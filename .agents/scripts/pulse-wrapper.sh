@@ -2795,6 +2795,85 @@ _complexity_scan_extract_md_topic_label() {
 	return 0
 }
 
+# Check if an open simplification-debt issue already exists for a given file.
+# Arguments:
+#   $1 - existing_issues (JSON array from gh issue list)
+#   $2 - issue_key (repo-relative file path used as dedup key)
+# Exit codes:
+#   0 - existing issue found (skip creation)
+#   1 - no existing issue (safe to create)
+_complexity_scan_has_existing_issue() {
+	local existing_issues="$1"
+	local issue_key="$2"
+
+	if echo "$existing_issues" | jq -e --arg key "$issue_key" \
+		'.[] | select((.title // "" | contains($key)) or (.body // "" | contains("**File:** `" + $key + "`")))' \
+		>/dev/null 2>&1; then
+		return 0
+	fi
+	return 1
+}
+
+# Build the GitHub issue body for an oversized agent doc.
+# Arguments:
+#   $1 - file_path (repo-relative)
+#   $2 - line_count
+#   $3 - topic_label (may be empty)
+# Output: issue body text to stdout
+_complexity_scan_build_md_issue_body() {
+	local file_path="$1"
+	local line_count="$2"
+	local topic_label="$3"
+
+	cat <<ISSUE_BODY_EOF
+## Agent doc simplification (automated scan)
+
+**File:** \`${file_path}\`
+**Detected topic:** ${topic_label:-Unknown}
+**Current size:** ${line_count} lines (threshold: ${COMPLEXITY_MD_LINE_THRESHOLD})
+
+### Classify before acting
+
+**First, determine the file type** — the correct action depends on whether this is an instruction doc or a reference corpus:
+
+- **Instruction doc** (agent rules, workflows, decision trees, operational procedures): Tighten prose, reorder by importance, split if multiple concerns. Follow guidance below.
+- **Reference corpus** (SKILL.md, domain knowledge base, textbook-style content with self-contained sections): Do NOT compress content. Instead, split into chapter files with a slim index. See \`tools/code-review/code-simplifier.md\` "Reference corpora" classification (GH#6432).
+
+### For instruction docs — proposed action
+
+Tighten and restructure this agent doc. Follow \`tools/build-agent/build-agent.md\` guidance. Key principles:
+
+1. **Preserve all institutional knowledge** — every verbose rule exists because something broke without it. Do not remove task IDs, incident references, error statistics, or decision rationale. Compress prose, not knowledge.
+2. **Order by importance** — most critical instructions first (primacy effect: LLMs weight earlier context more heavily). Security rules, core workflow, then edge cases.
+3. **Split if needed** — if the file covers multiple distinct concerns, extract sub-docs with a parent index. Use progressive disclosure (pointers, not inline content).
+4. **Use search patterns, not line numbers** — any \`file:line_number\` references to other files go stale on every edit. Use \`rg "pattern"\` or section heading references instead.
+
+### For reference corpora — proposed action
+
+1. **Extract each major section** into its own file (e.g., \`01-introduction.md\`, \`02-fundamentals.md\`)
+2. **Replace the original with a slim index** (~100-200 lines) — table of contents with one-line descriptions and file pointers
+3. **Zero content loss** — every line moves to a chapter file, nothing is deleted or compressed
+4. **Reconcile existing chapter files** — if partial splits already exist, deduplicate and keep the most complete version
+
+### Verification
+
+- Content preservation: all code blocks, URLs, task ID references (\`tNNN\`, \`GH#NNN\`), and command examples must be present before and after
+- No broken internal links or references
+- Agent behaviour unchanged (test with a representative query if possible)
+- For reference corpora: \`wc -l\` total of chapter files >= original line count minus index overhead
+
+### Confidence: medium
+
+Automated scan identified this file by size. The best simplification strategy requires human judgment — some large files are appropriately large. Reference corpora (SKILL.md, domain knowledge bases) need restructuring into chapters, not content reduction.
+
+---
+**To approve or decline**, comment on this issue:
+- \`approved\` — removes the review gate and queues for automated dispatch
+- \`declined: <reason>\` — closes this issue (include your reason after the colon)
+ISSUE_BODY_EOF
+	return 0
+}
+
 # Create GitHub issues for oversized agent docs.
 # Uses tier:thinking label (opus) because doc simplification requires deep
 # reasoning to distinguish noise from institutional knowledge.
@@ -2827,15 +2906,7 @@ _complexity_scan_create_md_issues() {
 	while IFS='|' read -r file_path line_count; do
 		[[ -n "$file_path" ]] || continue
 
-		local issue_key="$file_path"
-		local has_existing="false"
-		if echo "$existing_issues" | jq -e --arg key "$issue_key" \
-			'.[] | select((.title // "" | contains($key)) or (.body // "" | contains("**File:** `" + $key + "`")))' \
-			>/dev/null 2>&1; then
-			has_existing="true"
-		fi
-
-		if [[ "$has_existing" == "true" ]]; then
+		if _complexity_scan_has_existing_issue "$existing_issues" "$file_path"; then
 			echo "[pulse-wrapper] Complexity scan (.md): skipping ${file_path} — existing open issue" >>"$LOGFILE"
 			issues_skipped=$((issues_skipped + 1))
 			continue
@@ -2846,56 +2917,13 @@ _complexity_scan_create_md_issues() {
 			topic_label=$(_complexity_scan_extract_md_topic_label "$aidevops_path" "$file_path" 2>/dev/null || true)
 		fi
 
-		local issue_title="simplification: tighten agent doc ${issue_key} (${line_count} lines)"
+		local issue_title="simplification: tighten agent doc ${file_path} (${line_count} lines)"
 		if [[ -n "$topic_label" ]]; then
-			issue_title="simplification: tighten agent doc ${topic_label} (${issue_key}, ${line_count} lines)"
+			issue_title="simplification: tighten agent doc ${topic_label} (${file_path}, ${line_count} lines)"
 		fi
 
 		local issue_body
-		issue_body="## Agent doc simplification (automated scan)
-
-**File:** \`${file_path}\`
-**Detected topic:** ${topic_label:-Unknown}
-**Current size:** ${line_count} lines (threshold: ${COMPLEXITY_MD_LINE_THRESHOLD})
-
-### Classify before acting
-
-**First, determine the file type** — the correct action depends on whether this is an instruction doc or a reference corpus:
-
-- **Instruction doc** (agent rules, workflows, decision trees, operational procedures): Tighten prose, reorder by importance, split if multiple concerns. Follow guidance below.
-- **Reference corpus** (SKILL.md, domain knowledge base, textbook-style content with self-contained sections): Do NOT compress content. Instead, split into chapter files with a slim index. See \`tools/code-review/code-simplifier.md\` \"Reference corpora\" classification (GH#6432).
-
-### For instruction docs — proposed action
-
-Tighten and restructure this agent doc. Follow \`tools/build-agent/build-agent.md\` guidance. Key principles:
-
-1. **Preserve all institutional knowledge** — every verbose rule exists because something broke without it. Do not remove task IDs, incident references, error statistics, or decision rationale. Compress prose, not knowledge.
-2. **Order by importance** — most critical instructions first (primacy effect: LLMs weight earlier context more heavily). Security rules, core workflow, then edge cases.
-3. **Split if needed** — if the file covers multiple distinct concerns, extract sub-docs with a parent index. Use progressive disclosure (pointers, not inline content).
-4. **Use search patterns, not line numbers** — any \`file:line_number\` references to other files go stale on every edit. Use \`rg \"pattern\"\` or section heading references instead.
-
-### For reference corpora — proposed action
-
-1. **Extract each major section** into its own file (e.g., \`01-introduction.md\`, \`02-fundamentals.md\`)
-2. **Replace the original with a slim index** (~100-200 lines) — table of contents with one-line descriptions and file pointers
-3. **Zero content loss** — every line moves to a chapter file, nothing is deleted or compressed
-4. **Reconcile existing chapter files** — if partial splits already exist, deduplicate and keep the most complete version
-
-### Verification
-
-- Content preservation: all code blocks, URLs, task ID references (\`tNNN\`, \`GH#NNN\`), and command examples must be present before and after
-- No broken internal links or references
-- Agent behaviour unchanged (test with a representative query if possible)
-- For reference corpora: \`wc -l\` total of chapter files >= original line count minus index overhead
-
-### Confidence: medium
-
-Automated scan identified this file by size. The best simplification strategy requires human judgment — some large files are appropriately large. Reference corpora (SKILL.md, domain knowledge bases) need restructuring into chapters, not content reduction.
-
----
-**To approve or decline**, comment on this issue:
-- \`approved\` — removes the review gate and queues for automated dispatch
-- \`declined: <reason>\` — closes this issue (include your reason after the colon)"
+		issue_body=$(_complexity_scan_build_md_issue_body "$file_path" "$line_count" "$topic_label")
 
 		if gh issue create --repo "$aidevops_slug" \
 			--title "$issue_title" \
@@ -2942,15 +2970,7 @@ _complexity_scan_create_issues() {
 
 		# Dedup on repo-relative path (not basename) to avoid collisions between
 		# files with the same name in different directories (GH#5630)
-		local issue_key="$file_path"
-		local has_existing="false"
-		if echo "$existing_issues" | jq -e --arg key "$issue_key" \
-			'.[] | select((.title // "" | contains($key)) or (.body // "" | contains("**File:** `" + $key + "`")))' \
-			>/dev/null 2>&1; then
-			has_existing="true"
-		fi
-
-		if [[ "$has_existing" == "true" ]]; then
+		if _complexity_scan_has_existing_issue "$existing_issues" "$file_path"; then
 			echo "[pulse-wrapper] Complexity scan: skipping ${file_path} — existing open issue" >>"$LOGFILE"
 			issues_skipped=$((issues_skipped + 1))
 			continue
