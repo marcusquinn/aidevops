@@ -181,10 +181,6 @@ wait_for_deploy() {
     local deploy_id="$1"
     local max_wait="${2:-300}"
     local interval="${3:-10}"
-    if ! [[ "$interval" =~ ^[0-9]+$ ]] || [[ "$interval" -le 0 ]]; then
-        echo "[wait_for_deploy] interval must be a positive integer" >&2
-        return 1
-    fi
     local elapsed=0
     local iteration=0
     local max_iterations
