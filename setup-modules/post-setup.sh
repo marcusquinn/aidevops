@@ -135,33 +135,52 @@ print_final_instructions() {
 	return 0
 }
 
-# Offer to launch onboarding for new users (only if not running inside OpenCode
-# and not non-interactive).
+# Offer to launch onboarding for new users (only if not running inside an AI
+# runtime session and not non-interactive). (t1665.5 — registry-driven)
 # Respects config: aidevops config set ui.onboarding_prompt false
 setup_onboarding_prompt() {
-	if [[ "$NON_INTERACTIVE" != "true" ]] && [[ -z "${OPENCODE_SESSION:-}" ]] && is_feature_enabled onboarding_prompt 2>/dev/null && command -v opencode &>/dev/null; then
-		echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	# Skip if non-interactive or already inside a runtime session
+	[[ "$NON_INTERACTIVE" == "true" ]] && return 0
+	[[ -n "${OPENCODE_SESSION:-}" || -n "${CLAUDE_SESSION:-}" ]] && return 0
+	is_feature_enabled onboarding_prompt 2>/dev/null || return 0
+
+	# Find first available headless runtime for onboarding dispatch
+	local _onb_bin="" _onb_name=""
+	if type rt_list_headless &>/dev/null; then
+		local _onb_rt_id
+		while IFS= read -r _onb_rt_id; do
+			_onb_bin=$(rt_binary "$_onb_rt_id") || continue
+			if [[ -n "$_onb_bin" ]] && command -v "$_onb_bin" &>/dev/null; then
+				_onb_name=$(rt_display_name "$_onb_rt_id") || _onb_name="$_onb_bin"
+				break
+			fi
+			_onb_bin=""
+		done < <(rt_list_headless)
+	fi
+	# Fallback
+	if [[ -z "$_onb_bin" ]] && command -v opencode &>/dev/null; then
+		_onb_bin="opencode"
+		_onb_name="OpenCode"
+	fi
+	[[ -z "$_onb_bin" ]] && return 0
+
+	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	echo ""
+	echo "Ready to configure your services?"
+	echo ""
+	echo "Launch ${_onb_name} with the onboarding wizard to:"
+	echo "  - See which services are already configured"
+	echo "  - Get personalized recommendations based on your work"
+	echo "  - Set up API keys and credentials interactively"
+	echo ""
+	read -r -p "Launch ${_onb_name} with /onboarding now? [Y/n]: " launch_onboarding
+	if [[ "$launch_onboarding" =~ ^[Yy]?$ ]]; then
 		echo ""
-		echo "Ready to configure your services?"
+		echo "Starting ${_onb_name} with onboarding wizard..."
+		"$_onb_bin" --prompt "/onboarding"
+	else
 		echo ""
-		echo "Launch OpenCode with the onboarding wizard to:"
-		echo "  - See which services are already configured"
-		echo "  - Get personalized recommendations based on your work"
-		echo "  - Set up API keys and credentials interactively"
-		echo ""
-		read -r -p "Launch OpenCode with /onboarding now? [Y/n]: " launch_onboarding
-		if [[ "$launch_onboarding" =~ ^[Yy]?$ ]]; then
-			echo ""
-			echo "Starting OpenCode with onboarding wizard..."
-			# Launch with /onboarding prompt only — don't use --agent flag because
-			# the "Onboarding" agent only exists after generate-opencode-agents.sh
-			# writes to opencode.json, which requires opencode.json to already exist.
-			# On first run it won't, so --agent "Onboarding" causes a fatal error.
-			opencode --prompt "/onboarding"
-		else
-			echo ""
-			echo "You can run /onboarding anytime in OpenCode to configure services."
-		fi
+		echo "You can run /onboarding anytime in ${_onb_name} to configure services."
 	fi
 	return 0
 }

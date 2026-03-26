@@ -246,6 +246,80 @@ _RT_HEADLESS_SUPPORT=(
 	"yes" # amp
 )
 
+# --- Headless cmdline patterns (regex to identify headless/worker instances) ---
+# Used by session-count-helper.sh to exclude headless workers from interactive counts.
+# Empty string means "no headless mode" (all instances are interactive).
+# These are grep -E patterns matched against the process command line.
+_RT_HEADLESS_CMDLINE_PATTERN=(
+	"\\.opencode run "         # opencode — headless via "run" subcommand
+	"claude (-p|--print|run) " # claude-code — headless via -p, --print, or run
+	"codex "                   # codex — all CLI invocations are headless
+	""                         # cursor — no headless mode
+	"droid run "               # droid — headless via "run" subcommand
+	"gemini "                  # gemini-cli — all CLI invocations are headless
+	""                         # windsurf — no headless mode
+	""                         # continue — no headless mode
+	"kilo run "                # kilo — headless via "run" subcommand
+	""                         # kiro — no headless mode
+	"aider --yes "             # aider — headless via --yes flag
+	"amp run "                 # amp — headless via "run" subcommand
+)
+
+# --- pgrep mode (how to find processes for this runtime) ---
+# "x" = pgrep -x (exact binary name match)
+# "f" = pgrep -f (full command line match, for runtimes whose binary
+#       name differs from the process pattern, e.g., opencode runs as .opencode)
+_RT_PGREP_MODE=(
+	"f" # opencode — binary is .opencode in PATH, needs -f
+	"x" # claude-code — exact match on "claude"
+	"x" # codex
+	"f" # cursor — match Cursor.app in cmdline
+	"x" # droid
+	"x" # gemini-cli
+	"f" # windsurf — match Windsurf in cmdline
+	"f" # continue — match in cmdline
+	"x" # kilo
+	"x" # kiro
+	"f" # aider — Python process, needs -f
+	"x" # amp
+)
+
+# --- pgrep search pattern (what to pass to pgrep) ---
+# May differ from _RT_PROCESS_PATTERN when pgrep mode is "f" (full cmdline).
+_RT_PGREP_PATTERN=(
+	"\\.opencode"  # opencode — binary is .opencode
+	"claude"       # claude-code
+	"codex"        # codex
+	"Cursor\\.app" # cursor
+	"droid"        # droid
+	"gemini"       # gemini-cli
+	"Windsurf"     # windsurf
+	"continue"     # continue
+	"kilo"         # kilo
+	"kiro"         # kiro
+	"aider"        # aider
+	"amp"          # amp
+)
+
+# --- Process exclusion patterns (noise to filter out) ---
+# grep -E patterns for processes that match the pgrep pattern but are NOT
+# actual runtime sessions (language servers, node wrappers, etc.).
+# Empty string means "no exclusions needed".
+_RT_PROCESS_EXCLUSION=(
+	"(typescript-language-server|eslintServer|vscode-)|^node .*/bin/opencode" # opencode
+	""                                                                        # claude-code
+	""                                                                        # codex
+	""                                                                        # cursor
+	""                                                                        # droid
+	""                                                                        # gemini-cli
+	""                                                                        # windsurf
+	""                                                                        # continue
+	""                                                                        # kilo
+	""                                                                        # kiro
+	""                                                                        # aider
+	""                                                                        # amp
+)
+
 # =============================================================================
 # Internal: Index Lookup
 # =============================================================================
@@ -368,6 +442,38 @@ rt_headless_support() {
 	local idx
 	idx=$(_rt_index "$id") || return 1
 	echo "${_RT_HEADLESS_SUPPORT[$idx]}"
+	return 0
+}
+
+rt_headless_cmdline_pattern() {
+	local id="$1"
+	local idx
+	idx=$(_rt_index "$id") || return 1
+	echo "${_RT_HEADLESS_CMDLINE_PATTERN[$idx]}"
+	return 0
+}
+
+rt_pgrep_mode() {
+	local id="$1"
+	local idx
+	idx=$(_rt_index "$id") || return 1
+	echo "${_RT_PGREP_MODE[$idx]}"
+	return 0
+}
+
+rt_pgrep_pattern() {
+	local id="$1"
+	local idx
+	idx=$(_rt_index "$id") || return 1
+	echo "${_RT_PGREP_PATTERN[$idx]}"
+	return 0
+}
+
+rt_process_exclusion() {
+	local id="$1"
+	local idx
+	idx=$(_rt_index "$id") || return 1
+	echo "${_RT_PROCESS_EXCLUSION[$idx]}"
 	return 0
 }
 
@@ -534,6 +640,10 @@ rt_validate_registry() {
 		"_RT_SESSION_DB_FORMAT"
 		"_RT_PROCESS_PATTERN"
 		"_RT_HEADLESS_SUPPORT"
+		"_RT_HEADLESS_CMDLINE_PATTERN"
+		"_RT_PGREP_MODE"
+		"_RT_PGREP_PATTERN"
+		"_RT_PROCESS_EXCLUSION"
 	)
 
 	local arr_name

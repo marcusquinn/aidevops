@@ -27,7 +27,13 @@ set -euo pipefail
 # Configuration
 readonly INDEX_DIR="${AIDEVOPS_MCP_INDEX_DIR:-$HOME/.aidevops/.agent-workspace/mcp-index}"
 readonly INDEX_DB="$INDEX_DIR/mcp-tools.db"
-readonly OPENCODE_CONFIG="$HOME/.config/opencode/opencode.json"
+# Primary MCP config — use runtime registry if available, fallback to opencode (t1665.5)
+if type rt_config_path &>/dev/null; then
+	_MCP_IDX_CONFIG=$(rt_config_path "opencode") || _MCP_IDX_CONFIG=""
+else
+	_MCP_IDX_CONFIG="$HOME/.config/opencode/opencode.json"
+fi
+readonly OPENCODE_CONFIG="${_MCP_IDX_CONFIG}"
 # shellcheck disable=SC2034  # Used for future cache invalidation
 readonly CACHE_TTL_HOURS=24
 
