@@ -141,6 +141,96 @@ test_guardrail_fails_hard_limit_violation() {
 	return 0
 }
 
+test_stability_requires_url() {
+	local output exit_code
+	exit_code=0
+	output=$(cmd_stability 2>&1) || exit_code=$?
+	if [[ "$exit_code" -ne 0 ]] && printf '%s' "$output" | grep -q "URL is required"; then
+		print_result "stability: missing --url returns error" 0
+	else
+		print_result "stability: missing --url returns error" 1 "expected non-zero exit with URL error, got exit=${exit_code}"
+	fi
+	return 0
+}
+
+test_stability_rejects_invalid_reloads() {
+	local output exit_code
+	exit_code=0
+	output=$(cmd_stability --url "http://localhost:9999" --reloads "abc" 2>&1) || exit_code=$?
+	if [[ "$exit_code" -ne 0 ]] && printf '%s' "$output" | grep -q "positive integer"; then
+		print_result "stability: invalid --reloads rejected" 0
+	else
+		print_result "stability: invalid --reloads rejected" 1 "expected non-zero exit with integer error, got exit=${exit_code}"
+	fi
+	return 0
+}
+
+test_stability_rejects_zero_reloads() {
+	local output exit_code
+	exit_code=0
+	output=$(cmd_stability --url "http://localhost:9999" --reloads "0" 2>&1) || exit_code=$?
+	if [[ "$exit_code" -ne 0 ]] && printf '%s' "$output" | grep -q "positive integer"; then
+		print_result "stability: zero --reloads rejected" 0
+	else
+		print_result "stability: zero --reloads rejected" 1 "expected non-zero exit with integer error, got exit=${exit_code}"
+	fi
+	return 0
+}
+
+test_stability_unknown_option_rejected() {
+	local output exit_code
+	exit_code=0
+	output=$(cmd_stability --url "http://localhost:9999" --unknown-flag "val" 2>&1) || exit_code=$?
+	if [[ "$exit_code" -ne 0 ]]; then
+		print_result "stability: unknown option rejected" 0
+	else
+		print_result "stability: unknown option rejected" 1 "expected non-zero exit for unknown option"
+	fi
+	return 0
+}
+
+test_stability_script_generation() {
+	local script_file
+	script_file=$(mktemp "${TMPDIR:-/tmp}/test-stability-XXXXXX.mjs")
+	_generate_stability_script "$script_file" "http://localhost:3000" "'/'," "3" "30000" "500" "10000"
+	local exit_code=$?
+	if [[ "$exit_code" -eq 0 ]] && [[ -s "$script_file" ]]; then
+		if grep -q "waitForNetworkQuiescence" "$script_file" && grep -q "domFingerprint" "$script_file"; then
+			print_result "stability: script generation includes quiescence and fingerprint functions" 0
+		else
+			print_result "stability: script generation includes quiescence and fingerprint functions" 1 "missing expected JS functions"
+		fi
+	else
+		print_result "stability: script generation produces non-empty file" 1 "exit=${exit_code} or empty file"
+	fi
+	rm -f "$script_file"
+	return 0
+}
+
+test_format_stability_markdown_stable() {
+	local json='{"summary":{"total":1,"stable":1,"unstable":0},"pages":[{"page":"/","reloads":3,"stable":true,"allLoadsOk":true,"stable_dom":true,"totalConsoleErrors":0,"totalNetworkErrors":0,"avgLoadMs":120,"baseFingerprint":null,"reloadResults":[]}]}'
+	local output
+	output=$(_format_stability_markdown "$json")
+	if printf '%s' "$output" | grep -q "Stability Test Report" && printf '%s' "$output" | grep -q "Pages tested"; then
+		print_result "stability: markdown format renders stable result" 0
+	else
+		print_result "stability: markdown format renders stable result" 1 "missing expected markdown sections"
+	fi
+	return 0
+}
+
+test_format_stability_markdown_unstable() {
+	local json='{"summary":{"total":1,"stable":0,"unstable":1},"pages":[{"page":"/","reloads":3,"stable":false,"allLoadsOk":true,"stable_dom":false,"totalConsoleErrors":2,"totalNetworkErrors":0,"avgLoadMs":200,"baseFingerprint":null,"reloadResults":[]}]}'
+	local output
+	output=$(_format_stability_markdown "$json")
+	if printf '%s' "$output" | grep -q "Unstable Pages"; then
+		print_result "stability: markdown format renders unstable section" 0
+	else
+		print_result "stability: markdown format renders unstable section" 1 "missing Unstable Pages section"
+	fi
+	return 0
+}
+
 main() {
 	# Source after function declarations so helper functions are available here.
 	# main() in helper is guarded and will not auto-run when sourced.
@@ -156,6 +246,18 @@ main() {
 	test_resolve_clamps_to_anthropic_limit
 	test_guardrail_resizes_oversized_images
 	test_guardrail_fails_hard_limit_violation
+
+	echo "============================================="
+	echo "  browser-qa-helper.sh stability tests"
+	echo "============================================="
+
+	test_stability_requires_url
+	test_stability_rejects_invalid_reloads
+	test_stability_rejects_zero_reloads
+	test_stability_unknown_option_rejected
+	test_stability_script_generation
+	test_format_stability_markdown_stable
+	test_format_stability_markdown_unstable
 
 	echo "============================================="
 	echo "  Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"
