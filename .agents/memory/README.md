@@ -193,6 +193,50 @@ memory-embeddings-helper.sh status
 
 Hybrid search is recommended for natural language queries. New memories stored via `memory-helper.sh store` are automatically indexed once embeddings are configured.
 
+## Retrieval Feedback Loop
+
+Inspired by [Ori Mnemos](https://github.com/aayoawoyemi/Ori-Mnemos) Q-value system, simplified for operational use. Tracks whether recalled memories led to downstream actions. Memories that prove useful in practice rank higher in future recalls.
+
+**How it works:** When a recalled memory leads to a useful outcome (cited in new content, edited, led to a new memory), the caller records positive feedback. This increments a `usefulness_score` in `learning_access`. Future FTS5 and hybrid searches blend BM25 relevance with usefulness_score, so proven-useful memories get a ranking boost.
+
+```bash
+# Record feedback: memory was cited in new content
+memory-helper.sh feedback mem_xxx --signal cited
+
+# Record feedback: memory was edited after retrieval
+memory-helper.sh feedback mem_xxx --signal edited
+
+# Record feedback: a new memory was created after retrieving this one
+memory-helper.sh feedback mem_xxx --signal led_to_new
+
+# Record feedback: same memory recalled across different queries
+memory-helper.sh feedback mem_xxx --signal reused
+
+# Record negative feedback: retrieved but not used
+memory-helper.sh feedback mem_xxx --signal dead_end
+
+# Custom reward value
+memory-helper.sh feedback mem_xxx --value 0.8
+```
+
+**Signal types and rewards:**
+
+| Signal | Reward | Trigger |
+|--------|--------|---------|
+| `cited` | +1.0 | Memory was referenced/linked in new content |
+| `edited` | +0.5 | Memory was edited/updated after retrieval |
+| `led_to_new` | +0.6 | A new memory was created after retrieving this one |
+| `reused` | +0.4 | Same memory recalled across different queries in session |
+| `dead_end` | -0.15 | Retrieved in top results but no follow-up action |
+
+**Ranking integration:**
+
+- **FTS5 search:** Blended score = `bm25(learnings) - (usefulness_score * 0.3)`. The 0.3 lambda weight promotes proven-useful results by 1-2 positions without overriding strong keyword relevance.
+- **Hybrid search (RRF):** Usefulness score is added as a third signal in Reciprocal Rank Fusion, scaled to RRF magnitude.
+- **Score floor:** -1.0 minimum prevents a few `dead_end` signals from permanently burying a memory.
+
+**When to call feedback:** AI agents should call `feedback` after completing a task where recalled memories contributed to the outcome. The pulse supervisor can also batch-record feedback based on PR merge outcomes.
+
 ## Pattern Tracking
 
 Pattern tracking is handled by the cross-session memory system and the pulse supervisor's outcome observation (Step 2a).
@@ -269,7 +313,7 @@ Namespace DBs: `memory/namespaces/<name>/memory.db`. Global DB: `memory/memory.d
 ~/.aidevops/.agent-workspace/memory/
 ├── memory.db           # Global SQLite database with FTS5
 │   ├── learnings        # Project memories (FTS5)
-│   ├── learning_access  # Access tracking
+│   ├── learning_access  # Access tracking + usefulness_score (retrieval feedback)
 │   ├── learning_relations # Relational versioning
 │   ├── entities         # Entity records (person/agent/service)
 │   ├── entity_channels  # Cross-channel identity links
@@ -297,6 +341,11 @@ memory-helper.sh store --content "Additional context" --supersedes mem_xxx --rel
 # Recall
 memory-helper.sh recall "query" --type WORKING_SOLUTION --project myapp --limit 20
 memory-helper.sh recall --recent 10
+
+# Retrieval feedback (mark recalled memories as useful/not useful)
+memory-helper.sh feedback mem_xxx --signal cited       # Memory was referenced in new content
+memory-helper.sh feedback mem_xxx --signal dead_end    # Retrieved but not used
+memory-helper.sh feedback mem_xxx --value 0.8          # Custom reward value
 
 # Version history
 memory-helper.sh history mem_xxx   # Show ancestors and descendants

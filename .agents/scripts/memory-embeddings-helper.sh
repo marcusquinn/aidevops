@@ -500,7 +500,23 @@ def cmd_hybrid(provider: str, embeddings_db: str, memory_db: str, query: str, li
         # FTS5 query failed (e.g., special characters) — fall back to semantic only
         pass
 
-    # 3. Reciprocal Rank Fusion (RRF) with k=60
+    # 3. Fetch usefulness scores for retrieval feedback loop boost
+    # Memories that have proven useful in practice get a score boost.
+    usefulness_lookup: dict[str, float] = {}
+    try:
+        all_ids = set(mid for mid, _ in semantic_results) | set(mid for mid, _ in fts_results)
+        if all_ids:
+            placeholders = ",".join("?" for _ in all_ids)
+            usefulness_rows = mem_conn.execute(
+                f"SELECT id, COALESCE(usefulness_score, 0.0) FROM learning_access WHERE id IN ({placeholders})",
+                list(all_ids)
+            ).fetchall()
+            usefulness_lookup = {row[0]: row[1] for row in usefulness_rows}
+    except sqlite3.OperationalError:
+        # usefulness_score column may not exist on older DBs — graceful fallback
+        pass
+
+    # 4. Reciprocal Rank Fusion (RRF) with k=60 + usefulness boost
     k = 60
     rrf_scores: dict[str, float] = {}
 
@@ -509,6 +525,16 @@ def cmd_hybrid(provider: str, embeddings_db: str, memory_db: str, query: str, li
 
     for rank, (memory_id, _score) in enumerate(fts_results):
         rrf_scores[memory_id] = rrf_scores.get(memory_id, 0.0) + 1.0 / (k + rank + 1)
+
+    # Apply usefulness boost: lambda=0.3, normalized to RRF scale.
+    # A usefulness_score of 3.0 adds ~0.015 to RRF score (enough to shift
+    # 1-2 positions among closely-ranked results without overriding relevance).
+    usefulness_lambda = 0.3
+    rrf_scale = 1.0 / (k + 1)  # max single-signal RRF contribution
+    for memory_id in rrf_scores:
+        u_score = usefulness_lookup.get(memory_id, 0.0)
+        if u_score != 0.0:
+            rrf_scores[memory_id] += u_score * usefulness_lambda * rrf_scale
 
     # Sort by combined RRF score
     combined = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)[:limit]
@@ -524,7 +550,8 @@ def cmd_hybrid(provider: str, embeddings_db: str, memory_db: str, query: str, li
             (memory_id,)
         ).fetchone()
         if row:
-            output.append({
+            u_score = usefulness_lookup.get(memory_id, 0.0)
+            entry = {
                 "id": memory_id,
                 "content": row[0],
                 "type": row[1],
@@ -534,7 +561,10 @@ def cmd_hybrid(provider: str, embeddings_db: str, memory_db: str, query: str, li
                 "score": round(rrf_score, 4),
                 "semantic_score": round(semantic_lookup.get(memory_id, 0.0), 4),
                 "search_method": "hybrid",
-            })
+            }
+            if u_score != 0.0:
+                entry["usefulness_score"] = round(u_score, 2)
+            output.append(entry)
     mem_conn.close()
     print(json.dumps(output))
 PYEOF

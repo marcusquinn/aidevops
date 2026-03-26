@@ -262,6 +262,15 @@ _recall_search_db() {
 	local auto_join_filter="$6"
 	local limit="$7"
 
+	# Retrieval feedback loop: blend BM25 relevance with usefulness_score.
+	# bm25() returns negative values (more negative = more relevant).
+	# usefulness_score is 0.0+ (higher = more useful in practice).
+	# Blended score: bm25 - (usefulness_score * 0.3)
+	#   The 0.3 lambda weight means a memory with usefulness_score=3.0 gets
+	#   a 0.9-point boost — enough to promote proven-useful results by ~1-2
+	#   positions without overriding strong keyword relevance.
+	# The lambda is conservative: relevance still dominates, but memories
+	# that have proven useful in practice get a meaningful edge.
 	db -json "$db_path" <<EOF
 .param set :query "${param_query}"
 SELECT
@@ -274,7 +283,9 @@ SELECT
     COALESCE(learning_access.last_accessed_at, '') as last_accessed_at,
     COALESCE(learning_access.access_count, 0) as access_count,
     COALESCE(learning_access.auto_captured, 0) as auto_captured,
-    bm25(learnings) as score
+    COALESCE(learning_access.usefulness_score, 0.0) as usefulness_score,
+    bm25(learnings) as bm25_score,
+    (bm25(learnings) - (COALESCE(learning_access.usefulness_score, 0.0) * 0.3)) as score
 FROM learnings
 LEFT JOIN learning_access ON learnings.id = learning_access.id
 $entity_fts_join
@@ -380,7 +391,7 @@ _recall_recent() {
 	local format="$6"
 
 	local results
-	results=$(db -json "$db_path" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count, COALESCE(a.auto_captured, 0) as auto_captured FROM learnings l LEFT JOIN learning_access a ON l.id = a.id $entity_join WHERE 1=1 $entity_where $auto_filter ORDER BY l.created_at DESC LIMIT $limit;")
+	results=$(db -json "$db_path" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count, COALESCE(a.auto_captured, 0) as auto_captured, COALESCE(a.usefulness_score, 0.0) as usefulness_score FROM learnings l LEFT JOIN learning_access a ON l.id = a.id $entity_join WHERE 1=1 $entity_where $auto_filter ORDER BY l.created_at DESC LIMIT $limit;")
 	if [[ "$format" == "json" ]]; then
 		printf '%s\n' "$results"
 	else
@@ -798,5 +809,109 @@ SELECT '[' || type || '] ' || content
 FROM learnings WHERE id = '$escaped_latest';
 EOF
 
+	return 0
+}
+
+#######################################
+# Record retrieval feedback — mark a recalled memory as useful.
+#
+# Retrieval feedback loop (inspired by Ori Mnemos Q-value system):
+# When a recalled memory leads to a downstream action (commit, PR, new memory,
+# code edit), the caller records positive feedback. This increments the
+# usefulness_score in learning_access. Future recalls boost results with
+# higher usefulness_score, so memories that prove useful in practice
+# surface more readily.
+#
+# Signal types and their reward values:
+#   cited      (+1.0) — memory was referenced/linked in new content
+#   edited     (+0.5) — memory was edited/updated after retrieval
+#   led_to_new (+0.6) — a new memory was created after retrieving this one
+#   reused     (+0.4) — same memory recalled across different queries in session
+#   dead_end   (-0.15) — retrieved in top results but no follow-up action
+#
+# Usage:
+#   memory-helper.sh feedback <memory_id> [--signal <type>] [--value <float>]
+#   memory-helper.sh feedback mem_xxx --signal cited
+#   memory-helper.sh feedback mem_xxx --signal dead_end
+#   memory-helper.sh feedback mem_xxx --value 0.8
+#######################################
+cmd_feedback() {
+	local memory_id=""
+	local signal=""
+	local custom_value=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--signal | -s)
+			signal="$2"
+			shift 2
+			;;
+		--value | -v)
+			custom_value="$2"
+			shift 2
+			;;
+		*)
+			if [[ -z "$memory_id" ]]; then
+				memory_id="$1"
+			fi
+			shift
+			;;
+		esac
+	done
+
+	if [[ -z "$memory_id" ]]; then
+		log_error "Memory ID is required. Usage: memory-helper.sh feedback <id> [--signal <type>]"
+		return 1
+	fi
+
+	init_db
+
+	# Validate memory exists
+	local escaped_id="${memory_id//"'"/"''"}"
+	local exists
+	exists=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$escaped_id';")
+	if [[ "$exists" == "0" ]]; then
+		log_error "Memory not found: $memory_id"
+		return 1
+	fi
+
+	# Determine reward value from signal type or custom value
+	local reward="0.5" # default: moderate positive signal
+	if [[ -n "$custom_value" ]]; then
+		reward="$custom_value"
+	elif [[ -n "$signal" ]]; then
+		case "$signal" in
+		cited) reward="1.0" ;;
+		edited) reward="0.5" ;;
+		led_to_new) reward="0.6" ;;
+		reused) reward="0.4" ;;
+		dead_end) reward="-0.15" ;;
+		*)
+			log_error "Unknown signal type: $signal"
+			log_error "Valid signals: cited, edited, led_to_new, reused, dead_end"
+			return 1
+			;;
+		esac
+	fi
+
+	# Upsert: create learning_access row if missing, then update usefulness_score.
+	# Score is additive (EMA-like accumulation) — each feedback event shifts the
+	# score. Floor at -1.0 to prevent a few dead_end signals from permanently
+	# burying a memory that might be useful in a different context.
+	db "$MEMORY_DB" <<EOF
+INSERT INTO learning_access (id, last_accessed_at, access_count, usefulness_score)
+VALUES ('$escaped_id', datetime('now'), 0, MAX(-1.0, $reward))
+ON CONFLICT(id) DO UPDATE SET
+    usefulness_score = MAX(-1.0, COALESCE(usefulness_score, 0.0) + $reward);
+EOF
+
+	local new_score
+	new_score=$(db "$MEMORY_DB" "SELECT COALESCE(usefulness_score, 0.0) FROM learning_access WHERE id = '$escaped_id';" 2>/dev/null || echo "0.0")
+
+	if [[ -n "$signal" ]]; then
+		log_success "Feedback recorded: $memory_id signal=$signal reward=$reward (score now: $new_score)"
+	else
+		log_success "Feedback recorded: $memory_id reward=$reward (score now: $new_score)"
+	fi
 	return 0
 }
