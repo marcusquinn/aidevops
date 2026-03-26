@@ -207,16 +207,14 @@ testing-setup-helper.sh verify .
 This executes each configured runner and reports results:
 
 ```text
-=== Verification ===
+=== Test Verification ===
 
-  [pass] vitest — 3 tests passed (sample tests)
-  [pass] eslint — 0 errors, 2 warnings
-  [pass] prettier — all files formatted
-  [pass] typescript-check — no errors
-  [pass] coverage — 100% (sample tests only)
-  [skip] CI — cannot verify locally, check after push
+  [pass] vitest
+  [pass] eslint
+  [pass] prettier
+  [pass] typescript-check
 
-Setup complete. Run 'testing-setup-helper.sh status' anytime to check health.
+  Results: 4 passed, 0 failed, 0 skipped
 ```
 
 ### Step 7: Summary and Next Steps
@@ -264,6 +262,6 @@ Default test runner recommendations per bundle:
 
 - `tools/build-agent/agent-testing.md` — Agent-specific testing framework
 - `bundles/*.json` — Bundle definitions with quality gates
-- `scripts/linters-local.sh` — Local quality checks
-- `scripts/bundle-helper.sh` — Bundle detection and resolution
+- `.agents/scripts/linters-local.sh` — Local quality checks
+- `.agents/scripts/bundle-helper.sh` — Bundle detection and resolution
 - `workflows/preflight.md` — Pre-commit quality workflow
