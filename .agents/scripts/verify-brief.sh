@@ -17,6 +17,16 @@
 #   codebase  — rg pattern search, pass if match found (expect: absent inverts)
 #   subagent  — spawn AI review prompt (requires ai-research MCP)
 #   manual    — flag for human review (always SKIP, never blocks)
+#   runtime   — start dev env, run smoke/stability checks via browser-qa-helper.sh
+#
+# Runtime method fields (verify block):
+#   url       — base URL to test (default: read from testing.json or http://localhost:3000)
+#   pages     — space-separated page paths to smoke-test (default: "/")
+#   start_cmd — shell command to start dev env (optional; skipped if URL already responds)
+#   timeout   — seconds to wait for dev env to start (default: 30)
+#
+# Runtime method reads testing.json from repo root or ~/.aidevops/testing.json for defaults.
+# testing.json fields used: url, start_command, smoke_pages (all optional).
 #
 # Exit codes:
 #   0 - All non-manual criteria passed (or no verify blocks found)
@@ -207,7 +217,8 @@ parse_brief() {
 }
 
 # Parse a YAML verify block into variables.
-# Sets: V_METHOD, V_RUN, V_PATTERN, V_PATH, V_EXPECT, V_PROMPT, V_FILES
+# Sets: V_METHOD, V_RUN, V_PATTERN, V_PATH, V_EXPECT, V_PROMPT, V_FILES,
+#       V_URL, V_PAGES, V_START_CMD, V_TIMEOUT
 parse_verify_yaml() {
 	local yaml="$1"
 
@@ -218,6 +229,11 @@ parse_verify_yaml() {
 	V_EXPECT="present"
 	V_PROMPT=""
 	V_FILES=""
+	# runtime method fields
+	V_URL=""
+	V_PAGES=""
+	V_START_CMD=""
+	V_TIMEOUT="30"
 
 	local line
 	while IFS= read -r line; do
@@ -259,6 +275,22 @@ parse_verify_yaml() {
 			V_FILES="${BASH_REMATCH[1]}"
 			V_FILES="${V_FILES#\"}"
 			V_FILES="${V_FILES%\"}"
+		elif [[ "$line" =~ ^url:[[:space:]]*(.+)$ ]]; then
+			V_URL="${BASH_REMATCH[1]}"
+			V_URL="${V_URL#\"}"
+			V_URL="${V_URL%\"}"
+		elif [[ "$line" =~ ^pages:[[:space:]]*(.+)$ ]]; then
+			V_PAGES="${BASH_REMATCH[1]}"
+			V_PAGES="${V_PAGES#\"}"
+			V_PAGES="${V_PAGES%\"}"
+		elif [[ "$line" =~ ^start_cmd:[[:space:]]*(.+)$ ]]; then
+			V_START_CMD="${BASH_REMATCH[1]}"
+			V_START_CMD="${V_START_CMD#\"}"
+			V_START_CMD="${V_START_CMD%\"}"
+		elif [[ "$line" =~ ^timeout:[[:space:]]*(.+)$ ]]; then
+			V_TIMEOUT="${BASH_REMATCH[1]}"
+			V_TIMEOUT="${V_TIMEOUT#\"}"
+			V_TIMEOUT="${V_TIMEOUT%\"}"
 		fi
 	done <<<"$yaml"
 
@@ -268,6 +300,9 @@ parse_verify_yaml() {
 	V_PATH="${V_PATH//\\\\/\\}"
 	V_PROMPT="${V_PROMPT//\\\\/\\}"
 	V_FILES="${V_FILES//\\\\/\\}"
+	V_URL="${V_URL//\\\\/\\}"
+	V_PAGES="${V_PAGES//\\\\/\\}"
+	V_START_CMD="${V_START_CMD//\\\\/\\}"
 
 	# Validate method
 	if [[ -z "$V_METHOD" ]]; then
@@ -276,7 +311,7 @@ parse_verify_yaml() {
 	fi
 
 	case "$V_METHOD" in
-	bash | codebase | subagent | manual) ;;
+	bash | codebase | subagent | manual | runtime) ;;
 	*)
 		log_fail "Unknown verify method: $V_METHOD"
 		return 1
@@ -394,6 +429,218 @@ exec_manual() {
 	return 3
 }
 
+# Read a field from testing.json (repo-local or ~/.aidevops/testing.json).
+# Args: $1 = field name, $2 = repo_path, $3 = default value
+# Output: field value or default
+_read_testing_json_field() {
+	local field="$1"
+	local repo_path="$2"
+	local default_val="$3"
+
+	# Search order: repo-local testing.json, then ~/.aidevops/testing.json
+	local config_file=""
+	if [[ -f "${repo_path}/testing.json" ]]; then
+		config_file="${repo_path}/testing.json"
+	elif [[ -f "${HOME}/.aidevops/testing.json" ]]; then
+		config_file="${HOME}/.aidevops/testing.json"
+	fi
+
+	if [[ -z "$config_file" ]]; then
+		echo "$default_val"
+		return 0
+	fi
+
+	# Use jq if available, otherwise fall back to grep-based extraction
+	if command -v jq >/dev/null 2>&1; then
+		local val
+		val=$(jq -r --arg f "$field" '.[$f] // empty' "$config_file" 2>/dev/null || true)
+		if [[ -n "$val" && "$val" != "null" ]]; then
+			echo "$val"
+			return 0
+		fi
+	else
+		# Minimal grep-based extraction for simple string fields
+		local val
+		val=$(grep -E "\"${field}\"[[:space:]]*:[[:space:]]*\"" "$config_file" 2>/dev/null |
+			sed -E "s/.*\"${field}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/" |
+			head -1 || true)
+		if [[ -n "$val" ]]; then
+			echo "$val"
+			return 0
+		fi
+	fi
+
+	echo "$default_val"
+	return 0
+}
+
+# Check if a URL is reachable (HTTP 2xx or 3xx response).
+# Args: $1 = url, $2 = timeout_seconds
+# Returns: 0 if reachable, 1 if not
+_url_reachable() {
+	local url="$1"
+	local timeout_secs="${2:-10}"
+
+	if command -v curl >/dev/null 2>&1; then
+		local http_code
+		http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+			--max-time "$timeout_secs" \
+			--connect-timeout 5 \
+			"$url" 2>/dev/null || echo "000")
+		case "$http_code" in
+		2?? | 3??) return 0 ;;
+		*) return 1 ;;
+		esac
+	elif command -v wget >/dev/null 2>&1; then
+		wget -q --spider --timeout="$timeout_secs" "$url" >/dev/null 2>&1
+		return $?
+	fi
+
+	# No curl or wget — cannot check
+	log_warn "Neither curl nor wget available; cannot check URL reachability"
+	return 1
+}
+
+# Wait for a URL to become reachable, polling every 2 seconds.
+# Args: $1 = url, $2 = timeout_seconds
+# Returns: 0 when reachable, 1 on timeout
+_wait_for_url() {
+	local url="$1"
+	local timeout_secs="${2:-30}"
+	local elapsed=0
+	local interval=2
+
+	while [[ $elapsed -lt $timeout_secs ]]; do
+		if _url_reachable "$url" 5; then
+			return 0
+		fi
+		sleep $interval
+		elapsed=$((elapsed + interval))
+	done
+
+	return 1
+}
+
+# Execute a runtime verification: start dev env, run smoke checks.
+# Args: $1=url, $2=pages, $3=start_cmd, $4=timeout, $5=repo_path
+# Returns: 0=pass, 1=fail, 3=skip (browser-qa-helper.sh not available)
+exec_runtime() {
+	local url="$1"
+	local pages="$2"
+	local start_cmd="$3"
+	local timeout_secs="$4"
+	local repo_path="$5"
+
+	local browser_qa_helper="${SCRIPT_DIR}/browser-qa-helper.sh"
+
+	# Resolve defaults from testing.json if fields are empty
+	if [[ -z "$url" ]]; then
+		url=$(_read_testing_json_field "url" "$repo_path" "http://localhost:3000")
+	fi
+	if [[ -z "$pages" ]]; then
+		pages=$(_read_testing_json_field "smoke_pages" "$repo_path" "/")
+	fi
+	if [[ -z "$start_cmd" ]]; then
+		start_cmd=$(_read_testing_json_field "start_command" "$repo_path" "")
+	fi
+
+	log_debug "Runtime verify: url=$url pages=$pages timeout=${timeout_secs}s"
+
+	# Check if browser-qa-helper.sh is available
+	if [[ ! -x "$browser_qa_helper" ]]; then
+		log_skip "Runtime verification: browser-qa-helper.sh not found at $browser_qa_helper"
+		return 3
+	fi
+
+	# Phase 1: Ensure dev environment is running
+	local env_started=false
+	if _url_reachable "$url" 5; then
+		log_debug "Dev environment already running at $url"
+	elif [[ -n "$start_cmd" ]]; then
+		log_info "  Starting dev environment: $start_cmd"
+		# Start in background, capture PID for cleanup
+		local start_log
+		start_log=$(mktemp "${TMPDIR:-/tmp}/verify-brief-runtime-XXXXXX.log")
+		(cd "$repo_path" && bash -c "$start_cmd" >"$start_log" 2>&1) &
+		local start_pid=$!
+		log_debug "Dev env started with PID $start_pid, log: $start_log"
+		env_started=true
+
+		# Wait for URL to become reachable
+		log_info "  Waiting for $url (timeout: ${timeout_secs}s)..."
+		if ! _wait_for_url "$url" "$timeout_secs"; then
+			log_fail "Dev environment did not start within ${timeout_secs}s"
+			# Attempt cleanup
+			kill "$start_pid" 2>/dev/null || true
+			rm -f "$start_log"
+			return 1
+		fi
+		log_debug "Dev environment ready at $url"
+	else
+		log_fail "Dev environment not running at $url and no start_cmd provided"
+		log_info "  Set start_cmd in verify block or testing.json to auto-start"
+		return 1
+	fi
+
+	# Phase 2: Run smoke checks via browser-qa-helper.sh
+	log_info "  Running smoke checks on $url (pages: $pages)"
+	local smoke_output
+	local smoke_rc=0
+	smoke_output=$(bash "$browser_qa_helper" smoke \
+		--url "$url" \
+		--pages "$pages" \
+		--timeout 30000 \
+		2>&1) || smoke_rc=$?
+
+	if [[ "$VERBOSE" == "true" && -n "$smoke_output" ]]; then
+		echo "$smoke_output" | head -30 >&2
+	fi
+
+	# Phase 3: Parse smoke results
+	local passed=0
+	local total=0
+	local console_errors=0
+
+	if command -v jq >/dev/null 2>&1; then
+		# Try to parse JSON output from smoke command
+		local json_part
+		json_part=$(echo "$smoke_output" | grep -E '^\{' | head -1 || true)
+		if [[ -n "$json_part" ]]; then
+			passed=$(echo "$json_part" | jq -r '.summary.passed // 0' 2>/dev/null || echo "0")
+			total=$(echo "$json_part" | jq -r '.summary.total // 0' 2>/dev/null || echo "0")
+			console_errors=$(echo "$json_part" | jq -r '.summary.consoleErrors // 0' 2>/dev/null || echo "0")
+		fi
+	fi
+
+	# Cleanup: stop dev env if we started it
+	if [[ "$env_started" == "true" ]]; then
+		kill "$start_pid" 2>/dev/null || true
+		rm -f "${start_log:-}" 2>/dev/null || true
+	fi
+
+	# Evaluate result
+	if [[ $smoke_rc -ne 0 ]]; then
+		log_fail "Smoke checks failed (exit $smoke_rc)"
+		if [[ "$VERBOSE" != "true" && -n "$smoke_output" ]]; then
+			echo "$smoke_output" | tail -5 >&2
+		fi
+		return 1
+	fi
+
+	if [[ $console_errors -gt 0 ]]; then
+		log_fail "Smoke checks: $console_errors console error(s) detected on $url"
+		return 1
+	fi
+
+	if [[ $total -gt 0 ]]; then
+		log_pass "Smoke checks: $passed/$total pages passed on $url"
+	else
+		log_pass "Smoke checks passed on $url"
+	fi
+
+	return 0
+}
+
 # Add a result to the results array
 add_result() {
 	local criterion="$1"
@@ -475,6 +722,7 @@ process_criterion() {
 		codebase) log_info "    pattern: $V_PATTERN  path: ${V_PATH:-<repo>}  expect: $V_EXPECT" ;;
 		subagent) log_info "    prompt: $V_PROMPT" ;;
 		manual) log_info "    prompt: ${V_PROMPT:-<none>}" ;;
+		runtime) log_info "    url: ${V_URL:-<from testing.json>}  pages: ${V_PAGES:-/}  start_cmd: ${V_START_CMD:-<none>}  timeout: ${V_TIMEOUT}s" ;;
 		esac
 		add_result "$criterion" "dry-run" "$V_METHOD" ""
 		return 0
@@ -494,6 +742,9 @@ process_criterion() {
 		;;
 	manual)
 		exec_manual "$V_PROMPT" || rc=$?
+		;;
+	runtime)
+		exec_runtime "$V_URL" "$V_PAGES" "$V_START_CMD" "$V_TIMEOUT" "$REPO_PATH" || rc=$?
 		;;
 	esac
 
