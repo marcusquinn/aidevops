@@ -391,13 +391,15 @@ rt_count() {
 	return 0
 }
 
-# Detect which runtimes are installed (binary found in PATH).
+# Detect which runtimes are installed (binary in PATH or config dir exists).
 # Prints installed runtime IDs, one per line.
 # Returns 0 if at least one found, 1 if none.
+# Note: GUI/editor runtimes (cursor, windsurf, kiro, continue) may not ship
+# a PATH binary — fall back to checking their config directory.
 rt_detect_installed() {
 	local found=0
 	local i=0
-	local bin
+	local bin config_path config_dir
 	while [[ $i -lt $_RT_COUNT ]]; do
 		bin="${_RT_BINARY[$i]}"
 		# Use type -P to find only filesystem executables — command -v matches
@@ -405,6 +407,19 @@ rt_detect_installed() {
 		if [[ -n "$bin" ]] && type -P "$bin" >/dev/null 2>&1; then
 			echo "${_RT_IDS[$i]}"
 			found=1
+		else
+			# Fallback: check if the runtime's config directory exists.
+			# Editor-only runtimes (cursor, windsurf, kiro, continue) often
+			# don't have a PATH binary but do have a config directory.
+			config_path="${_RT_CONFIG_PATH[$i]}"
+			if [[ -n "$config_path" ]]; then
+				config_path=$(_rt_expand_path "$config_path")
+				config_dir="$(dirname "$config_path")"
+				if [[ -d "$config_dir" ]]; then
+					echo "${_RT_IDS[$i]}"
+					found=1
+				fi
+			fi
 		fi
 		i=$((i + 1))
 	done

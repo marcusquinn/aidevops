@@ -59,12 +59,16 @@ source "${SCRIPT_DIR}/ai-cli-config.sh"
 # These stubs provide the minimal interface this adapter needs from the runtime
 # registry. Only defined if runtime-registry.sh hasn't been sourced yet.
 
-# Guard: only define stubs if runtime-registry.sh functions are not available
-if ! declare -f rt_detect_installed >/dev/null 2>&1; then
-
-	# Detect which runtimes are installed on this system.
-	# Returns one runtime ID per line on stdout.
-	# IDs match runtime-registry.sh canonical names.
+# When runtime-registry.sh is loaded, define thin wrappers so the adapter's
+# public API (detect_installed_runtimes, get_runtime_display_name) is always
+# available. When standalone, define self-contained stubs.
+if declare -f rt_detect_installed >/dev/null 2>&1; then
+	# Registry loaded — bridge adapter API → registry API
+	# shellcheck disable=SC2120
+	detect_installed_runtimes() { rt_detect_installed; }
+	get_runtime_display_name() { rt_display_name "$@"; }
+else
+	# No registry — self-contained stubs
 	detect_installed_runtimes() {
 		# OpenCode
 		if [[ -d "$HOME/.config/opencode" ]] || command -v opencode >/dev/null 2>&1; then
@@ -113,7 +117,6 @@ if ! declare -f rt_detect_installed >/dev/null 2>&1; then
 		return 0
 	}
 
-	# Get the human-readable display name for a runtime.
 	get_runtime_display_name() {
 		local runtime_id="$1"
 		case "$runtime_id" in
@@ -132,8 +135,7 @@ if ! declare -f rt_detect_installed >/dev/null 2>&1; then
 		esac
 		return 0
 	}
-
-fi # end runtime-registry.sh guard
+fi
 
 # =============================================================================
 # Command Validation
@@ -338,8 +340,8 @@ _register_mcp_mcpservers() {
 		mkdir -p "$HOME/.kilo"
 		;;
 	kiro)
-		config_path="$HOME/.kiro/mcp.json"
-		mkdir -p "$HOME/.kiro"
+		config_path="$HOME/.kiro/settings/mcp.json"
+		mkdir -p "$HOME/.kiro/settings"
 		;;
 	*)
 		print_warning "Unknown mcpServers runtime: $runtime_id"

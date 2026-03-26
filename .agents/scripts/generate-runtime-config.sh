@@ -1286,12 +1286,10 @@ _generate_for_runtime() {
 		# Commands
 		_generate_commands_for_runtime "$runtime_id"
 
-		# MCP (only for runtimes with MCP config)
-		local mcp_config
-		mcp_config=$(rt_config_path "$runtime_id") || mcp_config=""
-		if [[ -n "$mcp_config" ]]; then
-			_generate_mcp_for_runtime "$runtime_id"
-		fi
+		# MCP — always attempt generation. The mcp-config-adapter handles
+		# per-runtime support detection internally (some runtimes like aider
+		# use YAML config instead of a JSON config path).
+		_generate_mcp_for_runtime "$runtime_id"
 
 		# System prompts
 		_generate_prompts_for_runtime "$runtime_id"

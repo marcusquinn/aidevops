@@ -55,75 +55,141 @@ fi
 # The adapter only needs: prompt mechanism lookup and installed-runtime detection.
 # =============================================================================
 
-if ! declare -f get_runtime_prompt_mechanism >/dev/null 2>&1; then
+# Source runtime-registry.sh if available (t1665.1)
+if [[ -f "${_PIA_DIR}/runtime-registry.sh" ]]; then
+	# shellcheck source=/dev/null
+	source "${_PIA_DIR}/runtime-registry.sh"
+fi
 
-	# Source runtime-registry.sh if it exists (t1665.1 merged)
-	if [[ -f "${_PIA_DIR}/runtime-registry.sh" ]]; then
-		# shellcheck source=/dev/null
-		source "${_PIA_DIR}/runtime-registry.sh"
-	else
-		# Stub: parallel arrays for prompt mechanism lookup
-		# IDs match runtime-registry.sh canonical names.
-		_PIA_RUNTIME_IDS=(
-			"opencode" "claude-code" "codex" "cursor" "droid"
-			"gemini-cli" "windsurf" "continue" "kilo" "kiro" "aider"
-		)
-		_PIA_RUNTIME_BINARIES=(
-			"opencode" "claude" "codex" "cursor" "droid"
-			"gemini" "windsurf" "continue" "kilo" "kiro" "aider"
-		)
-		_PIA_PROMPT_MECHANISMS=(
-			"json-instructions"
-			"agents-md-autodiscovery"
-			"codex-instructions-md"
-			"cursorrules-plus-agents"
-			"factory-skills"
-			"gemini-agents-md"
-			"windsurfrules"
-			"continue-rules"
-			"agents-md-autodiscovery"
-			"agents-md-autodiscovery"
-			"aider-read"
-		)
+# Define the adapter's own API functions.
+# When the registry is loaded, these are thin wrappers around rt_* functions.
+# When standalone (no registry), these are self-contained stubs.
+# This ensures get_runtime_prompt_mechanism, detect_installed_runtimes, and
+# is_runtime_installed are ALWAYS available regardless of sourcing order.
 
-		get_runtime_prompt_mechanism() {
-			local runtime_id="$1"
-			local i
-			for i in "${!_PIA_RUNTIME_IDS[@]}"; do
-				if [[ "${_PIA_RUNTIME_IDS[$i]}" == "$runtime_id" ]]; then
-					echo "${_PIA_PROMPT_MECHANISMS[$i]}"
-					return 0
-				fi
-			done
+if declare -f rt_detect_installed >/dev/null 2>&1; then
+	# Registry is loaded — define wrappers that bridge adapter API → registry API.
+	# The registry uses different function names and the prompt mechanism values
+	# differ (registry: "AGENTS.md"/"config"/"system-prompt"; adapter dispatches
+	# on: "json-instructions"/"agents-md-autodiscovery"/etc.), so we translate.
+
+	_PIA_RUNTIME_IDS=()
+	while IFS= read -r _id; do
+		_PIA_RUNTIME_IDS+=("$_id")
+	done < <(rt_list_ids)
+
+	get_runtime_prompt_mechanism() {
+		local runtime_id="$1"
+		# Translate registry's generic mechanism to adapter-specific dispatch key
+		local reg_mechanism
+		reg_mechanism=$(rt_prompt_mechanism "$runtime_id") || {
 			echo ""
 			return 1
 		}
+		case "$runtime_id" in
+		opencode) echo "json-instructions" ;;
+		codex) echo "codex-instructions-md" ;;
+		cursor) echo "cursorrules-plus-agents" ;;
+		droid) echo "factory-skills" ;;
+		gemini-cli) echo "gemini-agents-md" ;;
+		windsurf) echo "windsurfrules" ;;
+		continue) echo "continue-rules" ;;
+		aider) echo "aider-read" ;;
+		*)
+			# For AGENTS.md-based runtimes (claude-code, kilo, kiro, amp, etc.)
+			if [[ "$reg_mechanism" == "AGENTS.md" ]]; then
+				echo "agents-md-autodiscovery"
+			elif [[ -n "$reg_mechanism" ]]; then
+				echo "$reg_mechanism"
+			else
+				echo ""
+				return 1
+			fi
+			;;
+		esac
+		return 0
+	}
 
-		is_runtime_installed() {
-			local runtime_id="$1"
-			local i
-			for i in "${!_PIA_RUNTIME_IDS[@]}"; do
-				if [[ "${_PIA_RUNTIME_IDS[$i]}" == "$runtime_id" ]]; then
-					# Use type -P to find real executables only — command -v
-					# matches shell builtins/keywords (e.g., "continue") causing
-					# false positives.
-					type -P "${_PIA_RUNTIME_BINARIES[$i]}" &>/dev/null
-					return $?
-				fi
-			done
-			return 1
-		}
+	# shellcheck disable=SC2120
+	detect_installed_runtimes() {
+		rt_detect_installed
+		return $?
+	}
 
-		detect_installed_runtimes() {
-			local i
-			for i in "${!_PIA_RUNTIME_IDS[@]}"; do
-				if type -P "${_PIA_RUNTIME_BINARIES[$i]}" &>/dev/null; then
-					echo "${_PIA_RUNTIME_IDS[$i]}"
-				fi
-			done
+	is_runtime_installed() {
+		local runtime_id="$1"
+		local bin
+		bin=$(rt_binary "$runtime_id") || return 1
+		if [[ -n "$bin" ]] && type -P "$bin" >/dev/null 2>&1; then
 			return 0
-		}
-	fi
+		fi
+		# Fallback: check config directory for editor-only runtimes
+		local config_path
+		config_path=$(rt_config_path "$runtime_id") || config_path=""
+		if [[ -n "$config_path" ]] && [[ -f "$config_path" || -d "$(dirname "$config_path")" ]]; then
+			return 0
+		fi
+		return 1
+	}
+
+else
+	# No registry — use self-contained stubs
+	_PIA_RUNTIME_IDS=(
+		"opencode" "claude-code" "codex" "cursor" "droid"
+		"gemini-cli" "windsurf" "continue" "kilo" "kiro" "aider"
+	)
+	_PIA_RUNTIME_BINARIES=(
+		"opencode" "claude" "codex" "cursor" "droid"
+		"gemini" "windsurf" "continue" "kilo" "kiro" "aider"
+	)
+	_PIA_PROMPT_MECHANISMS=(
+		"json-instructions"
+		"agents-md-autodiscovery"
+		"codex-instructions-md"
+		"cursorrules-plus-agents"
+		"factory-skills"
+		"gemini-agents-md"
+		"windsurfrules"
+		"continue-rules"
+		"agents-md-autodiscovery"
+		"agents-md-autodiscovery"
+		"aider-read"
+	)
+
+	get_runtime_prompt_mechanism() {
+		local runtime_id="$1"
+		local i
+		for i in "${!_PIA_RUNTIME_IDS[@]}"; do
+			if [[ "${_PIA_RUNTIME_IDS[$i]}" == "$runtime_id" ]]; then
+				echo "${_PIA_PROMPT_MECHANISMS[$i]}"
+				return 0
+			fi
+		done
+		echo ""
+		return 1
+	}
+
+	is_runtime_installed() {
+		local runtime_id="$1"
+		local i
+		for i in "${!_PIA_RUNTIME_IDS[@]}"; do
+			if [[ "${_PIA_RUNTIME_IDS[$i]}" == "$runtime_id" ]]; then
+				type -P "${_PIA_RUNTIME_BINARIES[$i]}" &>/dev/null
+				return $?
+			fi
+		done
+		return 1
+	}
+
+	detect_installed_runtimes() {
+		local i
+		for i in "${!_PIA_RUNTIME_IDS[@]}"; do
+			if type -P "${_PIA_RUNTIME_BINARIES[$i]}" &>/dev/null; then
+				echo "${_PIA_RUNTIME_IDS[$i]}"
+			fi
+		done
+		return 0
+	}
 fi
 
 # =============================================================================
@@ -343,20 +409,20 @@ _deploy_prompt_json_instructions() {
 _deploy_prompt_agents_md_claude() {
 	local updated_count=0
 
-	# Claude Code auto-discovers AGENTS.md in these locations
+	# Claude Code auto-discovers AGENTS.md in these directories:
+	#   ~/.claude/AGENTS.md          — global auto-discovery (primary)
+	#   ~/.config/Claude/AGENTS.md   — config-level auto-discovery
+	# Note: ~/.claude/commands/ is for slash commands, NOT AGENTS.md.
 	local claude_dirs=(
-		"${HOME}/.claude/commands"
+		"${HOME}/.claude"
 		"${HOME}/.config/Claude"
 	)
 
 	for agents_dir in "${claude_dirs[@]}"; do
-		local config_dir
-		config_dir="$(dirname "$agents_dir")"
-
-		# Only deploy if the parent config directory exists (tool is installed)
-		if [[ -d "$config_dir" ]]; then
+		# Only deploy if the directory itself exists (tool is installed).
+		# Don't use dirname — ~/.config always exists, causing false positives.
+		if [[ -d "$agents_dir" ]]; then
 			local agents_file="${agents_dir}/AGENTS.md"
-			mkdir -p "$agents_dir"
 			_pia_ensure_reference_in_file "$agents_file" "$_PIA_REFERENCE_LINE" "$_PIA_GREP_PATTERN"
 			((++updated_count))
 		fi
@@ -378,11 +444,11 @@ _deploy_prompt_agents_md() {
 	local target_dirs=()
 
 	case "$runtime_id" in
-	claude)
+	claude-code | claude)
 		_deploy_prompt_agents_md_claude
 		return $?
 		;;
-	gemini)
+	gemini-cli | gemini)
 		target_dirs=("${HOME}/.gemini")
 		;;
 	kilo)
@@ -733,8 +799,8 @@ show_prompt_deployment_status() {
 			;;
 		agents-md-autodiscovery)
 			case "$rid" in
-			claude)
-				if grep -q "aidevops" "${HOME}/.claude/commands/AGENTS.md" 2>/dev/null ||
+			claude-code)
+				if grep -q "aidevops" "${HOME}/.claude/AGENTS.md" 2>/dev/null ||
 					grep -q "aidevops" "${HOME}/.config/Claude/AGENTS.md" 2>/dev/null; then
 					deployed="yes"
 				fi
