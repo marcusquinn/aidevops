@@ -435,6 +435,44 @@ else
 	fail "other OPENCODE_* vars still included in passthrough CSV" "got: $passthrough_csv2"
 fi
 
+section "Sandbox Source Guard (GH#6617)"
+# Regression test: sourcing sandbox-exec-helper.sh must NOT call main() and
+# must NOT produce any output. The secondary watchdog (_sandbox_spawn_watchdog_bg)
+# sources the sandbox script to load helper functions. Before the source guard
+# was added (GH#6550), sourcing the script called main() with the watchdog's
+# positional args, which fell through to the *) case → sandbox_help() → help
+# text printed to stdout → contaminating the opencode output file → workers
+# never launched (GH#6617).
+SANDBOX_HELPER="$REPO_DIR/.agents/scripts/sandbox-exec-helper.sh"
+source_output=$(bash -c "source '$SANDBOX_HELPER' 2>/dev/null; echo 'source_ok'" 2>/dev/null || true)
+if [[ "$source_output" == "source_ok" ]]; then
+	pass "sourcing sandbox-exec-helper.sh produces no output (source guard active)"
+else
+	fail "sourcing sandbox-exec-helper.sh produces no output (source guard active)" \
+		"got: $(printf '%s' "$source_output" | head -3)"
+fi
+
+# Verify that sourcing does NOT print help text (the specific symptom of GH#6617).
+source_help_check=$(bash -c "source '$SANDBOX_HELPER' 2>/dev/null; echo done" 2>/dev/null || true)
+if printf '%s' "$source_help_check" | grep -q "Commands:"; then
+	fail "sourcing sandbox-exec-helper.sh does not print help text (GH#6617 regression)" \
+		"help text found in source output"
+else
+	pass "sourcing sandbox-exec-helper.sh does not print help text (GH#6617 regression)"
+fi
+
+# Verify that sourcing with watchdog-style args (numeric timeout) does NOT call main().
+# This simulates what _sandbox_spawn_watchdog_bg does: source the script then call
+# _sandbox_spawn_watchdog. The numeric arg (3600) would previously trigger the *)
+# case in main() → help output.
+source_with_args=$(bash -c "source '$SANDBOX_HELPER' 3600 12345 12345 '' '/tmp/marker' 2>/dev/null; echo done" 2>/dev/null || true)
+if printf '%s' "$source_with_args" | grep -q "Commands:"; then
+	fail "sourcing sandbox-exec-helper.sh with watchdog args does not print help text (GH#6617)" \
+		"help text found when sourced with numeric args"
+else
+	pass "sourcing sandbox-exec-helper.sh with watchdog args does not print help text (GH#6617)"
+fi
+
 echo ""
 printf "Total: %d, Passed: %d, Failed: %d\n" "$TOTAL_COUNT" "$PASS_COUNT" "$FAIL_COUNT"
 

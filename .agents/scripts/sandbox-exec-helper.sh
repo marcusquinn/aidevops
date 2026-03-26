@@ -1226,6 +1226,15 @@ main() {
 	esac
 }
 
+# Source guard: only call main() when executed directly, not when sourced.
+# This prevents the secondary watchdog (_sandbox_spawn_watchdog_bg) from
+# triggering help output when it sources this script to load helper functions.
+# Without this guard, sourcing the script would call main() with the watchdog's
+# positional args (e.g., a numeric timeout), which falls through to the *)
+# case in main() → sandbox_help() → help text printed to the sandbox's stdout
+# pipe → contaminating the opencode output file → output_has_activity() returns
+# "0" → headless-runtime-helper.sh records a backoff and never launches the
+# worker. This was the root cause of GH#6617. (GH#6550)
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	main "$@"
 fi
