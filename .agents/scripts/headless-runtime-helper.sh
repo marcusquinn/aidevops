@@ -87,6 +87,10 @@ build_sandbox_passthrough_csv() {
 
 	while IFS='=' read -r name _; do
 		case "$name" in
+		# OPENCODE_PID is the pulse's own opencode process PID. Passing it to
+		# workers causes them to attach to the pulse's session instead of
+		# creating independent sessions (GH#6668). Exclude it explicitly.
+		OPENCODE_PID) ;;
 		AIDEVOPS_* | PULSE_* | GH_* | GITHUB_* | OPENAI_* | ANTHROPIC_* | GOOGLE_* | OPENCODE_* | CLAUDE_* | XDG_* | REAL_HOME | TMPDIR | TMP | TEMP | RTK_* | VERIFY_*)
 			if [[ "$seen_names" == *" ${name} "* ]]; then
 				continue
@@ -1206,6 +1210,12 @@ main() {
 	session)
 		cmd_session "$@"
 		return $?
+		;;
+	passthrough-csv)
+		# Print the sandbox passthrough CSV to stdout. Used by tests and
+		# diagnostics to verify which env vars are included/excluded.
+		build_sandbox_passthrough_csv
+		return 0
 		;;
 	help | --help | -h)
 		show_help
