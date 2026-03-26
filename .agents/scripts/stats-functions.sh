@@ -2555,7 +2555,7 @@ _check_pr_bot_coverage() {
 			pr_created=$(echo "$pr_obj" | jq -r '.createdAt // empty')
 			if [[ -n "$pr_created" ]]; then
 				local pr_epoch
-				pr_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$pr_created" +%s 2>/dev/null || date -d "$pr_created" +%s 2>/dev/null || echo "0")
+				pr_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$pr_created" +%s 2>/dev/null || date -d "$pr_created" +%s 2>/dev/null || echo "0")
 				[[ "$pr_epoch" =~ ^[0-9]+$ ]] || pr_epoch=0
 				if [[ "$pr_epoch" -gt 0 ]]; then
 					local now_epoch

@@ -107,7 +107,7 @@ get_pr_age_seconds() {
 
 	local created_epoch now_epoch
 	# macOS date vs GNU date
-	created_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$created_at" +%s 2>/dev/null ||
+	created_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$created_at" +%s 2>/dev/null ||
 		date -d "$created_at" +%s 2>/dev/null ||
 		echo "0")
 	now_epoch=$(date +%s)

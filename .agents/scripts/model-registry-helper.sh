@@ -704,7 +704,7 @@ cmd_sync() {
 		if [[ -n "$last_sync" ]]; then
 			local last_epoch now_epoch
 			if [[ "$(uname)" == "Darwin" ]]; then
-				last_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_sync" "+%s" 2>/dev/null || echo "0")
+				last_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_sync" "+%s" 2>/dev/null || echo "0")
 			else
 				last_epoch=$(date -d "$last_sync" "+%s" 2>/dev/null || echo "0")
 			fi
@@ -870,7 +870,7 @@ cmd_status() {
 	if [[ -n "$last_sync" && "$last_sync" != "never" ]]; then
 		local last_epoch now_epoch
 		if [[ "$(uname)" == "Darwin" ]]; then
-			last_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_sync" "+%s" 2>/dev/null || echo "0")
+			last_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_sync" "+%s" 2>/dev/null || echo "0")
 		else
 			last_epoch=$(date -d "$last_sync" "+%s" 2>/dev/null || echo "0")
 		fi

@@ -1283,7 +1283,7 @@ EOF
 
 	# Calculate time since last activity (in seconds)
 	local last_epoch now_epoch elapsed_seconds
-	last_epoch=$(date -d "$last_activity" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_activity" +%s 2>/dev/null || echo "0")
+	last_epoch=$(date -d "$last_activity" +%s 2>/dev/null || TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_activity" +%s 2>/dev/null || echo "0")
 	now_epoch=$(date +%s)
 	elapsed_seconds=$((now_epoch - last_epoch))
 

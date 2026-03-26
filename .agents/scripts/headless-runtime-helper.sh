@@ -459,7 +459,7 @@ backoff_active_for_key() {
 	if [[ -n "$stored_retry_after" ]]; then
 		local now_epoch retry_epoch
 		now_epoch=$(date -u '+%s')
-		retry_epoch=$(date -j -f '%Y-%m-%dT%H:%M:%SZ' "$stored_retry_after" '+%s' 2>/dev/null || date -u -d "$stored_retry_after" '+%s' 2>/dev/null || printf '%s' "0")
+		retry_epoch=$(TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$stored_retry_after" '+%s' 2>/dev/null || date -u -d "$stored_retry_after" '+%s' 2>/dev/null || printf '%s' "0")
 		if [[ "$retry_epoch" -le "$now_epoch" ]]; then
 			clear_provider_backoff "$key"
 			return 1
