@@ -894,6 +894,104 @@ _assemble_health_issue_body() {
 }
 
 #######################################
+# Resolve role-specific config variables for a runner.
+#
+# Outputs pipe-delimited fields:
+#   runner_prefix|role_label|role_label_color|role_label_desc|role_display
+#
+# Arguments:
+#   $1 - runner_user
+#   $2 - runner_role (supervisor|contributor)
+#######################################
+_resolve_runner_role_config() {
+	local runner_user="$1"
+	local runner_role="$2"
+
+	local runner_prefix role_label role_label_color role_label_desc role_display
+	if [[ "$runner_role" == "supervisor" ]]; then
+		runner_prefix="[Supervisor:${runner_user}]"
+		role_label="supervisor"
+		role_label_color="1D76DB"
+		role_label_desc="Supervisor health dashboard"
+		role_display="Supervisor"
+	else
+		runner_prefix="[Contributor:${runner_user}]"
+		role_label="contributor"
+		role_label_color="A2EEEF"
+		role_label_desc="Contributor health dashboard"
+		role_display="Contributor"
+	fi
+
+	printf '%s|%s|%s|%s|%s' \
+		"$runner_prefix" "$role_label" "$role_label_color" \
+		"$role_label_desc" "$role_display"
+	return 0
+}
+
+#######################################
+# Ensure the active health issue is pinned (supervisor-only).
+#
+# Unpins closed/stale issues to free pin slots (max 3 per repo),
+# then pins the active issue idempotently.
+#
+# Arguments:
+#   $1 - health_issue_number
+#   $2 - repo_slug
+#   $3 - runner_user (for _cleanup_stale_pinned_issues)
+#######################################
+_ensure_health_issue_pinned() {
+	local health_issue_number="$1"
+	local repo_slug="$2"
+	local runner_user="$3"
+
+	_cleanup_stale_pinned_issues "$repo_slug" "$runner_user"
+
+	local active_node_id
+	active_node_id=$(gh issue view "$health_issue_number" --repo "$repo_slug" \
+		--json id --jq '.id' 2>/dev/null || echo "")
+	if [[ -n "$active_node_id" ]]; then
+		gh api graphql -f query="
+			mutation {
+				pinIssue(input: {issueId: \"${active_node_id}\"}) {
+					issue { number }
+				}
+			}" >/dev/null 2>&1 || true
+	fi
+	return 0
+}
+
+#######################################
+# Extract headline counts from a rendered health issue body.
+#
+# Parses the Summary table rows for Open PRs, Assigned Issues,
+# and Active Workers to avoid re-running stats queries.
+#
+# Arguments:
+#   $1 - body (multiline markdown string)
+# Output: "pr_count|assigned_issue_count|worker_count"
+#######################################
+_extract_body_counts() {
+	local body="$1"
+
+	local pr_count=0
+	local assigned_issue_count=0
+	local worker_count=0
+	local body_line
+	while IFS= read -r body_line; do
+		if [[ "$body_line" =~ ^\|\ Open\ PRs\ \|\ ([0-9]+)\ \|$ ]]; then
+			pr_count="${BASH_REMATCH[1]}"
+		elif [[ "$body_line" =~ ^\|\ Assigned\ Issues\ \|\ ([0-9]+)\ \|$ ]]; then
+			assigned_issue_count="${BASH_REMATCH[1]}"
+		elif [[ "$body_line" =~ ^\|\ Active\ Workers\ \|\ ([0-9]+)\ \|$ ]]; then
+			worker_count="${BASH_REMATCH[1]}"
+		fi
+	done <<<"$body"
+
+	printf '%s|%s|%s' "$pr_count" "$assigned_issue_count" "$worker_count"
+	return 0
+}
+
+#######################################
 # Update pinned health issue for a single repo
 #
 # Creates or updates a pinned GitHub issue with live status:
@@ -926,37 +1024,22 @@ _update_health_issue_for_repo() {
 
 	[[ -z "$repo_slug" ]] && return 0
 
-	# Per-runner identity and role
 	local runner_user
 	runner_user=$(gh api user --jq '.login' || whoami)
 
-	# Determine role: supervisor (maintainer) or contributor (non-maintainer)
 	local runner_role
 	runner_role=$(_get_runner_role "$runner_user" "$repo_slug")
 
-	local runner_prefix role_label role_label_color role_label_desc role_display
-	if [[ "$runner_role" == "supervisor" ]]; then
-		runner_prefix="[Supervisor:${runner_user}]"
-		role_label="supervisor"
-		role_label_color="1D76DB"
-		role_label_desc="Supervisor health dashboard"
-		role_display="Supervisor"
-	else
-		runner_prefix="[Contributor:${runner_user}]"
-		role_label="contributor"
-		role_label_color="A2EEEF"
-		role_label_desc="Contributor health dashboard"
-		role_display="Contributor"
-	fi
+	local role_config runner_prefix role_label role_label_color role_label_desc role_display
+	role_config=$(_resolve_runner_role_config "$runner_user" "$runner_role")
+	IFS='|' read -r runner_prefix role_label role_label_color role_label_desc role_display \
+		<<<"$role_config"
 
-	# Cache file for this runner + repo (slug with / replaced by -)
 	local slug_safe="${repo_slug//\//-}"
 	local cache_dir="${HOME}/.aidevops/logs"
 	local health_issue_file="${cache_dir}/health-issue-${runner_user}-${role_label}-${slug_safe}"
-
 	mkdir -p "$cache_dir"
 
-	# Resolve (find or create) the health issue number
 	local health_issue_number
 	health_issue_number=$(_resolve_health_issue_number \
 		"$repo_slug" "$runner_user" "$runner_role" "$runner_prefix" \
@@ -964,60 +1047,34 @@ _update_health_issue_for_repo() {
 		"$role_display" "$health_issue_file")
 	[[ -z "$health_issue_number" ]] && return 0
 
-	# Supervisor-only: unpin closed/stale issues and ensure current is pinned
 	if [[ "$runner_role" == "supervisor" ]]; then
-		# Unpin closed/stale supervisor issues to free pin slots (max 3 per repo)
-		_cleanup_stale_pinned_issues "$repo_slug" "$runner_user"
-
-		# Ensure pinned (idempotent)
-		local active_node_id
-		active_node_id=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
-		if [[ -n "$active_node_id" ]]; then
-			gh api graphql -f query="
-				mutation {
-					pinIssue(input: {issueId: \"${active_node_id}\"}) {
-						issue { number }
-					}
-				}" >/dev/null 2>&1 || true
-		fi
+		_ensure_health_issue_pinned "$health_issue_number" "$repo_slug" "$runner_user"
 	fi
 
-	# Cache the issue number
 	echo "$health_issue_number" >"$health_issue_file"
 
 	local now_iso
 	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-	# Gather live stats and activity data, then assemble the body
 	local body
 	body=$(_assemble_health_issue_body \
 		"$repo_slug" "$repo_path" "$runner_user" "$slug_safe" \
 		"$now_iso" "$role_display" "$runner_role" \
 		"$cross_repo_md" "$cross_repo_session_time_md" "$cross_repo_person_stats_md")
 
-	# Update the issue body — capture stderr for debugging auth/API failures
 	local body_edit_stderr
-	body_edit_stderr=$(gh issue edit "$health_issue_number" --repo "$repo_slug" --body "$body" 2>&1 >/dev/null) || {
-		echo "[stats] Health issue: failed to update body for #${health_issue_number}: ${body_edit_stderr}" >>"$LOGFILE"
+	body_edit_stderr=$(gh issue edit "$health_issue_number" --repo "$repo_slug" \
+		--body "$body" 2>&1 >/dev/null) || {
+		echo "[stats] Health issue: failed to update body for #${health_issue_number}: ${body_edit_stderr}" \
+			>>"$LOGFILE"
 		return 0
 	}
 
-	# Build title with stats (correct pluralization)
-	# Re-extract headline counts from the rendered body to avoid relying on
-	# function-local variables from _assemble_health_issue_body.
-	local pr_count=0
-	local assigned_issue_count=0
-	local worker_count=0
-	local body_line
-	while IFS= read -r body_line; do
-		if [[ "$body_line" =~ ^\|\ Open\ PRs\ \|\ ([0-9]+)\ \|$ ]]; then
-			pr_count="${BASH_REMATCH[1]}"
-		elif [[ "$body_line" =~ ^\|\ Assigned\ Issues\ \|\ ([0-9]+)\ \|$ ]]; then
-			assigned_issue_count="${BASH_REMATCH[1]}"
-		elif [[ "$body_line" =~ ^\|\ Active\ Workers\ \|\ ([0-9]+)\ \|$ ]]; then
-			worker_count="${BASH_REMATCH[1]}"
-		fi
-	done <<<"$body"
+	# Re-extract headline counts from the rendered body to build the title.
+	# Avoids relying on function-local variables from _assemble_health_issue_body.
+	local counts_raw pr_count assigned_issue_count worker_count
+	counts_raw=$(_extract_body_counts "$body")
+	IFS='|' read -r pr_count assigned_issue_count worker_count <<<"$counts_raw"
 
 	local pr_label="PRs"
 	[[ "$pr_count" -eq 1 ]] && pr_label="PR"
