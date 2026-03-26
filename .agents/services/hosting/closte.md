@@ -170,21 +170,69 @@ Add this snippet **before** `/* That's all, stop editing! */` in `wp-config.php`
  * Without this, WordPress redirect-loops when Cloudflare proxies the request
  * because is_ssl() returns false (Cloudflare terminates TLS, origin sees HTTP).
  *
- * Security: this trusts the header unconditionally. On Closte (managed GCP),
- * the platform firewall restricts origin access so only Cloudflare can reach
- * the server. On self-managed hosts, restrict origin access to Cloudflare IPs
- * via firewall rules or validate $_SERVER['REMOTE_ADDR'] against
- * https://www.cloudflare.com/ips/ before trusting the header.
+ * Security: only trust the header when the request originates from a Cloudflare
+ * IP. Ranges sourced from https://www.cloudflare.com/ips/ (update periodically).
+ * On Closte the managed firewall already restricts origin access to Cloudflare,
+ * so this check is defence-in-depth. On self-managed hosts it is the primary
+ * guard against header spoofing by direct-to-origin attackers.
  */
+function _cf_ip_in_cidr( string $ip, string $cidr ): bool {
+    [ $subnet, $bits ] = explode( '/', $cidr );
+    if ( strpos( $ip, ':' ) !== false ) {
+        // IPv6: compare the first $bits bits of the packed addresses.
+        $ip_bin     = inet_pton( $ip );
+        $subnet_bin = inet_pton( $subnet );
+        if ( $ip_bin === false || $subnet_bin === false ) {
+            return false;
+        }
+        $bytes = (int) ceil( (int) $bits / 8 );
+        $mask  = (int) $bits % 8;
+        if ( substr( $ip_bin, 0, $bytes - ( $mask ? 1 : 0 ) )
+             !== substr( $subnet_bin, 0, $bytes - ( $mask ? 1 : 0 ) ) ) {
+            return false;
+        }
+        if ( $mask ) {
+            $last_byte_mask = 0xFF & ( 0xFF << ( 8 - $mask ) );
+            return ( ord( $ip_bin[ $bytes - 1 ] ) & $last_byte_mask )
+                === ( ord( $subnet_bin[ $bytes - 1 ] ) & $last_byte_mask );
+        }
+        return true;
+    }
+    // IPv4
+    $mask_long = -1 << ( 32 - (int) $bits );
+    return ( ip2long( $ip ) & $mask_long ) === ( ip2long( $subnet ) & $mask_long );
+}
+
+$cloudflare_ip_ranges = [
+    // IPv4 — https://www.cloudflare.com/ips-v4
+    '173.245.48.0/20', '103.21.244.0/22', '103.22.200.0/22', '103.31.4.0/22',
+    '141.101.64.0/18', '108.162.192.0/18', '190.93.240.0/20', '188.114.96.0/20',
+    '197.234.240.0/22', '198.41.128.0/17', '162.158.0.0/15', '104.16.0.0/13',
+    '104.24.0.0/14', '172.64.0.0/13', '131.0.72.0/22',
+    // IPv6 — https://www.cloudflare.com/ips-v6
+    '2400:cb00::/32', '2606:4700::/32', '2803:f800::/32', '2405:b500::/32',
+    '2405:8100::/32', '2a06:98c0::/29', '2c0f:f248::/32',
+];
+
+$remote_addr    = $_SERVER['REMOTE_ADDR'] ?? '';
+$from_cloudflare = false;
+foreach ( $cloudflare_ip_ranges as $range ) {
+    if ( _cf_ip_in_cidr( $remote_addr, $range ) ) {
+        $from_cloudflare = true;
+        break;
+    }
+}
+
 if (
-    isset($_SERVER['HTTP_X_FORWARDED_PROTO'])
+    $from_cloudflare
+    && isset( $_SERVER['HTTP_X_FORWARDED_PROTO'] )
     && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https'
 ) {
     $_SERVER['HTTPS'] = 'on';
 }
 ```
 
-**Security note:** This snippet trusts `X-Forwarded-Proto` unconditionally. On Closte, the managed platform firewall restricts direct origin access, making this safe. On self-managed infrastructure, either restrict origin access to [Cloudflare IPs](https://www.cloudflare.com/ips/) via firewall rules, or add an IP validation check before trusting the header.
+**Security note:** The snippet verifies `REMOTE_ADDR` against Cloudflare's published IP ranges before trusting `X-Forwarded-Proto`. This prevents a direct-to-origin attacker from spoofing the header. Keep the IP list current with [https://www.cloudflare.com/ips/](https://www.cloudflare.com/ips/) — Cloudflare publishes changes there. On Closte, the managed platform firewall already restricts origin access to Cloudflare IPs, so this check is defence-in-depth.
 
 **For multisite:** This goes in the shared `wp-config.php` — it applies to all sites in the network.
 
