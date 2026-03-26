@@ -678,7 +678,24 @@ ISSUE_DISPATCH_BUDGET=$(((AVAILABLE * NEW_ISSUE_DISPATCH_PCT) / 100))
 
 If budget is exhausted, stop opening new issue workers and continue PR advancement work.
 
-1. **Dedup guard (MANDATORY, GH#4400 + GH#4527):** Before dispatching, run deterministic checks for active workers, duplicate titles, and already-merged work. This prevents duplicate-dispatch thrashing and stale re-dispatches after a task is already merged.
+0.5. **Intelligence-first duplicate scan (GH#6419):** Before running any deterministic dedup checks, scan the issue list you already have from pre-fetched state. You can see all open issue titles for each repo — use that to spot obvious duplicates that share the same intent but have different task IDs or phrasing.
+
+**What to look for:** Multiple open issues in the same repo that describe the same feature, fix, or change — even if they have different task IDs. Examples: "Add universal tax fallback for WooCommerce" and "Implement tax fallback when no tax class matches" are the same feature. "Fix login redirect loop" and "Auth redirect causes infinite loop on /login" are the same bug.
+
+**When you find duplicates:**
+- Keep the oldest issue (or the one with the most context/comments).
+- Close the others with a standardised comment linking to the kept issue:
+
+```text
+Closing as duplicate of #<kept_number>. Identified during pulse triage — these issues describe the same work.
+```
+
+- If any duplicate is already assigned or has an active worker, do NOT close it — skip and let the worker finish. Close the unassigned duplicates only.
+- This is a judgment call, not a keyword match. Read the titles and use your understanding. If you're uncertain whether two issues are truly duplicates, leave them both open — a false positive (closing a non-duplicate) is worse than a false negative (dispatching a duplicate that a worker catches).
+
+**Cost:** Zero — you're reading data already in your context. This catches the class of duplicates that deterministic dedup misses: same feature, different task IDs, different phrasing.
+
+1. **Dedup guard (MANDATORY, GH#4400 + GH#4527):** After the intelligence scan, run deterministic checks as a safety net for active workers, duplicate titles, and already-merged work. This catches rapid-fire duplicates and cross-machine races that the intelligence scan may miss.
 
 ```bash
 # Source once per pulse run (provides has_worker_for_repo_issue, has_merged_pr_for_issue, and check_dispatch_dedup)
@@ -687,11 +704,15 @@ source ~/.aidevops/agents/scripts/pulse-wrapper.sh
 # Single dedup guard: checks active worker, title variants, and merged-PR evidence
 if check_dispatch_dedup <number> <slug> "Issue #<number>: <title>" "<task-id>: <title>"; then
   echo "Dedup guard blocked dispatch for #<number> in <slug> — skipping"
+  # Leave a trace in GitHub so the catch is visible to all runners and to the dedup health check
+  gh issue comment <number> --repo <slug> --body "Dispatch skipped — deterministic dedup guard detected overlap (active worker or merged PR evidence). See check_dispatch_dedup in pulse-wrapper.sh." 2>/dev/null || true
   continue
 fi
 ```
 
 `check_dispatch_dedup` runs all three checks in sequence: (1) exact repo+issue process overlap, (2) title variants via dispatch-dedup-helper (e.g., `issue-3502` vs `Issue #3502: description`), and (3) merged-PR evidence via close keywords and task-ID fallback. Skipping this guard caused both the 26-worker thrashing incident (GH#4400) and the awardsapp duplicate-PR pattern (GH#4527).
+
+The deterministic guard is the safety net, not the primary layer. Over time, as the intelligence scan catches more duplicates earlier, the deterministic guard should fire less often. See "Dedup health monitoring" below for how to track this.
 
 1.5. **Apply per-repo worker cap before dispatch:** default `MAX_WORKERS_PER_REPO=5` (override via env var only when you have a clear reason). If the target repo already has `MAX_WORKERS_PER_REPO` active workers, skip dispatch for that repo this cycle and continue with other repos.
 
@@ -1158,6 +1179,26 @@ Check the latest comment on each repo's quality review issue. Triage findings us
 - **Batch related findings** sharing a root cause into a single issue
 
 Dedup before creating (search existing issues). Max 3 issues per repo per cycle. NEVER close the quality review issue itself.
+
+## Dedup Health Monitoring (GH#6419)
+
+The dedup system has two layers: intelligence (you reading issue titles) and deterministic (bash scripts matching keys). Both leave traces in GitHub — the canonical state store visible to all runners.
+
+**Traces to look for (all in GitHub issue comments):**
+
+| Event | Comment pattern | Meaning |
+|-------|----------------|---------|
+| Intelligence catch | "Closing as duplicate of #X. Identified during pulse triage" | You spotted a duplicate before dispatch |
+| Deterministic catch | "Dispatch skipped — deterministic dedup guard" | `check_dispatch_dedup` blocked a dispatch |
+| Worker-discovered miss | "duplicate of #X" or "already implemented in PR #Y" (posted by a worker) | Both layers missed it — a worker was dispatched unnecessarily |
+
+**Periodic health check (once per pulse, during cycle summary):**
+
+At the end of each pulse session, briefly note in your summary how many duplicates you caught (intelligence layer) and whether any workers reported discovering duplicates (misses). This is observational — no `gh` queries needed, just report what you saw during the session.
+
+**Graduation signal:** If the deterministic guard (`check_dispatch_dedup`) has not caught anything that the intelligence scan missed for a sustained period (observable across multiple pulse sessions via the absence of "Dispatch skipped" comments without a preceding "Closing as duplicate" comment), that's a signal the deterministic layer may be removable. File a self-improvement issue when you observe this pattern — do not remove the code yourself.
+
+**If worker-discovered misses occur:** That means both layers failed. Assess why — was the issue title too vague to spot as a duplicate? Were the issues created in rapid succession between pulse cycles? File a self-improvement issue with the specific failure pattern so the guidance or title quality can be improved.
 
 ## Hard Rules
 

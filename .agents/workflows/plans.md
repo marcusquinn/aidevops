@@ -130,6 +130,20 @@ Use `templates/brief-template.md`. The brief captures: origin (session ID, date,
 
 **Session provenance is mandatory.** Detect runtime: `$OPENCODE_SESSION_ID`, `$CLAUDE_SESSION_ID`, or `{app}:unknown-{date}`.
 
+### Task Description Quality (GH#6419)
+
+Task descriptions in TODO.md become GitHub issue titles. Write them so that a reader scanning a list of 50 issues can immediately tell whether two issues describe the same work. This is the primary input to the pulse's intelligence-first duplicate detection.
+
+**Good descriptions** — specific enough to distinguish from similar work:
+- `Add WooCommerce tax fallback when no tax class matches product category`
+- `Fix infinite redirect loop on /login when session cookie is expired`
+
+**Bad descriptions** — too vague, could match multiple different tasks:
+- `Tax fallback` (fallback for what? where?)
+- `Fix login bug` (which login bug?)
+
+Include the **what** (action), **where** (component/file/feature area), and **when/why** (the triggering condition) in the description. The task ID provides uniqueness; the description provides recognisability.
+
 ### Step 1: Extract from Conversation
 
 Title, description, estimate (`~Xh (ai:Xh test:Xh read:Xm)`), tags, context, session ID.
