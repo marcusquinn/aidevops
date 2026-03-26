@@ -132,6 +132,21 @@ declare -a JSON_RESULTS=()
 # slow interpreters (Python, Ruby) while still catching hung MCP servers.
 readonly VERSION_TIMEOUT=10
 
+# Get installed version for pip packages using pip show.
+# pip-only libraries (e.g. crawl4ai, dspy) have no CLI binary, so
+# command -v always fails. pip show is fast and works for any installed package.
+get_pip_installed_version() {
+	local pkg="$1"
+	local version
+	version=$(pip show "$pkg" 2>/dev/null | grep -i '^Version:' | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+	if [[ -n "$version" ]]; then
+		echo "$version"
+	else
+		echo "not installed"
+	fi
+	return 0
+}
+
 # Get installed version from npm global package.json
 # Fallback for tools where --version starts a server instead of printing a version
 get_npm_pkg_version() {
@@ -283,8 +298,13 @@ check_tool() {
 	local update_cmd="$6"
 
 	local installed
-	# Pass package name for npm tools so fallback to package.json works
-	if [[ "$category" == "npm" ]]; then
+	# pip tools: use pip show for version detection — pip-only libraries (e.g.
+	# crawl4ai, dspy) have no CLI binary so command -v always fails.
+	# npm tools: pass package name so fallback to package.json works.
+	# All other categories: standard CLI binary detection.
+	if [[ "$category" == "pip" ]]; then
+		installed=$(get_pip_installed_version "$pkg")
+	elif [[ "$category" == "npm" ]]; then
 		installed=$(get_installed_version "$cmd" "$ver_flag" "$pkg")
 	else
 		installed=$(get_installed_version "$cmd" "$ver_flag")
