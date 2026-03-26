@@ -3025,6 +3025,7 @@ This is an automated scan. The function lengths are factual, but the best decomp
 **To approve or decline**, comment on this issue:
 - \`approved\` — removes the review gate and queues for automated dispatch
 - \`declined: <reason>\` — closes this issue (include your reason after the colon)"
+		local issue_key="$file_path"
 		if gh issue create --repo "$aidevops_slug" \
 			--title "simplification: reduce function complexity in ${issue_key} (${violation_count} functions >${COMPLEXITY_FUNC_LINE_THRESHOLD} lines)" \
 			--label "simplification-debt" --label "needs-maintainer-review" \
