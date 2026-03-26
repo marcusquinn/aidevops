@@ -474,7 +474,8 @@ Pre-select or pre-fill sensible defaults:
 ```javascript
 // Detect user's country from IP
 const userCountry = detectCountryFromIP();
-document.querySelector('select[name="country"]').value = userCountry;
+const countrySelect = document.querySelector('select[name="country"]');
+if (countrySelect) countrySelect.value = userCountry;
 ```
 
 **Quantity**:
@@ -1217,15 +1218,21 @@ Benefits:
 **Implementation**:
 
 ```javascript
-document.querySelector('input[name="customer"]').addEventListener('change', (e) => {
-  if (e.target.value === 'no') {
-    document.querySelector('.referral-field').style.display = 'block';
-    document.querySelector('.customer-id-field').style.display = 'none';
-  } else {
-    document.querySelector('.referral-field').style.display = 'none';
-    document.querySelector('.customer-id-field').style.display = 'block';
-  }
-});
+const customerInput = document.querySelector('input[name="customer"]');
+const referralField = document.querySelector('.referral-field');
+const customerIdField = document.querySelector('.customer-id-field');
+
+if (customerInput && referralField && customerIdField) {
+  customerInput.addEventListener('change', (e) => {
+    if (e.target.value === 'no') {
+      referralField.style.display = 'block';
+      customerIdField.style.display = 'none';
+    } else {
+      referralField.style.display = 'none';
+      customerIdField.style.display = 'block';
+    }
+  });
+}
 ```
 
 #### Save and Continue Later

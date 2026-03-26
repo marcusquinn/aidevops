@@ -828,11 +828,13 @@ form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const button = form.querySelector('button[type="submit"]');
   const formData = new FormData(form);
-  
+
+  if (!button) return;
+
   // Disable and show loading
   button.disabled = true;
   button.innerHTML = 'Processing... <span class="spinner"></span>';
-  
+
   try {
     const result = await submitOrder(formData);
     button.innerHTML = 'Order Confirmed ✓';

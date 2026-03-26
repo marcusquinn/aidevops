@@ -44,12 +44,14 @@ fetch('https://ipapi.co/json/')
   .then(res => res.json())
   .then(data => {
     const country = data.country_code;
+    const shippingEl = document.querySelector('.shipping');
+    if (!shippingEl) return;
     if (country === 'US') {
-      document.querySelector('.shipping').textContent = 'Free US shipping';
+      shippingEl.textContent = 'Free US shipping';
     } else if (country === 'GB') {
-      document.querySelector('.shipping').textContent = 'Free UK delivery';
+      shippingEl.textContent = 'Free UK delivery';
     } else {
-      document.querySelector('.shipping').textContent = 'Worldwide shipping available';
+      shippingEl.textContent = 'Worldwide shipping available';
     }
   });
 ```
@@ -173,7 +175,8 @@ const urlParams = new URLSearchParams(window.location.search);
 const source = urlParams.get('source');
 
 if (source === 'facebook-ad') {
-  document.querySelector('.headline').textContent = 'Your Facebook Exclusive Offer';
+  const headlineEl = document.querySelector('.headline');
+  if (headlineEl) headlineEl.textContent = 'Your Facebook Exclusive Offer';
 }
 ```
 
@@ -182,7 +185,8 @@ if (source === 'facebook-ad') {
 ```javascript
 const referrer = document.referrer;
 if (referrer.includes('competitor.com')) {
-  document.querySelector('.headline').textContent = 'Switching from Competitor? We'll beat their price.';
+  const headlineEl = document.querySelector('.headline');
+  if (headlineEl) headlineEl.textContent = "Switching from Competitor? We'll beat their price.";
 }
 ```
 
@@ -304,7 +308,8 @@ if (hour < 12) greeting = 'Good morning';
 else if (hour < 18) greeting = 'Good afternoon';
 else greeting = 'Good evening';
 
-document.querySelector('.headline').textContent = `${greeting}! Welcome to...`;
+const headlineEl = document.querySelector('.headline');
+if (headlineEl) headlineEl.textContent = `${greeting}! Welcome to...`;
 ```
 
 **A/B Test Integration**:
