@@ -236,6 +236,86 @@ if (
 
 **For multisite:** This goes in the shared `wp-config.php` — it applies to all sites in the network.
 
+### Server-Level Header Trust (Defence-in-Depth)
+
+The `wp-config.php` snippet above handles header verification at the application layer. For stronger security, also restrict header trust at the web server level. This ensures **all** applications on the server — not just WordPress — only trust forwarded headers from Cloudflare.
+
+**On Closte (managed hosting):** Closte's platform firewall already restricts origin access to Cloudflare IPs, so server-level config is not required. The `wp-config.php` snippet is sufficient. The guidance below is for self-managed hosts or environments where you control the web server config.
+
+**Apache / LiteSpeed (`mod_remoteip`):**
+
+```apache
+# /etc/apache2/conf-available/cloudflare.conf (or .htaccess if AllowOverride permits)
+# Requires: mod_remoteip enabled (a2enmod remoteip)
+
+RemoteIPHeader X-Forwarded-For
+
+# Cloudflare IPv4 — https://www.cloudflare.com/ips-v4
+RemoteIPTrustedProxy 173.245.48.0/20
+RemoteIPTrustedProxy 103.21.244.0/22
+RemoteIPTrustedProxy 103.22.200.0/22
+RemoteIPTrustedProxy 103.31.4.0/22
+RemoteIPTrustedProxy 141.101.64.0/18
+RemoteIPTrustedProxy 108.162.192.0/18
+RemoteIPTrustedProxy 190.93.240.0/20
+RemoteIPTrustedProxy 188.114.96.0/20
+RemoteIPTrustedProxy 197.234.240.0/22
+RemoteIPTrustedProxy 198.41.128.0/17
+RemoteIPTrustedProxy 162.158.0.0/15
+RemoteIPTrustedProxy 104.16.0.0/13
+RemoteIPTrustedProxy 104.24.0.0/14
+RemoteIPTrustedProxy 172.64.0.0/13
+RemoteIPTrustedProxy 131.0.72.0/22
+
+# Cloudflare IPv6 — https://www.cloudflare.com/ips-v6
+RemoteIPTrustedProxy 2400:cb00::/32
+RemoteIPTrustedProxy 2606:4700::/32
+RemoteIPTrustedProxy 2803:f800::/32
+RemoteIPTrustedProxy 2405:b500::/32
+RemoteIPTrustedProxy 2405:8100::/32
+RemoteIPTrustedProxy 2a06:98c0::/29
+RemoteIPTrustedProxy 2c0f:f248::/32
+```
+
+This replaces `REMOTE_ADDR` with the real client IP from `X-Forwarded-For` only when the request comes from a Cloudflare IP. Requests from non-Cloudflare IPs keep their original `REMOTE_ADDR` and forwarded headers are ignored.
+
+**Nginx (`set_real_ip_from`):**
+
+```nginx
+# /etc/nginx/conf.d/cloudflare.conf
+
+# Cloudflare IPv4
+set_real_ip_from 173.245.48.0/20;
+set_real_ip_from 103.21.244.0/22;
+set_real_ip_from 103.22.200.0/22;
+set_real_ip_from 103.31.4.0/22;
+set_real_ip_from 141.101.64.0/18;
+set_real_ip_from 108.162.192.0/18;
+set_real_ip_from 190.93.240.0/20;
+set_real_ip_from 188.114.96.0/20;
+set_real_ip_from 197.234.240.0/22;
+set_real_ip_from 198.41.128.0/17;
+set_real_ip_from 162.158.0.0/15;
+set_real_ip_from 104.16.0.0/13;
+set_real_ip_from 104.24.0.0/14;
+set_real_ip_from 172.64.0.0/13;
+set_real_ip_from 131.0.72.0/22;
+
+# Cloudflare IPv6
+set_real_ip_from 2400:cb00::/32;
+set_real_ip_from 2606:4700::/32;
+set_real_ip_from 2803:f800::/32;
+set_real_ip_from 2405:b500::/32;
+set_real_ip_from 2405:8100::/32;
+set_real_ip_from 2a06:98c0::/29;
+set_real_ip_from 2c0f:f248::/32;
+
+real_ip_header X-Forwarded-For;
+real_ip_recursive on;
+```
+
+**Maintenance:** Cloudflare publishes IP range changes at [https://www.cloudflare.com/ips/](https://www.cloudflare.com/ips/). Review periodically and update both the server config and the `wp-config.php` snippet. Cloudflare also provides a machine-readable endpoint: `https://api.cloudflare.com/client/v4/ips`.
+
 ### Step 2: Cloudflare Zone Settings
 
 1. **Add the domain** to Cloudflare (free plan is sufficient).
