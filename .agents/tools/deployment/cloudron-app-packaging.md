@@ -216,41 +216,27 @@ Single-process apps: `exec gosu cloudron:cloudron <cmd>` directly. Multi-process
 ```bash
 #!/bin/bash
 set -eu
+FIRST_RUN=false; [[ ! -f /app/data/.initialized ]] && FIRST_RUN=true
 
-FIRST_RUN=false
-[[ ! -f /app/data/.initialized ]] && FIRST_RUN=true
-
-# Directories
 mkdir -p /app/data/config /app/data/storage /app/data/logs /run/app /run/php /run/nginx
-
-# Symlinks — always recreate (idempotent)
 ln -sfn /app/data/config /app/code/config
 ln -sfn /app/data/storage /app/code/storage
 ln -sfn /app/data/logs /app/code/logs
 
-# First-run: copy defaults
-if [[ "$FIRST_RUN" == "true" ]]; then
-    cp -rn /app/code/defaults/config/* /app/data/config/ 2>/dev/null || true
-fi
+[[ "$FIRST_RUN" == "true" ]] && cp -rn /app/code/defaults/config/* /app/data/config/ 2>/dev/null || true
 
 # Config injection (choose one):
 # A: envsubst < /app/code/config.template > /app/data/config/app.conf
-# B: cat > /app/data/config/db.json <<EOF ... EOF
-# C: sed -i "s|APP_URL=.*|APP_URL=${CLOUDRON_APP_ORIGIN}|" /app/data/config/.env
+# B: sed -i "s|APP_URL=.*|APP_URL=${CLOUDRON_APP_ORIGIN}|" /app/data/config/.env
 
-# Disable auto-updater
 sed -i "s|'auto_update' => true|'auto_update' => false|" /app/data/config/settings.php 2>/dev/null || true
-
-# Migrations
 gosu cloudron:cloudron /app/code/bin/migrate --force
-
 chown -R cloudron:cloudron /app/data /run/app
 touch /app/data/.initialized
-
 exec gosu cloudron:cloudron node /app/code/server.js
 ```
 
-**Multi-process supervisord.conf** (repeat `[program:*]` block for each process):
+**Multi-process supervisord.conf** (repeat `[program:*]` for each process):
 
 ```ini
 [supervisord]
@@ -310,28 +296,17 @@ Store data under `/app/data/lavinmq` and run as a Supervisor program.
 
 ## Upgrade & Migration Handling
 
-```bash
-CURRENT_VERSION="2.0.0"
-VERSION_FILE="/app/data/.app_version"
-PREVIOUS_VERSION=$(cat "$VERSION_FILE" 2>/dev/null || echo "")
-if [[ -n "$PREVIOUS_VERSION" && "$PREVIOUS_VERSION" != "$CURRENT_VERSION" ]]; then
-    echo "==> Upgrading from $PREVIOUS_VERSION to $CURRENT_VERSION"
-    # per-version migration blocks here
-fi
-echo "$CURRENT_VERSION" > "$VERSION_FILE"
-```
-
-Migrations MUST be idempotent. Use framework migration tracking (Laravel, Django, Rails). For raw SQL: `CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`.
+Track version in `/app/data/.app_version`; compare on start to run per-version migration blocks. Migrations MUST be idempotent — use framework migration tracking (Laravel, Django, Rails) or raw SQL with `CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`.
 
 ## Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
 | App won't start | `cloudron logs --app testapp` / `cloudron debug --app testapp` |
-| Permission denied | `chown -R cloudron:cloudron /app/data` — check if writing to read-only path |
-| Database connection fails | Verify addon declared in manifest; `cloudron exec --app testapp` then `env \| grep CLOUDRON` |
+| Permission denied | `chown -R cloudron:cloudron /app/data` — check for writes to `/app/code` |
+| DB connection fails | Verify addon in manifest; `cloudron exec --app testapp` → `env \| grep CLOUDRON` |
 | Health check fails | `curl -v http://localhost:8000/health` — verify app listens on httpPort |
-| Memory limit exceeded | Increase `memoryLimit`; check for leaks; optimize worker counts |
+| Memory exceeded | Increase `memoryLimit`; check for leaks; optimize worker counts |
 
 ## Validation Checklist
 
