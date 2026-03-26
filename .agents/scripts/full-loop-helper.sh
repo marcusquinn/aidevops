@@ -37,6 +37,7 @@ max_preflight_iterations: ${MAX_PREFLIGHT_ITERATIONS:-$DEFAULT_MAX_PREFLIGHT_ITE
 max_pr_iterations: ${MAX_PR_ITERATIONS:-$DEFAULT_MAX_PR_ITERATIONS}
 skip_preflight: ${SKIP_PREFLIGHT:-false}
 skip_postflight: ${SKIP_POSTFLIGHT:-false}
+skip_runtime_testing: ${SKIP_RUNTIME_TESTING:-false}
 no_auto_pr: ${NO_AUTO_PR:-false}
 no_auto_deploy: ${NO_AUTO_DEPLOY:-false}
 headless: ${HEADLESS:-false}
@@ -56,8 +57,8 @@ load_state() {
 		# Allowlist: only set known state variables
 		case "$_key" in
 		PHASE | ACTIVE | ITERATION | MAX_TASK_ITERATIONS | MAX_PREFLIGHT_ITERATIONS | \
-			MAX_PR_ITERATIONS | SKIP_PREFLIGHT | SKIP_POSTFLIGHT | NO_AUTO_PR | \
-			NO_AUTO_DEPLOY | HEADLESS | PR_NUMBER)
+			MAX_PR_ITERATIONS | SKIP_PREFLIGHT | SKIP_POSTFLIGHT | SKIP_RUNTIME_TESTING | \
+			NO_AUTO_PR | NO_AUTO_DEPLOY | HEADLESS | PR_NUMBER)
 			printf -v "$_key" '%s' "$_val"
 			;;
 		esac
@@ -160,6 +161,10 @@ cmd_start() {
 			SKIP_POSTFLIGHT=true
 			shift
 			;;
+		--skip-runtime-testing)
+			SKIP_RUNTIME_TESTING=true
+			shift
+			;;
 		--no-auto-pr)
 			NO_AUTO_PR=true
 			shift
@@ -213,7 +218,7 @@ cmd_start() {
 	if [[ "$background" == "true" ]]; then
 		mkdir -p "$STATE_DIR"
 		export MAX_TASK_ITERATIONS MAX_PREFLIGHT_ITERATIONS MAX_PR_ITERATIONS
-		export SKIP_PREFLIGHT SKIP_POSTFLIGHT NO_AUTO_PR NO_AUTO_DEPLOY FULL_LOOP_HEADLESS="$HEADLESS"
+		export SKIP_PREFLIGHT SKIP_POSTFLIGHT SKIP_RUNTIME_TESTING NO_AUTO_PR NO_AUTO_DEPLOY FULL_LOOP_HEADLESS="$HEADLESS"
 		nohup "$0" _run_foreground "$prompt" >"${STATE_DIR}/full-loop.log" 2>&1 &
 		echo "$!" >"${STATE_DIR}/full-loop.pid"
 		print_success "Background loop started (PID: $!). Use 'status' or 'logs' to monitor."
@@ -316,7 +321,8 @@ Usage: full-loop-helper.sh <command> [options]
 Commands: start "<prompt>" | resume | status | cancel | logs [N] | help
 Options: --max-task-iterations N (50) | --max-preflight-iterations N (5)
   --max-pr-iterations N (20) | --skip-preflight | --skip-postflight
-  --no-auto-pr | --no-auto-deploy | --headless | --dry-run | --background
+  --skip-runtime-testing | --no-auto-pr | --no-auto-deploy
+  --headless | --dry-run | --background
 Phases: task -> preflight -> pr-create -> pr-review -> postflight -> deploy
 EOF
 }

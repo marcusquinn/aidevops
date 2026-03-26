@@ -214,7 +214,8 @@ Iterate until emitting `<promise>TASK_COMPLETE</promise>`.
 6. Conventional commits used
 7. Headless rules observed (see below)
 8. **Actionable finding coverage** — every deferred finding from audit/review/scan has a tracked task+issue
-9. **Commit+PR gate (GH#5317 — MANDATORY):**
+9. **Runtime testing gate (t1660.7)** — risk-appropriate runtime verification (see below)
+10. **Commit+PR gate (GH#5317 — MANDATORY):**
 
    ```bash
    UNCOMMITTED=$(git status --porcelain | wc -l | tr -d ' ')
@@ -240,6 +241,154 @@ For multi-finding reports (audit/review/scan): build `severity|title|details` li
 ```
 
 Include in PR body: `actionable_findings_total=N`, `fixed_in_pr=N`, `deferred_tasks_created=N`, `coverage=100%`.
+
+### Runtime Testing Gate (t1660.7 — MANDATORY)
+
+Before emitting `TASK_COMPLETE`, classify the risk level of your changes and perform the appropriate level of runtime verification. This is a judgment call — the agent reads the diff, identifies risk patterns, and escalates testing accordingly. Static analysis (lint, typecheck) catches syntax; runtime testing catches behaviour.
+
+#### Step 1: Diff Risk Classification
+
+Analyse `git diff origin/main` for high-risk patterns. Each pattern detected raises the required testing level.
+
+**Risk taxonomy:**
+
+| Risk Level | Patterns in Diff | Required Testing |
+|------------|-----------------|------------------|
+| **Critical** | Payment/billing logic, auth/session handling, data deletion/migration, cryptographic operations, credential flows | `runtime-verified` |
+| **High** | Polling/interval loops (`setInterval`, `setTimeout` chains, `while` polling), page reload triggers (`location.reload`, `router.refresh`), WebSocket/SSE connections, state machine transitions, form submission handlers, API endpoint changes | `runtime-verified` |
+| **Medium** | UI component changes, CSS/layout modifications, new routes/pages, configuration changes, environment variable usage, database queries | `runtime-verified` when dev env available; `self-assessed` with justification otherwise |
+| **Low** | Documentation, comments, type-only changes, test files only, linter config, CI config, agent prompts, markdown | `self-assessed` (no runtime testing needed) |
+
+**Detection approach — intelligence, not regex:**
+
+Read the diff holistically. A one-line CSS change is low risk. A one-line change to a payment webhook URL is critical. The pattern table above is guidance — use judgment for edge cases. When uncertain, escalate.
+
+```bash
+# Quick diff summary for risk assessment
+git diff --stat origin/main
+git diff origin/main -- '*.ts' '*.tsx' '*.js' '*.jsx' '*.py' '*.php' '*.rb' '*.go' '*.rs'
+```
+
+#### Step 2: Determine Testing Level
+
+Three testing levels, in ascending order of rigour:
+
+| Level | What It Means | When to Use |
+|-------|--------------|-------------|
+| `self-assessed` | Worker reviewed the code, ran static checks, assessed correctness by reading | Low-risk changes; no dev environment available and risk is medium or below |
+| `unit-tested` | Automated test suite passes (`npm test`, `pytest`, `cargo test`, etc.) | Any project with an existing test suite; medium-risk changes |
+| `runtime-verified` | Application started, behaviour confirmed in a running environment (browser, API call, CLI execution) | High/critical risk; any change touching user-facing behaviour in a project with a dev environment |
+
+**Escalation is one-way:** If the diff contains ANY critical-risk pattern, the entire PR requires `runtime-verified` regardless of other low-risk changes in the same diff.
+
+**Testing config integration (t1660.2):** If `.aidevops/testing.json` exists in the project root, read it for the project's dev environment setup, test commands, and smoke-test URLs. This file is created by `/testing-setup` (t1660.1). When the file doesn't exist, fall back to conventional detection:
+
+```bash
+# Detect available test infrastructure
+TESTING_CONFIG="$(git rev-parse --show-toplevel)/.aidevops/testing.json"
+if [[ -f "$TESTING_CONFIG" ]]; then
+  # Use project-specific testing config (t1660.2)
+  TEST_CMD=$(jq -r '.test_command // empty' "$TESTING_CONFIG")
+  DEV_CMD=$(jq -r '.dev_command // empty' "$TESTING_CONFIG")
+  SMOKE_URLS=$(jq -r '.smoke_urls[]? // empty' "$TESTING_CONFIG")
+else
+  # Conventional detection fallback
+  [[ -f "package.json" ]] && TEST_CMD="npm test"
+  [[ -f "pytest.ini" || -f "pyproject.toml" ]] && TEST_CMD="pytest"
+  [[ -f "Cargo.toml" ]] && TEST_CMD="cargo test"
+  [[ -f "go.mod" ]] && TEST_CMD="go test ./..."
+fi
+```
+
+#### Step 3: Execute Testing
+
+**For `self-assessed`:** Document in the commit message or PR body what you reviewed and why runtime testing was not required. Example: "Self-assessed: docs-only change, no runtime behaviour affected."
+
+**For `unit-tested`:** Run the test suite and confirm it passes:
+
+```bash
+if [[ -n "${TEST_CMD:-}" ]]; then
+  eval "$TEST_CMD" || {
+    echo "[t1660.7] Unit tests failed — fix before TASK_COMPLETE"
+    # Do NOT proceed to TASK_COMPLETE
+  }
+fi
+```
+
+**For `runtime-verified`:** Start the dev environment, verify behaviour, and record evidence:
+
+1. **Start dev server** (if not already running):
+
+   ```bash
+   # Use testing.json dev_command, or detect conventionally
+   if [[ -n "${DEV_CMD:-}" ]]; then
+     eval "$DEV_CMD" &
+     DEV_PID=$!
+     sleep 5  # Allow startup
+   fi
+   ```
+
+2. **Run smoke checks** — verify the application loads and key pages respond:
+
+   ```bash
+   # browser-qa-helper.sh stability (t1660.3) when available
+   STABILITY_HELPER="$HOME/.aidevops/agents/scripts/browser-qa-helper.sh"
+   if [[ -x "$STABILITY_HELPER" ]] && "$STABILITY_HELPER" help 2>&1 | grep -q 'stability'; then
+     "$STABILITY_HELPER" stability --url "${SMOKE_URLS:-http://localhost:3000}" --timeout 30
+   else
+     # Fallback: basic HTTP check
+     curl -sf "${SMOKE_URLS:-http://localhost:3000}" >/dev/null 2>&1 || {
+       echo "[t1660.7] Smoke check failed — application not responding"
+     }
+   fi
+   ```
+
+3. **Verify changed behaviour** — for UI changes, load the affected page; for API changes, call the affected endpoint; for CLI changes, run the affected command. This is the agent's judgment call — there is no script for "verify the thing you changed works."
+
+4. **Record evidence** in the PR body (see Step 4.7 structured format, t1660.10):
+
+   ```markdown
+   ## Runtime Testing
+   - **Testing level:** runtime-verified
+   - **Risk classification:** high (polling loop in useDataSync hook)
+   - **Dev environment:** npm run dev (Next.js 14, localhost:3000)
+   - **Smoke check:** homepage loads, /dashboard renders, /api/health returns 200
+   - **Behaviour verified:** polling interval respects backoff, stops on unmount
+   ```
+
+#### Step 4: Gate Enforcement
+
+**Before `TASK_COMPLETE`**, verify the testing level matches the risk:
+
+| Situation | Action |
+|-----------|--------|
+| Critical/high risk + no runtime verification | **BLOCK** — do not emit `TASK_COMPLETE`. Start the dev env and verify, or exit `BLOCKED: runtime testing required but dev environment unavailable` |
+| Medium risk + no dev env available | **WARN** — proceed with `self-assessed` but document the gap in PR body: "Medium-risk change, runtime testing recommended but dev environment not configured. Run `/testing-setup` to enable." |
+| Low risk + self-assessed | **PASS** — proceed normally |
+| Any risk + `testing.json` specifies `required_level` | **ENFORCE** — the project config overrides the default risk mapping. If `testing.json` says `runtime-verified` is required for all PRs, comply regardless of diff risk. |
+
+**Headless mode behaviour:** In headless dispatch, if runtime testing is required but the dev environment fails to start (missing dependencies, port conflict, Docker not running), exit with a structured message:
+
+```text
+BLOCKED: Runtime testing required (risk: high — auth flow changes in src/auth/handler.ts)
+but dev environment failed to start: npm run dev exited with code 1 (missing NEXT_PUBLIC_API_URL).
+Recommend: configure .aidevops/testing.json via /testing-setup, or add env vars to .env.local.
+```
+
+**`--skip-runtime-testing` flag:** For emergency hotfixes, pass `--skip-runtime-testing` to `/full-loop`. This bypasses the gate but logs a warning in the PR body: "Runtime testing skipped (emergency override). Manual verification recommended before merge." The flag is intentionally verbose to discourage casual use.
+
+#### Integration with Sibling Tasks
+
+This gate is designed to work standalone (using conventional detection and agent judgment) and to improve as sibling tasks land:
+
+| Task | What It Adds | Gate Behaviour Without It |
+|------|-------------|--------------------------|
+| t1660.1 `/testing-setup` | Interactive per-repo config | Agent uses conventional detection |
+| t1660.2 `testing.json` | Structured project config | Agent detects test/dev commands from package.json etc. |
+| t1660.3 `browser-qa stability` | Playwright quiescence detection | Agent uses `curl` smoke checks |
+| t1660.4 `verify-brief.sh` runtime | Brief-driven runtime verification | Agent runs tests directly |
+| t1660.5 `--testing-level` flag | Proof-log recording | Agent documents level in PR body only |
+| t1660.6 PR template section | Structured PR testing section | Agent writes free-form testing section |
 
 ### Key Rules
 
@@ -450,6 +599,7 @@ Verify release health. Deploy: `setup.sh --non-interactive` (aidevops repos only
 | `--skip-postflight` | Skip postflight monitoring |
 | `--no-auto-pr` | Pause for manual PR creation |
 | `--no-auto-deploy` | Don't auto-run setup.sh |
+| `--skip-runtime-testing` | Skip runtime testing gate (emergency hotfixes only) |
 
 ## Related
 
