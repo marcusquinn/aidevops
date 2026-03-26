@@ -173,21 +173,21 @@ setup_sandbox_runtime_configs() {
 				_sb_dst_dir="$sandbox_dir/$_sb_rel_dir"
 			fi
 
-			mkdir -p "$_sb_dst_dir"
-			cp "$_sb_cfg_path" "$_sb_dst_dir/$_sb_cfg_file"
+			mkdir -p "$_sb_dst_dir" || continue
+			cp "$_sb_cfg_path" "$_sb_dst_dir/$_sb_cfg_file" || continue
 		done < <(rt_detect_configured)
 	else
 		# Fallback: hardcoded paths (registry not loaded)
 		local opencode_src="${REAL_HOME}/.config/opencode"
 		if [[ -d "$opencode_src" ]]; then
-			mkdir -p "$config_dir/opencode"
-			[[ -f "$opencode_src/opencode.json" ]] && cp "$opencode_src/opencode.json" "$config_dir/opencode/"
+			mkdir -p "$config_dir/opencode" || return 1
+			[[ -f "$opencode_src/opencode.json" ]] && { cp "$opencode_src/opencode.json" "$config_dir/opencode/" || return 1; }
 		fi
 		local claude_dir_src="${REAL_HOME}/.claude"
 		if [[ -d "$claude_dir_src" ]]; then
 			local claude_dir_dst="$sandbox_dir/.claude"
-			mkdir -p "$claude_dir_dst"
-			[[ -f "$claude_dir_src/settings.json" ]] && cp "$claude_dir_src/settings.json" "$claude_dir_dst/"
+			mkdir -p "$claude_dir_dst" || return 1
+			[[ -f "$claude_dir_src/settings.json" ]] && { cp "$claude_dir_src/settings.json" "$claude_dir_dst/" || return 1; }
 		fi
 	fi
 
