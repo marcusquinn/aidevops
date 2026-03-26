@@ -1,0 +1,436 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aidevops.sh/schemas/testing.json",
+  "title": "aidevops Project Testing Configuration",
+  "description": "Per-repo testing configuration for the aidevops framework. Place at .aidevops/testing.json in the project root. Created interactively by /testing-setup (t1660.1). Read by the full-loop runtime testing gate (t1660.7), verify-brief.sh (t1660.4), and task-complete-helper.sh (t1660.5).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["environment"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference for editor autocomplete and validation."
+    },
+
+    "environment": {
+      "type": "string",
+      "enum": ["npm", "docker", "localwp", "expo", "xcode", "tauri", "binary", "manual"],
+      "description": "Primary development environment type. Determines which commands and tooling are available for runtime testing. npm: Node.js/npm/yarn/pnpm projects (Next.js, React, Vue, etc.). docker: Docker Compose or containerised services. localwp: WordPress sites managed by LocalWP (Local by Flywheel). expo: React Native / Expo mobile apps. xcode: iOS/macOS native apps built with Xcode. tauri: Desktop apps built with Tauri (Rust + web frontend). binary: Compiled binaries (Go, Rust, C, etc.) run directly. manual: No automated dev environment — human-only testing."
+    },
+
+    "dev_command": {
+      "type": "string",
+      "description": "Command to start the development server or application. Run from the project root. The full-loop gate starts this before smoke checks. Examples: 'npm run dev', 'docker compose up -d', 'cargo run', 'expo start'. Leave empty if the dev environment is always running (e.g., LocalWP managed by the app).",
+      "examples": [
+        "npm run dev",
+        "yarn dev",
+        "pnpm dev",
+        "docker compose up -d",
+        "cargo run",
+        "go run ./cmd/server",
+        "expo start --no-dev",
+        "npm run tauri dev"
+      ]
+    },
+
+    "dev_stop_command": {
+      "type": "string",
+      "description": "Command to stop the development server after testing. Only needed if dev_command starts a foreground process that must be explicitly stopped. Examples: 'docker compose down'. Processes started with & are stopped via PID tracking.",
+      "examples": [
+        "docker compose down",
+        "npm run stop"
+      ]
+    },
+
+    "test_command": {
+      "type": "string",
+      "description": "Command to run the automated test suite. Used for unit-tested level verification. Run from the project root. Examples: 'npm test', 'pytest', 'cargo test', 'go test ./...', 'xcodebuild test'.",
+      "examples": [
+        "npm test",
+        "npm run test:ci",
+        "yarn test",
+        "pnpm test",
+        "pytest",
+        "pytest -x --tb=short",
+        "cargo test",
+        "go test ./...",
+        "xcodebuild test -scheme MyApp -destination 'platform=iOS Simulator,name=iPhone 15'",
+        "expo run:android --no-install",
+        "php artisan test"
+      ]
+    },
+
+    "smoke_urls": {
+      "type": "array",
+      "description": "URLs to check after starting the dev environment. The full-loop gate verifies each URL returns HTTP 200. Checked in order — first failure stops the smoke check. Use relative paths for consistency; the base URL is derived from dev_port or dev_host.",
+      "items": {
+        "type": "string",
+        "format": "uri",
+        "description": "Absolute URL to smoke-check. Must be reachable from localhost."
+      },
+      "examples": [
+        ["http://localhost:3000"],
+        ["http://localhost:3000", "http://localhost:3000/api/health"],
+        ["http://localhost:8080", "http://localhost:8080/health"],
+        ["http://mysite.local"],
+        ["http://mysite.local", "http://mysite.local/wp-admin/"]
+      ],
+      "default": []
+    },
+
+    "dev_port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "Primary port the dev server listens on. Used to construct smoke_urls when not explicitly set, and to check if the dev server is already running before starting it.",
+      "examples": [3000, 3001, 4000, 5173, 8080, 8000]
+    },
+
+    "dev_host": {
+      "type": "string",
+      "description": "Hostname for the dev environment. Defaults to 'localhost'. Use for LocalWP sites (e.g., 'mysite.local') or Docker services with custom hostnames.",
+      "default": "localhost",
+      "examples": ["localhost", "mysite.local", "app.local", "0.0.0.0"]
+    },
+
+    "startup_wait_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 300,
+      "default": 5,
+      "description": "Seconds to wait after running dev_command before checking smoke_urls. Increase for slow-starting environments (Docker builds, Xcode simulators, Expo bundler). Default: 5."
+    },
+
+    "required_level": {
+      "type": "string",
+      "enum": ["self-assessed", "unit-tested", "runtime-verified"],
+      "description": "Minimum testing level required for all PRs in this project, regardless of diff risk classification. Overrides the full-loop gate's automatic risk-based escalation. Use 'runtime-verified' for production-critical projects where every PR must be manually verified. Use 'unit-tested' for projects with comprehensive test suites. Leave unset to use automatic risk-based escalation (recommended for most projects).",
+      "examples": ["runtime-verified", "unit-tested"]
+    },
+
+    "skip_runtime_for_paths": {
+      "type": "array",
+      "description": "Glob patterns for file paths where runtime testing is always skipped, even if required_level is set. Use for documentation, config, and test files that cannot affect runtime behaviour. Patterns are matched against git diff --name-only output.",
+      "items": {
+        "type": "string",
+        "description": "Glob pattern relative to project root."
+      },
+      "examples": [
+        ["docs/**", "*.md", ".agents/**", "*.json", "*.yaml"],
+        ["tests/**", "**/*.test.ts", "**/*.spec.ts"]
+      ],
+      "default": []
+    },
+
+    "environment_config": {
+      "type": "object",
+      "description": "Environment-specific configuration. The active section is determined by the 'environment' field. Only the matching section is used; others are ignored.",
+      "additionalProperties": false,
+      "properties": {
+
+        "npm": {
+          "type": "object",
+          "description": "Configuration for npm/yarn/pnpm Node.js projects.",
+          "additionalProperties": false,
+          "properties": {
+            "package_manager": {
+              "type": "string",
+              "enum": ["npm", "yarn", "pnpm", "bun"],
+              "default": "npm",
+              "description": "Package manager to use. Auto-detected from lockfile if not set."
+            },
+            "install_command": {
+              "type": "string",
+              "default": "npm install",
+              "description": "Command to install dependencies before running tests. Skipped if node_modules exists and is fresh.",
+              "examples": ["npm install", "yarn install", "pnpm install", "bun install"]
+            },
+            "build_command": {
+              "type": "string",
+              "description": "Command to build the project before starting the dev server. Optional — only needed if the dev server requires a prior build step.",
+              "examples": ["npm run build", "next build", "vite build"]
+            },
+            "env_file": {
+              "type": "string",
+              "default": ".env.local",
+              "description": "Path to the environment file to load before running dev/test commands. Relative to project root.",
+              "examples": [".env.local", ".env.development", ".env"]
+            }
+          }
+        },
+
+        "docker": {
+          "type": "object",
+          "description": "Configuration for Docker Compose or containerised projects.",
+          "additionalProperties": false,
+          "properties": {
+            "compose_file": {
+              "type": "string",
+              "default": "docker-compose.yml",
+              "description": "Path to the Docker Compose file. Relative to project root.",
+              "examples": ["docker-compose.yml", "docker-compose.dev.yml", "compose.yaml"]
+            },
+            "services": {
+              "type": "array",
+              "description": "Specific services to start. Empty array starts all services.",
+              "items": { "type": "string" },
+              "default": [],
+              "examples": [["app", "db"], ["web", "api", "redis"]]
+            },
+            "health_check_service": {
+              "type": "string",
+              "description": "Service name to poll for health before running smoke checks. Uses 'docker compose ps' to check status.",
+              "examples": ["app", "web", "api"]
+            },
+            "pull_before_start": {
+              "type": "boolean",
+              "default": false,
+              "description": "Run 'docker compose pull' before starting services. Useful for CI but slow for local dev."
+            }
+          }
+        },
+
+        "localwp": {
+          "type": "object",
+          "description": "Configuration for WordPress sites managed by LocalWP (Local by Flywheel).",
+          "additionalProperties": false,
+          "required": ["site_name"],
+          "properties": {
+            "site_name": {
+              "type": "string",
+              "description": "LocalWP site name as shown in the Local app. Used to start/stop the site via the Local CLI.",
+              "examples": ["My WordPress Site", "client-site", "mysite"]
+            },
+            "site_domain": {
+              "type": "string",
+              "description": "Local domain for the site (e.g., 'mysite.local'). Used to construct smoke_urls if not explicitly set.",
+              "examples": ["mysite.local", "client.local"]
+            },
+            "wp_cli_path": {
+              "type": "string",
+              "description": "Path to WP-CLI within the LocalWP site container. Defaults to the LocalWP bundled WP-CLI.",
+              "default": "/usr/local/bin/wp",
+              "examples": ["/usr/local/bin/wp", "~/.local/share/Local/lightning-services/php-8.1.23+build.1/bin/wp-cli.phar"]
+            },
+            "theme_build_command": {
+              "type": "string",
+              "description": "Command to build the active theme's assets before testing. Run from the theme directory.",
+              "examples": ["npm run build", "yarn build", "gulp build"]
+            },
+            "theme_path": {
+              "type": "string",
+              "description": "Path to the active theme directory, relative to the WordPress root (wp-content/themes/). Used with theme_build_command.",
+              "examples": ["wp-content/themes/my-theme", "wp-content/themes/client-theme"]
+            }
+          }
+        },
+
+        "expo": {
+          "type": "object",
+          "description": "Configuration for React Native / Expo mobile app projects.",
+          "additionalProperties": false,
+          "properties": {
+            "platform": {
+              "type": "string",
+              "enum": ["ios", "android", "both"],
+              "default": "both",
+              "description": "Target platform for testing. 'both' runs tests on both platforms."
+            },
+            "simulator_device": {
+              "type": "string",
+              "description": "iOS simulator device name for testing. Ignored for Android.",
+              "default": "iPhone 15",
+              "examples": ["iPhone 15", "iPhone 15 Pro", "iPad Pro (12.9-inch) (6th generation)"]
+            },
+            "android_avd": {
+              "type": "string",
+              "description": "Android Virtual Device (AVD) name for testing.",
+              "examples": ["Pixel_7_API_34", "Nexus_5X_API_33"]
+            },
+            "use_expo_go": {
+              "type": "boolean",
+              "default": true,
+              "description": "Use Expo Go for testing (faster) vs. building a development client. Set to false for projects with native modules."
+            },
+            "tunnel": {
+              "type": "boolean",
+              "default": false,
+              "description": "Use Expo tunnel mode for testing on physical devices. Requires ngrok."
+            }
+          }
+        },
+
+        "xcode": {
+          "type": "object",
+          "description": "Configuration for iOS/macOS native apps built with Xcode.",
+          "additionalProperties": false,
+          "required": ["scheme"],
+          "properties": {
+            "scheme": {
+              "type": "string",
+              "description": "Xcode scheme to build and test.",
+              "examples": ["MyApp", "MyApp-Dev", "MyApp Tests"]
+            },
+            "workspace": {
+              "type": "string",
+              "description": "Path to the .xcworkspace file. Required for CocoaPods projects. Relative to project root.",
+              "examples": ["MyApp.xcworkspace", "ios/MyApp.xcworkspace"]
+            },
+            "project": {
+              "type": "string",
+              "description": "Path to the .xcodeproj file. Used when workspace is not set. Relative to project root.",
+              "examples": ["MyApp.xcodeproj", "ios/MyApp.xcodeproj"]
+            },
+            "destination": {
+              "type": "string",
+              "description": "Xcode build destination. Passed to xcodebuild -destination.",
+              "default": "platform=iOS Simulator,name=iPhone 15",
+              "examples": [
+                "platform=iOS Simulator,name=iPhone 15",
+                "platform=macOS",
+                "platform=iOS Simulator,name=iPad Pro (12.9-inch) (6th generation)"
+              ]
+            },
+            "configuration": {
+              "type": "string",
+              "enum": ["Debug", "Release"],
+              "default": "Debug",
+              "description": "Build configuration. Use Debug for testing, Release for distribution."
+            },
+            "derived_data_path": {
+              "type": "string",
+              "description": "Custom DerivedData path. Useful for CI caching. Relative to project root.",
+              "examples": ["build/DerivedData", ".build/xcode"]
+            }
+          }
+        },
+
+        "tauri": {
+          "type": "object",
+          "description": "Configuration for desktop apps built with Tauri (Rust + web frontend).",
+          "additionalProperties": false,
+          "properties": {
+            "frontend_dev_command": {
+              "type": "string",
+              "description": "Command to start the frontend dev server (Vite, webpack, etc.). Tauri's dev mode starts this automatically if configured in tauri.conf.json, but can be overridden here.",
+              "examples": ["npm run dev", "vite", "yarn dev"]
+            },
+            "frontend_port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 1420,
+              "description": "Port the frontend dev server listens on. Tauri default is 1420."
+            },
+            "features": {
+              "type": "array",
+              "description": "Cargo features to enable when building/testing.",
+              "items": { "type": "string" },
+              "default": [],
+              "examples": [["custom-protocol"], ["updater", "system-tray"]]
+            },
+            "target": {
+              "type": "string",
+              "description": "Rust target triple for cross-compilation. Leave empty for native target.",
+              "examples": ["x86_64-apple-darwin", "aarch64-apple-darwin", "x86_64-pc-windows-msvc"]
+            }
+          }
+        },
+
+        "binary": {
+          "type": "object",
+          "description": "Configuration for compiled binary projects (Go, Rust, C/C++, etc.).",
+          "additionalProperties": false,
+          "properties": {
+            "build_command": {
+              "type": "string",
+              "description": "Command to compile the binary before running.",
+              "examples": ["go build ./...", "cargo build", "make", "cmake --build build/"]
+            },
+            "binary_path": {
+              "type": "string",
+              "description": "Path to the compiled binary, relative to project root. Used to run the binary for smoke testing.",
+              "examples": ["./bin/myapp", "./target/debug/myapp", "./build/myapp"]
+            },
+            "run_args": {
+              "type": "array",
+              "description": "Arguments to pass when running the binary for smoke testing.",
+              "items": { "type": "string" },
+              "default": [],
+              "examples": [["--port", "8080"], ["serve", "--dev"]]
+            },
+            "is_server": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether the binary is a long-running server (true) or a CLI tool that exits (false). Servers are started in the background and smoke-checked via smoke_urls. CLI tools are run and their exit code is checked."
+            }
+          }
+        },
+
+        "manual": {
+          "type": "object",
+          "description": "Configuration for projects requiring human-only testing (no automated dev environment).",
+          "additionalProperties": false,
+          "properties": {
+            "instructions": {
+              "type": "string",
+              "description": "Human-readable instructions for manual testing. Shown to the agent when runtime testing is required but the environment is manual. Should describe how to start the app and what to verify.",
+              "examples": [
+                "Start the app via Xcode, navigate to Settings > Account, verify the login flow works end-to-end.",
+                "Open the LocalWP site, activate the theme, and check the homepage renders correctly."
+              ]
+            },
+            "testing_contact": {
+              "type": "string",
+              "description": "GitHub username or email of the person responsible for manual testing. The agent will mention this person in the PR when manual testing is required.",
+              "examples": ["@marcusquinn", "qa@example.com"]
+            }
+          }
+        }
+
+      }
+    },
+
+    "proof_log": {
+      "type": "object",
+      "description": "Configuration for the testing proof log (t1660.5). Controls how test results are recorded in the task completion audit trail.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to record testing evidence in the proof log when task-complete-helper.sh is called with --testing-level."
+        },
+        "log_path": {
+          "type": "string",
+          "default": ".aidevops/proof-log.jsonl",
+          "description": "Path to the proof log file, relative to project root. JSONL format, one record per task completion.",
+          "examples": [".aidevops/proof-log.jsonl", "logs/testing-proof.jsonl"]
+        },
+        "include_screenshots": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether to capture and store screenshots as part of runtime-verified evidence. Requires browser-qa-helper.sh (t1660.3)."
+        }
+      }
+    },
+
+    "notes": {
+      "type": "string",
+      "description": "Free-text notes about the testing setup for this project. Shown to the agent when it reads this file. Use to document quirks, known issues, or manual steps required before testing.",
+      "examples": [
+        "Requires NEXT_PUBLIC_API_URL in .env.local before running dev server.",
+        "Docker must be running before starting. First run takes ~2 minutes to pull images.",
+        "LocalWP site must be started manually in the Local app before running tests."
+      ]
+    }
+  },
+
+  "$defs": {
+    "testing_level": {
+      "type": "string",
+      "enum": ["self-assessed", "unit-tested", "runtime-verified"],
+      "description": "Testing rigour level. self-assessed: code review only. unit-tested: automated test suite passes. runtime-verified: application started and behaviour confirmed."
+    }
+  }
+}
