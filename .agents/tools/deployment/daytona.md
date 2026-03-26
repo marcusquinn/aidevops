@@ -304,19 +304,23 @@ all_sandboxes = daytona.list()
 ### Python (Async)
 
 ```python
+import asyncio
 from daytona import AsyncDaytona, CreateSandboxFromImageParams, Resources, Image
 
-daytona = AsyncDaytona()
+async def main():
+    daytona = AsyncDaytona()
 
-image = Image.base("alpine:3.18").pip_install(["numpy"])
-sandbox = await daytona.create(CreateSandboxFromImageParams(
-    image=image,
-    language="python",
-    resources=Resources(cpu=2, memory=4),
-), timeout=120, on_snapshot_create_logs=lambda chunk: print(chunk, end=""))
+    image = Image.base("alpine:3.18").pip_install(["numpy"])
+    sandbox = await daytona.create(CreateSandboxFromImageParams(
+        image=image,
+        language="python",
+        resources=Resources(cpu=2, memory=4),
+    ), timeout=120, on_snapshot_create_logs=lambda chunk: print(chunk, end=""))
 
-result = await sandbox.process.code_run('import numpy; print(numpy.__version__)')
-await daytona.delete(sandbox)
+    result = await sandbox.process.code_run('import numpy; print(numpy.__version__)')
+    await daytona.delete(sandbox)
+
+asyncio.run(main())
 ```
 
 ### TypeScript
@@ -356,16 +360,16 @@ Base URL: `https://app.daytona.io/api` — `Authorization: Bearer $DAYTONA_API_K
 
 ```bash
 AUTH="Authorization: Bearer $DAYTONA_API_KEY"
-curl -H "$AUTH" https://app.daytona.io/api/sandboxes                                          # list
+curl -H "$AUTH" https://app.daytona.io/api/sandbox                                            # list
 curl -X POST -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"template":"python-3.11","resources":{"cpus":2,"memory":4,"disk":10}}' \
-  https://app.daytona.io/api/sandboxes                                                        # create
-curl -X POST -H "$AUTH" https://app.daytona.io/api/sandboxes/<id>/start                      # start
-curl -X POST -H "$AUTH" https://app.daytona.io/api/sandboxes/<id>/stop                       # stop
-curl -X DELETE -H "$AUTH" https://app.daytona.io/api/sandboxes/<id>                          # delete
+  -d '{"image":"python:3.11-slim","cpu":2,"memory":4,"disk":10}' \
+  https://app.daytona.io/api/sandbox                                                          # create
+curl -X POST -H "$AUTH" https://app.daytona.io/api/sandbox/<id>/start                        # start
+curl -X POST -H "$AUTH" https://app.daytona.io/api/sandbox/<id>/stop                         # stop
+curl -X DELETE -H "$AUTH" https://app.daytona.io/api/sandbox/<id>                            # delete
 curl -X POST -H "$AUTH" -H "Content-Type: application/json" \
   -d '{"command":"python script.py","timeout":60}' \
-  https://app.daytona.io/api/sandboxes/<id>/exec                                              # exec
+  https://app.daytona.io/api/sandbox/<id>/exec                                                # exec
 ```
 
 ## Comparison
@@ -394,7 +398,7 @@ daytona-helper.sh status <sandbox-id>
 daytona logs <sandbox-id>
 # Causes: resource limits exceeded, template not found, API key expired
 
-# Command timeout — increase or use background + poll
+# Command timeout — increase the timeout parameter
 result = sandbox.process.exec("long-running-command", timeout=300)
 
 # Port not accessible — verify listening, then re-expose
