@@ -557,7 +557,11 @@ _sandbox_exec_with_pgkill() {
 
 	# Secondary watchdog (GH#6413): independent wall-clock timeout enforcement.
 	# 10% grace period avoids racing with the primary loop's normal timeout.
-	_sandbox_spawn_watchdog "$t_secs" "$child_pid" "$child_pgid" "$child_start_token" "$t_watchdog_marker" &
+	# GH#6538: use _sandbox_spawn_watchdog_bg so the watchdog process appears
+	# as "bash -c ... sandbox-watchdog" in ps, not as "sandbox-exec-helper.sh
+	# run ... opencode run ... /full-loop ..." — preventing it from being
+	# counted as a duplicate active worker by list_active_worker_processes().
+	_sandbox_spawn_watchdog_bg "$t_secs" "$child_pid" "$child_pgid" "$child_start_token" "$t_watchdog_marker"
 	watchdog_pid=$!
 
 	# Poll until the child exits or the deadline is reached.
@@ -653,6 +657,13 @@ _sandbox_get_proc_starttime() {
 # signal, the watchdog re-reads the start time and compares. If they differ,
 # the PID has been recycled — the watchdog logs and exits without signalling.
 #
+# Process identity (GH#6538): the watchdog is spawned via
+# _sandbox_spawn_watchdog_bg which uses "( exec bash -c '...' sandbox-watchdog )"
+# so the resulting process appears as "bash -c ... sandbox-watchdog" in ps,
+# NOT as "sandbox-exec-helper.sh run ... opencode run ... /full-loop ...".
+# This prevents list_active_worker_processes() in pulse-wrapper.sh from
+# counting the watchdog as a second active worker for the same issue.
+#
 # Arguments:
 #   $1 - timeout_secs (original timeout)
 #   $2 - child_pid (PID to monitor)
@@ -745,6 +756,45 @@ _sandbox_spawn_watchdog() {
 		fi
 	fi
 
+	return 0
+}
+
+# Spawn the secondary watchdog as a background process with a distinct process
+# name (GH#6538). Using "( exec bash -c '...' sandbox-watchdog )" replaces the
+# forked subshell's process image so ps shows "bash -c ... sandbox-watchdog"
+# instead of inheriting the parent's execve() command line
+# ("sandbox-exec-helper.sh run ... -- opencode run ... /full-loop ...").
+#
+# Without this, list_active_worker_processes() in pulse-wrapper.sh matches the
+# watchdog on /full-loop + opencode and counts it as a second active worker for
+# the same issue — causing duplicate dispatch, git conflicts, and inflated
+# struggle ratios (GH#6538).
+#
+# The watchdog body is sourced from the parent script so all helper functions
+# (_sandbox_get_proc_starttime, log_sandbox, etc.) are available in the child.
+# BASH_SOURCE[0] is the canonical path to this script file.
+#
+# Arguments: same as _sandbox_spawn_watchdog ($1-$5)
+# Returns: 0 always (background job; caller captures PID via $!)
+_sandbox_spawn_watchdog_bg() {
+	local bg_timeout="$1"
+	local bg_pid="$2"
+	local bg_pgid="$3"
+	local bg_start_token="$4"
+	local bg_marker="$5"
+	local bg_script="${BASH_SOURCE[0]}"
+
+	# exec replaces the subshell's process image. The resulting process shows
+	# as "bash -c <body> sandbox-watchdog <args>" in ps — no sandbox-exec-helper.sh,
+	# no opencode, no /full-loop — so worker-counting filters skip it.
+	(
+		exec bash --norc --noprofile -c '
+			script="$1"; shift
+			# shellcheck source=/dev/null
+			source "$script" 2>/dev/null || true
+			_sandbox_spawn_watchdog "$@"
+		' sandbox-watchdog "$bg_script" "$bg_timeout" "$bg_pid" "$bg_pgid" "$bg_start_token" "$bg_marker"
+	) &
 	return 0
 }
 
