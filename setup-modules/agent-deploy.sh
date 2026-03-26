@@ -324,14 +324,33 @@ deploy_aidevops_agents() {
 inject_agents_reference() {
 	print_info "Adding aidevops reference to AI assistant configurations..."
 
+	# Delegate to prompt-injection-adapter.sh (t1665.3) which handles all runtimes.
+	# The adapter deploys AGENTS.md references via each runtime's native mechanism:
+	# OpenCode (json-instructions), Claude (AGENTS.md autodiscovery), Codex, Cursor,
+	# Droid, Gemini, Windsurf, Continue, Kilo, Kiro, Aider.
+	local adapter_script="${INSTALL_DIR}/.agents/scripts/prompt-injection-adapter.sh"
+
+	if [[ -f "$adapter_script" ]]; then
+		# shellcheck source=/dev/null
+		source "$adapter_script"
+		deploy_prompts_for_all_runtimes
+	else
+		# Fallback: adapter not yet deployed — use legacy inline logic
+		# This path is only hit during initial setup before .agents/ is deployed.
+		print_warning "prompt-injection-adapter.sh not found — using legacy deployment"
+		_inject_agents_reference_legacy
+	fi
+
+	return 0
+}
+
+# Legacy fallback for inject_agents_reference — used only when the adapter
+# script is not yet available (e.g., during initial setup before .agents/ deploy).
+# Will be removed once t1665 migration is complete.
+_inject_agents_reference_legacy() {
 	local reference_line='Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.'
 
 	# AI assistant agent directories - these receive AGENTS.md reference
-	# Format: "config_dir:agents_subdir" where agents_subdir is the folder containing agent files
-	# Only Claude Code (companion CLI) and .opencode are included here.
-	# OpenCode excluded: its agent/ dir treats every .md as a subagent, so AGENTS.md
-	# would show as a mode. OpenCode gets the reference via opencode.json instructions
-	# field and the config-root AGENTS.md (deployed by deploy_opencode_greeting below).
 	local ai_agent_dirs=(
 		"$HOME/.claude:commands"
 		"$HOME/.opencode:."
@@ -347,16 +366,12 @@ inject_agents_reference() {
 
 		# Only process if the config directory exists (tool is installed)
 		if [[ -d "$config_dir" ]]; then
-			# Create agents subdirectory if needed
 			mkdir -p "$agents_dir"
 
-			# Check if AGENTS.md exists and has our reference
 			if [[ -f "$agents_file" ]]; then
-				# Check first line for our reference
 				local first_line
 				first_line=$(head -1 "$agents_file" 2>/dev/null || echo "")
-				if [[ "$first_line" != *"~/.aidevops/agents/AGENTS.md"* ]]; then
-					# Prepend reference to existing file
+				if [[ "$first_line" != *"aidevops/agents/AGENTS.md"* ]]; then
 					local temp_file
 					temp_file=$(mktemp)
 					trap 'rm -f "${temp_file:-}"' RETURN
@@ -370,7 +385,6 @@ inject_agents_reference() {
 					print_info "Reference already exists in $agents_file"
 				fi
 			else
-				# Create new file with just the reference
 				echo "$reference_line" >"$agents_file"
 				print_success "Created $agents_file with aidevops reference"
 				((++updated_count))
@@ -384,17 +398,15 @@ inject_agents_reference() {
 		print_success "Updated $updated_count AI assistant configuration(s)"
 	fi
 
-	# Clean up stale AGENTS.md from OpenCode agent dir (was incorrectly showing as subagent)
+	# Clean up stale AGENTS.md from OpenCode agent dir
 	rm -f "$HOME/.config/opencode/agent/AGENTS.md"
 
 	# Deploy OpenCode config-level AGENTS.md from managed template
-	# This controls the session greeting (auto-loaded by OpenCode from config root)
 	local opencode_config_dir="$HOME/.config/opencode"
 	local opencode_config_agents="$opencode_config_dir/AGENTS.md"
 	local template_source="$INSTALL_DIR/templates/opencode-config-agents.md"
 
 	if [[ -d "$opencode_config_dir" && -f "$template_source" ]]; then
-		# Backup if file exists and differs from template
 		if [[ -f "$opencode_config_agents" ]]; then
 			if ! diff -q "$template_source" "$opencode_config_agents" &>/dev/null; then
 				create_backup_with_rotation "$opencode_config_agents" "opencode-agents"
