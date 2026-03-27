@@ -1313,7 +1313,7 @@ _rotate_execute() {
 	local provider="$1"
 	POOL_FILE_PATH="$POOL_FILE" AUTH_FILE_PATH="$OPENCODE_AUTH_FILE" \
 		PROVIDER="$provider" python3 -c "
-import sys, json, os, fcntl, tempfile, time, urllib.request, urllib.error
+import sys, json, os, tempfile, time, urllib.request, urllib.error
 from datetime import datetime, timezone
 
 pool_path = os.environ['POOL_FILE_PATH']
@@ -1330,6 +1330,41 @@ CLIENT_IDS = {
     'openai':    'app_EMoamEEZ73f0CkXaXp7hrann',
     'google':    '681255809395-oo8ft6t5t0rnmhfqgpnkqtev5b9a2i5j.apps.googleusercontent.com',
 }
+
+# ---------------------------------------------------------------------------
+# Cross-platform exclusive file lock (stdlib only, no pip dependencies).
+# Unix:    fcntl.flock  — POSIX advisory lock, inherited across fork.
+# Windows: msvcrt.locking — NT byte-range lock on byte 0 of the lock file.
+#          Retries up to ~30 s with 100 ms sleep between attempts.
+# ---------------------------------------------------------------------------
+def _acquire_lock(lock_fd):
+    if sys.platform == 'win32':
+        import msvcrt
+        deadline = time.time() + 30
+        while True:
+            try:
+                lock_fd.seek(0)
+                msvcrt.locking(lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
+                return
+            except OSError:
+                if time.time() >= deadline:
+                    raise
+                time.sleep(0.1)
+    else:
+        import fcntl
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+def _release_lock(lock_fd):
+    if sys.platform == 'win32':
+        import msvcrt
+        try:
+            lock_fd.seek(0)
+            msvcrt.locking(lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+    else:
+        import fcntl
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
 
 def _atomic_write_json(path, data):
     d = os.path.dirname(path)
@@ -1377,7 +1412,7 @@ def _try_refresh(account, provider, now_ms):
 lock_path = pool_path + '.lock'
 lock_fd = open(lock_path, 'w')
 try:
-    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    _acquire_lock(lock_fd)
 
     with open(pool_path) as f:
         pool = json.load(f)
@@ -1442,7 +1477,7 @@ try:
     _atomic_write_json(pool_path, pool)
 
 finally:
-    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    _release_lock(lock_fd)
     lock_fd.close()
 
 print('OK')
@@ -1562,7 +1597,7 @@ cmd_refresh() {
 	result=$(POOL_FILE_PATH="$POOL_FILE" AUTH_FILE_PATH="$OPENCODE_AUTH_FILE" \
 		PROVIDER="$provider" TARGET_EMAIL="$target_email" \
 		UA_HEADER="$USER_AGENT" python3 -c "
-import sys, json, os, fcntl, tempfile, urllib.request, urllib.error, time
+import sys, json, os, tempfile, urllib.request, urllib.error, time
 
 pool_path = os.environ['POOL_FILE_PATH']
 auth_path = os.environ['AUTH_FILE_PATH']
@@ -1587,10 +1622,45 @@ if not token_url or not client_id:
     print('ERROR:no_endpoint')
     sys.exit(0)
 
+# ---------------------------------------------------------------------------
+# Cross-platform exclusive file lock (stdlib only, no pip dependencies).
+# Unix:    fcntl.flock  — POSIX advisory lock, inherited across fork.
+# Windows: msvcrt.locking — NT byte-range lock on byte 0 of the lock file.
+#          Retries up to ~30 s with 100 ms sleep between attempts.
+# ---------------------------------------------------------------------------
+def _acquire_lock(lock_fd):
+    if sys.platform == 'win32':
+        import msvcrt
+        deadline = time.time() + 30
+        while True:
+            try:
+                lock_fd.seek(0)
+                msvcrt.locking(lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
+                return
+            except OSError:
+                if time.time() >= deadline:
+                    raise
+                time.sleep(0.1)
+    else:
+        import fcntl
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+def _release_lock(lock_fd):
+    if sys.platform == 'win32':
+        import msvcrt
+        try:
+            lock_fd.seek(0)
+            msvcrt.locking(lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+    else:
+        import fcntl
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+
 lock_path = pool_path + '.lock'
 lock_fd = open(lock_path, 'w')
 try:
-    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    _acquire_lock(lock_fd)
 
     with open(pool_path) as f:
         pool = json.load(f)
@@ -1697,7 +1767,7 @@ try:
                         break
 
 finally:
-    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    _release_lock(lock_fd)
     lock_fd.close()
 
 for e in refreshed:
