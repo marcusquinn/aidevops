@@ -89,8 +89,29 @@ _brew_pkg_upgrade_cmd() {
 	# sudo -n is used for apt/dnf paths: if sudo requires a password (non-TTY
 	# or container context), we emit a clear message instead of hanging on a
 	# password prompt or burning the 120s update timeout.
-	printf 'if command -v brew >/dev/null 2>&1; then brew upgrade %s; elif command -v apt-get >/dev/null 2>&1; then if sudo -n true 2>/dev/null; then sudo apt-get install -y --only-upgrade %s; else echo "sudo requires a password — rerun with elevated privileges or as root" >&2; exit 1; fi; elif command -v dnf >/dev/null 2>&1; then if sudo -n true 2>/dev/null; then sudo dnf upgrade -y %s; else echo "sudo requires a password — rerun with elevated privileges or as root" >&2; exit 1; fi; else echo "No supported package manager found (brew/apt-get/dnf)" >&2; exit 1; fi' \
-		"$brew_pkg" "$sys_pkg" "$sys_pkg"
+	local _sudo_check='if sudo -n true 2>/dev/null; then'
+	local _sudo_fail='else echo "sudo requires a password — rerun with elevated privileges or as root" >&2; exit 1; fi'
+	local _no_pm='echo "No supported package manager found (brew/apt-get/dnf)" >&2; exit 1'
+	printf 'if command -v brew >/dev/null 2>&1; then brew upgrade %s; elif command -v apt-get >/dev/null 2>&1; then %s sudo apt-get install -y --only-upgrade %s; %s; elif command -v dnf >/dev/null 2>&1; then %s sudo dnf upgrade -y %s; %s; else %s; fi' \
+		"$brew_pkg" \
+		"$_sudo_check" "$sys_pkg" "$_sudo_fail" \
+		"$_sudo_check" "$sys_pkg" "$_sudo_fail" \
+		"$_no_pm"
+	return 0
+}
+
+# Build a PEP 668-safe upgrade command for a pip-category package.
+# Prefers pipx (isolated environments), falls back to uv tool install,
+# and emits a clear error if neither is available.
+# The returned string is executed via `bash -c` so it must be self-contained.
+# $1 = pip package name (e.g. "beads-viewer", "dspy-ai", "crawl4ai")
+# shellcheck disable=SC2016  # Single quotes intentional: bash -c payload
+_pip_pkg_upgrade_cmd() {
+	local pip_pkg="$1"
+	local _no_tool="echo 'Install pipx or uv to upgrade ${pip_pkg} on externally-managed Python' >&2; exit 1"
+	printf 'if command -v pipx >/dev/null 2>&1; then pipx install %s --force; elif command -v uv >/dev/null 2>&1; then uv tool install %s --force; else %s; fi' \
+		"$pip_pkg" "$pip_pkg" "$_no_tool"
+	return 0
 }
 
 # Tool definitions
@@ -124,9 +145,9 @@ BREW_TOOLS=(
 )
 
 PIP_TOOLS=(
-	"pip|Beads Viewer|beads_viewer|--version|beads-viewer|if command -v pipx >/dev/null 2>&1; then pipx install beads-viewer --force; elif command -v uv >/dev/null 2>&1; then uv tool install beads-viewer --force; else echo 'Install pipx or uv to upgrade beads-viewer on externally-managed Python' >&2; exit 1; fi"
-	"pip|DSPy|dspy|--version|dspy-ai|if command -v pipx >/dev/null 2>&1; then pipx install dspy-ai --force; elif command -v uv >/dev/null 2>&1; then uv tool install dspy-ai --force; else echo 'Install pipx or uv to upgrade dspy-ai on externally-managed Python' >&2; exit 1; fi"
-	"pip|Crawl4AI|crawl4ai|--version|crawl4ai|if command -v pipx >/dev/null 2>&1; then pipx install crawl4ai --force; elif command -v uv >/dev/null 2>&1; then uv tool install crawl4ai --force; else echo 'Install pipx or uv to upgrade crawl4ai on externally-managed Python' >&2; exit 1; fi"
+	"pip|Beads Viewer|beads_viewer|--version|beads-viewer|$(_pip_pkg_upgrade_cmd beads-viewer)"
+	"pip|DSPy|dspy|--version|dspy-ai|$(_pip_pkg_upgrade_cmd dspy-ai)"
+	"pip|Crawl4AI|crawl4ai|--version|crawl4ai|$(_pip_pkg_upgrade_cmd crawl4ai)"
 	"pip|Analytics MCP|analytics-mcp|--version|analytics-mcp|pipx upgrade analytics-mcp"
 	"pip|Outscraper MCP|outscraper-mcp-server|--version|outscraper-mcp-server|uv tool upgrade outscraper-mcp-server"
 )
