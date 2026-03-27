@@ -168,11 +168,12 @@ async function configHook(config) {
 | Tool | Description |
 |------|-------------|
 | `aidevops` | Run aidevops CLI commands (status, repos, features, etc.) |
-| `aidevops_memory_recall` | Search cross-session memory |
-| `aidevops_memory_store` | Store new memories |
+| `aidevops_memory` | Recall or store cross-session memories (action: "recall"\|"store") |
 | `aidevops_pre_edit_check` | Run pre-edit git safety check |
-| `aidevops_quality_check` | Run quality pipeline on a file or full pre-commit checks |
 | `aidevops_install_hooks` | Install/manage git pre-commit quality hooks |
+| `model-accounts-pool` | OAuth account pool management (provider credential rotation) |
+
+Note: `aidevops_quality_check` was removed — quality checks run automatically via the `tool.execute.before` hook on every Write/Edit. An explicit LLM-callable tool was redundant.
 
 #### 3. Quality Hooks (t008.3)
 
