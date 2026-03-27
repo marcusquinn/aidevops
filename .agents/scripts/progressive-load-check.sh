@@ -92,23 +92,7 @@ check_inline_only() {
 	return 0
 }
 
-main() {
-	if [[ ! -f "$BUILD_TXT" ]]; then
-		printf "ERROR: build.txt not found at %s\n" "$BUILD_TXT" >&2
-		return 2
-	fi
-
-	if [[ ! -f "$AGENTS_MD" ]]; then
-		printf "ERROR: AGENTS.md not found at %s\n" "$AGENTS_MD" >&2
-		return 2
-	fi
-
-	[[ "$QUIET" != "--quiet" ]] && printf "Progressive Load Safety Check\n"
-	[[ "$QUIET" != "--quiet" ]] && printf "Source: %s\n" "$AGENTS_DIR"
-
-	# -------------------------------------------------------------------------
-	# build.txt extractions
-	# -------------------------------------------------------------------------
+check_build_txt_extractions() {
 	[[ "$QUIET" != "--quiet" ]] && printf "\n--- build.txt extractions ---"
 
 	check_extraction \
@@ -157,9 +141,10 @@ main() {
 		"$BUILD_TXT" \
 		"review-bot-gate-helper\.sh"
 
-	# -------------------------------------------------------------------------
-	# AGENTS.md extractions
-	# -------------------------------------------------------------------------
+	return 0
+}
+
+check_agents_md_extractions() {
 	[[ "$QUIET" != "--quiet" ]] && printf "\n--- AGENTS.md extractions ---"
 
 	check_extraction \
@@ -194,9 +179,10 @@ main() {
 		log_info "not yet extracted (open PR #6832) — still inline in AGENTS.md"
 	fi
 
-	# -------------------------------------------------------------------------
-	# Summary
-	# -------------------------------------------------------------------------
+	return 0
+}
+
+print_summary() {
 	printf "\n"
 	if [[ "$FAIL" -eq 0 ]]; then
 		printf "RESULT: PASS (%d checks passed, 0 failures)\n" "$PASS"
@@ -205,6 +191,25 @@ main() {
 		printf "RESULT: FAIL (%d passed, %d failed)\n" "$PASS" "$FAIL"
 		return 1
 	fi
+}
+
+main() {
+	if [[ ! -f "$BUILD_TXT" ]]; then
+		printf "ERROR: build.txt not found at %s\n" "$BUILD_TXT" >&2
+		return 2
+	fi
+
+	if [[ ! -f "$AGENTS_MD" ]]; then
+		printf "ERROR: AGENTS.md not found at %s\n" "$AGENTS_MD" >&2
+		return 2
+	fi
+
+	[[ "$QUIET" != "--quiet" ]] && printf "Progressive Load Safety Check\n"
+	[[ "$QUIET" != "--quiet" ]] && printf "Source: %s\n" "$AGENTS_DIR"
+
+	check_build_txt_extractions
+	check_agents_md_extractions
+	print_summary
 }
 
 main "$@"
