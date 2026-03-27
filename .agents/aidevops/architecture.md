@@ -46,6 +46,20 @@ Key integrations:
 - **Commands**: 41 slash commands deployed to `~/.config/opencode/commands/`
 - **Plugins**: Compaction plugin at `.agents/plugins/opencode-aidevops/`
 - **Prompts**: Custom system prompt at `.agents/prompts/build.txt`
+- **OpenCode tools**: `.opencode/tool/*.ts` — native OpenCode plugin tools (loaded by the Bun runtime)
+
+### OpenCode Native Tools (`.opencode/tool/`)
+
+Files in `.opencode/tool/` are **OpenCode plugin tools** — TypeScript modules loaded by the Bun runtime that extend the agent's tool palette. They are NOT shell-script wrappers.
+
+**Classification rule:** Before deleting or disabling any `.opencode/tool/*.ts` file, check whether it contains unique logic (DB access, API calls, state management) or is a thin wrapper that shells out to a helper script. Only wrappers are redundant; tools with native logic (like `bun:sqlite` access) have no shell equivalent.
+
+| File | Type | Purpose |
+|------|------|---------|
+| `ai-research.ts` | Native logic | Spawns research queries via Anthropic API |
+| `session-rename.ts` | Native logic | Renames sessions via direct SQLite write to `~/.local/share/opencode/opencode.db` — no HTTP API exists for this |
+
+**Why this matters:** `session-rename.ts` was previously deleted by a cleanup task that treated all `.opencode/tool/` files as redundant wrappers. The tool contains unique logic — OpenCode CLI sessions don't expose an HTTP API; `Session.setTitle()` is a Drizzle ORM write to the local SQLite DB. There is no shell-script equivalent.
 
 ## Intelligence Over Scripts (Core Principle)
 
