@@ -101,11 +101,11 @@ check_build_txt_extractions() {
 		"screenshot-limits.md" \
 		"reference/screenshot-limits\.md"
 
-	check_extraction \
-		"Secret Handling (8.1-8.4)" \
+	# Secret Handling (8.1-8.4): reference file is a supplement; inline content kept in build.txt
+	check_inline_only \
+		"Secret Handling (8.1-8.4) — inline + reference/secret-handling.md supplement" \
 		"$BUILD_TXT" \
-		"secret-handling.md" \
-		"reference/secret-handling\.md"
+		"8\.1 Session transcript|8\.2 Secret as command|8\.3 Post-execution|8\.4 App config"
 
 	check_extraction \
 		"External Repo Issue/PR Submission" \
@@ -113,11 +113,11 @@ check_build_txt_extractions() {
 		"external-repo-submissions.md" \
 		"reference/external-repo-submissions\.md"
 
-	check_extraction \
-		"Bash 3.2 Compatibility" \
+	# Bash 3.2 Compatibility: reference file is a supplement; inline content kept in build.txt
+	check_inline_only \
+		"Bash 3.2 Compatibility — inline + reference/bash-compat.md supplement" \
 		"$BUILD_TXT" \
-		"bash-compat.md" \
-		"reference/bash-compat\.md"
+		"Bash 3\.2 Compatibility|bash 3\.2"
 
 	check_extraction \
 		"Conversational Memory Lookup" \
@@ -153,31 +153,17 @@ check_agents_md_extractions() {
 		"domain-index.md" \
 		"reference/domain-index\.md"
 
-	# Self-Improvement and Agent Routing are in open PRs — check if extracted
-	local self_imp_ref="$REFERENCE_DIR/self-improvement.md"
-	local agent_routing_ref="$REFERENCE_DIR/agent-routing.md"
+	# Self-Improvement: reference file is a supplement; inline content kept in AGENTS.md
+	check_inline_only \
+		"Self-Improvement — inline + reference/self-improvement.md supplement" \
+		"$AGENTS_MD" \
+		"## Self-Improvement|framework-issue-helper\.sh"
 
-	[[ "$QUIET" != "--quiet" ]] && printf "\n[Self-Improvement]\n"
-	if [[ -f "$self_imp_ref" ]]; then
-		if grep -qE "reference/self-improvement\.md" "$AGENTS_MD" 2>/dev/null; then
-			log_pass "extracted: reference file + inline trigger both present"
-		else
-			log_fail "reference file exists but inline trigger MISSING in AGENTS.md"
-		fi
-	else
-		log_info "not yet extracted (open PR #6837) — still inline in AGENTS.md"
-	fi
-
-	[[ "$QUIET" != "--quiet" ]] && printf "\n[Agent Routing]\n"
-	if [[ -f "$agent_routing_ref" ]]; then
-		if grep -qE "reference/agent-routing\.md" "$AGENTS_MD" 2>/dev/null; then
-			log_pass "extracted: reference file + inline trigger both present"
-		else
-			log_fail "reference file exists but inline trigger MISSING in AGENTS.md"
-		fi
-	else
-		log_info "not yet extracted (open PR #6832) — still inline in AGENTS.md"
-	fi
+	# Agent Routing: reference file is a supplement; inline content kept in AGENTS.md
+	check_inline_only \
+		"Agent Routing — inline + reference/agent-routing.md supplement" \
+		"$AGENTS_MD" \
+		"## Agent Routing|headless-runtime-helper\.sh"
 
 	return 0
 }
