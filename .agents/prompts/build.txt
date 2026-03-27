@@ -147,7 +147,7 @@ Reference code as `file_path:line_number` for easy navigation.
 - Secrets: `aidevops secret set NAME` (gopass) or `~/.config/aidevops/credentials.sh` (600 perms)
 - NEVER accept secret values in conversation.
 #
-# 8.1 Transcript exposure (t1457)
+# 8.1 Session transcript exposure model (t1457)
 - Command I/O is transcript-visible. If printing it leaks a secret in chat, it leaks in tool output too.
 - Secret setup: warn "Never paste secret values into AI chat."
 - Prefer secret-safe patterns: key-name listings, masked previews, exit-code checks.
