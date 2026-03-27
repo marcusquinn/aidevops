@@ -3115,6 +3115,122 @@ ISSUE_BODY_EOF
 	return 0
 }
 
+# Check if the open simplification-debt issue backlog exceeds the cap.
+# Arguments: $1 - aidevops_slug, $2 - cap (default 100), $3 - log_prefix
+# Exit codes: 0 = under cap (safe to create), 1 = at/over cap (skip)
+_complexity_scan_check_open_cap() {
+	local aidevops_slug="$1"
+	local cap="${2:-100}"
+	local log_prefix="${3:-Complexity scan}"
+
+	local total_open
+	total_open=$(gh api graphql -f query="query { repository(owner:\"${aidevops_slug%%/*}\", name:\"${aidevops_slug##*/}\") { issues(labels:[\"simplification-debt\"], states:OPEN) { totalCount } } }" \
+		--jq '.data.repository.issues.totalCount' 2>/dev/null) || total_open="0"
+	if [[ "${total_open:-0}" -ge "$cap" ]]; then
+		echo "[pulse-wrapper] ${log_prefix}: skipping — ${total_open} open simplification-debt issues (cap: ${cap})" >>"$LOGFILE"
+		return 1
+	fi
+	return 0
+}
+
+# Process a single agent doc file for simplification issue creation (GH#5627).
+# Checks simplification state, dedup, regression, builds title/body, creates issue.
+#
+# Arguments:
+#   $1 - file_path (repo-relative)
+#   $2 - line_count
+#   $3 - aidevops_slug
+#   $4 - aidevops_path
+#   $5 - state_file (may be empty)
+#   $6 - maintainer
+# Output: single line to stdout — "created", "skipped", or "failed"
+_complexity_scan_process_single_md_file() {
+	local file_path="$1"
+	local line_count="$2"
+	local aidevops_slug="$3"
+	local aidevops_path="$4"
+	local state_file="$5"
+	local maintainer="$6"
+
+	# Check simplification state — skip if file was simplified and hasn't changed
+	if [[ -n "$state_file" && -n "$aidevops_path" ]]; then
+		local file_status
+		file_status=$(_simplification_state_check "$aidevops_path" "$file_path" "$state_file")
+		if [[ "$file_status" == "unchanged" ]]; then
+			echo "[pulse-wrapper] Complexity scan (.md): skipping ${file_path} — already simplified (hash unchanged)" >>"$LOGFILE"
+			echo "skipped"
+			return 0
+		fi
+	fi
+
+	if _complexity_scan_has_existing_issue "$aidevops_slug" "$file_path"; then
+		echo "[pulse-wrapper] Complexity scan (.md): skipping ${file_path} — existing open issue" >>"$LOGFILE"
+		echo "skipped"
+		return 0
+	fi
+
+	local topic_label=""
+	if [[ -n "$aidevops_path" ]]; then
+		topic_label=$(_complexity_scan_extract_md_topic_label "$aidevops_path" "$file_path" 2>/dev/null || true)
+	fi
+
+	# Determine if this is a regression (file changed after simplification)
+	local is_regression=false
+	if [[ -n "$state_file" && -n "$aidevops_path" ]]; then
+		local regression_check
+		regression_check=$(_simplification_state_check "$aidevops_path" "$file_path" "$state_file")
+		if [[ "$regression_check" == "regressed" ]]; then
+			is_regression=true
+		fi
+	fi
+
+	local issue_title="simplification: tighten agent doc ${file_path} (${line_count} lines)"
+	if [[ -n "$topic_label" ]]; then
+		issue_title="simplification: tighten agent doc ${topic_label} (${file_path}, ${line_count} lines)"
+	fi
+	if [[ "$is_regression" == true ]]; then
+		issue_title="regression: ${issue_title}"
+	fi
+
+	local issue_body
+	issue_body=$(_complexity_scan_build_md_issue_body "$file_path" "$line_count" "$topic_label")
+	if [[ "$is_regression" == true ]]; then
+		local prev_pr
+		prev_pr=$(jq -r --arg fp "$file_path" '.files[$fp].pr // 0' "$state_file" 2>/dev/null) || prev_pr="0"
+		issue_body="${issue_body}
+
+### Regression note
+
+This file was previously simplified (PR #${prev_pr}) but has since been modified. The content hash no longer matches the post-simplification state. Please re-evaluate."
+	fi
+
+	local create_ok=false
+	if [[ "$is_regression" == true ]]; then
+		gh issue create --repo "$aidevops_slug" \
+			--title "$issue_title" \
+			--label "simplification-debt" --label "needs-maintainer-review" --label "tier:thinking" --label "regression" \
+			--assignee "$maintainer" \
+			--body "$issue_body" >/dev/null 2>&1 && create_ok=true
+	else
+		gh issue create --repo "$aidevops_slug" \
+			--title "$issue_title" \
+			--label "simplification-debt" --label "needs-maintainer-review" --label "tier:thinking" \
+			--assignee "$maintainer" \
+			--body "$issue_body" >/dev/null 2>&1 && create_ok=true
+	fi
+
+	if [[ "$create_ok" == true ]]; then
+		local log_suffix=""
+		if [[ "$is_regression" == true ]]; then log_suffix=" [REGRESSION]"; fi
+		echo "[pulse-wrapper] Complexity scan (.md): created issue for ${file_path} (${line_count} lines)${log_suffix}" >>"$LOGFILE"
+		echo "created"
+	else
+		echo "[pulse-wrapper] Complexity scan (.md): failed to create issue for ${file_path}" >>"$LOGFILE"
+		echo "failed"
+	fi
+	return 0
+}
+
 # Create GitHub issues for agent docs flagged for simplification review.
 # Uses tier:thinking label (opus) because doc simplification requires deep
 # reasoning to distinguish noise from institutional knowledge.
@@ -3127,15 +3243,8 @@ _complexity_scan_create_md_issues() {
 	local issues_created=0
 	local issues_skipped=0
 
-	# Total-open cap: stop creating when backlog is already large.
-	# Prevents unbounded issue accumulation when issues aren't being resolved.
-	local total_open
-	total_open=$(gh api graphql -f query="query { repository(owner:\"${aidevops_slug%%/*}\", name:\"${aidevops_slug##*/}\") { issues(labels:[\"simplification-debt\"], states:OPEN) { totalCount } } }" \
-		--jq '.data.repository.issues.totalCount' 2>/dev/null) || total_open="0"
-	if [[ "${total_open:-0}" -ge 100 ]]; then
-		echo "[pulse-wrapper] Complexity scan (.md): skipping — ${total_open} open simplification-debt issues (cap: 100)" >>"$LOGFILE"
-		return 0
-	fi
+	# Total-open cap: stop creating when backlog is already large
+	_complexity_scan_check_open_cap "$aidevops_slug" 100 "Complexity scan (.md)" || return 0
 
 	local maintainer
 	maintainer=$(jq -r --arg slug "$aidevops_slug" \
@@ -3160,82 +3269,15 @@ _complexity_scan_create_md_issues() {
 		[[ -n "$file_path" ]] || continue
 		[[ "$issues_created" -ge "$max_issues_per_run" ]] && break
 
-		# Check simplification state — skip if file was simplified and hasn't changed
-		if [[ -n "$state_file" && -n "$aidevops_path" ]]; then
-			local file_status
-			file_status=$(_simplification_state_check "$aidevops_path" "$file_path" "$state_file")
-			if [[ "$file_status" == "unchanged" ]]; then
-				echo "[pulse-wrapper] Complexity scan (.md): skipping ${file_path} — already simplified (hash unchanged)" >>"$LOGFILE"
-				issues_skipped=$((issues_skipped + 1))
-				continue
-			fi
-			# "regressed" files fall through — they get a new issue with regression label
-		fi
+		local result
+		result=$(_complexity_scan_process_single_md_file "$file_path" "$line_count" \
+			"$aidevops_slug" "$aidevops_path" "$state_file" "$maintainer")
 
-		if _complexity_scan_has_existing_issue "$aidevops_slug" "$file_path"; then
-			echo "[pulse-wrapper] Complexity scan (.md): skipping ${file_path} — existing open issue" >>"$LOGFILE"
-			issues_skipped=$((issues_skipped + 1))
-			continue
-		fi
-
-		local topic_label=""
-		if [[ -n "$aidevops_path" ]]; then
-			topic_label=$(_complexity_scan_extract_md_topic_label "$aidevops_path" "$file_path" 2>/dev/null || true)
-		fi
-
-		# Determine if this is a regression (file changed after simplification)
-		local is_regression=false
-		if [[ -n "$state_file" && -n "$aidevops_path" ]]; then
-			local regression_check
-			regression_check=$(_simplification_state_check "$aidevops_path" "$file_path" "$state_file")
-			if [[ "$regression_check" == "regressed" ]]; then
-				is_regression=true
-			fi
-		fi
-
-		local issue_title="simplification: tighten agent doc ${file_path} (${line_count} lines)"
-		if [[ -n "$topic_label" ]]; then
-			issue_title="simplification: tighten agent doc ${topic_label} (${file_path}, ${line_count} lines)"
-		fi
-		if [[ "$is_regression" == true ]]; then
-			issue_title="regression: ${issue_title}"
-		fi
-
-		local issue_body
-		issue_body=$(_complexity_scan_build_md_issue_body "$file_path" "$line_count" "$topic_label")
-		if [[ "$is_regression" == true ]]; then
-			local prev_pr
-			prev_pr=$(jq -r --arg fp "$file_path" '.files[$fp].pr // 0' "$state_file" 2>/dev/null) || prev_pr="0"
-			issue_body="${issue_body}
-
-### Regression note
-
-This file was previously simplified (PR #${prev_pr}) but has since been modified. The content hash no longer matches the post-simplification state. Please re-evaluate."
-		fi
-
-		local create_ok=false
-		if [[ "$is_regression" == true ]]; then
-			gh issue create --repo "$aidevops_slug" \
-				--title "$issue_title" \
-				--label "simplification-debt" --label "needs-maintainer-review" --label "tier:thinking" --label "regression" \
-				--assignee "$maintainer" \
-				--body "$issue_body" >/dev/null 2>&1 && create_ok=true
-		else
-			gh issue create --repo "$aidevops_slug" \
-				--title "$issue_title" \
-				--label "simplification-debt" --label "needs-maintainer-review" --label "tier:thinking" \
-				--assignee "$maintainer" \
-				--body "$issue_body" >/dev/null 2>&1 && create_ok=true
-		fi
-
-		if [[ "$create_ok" == true ]]; then
-			issues_created=$((issues_created + 1))
-			local log_suffix=""
-			if [[ "$is_regression" == true ]]; then log_suffix=" [REGRESSION]"; fi
-			echo "[pulse-wrapper] Complexity scan (.md): created issue for ${file_path} (${line_count} lines)${log_suffix}" >>"$LOGFILE"
-		else
-			echo "[pulse-wrapper] Complexity scan (.md): failed to create issue for ${file_path}" >>"$LOGFILE"
-		fi
+		case "$result" in
+		created) issues_created=$((issues_created + 1)) ;;
+		skipped) issues_skipped=$((issues_skipped + 1)) ;;
+		*) ;; # failed — logged by helper, no counter change
+		esac
 	done <<<"$scan_results"
 	echo "[pulse-wrapper] Complexity scan (.md) complete: ${issues_created} issues created, ${issues_skipped} skipped (existing/simplified)" >>"$LOGFILE"
 	return 0
@@ -3253,13 +3295,7 @@ _complexity_scan_create_issues() {
 	local issues_skipped=0
 
 	# Total-open cap: stop creating when backlog is already large
-	local total_open
-	total_open=$(gh api graphql -f query="query { repository(owner:\"${aidevops_slug%%/*}\", name:\"${aidevops_slug##*/}\") { issues(labels:[\"simplification-debt\"], states:OPEN) { totalCount } } }" \
-		--jq '.data.repository.issues.totalCount' 2>/dev/null) || total_open="0"
-	if [[ "${total_open:-0}" -ge 100 ]]; then
-		echo "[pulse-wrapper] Complexity scan: skipping — ${total_open} open simplification-debt issues (cap: 100)" >>"$LOGFILE"
-		return 0
-	fi
+	_complexity_scan_check_open_cap "$aidevops_slug" 100 "Complexity scan" || return 0
 
 	local maintainer
 	maintainer=$(jq -r --arg slug "$aidevops_slug" \
