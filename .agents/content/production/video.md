@@ -77,6 +77,6 @@ seed-bracket-helper.sh generate --type product --prompt "Product rotating on whi
 video-gen-helper.sh generate sora "A cat reading a book" sora-2-pro 8 1280x720
 video-gen-helper.sh generate veo "Cinematic mountain sunset" veo-3.1-generate-001 16:9
 
-# Post-production
-real-video-enhancer-helper.sh enhance input.mp4 output.mp4 --scale 2 --fps 60 --denoise
+# Post-production (use --fps 60 for action footage; keep cinematic/non-action at source fps)
+real-video-enhancer-helper.sh enhance input.mp4 output.mp4 --scale 2 --fps 30 --denoise
 ```

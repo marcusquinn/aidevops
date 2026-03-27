@@ -33,3 +33,5 @@ Content Type?
 | Commercial | 16:9 | 15-30s | Gimbal | Veo 3.1 | 4000-4999 (product) / 1000-1999 (people) |
 | Cinematic | 2.39:1 | 10-30s | Dolly/crane | Veo 3.1 | 3000-3999 / 1000-1999 |
 | Documentary | 16:9 | 15-60s | Tripod/handheld | Sora 2 Pro or Veo 3.1 | 2000-2999 / 3000-3999 |
+
+> See Quick Reference above for the full seed range breakdown by content type.

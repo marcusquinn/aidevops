@@ -9,10 +9,14 @@ Increases success rate from 15% to 70%+ by systematically testing seed ranges.
 ```bash
 #!/bin/bash
 set -euo pipefail
+HF_API_KEY="${HF_API_KEY:?Set HF_API_KEY}"
+HF_SECRET="${HF_SECRET:?Set HF_SECRET}"
+: > seed_bracket_results.csv
+echo "seed,job_id" >> seed_bracket_results.csv
 for seed in {4000..4010}; do
   result=$(curl --fail --show-error --silent -X POST \
     'https://platform.higgsfield.ai/v1/image2video/dop' \
-    --header 'hf-api-key: {api-key}' --header 'hf-secret: {secret}' \
+    --header "hf-api-key: ${HF_API_KEY}" --header "hf-secret: ${HF_SECRET}" \
     --data "{\"params\":{\"prompt\":\"[your prompt]\",\"seed\":$seed,\"model\":\"dop-turbo\"}}") \
     || { echo "ERROR: API call failed for seed $seed" >&2; continue; }
   job_id=$(echo "$result" | jq -r '.jobs[0].id // empty' || true)

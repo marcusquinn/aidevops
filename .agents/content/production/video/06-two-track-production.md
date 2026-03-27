@@ -13,7 +13,7 @@ Upload Midjourney output as ingredient, apply VEO framework for animation.
 ```bash
 # Refine to 4K via Higgsfield API
 curl -X POST 'https://platform.higgsfield.ai/bytedance/seedream/v4/upscale' \
-  --header 'Authorization: Key {api_key}:{api_secret}' \
+  --header 'hf-api-key: {api-key}' --header 'hf-secret: {secret}' \
   --data '{"image_url": "https://freepik-output.jpg", "target_resolution": "4K"}'
 ```
 
