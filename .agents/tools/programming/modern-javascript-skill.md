@@ -69,88 +69,31 @@ Always prefer non-mutating methods:
 
 ## Modernization Patterns
 
-### Array Access
-
 ```javascript
-// ❌ Legacy
-const last = arr[arr.length - 1];
-const secondLast = arr[arr.length - 2];
-
-// ✅ Modern (ES2022)
+// Array access (ES2022)
 const last = arr.at(-1);
 const secondLast = arr.at(-2);
-```
 
-### Non-Mutating Array Operations
-
-```javascript
-// ❌ Mutates original array
-const sorted = arr.sort((a, b) => a - b);
-const reversed = arr.reverse();
-
-// ✅ Returns new array (ES2023)
+// Non-mutating array ops (ES2023) — never mutate with .sort()/.reverse()/.splice()
 const sorted = arr.toSorted((a, b) => a - b);
 const reversed = arr.toReversed();
 const updated = arr.with(2, 'new value');
 const removed = arr.toSpliced(1, 1);
-```
 
-### String Replacement
+// String replacement (ES2021)
+const result = str.replaceAll('foo', 'bar'); // not str.replace(/foo/g, 'bar')
 
-```javascript
-// ❌ Legacy with regex
-const result = str.replace(/foo/g, 'bar');
-
-// ✅ Modern (ES2021)
-const result = str.replaceAll('foo', 'bar');
-```
-
-### Grouping Data
-
-```javascript
-// ❌ Manual grouping
-const grouped = items.reduce((acc, item) => {
-  const key = item.category;
-  acc[key] = acc[key] || [];
-  acc[key].push(item);
-  return acc;
-}, {});
-
-// ✅ Modern (ES2024)
+// Grouping (ES2024) — replaces verbose .reduce() accumulator pattern
 const grouped = Object.groupBy(items, item => item.category);
-```
 
-### Nullish Handling
+// Nullish handling — ?? and ?. only match null/undefined, not 0/''/false
+const value = input ?? 'default';           // not input || 'default'
+const name = user?.profile?.name;           // not user && user.profile && ...
 
-```javascript
-// ❌ Falsy check (0, '', false are valid values)
-const value = input || 'default';
-const name = user && user.profile && user.profile.name;
-
-// ✅ Nullish check (only null/undefined)
-const value = input ?? 'default';
-const name = user?.profile?.name;
-```
-
-### Property Existence
-
-```javascript
-// ❌ Can be fooled by prototype or overwritten hasOwnProperty
-if (obj.hasOwnProperty('key')) { }
-
-// ✅ Modern (ES2022)
+// Property existence (ES2022) — hasOwnProperty can be overwritten
 if (Object.hasOwn(obj, 'key')) { }
-```
 
-### Logical Assignment
-
-```javascript
-// ❌ Verbose assignment
-if (obj.prop === null || obj.prop === undefined) {
-  obj.prop = 'default';
-}
-
-// ✅ Modern (ES2021)
+// Logical assignment (ES2021)
 obj.prop ??= 'default';  // Assign if null/undefined
 obj.count ||= 0;         // Assign if falsy
 obj.enabled &&= check(); // Assign if truthy
@@ -178,27 +121,15 @@ const fastest = await Promise.any([fetchFromCDN1(), fetchFromCDN2()]);
 const winner = await Promise.race([fetchData(), timeout(5000)]);
 ```
 
-### Promise.withResolvers (ES2024)
+### Promise.withResolvers (ES2024) and Top-Level Await (ES2022)
 
 ```javascript
-// ❌ Legacy pattern
-let resolve, reject;
-const promise = new Promise((res, rej) => {
-  resolve = res;
-  reject = rej;
-});
-
-// ✅ Modern (ES2024)
+// Expose resolve/reject outside constructor (replaces let resolve, reject + new Promise)
 const { promise, resolve, reject } = Promise.withResolvers();
-```
 
-### Top-Level Await (ES2022)
-
-```javascript
-// In ES modules, await at top level
+// Top-level await in ES modules
 const config = await fetch('/config.json').then(r => r.json());
 const db = await connectDatabase(config);
-
 export { db };
 ```
 
@@ -207,29 +138,15 @@ export { db };
 ### Immutable Object Updates
 
 ```javascript
-// Add/update property
-const updated = { ...user, age: 31 };
-
-// Remove property
-const { password, ...userWithoutPassword } = user;
-
-// Nested update
-const updated = {
-  ...state,
-  user: { ...state.user, name: 'New Name' }
-};
+const updated = { ...user, age: 31 };                               // Add/update
+const { password, ...userWithoutPassword } = user;                  // Remove
+const nested = { ...state, user: { ...state.user, name: 'New' } }; // Nested
 ```
 
 ### Array Transformations
 
 ```javascript
-// Chain transformations (ES2023)
-const result = users
-  .filter(u => u.active)
-  .map(u => u.name)
-  .toSorted();
-
-// Using flatMap for filter+map (single pass)
+// flatMap for filter+map in single pass
 const activeNames = users.flatMap(u => u.active ? [u.name] : []);
 
 // ES2024: Group then process
@@ -241,7 +158,6 @@ const activeNames = byStatus.active?.map(u => u.name) ?? [];
 
 ```javascript
 const pipe = (...fns) => x => fns.reduce((v, f) => f(v), x);
-const compose = (...fns) => x => fns.reduceRight((v, f) => f(v), x);
 
 const processUser = pipe(
   user => ({ ...user, name: user.name.trim() }),
@@ -252,61 +168,18 @@ const processUser = pipe(
 
 ## Destructuring Patterns
 
-### Object Destructuring
-
 ```javascript
-// Basic with rename and default
+// Object: rename, default, nested, rest
 const { name: userName, age = 18 } = user;
-
-// Nested
 const { address: { city, country } } = user;
-
-// Rest
 const { id, ...userData } = user;
-```
 
-### Array Destructuring
-
-```javascript
-// Skip elements
+// Array: skip, rest, swap, function returns
 const [first, , third] = array;
-
-// Rest
 const [head, ...tail] = array;
-
-// Swap variables
 [a, b] = [b, a];
-
-// Function returns
 const [x, y] = getCoordinates();
 ```
-
-## Anti-Patterns
-
-| Anti-Pattern | Problem | Modern Solution |
-|--------------|---------|-----------------|
-| `arr[arr.length-1]` | Verbose, error-prone | `arr.at(-1)` |
-| `.sort()` on original | Mutates array | `.toSorted()` |
-| `.replace(/g/)` for all | Regex overhead | `.replaceAll()` |
-| `obj.hasOwnProperty()` | Can be overwritten | `Object.hasOwn()` |
-| `value \|\| default` | 0, '', false treated as falsy | `value ?? default` |
-| `obj && obj.prop && obj.prop.method()` | Verbose null checks | `obj?.prop?.method?.()` |
-| `for (let i = 0; ...)` | Index bugs, verbose | `.map()`, `.filter()`, `for...of` |
-| `new Promise((res, rej) => ...)` | Boilerplate | `Promise.withResolvers()` |
-| Manual array grouping | Verbose, error-prone | `Object.groupBy()` |
-
-## Best Practices
-
-1. **Use `const` by default** — Only use `let` when reassignment is needed
-2. **Prefer arrow functions** — Especially for callbacks and short functions
-3. **Use template literals** — Instead of string concatenation
-4. **Destructure early** — Extract what you need at function start
-5. **Avoid mutations** — Use `.toSorted()`, `.toReversed()`, spread operator
-6. **Use optional chaining** — Prevent "Cannot read property of undefined"
-7. **Use nullish coalescing** — `??` for defaults, not `||` (unless intentional)
-8. **Prefer array methods** — `.map()`, `.filter()`, `.find()` over loops
-9. **Use `async/await`** — Instead of `.then()` chains
-10. **Handle errors properly** — `try/catch` with async/await
 
 ## Reference Documentation
 
@@ -329,22 +202,13 @@ const [x, y] = getCoordinates();
 | [references/CONCURRENCY.md](references/CONCURRENCY.md) | Parallel, batched, pool patterns, retry, cancellation |
 | [references/IMMUTABILITY.md](references/IMMUTABILITY.md) | Immutable data patterns, pure functions |
 | [references/COMPOSITION.md](references/COMPOSITION.md) | Higher-order functions, memoization, monads |
-| [references/CHEATSHEET.md](references/CHEATSHEET.md) | Quick syntax reference
+| [references/CHEATSHEET.md](references/CHEATSHEET.md) | Quick syntax reference |
 
 ## Resources
 
-### Specifications
-
-- **ECMAScript Specification**: https://tc39.es/ecma262/ (living standard)
-- **TC39 Proposals**: https://github.com/tc39/proposals (upcoming features)
-- **TC39 Process**: https://tc39.es/process-document/ (how features are added)
-
-### Documentation
-
+- **ECMAScript Specification**: https://tc39.es/ecma262/
+- **TC39 Proposals**: https://github.com/tc39/proposals
 - **MDN Web Docs**: https://developer.mozilla.org/en-US/docs/Web/JavaScript
 - **JavaScript.info**: https://javascript.info/
-
-### Compatibility
-
-- **Can I Use**: https://caniuse.com (browser support tables)
+- **Can I Use**: https://caniuse.com
 - **Node.js ES Compatibility**: https://node.green/
