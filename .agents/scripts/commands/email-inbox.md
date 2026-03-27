@@ -27,7 +27,7 @@ Parse `$ARGUMENTS` to select an operation. Default is `check` (inbox summary).
 | `flag <id> <flag>` | `email-mailbox-helper.sh flag "$MESSAGE_ID" "$FLAG"` | Apply flag to message |
 | `archive <id>` | `email-mailbox-helper.sh archive "$MESSAGE_ID"` | Archive a message |
 
-All helper scripts are under `scripts/` (repo-relative).
+All helper scripts are under `~/.aidevops/agents/scripts/` (deployed absolute path). Repo-relative equivalents are under `scripts/` for contributors.
 
 ## Output Format
 
@@ -79,10 +79,10 @@ After each operation, offer contextual next steps:
 
 ## Dependencies
 
-- `scripts/email-mailbox-helper.sh` — IMAP/JMAP adapter and mailbox operations (t1493)
-- `scripts/email-triage-helper.sh` — AI classification and prioritization engine (t1502)
-- `scripts/email-compose-helper.sh` — Drafting, tone, signatures, attachments (t1495)
-- `tools/security/prompt-injection-defender.md` — Injection scanning for message bodies
+- `~/.aidevops/agents/scripts/email-mailbox-helper.sh` — IMAP/JMAP adapter and mailbox operations (t1493)
+- `~/.aidevops/agents/scripts/email-triage-helper.sh` — AI classification and prioritization engine (t1502)
+- `~/.aidevops/agents/scripts/email-compose-helper.sh` — Drafting, tone, signatures, attachments (t1495)
+- `~/.aidevops/agents/tools/security/prompt-injection-defender.md` — Injection scanning for message bodies
 
 ## Related
 

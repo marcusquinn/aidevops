@@ -241,11 +241,19 @@ task_id = response.json()["task_id"]
 ```python
 @app.route('/webhook', methods=['POST'])
 def handle_webhook():
-    payload = request.json
-    if payload['status'] == 'completed':
-        process_results(payload['data'])
-    return "OK", 200
+    try:
+        payload = request.json
+        if not payload:
+            return "Invalid payload", 400
+        if payload.get('status') == 'completed':
+            process_results(payload.get('data', {}))
+        return "OK", 200
+    except Exception as e:
+        app.logger.error(f"Webhook error: {e}")
+        return "Internal error", 500
 ```
+
+> **Security note**: Validate webhook signatures before processing payloads in production. See the Security Configuration section for rate limiting and header validation.
 
 ## 🤖 AI Assistant Integration
 
