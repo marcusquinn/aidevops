@@ -24,67 +24,26 @@ tools:
 - **MCP Tools**: `execute_script`, `get_scripting_tips`, `accessibility_query`
 - **Docs**: <https://github.com/steipete/macos-automator-mcp>
 - **Enabled for Agents**: None by default — enable via `@mac` subagent
-- **Supported AI Tools**: OpenCode, Claude Code, Cursor, Windsurf, Zed, GitHub Copilot, Kilo Code, Kiro, Gemini CLI, Droid (Factory.AI)
+- **Supported**: OpenCode, Claude Code, Cursor, Windsurf, Zed, GitHub Copilot, Kilo Code, Kiro, Gemini CLI, Droid (Factory.AI)
 
-**Verification prompt**: `Use the macos-automator MCP to get the current Safari URL.`
+**Verification**: `Use the macos-automator MCP to get the current Safari URL.`
 
 <!-- AI-CONTEXT-END -->
 
 ## Prerequisites
 
-Node.js 18+. Grant to Terminal or your AI tool:
-
-| Permission | Path |
-|------------|------|
-| Automation | System Settings > Privacy & Security > Automation |
-| Accessibility (UI scripting) | System Settings > Privacy & Security > Accessibility |
+Node.js 18+. Grant Automation and Accessibility permissions to your terminal/AI tool via System Settings > Privacy & Security.
 
 ## Installation
 
 ```bash
-npx -y @steipete/macos-automator-mcp@0.2.0        # run directly (no install)
+npx -y @steipete/macos-automator-mcp@0.2.0        # run directly
 npm install -g @steipete/macos-automator-mcp@0.2.0  # or install globally
 ```
 
 ## AI Tool Configurations
 
-### OpenCode
-
-`~/.config/opencode/opencode.json`:
-
-```json
-{
-  "mcp": {
-    "macos-automator": {
-      "type": "local",
-      "command": ["npx", "-y", "@steipete/macos-automator-mcp@0.2.0"],
-      "enabled": true
-    }
-  },
-  "tools": { "macos-automator_*": false },
-  "agent": {
-    "Build+": { "tools": { "macos-automator_*": true } }
-  }
-}
-```
-
-### Claude Code
-
-```bash
-# User scope (all projects)
-claude mcp add-json macos-automator --scope user '{"type":"stdio","command":"npx","args":["-y","@steipete/macos-automator-mcp@0.2.0"]}'
-
-# Project scope
-claude mcp add-json macos-automator --scope project '{"type":"stdio","command":"npx","args":["-y","@steipete/macos-automator-mcp@0.2.0"]}'
-```
-
-### Cursor / Windsurf / Zed / Gemini CLI
-
-All use the same JSON shape. Config locations:
-- **Cursor**: Settings > Tools & MCP > New MCP Server
-- **Windsurf**: `~/.codeium/windsurf/mcp.json`
-- **Zed**: ... > Add Custom Server (add `"env": {}` field)
-- **Gemini CLI**: `~/.gemini/settings.json`
+Most tools use the same `mcpServers` JSON shape:
 
 ```json
 {
@@ -97,56 +56,41 @@ All use the same JSON shape. Config locations:
 }
 ```
 
-### GitHub Copilot
+Config locations: **Cursor** → Settings > Tools & MCP | **Windsurf** → `~/.codeium/windsurf/mcp.json` | **Zed** → Add Custom Server (add `"env": {}`) | **Gemini CLI** → `~/.gemini/settings.json`
 
-`.vscode/mcp.json` in project root:
+**GitHub Copilot** uses `"servers"` key in `.vscode/mcp.json` with `"type": "stdio"` added.
 
+**Claude Code**:
+```bash
+claude mcp add-json macos-automator --scope user \
+  '{"type":"stdio","command":"npx","args":["-y","@steipete/macos-automator-mcp@0.2.0"]}'
+```
+
+**OpenCode** (`~/.config/opencode/opencode.json`) — uses `"type": "local"` and supports per-agent tool gating:
 ```json
 {
-  "servers": {
-    "macos-automator": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@steipete/macos-automator-mcp@0.2.0"]
-    }
-  }
+  "mcp": { "macos-automator": { "type": "local", "command": ["npx", "-y", "@steipete/macos-automator-mcp@0.2.0"], "enabled": true } },
+  "tools": { "macos-automator_*": false },
+  "agent": { "Build+": { "tools": { "macos-automator_*": true } } }
 }
 ```
 
-### Droid (Factory.AI)
-
-```bash
-droid mcp add macos-automator "npx" -y @steipete/macos-automator-mcp@0.2.0
-```
+**Droid**: `droid mcp add macos-automator "npx" -y @steipete/macos-automator-mcp@0.2.0`
 
 ## MCP Tools
 
 ### execute_script
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `script_content` | string | Raw script code (mutually exclusive with `script_path`, `kb_script_id`) |
-| `script_path` | string | Absolute path to script file |
-| `kb_script_id` | string | Pre-defined script ID from knowledge base |
-| `language` | enum | `applescript` (default) or `javascript` |
-| `arguments` | array | Arguments passed to script |
-| `input_data` | object | Named inputs for knowledge base scripts |
-| `timeout_seconds` | integer | Max execution time (default: 60) |
+Parameters: `script_content` (string, raw code) | `script_path` (string, absolute path) | `kb_script_id` (string, knowledge base ID) — mutually exclusive. Also: `language` (`applescript`/`javascript`, default applescript), `arguments` (array), `input_data` (object), `timeout_seconds` (integer, default 60).
 
 ```json
 { "script_content": "tell application \"Safari\" to get URL of front document", "language": "applescript" }
 { "kb_script_id": "safari_get_active_tab_url" }
-{ "kb_script_id": "systemsettings_toggle_dark_mode_ui" }
 ```
 
 ### get_scripting_tips
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `list_categories` | boolean | List available categories |
-| `category` | string | Filter by category (e.g., `finder`, `safari`) |
-| `search_term` | string | Search titles, descriptions, content |
-| `limit` | integer | Max results (default: 10) |
+Parameters: `list_categories` (boolean), `category` (string), `search_term` (string), `limit` (integer, default 10).
 
 ```json
 { "list_categories": true }
@@ -156,13 +100,7 @@ droid mcp add macos-automator "npx" -y @steipete/macos-automator-mcp@0.2.0
 
 ### accessibility_query
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `command` | enum | `query` or `perform` |
-| `locator.app` | string | App name or bundle ID |
-| `locator.role` | string | Accessibility role (e.g., `AXButton`) |
-| `locator.match` | object | Attributes to match |
-| `action_to_perform` | string | Action for `perform` (e.g., `AXPress`) |
+Parameters: `command` (`query`/`perform`), `locator.app`, `locator.role`, `locator.match`, `action_to_perform`.
 
 ```json
 { "command": "query", "return_all_matches": true, "locator": { "app": "System Settings", "role": "AXButton", "match": {} } }
@@ -172,20 +110,11 @@ droid mcp add macos-automator "npx" -y @steipete/macos-automator-mcp@0.2.0
 ## Common Scripts
 
 ```applescript
--- Safari: get URL
 tell application "Safari" to get URL of front document
-
--- Mail: unread subjects
 tell application "Mail" to get subject of messages of inbox whose read status is false
-
--- Music: play/pause
 tell application "Music" to playpause
-
--- Finder: list desktop / create folder
 tell application "Finder" to get name of every item of desktop
 tell application "Finder" to make new folder at desktop with properties {name:"New Folder"}
-
--- Notification / volume / clipboard
 display notification "Task complete!" with title "Automation"
 set volume output volume 50
 the clipboard
@@ -195,19 +124,11 @@ the clipboard
 
 | Variable | Description |
 |----------|-------------|
-| `LOG_LEVEL` | Verbosity: `DEBUG`, `INFO`, `WARN`, `ERROR` |
-| `KB_PARSING` | Knowledge base loading: `lazy` (default) or `eager` |
+| `LOG_LEVEL` | `DEBUG`, `INFO`, `WARN`, `ERROR` |
+| `KB_PARSING` | `lazy` (default) or `eager` |
 | `LOCAL_KB_PATH` | Custom KB path (default: `~/.macos-automator/knowledge_base`) |
 
-## Custom Knowledge Base
-
-Place scripts at `~/.macos-automator/knowledge_base/` — matching IDs override built-ins:
-
-```text
-~/.macos-automator/knowledge_base/
-  01_applescript_core/my_custom_script.md
-  05_web_browsers/safari/my_safari_script.md
-```
+Custom scripts at `~/.macos-automator/knowledge_base/` override built-ins by matching ID.
 
 ## Troubleshooting
 
@@ -215,8 +136,8 @@ Place scripts at `~/.macos-automator/knowledge_base/` — matching IDs override 
 |-------|-----|
 | `Permission denied` | System Settings > Privacy & Security > Automation — enable your terminal/tool |
 | `Accessibility access required` | System Settings > Privacy & Security > Accessibility — add your terminal/tool |
-| Script timeout | Add `"timeout_seconds": 120` to the call |
-| `Application not found` | Use exact name or bundle ID: `tell application id "com.apple.Safari"` |
+| Script timeout | Add `"timeout_seconds": 120` |
+| `Application not found` | Use bundle ID: `tell application id "com.apple.Safari"` |
 
 ## Related
 
