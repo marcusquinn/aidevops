@@ -2,8 +2,6 @@
 
 Sequence diagrams show interactions between participants over time. Ideal for API flows, protocols, and service communication.
 
----
-
 ## Basic Syntax
 
 ```mermaid
@@ -11,8 +9,6 @@ sequenceDiagram
     Alice->>Bob: Hello Bob
     Bob-->>Alice: Hi Alice
 ```
-
----
 
 ## Participants
 
@@ -27,8 +23,6 @@ sequenceDiagram
 ```
 
 ### Explicit Declaration
-
-Control order and add aliases:
 
 ```mermaid
 sequenceDiagram
@@ -65,8 +59,6 @@ sequenceDiagram
     Carl->>Alice: Goodbye
 ```
 
----
-
 ## Message Types
 
 | Syntax | Description |
@@ -88,11 +80,7 @@ sequenceDiagram
     C--x A: Failed
 ```
 
----
-
 ## Activation (Lifeline)
-
-Show when participant is active:
 
 ### Manual Activation
 
@@ -129,8 +117,6 @@ sequenceDiagram
     DB-->>-Server: Data
     Server-->>-Client: Response
 ```
-
----
 
 ## Control Flow
 
@@ -214,11 +200,7 @@ sequenceDiagram
     API-->>Client: 200 OK
 ```
 
----
-
 ## Notes
-
-### Position
 
 ```mermaid
 sequenceDiagram
@@ -231,8 +213,6 @@ sequenceDiagram
     Note over A,B: Spanning note
 ```
 
-### With Messages
-
 ```mermaid
 sequenceDiagram
     Client->>+API: POST /orders
@@ -242,8 +222,6 @@ sequenceDiagram
     DB-->>API: Order ID
     API-->>-Client: 201 Created
 ```
-
----
 
 ## Autonumbering
 
@@ -255,8 +233,6 @@ sequenceDiagram
     Auth-->>API: Token
     API-->>Client: Success
 ```
-
----
 
 ## Background Highlighting
 
@@ -275,11 +251,7 @@ sequenceDiagram
     end
 ```
 
----
-
 ## Participant Boxes
-
-Group participants visually:
 
 ```mermaid
 sequenceDiagram
@@ -299,8 +271,6 @@ sequenceDiagram
     A-->>C: Response
     C-->>U: Display
 ```
-
----
 
 ## Examples
 
