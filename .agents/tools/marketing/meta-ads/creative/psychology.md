@@ -4,448 +4,154 @@
 
 ---
 
-## Table of Contents
-1. [How People Scroll](#how-people-scroll)
-2. [Attention Science](#attention-science)
-3. [Pattern Interrupts](#pattern-interrupts)
-4. [Visual Hierarchy](#visual-hierarchy)
-5. [The Psychology of Persuasion](#the-psychology-of-persuasion)
-6. [Emotional Triggers](#emotional-triggers)
-
----
-
 ## How People Scroll
 
-### The Feed Behavior Research
+**Eye-tracking findings:** Average time on content: 1.7s. Engagement decision: 0.5–1s. 80%+ scroll without sound. Thumb does ~90% of scrolling. F/Z-pattern eye movement.
 
-**Key Findings from Eye-Tracking Studies:**
+**The three-second window:**
 
-- Average time on a piece of content: 1.7 seconds
-- Decision to engage: made in 0.5-1 second
-- 80%+ scroll without sound
-- Thumb does ~90% of scrolling
-- Most scroll with "F-pattern" or "Z-pattern" eyes
+| Second | Question | Brain activity |
+|--------|----------|----------------|
+| 0–1 | "What is this?" | Visual registers; categorises (ad/content/friend) |
+| 1–2 | "Is this for me?" | Message absorption; relevance assessment |
+| 2–3 | "Should I stop?" | Hook payoff; curiosity created or not |
 
-### The Three-Second Window
+**Mobile-first (90%+ of Meta impressions):** Vertical formats (9:16, 4:5) preferred. Text must be large. First 1–2 inches = prime real estate. Thumb zone (bottom-right) = CTA placement.
 
-```
-Second 0-1: "What is this?"
-├── Visual registers
-├── Brain categorizes (ad? content? friend?)
-├── Initial interest/disinterest
-
-Second 1-2: "Is this for me?"
-├── Message absorption begins
-├── Relevance assessment
-├── Continue/skip decision forming
-
-Second 2-3: "Should I stop?"
-├── Hook payoff
-├── Curiosity created (or not)
-├── Scroll stops or continues
-```
-
-### Mobile-First Reality
-
-**90%+ of Meta impressions are mobile**
-
-**Implications:**
-- Vertical formats (9:16, 4:5) perform better
-- Text must be large and readable
-- First 1-2 inches of screen are prime real estate
-- Thumb zone = bottom-right corner (CTA placement)
-
-### Sound-Off Default
-
-**80% of feed video is watched without sound**
-
-**Implications:**
-- Captions are mandatory
-- Visual storytelling must work silently
-- Text overlays carry the message
-- Music is bonus, not requirement
+**Sound-off (80% of feed video):** Captions mandatory. Visual storytelling must work silently. Text overlays carry the message.
 
 ---
 
 ## Attention Science
 
-### Pre-Attentive Processing
+**Pre-attentive processing** (before conscious attention): colour (red/yellow/contrast), motion, faces (eyes/emotions), large shapes, unexpected elements.
 
-Your brain processes certain visual features BEFORE conscious attention:
-- Color (especially red, yellow, contrast)
-- Motion/movement
-- Faces (especially eyes, emotions)
-- Large shapes vs small
-- Unexpected elements
+**Cognitive load — lower = higher engagement:**
 
-**Use This:**
-- High-contrast colors grab attention
-- Motion in first frame captures eyes
-- Faces create instant connection
-- Size hierarchy guides attention
-
-### Cognitive Load
-
-**Lower cognitive load = Higher engagement**
-
-| High Cognitive Load (Bad) | Low Cognitive Load (Good) |
-|---------------------------|---------------------------|
-| Dense text | Simple message |
-| Multiple focal points | Single focal point |
-| Complex visuals | Clean visuals |
-| Industry jargon | Plain language |
+| High load (bad) | Low load (good) |
+|-----------------|-----------------|
+| Dense text, multiple focal points | Simple message, single focal point |
+| Complex visuals, industry jargon | Clean visuals, plain language |
 | Many choices | One clear CTA |
 
-### The Mere Exposure Effect
+**Mere exposure effect:** People prefer things they've seen before. Consistent brand visuals build familiarity; retargeting works partly through exposure.
 
-People prefer things they've seen before.
-
-**Implications:**
-- Consistent brand visuals build familiarity
-- Retargeting works partly because of exposure
-- Repetition creates comfort (but too much = annoyance)
-
-### Novelty vs Familiarity Balance
-
-**Too Familiar:** Ignored (looks like everything else)
-**Too Novel:** Confusing (brain can't categorize)
-**Sweet Spot:** Familiar enough to understand, novel enough to notice
+**Novelty vs familiarity:** Too familiar = ignored. Too novel = confusing. Sweet spot = familiar enough to understand, novel enough to notice.
 
 ---
 
 ## Pattern Interrupts
 
-### What Is a Pattern Interrupt?
+Something that breaks the expected visual pattern of a feed, forcing attention.
 
-Something that breaks the expected visual pattern of a feed, forcing the brain to pay attention.
+| Type | Examples |
+|------|---------|
+| Visual contrast | Bright colours vs muted feed; black/white in colourful feed |
+| Motion | Sudden movement at video start; hand wave; object flying in |
+| Text | Large bold overlay; question; controversial statement |
+| Format | Portrait in landscape-dominant feed; minimalist in busy feed |
+| Emotional | Strong facial expression; surprising image |
 
-### Types of Pattern Interrupts
+**Hook examples:**
+- `[HAND SLAPS TABLE] "Stop scrolling. This is important."` — motion + direct address
+- `[CLOSE-UP SHOCKED FACE] "I can't believe this worked"` — emotion + curiosity
+- `[BOLD TEXT ON BLACK] "EVERYTHING YOU KNOW ABOUT [TOPIC] IS WRONG"` — contrast + controversy
+- `[PRODUCT FLYING IN] "This little thing changed my life"` — motion + intrigue
 
-**1. Visual Contrast**
-- Bright colors against feed's muted tones
-- Black/white in a colorful feed
-- Unusual shapes
-
-**2. Motion Interrupt**
-- Sudden movement at video start
-- Hand waving
-- Object flying into frame
-- Abrupt transitions
-
-**3. Text Interrupt**
-- Large, bold text overlay
-- Unusual fonts
-- Text that poses a question
-- Controversial statement
-
-**4. Format Interrupt**
-- Portrait in landscape-dominant feed
-- Text-heavy in image-heavy feed
-- Minimalist in busy feed
-
-**5. Emotional Interrupt**
-- Strong facial expression
-- Surprising image
-- Controversial visual
-
-### Pattern Interrupt Examples
-
-```
-Hook: [HAND SLAPS TABLE]
-"Stop scrolling. This is important."
-→ Physical motion + direct address
-
-Hook: [CLOSE-UP FACE, SHOCKED EXPRESSION]
-"I can't believe this worked"
-→ Emotional face + curiosity
-
-Hook: [BOLD TEXT ON BLACK]
-"EVERYTHING YOU KNOW ABOUT [TOPIC] IS WRONG"
-→ Contrast + controversy
-
-Hook: [PRODUCT FLYING INTO FRAME]
-"This little thing changed my life"
-→ Motion + intrigue
-```
-
-### Warning: Pattern Interrupt ≠ Clickbait
-
-Pattern interrupt gets attention.
-The content must DELIVER on the promise.
-
-**Good:** Interrupt → Relevant content → Value → CTA
-**Bad:** Interrupt → Bait and switch → User feels tricked
+**Warning:** Pattern interrupt ≠ clickbait. Interrupt gets attention; content must deliver on the promise. Bait-and-switch = user feels tricked.
 
 ---
 
 ## Visual Hierarchy
 
-### What Is Visual Hierarchy?
+Priority order: largest/boldest → supporting visual → body text → CTA.
 
-Organizing visual elements so viewers process information in the right order.
+**Hierarchy tools:** Size (bigger = more important), colour (contrast draws eyes), position (top-left reads first in LTR), space (isolation creates importance).
 
-### The Priority Order
+**Mobile zones:**
+- Top third: hook text or key visual (must stop scroll)
+- Middle third: supporting info, social proof
+- Bottom third: CTA, price/offer
 
-```
-1. LARGEST/BOLDEST ELEMENT
-   (What they see first)
-   
-2. Supporting visual
-   (Context or proof)
-   
-3. Body text
-   (Details if interested)
-   
-4. CTA
-   (Action to take)
-```
+**Common mistakes:**
 
-### Creating Hierarchy
-
-**Size:** Bigger = More important
-```
-HEADLINE (Large)
-Supporting text (Medium)
-Fine print (Small)
-```
-
-**Color:** Contrast draws eyes
-```
-[BRIGHT CTA BUTTON] stands out from muted background
-```
-
-**Position:** Top-left reads first (for left-to-right languages)
-```
-Key message in top third
-Supporting elements below
-```
-
-**Space:** Isolation creates importance
-```
-[     SINGLE MESSAGE     ]
-     surrounded by space
-     demands attention
-```
-
-### Mobile Visual Hierarchy
-
-**Top Third (Premium Real Estate):**
-- Hook text or key visual
-- Must be compelling to stop scroll
-
-**Middle Third:**
-- Supporting information
-- Social proof
-
-**Bottom Third:**
-- CTA
-- Price/offer
-
-### Common Hierarchy Mistakes
-
-| Mistake | Problem | Fix |
-|---------|---------|-----|
-| Everything same size | Nothing stands out | Create clear size difference |
-| Too many focal points | Confusing | One primary focus |
-| CTA buried | Missed conversions | Make CTA prominent |
-| Text too small | Unreadable on mobile | Minimum 24px for key text |
+| Mistake | Fix |
+|---------|-----|
+| Everything same size | Create clear size difference |
+| Too many focal points | One primary focus |
+| CTA buried | Make CTA prominent |
+| Text too small | Minimum 24px for key text |
 
 ---
 
 ## The Psychology of Persuasion
 
-### Cialdini's Principles Applied to Ads
+**Cialdini's principles:**
 
-**1. Reciprocity**
-Give value first, then ask.
+| Principle | Application |
+|-----------|-------------|
+| Reciprocity | Give value first ("Free guide: 10 ways to…") |
+| Commitment | Get small yeses ("Comment YES if you want…") |
+| Social proof | "Join 10,000+ marketers…" / "4.9★ from 2,000+ reviews" |
+| Authority | "Dr. [Name] recommends…" / "Featured in Forbes" |
+| Liking | Relatable founder story; UGC from someone "like me" |
+| Scarcity | "Only 47 spots left" / "Offer ends midnight" |
 
-```
-Ad: "Free guide: 10 ways to [solve problem]"
-Psychology: Viewer feels obligated to reciprocate attention
-```
+**Loss aversion** (losses feel 2× stronger than equivalent gains):
 
-**2. Commitment/Consistency**
-Get small yeses before big asks.
-
-```
-Ad: "Want better [outcome]? 👇 Comment YES"
-Psychology: Public commitment increases follow-through
-```
-
-**3. Social Proof**
-People follow the crowd.
-
-```
-Ad: "Join 10,000+ marketers who..."
-Ad: "⭐⭐⭐⭐⭐ 4.9 from 2,000+ reviews"
-Psychology: If others trust it, I should too
-```
-
-**4. Authority**
-Experts are trusted.
-
-```
-Ad: "Dr. [Name] recommends..."
-Ad: "Featured in Forbes, TechCrunch..."
-Psychology: Authority figures reduce perceived risk
-```
-
-**5. Liking**
-We buy from people we like.
-
-```
-Ad: Relatable founder story
-Ad: UGC from someone "like me"
-Psychology: Similarity and authenticity create connection
-```
-
-**6. Scarcity**
-Limited availability increases desire.
-
-```
-Ad: "Only 47 spots left"
-Ad: "Offer ends midnight"
-Psychology: Fear of missing out motivates action
-```
-
-### Loss Aversion
-
-**People feel losses 2x more than equivalent gains**
-
-| Gain Frame (Weaker) | Loss Frame (Stronger) |
+| Gain frame (weaker) | Loss frame (stronger) |
 |---------------------|----------------------|
 | "Save $100" | "Stop losing $100/month" |
 | "Get more leads" | "Stop missing leads" |
 | "Improve your health" | "Don't let your health decline" |
 
-### The Endowment Effect
-
-People value things more once they "own" them.
-
-**Application:**
-- Free trials (they "own" the product)
-- "Your free [thing] is waiting"
-- Personalization ("Your custom plan")
+**Endowment effect:** People value things more once they "own" them. Apply via free trials, "Your free [thing] is waiting", personalisation ("Your custom plan").
 
 ---
 
 ## Emotional Triggers
 
-### The Emotion Hierarchy
+**Hierarchy by motivational strength:**
 
-```
-Strongest Motivators:
-├── Fear (loss, missing out, danger)
-├── Desire (aspiration, status, belonging)
-└── Curiosity (mystery, incomplete information)
+| Strength | Emotions |
+|----------|---------|
+| Strongest | Fear (loss/FOMO/danger), Desire (aspiration/status/belonging), Curiosity (mystery/incomplete info) |
+| Medium | Anger (injustice/frustration), Surprise (novelty), Joy (humour) |
+| Weaker | Trust (reliability/safety), Anticipation (future reward) |
 
-Medium Motivators:
-├── Anger (injustice, frustration)
-├── Surprise (unexpected, novelty)
-└── Joy (pleasure, humor)
+**Hook templates by emotion:**
+- **Fear:** "Are you making this expensive mistake?" / "You're leaving $X on the table every month"
+- **Desire:** "What would you do with 10 extra hours per week?" / "Imagine waking up to [outcome]"
+- **Curiosity:** "I discovered this by accident…" / "The one thing [experts] won't tell you"
+- **Anger:** "Tired of [frustration]?" / "We built this because we were fed up with [status quo]"
+- **Humour:** "POV: You just discovered [product]" / "The face you make when [relatable situation]"
 
-Weaker Motivators:
-├── Trust (reliability, safety)
-└── Anticipation (future reward)
-```
+**Match emotion to funnel stage:**
 
-### Fear-Based Hooks
-
-Use carefully — powerful but can backfire if overused.
-
-```
-"Are you making this expensive mistake?"
-"The hidden danger of [common practice]"
-"What your [competitor/industry] doesn't want you to know"
-"You're leaving $X on the table every month"
-```
-
-### Desire-Based Hooks
-
-Aspirational messaging for positive motivation.
-
-```
-"What would you do with 10 extra hours per week?"
-"The [product] that [successful people] use"
-"Finally feel [desired emotion] about your [area]"
-"Imagine waking up to [desired outcome]"
-```
-
-### Curiosity-Based Hooks
-
-Information gaps that must be closed.
-
-```
-"I discovered this by accident..."
-"The one thing [experts] won't tell you"
-"Why does this simple trick work so well?"
-"This changed everything for me (and it's not what you think)"
-```
-
-### Anger/Frustration Hooks
-
-Channel existing frustration toward your solution.
-
-```
-"Tired of [common frustration]?"
-"Why does [problem] have to be so hard?"
-"We built this because we were fed up with [status quo]"
-```
-
-### Humor Hooks
-
-Disarms, creates positive association, shares well.
-
-```
-"Me trying to [common struggle] [funny visual]"
-"POV: You just discovered [product]"
-"The face you make when [relatable situation]"
-```
-
-### Matching Emotion to Funnel Stage
-
-| Funnel Stage | Best Emotions |
-|--------------|---------------|
+| Stage | Best emotions |
+|-------|--------------|
 | Awareness | Curiosity, Surprise, Fear |
 | Consideration | Desire, Trust, Social proof |
 | Decision | Scarcity, Loss aversion, Urgency |
 
 ---
 
-## Putting It Together
-
-### The Scroll-Stopping Formula
+## Scroll-Stopping Formula
 
 ```
-1. PATTERN INTERRUPT (0-1 second)
-   └── Motion, contrast, face, or text that breaks the scroll
-
-2. HOOK (1-3 seconds)
-   └── Curiosity, fear, or desire trigger
-   └── "Is this for me?" answered YES
-
-3. VALUE DELIVERY (3-10 seconds)
-   └── Fulfill the hook promise
-   └── Build understanding
-
-4. PROOF (10-20 seconds)
-   └── Social proof, results, testimonials
-   └── "Can I trust this?"
-
-5. CTA (Final moment)
-   └── Clear, single action
-   └── Lower perceived friction
+1. PATTERN INTERRUPT (0–1s)  — motion, contrast, face, or text breaks the scroll
+2. HOOK (1–3s)               — curiosity/fear/desire trigger; "Is this for me?" = YES
+3. VALUE DELIVERY (3–10s)    — fulfil the hook promise; build understanding
+4. PROOF (10–20s)            — social proof, results, testimonials; "Can I trust this?"
+5. CTA (final)               — single clear action; minimise perceived friction
 ```
 
-### The Psychology Checklist
-
-Before launching creative, ask:
-
+**Pre-launch checklist:**
 - [ ] What pattern does this interrupt?
 - [ ] What emotion does this trigger?
 - [ ] Is the visual hierarchy clear?
 - [ ] Does this work without sound?
-- [ ] Is cognitive load minimized?
+- [ ] Is cognitive load minimised?
 - [ ] What persuasion principle is at work?
 - [ ] Would I stop scrolling for this?
 
