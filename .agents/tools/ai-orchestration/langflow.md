@@ -32,7 +32,7 @@ tools:
 
 ## Installation
 
-### Automated (Recommended)
+**Automated (recommended):**
 
 ```bash
 bash .agents/scripts/langflow-helper.sh setup
@@ -40,7 +40,7 @@ nano ~/.aidevops/langflow/.env
 ~/.aidevops/scripts/start-langflow.sh
 ```
 
-### Manual
+**Manual:**
 
 ```bash
 mkdir -p ~/.aidevops/langflow && cd ~/.aidevops/langflow
@@ -48,19 +48,18 @@ python3 -m venv venv && source venv/bin/activate
 pip install langflow && langflow run
 ```
 
-### Docker
+**Docker:**
 
 ```bash
 docker run -p 7860:7860 langflowai/langflow:latest
-# With persistent storage:
-docker run -p 7860:7860 -v langflow_data:/app/langflow langflowai/langflow:latest
+docker run -p 7860:7860 -v langflow_data:/app/langflow langflowai/langflow:latest  # persistent
 ```
 
 Desktop app: https://www.langflow.org/desktop (Windows/macOS)
 
 ## Configuration
 
-### Environment Variables (`~/.aidevops/langflow/.env`)
+**`~/.aidevops/langflow/.env`:**
 
 ```bash
 OPENAI_API_KEY=your_openai_api_key_here
@@ -72,10 +71,9 @@ LANGFLOW_DATABASE_URL=sqlite:///./langflow.db
 OLLAMA_BASE_URL=http://localhost:11434
 ```
 
-### Custom Components
+**Custom components** (`~/.aidevops/langflow/components/my_component.py`):
 
 ```python
-# ~/.aidevops/langflow/components/my_component.py
 from langflow.custom import CustomComponent
 from langflow.schema import Data
 
@@ -91,22 +89,18 @@ Load: `langflow run --components-path ~/.aidevops/langflow/components/`
 
 ## Usage
 
-### Building a Flow
+Open http://localhost:7860 → "New Flow" or template → drag components from sidebar, connect edges, configure parameters → "Run".
 
-1. Open http://localhost:7860 → "New Flow" or use a template
-2. Drag components from sidebar, connect by dragging edges
-3. Configure component parameters → click "Run" to test
+**RAG Pipeline:**
 
-### Common Flow Patterns
-
-**RAG Pipeline**:
 ```text
 [Document Loader] → [Text Splitter] → [Embeddings] → [Vector Store]
                                                            ↓
 [User Input] → [Retriever] → [LLM] → [Output]
 ```
 
-**Multi-Agent Chat**:
+**Multi-Agent Chat:**
+
 ```text
 [User Input] → [Router Agent] → [Specialist Agent 1]
                              → [Specialist Agent 2]
@@ -115,7 +109,7 @@ Load: `langflow run --components-path ~/.aidevops/langflow/components/`
 
 ## API Integration
 
-### REST API
+**REST API:**
 
 ```python
 import requests
@@ -126,14 +120,15 @@ response = requests.post(
 print(response.json())
 ```
 
-### MCP Server
+**MCP Server:**
 
 ```bash
 langflow run --mcp
 # Or in .env: LANGFLOW_MCP_ENABLED=true
 ```
 
-Connect from any MCP-compatible AI assistant. OpenCode config:
+Connect from any MCP-compatible AI assistant. Claude Code config:
+
 ```json
 { "mcpServers": { "langflow": { "command": "langflow", "args": ["run", "--mcp"] } } }
 ```
@@ -141,12 +136,10 @@ Connect from any MCP-compatible AI assistant. OpenCode config:
 ## Git Integration
 
 ```bash
-# Export/import flows
 langflow export --flow-id <flow-id> --output flows/my-flow.json
 langflow export --all --output flows/
 langflow import --file flows/my-flow.json
 langflow import --directory flows/
-
 # .gitignore: langflow.db, *.log, __pycache__/, .env
 # Track: flows/*.json, components/*.py
 ```
@@ -155,14 +148,10 @@ Bi-directional sync: use `watchdog` file watcher to auto-import on `.json` chang
 
 ## Local LLM Support
 
-**Ollama**: `curl -fsSL https://ollama.com/install.sh | sh && ollama pull llama3.2`
-— Add Ollama component in Langflow, set base URL to `http://localhost:11434`
-
-**LM Studio**: Download from https://lmstudio.ai, start local server, use OpenAI-compatible endpoint `http://localhost:1234/v1`
+- **Ollama**: `curl -fsSL https://ollama.com/install.sh | sh && ollama pull llama3.2` — add Ollama component, set base URL `http://localhost:11434`
+- **LM Studio**: https://lmstudio.ai — start local server, use OpenAI-compatible endpoint `http://localhost:1234/v1`
 
 ## Deployment
-
-### Docker Compose
 
 ```yaml
 services:
@@ -178,7 +167,7 @@ volumes:
   langflow_data:
 ```
 
-**Production**: Use PostgreSQL (not SQLite), enable auth for multi-user, reverse proxy (nginx/traefik) for HTTPS.
+**Production**: PostgreSQL (not SQLite), enable auth for multi-user, reverse proxy (nginx/traefik) for HTTPS.
 
 ## Troubleshooting
 
@@ -191,7 +180,7 @@ volumes:
 
 ## Integrations
 
-- **CrewAI**: Create a custom component importing CrewAI, define agents/tasks, connect to other Langflow components
+- **CrewAI**: Custom component importing CrewAI, define agents/tasks, connect to Langflow components
 - **aidevops workflows**: `langflow export --flow-id <id> --output flows/devops-automation.json` then commit to git
 
 ## Resources
