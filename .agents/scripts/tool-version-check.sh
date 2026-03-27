@@ -132,11 +132,14 @@ BREW_TOOLS=(
 
 PIP_TOOLS=(
 	"pip|Beads Viewer|beads_viewer|--version|beads-viewer|$(_pip_upgrade_cmd beads-viewer)"
-	"pip|DSPy|dspy|--version|dspy-ai|$(_pip_upgrade_cmd dspy-ai)"
-	"pip|Crawl4AI|crawl4ai|--version|crawl4ai|$(_pip_upgrade_cmd crawl4ai)"
 	"pip|Analytics MCP|analytics-mcp|--version|analytics-mcp|pipx upgrade analytics-mcp"
 	"pip|Outscraper MCP|outscraper-mcp-server|--version|outscraper-mcp-server|uv tool upgrade outscraper-mcp-server"
 )
+# Library dependencies (e.g. dspy-ai, crawl4ai) are intentionally excluded from
+# PIP_TOOLS. They are project-level dependencies managed inside project venvs via
+# pyproject.toml / requirements.txt — not global CLI tools. Auto-updating them
+# here installs redundant global copies that diverge from pinned project versions.
+# See: https://github.com/marcusquinn/aidevops/issues/6763
 
 # Tools installed via curl/custom installers (not in brew/npm/pip registries)
 # Latest version cannot be checked via registry — use "self" category
