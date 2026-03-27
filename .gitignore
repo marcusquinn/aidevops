@@ -50,6 +50,9 @@ authorized_keys
 !.agents/scripts/secret-hygiene-helper.sh
 !.agents/scripts/tests/test-secret-helper.sh
 
+# Exception for secret handling reference doc (guidance, not actual secrets)
+!.agents/reference/secret-handling.md
+
 # Environment files
 .env*
 *.env

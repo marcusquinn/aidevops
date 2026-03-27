@@ -211,7 +211,7 @@ docker inspect <app_container> | grep CLOUDRON_MYSQL
 docker exec -it mysql mysql -u<username> -p<password> <database>
 ```
 
-> **Security note**: `docker inspect` reveals database credentials. Redact passwords before sharing output. The `-p$(cat ...)` pattern briefly exposes the password in the process list — prefer env var injection where possible (see `prompts/build.txt` section 8.2).
+> **Security note**: `docker inspect` reveals database credentials. Redact passwords before sharing output. The `-p$(cat ...)` pattern briefly exposes the password in the process list — prefer env var injection where possible (see `reference/secret-handling.md` §8.3).
 
 **Charset/Collation Issues** (common after updates):
 

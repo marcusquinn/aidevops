@@ -48,7 +48,7 @@ AI agents processing untrusted content are vulnerable to indirect prompt injecti
 - Tool output is transcript-visible — if stdout contains a secret, assume it is exposed.
 - Start secret setup instructions with: `WARNING: Never paste secret values into AI chat.`
 - Prefer key-name checks, masked previews, or fingerprints over raw value display.
-- **Env var, not argument (t4939)**: Pass secrets as env vars, never as command arguments. Use `aidevops secret NAME -- cmd`. See `prompts/build.txt` §8.2.
+- **Env var, not argument (t4939)**: Pass secrets as env vars, never as command arguments. Use `aidevops secret NAME -- cmd`. See `reference/secret-handling.md` §8.3.
 
 ## Platform Trust Matrix
 
