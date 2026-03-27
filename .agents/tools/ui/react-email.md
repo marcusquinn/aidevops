@@ -25,29 +25,18 @@ tools:
 - **Website**: https://react.email
 - **Used by**: TurboStarter (`~/Git/turbostarter/core/packages/email/`)
 
-**Why React Email**:
-
-- Write emails as React components (familiar DX)
-- Preview emails in browser during development
-- Renders to cross-client compatible HTML
-- Built-in components handle email client quirks
-- Works with any email provider (Resend, SendGrid, Postmark, SES)
-
 <!-- AI-CONTEXT-END -->
 
 ## Quick Start
 
 ```bash
-# Add to existing project
 npm install @react-email/components react-email
-
-# Or create standalone email project
-npx create-email@latest
+# Or standalone: npx create-email@latest
 ```
 
 ## Components
 
-React Email provides pre-built components that render correctly across email clients:
+Pre-built components that render correctly across email clients:
 
 | Component | Purpose |
 |-----------|---------|
@@ -123,11 +112,7 @@ export default function WelcomeEmail({ name, actionUrl }: WelcomeEmailProps) {
 ## Development Preview
 
 ```bash
-# Start preview server
-npx react-email dev
-
-# Opens browser at http://localhost:3000
-# Live reload as you edit templates
+npx react-email dev  # Opens http://localhost:3000 with live reload
 ```
 
 ## Rendering to HTML
@@ -136,13 +121,8 @@ npx react-email dev
 import { render } from '@react-email/render';
 import WelcomeEmail from './emails/welcome';
 
-// Render to HTML string
 const html = await render(WelcomeEmail({ name: 'John', actionUrl: 'https://...' }));
-
-// Render to plain text (for text/plain fallback)
-const text = await render(WelcomeEmail({ name: 'John', actionUrl: 'https://...' }), {
-  plainText: true,
-});
+const text = await render(WelcomeEmail({ name: 'John', actionUrl: 'https://...' }), { plainText: true });
 ```
 
 ## Sending with Providers
@@ -154,7 +134,6 @@ import { Resend } from 'resend';
 import WelcomeEmail from './emails/welcome';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
-
 await resend.emails.send({
   from: 'App <hello@example.com>',
   to: 'user@example.com',
@@ -171,14 +150,8 @@ import { render } from '@react-email/render';
 import WelcomeEmail from './emails/welcome';
 
 const html = await render(WelcomeEmail({ name: 'John', actionUrl: 'https://...' }));
-
 const transporter = nodemailer.createTransport({ /* SMTP config */ });
-await transporter.sendMail({
-  from: 'hello@example.com',
-  to: 'user@example.com',
-  subject: 'Welcome!',
-  html,
-});
+await transporter.sendMail({ from: 'hello@example.com', to: 'user@example.com', subject: 'Welcome!', html });
 ```
 
 ## Project Structure (TurboStarter Pattern)
