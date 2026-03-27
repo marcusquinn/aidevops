@@ -651,7 +651,7 @@ create_or_preview_issue() {
 
 	local create_cmd=(gh issue create --repo "$repo_slug" --title "$title" --body "$body" --label bug --label "source:ci-failure-miner")
 	local label
-	for label in "${extra_labels[@]}"; do
+	for label in ${extra_labels[@]+"${extra_labels[@]}"}; do
 		if [[ -n "$label" ]]; then
 			create_cmd+=(--label "$label")
 		fi
@@ -710,7 +710,7 @@ create_systemic_issues() {
 			continue
 		fi
 
-		create_or_preview_issue "$cluster_json" "$pattern_id" "$systemic_threshold" "$dry_run" "${extra_labels[@]+"${extra_labels[@]}"}"
+		create_or_preview_issue "$cluster_json" "$pattern_id" "$systemic_threshold" "$dry_run" ${extra_labels[@]+"${extra_labels[@]}"}
 
 		created=$((created + 1))
 		idx=$((idx + 1))
