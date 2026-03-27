@@ -23,194 +23,99 @@ tools:
 - **Store path**: `~/.local/share/gopass/stores/root/aidevops/`
 - **Fallback**: `~/.config/aidevops/credentials.sh` (plaintext, chmod 600)
 
-**Commands**:
+| Command | Purpose |
+|---------|---------|
+| `aidevops secret set NAME` | Store secret (interactive hidden input) |
+| `aidevops secret list` | List names only (never values) |
+| `aidevops secret run CMD` | Inject all secrets, redact output |
+| `aidevops secret NAME -- CMD` | Inject specific secret, redact output |
+| `aidevops secret init` | Initialize gopass store |
+| `aidevops secret import-credentials` | Migrate from credentials.sh |
+| `aidevops secret status` | Show backend status |
 
-- `aidevops secret set NAME` -- Store secret (interactive hidden input)
-- `aidevops secret list` -- List names only (never values)
-- `aidevops secret run CMD` -- Inject all secrets, redact output
-- `aidevops secret NAME -- CMD` -- Inject specific secrets, redact output
-- `aidevops secret init` -- Initialize gopass store
-- `aidevops secret import-credentials` -- Migrate from credentials.sh
-- `aidevops secret status` -- Show backend status
-
-**CRITICAL**: NEVER use `gopass show`, `gopass cat`, or any command that prints secret values in agent context. Use `aidevops secret run` for subprocess injection with automatic output redaction.
+**CRITICAL**: NEVER use `gopass show`, `gopass cat`, or any command that prints secret values in agent context.
 
 <!-- AI-CONTEXT-END -->
-
-## Why gopass
-
-| Feature | gopass | credentials.sh |
-|---------|--------|----------------|
-| Encryption at rest | GPG/age | None (plaintext) |
-| Team sharing | Git sync + GPG recipients | Manual copy |
-| Audit trail | Git history | None |
-| AI-safe | Subprocess injection + redaction | Agent can `cat` the file |
-| Breach detection | `gopass audit` + HIBP | None |
 
 ## Installation
 
 ```bash
-# macOS
-brew install gopass
-
-# Linux (Debian/Ubuntu)
-apt install gopass
-
-# Linux (Arch)
-pacman -S gopass
-
-# Or via aidevops
-aidevops secret init  # Auto-installs if missing
+brew install gopass          # macOS
+apt install gopass           # Debian/Ubuntu
+pacman -S gopass             # Arch
+aidevops secret init         # Auto-installs if missing
 ```
 
-### Prerequisites
-
-- **GPG**: Required for encryption (`brew install gnupg`)
-- **pinentry-mac**: Required on macOS for passphrase entry (`brew install pinentry-mac`)
-- **git**: Required for versioned storage (already required by aidevops)
+**Prerequisites**: `brew install gnupg pinentry-mac` (macOS); git (already required).
 
 ## Setup
 
 ```bash
-# Initialize gopass (creates GPG key if needed)
-aidevops secret init
-
-# Import existing credentials from credentials.sh
-aidevops secret import-credentials
-
-# Verify
-aidevops secret list
-aidevops secret status
+aidevops secret init                 # Creates GPG key if needed
+aidevops secret import-credentials  # Migrate from credentials.sh
 ```
 
 ## Usage
 
 ### Storing Secrets
 
-Exact flow for each key:
-
-1. Run `aidevops secret set SECRET_NAME` in your own terminal
-2. Wait for hidden input prompt
-3. Paste only the raw secret value (not a command, not `export KEY=...`, not the key name)
-4. Press Enter once
-5. Verify key names only with `aidevops secret list`
+Run in your own terminal — never paste values into AI chat:
 
 ```bash
-# Interactive hidden input (value never visible)
-aidevops secret set GITHUB_TOKEN
+aidevops secret set GITHUB_TOKEN     # Enter raw value at hidden prompt
 aidevops secret set OPENAI_API_KEY
-aidevops secret set STRIPE_SECRET_KEY
 ```
+
+Verify with `aidevops secret list`.
 
 ### Using Secrets in Commands
 
 ```bash
-# Inject all secrets into a command (output redacted)
-aidevops secret run npx some-mcp-server
-
-# Inject specific secrets only
-aidevops secret GITHUB_TOKEN -- gh api /user
-aidevops secret STRIPE_SECRET_KEY -- curl https://api.stripe.com/v1/charges
-
-# MCP server with secrets (replaces: source credentials.sh && npx server)
-aidevops secret run npx @anthropic/mcp-server-github
-```
-
-### Listing Secrets
-
-```bash
-# Names only (never values)
-aidevops secret list
-
-# Backend status
-aidevops secret status
+aidevops secret run npx some-mcp-server          # Inject all secrets, redact output
+aidevops secret GITHUB_TOKEN -- gh api /user     # Inject specific secret
 ```
 
 ## Team Sharing
 
-gopass uses GPG recipients for team access:
-
 ```bash
-# Add team member's GPG key
 gpg --import teammate-public-key.asc
-
-# Add as gopass recipient
 gopass recipients add teammate@example.com
-
-# Sync via git
 gopass sync
 ```
 
 ## Agent Instructions
 
-When an AI agent needs a secret:
+Warn user before requesting a secret:
 
-Agent should start with this warning in chat:
+> Never paste secret values into AI chat. Run `aidevops secret set SECRET_NAME` in your terminal.
 
-`WARNING: Never paste secret values into AI chat. Run aidevops secret set SECRET_NAME in your terminal, then enter the value at the hidden prompt.`
+Then use: `aidevops secret SECRET_NAME -- command` (output auto-redacted).
 
-1. Agent instructs user: "Please run: `aidevops secret set SECRET_NAME`"
-2. User runs command at terminal (value entered with hidden input)
-3. Agent uses secret via: `aidevops secret SECRET_NAME -- command`
-4. Output is automatically redacted
+**Env var, not argument**: ALWAYS inject secrets as env vars, never command arguments — args appear in `ps`, error messages, and logs. `aidevops secret NAME -- cmd` handles this automatically. See `reference/secret-handling.md` §8.3.
 
-**Env var, not argument**: When passing secrets to subprocesses, ALWAYS use environment variables, never command arguments. Arguments appear in `ps`, error messages, and logs -- even when the command's intent is safe (e.g., a DB insert). Use `aidevops secret NAME -- cmd` which injects as env var automatically, or `MY_SECRET="$value" cmd` where the subprocess reads via `getenv()`. See `reference/secret-handling.md` §8.3 for the full rule.
+**Prohibited** (NEVER run in agent context):
 
-**Prohibited commands** (NEVER run in agent context):
-
-- `gopass show` / `gopass cat` -- prints secret values
-- `cat ~/.config/aidevops/credentials.sh` -- exposes plaintext
-- `echo $SECRET_NAME` -- leaks to agent context
-- `env | grep` -- exposes environment variables
-- `cmd "$SECRET"` -- secret as command argument, visible in `ps` and error output
-
-## psst Alternative
-
-For solo developers who prefer simplicity, [psst](https://github.com/nicholasgasior/psst) is a documented alternative:
-
-- Simpler setup (Bun-based, no GPG)
-- AI-native design (built for agent workflows)
-- Trade-offs: v0.3.0, 61 stars, no team features, Bun dependency
-
-See `tools/credentials/psst.md` for psst documentation.
-
-## Architecture
-
-```text
-                    User Terminal (interactive)
-                           |
-                    aidevops secret set NAME
-                           |
-                    gopass insert aidevops/NAME
-                           |
-              ~/.local/share/gopass/stores/root/
-              (GPG-encrypted files, git-versioned)
-                           |
-              aidevops secret NAME -- command
-                           |
-              1. gopass show -o aidevops/NAME
-              2. Inject into subprocess env
-              3. Execute command
-              4. Redact output
-              5. Return exit code
-```
+- `gopass show` / `gopass cat` — prints secret values
+- `cat ~/.config/aidevops/credentials.sh` — exposes plaintext
+- `echo $SECRET_NAME` / `env | grep` — leaks to agent context
+- `cmd "$SECRET"` — secret as argument, visible in `ps` and error output
 
 ## Encryption Stack
 
-gopass handles **individual secrets** (API keys, tokens, passwords). For other encryption needs:
+gopass handles individual secrets (API keys, tokens, passwords). For other needs:
 
-- **Config files in git** (YAML/JSON with encrypted values): Use SOPS -- `tools/credentials/sops.md`
-- **Directory encryption at rest** (sensitive folders): Use gocryptfs -- `tools/credentials/gocryptfs.md`
+- **Config files in git**: SOPS — `tools/credentials/sops.md`
+- **Directory encryption**: gocryptfs — `tools/credentials/gocryptfs.md`
 - **Decision guide**: `tools/credentials/encryption-stack.md`
 
 ## Related
 
-- `tools/credentials/encryption-stack.md` -- Full encryption stack overview and decision tree
-- `tools/credentials/sops.md` -- SOPS config file encryption (age backend)
-- `tools/credentials/gocryptfs.md` -- gocryptfs directory encryption
-- `tools/credentials/api-key-setup.md` -- Plaintext credential setup
-- `tools/credentials/multi-tenant.md` -- Multi-tenant credential storage
-- `tools/credentials/psst.md` -- psst alternative for solo devs
-- `tools/credentials/list-keys.md` -- List configured keys
-- `.agents/scripts/secret-helper.sh` -- Implementation
-- `.agents/scripts/credential-helper.sh` -- Multi-tenant plaintext backend
+- `tools/credentials/encryption-stack.md` — Full encryption stack and decision tree
+- `tools/credentials/sops.md` — SOPS config file encryption
+- `tools/credentials/gocryptfs.md` — gocryptfs directory encryption
+- `tools/credentials/api-key-setup.md` — Plaintext credential setup
+- `tools/credentials/multi-tenant.md` — Multi-tenant credential storage
+- `tools/credentials/psst.md` — psst alternative for solo devs (no GPG)
+- `tools/credentials/list-keys.md` — List configured keys
+- `.agents/scripts/secret-helper.sh` — Implementation
+- `.agents/scripts/credential-helper.sh` — Multi-tenant plaintext backend
