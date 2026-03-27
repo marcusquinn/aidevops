@@ -360,19 +360,17 @@ format_json_record() {
 # Main Scan Command
 # =============================================================================
 
-cmd_scan() {
-	local json_output=false
-	local quiet=false
-	local extra_path=""
-
+# Parse scan subcommand flags into caller-scoped variables.
+# Sets: _json_output, _quiet, _extra_path (caller must declare these locals first).
+parse_scan_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--json | -j)
-			json_output=true
+			_json_output=true
 			shift
 			;;
 		--quiet | -q)
-			quiet=true
+			_quiet=true
 			shift
 			;;
 		--path | -p)
@@ -380,7 +378,7 @@ cmd_scan() {
 				echo "Error: --path requires a directory argument" >&2
 				exit 2
 			fi
-			extra_path="$2"
+			_extra_path="$2"
 			shift 2
 			;;
 		*)
@@ -389,29 +387,27 @@ cmd_scan() {
 			;;
 		esac
 	done
+	return 0
+}
 
-	local venv_count=0
-	local healthy_count=0
-	local warning_count=0
-	local broken_count=0
-	local json_records=""
-	local first_json=true
-	local overall_exit=0
+# Iterate over all discovered venvs, run checks, and accumulate counts/records.
+# Args: json_output quiet extra_path
+# Outputs (via stdout): tab-separated counters line, then JSON records line (if json mode).
+# Side-effects: calls format_console_output or accumulates json_records.
+process_venv_results() {
+	local json_output="$1"
+	local quiet="$2"
+	local extra_path="$3"
 
-	if [[ "$json_output" != "true" && "$quiet" != "true" ]]; then
-		echo -e "${BOLD}${BLUE}Python Venv Health Check${NC}"
-		echo "========================"
-		echo ""
-	fi
+	local venv_count=0 healthy_count=0 warning_count=0 broken_count=0
+	local json_records="" first_json=true overall_exit=0
 
 	while IFS= read -r venv_dir; do
 		[[ -z "$venv_dir" ]] && continue
 		venv_count=$((venv_count + 1))
 
-		local result_line
+		local result_line venv_path status issues
 		result_line=$(check_single_venv "$venv_dir")
-
-		local venv_path status issues
 		venv_path=$(printf '%s' "$result_line" | cut -f1)
 		status=$(printf '%s' "$result_line" | cut -f2)
 		issues=$(printf '%s' "$result_line" | cut -f3)
@@ -428,23 +424,28 @@ cmd_scan() {
 		if [[ "$json_output" == "true" ]]; then
 			local record
 			record=$(format_json_record "$venv_path" "$status" "$issues")
-			if [[ "$first_json" == "true" ]]; then
-				first_json=false
-			else
-				json_records="${json_records},"
-			fi
+			[[ "$first_json" == "true" ]] && first_json=false || json_records="${json_records},"
 			json_records="${json_records}${record}"
 		else
 			format_console_output "$venv_path" "$status" "$issues" "$quiet"
 		fi
 	done < <(collect_all_venvs "$extra_path")
 
-	if [[ "$json_output" == "true" ]]; then
-		printf '{"summary":{"total":%d,"healthy":%d,"warnings":%d,"broken":%d},"venvs":[%s]}\n' \
-			"$venv_count" "$healthy_count" "$warning_count" "$broken_count" \
-			"$json_records"
-		return $overall_exit
-	fi
+	# Return counters + records via stdout (tab-separated for easy parsing)
+	printf '%d\t%d\t%d\t%d\t%d\t%s\n' \
+		"$venv_count" "$healthy_count" "$warning_count" "$broken_count" \
+		"$overall_exit" "$json_records"
+	return 0
+}
+
+# Print the human-readable summary block after scanning.
+# Args: venv_count healthy_count warning_count broken_count quiet
+print_scan_summary() {
+	local venv_count="$1"
+	local healthy_count="$2"
+	local warning_count="$3"
+	local broken_count="$4"
+	local quiet="$5"
 
 	if [[ $venv_count -eq 0 ]]; then
 		if [[ "$quiet" != "true" ]]; then
@@ -456,25 +457,54 @@ cmd_scan() {
 		return 0
 	fi
 
-	if [[ "$quiet" != "true" ]]; then
+	[[ "$quiet" == "true" ]] && return 0
+
+	echo ""
+	echo -e "${BOLD}Summary${NC}"
+	echo "  Total venvs:  $venv_count"
+	echo "  Healthy:      $healthy_count"
+	[[ $warning_count -gt 0 ]] && echo -e "  Warnings:     ${YELLOW}${warning_count}${NC}"
+	if [[ $broken_count -gt 0 ]]; then
+		echo -e "  Broken:       ${RED}${broken_count}${NC}"
 		echo ""
-		echo -e "${BOLD}Summary${NC}"
-		echo "  Total venvs:  $venv_count"
-		echo "  Healthy:      $healthy_count"
-		if [[ $warning_count -gt 0 ]]; then
-			echo -e "  Warnings:     ${YELLOW}${warning_count}${NC}"
-		fi
-		if [[ $broken_count -gt 0 ]]; then
-			echo -e "  Broken:       ${RED}${broken_count}${NC}"
-			echo ""
-			echo "Run the fix commands shown above to resolve broken venvs."
-		else
-			echo ""
-			echo -e "${GREEN}All venvs are healthy.${NC}"
-		fi
+		echo "Run the fix commands shown above to resolve broken venvs."
+	else
+		echo ""
+		echo -e "${GREEN}All venvs are healthy.${NC}"
+	fi
+	return 0
+}
+
+cmd_scan() {
+	local _json_output=false _quiet=false _extra_path=""
+	parse_scan_args "$@"
+
+	if [[ "$_json_output" != "true" && "$_quiet" != "true" ]]; then
+		echo -e "${BOLD}${BLUE}Python Venv Health Check${NC}"
+		echo "========================"
+		echo ""
 	fi
 
-	return $overall_exit
+	local results_line
+	results_line=$(process_venv_results "$_json_output" "$_quiet" "$_extra_path")
+
+	local venv_count healthy_count warning_count broken_count overall_exit json_records
+	venv_count=$(printf '%s' "$results_line" | cut -f1)
+	healthy_count=$(printf '%s' "$results_line" | cut -f2)
+	warning_count=$(printf '%s' "$results_line" | cut -f3)
+	broken_count=$(printf '%s' "$results_line" | cut -f4)
+	overall_exit=$(printf '%s' "$results_line" | cut -f5)
+	json_records=$(printf '%s' "$results_line" | cut -f6-)
+
+	if [[ "$_json_output" == "true" ]]; then
+		printf '{"summary":{"total":%d,"healthy":%d,"warnings":%d,"broken":%d},"venvs":[%s]}\n' \
+			"$venv_count" "$healthy_count" "$warning_count" "$broken_count" \
+			"$json_records"
+		return "$overall_exit"
+	fi
+
+	print_scan_summary "$venv_count" "$healthy_count" "$warning_count" "$broken_count" "$_quiet"
+	return "$overall_exit"
 }
 
 # =============================================================================
