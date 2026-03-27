@@ -417,7 +417,8 @@ _update_status() {
 
 	_ensure_ledger
 	if ! _acquire_lock; then
-		return 0 # Silently skip — status update is best-effort
+		echo "Error: _update_status aborted — could not acquire lock for session_key=${session_key}" >&2
+		return 1
 	fi
 
 	if [[ ! -s "$LEDGER_FILE" ]]; then

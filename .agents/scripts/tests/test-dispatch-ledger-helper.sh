@@ -15,6 +15,19 @@ TESTS_FAILED=0
 
 TEST_ROOT=""
 
+#######################################
+# Run a helper command without triggering set -e on failure.
+# Captures exit status so test bodies can check it explicitly.
+# Usage: run_helper [args...]; LAST_EXIT=$?
+#######################################
+run_helper() {
+	set +e
+	"$@"
+	LAST_EXIT=$?
+	set -e
+	return 0
+}
+
 print_result() {
 	local test_name="$1"
 	local passed="$2"
@@ -54,7 +67,7 @@ teardown_test_env() {
 test_register_creates_entry() {
 	setup_test_env
 
-	"$LEDGER_HELPER" register --session-key "issue-42" --issue 42 --repo "owner/repo" --pid $$
+	run_helper "$LEDGER_HELPER" register --session-key "issue-42" --issue 42 --repo "owner/repo" --pid $$
 
 	local entry_count
 	entry_count=$(wc -l <"${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl" | tr -d ' ')
@@ -88,7 +101,7 @@ test_register_creates_entry() {
 test_check_detects_inflight() {
 	setup_test_env
 
-	"$LEDGER_HELPER" register --session-key "issue-99" --issue 99 --repo "owner/repo" --pid $$
+	run_helper "$LEDGER_HELPER" register --session-key "issue-99" --issue 99 --repo "owner/repo" --pid $$
 
 	local result=1
 	if "$LEDGER_HELPER" check --session-key "issue-99" >/dev/null 2>&1; then
@@ -106,7 +119,7 @@ test_check_detects_inflight() {
 test_check_returns_1_for_unknown() {
 	setup_test_env
 
-	"$LEDGER_HELPER" register --session-key "issue-42" --issue 42 --repo "owner/repo" --pid $$
+	run_helper "$LEDGER_HELPER" register --session-key "issue-42" --issue 42 --repo "owner/repo" --pid $$
 
 	local result=0
 	if "$LEDGER_HELPER" check --session-key "issue-999" >/dev/null 2>&1; then
@@ -124,7 +137,7 @@ test_check_returns_1_for_unknown() {
 test_check_issue_detects_inflight() {
 	setup_test_env
 
-	"$LEDGER_HELPER" register --session-key "issue-55" --issue 55 --repo "owner/repo" --pid $$
+	run_helper "$LEDGER_HELPER" register --session-key "issue-55" --issue 55 --repo "owner/repo" --pid $$
 
 	local result=1
 	if "$LEDGER_HELPER" check-issue --issue 55 --repo "owner/repo" >/dev/null 2>&1; then
@@ -142,7 +155,7 @@ test_check_issue_detects_inflight() {
 test_check_issue_different_repo() {
 	setup_test_env
 
-	"$LEDGER_HELPER" register --session-key "issue-55" --issue 55 --repo "owner/repo-a" --pid $$
+	run_helper "$LEDGER_HELPER" register --session-key "issue-55" --issue 55 --repo "owner/repo-a" --pid $$
 
 	local result=0
 	if "$LEDGER_HELPER" check-issue --issue 55 --repo "owner/repo-b" >/dev/null 2>&1; then
@@ -160,11 +173,11 @@ test_check_issue_different_repo() {
 test_complete_marks_entry() {
 	setup_test_env
 
-	"$LEDGER_HELPER" register --session-key "issue-42" --issue 42 --repo "owner/repo" --pid $$
-	"$LEDGER_HELPER" complete --session-key "issue-42"
+	run_helper "$LEDGER_HELPER" register --session-key "issue-42" --issue 42 --repo "owner/repo" --pid $$
+	run_helper "$LEDGER_HELPER" complete --session-key "issue-42"
 
 	# A late fail (e.g., from dead-PID cleanup) must NOT overwrite completed status
-	"$LEDGER_HELPER" fail --session-key "issue-42"
+	run_helper "$LEDGER_HELPER" fail --session-key "issue-42"
 
 	# check should still return 1 (no in-flight entry)
 	local result=0
@@ -190,8 +203,8 @@ test_complete_marks_entry() {
 test_fail_marks_entry() {
 	setup_test_env
 
-	"$LEDGER_HELPER" register --session-key "issue-42" --issue 42 --repo "owner/repo" --pid $$
-	"$LEDGER_HELPER" fail --session-key "issue-42"
+	run_helper "$LEDGER_HELPER" register --session-key "issue-42" --issue 42 --repo "owner/repo" --pid $$
+	run_helper "$LEDGER_HELPER" fail --session-key "issue-42"
 
 	local status
 	status=$(jq -r '.status' "${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl" 2>/dev/null | head -1)
@@ -216,9 +229,9 @@ test_terminal_state_immutability() {
 	local result=0
 
 	# Case 1: fail must not overwrite completed
-	"$LEDGER_HELPER" register --session-key "issue-77" --issue 77 --repo "owner/repo" --pid $$
-	"$LEDGER_HELPER" complete --session-key "issue-77"
-	"$LEDGER_HELPER" fail --session-key "issue-77"
+	run_helper "$LEDGER_HELPER" register --session-key "issue-77" --issue 77 --repo "owner/repo" --pid $$
+	run_helper "$LEDGER_HELPER" complete --session-key "issue-77"
+	run_helper "$LEDGER_HELPER" fail --session-key "issue-77"
 
 	local status1
 	status1=$(jq -r 'select(.session_key == "issue-77") | .status' "${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl" 2>/dev/null | head -1)
@@ -227,9 +240,9 @@ test_terminal_state_immutability() {
 	fi
 
 	# Case 2: complete must not overwrite failed
-	"$LEDGER_HELPER" register --session-key "issue-78" --issue 78 --repo "owner/repo" --pid $$
-	"$LEDGER_HELPER" fail --session-key "issue-78"
-	"$LEDGER_HELPER" complete --session-key "issue-78"
+	run_helper "$LEDGER_HELPER" register --session-key "issue-78" --issue 78 --repo "owner/repo" --pid $$
+	run_helper "$LEDGER_HELPER" fail --session-key "issue-78"
+	run_helper "$LEDGER_HELPER" complete --session-key "issue-78"
 
 	local status2
 	status2=$(jq -r 'select(.session_key == "issue-78") | .status' "${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl" 2>/dev/null | head -1)
@@ -248,8 +261,8 @@ test_terminal_state_immutability() {
 test_register_idempotent() {
 	setup_test_env
 
-	"$LEDGER_HELPER" register --session-key "issue-42" --issue 42 --repo "owner/repo" --pid $$
-	"$LEDGER_HELPER" register --session-key "issue-42" --issue 42 --repo "owner/repo" --pid $$
+	run_helper "$LEDGER_HELPER" register --session-key "issue-42" --issue 42 --repo "owner/repo" --pid $$
+	run_helper "$LEDGER_HELPER" register --session-key "issue-42" --issue 42 --repo "owner/repo" --pid $$
 
 	local entry_count
 	entry_count=$(wc -l <"${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl" | tr -d ' ')
@@ -270,10 +283,10 @@ test_register_idempotent() {
 test_count_inflight() {
 	setup_test_env
 
-	"$LEDGER_HELPER" register --session-key "issue-1" --issue 1 --repo "owner/repo" --pid $$
-	"$LEDGER_HELPER" register --session-key "issue-2" --issue 2 --repo "owner/repo" --pid $$
-	"$LEDGER_HELPER" register --session-key "issue-3" --issue 3 --repo "owner/repo" --pid $$
-	"$LEDGER_HELPER" complete --session-key "issue-2"
+	run_helper "$LEDGER_HELPER" register --session-key "issue-1" --issue 1 --repo "owner/repo" --pid $$
+	run_helper "$LEDGER_HELPER" register --session-key "issue-2" --issue 2 --repo "owner/repo" --pid $$
+	run_helper "$LEDGER_HELPER" register --session-key "issue-3" --issue 3 --repo "owner/repo" --pid $$
+	run_helper "$LEDGER_HELPER" complete --session-key "issue-2"
 
 	local count
 	count=$("$LEDGER_HELPER" count)
@@ -410,7 +423,7 @@ test_prune_old_entries() {
 test_status_runs() {
 	setup_test_env
 
-	"$LEDGER_HELPER" register --session-key "issue-42" --issue 42 --repo "owner/repo" --pid $$
+	run_helper "$LEDGER_HELPER" register --session-key "issue-42" --issue 42 --repo "owner/repo" --pid $$
 
 	local output
 	output=$("$LEDGER_HELPER" status 2>&1)
