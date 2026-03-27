@@ -283,6 +283,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | Planning | `workflows/plans.md`, `scripts/commands/define.md`, `tools/task-management/beads.md` |
 | Code quality | `tools/code-review/code-standards.md` |
 | Git/PRs/Releases | `workflows/git-workflow.md`, `tools/git/github-cli.md`, `workflows/release.md` |
+| External repo submissions | `reference/external-repo-submission.md` |
 | Documents/PDF | `tools/document/document-creation.md`, `tools/pdf/overview.md`, `tools/conversion/pandoc.md` |
 | OCR | `tools/ocr/overview.md`, `tools/ocr/paddleocr.md`, `tools/ocr/glm-ocr.md` |
 | Product (shared) | `product/validation.md`, `product/onboarding.md`, `product/monetisation.md`, `product/growth.md`, `product/ui-design.md`, `product/analytics.md` |
