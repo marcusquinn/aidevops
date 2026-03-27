@@ -1071,10 +1071,89 @@ PR_PLIST
 	return 0
 }
 
+# Detect Windows Git Bash / MINGW64 / MSYS2 environment.
+# WSL reports "Linux" from uname -s and uses the cron path — correct behaviour.
+# Returns 0 (true) on Windows Git Bash/MINGW/MSYS/Cygwin, 1 otherwise.
+_is_windows() {
+	case "$(uname -s)" in
+	MINGW* | MSYS* | CYGWIN*)
+		return 0
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
+# Install OAuth token refresh via Windows Task Scheduler (schtasks).
+# Args: $1=tr_script (Unix path), $2=log_dir (Unix path)
+# Runs every 30 minutes, matching macOS launchd and Linux cron behaviour.
+# Uses bash.exe from Git for Windows to execute the shell script.
+_install_token_refresh_schtasks() {
+	local tr_script="$1"
+	local log_dir="$2"
+	local task_name="aidevops-token-refresh"
+
+	# Resolve bash.exe — Git for Windows ships it alongside git.exe
+	local bash_exe
+	bash_exe=$(command -v bash.exe 2>/dev/null || command -v bash 2>/dev/null || echo "bash")
+
+	# Convert Unix paths to Windows paths for schtasks (requires cygpath from Git Bash)
+	local tr_script_win log_dir_win bash_exe_win
+	if command -v cygpath &>/dev/null; then
+		tr_script_win=$(cygpath -w "$tr_script")
+		log_dir_win=$(cygpath -w "$log_dir")
+		bash_exe_win=$(cygpath -w "$bash_exe")
+	else
+		# Fallback: manual conversion (replace /c/ with C:\, forward to backslash)
+		tr_script_win=$(echo "$tr_script" | sed 's|^/\([a-zA-Z]\)/|\1:\\|; s|/|\\|g')
+		log_dir_win=$(echo "$log_dir" | sed 's|^/\([a-zA-Z]\)/|\1:\\|; s|/|\\|g')
+		bash_exe_win="bash.exe"
+	fi
+
+	# Remove existing task (idempotent — ignore error if not present)
+	schtasks /Delete /TN "$task_name" /F >/dev/null 2>&1 || true
+
+	# Create scheduled task: every 30 minutes, run at logon, run whether logged on or not
+	# /SC MINUTE /MO 30 = every 30 minutes
+	# /RL HIGHEST = run with highest available privileges (needed for token writes)
+	# /F = force creation (overwrite if exists)
+	# The action runs bash.exe with -c to chain both refresh calls
+	local action_cmd
+	action_cmd="\"${bash_exe_win}\" -c \"'${tr_script_win}' refresh anthropic >> '${log_dir_win}\\token-refresh.log' 2>&1; '${tr_script_win}' refresh openai >> '${log_dir_win}\\token-refresh.log' 2>&1\""
+
+	if schtasks /Create \
+		/TN "$task_name" \
+		/TR "$action_cmd" \
+		/SC MINUTE \
+		/MO 30 \
+		/RL HIGHEST \
+		/F \
+		>/dev/null 2>&1; then
+		print_info "OAuth token refresh enabled (schtasks, every 30 min)"
+		# Run immediately to refresh any expired tokens
+		schtasks /Run /TN "$task_name" >/dev/null 2>&1 || true
+	else
+		print_warning "Failed to create token refresh scheduled task. Run manually: schtasks /Create /TN aidevops-token-refresh /TR \"bash '${tr_script_win}' refresh anthropic\" /SC MINUTE /MO 30"
+	fi
+	return 0
+}
+
+# Remove OAuth token refresh Windows scheduled task (uninstall path).
+_uninstall_token_refresh_schtasks() {
+	local task_name="aidevops-token-refresh"
+	if schtasks /Query /TN "$task_name" >/dev/null 2>&1; then
+		schtasks /Delete /TN "$task_name" /F >/dev/null 2>&1 || true
+		print_info "OAuth token refresh disabled (schtasks task removed)"
+	fi
+	return 0
+}
+
 # Setup OAuth token refresh scheduled job.
 # Refreshes expired/expiring tokens every 30 min so sessions never hit
 # "invalid x-api-key". Also runs at load to catch tokens that expired
 # while the machine was off.
+# macOS: launchd plist | Linux/WSL: cron | Windows Git Bash: schtasks
 setup_oauth_token_refresh() {
 	local tr_script="$HOME/.aidevops/agents/scripts/oauth-pool-helper.sh"
 	local tr_label="sh.aidevops.token-refresh"
@@ -1082,7 +1161,8 @@ setup_oauth_token_refresh() {
 		return 0
 	fi
 
-	mkdir -p "$HOME/.aidevops/.agent-workspace/logs"
+	local tr_log_dir="$HOME/.aidevops/.agent-workspace/logs"
+	mkdir -p "$tr_log_dir"
 
 	if [[ "$(uname -s)" == "Darwin" ]]; then
 		local tr_plist="$HOME/Library/LaunchAgents/${tr_label}.plist"
@@ -1139,8 +1219,11 @@ TR_PLIST
 		else
 			print_warning "Failed to load token refresh LaunchAgent"
 		fi
+	elif _is_windows; then
+		# Windows Git Bash / MINGW64 / MSYS2: use Task Scheduler (schtasks)
+		_install_token_refresh_schtasks "$tr_script" "$tr_log_dir"
 	else
-		# Linux: cron entry (every 30 min)
+		# Linux / WSL: cron entry (every 30 min)
 		local _cron_tr_script
 		_cron_tr_script=$(_cron_escape "$tr_script")
 		(
