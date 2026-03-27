@@ -100,7 +100,7 @@ Patterns for citation by AI assistants (ChatGPT, Claude, Perplexity, Gemini).
 
 ### Statistic Citation Block
 
-Statistics increase AI citation rates by 15-30%. Always include sources.
+Statistics can increase AI citation rates. Always include sources.
 
 ```markdown
 [Claim]. According to [Source], [statistic with number and timeframe]. [Why this matters].
