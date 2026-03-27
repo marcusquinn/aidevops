@@ -86,7 +86,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   );
 }
 
-// src/app/providers/index.tsx — 'use client'
+// src/app/providers/index.tsx
+'use client';
+
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
