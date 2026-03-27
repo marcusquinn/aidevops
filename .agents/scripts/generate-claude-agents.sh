@@ -510,17 +510,19 @@ if command -v claude &>/dev/null; then
 		return 0
 	}
 
-	# --- Augment Context Engine ---
-	if command -v auggie &>/dev/null; then
+	# --- Augment Context Engine (requires binary AND active auth session) ---
+	if command -v auggie &>/dev/null && [[ -f "$HOME/.augment/session.json" ]]; then
 		local_auggie=$(command -v auggie)
 		register_mcp "auggie-mcp" "{\"type\":\"stdio\",\"command\":\"$local_auggie\",\"args\":[\"--mcp\"]}"
+	elif command -v auggie &>/dev/null; then
+		echo -e "  ${YELLOW}[SKIP]${NC} auggie-mcp: binary found but not logged in (run: auggie login)"
 	fi
 
 	# --- context7 (library docs) ---
 	register_mcp "context7" "{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\",\"@upstash/context7-mcp@latest\"]}"
 
-	# --- Playwright MCP ---
-	register_mcp "playwright" "{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\",\"@anthropic-ai/mcp-server-playwright@latest\"]}"
+	# --- Playwright MCP (correct package: @playwright/mcp) ---
+	register_mcp "playwright" "{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\",\"@playwright/mcp@latest\"]}"
 
 	# --- shadcn UI ---
 	register_mcp "shadcn" "{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"shadcn@latest\",\"mcp\"]}"

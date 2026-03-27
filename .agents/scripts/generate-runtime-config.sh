@@ -1189,13 +1189,15 @@ _generate_mcp_for_runtime() {
 	# Shared MCP definitions — defined once, registered for each runtime
 	# Format: register_mcp_for_runtime <runtime_id> <name> '<json>'
 
-	# Augment Context Engine
+	# Augment Context Engine (requires auggie binary AND active auth session)
 	local auggie_path
 	auggie_path=$(command -v auggie 2>/dev/null || echo "")
-	if [[ -n "$auggie_path" ]]; then
+	if [[ -n "$auggie_path" && -f "$HOME/.augment/session.json" ]]; then
 		register_mcp_for_runtime "$runtime_id" "auggie-mcp" \
 			"{\"command\":\"$auggie_path\",\"args\":[\"--mcp\"]}"
 		mcp_count=$((mcp_count + 1))
+	elif [[ -n "$auggie_path" ]]; then
+		print_warning "Skipping auggie-mcp: binary found but not logged in (run: auggie login)"
 	fi
 
 	# context7 (library docs)
@@ -1203,9 +1205,9 @@ _generate_mcp_for_runtime() {
 		'{"command":"npx","args":["-y","@upstash/context7-mcp@latest"]}'
 	mcp_count=$((mcp_count + 1))
 
-	# Playwright MCP
+	# Playwright MCP (correct package: @playwright/mcp, not @anthropic-ai/mcp-server-playwright)
 	register_mcp_for_runtime "$runtime_id" "playwright" \
-		'{"command":"npx","args":["-y","@anthropic-ai/mcp-server-playwright@latest"]}'
+		'{"command":"npx","args":["-y","@playwright/mcp@latest"]}'
 	mcp_count=$((mcp_count + 1))
 
 	# shadcn UI
@@ -1228,9 +1230,9 @@ _generate_mcp_for_runtime() {
 		mcp_count=$((mcp_count + 1))
 	fi
 
-	# Cloudflare API (remote)
+	# Cloudflare API (remote MCP endpoint — no local install needed)
 	register_mcp_for_runtime "$runtime_id" "cloudflare-api" \
-		'{"command":"npx","args":["-y","@cloudflare/mcp-server-cloudflare"]}'
+		'{"url":"https://mcp.cloudflare.com/mcp"}'
 	mcp_count=$((mcp_count + 1))
 
 	print_success "$display_name: $mcp_count MCP servers processed"

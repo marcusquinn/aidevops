@@ -152,9 +152,16 @@ validate_mcp_command() {
 		return 0
 	fi
 
+	# URL-based (remote) MCPs have no command to validate
+	local url
+	url=$(echo "$mcp_json" | jq -r '.url // empty')
+	if [[ -n "$url" ]]; then
+		return 0
+	fi
+
 	cmd=$(echo "$mcp_json" | jq -r '.command // empty')
 	if [[ -z "$cmd" ]]; then
-		print_warning "No command specified in MCP definition"
+		print_warning "No command or url specified in MCP definition"
 		return 1
 	fi
 
@@ -193,17 +200,28 @@ _register_mcp_opencode() {
 		return 0
 	fi
 
-	# Transform universal format → OpenCode format:
-	# - Merge command + args into a single "command" array
-	# - Rename "env" → "environment"
-	# - Add type: "local", enabled: true (unless overridden)
+	# Detect remote (URL-based) vs local (command-based) MCP
+	local url
+	url=$(echo "$mcp_json" | jq -r '.url // empty')
+
 	local opencode_entry
-	opencode_entry=$(echo "$mcp_json" | jq -c '{
-        type: "local",
-        command: ([.command] + (.args // [])),
-        environment: (.env // {}),
-        enabled: (.enabled // true)
-    }')
+	if [[ -n "$url" ]]; then
+		# Remote MCP: use type "remote" with url field
+		opencode_entry=$(echo "$mcp_json" | jq -c '{
+            type: "remote",
+            url: .url,
+            enabled: (.enabled // true)
+        }')
+	else
+		# Local MCP: merge command + args into a single "command" array
+		# Rename "env" → "environment"
+		opencode_entry=$(echo "$mcp_json" | jq -c '{
+            type: "local",
+            command: ([.command] + (.args // [])),
+            environment: (.env // {}),
+            enabled: (.enabled // true)
+        }')
+	fi
 
 	json_set_nested "$opencode_config" "mcp" "$mcp_name" "$opencode_entry"
 	return 0
@@ -233,16 +251,26 @@ _register_mcp_claude() {
 		return 0
 	fi
 
-	# Transform universal format → Claude format:
-	# - type: "stdio" (default)
-	# - command, args, env stay as-is
+	# Detect remote (URL-based) vs local (command-based) MCP
+	local url
+	url=$(echo "$mcp_json" | jq -r '.url // empty')
+
 	local claude_entry
-	claude_entry=$(echo "$mcp_json" | jq -c '{
-        type: (.transport // "stdio"),
-        command: .command,
-        args: (.args // []),
-        env: (.env // {})
-    }')
+	if [[ -n "$url" ]]; then
+		# Remote MCP: use SSE transport with url
+		claude_entry=$(echo "$mcp_json" | jq -c '{
+            type: "sse",
+            url: .url
+        }')
+	else
+		# Local MCP: stdio transport with command + args
+		claude_entry=$(echo "$mcp_json" | jq -c '{
+            type: (.transport // "stdio"),
+            command: .command,
+            args: (.args // []),
+            env: (.env // {})
+        }')
+	fi
 
 	if claude mcp add-json "$mcp_name" --scope user "$claude_entry" 2>/dev/null; then
 		print_success "Registered $mcp_name in Claude Code"
@@ -354,13 +382,24 @@ _register_mcp_mcpservers() {
 		;;
 	esac
 
-	# Common entry format for all mcpServers-style runtimes
+	# Detect remote (URL-based) vs local (command-based) MCP
+	local url
+	url=$(echo "$mcp_json" | jq -r '.url // empty')
+
 	local entry
-	entry=$(echo "$mcp_json" | jq -c '{
-		command: .command,
-		args: (.args // []),
-		env: (.env // {})
-	}')
+	if [[ -n "$url" ]]; then
+		# Remote MCP: use url field (mcpServers format supports this)
+		entry=$(echo "$mcp_json" | jq -c '{
+			url: .url
+		}')
+	else
+		# Local MCP: command + args + env
+		entry=$(echo "$mcp_json" | jq -c '{
+			command: .command,
+			args: (.args // []),
+			env: (.env // {})
+		}')
+	fi
 
 	json_set_nested "$config_path" "mcpServers" "$mcp_name" "$entry"
 	return 0
