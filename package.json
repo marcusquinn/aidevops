@@ -1,6 +1,6 @@
 {
   "name": "aidevops",
-  "version": "3.1.316",
+  "version": "3.1.317",
   "description": "AI DevOps Framework - AI-assisted development workflows, code quality, and deployment automation",
   "type": "module",
   "bin": {
