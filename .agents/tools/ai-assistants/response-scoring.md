@@ -29,80 +29,33 @@ model: sonnet
 
 ## Overview
 
-The response scoring framework enables structured evaluation of AI model outputs. Unlike `compare-models` which compares model specs (pricing, context windows, capabilities), this framework evaluates **actual responses** to specific prompts.
+Enables structured evaluation of actual AI model outputs. Unlike `compare-models` (which compares specs — pricing, context windows, capabilities), this framework evaluates **actual responses** to specific prompts.
 
-### When to Use
+**When to use**: evaluating model fit for a task type, benchmarking prompt engineering changes, building evidence-based model selection.
 
-- Evaluating which model performs best for a specific task type
-- Building evidence-based model selection for your workflow
-- Comparing model outputs before/after prompt engineering changes
-- Creating reproducible benchmarks for your use cases
+## Scoring Criteria (1–5 scale, weighted average)
 
-## Scoring Criteria
+| Criterion | Weight | 1 | 3 | 5 |
+|-----------|--------|---|---|---|
+| Correctness | 30% | Major errors | Mostly correct, minor issues | Fully correct |
+| Completeness | 25% | Missing major requirements | Covers main requirements, misses edge cases | Comprehensive, all edge cases |
+| Code Quality | 25% | Poor structure, no error handling | Reasonable structure, some best practices | Clean, idiomatic, well-structured |
+| Clarity | 20% | Confusing, poorly organized | Understandable but could be clearer | Crystal clear, well-organized |
 
-All criteria use a 1-5 scale with weighted averaging:
-
-### Correctness (30%)
-
-Factual accuracy and technical correctness of the response.
-
-| Score | Description |
-|-------|-------------|
-| 1 | Major errors or incorrect approach |
-| 2 | Several errors that affect usability |
-| 3 | Mostly correct with minor issues |
-| 4 | Correct with negligible issues |
-| 5 | Fully correct, no errors |
-
-### Completeness (25%)
-
-Coverage of all requirements and edge cases.
-
-| Score | Description |
-|-------|-------------|
-| 1 | Missing major requirements |
-| 2 | Covers some requirements, misses important ones |
-| 3 | Covers main requirements, misses edge cases |
-| 4 | Comprehensive, misses only minor edge cases |
-| 5 | Comprehensive coverage including edge cases |
-
-### Code Quality (25%)
-
-Clean code, best practices, and maintainability.
-
-| Score | Description |
-|-------|-------------|
-| 1 | Poor structure, no error handling |
-| 2 | Basic structure, minimal best practices |
-| 3 | Reasonable structure, some best practices |
-| 4 | Good structure, follows most best practices |
-| 5 | Clean, idiomatic, well-structured with error handling |
-
-### Clarity (20%)
-
-Clear explanation, good formatting, and readability.
-
-| Score | Description |
-|-------|-------------|
-| 1 | Confusing or poorly organized |
-| 2 | Somewhat understandable but disorganized |
-| 3 | Understandable but could be clearer |
-| 4 | Clear and well-organized |
-| 5 | Crystal clear, well-organized, easy to follow |
+Scores 2 and 4 fall between the anchors above.
 
 ## Workflow
 
 ### Step 1: Create an Evaluation Prompt
 
 ```bash
-# Simple prompt
 response-scoring-helper.sh prompt add \
   --title "FizzBuzz in Python" \
   --text "Write a Python function that prints FizzBuzz for numbers 1-100" \
   --category "coding" \
   --difficulty "easy"
 
-# Prompt from file
+# From file
 response-scoring-helper.sh prompt add \
   --title "REST API Design" \
   --file prompts/rest-api.txt \
@@ -112,10 +65,7 @@ response-scoring-helper.sh prompt add \
 
 ### Step 2: Record Model Responses
 
-Send the prompt to each model and record the responses:
-
 ```bash
-# Record response with metadata
 response-scoring-helper.sh record \
   --prompt 1 \
   --model claude-sonnet-4-6 \
@@ -124,7 +74,6 @@ response-scoring-helper.sh record \
   --tokens 150 \
   --cost 0.0005
 
-# Record from file
 response-scoring-helper.sh record \
   --prompt 1 \
   --model gpt-4o \
@@ -139,45 +88,29 @@ response-scoring-helper.sh record \
 ```bash
 response-scoring-helper.sh score \
   --response 1 \
-  --correctness 5 \
-  --completeness 4 \
-  --code-quality 5 \
-  --clarity 4
+  --correctness 5 --completeness 4 --code-quality 5 --clarity 4
 
 response-scoring-helper.sh score \
   --response 2 \
-  --correctness 4 \
-  --completeness 5 \
-  --code-quality 3 \
-  --clarity 4
+  --correctness 4 --completeness 5 --code-quality 3 --clarity 4
 ```
 
 ### Step 4: Compare Results
 
 ```bash
-# Side-by-side comparison
 response-scoring-helper.sh compare --prompt 1
-
-# JSON output for programmatic use
-response-scoring-helper.sh compare --prompt 1 --json
+response-scoring-helper.sh compare --prompt 1 --json   # programmatic use
 ```
 
 ### Step 5: View Aggregate Rankings
 
 ```bash
-# Overall leaderboard
 response-scoring-helper.sh leaderboard
-
-# Filter by category
 response-scoring-helper.sh leaderboard --category coding
-
-# Export for analysis
 response-scoring-helper.sh export --csv > scores.csv
 ```
 
 ## Integration with compare-models
-
-The response scoring framework complements the model comparison tools:
 
 | Tool | Purpose |
 |------|---------|
@@ -186,31 +119,19 @@ The response scoring framework complements the model comparison tools:
 | `model-registry-helper.sh` | Track model versions and deprecations |
 | **`response-scoring-helper.sh`** | **Evaluate actual model response quality** |
 
-### Typical Workflow
-
-1. Use `compare-models-helper.sh recommend "task"` to identify candidate models
-2. Use `model-availability-helper.sh check <model>` to verify availability
-3. Use `response-scoring-helper.sh` to evaluate actual outputs
-4. Use leaderboard data to inform `model-routing.md` tier assignments
+**Typical workflow**: `compare-models-helper.sh recommend "task"` → `model-availability-helper.sh check <model>` → `response-scoring-helper.sh` → use leaderboard data to inform `model-routing.md` tier assignments.
 
 ## Pattern Tracker Integration (t1099)
 
-Scoring results automatically feed into the shared pattern tracker database. This closes the loop between response evaluation and model routing:
+Scoring results automatically feed into the shared pattern tracker database:
 
-- **On score**: Each scored response is recorded as a `SUCCESS_PATTERN` (weighted avg >= 3.5/5.0) or `FAILURE_PATTERN` (< 3.5/5.0) in the pattern tracker, tagged with the model tier and task category.
-- **On compare**: When a comparison has a winner among 2+ models, the winner is recorded as a `SUCCESS_PATTERN` with comparison metadata.
-- **Bulk sync**: Use `response-scoring-helper.sh sync` to backfill existing scores into the pattern tracker. Use `--dry-run` to preview.
+- **On score**: recorded as `SUCCESS_PATTERN` (weighted avg ≥ 3.5/5.0) or `FAILURE_PATTERN` (< 3.5/5.0), tagged with model tier and task category.
+- **On compare**: winner among 2+ models recorded as `SUCCESS_PATTERN` with comparison metadata.
+- **Bulk sync**: `response-scoring-helper.sh sync` (use `--dry-run` to preview).
+- **Disable sync**: `SCORING_NO_PATTERN_SYNC=1`
+- **Model tier mapping**: full model names (e.g., `claude-sonnet-4-6`) auto-mapped to routing tiers (`sonnet`).
 
-This enables:
-
-- `/route <task>` to use real A/B comparison data for model selection
-- `/patterns recommend --task-type <type>` to show which models perform best per category
-- Data-driven model routing that improves over time as more evaluations are recorded
-
-### Configuration
-
-- **Disable sync**: Set `SCORING_NO_PATTERN_SYNC=1` environment variable
-- **Model tier mapping**: Full model names (e.g., `claude-sonnet-4-6`) are automatically mapped to routing tiers (`sonnet`)
+Enables `/route <task>` and `/patterns recommend --task-type <type>` to use real A/B data for model selection.
 
 ## Database Schema
 
