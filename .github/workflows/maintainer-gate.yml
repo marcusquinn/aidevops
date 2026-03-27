@@ -47,6 +47,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAINTAINER_GATE_DEBUG: ${{ vars.MAINTAINER_GATE_DEBUG || 'false' }}
         run: |
           # Collect linked issue numbers from PR body
           LINKED_ISSUES=""
@@ -57,10 +58,16 @@ jobs:
           # Also check PR title for task ID and find matching issue
           TASK_ID=$(echo "$PR_TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*' || true)
           if [[ -n "$TASK_ID" && -z "$LINKED_ISSUES" ]]; then
-            FOUND=$(gh issue list --repo "$REPO" --state all --search "${TASK_ID}:" --json number,title --limit 5 \
-              | jq -r --arg tid "$TASK_ID" '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[0].number // empty' 2>/dev/null || true)
-            if [[ -n "$FOUND" && "$FOUND" != "null" ]]; then
-              LINKED_ISSUES="$FOUND"
+            ISSUE_SEARCH_OUTPUT=$(gh issue list --repo "$REPO" --state all --search "${TASK_ID}:" --json number,title --limit 5 2>&1) || {
+              echo "::warning::Title-based issue lookup failed for task ID '$TASK_ID': $ISSUE_SEARCH_OUTPUT"
+              ISSUE_SEARCH_OUTPUT=""
+            }
+            if [[ -n "$ISSUE_SEARCH_OUTPUT" ]]; then
+              FOUND=$(echo "$ISSUE_SEARCH_OUTPUT" \
+                | jq -r --arg tid "$TASK_ID" '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[0].number // empty' 2>/dev/null || true)
+              if [[ -n "$FOUND" && "$FOUND" != "null" ]]; then
+                LINKED_ISSUES="$FOUND"
+              fi
             fi
           fi
 
@@ -87,11 +94,13 @@ jobs:
               continue
             }
 
-            # Debug: log raw assignees and labels arrays for troubleshooting
-            echo "DEBUG: Raw assignees for issue #$ISSUE_NUM: $(echo "$RAW_ISSUE_DATA" | jq -c '[.assignees[]?.login]')"
-            echo "DEBUG: Raw labels for issue #$ISSUE_NUM: $(echo "$RAW_ISSUE_DATA" | jq -c '[.labels[]?.name]')"
+            # Debug: log raw assignees and labels arrays for troubleshooting (opt-in via workflow_dispatch or re-run)
+            if [[ "${MAINTAINER_GATE_DEBUG:-false}" == "true" ]]; then
+              echo "DEBUG: Raw assignees for issue #$ISSUE_NUM: $(echo "$RAW_ISSUE_DATA" | jq -c '[.assignees[]?.login]')"
+              echo "DEBUG: Raw labels for issue #$ISSUE_NUM: $(echo "$RAW_ISSUE_DATA" | jq -c '[.labels[]?.name]')"
+            fi
 
-            # Parse fields from raw JSON — use //empty to handle null safely
+            # Parse fields from raw JSON — use []? to handle empty arrays safely
             ISSUE_DATA=$(echo "$RAW_ISSUE_DATA" | jq '{labels: [.labels[]?.name], assignees: [.assignees[]?.login], state: .state, author_association: .author_association}') || {
               echo "::error::jq parsing failed for issue #$ISSUE_NUM"
               echo "DEBUG: First 500 chars of raw response: ${RAW_ISSUE_DATA:0:500}"
@@ -104,7 +113,9 @@ jobs:
             ASSIGNEES=$(echo "$ISSUE_DATA" | jq -r '.assignees[]' 2>/dev/null || true)
             STATE=$(echo "$ISSUE_DATA" | jq -r '.state' 2>/dev/null || echo "unknown")
 
-            echo "DEBUG: Parsed LABELS='$LABELS' ASSIGNEES='$ASSIGNEES' STATE='$STATE'"
+            if [[ "${MAINTAINER_GATE_DEBUG:-false}" == "true" ]]; then
+              echo "DEBUG: Parsed LABELS='$LABELS' ASSIGNEES='$ASSIGNEES' STATE='$STATE'"
+            fi
 
             # Skip closed issues — they've already been reviewed
             if [[ "$STATE" == "closed" ]]; then
@@ -268,6 +279,7 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAINTAINER_GATE_DEBUG: ${{ vars.MAINTAINER_GATE_DEBUG || 'false' }}
         run: |
           echo "Issue #$ISSUE_NUMBER labels changed — checking for linked PRs"
 
@@ -313,10 +325,16 @@ jobs:
             # Also check PR title for task ID and find matching issue
             TASK_ID=$(echo "$PR_TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*' || true)
             if [[ -n "$TASK_ID" && -z "$LINKED_ISSUES" ]]; then
-              FOUND=$(gh issue list --repo "$REPO" --state all --search "${TASK_ID}:" --json number,title --limit 5 \
-                | jq -r --arg tid "$TASK_ID" '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[0].number // empty' 2>/dev/null || true)
-              if [[ -n "$FOUND" && "$FOUND" != "null" ]]; then
-                LINKED_ISSUES="$FOUND"
+              ISSUE_SEARCH_OUTPUT=$(gh issue list --repo "$REPO" --state all --search "${TASK_ID}:" --json number,title --limit 5 2>&1) || {
+                echo "::warning::Title-based issue lookup failed for task ID '$TASK_ID': $ISSUE_SEARCH_OUTPUT"
+                ISSUE_SEARCH_OUTPUT=""
+              }
+              if [[ -n "$ISSUE_SEARCH_OUTPUT" ]]; then
+                FOUND=$(echo "$ISSUE_SEARCH_OUTPUT" \
+                  | jq -r --arg tid "$TASK_ID" '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[0].number // empty' 2>/dev/null || true)
+                if [[ -n "$FOUND" && "$FOUND" != "null" ]]; then
+                  LINKED_ISSUES="$FOUND"
+                fi
               fi
             fi
 
@@ -348,9 +366,11 @@ jobs:
                 continue
               }
 
-              # Debug: log raw assignees and labels arrays for troubleshooting
-              echo "DEBUG: Raw assignees for issue #$ISSUE_NUM: $(echo "$RAW_ISSUE_DATA" | jq -c '[.assignees[]?.login]')"
-              echo "DEBUG: Raw labels for issue #$ISSUE_NUM: $(echo "$RAW_ISSUE_DATA" | jq -c '[.labels[]?.name]')"
+              # Debug: log raw assignees and labels arrays for troubleshooting (opt-in)
+              if [[ "${MAINTAINER_GATE_DEBUG:-false}" == "true" ]]; then
+                echo "DEBUG: Raw assignees for issue #$ISSUE_NUM: $(echo "$RAW_ISSUE_DATA" | jq -c '[.assignees[]?.login]')"
+                echo "DEBUG: Raw labels for issue #$ISSUE_NUM: $(echo "$RAW_ISSUE_DATA" | jq -c '[.labels[]?.name]')"
+              fi
 
               # Parse fields from raw JSON
               ISSUE_DATA=$(echo "$RAW_ISSUE_DATA" | jq '{labels: [.labels[]?.name], assignees: [.assignees[]?.login], state: .state}') || {
@@ -365,7 +385,9 @@ jobs:
               ASSIGNEES=$(echo "$ISSUE_DATA" | jq -r '.assignees[]' 2>/dev/null || true)
               STATE=$(echo "$ISSUE_DATA" | jq -r '.state' 2>/dev/null || echo "unknown")
 
-              echo "DEBUG: Parsed LABELS='$LABELS' ASSIGNEES='$ASSIGNEES' STATE='$STATE'"
+              if [[ "${MAINTAINER_GATE_DEBUG:-false}" == "true" ]]; then
+                echo "DEBUG: Parsed LABELS='$LABELS' ASSIGNEES='$ASSIGNEES' STATE='$STATE'"
+              fi
 
               # Skip closed issues — they've already been reviewed
               if [[ "$STATE" == "closed" ]]; then
