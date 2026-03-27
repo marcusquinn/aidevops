@@ -6,16 +6,12 @@ High-converting ad examples for Facebook, Google, and social.
 
 ## Facebook/Instagram Ads
 
-### 1. Direct Response — Problem-Agitate-Solve
-
-**Hook:** "I wasted $10,000 on ads before I learned this..."
+### 1. Problem-Agitate-Solve
 
 ```
 I wasted $10,000 on Facebook ads before I learned this...
 
-The problem wasn't my targeting.
-It wasn't my budget.
-It wasn't even my offer.
+The problem wasn't my targeting. It wasn't my budget. It wasn't even my offer.
 
 It was my creative.
 
@@ -34,17 +30,7 @@ Click below to grab it 👇
 [Learn More]
 ```
 
-**Why it works:**
-- Personal failure hook (relatable)
-- Specific numbers ($10K, 1.2x → 4.7x)
-- Problem → insight → solution
-- Free lead magnet
-
----
-
-### 2. Social Proof — Results Ad
-
-**Hook:** "From $3K/mo to $47K/mo in 6 months"
+### 2. Social Proof — Results
 
 ```
 From $3K/mo to $47K/mo in 6 months.
@@ -54,8 +40,6 @@ That's what happened when Sarah implemented our system.
 ❌ Before: Guessing which ads would work
 ✅ After: Predictable system that scales
 
-Here's what she said:
-
 "I finally feel like I understand what makes an ad work. The framework changed everything."
 
 Want the same system Sarah used?
@@ -63,17 +47,7 @@ Want the same system Sarah used?
 [Get Free Training]
 ```
 
-**Why it works:**
-- Specific numbers in hook
-- Before/after format
-- Testimonial builds trust
-- Clear CTA
-
----
-
-### 3. Curiosity Gap — "If-Then" Ad
-
-**Hook:** "If you're spending $1,000+ on ads..."
+### 3. Curiosity Gap — If-Then
 
 ```
 If you're spending $1,000+/month on ads and NOT seeing at least 3x ROAS...
@@ -93,28 +67,14 @@ Download it here 👇
 [Get the Checklist]
 ```
 
-**Why it works:**
-- Qualifies audience immediately
-- Specific threshold ($1K, 3x)
-- Lists common mistakes (curiosity)
-- Solution offered
-
----
-
-### 4. Story Ad — Before/After
-
-**Hook:** "2 years ago, I was about to give up..."
+### 4. Story — Before/After
 
 ```
 2 years ago, I was about to give up.
 
-My agency had 3 clients.
-I was working 60 hours a week.
-Making less than I did at my old job.
+My agency had 3 clients. I was working 60 hours a week. Making less than I did at my old job.
 
-Then I discovered one thing that changed everything:
-
-Productized services.
+Then I discovered one thing that changed everything: Productized services.
 
 Instead of custom projects, I created one repeatable offer.
 
@@ -128,17 +88,7 @@ Want to see how I structured it?
 [Link in bio / Learn More]
 ```
 
-**Why it works:**
-- Emotional story hook
-- Specific numbers (before/after)
-- One key insight
-- Aspirational outcome
-
----
-
-### 5. Listicle Ad — Quick Value
-
-**Hook:** "5 Landing Page Mistakes Killing Your Conversions"
+### 5. Listicle — Quick Value
 
 ```
 5 Landing Page Mistakes Killing Your Conversions:
@@ -158,69 +108,33 @@ Grab it free 👇
 [Download Checklist]
 ```
 
-**Why it works:**
-- Number in hook (scannable)
-- Actual value provided
-- Educational → lead magnet transition
-- Each point is actionable
-
 ---
 
 ## Google Ads
 
-### 6. Search Ad — Solution Focused
+### 6. Solution Focused
 
-**Headline 1:** Get Indexed in 24 Hours
-**Headline 2:** Stop Waiting for Google
-**Headline 3:** Free Trial - No CC Required
+**H1:** Get Indexed in 24 Hours | **H2:** Stop Waiting for Google | **H3:** Free Trial - No CC Required
 
-**Description:** Frustrated with slow indexing? BrowserBlast forces your pages to index fast. 10,000+ SEOs trust us. Start your free trial today.
+**Desc:** Frustrated with slow indexing? BrowserBlast forces your pages to index fast. 10,000+ SEOs trust us. Start your free trial today.
 
-**Why it works:**
-- Benefit in H1 (fast indexing)
-- Pain point in H2 (waiting)
-- Low friction in H3 (free trial)
-- Proof point in description
+### 7. Problem Focused
 
----
+**H1:** Pages Not Getting Indexed? | **H2:** The Fix Top SEOs Use | **H3:** 94% Indexing Rate
 
-### 7. Search Ad — Problem Focused
+**Desc:** Manual submission not working? You need BrowserBlast. Bulk index thousands of pages. Trusted by 10,000+ pros. Start free →
 
-**Headline 1:** Pages Not Getting Indexed?
-**Headline 2:** The Fix Top SEOs Use
-**Headline 3:** 94% Indexing Rate
+### 8. Comparison
 
-**Description:** Manual submission not working? You need BrowserBlast. Bulk index thousands of pages. Trusted by 10,000+ pros. Start free →
+**H1:** Better Than Search Console | **H2:** Actually Gets Pages Indexed | **H3:** Free 14-Day Trial
 
-**Why it works:**
-- Problem as question (searcher intent match)
-- Authority (top SEOs)
-- Specific result (94%)
-- Social proof + free trial
-
----
-
-### 8. Search Ad — Comparison
-
-**Headline 1:** Better Than Search Console
-**Headline 2:** Actually Gets Pages Indexed
-**Headline 3:** Free 14-Day Trial
-
-**Description:** Tired of clicking "Request Indexing" over and over? BrowserBlast automates the process and actually works. Try it free.
-
-**Why it works:**
-- Comparison positioning
-- Addresses frustration
-- Clear differentiator
-- Trial offer
+**Desc:** Tired of clicking "Request Indexing" over and over? BrowserBlast automates the process and actually works. Try it free.
 
 ---
 
 ## LinkedIn Ads
 
-### 9. LinkedIn — B2B Lead Gen
-
-**Image:** Professional screenshot of product
+### 9. B2B Lead Gen
 
 ```
 Struggling to prove your local SEO work is actually working?
@@ -230,7 +144,7 @@ LocalRank shows you exactly where you rank—across every zip code, keyword, and
 Finally, reports your clients will actually understand.
 
 ✓ Track unlimited keywords
-✓ Monitor citations automatically  
+✓ Monitor citations automatically
 ✓ White-label client reports
 
 Join 3,000+ agencies already using LocalRank.
@@ -238,15 +152,7 @@ Join 3,000+ agencies already using LocalRank.
 [Start Your Free Trial]
 ```
 
-**Why it works:**
-- B2B pain point (proving ROI)
-- Specific capabilities
-- Agency-focused
-- Social proof (3,000+)
-
----
-
-### 10. LinkedIn — Thought Leadership
+### 10. Thought Leadership
 
 ```
 Hot take: The best marketers don't A/B test.
@@ -267,37 +173,21 @@ The volume of tests matters more than the quality of any single test.
 Agree or disagree? 👇
 ```
 
-**Why it works:**
-- Contrarian hook
-- Specific framework
-- Actionable takeaways
-- Engagement prompt
-
 ---
 
 ## Twitter/X Ads
 
-### 11. Twitter — Short & Punchy
+### 11. Short & Punchy
 
 ```
-99% of landing pages fail because the headline 
-doesn't answer one question:
+99% of landing pages fail because the headline doesn't answer one question:
 
 "What's in it for me?"
 
-If your headline doesn't pass this test, 
-nothing else matters.
+If your headline doesn't pass this test, nothing else matters.
 ```
 
-**Why it works:**
-- Stat hook (99%)
-- Simple framework
-- Easy to understand
-- Shareable insight
-
----
-
-### 12. Twitter Thread — Educational
+### 12. Thread Opener
 
 ```
 I've written copy for $100M+ in sales.
@@ -307,16 +197,11 @@ Here are 10 copywriting secrets I wish I knew sooner:
 🧵 Thread:
 ```
 
-**Why it works:**
-- Authority (results)
-- Promise of value
-- Thread format (engagement)
-
 ---
 
-## Ad Copy Templates
+## Templates
 
-### Template 1: Problem-Agitate-Solve (Facebook)
+### Problem-Agitate-Solve (Facebook)
 
 ```
 [Relatable problem statement]
@@ -330,7 +215,7 @@ Here are 10 copywriting secrets I wish I knew sooner:
 [CTA + lead magnet offer]
 ```
 
-### Template 2: Curiosity Gap (Facebook)
+### Curiosity Gap (Facebook)
 
 ```
 If you're [qualifier] and NOT getting [desired result]...
@@ -346,7 +231,7 @@ The good news? [Promise of solution]
 [CTA]
 ```
 
-### Template 3: Before/After (Facebook)
+### Before/After (Facebook)
 
 ```
 [TIME] ago, I was [painful before state].
@@ -360,17 +245,17 @@ Want to see how?
 [CTA]
 ```
 
-### Template 4: Google Search
+### Google Search
 
 ```
-Headline 1: [Primary Benefit]
-Headline 2: [Pain Point / Problem]
-Headline 3: [Offer / CTA]
+H1: [Primary Benefit]
+H2: [Pain Point / Problem]
+H3: [Offer / CTA]
 
-Description: [Problem acknowledgment]? [Product] helps [who] [achieve what]. [Proof point]. [CTA].
+Desc: [Problem acknowledgment]? [Product] helps [who] [achieve what]. [Proof point]. [CTA].
 ```
 
-### Template 5: Social Proof (Any Platform)
+### Social Proof (Any Platform)
 
 ```
 [Specific result achieved] in [timeframe].
@@ -389,50 +274,28 @@ Want the same?
 
 ---
 
-## Ad Copy Best Practices
+## Best Practices
 
-### Hook Rules
-1. First line must stop the scroll
-2. Numbers and specifics work
-3. Questions engage directly
-4. Controversy/contrarian views get attention
-5. Story openings build curiosity
+**Hook:** Stop the scroll — use numbers, questions, controversy, or story openings.
 
-### Body Copy Rules
-1. Short sentences
-2. Break up text (bullets, emojis)
-3. One idea per line
-4. Benefits over features
-5. Proof points matter
+**Body:** Short sentences. One idea per line. Bullets/emojis. Benefits over features. Proof points.
 
-### CTA Rules
-1. One clear action
-2. Make it low friction (free, trial, learn)
-3. Create urgency when real
-4. Button text = action verb
+**CTA:** One clear action. Low friction (free, trial, learn). Action verb button text.
 
-### Testing Rules
-1. Test hooks first (highest impact)
-2. Test 5-10 variations minimum
-3. Kill losers fast (24-48 hours)
-4. Scale winners horizontally
-5. Document what works
+**Testing:** Test hooks first. 5-10 variations minimum. Kill losers in 24-48h. Scale winners horizontally. Document patterns.
 
 ---
 
-## Ad Examples for Jacky's Businesses
+## Brand Examples
 
 ### BrowserBlast Facebook Ad
 
 ```
-You published the content.
-You did the keyword research.
-You built the links.
+You published the content. You did the keyword research. You built the links.
 
 But Google won't index your pages.
 
-You've tried manual submission. You've tried pinging.
-You've waited weeks. Nothing.
+You've tried manual submission. You've tried pinging. You've waited weeks. Nothing.
 
 What if you could force Google to index your pages in hours?
 
@@ -456,9 +319,7 @@ The #1 question agency owners ask:
 
 "How do I prove to clients that my local SEO work is actually working?"
 
-Spreadsheets? Too manual.
-Screenshots? Unprofessional.
-Third-party rank trackers? Don't track local properly.
+Spreadsheets? Too manual. Screenshots? Unprofessional. Third-party rank trackers? Don't track local properly.
 
 LocalRank solves this.
 
@@ -475,6 +336,6 @@ Join 3,000+ agencies who finally have proof their work works.
 
 ## Further Reading
 
-- See [Headline Formulas](../frameworks/headline-formulas.md) for hook ideas
-- See [Landing Page Structure](../frameworks/landing-page-structure.md) for where ads lead
-- See [Offer Construction](../frameworks/offer-construction.md) for lead magnet offers
+- [Headline Formulas](../frameworks/headline-formulas.md)
+- [Landing Page Structure](../frameworks/landing-page-structure.md)
+- [Offer Construction](../frameworks/offer-construction.md)
