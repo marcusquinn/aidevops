@@ -15,203 +15,54 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
-## Quick Reference
+**Pattern**: `[service]-helper.sh` + `[service]-config.json` + `.agents/[service].md` per service.
 
-| Category | Services |
-|----------|----------|
-| Infrastructure | Hostinger (shared), Hetzner (VPS), Closte (VPS), Cloudron (apps) |
-| Deployment | Coolify (self-hosted PaaS) |
-| Content | MainWP (WordPress management) |
-| Security | Vaultwarden (passwords/secrets) |
-| Quality | CodeRabbit, CodeFactor, Codacy, SonarCloud |
-| Git | GitHub, GitLab, Gitea, Local Git |
-| Email | Amazon SES |
-| Communications | Twilio (CPaaS), Telfon (softphone) |
-| Domains | Spaceship (API purchasing), 101domains |
-| DNS | Cloudflare, Namecheap, Route 53 |
-| Local/Dev | Localhost, LocalWP, Context7 MCP, MCP Servers, Crawl4AI |
-| Setup | Intelligent Setup Wizard |
+## Service Catalogue
 
-**Pattern**: `[service]-helper.sh` + `[service]-config.json` + `.agents/[service].md` for each service.
-
-<!-- AI-CONTEXT-END -->
-
-## Infrastructure & Hosting
-
-### Hostinger
-
-Budget-friendly shared hosting, WordPress-optimised. REST API for account/hosting management.
-
-- **Helper**: `hostinger-helper.sh` | **Config**: `hostinger-config.json` | **Docs**: `.agents/hostinger.md`
-
-### Hetzner Cloud
-
-German cloud VPS — excellent price/performance, EU-based. Comprehensive REST API.
-
-- **Helper**: `hetzner-helper.sh` | **Config**: `hetzner-config.json` | **Docs**: `.agents/hetzner.md`
-
-### Closte
-
-VPS hosting — competitive pricing, multiple locations. REST API for provisioning.
-
-- **Helper**: `closte-helper.sh` | **Config**: `closte-config.json` | **Docs**: `.agents/closte.md`
-
-### Cloudron
-
-Self-hosted app platform — easy deployment, automatic updates, backup management. REST API.
-
-- **Helper**: `cloudron-helper.sh` | **Config**: `cloudron-config.json` | **Docs**: `.agents/cloudron.md`
-
-## Deployment & Orchestration
-
-### Coolify
-
-Self-hosted PaaS — Docker-based, Git integration, container orchestration. REST API.
-
-- **Helper**: `coolify-helper.sh` | **Config**: `coolify-config.json` | **Docs**: `.agents/coolify.md`
-
-## Content Management
-
-### MainWP
-
-Centralised WordPress management — bulk operations, security monitoring. REST API.
-
-- **Helper**: `mainwp-helper.sh` | **Config**: `mainwp-config.json` | **Docs**: `.agents/mainwp.md`
-
-## Security & Secrets
-
-### Vaultwarden
-
-Self-hosted Bitwarden-compatible password manager — API access, team sharing, MCP server available.
-
-- **Helper**: `vaultwarden-helper.sh` | **Config**: `vaultwarden-config.json` | **Docs**: `.agents/vaultwarden.md`
+| Category | Service | Helper | Config | Docs |
+|----------|---------|--------|--------|------|
+| Infrastructure | Hostinger (shared hosting, WordPress-optimised) | `hostinger-helper.sh` | `hostinger-config.json` | `.agents/hostinger.md` |
+| Infrastructure | Hetzner Cloud (German VPS, EU-based, REST API) | `hetzner-helper.sh` | `hetzner-config.json` | `.agents/hetzner.md` |
+| Infrastructure | Closte (VPS, multiple locations, REST API) | `closte-helper.sh` | `closte-config.json` | `.agents/closte.md` |
+| Infrastructure | Cloudron (self-hosted app platform, auto-updates, backups) | `cloudron-helper.sh` | `cloudron-config.json` | `.agents/cloudron.md` |
+| Deployment | Coolify (self-hosted PaaS, Docker, Git integration) | `coolify-helper.sh` | `coolify-config.json` | `.agents/coolify.md` |
+| Content | MainWP (centralised WordPress management, bulk ops) | `mainwp-helper.sh` | `mainwp-config.json` | `.agents/mainwp.md` |
+| Security | Vaultwarden (self-hosted Bitwarden, MCP server available) | `vaultwarden-helper.sh` | `vaultwarden-config.json` | `.agents/vaultwarden.md` |
+| Email | Amazon SES (scalable delivery, high deliverability) | `ses-helper.sh` | `ses-config.json` | `.agents/services/email/ses.md` |
+| Communications | Twilio (CPaaS — SMS, voice, WhatsApp, 2FA; comply with AUP) | `twilio-helper.sh` | `twilio-config.json` | `.agents/services/communications/twilio.md` |
+| Communications | Telfon (Twilio-powered softphone, iOS/Android/Chrome/Edge) | — | — | `.agents/services/communications/telfon.md` |
+| Domains | Spaceship (API purchasing, transparent pricing) | `spaceship-helper.sh` | `spaceship-config.json` | `.agents/spaceship.md`, `.agents/domain-purchasing.md` |
+| Domains | 101domains (1000+ TLDs, bulk ops, reseller) | `101domains-helper.sh` | `101domains-config.json` | `.agents/101DOMAINS.md` |
+| DNS | Cloudflare (CDN + DNS, DDoS protection) | `dns-helper.sh` | `cloudflare-dns-config.json` | `.agents/dns-providers.md` |
+| DNS | Namecheap DNS (integrated with registration) | `dns-helper.sh` | `namecheap-dns-config.json` | `.agents/dns-providers.md` |
+| DNS | Route 53 (AWS DNS, advanced routing, health checks) | `dns-helper.sh` | `route53-dns-config.json` | `.agents/dns-providers.md` |
+| Dev/Local | Localhost (`.local` domain support) | `localhost-helper.sh` | `localhost-config.json` | `.agents/localhost.md` |
+| Dev/Local | LocalWP (WordPress dev, DB access, MCP server) | `localhost-helper.sh` | `localhost-config.json` | `.agents/localwp-mcp.md` |
+| Dev/Local | Context7 MCP (real-time docs for AI assistants) | integrated | `context7-mcp-config.json` | `.agents/context7-mcp-setup.md` |
+| Dev/Local | MCP Servers (protocol server management) | integrated | `mcp-servers-config.json` | `.agents/mcp-servers.md` |
+| Dev/Local | Crawl4AI (AI web crawler, LLM-ready output, RAG) | `crawl4ai-helper.sh` | `crawl4ai-config.json` | `.agents/crawl4ai.md` |
+| Setup | Intelligent Setup Wizard (AI-guided infrastructure setup) | `setup-wizard-helper.sh` | `setup-wizard-responses.json` (generated) | integrated in service docs |
 
 ## Code Quality & Auditing
 
-All four services share `code-audit-helper.sh`, `code-audit-config.json`, and `.agents/code-auditing.md`.
+All four share `code-audit-helper.sh`, `code-audit-config.json`, and `.agents/code-auditing.md`.
 
-### CodeRabbit
-
-AI-powered code review — context-aware analysis, security scanning. MCP server available.
-
-### CodeFactor
-
-Automated code quality — simple setup, clear metrics, GitHub integration.
-
-### Codacy
-
-Comprehensive quality and security analysis — custom rules, team collaboration. MCP server available.
-
-### SonarCloud
-
-Industry-standard quality gates — comprehensive rules, security compliance. SonarQube MCP server available.
+| Service | Notes |
+|---------|-------|
+| CodeRabbit | AI-powered code review, context-aware analysis, security scanning. MCP server available. |
+| CodeFactor | Automated quality, simple setup, clear metrics, GitHub integration. |
+| Codacy | Comprehensive quality + security, custom rules, team collaboration. MCP server available. |
+| SonarCloud | Industry-standard quality gates, security compliance. SonarQube MCP server available. |
 
 ## Version Control & Git Platforms
 
-GitHub, GitLab, Gitea, and Local Git share `git-platforms-helper.sh`, `git-platforms-config.json`, and `.agents/git-platforms.md`.
+All four share `git-platforms-helper.sh`, `git-platforms-config.json`, and `.agents/git-platforms.md`.
 
-### GitHub
+| Service | Notes |
+|---------|-------|
+| GitHub | REST API v4 + GraphQL. Official MCP server available. |
+| GitLab | Built-in CI/CD, security scanning, self-hosted option. Community MCP servers available. |
+| Gitea | Lightweight self-hosted Git, minimal resources, GitHub-compatible API. Community MCP servers available. |
+| Local Git | Offline development, no external dependencies. |
 
-World's largest code hosting — REST API v4 + GraphQL, official MCP server available.
-
-### GitLab
-
-Complete DevOps platform — built-in CI/CD, security scanning, self-hosted option. Community MCP servers available.
-
-### Gitea
-
-Lightweight self-hosted Git — minimal resources, GitHub-compatible API. Community MCP servers available.
-
-### Local Git
-
-Local repository management — offline development, no external dependencies.
-
-## Email Services
-
-### Amazon SES
-
-Scalable email delivery — high deliverability, analytics, AWS integration.
-
-- **Helper**: `ses-helper.sh` | **Config**: `ses-config.json` | **Docs**: `.agents/services/email/ses.md`
-
-## Communications Services
-
-### Twilio
-
-Cloud CPaaS — SMS, voice, WhatsApp, 2FA/OTP, call recording. Global coverage. Must comply with Twilio AUP.
-
-- **Helper**: `twilio-helper.sh` | **Config**: `twilio-config.json` | **Docs**: `.agents/services/communications/twilio.md`
-
-### Telfon
-
-Twilio-powered softphone with mobile/desktop apps — iOS, Android, Chrome Extension, Edge Add-on. Recommended for end users needing a calling/SMS interface.
-
-- **Website**: https://mytelfon.com/ | **Docs**: `.agents/services/communications/telfon.md`
-
-## Domain & DNS
-
-### Spaceship
-
-Modern domain registrar with API purchasing — transparent pricing, portfolio management.
-
-- **Helper**: `spaceship-helper.sh` | **Config**: `spaceship-config.json` | **Docs**: `.agents/spaceship.md`, `.agents/domain-purchasing.md`
-
-### 101domains
-
-Comprehensive registrar — 1000+ TLDs, bulk operations, reseller services.
-
-- **Helper**: `101domains-helper.sh` | **Config**: `101domains-config.json` | **Docs**: `.agents/101DOMAINS.md`
-
-Cloudflare DNS, Namecheap DNS, and Route 53 share `dns-helper.sh` and `.agents/dns-providers.md`.
-
-### Cloudflare DNS
-
-Global CDN + DNS — DDoS protection, performance optimisation. Config: `cloudflare-dns-config.json`.
-
-### Namecheap DNS
-
-DNS hosting integrated with domain registration — reliable, affordable. Config: `namecheap-dns-config.json`.
-
-### Route 53
-
-AWS DNS — advanced routing policies, health checks, AWS integration. Config: `route53-dns-config.json`.
-
-## Development & Local
-
-### Localhost
-
-Local development with `.local` domain support.
-
-- **Helper**: `localhost-helper.sh` | **Config**: `localhost-config.json` | **Docs**: `.agents/localhost.md`
-
-### LocalWP
-
-Local WordPress development — database access, dev tools. MCP server for database access.
-
-- **Helper**: `localhost-helper.sh` (includes LocalWP) | **Config**: `localhost-config.json` | **Docs**: `.agents/localwp-mcp.md`
-
-### Context7 MCP
-
-Real-time documentation access for AI assistants — latest docs, contextual information.
-
-- **Integration**: Context7 integration in all helpers | **Config**: `context7-mcp-config.json` | **Docs**: `.agents/context7-mcp-setup.md`
-
-### MCP Servers
-
-Model Context Protocol server management — real-time data access, standardised AI integration.
-
-- **Integration**: MCP integration in all helpers | **Config**: `mcp-servers-config.json` | **Docs**: `.agents/mcp-servers.md`
-
-### Crawl4AI
-
-AI-powered web crawler — LLM-ready output, structured extraction, RAG pipelines. REST API + MCP server.
-
-- **Helper**: `crawl4ai-helper.sh` | **Config**: `crawl4ai-config.json` | **Docs**: `.agents/crawl4ai.md`
-
-## Setup & Configuration
-
-### Intelligent Setup Wizard
-
-AI-guided infrastructure setup — intelligent recommendations, integrates with all framework services.
-
-- **Helper**: `setup-wizard-helper.sh` | **Config**: `setup-wizard-responses.json` (generated) | **Docs**: Integrated in all service documentation
+<!-- AI-CONTEXT-END -->
