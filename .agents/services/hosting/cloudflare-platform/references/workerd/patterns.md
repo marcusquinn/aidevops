@@ -10,7 +10,6 @@ const config :Workerd.Config = (
       compatibilityDate = "2024-01-15",
       bindings = [(name = "API", service = "api")]
     )),
-    
     (name = "api", worker = (
       modules = [(name = "index.js", esModule = embed "api/index.js")],
       compatibilityDate = "2024-01-15",
@@ -19,11 +18,9 @@ const config :Workerd.Config = (
         (name = "CACHE", kvNamespace = "kv"),
       ]
     )),
-    
     (name = "postgres", external = (address = "db.internal:5432", http = ())),
     (name = "kv", disk = (path = "/var/kv", writable = true)),
   ],
-  
   sockets = [(name = "http", address = "*:8080", http = (), service = "frontend")]
 );
 ```
@@ -87,20 +84,13 @@ const config :Workerd.Config = (
 
 ## Local Development
 
-### Using Wrangler
+| Method | Command |
+|--------|---------|
+| Wrangler | `export MINIFLARE_WORKERD_PATH="/path/to/workerd" && wrangler dev` |
+| Direct | `workerd serve config.capnp --socket-addr http=*:3000 --verbose` |
+| With env vars | `export DATABASE_URL="postgres://..." && workerd serve config.capnp` |
 
-```bash
-export MINIFLARE_WORKERD_PATH="/path/to/workerd"
-wrangler dev
-```
-
-### Direct Workerd
-
-```bash
-workerd serve config.capnp --socket-addr http=*:3000 --verbose
-```
-
-### Environment Variables
+**Environment variable bindings:**
 
 ```capnp
 bindings = [
@@ -109,15 +99,7 @@ bindings = [
 ]
 ```
 
-```bash
-export DATABASE_URL="postgres://..."
-export API_KEY="secret"
-workerd serve config.capnp
-```
-
 ## Testing
-
-### Test Config
 
 ```capnp
 const testWorker :Workerd.Worker = (
@@ -136,10 +118,9 @@ workerd test config.capnp --test-only=test.js
 
 ## Production Deployment
 
-### Systemd
+**Systemd** (`/etc/systemd/system/workerd.service` + `workerd.socket`):
 
 ```ini
-# /etc/systemd/system/workerd.service
 [Unit]
 Description=workerd runtime
 After=network-online.target
@@ -157,7 +138,6 @@ WantedBy=multi-user.target
 ```
 
 ```ini
-# /etc/systemd/system/workerd.socket
 [Socket]
 ListenStream=0.0.0.0:80
 
@@ -165,7 +145,7 @@ ListenStream=0.0.0.0:80
 WantedBy=sockets.target
 ```
 
-### Docker
+**Docker:**
 
 ```dockerfile
 FROM debian:bookworm-slim
@@ -177,7 +157,7 @@ EXPOSE 8080
 CMD ["workerd", "serve", "/etc/workerd/config.capnp"]
 ```
 
-### Compiled Binary
+**Compiled binary:**
 
 ```bash
 workerd compile config.capnp myConfig -o production-server
@@ -186,42 +166,30 @@ workerd compile config.capnp myConfig -o production-server
 
 ## Best Practices
 
-1. **Use ES modules** over service worker syntax
-2. **Explicit bindings** - no global namespace assumptions
-3. **Type safety** - define `Env` interfaces
-4. **Service isolation** - split concerns
-5. **Pin compat date** in production after testing
-6. **Use ctx.waitUntil()** for background tasks
-7. **Handle errors gracefully** with try/catch
-8. **Configure resource limits** on caches/storage
+| Rule | Detail |
+|------|--------|
+| ES modules | Prefer over service worker syntax |
+| Explicit bindings | No global namespace assumptions |
+| Type safety | Define `Env` interfaces |
+| Service isolation | Split concerns across services |
+| Pin compat date | Set in production after testing |
+| Background tasks | Use `ctx.waitUntil()` |
+| Error handling | Wrap handlers in try/catch |
+| Resource limits | Configure limits on caches/storage |
 
-## Error Handling Pattern
+## Worker Patterns
 
 ```javascript
 export default {
   async fetch(request, env, ctx) {
+    console.log("Request", {method: request.method, url: request.url});
+    ctx.waitUntil(logToAnalytics(request, env));
     try {
       return await handleRequest(request, env);
     } catch (error) {
       console.error("Request failed", error);
       return new Response("Internal Error", {status: 500});
     }
-  }
-};
-```
-
-## Logging Pattern
-
-```javascript
-export default {
-  async fetch(request, env, ctx) {
-    console.log("Request", {method: request.method, url: request.url});
-    
-    ctx.waitUntil(
-      logToAnalytics(request, env)
-    );
-    
-    return new Response("OK");
   }
 };
 ```
