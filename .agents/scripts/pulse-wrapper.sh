@@ -2835,11 +2835,18 @@ _complexity_scan_should_open_md_issue() {
 _complexity_scan_collect_md_violations() {
 	local aidevops_path="$1"
 
-	# Protected files — excluded from automated simplification (matches code-simplifier.md)
+	# Protected files and directories — excluded from automated simplification.
+	# - build.txt, AGENTS.md, pulse.md: core infrastructure (code-simplifier.md)
+	# - templates/: template files meant to be copied, not compressed
+	# - README.md: navigation/index docs, not instruction docs
+	# - references/: reference corpora — split into chapters, not compressed
+	# - todo/, plans: planning files, not code
 	local protected_pattern='prompts/build\.txt|^\.agents/AGENTS\.md|^AGENTS\.md|scripts/commands/pulse\.md'
+	local excluded_dirs='_archive/|archived/|/templates/|/references/|/todo/'
+	local excluded_files='/README\.md$'
 
 	local md_files
-	md_files=$(git -C "$aidevops_path" ls-files '*.md' | grep -E '^\.agents/' | grep -Ev '_archive/|archived/' | grep -Ev "$protected_pattern" || true)
+	md_files=$(git -C "$aidevops_path" ls-files '*.md' | grep -E '^\.agents/' | grep -Ev "$excluded_dirs" | grep -Ev "$excluded_files" | grep -Ev "$protected_pattern" || true)
 	if [[ -z "$md_files" ]]; then
 		echo "[pulse-wrapper] Complexity scan (.md): no agent doc files found" >>"$LOGFILE"
 		return 1
