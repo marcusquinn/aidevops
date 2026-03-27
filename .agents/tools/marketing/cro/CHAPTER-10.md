@@ -4,7 +4,7 @@ Average cart abandonment is ~70%. Every friction point costs real revenue.
 
 ### Checkout Flow Structure
 
-Streamline the typical 7-step checkout (cart review > customer info > shipping address > shipping method > payment > order review > confirmation) to 3 steps:
+Streamline the typical 7-step checkout to 3 steps:
 
 1. Email + Shipping Address
 2. Shipping Method + Payment
@@ -14,7 +14,7 @@ Streamline the typical 7-step checkout (cart review > customer info > shipping a
 
 **35% of cart abandonment** is due to forced account creation (Baymard Institute). Guest checkout yields **20-45% higher conversion**.
 
-Best practice: guest as default, account as optional checkbox that reveals a password field. Post-purchase: "Your order is placed! Create an account to track it?" Amazon uses separate paths for new vs. returning customers with post-purchase account creation email.
+Best practice: guest as default, account as optional checkbox revealing a password field. Post-purchase: "Your order is placed! Create an account to track it?" Amazon uses separate paths for new vs. returning customers with post-purchase account creation email.
 
 ### One-Page vs. Multi-Step vs. Accordion
 
@@ -36,15 +36,15 @@ No universal winner (CXL Institute):
 | Step counter ("Step 2 of 4") | Clear but emphasizes remaining work |
 | Step names ("Shipping > Payment > Review") | Shows what's coming |
 | Progress bar | Feels good; must be accurate |
-| Checked steps ("checkmark Cart checkmark Shipping > Payment > Review") | Clear completion status |
+| Checked steps ("✓ Cart ✓ Shipping > Payment > Review") | Clear completion status |
 
-**Endowed Progress Effect** (Nunes & Dreze, 2006): 82% higher completion when users perceive existing progress. Show "Cart" as completed first step so users feel they've started.
+**Endowed Progress Effect** (Nunes & Dreze, 2006): 82% higher completion when users perceive existing progress. Show "Cart" as completed first step.
 
 ### Form Field Optimization
 
 **Absolute minimum**: Email, Shipping Address (physical goods), Payment.
 
-- **Phone**: Make optional unless needed for delivery. Optional phone increased conversions 5-10%. If required, explain why: "Phone number (for delivery notifications)"
+- **Phone**: Optional unless needed for delivery. Optional phone increased conversions 5-10%. If required, explain why: "Phone number (for delivery notifications)"
 - **Company name**: Conditional — show only when "This is a business purchase" is checked, with optional VAT/Tax ID
 - **Address Line 2**: Never require. Placeholder: "Apartment, suite, etc. (optional)"
 
