@@ -199,6 +199,7 @@ comments to understand what happened — if the information isn't there, it's in
 
 ```text
 Dispatching worker.
+- **[aidevops.sh](https://github.com/marcusquinn/aidevops)**: v3.x.x
 - **Model**: sonnet (anthropic/claude-sonnet-4-6)
 - **Branch**: bugfix/qd-4472-speech-to-speech
 - **Scope**: Address critical review feedback on speech-to-speech.md
@@ -206,10 +207,15 @@ Dispatching worker.
 - **Direction**: Focus on the specific review comments from PR #4397
 ```
 
+The version is read from `~/.aidevops/agents/VERSION` (or `$AIDEVOPS_VERSION` if set).
+The `[aidevops.sh](https://github.com/marcusquinn/aidevops)` link provides quick navigation
+to the framework repo for anyone reading the comment.
+
 ### Kill/failure comment template
 
 ```text
 Worker killed after 2h15m with 0 commits (struggle_ratio: 45).
+- **[aidevops.sh](https://github.com/marcusquinn/aidevops)**: v3.x.x
 - **Model**: sonnet
 - **Branch**: feature/t748-migration
 - **Reason**: thrashing — repeated identical errors, no progress
@@ -221,6 +227,7 @@ Worker killed after 2h15m with 0 commits (struggle_ratio: 45).
 
 ```text
 Completed via PR #4501.
+- **[aidevops.sh](https://github.com/marcusquinn/aidevops)**: v3.x.x
 - **Model**: sonnet (first attempt)
 - **Attempts**: 1
 - **Duration**: 23 minutes

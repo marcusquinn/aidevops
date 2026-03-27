@@ -60,19 +60,17 @@ Check external contributor gate before ANY merge (see Pre-merge checks below).
 For each unassigned, non-blocked issue with no open PR, no active worker, and **no `needs-maintainer-review` label**:
 
 ```bash
-# Dedup guard (MANDATORY — all four checks required)
+# Dedup guard (MANDATORY — all checks via deterministic guard + claim lock)
 source ~/.aidevops/agents/scripts/pulse-wrapper.sh
 RUNNER_USER=$(gh api user --jq '.login' 2>/dev/null || whoami)
 
-# 1. Local process dedup (same machine only)
-if has_worker_for_repo_issue NUMBER SLUG; then continue; fi
-if ~/.aidevops/agents/scripts/dispatch-dedup-helper.sh is-duplicate "Issue #NUMBER: TITLE"; then continue; fi
+# 1. Deterministic dedup (ledger, process, title, merged-PR, assignee — GH#6891)
+# The assignee check is now inside check_dispatch_dedup (Layer 5), so passing
+# $RUNNER_USER as the 5th arg is required. This prevents the bug where an LLM
+# pulse skipped the is_assigned step and dispatched for another runner's issue.
+if check_dispatch_dedup NUMBER SLUG "Issue #NUMBER: TITLE" "TASK_ID: TITLE" "$RUNNER_USER"; then continue; fi
 
-# 2. Cross-machine assignee dedup (checks GitHub — visible to ALL runners)
-# If another runner already assigned themselves, skip this issue.
-if ~/.aidevops/agents/scripts/dispatch-dedup-helper.sh is-assigned NUMBER SLUG "$RUNNER_USER"; then continue; fi
-
-# 3. Cross-machine claim lock (t1686 — prevents race in assign-then-dispatch)
+# 2. Cross-machine claim lock (t1686 — prevents race in assign-then-dispatch)
 # Posts an HTML comment claim, waits consensus window, checks who was first.
 # Exit 0 = won (proceed), exit 1 = lost (skip), exit 2 = error (proceed, fail-open).
 CLAIM_EXIT=0
@@ -541,8 +539,11 @@ Every comment the supervisor posts on an issue or PR must be **sufficient for a 
 
 When dispatching a worker, comment on the issue with:
 
+Read the aidevops version: `AIDEVOPS_VERSION=$(cat ~/.aidevops/agents/VERSION 2>/dev/null || echo "unknown")`.
+
 ```bash
 gh issue comment <number> --repo <slug> --body "Dispatching worker.
+- **[aidevops.sh](https://github.com/marcusquinn/aidevops)**: v${AIDEVOPS_VERSION}
 - **Model**: <tier and full model ID, e.g., sonnet (anthropic/claude-sonnet-4-6)>
 - **Branch**: <branch name, e.g., fix/t748-ai-migration>
 - **Scope**: <1-line description of what the worker should do>
@@ -556,6 +557,7 @@ When killing a worker or closing a failed PR, comment with:
 
 ```bash
 gh issue comment <number> --repo <slug> --body "Worker killed after <duration> with <N> commits (struggle_ratio: <ratio>).
+- **[aidevops.sh](https://github.com/marcusquinn/aidevops)**: v${AIDEVOPS_VERSION}
 - **Model**: <tier used>
 - **Branch**: <branch name>
 - **Reason**: <why it was killed — thrashing, timeout, CI loop, etc.>
@@ -569,6 +571,7 @@ When merging a PR or closing an issue as done:
 
 ```bash
 gh issue comment <number> --repo <slug> --body "Completed via PR #<N>.
+- **[aidevops.sh](https://github.com/marcusquinn/aidevops)**: v${AIDEVOPS_VERSION}
 - **Model**: <tier that succeeded>
 - **Attempts**: <total attempts including failures>
 - **Duration**: <wall-clock from first dispatch to merge>"
@@ -719,16 +722,16 @@ Closing as duplicate of #<kept_number>. Identified during pulse triage — these
 # Source once per pulse run (provides has_worker_for_repo_issue, has_merged_pr_for_issue, and check_dispatch_dedup)
 source ~/.aidevops/agents/scripts/pulse-wrapper.sh
 
-# Single dedup guard: checks active worker, title variants, and merged-PR evidence
-if check_dispatch_dedup <number> <slug> "Issue #<number>: <title>" "<task-id>: <title>"; then
+# Single dedup guard: checks active worker, title variants, merged-PR evidence, and assignee
+if check_dispatch_dedup <number> <slug> "Issue #<number>: <title>" "<task-id>: <title>" "$RUNNER_USER"; then
   echo "Dedup guard blocked dispatch for #<number> in <slug> — skipping"
   # Leave a trace in GitHub so the catch is visible to all runners and to the dedup health check
-  gh issue comment <number> --repo <slug> --body "Dispatch skipped — deterministic dedup guard detected overlap (active worker or merged PR evidence). See check_dispatch_dedup in pulse-wrapper.sh." 2>/dev/null || true
+  gh issue comment <number> --repo <slug> --body "Dispatch skipped — deterministic dedup guard detected overlap (active worker, merged PR evidence, or assigned to another runner). See check_dispatch_dedup in pulse-wrapper.sh." 2>/dev/null || true
   continue
 fi
 ```
 
-`check_dispatch_dedup` runs all three checks in sequence: (1) exact repo+issue process overlap, (2) title variants via dispatch-dedup-helper (e.g., `issue-3502` vs `Issue #3502: description`), and (3) merged-PR evidence via close keywords and task-ID fallback. Skipping this guard caused both the 26-worker thrashing incident (GH#4400) and the awardsapp duplicate-PR pattern (GH#4527).
+`check_dispatch_dedup` runs all five checks in sequence: (1) in-flight dispatch ledger, (2) exact repo+issue process overlap, (3) title variants via dispatch-dedup-helper (e.g., `issue-3502` vs `Issue #3502: description`), (4) merged-PR evidence via close keywords and task-ID fallback, and (5) cross-machine assignee guard (GH#6891) — prevents dispatching for issues already assigned to another runner. Skipping this guard caused both the 26-worker thrashing incident (GH#4400) and the awardsapp duplicate-PR pattern (GH#4527). The assignee guard was added after GH#6891 where a runner dispatched a worker for an issue assigned to a different user.
 
 The deterministic guard is the safety net, not the primary layer. Over time, as the intelligence scan catches more duplicates earlier, the deterministic guard should fire less often. See "Dedup health monitoring" below for how to track this.
 

@@ -3286,6 +3286,7 @@ has_worker_for_repo_issue() {
 #   $2 - repo slug (owner/repo)
 #   $3 - dispatch title (e.g., "Issue #42: Fix auth")
 #   $4 - issue title (optional; used for merged-PR task-id fallback)
+#   $5 - self login (optional; runner's GitHub login for assignee check)
 # Exit codes:
 #   0 - duplicate detected (do NOT dispatch)
 #   1 - no duplicate (safe to dispatch)
@@ -3295,6 +3296,7 @@ check_dispatch_dedup() {
 	local repo_slug="$2"
 	local title="$3"
 	local issue_title="${4:-}"
+	local self_login="${5:-}"
 
 	# Layer 1 (GH#6696): in-flight dispatch ledger — catches workers between
 	# dispatch and PR creation (the 10-15 min gap that caused duplicate dispatches)
@@ -3330,6 +3332,19 @@ check_dispatch_dedup() {
 			else
 				echo "[pulse-wrapper] Dedup: merged PR evidence already exists for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 			fi
+			return 0
+		fi
+	fi
+
+	# Layer 5 (GH#6891): cross-machine assignee guard — prevents runners from
+	# dispatching workers for issues already assigned to another runner. This was
+	# previously an LLM-only instruction in pulse.md; moving it here makes it
+	# deterministic. The incident: johnwaldo's pulse dispatched a worker for an
+	# issue assigned to marcusquinn because the LLM skipped the is_assigned step.
+	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
+		local assigned_output=""
+		if assigned_output=$("$dedup_helper" is-assigned "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE"); then
+			echo "[pulse-wrapper] Dedup: #${issue_number} in ${repo_slug} already assigned to another runner — ${assigned_output}" >>"$LOGFILE"
 			return 0
 		fi
 	fi
