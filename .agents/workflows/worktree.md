@@ -19,7 +19,7 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Separate working directories per branch — no branch-switching conflicts
-- **Core principle**: Main repo (`~/Git/{repo}/`) ALWAYS stays on `main`
+- **Core principle**: Main repo (`~/Git/{repo}/`) ALWAYS stays on `main`. **Never `git checkout -b` in the main repo** — the next session inherits wrong state.
 - **Preferred tool**: [Worktrunk](https://worktrunk.dev) (`brew install max-sixty/worktrunk/wt`)
 - **Fallback**: `~/.aidevops/agents/scripts/worktree-helper.sh`
 
@@ -50,39 +50,6 @@ wt remove                         # Remove current worktree
 
 <!-- AI-CONTEXT-END -->
 
-## Why Worktrees?
-
-Standard git has one working directory per clone — `git checkout` in any terminal affects all terminals. Worktrees give each branch its own directory so sessions are fully independent.
-
-**Never use `git checkout -b` in the main repo directory.** Always use worktrees. If the main repo is left on a feature branch, the next session inherits wrong state and parallel workflow assumptions break.
-
-## Workflow Patterns
-
-### Parallel Feature Development
-
-```bash
-worktree-helper.sh add feature/user-auth   # ~/Git/myrepo-feature-user-auth/
-worktree-helper.sh add feature/api-v2      # ~/Git/myrepo-feature-api-v2/
-# Work on each in separate terminals/editors
-```
-
-### Quick Bug Fix During Feature Work
-
-```bash
-# Don't leave your feature worktree — create a new one
-worktree-helper.sh add hotfix/security-patch
-cd ~/Git/myrepo-hotfix-security-patch/
-# Fix, commit, push, PR — then return to feature work unchanged
-```
-
-### Multiple AI Sessions
-
-```bash
-opencode ~/Git/myrepo-feature-auth/    # Session 1: feature
-opencode ~/Git/myrepo-bugfix-login/    # Session 2: bug
-opencode ~/Git/myrepo-chore-docs/      # Session 3: docs
-```
-
 ## Commands Reference
 
 ```bash
@@ -99,11 +66,29 @@ worktree-helper.sh remove feature/auth   # Removes directory, NOT the branch
 git branch -d feature/auth               # Delete branch separately if needed
 
 # Batch cleanup (merged branches — interactive only)
-worktree-helper.sh clean                 # Prompts before removing; runs git fetch --prune
+# Detects squash-merged branches via deleted remote refs; runs git fetch --prune automatically
+worktree-helper.sh clean
 
 # Worker self-cleanup (automated — after PR merge in /full-loop)
 # Workers remove their own worktree after merge (GH#6740).
 # See full-loop.md Step 4.8 for the full procedure.
+```
+
+## Workflow Patterns
+
+```bash
+# Parallel features
+worktree-helper.sh add feature/user-auth   # ~/Git/myrepo-feature-user-auth/
+worktree-helper.sh add feature/api-v2      # ~/Git/myrepo-feature-api-v2/
+
+# Hotfix without leaving feature work
+worktree-helper.sh add hotfix/security-patch
+cd ~/Git/myrepo-hotfix-security-patch/
+# Fix, commit, push, PR — feature worktree unchanged
+
+# Multiple AI sessions
+opencode ~/Git/myrepo-feature-auth/    # Session 1
+opencode ~/Git/myrepo-bugfix-login/    # Session 2
 ```
 
 ## Integration with aidevops
@@ -131,7 +116,7 @@ Worktree removal auto-cleans the corresponding branch route.
 ~/.aidevops/agents/scripts/worktree-sessions.sh open   # Interactive: select + open in OpenCode
 ```
 
-Session matching scores: exact branch name in title (+100), branch slug (+80), key terms (+20 each), created within 1h of branch (+40). **Best practice**: use `session-rename_sync_branch` after creating branches.
+**Best practice**: use `session-rename_sync_branch` after creating branches. Before closing a PR or deleting a branch, check `worktree-sessions.sh list` for active sessions.
 
 ## Best Practices
 
@@ -151,14 +136,6 @@ Registry: `~/.aidevops/.agent-workspace/worktree-registry.db`
 
 Workers dispatched via `/full-loop` must remove their worktree after successful PR merge. Without this, batch dispatches (50+ workers) accumulate worktrees faster than the pulse cleanup cycle can remove them, eventually blocking new workers. See `full-loop.md` Step 4.8 and `commands/worktree-cleanup.md`.
 
-### Squash Merge Detection
-
-`clean` detects merged branches two ways: `git branch --merged` (traditional) and deleted remote branches after PR merge (squash). Runs `git fetch --prune` automatically.
-
-### Don't Checkout Same Branch Twice
-
-Git prevents this — each branch can only be checked out in one worktree at a time.
-
 ## Troubleshooting
 
 | Problem | Fix |
@@ -167,16 +144,10 @@ Git prevents this — each branch can only be checked out in one worktree at a t
 | "Worktree path already exists" | `rm -rf ~/Git/myrepo-feature-auth` if safe, then re-add |
 | Stale worktree references | `git worktree prune` |
 | Detached HEAD | `cd` into worktree, `git checkout feature/auth` |
+| Same branch checked out twice | Git prevents this — each branch can only be in one worktree at a time |
+| Worktree deleted mid-session | `git branch --list feature/my-feature` → `worktree-helper.sh add feature/my-feature` → `git stash pop` |
 
-### Worktree Deleted Mid-Session
-
-```bash
-git branch --list feature/my-feature          # Check if branch still exists
-worktree-helper.sh add feature/my-feature     # Recreate worktree
-git stash list && git stash pop               # Restore uncommitted changes if any
-```
-
-Use `session-rename_sync_branch` to re-sync the session name after recreating. Before closing a PR or deleting a branch, check `worktree-sessions.sh list` for active sessions.
+Use `session-rename_sync_branch` to re-sync the session name after recreating a worktree.
 
 ## Tool Comparison
 
