@@ -445,7 +445,7 @@ pulse-wrapper.sh (weekly) --> awk complexity scan
                               Create issues (simplification-debt + needs-maintainer-review)
 ```
 
-Configuration: `COMPLEXITY_SCAN_INTERVAL` (default 7 days), `COMPLEXITY_FILE_VIOLATION_THRESHOLD` (default 5).
+Configuration: `COMPLEXITY_SCAN_INTERVAL` (default 1 day), `COMPLEXITY_FILE_VIOLATION_THRESHOLD` (default 1).
 
 ### 2. Manual analysis
 

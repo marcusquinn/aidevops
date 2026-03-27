@@ -228,14 +228,12 @@ COMPLEXITY_SCAN_LAST_RUN="${HOME}/.aidevops/logs/complexity-scan-last-run"
 COMPLEXITY_SCAN_INTERVAL="${COMPLEXITY_SCAN_INTERVAL:-86400}"                   # 1 day in seconds (was 7 days)
 COMPLEXITY_FUNC_LINE_THRESHOLD="${COMPLEXITY_FUNC_LINE_THRESHOLD:-100}"         # Functions longer than this are violations
 COMPLEXITY_FILE_VIOLATION_THRESHOLD="${COMPLEXITY_FILE_VIOLATION_THRESHOLD:-1}" # Files with >= this many violations get an issue (was 5)
-COMPLEXITY_MD_LINE_THRESHOLD="${COMPLEXITY_MD_LINE_THRESHOLD:-500}"             # Agent docs longer than this get an issue
 WORKER_WATCHDOG_HELPER="${SCRIPT_DIR}/worker-watchdog.sh"
 
 # Validate complexity scan configuration (defined above, validated here)
 COMPLEXITY_SCAN_INTERVAL=$(_validate_int COMPLEXITY_SCAN_INTERVAL "$COMPLEXITY_SCAN_INTERVAL" 86400 3600)
 COMPLEXITY_FUNC_LINE_THRESHOLD=$(_validate_int COMPLEXITY_FUNC_LINE_THRESHOLD "$COMPLEXITY_FUNC_LINE_THRESHOLD" 100 50)
 COMPLEXITY_FILE_VIOLATION_THRESHOLD=$(_validate_int COMPLEXITY_FILE_VIOLATION_THRESHOLD "$COMPLEXITY_FILE_VIOLATION_THRESHOLD" 1 1)
-COMPLEXITY_MD_LINE_THRESHOLD=$(_validate_int COMPLEXITY_MD_LINE_THRESHOLD "$COMPLEXITY_MD_LINE_THRESHOLD" 500 200)
 
 if [[ ! -x "$HEADLESS_RUNTIME_HELPER" ]]; then
 	printf '[pulse-wrapper] ERROR: headless runtime helper is missing or not executable: %s (SCRIPT_DIR=%s)\n' "$HEADLESS_RUNTIME_HELPER" "$SCRIPT_DIR" >&2
@@ -2722,7 +2720,9 @@ _complexity_scan_collect_violations() {
 	return 0
 }
 
-# Collect oversized agent docs (.md files in .agents/).
+# Collect all agent docs (.md files in .agents/) for simplification analysis.
+# No file size gate — classification (instruction doc vs reference corpus)
+# determines the action, not line count (t1679, code-simplifier.md).
 # Protected files (build.txt, AGENTS.md, pulse.md) are excluded — these are
 # core infrastructure that must be simplified manually with a maintainer present.
 # Results are sorted longest-first so biggest wins come early.
@@ -2742,23 +2742,21 @@ _complexity_scan_collect_md_violations() {
 	fi
 
 	local scan_results=""
-	local oversized_count=0
+	local file_count=0
 	while IFS= read -r file; do
 		[[ -n "$file" ]] || continue
 		local full_path="${aidevops_path}/${file}"
 		[[ -f "$full_path" ]] || continue
 		local lc
 		lc=$(wc -l <"$full_path" 2>/dev/null | tr -d ' ')
-		if [[ "$lc" -ge "$COMPLEXITY_MD_LINE_THRESHOLD" ]]; then
-			scan_results="${scan_results}${file}|${lc}"$'\n'
-			oversized_count=$((oversized_count + 1))
-		fi
+		scan_results="${scan_results}${file}|${lc}"$'\n'
+		file_count=$((file_count + 1))
 	done <<<"$md_files"
 
 	# Sort longest-first (descending by line count after the pipe)
 	scan_results=$(printf '%s' "$scan_results" | sort -t'|' -k2 -rn)
 
-	echo "[pulse-wrapper] Complexity scan (.md): ${oversized_count} files exceed ${COMPLEXITY_MD_LINE_THRESHOLD} lines" >>"$LOGFILE"
+	echo "[pulse-wrapper] Complexity scan (.md): ${file_count} agent doc files collected (no size gate)" >>"$LOGFILE"
 	printf '%s' "$scan_results"
 	return 0
 }
@@ -2834,7 +2832,7 @@ _complexity_scan_build_md_issue_body() {
 
 **File:** \`${file_path}\`
 **Detected topic:** ${topic_label:-Unknown}
-**Current size:** ${line_count} lines (threshold: ${COMPLEXITY_MD_LINE_THRESHOLD})
+**Current size:** ${line_count} lines
 
 ### Classify before acting
 
@@ -3046,7 +3044,7 @@ This is an automated scan. The function lengths are factual, but the best decomp
 #
 # Scans both shell scripts (.sh) and agent docs (.md) for complexity:
 # - .sh files: functions exceeding COMPLEXITY_FUNC_LINE_THRESHOLD lines
-# - .md files: agent docs exceeding COMPLEXITY_MD_LINE_THRESHOLD lines
+# - .md files: all agent docs (no size gate — classification determines action, t1679)
 #
 # Protected files (build.txt, AGENTS.md, pulse.md) are excluded from
 # .md scanning — these are core infrastructure requiring manual review.
