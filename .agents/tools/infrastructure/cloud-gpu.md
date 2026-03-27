@@ -180,21 +180,14 @@ speech-to-speech-helper.sh start --server && speech-to-speech-helper.sh client -
 ## GPU Monitoring
 
 ```bash
-# Health check on connect
+# Health check
 nvidia-smi --query-gpu=name,memory.total,memory.used,temperature.gpu,utilization.gpu --format=csv,noheader
 python3 -c "import torch; print(f'CUDA: {torch.cuda.is_available()}, GPUs: {torch.cuda.device_count()}, Device: {torch.cuda.get_device_name(0)}')"
-
-# Log metrics every 30s to CSV
+# Log metrics every 30s
 nvidia-smi --query-gpu=timestamp,name,utilization.gpu,utilization.memory,memory.used,temperature.gpu,power.draw \
   --format=csv -l 30 > /tmp/gpu_metrics.csv &
-
-# Memory bandwidth benchmark (validate before long workloads)
-python3 -c "
-import torch, time; size=1024*1024*256; a=torch.randn(size,device='cuda'); torch.cuda.synchronize()
-t=time.time(); [a.clone() for _ in range(100)]; torch.cuda.synchronize()
-print(f'Bandwidth: {(size*4*100)/(time.time()-t)/1e9:.1f} GB/s')
-"
-# Vast.ai: verify DLPerf score matches listing | RunPod: Community Cloud may have lower bandwidth than Secure Cloud
+# Bandwidth benchmark (validate before long workloads; Vast.ai: verify DLPerf score; RunPod: Community < Secure Cloud)
+python3 -c "import torch,time; s=1024*1024*256; a=torch.randn(s,device='cuda'); torch.cuda.synchronize(); t=time.time(); [a.clone() for _ in range(100)]; torch.cuda.synchronize(); print(f'{(s*4*100)/(time.time()-t)/1e9:.1f} GB/s')"
 ```
 
 ## Troubleshooting
@@ -210,13 +203,10 @@ print(f'Bandwidth: {(size*4*100)/(time.time()-t)/1e9:.1f} GB/s')
 
 ## Security
 
-- Never expose model APIs to the public internet without authentication
-- Use SSH tunnels or VPN for secure access
+- Never expose model APIs without authentication; use SSH tunnels or VPN
 - Store credentials: `aidevops secret set RUNPOD_API_KEY` / `VASTAI_API_KEY` / `LAMBDA_API_KEY`
-- Rotate SSH keys regularly; enable provider-level firewalls (security groups)
-- For production: use HTTPS with reverse proxy (nginx/caddy)
-
-See `tools/credentials/api-key-setup.md` for full credential setup.
+- Rotate SSH keys regularly; enable provider firewalls; production: HTTPS via nginx/caddy
+- Full credential setup: `tools/credentials/api-key-setup.md`
 
 ## See Also
 
