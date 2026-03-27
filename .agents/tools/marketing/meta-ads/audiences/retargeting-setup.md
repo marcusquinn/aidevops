@@ -22,26 +22,11 @@ Sources: Website, Video, Facebook Page, Instagram Account, Lead Form, Customer L
 | Purchasers 180d | Purchase event, 180 days |
 | High-Intent Pages 7d | URL contains /pricing OR /demo, 7 days |
 
-### URL-Based Audiences
+**URL-based:** `URL contains: /segment` + retention window. Name: `RT_[Segment]_[Window]` (e.g., `RT_Pricing_14d`, `RT_Blog_30d`).
 
-Pattern: `URL contains: /segment` with retention window. Name: `RT_[Segment]_[Window]`.
+**Event funnel:** PageView > ViewContent > AddToCart > InitiateCheckout > Purchase, Lead, CompleteRegistration.
 
-Example: pricing page visitors 14d = `RT_Pricing_14d`, blog readers 30d = `RT_Blog_30d`.
-
-### Event-Based Audiences
-
-**Standard events (by funnel stage):**
-PageView > ViewContent > AddToCart > InitiateCheckout > Purchase, Lead, CompleteRegistration.
-
-**Exclusion pattern** (cart abandoners example):
-
-```text
-All website visitors who:
-  Events: AddToCart
-  And also: Did NOT complete: Purchase
-  Retention: 14 days
-  Name: RT_Cart_NoPurchase_14d
-```
+**Exclusion pattern (cart abandoners):** Include AddToCart, exclude Purchase, 14 days → `RT_Cart_NoPurchase_14d`.
 
 ## Engagement Audiences
 
@@ -49,22 +34,16 @@ All website visitors who:
 
 | Threshold | Use Case |
 |-----------|----------|
-| 3s / 10s / ThruPlay (15s+) | Low intent — awareness |
+| 3s / 10s / ThruPlay | Low intent — awareness |
 | 25% / 50% viewed | Mid-funnel |
 | 75% viewed | High intent |
 | 95% viewed | Highest intent |
 
-**Recommended audiences:** 50% viewers 30d (mid-funnel), 75% viewers 60d (high intent), 95% viewers 60d (highest intent).
+**Recommended:** 50% viewers 30d (mid-funnel), 75% viewers 60d (high intent), 95% viewers 60d (highest intent).
 
 ### Page and Instagram Engagement
 
-Options (same for Facebook Page and Instagram Account):
-- Everyone who engaged with your account
-- Anyone who visited your profile
-- People who engaged with any post or ad
-- People who clicked any CTA button (FB only)
-- People who sent a message
-- People who saved your page/post
+Options: everyone who engaged, profile visitors, post/ad engagers, CTA clickers (FB only), message senders, page/post savers.
 
 **Recommended:** "Engaged with any post or ad" — 60 days.
 
@@ -74,16 +53,12 @@ People who opened a lead form but didn't submit — captures high-intent users w
 
 ## Customer List Setup
 
-### Preparing and Uploading
-
 | Field | Importance |
 |-------|-----------|
 | Email | Required (primary match key) |
 | Phone | Recommended |
 | First Name, Last Name | Recommended |
 | City, State, Country, Zip | Recommended |
-
-**CSV format:**
 
 ```csv
 email,phone,fn,ln,ct,st,country,zip
@@ -113,40 +88,19 @@ john@example.com,+14155551234,John,Smith,San Francisco,CA,US,94102
 
 ## Audience Combinations
 
-Use AND/OR logic with include/exclude rules:
+Use include/exclude rules with AND/OR logic.
 
-```text
-Include: [audience A] OR [audience B]
-Exclude: [audience C]
-```
+**Warm But Not Hot:** Include All Visitors 30d, exclude Visitors 7d + Purchasers 30d = visited 8-30 days ago, didn't buy.
 
-### Recommended Combinations
+**Engaged But Not Visited:** Include Page/IG Engagers 60d, exclude Website Visitors 30d = social engagers who haven't been to site.
 
-**Warm But Not Hot:**
-Include All Visitors 30d, exclude Visitors 7d + Purchasers 30d = visited 8-30 days ago, didn't buy.
-
-**Engaged But Not Visited:**
-Include Page/IG Engagers 60d, exclude Website Visitors 30d = social engagers who haven't been to site.
-
-**Lapsed Customers:**
-Include Purchasers 365d, exclude Purchasers 90d = bought 4-12 months ago, not recently.
+**Lapsed Customers:** Include Purchasers 365d, exclude Purchasers 90d = bought 4-12 months ago, not recently.
 
 ## Pixel Event Configuration
 
 **Setup:** Events Manager > Data Sources > Pixel > Settings > Event Setup Tool > navigate to site > configure events.
 
-### Aggregated Event Measurement (AEM) Priority
-
-Rank your 8 events by value (highest to lowest):
-
-1. Purchase
-2. InitiateCheckout
-3. AddToCart
-4. Lead
-5. CompleteRegistration
-6. ViewContent
-7. Search
-8. PageView
+**AEM priority** (rank 8 events highest to lowest): Purchase, InitiateCheckout, AddToCart, Lead, CompleteRegistration, ViewContent, Search, PageView.
 
 **Testing:** Events Manager > Pixel > Test Events tab > browse your site > verify events fire.
 
@@ -171,8 +125,6 @@ RT_Engage_PageLikes_60d
 LAL_Customers_HighLTV_1pct
 ```
 
-### Archiving
-
-Add "ARCHIVE" prefix to name and move to Archive folder when no longer used, data too old, or replaced by newer version. Don't delete — may break historical reports.
+**Archiving:** Add "ARCHIVE" prefix and move to Archive folder when no longer used, data too old, or replaced. Don't delete — may break historical reports.
 
 *Next: [First-Party Data](first-party-data.md)*
