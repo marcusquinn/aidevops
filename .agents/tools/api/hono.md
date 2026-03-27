@@ -27,7 +27,6 @@ tools:
 ```tsx
 import { Hono } from "hono";
 const app = new Hono();
-
 app.get("/api/users", (c) => c.json({ users: [] }));
 app.post("/api/users", async (c) => {
   const body = await c.req.json();
@@ -40,7 +39,6 @@ app.post("/api/users", async (c) => {
 ```tsx
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-
 app.post(
   "/api/users",
   zValidator("json", z.object({ name: z.string().min(1), email: z.string().email() })),
@@ -91,7 +89,7 @@ import { timing } from "hono/timing";
 app.use("*", logger(), timing());
 app.use("/api/*", cors());
 
-// Auth middleware — validate token, not just header presence
+// Auth — validate token, not just header presence
 app.use("/api/admin/*", async (c, next) => {
   const authHeader = c.req.header("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
@@ -139,7 +137,6 @@ const users = new Hono()
   .get("/", (c) => c.json({ users: [] }))
   .get("/:id", (c) => c.json({ id: c.req.param("id") }))
   .post("/", (c) => c.json({ created: true }));
-
 app.route("/api/users", users);
 ```
 
