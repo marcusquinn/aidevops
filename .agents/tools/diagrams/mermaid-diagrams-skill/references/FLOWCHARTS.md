@@ -11,36 +11,21 @@ flowchart LR
     B -->|No| D[End]
 ```
 
-## Direction
-
-| Declaration | Direction |
-|-------------|-----------|
-| `TB` / `TD` | Top to Bottom |
-| `BT` | Bottom to Top |
-| `LR` | Left to Right |
-| `RL` | Right to Left |
+Direction: `TB`/`TD` (top-bottom), `BT`, `LR`, `RL`
 
 ## Node Shapes
 
-### Standard Shapes
+### Standard
 
 ```
-A[Rectangle]         Default box
-B(Rounded)           Rounded corners
-C([Stadium])         Pill shape
-D[[Subroutine]]      Double vertical lines
-E[(Database)]        Cylinder
-F((Circle))          Circle
-G{Diamond}           Decision/rhombus
-H{{Hexagon}}         Hexagon
-I[/Parallelogram/]   Slanted right
-J[\Parallelogram\]   Slanted left
-K[/Trapezoid\]       Trapezoid
-L[\Trapezoid/]       Inverted trapezoid
-M(((Double Circle))) Double circle
+A[Rectangle]         B(Rounded)           C([Stadium])
+D[[Subroutine]]      E[(Database)]        F((Circle))
+G{Diamond}           H{{Hexagon}}         I[/Parallelogram/]
+J[\Parallelogram\]   K[/Trapezoid\]       L[\Trapezoid/]
+M(((Double Circle)))
 ```
 
-### Extended Shapes (v11.3+)
+### Extended (v11.3+)
 
 Syntax: `node@{ shape: name, label: "Text" }`
 
@@ -73,29 +58,17 @@ flowchart LR
 ## Edge Types
 
 ```
-A --> B       Solid arrow
-A --- B       Solid line (no arrow)
-A -.-> B      Dotted arrow
-A -.- B       Dotted line
-A ==> B       Thick arrow
-A === B       Thick line
-A --o B       Circle end
-A --x B       Cross end
-A o--o B      Circle both ends
-A x--x B      Cross both ends
-A <--> B      Arrows both ends
+A --> B       Solid arrow        A --- B       Solid line
+A -.-> B      Dotted arrow       A -.- B       Dotted line
+A ==> B       Thick arrow        A === B       Thick line
+A --o B       Circle end         A --x B       Cross end
+A o--o B      Circle both ends   A x--x B      Cross both ends
+A <--> B      Bidirectional
 ```
 
-**Edge length** — extra dashes extend: `A --> B` (normal), `A ---> B` (longer), `A ----> B` (even longer)
+**Length** — extra dashes extend: `-->` (normal), `--->` (longer), `---->` (longest)
 
-**Labels:**
-
-```mermaid
-flowchart LR
-    A --> |label| B
-    C -- text --> D
-    E -->|"multi word"| F
-```
+**Labels:** `A -->|text| B` or `A -- text --> B` or `A -->|"multi word"| B`
 
 **Animation (v11+):** `A e1@--> B` then `e1@{ animate: true, animation-duration: "0.5s" }`
 
@@ -114,7 +87,7 @@ flowchart TB
     UI --> WS
 ```
 
-**Nested subgraphs** — subgraphs can contain subgraphs. **Per-subgraph direction** — add `direction TB` inside a subgraph to override flow direction locally.
+**Nested subgraphs** supported. **Per-subgraph direction** — add `direction TB` inside to override locally.
 
 ## Multi-Target Edges
 
@@ -158,16 +131,8 @@ flowchart LR
     A[Start]:::green --> B[Process]:::blue --> C[End]:::green
     classDef green fill:#10b981,stroke:#059669,color:white
     classDef blue fill:#3b82f6,stroke:#2563eb,color:white
-```
-
-**Individual node and link styles:**
-
-```mermaid
-flowchart LR
-    A --> B --> C
     style A fill:#f9f,stroke:#333,stroke-width:2px
     linkStyle 0 stroke:red,stroke-width:2px
-    linkStyle 1 stroke:blue,stroke-dasharray:5
     linkStyle default stroke:gray,stroke-width:1px
 ```
 
@@ -182,24 +147,7 @@ flowchart TB
     B & C & D --> E
 ```
 
-## Examples
-
-### Decision Tree
-
-```mermaid
-flowchart TD
-    Start[User Request] --> Auth{Authenticated?}
-    Auth -->|Yes| Perm{Has Permission?}
-    Auth -->|No| Login[Redirect to Login]
-    Perm -->|Yes| Process[Process Request]
-    Perm -->|No| Denied[403 Forbidden]
-    Process --> Success[200 OK]
-    style Success fill:#10b981
-    style Denied fill:#ef4444
-    style Login fill:#f59e0b
-```
-
-### CI/CD Pipeline
+## Example: CI/CD Pipeline
 
 ```mermaid
 flowchart LR
