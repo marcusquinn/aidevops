@@ -15,7 +15,7 @@ Parse `$ARGUMENTS` to select an operation. Default is `check` (inbox summary).
 | Command | Helper call | Purpose |
 |---------|-------------|---------|
 | *(empty)* / `check` | `email-mailbox-helper.sh inbox --summary` | Inbox summary (unread, flagged, pending triage) |
-| `triage [--limit N]` | `email-triage-helper.sh run --limit 50` | AI triage of unread messages (classify, prioritize, flag) |
+| `triage [--limit N]` | `email-triage-helper.sh run --limit "$LIMIT"` | AI triage of unread messages (classify, prioritize, flag; default: 50) |
 | `compose [--reply <id>]` | `email-compose-helper.sh` workflow | Compose new email or reply |
 | `search "<query>"` | `email-mailbox-helper.sh search "$QUERY"` | Full-text search |
 | `search --from <addr>` | `email-mailbox-helper.sh search --from "$ADDR"` | Search by sender |
@@ -27,7 +27,7 @@ Parse `$ARGUMENTS` to select an operation. Default is `check` (inbox summary).
 | `flag <id> <flag>` | `email-mailbox-helper.sh flag "$MESSAGE_ID" "$FLAG"` | Apply flag to message |
 | `archive <id>` | `email-mailbox-helper.sh archive "$MESSAGE_ID"` | Archive a message |
 
-All helper scripts are under `scripts/` (repo-relative; deployed to `~/.aidevops/agents/scripts/`).
+All helper scripts are under `scripts/` (repo-relative).
 
 ## Output Format
 
