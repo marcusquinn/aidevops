@@ -3227,12 +3227,18 @@ has_worker_for_repo_issue() {
 }
 
 #######################################
-# Check if dispatching a worker would be a duplicate (GH#4400, GH#5210)
+# Check if dispatching a worker would be a duplicate (GH#4400, GH#5210, GH#6696)
 #
-# Four-layer dedup:
-#   1. has_worker_for_repo_issue() — exact repo+issue process match
-#   2. dispatch-dedup-helper.sh is-duplicate — normalized title key match
-#   3. dispatch-dedup-helper.sh has-open-pr — merged PR evidence for issue/task
+# Five-layer dedup:
+#   1. dispatch-ledger-helper.sh check-issue — in-flight ledger (GH#6696)
+#   2. has_worker_for_repo_issue() — exact repo+issue process match
+#   3. dispatch-dedup-helper.sh is-duplicate — normalized title key match
+#   4. dispatch-dedup-helper.sh has-open-pr — merged PR evidence for issue/task
+#
+# Layer 1 (ledger) is checked first because it's the fastest (local file
+# read, no process scanning or GitHub API calls) and catches the primary
+# failure mode: workers dispatched but not yet visible in process lists
+# or GitHub PRs (the 10-15 minute gap between dispatch and PR creation).
 #
 # Arguments:
 #   $1 - issue number
@@ -3249,13 +3255,23 @@ check_dispatch_dedup() {
 	local title="$3"
 	local issue_title="${4:-}"
 
-	# Layer 1: exact repo+issue process match
+	# Layer 1 (GH#6696): in-flight dispatch ledger — catches workers between
+	# dispatch and PR creation (the 10-15 min gap that caused duplicate dispatches)
+	local ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
+	if [[ -x "$ledger_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
+		if "$ledger_helper" check-issue --issue "$issue_number" --repo "$repo_slug" >/dev/null 2>&1; then
+			echo "[pulse-wrapper] Dedup: in-flight ledger entry for #${issue_number} in ${repo_slug} (GH#6696)" >>"$LOGFILE"
+			return 0
+		fi
+	fi
+
+	# Layer 2: exact repo+issue process match
 	if has_worker_for_repo_issue "$issue_number" "$repo_slug"; then
 		echo "[pulse-wrapper] Dedup: worker already running for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 		return 0
 	fi
 
-	# Layer 2: normalized title key match via dispatch-dedup-helper
+	# Layer 3: normalized title key match via dispatch-dedup-helper
 	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
 	if [[ -x "$dedup_helper" ]] && [[ -n "$title" ]]; then
 		if "$dedup_helper" is-duplicate "$title" >/dev/null 2>&1; then
@@ -3264,7 +3280,7 @@ check_dispatch_dedup() {
 		fi
 	fi
 
-	# Layer 3: merged PR evidence for this issue/task
+	# Layer 4: merged PR evidence for this issue/task
 	local dedup_helper_output=""
 	if [[ -x "$dedup_helper" ]]; then
 		if dedup_helper_output=$("$dedup_helper" has-open-pr "$issue_number" "$repo_slug" "$issue_title" 2>>"$LOGFILE"); then
@@ -3903,6 +3919,19 @@ _run_preflight_stages() {
 	run_stage_with_timeout "cleanup_orphans" "$PRE_RUN_STAGE_TIMEOUT" cleanup_orphans || true
 	run_stage_with_timeout "cleanup_worktrees" "$PRE_RUN_STAGE_TIMEOUT" cleanup_worktrees || true
 	run_stage_with_timeout "cleanup_stashes" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stashes || true
+
+	# GH#6696: Expire stale in-flight ledger entries and prune old completed/failed ones.
+	# This runs before worker counting so count_active_workers sees accurate ledger state.
+	local _ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
+	if [[ -x "$_ledger_helper" ]]; then
+		local expired_count
+		expired_count=$("$_ledger_helper" expire 2>/dev/null) || expired_count=0
+		"$_ledger_helper" prune >/dev/null 2>&1 || true
+		if [[ "${expired_count:-0}" -gt 0 ]]; then
+			echo "[pulse-wrapper] Dispatch ledger: expired ${expired_count} stale in-flight entries (GH#6696)" >>"$LOGFILE"
+		fi
+	fi
+
 	calculate_max_workers
 	calculate_priority_allocations
 	check_session_count >/dev/null
