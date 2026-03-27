@@ -33,23 +33,13 @@ tools:
 
 ## Prerequisites
 
-- macOS (required — AppleScript is macOS-only), Node.js 18+
-
-**Required permissions** (grant to Terminal or your AI tool):
-
-| Permission | Path |
-|------------|------|
-| Automation | System Settings > Privacy & Security > Automation |
-| Accessibility (UI scripting) | System Settings > Privacy & Security > Accessibility |
-
-## Installation
+- macOS + Node.js 18+
+- **Automation** permission: System Settings > Privacy & Security > Automation — enable for your terminal/AI tool
+- **Accessibility** permission: System Settings > Privacy & Security > Accessibility — add your terminal/AI tool
 
 ```bash
-# Run directly (no install needed)
-npx -y @steipete/macos-automator-mcp@0.2.0
-
-# Or install globally
-npm install -g @steipete/macos-automator-mcp@0.2.0
+npx -y @steipete/macos-automator-mcp@0.2.0   # run directly (no install needed)
+npm install -g @steipete/macos-automator-mcp@0.2.0  # or install globally
 ```
 
 ## AI Tool Configurations
@@ -84,47 +74,21 @@ claude mcp add-json macos-automator --scope user '{"type":"stdio","command":"npx
 claude mcp add-json macos-automator --scope project '{"type":"stdio","command":"npx","args":["-y","@steipete/macos-automator-mcp@0.2.0"]}'
 ```
 
-### Cursor / Windsurf / Zed / Gemini CLI
+### Cursor / Windsurf / Zed / Gemini CLI / GitHub Copilot
 
-All use the same JSON shape:
+All use the same npx command. Config file locations:
 
-```json
-{
-  "mcpServers": {
-    "macos-automator": {
-      "command": "npx",
-      "args": ["-y", "@steipete/macos-automator-mcp@0.2.0"]
-    }
-  }
-}
-```
-
-Config file locations:
-- **Cursor**: Settings > Tools & MCP > New MCP Server
-- **Windsurf**: `~/.codeium/windsurf/mcp.json`
-- **Zed**: ... > Add Custom Server (add `"env": {}` field)
-- **Gemini CLI**: `~/.gemini/settings.json`
-
-### GitHub Copilot
-
-`.vscode/mcp.json` in project root:
+| Tool | Config location | Notes |
+|------|----------------|-------|
+| **Cursor** | Settings > Tools & MCP > New MCP Server | use `mcpServers` key |
+| **Windsurf** | `~/.codeium/windsurf/mcp.json` | use `mcpServers` key |
+| **Zed** | ... > Add Custom Server | add `"env": {}` field |
+| **Gemini CLI** | `~/.gemini/settings.json` | use `mcpServers` key |
+| **GitHub Copilot** | `.vscode/mcp.json` in project root | use `servers` key, add `"type": "stdio"` |
+| **Droid** | CLI | `droid mcp add macos-automator "npx" -y @steipete/macos-automator-mcp@0.2.0` |
 
 ```json
-{
-  "servers": {
-    "macos-automator": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@steipete/macos-automator-mcp@0.2.0"]
-    }
-  }
-}
-```
-
-### Droid (Factory.AI)
-
-```bash
-droid mcp add macos-automator "npx" -y @steipete/macos-automator-mcp@0.2.0
+"macos-automator": { "command": "npx", "args": ["-y", "@steipete/macos-automator-mcp@0.2.0"] }
 ```
 
 ## MCP Tools
