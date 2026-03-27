@@ -108,6 +108,18 @@ Persistent user preferences are stored in `~/.config/aidevops/settings.json`. Th
 
 **Shell access**: Scripts that source `shared-constants.sh` can read settings via `get_setting "key" "default"`.
 
+## Contribution Watch
+
+Monitors external issues/PRs for new activity needing reply, using the GitHub Notifications API. Managed repos (`pulse: true` in repos.json) are excluded to suppress internal automation noise.
+
+**CLI**: `contribution-watch-helper.sh seed|scan|status|install|uninstall`
+
+- `seed` — seed tracked threads from existing contributed repos
+- `scan` — check for new activity on tracked threads (optional `--backfill` for low-frequency safety-net sweeps)
+- `install` / `uninstall` — install/remove the scheduled scanner
+
+**Security**: Automated scans are deterministic metadata checks (no LLM). Comment bodies are only shown in interactive sessions after `prompt-guard-helper.sh scan`.
+
 ## Auto-Update
 
 Automatic polling for new releases. Checks GitHub every 10 minutes and runs `aidevops update` when a new version is available. Safe to run while AI sessions are active.
