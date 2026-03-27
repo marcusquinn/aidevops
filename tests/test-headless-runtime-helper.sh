@@ -480,6 +480,7 @@ section "Spending Limit Detection (GH#8229)"
 
 # Test classify_failure_reason detects MonthlyLimitError
 SPENDING_TMP=$(mktemp)
+# shellcheck disable=SC2016  # $300 is a literal dollar amount, not a variable
 printf '{"error":{"type":"MonthlyLimitError","message":"Your workspace has reached its monthly spending limit of $300"}}' >"$SPENDING_TMP"
 # Source the helper to get classify_failure_reason (need to avoid main execution)
 # Instead, call the helper's classify function indirectly via a subshell
