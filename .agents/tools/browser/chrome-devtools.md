@@ -26,31 +26,18 @@ tools:
 **Connection methods**:
 
 ```bash
-# Connect to dev-browser (port 9222)
-npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222
-
-# Connect via WebSocket
-npx chrome-devtools-mcp@latest --wsEndpoint ws://127.0.0.1:9222/devtools/browser/<id>
-
-# Launch its own Chrome (headless)
-npx chrome-devtools-mcp@latest --headless
-
-# With isolated profile (temp, auto-cleaned)
-npx chrome-devtools-mcp@latest --isolated
-
-# With proxy
+npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222   # dev-browser (port 9222)
+npx chrome-devtools-mcp@latest --wsEndpoint ws://127.0.0.1:9222/devtools/browser/<id>  # WebSocket
+npx chrome-devtools-mcp@latest --headless    # launch own Chrome (headless)
+npx chrome-devtools-mcp@latest --isolated    # temp profile, auto-cleaned
 npx chrome-devtools-mcp@latest --proxyServer socks5://127.0.0.1:1080
-
-# Use Chrome Beta/Canary/Dev
-npx chrome-devtools-mcp@latest --channel canary
-
-# Auto-connect to user's Chrome (Chrome 145+, requires chrome://inspect/#remote-debugging)
-npx chrome-devtools-mcp@latest --autoConnect
+npx chrome-devtools-mcp@latest --channel canary   # Chrome Beta/Canary/Dev
+npx chrome-devtools-mcp@latest --autoConnect      # Chrome 145+, requires chrome://inspect/#remote-debugging
 ```
 
 **Capabilities**:
 - Performance: `lighthouse()`, `measureWebVitals()` (LCP, FID, CLS, TTFB)
-- Network: `monitorNetwork()`, global throttling via `emulate` with `networkConditions`, individual request throttling via `throttleRequest()` / `throttleRequests()` (Chrome 144+)
+- Network: `monitorNetwork()`, global throttling via `emulate` with `networkConditions`, per-request throttling via `throttleRequest()` / `throttleRequests()` (Chrome 144+)
 - Scraping: `extractData()`, `screenshot()` (fullPage, element)
 - Debug: `captureConsole()`, CSS coverage, visual regression
 - Mobile: `emulateDevice()`, `simulateTouch()` (tap, swipe)
@@ -75,21 +62,13 @@ npx chrome-devtools-mcp@latest --categoryEmulation false --categoryPerformance f
 
 ## Performance Analysis
 
-### **Lighthouse Performance Audit**
-
 ```javascript
-// Request a Lighthouse audit for performance optimization
 await chromeDevTools.lighthouse({
   url: "https://your-website.com",
   categories: ["performance", "accessibility", "best-practices", "seo"],
   device: "desktop"
 });
-```
 
-### **Core Web Vitals Monitoring**
-
-```javascript
-// Monitor Core Web Vitals in real-time
 await chromeDevTools.measureWebVitals({
   url: "https://your-website.com",
   metrics: ["LCP", "FID", "CLS", "TTFB"],
@@ -97,26 +76,14 @@ await chromeDevTools.measureWebVitals({
 });
 ```
 
-## 🕷️ **Web Scraping & Data Extraction**
-
-### **Extract Page Content**
+## Web Scraping & Data Extraction
 
 ```javascript
-// Extract structured data from a webpage
 await chromeDevTools.extractData({
   url: "https://example.com",
-  selectors: {
-    title: "h1",
-    description: ".description",
-    links: "a[href]"
-  }
+  selectors: { title: "h1", description: ".description", links: "a[href]" }
 });
-```
 
-### **Screenshot Generation**
-
-```javascript
-// Generate full-page screenshots
 await chromeDevTools.screenshot({
   url: "https://your-website.com",
   fullPage: true,
@@ -125,23 +92,15 @@ await chromeDevTools.screenshot({
 });
 ```
 
-## 🐛 **Debugging & Testing**
-
-### **Console Log Analysis**
+## Debugging & Testing
 
 ```javascript
-// Capture and analyze console errors
 await chromeDevTools.captureConsole({
   url: "https://your-website.com",
   logLevel: "error",
   duration: 30000
 });
-```
 
-### **Network Request Monitoring**
-
-```javascript
-// Monitor network requests and responses
 await chromeDevTools.monitorNetwork({
   url: "https://your-website.com",
   filters: ["xhr", "fetch", "document"],
@@ -150,115 +109,63 @@ await chromeDevTools.monitorNetwork({
 });
 ```
 
-## **Network Conditions & Throttling**
+## Network Throttling
 
-### **Global Network Throttling**
-
-Use the `emulate` tool with `networkConditions` to simulate slow networks:
+### Global (all requests)
 
 ```javascript
-// Simulate slow network globally
 await chromeDevTools.emulate({
   url: "https://your-website.com",
   networkConditions: {
     offline: false,
-    latency: 200,           // 200ms latency
-    downloadThroughput: 50 * 1024,  // 50 KB/s
-    uploadThroughput: 20 * 1024     // 20 KB/s
+    latency: 200,
+    downloadThroughput: 50 * 1024,
+    uploadThroughput: 20 * 1024
   }
 });
 
-// Preset network conditions
-await chromeDevTools.emulate({
-  url: "https://your-website.com",
-  networkConditions: "Slow 3G"  // or "Fast 3G", "Offline"
-});
+// Preset: "Slow 3G", "Fast 3G", "Offline"
+await chromeDevTools.emulate({ url: "...", networkConditions: "Slow 3G" });
 ```
 
-### **Individual Request Throttling** (Chrome 144+)
+### Per-request (Chrome 144+)
 
-Chrome 144+ supports throttling individual network requests rather than the entire page. This enables precise testing of how your application handles slow-loading specific resources.
-
-**Manual DevTools usage**: Right-click any request in the Network panel → "Throttle request URL" (Chrome 144+).
-
-**Use cases:**
-- Test lazy-loading behavior when specific images load slowly
-- Simulate slow API responses without affecting other requests
-- Debug race conditions when certain scripts load out of order
-- Test error handling for slow third-party resources
-
-> **Note**: The `url` parameter specifies the page to navigate to before applying throttling rules. These functions first navigate to the specified `url`, then apply the throttling rules for the duration of that page load.
+Throttles specific URL patterns without affecting the rest of the page. Right-click any request in the Network panel → "Throttle request URL" for manual use.
 
 ```javascript
-// Throttle a specific API endpoint
 await chromeDevTools.throttleRequest({
-  url: "https://your-website.com",  // page to navigate to
+  url: "https://your-website.com",   // page to navigate to before applying rules
   requestPattern: "**/api/slow-endpoint",
-  latency: 3000,  // Add 3 second delay
-  downloadThroughput: 50 * 1024  // 50 KB/s
+  latency: 3000,
+  downloadThroughput: 50 * 1024
 });
 
-// Throttle specific image requests
-await chromeDevTools.throttleRequest({
-  url: "https://your-website.com",
-  requestPattern: "*.jpg",
-  latency: 2000,
-  downloadThroughput: 100 * 1024  // 100 KB/s
-});
-
-// Throttle multiple patterns with different conditions
-// Rules are evaluated in order — the first matching rule wins.
-// In the example below, **/api/critical matches the first rule (no throttling)
-// and is NOT further matched by the second **/api/* rule.
+// Multiple patterns — rules evaluated in order, first match wins
 await chromeDevTools.throttleRequests({
   url: "https://your-website.com",
   rules: [
-    {
-      pattern: "**/api/critical",
-      latency: 0,
-      downloadThroughput: -1  // No throttling (priority)
-    },
-    {
-      pattern: "**/api/*",
-      latency: 1500,
-      downloadThroughput: 200 * 1024
-    },
-    {
-      pattern: "*.woff2",
-      latency: 500,
-      downloadThroughput: 50 * 1024
-    }
+    { pattern: "**/api/critical", latency: 0, downloadThroughput: -1 },  // no throttle
+    { pattern: "**/api/*", latency: 1500, downloadThroughput: 200 * 1024 },
+    { pattern: "*.woff2", latency: 500, downloadThroughput: 50 * 1024 }
   ]
 });
 ```
 
-**Comparison: Page-Level vs Individual Request Throttling**
-
-| Feature | Page-Level (`emulate`) | Individual Request (`throttleRequest`) |
-|---------|----------------------|---------------------------------------|
+| | `emulate` (global) | `throttleRequest` (per-request) |
+|---|---|---|
 | Scope | All requests | Specific URL patterns |
 | Precision | Coarse | Fine-grained |
-| Use case | General slow network | Targeted resource testing |
-| Chrome version | All versions | Chrome 144+ |
-| MCP API | `emulate` tool | `throttleRequest` / `throttleRequests` |
+| Chrome version | All | 144+ |
 
-## 📱 **Mobile Testing**
-
-### **Device Emulation**
+## Mobile Testing
 
 ```javascript
-// Test mobile responsiveness
 await chromeDevTools.emulateDevice({
   url: "https://your-website.com",
   device: "iPhone 12 Pro",
   orientation: "portrait"
 });
-```
 
-### **Touch Event Testing**
-
-```javascript
-// Simulate touch interactions
 await chromeDevTools.simulateTouch({
   url: "https://your-website.com",
   actions: [
@@ -268,54 +175,34 @@ await chromeDevTools.simulateTouch({
 });
 ```
 
-## 🔍 **SEO Analysis**
-
-### **Meta Tag Extraction**
+## SEO Analysis
 
 ```javascript
-// Extract SEO-relevant meta tags
 await chromeDevTools.extractSEO({
   url: "https://your-website.com",
   elements: ["title", "meta[name='description']", "meta[property^='og:']", "link[rel='canonical']"]
 });
-```
 
-### **Structured Data Validation**
-
-```javascript
-// Validate structured data markup
 await chromeDevTools.validateStructuredData({
   url: "https://your-website.com",
   schemas: ["Organization", "WebSite", "Article"]
 });
 ```
 
-## 🚀 **Automation Workflows**
-
-### **Multi-Page Analysis**
+## Automation Workflows
 
 ```javascript
-// Analyze multiple pages in sequence
-const urls = [
-  "https://your-website.com",
-  "https://your-website.com/about",
-  "https://your-website.com/contact"
-];
-
+// Multi-page analysis
 for (const url of urls) {
   await chromeDevTools.comprehensiveAnalysis({
-    url: url,
+    url,
     includePerformance: true,
     includeSEO: true,
     includeAccessibility: true
   });
 }
-```
 
-### **A/B Testing Support**
-
-```javascript
-// Compare two versions of a page
+// A/B comparison
 await chromeDevTools.comparePages({
   urlA: "https://your-website.com/version-a",
   urlB: "https://your-website.com/version-b",
@@ -323,24 +210,16 @@ await chromeDevTools.comparePages({
 });
 ```
 
-## 🎨 **Visual Testing**
-
-### **Visual Regression Testing**
+## Visual Testing
 
 ```javascript
-// Capture baseline and compare screenshots
 await chromeDevTools.visualRegression({
   url: "https://your-website.com",
   baseline: "/path/to/baseline.png",
   threshold: 0.1,
   highlightDifferences: true
 });
-```
 
-### **CSS Coverage Analysis**
-
-```javascript
-// Analyze unused CSS
 await chromeDevTools.analyzeCSSCoverage({
   url: "https://your-website.com",
   reportUnused: true,
