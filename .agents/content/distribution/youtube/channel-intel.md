@@ -15,36 +15,16 @@ tools:
 
 # YouTube Channel Intelligence
 
-Analyze YouTube channels to extract competitive insights: upload patterns, engagement metrics, outlier videos, content DNA, and strategic positioning.
-
-## When to Use
-
-Read this subagent when the user wants to:
-
-- Profile a YouTube channel (theirs or a competitor's)
-- Compare multiple channels side-by-side
-- Find outlier videos that dramatically outperformed the channel average
-- Extract a channel's "content DNA" (recurring topics, formats, angles)
-- Understand upload frequency and consistency patterns
-- Calculate engagement ratios (views/sub, likes/view, comments/view)
+Analyze YouTube channels for competitive insights: upload patterns, engagement metrics, outlier videos, content DNA, and strategic positioning. Use for channel profiling, competitor comparison, outlier detection, content DNA extraction, and engagement ratio calculation.
 
 ## Quick Reference
 
 ```bash
-# Channel overview
-youtube-helper.sh channel @handle
-
-# Full video list with stats
-youtube-helper.sh videos @handle 200
-
-# Side-by-side comparison
-youtube-helper.sh competitors @channel1 @channel2 @channel3
-
-# Get transcript of an outlier video
-youtube-helper.sh transcript VIDEO_ID
-
-# Check quota before heavy operations
-youtube-helper.sh quota
+youtube-helper.sh channel @handle          # Channel overview
+youtube-helper.sh videos @handle 200       # Full video list with stats
+youtube-helper.sh competitors @c1 @c2 @c3  # Side-by-side comparison
+youtube-helper.sh transcript VIDEO_ID      # Transcript of a video
+youtube-helper.sh quota                    # Check quota before heavy ops
 ```
 
 ## Channel Profiling Workflow
@@ -55,11 +35,7 @@ youtube-helper.sh quota
 youtube-helper.sh channel @handle json
 ```
 
-Extract and store:
-- Subscriber count, total views, video count
-- Channel creation date (age)
-- Description and positioning
-- Upload frequency (total videos / channel age)
+Extract: subscriber count, total views, video count, creation date, description, upload frequency (total videos / channel age).
 
 ### Step 2: Video Enumeration
 
@@ -67,19 +43,13 @@ Extract and store:
 youtube-helper.sh videos @handle 200 json
 ```
 
-From the video list, calculate:
-- **Average views per video** (total views / video count)
-- **Median views** (more useful than average — resistant to outliers)
-- **Upload frequency** (videos per week/month)
-- **View trend** (are recent videos getting more or fewer views?)
-- **Duration distribution** (short-form vs long-form mix)
+Calculate: average views/video, median views (more robust than average), upload frequency, view trend (recent vs historical), duration distribution.
 
 ### Step 3: Outlier Detection
 
-An outlier video is one that performs significantly above the channel's baseline. The standard threshold is **3x the channel's median views**.
+Threshold: **3x the channel's median views**.
 
 ```bash
-# Get videos as JSON, then analyze
 youtube-helper.sh videos @handle 200 json | node -e "
 process.stdin.on('data', d => {
     const videos = JSON.parse(d);
@@ -107,16 +77,9 @@ process.stdin.on('data', d => {
 
 ### Step 4: Content DNA Extraction
 
-Analyze outlier videos to identify patterns:
-
-1. **Topic clusters**: What subjects do outliers cover?
-2. **Title patterns**: Numbers? Questions? How-to? Brackets?
-3. **Duration sweet spot**: What length performs best?
-4. **Thumbnail style**: Faces? Text? Colors? (use `image-understanding.md`)
-5. **Hook patterns**: Get transcripts of top 5 outliers, analyze first 30 seconds
+Analyze outlier videos for: topic clusters, title patterns (numbers/questions/how-to/brackets), duration sweet spot, thumbnail style (use `image-understanding.md`), hook patterns (transcripts of top 5, first 30 seconds).
 
 ```bash
-# Get transcripts of top outlier videos
 for vid in VIDEO_ID_1 VIDEO_ID_2 VIDEO_ID_3; do
     echo "=== $vid ==="
     youtube-helper.sh transcript "$vid" | head -20
@@ -135,8 +98,6 @@ memory-helper.sh store --type WORKING_SOLUTION --namespace youtube \
 
 ## Competitor Comparison Matrix
 
-When comparing multiple channels, build this matrix:
-
 | Metric | Your Channel | Competitor 1 | Competitor 2 | Competitor 3 |
 |--------|-------------|-------------|-------------|-------------|
 | Subscribers | | | | |
@@ -150,13 +111,10 @@ When comparing multiple channels, build this matrix:
 | Outlier count (3x) | | | | |
 
 ```bash
-# Quick comparison
 youtube-helper.sh competitors @you @comp1 @comp2 @comp3
 ```
 
 ## Engagement Metrics
-
-Calculate these ratios for each channel:
 
 | Metric | Formula | Good Benchmark |
 |--------|---------|----------------|
@@ -166,7 +124,7 @@ Calculate these ratios for each channel:
 | Comment Rate | comments / views | > 0.5% |
 | Upload Consistency | std_dev of days between uploads | Lower = better |
 
-## Quota Budget for Channel Intel
+## Quota Budget
 
 | Operation | Cost | Typical Usage |
 |-----------|------|---------------|
@@ -174,13 +132,11 @@ Calculate these ratios for each channel:
 | Video enumeration (per 50 videos) | 1 unit | 200 videos = 4 units |
 | Video details (per 50 videos) | 1 unit | 200 videos = 4 units |
 | Transcripts (via yt-dlp) | 0 units | Unlimited |
-| **Total for full competitor analysis** | | **~50 units** |
+| **Full competitor analysis (5 channels)** | | **~50 units** |
 
-A full analysis of 5 competitors (200 videos each) costs approximately 50 quota units — well within the 10,000 daily limit.
+Daily limit: 10,000 units.
 
 ## Output Format
-
-When reporting channel intel, use this structure:
 
 ```markdown
 ## Channel Profile: [Name] (@handle)
