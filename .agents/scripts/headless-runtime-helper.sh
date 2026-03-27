@@ -46,7 +46,7 @@ _register_dispatch_ledger() {
 
 	# Resolve repo slug from work_dir via git remote
 	if [[ -n "$ledger_work_dir" && -d "$ledger_work_dir" ]]; then
-		ledger_repo=$(git -C "$ledger_work_dir" remote get-url origin 2>/dev/null | sed -E 's|.*[:/]([^/]+/[^/]+?)(\.git)?$|\1|' || true)
+		ledger_repo=$(git -C "$ledger_work_dir" remote get-url origin 2>/dev/null | sed -E 's|.*[:/]([^/]+/[^/]+)(\.git)?$|\1|' || true)
 	fi
 
 	local ledger_args=(register --session-key "$ledger_session_key" --pid "$$")
