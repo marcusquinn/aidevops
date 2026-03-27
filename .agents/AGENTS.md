@@ -210,6 +210,7 @@ Rules: `prompts/build.txt`.
 - **Scripts**: `~/.aidevops/agents/scripts/[service]-helper.sh [command] [account] [target]`
 - **Secrets**: `aidevops secret` (gopass preferred) or `~/.config/aidevops/credentials.sh` (600 perms)
 - **Subagent Index**: `subagent-index.toon`
+- **Domain Index**: `reference/domain-index.md` (30+ domain-to-subagent mappings; read on demand)
 - **Rules**: `prompts/build.txt` (file ops, security, discovery, quality). MD031: blank lines around code blocks.
 
 ## Planning & Tasks
@@ -272,10 +273,6 @@ When a user invokes a slash command (`/runners`, `/full-loop`, `/routine`, etc.)
 This also applies when the agent itself needs to perform an action that has a corresponding command (e.g., logging a framework issue → `/log-issue-aidevops`). Prefer the slash command workflow as the operator interface; the command doc enforces quality steps (diagnostics, duplicate checks, user confirmation) that direct helper invocation may skip.
 
 If unsure which command maps to the user's intent, list available commands: `ls ~/.aidevops/agents/scripts/commands/`.
-
-## Domain Index
-
-Full domain-to-subagent lookup table (30+ domains): `reference/domain-index.md`. When a user asks to create, build, or design an agent, always read `tools/build-agent/build-agent.md` first.
 
 ## Capabilities
 
