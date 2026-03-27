@@ -37,9 +37,12 @@ subagents:
   - github-cli
   - gitlab-cli
   - github-actions
+  # UI components
+  - shadcn
   # Deployment
   - coolify
   - vercel
+  - cloudflare-mcp
   # Monitoring
   - sentry
   - socket

@@ -20,9 +20,54 @@ readonly STATE_DIR="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-wo
 readonly STATE_DB="${STATE_DIR}/state.db"
 readonly OPENCODE_BIN_DEFAULT="${OPENCODE_BIN:-opencode}"
 readonly SANDBOX_EXEC_HELPER="${SCRIPT_DIR}/sandbox-exec-helper.sh"
+readonly DISPATCH_LEDGER_HELPER="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
 readonly HEADLESS_SANDBOX_TIMEOUT_DEFAULT="${AIDEVOPS_HEADLESS_SANDBOX_TIMEOUT:-3600}"
 readonly OPENCODE_AUTH_FILE="${HOME}/.local/share/opencode/auth.json"
 readonly LOCK_DIR="${STATE_DIR}/locks"
+
+# _register_dispatch_ledger: register this dispatch in the in-flight ledger (GH#6696).
+# Extracts issue number from session_key (pattern: "issue-NNN") and registers
+# the dispatch so the pulse can detect in-flight workers before they create PRs.
+#
+# Args: $1 = session_key, $2 = work_dir (used to resolve repo slug)
+_register_dispatch_ledger() {
+	local ledger_session_key="$1"
+	local ledger_work_dir="$2"
+
+	[[ -x "$DISPATCH_LEDGER_HELPER" ]] || return 0
+
+	local ledger_issue=""
+	local ledger_repo=""
+
+	# Extract issue number from session key (e.g., "issue-42" -> "42")
+	if [[ "$ledger_session_key" =~ ^issue-([0-9]+)$ ]]; then
+		ledger_issue="${BASH_REMATCH[1]}"
+	fi
+
+	# Resolve repo slug from work_dir via git remote
+	if [[ -n "$ledger_work_dir" && -d "$ledger_work_dir" ]]; then
+		ledger_repo=$(git -C "$ledger_work_dir" remote get-url origin 2>/dev/null | sed -E 's|.*[:/]([^/]+/[^/]+?)(\.git)?$|\1|' || true)
+	fi
+
+	local ledger_args=(register --session-key "$ledger_session_key" --pid "$$")
+	[[ -n "$ledger_issue" ]] && ledger_args+=(--issue "$ledger_issue")
+	[[ -n "$ledger_repo" ]] && ledger_args+=(--repo "$ledger_repo")
+
+	"$DISPATCH_LEDGER_HELPER" "${ledger_args[@]}" 2>/dev/null || true
+	return 0
+}
+
+# _update_dispatch_ledger: mark a dispatch as completed or failed (GH#6696).
+# Args: $1 = session_key, $2 = status ("completed" or "failed")
+_update_dispatch_ledger() {
+	local ledger_session_key="$1"
+	local ledger_status="$2"
+
+	[[ -x "$DISPATCH_LEDGER_HELPER" ]] || return 0
+
+	"$DISPATCH_LEDGER_HELPER" "$ledger_status" --session-key "$ledger_session_key" 2>/dev/null || true
+	return 0
+}
 
 # _acquire_session_lock: prevent duplicate workers for the same session-key (GH#6538).
 #
@@ -1105,11 +1150,17 @@ cmd_run() {
 		return 0
 	fi
 	# shellcheck disable=SC2064
-	trap "_release_session_lock '$session_key'" EXIT
+	trap "_release_session_lock '$session_key'; _update_dispatch_ledger '$session_key' 'fail'" EXIT
+
+	# GH#6696: Register this dispatch in the in-flight ledger so the pulse
+	# can detect workers that haven't created PRs yet. The ledger bridges
+	# the 10-15 minute gap between dispatch and PR creation.
+	_register_dispatch_ledger "$session_key" "$work_dir"
 
 	local selected_model
 	selected_model=$(choose_model "$role" "$model_override") || {
 		local choose_exit=$?
+		_update_dispatch_ledger "$session_key" "fail"
 		_release_session_lock "$session_key"
 		trap - EXIT
 		return "$choose_exit"
@@ -1128,6 +1179,7 @@ cmd_run() {
 		local attempt_exit=$?
 
 		if [[ "$attempt_exit" -eq 0 ]]; then
+			_update_dispatch_ledger "$session_key" "complete"
 			_release_session_lock "$session_key"
 			trap - EXIT
 			return 0
@@ -1136,6 +1188,7 @@ cmd_run() {
 		# Only retry on auth errors when no explicit model was requested
 		# and we have attempts remaining.
 		if [[ -n "$model_override" || "$_run_failure_reason" != "auth_error" || "$attempt" -ge "$max_attempts" ]]; then
+			_update_dispatch_ledger "$session_key" "fail"
 			_release_session_lock "$session_key"
 			trap - EXIT
 			return "$attempt_exit"
@@ -1144,6 +1197,7 @@ cmd_run() {
 		local provider next_model
 		provider=$(extract_provider "$selected_model")
 		next_model=$(choose_model "$role" "") || {
+			_update_dispatch_ledger "$session_key" "fail"
 			_release_session_lock "$session_key"
 			trap - EXIT
 			return "$attempt_exit"
@@ -1155,6 +1209,7 @@ cmd_run() {
 
 	# Unreachable: loop always executes (attempt starts at 1, max_attempts=2)
 	# and every path inside returns explicitly. Kept as defensive fallback.
+	_update_dispatch_ledger "$session_key" "fail"
 	_release_session_lock "$session_key"
 	trap - EXIT
 	return 1

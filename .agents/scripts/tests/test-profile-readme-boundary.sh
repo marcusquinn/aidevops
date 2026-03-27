@@ -463,6 +463,110 @@ EOF
 	return 0
 }
 
+test_default_template_with_existing_markers_replaced() {
+	local test_name="default template with existing markers gets replaced"
+
+	TEST_DIR=$(mktemp -d)
+	local fixture_home="${TEST_DIR}/home"
+	local fixture_repo="${TEST_DIR}/profile-repo"
+	local fixture_remote="${TEST_DIR}/profile-remote.git"
+	local helper_dir="${TEST_DIR}/helper"
+	local helper_path="${helper_dir}/profile-readme-helper.sh"
+
+	mkdir -p "${helper_dir}" "${fixture_home}/.config/aidevops"
+	mkdir -p "${fixture_home}/.aidevops/.agent-workspace/observability"
+	mkdir -p "${fixture_home}/.aidevops/cache"
+	cp "${SOURCE_HELPER}" "${helper_path}"
+	chmod +x "${helper_path}"
+	write_stub_dependencies "${helper_dir}"
+
+	git init --bare --initial-branch=main "${fixture_remote}" >/dev/null
+	git init -b main "${fixture_repo}" >/dev/null
+	git -C "${fixture_repo}" config user.name "Fixture"
+	git -C "${fixture_repo}" config user.email "fixture@example.com"
+	git -C "${fixture_repo}" remote add origin "${fixture_remote}"
+
+	# Simulate Alex's exact case: default GitHub template with markers already
+	# injected at the bottom (by v3.1.87 _inject_markers_into_readme)
+	cat >"${fixture_repo}/README.md" <<'EOF'
+## Hi there 👋
+
+<!--
+**fixture/fixture** is a ✨ _special_ ✨ repository because its `README.md` (this file) appears on your GitHub profile.
+
+Here are some ideas to get you started:
+
+- 🔭 I'm currently working on ...
+- 🌱 I'm currently learning ...
+-->
+
+<!-- STATS-START -->
+Old stats content
+<!-- STATS-END -->
+
+<!-- CONTRIBUTIONS-START -->
+<!-- CONTRIBUTIONS-END -->
+
+---
+
+<!-- UPDATED-START -->
+<!-- UPDATED-END -->
+EOF
+
+	git -C "${fixture_repo}" add README.md
+	git -C "${fixture_repo}" commit -m "feat: markers injected into default template" >/dev/null
+	git -C "${fixture_repo}" push -u origin main >/dev/null
+
+	cat >"${fixture_home}/.config/aidevops/repos.json" <<EOF
+{
+  "initialized_repos": [
+    {
+      "path": "${fixture_repo}",
+      "slug": "fixture/fixture",
+      "priority": "profile",
+      "pulse": false,
+      "maintainer": "fixture"
+    }
+  ]
+}
+EOF
+
+	# Run update — should detect default template despite markers and replace it
+	if ! HOME="${fixture_home}" bash "${helper_path}" update >/dev/null 2>&1; then
+		print_result "${test_name}" 1 "helper update command failed"
+		return 0
+	fi
+
+	local readme="${fixture_repo}/README.md"
+
+	# Verify the default template is gone
+	if grep -q 'is a.*special.*repository' "$readme" 2>/dev/null; then
+		print_result "${test_name}" 1 "default GitHub template still present after update"
+		return 0
+	fi
+
+	# Verify the "Hi there" heading is gone (replaced with rich profile heading)
+	if grep -q 'Hi there' "$readme" 2>/dev/null; then
+		print_result "${test_name}" 1 "'Hi there' heading still present — template not replaced"
+		return 0
+	fi
+
+	# Verify markers still exist
+	if ! grep -q '<!-- STATS-START -->' "$readme"; then
+		print_result "${test_name}" 1 "STATS-START marker missing after replacement"
+		return 0
+	fi
+
+	# Verify it's a rich README
+	if ! grep -q 'aidevops' "$readme"; then
+		print_result "${test_name}" 1 "aidevops reference not found — not a rich README"
+		return 0
+	fi
+
+	print_result "${test_name}" 0
+	return 0
+}
+
 main() {
 	if [[ ! -x "${SOURCE_HELPER}" ]]; then
 		echo "Helper script not found or not executable: ${SOURCE_HELPER}" >&2
@@ -476,6 +580,8 @@ main() {
 	test_diverged_history_recovery
 	teardown
 	test_default_template_replaced_with_rich_readme
+	teardown
+	test_default_template_with_existing_markers_replaced
 	teardown
 
 	echo ""

@@ -10,6 +10,9 @@ tools:
   grep: true
   webfetch: true
   task: true
+  playwright_*: true
+mcp:
+  - playwright
 ---
 
 # Playwright MCP

@@ -80,6 +80,18 @@ check_policy_markers() {
 	local sandbox_helper="${SCRIPT_DIR}/sandbox-exec-helper.sh"
 	local secret_handling_ref="${SCRIPT_DIR}/../reference/secret-handling.md"
 
+	# Explicit readability checks before marker checks — avoids misleading
+	# "marker missing" errors when the file itself is absent or unreadable.
+	if [[ ! -r "$build_prompt" ]]; then
+		echo "FAIL: build prompt not readable: $build_prompt" >&2
+		return 1
+	fi
+
+	if [[ ! -r "$sandbox_helper" ]]; then
+		echo "FAIL: sandbox helper not readable: $sandbox_helper" >&2
+		return 1
+	fi
+
 	# build.txt must reference transcript exposure policy (inline or via pointer)
 	if ! pattern_exists "transcript exposure" "$build_prompt"; then
 		echo "FAIL: transcript exposure policy missing from build prompt" >&2
@@ -95,6 +107,10 @@ check_policy_markers() {
 	# Detailed secret handling rules must exist (either inline in build.txt
 	# or in the extracted reference file)
 	if [[ -f "$secret_handling_ref" ]]; then
+		if [[ ! -r "$secret_handling_ref" ]]; then
+			echo "FAIL: secret-handling reference not readable: $secret_handling_ref" >&2
+			return 1
+		fi
 		if ! pattern_exists "Never paste secret values into AI chat" "$secret_handling_ref"; then
 			echo "FAIL: mandatory warning guidance missing from secret-handling reference" >&2
 			return 1

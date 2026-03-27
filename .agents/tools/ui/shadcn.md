@@ -10,6 +10,9 @@ tools:
   grep: true
   webfetch: true
   task: true
+  shadcn_*: true
+mcp:
+  - shadcn
 ---
 
 # shadcn/ui MCP Server

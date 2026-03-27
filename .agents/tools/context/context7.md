@@ -10,6 +10,9 @@ tools:
   grep: true
   webfetch: true
   task: true
+  context7_*: true
+mcp:
+  - context7
 ---
 
 # Context7 MCP Setup Guide

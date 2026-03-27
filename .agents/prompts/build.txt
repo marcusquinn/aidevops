@@ -72,6 +72,15 @@ Use TodoWrite frequently. Break complex tasks into steps. Mark todos completed i
 - NEVER use bash echo to communicate — output text directly.
 - Slash commands: read `scripts/commands/<command>.md` first.
 
+# Errored MCP Server Guard (t1682)
+# MCP servers that fail to start (e.g., "MCP error -32000: Connection closed",
+# "spawn ENOENT", "ECONNREFUSED") may still have their tool schemas present in
+# the tool list. Calling these tools wastes tokens and always fails.
+- When a tool call returns "MCP error -32000", "Connection closed", "spawn ENOENT", or similar startup errors, mark that MCP server as unavailable for the rest of the session. Do NOT retry tools from that server.
+- If you see tools in the tool list from a server that has previously errored, skip them entirely — do not attempt to call them.
+- To identify and fix errored MCP servers: `~/.aidevops/agents/scripts/mcp-diagnose.sh check-all`. This scans all enabled MCP servers and reports which ones are unavailable, with remediation steps.
+- To disable a persistently errored server: set `"enabled": false` in `~/.config/opencode/opencode.json` for that server entry. This removes its tool schemas from context entirely.
+
 # File Discovery (MANDATORY)
 - NEVER use Glob when Bash is available
 - `git ls-files '<pattern>'` for tracked files; `fd -e <ext>` for untracked
