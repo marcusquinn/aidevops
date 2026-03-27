@@ -3152,15 +3152,16 @@ _complexity_scan_process_single_md_file() {
 	local state_file="$5"
 	local maintainer="$6"
 
-	# Check simplification state — skip if file was simplified and hasn't changed
+	# Cache simplification state to avoid redundant jq + git hash-object calls
+	local file_status="new"
 	if [[ -n "$state_file" && -n "$aidevops_path" ]]; then
-		local file_status
 		file_status=$(_simplification_state_check "$aidevops_path" "$file_path" "$state_file")
 		if [[ "$file_status" == "unchanged" ]]; then
 			echo "[pulse-wrapper] Complexity scan (.md): skipping ${file_path} — already simplified (hash unchanged)" >>"$LOGFILE"
 			echo "skipped"
 			return 0
 		fi
+		# "regressed" files fall through — they get a new issue with regression label
 	fi
 
 	if _complexity_scan_has_existing_issue "$aidevops_slug" "$file_path"; then
@@ -3176,12 +3177,8 @@ _complexity_scan_process_single_md_file() {
 
 	# Determine if this is a regression (file changed after simplification)
 	local is_regression=false
-	if [[ -n "$state_file" && -n "$aidevops_path" ]]; then
-		local regression_check
-		regression_check=$(_simplification_state_check "$aidevops_path" "$file_path" "$state_file")
-		if [[ "$regression_check" == "regressed" ]]; then
-			is_regression=true
-		fi
+	if [[ "$file_status" == "regressed" ]]; then
+		is_regression=true
 	fi
 
 	local issue_title="simplification: tighten agent doc ${file_path} (${line_count} lines)"
