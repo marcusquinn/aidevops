@@ -8,7 +8,7 @@ well-crafted issues get closed within hours if they don't use the right format.
 This is a judgment call, not a deterministic check. Read the templates and
 contributing guidelines, then format your submission accordingly.
 
-## Filing Issues on External Repos
+## Issue Submission
 
 Before `gh issue create --repo <slug>` on a repo NOT in `~/.config/aidevops/repos.json`:
 
@@ -30,14 +30,11 @@ Before `gh issue create --repo <slug>` on a repo NOT in `~/.config/aidevops/repo
    ```
 
 2. If templates exist, fetch the relevant one (e.g., `bug-report.yml`) using the same `--include` status pattern; only decode `200` bodies (`base64 -d`).
-
 3. Check for `CONTRIBUTING.md` using the same `--include` status pattern; continue on `404`, fail on other non-`200` statuses.
-
 4. Format the issue body to match the required template structure. YAML form templates (`.yml`) generate `### Label` section headers when submitted via the web UI — replicate this structure in your `--body`.
-
 5. If no templates exist, use a clear, well-structured format (title, description, steps to reproduce, expected/actual behaviour).
 
-## Filing PRs on External Repos
+## PR Submission
 
 Before `gh pr create` targeting an external repo:
 
@@ -45,10 +42,8 @@ Before `gh pr create` targeting an external repo:
 2. Check `CONTRIBUTING.md` for PR requirements (branch naming, commit format, CLA, etc.)
 3. Format the PR body to match their template and follow their contributing guidelines.
 
-## Auto-Closed Submissions
+## Auto-closed Submissions
 
 If a submission is auto-closed by a compliance bot, read the bot's comment for formatting requirements, then resubmit with the correct format.
 
-## Practical Examples
-
-Template mapping and worked examples: `tools/git/github-cli.md` "External Repo Submissions" section.
+Practical examples and template mapping: `tools/git/github-cli.md` "External Repo Submissions" section.

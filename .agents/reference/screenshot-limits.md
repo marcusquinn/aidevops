@@ -1,10 +1,12 @@
-# Screenshot Size Limits
+# Screenshot Size Limits (CRITICAL — session-crashing)
 
-**CRITICAL — session-crashing**
+Anthropic hard-rejects images >8000px on any dimension. This crashes the session
+because the oversized image is already in message history — every subsequent
+API call fails with the same error. There is no recovery except starting a new
+session and losing all conversation context.
 
-Anthropic hard-rejects images >8000px on any dimension. This crashes the session because the oversized image is already in message history — every subsequent API call fails with the same error. There is no recovery except starting a new session and losing all conversation context.
-
-GH#4213 added guardrails to `browser-qa-helper.sh` but agents take screenshots through at least 5 other paths that bypass those guardrails entirely.
+GH#4213 added guardrails to browser-qa-helper.sh but agents take screenshots
+through at least 5 other paths that bypass those guardrails entirely.
 
 ## Rules
 

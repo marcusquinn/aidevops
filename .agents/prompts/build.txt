@@ -217,28 +217,13 @@ When referencing specific functions or code include the pattern `file_path:line_
 - NEVER include private repo names in TODO.md, issue titles, issue bodies, or comments on public repos. Use "a managed private repo" or similar generic references. issue-sync-helper.sh has automated sanitization as a safety net, but prevention at source is primary.
 
 # Parallel Model Verification (t1364)
-# High-stakes operations are verified by a second model before execution.
-# This catches single-model hallucinations before destructive operations cause
-# irreversible damage. Different providers have different failure modes, so
-# correlated errors are rare. Verification is targeted — not every operation,
-# only those matching the risk taxonomy.
-- Before destructive operations (force push, DB drop, production deploy, secret exposure): source `verify-operation-helper.sh` and call `check_operation()`. If risk is critical/high, call `verify_operation()` and respect the result.
-- pre-edit-check.sh accepts `--verify-op "command"` to gate operations at the pre-edit stage.
-- dispatch.sh automatically screens task descriptions via `check_task_high_stakes()` before committing workers.
-- Verification is opt-out (`VERIFY_ENABLED=false`) not opt-in. High-stakes operations are verified by default.
-- Verification uses the cheapest model tier (haiku) — cost is minimal per check.
-- When verification is unavailable (no verifier model reachable): critical operations are blocked in headless mode, warned in interactive mode. Non-critical operations proceed.
+# Before destructive operations (force push, DB drop, production deploy): call `check_operation()`
+# from `verify-operation-helper.sh`. Critical/high risk → `verify_operation()` and respect result.
+# Full details: `reference/model-verification.md`
 
 # Tamper-Evident Audit Logging (t1412.8)
-# Security-sensitive operations are logged to an append-only JSONL file with
-# SHA-256 hash chaining. Each entry includes the hash of the previous entry,
-# creating a chain. Modifying or deleting any entry breaks the chain, making
-# tampering detectable via `audit-log-helper.sh verify`.
-- Log security-sensitive operations via `audit-log-helper.sh log <type> <message> [--detail k=v ...]`. Event types: `worker.dispatch`, `worker.complete`, `worker.error`, `credential.access`, `credential.rotate`, `config.change`, `config.deploy`, `security.event`, `security.injection`, `security.scan`, `operation.verify`, `operation.block`, `system.startup`, `system.update`, `system.rotate` (15 types). Run `audit-log-helper.sh help` for details.
-- Log file: `~/.aidevops/.agent-workspace/observability/audit.jsonl` (0600 permissions, owner-only).
-- Verify chain integrity: `audit-log-helper.sh verify`. Run before log rotation and during security audits.
-- NEVER log credential values — only key names, scopes, and access metadata. The audit log is plaintext.
-- Full docs: `tools/security/tamper-evident-audit.md`.
+# Log security-sensitive operations: `audit-log-helper.sh log <type> <message>`.
+# NEVER log credential values. Full details: `reference/audit-logging.md`
 
 # Git Workflow and Traceability
 Git is the primary audit trail for all work. Every change should be discoverable through the chain: TODO task -> GitHub issue -> worktree/ref -> PR -> merge commit. A PR without a TODO entry, or an issue closed without a PR link, is an audit gap.
@@ -345,18 +330,8 @@ Short, concise, GitHub-flavored markdown. Numbered options for prompts (never "[
 Never apply AI tool suggestions (review bots, linters, PR reviewers) without independent verification. AI reviewers hallucinate. Verify claims against runtime, docs, or project conventions.
 
 # Review Bot Gate (t1382, GH#3827)
-# Before merging any PR, wait for AI code review bots (CodeRabbit, Gemini Code Assist,
-# etc.) to post their reviews. PRs merged before bots post lose security findings.
-# Three enforcement layers:
-# 1. CI: `.github/workflows/review-bot-gate.yml` — required status check
-# 2. Agent: `review-bot-gate-helper.sh check <PR> [REPO]` — returns PASS/PASS_RATE_LIMITED/WAITING/SKIP
-# 3. Branch protection: add `review-bot-gate` as required check per repo
-- Before merging: run `review-bot-gate-helper.sh check <PR_NUMBER>`. If WAITING, poll up to 10 minutes. Most bots post within 2-5 minutes.
-- If the PR has `skip-review-gate` label, bypass the gate (for docs-only PRs or repos without bots).
-- In headless mode: if still WAITING after timeout, proceed but log a warning. The CI required check is the hard gate.
-- ALWAYS read bot reviews before merging. Address critical/security findings; note non-critical suggestions for follow-up.
-- PASS_RATE_LIMITED means bots are rate-limited but the PR exceeded the grace period (default 4h). Safe to merge — bot reviews will arrive later and can be addressed in follow-up PRs. Use `request-retry` to trigger a re-review once rate limits clear.
-- When many PRs are rate-limited simultaneously, use `request-retry` on the highest-priority PRs first. Stagger retries to avoid re-triggering rate limits.
+# Before merging any PR: run `review-bot-gate-helper.sh check <PR_NUMBER>`.
+# ALWAYS read bot reviews before merging. Full workflow: `reference/review-bot-gate.md`
 
 # Context Compaction Survival
 # On compaction, ALWAYS preserve: (1) task IDs + states, (2) active batch/concurrency,

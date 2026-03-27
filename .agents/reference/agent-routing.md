@@ -1,11 +1,10 @@
----
-mode: subagent
----
 # Agent Routing
 
 Not every task is code. The framework has multiple primary agents, each with domain expertise. When dispatching workers (via `/pulse`, `/runners`, or manual `opencode run`), route to the appropriate agent using `--agent <name>`.
 
-**Available primary agents** (full index in `subagent-index.toon`):
+## Available Primary Agents
+
+Full index in `subagent-index.toon`.
 
 | Agent | Use for |
 |-------|---------|
@@ -23,7 +22,8 @@ Not every task is code. The framework has multiple primary agents, each with dom
 | Video | Video generation, editing, prompt engineering |
 | Health | Health and wellness content |
 
-**Routing rules:**
+## Routing Rules
+
 - Read the task/issue description and match it to the domain above
 - If the task is clearly code (implement, fix, refactor, CI), use Build+ or omit `--agent`
 - If the task matches another domain, pass `--agent <name>` to `opencode run`
@@ -31,15 +31,16 @@ Not every task is code. The framework has multiple primary agents, each with dom
 - The agent choice affects which system prompt and domain knowledge the worker loads
 - **Bundle-aware routing (t1364.6):** Project bundles can define `agent_routing` overrides per task domain. For example, a content-site bundle routes `marketing` tasks to the Marketing agent. Check with `bundle-helper.sh get agent_routing <repo-path>`. Explicit `--agent` flags always override bundle defaults.
 
-**Headless dispatch CLI:** ALWAYS use `headless-runtime-helper.sh run` for dispatching workers. This helper handles provider rotation, session persistence, backoff, and lifecycle reinforcement. NEVER use bare `opencode run` for dispatch — workers launched that way miss lifecycle reinforcement and stop after PR creation (GH#5096). NEVER use `claude`, `claude -p`, or any other CLI.
+## Headless Dispatch
 
-**Dispatch example:**
+ALWAYS use `headless-runtime-helper.sh run` for dispatching workers. This helper handles provider rotation, session persistence, backoff, and lifecycle reinforcement. NEVER use bare `opencode run` for dispatch — workers launched that way miss lifecycle reinforcement and stop after PR creation (GH#5096). NEVER use `claude`, `claude -p`, or any other CLI.
+
+### Dispatch Example
 
 ```bash
 AGENTS_DIR="$(aidevops config get paths.agents_dir)"
 AGENTS_DIR="${AGENTS_DIR:-"$HOME/.aidevops/agents"}"
 HELPER="${AGENTS_DIR/#\~/$HOME}/scripts/headless-runtime-helper.sh"
-# Path is determined by 'paths.agents_dir' in config.jsonc
 
 # Code task (default — Build+ implied)
 $HELPER run \
@@ -58,15 +59,5 @@ $HELPER run \
   --dir ~/Git/myproject \
   --title "Issue #55: SEO audit" \
   --prompt "/full-loop Implement issue #55 -- Run SEO audit on landing pages" &
-sleep 2
-
-# Content task
-$HELPER run \
-  --role worker \
-  --session-key "issue-60" \
-  --agent Content \
-  --dir ~/Git/myproject \
-  --title "Issue #60: Blog post" \
-  --prompt "/full-loop Implement issue #60 -- Write launch announcement blog post" &
 sleep 2
 ```
