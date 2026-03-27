@@ -1,4 +1,100 @@
 {
   "_comment": "Tracks files that have been simplified. Hash is git blob SHA of the file at simplification time. When the scan sees a file here with a matching hash, it skips issue creation. When the hash differs (file changed), it creates a regression issue.",
-  "files": {}
+  "files": {
+    ".agents/seo/analytics-tracking.md": {
+      "hash": "07ff0feec55ad3f8477a6badd724b479c1b09370",
+      "at": "2026-03-27T21:25:04Z",
+      "pr": 11015
+    },
+    ".agents/tools/credentials/gopass.md": {
+      "hash": "a59a0077d4d56694894c8cadef6b9c3a294dede0",
+      "at": "2026-03-27T21:25:05Z",
+      "pr": 11021
+    },
+    ".agents/tools/marketing/meta-ads/creative/hooks.md": {
+      "hash": "f7c8e3356361a9ab1941f729337bbf7d0f8447ef",
+      "at": "2026-03-27T21:25:06Z",
+      "pr": 11016
+    },
+    ".agents/tools/programming/modern-javascript-skill/references/ES2024.md": {
+      "hash": "5ff178dfe9603a724792aaef45d63f4b33fce7ef",
+      "at": "2026-03-27T21:25:08Z",
+      "pr": 11002
+    },
+    ".agents/aidevops/providers.md": {
+      "hash": "18b8c2ddd2bb1ee1b0affc02c05ae860b8e902da",
+      "at": "2026-03-27T21:25:09Z",
+      "pr": 11003
+    },
+    ".agents/aidevops/services.md": {
+      "hash": "0fd05379ebb6a6ab079aaa0011c1dd8a5cca6af1",
+      "at": "2026-03-27T21:25:10Z",
+      "pr": 11004
+    },
+    ".agents/seo/semrush.md": {
+      "hash": "cc61832322267a222c9e557b04459de4a3520086",
+      "at": "2026-03-27T21:25:11Z",
+      "pr": 11006
+    },
+    ".agents/tools/marketing/cro/CHAPTER-10.md": {
+      "hash": "730bf8258084ccd7a330cc2ac1032f1aedd4a370",
+      "at": "2026-03-27T21:25:12Z",
+      "pr": 11005
+    },
+    ".agents/scripts/commands/log-issue-aidevops.md": {
+      "hash": "24878e7d7abca4cf0b41a18e5dac1977978ec3c1",
+      "at": "2026-03-27T21:25:13Z",
+      "pr": 11007
+    },
+    ".agents/services/communications/xmtp.md": {
+      "hash": "0b5b1bb178865dc7efff9f7578cd26dd9bf82bc9",
+      "at": "2026-03-27T21:25:14Z",
+      "pr": 11009
+    },
+    ".agents/tools/credentials/multi-tenant.md": {
+      "hash": "efa55dc5b3f2f5222982c1c9f0214ad1e2601624",
+      "at": "2026-03-27T21:25:16Z",
+      "pr": 11008
+    },
+    ".agents/reference/high-stakes-operations.md": {
+      "hash": "ba39668c924d2e2d0137c766053513a98a2f2839",
+      "at": "2026-03-27T21:25:17Z",
+      "pr": 11012
+    },
+    ".agents/tools/architecture/feature-slicing-skill.md": {
+      "hash": "7a86b72e717f9805c458d44fa69e00b9b845addd",
+      "at": "2026-03-27T21:25:18Z",
+      "pr": 11010
+    },
+    ".agents/tools/automation/macos-automator.md": {
+      "hash": "f8771a0d1548af0fbdd76f1944d50ce6b1107f13",
+      "at": "2026-03-27T21:25:19Z",
+      "pr": 11011
+    },
+    ".agents/seo/data-export.md": {
+      "hash": "196b3c4788803c0b2b8d412752d3d262d7e6f8b2",
+      "at": "2026-03-27T21:25:21Z",
+      "pr": 11019
+    },
+    ".agents/tools/ai-generation/comfy-cli.md": {
+      "hash": "6d885b8f28374a6d71d6f4095a6015f3359a668e",
+      "at": "2026-03-27T21:25:22Z",
+      "pr": 11014
+    },
+    ".agents/tools/architecture/feature-slicing-skill/references/CHEATSHEET.md": {
+      "hash": "b244fb8417fc27f0de33c83c86092f5bebd736f3",
+      "at": "2026-03-27T21:25:23Z",
+      "pr": 11018
+    },
+    ".agents/tools/browser/anti-detect-browser.md": {
+      "hash": "647081565083b90f27fdce7d25dea9e153fc64a4",
+      "at": "2026-03-27T21:25:25Z",
+      "pr": 11017
+    },
+    ".agents/tools/code-review/snyk.md": {
+      "hash": "e248df7d21db7a21cef8b1e16e1e96f361e3e487",
+      "at": "2026-03-27T21:25:26Z",
+      "pr": 11013
+    }
+  }
 }
