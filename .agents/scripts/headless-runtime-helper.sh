@@ -610,12 +610,7 @@ PY
 	fi
 	# Spending/billing limit detection (GH#8229): must check BEFORE auth_error
 	# because spending limits often return 401 but with a distinct error body.
-	# MonthlyLimitError, spending limit, billing limit, quota exceeded, etc.
-	if [[ "$lowered" == *"monthlylimiterror"* ]] || [[ "$lowered" == *"spending limit"* ]] ||
-		[[ "$lowered" == *"monthly spending limit"* ]] || [[ "$lowered" == *"monthly limit"* ]] ||
-		[[ "$lowered" == *"billing limit"* ]] || [[ "$lowered" == *"budget exceeded"* ]] ||
-		[[ "$lowered" == *"quota exceeded"* ]] || [[ "$lowered" == *"usage limit"* ]] ||
-		[[ "$lowered" == *"credits exhausted"* ]]; then
+	if is_spending_limit_error "$lowered"; then
 		printf '%s' "spending_limit"
 		return 0
 	fi

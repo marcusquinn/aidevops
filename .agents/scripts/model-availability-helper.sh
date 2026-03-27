@@ -207,27 +207,14 @@ _opencode_model_exists() {
 # because all models under the same account share the spending cap.
 
 # Check if an HTTP response body contains a spending/billing limit error.
+# Delegates to is_spending_limit_error() in shared-constants.sh.
 # Returns 0 if spending limit detected, 1 otherwise.
 _is_spending_limit_error() {
 	local body="$1"
 	local lowered
 	lowered=$(printf '%s' "$body" | tr '[:upper:]' '[:lower:]')
-
-	# Match known billing error patterns:
-	# - OpenCode: MonthlyLimitError / "monthly spending limit"
-	# - Generic: "spending limit", "billing limit", "quota exceeded", "budget exceeded"
-	case "$lowered" in
-	*monthlylimiterror* | *"monthly spending limit"* | *"monthly limit"*)
-		return 0
-		;;
-	*"spending limit"* | *"billing limit"* | *"budget exceeded"*)
-		return 0
-		;;
-	*"quota exceeded"* | *"usage limit"* | *"credits exhausted"*)
-		return 0
-		;;
-	esac
-	return 1
+	is_spending_limit_error "$lowered"
+	return $?
 }
 
 # =============================================================================
