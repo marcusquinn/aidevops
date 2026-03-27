@@ -23,8 +23,6 @@ tools:
 - **App**: https://github.com/apps/opencode-agent
 - **Docs**: https://opencode.ai/docs/github/
 
-**What It Does**:
-
 | Command | Result |
 |---------|--------|
 | `/oc explain this` | AI analyzes issue/PR and replies |
@@ -32,48 +30,19 @@ tools:
 | `/oc review this PR` | Reviews code, suggests improvements |
 | `/oc add error handling here` | Line-specific fix (in Files tab) |
 
-**Requirements**:
-- GitHub App installed on repo/org
-- Workflow file: `.github/workflows/opencode.yml`
-- Secret: `ANTHROPIC_API_KEY` (or other AI provider)
+**Requirements**: GitHub App installed, workflow file (`.github/workflows/opencode.yml`), secret (`ANTHROPIC_API_KEY` or other provider). Runs on YOUR GitHub Actions runners.
 
 <!-- AI-CONTEXT-END -->
 
-## Overview
-
-OpenCode's GitHub integration enables AI-powered automation directly from GitHub issues and pull requests. When you comment `/oc fix this` on an issue, OpenCode:
-
-1. Analyzes the issue context
-2. Creates a new branch
-3. Implements the fix
-4. Opens a pull request with the changes
-
-All execution happens securely on YOUR GitHub Actions runners.
-
 ## Installation
 
-### Automated Setup (Recommended)
+**Automated**: `opencode github install` (walks through App install → workflow → secrets).
 
-```bash
-opencode github install
-```
+**Manual**:
 
-This walks you through:
-1. Installing the GitHub App
-2. Creating the workflow file
-3. Setting up secrets
+1. **Install App**: https://github.com/apps/opencode-agent — install for repo or org.
 
-### Manual Setup
-
-#### 1. Install GitHub App
-
-Visit: https://github.com/apps/opencode-agent
-
-Install for your repository or organization.
-
-#### 2. Create Workflow File
-
-Create `.github/workflows/opencode.yml`:
+2. **Create `.github/workflows/opencode.yml`**:
 
 ```yaml
 name: opencode
@@ -108,72 +77,13 @@ jobs:
           model: anthropic/claude-sonnet-4-6
 ```
 
-#### 3. Add Secrets
-
-Go to: Repository Settings → Secrets and variables → Actions
-
-Add your AI provider API key:
-- **Name**: `ANTHROPIC_API_KEY`
-- **Value**: Your Anthropic API key
-
-Other supported providers:
-- `OPENAI_API_KEY`
-- `GOOGLE_API_KEY`
+**3. Add Secrets**: Repository Settings → Secrets and variables → Actions. Add `ANTHROPIC_API_KEY`. Other providers: `OPENAI_API_KEY`, `GOOGLE_API_KEY`.
 
 ## Usage
 
-### In Issues
+Commands work in issue comments, PR comments, and PR file-level comments (line-specific). `/oc` can appear anywhere in a comment (e.g., `This needs validation. /oc add input validation`). Line-specific comments (PR Files tab) give OpenCode exact file/line/diff context.
 
-Comment on any issue:
-
-```text
-/opencode explain this issue
-```
-
-OpenCode reads the issue title, description, and comments, then replies with an explanation.
-
-```text
-/oc fix this
-```
-
-OpenCode creates a branch, implements a fix, and opens a PR.
-
-### In Pull Requests
-
-Comment on a PR:
-
-```text
-/opencode review this PR
-```
-
-OpenCode analyzes the changes and provides feedback.
-
-### Line-Specific Reviews
-
-In the PR "Files" tab, comment on a specific line:
-
-```text
-/oc add error handling here
-```
-
-OpenCode sees:
-- The exact file
-- The specific line(s)
-- Surrounding diff context
-
-And makes targeted changes.
-
-### Inline Commands
-
-You can include `/oc` anywhere in your comment:
-
-```text
-This function needs better validation. /oc add input validation
-```
-
-## Configuration Options
-
-### Workflow Configuration
+## Configuration
 
 ```yaml
 - uses: sst/opencode/github@latest
@@ -188,140 +98,56 @@ This function needs better validation. /oc add input validation
     token: ${{ secrets.CUSTOM_TOKEN }}         # Optional: custom GitHub token
 ```
 
-### Token Options
+**Token options**: Default = OpenCode App Token (commits as "opencode-agent"). Use `token: ${{ secrets.GITHUB_TOKEN }}` for built-in runner token (no app needed), or a PAT for commits under your identity.
 
-| Token Type | Description | Use Case |
-|------------|-------------|----------|
-| OpenCode App Token | Default, commits as "opencode-agent" | Standard usage |
-| `GITHUB_TOKEN` | Built-in runner token | No app installation needed |
-| Personal Access Token | Your identity | Commits appear as you |
-
-To use `GITHUB_TOKEN` instead of the app:
-
-```yaml
-- uses: sst/opencode/github@latest
-  with:
-    model: anthropic/claude-sonnet-4-6
-    token: ${{ secrets.GITHUB_TOKEN }}
-```
-
-## Permissions
-
-The workflow requires these permissions:
-
-```yaml
-permissions:
-  id-token: write      # Required for OpenCode
-  contents: write      # For committing changes
-  pull-requests: write # For creating/updating PRs
-  issues: write        # For commenting on issues
-```
-
-## Check Setup Status
-
-Use the helper script to verify your setup:
+## Check Setup / Troubleshooting
 
 ```bash
 ~/.aidevops/agents/scripts/opencode-github-setup-helper.sh check
 ```
 
-This checks:
-- Git remote type (GitHub/GitLab/Gitea)
-- GitHub App installation status
-- Workflow file presence
-- Required secrets
-
-## Troubleshooting
-
-### OpenCode Not Responding
-
-1. **Check workflow exists**: `.github/workflows/opencode.yml`
-2. **Check workflow ran**: Repository → Actions tab
-3. **Check secrets**: Settings → Secrets → `ANTHROPIC_API_KEY`
-
-### Permission Denied
-
-Ensure workflow has correct permissions:
-
-```yaml
-permissions:
-  id-token: write
-  contents: write
-  pull-requests: write
-  issues: write
-```
-
-### App Not Installed
-
-Visit https://github.com/apps/opencode-agent and install for your repo.
-
-Or use `GITHUB_TOKEN` instead (no app needed):
-
-```yaml
-token: ${{ secrets.GITHUB_TOKEN }}
-```
+| Problem | Check |
+|---------|-------|
+| Not responding | Workflow exists? Actions tab shows run? Secrets configured? |
+| Permission denied | Workflow `permissions` block has all 4 scopes (id-token, contents, pull-requests, issues) |
+| App not installed | Install at https://github.com/apps/opencode-agent, or use `GITHUB_TOKEN` instead |
 
 ## Security
 
-- **Runs on YOUR runners**: Code never leaves your GitHub Actions environment
-- **Secrets stay secret**: API keys stored in GitHub Secrets
-- **Scoped permissions**: Only accesses what the workflow allows
-- **Audit trail**: All actions visible in Actions tab
+Runs on YOUR runners (code never leaves your environment). Secrets stored in GitHub Secrets. All actions visible in Actions tab audit trail.
 
-### Security Hardening (Recommended)
+### Hardening (Recommended)
 
-The basic workflow above allows ANY user to trigger AI commands. For production use, implement security hardening:
+The basic workflow allows ANY user to trigger AI commands. Restrict to trusted users by adding to the workflow job `if`:
 
 ```yaml
-# Add to your workflow job
-if: |
-  (contains(github.event.comment.body, '/oc') ||
-   contains(github.event.comment.body, '/opencode')) &&
-  (github.event.comment.author_association == 'OWNER' ||
-   github.event.comment.author_association == 'MEMBER' ||
-   github.event.comment.author_association == 'COLLABORATOR')
+(github.event.comment.author_association == 'OWNER' ||
+ github.event.comment.author_association == 'MEMBER' ||
+ github.event.comment.author_association == 'COLLABORATOR')
 ```
 
-**Full security implementation**: See `git/opencode-github-security.md` for:
-- Trusted user validation
-- `ai-approved` label requirement for issues
-- Prompt injection pattern detection
-- Audit logging
-- Security-focused system prompts
-
-**Quick setup with max security**:
+**Full security**: See `git/opencode-github-security.md` — trusted user validation, `ai-approved` label gates, prompt injection detection, audit logging.
 
 ```bash
-# Copy the secure workflow
+# Quick setup with max security
 cp .github/workflows/opencode-agent.yml .github/workflows/opencode.yml
-
-# Create required labels
 gh label create "ai-approved" --color "0E8A16" --description "Issue approved for AI agent"
 gh label create "security-review" --color "D93F0B" --description "Requires security review"
 ```
 
 ## Integration with aidevops
 
-When using aidevops workflows:
-
-1. **Branch creation**: OpenCode respects aidevops branch naming (`feature/`, `bugfix/`, etc.)
-2. **PR format**: Configure prompt to follow aidevops PR template
-3. **Quality checks**: OpenCode PRs trigger your existing CI workflows
-
-Example custom prompt for aidevops style:
+OpenCode PRs trigger existing CI workflows. Configure the prompt for aidevops conventions:
 
 ```yaml
 prompt: |
-  Follow these guidelines:
-  - Use conventional commit messages
-  - Create feature/ or bugfix/ branches
-  - Include ## Summary section in PR description
-  - Run quality checks before committing
+  Use conventional commits, create feature/ or bugfix/ branches,
+  include ## Summary in PR description, run quality checks before committing.
 ```
 
 ## Related
 
-- **Security hardening**: `git/opencode-github-security.md` - Full security guide
+- **Security hardening**: `git/opencode-github-security.md`
 - **GitLab integration**: `git/opencode-gitlab.md`
 - **GitHub CLI**: `git/github-cli.md`
 - **GitHub Actions**: `git/github-actions.md`
