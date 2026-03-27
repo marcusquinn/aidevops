@@ -37,7 +37,8 @@ Standard `docker` and `docker compose` commands work without modification. These
 # Management
 orb list                          # List all containers and VMs
 orb shell <container-name>        # Quick shell access
-orb start | orb stop              # Start/stop OrbStack (frees resources)
+orb stop                          # Stop OrbStack (frees resources)
+orb start                         # Start OrbStack
 
 # Automatic .local DNS — no config needed
 curl http://<container-name>.orb.local
