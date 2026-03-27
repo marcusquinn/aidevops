@@ -607,6 +607,11 @@ build_issue_body() {
 ensure_repo_labels() {
 	local clusters_json="$1"
 	printf '%s\n' "$clusters_json" | jq -r '.[].repo' | sort -u | while IFS= read -r repo_entry; do
+		# Skip empty or malformed slugs (must be owner/repo format)
+		if [[ -z "$repo_entry" ]] || [[ "$repo_entry" != *"/"* ]]; then
+			echo "ensure_repo_labels: skipping invalid repo slug: '${repo_entry}'" >&2
+			continue
+		fi
 		gh label create "source:ci-failure-miner" --repo "$repo_entry" \
 			--description "Auto-created by gh-failure-miner-helper.sh" --color "C2E0C6" --force || true
 	done
@@ -705,7 +710,7 @@ create_systemic_issues() {
 			continue
 		fi
 
-		create_or_preview_issue "$cluster_json" "$pattern_id" "$systemic_threshold" "$dry_run" "${extra_labels[@]}"
+		create_or_preview_issue "$cluster_json" "$pattern_id" "$systemic_threshold" "$dry_run" "${extra_labels[@]+"${extra_labels[@]}"}"
 
 		created=$((created + 1))
 		idx=$((idx + 1))
