@@ -437,6 +437,112 @@ PLIST
 	return 0
 }
 
+# Setup failure miner — mines GitHub CI failure notifications for systemic patterns
+# and auto-files root-cause issues. Runs as a pure bash script (no LLM needed).
+# Installed when pulse is enabled and the helper script exists.
+# macOS: launchd plist (hourly at :15) | Linux: cron (hourly at :15)
+setup_failure_miner() {
+	local _pulse_lower="$1"
+	local _pulse_effective="${PULSE_ENABLED:-$_pulse_lower}"
+	local miner_script="$HOME/.aidevops/agents/scripts/gh-failure-miner-helper.sh"
+	local miner_label="sh.aidevops.routine-gh-failure-miner"
+	if [[ ! -x "$miner_script" ]] || [[ "$_pulse_effective" != "true" ]]; then
+		# Remove scheduler if pulse is disabled or script missing
+		if [[ "$(uname -s)" == "Darwin" ]]; then
+			local miner_plist="$HOME/Library/LaunchAgents/${miner_label}.plist"
+			if _launchd_has_agent "$miner_label"; then
+				launchctl unload "$miner_plist" 2>/dev/null || true
+				rm -f "$miner_plist"
+				print_info "Failure miner disabled (pulse is off or script missing)"
+			fi
+		else
+			if crontab -l 2>/dev/null | grep -qF "aidevops: gh-failure-miner"; then
+				crontab -l 2>/dev/null | grep -v 'aidevops: gh-failure-miner' | crontab - || true
+				print_info "Failure miner disabled (cron entry removed)"
+			fi
+		fi
+		return 0
+	fi
+
+	mkdir -p "$HOME/.aidevops/logs"
+
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		local miner_plist="$HOME/Library/LaunchAgents/${miner_label}.plist"
+
+		local _xml_miner_script _xml_miner_home _xml_miner_path _xml_miner_log
+		_xml_miner_script=$(_xml_escape "$miner_script")
+		_xml_miner_home=$(_xml_escape "$HOME")
+		_xml_miner_path=$(_xml_escape "/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}")
+		_xml_miner_log=$(_xml_escape "${HOME}/.aidevops/logs/routine-gh-failure-miner.log")
+
+		local miner_plist_content
+		miner_plist_content=$(
+			cat <<MINER_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${miner_label}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>${_xml_miner_script}</string>
+		<string>create-issues</string>
+		<string>--since-hours</string>
+		<string>24</string>
+		<string>--pulse-repos</string>
+		<string>--systemic-threshold</string>
+		<string>2</string>
+		<string>--max-issues</string>
+		<string>3</string>
+		<string>--label</string>
+		<string>auto-dispatch</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>${_xml_miner_home}</string>
+		<key>PATH</key>
+		<string>${_xml_miner_path}</string>
+	</dict>
+	<key>StartCalendarInterval</key>
+	<array>
+		<dict>
+			<key>Minute</key>
+			<integer>15</integer>
+		</dict>
+	</array>
+	<key>StandardOutPath</key>
+	<string>${_xml_miner_log}</string>
+	<key>StandardErrorPath</key>
+	<string>${_xml_miner_log}</string>
+	<key>RunAtLoad</key>
+	<false/>
+</dict>
+</plist>
+MINER_PLIST
+		)
+
+		if _launchd_install_if_changed "$miner_label" "$miner_plist" "$miner_plist_content"; then
+			print_info "Failure miner enabled (launchd, hourly at :15)"
+		else
+			print_warning "Failed to load failure miner LaunchAgent"
+		fi
+	else
+		local _cron_miner_script
+		_cron_miner_script=$(_cron_escape "$miner_script")
+		(
+			crontab -l 2>/dev/null | grep -v 'aidevops: gh-failure-miner' || true
+			echo "15 * * * * /bin/bash ${_cron_miner_script} create-issues --since-hours 24 --pulse-repos --systemic-threshold 2 --max-issues 3 --label auto-dispatch >> \"\$HOME/.aidevops/logs/routine-gh-failure-miner.log\" 2>&1 # aidevops: gh-failure-miner"
+		) | crontab - || true
+		if crontab -l 2>/dev/null | grep -qF "aidevops: gh-failure-miner"; then
+			print_info "Failure miner enabled (cron, hourly at :15)"
+		fi
+	fi
+	return 0
+}
+
 # Setup process guard — kills runaway AI processes (ShellCheck bloat, stuck workers)
 # before they exhaust memory and cause kernel panics. Always installed when the
 # script exists; no consent needed (safety net, not autonomous action).

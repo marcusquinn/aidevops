@@ -765,7 +765,16 @@ build_routine_prompt() {
 parse_launchd_options() {
 	ROUTINE_NAME="$DEFAULT_ROUTINE_NAME"
 	ROUTINE_SCHEDULE="$DEFAULT_ROUTINE_SCHEDULE"
-	ROUTINE_DIR=$(cd "${SCRIPT_DIR}/../.." && pwd)
+	# Resolve to canonical (main) worktree, not a linked worktree.
+	# Worktree paths like ~/Git/repo.branch-name get cleaned up, so the plist
+	# must point at the main worktree (~/Git/repo) to survive worktree removal.
+	local raw_dir
+	raw_dir=$(cd "${SCRIPT_DIR}/../.." && pwd)
+	ROUTINE_DIR=$(git -C "$raw_dir" worktree list --porcelain 2>/dev/null |
+		awk '/^worktree / {print substr($0, 10); exit}') || ROUTINE_DIR=""
+	if [[ -z "$ROUTINE_DIR" || ! -d "$ROUTINE_DIR" ]]; then
+		ROUTINE_DIR="$raw_dir"
+	fi
 	ROUTINE_TITLE="$DEFAULT_ROUTINE_TITLE"
 	LAUNCHD_SINCE_HOURS="$DEFAULT_SINCE_HOURS"
 	LAUNCHD_SYSTEMIC_THRESHOLD="$DEFAULT_SYSTEMIC_THRESHOLD"
