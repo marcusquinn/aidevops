@@ -60,12 +60,12 @@ All clients connect to `https://openapi-mcp.openapisearch.com/mcp`. aidevops con
 | Claude Code | `~/.claude/settings.json` | `mcpServers.openapi-search` — `type: http`, `url` |
 | Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` | `mcpServers.openapi-search` — `type: http`, `url` |
 | Cursor | `~/.cursor/mcp.json` | `mcpServers.openapi-search.url` |
-| Windsurf | `~/.codeium/windsurf/mcp_config.json` | `mcpServers.openapi-search.serverUrl` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | `mcpServers.openapi-search.url` |
 | Gemini CLI | `~/.gemini/settings.json` | `mcpServers.openapi-search.url` |
-| Continue.dev | `~/.continue/config.json` | `mcpServers[].transport` — `type: streamable-http`, `url` |
+| Continue.dev | `~/.continue/config.json` | `mcpServers[].transport` — `type: sse`, `url` |
 | GitHub Copilot | `.vscode/mcp.json` | `servers.openapi-search` — `type: http`, `url` |
-| Kilo Code / Kiro | global MCP config | `mcpServers.openapi-search.url` |
-| Zed | Settings → Extensions → MCP Servers | Name: `openapi-search`, URL field |
+| Kilo Code / Kiro | global MCP config | `mcpServers.openapi-search.url` (unverified — no official docs) |
+| Zed | `~/.config/zed/settings.json` | `context_servers.openapi-search.url` |
 
 **Claude Code CLI**:
 
@@ -124,7 +124,7 @@ getOperationDetails(apiId: "exchangerate-api", operationId: "GET /latest/{base}"
 **MCP not responding** — check connectivity:
 
 ```bash
-curl -s https://openapi-mcp.openapisearch.com/mcp | head -5
+curl -sf --max-time 10 https://openapi-mcp.openapisearch.com/mcp | head -5
 ```
 
 **API identifier not found** — browse <https://openapisearch.com/search> or pass a direct URL to a raw OpenAPI file.
