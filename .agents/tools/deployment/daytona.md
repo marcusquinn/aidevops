@@ -368,6 +368,47 @@ curl -X POST -H "$AUTH" -H "Content-Type: application/json" \
   https://app.daytona.io/api/sandboxes/<id>/exec                                              # exec
 ```
 
+## Daytona Cloud vs Self-Hosted
+
+| Aspect | Daytona Cloud | Self-Hosted |
+|--------|--------------|-------------|
+| Setup | Zero — API key only | Install on your infra |
+| API endpoint | `https://app.daytona.io/api` | `https://<your-host>/api` |
+| Billing | Per-second (Daytona-managed) | Your infra costs |
+| Isolation | gVisor (managed) | Configurable (gVisor/Sysbox/VM) |
+| GPU | A100/H100/L40S on demand | Depends on your hardware |
+| Data residency | Daytona's cloud | Your control |
+| Maintenance | None | You manage upgrades |
+| Scale | Elastic | Limited by your hardware |
+
+### Self-Hosted Install
+
+```bash
+# Install Daytona server (Linux, requires Docker)
+curl -sf -L https://download.daytona.io/daytona/install.sh | sudo bash
+
+# Start the server
+daytona server start
+
+# Point SDK/CLI at your instance
+export DAYTONA_API_URL="https://your-daytona-host.example.com"
+export DAYTONA_API_KEY="your-self-hosted-key"
+```
+
+```python
+from daytona import Daytona, DaytonaConfig
+
+# Self-hosted: override base URL
+daytona = Daytona(DaytonaConfig(
+    api_key="your-self-hosted-key",
+    server_url="https://your-daytona-host.example.com",
+))
+sandbox = daytona.create()
+```
+
+**Choose Daytona Cloud**: fastest start, no infra, elastic GPU, per-second billing.
+**Choose self-hosted**: data residency requirements, existing GPU hardware, air-gapped environments, cost control at scale.
+
 ## Comparison
 
 | Feature | Daytona | E2B | Modal | GitHub Codespaces |
