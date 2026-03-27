@@ -83,6 +83,7 @@ docker compose run --rm openclaw-cli channels login   # Channel setup
 ```bash
 # Isolated dev database
 docker run -d --name postgres -p 5432:5432 \
+  -v postgres-data:/var/lib/postgresql/data \
   -e POSTGRES_PASSWORD=dev postgres:16
 # Access at postgres.orb.local or localhost:5432
 
