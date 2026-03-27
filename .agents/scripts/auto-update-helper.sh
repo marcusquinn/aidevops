@@ -41,6 +41,8 @@
 #   updates.tool_idle_hours            AIDEVOPS_TOOL_IDLE_HOURS        6
 #   updates.upstream_watch             AIDEVOPS_UPSTREAM_WATCH         true
 #   updates.upstream_watch_hours       AIDEVOPS_UPSTREAM_WATCH_HOURS   24
+#   updates.venv_health_check          AIDEVOPS_VENV_HEALTH_CHECK      true
+#   updates.venv_health_hours          AIDEVOPS_VENV_HEALTH_HOURS      24
 #
 # Logs: ~/.aidevops/logs/auto-update.log
 
@@ -78,6 +80,7 @@ readonly DEFAULT_OPENCLAW_FRESHNESS_HOURS=24
 readonly DEFAULT_TOOL_FRESHNESS_HOURS=6
 readonly DEFAULT_TOOL_IDLE_HOURS=6
 readonly DEFAULT_UPSTREAM_WATCH_HOURS=24
+readonly DEFAULT_VENV_HEALTH_HOURS=24
 readonly LAUNCHD_LABEL="com.aidevops.aidevops-auto-update"
 readonly LAUNCHD_DIR="$HOME/Library/LaunchAgents"
 readonly LAUNCHD_PLIST="${LAUNCHD_DIR}/${LAUNCHD_LABEL}.plist"
@@ -418,6 +421,7 @@ run_freshness_checks() {
 	check_openclaw_freshness
 	check_tool_freshness
 	check_upstream_watch
+	check_venv_health
 }
 
 #######################################
@@ -1092,6 +1096,86 @@ update_upstream_watch_timestamp() {
 		else
 			jq -n --arg ts "$timestamp" \
 				'{last_upstream_watch_check: $ts}' >"$STATE_FILE"
+		fi
+	fi
+	return 0
+}
+
+#######################################
+# Check Python venv health across managed repos (24h gate).
+# Delegates to venv-health-check-helper.sh scan --quiet.
+# Logs broken/warning venvs; healthy venvs are silent.
+# Called from run_freshness_checks after upstream watch.
+# Respects config: aidevops config set updates.venv_health_check false
+#######################################
+check_venv_health() {
+	# Opt-out via config (env var or config file)
+	if ! is_feature_enabled venv_health_check 2>/dev/null; then
+		log_info "Venv health check disabled via config"
+		return 0
+	fi
+
+	local freshness_hours
+	freshness_hours=$(_get_validated_freshness_hours "venv_health_hours" "$DEFAULT_VENV_HEALTH_HOURS" "updates.venv_health_hours")
+	local freshness_seconds=$((freshness_hours * 3600))
+
+	# Time gate: skip if checked recently
+	local gate_result
+	gate_result=$(_check_freshness_time_gate "last_venv_health_check" "$freshness_seconds" "Venv health")
+	if [[ "$gate_result" == "skip" ]]; then
+		return 0
+	fi
+
+	# Locate venv-health-check-helper.sh
+	local venv_health_script
+	venv_health_script=$(_locate_helper_script "venv-health-check-helper.sh")
+	if [[ -z "$venv_health_script" ]]; then
+		log_info "venv-health-check-helper.sh not found — skipping venv health check"
+		return 0
+	fi
+
+	log_info "Running daily venv health check..."
+	local venv_output
+	local venv_rc=0
+	venv_output=$("$venv_health_script" scan --quiet 2>&1) || venv_rc=$?
+
+	if [[ -n "$venv_output" ]]; then
+		echo "$venv_output" >>"$LOG_FILE"
+	fi
+
+	if [[ $venv_rc -ne 0 ]]; then
+		log_warn "Venv health check found issues (exit code: $venv_rc) — see log for details"
+	else
+		log_info "Venv health check complete (all healthy)"
+	fi
+
+	update_venv_health_timestamp
+	return 0
+}
+
+#######################################
+# Record last_venv_health_check timestamp in state file
+#######################################
+update_venv_health_timestamp() {
+	local timestamp
+	timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+	if command -v jq &>/dev/null; then
+		local tmp_state
+		tmp_state=$(mktemp)
+		trap 'rm -f "${tmp_state:-}"' RETURN
+
+		if [[ -f "$STATE_FILE" ]]; then
+			if ! jq --arg ts "$timestamp" \
+				'. + {last_venv_health_check: $ts}' \
+				"$STATE_FILE" >"$tmp_state" 2>&1; then
+				log_warn "Failed to update venv health timestamp (jq error on state file)"
+				return 1
+			fi
+			mv "$tmp_state" "$STATE_FILE"
+		else
+			jq -n --arg ts "$timestamp" \
+				'{last_venv_health_check: $ts}' >"$STATE_FILE"
 		fi
 	fi
 	return 0
