@@ -235,30 +235,7 @@ Git is the audit trail. Chain: TODO → issue → worktree → PR → merge. Gap
 - `local var="$1"` pattern. Explicit returns. Conventional commits.
 
 # Bash 3.2 Compatibility (macOS default)
-# All scripts MUST work on bash 3.2.57. 4.0+ features silently break.
-#
-# Forbidden (bash 4.0+):
-- `declare -A`/`local -A` → parallel indexed arrays or grep lookup
-- `mapfile`/`readarray` → `while IFS= read -r line; do arr+=("$line"); done < <(cmd)`
-- `${var,,}`/`${var^^}` → `tr '[:upper:]' '[:lower:]'`
-- `|&` → `2>&1 |`; `&>>` → `>> file 2>&1`
-- `declare -n`/`local -n` → eval or `${!var}`
-#
-# Subshell traps:
-- `$()` captures ALL stdout — don't mix with exit code capture. Use temp file.
-- `PIPESTATUS` — capture immediately: `cmd1 | cmd2; local ps=("${PIPESTATUS[@]}")`
-#
-# Array passing:
-- Arrays flatten across subshell/pipe boundaries. Pass as positional args (`"${arr[@]}"`).
-- Receive via temp file (one element per line) + while read loop.
-#
-# Escape quoting (recurring bug):
-- `"\t"` = literal backslash-t (TWO chars). Use `$'\t'` for actual tab.
-- `"\n"` = literal backslash-n. Use `$'\n'` for newline.
-- XML/plist/JSON: ALWAYS `$'\t'` for indentation. `"\t"` in plist silently kills launchd.
-- `printf '%s\t%s' "$a" "$b"` = safest portable tab embedding.
-#
-# Testing: use `/bin/bash` not `/opt/homebrew/bin/bash`. ShellCheck doesn't catch version issues.
+# Full rules: `reference/bash-compat.md`
 
 # Write-Time Quality Enforcement
 - Fix linter violations in code, not linter config. Config changes need documented rationale.
