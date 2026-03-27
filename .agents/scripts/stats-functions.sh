@@ -2432,8 +2432,8 @@ _create_simplification_issues() {
 		[[ "$issues_created" -ge "$max_issues_per_sweep" ]] && break
 
 		# Deduplicate: check if an issue already exists for this file
-		local file_basename
-		file_basename=$(basename "$file_path")
+		# Use parameter expansion instead of $(basename) — safe in both bash and zsh
+		local file_basename="${file_path##*/}"
 		if echo "$existing_issues" | grep -qF "$file_basename"; then
 			continue
 		fi

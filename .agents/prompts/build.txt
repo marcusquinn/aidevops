@@ -452,11 +452,57 @@ Git is the primary audit trail for all work. Every change should be discoverable
 - `printf '%s\t%s' "$a" "$b"` is the safest portable way to embed tabs.
 - When building XML/plist/JSON via string concatenation, ALWAYS use `$'\t'` for indentation — never `"\t"`. A single `"\t"` in a plist makes it unparseable and silently kills launchd jobs.
 #
+# zsh IFS=$'\t' + $() command substitution trap (MCP Bash tool runs zsh on macOS):
+# ROOT CAUSE: In zsh, lowercase `path` is a SPECIAL TIED ARRAY linked to PATH.
+# When `while IFS=$'\t' read -r size path` assigns `path=test.md`, it sets
+# PATH=test.md — destroying the PATH and making ALL external commands fail with
+# "command not found". This is NOT an IFS leak — it's a variable name collision.
+# Bash does not have this tied-array behaviour; zsh does.
+# This affects ALL inline shell commands generated for the MCP Bash tool (which uses
+# the user's default shell, typically zsh on macOS), even when the logic is correct bash.
+# Framework scripts with `#!/bin/bash` shebangs are safe when invoked directly.
+#
+# NEVER use `path` as a loop variable in while-read loops (zsh tied array):
+#   echo -e "100\ttest.md" | while IFS=$'\t' read -r size path; do
+#     base=$(echo "$path" | sed 's|\.md$||')   # FAILS — PATH=test.md, sed not found
+#   done
+#
+# SAFE alternatives:
+#   # Option 1: rename the variable (avoid 'path', 'log', 'cdpath' — all zsh tied arrays)
+#   while IFS=$'\t' read -r size file_path; do
+#     base="${file_path##*/}"      # parameter expansion — no subshell needed
+#     base="${base%.md}"
+#   done
+#
+#   # Option 2: avoid IFS=$'\t' on the while line — parse with parameter expansion
+#   while read -r line; do
+#     size="${line%%$'\t'*}"
+#     file_path="${line#*$'\t'}"
+#   done
+#
+#   # Option 3: IFS save/restore before $() calls (defensive — use when renaming isn't feasible)
+#   while IFS=$'\t' read -r size file_path; do
+#     local _saved_ifs="$IFS"
+#     IFS=$' \t\n'
+#     result=$(some_command "$file_path")
+#     IFS="$_saved_ifs"
+#   done
+#   NOTE: IFS save/restore does NOT fix the 'path' tied-array issue — PATH is already
+#   clobbered when 'path' is assigned. Always rename 'path' to 'file_path' or similar.
+#
+# zsh tied arrays to NEVER use as variable names in while-read loops:
+#   path (→ PATH), manpath (→ MANPATH), cdpath (→ CDPATH), fpath (→ FPATH),
+#   mailpath (→ MAILPATH), module_path (→ MODULE_PATH)
+#
+# For framework .sh scripts (invoked directly, not inlined): already safe due to
+# `#!/bin/bash` shebangs. No change needed. The risk is inline agent-generated code only.
+#
 # Safe patterns:
 - Test scripts with `/bin/bash` (not `/opt/homebrew/bin/bash`) to catch 4.0+ usage
 - When in doubt, check: `bash --version` on macOS gives 3.2.57
 - ShellCheck does NOT catch most bash version incompatibilities — manual review required
 - ShellCheck does NOT catch `"\t"` vs `$'\t'` — both are valid bash, just different semantics
+- ShellCheck does NOT catch the zsh IFS leak — it only lints bash syntax, not zsh runtime behaviour
 
 # Write-Time Quality Enforcement
 # Inspired by Plankton (github.com/alexfazio/plankton) — adapted for runtime-agnostic use.

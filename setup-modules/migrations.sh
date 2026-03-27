@@ -1088,13 +1088,14 @@ migrate_pulse_repos_to_repos_json() {
 	fi
 
 	local migrated=0
-	local slug path priority
+	local slug repo_path priority
 
 	# Read each entry from pulse-repos.json and merge into repos.json
-	while IFS=$'\t' read -r slug path priority; do
+	# Note: avoid 'path' as variable name — in zsh, lowercase 'path' is tied to PATH array
+	while IFS=$'\t' read -r slug repo_path priority; do
 		[[ -z "$slug" ]] && continue
 		# Expand ~ in path
-		local expanded_path="${path/#\~/$HOME}"
+		local expanded_path="${repo_path/#\~/$HOME}"
 
 		# Check if this repo exists in repos.json by path
 		if jq -e --arg path "$expanded_path" '.initialized_repos[] | select(.path == $path)' "$repos_file" &>/dev/null; then

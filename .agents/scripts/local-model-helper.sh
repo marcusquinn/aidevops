@@ -2116,10 +2116,11 @@ cmd_usage() {
 		echo "Total: ${total_req} requests, ${total_in} input tokens, ${total_out} output tokens"
 
 		# Estimate cloud cost savings (haiku: $0.25/MTok in, $1.25/MTok out; sonnet: $3/MTok in, $15/MTok out)
+		# Reset IFS before $() subshells — prevents zsh IFS leak corrupting awk PATH lookup
 		if [[ "$total_in" -gt 0 ]] || [[ "$total_out" -gt 0 ]]; then
 			local haiku_cost sonnet_cost
-			haiku_cost="$(echo "$total_in $total_out" | awk '{printf "%.2f", ($1 * 0.00000025 + $2 * 0.00000125)}')"
-			sonnet_cost="$(echo "$total_in $total_out" | awk '{printf "%.2f", ($1 * 0.000003 + $2 * 0.000015)}')"
+			haiku_cost="$(IFS= awk -v i="$total_in" -v o="$total_out" 'BEGIN {printf "%.2f", (i * 0.00000025 + o * 0.00000125)}')"
+			sonnet_cost="$(IFS= awk -v i="$total_in" -v o="$total_out" 'BEGIN {printf "%.2f", (i * 0.000003 + o * 0.000015)}')"
 			echo "Estimated cloud cost saved: \$${haiku_cost} (vs haiku), \$${sonnet_cost} (vs sonnet)"
 		fi
 	fi
@@ -2400,11 +2401,12 @@ cmd_inventory() {
 			if [[ ${#display_model} -gt 35 ]]; then
 				display_model="${display_model:0:32}..."
 			fi
+			# Reset IFS before $() subshell — prevents zsh IFS leak corrupting awk PATH lookup
 			local size_human
-			size_human="$(echo "$size_bytes" | awk '{
-				if ($1 >= 1073741824) printf "%.1f GB", $1/1073741824;
-				else if ($1 >= 1048576) printf "%.0f MB", $1/1048576;
-				else if ($1 > 0) printf "%.0f KB", $1/1024;
+			size_human="$(IFS= awk -v b="$size_bytes" 'BEGIN {
+				if (b >= 1073741824) printf "%.1f GB", b/1073741824;
+				else if (b >= 1048576) printf "%.0f MB", b/1048576;
+				else if (b > 0) printf "%.0f KB", b/1024;
 				else printf "-";
 			}')"
 			[[ -z "$quant" ]] && quant="-"

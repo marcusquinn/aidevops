@@ -758,7 +758,9 @@ _collect_entry_summaries() {
 	while IFS=$'\t' read -r eid emodel _etask ewt _ebranch elog _epr; do
 		[[ -z "$eid" ]] && continue
 
-		local summary=""
+		# Reset IFS to default before $() calls — prevents zsh IFS leak corrupting PATH lookup
+		local summary="" _saved_ifs="$IFS"
+		IFS=$' \t\n'
 		if [[ -n "$ewt" && -d "$ewt" ]]; then
 			summary=$(git -C "$ewt" diff --stat "main..HEAD" 2>/dev/null || echo "No diff available")
 			local full_diff
@@ -770,6 +772,7 @@ ${full_diff}"
 		elif [[ -n "$elog" && -f "$elog" ]]; then
 			summary=$(tail -100 "$elog" 2>/dev/null || echo "No log available")
 		fi
+		IFS="$_saved_ifs"
 
 		# Store summary in entry
 		db "$SUPERVISOR_DB" "
@@ -816,8 +819,11 @@ Here are the implementations:
 	while IFS=$'\t' read -r _eid _emodel summary_b64; do
 		[[ -z "$_eid" ]] && continue
 		local label="${labels[$idx]:-$(printf '%c' $((65 + idx)))}"
-		local summary
+		# Reset IFS to default before $() calls — prevents zsh IFS leak corrupting PATH lookup
+		local summary _saved_ifs="$IFS"
+		IFS=$' \t\n'
 		summary=$(printf '%s' "$summary_b64" | base64 --decode 2>/dev/null || echo "")
+		IFS="$_saved_ifs"
 		ranking_prompt="${ranking_prompt}
 === Implementation ${label} ===
 ${summary}
@@ -946,8 +952,11 @@ _store_scores_and_find_winner() {
 		[[ -z "$eid" ]] && continue
 		local label="${labels[$idx]:-$(printf '%c' $((65 + idx)))}"
 
-		local score_row
+		# Reset IFS to default before $() calls — prevents zsh IFS leak corrupting PATH lookup
+		local score_row _saved_ifs="$IFS"
+		IFS=$' \t\n'
 		score_row=$(_aggregate_entry_scores "$label" "$all_scores_file")
+		IFS="$_saved_ifs"
 		local avg_correct avg_complete avg_quality avg_clarity weighted score_count
 		IFS=$'\t' read -r avg_correct avg_complete avg_quality avg_clarity weighted score_count <<<"$score_row"
 
@@ -1249,13 +1258,15 @@ _record_contest_scores() {
 	while IFS=$'\t' read -r emodel esummary ecorrect ecomplete equality eclarity _eweighted; do
 		[[ -z "$emodel" ]] && continue
 
-		# Record response
-		local response_id
+		# Reset IFS to default before $() calls — prevents zsh IFS leak corrupting PATH lookup
+		local response_id _saved_ifs="$IFS"
+		IFS=$' \t\n'
 		response_id=$("$scoring_helper" record \
 			--prompt "$prompt_id" \
 			--model "$emodel" \
 			--text "${esummary:-No output}" 2>/dev/null | grep -oE '[0-9]+' | head -1 || echo "")
 
+		IFS="$_saved_ifs"
 		if [[ -n "$response_id" ]]; then
 			# Record scores (convert float to int for the 1-5 scale)
 			local int_correct int_complete int_quality int_clarity

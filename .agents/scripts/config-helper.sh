@@ -517,6 +517,10 @@ cmd_list() {
 	while IFS=$'\t' read -r dotpath default_val; do
 		[[ -z "$dotpath" ]] && continue
 
+		# Reset IFS to default before $() calls — prevents zsh IFS leak corrupting PATH lookup
+		local _saved_ifs="$IFS"
+		IFS=$' \t\n'
+
 		local user_val env_val effective source
 
 		user_val=$(echo "$user_json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) | if . == null then empty else tostring end') || user_val=""
@@ -550,6 +554,7 @@ cmd_list() {
 		default) value_display="${effective}" ;;
 		esac
 
+		IFS="$_saved_ifs"
 		printf "  %-45s %-15b %-10s\n" "$dotpath" "$value_display" "$source"
 	done <<<"$entries"
 

@@ -692,8 +692,9 @@ cmd_index() {
 		# Collect agent files for this plugin
 		local key_files=""
 		while IFS=$'\t' read -r name file desc model; do
-			local base
-			base=$(basename "$file" .md)
+			# Use parameter expansion instead of $(basename) — safe in both bash and zsh
+			local base="${file##*/}"
+			base="${base%.md}"
 			if [[ -n "$key_files" ]]; then
 				key_files="${key_files}|${base}"
 			else

@@ -1014,10 +1014,12 @@ format_table() {
 	_nc=$(c_nc)
 	echo "$json" | jq -r '.providers[] | [.provider, (.risk_level // "error"), (.score // 0 | tostring), (if .cached then "cached" else "live" end), (.error // (.is_listed | if . then "listed" else "clean" end))] | @tsv' 2>/dev/null |
 		while IFS=$'\t' read -r prov risk score source detail; do
-			local prov_color
+			# Reset IFS to default before $() calls — prevents zsh IFS leak corrupting PATH lookup
+			local prov_color display_name _saved_ifs="$IFS"
+			IFS=$' \t\n'
 			prov_color=$(risk_color "$risk")
-			local display_name
 			display_name=$(provider_display_name "$prov")
+			IFS="$_saved_ifs"
 			printf "  %-18s ${prov_color}%-10s${_nc} %-8s %-8s %s\n" "$display_name" "$risk" "$score" "$source" "$detail"
 		done
 
@@ -1485,9 +1487,13 @@ _batch_print_summary() {
 			'.[] | select(.risk_level != "clean") | "\(.ip)\t\(.risk_level)\t\(.unified_score)\t\(.recommendation)"' \
 			2>/dev/null |
 			while IFS=$'\t' read -r batch_ip risk score rec; do
-				local color risk_upper
+				# Reset IFS to default before $() calls — prevents zsh IFS leak corrupting PATH lookup
+				local color risk_upper _saved_ifs="$IFS"
+				IFS=$' \t\n'
 				color=$(risk_color "$risk")
-				risk_upper=$(echo "$risk" | tr '[:lower:]' '[:upper:]')
+				IFS="$_saved_ifs"
+				# Use tr for case conversion — safe as external command with IFS reset via prefix
+				risk_upper=$(IFS=$' \t\n' tr '[:lower:]' '[:upper:]' <<<"$risk")
 				echo -e "  ${batch_ip}  ${color}${risk_upper}${_nc_batch} (${score})  ${rec}"
 			done
 		echo ""

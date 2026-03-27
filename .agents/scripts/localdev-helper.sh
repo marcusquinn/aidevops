@@ -1963,28 +1963,39 @@ _cmd_list_localdev_projects() {
 			apps_json="$(jq -r '.apps | to_entries[] | "\(.key)\t\(.value.port)\t\(.value.domain)"' "$PORTS_FILE")"
 			while IFS=$'\t' read -r app_name app_port app_domain; do
 				[[ -z "$app_name" ]] && continue
-				local cert_st health_st proc_name
+				# Reset IFS to default before $() calls — prevents zsh IFS leak corrupting PATH lookup
+				local cert_st health_st proc_name cert_fmt health_fmt _saved_ifs="$IFS"
+				IFS=$' \t\n'
 				cert_st="$(check_cert_status "$app_name")"
 				health_st="$(check_port_health "$app_port")"
 				proc_name="$(get_port_process "$app_port")"
+				cert_fmt="$(format_status "$cert_st")"
+				health_fmt="$(format_status "$health_st")"
+				IFS="$_saved_ifs"
 				printf "  %-20s %-28s %-6s %-6s %-6s %s\n" \
 					"$app_name" "https://${app_domain}" "$app_port" \
-					"$(format_status "$cert_st")" "$(format_status "$health_st")" \
+					"$cert_fmt" "$health_fmt" \
 					"${proc_name:--}"
 
 				local branches_json
+				IFS=$' \t\n'
 				branches_json="$(jq -r --arg a "$app_name" \
 					'.apps[$a].branches // {} | to_entries[] | "\(.key)\t\(.value.port)\t\(.value.subdomain)"' \
 					"$PORTS_FILE" 2>/dev/null)"
+				IFS="$_saved_ifs"
 				if [[ -n "$branches_json" ]]; then
 					while IFS=$'\t' read -r br_name br_port br_subdomain; do
 						[[ -z "$br_name" ]] && continue
-						local br_health br_proc
+						# Reset IFS to default before $() calls inside nested loop
+						local br_health br_proc br_health_fmt _saved_ifs2="$IFS"
+						IFS=$' \t\n'
 						br_health="$(check_port_health "$br_port")"
 						br_proc="$(get_port_process "$br_port")"
+						br_health_fmt="$(format_status "$br_health")"
+						IFS="$_saved_ifs2"
 						printf "  %-20s %-28s %-6s %-6s %-6s %s\n" \
 							"  > $br_name" "https://${br_subdomain}" "$br_port" \
-							"    " "$(format_status "$br_health")" \
+							"    " "$br_health_fmt" \
 							"${br_proc:--}"
 					done <<<"$branches_json"
 				fi
@@ -2064,16 +2075,20 @@ _cmd_list_localwp_sites() {
 		echo "$localwp_data" | jq -r '.[] | "\(.name)\t\(.domain)\t\(.http_port // "-")\t\(.php_version)\t\(.mysql_version)"' |
 			while IFS=$'\t' read -r lwp_name lwp_domain lwp_port lwp_php lwp_mysql; do
 				[[ -z "$lwp_name" ]] && continue
-				local lwp_health
+				# Reset IFS to default before $() calls — prevents zsh IFS leak corrupting PATH lookup
+				local lwp_health lwp_health_fmt _saved_ifs="$IFS"
+				IFS=$' \t\n'
 				if [[ "$lwp_port" != "-" ]] && [[ "$lwp_port" != "null" ]] && [[ -n "$lwp_port" ]]; then
 					lwp_health="$(check_port_health "$lwp_port")"
 				else
 					lwp_health="down"
 					lwp_port="-"
 				fi
+				lwp_health_fmt="$(format_status "$lwp_health")"
+				IFS="$_saved_ifs"
 				printf "  %-20s %-28s %-6s %-6s %-10s %s\n" \
 					"$lwp_name" "$lwp_domain" "$lwp_port" \
-					"$(format_status "$lwp_health")" "$lwp_php" "$lwp_mysql"
+					"$lwp_health_fmt" "$lwp_php" "$lwp_mysql"
 			done
 	else
 		python3 -c "
@@ -2245,9 +2260,12 @@ _cmd_status_ports() {
 		if [[ -n "$apps_ports" ]]; then
 			while IFS=$'\t' read -r app_name app_port; do
 				[[ -z "$app_name" ]] && continue
-				local health proc_name
+				# Reset IFS to default before $() calls — prevents zsh IFS leak corrupting PATH lookup
+				local health proc_name _saved_ifs="$IFS"
+				IFS=$' \t\n'
 				health="$(check_port_health "$app_port")"
 				proc_name="$(get_port_process "$app_port")"
+				IFS="$_saved_ifs"
 				if [[ "$health" == "up" ]]; then
 					print_success "  $app_name (port $app_port): listening (${proc_name:-unknown})"
 				else

@@ -269,7 +269,10 @@ analyze_low_ctr() {
 		echo "Query | Position | CTR | Impressions"
 		echo "------|----------|-----|------------"
 		sort -t$'\t' -k6 -rn "$temp_file" | head -10 | while IFS=$'\t' read -r query page imp ctr pos potential src; do
-			printf "%.40s | %.1f | %.2f%% | %d\n" "$query" "$pos" "$(echo "$ctr * 100" | bc -l 2>/dev/null || echo "$ctr")" "$imp"
+			# Use awk instead of $(echo | bc) — avoids $() inside IFS=$'\t' loop (zsh IFS leak)
+			local ctr_pct
+			ctr_pct="$(IFS= awk -v c="$ctr" 'BEGIN {printf "%.2f", c * 100}')"
+			printf "%.40s | %.1f | %s%% | %d\n" "$query" "$pos" "$ctr_pct" "$imp"
 		done
 	else
 		print_warning "No low CTR opportunities found"

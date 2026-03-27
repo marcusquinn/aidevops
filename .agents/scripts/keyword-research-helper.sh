@@ -901,6 +901,10 @@ _format_webmaster_output() {
 
 	local count=0
 	while IFS=$'\t' read -r keyword clicks impressions ctr position sources; do
+		# Reset IFS to default before $() calls — prevents zsh IFS leak corrupting PATH lookup
+		local _saved_ifs="$IFS"
+		IFS=$' \t\n'
+
 		# Get enrichment data if available
 		local volume="-"
 		local kd="-"
@@ -916,10 +920,11 @@ _format_webmaster_output() {
 			fi
 		fi
 
-		# Format CTR as percentage
+		# Format CTR as percentage — use awk instead of bc to avoid IFS issues
 		local ctr_pct
-		ctr_pct=$(echo "scale=2; $ctr * 100" | bc 2>/dev/null || echo "$ctr")
+		ctr_pct=$(awk -v c="$ctr" 'BEGIN {printf "%.2f", c * 100}')
 
+		IFS="$_saved_ifs"
 		printf "| %-40s | %10s | %12s | %5s%% | %8.1f | %8s | %6s | %8s | %-10s |\n" \
 			"${keyword:0:40}" "$clicks" "$impressions" "$ctr_pct" "$position" "$volume" "$kd" "$cpc" "$sources"
 

@@ -1177,13 +1177,18 @@ _generate_contributions() {
 		' 2>/dev/null || true)
 		while IFS=$'\t' read -r rname rdesc rurl; do
 			[[ -z "$rname" ]] && continue
+			# Reset IFS to default before $() calls — prevents zsh IFS leak corrupting PATH lookup
+			local _saved_ifs="$IFS"
+			IFS=$' \t\n'
 			# Deduplicate within forks (xargs -P can return duplicates)
 			if [[ -n "$seen_repos" ]] && grep -qxF "$rname" <<<"$seen_repos" 2>/dev/null; then
+				IFS="$_saved_ifs"
 				continue
 			fi
 			rname=$(_sanitize_md "$rname")
 			rdesc=$(_sanitize_md "$rdesc")
 			rurl=$(_sanitize_url "$rurl")
+			IFS="$_saved_ifs"
 			[[ -z "$rurl" ]] && continue
 			seen_repos="${seen_repos}${rname}"$'\n'
 			contrib_repos="${contrib_repos}- **[${rname}](${rurl})** -- ${rdesc}"$'\n'

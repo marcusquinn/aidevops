@@ -1001,10 +1001,14 @@ for c in codes:
     # Output tab-separated for shell consumption
     print(f\"{c['type']}\t{c['value']}\")
 " | while IFS=$'\t' read -r code_type code_value; do
+			# Reset IFS to default before $() calls — prevents zsh IFS leak corrupting PATH lookup
+			local _saved_ifs="$IFS"
+			IFS=$' \t\n'
 			db "$EMAIL_DB" "
 				INSERT INTO extracted_codes (message_id, code_type, code_value)
 				VALUES ('$(sql_escape "$message_id")', '$(sql_escape "$code_type")', '$(sql_escape "$code_value")');
 			"
+			IFS="$_saved_ifs"
 		done
 
 		log_info "Extracted $count code(s) from message $message_id"
