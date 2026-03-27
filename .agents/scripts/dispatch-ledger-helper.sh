@@ -195,8 +195,15 @@ cmd_register() {
 		mv "$tmp_file" "$LEDGER_FILE"
 	fi
 
-	# Append new entry
-	printf '%s\n' "{\"session_key\":\"${session_key}\",\"issue_number\":\"${issue_number}\",\"repo_slug\":\"${repo_slug}\",\"pid\":${dispatch_pid},\"dispatched_at\":\"${now}\",\"status\":\"in-flight\",\"updated_at\":\"${now}\"}" >>"$LEDGER_FILE"
+	# Append new entry — use jq for safe JSON construction (handles special chars)
+	jq -cn \
+		--arg sk "$session_key" \
+		--arg inum "$issue_number" \
+		--arg slug "$repo_slug" \
+		--argjson pid "$dispatch_pid" \
+		--arg ts "$now" \
+		'{session_key: $sk, issue_number: $inum, repo_slug: $slug, pid: $pid, dispatched_at: $ts, status: "in-flight", updated_at: $ts}' \
+		>>"$LEDGER_FILE"
 
 	_release_lock
 	return 0
