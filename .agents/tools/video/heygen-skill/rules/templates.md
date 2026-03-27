@@ -19,11 +19,6 @@ Reusable video structures with variable placeholders for personalized generation
 
 ## List Templates
 
-```bash
-curl -X GET "https://api.heygen.com/v2/templates" \
-  -H "X-Api-Key: $HEYGEN_API_KEY"
-```
-
 ```typescript
 interface TemplateVariable {
   name: string;
@@ -48,40 +43,9 @@ async function listTemplates(): Promise<Template[]> {
 }
 ```
 
-```python
-def list_templates() -> list:
-    res = requests.get(
-        "https://api.heygen.com/v2/templates",
-        headers={"X-Api-Key": os.environ["HEYGEN_API_KEY"]}
-    )
-    data = res.json()
-    if data.get("error"): raise Exception(data["error"])
-    return data["data"]["templates"]
-```
-
-**Response shape:**
-
-```json
-{
-  "error": null,
-  "data": {
-    "templates": [{
-      "template_id": "template_abc123",
-      "name": "Product Announcement",
-      "thumbnail_url": "https://files.heygen.ai/...",
-      "variables": [
-        { "name": "product_name", "type": "text", "properties": { "max_length": 50 } },
-        { "name": "presenter_script", "type": "text", "properties": { "max_length": 500 } },
-        { "name": "product_image", "type": "image" }
-      ]
-    }]
-  }
-}
-```
+Response shape: `{ error: null, data: { templates: [{ template_id, name, thumbnail_url, variables }] } }`
 
 ## Generate from Template
-
-### Request Fields
 
 | Field | Type | Req | Description |
 |-------|------|:---:|-------------|
@@ -90,20 +54,6 @@ def list_templates() -> list:
 | `title` | string | | Video name for organization |
 | `callback_id` | string | | Custom ID for webhook tracking |
 | `callback_url` | string | | URL for completion notification |
-
-```bash
-curl -X POST "https://api.heygen.com/v2/template/{template_id}/generate" \
-  -H "X-Api-Key: $HEYGEN_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "test": false,
-    "variables": {
-      "product_name": "SuperWidget Pro",
-      "presenter_script": "Introducing our latest innovation!",
-      "product_image": "https://example.com/product.jpg"
-    }
-  }'
-```
 
 ```typescript
 async function generateFromTemplate(
@@ -126,18 +76,6 @@ async function generateFromTemplate(
   if (json.error) throw new Error(json.error);
   return json.data.video_id;
 }
-```
-
-```python
-def generate_from_template(template_id: str, variables: dict, test: bool = False) -> str:
-    res = requests.post(
-        f"https://api.heygen.com/v2/template/{template_id}/generate",
-        headers={"X-Api-Key": os.environ["HEYGEN_API_KEY"], "Content-Type": "application/json"},
-        json={"test": test, "variables": variables}
-    )
-    data = res.json()
-    if data.get("error"): raise Exception(data["error"])
-    return data["data"]["video_id"]
 ```
 
 ## Variable Types
@@ -202,13 +140,6 @@ async function createPersonalizedVideo(
   const videoId = await generateFromTemplate(templateId, personalization);
   return waitForVideo(videoId); // see video-status.md
 }
-
-// Usage
-const url = await createPersonalizedVideo("template_abc123", {
-  customer_name: "John Smith",
-  product_name: "SuperWidget Pro",
-  offer_details: "Get 20% off your first order!",
-});
 ```
 
 ## Best Practices
