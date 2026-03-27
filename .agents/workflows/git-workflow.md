@@ -64,6 +64,17 @@ ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh list
 
 If the main repo is left on a feature branch, the next session inherits that state, causing "local changes would be overwritten" errors and breaking parallel workflows. See `workflows/worktree.md` for full worktree workflow.
 
+**Non-git artifacts do not transfer between worktrees.** Gitignored directories — `.venv/`, `node_modules/`, `dist/`, `build/`, compiled extensions — exist only in the directory where they were created. A worktree starts with only git-tracked files.
+
+| Artifact | Worktree behaviour | Correct action |
+|----------|--------------------|----------------|
+| `.venv/` (Python) | Not present | Create fresh venv inside worktree; never run `pip install -e` from worktree using canonical venv (creates broken absolute `.pth` path) |
+| `node_modules/` | Not present | Run `npm install` / `pnpm install` inside worktree |
+| `dist/`, `build/` | Not present | Run build command inside worktree |
+| `.env` (gitignored) | Not present | Copy from canonical repo or recreate from `.env.example` |
+
+See `tools/code-review/code-standards.md` "Python Projects" for detailed Python packaging rules.
+
 **Session-Branch Tracking**:
 
 | Tool/Command | Purpose |

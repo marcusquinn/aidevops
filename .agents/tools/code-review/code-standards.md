@@ -397,6 +397,90 @@ npx markdownlint-cli2 "**/*.md" --ignore node_modules
 - **Codacy**: Enterprise-grade compliance
 - **Critical Issues**: S7679 & S1481 = 0 (RESOLVED)
 
+## Python Projects
+
+Rules for Python projects using the worktree-based workflow. Workers encounter these regularly — the worktree model creates specific failure modes that differ from single-checkout development.
+
+### Worktrees and Virtual Environments
+
+**Gitignored artifacts do not transfer between worktrees.** `.venv/`, `__pycache__/`, build dirs, and compiled extensions are gitignored and exist only in the directory where they were created. A worker operating in a worktree cannot assume the canonical repo's `.venv/` is usable from that worktree path.
+
+| Situation | Correct action |
+|-----------|----------------|
+| Project has `.venv/` in canonical repo | Create a fresh `.venv/` inside the worktree, or activate the canonical venv by absolute path and do NOT run `pip install -e` from the worktree |
+| Project has `pyproject.toml` but no `.venv/` | Create `.venv/` inside the worktree: `python3 -m venv .venv && pip install -e ".[dev]"` |
+| Verifying that a package installs correctly | Create a throwaway venv inside the worktree — never modify the canonical repo's venv from a worktree context |
+
+### Editable Installs in Worktrees
+
+**`pip install -e` writes the worktree's absolute path into a `.pth` file.** When the worktree is removed after PR merge, that path no longer exists. Any code that imports the package via the editable install will fail silently.
+
+```bash
+# UNSAFE — from inside a worktree, using the canonical repo's venv
+pip install -e shared/project/  # Writes worktree path into canonical venv's .pth
+
+# SAFE — create a throwaway venv inside the worktree
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e shared/project/  # .pth path is inside the worktree, removed with it
+```
+
+**Rule**: Never run `pip install -e` from a worktree using a venv that lives outside the worktree.
+
+### Installation Scope
+
+**Never install packages to user-local or system scope.** If a project has a `.venv/`, use it. If it doesn't, create one. Never let `pip install` fall through to `~/.local/lib/` or system Python.
+
+```bash
+# UNSAFE — no venv active, packages go to ~/.local/lib/python3.x/
+pip install crawl4ai
+
+# SAFE — activate venv first
+source .venv/bin/activate
+pip install crawl4ai
+
+# SAFE — explicit venv pip
+.venv/bin/pip install crawl4ai
+```
+
+Verify scope before installing: `pip --version` should show a path inside the project's `.venv/`, not `~/.local/` or `/usr/`.
+
+### Requirements File Discipline
+
+Every Python project must have a reproducible dependency declaration. Workers must not create venvs and install packages without updating the dependency file.
+
+| File | When to use |
+|------|-------------|
+| `pyproject.toml` (preferred) | New projects, PEP 517/518 compliant |
+| `requirements.txt` | Legacy projects or simple scripts |
+| `requirements-dev.txt` | Dev-only deps (pytest, mypy, ruff) |
+
+After installing any package:
+
+```bash
+# pyproject.toml projects
+pip install -e ".[dev]"  # installs from declared deps — no manual update needed
+
+# requirements.txt projects
+pip freeze > requirements.txt  # or pin manually — never leave venv unreproducible
+```
+
+**A venv that cannot be recreated from committed files is a defect.** Workers must not leave venvs in a state where `git clone` + `pip install -r requirements.txt` would produce a different environment.
+
+### Project AGENTS.md / Plan: Development Environment Section
+
+When working on a Python project that lacks a "Development Environment" section in its `AGENTS.md` or plan, add one. This prevents the next worker from repeating the same discovery. Minimum content:
+
+```markdown
+## Development Environment
+
+- **Python**: 3.x (specify version)
+- **Venv**: `python3 -m venv .venv && source .venv/bin/activate`
+- **Install**: `pip install -e ".[dev]"` (or `pip install -r requirements.txt`)
+- **Tests**: `pytest` (or project-specific command)
+- **Do NOT**: install globally, run `pip install -e` from a worktree using the canonical venv
+```
+
 ## Related Documentation
 
 - **Local linting**: `scripts/linters-local.sh`

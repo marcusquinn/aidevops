@@ -80,6 +80,18 @@ Based on [Loom's spec-as-lookup-table pattern](https://ghuntley.com/ralph/), eac
 
 Brief description of why this work matters.
 
+#### Development Environment
+
+<!-- Required for Python, Node.js, and any project with non-trivial setup.
+     Workers read this section to avoid broken installs in worktrees. -->
+
+| Item | Value |
+|------|-------|
+| Language/runtime | e.g. Python 3.12, Node 20 |
+| Venv/install | e.g. `python3 -m venv .venv && pip install -e ".[dev]"` |
+| Tests | e.g. `source .venv/bin/activate && pytest` |
+| Do NOT | e.g. install globally; run `pip install -e` from worktree using canonical venv |
+
 #### Linkage (The Pin)
 
 | Concept | Files | Lines | Synonyms |
