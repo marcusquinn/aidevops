@@ -24,98 +24,40 @@ mcp:
 ## Quick Reference
 
 - **Purpose**: Semantic codebase retrieval via Augment's context engine
-- **Install**: `npm install -g @augmentcode/auggie@prerelease`
-- **Auth**: `auggie login` (credentials in `~/.augment/session.json`)
+- **Install**: `npm install -g @augmentcode/auggie@prerelease` (Node.js 22+ required)
+- **Auth**: `auggie login` → credentials in `~/.augment/session.json`
 - **MCP Tool**: `codebase-retrieval`
 - **Docs**: <https://docs.augmentcode.com/context-services/mcp/overview>
 
-**OpenCode Config**:
-
-```json
-"augment-context-engine": {
-  "type": "local",
-  "command": ["auggie", "--mcp"],
-  "enabled": true
-}
-```
-
-**Verification Prompt**:
-
-```text
-What is this project? Please use codebase retrieval tool to get the answer.
-```
-
-**Configured for**: OpenCode (as MCP). Works with any tool that supports MCP.
-
-**Enabled for Agents**: All 14 primary agents (on-demand via subagent)
-
-**Usage Strategy**: Augment Context Engine provides **semantic codebase search**.
-Use rg/fd for exact matches first. Use Augment when:
-- You need semantic understanding beyond keyword matching
-- You need cloud sync or team features
-
-<!-- AI-CONTEXT-END -->
-
-## What It Does
-
-The Augment Context Engine provides **semantic codebase retrieval** - understanding
-your code at a deeper level than simple text search:
+**Usage**: Use rg/fd for exact matches first. Use Augment for semantic understanding, cross-file context, and natural language queries.
 
 | Feature | grep/glob | Augment Context Engine |
 |---------|-----------|------------------------|
 | Text matching | Exact patterns | Semantic understanding |
 | Cross-file context | Manual | Automatic |
-| Code relationships | None | Understands dependencies |
 | Natural language | No | Yes |
 
-Use it to:
+**Verification prompt**:
 
-- Find related code across your entire codebase
-- Understand project architecture quickly
-- Discover patterns and implementations
-- Get context-aware code suggestions
-
-## Prerequisites
-
-- **Node.js 22+** required
-- **Augment account** (free tier available at <https://augmentcode.com>)
-
-Check Node.js version:
-
-```bash
-node --version  # Must be v22.x or higher
+```text
+What is this project? Please use codebase retrieval tool to get the answer.
 ```
+
+<!-- AI-CONTEXT-END -->
 
 ## Installation
 
-### 1. Install Auggie CLI
-
 ```bash
 npm install -g @augmentcode/auggie@prerelease
+auggie login        # opens browser for auth
+auggie token print  # verify authentication
 ```
-
-### 2. Authenticate
-
-```bash
-auggie login
-```
-
-This opens a browser for authentication. Credentials are stored in
-`~/.augment/session.json`.
-
-### 3. Verify Installation
-
-```bash
-auggie token print
-```
-
-Should output your access token (confirms authentication is working).
 
 ## AI Tool Configurations
 
 ### OpenCode
 
-Edit `~/.config/opencode/opencode.json`:
+`~/.config/opencode/opencode.json`:
 
 ```json
 {
@@ -126,33 +68,20 @@ Edit `~/.config/opencode/opencode.json`:
       "enabled": true
     }
   },
-  "tools": {
-    "augment-context-engine_*": false
-  }
-}
-```
-
-Then enable per-agent in the `agent` section:
-
-```json
-"agent": {
-  "Build+": {
-    "tools": {
-      "augment-context-engine_*": true
-    }
+  "tools": { "augment-context-engine_*": false },
+  "agent": {
+    "Build+": { "tools": { "augment-context-engine_*": true } }
   }
 }
 ```
 
 ### Claude Code
 
-Add via CLI command:
-
 ```bash
 # User scope (all projects)
 claude mcp add-json auggie-mcp --scope user '{"type":"stdio","command":"auggie","args":["--mcp"]}'
 
-# Project scope (current project only)
+# Project scope
 claude mcp add-json auggie-mcp --scope project '{"type":"stdio","command":"auggie","args":["--mcp"]}'
 
 # With specific workspace
@@ -161,7 +90,7 @@ claude mcp add-json auggie-mcp --scope user '{"type":"stdio","command":"auggie",
 
 ### Cursor
 
-Go to Settings → Tools & MCP → New MCP Server.
+Settings → Tools & MCP → New MCP Server.
 
 **macOS/Linux**:
 
@@ -205,7 +134,7 @@ Click ··· → Add Custom Server.
 }
 ```
 
-**Windows** (update path):
+**Windows**:
 
 ```json
 {
@@ -219,7 +148,7 @@ Click ··· → Add Custom Server.
 
 ### GitHub Copilot
 
-Create `.vscode/mcp.json` in your project root:
+`.vscode/mcp.json` in project root (use in Agent mode):
 
 ```json
 {
@@ -234,11 +163,9 @@ Create `.vscode/mcp.json` in your project root:
 }
 ```
 
-**Note**: Use in Agent mode for codebase retrieval.
-
 ### Kilo Code
 
-Click MCP server icon → Edit Global MCP:
+MCP server icon → Edit Global MCP:
 
 ```json
 {
@@ -256,10 +183,7 @@ Click MCP server icon → Edit Global MCP:
 
 ### Kiro
 
-Open command palette (Cmd+Shift+P / Ctrl+Shift+P):
-
-- **Kiro: Open workspace MCP config (JSON)** - For workspace level
-- **Kiro: Open user MCP config (JSON)** - For user level
+Cmd+Shift+P → "Kiro: Open workspace MCP config (JSON)" or "Kiro: Open user MCP config (JSON)":
 
 ```json
 {
@@ -276,7 +200,7 @@ Open command palette (Cmd+Shift+P / Ctrl+Shift+P):
 
 ### Gemini CLI
 
-Edit `~/.gemini/settings.json` (user level) or `.gemini/settings.json` (project):
+`~/.gemini/settings.json` (user) or `.gemini/settings.json` (project):
 
 ```json
 {
@@ -289,166 +213,51 @@ Edit `~/.gemini/settings.json` (user level) or `.gemini/settings.json` (project)
 }
 ```
 
-With specific workspace:
-
-```json
-{
-  "mcpServers": {
-    "augment-context-engine": {
-      "command": "auggie",
-      "args": ["-w", "/path/to/project", "--mcp"]
-    }
-  }
-}
-```
+With specific workspace: add `"-w", "/path/to/project"` before `"--mcp"`.
 
 ### Droid (Factory.AI)
 
-Add via CLI:
-
 ```bash
 droid mcp add augment-code "auggie" --mcp
-
-# With specific workspace
-droid mcp add augment-code "auggie" -w /path/to/project --mcp
+# With workspace: droid mcp add augment-code "auggie" -w /path/to/project --mcp
 ```
-
-## Verification
-
-After configuring any tool, test with this prompt:
-
-```text
-What is this project? Please use codebase retrieval tool to get the answer.
-```
-
-The AI should:
-
-1. Confirm access to `codebase-retrieval` tool
-2. Provide a semantic understanding of your project
-3. Describe the main components and architecture
 
 ## Non-Interactive Setup (CI/CD)
 
-For automation environments where `auggie login` isn't possible:
-
-### 1. Get Authentication Token
-
 ```bash
 auggie token print
+# Output: TOKEN={"accessToken":"...","tenantURL":"...","scopes":["read","write"]}
 ```
 
-Output:
-
-```text
-TOKEN={"accessToken":"your-access-token","tenantURL":"your-tenant-url","scopes":["read","write"]}
-```
-
-### 2. Configure Environment Variables
-
-Add to your CI/CD environment or `~/.config/aidevops/credentials.sh`:
+Set env vars:
 
 ```bash
 export AUGMENT_API_TOKEN="your-access-token"
 export AUGMENT_API_URL="your-tenant-url"
 ```
 
-### 3. Update MCP Config with Env Vars
+Pass via MCP config `env` block (OpenCode, Claude Code) or `--env` flags (Droid).
 
-**OpenCode** (`~/.config/opencode/opencode.json`):
+**Credential storage**:
 
-```json
-{
-  "mcp": {
-    "augment-context-engine": {
-      "type": "local",
-      "command": ["auggie", "--mcp"],
-      "enabled": true,
-      "env": {
-        "AUGMENT_API_TOKEN": "your-access-token",
-        "AUGMENT_API_URL": "your-tenant-url"
-      }
-    }
-  }
-}
-```
-
-**Claude Code**:
-
-```bash
-claude mcp add-json auggie-mcp --scope user '{"type":"stdio","command":"auggie","args":["--mcp"],"env":{"AUGMENT_API_TOKEN":"your-access-token","AUGMENT_API_URL":"your-tenant-url"}}'
-```
-
-**Droid**:
-
-```bash
-droid mcp add augment-code "auggie" --mcp --env AUGMENT_API_TOKEN=your-access-token --env AUGMENT_API_URL=your-tenant-url
-```
-
-## Credential Storage
-
-| Method | Location | Use Case |
-|--------|----------|----------|
-| Interactive | `~/.augment/session.json` | Local development |
-| Environment | `AUGMENT_API_TOKEN` + `AUGMENT_API_URL` | CI/CD, automation |
-| aidevops pattern | `~/.config/aidevops/credentials.sh` | Consistent with other services |
+| Method | Location |
+|--------|----------|
+| Interactive | `~/.augment/session.json` |
+| Environment | `AUGMENT_API_TOKEN` + `AUGMENT_API_URL` |
+| aidevops pattern | `~/.config/aidevops/credentials.sh` |
 
 ## Troubleshooting
 
-### "auggie: command not found"
+| Error | Fix |
+|-------|-----|
+| `auggie: command not found` | `npm install -g @augmentcode/auggie@prerelease` |
+| Node.js version too old | `nvm install 22 && nvm use 22` or `brew install node@22` |
+| Authentication failed | `auggie login` then `auggie token print` |
+| MCP server not responding | Check `ps aux \| grep auggie`, restart AI tool, verify JSON syntax |
+| `codebase-retrieval` not found | Enable MCP in config, set `augment-context-engine_*: true` for agent, restart |
 
-```bash
-# Check installation
-npm list -g @augmentcode/auggie
+## Related
 
-# Reinstall
-npm install -g @augmentcode/auggie@prerelease
-```
-
-### "Node.js version too old"
-
-```bash
-# Check version
-node --version
-
-# Install Node 22+ via nvm
-nvm install 22
-nvm use 22
-
-# Or via Homebrew (macOS)
-brew install node@22
-```
-
-### "Authentication failed"
-
-```bash
-# Re-authenticate
-auggie login
-
-# Verify token
-auggie token print
-```
-
-### "MCP server not responding"
-
-1. Check if auggie is running: `ps aux | grep auggie`
-2. Restart your AI tool
-3. Verify config JSON syntax
-
-### "codebase-retrieval tool not found"
-
-1. Ensure MCP is enabled in your config
-2. Check that the agent has `augment-context-engine_*: true`
-3. Restart the AI tool after config changes
-
-## Updates
-
-Check for configuration updates at:
-<https://docs.augmentcode.com/context-services/mcp/overview>
-
-The Augment team regularly adds support for new AI tools and updates configurations.
-
-## Related Documentation
-
-- [Context Builder](context-builder.md) - Token-efficient codebase packing
-- [Context7](context7.md) - Library documentation lookup
+- [Context Builder](context-builder.md) — Token-efficient codebase packing
+- [Context7](context7.md) — Library documentation lookup
 - [Auggie CLI Overview](https://docs.augmentcode.com/cli/overview)
