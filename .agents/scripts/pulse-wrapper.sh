@@ -3709,18 +3709,28 @@ has_worker_for_repo_issue() {
 }
 
 #######################################
-# Check if dispatching a worker would be a duplicate (GH#4400, GH#5210, GH#6696)
+# Check if dispatching a worker would be a duplicate (GH#4400, GH#5210, GH#6696, GH#11086)
 #
-# Five-layer dedup:
+# Six-layer dedup:
 #   1. dispatch-ledger-helper.sh check-issue — in-flight ledger (GH#6696)
 #   2. has_worker_for_repo_issue() — exact repo+issue process match
 #   3. dispatch-dedup-helper.sh is-duplicate — normalized title key match
 #   4. dispatch-dedup-helper.sh has-open-pr — merged PR evidence for issue/task
+#   5. dispatch-dedup-helper.sh is-assigned — cross-machine assignee guard (GH#6891)
+#   6. dispatch-dedup-helper.sh claim — cross-machine optimistic lock (GH#11086)
 #
 # Layer 1 (ledger) is checked first because it's the fastest (local file
 # read, no process scanning or GitHub API calls) and catches the primary
 # failure mode: workers dispatched but not yet visible in process lists
 # or GitHub PRs (the 10-15 minute gap between dispatch and PR creation).
+#
+# Layer 6 (claim) is last because it's the slowest (posts a GitHub comment,
+# sleeps DISPATCH_CLAIM_WINDOW seconds, re-reads comments). It's the final
+# cross-machine safety net: two runners that pass layers 1-5 simultaneously
+# will both post a claim, but only the oldest claim wins. Previously this
+# was an LLM-instructed step in pulse.md that runners could skip — the
+# GH#11086 incident showed both marcusquinn and johnwaldo dispatching on
+# the same issue 45 seconds apart because the LLM skipped the claim step.
 #
 # Arguments:
 #   $1 - issue number
@@ -3790,7 +3800,55 @@ check_dispatch_dedup() {
 		fi
 	fi
 
+	# Layer 6 (GH#11086): cross-machine optimistic claim lock — the final safety
+	# net for multi-runner environments. Posts an HTML comment claim on the issue,
+	# sleeps the consensus window (default 8s), then checks if this runner's claim
+	# is the oldest. Only the first claimant proceeds; others back off.
+	#
+	# Previously this was an LLM-instructed step in pulse.md that runners could
+	# skip. The GH#11086 incident: marcusquinn dispatched at 23:07:43, johnwaldo
+	# dispatched at 23:08:28 — 45 seconds apart on the same issue because the
+	# LLM skipped the claim step. Moving it here makes it deterministic.
+	#
+	# Exit codes from claim: 0=won, 1=lost, 2=error (fail-open).
+	# On error (exit 2), we allow dispatch to proceed — better to risk a rare
+	# duplicate than to block all dispatch on a transient GitHub API failure.
+	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
+		local claim_exit=0
+		"$dedup_helper" claim "$issue_number" "$repo_slug" "$self_login" >>"$LOGFILE" 2>&1 || claim_exit=$?
+		if [[ "$claim_exit" -eq 1 ]]; then
+			echo "[pulse-wrapper] Dedup: claim lost for #${issue_number} in ${repo_slug} — another runner claimed first (GH#11086)" >>"$LOGFILE"
+			return 0
+		fi
+		if [[ "$claim_exit" -eq 2 ]]; then
+			echo "[pulse-wrapper] Dedup: claim error for #${issue_number} in ${repo_slug} — proceeding (fail-open)" >>"$LOGFILE"
+		fi
+		# claim_exit 0 = won, proceed to dispatch
+	fi
+
 	return 1
+}
+
+#######################################
+# Release the dispatch claim comment after a worker has been dispatched.
+# Call this after the dispatch command succeeds. Non-fatal — errors are logged
+# but do not block the dispatch flow.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug (owner/repo)
+#   $3 - runner login (optional; auto-detected if omitted)
+#######################################
+release_dispatch_claim() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="${3:-}"
+
+	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
+	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
+		"$dedup_helper" release "$issue_number" "$repo_slug" "$self_login" >>"$LOGFILE" 2>&1 || true
+	fi
+	return 0
 }
 
 #######################################

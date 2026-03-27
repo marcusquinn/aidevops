@@ -67,23 +67,16 @@ Check external contributor gate before ANY approve/merge (see Pre-merge checks b
 For each unassigned, non-blocked issue with no open PR, no active worker, and **no `needs-maintainer-review` label**:
 
 ```bash
-# Dedup guard (MANDATORY — all checks via deterministic guard + claim lock)
+# Dedup guard (MANDATORY — all 6 layers run deterministically inside check_dispatch_dedup)
 source ~/.aidevops/agents/scripts/pulse-wrapper.sh
 RUNNER_USER=$(gh api user --jq '.login' 2>/dev/null || whoami)
 
-# 1. Deterministic dedup (ledger, process, title, merged-PR, assignee — GH#6891)
-# The assignee check is now inside check_dispatch_dedup (Layer 5), so passing
-# $RUNNER_USER as the 5th arg is required. This prevents the bug where an LLM
-# pulse skipped the is_assigned step and dispatched for another runner's issue.
+# All dedup layers including cross-machine claim lock (GH#11086) are inside
+# check_dispatch_dedup. Layer 6 posts an HTML comment claim, sleeps the
+# consensus window, and checks who was first. Do NOT add a separate claim
+# step — it's already deterministic. Passing $RUNNER_USER as the 5th arg
+# is required for the assignee guard (Layer 5) and claim lock (Layer 6).
 if check_dispatch_dedup NUMBER SLUG "Issue #NUMBER: TITLE" "TASK_ID: TITLE" "$RUNNER_USER"; then continue; fi
-
-# 2. Cross-machine claim lock (t1686 — prevents race in assign-then-dispatch)
-# Posts an HTML comment claim, waits consensus window, checks who was first.
-# Exit 0 = won (proceed), exit 1 = lost (skip), exit 2 = error (proceed, fail-open).
-CLAIM_EXIT=0
-~/.aidevops/agents/scripts/dispatch-dedup-helper.sh claim NUMBER SLUG "$RUNNER_USER" || CLAIM_EXIT=$?
-if [[ "$CLAIM_EXIT" -eq 1 ]]; then continue; fi
-# Exit 2 (error) = fail-open, proceed with dispatch
 
 # Assign and dispatch
 gh issue edit NUMBER --repo SLUG --add-assignee "$RUNNER_USER" --add-label "status:queued" 2>/dev/null || true
@@ -96,8 +89,8 @@ gh issue edit NUMBER --repo SLUG --add-assignee "$RUNNER_USER" --add-label "stat
   --prompt "/full-loop Implement issue #NUMBER (URL) -- DESCRIPTION" &
 sleep 2
 
-# Clean up claim comment after dispatch
-~/.aidevops/agents/scripts/dispatch-dedup-helper.sh release NUMBER SLUG "$RUNNER_USER" 2>/dev/null || true
+# Clean up claim comment after dispatch (non-fatal)
+release_dispatch_claim NUMBER SLUG "$RUNNER_USER"
 ```
 
 Repeat until `AVAILABLE` slots are filled or no dispatchable issues remain.
@@ -729,16 +722,19 @@ Closing as duplicate of #<kept_number>. Identified during pulse triage — these
 # Source once per pulse run (provides has_worker_for_repo_issue, has_merged_pr_for_issue, and check_dispatch_dedup)
 source ~/.aidevops/agents/scripts/pulse-wrapper.sh
 
-# Single dedup guard: checks active worker, title variants, merged-PR evidence, and assignee
+# Single dedup guard: checks active worker, title variants, merged-PR evidence, assignee, and cross-machine claim
 if check_dispatch_dedup <number> <slug> "Issue #<number>: <title>" "<task-id>: <title>" "$RUNNER_USER"; then
   echo "Dedup guard blocked dispatch for #<number> in <slug> — skipping"
   # Leave a trace in GitHub so the catch is visible to all runners and to the dedup health check
-  gh issue comment <number> --repo <slug> --body "Dispatch skipped — deterministic dedup guard detected overlap (active worker, merged PR evidence, or assigned to another runner). See check_dispatch_dedup in pulse-wrapper.sh." 2>/dev/null || true
+  gh issue comment <number> --repo <slug> --body "Dispatch skipped — deterministic dedup guard detected overlap (active worker, merged PR evidence, assigned to another runner, or lost claim). See check_dispatch_dedup in pulse-wrapper.sh." 2>/dev/null || true
   continue
 fi
+
+# After dispatch succeeds, clean up the claim comment (non-fatal)
+release_dispatch_claim <number> <slug> "$RUNNER_USER"
 ```
 
-`check_dispatch_dedup` runs all five checks in sequence: (1) in-flight dispatch ledger, (2) exact repo+issue process overlap, (3) title variants via dispatch-dedup-helper (e.g., `issue-3502` vs `Issue #3502: description`), (4) merged-PR evidence via close keywords and task-ID fallback, and (5) cross-machine assignee guard (GH#6891) — prevents dispatching for issues already assigned to another runner. Skipping this guard caused both the 26-worker thrashing incident (GH#4400) and the awardsapp duplicate-PR pattern (GH#4527). The assignee guard was added after GH#6891 where a runner dispatched a worker for an issue assigned to a different user.
+`check_dispatch_dedup` runs all six checks in sequence: (1) in-flight dispatch ledger, (2) exact repo+issue process overlap, (3) title variants via dispatch-dedup-helper (e.g., `issue-3502` vs `Issue #3502: description`), (4) merged-PR evidence via close keywords and task-ID fallback, (5) cross-machine assignee guard (GH#6891) — prevents dispatching for issues already assigned to another runner, and (6) cross-machine optimistic claim lock (GH#11086) — posts an HTML comment claim, sleeps the consensus window, and checks who was first. Only the oldest claimant proceeds; others back off. This was previously an LLM-instructed step that runners could skip — the GH#11086 incident showed two runners dispatching on the same issue 45 seconds apart.
 
 The deterministic guard is the safety net, not the primary layer. Over time, as the intelligence scan catches more duplicates earlier, the deterministic guard should fire less often. See "Dedup health monitoring" below for how to track this.
 
@@ -1217,7 +1213,8 @@ The dedup system has two layers: intelligence (you reading issue titles) and det
 | Event | Comment pattern | Meaning |
 |-------|----------------|---------|
 | Intelligence catch | "Closing as duplicate of #X. Identified during pulse triage" | You spotted a duplicate before dispatch |
-| Deterministic catch | "Dispatch skipped — deterministic dedup guard" | `check_dispatch_dedup` blocked a dispatch |
+| Deterministic catch | "Dispatch skipped — deterministic dedup guard" | `check_dispatch_dedup` blocked a dispatch (layers 1-5) |
+| Claim lock catch | "claim lost for #X" in pulse logs | Layer 6 cross-machine claim prevented duplicate dispatch |
 | Worker-discovered miss | "duplicate of #X" or "already implemented in PR #Y" (posted by a worker) | Both layers missed it — a worker was dispatched unnecessarily |
 
 **Periodic health check (once per pulse, during cycle summary):**
