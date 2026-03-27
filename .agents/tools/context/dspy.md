@@ -130,7 +130,7 @@ Language model providers and optimization settings are configured in `configs/ds
 | Issue | Fix |
 |-------|-----|
 | Import errors | Activate venv: `source python-env/dspy-env/bin/activate` |
-| API key issues | Verify env vars are set: `[[ -n "$OPENAI_API_KEY" ]] && echo "OPENAI_API_KEY is set" || echo "OPENAI_API_KEY is missing"` |
+| API key issues | Verify env vars are set: `[[ -n "$OPENAI_API_KEY" ]] && echo "OPENAI_API_KEY is set" \|\| echo "OPENAI_API_KEY is missing"` |
 | Memory issues | Reduce batch sizes: `dspy.settings.configure(lm=lm, max_tokens=1000)` |
 
 ## Resources
