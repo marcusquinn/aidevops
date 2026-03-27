@@ -4,147 +4,92 @@ Use this checklist to ensure your offer is irresistible before launch.
 
 ---
 
-## Core Offer ✓
+## Core Offer
 
-- [ ] The core product/service is CLEARLY defined
-- [ ] I can describe what they get in ONE sentence
-- [ ] The PRIMARY benefit is obvious
-- [ ] It solves a REAL problem my audience has
-- [ ] It delivers a TRANSFORMATION (before → after)
-- [ ] The offer matches the AWARENESS level of my audience
+- [ ] Describable in ONE sentence
+- [ ] PRIMARY benefit is obvious
+- [ ] Solves a REAL problem the audience has
+- [ ] Delivers a TRANSFORMATION (before → after)
+- [ ] Matches the AWARENESS level of the audience
 
 ---
 
-## Value Stack ✓
+## Value Stack
 
-**Core Offer:**
-- [ ] Main product is clearly described
-- [ ] Value is assigned and justified
-- [ ] Components are listed (modules, features, deliverables)
+**Core product:**
+- [ ] Clearly described with listed components (modules, features, deliverables)
+- [ ] Value assigned and justified
 
 **Bonuses:**
-- [ ] Each bonus is RELEVANT to the core offer
-- [ ] Each bonus helps them SUCCEED with the main offer
-- [ ] Each bonus has SPECIFIC deliverables (not vague)
-- [ ] Bonus values are BELIEVABLE
-- [ ] Bonuses are NAMED (not just "Bonus 1")
-- [ ] At least 2-3 bonuses included
+- [ ] Each bonus is RELEVANT and helps them SUCCEED with the core offer
+- [ ] Each bonus has SPECIFIC deliverables (not vague) and a BELIEVABLE value
+- [ ] Bonuses are NAMED (not "Bonus 1"); include at least 2-3
 
-**Value Math:**
-- [ ] Total value is 5-10x the price
-- [ ] Value calculation is shown (not hidden)
-- [ ] Each component value is listed
+**Value math:**
+- [ ] Total value is 5-10x the price; calculation is shown
 - [ ] Final price feels like a BARGAIN in comparison
 
 ---
 
-## Pricing ✓
+## Pricing
 
 **Structure:**
 - [ ] Pricing is CLEAR and simple
-- [ ] Most popular tier is HIGHLIGHTED (if multiple tiers)
-- [ ] Features per tier are EASY to compare
-- [ ] There's a tier for BUDGET-conscious buyers
-- [ ] There's a tier for POWER users (if applicable)
+- [ ] Most popular tier HIGHLIGHTED (if multiple tiers)
+- [ ] Tier for BUDGET-conscious buyers; tier for POWER users (if applicable)
 
 **Psychology:**
-- [ ] Price ANCHORING is used (show high value first)
+- [ ] Price ANCHORING used (show high value first)
 - [ ] Charm pricing applied ($97, $297, $497 vs. round numbers)
-- [ ] Payment plan option for $200+ offers
+- [ ] Payment plan for $200+ offers
 - [ ] Annual discount incentivizes commitment (if subscription)
-- [ ] Price is COMPARED to alternatives ("$5,000 agency vs. $79/mo")
+- [ ] Price COMPARED to alternatives ("$5,000 agency vs. $79/mo")
 
-**10x Rule:**
-- [ ] Customer will get 10x the value of what they pay
-- [ ] ROI is clear (if $500, they should expect $5,000+ value)
+**ROI:**
+- [ ] Customer gets 10x the value of what they pay
 - [ ] ROI is communicated in the copy
 
 ---
 
-## Guarantee ✓
+## Guarantee
 
-**Clarity:**
-- [ ] Guarantee is PROMINENT (not buried)
-- [ ] Guarantee terms are CLEAR
-- [ ] Timeframe is SPECIFIC (30 days, 60 days, etc.)
-- [ ] Refund process is SIMPLE (not lots of hoops)
-
-**Strength:**
-- [ ] Guarantee removes their PRIMARY fear
-- [ ] Guarantee feels FAIR (not one-sided)
-- [ ] Guarantee shows CONFIDENCE in product
-- [ ] Guarantee has a NAME (adds legitimacy)
-
-**Types (choose one or combine):**
-- [ ] Money-back guarantee
-- [ ] Results-based guarantee
-- [ ] Free trial (no CC)
-- [ ] Risk-free trial (with CC, cancel anytime)
+- [ ] PROMINENT (not buried); terms CLEAR; timeframe SPECIFIC (30/60 days)
+- [ ] Refund process SIMPLE (not lots of hoops)
+- [ ] Removes the PRIMARY fear; shows CONFIDENCE; has a NAME
+- [ ] Type chosen: money-back / results-based / free trial / risk-free trial
 
 ---
 
-## Urgency & Scarcity ✓
+## Urgency & Scarcity
 
-**Legitimacy:**
-- [ ] Urgency/scarcity is REAL (not fake)
-- [ ] Deadline is SPECIFIC (date/time)
-- [ ] Consequences of waiting are CLEAR
-- [ ] We WILL honor the deadline (no extending)
-
-**Types (use when appropriate):**
-- [ ] Limited time offer (deadline)
-- [ ] Limited quantity (spots, copies)
-- [ ] Rising price (early bird)
-- [ ] Bonus expiration
-- [ ] Cart expiration (for abandoners)
-
-**Copy:**
-- [ ] What they LOSE is clear (bonuses, price, access)
-- [ ] Why the limit EXISTS is explained (if not obvious)
+- [ ] Urgency/scarcity is REAL (not fake); deadline is SPECIFIC
+- [ ] Consequences of waiting are CLEAR; deadline WILL be honored
+- [ ] Type chosen: limited time / limited quantity / rising price / bonus expiration / cart expiration
+- [ ] What they LOSE is clear; why the limit EXISTS is explained (if not obvious)
 
 ---
 
-## Call to Action ✓
+## Call to Action
 
-- [ ] CTA is ACTION-ORIENTED ("Start My Trial" vs "Submit")
-- [ ] CTA is BENEFIT-focused when possible ("Get More Leads")
-- [ ] CTA appears MULTIPLE times on long pages
-- [ ] CTA STANDS OUT visually
-- [ ] CTA explains what happens NEXT
-- [ ] FRICTION is minimized (fewest fields possible)
+- [ ] ACTION-ORIENTED ("Start My Trial" vs "Submit")
+- [ ] BENEFIT-focused when possible ("Get More Leads")
+- [ ] Appears MULTIPLE times on long pages; STANDS OUT visually
+- [ ] Explains what happens NEXT; FRICTION minimized (fewest fields possible)
 
 ---
 
-## Objection Handling ✓
+## Objection Handling
 
-Ensure your offer addresses these common objections:
-
-**Price objection:**
-- [ ] Value is clear before price
-- [ ] Price is compared to alternatives
-- [ ] ROI is communicated
-- [ ] Payment plans reduce friction
-
-**Trust objection:**
-- [ ] Guarantee removes risk
-- [ ] Social proof backs claims
-- [ ] Credibility is established
-
-**Time objection:**
-- [ ] Time to results is clear
-- [ ] Time investment is reasonable
-- [ ] Quick wins are highlighted
-
-**"Not for me" objection:**
-- [ ] Target audience is clear
-- [ ] Different use cases shown
-- [ ] FAQ addresses edge cases
+| Objection | Must address |
+|-----------|-------------|
+| Price | Value clear before price; ROI communicated; payment plans available |
+| Trust | Guarantee removes risk; social proof backs claims; credibility established |
+| Time | Time to results clear; quick wins highlighted |
+| "Not for me" | Target audience clear; FAQ addresses edge cases |
 
 ---
 
 ## Offer Comparison
-
-Before finalizing, compare your offer:
 
 | Factor | Your Offer | Competitor A | Competitor B |
 |--------|------------|--------------|--------------|
@@ -159,71 +104,34 @@ Your offer should win on at least 2-3 factors.
 
 ---
 
-## Offer Testing Priorities
+## Testing Priorities
 
-Test these elements in order of impact:
+Test in order of impact:
 
 1. **Price point** — $97 vs $197 vs $297
 2. **Guarantee** — 30-day vs 60-day vs results-based
-3. **Bonuses** — Which bonuses increase conversion?
-4. **Payment options** — One-time vs. payment plan
-5. **Urgency type** — Deadline vs. quantity vs. price increase
+3. **Bonuses** — which bonuses increase conversion?
+4. **Payment options** — one-time vs. payment plan
+5. **Urgency type** — deadline vs. quantity vs. price increase
 
 ---
 
 ## Pre-Launch Verification
 
-Before launching the offer:
-
-- [ ] Offer is documented clearly
-- [ ] Team knows the offer details
-- [ ] Checkout process works
-- [ ] Payment processing tested
+- [ ] Checkout process works; payment processing tested
 - [ ] Fulfillment ready (instant access, onboarding, etc.)
-- [ ] Support prepared for questions
-- [ ] Tracking set up (pixels, analytics)
-
----
-
-## Offer Math Worksheet
-
-Fill this out to verify your offer makes sense:
-
-**Value Calculation:**
-```
-Core Product Value: $______
-+ Bonus 1 Value:    $______
-+ Bonus 2 Value:    $______
-+ Bonus 3 Value:    $______
-─────────────────────────────
-Total Value:        $______
-
-Your Price:         $______
-
-Value Multiple:     ____x (should be 5-10x)
-```
-
-**ROI Calculation:**
-```
-If customer pays:   $______
-They should get:    $______ in value (10x minimum)
-
-How do they get that value?
-- [Outcome 1]: $______
-- [Outcome 2]: $______
-- [Outcome 3]: $______
-```
+- [ ] Support prepared; tracking set up (pixels, analytics)
 
 ---
 
 ## Quick Offer Check
 
-Before you publish, ask:
+Before publishing:
 
-1. ✓ Would I buy this at this price?
-2. ✓ Is the value obviously greater than the price?
-3. ✓ Is there a clear reason to buy NOW?
-4. ✓ Is the risk removed (guarantee)?
-5. ✓ Is the action clear?
+1. Would I buy this at this price?
+2. Is the value obviously greater than the price?
+3. Is there a clear reason to buy NOW?
+4. Is the risk removed (guarantee)?
+5. Is the action clear?
 
-If all five are "yes," your offer is ready.
+All five "yes" → offer is ready.
