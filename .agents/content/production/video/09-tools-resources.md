@@ -2,18 +2,18 @@
 
 ## Internal References
 
-- `tools/video/video-prompt-design.md` — Veo 3 Meta Framework (7-component prompting)
-- `tools/video/higgsfield.md` — Higgsfield API integration
-- `tools/video/heygen-skill.md` — HeyGen Avatar API (talking-head generation)
-- `tools/video/muapi.md` — MuAPI (VEED lipsync, face swap, VFX)
-- `tools/video/remotion.md` — Programmatic video editing
-- `tools/voice/voice-models.md` — TTS model comparison (ElevenLabs, MiniMax, Qwen3-TTS)
-- `tools/voice/qwen3-tts.md` — Qwen3-TTS setup and voice cloning
-- `content/production/image.md` — Image generation (Nanobanana Pro, Midjourney, Freepik)
-- `content/production/audio.md` — Voice pipeline, 4-Layer Audio Design
-- `content/production/characters.md` — Character consistency (Facial Engineering, Character Bibles)
-- `content/optimization.md` — A/B testing, seed bracketing automation
-- `scripts/seed-bracket-helper.sh` — Seed bracketing CLI
+- `.agents/tools/video/video-prompt-design.md` — Veo 3 Meta Framework (7-component prompting)
+- `.agents/tools/video/higgsfield.md` — Higgsfield API integration
+- `.agents/tools/video/heygen-skill.md` — HeyGen Avatar API (talking-head generation)
+- `.agents/tools/video/muapi.md` — MuAPI (VEED lipsync, face swap, VFX)
+- `.agents/tools/video/remotion.md` — Programmatic video editing
+- `.agents/tools/voice/voice-models.md` — TTS model comparison (ElevenLabs, MiniMax, Qwen3-TTS)
+- `.agents/tools/voice/qwen3-tts.md` — Qwen3-TTS setup and voice cloning
+- `.agents/content/production/image.md` — Image generation (Nanobanana Pro, Midjourney, Freepik)
+- `.agents/content/production/audio.md` — Voice pipeline, 4-Layer Audio Design
+- `.agents/content/production/characters.md` — Character consistency (Facial Engineering, Character Bibles)
+- `.agents/content/optimization.md` — A/B testing, seed bracketing automation
+- `.agents/scripts/seed-bracket-helper.sh` — Seed bracketing CLI
 
 ## Helper Scripts
 

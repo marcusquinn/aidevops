@@ -20,7 +20,7 @@ Write for natural speech, not written text:
 - Contractions: "it's", "don't", "we're" — never "it is", "do not"
 - Short sentences: 8-12 words for natural pacing
 - Emotional block cues: `[excited]This changed how I work.[/excited]`
-- Read aloud test: if it sounds awkward spoken, rewrite it
+- Read-aloud test: if it sounds awkward spoken, rewrite it
 
 ## Step 3: Voice Audio
 

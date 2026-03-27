@@ -22,8 +22,9 @@ Veo 3.1 excels at cinematic, character-consistent content. **CRITICAL**: Always 
 
 ```bash
 # Create ingredient via Higgsfield API
+# HF_API_KEY and HF_SECRET must be set in environment
 curl -X POST 'https://platform.higgsfield.ai/api/characters' \
-  --header 'hf-api-key: {api-key}' --header 'hf-secret: {secret}' \
+  --header "hf-api-key: ${HF_API_KEY}" --header "hf-secret: ${HF_SECRET}" \
   --form 'photo=@/path/to/character_face.jpg'
 # Returns: {"id": "3eb3ad49-775d-40bd-b5e5-38b105108780", "photo_url": "..."}
 ```
