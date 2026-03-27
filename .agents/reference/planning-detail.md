@@ -159,7 +159,7 @@ If ANY source confirms a merged PR (with verified `mergedAt`), treat the task as
 
 **After ANY TODO/planning edit** (interactive sessions only, NOT workers): Commit and push immediately. Planning-only files (TODO.md, todo/) go directly to main — no branch, no PR. Mixed changes (planning + non-exception files) use a worktree. NEVER `git checkout -b` in the main repo.
 
-**PR required for ALL non-planning changes** (MANDATORY): Every change to scripts, agents, configs, workflows, or any file outside `TODO.md`, `todo/`, and `VERIFY.md` MUST go through a worktree + PR + CI pipeline — no matter how small. "It's just one line" is not a valid reason to skip CI. The pre-edit-check script enforces this; never bypass it by editing directly on main.
+**PR required for ALL non-planning changes** (MANDATORY): Every change to scripts, agents, configs, workflows, or any file outside `TODO.md` and `todo/` MUST go through a worktree + PR + CI pipeline — no matter how small. "It's just one line" is not a valid reason to skip CI. The pre-edit-check script enforces this; never bypass it by editing directly on main.
 
 ## Task ID Allocation
 
