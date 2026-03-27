@@ -1482,8 +1482,8 @@ _ensure_quality_issue() {
 			--description "Auto-created by stats-functions.sh quality sweep" --force 2>/dev/null || true
 
 		issue_number=$(gh issue create --repo "$repo_slug" \
-			--title "Daily Code Quality Review" \
-			--body "Persistent issue for daily code quality sweeps across multiple tools (CodeRabbit, Qlty, ShellCheck, Codacy, SonarCloud). The supervisor posts findings here and creates actionable issues from them. **Do not close this issue.**" \
+			--title "Code Audit Routines" \
+			--body "Persistent dashboard for automated code quality and simplification routines (ShellCheck, Qlty, SonarCloud, Codacy, CodeRabbit). The supervisor posts findings here and creates actionable issues from them. **Do not close this issue.**" \
 			--label "quality-review" --label "persistent" --label "source:quality-sweep" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
 
 		if [[ -z "$issue_number" ]]; then
@@ -2783,15 +2783,43 @@ _update_quality_issue_body() {
 	local badge_indicator
 	badge_indicator=$(_compute_badge_indicator "$gate_status" "$qlty_grade")
 
+	# --- Simplification progress ---
+	# Count files tracked in simplification state (git-committed registry)
+	local simplified_count=0
+	local repo_path
+	repo_path=$(jq -r --arg slug "$repo_slug" \
+		'.initialized_repos[]? | select(.slug == $slug) | .path // empty' \
+		"${HOME}/.config/aidevops/repos.json" 2>/dev/null) || repo_path=""
+	local state_file=""
+	if [[ -n "$repo_path" ]]; then
+		state_file="${repo_path}/.agents/configs/simplification-state.json"
+	fi
+	if [[ -f "$state_file" ]]; then
+		simplified_count=$(jq '.files | length' "$state_file" 2>/dev/null) || simplified_count=0
+	fi
+
+	# Sanitize all variables to single-line values — prevents multi-line
+	# tool output (e.g., ShellCheck findings) from leaking into the dashboard
+	# table when the newline-delimited passing from _run_sweep_tools breaks.
+	gate_status="${gate_status%%$'\n'*}"
+	total_issues="${total_issues%%$'\n'*}"
+	high_critical="${high_critical%%$'\n'*}"
+	qlty_grade="${qlty_grade%%$'\n'*}"
+	qlty_smell_count="${qlty_smell_count%%$'\n'*}"
+	# Validate numeric fields — fall back to 0/UNKNOWN if corrupted
+	[[ "$total_issues" =~ ^[0-9]+$ ]] || total_issues=0
+	[[ "$high_critical" =~ ^[0-9]+$ ]] || high_critical=0
+	[[ "$qlty_smell_count" =~ ^[0-9]+$ ]] || qlty_smell_count=0
+
 	# --- Assemble dashboard body ---
-	local body="## Quality Review Dashboard
+	local body="## Code Audit Routines
 
 **Last sweep**: \`${sweep_time}\`
 **Repo**: \`${repo_slug}\`
 **Tools run**: ${tool_count}
 **Badge status**: ${badge_indicator}
 
-### Summary
+### Quality
 
 | Metric | Value |
 | --- | --- |
@@ -2799,10 +2827,20 @@ _update_quality_issue_body() {
 | SonarCloud issues | ${total_issues} (${high_critical} high/critical) |
 | Qlty grade | ${qlty_grade} |
 | Qlty smells | ${qlty_smell_count} |
-| Quality-debt open | ${debt_open} |
-| Quality-debt closed | ${debt_closed} |
-| Quality-debt total | ${debt_total} |
+
+### Simplification
+
+| Metric | Value |
+| --- | --- |
+| Open | ${debt_open} |
+| Closed | ${debt_closed} |
+| Simplified (state tracked) | ${simplified_count} |
 | Resolution rate | ${debt_resolution_pct}% |
+
+### PR Scanning
+
+| Metric | Value |
+| --- | --- |
 | PRs scanned (lifetime) | ${prs_scanned_lifetime} |
 | Issues created (lifetime) | ${issues_created_lifetime} |
 
@@ -2818,12 +2856,8 @@ _Auto-updated by daily quality sweep. Comments below contain detailed findings p
 		return 0
 	}
 
-	# Update issue title with stats (like supervisor health issues)
-	local title_gate="${gate_status}"
-	[[ "$gate_status" == "UNKNOWN" ]] && title_gate="--"
-	local qlty_title="${qlty_grade}"
-	[[ "$qlty_grade" == "UNKNOWN" ]] && qlty_title="--"
-	local quality_title="Daily Code Quality Review — ${title_gate}, qlty:${qlty_title}, ${debt_open} debt, ${total_issues} sonar"
+	# Update issue title — clean summary stats only, no raw tool output
+	local quality_title="Code Audit Routines — Open: ${debt_open} | Closed: ${debt_closed} | Simplified: ${simplified_count}"
 	# Only update title if it changed (avoid unnecessary API calls)
 	local current_title
 	current_title=$(gh issue view "$issue_number" --repo "$repo_slug" --json title --jq '.title' 2>>"$LOGFILE" || echo "")
