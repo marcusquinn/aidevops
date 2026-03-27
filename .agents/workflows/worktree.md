@@ -98,8 +98,12 @@ worktree-helper.sh status
 worktree-helper.sh remove feature/auth   # Removes directory, NOT the branch
 git branch -d feature/auth               # Delete branch separately if needed
 
-# Batch cleanup (merged branches)
+# Batch cleanup (merged branches — interactive only)
 worktree-helper.sh clean                 # Prompts before removing; runs git fetch --prune
+
+# Worker self-cleanup (automated — after PR merge in /full-loop)
+# Workers remove their own worktree after merge (GH#6740).
+# See full-loop.md Step 4.8 for the full procedure.
 ```
 
 ## Integration with aidevops
@@ -142,6 +146,10 @@ worktree-helper.sh remove feature/branch --force  # Override ownership (use with
 ```
 
 Registry: `~/.aidevops/.agent-workspace/worktree-registry.db`
+
+### Worker Self-Cleanup (GH#6740)
+
+Workers dispatched via `/full-loop` must remove their worktree after successful PR merge. Without this, batch dispatches (50+ workers) accumulate worktrees faster than the pulse cleanup cycle can remove them, eventually blocking new workers. See `full-loop.md` Step 4.8 and `commands/worktree-cleanup.md`.
 
 ### Squash Merge Detection
 

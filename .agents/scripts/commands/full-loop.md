@@ -290,9 +290,44 @@ After merge, post structured comment on every linked issue with: **What was done
 
 Every section needs ≥1 bullet ("None"/"N/A" if nothing). Testing level required — never omit. Gate — no `FULL_LOOP_COMPLETE` until posted.
 
-### 4.8 Worktree Cleanup
+### 4.8 Worktree Cleanup (GH#6740 — MANDATORY)
 
-See [`worktree-cleanup.md`](worktree-cleanup.md). Key: never pass `--delete-branch` to `gh pr merge` from inside a worktree.
+Workers MUST clean up their worktree after successful merge. Without this, worktrees accumulate indefinitely during batch dispatch and eventually block new workers from creating worktrees.
+
+```bash
+# After merge (Step 4.5) succeeds:
+WORKTREE_PATH="$(pwd)"
+BRANCH_NAME="$(git rev-parse --abbrev-ref HEAD)"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+CANONICAL_DIR="${REPO_ROOT%%.*}"  # ~/Git/repo from ~/Git/repo.branch-name
+
+# 1. Return to canonical repo directory (on main)
+cd "$CANONICAL_DIR" || cd "$HOME"
+
+# 2. Pull merged changes
+git pull origin main 2>/dev/null || true
+
+# 3. Remove the worktree
+HELPER="$HOME/.aidevops/agents/scripts/worktree-helper.sh"
+if [[ -x "$HELPER" ]]; then
+  WORKTREE_FORCE_REMOVE=true "$HELPER" remove "$BRANCH_NAME" --force 2>/dev/null || true
+else
+  git worktree remove --force "$WORKTREE_PATH" 2>/dev/null || true
+  git worktree prune 2>/dev/null || true
+fi
+
+# 4. Delete the remote branch (GitHub may auto-delete, but be explicit)
+git push origin --delete "$BRANCH_NAME" 2>/dev/null || true
+git branch -D "$BRANCH_NAME" 2>/dev/null || true
+```
+
+**Key rules:**
+- Never pass `--delete-branch` to `gh pr merge` from inside a worktree — it fails because the branch is checked out
+- Always `cd` out of the worktree before removing it
+- Use `--force` because the worktree is clean (all changes merged)
+- Failures are non-fatal (`|| true`) — the PR is already merged, cleanup is best-effort
+
+See [`worktree-cleanup.md`](worktree-cleanup.md) for the full procedure.
 
 ### 4.9 Postflight + Deploy
 
