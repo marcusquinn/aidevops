@@ -77,8 +77,10 @@ Same API calls, wrapped in a loop with base64 encoding for local files:
 
 ```bash
 for img in /path/to/images/*.{jpg,png,webp}; do
+  EXT="${img##*.}"
+  case "$EXT" in jpg) MIME="image/jpeg" ;; *) MIME="image/$EXT" ;; esac
   B64=$(base64 -i "$img" | tr -d '\n')
-  IMAGE_DATA="data:image/jpeg;base64,$B64"
+  IMAGE_DATA="data:${MIME};base64,$B64"
   # Use $IMAGE_DATA in place of $IMAGE_URL in the API calls above
 done
 ```
