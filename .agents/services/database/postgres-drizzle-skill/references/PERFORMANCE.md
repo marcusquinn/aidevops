@@ -39,8 +39,6 @@ index('active_users_idx').on(table.email).where(sql`deleted_at IS NULL`)
 
 ### Covering Indexes (INCLUDE)
 
-Include extra columns for index-only scans (no table access):
-
 ```sql
 CREATE INDEX orders_user_idx ON orders(user_id) INCLUDE (status, total);
 -- SELECT status, total FROM orders WHERE user_id = 123;  -- index-only scan
@@ -60,17 +58,13 @@ CREATE INDEX data_gin_path_idx ON events USING gin(data jsonb_path_ops);  -- sma
 
 ### Expression Indexes
 
+Query must match expression exactly.
+
 ```sql
 CREATE INDEX users_email_lower_idx ON users(lower(email));          -- case-insensitive
 CREATE INDEX orders_month_idx ON orders(date_trunc('month', created_at));
 CREATE INDEX events_type_idx ON events((data->>'type'));             -- JSONB field
-```
-
-**Important:** Query must match expression exactly.
-
-```sql
-SELECT * FROM users WHERE lower(email) = 'user@example.com';  -- uses index
-SELECT * FROM users WHERE email = 'USER@example.com';          -- does NOT
+-- SELECT * FROM users WHERE lower(email) = '...' uses index; WHERE email = 'UPPER@...' does NOT
 ```
 
 ## Query Optimization
@@ -99,32 +93,25 @@ SELECT * FROM orders WHERE user_id = '123' AND status = 'pending';
 const getUserById = db.select().from(users)
   .where(eq(users.id, sql.placeholder('id')))
   .prepare('get_user_by_id');
-
 const user = await getUserById.execute({ id: 'uuid-1' });  // reuses plan
 ```
 
 ### Avoid N+1 Queries
 
 ```typescript
-// Bad: N+1
+// N+1 (bad)
 for (const post of posts) {
   const author = await db.select().from(users).where(eq(users.id, post.authorId));
 }
-
-// Good: relational query (single JOIN)
+// relational query — single JOIN (good)
 const posts = await db.query.posts.findMany({ with: { author: true } });
-
-// Good: manual join
+// manual join (good)
 const posts = await db.select().from(posts).leftJoin(users, eq(posts.authorId, users.id));
 ```
 
 ### Select Only Needed Columns
 
 ```typescript
-// Bad
-const users = await db.select().from(users);
-
-// Good
 const users = await db.select({ id: users.id, email: users.email }).from(users);
 const users = await db.query.users.findMany({ columns: { id: true, email: true } });
 ```
@@ -132,11 +119,8 @@ const users = await db.query.users.findMany({ columns: { id: true, email: true }
 ### Batch Operations
 
 ```typescript
-// Bad: individual inserts in a loop
-// Good: batch insert
-await db.insert(usersTable).values(users);
-
-// Very large batches: chunk
+await db.insert(usersTable).values(users);  // batch insert
+// chunk very large batches
 const BATCH_SIZE = 1000;
 for (let i = 0; i < users.length; i += BATCH_SIZE) {
   await db.insert(usersTable).values(users.slice(i, i + BATCH_SIZE));
@@ -146,7 +130,6 @@ for (let i = 0; i < users.length; i += BATCH_SIZE) {
 ### Transactions
 
 ```typescript
-// Good: single transaction (atomic, one round trip)
 await db.transaction(async (tx) => {
   const [user] = await tx.insert(users).values({ ... }).returning();
   await tx.insert(profiles).values({ userId: user.id });
@@ -157,7 +140,7 @@ await db.transaction(async (tx) => {
 
 Each PostgreSQL connection uses ~10MB RAM. PgBouncer connections use ~2KB.
 
-### PgBouncer Configuration
+### PgBouncer
 
 ```ini
 [databases]
@@ -179,13 +162,10 @@ default_pool_size = 20
 
 **Transaction pooling limitations:** No `SET SESSION` (use `SET LOCAL`); no `PREPARE` without config; temp tables must be created/dropped in same transaction.
 
-### Drizzle Connection Pooling
+### Drizzle
 
 ```typescript
-// postgres.js (built-in pooling)
 const client = postgres(process.env.DATABASE_URL!, { max: 20, idle_timeout: 30, connect_timeout: 10 });
-
-// node-postgres
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 20, idleTimeoutMillis: 30000 });
 const db = drizzle(pool, { schema });
 ```
@@ -197,13 +177,10 @@ async function getCachedUser(userId: string) {
   const cacheKey = `user:${userId}`;
   const cached = await redis.get(cacheKey);
   if (cached) return JSON.parse(cached);
-
   const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
   if (user) await redis.setex(cacheKey, 3600, JSON.stringify(user));
   return user;
 }
-
-// Invalidate on update
 async function updateUser(userId: string, data: Partial<User>) {
   await db.update(users).set(data).where(eq(users.id, userId));
   await redis.del(`user:${userId}`);
@@ -215,13 +192,11 @@ async function updateUser(userId: string, data: Partial<User>) {
 ```typescript
 // Offset-based (simple, slow for large offsets)
 db.select().from(posts).orderBy(desc(posts.createdAt)).limit(pageSize).offset((page - 1) * pageSize)
-
 // Cursor-based (better performance)
 db.select().from(posts)
   .where(cursor ? lt(posts.id, cursor) : undefined)
   .orderBy(desc(posts.id)).limit(limit)
-
-// Keyset pagination (most efficient — composite cursor)
+// Keyset (most efficient — composite cursor)
 db.select().from(posts)
   .where(cursor ? or(
     lt(posts.createdAt, cursor.createdAt),
@@ -233,17 +208,12 @@ db.select().from(posts)
 ## Bulk Operations
 
 ```typescript
-// Bulk insert
 await db.insert(events).values(items.map(item => ({ type: item.type, data: item.data, createdAt: new Date() })));
-
-// Bulk update with CASE
 await db.execute(sql`
   UPDATE products SET price = CASE id
     ${sql.join(updates.map(u => sql`WHEN ${u.id} THEN ${u.price}`), sql` `)}
   END WHERE id IN ${sql`(${sql.join(updates.map(u => u.id), sql`, `)})`}
 `);
-
-// Bulk upsert
 await db.insert(products).values(products).onConflictDoUpdate({
   target: products.sku,
   set: { price: sql`excluded.price`, updatedAt: new Date() },
@@ -252,32 +222,23 @@ await db.insert(products).values(products).onConflictDoUpdate({
 
 ## Performance Checklist
 
-**PostgreSQL config:**
-- `shared_buffers` = 25% of RAM
-- `effective_cache_size` = 50-75% of RAM
-- `work_mem`: OLTP 4-16MB, OLAP 64-256MB
-- `io_method = worker` + `io_workers` ~1/4 CPU cores (PostgreSQL 18)
-
-**Indexing:** Foreign keys indexed; partial indexes for filtered subsets; covering indexes for hot queries; GIN `jsonb_path_ops` for JSONB containment; remove unused indexes.
-
-**Queries:** `EXPLAIN (ANALYZE, BUFFERS)` for optimization; prepared statements for repeated queries; relational queries API to avoid N+1; select only needed columns; cursor-based pagination for large datasets.
-
-**Application:** Connection pooling; batch insert/update; cache frequently accessed data; use transactions appropriately.
-
-**Maintenance:** Autovacuum configured; `ANALYZE` after bulk changes; monitor table/index bloat; `REINDEX CONCURRENTLY` periodically.
+| Area | Key Actions |
+|------|-------------|
+| **PostgreSQL config** | `shared_buffers`=25% RAM; `effective_cache_size`=50-75% RAM; `work_mem` 4-16MB (OLTP) / 64-256MB (OLAP); `io_method=worker` + `io_workers`~¼ CPU cores (PG18) |
+| **Indexing** | Index foreign keys; partial indexes for filtered subsets; covering indexes for hot queries; GIN `jsonb_path_ops` for containment; remove unused indexes |
+| **Queries** | `EXPLAIN (ANALYZE, BUFFERS)` to diagnose; prepared statements for repeated queries; relational API to avoid N+1; select only needed columns; cursor pagination for large datasets |
+| **Application** | Connection pooling; batch insert/update; cache frequently read data; use transactions appropriately |
+| **Maintenance** | Autovacuum configured; `ANALYZE` after bulk changes; monitor table/index bloat; `REINDEX CONCURRENTLY` periodically |
 
 ## Monitoring
 
 ```sql
--- Slow query logging
-ALTER SYSTEM SET log_min_duration_statement = 1000;  -- 1 second
+ALTER SYSTEM SET log_min_duration_statement = 1000;  -- log queries >1s
 
--- Top queries by time (requires pg_stat_statements extension)
 CREATE EXTENSION pg_stat_statements;
 SELECT query, calls, mean_exec_time, total_exec_time
 FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 20;
 
--- Index efficiency
 SELECT t.tablename,
   pg_size_pretty(pg_table_size(t.tablename::regclass)) AS table_size,
   indexname,
