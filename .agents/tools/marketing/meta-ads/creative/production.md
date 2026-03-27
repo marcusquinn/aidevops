@@ -55,7 +55,7 @@ Expect to test 5-10 concepts to find 1-2 winners.
 
 **Folder structure:**
 
-```
+```text
 Creative Assets/
 ├── Raw Footage/  UGC/[Creator]/[Date]_[Concept].mp4 | Founder/ | Product/
 ├── Edited/       Videos/ | Images/ | Carousels/
