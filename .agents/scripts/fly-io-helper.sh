@@ -303,6 +303,102 @@ cmd_apps() {
 	return $?
 }
 
+cmd_ssh() {
+	local fly_cmd="$1"
+	local app="$2"
+	shift 2
+
+	require_app "$app" || return 1
+
+	# No args: open interactive SSH console
+	if [[ $# -eq 0 ]]; then
+		print_info "Opening SSH console for $app"
+		"$fly_cmd" ssh console --app "$app"
+		return $?
+	fi
+
+	local action="$1"
+	shift
+
+	case "$action" in
+	console)
+		print_info "Opening SSH console for $app"
+		if [[ $# -gt 0 ]]; then
+			"$fly_cmd" ssh console --app "$app" "$@"
+		else
+			"$fly_cmd" ssh console --app "$app"
+		fi
+		return $?
+		;;
+	sftp)
+		print_info "Opening SFTP session for $app"
+		if [[ $# -gt 0 ]]; then
+			"$fly_cmd" ssh sftp "$@" --app "$app"
+		else
+			"$fly_cmd" ssh sftp shell --app "$app"
+		fi
+		return $?
+		;;
+	issue)
+		print_info "Issuing SSH certificate for $app"
+		"$fly_cmd" ssh issue --app "$app" "$@"
+		return $?
+		;;
+	*)
+		print_error "Unknown ssh action: $action"
+		print_info "Available: console, sftp, issue"
+		return 1
+		;;
+	esac
+}
+
+cmd_destroy() {
+	local fly_cmd="$1"
+	local app="$2"
+	shift 2
+
+	require_app "$app" || return 1
+
+	print_warning "IRREVERSIBLE: This will permanently destroy app '$app' and all its data."
+	print_warning "All machines, volumes, and configuration will be deleted."
+
+	# Require explicit --yes flag to prevent accidental destruction
+	local confirmed="false"
+	local extra_args=()
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--yes | -y)
+			confirmed="true"
+			;;
+		*)
+			extra_args+=("$1")
+			;;
+		esac
+		shift
+	done
+
+	if [[ "$confirmed" != "true" ]]; then
+		print_error "Confirmation required. Re-run with --yes to confirm destruction of '$app'."
+		print_info "Usage: $SCRIPT_NAME destroy $app --yes"
+		return 1
+	fi
+
+	print_info "Destroying app: $app"
+	if [[ ${#extra_args[@]} -gt 0 ]]; then
+		"$fly_cmd" apps destroy "$app" --yes "${extra_args[@]}"
+	else
+		"$fly_cmd" apps destroy "$app" --yes
+	fi
+	local rc=$?
+
+	if [[ $rc -eq 0 ]]; then
+		print_success "App '$app' destroyed"
+	else
+		print_error "Destroy failed for '$app' (exit $rc)"
+	fi
+	return $rc
+}
+
 # ------------------------------------------------------------------------------
 # HELP
 # ------------------------------------------------------------------------------
@@ -313,14 +409,16 @@ $HELP_LABEL_USAGE
   $SCRIPT_NAME <command> [app] [args...]
 
 $HELP_LABEL_COMMANDS
-  deploy  <app> [flags]                          Deploy app (wraps fly deploy)
-  scale   <app> [count|vm|memory|show] [args]    Scale machines or show current scale
-  status  <app>                                   Show app health and machine status
-  secrets <app> [list|set|unset|import] [args]    Manage secrets (names only — values never shown)
-  volumes <app> [list|create|extend|destroy] [args]  Manage persistent volumes
-  logs    <app> [flags]                           Show recent logs
-  apps    [flags]                                 List all Fly.io apps
-  help                                            Show this help
+  deploy  <app> [flags]                              Deploy app (wraps fly deploy)
+  scale   <app> [count|vm|memory|show] [args]        Scale machines or show current scale
+  status  <app>                                       Show app health and machine status
+  secrets <app> [list|set|unset|import] [args]        Manage secrets (names only — values never shown)
+  volumes <app> [list|create|extend|destroy] [args]   Manage persistent volumes
+  logs    <app> [flags]                               Show recent logs
+  ssh     <app> [console|sftp|issue] [args]           SSH into app machines
+  destroy <app> --yes                                 Permanently destroy app (irreversible)
+  apps    [flags]                                     List all Fly.io apps
+  help                                                Show this help
 
 $HELP_LABEL_EXAMPLES
   $SCRIPT_NAME deploy my-app
@@ -337,6 +435,9 @@ $HELP_LABEL_EXAMPLES
   $SCRIPT_NAME volumes my-app extend vol_abc123 --size 20
   $SCRIPT_NAME logs my-app
   $SCRIPT_NAME logs my-app --region lhr
+  $SCRIPT_NAME ssh my-app
+  $SCRIPT_NAME ssh my-app console --command "/bin/sh"
+  $SCRIPT_NAME destroy my-app --yes
   $SCRIPT_NAME apps
 EOF
 	return 0
@@ -364,7 +465,7 @@ main() {
 
 	# Check auth for all operational commands
 	case "$command" in
-	deploy | scale | status | secrets | volumes | logs | apps)
+	deploy | scale | status | secrets | volumes | logs | ssh | destroy | apps)
 		check_auth "$fly_cmd" || return 1
 		;;
 	*)
@@ -380,7 +481,7 @@ main() {
 		cmd_apps "$fly_cmd" "$@"
 		return $?
 		;;
-	deploy | scale | status | secrets | volumes | logs)
+	deploy | scale | status | secrets | volumes | logs | ssh | destroy)
 		local app_name="${1:-}"
 		shift || true
 		"cmd_${command}" "$fly_cmd" "$app_name" "$@"
