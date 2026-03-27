@@ -3049,29 +3049,14 @@ async function poolActionCheck(providerArg, now) {
  */
 export function createPoolTool(client) {
   return {
-    description: [
-      "Manage OAuth account pool for provider credential rotation.",
-      "Use 'list' to see all accounts and their status,",
-      "'rotate' to switch to the next pool account,",
-      "'remove <email>' to remove an account,",
-      "'assign-pending <email>' to assign a pending unidentified token to an account,",
-      "'check' to test token validity for all accounts,",
-      "'status' for rotation statistics.",
-      "Supports providers: anthropic (Claude Pro/Max), openai (ChatGPT Plus/Pro),",
-      "cursor (Cursor Pro), and google (Google AI Pro/Ultra/Workspace).",
-      "The agent should route natural language requests about managing",
-      "provider accounts, OAuth pools, or credential rotation to this tool.",
-      "Shell equivalent: oauth-pool-helper.sh supports the same actions",
-      "(rotate, status, assign-pending, check, list, remove, add).",
-    ].join(" "),
+    description: "Manage OAuth account pool for provider credential rotation. Actions: list, rotate, remove, assign-pending, check, status, reset-cooldowns. Providers: anthropic, openai, cursor, google. Shell equivalent: oauth-pool-helper.sh.",
     parameters: {
       type: "object",
       properties: {
         action: {
           type: "string",
           enum: ["list", "remove", "status", "reset-cooldowns", "rotate", "assign-pending", "check"],
-          description:
-            "Action to perform: list accounts, remove an account, show status, reset cooldowns, rotate to next account, assign a pending token, or check token validity",
+          description: "Action to perform",
         },
         email: {
           type: "string",
