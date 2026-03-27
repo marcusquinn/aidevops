@@ -19,16 +19,12 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Build cross-browser extensions with modern tooling
 - **Framework**: WXT (recommended), Plasmo, or vanilla Manifest V3
 - **Docs**: Use Context7 MCP for latest WXT, Plasmo, and WebExtension API docs
 - **Reference**: TurboStarter extension structure at `~/Git/turbostarter/core/apps/extension/`
 
-**WXT scaffold**:
-
 ```bash
-npx wxt@latest init my-extension
-cd my-extension
+npx wxt@latest init my-extension && cd my-extension
 npm run dev        # Dev mode with HMR
 npm run build      # Production build
 ```
@@ -39,66 +35,28 @@ npm run build      # Production build
 
 ```text
 my-extension/
-├── wxt.config.ts            # WXT configuration
-├── package.json
-├── tsconfig.json
+├── wxt.config.ts                    # WXT configuration
 ├── src/
-│   ├── entrypoints/         # Extension entry points
-│   │   ├── background.ts    # Service worker
-│   │   ├── content.ts       # Content script
-│   │   ├── popup/           # Popup UI
-│   │   │   ├── index.html
-│   │   │   ├── App.tsx
-│   │   │   └── style.css
-│   │   ├── options/         # Options page
-│   │   │   ├── index.html
-│   │   │   └── App.tsx
-│   │   ├── sidepanel/       # Side panel (Chrome 114+)
-│   │   │   ├── index.html
-│   │   │   └── App.tsx
-│   │   └── newtab/          # New tab override
-│   │       ├── index.html
-│   │       └── App.tsx
-│   ├── components/          # Shared UI components
-│   ├── hooks/               # Shared React hooks
-│   ├── lib/                 # Utilities
-│   │   ├── storage.ts       # Storage abstraction
-│   │   ├── messaging.ts     # Message passing
-│   │   └── api.ts           # Backend API client
-│   ├── assets/              # Icons, images
-│   │   └── icon.png         # Extension icon (128x128 minimum)
-│   └── styles/              # Global styles
-│       └── globals.css
-├── public/                  # Static assets
-└── .output/                 # Build output
-    ├── chrome-mv3/          # Chrome build
-    └── firefox-mv2/         # Firefox build
+│   ├── entrypoints/                 # background.ts, content.ts, popup/, options/, sidepanel/, newtab/
+│   ├── components/ hooks/           # Shared UI + React hooks
+│   ├── lib/                         # storage.ts, messaging.ts, api.ts
+│   └── assets/                      # Icons (128x128 min), images
+└── .output/                         # chrome-mv3/, firefox-mv2/
 ```
 
-## Extension Architecture
-
-### Entry Points
+## Entry Points
 
 | Entry Point | Purpose | Manifest Key |
 |-------------|---------|-------------|
-| **Background** (Service Worker) | Event handling, API calls, state management | `background.service_worker` |
-| **Content Script** | Modify web pages, inject UI, read page data | `content_scripts` |
-| **Popup** | Quick actions UI (click extension icon) | `action.default_popup` |
-| **Options** | Settings and configuration page | `options_ui` |
-| **Side Panel** | Persistent sidebar UI (Chrome 114+) | `side_panel` |
-| **New Tab** | Override new tab page | `chrome_url_overrides.newtab` |
+| **Background** (Service Worker) | Event handling, API calls, state | `background.service_worker` |
+| **Content Script** | Modify web pages, inject UI | `content_scripts` |
+| **Popup** | Quick actions (click icon) | `action.default_popup` |
+| **Options** | Settings page | `options_ui` |
+| **Side Panel** | Persistent sidebar (Chrome 114+) | `side_panel` |
+| **New Tab** | Override new tab | `chrome_url_overrides.newtab` |
 | **DevTools** | Developer tools panel | `devtools_page` |
 
-### Communication Patterns
-
-```text
-Content Script <-> Background (Service Worker) <-> Popup/Options/SidePanel
-       |                    |
-       v                    v
-   Web Page            External APIs
-```
-
-**Message passing**:
+## Message Passing
 
 ```typescript
 // Content script -> Background
@@ -107,32 +65,27 @@ chrome.runtime.sendMessage({ type: 'getData', url: window.location.href });
 // Background -> Content script
 chrome.tabs.sendMessage(tabId, { type: 'updateUI', data: result });
 
-// Background message handler
+// Background handler — return true to keep channel open for async
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'getData') {
     fetchData(message.url).then(sendResponse);
-    return true; // Keep channel open for async response
+    return true;
   }
 });
 ```
 
-### Storage
+## Storage
 
 ```typescript
-// Sync storage (syncs across devices, 100KB limit)
-await chrome.storage.sync.set({ preferences: { theme: 'dark' } });
+await chrome.storage.sync.set({ preferences: { theme: 'dark' } });   // Syncs across devices, 100KB limit
+await chrome.storage.local.set({ cache: largeData });                 // Device-only, 5MB limit
+await chrome.storage.session.set({ tempToken: 'abc' });               // Cleared on restart, MV3 only
 const { preferences } = await chrome.storage.sync.get('preferences');
-
-// Local storage (device-only, 5MB limit)
-await chrome.storage.local.set({ cache: largeData });
-
-// Session storage (cleared on browser restart, MV3 only)
-await chrome.storage.session.set({ tempToken: 'abc' });
 ```
 
-### Permissions
+## Permissions
 
-Request only what you need. Prefer optional permissions:
+Request only what you need. Prefer optional permissions (requested at runtime):
 
 ```json
 {
@@ -142,101 +95,52 @@ Request only what you need. Prefer optional permissions:
 }
 ```
 
-**Optional permissions** (requested at runtime):
-
 ```typescript
-const granted = await chrome.permissions.request({
-  permissions: ['tabs'],
-  origins: ['https://*.example.com/*'],
-});
+const granted = await chrome.permissions.request({ permissions: ['tabs'], origins: ['https://*.example.com/*'] });
 ```
 
 ## Cross-Browser Compatibility
 
-### Manifest Differences
-
 | Feature | Chrome (MV3) | Firefox (MV2/MV3) |
 |---------|-------------|-------------------|
-| Background | `service_worker` | `scripts` (MV2) or `service_worker` (MV3) |
-| Action | `action` | `browser_action` (MV2) or `action` (MV3) |
-| Host permissions | `host_permissions` | `permissions` (MV2) or `host_permissions` (MV3) |
-| Side panel | Supported (Chrome 114+) | Not supported |
-| Content security | `content_security_policy.extension_pages` | `content_security_policy` (string) |
+| Background | `service_worker` | `scripts` (MV2) / `service_worker` (MV3) |
+| Action | `action` | `browser_action` (MV2) / `action` (MV3) |
+| Host permissions | `host_permissions` | `permissions` (MV2) / `host_permissions` (MV3) |
+| Side panel | Chrome 114+ | Not supported |
+| CSP | `content_security_policy.extension_pages` | `content_security_policy` (string) |
 
-WXT handles most of these differences automatically.
-
-### Browser-Specific APIs
-
-```typescript
-// Use webextension-polyfill for cross-browser compatibility
-import browser from 'webextension-polyfill';
-
-// Or check for API availability
-if (chrome.sidePanel) {
-  // Chrome-specific side panel
-}
-```
+WXT handles most differences automatically. For manual compat: `import browser from 'webextension-polyfill'`.
 
 ## Development Standards
 
-### TypeScript
+- **TypeScript** always — type messages, storage schemas, API responses
+- **UI**: React (recommended), Vue (WXT first-class), Svelte (smallest bundle), or vanilla
+- **Styling**: Tailwind CSS (recommended), CSS Modules, or Shadow DOM for content scripts
 
-Always use TypeScript. Define types for all messages, storage schemas, and API responses.
-
-### UI Framework
-
-- **React** (recommended): Largest ecosystem, TurboStarter uses it
-- **Vue**: Good alternative, WXT has first-class support
-- **Svelte**: Smallest bundle size, WXT supports it
-- **Vanilla**: For minimal extensions
-
-### Styling
-
-- **Tailwind CSS**: Recommended for rapid development
-- **CSS Modules**: For component isolation
-- **Shadow DOM**: For content script UI (prevents host page style conflicts)
-
-### Content Script UI Isolation
-
-When injecting UI into web pages, use Shadow DOM to prevent style conflicts:
+Content script UI isolation — Shadow DOM prevents host page style conflicts:
 
 ```typescript
 const host = document.createElement('div');
 const shadow = host.attachShadow({ mode: 'closed' });
 shadow.innerHTML = `
-  <style>/* Your isolated styles */</style>
+  <style>/* Isolated styles */</style>
   <div id="app"><!-- Your UI --></div>
 `;
 document.body.appendChild(host);
 ```
 
-## Performance
+## Performance & Security
 
-- Keep service worker lightweight (it's unloaded when idle in MV3)
-- Use `chrome.alarms` instead of `setInterval` for periodic tasks
-- Lazy-load heavy dependencies
-- Minimise content script injection (use `matches` patterns carefully)
-- Use `chrome.storage` change listeners instead of polling
-
-## Security
-
-- Never store secrets in extension code (use backend API)
-- Validate all messages between contexts
-- Use Content Security Policy (CSP)
-- Sanitise any HTML injected into pages
-- Request minimal permissions
-- Use `activeTab` instead of broad host permissions when possible
+- Service worker is unloaded when idle (MV3) — keep lightweight
+- `chrome.alarms` over `setInterval`; `chrome.storage` listeners over polling
+- Lazy-load heavy deps; minimise content script `matches` scope
+- Never store secrets in extension code — use backend API
+- Validate all inter-context messages; sanitise injected HTML
+- Enforce CSP; prefer `activeTab` over broad host permissions
 
 ## Related
 
-- `tools/browser/extension-dev/testing.md` - Testing extensions
-- `tools/browser/extension-dev/publishing.md` - Store submission
-- `tools/browser/chrome-webstore-release.md` - Chrome Web Store automation
-- `tools/ui/wxt.md` - Dedicated WXT framework agent
-- `tools/ui/tailwind-css.md` - Tailwind CSS styling
-- `tools/ui/shadcn.md` - shadcn/ui components (for extension UIs)
-- `tools/ui/react-email.md` - React Email (for transactional emails)
-- `tools/api/hono.md` - Hono API framework (for extension backends)
-- `tools/api/better-auth.md` - Authentication
-- `services/payments/stripe.md` - Stripe payments (for premium extensions)
-- `product/ui-design.md` - Design standards (shared across all product types)
+- **Extension dev**: `testing.md`, `publishing.md`, `chrome-webstore-release.md` (in `tools/browser/`)
+- **UI/Styling**: `tools/ui/wxt.md`, `tools/ui/tailwind-css.md`, `tools/ui/shadcn.md`
+- **Backend**: `tools/api/hono.md`, `tools/api/better-auth.md`, `services/payments/stripe.md`
+- **Design**: `product/ui-design.md`
