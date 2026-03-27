@@ -33,131 +33,57 @@ flowchart TB
 
 ## Commands vs Queries
 
-### Commands (Write Side)
-
-Commands represent intent to change state. They **mutate** data.
+**Commands** mutate state; **queries** retrieve data without side effects.
 
 ```typescript
-// application/commands/place_order_command.ts
-export interface PlaceOrderCommand {
-  type: 'PlaceOrder';
-  customerId: string;
-  items: Array<{ productId: string; quantity: number }>;
-}
-
+// Command handler — write side (mutates state, publishes events)
 export class PlaceOrderHandler {
-  async handle(command: PlaceOrderCommand): Promise<OrderId> {
-    const order = Order.create(CustomerId.from(command.customerId));
-    for (const item of command.items) {
-      const product = await this.productRepo.findById(item.productId);
-      order.addItem(product.id, item.quantity, product.price);
-    }
+  async handle(cmd: PlaceOrderCommand): Promise<OrderId> {
+    const order = Order.create(CustomerId.from(cmd.customerId));
+    for (const item of cmd.items) order.addItem((await this.productRepo.findById(item.productId)).id, item.quantity);
     await this.orderRepo.save(order);
     await this.eventPublisher.publishAll(order.domainEvents);
     return order.id;
   }
 }
-```
 
-### Queries (Read Side)
-
-Queries retrieve data without side effects. They **never mutate** state.
-
-```typescript
-// application/queries/get_order_query.ts
-export interface OrderDTO {
-  id: string;
-  customerId: string;
-  customerName: string;
-  status: string;
-  items: Array<{ productId: string; productName: string; quantity: number; unitPrice: number; subtotal: number }>;
-  total: number;
-  createdAt: string;
-  confirmedAt?: string;
-}
-
+// Query handler — read side (never mutates state)
 export class GetOrderHandler {
-  constructor(private readonly readDb: IOrderReadModel) {}
   async handle(query: { orderId: string }): Promise<OrderDTO | null> {
     return this.readDb.findById(query.orderId);
   }
 }
-
-export class GetOrdersByCustomerHandler {
-  constructor(private readonly readDb: IOrderReadModel) {}
-  async handle(query: { customerId: string; status?: OrderStatus; page?: number; pageSize?: number }): Promise<PaginatedResult<OrderDTO>> {
-    return this.readDb.findByCustomer(query.customerId, query.status, query.page ?? 1, query.pageSize ?? 20);
-  }
-}
 ```
 
-## Read Model (Projection)
-
-Optimized database structure for queries. Can denormalize data for performance. Separate write and read databases are optional — write is normalized for transactions, read is denormalized for queries.
-
-```
-interface IOrderReadModel:
-    findById(orderId: string) -> OrderDTO | null
-    findByCustomer(customerId, status?, page?, pageSize?) -> PaginatedResult<OrderDTO>
-    search(criteria: OrderSearchCriteria) -> List<OrderDTO>
-```
+**Read model** is optimized for queries — denormalized, separate from the write database (optional; start with same DB, different query paths).
 
 ## Domain Events
 
-Notifications that something happened in the domain. Used for updating read models, cross-aggregate communication, and integration with other bounded contexts.
+Notifications that something happened. Used for updating read models, cross-aggregate communication, and integration with other bounded contexts.
 
 ```typescript
-// domain/shared/domain_event.ts
 export abstract class DomainEvent {
-  readonly eventId: string = crypto.randomUUID();
-  readonly occurredAt: Date = new Date();
+  readonly eventId = crypto.randomUUID();
+  readonly occurredAt = new Date();
   abstract readonly eventType: string;
   constructor(readonly aggregateId: string) {}
   abstract toPayload(): Record<string, unknown>;
 }
 
-// domain/order/events.ts
-export class OrderCreated extends DomainEvent {
-  readonly eventType = 'order.created';
-  constructor(readonly orderId: OrderId, readonly customerId: CustomerId) {
-    super(orderId.value);
-  }
-  toPayload() { return { orderId: this.orderId.value, customerId: this.customerId.value }; }
-}
-
+// Concrete event — carries only what changed
 export class OrderConfirmed extends DomainEvent {
   readonly eventType = 'order.confirmed';
-  constructor(readonly orderId: OrderId, readonly total: Money, readonly items: ReadonlyArray<{ productId: string; quantity: number }>) {
-    super(orderId.value);
-  }
+  constructor(readonly orderId: OrderId, readonly total: Money, readonly items: ReadonlyArray<{ productId: string; quantity: number }>) { super(orderId.value); }
   toPayload() { return { orderId: this.orderId.value, total: { amount: this.total.amount, currency: this.total.currency }, items: this.items }; }
 }
-
-export class OrderShipped extends DomainEvent {
-  readonly eventType = 'order.shipped';
-  constructor(readonly orderId: OrderId, readonly trackingNumber: string, readonly carrier: string) {
-    super(orderId.value);
-  }
-  toPayload() { return { orderId: this.orderId.value, trackingNumber: this.trackingNumber, carrier: this.carrier }; }
-}
 ```
 
-### Event Handlers
+Event handlers update read models or trigger side effects:
 
 ```
-class OrderCreatedHandler:
-    handle(event: OrderCreated):
-        db.ordersRead.insert({ id: event.orderId.value, customerId: event.customerId.value, status: "draft", createdAt: event.occurredAt })
-
 class OrderConfirmedHandler:
     handle(event: OrderConfirmed):
         db.ordersRead.where(id: event.orderId.value).update({ status: "confirmed", total: event.total.amount, confirmedAt: event.occurredAt })
-
-class SendShippingNotificationHandler:
-    async handle(event: OrderShipped):
-        order = await orderRepo.findById(OrderId.from(event.orderId.value))
-        if !order: return
-        await notifier.sendEmail(order.customerEmail, { template: 'order-shipped', data: { orderId: event.orderId.value, trackingNumber: event.trackingNumber, carrier: event.carrier } })
 ```
 
 ## Domain Events vs Integration Events
@@ -169,29 +95,7 @@ class SendShippingNotificationHandler:
 | Transport | In-process | Message broker |
 | Schema | Internal | Versioned |
 
-```typescript
-// Domain event — internal, fine-grained
-class OrderItemQuantityIncreased extends DomainEvent {
-  constructor(readonly orderId: OrderId, readonly productId: ProductId, readonly oldQuantity: number, readonly newQuantity: number) { super(orderId.value); }
-}
-
-// Integration event — external, versioned
-interface OrderConfirmedIntegrationEvent {
-  eventType: 'sales.order.confirmed';
-  eventId: string;
-  version: '1.0';
-  occurredAt: string;
-  payload: {
-    orderId: string;
-    customerId: string;
-    total: { amount: number; currency: string };
-    items: Array<{ productId: string; quantity: number; unitPrice: number }>;
-    shippingAddress: { street: string; city: string; postalCode: string; country: string };
-  };
-}
-```
-
-Publishing integration events from domain events:
+Publishing integration events from domain events — a domain event handler fetches the aggregate and publishes a versioned, coarser-grained integration event to the message broker:
 
 ```typescript
 export class PublishOrderConfirmedIntegrationEvent {
@@ -199,16 +103,11 @@ export class PublishOrderConfirmedIntegrationEvent {
     const order = await this.orderRepo.findById(domainEvent.orderId);
     if (!order) return;
     await this.messageBroker.publish('order-events', {
-      eventType: 'sales.order.confirmed',
-      eventId: crypto.randomUUID(),
-      version: '1.0',
+      eventType: 'sales.order.confirmed', eventId: crypto.randomUUID(), version: '1.0',
       occurredAt: new Date().toISOString(),
-      payload: {
-        orderId: order.id.value,
-        customerId: order.customerId.value,
+      payload: { orderId: order.id.value, customerId: order.customerId.value,
         total: { amount: order.total.amount, currency: order.total.currency },
         items: order.items.map(i => ({ productId: i.productId.value, quantity: i.quantity.value, unitPrice: i.unitPrice.amount })),
-        shippingAddress: order.shippingAddress ?? null,
       },
     });
   }
@@ -217,93 +116,57 @@ export class PublishOrderConfirmedIntegrationEvent {
 
 ## Event Dispatcher Pattern
 
+Routes events to registered handlers. Multiple handlers per event type are supported (fan-out).
+
 ```typescript
-// infrastructure/events/event_dispatcher.ts
 export class EventDispatcher {
   private handlers: Map<string, IEventHandler<any>[]> = new Map();
-
   register<T extends DomainEvent>(eventType: string, handler: IEventHandler<T>): void {
-    const existing = this.handlers.get(eventType) ?? [];
-    this.handlers.set(eventType, [...existing, handler]);
+    this.handlers.set(eventType, [...(this.handlers.get(eventType) ?? []), handler]);
   }
-
   async dispatch(event: DomainEvent): Promise<void> {
-    const handlers = this.handlers.get(event.eventType) ?? [];
-    await Promise.all(handlers.map(h => h.handle(event)));
+    await Promise.all((this.handlers.get(event.eventType) ?? []).map(h => h.handle(event)));
   }
-
   async dispatchAll(events: DomainEvent[]): Promise<void> {
     for (const event of events) await this.dispatch(event);
   }
 }
 
-// Registration
-dispatcher.register('order.created', new OrderCreatedHandler(readDb));
+// One event type can have multiple handlers (fan-out)
 dispatcher.register('order.confirmed', new OrderConfirmedHandler(readDb));
 dispatcher.register('order.confirmed', new PublishOrderConfirmedIntegrationEvent(broker, orderRepo));
-dispatcher.register('order.shipped', new SendShippingNotificationHandler(orderRepo, notifier));
 ```
 
 ## Outbox Pattern
 
-Ensures events are published reliably (exactly-once semantics).
+Ensures reliable event publishing (exactly-once semantics): write events to an outbox table in the **same transaction** as the aggregate, then publish asynchronously.
 
 ```
-class PlaceOrderHandler:
-    handle(command: PlaceOrderCommand) -> OrderId:
-        order = Order.create(CustomerId.from(command.customerId))
-        db.transaction((tx) => {
-            orderRepo.save(order, tx)
-            for event in order.domainEvents:
-                tx.outbox.insert({ id: event.eventId, eventType: event.eventType, payload: serialize(event.toPayload()), createdAt: event.occurredAt })
-        })
-        return order.id
+// In command handler — single transaction
+db.transaction((tx) => {
+    orderRepo.save(order, tx)
+    for event in order.domainEvents:
+        tx.outbox.insert({ id: event.eventId, eventType: event.eventType, payload: serialize(event.toPayload()), createdAt: event.occurredAt })
+})
 
+// Background processor
 class OutboxProcessor:
     process():
         messages = db.outbox.where(processedAt: null).orderBy("createdAt").limit(100).lockForUpdate()
         for message in messages:
-            try:
-                messageBroker.publish(message.eventType, message.payload)
-                db.outbox.where(id: message.id).update({processedAt: now()})
-            catch error:
-                log.error("Failed to process outbox message", message.id)
+            messageBroker.publish(message.eventType, message.payload)
+            db.outbox.where(id: message.id).update({processedAt: now()})
 ```
 
 ## When to Use CQRS
 
 > **Warning:** "You should be very cautious about using CQRS... the majority of cases I've run into have not been so good." — Martin Fowler
 
-**Use CQRS when:**
-- Read and write workloads have dramatically different scaling requirements
-- Complex queries that genuinely don't map well to domain model
-- Event sourcing is used (CQRS pairs naturally with ES)
-- You've proven simpler approaches are insufficient
+**Use when:** Read/write workloads have dramatically different scaling requirements; complex queries don't map well to the domain model; event sourcing is used; simpler approaches are proven insufficient.
 
-**Skip CQRS when:**
-- Simple CRUD application (most applications)
-- Read/write patterns are similar
-- Small team, simple domain
-- Adding it "just in case"
+**Skip when:** Simple CRUD; similar read/write patterns; small team or simple domain; adding "just in case".
 
-**CQRS applies to specific bounded contexts, never entire systems.**
-
-**Start simple** — same database, different query paths:
-
-```typescript
-class OrderService {
-  async placeOrder(cmd: PlaceOrderCommand): Promise<OrderId> {
-    const order = Order.create(...);
-    await this.orderRepo.save(order);
-    return order.id;
-  }
-  async getOrder(id: string): Promise<OrderDTO | null> {
-    return this.readModel.findById(id);
-  }
-}
-```
-
-Evolve to separate databases only when needed.
+**CQRS applies to specific bounded contexts, never entire systems.** Start with the same database and separate query paths; evolve to separate databases only when proven necessary.
 
 ## Event Sourcing: Critical Considerations
 
