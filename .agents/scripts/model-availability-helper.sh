@@ -33,6 +33,7 @@
 #   1 - Provider/model unavailable or error
 #   2 - Rate limited (retry after delay)
 #   3 - API key invalid or missing
+#   4 - Spending/billing limit reached (provider-level backoff)
 #
 # Author: AI DevOps Framework
 # Version: 1.0.0
@@ -195,6 +196,25 @@ _opencode_model_exists() {
 			'[.[] | .models[$m] // empty] | length > 0' "$OPENCODE_MODELS_CACHE" >/dev/null 2>&1
 		return $?
 	fi
+}
+
+# =============================================================================
+# Spending / Billing Limit Detection (GH#8229)
+# =============================================================================
+# Detects MonthlyLimitError and similar billing cap errors from API responses.
+# These are distinct from auth errors: the key is valid but the account has
+# exhausted its spending budget. Requires provider-level backoff (not model-level)
+# because all models under the same account share the spending cap.
+
+# Check if an HTTP response body contains a spending/billing limit error.
+# Delegates to is_spending_limit_error() in shared-constants.sh.
+# Returns 0 if spending limit detected, 1 otherwise.
+_is_spending_limit_error() {
+	local body="$1"
+	local lowered
+	lowered=$(printf '%s' "$body" | tr '[:upper:]' '[:lower:]')
+	is_spending_limit_error "$lowered"
+	return $?
 }
 
 # =============================================================================
@@ -464,6 +484,10 @@ _probe_return_cached() {
 		[[ "$quiet" != "true" ]] && print_warning "$provider: cached key-invalid"
 		return 3
 		;;
+	spending_limit)
+		[[ "$quiet" != "true" ]] && print_warning "$provider: cached spending-limit"
+		return 4
+		;;
 	*)
 		[[ "$quiet" != "true" ]] && print_warning "$provider: cached unhealthy"
 		return 1
@@ -471,26 +495,69 @@ _probe_return_cached() {
 	esac
 }
 
-# Probe the OpenCode meta-provider via its local models cache (no API key needed).
-# Returns: 0=healthy, 1=unhealthy
+# Probe the OpenCode meta-provider.
+# Two-phase check (GH#8229):
+#   1. Local models cache — confirms CLI is installed and models are listed
+#   2. Live API probe — lightweight /models call to detect spending/billing limits
+# The cache check alone cannot detect account-level budget exhaustion because
+# the models list is static. A MonthlyLimitError only surfaces on actual API calls.
+# Returns: 0=healthy, 1=unhealthy, 4=spending-limit
 _probe_opencode() {
 	local quiet="${1:-false}"
 
-	if _is_opencode_available; then
-		local oc_models_count=0
-		oc_models_count=$(jq -r '.opencode.models | length' "$OPENCODE_MODELS_CACHE" 2>/dev/null || echo "0")
-		_record_health "opencode" "healthy" 200 0 "" "$oc_models_count"
-		[[ "$quiet" != "true" ]] && print_success "opencode: healthy ($oc_models_count models in cache)"
-		db_query "
-            INSERT INTO probe_log (provider, action, result, duration_ms, details)
-            VALUES ('opencode', 'cache_check', 'healthy', 0, '$oc_models_count models from cache');
-        " || true
-		return 0
+	if ! _is_opencode_available; then
+		_record_health "opencode" "unhealthy" 0 0 "OpenCode CLI or models cache not found" 0
+		[[ "$quiet" != "true" ]] && print_warning "opencode: CLI or models cache not available"
+		return 1
 	fi
 
-	_record_health "opencode" "unhealthy" 0 0 "OpenCode CLI or models cache not found" 0
-	[[ "$quiet" != "true" ]] && print_warning "opencode: CLI or models cache not available"
-	return 1
+	local oc_models_count=0
+	oc_models_count=$(jq -r '.opencode.models | length' "$OPENCODE_MODELS_CACHE" 2>/dev/null || echo "0")
+
+	# Phase 2: Live API probe to detect spending/billing limits.
+	# The /models endpoint is free and fast, but a spending-capped account
+	# will return 401 + MonthlyLimitError even on this endpoint.
+	local api_key
+	api_key=$(_get_key_value "opencode" 2>/dev/null) || api_key=""
+	if [[ -n "$api_key" ]]; then
+		local endpoint
+		endpoint=$(get_provider_endpoint "opencode" 2>/dev/null) || endpoint=""
+		if [[ -n "$endpoint" ]]; then
+			local live_response live_http_code live_body
+			live_response=$(curl -s -w $'\n%{http_code}' --max-time "$PROBE_TIMEOUT" \
+				-H "Authorization: Bearer ${api_key}" \
+				"$endpoint" 2>/dev/null) || true
+			live_http_code=$(printf '%s' "$live_response" | tail -1)
+			live_body=$(printf '%s' "$live_response" | sed '$d')
+
+			if [[ -n "$live_http_code" && "$live_http_code" != "200" ]]; then
+				# Check if the error is a spending/billing limit
+				if _is_spending_limit_error "$live_body"; then
+					_record_health "opencode" "spending_limit" "$live_http_code" 0 \
+						"Spending/billing limit reached" "$oc_models_count"
+					[[ "$quiet" != "true" ]] && print_error "opencode: spending limit reached (HTTP $live_http_code)"
+					db_query "
+						INSERT INTO probe_log (provider, action, result, duration_ms, details)
+						VALUES ('opencode', 'live_probe', 'spending_limit', 0,
+							'HTTP $live_http_code - spending limit detected');
+					" || true
+					return 4
+				fi
+				# Non-spending-limit errors on the live probe: log but don't fail
+				# the overall check — the models cache is still valid for listing
+				[[ "$quiet" != "true" ]] && print_warning "opencode: live probe returned HTTP $live_http_code (non-fatal)"
+			fi
+		fi
+	fi
+
+	# Models cache is valid and no spending limit detected
+	_record_health "opencode" "healthy" 200 0 "" "$oc_models_count"
+	[[ "$quiet" != "true" ]] && print_success "opencode: healthy ($oc_models_count models in cache)"
+	db_query "
+		INSERT INTO probe_log (provider, action, result, duration_ms, details)
+		VALUES ('opencode', 'cache_check', 'healthy', 0, '$oc_models_count models from cache');
+	" || true
+	return 0
 }
 
 # Build curl argument array and resolve the final endpoint URL for a provider.
@@ -549,10 +616,20 @@ _probe_parse_http_response() {
 		[[ "$quiet" != "true" ]] && print_success "$provider: healthy (${models_count} models)"
 		;;
 	401 | 403)
-		status="key_invalid"
-		error_msg="Authentication failed (HTTP $http_code)"
-		exit_code=3
-		[[ "$quiet" != "true" ]] && print_error "$provider: API key invalid (HTTP $http_code)"
+		# Distinguish spending/billing limits from auth errors (GH#8229).
+		# Spending limits often return 401 but with a body indicating budget exhaustion,
+		# not an invalid key. These require provider-level backoff, not key rotation.
+		if _is_spending_limit_error "$body"; then
+			status="spending_limit"
+			error_msg="Spending/billing limit reached (HTTP $http_code)"
+			exit_code=4
+			[[ "$quiet" != "true" ]] && print_error "$provider: spending limit reached (HTTP $http_code)"
+		else
+			status="key_invalid"
+			error_msg="Authentication failed (HTTP $http_code)"
+			exit_code=3
+			[[ "$quiet" != "true" ]] && print_error "$provider: API key invalid (HTTP $http_code)"
+		fi
 		;;
 	429)
 		status="rate_limited"
@@ -1253,6 +1330,7 @@ _status_print_providers() {
 		unhealthy | unreachable) status_display="${RED}$stat${NC}" ;;
 		rate_limited) status_display="${YELLOW}rate-ltd${NC}" ;;
 		key_invalid) status_display="${RED}bad-key${NC}" ;;
+		spending_limit) status_display="${RED}spend-cap${NC}" ;;
 		no_key) status_display="${YELLOW}no-key${NC}" ;;
 		esac
 
@@ -1509,6 +1587,80 @@ cmd_invalidate() {
 	return 0
 }
 
+# Mark a provider as unavailable with a specific reason (GH#8229).
+# Called by headless-runtime-helper.sh when a worker detects a spending limit
+# or other billing error at runtime. This writes directly to the availability
+# cache so subsequent resolve_tier() calls skip this provider.
+#
+# Usage: model-availability-helper.sh mark-unavailable <provider> <reason> [--ttl N]
+# Reasons: spending_limit, billing_error, quota_exceeded, key_invalid, unhealthy
+cmd_mark_unavailable() {
+	local provider="${1:-}"
+	local reason="${2:-unhealthy}"
+	local ttl_override=""
+	shift 2 || true
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--ttl)
+			ttl_override="${2:-}"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+
+	if [[ -z "$provider" ]]; then
+		print_error "Usage: model-availability-helper.sh mark-unavailable <provider> <reason> [--ttl N]"
+		return 1
+	fi
+
+	local status="$reason"
+	local error_msg="Marked unavailable: $reason"
+	local ttl="${ttl_override:-$DEFAULT_HEALTH_TTL}"
+
+	# Spending limits get a longer TTL (1 hour) since they reset monthly
+	if [[ "$reason" == "spending_limit" && -z "$ttl_override" ]]; then
+		ttl=3600
+	fi
+
+	db_query "
+		INSERT INTO provider_health (provider, status, http_code, response_ms, error_message, models_count, checked_at, ttl_seconds)
+		VALUES (
+			'$(sql_escape "$provider")',
+			'$(sql_escape "$status")',
+			0,
+			0,
+			'$(sql_escape "$error_msg")',
+			0,
+			strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+			$ttl
+		)
+		ON CONFLICT(provider) DO UPDATE SET
+			status = excluded.status,
+			http_code = excluded.http_code,
+			response_ms = excluded.response_ms,
+			error_message = excluded.error_message,
+			models_count = excluded.models_count,
+			checked_at = excluded.checked_at,
+			ttl_seconds = excluded.ttl_seconds;
+	" || true
+
+	db_query "
+		INSERT INTO probe_log (provider, action, result, duration_ms, details)
+		VALUES (
+			'$(sql_escape "$provider")',
+			'mark_unavailable',
+			'$(sql_escape "$status")',
+			0,
+			'$(sql_escape "$error_msg")'
+		);
+	" || true
+
+	print_info "$provider: marked as $status (TTL: ${ttl}s)"
+	return 0
+}
+
 # Resolve using the full fallback chain (t132.4).
 # Delegates to fallback-chain-helper.sh for extended chain resolution
 # including gateway providers and per-agent overrides.
@@ -1578,12 +1730,13 @@ cmd_help() {
 	echo "Usage: model-availability-helper.sh [command] [options]"
 	echo ""
 	echo "Commands:"
-	echo "  check <provider|model|tier>  Check availability (exit 0=yes, 1=no, 2=rate-limited, 3=bad-key)"
+	echo "  check <provider|model|tier>  Check availability (exit 0=yes, 1=no, 2=rate-limited, 3=bad-key, 4=spending-limit)"
 	echo "  probe [provider] [--all]     Probe providers (default: only those with keys)"
 	echo "  status                       Show cached availability status"
 	echo "  rate-limits                  Show rate limit data from cache"
 	echo "  resolve <tier>               Resolve best available model for tier (primary + fallback)"
 	echo "  resolve-chain <tier>         Resolve via full fallback chain (t132.4, includes gateways)"
+	echo "  mark-unavailable <prov> <reason>  Mark provider unavailable (GH#8229, called by headless-runtime)"
 	echo "  invalidate [provider]        Clear cache (all or specific provider)"
 	echo "  help                         Show this help"
 	echo ""
@@ -1639,6 +1792,7 @@ cmd_help() {
 	echo "  1 - Unavailable or error"
 	echo "  2 - Rate limited"
 	echo "  3 - API key invalid or missing"
+	echo "  4 - Spending/billing limit reached"
 	echo ""
 	echo "Cache: $AVAILABILITY_DB"
 	echo "OpenCode models: $OPENCODE_MODELS_CACHE"
@@ -1678,6 +1832,9 @@ main() {
 		;;
 	resolve-chain | resolve_chain)
 		cmd_resolve_chain "$@"
+		;;
+	mark-unavailable | mark_unavailable)
+		cmd_mark_unavailable "$@"
 		;;
 	invalidate | clear | flush)
 		cmd_invalidate "$@"

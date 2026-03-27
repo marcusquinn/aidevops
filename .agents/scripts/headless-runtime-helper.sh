@@ -437,10 +437,10 @@ record_provider_backoff() {
 	local model="${4:-$provider}"
 	local details retry_seconds auth_signature retry_after backoff_key
 
-	# Auth errors back off at provider level (shared credentials).
+	# Auth and spending limit errors back off at provider level (shared credentials/budget).
 	# Rate limits and provider errors back off at model level so that
 	# other models from the same provider remain available as fallbacks.
-	if [[ "$reason" == "auth_error" ]]; then
+	if [[ "$reason" == "auth_error" || "$reason" == "spending_limit" ]]; then
 		backoff_key="$provider"
 	else
 		backoff_key="$model"
@@ -461,6 +461,7 @@ PY
 		case "$reason" in
 		rate_limit) retry_seconds=900 ;;
 		auth_error) retry_seconds=3600 ;;
+		spending_limit) retry_seconds=3600 ;;
 		*) retry_seconds=300 ;;
 		esac
 	fi
@@ -482,6 +483,17 @@ ON CONFLICT(provider) DO UPDATE SET
     details = excluded.details,
     updated_at = excluded.updated_at;
 " >/dev/null
+
+	# Cross-write spending limits to the model-availability cache (GH#8229).
+	# This ensures resolve_tier() in model-availability-helper.sh also skips
+	# this provider, preventing the pulse from dispatching new workers that
+	# will immediately fail with the same spending limit error.
+	if [[ "$reason" == "spending_limit" ]]; then
+		local avail_helper="${SCRIPT_DIR}/model-availability-helper.sh"
+		if [[ -x "$avail_helper" ]]; then
+			"$avail_helper" mark-unavailable "$provider" "spending_limit" --ttl "$retry_seconds" 2>/dev/null || true
+		fi
+	fi
 	return 0
 }
 
@@ -594,6 +606,12 @@ PY
 	)
 	if [[ "$lowered" == *"rate limit"* ]] || [[ "$lowered" == *"429"* ]] || [[ "$lowered" == *"too many requests"* ]]; then
 		printf '%s' "rate_limit"
+		return 0
+	fi
+	# Spending/billing limit detection (GH#8229): must check BEFORE auth_error
+	# because spending limits often return 401 but with a distinct error body.
+	if is_spending_limit_error "$lowered"; then
+		printf '%s' "spending_limit"
 		return 0
 	fi
 	if [[ "$lowered" =~ (unauthorized|401|invalid\ api\ key|authentication|token\ refresh\ failed|invalid_grant|invalid\ refresh\ token) ]] || [[ "$lowered" == *"auth"* && "$lowered" == *"failed"* ]]; then
