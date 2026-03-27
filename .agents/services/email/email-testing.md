@@ -17,102 +17,37 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Comprehensive email testing - design rendering, delivery, and inbox placement
 - **Script**: `email-test-suite-helper.sh [command] [options]`
-- **Checks**: HTML validation, CSS compatibility, dark mode, responsive design, SMTP, TLS, headers
-- **Tools**: dig, openssl, curl (required); html-validate, mjml (optional)
+- **Required tools**: `dig`, `openssl`, `curl`; optional: `html-validate`, `mjml`
 - **Related**: `email-health-check-helper.sh` for DNS authentication checks
 
-**Quick commands:**
+**Design rendering** (HTML validation, CSS compat, dark mode, responsive, accessibility — WCAG 2.1 AA):
 
 ```bash
-# Design rendering tests (includes accessibility)
-email-test-suite-helper.sh test-design newsletter.html
+email-test-suite-helper.sh test-design newsletter.html      # full suite
+email-test-suite-helper.sh validate-html newsletter.html
+email-test-suite-helper.sh check-css newsletter.html
 email-test-suite-helper.sh check-dark-mode template.html
 email-test-suite-helper.sh check-responsive campaign.html
 email-test-suite-helper.sh check-accessibility newsletter.html
-
-# Delivery testing
-email-test-suite-helper.sh test-smtp smtp.gmail.com 587
-email-test-suite-helper.sh test-smtp-domain example.com
-email-test-suite-helper.sh check-placement example.com
-
-# Header analysis
-email-test-suite-helper.sh analyze-headers headers.txt
-
-# Generate test template
 email-test-suite-helper.sh generate-test-email test.html
 ```
 
-<!-- AI-CONTEXT-END -->
-
-## Overview
-
-The email testing suite provides two categories of testing:
-
-### 1. Design Rendering Tests
-
-Validate that HTML emails render correctly across email clients:
-
-- **HTML Structure** - DOCTYPE, charset, viewport, table layout, inline styles, image alt text, file size (Gmail 102KB clip limit)
-- **CSS Compatibility** - Detects unsupported CSS (flexbox, grid, position, float, animations) that break in Outlook/Gmail/Yahoo
-- **Dark Mode** - color-scheme meta, prefers-color-scheme queries, hardcoded colors, transparent PNGs
-- **Responsive Design** - Viewport meta, fixed widths, media queries, MSO conditionals, font sizes, touch targets
-- **Accessibility** - WCAG 2.1 AA checks: alt text, lang attribute, table roles, font sizes, link text, headings, colour usage
-
-### 2. Delivery Testing
-
-Validate email delivery infrastructure:
-
-- **SMTP Connectivity** - TCP connection, SMTP banner, STARTTLS/TLS support
-- **Domain SMTP** - Auto-discover MX records and test primary mail server
-- **Header Analysis** - Authentication results (SPF/DKIM/DMARC), delivery path, spam indicators, List-Unsubscribe
-- **Inbox Placement** - Comprehensive scoring (SPF, DKIM, DMARC, MX, PTR, MTA-STS, TLS-RPT, BIMI, blacklists)
-- **TLS Certificate** - Certificate validity, expiry, TLS version for mail servers
-
-## Usage
-
-### Design Rendering
+**Delivery** (SMTP, TLS, headers, inbox placement):
 
 ```bash
-# Full design test suite (all checks including accessibility)
-email-test-suite-helper.sh test-design newsletter.html
-
-# Individual checks
-email-test-suite-helper.sh validate-html newsletter.html
-email-test-suite-helper.sh check-css newsletter.html
-email-test-suite-helper.sh check-dark-mode newsletter.html
-email-test-suite-helper.sh check-responsive newsletter.html
-email-test-suite-helper.sh check-accessibility newsletter.html
-
-# Generate a test email template
-email-test-suite-helper.sh generate-test-email test.html
-```
-
-### Delivery Testing
-
-```bash
-# Test SMTP server directly
 email-test-suite-helper.sh test-smtp smtp.gmail.com 587
 email-test-suite-helper.sh test-smtp mail.example.com 25
-
-# Auto-discover and test domain's mail servers
-email-test-suite-helper.sh test-smtp-domain example.com
-
-# Analyze email headers (from file or stdin)
+email-test-suite-helper.sh test-smtp-domain example.com     # auto-discover MX
 email-test-suite-helper.sh analyze-headers headers.txt
-
-# Check inbox placement factors (scored)
-email-test-suite-helper.sh check-placement example.com
-
-# Test mail server TLS
+email-test-suite-helper.sh check-placement example.com      # scored 0-10
 email-test-suite-helper.sh test-tls mail.example.com 465
 email-test-suite-helper.sh test-tls smtp.example.com 587
 ```
 
-## Email Client Rendering Engines
+<!-- AI-CONTEXT-END -->
 
-Understanding which rendering engine each client uses helps predict compatibility:
+## Email Client Rendering Engines
 
 | Engine | Clients | Key Limitations |
 |--------|---------|-----------------|
@@ -121,7 +56,7 @@ Understanding which rendering engine each client uses helps predict compatibilit
 | **Word** | Outlook 2016+, Outlook 365 | No flexbox/grid, limited CSS, VML for backgrounds |
 | **Custom** | Yahoo, AOL, Thunderbird | Partial media query support |
 
-## CSS Compatibility Quick Reference
+## CSS Compatibility
 
 | CSS Property | Apple Mail | Gmail | Outlook | Yahoo |
 |-------------|-----------|-------|---------|-------|
@@ -133,9 +68,7 @@ Understanding which rendering engine each client uses helps predict compatibilit
 | Custom fonts | Yes | **No** | **No** | **No** |
 | Animations | Yes | **No** | **No** | **No** |
 
-## Dark Mode Testing
-
-Email clients handle dark mode differently:
+## Dark Mode
 
 | Client | Behavior |
 |--------|----------|
@@ -154,7 +87,7 @@ Email clients handle dark mode differently:
 
 ## Inbox Placement Scoring
 
-The `check-placement` command scores domains on a 10-point scale:
+`check-placement` scores domains 0–10:
 
 | Factor | Points | Description |
 |--------|--------|-------------|
@@ -169,16 +102,14 @@ The `check-placement` command scores domains on a 10-point scale:
 | BIMI | 1 | Brand logo configured |
 | Not blacklisted | 1 | Clean on Spamhaus |
 
-**Score interpretation:**
-
-- **8-10**: Excellent - high inbox placement expected
-- **6-7**: Good - most emails reach inbox
-- **4-5**: Fair - some emails may go to spam
-- **0-3**: Poor - significant deliverability issues
+| Score | Interpretation |
+|-------|---------------|
+| 8–10 | Excellent — high inbox placement expected |
+| 6–7 | Good — most emails reach inbox |
+| 4–5 | Fair — some emails may go to spam |
+| 0–3 | Poor — significant deliverability issues |
 
 ## Integration with Health Check
-
-The email test suite complements `email-health-check-helper.sh`:
 
 | Tool | Focus |
 |------|-------|
@@ -188,25 +119,14 @@ The email test suite complements `email-health-check-helper.sh`:
 **Recommended workflow:**
 
 ```bash
-# 1. Check DNS authentication
-email-health-check-helper.sh check example.com
-
-# 2. Test design rendering (includes accessibility)
-email-test-suite-helper.sh test-design newsletter.html
-
-# 3. Check delivery infrastructure
-email-test-suite-helper.sh check-placement example.com
-
-# 4. Test SMTP connectivity
-email-test-suite-helper.sh test-smtp-domain example.com
-
-# 5. Standalone accessibility audit (if needed)
-email-health-check-helper.sh accessibility newsletter.html
+email-health-check-helper.sh check example.com             # 1. DNS auth
+email-test-suite-helper.sh test-design newsletter.html     # 2. Design rendering
+email-test-suite-helper.sh check-placement example.com     # 3. Delivery infra
+email-test-suite-helper.sh test-smtp-domain example.com    # 4. SMTP connectivity
+email-health-check-helper.sh accessibility newsletter.html # 5. Standalone a11y
 ```
 
 ## External Testing Services
-
-For visual rendering tests across real email clients:
 
 | Service | Purpose | URL |
 |---------|---------|-----|
@@ -226,5 +146,4 @@ For visual rendering tests across real email clients:
 - `services/email/ses.md` - Amazon SES integration
 - `content/distribution/email.md` - Email content strategy
 - `tools/accessibility/accessibility.md` - WCAG accessibility reference
-- `services/accessibility/accessibility-audit.md` - Full accessibility audit service
 - `tools/browser/browser-automation.md` - For automated rendering tests
