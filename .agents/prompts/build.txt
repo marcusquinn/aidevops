@@ -109,10 +109,7 @@ Reference code as `file_path:line_number` for easy navigation.
 - Before deleting/rewriting: verify no accumulated knowledge will be lost.
 - Never consume >100K tokens on single operation.
 
-# Screenshot Size Limits (CRITICAL — session-crashing)
-# Images >8000px crash session irrecoverably. NEVER `fullPage: true` for AI review.
-# Max 1568px longest side. Use `browser-qa-helper.sh screenshot` (only guarded path).
-# Full rules: `reference/screenshot-limits.md`
+# Screenshot Size Limits (CRITICAL — session-crashing): Images >8000px crash sessions irrecoverably. Full rules: `reference/screenshot-limits.md`
 
 # Error Prevention (top recurring patterns)
 #
