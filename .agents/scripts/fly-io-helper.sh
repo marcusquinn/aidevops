@@ -5,7 +5,7 @@
 # Managed by AI DevOps Framework
 #
 # Usage: fly-io-helper.sh <command> [app] [args...]
-# Commands: deploy, scale, status, secrets, volumes, logs, apps
+# Commands: deploy, scale, status, secrets, volumes, logs, apps, ssh, destroy
 # Bash 3.2 compatible (macOS default shell)
 
 set -euo pipefail
@@ -95,11 +95,26 @@ cmd_deploy() {
 	local rc=$?
 
 	if [[ $rc -eq 0 ]]; then
-		print_success "Deploy completed for $app"
+		print_success "Deploy completed: $app"
 	else
-		print_error "Deploy failed for $app (exit $rc)"
+		print_error "Deploy failed: $app (exit $rc)"
 	fi
 	return $rc
+}
+
+_scale_numeric() {
+	local fly_cmd="$1"
+	local app="$2"
+	local count="$3"
+	shift 3
+
+	print_info "Scaling app: $app to $count machines"
+	if [[ $# -gt 0 ]]; then
+		"$fly_cmd" scale count "$count" --app "$app" "$@"
+	else
+		"$fly_cmd" scale count "$count" --app "$app"
+	fi
+	return $?
 }
 
 cmd_scale() {
@@ -109,9 +124,8 @@ cmd_scale() {
 
 	require_app "$app" || return 1
 
-	# No args: show current scale
 	if [[ $# -eq 0 ]]; then
-		print_info "Current scale for $app:"
+		print_info "Current scale, app: $app"
 		"$fly_cmd" scale show --app "$app"
 		return $?
 	fi
@@ -120,23 +134,15 @@ cmd_scale() {
 
 	case "$first_arg" in
 	count | vm | memory | show)
-		# Pass through to fly scale <subcommand> ... --app
 		"$fly_cmd" scale "$@" --app "$app"
 		return $?
 		;;
 	*)
-		# If first arg is a number, treat as shorthand for count
 		if [[ "$first_arg" =~ ^[0-9]+$ ]]; then
-			print_info "Scaling $app to $first_arg machines"
 			shift
-			if [[ $# -gt 0 ]]; then
-				"$fly_cmd" scale count "$first_arg" --app "$app" "$@"
-			else
-				"$fly_cmd" scale count "$first_arg" --app "$app"
-			fi
+			_scale_numeric "$fly_cmd" "$app" "$first_arg" "$@"
 			return $?
 		fi
-		# Otherwise pass through
 		"$fly_cmd" scale "$@" --app "$app"
 		return $?
 		;;
@@ -150,11 +156,49 @@ cmd_status() {
 
 	require_app "$app" || return 1
 
-	print_info "Status for $app:"
+	print_info "Status, app: $app"
 	"$fly_cmd" status --app "$app"
 	echo ""
 	print_info "Machines:"
 	"$fly_cmd" machines list --app "$app"
+	return $?
+}
+
+_secrets_list() {
+	local fly_cmd="$1"
+	local app="$2"
+
+	print_info "Secrets (names only — values never shown), app: $app"
+	"$fly_cmd" secrets list --app "$app"
+	return $?
+}
+
+_secrets_set() {
+	local fly_cmd="$1"
+	local app="$2"
+	shift 2
+
+	if [[ $# -eq 0 ]]; then
+		print_error "Secret NAME=VALUE pair required"
+		print_info "Usage: echo 'value' | $SCRIPT_NAME secrets <app> set NAME=-"
+		print_warning "Prefer piping values via stdin (NAME=-) to avoid shell history exposure"
+		return 1
+	fi
+	"$fly_cmd" secrets set "$@" --app "$app"
+	return $?
+}
+
+_secrets_unset() {
+	local fly_cmd="$1"
+	local app="$2"
+	shift 2
+
+	if [[ $# -eq 0 ]]; then
+		print_error "Secret name required"
+		print_info "Usage: $SCRIPT_NAME secrets <app> unset SECRET_NAME"
+		return 1
+	fi
+	"$fly_cmd" secrets unset "$@" --app "$app"
 	return $?
 }
 
@@ -165,10 +209,8 @@ cmd_secrets() {
 
 	require_app "$app" || return 1
 
-	# Default: list secret names (never values)
 	if [[ $# -eq 0 ]]; then
-		print_info "Secrets for $app (names only — values never shown):"
-		"$fly_cmd" secrets list --app "$app"
+		_secrets_list "$fly_cmd" "$app"
 		return $?
 	fi
 
@@ -177,31 +219,19 @@ cmd_secrets() {
 
 	case "$action" in
 	list)
-		print_info "Secrets for $app (names only — values never shown):"
-		"$fly_cmd" secrets list --app "$app"
+		_secrets_list "$fly_cmd" "$app"
 		return $?
 		;;
 	set)
-		if [[ $# -eq 0 ]]; then
-			print_error "Secret NAME=VALUE pair required"
-			print_info "Usage: echo 'value' | $SCRIPT_NAME secrets <app> set NAME=-"
-			print_warning "Prefer piping values via stdin (NAME=-) to avoid shell history exposure"
-			return 1
-		fi
-		"$fly_cmd" secrets set "$@" --app "$app"
+		_secrets_set "$fly_cmd" "$app" "$@"
 		return $?
 		;;
 	unset)
-		if [[ $# -eq 0 ]]; then
-			print_error "Secret name required for unset"
-			print_info "Usage: $SCRIPT_NAME secrets <app> unset SECRET_NAME"
-			return 1
-		fi
-		"$fly_cmd" secrets unset "$@" --app "$app"
+		_secrets_unset "$fly_cmd" "$app" "$@"
 		return $?
 		;;
 	import)
-		print_info "Importing secrets for $app from stdin"
+		print_info "Importing secrets, app: $app"
 		"$fly_cmd" secrets import --app "$app"
 		return $?
 		;;
@@ -213,6 +243,51 @@ cmd_secrets() {
 	esac
 }
 
+_volumes_create() {
+	local fly_cmd="$1"
+	local app="$2"
+	shift 2
+
+	if [[ $# -lt 1 ]]; then
+		print_error "Volume name required"
+		print_info "Usage: $SCRIPT_NAME volumes <app> create <name> [--size N] [--region REGION]"
+		return 1
+	fi
+	print_info "Creating volume, app: $app"
+	"$fly_cmd" volumes create "$@" --app "$app"
+	return $?
+}
+
+_volumes_extend() {
+	local fly_cmd="$1"
+	local app="$2"
+	shift 2
+
+	if [[ $# -lt 1 ]]; then
+		print_error "Volume ID required"
+		print_info "Usage: $SCRIPT_NAME volumes <app> extend <volume-id> --size N"
+		return 1
+	fi
+	print_info "Extending volume, app: $app"
+	"$fly_cmd" volumes extend "$@" --app "$app"
+	return $?
+}
+
+_volumes_destroy() {
+	local fly_cmd="$1"
+	local app="$2"
+	shift 2
+
+	if [[ $# -lt 1 ]]; then
+		print_error "Volume ID required"
+		print_info "Usage: $SCRIPT_NAME volumes <app> destroy <volume-id>"
+		return 1
+	fi
+	print_warning "IRREVERSIBLE: Destroying volume $1 on $app"
+	"$fly_cmd" volumes destroy "$@" --app "$app"
+	return $?
+}
+
 cmd_volumes() {
 	local fly_cmd="$1"
 	local app="$2"
@@ -220,9 +295,8 @@ cmd_volumes() {
 
 	require_app "$app" || return 1
 
-	# Default: list volumes
 	if [[ $# -eq 0 ]]; then
-		print_info "Volumes for $app:"
+		print_info "Volumes, app: $app"
 		"$fly_cmd" volumes list --app "$app"
 		return $?
 	fi
@@ -232,38 +306,20 @@ cmd_volumes() {
 
 	case "$action" in
 	list)
-		print_info "Volumes for $app:"
+		print_info "Volumes, app: $app"
 		"$fly_cmd" volumes list --app "$app"
 		return $?
 		;;
 	create)
-		if [[ $# -lt 1 ]]; then
-			print_error "Volume name required"
-			print_info "Usage: $SCRIPT_NAME volumes <app> create <name> [--size N] [--region REGION]"
-			return 1
-		fi
-		print_info "Creating volume for $app"
-		"$fly_cmd" volumes create "$@" --app "$app"
+		_volumes_create "$fly_cmd" "$app" "$@"
 		return $?
 		;;
 	extend)
-		if [[ $# -lt 1 ]]; then
-			print_error "Volume ID required"
-			print_info "Usage: $SCRIPT_NAME volumes <app> extend <volume-id> --size N"
-			return 1
-		fi
-		print_info "Extending volume for $app"
-		"$fly_cmd" volumes extend "$@" --app "$app"
+		_volumes_extend "$fly_cmd" "$app" "$@"
 		return $?
 		;;
 	destroy)
-		if [[ $# -lt 1 ]]; then
-			print_error "Volume ID required"
-			print_info "Usage: $SCRIPT_NAME volumes <app> destroy <volume-id>"
-			return 1
-		fi
-		print_warning "IRREVERSIBLE: Destroying volume $1 on $app"
-		"$fly_cmd" volumes destroy "$@" --app "$app"
+		_volumes_destroy "$fly_cmd" "$app" "$@"
 		return $?
 		;;
 	*)
@@ -281,7 +337,7 @@ cmd_logs() {
 
 	require_app "$app" || return 1
 
-	print_info "Logs for $app:"
+	print_info "Logs, app: $app"
 	if [[ $# -gt 0 ]]; then
 		"$fly_cmd" logs --app "$app" "$@"
 	else
@@ -303,6 +359,34 @@ cmd_apps() {
 	return $?
 }
 
+_ssh_console() {
+	local fly_cmd="$1"
+	local app="$2"
+	shift 2
+
+	print_info "Opening SSH console, app: $app"
+	if [[ $# -gt 0 ]]; then
+		"$fly_cmd" ssh console --app "$app" "$@"
+	else
+		"$fly_cmd" ssh console --app "$app"
+	fi
+	return $?
+}
+
+_ssh_sftp() {
+	local fly_cmd="$1"
+	local app="$2"
+	shift 2
+
+	print_info "Opening SFTP session, app: $app"
+	if [[ $# -gt 0 ]]; then
+		"$fly_cmd" ssh sftp "$@" --app "$app"
+	else
+		"$fly_cmd" ssh sftp shell --app "$app"
+	fi
+	return $?
+}
+
 cmd_ssh() {
 	local fly_cmd="$1"
 	local app="$2"
@@ -310,10 +394,8 @@ cmd_ssh() {
 
 	require_app "$app" || return 1
 
-	# No args: open interactive SSH console
 	if [[ $# -eq 0 ]]; then
-		print_info "Opening SSH console for $app"
-		"$fly_cmd" ssh console --app "$app"
+		_ssh_console "$fly_cmd" "$app"
 		return $?
 	fi
 
@@ -322,25 +404,15 @@ cmd_ssh() {
 
 	case "$action" in
 	console)
-		print_info "Opening SSH console for $app"
-		if [[ $# -gt 0 ]]; then
-			"$fly_cmd" ssh console --app "$app" "$@"
-		else
-			"$fly_cmd" ssh console --app "$app"
-		fi
+		_ssh_console "$fly_cmd" "$app" "$@"
 		return $?
 		;;
 	sftp)
-		print_info "Opening SFTP session for $app"
-		if [[ $# -gt 0 ]]; then
-			"$fly_cmd" ssh sftp "$@" --app "$app"
-		else
-			"$fly_cmd" ssh sftp shell --app "$app"
-		fi
+		_ssh_sftp "$fly_cmd" "$app" "$@"
 		return $?
 		;;
 	issue)
-		print_info "Issuing SSH certificate for $app"
+		print_info "Issuing SSH certificate, app: $app"
 		"$fly_cmd" ssh issue --app "$app" "$@"
 		return $?
 		;;
@@ -352,17 +424,10 @@ cmd_ssh() {
 	esac
 }
 
-cmd_destroy() {
-	local fly_cmd="$1"
-	local app="$2"
-	shift 2
+_parse_destroy_flags() {
+	local confirmed_var="$1"
+	shift
 
-	require_app "$app" || return 1
-
-	print_warning "IRREVERSIBLE: This will permanently destroy app '$app' and all its data."
-	print_warning "All machines, volumes, and configuration will be deleted."
-
-	# Require explicit --yes flag to prevent accidental destruction
 	local confirmed="false"
 	local extra_args=()
 	while [[ $# -gt 0 ]]; do
@@ -377,15 +442,35 @@ cmd_destroy() {
 		shift
 	done
 
-	if [[ "$confirmed" != "true" ]]; then
+	# Export results via global-style variables (Bash 3.2 compatible)
+	_DESTROY_CONFIRMED="$confirmed"
+	_DESTROY_EXTRA_ARGS=("${extra_args[@]+"${extra_args[@]}"}")
+	return 0
+}
+
+cmd_destroy() {
+	local fly_cmd="$1"
+	local app="$2"
+	shift 2
+
+	require_app "$app" || return 1
+
+	print_warning "IRREVERSIBLE: This will permanently destroy app '$app' and all its data."
+	print_warning "All machines, volumes, and configuration will be deleted."
+
+	_DESTROY_CONFIRMED="false"
+	_DESTROY_EXTRA_ARGS=()
+	_parse_destroy_flags "confirmed" "$@"
+
+	if [[ "$_DESTROY_CONFIRMED" != "true" ]]; then
 		print_error "Confirmation required. Re-run with --yes to confirm destruction of '$app'."
 		print_info "Usage: $SCRIPT_NAME destroy $app --yes"
 		return 1
 	fi
 
 	print_info "Destroying app: $app"
-	if [[ ${#extra_args[@]} -gt 0 ]]; then
-		"$fly_cmd" apps destroy "$app" --yes "${extra_args[@]}"
+	if [[ ${#_DESTROY_EXTRA_ARGS[@]} -gt 0 ]]; then
+		"$fly_cmd" apps destroy "$app" --yes "${_DESTROY_EXTRA_ARGS[@]}"
 	else
 		"$fly_cmd" apps destroy "$app" --yes
 	fi
@@ -394,7 +479,7 @@ cmd_destroy() {
 	if [[ $rc -eq 0 ]]; then
 		print_success "App '$app' destroyed"
 	else
-		print_error "Destroy failed for '$app' (exit $rc)"
+		print_error "Destroy failed: '$app' (exit $rc)"
 	fi
 	return $rc
 }
@@ -447,35 +532,11 @@ EOF
 # MAIN
 # ------------------------------------------------------------------------------
 
-main() {
-	local command="${1:-help}"
-	shift || true
+_dispatch_command() {
+	local fly_cmd="$1"
+	local command="$2"
+	shift 2
 
-	# Help doesn't need flyctl
-	if [[ "$command" == "help" || "$command" == "-h" || "$command" == "--help" ]]; then
-		show_help
-		return 0
-	fi
-
-	# Check flyctl is installed
-	check_flyctl || return 1
-
-	local fly_cmd
-	fly_cmd="$(get_fly_cmd)" || return 1
-
-	# Check auth for all operational commands
-	case "$command" in
-	deploy | scale | status | secrets | volumes | logs | ssh | destroy | apps)
-		check_auth "$fly_cmd" || return 1
-		;;
-	*)
-		print_error "$ERROR_UNKNOWN_COMMAND: $command"
-		show_help
-		return 1
-		;;
-	esac
-
-	# Dispatch to subcommand
 	case "$command" in
 	apps)
 		cmd_apps "$fly_cmd" "$@"
@@ -488,6 +549,36 @@ main() {
 		return $?
 		;;
 	esac
+	return 1
+}
+
+main() {
+	local command="${1:-help}"
+	shift || true
+
+	if [[ "$command" == "help" || "$command" == "-h" || "$command" == "--help" ]]; then
+		show_help
+		return 0
+	fi
+
+	check_flyctl || return 1
+
+	local fly_cmd
+	fly_cmd="$(get_fly_cmd)" || return 1
+
+	case "$command" in
+	deploy | scale | status | secrets | volumes | logs | ssh | destroy | apps)
+		check_auth "$fly_cmd" || return 1
+		;;
+	*)
+		print_error "$ERROR_UNKNOWN_COMMAND: $command"
+		show_help
+		return 1
+		;;
+	esac
+
+	_dispatch_command "$fly_cmd" "$command" "$@"
+	return $?
 }
 
 main "$@"
