@@ -9,11 +9,11 @@ pattern_exists() {
 	local file_path="$2"
 
 	if command -v rg >/dev/null 2>&1; then
-		rg -q --fixed-strings "$pattern" "$file_path"
+		rg -qi --fixed-strings "$pattern" "$file_path"
 		return $?
 	fi
 
-	grep -qF "$pattern" "$file_path"
+	grep -qiF "$pattern" "$file_path"
 	return $?
 }
 
