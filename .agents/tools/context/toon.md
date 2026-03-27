@@ -26,59 +26,14 @@ tools:
 - **Best for**: Tabular data (60%+ savings), config data, API responses
 - **Config**: `configs/toon-config.json`
 - **Resources**: https://toonformat.dev, https://github.com/toon-format/toon
+
 <!-- AI-CONTEXT-END -->
 
-**Token-Oriented Object Notation (TOON)** - Compact, human-readable, schema-aware JSON for LLM prompts.
+**Token-Oriented Object Notation (TOON)** — compact, human-readable, schema-aware serialization for LLM prompts.
 
-## Overview
+## Format Examples
 
-TOON is a revolutionary data format designed specifically for Large Language Models (LLMs), offering:
-
-- **20-60% token reduction** compared to JSON
-- **Human-readable tabular format** for structured data
-- **Schema-aware** with explicit array lengths and field headers
-- **Better LLM comprehension** and generation accuracy
-- **Supports nested structures** and mixed data types
-
-## 🚀 **Quick Start**
-
-### **Installation**
-
-TOON CLI is automatically available through npx (no installation required):
-
-```bash
-# Test TOON CLI
-npx @toon-format/cli --help
-
-# Or use the AI DevOps helper
-./.agents/scripts/toon-helper.sh info
-```
-
-### **Basic Usage**
-
-```bash
-# Convert JSON to TOON
-./.agents/scripts/toon-helper.sh encode data.json output.toon
-
-# Convert TOON back to JSON
-./.agents/scripts/toon-helper.sh decode output.toon restored.json
-
-# Show token efficiency comparison
-./.agents/scripts/toon-helper.sh compare large-dataset.json
-
-# Validate TOON format
-./.agents/scripts/toon-helper.sh validate data.toon
-```
-
-## 📊 **Format Examples**
-
-### **Simple Object**
-
-```json
-{"id": 1, "name": "Alice", "active": true}
-```
-
-**TOON:**
+### Simple Object
 
 ```toon
 id: 1
@@ -86,18 +41,7 @@ name: Alice
 active: true
 ```
 
-### **Tabular Data (Most Efficient)**
-
-```json
-{
-  "users": [
-    {"id": 1, "name": "Alice", "role": "admin"},
-    {"id": 2, "name": "Bob", "role": "user"}
-  ]
-}
-```
-
-**TOON:**
+### Tabular Data (most efficient)
 
 ```toon
 users[2]{id,name,role}:
@@ -105,21 +49,7 @@ users[2]{id,name,role}:
   2,Bob,user
 ```
 
-### **Nested Structures**
-
-```json
-{
-  "project": {
-    "name": "AI DevOps",
-    "metrics": [
-      {"date": "2025-01-01", "users": 100},
-      {"date": "2025-01-02", "users": 150}
-    ]
-  }
-}
-```
-
-**TOON:**
+### Nested Structures
 
 ```toon
 project:
@@ -129,83 +59,29 @@ project:
     2025-01-02,150
 ```
 
-## 🛠️ **Helper Script Commands**
-
-### **File Conversion**
+## Helper Script Commands
 
 ```bash
-# Basic conversion
-./.agents/scripts/toon-helper.sh encode input.json output.toon
+# File conversion
+toon-helper.sh encode input.json output.toon
+toon-helper.sh encode input.json output.toon '\t' true   # tab delimiter
+toon-helper.sh decode input.toon output.json false        # lenient validation
 
-# With tab delimiter (often more efficient)
-./.agents/scripts/toon-helper.sh encode input.json output.toon '\t' true
+# Batch processing
+toon-helper.sh batch ./json-files ./toon-files json-to-toon
+toon-helper.sh batch ./toon-files ./json-files toon-to-json '\t'
 
-# Decode with lenient validation
-./.agents/scripts/toon-helper.sh decode input.toon output.json false
+# Stream processing
+cat data.json | toon-helper.sh stdin-encode
+cat data.toon | toon-helper.sh stdin-decode
+
+# Validation and comparison
+toon-helper.sh validate data.toon
+toon-helper.sh compare large-dataset.json
+toon-helper.sh info
 ```
 
-### **Batch Processing**
-
-```bash
-# Convert directory of JSON files to TOON
-./.agents/scripts/toon-helper.sh batch ./json-files ./toon-files json-to-toon
-
-# Convert directory of TOON files to JSON
-./.agents/scripts/toon-helper.sh batch ./toon-files ./json-files toon-to-json '\t'
-```
-
-### **Stream Processing**
-
-```bash
-# Convert from stdin
-cat data.json | ./.agents/scripts/toon-helper.sh stdin-encode
-echo '{"name": "test"}' | ./.agents/scripts/toon-helper.sh stdin-encode '\t' true
-
-# Decode from stdin
-cat data.toon | ./.agents/scripts/toon-helper.sh stdin-decode
-```
-
-## 🎯 **AI DevOps Use Cases**
-
-### **1. Configuration Data**
-
-Perfect for server configurations, deployment settings, and infrastructure data:
-
-```bash
-# Convert server inventory to TOON for AI analysis
-./.agents/scripts/toon-helper.sh encode servers.json servers.toon '\t' true
-```
-
-### **2. API Response Formatting**
-
-Reduce token costs when sending API responses to LLMs:
-
-```bash
-# Convert API responses for efficient LLM processing
-curl -s "https://api.example.com/data" | ./.agents/scripts/toon-helper.sh stdin-encode
-```
-
-### **3. Database Exports**
-
-Efficient format for database query results:
-
-```bash
-# Export database results in TOON format
-mysql -e "SELECT * FROM users" --json | ./.agents/scripts/toon-helper.sh stdin-encode '\t'
-```
-
-### **4. Log Analysis**
-
-Structure log data for AI analysis:
-
-```bash
-# Convert structured logs to TOON
-./.agents/scripts/toon-helper.sh batch ./logs/json ./logs/toon json-to-toon
-```
-
-## 📈 **Token Efficiency**
-
-TOON provides significant token savings, especially for tabular data:
+## Token Efficiency
 
 | Data Type | JSON Tokens | TOON Tokens | Savings |
 |-----------|-------------|-------------|---------|
@@ -214,79 +90,39 @@ TOON provides significant token savings, especially for tabular data:
 | GitHub Repos | 15,145 | 8,745 | 42.3% |
 | E-commerce Orders | 108,806 | 72,771 | 33.1% |
 
-## 🔧 **Configuration**
+## Use Cases
 
-Copy and customize the configuration template:
+| Use Case | Command |
+|----------|---------|
+| Server config / inventory | `toon-helper.sh encode servers.json servers.toon '\t' true` |
+| API response to LLM | `curl -s "https://api.example.com/data" \| toon-helper.sh stdin-encode` |
+| Database export | `mysql -e "SELECT * FROM users" --json \| toon-helper.sh stdin-encode '\t'` |
+| Log analysis | `toon-helper.sh batch ./logs/json ./logs/toon json-to-toon` |
+
+## LLM Integration
+
+**Sending TOON to LLMs** — include this preamble:
+
+```
+Data is in TOON format (2-space indent, arrays show length and fields):
+```
+
+**Generating TOON from LLMs:**
+
+- Show expected header format: `users[N]{id,name,role}:`
+- Rules: 2-space indent, no trailing spaces, `[N]` matches row count
+- Request code block output only
+
+## Configuration
 
 ```bash
 cp configs/toon-config.json.txt configs/toon-config.json
-# Edit with your preferences
 ```
 
-Key configuration options:
+Key options: `default_delimiter` (`,`/`\t`/`|`), `key_folding` (path compression), `batch_processing` (concurrency), `ai_prompts` (LLM optimisation).
 
-- **default_delimiter**: Choose between `,`, `\t`, or `|`
-- **key_folding**: Enable path compression for nested data
-- **batch_processing**: Configure concurrent conversions
-- **ai_prompts**: Optimize for LLM interactions
+## Best Practices
 
-## 🤖 **LLM Integration**
-
-### **Sending TOON to LLMs**
-
-```markdown
-Data is in TOON format (2-space indent, arrays show length and fields):
-
-```toon
-users[3]{id,name,role,lastLogin}:
-  1,Alice,admin,2025-01-15T10:30:00Z
-  2,Bob,user,2025-01-14T15:22:00Z
-  3,Charlie,user,2025-01-13T09:45:00Z
-```
-
-Task: Return only users with role "user" as TOON.
-
-```text
-
-```
-
-### **Generating TOON from LLMs**
-
-- Show expected header format: `users[N]{id,name,role}:`
-- Specify rules: 2-space indent, no trailing spaces, [N] matches row count
-- Request code block output only
-
-## 🔍 **Validation & Quality**
-
-```bash
-# Validate TOON format
-./.agents/scripts/toon-helper.sh validate data.toon
-
-# Compare efficiency
-./.agents/scripts/toon-helper.sh compare large-dataset.json
-
-# Show format information
-./.agents/scripts/toon-helper.sh info
-```
-
-## 📚 **Resources**
-
-- **Official Website**: https://toonformat.dev
-- **GitHub Repository**: https://github.com/toon-format/toon
-- **Specification**: https://github.com/toon-format/toon/blob/main/spec.md
-- **Benchmarks**: https://github.com/toon-format/toon#benchmarks
-- **TypeScript SDK**: `npm install @toon-format/toon`
-
-## 🛡️ **Security & Best Practices**
-
-- **Validate input**: Always validate TOON data before processing
-- **Use strict mode**: Enable strict validation for production use
-- **Backup originals**: Keep JSON backups when converting
-- **Test conversions**: Verify round-trip conversion accuracy
-- **Monitor token usage**: Track actual token savings in your use case
-
----
-
-**Integration Status**: ✅ **Fully Integrated** with AI DevOps Framework
-**Maintenance**: Automated updates via npm/npx
-**Support**: Community-driven with active development
+- Validate input before processing; use strict mode in production
+- Keep JSON backups when converting; verify round-trip accuracy
+- Monitor actual token savings — tabular data benefits most
