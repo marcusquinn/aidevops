@@ -1279,6 +1279,69 @@ check_permission_failure_pr() {
 }
 
 #######################################
+# Auto-approve a collaborator's PR before merging (GH#10522, t1691)
+#
+# Branch protection requires required_approving_review_count=1.
+# The pulse runs with the repo admin's token, which can approve PRs.
+# This function approves the PR so that gh pr merge succeeds.
+#
+# SAFETY: Only call this AFTER the external contributor gate has
+# confirmed the PR author is a collaborator (admin/maintain/write).
+# NEVER call this for external contributor PRs.
+#
+# Idempotent — if the PR already has an approving review from the
+# current user, this is a no-op (GitHub ignores duplicate approvals).
+#
+# Arguments:
+#   $1 - PR number
+#   $2 - repo slug (owner/repo)
+#   $3 - PR author login (for logging only)
+#
+# Exit codes:
+#   0 - PR approved (or already approved)
+#   1 - approval failed (caller should skip merge this cycle)
+#   2 - missing arguments
+#######################################
+approve_collaborator_pr() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_author="${3:-unknown}"
+
+	if [[ -z "$pr_number" || -z "$repo_slug" ]]; then
+		echo "[pulse-wrapper] approve_collaborator_pr: missing arguments" >>"$LOGFILE"
+		return 2
+	fi
+
+	# Check if we already approved (avoid noisy duplicate approvals in the timeline)
+	local current_user
+	current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+
+	if [[ -n "$current_user" ]]; then
+		local existing_approval
+		existing_approval=$(gh api "repos/${repo_slug}/pulls/${pr_number}/reviews" \
+			--jq "[.[] | select(.user.login == \"${current_user}\" and .state == \"APPROVED\")] | length" 2>/dev/null || echo "0")
+
+		if [[ "$existing_approval" -gt 0 ]]; then
+			echo "[pulse-wrapper] approve_collaborator_pr: PR #$pr_number in $repo_slug already approved by $current_user — skipping" >>"$LOGFILE"
+			return 0
+		fi
+	fi
+
+	# Approve the PR
+	local approve_output
+	approve_output=$(gh pr review "$pr_number" --repo "$repo_slug" --approve --body "Auto-approved by pulse — collaborator PR (author: @${pr_author}). All pre-merge checks passed." 2>&1)
+	local approve_exit=$?
+
+	if [[ $approve_exit -eq 0 ]]; then
+		echo "[pulse-wrapper] approve_collaborator_pr: approved PR #$pr_number in $repo_slug (author: $pr_author)" >>"$LOGFILE"
+		return 0
+	fi
+
+	echo "[pulse-wrapper] approve_collaborator_pr: failed to approve PR #$pr_number in $repo_slug — $approve_output" >>"$LOGFILE"
+	return 1
+}
+
+#######################################
 # Check if a PR modifies GitHub Actions workflow files (t3934)
 #
 # PRs that modify .github/workflows/ files require the `workflow` scope

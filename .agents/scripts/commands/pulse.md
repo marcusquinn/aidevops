@@ -45,15 +45,22 @@ The wrapper already fetched all open PRs and issues. The data is in your prompt 
 do NOT run `gh pr list` or `gh issue list` (that was the root cause of the "only processes
 first repo" bug).
 
-### 3. Merge ready PRs (free — no worker slot needed)
+### 3. Approve and merge ready PRs (free — no worker slot needed)
 
-For each PR with green CI + review gate passed + maintainer author:
+For each PR with green CI + all status checks passed + collaborator author:
 
 ```bash
+# Auto-approve collaborator PRs to satisfy required_approving_review_count (GH#10522)
+# ONLY for PRs authored by collaborators (admin/maintain/write permission).
+# External contributor PRs are NEVER auto-approved — they require manual maintainer review.
+source ~/.aidevops/agents/scripts/pulse-wrapper.sh
+approve_collaborator_pr NUMBER SLUG AUTHOR
+
+# Then merge
 gh pr merge NUMBER --repo SLUG --squash
 ```
 
-Check external contributor gate before ANY merge (see Pre-merge checks below).
+Check external contributor gate before ANY approve/merge (see Pre-merge checks below).
 
 ### 4. Dispatch workers for open issues
 
@@ -202,13 +209,13 @@ Before merging ANY PR:
 
 3. **Workflow file guard.** Use `check_workflow_merge_guard` from `pulse-wrapper.sh`. If the PR modifies `.github/workflows/` and the token lacks `workflow` scope, the merge will fail. The helper posts a comment telling the user to run `gh auth refresh -s workflow`.
 
-4. **Review gate.** Run `review-bot-gate-helper.sh check NUMBER SLUG`. Merge when any of: formal review count > 0, bot gate returns PASS, bot gate returns PASS_RATE_LIMITED (grace period elapsed), or PR has `skip-review-gate` label. Do NOT merge when formal review count is 0 AND bot gate returns WAITING. Run `review-bot-gate-helper.sh request-retry` to self-heal rate-limited bots.
+4. **Review gate.** Run `review-bot-gate-helper.sh check NUMBER SLUG`. Merge when any of: bot gate returns PASS, bot gate returns PASS_RATE_LIMITED (grace period elapsed), or PR has `skip-review-gate` label. Do NOT merge when bot gate returns WAITING. Run `review-bot-gate-helper.sh request-retry` to self-heal rate-limited bots. Note: the formal review count requirement (`required_approving_review_count`) is satisfied by `approve_collaborator_pr` in Step 3 — the pulse auto-approves collaborator PRs before merging (GH#10522).
 
 5. **Unresolved review suggestions.** Check for unresolved bot suggestions with `gh api "repos/SLUG/pulls/NUMBER/comments"`. If actionable suggestions exist, dispatch a worker to address them (label `needs-review-fixes`), skip merge this cycle. If `needs-review-fixes` or `skip-review-suggestions` label already exists, skip this check.
 
 ### PR triage
 
-- **Green CI + no blocking reviews** → merge: `gh pr merge <number> --repo <slug> --squash`. If the PR resolves an issue, comment on the issue to link the merged PR, then close it: `gh issue comment <number> --repo <slug> --body "Completed via PR #<N>."` then `gh issue close <number> --repo <slug>`.
+- **Green CI + no blocking reviews** → approve then merge: `approve_collaborator_pr <number> <slug> <author>` then `gh pr merge <number> --repo <slug> --squash`. If the PR resolves an issue, comment on the issue to link the merged PR, then close it: `gh issue comment <number> --repo <slug> --body "Completed via PR #<N>."` then `gh issue close <number> --repo <slug>`.
 - **Green CI + WAITING on review bots** → skip, run `request-retry`
 - **Failing CI** → check if systemic (same check fails on 3+ PRs). If systemic, file a workflow issue instead of dispatching per-PR fixes. If per-PR, dispatch a fix worker.
 - **Open 6+ hours with no recent commits** → something is stuck. Comment, consider closing and re-filing.
