@@ -405,6 +405,11 @@ daytona port remove <sandbox-id> 8080 && daytona port expose <sandbox-id> 8080
 daytona list --json | jq -r '.[] | select(.state=="running") | .id' | xargs -I{} daytona stop {}
 ```
 
+## Related
+
+- **Hosting comparison**: `tools/deployment/hosting-comparison.md` — Daytona vs Fly.io vs Coolify vs Cloudron vs Vercel decision guide
+- **Helper script**: `.agents/scripts/daytona-helper.sh`
+
 ## References
 
 - **Docs**: https://docs.daytona.io
