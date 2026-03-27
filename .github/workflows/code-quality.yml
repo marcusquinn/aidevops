@@ -23,6 +23,12 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      with:
+        # Fetch enough history for merge-base detection in safety-policy-check.sh.
+        # Without this, stale PR branches that predate new policy markers cause
+        # false-positive CI failures because the check can't distinguish regressions
+        # from missing markers. GH#6902.
+        fetch-depth: 0
 
     - name: Framework Structure Check
       run: |

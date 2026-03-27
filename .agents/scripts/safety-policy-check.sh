@@ -17,6 +17,55 @@ pattern_exists() {
 	return $?
 }
 
+# Check if a pattern exists in a file on the merge base (origin/main).
+# Returns 0 if the pattern exists on the base, 1 if not (or if git is unavailable).
+# Used to distinguish regressions (marker removed by PR) from stale branches
+# (marker never existed when the branch was created). GH#6902.
+pattern_exists_on_base() {
+	local pattern="$1"
+	local file_path="$2"
+
+	# Resolve the repo-relative path for git show
+	local repo_root
+	repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
+	local rel_path
+	rel_path=$(realpath --relative-to="$repo_root" "$file_path" 2>/dev/null) || return 1
+
+	local merge_base
+	merge_base=$(git merge-base HEAD origin/main 2>/dev/null) || return 1
+
+	local base_content
+	base_content=$(git show "${merge_base}:${rel_path}" 2>/dev/null) || return 1
+
+	printf '%s\n' "$base_content" | grep -qiF "$pattern"
+	return $?
+}
+
+# Require a pattern in a file. If missing, check whether it existed on the
+# merge base to distinguish regressions from stale-branch false positives.
+# Regressions (pattern was on base, removed by PR) hard-fail.
+# Stale branches (pattern never on base) emit a warning and pass. GH#6902.
+require_pattern() {
+	local pattern="$1"
+	local file_path="$2"
+	local fail_message="$3"
+
+	if pattern_exists "$pattern" "$file_path"; then
+		return 0
+	fi
+
+	# Pattern missing — is this a regression or a stale branch?
+	if pattern_exists_on_base "$pattern" "$file_path"; then
+		# Pattern existed on base but was removed by this branch — regression
+		echo "FAIL: ${fail_message}" >&2
+		return 1
+	fi
+
+	# Pattern never existed on the merge base — stale branch, not a regression
+	echo "WARN: ${fail_message} (not a regression — marker absent on merge base)" >&2
+	return 0
+}
+
 check_generator_rules() {
 	local generator_file="${SCRIPT_DIR}/generate-claude-agents.sh"
 	if [[ ! -f "$generator_file" ]]; then
@@ -93,14 +142,14 @@ check_policy_markers() {
 	fi
 
 	# build.txt must reference transcript exposure policy (inline or via pointer)
-	if ! pattern_exists "transcript exposure" "$build_prompt"; then
-		echo "FAIL: transcript exposure policy missing from build prompt" >&2
+	if ! require_pattern "transcript exposure" "$build_prompt" \
+		"transcript exposure policy missing from build prompt"; then
 		return 1
 	fi
 
 	# build.txt must contain the transcript-visible rule
-	if ! pattern_exists "transcript-visible" "$build_prompt"; then
-		echo "FAIL: transcript-visible rule missing from build prompt" >&2
+	if ! require_pattern "transcript-visible" "$build_prompt" \
+		"transcript-visible rule missing from build prompt"; then
 		return 1
 	fi
 
@@ -111,29 +160,29 @@ check_policy_markers() {
 			echo "FAIL: secret-handling reference not readable: $secret_handling_ref" >&2
 			return 1
 		fi
-		if ! pattern_exists "Never paste secret values into AI chat" "$secret_handling_ref"; then
-			echo "FAIL: mandatory warning guidance missing from secret-handling reference" >&2
+		if ! require_pattern "Never paste secret values into AI chat" "$secret_handling_ref" \
+			"mandatory warning guidance missing from secret-handling reference"; then
 			return 1
 		fi
-		if ! pattern_exists "Session Transcript Exposure" "$secret_handling_ref"; then
-			echo "FAIL: transcript exposure section missing from secret-handling reference" >&2
+		if ! require_pattern "Session Transcript Exposure" "$secret_handling_ref" \
+			"transcript exposure section missing from secret-handling reference"; then
 			return 1
 		fi
 	else
 		# Fallback: if reference file doesn't exist, check build.txt directly
-		if ! pattern_exists "Never paste secret values into AI chat" "$build_prompt"; then
-			echo "FAIL: mandatory warning guidance missing from build prompt" >&2
+		if ! require_pattern "Never paste secret values into AI chat" "$build_prompt" \
+			"mandatory warning guidance missing from build prompt"; then
 			return 1
 		fi
 	fi
 
-	if ! pattern_exists "_sandbox_emit_redacted_output" "$sandbox_helper"; then
-		echo "FAIL: sandbox output redaction function missing" >&2
+	if ! require_pattern "_sandbox_emit_redacted_output" "$sandbox_helper" \
+		"sandbox output redaction function missing"; then
 		return 1
 	fi
 
-	if ! pattern_exists "_sandbox_is_secret_tainted_command" "$sandbox_helper"; then
-		echo "FAIL: sandbox taint handling function missing" >&2
+	if ! require_pattern "_sandbox_is_secret_tainted_command" "$sandbox_helper" \
+		"sandbox taint handling function missing"; then
 		return 1
 	fi
 
