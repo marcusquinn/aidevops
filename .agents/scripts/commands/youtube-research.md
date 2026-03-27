@@ -20,6 +20,7 @@ Parse $ARGUMENTS:
 | `trending` / `trends` | Trending topics in niche |
 | `gaps` / `opportunities` | Content gap analysis |
 | `video VIDEO_ID` | Analyze specific video |
+| `--all` | Full research cycle (all competitors) |
 | No args | Interactive (ask user) |
 
 ### Step 2: Load Configuration
@@ -152,7 +153,7 @@ User: /youtube research @fireship
 
 Channel: Fireship | 3.2M subs | 245 videos | Avg: 1.8M views
 
-Outlier Videos (3x+ avg = 5.5M+):
+Outlier Videos (3x+ avg = 5.4M+):
 1. "100+ JavaScript Concepts you Need to Know" - 12.4M (6.8x)
 2. "I built the same app 10 times" - 8.9M (4.8x)
 3. "JavaScript Pro Tips - Code This, NOT That" - 7.2M (3.9x)
