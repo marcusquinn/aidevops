@@ -419,7 +419,17 @@ scan_imported_skills() {
 	# Pre-check: cisco-ai-skill-scanner requires Python >= 3.10
 	# Fallback chain: uv -> pipx -> venv+symlink -> pip3 --user (legacy)
 	# PEP 668 (Ubuntu 24.04+) blocks pip3 --user, so we try isolated methods first
-	if ! command -v skill-scanner &>/dev/null; then
+	#
+	# PATH note: uv installs to ~/.local/bin which may not be on PATH in all shells.
+	# Check both command -v and the known install path to avoid spurious reinstalls.
+	local skill_scanner_bin
+	skill_scanner_bin=$(command -v skill-scanner 2>/dev/null || echo "")
+	# Fallback: uv/pipx install to ~/.local/bin which may not be on PATH
+	if [[ -z "$skill_scanner_bin" && -x "$HOME/.local/bin/skill-scanner" ]]; then
+		skill_scanner_bin="$HOME/.local/bin/skill-scanner"
+	fi
+
+	if [[ -z "$skill_scanner_bin" ]]; then
 		# Verify Python >= 3.10 is available (or install it via uv)
 		if ! check_python_for_skill_scanner; then
 			print_warning "Skipping Cisco Skill Scanner install (Python >= 3.10 required)"
@@ -429,11 +439,23 @@ scan_imported_skills() {
 		local installed=false
 
 		# 1. uv tool install (preferred - fast, isolated, manages its own Python)
+		# Uses --force to handle two known failure modes:
+		#   a) Dangling/corrupted environment: uv detects "Invalid environment" and
+		#      exits 2. Detect via warning in `uv tool list` and uninstall first.
+		#   b) Executable conflict: skill-scanner already exists (e.g. from pipx).
+		#      --force overwrites the existing executable.
 		if [[ "$installed" == "false" ]] && command -v uv &>/dev/null && uv tool --help &>/dev/null; then
 			print_info "Installing Cisco Skill Scanner via uv..."
-			if run_with_spinner "Installing cisco-ai-skill-scanner" uv tool install cisco-ai-skill-scanner; then
+			# Detect and remove dangling uv environment before attempting install
+			if uv tool list 2>&1 | grep -q "Ignoring malformed tool.*cisco-ai-skill-scanner"; then
+				print_info "Removing dangling uv environment for cisco-ai-skill-scanner..."
+				uv tool uninstall cisco-ai-skill-scanner 2>/dev/null || true
+			fi
+			if run_with_spinner "Installing cisco-ai-skill-scanner" uv tool install --force cisco-ai-skill-scanner; then
 				print_success "Cisco Skill Scanner installed via uv"
 				installed=true
+				# uv installs to ~/.local/bin — update skill_scanner_bin for use below
+				skill_scanner_bin=$(command -v skill-scanner 2>/dev/null || echo "$HOME/.local/bin/skill-scanner")
 			fi
 		fi
 
@@ -443,6 +465,7 @@ scan_imported_skills() {
 			if run_with_spinner "Installing cisco-ai-skill-scanner" pipx install cisco-ai-skill-scanner; then
 				print_success "Cisco Skill Scanner installed via pipx"
 				installed=true
+				skill_scanner_bin=$(command -v skill-scanner 2>/dev/null || echo "$HOME/.local/bin/skill-scanner")
 			fi
 		fi
 
@@ -457,6 +480,7 @@ scan_imported_skills() {
 				ln -sf "$venv_dir/bin/skill-scanner" "$bin_dir/skill-scanner"
 				print_success "Cisco Skill Scanner installed via venv ($venv_dir)"
 				installed=true
+				skill_scanner_bin="$bin_dir/skill-scanner"
 			else
 				rm -rf "$venv_dir" 2>/dev/null || true
 			fi
@@ -468,6 +492,7 @@ scan_imported_skills() {
 			if run_with_spinner "Installing cisco-ai-skill-scanner" pip3 install --user cisco-ai-skill-scanner 2>/dev/null; then
 				print_success "Cisco Skill Scanner installed via pip3"
 				installed=true
+				skill_scanner_bin=$(command -v skill-scanner 2>/dev/null || echo "$HOME/.local/bin/skill-scanner")
 			fi
 		fi
 
