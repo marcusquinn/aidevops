@@ -12,13 +12,15 @@ Target: $ARGUMENTS
 
 ### Step 1: Determine Research Type
 
-Parse $ARGUMENTS to identify the research mode:
+Parse $ARGUMENTS:
 
-- `@handle` → Competitor analysis
-- `trending` or `trends` → Trending topics in niche
-- `gaps` or `opportunities` → Content gap analysis
-- `video VIDEO_ID` → Analyze specific video
-- No args → Interactive mode (ask user what to research)
+| Argument | Mode |
+|----------|------|
+| `@handle` | Competitor analysis |
+| `trending` / `trends` | Trending topics in niche |
+| `gaps` / `opportunities` | Content gap analysis |
+| `video VIDEO_ID` | Analyze specific video |
+| No args | Interactive (ask user) |
 
 ### Step 2: Load Configuration
 
@@ -32,38 +34,24 @@ Retrieve the user's channel, niche, and competitor list from setup.
 
 #### Mode A: Competitor Analysis (`@competitor`)
 
-1. **Get channel overview:**
+1. **Get channel overview and recent videos:**
 
 ```bash
 ~/.aidevops/agents/scripts/youtube-helper.sh channel @competitor
-```
-
-2. **List recent videos (last 50):**
-
-```bash
 ~/.aidevops/agents/scripts/youtube-helper.sh videos @competitor 50
 ```
 
-3. **Identify outliers** (videos with 3x+ channel average views):
+2. **Identify outliers** — videos with 3x+ channel average views. These are proven winners.
 
-   - Calculate average views/video from channel stats
-   - Flag videos with views > 3x average
-   - These are the "proven winners" to study
-
-4. **Get transcripts of top 3 outliers:**
+3. **Get transcripts of top 3 outliers:**
 
 ```bash
 ~/.aidevops/agents/scripts/youtube-helper.sh transcript VIDEO_ID
 ```
 
-5. **Analyze patterns:**
+4. **Analyze patterns:** common topics, title patterns (length, keywords, hooks), video length, upload frequency.
 
-   - Common topics in outliers
-   - Title patterns (length, keywords, hooks)
-   - Video length patterns
-   - Upload frequency
-
-6. **Store findings in memory:**
+5. **Store findings:**
 
 ```bash
 ~/.aidevops/agents/scripts/memory-helper.sh store \
@@ -80,16 +68,9 @@ Retrieve the user's channel, niche, and competitor list from setup.
 ~/.aidevops/agents/scripts/youtube-helper.sh trending "niche topic" 20
 ```
 
-2. **Cluster by topic:**
+2. **Cluster by topic:** group by keywords/themes, identify rising topics, note view counts and engagement.
 
-   - Group videos by common keywords/themes
-   - Identify rising topics (multiple recent videos)
-   - Note view counts and engagement rates
-
-3. **Cross-reference with competitors:**
-
-   - Which trending topics have your competitors NOT covered?
-   - Which topics are oversaturated?
+3. **Cross-reference with competitors:** which trending topics have they NOT covered? Which are oversaturated?
 
 4. **Store opportunities:**
 
@@ -102,92 +83,57 @@ Retrieve the user's channel, niche, and competitor list from setup.
 
 #### Mode C: Content Gap Analysis (`gaps`)
 
-1. **Compare your videos vs competitors:**
+1. **Compare your videos vs competitors:** topics covered/not covered, unique angles.
 
-   - Topics you've covered vs topics they've covered
-   - Identify gaps (topics they cover that you don't)
-   - Identify unique angles (topics you cover that they don't)
-
-2. **Keyword clustering:**
-
-   - Extract common keywords from competitor titles
-   - Group into topic clusters
-   - Rank by frequency and avg views
+2. **Keyword clustering:** extract common keywords from competitor titles, group into topic clusters, rank by frequency and avg views.
 
 3. **Opportunity scoring:**
-
    - High views + low competition = high opportunity
    - High views + high competition = proven topic, need unique angle
    - Low views + low competition = risky, validate demand first
 
 #### Mode D: Video Analysis (`video VIDEO_ID`)
 
-1. **Get video details:**
+1. **Get video details and transcript:**
 
 ```bash
 ~/.aidevops/agents/scripts/youtube-helper.sh video VIDEO_ID
-```
-
-2. **Get transcript:**
-
-```bash
 ~/.aidevops/agents/scripts/youtube-helper.sh transcript VIDEO_ID
 ```
 
-3. **Analyze structure:**
+2. **Analyze structure:** hook (first 30s), intro (problem setup), body (solution/content), CTA.
 
-   - Hook (first 30 seconds)
-   - Intro (problem setup)
-   - Body (solution/content)
-   - CTA (call to action)
-
-4. **Extract reusable patterns:**
-
-   - Title formula
-   - Hook formula
-   - Content structure
-   - Pacing (words/minute from transcript)
+3. **Extract reusable patterns:** title formula, hook formula, content structure, pacing (words/minute).
 
 ### Step 4: Present Findings
 
-Format as a structured report:
+Format as structured report:
 
 ```text
 YouTube Research: {target}
 
 Summary:
-- {key insight 1}
-- {key insight 2}
-- {key insight 3}
+- {key insight 1-3}
 
 Outlier Videos (3x+ avg views):
 1. {title} - {views} views ({ratio}x avg)
-2. {title} - {views} views ({ratio}x avg)
-3. {title} - {views} views ({ratio}x avg)
 
 Common Patterns:
-- Topics: {topic clusters}
-- Title style: {pattern}
-- Video length: {avg duration}
-- Upload frequency: {frequency}
+- Topics: {clusters} | Title style: {pattern}
+- Video length: {avg} | Upload frequency: {freq}
 
 Content Opportunities:
-1. {opportunity 1} - {reasoning}
-2. {opportunity 2} - {reasoning}
-3. {opportunity 3} - {reasoning}
+1. {opportunity} - {reasoning}
 
 Next Steps:
-1. Generate script for opportunity #1: /youtube script "{topic}"
-2. Analyze another competitor: /youtube research @handle
-3. Deep-dive on specific video: /youtube research video VIDEO_ID
+1. /youtube script "{topic}"
+2. /youtube research @handle
+3. /youtube research video VIDEO_ID
 ```
 
 ### Step 5: Offer Follow-up Actions
 
-- Generate script for top opportunity
-- Research another competitor
-- Set up automated monitoring (pipeline.md)
-- Export findings to a report file
+Generate script for top opportunity, research another competitor, set up monitoring (pipeline.md), or export findings.
 
 ## Options
 
@@ -199,117 +145,27 @@ Next Steps:
 | `/youtube research video VIDEO_ID` | Analyze specific video |
 | `/youtube research --all` | Full research cycle (all competitors) |
 
-## Examples
-
-**Competitor analysis:**
+## Example: Competitor Analysis
 
 ```text
 User: /youtube research @fireship
-AI: Analyzing @fireship...
 
-    Channel: Fireship
-    Subscribers: 3.2M
-    Videos: 245
-    Avg views/video: 1,836,735
-    
-    Fetching recent videos...
-    
-    Outlier Videos (3x+ avg = 5.5M+ views):
-    1. "100+ JavaScript Concepts you Need to Know" - 12.4M views (6.8x avg)
-    2. "I built the same app 10 times" - 8.9M views (4.8x avg)
-    3. "JavaScript Pro Tips - Code This, NOT That" - 7.2M views (3.9x avg)
-    
-    Common Patterns:
-    - Topics: Comparison videos, "X concepts" lists, code quality tips
-    - Title style: Numbers + actionable promise (e.g., "100+ concepts you NEED")
-    - Video length: 8-12 minutes (sweet spot for retention)
-    - Upload frequency: 2-3 videos/week
-    
-    Analyzing top video transcript...
-    
-    Hook Analysis ("100+ JavaScript Concepts"):
-    - Opens with: "JavaScript is a language you can learn in 5 minutes..."
-    - Pattern: Contrarian statement → immediate value promise
-    - First 30s: Problem setup + content preview
-    
-    Content Opportunities:
-    1. "100+ Python Concepts you Need to Know" - Proven format, untapped niche
-    2. "I built the same AI app 10 times" - Trending topic (AI) + proven format
-    3. "Python Pro Tips - Code This, NOT That" - Direct adaptation to your niche
-    
-    Findings stored in memory (namespace: youtube-topics)
-    
-    Next: /youtube script "100+ Python Concepts you Need to Know"
-```
+Channel: Fireship | 3.2M subs | 245 videos | Avg: 1.8M views
 
-**Trending topics:**
+Outlier Videos (3x+ avg = 5.5M+):
+1. "100+ JavaScript Concepts you Need to Know" - 12.4M (6.8x)
+2. "I built the same app 10 times" - 8.9M (4.8x)
+3. "JavaScript Pro Tips - Code This, NOT That" - 7.2M (3.9x)
 
-```text
-User: /youtube research trending
-AI: Searching trending videos in "AI coding tools"...
+Patterns: comparison videos, "X concepts" lists, code quality tips
+Titles: numbers + actionable promise | Length: 8-12 min | Freq: 2-3/week
+Hook: contrarian statement -> immediate value promise
 
-    Trending Topics (last 30 days, sorted by views):
-    
-    Topic Cluster: "AI Coding Assistants"
-    - "Cursor vs GitHub Copilot" - 890K views
-    - "I replaced my developer with AI" - 650K views
-    - "Best AI coding tools 2026" - 520K views
-    
-    Topic Cluster: "AI Code Review"
-    - "AI found bugs in my code" - 340K views
-    - "Automated code review with AI" - 280K views
-    
-    Topic Cluster: "AI Agents"
-    - "Building AI agents that code" - 450K views
-    - "AI agent writes entire app" - 380K views
-    
-    Gap Analysis:
-    ✓ Your competitors HAVE covered: AI assistants, code generation
-    ✗ Your competitors HAVEN'T covered: AI code review, AI agents (emerging)
-    
-    High-Opportunity Topics:
-    1. "AI Code Review Tools Compared" - Rising trend, low competition
-    2. "I built an AI agent that writes code" - Proven format + trending topic
-    3. "AI found 10 bugs in production code" - Specific, relatable, shareable
-    
-    Stored 3 opportunities in memory.
-    
-    Next: /youtube script "AI Code Review Tools Compared"
-```
+Opportunities:
+1. "100+ Python Concepts you Need to Know" - proven format, untapped niche
+2. "I built the same AI app 10 times" - trending topic + proven format
 
-**Video deep-dive:**
-
-```text
-User: /youtube research video dQw4w9WgXcQ
-AI: Analyzing video dQw4w9WgXcQ...
-
-    Title: "Never Gonna Give You Up"
-    Channel: Rick Astley
-    Views: 1.4B
-    Published: 2009-10-25
-    Duration: 3m33s
-    
-    Transcript Analysis:
-    - Hook: Immediate music start (no intro)
-    - Structure: Verse → Chorus → Verse → Chorus → Bridge → Chorus
-    - Pacing: 120 words/minute (moderate)
-    - Repetition: Chorus repeats 4 times (retention strategy)
-    
-    Title Formula:
-    - Simple, direct, memorable
-    - No clickbait, pure content promise
-    
-    Engagement:
-    - Likes: 16M (1.1% of views)
-    - Comments: 3.2M (0.2% of views)
-    - High shareability (meme status)
-    
-    Reusable Patterns:
-    1. Strong hook (no wasted time)
-    2. Repetition for retention
-    3. Memorable, quotable content
-    
-    This video is an outlier (meme status), but the structural patterns apply.
+Next: /youtube script "100+ Python Concepts you Need to Know"
 ```
 
 ## Related
