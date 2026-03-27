@@ -53,7 +53,7 @@ When `/save-todo` is invoked, analyze the conversation for complexity signals:
 
 | Signal | Indicates | Action |
 |--------|-----------|--------|
-| Single action item / < 2h estimate / "quick" or "simple" | Simple | TODO.md only |
+| Single action item / <= 2h estimate / "quick" or "simple" | Simple | TODO.md only |
 | Multiple distinct steps / research needed / > 2h / multi-session / PRD needed | Complex | PLANS.md + TODO.md |
 
 ## Ralph Classification
@@ -80,7 +80,7 @@ Tasks can be classified as "Ralph-able" -- suitable for autonomous iterative AI 
 - [ ] t042 Fix all ShellCheck violations #ralph(SHELLCHECK_CLEAN) ~1h
 ```
 
-**Running**: `/ralph-loop "$(grep 't042' TODO.md)" --completion-promise "SHELLCHECK_CLEAN" --max-iterations 10` or `/ralph-task t042`
+**Running**: `/ralph-loop "$(grep -E '^- \[ \] t042\s' TODO.md | head -n1)" --completion-promise "SHELLCHECK_CLEAN" --max-iterations 10` or `/ralph-task t042`
 
 **Quality loop integration**: Preflight (`/preflight-loop`, `PREFLIGHT_PASS`), PR Review (`/pr-loop`, `PR_APPROVED`), Postflight (`/postflight-loop`, `RELEASE_HEALTHY`).
 
@@ -253,7 +253,7 @@ Update progress, record decisions, and note surprises in PLANS.md:
 
 ## Time Estimation
 
-Use calibrated tiers from `reference/planning-detail.md` (based on 340 completed tasks). Default `~30m` for most tasks. `~2h` triggers auto-subtasking. See that file for the full tier table and calibration data.
+Use calibrated tiers from `reference/planning-detail.md` (based on 340 completed tasks). Default `~30m` for most tasks. Estimates >2h trigger auto-subtasking. See that file for the full tier table and calibration data.
 
 ## Dependencies and Blocking
 
