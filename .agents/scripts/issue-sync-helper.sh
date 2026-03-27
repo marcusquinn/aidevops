@@ -157,8 +157,18 @@ _mark_issue_done() {
 # Close Helpers
 # =============================================================================
 
+# _is_cancelled_or_deferred: returns 0 if the task text indicates it was
+# cancelled, deferred, or declined — these states require no PR/verified evidence.
+_is_cancelled_or_deferred() {
+	local text="$1"
+	echo "$text" | grep -qiE 'cancelled:[0-9]{4}-[0-9]{2}-[0-9]{2}|deferred:[0-9]{4}-[0-9]{2}-[0-9]{2}|declined:[0-9]{4}-[0-9]{2}-[0-9]{2}|CANCELLED' && return 0
+	return 1
+}
+
 _has_evidence() {
 	local text="$1" task_id="$2" repo="$3"
+	# Cancelled/deferred/declined tasks need no PR or verified: evidence
+	_is_cancelled_or_deferred "$text" && return 0
 	echo "$text" | grep -qE 'verified:[0-9]{4}-[0-9]{2}-[0-9]{2}|pr:#[0-9]+' && return 0
 	echo "$text" | grep -qiE 'PR #[0-9]+ merged|PR.*merged' && return 0
 	[[ -n "$repo" ]] && [[ -n "$(gh_find_merged_pr "$repo" "$task_id")" ]] && return 0
@@ -195,6 +205,14 @@ _find_closing_pr() {
 
 _close_comment() {
 	local task_id="$1" text="$2" pr_num="$3" pr_url="$4"
+	# Cancelled/deferred/declined: produce a not-planned comment (no PR needed)
+	if _is_cancelled_or_deferred "$text"; then
+		local reason
+		reason=$(echo "$text" | grep -oiE 'cancelled:[0-9-]+|deferred:[0-9-]+|declined:[0-9-]+|CANCELLED' | head -1 | tr '[:upper:]' '[:lower:]')
+		[[ -z "$reason" ]] && reason="cancelled"
+		echo "Closing as not planned ($reason). Task $task_id resolved in TODO.md."
+		return 0
+	fi
 	if [[ -n "$pr_num" && -n "$pr_url" ]]; then
 		echo "Completed via [PR #${pr_num}](${pr_url}). Task $task_id done in TODO.md."
 	elif [[ -n "$pr_num" ]]; then
@@ -236,7 +254,16 @@ _do_close() {
 		print_info "[DRY-RUN] Would close #$issue_number ($task_id)"
 		return 0
 	fi
-	if gh issue close "$issue_number" --repo "$repo" --comment "$comment" 2>/dev/null; then
+	# Cancelled/deferred/declined tasks close as "not planned"; completed tasks use default reason
+	local close_args=("issue" "close" "$issue_number" "--repo" "$repo" "--comment" "$comment")
+	if _is_cancelled_or_deferred "$task_with_notes"; then
+		close_args+=("--reason" "not planned")
+		gh_create_label "$repo" "not-planned" "E4E669" "Closed as not planned"
+	fi
+	if gh "${close_args[@]}" 2>/dev/null; then
+		if _is_cancelled_or_deferred "$task_with_notes"; then
+			_gh_edit_labels "add" "$repo" "$issue_number" "not-planned"
+		fi
 		_mark_issue_done "$repo" "$issue_number"
 		print_success "Closed #$issue_number ($task_id)"
 	else
@@ -631,7 +658,7 @@ cmd_close() {
 			fi
 		fi
 		if _do_close "$task_id" "$issue_num" "$todo_file" "$repo"; then closed=$((closed + 1)); else skipped=$((skipped + 1)); fi
-	done < <(strip_code_fences <"$todo_file" | grep -E '^\s*- \[x\] t[0-9]+' || true)
+	done < <(strip_code_fences <"$todo_file" | grep -E '^\s*- \[(x|-)\] t[0-9]+' || true)
 	print_info "Close: $closed closed, $skipped skipped, $ref_fixed refs fixed"
 }
 
