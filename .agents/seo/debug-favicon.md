@@ -62,10 +62,10 @@ curl -sI "https://example.com/favicon.ico" | head -1 | cut -d' ' -f2
 
 | Size | Purpose |
 |------|---------|
-| 48x48 | Android notification |
-| 72x72 | Android home screen |
-| 96x96 | Android home screen |
-| 144x144 | Android home screen |
+| 48x48 | Android notification (optional) |
+| 72x72 | Android home screen (optional) |
+| 96x96 | Android home screen (optional) |
+| 144x144 | Android home screen (optional) |
 | 192x192 | **Required** - PWA install |
 | 512x512 | **Required** - PWA splash screen |
 
@@ -131,7 +131,7 @@ curl -sI "https://example.com/favicon.ico" | head -1 | cut -d' ' -f2
 | 2 | Wrong Content-Type | ICO: `image/x-icon`, PNG: `image/png`, SVG: `image/svg+xml` |
 | 3 | Missing Apple Touch Icon | Add `<link rel="apple-touch-icon" href="/apple-touch-icon.png">` |
 | 4 | PWA install fails | Ensure manifest has 192x192 and 512x512 icons |
-| 5 | Icon URL resolution in manifest | Use absolute paths (e.g., `/icons/icon-192x192.png`) or relative paths (resolved relative to manifest location) |
+| 5 | Icon URL resolution in manifest | Absolute (`/icons/icon-192.png`) or relative (`icon-192.png` — resolved relative to manifest location) |
 | 6 | Cache issues | Add version query string: `href="/favicon.ico?v=2"` |
 
 ## Full Audit Script
