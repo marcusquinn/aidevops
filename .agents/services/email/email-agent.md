@@ -101,78 +101,18 @@ conversations (1 per vendor/topic per mission)
 
 ### SES Receipt Rules Setup
 
-To receive emails, configure SES Receipt Rules to deliver to S3:
+See `services/email/ses.md` for full SES configuration. Summary:
 
-1. **Verify receiving domain** in SES (the domain you want to receive email on)
-2. **Create S3 bucket** for incoming emails (or use existing)
-3. **Create SES Receipt Rule Set**:
-   - Recipient: `missions@yourdomain.com` (or `*@missions.yourdomain.com`)
-   - Action: S3 (bucket name, prefix `incoming/`)
-4. **Configure MX record**: Point the receiving domain's MX to SES inbound endpoint
-   - `10 inbound-smtp.{region}.amazonaws.com`
-5. **Update config**: Set `s3_receive_bucket` and `s3_receive_prefix` in `email-agent-config.json`
-
-```bash
-# Verify domain for receiving
-aws ses verify-domain-identity --domain missions.yourdomain.com
-
-# Create receipt rule (after MX record is configured)
-aws ses create-receipt-rule-set --rule-set-name mission-emails
-aws ses create-receipt-rule --rule-set-name mission-emails --rule '{
-  "Name": "store-to-s3",
-  "Enabled": true,
-  "Recipients": ["missions@yourdomain.com"],
-  "Actions": [{
-    "S3Action": {
-      "BucketName": "my-mission-emails",
-      "ObjectKeyPrefix": "incoming/"
-    }
-  }]
-}'
-aws ses set-active-receipt-rule-set --rule-set-name mission-emails
-```
+1. Verify receiving domain in SES
+2. Create S3 bucket for incoming emails; set MX record to `10 inbound-smtp.{region}.amazonaws.com`
+3. Create SES Receipt Rule: recipient `missions@yourdomain.com` → S3 action (`incoming/` prefix)
+4. Update config: `s3_receive_bucket` and `s3_receive_prefix` in `email-agent-config.json`
 
 ## Template System
 
-Templates are markdown files with `{{variable}}` placeholders. The first `Subject:` line becomes the email subject; everything after the first blank line becomes the body.
-
-### Template Format
-
-```markdown
-Subject: API Access Request for {{service_name}}
-
-Dear {{contact_name}},
-
-I am writing to request API access to {{service_name}} for our project {{project_name}}.
-
-We are building {{project_description}} and would like to integrate with your
-{{api_type}} API. Our expected usage is approximately {{expected_volume}} requests
-per month.
-
-Could you please provide:
-1. API credentials or an invitation to your developer portal
-2. Documentation for the {{api_type}} API
-3. Any rate limits or usage policies we should be aware of
-
-Thank you for your time.
-
-Best regards,
-{{sender_name}}
-{{sender_title}}
-{{sender_company}}
-```
-
-### Usage
-
-```bash
-email-agent-helper.sh send --mission M001 --to api@vendor.com \
-  --template path/to/api-request.md \
-  --vars 'service_name=Acme API,contact_name=API Team,project_name=MyProject,project_description=a CRM platform,api_type=REST,expected_volume=10000,sender_name=Alex,sender_title=CTO,sender_company=MyCompany'
-```
+Templates are markdown files with `{{variable}}` placeholders. First `Subject:` line → email subject; everything after the first blank line → body. Store in `{mission-dir}/templates/`.
 
 ### Built-in Template Patterns
-
-Common mission communication patterns:
 
 | Pattern | Use Case | Key Variables |
 |---------|----------|---------------|
@@ -181,11 +121,9 @@ Common mission communication patterns:
 | Support inquiry | Ask vendor support a question | service_name, issue_description |
 | Cancellation request | Cancel a service or subscription | service_name, account_id, reason |
 
-Create templates in the mission directory: `{mission-dir}/templates/`.
-
 ## Verification Code Extraction
 
-The agent automatically extracts verification codes from inbound emails using pattern matching.
+Auto-extracted from inbound emails via pattern matching.
 
 ### Supported Patterns
 
@@ -216,53 +154,25 @@ ai-research --prompt "Extract any verification codes, API keys, or confirmation 
 
 ## Integration with Mission System
 
-### Mission Orchestrator Usage
-
-The mission orchestrator invokes the email agent when a milestone requires 3rd-party communication:
-
-```text
-Mission: "Build a SaaS with Stripe payments"
-├── Milestone 1: Infrastructure
-│   ├── Feature: Register domain (email agent: domain registrar)
-│   └── Feature: Setup hosting (email agent: hosting provider)
-├── Milestone 2: Payments
-│   └── Feature: Stripe API access (email agent: Stripe support)
-```
+The mission orchestrator invokes the email agent when a milestone requires 3rd-party communication (e.g., domain registrar, hosting provider, API vendor). See `workflows/mission-orchestrator.md` for the full orchestration pattern.
 
 ### Orchestrator Integration Pattern
 
 ```bash
-# 1. Send initial request
+# Send → poll → extract → use
 msg_id=$(email-agent-helper.sh send --mission M001 --to api@stripe.com \
   --template templates/api-request.md --vars 'service_name=Stripe')
-
-# 2. Wait and poll (in pulse loop)
 email-agent-helper.sh poll --mission M001
-
-# 3. Check for codes
 email-agent-helper.sh extract-codes --mission M001
-
-# 4. Read conversation status
 email-agent-helper.sh status --mission M001
-
-# 5. If response received with code, use it
-# The orchestrator reads extracted_codes and passes to the next feature
+# Orchestrator reads extracted_codes and passes to the next feature
 ```
 
 ### Credential Flow
 
-```text
-Email Agent extracts code
-    ↓
-Mission state file updated:
-  Resources:
-  - [x] Stripe API key (extracted from email, conv: conv-xxx)
-    ↓
-Next feature uses the credential:
-  /full-loop "Configure Stripe with API key from mission resources"
-```
+Extracted codes → mission state file (`Resources` section) → next feature reads by secret name.
 
-**Security**: Extracted credentials are stored in the SQLite database with masked display. For sensitive credentials (API keys, passwords), the mission orchestrator should move them to gopass/Vaultwarden immediately after extraction and reference them by secret name, not value.
+**Security**: Move sensitive credentials (API keys, passwords) to gopass/Vaultwarden immediately after extraction. Never reference by value — use secret name only.
 
 ## Security
 
