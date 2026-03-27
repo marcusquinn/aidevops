@@ -141,6 +141,15 @@ workers=$(( mem / 1024 / 1024 / 128 ))  # 1 worker per 128MB
 
 **General Variables**: `CLOUDRON_APP_ORIGIN` (full URL), `CLOUDRON_APP_DOMAIN` (domain only), `CLOUDRON=1`.
 
+## Filesystem Permissions
+
+| Path | State | Purpose |
+|------|-------|---------|
+| `/app/code` | READ-ONLY | Application code |
+| `/app/data` | READ-WRITE | Persistent storage (backed up) |
+| `/run` | READ-WRITE (wiped on restart) | Sockets, PIDs, sessions, caches |
+| `/tmp` | READ-WRITE (wiped on restart) | Temporary files |
+
 ## Dockerfile Patterns
 
 ```dockerfile
