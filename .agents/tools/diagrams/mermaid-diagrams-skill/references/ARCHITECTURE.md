@@ -159,11 +159,32 @@ C4Container
 
 ### C4Dynamic
 
-Numbered `Rel()` calls show interaction sequence. Same elements as C4Container.
+```mermaid
+C4Dynamic
+    title Order Flow
+    Person(user, "User")
+    Container(api, "API", "Node.js")
+    ContainerDb(db, "Database", "PostgreSQL")
+    Rel(user, api, "1. POST /orders")
+    Rel(api, db, "2. Insert order")
+    Rel(api, user, "3. Order created")
+```
 
 ### C4Deployment
 
-`Deployment_Node(alias, label, tech)` nests infrastructure. Contains `Container`/`ContainerDb` elements. Same `Rel()` syntax.
+```mermaid
+C4Deployment
+    title Deployment
+    Deployment_Node(aws, "AWS", "Cloud") {
+        Deployment_Node(eks, "EKS", "Kubernetes") {
+            Container(api, "API", "Node.js")
+        }
+        Deployment_Node(rds, "RDS", "Database") {
+            ContainerDb(db, "PostgreSQL", "Database")
+        }
+    }
+    Rel(api, db, "SQL")
+```
 
 ---
 
@@ -208,9 +229,10 @@ packet-beta
     16-31: "Destination Port"
     32-63: "Sequence Number"
     64-95: "Acknowledgment Number"
-    96-111: "Flags/Window"
-    112-127: "Checksum"
-    128-191: "Options"
+    96-111: "Flags"
+    112-127: "Window"
+    128-143: "Checksum"
+    144-191: "Options"
     192-255: "Data"
 ```
 
