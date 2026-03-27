@@ -1,439 +1,147 @@
 # 100+ Hooks Organized by Type
 
-> The hook is everything. These first words/seconds determine whether your ad lives or dies.
+> The hook is everything. First words/seconds determine whether your ad lives or dies.
 
-**How to use**: Find the category matching your angle → adapt the template → test 3-5 variations → winner hook + winning body = optimized ad.
-
----
-
-## Curiosity Hooks
-
-**Gap Theory:** Create an information gap that must be closed.
-
-### "Secret" Hooks
-```
-1. "The secret [industry experts] don't want you to know"
-2. "I'm going to share something most [professionals] keep to themselves"
-3. "Here's what nobody tells you about [topic]"
-4. "The hidden [thing] that changed everything for me"
-5. "What [successful people] know that you don't"
-6. "I discovered this by accident and it changed my [area]"
-```
-
-### "Mystery" Hooks
-```
-7. "What happened next shocked me"
-8. "I never expected this to work, but..."
-9. "Something strange happened when I tried [product]"
-10. "This makes no sense, but it works"
-11. "I didn't believe it until I saw it myself"
-12. "The weird trick that [outcome]"
-```
-
-### "Revelation" Hooks
-```
-13. "I finally figured out why [problem] happens"
-14. "After [time], I finally understand"
-15. "It took me [time] to realize this"
-16. "I was doing it wrong for years"
-17. "The real reason [thing] doesn't work"
-18. "What I wish I knew [time] ago"
-```
-
-### "Story Starter" Hooks
-```
-19. "Last week, something happened that changed my perspective"
-20. "I need to tell you about what happened when..."
-21. "So this morning I woke up to..."
-22. "Let me tell you about the time I..."
-23. "True story: I was [situation] when..."
-24. "You won't believe what happened when I..."
-```
+**How to use**: Match category to your angle → adapt template → test 3-5 variations → winner hook + winning body = optimized ad.
 
 ---
 
-## Pain Point Hooks
+## Curiosity Hooks — create an information gap that must be closed
 
-**Agitation:** Surface the frustration they already feel.
-
-### "Frustration" Hooks
-```
-25. "Tired of [frustrating situation]?"
-26. "Why does [problem] have to be so hard?"
-27. "Sick of [problem] yet?"
-28. "How many times have you tried to [thing] and failed?"
-29. "Still struggling with [problem]?"
-30. "Frustrated that [thing] isn't working?"
-```
-
-### "Problem Call-Out" Hooks
-```
-31. "If your [thing] looks like this, you have a problem"
-32. "[Problem] is costing you more than you think"
-33. "This is why your [thing] isn't working"
-34. "Are you making this [area] mistake?"
-35. "The #1 reason [people like you] fail at [thing]"
-36. "You're probably doing [thing] wrong"
-```
-
-### "Fear" Hooks
-```
-37. "What [bad thing] is doing to your [area]"
-38. "Are you at risk of [negative outcome]?"
-39. "The [thing] that's silently destroying your [area]"
-40. "Most [people] don't realize they're [problem]"
-41. "Before it's too late: [urgent message]"
-42. "Warning: [thing] is worse than you think"
-```
-
-### "Loss" Hooks
-```
-43. "You're leaving $[X] on the table every [time period]"
-44. "Every day you wait, you lose [thing]"
-45. "What [problem] is really costing you"
-46. "Stop losing [thing] to [problem]"
-47. "How much [time/money] have you wasted on [thing]?"
-48. "You're missing out on [outcome] because of [reason]"
-```
+| Sub-type | Examples |
+|----------|---------|
+| **Secret** | "The secret [industry experts] don't want you to know" · "I'm going to share something most [professionals] keep to themselves" · "Here's what nobody tells you about [topic]" · "The hidden [thing] that changed everything for me" · "What [successful people] know that you don't" · "I discovered this by accident and it changed my [area]" |
+| **Mystery** | "What happened next shocked me" · "I never expected this to work, but..." · "Something strange happened when I tried [product]" · "This makes no sense, but it works" · "I didn't believe it until I saw it myself" · "The weird trick that [outcome]" |
+| **Revelation** | "I finally figured out why [problem] happens" · "After [time], I finally understand" · "It took me [time] to realize this" · "I was doing it wrong for years" · "The real reason [thing] doesn't work" · "What I wish I knew [time] ago" |
+| **Story Starter** | "Last week, something happened that changed my perspective" · "I need to tell you about what happened when..." · "So this morning I woke up to..." · "Let me tell you about the time I..." · "True story: I was [situation] when..." · "You won't believe what happened when I..." |
 
 ---
 
-## Benefit Hooks
+## Pain Point Hooks — surface the frustration they already feel
 
-**Desire:** Promise the outcome they want.
-
-### "Transformation" Hooks
-```
-49. "How to go from [bad state] to [good state] in [timeframe]"
-50. "Transform your [area] in just [time]"
-51. "[Result] in [timeframe] — here's how"
-52. "What if you could [desired outcome] by [date]?"
-53. "From [before] to [after]: my [time] journey"
-54. "The fastest way to [desired outcome]"
-```
-
-### "Result" Hooks
-```
-55. "How I [achieved result] in [timeframe]"
-56. "We helped [X] [people] achieve [result]"
-57. "[Impressive stat] in [timeframe]"
-58. "Here's how [person/company] got [specific result]"
-59. "The exact system that generated [result]"
-60. "[Number] [people] have used this to [outcome]"
-```
-
-### "Possibility" Hooks
-```
-61. "Imagine waking up to [desired state]"
-62. "What would you do with [benefit]?"
-63. "Picture this: [ideal scenario]"
-64. "Finally: [desired outcome] without [pain point]"
-65. "It's possible to [achieve goal] even if [obstacle]"
-66. "What if [desired outcome] was actually easy?"
-```
-
-### "Specific Benefit" Hooks
-```
-67. "[Product] gives you [specific benefit] without [drawback]"
-68. "The only [product] that [unique benefit]"
-69. "Get [benefit] + [benefit] + [benefit] with one [product]"
-70. "Why [number]+ [people] switched to [product] for [benefit]"
-71. "[Product] that actually [delivers on promise]"
-72. "The [adjective] way to [achieve outcome]"
-```
+| Sub-type | Examples |
+|----------|---------|
+| **Frustration** | "Tired of [frustrating situation]?" · "Why does [problem] have to be so hard?" · "Sick of [problem] yet?" · "How many times have you tried to [thing] and failed?" · "Still struggling with [problem]?" · "Frustrated that [thing] isn't working?" |
+| **Problem Call-Out** | "If your [thing] looks like this, you have a problem" · "[Problem] is costing you more than you think" · "This is why your [thing] isn't working" · "Are you making this [area] mistake?" · "The #1 reason [people like you] fail at [thing]" · "You're probably doing [thing] wrong" |
+| **Fear** | "What [bad thing] is doing to your [area]" · "Are you at risk of [negative outcome]?" · "The [thing] that's silently destroying your [area]" · "Most [people] don't realize they're [problem]" · "Before it's too late: [urgent message]" · "Warning: [thing] is worse than you think" |
+| **Loss** | "You're leaving $[X] on the table every [time period]" · "Every day you wait, you lose [thing]" · "What [problem] is really costing you" · "Stop losing [thing] to [problem]" · "How much [time/money] have you wasted on [thing]?" · "You're missing out on [outcome] because of [reason]" |
 
 ---
 
-## Controversy Hooks
+## Benefit Hooks — promise the outcome they want
 
-**Disruption:** Challenge conventional wisdom.
-
-### "Myth-Busting" Hooks
-```
-73. "Everything you've been told about [topic] is wrong"
-74. "[Common belief] is a lie"
-75. "Stop believing the myth that [thing]"
-76. "Why [popular advice] is actually hurting you"
-77. "The [industry] has been lying to you about [thing]"
-78. "[X] is dead. Here's what's replacing it."
-```
-
-### "Hot Take" Hooks
-```
-79. "Unpopular opinion: [controversial stance]"
-80. "I'm going to say what no one else will about [topic]"
-81. "This might make some people angry, but [truth]"
-82. "Hot take: [bold statement]"
-83. "I don't care if this is controversial: [opinion]"
-84. "Why I disagree with every [expert] about [thing]"
-```
-
-### "Comparison" Hooks
-```
-85. "Why I quit [competitor/alternative] and never looked back"
-86. "[Product] vs [Product]: The truth"
-87. "What [alternative] doesn't want you to know"
-88. "I tried every [product type]. Here's the truth."
-89. "The real difference between [thing] and [thing]"
-90. "Why [popular solution] is overrated"
-```
+| Sub-type | Examples |
+|----------|---------|
+| **Transformation** | "How to go from [bad state] to [good state] in [timeframe]" · "Transform your [area] in just [time]" · "[Result] in [timeframe] — here's how" · "What if you could [desired outcome] by [date]?" · "From [before] to [after]: my [time] journey" · "The fastest way to [desired outcome]" |
+| **Result** | "How I [achieved result] in [timeframe]" · "We helped [X] [people] achieve [result]" · "[Impressive stat] in [timeframe]" · "Here's how [person/company] got [specific result]" · "The exact system that generated [result]" · "[Number] [people] have used this to [outcome]" |
+| **Possibility** | "Imagine waking up to [desired state]" · "What would you do with [benefit]?" · "Picture this: [ideal scenario]" · "Finally: [desired outcome] without [pain point]" · "It's possible to [achieve goal] even if [obstacle]" · "What if [desired outcome] was actually easy?" |
+| **Specific Benefit** | "[Product] gives you [specific benefit] without [drawback]" · "The only [product] that [unique benefit]" · "Get [benefit] + [benefit] + [benefit] with one [product]" · "Why [number]+ [people] switched to [product] for [benefit]" · "[Product] that actually [delivers on promise]" · "The [adjective] way to [achieve outcome]" |
 
 ---
 
-## Social Proof Hooks
+## Controversy Hooks — challenge conventional wisdom
 
-**Validation:** Show others trust you.
-
-### "Number" Hooks
-```
-91. "[X,000+] [people] can't be wrong"
-92. "Join [number] [people] who already [benefit]"
-93. "#1 rated [product] by [authority]"
-94. "[Number] 5-star reviews from real customers"
-95. "[X%] of customers report [result]"
-96. "Used by [number] of the Fortune 500"
-```
-
-### "Testimonial" Hooks
-```
-97. "'[Strong quote]' — [Name], [Company]"
-98. "Here's what [credible person] says about [product]"
-99. "I wasn't a believer until [customer name] showed me [result]"
-100. "Real people. Real results. Here's [name]'s story."
-101. "Don't take my word for it — hear from [customer]"
-102. "Why [famous person/company] uses [product]"
-```
-
-### "Authority" Hooks
-```
-103. "Featured in [Forbes/TechCrunch/etc.]"
-104. "The [product] recommended by [experts/doctors/etc.]"
-105. "Award-winning [product] for [category]"
-106. "Trusted by [impressive clients]"
-107. "[Expert title] reveals [insight]"
-108. "The [product] [industry leaders] use"
-```
+| Sub-type | Examples |
+|----------|---------|
+| **Myth-Busting** | "Everything you've been told about [topic] is wrong" · "[Common belief] is a lie" · "Stop believing the myth that [thing]" · "Why [popular advice] is actually hurting you" · "The [industry] has been lying to you about [thing]" · "[X] is dead. Here's what's replacing it." |
+| **Hot Take** | "Unpopular opinion: [controversial stance]" · "I'm going to say what no one else will about [topic]" · "This might make some people angry, but [truth]" · "Hot take: [bold statement]" · "I don't care if this is controversial: [opinion]" · "Why I disagree with every [expert] about [thing]" |
+| **Comparison** | "Why I quit [competitor/alternative] and never looked back" · "[Product] vs [Product]: The truth" · "What [alternative] doesn't want you to know" · "I tried every [product type]. Here's the truth." · "The real difference between [thing] and [thing]" · "Why [popular solution] is overrated" |
 
 ---
 
-## Question Hooks
+## Social Proof Hooks — show others trust you
 
-**Engagement:** Invite them into conversation.
-
-### "Direct Question" Hooks
-```
-109. "Have you ever [relatable experience]?"
-110. "Do you [common struggle]?"
-111. "What if you could [desired outcome]?"
-112. "Are you [target description]?"
-113. "Want to know how [people] [achieve result]?"
-114. "Ready to finally [achieve goal]?"
-```
-
-### "Rhetorical Question" Hooks
-```
-115. "Why do [thing] when you could [better thing]?"
-116. "What's stopping you from [goal]?"
-117. "Isn't it time you [took action]?"
-118. "How much longer will you [continue problem]?"
-119. "When was the last time you [positive experience]?"
-120. "What would [outcome] be worth to you?"
-```
-
-### "Quiz/Interactive" Hooks
-```
-121. "Take this 30-second quiz to find out if [thing]"
-122. "Which [type] are you?"
-123. "See how you compare to [benchmark]"
-124. "Find out your [type/score/result]"
-125. "Test: Are you [persona type]?"
-```
+| Sub-type | Examples |
+|----------|---------|
+| **Number** | "[X,000+] [people] can't be wrong" · "Join [number] [people] who already [benefit]" · "#1 rated [product] by [authority]" · "[Number] 5-star reviews from real customers" · "[X%] of customers report [result]" · "Used by [number] of the Fortune 500" |
+| **Testimonial** | "'[Strong quote]' — [Name], [Company]" · "Here's what [credible person] says about [product]" · "I wasn't a believer until [customer name] showed me [result]" · "Real people. Real results. Here's [name]'s story." · "Don't take my word for it — hear from [customer]" · "Why [famous person/company] uses [product]" |
+| **Authority** | "Featured in [Forbes/TechCrunch/etc.]" · "The [product] recommended by [experts/doctors/etc.]" · "Award-winning [product] for [category]" · "Trusted by [impressive clients]" · "[Expert title] reveals [insight]" · "The [product] [industry leaders] use" |
 
 ---
 
-## Instructional Hooks
+## Question Hooks — invite them into conversation
 
-**Value:** Promise to teach something useful.
-
-### "How To" Hooks
-```
-126. "How to [achieve outcome] in [timeframe]"
-127. "The step-by-step guide to [achieving thing]"
-128. "[Number] ways to [improve/achieve something]"
-129. "How to [do thing] (without [common obstacle])"
-130. "The complete guide to [topic]"
-131. "Learn how to [skill] in [short time]"
-```
-
-### "Listicle" Hooks
-```
-132. "[Number] [things] every [person] needs to know"
-133. "[Number] mistakes [people] make (and how to avoid them)"
-134. "[Number] reasons why [thing] (and [number] that [contrast])"
-135. "The top [number] [things] for [goal]"
-136. "[Number] [things] I wish I knew before [doing thing]"
-137. "[Number] signs you need [solution]"
-```
-
-### "Hack" Hooks
-```
-138. "The [number]-second hack that [outcome]"
-139. "One simple trick to [achieve result]"
-140. "The lazy person's guide to [outcome]"
-141. "Little-known hack for [problem]"
-142. "The shortcut to [goal] that [type of people] use"
-```
+| Sub-type | Examples |
+|----------|---------|
+| **Direct** | "Have you ever [relatable experience]?" · "Do you [common struggle]?" · "What if you could [desired outcome]?" · "Are you [target description]?" · "Want to know how [people] [achieve result]?" · "Ready to finally [achieve goal]?" |
+| **Rhetorical** | "Why do [thing] when you could [better thing]?" · "What's stopping you from [goal]?" · "Isn't it time you [took action]?" · "How much longer will you [continue problem]?" · "When was the last time you [positive experience]?" · "What would [outcome] be worth to you?" |
+| **Quiz/Interactive** | "Take this 30-second quiz to find out if [thing]" · "Which [type] are you?" · "See how you compare to [benchmark]" · "Find out your [type/score/result]" · "Test: Are you [persona type]?" |
 
 ---
 
-## Time-Sensitive Hooks
+## Instructional Hooks — promise to teach something useful
 
-**Urgency:** Create need for immediate action.
-
-### "Limited Time" Hooks
-```
-143. "[X] hours left: [offer]"
-144. "Last chance: [thing] ends [date]"
-145. "Today only: [benefit/discount]"
-146. "Don't miss: [offer] ends tonight"
-147. "Final hours to [get/save/join]"
-```
-
-### "Limited Quantity" Hooks
-```
-148. "Only [X] left in stock"
-149. "We're almost sold out of [product]"
-150. "[X] spots remaining"
-151. "Limited to [number] [people/units]"
-152. "While supplies last: [offer]"
-```
-
-### "Timely/Trending" Hooks
-```
-153. "Everyone's talking about [topic]"
-154. "[Trend] is taking over [industry]"
-155. "[Timely event] is here — are you ready?"
-156. "The [year] update you need to see"
-157. "Why [current event] changes everything about [topic]"
-```
+| Sub-type | Examples |
+|----------|---------|
+| **How To** | "How to [achieve outcome] in [timeframe]" · "The step-by-step guide to [achieving thing]" · "[Number] ways to [improve/achieve something]" · "How to [do thing] (without [common obstacle])" · "The complete guide to [topic]" · "Learn how to [skill] in [short time]" |
+| **Listicle** | "[Number] [things] every [person] needs to know" · "[Number] mistakes [people] make (and how to avoid them)" · "[Number] reasons why [thing] (and [number] that [contrast])" · "The top [number] [things] for [goal]" · "[Number] [things] I wish I knew before [doing thing]" · "[Number] signs you need [solution]" |
+| **Hack** | "The [number]-second hack that [outcome]" · "One simple trick to [achieve result]" · "The lazy person's guide to [outcome]" · "Little-known hack for [problem]" · "The shortcut to [goal] that [type of people] use" |
 
 ---
 
-## Pattern Interrupt Hooks
+## Time-Sensitive Hooks — create need for immediate action
 
-**Shock:** Break the scroll with unexpected opening.
-
-### "Direct Address" Hooks
-```
-158. "Stop scrolling. You need to see this."
-159. "Hey [persona], listen up"
-160. "You. Yes, you. [Message]"
-161. "Wait — before you scroll past..."
-162. "Real talk: [honest message]"
-```
-
-### "Unexpected" Hooks
-```
-163. "This is the weirdest [product] I've ever used"
-164. "I know this sounds crazy, but..."
-165. "Okay, this is going to sound weird"
-166. "Plot twist: [unexpected revelation]"
-167. "Here's something you'll never guess about [topic]"
-```
-
-### "Humor" Hooks
-```
-168. "Me trying to [relatable struggle] [😅]"
-169. "POV: You just discovered [product]"
-170. "Nobody: ... Me: [funny behavior]"
-171. "That moment when [relatable situation]"
-172. "My [relationship to product] is complicated but..."
-```
+| Sub-type | Examples |
+|----------|---------|
+| **Limited Time** | "[X] hours left: [offer]" · "Last chance: [thing] ends [date]" · "Today only: [benefit/discount]" · "Don't miss: [offer] ends tonight" · "Final hours to [get/save/join]" |
+| **Limited Quantity** | "Only [X] left in stock" · "We're almost sold out of [product]" · "[X] spots remaining" · "Limited to [number] [people/units]" · "While supplies last: [offer]" |
+| **Timely/Trending** | "Everyone's talking about [topic]" · "[Trend] is taking over [industry]" · "[Timely event] is here — are you ready?" · "The [year] update you need to see" · "Why [current event] changes everything about [topic]" |
 
 ---
 
-## Hook Testing Framework
+## Pattern Interrupt Hooks — break the scroll with unexpected opening
 
-### A/B Test Process
-
-- **Week 1 (Concept)**: Test 3-5 hooks from different categories, same body + CTA → find winning category
-- **Week 2 (Variation)**: Test 3-5 variations within winning category → find exact winning hook
-- **Week 3 (Iterate)**: Small modifications to winner (different words, same structure) → optimize
-
-### Hook Performance Benchmarks
-
-| Hook Quality | Video (3s View Rate) | Static (CTR) |
-|--------------|---------------------|--------------|
-| Poor | <20% | <0.5% |
-| Average | 20-30% | 0.5-1.0% |
-| Good | 30-40% | 1.0-1.5% |
-| Great | 40-50% | 1.5-2.5% |
-| Exceptional | >50% | >2.5% |
-
-### Universal Hook Principles
-
-1. **Specificity beats generality** — "Save $347" beats "Save money"
-2. **Emotion beats logic** — Feel first, think second
-3. **Questions engage** — Brain can't ignore a question
-4. **Contradiction intrigues** — "Everything you know is wrong"
-5. **Numbers add credibility** — "3 steps" beats "a few steps"
-6. **Personal pronouns connect** — "You" and "I" create intimacy
-7. **Active voice wins** — "Do this" beats "This can be done"
+| Sub-type | Examples |
+|----------|---------|
+| **Direct Address** | "Stop scrolling. You need to see this." · "Hey [persona], listen up" · "You. Yes, you. [Message]" · "Wait — before you scroll past..." · "Real talk: [honest message]" |
+| **Unexpected** | "This is the weirdest [product] I've ever used" · "I know this sounds crazy, but..." · "Okay, this is going to sound weird" · "Plot twist: [unexpected revelation]" · "Here's something you'll never guess about [topic]" |
+| **Humor** | "Me trying to [relatable struggle] 😅" · "POV: You just discovered [product]" · "Nobody: ... Me: [funny behavior]" · "That moment when [relatable situation]" · "My [relationship to product] is complicated but..." |
 
 ---
 
-## Industry-Specific Hook Examples
+## Industry-Specific Examples
 
-### For SaaS/B2B
+### SaaS / B2B
+- "Your [software/process] is costing you hours every week"
+- "Why your team keeps missing deadlines (and how to fix it)"
+- "[Number]% of [professionals] struggle with this"
+- "The tool your competitors are using (and you're not)"
+- "Stop paying for features you don't use"
+- "Why [industry] leaders are switching to [product category]"
+- "Automate your [task] in under 5 minutes"
+- "The dashboard that changed how we [do thing]"
+- "Everything you need to [achieve goal] in one place"
+- "Finally: [product category] that doesn't require IT"
+- "Built for [specific role], by [specific role]"
+- "The tool that pays for itself in [timeframe]"
 
-```
-173. "Your [software/process] is costing you hours every week"
-174. "Why your team keeps missing deadlines (and how to fix it)"
-175. "[Number]% of [professionals] struggle with this"
-176. "The tool your competitors are using (and you're not)"
-177. "Stop paying for features you don't use"
-178. "Why [industry] leaders are switching to [product category]"
-179. "Automate your [task] in under 5 minutes"
-180. "The dashboard that changed how we [do thing]"
-181. "Everything you need to [achieve goal] in one place"
-182. "Finally: [product category] that doesn't require IT"
-183. "Built for [specific role], by [specific role]"
-184. "The tool that pays for itself in [timeframe]"
-```
+### Ecommerce
+- "The [product] that [X,000] people can't stop talking about"
+- "Why this [product] is going viral on TikTok"
+- "The [product] I didn't know I needed"
+- "Everything you want in a [product], nothing you don't"
+- "Designed in [location], loved by [people]"
+- "The [adjective] [product] that actually delivers"
+- "What our customers are saying shocked us"
+- "[Number] happy customers can't be wrong"
+- "The [product] our customers keep buying again"
+- "Why [product] has a 4.9-star rating"
+- "Join [number] people who've made the switch"
+- "See why [product] has [number] 5-star reviews"
 
-### For Ecommerce
-
-```
-185. "The [product] that [X,000] people can't stop talking about"
-186. "Why this [product] is going viral on TikTok"
-187. "The [product] I didn't know I needed"
-188. "Everything you want in a [product], nothing you don't"
-189. "Designed in [location], loved by [people]"
-190. "The [adjective] [product] that actually delivers"
-191. "What our customers are saying shocked us"
-192. "[Number] happy customers can't be wrong"
-193. "The [product] our customers keep buying again"
-194. "Why [product] has a 4.9-star rating"
-195. "Join [number] people who've made the switch"
-196. "See why [product] has [number] 5-star reviews"
-```
-
-### For Services/Lead Gen
-
-```
-197. "Get a free [analysis/audit/consultation] in [timeframe]"
-198. "See what's really going on with your [area]"
-199. "The [timeframe] diagnostic that reveals everything"
-200. "What we found when we analyzed [X] [businesses/cases]"
-201. "Your custom [report/plan] is ready"
-202. "Let's fix your [problem] together — free consultation"
-203. "After [years] in [industry], here's what I know"
-204. "The strategy I use for my own [business/clients]"
-205. "What I learned from [X] [projects/clients/years]"
-206. "The [framework/system] that's worked [X] times"
-207. "I've [achieved result] — here's exactly how"
-208. "The same approach that [famous company/person] uses"
-```
+### Services / Lead Gen
+- "Get a free [analysis/audit/consultation] in [timeframe]"
+- "See what's really going on with your [area]"
+- "The [timeframe] diagnostic that reveals everything"
+- "What we found when we analyzed [X] [businesses/cases]"
+- "Your custom [report/plan] is ready"
+- "Let's fix your [problem] together — free consultation"
+- "After [years] in [industry], here's what I know"
+- "The strategy I use for my own [business/clients]"
+- "What I learned from [X] [projects/clients/years]"
+- "The [framework/system] that's worked [X] times"
+- "I've [achieved result] — here's exactly how"
+- "The same approach that [famous company/person] uses"
 
 ---
 
@@ -468,13 +176,39 @@
 
 ---
 
-## Platform-Specific Notes
+## Testing & Benchmarks
 
-| Platform | Hook guidance |
-|----------|--------------|
+**A/B Test Process**
+- Week 1 (Concept): Test 3-5 hooks from different categories, same body + CTA → find winning category
+- Week 2 (Variation): Test 3-5 variations within winning category → find exact winning hook
+- Week 3 (Iterate): Small modifications to winner → optimize
+
+**Performance Benchmarks**
+
+| Quality | Video 3s View Rate | Static CTR |
+|---------|-------------------|------------|
+| Poor | <20% | <0.5% |
+| Average | 20–30% | 0.5–1.0% |
+| Good | 30–40% | 1.0–1.5% |
+| Great | 40–50% | 1.5–2.5% |
+| Exceptional | >50% | >2.5% |
+
+**Universal Principles**
+1. Specificity beats generality — "Save $347" beats "Save money"
+2. Emotion beats logic — feel first, think second
+3. Questions engage — brain can't ignore a question
+4. Contradiction intrigues — "Everything you know is wrong"
+5. Numbers add credibility — "3 steps" beats "a few steps"
+6. Personal pronouns connect — "You" and "I" create intimacy
+7. Active voice wins — "Do this" beats "This can be done"
+
+**Platform Notes**
+
+| Platform | Guidance |
+|----------|---------|
 | Facebook Feed | Full sentence OK; question + testimonial hooks perform well; first line visible before "See More" |
 | Instagram Feed | Shorter/punchier; visual hook must match text hook |
-| Stories/Reels | Must work in first 1-2 seconds; text overlay is the hook |
+| Stories/Reels | Must work in first 1–2 seconds; text overlay is the hook |
 | Audience Network | Very short; direct value statement; click-bait gets ignored |
 
 ---
