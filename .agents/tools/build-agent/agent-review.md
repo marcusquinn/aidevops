@@ -12,137 +12,77 @@ tools:
   task: true
 ---
 
-# Agent Review - Reviewing and Improving Agents
+# Agent Review
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
 - **Purpose**: Systematic review and improvement of agent instructions
-- **Trigger**: End of session, user correction, observable failure
+- **Trigger**: Session end, user correction, observable failure, periodic maintenance
 - **Output**: Proposed improvements with evidence and scope
 
-**Review Checklist**:
-1. Instruction count - over budget?
-2. Universal applicability - task-specific content?
-3. Duplicate detection - same guidance elsewhere?
-4. Code examples - still accurate? authoritative?
-5. AI-CONTEXT block - captures essentials?
+**Review Checklist**: (1) Instruction count -- over budget? (2) Universal applicability -- task-specific content? (3) Duplicate detection -- same guidance elsewhere? (4) Code examples -- still accurate/authoritative? (5) AI-CONTEXT block -- captures essentials? (6) Slash commands -- defined inline instead of `scripts/commands/`?
 
-**Self-Assessment Triggers**:
-- User corrects agent response
-- Commands/paths fail
-- Contradiction with authoritative sources
-- Staleness indicators (versions, deprecated APIs)
+**Self-Assessment Triggers**: User corrects response, commands/paths fail, contradiction with authoritative sources, staleness (versions, deprecated APIs).
 
-**Process**: Complete task first, cite evidence, check duplicates, propose specific fix, ask permission
+**Process**: Complete task first, cite evidence, check duplicates, propose specific fix, ask permission.
 
-**Write Restrictions (MANDATORY)**: This subagent has `write: true` but MUST respect branch protection. When the working directory is on `main`/`master`:
+**Write Restrictions (MANDATORY)**: On `main`/`master` -- ALLOWED: `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`. BLOCKED: all other files. For code changes: return proposed edits to calling agent for worktree application.
 
-- **ALLOWED writes**: `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`
-- **BLOCKED writes**: All other files (agent definitions, scripts, configs, code)
-- **For code changes**: Return proposed edits to the calling agent; do NOT write directly. The calling agent will apply them in a worktree.
-
-**Testing**: Use OpenCode CLI to test agent/config changes without restarting TUI:
-
-```bash
-opencode run "Test query" --agent [agent-name]
-```text
-
-See `tools/opencode/opencode.md` for CLI testing patterns.
+**Testing**: `opencode run "Test query" --agent [agent-name]` -- see `tools/opencode/opencode.md`.
 
 <!-- AI-CONTEXT-END -->
 
-## Agent Review Process
+## When to Review
 
-### When to Review
+- **Session end** -- after complex multi-step tasks, PR merge, or release
+- **User correction** -- immediate targeted review
+- **Observable failure** -- commands fail, paths don't exist
+- **After fixing multiple issues** -- pattern recognition opportunity
 
-1. **End of significant session** - After complex multi-step tasks
-2. **User correction** - Immediate trigger for targeted review
-3. **Observable failure** - Commands fail, paths don't exist
-4. **Periodic maintenance** - Scheduled review cycles
-
-### When Agents Should Suggest @agent-review
-
-All agents should suggest calling `@agent-review` at these points:
-
-1. **After PR merge** - Capture what worked in the PR process
-2. **After release** - Document release learnings
-3. **After fixing multiple issues** - Pattern recognition opportunity
-4. **After user correction** - Immediate improvement opportunity
-5. **Before starting unrelated work** - Clean context boundary
-6. **After long session** - Capture accumulated learnings
-
-**Suggestion format:**
+All agents should suggest `@agent-review` at these points:
 
 ```text
----
 Session complete. Consider running @agent-review to:
 - Capture patterns from {specific accomplishment}
 - Identify improvements to {agents used}
 - Document {any corrections or failures}
-
-Options:
-1. Run @agent-review now
-2. Start new session (clean context)
-3. Continue in current session
----
 ```
 
-See `workflows/session-manager.md` for full session lifecycle guidance.
+See `workflows/session-manager.md` for full session lifecycle.
 
-### Review Checklist
+## Review Checklist
 
-For each agent file under review:
+### 1. Instruction Count
 
-#### 1. Instruction Count
+Target: <50 main agents, <100 detailed subagents. Over budget: consolidate, move to subagent, or remove.
 
-- Count discrete instructions (bullets, rules, directives)
-- Target: <50 for main agents, <100 for detailed subagents
-- If over budget: consolidate, move to subagent, or remove
+### 2. Universal Applicability
 
-#### 2. Universal Applicability
+Every instruction relevant to >80% of tasks? Task-specific content and edge cases that became main content → extract to subagents.
 
-- Is every instruction relevant to >80% of tasks?
-- Task-specific content should move to subagents
-- Check for edge cases that became main content
-
-#### 3. Duplicate Detection
+### 3. Duplicate Detection
 
 ```bash
-# Search for similar instructions across all agents
 rg "pattern" .agents/
+```
 
-# Check specific files that might overlap
-diff .agents/file1.md .agents/file2.md
-```text
+Single authoritative source per concept. Cross-references okay, duplicated instructions not.
 
-- Same concept should have single authoritative source
-- Cross-references okay, duplicated instructions not okay
+### 4. Code Examples Audit
 
-#### 4. Code Examples Audit
+For each example: (1) Authoritative reference implementation? (2) Still works? (3) Secrets placeholder'd? (4) Could be a search-pattern reference instead?
 
-For each code example:
-- Is it authoritative (the reference implementation)?
-- Does it still work? Test if possible
-- Are secrets properly placeholder'd?
-- Could it be a `file:line` reference instead?
+### 5. AI-CONTEXT Block Quality
 
-#### 5. AI-CONTEXT Block Quality
+Captures all essentials in condensed form? Readable standalone -- would an AI get stuck with only this?
 
-- Does condensed version capture all essentials?
-- Is it readable without the detailed section?
-- Would an AI get stuck with only the AI-CONTEXT?
+### 6. Slash Command Audit
 
-#### 6. Slash Command Audit
+Inline commands in main agents → move to `scripts/commands/` or domain subagent. Main agents reference commands, never implement them.
 
-- Are any commands defined inline in main agents?
-- Should inline commands move to `scripts/commands/` or domain subagent?
-- Do main agents only reference commands (not implement them)?
-
-### Improvement Proposal Format
-
-When proposing changes:
+## Improvement Proposal Format
 
 ```markdown
 ## Agent Improvement Proposal
@@ -150,87 +90,31 @@ When proposing changes:
 **File**: `.agents/[path]/[file].md`
 **Issue**: [Brief description]
 **Evidence**: [Specific failure, contradiction, or user feedback]
+**Related Files** (checked for duplicates): `.agents/[other-file].md` - [relationship]
+**Proposed Change**: [Specific before/after or description]
+**Impact**: [ ] No conflicts with other agents [ ] Instruction count: [+/- N] [ ] Tested if code example
+```
 
-**Related Files** (checked for duplicates):
-- `.agents/[other-file].md` - [relationship]
-- `.agents/[another-file].md` - [relationship]
+## Common Improvement Patterns
 
-**Proposed Change**:
-[Specific before/after or description]
-
-**Impact Assessment**:
-- [ ] No conflicts with other agents
-- [ ] Instruction count impact: [+/- N]
-- [ ] Tested if code example
-```text
-
-### Common Improvement Patterns
-
-#### Consolidating Instructions
+**Consolidating instructions** -- merge redundant rules into one:
 
 ```markdown
-# Before (5 instructions)
-- Use local variables
-- Assign parameters to locals
-- Never use $1 directly
-- Pattern: local var="$1"
-- This prevents issues
+# Before (5 instructions): Use local variables / Assign parameters to locals / Never use $1 directly / Pattern: local var="$1" / This prevents issues
+# After (1 instruction): Pattern: `local var="$1"` for all parameters
+```
 
-# After (1 instruction)
-- Pattern: `local var="$1"` for all parameters
-```text
+**Moving to subagent** -- replace 50 lines of inline rules with `See aidevops/architecture.md for schema guidelines`, move detail to subagent file.
 
-#### Moving to Subagent
+**Replacing code with reference** -- replace inline code blocks with `See error handling at .agents/scripts/hostinger-helper.sh` (use search patterns, not line numbers).
 
-```markdown
-# Before (in main AGENTS.md)
-## Database Schema Guidelines
-[50 lines of detailed rules]
+## Session Review Workflow
 
-# After (in AGENTS.md)
-See `aidevops/architecture.md` for schema guidelines
+1. Note corrections and failures from the session
+2. Check which agent instructions were relevant
+3. Propose improvements following format above
+4. Ask permission -- user decides if changes are made
 
-# After (in architecture.md)
-## Database Schema Guidelines
-[50 lines of detailed rules]
-```text
+## Contributing
 
-#### Replacing Code with Reference
-
-```markdown
-# Before
-Here's the error handling pattern:
-```bash
-if ! result=$(command); then
-    echo "Error: $result"
-    return 1
-fi
-```text
-
-## After
-
-See error handling pattern at `.agents/scripts/hostinger-helper.sh:145`
-
-```text
-
-### Session Review Workflow
-
-At end of significant session:
-
-1. **Note any corrections** - What did user correct?
-2. **Note any failures** - What didn't work as expected?
-3. **Check instructions used** - Which agents were relevant?
-4. **Propose improvements** - Following format above
-5. **Ask permission** - User decides if changes are made
-
-### Contributing Improvements
-
-Improvements to aidevops agents benefit all users:
-
-1. Create improvement proposal
-2. Make changes in `~/Git/aidevops/`
-3. Run quality check: `.agents/scripts/linters-local.sh`
-4. Commit with descriptive message
-5. Create PR to upstream
-
-See `workflows/release-process.md` for contribution workflow.
+Create proposal → make changes in `~/Git/aidevops/` → run `.agents/scripts/linters-local.sh` → commit and create PR. See `workflows/release-process.md`.
