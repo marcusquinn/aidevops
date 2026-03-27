@@ -38,38 +38,17 @@ cp configs/email-providers.json.txt configs/email-providers.json
 
 ## Provider Selection
 
-### By Privacy Rating
+| Rating | Providers | Auth |
+|--------|-----------|------|
+| **A+** Proton Mail, Tuta, Cloudron | E2EE/self-hosted, zero-knowledge | Bridge password / regular |
+| **A** Fastmail, mailbox.org, StartMail, Disroot, ChatMail | No data mining, privacy-focused | App passwords / regular |
+| **B** Zoho, IONOS, Namecheap, iCloud | No ads, less privacy-focused jurisdiction | OAuth2 / app passwords |
+| **C** Google Workspace, Microsoft 365, GMX, mail.com | No ad targeting, telemetry active | OAuth2 / service account |
+| **D** Gmail, Outlook/Hotmail, Yahoo | Ad-supported, content scanning | OAuth2 / app passwords |
 
-| Rating | Providers | Key Characteristics |
-|--------|-----------|-------------------|
-| A+ | Proton Mail, Tuta, Cloudron | E2EE built-in or self-hosted, zero-knowledge, open-source |
-| A | Fastmail, mailbox.org, StartMail, Disroot, ChatMail | No data mining, privacy-focused business model |
-| B | Zoho, IONOS, Namecheap, iCloud | No ads/mining, but less privacy-focused jurisdiction or practices |
-| C | Google Workspace, Microsoft 365, GMX, mail.com | Business plans with no ad targeting, but telemetry active |
-| D | Gmail, Outlook/Hotmail, Yahoo | Ad-supported, content scanning, broad data usage policies |
+**Protocol exceptions**: Tuta — no IMAP/SMTP/POP3 (proprietary only). Proton Mail — IMAP/SMTP via local Bridge. Fastmail — JMAP available. Outlook/365 — Graph API. All others: IMAP + SMTP + POP3.
 
-### By Protocol Support
-
-| Protocol | Providers |
-|----------|-----------|
-| IMAP + SMTP | All except Tuta |
-| JMAP | Fastmail only |
-| POP3 | Gmail, Google Workspace, Outlook, Microsoft 365, Yahoo, Zoho, GMX, IONOS, Namecheap, mail.com, Fastmail, mailbox.org, Disroot, Cloudron |
-| Graph API | Outlook, Microsoft 365 |
-| Bridge required | Proton Mail (local IMAP/SMTP via Proton Bridge) |
-| No standard protocols | Tuta (proprietary client only) |
-
-### By Auth Method
-
-| Method | Providers |
-|--------|-----------|
-| OAuth2 | Gmail, Google Workspace, Outlook, Microsoft 365, Zoho |
-| App passwords | Gmail, Fastmail, Yahoo, StartMail, iCloud |
-| Regular password | Cloudron, mailbox.org, GMX, IONOS, Namecheap, mail.com, Disroot, ChatMail, Zoho |
-| Bridge password | Proton Mail |
-| Service account | Google Workspace, Microsoft 365 |
-
-## POP vs IMAP Decision Tree
+## POP vs IMAP
 
 ```text
 Need email access?
@@ -95,42 +74,21 @@ Need email access?
 | Spam/Junk | `[Gmail]/Spam` | `Junk` / `Junk Email` | `Bulk Mail` | `Junk` | `Junk` or `Spam` |
 | Archive | `[Gmail]/All Mail` | `Archive` | `Archive` | `Archive` | `Archive` |
 
-- **Gmail**: uses labels, not folders — a message can appear in multiple IMAP "folders". Deleting from a label removes the label only; true deletion requires moving to Trash.
-- **Outlook/365**: free Outlook.com uses `Sent`/`Deleted`; Microsoft 365 business uses `Sent Items`/`Deleted Items`.
+- **Gmail**: labels not folders — message can appear in multiple IMAP "folders". Deleting a label removes the label only; true deletion requires moving to Trash.
+- **Outlook/365**: free uses `Sent`/`Deleted`; Microsoft 365 business uses `Sent Items`/`Deleted Items`.
 
 ## Shared Mailbox Patterns
 
-| Address | Purpose | Typical Protocol |
-|---------|---------|-----------------|
-| `info@` | General enquiries | POP or IMAP shared |
-| `support@` | Customer support | IMAP + helpdesk tool |
-| `sales@` | Sales enquiries | IMAP + CRM |
-| `enquiries@` | General enquiries (UK) | POP or IMAP shared |
-| `accounts@` | Financial / billing | IMAP (restricted) |
-| `marketing@` | Marketing team | IMAP shared |
-| `admin@` | Administrative | IMAP (restricted) |
-| `webmaster@` | Website issues | IMAP |
-| `buyers@` | Procurement | IMAP |
-| `dataprotection@` | GDPR / privacy | IMAP (restricted) |
-| `legal@` | Legal matters | IMAP (restricted) |
-| `billing@` | Payment / invoicing | IMAP (restricted) |
-| `noreply@` | Outbound only | SMTP only |
-| `hello@` | Friendly general contact | POP or IMAP shared |
-| `contact@` | General contact | POP or IMAP shared |
-| `hr@` | Human resources | IMAP (restricted) |
-| `careers@` | Job applications | IMAP |
-| `press@` | Media enquiries | IMAP |
-| `abuse@` | Abuse reports (RFC 2142) | IMAP |
-| `postmaster@` | Mail server issues (RFC 2142) | IMAP |
-| `security@` | Security reports | IMAP (restricted) |
+| Address | Protocol | Notes |
+|---------|----------|-------|
+| `info@`, `enquiries@`, `hello@`, `contact@` | POP or IMAP shared | POP if all users need same copy |
+| `support@` | IMAP + helpdesk tool | Assign/claim workflow |
+| `sales@` | IMAP + CRM | |
+| `noreply@` | SMTP only | No inbox needed |
+| `abuse@`, `postmaster@` | IMAP | RFC 2142 required addresses |
+| `security@`, `dataprotection@`, `legal@`, `billing@`, `accounts@` | IMAP (restricted) | Limit access |
 
-**Provider shared mailbox support:**
-- **Microsoft 365**: Best-in-class — dedicated shared mailbox, no extra license, auto-mapping, send-as/on-behalf.
-- **Google Workspace**: Collaborative inboxes via Google Groups; delegated access for individual mailboxes.
-- **Zoho Mail**: Group mailboxes in paid plans; shared folders and delegated access.
-- **Cloudron**: Separate mailbox accounts or aliases via admin panel / CLI.
-- **Proton Mail**: Business plans support multi-user access and catch-all.
-- **Others**: Most free/personal providers have no shared mailbox support.
+**Shared mailbox provider support**: Microsoft 365 (best — dedicated shared mailbox, no extra license, send-as/on-behalf) > Google Workspace (Groups + delegated access) > Zoho Mail (paid plans) > Cloudron (aliases via CLI) > Proton Mail (business plans). Most free/personal providers: none.
 
 ## Cloudron Mail Management
 
