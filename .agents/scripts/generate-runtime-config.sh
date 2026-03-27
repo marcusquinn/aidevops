@@ -1200,9 +1200,9 @@ _generate_mcp_for_runtime() {
 		print_warning "Skipping auggie-mcp: binary found but not logged in (run: auggie login)"
 	fi
 
-	# context7 (library docs)
+	# context7 (library docs — remote endpoint, zero install)
 	register_mcp_for_runtime "$runtime_id" "context7" \
-		'{"command":"npx","args":["-y","@upstash/context7-mcp@latest"]}'
+		'{"url":"https://mcp.context7.com/mcp"}'
 	mcp_count=$((mcp_count + 1))
 
 	# Playwright MCP (correct package: @playwright/mcp, not @anthropic-ai/mcp-server-playwright)

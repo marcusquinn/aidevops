@@ -204,13 +204,15 @@ _register_mcp_opencode() {
 	local url
 	url=$(echo "$mcp_json" | jq -r '.url // empty')
 
+	# Default: disabled. MCPs activate on-demand via subagents.
+	# Pass "enabled":true in mcp_json to override for always-on MCPs.
 	local opencode_entry
 	if [[ -n "$url" ]]; then
 		# Remote MCP: use type "remote" with url field
 		opencode_entry=$(echo "$mcp_json" | jq -c '{
             type: "remote",
             url: .url,
-            enabled: (.enabled // true)
+            enabled: (.enabled // false)
         }')
 	else
 		# Local MCP: merge command + args into a single "command" array
@@ -219,7 +221,7 @@ _register_mcp_opencode() {
             type: "local",
             command: ([.command] + (.args // [])),
             environment: (.env // {}),
-            enabled: (.enabled // true)
+            enabled: (.enabled // false)
         }')
 	fi
 

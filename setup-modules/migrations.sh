@@ -686,17 +686,22 @@ disable_ondemand_mcps() {
 		return 0
 	fi
 
-	# MCPs to disable globally (these have subagent alternatives or are unused)
+	# All MCPs disabled by default — activate on-demand via subagents.
+	# This reduces idle process/connection overhead to zero.
 	# Note: use exact MCP key names from opencode.json
 	local -a ondemand_mcps=(
-		"playwriter"
-		"playwright"
+		"auggie-mcp"
 		"augment-context-engine"
+		"cloudflare-api"
+		"context7"
 		"gh_grep"
 		"google-analytics-mcp"
 		"grep_app"
+		"playwright"
+		"playwriter"
+		"shadcn"
+		"macos-automator"
 		"websearch"
-		# KEEP ENABLED: context7 (library docs), auggie-mcp (semantic search)
 	)
 
 	local disabled=0
@@ -733,15 +738,8 @@ disable_ondemand_mcps() {
 		fi
 	done
 
-	# Re-enable MCPs that were accidentally disabled (v2.100.16-17 bug)
-	local -a keep_enabled=("context7")
-	for mcp in "${keep_enabled[@]}"; do
-		if jq -e ".mcp[\"$mcp\"].enabled == false" "$tmp_config" >/dev/null 2>&1; then
-			jq ".mcp[\"$mcp\"].enabled = true" "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-			print_info "Re-enabled $mcp MCP"
-			changed=1
-		fi
-	done
+	# Note: the v2.100.16-17 context7 re-enable migration was removed in v3.1.312.
+	# All MCPs are now disabled by default — subagents enable them on-demand.
 
 	if [[ $disabled -gt 0 || $changed -gt 0 ]]; then
 		create_backup_with_rotation "$opencode_config" "opencode"

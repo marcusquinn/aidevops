@@ -10,7 +10,10 @@ tools:
   grep: true
   webfetch: false
   task: true
+  auggie-mcp_*: true
+  augment-context-engine_*: true
 mcp:
+  - auggie-mcp
   - augment-context-engine
 ---
 

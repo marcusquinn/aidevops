@@ -10,6 +10,8 @@ subagents:
   - plans
   # Context tools
   - toon
+  # macOS automation (AppleScript/JXA)
+  - macos-automator
   # Built-in
   - general
   - explore
