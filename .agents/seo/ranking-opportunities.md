@@ -21,20 +21,13 @@ tools:
 - **Output**: Analysis report in TOON format
 - **Commands**: `/seo-analyze`, `/seo-opportunities`, `seo-analysis-helper.sh`
 
-**Quick Commands**:
-
 ```bash
-# Full analysis
-seo-analysis-helper.sh example.com
-
-# Specific analyses
-seo-analysis-helper.sh example.com quick-wins
-seo-analysis-helper.sh example.com striking-distance
-seo-analysis-helper.sh example.com low-ctr
-seo-analysis-helper.sh example.com cannibalization
-
-# View data summary
-seo-analysis-helper.sh example.com summary
+seo-analysis-helper.sh example.com                    # Full analysis
+seo-analysis-helper.sh example.com quick-wins         # Quick wins only
+seo-analysis-helper.sh example.com striking-distance  # Striking distance
+seo-analysis-helper.sh example.com low-ctr            # Low CTR
+seo-analysis-helper.sh example.com cannibalization    # Cannibalization
+seo-analysis-helper.sh example.com summary            # Data summary
 ```
 
 <!-- AI-CONTEXT-END -->
@@ -42,64 +35,45 @@ seo-analysis-helper.sh example.com summary
 ## Analysis Types
 
 ### Quick Wins
+**Criteria**: Position 4–20, Impressions > 100 — page 1–2 keywords that could rank higher with small improvements.
 
-**Criteria**: Position 4-20, Impressions > 100
+**Actions**: Optimize title/meta, add internal links from high-authority pages, improve content depth, add schema markup.
 
-Keywords already ranking on page 1-2 that could move higher with small improvements.
-
-**Actions**:
-- Optimize title tags and meta descriptions
-- Add internal links from high-authority pages
-- Improve content depth and relevance
-- Add schema markup
-
-**Scoring**: Higher impressions + closer to position 4 = higher score
+**Scoring**: Higher impressions + closer to position 4 = higher score.
 
 ### Striking Distance
+**Criteria**: Position 11–30, Volume > 500 — keywords just off page 1 with significant volume.
 
-**Criteria**: Position 11-30, Volume > 500
+**Actions**: Expand content, build backlinks, improve Core Web Vitals, add topic cluster support.
 
-Keywords just off page 1 with significant search volume. Moving these to page 1 can drive substantial traffic.
-
-**Actions**:
-- Expand content significantly
-- Build quality backlinks
-- Improve page speed and Core Web Vitals
-- Add supporting content (topic clusters)
-
-**Scoring**: Volume × (31 - position) = opportunity score
+**Scoring**: `volume × (31 - position)`
 
 ### Low CTR
+**Criteria**: CTR < 2%, Impressions > 500, Position ≤ 10 — ranking well but not getting clicks.
 
-**Criteria**: CTR < 2%, Impressions > 500, Position ≤ 10
+**Actions**: Rewrite title tags, improve meta descriptions with CTAs, add structured data, check SERP feature opportunities (FAQ, How-to).
 
-Keywords ranking well but not getting clicks. Usually indicates poor title/meta or SERP feature competition.
-
-**Actions**:
-- Rewrite title tags to be more compelling
-- Improve meta descriptions with CTAs
-- Add structured data for rich snippets
-- Check for SERP feature opportunities (FAQ, How-to)
-
-**Potential**: Calculated as impressions × 5% (target CTR)
+**Potential**: `impressions × 5%` (target CTR)
 
 ### Content Cannibalization
+**Criteria**: Same query ranking with multiple URLs — dilutes ranking signals.
 
-**Criteria**: Same query ranking with multiple URLs
+**Actions**: Merge into single authoritative page, add canonicals to secondary pages, differentiate intent, use 301 redirects.
 
-Multiple pages competing for the same keyword, diluting ranking signals.
+**Detection**: Groups queries by normalized text; flags those with 2+ unique URLs.
 
-**Actions**:
-- Merge content into a single authoritative page
-- Add canonical tags to secondary pages
-- Differentiate content focus (different intent)
-- Use 301 redirects if merging
+## Thresholds
 
-**Detection**: Groups queries by normalized text, identifies those with 2+ unique URLs
+| Analysis | Parameter | Default |
+|----------|-----------|---------|
+| Quick Wins | Position range | 4–20 |
+| Quick Wins | Min Impressions | 100 |
+| Striking Distance | Position range | 11–30 |
+| Striking Distance | Min Volume | 500 |
+| Low CTR | Max CTR | 0.02 (2%) |
+| Low CTR | Min Impressions | 500 |
 
 ## Output Format
-
-Analysis results are saved in TOON format:
 
 ```text
 domain	example.com
@@ -126,108 +100,24 @@ seo tools	/blog/tools,/guides/seo	8.2,15.3	2
 
 ## Workflow
 
-### 1. Export Data
+1. **Export**: `seo-export-helper.sh all example.com --days 90`
+2. **Analyze**: `seo-analysis-helper.sh example.com`
+3. **Review**: `cat ~/.aidevops/.agent-workspace/work/seo-data/example.com/analysis-*.toon`
+4. **Prioritize**: Quick wins → Low CTR → Cannibalization → Striking distance
 
-```bash
-# Export from all configured platforms
-seo-export-helper.sh all example.com --days 90
-```
+## Multi-Source
 
-### 2. Run Analysis
-
-```bash
-# Full analysis
-seo-analysis-helper.sh example.com
-```
-
-### 3. Review Results
-
-```bash
-# View the analysis file
-cat ~/.aidevops/.agent-workspace/work/seo-data/example.com/analysis-*.toon
-```
-
-### 4. Take Action
-
-Prioritize by:
-1. **Quick wins** - Fastest ROI, minimal effort
-2. **Low CTR** - Title/meta changes are quick
-3. **Cannibalization** - Prevents wasted effort
-4. **Striking distance** - Longer-term, higher effort
-
-## Thresholds
-
-Default thresholds can be adjusted in the script:
-
-| Analysis | Parameter | Default |
-|----------|-----------|---------|
-| Quick Wins | Min Position | 4 |
-| Quick Wins | Max Position | 20 |
-| Quick Wins | Min Impressions | 100 |
-| Striking Distance | Min Position | 11 |
-| Striking Distance | Max Position | 30 |
-| Striking Distance | Min Volume | 500 |
-| Low CTR | Max CTR | 0.02 (2%) |
-| Low CTR | Min Impressions | 500 |
-
-## Multi-Source Analysis
-
-The analysis combines data from all available sources:
-- GSC provides actual click/impression data
-- Ahrefs/DataForSEO provide volume and difficulty
-- Bing provides additional search engine coverage
-
-When the same query appears in multiple sources, all instances are considered for cannibalization detection.
-
-## Example Output
-
-```text
-=== Quick Wins Analysis ===
-[INFO] Criteria: Position 4-20, Impressions > 100
-
-[SUCCESS] Found 47 quick win opportunities
-
-Top 10 Quick Wins:
-Query | Position | Impressions | Source
-------|----------|-------------|-------
-best seo tools 2026                      | 6.2 | 4500 | gsc
-keyword research guide                   | 8.1 | 3200 | gsc
-how to improve seo                       | 11.3 | 2800 | gsc
-
-=== Content Cannibalization Analysis ===
-[INFO] Finding queries with multiple ranking URLs
-
-[SUCCESS] Found 12 cannibalized queries
-
-Top 10 Cannibalized Queries:
-Query | # Pages | Positions
-------|---------|----------
-seo tools                                | 3 | 6.2,15.3,28.1
-keyword research                         | 2 | 8.1,22.4
-```
+GSC provides click/impression data; Ahrefs/DataForSEO provide volume and difficulty; Bing provides additional coverage. When the same query appears in multiple sources, all instances are considered for cannibalization detection.
 
 ## Integration
-
-### With Keyword Research
 
 ```bash
 # Find opportunities, then research related keywords
 seo-analysis-helper.sh example.com quick-wins
 /keyword-research-extended "top opportunity keyword"
-```
 
-### With Content Planning
-
-Use analysis results to prioritize content updates:
-1. Quick wins → Update existing content
-2. Striking distance → Expand content
-3. Cannibalization → Consolidate pages
-
-### With Reporting
-
-Export analysis for stakeholder reports:
-
-```bash
-# Convert TOON to CSV for spreadsheets
+# Export TOON to CSV for stakeholder reports
 cat analysis-*.toon | awk -F'\t' 'NF>1{print}' > analysis.csv
 ```
+
+Use analysis results to prioritize content work: quick wins → update existing content; striking distance → expand content; cannibalization → consolidate pages.
