@@ -57,11 +57,13 @@
 - Creative team structure
 
 ## Chapter 9: Advanced Performance Creative Strategies
-- Audience-specific creative strategies
-- Competitive creative intelligence
-- Creative fatigue detection and prevention
-- Cross-channel creative optimization
-- Segment-specific testing
+- AI-powered creative optimization (DCO, real-time personalization)
+- Creative sequencing for customer journeys and frequency management
+- Cross-channel creative consistency and asset portability
+- Emerging formats: AR, shoppable, audio/voice advertising
+- Creative experimentation methodologies and competitive intelligence
+- Production at scale: modular systems, agile workflows, cost-quality-speed trade-offs
+- Future trends: synthetic media, privacy-first creative, immersive technologies
 
 ## Chapter 10: Creative Analytics and Optimization
 - Creative KPIs by platform
