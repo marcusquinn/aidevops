@@ -14,181 +14,102 @@ Per-project brand identity bridging design and content agents. A designer picks 
 ## Quick Reference
 
 - **Template**: `context/brand-identity.toon` in each project repo
-- **8 dimensions**: Visual style, voice & tone, copywriting patterns, imagery, iconography, buttons & forms, media & motion, brand positioning
-- **Create from scratch**: Style interview via `tools/design/ui-ux-inspiration.md`
-- **Create from existing site**: URL study via `tools/design/ui-ux-inspiration.md`
+- **8 dimensions**: Visual style, voice & tone, copywriting, imagery, iconography, buttons & forms, media & motion, brand positioning
+- **Create**: From scratch or existing site via `tools/design/ui-ux-inspiration.md`
 - **Related**: `content/guidelines.md`, `content/platform-personas.md`, `content/production/image.md`, `workflows/ui-verification.md`
-
-**When to use**: Before any design or content work. Check `context/brand-identity.toon` — if missing, create one first.
+- **When to use**: Before any design or content work. If `context/brand-identity.toon` is missing, create one first.
 
 <!-- AI-CONTEXT-END -->
 
-Without a shared brand definition, designers and copywriters produce mismatched output. The brand identity file is the single source of truth, persisting across sessions in `context/brand-identity.toon`.
-
 ## Template (8 Dimensions)
-
-### 1. Visual Style
 
 ```toon
 [visual_style]
-ui_style = ""              # From catalogue: Glassmorphism, Neubrutalism, etc.
-ui_style_keywords = []
-colour_palette_name = ""
+ui_style = ""  ui_style_keywords = []  colour_palette_name = ""  # ui_style from catalogue: Glassmorphism, Neubrutalism, etc.
 colours
-  primary = ""  secondary = ""  accent = ""
-  background = ""  surface = ""
-  text_primary = ""  text_secondary = ""
-  success = ""  warning = ""  error = ""
+  primary = ""  secondary = ""  accent = ""  background = ""  surface = ""
+  text_primary = ""  text_secondary = ""  success = ""  warning = ""  error = ""
 dark_mode = false  dark_mode_strategy = ""
 typography
   heading_font = ""  body_font = ""  mono_font = ""
-  heading_weight = ""  body_weight = ""  base_size = ""
-  scale_ratio = ""  line_height = ""  letter_spacing = ""
+  heading_weight = ""  body_weight = ""  base_size = ""  scale_ratio = ""  line_height = ""  letter_spacing = ""
 border_radius = ""  spacing_unit = ""  shadow_style = ""
-```
-
-### 2. Voice & Tone
-
-```toon
 [voice_and_tone]
-register = ""              # "formal" | "casual" | "technical" | "conversational"
-vocabulary_level = ""      # "simple" | "intermediate" | "advanced" | "technical"
-sentence_style = ""        # "short_punchy" | "flowing" | "varied" | "academic"
-personality_traits = []
-humour = ""                # "none" | "dry" | "playful" | "self-deprecating"
-perspective = ""           # "first_person_plural" | "first_person_singular" | "second_person" | "third_person"
-formality_spectrum = 0     # 1-10
-emotional_range = ""  jargon_policy = ""  british_english = false
+register = ""  vocabulary_level = ""  sentence_style = ""  # register: formal|casual|technical|conversational; vocab: simple|intermediate|advanced|technical; sentence: short_punchy|flowing|varied|academic
+personality_traits = []  humour = ""  perspective = ""  # humour: none|dry|playful|self-deprecating; perspective: first_person_plural|singular|second_person|third_person
+formality_spectrum = 0  emotional_range = ""  jargon_policy = ""  british_english = false  # formality 1-10
 brand_voice_examples
   do = []  dont = []
-```
-
-### 3. Copywriting Patterns
-
-```toon
 [copywriting_patterns]
-headline_style = ""        # "question" | "statement" | "how_to" | "number" | "mixed"
-headline_case = ""         # "sentence" | "title" | "lowercase"
-headline_max_words = 0
-subheadline_style = ""     # "explanatory" | "benefit" | "action"
-paragraph_length = ""      # "one_sentence" | "two_three_sentences" | "varied"
-cta_language = ""          # "direct" | "benefit_led" | "urgency" | "conversational"
-cta_examples = []
-power_words = []  words_to_avoid = []
-transition_style = ""  list_style = ""  social_proof_style = ""
-error_message_tone = ""  empty_state_tone = ""
-```
-
-### 4. Imagery
-
-```toon
+headline_style = ""  headline_case = ""  headline_max_words = 0  # style: question|statement|how_to|number|mixed; case: sentence|title|lowercase
+subheadline_style = ""  paragraph_length = ""  cta_language = ""  # sub: explanatory|benefit|action; para: one_sentence|two_three_sentences|varied; cta: direct|benefit_led|urgency|conversational
+cta_examples = []  power_words = []  words_to_avoid = []
+transition_style = ""  list_style = ""  social_proof_style = ""  error_message_tone = ""  empty_state_tone = ""
 [imagery]
-primary_style = ""         # "photography" | "illustration" | "3d" | "mixed" | "abstract"
-photography_style = ""     # "editorial" | "lifestyle" | "product" | "documentary"
-illustration_style = ""    # "flat" | "isometric" | "hand_drawn" | "geometric" | "line_art"
-mood = ""                  # "bright_optimistic" | "dark_moody" | "warm_natural" | "cool_technical"
-colour_treatment = ""      # "full_colour" | "muted" | "duotone" | "monochrome" | "brand_tinted"
-subjects = []
-composition_preference = "" # "centered" | "rule_of_thirds" | "asymmetric" | "full_bleed"
+primary_style = ""  photography_style = ""  illustration_style = ""  # primary: photography|illustration|3d|mixed|abstract; photo: editorial|lifestyle|product|documentary; illust: flat|isometric|hand_drawn|geometric|line_art
+mood = ""  colour_treatment = ""  subjects = []  # mood: bright_optimistic|dark_moody|warm_natural|cool_technical; colour: full_colour|muted|duotone|monochrome|brand_tinted
+composition_preference = ""  # centered|rule_of_thirds|asymmetric|full_bleed
 aspect_ratios
   hero = ""  card = ""  thumbnail = ""  social = ""
 stock_vs_custom = ""  filters = ""  people_in_images = ""  diversity_requirements = ""
-```
-
-### 5. Iconography
-
-```toon
 [iconography]
-library = ""               # "lucide" | "heroicons" | "phosphor" | "tabler" | "custom"
-style = ""                 # "outline" | "filled" | "duotone" | "solid"
-stroke_width = ""
+library = ""  style = ""  stroke_width = ""  # library: lucide|heroicons|phosphor|tabler|custom; style: outline|filled|duotone|solid
 size_scale
   xs = ""  sm = ""  md = ""  lg = ""  xl = ""
-corner_style = ""  colour_usage = ""  animation = ""
-fallback_library = ""  custom_icons = []
-```
-
-### 6. Buttons & Forms
-
-```toon
+corner_style = ""  colour_usage = ""  animation = ""  fallback_library = ""  custom_icons = []
 [buttons_and_forms]
 button_variants
   primary
-    background = ""  text_colour = ""  border_radius = ""
-    padding = ""  font_weight = ""  shadow = ""
-    hover_effect = ""  transition = ""
+    background = ""  text_colour = ""  border_radius = ""  padding = ""  font_weight = ""  shadow = ""  hover_effect = ""  transition = ""
   secondary
-    style = ""       # "outline" | "ghost" | "subtle" | "tonal"
+    style = ""  # outline|ghost|subtle|tonal
   destructive
     style = ""  behaviour = ""
 form_fields
-  style = ""         # "outlined" | "filled" | "underlined" | "minimal"
-  border_radius = ""  focus_ring = ""
-  label_position = ""  validation_style = ""
+  style = ""  border_radius = ""  focus_ring = ""  label_position = ""  validation_style = ""  # style: outlined|filled|underlined|minimal
 button_copy_patterns
-  primary_cta = []  secondary_cta = []
-  destructive_cta = []  confirmation_cta = []
-label_voice = ""
+  primary_cta = []  secondary_cta = []  destructive_cta = []  confirmation_cta = []
+label_voice = ""  placeholder_style = ""  success_message_style = ""
 label_examples
   do = []  dont = []
-placeholder_style = ""
 error_message_examples
   required = ""  invalid = ""  server = ""
-success_message_style = ""
-```
-
-### 7. Media & Motion
-
-```toon
 [media_and_motion]
-animation_approach = ""    # "subtle" | "moderate" | "bold" | "none"
-transition_timing = ""     # "fast" (150ms) | "normal" (300ms) | "slow" (500ms)
-easing = ""                # "ease-out" | "spring" | "linear" | "custom"
-loading_pattern = ""       # "skeleton" | "spinner" | "shimmer" | "progressive"
+animation_approach = ""  transition_timing = ""  easing = ""  loading_pattern = ""  # approach: subtle|moderate|bold|none; timing: fast(150ms)|normal(300ms)|slow(500ms); easing: ease-out|spring|linear|custom; loading: skeleton|spinner|shimmer|progressive
 scroll_behaviour = ""  hover_interactions = ""  page_transitions = ""  micro_interactions = []
-video_style = ""           # "talking_head" | "screen_recording" | "animated" | "cinematic" | "mixed"
-video_pacing = ""  music_mood = ""  narration_style = ""  narration_perspective = ""
-sound_effects = ""  video_intro_style = ""  video_outro_style = ""
-```
-
-### 8. Brand Positioning
-
-```toon
-[brand_positioning]
-# Spectrums 1-10
-premium_vs_accessible = 0      # budget → luxury
-playful_vs_serious = 0         # casual → corporate
-innovative_vs_established = 0  # cutting-edge → traditional
-minimal_vs_maximal = 0         # stripped back → feature-dense
-technical_vs_simple = 0        # consumer → expert
-global_vs_local = 0            # hyper-local → universal
-tagline = ""
-value_proposition = ""
-competitive_differentiator = ""
-target_audience = ""
-audience_sophistication = ""   # "beginner" | "intermediate" | "expert" | "mixed"
-industry = ""
-desired_first_impression = ""
-desired_trust_signals = []
-brand_archetype = ""           # "creator" | "sage" | "explorer" | "hero"
+video_style = ""  video_pacing = ""  music_mood = ""  # video: talking_head|screen_recording|animated|cinematic|mixed
+narration_style = ""  narration_perspective = ""  sound_effects = ""  video_intro_style = ""  video_outro_style = ""
+[brand_positioning]  # all spectrums 1-10
+premium_vs_accessible = 0  playful_vs_serious = 0  innovative_vs_established = 0  # budget→luxury, casual→corporate, cutting-edge→traditional
+minimal_vs_maximal = 0  technical_vs_simple = 0  global_vs_local = 0  # stripped→dense, consumer→expert, local→universal
+tagline = ""  value_proposition = ""  competitive_differentiator = ""
+target_audience = ""  audience_sophistication = ""  industry = ""  # sophistication: beginner|intermediate|expert|mixed
+desired_first_impression = ""  desired_trust_signals = []  brand_archetype = ""  # archetype: creator|sage|explorer|hero
 ```
 
 ## Agent Integration
 
-Every agent producing design or content output must check `context/brand-identity.toon` before generating — constraint, not suggestion. All agents read `brand_positioning`. Design agents also read `visual_style`, `iconography`, `buttons_and_forms`, `media_and_motion`. Content agents read `voice_and_tone`, `copywriting_patterns`, `imagery`. Production agents read `imagery`, `iconography`, `media_and_motion`, `visual_style`.
+Every agent producing design or content output MUST check `context/brand-identity.toon` — constraint, not suggestion.
 
-- **`content/humanise.md`**: Pass `voice_and_tone` to preserve brand personality during AI pattern removal
-- **`workflows/ui-verification.md`**: Brand identity adds constraints but never relaxes verification gates
+| Agent type | Reads |
+|------------|-------|
+| All | `brand_positioning` |
+| Design | `visual_style`, `iconography`, `buttons_and_forms`, `media_and_motion` |
+| Content | `voice_and_tone`, `copywriting_patterns`, `imagery` |
+| Production | `imagery`, `iconography`, `media_and_motion`, `visual_style` |
 
-## Workflow: Create Brand Identity
+- `content/humanise.md`: Pass `voice_and_tone` to preserve brand personality during AI pattern removal
+- `workflows/ui-verification.md`: Brand identity adds constraints but never relaxes verification gates
 
-**From scratch**: (1) Visual interview via `tools/design/ui-ux-inspiration.md` → UI style, palette, typography; (2) Verbal interview → voice adjectives, tone spectrums, CTA pairs, words to avoid; (3) Imagery & motion → image style, icon library, animation level; (4) Brand positioning → walk each spectrum; (5) Synthesise into `context/brand-identity.toon`, flag contradictions, iterate.
+## Workflow
 
-**From existing site**: (1) URL study via `tools/design/ui-ux-inspiration.md` → extract colours, typography, UI patterns; (2) Read 5-10 pages → identify voice, CTAs, error messages; (3) Present findings as filled-in template; (4) Refine — what stays/changes/is missing; (5) Merge kept elements with new directions, flag breaking changes.
+**From scratch**: (1) Visual interview via `tools/design/ui-ux-inspiration.md` → UI style, palette, typography; (2) Verbal interview → voice, tone spectrums, CTAs, words to avoid; (3) Imagery & motion → image style, icon library, animation level; (4) Brand positioning → walk each spectrum; (5) Synthesise into `context/brand-identity.toon`, flag contradictions, iterate.
+
+**From existing site**: (1) URL study via `tools/design/ui-ux-inspiration.md` → extract colours, typography, UI patterns; (2) Read 5-10 pages → identify voice, CTAs, error messages; (3) Present as filled template; (4) Refine — what stays/changes/is missing; (5) Merge kept elements with new directions, flag breaking changes.
 
 ## Relationship Map
 
-`context/brand-identity.toon` is read by: `tools/design/ui-ux-inspiration.md` (interview writes it), `content/guidelines.md` (structural rules), `content/platform-personas.md` (voice shifts), `content/production/image.md` (image gen params), `content/production/characters.md` (character personality), `content/humanise.md` (preserve personality), `workflows/ui-verification.md` (adds constraints), `tools/design/ui-ux-catalogue.toon` (records choices).
+`context/brand-identity.toon` readers: `tools/design/ui-ux-inspiration.md` (writes it), `content/guidelines.md` (structural rules), `content/platform-personas.md` (voice shifts), `content/production/image.md` (image gen params), `content/production/characters.md` (character personality), `content/humanise.md` (preserve personality), `workflows/ui-verification.md` (adds constraints), `tools/design/ui-ux-catalogue.toon` (records choices).
 
 ## Example: Launchpad (developer deploy tool)
 
@@ -196,31 +117,24 @@ Every agent producing design or content output must check `context/brand-identit
 [visual_style]
 ui_style = "Clean Minimal"  colour_palette_name = "Developer Calm"
 colours
-  primary = "#6366F1"  secondary = "#0EA5E9"  accent = "#F59E0B"
-  background = "#FAFAFA"  surface = "#FFFFFF"
-  text_primary = "#18181B"  text_secondary = "#71717A"
-  success = "#22C55E"  warning = "#F59E0B"  error = "#EF4444"
+  primary = "#6366F1"  secondary = "#0EA5E9"  accent = "#F59E0B"  background = "#FAFAFA"  surface = "#FFFFFF"
+  text_primary = "#18181B"  text_secondary = "#71717A"  success = "#22C55E"  warning = "#F59E0B"  error = "#EF4444"
 dark_mode = true  dark_mode_strategy = "separate_palette"
 typography
-  heading_font = "Inter"  mono_font = "JetBrains Mono"
-  heading_weight = "600"  base_size = "16px"
+  heading_font = "Inter"  mono_font = "JetBrains Mono"  heading_weight = "600"  base_size = "16px"
 border_radius = "8px"  spacing_unit = "4px"  shadow_style = "subtle"
-
 [voice_and_tone]
 register = "conversational"  vocabulary_level = "technical"  sentence_style = "short_punchy"
 personality_traits = ["confident", "direct", "slightly_irreverent", "helpful"]
-humour = "dry"  perspective = "first_person_plural"  formality_spectrum = 4
-jargon_policy = "assume_knowledge"
+humour = "dry"  perspective = "first_person_plural"  formality_spectrum = 4  jargon_policy = "assume_knowledge"
 brand_voice_examples
   do = ["Ship it.", "Your deploy is live. Took 11 seconds.", "Zero config. Seriously."]
   dont = ["We are delighted to inform you...", "Leverage our cutting-edge platform..."]
-
 [copywriting_patterns]
 headline_style = "statement"  headline_case = "sentence"  cta_language = "direct"
 cta_examples = ["Deploy now", "Start building", "Try free"]
 power_words = ["ship", "deploy", "build", "fast", "zero-config"]
 words_to_avoid = ["leverage", "synergy", "cutting-edge", "streamline"]
-
 [brand_positioning]
 premium_vs_accessible = 4  playful_vs_serious = 4  technical_vs_simple = 7  global_vs_local = 8
 tagline = "Ship your side project. Tonight."
@@ -232,8 +146,10 @@ audience_sophistication = "intermediate"  industry = "developer_tools"  brand_ar
 
 ## File Locations
 
-- `.agents/tools/design/brand-identity.md` — this template
-- `context/brand-identity.toon` — per-project identity
-- `context/inspiration/*.toon` — per-project inspiration
-- `.agents/tools/design/ui-ux-catalogue.toon` — style catalogue
-- `.agents/tools/design/ui-ux-inspiration.md` — interview workflow
+| File | Purpose |
+|------|---------|
+| `.agents/tools/design/brand-identity.md` | This template |
+| `context/brand-identity.toon` | Per-project identity |
+| `context/inspiration/*.toon` | Per-project inspiration |
+| `.agents/tools/design/ui-ux-catalogue.toon` | Style catalogue |
+| `.agents/tools/design/ui-ux-inspiration.md` | Interview workflow |
