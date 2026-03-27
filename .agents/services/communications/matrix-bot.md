@@ -47,19 +47,13 @@ Matrix Room ──▶ Matrix Bot ──▶ OpenCode / runner-helper.sh ──▶
               └── matrix_room_sessions
 ```
 
-**Message flow**: `!ai <prompt>` → sync → permission check → room-to-runner lookup → entity resolution → Layer 0 log → load entity profile + conversation summary + recent interactions → privacy filter → dispatch → log response → post to room + reaction (⏳/✓/✗).
+**Message flow**: `!ai <prompt>` → sync → permission check → room-to-runner lookup → entity resolution → L0 log → load entity profile + conversation summary + recent interactions → privacy filter → dispatch → log response → post to room + reaction (⏳/✓/✗).
 
-**Session lifecycle**: First message creates session → entity linked → all messages logged to Layer 0 (immutable) → after `sessionIdleTimeout` idle, AI summarises → summary stored in Layer 1; **Layer 0 never deleted** → next message primed with entity profile + summary → SIGINT/SIGTERM compacts all sessions before exit.
+**Session lifecycle**: First message creates session → all messages logged to L0 (immutable) → after `sessionIdleTimeout` idle, AI summarises → stored in L1 (**L0 never deleted**) → next message primed with entity profile + summary → SIGINT/SIGTERM compacts all sessions before exit.
 
 ## Setup
 
-**Prerequisites**: Matrix homeserver (Synapse recommended), bot account + access token, OpenCode server, at least one runner.
-
-```bash
-matrix-dispatch-helper.sh setup --dry-run  # Preview without saving
-matrix-dispatch-helper.sh setup            # Apply (prompts: homeserver URL, access token,
-                                           # allowed users, default runner, session idle timeout)
-```
+**Prerequisites**: Matrix homeserver (Synapse recommended), bot account + access token, OpenCode server, at least one runner. Run `matrix-dispatch-helper.sh setup --dry-run` to preview, then `setup` to apply.
 
 ### Cloudron Setup (Recommended)
 
@@ -72,7 +66,7 @@ curl -s -X POST "http://localhost:8008/_matrix/client/v3/login" \
   -H "Content-Type: application/json" \
   -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"aibot"},"password":"YOUR_PASSWORD"}' \
   | python3 -m json.tool   # copy access_token
-# 4. In homeserver.yaml: set enable_registration: false, remove 'federation' from resources. Restart.
+# 4. homeserver.yaml: set enable_registration: false, remove 'federation' from resources. Restart.
 # 5. Create unencrypted rooms via Element (NOT FluffyChat — forces encryption with no toggle)
 #    Or via API: curl -X POST ".../createRoom" -d '{"preset":"private_chat","initial_state":[]}'
 # 6. Configure + map + start:
@@ -98,24 +92,6 @@ curl -X POST "https://matrix.example.com/_matrix/client/v3/login" \
 
 `~/.config/aidevops/matrix-bot.json` (600 permissions):
 
-```json
-{
-  "homeserverUrl": "https://matrix.example.com",
-  "accessToken": "syt_...",
-  "allowedUsers": "@admin:example.com,@dev:example.com",
-  "defaultRunner": "",
-  "roomMappings": {
-    "!abc123:example.com": "code-reviewer",
-    "!def456:example.com": "seo-analyst"
-  },
-  "botPrefix": "!ai",
-  "ignoreOwnMessages": true,
-  "maxPromptLength": 3000,
-  "responseTimeout": 600,
-  "sessionIdleTimeout": 300
-}
-```
-
 | Option | Default | Description |
 |--------|---------|-------------|
 | `homeserverUrl` | required | Matrix homeserver URL |
@@ -129,7 +105,7 @@ curl -X POST "https://matrix.example.com/_matrix/client/v3/login" \
 | `responseTimeout` | `600` | Max seconds to wait for runner |
 | `sessionIdleTimeout` | `300` | Idle timeout before compaction |
 
-## Room-to-Runner Mapping
+## Room-to-Runner Mapping & Usage
 
 ```bash
 matrix-dispatch-helper.sh map '!dev-room:server' code-reviewer
@@ -137,42 +113,19 @@ matrix-dispatch-helper.sh mappings
 matrix-dispatch-helper.sh unmap '!dev-room:server'
 ```
 
-| Room | Runner | Purpose |
-|------|--------|---------|
-| `#dev:server` | `code-reviewer` | Code review, security analysis |
-| `#seo:server` | `seo-analyst` | SEO audits, keyword research |
-| `#ops:server` | `ops-monitor` | Server health, deployment status |
-| `#general:server` | (default) | General AI assistance |
-
-## Usage
-
-```text
-!ai Review src/auth.ts for security vulnerabilities
-!ai Generate unit tests for the user registration flow
-!ai What are the top 10 keywords for "cloud hosting"?
-```
-
-**Bot behaviour**: typing indicator; hourglass/checkmark/X reactions; one dispatch per room (prevents flooding); long responses truncated; auto-joins on invite; per-room context persisted.
+Trigger with `!ai <prompt>` in any mapped room. Bot behaviour: typing indicator; ⏳/✓/✗ reactions; one dispatch per room (prevents flooding); long responses truncated; auto-joins on invite; per-room context persisted.
 
 ## Session Persistence & Entity Integration
 
-**Entity resolution**: `@user:server` → lookup `entity_channels` → create if new → cache per session. Cross-channel profiles available if the same person is linked on SimpleX, email, etc.
-
-**Context loaded per prompt**:
-
-1. Entity profile (Layer 2) — preferences, communication style
-2. Conversation summary (Layer 1) — previous context for this room
-3. Recent interactions (Layer 0) — last N messages from this channel only
-4. Privacy filter — emails, IPs, API keys redacted; cross-channel private info not leaked
+**Entity resolution**: `@user:server` → lookup `entity_channels` → create if new → cache per session. Context per prompt: entity profile (L2) → conversation summary (L1) → recent interactions (L0, this channel only) → privacy filter (emails, IPs, API keys redacted).
 
 ```bash
-matrix-dispatch-helper.sh sessions list
-matrix-dispatch-helper.sh sessions stats
+matrix-dispatch-helper.sh sessions list|stats
 matrix-dispatch-helper.sh sessions clear '!room:server'
 matrix-dispatch-helper.sh sessions clear-all
 ```
 
-**Storage** (`memory.db`, SQLite WAL): `matrix_room_sessions` (per-room state), `interactions` (Layer 0 immutable), `conversations` (Layer 1 summaries), `entities`/`entity_channels`/`entity_profiles` (Layer 2 identity). Legacy `sessions.db` auto-detected.
+**Storage** (`memory.db`, SQLite WAL): `matrix_room_sessions` (per-room state), `interactions` (L0 immutable), `conversations` (L1 summaries), `entities`/`entity_channels`/`entity_profiles` (L2 identity). Legacy `sessions.db` auto-detected.
 
 ## Operations
 
@@ -189,11 +142,8 @@ matrix-dispatch-helper.sh test code-reviewer "Review src/auth.ts"
 
 ```bash
 runner-helper.sh create code-reviewer --description "Reviews code for security and quality"
-runner-helper.sh create seo-analyst --description "SEO analysis and keyword research"
 runner-helper.sh edit code-reviewer
 ```
-
-Dispatches via `runner-helper.sh` — handles AGENTS.md, OpenCode sessions, memory namespace isolation, mailbox, run logging.
 
 ## Security
 
