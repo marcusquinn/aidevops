@@ -46,13 +46,9 @@ email-design-test-helper.sh eoa-clients
 
 <!-- AI-CONTEXT-END -->
 
-## Overview
+## Local Design Checks
 
-The email design test helper provides two testing modes:
-
-### 1. Local Design Testing
-
-Fast, offline validation that catches common email design issues:
+Fast, offline validation — no API key needed:
 
 - **HTML Structure** - DOCTYPE, charset, viewport, table layout, inline styles, image alt text, file size
 - **CSS Compatibility** - Detects unsupported CSS (flexbox, grid, position, float, animations)
@@ -63,13 +59,13 @@ Fast, offline validation that catches common email design issues:
 - **Link Validation** - Empty hrefs, javascript: links, HTTP vs HTTPS, UTM tracking
 - **Preheader Text** - Hidden preview text detection
 
-### 2. Email on Acid (EOA) API Testing
+## EOA Client Coverage
 
-Submit HTML to EOA for real-client rendering screenshots across 90+ email clients:
+Real-client rendering screenshots across 90+ clients:
 
-- **Application clients** - Outlook 2016/2019/365, Apple Mail, Thunderbird
-- **Mobile clients** - iPhone, iPad, Android (Gmail, Samsung Mail)
-- **Web clients** - Gmail, Yahoo, Outlook.com, AOL (Chrome, Firefox, Edge)
+- **Application** - Outlook 2016/2019/365, Apple Mail, Thunderbird
+- **Mobile** - iPhone, iPad, Android (Gmail, Samsung Mail)
+- **Web** - Gmail, Yahoo, Outlook.com, AOL (Chrome, Firefox, Edge)
 - **Image blocking** - Test with images disabled
 - **Spam testing** - Optional spam filter checks
 
@@ -93,20 +89,9 @@ export EOA_API_PASSWORD="your-password"
 
 ### Sandbox Mode
 
-No credentials needed. Uses EOA's built-in sandbox for testing API integration without consuming test credits.
-
-```bash
-email-design-test-helper.sh eoa-sandbox newsletter.html
-```
+No credentials needed — uses EOA's built-in sandbox without consuming test credits (command in Quick Reference above).
 
 ## Usage
-
-### Local Testing
-
-```bash
-# Full local design test suite
-email-design-test-helper.sh test newsletter.html
-```
 
 ### EOA API Testing
 
