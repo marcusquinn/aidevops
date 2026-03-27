@@ -1,312 +1,119 @@
 # Chapter 13: Heatmap and Session Recording Analysis
 
-Heatmaps and session recordings reveal how users actually interact with your site—where they click, how far they scroll, what confuses them, and where they get stuck.
+Heatmaps and session recordings reveal how users actually interact with your site.
 
-### Types of Heatmaps
+## Heatmap Types
 
-**1. Click Heatmaps (Click Maps)**
+| Type | Shows | Key Questions |
+|------|-------|---------------|
+| **Click** | Where users click/tap | CTAs clicked? Non-clickable elements clicked? Wrong elements clicked? |
+| **Scroll** | How far users scroll | Does CTA fall below fold? Where do users drop off? |
+| **Move** | Mouse cursor movement (desktop) | Where is attention? Hesitation points (hover without click)? |
+| **Attention** | Time spent per area | What gets read vs ignored? Where do users spend time before converting? |
 
-Shows where users click (or tap on mobile).
-
-**What It Reveals**:
-- Are users clicking on non-clickable elements? (Indicates they expect it to be a link/button)
-- Are they ignoring important CTAs?
-- Are they clicking on the wrong things?
-
-**Example Insights**:
-
-**Product Image Clicks**:
+### Click Heatmap Examples
 
 ```text
-Heatmap shows 1,000 clicks on product image (not clickable)
-0 clicks on "View Details" link
+1,000 clicks on product image (not clickable) + 0 clicks on "View Details"
+→ Action: Make image clickable or add "Click to enlarge" text
+
+500 clicks on "Free Shipping" text (looks like button)
+→ Action: Make it a button or visually differentiate it
 ```
 
-**Action**: Make product image clickable, or add "Click to enlarge" text.
-
-**Non-Button Text Clicked**:
+### Scroll Heatmap Examples
 
 ```text
-Heatmap shows 500 clicks on "Free Shipping" text (looks like button but isn't)
+60% never scroll past hero; CTA at 70% page depth
+→ Action: Add CTA above fold OR create sticky CTA
+
+90% engagement at top → 40% middle → 10% bottom
+→ Action: Move important content higher, cut fluff, add visual breaks
 ```
 
-**Action**: Either make it a button or visually differentiate it so users don't think it's clickable.
-
-**2. Scroll Heatmaps (Scroll Maps)**
-
-Shows how far down the page users scroll before leaving.
-
-**What It Reveals**:
-- Do users see your CTA? (Is it below the fold where only 20% scroll?)
-- Are long pages losing engagement halfway through?
-- Where do users drop off?
-
-**Example Insights**:
-
-**CTA Below the Fold**:
+### Move/Attention Heatmap Examples
 
 ```text
-Scroll map shows 60% of users never scroll past hero section
-CTA is at 70% page depth
+Cursors hover over price 10+ seconds, then leave without clicking
+→ Action: Add guarantees/testimonials near pricing
+
+Users read first 3 bullets, skip rest
+→ Action: Limit to 3–5 bullets, restructure for scannability
+
+2s on headline, 30s on image, 0s on benefits section
+→ Action: Make benefits more visual/scannable or reposition
+
+20+ seconds on navigation (confusion signal)
+→ Action: Simplify navigation labels or structure
 ```
 
-**Action**: Add CTA above the fold OR create sticky CTA.
+## Reading Heatmaps
 
-**Content Drop-Off**:
+**Colour scale:** Red = high activity → Yellow/Orange = medium → Blue/Green = low → White/Gray = none
 
-```text
-Scroll map shows 90% engagement at top, 40% at middle, 10% at bottom
-```
+### Good Patterns
 
-**Action**: Move important content higher, cut fluff at bottom, or add visual breaks to encourage scrolling.
+| Page | Signals |
+|------|---------|
+| Hero | Red on headline + CTA; some attention on value prop |
+| Product | High clicks on "Add to Cart"; high attention on images; moderate on description |
+| Landing | 80%+ scroll depth reaches CTA; high CTA clicks; even attention across benefits |
 
-**3. Move Heatmaps (Mouse Tracking / Hover Maps)**
+### Bad Patterns
 
-Shows where users move their mouse cursor (desktop only).
+| Pattern | Causes | Action |
+|---------|--------|--------|
+| **Rage clicks** (rapid repeated clicks) | Non-clickable element, broken JS, slow response | Fix the broken/misleading element |
+| **Dead clicks** (clicks on non-interactive elements) | Visual cue implies clickability | Make functional or remove visual cue |
+| **Scroll abandonment** (90% leave before 30%) | Boring content, no visual breaks, CTA too low | Add engaging content, visual hierarchy, raise CTA |
+| **Ignored CTA** (near-zero clicks despite traffic) | Poor placement, weak copy, not visually distinct, low value prop | Redesign, reposition, or rewrite CTA |
 
-**What It Reveals**:
-- Mouse movement often correlates with eye tracking
-- Where users are reading/paying attention
-- Hesitation points (cursor hovering without clicking)
+## Heatmap Tools
 
-**Example Insights**:
+| Tool | Key Features | Cost |
+|------|-------------|------|
+| **Hotjar** | Click/scroll/move heatmaps, session recordings, surveys | Free plan available |
+| **Crazy Egg** | Click heatmaps, scroll maps, confetti (segment by source), A/B testing | Paid |
+| **Microsoft Clarity** | Heatmaps, session recordings, rage/dead click detection, GA integration | Free |
+| **Mouseflow** | Heatmaps, session recordings, form analytics, funnel analysis | Paid |
+| **FullStory** | Session recordings, retroactive funnels, heatmaps, error tracking | Premium |
 
-**Pricing Hesitation**:
+## Session Recordings: What to Watch For
 
-```text
-Move map shows cursors hovering over price for 10+ seconds
-Then leaving without clicking CTA
-```
+| Signal | Indicates | Action |
+|--------|-----------|--------|
+| Hover 10+ seconds without clicking | Uncertainty, fear, unclear value | Add guarantees, testimonials, clearer benefits |
+| Clicks multiple nav items, backtracks | Poor navigation, confusing copy | Simplify nav, improve content clarity |
+| Rage clicks (5–10 rapid clicks) | Broken element, slow load, misleading design | Fix technical issue or redesign element |
+| Starts form, abandons at phone field | Privacy concerns | Make phone optional |
+| Starts form, abandons at credit card | Not ready to pay, security concerns | Add trust signals, simplify checkout |
+| Fast scroll to bottom, leaves | Not finding what they need, wrong audience | Audit message-match, improve scannability |
+| Slow careful scroll | High intent, engaged, likely to convert | Reinforce conversion path |
+| Back-and-forth scrolling | Seeking info that's hard to find | Improve information architecture |
+| Zooming in, struggling to tap | Poor mobile optimization | Larger fonts, bigger buttons, fix responsive design |
 
-**Action**: Price may be too high, or value not clear. Add guarantees, testimonials near pricing.
+### Common Exit Points
 
-**Reading Patterns**:
+| Page | Why They Leave | Action |
+|------|---------------|--------|
+| Pricing | Too expensive or unclear value | Add value context, comparison, guarantees |
+| Checkout | Surprise fees, friction, trust issues | Remove friction, add trust signals |
+| Form | Too long, too invasive | Reduce required fields, add reassurance |
+| Product | Not enough info, poor images | Improve content, add better images |
 
-```text
-Move map shows users reading first 3 bullet points, skipping rest
-```
+## Session Recording Methodology
 
-**Action**: Limit to 3-5 bullets, or restructure for scannability.
+**Don't watch randomly.** Segment first:
 
-**4. Attention Heatmaps (Based on Time Spent)**
+1. **Converters** — see what worked
+2. **Abandoners** — see what broke
+3. **Bounces** — see what turned them off
 
-Shows which areas of the page get the most visual attention based on time spent.
+**Filters:** Traffic source (paid ≠ organic ≠ email) | Device (mobile vs desktop)
 
-**What It Reveals**:
-- What content actually gets read
-- What gets ignored
-- Where users spend time before converting (or leaving)
+**Sample size:** 20–30 recordings per segment is enough to identify patterns.
 
-**Example Insights**:
-
-**Ignored Value Proposition**:
-
-```text
-Attention map shows users spend 2 seconds on headline, 30 seconds on image, 0 seconds on benefits section
-```
-
-**Action**: Make benefits section more visual, scannable, or reposition.
-
-**Confused Navigation**:
-
-```text
-Attention map shows users spending 20+ seconds on navigation menu (indicating confusion)
-```
-
-**Action**: Simplify navigation labels or structure.
-
-### Reading Heatmaps: What to Look For
-
-**Red = High Activity** (clicks, scrolls, attention)
-**Yellow/Orange = Medium Activity**
-**Blue/Green = Low Activity**
-**White/Gray = No Activity**
-
-#### Good Heatmap Patterns
-
-**Hero Section**:
-- Red around headline (high attention)
-- Red around CTA button (high clicks)
-- Some attention on value prop
-
-**Product Page**:
-- High clicks on "Add to Cart"
-- High attention on product images
-- Moderate attention on product description
-- Low clicks on unrelated elements
-
-**Landing Page**:
-- High scroll depth (80%+ reach CTA)
-- High clicks on CTA
-- Even distribution of attention across benefits
-
-#### Bad Heatmap Patterns
-
-**Rage Clicks**:
-Multiple rapid clicks in same spot = frustration.
-
-**Causes**:
-- Element looks clickable but isn't
-- Button isn't working (broken JS)
-- Slow page response (user impatiently clicking)
-
-**Action**: Fix the issue causing frustration.
-
-**Dead Clicks**:
-Clicks on non-clickable elements.
-
-**Example**: Users clicking product image expecting it to enlarge.
-
-**Action**: Make element functional or remove visual cue that suggests it's clickable.
-
-**Scroll Abandonment**:
-90% of users never scroll past 30% of page.
-
-**Causes**:
-- Boring content
-- No visual breaks
-- CTA too low
-- Above-fold content doesn't compel scrolling
-
-**Action**: Add engaging content, visual hierarchy, CTA higher.
-
-**Ignored CTAs**:
-CTA button has almost zero clicks despite high traffic.
-
-**Causes**:
-- Poor placement
-- Weak copy
-- Not visually distinct
-- Low value proposition
-- Wrong audience
-
-**Action**: Redesign, reposition, or rewrite CTA.
-
-### Heatmap Tools
-
-**Hotjar**:
-- Click, scroll, and move heatmaps
-- Session recordings
-- Surveys and feedback
-- Free plan available
-
-**Crazy Egg**:
-- Click heatmaps (desktop and mobile)
-- Scroll maps
-- Confetti tool (segment clicks by traffic source)
-- A/B testing built-in
-
-**Microsoft Clarity**:
-- 100% free
-- Heatmaps
-- Session recordings
-- Rage clicks and dead clicks
-- Integrates with Google Analytics
-
-**Mouseflow**:
-- Heatmaps
-- Session recordings
-- Form analytics
-- Funnel analysis
-
-**FullStory**:
-- Session recordings
-- Retroactive funnels
-- Heatmaps
-- Error tracking
-- Premium tool (higher cost)
-
-### Session Recordings: What to Watch For
-
-Session recordings show actual user sessions—you watch them navigate your site in real-time.
-
-**What to Look For**:
-
-**1. Hesitation**:
-User hovers over a button for 10+ seconds without clicking.
-
-**Indicates**: Uncertainty, fear, lack of trust, or unclear value prop.
-
-**Action**: Add reassurance (guarantees, testimonials, clearer benefits).
-
-**2. Confusion**:
-User clicks multiple navigation items, backtracks, re-reads content.
-
-**Indicates**: Poor navigation, unclear information hierarchy, confusing copy.
-
-**Action**: Simplify navigation, improve content clarity.
-
-**3. Frustration (Rage Clicks)**:
-User clicks same spot rapidly 5-10 times.
-
-**Indicates**: Broken element, slow load, or misleading design.
-
-**Action**: Fix technical issue or redesign element.
-
-**4. Form Abandonment**:
-User starts filling form, then leaves.
-
-**Where They Abandon**:
-- Email field: Privacy concerns or not ready to commit
-- Phone field: Don't want to be called
-- Credit card field: Not ready to pay or security concerns
-- Complex field: Confused about what to enter
-
-**Action**: Simplify form, reduce required fields, add reassurance.
-
-**5. Scroll Patterns**:
-
-**Fast Scrolling**: User scrolls quickly to bottom, then leaves.
-**Indicates**: Not finding what they need, impatient, wrong audience.
-
-**Slow Scrolling**: User reads carefully, spends time on each section.
-**Indicates**: High intent, engaged, likely to convert.
-
-**Back-and-Forth Scrolling**: User scrolls down, then back up repeatedly.
-**Indicates**: Seeking specific information that's hard to find, or comparing options.
-
-**6. Mobile Struggles**:
-User zooming in to read text, struggling to tap small buttons, horizontal scrolling (bad!).
-
-**Indicates**: Poor mobile optimization.
-
-**Action**: Larger fonts, bigger buttons, fix responsive design.
-
-**7. Exit Points**:
-Where do users leave?
-
-**Common Exit Points**:
-- Pricing page (too expensive or unclear value)
-- Checkout page (surprise fees, friction, trust issues)
-- Form page (too long, too invasive)
-- Product page (not enough info, poor images)
-
-**Action**: Analyze why they're leaving at that specific point and optimize.
-
-### Session Recording Methodology
-
-**Don't Watch Randomly**: That's inefficient and biased.
-
-**Systematic Approach**:
-
-**1. Segment Recordings**:
-- **Converters**: Watch users who converted (see what worked)
-- **Abandoners**: Watch users who almost converted but didn't (see what broke)
-- **Bounces**: Watch users who left immediately (see what turned them off)
-
-**2. Filter by Traffic Source**:
-- Paid traffic behaves differently than organic
-- Email traffic is warmer than cold social traffic
-
-**3. Filter by Device**:
-- Mobile vs desktop (different friction points)
-
-**4. Set a Sample Size**:
-- Don't watch 1,000 recordings
-- Watch 20-30 per segment (enough to identify patterns)
-
-**5. Take Notes**:
-Track patterns:
+**Note-taking template:**
 
 ```text
 Issue: Users confused by navigation
@@ -315,120 +122,42 @@ Action: Simplify nav labels
 Priority: High
 ```
 
-### Heatmap Analysis Checklist
+## Sample Size Guidelines
 
-Before running tests, analyze heatmaps to identify optimization opportunities:
+| Traffic Level | Sessions/Month | Data Needed |
+|--------------|---------------|-------------|
+| High | 10,000+ | 1–2 weeks |
+| Medium | 1,000–10,000 | 2–4 weeks |
+| Low | <1,000 | 1–3 months |
 
-**Click Heatmap Analysis**:
-- [ ] Are CTAs getting clicked? (If not, why?)
-- [ ] Are users clicking non-clickable elements?
-- [ ] Are users clicking the "wrong" elements (not the ones you want)?
-- [ ] Are there unexpected click patterns?
-- [ ] Mobile: Are tap targets large enough?
+**Minimums:** 100–200 sessions for initial patterns · 500–1,000 for reliable insights · 2,000+ for confident insights
 
-**Scroll Heatmap Analysis**:
-- [ ] What % of users reach the CTA?
-- [ ] Where do most users drop off?
-- [ ] Is important content below average scroll depth?
-- [ ] Are there visual barriers preventing scrolling?
-- [ ] How does scroll depth compare to conversion rate?
+**Conversion pages:** Minimum 50 conversions + 500 non-conversions to compare.
 
-**Move Heatmap Analysis**:
-- [ ] Where are users' cursors spending the most time?
-- [ ] Are they reading the content you want them to read?
-- [ ] Are there hesitation patterns (hovering without clicking)?
-- [ ] Do move patterns align with click patterns?
+**Segment analysis:** Minimum 200–500 sessions per segment (mobile vs desktop, traffic source).
 
-**Attention Heatmap Analysis**:
-- [ ] What gets the most attention? (Is it what you want?)
-- [ ] What gets ignored? (Should it be more prominent?)
-- [ ] How long do users spend on key sections?
-- [ ] Is attention distributed logically?
+> Too little data (20 sessions) = noise from one odd user. Too much (5,000+) = diminishing returns.
 
-### Sample Size for Heatmaps
+## Heatmap Analysis Checklist
 
-**Question**: How much data do I need before heatmap insights are reliable?
+**Click:** CTAs getting clicked? Non-clickable elements clicked? Wrong elements clicked? Unexpected patterns? Mobile tap targets large enough?
 
-**General Guideline**:
+**Scroll:** % reaching CTA? Where do most drop off? Important content below average scroll depth? Visual barriers preventing scrolling?
 
-**Minimum**:
-- 100-200 sessions for initial patterns
-- 500-1,000 sessions for reliable insights
-- 2,000+ sessions for statistically confident insights
+**Move:** Where are cursors spending time? Reading desired content? Hesitation patterns? Move/click alignment?
 
-**But It Depends**:
+**Attention:** What gets most attention (is it what you want)? What gets ignored? Time on key sections? Logical attention distribution?
 
-**High-Traffic Pages** (10,000+ sessions/month):
-- 1-2 weeks of data
+## Combining Heatmaps with Analytics
 
-**Medium-Traffic Pages** (1,000-10,000 sessions/month):
-- 2-4 weeks of data
+Heatmaps answer **"what happened"** · Analytics answer **"how much"**
 
-**Low-Traffic Pages** (<1,000 sessions/month):
-- 1-3 months of data
-
-**Conversion-Focused Pages** (landing pages, checkout):
-- Need enough conversions AND non-conversions to compare
-- Minimum: 50 conversions + 500 non-conversions
-
-**Segment Analysis** (mobile vs desktop, traffic source):
-- Minimum 200-500 sessions per segment
-
-**Too Little Data = Noise**:
-With only 20 sessions, one odd user behavior skews the entire heatmap.
-
-**Too Much Data = Diminishing Returns**:
-After 5,000 sessions, patterns stabilize. More data doesn't reveal much new.
-
-### Combining Heatmaps with Analytics
-
-Heatmaps answer "what happened."
-Analytics answer "how much."
-
-**Powerful Combination**:
-
-**Example 1: Low CTA Clicks**
-
-**Analytics**: CTA click rate is 2% (low)
-
-**Heatmap**: CTA is getting almost no clicks
-
-**Session Recordings**: Users are clicking above the CTA on a non-clickable image that looks like a button
-
-**Insight**: Users think the image is the CTA
-
-**Action**: Make image clickable OR redesign to visually differentiate actual CTA
-
-**Result**: CTA click rate increases to 8%
-
-**Example 2: High Bounce Rate**
-
-**Analytics**: Landing page has 70% bounce rate
-
-**Scroll Heatmap**: 90% of users never scroll past hero section
-
-**Session Recordings**: Users land on page, read headline, immediately leave
-
-**Insight**: Headline doesn't match ad promise (traffic source analysis shows users coming from ad about "free trial" but headline says "request demo")
-
-**Action**: Align headline with ad message
-
-**Result**: Bounce rate drops to 45%
-
-**Example 3: Form Abandonment**
-
-**Analytics**: 60% of users abandon form at phone number field
-
-**Heatmap**: High attention on phone number field, zero clicks on submit
-
-**Session Recordings**: Users fill email and name, hesitate at phone, then leave
-
-**Insight**: Phone number field creates friction (privacy concerns)
-
-**Action**: Make phone number optional
-
-**Result**: Form completion rate increases 35%
+| Scenario | Analytics | Heatmap | Recording | Insight | Action | Result |
+|----------|-----------|---------|-----------|---------|--------|--------|
+| Low CTA clicks | 2% click rate | Near-zero CTA clicks | Users click image above CTA | Image looks like the CTA | Make image clickable OR redesign CTA | 2% → 8% |
+| High bounce | 70% bounce rate | 90% never scroll past hero | Read headline, immediately leave | Headline ≠ ad promise ("free trial" ad → "request demo" page) | Align headline with ad | 70% → 45% bounce |
+| Form abandonment | 60% abandon at phone field | High attention on phone, zero submits | Fill email/name, hesitate at phone, leave | Phone field = privacy friction | Make phone optional | +35% form completion |
 
 ---
 
-*This deep dive continues in [Chapter 14: Landing Page Teardowns](./CHAPTER-14.md) and [Chapter 15: Personalization](./CHAPTER-15.md).*
+*Continues in [Chapter 14: Landing Page Teardowns](./CHAPTER-14.md) and [Chapter 15: Personalization](./CHAPTER-15.md).*
