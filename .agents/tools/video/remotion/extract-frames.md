@@ -8,11 +8,18 @@ metadata:
 
 # Extracting frames from videos
 
-Use Mediabunny to extract frames from videos at specific timestamps. This is useful for generating thumbnails, filmstrips, or processing individual frames.
+Use [Mediabunny](https://mediabunny.dev) to extract frames at specific timestamps. Useful for thumbnails, filmstrips, and per-frame processing.
 
-## The `extractFrames()` function
+## API
 
-This function can be copy-pasted into any project.
+### `extractFrames(props)` — copy-paste into any project
+
+| Prop | Type | Required | Description |
+|------|------|----------|-------------|
+| `src` | `string` | Yes | Video URL |
+| `timestampsInSeconds` | `number[]` \| `(opts) => Promise<number[]>` | Yes | Fixed list or callback receiving `{track, container, durationInSeconds}` |
+| `onVideoSample` | `(sample: VideoSample) => void` | Yes | Called for each decoded frame |
+| `signal` | `AbortSignal` | No | Cancel in-flight extraction |
 
 ```tsx
 import {
@@ -22,23 +29,6 @@ import {
   VideoSample,
   VideoSampleSink,
 } from "mediabunny";
-
-type Options = {
-  track: { width: number; height: number };
-  container: string;
-  durationInSeconds: number | null;
-};
-
-export type ExtractFramesTimestampsInSecondsFn = (
-  options: Options
-) => Promise<number[]> | number[];
-
-export type ExtractFramesProps = {
-  src: string;
-  timestampsInSeconds: number[] | ExtractFramesTimestampsInSecondsFn;
-  onVideoSample: (sample: VideoSample) => void;
-  signal?: AbortSignal;
-};
 
 export async function extractFrames({
   src,
@@ -57,53 +47,32 @@ export async function extractFrames({
     input.getPrimaryVideoTrack(),
   ]);
 
-  if (!videoTrack) {
-    throw new Error("No video track found in the input");
-  }
-
-  if (signal?.aborted) {
-    throw new Error("Aborted");
-  }
+  if (!videoTrack) throw new Error("No video track found in the input");
+  if (signal?.aborted) throw new Error("Aborted");
 
   const timestamps =
     typeof timestampsInSeconds === "function"
       ? await timestampsInSeconds({
-          track: {
-            width: videoTrack.displayWidth,
-            height: videoTrack.displayHeight,
-          },
+          track: { width: videoTrack.displayWidth, height: videoTrack.displayHeight },
           container: format.name,
           durationInSeconds,
         })
       : timestampsInSeconds;
 
-  if (timestamps.length === 0) {
-    return;
-  }
-
-  if (signal?.aborted) {
-    throw new Error("Aborted");
-  }
+  if (timestamps.length === 0) return;
+  if (signal?.aborted) throw new Error("Aborted");
 
   const sink = new VideoSampleSink(videoTrack);
 
   for await (using videoSample of sink.samplesAtTimestamps(timestamps)) {
-    if (signal?.aborted) {
-      break;
-    }
-
-    if (!videoSample) {
-      continue;
-    }
-
+    if (signal?.aborted) break;
+    if (!videoSample) continue;
     onVideoSample(videoSample);
   }
 }
 ```
 
 ## Basic usage
-
-Extract frames at specific timestamps:
 
 ```tsx
 await extractFrames({
@@ -119,9 +88,7 @@ await extractFrames({
 });
 ```
 
-## Creating a filmstrip
-
-Use a callback function to dynamically calculate timestamps based on video metadata:
+## Filmstrip (dynamic timestamps via callback)
 
 ```tsx
 const canvasWidth = 500;
@@ -133,23 +100,16 @@ await extractFrames({
   src: "https://remotion.media/video.mp4",
   timestampsInSeconds: async ({ track, durationInSeconds }) => {
     const aspectRatio = track.width / track.height;
-    const amountOfFramesFit = Math.ceil(
-      canvasWidth / (canvasHeight * aspectRatio)
-    );
+    const amountOfFramesFit = Math.ceil(canvasWidth / (canvasHeight * aspectRatio));
     const segmentDuration = toSeconds - fromSeconds;
     const timestamps: number[] = [];
-
     for (let i = 0; i < amountOfFramesFit; i++) {
-      timestamps.push(
-        fromSeconds + (segmentDuration / amountOfFramesFit) * (i + 0.5)
-      );
+      timestamps.push(fromSeconds + (segmentDuration / amountOfFramesFit) * (i + 0.5));
     }
-
     return timestamps;
   },
   onVideoSample: (sample) => {
     console.log(`Frame at ${sample.timestamp}s`);
-
     const canvas = document.createElement("canvas");
     canvas.width = sample.displayWidth;
     canvas.height = sample.displayHeight;
@@ -161,11 +121,8 @@ await extractFrames({
 
 ## Cancellation with AbortSignal
 
-Cancel frame extraction after a timeout:
-
 ```tsx
 const controller = new AbortController();
-
 setTimeout(() => controller.abort(), 5000);
 
 try {
@@ -182,7 +139,6 @@ try {
     },
     signal: controller.signal,
   });
-
   console.log("Frame extraction complete!");
 } catch (error) {
   console.error("Frame extraction was aborted or failed:", error);
@@ -199,10 +155,7 @@ const timeoutPromise = new Promise<never>((_, reject) => {
     controller.abort();
     reject(new Error("Frame extraction timed out after 10 seconds"));
   }, 10000);
-
-  controller.signal.addEventListener("abort", () => clearTimeout(timeoutId), {
-    once: true,
-  });
+  controller.signal.addEventListener("abort", () => clearTimeout(timeoutId), { once: true });
 });
 
 try {
@@ -222,7 +175,6 @@ try {
     }),
     timeoutPromise,
   ]);
-
   console.log("Frame extraction complete!");
 } catch (error) {
   console.error("Frame extraction was aborted or failed:", error);
