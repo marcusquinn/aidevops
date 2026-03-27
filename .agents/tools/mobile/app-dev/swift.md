@@ -19,25 +19,14 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Build native iOS apps with Swift and SwiftUI
 - **IDE**: Xcode (use `xcodebuild-mcp` for AI-driven build/test)
-- **Docs**: Use Context7 MCP for latest Swift and SwiftUI documentation
-- **Min target**: iOS 17+ (for latest SwiftUI features)
-- **Architecture**: MVVM with SwiftUI, Swift Concurrency (async/await)
+- **Docs**: Context7 MCP for latest Swift/SwiftUI documentation
+- **Min target**: iOS 17+ (latest SwiftUI features)
+- **Architecture**: MVVM with `@Observable`, Swift Concurrency (async/await)
 
-**When to choose Swift over Expo**:
+**Choose Swift over Expo when**: deep Apple ecosystem integration (HealthKit, HomeKit, Siri, Widgets), maximum native performance (games, AR, complex animations), Apple Watch/tvOS/visionOS targets, hybrid native+web (WebKit for SwiftUI), or Swift-specific libraries.
 
-- Deep Apple ecosystem integration (HealthKit, HomeKit, Siri Intents, Widgets)
-- Maximum native performance (games, AR, complex animations)
-- Apple Watch, tvOS, or visionOS targets
-- Hybrid native + web content apps (WebKit for SwiftUI provides first-class WebView support)
-- Leveraging Swift-specific libraries
-
-**Project scaffold via XcodeBuildMCP**:
-
-```text
-Use xcodebuild-mcp scaffold_ios_project to create a new project
-```
+**Scaffold**: `xcodebuild-mcp scaffold_ios_project`
 
 <!-- AI-CONTEXT-END -->
 
@@ -45,285 +34,117 @@ Use xcodebuild-mcp scaffold_ios_project to create a new project
 
 ```text
 MyApp/
-├── MyApp.swift              # App entry point (@main)
-├── ContentView.swift        # Root view
-├── Info.plist               # App configuration
-├── Assets.xcassets/         # Images, colours, app icon
-├── Models/                  # Data models
-│   ├── User.swift
-│   └── AppState.swift
-├── Views/                   # SwiftUI views
-│   ├── Home/
-│   │   ├── HomeView.swift
-│   │   └── HomeViewModel.swift
-│   ├── Onboarding/
-│   │   ├── OnboardingView.swift
-│   │   └── OnboardingStep.swift
-│   ├── Settings/
-│   │   └── SettingsView.swift
-│   └── Components/          # Reusable UI components
-│       ├── PrimaryButton.swift
-│       └── CardView.swift
-├── Services/                # Business logic, API clients
-│   ├── APIService.swift
-│   ├── AuthService.swift
-│   └── NotificationService.swift
-├── Stores/                  # State management
-│   └── AppStore.swift
-├── Extensions/              # Swift extensions
-│   ├── Color+Theme.swift
-│   └── View+Modifiers.swift
-├── Resources/               # Fonts, localisation
-│   └── Localizable.xcstrings
-└── Tests/
-    ├── UnitTests/
-    └── UITests/
+├── MyApp.swift                 # @main entry point
+├── ContentView.swift           # Root view
+├── Info.plist / Assets.xcassets/
+├── Models/                     # Data models, AppState
+├── Views/{Feature}/            # FeatureView.swift + FeatureViewModel.swift
+│   └── Components/             # Reusable UI
+├── Services/                   # API clients, auth, notifications
+├── Stores/ / Extensions/ / Resources/
+└── Tests/                      # UnitTests/ + UITests/
 ```
 
 ## Development Standards
 
-### SwiftUI Patterns
-
-**MVVM with Observable**:
+### MVVM with @Observable
 
 ```swift
-@Observable
-final class HomeViewModel {
+@Observable final class HomeViewModel {
     var items: [Item] = []
     var isLoading = false
     var errorMessage: String?
-
     func loadItems() async {
-        isLoading = true
-        defer { isLoading = false }
-        do {
-            items = try await APIService.shared.fetchItems()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        isLoading = true; defer { isLoading = false }
+        do { items = try await APIService.shared.fetchItems() }
+        catch { errorMessage = error.localizedDescription }
     }
 }
 ```
 
-**View composition**: Break views into small, focused components. Each view file should be under 100 lines.
-
-### Design System
-
-Define a theme that matches the app's brand:
-
-```swift
-extension Color {
-    static let appPrimary = Color("Primary")
-    static let appBackground = Color("Background")
-    static let appSurface = Color("Surface")
-    static let appText = Color("Text")
-    static let appTextSecondary = Color("TextSecondary")
-}
-
-extension Font {
-    static let appTitle = Font.system(.title, design: .rounded, weight: .bold)
-    static let appBody = Font.system(.body, design: .default)
-    static let appCaption = Font.system(.caption, design: .default)
-}
-```
+Each view file under 100 lines. Define theme via `extension Color { static let appPrimary = Color("Primary") ... }` and `extension Font` for `.appTitle`, `.appBody`, `.appCaption`.
 
 ### Animations
 
-SwiftUI provides excellent built-in animation support:
-
-- `withAnimation(.spring())` for natural transitions
-- `.matchedGeometryEffect` for shared element transitions
-- `.transition()` for view enter/exit
-- `TimelineView` for continuous animations
-- `sensoryFeedback()` modifier for haptics paired with animations
+`withAnimation(.spring())`, `.matchedGeometryEffect`, `.transition()`, `TimelineView`, `sensoryFeedback()` for haptics.
 
 ### Native Capabilities
 
-| Feature | Framework | Notes |
-|---------|-----------|-------|
-| Health data | HealthKit | Step count, heart rate, sleep |
-| Home automation | HomeKit | Smart home device control |
-| Siri | SiriKit / App Intents | Voice commands, shortcuts |
-| Widgets | WidgetKit | Home screen and Lock Screen widgets |
-| Live Activities | ActivityKit | Dynamic Island, Lock Screen updates |
-| AR | ARKit + RealityKit | Augmented reality |
-| ML | Core ML + Create ML | On-device machine learning |
-| Maps | MapKit | Native Apple Maps |
-| Payments | StoreKit 2 | In-app purchases (or RevenueCat) |
-| Notifications | UserNotifications | Push and local |
-| Biometrics | LocalAuthentication | Face ID, Touch ID |
-| Camera | AVFoundation | Photo/video capture |
-| NFC | Core NFC | NFC tag reading |
-| Web content | WebKit for SwiftUI | Native WebView, JS bridge, custom URL schemes (iOS 26+) |
+| Feature | Framework |
+|---------|-----------|
+| Health | HealthKit |
+| Home | HomeKit |
+| Siri / Shortcuts | App Intents |
+| Widgets / Live Activities | WidgetKit, ActivityKit |
+| AR | ARKit + RealityKit |
+| ML | Core ML + Create ML |
+| Maps | MapKit |
+| Payments | StoreKit 2 (or RevenueCat) |
+| Push / Local notifications | UserNotifications |
+| Biometrics | LocalAuthentication |
+| Camera / NFC | AVFoundation, Core NFC |
+| Web content (iOS 26+) | WebKit for SwiftUI |
 
 ### Swift Concurrency
 
-Use structured concurrency throughout:
-
-- `async/await` for all asynchronous operations
-- `Task` groups for parallel work
-- `@MainActor` for UI updates
-- `AsyncStream` for continuous data (sensors, location)
-- `Sendable` conformance for thread safety
+`async/await` everywhere. `Task` groups for parallel work. `@MainActor` for UI. `AsyncStream` for continuous data. `Sendable` for thread safety.
 
 ### Data Persistence
 
-| Approach | Use Case |
-|----------|----------|
-| `@AppStorage` | Simple user preferences |
-| SwiftData | Structured local data (replaces Core Data) |
-| Keychain | Secure credentials and tokens |
-| FileManager | Documents, cached files |
-| CloudKit | iCloud sync across devices |
+`@AppStorage` (prefs) · SwiftData (structured, replaces Core Data) · Keychain (credentials) · FileManager (docs) · CloudKit (iCloud sync).
 
 ## Hybrid Content (WebKit for SwiftUI)
 
 > iOS 26+ / macOS 26+ / visionOS 26+. Requires `import WebKit`.
 > Source: WWDC 2025 Session 231 — "Meet WebKit for SwiftUI".
 
-First-class SwiftUI views for embedding web content — replaces the old `WKWebView` UIKit/AppKit bridge pattern.
+Replaces old `WKWebView` UIKit bridge. For iOS <26, guard with `#available` and fall back to a `UIViewRepresentable` `WKWebView` wrapper.
 
-**Compatibility**: These APIs require iOS 26+. For apps targeting earlier versions, guard with `#available` and provide a `WKWebView` fallback:
-
-```swift
-var body: some View {
-    if #available(iOS 26.0, *) {
-        WebView(url: url)
-    } else {
-        LegacyWKWebView(url: url) // UIViewRepresentable wrapper around WKWebView
-    }
-}
-```
-
-### WebView and WebPage
+### Core Pattern
 
 ```swift
 import WebKit
-
 struct ArticleView: View {
     @State private var page = WebPage()
-
     var body: some View {
         WebView(page)
-            .onAppear {
-                guard let url = URL(string: "https://example.com/article") else { return }
-                page.url = url
-            }
+            .onAppear { page.url = URL(string: "https://example.com/article") }
             .navigationTitle(page.title ?? "Loading...")
     }
 }
 ```
 
-`WebPage` is an `@Observable` class exposing: `url`, `title`, `isLoading`, `estimatedProgress`, `themeColor`, `isAtTop`, `isAtBottom`.
+`WebPage` (`@Observable`): `url`, `title`, `isLoading`, `estimatedProgress`, `themeColor`, `isAtTop`, `isAtBottom`.
 
 ### JavaScript Bridge
 
-Call JavaScript with typed argument dictionaries and get typed results:
-
-```swift
-let count: Int = try await page.callJavaScript(
-    "addItems",
-    arguments: ["items": ["apple", "banana"], "startIndex": 0]
-)
-```
-
-Arguments and return values are automatically bridged between Swift and JavaScript types.
+`let count: Int = try await page.callJavaScript("addItems", arguments: ["items": [...], "startIndex": 0])` — types auto-bridge between Swift and JS.
 
 ### Custom URL Schemes
 
-Serve bundled HTML/CSS/JS via custom URL schemes using `URLSchemeHandler`:
-
-```swift
-WebView(page)
-    .urlScheme("app-resource") { request in
-        guard
-            let url = request.url,
-            !url.path.isEmpty
-        else {
-            return .init(statusCode: 400, headerFields: [:], data: Data())
-        }
-
-        let relativePath = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let fileURL = Bundle.main.resourceURL?.appendingPathComponent(relativePath) else {
-            return .init(statusCode: 404, headerFields: [:], data: Data())
-        }
-
-        do {
-            let data = try Data(contentsOf: fileURL)
-            return .init(statusCode: 200, headerFields: [:], data: data)
-        } catch {
-            return .init(statusCode: 404, headerFields: [:], data: Data())
-        }
-    }
-```
-
-Load with `app-resource:///index.html` — content stays local, no network requests.
+`.urlScheme("app-resource") { request in ... }` serves bundled HTML/CSS/JS via `Bundle.main.resourceURL`. Load with `app-resource:///index.html` — no network requests.
 
 ### Navigation Policy
 
-Control which navigations are allowed using `WebPage.NavigationDeciding`:
-
-```swift
-page.navigationDeciding = .handler { action in
-    if action.request.url?.host == "example.com" {
-        return .allow
-    }
-    return .cancel
-}
-```
+`page.navigationDeciding = .handler { action in action.request.url?.host == "example.com" ? .allow : .cancel }`
 
 ### View Modifiers
 
-| Modifier | Purpose |
-|----------|---------|
-| `webViewScrollPosition(_:)` | Bind scroll position |
-| `onScrollGeometryChange` | React to scroll geometry changes |
-| `findNavigator(isPresented:)` | In-page find (Cmd+F) |
-| `webViewScrollInputBehavior(_:for:)` | Control scroll input handling |
+`webViewScrollPosition(_:)`, `onScrollGeometryChange`, `findNavigator(isPresented:)`, `webViewScrollInputBehavior(_:for:)`.
 
 ## Build and Test
 
-### Using XcodeBuildMCP
+**XcodeBuildMCP**: `discover_projs` → `build_sim --scheme MyApp` → `test_sim --scheme MyApp` → `build_run_sim --scheme MyApp` → `screenshot`.
 
-```text
-# Discover project
-discover_projs
-
-# Build for simulator
-build_sim --scheme MyApp
-
-# Run tests
-test_sim --scheme MyApp
-
-# Build and run
-build_run_sim --scheme MyApp
-
-# Screenshot current state
-screenshot
-```
-
-### Local Xcode Commands
+**Local xcodebuild**:
 
 ```bash
-# Build
-xcodebuild -scheme MyApp -destination 'platform=iOS Simulator,name=iPhone 16 Pro'
-
-# Test
-xcodebuild test -scheme MyApp -destination 'platform=iOS Simulator,name=iPhone 16 Pro'
-
-# Archive for distribution
-xcodebuild archive -scheme MyApp -archivePath MyApp.xcarchive
+xcodebuild -scheme MyApp -destination 'platform=iOS Simulator,name=iPhone 16 Pro'       # build
+xcodebuild test -scheme MyApp -destination 'platform=iOS Simulator,name=iPhone 16 Pro'   # test
+xcodebuild archive -scheme MyApp -archivePath MyApp.xcarchive                            # archive
 ```
 
-## TestFlight Setup
-
-1. Configure signing in Xcode (Automatically manage signing)
-2. Archive the app (`Product > Archive`)
-3. Upload to App Store Connect via Xcode Organizer
-4. Add internal testers in App Store Connect
-5. External testing requires App Review approval
-
-Or use `xcodebuild-mcp` device tools for direct device deployment during development.
+**TestFlight**: Configure auto-signing → Archive → Upload via Organizer → Add testers in App Store Connect (external requires App Review). Or use `xcodebuild-mcp` device tools for dev deployment.
 
 ## Related
 
