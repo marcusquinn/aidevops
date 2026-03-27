@@ -59,7 +59,7 @@ Submits a file to the Unstract API, polls for completion, and returns structured
 
 1. Sign up at https://unstract.com/start-for-free/ (14-day free trial)
 2. Create a Prompt Studio project, define extraction schema, deploy as API endpoint
-3. Add credentials to `~/.config/aidevops/credentials.sh` (chmod 600):
+3. Store credentials (preferred: `~/.aidevops/agents/scripts/setup-local-api-keys.sh`; or manually in `~/.config/aidevops/credentials.sh` chmod 600):
 
 ```bash
 export UNSTRACT_API_KEY="your_api_key_here"
@@ -80,10 +80,10 @@ Clones to `~/.aidevops/unstract/`, disables analytics, starts Docker Compose. Vi
 **Management:**
 
 ```bash
-unstract-helper.sh start|stop|status|logs|configure-llm|uninstall
+~/.aidevops/agents/scripts/unstract-helper.sh start|stop|status|logs|configure-llm|uninstall
 ```
 
-Set credentials pointing at local instance:
+Set credentials pointing at local instance (preferred: `~/.aidevops/agents/scripts/setup-local-api-keys.sh`; or manually):
 
 ```bash
 export UNSTRACT_API_KEY="your_api_key_here"
@@ -94,7 +94,7 @@ export API_BASE_URL="http://backend.unstract.localhost/deployment/api/your-id/"
 
 ### LLM Adapters (Self-Hosted)
 
-Add existing API keys as adapters in Unstract UI (Settings > Adapters). Run `unstract-helper.sh configure-llm` to see configured keys.
+Add existing API keys as adapters in Unstract UI (Settings > Adapters). Run `~/.aidevops/agents/scripts/unstract-helper.sh configure-llm` to see configured keys.
 
 | Your Key | Unstract Adapter |
 |----------|-----------------|
