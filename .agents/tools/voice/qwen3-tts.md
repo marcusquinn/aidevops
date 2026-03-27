@@ -25,7 +25,7 @@ tools:
 - **Latency**: 97ms streaming (first chunk)
 - **Models**: 1.7B (~4GB VRAM) and 0.6B (~2GB) in Base, CustomVoice, VoiceDesign variants
 - **Install**: `pip install qwen-tts` or `pip install vllm-omni` (production serving)
-- **Helper**: `voice-helper.sh talk whisper-mlx qwen3-tts` (voice bridge integration)
+- **Note**: Not supported by voice-bridge.py — use the Python API directly
 
 **When to Use**: Multi-language TTS with voice cloning (3s reference), custom voice control (9 speakers + instruction), or voice design (natural language persona). Ideal for voice agents, content creation, and accessibility.
 
@@ -97,16 +97,7 @@ for chunk in tts.synthesize_stream(text="Streaming with 97ms first-chunk latency
     play_audio(chunk)
 ```
 
-## Voice Bridge Integration
-
-```bash
-voice-helper.sh talk whisper-mlx qwen3-tts                              # Default
-voice-helper.sh talk whisper-mlx qwen3-tts path/to/reference.wav        # Custom voice
-voice-helper.sh talk whisper-mlx qwen3-tts path/to/reference.wav opencode/claude-sonnet-4-6  # Custom voice + model
-```
-
-> Positional args: `stt tts voice model`. Named flags (`--voice-ref`, `--persona`) not supported.
-> Voice design (persona descriptions) must use the Python API directly.
+> **Note:** qwen3-tts is not supported by voice-bridge.py. Use the Python API directly for all synthesis tasks.
 
 ## Performance
 
