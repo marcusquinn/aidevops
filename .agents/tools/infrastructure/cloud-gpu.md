@@ -26,9 +26,9 @@ Deploy GPU-intensive AI models (voice, vision, LLMs) when local hardware is insu
 
 | Provider | GPUs | Pricing | Best For |
 |----------|------|---------|----------|
-| [RunPod](https://www.runpod.io/) | B200-RTX 4090 | Per-second, $0.40-8.64/hr | General purpose, serverless |
+| [RunPod](https://www.runpod.io/) | B200, H200, H100, A100, L40S, RTX 4090 | Per-second, $0.40-8.64/hr | General purpose, serverless |
 | [Vast.ai](https://vast.ai/) | Consumer+datacenter, 10k+ | Auction+fixed, 5-6x cheaper | Budget, experimentation |
-| [Lambda](https://lambdalabs.com/) | GB300-H100 | Per-hour, reserved discounts | Research, training, enterprise |
+| [Lambda](https://lambdalabs.com/) | GB300, B200, H200, H100 | Per-hour, reserved discounts | Research, training, enterprise |
 | [NVIDIA Cloud](https://www.nvidia.com/en-us/gpu-cloud/) | A100, H100 (DGX) | Per-hour, enterprise | Official NVIDIA stack |
 
 ## GPU Selection
@@ -57,9 +57,11 @@ runpodctl create pod --name my-model --gpuType "NVIDIA GeForce RTX 4090" --gpuCo
 # Vast.ai (install: pip install vastai && vastai set api-key <key>)
 vastai search offers 'gpu_name=RTX_4090 num_gpus=1 rentable=true' --order 'dph_total' --limit 10
 vastai create instance <offer-id> --image pytorch/pytorch:2.4.0-cuda12.1-cudnn9-devel --disk 50 --ssh
-# Lambda (REST: BASE=https://cloud.lambdalabs.com/api/v1, AUTH=-H "Authorization: Bearer $LAMBDA_API_KEY")
-curl -s $AUTH "$BASE/instance-types"  # list types
-curl -s -X POST $AUTH -H "Content-Type: application/json" "$BASE/instance-operations/launch" \
+# Lambda (REST API)
+LAMBDA_BASE="https://cloud.lambdalabs.com/api/v1"
+curl -s -H "Authorization: Bearer $LAMBDA_API_KEY" "$LAMBDA_BASE/instance-types"  # list types
+curl -s -X POST -H "Authorization: Bearer $LAMBDA_API_KEY" -H "Content-Type: application/json" \
+  "$LAMBDA_BASE/instance-operations/launch" \
   -d '{"region_name":"us-east-1","instance_type_name":"gpu_1x_h100_sxm5","ssh_key_names":["my-key"]}'
 ```
 
@@ -96,14 +98,32 @@ curl http://<instance-ip>:8000/v1/completions -H "Content-Type: application/json
 **Auto-shutdown** (30min idle -- provider-native alternatives: RunPod auto-stop, Vast.ai max idle, Lambda API):
 
 ```bash
-*/5 * * * * nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader | \
-  awk '{if ($1+0 < 5) system("echo idle >> /tmp/gpu_idle"); else system("rm -f /tmp/gpu_idle")}' && \
-  [ "$(wc -l < /tmp/gpu_idle 2>/dev/null)" -gt 6 ] && shutdown -h now
+*/5 * * * * GPU_UTIL=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader | awk '{print $1+0}'); \
+  IDLE_COUNT=$(cat /tmp/gpu_idle_count 2>/dev/null || echo 0); \
+  if [ "$GPU_UTIL" -lt 5 ]; then echo $((IDLE_COUNT + 1)) > /tmp/gpu_idle_count; \
+  else echo 0 > /tmp/gpu_idle_count; fi; \
+  [ "$(cat /tmp/gpu_idle_count)" -gt 6 ] && shutdown -h now
 ```
 
 ## Monitoring + Troubleshooting
 
-Health: `nvidia-smi --query-gpu=name,memory.total,memory.used,temperature.gpu,utilization.gpu --format=csv,noheader`. CUDA check: `python3 -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"`. Continuous: `nvidia-smi --query-gpu=timestamp,utilization.gpu,memory.used,temperature.gpu --format=csv -l 30 > /tmp/gpu_metrics.csv &`.
+**Health check:**
+
+```bash
+nvidia-smi --query-gpu=name,memory.total,memory.used,temperature.gpu,utilization.gpu --format=csv,noheader
+```
+
+**CUDA check:**
+
+```bash
+python3 -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"
+```
+
+**Continuous monitoring:**
+
+```bash
+nvidia-smi --query-gpu=timestamp,utilization.gpu,memory.used,temperature.gpu --format=csv -l 30 > /tmp/gpu_metrics.csv &
+```
 
 | Issue | Solution |
 |-------|----------|
