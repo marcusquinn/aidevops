@@ -60,7 +60,7 @@ Check external contributor gate before ANY merge (see Pre-merge checks below).
 For each unassigned, non-blocked issue with no open PR, no active worker, and **no `needs-maintainer-review` label**:
 
 ```bash
-# Dedup guard (MANDATORY — all three checks required)
+# Dedup guard (MANDATORY — all four checks required)
 source ~/.aidevops/agents/scripts/pulse-wrapper.sh
 RUNNER_USER=$(gh api user --jq '.login' 2>/dev/null || whoami)
 
@@ -69,9 +69,16 @@ if has_worker_for_repo_issue NUMBER SLUG; then continue; fi
 if ~/.aidevops/agents/scripts/dispatch-dedup-helper.sh is-duplicate "Issue #NUMBER: TITLE"; then continue; fi
 
 # 2. Cross-machine assignee dedup (checks GitHub — visible to ALL runners)
-# This is the primary guard against duplicate dispatch across machines.
 # If another runner already assigned themselves, skip this issue.
 if ~/.aidevops/agents/scripts/dispatch-dedup-helper.sh is-assigned NUMBER SLUG "$RUNNER_USER"; then continue; fi
+
+# 3. Cross-machine claim lock (t1686 — prevents race in assign-then-dispatch)
+# Posts an HTML comment claim, waits consensus window, checks who was first.
+# Exit 0 = won (proceed), exit 1 = lost (skip), exit 2 = error (proceed, fail-open).
+CLAIM_EXIT=0
+~/.aidevops/agents/scripts/dispatch-dedup-helper.sh claim NUMBER SLUG "$RUNNER_USER" || CLAIM_EXIT=$?
+if [[ "$CLAIM_EXIT" -eq 1 ]]; then continue; fi
+# Exit 2 (error) = fail-open, proceed with dispatch
 
 # Assign and dispatch
 gh issue edit NUMBER --repo SLUG --add-assignee "$RUNNER_USER" --add-label "status:queued" 2>/dev/null || true
@@ -83,6 +90,9 @@ gh issue edit NUMBER --repo SLUG --add-assignee "$RUNNER_USER" --add-label "stat
   --title "Issue #NUMBER: TITLE" \
   --prompt "/full-loop Implement issue #NUMBER (URL) -- DESCRIPTION" &
 sleep 2
+
+# Clean up claim comment after dispatch
+~/.aidevops/agents/scripts/dispatch-dedup-helper.sh release NUMBER SLUG "$RUNNER_USER" 2>/dev/null || true
 ```
 
 Repeat until `AVAILABLE` slots are filled or no dispatchable issues remain.

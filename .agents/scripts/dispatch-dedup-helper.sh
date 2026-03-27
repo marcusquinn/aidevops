@@ -32,10 +32,21 @@
 #   dispatch-dedup-helper.sh list-running-keys
 #     List dedup keys for all currently running workers.
 #
+#   dispatch-dedup-helper.sh claim <issue> <slug> [runner-login]
+#     Cross-machine optimistic lock via GitHub comments (t1686).
+#     Exit 0 = claim won (safe to dispatch), exit 1 = lost, exit 2 = error (fail-open).
+#
+#   dispatch-dedup-helper.sh release <issue> <slug> [runner-login]
+#     Clean up claim comments after dispatch completes.
+#
 #   dispatch-dedup-helper.sh normalize <title>
 #     Return the normalized (lowercased, stripped) form of a title for comparison.
 
 set -euo pipefail
+
+# Resolve path to dispatch-claim-helper.sh (co-located)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+CLAIM_HELPER="${SCRIPT_DIR}/dispatch-claim-helper.sh"
 
 #######################################
 # Extract canonical dedup keys from a title string.
@@ -491,7 +502,11 @@ Usage:
   dispatch-dedup-helper.sh has-open-pr <issue> <slug> [issue-title]
                                                     Check merged PR evidence (exit 0=evidence, 1=none)
   dispatch-dedup-helper.sh is-assigned <issue> <slug> [self-login]
-                                                    Check if issue is assigned (exit 0=assigned, 1=free)
+                                                     Check if issue is assigned (exit 0=assigned, 1=free)
+  dispatch-dedup-helper.sh claim <issue> <slug> [runner-login]
+                                                     Cross-machine claim lock (exit 0=won, 1=lost, 2=error)
+  dispatch-dedup-helper.sh release <issue> <slug> [runner-login]
+                                                     Clean up claim comments after dispatch
   dispatch-dedup-helper.sh list-running-keys        List keys for all running workers
   dispatch-dedup-helper.sh normalize <title>        Normalize a title for comparison
   dispatch-dedup-helper.sh help                     Show this help
@@ -521,6 +536,15 @@ Examples:
     echo "Issue already has merged PR evidence — skip dispatch"
   else
     echo "No merged PR evidence — safe to dispatch"
+  fi
+
+  # Cross-machine claim lock (t1686)
+  if dispatch-dedup-helper.sh claim 2300 owner/repo mylogin; then
+    echo "Claim won — safe to dispatch"
+    # ... dispatch worker ...
+    dispatch-dedup-helper.sh release 2300 owner/repo mylogin
+  else
+    echo "Claim lost or error — skip dispatch"
   fi
 HELP
 	return 0
@@ -561,6 +585,28 @@ main() {
 			return 1
 		}
 		has_open_pr "$1" "$2" "${3:-}"
+		;;
+	claim)
+		[[ $# -lt 2 ]] && {
+			echo "Error: claim requires <issue-number> <repo-slug> [runner-login]" >&2
+			return 1
+		}
+		if [[ ! -x "$CLAIM_HELPER" ]]; then
+			echo "Error: dispatch-claim-helper.sh not found at ${CLAIM_HELPER}" >&2
+			return 2
+		fi
+		"$CLAIM_HELPER" claim "$1" "$2" "${3:-}"
+		;;
+	release)
+		[[ $# -lt 2 ]] && {
+			echo "Error: release requires <issue-number> <repo-slug> [runner-login]" >&2
+			return 1
+		}
+		if [[ ! -x "$CLAIM_HELPER" ]]; then
+			echo "Warning: dispatch-claim-helper.sh not found — skipping release" >&2
+			return 0
+		fi
+		"$CLAIM_HELPER" release "$1" "$2" "${3:-}"
 		;;
 	list-running-keys)
 		list_running_keys
