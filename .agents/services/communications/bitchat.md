@@ -50,7 +50,7 @@ Devices form ad-hoc BLE mesh networks with four layers: Application (`BitchatMes
 
 ### Identity and Keys
 
-Each device generates two persistent key pairs on first launch (stored in device Keychain):
+Each device generates two persistent key pairs on first launch (stored in the device's secure keystore — Apple Keychain on iOS/macOS; Android Keystore on Android):
 
 | Key | Algorithm | Purpose |
 |-----|-----------|---------|
@@ -84,10 +84,10 @@ All packets padded to next block size (PKCS#7-style) to obscure true message len
 
 ## Installation
 
-| Platform | Store | Source |
-|----------|-------|--------|
-| iOS/macOS | [App Store](https://apps.apple.com/us/app/bitchat-mesh/id6748219622) | [bitchat](https://github.com/permissionlesstech/bitchat) (Xcode 15+, Swift) |
-| Android | [Play Store](https://play.google.com/store/apps/details?id=com.bitchat.droid) / [APK](https://github.com/permissionlesstech/bitchat-android/releases) | [bitchat-android](https://github.com/permissionlesstech/bitchat-android) (Gradle, API 26+) |
+| Platform | Store | Source | Last verified |
+|----------|-------|--------|---------------|
+| iOS/macOS | [App Store](https://apps.apple.com/us/app/bitchat-mesh/id6748219622) | [bitchat](https://github.com/permissionlesstech/bitchat) (Xcode 15+, Swift) | 2026-03-27 |
+| Android | [Play Store](https://play.google.com/store/apps/details?id=com.bitchat.droid) / [APK](https://github.com/permissionlesstech/bitchat-android/releases) | [bitchat-android](https://github.com/permissionlesstech/bitchat-android) (Gradle, API 26+) | 2026-03-27 |
 
 No desktop Linux/Windows client. No CLI or bot API (native app only).
 
