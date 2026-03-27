@@ -24,8 +24,7 @@ tools:
 - **MCP Tools**: `execute_script`, `get_scripting_tips`, `accessibility_query`
 - **Docs**: <https://github.com/steipete/macos-automator-mcp>
 - **Enabled for Agents**: None by default — enable via `@mac` subagent
-
-**Supported AI Tools**: OpenCode, Claude Code, Cursor, Windsurf, Zed, GitHub Copilot, Kilo Code, Kiro, Gemini CLI, Droid (Factory.AI)
+- **Supported AI Tools**: OpenCode, Claude Code, Cursor, Windsurf, Zed, GitHub Copilot, Kilo Code, Kiro, Gemini CLI, Droid (Factory.AI)
 
 **Verification prompt**: `Use the macos-automator MCP to get the current Safari URL.`
 
@@ -33,9 +32,7 @@ tools:
 
 ## Prerequisites
 
-- macOS (required — AppleScript is macOS-only), Node.js 18+
-
-**Required permissions** (grant to Terminal or your AI tool):
+Node.js 18+. Grant to Terminal or your AI tool:
 
 | Permission | Path |
 |------------|------|
@@ -45,11 +42,8 @@ tools:
 ## Installation
 
 ```bash
-# Run directly (no install needed)
-npx -y @steipete/macos-automator-mcp@0.2.0
-
-# Or install globally
-npm install -g @steipete/macos-automator-mcp@0.2.0
+npx -y @steipete/macos-automator-mcp@0.2.0        # run directly (no install)
+npm install -g @steipete/macos-automator-mcp@0.2.0  # or install globally
 ```
 
 ## AI Tool Configurations
@@ -86,7 +80,11 @@ claude mcp add-json macos-automator --scope project '{"type":"stdio","command":"
 
 ### Cursor / Windsurf / Zed / Gemini CLI
 
-All use the same JSON shape:
+All use the same JSON shape. Config locations:
+- **Cursor**: Settings > Tools & MCP > New MCP Server
+- **Windsurf**: `~/.codeium/windsurf/mcp.json`
+- **Zed**: ... > Add Custom Server (add `"env": {}` field)
+- **Gemini CLI**: `~/.gemini/settings.json`
 
 ```json
 {
@@ -98,12 +96,6 @@ All use the same JSON shape:
   }
 }
 ```
-
-Config file locations:
-- **Cursor**: Settings > Tools & MCP > New MCP Server
-- **Windsurf**: `~/.codeium/windsurf/mcp.json`
-- **Zed**: ... > Add Custom Server (add `"env": {}` field)
-- **Gemini CLI**: `~/.gemini/settings.json`
 
 ### GitHub Copilot
 
@@ -137,7 +129,7 @@ droid mcp add macos-automator "npx" -y @steipete/macos-automator-mcp@0.2.0
 | `script_path` | string | Absolute path to script file |
 | `kb_script_id` | string | Pre-defined script ID from knowledge base |
 | `language` | enum | `applescript` (default) or `javascript` |
-| `arguments` | array | Arguments to pass to script |
+| `arguments` | array | Arguments passed to script |
 | `input_data` | object | Named inputs for knowledge base scripts |
 | `timeout_seconds` | integer | Max execution time (default: 60) |
 
