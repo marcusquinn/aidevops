@@ -20,9 +20,7 @@ Use instead of `higgsfield.md` when: subscription credits apply, UI-exclusive fe
 
 ## Setup
 
-**Prerequisites**: Node.js/Bun, Playwright (`npm install playwright && npx playwright install chromium`).
-
-Credentials in `~/.config/aidevops/credentials.sh`: `HIGGSFIELD_USER`, `HIGGSFIELD_PASS`.
+Requires Node.js/Bun, Playwright (`npm install playwright && npx playwright install chromium`). Credentials: `~/.config/aidevops/credentials.sh` → `HIGGSFIELD_USER`, `HIGGSFIELD_PASS`.
 
 ```bash
 higgsfield-helper.sh setup
@@ -86,9 +84,7 @@ higgsfield-helper.sh pipeline --brief brief.json   # parallel submit: 5 scenes ~
 | Nano Banana | `nano_banana` | 1cr | Yes |
 | WAN 2.2 | `wan2` | 1cr | No |
 
-Ranked by quality for product shots (GPT → Seedream 4.5 → FLUX → Kontext → ...). `--prefer-unlimited` (default) auto-selects best unlimited model. Unlimited models use dedicated routes (e.g., `/nano-banana-pro`) — standard `/image/` routes cost credits even for subscribed models.
-
-Soul presets: All, New, TikTok Core, Instagram Aesthetics, Camera Presets, Beauty, Mood, Surreal, Graphic Art.
+Quality ranking (product shots): GPT → Seedream 4.5 → FLUX → Kontext → ... `--prefer-unlimited` (default) auto-selects best unlimited model. Unlimited models use dedicated routes (e.g., `/nano-banana-pro`) — standard `/image/` routes cost credits even for subscribed models. Soul presets: All, New, TikTok Core, Instagram Aesthetics, Camera Presets, Beauty, Mood, Surreal, Graphic Art.
 
 ### Video (5 models)
 
@@ -140,58 +136,51 @@ Remotion: `cd .agents/scripts/higgsfield/remotion && npm install` — animated c
 
 ## Output
 
-Interactive/`--headed` → `~/Downloads/higgsfield/` | Headless → `~/.aidevops/.agent-workspace/work/higgsfield/output/`
-
-Override: `--output`. Subdirs per type: `--project`. Disable sidecar: `--no-sidecar`. Disable dedup: `--no-dedup`.
+`--headed` → `~/Downloads/higgsfield/` | headless → `~/.aidevops/.agent-workspace/work/higgsfield/output/` | override: `--output` | subdirs: `--project` | `--no-sidecar` `--no-dedup`
 
 ## Key CLI Options
 
 ```text
---model/-m       Model slug
---aspect/-a      16:9 | 9:16 | 1:1 | 3:4 | 4:3 | 2:3 | 3:2
---quality/-q     1K | 1.5K | 2K | 4K
---output/-o      Output directory
---headed/--headless  Browser mode (headless default)
---duration/-d    Video seconds (5, 10, 15)
---image-file     Input image path
---image-file2    Second image (multi-reference edit)
+--model/-m          Model slug
+--aspect/-a         16:9 | 9:16 | 1:1 | 3:4 | 4:3 | 2:3 | 3:2
+--quality/-q        1K | 1.5K | 2K | 4K
+--output/-o         Output directory
+--headed/--headless Browser mode (headless default)
+--duration/-d       Video seconds (5, 10, 15)
+--image-file        Input image path
+--image-file2       Second image (multi-reference edit)
 --video-file/--motion-ref  Motion reference video
---batch/-b       Images 1-4
---preset/-s      Style preset name
---seed           Seed number
---seed-range     1000-1010 or "4000,4003,4008"
---brief          Pipeline brief JSON path
---tab            image | video
---filter         image | video | lipsync | upscaled | liked
---asset-action   list | download | download-latest | download-all
---asset-index    0-based asset index
---chain-action   animate | inpaint | upscale | relight | angles | shots | ai-stylist | skin-enhancer | multishot
---feature        fashion-factory | ugc-factory | photodump-studio | camera-controls | effects
---subtype        Vibe Motion: infographics | text-animation | posters | presentation | from-scratch
---project        Organized output subdirs
+--batch/-b          Images 1-4
+--preset/-s         Style preset name
+--seed              Seed number
+--seed-range        1000-1010 or "4000,4003,4008"
+--brief             Pipeline brief JSON path
+--tab               image | video
+--filter            image | video | lipsync | upscaled | liked
+--asset-action      list | download | download-latest | download-all
+--asset-index       0-based asset index
+--chain-action      animate | inpaint | upscale | relight | angles | shots | ai-stylist | skin-enhancer | multishot
+--feature           fashion-factory | ugc-factory | photodump-studio | camera-controls | effects
+--subtype           Vibe Motion: infographics | text-animation | posters | presentation | from-scratch
+--project           Organized output subdirs
 --prefer-unlimited  Auto-select best unlimited model (default on)
 ```
 
 ## Prompt Tips
 
-**Images**: Camera + lighting + lens. `"Golden retriever, golden hour, shallow DOF, Canon EOS R5, 85mm, bokeh"`
-
-**Videos**: Camera movement first. `"Smooth cinematic pan left to right, golden hour, 24fps film grain"`
-
+**Images** (camera + lighting + lens): `"Golden retriever, golden hour, shallow DOF, Canon EOS R5, 85mm, bokeh"`
+**Videos** (camera movement first): `"Smooth cinematic pan left to right, golden hour, 24fps film grain"`
 **Modifiers**: photorealistic → `"8k, highly detailed"` | cinematic → `"anamorphic, film grain, color graded"` | portrait → `"studio lighting, bokeh, 85mm"`
 
 ## Troubleshooting
 
 ```bash
 rm ~/.aidevops/.agent-workspace/work/higgsfield/auth-state.json && higgsfield-helper.sh login  # auth reset
-higgsfield-helper.sh image "test" --headed   # debug in browser
+higgsfield-helper.sh image "test" --headed   # debug in browser; screenshots → work/higgsfield/
 higgsfield-helper.sh download --model video  # video fallback (fnf.higgsfield.ai API)
 npx playwright install chromium              # browser missing
+node playwright-automator.mjs test           # self-tests (44 tests)
 ```
-
-Debug screenshots → `~/.aidevops/.agent-workspace/work/higgsfield/` (login-debug, image-page, generation-result, error).
-
-Self-tests: `node playwright-automator.mjs test` (44 tests).
 
 ## Related
 
