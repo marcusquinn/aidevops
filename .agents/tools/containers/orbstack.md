@@ -19,215 +19,97 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Fast, lightweight Docker and Linux VM runtime for macOS (replaces Docker Desktop)
-- **Install**: `brew install orbstack` or https://orbstack.dev/download
-- **CLI**: `orb` (management) + `docker` (Docker-compatible)
+- **Install**: `brew install orbstack` → verify with `orb status` and `docker --version`
+- **CLI**: `orb` (management) + `docker` (Docker-compatible — all existing commands work unchanged)
 - **Docs**: https://docs.orbstack.dev
-- **Status**: `orb status`
+- **Website**: https://orbstack.dev | **GitHub**: https://github.com/orbstack/orbstack
+- **Pricing**: Free for personal use, paid for teams
 
-**Why OrbStack over Docker Desktop**:
-
-- Significantly faster startup and lower memory usage
-- Native macOS integration (Finder, menu bar, `.local` domains)
-- Built-in Linux VMs alongside Docker containers
-- Rosetta x86 emulation on Apple Silicon
-- Free for personal use
+**Why OrbStack over Docker Desktop**: Faster startup, lower memory, native macOS integration (Finder, menu bar, `.orb.local` domains), built-in Linux VMs, Rosetta x86 emulation on Apple Silicon.
 
 <!-- AI-CONTEXT-END -->
 
-## Installation
+## OrbStack-Specific Features
+
+Standard `docker` and `docker compose` commands work without modification. These are OrbStack-only capabilities:
 
 ```bash
-# Via Homebrew (recommended)
-brew install orbstack
+# Management
+orb list                          # List all containers and VMs
+orb shell <container-name>        # Quick shell access
+orb start | orb stop              # Start/stop OrbStack (frees resources)
 
-# Verify
-orb status
-docker --version
-```
-
-OrbStack provides a Docker-compatible CLI. Existing `docker` and `docker compose` commands work without modification.
-
-## Docker Operations
-
-### Running Containers
-
-```bash
-# Standard Docker commands work
-docker run -d --name my-app -p 8080:80 nginx
-docker ps
-docker logs my-app
-docker stop my-app
-
-# Docker Compose
-docker compose up -d
-docker compose logs -f
-docker compose down
-```
-
-### OrbStack-Specific Features
-
-```bash
-# List all containers and VMs
-orb list
-
-# Quick access to container shell
-orb shell <container-name>
-
-# Container .local domains (automatic)
-# Access containers at <container-name>.orb.local
-curl http://my-app.orb.local
-
-# Stop OrbStack (frees resources)
-orb stop
-
-# Start OrbStack
-orb start
+# Automatic .local DNS — no config needed
+curl http://<container-name>.orb.local
 ```
 
 ## Linux VMs
 
-OrbStack can run lightweight Linux VMs alongside Docker:
+OrbStack runs lightweight Linux VMs alongside Docker with automatic `.orb.local` DNS, SSH, and shared filesystem:
 
 ```bash
-# Create an Ubuntu VM
-orb create ubuntu my-ubuntu
-
-# SSH into VM
-orb shell my-ubuntu
-
-# Or use SSH directly
-ssh my-ubuntu@orb
-
-# List VMs
-orb list
-
-# Stop/start VM
-orb stop my-ubuntu
-orb start my-ubuntu
-
-# Delete VM
-orb delete my-ubuntu
+orb create ubuntu my-ubuntu       # Create VM
+orb shell my-ubuntu               # Shell into VM (or: ssh my-ubuntu@orb)
+orb stop my-ubuntu                # Stop VM
+orb start my-ubuntu               # Start VM
+orb delete my-ubuntu              # Delete VM
 ```
-
-VMs get automatic `.local` DNS, SSH access, and shared filesystem with macOS.
 
 ## OpenClaw in OrbStack
 
-### Running OpenClaw via Docker
+### Setup
 
 ```bash
-# Clone OpenClaw
 git clone https://github.com/openclaw/openclaw.git
 cd openclaw
-
-# Run setup (builds image, runs onboarding, starts gateway)
-./docker-setup.sh
-
-# Access Control UI
-open http://127.0.0.1:18789/
+./docker-setup.sh                 # Builds image, runs onboarding, starts gateway
+open http://127.0.0.1:18789/      # Access Control UI
 ```
 
-### Managing the OpenClaw Container
+### Management
 
 ```bash
-# Check status
-docker compose ps
-
-# View logs
-docker compose logs -f openclaw-gateway
-
-# Restart gateway
-docker compose restart openclaw-gateway
-
-# Run CLI commands
-docker compose run --rm openclaw-cli doctor
-docker compose run --rm openclaw-cli security audit
-
-# Channel setup
-docker compose run --rm openclaw-cli channels login
+docker compose ps                                    # Status
+docker compose logs -f openclaw-gateway              # Logs
+docker compose restart openclaw-gateway              # Restart
+docker compose run --rm openclaw-cli doctor           # Health check
+docker compose run --rm openclaw-cli security audit   # Security audit
+docker compose run --rm openclaw-cli channels login   # Channel setup
 ```
 
 ### Persistent Data
 
-OpenClaw config and workspace are bind-mounted from the host:
+Config and workspace are bind-mounted from the host (persist across container restarts):
 
-- Config: `~/.openclaw/openclaw.json`
-- Workspace: `~/.openclaw/workspace`
-- Credentials: `~/.openclaw/credentials/`
-- Sessions: `~/.openclaw/agents/<agentId>/sessions/`
+| Path | Contents |
+|------|----------|
+| `~/.openclaw/openclaw.json` | Config |
+| `~/.openclaw/workspace` | Workspace |
+| `~/.openclaw/credentials/` | Credentials |
+| `~/.openclaw/agents/<agentId>/sessions/` | Sessions |
 
-These persist across container restarts and rebuilds.
-
-## Common Use Cases with aidevops
-
-### 1. Isolated Development Environments
+## Common Use Cases
 
 ```bash
-# Run a database for local development
+# Isolated dev database (access at postgres.orb.local or localhost:5432)
 docker run -d --name postgres -p 5432:5432 \
   -e POSTGRES_PASSWORD=dev postgres:16
 
-# Access at postgres.orb.local or localhost:5432
-```
-
-### 2. OpenClaw Sandbox Images
-
-Build sandbox images for OpenClaw agent tool isolation:
-
-```bash
+# OpenClaw sandbox images for agent tool isolation
 cd openclaw
 scripts/sandbox-setup.sh           # Base sandbox
 scripts/sandbox-common-setup.sh    # With build tools
 scripts/sandbox-browser-setup.sh   # With Chromium
 ```
 
-### 3. Testing Coolify Locally
-
-```bash
-# Run Coolify in Docker for local testing before VPS deployment
-docker run -d --name coolify -p 8000:8000 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  coollabsio/coolify:latest
-```
-
-## Resource Management
-
-```bash
-# Check OrbStack resource usage
-orb status
-
-# Stop OrbStack when not needed (frees memory)
-orb stop
-
-# Prune unused Docker resources
-docker system prune -a
-
-# Check disk usage
-docker system df
-```
-
 ## Troubleshooting
 
 ```bash
-# Check OrbStack status
-orb status
-
-# Restart OrbStack
-orb restart
-
-# Check Docker daemon
-docker info
-
-# View OrbStack logs
-orb logs
-
-# Reset OrbStack (last resort)
-orb reset
+orb status                        # Check OrbStack status
+orb restart                       # Restart OrbStack
+orb logs                          # View OrbStack logs
+docker info                       # Check Docker daemon
+docker system prune -a            # Prune unused resources
+docker system df                  # Check disk usage
+orb reset                         # Factory reset (last resort)
 ```
-
-## Resources
-
-- **Website**: https://orbstack.dev
-- **Docs**: https://docs.orbstack.dev
-- **GitHub**: https://github.com/orbstack/orbstack
-- **Pricing**: Free for personal use, paid for teams
