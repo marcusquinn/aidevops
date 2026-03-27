@@ -15,11 +15,8 @@ import argparse
 import colorsys
 import hashlib
 import json
-import math
 import os
-import random
 import re
-import sys
 import uuid
 from pathlib import Path
 
@@ -529,6 +526,8 @@ def main():
                 needs_profile += 1
                 print(f"  [new]    {repo['name']} -> {repo['path']}")
         print(f"\nExisting: {has_profile}, New: {needs_profile}")
+        if needs_profile > 0:
+            print("Note: existing profiles are never modified — only new ones are created.")
         return
 
     # Determine group ID
@@ -557,8 +556,6 @@ def main():
         return
 
     # Insert new profiles into the profiles section
-    # Find the end of the profiles list (before the next top-level key)
-    profiles_end = None
     # Find where profiles section ends by looking for next top-level key
     lines = config_text.split("\n")
     in_profiles = False
