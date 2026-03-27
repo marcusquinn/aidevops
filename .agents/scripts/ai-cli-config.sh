@@ -356,6 +356,7 @@ main() {
 }
 
 # Allow sourcing without executing main (for testing individual functions)
+
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 	main "$@"
 fi
