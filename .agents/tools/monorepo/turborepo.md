@@ -22,28 +22,16 @@ tools:
 - **Purpose**: High-performance build system for JavaScript/TypeScript monorepos
 - **Package Manager**: pnpm (recommended), npm, yarn
 - **Docs**: Use Context7 MCP for current documentation
-
-**Key Features**:
-- Incremental builds with caching
-- Parallel task execution
-- Remote caching (Vercel)
-- Dependency-aware task ordering
+- **Features**: Incremental builds with caching · Parallel task execution · Remote caching (Vercel) · Dependency-aware task ordering
 
 **Common Commands**:
 
 ```bash
-# Run dev for all packages
-pnpm dev
-
-# Run build for all packages
-pnpm build
-
-# Run specific task for specific package
-pnpm --filter web dev
-pnpm --filter @workspace/ui build
-
-# Run task for package and its dependencies
-pnpm --filter web... build
+pnpm dev                              # all packages
+pnpm build                            # all packages
+pnpm --filter web dev                 # single package
+pnpm --filter @workspace/ui build     # by full name
+pnpm --filter web... build            # package + dependencies
 ```
 
 **Workspace Structure**:
@@ -51,23 +39,14 @@ pnpm --filter web... build
 ```text
 /
 ├── apps/
-│   ├── web/              # Next.js app
-│   ├── mobile/           # React Native app
-│   └── extension/        # Browser extension
+│   ├── web/        # Next.js app
+│   ├── mobile/     # React Native app
+│   └── extension/  # Browser extension
 ├── packages/
-│   ├── ui/               # Shared UI components
-│   │   ├── web/          # Web-specific UI
-│   │   ├── mobile/       # Mobile-specific UI
-│   │   └── shared/       # Cross-platform UI
-│   ├── api/              # API routes/handlers
-│   ├── db/               # Database schema/queries
-│   ├── auth/             # Authentication
-│   ├── i18n/             # Internationalization
-│   └── shared/           # Shared utilities
+│   ├── ui/{web,mobile,shared}/
+│   ├── api/  db/  auth/  i18n/  shared/
 └── tooling/
-    ├── eslint/           # ESLint config
-    ├── typescript/       # TypeScript config
-    └── prettier/         # Prettier config
+    ├── eslint/  typescript/  prettier/
 ```
 
 **Package Naming**:
@@ -78,33 +57,23 @@ pnpm --filter web... build
 | `packages/db` | `@workspace/db` | `@workspace/db/schema` |
 | `tooling/eslint` | `@workspace/eslint-config` | `@workspace/eslint-config` |
 
-**turbo.json Configuration**:
+**turbo.json**:
 
 ```json
 {
   "$schema": "https://turbo.build/schema.json",
   "tasks": {
-    "build": {
-      "dependsOn": ["^build"],
-      "outputs": [".next/**", "dist/**"]
-    },
-    "dev": {
-      "cache": false,
-      "persistent": true
-    },
-    "lint": {
-      "dependsOn": ["^build"]
-    },
-    "typecheck": {
-      "dependsOn": ["^build"]
-    }
+    "build":     { "dependsOn": ["^build"], "outputs": [".next/**", "dist/**"] },
+    "dev":       { "cache": false, "persistent": true },
+    "lint":      { "dependsOn": ["^build"] },
+    "typecheck": { "dependsOn": ["^build"] }
   }
 }
 ```
 
 <!-- AI-CONTEXT-END -->
 
-## Detailed Patterns
+## Patterns
 
 ### Package.json Exports
 
@@ -121,7 +90,6 @@ pnpm --filter web... build
 ```
 
 ```tsx
-// Usage in apps/web
 import { Button } from "@workspace/ui-web/button";
 import { cn } from "@workspace/ui-web";
 import "@workspace/ui-web/globals.css";
@@ -129,53 +97,32 @@ import "@workspace/ui-web/globals.css";
 
 ### Workspace Dependencies
 
+Use `"workspace:*"` protocol (not `"*"`):
+
 ```json
-// apps/web/package.json
-{
-  "dependencies": {
-    "@workspace/ui-web": "workspace:*",
-    "@workspace/api": "workspace:*",
-    "@workspace/db": "workspace:*"
-  }
-}
+{ "dependencies": { "@workspace/ui-web": "workspace:*", "@workspace/api": "workspace:*" } }
 ```
 
-### Filtering Commands
+### Filtering
 
 ```bash
-# Single package
-pnpm --filter web dev
-
-# Package and dependencies
-pnpm --filter web... build
-
-# Package and dependents
-pnpm --filter ...web build
-
-# Multiple packages
-pnpm --filter web --filter mobile dev
-
-# By directory
-pnpm --filter "./packages/*" build
-
-# Exclude package
-pnpm --filter "!web" build
+pnpm --filter web dev                  # single
+pnpm --filter web... build             # + dependencies
+pnpm --filter ...web build             # + dependents
+pnpm --filter web --filter mobile dev  # multiple
+pnpm --filter "./packages/*" build     # by directory
+pnpm --filter "!web" build             # exclude
 ```
 
 ### Environment Variables
 
 ```bash
-# "with-env" is a custom script using dotenv-cli to load .env before turbo
-# Equivalent to: pnpm dotenv -- turbo build
+# "with-env" loads .env via dotenv-cli before turbo (equivalent: pnpm dotenv -- turbo build)
 pnpm with-env turbo build
+```
 
-# In package.json
-{
-  "scripts": {
-    "build": "pnpm with-env turbo build",
-    "dev": "pnpm with-env turbo dev"
-  }
-}
+```json
+{ "scripts": { "build": "pnpm with-env turbo build", "dev": "pnpm with-env turbo dev" } }
 ```
 
 ### Shared TypeScript Config
@@ -185,102 +132,52 @@ pnpm with-env turbo build
 {
   "$schema": "https://json.schemastore.org/tsconfig",
   "compilerOptions": {
-    "strict": true,
-    "moduleResolution": "bundler",
-    "module": "ESNext",
-    "target": "ES2022",
-    "lib": ["ES2022"],
-    "skipLibCheck": true,
-    "esModuleInterop": true
+    "strict": true, "moduleResolution": "bundler", "module": "ESNext",
+    "target": "ES2022", "lib": ["ES2022"], "skipLibCheck": true, "esModuleInterop": true
   }
 }
-
 // packages/api/tsconfig.json
-{
-  "extends": "@workspace/tsconfig/base.json",
-  "compilerOptions": {
-    "outDir": "dist"
-  },
-  "include": ["src"]
-}
+{ "extends": "@workspace/tsconfig/base.json", "compilerOptions": { "outDir": "dist" }, "include": ["src"] }
 ```
 
 ### Shared ESLint Config
 
 ```js
 // tooling/eslint/base.js
-module.exports = {
-  extends: ["eslint:recommended", "prettier"],
-  rules: {
-    // Shared rules
-  },
-};
-
+module.exports = { extends: ["eslint:recommended", "prettier"], rules: {} };
 // apps/web/eslint.config.js
 import baseConfig from "@workspace/eslint-config/base";
-
-export default [
-  ...baseConfig,
-  // App-specific overrides
-];
+export default [...baseConfig];
 ```
 
-### Database Package Pattern
+### Database Package
 
 ```tsx
-// packages/db/src/index.ts
+// packages/db/src/index.ts — public API
 export * from "./schema";
 export type { InferSelectModel, InferInsertModel } from "drizzle-orm";
-
-// packages/db/src/server.ts
+// packages/db/src/server.ts — server-only
 export { db } from "./client";
-
-// packages/db/src/schema/index.ts
-export * from "./users";
-export * from "./posts";
-export * from "./auth";
 ```
 
-### Running Database Commands
-
 ```bash
-# Generate migrations
-pnpm --filter @workspace/db db:generate
-
-# Apply migrations
-pnpm --filter @workspace/db db:migrate
-
-# Open studio
-pnpm --filter @workspace/db db:studio
-
-# Or use turbo
-turbo db:generate --filter=@workspace/db
+pnpm --filter @workspace/db db:generate  # generate migrations
+pnpm --filter @workspace/db db:migrate   # apply
+pnpm --filter @workspace/db db:studio    # open studio UI
 ```
 
 ## Common Mistakes
 
-1. **Circular dependencies**
-   - Package A imports B, B imports A
-   - Extract shared code to third package
-
-2. **Missing `^` in dependsOn**
-   - `"dependsOn": ["build"]` - same package
-   - `"dependsOn": ["^build"]` - dependencies first
-
-3. **Cache not invalidating**
-   - Check `outputs` in turbo.json
-   - Add env vars to `globalEnv` if needed
-
-4. **Wrong workspace protocol**
-   - Use `"workspace:*"` not `"*"`
-   - Ensures local package is used
-
-5. **TypeScript path issues**
-   - Use `moduleResolution: "bundler"`
-   - Match exports in package.json
+| Mistake | Fix |
+|---------|-----|
+| Circular dependencies (A→B→A) | Extract shared code to a third package |
+| Missing `^` in `dependsOn` | `"^build"` = dependencies first; `"build"` = same package only |
+| Cache not invalidating | Check `outputs` in turbo.json; add env vars to `globalEnv` |
+| Wrong workspace protocol | Use `"workspace:*"` not `"*"` |
+| TypeScript path issues | Use `moduleResolution: "bundler"`; match `exports` in package.json |
 
 ## Related
 
-- `tools/api/drizzle.md` - Database in monorepo
-- `tools/ui/nextjs-layouts.md` - App structure
+- `tools/api/drizzle.md` — Database in monorepo
+- `tools/ui/nextjs-layouts.md` — App structure
 - Context7 MCP for Turborepo documentation
