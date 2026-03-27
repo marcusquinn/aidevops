@@ -61,6 +61,36 @@ readonly ERROR_API_KEY_MISSING="API key is missing or invalid"
 readonly ERROR_INVALID_CREDENTIALS="Invalid credentials"
 
 # =============================================================================
+# Spending / Billing Limit Detection (GH#8229)
+# =============================================================================
+# Shared function used by model-availability-helper.sh and headless-runtime-helper.sh
+# to detect spending/billing limit errors in API response bodies.
+# Centralised here to avoid duplication between the two scripts.
+
+# Check if a (lowercased) string contains a spending/billing limit error pattern.
+# Caller must lowercase the input before passing it.
+# Returns 0 if spending limit detected, 1 otherwise.
+is_spending_limit_error() {
+	local lowered="$1"
+
+	# Match known billing error patterns:
+	# - OpenCode: MonthlyLimitError / "monthly spending limit"
+	# - Generic: "spending limit", "billing limit", "quota exceeded", "budget exceeded"
+	case "$lowered" in
+	*monthlylimiterror* | *"monthly spending limit"* | *"monthly limit"*)
+		return 0
+		;;
+	*"spending limit"* | *"billing limit"* | *"budget exceeded"*)
+		return 0
+		;;
+	*"quota exceeded"* | *"usage limit"* | *"credits exhausted"*)
+		return 0
+		;;
+	esac
+	return 1
+}
+
+# =============================================================================
 # Success Messages
 # =============================================================================
 
