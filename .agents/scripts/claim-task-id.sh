@@ -461,7 +461,7 @@ allocate_counter_cas() {
 	local last_id=$((current_value + count - 1))
 	local new_counter=$((current_value + count))
 
-	log_info "Counter at ${current_value}, claiming t${first_id}..t${last_id}, new counter: ${new_counter}"
+	log_info "Counter at ${current_value}, claiming $(printf 't%03d' "$first_id")..$(printf 't%03d' "$last_id"), new counter: ${new_counter}"
 
 	# Step 2: Build a commit directly on <remote>/<counter_branch> using plumbing commands.
 	# This is safe from any branch — we never touch HEAD or the working tree index.
@@ -469,9 +469,9 @@ allocate_counter_cas() {
 
 	local commit_msg="chore: claim task ID"
 	if [[ "$count" -eq 1 ]]; then
-		commit_msg="chore: claim t${first_id}"
+		commit_msg="chore: claim $(printf 't%03d' "$first_id")"
 	else
-		commit_msg="chore: claim t${first_id}..t${last_id}"
+		commit_msg="chore: claim $(printf 't%03d' "$first_id")..$(printf 't%03d' "$last_id")"
 	fi
 
 	# Create a blob with the new counter value
@@ -544,7 +544,7 @@ allocate_online() {
 
 		case $cas_result in
 		0)
-			log_success "Claimed t${first_id} (attempt ${attempt})"
+			log_success "Claimed $(printf 't%03d' "$first_id") (attempt ${attempt})"
 			echo "$first_id"
 			return 0
 			;;
@@ -590,7 +590,7 @@ allocate_offline() {
 	# Update local counter (no push)
 	echo "$new_counter" >"${repo_path}/${COUNTER_FILE}"
 
-	log_warn "Allocated t${first_id} with offset (reconcile when back online)"
+	log_warn "Allocated $(printf 't%03d' "$first_id") with offset (reconcile when back online)"
 
 	echo "$first_id"
 	return 0
@@ -815,7 +815,7 @@ _main_resolve_allocation() {
 			local current
 			current=$(read_remote_counter "$REPO_PATH" 2>/dev/null || read_local_counter "$REPO_PATH" 2>/dev/null || echo "?")
 			if [[ "$current" =~ ^[0-9]+$ ]]; then
-				log_info "Would allocate t${current}..t$((current + ALLOC_COUNT - 1)) (counter at ${current})"
+				log_info "Would allocate $(printf 't%03d' "$current")..$(printf 't%03d' "$((current + ALLOC_COUNT - 1))") (counter at ${current})"
 			else
 				log_info "Would allocate task ID (counter unreadable: ${current})"
 			fi
@@ -825,7 +825,7 @@ _main_resolve_allocation() {
 		fi
 
 		if first_id_out=$(allocate_online "$REPO_PATH" "$ALLOC_COUNT"); then
-			log_success "Allocated task ID: t${first_id_out}"
+			log_success "Allocated task ID: $(printf 't%03d' "$first_id_out")"
 		else
 			log_warn "Online allocation failed, falling back to offline mode"
 			is_offline_out="true"
@@ -879,7 +879,8 @@ _main_create_issues() {
 		else
 			local i
 			for ((i = first_id; i <= last_id; i++)); do
-				local issue_title="t${i}: ${TASK_TITLE}"
+				local issue_title
+				issue_title="$(printf 't%03d' "$i"): ${TASK_TITLE}"
 				local issue_num=""
 
 				case "$platform" in
@@ -899,7 +900,7 @@ _main_create_issues() {
 						first_issue_num="$issue_num"
 					fi
 				else
-					log_warn "Issue creation failed for t${i} (non-fatal — ID is secured)"
+					log_warn "Issue creation failed for $(printf 't%03d' "$i") (non-fatal — ID is secured)"
 					issue_nums+=("")
 				fi
 			done
@@ -935,10 +936,10 @@ _main_output_results() {
 	local last_id=$((first_id + ALLOC_COUNT - 1))
 
 	if [[ "$ALLOC_COUNT" -eq 1 ]]; then
-		echo "task_id=t${first_id}"
+		printf "task_id=t%03d\n" "$first_id"
 	else
-		echo "task_id=t${first_id}"
-		echo "task_id_last=t${last_id}"
+		printf "task_id=t%03d\n" "$first_id"
+		printf "task_id_last=t%03d\n" "$last_id"
 		echo "task_count=${ALLOC_COUNT}"
 	fi
 
