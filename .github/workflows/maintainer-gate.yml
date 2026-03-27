@@ -79,13 +79,32 @@ jobs:
           for ISSUE_NUM in $LINKED_ISSUES; do
             echo "--- Checking issue #$ISSUE_NUM ---"
 
-            # Get issue labels and assignees
-            ISSUE_DATA=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}" \
-              --jq '{labels: [.labels[].name], assignees: [.assignees[].login], state: .state, author_association: .author_association}' 2>/dev/null || echo '{}')
+            # Fetch raw issue JSON first, then parse — never silence API errors (GH#11063)
+            RAW_ISSUE_DATA=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}" 2>&1) || {
+              echo "::error::gh api failed for issue #$ISSUE_NUM: $RAW_ISSUE_DATA"
+              BLOCKED=true
+              REASONS="${REASONS}Issue #${ISSUE_NUM}: API call failed — cannot verify assignee/labels.\n"
+              continue
+            }
+
+            # Debug: log raw assignees and labels arrays for troubleshooting
+            echo "DEBUG: Raw assignees for issue #$ISSUE_NUM: $(echo "$RAW_ISSUE_DATA" | jq -c '[.assignees[]?.login]')"
+            echo "DEBUG: Raw labels for issue #$ISSUE_NUM: $(echo "$RAW_ISSUE_DATA" | jq -c '[.labels[]?.name]')"
+
+            # Parse fields from raw JSON — use //empty to handle null safely
+            ISSUE_DATA=$(echo "$RAW_ISSUE_DATA" | jq '{labels: [.labels[]?.name], assignees: [.assignees[]?.login], state: .state, author_association: .author_association}') || {
+              echo "::error::jq parsing failed for issue #$ISSUE_NUM"
+              echo "DEBUG: First 500 chars of raw response: ${RAW_ISSUE_DATA:0:500}"
+              BLOCKED=true
+              REASONS="${REASONS}Issue #${ISSUE_NUM}: Failed to parse API response.\n"
+              continue
+            }
 
             LABELS=$(echo "$ISSUE_DATA" | jq -r '.labels[]' 2>/dev/null || true)
             ASSIGNEES=$(echo "$ISSUE_DATA" | jq -r '.assignees[]' 2>/dev/null || true)
             STATE=$(echo "$ISSUE_DATA" | jq -r '.state' 2>/dev/null || echo "unknown")
+
+            echo "DEBUG: Parsed LABELS='$LABELS' ASSIGNEES='$ASSIGNEES' STATE='$STATE'"
 
             # Skip closed issues — they've already been reviewed
             if [[ "$STATE" == "closed" ]]; then
@@ -321,12 +340,32 @@ jobs:
             for ISSUE_NUM in $LINKED_ISSUES; do
               echo "--- Checking issue #$ISSUE_NUM ---"
 
-              ISSUE_DATA=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}" \
-                --jq '{labels: [.labels[].name], assignees: [.assignees[].login], state: .state}' 2>/dev/null || echo '{}')
+              # Fetch raw issue JSON first, then parse — never silence API errors (GH#11063)
+              RAW_ISSUE_DATA=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}" 2>&1) || {
+                echo "::error::gh api failed for issue #$ISSUE_NUM: $RAW_ISSUE_DATA"
+                BLOCKED=true
+                DESCRIPTION="Issue #${ISSUE_NUM}: API call failed"
+                continue
+              }
+
+              # Debug: log raw assignees and labels arrays for troubleshooting
+              echo "DEBUG: Raw assignees for issue #$ISSUE_NUM: $(echo "$RAW_ISSUE_DATA" | jq -c '[.assignees[]?.login]')"
+              echo "DEBUG: Raw labels for issue #$ISSUE_NUM: $(echo "$RAW_ISSUE_DATA" | jq -c '[.labels[]?.name]')"
+
+              # Parse fields from raw JSON
+              ISSUE_DATA=$(echo "$RAW_ISSUE_DATA" | jq '{labels: [.labels[]?.name], assignees: [.assignees[]?.login], state: .state}') || {
+                echo "::error::jq parsing failed for issue #$ISSUE_NUM"
+                echo "DEBUG: First 500 chars of raw response: ${RAW_ISSUE_DATA:0:500}"
+                BLOCKED=true
+                DESCRIPTION="Issue #${ISSUE_NUM}: Failed to parse API response"
+                continue
+              }
 
               LABELS=$(echo "$ISSUE_DATA" | jq -r '.labels[]' 2>/dev/null || true)
               ASSIGNEES=$(echo "$ISSUE_DATA" | jq -r '.assignees[]' 2>/dev/null || true)
               STATE=$(echo "$ISSUE_DATA" | jq -r '.state' 2>/dev/null || echo "unknown")
+
+              echo "DEBUG: Parsed LABELS='$LABELS' ASSIGNEES='$ASSIGNEES' STATE='$STATE'"
 
               # Skip closed issues — they've already been reviewed
               if [[ "$STATE" == "closed" ]]; then
