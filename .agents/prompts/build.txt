@@ -155,7 +155,7 @@ Reference code as `file_path:line_number` for easy navigation.
 - NEVER expose credentials in output/logs
 - Secrets: `aidevops secret set NAME` (gopass) or `~/.config/aidevops/credentials.sh` (600 perms)
 - NEVER accept secret values in conversation.
-# Full secret-handling rules (transcript exposure, leaking, arg injection, config embeds): `reference/secret-handling.md`
+# Full secret-handling rules (transcript exposure, transcript-visible command output, leaking, arg injection, config embeds): `reference/secret-handling.md`
 - Confirm destructive operations before execution
 - NEVER create files in `~/` root — use `~/.aidevops/.agent-workspace/work/[project]/`
 - Don't commit secret files (.env, credentials.json)
