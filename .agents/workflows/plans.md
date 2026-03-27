@@ -53,7 +53,7 @@ When `/save-todo` is invoked, analyze the conversation for complexity signals:
 
 | Signal | Indicates | Action |
 |--------|-----------|--------|
-| Single action item / <= 2h estimate / "quick" or "simple" | Simple | TODO.md only |
+| Single action item / < 2h estimate / "quick" or "simple" | Simple | TODO.md only |
 | Multiple distinct steps / research needed / >= 2h / multi-session / PRD needed | Complex | PLANS.md + TODO.md |
 
 ## Ralph Classification
@@ -102,7 +102,7 @@ Do NOT add `#auto-dispatch` when ANY of these are true:
 - Description says "investigate" or "evaluate" without a clear deliverable
 - Has `blocked-by:` dependencies on incomplete tasks
 
-**AI agents MUST**: Default to including `#auto-dispatch` -- only omit when a specific exclusion criterion applies.
+`#auto-dispatch` is added only when all inclusion criteria pass and no exclusion criteria apply.
 
 ## Saving Work
 
