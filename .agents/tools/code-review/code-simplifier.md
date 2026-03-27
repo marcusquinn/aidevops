@@ -429,16 +429,16 @@ The pulse already skips `needs-maintainer-review` issues (see pulse.md "External
 
 Code simplification analysis fits into the quality workflow via two input paths:
 
-### 1. Automated weekly scan (GH#5628)
+### 1. Automated daily scan (GH#5628)
 
-`pulse-wrapper.sh` runs a weekly complexity scan that uses the same awk-based function complexity check as CI. It creates `simplification-debt` issues for files exceeding the per-file violation threshold (default: 5+ functions >100 lines). Issues are deduplicated against existing open issues by repo-relative file path.
+`pulse-wrapper.sh` runs a daily complexity scan that uses the same awk-based function complexity check as CI. It creates `simplification-debt` issues for files exceeding the per-file violation threshold (default: 1+ function >100 lines). Issues are deduplicated against existing open issues by repo-relative file path.
 
 **No file size gate.** Agent docs of any size are eligible for simplification analysis. The previous 500-line threshold was removed (t1679) — smaller files can be equally verbose. The classification (instruction doc vs reference corpus) determines the action, not the line count.
 
 ```text
-pulse-wrapper.sh (weekly) --> awk complexity scan
+pulse-wrapper.sh (daily) --> awk complexity scan
                                   |
-                              Files with 5+ violations
+                              Files with 1+ violations
                                   |
                               Dedup against open issues (by repo-relative path)
                                   |
