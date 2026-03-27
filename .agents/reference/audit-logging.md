@@ -9,7 +9,7 @@ tampering detectable via `audit-log-helper.sh verify`.
 
 Log security-sensitive operations via `audit-log-helper.sh log <type> <message> [--detail k=v ...]`.
 
-Event types (16): `worker.dispatch`, `worker.complete`, `worker.error`, `credential.access`, `credential.rotate`, `config.change`, `config.deploy`, `security.event`, `security.injection`, `security.scan`, `operation.verify`, `operation.block`, `system.startup`, `system.update`, `system.rotate`, `testing.runtime`.
+Event types: `worker.dispatch`, `worker.complete`, `worker.error`, `credential.access`, `credential.rotate`, `config.change`, `config.deploy`, `security.event`, `security.injection`, `security.scan`, `operation.verify`, `operation.block`, `system.startup`, `system.update`, `system.rotate`, `testing.runtime`.
 
 Run `audit-log-helper.sh help` for details.
 

@@ -84,7 +84,7 @@ Rules: `prompts/build.txt`.
 ## Planning & Tasks
 
 Format: `- [ ] t001 Description @owner #tag ~4h started:ISO blocked-by:t002`
-Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md.
+Task IDs (project-local): `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md. For framework-level tasks, use `framework-issue-helper.sh log` instead.
 
 **Briefs MANDATORY.** `todo/tasks/{task_id}-brief.md`: session origin, what, why, how, acceptance criteria. `/define` or `/new-task`.
 

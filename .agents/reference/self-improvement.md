@@ -2,7 +2,7 @@
 
 Every agent session — interactive, worker, or supervisor — should improve the system, not just complete its task. This is a universal principle, not specific to any one command.
 
-**Observe outcomes from existing state.** TODO.md, PLANS.md, and GitHub issues/PRs are the state database. Never duplicate this state into separate files, databases, or logs.
+**Observe outcomes from existing state.** `TODO.md`, `todo/PLANS.md`, and GitHub issues/PRs are the state database. Never duplicate this state into separate files, databases, or logs.
 
 **Signals that something needs fixing** (check via `gh` CLI, not custom state):
 - A PR has been open for 6+ hours with no progress

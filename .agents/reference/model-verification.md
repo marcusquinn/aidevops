@@ -8,7 +8,7 @@ only those matching the risk taxonomy.
 
 ## Usage
 
-- Before destructive operations (force push, DB drop, production deploy, secret exposure): source `verify-operation-helper.sh` and call `check_operation()`. If risk is critical/high, call `verify_operation()` and respect the result.
+- Before destructive operations (force push, DB drop, production deploy, secret exposure): run `verify-operation-helper.sh check --operation "cmd"`. If risk is critical/high, run `verify-operation-helper.sh verify --operation "cmd" --risk-tier "critical"` and respect the result.
 - pre-edit-check.sh accepts `--verify-op "command"` to gate operations at the pre-edit stage.
 - dispatch.sh automatically screens task descriptions via `check_task_high_stakes()` before committing workers.
 - Verification is opt-out (`VERIFY_ENABLED=false`) not opt-in. High-stakes operations are verified by default.
