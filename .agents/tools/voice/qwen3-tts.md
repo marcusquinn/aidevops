@@ -144,7 +144,7 @@ For cloud GPU deployment (RunPod, Vast.ai, Lambda, NVIDIA Cloud), see **[Cloud G
 | Issue | Solution |
 |-------|----------|
 | `ModuleNotFoundError: qwen_tts` | `pip install qwen-tts` |
-| High latency | Use streaming: `streaming=True` |
+| High latency | Enable streaming mode: `streaming=True` |
 | OOM on GPU | Use 0.6B model or `device="cpu"` |
 | Poor voice clone quality | Ensure 3+ seconds clean reference audio |
 | Accent not matching | Use instruction: `instruction="British accent"` |
