@@ -81,7 +81,7 @@ Output: practices followed, practices missed with recommendations.
 ~/.aidevops/agents/scripts/session-distill-helper.sh auto
 ```
 
-Analyzes commits for patterns (fixes, features, refactors), extracts learnings (ERROR_FIX, WORKING_SOLUTION, etc.), stores to memory.
+Analyses commits for patterns (fixes, features, refactors), extracts learnings (ERROR_FIX, WORKING_SOLUTION, etc.), stores to memory.
 
 ### Step 5: Conversation Value Extraction + Knowledge Capture
 
