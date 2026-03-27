@@ -8,77 +8,13 @@ Theming, configuration, custom styling, and troubleshooting for Mermaid diagrams
 
 ## Init Directive
 
-Configure diagrams using the init directive:
-
 ```mermaid
 %%{init: { 'theme': 'dark' } }%%
 flowchart LR
     A --> B
 ```
 
-## Multi-Line Configuration
-
-```mermaid
-%%{init: {
-  'theme': 'base',
-  'themeVariables': {
-    'primaryColor': '#3b82f6',
-    'primaryTextColor': '#ffffff'
-  }
-}}%%
-flowchart LR
-    A --> B --> C
-```
-
----
-
-# Themes
-
-## Built-in Themes
-
-| Theme | Description |
-|-------|-------------|
-| `default` | Default blue theme |
-| `dark` | Dark mode |
-| `forest` | Green nature theme |
-| `neutral` | Grayscale |
-| `base` | Base for customization |
-
-### Usage
-
-```mermaid
-%%{init: {'theme': 'forest'}}%%
-flowchart LR
-    A --> B --> C
-```
-
----
-
-# Theme Variables
-
-## Core Variables
-
-| Variable | Description |
-|----------|-------------|
-| `primaryColor` | Main node color |
-| `primaryTextColor` | Text in primary nodes |
-| `primaryBorderColor` | Primary node border |
-| `secondaryColor` | Secondary elements |
-| `tertiaryColor` | Tertiary/background |
-| `lineColor` | Edge/arrow color |
-| `textColor` | General text |
-| `background` | Diagram background |
-
-## Typography
-
-| Variable | Description |
-|----------|-------------|
-| `fontSize` | Base font size |
-| `fontFamily` | Font family |
-
----
-
-## Custom Theme Example
+Multi-line with theme variables:
 
 ```mermaid
 %%{init: {
@@ -101,103 +37,90 @@ flowchart LR
     B -->|No| D[Failure]
 ```
 
+## Frontmatter (alternative to init)
+
+```yaml
 ---
+title: My Diagram
+config:
+  theme: forest
+  flowchart:
+    defaultRenderer: elk
+---
+```
+
+---
+
+# Themes
+
+| Theme | Description |
+|-------|-------------|
+| `default` | Default blue |
+| `dark` | Dark mode |
+| `forest` | Green |
+| `neutral` | Grayscale |
+| `base` | Base for customization |
+
+---
+
+# Theme Variables
+
+## Core Variables
+
+| Variable | Description |
+|----------|-------------|
+| `primaryColor` | Main node color |
+| `primaryTextColor` | Text in primary nodes |
+| `primaryBorderColor` | Primary node border |
+| `secondaryColor` | Secondary elements |
+| `tertiaryColor` | Tertiary/background |
+| `lineColor` | Edge/arrow color |
+| `textColor` | General text |
+| `background` | Diagram background |
+| `fontSize` | Base font size |
+| `fontFamily` | Font family |
 
 ## Diagram-Specific Variables
 
-### Flowchart
+**Flowchart:** `nodeBorder`, `nodeTextColor`, `clusterBkg`, `clusterBorder`, `edgeLabelBackground`
 
-| Variable | Description |
-|----------|-------------|
-| `nodeBorder` | Node border color |
-| `nodeTextColor` | Node text |
-| `clusterBkg` | Subgraph background |
-| `clusterBorder` | Subgraph border |
-| `edgeLabelBackground` | Edge label background |
+**Sequence:** `actorBorder`, `actorBkg`, `actorTextColor`, `activationBorderColor`, `activationBkgColor`, `signalColor`, `signalTextColor`, `noteBkgColor`, `noteBorderColor`, `noteTextColor`
 
-### Sequence Diagram
+**State:** `labelColor`, `altBackground`
 
-| Variable | Description |
-|----------|-------------|
-| `actorBorder` | Actor border |
-| `actorBkg` | Actor background |
-| `actorTextColor` | Actor text |
-| `activationBorderColor` | Activation border |
-| `activationBkgColor` | Activation background |
-| `signalColor` | Arrow/signal color |
-| `signalTextColor` | Message text |
-| `noteBkgColor` | Note background |
-| `noteBorderColor` | Note border |
-| `noteTextColor` | Note text |
-
-### State Diagram
-
-| Variable | Description |
-|----------|-------------|
-| `labelColor` | State label |
-| `altBackground` | Composite state background |
-
-### Gantt Chart
-
-| Variable | Description |
-|----------|-------------|
-| `gridColor` | Grid lines |
-| `todayLineColor` | Today marker |
-| `taskTextColor` | Task text |
-| `doneTaskBkgColor` | Completed task |
-| `activeTaskBkgColor` | Active task |
-| `critBkgColor` | Critical path |
-| `taskBorderColor` | Task border |
+**Gantt:** `gridColor`, `todayLineColor`, `taskTextColor`, `doneTaskBkgColor`, `activeTaskBkgColor`, `critBkgColor`, `taskBorderColor`
 
 ---
 
 # Styling
 
-## Class-Based Styling
-
-### Define Classes
+## Class-Based
 
 ```mermaid
 flowchart LR
     A[Start]:::success --> B[Process]:::info --> C[End]:::warning
+    class A,D success
+    class B,C info
 
     classDef success fill:#10b981,stroke:#059669,color:white
     classDef info fill:#3b82f6,stroke:#2563eb,color:white
     classDef warning fill:#f59e0b,stroke:#d97706,color:white
+    classDef default fill:#f8fafc,stroke:#cbd5e1
 ```
 
-### Apply to Multiple Nodes
+## Individual Node & Link Styling
 
 ```mermaid
 flowchart LR
     A --> B --> C --> D
-    class A,D success
-    class B,C info
-
-    classDef success fill:#10b981
-    classDef info fill:#3b82f6
-```
-
-### Default Class
-
-```mermaid
-flowchart LR
-    A --> B --> C
-
-    classDef default fill:#f8fafc,stroke:#cbd5e1
-```
-
----
-
-## Individual Node Styling
-
-```mermaid
-flowchart LR
-    A --> B --> C
 
     style A fill:#10b981,stroke:#059669,color:white
     style B fill:#3b82f6,stroke:#2563eb,color:white
     style C fill:#ef4444,stroke:#dc2626,color:white
+
+    linkStyle 0 stroke:green,stroke-width:2px
+    linkStyle 1 stroke:blue,stroke-width:2px
+    linkStyle default stroke:gray,stroke-width:1px
 ```
 
 ### Style Properties
@@ -213,54 +136,35 @@ flowchart LR
 
 ---
 
-## Link Styling
+# Layout & Directives
 
-### Individual Links
+## ELK Renderer (v9.4+)
 
-```mermaid
-flowchart LR
-    A --> B --> C --> D
-
-    linkStyle 0 stroke:green,stroke-width:2px
-    linkStyle 1 stroke:blue,stroke-width:2px
-    linkStyle 2 stroke:red,stroke-width:2px,stroke-dasharray:5
-```
-
-### All Links
-
-```mermaid
-flowchart LR
-    A --> B --> C
-
-    linkStyle default stroke:gray,stroke-width:1px
-```
-
----
-
-# Layout Engine
-
-## ELK Renderer
-
-For complex diagrams (v9.4+):
+Better complex layouts, predictable edge routing, improved subgraph positioning.
 
 ```mermaid
 %%{init: {"flowchart": {"defaultRenderer": "elk"}} }%%
 flowchart TB
     A --> B & C & D
     B & C & D --> E
-    E --> F & G
 ```
 
-Benefits:
-- Better handling of complex layouts
-- More predictable edge routing
-- Improved subgraph positioning
+## Common Init Options
+
+```javascript
+%%{init: {
+  'theme': 'default',
+  'flowchart': { 'defaultRenderer': 'elk', 'curve': 'basis', 'padding': 15 },
+  'sequence': { 'showSequenceNumbers': true, 'actorMargin': 50, 'boxMargin': 10 },
+  'gantt': { 'barHeight': 20, 'fontSize': 11, 'sectionFontSize': 14 }
+}}%%
+```
+
+Directive keys: `flowchart`, `sequenceDiagram`, `classDiagram`, `stateDiagram`, `erDiagram`, `gantt`
 
 ---
 
 # Security Levels
-
-Control what Mermaid can do:
 
 | Level | Description |
 |-------|-------------|
@@ -280,11 +184,9 @@ flowchart LR
 
 # Troubleshooting
 
-## Common Issues
+## Special Characters
 
-### Special Characters
-
-Escape with HTML entities or quotes:
+Escape with HTML entities or use quoted strings:
 
 ```mermaid
 flowchart LR
@@ -293,21 +195,13 @@ flowchart LR
     C["Hash #35; symbol"]
 ```
 
-### HTML Entities
+| Char | Entity | Char | Entity |
+|------|--------|------|--------|
+| `#` | `#35;` | `"` | `#quot;` |
+| `<` | `#lt;` | `>` | `#gt;` |
+| `&` | `#amp;` | `{` | `#123;` / `}` | `#125;` |
 
-| Char | Entity |
-|------|--------|
-| `#` | `#35;` |
-| `"` | `#quot;` |
-| `<` | `#lt;` |
-| `>` | `#gt;` |
-| `&` | `#amp;` |
-| `{` | `#123;` |
-| `}` | `#125;` |
-
-### Long Labels
-
-Use markdown strings:
+## Long Labels
 
 ```mermaid
 flowchart LR
@@ -315,34 +209,6 @@ flowchart LR
     label that wraps
     across multiple lines`"]
 ```
-
----
-
-## Debugging Tips
-
-### 1. Check Syntax
-
-- Verify diagram type declaration
-- Check for unclosed brackets/quotes
-- Ensure arrow syntax matches diagram type
-
-### 2. Test Incrementally
-
-- Start with minimal diagram
-- Add elements one at a time
-- Identify breaking change
-
-### 3. Use Live Editor
-
-Test at: https://mermaid.live
-
-### 4. Platform Differences
-
-- Check target platform support
-- Some features are version-specific
-- Export to PNG/SVG for guaranteed rendering
-
----
 
 ## Arrow Syntax by Diagram Type
 
@@ -353,127 +219,26 @@ Test at: https://mermaid.live
 | Class | `-->` | N/A | `..>` |
 | State | `-->` | N/A | N/A |
 
----
+## Debugging
 
-# Frontmatter Configuration
-
-Alternative to init directive:
-
-```yaml
----
-title: My Diagram
-config:
-  theme: forest
-  flowchart:
-    defaultRenderer: elk
----
-```
-
-```mermaid
-flowchart LR
-    A --> B
-```
+- Verify diagram type declaration; check unclosed brackets/quotes; match arrow syntax to type
+- Start minimal, add elements one at a time to isolate breaking change
+- Live editor: https://mermaid.live — export PNG/SVG for guaranteed rendering across platforms
 
 ---
 
-# Directive Reference
+# Accessibility & Performance
 
-## Diagram Directives
+**Accessibility:** Provide context text before diagrams for screen readers. HTML: `<div class="mermaid" role="img" aria-label="...">`.
 
-| Diagram | Directive |
-|---------|-----------|
-| All | `%%{init: {...}}%%` |
-| Flowchart | `flowchart` config |
-| Sequence | `sequenceDiagram` config |
-| Class | `classDiagram` config |
-| State | `stateDiagram` config |
-| ER | `erDiagram` config |
-| Gantt | `gantt` config |
-
-## Common Init Options
-
-```javascript
-%%{init: {
-  'theme': 'default',
-  'themeVariables': { ... },
-  'flowchart': {
-    'defaultRenderer': 'elk',
-    'curve': 'basis',
-    'padding': 15
-  },
-  'sequence': {
-    'showSequenceNumbers': true,
-    'actorMargin': 50,
-    'boxMargin': 10
-  },
-  'gantt': {
-    'barHeight': 20,
-    'fontSize': 11,
-    'sectionFontSize': 14
-  }
-}}%%
-```
+**Performance:** Split large diagrams. Use ELK for complex layouts. Prefer class-based styling over inline. Cache renders; lazy load in documentation.
 
 ---
 
-# Accessibility
+# Export
 
-## Alt Text
-
-For screen readers, provide context before diagrams:
-
-```markdown
-The following diagram shows the authentication flow:
-
-```mermaid
-sequenceDiagram
-    User->>App: Login
-    App->>Auth: Validate
-```
-
-```
-
-## ARIA Labels
-
-When embedding in HTML:
-
-```html
-<div class="mermaid" role="img" aria-label="Authentication flow diagram">
-  sequenceDiagram
-    User->>App: Login
-</div>
-```
-
----
-
-# Performance Tips
-
-1. **Limit complexity** - Split large diagrams
-2. **Use ELK** for complex layouts
-3. **Minimize styling** - Class-based over inline
-4. **Cache renders** when possible
-5. **Lazy load** in documentation
-
----
-
-# Export Options
-
-## From Live Editor
-
-- PNG (transparent or white background)
-- SVG (scalable)
-- Markdown
-
-## Programmatic
-
-```javascript
-import mermaid from 'mermaid';
-
-const svg = await mermaid.render('id', diagramText);
-```
-
-## CLI
-
-```bash
-npx @mermaid-js/mermaid-cli -i input.md -o output.svg
-```
+| Method | Command/Usage |
+|--------|--------------|
+| Live editor | PNG, SVG, Markdown at https://mermaid.live |
+| Programmatic | `const svg = await mermaid.render('id', diagramText)` |
+| CLI | `npx @mermaid-js/mermaid-cli -i input.md -o output.svg` |
