@@ -15,7 +15,11 @@ Parse `$ARGUMENTS` to select an operation. Default is `check` (inbox summary).
 | Command | Helper call | Purpose |
 |---------|-------------|---------|
 | *(empty)* / `check` | `email-mailbox-helper.sh inbox --summary` | Inbox summary (unread, flagged, pending triage) |
+<<<<<<< Updated upstream
 | `triage [--limit N]` | `email-triage-helper.sh triage --limit "$LIMIT"` | AI triage of unread messages (classify, prioritize, flag; default: 50) |
+=======
+| `triage [--limit N]` | `email-triage-helper.sh triage --limit N` | AI triage of unread messages (classify, prioritize, flag) |
+>>>>>>> Stashed changes
 | `compose [--reply <id>]` | `email-compose-helper.sh` workflow | Compose new email or reply |
 | `search "<query>"` | `email-mailbox-helper.sh search "$QUERY"` | Full-text search |
 | `search --from <addr>` | `email-mailbox-helper.sh search --from "$ADDR"` | Search by sender |
@@ -79,9 +83,9 @@ After each operation, offer contextual next steps:
 
 ## Dependencies
 
-- `scripts/email-mailbox-helper.sh` — IMAP/JMAP adapter and mailbox operations (t1493)
-- `scripts/email-triage-helper.sh` — AI classification and prioritization engine (t1502)
-- `scripts/email-compose-helper.sh` — Drafting, tone, signatures, attachments (t1495)
+- `.agents/scripts/email-mailbox-helper.sh` — IMAP/JMAP adapter and mailbox operations (t1493)
+- `.agents/scripts/email-triage-helper.sh` — AI classification and prioritization engine (t1502)
+- `.agents/scripts/email-compose-helper.sh` — Drafting, tone, signatures, attachments (t1495)
 - `tools/security/prompt-injection-defender.md` — Injection scanning for message bodies
 
 ## Related

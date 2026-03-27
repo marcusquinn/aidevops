@@ -102,8 +102,8 @@ for chunk in tts.synthesize_stream(text="Streaming with 97ms first-chunk latency
 ## Performance
 
 ```python
-tts = QwenTTS(model="Qwen/Qwen3-TTS-1.7B-CustomVoice", device="cuda")  # GPU acceleration
-tts = QwenTTS(model="...", cache_dir="~/.cache/qwen-tts")               # Model caching
+# GPU acceleration with model caching
+tts = QwenTTS(model="Qwen/Qwen3-TTS-1.7B-CustomVoice", device="cuda", cache_dir="~/.cache/qwen-tts")
 
 # Batch processing
 audios = tts.batch_synthesize(["First.", "Second.", "Third."], speaker_id=0, language="en")
