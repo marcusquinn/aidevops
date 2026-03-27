@@ -22,11 +22,6 @@ tools:
 
 **Selection Criteria**: speed-first, WP standards compliant, well-documented, non-breaking updates, stack-tested.
 
-**Key Ecosystems**:
-- **Kadence**: Theme, Blocks Pro, Conversions, Shop Kit, Starter Templates
-- **Fluent**: Forms, CRM, Support, Booking, Community, Boards, SMTP
-- **Flying**: Analytics, Pages, Scripts (performance suite)
-
 **Quick Install (minimal stack)**:
 
 ```bash
@@ -34,9 +29,9 @@ wp plugin install antispam-bee compressx fluent-smtp kadence-blocks simple-cloud
 wp theme install kadence --activate
 ```
 
-**Pro/Premium plugins**: Require license activation via vendor dashboards
-**License keys**: Store in `~/.config/aidevops/credentials.sh` (see api-key-setup.md)
-**Updates**: Git Updater available for managing plugin updates from Git repositories
+**Pro/Premium plugins**: Require license activation via vendor dashboards.
+**License keys**: Store in `~/.config/aidevops/credentials.sh` (see api-key-setup.md).
+**Updates**: Git Updater available for managing plugin updates from Git repositories.
 <!-- AI-CONTEXT-END -->
 
 ## Theme
@@ -153,6 +148,19 @@ wp theme install kadence --activate
 | `pymntpl-paypal-woocommerce` | Payment Plugins for PayPal | https://wordpress.org/plugins/pymntpl-paypal-woocommerce/ |
 | `woo-stripe-payment` | Payment Plugins for Stripe | https://wordpress.org/plugins/woo-stripe-payment/ |
 
+### Kadence Ecosystem
+
+| Slug | Name | Source |
+|------|------|--------|
+| `kadence-blocks-pro` | Kadence Blocks PRO | https://www.kadencewp.com/kadence-blocks/pro/ |
+| `kadence-build-child-defaults` | Kadence Child Theme Builder | https://www.kadencewp.com/ |
+| `kadence-cloud` | Kadence Pattern Hub | https://www.kadencewp.com/ |
+| `kadence-conversions` | Kadence Conversions | https://www.kadencewp.com/ |
+| `kadence-simple-share` | Kadence Simple Share | https://wordpress.org/plugins/kadence-simple-share/ |
+| `kadence-starter-templates` | Starter Templates by Kadence WP | https://wordpress.org/plugins/kadence-starter-templates/ |
+
+*Also see: `kadence` (Theme), `kadence-pro` (Theme), `kadence-blocks` (Minimal), `kadence-woo-extras` + `kadence-woocommerce-email-designer` (eCommerce).*
+
 ### LMS (Learning Management)
 
 | Slug | Name | Source |
@@ -192,26 +200,9 @@ wp theme install kadence --activate
 | `ultimate-410` | Ultimate 410 | https://wordpress.org/plugins/ultimate-410/ |
 | `webmention` | Webmention | https://wordpress.org/plugins/webmention/ |
 
-### Setup & Import
-
-| Slug | Name | Source |
-|------|------|--------|
-| `kadence-starter-templates` | Starter Templates by Kadence WP | https://wordpress.org/plugins/kadence-starter-templates/ |
-| `wordpress-importer` | WordPress Importer | https://wordpress.org/plugins/wordpress-importer/ |
-
-### Social
-
-| Slug | Name | Source |
-|------|------|--------|
-| `social-engine` | Social Engine | https://wordpress.org/plugins/social-engine/ |
-| `social-engine-pro` | Social Engine Pro | https://meowapps.com/plugin/social-engine/ |
-| `wp-social-ninja` | WP Social Ninja | https://wordpress.org/plugins/wp-social-ninja/ |
-| `wp-social-ninja-pro` | WP Social Ninja Pro | https://wpsocialninja.com/ |
-| `wp-social-reviews` | WP Social Reviews | https://wordpress.org/plugins/wp-social-reviews/ |
-
 ### Speed & Performance
 
-*Also see: `compressx` (Minimal).*
+*Also see: `compressx` (Minimal), `hreflang-manager` + `performant-translations` (translation support).*
 
 | Slug | Name | Source |
 |------|------|--------|
@@ -228,10 +219,6 @@ wp theme install kadence --activate
 | `litespeed-cache` | LiteSpeed Cache | https://wordpress.org/plugins/litespeed-cache/ |
 | `performant-translations` | Performant Translations | https://wordpress.org/plugins/performant-translations/ |
 | `wp-widget-disable` | Widget Disable | https://wordpress.org/plugins/wp-widget-disable/ |
-
-### Translation
-
-*Also see: `hreflang-manager` (SEO), `performant-translations` (Speed & Performance).*
 
 ### Advanced (Developer Tools)
 
@@ -268,20 +255,21 @@ wp theme install kadence --activate
 | `comment_goblin` | Comment Goblin | https://commentgoblin.com/ |
 | `gotmls` | Anti-Malware Security | https://wordpress.org/plugins/gotmls/ |
 
-### Kadence Ecosystem
+### Setup & Import
 
 | Slug | Name | Source |
 |------|------|--------|
-| `kadence-blocks` | Kadence Blocks | https://wordpress.org/plugins/kadence-blocks/ |
-| `kadence-blocks-pro` | Kadence Blocks PRO | https://www.kadencewp.com/kadence-blocks/pro/ |
-| `kadence-build-child-defaults` | Kadence Child Theme Builder | https://www.kadencewp.com/ |
-| `kadence-cloud` | Kadence Pattern Hub | https://www.kadencewp.com/ |
-| `kadence-conversions` | Kadence Conversions | https://www.kadencewp.com/ |
-| `kadence-pro` | Kadence Pro | https://www.kadencewp.com/kadence-theme/pro/ |
-| `kadence-simple-share` | Kadence Simple Share | https://wordpress.org/plugins/kadence-simple-share/ |
-| `kadence-starter-templates` | Starter Templates by Kadence WP | https://wordpress.org/plugins/kadence-starter-templates/ |
-| `kadence-woo-extras` | Kadence Shop Kit | https://www.kadencewp.com/ |
-| `kadence-woocommerce-email-designer` | Kadence WooCommerce Email Designer | https://wordpress.org/plugins/kadence-woocommerce-email-designer/ |
+| `wordpress-importer` | WordPress Importer | https://wordpress.org/plugins/wordpress-importer/ |
+
+### Social
+
+| Slug | Name | Source |
+|------|------|--------|
+| `social-engine` | Social Engine | https://wordpress.org/plugins/social-engine/ |
+| `social-engine-pro` | Social Engine Pro | https://meowapps.com/plugin/social-engine/ |
+| `wp-social-ninja` | WP Social Ninja | https://wordpress.org/plugins/wp-social-ninja/ |
+| `wp-social-ninja-pro` | WP Social Ninja Pro | https://wpsocialninja.com/ |
+| `wp-social-reviews` | WP Social Reviews | https://wordpress.org/plugins/wp-social-reviews/ |
 
 ### Migration & Backup
 
@@ -300,10 +288,7 @@ wp theme install kadence --activate
 
 ### Hosting-Specific
 
-| Slug | Name | Source |
-|------|------|--------|
-| `closte-requirements` | Closte.com | Only for Closte.com hosting |
-| `eos-deactivate-plugins` | Freesoul Deactivate Plugins [FDP] | Closte variant |
+*Closte.com only: `closte-requirements`, `eos-deactivate-plugins` (Closte variant of Freesoul Deactivate Plugins).*
 
 ## WP-CLI Install Stacks
 
@@ -326,21 +311,6 @@ wp plugin install woocommerce kadence-woocommerce-email-designer pymntpl-paypal-
 # Debug
 wp plugin install query-monitor debug-log-manager string-locator wp-crontrol user-switching --activate
 ```
-
-## Pro Plugin Vendors
-
-| Ecosystem | Vendor URL |
-|-----------|------------|
-| Kadence | https://www.kadencewp.com/ |
-| Fluent/WPManageNinja | https://wpmanageninja.com/ |
-| Rank Math | https://rankmath.com/ |
-| Meow Apps | https://meowapps.com/ |
-| Really Simple | https://really-simple-ssl.com/ |
-| Complianz | https://complianz.io/ |
-| Tutor LMS | https://www.themeum.com/ |
-| Admin Columns | https://www.admincolumns.com/ |
-| Code Snippets | https://codesnippets.pro/ |
-| Delicious Brains | https://deliciousbrains.com/ |
 
 ## Related Documentation
 
