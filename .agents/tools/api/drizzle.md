@@ -19,272 +19,131 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Type-safe ORM for SQL databases
 - **Packages**: `drizzle-orm`, `drizzle-kit`, `drizzle-zod`
-- **Docs**: Use Context7 MCP for current documentation
+- **Docs**: Context7 MCP for current documentation
+- **Key traits**: Full TS inference, SQL-like builder, zero runtime deps, auto-migrations
 
-**Key Features**:
-- Full TypeScript inference from schema
-- SQL-like query builder
-- Zero dependencies at runtime
-- Automatic migrations
-
-**Schema Definition**:
+**Schema** (`packages/db/src/schema/users.ts`):
 
 ```tsx
-// packages/db/src/schema/users.ts
 import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
-
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   email: text("email").notNull().unique(),
   name: text("name"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(), // Note: only sets on INSERT; use .$onUpdate() or DB trigger for UPDATE
+  updatedAt: timestamp("updated_at").defaultNow().notNull(), // only sets on INSERT; use .$onUpdate() or DB trigger for UPDATE
 });
 ```
 
-**Basic Queries**:
+**CRUD**:
 
 ```tsx
 import { db } from "@workspace/db";
 import { users } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
-
-// Select all
 const allUsers = await db.select().from(users);
-
-// Select with filter
-const user = await db
-  .select()
-  .from(users)
-  .where(eq(users.email, "test@example.com"))
-  .limit(1);
-
-// Insert
-const newUser = await db
-  .insert(users)
-  .values({ email: "new@example.com", name: "New User" })
-  .returning();
-
-const userId = "user-id-to-update"; // From request params, auth, etc.
-
-// Update
-await db
-  .update(users)
-  .set({ name: "Updated Name" })
-  .where(eq(users.id, userId));
-
-// Delete
+const user = await db.select().from(users).where(eq(users.email, "test@example.com")).limit(1);
+const newUser = await db.insert(users).values({ email: "new@example.com", name: "New User" }).returning();
+await db.update(users).set({ name: "Updated Name" }).where(eq(users.id, userId));
 await db.delete(users).where(eq(users.id, userId));
 ```
 
-**Migration Commands**:
+**Migrations**:
 
 ```bash
-# Generate migration from schema changes
-pnpm db:generate
-
-# Apply migrations
-pnpm db:migrate
-
-# Push schema directly (dev only)
-pnpm db:push
-
-# Open Drizzle Studio
-pnpm db:studio
+pnpm db:generate   # generate migration from schema changes
+pnpm db:migrate    # apply migrations
+pnpm db:push       # push schema directly (dev only)
+pnpm db:studio     # open Drizzle Studio
 ```
 
-**Zod Integration**:
+**Zod integration**:
 
 ```tsx
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
-import { users } from "./schema";
-
 export const insertUserSchema = createInsertSchema(users);
 export const selectUserSchema = createSelectSchema(users);
-
-// Use in API validation
-app.post("/users", zValidator("json", insertUserSchema), async (c) => {
-  const data = c.req.valid("json");
-  const user = await db.insert(users).values(data).returning();
-  return c.json(user[0]);
-});
+// Use in API validation (e.g. Hono + zValidator)
+app.post("/users", zValidator("json", insertUserSchema), async (c) =>
+  c.json((await db.insert(users).values(c.req.valid("json")).returning())[0])
+);
 ```
 
 <!-- AI-CONTEXT-END -->
 
-## Detailed Patterns
-
-### Relations
+## Relations
 
 ```tsx
 import { relations } from "drizzle-orm";
-import { pgTable, text, uuid } from "drizzle-orm/pg-core";
-
-// Simplified schema for relations example (see full schema above)
-export const users = pgTable("users", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  name: text("name"),
-});
-
 export const posts = pgTable("posts", {
   id: uuid("id").primaryKey().defaultRandom(),
   title: text("title").notNull(),
   authorId: uuid("author_id").references(() => users.id),
 });
-
-export const usersRelations = relations(users, ({ many }) => ({
-  posts: many(posts),
-}));
-
+export const usersRelations = relations(users, ({ many }) => ({ posts: many(posts) }));
 export const postsRelations = relations(posts, ({ one }) => ({
-  author: one(users, {
-    fields: [posts.authorId],
-    references: [users.id],
-  }),
+  author: one(users, { fields: [posts.authorId], references: [users.id] }),
 }));
+
+// Query with relations — use query API (not .select())
+const usersWithPosts = await db.query.users.findMany({ with: { posts: true } });
+const deep = await db.query.users.findMany({ with: { posts: { with: { comments: true } } } });
 ```
 
-### Query with Relations
+## Complex Queries
 
 ```tsx
-// Using query API (recommended for relations)
-const usersWithPosts = await db.query.users.findMany({
-  with: {
-    posts: true,
-  },
-});
-
-// Nested relations
-const usersWithPostsAndComments = await db.query.users.findMany({
-  with: {
-    posts: {
-      with: {
-        comments: true,
-      },
-    },
-  },
-});
+import { and, like, gt, desc, sql } from "drizzle-orm";
+const results = await db.select().from(users)
+  .where(and(like(users.email, "%@example.com"), gt(users.createdAt, new Date("2024-01-01"))))
+  .orderBy(desc(users.createdAt)).limit(10);
+const count = await db.select({ count: sql<number>`count(*)` }).from(users);
 ```
 
-### Complex Queries
+## Transactions & Connection
 
 ```tsx
-import { and, or, like, gt, desc, sql } from "drizzle-orm";
-
-// Multiple conditions
-const results = await db
-  .select()
-  .from(users)
-  .where(
-    and(
-      like(users.email, "%@example.com"),
-      gt(users.createdAt, new Date("2024-01-01"))
-    )
-  )
-  .orderBy(desc(users.createdAt))
-  .limit(10);
-
-// Raw SQL when needed
-const count = await db
-  .select({ count: sql<number>`count(*)` })
-  .from(users);
-```
-
-### Transactions
-
-```tsx
+// Transaction
 await db.transaction(async (tx) => {
-  const user = await tx
-    .insert(users)
-    .values({ email: "test@example.com" })
-    .returning();
-
-  await tx.insert(posts).values({
-    title: "First Post",
-    authorId: user[0].id,
-  });
+  const [user] = await tx.insert(users).values({ email: "test@example.com" }).returning();
+  await tx.insert(posts).values({ title: "First Post", authorId: user.id });
 });
-```
 
-### Database Connection
-
-```tsx
-// packages/db/src/server.ts
+// Connection (packages/db/src/server.ts)
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema";
-
-const client = postgres(process.env.DATABASE_URL!);
-export const db = drizzle(client, { schema });
+export const db = drizzle(postgres(process.env.DATABASE_URL!), { schema });
 ```
 
-### Seeding
+## Seeding (`packages/db/src/scripts/seed.ts`)
 
 ```tsx
-// packages/db/src/scripts/seed.ts
-import { db } from "../server";
-import { users, posts } from "../schema";
-
 async function seed() {
-  // Safety: prevent accidental data wipe in production
-  if (process.env.NODE_ENV === "production" && process.env.ALLOW_DB_WIPE !== "true") {
-    throw new Error(
-      "Seeding with destructive deletes is disabled in production. " +
-      "Set ALLOW_DB_WIPE=true to override (use with caution)."
-    );
-  }
-
-  console.log(`Seeding database (NODE_ENV=${process.env.NODE_ENV ?? "undefined"})...`);
-
-  // Wrap in transaction so a failed insert doesn't leave the DB empty
+  if (process.env.NODE_ENV === "production" && process.env.ALLOW_DB_WIPE !== "true")
+    throw new Error("Seeding disabled in production. Set ALLOW_DB_WIPE=true to override.");
   await db.transaction(async (tx) => {
-    // Clear existing data (order matters: delete children before parents)
-    await tx.delete(posts);
+    await tx.delete(posts); // children before parents
     await tx.delete(users);
-
-    // Insert seed data
-    const [user] = await tx
-      .insert(users)
-      .values({ email: "admin@example.com", name: "Admin" })
-      .returning();
-
-    await tx.insert(posts).values([
-      { title: "First Post", authorId: user.id },
-      { title: "Second Post", authorId: user.id },
-    ]);
+    const [user] = await tx.insert(users).values({ email: "admin@example.com", name: "Admin" }).returning();
+    await tx.insert(posts).values([{ title: "First Post", authorId: user.id }, { title: "Second Post", authorId: user.id }]);
   });
-
-  console.log("Seeding complete!");
 }
-
-seed().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+seed().catch((err) => { console.error(err); process.exit(1); });
 ```
 
 ## Common Mistakes
 
-1. **Forgetting `.returning()`**
-   - Insert/update don't return data by default
-   - Add `.returning()` to get inserted/updated rows
-
-2. **Not using transactions**
-   - Related inserts should be in transaction
-   - Prevents partial data on failure
-
-3. **Schema drift**
-   - Always run `db:generate` after schema changes
-   - Review generated SQL before applying
-
-4. **Missing indexes**
-   - Add indexes for frequently queried columns
-   - Use `.index()` in schema definition
+| Mistake | Fix |
+|---------|-----|
+| Missing `.returning()` | Insert/update don't return data by default — add `.returning()` |
+| Skipping transactions | Related inserts must be in a transaction to prevent partial failures |
+| Schema drift | Always run `db:generate` after schema changes; review SQL before applying |
+| Missing indexes | Add `.index()` in schema for frequently queried columns |
 
 ## Related
 
-- `tools/api/hono.md` - API routes using Drizzle
-- `workflows/sql-migrations.md` - Migration best practices
+- `tools/api/hono.md` — API routes using Drizzle
+- `workflows/sql-migrations.md` — migration best practices
 - Context7 MCP for Drizzle documentation
