@@ -111,6 +111,30 @@ Use primary sources over tutorials. Cross-reference, prefer recent, watch for ve
 7. **Existing agent?** Call and improve vs duplicate?
 8. **Sources verified?** Primary, cross-referenced
 9. **Markdown linting?** MD025/MD022/MD031/MD012. Run `bunx markdownlint-cli2 "path/to/file.md"`
+10. **Terse pass done?** See below
+
+## Post-Creation Terse Pass (MANDATORY)
+
+After writing any agent doc, do a second pass to tighten prose before committing. Every token in an agent doc is paid for on every load — verbose docs compound cost across hundreds of sessions.
+
+**Technique:** Re-read the doc and compress every instruction to its minimum form while preserving all rules, constraints, and references. LLMs follow terse instructions equally well as verbose ones.
+
+**What to compress:**
+- "In order to achieve X, you should Y" → "Y"
+- "It is important to note that X" → "X" (or drop if self-evident)
+- Multi-sentence explanations of a single rule → single sentence
+- Narrative context ("The reason this exists is because in March 2026...") → keep task ID, drop story
+- Redundant examples that demonstrate the same point → keep one
+
+**What to preserve (never compress):**
+- Task IDs (`tNNN`), issue refs (`GH#NNN`), incident identifiers
+- All rules and constraints — compress wording, not the rule itself
+- File paths, command examples, code blocks
+- Safety-critical detail (security, compatibility)
+
+**Target:** Agent docs should read like reference cards, not tutorials. If a section reads like it's explaining a concept to a newcomer, tighten it — the reader is an LLM that already understands the concept.
+
+**Evidence:** Terse pass on `build.txt` achieved 63% byte reduction with zero rule loss. `AGENTS.md` achieved 48%. See `tools/code-review/code-simplifier.md` "Prose tightening" for the full classification.
 
 ## Code Examples: When to Include
 
