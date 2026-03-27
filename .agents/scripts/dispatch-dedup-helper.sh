@@ -29,6 +29,11 @@
 #     task-id fallback) and should be skipped by pulse dispatch.
 #     Exit 0 = PR evidence exists (do NOT dispatch), exit 1 = no evidence.
 #
+#   dispatch-dedup-helper.sh is-assigned <issue> <slug> [self-login]
+#     Check if issue is assigned to another runner (not self, owner, or maintainer).
+#     GH#10521: Ignores repo owner (from slug) and maintainer (from repos.json).
+#     Exit 0 = assigned to another runner (do NOT dispatch), exit 1 = safe to dispatch.
+#
 #   dispatch-dedup-helper.sh list-running-keys
 #     List dedup keys for all currently running workers.
 #
@@ -359,21 +364,49 @@ is_duplicate() {
 }
 
 #######################################
-# Check if a GitHub issue is already assigned to someone else.
+# Look up the repo maintainer from repos.json.
+# The maintainer is the repo owner/admin — not a runner account.
+# Args: $1 = repo slug (owner/repo)
+# Returns: maintainer login on stdout (empty if not found)
+#######################################
+_get_repo_maintainer() {
+	local repo_slug="$1"
+	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+
+	if [[ ! -f "$repos_json" ]]; then
+		return 0
+	fi
+
+	local maintainer=""
+	maintainer=$(jq -r --arg slug "$repo_slug" \
+		'.initialized_repos[] | select(.slug == $slug) | .maintainer // empty' \
+		"$repos_json" 2>/dev/null) || maintainer=""
+
+	printf '%s' "$maintainer"
+	return 0
+}
+
+#######################################
+# Check if a GitHub issue is already assigned to another runner.
 #
 # This is the primary cross-machine dedup guard. Process-based checks
 # (is_duplicate, has_worker_for_repo_issue) only see local processes —
 # they miss workers running on other machines. The GitHub assignee is
 # the single source of truth visible to all runners.
 #
+# GH#10521: Distinguishes maintainer/owner assignment from runner
+# assignment. Issues assigned to the repo maintainer (from repos.json)
+# or the repo owner (from slug) are NOT blocked — only issues assigned
+# to other known runner accounts trigger the dedup guard.
+#
 # Args:
 #   $1 = issue number
 #   $2 = repo slug (owner/repo)
 #   $3 = (optional) current runner login — if assigned to self, not a dup
 # Returns:
-#   exit 0 if assigned to someone else (do NOT dispatch)
-#   exit 1 if unassigned or assigned to self (safe to dispatch)
-# Outputs: assignee info on stdout if assigned
+#   exit 0 if assigned to another runner (do NOT dispatch)
+#   exit 1 if unassigned, assigned to self, or assigned to maintainer/owner (safe to dispatch)
+# Outputs: assignee info on stdout if assigned to another runner
 #######################################
 is_assigned() {
 	local issue_number="$1"
@@ -400,27 +433,62 @@ is_assigned() {
 		return 1
 	fi
 
-	# If assigned to self, not a duplicate
+	# Build the set of non-runner logins to exclude from the dedup check:
+	# 1. Current runner (self_login)
+	# 2. Repo maintainer from repos.json
+	# 3. Repo owner from slug (owner/repo → owner)
+	local -a non_runner_logins=()
 	if [[ -n "$self_login" ]]; then
-		# Check if ALL assignees are self (could be multiple)
-		local dominated_by_self=true
-		local -a assignee_array=()
-		local saved_ifs="${IFS:-}"
-		IFS=',' read -ra assignee_array <<<"$assignees"
-		IFS="$saved_ifs"
-		local assignee
-		for assignee in "${assignee_array[@]}"; do
-			if [[ "$assignee" != "$self_login" ]]; then
-				dominated_by_self=false
+		non_runner_logins+=("$self_login")
+	fi
+
+	# Repo owner from slug (the part before /)
+	local repo_owner=""
+	repo_owner="${repo_slug%%/*}"
+	if [[ -n "$repo_owner" ]]; then
+		non_runner_logins+=("$repo_owner")
+	fi
+
+	# Repo maintainer from repos.json
+	local repo_maintainer=""
+	repo_maintainer=$(_get_repo_maintainer "$repo_slug")
+	if [[ -n "$repo_maintainer" ]]; then
+		non_runner_logins+=("$repo_maintainer")
+	fi
+
+	# Check if ALL assignees are non-runner logins (self, maintainer, or owner)
+	local has_runner_assignee=false
+	local runner_assignees=""
+	local -a assignee_array=()
+	local saved_ifs="${IFS:-}"
+	IFS=',' read -ra assignee_array <<<"$assignees"
+	IFS="$saved_ifs"
+	local assignee
+	for assignee in "${assignee_array[@]}"; do
+		local is_non_runner=false
+		local non_runner
+		for non_runner in "${non_runner_logins[@]}"; do
+			if [[ "$assignee" == "$non_runner" ]]; then
+				is_non_runner=true
 				break
 			fi
 		done
-		if [[ "$dominated_by_self" == "true" ]]; then
-			return 1
+		if [[ "$is_non_runner" == "false" ]]; then
+			has_runner_assignee=true
+			if [[ -n "$runner_assignees" ]]; then
+				runner_assignees="${runner_assignees},${assignee}"
+			else
+				runner_assignees="$assignee"
+			fi
 		fi
+	done
+
+	if [[ "$has_runner_assignee" == "false" ]]; then
+		# All assignees are self, maintainer, or repo owner — safe to dispatch
+		return 1
 	fi
 
-	printf 'ASSIGNED: issue #%s in %s is assigned to %s\n' "$issue_number" "$repo_slug" "$assignees"
+	printf 'ASSIGNED: issue #%s in %s is assigned to runner(s) %s\n' "$issue_number" "$repo_slug" "$runner_assignees"
 	return 0
 }
 
@@ -502,7 +570,8 @@ Usage:
   dispatch-dedup-helper.sh has-open-pr <issue> <slug> [issue-title]
                                                     Check merged PR evidence (exit 0=evidence, 1=none)
   dispatch-dedup-helper.sh is-assigned <issue> <slug> [self-login]
-                                                     Check if issue is assigned (exit 0=assigned, 1=free)
+                                                      Check if assigned to another runner (exit 0=blocked, 1=free)
+                                                      Ignores repo owner (from slug) and maintainer (from repos.json)
   dispatch-dedup-helper.sh claim <issue> <slug> [runner-login]
                                                      Cross-machine claim lock (exit 0=won, 1=lost, 2=error)
   dispatch-dedup-helper.sh release <issue> <slug> [runner-login]
@@ -524,11 +593,12 @@ Examples:
     echo "Safe to dispatch"
   fi
 
-  # Check before dispatching (cross-machine assignee dedup)
+  # Check before dispatching (cross-machine assignee dedup — GH#10521)
+  # Only blocks for runner accounts, not repo owner/maintainer
   if dispatch-dedup-helper.sh is-assigned 2300 owner/repo mylogin; then
-    echo "Assigned to someone else — skip dispatch"
+    echo "Assigned to another runner — skip dispatch"
   else
-    echo "Unassigned or assigned to self — safe to dispatch"
+    echo "Unassigned, assigned to self, or assigned to owner/maintainer — safe"
   fi
 
   # Check before dispatching (merged PR dedup)
