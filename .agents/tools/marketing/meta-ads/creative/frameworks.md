@@ -1,8 +1,6 @@
 # Creative Frameworks
 
-> Proven structures for creating persuasive ad content.
-
----
+Proven structures for creating persuasive ad content.
 
 ## Framework Selection Guide
 
@@ -17,8 +15,6 @@
 | Brand building | Origin story |
 | Cold audience | AIDA |
 | Warm retargeting | Case study |
-
----
 
 ## Direct Response Frameworks
 
@@ -55,8 +51,6 @@ CTA: Try Free
 [18-25s] "Join 5,000+ companies who've reclaimed their time. Try it free at [WEBSITE]."
 ```
 
----
-
 ### AIDA (Attention-Interest-Desire-Action)
 
 Classic framework adapted for video ads.
@@ -69,8 +63,6 @@ Classic framework adapted for video ads.
 [20-30s] ACTION:   "Get started free at [WEBSITE]. Join [number] others who've made the switch."
 ```
 
----
-
 ### BAB (Before-After-Bridge)
 
 Simple transformation framework. Works well for carousels.
@@ -82,8 +74,6 @@ CARD 3 (BRIDGE):  [Product image]    "[PRODUCT]: The bridge from chaos to calm."
 CARD 4 (PROOF):   "10,000+ professionals made the switch." [Testimonial quote]
 CARD 5 (CTA):     "Start your transformation →"
 ```
-
----
 
 ### FAB (Feature-Advantage-Benefit)
 
@@ -101,8 +91,6 @@ Your changes appear instantly everywhere — not in an hour like other tools.
 Work seamlessly from any device without ever losing progress or waiting.
 Try [PRODUCT] free →
 ```
-
----
 
 ### Us vs Them
 
@@ -124,8 +112,6 @@ NEW WAY:
 "Same outcome, zero hassle. Try [PRODUCT] free →"
 ```
 
----
-
 ## Storytelling Frameworks
 
 ### Mini-Story Arc (30-60s video)
@@ -140,8 +126,6 @@ Setup (5-10s) → Conflict (5-10s) → Climax (5-10s) → Resolution (5-10s) →
 [CTA]        "Ready to transform your workflow? Start free at [WEBSITE]."
 ```
 
----
-
 ### Customer Journey Story
 
 Before → Trigger → Search → Discovery → Experience → After
@@ -155,8 +139,6 @@ Before → Trigger → Search → Discovery → Experience → After
 [AFTER]     "Now I have a waitlist of clients. [PRODUCT] changed everything."
 ```
 
----
-
 ### Transformation Story
 
 Identity Before → Struggle → Catalyst → New Identity After
@@ -169,8 +151,6 @@ Now? I'm the one who's always ahead. [Show calm, organized after]
 Same me. Different tools. Different results. [CTA]"
 ```
 
----
-
 ### Origin Story (Founder Content)
 
 Frustration → Decision → Journey → Achievement → Connection
@@ -182,8 +162,6 @@ Frustration → Decision → Journey → Achievement → Connection
 [ACHIEVEMENT] "But now, over 10,000 people use what I built to do in 10 minutes what used to take hours."
 [CONNECTION]  "If you've ever felt that same frustration, I built [PRODUCT] for you. Try it free at [WEBSITE]."
 ```
-
----
 
 ## Proof Frameworks
 
@@ -216,8 +194,6 @@ RESULTS:   📈 80% reduction in processing time  💰 $45,000 saved annually  �
 [Grid of media logos]     "Featured in Forbes, TechCrunch, Inc."
 ```
 
----
-
 ## Quick Ad Formulas by Length
 
 | Length | Formula |
@@ -226,7 +202,5 @@ RESULTS:   📈 80% reduction in processing time  💰 $45,000 saved annually  �
 | 15s video | `[HOOK 3s] + [DEMO 7s] + [CTA 5s]` |
 | 30s video | `[HOOK 3s] + [PROBLEM 7s] + [SOLUTION 10s] + [PROOF 5s] + [CTA 5s]` |
 | 60s video | `[HOOK 5s] + [PROBLEM 10s] + [AGITATE 10s] + [SOLUTION 15s] + [PROOF 10s] + [CTA 10s]` |
-
----
 
 *Next: [Production Workflow](production.md)*
