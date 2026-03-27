@@ -7,6 +7,7 @@ subagents:
   - gitlab-cli
   - plans
   - toon
+  - macos-automator
   - general
   - explore
 ---
@@ -119,14 +120,16 @@ Every action must leave a trace in issue/PR comments. Required fields: model, br
 ```text
 # Dispatch comment
 Dispatching worker.
-- **[aidevops.sh](https://github.com/marcusquinn/aidevops)**: v3.x.x
+- **[aidevops.sh](https://github.com/marcusquinn/aidevops)**: v3.x.x  (read from ~/.aidevops/agents/VERSION)
 - **Model**: sonnet (anthropic/claude-sonnet-4-6)
 - **Branch**: bugfix/qd-4472-speech-to-speech
 - **Scope**: Address critical review feedback on speech-to-speech.md
 - **Attempt**: 1 of 1
+- **Direction**: Focus on the specific review comments from PR #4397
 
 # Kill/failure comment
 Worker killed after 2h15m with 0 commits (struggle_ratio: 45).
+- **[aidevops.sh](https://github.com/marcusquinn/aidevops)**: v3.x.x
 - **Model**: sonnet  - **Branch**: feature/t748-migration
 - **Reason**: thrashing — repeated identical errors, no progress
 - **Diagnosis**: task requires codebase archaeology beyond sonnet capability
@@ -134,5 +137,6 @@ Worker killed after 2h15m with 0 commits (struggle_ratio: 45).
 
 # Completion comment
 Completed via PR #4501.
+- **[aidevops.sh](https://github.com/marcusquinn/aidevops)**: v3.x.x
 - **Model**: sonnet (first attempt)  - **Attempts**: 1  - **Duration**: 23 minutes
 ```
