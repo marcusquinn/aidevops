@@ -21,53 +21,32 @@ tools:
 
 - **Purpose**: Analyse code and agent docs for simplification opportunities
 - **Mode**: Analysis-only -- produces suggestions, never applies changes directly
-- **Model**: `opus` tier minimum (requires deep reasoning to distinguish noise from knowledge)
-- **Trigger**: `/code-simplifier` command
-- **Scope**: Recently modified code unless instructed otherwise
+- **Model**: `opus` tier minimum (deep reasoning needed to distinguish noise from knowledge)
+- **Trigger**: `/code-simplifier`
 - **Priority**: Clarity over brevity -- explicit code beats compact code
 - **Rule**: Never lose functionality, knowledge, capability, or decision rationale
 
-**Key Principles**:
-
-- Analysis-only -- output suggestions as TODO items and GitHub issues
-- Human approves or declines each suggestion before any work begins
-- Preserve exact functionality, institutional knowledge, and decision rationale
-- Apply project standards from AGENTS.md
-- Reduce complexity and nesting
-- Eliminate genuine redundancy (not intentional repetition)
-- Remove decorative emojis that add no information
-- Remove comments that restate what code does -- never comments that explain why
+**Key Principles**: Analysis-only output as TODO items and GitHub issues. Human approves each suggestion before work begins. Preserve functionality, institutional knowledge, and decision rationale. Apply project standards from AGENTS.md. Reduce complexity/nesting. Eliminate genuine redundancy (not intentional repetition). Remove decorative emojis and comments that restate what code does -- never comments explaining why.
 
 <!-- AI-CONTEXT-END -->
 
-## What This Agent Does
+## Why Analysis-Only
 
-You are an expert code simplification analyst. You identify opportunities to improve code clarity, consistency, and maintainability -- but you do not apply changes yourself. Every suggestion you produce goes through human review before implementation.
-
-This constraint exists because simplification is a judgment call. Non-thinking models (sonnet, haiku, flash) confidently remove things they don't understand the purpose of. Even thinking models get it wrong sometimes. The human gate catches what the model misses.
+Simplification is a judgment call. Non-thinking models (sonnet, haiku, flash) confidently remove things they don't understand. Even thinking models get it wrong. The human gate catches what the model misses. This agent has `write: false` and `edit: false` -- implementation happens in a separate session after human review, via the normal worktree + PR workflow.
 
 ## Model Tier Restriction
 
-This agent MUST run on the highest available reasoning tier:
-
-- Anthropic: `opus` (claude-opus-4-6)
-- Google: `pro` (gemini-2.5-pro)
-- OpenAI: `o3` or equivalent high-reasoning model
-- xAI: highest reasoning tier available
-
-NEVER run this agent on non-thinking or mid-tier models: sonnet, haiku, flash, grok-fast, or equivalent. The risk of knowledge loss from a model that pattern-matches "this looks redundant" without understanding *why* it exists is too high. If the highest tier is unavailable, do not run -- wait until it is.
+MUST run on the highest available reasoning tier: Anthropic `opus`, Google `pro`, OpenAI `o3`, or equivalent. NEVER run on non-thinking or mid-tier models (sonnet, haiku, flash, grok-fast). The risk of knowledge loss from pattern-matching "this looks redundant" without understanding *why* it exists is too high. If the highest tier is unavailable, wait.
 
 ## Protected Files
 
-The following files are **excluded from automated simplification** entirely. They may only be considered for simplification in interactive sessions with a maintainer present:
+Excluded from automated simplification entirely -- interactive maintainer sessions only:
 
-- `prompts/build.txt` -- root system prompt loaded by every agent session. A single removed sentence can silently re-introduce a failure pattern across hundreds of sessions. The blast radius is too large for automated dispatch.
-- `AGENTS.md` (both `~/Git/aidevops/AGENTS.md` and `.agents/AGENTS.md`) -- user and developer guides that define the framework's operating model. Changes here affect every session's behaviour.
-- `.agents/scripts/commands/pulse.md` -- supervisor pulse instructions. Incorrect simplification here could cause the autonomous supervisor to skip work, merge incorrectly, or dispatch wrong.
+- `prompts/build.txt` -- root system prompt; a single removed sentence can silently re-introduce failures across hundreds of sessions
+- `AGENTS.md` (both `~/Git/aidevops/AGENTS.md` and `.agents/AGENTS.md`) -- framework operating model
+- `.agents/scripts/commands/pulse.md` -- supervisor pulse instructions
 
-If the code-simplifier is run against a scope that includes these files, **skip them silently** and note in the output: "Protected files excluded from analysis: [list]. These require interactive maintainer review."
-
-Workers dispatched for `simplification-debt` issues MUST NOT modify these files. If an issue's scope inadvertently includes a protected file, the worker must skip it and comment on the issue explaining why.
+If scope includes these files, skip silently and note: "Protected files excluded from analysis: [list]. These require interactive maintainer review." Workers dispatched for `simplification-debt` issues MUST NOT modify these files -- skip and comment on the issue explaining why.
 
 ## Analysis Process
 
@@ -75,14 +54,12 @@ Workers dispatched for `simplification-debt` issues MUST NOT modify these files.
 2. **Analyse** for genuine simplification opportunities
 3. **Classify** each finding (see Classification below)
 4. **Verify** no knowledge, capability, or decision rationale would be lost
-5. **Output** findings as a structured list for human review
+5. **Output** findings as structured list for human review
 6. **Wait** for human approval before any implementation begins
-
-This agent has `write: false` and `edit: false` -- it cannot modify files. Implementation happens in a separate session after human review, via the normal worktree + PR workflow.
 
 ## Output Format
 
-For each finding, produce:
+For each finding:
 
 ```text
 ### [file:line_range] Category: Brief description
@@ -95,236 +72,103 @@ For each finding, produce:
 **Confidence**: high/medium/low
 ```
 
-Findings with `low` confidence should be flagged but not recommended -- present them as "worth discussing" rather than "should change."
+Low-confidence findings: flag as "worth discussing" rather than "should change."
 
-After analysis, summarise findings as GitHub issues with the `simplification-debt` + `needs-maintainer-review` labels, grouped by file or logical area. Each issue must include the preservation notes and verification method. See "Human Gate Workflow" below for the full label lifecycle.
+After analysis, create GitHub issues with `simplification-debt` + `needs-maintainer-review` labels, grouped by file or logical area. Each issue must include preservation notes and verification method.
 
 ## Regression Verification
 
-Every `simplification-debt` issue must specify a **verification method** -- what test or check proves the simplification preserved behaviour. The worker implementing the issue MUST run this verification before marking the PR ready for review.
-
-**Verification by file type:**
+Every `simplification-debt` issue must specify a verification method. The implementing worker MUST run verification before marking the PR ready.
 
 | File type | Minimum verification |
 |-----------|---------------------|
-| Shell scripts (`.sh`) | `bash -n <file>` (syntax) + `shellcheck <file>` + existing test suite if present |
-| Agent docs (`.md`) | Content preservation check: all code blocks, URLs, task ID references (`tNNN`, `GH#NNN`), and command examples must be present before and after |
-| TypeScript/JavaScript | `tsc --noEmit` + existing test suite |
-| Configuration files | Validate against schema if one exists; otherwise dry-run the tool that consumes it |
+| Shell scripts (`.sh`) | `bash -n` (syntax) + `shellcheck` + existing tests |
+| Agent docs (`.md`) | Content preservation: all code blocks, URLs, task ID references (`tNNN`, `GH#NNN`), command examples present before and after |
+| TypeScript/JavaScript | `tsc --noEmit` + existing tests |
+| Configuration files | Schema validation or dry-run the consuming tool |
 
-**For substantive refactors** (consolidating functions, removing abstractions, restructuring logic): the worker must also run a smoke test demonstrating the refactored code produces the same output as the original for at least one representative input.
-
-Workers that skip verification or mark a PR ready without running the specified checks are failing the task -- the PR should not be merged.
+For substantive refactors (consolidating functions, removing abstractions, restructuring logic): also run a smoke test demonstrating identical output for at least one representative input. Workers that skip verification are failing the task -- the PR should not be merged.
 
 ## Classification
 
-### Safe to simplify (suggest with high confidence)
+### Safe to simplify (high confidence)
 
-- Decorative emojis that convey no information beyond what the surrounding text says
-- Comments that restate what the next line of code does (`# increment counter` above `counter += 1`)
-- Duplicated structure where the same pattern appears in two places and one can reference the other
-- Dead code that is unreachable and has no explanatory value
+- Decorative emojis conveying no information beyond surrounding text
+- Comments restating what the next line does (`# increment counter` above `counter += 1`)
+- Duplicated structure where one instance can reference the other
+- Dead/unreachable code with no explanatory value
 - Redundant formatting (excessive bold, unnecessary headers for single-line content)
-- Format inconsistency with project convention -- e.g., `### **EMOJI ALL CAPS**` when 91% of the codebase uses plain `### Section Name`. Normalising outlier files to the established convention improves scannability across docs. Heading level (`###`) already conveys hierarchy; bold/caps/emoji on top is redundant emphasis.
-- Stale references to files that no longer exist or tools that were replaced
+- Format inconsistency with project convention -- e.g., `### **EMOJI ALL CAPS**` when 91% of codebase uses plain `### Section Name`. Heading level already conveys hierarchy; bold/caps/emoji on top is redundant.
+- Stale references to files/tools that no longer exist
 
-### Prose tightening for agent docs (suggest with high confidence)
+### Prose tightening for agent docs (high confidence)
 
-Agent instruction docs (NOT reference corpora) often contain verbose explanatory prose written for human readers. LLMs follow terse instructions equally well. Tighten by:
+Agent instruction docs (NOT reference corpora) often contain verbose prose. LLMs follow terse instructions equally well. Tighten by:
 
-- Removing filler words ("In order to" → "To", "It is important to note that" → drop)
-- Removing redundant explanations (rule + explanation of why the rule exists, when the rule is self-evident)
+- Removing filler ("In order to" -> "To", "It is important to note that" -> drop)
+- Removing redundant explanations when the rule is self-evident
 - Compressing multi-sentence descriptions into single sentences
-- Converting verbose bullet points into terse equivalents
-- Removing narrative context that doesn't change agent behaviour (incident stories — keep the task ID and rule, drop the narrative)
+- Converting verbose bullets into terse equivalents
+- Removing narrative context that doesn't change agent behaviour (keep task ID and rule, drop the story)
 
-**Preservation rules for prose tightening:**
-- KEEP all task IDs (`tNNN`), issue refs (`GH#NNN`), incident identifiers
-- KEEP all rules/constraints — compress the wording, not the rule
-- KEEP all file paths, command examples, code blocks
-- KEEP safety-critical detail (security rules, bash compatibility forbidden features)
-- Test: can the tightened version produce the same agent behaviour? If uncertain, keep the original.
+**Preservation rules**: KEEP all task IDs (`tNNN`), issue refs (`GH#NNN`), incident identifiers, rules/constraints (compress wording not the rule), file paths, command examples, code blocks, safety-critical detail. Test: can the tightened version produce the same agent behaviour? If uncertain, keep original.
 
-**Evidence (t1679 session):** Terse pass on `build.txt` achieved 63% byte reduction (45k→17k) with zero rule loss. `AGENTS.md` achieved 48% (22k→12k). All 25 critical patterns verified present after tightening.
+**Evidence (t1679):** Terse pass on `build.txt` achieved 63% byte reduction (45k->17k) with zero rule loss. `AGENTS.md` achieved 48% (22k->12k). All 25 critical patterns verified present.
 
-### Requires careful judgment (suggest with medium confidence)
+### Requires careful judgment (medium confidence)
 
 - Verbose code that could be shorter without losing readability
-- Abstractions that add indirection without clear benefit
-- Consolidating similar sections that address different audiences or contexts
+- Abstractions adding indirection without clear benefit
+- Consolidating similar sections addressing different audiences or contexts
 
-### Reference corpora — restructure, do not compress (GH#6432)
+### Reference corpora -- restructure, do not compress (GH#6432)
 
-Some large `.md` files are **knowledge bases** (skill docs, domain reference material, textbooks) rather than agent instruction docs. Their size comes from breadth of domain knowledge, not verbosity — the content is already as dense as it should be.
+Some large `.md` files are knowledge bases (skill docs, domain reference) rather than agent instructions. Their size comes from breadth of domain knowledge, not verbosity.
 
-**How to identify:** The file is a SKILL.md or similar reference doc where sections are self-contained domain knowledge (e.g., "Landing Page Optimization", "Checkout Flow Psychology") rather than operational rules, workflows, or decision trees. The content reads like a textbook chapter, not like agent instructions.
+**How to identify:** SKILL.md or similar where sections are self-contained domain knowledge (e.g., "Landing Page Optimization") rather than operational rules. Reads like a textbook chapter, not agent instructions.
 
-**Correct action: split into chapter files with a slim index.** Do NOT compress, summarise, or remove domain knowledge. Instead:
+**Correct action: split into chapter files with a slim index.** Do NOT compress or remove domain knowledge. Extract each major section into its own file, replace original with a slim index (~100-200 lines) with one-line descriptions and file pointers. Verify zero content loss: `wc -l` total of chapters >= original minus index overhead.
 
-1. Extract each major section (`## N. Section`) into its own file (e.g., `01-introduction.md`, `02-fundamentals.md`)
-2. Replace the original file with a slim index (~100-200 lines) — table of contents with one-line descriptions and file pointers to each chapter
-3. Verify zero content loss: `wc -l` total of all chapter files >= original line count minus index overhead
-4. This enables progressive disclosure — agents load only the chapter they need, not the entire corpus
+**What NOT to do:** Don't "tighten prose" on reference material. Don't merge small sections to reduce file count. Don't remove seemingly overlapping sections -- domain topics overlap by nature.
 
-**What NOT to do with reference corpora:**
-
-- Do not "tighten prose" — reference material is already dense
-- Do not merge small sections to reduce file count — each section is a distinct domain concern
-- Do not remove sections that seem to overlap — domain topics overlap by nature (e.g., social proof appears in landing pages AND checkout flows)
-
-**Issue template guidance:** When creating `simplification-debt` issues for oversized files, classify the file first. If it's a reference corpus, the issue title should say "restructure" not "tighten", and the body should recommend chapter splitting, not prose compression.
+**Issue template:** For oversized reference corpora, title should say "restructure" not "tighten", and body should recommend chapter splitting.
 
 ### Almost never simplify (flag but do not recommend)
 
-- Comments containing task IDs, incident numbers, or error pattern data (e.g., `t1345`, `GH#2928`, `46.8% failure rate`) -- these are institutional memory
-- Comments explaining *why* something is disabled, with references to specific bugs or PRs (e.g., the `DISABLED:` blocks in `monitor-code-review.sh`)
-- Agent prompt rules that look verbose but encode specific observed failure patterns
-- Shell script patterns that are project quality standards (`local var="$1"`, explicit `return 0`)
-- Intentional repetition across agent docs that serves different audiences (AGENTS.md vs subagent)
-- Error-prevention rules with supporting data -- the data justifies the rule's existence
+- Comments with task IDs, incident numbers, or error pattern data (`t1345`, `GH#2928`, `46.8% failure rate`) -- institutional memory
+- Comments explaining *why* something is disabled, with bug/PR references (e.g., `DISABLED:` blocks)
+- Agent prompt rules encoding specific observed failure patterns
+- Shell script quality standards (`local var="$1"`, explicit `return 0`)
+- Intentional repetition across agent docs serving different audiences
+- Error-prevention rules with supporting data justifying the rule's existence
 
 ## Core Principles
 
-### 1. Preserve Everything That Has Purpose
+1. **Preserve everything with purpose.** The bar for "redundant": does removing this lose information someone would need in the future? If uncertain, it stays. Decision-recording comments, institutional memory (task IDs, error stats, incident descriptions), agent prompt specificity, quality standard patterns, and disabled code with rationale are all protected.
 
-The bar for "redundant" is: does removing this lose information that someone (human or agent) would need in the future? If uncertain, it stays.
+2. **Remove decorative noise.** Emojis in code/scripts/agent docs that add no information beyond surrounding text. Examples: `print_success "All quality gates passed"` (function name conveys success), `echo "Running analysis..."` (emoji before "Running" adds nothing), emoji bullets in markdown where plain text suffices. Exception: emojis serving genuine UI/UX purpose (status indicators in dashboards).
 
-Specific preservation rules:
+3. **Apply project standards** -- but standards themselves are not simplification targets. Follow ES modules, `function` keyword, explicit return types, React Props types, proper error handling. Shell: `local var="$1"`, explicit returns, constants for 3+ occurrences, SC2155 compliance.
 
-- **Decision-recording comments**: Any comment explaining *why* code exists, *why* something is disabled, or *what went wrong without it*. These are knowledge, not noise.
-- **Institutional memory**: Task IDs (`t1345`), issue references (`GH#2928`), error statistics (`250 uses, 117 errors`), incident descriptions. These justify the rules they accompany.
-- **Agent prompt specificity**: Rules in `build.txt` and agent docs that look verbose often encode specific failure patterns. Each rule exists because something broke without it. The verbosity is the value.
-- **Quality standard patterns**: `local var="$1"`, explicit returns, SC2155 compliance -- these are enforced standards, not simplification targets.
-- **Disabled code with rationale**: Code blocks marked `DISABLED:` with an explanation of why are more valuable than the code itself -- they prevent someone from re-enabling a known-broken approach.
+4. **Enhance clarity without losing depth.** Reduce nesting, eliminate genuinely redundant code, improve naming, consolidate related logic, remove "what" comments (not "why"), prefer switch/if-else over nested ternaries.
 
-### 2. Remove Decorative Noise
-
-Emojis in code, scripts, agent docs, and commit tooling that add no information beyond what the surrounding text already conveys are simplification targets. Examples:
-
-- `print_success "All quality gates passed"` -- the function name conveys success; a checkmark emoji in the string adds nothing
-- `echo "Running analysis..."` -- an emoji before "Running" adds nothing
-- Section headers in markdown that use emojis as bullets when plain text or standard markers suffice
-
-Emojis that serve a genuine UI/UX purpose (e.g., status indicators in user-facing dashboards where colour/shape conveys state at a glance) are not targets.
-
-### 3. Apply Project Standards
-
-Follow established coding standards -- but recognise that standards themselves are not simplification targets:
-
-- ES modules with proper import sorting and extensions
-- `function` keyword over arrow functions
-- Explicit return type annotations for top-level functions
-- React component patterns with explicit Props types
-- Proper error handling patterns
-
-For shell scripts, follow aidevops standards:
-
-- `local var="$1"` pattern for parameters
-- Explicit return statements
-- Constants for repeated strings (3+ occurrences)
-- SC2155 compliance: separate `local var` and `var=$(command)`
-
-### 4. Enhance Clarity Without Losing Depth
-
-Simplify code structure by:
-
-- Reducing unnecessary complexity and nesting
-- Eliminating genuinely redundant code and abstractions
-- Improving readability through clear variable and function names
-- Consolidating related logic
-- Removing comments that describe *what* code does (not *why*)
-- Preferring switch/if-else over nested ternaries
-- Choosing clarity over brevity -- explicit code beats compact code
-
-### 5. Maintain Balance
-
-Avoid over-simplification that could:
-
-- Reduce code clarity or maintainability
-- Create overly clever solutions that are hard to understand
-- Combine too many concerns into single functions or components
-- Remove helpful abstractions that improve code organization
-- Prioritize "fewer lines" over readability
-- Make the code harder to debug or extend
-- Lose edge-case handling or gotcha documentation
+5. **Maintain balance.** Avoid over-simplification that reduces clarity, creates clever-but-opaque solutions, combines too many concerns, removes helpful abstractions, prioritizes fewer lines over readability, or loses edge-case handling.
 
 ## Usage
 
-### Slash Command
-
 ```bash
 /code-simplifier              # Analyse recently modified code
-/code-simplifier src/         # Analyse code in specific directory
+/code-simplifier src/         # Analyse specific directory
 /code-simplifier --all        # Analyse entire codebase (use sparingly)
 ```
 
-### Scope Detection
+**Scope detection** (no target specified): `git diff --name-only HEAD~1` and `git diff --name-only --staged`. With target: analyse directory, file, or `--all`.
 
-If no target specified:
-
-```bash
-# Find recently modified files (last commit or staged)
-git diff --name-only HEAD~1
-git diff --name-only --staged
-```
-
-If target specified:
-
-- Directory path: Analyse all code files in directory
-- File path: Analyse specific file
-- `--all`: Analyse entire codebase (use sparingly)
-
-### Workflow
-
-```text
-/code-simplifier (analyse) --> human reviews suggestions --> approved items become issues
-                                                        --> declined items are discarded
-                                                        --> issues dispatched via normal workflow
-                                                        --> worker implements in worktree + PR
-```
-
-This is deliberately slower than direct editing. The cost of accidentally removing institutional knowledge far exceeds the cost of a human review step.
+**Workflow**: `/code-simplifier` (analyse) -> human reviews -> approved items become issues -> dispatched via normal workflow -> worker implements in worktree + PR. Deliberately slower than direct editing -- the cost of accidentally removing institutional knowledge far exceeds a human review step.
 
 ## Examples
 
-### Before: Nested Ternaries
-
-```javascript
-const status = isLoading ? 'loading' : hasError ? 'error' : isComplete ? 'complete' : 'idle';
-```
-
-### Suggested: Clear Function
-
-```javascript
-function getStatus(isLoading, hasError, isComplete) {
-  if (isLoading) return 'loading';
-  if (hasError) return 'error';
-  if (isComplete) return 'complete';
-  return 'idle';
-}
-```
-
-**Preserved**: Exact same logic and return values.
-**Risk**: None -- pure structural improvement.
-
-### Before: Dense One-Liner
-
-```javascript
-const result = data.filter(x => x.active).map(x => x.name).reduce((a, b) => a + ', ' + b, '').slice(2);
-```
-
-### Suggested: Readable Steps
-
-```javascript
-const activeItems = data.filter(item => item.active);
-const names = activeItems.map(item => item.name);
-const result = names.join(', ');
-```
-
-**Preserved**: Same filtering, mapping, and joining behaviour.
-**Risk**: None -- clearer variable names and standard `join()`.
-
-### NOT a Simplification Target
+### NOT a simplification target
 
 ```bash
 # DISABLED: qlty fmt introduces invalid shell syntax (adds "|| exit" after
@@ -332,28 +176,28 @@ const result = names.join(', ');
 # See: https://github.com/marcusquinn/aidevops/issues/333
 ```
 
-This comment block looks like it could be "simplified" but it encodes critical knowledge: what was tried, why it failed, and where to find the details. Removing it risks someone re-enabling the broken approach.
+This encodes critical knowledge: what was tried, why it failed, where to find details. Removing it risks re-enabling a known-broken approach.
+
+### Structural simplification
+
+Nested ternary `isLoading ? 'loading' : hasError ? 'error' : isComplete ? 'complete' : 'idle'` -> extract to a function with early returns. Same logic, clearer structure, zero risk.
+
+Dense chain `.filter().map().reduce().slice()` -> named intermediate variables with `join()`. Same behaviour, clearer intent.
 
 ## Human Gate Workflow
 
-Every simplification finding must pass through a maintainer before work begins. This is enforced through GitHub labels, assignment, and dashboard visibility.
+Every finding must pass through a maintainer before work begins, enforced through GitHub labels, assignment, and dashboard visibility.
 
 ### Issue creation (by code-simplifier agent)
 
-When creating `simplification-debt` issues, the agent MUST:
-
 1. Add labels: `simplification-debt` + `needs-maintainer-review`
-2. Assign to the repo maintainer (from `repos.json` `maintainer` field, or fall back to the repo owner from the slug)
-3. Include the structured finding format (Current/Proposed/Preserved/Risk/Verification/Confidence)
+2. Assign to repo maintainer (from `repos.json` `maintainer` field, fall back to slug owner)
+3. Include structured finding format (Current/Proposed/Preserved/Risk/Verification/Confidence)
 
 ```bash
-# Determine maintainer
 MAINTAINER=$(jq -r '.initialized_repos[] | select(.slug == "<slug>") | .maintainer // empty' ~/.config/aidevops/repos.json)
-if [[ -z "$MAINTAINER" ]]; then
-  MAINTAINER=$(echo "<slug>" | cut -d/ -f1)
-fi
+[[ -z "$MAINTAINER" ]] && MAINTAINER=$(echo "<slug>" | cut -d/ -f1)
 
-# Create issue with labels and assignment
 gh issue create --repo <slug> \
   --title "simplification: <brief description>" \
   --label "simplification-debt" --label "needs-maintainer-review" \
@@ -363,133 +207,56 @@ gh issue create --repo <slug> \
 ---
 **To approve or decline**, comment on this issue:
 - \`approved\` — removes the review gate and queues for automated dispatch
-- \`declined: <reason>\` — closes this issue (include your reason after the colon)"
+- \`declined: <reason>\` — closes this issue"
 ```
 
-GitHub sends a notification to the assignee on creation. The `needs-maintainer-review` label prevents the pulse from dispatching a worker. The footer tells the maintainer exactly how to act — no label commands needed.
+The `needs-maintainer-review` label prevents pulse dispatch. GitHub notifies the assignee on creation.
 
-### Maintainer review (interactive)
+### Maintainer review
 
-The maintainer reviews pending simplification issues via any of:
+Review via GitHub notifications, label filter (`gh issue list --label simplification-debt --label needs-maintainer-review`), or `/dashboard --pending-review`.
 
-- **GitHub notifications** -- assignment triggers email/notification
-- **Label filter** -- `gh issue list --label simplification-debt --label needs-maintainer-review`
-- **Dashboard** -- `/dashboard --pending-review` shows all items awaiting maintainer decision (see dashboard.md)
-
-For each issue, the maintainer comments on the issue:
-
-**Approves** -- comment `approved` (case-insensitive). The pulse scans for this keyword from the maintainer, removes `needs-maintainer-review`, adds `auto-dispatch`, and the issue enters the dispatch queue.
-
-**Declines** -- comment `declined: <reason>` (e.g., `declined: this verbosity is intentional, see t1345`). The pulse closes the issue with the maintainer's reason preserved.
-
-**Defers** -- no comment needed. The issue stays in `needs-maintainer-review` for later review.
-
-**Label fallback** -- maintainers who prefer direct label manipulation can still use:
-
-```bash
-# Approve via labels
-gh issue edit <number> --repo <slug> \
-  --remove-label "needs-maintainer-review" \
-  --add-label "auto-dispatch"
-
-# Decline via labels
-gh issue close <number> --repo <slug> \
-  -c "Declined: <reason>"
-```
-
-### Pulse behaviour
-
-The pulse already skips `needs-maintainer-review` issues (see pulse.md "External issues and PRs — scope check"). Once the maintainer removes that label and adds `auto-dispatch`, the issue enters the normal dispatch queue at priority 8 (simplification-debt).
+- **Approve**: comment `approved` (case-insensitive). Pulse removes `needs-maintainer-review`, adds `auto-dispatch`, issue enters dispatch queue.
+- **Decline**: comment `declined: <reason>`. Pulse closes the issue with reason preserved.
+- **Defer**: no comment needed -- stays in `needs-maintainer-review`.
+- **Label fallback**: maintainers can also directly manipulate labels (`--remove-label "needs-maintainer-review" --add-label "auto-dispatch"` or `gh issue close -c "Declined: <reason>"`).
 
 ### Label lifecycle
 
 ```text
-/code-simplifier creates issue (with approval instructions in footer)
-    |
-    v
-[simplification-debt] + [needs-maintainer-review] + assigned to maintainer
-    |
-    +--> Maintainer comments "approved"
-    |       |
-    |       v
-    |    Pulse scans comment --> remove [needs-maintainer-review], add [auto-dispatch]
-    |       |
-    |       v
-    |    Pulse dispatches worker --> [status:queued] --> [status:in-progress]
-    |       |
-    |       v
-    |    Worker opens PR --> [status:in-review] --> PR merged --> [status:done]
-    |
-    +--> Maintainer comments "declined: <reason>" --> pulse closes issue
-    |
-    +--> Maintainer defers (no comment) --> no change (reviewed on next pass)
+Issue created [simplification-debt + needs-maintainer-review] + assigned
+  ├─ "approved" → pulse removes gate, adds [auto-dispatch] → dispatched → PR → merged → [status:done]
+  ├─ "declined: reason" → pulse closes issue
+  └─ deferred (no comment) → no change
 ```
 
 ## Integration with Quality Workflow
 
-Code simplification analysis fits into the quality workflow via two input paths:
-
 ### 1. Automated daily scan (GH#5628)
 
-`pulse-wrapper.sh` runs a daily complexity scan that uses the same awk-based function complexity check as CI. It creates `simplification-debt` issues for files exceeding the per-file violation threshold (default: 1+ functions >100 lines). Issues are deduplicated against existing open issues by repo-relative file path.
+`pulse-wrapper.sh` runs daily complexity scan (same awk-based check as CI). Creates `simplification-debt` issues for files exceeding the per-file violation threshold (default: 1+ functions >100 lines). Deduplicated by repo-relative file path.
 
-**No file size gate.** Agent docs of any size are eligible for simplification analysis. The previous 500-line threshold was removed (t1679) — smaller files can be equally verbose. A qualification gate (`_complexity_scan_should_open_md_issue`) filters out stubs and very short files (default: <50 lines) so only actionable candidates reach issue creation. The classification (instruction doc vs reference corpus) determines the action, not the line count.
+**No file size gate** (t1679). Agent docs of any size are eligible. A qualification gate (`_complexity_scan_should_open_md_issue`) filters stubs/very short files (default: <50 lines). Classification (instruction doc vs reference corpus) determines the action, not line count.
 
-```text
-pulse-wrapper.sh (daily) --> awk complexity scan
-                                  |
-                              Files with 1+ violations
-                                  |
-                              Dedup against open issues (by repo-relative path)
-                                  |
-                              Create issues (simplification-debt + needs-maintainer-review)
-```
-
-Configuration: `COMPLEXITY_SCAN_INTERVAL` (default 1 day), `COMPLEXITY_FILE_VIOLATION_THRESHOLD` (default 1), `COMPLEXITY_MD_MIN_LINES` (default 50).
+Config: `COMPLEXITY_SCAN_INTERVAL` (default 1 day), `COMPLEXITY_FILE_VIOLATION_THRESHOLD` (default 1), `COMPLEXITY_MD_MIN_LINES` (default 50).
 
 ### 2. Manual analysis
 
-```text
-/code-simplifier (analyse) --> Issues created (needs-maintainer-review)
-```
+`/code-simplifier` (analyse) -> issues created with `needs-maintainer-review`.
 
-### Common pipeline (both paths)
+### Common pipeline
 
-```text
-Issues created (needs-maintainer-review)
-    |
-Maintainer comments "approved" or "declined: reason"
-    |
-Pulse processes comment (labels + close)
-    |
-Approved items dispatched (priority 8)
-    |
-Worker implements in worktree + PR
-    |
-CI threshold ratchets down (.agents/configs/complexity-thresholds.conf)
-```
+Both paths -> maintainer approves/declines -> approved items dispatched (priority 8) -> worker implements in worktree + PR -> CI threshold ratchets down.
 
-### CI threshold ratchet (GH#5628)
-
-CI complexity thresholds are stored in `.agents/configs/complexity-thresholds.conf` instead of being hardcoded. After each batch of simplification PRs merges, lower the thresholds in a chore commit to prevent regression. The file contains `FUNCTION_COMPLEXITY_THRESHOLD`, `NESTING_DEPTH_THRESHOLD`, and `FILE_SIZE_THRESHOLD`.
+**CI threshold ratchet (GH#5628):** Thresholds stored in `.agents/configs/complexity-thresholds.conf` (not hardcoded). After simplification PRs merge, lower thresholds in a chore commit. Contains `FUNCTION_COMPLEXITY_THRESHOLD`, `NESTING_DEPTH_THRESHOLD`, `FILE_SIZE_THRESHOLD`.
 
 ## Pulse and Supervisor Integration
 
-Approved `simplification-debt` issues enter the normal pulse dispatch queue at **priority 8** (below quality-debt, above oldest-issues). They are post-deployment maintainability work -- dispatched only when no higher-priority work exists.
+Approved `simplification-debt` issues enter the dispatch queue at **priority 8** (below quality-debt, above oldest-issues). Post-deployment maintainability work -- dispatched only when no higher-priority work exists.
 
-**Concurrency cap:** Simplification-debt may consume at most 10% of worker slots, and shares a combined 30% cap with quality-debt. See `scripts/commands/pulse.md` "Simplification-debt concurrency cap" for the full rules.
+**Concurrency cap:** At most 10% of worker slots, sharing a combined 30% cap with quality-debt. See `scripts/commands/pulse.md`.
 
-**Codacy maintainability signal:** When Codacy reports a maintainability grade drop (B or below), simplification-debt issues for that repo get a temporary priority boost to priority 7 (same level as quality-debt). This creates a feedback loop:
-
-```text
-Codacy grade drops --> simplification-debt priority increases
-                           |
-                       Workers fix maintainability issues
-                           |
-                       Codacy grade recovers --> priority returns to normal
-```
-
-The daily quality sweep (in `pulse-wrapper.sh`) posts Codacy findings on the persistent quality-review issue. The pulse reads these findings and adjusts simplification-debt priority accordingly.
+**Codacy maintainability signal:** When Codacy reports grade B or below, simplification-debt issues for that repo get temporary priority boost to 7 (same as quality-debt). Workers fix issues -> grade recovers -> priority returns to normal. The daily quality sweep (in `pulse-wrapper.sh`) posts Codacy findings on the persistent quality-review issue; the pulse reads these for priority adjustment.
 
 ## Related Agents
 
