@@ -72,6 +72,34 @@ done
 # shellcheck disable=SC2016  # Single quotes intentional: string is a bash -c payload, must not expand at assignment time
 _oc_upgrade_cmd='if r=$(command -v opencode 2>/dev/null); [[ "$r" == *bun* ]]; then bun install -g opencode-ai@latest; else npm install -g opencode-ai@latest; fi'
 
+# Platform-aware brew package upgrade command.
+# On macOS (or any system with brew), use brew upgrade.
+# On Debian/Ubuntu (apt), use apt-get install --only-upgrade.
+# On Fedora/RHEL/CentOS (dnf/yum), use dnf upgrade.
+# Falls back to brew upgrade if no system package manager is detected.
+# $1 = brew formula name (e.g. "gh", "jq", "shellcheck")
+# $2 = apt/dnf package name if different from brew name (optional; defaults to $1)
+# The returned string is a self-contained bash -c payload (no expansion at definition time).
+# shellcheck disable=SC2016  # Single quotes intentional: bash -c payload
+_brew_upgrade_cmd() {
+	local brew_pkg="$1"
+	local sys_pkg="${2:-$1}"
+	# Return a self-contained bash -c string that detects the package manager at runtime.
+	# Uses single quotes so variables are NOT expanded now — they expand inside bash -c.
+	printf '%s' 'if command -v brew >/dev/null 2>&1; then brew upgrade '"${brew_pkg}"'; elif command -v apt-get >/dev/null 2>&1; then sudo apt-get install --only-upgrade -y '"${sys_pkg}"'; elif command -v dnf >/dev/null 2>&1; then sudo dnf upgrade -y '"${sys_pkg}"'; elif command -v yum >/dev/null 2>&1; then sudo yum upgrade -y '"${sys_pkg}"'; else echo "No supported package manager found (brew/apt-get/dnf/yum)" >&2; exit 1; fi'
+}
+
+# PEP 668-safe pip upgrade command.
+# Ubuntu 24.04+, Fedora 38+, and modern Debian mark the system Python as
+# "externally managed" — bare `pip install` is blocked with an error.
+# Safe upgrade order: pipx (isolated venv) → pip --user (user site-packages).
+# $1 = pip package name (e.g. "beads-viewer", "dspy-ai", "crawl4ai")
+# shellcheck disable=SC2016  # Single quotes intentional: bash -c payload
+_pip_upgrade_cmd() {
+	local pkg="$1"
+	printf '%s' 'if command -v pipx >/dev/null 2>&1 && pipx list --short 2>/dev/null | grep -qi '"^${pkg}"'; then pipx upgrade '"${pkg}"'; else pip install --user --upgrade '"${pkg}"' 2>/dev/null || pip install --upgrade '"${pkg}"'; fi'
+}
+
 # Tool definitions
 # Format: category|display_name|cli_command|version_flag|package_name|update_command
 
@@ -94,18 +122,18 @@ NPM_TOOLS=(
 )
 
 BREW_TOOLS=(
-	"brew|GitHub CLI|gh|--version|gh|brew upgrade gh"
-	"brew|GitLab CLI|glab|--version|glab|brew upgrade glab"
-	"brew|Worktrunk|wt|--version|max-sixty/worktrunk/wt|brew upgrade max-sixty/worktrunk/wt"
-	"brew|Beads CLI|bd|version|steveyegge/beads/bd|brew upgrade steveyegge/beads/bd"
-	"brew|jq|jq|--version|jq|brew upgrade jq"
-	"brew|ShellCheck|shellcheck|--version|shellcheck|brew upgrade shellcheck"
+	"brew|GitHub CLI|gh|--version|gh|$(_brew_upgrade_cmd gh)"
+	"brew|GitLab CLI|glab|--version|glab|$(_brew_upgrade_cmd glab)"
+	"brew|Worktrunk|wt|--version|max-sixty/worktrunk/wt|$(_brew_upgrade_cmd max-sixty/worktrunk/wt)"
+	"brew|Beads CLI|bd|version|steveyegge/beads/bd|$(_brew_upgrade_cmd steveyegge/beads/bd)"
+	"brew|jq|jq|--version|jq|$(_brew_upgrade_cmd jq)"
+	"brew|ShellCheck|shellcheck|--version|shellcheck|$(_brew_upgrade_cmd shellcheck)"
 )
 
 PIP_TOOLS=(
-	"pip|Beads Viewer|beads_viewer|--version|beads-viewer|pip install --upgrade beads-viewer"
-	"pip|DSPy|dspy|--version|dspy-ai|pip install --upgrade dspy-ai"
-	"pip|Crawl4AI|crawl4ai|--version|crawl4ai|pip install --upgrade crawl4ai"
+	"pip|Beads Viewer|beads_viewer|--version|beads-viewer|$(_pip_upgrade_cmd beads-viewer)"
+	"pip|DSPy|dspy|--version|dspy-ai|$(_pip_upgrade_cmd dspy-ai)"
+	"pip|Crawl4AI|crawl4ai|--version|crawl4ai|$(_pip_upgrade_cmd crawl4ai)"
 	"pip|Analytics MCP|analytics-mcp|--version|analytics-mcp|pipx upgrade analytics-mcp"
 	"pip|Outscraper MCP|outscraper-mcp-server|--version|outscraper-mcp-server|uv tool upgrade outscraper-mcp-server"
 )
@@ -302,17 +330,29 @@ get_npm_latest() {
 	return 0
 }
 
-# Get latest brew version
+# Get latest brew version.
+# When brew is available, use `brew info` (works on macOS and Linux with brew).
+# When brew is absent (common on Linux), fall back to the GitHub Releases API
+# for tools with known repos. This keeps version detection cross-platform even
+# when the update path uses apt/dnf instead of brew.
 get_brew_latest() {
 	local pkg="$1"
 	local brew_bin=""
 	brew_bin=$(command -v brew 2>/dev/null || true)
 	if [[ -n "$brew_bin" && -x "$brew_bin" ]]; then
 		timeout_sec "$PKG_QUERY_TIMEOUT" "$brew_bin" info "$pkg" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown"
-	elif [[ "$pkg" == "gh" ]]; then
-		get_public_release_tag "cli/cli"
 	else
-		echo "unknown"
+		# No brew — fall back to GitHub Releases API for known tools.
+		# Strip tap prefix (e.g. "max-sixty/worktrunk/wt" → "wt") for matching.
+		local base_pkg="${pkg##*/}"
+		case "$base_pkg" in
+		gh) get_public_release_tag "cli/cli" ;;
+		glab) get_public_release_tag "gitlab-org/cli" ;;
+		wt) get_public_release_tag "max-sixty/worktrunk" ;;
+		jq) get_public_release_tag "jqlang/jq" ;;
+		shellcheck) get_public_release_tag "koalaman/shellcheck" ;;
+		*) echo "unknown" ;;
+		esac
 	fi
 	return 0
 }
