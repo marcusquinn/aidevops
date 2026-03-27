@@ -16,9 +16,7 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
-## Overview
-
-Anti-detect browser capabilities for multi-account automation, bot detection evasion, and fingerprint management. Replicates features of commercial tools (AdsPower, GoLogin, OctoBrowser) using open-source components.
+Anti-detect browser capabilities for multi-account automation, bot detection evasion, and fingerprint management. Replicates commercial tools (AdsPower, GoLogin, OctoBrowser) using open-source components.
 
 ## Architecture
 
@@ -40,29 +38,25 @@ Anti-detect browser capabilities for multi-account automation, bot detection eva
 Need anti-detection?
     |
     +-> Quick stealth (hide automation signals only)?
-    |       |
-    |       +-> Chromium (existing Playwright)? --> stealth-patches.md (rebrowser-patches)
-    |       +-> Firefox? --> Camoufox (fingerprint-profiles.md)
+    |       +-> Chromium? --> stealth-patches.md (rebrowser-patches)
+    |       +-> Firefox?  --> fingerprint-profiles.md (Camoufox)
     |
     +-> Full anti-detect (fingerprint rotation, multi-account)?
-    |       |
-    |       +-> Need unique fingerprints per profile? --> fingerprint-profiles.md (Camoufox)
-    |       +-> Need persistent profiles (cookies, history)? --> browser-profiles.md
-    |       +-> Need proxy per profile? --> proxy-integration.md
-    |       +-> Need all of the above? --> anti-detect-helper.sh launch --profile <name>
+    |       +-> Unique fingerprints per profile? --> fingerprint-profiles.md
+    |       +-> Persistent profiles (cookies, history)? --> browser-profiles.md
+    |       +-> Proxy per profile? --> proxy-integration.md
+    |       +-> All of the above? --> anti-detect-helper.sh launch --profile <name>
     |
-    +-> Which browser engine?
-    |       |
-    |       +-> Maximum stealth (C++ level spoofing)? --> Camoufox (Firefox)
-    |       +-> Privacy-first (Tor Browser patches)? --> Mullvad Browser (--engine mullvad)
+    +-> Which engine?
+    |       +-> Max stealth (C++ spoofing)?       --> Camoufox (Firefox)
+    |       +-> Privacy-first (Tor patches)?      --> Mullvad Browser (--engine mullvad)
     |       +-> Speed + existing Playwright code? --> rebrowser-patches (Chromium)
-    |       +-> Both (rotate engines)? --> anti-detect-helper.sh --engine random
+    |       +-> Rotate engines?                   --> anti-detect-helper.sh --engine random
     |
     +-> Headless or headed?
-            |
-            +-> Headless (server/CI)? --> Camoufox virtual display OR rebrowser headless
-            +-> Headed (local dev)? --> Either engine, visible window
-            +-> Headless that looks headed? --> Camoufox (patches headless detection)
+            +-> Headless (server/CI)?        --> Camoufox virtual display OR rebrowser
+            +-> Headed (local dev)?          --> Either engine, visible window
+            +-> Headless that looks headed?  --> Camoufox (patches headless detection)
 ```
 
 ## Tool Comparison
@@ -76,15 +70,13 @@ Need anti-detection?
 | **Canvas/WebGL** | No | Yes (C++ intercept) | Yes (randomized) | Yes |
 | **Font spoofing** | No | Yes (bundled fonts) | Yes (limited set) | Yes |
 | **Human mouse** | No | Yes (C++ algorithm) | No | Yes |
-| **Profile management** | Manual | Python API | Manual | GUI |
+| **Profile mgmt** | Manual | Python API | Manual | GUI |
 | **Proxy integration** | Playwright native | Python API | Manual/system | Built-in |
 | **Headless stealth** | Partial | Full (patched) | Partial | N/A |
 | **Cost** | Free (MIT) | Free (MPL-2.0) | Free (GPL) | $9-$299/mo |
 | **Setup** | `npx rebrowser-patches patch` | `pip install camoufox` | Download app | Download app |
 
-**Mullvad Browser vs Camoufox**:
-- **Mullvad Browser**: Best for manual browsing with privacy. Uses Tor Browser's uniform fingerprint approach (all users look identical). Limited automation support.
-- **Camoufox**: Best for automation. Generates unique, realistic fingerprints per profile. Full Playwright API support with C++ level spoofing.
+**Mullvad** = manual browsing with uniform fingerprint (all users identical). **Camoufox** = automation with unique realistic fingerprints per profile + full Playwright API.
 
 ## Quick Start
 
@@ -111,28 +103,13 @@ Need anti-detection?
 ~/.aidevops/agents/scripts/anti-detect-helper.sh profile clean "my-account"
 ```
 
-## Integration with playwright-cli
-
-playwright-cli uses Playwright's Chromium under the hood. For stealth:
+## playwright-cli Integration
 
 | Stealth Level | Setup | Use Case |
 |---------------|-------|----------|
 | **None** | `playwright-cli open <url>` | Dev testing, trusted sites |
-| **Medium** | Apply rebrowser-patches, then use playwright-cli | Hide automation signals |
-| **High** | Use Camoufox + Playwright API directly | Bot detection evasion |
-
-**Medium stealth with playwright-cli**:
-
-```bash
-# 1. Patch Playwright's Chromium (one-time)
-npx rebrowser-patches@latest patch
-
-# 2. Use playwright-cli normally - it uses patched browser
-playwright-cli open https://bot-detection-test.com
-playwright-cli snapshot
-```
-
-**High stealth** requires Camoufox with Playwright API (not playwright-cli) for fingerprint rotation. See `fingerprint-profiles.md`.
+| **Medium** | `npx rebrowser-patches@latest patch` then use playwright-cli normally | Hide automation signals |
+| **High** | Camoufox + Playwright API directly (not playwright-cli) | Bot detection evasion, fingerprint rotation → `fingerprint-profiles.md` |
 
 ## Subagent Index
 
@@ -162,66 +139,3 @@ playwright-cli snapshot
 - Do not create fake accounts or impersonate others
 
 <!-- AI-CONTEXT-END -->
-
-## Detailed Subagent Usage
-
-### Layer 1: Stealth Patches (Chromium)
-
-For quick stealth on existing Playwright code. Read `stealth-patches.md` for:
-- rebrowser-patches installation and usage
-- CDP leak prevention
-- `navigator.webdriver` removal
-- Runtime.enable leak fix
-- Headless detection bypass
-
-### Layer 2: Fingerprint Profiles (Camoufox)
-
-For full anti-detect with unique identities. Read `fingerprint-profiles.md` for:
-- Camoufox installation and Python API
-- BrowserForge fingerprint generation
-- WebRTC, Canvas, WebGL, Font spoofing
-- Screen/viewport/timezone spoofing
-- Human-like mouse movement
-- Headless mode that appears headed
-
-### Layer 3: Profile Management
-
-For multi-account workflows. Read `browser-profiles.md` for:
-- Profile CRUD operations
-- Cookie/localStorage persistence
-- Fingerprint assignment per profile
-- Profile warming (browsing history generation)
-- Import/export profiles
-- Bulk profile operations
-
-### Layer 4: Proxy Integration
-
-For network identity. Read `proxy-integration.md` for:
-- Residential proxy providers (DataImpulse, WebShare, BrightData)
-- SOCKS5/HTTP proxy configuration
-- Sticky sessions (same IP per profile)
-- Geo-targeting by country/city
-- Proxy health checking and rotation
-- VPN integration (IVPN, Mullvad)
-
-## Integration with Existing Tools
-
-The anti-detect stack integrates with existing browser tools:
-
-| Existing Tool | Integration |
-|---------------|-------------|
-| **Playwright** | rebrowser-patches applied, stealth context creation |
-| **dev-browser** | Profile directory shared, stealth launch args |
-| **Crawl4AI** | Camoufox as browser backend, proxy config |
-| **CapSolver** | CAPTCHA solving after anti-detect fails |
-| **Chrome DevTools** | Debugging stealth issues, leak detection |
-
-## Future Extensions
-
-Services to be added (see `proxy-integration.md` for proxy roadmap):
-- Additional proxy providers (Oxylabs, SmartProxy, PacketStream)
-- VPN services (NordVPN, ExpressVPN SOCKS5)
-- SMS verification services (for account creation)
-- Email verification services
-- Browser fingerprint marketplace integration
-- Cloud browser farms (for scale)
