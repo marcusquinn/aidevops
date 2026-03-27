@@ -22,175 +22,61 @@ tools:
 - Fix script: `bash .agents/scripts/quality-fix.sh [file|dir]`
 - SonarCloud rules: S7679 (positional params), S1481 (unused vars), S1192 (strings), S7682 (returns)
 - Specialized fixes:
-  - `fix-content-type.sh` - Content-Type header constants
-  - `fix-auth-headers.sh` - Authorization header patterns
-  - `fix-error-messages.sh` - Error message consolidation
-  - `markdown-formatter.sh` - Markdown linting/formatting
+  - `fix-content-type.sh` — Content-Type header constants (S1192)
+  - `fix-auth-headers.sh` — Authorization header patterns
+  - `fix-error-messages.sh` — Error message consolidation
+  - `markdown-formatter.sh` — Markdown linting/formatting
 - CLI manager: `bash .agents/scripts/quality-cli-manager.sh install|analyze|status all`
 - Platform CLIs: CodeRabbit, Codacy, SonarScanner
-- Achievement: 349 -> 42 issues (88% reduction), A-grade platforms
+- Achievement: 349 → 42 issues (88% reduction), A-grade platforms
+
 <!-- AI-CONTEXT-END -->
 
-## Comprehensive Quality Management Tools
+## Core Scripts
 
-> **Note**: This document is supplementary to the [AGENTS.md](../AGENTS.md).
-> For any conflicts, the Master Guide takes precedence as the single source of truth.
+| Script | Purpose | Key checks |
+|--------|---------|------------|
+| `linters-local.sh` | Multi-platform validation | S7679, S1481, S1192, S7682, ShellCheck, return statements |
+| `quality-fix.sh [file\|dir]` | Auto-fix common issues | Missing returns, positional params, ShellCheck basics |
+| `markdown-formatter.sh` | Markdown formatting | Trailing whitespace, list markers, Codacy violations |
+| `markdown-lint-fix.sh` | markdownlint-cli integration | `.markdownlint.json` config, auto-install |
 
-### Overview
+## Specialized Fix Scripts
 
-This guide provides detailed documentation of our quality automation tools and their usage patterns.
+| Script | Targets | Creates |
+|--------|---------|---------|
+| `fix-content-type.sh` | `"Content-Type: application/json"` (24+ occurrences) | `readonly CONTENT_TYPE_JSON` |
+| `fix-auth-headers.sh` | `"Authorization: Bearer"` patterns | `readonly AUTH_BEARER_PREFIX` |
+| `fix-error-messages.sh` | `Unknown command:`, `Usage:` patterns | Error message constants |
 
-### Core Quality Scripts
-
-#### linters-local.sh - Master Quality Validator
-
-**Purpose**: Comprehensive multi-platform quality validation
-**Usage**: `bash .agents/scripts/linters-local.sh`
-
-**Checks Performed**:
-
-- SonarCloud issue analysis (S7679, S1481, S1192, S7682)
-- ShellCheck compliance validation
-- Return statement verification
-- Positional parameter detection
-- String literal duplication analysis
-
-**Output**: Color-coded quality report with actionable recommendations
-
-#### quality-fix.sh - Universal Issue Resolution
-
-**Purpose**: Automated fixing of common quality issues
-**Usage**: `bash .agents/scripts/quality-fix.sh [file|directory]`
-
-**Fixes Applied**:
-
-- Missing return statements in functions
-- Positional parameter usage patterns
-- Basic ShellCheck compliance issues
-- Function structure standardization
-
-### Specialized Fix Scripts
-
-#### String Literal Management
-
-**fix-content-type.sh**: Content-Type header consolidation
-
-- Targets: `"Content-Type: application/json"` (24+ occurrences)
-- Creates: `readonly CONTENT_TYPE_JSON` constants
-- Result: Eliminates S1192 violations for HTTP headers
-
-**fix-auth-headers.sh**: Authorization header standardization
-
-- Targets: `"Authorization: Bearer"` patterns
-- Creates: `readonly AUTH_BEARER_PREFIX` constants
-- Result: Consistent API authentication patterns
-
-**fix-error-messages.sh**: Error message consolidation
-
-- Targets: Common error patterns (`Unknown command:`, `Usage:`)
-- Creates: Error message constants
-- Result: Standardized user experience
-
-#### Markdown Quality Tools
-
-**markdown-formatter.sh**: Comprehensive markdown formatting
-
-- Fixes: Trailing whitespace, list markers, emphasis
-- Addresses: Codacy markdown formatting violations
-- Result: Professional documentation standards
-
-**markdown-lint-fix.sh**: Professional markdown linting
-
-- Integration: markdownlint-cli with auto-install
-- Configuration: Optimized .markdownlint.json
-- Result: Industry-standard markdown compliance
-
-### Quality CLI Integration
-
-#### Multi-Platform Analysis
-
-**quality-cli-manager.sh**: Unified CLI management
+## Platform CLIs
 
 ```bash
-# Install all quality CLIs
+# Install / analyze / status all platforms
 bash .agents/scripts/quality-cli-manager.sh install all
-
-# Run comprehensive analysis
 bash .agents/scripts/quality-cli-manager.sh analyze all
-
-# Check status of all platforms
 bash .agents/scripts/quality-cli-manager.sh status all
-```
 
-#### Individual Platform CLIs
-
-**CodeRabbit CLI**: AI-powered code review
-
-```bash
+# Individual platforms
 bash .agents/scripts/coderabbit-cli.sh review
-bash .agents/scripts/coderabbit-cli.sh analyze .agents/scripts/
-```
-
-**Codacy CLI v2**: Comprehensive static analysis
-
-```bash
 bash .agents/scripts/codacy-cli.sh analyze
-bash .agents/scripts/codacy-cli.sh upload results.sarif
-```
-
-**SonarScanner CLI**: SonarCloud integration
-
-```bash
 bash .agents/scripts/sonarscanner-cli.sh analyze
 ```
 
-### Automation Workflows
-
-#### Pre-Commit Quality Gate
+## Pre-Commit Workflow
 
 ```bash
-#!/bin/bash
-# Run before every commit
-
-# 1. Comprehensive quality check
-bash .agents/scripts/linters-local.sh
-
-# 2. Fix common issues
-bash .agents/scripts/quality-fix.sh .
-
-# 3. Format markdown
-bash .agents/scripts/markdown-formatter.sh .
-
-# 4. Verify improvements
-bash .agents/scripts/linters-local.sh
+bash .agents/scripts/linters-local.sh          # check
+bash .agents/scripts/quality-fix.sh .          # fix
+bash .agents/scripts/markdown-formatter.sh .   # format
+bash .agents/scripts/linters-local.sh          # verify
 ```
 
-#### Continuous Quality Monitoring
-
-```bash
-#!/bin/bash
-# Daily quality monitoring
-
-# 1. Multi-platform analysis
-bash .agents/scripts/quality-cli-manager.sh analyze all
-
-# 2. Generate quality report
-bash .agents/scripts/linters-local.sh > quality-report.txt
-
-# 3. Track progress
-echo "$(date): $(grep 'SonarCloud:' quality-report.txt)" >> quality-history.log
-```
-
-### Quality Metrics & Targets
-
-#### Current Achievement
+## Quality Metrics & Targets
 
 - **SonarCloud**: 349 → 42 issues (88% reduction)
-- **Critical Issues**: S7679 & S1481 = 0 (100% resolved)
-- **String Literals**: 50+ S1192 violations eliminated
-- **Platform Ratings**: A-grade across CodeFactor, Codacy
-
-#### Target Thresholds
+- **Critical**: S7679 & S1481 = 0 (100% resolved); 50+ S1192 violations eliminated
+- **Platform ratings**: A-grade across CodeFactor, Codacy
 
 ```bash
 # linters-local.sh thresholds
@@ -200,20 +86,11 @@ readonly MAX_POSITIONAL_ISSUES=0
 readonly MAX_STRING_LITERAL_ISSUES=0
 ```
 
-### Best Practices
+## Issue Resolution Priority
 
-#### Issue Resolution Priority
+1. **Critical (S7679, S1481)** — immediate
+2. **High (S1192)** — target 3+ occurrences for maximum impact
+3. **Medium (S7682)** — systematic function standardization
+4. **Low (ShellCheck)** — style and best practice improvements
 
-1. **Critical (S7679, S1481)**: Immediate resolution required
-2. **High (S1192)**: Target 3+ occurrences for maximum impact
-3. **Medium (S7682)**: Systematic function standardization
-4. **Low (ShellCheck)**: Style and best practice improvements
-
-#### Automation Principles
-
-- **Batch Processing**: Target similar patterns across multiple files
-- **Functionality Preservation**: Never remove features to fix issues
-- **Reusable Tools**: Create scripts for recurring patterns
-- **Validation**: Always verify fixes don't break functionality
-
-This automation ecosystem enables systematic maintenance of zero technical debt while enhancing code quality and functionality.
+Rules: batch similar patterns; never remove features to fix issues; always verify fixes don't break functionality.
