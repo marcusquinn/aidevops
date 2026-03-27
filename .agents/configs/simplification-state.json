@@ -1,0 +1,4 @@
+{
+  "_comment": "Tracks files that have been simplified. Hash is git blob SHA of the file at simplification time. When the scan sees a file here with a matching hash, it skips issue creation. When the hash differs (file changed), it creates a regression issue.",
+  "files": {}
+}

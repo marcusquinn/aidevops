@@ -2902,6 +2902,117 @@ _complexity_scan_extract_md_topic_label() {
 	return 0
 }
 
+#######################################
+# Simplification state tracking — git-committed registry of simplified files.
+#
+# State file: .agents/configs/simplification-state.json (in repo, on main)
+# Format: { "files": { "path": { "hash": "<git blob sha>", "at": "ISO", "pr": N } } }
+#
+# - "hash" is the git blob SHA of the file at simplification time
+# - When scan sees a file in state with matching hash → skip (already done)
+# - When hash differs → file changed since simplification → create regression issue
+# - State is committed to main and pushed, so all users share it
+#######################################
+
+# Check if a file has already been simplified and is unchanged.
+# Arguments: $1 - repo_path, $2 - file_path (repo-relative), $3 - state_file path
+# Returns: 0 = already simplified (unchanged), 1 = not simplified or changed
+# Outputs to stdout: "unchanged" | "regressed" | "new"
+_simplification_state_check() {
+	local repo_path="$1"
+	local file_path="$2"
+	local state_file="$3"
+
+	if [[ ! -f "$state_file" ]]; then
+		echo "new"
+		return 1
+	fi
+
+	local recorded_hash
+	recorded_hash=$(jq -r --arg fp "$file_path" '.files[$fp].hash // empty' "$state_file" 2>/dev/null) || recorded_hash=""
+
+	if [[ -z "$recorded_hash" ]]; then
+		echo "new"
+		return 1
+	fi
+
+	# Compute current git blob hash
+	local current_hash
+	local full_path="${repo_path}/${file_path}"
+	if [[ ! -f "$full_path" ]]; then
+		echo "new"
+		return 1
+	fi
+	current_hash=$(git -C "$repo_path" hash-object "$full_path" 2>/dev/null) || current_hash=""
+
+	if [[ "$current_hash" == "$recorded_hash" ]]; then
+		echo "unchanged"
+		return 0
+	fi
+
+	echo "regressed"
+	return 1
+}
+
+# Record a file as simplified in the state file.
+# Arguments: $1 - repo_path, $2 - file_path, $3 - state_file, $4 - pr_number
+_simplification_state_record() {
+	local repo_path="$1"
+	local file_path="$2"
+	local state_file="$3"
+	local pr_number="${4:-0}"
+
+	local current_hash
+	local full_path="${repo_path}/${file_path}"
+	current_hash=$(git -C "$repo_path" hash-object "$full_path" 2>/dev/null) || current_hash=""
+	[[ -z "$current_hash" ]] && return 1
+
+	local now_iso
+	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+	# Ensure state file exists with valid structure
+	if [[ ! -f "$state_file" ]]; then
+		printf '{"files":{}}\n' >"$state_file"
+	fi
+
+	# Update the entry using jq
+	local tmp_file
+	tmp_file=$(mktemp)
+	jq --arg fp "$file_path" --arg hash "$current_hash" --arg at "$now_iso" --argjson pr "$pr_number" \
+		'.files[$fp] = {"hash": $hash, "at": $at, "pr": $pr}' \
+		"$state_file" >"$tmp_file" 2>/dev/null && mv "$tmp_file" "$state_file" || {
+		rm -f "$tmp_file"
+		return 1
+	}
+	return 0
+}
+
+# Commit and push simplification state to main (planning data, not code).
+# Arguments: $1 - repo_path
+_simplification_state_push() {
+	local repo_path="$1"
+	local state_rel=".agents/configs/simplification-state.json"
+
+	# Only push from the canonical (main) worktree
+	local main_branch
+	main_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || main_branch="main"
+	local current_branch
+	current_branch=$(git -C "$repo_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || current_branch=""
+
+	if [[ "$current_branch" != "$main_branch" ]]; then
+		echo "[pulse-wrapper] simplification-state: skipping push — not on $main_branch (on $current_branch)" >>"$LOGFILE"
+		return 0
+	fi
+
+	if ! git -C "$repo_path" diff --quiet -- "$state_rel" 2>/dev/null; then
+		git -C "$repo_path" add "$state_rel" 2>/dev/null || return 1
+		git -C "$repo_path" commit -m "chore: update simplification state registry" --no-verify 2>/dev/null || return 1
+		git -C "$repo_path" push origin "$main_branch" 2>/dev/null || return 1
+		echo "[pulse-wrapper] simplification-state: pushed updated state to $main_branch" >>"$LOGFILE"
+	fi
+	return 0
+}
+
 # Check if an open simplification-debt issue already exists for a given file.
 #
 # Uses GitHub search API via `gh issue list --search` to query server-side,
@@ -3039,9 +3150,27 @@ _complexity_scan_create_md_issues() {
 		'.initialized_repos[] | select(.slug == $slug) | .path' \
 		"$repos_json" 2>/dev/null | head -n 1)
 
+	# Simplification state file — tracks already-simplified files by git blob hash
+	local state_file=""
+	if [[ -n "$aidevops_path" ]]; then
+		state_file="${aidevops_path}/.agents/configs/simplification-state.json"
+	fi
+
 	while IFS='|' read -r file_path line_count; do
 		[[ -n "$file_path" ]] || continue
 		[[ "$issues_created" -ge "$max_issues_per_run" ]] && break
+
+		# Check simplification state — skip if file was simplified and hasn't changed
+		if [[ -n "$state_file" && -n "$aidevops_path" ]]; then
+			local file_status
+			file_status=$(_simplification_state_check "$aidevops_path" "$file_path" "$state_file")
+			if [[ "$file_status" == "unchanged" ]]; then
+				echo "[pulse-wrapper] Complexity scan (.md): skipping ${file_path} — already simplified (hash unchanged)" >>"$LOGFILE"
+				issues_skipped=$((issues_skipped + 1))
+				continue
+			fi
+			# "regressed" files fall through — they get a new issue with regression label
+		fi
 
 		if _complexity_scan_has_existing_issue "$aidevops_slug" "$file_path"; then
 			echo "[pulse-wrapper] Complexity scan (.md): skipping ${file_path} — existing open issue" >>"$LOGFILE"
@@ -3054,26 +3183,61 @@ _complexity_scan_create_md_issues() {
 			topic_label=$(_complexity_scan_extract_md_topic_label "$aidevops_path" "$file_path" 2>/dev/null || true)
 		fi
 
+		# Determine if this is a regression (file changed after simplification)
+		local is_regression=false
+		if [[ -n "$state_file" && -n "$aidevops_path" ]]; then
+			local regression_check
+			regression_check=$(_simplification_state_check "$aidevops_path" "$file_path" "$state_file")
+			if [[ "$regression_check" == "regressed" ]]; then
+				is_regression=true
+			fi
+		fi
+
 		local issue_title="simplification: tighten agent doc ${file_path} (${line_count} lines)"
 		if [[ -n "$topic_label" ]]; then
 			issue_title="simplification: tighten agent doc ${topic_label} (${file_path}, ${line_count} lines)"
 		fi
+		if [[ "$is_regression" == true ]]; then
+			issue_title="regression: ${issue_title}"
+		fi
 
 		local issue_body
 		issue_body=$(_complexity_scan_build_md_issue_body "$file_path" "$line_count" "$topic_label")
+		if [[ "$is_regression" == true ]]; then
+			local prev_pr
+			prev_pr=$(jq -r --arg fp "$file_path" '.files[$fp].pr // 0' "$state_file" 2>/dev/null) || prev_pr="0"
+			issue_body="${issue_body}
 
-		if gh issue create --repo "$aidevops_slug" \
-			--title "$issue_title" \
-			--label "simplification-debt" --label "needs-maintainer-review" --label "tier:thinking" \
-			--assignee "$maintainer" \
-			--body "$issue_body" >/dev/null 2>&1; then
+### Regression note
+
+This file was previously simplified (PR #${prev_pr}) but has since been modified. The content hash no longer matches the post-simplification state. Please re-evaluate."
+		fi
+
+		local create_ok=false
+		if [[ "$is_regression" == true ]]; then
+			gh issue create --repo "$aidevops_slug" \
+				--title "$issue_title" \
+				--label "simplification-debt" --label "needs-maintainer-review" --label "tier:thinking" --label "regression" \
+				--assignee "$maintainer" \
+				--body "$issue_body" >/dev/null 2>&1 && create_ok=true
+		else
+			gh issue create --repo "$aidevops_slug" \
+				--title "$issue_title" \
+				--label "simplification-debt" --label "needs-maintainer-review" --label "tier:thinking" \
+				--assignee "$maintainer" \
+				--body "$issue_body" >/dev/null 2>&1 && create_ok=true
+		fi
+
+		if [[ "$create_ok" == true ]]; then
 			issues_created=$((issues_created + 1))
-			echo "[pulse-wrapper] Complexity scan (.md): created issue for ${file_path} (${line_count} lines)" >>"$LOGFILE"
+			local log_suffix=""
+			if [[ "$is_regression" == true ]]; then log_suffix=" [REGRESSION]"; fi
+			echo "[pulse-wrapper] Complexity scan (.md): created issue for ${file_path} (${line_count} lines)${log_suffix}" >>"$LOGFILE"
 		else
 			echo "[pulse-wrapper] Complexity scan (.md): failed to create issue for ${file_path}" >>"$LOGFILE"
 		fi
 	done <<<"$scan_results"
-	echo "[pulse-wrapper] Complexity scan (.md) complete: ${issues_created} issues created, ${issues_skipped} skipped (existing)" >>"$LOGFILE"
+	echo "[pulse-wrapper] Complexity scan (.md) complete: ${issues_created} issues created, ${issues_skipped} skipped (existing/simplified)" >>"$LOGFILE"
 	return 0
 }
 
@@ -3296,6 +3460,10 @@ run_weekly_complexity_scan() {
 
 	echo "[pulse-wrapper] Running daily complexity scan (GH#5628)..." >>"$LOGFILE"
 
+	# Ensure regression label exists (used when a simplified file changes)
+	gh label create "regression" --repo "$aidevops_slug" --color "D93F0B" \
+		--description "File was simplified but has since been modified" --force 2>/dev/null || true
+
 	local aidevops_path
 	aidevops_path=$(_complexity_scan_find_repo "$repos_json" "$aidevops_slug" "$now_epoch") || return 0
 
@@ -3313,6 +3481,56 @@ run_weekly_complexity_scan() {
 	md_results=$(_complexity_scan_collect_md_violations "$aidevops_path") || true
 	if [[ -n "$md_results" ]]; then
 		_complexity_scan_create_md_issues "$md_results" "$repos_json" "$aidevops_slug"
+	fi
+
+	# Phase 3: Backfill simplification state from recently-closed issues.
+	# Finds simplification-debt issues closed in the last 7 days that have a
+	# linked merged PR, extracts the changed files, and records their current
+	# git blob hashes in the state file. This catches simplifications done by
+	# workers without requiring them to update the state file explicitly.
+	local state_file="${aidevops_path}/.agents/configs/simplification-state.json"
+	local state_updated=false
+	local closed_issues
+	closed_issues=$(gh issue list --repo "$aidevops_slug" \
+		--label "simplification-debt" --state closed \
+		--limit 50 --json number,title,closedAt \
+		--jq '[.[] | select(.closedAt > (now - 604800 | strftime("%Y-%m-%dT%H:%M:%SZ")))] | .[].number' 2>/dev/null) || closed_issues=""
+
+	if [[ -n "$closed_issues" ]]; then
+		while IFS= read -r issue_num; do
+			[[ -z "$issue_num" ]] && continue
+			# Find linked merged PR
+			local pr_num
+			pr_num=$(gh api "repos/${aidevops_slug}/issues/${issue_num}/timeline" \
+				--jq '[.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null and .source.issue.pull_request.merged_at != null)] | .[0].source.issue.number // empty' 2>/dev/null) || pr_num=""
+			[[ -z "$pr_num" ]] && continue
+
+			# Get changed files from the PR
+			local changed_files
+			changed_files=$(gh pr view "$pr_num" --repo "$aidevops_slug" --json files --jq '.files[].path' 2>/dev/null) || changed_files=""
+			[[ -z "$changed_files" ]] && continue
+
+			# Record each changed file that still exists
+			while IFS= read -r changed_file; do
+				[[ -z "$changed_file" ]] && continue
+				# Only record files that match the simplification target patterns
+				case "$changed_file" in
+				*.md | *.sh) ;;
+				*) continue ;;
+				esac
+				# Check if already in state with current hash
+				local check_result
+				check_result=$(_simplification_state_check "$aidevops_path" "$changed_file" "$state_file")
+				if [[ "$check_result" != "unchanged" ]]; then
+					_simplification_state_record "$aidevops_path" "$changed_file" "$state_file" "$pr_num" && state_updated=true
+				fi
+			done <<<"$changed_files"
+		done <<<"$closed_issues"
+	fi
+
+	# Push state file if updated (planning data — direct to main)
+	if [[ "$state_updated" == true ]]; then
+		_simplification_state_push "$aidevops_path"
 	fi
 
 	echo "$now_epoch" >"$COMPLEXITY_SCAN_LAST_RUN"
