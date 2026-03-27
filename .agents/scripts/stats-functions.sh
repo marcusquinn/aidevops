@@ -1355,20 +1355,31 @@ update_health_issues() {
 # actionable GitHub issues for findings that warrant fixes.
 #######################################
 run_daily_quality_sweep() {
-	# Time-of-day gate — only run during off-peak hours (18:00-05:59 local).
-	# Anthropic doubles token allowance during off-peak (6 PM-12 AM UK time),
-	# and model demand is lower. Quality sweep findings trigger LLM worker
-	# dispatch via the pulse, so landing findings in this window means the
-	# resulting workers also run at 2x rates. The window includes overnight
-	# hours (00:00-05:59) which are the quietest period for both API load
-	# and user activity. Override: QUALITY_SWEEP_OFFPEAK=0
-	local current_hour
+	# Time-of-day gate — only run during Anthropic's 2x usage boost hours.
+	# Claude doubles usage allowance outside peak: for UK/GMT that's 18:00-11:59
+	# (standard 1x is only 12:00-17:59). Weekends are 2x all day, all timezones.
+	# Reference: https://claude.ai — "Claude 2x usage boost" schedule.
+	# Peak hours by timezone (standard 1x only):
+	#   Pacific PT:  05:00-10:59    UK GMT:     12:00-17:59
+	#   Eastern ET:  08:00-13:59    CET:        13:00-18:59
+	# Quality sweep findings trigger LLM worker dispatch via the pulse, so
+	# landing findings in the 2x window means workers also run at boosted rates.
+	# Override: QUALITY_SWEEP_OFFPEAK=0
+	local current_hour current_dow
 	current_hour=$(date +%H)
-	# Off-peak = 18:00-05:59 (hours 18,19,20,21,22,23,0,1,2,3,4,5)
-	# Peak = 06:00-17:59 (hours 6-17). Defer during peak only.
-	if [[ "${QUALITY_SWEEP_OFFPEAK:-1}" == "1" ]] && ((10#$current_hour >= 6 && 10#$current_hour < 18)); then
-		echo "[stats] Quality sweep deferred: hour ${current_hour} is outside off-peak window (18:00-05:59)" >>"$LOGFILE"
-		return 0
+	current_dow=$(date +%u) # 1=Monday, 7=Sunday
+	# Weekends (Sat=6, Sun=7) are 2x all day — always run
+	if [[ "${QUALITY_SWEEP_OFFPEAK:-1}" == "1" ]] && ((current_dow < 6)); then
+		# Weekday: defer during peak hours only (12:00-17:59 UK/GMT).
+		# Users in other timezones can override via QUALITY_SWEEP_PEAK_START
+		# and QUALITY_SWEEP_PEAK_END environment variables.
+		local peak_start peak_end
+		peak_start="${QUALITY_SWEEP_PEAK_START:-12}"
+		peak_end="${QUALITY_SWEEP_PEAK_END:-18}"
+		if ((10#$current_hour >= 10#$peak_start && 10#$current_hour < 10#$peak_end)); then
+			echo "[stats] Quality sweep deferred: hour ${current_hour} is peak (${peak_start}:00-$((peak_end - 1)):59), 2x boost inactive" >>"$LOGFILE"
+			return 0
+		fi
 	fi
 
 	# Timestamp guard — run at most once per QUALITY_SWEEP_INTERVAL
