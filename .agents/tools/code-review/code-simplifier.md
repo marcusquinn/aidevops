@@ -431,9 +431,9 @@ Code simplification analysis fits into the quality workflow via two input paths:
 
 ### 1. Automated daily scan (GH#5628)
 
-`pulse-wrapper.sh` runs a daily complexity scan that uses the same awk-based function complexity check as CI. It creates `simplification-debt` issues for files exceeding the per-file violation threshold (default: 1+ function >100 lines). Issues are deduplicated against existing open issues by repo-relative file path.
+`pulse-wrapper.sh` runs a daily complexity scan that uses the same awk-based function complexity check as CI. It creates `simplification-debt` issues for files exceeding the per-file violation threshold (default: 1+ functions >100 lines). Issues are deduplicated against existing open issues by repo-relative file path.
 
-**No file size gate.** Agent docs of any size are eligible for simplification analysis. The previous 500-line threshold was removed (t1679) — smaller files can be equally verbose. The classification (instruction doc vs reference corpus) determines the action, not the line count.
+**No file size gate.** Agent docs of any size are eligible for simplification analysis. The previous 500-line threshold was removed (t1679) — smaller files can be equally verbose. A qualification gate (`_complexity_scan_should_open_md_issue`) filters out stubs and very short files (default: <50 lines) so only actionable candidates reach issue creation. The classification (instruction doc vs reference corpus) determines the action, not the line count.
 
 ```text
 pulse-wrapper.sh (daily) --> awk complexity scan
@@ -445,7 +445,7 @@ pulse-wrapper.sh (daily) --> awk complexity scan
                               Create issues (simplification-debt + needs-maintainer-review)
 ```
 
-Configuration: `COMPLEXITY_SCAN_INTERVAL` (default 1 day), `COMPLEXITY_FILE_VIOLATION_THRESHOLD` (default 1).
+Configuration: `COMPLEXITY_SCAN_INTERVAL` (default 1 day), `COMPLEXITY_FILE_VIOLATION_THRESHOLD` (default 1), `COMPLEXITY_MD_MIN_LINES` (default 50).
 
 ### 2. Manual analysis
 

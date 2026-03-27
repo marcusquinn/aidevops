@@ -228,12 +228,14 @@ COMPLEXITY_SCAN_LAST_RUN="${HOME}/.aidevops/logs/complexity-scan-last-run"
 COMPLEXITY_SCAN_INTERVAL="${COMPLEXITY_SCAN_INTERVAL:-86400}"                   # 1 day in seconds (was 7 days)
 COMPLEXITY_FUNC_LINE_THRESHOLD="${COMPLEXITY_FUNC_LINE_THRESHOLD:-100}"         # Functions longer than this are violations
 COMPLEXITY_FILE_VIOLATION_THRESHOLD="${COMPLEXITY_FILE_VIOLATION_THRESHOLD:-1}" # Files with >= this many violations get an issue (was 5)
+COMPLEXITY_MD_MIN_LINES="${COMPLEXITY_MD_MIN_LINES:-50}"                        # Agent docs shorter than this are not actionable for simplification
 WORKER_WATCHDOG_HELPER="${SCRIPT_DIR}/worker-watchdog.sh"
 
 # Validate complexity scan configuration (defined above, validated here)
 COMPLEXITY_SCAN_INTERVAL=$(_validate_int COMPLEXITY_SCAN_INTERVAL "$COMPLEXITY_SCAN_INTERVAL" 86400 3600)
 COMPLEXITY_FUNC_LINE_THRESHOLD=$(_validate_int COMPLEXITY_FUNC_LINE_THRESHOLD "$COMPLEXITY_FUNC_LINE_THRESHOLD" 100 50)
 COMPLEXITY_FILE_VIOLATION_THRESHOLD=$(_validate_int COMPLEXITY_FILE_VIOLATION_THRESHOLD "$COMPLEXITY_FILE_VIOLATION_THRESHOLD" 1 1)
+COMPLEXITY_MD_MIN_LINES=$(_validate_int COMPLEXITY_MD_MIN_LINES "$COMPLEXITY_MD_MIN_LINES" 50 10)
 
 if [[ ! -x "$HEADLESS_RUNTIME_HELPER" ]]; then
 	printf '[pulse-wrapper] ERROR: headless runtime helper is missing or not executable: %s (SCRIPT_DIR=%s)\n' "$HEADLESS_RUNTIME_HELPER" "$SCRIPT_DIR" >&2
@@ -2720,9 +2722,45 @@ _complexity_scan_collect_violations() {
 	return 0
 }
 
-# Collect all agent docs (.md files in .agents/) for simplification analysis.
-# No file size gate — classification (instruction doc vs reference corpus)
+# Determine whether an agent doc qualifies for a simplification issue.
+# Not every .agents/*.md file is actionable — very short files, empty stubs,
+# and YAML-only frontmatter files are not candidates. This gate prevents
+# flooding the issue tracker with non-actionable entries (CodeRabbit GH#6879).
+# Arguments: $1 - full_path, $2 - line_count
+# Returns: 0 if the file should get an issue, 1 if it should be skipped
+_complexity_scan_should_open_md_issue() {
+	local full_path="$1"
+	local line_count="$2"
+
+	# Skip files below the minimum actionable size
+	if [[ "$line_count" -lt "$COMPLEXITY_MD_MIN_LINES" ]]; then
+		return 1
+	fi
+
+	# Skip files that are mostly YAML frontmatter (e.g., stub agent definitions).
+	# If >60% of lines are inside the frontmatter block, there's no prose to simplify.
+	local frontmatter_end=0
+	if head -1 "$full_path" 2>/dev/null | grep -q '^---$'; then
+		frontmatter_end=$(awk 'NR==1 && /^---$/ { in_fm=1; next } in_fm && /^---$/ { print NR; exit }' "$full_path" 2>/dev/null)
+		frontmatter_end=${frontmatter_end:-0}
+	fi
+	if [[ "$frontmatter_end" -gt 0 ]]; then
+		local content_lines=$((line_count - frontmatter_end))
+		# If content after frontmatter is less than 40% of total, skip
+		local threshold=$(((line_count * 40) / 100))
+		if [[ "$content_lines" -lt "$threshold" ]]; then
+			return 1
+		fi
+	fi
+
+	return 0
+}
+
+# Collect agent docs (.md files in .agents/) for simplification analysis.
+# No hard file size gate — classification (instruction doc vs reference corpus)
 # determines the action, not line count (t1679, code-simplifier.md).
+# Files must pass _complexity_scan_should_open_md_issue to be included —
+# this filters out stubs, short files, and frontmatter-only definitions.
 # Protected files (build.txt, AGENTS.md, pulse.md) are excluded — these are
 # core infrastructure that must be simplified manually with a maintainer present.
 # Results are sorted longest-first so biggest wins come early.
@@ -2741,11 +2779,6 @@ _complexity_scan_collect_md_violations() {
 		return 1
 	fi
 
-	# Minimum line count to qualify for simplification analysis.
-	# Files below this threshold are unlikely to benefit from restructuring
-	# and would flood issues for trivially small stubs or index files.
-	local md_min_lines=50
-
 	local scan_results=""
 	local file_count=0
 	local skipped_count=0
@@ -2755,18 +2788,18 @@ _complexity_scan_collect_md_violations() {
 		[[ -f "$full_path" ]] || continue
 		local lc
 		lc=$(wc -l <"$full_path" 2>/dev/null | tr -d ' ')
-		if [[ "$lc" -lt "$md_min_lines" ]]; then
+		if _complexity_scan_should_open_md_issue "$full_path" "$lc"; then
+			scan_results="${scan_results}${file}|${lc}"$'\n'
+			file_count=$((file_count + 1))
+		else
 			skipped_count=$((skipped_count + 1))
-			continue
 		fi
-		scan_results="${scan_results}${file}|${lc}"$'\n'
-		file_count=$((file_count + 1))
 	done <<<"$md_files"
 
 	# Sort longest-first (descending by line count after the pipe)
 	scan_results=$(printf '%s' "$scan_results" | sort -t'|' -k2 -rn)
 
-	echo "[pulse-wrapper] Complexity scan (.md): ${file_count} agent doc files collected (${skipped_count} skipped below ${md_min_lines}-line threshold)" >>"$LOGFILE"
+	echo "[pulse-wrapper] Complexity scan (.md): ${file_count} agent docs qualified, ${skipped_count} skipped (below ${COMPLEXITY_MD_MIN_LINES}-line threshold or stub)" >>"$LOGFILE"
 	printf '%s' "$scan_results"
 	return 0
 }
@@ -2826,7 +2859,7 @@ _complexity_scan_has_existing_issue() {
 	return 1
 }
 
-# Build the GitHub issue body for an oversized agent doc.
+# Build the GitHub issue body for an agent doc flagged for simplification review.
 # Arguments:
 #   $1 - file_path (repo-relative)
 #   $2 - line_count
@@ -2876,7 +2909,7 @@ Tighten and restructure this agent doc. Follow \`tools/build-agent/build-agent.m
 
 ### Confidence: medium
 
-Automated scan flagged this file via the \`simplification-debt\` topic label. The best simplification strategy requires human judgment — some large files are appropriately large. Reference corpora (SKILL.md, domain knowledge bases) need restructuring into chapters, not content reduction.
+Automated scan flagged this file for maintainer review. The best simplification strategy requires human judgment — some files are appropriately structured already. Reference corpora (SKILL.md, domain knowledge bases) need restructuring into chapters, not content reduction.
 
 ---
 **To approve or decline**, comment on this issue:
@@ -2886,7 +2919,7 @@ ISSUE_BODY_EOF
 	return 0
 }
 
-# Create GitHub issues for oversized agent docs.
+# Create GitHub issues for agent docs flagged for simplification review.
 # Uses tier:thinking label (opus) because doc simplification requires deep
 # reasoning to distinguish noise from institutional knowledge.
 # Arguments: $1 - scan_results (pipe-delimited: file_path|line_count), $2 - repos_json, $3 - aidevops_slug
