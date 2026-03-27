@@ -2436,20 +2436,27 @@ _create_simplification_issues() {
 		maintainer="${repo_slug%%/*}"
 	fi
 
-	# Fetch existing open simplification-debt issues to deduplicate
-	local existing_issues
-	existing_issues=$(gh issue list --repo "$repo_slug" \
-		--label "simplification-debt" --state open \
-		--json title --jq '.[].title' 2>/dev/null) || existing_issues=""
+	# Total-open cap: stop creating when backlog is already large
+	local total_open
+	total_open=$(gh api graphql -f query="query { repository(owner:\"${repo_slug%%/*}\", name:\"${repo_slug##*/}\") { issues(labels:[\"simplification-debt\"], states:OPEN) { totalCount } } }" \
+		--jq '.data.repository.issues.totalCount' 2>/dev/null) || total_open="0"
+	if [[ "${total_open:-0}" -ge 100 ]]; then
+		echo "[stats] Simplification issues: skipping — ${total_open} open (cap: 100)" >>"$LOGFILE"
+		return 0
+	fi
 
 	while IFS=$'\t' read -r smell_count file_path; do
 		[[ -z "$file_path" ]] && continue
 		[[ "$issues_created" -ge "$max_issues_per_sweep" ]] && break
 
-		# Deduplicate: check if an issue already exists for this file
-		# Use parameter expansion instead of $(basename) — safe in both bash and zsh
-		local file_basename="${file_path##*/}"
-		if echo "$existing_issues" | grep -qF "$file_basename"; then
+		# Deduplicate via server-side title search — accurate across all issues.
+		# The file path is in the title, so searching by path is reliable.
+		local existing_count
+		existing_count=$(gh issue list --repo "$repo_slug" \
+			--label "simplification-debt" --state open \
+			--search "in:title \"$file_path\"" \
+			--json number --jq 'length' 2>/dev/null) || existing_count="0"
+		if [[ "${existing_count:-0}" -gt 0 ]]; then
 			continue
 		fi
 
@@ -2462,6 +2469,7 @@ _create_simplification_issues() {
 		' 2>/dev/null) || rule_breakdown="(could not parse)"
 
 		# Create the issue with code-simplifier label convention
+		local file_basename="${file_path##*/}"
 		local issue_title="simplification: reduce ${smell_count} Qlty smells in ${file_basename}"
 		local issue_body
 		issue_body=$(_build_simplification_issue_body "$file_path" "$smell_count" "$rule_breakdown")
