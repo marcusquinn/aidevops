@@ -1761,10 +1761,9 @@ _update_inject_markers_if_needed() {
 	local profile_repo="$1"
 	local readme_path="$2"
 
-	if grep -q '<!-- STATS-START -->' "$readme_path" && grep -q '<!-- STATS-END -->' "$readme_path"; then
-		return 0
-	fi
-
+	# Even if markers exist, check if the content outside them is the default
+	# GitHub template. This handles the case where v3.1.87 injected markers into
+	# the default template but didn't replace the template content itself.
 	if _is_default_github_template "$readme_path"; then
 		echo "Default GitHub template detected — replacing with rich profile README..."
 		local gh_user
@@ -1775,10 +1774,17 @@ _update_inject_markers_if_needed() {
 			echo "Could not resolve username — injecting markers only..."
 			_inject_markers_into_readme "$readme_path"
 		fi
-	else
-		echo "Markers missing from README — injecting them..."
-		_inject_markers_into_readme "$readme_path"
+		git -C "$profile_repo" add README.md
+		git -C "$profile_repo" commit -m "feat: replace default GitHub template with rich profile README" --no-verify 2>/dev/null || true
+		return 0
 	fi
+
+	if grep -q '<!-- STATS-START -->' "$readme_path" && grep -q '<!-- STATS-END -->' "$readme_path"; then
+		return 0
+	fi
+
+	echo "Markers missing from README — injecting them..."
+	_inject_markers_into_readme "$readme_path"
 	git -C "$profile_repo" add README.md
 	git -C "$profile_repo" commit -m "feat: initialize profile README with aidevops stat markers" --no-verify 2>/dev/null || true
 	return 0
