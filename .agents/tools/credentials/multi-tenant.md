@@ -18,206 +18,90 @@ tools:
 
 ## Quick Reference
 
-- **Script**: `.agents/scripts/credential-helper.sh`
+- **Script**: `credential-helper.sh` (`bash ~/.aidevops/agents/scripts/credential-helper.sh <cmd>` if not on PATH)
 - **Storage**: `~/.config/aidevops/tenants/{tenant}/credentials.sh`
-- **Active tenant**: `~/.config/aidevops/active-tenant`
-- **Project override**: `.aidevops-tenant` (gitignored)
-- **Priority**: Project tenant > Global active > "default"
-- **Backward compatible**: Existing `credentials.sh` migrates to `default` tenant
+- **Priority**: Project (`.aidevops-tenant`) > Global (`active-tenant`) > `default`
+- **Backward compatible**: Existing `credentials.sh` migrates to `default` on `init`
 
-**Quick commands**:
-- `credential-helper.sh init` - Initialize (migrates existing keys)
-- `credential-helper.sh create <name>` - New tenant
-- `credential-helper.sh switch <name>` - Change active tenant
-- `credential-helper.sh use <name>` - Per-project tenant
-- `credential-helper.sh status` - Show current state
+**Commands**: `init` | `create <n>` | `switch <n>` | `use <n>` | `status` | `list` | `keys` | `set/get/remove <KEY>` | `copy <src> <dst>` | `delete <n>` | `export`
+
 <!-- AI-CONTEXT-END -->
 
-## Overview
-
-Multi-tenant credential storage allows managing separate credential sets for:
-
-- **Multiple clients** (client-acme, client-globex)
-- **Multiple environments** (production, staging, development)
-- **Multiple accounts** (personal, work, freelance)
-- **Multiple services** (different GitHub orgs, Cloudflare accounts)
-
-**Note**: For encrypted secret storage, see `tools/credentials/gopass.md`. gopass can be used alongside multi-tenant storage -- use `aidevops secret` for encrypted secrets and `credential-helper.sh` for tenant switching.
+Manages separate credential sets for multiple clients, environments, or accounts. For encrypted storage, see `tools/credentials/gopass.md` — use `aidevops secret` for encrypted secrets alongside `credential-helper.sh` for tenant switching.
 
 ## Architecture
 
 ```text
 ~/.config/aidevops/
-├── credentials.sh              # Loader (sources active tenant)
+├── credentials.sh          # Loader (sources active tenant)
 ├── active-tenant           # Global active tenant name
 └── tenants/
-    ├── default/
-    │   └── credentials.sh      # Original credentials (migrated)
-    ├── client-acme/
-    │   └── credentials.sh      # Acme Corp credentials
-    └── client-globex/
-        └── credentials.sh      # Globex Corp credentials
+    ├── default/credentials.sh
+    └── client-acme/credentials.sh
 ```
-
-### Resolution Priority
-
-1. **Project-level** (`.aidevops-tenant` in project root)
-2. **Global active** (`~/.config/aidevops/active-tenant`)
-3. **Default** (fallback to `default` tenant)
 
 ## Setup
 
-> **Note:** The examples below use `credential-helper.sh` for brevity. If the script
-> is not on your `PATH`, invoke it explicitly:
-> `bash ~/.aidevops/agents/scripts/credential-helper.sh <command>`
-> or via the wrapper: `setup-local-api-keys.sh tenant <command>`
-
-### Initialize
-
 ```bash
-# First time: migrates existing credentials.sh to 'default' tenant
-credential-helper.sh init
-```
-
-### Create Tenants
-
-```bash
-# Create tenants for different contexts
-credential-helper.sh create personal
-credential-helper.sh create work
-credential-helper.sh create client-acme
-```
-
-### Add Credentials
-
-```bash
-# Add to specific tenant
-credential-helper.sh set GITHUB_TOKEN ghp_personal_xxx --tenant personal
-credential-helper.sh set GITHUB_TOKEN ghp_work_xxx --tenant work
-credential-helper.sh set GITHUB_TOKEN ghp_acme_xxx --tenant client-acme
-
-# Add to active tenant (no --tenant flag)
-credential-helper.sh set OPENAI_API_KEY sk-xxx
-```
-
-### Switch Tenants
-
-```bash
-# Global switch (affects all terminals after reload)
-credential-helper.sh switch client-acme
-
-# Per-project (overrides global, stays in this directory)
-cd ~/projects/acme-webapp
-credential-helper.sh use client-acme
+credential-helper.sh init                                          # migrate legacy credentials.sh → default
+credential-helper.sh create client-acme                           # new tenant
+credential-helper.sh set GITHUB_TOKEN ghp_xxx --tenant client-acme
+credential-helper.sh switch client-acme                           # global switch
+cd ~/projects/acme && credential-helper.sh use client-acme        # per-project
 ```
 
 ## Usage Patterns
 
-### Agency/Freelance
-
+**Agency/Freelance**:
 ```bash
-# Create per-client tenants
 credential-helper.sh create client-acme
-credential-helper.sh create client-globex
-
-# Each client has their own API keys
 credential-helper.sh set VERCEL_TOKEN xxx --tenant client-acme
-credential-helper.sh set CLOUDFLARE_TOKEN xxx --tenant client-acme
-credential-helper.sh set GITHUB_TOKEN xxx --tenant client-acme
-
-# Set per-project
 cd ~/projects/acme-webapp && credential-helper.sh use client-acme
-cd ~/projects/globex-api && credential-helper.sh use client-globex
 ```
 
-### Environment Separation
-
+**Environment separation**:
 ```bash
-# Create environment tenants
-credential-helper.sh create production
-credential-helper.sh create staging
-
-# Different database credentials per environment
 credential-helper.sh set DATABASE_URL "postgres://prod..." --tenant production
 credential-helper.sh set DATABASE_URL "postgres://staging..." --tenant staging
 ```
 
-### Shared Keys
-
+**Copy keys between tenants**:
 ```bash
-# Copy common keys (e.g., AI API keys) to new tenants
 credential-helper.sh copy default client-acme --key OPENAI_API_KEY
-credential-helper.sh copy default client-acme --key ANTHROPIC_API_KEY
-
-# Copy all keys from one tenant to another
-credential-helper.sh copy default client-acme
+credential-helper.sh copy default client-acme   # copy all
 ```
 
 ## Commands Reference
 
 | Command | Description |
 |---------|-------------|
-| `init` | Initialize multi-tenant storage, migrate legacy |
-| `status` | Show active tenant, list all tenants |
-| `create <name>` | Create a new tenant |
+| `init` | Initialize, migrate legacy |
+| `status` | Show active tenant, list all |
+| `create <name>` | New tenant |
 | `switch <name>` | Set global active tenant |
 | `use [<name>\|--clear]` | Set/clear project-level tenant |
-| `list` | List all tenants with key counts |
-| `keys [--tenant <n>]` | Show key names in a tenant |
-| `set <KEY> <val> [--tenant <n>]` | Set a credential |
-| `get <KEY> [--tenant <n>]` | Get a credential value |
-| `remove <KEY> [--tenant <n>]` | Remove a credential |
+| `list` | List tenants with key counts |
+| `keys [--tenant <n>]` | Show key names |
+| `set <KEY> <val> [--tenant <n>]` | Set credential |
+| `get <KEY> [--tenant <n>]` | Get credential value |
+| `remove <KEY> [--tenant <n>]` | Remove credential |
 | `copy <src> <dest> [--key K]` | Copy keys between tenants |
-| `delete <name>` | Delete a tenant (not default) |
+| `delete <name>` | Delete tenant (not default) |
 | `export [--tenant <n>]` | Output exports for eval |
 
 ## Integration
 
-### Shell Integration
+**Shell**: After switching, reload with `source ~/.zshrc` or `exec $SHELL`.
 
-The `credentials.sh` loader is sourced by shell startup (`.zshrc`/`.bashrc`). After switching tenants, either:
+**Script**: `source <(bash ~/.aidevops/agents/scripts/credential-helper.sh export --tenant client-acme)`
 
-```bash
-source ~/.zshrc          # Reload current shell
-# or
-exec $SHELL              # Restart shell
-```
+**CI/CD**: Use GitHub Secrets — multi-tenant is for local development only.
 
-### Script Integration
-
-```bash
-# Load specific tenant in a script (preferred: source)
-source <(bash ~/.aidevops/agents/scripts/credential-helper.sh export --tenant client-acme)
-
-# Check active tenant
-echo "$AIDEVOPS_ACTIVE_TENANT"
-```
-
-### CI/CD Integration
-
-For CI/CD, use GitHub Secrets or environment-specific variables. Multi-tenant is designed for local development, not CI.
-
-### MCP Tool Integration
-
-The `api-keys` MCP tool supports tenant operations:
-
-```text
-api-keys action:list                    # Lists keys from active tenant
-api-keys action:set service:KEY_NAME    # Sets in active tenant
-```
+**MCP** (`api-keys` tool): `action:list` reads active tenant; `action:set service:KEY_NAME` sets in active tenant.
 
 ## Security
 
-- All tenant directories: `700` permissions
-- All `credentials.sh` files: `600` permissions
-- `.aidevops-tenant` is automatically added to `.gitignore`
-- Tenant names validated (alphanumeric, hyphens, underscores only)
-- Cannot delete the `default` tenant
-- Key values never displayed by `list`/`keys`/`status` commands
-
-## Backward Compatibility
-
-- Existing `credentials.sh` is automatically migrated to `default` tenant on first `init`
-- The legacy `credentials.sh` file becomes a loader that sources the active tenant
-- `setup-local-api-keys.sh` continues to work (operates on active tenant)
-- `list-keys-helper.sh` continues to work (reads from sourced environment)
+- Tenant dirs: `700`; credential files: `600`
+- `.aidevops-tenant` auto-added to `.gitignore`
+- Tenant names: alphanumeric, hyphens, underscores only; `default` cannot be deleted
+- Key values never shown by `list`/`keys`/`status`
