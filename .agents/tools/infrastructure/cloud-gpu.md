@@ -18,12 +18,7 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Deploy GPU-intensive AI models (voice, vision, LLMs) to cloud providers
-- **Providers**: NVIDIA Cloud, Vast.ai, RunPod, Lambda
-- **Pattern**: SSH into instance, Docker deploy, expose API, connect from local machine
-- **Cost range**: $0.20/hr (consumer GPUs) to $8.64/hr (B200 SXM)
-
-**When to Use**: Read this when deploying any AI model that requires GPU acceleration and local hardware is insufficient. Referenced by `tools/voice/speech-to-speech.md` and `tools/vision/` subagents.
+Deploy GPU-intensive AI models (voice, vision, LLMs) when local hardware is insufficient. Pattern: SSH → Docker → expose API → connect. Cost: $0.20–$8.64/hr. Referenced by `tools/voice/speech-to-speech.md` and `tools/vision/` subagents.
 
 <!-- AI-CONTEXT-END -->
 
@@ -45,7 +40,7 @@ tools:
 | 13B LLM / diffusion | Llama 2 13B, SD XL, FLUX | 16-24GB | RTX 4090 / L40S | $0.70-1.22 |
 | Vision / video gen | MiniCPM-o, Wan 2.1, CogVideoX | 24-80GB | L40S / A100 | $0.85-2.72 |
 | 70B LLM | Llama 3.3 70B, Qwen 2.5 72B | 40-80GB | A100 / H100 | $1.79-4.18 |
-| Large models (96GB) | Large models without datacenter GPUs | 96GB | RTX Pro 6000 | $1.50-2.00 |
+| Large models (96GB) | RTX Pro 6000 workloads | 96GB | RTX Pro 6000 | $1.50-2.00 |
 | 400B+ LLM (quantized) | Llama 3.1 405B 4-bit | 140-180GB | H200 / B200 | $3.35-8.64 |
 
 GPU hardware reference: RTX 4090=24GB, L4=24GB, L40S=48GB, A100=80GB, H100=80GB, H200=141GB, B200=180GB.
@@ -123,12 +118,9 @@ volumes:
 ### 4. Model Caching
 
 ```bash
-export HF_HOME=/models/huggingface
-export TRANSFORMERS_CACHE=/models/huggingface/hub
-
-# Pre-download to persistent volume before serving
+export HF_HOME=/models/huggingface TRANSFORMERS_CACHE=/models/huggingface/hub
+# Pre-download to persistent volume before serving (RunPod: network volumes | Vast.ai: persistent disk | Lambda: persistent storage)
 python -c "from transformers import AutoModelForCausalLM, AutoTokenizer; m='microsoft/Phi-3-mini-4k-instruct'; AutoTokenizer.from_pretrained(m, cache_dir='$TRANSFORMERS_CACHE'); AutoModelForCausalLM.from_pretrained(m, cache_dir='$TRANSFORMERS_CACHE')"
-# RunPod: network volumes | Vast.ai: persistent disk | Lambda: persistent storage
 ```
 
 ### 5. Expose API
@@ -168,7 +160,7 @@ speech-to-speech-helper.sh start --server && speech-to-speech-helper.sh client -
 
 **Quantization**: 4-bit (GPTQ/AWQ) reduces VRAM by ~75%. Example: Llama 3.1 70B FP16 needs ~140GB; 4-bit fits on 1x A100 or L40S (~35GB). Search HuggingFace for `TheBloke/<model>-GPTQ` or `<model>-AWQ`.
 
-**Auto-shutdown** (add to crontab):
+**Auto-shutdown** (crontab):
 
 ```bash
 */5 * * * * nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader | \
