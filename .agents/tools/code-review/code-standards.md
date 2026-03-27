@@ -35,12 +35,15 @@ tools:
 **Validation Commands**:
 
 ```bash
-# Run local linting
+# Run all local quality checks
 ~/.aidevops/agents/scripts/linters-local.sh
 
 # Check specific rules
-grep -L "return [01]" .agents/scripts/*.sh  # S7682
+grep -L "return [01]" .agents/scripts/*.sh          # S7682
 grep -n '\$[1-9]' .agents/scripts/*.sh | grep -v 'local.*=.*\$[1-9]'  # S7679
+find .agents/scripts/ -name "*.sh" -exec shellcheck {} \;  # ShellCheck
+npx markdownlint-cli2 "**/*.md" --ignore node_modules      # Markdown
+~/.aidevops/agents/scripts/secretlint-helper.sh scan       # Secrets
 ```
 
 **Workflow Position**: Reference during development, validated by `/linters-local`
@@ -49,12 +52,12 @@ grep -n '\$[1-9]' .agents/scripts/*.sh | grep -v 'local.*=.*\$[1-9]'  # S7679
 
 ## Purpose
 
-This document defines the **authoritative code quality standards** for the aidevops framework. Use this as a reference during development to ensure compliance.
+Authoritative code quality standards for the aidevops framework.
 
 **Related commands**:
-- `/linters-local` - Validates these standards locally
-- `/code-audit-remote` - Validates via external services
-- `/pr` - Orchestrates all checks
+- `/linters-local` — validates these standards locally
+- `/code-audit-remote` — validates via external services
+- `/pr` — orchestrates all checks
 
 ## Critical Standards (Zero Tolerance)
 
@@ -63,59 +66,42 @@ This document defines the **authoritative code quality standards** for the aidev
 Every function MUST have an explicit `return 0` or `return 1`.
 
 ```bash
-# CORRECT - Always explicit return
+# Correct
 function_name() {
     local param="$1"
-    # Function logic
-    return 0  # MANDATORY
+    # logic
+    return 0
 }
 
-# INCORRECT - Missing return statement
+# Violation — missing return
 function_name() {
     local param="$1"
-    # Function logic
-}  # This causes S7682 violation
-```
-
-**Validation**:
-
-```bash
-grep -L "return [01]" .agents/scripts/*.sh
+    # logic
+}
 ```
 
 ### S7679 - Positional Parameters
 
-NEVER use positional parameters directly. Always assign to local variables first.
+Never use positional parameters directly. Always assign to local variables first.
 
 ```bash
-# CORRECT - Local variable assignment
+# Correct
 main() {
     local command="${1:-help}"
     local account_name="$2"
     local target="$3"
-
     case "$command" in
-        "list")
-            list_items "$account_name"  # Use local variable
-            ;;
+        "list") list_items "$account_name" ;;
     esac
     return 0
 }
 
-# INCORRECT - Direct positional parameter usage
+# Violation — direct $1/$2 usage
 main() {
-    case "$1" in  # This causes S7679 violation
-        "list")
-            list_items "$2"  # This causes S7679 violation
-            ;;
+    case "$1" in
+        "list") list_items "$2" ;;
     esac
 }
-```
-
-**Validation**:
-
-```bash
-grep -n '\$[1-9]' .agents/scripts/*.sh | grep -v 'local.*=.*\$[1-9]'
 ```
 
 ### S1192 - String Literals
@@ -123,18 +109,14 @@ grep -n '\$[1-9]' .agents/scripts/*.sh | grep -v 'local.*=.*\$[1-9]'
 Define constants for strings used 3 or more times.
 
 ```bash
-# CORRECT - Constants at file top
+# Correct — constants at file top
 readonly ERROR_ACCOUNT_REQUIRED="Account name is required"
 readonly ERROR_CONFIG_NOT_FOUND="Configuration file not found"
-readonly SUCCESS_OPERATION_COMPLETE="Operation completed successfully"
 
-# Use constants instead of literals
 print_error "$ERROR_ACCOUNT_REQUIRED"
-print_error "$ERROR_CONFIG_NOT_FOUND"
 
-# INCORRECT - Repeated string literals
-print_error "Account name is required"  # Repeated 3+ times
-print_error "Account name is required"  # Causes S1192 violation
+# Violation — repeated string literals
+print_error "Account name is required"  # repeated 3+ times
 ```
 
 **Validation**:
@@ -151,17 +133,17 @@ done
 Only declare variables that are actually used.
 
 ```bash
-# CORRECT - Only used variables
+# Correct
 function_name() {
     local used_param="$1"
     echo "$used_param"
     return 0
 }
 
-# INCORRECT - Unused variable declaration
+# Violation — unused_param declared but never referenced
 function_name() {
     local used_param="$1"
-    local unused_param="$2"  # This causes S1481 violation
+    local unused_param="$2"
     echo "$used_param"
     return 0
 }
@@ -172,27 +154,21 @@ function_name() {
 All shell scripts must pass ShellCheck with zero violations.
 
 ```bash
-# Validate all scripts
 find .agents/scripts/ -name "*.sh" -exec shellcheck {} \;
-
-# Validate single script
-shellcheck script.sh
+shellcheck script.sh  # single file
 ```
 
 ## Security Hotspots (Acceptable Patterns)
 
-SonarCloud flags these patterns as security hotspots. They are acceptable when properly documented:
+SonarCloud flags these patterns as security hotspots. They are acceptable when properly documented.
 
 ### HTTP String Detection (S5332)
 
 When checking for insecure URLs, not using them:
 
 ```bash
-# CORRECT - Detection with comment
+# Correct — comment documents intent
 # SONAR: Detecting insecure URLs for security audit, not using them
-non_https=$(echo "$data" | jq '[.items[] | select(.url | startswith("http://"))] | length')
-
-# INCORRECT - No documentation
 non_https=$(echo "$data" | jq '[.items[] | select(.url | startswith("http://"))] | length')
 ```
 
@@ -201,7 +177,6 @@ non_https=$(echo "$data" | jq '[.items[] | select(.url | startswith("http://"))]
 Local development environments often lack SSL:
 
 ```bash
-# CORRECT - Intentional localhost HTTP
 if [[ "$ssl" == "true" ]]; then
     print_info "Access your app at: https://$domain"
 else
@@ -215,13 +190,13 @@ fi
 For official installers from verified sources:
 
 ```bash
-# CORRECT - Documented official installer
+# Correct — documented official installer
 # SONAR: Official Bun installer from verified HTTPS source
 curl -fsSL https://bun.sh/install | bash
 
-# BETTER - Download and inspect first (for new/unknown sources)
+# Better for new/unknown sources — download and inspect first
 curl -fsSL https://example.com/install.sh -o /tmp/install.sh
-less /tmp/install.sh  # Review script
+less /tmp/install.sh
 bash /tmp/install.sh
 ```
 
@@ -267,64 +242,33 @@ All markdown files must pass markdownlint with zero violations.
 
 ### MD022 - Headings Surrounded by Blank Lines
 
-Headings MUST have blank lines before AND after them.
-
 ```markdown
-<!-- CORRECT - Blank lines around headings -->
-Some content here.
+<!-- Correct -->
+Some content.
 
 ### Heading Title
 
 Content after heading.
 
-<!-- INCORRECT - Missing blank line after heading -->
-Some content here.
-
+<!-- Violation — missing blank line after heading -->
 ### Heading Title
-Content after heading.  <!-- This causes MD022 violation -->
+Content after heading.
 ```
 
 ### MD025 - Single Top-Level Heading
 
 Each document should have only ONE H1 (`#`) heading.
 
-```markdown
-<!-- CORRECT - Single H1 -->
-# Document Title
-
-## Section One
-
-## Section Two
-
-<!-- INCORRECT - Multiple H1s -->
-# First Title
-
-# Second Title  <!-- This causes MD025 violation -->
-```
-
 ### MD012 - No Multiple Blank Lines
 
 Use only single blank lines between elements.
-
-```markdown
-<!-- CORRECT - Single blank lines -->
-Paragraph one.
-
-Paragraph two.
-
-<!-- INCORRECT - Multiple blank lines -->
-Paragraph one.
-
-
-Paragraph two.  <!-- This causes MD012 violation -->
-```
 
 ### MD031 - Fenced Code Blocks Surrounded by Blank Lines
 
 Code blocks MUST have blank lines before AND after them.
 
 ````markdown
-<!-- CORRECT - Blank lines around code blocks -->
+<!-- Correct -->
 Some text.
 
 ```bash
@@ -333,50 +277,17 @@ echo "hello"
 
 More text.
 
-<!-- INCORRECT - Missing blank line before code block -->
+<!-- Violation — missing blank line before code block -->
 Some text.
 ```bash
 echo "hello"
 ```
-
-More text.
 ````
 
-**Validation**:
+**Auto-fix**:
 
 ```bash
-# Lint all markdown files
-npx markdownlint-cli2 "**/*.md" --ignore node_modules
-
-# Lint specific file
-npx markdownlint-cli2 "path/to/file.md"
-
-# Auto-fix issues
 npx markdownlint-cli2 "**/*.md" --fix
-```
-
-## Pre-Commit Checklist
-
-Before committing, verify:
-
-```bash
-# 1. Run local linting
-~/.aidevops/agents/scripts/linters-local.sh
-
-# 2. Check return statements
-grep -L "return [01]" .agents/scripts/*.sh
-
-# 3. Check positional parameters
-grep -n '\$[1-9]' .agents/scripts/*.sh | grep -v 'local.*=.*\$[1-9]'
-
-# 4. Run ShellCheck
-find .agents/scripts/ -name "*.sh" -exec shellcheck {} \;
-
-# 5. Check for secrets
-~/.aidevops/agents/scripts/secretlint-helper.sh scan
-
-# 6. Lint markdown files
-npx markdownlint-cli2 "**/*.md" --ignore node_modules
 ```
 
 ## Quality Scripts
@@ -387,15 +298,6 @@ npx markdownlint-cli2 "**/*.md" --ignore node_modules
 | `quality-fix.sh` | Auto-fix common issues |
 | `pre-commit-hook.sh` | Git pre-commit validation |
 | `secretlint-helper.sh` | Secret detection |
-
-## Current Status
-
-**Multi-Platform Excellence Achieved:**
-
-- **SonarCloud**: A-grade maintained
-- **CodeFactor**: A-grade overall
-- **Codacy**: Enterprise-grade compliance
-- **Critical Issues**: S7679 & S1481 = 0 (RESOLVED)
 
 ## Python Projects
 
@@ -416,10 +318,10 @@ Rules for Python projects using the worktree-based workflow. Workers encounter t
 **`pip install -e` writes the worktree's absolute path into a `.pth` file.** When the worktree is removed after PR merge, that path no longer exists. Any code that imports the package via the editable install will fail silently.
 
 ```bash
-# UNSAFE — from inside a worktree, using the canonical repo's venv
+# Unsafe — from inside a worktree, using the canonical repo's venv
 pip install -e shared/project/  # Writes worktree path into canonical venv's .pth
 
-# SAFE — create a throwaway venv inside the worktree
+# Safe — create a throwaway venv inside the worktree
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e shared/project/  # .pth path is inside the worktree, removed with it
@@ -432,14 +334,14 @@ pip install -e shared/project/  # .pth path is inside the worktree, removed with
 **Never install packages to user-local or system scope.** If a project has a `.venv/`, use it. If it doesn't, create one. Never let `pip install` fall through to `~/.local/lib/` or system Python.
 
 ```bash
-# UNSAFE — no venv active, packages go to ~/.local/lib/python3.x/
+# Unsafe — no venv active, packages go to ~/.local/lib/python3.x/
 pip install crawl4ai
 
-# SAFE — activate venv first
+# Safe — activate venv first
 source .venv/bin/activate
 pip install crawl4ai
 
-# SAFE — explicit venv pip
+# Safe — explicit venv pip
 .venv/bin/pip install crawl4ai
 ```
 
