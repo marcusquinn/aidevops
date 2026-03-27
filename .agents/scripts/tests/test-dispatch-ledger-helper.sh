@@ -163,20 +163,23 @@ test_complete_marks_entry() {
 	"$LEDGER_HELPER" register --session-key "issue-42" --issue 42 --repo "owner/repo" --pid $$
 	"$LEDGER_HELPER" complete --session-key "issue-42"
 
-	# check should now return 1 (no in-flight entry)
+	# A late fail (e.g., from dead-PID cleanup) must NOT overwrite completed status
+	"$LEDGER_HELPER" fail --session-key "issue-42"
+
+	# check should still return 1 (no in-flight entry)
 	local result=0
 	if "$LEDGER_HELPER" check --session-key "issue-42" >/dev/null 2>&1; then
 		result=1
 	fi
 
-	# Verify status in file
+	# Verify status is still "completed" — not downgraded to "failed"
 	local status
 	status=$(jq -r '.status' "${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl" 2>/dev/null | head -1)
 	if [[ "$status" != "completed" ]]; then
 		result=1
 	fi
 
-	print_result "complete marks entry as completed" "$result" "status=${status}"
+	print_result "complete marks entry as completed (terminal state immutable)" "$result" "status=${status}"
 	teardown_test_env
 	return 0
 }
@@ -199,6 +202,42 @@ test_fail_marks_entry() {
 	fi
 
 	print_result "fail marks entry as failed" "$result" "status=${status}"
+	teardown_test_env
+	return 0
+}
+
+#######################################
+# Test: terminal status immutability — fail cannot overwrite completed,
+# complete cannot overwrite failed (regression for CodeRabbit review)
+#######################################
+test_terminal_state_immutability() {
+	setup_test_env
+
+	local result=0
+
+	# Case 1: fail must not overwrite completed
+	"$LEDGER_HELPER" register --session-key "issue-77" --issue 77 --repo "owner/repo" --pid $$
+	"$LEDGER_HELPER" complete --session-key "issue-77"
+	"$LEDGER_HELPER" fail --session-key "issue-77"
+
+	local status1
+	status1=$(jq -r 'select(.session_key == "issue-77") | .status' "${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl" 2>/dev/null | head -1)
+	if [[ "$status1" != "completed" ]]; then
+		result=1
+	fi
+
+	# Case 2: complete must not overwrite failed
+	"$LEDGER_HELPER" register --session-key "issue-78" --issue 78 --repo "owner/repo" --pid $$
+	"$LEDGER_HELPER" fail --session-key "issue-78"
+	"$LEDGER_HELPER" complete --session-key "issue-78"
+
+	local status2
+	status2=$(jq -r 'select(.session_key == "issue-78") | .status' "${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl" 2>/dev/null | head -1)
+	if [[ "$status2" != "failed" ]]; then
+		result=1
+	fi
+
+	print_result "terminal status immutability (completed/failed are final)" "$result" "completed_after_fail=${status1}, failed_after_complete=${status2}"
 	teardown_test_env
 	return 0
 }
@@ -444,6 +483,7 @@ main() {
 	test_check_issue_detects_inflight
 	test_check_issue_different_repo
 	test_complete_marks_entry
+	test_terminal_state_immutability
 	test_fail_marks_entry
 	test_register_idempotent
 	test_count_inflight

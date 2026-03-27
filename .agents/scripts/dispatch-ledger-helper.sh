@@ -23,9 +23,9 @@
 #   updated_at   - ISO 8601 UTC timestamp of last status change
 #
 # Concurrency: file-level flock for atomic reads/writes. Safe for
-# concurrent pulse + worker access. Falls back to no-lock on systems
-# without flock (macOS without util-linux) — acceptable because the
-# pulse is single-instance (mkdir lock) and workers update sequentially.
+# concurrent pulse + worker access. Falls back to mkdir-based lock on
+# systems without flock (macOS without util-linux). Lock acquisition
+# fails closed — write operations abort if the lock cannot be obtained.
 #
 # Usage:
 #   dispatch-ledger-helper.sh register --session-key KEY [--issue NUM] [--repo SLUG] [--pid PID]
@@ -57,14 +57,30 @@ _ensure_ledger() {
 }
 
 #######################################
-# Acquire file lock (best-effort — flock may not be available on macOS)
-# Args: $1 = lock FD number
-# Returns: 0 always (proceeds without lock if flock unavailable)
+# Acquire file lock (fail-closed — aborts if lock cannot be obtained)
+# Uses flock when available, falls back to mkdir-based lock.
+# Returns: 0 on success, 1 on failure (caller must abort write)
 #######################################
 _acquire_lock() {
 	if command -v flock &>/dev/null; then
 		exec 8>"$LEDGER_LOCK"
-		flock -w 5 8 2>/dev/null || true
+		if ! flock -w 5 8 2>/dev/null; then
+			echo "Error: could not acquire ledger lock: $LEDGER_LOCK" >&2
+			return 1
+		fi
+	else
+		# Portable fallback: mkdir is atomic on all POSIX systems
+		local lock_dir="${LEDGER_LOCK}.d"
+		local attempts=0
+		local max_attempts=50 # 50 × 0.1s = 5s timeout
+		while ! mkdir "$lock_dir" 2>/dev/null; do
+			attempts=$((attempts + 1))
+			if [[ "$attempts" -ge "$max_attempts" ]]; then
+				echo "Error: could not acquire ledger lock (mkdir): $lock_dir" >&2
+				return 1
+			fi
+			sleep 0.1
+		done
 	fi
 	return 0
 }
@@ -75,6 +91,10 @@ _acquire_lock() {
 _release_lock() {
 	if command -v flock &>/dev/null; then
 		flock -u 8 2>/dev/null || true
+	else
+		# Remove mkdir-based lock
+		local lock_dir="${LEDGER_LOCK}.d"
+		rmdir "$lock_dir" 2>/dev/null || true
 	fi
 	return 0
 }
@@ -159,7 +179,10 @@ cmd_register() {
 	fi
 
 	_ensure_ledger
-	_acquire_lock
+	if ! _acquire_lock; then
+		echo "Error: register aborted — could not acquire lock" >&2
+		return 1
+	fi
 
 	local now
 	now=$(_now_utc)
@@ -167,7 +190,7 @@ cmd_register() {
 	# Remove any existing entry for this session_key (idempotent re-register)
 	if [[ -s "$LEDGER_FILE" ]]; then
 		local tmp_file
-		tmp_file=$(mktemp)
+		tmp_file=$(mktemp "${LEDGER_DIR}/dispatch-ledger.XXXXXX")
 		jq -c --arg sk "$session_key" 'select(.session_key != $sk)' "$LEDGER_FILE" >"$tmp_file" 2>/dev/null || true
 		mv "$tmp_file" "$LEDGER_FILE"
 	fi
@@ -393,7 +416,9 @@ _update_status() {
 	local new_status="$2"
 
 	_ensure_ledger
-	_acquire_lock
+	if ! _acquire_lock; then
+		return 0 # Silently skip — status update is best-effort
+	fi
 
 	if [[ ! -s "$LEDGER_FILE" ]]; then
 		_release_lock
@@ -403,10 +428,16 @@ _update_status() {
 	local now
 	now=$(_now_utc)
 	local tmp_file
-	tmp_file=$(mktemp)
+	tmp_file=$(mktemp "${LEDGER_DIR}/dispatch-ledger.XXXXXX")
 
+	# Only transition entries that are still "in-flight" — terminal statuses
+	# ("completed", "failed") are immutable. A late fail from dead-PID cleanup
+	# must not overwrite a genuinely completed dispatch.
 	jq -c --arg sk "$session_key" --arg st "$new_status" --arg ts "$now" \
-		'if .session_key == $sk then .status = $st | .updated_at = $ts else . end' \
+		'if .session_key == $sk and .status == "in-flight"
+			then .status = $st | .updated_at = $ts
+			else .
+		end' \
 		"$LEDGER_FILE" >"$tmp_file" 2>/dev/null || cp "$LEDGER_FILE" "$tmp_file"
 
 	mv "$tmp_file" "$LEDGER_FILE"
@@ -446,7 +477,10 @@ cmd_expire() {
 	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl="$DEFAULT_TTL"
 
 	_ensure_ledger
-	_acquire_lock
+	if ! _acquire_lock; then
+		printf '%s\n' "0"
+		return 0 # Best-effort cleanup
+	fi
 
 	if [[ ! -s "$LEDGER_FILE" ]]; then
 		_release_lock
@@ -460,7 +494,7 @@ cmd_expire() {
 	now_ts=$(_now_utc)
 	local expired_count=0
 	local tmp_file
-	tmp_file=$(mktemp)
+	tmp_file=$(mktemp "${LEDGER_DIR}/dispatch-ledger.XXXXXX")
 
 	while IFS= read -r line; do
 		[[ -z "$line" ]] && continue
@@ -597,7 +631,10 @@ cmd_status() {
 #######################################
 cmd_prune() {
 	_ensure_ledger
-	_acquire_lock
+	if ! _acquire_lock; then
+		printf '%s\n' "0"
+		return 0 # Best-effort cleanup — skip if locked
+	fi
 
 	if [[ ! -s "$LEDGER_FILE" ]]; then
 		_release_lock
@@ -610,7 +647,7 @@ cmd_prune() {
 	prune_threshold=86400 # 24 hours
 	pruned_count=0
 	local tmp_file
-	tmp_file=$(mktemp)
+	tmp_file=$(mktemp "${LEDGER_DIR}/dispatch-ledger.XXXXXX")
 
 	while IFS= read -r line; do
 		[[ -z "$line" ]] && continue
