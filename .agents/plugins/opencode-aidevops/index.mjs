@@ -1103,7 +1103,7 @@ const {
  *
  * Provides:
  * 1. Config hook — lightweight agent index + MCP server registration (t1040)
- * 2. Custom tools — aidevops CLI, memory (unified recall/store), pre-edit check, hook installer (5 tools total)
+ * 2. Custom tools — aidevops CLI, memory (unified recall/store), pre-edit check, OAuth pool (4 tools total)
  * 3. Quality hooks — full pre-commit pipeline (ShellCheck, return statements,
  *    positional params, secrets scan, markdown lint) on Write/Edit operations
  * 4. Shell environment — aidevops paths and variables

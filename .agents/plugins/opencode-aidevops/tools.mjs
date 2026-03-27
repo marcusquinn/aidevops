@@ -1,4 +1,4 @@
-import { execSync, execFileSync } from "child_process";
+import { execSync } from "child_process";
 import { existsSync } from "fs";
 import { join } from "path";
 
@@ -135,123 +135,22 @@ function createPreEditCheckTool(scriptsDir) {
 }
 
 /**
- * Sanitize a hook action string into a known-safe literal.
- * Uses a switch statement so static taint analyzers (Codacy/Semgrep) can
- * prove the returned value is a constant — completely severing the data flow
- * from the function parameter to the shell command. Object-property lookups
- * and Array.find() do not satisfy Semgrep's taint tracking because the
- * analyzer cannot prove the returned value is independent of the input.
- * @param {string} action - Raw action string from caller
- * @returns {string|undefined} Sanitized action literal, or undefined if invalid
- */
-function sanitizeHookAction(action) {
-  switch (String(action)) {
-    case "install": return "install";
-    case "uninstall": return "uninstall";
-    case "status": return "status";
-    case "test": return "test";
-    default: return undefined;
-  }
-}
-
-/** Valid hook actions for display in error messages. */
-const VALID_HOOK_ACTIONS = ["install", "uninstall", "status", "test"];
-
-/**
- * Run the install-hooks-helper.sh script.
- * Uses execFileSync with argument array instead of execSync with string
- * interpolation — eliminates shell interpretation entirely, which is both
- * more secure and satisfies static taint analyzers (Codacy/Semgrep) that
- * flag parameter-to-child_process data flows in execSync template strings.
- * @param {string} helperScript - Path to the helper script
- * @param {string} action - Hook action to run
- * @returns {string}
- */
-function runHookHelper(helperScript, action) {
-  const validAction = sanitizeHookAction(action);
-  if (!validAction) {
-    return `Invalid action: ${String(action)}. Valid actions: ${VALID_HOOK_ACTIONS.join(", ")}`;
-  }
-  try {
-    const result = execFileSync("bash", [helperScript, validAction], {
-      encoding: "utf-8",
-      timeout: 15000,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    return result.trim();
-  } catch (err) {
-    const cmdOutput = (err.stdout || "") + (err.stderr || "");
-    return `Hook ${validAction} failed:\n${cmdOutput.trim()}`;
-  }
-}
-
-/**
- * Fallback: install git pre-commit hook directly when helper script is missing.
- * @param {string} scriptsDir
- * @param {function} run - Shell command runner
- * @returns {string}
- */
-function installGitHookFallback(scriptsDir, run) {
-  const preCommitHook = join(scriptsDir, "pre-commit-hook.sh");
-  if (!existsSync(preCommitHook)) {
-    return "pre-commit-hook.sh not found — run aidevops update";
-  }
-  const gitHookDir = run("git rev-parse --git-dir 2>/dev/null");
-  if (!gitHookDir) {
-    return "Not in a git repository — cannot install pre-commit hook";
-  }
-  const hookDest = join(gitHookDir, "hooks", "pre-commit");
-  try {
-    execSync(`cp "${preCommitHook}" "${hookDest}" && chmod +x "${hookDest}"`, {
-      encoding: "utf-8",
-      timeout: 5000,
-    });
-    return `Git pre-commit hook installed at ${hookDest}`;
-  } catch (err) {
-    return `Failed to install hook: ${err.message}`;
-  }
-}
-
-/**
- * Create the install hooks tool.
- * @param {string} scriptsDir - Path to scripts directory
- * @param {function} run - Shell command runner
- * @returns {object} Tool definition
- */
-function createInstallHooksTool(scriptsDir, run) {
-  return {
-    description:
-      'Install or manage git pre-commit quality hooks. Args: action (string: "install", "uninstall", "status", "test")',
-    async execute(args) {
-      const action = args.action || args || "install";
-      const helperScript = join(scriptsDir, "install-hooks-helper.sh");
-
-      if (existsSync(helperScript)) {
-        return runHookHelper(helperScript, action);
-      }
-
-      if (action === "install") {
-        return installGitHookFallback(scriptsDir, run);
-      }
-
-      return `install-hooks-helper.sh not found. Available actions: install, uninstall, status, test`;
-    },
-  };
-}
-
-/**
  * Create all tool definitions for the plugin.
  *
- * Tools (5 total):
+ * Tools (4 total):
  *   - aidevops              — aidevops CLI runner
  *   - aidevops_memory       — unified recall/store (merged from former recall + store pair)
  *   - aidevops_pre_edit_check — git safety check before file edits
- *   - aidevops_install_hooks  — git pre-commit hook management
  *   - model-accounts-pool   — OAuth account pool management (added in index.mjs)
  *
  * NOTE: aidevops_quality_check was removed. Quality checks run automatically
  * via the tool.execute.before hook on every Write/Edit operation — an explicit
  * LLM-callable tool is redundant and adds unnecessary context overhead.
+ *
+ * NOTE: aidevops_install_hooks was removed. Hook installation is a one-time
+ * setup operation best done via Bash: `bash ~/.aidevops/agents/scripts/install-hooks-helper.sh install`
+ * or `aidevops security posture`. A dedicated plugin tool adds ~90 lines of
+ * code for a task the LLM can perform directly via the Bash tool.
  *
  * NOTE: opencode 1.1.56+ uses Zod v4 to validate tool args schemas.
  * Plain `{ type: "string" }` objects are NOT valid Zod schemas and cause:
@@ -269,6 +168,5 @@ export function createTools(scriptsDir, run, _pipelines) {
     aidevops: createAidevopsTool(run),
     aidevops_memory: createMemoryTool(scriptsDir, run),
     aidevops_pre_edit_check: createPreEditCheckTool(scriptsDir),
-    aidevops_install_hooks: createInstallHooksTool(scriptsDir, run),
   };
 }
