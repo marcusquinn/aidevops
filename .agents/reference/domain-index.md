@@ -32,6 +32,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | OpenAPI exploration | `tools/context/openapi-search.md` |
 | Local models | `tools/local-models/local-models.md`, `tools/local-models/huggingface.md`, `scripts/local-model-helper.sh` |
 | Bundles | `bundles/*.json`, `scripts/bundle-helper.sh`, `tools/context/model-routing.md` |
+| Agent routing | `reference/agent-routing.md` |
 | Model routing | `tools/context/model-routing.md`, `reference/orchestration.md` |
 | Orchestration | `reference/orchestration.md`, `tools/ai-assistants/headless-dispatch.md`, `scripts/commands/pulse.md`, `scripts/commands/dashboard.md` |
 | Upstream watch | `scripts/upstream-watch-helper.sh`, `.agents/configs/upstream-watch.json` |
