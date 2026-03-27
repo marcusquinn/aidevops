@@ -2844,16 +2844,17 @@ _complexity_scan_extract_md_topic_label() {
 #   0 - existing issue found (skip creation)
 #   1 - no existing issue (safe to create)
 _complexity_scan_has_existing_issue() {
-	local existing_issues="$1"
+	local repo_slug="$1"
 	local issue_key="$2"
 
-	if echo "$existing_issues" | jq -e --arg key "$issue_key" \
-		'.[] | select(
-			(.title // "" | contains($key)) or
-			(.body // "" | contains("**File:** `" + $key + "`")) or
-			(.body // "" | contains("## Qlty Maintainability \u2014 " + $key))
-		)' \
-		>/dev/null 2>&1; then
+	# Server-side search by file path in title — accurate across all issues,
+	# not limited by --limit pagination. The file path is always in the title.
+	local match_count
+	match_count=$(gh issue list --repo "$repo_slug" \
+		--label "simplification-debt" --state open \
+		--search "in:title \"$issue_key\"" \
+		--json number --jq 'length' 2>/dev/null) || match_count="0"
+	if [[ "${match_count:-0}" -gt 0 ]]; then
 		return 0
 	fi
 	return 1
@@ -2927,13 +2928,19 @@ _complexity_scan_create_md_issues() {
 	local scan_results="$1"
 	local repos_json="$2"
 	local aidevops_slug="$3"
+	local max_issues_per_run=5
 	local issues_created=0
 	local issues_skipped=0
 
-	local existing_issues
-	existing_issues=$(gh issue list --repo "$aidevops_slug" \
-		--label "simplification-debt" --state open \
-		--json number,title,body --limit 200 2>/dev/null) || existing_issues="[]"
+	# Total-open cap: stop creating when backlog is already large.
+	# Prevents unbounded issue accumulation when issues aren't being resolved.
+	local total_open
+	total_open=$(gh api graphql -f query="query { repository(owner:\"${aidevops_slug%%/*}\", name:\"${aidevops_slug##*/}\") { issues(labels:[\"simplification-debt\"], states:OPEN) { totalCount } } }" \
+		--jq '.data.repository.issues.totalCount' 2>/dev/null) || total_open="0"
+	if [[ "${total_open:-0}" -ge 100 ]]; then
+		echo "[pulse-wrapper] Complexity scan (.md): skipping — ${total_open} open simplification-debt issues (cap: 100)" >>"$LOGFILE"
+		return 0
+	fi
 
 	local maintainer
 	maintainer=$(jq -r --arg slug "$aidevops_slug" \
@@ -2950,8 +2957,9 @@ _complexity_scan_create_md_issues() {
 
 	while IFS='|' read -r file_path line_count; do
 		[[ -n "$file_path" ]] || continue
+		[[ "$issues_created" -ge "$max_issues_per_run" ]] && break
 
-		if _complexity_scan_has_existing_issue "$existing_issues" "$file_path"; then
+		if _complexity_scan_has_existing_issue "$aidevops_slug" "$file_path"; then
 			echo "[pulse-wrapper] Complexity scan (.md): skipping ${file_path} — existing open issue" >>"$LOGFILE"
 			issues_skipped=$((issues_skipped + 1))
 			continue
@@ -2985,22 +2993,25 @@ _complexity_scan_create_md_issues() {
 	return 0
 }
 
-# Create GitHub issues for qualifying files (dedup against existing open issues).
-# Fetches existing issues once before the loop to reduce API traffic.
+# Create GitHub issues for qualifying files (dedup via server-side title search).
 # Arguments: $1 - scan_results (pipe-delimited: file_path|count), $2 - repos_json, $3 - aidevops_slug
 # Returns: 0 always
 _complexity_scan_create_issues() {
 	local scan_results="$1"
 	local repos_json="$2"
 	local aidevops_slug="$3"
+	local max_issues_per_run=5
 	local issues_created=0
 	local issues_skipped=0
 
-	# Fetch existing open simplification-debt issues once (reduces API traffic)
-	local existing_issues
-	existing_issues=$(gh issue list --repo "$aidevops_slug" \
-		--label "simplification-debt" --state open \
-		--json number,title,body --limit 200 2>/dev/null) || existing_issues="[]"
+	# Total-open cap: stop creating when backlog is already large
+	local total_open
+	total_open=$(gh api graphql -f query="query { repository(owner:\"${aidevops_slug%%/*}\", name:\"${aidevops_slug##*/}\") { issues(labels:[\"simplification-debt\"], states:OPEN) { totalCount } } }" \
+		--jq '.data.repository.issues.totalCount' 2>/dev/null) || total_open="0"
+	if [[ "${total_open:-0}" -ge 100 ]]; then
+		echo "[pulse-wrapper] Complexity scan: skipping — ${total_open} open simplification-debt issues (cap: 100)" >>"$LOGFILE"
+		return 0
+	fi
 
 	local maintainer
 	maintainer=$(jq -r --arg slug "$aidevops_slug" \
@@ -3012,10 +3023,10 @@ _complexity_scan_create_issues() {
 
 	while IFS='|' read -r file_path violation_count; do
 		[[ -n "$file_path" ]] || continue
+		[[ "$issues_created" -ge "$max_issues_per_run" ]] && break
 
-		# Dedup on repo-relative path (not basename) to avoid collisions between
-		# files with the same name in different directories (GH#5630)
-		if _complexity_scan_has_existing_issue "$existing_issues" "$file_path"; then
+		# Dedup via server-side title search — accurate across all issues (GH#5630)
+		if _complexity_scan_has_existing_issue "$aidevops_slug" "$file_path"; then
 			echo "[pulse-wrapper] Complexity scan: skipping ${file_path} — existing open issue" >>"$LOGFILE"
 			issues_skipped=$((issues_skipped + 1))
 			continue
