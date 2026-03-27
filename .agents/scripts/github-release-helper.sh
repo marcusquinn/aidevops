@@ -146,53 +146,69 @@ release_exists() {
 }
 
 # =============================================================================
-# Commands
+# Commands — create (decomposed into subfunctions)
 # =============================================================================
 
-cmd_create() {
-	local version=""
-	local flag_repo=""
-	local flag_tag=""
-	local flag_title=""
-	local flag_notes=""
-	local flag_notes_file=""
-	local flag_generate_notes=false
-	local flag_draft=false
-	local flag_prerelease=false
+# Module-scoped variables for create subcommand (set by _parse_create_args,
+# consumed by _resolve_create_inputs and _execute_release_create).
+_create_version=""
+_create_flag_repo=""
+_create_flag_tag=""
+_create_flag_title=""
+_create_flag_notes=""
+_create_flag_notes_file=""
+_create_flag_generate_notes=false
+_create_flag_draft=false
+_create_flag_prerelease=false
+# Resolved values (set by _resolve_create_inputs)
+_create_repo=""
+_create_tag=""
+_create_title=""
 
-	# Parse arguments
+# Parse create/draft CLI arguments into _create_* variables.
+_parse_create_args() {
+	_create_version=""
+	_create_flag_repo=""
+	_create_flag_tag=""
+	_create_flag_title=""
+	_create_flag_notes=""
+	_create_flag_notes_file=""
+	_create_flag_generate_notes=false
+	_create_flag_draft=false
+	_create_flag_prerelease=false
+
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--repo)
-			flag_repo="$2"
+			_create_flag_repo="$2"
 			shift 2
 			;;
 		--tag)
-			flag_tag="$2"
+			_create_flag_tag="$2"
 			shift 2
 			;;
 		--title)
-			flag_title="$2"
+			_create_flag_title="$2"
 			shift 2
 			;;
 		--notes)
-			flag_notes="$2"
+			_create_flag_notes="$2"
 			shift 2
 			;;
 		--notes-file)
-			flag_notes_file="$2"
+			_create_flag_notes_file="$2"
 			shift 2
 			;;
 		--generate-notes)
-			flag_generate_notes=true
+			_create_flag_generate_notes=true
 			shift
 			;;
 		--draft)
-			flag_draft=true
+			_create_flag_draft=true
 			shift
 			;;
 		--prerelease)
-			flag_prerelease=true
+			_create_flag_prerelease=true
 			shift
 			;;
 		-*)
@@ -200,8 +216,8 @@ cmd_create() {
 			return 1
 			;;
 		*)
-			if [[ -z "$version" ]]; then
-				version="$1"
+			if [[ -z "$_create_version" ]]; then
+				_create_version="$1"
 			else
 				print_error "Unexpected argument: $1"
 				return 1
@@ -210,61 +226,78 @@ cmd_create() {
 			;;
 		esac
 	done
+	return 0
+}
 
-	# Validate version
-	if [[ -z "$version" ]]; then
+# Validate parsed arguments and resolve repo/tag/title.
+# Sets _create_repo, _create_tag, _create_title.
+_resolve_create_inputs() {
+	if [[ -z "$_create_version" ]]; then
 		print_error "Version is required. Usage: $0 create <version> [options]"
 		return 1
 	fi
 
-	# Resolve repo and tag
-	local repo tag title
-	repo=$(resolve_repo "$flag_repo") || return 1
-	tag="${flag_tag:-$(normalise_tag "$version")}"
-	title="${flag_title:-$tag}"
+	_create_repo=$(resolve_repo "$_create_flag_repo") || return 1
+	_create_tag="${_create_flag_tag:-$(normalise_tag "$_create_version")}"
+	_create_title="${_create_flag_title:-$_create_tag}"
 
-	print_info "Repo:    $repo"
-	print_info "Tag:     $tag"
-	print_info "Title:   $title"
-	[[ "$flag_draft" == true ]] && print_info "Mode:    draft"
-	[[ "$flag_prerelease" == true ]] && print_info "Type:    pre-release"
+	print_info "Repo:    $_create_repo"
+	print_info "Tag:     $_create_tag"
+	print_info "Title:   $_create_title"
+	[[ "$_create_flag_draft" == true ]] && print_info "Mode:    draft"
+	[[ "$_create_flag_prerelease" == true ]] && print_info "Type:    pre-release"
 
 	# Guard: duplicate release
-	if release_exists "$repo" "$tag"; then
-		print_error "Release '$tag' already exists on $repo. Use a different version or delete the existing release first."
+	if release_exists "$_create_repo" "$_create_tag"; then
+		print_error "Release '$_create_tag' already exists on $_create_repo. Use a different version or delete the existing release first."
 		return 1
 	fi
+	return 0
+}
 
-	# Build gh release create arguments
+# Build gh CLI arguments and execute the release creation.
+# Reads _create_* variables set by earlier phases.
+_execute_release_create() {
 	local gh_args=()
-	gh_args+=("$tag")
-	gh_args+=("--repo" "$repo")
-	gh_args+=("--title" "$title")
+	gh_args+=("$_create_tag")
+	gh_args+=("--repo" "$_create_repo")
+	gh_args+=("--title" "$_create_title")
 
-	if [[ -n "$flag_notes_file" ]]; then
-		if [[ ! -f "$flag_notes_file" ]]; then
-			print_error "Notes file not found: $flag_notes_file"
+	if [[ -n "$_create_flag_notes_file" ]]; then
+		if [[ ! -f "$_create_flag_notes_file" ]]; then
+			print_error "Notes file not found: $_create_flag_notes_file"
 			return 1
 		fi
-		gh_args+=("--notes-file" "$flag_notes_file")
-	elif [[ -n "$flag_notes" ]]; then
-		gh_args+=("--notes" "$flag_notes")
+		gh_args+=("--notes-file" "$_create_flag_notes_file")
+	elif [[ -n "$_create_flag_notes" ]]; then
+		gh_args+=("--notes" "$_create_flag_notes")
 	else
 		# Default: auto-generate notes from commits
 		gh_args+=("--generate-notes")
 	fi
 
-	[[ "$flag_draft" == true ]] && gh_args+=("--draft")
-	[[ "$flag_prerelease" == true ]] && gh_args+=("--prerelease")
+	[[ "$_create_flag_draft" == true ]] && gh_args+=("--draft")
+	[[ "$_create_flag_prerelease" == true ]] && gh_args+=("--prerelease")
 
 	print_info "Creating release..."
 	if gh release create "${gh_args[@]}"; then
-		print_success "Release '$tag' created on $repo"
+		print_success "Release '$_create_tag' created on $_create_repo"
 		return 0
 	else
-		print_error "Failed to create release '$tag' on $repo"
+		print_error "Failed to create release '$_create_tag' on $_create_repo"
 		return 1
 	fi
+}
+
+# =============================================================================
+# Commands
+# =============================================================================
+
+cmd_create() {
+	_parse_create_args "$@" || return 1
+	_resolve_create_inputs || return 1
+	_execute_release_create || return 1
+	return 0
 }
 
 cmd_draft() {
