@@ -318,18 +318,18 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 
 ## Capabilities
 
-Key capabilities (details in `reference/orchestration.md`, `reference/services.md`, `reference/session.md`):
+Key capabilities — details in `reference/orchestration.md`, `reference/services.md`, `reference/session.md`:
 
 - **Model routing**: local→haiku→flash→sonnet→pro→opus (cost-aware). See `tools/context/model-routing.md`.
-- **Bundle presets**: Project-type-aware defaults for model tiers, quality gates, and agent routing. Auto-detected from marker files or explicit in repos.json. See `bundles/` and `scripts/bundle-helper.sh`.
+- **Bundle presets**: project-type defaults for model tiers, quality gates, agent routing. See `bundles/` and `scripts/bundle-helper.sh`.
 - **Memory**: cross-session SQLite FTS5 (`/remember`, `/recall`)
 - **Orchestration**: supervisor dispatch, pulse scheduler, auto-pickup, cross-repo issue/PR/TODO visibility
-- **Contribution watch**: monitors external issues/PRs for new activity needing reply using the GitHub Notifications API. `contribution-watch-helper.sh seed|scan|status|install|uninstall` (optional `scan --backfill` for low-frequency safety-net sweeps of tracked threads). Managed repos (`pulse: true` in repos.json) are excluded to suppress internal automation noise. Prompt-injection-safe — automated scans are deterministic metadata checks (no LLM), comment bodies only shown in interactive sessions after `prompt-guard-helper.sh scan`.
-- **Upstream watch**: monitors external repos we've borrowed ideas/code from for new releases. `upstream-watch-helper.sh add|remove|check|ack|status`. Shows release diffs and changelogs between our last-seen version and latest. Distinct from skill imports (code we pulled in) and contribution watch (repos we filed issues on) — this tracks "inspiration repos" for passive monitoring. Config: `.agents/configs/upstream-watch.json`.
+- **Contribution watch**: monitors external issues/PRs for new activity. See `scripts/contribution-watch-helper.sh help`.
+- **Upstream watch**: monitors inspiration repos for new releases. See `reference/services.md` "Auto-Update".
 - **Skills**: `aidevops skills`, `/skills`
-- **Auto-update**: GitHub poll + daily skill/upstream watch/OpenClaw/tool freshness checks (via `auto-update-helper.sh`). Repo sync runs separately via `aidevops repo-sync` scheduler.
+- **Auto-update**: daily freshness checks via `auto-update-helper.sh`. See `reference/services.md` "Auto-Update".
 - **Browser**: Playwright, dev-browser (persistent login)
-- **Quality**: Write-time per-edit linting → `linters-local.sh` → `/pr review` → `/postflight`. Fix violations at edit time, not commit time. See `prompts/build.txt` "Write-Time Quality Enforcement". Bundle `skip_gates` filter irrelevant checks per project type.
+- **Quality**: write-time linting → `linters-local.sh` → `/pr review` → `/postflight`. See `prompts/build.txt`.
 - **Sessions**: `/session-review`, `/checkpoint`, compaction resilience
 - **Auth recovery**: if model is broken or "Key Missing" → read `tools/credentials/auth-troubleshooting.md`
 
