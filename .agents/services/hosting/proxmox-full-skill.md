@@ -54,7 +54,7 @@ curl -sk -X POST -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/lxc" \
   -d "storage=local-lvm" -d "rootfs=local-lvm:8" \
   -d "memory=2048" -d "swap=512" -d "cores=2" \
   -d "net0=name=eth0,bridge=vmbr0,ip=dhcp" \
-  -d "password=changeme" -d "start=1" -d "unprivileged=1"
+  -d "password=$LXC_PASSWORD" -d "start=1" -d "unprivileged=1"
 ```
 
 ## Create VM
