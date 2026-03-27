@@ -23,20 +23,18 @@ mcp:
 
 - **Purpose**: Real-time access to latest library/framework documentation
 - **Package**: `@upstash/context7-mcp` (formerly `@context7/mcp-server`)
-- **CLI**: `npx ctx7` for skills and setup commands
-- **CLI setup mode**: `npx ctx7 setup --opencode --cli` (no MCP server)
-- **Strategy**: Hybrid backend - MCP first (`@context7`), CLI fallback (`@context7-cli`)
-- **Telemetry**: Disable with `export CTX7_TELEMETRY_DISABLED=1`
+- **CLI**: `npx ctx7` — setup, skills, and doc queries
+- **Strategy**: MCP first (`@context7`), CLI fallback (`@context7-cli`)
+- **Telemetry**: `export CTX7_TELEMETRY_DISABLED=1`
 
-**MCP Tools**:
-
-- `resolve-library-id` -- Resolves library name to Context7 ID (e.g., "next.js" -> "/vercel/next.js")
-- `query-docs` -- Retrieves documentation for a library ID with a query
+**MCP Tools**: `resolve-library-id` → `query-docs`
 
 **CLI equivalents**:
 
-- `npx ctx7 library <name> [query] --json` -- Resolve library ID
-- `npx ctx7 docs <libraryId> <query> --json` -- Query docs
+```bash
+npx ctx7 library <name> [query] --json   # Resolve library ID
+npx ctx7 docs <libraryId> <query> --json # Query docs
+```
 
 **Common Library IDs**:
 
@@ -47,186 +45,78 @@ mcp:
 - AI/ML: `/openai/openai-node`, `/anthropic/anthropic-sdk-typescript`, `/langchain-ai/langchainjs`
 - Media: `/websites/higgsfield_ai` (100+ image/video/audio models)
 
-**Skills Registry**: [context7.com/skills](https://context7.com/skills) -- searchable registry with trust scores and install counts.
-
-```bash
-npx ctx7 skills search react        # Search registry
-npx ctx7 skills suggest             # Auto-suggest from project deps
-npx ctx7 skills install /anthropics/skills pdf  # Install a skill
-```
-
-Skills found in the Context7 registry can be imported into aidevops using `/add-skill`. See "Skill Discovery and Import" section below.
-
-**Config Location**: `~/.config/opencode/opencode.json`
+**Skills Registry**: [context7.com/skills](https://context7.com/skills) — trust scores, install counts. Import into aidevops via `/add-skill`. See "Skill Discovery and Import" below.
 
 <!-- AI-CONTEXT-END -->
 
-## Hybrid Usage (MCP + CLI)
-
-Use Context7 as a hybrid documentation backend:
-
-1. **Default:** `@context7` via MCP tools for standard interactive tasks
-2. **Fallback:** `@context7-cli` when MCP is unavailable or constrained
-3. **CLI-first:** shell workflows needing deterministic JSON output (`--json`) for pipelines
-
 ## Installation & Setup
 
-### Prerequisites
-
-- Node.js 18+, npm/npx available
-- AI assistant supporting MCP (Claude Code recommended)
-
-### 1. Test the Server
+> aidevops configures Context7 automatically via `setup.sh`. The sections below are for manual/other-tool setup.
 
 ```bash
-npx -y @upstash/context7-mcp --help
+npx -y @upstash/context7-mcp --help   # Test the server
 ```
 
-### 2. Add to Your AI Assistant
-
-> **Note**: aidevops configures Context7 automatically via `setup.sh`. The sections below document config formats for other tools as MCP reference.
-
-**Claude Code:**
-
-```bash
-claude mcp add --scope user context7 -- npx -y @upstash/context7-mcp
-```
+**Claude Code**: `claude mcp add --scope user context7 -- npx -y @upstash/context7-mcp`
 
 **Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
-{
-  "mcpServers": {
-    "context7": {
-      "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"]
-    }
-  }
-}
+{ "mcpServers": { "context7": { "command": "npx", "args": ["-y", "@upstash/context7-mcp"] } } }
 ```
 
-**Remote server connection** (any MCP client supporting remote servers):
+**Remote**: `{ "mcpServers": { "context7": { "url": "https://mcp.context7.com/mcp" } } }`
 
-```json
-{
-  "mcpServers": {
-    "context7": {
-      "url": "https://mcp.context7.com/mcp"
-    }
-  }
-}
-```
+**Automated**: `npx ctx7 setup` (add `--cursor`, `--claude`, or `--opencode` to target a specific agent)
 
-**Automated setup:**
-
-```bash
-npx ctx7 setup                # Auto-configures MCP server and rule
-# Use --cursor, --claude, or --opencode to target a specific agent
-```
-
-### 3. Framework Configuration
-
-```bash
-cp configs/context7-mcp-config.json.txt configs/context7-mcp-config.json
-# Edit with your commonly used libraries and preferences
-```
+**Framework config**: `cp configs/context7-mcp-config.json.txt configs/context7-mcp-config.json`
 
 ## Usage
 
-The core workflow is always: **resolve library ID -> query docs**.
+Core workflow: **resolve library ID → query docs**.
 
 ```bash
-# MCP tools
-resolve-library-id("next.js")           # -> "/vercel/next.js"
+resolve-library-id("next.js")                              # -> "/vercel/next.js"
 query-docs("/vercel/next.js", topic="routing")
-query-docs("/vercel/next.js/v14.3.0-canary.87")  # Version-specific
-query-docs("/facebook/react", tokens=10000)       # Adjust detail level
-
-# CLI equivalents
-npx ctx7 library next.js --json
-npx ctx7 docs /vercel/next.js "routing" --json
+query-docs("/vercel/next.js/v14.3.0-canary.87")            # Version-specific
+query-docs("/facebook/react", tokens=10000)                # Adjust detail level
 ```
 
-**Tips:**
-
-- Always resolve before querying -- use specific names ("next.js" not "nextjs")
-- Use `topic=` for focused results; adjust `tokens=` for detail level (default 5000)
-- Try name variations if not found: without dots, shortened, with org prefix
+- Always resolve before querying — use specific names ("next.js" not "nextjs")
+- Use `topic=` for focused results; `tokens=` adjusts detail (default 5000)
+- Not found? Try without dots, shortened, or with org prefix
 
 ## Troubleshooting
 
-**Library not found:**
+**Library not found**: try `resolve-library-id("nextjs")`, `resolve-library-id("next")`, `resolve-library-id("vercel/next")`
 
-```bash
-resolve-library-id("nextjs")      # Without dots
-resolve-library-id("next")        # Shortened
-resolve-library-id("vercel/next") # With org prefix
-```
+**Outdated docs**: query a specific version (`/vercel/next.js/v14.0.0`) or check for renames.
 
-**Documentation seems outdated:** Query a specific version (`/vercel/next.js/v14.0.0`) or check if the library was renamed.
-
-**MCP server not responding:**
-
-```bash
-npx -y @upstash/context7-mcp --help   # Test directly
-# Then check AI assistant's MCP config and restart
-```
+**MCP not responding**: `npx -y @upstash/context7-mcp --help`, then check MCP config and restart.
 
 ## Skill Discovery and Import
 
-Context7 maintains a searchable [skills registry](https://context7.com/skills) with trust scores, install counts, and prompt injection scanning. Skills follow the [Agent Skills](https://agentskills.io) open standard (`SKILL.md` format).
-
-### Searching for Skills
-
 ```bash
 npx ctx7 skills search react
-npx ctx7 skills search "typescript testing"
 npx ctx7 skills suggest              # Auto-suggest from project deps
-npx ctx7 skills info /anthropics/skills
+npx ctx7 skills install /anthropics/skills pdf [--global] [--claude]
 ```
 
-### Installing Skills via Context7
+**Trust scores**: 7+ = high, 3–6.9 = medium, <3 = review carefully.
 
-```bash
-npx ctx7 skills install /anthropics/skills           # Interactive selection
-npx ctx7 skills install /anthropics/skills pdf        # Specific skill
-npx ctx7 skills install /anthropics/skills pdf --global  # All projects
-npx ctx7 skills install /anthropics/skills pdf --claude  # Target client
-```
+**Import into aidevops** (`/add-skill` converts to subagent format, registers for update tracking):
 
-### Importing Skills into aidevops
-
-Skills from the Context7 registry can be imported into the aidevops framework using `/add-skill`, which converts them to aidevops subagent format with frontmatter, registers them for update tracking, and places them in `.agents/`.
-
-**Workflow:**
-
-1. **Search**: `npx ctx7 skills search <query>`
-2. **Evaluate**: trust score (7+ = high, 3-6.9 = medium, <3 = review carefully)
-3. **Import**: `/add-skill <github-repo>` (e.g., `/add-skill anthropics/skills`)
-4. **Verify**: imported skill passes security scanning (Cisco Skill Scanner)
-5. **Deploy**: `./setup.sh` to create symlinks for all AI assistants
-
-**Example:**
-
-```bash
-npx ctx7 skills search supabase
-# Found: /supabase-community/supabase-custom-claims (trust: 7.2)
-
-/add-skill supabase-community/supabase-custom-claims
-# -> .agents/services/database/supabase-custom-claims-skill.md
-```
-
-**Key differences between Context7 install and aidevops import:**
+1. Search: `npx ctx7 skills search <query>`
+2. Import: `/add-skill <github-repo>` → `.agents/`
+3. Deploy: `./setup.sh`
 
 | Aspect | `ctx7 skills install` | `/add-skill` |
 |--------|----------------------|--------------|
 | Format | SKILL.md (as-is) | Converted to aidevops subagent |
-| Location | Client skill dirs (`.claude/skills/`) | `.agents/` directory |
+| Location | `.claude/skills/` | `.agents/` |
 | Tracking | None | `skill-sources.json` with update checks |
 | Security | Context7 trust score | Cisco Skill Scanner + trust score |
 | Cross-tool | Single client | All AI assistants via `setup.sh` |
-
-### Managing Skills
 
 ```bash
 npx ctx7 skills list                 # Installed Context7 skills
@@ -238,13 +128,11 @@ npx ctx7 skills remove pdf           # Remove Context7 skill
 
 **Related**: `scripts/commands/add-skill.md`, `tools/build-agent/add-skill.md`, `tools/deployment/agent-skills.md`
 
-## Disabling Telemetry
-
-The Context7 CLI (`ctx7`) collects anonymous usage data. To disable:
+## Telemetry
 
 ```bash
 CTX7_TELEMETRY_DISABLED=1 npx ctx7 skills search pdf   # Single command
 export CTX7_TELEMETRY_DISABLED=1                        # Permanent (add to shell profile)
 ```
 
-aidevops recommends disabling telemetry in automated/CI environments. Add the export to `~/.config/aidevops/credentials.sh` or your shell profile.
+Recommended in automated/CI environments. Add to `~/.config/aidevops/credentials.sh` or shell profile.
