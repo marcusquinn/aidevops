@@ -1,19 +1,11 @@
 # Drizzle Relations & Relational Queries
 
-Comprehensive reference for defining relations and using the relational queries API.
-
-## Overview
-
-Drizzle has two query APIs:
-
 | API | Use Case | N+1 Safe |
 |-----|----------|----------|
 | **SQL-like** (`db.select()...`) | Complex queries, joins, aggregations | Manual |
 | **Relational** (`db.query...`) | Nested data, simple CRUD | Yes |
 
 Relations are **application-level** (not database constraints). They enable the relational queries API.
-
-### Imports
 
 ```typescript
 import { relations } from 'drizzle-orm';
@@ -44,17 +36,11 @@ export const postsRelations = relations(posts, ({ one }) => ({
     references: [users.id],
   }),
 }));
-```
 
-```typescript
+// Query
 const userWithPosts = await db.query.users.findFirst({
   where: eq(users.id, userId),
   with: { posts: true },
-});
-
-const postWithAuthor = await db.query.posts.findFirst({
-  where: eq(posts.id, postId),
-  with: { author: true },
 });
 ```
 
@@ -78,9 +64,8 @@ export const profilesRelations = relations(profiles, ({ one }) => ({
     references: [users.id],
   }),
 }));
-```
 
-```typescript
+// Query
 const userWithProfile = await db.query.users.findFirst({
   where: eq(users.id, userId),
   with: { profile: true },
@@ -95,7 +80,6 @@ export const groups = pgTable('groups', {
   name: text('name').notNull(),
 });
 
-// Junction table
 export const usersToGroups = pgTable('users_to_groups', {
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   groupId: uuid('group_id').notNull().references(() => groups.id, { onDelete: 'cascade' }),
@@ -117,19 +101,12 @@ export const usersToGroupsRelations = relations(usersToGroups, ({ one }) => ({
   user: one(users, { fields: [usersToGroups.userId], references: [users.id] }),
   group: one(groups, { fields: [usersToGroups.groupId], references: [groups.id] }),
 }));
-```
 
-```typescript
+// Query + flatten junction
 const userWithGroups = await db.query.users.findFirst({
   where: eq(users.id, userId),
-  with: {
-    usersToGroups: {
-      with: { group: true },
-    },
-  },
+  with: { usersToGroups: { with: { group: true } } },
 });
-
-// Flatten the result
 const groups = userWithGroups?.usersToGroups.map(utg => ({
   ...utg.group,
   joinedAt: utg.joinedAt,
@@ -156,14 +133,13 @@ export const categoriesRelations = relations(categories, ({ one, many }) => ({
   }),
   children: many(categories, { relationName: 'parent' }),
 }));
-```
 
-```typescript
+// Query (2 levels deep)
 const category = await db.query.categories.findFirst({
   where: eq(categories.id, categoryId),
   with: {
     parent: true,
-    children: { with: { children: true } },  // 2 levels deep
+    children: { with: { children: true } },
   },
 });
 ```
@@ -201,7 +177,7 @@ if (!user) throw new NotFoundError();
 ### With Relations
 
 ```typescript
-// Multiple + nested relations
+// Multiple + nested
 const userWithAll = await db.query.users.findFirst({
   where: eq(users.id, userId),
   with: {
@@ -308,18 +284,16 @@ type UserBasic = typeof result[number];
 | **SQL-like joins** | Complex aggregations, filtering on related data, custom cross-table column selection, performance-critical queries |
 
 ```typescript
-// Relational — nested result
+// Relational — nested result: { id, name, posts: [{ id, title }, ...] }
 const userWithPosts = await db.query.users.findFirst({
   where: eq(users.id, userId),
   with: { posts: true },
 });
-// { id, name, posts: [{ id, title }, ...] }
 
-// Join — flat result
+// Join — flat result: [{ users: { id, name }, posts: { id, title } | null }, ...]
 const userWithPosts = await db
   .select()
   .from(users)
   .leftJoin(posts, eq(posts.authorId, users.id))
   .where(eq(users.id, userId));
-// [{ users: { id, name }, posts: { id, title } | null }, ...]
 ```
