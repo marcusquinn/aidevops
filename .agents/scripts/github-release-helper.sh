@@ -166,36 +166,47 @@ _create_tag=""
 _create_title=""
 
 # Parse create/draft CLI arguments into _create_* variables.
+# Caller must initialise _create_* state before invoking (see cmd_create).
 _parse_create_args() {
-	_create_version=""
-	_create_flag_repo=""
-	_create_flag_tag=""
-	_create_flag_title=""
-	_create_flag_notes=""
-	_create_flag_notes_file=""
-	_create_flag_generate_notes=false
-	_create_flag_draft=false
-	_create_flag_prerelease=false
-
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--repo)
+			if [[ $# -lt 2 ]]; then
+				print_error "--repo requires a value"
+				return 1
+			fi
 			_create_flag_repo="$2"
 			shift 2
 			;;
 		--tag)
+			if [[ $# -lt 2 ]]; then
+				print_error "--tag requires a value"
+				return 1
+			fi
 			_create_flag_tag="$2"
 			shift 2
 			;;
 		--title)
+			if [[ $# -lt 2 ]]; then
+				print_error "--title requires a value"
+				return 1
+			fi
 			_create_flag_title="$2"
 			shift 2
 			;;
 		--notes)
+			if [[ $# -lt 2 ]]; then
+				print_error "--notes requires a value"
+				return 1
+			fi
 			_create_flag_notes="$2"
 			shift 2
 			;;
 		--notes-file)
+			if [[ $# -lt 2 ]]; then
+				print_error "--notes-file requires a value"
+				return 1
+			fi
 			_create_flag_notes_file="$2"
 			shift 2
 			;;
@@ -263,7 +274,10 @@ _execute_release_create() {
 	gh_args+=("--repo" "$_create_repo")
 	gh_args+=("--title" "$_create_title")
 
-	if [[ -n "$_create_flag_notes_file" ]]; then
+	if [[ "$_create_flag_generate_notes" == true ]]; then
+		# Explicit --generate-notes overrides --notes / --notes-file
+		gh_args+=("--generate-notes")
+	elif [[ -n "$_create_flag_notes_file" ]]; then
 		if [[ ! -f "$_create_flag_notes_file" ]]; then
 			print_error "Notes file not found: $_create_flag_notes_file"
 			return 1
@@ -294,6 +308,17 @@ _execute_release_create() {
 # =============================================================================
 
 cmd_create() {
+	# Initialise state for the create subcommand (reset before each invocation)
+	_create_version=""
+	_create_flag_repo=""
+	_create_flag_tag=""
+	_create_flag_title=""
+	_create_flag_notes=""
+	_create_flag_notes_file=""
+	_create_flag_generate_notes=false
+	_create_flag_draft=false
+	_create_flag_prerelease=false
+
 	_parse_create_args "$@" || return 1
 	_resolve_create_inputs || return 1
 	_execute_release_create || return 1
