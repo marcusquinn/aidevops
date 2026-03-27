@@ -82,7 +82,8 @@ curl -s -X POST "https://searchconsole.googleapis.com/v1/sites/https%3A%2F%2Fexa
     "rowLimit": 25
   }'
 
-# Submit URL for indexing
+# Inspect URL indexing status (note: this checks status, does not submit for indexing)
+# To submit URLs for indexing, use the Indexing API: indexing.googleapis.com/v3/urlNotifications:publish
 curl -s -X POST "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect" \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
@@ -197,6 +198,8 @@ opencode mcp list
 ## MCP Configuration
 
 Add to your MCP config (`~/.config/opencode/mcp.json` or similar):
+
+> **Note**: `@anthropic/google-search-console-mcp` is an internal/unreleased package. If unavailable via npm, use the curl fallback above or check with your aidevops maintainer for the current install path.
 
 ```json
 {
