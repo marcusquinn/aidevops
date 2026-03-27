@@ -101,7 +101,7 @@ orb stop                          # Free memory when not needed
 orb restart                       # Fix most issues
 orb logs                          # OrbStack logs
 orb reset                         # Factory reset (last resort)
-docker system prune -a            # Prune unused Docker resources
+docker system prune -a            # DESTRUCTIVE: removes all unused images/containers/networks
 docker system df                  # Check disk usage
 docker info                       # Docker daemon status
 ```
