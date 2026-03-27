@@ -2837,8 +2837,14 @@ _complexity_scan_extract_md_topic_label() {
 }
 
 # Check if an open simplification-debt issue already exists for a given file.
+#
+# Uses GitHub search API via `gh issue list --search` to query server-side,
+# avoiding the --limit 200 cap that caused duplicate issues (GH#10783).
+# Previous approach fetched 200 issues locally and checked with jq, but with
+# 3000+ open simplification-debt issues, most were invisible to the dedup check.
+#
 # Arguments:
-#   $1 - existing_issues (JSON array from gh issue list)
+#   $1 - repo_slug (owner/repo for gh commands)
 #   $2 - issue_key (repo-relative file path used as dedup key)
 # Exit codes:
 #   0 - existing issue found (skip creation)
@@ -2857,6 +2863,18 @@ _complexity_scan_has_existing_issue() {
 	if [[ "${match_count:-0}" -gt 0 ]]; then
 		return 0
 	fi
+
+	# Fallback: search in issue body for the structured **File:** field.
+	# This catches issues where the title format differs (e.g., Qlty issues).
+	match_count=$(gh issue list --repo "$repo_slug" \
+		--label "simplification-debt" --state open \
+		--search "\"$issue_key\" in:body" \
+		--json number --jq 'length' 2>/dev/null) || match_count="0"
+
+	if [[ "$match_count" -gt 0 ]]; then
+		return 0
+	fi
+
 	return 1
 }
 

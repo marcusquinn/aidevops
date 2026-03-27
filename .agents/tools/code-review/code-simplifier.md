@@ -190,24 +190,34 @@ Every finding must pass through a maintainer before work begins, enforced throug
 
 ### Issue creation (by code-simplifier agent)
 
-1. Add labels: `simplification-debt` + `needs-maintainer-review`
-2. Assign to repo maintainer (from `repos.json` `maintainer` field, fall back to slug owner)
-3. Include structured finding format (Current/Proposed/Preserved/Risk/Verification/Confidence)
+1. **Dedup check FIRST (GH#10783)** -- before creating any issue, search for existing open issues targeting the same file. Without this, each scan run creates duplicates.
+2. Add labels: `simplification-debt` + `needs-maintainer-review`
+3. Assign to repo maintainer (from `repos.json` `maintainer` field, fall back to slug owner)
+4. Include structured finding format (Current/Proposed/Preserved/Risk/Verification/Confidence)
 
 ```bash
 MAINTAINER=$(jq -r '.initialized_repos[] | select(.slug == "<slug>") | .maintainer // empty' ~/.config/aidevops/repos.json)
 [[ -z "$MAINTAINER" ]] && MAINTAINER=$(echo "<slug>" | cut -d/ -f1)
 
-gh issue create --repo <slug> \
-  --title "simplification: <brief description>" \
-  --label "simplification-debt" --label "needs-maintainer-review" \
-  --assignee "$MAINTAINER" \
-  --body "<structured finding>
+# Dedup: check for existing open issue targeting this file (GH#10783)
+EXISTING=$(gh issue list --repo <slug> \
+  --label "simplification-debt" --state open \
+  --search "\"<file_path>\" in:title" \
+  --json number --jq 'length' 2>/dev/null) || EXISTING="0"
+if [[ "$EXISTING" -gt 0 ]]; then
+  echo "Skipping <file_path> — existing open simplification-debt issue found"
+else
+  gh issue create --repo <slug> \
+    --title "simplification: <brief description>" \
+    --label "simplification-debt" --label "needs-maintainer-review" \
+    --assignee "$MAINTAINER" \
+    --body "<structured finding>
 
 ---
 **To approve or decline**, comment on this issue:
 - \`approved\` — removes the review gate and queues for automated dispatch
 - \`declined: <reason>\` — closes this issue"
+fi
 ```
 
 The `needs-maintainer-review` label prevents pulse dispatch. GitHub notifies the assignee on creation.
