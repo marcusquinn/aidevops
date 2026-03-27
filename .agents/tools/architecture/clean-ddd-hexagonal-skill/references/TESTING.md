@@ -65,10 +65,28 @@ describe('Order', () => {
 });
 
 const draft = () => Order.create(CustomerId.from('cust-123'));
-const withItems = () => { const o = draft(); o.addItem(ProductId.from('p1'), Quantity.create(1), Money.create(10, 'USD')); return o; };
-const testAddress = () => new Address({ street: '1 Main St', city: 'Springfield', country: 'US', postcode: '12345' });
-const confirmed = () => { const o = withItems(); o.setShippingAddress(testAddress()); o.confirm(); return o; };
-const cancelled = () => { const o = withItems(); o.cancel('test'); return o; };
+
+const testAddress = () =>
+  new Address({ street: '1 Main St', city: 'Springfield', country: 'US', postcode: '12345' });
+
+const withItems = () => {
+  const o = draft();
+  o.addItem(ProductId.from('p1'), Quantity.create(1), Money.create(10, 'USD'));
+  return o;
+};
+
+const confirmed = () => {
+  const o = withItems();
+  o.setShippingAddress(testAddress());
+  o.confirm();
+  return o;
+};
+
+const cancelled = () => {
+  const o = withItems();
+  o.cancel('test');
+  return o;
+};
 ```
 
 ### Value Objects
@@ -256,7 +274,7 @@ Builder pattern — fluent API, `clearEvents()` after construction so tests star
 export class OrderBuilder {
   private customerId = CustomerId.from('default-customer');
   private items: Array<{ productId: ProductId; quantity: Quantity; price: Money }> = [];
-  private confirmed = false;
+  private confirmed = false;  // Builder flag — actual Order uses OrderStatus enum
 
   withCustomer(id: string): this { this.customerId = CustomerId.from(id); return this; }
   withItem(productId: string, qty: number, price: number): this {
