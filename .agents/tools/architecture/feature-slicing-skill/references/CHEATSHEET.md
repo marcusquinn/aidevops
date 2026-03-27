@@ -13,7 +13,7 @@ entities/ → Business domain models                  [HAS slices, optional]
 shared/   → Project-agnostic infrastructure         [NO slices, REQUIRED]
 ```
 
-**Import Rule:** Only import from layers BELOW. Never sideways or up.
+**Import Rule:** Only import from layers BELOW. Never sideways or up. Start with `app/`, `pages/`, `shared/` — add others as complexity grows.
 
 ---
 
@@ -32,20 +32,7 @@ shared/   → Project-agnostic infrastructure         [NO slices, REQUIRED]
 
 ---
 
-## Quick Decision Trees
-
-### "Where does this code go?"
-
-```
-├─ App-wide config, providers, routing    → app/
-├─ Full page / route component            → pages/
-├─ Complex reusable UI block              → widgets/
-├─ User action with business value        → features/
-├─ Business domain object (data model)    → entities/
-└─ Reusable, domain-agnostic code         → shared/
-```
-
-### "Feature or Entity?"
+## Entity vs Feature
 
 | Entity (noun) | Feature (verb) |
 |---------------|----------------|
@@ -54,10 +41,7 @@ shared/   → Project-agnostic infrastructure         [NO slices, REQUIRED]
 | `comment` | `write-comment` |
 | `order` | `checkout` |
 
-**Entities:** THINGS with identity, displayed in lists
-**Features:** ACTIONS with side effects, triggered by user
-
----
+**Entities:** THINGS with identity. **Features:** ACTIONS with side effects.
 
 ## Segments
 
@@ -71,70 +55,19 @@ shared/   → Project-agnostic infrastructure         [NO slices, REQUIRED]
 
 **Naming:** Use purpose-driven names (`api/`, `model/`) not essence-based (`hooks/`, `types/`).
 
----
+## File Structure
 
-## File Structure Templates
-
-### Entity
-
-```
-entities/{name}/
-├── ui/
-│   ├── {Name}Card.tsx
-│   └── index.ts
-├── api/
-│   ├── {name}Api.ts
-│   ├── queries.ts
-│   └── index.ts
-├── model/
-│   ├── types.ts
-│   ├── schema.ts
-│   ├── mapper.ts
-│   └── index.ts
-└── index.ts
-```
-
-### Feature
-
-```
-features/{name}/
-├── ui/
-│   ├── {Name}Form.tsx
-│   ├── {Name}Button.tsx
-│   └── index.ts
-├── api/
-│   ├── {name}Api.ts
-│   └── index.ts
-├── model/
-│   ├── types.ts
-│   ├── schema.ts
-│   ├── store.ts
-│   └── index.ts
-└── index.ts
-```
-
-### Page
-
-```
-pages/{name}/
-├── ui/
-│   ├── {Name}Page.tsx
-│   └── index.ts
-├── api/
-│   └── loader.ts
-├── model/
-│   └── schema.ts
-└── index.ts
-```
-
----
+| Layer | Key files |
+|-------|-----------|
+| `entities/{name}/` | `ui/{Name}Card.tsx`, `api/{name}Api.ts`, `api/queries.ts`, `model/types.ts`, `model/schema.ts`, `model/mapper.ts`, `index.ts` |
+| `features/{name}/` | `ui/{Name}Form.tsx`, `ui/{Name}Button.tsx`, `api/{name}Api.ts`, `model/types.ts`, `model/schema.ts`, `model/store.ts`, `index.ts` |
+| `pages/{name}/` | `ui/{Name}Page.tsx`, `api/loader.ts`, `model/schema.ts`, `index.ts` |
 
 ## Public API Pattern
 
 ```typescript
 // entities/user/index.ts
 export { UserCard } from './ui/UserCard';
-export { UserAvatar } from './ui/UserAvatar';
 export { getUser, updateUser } from './api/userApi';
 export { useUser, useUsers } from './api/queries';
 export type { User, UserRole } from './model/types';
@@ -142,25 +75,12 @@ export { userSchema } from './model/schema';
 export { mapUserDTO } from './model/mapper';
 ```
 
-**Import from public API only:**
-
 ```typescript
-// ✅
-import { UserCard, type User } from '@/entities/user';
-
-// ❌
-import { UserCard } from '@/entities/user/ui/UserCard';
+// ✅ import { UserCard, type User } from '@/entities/user';
+// ❌ import { UserCard } from '@/entities/user/ui/UserCard';
 ```
-
----
 
 ## Cross-Entity References (@x)
-
-When entities must reference each other:
-
-```
-entities/product/@x/order.ts  → API for order to import
-```
 
 ```typescript
 // entities/product/@x/order.ts
@@ -170,22 +90,11 @@ export type { ProductId } from '../model/types';
 import type { ProductId } from '@/entities/product/@x/order';
 ```
 
----
-
 ## TypeScript Path Aliases
 
 ```json
-{
-  "compilerOptions": {
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["./src/*"]
-    }
-  }
-}
+{ "compilerOptions": { "baseUrl": ".", "paths": { "@/*": ["./src/*"] } } }
 ```
-
----
 
 ## Anti-Patterns
 
@@ -199,21 +108,6 @@ import type { ProductId } from '@/entities/product/@x/order';
 | Single-use widgets | Keep in page slice |
 | Everything is a feature | Only reused interactions |
 | Import from internal paths | Always use `index.ts` |
-
----
-
-## Minimal FSD Setup
-
-Start small, add layers as needed:
-
-```
-src/
-├── app/
-├── pages/
-└── shared/
-```
-
-Add `entities/`, `features/`, `widgets/` when complexity grows.
 
 ---
 
