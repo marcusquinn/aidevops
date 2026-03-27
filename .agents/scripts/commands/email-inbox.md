@@ -296,15 +296,15 @@ AI: Loading thread for message abc123...
 
 ## Dependencies
 
-- `scripts/email-mailbox-helper.sh` — IMAP/JMAP adapter and mailbox operations (t1493)
-- `scripts/email-triage-helper.sh` — AI classification and prioritization engine (t1502)
-- `scripts/email-compose-helper.sh` — Drafting, tone, signatures, attachments (t1495)
-- `tools/security/prompt-injection-defender.md` — Injection scanning for message bodies
+- `~/.aidevops/agents/scripts/email-mailbox-helper.sh` — IMAP/JMAP adapter and mailbox operations (t1493)
+- `~/.aidevops/agents/scripts/email-triage-helper.sh` — AI classification and prioritization engine (t1502)
+- `~/.aidevops/agents/scripts/email-compose-helper.sh` — Drafting, tone, signatures, attachments (t1495)
+- `~/.aidevops/agents/tools/security/prompt-injection-defender.md` — Injection scanning for message bodies
 
 ## Related
 
-- `services/email/email-mailbox.md` — Mailbox organization, flagging, Sieve rules, IMAP/JMAP reference
-- `services/email/email-agent.md` — Autonomous mission communication (send/receive/extract)
-- `scripts/commands/email-health-check.md` — Email infrastructure health checks
-- `scripts/commands/email-delivery-test.md` — Spam analysis and inbox placement tests
-- `scripts/commands/email-test-suite.md` — Design rendering and delivery testing
+- `~/.aidevops/agents/services/email/email-mailbox.md` — Mailbox organization, flagging, Sieve rules, IMAP/JMAP reference
+- `~/.aidevops/agents/services/email/email-agent.md` — Autonomous mission communication (send/receive/extract)
+- `~/.aidevops/agents/scripts/commands/email-health-check.md` — Email infrastructure health checks
+- `~/.aidevops/agents/scripts/commands/email-delivery-test.md` — Spam analysis and inbox placement tests
+- `~/.aidevops/agents/scripts/commands/email-test-suite.md` — Design rendering and delivery testing
