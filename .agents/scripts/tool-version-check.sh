@@ -132,11 +132,16 @@ BREW_TOOLS=(
 
 PIP_TOOLS=(
 	"pip|Beads Viewer|beads_viewer|--version|beads-viewer|$(_pip_upgrade_cmd beads-viewer)"
-	"pip|DSPy|dspy|--version|dspy-ai|$(_pip_upgrade_cmd dspy-ai)"
-	"pip|Crawl4AI|crawl4ai|--version|crawl4ai|$(_pip_upgrade_cmd crawl4ai)"
 	"pip|Analytics MCP|analytics-mcp|--version|analytics-mcp|pipx upgrade analytics-mcp"
 	"pip|Outscraper MCP|outscraper-mcp-server|--version|outscraper-mcp-server|uv tool upgrade outscraper-mcp-server"
 )
+# Library dependencies (crawl4ai, dspy) are intentionally excluded from PIP_TOOLS.
+# - dspy: pinned in requirements.txt (see "Update versions deliberately" comment there);
+#   auto-updating globally would diverge from the pinned project version.
+# - crawl4ai: a library dependency installed into project venvs, not a global CLI tool;
+#   it is not declared in this repo's requirements.txt or pyproject.toml.
+# Neither belongs in the global CLI tool update loop.
+# See: https://github.com/marcusquinn/aidevops/issues/6763
 
 # Tools installed via curl/custom installers (not in brew/npm/pip registries)
 # Latest version cannot be checked via registry — use "self" category
@@ -195,8 +200,7 @@ get_uv_installed_version() {
 # Get installed version for Python packages across all install methods.
 # Tries pip show first (standard pip installs), then pipx (isolated tools like
 # analytics-mcp), then uv tool (isolated tools like outscraper-mcp-server).
-# pip-only libraries (e.g. crawl4ai, dspy) have no CLI binary so command -v
-# always fails — this function handles all three installation methods.
+# CLI tools have a binary; library-only packages (excluded from PIP_TOOLS) do not.
 get_python_installed_version() {
 	local pkg="$1"
 	local version
@@ -389,8 +393,8 @@ check_tool() {
 	local update_cmd="$6"
 
 	local installed
-	# pip tools: detect across pip/pipx/uv — pip-only libraries (e.g.
-	# crawl4ai, dspy) have no CLI binary so command -v always fails.
+	# pip tools: detect across pip/pipx/uv — some pip tools have no CLI binary
+	# so command -v always fails; get_python_installed_version handles all cases.
 	# npm tools: pass package name so fallback to package.json works.
 	# All other categories: standard CLI binary detection.
 	if [[ "$category" == "pip" ]]; then
