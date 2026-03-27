@@ -4,216 +4,106 @@ Average cart abandonment is ~70%. Every friction point costs real revenue.
 
 ### Checkout Flow Structure
 
-Streamline the typical 7-step checkout to 3 steps:
+Streamline to 3 steps: (1) Email + Shipping Address, (2) Shipping Method + Payment, (3) Order Confirmation.
 
-1. Email + Shipping Address
-2. Shipping Method + Payment
-3. Order Confirmation
+**Guest checkout**: 35% of abandonment is forced account creation (Baymard). Guest checkout yields 20-45% higher conversion. Default to guest; offer optional account post-purchase.
 
-### Guest Checkout vs. Account Required
-
-**35% of cart abandonment** is due to forced account creation (Baymard Institute). Guest checkout yields **20-45% higher conversion**.
-
-Best practice: guest as default, account as optional checkbox revealing a password field. Post-purchase: "Your order is placed! Create an account to track it?" Amazon uses separate paths for new vs. returning customers with post-purchase account creation email.
-
-### One-Page vs. Multi-Step vs. Accordion
-
-No universal winner (CXL Institute):
-
-| Fields | Recommendation |
-|--------|---------------|
-| < 7 | One-page |
-| 8-15 | Test both |
-| > 15 | Multi-step |
-| Mobile-first | Multi-step |
-
-**Recommended: Accordion checkout** — single page (no reloads), progressive disclosure, shows progress. Each section collapses on completion, next section expands.
+**Layout**: Accordion checkout recommended — single page, progressive disclosure, shows progress. Field count guide: <7 fields → one-page; 8-15 → test both; >15 or mobile-first → multi-step.
 
 ### Progress Indicators
 
-| Type | Trade-off |
-|------|-----------|
-| Step counter ("Step 2 of 4") | Clear but emphasizes remaining work |
-| Step names ("Shipping > Payment > Review") | Shows what's coming |
-| Progress bar | Feels good; must be accurate |
-| Checked steps ("✓ Cart ✓ Shipping > Payment > Review") | Clear completion status |
-
-**Endowed Progress Effect** (Nunes & Dreze, 2006): 82% higher completion when users perceive existing progress. Show "Cart" as completed first step.
+Show "Cart" as completed first step (Endowed Progress Effect: 82% higher completion, Nunes & Dreze 2006). Options: step counter, step names, progress bar, or checked steps — all valid; choose by context.
 
 ### Form Field Optimization
 
-**Absolute minimum**: Email, Shipping Address (physical goods), Payment.
+Minimum: Email, Shipping Address, Payment. Phone optional (explain why if required; optional phone +5-10% conversion). Company name conditional on "business purchase" checkbox. Address Line 2 never required.
 
-- **Phone**: Optional unless needed for delivery. Optional phone increased conversions 5-10%. If required, explain why: "Phone number (for delivery notifications)"
-- **Company name**: Conditional — show only when "This is a business purchase" is checked, with optional VAT/Tax ID
-- **Address Line 2**: Never require. Placeholder: "Apartment, suite, etc. (optional)"
+### Shipping and Payment
 
-### Shipping Method Display
+**Shipping**: Surprise costs are the #1 abandonment reason (Baymard: 50%). Show all options with prices upfront. Pre-select most popular. Decoy pricing works: mid-tier close to premium makes premium seem smart.
 
-Surprise shipping costs are the **#1 abandonment reason** (Baymard: 50%). Never hide costs behind "Calculate at checkout."
-
-Show all options with prices, highlight free shipping, pre-select the most popular option. **Decoy pricing**: mid-tier priced close to premium makes premium seem smart (e.g., Priority $12 vs. Express $14 for much faster delivery).
-
-### Payment Methods
-
-Display accepted payment logos prominently — reassures users, signals legitimacy.
-
-- **BNPL** (Affirm, Afterpay, Klarna): +30-50% AOV, +20-30% conversion, especially orders $100+
-- **Digital wallets** (Apple Pay, Google Pay, Shop Pay): Checkout from 2-3 min to 10-20 sec
-
-Layout: Express checkout buttons (Apple Pay, Google Pay, PayPal) at top, then "Or enter information below" with card/PayPal/BNPL options. Show BNPL installment breakdown (e.g., "4 x $24.99 - no interest").
+**Payment**: Display logos prominently. Express checkout (Apple Pay, Google Pay, PayPal) at top, card/BNPL below. BNPL (Affirm, Afterpay, Klarna): +30-50% AOV, +20-30% conversion on orders $100+. Digital wallets reduce checkout from 2-3 min to 10-20 sec. Show BNPL installment breakdown ("4 × $24.99 - no interest").
 
 ### Security and Trust Signals
 
 | Signal | Placement |
 |--------|-----------|
-| SSL/HTTPS lock + "Secure Checkout" | Page header |
+| SSL lock + "Secure Checkout" | Page header |
 | Security badges (Norton, McAfee) | Near payment form and CTA |
 | PCI DSS Compliant | Near payment form |
-| Money-back guarantee | Near submit button |
-| Return policy link | Near submit button |
+| Money-back guarantee + return policy | Near submit button |
 | Customer service contact | Checkout footer |
 
-Security badges increase conversion **15-42%** depending on audience/industry. Place "Your payment information is encrypted and secure" near card fields, guarantee badge near submit button.
+Security badges increase conversion 15-42%. "Your payment information is encrypted and secure" near card fields.
 
-### Order Summary and Cart Visibility
+### Order Summary, Promo Codes, Auto-Fill
 
-Users must always see items, costs, and total throughout checkout. **Desktop**: persistent sidebar. **Mobile**: collapsible summary with total visible ("Show Order Summary ($142)"). Use sticky positioning.
+**Order summary**: Always visible — desktop sidebar, mobile collapsible with total shown. Sticky positioning.
 
-### Promo Code Field
+**Promo field**: Visible fields cause 20-30% of users to leave searching for codes. Best: remove entirely (auto-apply). Good: collapse behind "Have a promo code?". Removing the field: +3-5% conversion.
 
-Visible promo fields cause 20-30% of users to leave and search for codes (many never return).
+**Auto-fill**: Use proper `autocomplete` attributes (`email`, `given-name`, `family-name`, `shipping street-address`, `shipping postal-code`, `tel`) — reduces checkout time 50%+. Address autocomplete via Google Places API, Loqate, or Smarty Streets. Smart defaults: country from IP, pre-check "Billing = Shipping" (~90% use same).
 
-1. **Best**: Remove entirely — auto-apply promos by cart contents or customer segment
-2. **Good**: Collapse — "Have a promo code? [Click here]"
-3. **Acceptable**: Pre-fill active promos for transparency
+### Error Handling and Mobile
 
-Removing the field increased conversions 3-5%.
+**Errors**: Inline validation on-blur; debounced on-keystroke for email/phone/card. Never validate only on submit. Specific messages ("Credit card should be 15-16 digits. You entered 15."). Show error summary at top on submit. Always preserve entered data.
 
-### Auto-Fill and Smart Defaults
+**Mobile** (50%+ transactions, 2-3× lower conversion than desktop):
 
-Use proper `autocomplete` attributes (`email`, `given-name`, `family-name`, `shipping street-address`, `shipping address-level2`, `shipping address-level1`, `shipping postal-code`, `tel`) — reduces checkout time 50%+.
+- `type="email"` / `type="tel"` for correct keyboards; `font-size: 16px` to prevent iOS zoom
+- Min 48×48px touch targets; single-column layout
+- Digital wallets above the fold; sticky "Place Order" button (`position: sticky; bottom: 0`)
+- Minimize typing: dropdowns for states, autofill, address autocomplete
 
-**Address autocomplete**: Google Places API, Loqate, or Smarty Streets for type-ahead lookup.
+### Submission and Page Speed
 
-**Smart defaults**: Country from IP/past orders. Pre-check "Billing = Shipping" (~90% use same). Offer "Save this information for next time" for guests.
+Disable button on click, show "Processing Payment...", re-enable on error. Include price in button ("Place Order - $142.00"). Speed targets: <1s TTI, <2s FCP, <3s full load.
 
-### Error Handling and Validation
+Speed impact: 1s delay = 7% conversion loss; 3s load = 40% abandonment; 5s = 90% abandonment (Amazon). Optimizations: minimize JS, lazy-load non-critical elements, WebP via CDN, inline critical CSS, SSR checkout, async payment iframes (Stripe Elements, PayPal Smart Buttons).
 
-**Inline validation** with debounced real-time feedback. Validate on-blur for most fields, on-keystroke with debounce for complex formats (email, phone, card). Never validate only on submit.
-
-Error messages must be specific and actionable (e.g., "Credit card number should be 15-16 digits. You entered 15."). On submit with errors, show summary at top linking to each field. **Always preserve entered data on validation failure.**
-
-### Mobile Checkout Optimization
-
-50%+ transactions start on mobile, but conversion is often 2-3x lower than desktop.
-
-1. **Input types**: `type="email"` (email keyboard), `type="tel"` (numeric keypad)
-2. **Touch targets**: Min 48x48px. `font-size: 16px` on inputs to prevent iOS zoom
-3. **Single-column layout**: Never side-by-side fields on mobile
-4. **Minimize typing**: Dropdowns for states, toggles over text, autofill, address autocomplete
-5. **Digital wallets prominent**: Above the fold with "or pay with card" separator
-6. **Sticky CTA**: "Place Order" button fixed to bottom of screen (`position: sticky; bottom: 0`)
-
-### Loading States During Submission
-
-Prevent double-orders: disable button on click, show "Processing Payment..." state, re-enable on error with message. Include price in button text ("Place Order - $142.00") for commitment. Redirect to confirmation on success.
-
-### Cart Abandonment Recovery Emails
+### Cart Abandonment Recovery
 
 Email recovery wins back 10-15% of abandoned checkouts.
 
-| Email | Timing | Strategy | Key element |
-|-------|--------|----------|-------------|
-| #1 Reminder | 1-3 hours | Low-pressure | Product image, "Still deciding?", support offer, 48h cart limit |
-| #2 Incentive | 24 hours | 10% discount | Time-limited code, support offer |
-| #3 Last chance | 48-72 hours | Urgency + scarcity | Cart expiration, stock warning |
-| #4 Alternatives | 5-7 days | Re-engagement | Similar product recommendations |
+| Email | Timing | Strategy |
+|-------|--------|----------|
+| #1 Reminder | 1-3 hours | Low-pressure: product image, support offer, 48h cart limit |
+| #2 Incentive | 24 hours | 10% discount, time-limited code |
+| #3 Last chance | 48-72 hours | Cart expiration, stock warning |
+| #4 Alternatives | 5-7 days | Similar product recommendations |
 
-**Caution**: Limit discounts to first-time abandoners — don't train customers to abandon for discounts.
+Segment by cart value: High ($200+) = personal outreach; Medium ($50-200) = full sequence; Low (<$50) = emails 1 and 3 only. Don't train customers to abandon for discounts — limit to first-time abandoners. Tailor by stage: browse → "Still interested?"; cart → standard; checkout-started → "You're one click away!"
 
-**Best practices**: Personalize with name, exact products, images, cart value. Mobile-optimize (large buttons, short copy). Test incentive levels vs. margin impact. **Segment by cart value**: High ($200+) = personal outreach + phone; Medium ($50-200) = full sequence; Low (<$50) = emails 1 and 3 only. Include exit survey in email 2 or 3.
+### Exit-Intent, Order Bumps, Post-Purchase
 
-**Abandonment types** — tailor messaging by stage:
+**Exit-intent**: Trigger on mouse-toward-close. Offer free shipping, discount, or live chat. Once per session, easy to close. Recovery: +3-8%. Live chat ("Need help?") often outperforms discounts.
 
-- **Browse** (viewed, didn't add): "Still interested?" + recommendations
-- **Cart** (added, didn't start checkout): Standard sequence
-- **Checkout** (entered email, didn't complete): More urgent — "You're one click away!"
+**Order bump** (pre-payment): Checkbox add-on, 10-30% of main item price, limit 1-2 options. Take rate: 10-30%.
 
-### Exit-Intent Popups
+**Post-purchase upsell** (after confirmation): One-click add, discounted price. Take rate: 5-20%. Combined: +15-40% AOV. No dark patterns — easy "No Thanks", genuine value.
 
-Trigger when user is about to leave (mouse toward close/back). Offer: free shipping, discount code, or live chat. **Rules**: Once per session only, easy to close. On mobile, use time-based or scroll-based triggers. Typical recovery: +3-8%.
+**Confirmation page**: Order number, delivery timeline, tracking link, support contact. Engagement: upsell, social sharing, referral program, guest account creation (pre-filled email), quick checkout feedback.
 
-**Alternative**: Live chat popup instead of discount — "Need help with your order?" Less sleazy, addresses objections directly, builds trust.
+### A/B Testing Ideas
 
-### Order Bumps and Upsells
+| Test | Expected Impact |
+|------|----------------|
+| Guest vs. forced account | +15-45% conversion |
+| Free shipping threshold ($35/$50/$75) | Measure conversion AND AOV |
+| Security badges near payment | +5-15% conversion |
+| Button copy ("Place Order" vs "Buy Now - $142") | 2-8% difference |
+| Phone required vs. optional | +3-10% conversion |
+| Promo code visible/collapsed/removed | 2-5% change |
+| Exit-intent offer type | +3-8% recovery |
 
-**Order bump** (pre-payment): Checkbox add-on relevant to main purchase, priced 10-30% of main item, limit 1-2 options, show product image. Take rate: 10-30%.
+### Fraud Prevention and International
 
-**Post-purchase upsell** (after confirmation, payment already captured): One-click add with discounted price. Take rate: 5-20%.
+**Fraud**: Risk signals: mismatched billing/shipping, high-value first order, multiple orders same IP, unusual email domain. Tools: Stripe Radar, Signifyd, Kount, Riskified, 3D Secure. Low risk = auto-approve; medium = manual review; high = decline or verify.
 
-Combined: +15-40% AOV. **Ethics**: Easy "No Thanks", no dark patterns (fake countdowns, hidden decline), genuine value.
+**International**: Display local currency (auto-detect by IP). Regional methods: US (cards, PayPal, Venmo), Europe (Klarna, SEPA), China (Alipay, WeChat Pay), India (UPI, Razorpay), LatAm (Mercado Pago, Boleto). DDP preferred — removes surprise duties. Translate at minimum error messages and button copy.
 
-### Post-Purchase Confirmation Page
+### Accessibility
 
-High-engagement opportunity, not just a receipt.
-
-**Essential**: Order number + email confirmation, delivery timeline, order summary, tracking link, support contact.
-
-**Engagement**: One-click upsell/cross-sell, social sharing with branded hashtag, referral program ("Refer a friend, both get $10 off"), account creation for guests (pre-filled email), quick feedback on checkout experience, related content.
-
-### Checkout Page Speed
-
-- **1-second delay** = 7% conversion reduction (Amazon)
-- **3-second load** = 40% abandonment
-- **5-second load** = 90% abandonment
-
-**Targets**: <1s TTI, <2s FCP, <3s full load.
-
-**Optimizations**: Minimize JS (vanilla/lightweight for checkout), lazy-load non-critical elements, WebP thumbnails via CDN, inline critical CSS, SSR checkout (not SPA), async payment iframes (Stripe Elements, PayPal Smart Buttons), fast DB queries. Monitor with PageSpeed Insights, Lighthouse, RUM.
-
-### Checkout A/B Testing Ideas
-
-| # | Test | Expected Impact |
-|---|------|----------------|
-| 1 | Guest checkout vs. forced account | +15-45% conversion |
-| 2 | One-page vs. multi-step | Varies by context |
-| 3 | Free shipping threshold ($35 vs $50 vs $75) | Measure conversion AND AOV |
-| 4 | Security badges near payment form | +5-15% conversion |
-| 5 | Button copy ("Place Order" vs "Complete Purchase" vs "Buy Now - $142") | 2-8% difference |
-| 6 | Phone required vs. optional | +3-10% conversion |
-| 7 | Promo code visible vs. collapsed vs. removed | 2-5% change |
-| 8 | Exit-intent (discount vs. free shipping vs. live chat) | +3-8% recovery |
-| 9 | Order summary location (sidebar vs. top) | 1-5% difference |
-| 10 | Payment options order (card-first vs. PayPal-first) | May shift mix, not overall conversion |
-
-### Fraud Prevention
-
-Balance prevention against false positives (legitimate orders declined).
-
-**Risk signals**: Mismatched billing/shipping, high-value first order, multiple orders same IP, freight forwarder, unusual email domain, multiple failed payments.
-
-**Tools**: Stripe Radar, Signifyd, Kount, Riskified, 3D Secure.
-
-**Approach**: Low risk = auto-approve. Medium = manual review. High = decline or require verification (phone, ID upload).
-
-### International Checkout
-
-**Currency**: Display local, auto-detect by IP or let user select.
-
-**Regional payment methods**: US (cards, PayPal, Venmo), Europe (cards, PayPal, Klarna, SEPA), China (Alipay, WeChat Pay), India (UPI, Paytm, Razorpay), Latin America (Mercado Pago, Boleto).
-
-**Taxes/duties**: DDP (Delivered Duty Paid) removes surprise fees — preferred. Otherwise state "Duties and taxes may apply upon delivery." Show realistic international delivery times. Translate at minimum error messages and button copy.
-
-### Checkout Accessibility
-
-1. **Keyboard navigation**: All fields and buttons via Tab
-2. **Screen reader**: Proper labels, ARIA attributes, error/success announced
-3. **Color contrast**: WCAG AA minimum (4.5:1)
-4. **Focus indicators**: Visible outline on focused fields
-5. **Error identification**: Associated with fields, not color-only
-6. **Descriptive links**: "Complete your purchase" not "Click here"
-
-**Testing**: NVDA, JAWS, VoiceOver, keyboard-only, axe, WAVE.
+Keyboard navigation for all fields/buttons; screen reader labels and ARIA; WCAG AA color contrast (4.5:1); visible focus indicators; errors associated with fields (not color-only); descriptive link text. Test with NVDA, JAWS, VoiceOver, keyboard-only, axe, WAVE.
 
 ---
