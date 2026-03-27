@@ -1355,15 +1355,19 @@ update_health_issues() {
 # actionable GitHub issues for findings that warrant fixes.
 #######################################
 run_daily_quality_sweep() {
-	# Time-of-day gate — only run during off-peak hours (18:00-23:59 local).
+	# Time-of-day gate — only run during off-peak hours (18:00-05:59 local).
 	# Anthropic doubles token allowance during off-peak (6 PM-12 AM UK time),
 	# and model demand is lower. Quality sweep findings trigger LLM worker
 	# dispatch via the pulse, so landing findings in this window means the
-	# resulting workers also run at 2x rates. Override: QUALITY_SWEEP_OFFPEAK=0
+	# resulting workers also run at 2x rates. The window includes overnight
+	# hours (00:00-05:59) which are the quietest period for both API load
+	# and user activity. Override: QUALITY_SWEEP_OFFPEAK=0
 	local current_hour
 	current_hour=$(date +%H)
-	if [[ "${QUALITY_SWEEP_OFFPEAK:-1}" == "1" ]] && ((10#$current_hour < 18)); then
-		echo "[stats] Quality sweep deferred: hour ${current_hour} is outside off-peak window (18:00-23:59)" >>"$LOGFILE"
+	# Off-peak = 18:00-05:59 (hours 18,19,20,21,22,23,0,1,2,3,4,5)
+	# Peak = 06:00-17:59 (hours 6-17). Defer during peak only.
+	if [[ "${QUALITY_SWEEP_OFFPEAK:-1}" == "1" ]] && ((10#$current_hour >= 6 && 10#$current_hour < 18)); then
+		echo "[stats] Quality sweep deferred: hour ${current_hour} is outside off-peak window (18:00-05:59)" >>"$LOGFILE"
 		return 0
 	fi
 

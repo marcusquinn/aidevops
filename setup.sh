@@ -877,6 +877,7 @@ _setup_post_setup_steps() {
 	setup_auto_update
 	setup_supervisor_pulse "$os"
 	setup_stats_wrapper "${PULSE_ENABLED:-}"
+	setup_failure_miner "${PULSE_ENABLED:-}"
 	setup_repo_sync
 	setup_process_guard
 	setup_memory_pressure_monitor
