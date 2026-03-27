@@ -178,8 +178,11 @@ fi
 # OpenCode uses anthropic/ as the provider prefix — opencode/claude-* causes
 # ProviderModelNotFoundError at dispatch time.
 for tier in opus coding haiku sonnet health eval; do
-	tier_output=$(run_with_timeout 5 bash "$HELPER" resolve "$tier" --quiet 2>&1) || true
-	if [[ -n "$tier_output" && "$tier_output" == opencode/claude-* ]]; then
+	tier_exit=0
+	tier_output=$(run_with_timeout 5 bash "$HELPER" resolve "$tier" --quiet 2>&1) || tier_exit=$?
+	if [[ "$tier_exit" -ne 0 || -z "$tier_output" ]]; then
+		skip "resolve $tier: unable to resolve in this environment (cannot validate GH#7633)"
+	elif [[ "$tier_output" == opencode/claude-* ]]; then
 		fail "resolve $tier: must not return opencode/claude-* prefix (GH#7633)" \
 			"Got: $tier_output — OpenCode uses anthropic/ prefix for Anthropic models"
 	else
