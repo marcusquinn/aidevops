@@ -106,8 +106,10 @@ is_known_provider() {
 
 # Tier to primary/fallback model mapping
 # Format: primary_provider/model|fallback_provider/model
-# When OpenCode is available, prefer opencode/* model IDs (routed through
-# OpenCode's gateway, no direct API keys needed for these).
+# When OpenCode is available, Anthropic models are routed through OpenCode's
+# gateway using the anthropic/ provider prefix (not opencode/). OpenCode uses
+# anthropic/ as the provider prefix for all Anthropic models — using opencode/
+# causes ProviderModelNotFoundError at dispatch time (GH#7633).
 get_tier_models() {
 	local tier="$1"
 
@@ -115,14 +117,14 @@ get_tier_models() {
 	if _is_opencode_available; then
 		case "$tier" in
 		local) echo "local/llama.cpp|anthropic/claude-haiku-4-5" ;;
-		haiku) echo "opencode/claude-haiku-4-5|opencode/gemini-3-flash" ;;
+		haiku) echo "anthropic/claude-haiku-4-5|opencode/gemini-3-flash" ;;
 		flash) echo "google/gemini-2.5-flash|opencode/gemini-3-flash" ;;
-		sonnet) echo "opencode/claude-sonnet-4-6|openai/gpt-5.3-codex|anthropic/claude-sonnet-4-6" ;;
+		sonnet) echo "anthropic/claude-sonnet-4-6|openai/gpt-5.3-codex" ;;
 		pro) echo "google/gemini-2.5-pro|opencode/gemini-3-pro" ;;
-		opus) echo "opencode/claude-opus-4-6|openai/gpt-5.4|anthropic/claude-opus-4-6" ;;
-		health) echo "opencode/claude-sonnet-4-6|google/gemini-2.5-flash" ;;
-		eval) echo "opencode/claude-sonnet-4-6|google/gemini-2.5-flash" ;;
-		coding) echo "opencode/claude-opus-4-6|openai/gpt-5.4|anthropic/claude-opus-4-6" ;;
+		opus) echo "anthropic/claude-opus-4-6|openai/gpt-5.4" ;;
+		health) echo "anthropic/claude-sonnet-4-6|google/gemini-2.5-flash" ;;
+		eval) echo "anthropic/claude-sonnet-4-6|google/gemini-2.5-flash" ;;
+		coding) echo "anthropic/claude-opus-4-6|openai/gpt-5.4" ;;
 		*) return 1 ;;
 		esac
 	else
