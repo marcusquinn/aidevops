@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # MCP Connection Failure Diagnostics
 # Usage: mcp-diagnose.sh <mcp-name>
+#        mcp-diagnose.sh check-all
 #
 # Diagnoses common MCP connection issues:
 # - Command availability
 # - Version mismatches
 # - Configuration errors
 # - Known breaking changes
+#
+# check-all: scans all enabled MCP servers and reports which are unavailable,
+# helping identify dead tool schemas that waste context tokens (t1682).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
@@ -17,10 +21,160 @@ MCP_NAME="${1:-}"
 
 if [[ -z "$MCP_NAME" ]]; then
 	echo "Usage: mcp-diagnose.sh <mcp-name>"
+	echo "       mcp-diagnose.sh check-all"
 	echo ""
 	echo "Examples:"
 	echo "  mcp-diagnose.sh augment-context-engine"
+	echo "  mcp-diagnose.sh check-all"
 	exit 1
+fi
+
+# =============================================================================
+# check-all: scan all enabled MCP servers for connection errors (t1682)
+# Identifies servers whose tool schemas are in context but can't execute.
+# =============================================================================
+_check_all_mcps() {
+	echo -e "${BLUE}=== MCP Server Health Check (t1682) ===${NC}"
+	echo ""
+	echo "Scanning all enabled MCP servers for connection errors..."
+	echo "Errored servers inject dead tool schemas into context, wasting tokens."
+	echo ""
+
+	# Resolve config file — registry-driven with opencode fallback
+	local config_file=""
+	if type rt_config_path &>/dev/null; then
+		config_file=$(rt_config_path "opencode" 2>/dev/null) || config_file=""
+	fi
+	if [[ -z "$config_file" || ! -f "$config_file" ]]; then
+		config_file="$HOME/.config/opencode/opencode.json"
+	fi
+
+	if [[ ! -f "$config_file" ]]; then
+		echo -e "${RED}✗ No MCP config file found at: $config_file${NC}"
+		return 1
+	fi
+
+	echo "Config: $config_file"
+	echo ""
+
+	# Extract enabled MCP server names and their commands using Python
+	local server_list
+	server_list=$(
+		python3 - "$config_file" <<'PYEOF'
+import json, sys
+
+config_file = sys.argv[1]
+with open(config_file) as f:
+    cfg = json.load(f)
+
+# Support both 'mcp' (opencode) and 'mcpServers' (Claude Code / other runtimes)
+mcp_section = cfg.get('mcp', cfg.get('mcpServers', {}))
+
+for name, server in mcp_section.items():
+    enabled = server.get('enabled', True)
+    if not enabled:
+        continue
+    server_type = server.get('type', 'local')
+    if server_type == 'remote':
+        # Remote MCPs: just print name with remote marker
+        print(f"{name}\tremote\t")
+        continue
+    cmd = server.get('command', [])
+    if isinstance(cmd, list) and len(cmd) > 0:
+        print(f"{name}\tlocal\t{cmd[0]}")
+    elif isinstance(cmd, str):
+        print(f"{name}\tlocal\t{cmd}")
+    else:
+        print(f"{name}\tlocal\t")
+PYEOF
+	) || {
+		echo -e "${RED}✗ Failed to parse config file${NC}"
+		return 1
+	}
+
+	if [[ -z "$server_list" ]]; then
+		echo -e "${YELLOW}No enabled MCP servers found in config.${NC}"
+		return 0
+	fi
+
+	local ok_count=0
+	local error_count=0
+	local skip_count=0
+	local errored_names=()
+
+	while IFS=$'\t' read -r name server_type cmd_path; do
+		[[ -z "$name" ]] && continue
+
+		if [[ "$server_type" == "remote" ]]; then
+			echo -e "  ${CYAN}[remote]${NC} $name — skipping connectivity check (remote MCP)"
+			((++skip_count))
+			continue
+		fi
+
+		# For local MCPs: check if the command binary exists
+		# cmd_path may be a full path (e.g. /home/user/.nvm/.../npx) or a bare name
+		local cmd_ok=false
+		if [[ -n "$cmd_path" ]]; then
+			if [[ -x "$cmd_path" ]]; then
+				cmd_ok=true
+			elif command -v "$cmd_path" &>/dev/null; then
+				cmd_ok=true
+			fi
+		fi
+
+		if [[ "$cmd_ok" == "true" ]]; then
+			echo -e "  ${GREEN}[ok]${NC}     $name"
+			((++ok_count))
+		else
+			echo -e "  ${RED}[error]${NC}  $name — command not found: ${cmd_path:-<none>}"
+			errored_names+=("$name")
+			((++error_count))
+		fi
+	done <<<"$server_list"
+
+	echo ""
+	echo "Summary: ${ok_count} ok, ${error_count} errored, ${skip_count} skipped (remote)"
+
+	if [[ ${#errored_names[@]} -gt 0 ]]; then
+		echo ""
+		echo -e "${YELLOW}=== Errored Servers — Dead Tool Schemas in Context ===${NC}"
+		echo ""
+		echo "These servers have tool schemas registered but cannot execute."
+		echo "Each errored server wastes context tokens on unusable tools."
+		echo ""
+		echo "Remediation options:"
+		echo ""
+		echo "  Option A — Fix the connection (preferred):"
+		for name in "${errored_names[@]}"; do
+			echo "    mcp-diagnose.sh $name"
+		done
+		echo ""
+		echo "  Option B — Disable until fixed (removes schemas from context):"
+		echo "    Edit $config_file"
+		for name in "${errored_names[@]}"; do
+			echo "    Set \"$name\": { ..., \"enabled\": false }"
+		done
+		echo ""
+		echo "  Option C — Remove registration entirely:"
+		for name in "${errored_names[@]}"; do
+			echo "    Delete the \"$name\" entry from $config_file"
+		done
+		echo ""
+		echo -e "${BLUE}Tip:${NC} After fixing, restart your AI runtime to reload tool schemas."
+		return 1
+	fi
+
+	echo ""
+	echo -e "${GREEN}All enabled local MCP servers have reachable commands.${NC}"
+	return 0
+}
+
+# =============================================================================
+# Single-server diagnosis (original behaviour)
+# =============================================================================
+if [[ "$MCP_NAME" == "check-all" ]]; then
+	_check_all_mcps
+	exit $?
 fi
 
 echo -e "${BLUE}=== MCP Diagnosis: $MCP_NAME ===${NC}"

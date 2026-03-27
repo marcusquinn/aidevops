@@ -41,9 +41,45 @@ If you see `Unrecognized key: "xxx"`, OpenCode doesn't support that config key.
 
 **Fix**: Edit `~/.config/opencode/opencode.json` and remove the unsupported key.
 
+## Errored Servers — Dead Tool Schemas (t1682)
+
+When an MCP server fails to start, its tool schemas may still appear in the tool
+list. The agent sees the tools but every call returns "MCP error -32000: Connection
+closed". This wastes context tokens on tools that can never execute.
+
+**Detect errored servers:**
+
+```bash
+~/.aidevops/agents/scripts/mcp-diagnose.sh check-all
+```
+
+This scans all enabled MCP servers, reports which commands are unreachable, and
+prints remediation steps (fix, disable, or remove).
+
+**Disable a persistently errored server** (removes its schemas from context):
+
+```json
+{
+  "playwright": {
+    "enabled": false
+  }
+}
+```
+
+Edit `~/.config/opencode/opencode.json` and set `"enabled": false` for the server.
+Restart your AI runtime to reload the tool list.
+
+**Agent behaviour with errored servers:** When a tool call returns
+"MCP error -32000" or "Connection closed", treat that server as unavailable for
+the rest of the session. Do not retry tools from that server. See `prompts/build.txt`
+"Errored MCP Server Guard" for the full rule.
+
 ## Diagnostic Commands
 
 ```bash
+# Scan all enabled MCP servers for connection errors (t1682)
+~/.aidevops/agents/scripts/mcp-diagnose.sh check-all
+
 # Full diagnosis for specific MCP
 ~/.aidevops/agents/scripts/mcp-diagnose.sh <mcp-name>
 
