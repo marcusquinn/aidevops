@@ -20,7 +20,7 @@ mcp:
 ## Quick Reference
 
 - **Purpose**: Convert documents to Markdown/JSON/CSV/HTML with structured data extraction
-- **Install**: `pip install docstrange`
+- **Install**: `pip install docstrange` (web UI: `pip install "docstrange[web]"`)
 - **Formats**: PDF, DOCX, PPTX, XLSX, images (PNG/JPG/TIFF/BMP), HTML, URLs
 - **Modes**: Cloud (free, 10k docs/month) or local GPU (100% private, CUDA required)
 - **MCP**: Built-in server for Claude Desktop (clone repo, not in PyPI)
@@ -30,11 +30,9 @@ mcp:
 
 **On-demand loading**: This MCP is disabled globally and enabled per-agent when document extraction is needed.
 
+**Key differentiator**: Single `pip install` replaces the multi-tool Docling+ExtractThinker+Presidio stack. Uses an upgraded 7B model for OCR and layout detection, producing LLM-optimized Markdown and structured JSON.
+
 <!-- AI-CONTEXT-END -->
-
-## What is DocStrange?
-
-NanoNets DocStrange is a Python library for converting documents into clean, structured output. It uses an upgraded 7B model for OCR and layout detection, producing LLM-optimized Markdown and structured JSON. Key differentiator: single `pip install` replaces the multi-tool Docling+ExtractThinker+Presidio stack for most extraction tasks.
 
 ## Processing Modes
 
@@ -45,151 +43,58 @@ NanoNets DocStrange is a Python library for converting documents into clean, str
 | **Cloud (API key)** | Low | Fast | API key | 10k docs/month |
 | **Local GPU** | Full | Medium | CUDA required | Unlimited |
 
-## Installation
-
-```bash
-# Core library
-pip install docstrange
-
-# With web UI (local drag-and-drop interface)
-pip install "docstrange[web]"
-
-# Local GPU mode requires CUDA
-# Models download automatically on first run
-```
-
-## Usage
-
-### Convert to Markdown
+## Python API
 
 ```python
 from docstrange import DocumentExtractor
-
-extractor = DocumentExtractor()
+extractor = DocumentExtractor()          # cloud mode (or gpu=True for local)
 result = extractor.extract("document.pdf")
-print(result.extract_markdown())
+
+result.extract_markdown()    # clean Markdown (LLM/RAG pipelines)
+result.extract_data()        # structured JSON
+result.extract_html()        # formatted HTML
+result.extract_csv()         # CSV (table/spreadsheet data)
+result.extract_text()        # plain text
+
+# Targeted fields
+result.extract_data(specified_fields=["invoice_number", "total_amount", "vendor_name"])
+# Schema-conforming
+result.extract_data(json_schema={"contract_number": "string", "parties": ["string"],
+    "total_value": "number", "start_date": "string", "terms": ["string"]})
 ```
 
-### Extract Structured JSON
-
-```python
-result = extractor.extract("invoice.pdf")
-json_data = result.extract_data()
-print(json_data)
-```
-
-### Extract Specific Fields
-
-```python
-result = extractor.extract("invoice.pdf")
-fields = result.extract_data(specified_fields=[
-    "invoice_number", "total_amount", "vendor_name", "due_date"
-])
-```
-
-### Extract with JSON Schema
-
-```python
-schema = {
-    "contract_number": "string",
-    "parties": ["string"],
-    "total_value": "number",
-    "start_date": "string",
-    "terms": ["string"]
-}
-structured = result.extract_data(json_schema=schema)
-```
-
-### Local GPU Processing
-
-```python
-extractor = DocumentExtractor(gpu=True)
-result = extractor.extract("sensitive-document.pdf")
-```
-
-### CLI
+## CLI
 
 ```bash
-# Basic conversion
-docstrange document.pdf
-
-# JSON output with specific fields
+docstrange document.pdf                                              # Markdown output
 docstrange invoice.pdf --output json --extract-fields invoice_number total_amount
+docstrange contract.pdf --output json --json-schema schema.json      # schema extraction
+docstrange document.pdf --gpu-mode                                   # local GPU
+docstrange *.pdf --output markdown                                   # batch
+docstrange document.pdf --output-file result.md                      # save to file
 
-# JSON schema extraction
-docstrange contract.pdf --output json --json-schema schema.json
-
-# Local GPU mode
-docstrange document.pdf --gpu-mode
-
-# Multiple files
-docstrange *.pdf --output markdown
-
-# Save to file
-docstrange document.pdf --output-file result.md
-```
-
-### Authentication
-
-```bash
-# Google login (10k docs/month)
-docstrange login
-
-# Or use API key
+# Authentication (10k docs/month)
+docstrange login                          # Google login
 docstrange document.pdf --api-key YOUR_API_KEY
-
-# Logout
 docstrange --logout
+
+# Local web UI (drag-and-drop at localhost:8000)
+docstrange web                            # default port
+docstrange web --port 8080                # custom port
 ```
-
-## Output Formats
-
-| Method | Output | Use Case |
-|--------|--------|----------|
-| `extract_markdown()` | Clean Markdown | LLM/RAG pipelines |
-| `extract_data()` | Structured JSON | Data extraction |
-| `extract_data(specified_fields=[...])` | Targeted JSON | Specific field extraction |
-| `extract_data(json_schema={...})` | Schema-conforming JSON | Structured pipelines |
-| `extract_html()` | Formatted HTML | Web display |
-| `extract_csv()` | CSV | Table/spreadsheet data |
-| `extract_text()` | Plain text | Simple text extraction |
-
-## Local Web UI
-
-```bash
-# Start local web interface
-docstrange web
-
-# Custom port
-docstrange web --port 8080
-```
-
-Provides drag-and-drop document conversion at `http://localhost:8000`. Supports cloud and local GPU modes.
 
 ## MCP Server (Claude Desktop)
 
-The MCP server is in the repo but not in the PyPI package. Clone to use:
+Not in PyPI — clone repo to use:
 
 ```bash
 git clone https://github.com/nanonets/docstrange.git
-cd docstrange
-pip install -e ".[dev]"
+cd docstrange && pip install -e ".[dev]"
 ```
 
-Add to Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+Config (`~/Library/Application Support/Claude/claude_desktop_config.json`): add `mcpServers.docstrange` with `command: "python3"`, `args: ["/path/to/docstrange/mcp_server_module/server.py"]`.
 
-```json
-{
-  "mcpServers": {
-    "docstrange": {
-      "command": "python3",
-      "args": ["/path/to/docstrange/mcp_server_module/server.py"]
-    }
-  }
-}
-```
-
-MCP features: smart token counting, hierarchical document navigation, intelligent chunking, document search.
+Features: smart token counting, hierarchical navigation, intelligent chunking, document search.
 
 ## When to Use (vs Alternatives)
 
@@ -204,18 +109,12 @@ MCP features: smart token counting, hierarchical document navigation, intelligen
 | **OCR quality** | 7B model, strong on scans | EasyOCR/Tesseract | Depends on LLM |
 | **Best for** | Quick extraction, scans | Custom pipelines, PII | Enterprise workflows |
 
-**Choose DocStrange when**: You need fast setup, good OCR on scans/photos, schema-based extraction, or a free cloud API. Single tool, no orchestration needed.
-
-**Choose Docling+ExtractThinker when**: You need PII redaction (Presidio), custom Pydantic schemas, fully local CPU processing (no CUDA), or fine-grained pipeline control.
-
-**Choose Unstract when**: You need a visual schema builder, enterprise ETL pipelines, or pre-built extractors without code.
-
 ## Limitations
 
-- Local GPU mode requires CUDA (no Apple Silicon/MLX support)
-- No built-in PII detection/redaction (use Presidio separately if needed)
+- CUDA required for local GPU (no Apple Silicon/MLX)
+- No built-in PII redaction (use Presidio separately)
 - Cloud mode sends documents to NanoNets servers
-- MCP server not included in PyPI package (must clone repo)
+- MCP server not in PyPI (must clone repo)
 - 7B model downloads on first local run (~4GB)
 
 ## Related
