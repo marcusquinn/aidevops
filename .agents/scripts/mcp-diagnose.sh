@@ -32,15 +32,19 @@ fi
 # =============================================================================
 # check-all: scan all enabled MCP servers for connection errors (t1682)
 # Identifies servers whose tool schemas are in context but can't execute.
+#
+# Decomposed into helpers (GH#8516):
+#   _resolve_mcp_config   — find the MCP config file
+#   _extract_server_list  — parse config into tab-separated server list
+#   _print_remediation    — display fix instructions for errored servers
+#   _check_all_mcps       — orchestrator
 # =============================================================================
-_check_all_mcps() {
-	echo -e "${BLUE}=== MCP Server Health Check (t1682) ===${NC}"
-	echo ""
-	echo "Scanning all enabled MCP servers for connection errors..."
-	echo "Errored servers inject dead tool schemas into context, wasting tokens."
-	echo ""
 
-	# Resolve config file — registry-driven with opencode fallback
+# Resolve the MCP config file path.
+# Tries the runtime registry first, then falls back to the default location.
+# Echoes the resolved path on stdout.
+# Returns: 0 if a valid config file was found, 1 otherwise.
+_resolve_mcp_config() {
 	local config_file=""
 	if type rt_config_path &>/dev/null; then
 		config_file=$(rt_config_path "opencode" 2>/dev/null) || config_file=""
@@ -50,17 +54,23 @@ _check_all_mcps() {
 	fi
 
 	if [[ ! -f "$config_file" ]]; then
-		echo -e "${RED}✗ No MCP config file found at: $config_file${NC}"
+		echo -e "${RED}✗ No MCP config file found at: $config_file${NC}" >&2
 		return 1
 	fi
 
-	echo "Config: $config_file"
-	echo ""
+	echo "$config_file"
+	return 0
+}
 
-	# Extract enabled MCP server names and their commands using Python
-	local server_list
-	server_list=$(
-		python3 - "$config_file" <<'PYEOF'
+# Extract enabled MCP server names and their commands from a config file.
+# Arguments:
+#   $1 - config file path (required)
+# Output: tab-separated lines: name\tserver_type\tcmd_path
+# Returns: 0 on success, 1 on parse failure.
+_extract_server_list() {
+	local config_file="$1"
+
+	python3 - "$config_file" <<'PYEOF'
 import json, sys
 
 config_file = sys.argv[1]
@@ -87,7 +97,64 @@ for name, server in mcp_section.items():
     else:
         print(f"{name}\tlocal\t")
 PYEOF
-	) || {
+	return $?
+}
+
+# Print remediation advice for errored MCP servers.
+# Arguments:
+#   $1 - config file path
+#   $2..N - errored server names
+# Returns: 0 always.
+_print_remediation() {
+	local config_file="$1"
+	shift
+	# Remaining args are errored server names
+
+	echo ""
+	echo -e "${YELLOW}=== Errored Servers — Dead Tool Schemas in Context ===${NC}"
+	echo ""
+	echo "These servers have tool schemas registered but cannot execute."
+	echo "Each errored server wastes context tokens on unusable tools."
+	echo ""
+	echo "Remediation options:"
+	echo ""
+	echo "  Option A — Fix the connection (preferred):"
+	local name
+	for name in "$@"; do
+		echo "    mcp-diagnose.sh $name"
+	done
+	echo ""
+	echo "  Option B — Disable until fixed (removes schemas from context):"
+	echo "    Edit $config_file"
+	for name in "$@"; do
+		echo "    Set \"$name\": { ..., \"enabled\": false }"
+	done
+	echo ""
+	echo "  Option C — Remove registration entirely:"
+	for name in "$@"; do
+		echo "    Delete the \"$name\" entry from $config_file"
+	done
+	echo ""
+	echo -e "${BLUE}Tip:${NC} After fixing, restart your AI runtime to reload tool schemas."
+	return 0
+}
+
+# Orchestrator: scan all enabled MCP servers and report health.
+_check_all_mcps() {
+	echo -e "${BLUE}=== MCP Server Health Check (t1682) ===${NC}"
+	echo ""
+	echo "Scanning all enabled MCP servers for connection errors..."
+	echo "Errored servers inject dead tool schemas into context, wasting tokens."
+	echo ""
+
+	local config_file
+	config_file=$(_resolve_mcp_config) || return 1
+
+	echo "Config: $config_file"
+	echo ""
+
+	local server_list
+	server_list=$(_extract_server_list "$config_file") || {
 		echo -e "${RED}✗ Failed to parse config file${NC}"
 		return 1
 	}
@@ -136,31 +203,7 @@ PYEOF
 	echo "Summary: ${ok_count} ok, ${error_count} errored, ${skip_count} skipped (remote)"
 
 	if [[ ${#errored_names[@]} -gt 0 ]]; then
-		echo ""
-		echo -e "${YELLOW}=== Errored Servers — Dead Tool Schemas in Context ===${NC}"
-		echo ""
-		echo "These servers have tool schemas registered but cannot execute."
-		echo "Each errored server wastes context tokens on unusable tools."
-		echo ""
-		echo "Remediation options:"
-		echo ""
-		echo "  Option A — Fix the connection (preferred):"
-		for name in "${errored_names[@]}"; do
-			echo "    mcp-diagnose.sh $name"
-		done
-		echo ""
-		echo "  Option B — Disable until fixed (removes schemas from context):"
-		echo "    Edit $config_file"
-		for name in "${errored_names[@]}"; do
-			echo "    Set \"$name\": { ..., \"enabled\": false }"
-		done
-		echo ""
-		echo "  Option C — Remove registration entirely:"
-		for name in "${errored_names[@]}"; do
-			echo "    Delete the \"$name\" entry from $config_file"
-		done
-		echo ""
-		echo -e "${BLUE}Tip:${NC} After fixing, restart your AI runtime to reload tool schemas."
+		_print_remediation "$config_file" "${errored_names[@]}"
 		return 1
 	fi
 
