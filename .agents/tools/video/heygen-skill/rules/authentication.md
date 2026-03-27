@@ -7,26 +7,16 @@ metadata:
 
 # HeyGen Authentication
 
-All HeyGen API requests require authentication using an API key passed in the `X-Api-Key` header.
+All requests require an API key in the `X-Api-Key` header.
 
-## Getting Your API Key
+## Setup
 
-1. Log in to your HeyGen account at https://app.heygen.com
-2. Navigate to Settings > API
-3. Copy your API key
-
-## Environment Setup
-
-Store your API key securely as an environment variable:
+1. Log in at https://app.heygen.com → Settings > API → copy your key
+2. Store as environment variable:
 
 ```bash
-export HEYGEN_API_KEY="your-api-key-here"
-```
-
-For `.env` files:
-
-```text
-HEYGEN_API_KEY=your-api-key-here
+export HEYGEN_API_KEY="your-api-key-here"   # shell
+# or in .env: HEYGEN_API_KEY=your-api-key-here
 ```
 
 ## Making Authenticated Requests
@@ -38,37 +28,19 @@ curl -X GET "https://api.heygen.com/v2/avatars" \
   -H "X-Api-Key: $HEYGEN_API_KEY"
 ```
 
-### TypeScript/JavaScript (fetch)
+### TypeScript (fetch)
 
 ```typescript
 const response = await fetch("https://api.heygen.com/v2/avatars", {
-  headers: {
-    "X-Api-Key": process.env.HEYGEN_API_KEY!,
-  },
+  headers: { "X-Api-Key": process.env.HEYGEN_API_KEY! },
 });
 const { data } = await response.json();
 ```
 
-### TypeScript/JavaScript (axios)
-
-```typescript
-import axios from "axios";
-
-const client = axios.create({
-  baseURL: "https://api.heygen.com",
-  headers: {
-    "X-Api-Key": process.env.HEYGEN_API_KEY,
-  },
-});
-
-const { data } = await client.get("/v2/avatars");
-```
-
-### Python (requests)
+### Python
 
 ```python
-import os
-import requests
+import os, requests
 
 response = requests.get(
     "https://api.heygen.com/v2/avatars",
@@ -77,60 +49,29 @@ response = requests.get(
 data = response.json()
 ```
 
-### Python (httpx)
+The pattern is identical for any HTTP client — set `X-Api-Key` header to your key.
 
-```python
-import os
-import httpx
-
-async with httpx.AsyncClient() as client:
-    response = await client.get(
-        "https://api.heygen.com/v2/avatars",
-        headers={"X-Api-Key": os.environ["HEYGEN_API_KEY"]}
-    )
-    data = response.json()
-```
-
-## Creating a Reusable API Client
-
-### TypeScript
+## Reusable API Client
 
 ```typescript
 class HeyGenClient {
-  private baseUrl = "https://api.heygen.com";
-  private apiKey: string;
-
-  constructor(apiKey: string) {
-    this.apiKey = apiKey;
-  }
+  constructor(private apiKey: string, private baseUrl = "https://api.heygen.com") {}
 
   async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
       ...options,
-      headers: {
-        "X-Api-Key": this.apiKey,
-        "Content-Type": "application/json",
-        ...options.headers,
-      },
+      headers: { "X-Api-Key": this.apiKey, "Content-Type": "application/json", ...options.headers },
     });
-
     if (!response.ok) {
       const error = await response.json();
       throw new Error(error.error || `HTTP ${response.status}`);
     }
-
     return response.json();
   }
 
-  get<T>(endpoint: string): Promise<T> {
-    return this.request<T>(endpoint);
-  }
-
-  post<T>(endpoint: string, body: unknown): Promise<T> {
-    return this.request<T>(endpoint, {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
+  get<T>(endpoint: string) { return this.request<T>(endpoint); }
+  post<T>(endpoint: string, body: unknown) {
+    return this.request<T>(endpoint, { method: "POST", body: JSON.stringify(body) });
   }
 }
 
@@ -141,94 +82,41 @@ const avatars = await client.get("/v2/avatars");
 
 ## API Response Format
 
-All HeyGen API responses follow this structure:
-
 ```typescript
 interface ApiResponse<T> {
-  error: null | string;
-  data: T;
+  error: null | string;  // null on success, message on failure
+  data: T;               // payload on success, null on failure
 }
 ```
 
-Successful response example:
-
-```json
-{
-  "error": null,
-  "data": {
-    "avatars": [...]
-  }
-}
-```
-
-Error response example:
-
-```json
-{
-  "error": "Invalid API key",
-  "data": null
-}
-```
+Example error: `{ "error": "Invalid API key", "data": null }`
 
 ## Error Handling
 
-Common authentication errors:
-
-| Status Code | Error | Cause |
-|-------------|-------|-------|
-| 401 | Invalid API key | API key is missing or incorrect |
-| 403 | Forbidden | API key doesn't have required permissions |
-| 429 | Rate limit exceeded | Too many requests |
-
-### Handling Errors
-
-```typescript
-async function makeRequest(endpoint: string) {
-  const response = await fetch(`https://api.heygen.com${endpoint}`, {
-    headers: { "X-Api-Key": process.env.HEYGEN_API_KEY! },
-  });
-
-  const json = await response.json();
-
-  if (!response.ok || json.error) {
-    throw new Error(json.error || `HTTP ${response.status}`);
-  }
-
-  return json.data;
-}
-```
+| Status | Error | Cause |
+|--------|-------|-------|
+| 401 | Invalid API key | Key missing or incorrect |
+| 403 | Forbidden | Insufficient permissions |
+| 429 | Rate limit exceeded | Too many requests — use exponential backoff |
 
 ## Rate Limiting
 
-HeyGen enforces rate limits on API requests:
-- Standard rate limits apply per API key
-- Some endpoints (like video generation) have stricter limits
-- Use exponential backoff when receiving 429 errors
+Standard limits per API key; video generation endpoints are stricter. Retry 429s with exponential backoff:
 
 ```typescript
-async function requestWithRetry(
-  fn: () => Promise<Response>,
-  maxRetries = 3
-): Promise<Response> {
+async function requestWithRetry(fn: () => Promise<Response>, maxRetries = 3): Promise<Response> {
   for (let i = 0; i < maxRetries; i++) {
     const response = await fn();
-
-    if (response.status === 429) {
-      const waitTime = Math.pow(2, i) * 1000;
-      await new Promise((resolve) => setTimeout(resolve, waitTime));
-      continue;
-    }
-
-    return response;
+    if (response.status !== 429) return response;
+    await new Promise((r) => setTimeout(r, Math.pow(2, i) * 1000));
   }
-
   throw new Error("Max retries exceeded");
 }
 ```
 
 ## Security Best Practices
 
-1. **Never expose API keys in client-side code** - Always make API calls from a backend server
-2. **Use environment variables** - Don't hardcode API keys in source code
-3. **Rotate keys periodically** - Generate new API keys regularly
-4. **Monitor usage** - Check your HeyGen dashboard for unusual activity
+1. **Never expose API keys in client-side code** — always call from a backend server
+2. **Use environment variables** — never hardcode keys in source code
+3. **Rotate keys periodically** — generate new keys on a regular schedule
+4. **Monitor usage** — check your HeyGen dashboard for unusual activity
