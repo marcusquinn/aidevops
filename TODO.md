@@ -108,6 +108,35 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+### Context Token Optimization
+
+Session baseline grew from ~9.5k tokens (Mar 1) to ~21.8k tokens (Mar 27) in prompt files alone. Total session cost ~39k tokens before first user message. Target: reduce back toward ~25k total baseline.
+
+- [ ] t1678 refactor: remove 11 .opencode/tool/ shell wrappers — disable repo-local OpenCode tool definitions that are pure wrappers around existing helper scripts (system-cleanup, linter-manager, version-manager, quality-check, api-keys, mcp-integrations, markdown-formatter, github-release, parallel-quality, session-rename, toon). Agent calls scripts directly via bash. Saves ~3-4k tokens per session. Keep only ai-research.ts (has real logic). Create helper scripts for github-release, parallel-quality, session-rename to replace the 3 tools with custom logic. Delete .disabled files after verification. #refactor #efficiency #auto-dispatch ~2h model:sonnet logged:2026-03-27
+  - [ ] t1678.1 Create github-release-helper.sh — wrap `gh release` commands (create, draft, list, latest) with validation ~30m model:sonnet
+  - [ ] t1678.2 Create parallel-quality-helper.sh — run shellcheck, sonarcloud, secrets, markdown, returns checks in parallel with `&` + `wait` ~1h model:sonnet
+  - [ ] t1678.3 Create session-rename-helper.sh — `curl` to OpenCode API for session rename, port auto-detection ~30m model:sonnet
+  - [ ] t1678.4 Delete .disabled files and verify in fresh session ~15m model:sonnet
+
+- [ ] t1679 refactor: progressive-load build.txt — move rare sections to on-demand subagents — build.txt grew from ~5.6k to ~14k tokens (Mar 1-27). Sections used in <10% of sessions should be on-demand subagent docs with 1-line pointers in build.txt. Candidates: Conversational Memory Lookup (~600 tokens), Screenshot Size Limits (~400 tokens), External Repo Issue/PR Submission (~500 tokens), Parallel Model Verification (~300 tokens), Tamper-Evident Audit Logging (~200 tokens), Bash 3.2 Compatibility (~600 tokens), secret sections 8.1-8.4 (~1,200 tokens). Potential savings: ~3,800 tokens. Risk: safety-critical sections (secrets, bash compat) must retain enough inline to trigger on-demand loading. #refactor #efficiency ~4h model:opus logged:2026-03-27
+  - [ ] t1679.1 Extract Conversational Memory Lookup to reference/memory-lookup.md ~30m
+  - [ ] t1679.2 Extract Screenshot Size Limits to reference/screenshot-limits.md ~15m
+  - [ ] t1679.3 Extract External Repo Issue/PR Submission to reference/external-repo-submissions.md ~15m
+  - [ ] t1679.4 Extract Bash 3.2 Compatibility to reference/bash-compat.md ~15m
+  - [ ] t1679.5 Consolidate secret sections 8.1-8.4 into reference/secret-handling.md, keep 1-line trigger rules inline ~1h
+  - [ ] t1679.6 Verify no safety regressions — test that on-demand loading triggers correctly for each extracted section ~1h
+
+- [ ] t1680 refactor: progressive-load AGENTS.md — move large sections to on-demand subagents — AGENTS.md grew from ~3.9k to ~7.8k tokens (Mar 1-27). Candidates: Domain Index table (~800 tokens, 40+ rows), Self-Improvement section (~1,200 tokens), Agent Routing section (~600 tokens), Email/Outreach domain entries (~400 tokens), Capabilities section (~500 tokens). Potential savings: ~3,500 tokens. The Domain Index is the biggest single target — it's a lookup table that could be a TOON file loaded on demand. #refactor #efficiency ~3h model:opus logged:2026-03-27
+  - [ ] t1680.1 Move Domain Index to on-demand reference (TOON or md) with 1-line pointer ~1h
+  - [ ] t1680.2 Move Self-Improvement to on-demand subagent doc ~30m
+  - [ ] t1680.3 Move Agent Routing to on-demand subagent doc ~30m
+  - [ ] t1680.4 Trim Capabilities to essential pointers only ~30m
+  - [ ] t1680.5 Verify agent discoverability not degraded — test @mention, domain routing, self-improvement filing ~30m
+
+- [ ] t1681 audit: consolidate plugin tools.mjs (7 tools, ~3.2k tokens) — the opencode-aidevops plugin registers 7 tools (aidevops CLI, memory_recall, memory_store, pre_edit_check, quality_check, install_hooks, model-accounts-pool). Assess: can any be merged (e.g., memory_recall + memory_store into single memory tool)? Can quality_check be removed (duplicates .opencode/tool/quality-check which we just disabled)? Can install_hooks be bash-only? #refactor #efficiency ~1h model:sonnet logged:2026-03-27
+
+- [ ] t1682 fix: errored MCP servers may inject dead tool schemas — auggie-mcp, cloudflare-api, playwright show "MCP error -32000: Connection closed" but may still have tool schemas registered in context, wasting tokens on tools that can't execute. Investigate whether OpenCode injects schemas for errored servers. If yes, either fix the connection errors or remove the registrations. #bugfix #efficiency ~1h model:sonnet logged:2026-03-27
+
 ### Runtime Parity (Claude Code CLI + OpenCode)
 
 - [x] t1546 Setup/update: guide users to configure OAuth pool when built-in anthropic-auth is removed in OpenCode v1.2.30 #feature #setup ~2h ref:GH#5311 logged:2026-03-20 pr:#5315 completed:2026-03-20

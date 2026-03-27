@@ -22,6 +22,43 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-03-27] Context Token Optimization — Reduce Session Baseline
+
+**Status:** In Progress (Phase 1/3)
+**Estimate:** ~11h
+**TODOs:** t1678, t1679, t1680, t1681, t1682
+
+**Problem:** Session baseline grew from ~9.5k tokens (Mar 1) to ~39k tokens (Mar 27) before the first user message. User reported "hi" used to cost <20k, now costs 40k+. This is a compounding cost — every message pays for the base context.
+
+**Root causes identified:**
+1. **build.txt** grew 2.5x: 5,649 → 13,973 tokens (Mar 1-27). Each incident/learning added inline rules.
+2. **.agents/AGENTS.md** grew 2x: 3,888 → 7,789 tokens. Domain index, self-improvement, agent routing sections expanded.
+3. **12 repo-local .opencode/tool/*.ts files** injected ~3-4k tokens of tool schemas — 11 were pure shell script wrappers.
+4. **7 plugin tools** (tools.mjs) add ~3.2k tokens — some may be consolidatable.
+5. **Errored MCP servers** (auggie, cloudflare, playwright) may inject dead schemas.
+
+**Phase 1 — Quick wins (done):**
+- [x] Disabled 11 .opencode/tool/ shell wrappers (t1678 partial). Saved ~3-4k tokens. Verified: 122k → 39k mid-session, fresh session 38,885 tokens.
+- [x] Discovered `system-cleanup` tool was actually broken (wrong arg format) — bash direct is better.
+
+**Phase 2 — Progressive loading (t1679, t1680):**
+- Move rarely-used build.txt sections to on-demand subagent docs (~3,800 tokens)
+- Move AGENTS.md large sections to on-demand references (~3,500 tokens)
+- Target: ~14k token reduction from prompt files
+
+**Phase 3 — Plugin and MCP cleanup (t1681, t1682):**
+- Consolidate plugin tools (7 → fewer)
+- Fix or remove errored MCP server registrations
+
+**Decision log:**
+- 2026-03-27: Keep `ai-research.ts` as only repo-local tool — it has real logic (OAuth, API calls, rate limiting, domain mapping). All others are bash-replaceable.
+- 2026-03-27: Use `.disabled` extension for reversibility during testing. Delete after verification.
+- 2026-03-27: build.txt and AGENTS.md are "protected" — changes require interactive session with user decisions, not auto-dispatch.
+
+**Surprises:**
+- The 122k → 39k drop was mostly conversation accumulation, not tool schemas. Actual tool schema savings were ~3-4k tokens — still meaningful but not the 83k implied by the raw numbers.
+- The `system-cleanup` tool had a stale enum that didn't match the script's actual interface. Tool wrappers can mask the real CLI, making them worse than direct bash.
+
 ### [2026-03-14] Restore OpenAI Codex and Enforce Model ID Conventions
 
 **Status:** Completed
