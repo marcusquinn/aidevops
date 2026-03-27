@@ -12,16 +12,7 @@ tools:
 
 # Analytics Tracking - Implementation Guide
 
-<!-- AI-CONTEXT-START -->
-
-**Scope**: Implement and audit analytics tracking (GA4, GTM, events, conversions, UTM, attribution). For *reading* analytics data, use `services/analytics/google-analytics.md` (GA4 MCP).
-
-- **GA4 docs**: https://developers.google.com/analytics/devguides/collection/ga4
-- **GTM docs**: https://developers.google.com/tag-platform/tag-manager
-- **Measurement Protocol**: https://developers.google.com/analytics/devguides/collection/protocol/ga4
-- **Related**: `seo/seo-audit-skill.md` (technical SEO audit)
-
-<!-- AI-CONTEXT-END -->
+**Scope**: Implement and audit analytics tracking (GA4, GTM, events, conversions, UTM, attribution). For *reading* analytics data, use `services/analytics/google-analytics.md`. Docs: [GA4](https://developers.google.com/analytics/devguides/collection/ga4) · [GTM](https://developers.google.com/tag-platform/tag-manager) · [Measurement Protocol](https://developers.google.com/analytics/devguides/collection/protocol/ga4)
 
 ## GA4 Setup
 
@@ -37,52 +28,26 @@ tools:
 </script>
 ```
 
-**Google Tag Manager (recommended)** — get snippet from https://tagmanager.google.com: head snippet in `<head>`, noscript body snippet immediately after `<body>`. Then add GA4 Configuration tag (Measurement ID = `G-XXXXXXXXXX`, Trigger = All Pages).
+**GTM (recommended)** — get snippet from https://tagmanager.google.com: head snippet in `<head>`, noscript body snippet after `<body>`. Add GA4 Configuration tag (Measurement ID = `G-XXXXXXXXXX`, Trigger = All Pages).
 
 **WordPress** — Site Kit by Google (official), MonsterInsights, or manual via `wp_head` hook.
 
 ## Event Tracking
 
-### GA4 Event Model
-
-| Event Category | Examples | Parameters | Auto-collected? |
-|---------------|----------|------------|-----------------|
-| Automatically collected | `page_view`, `first_visit`, `session_start` | — | Yes |
-| Enhanced measurement | `scroll`, `click` (outbound), `file_download`, `video_start` | — | Yes (toggle) |
-| `login`, `sign_up` | New account / session | `method` | No (implement) |
-| `generate_lead` | Lead form submission | `currency`, `value`, `form_name` | No (implement) |
-| `purchase` | Completed purchase | `transaction_id`, `value`, `currency`, `items` | No (implement) |
-| `add_to_cart`, `begin_checkout`, `view_item` | E-commerce funnel | `currency`, `value`, `items` | No (implement) |
-| `search` | Site search | `search_term` | No (implement) |
-| Custom events | Any business-specific event | Up to 25 custom params | No (implement) |
-
-Full event reference: https://developers.google.com/analytics/devguides/collection/ga4/reference/events
-
-### Implementing Custom Events
+Auto-collected: `page_view`, `first_visit`, `session_start`. Enhanced measurement (toggle): `scroll`, `click` (outbound), `file_download`, `video_start`. Implement manually: `login`/`sign_up` (`method`), `generate_lead` (`currency`, `value`, `form_name`), `purchase` (`transaction_id`, `value`, `currency`, `items`), `add_to_cart`/`begin_checkout`/`view_item` (`currency`, `value`, `items`), `search` (`search_term`), custom events (up to 25 params). Full reference: https://developers.google.com/analytics/devguides/collection/ga4/reference/events
 
 ```javascript
-// gtag.js
 gtag('event', 'generate_lead', {'form_name': 'contact_form', 'currency': 'USD', 'value': 50.00});
 gtag('event', 'cta_click', {'cta_text': 'Start Free Trial', 'cta_location': 'hero_section'});
-// GTM data layer — then create Custom Event trigger matching the event name
+// GTM data layer — create Custom Event trigger matching the event name
 window.dataLayer.push({'event': 'cta_click', 'cta_text': 'Start Free Trial', 'cta_location': 'hero_section'});
 ```
 
-### Event Parameter Limits
-
-| Limit | Value |
-|-------|-------|
-| Event name length | 40 characters |
-| Parameter name/value length | 40 / 100 characters |
-| Parameters per event | 25 |
-| Custom dimensions per property | 50 event-scoped, 25 user-scoped |
-| Custom metrics per property | 50 |
+**Limits**: event name 40 chars; param name/value 40/100 chars; 25 params/event; 50 event-scoped + 25 user-scoped custom dimensions; 50 custom metrics.
 
 ## Conversion Tracking
 
-**Admin > Events** → toggle "Mark as key event" → assign value (optional). Key events: `generate_lead` (lead value), `purchase` (transaction value), `sign_up` (LTV estimate), `book_demo` (pipeline value).
-
-### E-commerce Tracking
+**Admin > Events** → toggle "Mark as key event" → assign value. Key events: `generate_lead`, `purchase`, `sign_up`, `book_demo`.
 
 ```javascript
 gtag('event', 'purchase', {
@@ -92,53 +57,21 @@ gtag('event', 'purchase', {
 });
 ```
 
-**Funnel**: `view_item_list` → `select_item` → `view_item` → `add_to_cart` → `view_cart` → `begin_checkout` → `add_shipping_info` → `add_payment_info` → `purchase`
+**E-commerce funnel**: `view_item_list` → `select_item` → `view_item` → `add_to_cart` → `view_cart` → `begin_checkout` → `add_shipping_info` → `add_payment_info` → `purchase`
 
-**Google Ads import**: Link GA4 to Google Ads → **Tools > Conversions > Import > Google Analytics 4** → select key events, set counting method and conversion window (default 30 days).
+**Google Ads import**: Link GA4 → **Tools > Conversions > Import > Google Analytics 4** → select key events, set counting method and conversion window (default 30 days).
 
 ## UTM Parameters
 
-| Parameter | Required | Purpose | Example |
-|-----------|----------|---------|---------|
-| `utm_source` | Yes | Traffic source | `google`, `newsletter` |
-| `utm_medium` | Yes | Marketing medium | `cpc`, `email`, `social` |
-| `utm_campaign` | Yes | Campaign name | `spring_sale_2026` |
-| `utm_term` | No | Paid keyword | `running+shoes` |
-| `utm_content` | No | Ad/link variant | `header_cta` |
-
-**Naming conventions**: lowercase, underscores, no spaces. Standard mediums: `cpc`, `email`, `social`, `referral`, `display`, `affiliate`.
-
-- **Never use UTMs for internal links** — they reset the session source
-- **Use lowercase consistently** — GA4 is case-sensitive (`Email` != `email`)
-- **Avoid PII** in UTM values (no email addresses or user IDs)
-- URL builder: https://ga-dev-tools.google/ga4/campaign-url-builder/
+Required: `utm_source` (e.g. `google`), `utm_medium` (e.g. `cpc`, `email`), `utm_campaign` (e.g. `spring_sale_2026`). Optional: `utm_term` (paid keyword), `utm_content` (ad variant). Rules: lowercase + underscores; never on internal links (resets session source); no PII. Builder: https://ga-dev-tools.google/ga4/campaign-url-builder/
 
 ## Attribution
 
-GA4 supports two models (Google deprecated first-click, linear, position-based, and time-decay in November 2023):
-
-| Model | How it works | Best for |
-|-------|-------------|----------|
-| **Data-driven** (default) | ML-based, distributes credit by actual contribution | Most accounts (needs 600+ conversions/month) |
-| **Last click** | 100% credit to last touchpoint | Simple reporting, direct response |
-
-**Cross-channel setup**: Tag all campaigns with UTMs, link Google Ads (auto-tagging via gclid), link Search Console, enable Google Signals, set lookback window (30–90 days). Use **Advertising > Attribution > Conversion paths** to identify assist channels.
+Two models (first-click, linear, position-based, time-decay deprecated Nov 2023): **Data-driven** (default, ML-based, needs 600+ conversions/month) and **Last click** (100% credit to last touchpoint, simple reporting). Tag all campaigns with UTMs, link Google Ads (auto-tagging via gclid) and Search Console, enable Google Signals. Use **Advertising > Attribution > Conversion paths** for assist channels.
 
 ## Google Tag Manager
 
-### Common GTM Triggers
-
-| Trigger Type | Use Case | Configuration |
-|-------------|----------|---------------|
-| Page View | Track all pages | All Pages (built-in) |
-| Click - All Elements | Button/link clicks | Click Element matches CSS selector |
-| Click - Just Links | Outbound links | Click URL contains `http` + not your domain |
-| Form Submission | Lead forms | Form ID or Form Classes |
-| Scroll Depth | Content engagement | Vertical scroll 25%, 50%, 75%, 90% |
-| Custom Event | Data layer events | Event name matches |
-| Element Visibility | Section views | CSS selector, once per page |
-
-### Data Layer Best Practices
+Triggers: **Page View** (All Pages) · **Click - All Elements** (CSS selector) · **Click - Just Links** (outbound: URL contains `http` + not your domain) · **Form Submission** (Form ID/Classes) · **Scroll Depth** (25/50/75/90%) · **Custom Event** (event name match) · **Element Visibility** (CSS selector, once per page)
 
 ```javascript
 // Page-level (before GTM container)
@@ -160,37 +93,11 @@ Dimensions: page_type, user_type, traffic_source (UTM)
 Segments: Purchasers vs. non-purchasers, Mobile vs. desktop, Organic vs. paid
 ```
 
-## Auditing Existing Tracking
+## Audit Checklist
 
-### Quick Audit Checklist
+GA4 tag fires on all pages · Measurement ID correct (not UA-) · Enhanced measurement enabled · Data retention 14 months (default 2 — change in Admin) · Internal traffic filtered · Key events defined and firing · E-commerce tracking complete · Cross-domain tracking configured · UTMs used consistently · No PII in event parameters · Cookie consent implemented (GDPR/CCPA) · Google Ads and Search Console linked · Custom dimensions registered · Google Signals enabled · Audiences configured
 
-- [ ] GA4 tag fires on all pages (check with Tag Assistant)
-- [ ] Measurement ID is correct (not a UA- property)
-- [ ] Enhanced measurement enabled
-- [ ] Data retention set to 14 months (default is 2 months — change in Admin)
-- [ ] Internal traffic filtered (exclude office IPs)
-- [ ] Key events (conversions) defined and firing
-- [ ] E-commerce tracking complete (if applicable)
-- [ ] Cross-domain tracking configured (if multiple domains)
-- [ ] UTM parameters used consistently on campaigns
-- [ ] No PII sent to GA4 (email addresses, names in event parameters)
-- [ ] Cookie consent implemented (GDPR/CCPA compliance)
-- [ ] Google Ads and Search Console linked
-- [ ] Custom dimensions registered for custom parameters
-- [ ] Google Signals enabled (for cross-device reporting)
-- [ ] Audiences configured for remarketing
-
-### Common Issues
-
-| Issue | Symptom | Fix |
-|-------|---------|-----|
-| Duplicate tags | Inflated pageviews | Remove duplicate gtag.js or GTM containers |
-| Missing enhanced measurement | No scroll/click data | Enable in GA4 Admin > Data Streams |
-| UTM on internal links | Self-referrals, broken sessions | Remove UTMs from internal navigation |
-| No consent management | GDPR violations, data loss | Implement consent mode v2 |
-| Wrong measurement ID | No data in property | Verify G-XXXXXXXXXX matches property |
-| Data retention at 2 months | Limited historical analysis | Set to 14 months in Admin |
-| PII in events | Policy violation | Audit event parameters, strip PII |
+**Common issues**: Duplicate tags → inflated pageviews (remove duplicate gtag.js/GTM containers) · Missing enhanced measurement → no scroll/click data (enable in Admin > Data Streams) · UTM on internal links → self-referrals (remove from internal nav) · No consent management → GDPR violations (implement consent mode v2) · Wrong measurement ID → no data (verify G-XXXXXXXXXX) · Data retention at 2 months → limited history (set to 14 months) · PII in events → policy violation (audit and strip)
 
 ## Consent Mode v2
 
