@@ -23,9 +23,9 @@ tools:
 - **Output**: Shot list with prompts, character bible, pipeline brief JSON
 - **Automation**: `higgsfield-helper.sh pipeline --brief <output.json>`
 
-**Core Workflow**: Brief -> Research -> Character Bible -> Shot List -> Prompt Generation -> Pipeline Brief JSON
+**Core Workflow**: Brief → Character Bible → Shot List → Prompt Generation → Pipeline Brief JSON
 
-**Key Principles** (from production guides):
+**Key Principles**:
 - 8K camera prompting: specify real camera models (RED Komodo 6K, ARRI Alexa LF, Sony Venice 8K)
 - Seed bracketing: test 10-11 seeds per prompt, reuse winners (people: 1000-1999, action: 2000-2999, landscape: 3000-3999, product: 4000-4999)
 - Facial engineering: extreme-detail facial analysis for character consistency
@@ -38,145 +38,89 @@ tools:
 
 ### Step 1: Research Brief
 
-Before generating anything, understand the target:
-
-```text
-BRIEF TEMPLATE:
-- Product/Subject: What are we showcasing?
-- Target Audience: Who watches this? (age, interests, pain points)
-- Platform: TikTok (9:16, 10-30s) | Instagram Reels (9:16, 15-60s) | YouTube Shorts (9:16, <60s) | YouTube (16:9, 30s+)
-- Style: UGC/authentic | Cinematic/polished | Educational | Storytelling
-- Duration: 10s | 15s | 30s | 60s
-- CTA: What should the viewer do?
-- Tone: Casual | Professional | Dramatic | Humorous
-- References: Any existing videos/images to match?
-```
+- **Product/Subject**: What are we showcasing?
+- **Target Audience**: Age, interests, pain points
+- **Platform**: TikTok (9:16, 10-30s) | Instagram Reels (9:16, 15-60s) | YouTube Shorts (9:16, <60s) | YouTube (16:9, 30s+)
+- **Style**: UGC/authentic | Cinematic/polished | Educational | Storytelling
+- **Duration**: 10s | 15s | 30s | 60s
+- **CTA**: What should the viewer do?
+- **Tone**: Casual | Professional | Dramatic | Humorous
+- **References**: Any existing videos/images to match?
 
 ### Step 2: Character Bible
 
-For any production with a recurring character, create a CHARACTER CONTEXT PROFILE:
-
-```text
-CHARACTER BIBLE:
-1. FACIAL PROFILE (from vision model analysis of base image):
-   - Face shape, eye shape/color, nose structure, lip shape
-   - Skin tone (hex), hair color/style/length
-   - Distinguishing features (freckles, dimples, jawline)
-   - Approximate age range
-
-2. PERSONALITY:
-   - Speaking style (casual, authoritative, warm)
-   - Energy level (calm, energetic, intense)
-   - Emotional range for this production
-
-3. WARDROBE:
-   - Default outfit description
-   - Color palette (hex codes)
-   - Accessories
-
-4. CONSISTENCY RULES:
-   - Always include facial details in every scene prompt
-   - Use same lighting temperature across scenes
-   - Maintain wardrobe continuity unless scene requires change
-```
+For recurring characters, create a CHARACTER CONTEXT PROFILE and prepend it to every scene prompt.
 
 **Facial Engineering Process** (critical for consistency):
 1. Generate or select a base character image
-2. Upload to a vision model (Claude, GPT-4V)
-3. Request extreme-detail facial analysis: measurements, eye shape, nose bridge width, lip fullness, skin undertone, etc.
-4. Save this analysis as the CHARACTER CONTEXT PROFILE
-5. Prepend this profile to every scene prompt
+2. Upload to a vision model (Claude, GPT-4V); request extreme-detail facial analysis (measurements, eye shape, nose bridge width, lip fullness, skin undertone)
+3. Save as CHARACTER CONTEXT PROFILE — prepend to every scene prompt
+
+**Profile fields**: face shape, eye shape/color, nose structure, lip shape, skin tone (hex), hair color/style/length, distinguishing features, age range, speaking style, energy level, wardrobe + color palette (hex), accessories.
+
+**Consistency rules**: include facial details in every prompt; same lighting temperature across scenes; maintain wardrobe continuity unless scene requires change.
 
 ### Step 3: Shot List
 
-Structure every production as a shot-by-shot breakdown:
-
 ```text
-SHOT TEMPLATE:
-Shot #: [number]
-Duration: [seconds]
+Shot #: [number]  Duration: [seconds]
 Type: ECU | CU | MCU | MS | MWS | WS | EWS
 Camera: Static | Handheld | Push-in | Pull-out | Pan | Tilt | Dolly | Tracking | Overhead | Arc
-Location: [setting description]
-Character: [what they're doing, expression, wardrobe]
-Cinematography:
-  - Camera: [model - RED Komodo 6K, ARRI Alexa LF, Sony Venice 8K, iPhone 15 Pro]
-  - Framing: [rule of thirds, centered, dutch angle]
-  - DOF: [shallow/deep, f-stop]
-  - Lighting: [natural/studio, direction, color temp]
-  - Mood: [warm, cool, dramatic, soft]
-Actions: [timestamped to 0.5s increments]
-Dialogue: [with delivery style - e.g., "[excited] Check this out!"]
+Location: [setting]  Character: [action, expression, wardrobe]
+Cinematography: [camera model] [framing] [DOF/f-stop] [lighting direction+temp] [mood]
+Actions: [timestamped to 0.5s]  Dialogue: [with delivery — e.g., "[excited] Check this out!"]
 Background Sound: [ambient, music style, SFX]
 ```
 
-**Shot Type Reference**:
-- ECU (Extreme Close-Up): Eyes, lips, product detail
-- CU (Close-Up): Face fills frame
-- MCU (Medium Close-Up): Head and shoulders
-- MS (Medium Shot): Waist up
-- MWS (Medium Wide Shot): Knees up
-- WS (Wide Shot): Full body with environment
-- EWS (Extreme Wide Shot): Establishing, landscape
+**Shot types**:
 
-**Camera Movement Reference**:
-- Static: Locked tripod, professional feel
-- Handheld: Authentic UGC feel, micro-movements
-- Push-in: Building tension/focus
-- Pull-out: Reveal, establishing context
-- Pan: Horizontal sweep, following action
-- Tilt: Vertical sweep, revealing height
-- Dolly: Smooth forward/backward on track
-- Tracking: Following subject laterally
-- Overhead/Bird's Eye: Top-down, product flat-lay
-- Arc: Orbiting around subject
+| Code | Name | Use |
+|------|------|-----|
+| ECU | Extreme Close-Up | Eyes, lips, product detail |
+| CU | Close-Up | Face fills frame |
+| MCU | Medium Close-Up | Head and shoulders |
+| MS | Medium Shot | Waist up |
+| MWS | Medium Wide Shot | Knees up |
+| WS | Wide Shot | Full body with environment |
+| EWS | Extreme Wide Shot | Establishing, landscape |
+
+**Camera movements**:
+
+| Movement | Use |
+|----------|-----|
+| Static | Locked tripod, professional feel |
+| Handheld | Authentic UGC feel, micro-movements |
+| Push-in | Building tension/focus |
+| Pull-out | Reveal, establishing context |
+| Pan | Horizontal sweep, following action |
+| Tilt | Vertical sweep, revealing height |
+| Dolly | Smooth forward/backward on track |
+| Tracking | Following subject laterally |
+| Overhead | Top-down, product flat-lay |
+| Arc | Orbiting around subject |
 
 ### Step 4: Prompt Generation
 
-**Image Prompt Structure** (for Higgsfield Soul/NanoBanana/Seedream):
+**Image prompt** (Higgsfield Soul/NanoBanana/Seedream):
+`[CHARACTER CONTEXT PROFILE], [action/pose], [expression], [wardrobe], [setting], [lighting: direction+quality+temp], [camera: model+focal+aperture+framing], [style modifiers], [mood]`
 
-```text
-[Subject description with CHARACTER CONTEXT PROFILE details],
-[Action/pose], [Expression],
-[Wardrobe details],
-[Setting/environment],
-[Lighting: direction, quality, color temperature],
-[Camera: model, focal length, aperture, framing],
-[Style modifiers: photorealistic, 8k, cinematic, etc.],
-[Mood/atmosphere]
-```
+**Video prompt** (Kling 2.6/Sora/VEO):
+`[camera model, resolution, aspect ratio] [Subject] [action] in [context]. [Camera movement] captures [composition]. [Lighting]. [Audio: dialogue, ambient, SFX]. (no subtitles!)`
+`Spoken lines: Character: "[Emotion] dialogue text"`
 
-**Video Prompt Structure** (for Kling 2.6/Sora/VEO):
+**Camera models** (always specify — quality multiplier):
 
-```text
-[Technical specs: camera model, resolution, aspect ratio]
-[Subject] [Action] in [Context].
-[Camera movement] captures [Composition].
-[Lighting/ambiance description].
-[Audio elements: dialogue, ambient, SFX].
-(no subtitles!)
+| Model | Character |
+|-------|-----------|
+| RED Komodo 6K | Clean, sharp, cinematic |
+| ARRI Alexa LF | Warm, filmic, high dynamic range |
+| Sony Venice 8K | Ultra-detailed, natural color science |
+| iPhone 15 Pro | Authentic UGC feel, HDR processing |
+| Canon EOS R5 | Portrait/product photography |
 
-Spoken lines:
-Character: "[Emotion] dialogue text"
-```
-
-**8K Camera Prompting** (quality multiplier):
-Always specify a real camera model. This dramatically improves output quality:
-- RED Komodo 6K: Clean, sharp, cinematic
-- ARRI Alexa LF: Warm, filmic, high dynamic range
-- Sony Venice 8K: Ultra-detailed, natural color science
-- iPhone 15 Pro: Authentic UGC feel, HDR processing
-- Canon EOS R5: Portrait/product photography
-
-**Emotional Block Cues** for dialogue:
-```text
-"[Happy] Hello, [surprised] my [excited] name is Sarah!"
-"[Concerned] Have you ever [frustrated] struggled with this?"
-```
+**Emotional block cues**: `"[Happy] Hello, [surprised] my [excited] name is Sarah!"`
 
 ### Step 5: Pipeline Brief JSON
-
-Convert the shot list into a pipeline brief for automation:
 
 ```json
 {
@@ -216,50 +160,14 @@ Convert the shot list into a pipeline brief for automation:
 
 ## Content Type Templates
 
-### UGC/TikTok (9:16, 10-30s)
-
-```text
-Structure: Hook (3s) -> Problem (5s) -> Solution (10s) -> CTA (3s)
-Camera: iPhone 15 Pro, handheld, fast cuts
-Style: Authentic, relatable, slightly messy
-Pacing: Quick, 2-3s per shot max
-Audio: Direct-to-camera speech, trending sounds
-```
-
-### Commercial/Polished (16:9, 15-60s)
-
-```text
-Structure: Attention (3s) -> Story (20s) -> Product (10s) -> CTA (5s)
-Camera: RED Komodo 6K or ARRI Alexa LF, smooth movements
-Style: Cinematic, color graded, professional
-Pacing: Measured, 3-5s per shot
-Audio: Voiceover, ambient, subtle music
-```
-
-### Slideshow/Carousel (9:16, 15-30s)
-
-```text
-Structure: Hook slide -> 3-5 content slides -> CTA slide
-Camera: Static, clean product shots
-Style: Consistent character across all slides (NanoBanana Pro)
-Pacing: 3-5s per slide
-Audio: Trending sound, text overlays
-```
-
-### AI Influencer Content
-
-```text
-Structure: Hook (2s) -> Value (15-20s) -> Soft CTA (3s)
-Character: Consistent face across ALL videos (facial engineering required)
-Camera: Mix of CU and MS, slight handheld
-Style: Authentic but polished, consistent wardrobe/setting
-Key: Text-to-video with detailed prompts > Image-to-video for quality
-Post-production: Film grain overlay (CapCut), 1.25-1.75x upscale (Topaz)
-```
+| Type | Aspect/Duration | Structure | Camera | Pacing | Audio |
+|------|----------------|-----------|--------|--------|-------|
+| UGC/TikTok | 9:16, 10-30s | Hook (3s) → Problem (5s) → Solution (10s) → CTA (3s) | iPhone 15 Pro, handheld | 2-3s/shot | Direct-to-camera, trending sounds |
+| Commercial | 16:9, 15-60s | Attention (3s) → Story (20s) → Product (10s) → CTA (5s) | RED Komodo 6K or ARRI Alexa LF | 3-5s/shot | Voiceover, ambient, subtle music |
+| Slideshow | 9:16, 15-30s | Hook → 3-5 content slides → CTA | Static, clean product shots (NanoBanana Pro) | 3-5s/slide | Trending sound, text overlays |
+| AI Influencer | 9:16, 20-25s | Hook (2s) → Value (15-20s) → Soft CTA (3s) | Mix CU/MS, slight handheld | — | Text-to-video > image-to-video; film grain (CapCut), 1.25-1.75x upscale (Topaz) |
 
 ## Unlimited Model Strategy (Higgsfield)
-
-Always prefer unlimited models (0 credits):
 
 | Step | Model | Cost |
 |------|-------|------|
@@ -275,14 +183,14 @@ Always prefer unlimited models (0 credits):
 
 Before sending any prompt to generation:
 
-1. Does it specify a real camera model?
-2. Does it include lighting direction and quality?
-3. Does it describe the subject with CHARACTER CONTEXT PROFILE details?
-4. Does it specify aspect ratio and framing?
-5. Is the action/movement described with timestamps?
-6. For dialogue: are emotional block cues included?
-7. For video: is "no subtitles" appended?
-8. Is the prompt specific enough? (>50 words for images, >100 for video)
+1. Real camera model specified?
+2. Lighting direction and quality included?
+3. Subject described with CHARACTER CONTEXT PROFILE details?
+4. Aspect ratio and framing specified?
+5. Action/movement described with timestamps?
+6. Dialogue: emotional block cues included?
+7. Video: "no subtitles" appended?
+8. Prompt specific enough? (>50 words for images, >100 for video)
 
 ## Related
 
