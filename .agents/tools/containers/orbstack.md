@@ -37,10 +37,10 @@ Standard `docker` and `docker compose` commands work without modification. These
 # Management
 orb list                          # List all containers and VMs
 orb shell <container-name>        # Quick shell access
-orb stop                          # Stop OrbStack (frees resources)
 orb start                         # Start OrbStack
+orb stop                          # Stop OrbStack (frees resources)
 
-# Automatic .local DNS — no config needed
+# Automatic .orb.local DNS — no config needed
 curl http://<container-name>.orb.local
 ```
 
@@ -110,7 +110,12 @@ orb status                        # Check OrbStack status
 orb restart                       # Restart OrbStack
 orb logs                          # View OrbStack logs
 docker info                       # Check Docker daemon
-docker system prune -a            # Prune unused resources
+# WARNING: The following command permanently removes ALL unused containers,
+# images, networks, and build cache. This can cause data loss and cannot be
+# undone. Prefer targeted alternatives: `docker image prune` (images only),
+# `docker container prune` (stopped containers only), or omit `-a` to keep
+# tagged images. Only run with `-a` when you are certain you want a full reset.
+docker system prune -a            # Prune ALL unused resources (destructive)
 docker system df                  # Check disk usage
 orb reset                         # Factory reset (last resort)
 ```
