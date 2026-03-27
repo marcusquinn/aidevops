@@ -14,8 +14,8 @@ Parse `$ARGUMENTS` to select an operation. Default is `check` (inbox summary).
 
 | Command | Helper call | Purpose |
 |---------|-------------|---------|
-| *(empty)* / `check` | `email-mailbox-helper.sh inbox --summary` | Inbox summary (unread, flagged, pending triage) |
-| `triage [--limit N]` | `email-triage-helper.sh batch --input <messages.json> --limit "$LIMIT"` | AI triage of unread messages (classify, prioritize, flag; default: 50) |
+| *(empty)* / `check` | `email-mailbox-helper.sh inbox <account> --summary` | Inbox summary (unread, flagged, pending triage) |
+| `triage [--limit N]` | `email-triage-helper.sh run --limit N` | AI triage of unread messages (classify, prioritize, flag) |
 | `compose [--reply <id>]` | `email-compose-helper.sh` workflow | Compose new email or reply |
 | `search "<query>"` | `email-mailbox-helper.sh search "$QUERY"` | Full-text search |
 | `search --from <addr>` | `email-mailbox-helper.sh search --from "$ADDR"` | Search by sender |
@@ -27,7 +27,7 @@ Parse `$ARGUMENTS` to select an operation. Default is `check` (inbox summary).
 | `flag <id> <flag>` | `email-mailbox-helper.sh flag "$MESSAGE_ID" "$FLAG"` | Apply flag to message |
 | `archive <id>` | `email-mailbox-helper.sh archive "$MESSAGE_ID"` | Archive a message |
 
-All helper scripts are under `~/.aidevops/agents/scripts/` (deployed absolute path). Repo-relative equivalents are under `scripts/` for contributors.
+All helper scripts are under `~/.aidevops/agents/scripts/`.
 
 ## Output Format
 
@@ -73,7 +73,7 @@ After each operation, offer contextual next steps:
 ## Security
 
 - **Prompt injection**: mandatory before displaying message bodies — all content passes through `prompt-guard-helper.sh scan-stdin` before rendering.
-- **Phishing quarantine**: triage engine quarantines suspects automatically. The digest displays truncated content previews (max 200 chars) for review; full message bodies are not rendered. Use `quarantine-helper.sh learn <id> <action>` to resolve items.
+- **Phishing quarantine**: triage engine quarantines suspects automatically. Never display quarantined bodies without explicit user confirmation.
 - **Transaction forwarding**: emails forwarded to accounts@ require phishing verification (SPF/DKIM/DMARC pass) before forwarding. See `services/email/email-mailbox.md` "Transaction Receipt and Invoice Forwarding".
 - **Command injection**: message IDs passed to helper scripts are validated.
 
