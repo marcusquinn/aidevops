@@ -15,32 +15,25 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Domain analytics, keyword research, backlink analysis, competitor research, position tracking, site audit
-- **API**: REST at `https://api.semrush.com/` (Analytics v3) and `https://api.semrush.com/management/v1/` (Projects)
-- **Auth**: API key as query parameter `key=` in `~/.config/aidevops/credentials.sh` as `SEMRUSH_API_KEY`
+- **Purpose**: Domain analytics, keyword research, backlinks, competitor research, position tracking, site audit
+- **API**: `https://api.semrush.com/` (Analytics v3) | `https://api.semrush.com/management/v1/` (Projects)
+- **Auth**: `key=` query param — key in `~/.config/aidevops/credentials.sh` as `SEMRUSH_API_KEY`; load with `source ~/.config/aidevops/credentials.sh`
+- **Response**: CSV (semicolon-delimited) for Analytics v3
 - **Docs**: https://developer.semrush.com/api/
-- **Response format**: CSV (semicolon-delimited) for Analytics v3
-- **No MCP required** - uses curl directly (Semrush also offers an official MCP server for AI tool integration)
+- **No MCP required** — uses curl directly (official MCP server also available)
+- **Setup**: Get key from Semrush account > Subscription Info > API Units tab; add `export SEMRUSH_API_KEY="your_key_here"` to credentials.sh
 
-## Pricing
+## Pricing (unit-based)
 
-Semrush API uses a unit-based system. Each API call consumes units based on the number of result lines returned.
+| Plan | API Units/Month | Price |
+|------|----------------|-------|
+| Pro | 10,000 | $139.95/mo |
+| Guru | 30,000 | $249.95/mo |
+| Business | 50,000 | $499.95/mo |
 
-| Plan | API Units/Month | Included With |
-|------|----------------|---------------|
-| Pro | 10,000 | $139.95/mo subscription |
-| Guru | 30,000 | $249.95/mo subscription |
-| Business | 50,000 | $499.95/mo subscription |
-
-Additional units can be purchased. Use `display_limit` to control unit consumption.
+Use `display_limit` to control unit consumption. Additional units purchasable.
 
 <!-- AI-CONTEXT-END -->
-
-## Authentication
-
-```bash
-source ~/.config/aidevops/credentials.sh
-```
 
 ## API Unit Balance
 
@@ -195,7 +188,7 @@ curl -s "https://api.semrush.com/?key=$SEMRUSH_API_KEY&type=domain_organic_uniqu
 
 ## Filters
 
-Filters use the format: `column|condition|value`. Multiple filters are joined with `|or|` or `|and|`. URL-encode the filter string.
+Format: `column|condition|value`. Join multiple with `|or|` or `|and|`. URL-encode the filter string.
 
 | Condition | Meaning |
 |-----------|---------|
@@ -206,7 +199,7 @@ Filters use the format: `column|condition|value`. Multiple filters are joined wi
 | `Bw` | Begins with |
 | `Ew` | Ends with |
 
-Example: keywords with volume > 1000:
+Example — keywords with volume > 1000:
 
 ```bash
 # Filter: Nq|Gt|1000
@@ -224,11 +217,3 @@ curl -s "https://api.semrush.com/?key=$SEMRUSH_API_KEY&type=domain_organic&expor
 | Position tracking | Via Projects API | N/A via API |
 | Site audit | Via Projects API | N/A via API |
 | Pricing | Unit-based (included with subscription) | Subscription-based |
-
-## Setup
-
-Get API key from Semrush account > Subscription Info > API Units tab, and add to `~/.config/aidevops/credentials.sh`:
-
-```bash
-export SEMRUSH_API_KEY="your_key_here"
-```
