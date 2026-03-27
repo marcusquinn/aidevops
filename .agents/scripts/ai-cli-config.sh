@@ -47,13 +47,14 @@ except (FileNotFoundError, json.JSONDecodeError):
 if outer_key not in config or not isinstance(config[outer_key], dict):
     config[outer_key] = {}
 
-if inner_key in config[outer_key]:
-    print(f"{inner_key} already configured in {file_path} - skipping")
+existed = inner_key in config[outer_key]
+config[outer_key][inner_key] = json.loads(value_json)
+with open(file_path, 'w') as f:
+    json.dump(config, f, indent=2)
+    f.write('\n')
+if existed:
+    print(f"Updated {inner_key} in {file_path}")
 else:
-    config[outer_key][inner_key] = json.loads(value_json)
-    with open(file_path, 'w') as f:
-        json.dump(config, f, indent=2)
-        f.write('\n')
     print(f"Added {inner_key} to {file_path}")
 PYEOF
 	return 0
