@@ -1,221 +1,87 @@
 # Immutability and Pure Functions
 
-Immutable array operations (spread, toSorted, toReversed, toSpliced, with), immutable object operations (spread, destructuring, structuredClone), pure function patterns, state update patterns for React/Redux.
+Never modify data in place. Same input → same output, no side effects. Prefer declarative style.
 
-## Core Principles
-
-1. **Immutability**: Never modify data in place
-2. **Pure functions**: Same input always produces same output, no side effects
-3. **First-class functions**: Functions as values, passed around and composed
-4. **Declarative style**: Describe what, not how
-
-## Immutable Array Patterns
-
-### Array Operations
+## Immutable Array Operations
 
 ```javascript
-const numbers = [1, 2, 3, 4, 5];
+const nums = [1, 2, 3, 4, 5];
 
-// Add element
-const withSix = [...numbers, 6];
-
-// Prepend element
-const withZero = [0, ...numbers];
-
-// Remove element (by value)
-const withoutThree = numbers.filter(n => n !== 3);
-
-// Remove element (by index) - ES2023
-const withoutSecond = numbers.toSpliced(1, 1);
-
-// Update element (by index) - ES2023
-const updated = numbers.with(2, 99);
-
-// Transform element at index
-const doubledAtTwo = numbers.with(2, numbers.at(2) * 2);
-
-// ES2023: Non-mutating methods
-const sorted = numbers.toSorted((a, b) => b - a);
-const reversed = numbers.toReversed();
+const withSix = [...nums, 6];                          // Append
+const withZero = [0, ...nums];                         // Prepend
+const withoutThree = nums.filter(n => n !== 3);        // Remove by value
+const withoutSecond = nums.toSpliced(1, 1);            // Remove by index (ES2023)
+const updated = nums.with(2, 99);                      // Replace at index (ES2023)
+const doubled = nums.with(2, nums.at(2) * 2);         // Transform at index
+const sorted = nums.toSorted((a, b) => b - a);        // Non-mutating sort (ES2023)
+const reversed = nums.toReversed();                    // Non-mutating reverse (ES2023)
 ```
 
-## Immutable Object Patterns
-
-### Object Operations
+## Immutable Object Operations
 
 ```javascript
-const user = { name: 'Alice', age: 30 };
+const user = { name: 'Alice', age: 30, address: { city: 'NYC' } };
 
-// Add/update property
-const updated = { ...user, age: 31 };
-
-// Add nested property
-const withAddress = {
-  ...user,
-  address: { city: 'NYC' }
-};
-
-// Update nested property
-const withNewCity = {
-  ...user,
-  address: { ...user.address, city: 'LA' }
-};
-
-// Remove property
-const { age, ...userWithoutAge } = user;
-
-// Rename property
-const { name: fullName, ...rest } = user;
+const older = { ...user, age: 31 };                                    // Update property
+const withZip = { ...user, address: { ...user.address, zip: '10001' } }; // Update nested
+const { age, ...userWithoutAge } = user;                               // Remove property
+const { name: fullName, ...rest } = user;                              // Rename property
 const renamed = { fullName, ...rest };
+const maybeAdmin = { ...user, ...(isAdmin && { role: 'admin' }) };     // Conditional property
 
-// Conditional property
-const maybeAdmin = {
-  ...user,
-  ...(isAdmin && { role: 'admin' })
-};
-```
-
-## Deep Operations
-
-```javascript
-// Deep clone (modern - preserves types, handles circular refs)
+// Deep clone (handles circular refs, preserves types)
 const clone = structuredClone(obj);
-
-// Deep clone (legacy - loses functions, Dates become strings)
-// const clone = JSON.parse(JSON.stringify(obj));
-
-// Deep update helper
-function updatePath(obj, path, value) {
-  const keys = path.split('.');
-  if (keys.length === 1) {
-    return { ...obj, [keys[0]]: value };
-  }
-  return {
-    ...obj,
-    [keys[0]]: updatePath(obj[keys[0]], keys.slice(1).join('.'), value)
-  };
-}
-
-const updated = updatePath(state, 'user.profile.name', 'Bob');
 ```
 
 ## Pure Functions
 
-### Characteristics
-
 ```javascript
-// ✅ Pure: Deterministic, no side effects
-function add(a, b) {
-  return a + b;
-}
+// ✅ Pure: deterministic, no side effects
+const formatUser = (user) => ({
+  displayName: `${user.firstName} ${user.lastName}`,
+  initials: `${user.firstName[0]}${user.lastName[0]}`
+});
 
-function formatUser(user) {
-  return {
-    displayName: `${user.firstName} ${user.lastName}`,
-    initials: `${user.firstName[0]}${user.lastName[0]}`
-  };
-}
-
-// ❌ Impure: Uses external state
+// ❌ Impure: external state | non-deterministic | side effects
 let counter = 0;
-function incrementCounter() {
-  counter++;  // Side effect: modifies external state
-  return counter;
-}
-
-// ❌ Impure: Non-deterministic
-function getRandomUser(users) {
-  return users[Math.floor(Math.random() * users.length)];
-}
-
-// ❌ Impure: Side effect
-function saveUser(user) {
-  localStorage.setItem('user', JSON.stringify(user));  // Side effect
-  return user;
-}
+function increment() { return ++counter; }           // Mutates external state
+function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; } // Non-deterministic
+function save(u) { localStorage.setItem('u', JSON.stringify(u)); }         // Side effect
 ```
 
 ### Purifying Impure Functions
 
 ```javascript
-// Impure: Depends on Date
-function isExpired(token) {
-  return token.expiresAt < Date.now();  // Non-deterministic
-}
-
-// Pure: Inject current time
-function isExpired(token, now) {
-  return token.expiresAt < now;
-}
+// Inject dependencies to make functions pure and testable
+const isExpired = (token, now) => token.expiresAt < now;
 isExpired(token, Date.now());
 
-// Impure: Random + mutates
-function shuffle(array) {
-  return array.sort(() => Math.random() - 0.5);  // Mutates!
-}
-
-// Pure: Inject randomness + non-mutating (ES2023)
-function shuffle(array, random = Math.random) {
-  return array.toSorted(() => random() - 0.5);
-}
-shuffle(items);  // Random
-shuffle(items, () => 0.5);  // Deterministic for tests
+const shuffle = (array, random = Math.random) =>
+  array.toSorted(() => random() - 0.5);             // ES2023 non-mutating
+shuffle(items);                                       // Random in production
+shuffle(items, () => 0.5);                            // Deterministic in tests
 ```
 
-## State Updates (React/Redux style)
-
-### Updating Arrays in State
+## State Updates (React/Redux)
 
 ```javascript
-// Add item
-const addTodo = (todos, newTodo) => [...todos, newTodo];
-
-// Remove item
-const removeTodo = (todos, id) => todos.filter(t => t.id !== id);
-
-// Update item
+// Array state operations
+const addTodo    = (todos, todo) => [...todos, todo];
+const removeTodo = (todos, id)  => todos.filter(t => t.id !== id);
 const updateTodo = (todos, id, updates) =>
   todos.map(t => t.id === id ? { ...t, ...updates } : t);
-
-// Toggle item
 const toggleTodo = (todos, id) =>
   todos.map(t => t.id === id ? { ...t, done: !t.done } : t);
-
-// Reorder items
-const moveTodo = (todos, fromIndex, toIndex) => {
-  const result = todos.toSpliced(fromIndex, 1);
-  return result.toSpliced(toIndex, 0, todos[fromIndex]);
+const moveTodo   = (todos, from, to) => {
+  const result = todos.toSpliced(from, 1);
+  return result.toSpliced(to, 0, todos[from]);
 };
-```
 
-### Updating Nested State
-
-```javascript
-// Update deeply nested property
-const updateNestedState = (state, userId, field, value) => ({
-  ...state,
-  users: {
-    ...state.users,
-    [userId]: {
-      ...state.users[userId],
-      profile: {
-        ...state.users[userId].profile,
-        [field]: value
-      }
-    }
-  }
-});
-
-// With helper function
+// Deep nested state update helper
 const setIn = (obj, path, value) => {
   const [head, ...rest] = path;
-  if (rest.length === 0) {
-    return { ...obj, [head]: value };
-  }
-  return {
-    ...obj,
-    [head]: setIn(obj[head] ?? {}, rest, value)
-  };
+  if (rest.length === 0) return { ...obj, [head]: value };
+  return { ...obj, [head]: setIn(obj[head] ?? {}, rest, value) };
 };
 
 const newState = setIn(state, ['users', 'u1', 'profile', 'name'], 'Alice');
@@ -223,11 +89,10 @@ const newState = setIn(state, ['users', 'u1', 'profile', 'name'], 'Alice');
 
 ## Best Practices
 
-1. **Use const by default** — Prevent accidental reassignment
-2. **Prefer ES2023 methods** — `.toSorted()`, `.toReversed()`, `.with()`
-3. **Use spread for shallow copies** — `{ ...obj }`, `[...arr]`
-4. **Use structuredClone for deep copies** — Handles circular refs
-5. **Return new objects** — Never mutate parameters
-6. **Extract side effects** — Keep pure logic separate from I/O
-7. **Inject dependencies** — Pass Date.now, Math.random as params for testing
-8. **Use optional chaining** — `obj?.nested?.value` instead of guards
+1. **`const` by default** — prevent accidental reassignment
+2. **ES2023 methods** — `.toSorted()`, `.toReversed()`, `.toSpliced()`, `.with()`
+3. **Spread for shallow** — `{ ...obj }`, `[...arr]`; `structuredClone()` for deep
+4. **Never mutate parameters** — always return new objects
+5. **Separate pure logic from I/O** — extract side effects to boundaries
+6. **Inject non-determinism** — pass `Date.now`, `Math.random` as params for testability
+7. **Optional chaining** — `obj?.nested?.value` instead of manual guards
