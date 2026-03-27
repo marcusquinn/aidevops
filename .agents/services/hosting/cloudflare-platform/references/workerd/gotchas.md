@@ -4,76 +4,43 @@
 
 ### Missing Compat Date
 
-❌ **Wrong**:
-
 ```capnp
+# BAD — missing compat date
 const worker :Workerd.Worker = (
   serviceWorkerScript = embed "worker.js"
 )
-```
 
-✅ **Correct**:
-
-```capnp
+# GOOD — always set compatibilityDate
 const worker :Workerd.Worker = (
   serviceWorkerScript = embed "worker.js",
-  compatibilityDate = "2024-01-15"  # Always set!
+  compatibilityDate = "2024-01-15"
 )
 ```
 
 ### Wrong Binding Type
 
-❌ **Wrong** - text returns string:
-
 ```capnp
-(name = "CONFIG", text = '{"key":"value"}')  # String, not parsed
-```
-
-✅ **Correct** - json returns object:
-
-```capnp
-(name = "CONFIG", json = '{"key":"value"}')  # Parsed object
+(name = "CONFIG", text = '{"key":"value"}')    # BAD — returns string, not parsed
+(name = "CONFIG", json = '{"key":"value"}')    # GOOD — returns parsed object
 ```
 
 ### Service vs Namespace
 
-❌ **Wrong** - just a Fetcher:
-
 ```capnp
-(name = "ROOM", service = "room-service")
-```
-
-✅ **Correct** - Durable Object namespace:
-
-```capnp
-(name = "ROOM", durableObjectNamespace = "Room")
+(name = "ROOM", service = "room-service")          # BAD — just a Fetcher
+(name = "ROOM", durableObjectNamespace = "Room")   # GOOD — DO namespace
 ```
 
 ### Module Name Mismatch
 
-❌ **Wrong** - import fails:
-
 ```capnp
-modules = [(name = "src/index.js", esModule = embed "src/index.js")]
-```
-
-✅ **Correct** - use simple names:
-
-```capnp
-modules = [(name = "index.js", esModule = embed "src/index.js")]
+modules = [(name = "src/index.js", esModule = embed "src/index.js")]  # BAD — import fails
+modules = [(name = "index.js", esModule = embed "src/index.js")]      # GOOD — simple names
 ```
 
 ## Network Access
 
-### No Global Outbound
-
-❌ **Wrong** - may fail without config:
-
-```javascript
-await fetch("https://api.example.com")
-```
-
-✅ **Correct** - configure network service:
+Fetch calls fail without explicit network config:
 
 ```capnp
 services = [
@@ -85,7 +52,7 @@ services = [
 ]
 ```
 
-Or use external service:
+Or use an external service binding:
 
 ```capnp
 bindings = [
@@ -96,145 +63,68 @@ bindings = [
 ]
 ```
 
-## Debugging Issues
+## Debugging
 
-### Worker Not Responding
+**Worker not responding** — Check: socket `address = "*:8080"` set, service name matches socket config, worker has `fetch()` handler, port available.
 
-Check:
-1. Socket config: `address = "*:8080"`, service name matches
-2. Worker has `fetch()` handler
-3. Port available
-4. Service name in socket matches service definition
+**Binding not found** — Check: binding name in config matches code (`env.BINDING` or global), service exists, ES module vs service worker syntax (env vs global).
 
-### Binding Not Found
+**Module not found** — Check: module name in config matches import path, `embed` path correct, ES module syntax valid (no CommonJS in `.mjs`).
 
-Check:
-1. Binding name in config matches code (`env.BINDING` or global)
-2. Service exists in config
-3. ES module vs service worker syntax (env vs global)
+**Compatibility errors** — Check: `compatibilityDate` set, API available on that date ([docs](https://developers.cloudflare.com/workers/configuration/compatibility-dates/)), required `compatibilityFlags` enabled.
 
-### Module Not Found
+## Performance
 
-Check:
-1. Module name in config matches import path
-2. `embed` path correct
-3. ES module syntax valid (no CommonJS in `.mjs`)
+**High memory** — V8 flags: `v8Flags = ["--max-old-space-size=2048"]`. Reduce `memoryCache.limits.maxTotalValueSize`. Profile with `--verbose`.
 
-### Compatibility Errors
+**Slow startup** — Compile binary: `workerd compile config.capnp name -o binary`. Reduce module count. Review compat flags (some have perf impact).
 
-Check:
-1. `compatibilityDate` set
-2. API available on that date ([docs](https://developers.cloudflare.com/workers/configuration/compatibility-dates/))
-3. Required flags enabled (`compatibilityFlags`)
-
-## Performance Issues
-
-### High Memory Usage
-
-Try:
-1. V8 flags: `v8Flags = ["--max-old-space-size=2048"]`
-2. Reduce cache limits: `memoryCache.limits.maxTotalValueSize`
-3. Profile with `--verbose` logging
-
-### Slow Startup
-
-Try:
-1. Compile binary: `workerd compile config.capnp name -o binary`
-2. Check module count (many imports slow startup)
-3. Review compatibility flags (some have perf impact)
-
-### Request Timeouts
-
-Check:
-1. External service connectivity
-2. Network service DNS resolution
-3. TLS handshake issues (`tlsOptions`)
+**Request timeouts** — Check external service connectivity, DNS resolution, TLS handshake (`tlsOptions`).
 
 ## Build Issues
 
-### Cap'n Proto Errors
+**Cap'n Proto errors** — Install: `brew install capnp` / `apt install capnproto`. Check import: `using Workerd = import "/workerd/workerd.capnp";`. Validate: `capnp compile -I. config.capnp`.
 
-- Install Cap'n Proto tools: `brew install capnp` / `apt install capnproto`
-- Check schema import path: `using Workerd = import "/workerd/workerd.capnp";`
-- Validate with: `capnp compile -I. config.capnp`
+**Embed path issues** — Paths are relative to config file location. Use absolute paths if needed: `embed "/full/path/file.js"`. Verify file exists before running.
 
-### Embed Path Issues
+**V8 flags warning** — `v8Flags` can break everything. Use only if necessary, test thoroughly. Not supported in production Cloudflare Workers.
 
-- Paths relative to config file location
-- Use absolute paths if needed: `embed "/full/path/file.js"`
-- Check file exists before running
-
-### V8 Flags Warning
-
-**Warning**: V8 flags (`v8Flags`) can break everything. Use only if necessary and test thoroughly. Not supported in production Cloudflare Workers.
-
-## Security Gotchas
+## Security
 
 ### Hardcoded Secrets
 
-❌ **Never** hardcode:
-
 ```capnp
-(name = "API_KEY", text = "sk-1234567890")
-```
-
-✅ **Use env vars**:
-
-```capnp
-(name = "API_KEY", fromEnvironment = "API_KEY")
+(name = "API_KEY", text = "sk-1234567890")         # BAD — never hardcode
+(name = "API_KEY", fromEnvironment = "API_KEY")     # GOOD — use env vars
 ```
 
 ### Overly Broad Network Access
 
-❌ **Too permissive**:
-
 ```capnp
-network = (allow = ["*"])  # Everything
-```
-
-✅ **Restrictive**:
-
-```capnp
-network = (allow = ["public"], deny = ["local"])
+network = (allow = ["*"])                           # BAD — too permissive
+network = (allow = ["public"], deny = ["local"])    # GOOD — restrictive
 ```
 
 ### Extractable Keys
 
-❌ **Extractable keys risky**:
-
 ```capnp
-cryptoKey = (extractable = true, ...)
-```
-
-✅ **Non-extractable**:
-
-```capnp
-cryptoKey = (extractable = false, ...)
+cryptoKey = (extractable = true, ...)               # BAD — extractable keys risky
+cryptoKey = (extractable = false, ...)              # GOOD — non-extractable
 ```
 
 ## Compatibility Changes
 
-### Breaking Change Migration
+When updating `compatibilityDate`: review [compatibility dates docs](https://developers.cloudflare.com/workers/configuration/compatibility-dates/), check flags enabled between old/new date, test locally, update code for breaking changes, deploy.
 
-When updating `compatibilityDate`:
-1. Review [compatibility dates docs](https://developers.cloudflare.com/workers/configuration/compatibility-dates/)
-2. Check flags enabled between old/new date
-3. Test locally with new date
-4. Update code for breaking changes
-5. Deploy with new date
-
-### Version Mismatch
-
-Workerd version = max compat date supported. If `compatibilityDate = "2025-01-01"` but workerd is v1.20241201.0, it fails. Update workerd binary.
+**Version mismatch** — Workerd version = max compat date supported. If `compatibilityDate = "2025-01-01"` but workerd is v1.20241201.0, it fails. Update workerd binary.
 
 ## Troubleshooting Steps
 
-1. **Enable verbose logging**: `workerd serve config.capnp --verbose`
-2. **Check logs**: Look for error messages, stack traces
-3. **Validate config**: `capnp compile -I. config.capnp`
-4. **Test bindings**: Log `Object.keys(env)` to verify
-5. **Check versions**: Workerd version vs compat date
-6. **Isolate issue**: Minimal repro config
-7. **Review schema**: [workerd.capnp](https://github.com/cloudflare/workerd/blob/main/src/workerd/server/workerd.capnp)
+1. Enable verbose logging: `workerd serve config.capnp --verbose`
+2. Validate config: `capnp compile -I. config.capnp`
+3. Test bindings: log `Object.keys(env)` to verify
+4. Check versions: workerd version vs compat date
+5. Isolate issue: minimal repro config
+6. Review schema: [workerd.capnp](https://github.com/cloudflare/workerd/blob/main/src/workerd/server/workerd.capnp)
 
-See [patterns.md](./patterns.md) for working examples
+See [patterns.md](./patterns.md) for working examples.
