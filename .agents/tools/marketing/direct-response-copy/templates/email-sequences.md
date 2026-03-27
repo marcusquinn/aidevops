@@ -2,7 +2,7 @@
 
 ## Shared Conventions
 
-**All templates below use these defaults** (don't repeat in each email):
+**Defaults for all templates** (don't repeat in each email):
 - Greeting: `Hey [First Name],` or `[First Name],`
 - Sign-off: `[Your Name]` (solo brand) or `— [Your Name/Team]` (SaaS/company)
 - Every email ends with a reply invitation ("Just reply", "Hit reply", etc.)
@@ -10,7 +10,7 @@
 
 ## Reusable Patterns
 
-These archetypes appear across multiple sequences. Each sequence email references which pattern it uses, with sequence-specific customisations noted inline.
+Archetypes referenced by name across sequences. Sequence-specific customisations noted inline.
 
 ### Pattern: Social Proof
 
