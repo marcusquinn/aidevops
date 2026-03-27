@@ -19,79 +19,54 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Extract browser cookies for automation, session reuse, and authenticated scraping
-- **Two Libraries**: TypeScript (cross-platform) and Swift (macOS native)
-- **Use Case**: When you need real browser session cookies for API calls or automation
+- **Two Libraries**: `@steipete/sweet-cookie` (TypeScript, cross-platform) and `SweetCookieKit` (Swift, macOS)
 
-**When to Use Sweet Cookie**:
+**When to use**:
 - Reusing existing browser sessions (already logged in)
 - Authenticated API calls without re-login
 - Bypassing automation detection with real cookies
 - CI/CD pipelines needing browser auth state
 
-**When NOT to Use**:
-- Fresh browser automation (use agent-browser, stagehand)
-- Sites with app-bound encryption (use Chrome extension)
-- Simple scraping without auth (use crawl4ai)
+**When NOT to use**:
+- Fresh browser automation → use agent-browser, stagehand
+- Simple scraping without auth → use crawl4ai
 
-**Quick Decision**:
+**Decision**:
 
 ```text
 Need cookies from existing browser session?
-    |
     +-> TypeScript/Node.js project? --> @steipete/sweet-cookie
-    |
-    +-> Swift/macOS native app? --> SweetCookieKit
-    |
-    +-> App-bound cookies (Chrome 127+)? --> Use Chrome extension
+    +-> Swift/macOS native app?     --> SweetCookieKit
+    +-> App-bound cookies (Chrome 127+)? --> Chrome extension
 ```
+
 <!-- AI-CONTEXT-END -->
-
-## Overview
-
-Sweet Cookie provides two complementary libraries for extracting browser cookies:
-
-| Library | Language | Platforms | Best For |
-|---------|----------|-----------|----------|
-| `@steipete/sweet-cookie` | TypeScript | macOS, Windows, Linux | Node.js/Bun automation, CI/CD |
-| `SweetCookieKit` | Swift | macOS only | Native macOS apps, Swift tooling |
-
-Both libraries read cookies directly from browser profile databases, avoiding the need for manual cookie export or browser extensions in most cases.
 
 ## @steipete/sweet-cookie (TypeScript)
 
-Cross-platform cookie extraction for Node.js and Bun.
+Cross-platform cookie extraction for Node.js and Bun. **Requirements**: Node.js >= 22 (`node:sqlite`) or Bun (`bun:sqlite`).
 
 ### Installation
 
 ```bash
 npm install @steipete/sweet-cookie
-# or
-pnpm add @steipete/sweet-cookie
-# or
-bun add @steipete/sweet-cookie
+# or: pnpm add / bun add
 ```
-
-**Requirements**: Node.js >= 22 (for `node:sqlite`) or Bun (for `bun:sqlite`)
 
 ### Basic Usage
 
 ```typescript
 import { getCookies, toCookieHeader } from '@steipete/sweet-cookie';
 
-// Extract cookies for a URL
 const { cookies, warnings } = await getCookies({
   url: 'https://example.com/',
   names: ['session', 'csrf'],
   browsers: ['chrome', 'edge', 'firefox', 'safari'],
 });
 
-// Log any warnings (e.g., browser locked, keychain prompt)
 for (const warning of warnings) console.warn(warning);
 
-// Convert to Cookie header string
 const cookieHeader = toCookieHeader(cookies, { dedupeByName: true });
-
-// Use in fetch request
 const response = await fetch('https://api.example.com/data', {
   headers: { Cookie: cookieHeader }
 });
@@ -100,7 +75,6 @@ const response = await fetch('https://api.example.com/data', {
 ### Multiple Origins (OAuth/SSO)
 
 ```typescript
-// Handle OAuth redirects across domains
 const { cookies } = await getCookies({
   url: 'https://app.example.com/',
   origins: ['https://accounts.example.com/', 'https://login.example.com/'],
@@ -113,19 +87,8 @@ const { cookies } = await getCookies({
 ### Specific Browser Profile
 
 ```typescript
-// Chrome with specific profile
-await getCookies({
-  url: 'https://example.com/',
-  browsers: ['chrome'],
-  chromeProfile: 'Default', // or full path to Cookies DB
-});
-
-// Edge with specific profile
-await getCookies({
-  url: 'https://example.com/',
-  browsers: ['edge'],
-  edgeProfile: 'Profile 1',
-});
+await getCookies({ url: 'https://example.com/', browsers: ['chrome'], chromeProfile: 'Default' });
+await getCookies({ url: 'https://example.com/', browsers: ['edge'], edgeProfile: 'Profile 1' });
 ```
 
 ### Inline Cookies (CI/CD)
@@ -133,40 +96,20 @@ await getCookies({
 For environments where browser DB access isn't possible:
 
 ```typescript
-// From file (exported via Chrome extension)
-await getCookies({
-  url: 'https://example.com/',
-  browsers: ['chrome'],
-  inlineCookiesFile: '/path/to/cookies.json',
-});
-
-// From JSON string
-await getCookies({
-  url: 'https://example.com/',
-  inlineCookiesJson: '{"cookies": [...]}',
-});
-
-// From base64
-await getCookies({
-  url: 'https://example.com/',
-  inlineCookiesBase64: 'eyJjb29raWVzIjogWy4uLl19',
-});
+await getCookies({ url: 'https://example.com/', browsers: ['chrome'], inlineCookiesFile: '/path/to/cookies.json' });
+await getCookies({ url: 'https://example.com/', inlineCookiesJson: '{"cookies": [...]}' });
+await getCookies({ url: 'https://example.com/', inlineCookiesBase64: 'eyJjb29raWVzIjogWy4uLl19' });
 ```
 
 ### Environment Variables
 
 ```bash
-# Browser selection
 SWEET_COOKIE_BROWSERS=chrome,safari,firefox
-SWEET_COOKIE_MODE=merge  # or 'first'
-
-# Profile selection
+SWEET_COOKIE_MODE=merge                        # or 'first'
 SWEET_COOKIE_CHROME_PROFILE=Default
 SWEET_COOKIE_EDGE_PROFILE=Default
 SWEET_COOKIE_FIREFOX_PROFILE=default-release
-
-# Linux keyring (if needed)
-SWEET_COOKIE_LINUX_KEYRING=gnome  # or kwallet, basic
+SWEET_COOKIE_LINUX_KEYRING=gnome               # or kwallet, basic
 SWEET_COOKIE_CHROME_SAFE_STORAGE_PASSWORD=...
 ```
 
@@ -174,14 +117,14 @@ SWEET_COOKIE_CHROME_SAFE_STORAGE_PASSWORD=...
 
 | Browser | macOS | Windows | Linux |
 |---------|-------|---------|-------|
-| Chrome | Yes | Yes | Yes |
-| Edge | Yes | Yes | Yes |
-| Firefox | Yes | Yes | Yes |
-| Safari | Yes | - | - |
+| Chrome  | Yes   | Yes     | Yes   |
+| Edge    | Yes   | Yes     | Yes   |
+| Firefox | Yes   | Yes     | Yes   |
+| Safari  | Yes   | -       | -     |
 
 ### Chrome Extension (App-Bound Cookies)
 
-For Chrome 127+ with app-bound encryption, use the included Chrome extension:
+For Chrome 127+ with app-bound encryption:
 
 1. Install from `apps/extension` in the sweet-cookie repo
 2. Export cookies as JSON/base64/file
@@ -189,7 +132,7 @@ For Chrome 127+ with app-bound encryption, use the included Chrome extension:
 
 ## SweetCookieKit (Swift)
 
-Native macOS cookie extraction for Swift applications.
+Native macOS cookie extraction. **Requirements**: macOS 13+, Swift 6.
 
 ### Installation
 
@@ -198,133 +141,39 @@ Native macOS cookie extraction for Swift applications.
 .package(url: "https://github.com/steipete/SweetCookieKit.git", from: "0.2.0")
 ```
 
-**Requirements**: macOS 13+, Swift 6
-
 ### Basic Usage
 
 ```swift
 import SweetCookieKit
 
 let client = BrowserCookieClient()
-
-// List available browser profiles
 let stores = client.stores(for: .chrome)
-
-// Get cookies from specific profile
 let store = stores.first { $0.profile.name == "Default" }
-let query = BrowserCookieQuery(domains: ["example.com"])
-let records = try client.records(matching: query, in: store!)
-
-// Convert to HTTPCookie
+let query = BrowserCookieQuery(domains: ["example.com"], domainMatch: .suffix, includeExpired: false)
 let cookies = try client.cookies(matching: query, in: store!)
-```
-
-### Query Options
-
-```swift
-let query = BrowserCookieQuery(
-    domains: ["example.com"],
-    domainMatch: .suffix,      // Match subdomains
-    includeExpired: false
-)
 ```
 
 ### Browser Import Order
 
 ```swift
-// Try all supported browsers in order
 let order = Browser.defaultImportOrder
 for browser in order {
     let results = try client.records(matching: query, in: browser)
-    // Results grouped by profile/store
 }
 ```
 
-### Chromium Local Storage
+### Chromium Local Storage & LevelDB
 
 ```swift
-// Read localStorage entries
-let entries = ChromiumLocalStorageReader.readEntries(
-    for: "https://example.com",
-    in: levelDBURL
-)
-```
-
-### Chromium LevelDB Helpers
-
-```swift
-// Raw text entries
-let entries = ChromiumLevelDBReader.readTextEntries(in: levelDBURL)
-
-// Token candidates (for auth tokens)
-let tokens = ChromiumLevelDBReader.readTokenCandidates(
-    in: levelDBURL,
-    minimumLength: 80
-)
+let entries = ChromiumLocalStorageReader.readEntries(for: "https://example.com", in: levelDBURL)
+let tokens = ChromiumLevelDBReader.readTokenCandidates(in: levelDBURL, minimumLength: 80)
 ```
 
 ### CLI Tool
 
 ```bash
-cd Examples/CookieCLI
-swift run SweetCookieCLI --help
-
-# List stores
 swift run SweetCookieCLI stores
-
-# Export cookies as JSON
 swift run SweetCookieCLI export --domain example.com --format json
-```
-
-## Comparison: When to Use Each
-
-| Scenario | Recommended Tool |
-|----------|------------------|
-| Node.js/Bun automation | `@steipete/sweet-cookie` |
-| Swift/macOS native app | `SweetCookieKit` |
-| CI/CD pipeline | `@steipete/sweet-cookie` + inline cookies |
-| Cross-platform script | `@steipete/sweet-cookie` |
-| macOS-only CLI tool | Either (Swift for native, TS for npm ecosystem) |
-| Browser extension needed | `@steipete/sweet-cookie` Chrome extension |
-
-## Integration with aidevops
-
-### With Bird (X/Twitter CLI)
-
-Bird uses sweet-cookie for automatic authentication:
-
-```bash
-# Bird auto-extracts X/Twitter cookies
-bird whoami  # Shows logged-in account
-bird tweet "Hello from CLI"
-```
-
-### With Browser Automation
-
-Combine with agent-browser or stagehand for authenticated sessions:
-
-```typescript
-import { getCookies, toCookieHeader } from '@steipete/sweet-cookie';
-
-// Get existing session cookies
-const { cookies } = await getCookies({
-  url: 'https://app.example.com/',
-  browsers: ['chrome'],
-});
-
-// Inject into automation
-const cookieHeader = toCookieHeader(cookies);
-// Use with fetch, playwright, or other tools
-```
-
-### With Crawl4AI
-
-For authenticated crawling:
-
-```bash
-# Export cookies to file
-# Then use with crawl4ai
-crawl4ai https://app.example.com --cookies /path/to/cookies.json
 ```
 
 ## Security Notes
@@ -337,13 +186,26 @@ crawl4ai https://app.example.com --cookies /path/to/cookies.json
 ### Keychain Prompt Handler (Swift)
 
 ```swift
-import SweetCookieKit
-
-// Show custom UI before system keychain prompt
 BrowserCookieKeychainPromptHandler.shared.handler = { context in
-    // context.kind = .chromiumSafeStorage
-    // Show blocking alert or custom UI
+    // context.kind = .chromiumSafeStorage — show blocking alert or custom UI
 }
+```
+
+## Integration
+
+### With Bird (X/Twitter CLI)
+
+Bird auto-extracts X/Twitter cookies via sweet-cookie:
+
+```bash
+bird whoami
+bird tweet "Hello from CLI"
+```
+
+### With Crawl4AI
+
+```bash
+crawl4ai https://app.example.com --cookies /path/to/cookies.json
 ```
 
 ## Resources
@@ -351,7 +213,6 @@ BrowserCookieKeychainPromptHandler.shared.handler = { context in
 - **sweet-cookie (TypeScript)**: https://github.com/steipete/sweet-cookie
 - **SweetCookieKit (Swift)**: https://github.com/steipete/SweetCookieKit
 - **Documentation**: https://sweetcookie.dev
-- **Chrome Extension**: `apps/extension` in sweet-cookie repo
 
 ## Related Tools
 
