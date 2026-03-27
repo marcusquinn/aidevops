@@ -21,32 +21,20 @@ tools:
 **Key Commands**:
 
 ```bash
-# Add content to calendar
-content-calendar-helper.sh add "Topic Title" --pillar DevOps --intent informational
-
-# Schedule across platforms
+content-calendar-helper.sh add "Topic Title" --pillar DevOps --cluster "CI/CD" --intent commercial --author marcus
 content-calendar-helper.sh schedule 1 2026-02-15 blog --time 10:00
-content-calendar-helper.sh schedule 1 2026-02-17 linkedin
-content-calendar-helper.sh schedule 1 2026-02-17 x
-
-# Check posting cadence
-content-calendar-helper.sh cadence --platform youtube --weeks 8
-
-# Find content gaps
-content-calendar-helper.sh gaps --days 30
-
-# Move through lifecycle
-content-calendar-helper.sh advance 1 draft
-
-# See what's due
+content-calendar-helper.sh cadence [--platform youtube] [--weeks 8]  # actual vs target, UNDER/ON TRACK/OVER
+content-calendar-helper.sh gaps --days 30                             # platform coverage, pillar distribution, empty days
+content-calendar-helper.sh advance 1 [draft|review|publish|promote|analyze]
+content-calendar-helper.sh list [--stage draft] [--platform youtube]
 content-calendar-helper.sh due --days 7
+content-calendar-helper.sh stats
+content-calendar-helper.sh export --format [json|csv]
 ```
 
 <!-- AI-CONTEXT-END -->
 
 ## Cadence Engine
-
-The cadence engine tracks posting frequency per platform against evidence-based targets and recommends adjustments.
 
 ### Cadence Targets (posts/week)
 
@@ -62,18 +50,6 @@ The cadence engine tracks posting frequency per platform against evidence-based 
 | Podcast | 0.5 | 1 | 1 | Weekly or bi-weekly |
 | Instagram | 3 | 5 | 3 | Consistent visual presence |
 
-**Cadence analysis**:
-
-```bash
-# Full cadence report across all platforms
-content-calendar-helper.sh cadence
-
-# Platform-specific with custom window
-content-calendar-helper.sh cadence --platform youtube --weeks 8
-```
-
-Output shows actual vs target posting rate, gap, and recommendations (UNDER/ON TRACK/OVER).
-
 ### Optimal Posting Windows (UTC)
 
 | Platform | Best Days | Times (UTC) |
@@ -87,40 +63,21 @@ Output shows actual vs target posting rate, gap, and recommendations (UNDER/ON T
 | Reddit | Mon-Fri | 09:00-11:00 |
 | Email | Tue, Thu | 10:00 |
 
-**Stagger rule**: Blog publishes first. Social adaptations follow over 5-7 days per `content/guidelines.md` repurposing workflow.
+**Stagger rule**: Blog publishes first. Social adaptations follow over 5-7 days per `content/guidelines.md`.
 
 ## Content Gap Analysis
 
-### Automated Gap Detection
+**Automated**: `content-calendar-helper.sh gaps --days 30`
 
-```bash
-# Find gaps in the next 30 days
-content-calendar-helper.sh gaps --days 30
+**SEO-driven**:
 
-# Shows:
-# - Platform coverage vs targets
-# - Pillar distribution
-# - Empty weekdays with no content scheduled
-```
+1. Export GSC data: `gsc-helper.sh query-report --min-impressions 500 --max-ctr 0.02 --days 90` (high-impression, low-CTR = gap)
+2. Cluster keywords by parent topic (`seo/keyword-research.md` SERP similarity)
+3. Map published URLs to clusters; flag uncovered clusters
+4. Competitor gap: compare covered topics against competitor sitemaps/rankings
+5. Prioritize: `search_volume * (1 - current_coverage) * business_relevance`
 
-### SEO-Driven Gap Analysis
-
-Use keyword research data to identify missing coverage:
-
-1. **Export GSC data**: Pull queries from `seo/google-search-console.md` (impressions without clicks = gap)
-2. **Cluster keywords**: Group by parent topic using `seo/keyword-research.md` SERP similarity
-3. **Audit existing content**: Map published URLs to keyword clusters, flag uncovered clusters
-4. **Competitor gap**: Compare covered topics against competitor sitemaps/rankings
-5. **Prioritize**: Score by `search_volume * (1 - current_coverage) * business_relevance`
-
-```bash
-# Extract high-impression, low-CTR queries as content gaps
-gsc-helper.sh query-report --min-impressions 500 --max-ctr 0.02 --days 90
-```
-
-## Topic Suggestions & Clustering
-
-Organize topics into **pillars** (broad authority pages) and **clusters** (supporting articles):
+## Topic Clustering
 
 | Layer | Type | Example | Word Count |
 |-------|------|---------|------------|
@@ -128,7 +85,7 @@ Organize topics into **pillars** (broad authority pages) and **clusters** (suppo
 | Cluster | Supporting article | "GitHub Actions vs GitLab CI" | 1500-2500 |
 | Satellite | Quick reference | "Docker Compose Cheatsheet" | 500-1000 |
 
-**Search intent mapping**: Assign each topic an intent to guide format:
+**Search intent mapping**:
 
 | Intent | Format | CTA |
 |--------|--------|-----|
@@ -137,26 +94,9 @@ Organize topics into **pillars** (broad authority pages) and **clusters** (suppo
 | Transactional | Landing page, pricing | Purchase, sign up |
 | Navigational | Documentation, FAQ | Product link, support |
 
-```bash
-# Add content with pillar, cluster, and intent
-content-calendar-helper.sh add "GitHub Actions vs GitLab CI" \
-  --pillar DevOps --cluster "CI/CD" --intent commercial --author marcus
-```
-
 ## Calendar Structure
 
-### Weekly View (Markdown)
-
-```markdown
-## Week of YYYY-MM-DD
-
-- [ ] MON: Draft "Topic A" (cluster: CI/CD) @author #blog ~3h
-- [ ] WED: Publish "Topic A" + social adapts @editor #publish
-- [ ] THU: LinkedIn post (Topic A excerpt) @social #linkedin
-- [ ] FRI: X thread (Topic A key points) @social #twitter
-```
-
-### Monthly Overview
+**Monthly overview** (rotate pillar focus monthly; maintain 2:1 cluster-to-pillar ratio):
 
 | Week | Pillar Focus | Blog | Social | Video | Email |
 |------|-------------|------|--------|-------|-------|
@@ -165,22 +105,7 @@ content-calendar-helper.sh add "GitHub Actions vs GitLab CI" \
 | 3 | Security | Publish 1 | 3 posts | - | Newsletter |
 | 4 | Community | Publish 1 | 3 posts | 1 long | Monthly recap |
 
-Rotate pillar focus monthly. Maintain 2:1 ratio of cluster-to-pillar content.
-
-### Database-Backed Calendar
-
-```bash
-# List all items with schedule info
-content-calendar-helper.sh list
-
-# Filter by stage or platform
-content-calendar-helper.sh list --stage draft
-content-calendar-helper.sh list --platform youtube
-
-# Export for external tools
-content-calendar-helper.sh export --format json
-content-calendar-helper.sh export --format csv
-```
+**Weekly task format**: `- [ ] MON: Draft "Topic A" (cluster: CI/CD) @author #blog ~3h`
 
 ## Content Lifecycle
 
@@ -195,93 +120,43 @@ content-calendar-helper.sh export --format csv
 | `promote` | 5-7 days | Cross-platform adapts posted |
 | `analyze` | 14-30 days | GSC impressions/clicks, engagement metrics |
 
-```bash
-# Move item through stages
-content-calendar-helper.sh advance 1 draft
-content-calendar-helper.sh advance 1 review
-content-calendar-helper.sh advance 1 publish  # Auto-logs to cadence tracker
-
-# Check item details and schedule
-content-calendar-helper.sh status 1
-```
-
-When advancing to `publish`, the helper automatically:
-
-- Updates schedule entries to `published` status
-- Logs the publication to the cadence tracker
-- Enables accurate cadence analysis going forward
+Advancing to `publish` auto-updates schedule entries to `published` and logs to cadence tracker.
 
 ## Content Pillars Strategy
 
-Define 3-5 pillars that map to business goals. Every cluster links to its pillar; pillars link to all children. Cross-link related clusters (3-5 internal links per post). Update pillar pages quarterly.
+Define 3-5 pillars mapping to business goals. Every cluster links to its pillar. Cross-link related clusters (3-5 internal links per post). Update pillar pages quarterly. View distribution: `content-calendar-helper.sh stats`
 
-```text
-Pillar: "DevOps Automation"
-├── Cluster: CI/CD pipelines (8 articles)
-├── Cluster: Infrastructure as Code (6 articles)
-├── Cluster: Monitoring & Observability (5 articles)
-└── Cluster: Security & Compliance (4 articles)
-```
+## Multi-Channel Fan-Out
 
-```bash
-# View pillar distribution
-content-calendar-helper.sh stats
-```
+One story → multiple platforms over 5-7 days (diamond pipeline from `content.md`). Schedule with `content-calendar-helper.sh schedule <id> <date> <platform> [--time HH:MM]` following the stagger rule.
 
-## Multi-Channel Fan-Out Workflow
+## Seasonality
 
-When a content item is ready, schedule it across multiple platforms following the stagger rule:
-
-```bash
-# Day 1: Blog publish
-content-calendar-helper.sh schedule 1 2026-02-15 blog --time 10:00
-
-# Day 1-2: Social teasers
-content-calendar-helper.sh schedule 1 2026-02-15 x --time 14:00
-content-calendar-helper.sh schedule 1 2026-02-16 linkedin --time 08:00
-
-# Day 3-5: Extended distribution
-content-calendar-helper.sh schedule 1 2026-02-17 reddit
-content-calendar-helper.sh schedule 1 2026-02-18 email
-content-calendar-helper.sh schedule 1 2026-02-19 youtube
-```
-
-This follows the diamond pipeline from `content.md`: one story -> multiple platforms over 5-7 days.
-
-## Seasonality Awareness
-
-From `content/optimization.md`:
-
-- **Q4 (Oct-Dec)**: Highest buying intent — prioritize monetization content (reviews, comparisons, "best of" lists)
-- **Q1 (Jan-Mar)**: New Year motivation — prioritize educational content (getting started guides, tutorials)
-- **Q2-Q3 (Apr-Sep)**: Maintenance mode — test new formats, build content backlog for Q4
+| Quarter | Focus |
+|---------|-------|
+| Q4 (Oct-Dec) | Monetization content — reviews, comparisons, "best of" lists (highest buying intent) |
+| Q1 (Jan-Mar) | Educational content — getting started guides, tutorials (New Year motivation) |
+| Q2-Q3 (Apr-Sep) | Maintenance — test new formats, build Q4 backlog |
 
 ## Integration Points
 
-| Tool | Purpose | Command/Reference |
-|------|---------|-------------------|
-| Content Calendar Helper | Calendar management, cadence tracking | `content-calendar-helper.sh` |
+| Tool | Purpose | Reference |
+|------|---------|-----------|
 | Keyword Research | Topic discovery, volume data | `seo/keyword-research.md` |
 | GSC | Performance tracking, gap detection | `seo/google-search-console.md` |
 | Content Guidelines | Platform voice and format specs | `content/guidelines.md` |
 | Content Optimization | A/B testing, analytics loops | `content/optimization.md` |
 | Distribution Agents | Platform-specific publishing | `content/distribution/` |
-| TODO.md | Task tracking integration | Root `TODO.md` with `#content` tag |
+| TODO.md | Task tracking | Root `TODO.md` with `#content` tag |
 
 ## Analytics Feedback Loop
 
-The cadence engine closes the loop between publishing and planning:
-
-1. **Publish content** -> cadence tracker logs the post
-2. **Run cadence analysis** -> identify under/over-served platforms
-3. **Run gap analysis** -> find empty days and missing pillars
-4. **Update calendar** -> schedule new content to fill gaps
-5. **Repeat** -> continuous optimization cycle
+Publish → cadence analysis → gap analysis → update calendar → repeat.
 
 ```bash
-# Weekly review workflow
-content-calendar-helper.sh cadence --weeks 1    # How did last week go?
-content-calendar-helper.sh gaps --days 7        # What's missing next week?
-content-calendar-helper.sh due --days 7         # What's coming up?
-content-calendar-helper.sh stats                # Overall health check
+# Weekly review
+content-calendar-helper.sh cadence --weeks 1   # last week performance
+content-calendar-helper.sh gaps --days 7       # missing next week
+content-calendar-helper.sh due --days 7        # upcoming items
+content-calendar-helper.sh stats               # overall health
 ```
