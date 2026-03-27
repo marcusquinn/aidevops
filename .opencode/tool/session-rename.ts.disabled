@@ -1,93 +1,69 @@
 import { tool } from "@opencode-ai/plugin"
-
-const OPENCODE_PORTS = ["4096", "4097", "4098", "4099"]
-const PORT_SCAN_TIMEOUT_MS = 500
+import { Database } from "bun:sqlite"
+import { homedir } from "os"
+import { join } from "path"
 
 /**
- * Auto-detect the OpenCode API port by scanning common ports.
- * OpenCode typically runs on 4096, but may use 4097-4099 if ports are busy.
+ * Resolve the OpenCode SQLite database path.
+ * OpenCode stores sessions in ~/.local/share/opencode/opencode.db (Drizzle ORM).
+ * The OPENCODE_DB env var overrides the default path.
  */
-async function findOpenCodePort(): Promise<string | null> {
-  // Check environment variable first
-  if (process.env.OPENCODE_PORT) {
-    return process.env.OPENCODE_PORT
+function getDbPath(): string {
+  if (process.env.OPENCODE_DB) {
+    return process.env.OPENCODE_DB
   }
-
-  // Scan common ports in parallel
-  const checkPort = async (port: string): Promise<string | null> => {
-    try {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), PORT_SCAN_TIMEOUT_MS)
-
-      const response = await fetch(`http://localhost:${port}/session`, {
-        method: "GET",
-        signal: controller.signal,
-      })
-
-      clearTimeout(timeout)
-      return response.ok ? port : null
-    } catch {
-      return null
-    }
-  }
-
-  const results = await Promise.all(OPENCODE_PORTS.map(checkPort))
-  return results.find((port) => port !== null) ?? null
+  return join(homedir(), ".local", "share", "opencode", "opencode.db")
 }
 
 /**
- * Helper function to rename a session via the OpenCode API.
- * Extracts common logic to avoid duplication between tools.
- * 
- * The `directory` parameter is required to scope the request to the correct
- * project. Without it, the API only searches the "global" session store and
- * returns NotFoundError for project-scoped sessions.
+ * Rename a session by updating the title directly in the SQLite database.
+ *
+ * OpenCode CLI sessions do not expose an HTTP API — Session.setTitle() is a
+ * Drizzle ORM call that writes to the local SQLite DB. The TUI reads from the
+ * same DB and picks up changes immediately (verified empirically).
  */
-async function renameSession(sessionID: string, title: string, directory: string): Promise<{ success: boolean; message: string }> {
-  const port = await findOpenCodePort()
-  
-  if (!port) {
-    return { 
-      success: false, 
-      message: `Unable to find OpenCode API. Tried ports ${OPENCODE_PORTS.join(", ")}. Set OPENCODE_PORT env var if using a different port.` 
-    }
-  }
-  
-  const baseUrl = `http://localhost:${port}`
-  const params = new URLSearchParams({ directory })
-  
+function renameSession(sessionID: string, title: string): { success: boolean; message: string } {
+  const dbPath = getDbPath()
+
   try {
-    const response = await fetch(`${baseUrl}/session/${sessionID}?${params}`, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ title }),
-    })
-    
-    if (!response.ok) {
-      const error = await response.text()
-      return { success: false, message: `API error (port ${port}): ${error}` }
+    const db = new Database(dbPath)
+    try {
+      const nowMs = Date.now()
+      const result = db.run(
+        "UPDATE session SET title = ?, time_updated = ? WHERE id = ?",
+        [title, nowMs, sessionID],
+      )
+
+      if (result.changes === 0) {
+        return { success: false, message: `Session ${sessionID} not found in database` }
+      }
+
+      return { success: true, message: title }
+    } finally {
+      db.close()
     }
-    
-    const session = await response.json()
-    return { success: true, message: session.title || title }
   } catch (error) {
-    return { success: false, message: error instanceof Error ? error.message : String(error) }
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : String(error),
+    }
   }
 }
 
 export default tool({
-  description: "Rename the current session to a new title. Use this after creating a git branch to sync the session name with the branch name.",
+  description:
+    "Rename the current session to a new title. Use this after creating a git branch to sync the session name with the branch name.",
   args: {
-    title: tool.schema.string().describe("New title for the session (e.g., branch name like 'feature/my-feature')"),
+    title: tool.schema
+      .string()
+      .describe("New title for the session (e.g., branch name like 'feature/my-feature')"),
   },
   async execute(args, context) {
-    const { sessionID, directory } = context
+    const { sessionID } = context
     const { title } = args
-    
-    const result = await renameSession(sessionID, title, directory)
-    
+
+    const result = renameSession(sessionID, title)
+
     if (result.success) {
       return `Session renamed to: ${result.message}`
     }
@@ -97,12 +73,13 @@ export default tool({
 
 // Also export a tool that syncs with the current git branch
 export const sync_branch = tool({
-  description: "Rename the current session to match the current git branch name. Call this after creating or switching branches.",
+  description:
+    "Rename the current session to match the current git branch name. Call this after creating or switching branches.",
   args: {},
   async execute(_args, context) {
-    const { sessionID, directory } = context
-    
-    // Get current branch name - wrapped in try/catch to handle non-git directories
+    const { sessionID } = context
+
+    // Get current branch name
     let branch: string
     try {
       const branchResult = await Bun.$`git branch --show-current`.text()
@@ -110,13 +87,13 @@ export const sync_branch = tool({
     } catch {
       return "Not in a git repository or git command failed"
     }
-    
+
     if (!branch) {
       return "No branch checked out (detached HEAD state or not a git repository)"
     }
-    
-    const result = await renameSession(sessionID, branch, directory)
-    
+
+    const result = renameSession(sessionID, branch)
+
     if (result.success) {
       return `Session synced with branch: ${result.message}`
     }
