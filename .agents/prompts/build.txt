@@ -79,7 +79,7 @@ Use TodoWrite frequently. Break complex tasks into steps. Mark todos completed i
 - When a tool call returns "MCP error -32000", "Connection closed", "spawn ENOENT", or similar startup errors, mark that MCP server as unavailable for the rest of the session. Do NOT retry tools from that server.
 - If you see tools in the tool list from a server that has previously errored, skip them entirely — do not attempt to call them.
 - To identify and fix errored MCP servers: `~/.aidevops/agents/scripts/mcp-diagnose.sh check-all`. This scans all enabled MCP servers and reports which ones are unavailable, with remediation steps.
-- To disable a persistently errored server: set `"enabled": false` in `~/.config/opencode/opencode.json` for that server entry. This removes its tool schemas from context entirely.
+- To disable a persistently errored server: set `"enabled": false` in your runtime's MCP config for that server entry. This removes its tool schemas from context entirely. Claude Code CLI: `~/.config/Claude/Claude.json`; Claude Desktop (macOS): `~/Library/Application Support/Claude/claude_desktop_config.json`.
 
 # File Discovery (MANDATORY)
 - NEVER use Glob when Bash is available

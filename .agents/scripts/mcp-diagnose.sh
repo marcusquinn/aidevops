@@ -41,20 +41,50 @@ fi
 # =============================================================================
 
 # Resolve the MCP config file path.
-# Tries the runtime registry first, then falls back to the default location.
+# Tries the runtime registry first (for all detected runtimes), then falls back
+# to platform-aware candidate paths in priority order:
+#   1. Claude Code CLI:     ~/.config/Claude/Claude.json
+#   2. Claude Desktop macOS: ~/Library/Application Support/Claude/claude_desktop_config.json
+#   3. OpenCode:            ~/.config/opencode/opencode.json
 # Echoes the resolved path on stdout.
 # Returns: 0 if a valid config file was found, 1 otherwise.
 _resolve_mcp_config() {
 	local config_file=""
-	if type rt_config_path &>/dev/null; then
-		config_file=$(rt_config_path "opencode" 2>/dev/null) || config_file=""
-	fi
-	if [[ -z "$config_file" || ! -f "$config_file" ]]; then
-		config_file="$HOME/.config/opencode/opencode.json"
+
+	# Try runtime registry for all detected runtimes (preferred — registry-driven)
+	if type rt_detect_configured &>/dev/null; then
+		local _rt_id
+		while IFS= read -r _rt_id; do
+			local _cfg
+			_cfg=$(rt_config_path "$_rt_id" 2>/dev/null) || continue
+			if [[ -n "$_cfg" && -f "$_cfg" ]]; then
+				config_file="$_cfg"
+				break
+			fi
+		done < <(rt_detect_configured 2>/dev/null)
 	fi
 
-	if [[ ! -f "$config_file" ]]; then
-		echo -e "${RED}✗ No MCP config file found at: $config_file${NC}" >&2
+	# Fallback: platform-aware candidate paths in priority order
+	if [[ -z "$config_file" || ! -f "$config_file" ]]; then
+		local _candidates=(
+			"$HOME/.config/Claude/Claude.json"
+			"$HOME/Library/Application Support/Claude/claude_desktop_config.json"
+			"$HOME/.config/opencode/opencode.json"
+		)
+		local _c
+		for _c in "${_candidates[@]}"; do
+			if [[ -f "$_c" ]]; then
+				config_file="$_c"
+				break
+			fi
+		done
+	fi
+
+	if [[ -z "$config_file" || ! -f "$config_file" ]]; then
+		echo -e "${RED}✗ No MCP config file found. Checked:${NC}" >&2
+		echo -e "${RED}  ~/.config/Claude/Claude.json${NC}" >&2
+		echo -e "${RED}  ~/Library/Application Support/Claude/claude_desktop_config.json${NC}" >&2
+		echo -e "${RED}  ~/.config/opencode/opencode.json${NC}" >&2
 		return 1
 	fi
 
@@ -274,10 +304,22 @@ if type rt_detect_configured &>/dev/null; then
 		[[ -n "$_cfg" && -f "$_cfg" ]] && _MCP_DIAG_CONFIGS+=("$_rt_id:$_cfg")
 	done < <(rt_detect_configured)
 fi
-# Fallback if registry not loaded or no configs found
+# Fallback if registry not loaded or no configs found — check platform-aware candidates
 if [[ ${#_MCP_DIAG_CONFIGS[@]} -eq 0 ]]; then
-	_fallback_cfg="$HOME/.config/opencode/opencode.json"
-	[[ -f "$_fallback_cfg" ]] && _MCP_DIAG_CONFIGS+=("opencode:$_fallback_cfg")
+	declare -a _fallback_candidates
+	_fallback_candidates=(
+		"claude-code:$HOME/.config/Claude/Claude.json"
+		"claude-code:$HOME/Library/Application Support/Claude/claude_desktop_config.json"
+		"opencode:$HOME/.config/opencode/opencode.json"
+	)
+	_fc=""
+	_fc_rt=""
+	_fc_path=""
+	for _fc in "${_fallback_candidates[@]}"; do
+		_fc_rt="${_fc%%:*}"
+		_fc_path="${_fc#*:}"
+		[[ -f "$_fc_path" ]] && _MCP_DIAG_CONFIGS+=("${_fc_rt}:${_fc_path}")
+	done
 fi
 
 _mcp_found_in_any=0
