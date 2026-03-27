@@ -46,4 +46,4 @@ Before `gh pr create` targeting an external repo:
 
 If a submission is auto-closed by a compliance bot, read the bot's comment for formatting requirements, then resubmit with the correct format.
 
-Practical examples and template mapping: `tools/git/github-cli.md` "External Repo Submissions" section.
+Practical examples and template mapping: `../tools/git/github-cli.md` "External Repo Submissions" section.

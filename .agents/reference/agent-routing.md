@@ -1,6 +1,6 @@
 # Agent Routing
 
-Not every task is code. The framework has multiple primary agents, each with domain expertise. When dispatching workers (via `/pulse`, `/runners`, or manual `opencode run`), route to the appropriate agent using `--agent <name>`.
+Not every task is code. The framework has multiple primary agents, each with domain expertise. When dispatching workers (via `/pulse`, `/runners`, or `headless-runtime-helper.sh run`), route to the appropriate agent using `--agent <name>`.
 
 ## Available Primary Agents
 
@@ -26,7 +26,7 @@ Full index in `subagent-index.toon`.
 
 - Read the task/issue description and match it to the domain above
 - If the task is clearly code (implement, fix, refactor, CI), use Build+ or omit `--agent`
-- If the task matches another domain, pass `--agent <name>` to `opencode run`
+- If the task matches another domain, pass `--agent <name>` to `headless-runtime-helper.sh run`
 - When uncertain, default to Build+ — it can read subagent docs on demand
 - The agent choice affects which system prompt and domain knowledge the worker loads
 - **Bundle-aware routing (t1364.6):** Project bundles can define `agent_routing` overrides per task domain. For example, a content-site bundle routes `marketing` tasks to the Marketing agent. Check with `bundle-helper.sh get agent_routing <repo-path>`. Explicit `--agent` flags always override bundle defaults.
