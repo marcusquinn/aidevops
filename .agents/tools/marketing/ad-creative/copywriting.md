@@ -8,17 +8,13 @@ A: AGITATE the pain (consequences, not features)
 S: Present the SOLUTION
 ```
 
-**Example - B2B Software:**
-
 ```
 PROBLEM: "Wasting 10+ hours per week on manual data entry?"
 AGITATE: "While you're buried in spreadsheets, your competitors are growing. Every hour of manual work is an hour not spent on strategy."
 SOLUTION: "AutoFlow eliminates 95% of manual data entry. 2,000+ companies saved 1,500 hours last month."
 ```
 
-**Best for:** Cold audiences, clear pain points, competitive markets, longer-form copy.
-
-**Tips:** Specific problems > generic. Agitate with consequences. Solution directly addresses the agitated pain. Use visceral language.
+**Best for:** Cold audiences, clear pain points, competitive markets, longer-form copy. Use specific problems, visceral language, agitate with consequences — not features.
 
 ### 2. AIDA (Attention-Interest-Desire-Action)
 
@@ -28,8 +24,6 @@ I: Build INTEREST (expand on the hook)
 D: Create DESIRE (emotional — paint the picture)
 A: Prompt ACTION (urgency or risk of loss)
 ```
-
-**Example - Course:**
 
 ```
 ATTENTION: "6 Months Ago I Was Working Minimum Wage. Today I Made $12K This Month."
@@ -48,21 +42,15 @@ A: AFTER state (desired outcome — aspirational but believable)
 B: BRIDGE (your product/service — specific, not vague)
 ```
 
-**Example - Fitness:**
-
 ```
 BEFORE: "You're tired of starting diets that last 3 days. Every Monday is 'the day' and by Wednesday you're back to old habits."
 AFTER: "Waking up with energy. Looking in the mirror and liking what you see. Wearing clothes you thought you'd never fit into again."
 BRIDGE: "FitMatch pairs you with a coach who texts daily, celebrates wins, and adjusts when life gets crazy. 5,000+ transformations."
 ```
 
-**Best for:** Transformation products, before/after results, services (coaching, consulting, done-for-you).
-
-**Tips:** Use sensory language (what they'll see, feel, hear).
+**Best for:** Transformation products, before/after results, services (coaching, consulting, done-for-you). Use sensory language — what they'll see, feel, hear.
 
 ### 4. The 4 Us (Copy Audit Checklist)
-
-Score any copy against four criteria:
 
 | Criterion | Weak | Strong |
 |-----------|------|--------|
@@ -81,8 +69,6 @@ STORY: Their journey/struggle (specific details, include "aha moment")
 SOLUTION: How they overcame it with your product (specific, believable results)
 ```
 
-**Example - B2C Service:**
-
 ```
 STAR: "Meet Sarah. 34, marketing manager, mom of two. Zero time for herself."
 STORY: "After her second kid — no time for the gym. Home workouts interrupted. Felt tired, unhealthy, frustrated."
@@ -92,8 +78,6 @@ SOLUTION: "15-minute guided workouts. No gym, no equipment. In 90 days: lost 22 
 **Best for:** Video ads (testimonial style), case studies, email sequences, landing pages.
 
 ### 6. Extended BAB (High-Ticket)
-
-Expands BAB for complex sales:
 
 ```
 BEFORE → AFTER → BRIDGE → PROOF (data, testimonials) → OFFER (clear package) → RISK REVERSAL (guarantee) → CTA (urgency)
@@ -279,42 +263,29 @@ Feature: What it is → Advantage: What it does → Benefit: What it means for T
 
 **Test priority:** Primary vs secondary benefit → Question vs statement → Long vs short → With/without numbers → Personal vs impersonal → Generic vs specific.
 
-**Winning characteristics:** Specific (numbers, names), clear (immediately understandable), relevant (matches pain/desire), urgent (reason to act now), beneficial (what they get).
-
-**Common mistakes:** Too vague, too clever (pun over clarity), too long, too brand-focused, no differentiation.
+**Winning:** Specific (numbers, names), clear, relevant (matches pain/desire), urgent, beneficial. **Avoid:** Too vague, too clever (pun over clarity), too long, too brand-focused, no differentiation.
 
 ---
 
 ## Brand Voice in Ads
 
-### The 3 Dimensions of Voice
+### Voice Dimensions
 
-**1. Personality Spectrum:**
+| Dimension | Axes |
+|-----------|------|
+| Personality | Formal ↔ Casual, Serious ↔ Playful, Respectful ↔ Irreverent, Enthusiastic ↔ Matter-of-fact |
+| Vocabulary | Jargon (use/avoid/explain), complexity, slang, profanity |
+| Grammar | Sentence length, contractions, exclamation points, fragments |
 
-```
-Formal ←―――→ Casual    |  Serious ←―――→ Playful
-Respectful ←―→ Irreverent  |  Enthusiastic ←―→ Matter-of-fact
-```
+**Voice stays constant; tone adapts per platform:** LinkedIn (B2B) → formal, feature-focused. Instagram (solopreneurs) → casual, conversational. TikTok (young entrepreneurs) → very casual, meme-adjacent.
 
-**2. Vocabulary:** Jargon (use/avoid/explain), complexity, slang, profanity.
+### Voice Examples
 
-**3. Grammar & Structure:** Sentence length, contractions, exclamation points, fragments.
-
-### Voice Examples (2 Contrasting Styles)
-
-**Professional B2B SaaS:** Formal-leaning, serious with occasional levity, jargon explained, medium sentences, contractions mixed.
+**Professional B2B SaaS** (formal, jargon explained):
 > "Your team deserves better than spreadsheets. [Product] brings your projects, communication, and files into one intuitive workspace. Join 10,000+ companies who've made the switch."
 
-**DTC Playful Brand:** Casual, irreverent, no jargon, short punchy sentences, heavy contractions, fragments fine.
+**DTC Playful Brand** (casual, irreverent, fragments fine):
 > "Tired of jeans that don't fit right? Same. That's why we made these. They actually fit. Wild concept. Try 'em, love 'em, or send 'em back. No BS."
-
-### Voice Stays, Tone Adapts
-
-Same brand voice adjusts for platform and audience:
-
-- **LinkedIn** (B2B decision-makers): More formal, feature-focused
-- **Instagram** (solopreneurs): Casual, relatable, conversational
-- **TikTok** (young entrepreneurs): Very casual, meme-adjacent
 
 ### Brand Voice Guide Template
 
@@ -342,18 +313,16 @@ Same brand voice adjusts for platform and audience:
 7. CHECKLIST: Does this sound like [BRAND]? Appropriate for platform/audience?
 ```
 
-### Voice Testing
-
-Run simultaneous variants of the same message in different voices (professional, casual, formal, emotional). Measure CTR and CPA. Winner = voice that resonates with your audience.
-
 ### Common Voice Mistakes
 
-| Mistake | Problem | Fix |
-|---------|---------|-----|
-| Inconsistent voice | Sounds like two brands across ads | Pick one voice, stick to it |
-| Wrong platform voice | Corporate tone on TikTok | Match platform expectations |
-| Trying too hard | Forced slang feels inauthentic | Be authentic to YOUR brand |
-| No personality | Generic, could be any brand | Add distinctive voice elements |
-| Offensive irreverence | Alienating target audience | Know your audience limits |
+| Mistake | Fix |
+|---------|-----|
+| Inconsistent voice across ads | Pick one voice, stick to it |
+| Wrong platform voice (corporate on TikTok) | Match platform expectations |
+| Forced slang | Be authentic to YOUR brand |
+| No personality | Add distinctive voice elements |
+| Offensive irreverence | Know your audience limits |
+
+**Voice testing:** Run simultaneous variants (professional, casual, formal, emotional). Measure CTR and CPA. Winner = voice that resonates with your audience.
 
 ---
