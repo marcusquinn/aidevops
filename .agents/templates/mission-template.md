@@ -41,161 +41,94 @@ preferences:
 
 ## Scope
 
-### Goal
+**Goal:** {Desired outcome — not "build X" but what the user/system will experience when complete. Include measurable success criteria.}
 
-{Detailed description of the desired outcome. Not "build X" but what the user/system will experience when the mission is complete. Include measurable success criteria where possible.}
+**Mode:** <!-- poc | full -->
 
-### Mode
+| Mode | Behaviour |
+|------|-----------|
+| **POC** | Skip ceremony (briefs, PRs, reviews). Commit to main or single branch. Fast iteration, exploration-first. |
+| **Full** | Standard worktree + PR workflow. Briefs required. Code review. Production-quality output. |
 
-- **POC**: Skip ceremony (briefs, PRs, reviews). Commit to main (dedicated repo) or single branch (existing repo). Fast iteration, exploration-first.
-- **Full**: Standard worktree + PR workflow. Briefs required. Code review. Production-quality output.
+**Non-goals:** {Explicitly out of scope — prevents scope creep}
 
-### Non-Goals
-
-- {Explicitly out of scope — prevents scope creep}
-- {Things that look related but are not part of this mission}
-
-### Constraints
-
-- {Budget limits, timeline, technical constraints}
-- {External dependencies, API rate limits, service availability}
-- {User preferences that constrain choices}
+**Constraints:** {Budget limits, timeline, technical constraints, external dependencies}
 
 ## Milestones
 
-Milestones are sequential. Features within each milestone are parallelisable.
-
-**TODO integration (Full mode):** Each feature becomes a TODO entry tagged `mission:{id}` (e.g., `mission:m001`). This tag lets the pulse supervisor correlate features back to their mission. Example TODO format: `- [ ] t042 Implement user auth #mission:m001 ~3h`
+Milestones are sequential; features within each milestone are parallelisable. Each feature becomes a TODO entry tagged `mission:{id}` (Full mode). Example: `- [ ] t042 Implement user auth #mission:m001 ~3h`
 
 ### Milestone 1: {Name}
 
 **Status:** pending  <!-- pending | active | validating | passed | failed | skipped -->
 **Estimate:** ~{X}h
-**Validation:** {What must be true for this milestone to pass — e.g., "all tests pass", "UI renders correctly", "API responds to all endpoints"}
+**Validation:** {What must be true for this milestone to pass}
 
 | # | Feature | Task ID | Status | Estimate | Worker | PR |
 |---|---------|---------|--------|----------|--------|----|
 | 1.1 | {Feature description} | {tNNN} | pending | ~{X}h | | |
 | 1.2 | {Feature description} | {tNNN} | pending | ~{X}h | | |
-| 1.3 | {Feature description} | {tNNN} | pending | ~{X}h | | |
 
-### Milestone 2: {Name}
-
-**Status:** pending
-**Estimate:** ~{X}h
-**Validation:** {Validation criteria}
-
-| # | Feature | Task ID | Status | Estimate | Worker | PR |
-|---|---------|---------|--------|----------|--------|----|
-| 2.1 | {Feature description} | {tNNN} | pending | ~{X}h | | |
-| 2.2 | {Feature description} | {tNNN} | pending | ~{X}h | | |
-
-<!-- Add more milestones as needed. Template:
-
-### Milestone N: {Name}
-
-**Status:** pending
-**Estimate:** ~{X}h
-**Validation:** {Validation criteria}
-
-| # | Feature | Task ID | Status | Estimate | Worker | PR |
-|---|---------|---------|--------|----------|--------|----|
-| N.1 | {Feature description} | {tNNN} | pending | ~{X}h | | |
-
--->
+<!-- Add milestones as needed. Copy the block above. -->
 
 ## Resources
 
-### Accounts & Credentials
+<!-- Type: credential | infrastructure | dependency. Credential Notes = gopass path, not the value. -->
 
-| Service | Purpose | Status | Secret Key |
-|---------|---------|--------|------------|
-| {e.g., Stripe} | {Payment processing} | {needed / configured / n/a} | {gopass path, not the value} |
-
-### Infrastructure
-
-| Resource | Purpose | Status | Notes |
-|----------|---------|--------|-------|
-| {e.g., PostgreSQL} | {Primary database} | {needed / provisioned / n/a} | |
-
-### External Dependencies
-
-| Dependency | Type | Status | Notes |
-|------------|------|--------|-------|
-| {e.g., API approval} | {api / service / human} | {pending / resolved} | |
+| Name | Type | Purpose | Status | Notes |
+|------|------|---------|--------|-------|
+| {e.g., Stripe} | credential | {Payment processing} | {needed / configured / n/a} | |
+| {e.g., PostgreSQL} | infrastructure | {Primary database} | {needed / provisioned / n/a} | |
+| {e.g., API approval} | dependency | {api / service / human} | {pending / resolved} | |
 
 ## Budget Tracking
 
-### Summary
-
 | Category | Budget | Spent | Remaining | % Used |
 |----------|--------|-------|-----------|--------|
-| Time (hours) | 0h   | 0h | 0h   | 0% |
-| Money (USD)  | $0   | $0 | $0   | 0% |
-| Tokens       | 0    | 0  | 0    | 0% |
+| Time (hours) | 0h | 0h | 0h | 0% |
+| Money (USD)  | $0 | $0 | $0 | 0% |
+| Tokens       | 0  | 0  | 0  | 0% |
 
-**Alert threshold:** 80% — pause and report when any category exceeds this.
-
-### Spend Log
+<!-- Alert threshold: 80% — pause and report when any category exceeds this.
+     Spend log: append rows as spend occurs.
+     budget-analysis-helper.sh analyse --budget <remaining_usd> --json
+     budget-analysis-helper.sh estimate --task "<feature>" --json -->
 
 | Date | Category | Amount | Description | Milestone |
 |------|----------|--------|-------------|-----------|
 | | | | | |
 
-<!-- Append rows as spend occurs. Use budget-analysis-helper.sh for cost estimation and tiered recommendations.
-     Run: budget-analysis-helper.sh analyse --budget <remaining_usd> --json to check remaining capacity.
-     Run: budget-analysis-helper.sh estimate --task "<feature>" --json for per-feature cost estimates. -->
-
-## Decision Log
-
-Decisions made during mission execution. Each entry captures what was decided, why, and what alternatives were considered.
+## Decision Log <!-- Append as they occur. Include trade-offs and constraints. -->
 
 | # | Date | Decision | Rationale | Alternatives Considered |
 |---|------|----------|-----------|------------------------|
 | 1 | | | | |
 
-<!-- Append decisions as they occur. Include trade-offs and constraints that drove the choice. -->
-
-## Mission Agents
-
-Temporary agents created for this mission. Draft-tier by default — promoted to custom/ or shared/ if generally useful.
+## Mission Agents <!-- Created on-demand; live in {mission-dir}/agents/. Review for promotion after completion. -->
 
 | Agent | Purpose | Path | Promote? |
 |-------|---------|------|----------|
 | | | `{mission-dir}/agents/{name}.md` | pending |
 
-<!-- Mission agents are created on-demand as the orchestrator discovers needs.
-     They live in the mission's agents/ subfolder.
-     After mission completion, review for promotion to the framework. -->
-
-## Research
-
-Key findings gathered during mission execution.
+## Research <!-- Artifacts (PDFs, screenshots, comparisons) go in {mission-dir}/research/ -->
 
 | Topic | Summary | Source | Date |
 |-------|---------|--------|------|
 | | | | |
 
-<!-- Research artifacts (PDFs, screenshots, comparisons) go in {mission-dir}/research/ -->
-
-## Progress Log
-
-Timestamped log of significant events during mission execution.
+## Progress Log <!-- Orchestrator appends entries as milestones start, complete, fail, or require re-planning. -->
 
 | Timestamp | Event | Details |
 |-----------|-------|---------|
 | | Mission created | |
 
-<!-- The orchestrator appends entries as milestones start, complete, fail, or require re-planning. -->
-
 ## Retrospective
 
 _Completed after mission finishes._
 
-### Outcomes
-
-- {What was delivered}
-- {How it compares to the original goal}
+- **Outcomes:** {What was delivered and how it compares to the original goal}
+- **Lessons learned:** {What worked / what didn't / what to do differently}
+- **Framework improvements:** {Improvements to offer back to aidevops — new agents, scripts, patterns}
 
 ### Budget Accuracy
 
@@ -205,25 +138,13 @@ _Completed after mission finishes._
 | Money | | | |
 | Tokens | | | |
 
-### Lessons Learned
-
-- {What worked well}
-- {What didn't work}
-- {What to do differently next time}
-
-### Framework Improvements
-
-- {Improvements to offer back to aidevops — new agents, scripts, patterns discovered}
-
 ### Skill Learning
 
-_Auto-populated by `mission-skill-learner.sh scan` at mission completion._
+<!-- Auto-populated: mission-skill-learner.sh scan {mission-dir}
+     Promote: mission-skill-learner.sh promote <path> [draft|custom]
+     Patterns: mission-skill-learner.sh patterns --mission {mission_id}
+     See: workflows/mission-skill-learning.md -->
 
 | Artifact | Type | Score | Promoted To | Notes |
 |----------|------|-------|-------------|-------|
 | | | | | |
-
-<!-- Run: mission-skill-learner.sh scan {mission-dir}
-     Promote: mission-skill-learner.sh promote <path> [draft|custom]
-     Patterns: mission-skill-learner.sh patterns --mission {mission_id}
-     See: workflows/mission-skill-learning.md -->
