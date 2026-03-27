@@ -225,7 +225,10 @@ STATE_FILE="${HOME}/.aidevops/logs/pulse-state.txt"
 QUEUE_METRICS_FILE="${HOME}/.aidevops/logs/pulse-queue-metrics"
 SCOPE_FILE="${HOME}/.aidevops/logs/pulse-scope-repos"
 COMPLEXITY_SCAN_LAST_RUN="${HOME}/.aidevops/logs/complexity-scan-last-run"
-COMPLEXITY_SCAN_INTERVAL="${COMPLEXITY_SCAN_INTERVAL:-86400}"                   # 1 day in seconds (was 7 days)
+COMPLEXITY_SCAN_INTERVAL="${COMPLEXITY_SCAN_INTERVAL:-86400}" # 1 day in seconds (was 7 days)
+DEDUP_CLEANUP_LAST_RUN="${HOME}/.aidevops/logs/dedup-cleanup-last-run"
+DEDUP_CLEANUP_INTERVAL="${DEDUP_CLEANUP_INTERVAL:-86400}"                       # 1 day in seconds
+DEDUP_CLEANUP_BATCH_SIZE="${DEDUP_CLEANUP_BATCH_SIZE:-50}"                      # Max issues to close per run
 COMPLEXITY_FUNC_LINE_THRESHOLD="${COMPLEXITY_FUNC_LINE_THRESHOLD:-100}"         # Functions longer than this are violations
 COMPLEXITY_FILE_VIOLATION_THRESHOLD="${COMPLEXITY_FILE_VIOLATION_THRESHOLD:-1}" # Files with >= this many violations get an issue (was 5)
 COMPLEXITY_MD_MIN_LINES="${COMPLEXITY_MD_MIN_LINES:-50}"                        # Agent docs shorter than this are not actionable for simplification
@@ -3113,6 +3116,94 @@ This is an automated scan. The function lengths are factual, but the best decomp
 #
 # Returns: 0 always (best-effort, never breaks the pulse)
 #######################################
+
+#######################################
+# Close duplicate simplification-debt issues across pulse-enabled repos.
+#
+# For each repo, fetches open simplification-debt issues and groups by
+# file path extracted from the title. When multiple issues exist for the
+# same file, keeps the newest and closes the rest as "not planned".
+#
+# Rate-limited: closes at most DEDUP_CLEANUP_BATCH_SIZE issues per run
+# and runs at most once per DEDUP_CLEANUP_INTERVAL (default: daily).
+#
+# Returns: 0 always (best-effort, never breaks the pulse)
+#######################################
+run_simplification_dedup_cleanup() {
+	local now_epoch
+	now_epoch=$(date +%s)
+
+	# Interval guard
+	if [[ -f "$DEDUP_CLEANUP_LAST_RUN" ]]; then
+		local last_run
+		last_run=$(cat "$DEDUP_CLEANUP_LAST_RUN" 2>/dev/null || echo "0")
+		[[ "$last_run" =~ ^[0-9]+$ ]] || last_run=0
+		local elapsed=$((now_epoch - last_run))
+		if [[ "$elapsed" -lt "$DEDUP_CLEANUP_INTERVAL" ]]; then
+			return 0
+		fi
+	fi
+
+	local repos_json="$REPOS_JSON"
+	if [[ ! -f "$repos_json" ]]; then
+		return 0
+	fi
+
+	local repo_slugs
+	repo_slugs=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null) || repo_slugs=""
+	[[ -z "$repo_slugs" ]] && return 0
+
+	local total_closed=0
+	local batch_limit="$DEDUP_CLEANUP_BATCH_SIZE"
+
+	while IFS= read -r slug; do
+		[[ -z "$slug" ]] && continue
+		[[ "$total_closed" -ge "$batch_limit" ]] && break
+
+		# Use jq to extract file paths from titles and find duplicates server-side.
+		# Strategy: fetch issues sorted by number ascending (oldest first), extract
+		# file path from title via jq regex, group by path, and collect all but the
+		# last (newest) issue number from each group as duplicates to close.
+		local dupe_numbers
+		dupe_numbers=$(gh issue list --repo "$slug" \
+			--label "simplification-debt" --state open \
+			--limit 500 --json number,title \
+			--jq '
+				sort_by(.number) |
+				[.[] | {
+					number,
+					file: (
+						(.title | capture("\\((?<p>[^,)]+\\.(sh|md|py|ts|js))[,)]") // null | .p) //
+						(.title | capture("in (?<p>[^ ]+\\.(sh|md|py|ts|js))") // null | .p) //
+						null
+					)
+				}] |
+				[.[] | select(.file != null)] |
+				group_by(.file) |
+				[.[] | select(length > 1) | .[:-1][].number] |
+				.[]
+			' 2>/dev/null) || dupe_numbers=""
+
+		[[ -z "$dupe_numbers" ]] && continue
+
+		while IFS= read -r dupe_num; do
+			[[ -z "$dupe_num" ]] && continue
+			[[ "$total_closed" -ge "$batch_limit" ]] && break
+			if gh issue close "$dupe_num" --repo "$slug" --reason "not planned" \
+				--comment "Auto-closing duplicate: another simplification-debt issue exists for this file. Keeping the newest." \
+				>/dev/null 2>&1; then
+				total_closed=$((total_closed + 1))
+			fi
+		done <<<"$dupe_numbers"
+	done <<<"$repo_slugs"
+
+	echo "$now_epoch" >"$DEDUP_CLEANUP_LAST_RUN"
+	if [[ "$total_closed" -gt 0 ]]; then
+		echo "[pulse-wrapper] Dedup cleanup: closed ${total_closed} duplicate simplification-debt issue(s)" >>"$LOGFILE"
+	fi
+	return 0
+}
+
 run_weekly_complexity_scan() {
 	local repos_json="$REPOS_JSON"
 	local aidevops_slug="marcusquinn/aidevops"
@@ -4008,6 +4099,11 @@ _run_preflight_stages() {
 	# threshold. Longest files first. Runs at most once per day.
 	# Non-fatal — pulse proceeds even if the scan fails.
 	run_stage_with_timeout "complexity_scan" "$PRE_RUN_STAGE_TIMEOUT" run_weekly_complexity_scan || true
+
+	# Daily dedup cleanup: close duplicate simplification-debt issues.
+	# Runs after complexity scan so any new duplicates from this cycle are caught.
+	# Non-fatal — pulse proceeds even if cleanup fails.
+	run_stage_with_timeout "dedup_cleanup" "$PRE_RUN_STAGE_TIMEOUT" run_simplification_dedup_cleanup || true
 
 	# Contribution watch: lightweight scan of external issues/PRs (t1419).
 	prefetch_contribution_watch
