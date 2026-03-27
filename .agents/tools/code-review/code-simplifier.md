@@ -128,6 +128,25 @@ Workers that skip verification or mark a PR ready without running the specified 
 - Format inconsistency with project convention -- e.g., `### **EMOJI ALL CAPS**` when 91% of the codebase uses plain `### Section Name`. Normalising outlier files to the established convention improves scannability across docs. Heading level (`###`) already conveys hierarchy; bold/caps/emoji on top is redundant emphasis.
 - Stale references to files that no longer exist or tools that were replaced
 
+### Prose tightening for agent docs (suggest with high confidence)
+
+Agent instruction docs (NOT reference corpora) often contain verbose explanatory prose written for human readers. LLMs follow terse instructions equally well. Tighten by:
+
+- Removing filler words ("In order to" → "To", "It is important to note that" → drop)
+- Removing redundant explanations (rule + explanation of why the rule exists, when the rule is self-evident)
+- Compressing multi-sentence descriptions into single sentences
+- Converting verbose bullet points into terse equivalents
+- Removing narrative context that doesn't change agent behaviour (incident stories — keep the task ID and rule, drop the narrative)
+
+**Preservation rules for prose tightening:**
+- KEEP all task IDs (`tNNN`), issue refs (`GH#NNN`), incident identifiers
+- KEEP all rules/constraints — compress the wording, not the rule
+- KEEP all file paths, command examples, code blocks
+- KEEP safety-critical detail (security rules, bash compatibility forbidden features)
+- Test: can the tightened version produce the same agent behaviour? If uncertain, keep the original.
+
+**Evidence (t1679 session):** Terse pass on `build.txt` achieved 63% byte reduction (45k→17k) with zero rule loss. `AGENTS.md` achieved 48% (22k→12k). All 25 critical patterns verified present after tightening.
+
 ### Requires careful judgment (suggest with medium confidence)
 
 - Verbose code that could be shorter without losing readability
@@ -413,6 +432,8 @@ Code simplification analysis fits into the quality workflow via two input paths:
 ### 1. Automated weekly scan (GH#5628)
 
 `pulse-wrapper.sh` runs a weekly complexity scan that uses the same awk-based function complexity check as CI. It creates `simplification-debt` issues for files exceeding the per-file violation threshold (default: 5+ functions >100 lines). Issues are deduplicated against existing open issues by repo-relative file path.
+
+**No file size gate.** Agent docs of any size are eligible for simplification analysis. The previous 500-line threshold was removed (t1679) — smaller files can be equally verbose. The classification (instruction doc vs reference corpus) determines the action, not the line count.
 
 ```text
 pulse-wrapper.sh (weekly) --> awk complexity scan
