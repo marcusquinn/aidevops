@@ -28,19 +28,14 @@ tools:
 
 ### 1. Google Cloud Project
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com)
-2. Create or select a project
-3. Enable the **Google Search Console API**
-4. Go to **Credentials** → **Create Credentials** → **Service Account**
-5. Name it (e.g., `aidevops`) and create
-6. Go to **Keys** tab → **Add Key** → **Create new key** → **JSON**
-7. Save to `~/.config/aidevops/gsc-credentials.json` and `chmod 600` it
+1. Go to [Google Cloud Console](https://console.cloud.google.com) → create or select a project
+2. Enable the **Google Search Console API**
+3. **Credentials** → **Create Credentials** → **Service Account** → name it (e.g., `aidevops`)
+4. **Keys** tab → **Add Key** → **Create new key** → **JSON** → save to `~/.config/aidevops/gsc-credentials.json` and `chmod 600` it
 
 ### 2. Add Service Account to GSC Properties
 
-The service account email (e.g., `aidevops@project-id.iam.gserviceaccount.com`) must be added as a user to each GSC property.
-
-**Manual**: GSC → Property → Settings → Users and permissions → Add user
+**Manual**: GSC → Property → Settings → Users and permissions → Add user (service account email, e.g., `aidevops@project-id.iam.gserviceaccount.com`)
 
 **Automated**: Use the Playwright script below to bulk-add to all properties.
 
@@ -52,7 +47,7 @@ python3 -c "import json; d=json.load(open('$HOME/.config/aidevops/gsc-credential
 
 ## Direct API Access (curl fallback)
 
-When the MCP is unavailable, use curl with OAuth2 token exchange:
+**Requirements**: `pip install PyJWT requests`
 
 ```bash
 # Get OAuth2 access token from service account
@@ -82,21 +77,16 @@ curl -s -X POST "https://searchconsole.googleapis.com/v1/sites/https%3A%2F%2Fexa
     "rowLimit": 25
   }'
 
-# Inspect URL indexing status (note: this checks status, does not submit for indexing)
-# To submit URLs for indexing, use the Indexing API: indexing.googleapis.com/v3/urlNotifications:publish
+# Inspect URL indexing status (checks status only — to submit for indexing use indexing.googleapis.com/v3/urlNotifications:publish)
 curl -s -X POST "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect" \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"inspectionUrl": "https://example.com/page", "siteUrl": "https://example.com"}'
 ```
 
-**Requirements for curl fallback**: `pip install PyJWT requests`
-
 <!-- AI-CONTEXT-END -->
 
 ## MCP Tool Reference (`gsc_*`)
-
-The MCP exposes `gsc_*` tools. Key operations:
 
 | Tool | Purpose | Key params |
 |------|---------|------------|
@@ -107,10 +97,6 @@ The MCP exposes `gsc_*` tools. Key operations:
 | `gsc_delete_sitemap` | Remove sitemap | `siteUrl`, `feedpath` |
 | `gsc_list_sitemaps` | List submitted sitemaps | `siteUrl` |
 
-**Dimensions**: `query`, `page`, `country`, `device`, `searchAppearance`
-
-**Metrics returned**: `clicks`, `impressions`, `ctr`, `position`
-
 **Common analysis patterns**:
 - Top queries by impressions: `dimensions: ["query"]`, `orderBy: impressions`
 - Page performance: `dimensions: ["page"]`, `orderBy: clicks`
@@ -119,8 +105,6 @@ The MCP exposes `gsc_*` tools. Key operations:
 - CTR opportunities: filter `impressions > 100` and `ctr < 0.05`
 
 ## Automated Bulk Setup with Playwright
-
-Add the service account to all GSC properties automatically:
 
 ```javascript
 // Save as gsc-add-service-account.js
@@ -174,6 +158,11 @@ Run with: `node gsc-add-service-account.js`
 
 **Requirements**: `npm install playwright` · Chrome with logged-in Google session · Owner access to GSC properties
 
+**Chrome profile paths**:
+- macOS: `/Users/USERNAME/Library/Application Support/Google/Chrome/Default`
+- Linux: `~/.config/google-chrome/Default`
+- Windows: `%LOCALAPPDATA%\Google\Chrome\User Data\Default`
+
 ## Troubleshooting
 
 **Empty results `{}`**: Service account not added to any GSC properties — use the Playwright script above.
@@ -183,21 +172,11 @@ Run with: `node gsc-add-service-account.js`
 **Connection issues**:
 
 ```bash
-# Check credentials file exists and has correct permissions
 ls -la ~/.config/aidevops/gsc-credentials.json
-
-# Test MCP connection
 opencode mcp list
 ```
 
-**Chrome profile paths** (for Playwright):
-- macOS: `/Users/USERNAME/Library/Application Support/Google/Chrome/Default`
-- Linux: `~/.config/google-chrome/Default`
-- Windows: `%LOCALAPPDATA%\Google\Chrome\User Data\Default`
-
 ## MCP Configuration
-
-Add to your MCP config (`~/.config/opencode/mcp.json` or similar):
 
 > **Note**: `@anthropic/google-search-console-mcp` is an internal/unreleased package. If unavailable via npm, use the curl fallback above or check with your aidevops maintainer for the current install path.
 
