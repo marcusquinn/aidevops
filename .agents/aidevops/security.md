@@ -13,65 +13,15 @@ tools:
 
 # Security Best Practices
 
-<!-- AI-CONTEXT-START -->
+## Credential Management
 
-## Quick Reference
+- **Never commit API tokens or secrets to version control**
+- Store in `~/.config/aidevops/credentials.sh` (600 permissions) or gopass
+- Use environment variables for CI/CD; add config files to `.gitignore`
+- Rotate tokens quarterly; use least-privilege principle per project/environment
+- Store SSH passwords in separate files (never in scripts), permissions 600
 
-**Credential Rules**:
-- NEVER commit API tokens to git
-- Store in `~/.config/aidevops/credentials.sh` (600 permissions)
-- Rotate tokens quarterly
-- Use least-privilege principle
-
-**SSH Security**:
-- Use Ed25519 keys: `ssh-keygen -t ed25519`
-- Permissions: 600 (private), 644 (public), 700 (~/.ssh/)
-- Protect with passphrases
-
-**File Permissions**:
-- Config files: 600
-- Scripts: 755
-- SSH keys: 600 (private), 644 (public)
-
-**Script Security**:
-- `scripts/` - Shared, committed (use placeholders for secrets)
-- `scripts-private/` - Local only, gitignored (real credentials OK)
-
-**Incident Response**: Disable creds → Block IPs → Isolate systems → Investigate → Rotate all creds → Patch
-
-**Security Checklist**: MFA on cloud accounts, regular token rotation, audit SSH keys, monitor logs
-<!-- AI-CONTEXT-END -->
-
-This document outlines security best practices for the AI Assistant Server Access Framework.
-
-## 🔐 **Credential Management**
-
-### API Tokens
-
-- **Never commit API tokens to version control**
-- Store tokens in separate configuration files
-- Add config files to `.gitignore`
-- Use environment variables for CI/CD
-- Rotate tokens regularly (quarterly recommended)
-- Use least-privilege principle for API permissions
-
-### SSH Keys
-
-- **Use Ed25519 keys** (modern, secure, fast)
-- Generate unique keys per environment if needed
-- Protect private keys with passphrases
-- Set proper file permissions (600 for private keys, 644 for public keys)
-- Regular key rotation and audit
-
-### Password Files
-
-- Store SSH passwords in separate files (never in scripts)
-- Set restrictive permissions (600)
-- Consider using SSH keys instead of passwords when possible
-
-## 🔑 **SSH Security**
-
-### Key Management Best Practices
+## SSH Security
 
 ```bash
 # Generate secure Ed25519 key
@@ -85,127 +35,27 @@ chmod 644 ~/.ssh/id_ed25519.pub
 ssh-keygen -p -f ~/.ssh/id_ed25519
 ```
 
-### SSH Configuration Security
-
 ```bash
-# ~/.ssh/config security settings
+# ~/.ssh/config hardening
 Host *
-    # Disable password authentication when keys are available
     PasswordAuthentication no
-
-    # Use only secure key exchange algorithms
     KexAlgorithms curve25519-sha256@libssh.org,diffie-hellman-group16-sha512
-
-    # Use only secure ciphers
     Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com
-
-    # Use only secure MAC algorithms
     MACs hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com
-
-    # Disable X11 forwarding by default
     ForwardX11 no
-
-    # Connection timeout
     ConnectTimeout 10
 ```
 
-### Server Hardening
+Server hardening: disable root login, use non-standard SSH ports, implement fail2ban, monitor SSH logs.
 
-- Disable root login where possible
-- Use non-standard SSH ports
-- Implement fail2ban or similar
-- Regular security updates
-- Monitor SSH logs
+## Access Control
 
-## 🛡️ **Access Control**
+- Grant minimum necessary permissions; use separate tokens per project/environment
+- Enable MFA on all cloud accounts; use hardware security keys where available
+- Use VPNs or bastion hosts for production; implement IP whitelisting
+- Use TLS 1.2+ for all API communications; rotate certificates regularly
 
-### Principle of Least Privilege
-
-- Grant minimum necessary permissions
-- Use separate API tokens per project/environment
-- Implement role-based access control
-- Regular access reviews and cleanup
-
-### Network Security
-
-- Use VPNs or bastion hosts for sensitive environments
-- Implement IP whitelisting where possible
-- Use private networks for internal communication
-- Monitor network traffic
-
-### Multi-Factor Authentication
-
-- Enable MFA on all cloud provider accounts
-- Use hardware security keys when available
-- Implement time-based OTP for API access
-
-## 📊 **Monitoring and Auditing**
-
-### Access Logging
-
-```bash
-# Enable SSH logging
-# Add to /etc/ssh/sshd_config
-LogLevel VERBOSE
-
-# Monitor SSH access
-tail -f /var/log/auth.log | grep ssh
-```
-
-### API Usage Monitoring
-
-- Monitor API rate limits and usage
-- Set up alerts for unusual activity
-- Regular audit of API token usage
-- Log all API calls in production
-
-### Security Scanning
-
-```bash
-# Regular security scans
-nmap -sS -O target-server
-
-# SSH security audit
-ssh-audit target-server
-
-# SSL/TLS testing
-testssl.sh target-server
-```
-
-## 🚨 **Incident Response**
-
-### Compromise Detection
-
-- Monitor for unauthorized SSH connections
-- Watch for unusual API activity
-- Set up alerts for failed authentication attempts
-- Regular review of server logs
-
-### Response Procedures
-
-1. **Immediate Actions**
-   - Disable compromised credentials
-   - Block suspicious IP addresses
-   - Isolate affected systems
-
-2. **Investigation**
-   - Analyze logs for attack vectors
-   - Identify scope of compromise
-   - Document findings
-
-3. **Recovery**
-   - Rotate all potentially compromised credentials
-   - Update and patch systems
-   - Restore from clean backups if necessary
-
-4. **Prevention**
-   - Implement additional security measures
-   - Update security procedures
-   - Conduct security training
-
-## 🔒 **File Permissions**
-
-### Recommended Permissions
+## File Permissions
 
 ```bash
 # Configuration files
@@ -223,13 +73,10 @@ chmod 600 ~/.ssh/*_password
 # Scripts
 chmod 755 *.sh
 chmod 755 .agents/scripts/*.sh
-chmod 755 ssh/*.sh
 ```
 
-### Git Security
-
 ```bash
-# .gitignore for security
+# .gitignore entries
 echo "configs/.*.json" >> .gitignore
 echo "*.password" >> .gitignore
 echo ".env" >> .gitignore
@@ -239,8 +86,6 @@ echo "*.pem" >> .gitignore
 
 ## Script Security
 
-### Directory Structure
-
 ```text
 .agents/
 ├── scripts/              # Shared (committed to Git)
@@ -249,19 +94,9 @@ echo "*.pem" >> .gitignore
     └── [custom].sh       # Real credentials OK here
 ```
 
-### Guidelines
+**Shared scripts (`scripts/`):** Use placeholders (`readonly API_TOKEN="YOUR_API_TOKEN_HERE"`); load from secure storage via `setup-local-api-keys.sh get service`. Never hardcode credentials.
 
-**Shared scripts (`scripts/`):**
-- Use placeholders: `readonly API_TOKEN="YOUR_API_TOKEN_HERE"`
-- Load from secure storage: `api_key=$(.agents/scripts/setup-local-api-keys.sh get service)`
-- Never hardcode actual credentials
-
-**Private scripts (`scripts-private/`):**
-- Safe for real API keys (gitignored)
-- Create from templates in `scripts/`
-- Never share outside secure channels
-
-### Verification
+**Private scripts (`scripts-private/`):** Safe for real API keys (gitignored). Create from templates in `scripts/`. Never share outside secure channels.
 
 ```bash
 # Verify private scripts are gitignored
@@ -269,56 +104,26 @@ git status --ignored | grep scripts-private
 # Should show: .agents/scripts-private/ (ignored)
 ```
 
-## 🌐 **Network Security**
-
-### VPN and Bastion Hosts
-
-- Use VPN for accessing production systems
-- Implement bastion hosts for multi-hop access
-- Restrict direct internet access to servers
-
-### Firewall Rules
+## Monitoring and Incident Response
 
 ```bash
-# Basic iptables rules
-iptables -A INPUT -p tcp --dport 22 -s trusted-ip -j ACCEPT
-iptables -A INPUT -p tcp --dport 22 -j DROP
+# Enable SSH logging — add to /etc/ssh/sshd_config
+LogLevel VERBOSE
+
+# Monitor SSH access
+tail -f /var/log/auth.log | grep ssh
 ```
 
-### SSL/TLS
+Monitor API rate limits and usage; set up alerts for unusual activity; log all API calls in production.
 
-- Use TLS 1.2 or higher for all API communications
-- Implement certificate pinning where possible
-- Regular certificate rotation
+**Incident response:**
 
-## 📋 **Security Checklist**
+1. **Immediate** — disable compromised credentials, block suspicious IPs, isolate affected systems
+2. **Investigate** — analyze logs for attack vectors, identify scope, document findings
+3. **Recover** — rotate all potentially compromised credentials, patch systems, restore from clean backups if needed
+4. **Prevent** — implement additional controls, update procedures, conduct security training
 
-### Initial Setup
-
-- [ ] Generate secure SSH keys with passphrases
-- [ ] Set proper file permissions on all sensitive files
-- [ ] Configure secure SSH client settings
-- [ ] Add sensitive files to .gitignore
-- [ ] Enable MFA on all cloud accounts
-
-### Regular Maintenance
-
-- [ ] Rotate API tokens quarterly
-- [ ] Audit SSH keys and remove unused ones
-- [ ] Review and update access permissions
-- [ ] Monitor logs for suspicious activity
-- [ ] Update and patch all systems
-
-### Emergency Procedures
-
-- [ ] Document incident response procedures
-- [ ] Test backup and recovery processes
-- [ ] Maintain emergency contact information
-- [ ] Regular security drills and training
-
-## 🔍 **Security Tools**
-
-### Recommended Tools
+## Security Tools
 
 ```bash
 # SSH security audit
@@ -331,20 +136,28 @@ nmap -sS -sV target
 testssl.sh target
 
 # File integrity monitoring
-aide --init
-aide --check
+aide --init && aide --check
 
-# Log analysis
+# Firewall (SSH example)
+iptables -A INPUT -p tcp --dport 22 -s trusted-ip -j ACCEPT
+iptables -A INPUT -p tcp --dport 22 -j DROP
+
+# Fail2ban status
 fail2ban-client status
 ```
 
-### Automation
+## Security Checklist
 
-- Implement automated security scanning
-- Set up log monitoring and alerting
-- Use configuration management for consistent security settings
-- Regular automated backups with encryption
+**Initial setup:**
+- [ ] Generate Ed25519 SSH keys with passphrases
+- [ ] Set file permissions on all sensitive files
+- [ ] Configure secure SSH client settings
+- [ ] Add sensitive files to `.gitignore`
+- [ ] Enable MFA on all cloud accounts
 
----
-
-**Remember: Security is an ongoing process, not a one-time setup. Regular reviews and updates are essential for maintaining a secure infrastructure.**
+**Regular maintenance:**
+- [ ] Rotate API tokens quarterly
+- [ ] Audit SSH keys and remove unused ones
+- [ ] Review and update access permissions
+- [ ] Monitor logs for suspicious activity
+- [ ] Update and patch all systems
