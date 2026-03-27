@@ -78,15 +78,37 @@ PY
 check_policy_markers() {
 	local build_prompt="${SCRIPT_DIR}/../prompts/build.txt"
 	local sandbox_helper="${SCRIPT_DIR}/sandbox-exec-helper.sh"
+	local secret_handling_ref="${SCRIPT_DIR}/../reference/secret-handling.md"
 
-	if ! pattern_exists "Session transcript exposure model" "$build_prompt"; then
+	# build.txt must reference transcript exposure policy (inline or via pointer)
+	if ! pattern_exists "transcript exposure" "$build_prompt"; then
 		echo "FAIL: transcript exposure policy missing from build prompt" >&2
 		return 1
 	fi
 
-	if ! pattern_exists "Never paste secret values into AI chat" "$build_prompt"; then
-		echo "FAIL: mandatory warning guidance missing from build prompt" >&2
+	# build.txt must contain the transcript-visible rule
+	if ! pattern_exists "transcript-visible" "$build_prompt"; then
+		echo "FAIL: transcript-visible rule missing from build prompt" >&2
 		return 1
+	fi
+
+	# Detailed secret handling rules must exist (either inline in build.txt
+	# or in the extracted reference file)
+	if [[ -f "$secret_handling_ref" ]]; then
+		if ! pattern_exists "Never paste secret values into AI chat" "$secret_handling_ref"; then
+			echo "FAIL: mandatory warning guidance missing from secret-handling reference" >&2
+			return 1
+		fi
+		if ! pattern_exists "Session Transcript Exposure" "$secret_handling_ref"; then
+			echo "FAIL: transcript exposure section missing from secret-handling reference" >&2
+			return 1
+		fi
+	else
+		# Fallback: if reference file doesn't exist, check build.txt directly
+		if ! pattern_exists "Never paste secret values into AI chat" "$build_prompt"; then
+			echo "FAIL: mandatory warning guidance missing from build prompt" >&2
+			return 1
+		fi
 	fi
 
 	if ! pattern_exists "_sandbox_emit_redacted_output" "$sandbox_helper"; then
