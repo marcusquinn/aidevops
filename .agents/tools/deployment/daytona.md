@@ -31,11 +31,7 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-Daytona provides cloud-hosted development environments (sandboxes) optimised for AI agent workflows. Each sandbox is a fully isolated Linux environment with per-second billing, stateful snapshots, and a REST/SDK API for programmatic lifecycle management.
-
 ## Sandbox Lifecycle
-
-States: `creating` → `running` → `stopped` → `archived` → `deleted`
 
 ```text
 create ──► running ──► stopped ──► archived ──► deleted
@@ -88,8 +84,6 @@ daytona exec <sandbox-id> -- nvidia-smi
 ```
 
 ### Billing Model
-
-Per-second billing based on allocated resources while running:
 
 | State | Billed for |
 |-------|------------|
@@ -226,15 +220,6 @@ def execute_shell(command: str) -> dict:
         return {"result": result.result, "exit_code": result.exit_code}
     finally:
         daytona.delete(sandbox)
-```
-
-### Persistent Dev Environment
-
-```bash
-SANDBOX_ID=$(daytona-helper.sh create dev-env --template python-3.11)
-daytona-helper.sh stop "$SANDBOX_ID"          # save vCPU/RAM cost
-daytona-helper.sh start "$SANDBOX_ID"         # resume later
-daytona-helper.sh exec "$SANDBOX_ID" "python my_script.py"
 ```
 
 ### CI/CD Ephemeral Runner
