@@ -27,224 +27,83 @@ tools:
 - Config files: .codacy.yml, sonar-project.properties (already in repo)
 - Expected grades: CodeFactor A+, Codacy A, SonarCloud passed gate
 - Troubleshooting: Check secrets, webhook configs, repo permissions
+
 <!-- AI-CONTEXT-END -->
 
-This guide walks you through setting up all 4 integrated code quality and security analysis platforms for your AI DevOps Framework.
+## Platform Setup
 
-## Overview
+### 1. CodeRabbit (AI code reviews)
 
-The framework integrates with 4 major code analysis platforms:
+1. Sign up at <https://coderabbit.ai/> with GitHub
+2. Authorize access, add repository
+3. Enable automatic PR reviews
 
-- **🤖 CodeRabbit** - AI-powered code reviews and security analysis
-- **📊 CodeFactor** - Automated code quality grading and metrics
-- **🛡️ Codacy** - Code quality, security, and coverage analysis
-- **⚡ SonarCloud** - Professional security and maintainability analysis
+### 2. CodeFactor (quality grading)
 
-## 🚀 **Quick Setup (5 Minutes Each)**
+1. Sign up at <https://www.codefactor.io/> with GitHub
+2. Add repository
+3. Enable GitHub Checks for PR integration
 
-### **1. 🤖 CodeRabbit Setup**
+### 3. Codacy (security analysis)
 
-#### **Steps:**
+1. Sign up at <https://app.codacy.com/> with GitHub
+2. Import repository — uses the `.codacy.yml` already in the repo
 
-1. **Visit**: https://coderabbit.ai/
-2. **Sign up** with your GitHub account
-3. **Authorize** CodeRabbit to access your repositories
-4. **Add Repository**: Select `marcusquinn/aidevops`
-5. **Configure**: Enable automatic PR reviews
+### 4. SonarCloud (enterprise analysis)
 
-#### **Features You Get:**
+1. Sign up at <https://sonarcloud.io/> with GitHub
+2. Create organization linked to your GitHub account
+3. Import project
+4. Generate token: My Account > Security > Generate Token
+5. Add GitHub secret: repo Settings > Secrets and variables > Actions > `SONAR_TOKEN`
+6. Verify: push a commit, check Actions tab for successful analysis
 
-- AI-powered code reviews on every pull request
-- Security vulnerability detection
-- Context-aware suggestions
-- Integration with GitHub checks
+## Analysis Coverage
 
-#### **Badge for README:**
+| Platform | Focus areas |
+|----------|-------------|
+| CodeRabbit | AI code reviews, security vulnerabilities, best practices, performance |
+| CodeFactor | Quality grading (A-F), cyclomatic complexity, technical debt, trends |
+| Codacy | Security scanning, quality metrics, test coverage, coding standards |
+| SonarCloud | Security hotspots, code smells, bug detection, duplication analysis |
+
+## README Badges
 
 ```markdown
 [![CodeRabbit](https://img.shields.io/badge/CodeRabbit-AI%20Reviews-blue)](https://coderabbit.ai)
 ```
 
-### **2. 📊 CodeFactor Setup**
-
-#### **Steps:**
-
-1. **Visit**: https://www.codefactor.io/
-2. **Sign up** with your GitHub account
-3. **Add Repository**: Click "Add new repository"
-4. **Select**: `marcusquinn/aidevops`
-5. **Enable**: GitHub Checks for PR integration
-
-#### **Features You Get:**
-
-- Automatic code quality grading (A-F scale)
-- Technical debt tracking
-- Issue categorization and prioritization
-- Quality trends over time
-
-#### **Badge for README:**
-
 ```markdown
 [![CodeFactor](https://www.codefactor.io/repository/github/marcusquinn/aidevops/badge)](https://www.codefactor.io/repository/github/marcusquinn/aidevops)
 ```
-
-### **3. 🛡️ Codacy Setup**
-
-#### **Steps:**
-
-1. **Visit**: https://app.codacy.com/
-2. **Sign up** with your GitHub account
-3. **Add Repository**: Import from GitHub
-4. **Select**: `marcusquinn/aidevops`
-5. **Configure**: Uses the `.codacy.yml` configuration we provided
-
-#### **Features You Get:**
-
-- Comprehensive security analysis
-- Code quality metrics
-- Custom quality rules
-- Team collaboration features
-
-#### **Badge for README:**
 
 ```markdown
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/[PROJECT_ID])](https://app.codacy.com/gh/marcusquinn/aidevops/dashboard)
 ```
 
-### **4. ⚡ SonarCloud Setup**
-
-#### **Steps:**
-
-1. **Visit**: https://sonarcloud.io/
-2. **Sign up** with your GitHub account
-3. **Create Organization**: Link to your GitHub account
-4. **Add Project**: Import `marcusquinn/aidevops`
-5. **Get Token**: My Account → Security → Generate Token
-6. **Add Secret**: In GitHub repo settings → Secrets → `SONAR_TOKEN`
-
-#### **Features You Get:**
-
-- Professional security analysis
-- Code smell detection
-- Quality gate enforcement
-- Comprehensive reporting
-
-#### **Badge for README:**
-
 ```markdown
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=marcusquinn_aidevops&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=marcusquinn_aidevops)
 ```
 
-## 🔧 **GitHub Integration Setup**
+## Expected Quality Scores
 
-### **SonarCloud GitHub Actions Integration:**
+| Platform | Target | Notes |
+|----------|--------|-------|
+| CodeFactor | A+ | Code organization |
+| Codacy | A | Shell scripts and docs |
+| SonarCloud | Passed gate | Zero security issues |
+| CodeRabbit | Positive feedback | Well-structured framework |
 
-1. **Get SonarCloud Token:**
-   - Go to SonarCloud → My Account → Security
-   - Generate new token with name: `GitHub Actions`
-   - Copy the token
+## Troubleshooting
 
-2. **Add GitHub Secret:**
-   - Go to your GitHub repository
-   - Settings → Secrets and variables → Actions
-   - Click "New repository secret"
-   - Name: `SONAR_TOKEN`
-   - Value: [paste your token]
+**SonarCloud not running:**
+Check `SONAR_TOKEN` secret is set, verify organization setup, check `sonar-project.properties`.
 
-3. **Verify Integration:**
-   - Push a commit to trigger GitHub Actions
-   - Check Actions tab for successful SonarCloud analysis
+**CodeRabbit not reviewing:**
+Ensure repo is added, check GitHub app permissions, verify PR triggers.
 
-## 📊 **What Each Service Analyzes**
+**CodeFactor not updating:**
+Check repository connection, verify GitHub webhook, ensure repo is public or authorized.
 
-### **🤖 CodeRabbit Analysis:**
-
-- **AI Code Reviews**: Context-aware suggestions
-- **Security Issues**: Vulnerability detection
-- **Best Practices**: Code pattern recommendations
-- **Performance**: Optimization suggestions
-
-### **📊 CodeFactor Analysis:**
-
-- **Code Quality**: Overall quality grading
-- **Complexity**: Cyclomatic complexity analysis
-- **Maintainability**: Technical debt assessment
-- **Trends**: Quality evolution over time
-
-### **🛡️ Codacy Analysis:**
-
-- **Security**: Security vulnerability scanning
-- **Quality**: Code quality metrics
-- **Coverage**: Test coverage tracking (when tests added)
-- **Standards**: Coding standard compliance
-
-### **⚡ SonarCloud Analysis:**
-
-- **Security Hotspots**: Detailed security analysis
-- **Code Smells**: Maintainability issues
-- **Bugs**: Potential bug detection
-- **Duplications**: Code duplication analysis
-
-## 🎯 **Expected Results**
-
-### **Immediate Analysis:**
-
-- **GitHub Actions**: Automated analysis on every push
-- **Pull Request Reviews**: Automated feedback on PRs
-- **Quality Metrics**: Comprehensive quality scoring
-- **Security Reports**: Detailed security analysis
-
-### **Quality Scores Expected:**
-
-- **CodeFactor**: A+ grade (excellent code organization)
-- **Codacy**: A grade (high-quality shell scripts and docs)
-- **SonarCloud**: Passed quality gate (zero security issues)
-- **CodeRabbit**: Positive AI feedback (well-structured framework)
-
-## 🏆 **Professional Benefits**
-
-### **Credibility:**
-
-- **Quality Badges**: Professional quality validation
-- **Automated Analysis**: Continuous quality monitoring
-- **Security Validation**: Zero known vulnerabilities
-- **Best Practices**: Industry-standard compliance
-
-### **Community Trust:**
-
-- **Transparent Quality**: Public quality metrics
-- **Professional Standards**: Enterprise-grade analysis
-- **Continuous Improvement**: Automated feedback loops
-- **Contributor Confidence**: Clear quality guidelines
-
-## 🔍 **Troubleshooting**
-
-### **Common Issues:**
-
-#### **SonarCloud Not Running:**
-
-- Check `SONAR_TOKEN` secret is set correctly
-- Verify organization setup in SonarCloud
-- Check `sonar-project.properties` configuration
-
-#### **CodeRabbit Not Reviewing:**
-
-- Ensure repository is added to CodeRabbit
-- Check GitHub app permissions
-- Verify PR creation triggers reviews
-
-#### **CodeFactor Not Updating:**
-
-- Check repository connection in CodeFactor
-- Verify GitHub webhook configuration
-- Ensure repository is public or properly authorized
-
-#### **Codacy Analysis Issues:**
-
-- Check `.codacy.yml` configuration
-- Verify repository import was successful
-- Check supported file types are being analyzed
-
----
-
-**Once all 4 services are set up, your repository will have comprehensive, automated code quality and security analysis - establishing it as a professional, high-quality open source project!** 🌟🔍✨
+**Codacy analysis issues:**
+Check `.codacy.yml` configuration, verify import succeeded, check supported file types.
