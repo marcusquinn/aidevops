@@ -114,8 +114,8 @@ rg -in '(token|secret|password|key)\s*[:=]\s*["\x27][A-Za-z0-9+/=]{20,}["\x27]' 
 ```bash
 # Unpinned actions (HIGH risk)
 rg -n 'uses:\s+[^#]+@(v\d|main|master|latest)' --glob '*.{yml,yaml}' -g '.github/**'
-# Missing permissions block
-rg -n '^permissions:' --glob '*.{yml,yaml}' -g '.github/**'
+# Workflows missing permissions block (HIGH risk)
+rg -L '^permissions:' --glob '*.{yml,yaml}' -g '.github/**'
 # Secrets echoed to logs
 rg -n 'echo.*\$\{\{\s*secrets\.' --glob '*.{yml,yaml}' -g '.github/**'
 # Third-party actions list
@@ -221,17 +221,18 @@ rm -rf "$CLONE_DIR"
 |---|----------|--------|-------|
 | 1 | Secrets/Credentials | PASS/FAIL/WARN | |
 | 2 | Dependency Vulnerabilities | PASS/FAIL/WARN/SKIP | |
-| 3 | Unsafe Code Patterns | PASS/FAIL/WARN | |
-| 4 | GitHub Actions Supply Chain | PASS/FAIL/WARN/SKIP | |
-| 5 | Docker Security | PASS/FAIL/WARN/SKIP | |
-| 6 | Shell Script Security | PASS/FAIL/WARN/SKIP | |
-| 7 | Frontend Security (XSS) | PASS/FAIL/WARN/SKIP | |
-| 8 | CORS Configuration | PASS/FAIL/WARN/SKIP | |
-| 9 | Auth and Rate Limiting | PASS/FAIL/WARN/SKIP | |
-| 10 | Insecure HTTP URLs | PASS/WARN | |
-| 11 | Prompt Injection Defense | PASS/FAIL/WARN/SKIP | |
-| 12 | Security Automation | PASS/FAIL/WARN | |
-| 13 | Security Architecture | {assessment} | |
+| 3 | Hardcoded Secret Patterns | PASS/FAIL/WARN | |
+| 4 | Unsafe Code Patterns | PASS/FAIL/WARN | |
+| 5 | GitHub Actions Supply Chain | PASS/FAIL/WARN/SKIP | |
+| 6 | Docker Security | PASS/FAIL/WARN/SKIP | |
+| 7 | Shell Script Security | PASS/FAIL/WARN/SKIP | |
+| 8 | Frontend Security (XSS) | PASS/FAIL/WARN/SKIP | |
+| 9 | CORS Configuration | PASS/FAIL/WARN/SKIP | |
+| 10 | Auth and Rate Limiting | PASS/FAIL/WARN/SKIP | |
+| 11 | Insecure HTTP URLs | PASS/WARN | |
+| 12 | Prompt Injection Defense | PASS/FAIL/WARN/SKIP | |
+| 13 | Security Automation | PASS/FAIL/WARN | |
+| 14 | Security Architecture | {assessment} | |
 
 ### Recommendations
 
