@@ -36,41 +36,19 @@ tools:
 | [Lambda](https://lambdalabs.com/) | GB300 NVL72, HGX B300, B200, H200, H100 | Per-hour, reserved discounts | Research, large-scale training, enterprise |
 | [NVIDIA Cloud](https://www.nvidia.com/en-us/gpu-cloud/) | A100, H100 (via DGX Cloud) | Per-hour, enterprise contracts | Official NVIDIA stack, production workloads |
 
-```text
-Need cheapest possible?           → Vast.ai (auction pricing)
-Need reliability + good pricing?  → RunPod (per-second billing, 30+ regions)
-Need enterprise / compliance?     → Lambda (SOC 2, single-tenant) or NVIDIA Cloud
-Need serverless inference?        → RunPod Serverless
-Need multi-GPU clusters?          → Lambda 1-Click Clusters or RunPod Instant Clusters
-```
-
 ## GPU Selection Guide
 
-| GPU | VRAM | Use Case | Approx. Cost/hr |
-|-----|------|----------|-----------------|
-| RTX 3090/4090 | 24GB | Small models, fine-tuning, inference | $0.20-0.70 |
-| RTX 5090 | 32GB | Small-medium models, fast inference | $0.77-1.58 |
-| L4 | 24GB | Inference, cost-effective | $0.40-0.60 |
-| L40S | 48GB | Medium models, inference | $0.85-1.22 |
-| RTX Pro 6000 | 96GB | Large models without datacenter GPUs | $1.50-2.00 |
-| A100 (80GB) | 80GB | Large models, training + inference | $1.79-2.72 |
-| H100 (80GB) | 80GB | High throughput, large-scale training | $2.50-4.18 |
-| H200 (141GB) | 141GB | Largest models, maximum throughput | $3.35-5.58 |
-| B200 (180GB) | 180GB | Next-gen training, largest models | $6.84-8.64 |
+| Workload | Examples | VRAM | GPU | Cost/hr |
+|----------|----------|------|-----|---------|
+| Voice STT+TTS | Whisper + Parler-TTS | 4GB | RTX 3090/4090 | $0.20-0.70 |
+| Voice full S2S / 7-8B LLM | Whisper+LLM+TTS, Llama 3.3 8B, Phi-4 | 8-16GB | RTX 4090 / L4 | $0.40-0.70 |
+| 13B LLM / diffusion | Llama 2 13B, SD XL, FLUX | 16-24GB | RTX 4090 / L40S | $0.70-1.22 |
+| Vision / video gen | MiniCPM-o, Wan 2.1, CogVideoX | 24-80GB | L40S / A100 | $0.85-2.72 |
+| 70B LLM | Llama 3.3 70B, Qwen 2.5 72B | 40-80GB | A100 / H100 | $1.79-4.18 |
+| Large models (96GB) | Large models without datacenter GPUs | 96GB | RTX Pro 6000 | $1.50-2.00 |
+| 400B+ LLM (quantized) | Llama 3.1 405B 4-bit | 140-180GB | H200 / B200 | $3.35-8.64 |
 
-### VRAM Requirements by Model Type
-
-| Model Category | Example Models | Min VRAM | Recommended GPU |
-|---------------|---------------|----------|-----------------|
-| Voice pipeline (STT+TTS) | Whisper + Parler-TTS | 4GB | RTX 3090/4090 |
-| Voice pipeline (full S2S) | Whisper + LLM + TTS | 8-16GB | RTX 4090 / L4 |
-| 7-8B parameter LLM | Llama 3.3 8B, Phi-4 | 8-16GB | RTX 4090 / L4 |
-| 13B parameter LLM | Llama 2 13B | 16-24GB | RTX 4090 / L40S |
-| 70B parameter LLM | Llama 3.3 70B, Qwen 2.5 72B | 40-80GB | A100 / H100 |
-| 400B+ parameter LLM | Llama 3.1 405B (quantized) | 140-180GB | H200 / B200 |
-| Vision models | MiniCPM-o, LLaVA, Qwen-VL | 8-24GB | RTX 4090 / L40S |
-| Diffusion models | Stable Diffusion XL, FLUX | 8-16GB | RTX 4090 |
-| Video generation | Wan 2.1, CogVideoX | 24-80GB | L40S / A100 |
+GPU hardware reference: RTX 4090=24GB, L4=24GB, L40S=48GB, A100=80GB, H100=80GB, H200=141GB, B200=180GB.
 
 ## Deployment Workflow
 
@@ -79,105 +57,52 @@ Need multi-GPU clusters?          → Lambda 1-Click Clusters or RunPod Instant 
 #### RunPod (runpodctl CLI)
 
 ```bash
-# Install CLI
-brew install runpod/runpodctl/runpodctl  # macOS
-# Or: wget -qO- cli.runpod.net | sudo bash
-
-# Configure API key (get from runpod.io/console/user/settings)
+brew install runpod/runpodctl/runpodctl  # macOS; or: wget -qO- cli.runpod.net | sudo bash
 runpodctl config --apiKey "$RUNPOD_API_KEY"
-
-# Create a pod with RTX 4090, 50GB storage, PyTorch image
-runpodctl create pod \
-  --name my-model \
-  --gpuType "NVIDIA GeForce RTX 4090" \
-  --gpuCount 1 \
-  --imageName pytorch/pytorch:2.4.0-cuda12.1-cudnn9-devel \
-  --volumeSize 50 \
-  --ports "8000/http,22/tcp"
-
-# List/stop/start/remove
-runpodctl get pod
-runpodctl stop pod <pod-id>
-runpodctl start pod <pod-id>
-runpodctl remove pod <pod-id>
+runpodctl create pod --name my-model --gpuType "NVIDIA GeForce RTX 4090" --gpuCount 1 \
+  --imageName pytorch/pytorch:2.4.0-cuda12.1-cudnn9-devel --volumeSize 50 --ports "8000/http,22/tcp"
+runpodctl get pod | stop pod <id> | start pod <id> | remove pod <id>
 ```
 
 #### Vast.ai (vastai CLI)
 
 ```bash
-pip install vastai
-vastai set api-key <your-api-key>
-
-# Search offers: RTX 4090, sorted by price
-vastai search offers 'gpu_name=RTX_4090 num_gpus=1 rentable=true' \
-  --order 'dph_total' --limit 10
-
-# Rent an instance
-vastai create instance <offer-id> \
-  --image pytorch/pytorch:2.4.0-cuda12.1-cudnn9-devel \
-  --disk 50 --ssh
-
-vastai show instances
-vastai ssh-url <instance-id>
-vastai destroy instance <instance-id>
+pip install vastai && vastai set api-key <your-api-key>
+vastai search offers 'gpu_name=RTX_4090 num_gpus=1 rentable=true' --order 'dph_total' --limit 10
+vastai create instance <offer-id> --image pytorch/pytorch:2.4.0-cuda12.1-cudnn9-devel --disk 50 --ssh
+vastai show instances | ssh-url <instance-id> | destroy instance <instance-id>
 ```
 
 #### Lambda (REST API)
 
 ```bash
-export LAMBDA_API_KEY="your-api-key"
-
-# List available instance types
-curl -s -H "Authorization: Bearer $LAMBDA_API_KEY" \
-  https://cloud.lambdalabs.com/api/v1/instance-types | \
-  python3 -c "
-import json, sys
-data = json.load(sys.stdin)['data']
-for k, v in data.items():
-    print(f\"{k}: {v['instance_type']['description']}\")
-"
-
-# Launch an instance
-curl -s -X POST -H "Authorization: Bearer $LAMBDA_API_KEY" \
-  -H "Content-Type: application/json" \
-  https://cloud.lambdalabs.com/api/v1/instance-operations/launch \
-  -d '{
-    "region_name": "us-east-1",
-    "instance_type_name": "gpu_1x_h100_sxm5",
-    "ssh_key_names": ["my-key"],
-    "name": "my-model-server"
-  }'
-
-# Terminate instance
-curl -s -X POST -H "Authorization: Bearer $LAMBDA_API_KEY" \
-  -H "Content-Type: application/json" \
-  https://cloud.lambdalabs.com/api/v1/instance-operations/terminate \
-  -d '{"instance_ids": ["<instance-id>"]}'
+export LAMBDA_API_KEY="your-api-key" BASE="https://cloud.lambdalabs.com/api/v1"
+AUTH="-H \"Authorization: Bearer $LAMBDA_API_KEY\""
+# List
+curl -s $AUTH "$BASE/instance-types" | python3 -c "import json,sys; [print(k) for k in json.load(sys.stdin)['data']]"
+# Launch
+curl -s -X POST $AUTH -H "Content-Type: application/json" "$BASE/instance-operations/launch" \
+  -d '{"region_name":"us-east-1","instance_type_name":"gpu_1x_h100_sxm5","ssh_key_names":["my-key"],"name":"my-model-server"}'
+# Terminate
+curl -s -X POST $AUTH -H "Content-Type: application/json" "$BASE/instance-operations/terminate" \
+  -d '{"instance_ids":["<instance-id>"]}'
 ```
 
 ### 2. SSH Setup
 
 ```bash
-ssh-keygen -t ed25519 -C "gpu-instance"
-# Add public key to provider dashboard, then connect:
+ssh-keygen -t ed25519 -C "gpu-instance"  # add public key to provider dashboard
 ssh -i ~/.ssh/id_ed25519 root@<instance-ip> -p <port>
-
-# Store credentials securely
-aidevops secret set GPU_SSH_KEY_PATH
-aidevops secret set GPU_INSTANCE_IP
+aidevops secret set GPU_SSH_KEY_PATH && aidevops secret set GPU_INSTANCE_IP
 ```
 
 ### 3. Docker Deployment
 
 ```bash
-docker run --gpus all -d \
-  -p 8000:8000 \
-  -v /models:/models \
-  --name my-model \
-  my-model-image:latest
+docker run --gpus all -d -p 8000:8000 -v /models:/models --name my-model my-model-image:latest
 ```
 
-Example `docker-compose.yml`:
+`docker-compose.yml`:
 
 ```yaml
 services:
@@ -186,18 +111,11 @@ services:
     deploy:
       resources:
         reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    ports:
-      - "8000:8000"
+          devices: [{driver: nvidia, count: 1, capabilities: [gpu]}]
+    ports: ["8000:8000"]
     volumes:
       - ./models:/models
       - model-cache:/root/.cache/huggingface
-    environment:
-      - CUDA_VISIBLE_DEVICES=0
-
 volumes:
   model-cache:
 ```
@@ -205,35 +123,23 @@ volumes:
 ### 4. Model Caching
 
 ```bash
-# Set HuggingFace cache to persistent volume
 export HF_HOME=/models/huggingface
 export TRANSFORMERS_CACHE=/models/huggingface/hub
 
-# Pre-download models before serving
-python -c "
-from transformers import AutoModelForCausalLM, AutoTokenizer
-model_name = 'microsoft/Phi-3-mini-4k-instruct'
-AutoTokenizer.from_pretrained(model_name, cache_dir='/models/huggingface/hub')
-AutoModelForCausalLM.from_pretrained(model_name, cache_dir='/models/huggingface/hub')
-"
-# RunPod: Use network volumes | Vast.ai: persistent disk | Lambda: persistent storage
+# Pre-download to persistent volume before serving
+python -c "from transformers import AutoModelForCausalLM, AutoTokenizer; m='microsoft/Phi-3-mini-4k-instruct'; AutoTokenizer.from_pretrained(m, cache_dir='$TRANSFORMERS_CACHE'); AutoModelForCausalLM.from_pretrained(m, cache_dir='$TRANSFORMERS_CACHE')"
+# RunPod: network volumes | Vast.ai: persistent disk | Lambda: persistent storage
 ```
 
 ### 5. Expose API
 
 ```bash
-# vLLM (recommended for LLM inference)
-python -m vllm.entrypoints.openai.api_server \
-  --model microsoft/Phi-3-mini-4k-instruct \
-  --host 0.0.0.0 --port 8000
-
-# Text Generation Inference (TGI)
-docker run --gpus all -p 8000:80 \
-  -v /models:/data \
-  ghcr.io/huggingface/text-generation-inference:latest \
+# vLLM (recommended)
+python -m vllm.entrypoints.openai.api_server --model microsoft/Phi-3-mini-4k-instruct --host 0.0.0.0 --port 8000
+# TGI
+docker run --gpus all -p 8000:80 -v /models:/data ghcr.io/huggingface/text-generation-inference:latest \
   --model-id microsoft/Phi-3-mini-4k-instruct
-
-# Custom FastAPI server
+# Custom FastAPI
 uvicorn serve:app --host 0.0.0.0 --port 8000
 ```
 
@@ -241,16 +147,12 @@ uvicorn serve:app --host 0.0.0.0 --port 8000
 
 ```bash
 # Direct API call
-curl http://<instance-ip>:8000/v1/completions \
-  -H "Content-Type: application/json" \
+curl http://<instance-ip>:8000/v1/completions -H "Content-Type: application/json" \
   -d '{"model": "microsoft/Phi-3-mini-4k-instruct", "prompt": "Hello", "max_tokens": 100}'
-
-# SSH tunnel for secure access
+# SSH tunnel
 ssh -L 8000:localhost:8000 root@<instance-ip> -p <port>
-
-# Speech-to-speech server/client pattern
-speech-to-speech-helper.sh start --server   # On GPU server
-speech-to-speech-helper.sh client --host <instance-ip>  # On local machine
+# Speech-to-speech
+speech-to-speech-helper.sh start --server && speech-to-speech-helper.sh client --host <ip>
 ```
 
 ## Cost Optimization
@@ -279,41 +181,20 @@ speech-to-speech-helper.sh client --host <instance-ip>  # On local machine
 
 ```bash
 # Health check on connect
-nvidia-smi
-nvidia-smi --query-gpu=name,memory.total,memory.used,temperature.gpu,utilization.gpu \
-  --format=csv,noheader
-watch -n 2 nvidia-smi
+nvidia-smi --query-gpu=name,memory.total,memory.used,temperature.gpu,utilization.gpu --format=csv,noheader
+python3 -c "import torch; print(f'CUDA: {torch.cuda.is_available()}, GPUs: {torch.cuda.device_count()}, Device: {torch.cuda.get_device_name(0)}')"
 
-# Verify PyTorch sees the GPU
-python3 -c "
-import torch
-print(f'CUDA: {torch.cuda.is_available()}, GPUs: {torch.cuda.device_count()}, Device: {torch.cuda.get_device_name(0)}')
-"
-
-# Log metrics every 30 seconds to CSV
-nvidia-smi \
-  --query-gpu=timestamp,name,utilization.gpu,utilization.memory,memory.used,temperature.gpu,power.draw \
+# Log metrics every 30s to CSV
+nvidia-smi --query-gpu=timestamp,name,utilization.gpu,utilization.memory,memory.used,temperature.gpu,power.draw \
   --format=csv -l 30 > /tmp/gpu_metrics.csv &
-```
 
-**Performance benchmark** (validate before long workloads):
-
-```bash
+# Memory bandwidth benchmark (validate before long workloads)
 python3 -c "
-import torch, time
-size = 1024 * 1024 * 256  # 1GB
-a = torch.randn(size, device='cuda')
-torch.cuda.synchronize()
-start = time.time()
-for _ in range(100):
-    b = a.clone()
-torch.cuda.synchronize()
-elapsed = time.time() - start
-gb_per_sec = (size * 4 * 100) / elapsed / 1e9
-print(f'Memory bandwidth: {gb_per_sec:.1f} GB/s')
+import torch, time; size=1024*1024*256; a=torch.randn(size,device='cuda'); torch.cuda.synchronize()
+t=time.time(); [a.clone() for _ in range(100)]; torch.cuda.synchronize()
+print(f'Bandwidth: {(size*4*100)/(time.time()-t)/1e9:.1f} GB/s')
 "
-# Vast.ai: check DLPerf score matches listing
-# RunPod: Community Cloud GPUs may have lower bandwidth than Secure Cloud
+# Vast.ai: verify DLPerf score matches listing | RunPod: Community Cloud may have lower bandwidth than Secure Cloud
 ```
 
 ## Troubleshooting
