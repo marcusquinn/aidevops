@@ -1103,7 +1103,7 @@ const {
  *
  * Provides:
  * 1. Config hook — lightweight agent index + MCP server registration (t1040)
- * 2. Custom tools — aidevops CLI, memory, pre-edit check, quality check, hook installer
+ * 2. Custom tools — aidevops CLI, memory (unified recall/store), pre-edit check, hook installer (5 tools total)
  * 3. Quality hooks — full pre-commit pipeline (ShellCheck, return statements,
  *    positional params, secrets scan, markdown lint) on Write/Edit operations
  * 4. Shell environment — aidevops paths and variables
@@ -1190,11 +1190,8 @@ export async function AidevopsPlugin({ directory, client }) {
   }
 
   // Phase 7b: OAuth pool tools (t1543, t1548, t1549)
-  const baseTools = createTools(SCRIPTS_DIR, run, {
-    runShellQualityPipeline,
-    runMarkdownQualityPipeline,
-    scanForSecrets,
-  });
+  // Note: pipelines arg omitted — quality checks run via tool.execute.before hook, not LLM-callable tools.
+  const baseTools = createTools(SCRIPTS_DIR, run);
   baseTools["model-accounts-pool"] = createPoolTool(client);
 
   return {
