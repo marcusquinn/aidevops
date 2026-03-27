@@ -21,167 +21,91 @@ tools:
 - **Pattern**: `./.agents/scripts/[service]-helper.sh [command] [account] [target] [options]`
 - **Config**: `configs/[service]-config.json.txt` (template) → `configs/[service]-config.json` (gitignored)
 
-**Categories**:
-- Infrastructure (4): Hostinger, Hetzner, Closte, Cloudron
-- Deployment (1): Coolify
-- Git (4): GitHub, GitLab, Gitea, Local
-- DNS (5): Spaceship, 101domains, Cloudflare, Namecheap, Route53
-- Code Quality (4): CodeRabbit, CodeFactor, Codacy, SonarCloud
-- Security (1): Vaultwarden
-- Email (1): Amazon SES
+**Categories**: Infrastructure (4), Deployment (1), Git (4), DNS (5), Code Quality (4), Security (1), Email (1)
 
 **MCP Ports**: 3001 (LocalWP), 3002 (Vaultwarden), 3003+ (code audit, git platforms)
 
-**Extension**: Follow standard patterns in `.agents/aidevops/extension.md`
-
-**Design Patterns**: aidevops implements industry-standard agent design patterns (see below)
+**Extension**: See `.agents/aidevops/extension.md`
 <!-- AI-CONTEXT-END -->
 
 ## Preferred Tool
 
-**[Claude Code](https://Claude.ai/)** is the recommended and primary-tested AI coding agent for aidevops. All features, agents, workflows, and MCP integrations are designed and tested for Claude Code first. Other AI assistants (OpenCode, Cursor, Zed, etc.) are supported as a courtesy but may not receive the same level of testing or integration depth.
+**[Claude Code](https://Claude.ai/)** is the primary-tested AI coding agent. All features, agents, workflows, and MCP integrations are designed for Claude Code first. Other AI assistants are supported but may have less integration depth.
 
-Key integrations:
-- **Agents**: Generated via `generate-opencode-agents.sh` with per-agent MCP tool filtering
-- **Commands**: 41 slash commands deployed to `~/.config/opencode/commands/`
-- **Plugins**: Compaction plugin at `.agents/plugins/opencode-aidevops/`
-- **Prompts**: Custom system prompt at `.agents/prompts/build.txt`
-- **OpenCode tools**: `.opencode/tool/*.ts` — native OpenCode plugin tools (loaded by the Bun runtime)
+Key integrations: agents via `generate-opencode-agents.sh`, 41 slash commands, compaction plugin at `.agents/plugins/opencode-aidevops/`, system prompt at `.agents/prompts/build.txt`, native tools at `.opencode/tool/*.ts`.
 
 ### OpenCode Native Tools (`.opencode/tool/`)
 
-Files in `.opencode/tool/` are **OpenCode plugin tools** — TypeScript modules loaded by the Bun runtime that extend the agent's tool palette. They are NOT shell-script wrappers.
+Files in `.opencode/tool/` are **OpenCode plugin tools** — TypeScript modules loaded by the Bun runtime, NOT shell-script wrappers.
 
-**Classification rule:** Before deleting or disabling any `.opencode/tool/*.ts` file, check whether it contains unique logic (DB access, API calls, state management) or is a thin wrapper that shells out to a helper script. Only wrappers are redundant; tools with native logic (like `bun:sqlite` access) have no shell equivalent.
+**Classification rule:** Before deleting any `.opencode/tool/*.ts` file, check whether it contains unique logic (DB access, API calls, state management) or is a thin wrapper. Only wrappers are redundant; tools with native logic (like `bun:sqlite` access) have no shell equivalent.
 
 | File | Type | Purpose |
 |------|------|---------|
 | `ai-research.ts` | Native logic | Spawns research queries via Anthropic API |
-| `session-rename.ts` | Native logic | Renames sessions via direct SQLite write to `~/.local/share/opencode/opencode.db` — no HTTP API exists for this |
-
-**Why this matters:** `session-rename.ts` was previously deleted by a cleanup task that treated all `.opencode/tool/` files as redundant wrappers. The tool contains unique logic — OpenCode CLI sessions don't expose an HTTP API; `Session.setTitle()` is a Drizzle ORM write to the local SQLite DB. There is no shell-script equivalent.
+| `session-rename.ts` | Native logic | Renames sessions via direct SQLite write — no HTTP API exists |
 
 ## Intelligence Over Scripts (Core Principle)
 
 **Guide intelligence with agent docs. Do not replace it with deterministic bash logic.**
 
-aidevops previously had a 37,000-line deterministic supervisor in bash (SQLite state DB, phase-based pipelines, grace periods, heartbeat windows, stale-state GC, dedup helpers). It was fragile, never reliable, and impossible to maintain. Every edge case spawned another script, another phase, another grace period — compounding complexity without improving outcomes.
-
-The current architecture deliberately replaced all of that with a simple pattern: an AI agent reads `scripts/commands/pulse.md` (guidance), fetches live state from GitHub (the only state DB), reasons about what to do, and acts. When the agent makes mistakes, the fix is **better guidance in the agent doc** — not a new bash script, helper, or deterministic gate.
+aidevops replaced a 37,000-line deterministic bash supervisor (SQLite state DB, phase pipelines, grace periods, heartbeat windows) with a simple pattern: an AI agent reads guidance docs, fetches live state from GitHub, reasons, and acts. When the agent errs, fix the guidance — not a new script.
 
 **When you encounter a supervisor/orchestration bug:**
 
-1. Improve the guidance in the relevant agent doc (e.g., `scripts/commands/pulse.md`, `scripts/commands/full-loop.md`)
-2. Add the missing knowledge the agent needed to make the right decision
+1. Improve guidance in the relevant agent doc (e.g., `scripts/commands/pulse.md`)
+2. Add the missing knowledge the agent needed
 3. Never create a bash script to enforce what the agent should reason about
 4. Never add state files, databases, or tracking layers
 
-**The test:** If your fix adds a `.sh` file or a new state mechanism to the orchestration layer, you are going in the wrong direction. If your fix adds a paragraph of clear guidance to an agent doc, you are on the right track.
+**The test:** Fix adds a `.sh` file or state mechanism → wrong direction. Fix adds a paragraph of clear guidance → right track.
 
-Helper scripts are appropriate for **deterministic utilities** (version bumping, file discovery, credential lookup) — not for **decisions that require judgment** (what to dispatch, whether a task is stuck, how to prioritize).
+Helper scripts are for **deterministic utilities** (version bumping, file discovery, credential lookup) — not **judgment calls** (dispatch priority, stuck detection, triage).
 
 ## Agent Architecture
 
-**Build+** is the unified coding agent for planning and implementation. It consolidates the former Plan+ and AI-DevOps agents:
+**Build+** is the unified coding agent for planning and implementation (consolidates former Plan+ and AI-DevOps agents):
 
-- **Intent detection**: Automatically detects deliberation vs execution mode
-- **Planning workflow**: Parallel explore agents, investigation phases, synthesis
-- **Execution workflow**: Pre-edit git check, quality gates, autonomous iteration
-- **Specialist subagents**: `@aidevops` for framework ops, `@plan-plus` for planning-only mode
+- **Intent detection**: Auto-detects deliberation vs execution mode
+- **Planning**: Parallel explore agents, investigation phases, synthesis
+- **Execution**: Pre-edit git check, quality gates, autonomous iteration
+- **Specialist subagents**: `@aidevops` for framework ops, `@plan-plus` for planning-only
 
 ## Agent Design Patterns
 
-aidevops implements proven agent design patterns identified by Lance Martin (LangChain) and validated across successful agents like Claude Code, Manus, and Cursor. These patterns optimize for context efficiency and long-running autonomous operation.
+Implements proven patterns from Lance Martin (LangChain), validated across Claude Code, Manus, and Cursor.
 
-### Pattern Alignment
-
-| Pattern | Description | aidevops Implementation |
-|---------|-------------|------------------------|
-| **Give Agents a Computer** | Filesystem + shell access for persistent context | `~/.aidevops/.agent-workspace/`, helper scripts in `scripts/`, bash tools |
-| **Multi-Layer Action Space** | Few tools, push actions to computer | Per-agent MCP filtering in `generate-opencode-agents.sh`, ~12-20 tools per agent |
-| **Progressive Disclosure** | Load context on-demand, not upfront | Subagent tables in AGENTS.md, read-on-demand pattern, YAML frontmatter |
-| **Offload Context** | Write intermediate results to filesystem | `.agent-workspace/work/[project]/` for persistent files, session trajectories |
-| **Cache Context** | Prompt caching for cost efficiency | Stable instruction prefixes, avoid reordering between calls |
-| **Isolate Context** | Sub-agents with separate context windows | Subagent markdown files with specific tool permissions |
-| **Ralph Loop** | Iterative agent execution until task complete | `workflows/ralph-loop.md`, `full-loop-helper.sh` |
-| **Evolve Context** | Learn from sessions, update memories | `/remember`, `/recall` with SQLite FTS5, `memory-helper.sh` |
-
-### Key Implementation Details
-
-**Multi-Layer Action Space** (`opencode.json` tools section):
-
-```python
-# Tools disabled globally, enabled per-agent
-GLOBAL_TOOLS = {"gsc_*": False, "outscraper_*": False, ...}
-AGENT_TOOLS = {
-    "Build+": {"write": True, "context7_*": True, "bash": True, "playwriter_*": True, ...},
-    "SEO": {"gsc_*": True, "google-analytics-mcp_*": True, ...},
-}
-```
-
-**Progressive Disclosure** (AGENTS.md structure):
-
-```markdown
-## Subagent Folders
-| Folder | Purpose | Key Subagents |
-|--------|---------|---------------|
-| `tools/browser/` | Browser automation | stagehand, playwright, crawl4ai |
-```
-
-Agents read full subagent content only when tasks require domain expertise.
-
-**Ralph Loop** (iterative development):
-
-```text
-Task -> Implement -> Check -> Fix Issues -> Re-check -> ... -> Complete
-         ^                      |
-         +----------------------+ (loop until done)
-```
-
-**Memory System** (continual learning):
-
-```bash
-# Store learnings
-/remember "Fixed CORS with nginx proxy_set_header"
-
-# Recall across sessions
-/recall "cors nginx"
-```
+| Pattern | aidevops Implementation |
+|---------|------------------------|
+| **Give Agents a Computer** | `~/.aidevops/.agent-workspace/`, helper scripts, bash tools |
+| **Multi-Layer Action Space** | Per-agent MCP filtering via `generate-opencode-agents.sh`, ~12-20 tools/agent |
+| **Progressive Disclosure** | Subagent tables in AGENTS.md, read-on-demand, YAML frontmatter |
+| **Offload Context** | `.agent-workspace/work/[project]/` for persistent files |
+| **Cache Context** | Stable instruction prefixes, avoid reordering between calls |
+| **Isolate Context** | Subagent markdown files with specific tool permissions |
+| **Ralph Loop** | `workflows/ralph-loop.md`, `full-loop-helper.sh` |
+| **Evolve Context** | `/remember`, `/recall` with SQLite FTS5, `memory-helper.sh` |
 
 ### MCP Lifecycle Pattern
 
-Decision framework for when to use an MCP server vs a curl-based subagent:
+**When to use MCP vs curl subagent:**
 
-| Factor | Use MCP | Use curl subagent |
-|--------|---------|-------------------|
-| Tool count | 25+ tools (outscraper) | 5-10 endpoints |
-| Auth complexity | OAuth2 token exchange (GSC) | Simple Bearer/Basic/API key |
-| Session frequency | Used most sessions | Used occasionally |
-| Context cost | Justified by frequency | Wasteful if rarely invoked |
-| Statefulness | Needs persistent connection | Stateless REST calls |
+| Factor | MCP | curl subagent |
+|--------|-----|---------------|
+| Tool count | 25+ | 5-10 endpoints |
+| Auth | OAuth2 token exchange | Simple Bearer/Basic/API key |
+| Session frequency | Most sessions | Occasional |
+| Statefulness | Persistent connection | Stateless REST |
 
-**Three-tier MCP strategy**:
+**Three-tier MCP strategy:**
 
-1. **Globally enabled** (always loaded, ~2K tokens each): augment-context-engine
-2. **Enabled, tools disabled** (zero context until agent invokes): amazon-order-history, chrome-devtools, claude-code-mcp, context7, google-analytics-mcp, gsc, outscraper, playwriter, quickfile, repomix, etc.
-3. **Replaced by curl subagent** (removed entirely): hetzner, serper, dataforseo, ahrefs, hostinger
+1. **Globally enabled** (~2K tokens each): augment-context-engine
+2. **Enabled, tools disabled** (zero context until invoked): amazon-order-history, chrome-devtools, claude-code-mcp, context7, google-analytics-mcp, gsc, outscraper, playwriter, quickfile, repomix, etc.
+3. **Replaced by curl subagent** (removed): hetzner, serper, dataforseo, ahrefs, hostinger
 
-**Pattern for tier 2** (in `opencode.json`):
+Tier 2 pattern: MCP process runs but tools hidden from all agents except those that explicitly enable them via `opencode.json` agent tool overrides. Zero context overhead for non-using agents.
 
-```json
-"mcp": { "service": { "enabled": true, ... } },
-"tools": { "service_*": false },
-"agent": { "AgentName": { "tools": { "service_*": true } } }
-```
-
-The MCP process runs but tools are hidden from all agents except those that explicitly enable them. Zero context overhead for agents that don't need the capability.
-
-**When to migrate MCP → curl subagent**:
-- API is simple REST with Bearer/Basic auth
-- Fewer than ~10 endpoints needed
-- No complex state management
-- Subagent can document all patterns in a single markdown file
-- Saves ~2K context tokens per session permanently
+**Migrate MCP → curl subagent when:** simple REST with Bearer/Basic auth, <10 endpoints, no complex state, all patterns fit one markdown file. Saves ~2K context tokens permanently.
 
 ### References
 
@@ -192,47 +116,17 @@ The MCP process runs but tools are hidden from all agents except those that expl
 
 ## Extension Guide
 
-### Adding New Providers/Services
+Full extension guide: `.agents/aidevops/extension.md`
 
-**1. Create helper script** at `.agents/scripts/[service-name]-helper.sh`:
-
-```bash
-#!/bin/bash
-# Standard header: color vars, print_info/success/warning/error functions
-# Required functions: check_dependencies, load_config, get_account_config,
-#   api_request, list_accounts, show_help, main
-CONFIG_FILE="../configs/[service-name]-config.json"
-```
-
-**2. Create config template** at `configs/[service-name]-config.json.txt`:
-
-```json
-{
-  "accounts": {
-    "personal": {
-      "api_token": "YOUR_[SERVICE]_API_TOKEN_HERE",
-      "base_url": "https://api.[service].com"
-    }
-  },
-  "default_settings": { "timeout": 30, "rate_limit": 60 }
-}
-```
-
-**3. Create documentation** at `.agents/[SERVICE-NAME].md` covering: overview, configuration, usage examples, security practices, MCP integration, troubleshooting.
-
-**4. Update framework files**: `.gitignore` (add config), `README.md` (add to provider list), `setup-wizard-helper.sh` (add to recommendations).
+**Summary:** Helper scripts at `.agents/scripts/[service-name]-helper.sh`, config templates at `configs/[service-name]-config.json.txt`, docs at `.agents/[SERVICE-NAME].md`. Required functions: `check_dependencies`, `load_config`, `get_account_config`, `api_request`, `list_accounts`, `show_help`, `main`. Update `.gitignore`, `README.md`, `setup-wizard-helper.sh` after adding.
 
 ### Naming Conventions
 
-- Helper scripts: `[service-name]-helper.sh` (lowercase, hyphenated)
-- Config templates: `[service-name]-config.json.txt`; working: `[service-name]-config.json` (gitignored)
-- Documentation: `[SERVICE-NAME].md` (uppercase, hyphenated)
+- Scripts: `[service-name]-helper.sh` (lowercase, hyphenated)
+- Config: `[service-name]-config.json.txt` (template); `[service-name]-config.json` (gitignored)
+- Docs: `[SERVICE-NAME].md` (uppercase, hyphenated)
 - Functions: `action_description` (lowercase, underscored)
 - Variables: `CONSTANT_NAME` (uppercase, underscored)
-
-### Code Standards
-
-All helper scripts must include: shebang, description comment, color definitions, `CONFIG_FILE`, `check_dependencies()`, `load_config()`, `show_help()`, `main()` with case statement, consistent error handling, proper exit codes.
 
 ### Security Standards
 
