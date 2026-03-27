@@ -15,7 +15,7 @@ Parse `$ARGUMENTS` to select an operation. Default is `check` (inbox summary).
 | Command | Helper call | Purpose |
 |---------|-------------|---------|
 | *(empty)* / `check` | `email-mailbox-helper.sh inbox --summary` | Inbox summary (unread, flagged, pending triage) |
-| `triage [--limit N]` | `email-triage-helper.sh run --limit 50` | AI triage of unread messages (classify, prioritize, flag) |
+| `triage [--limit N]` | `email-triage-helper.sh triage --limit 50` | AI triage of unread messages (classify, prioritize, flag) |
 | `compose [--reply <id>]` | `email-compose-helper.sh` workflow | Compose new email or reply |
 | `search "<query>"` | `email-mailbox-helper.sh search "$QUERY"` | Full-text search |
 | `search --from <addr>` | `email-mailbox-helper.sh search --from "$ADDR"` | Search by sender |
@@ -23,9 +23,8 @@ Parse `$ARGUMENTS` to select an operation. Default is `check` (inbox summary).
 | `search --since <period>` | `email-mailbox-helper.sh search --since "$PERIOD"` | Search by date range |
 | `organize [--apply]` | `email-mailbox-helper.sh organize --dry-run` | Preview/apply category sorting |
 | `folders` | `email-mailbox-helper.sh folders` | List folders with message counts |
-| `thread <id>` | `email-mailbox-helper.sh thread "$MESSAGE_ID"` | Show full email thread |
 | `flag <id> <flag>` | `email-mailbox-helper.sh flag "$MESSAGE_ID" "$FLAG"` | Apply flag to message |
-| `archive <id>` | `email-mailbox-helper.sh archive "$MESSAGE_ID"` | Archive a message |
+| `move <id> <dest>` | `email-mailbox-helper.sh move <account> --uid "$UID" --dest "$DEST"` | Move message to destination |
 
 All helper scripts are under `~/.aidevops/agents/scripts/`.
 
@@ -63,12 +62,12 @@ After each operation, offer contextual next steps:
 
 | Flag | Meaning | Use when |
 |------|---------|---------|
-| `task` | Requires action | Message asks you to do something |
-| `reminder` | Time-sensitive | Has a deadline or due date |
-| `review` | Needs careful reading | Contract, proposal, legal document |
-| `filing` | Archive to folder | Belongs in a project/client folder |
-| `idea` | Future reference | Inspiration or interesting link |
-| `contact` | Save contact details | New person to add to contacts |
+| `Tasks` | Requires action | Message asks you to do something |
+| `Reminders` | Time-sensitive | Has a deadline or due date |
+| `Review` | Needs careful reading | Contract, proposal, legal document |
+| `Filing` | Archive to folder | Belongs in a project/client folder |
+| `Ideas` | Future reference | Inspiration or interesting link |
+| `Add-to-Contacts` | Save contact details | New person to add to contacts |
 
 ## Security
 
