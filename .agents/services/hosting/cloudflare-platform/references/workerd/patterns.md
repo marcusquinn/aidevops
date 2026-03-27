@@ -10,162 +10,94 @@ const config :Workerd.Config = (
       compatibilityDate = "2024-01-15",
       bindings = [(name = "API", service = "api")]
     )),
-    
     (name = "api", worker = (
       modules = [(name = "index.js", esModule = embed "api/index.js")],
       compatibilityDate = "2024-01-15",
-      bindings = [
-        (name = "DB", service = "postgres"),
-        (name = "CACHE", kvNamespace = "kv"),
-      ]
+      bindings = [(name = "DB", service = "postgres"), (name = "CACHE", kvNamespace = "kv")]
     )),
-    
     (name = "postgres", external = (address = "db.internal:5432", http = ())),
     (name = "kv", disk = (path = "/var/kv", writable = true)),
   ],
-  
   sockets = [(name = "http", address = "*:8080", http = (), service = "frontend")]
 );
 ```
+
+For a reverse proxy, use the same `external` binding pattern — point a worker at a backend service via `bindings = [(name = "BACKEND", service = "backend")]` with `(name = "backend", external = (address = "internal:8080", http = ()))`.
 
 ## Durable Objects
 
 ```capnp
 const config :Workerd.Config = (
-  services = [
-    (name = "app", worker = (
-      modules = [
-        (name = "index.js", esModule = embed "index.js"),
-        (name = "room.js", esModule = embed "room.js"),
-      ],
-      compatibilityDate = "2024-01-15",
-      bindings = [(name = "ROOMS", durableObjectNamespace = "Room")],
-      durableObjectNamespaces = [(className = "Room", uniqueKey = "v1")],
-      durableObjectStorage = (localDisk = "/var/do")
-    ))
-  ],
+  services = [(name = "app", worker = (
+    modules = [
+      (name = "index.js", esModule = embed "index.js"),
+      (name = "room.js", esModule = embed "room.js"),
+    ],
+    compatibilityDate = "2024-01-15",
+    bindings = [(name = "ROOMS", durableObjectNamespace = "Room")],
+    durableObjectNamespaces = [(className = "Room", uniqueKey = "v1")],
+    durableObjectStorage = (localDisk = "/var/do")
+  ))],
   sockets = [(name = "http", address = "*:8080", http = (), service = "app")]
 );
 ```
 
 ## Dev vs Prod Configs
 
+Use `inherit` to override only what changes between environments:
+
 ```capnp
 const devWorker :Workerd.Worker = (
   modules = [(name = "index.js", esModule = embed "src/index.js")],
   compatibilityDate = "2024-01-15",
-  bindings = [
-    (name = "API_URL", text = "http://localhost:3000"),
-    (name = "DEBUG", text = "true"),
-  ]
+  bindings = [(name = "API_URL", text = "http://localhost:3000"), (name = "DEBUG", text = "true")]
 );
-
 const prodWorker :Workerd.Worker = (
   inherit = "dev-service",
-  bindings = [
-    (name = "API_URL", text = "https://api.prod.com"),
-    (name = "DEBUG", text = "false"),
-  ]
-);
-```
-
-## HTTP Reverse Proxy
-
-```capnp
-const config :Workerd.Config = (
-  services = [
-    (name = "proxy", worker = (
-      serviceWorkerScript = embed "proxy.js",
-      compatibilityDate = "2024-01-15",
-      bindings = [(name = "BACKEND", service = "backend")]
-    )),
-    (name = "backend", external = (address = "internal:8080", http = ()))
-  ],
-  sockets = [(name = "http", address = "*:80", http = (), service = "proxy")]
+  bindings = [(name = "API_URL", text = "https://api.prod.com"), (name = "DEBUG", text = "false")]
 );
 ```
 
 ## Local Development
 
-### Using Wrangler
-
 ```bash
+# Via wrangler (set MINIFLARE_WORKERD_PATH to use local binary)
 export MINIFLARE_WORKERD_PATH="/path/to/workerd"
 wrangler dev
-```
 
-### Direct Workerd
-
-```bash
+# Direct
 workerd serve config.capnp --socket-addr http=*:3000 --verbose
 ```
 
-### Environment Variables
-
-```capnp
-bindings = [
-  (name = "DATABASE_URL", fromEnvironment = "DATABASE_URL"),
-  (name = "API_KEY", fromEnvironment = "API_KEY"),
-]
-```
-
-```bash
-export DATABASE_URL="postgres://..."
-export API_KEY="secret"
-workerd serve config.capnp
-```
+Inject env vars at runtime: `bindings = [(name = "DATABASE_URL", fromEnvironment = "DATABASE_URL")]`.
 
 ## Testing
 
-### Test Config
+Add test modules to the worker, then run with `workerd test`:
 
 ```capnp
 const testWorker :Workerd.Worker = (
-  modules = [
-    (name = "index.js", esModule = embed "src/index.js"),
-    (name = "test.js", esModule = embed "tests/test.js"),
-  ],
+  modules = [(name = "index.js", esModule = embed "src/index.js"), (name = "test.js", esModule = embed "tests/test.js")],
   compatibilityDate = "2024-01-15"
 );
 ```
 
-```bash
-workerd test config.capnp
-workerd test config.capnp --test-only=test.js
-```
+Run: `workerd test config.capnp` or `workerd test config.capnp --test-only=test.js`
 
 ## Production Deployment
 
-### Systemd
+**Systemd** — socket-activated service (`workerd.socket` on `0.0.0.0:80`):
 
 ```ini
-# /etc/systemd/system/workerd.service
-[Unit]
-Description=workerd runtime
-After=network-online.target
-Requires=workerd.socket
-
 [Service]
 Type=exec
 ExecStart=/usr/bin/workerd serve /etc/workerd/config.capnp --socket-fd http=3
 Restart=always
 User=nobody
 NoNewPrivileges=true
-
-[Install]
-WantedBy=multi-user.target
 ```
 
-```ini
-# /etc/systemd/system/workerd.socket
-[Socket]
-ListenStream=0.0.0.0:80
-
-[Install]
-WantedBy=sockets.target
-```
-
-### Docker
+**Docker:**
 
 ```dockerfile
 FROM debian:bookworm-slim
@@ -177,53 +109,14 @@ EXPOSE 8080
 CMD ["workerd", "serve", "/etc/workerd/config.capnp"]
 ```
 
-### Compiled Binary
-
-```bash
-workerd compile config.capnp myConfig -o production-server
-./production-server
-```
+**Compiled binary:** `workerd compile config.capnp myConfig -o production-server && ./production-server`
 
 ## Best Practices
 
-1. **Use ES modules** over service worker syntax
-2. **Explicit bindings** - no global namespace assumptions
-3. **Type safety** - define `Env` interfaces
-4. **Service isolation** - split concerns
-5. **Pin compat date** in production after testing
-6. **Use ctx.waitUntil()** for background tasks
-7. **Handle errors gracefully** with try/catch
-8. **Configure resource limits** on caches/storage
-
-## Error Handling Pattern
-
-```javascript
-export default {
-  async fetch(request, env, ctx) {
-    try {
-      return await handleRequest(request, env);
-    } catch (error) {
-      console.error("Request failed", error);
-      return new Response("Internal Error", {status: 500});
-    }
-  }
-};
-```
-
-## Logging Pattern
-
-```javascript
-export default {
-  async fetch(request, env, ctx) {
-    console.log("Request", {method: request.method, url: request.url});
-    
-    ctx.waitUntil(
-      logToAnalytics(request, env)
-    );
-    
-    return new Response("OK");
-  }
-};
-```
+1. **ES modules over service worker syntax** — required for Durable Objects, multi-module workers
+2. **Explicit bindings** — no global namespace; declare every dependency in capnp config
+3. **Pin `compatibilityDate`** in production after testing — prevents surprise runtime changes
+4. **Use `ctx.waitUntil()`** for background tasks (logging, analytics) that shouldn't block the response
+5. **Service isolation** — split concerns into separate named services with typed bindings
 
 See [gotchas.md](./gotchas.md) for common errors.
