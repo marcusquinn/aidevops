@@ -37,6 +37,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | Upstream watch | `scripts/upstream-watch-helper.sh`, `.agents/configs/upstream-watch.json` |
 | Testing | `scripts/commands/testing-setup.md`, `tools/build-agent/agent-testing.md`, `scripts/testing-setup-helper.sh` |
 | Agent/MCP dev | `tools/build-agent/build-agent.md`, `tools/build-mcp/build-mcp.md`, `tools/mcp-toolkit/mcporter.md` |
+| Self-Improvement | `reference/self-improvement.md` |
 | Framework | `aidevops/architecture.md`, `scripts/commands/skills.md` |
 
 **Creating agents**: When a user asks to create, build, or design an agent — regardless of which primary agent is active — always read `tools/build-agent/build-agent.md` first. It contains the tier prompt (draft/custom/shared), design checklist, and lifecycle rules.
