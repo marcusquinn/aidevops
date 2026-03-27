@@ -64,11 +64,24 @@ jobs:
             }
             if [[ -n "$ISSUE_SEARCH_OUTPUT" ]]; then
               FOUND=$(echo "$ISSUE_SEARCH_OUTPUT" \
-                | jq -r --arg tid "$TASK_ID" '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[0].number // empty' 2>/dev/null || true)
+                | jq -r --arg tid "$TASK_ID" '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[0].number // empty' 2>&1) || {
+                echo "::error::jq parsing failed during title-based issue lookup for task ID '$TASK_ID': $FOUND"
+                FOUND=""
+                TITLE_LOOKUP_FAILED=true
+              }
               if [[ -n "$FOUND" && "$FOUND" != "null" ]]; then
                 LINKED_ISSUES="$FOUND"
               fi
             fi
+          fi
+
+          # If title-based lookup was attempted but failed, block — don't pass the gate on API errors
+          if [[ -z "$LINKED_ISSUES" && "${TITLE_LOOKUP_FAILED:-false}" == "true" ]]; then
+            echo "::error::Title-based issue lookup failed — cannot verify linked issues. Blocking to be safe."
+            echo "blocked=true" >> "$GITHUB_OUTPUT"
+            printf 'Title-based issue lookup for task ID %s failed — cannot verify linked issues.\n' "$TASK_ID" > /tmp/gate-reasons.txt
+            echo "has_reasons=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
           if [[ -z "$LINKED_ISSUES" ]]; then
@@ -331,11 +344,27 @@ jobs:
               }
               if [[ -n "$ISSUE_SEARCH_OUTPUT" ]]; then
                 FOUND=$(echo "$ISSUE_SEARCH_OUTPUT" \
-                  | jq -r --arg tid "$TASK_ID" '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[0].number // empty' 2>/dev/null || true)
+                  | jq -r --arg tid "$TASK_ID" '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[0].number // empty' 2>&1) || {
+                  echo "::error::jq parsing failed during title-based issue lookup for task ID '$TASK_ID': $FOUND"
+                  FOUND=""
+                  TITLE_LOOKUP_FAILED=true
+                }
                 if [[ -n "$FOUND" && "$FOUND" != "null" ]]; then
                   LINKED_ISSUES="$FOUND"
                 fi
               fi
+            fi
+
+            # If title-based lookup was attempted but failed, block — don't pass the gate on API errors
+            if [[ -z "$LINKED_ISSUES" && "${TITLE_LOOKUP_FAILED:-false}" == "true" ]]; then
+              echo "::error::Title-based issue lookup failed for PR #$PR_NUM — blocking to be safe"
+              gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+                --method POST \
+                -f state=failure \
+                -f context="maintainer-gate" \
+                -f description="Title-based issue lookup failed — cannot verify linked issues" \
+                2>/dev/null || echo "::warning::Could not post failure status on PR #$PR_NUM"
+              continue
             fi
 
             if [[ -z "$LINKED_ISSUES" ]]; then
