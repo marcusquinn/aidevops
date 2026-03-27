@@ -66,7 +66,8 @@ describe('Order', () => {
 
 const draft = () => Order.create(CustomerId.from('cust-123'));
 const withItems = () => { const o = draft(); o.addItem(ProductId.from('p1'), Quantity.create(1), Money.create(10, 'USD')); return o; };
-const confirmed = () => { const o = withItems(); o.setShippingAddress(createTestAddress()); o.confirm(); return o; };
+const testAddress = () => new Address({ street: '1 Main St', city: 'Springfield', country: 'US', postcode: '12345' });
+const confirmed = () => { const o = withItems(); o.setShippingAddress(testAddress()); o.confirm(); return o; };
 const cancelled = () => { const o = withItems(); o.cancel('test'); return o; };
 ```
 
@@ -95,7 +96,7 @@ describe('PlaceOrderHandler', () => {
   beforeEach(() => {
     orderRepo = new MockOrderRepository();
     eventPublisher = new MockEventPublisher();
-    const productRepo = new MockProductRepository([createTestProduct('prod-1', 10)]);
+    const productRepo = new MockProductRepository([new Product(ProductId.from('prod-1'), Money.create(10, 'USD'))]);
     handler = new PlaceOrderHandler(orderRepo, productRepo, eventPublisher);
   });
 
@@ -171,8 +172,14 @@ describe('PostgresOrderRepository', () => {
 ```typescript
 // tests/integration/http/orders_api.test.ts
 describe('Orders API', () => {
+  let pool: Pool;
+  let app: Express;
+
   beforeAll(async () => { pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL }); app = createApp(pool); });
-  beforeEach(async () => { await db.truncate('orders', 'order_items', 'products'); await db.products.insertMany([{ id: 'prod-1', price: 1000 }]); });
+  beforeEach(async () => {
+    await pool.query('TRUNCATE orders, order_items, products CASCADE');
+    await pool.query("INSERT INTO products VALUES ('prod-1', 1000)");
+  });
   afterAll(async () => { await pool.end(); });
 
   it('POST /orders → 201 with id', async () => {
