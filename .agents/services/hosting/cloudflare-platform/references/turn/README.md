@@ -86,6 +86,8 @@ async function generateTURNCredentials(keyId: string, keySecret: string, ttl = 8
 }
 ```
 
+Cache credentials client-side; refresh 60s before expiry (`expiresAt: now + ttl * 1000 - 60000`).
+
 ### Cloudflare Worker
 
 ```typescript
@@ -110,29 +112,6 @@ export default {
     ]}), { headers: { 'Content-Type': 'application/json' } });
   }
 };
-```
-
-### Credential Caching
-
-Cache credentials client-side; refresh 60s before expiry:
-
-```typescript
-class TURNCredentialsManager {
-  private cache: { username: string; credential: string; urls: string[]; expiresAt: number } | null = null;
-
-  async getCredentials(keyId: string, keySecret: string): Promise<RTCIceServer[]> {
-    const now = Date.now();
-    if (!this.cache || this.cache.expiresAt <= now) {
-      const ttl = 3600;
-      const creds = await generateTURNCredentials(keyId, keySecret, ttl);
-      this.cache = { ...creds, expiresAt: now + ttl * 1000 - 60000 };
-    }
-    return [
-      { urls: 'stun:stun.cloudflare.com:3478' },
-      { urls: this.cache.urls, username: this.cache.username, credential: this.cache.credential }
-    ];
-  }
-}
 ```
 
 ## Configuration
@@ -194,25 +173,12 @@ pc.addEventListener('iceconnectionstatechange', () => console.log('ICE state:', 
 
 - **Anycast**: BGP routes clients to nearest location — no region selection needed
 - **Use TURN when**: symmetric NATs, corporate firewalls, carrier-grade NAT, predictable connectivity required
-- **`iceTransportPolicy: 'all'`**: try direct first (recommended); `'relay'`: force TURN (IoT/predictability)
-- **With Cloudflare Calls SFU**: TURN is free and automatically coordinated
-
-## Cost Optimization
-
-- Use `iceTransportPolicy: 'all'` (not `'relay'`) to prefer direct connections
-- Cache credentials — reuse within TTL window
-- Use with Cloudflare Calls SFU for free TURN
-
-## Related Services
-
-- **Cloudflare Calls SFU**: Managed SFU — TURN is free when used together
-- **Cloudflare Stream**: WHIP/WHEP video streaming
-- **Cloudflare Workers**: Backend for credential generation
-- **Cloudflare KV**: Credential caching
+- **`iceTransportPolicy: 'all'`**: try direct first (recommended, reduces cost); `'relay'`: force TURN (IoT/predictability)
+- **With Cloudflare Calls SFU**: TURN is free and automatically coordinated; cache credentials within TTL window
 
 ## Resources
 
 - [Cloudflare TURN Docs](https://developers.cloudflare.com/realtime/turn/)
-- [Cloudflare Calls Docs](https://developers.cloudflare.com/calls/)
+- [Cloudflare Calls Docs](https://developers.cloudflare.com/calls/) — Calls SFU (TURN free when used together), Stream (WHIP/WHEP), Workers (credential backend), KV (credential caching)
 - [API Reference](https://developers.cloudflare.com/api/resources/calls/subresources/turn/)
 - [Orange Meets (example)](https://github.com/cloudflare/orange)
