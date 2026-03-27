@@ -40,6 +40,9 @@ authorized_keys
 !.secretlintignore
 !.agents/scripts/secretlint-helper.sh
 
+# Exception: secret handling reference doc (documentation, not actual secrets)
+!.agents/reference/secret-handling.md
+
 # Exception for worker token helper (manages tokens, doesn't contain them)
 !.agents/scripts/worker-token-helper.sh
 !.agents/secretlint.md

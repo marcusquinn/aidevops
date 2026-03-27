@@ -296,7 +296,7 @@ Key capabilities (details in `reference/orchestration.md`, `reference/services.m
 
 ## Security
 
-Rules: `prompts/build.txt`. Secrets: `gopass` preferred; `credentials.sh` plaintext fallback (600 perms). Config templates: `configs/*.json.txt` (committed), working: `configs/*.json` (gitignored). Full docs: `tools/credentials/gopass.md`.
+Rules: `prompts/build.txt`. Secrets: `gopass` preferred; `credentials.sh` plaintext fallback (600 perms). Config templates: `configs/*.json.txt` (committed), working: `configs/*.json` (gitignored). Full docs: `tools/credentials/gopass.md`. Secret handling detail (transcript exposure, command argument leaks, post-execution detection, embedded config credentials): `reference/secret-handling.md`.
 
 **Unified security command:** `aidevops security` (no args) runs all checks — user posture, plaintext secret hygiene, supply chain IoCs, and active advisories. Subcommands for targeted use:
 - `aidevops security` — run everything (recommended)
