@@ -45,6 +45,7 @@ Settings > CI/CD > Variables:
 | Variable | Value | Protected | Masked |
 |----------|-------|-----------|--------|
 | `ANTHROPIC_API_KEY` | Your API key | Yes | Yes |
+| `OPENAI_API_KEY` | Your API key (if using OpenAI) | Yes | Yes |
 | `GITLAB_TOKEN_OPENCODE` | Service account token | Yes | Yes |
 | `GITLAB_HOST` | `gitlab.com` or your instance | No | No |
 
