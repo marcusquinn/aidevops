@@ -33,6 +33,10 @@
 
 **Was great, now terrible**: Gradual decline = fatigue (add new creative, pause fatigued ads). Sudden overnight = algorithm reset or external factor (check edits, seasonal competition, LP changes). Recovery: revert edits if sudden, duplicate fresh ad set, adjust expectations.
 
+**Algorithm Reset** — Signs: "Learning" status reappeared, wild performance swings, CPA significantly different from baseline. Triggers: budget change >20% (sometimes), targeting change (always), all creative changed at once (always), pause >7 days (always). Recovery: wait 3-5 days, don't make more changes, let algorithm re-learn.
+
+**Diminishing Returns at Scale**: Each budget increase yields smaller CPA improvement, eventually CPA starts rising, frequency increasing despite larger audience. Response: (1) stop vertical scaling, (2) try horizontal scaling (duplicates), (3) look for new winning creative, (4) accept current scale as efficient maximum.
+
 **High CPM** — Causes: Q4/holiday competition, narrow audience, low ad quality, poor engagement. Fixes: broaden audience, improve creative, test placements, adjust timing.
 
 **Low CTR** — Benchmark: <0.8% concerning, <0.5% needs action. Causes: hook not compelling, wrong audience, creative fatigue, poor visuals, unclear value prop. Fixes: test new hooks, review audience fit, refresh creative, clarify message.
