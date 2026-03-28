@@ -106,12 +106,15 @@ test.describe(`WordPress plugin smoke tests: ${PLUGIN_SLUG}`, () => {
   test('deactivate and reactivate without errors', async ({ page }) => {
     await page.goto(`${WP_ADMIN}/plugins.php`);
 
+    let transitionRun = false;
+
     // Deactivate
     const deactivateLink = page.locator(
       `tr[data-slug="${PLUGIN_SLUG}"] .deactivate a`
     );
     if (await deactivateLink.isVisible()) {
       await deactivateLink.click();
+      transitionRun = true;
       await page.waitForURL(/plugins\.php/);
       const deactivateErrors = await collectPhpErrors(page);
       expect(
@@ -126,6 +129,7 @@ test.describe(`WordPress plugin smoke tests: ${PLUGIN_SLUG}`, () => {
     );
     if (await activateLink.isVisible()) {
       await activateLink.click();
+      transitionRun = true;
       await page.waitForURL(/plugins\.php/);
       const activateErrors = await collectPhpErrors(page);
       expect(
@@ -133,6 +137,18 @@ test.describe(`WordPress plugin smoke tests: ${PLUGIN_SLUG}`, () => {
         `PHP errors after reactivation: ${activateErrors.join(', ')}`
       ).toHaveLength(0);
     }
+
+    // Assert at least one transition actually ran
+    expect(transitionRun, 'No deactivate/activate transition ran — plugin state was not exercised').toBe(true);
+
+    // Assert the plugin ends in the active state (deactivate link visible = active)
+    const deactivateLinkFinal = page.locator(
+      `tr[data-slug="${PLUGIN_SLUG}"] .deactivate a`
+    );
+    await expect(
+      deactivateLinkFinal,
+      `Plugin "${PLUGIN_SLUG}" did not end in active state after reactivation cycle`
+    ).toBeVisible({ timeout: 10000 });
   });
 
   // ---------------------------------------------------------------------------

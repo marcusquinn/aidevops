@@ -30,6 +30,10 @@
 #
 # State file: ~/.aidevops/cache/foss-wp-handler.json
 # Smoke test template: foss-handlers/wp-plugin-smoke-test.spec.js
+#
+# Security note: composer and npm installs run with --no-scripts/--ignore-scripts
+# by default to prevent untrusted plugin lifecycle scripts from executing.
+# Set ALLOW_PLUGIN_SCRIPTS=1 to opt in to running plugin scripts.
 
 set -euo pipefail
 
@@ -86,6 +90,9 @@ readonly WP_ENV_PORT_END=8999
 # Multisite wp-env config constants
 readonly WP_MULTISITE_DOMAIN="localhost"
 readonly WP_DEBUG_CONFIG='{"WP_DEBUG":true,"WP_DEBUG_LOG":true,"WP_DEBUG_DISPLAY":false,"SCRIPT_DEBUG":true}'
+
+# Handler-owned wp-env config filename (avoids overwriting repo's .wp-env.json)
+readonly WP_ENV_CONFIG_FILE=".wp-env.aidevops.json"
 
 # =============================================================================
 # Utility helpers
@@ -175,19 +182,21 @@ find_available_wp_env_port() {
 # wp-env.json generation
 # =============================================================================
 
-# Generate .wp-env.json with multisite config — writes into the plugin directory.
+# Generate .wp-env.aidevops.json with multisite config — writes into the plugin directory.
+# Uses a handler-owned filename to avoid overwriting any repo-owned .wp-env.json.
 generate_wp_env_json() {
 	local plugin_dir="${1:-}"
 	local wp_port="${2:-8888}"
 	local slug
 	slug="$(basename "$plugin_dir")"
+	local domain="${slug}.local"
 
-	print_info "Generating .wp-env.json: ${slug} (port ${wp_port}, multisite)"
+	print_info "Generating ${WP_ENV_CONFIG_FILE}: ${slug} (port ${wp_port}, multisite)"
 
 	local multisite_config
 	multisite_config=$(jq -n \
 		--argjson debug "$WP_DEBUG_CONFIG" \
-		--arg domain "$WP_MULTISITE_DOMAIN" \
+		--arg domain "$domain" \
 		--arg port "$wp_port" \
 		'{
 			"WP_DEBUG": $debug.WP_DEBUG,
@@ -200,7 +209,9 @@ generate_wp_env_json() {
 			"DOMAIN_CURRENT_SITE": $domain,
 			"PATH_CURRENT_SITE": "/",
 			"SITE_ID_CURRENT_SITE": 1,
-			"BLOG_ID_CURRENT_SITE": 1
+			"BLOG_ID_CURRENT_SITE": 1,
+			"WP_HOME": ("https://" + $domain),
+			"WP_SITEURL": ("https://" + $domain)
 		}')
 
 	jq -n \
@@ -214,9 +225,9 @@ generate_wp_env_json() {
 			"config": $config,
 			"port": $port,
 			"testsPort": ($port + 1)
-		}' >"${plugin_dir}/.wp-env.json"
+		}' >"${plugin_dir}/${WP_ENV_CONFIG_FILE}"
 
-	print_success ".wp-env.json written to ${plugin_dir}/.wp-env.json"
+	print_success "${WP_ENV_CONFIG_FILE} written to ${plugin_dir}/${WP_ENV_CONFIG_FILE}"
 	return 0
 }
 
@@ -224,7 +235,9 @@ generate_wp_env_json() {
 # Build sub-helpers (extracted to reduce nesting depth)
 # =============================================================================
 
-# Install Composer dependencies when composer.json is present
+# Install Composer dependencies when composer.json is present.
+# Uses --no-scripts by default to prevent untrusted lifecycle scripts.
+# Set ALLOW_PLUGIN_SCRIPTS=1 to opt in.
 _install_composer_deps() {
 	local plugin_dir="${1:-}"
 	if [[ ! -f "${plugin_dir}/composer.json" ]]; then
@@ -235,8 +248,14 @@ _install_composer_deps() {
 		print_info "Install: brew install composer"
 		return 0
 	fi
-	print_info "Installing Composer dependencies..."
-	if composer install --no-interaction --prefer-dist --working-dir="$plugin_dir" 2>&1; then
+	local no_scripts_flag="--no-scripts"
+	if [[ "${ALLOW_PLUGIN_SCRIPTS:-0}" == "1" ]]; then
+		no_scripts_flag=""
+		print_warning "ALLOW_PLUGIN_SCRIPTS=1: running composer lifecycle scripts from plugin"
+	fi
+	print_info "Installing Composer dependencies (${no_scripts_flag:-scripts enabled})..."
+	# shellcheck disable=SC2086
+	if composer install --no-interaction --prefer-dist --working-dir="$plugin_dir" ${no_scripts_flag} 2>&1; then
 		print_success "Composer install complete"
 	else
 		print_warning "Composer install failed — continuing without PHP deps"
@@ -244,7 +263,9 @@ _install_composer_deps() {
 	return 0
 }
 
-# Install npm dependencies when package.json is present
+# Install npm dependencies when package.json is present.
+# Uses --ignore-scripts by default to prevent untrusted lifecycle scripts.
+# Set ALLOW_PLUGIN_SCRIPTS=1 to opt in.
 _install_npm_deps() {
 	local plugin_dir="${1:-}"
 	if [[ ! -f "${plugin_dir}/package.json" ]]; then
@@ -253,8 +274,14 @@ _install_npm_deps() {
 	if ! command -v npm >/dev/null 2>&1; then
 		return 0
 	fi
-	print_info "Installing npm dependencies..."
-	if npm install --prefix "$plugin_dir" 2>&1; then
+	local ignore_scripts_flag="--ignore-scripts"
+	if [[ "${ALLOW_PLUGIN_SCRIPTS:-0}" == "1" ]]; then
+		ignore_scripts_flag=""
+		print_warning "ALLOW_PLUGIN_SCRIPTS=1: running npm lifecycle scripts from plugin"
+	fi
+	print_info "Installing npm dependencies (${ignore_scripts_flag:-scripts enabled})..."
+	# shellcheck disable=SC2086
+	if npm install --prefix "$plugin_dir" ${ignore_scripts_flag} 2>&1; then
 		print_success "npm install complete"
 	else
 		print_warning "npm install failed — continuing without JS deps"
@@ -265,12 +292,13 @@ _install_npm_deps() {
 # Activate plugin on multisite network (best-effort)
 _activate_plugin_network() {
 	local slug="${1:-}"
+	local plugin_dir="${2:-}"
 	print_info "Checking multisite network activation..."
-	if wp-env run cli wp plugin is-active "$slug" --network 2>/dev/null; then
+	if (cd "$plugin_dir" && wp-env run cli wp plugin is-active "$slug" --network 2>/dev/null); then
 		print_info "Plugin already network-active"
 		return 0
 	fi
-	if wp-env run cli wp plugin activate "$slug" --network 2>&1; then
+	if (cd "$plugin_dir" && wp-env run cli wp plugin activate "$slug" --network 2>&1); then
 		print_success "Plugin network-activated on multisite"
 	else
 		print_info "Network activation skipped (may not be network-activatable)"
@@ -313,21 +341,56 @@ _run_playwright_tests() {
 # Review sub-helpers (extracted to reduce nesting depth)
 # =============================================================================
 
-# Register a branch subdomain via localdev and print the URL
+# Register a branch subdomain via localdev and print the URL.
+# Looks up an existing branch port from state first; allocates a new one only
+# if none is persisted, then starts a branch wp-env instance bound to that port
+# before registering the HTTPS URL so the URL points to a running instance.
 _register_branch_url() {
 	local slug="${1:-}"
 	local branch_name="${2:-}"
+	local plugin_dir="${3:-}"
 	local branch_subdomain
 	branch_subdomain="$(echo "$branch_name" | tr '/' '-' | tr '_' '-' | tr '[:upper:]' '[:lower:]')"
+
+	# Derive state key for this branch instance
+	local branch_state_key="${slug}:branch:${branch_subdomain}:port"
+
+	# Prefer a previously-persisted port for this branch
 	local branch_port
-	branch_port="$(find_available_wp_env_port)" || branch_port=""
+	branch_port="$(state_get "$branch_state_key")"
+
 	if [[ -z "$branch_port" ]]; then
-		return 0
+		# Allocate a new port and persist it
+		branch_port="$(find_available_wp_env_port)" || branch_port=""
+		if [[ -z "$branch_port" ]]; then
+			print_warning "No available port for branch wp-env — skipping branch URL"
+			return 0
+		fi
+		state_set "$branch_state_key" "$branch_port"
 	fi
-	if "$LOCALDEV_HELPER" branch "$slug" "$branch_subdomain" "$branch_port" 2>/dev/null; then
-		print_info "  HTTPS : https://${branch_subdomain}.${slug}.local"
+
+	# Ensure a wp-env instance is running on the branch port before registering
+	# the HTTPS URL so the URL is not dead.
+	if [[ -n "$plugin_dir" ]] && [[ -d "$plugin_dir" ]]; then
+		print_info "Starting branch wp-env on port ${branch_port} (${branch_name})..."
+		generate_wp_env_json "$plugin_dir" "$branch_port" || true
+		if ! (cd "$plugin_dir" && wp-env start --update --config "${WP_ENV_CONFIG_FILE}" 2>&1); then
+			print_warning "Branch wp-env start failed — HTTPS URL may not be reachable"
+		else
+			print_success "Branch wp-env started on port ${branch_port}"
+		fi
 	else
-		print_info "  Branch URL registration failed — use HTTP"
+		print_warning "plugin_dir not provided or missing — branch wp-env not started"
+	fi
+
+	if [[ -x "$LOCALDEV_HELPER" ]]; then
+		if "$LOCALDEV_HELPER" branch "$slug" "$branch_subdomain" "$branch_port" 2>/dev/null; then
+			print_info "  HTTPS : https://${branch_subdomain}.${slug}.local"
+		else
+			print_info "  Branch URL registration failed — use HTTP"
+			print_info "  HTTP  : http://localhost:${branch_port}"
+		fi
+	else
 		print_info "  HTTP  : http://localhost:${branch_port}"
 	fi
 	return 0
@@ -340,17 +403,17 @@ _register_branch_url() {
 # Stop and destroy the wp-env environment
 _destroy_wp_env() {
 	local plugin_dir="${1:-}"
-	if [[ ! -f "${plugin_dir}/.wp-env.json" ]]; then
-		print_info "No .wp-env.json found — skipping wp-env destroy"
+	if [[ ! -f "${plugin_dir}/${WP_ENV_CONFIG_FILE}" ]]; then
+		print_info "No ${WP_ENV_CONFIG_FILE} found — skipping wp-env destroy"
 		return 0
 	fi
 	print_info "Destroying wp-env environment..."
-	if wp-env destroy --yes 2>&1; then
+	if (cd "$plugin_dir" && wp-env destroy --yes --config "${WP_ENV_CONFIG_FILE}" 2>&1); then
 		print_success "wp-env destroyed"
 	else
 		print_warning "wp-env destroy failed — may already be stopped"
 	fi
-	rm -f "${plugin_dir}/.wp-env.json"
+	rm -f "${plugin_dir}/${WP_ENV_CONFIG_FILE}"
 	return 0
 }
 
@@ -434,7 +497,12 @@ cmd_setup() {
 	local plugin_dir
 	plugin_dir="$(plugin_dir_from_slug "$slug")"
 
-	[[ -n "$worktree_path" ]] && plugin_dir="$worktree_path"
+	# Fix 2: when worktree_path overrides plugin_dir, also update slug so all
+	# later steps use the same identifier.
+	if [[ -n "$worktree_path" ]]; then
+		plugin_dir="$worktree_path"
+		slug="$(basename "$plugin_dir")"
+	fi
 
 	print_info "=== WordPress Plugin Handler: setup ==="
 	print_info "GitHub slug : $github_slug"
@@ -457,7 +525,8 @@ cmd_setup() {
 	generate_wp_env_json "$plugin_dir" "$wp_port" || return 1
 
 	print_info "Starting wp-env (port ${wp_port})..."
-	if ! wp-env start --update 2>&1; then
+	# Fix 7: run wp-env from plugin_dir so it resolves the correct config file
+	if ! (cd "$plugin_dir" && wp-env start --update --config "${WP_ENV_CONFIG_FILE}" 2>&1); then
 		print_error "wp-env start failed"
 		return 1
 	fi
@@ -504,13 +573,14 @@ cmd_build() {
 	_install_npm_deps "$plugin_dir"
 
 	print_info "Activating plugin in wp-env..."
-	if wp-env run cli wp plugin activate "$slug" 2>&1; then
+	# Fix 7: run wp-env from plugin_dir so it resolves the correct config file
+	if (cd "$plugin_dir" && wp-env run cli wp plugin activate "$slug" 2>&1); then
 		print_success "Plugin activated: ${slug}"
 	else
 		print_warning "Plugin activation failed — check wp-env is running"
 	fi
 
-	_activate_plugin_network "$slug"
+	_activate_plugin_network "$slug" "$plugin_dir"
 
 	echo ""
 	print_success "=== Build complete ==="
@@ -547,7 +617,8 @@ cmd_test() {
 
 	if [[ "$has_phpunit" == "true" ]]; then
 		print_info "Running PHPUnit tests..."
-		if wp-env run tests-cli phpunit 2>&1; then
+		# Fix 4: run wp-env from plugin_dir so phpunit.xml is found in the plugin's CWD
+		if (cd "$plugin_dir" && wp-env run tests-cli --env-cwd="wp-content/plugins/${slug}" phpunit 2>&1); then
 			print_success "PHPUnit: PASS"
 		else
 			print_error "PHPUnit: FAIL"
@@ -560,10 +631,11 @@ cmd_test() {
 	# Check debug.log — PHP fatal errors
 	print_info "Checking debug.log: PHP errors..."
 	local debug_log_errors
-	debug_log_errors="$(wp-env run cli cat /var/www/html/wp-content/debug.log 2>/dev/null | grep -ciE '(Fatal error|PHP Fatal|PHP Parse error)' || echo 0)"
+	# Fix 7: run wp-env from plugin_dir
+	debug_log_errors="$(cd "$plugin_dir" && wp-env run cli cat /var/www/html/wp-content/debug.log 2>/dev/null | grep -ciE '(Fatal error|PHP Fatal|PHP Parse error)' || echo 0)"
 	if [[ "$debug_log_errors" -gt 0 ]]; then
 		print_error "PHP fatal/parse errors found in debug.log (${debug_log_errors} occurrences)"
-		wp-env run cli cat /var/www/html/wp-content/debug.log 2>/dev/null | grep -iE '(Fatal error|PHP Fatal|PHP Parse error)' | head -10
+		(cd "$plugin_dir" && wp-env run cli cat /var/www/html/wp-content/debug.log 2>/dev/null | grep -iE '(Fatal error|PHP Fatal|PHP Parse error)' | head -10)
 		test_passed=false
 	else
 		print_success "debug.log: no PHP fatal errors"
@@ -583,7 +655,7 @@ cmd_test() {
 
 	# Multisite-specific checks
 	print_info "Running multisite checks..."
-	_run_multisite_checks "$slug" || test_passed=false
+	_run_multisite_checks "$slug" "$plugin_dir" || test_passed=false
 
 	echo ""
 	if [[ "$test_passed" == "true" ]]; then
@@ -599,8 +671,10 @@ cmd_test() {
 # check multisite-incompatible code patterns.
 _run_multisite_checks() {
 	local slug="${1:-}"
+	local plugin_dir="${2:-}"
 
-	if wp-env run cli wp plugin is-active "$slug" --network 2>/dev/null; then
+	# Fix 7: run wp-env from plugin_dir
+	if (cd "$plugin_dir" && wp-env run cli wp plugin is-active "$slug" --network 2>/dev/null); then
 		print_success "Multisite: plugin is network-active"
 	else
 		print_info "Multisite: plugin is not network-active (may be site-specific)"
@@ -647,7 +721,8 @@ cmd_review() {
 	if [[ -n "$branch_name" ]]; then
 		echo ""
 		print_info "Branch: ${branch_name}"
-		[[ -x "$LOCALDEV_HELPER" ]] && _register_branch_url "$slug" "$branch_name"
+		# Fix 1: pass plugin_dir so _register_branch_url can start a branch wp-env
+		[[ -x "$LOCALDEV_HELPER" ]] && _register_branch_url "$slug" "$branch_name" "$plugin_dir"
 	fi
 
 	echo ""
@@ -697,7 +772,7 @@ cmd_help() {
 		'' \
 		'COMMANDS' \
 		'  setup   <github-slug> [worktree-path]' \
-		'      Fork, clone, generate .wp-env.json (multisite), start wp-env,' \
+		'      Fork, clone, generate .wp-env.aidevops.json (multisite), start wp-env,' \
 		'      register HTTPS .local domain via localdev.' \
 		'      Example: wordpress-plugin.sh setup afragen/git-updater' \
 		'' \
@@ -711,8 +786,8 @@ cmd_help() {
 		'      Example: wordpress-plugin.sh test ~/Git/wordpress/git-updater' \
 		'' \
 		'  review  <plugin-dir> [branch-name]' \
-		'      Print review URLs. With branch-name, registers a branch subdomain' \
-		'      via localdev — side-by-side comparison.' \
+		'      Print review URLs. With branch-name, starts a branch wp-env instance' \
+		'      and registers a branch subdomain via localdev — side-by-side comparison.' \
 		'      Example: wordpress-plugin.sh review ~/Git/wordpress/git-updater bugfix-xyz' \
 		'' \
 		'  cleanup <plugin-dir>' \
@@ -728,6 +803,10 @@ cmd_help() {
 		'  jq              — required by JSON config generation' \
 		'  composer        — optional, PHP deps' \
 		'  mkcert          — optional, HTTPS .local (via localdev-helper.sh init)' \
+		'' \
+		'SECURITY' \
+		'  composer and npm installs run with --no-scripts/--ignore-scripts by default.' \
+		'  Set ALLOW_PLUGIN_SCRIPTS=1 to opt in to running plugin lifecycle scripts.' \
 		'' \
 		'STATE FILE' \
 		'  ~/.aidevops/cache/foss-wp-handler.json' \
