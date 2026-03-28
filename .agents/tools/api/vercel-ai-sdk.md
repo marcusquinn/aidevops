@@ -88,23 +88,7 @@ const { messages, sendMessage, status } = useChat({
 });
 ```
 
-**Message Parts** (for rich content):
-
-```tsx
-messages.map((message) => (
-  <div key={message.id}>
-    {message.parts.map((part, i) => {
-      if (part.type === "text") {
-        return <p key={i}>{part.text}</p>;
-      }
-      if (part.type === "tool-call") {
-        return <ToolResult key={i} call={part} />; {/* Your custom component to render tool output */}
-      }
-      return null;
-    })}
-  </div>
-));
-```
+**Message Parts** — iterate `message.parts`; types: `text` (render `part.text`), `tool-call` (render custom component). See Advanced Patterns below for full example.
 
 **Status Values**:
 
@@ -119,107 +103,69 @@ messages.map((message) => (
 
 ## Detailed Patterns
 
-### Full Chat Component
+### Chat Component — Advanced Patterns
+
+Key patterns beyond the Quick Reference example:
 
 ```tsx
 "use client";
-
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { useState, useRef, useEffect } from "react";
 
-const sanitizeMarkdown = (text: string) => {
-  const html = marked.parse(text) as string;
-  return DOMPurify.sanitize(html, {
-    ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'code', 'pre', 'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'blockquote'],
-    ALLOWED_ATTR: ['href', 'class']
+// Markdown rendering with XSS protection (npm install dompurify @types/dompurify)
+const sanitizeMarkdown = (text: string) =>
+  DOMPurify.sanitize(marked.parse(text) as string, {
+    ALLOWED_TAGS: ["p", "br", "strong", "em", "code", "pre", "ul", "ol", "li", "a", "h1", "h2", "h3", "blockquote"],
+    ALLOWED_ATTR: ["href", "class"],
   });
-};
 
 export function AIChatSidebar() {
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const { messages, error, sendMessage, status } = useChat({
-    transport: new DefaultChatTransport({
-      api: "/api/ai/chat",
-    }),
+    transport: new DefaultChatTransport({ api: "/api/ai/chat" }),
     onError: (err) => console.error("Chat Error:", err),
   });
 
-  // Filter to user/assistant messages only
-  const displayMessages = messages.filter((m) =>
-    ["assistant", "user"].includes(m.role)
-  );
-
+  const displayMessages = messages.filter((m) => ["assistant", "user"].includes(m.role));
   const isLoading = ["submitted", "streaming"].includes(status);
 
   // Auto-scroll on new messages
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
 
   const handleSubmit = () => {
-    if (input.trim()) {
-      sendMessage({ text: input });
-      setInput("");
-    }
+    if (input.trim()) { sendMessage({ text: input }); setInput(""); }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
-    }
-  };
-
-  if (error) {
-    return <div>Error: {error.message}</div>;
-  }
+  if (error) return <div>Error: {error.message}</div>;
 
   return (
     <div className="flex flex-col h-full">
       <div ref={scrollRef} className="flex-1 overflow-auto p-4">
         {displayMessages.map((message) => (
-          <div
-            key={message.id}
-            className={message.role === "user" ? "text-right" : "text-left"}
-          >
-            {message.parts.map((part, i) => {
-              if (part.type === "text") {
-                return message.role === "assistant" ? (
-                  <div
-                    key={i}
-                    className="prose"
-                    dangerouslySetInnerHTML={{
-                      __html: sanitizeMarkdown(part.text),
-                    }}
-                  />
-                ) : (
-                  <p key={i}>{part.text}</p>
-                );
-              }
-              return null;
-            })}
+          <div key={message.id} className={message.role === "user" ? "text-right" : "text-left"}>
+            {message.parts.map((part, i) =>
+              part.type === "text" ? (
+                message.role === "assistant"
+                  ? <div key={i} className="prose" dangerouslySetInnerHTML={{ __html: sanitizeMarkdown(part.text) }} />
+                  : <p key={i}>{part.text}</p>
+              ) : null
+            )}
           </div>
         ))}
         {isLoading && <div>Thinking...</div>}
       </div>
       <div className="p-4 border-t">
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={isLoading}
-          placeholder="Type a message..."
-        />
-        <button onClick={handleSubmit} disabled={isLoading || !input.trim()}>
-          Send
-        </button>
+        <textarea value={input} onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); } }}
+          disabled={isLoading} placeholder="Type a message..." />
+        <button onClick={handleSubmit} disabled={isLoading || !input.trim()}>Send</button>
       </div>
     </div>
   );
@@ -275,20 +221,11 @@ const result = streamText({
 
 ### Multiple Providers
 
+Swap the `model:` argument — same `streamText` API for all providers:
+
 ```tsx
-import { openai } from "@ai-sdk/openai";
 import { anthropic } from "@ai-sdk/anthropic";
-
-// Use different models
-const openaiResult = streamText({
-  model: openai("gpt-4o"),
-  messages,
-});
-
-const claudeResult = streamText({
-  model: anthropic("claude-sonnet-4-6"),
-  messages,
-});
+// model: anthropic("claude-sonnet-4-6")  or  openai("gpt-4o")  or  any @ai-sdk/* adapter
 ```
 
 ### Structured Output
@@ -312,26 +249,11 @@ console.log(result.object); // Typed!
 
 ## Common Mistakes
 
-1. **Not handling all message parts**
-   - Messages can have multiple parts (text, tool-call, etc.)
-   - Always iterate over `message.parts`
-
-2. **Forgetting to filter messages**
-   - `messages` includes system messages
-   - Filter to `user` and `assistant` for display
-
-3. **Not checking status**
-   - Disable input during `streaming`
-   - Show loading indicator
-
-4. **Missing error handling**
-   - Always handle `error` from `useChat`
-   - Provide retry mechanism
-
-5. **XSS vulnerability with markdown rendering**
-   - Never use `dangerouslySetInnerHTML` with unsanitized content
-   - Use DOMPurify to sanitize: `DOMPurify.sanitize(marked.parse(text))`
-   - Install: `npm install dompurify @types/dompurify`
+1. **Not handling all message parts** — iterate `message.parts`, not `message.content`; parts can be `text`, `tool-call`, etc.
+2. **Forgetting to filter messages** — `messages` includes system messages; filter to `["user", "assistant"]` for display.
+3. **Not checking status** — disable input and show loading indicator during `submitted`/`streaming`.
+4. **Missing error handling** — always handle `error` from `useChat`; provide a retry mechanism.
+5. **XSS with markdown** — never use `dangerouslySetInnerHTML` with unsanitized content; use `DOMPurify.sanitize(marked.parse(text))` (`npm install dompurify @types/dompurify`).
 
 ## Related
 
