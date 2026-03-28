@@ -122,9 +122,9 @@
       "pr": 11275
     },
     ".agents/marketing/direct-response-copy-frameworks-objection-handling.md": {
-      "hash": "c5e248276fc430981c831b12c72117af1a8091f2",
-      "at": "2026-03-28T02:51:05Z",
-      "pr": 11278
+      "hash": "03a35fccab0f4d79526416af4049498f59eb1cf8",
+      "at": "2026-03-28T03:53:27Z",
+      "pr": 11336
     },
     ".agents/reference/configuration.md": {
       "hash": "8f88704d9a8ee1c9e58fa589d4bb30ccbb182e0f",
@@ -150,6 +150,151 @@
       "hash": "3468736a31ae90ba52430e926919c952e3f9f77a",
       "at": "2026-03-28T12:00:00Z",
       "pr": 11294
+    },
+    ".agents/tools/programming/modern-javascript-skill/composition.md": {
+      "hash": "fe9da3d05db78aac6b072235efe8b74f5c9fcf2b",
+      "at": "2026-03-28T03:53:07Z",
+      "pr": 11328
+    },
+    ".agents/marketing/direct-response-copy-templates-landing-page.md": {
+      "hash": "a82f659f9a89ed7c8563bbbdd673f3a2db97e83d",
+      "at": "2026-03-28T03:53:11Z",
+      "pr": 11334
+    },
+    ".agents/tools/programming/modern-javascript-skill/es2022-es2023.md": {
+      "hash": "5e5dfb7e18557b8e26c5c48c090c8df94eda485c",
+      "at": "2026-03-28T03:53:13Z",
+      "pr": 11337
+    },
+    ".agents/marketing/meta-ads-optimization-metrics.md": {
+      "hash": "cdbd666064fccd0929002a4de6e08792d0d89340",
+      "at": "2026-03-28T03:53:24Z",
+      "pr": 11329
+    },
+    ".agents/marketing/cro-chapter-03.md": {
+      "hash": "78180c695a030f793a2b005a94691608a6575318",
+      "at": "2026-03-28T03:53:30Z",
+      "pr": 11333
+    },
+    ".agents/marketing/direct-response-copy-templates-email-sequences.md": {
+      "hash": "befc3dd14c09e7a302b1dd26ea652ec365ae5314",
+      "at": "2026-03-28T03:53:33Z",
+      "pr": 11331
+    },
+    ".agents/marketing/direct-response-copy-frameworks-offer-construction.md": {
+      "hash": "ea7ff470ba073b21ab88f669e294794c00d30a58",
+      "at": "2026-03-28T03:53:40Z",
+      "pr": 11303
+    },
+    ".agents/workflows/milestone-validation.md": {
+      "hash": "3e8c88a4d98e24993198b7a6cfc0c93b7825bd26",
+      "at": "2026-03-28T03:53:42Z",
+      "pr": 11286
+    },
+    ".agents/services/communications/discord.md": {
+      "hash": "44cce31bf11bd980e6b95270c913477c86348a15",
+      "at": "2026-03-28T03:53:47Z",
+      "pr": 11287
+    },
+    ".agents/tools/browser/pagespeed.md": {
+      "hash": "55b132de0f4ff15dd72cec557bf042cd56b93fec",
+      "at": "2026-03-28T03:53:49Z",
+      "pr": 11295
+    },
+    ".agents/tools/ai-orchestration/packaging.md": {
+      "hash": "4cbea04181622677bff0bdbb611cdd03a3401484",
+      "at": "2026-03-28T03:53:52Z",
+      "pr": 11296
+    },
+    ".agents/aidevops/mcp-integrations.md": {
+      "hash": "8c6204355b9b3ccc09bb3761ac1804e94bf76db2",
+      "at": "2026-03-28T03:53:54Z",
+      "pr": 11339
+    },
+    ".agents/tools/ai-assistants/opencode-server.md": {
+      "hash": "15e90e96d742cfe07ffd4cb37c340157d5a8bb74",
+      "at": "2026-03-28T03:53:56Z",
+      "pr": 11345
+    },
+    ".agents/tools/context/mcp-discovery.md": {
+      "hash": "b5851d90484fe52e39f87e3c7af8692778986208",
+      "at": "2026-03-28T03:53:59Z",
+      "pr": 11338
+    },
+    ".agents/tools/deployment/cloudron-app-packaging.md": {
+      "hash": "a6ddd4af870f4445d96eb4bf3c2d109fcb9219b7",
+      "at": "2026-03-28T03:54:01Z",
+      "pr": 11344
+    },
+    ".agents/tools/security/ip-reputation.md": {
+      "hash": "a1da2aa2f5e2f454f3c1dbcd3a7a819a72cd80dd",
+      "at": "2026-03-28T03:54:03Z",
+      "pr": 11342
+    },
+    ".agents/tools/ui/frontend-debugging.md": {
+      "hash": "272d16549c353500a19666d7ace227b34b2ae363",
+      "at": "2026-03-28T03:54:06Z",
+      "pr": 11340
+    },
+    ".agents/workflows/preflight.md": {
+      "hash": "c4695943d5555314205b87bb88020fb62de14b63",
+      "at": "2026-03-28T03:54:08Z",
+      "pr": 11341
+    },
+    ".agents/aidevops/recommendations.md": {
+      "hash": "67c3f660425b669feae3238d7b42589449caa860",
+      "at": "2026-03-28T03:54:11Z",
+      "pr": 11343
+    },
+    ".agents/services/communications/msteams.md": {
+      "hash": "9818d1daccf3f68d103ecba204aa56431dba6514",
+      "at": "2026-03-28T03:54:15Z",
+      "pr": 11346
+    },
+    ".agents/tools/browser/peekaboo.md": {
+      "hash": "294d232e9625b8a855f17cbea4498a4881a6b0bc",
+      "at": "2026-03-28T03:54:17Z",
+      "pr": 11348
+    },
+    ".agents/tools/database/vector-search.md": {
+      "hash": "d365046c212da54c3ab0ede8217cce083de484c5",
+      "at": "2026-03-28T03:54:19Z",
+      "pr": 11351
+    },
+    ".agents/seo/neuronwriter.md": {
+      "hash": "e6d78a192db4a98186ff9a1f428a07d6455ba42a",
+      "at": "2026-03-28T03:54:21Z",
+      "pr": 11350
+    },
+    ".agents/tools/wordpress/wp-preferred.md": {
+      "hash": "6664b61850bd5f84a8044f5dea501f4534b9a9d8",
+      "at": "2026-03-28T03:54:25Z",
+      "pr": 11353
+    },
+    ".agents/tools/git/opencode-github.md": {
+      "hash": "02c6d675ca2b756817bc639ec03d999e1f3ea58e",
+      "at": "2026-03-28T03:54:27Z",
+      "pr": 11349
+    },
+    ".agents/services/hosting/webhosting.md": {
+      "hash": "fb3877648d049a414407d7f9e6beb747c2f92f1d",
+      "at": "2026-03-28T03:54:32Z",
+      "pr": 11352
+    },
+    ".agents/services/communications/nextcloud-talk.md": {
+      "hash": "830399729c8d83ca4263bbf736ea549534989f63",
+      "at": "2026-03-28T03:54:35Z",
+      "pr": 11360
+    },
+    ".agents/services/outreach/smartlead.md": {
+      "hash": "8171133da8154e590bca4a6baa8a1bbe05051e05",
+      "at": "2026-03-28T03:54:38Z",
+      "pr": 11357
+    },
+    ".agents/tools/mobile/app-dev/swift.md": {
+      "hash": "d601962cd709d65d62ca882b09f763abe48b7e04",
+      "at": "2026-03-28T03:54:42Z",
+      "pr": 11358
     }
   }
 }
