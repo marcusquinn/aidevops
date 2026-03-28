@@ -18,10 +18,9 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Headless browser automation CLI designed specifically for AI agents
 - **Install**: `npm install -g @playwright/mcp@latest`
 - **GitHub**: https://github.com/microsoft/playwright-cli
-- **Skill**: Available as Claude Code skill via `/plugin marketplace add microsoft/playwright-cli`
+- **Skill**: `/plugin marketplace add microsoft/playwright-cli`
 
 **Core Workflow** (optimal for AI):
 
@@ -37,19 +36,18 @@ playwright-cli close
 
 **Key Advantages**:
 
-- **Microsoft official**: Part of `@playwright/mcp`, actively maintained
 - **Ref-based selection**: Deterministic element targeting from snapshots (e1, e2, e3)
 - **Session isolation**: `--session` flag for parallel browser instances
 - **Headless by default**: Use `--headed` only for visual debugging
 - **Persistent profiles**: Sessions preserve cookies/storage between calls
 - **Tracing built-in**: `tracing-start/stop` for debugging
-- **No MCP overhead**: Direct CLI calls, no WebSocket relay
+- **Microsoft official**: Part of `@playwright/mcp`, actively maintained
 
-**Performance**: Similar to agent-browser (both use Playwright engine). Navigate+screenshot ~1.9s, form fill ~1.4s.
+**Performance**: Navigate+screenshot ~1.9s, form fill ~1.4s (~2s cold start).
 
-**vs agent-browser**: playwright-cli uses simpler ref syntax (`e5` vs `@e5`), has built-in tracing, and is Microsoft-maintained. agent-browser has more CLI commands and a Rust binary (but slower cold start ~3-5s vs ~2s).
+**vs agent-browser**: Simpler ref syntax (`e5` vs `@e5`), built-in tracing, Microsoft-maintained. agent-browser has more CLI commands but slower cold start (~3-5s).
 
-**vs Playwriter MCP**: playwright-cli runs headless with isolated sessions. Playwriter uses your existing browser (headed, with your extensions/passwords).
+**vs Playwriter MCP**: playwright-cli runs headless with isolated sessions. Playwriter uses your existing browser (headed, with extensions/passwords).
 
 **When to use**:
 
@@ -63,63 +61,24 @@ playwright-cli close
 ## Installation
 
 ```bash
-# Install globally (recommended - fastest, no runner overhead)
+# Install globally (recommended)
 bun install -g @playwright/mcp@latest   # Bun (preferred)
 npm install -g @playwright/mcp@latest   # npm alternative
 
-# Verify installation
+# Verify
 playwright-cli --help
 
-# Or run without global install (slower cold start)
+# Without global install
 bunx @playwright/mcp playwright-cli --help   # ~0.3s
-npx @playwright/mcp playwright-cli --help    # ~2-3s (registry lookup)
+npx @playwright/mcp playwright-cli --help    # ~2-3s
 ```
 
-**As Claude Code skill** (recommended for Claude Code users):
+**As Claude Code skill**:
 
 ```bash
 /plugin marketplace add microsoft/playwright-cli
 /plugin install playwright-cli
 ```
-
-**Manual skill installation**:
-
-```bash
-mkdir -p .claude/skills/playwright-cli
-curl -o .claude/skills/playwright-cli/SKILL.md \
-  https://raw.githubusercontent.com/microsoft/playwright-cli/main/skills/playwright-cli/SKILL.md
-```
-
-## Core Workflow
-
-### The Snapshot + Ref Pattern
-
-This is the **recommended workflow for AI agents**:
-
-```bash
-# 1. Navigate and get snapshot
-playwright-cli open https://example.com
-playwright-cli snapshot
-
-# 2. AI identifies target refs from snapshot
-# Output includes refs like:
-# - heading "Example Domain" [ref=e1] [level=1]
-# - button "Submit" [ref=e2]
-# - textbox "Email" [ref=e3]
-
-# 3. Execute actions using refs
-playwright-cli click e2
-playwright-cli fill e3 "input text"
-
-# 4. Get new snapshot if page changed
-playwright-cli snapshot
-```
-
-**Why use refs?**
-
-- **Deterministic**: Ref points to exact element from snapshot
-- **Fast**: No DOM re-query needed
-- **AI-friendly**: Snapshot + ref workflow is optimal for LLMs
 
 ## Commands Reference
 
@@ -143,6 +102,7 @@ playwright-cli eval <func> [ref]        # Evaluate JavaScript
 playwright-cli dialog-accept [prompt]   # Accept dialog (with optional prompt text)
 playwright-cli dialog-dismiss           # Dismiss dialog
 playwright-cli resize <width> <height>  # Resize browser window
+playwright-cli open <url> --headed      # Show browser window (debugging)
 ```
 
 ### Navigation
@@ -202,53 +162,15 @@ playwright-cli tracing-stop             # Stop trace recording
 ```bash
 playwright-cli --session=name open <url>  # Use named session
 playwright-cli session-list               # List all sessions
-playwright-cli session-stop [name]        # Stop session
+playwright-cli session-stop [name]        # Stop session (keeps profile)
 playwright-cli session-stop-all           # Stop all sessions
-playwright-cli session-delete [name]      # Delete session data and profile
+playwright-cli session-delete [name]      # Delete session + profile data
 ```
-
-## Sessions
-
-Playwright CLI uses persistent profiles by default. Cookies and storage are preserved between calls.
-
-### Named Sessions
-
-Run multiple isolated browser instances:
-
-```bash
-# Different sessions for different tasks
-playwright-cli open https://playwright.dev
-playwright-cli --session=example open https://example.com
-playwright-cli session-list
-
-# Work in specific session
-playwright-cli --session=example click e4
-playwright-cli --session=example snapshot
-```
-
-### Environment Variable
 
 Set session via environment for all commands:
 
 ```bash
 PLAYWRIGHT_CLI_SESSION=todo-app claude .
-```
-
-### Session Management
-
-```bash
-playwright-cli session-list             # List all sessions
-playwright-cli session-stop [name]      # Stop session (keeps profile)
-playwright-cli session-stop-all         # Stop all sessions
-playwright-cli session-delete [name]    # Delete session + profile data
-```
-
-## Headed Mode
-
-Show the browser window for debugging:
-
-```bash
-playwright-cli open https://playwright.dev --headed
 ```
 
 ## Examples
@@ -258,7 +180,6 @@ playwright-cli open https://playwright.dev --headed
 ```bash
 playwright-cli open https://example.com/form
 playwright-cli snapshot
-
 playwright-cli fill e1 "user@example.com"
 playwright-cli fill e2 "$PASSWORD"  # Store credentials in env var or secure vault
 playwright-cli click e3
@@ -323,67 +244,34 @@ playwright-cli screenshot
 | **Extensions** | No | No | Yes (yours) | Possible |
 | **Cold start** | ~2s | ~3-5s (Rust) | ~1s (extension) | ~2s |
 
-### When to Use playwright-cli
-
-- **AI agent automation** - Snapshot + ref pattern for LLMs
-- **CLI-first workflows** - Shell scripts, CI/CD pipelines
-- **Multi-session automation** - Parallel browser instances
-- **Microsoft ecosystem** - Official Playwright tooling
-
-### When to Use Other Tools
-
-- **agent-browser** - More CLI commands, Rust binary (but slower cold start)
-- **Playwriter** - Need your existing browser sessions, extensions, passwords
-- **Stagehand** - Natural language automation, self-healing selectors
-- **Playwright direct** - Maximum speed, full API control, TypeScript projects
+- **agent-browser** — more CLI commands, Rust binary (but slower cold start)
+- **Playwriter** — need your existing browser sessions, extensions, passwords
+- **Stagehand** — natural language automation, self-healing selectors
+- **Playwright direct** — maximum speed, full API control, TypeScript projects
 
 ## Integration with Other Tools
 
 ### Chrome DevTools MCP
 
-playwright-cli exposes a CDP endpoint that Chrome DevTools MCP can connect to for debugging:
+playwright-cli exposes a CDP endpoint that Chrome DevTools MCP can connect to:
 
 ```bash
-# Start playwright-cli with remote debugging
 playwright-cli open https://example.com --headed
-
-# In another terminal, connect DevTools MCP to the browser
-# (playwright-cli uses Chromium on port 9222 by default)
+# In another terminal:
 npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222
 ```
 
-**Use cases**:
-- Performance profiling with Lighthouse while automating
-- Network monitoring during form submissions
-- CSS coverage analysis
-- Console error capture
-
-See `tools/browser/chrome-devtools.md` for full DevTools capabilities.
+Use cases: performance profiling, network monitoring, CSS coverage, console error capture. See `tools/browser/chrome-devtools.md`.
 
 ### Anti-Detect Browser Stack
-
-playwright-cli uses Playwright under the hood, so it works with the anti-detect stack:
-
-**Quick stealth (rebrowser-patches)**:
-
-```bash
-# Install rebrowser-patches for Chromium
-# See tools/browser/stealth-patches.md for setup
-
-# playwright-cli will use the patched Chromium automatically
-# if installed in the Playwright browsers directory
-playwright-cli open https://bot-detection-test.com
-```
-
-**Full anti-detect (Camoufox)**:
-
-For maximum stealth with fingerprint rotation, use Camoufox directly with Playwright API rather than playwright-cli. See `tools/browser/anti-detect-browser.md`.
 
 | Stealth Level | Tool | Use Case |
 |---------------|------|----------|
 | None | playwright-cli (default) | Dev testing, trusted sites |
 | Medium | rebrowser-patches + playwright-cli | Hide automation signals |
 | High | Camoufox + Playwright API | Bot detection evasion, multi-account |
+
+playwright-cli uses Playwright under the hood and works with rebrowser-patches automatically if installed in the Playwright browsers directory. For maximum stealth with fingerprint rotation, use Camoufox directly. See `tools/browser/anti-detect-browser.md`.
 
 ## Related
 
