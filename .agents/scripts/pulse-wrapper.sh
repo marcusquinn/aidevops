@@ -748,6 +748,15 @@ _append_prefetch_sub_helpers() {
 	cat "$ghfail_tmp" >>"$STATE_FILE"
 	rm -f "$ghfail_tmp"
 
+	# Append needs-maintainer-review triage status for automated review dispatch
+	local triage_tmp
+	triage_tmp=$(mktemp)
+	run_cmd_with_timeout 30 prefetch_triage_review_status "$repo_entries" >"$triage_tmp" 2>/dev/null || {
+		echo "[pulse-wrapper] prefetch_triage_review_status timed out after 30s (non-fatal)" >>"$LOGFILE"
+	}
+	cat "$triage_tmp" >>"$STATE_FILE"
+	rm -f "$triage_tmp"
+
 	return 0
 }
 
@@ -2642,6 +2651,93 @@ prefetch_contribution_watch() {
 			echo ""
 		}
 		echo "[pulse-wrapper] Contribution watch: ${cw_count} items need attention" >>"$LOGFILE"
+	fi
+
+	return 0
+}
+
+#######################################
+# Pre-fetch triage review status for needs-maintainer-review issues
+#
+# For each pulse-enabled repo, finds issues with the needs-maintainer-review
+# label and checks whether an agent triage review comment already exists.
+# This data enables the pulse to dispatch opus-tier review workers only
+# for issues that haven't been reviewed yet.
+#
+# Detection: an agent review comment contains "## Review:" or
+# "## Issue/PR Review:" in the body (the structured output format
+# from review-issue-pr.md).
+#
+# Arguments:
+#   $1 - repo_entries (slug|path pairs, one per line)
+# Output: triage review status section to stdout
+#######################################
+prefetch_triage_review_status() {
+	local repo_entries="$1"
+	local found_any=false
+	local total_pending=0
+
+	while IFS='|' read -r slug path; do
+		[[ -n "$slug" ]] || continue
+
+		# Get needs-maintainer-review issues for this repo
+		local nmr_json
+		nmr_json=$(gh issue list --repo "$slug" --label "needs-maintainer-review" \
+			--state open --json number,title,createdAt,updatedAt \
+			--limit 50 2>/dev/null) || nmr_json="[]"
+
+		local nmr_count
+		nmr_count=$(echo "$nmr_json" | jq 'length')
+		[[ "$nmr_count" -gt 0 ]] || continue
+
+		if [[ "$found_any" == false ]]; then
+			echo ""
+			echo "# Needs Maintainer Review — Triage Status"
+			echo ""
+			echo "Issues with \`needs-maintainer-review\` label and their automated triage review status."
+			echo "Dispatch an opus-tier \`/review-issue-pr\` worker for items marked **needs-review**."
+			echo "Max 2 triage review dispatches per pulse cycle."
+			echo ""
+			found_any=true
+		fi
+
+		echo "## ${slug}"
+		echo ""
+
+		# Check each issue for an existing agent review comment
+		local i=0
+		while [[ "$i" -lt "$nmr_count" ]]; do
+			local number title created_at
+			number=$(echo "$nmr_json" | jq -r ".[$i].number")
+			title=$(echo "$nmr_json" | jq -r ".[$i].title")
+			created_at=$(echo "$nmr_json" | jq -r ".[$i].createdAt")
+
+			# Check for agent review comment (contains "## Review:" or "## Issue/PR Review:")
+			local review_exists=0
+			review_exists=$(gh api "repos/${slug}/issues/${number}/comments" \
+				--jq '[.[] | select(.body | test("## (Issue/PR )?Review:"))] | length' 2>/dev/null) || review_exists=0
+			[[ "$review_exists" =~ ^[0-9]+$ ]] || review_exists=0
+
+			local status_label
+			if [[ "$review_exists" -gt 0 ]]; then
+				status_label="reviewed"
+			else
+				status_label="needs-review"
+				total_pending=$((total_pending + 1))
+			fi
+
+			echo "- Issue #${number}: ${title} [status: **${status_label}**] [created: ${created_at}]"
+
+			i=$((i + 1))
+		done
+
+		echo ""
+	done <<<"$repo_entries"
+
+	if [[ "$found_any" == true ]]; then
+		echo "**Total pending triage reviews: ${total_pending}**"
+		echo ""
+		echo "[pulse-wrapper] Triage review status: ${total_pending} issues pending review" >>"$LOGFILE"
 	fi
 
 	return 0

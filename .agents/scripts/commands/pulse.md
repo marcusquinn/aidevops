@@ -94,6 +94,40 @@ release_dispatch_claim NUMBER SLUG "$RUNNER_USER"
 
 Repeat until `AVAILABLE` slots are filled or no dispatchable issues remain.
 
+### 4.5. Dispatch triage reviews for needs-maintainer-review issues
+
+After filling implementation worker slots, check the pre-fetched "Needs Maintainer Review — Triage Status" section. For each issue marked **needs-review** (no agent review comment yet), dispatch an opus-tier triage review worker. These are operational (no code changes) and use `/review-issue-pr` directly.
+
+```bash
+# Only dispatch if worker slots are available
+# Max 2 triage reviews per pulse cycle (opus-tier, expensive)
+TRIAGE_REVIEW_COUNT=0
+TRIAGE_REVIEW_MAX=2
+
+# For each needs-review issue from the pre-fetched triage status:
+if [[ "$AVAILABLE" -gt 0 && "$TRIAGE_REVIEW_COUNT" -lt "$TRIAGE_REVIEW_MAX" ]]; then
+  RESOLVED_MODEL=$(~/.aidevops/agents/scripts/model-availability-helper.sh resolve opus)
+
+  ~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
+    --role worker \
+    --session-key "triage-review-NUMBER" \
+    --dir PATH \
+    --model "$RESOLVED_MODEL" \
+    --title "Triage review: Issue #NUMBER" \
+    --prompt "/review-issue-pr NUMBER" &
+  sleep 2
+
+  TRIAGE_REVIEW_COUNT=$((TRIAGE_REVIEW_COUNT + 1))
+  AVAILABLE=$((AVAILABLE - 1))
+fi
+```
+
+Skip triage reviews when:
+
+- All worker slots are occupied (implementation work takes priority)
+- The issue was created less than 5 minutes ago (give the author time to add context)
+- The maintainer has already commented on the issue (they're already engaged)
+
 ### 5. Record initial dispatch success
 
 ```bash
@@ -135,9 +169,10 @@ After the initial dispatch, enter a monitoring loop. Each cycle:
    ```
 
 4. **If slots are open**: check for mergeable PRs (free), then dispatch workers for the
-   highest-priority open issues. Use the same dedup guards and dispatch commands as the
-   initial dispatch. Re-fetch issue state with targeted `gh` calls only for repos where
-   you need to dispatch (not a full re-fetch of all repos).
+   highest-priority open issues, then dispatch triage reviews for unreviewed
+   `needs-maintainer-review` issues (same rules as Step 4.5). Use the same dedup guards
+   and dispatch commands as the initial dispatch. Re-fetch issue state with targeted `gh`
+   calls only for repos where you need to dispatch (not a full re-fetch of all repos).
 
 5. **If fully staffed**: log it, mark the cycle todo complete, continue to next cycle.
 
@@ -247,7 +282,7 @@ When closing any issue, ALWAYS comment first explaining why and linking to the P
 - **Duplicate issues for same task ID** → keep the one referenced by `ref:GH#` in TODO.md, close others with a comment.
 - **Too large for one worker** → classify with `task-decompose-helper.sh classify`. If composite, decompose into subtask issues, label parent `status:blocked`. Child tasks enter the normal dispatch queue.
 - **`status:queued` or `status:in-progress`** → check `updatedAt`. If updated within 3 hours, skip. If 3+ hours with no PR and no worker, relabel `status:available`, unassign, comment the recovery. Note: issues claimed at creation via `/new-task` option 2 (t1687) will have `status:in-progress` + assignee set immediately, so the pulse correctly skips them during the interactive work window.
-- **`needs-maintainer-review`** → SKIP. Awaiting maintainer review. Do NOT dispatch.
+- **`needs-maintainer-review`** → Do NOT dispatch an implementation worker. Instead, dispatch a **triage review worker** if no agent review comment exists yet (see "Automated triage review" below).
 - **`status:available` or no status (without `needs-maintainer-review`)** → dispatch a worker.
 
 ### External issues and PRs — maintainer review gate (t1545)
@@ -271,13 +306,62 @@ When closing any issue, ALWAYS comment first explaining why and linking to the P
 - **Destructive behaviour reports** → valid bug, dispatch a fix (no label needed)
 - **Bug fixes and docs PRs** → normal review process
 
+### Automated triage review (opus-tier)
+
+Before waiting for the maintainer to manually review `needs-maintainer-review` issues, the pulse dispatches an opus-tier worker to post a structured analysis and recommendation. This gives the maintainer a pre-digested assessment so they can approve, decline, or provide direction with minimal effort.
+
+**When to dispatch a triage review:**
+
+For each `needs-maintainer-review` issue/PR in the pre-fetched state, check whether an agent review comment already exists. An agent review comment is identified by containing the string `## Issue/PR Review:` or `## Review:` (the structured output format from `review-issue-pr.md`).
+
+```bash
+# Check if an agent review comment already exists
+REVIEW_EXISTS=$(gh api "repos/<slug>/issues/<number>/comments" \
+  --jq '[.[] | select(.body | test("## (Issue/PR )?Review:"))] | length')
+
+if [[ "$REVIEW_EXISTS" -eq 0 ]]; then
+  # No review yet — dispatch a triage review worker
+fi
+```
+
+**Skip triage review when:**
+
+- An agent review comment already exists (idempotency guard)
+- The maintainer has already commented (approved/declined/direction) — they don't need the review
+- The issue was created less than 5 minutes ago (give the author time to add context)
+- Worker slots are fully occupied with higher-priority work (triage reviews are lower priority than merges, CI fixes, and implementation dispatches)
+
+**Dispatch the triage review worker:**
+
+Triage reviews are operational (no code changes), so they do NOT use `/full-loop`. They use `/review-issue-pr` directly. They use opus tier because the analysis requires deep codebase understanding and architectural judgment.
+
+```bash
+RESOLVED_MODEL=$(~/.aidevops/agents/scripts/model-availability-helper.sh resolve opus)
+
+~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
+  --role worker \
+  --session-key "triage-review-<number>" \
+  --dir <path> \
+  --model "$RESOLVED_MODEL" \
+  --title "Triage review: Issue #<number>" \
+  --prompt "/review-issue-pr <number>" &
+sleep 2
+```
+
+**Concurrency cap:** Max 2 triage review workers per pulse cycle. These are opus-tier and expensive — don't flood the worker pool with reviews when implementation work is waiting.
+
+**Priority:** Triage reviews are dispatched AFTER all merges, CI fixes, and implementation dispatches are handled. They fill remaining worker slots. If no slots are available, skip triage reviews this cycle — the issues will still be there next cycle.
+
+**Cost justification:** One opus triage review (~$0.10-0.30) saves the maintainer 10-30 minutes of manual investigation per issue. The review also captures architectural context that would otherwise require the maintainer to read code, check related issues, and trace root causes themselves.
+
 ### Comment-based approval
 
 Issues/PRs with `needs-maintainer-review` can be approved or declined by the maintainer commenting. Each cycle, fetch the maintainer's most recent comment on these items:
 
-- **"approved"** → remove `needs-maintainer-review`, add `status:available` (issues) or allow merge (PRs)
+- **"approved"** → remove `needs-maintainer-review`, add `status:available` (issues) or allow merge (PRs). If the triage review recommended a specific tier label (e.g., `tier:simple`), apply it.
 - **"declined"** → close with the maintainer's reason
-- **No matching comment** → skip, check next cycle
+- **Further direction** → if the maintainer's comment doesn't start with "approved" or "declined", treat it as additional context. On the next cycle, if no agent review exists that incorporates this direction, dispatch a new triage review worker with the maintainer's feedback included in the prompt.
+- **No matching comment from maintainer** → skip, check next cycle
 
 Only process comments from the repo maintainer (from `repos.json` or slug owner).
 
@@ -479,7 +563,37 @@ gh pr close <number> --repo <slug> \
   -c "Closed per maintainer decision. Reason: ${REASON:-no reason given}"
 ```
 
-3. **No matching comment from maintainer** — skip, check again next cycle.
+3. **Comment contains further direction** (doesn't start with `approved` or `declined`) — the maintainer is providing feedback. If an agent triage review already exists but was posted BEFORE the maintainer's comment, dispatch a new triage review worker that incorporates the maintainer's feedback:
+
+```bash
+# Check if the maintainer's comment is newer than the last agent review
+LAST_REVIEW_DATE=$(gh api "repos/<slug>/issues/<number>/comments" \
+  --jq '[.[] | select(.body | test("## (Issue/PR )?Review:"))] | last | .created_at' 2>/dev/null || echo "")
+MAINTAINER_COMMENT_DATE=$(echo "$COMMENT_DATA" | jq -r '.created_at // empty')
+
+# If maintainer commented after the last review, dispatch a follow-up review
+if [[ -n "$MAINTAINER_COMMENT_DATE" && "$MAINTAINER_COMMENT_DATE" > "$LAST_REVIEW_DATE" ]]; then
+  MAINTAINER_FEEDBACK=$(echo "$COMMENT_DATA" | jq -r '.body // empty')
+  RESOLVED_MODEL=$(~/.aidevops/agents/scripts/model-availability-helper.sh resolve opus)
+
+  ~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
+    --role worker \
+    --session-key "triage-review-<number>-followup" \
+    --dir <path> \
+    --model "$RESOLVED_MODEL" \
+    --title "Triage review followup: Issue #<number>" \
+    --prompt "/review-issue-pr <number>
+
+The maintainer provided the following feedback on the previous review:
+---
+${MAINTAINER_FEEDBACK}
+---
+Please incorporate this feedback into your analysis and update your recommendation." &
+  sleep 2
+fi
+```
+
+4. **No matching comment from maintainer** — skip, check again next cycle.
 
 **How to distinguish issues from PRs:** Check the pre-fetched state — PRs have a `headRefName` field, issues don't. Alternatively, use `gh api repos/<slug>/issues/<number> --jq '.pull_request // empty'` — non-empty means it's a PR.
 
