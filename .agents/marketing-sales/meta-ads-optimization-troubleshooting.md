@@ -33,7 +33,7 @@
 
 **Was great, now terrible**: Gradual decline = fatigue (add new creative, pause fatigued ads). Sudden overnight = algorithm reset or external factor (check edits, seasonal competition, LP changes). Recovery: revert edits if sudden, duplicate fresh ad set, adjust expectations.
 
-**Algorithm Reset Triggers**: Budget change >20% (sometimes), targeting change (always), all creative changed at once (always), pause >7 days (always). Recovery: wait 3-5 days, don't make more changes, let algorithm re-learn.
+**Algorithm Reset** — Signs: "Learning" status reappeared, wild performance swings, CPA significantly different from baseline. Triggers: budget change >20% (sometimes), targeting change (always), all creative changed at once (always), pause >7 days (always). Recovery: wait 3-5 days, don't make more changes, let algorithm re-learn.
 
 **Diminishing Returns at Scale**: Each budget increase yields smaller CPA improvement, eventually CPA starts rising, frequency increasing despite larger audience. Response: (1) stop vertical scaling, (2) try horizontal scaling (duplicates), (3) look for new winning creative, (4) accept current scale as efficient maximum.
 
