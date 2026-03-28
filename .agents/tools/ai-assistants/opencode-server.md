@@ -313,6 +313,6 @@ SDK timeout: pass `timeout: 30000` to `createOpencode({ timeout: 30000 })`.
 
 - `tools/ai-assistants/overview.md` - AI assistant comparison
 - `workflows/git-workflow.md` - Git workflow integration
-- `memory/README.md` - Memory system documentation
+- `reference/memory.md` - Memory system documentation
 - OpenCode SDK docs: `https://opencode.ai/docs/sdk/`
 - OpenCode Server docs: `https://opencode.ai/docs/server/`

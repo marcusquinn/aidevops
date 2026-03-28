@@ -13,7 +13,7 @@ readonly SCRIPT_DIR
 source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 readonly OUTPUT_DIR=".security-analysis"
 readonly VERSION="1.0.0"
-readonly SCAN_RESULTS_FILE=".agents/SKILL-SCAN-RESULTS.md"
+readonly SCAN_RESULTS_FILE=".agents/configs/configs/SKILL-SCAN-RESULTS.md"
 
 # Colors (fallback if shared-constants.sh not loaded)
 [[ -z "${RED+x}" ]] && RED='\033[0;31m'
@@ -457,7 +457,7 @@ update_scan_results_log() {
 	# and blocks subsequent `aidevops update` (git pull --ff-only refuses).
 	# See: https://github.com/marcusquinn/aidevops/issues/2286
 	local deployed_dir="$HOME/.aidevops/agents"
-	# SCAN_RESULTS_FILE is ".agents/SKILL-SCAN-RESULTS.md" (repo-relative);
+	# SCAN_RESULTS_FILE is ".agents/configs/configs/SKILL-SCAN-RESULTS.md" (repo-relative);
 	# strip the ".agents/" prefix to get the deployed path
 	local results_filename="${SCAN_RESULTS_FILE#.agents/}"
 	local results_file="${deployed_dir}/${results_filename}"

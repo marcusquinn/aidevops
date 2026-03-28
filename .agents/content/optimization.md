@@ -236,7 +236,7 @@ Example: "I spent $10K testing every AI video tool" (1M views) → replicate str
 
 - **Feeds into**: `content/research.md` (analytics inform next research cycle), `content/production/` (winning patterns inform next batch)
 - **Uses data from**: `content/distribution/` (platform analytics), `content/production/` (variant generation)
-- **Related**: `tools/task-management/beads.md` (task tracking), `memory/README.md` (pattern storage)
+- **Related**: `tools/task-management/beads.md` (task tracking), `reference/memory.md` (pattern storage)
 
 ## Next Steps
 

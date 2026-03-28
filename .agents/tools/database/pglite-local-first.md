@@ -368,7 +368,7 @@ const { unsubscribe } = await client.live.query(
 ## Related
 
 - **Vector search**: `tools/database/vector-search.md` — decision guide for vector databases including PGlite+pgvector for local-first vector search
-- **SQLite (for aidevops internals)**: `memory/README.md` - SQLite FTS5 for cross-session memory
+- **SQLite (for aidevops internals)**: `reference/memory.md` - SQLite FTS5 for cross-session memory
 - **Multi-org isolation**: `services/database/multi-org-isolation.md` — tenant isolation schema for server-side Postgres
 - **PowerSync**: https://www.powersync.com - SQLite sync with Postgres (better for React Native)
 - **ElectricSQL**: https://electric-sql.com - Postgres sync engine (works with PGlite)

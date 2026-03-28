@@ -216,7 +216,7 @@ MODEL_TIERS = {
 AGENT_MODEL_TIERS = {}
 
 # Files to skip (not primary agents)
-SKIP_FILES = {"AGENTS.md", "README.md", "SKILL-SCAN-RESULTS.md"} | SKIP_PRIMARY_AGENTS
+SKIP_FILES = {"AGENTS.md", "README.md", "configs/SKILL-SCAN-RESULTS.md"} | SKIP_PRIMARY_AGENTS
 
 # MCP loading policy
 EAGER_MCPS = set()

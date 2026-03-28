@@ -42,7 +42,7 @@ mission-skill-learner.sh stats                       # Show statistics
 | File | Purpose |
 |------|---------|
 | `workflows/mission-orchestrator.md` | Orchestrator that invokes skill learning at completion |
-| `memory/README.md` | Cross-session memory system |
+| `reference/memory.md` | Cross-session memory system |
 | `tools/build-agent/build-agent.md` | Agent lifecycle tiers (draft/custom/shared) |
 | `templates/mission-template.md` | Mission state file with "Mission Agents" table |
 

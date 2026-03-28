@@ -317,6 +317,6 @@ Tested with zvec 0.2.0 (`manylinux_2_28_x86_64` wheel), Python 3.12.3:
 
 - `tools/database/pglite-local-first.md` — PGlite (local-first embedded Postgres)
 - `services/database/postgres-drizzle-skill.md` — Postgres + Drizzle
-- `memory/README.md` — SQLite FTS5 (aidevops cross-session memory, NOT app vector search)
+- `reference/memory.md` — SQLite FTS5 (aidevops cross-session memory, NOT app vector search)
 - https://github.com/alibaba/zvec · https://github.com/pgvector/pgvector
 - https://developers.cloudflare.com/vectorize/ · https://www.pinecone.io/ · https://qdrant.tech/ · https://weaviate.io/

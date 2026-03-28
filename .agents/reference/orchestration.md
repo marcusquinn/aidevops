@@ -126,4 +126,4 @@ Track success/failure patterns across task types, models, and approaches. Patter
 
 **Integration with model routing**: `/route <task>` combines routing rules with pattern history. If pattern data shows >75% success rate with 3+ samples for a tier, it is weighted heavily in the recommendation.
 
-**Full docs**: `memory/README.md` "Pattern Tracking" section, `scripts/commands/patterns.md`
+**Full docs**: `reference/memory.md` "Pattern Tracking" section, `scripts/commands/patterns.md`

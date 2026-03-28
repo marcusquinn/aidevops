@@ -61,7 +61,7 @@ generate_subagents_block() {
         sub(/\.md$/, "", filename)
 
         # Skip non-agent files
-        if (filename ~ /^(README|AGENTS|SKILL|SKILL-SCAN-RESULTS)$/) next
+        if (filename ~ /^(README|AGENTS|SKILL)$/) next
         if (filename ~ /-skill$/) next
 
         # Skip paths containing filtered directories

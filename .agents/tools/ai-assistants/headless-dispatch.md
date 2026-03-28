@@ -332,4 +332,4 @@ See [runners/README.md](runners/README.md) for creating runners from templates.
 - `scripts/network-tier-helper.sh`, `scripts/sandbox-exec-helper.sh` — network tiering + sandbox
 - `configs/network-tiers.conf` — domain classification database
 - `tools/security/prompt-injection-defender.md` — prompt injection defense
-- `memory/README.md` — memory system (supports namespaces)
+- `reference/memory.md` — memory system (supports namespaces)

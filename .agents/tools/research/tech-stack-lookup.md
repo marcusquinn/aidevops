@@ -195,4 +195,4 @@ Planned (see TODO.md): historical tracking, vulnerability scanning, performance 
 - **Reverse Lookup**: Task t1068 (HTTP Archive integration)
 - **Slash Commands**: `scripts/commands/tech-stack.md`
 - **Helper Script**: `scripts/tech-stack-helper.sh`
-- **Caching**: `memory/README.md` (SQLite patterns)
+- **Caching**: `reference/memory.md` (SQLite patterns)

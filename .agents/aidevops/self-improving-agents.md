@@ -84,5 +84,5 @@ The archived script is at `scripts/archived/self-improve-helper.sh` for referenc
 
 - AGENTS.md "Self-Improvement" section — the authoritative definition
 - `scripts/commands/pulse.md` — supervisor outcome observation (Step 2a)
-- `memory/README.md` — cross-session memory system
+- `reference/memory.md` — cross-session memory system
 - `tools/security/privacy-filter.md` — privacy filter for PRs

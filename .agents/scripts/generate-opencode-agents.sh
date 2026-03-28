@@ -260,8 +260,8 @@ AGENT_MODEL_TIERS = {
 
 # Files to skip (not primary agents)
 # Includes SKIP_PRIMARY_AGENTS (demoted agents that are now subagents)
-# SKILL-SCAN-RESULTS.md is a generated report, not an agent
-SKIP_FILES = {"AGENTS.md", "README.md", "SKILL-SCAN-RESULTS.md"} | SKIP_PRIMARY_AGENTS
+# configs/SKILL-SCAN-RESULTS.md is a generated report, not an agent
+SKIP_FILES = {"AGENTS.md", "README.md", "configs/SKILL-SCAN-RESULTS.md"} | SKIP_PRIMARY_AGENTS
 
 def parse_frontmatter(filepath):
     """Parse YAML frontmatter from markdown file."""

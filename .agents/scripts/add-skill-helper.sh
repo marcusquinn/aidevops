@@ -31,7 +31,7 @@ set -euo pipefail
 AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
 SKILL_SOURCES="${AGENTS_DIR}/configs/skill-sources.json"
 TEMP_DIR="${TMPDIR:-/tmp}/aidevops-skill-import"
-SCAN_RESULTS_FILE=".agents/SKILL-SCAN-RESULTS.md"
+SCAN_RESULTS_FILE=".agents/configs/configs/SKILL-SCAN-RESULTS.md"
 
 # =============================================================================
 # Helper Functions
@@ -643,7 +643,7 @@ scan_skill_virustotal() {
 	return 0
 }
 
-# Log a single skill scan result to SKILL-SCAN-RESULTS.md
+# Log a single skill scan result to configs/SKILL-SCAN-RESULTS.md
 # Args: skill_name action critical_count high_count medium_count max_severity
 log_skill_scan_result() {
 	local skill_name="$1"

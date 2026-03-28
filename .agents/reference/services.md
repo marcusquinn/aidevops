@@ -29,7 +29,7 @@ Cross-session SQLite FTS5 memory. Commands: `/remember {content}`, `/recall {que
 
 Auto-recall is silent (no output if no memories found) and uses namespace isolation for runners.
 
-**Full docs**: `memory/README.md`
+**Full docs**: `reference/memory.md`
 
 **Proactive memory**: When you detect solutions, preferences, workarounds, failed approaches, or decisions — proactively suggest `/remember {description}`. Use `memory-helper.sh store --auto` for auto-captured memories. Privacy: `<private>` blocks stripped, secrets rejected.
 
