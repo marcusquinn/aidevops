@@ -52,11 +52,28 @@ Example: `"Developed by Dr. Sarah Chen, PhD, after 15 years of research at Johns
 
 Opportunities seem more valuable when availability is limited. Loss aversion amplifies this (see Section 6).
 
-**Types:** Quantity ("Only 3 left" / numbered releases / real-time inventory) | Time (countdown timers, "Sale ends midnight", seasonal deadlines) | Access ("Members only" / waitlist / VIP early access) | Competition ("23 people viewing this now").
+**Types:**
 
-**Implementation:** (1) Legitimate limitation — avoid false scarcity, (2) Specific numbers over vague claims, (3) Visual indicators (timers, counters, progress bars green→yellow→red), (4) Reason for scarcity to explain legitimacy, (5) Clear action required + consequence of inaction.
+- **Quantity:** "Only 3 left" / numbered releases / progress bars / real-time inventory
+- **Time:** countdown timers (most effective in final hours) / "Sale ends midnight" / seasonal deadlines
+- **Access:** "Members only" / waitlist / VIP early access
+- **Competition:** "23 people viewing this now" / "Just sold in your size"
 
-**Framing:** Loss frame typically outperforms gain frame. `"Don't lose your $50 savings—order now"` beats `"Save $50"`. Be specific: `"Offer expires Friday at midnight PST"` is more credible than `"Limited time offer"`. Poor: `"SALE ENDS IN 2 HOURS!!!"` (same message daily). Better: `"This batch is almost gone—47 of 500 remaining. Next production run isn't until March due to supply constraints."`
+**Implementation:**
+
+1. Legitimate limitation (avoid false scarcity)
+2. Specific numbers ("Only 5 left" vs. "Limited availability")
+3. Visual indicators (timers, counters, progress bars green→yellow→red)
+4. Reason for scarcity (explains legitimacy)
+5. Clear action required + consequence of inaction
+
+**Framing:**
+
+- **Loss Frame:** Typically outperforms gain frame. "Don't lose your $50 savings—order now" beats "Save $50".
+- **Specificity:** Be specific. "Offer expires Friday at midnight PST" is more credible than "Limited time offer".
+- **Authenticity:** Avoid fake urgency.
+  - **Poor (fake):** "SALE ENDS IN 2 HOURS!!!" (when shown daily).
+  - **Better:** "This batch is almost gone—47 of 500 remaining. Next production run isn't until March due to supply constraints."
 
 **Ethics:** Scarcity must be genuine. False urgency destroys trust.
 
@@ -98,7 +115,20 @@ Example: `"Our software includes automated reporting (feature), saving you 10 ho
 
 **Research finding:** emotions drive decisions; rationality provides post-hoc justification.
 
-**Emotion-Rational Sandwich:** (1) Open with emotional hook, (2) Build emotional connection, (3) Provide rational justification, (4) Close with emotional CTA. Example: `"Tired of feeling overwhelmed? (emotion) Our system helped 50,000 people regain control. (social proof) With 10 minutes/day, you'll accomplish more than ever. (rational) Imagine ending each day feeling accomplished. (emotion) Start your transformation today. (CTA)"`
+**Emotion-Rational Sandwich:**
+
+1. Open with emotional hook (capture attention)
+2. Build emotional connection (desire)
+3. Provide rational justification (logic)
+4. Close with emotional CTA
+
+**Example:**
+
+> "Tired of feeling overwhelmed? (emotion)
+> Our system helped 50,000 people regain control. (rational/social proof)
+> With 10 minutes/day, you'll accomplish more than ever. (rational benefit)
+> Imagine ending each day feeling accomplished. (emotion)
+> Start your transformation today. (CTA)"
 
 **Platform balance:**
 
@@ -149,9 +179,14 @@ Example: `"Our software includes automated reporting (feature), saving you 10 ho
 
 **Extended Parallel Process Model (EPPM):** (1) Threat severity — how bad could it be? (2) Threat susceptibility — could it happen to me? (3) Response efficacy — does the solution work? (4) Self-efficacy — can I implement it?
 
-**Fear-relief structure:** Problem (scale of threat) → Vulnerability (personal relevance) → Consequence (cost of inaction) → Solution (product capability) → Efficacy (proof it works) → Action (clear CTA with incentive).
+**Fear-relief structure:**
 
-Example: `"Identity theft costs Americans $56 billion annually. Your data is exposed every time you shop online. It takes 200 hours to recover. Our identity protection monitors 24/7 — we've prevented 10 million theft attempts. Protect yourself today — first month free."`
+1. **Problem:** "Identity theft costs Americans $56 billion annually"
+2. **Vulnerability:** "Your data is exposed every time you shop online"
+3. **Consequence:** "It takes 200 hours to recover from identity theft"
+4. **Solution:** "Our identity protection monitors your data 24/7"
+5. **Efficacy:** "We've prevented 10 million theft attempts"
+6. **Action:** "Protect yourself today—first month free"
 
 **Calibration:** Too little fear → no motivation. Too much → defensive avoidance. Optimal: sufficient to motivate, paired with effective solution.
 
@@ -173,8 +208,8 @@ Example: `"Identity theft costs Americans $56 billion annually. Your data is exp
 
 ## Section 5: Cultural Considerations in Persuasion
 
-| Dimension | Type A | Type B |
-|-----------|--------|--------|
+| Dimension | Individualist / Low / Low-PD | Collectivist / High / High-PD |
+|-----------|------------------------------|-------------------------------|
 | **Individualism vs. Collectivism** | Individualist (US, UK, AU): "Be your best self" / personal success | Collectivist (China, Japan, Korea, LatAm): "Bring joy to your family" / social approval |
 | **Context** | Low-context (Germany, US, Scandinavia): Direct value props, detailed info | High-context (Japan, Arab countries, China): Suggestive, visual storytelling, symbolism |
 | **Power Distance** | Low (Denmark, Israel, Austria): Peer-level messaging, humor, accessibility | High (Mexico, India, Philippines): Authority endorsements, prestige signaling |
@@ -189,7 +224,13 @@ Example: `"Identity theft costs Americans $56 billion annually. Your data is exp
 | Latin American | Emotional storytelling, social connection, celebration, passion |
 | African | Community/ubuntu, practical value, mobile-first, local relevance |
 
-**Localization strategy:** Global standardization (scale, consistency — risk: cultural disconnect) | Complete localization (max relevance — risk: cost, brand fragmentation) | Glocalization/hybrid (balanced — requires careful execution).
+**Localization strategy:**
+
+| Approach | Pros | Cons |
+|---|---|---|
+| Global standardization | Economies of scale, consistent brand | Cultural disconnect |
+| Complete localization | Maximum relevance | Higher cost, brand fragmentation |
+| Glocalization (hybrid) | Balance of consistency and relevance | Requires careful execution |
 
 **Adaptation axes:** visual (model ethnicity, setting, symbols, color), message (benefit hierarchy, tone, references), product (feature emphasis, pricing, use cases).
 
