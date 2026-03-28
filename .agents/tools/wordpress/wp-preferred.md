@@ -1,294 +1,165 @@
 ---
 description: WordPress preferred plugins and theme recommendations
 mode: subagent
-tools:
-  read: true
-  write: false
-  edit: false
-  bash: false
-  glob: true
-  grep: true
-  webfetch: true
-  task: true
+tools: { read: true, write: false, edit: false, bash: false, glob: true, grep: true, webfetch: true, task: true }
 ---
 
 # WordPress Preferred Plugins & Theme
 
 <!-- AI-CONTEXT-START -->
+
 ## Quick Reference
 
-**Theme**: Kadence (https://wordpress.org/themes/kadence/)
-**Total Plugins**: 127+ curated plugins across 19 categories
-
-**Selection Criteria**: speed-first, WP standards compliant, well-documented, non-breaking updates, stack-tested.
-
-**Quick Install (minimal stack)**:
+**Theme**: Kadence (`kadence`, <https://wordpress.org/themes/kadence/>) -- Pro: `kadence-pro` (<https://www.kadencewp.com/kadence-theme/pro/>)
+**Plugins**: 127+ curated across 19 categories. Selection: speed-first, WP standards, well-documented, non-breaking updates, stack-tested.
 
 ```bash
+# Minimal stack
 wp plugin install antispam-bee compressx fluent-smtp kadence-blocks simple-cloudflare-turnstile --activate
 wp theme install kadence --activate
 ```
 
-**Pro/Premium plugins**: Require license activation via vendor dashboards.
-**License keys**: Store in `~/.config/aidevops/credentials.sh` (see api-key-setup.md).
-**Updates**: Git Updater available for managing plugin updates from Git repositories.
+**Pro/Premium**: Require license activation via vendor dashboards. Keys in `~/.config/aidevops/credentials.sh` (see `api-key-setup.md`). Git Updater for Git-hosted plugin updates.
+
+**URL convention**: Free plugins at `https://wordpress.org/plugins/{slug}/`. Premium vendor URLs in [Premium Sources](#premium-plugin-sources) below.
+
 <!-- AI-CONTEXT-END -->
-
-## Theme
-
-| Name | Slug | Source |
-|------|------|--------|
-| Kadence | `kadence` | https://wordpress.org/themes/kadence/ |
-| Kadence Pro (plugin) | `kadence-pro` | https://www.kadencewp.com/kadence-theme/pro/ |
 
 ## Plugins by Category
 
 ### Minimal (Essential Starter Stack)
 
-| Slug | Name | Source |
-|------|------|--------|
-| `antispam-bee` | Antispam Bee | https://wordpress.org/plugins/antispam-bee/ |
-| `compressx` | CompressX | https://wordpress.org/plugins/compressx/ |
-| `fluent-smtp` | FluentSMTP | https://wordpress.org/plugins/fluent-smtp/ |
-| `kadence-blocks` | Kadence Blocks | https://wordpress.org/plugins/kadence-blocks/ |
-| `simple-cloudflare-turnstile` | Simple Cloudflare Turnstile | https://wordpress.org/plugins/simple-cloudflare-turnstile/ |
+`antispam-bee` Antispam Bee | `compressx` CompressX | `fluent-smtp` FluentSMTP | `kadence-blocks` Kadence Blocks | `simple-cloudflare-turnstile` Simple Cloudflare Turnstile
 
 ### Admin
 
-| Slug | Name | Source |
-|------|------|--------|
-| `admin-bar-dashboard-control` | Admin Bar & Dashboard Control | https://wordpress.org/plugins/admin-bar-dashboard-control/ |
-| `admin-columns-pro` | Admin Columns Pro | https://www.admincolumns.com/ |
-| `admin-menu-editor-pro` | Admin Menu Editor Pro | https://adminmenueditor.com/upgrade-to-pro/ |
-| `wp-toolbar-editor` | AME Toolbar Editor | https://adminmenueditor.com/ |
-| `hide-admin-notices` | Hide Admin Notices | https://wordpress.org/plugins/hide-admin-notices/ |
-| `magic-login` | Magic Login | https://wordpress.org/plugins/magic-login/ |
-| `mainwp-child` | MainWP Child | https://wordpress.org/plugins/mainwp-child/ |
-| `mainwp-child-reports` | MainWP Child Reports | https://wordpress.org/plugins/mainwp-child-reports/ |
-| `manage-notification-emails` | Manage Notification E-mails | https://wordpress.org/plugins/manage-notification-emails/ |
-| `network-plugin-auditor` | Network Plugin Auditor | https://wordpress.org/plugins/network-plugin-auditor/ |
-| `plugin-groups` | Plugin Groups | https://wordpress.org/plugins/plugin-groups/ |
-| `plugin-toggle` | Plugin Toggle | https://wordpress.org/plugins/plugin-toggle/ |
-| `user-switching` | User Switching | https://wordpress.org/plugins/user-switching/ |
+`admin-bar-dashboard-control` Admin Bar & Dashboard Control | `admin-columns-pro`\* Admin Columns Pro | `admin-menu-editor-pro`\* Admin Menu Editor Pro | `wp-toolbar-editor`\* AME Toolbar Editor | `hide-admin-notices` Hide Admin Notices | `magic-login` Magic Login | `mainwp-child` MainWP Child | `mainwp-child-reports` MainWP Child Reports | `manage-notification-emails` Manage Notification E-mails | `network-plugin-auditor` Network Plugin Auditor | `plugin-groups` Plugin Groups | `plugin-toggle` Plugin Toggle | `user-switching` User Switching
 
 ### AI
 
-| Slug | Name | Source |
-|------|------|--------|
-| `ai-engine` | AI Engine | https://wordpress.org/plugins/ai-engine/ |
-| `ai-engine-pro` | AI Engine (Pro) | https://meowapps.com/plugin/ai-engine/ |
+`ai-engine` AI Engine | `ai-engine-pro`\* AI Engine Pro
 
 ### CMS (Content Management)
 
-| Slug | Name | Source |
-|------|------|--------|
-| `auto-post-scheduler` | Auto Post Scheduler | https://wordpress.org/plugins/auto-post-scheduler/ |
-| `auto-upload-images` | Auto Upload Images | https://wordpress.org/plugins/auto-upload-images/ |
-| `block-options` | EditorsKit | https://wordpress.org/plugins/block-options/ |
-| `bookmark-card` | Bookmark Card | https://wordpress.org/plugins/bookmark-card/ |
-| `browser-shots` | Browser Shots | https://wordpress.org/plugins/browser-shots/ |
-| `bulk-actions-select-all` | Bulk Actions Select All | https://wordpress.org/plugins/bulk-actions-select-all/ |
-| `carbon-copy` | Carbon Copy | https://wordpress.org/plugins/carbon-copy/ |
-| `code-block-pro` | Code Block Pro | https://wordpress.org/plugins/code-block-pro/ |
-| `distributor` | Distributor | https://wordpress.org/plugins/distributor/ |
-| `iframe-block` | iFrame Block | https://wordpress.org/plugins/iframe-block/ |
-| `ics-calendar` | ICS Calendar | https://wordpress.org/plugins/ics-calendar/ |
-| `mammoth-docx-converter` | Mammoth .docx converter | https://wordpress.org/plugins/mammoth-docx-converter/ |
-| `nav-menu-roles` | Nav Menu Roles | https://wordpress.org/plugins/nav-menu-roles/ |
-| `ninja-tables` | Ninja Tables | https://wordpress.org/plugins/ninja-tables/ |
-| `ninja-tables-pro` | Ninja Tables Pro | https://wpmanageninja.com/ninja-tables/ |
-| `post-draft-preview` | Post Draft Preview | https://wordpress.org/plugins/post-draft-preview/ |
-| `post-type-switcher` | Post Type Switcher | https://wordpress.org/plugins/post-type-switcher/ |
-| `simple-custom-post-order` | Simple Custom Post Order | https://wordpress.org/plugins/simple-custom-post-order/ |
-| `simple-icons` | Popular Brand SVG Icons | https://wordpress.org/plugins/simple-icons/ |
-| `sticky-posts-switch` | Sticky Posts - Switch | https://wordpress.org/plugins/sticky-posts-switch/ |
-| `super-speedy-imports` | Super Speedy Imports | https://wordpress.org/plugins/super-speedy-imports/ |
-| `term-management-tools` | Term Management Tools | https://wordpress.org/plugins/term-management-tools/ |
-| `the-paste` | The Paste | https://wordpress.org/plugins/the-paste/ |
-| `wikipedia-preview` | Wikipedia Preview | https://wordpress.org/plugins/wikipedia-preview/ |
+`auto-post-scheduler` Auto Post Scheduler | `auto-upload-images` Auto Upload Images | `block-options` EditorsKit | `bookmark-card` Bookmark Card | `browser-shots` Browser Shots | `bulk-actions-select-all` Bulk Actions Select All | `carbon-copy` Carbon Copy | `code-block-pro` Code Block Pro | `distributor` Distributor | `iframe-block` iFrame Block | `ics-calendar` ICS Calendar | `mammoth-docx-converter` Mammoth .docx converter | `nav-menu-roles` Nav Menu Roles | `ninja-tables` Ninja Tables | `ninja-tables-pro`\* Ninja Tables Pro | `post-draft-preview` Post Draft Preview | `post-type-switcher` Post Type Switcher | `simple-custom-post-order` Simple Custom Post Order | `simple-icons` Popular Brand SVG Icons | `sticky-posts-switch` Sticky Posts - Switch | `super-speedy-imports` Super Speedy Imports | `term-management-tools` Term Management Tools | `the-paste` The Paste | `wikipedia-preview` Wikipedia Preview
 
 ### Compliance (Privacy & Legal)
 
-| Slug | Name | Source |
-|------|------|--------|
-| `avatar-privacy` | Avatar Privacy | https://wordpress.org/plugins/avatar-privacy/ |
-| `complianz-gdpr` | Complianz GDPR | https://wordpress.org/plugins/complianz-gdpr/ |
-| `complianz-gdpr-premium` | Complianz Privacy Suite Premium | https://complianz.io/ |
-| `complianz-terms-conditions` | Complianz Terms & Conditions | https://wordpress.org/plugins/complianz-terms-conditions/ |
-| `really-simple-ssl` | Really Simple SSL | https://wordpress.org/plugins/really-simple-ssl/ |
-| `really-simple-ssl-pro` | Really Simple Security Pro | https://really-simple-ssl.com/pro/ |
+`avatar-privacy` Avatar Privacy | `complianz-gdpr` Complianz GDPR | `complianz-gdpr-premium`\* Complianz Privacy Suite Premium | `complianz-terms-conditions` Complianz Terms & Conditions | `really-simple-ssl` Really Simple SSL | `really-simple-ssl-pro`\* Really Simple Security Pro
 
 ### CRM & Forms (Fluent Ecosystem)
 
-| Slug | Name | Source |
-|------|------|--------|
-| `fluent-boards` | Fluent Boards | https://wordpress.org/plugins/fluent-boards/ |
-| `fluent-boards-pro` | Fluent Boards Pro | https://fluentboards.com/ |
-| `fluent-booking` | FluentBooking | https://wordpress.org/plugins/fluent-booking/ |
-| `fluent-booking-pro` | FluentBooking Pro | https://fluentbooking.com/ |
-| `fluent-community` | FluentCommunity | https://wordpress.org/plugins/fluent-community/ |
-| `fluent-community-pro` | FluentCommunity Pro | https://fluentcommunity.co/ |
-| `fluent-crm` | FluentCRM | https://wordpress.org/plugins/fluent-crm/ |
-| `fluentcampaign-pro` | FluentCRM Pro | https://fluentcrm.com/ |
-| `fluent-roadmap` | Fluent Roadmap | https://wordpress.org/plugins/fluent-roadmap/ |
-| `fluent-support` | Fluent Support | https://wordpress.org/plugins/fluent-support/ |
-| `fluent-support-pro` | Fluent Support Pro | https://fluentsupport.com/ |
-| `fluentform` | Fluent Forms | https://wordpress.org/plugins/fluentform/ |
-| `fluentformpro` | Fluent Forms Pro | https://fluentforms.com/ |
-| `fluentforms-pdf` | Fluent Forms PDF Generator | https://wordpress.org/plugins/fluentforms-pdf/ |
-| `fluentform-signature` | Fluent Forms Signature Addon | https://fluentforms.com/ |
+`fluent-boards` Fluent Boards | `fluent-boards-pro`\* Fluent Boards Pro | `fluent-booking` FluentBooking | `fluent-booking-pro`\* FluentBooking Pro | `fluent-community` FluentCommunity | `fluent-community-pro`\* FluentCommunity Pro | `fluent-crm` FluentCRM | `fluentcampaign-pro`\* FluentCRM Pro | `fluent-roadmap` Fluent Roadmap | `fluent-support` Fluent Support | `fluent-support-pro`\* Fluent Support Pro | `fluentform` Fluent Forms | `fluentformpro`\* Fluent Forms Pro | `fluentforms-pdf` Fluent Forms PDF Generator | `fluentform-signature`\* Fluent Forms Signature Addon
 
 ### eCommerce (WooCommerce)
 
-| Slug | Name | Source |
-|------|------|--------|
-| `woocommerce` | WooCommerce | https://wordpress.org/plugins/woocommerce/ |
-| `kadence-woocommerce-email-designer` | Kadence WooCommerce Email Designer | https://wordpress.org/plugins/kadence-woocommerce-email-designer/ |
-| `kadence-woo-extras` | Kadence Shop Kit | https://www.kadencewp.com/ |
-| `pymntpl-paypal-woocommerce` | Payment Plugins for PayPal | https://wordpress.org/plugins/pymntpl-paypal-woocommerce/ |
-| `woo-stripe-payment` | Payment Plugins for Stripe | https://wordpress.org/plugins/woo-stripe-payment/ |
+`woocommerce` WooCommerce | `kadence-woocommerce-email-designer` Kadence WooCommerce Email Designer | `kadence-woo-extras`\* Kadence Shop Kit | `pymntpl-paypal-woocommerce` Payment Plugins for PayPal | `woo-stripe-payment` Payment Plugins for Stripe
 
 ### Kadence Ecosystem
 
-| Slug | Name | Source |
-|------|------|--------|
-| `kadence-blocks-pro` | Kadence Blocks PRO | https://www.kadencewp.com/kadence-blocks/pro/ |
-| `kadence-build-child-defaults` | Kadence Child Theme Builder | https://www.kadencewp.com/ |
-| `kadence-cloud` | Kadence Pattern Hub | https://www.kadencewp.com/ |
-| `kadence-conversions` | Kadence Conversions | https://www.kadencewp.com/ |
-| `kadence-simple-share` | Kadence Simple Share | https://wordpress.org/plugins/kadence-simple-share/ |
-| `kadence-starter-templates` | Starter Templates by Kadence WP | https://wordpress.org/plugins/kadence-starter-templates/ |
+Also listed elsewhere: `kadence`+`kadence-pro` (Theme), `kadence-blocks` (Minimal), `kadence-woo-extras`+`kadence-woocommerce-email-designer` (eCommerce).
 
-*Also see: `kadence` (Theme), `kadence-pro` (Theme), `kadence-blocks` (Minimal), `kadence-woo-extras` + `kadence-woocommerce-email-designer` (eCommerce).*
+`kadence-blocks-pro`\* Kadence Blocks PRO | `kadence-build-child-defaults`\* Kadence Child Theme Builder | `kadence-cloud`\* Kadence Pattern Hub | `kadence-conversions`\* Kadence Conversions | `kadence-simple-share` Kadence Simple Share | `kadence-starter-templates` Starter Templates by Kadence WP
 
 ### LMS (Learning Management)
 
-| Slug | Name | Source |
-|------|------|--------|
-| `tutor` | Tutor LMS | https://wordpress.org/plugins/tutor/ |
-| `tutor-pro` | Tutor LMS Pro | https://www.themeum.com/product/tutor-lms/ |
-| `tutor-lms-certificate-builder` | Tutor LMS Certificate Builder | https://www.themeum.com/product/tutor-lms-certificate-builder/ |
+`tutor` Tutor LMS | `tutor-pro`\* Tutor LMS Pro | `tutor-lms-certificate-builder`\* Tutor LMS Certificate Builder
 
 ### Media
 
-| Slug | Name | Source |
-|------|------|--------|
-| `easy-watermark` | Easy Watermark | https://wordpress.org/plugins/easy-watermark/ |
-| `enable-media-replace` | Enable Media Replace | https://wordpress.org/plugins/enable-media-replace/ |
-| `image-copytrack` | Image Copytrack | https://wordpress.org/plugins/image-copytrack/ |
-| `imsanity` | Imsanity | https://wordpress.org/plugins/imsanity/ |
-| `media-file-renamer` | Media File Renamer | https://wordpress.org/plugins/media-file-renamer/ |
-| `media-file-renamer-pro` | Media File Renamer Pro | https://meowapps.com/plugin/media-file-renamer/ |
-| `safe-svg` | Safe SVG | https://wordpress.org/plugins/safe-svg/ |
+`easy-watermark` Easy Watermark | `enable-media-replace` Enable Media Replace | `image-copytrack` Image Copytrack | `imsanity` Imsanity | `media-file-renamer` Media File Renamer | `media-file-renamer-pro`\* Media File Renamer Pro | `safe-svg` Safe SVG
 
 ### SEO
 
-| Slug | Name | Source |
-|------|------|--------|
-| `burst-statistics` | Burst Statistics | https://wordpress.org/plugins/burst-statistics/ |
-| `hreflang-manager` | Hreflang Manager | https://wordpress.org/plugins/hreflang-manager/ |
-| `link-insight` | Link Whisper | https://linkwhisper.com/ |
-| `official-facebook-pixel` | Meta Pixel for WordPress | https://wordpress.org/plugins/official-facebook-pixel/ |
-| `post-to-google-my-business` | Post to Google My Business | https://wordpress.org/plugins/post-to-google-my-business/ |
-| `pretty-link` | PrettyLinks | https://wordpress.org/plugins/pretty-link/ |
-| `seo-by-rank-math` | Rank Math SEO | https://wordpress.org/plugins/seo-by-rank-math/ |
-| `rank-optimizer-pro` | Rank Math SEO PRO | https://rankmath.com/ |
-| `readabler` | Readabler | https://wordpress.org/plugins/readabler/ |
-| `remove-cpt-base` | Remove CPT base | https://wordpress.org/plugins/remove-cpt-base/ |
-| `remove-old-slugspermalinks` | Slugs Manager | https://wordpress.org/plugins/remove-old-slugspermalinks/ |
-| `syndication-links` | Syndication Links | https://wordpress.org/plugins/syndication-links/ |
-| `ultimate-410` | Ultimate 410 | https://wordpress.org/plugins/ultimate-410/ |
-| `webmention` | Webmention | https://wordpress.org/plugins/webmention/ |
+`burst-statistics` Burst Statistics | `hreflang-manager` Hreflang Manager | `link-insight`\* Link Whisper | `official-facebook-pixel` Meta Pixel for WordPress | `post-to-google-my-business` Post to Google My Business | `pretty-link` PrettyLinks | `seo-by-rank-math` Rank Math SEO | `rank-optimizer-pro`\* Rank Math SEO PRO | `readabler` Readabler | `remove-cpt-base` Remove CPT base | `remove-old-slugspermalinks` Slugs Manager | `syndication-links` Syndication Links | `ultimate-410` Ultimate 410 | `webmention` Webmention
 
 ### Speed & Performance
 
-*Also see: `compressx` (Minimal), `hreflang-manager` + `performant-translations` (translation support).*
+Also see: `compressx` (Minimal), `hreflang-manager`+`performant-translations` (translation support).
 
-| Slug | Name | Source |
-|------|------|--------|
-| `disable-wordpress-updates` | Disable All WordPress Updates | https://wordpress.org/plugins/disable-wordpress-updates/ |
-| `disable-dashboard-for-woocommerce-pro` | Disable Bloat PRO | https://disablebloat.com/ |
-| `flying-analytics` | Flying Analytics | https://wordpress.org/plugins/flying-analytics/ |
-| `flying-pages` | Flying Pages | https://wordpress.org/plugins/flying-pages/ |
-| `flying-scripts` | Flying Scripts | https://wordpress.org/plugins/flying-scripts/ |
-| `freesoul-deactivate-plugins` | Freesoul Deactivate Plugins | https://wordpress.org/plugins/freesoul-deactivate-plugins/ |
-| `freesoul-deactivate-plugins-pro` | Freesoul Deactivate Plugins PRO | https://freesoul-deactivate-plugins.com/ |
-| `growthboost` | Scalability Pro | https://scalability.pro/ |
-| `http-requests-manager` | HTTP Requests Manager | https://wordpress.org/plugins/http-requests-manager/ |
-| `index-wp-mysql-for-speed` | Index WP MySQL For Speed | https://wordpress.org/plugins/index-wp-mysql-for-speed/ |
-| `litespeed-cache` | LiteSpeed Cache | https://wordpress.org/plugins/litespeed-cache/ |
-| `performant-translations` | Performant Translations | https://wordpress.org/plugins/performant-translations/ |
-| `wp-widget-disable` | Widget Disable | https://wordpress.org/plugins/wp-widget-disable/ |
+`disable-wordpress-updates` Disable All WordPress Updates | `disable-dashboard-for-woocommerce-pro`\* Disable Bloat PRO | `flying-analytics` Flying Analytics | `flying-pages` Flying Pages | `flying-scripts` Flying Scripts | `freesoul-deactivate-plugins` Freesoul Deactivate Plugins | `freesoul-deactivate-plugins-pro`\* Freesoul Deactivate Plugins PRO | `growthboost`\* Scalability Pro | `http-requests-manager` HTTP Requests Manager | `index-wp-mysql-for-speed` Index WP MySQL For Speed | `litespeed-cache` LiteSpeed Cache | `performant-translations` Performant Translations | `wp-widget-disable` Widget Disable
 
 ### Advanced (Developer Tools)
 
-| Slug | Name | Source |
-|------|------|--------|
-| `acf-better-search` | ACF: Better Search | https://wordpress.org/plugins/acf-better-search/ |
-| `secure-custom-fields` | Secure Custom Fields | https://wordpress.org/plugins/secure-custom-fields/ |
-| `code-snippets` | Code Snippets | https://wordpress.org/plugins/code-snippets/ |
-| `code-snippets-pro` | Code Snippets Pro | https://codesnippets.pro/ |
-| `git-updater` | Git Updater | https://wordpress.org/plugins/git-updater/ |
-| `indieweb` | IndieWeb | https://wordpress.org/plugins/indieweb/ |
-| `waspthemes-yellow-pencil` | YellowPencil Pro | https://yellowpencil.waspthemes.com/ |
+`acf-better-search` ACF: Better Search | `secure-custom-fields` Secure Custom Fields | `code-snippets` Code Snippets | `code-snippets-pro`\* Code Snippets Pro | `git-updater` Git Updater | `indieweb` IndieWeb | `waspthemes-yellow-pencil`\* YellowPencil Pro
 
 ### Debug & Troubleshooting
 
-*Also see: `user-switching` (Admin), `gotmls` (Security).*
+Also see: `user-switching` (Admin), `gotmls` (Security).
 
-| Slug | Name | Source |
-|------|------|--------|
-| `advanced-database-cleaner` | Advanced Database Cleaner | https://wordpress.org/plugins/advanced-database-cleaner/ |
-| `advanced-database-cleaner-pro` | Advanced Database Cleaner PRO | https://sigmaplugin.com/downloads/wordpress-advanced-database-cleaner |
-| `code-profiler-pro` | Code Profiler Pro | https://codeprofiler.io/ |
-| `debug-log-manager` | Debug Log Manager | https://wordpress.org/plugins/debug-log-manager/ |
-| `query-monitor` | Query Monitor | https://wordpress.org/plugins/query-monitor/ |
-| `string-locator` | String Locator | https://wordpress.org/plugins/string-locator/ |
-| `wp-crontrol` | WP Crontrol | https://wordpress.org/plugins/wp-crontrol/ |
+`advanced-database-cleaner` Advanced Database Cleaner | `advanced-database-cleaner-pro`\* Advanced Database Cleaner PRO | `code-profiler-pro`\* Code Profiler Pro | `debug-log-manager` Debug Log Manager | `query-monitor` Query Monitor | `string-locator` String Locator | `wp-crontrol` WP Crontrol
 
 ### Security
 
-*Also see: `antispam-bee` (Minimal), `simple-cloudflare-turnstile` (Minimal), `really-simple-ssl`/`-pro` (Compliance).*
+Also see: `antispam-bee`+`simple-cloudflare-turnstile` (Minimal), `really-simple-ssl`/`-pro` (Compliance).
 
-| Slug | Name | Source |
-|------|------|--------|
-| `comment_goblin` | Comment Goblin | https://commentgoblin.com/ |
-| `gotmls` | Anti-Malware Security | https://wordpress.org/plugins/gotmls/ |
+`comment_goblin`\* Comment Goblin | `gotmls` Anti-Malware Security
 
 ### Setup & Import
 
-| Slug | Name | Source |
-|------|------|--------|
-| `wordpress-importer` | WordPress Importer | https://wordpress.org/plugins/wordpress-importer/ |
+`wordpress-importer` WordPress Importer
 
 ### Social
 
-| Slug | Name | Source |
-|------|------|--------|
-| `social-engine` | Social Engine | https://wordpress.org/plugins/social-engine/ |
-| `social-engine-pro` | Social Engine Pro | https://meowapps.com/plugin/social-engine/ |
-| `wp-social-ninja` | WP Social Ninja | https://wordpress.org/plugins/wp-social-ninja/ |
-| `wp-social-ninja-pro` | WP Social Ninja Pro | https://wpsocialninja.com/ |
-| `wp-social-reviews` | WP Social Reviews | https://wordpress.org/plugins/wp-social-reviews/ |
+`social-engine` Social Engine | `social-engine-pro`\* Social Engine Pro | `wp-social-ninja` WP Social Ninja | `wp-social-ninja-pro`\* WP Social Ninja Pro | `wp-social-reviews` WP Social Reviews
 
 ### Migration & Backup
 
-| Slug | Name | Source |
-|------|------|--------|
-| `wp-migrate-db-pro` | WP Migrate | https://deliciousbrains.com/wp-migrate-db-pro/ |
-| `wp-migrate-db-pro-compatibility` | WP Migrate Compatibility | https://deliciousbrains.com/wp-migrate-db-pro/ |
+`wp-migrate-db-pro`\* WP Migrate | `wp-migrate-db-pro-compatibility`\* WP Migrate Compatibility
 
 ### Multisite
 
-*Also see: `network-plugin-auditor` (Admin).*
+Also see: `network-plugin-auditor` (Admin).
 
-| Slug | Name | Source |
-|------|------|--------|
-| `ultimate-multisite` | Ultimate Multisite | https://wordpress.org/plugins/ultimate-multisite/ |
+`ultimate-multisite` Ultimate Multisite
 
 ### Hosting-Specific
 
-*Closte.com only: `closte-requirements`, `eos-deactivate-plugins` (Closte variant of Freesoul Deactivate Plugins).*
+Closte.com only: `closte-requirements`, `eos-deactivate-plugins` (Closte variant of Freesoul Deactivate Plugins).
+
+## Premium Plugin Sources
+
+Slugs marked \* above. Free plugins: `https://wordpress.org/plugins/{slug}/`.
+
+| Slug | Vendor URL |
+|------|-----------|
+| `kadence-pro` | <https://www.kadencewp.com/kadence-theme/pro/> |
+| `admin-columns-pro` | <https://www.admincolumns.com/> |
+| `admin-menu-editor-pro` | <https://adminmenueditor.com/upgrade-to-pro/> |
+| `wp-toolbar-editor` | <https://adminmenueditor.com/> |
+| `ai-engine-pro` | <https://meowapps.com/plugin/ai-engine/> |
+| `ninja-tables-pro` | <https://wpmanageninja.com/ninja-tables/> |
+| `complianz-gdpr-premium` | <https://complianz.io/> |
+| `really-simple-ssl-pro` | <https://really-simple-ssl.com/pro/> |
+| `fluent-boards-pro` | <https://fluentboards.com/> |
+| `fluent-booking-pro` | <https://fluentbooking.com/> |
+| `fluent-community-pro` | <https://fluentcommunity.co/> |
+| `fluentcampaign-pro` | <https://fluentcrm.com/> |
+| `fluent-support-pro` | <https://fluentsupport.com/> |
+| `fluentformpro` | <https://fluentforms.com/> |
+| `fluentform-signature` | <https://fluentforms.com/> |
+| `kadence-woo-extras` | <https://www.kadencewp.com/> |
+| `kadence-blocks-pro` | <https://www.kadencewp.com/kadence-blocks/pro/> |
+| `kadence-build-child-defaults` | <https://www.kadencewp.com/> |
+| `kadence-cloud` | <https://www.kadencewp.com/> |
+| `kadence-conversions` | <https://www.kadencewp.com/> |
+| `tutor-pro` | <https://www.themeum.com/product/tutor-lms/> |
+| `tutor-lms-certificate-builder` | <https://www.themeum.com/product/tutor-lms-certificate-builder/> |
+| `media-file-renamer-pro` | <https://meowapps.com/plugin/media-file-renamer/> |
+| `link-insight` | <https://linkwhisper.com/> |
+| `rank-optimizer-pro` | <https://rankmath.com/> |
+| `disable-dashboard-for-woocommerce-pro` | <https://disablebloat.com/> |
+| `freesoul-deactivate-plugins-pro` | <https://freesoul-deactivate-plugins.com/> |
+| `growthboost` | <https://scalability.pro/> |
+| `code-snippets-pro` | <https://codesnippets.pro/> |
+| `waspthemes-yellow-pencil` | <https://yellowpencil.waspthemes.com/> |
+| `advanced-database-cleaner-pro` | <https://sigmaplugin.com/downloads/wordpress-advanced-database-cleaner> |
+| `code-profiler-pro` | <https://codeprofiler.io/> |
+| `comment_goblin` | <https://commentgoblin.com/> |
+| `social-engine-pro` | <https://meowapps.com/plugin/social-engine/> |
+| `wp-social-ninja-pro` | <https://wpsocialninja.com/> |
+| `wp-migrate-db-pro` | <https://deliciousbrains.com/wp-migrate-db-pro/> |
+| `wp-migrate-db-pro-compatibility` | <https://deliciousbrains.com/wp-migrate-db-pro/> |
 
 ## WP-CLI Install Stacks
 
