@@ -40,17 +40,7 @@ tools:
 bash .agents/scripts/stagehand-python-helper.sh setup
 ```
 
-## Python vs JavaScript
-
-| Feature | JavaScript | Python |
-|---------|------------|--------|
-| Type safety | TypeScript + Zod | Pydantic |
-| Async | Native Promises | async/await |
-| Data science | Limited | Rich ecosystem |
-| Web-first | Native | Good |
-| Package mgmt | npm/yarn | pip/uv |
-
-## Basic Usage
+## Usage
 
 ```python
 import asyncio
@@ -59,7 +49,6 @@ from pydantic import BaseModel, Field
 
 class PageData(BaseModel):
     title: str = Field(..., description="Page title")
-    summary: str = Field(..., description="Page summary")
 
 async def main():
     config = StagehandConfig(
@@ -74,7 +63,7 @@ async def main():
         page = stagehand.page
         await page.goto("https://example.com")
         await page.act("scroll down to see more content")
-        data = await page.extract("extract the page title and summary", schema=PageData)
+        data = await page.extract("extract the page title", schema=PageData)
         print(f"Title: {data.title}")
     finally:
         await stagehand.close()
@@ -88,8 +77,6 @@ asyncio.run(main())
 
 ```python
 await page.act("click the submit button")
-await page.act("fill in the email field with user@example.com")
-await page.act("select 'Premium' from the subscription dropdown")
 ```
 
 ### Extract
@@ -101,8 +88,6 @@ from typing import List
 class Product(BaseModel):
     name: str = Field(..., description="Product name")
     price: float = Field(..., description="Price in USD")
-    rating: float = Field(..., description="Star rating out of 5")
-    in_stock: bool = Field(..., description="Whether item is in stock")
 
 products = await page.extract("extract all product details", schema=List[Product])
 ```
@@ -112,7 +97,6 @@ products = await page.extract("extract all product details", schema=List[Product
 ```python
 actions = await page.observe()
 buttons = await page.observe("find all clickable buttons")
-forms = await page.observe("find all form fields")
 ```
 
 ### Agent (autonomous)
@@ -149,79 +133,13 @@ BROWSERBASE_API_KEY=your_browserbase_api_key_here
 BROWSERBASE_PROJECT_ID=your_browserbase_project_id_here
 ```
 
-Advanced config:
-
-```python
-config = StagehandConfig(
-    env="LOCAL", verbose=1, debug_dom=True, headless=False,
-    model_name="google/gemini-2.5-flash-preview-05-20",
-    model_api_key=os.getenv("GOOGLE_API_KEY"),
-    browser_options={"args": ["--disable-web-security"]}
-)
-```
-
-## Examples
-
-### E-commerce
-
-```python
-async def search_products(query: str) -> List[Product]:
-    config = StagehandConfig(env="LOCAL", headless=True)
-    stagehand = Stagehand(config)
-    try:
-        await stagehand.init()
-        page = stagehand.page
-        await page.goto("https://amazon.com")
-        await page.act(f'search for "{query}"')
-        return await page.extract("extract the first 5 products", schema=List[Product])
-    finally:
-        await stagehand.close()
-```
-
-### Data Collection with Error Handling
-
-```python
-from pydantic import BaseModel, Field, ValidationError
-from typing import Optional
-
-class Article(BaseModel):
-    headline: str = Field(..., description="Article headline")
-    summary: str = Field(..., description="Article summary")
-    author: Optional[str] = Field(None, description="Article author")
-
-async def scrape_news(url: str) -> List[Article]:
-    stagehand = Stagehand(StagehandConfig(env="LOCAL", headless=True, verbose=1))
-    try:
-        await stagehand.init()
-        page = stagehand.page
-        await page.goto(url)
-        try:
-            await page.act("accept cookies if there's a banner")
-        except Exception:
-            pass
-        return await page.extract("extract all news articles", schema=List[Article])
-    except ValidationError as e:
-        print(f"Validation error: {e}")
-        return []
-    finally:
-        await stagehand.close()
-```
-
 ## MCP Integration
 
 ```bash
 bash .agents/scripts/setup-mcp-integrations.sh stagehand-python
 ```
 
-```python
-agent = stagehand.agent(
-    provider="openai",
-    model="computer-use-preview",
-    integrations=[],  # MCP integrations added here
-    system_prompt="You have access to browser automation and external tools."
-)
-await agent.execute("Search for information and save it to the database")
-```
+Pass MCP integrations via the `integrations` array in `stagehand.agent()`.
 
 ## Use Cases
 
@@ -231,18 +149,6 @@ await agent.execute("Search for information and save it to the database")
 | Data collection | Web scraping, competitive analysis, content aggregation |
 | Testing & QA | User journey testing, form validation, accessibility reporting |
 | Business automation | Lead generation, CRM data entry, report generation |
-
-## Helper Commands
-
-```bash
-bash .agents/scripts/stagehand-python-helper.sh install    # Install
-bash .agents/scripts/stagehand-python-helper.sh setup      # Complete setup
-bash .agents/scripts/stagehand-python-helper.sh status     # Check installation
-bash .agents/scripts/stagehand-python-helper.sh activate   # Show activation command
-bash .agents/scripts/stagehand-python-helper.sh clean      # Clean cache/logs
-source ~/.aidevops/stagehand-python/.venv/bin/activate     # Activate venv
-python examples/basic_example.py                           # Run basic example
-```
 
 ## Resources
 
