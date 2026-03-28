@@ -143,7 +143,7 @@ ln -s ~/Git/wordpress/plugin-slug "~/Local Sites/test-site/app/public/wp-content
 
 ### Patching Pro/Closed Plugins
 
-Create a companion plugin (`{slug}-fix`) that survives updates. Guard with `class_exists`/`function_exists`. Use priority > 10. Document issue URL and affected versions. Version-gate: `version_compare(ORIGINAL_PLUGIN_VERSION, '2.4.0', '<')`.
+Create a companion `{slug}-fix` plugin that survives updates. Guard with `class_exists`/`function_exists`. Use priority > 10. Document issue URL and affected versions. Version-gate: `version_compare(ORIGINAL_PLUGIN_VERSION, '2.4.0', '<')`.
 
 ```php
 <?php
@@ -174,7 +174,7 @@ Logs: `~/Local Sites/site-name/app/public/wp-content/debug.log` (LocalWP) | `wp-
 
 **Query Monitor**: `wp plugin install query-monitor --activate` — shows DB queries, PHP errors, HTTP requests, hooks, template hierarchy, memory.
 
-**OpenCode PHP LSP (Intelephense)**: If WordPress symbols are unresolved (`add_action`, `WP_Query`), configure `~/.config/opencode/config.json` with `lsp.intelephense` using local binary path, `extensions: ["php"]`, and `intelephense.stubs` including `"wordpress"`. If diagnostics persist, clear/rebuild cache. Do not suggest Claude-specific commands (e.g., `/lsp-restart`) in OpenCode sessions.
+**OpenCode PHP LSP (Intelephense)**: Unresolved WordPress symbols (`add_action`, `WP_Query`) → configure `~/.config/opencode/config.json` with `lsp.intelephense` using local binary path, `extensions: ["php"]`, and `intelephense.stubs` including `"wordpress"`. Persistent diagnostics → clear/rebuild cache. Do not suggest Claude-specific commands (e.g., `/lsp-restart`) in OpenCode sessions.
 
 **Error Diagnosis**: Enable `WP_DEBUG` → check `debug.log` → Query Monitor → `@localwp` for DB → `wp hook list` → `wp profile` or Code Profiler Pro.
 
