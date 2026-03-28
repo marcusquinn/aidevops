@@ -106,19 +106,6 @@ test_claim_non_numeric_issue() {
 }
 
 #######################################
-# Test: release with missing args returns exit 1
-#######################################
-test_release_missing_args() {
-	run_helper "$CLAIM_HELPER" release
-	if [[ "$LAST_EXIT" -eq 1 ]]; then
-		print_result "release with no args returns exit 1" 0
-	else
-		print_result "release with no args returns exit 1" 1 "got exit $LAST_EXIT"
-	fi
-	return 0
-}
-
-#######################################
 # Test: check with missing args returns exit 2
 #######################################
 test_check_missing_args() {
@@ -159,19 +146,6 @@ test_dedup_claim_routing() {
 }
 
 #######################################
-# Test: dispatch-dedup-helper.sh release subcommand routes correctly
-#######################################
-test_dedup_release_routing() {
-	run_helper "$DEDUP_HELPER" release
-	if [[ "$LAST_EXIT" -eq 1 ]]; then
-		print_result "dedup release with no args returns exit 1" 0
-	else
-		print_result "dedup release with no args returns exit 1" 1 "got exit $LAST_EXIT"
-	fi
-	return 0
-}
-
-#######################################
 # Test: DISPATCH_CLAIM_WINDOW env var is respected
 #######################################
 test_env_var_defaults() {
@@ -204,11 +178,9 @@ main() {
 	test_help_exits_zero
 	test_claim_missing_args
 	test_claim_non_numeric_issue
-	test_release_missing_args
 	test_check_missing_args
 	test_unknown_command
 	test_dedup_claim_routing
-	test_dedup_release_routing
 	test_env_var_defaults
 
 	echo ""

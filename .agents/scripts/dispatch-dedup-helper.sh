@@ -41,9 +41,6 @@
 #     Cross-machine optimistic lock via GitHub comments (t1686).
 #     Exit 0 = claim won (safe to dispatch), exit 1 = lost, exit 2 = error (fail-open).
 #
-#   dispatch-dedup-helper.sh release <issue> <slug> [runner-login]
-#     Clean up claim comments after dispatch completes.
-#
 #   dispatch-dedup-helper.sh normalize <title>
 #     Return the normalized (lowercased, stripped) form of a title for comparison.
 
@@ -629,8 +626,6 @@ Usage:
                                                        Check if assigned to another login (exit 0=blocked, 1=free)
   dispatch-dedup-helper.sh claim <issue> <slug> [runner-login]
                                                      Cross-machine claim lock (exit 0=won, 1=lost, 2=error)
-  dispatch-dedup-helper.sh release <issue> <slug> [runner-login]
-                                                     Clean up claim comments after dispatch
   dispatch-dedup-helper.sh list-running-keys        List keys for all running workers
   dispatch-dedup-helper.sh normalize <title>        Normalize a title for comparison
   dispatch-dedup-helper.sh help                     Show this help
@@ -674,7 +669,7 @@ Examples:
   if dispatch-dedup-helper.sh claim 2300 owner/repo mylogin; then
     echo "Claim won — safe to dispatch"
     # ... dispatch worker ...
-    dispatch-dedup-helper.sh release 2300 owner/repo mylogin
+    # Claim comment persists as audit trail
   else
     echo "Claim lost or error — skip dispatch"
   fi
@@ -735,17 +730,6 @@ main() {
 			return 2
 		fi
 		"$CLAIM_HELPER" claim "$1" "$2" "${3:-}"
-		;;
-	release)
-		[[ $# -lt 2 ]] && {
-			echo "Error: release requires <issue-number> <repo-slug> [runner-login]" >&2
-			return 1
-		}
-		if [[ ! -x "$CLAIM_HELPER" ]]; then
-			echo "Warning: dispatch-claim-helper.sh not found — skipping release" >&2
-			return 0
-		fi
-		"$CLAIM_HELPER" release "$1" "$2" "${3:-}"
 		;;
 	list-running-keys)
 		list_running_keys
