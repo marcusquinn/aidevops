@@ -237,20 +237,7 @@ If unsure which command maps to the user's intent: `ls ~/.aidevops/agents/script
 
 ## Capabilities
 
-Full details: `reference/orchestration.md`, `reference/services.md`, `reference/session.md`.
-
-- **Model routing**: haiku→sonnet→opus (cost-aware). See `reference/orchestration.md`.
-- **Bundle presets**: project-type defaults for model tiers, quality gates, agent routing. See `bundles/`.
-- **Memory**: cross-session SQLite FTS5 (`/remember`, `/recall`). See `reference/services.md`.
-- **Orchestration**: supervisor dispatch, pulse scheduler, cross-repo visibility. See `reference/orchestration.md`.
-- **Contribution watch**: monitors external issues/PRs for reply. See `reference/services.md`.
-- **Upstream watch**: monitors inspiration repos for new releases. See `reference/services.md`.
-- **Skills**: `aidevops skills`, `/skills`. See `reference/services.md`.
-- **Auto-update**: GitHub poll + daily freshness checks. See `reference/services.md`.
-- **Browser**: Playwright, dev-browser (persistent login). See `reference/session.md`.
-- **Quality**: per-edit linting → `linters-local.sh` → `/pr review` → `/postflight`. See `prompts/build.txt`.
-- **Sessions**: `/session-review`, `/checkpoint`, compaction resilience. See `reference/session.md`.
-- **Auth recovery**: model broken or "Key Missing" → `tools/credentials/auth-troubleshooting.md`.
+Model routing, memory, orchestration, browser, skills, sessions, auth recovery: `reference/orchestration.md`, `reference/services.md`, `reference/session.md`.
 
 ## Security
 
