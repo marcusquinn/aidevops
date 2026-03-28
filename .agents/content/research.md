@@ -28,34 +28,27 @@ Pre-writing research to validate niches, understand audiences, and analyse compe
 
 <!-- AI-CONTEXT-END -->
 
-## Pre-flight Questions
+## Pre-flight
 
-Before generating audience or market research, work through:
-
-1. What are the first principles here — what is actually true vs commonly assumed?
-2. What is the root cause, not the symptom?
-3. What biases could be distorting this — confirmation, anchoring, availability, survivorship?
-4. What is the evidence — and how reliable is the source?
-5. Are there physics, psychology, or reliability constraints that limit what's possible?
-6. What would disprove this conclusion?
+Apply first-principles thinking, bias checks (confirmation, anchoring, availability, survivorship), and evidence evaluation per `prompts/build.txt` "Scientific reasoning" before generating research. Ask: what would disprove this conclusion?
 
 ## Workflow
 
 ### 1. Audience Research
 
-**Data sources** (in priority order):
+**Data sources** (priority order):
 
-1. **Reddit Deep Research** — 11-Dimension Framework (see below)
-2. **Google Search Console** (`seo/google-search-console.md`) — existing query data
-3. **Competitor audiences** — analyse who engages with competitor content
-4. **Creator Brain Clone** — bulk transcript ingestion (see below, references t201)
-5. **Cross-platform signals** — TikTok/X/IG/Reddit for format migration patterns
+1. **Reddit Deep Research** — 11-Dimension Framework (below)
+2. **Google Search Console** (`seo/google-search-console.md`)
+3. **Competitor audiences** — who engages with competitor content
+4. **Creator Brain Clone** — bulk transcript ingestion (below, references t201)
+5. **Cross-platform signals** — TikTok/X/IG/Reddit format migration patterns
 6. **Web search** — industry reports, surveys, forum threads
 7. **DataForSEO** (`seo/dataforseo.md`) — keyword volume and demographics
 
 #### 11-Dimension Reddit Research Framework
 
-Use Perplexity (or similar AI search) with this mega-prompt to extract deep insights from Reddit discussions.
+Use Perplexity (or similar AI search) with this mega-prompt:
 
 ```text
 Analyze Reddit discussions about [TOPIC/PRODUCT/NICHE] across all relevant subreddits. Provide a comprehensive report covering these 11 dimensions:
@@ -76,21 +69,21 @@ For each dimension, provide: direct quotes (exact user language), frequency indi
 Focus on EXACT user language — their words, not marketing speak.
 ```
 
-**Usage:** Replace `[TOPIC/PRODUCT/NICHE]`, run in Perplexity Pro, extract insights into audience profile template, store raw output in `context/reddit-research-[topic].md`.
+Replace `[TOPIC/PRODUCT/NICHE]`, run in Perplexity Pro, store raw output in `context/reddit-research-[topic].md`.
 
 #### 30-Minute Expert Method
 
-1. **Reddit Scraping** (10 min) — Identify 3-5 relevant subreddits. Search "best [topic]", "vs", "alternative to", "frustrated with", "how to". Collect top 20-30 threads.
-2. **NotebookLM Ingestion** (5 min) — Create project `[Niche] Research - [Date]`. Upload Reddit threads + competitor sites + existing research.
-3. **AI-Powered Analysis** (15 min) — Ask: top 10 pain points, failed solutions, user language, common objections, ideal customer profile. Generate briefing doc.
+1. **Reddit Scraping** (10 min) — 3-5 subreddits. Search "best [topic]", "vs", "alternative to", "frustrated with", "how to". Top 20-30 threads.
+2. **NotebookLM Ingestion** (5 min) — Project `[Niche] Research - [Date]`. Upload Reddit threads + competitor sites + existing research.
+3. **AI Analysis** (15 min) — Extract: top 10 pain points, failed solutions, user language, objections, ideal customer profile.
 
-**Output:** Pain points in exact user language, failed solutions, purchase triggers, objection patterns, ideal customer profile. Save to `context/expert-brief-[niche].md`.
+Save to `context/expert-brief-[niche].md`.
 
 #### Pain Point Extraction
 
-Extract pain points in the EXACT language your audience uses (critical for hooks, copy, and resonance).
+Extract pain points in EXACT audience language (critical for hooks, copy, resonance).
 
-**Sources:** Reddit ("frustrated with", "problem with", "why does", "hate that") → Forum complaints (Quora, Facebook groups) → Product reviews (Amazon, G2, Capterra 1-3 star) → YouTube comments → Social media rants.
+**Sources:** Reddit ("frustrated with", "problem with", "why does", "hate that") → Forums (Quora, Facebook groups) → Product reviews (Amazon, G2, Capterra 1-3 star) → YouTube comments → Social media.
 
 ```markdown
 ## Pain Point: [Short Label]
@@ -104,11 +97,11 @@ Extract pain points in the EXACT language your audience uses (critical for hooks
 **Purchase Trigger**: [What would make them buy NOW]
 ```
 
-After collecting 20-30 pain points: cluster by theme, rank by frequency + severity, identify language patterns, map to content opportunities. Store in `context/pain-points-[niche].md`.
+Collect 20-30 pain points → cluster by theme → rank by frequency + severity → identify language patterns → map to content opportunities. Store in `context/pain-points-[niche].md`.
 
 #### Creator Brain Clone Pattern
 
-Bulk ingest competitor channel transcripts to build a queryable competitive intelligence knowledge base (references t201).
+Bulk ingest competitor channel transcripts for queryable competitive intelligence (references t201).
 
 ```bash
 # Download transcripts
@@ -123,14 +116,14 @@ memory-helper.sh recall --namespace youtube-[niche] "video opening hooks"
 memory-helper.sh recall --namespace youtube-[niche] "audience problems"
 ```
 
-**What you learn:** Topic coverage, hook patterns, storytelling frameworks, pain points addressed, language patterns, content gaps. Store in memory namespace `youtube-[niche]` + `context/creator-intel-[niche].md`.
+**Extracts:** Topic coverage, hook patterns, storytelling frameworks, pain points, language patterns, content gaps. Store in namespace `youtube-[niche]` + `context/creator-intel-[niche].md`.
 
 #### Gemini 3 Video Reverse-Engineering
 
-Feed competitor videos to Gemini 3 to extract reproducible prompts for your own video generation.
+Feed competitor videos to Gemini 3 to extract reproducible prompts for video generation.
 
-1. Identify high-performing competitor videos (top by views, viral short-form, long-running ads)
-2. Upload to Gemini 3 with this prompt:
+1. Identify high-performing competitor videos (top views, viral short-form, long-running ads)
+2. Upload to Gemini 3:
 
 ```text
 Analyze this video and provide:
@@ -141,7 +134,7 @@ Analyze this video and provide:
 5. REPRODUCIBLE PROMPT — Generate a Sora 2 / Veo 3.1 prompt that would recreate this style
 ```
 
-3. Save working prompts to `context/video-styles/[style-name].md` (tagged by niche, format, production value, emotion).
+3. Save prompts to `context/video-styles/[style-name].md` (tagged by niche, format, production value, emotion).
 
 **Related:** `content/production-video.md`, `tools/video/video-prompt-design.md`.
 
@@ -156,15 +149,15 @@ Analyze this video and provide:
 | YouTube | Long-form depth, tutorial formats, retention patterns |
 | LinkedIn | B2B angles, professional pain points, case studies |
 
-Watch for content performing well on one platform that hasn't migrated to others. Track in a cross-platform matrix:
+Watch for content performing well on one platform that hasn't migrated to others.
 
 | Topic | Reddit | TikTok | X | IG | YouTube | LinkedIn | Blog |
 |-------|--------|--------|---|----|---------|---------| ------|
 | [topic] | ✓/○/✗ | ✓/○/✗ | ✓/○/✗ | ✓/○/✗ | ✓/○/✗ | ✓/○/✗ | ✓/○/✗ |
 
-`✓` = exists, `○` = opportunity, `✗` = poor fit. **Related:** `content/distribution-*.md` for platform-specific adaptation guides.
+`✓` = exists, `○` = opportunity, `✗` = poor fit. **Related:** `content/distribution-*.md`.
 
-**Audience profile template:**
+#### Audience Profile Template
 
 ```markdown
 ## Audience Profile: [Segment Name]
@@ -181,7 +174,9 @@ Watch for content performing well on one platform that hasn't migrated to others
 - **Exact language**: [Key phrases they use repeatedly]
 ```
 
-**Validation signals** (at least 2 required before proceeding):
+#### Validation Signals
+
+At least 2 required before proceeding:
 
 | Signal | Source | Threshold |
 |--------|--------|-----------|
@@ -193,19 +188,14 @@ Watch for content performing well on one platform that hasn't migrated to others
 
 ### 2. Niche Validation
 
-**Formula**: `Viability Score = (Demand × Buying Intent × (1 / Competition)) × Business Fit`
+**Formula**: `Viability Score = (Demand x Buying Intent x (1 / Competition)) x Business Fit`
 
-**Scoring each factor (1-5):**
+**Scoring (1-5):**
 
-**Demand** — Google Trends direction (↗/→/↘), Reddit activity (3+ active subreddits or 1 large 50K+), Whop marketplace (3+ active sellers = proven demand).
-
-**Buying Intent** — High signals: Reddit "best [product] to buy", comparison queries, active Whop sales, affiliate programs exist, ads running. Low signals: only informational queries, no paid products, theoretical discussions.
-
-**Competition (inverted — lower = higher score)** — SERP DA analysis: 5=DA<40, 4=DA 40-60, 3=DA 60-70, 2=DA 70-85, 1=DA 85+.
-
-**Business Fit** — Monetization alignment: affiliates (easiest), info products $5-$27, courses/coaching $100-$5K, SaaS $10-$100/mo, services $500+.
-
-**Niche Viability Scorecard:**
+- **Demand** — Google Trends direction, Reddit activity (3+ active subreddits or 1 large 50K+), Whop marketplace (3+ active sellers = proven demand).
+- **Buying Intent** — High: Reddit "best [product] to buy", comparison queries, active Whop sales, affiliate programs, ads running. Low: only informational queries, no paid products, theoretical discussions.
+- **Competition (inverted)** — SERP DA: 5=DA<40, 4=DA 40-60, 3=DA 60-70, 2=DA 70-85, 1=DA 85+.
+- **Business Fit** — Monetization: affiliates (easiest), info products $5-$27, courses/coaching $100-$5K, SaaS $10-$100/mo, services $500+.
 
 | Factor | Weight | Score (1-5) | Weighted | Notes |
 |--------|--------|-------------|----------|-------|
@@ -215,20 +205,20 @@ Watch for content performing well on one platform that hasn't migrated to others
 | Business Fit | 15% | | | Monetization alignment |
 | **TOTAL** | **100%** | | | **Weighted average** |
 
-**Decision thresholds:** 4.0+ = proceed with pillar + cluster strategy · 3.5-3.9 = start with 2-3 test pieces · 3.0-3.4 = only if Business Fit = 5 · 2.5-2.9 = deprioritise · <2.5 = skip.
+**Thresholds:** 4.0+ = pillar + cluster strategy | 3.5-3.9 = 2-3 test pieces | 3.0-3.4 = only if Business Fit = 5 | 2.5-2.9 = deprioritise | <2.5 = skip.
 
-**Q4 Seasonality Bonus:** Add +0.5 to Buying Intent score in Oct-Dec.
+**Q4 Seasonality Bonus:** +0.5 to Buying Intent in Oct-Dec.
 
 **Validation steps:**
 
-1. Pull primary keyword + 10-20 related terms with volume and difficulty (see `seo/keyword-research.md`)
-2. SERP analysis: assess top 10 results for DA, word count, content type, freshness, gaps
-3. Content quality audit: read top 3 results — what they cover well, what they miss, depth, freshness, format gaps
-4. Business alignment: map the funnel: Awareness ("what is [topic]") → Consideration ("best [topic] tools") → Decision ("[your product] for [topic]")
+1. Pull primary keyword + 10-20 related terms with volume and difficulty (`seo/keyword-research.md`)
+2. SERP analysis: top 10 results — DA, word count, content type, freshness, gaps
+3. Content quality audit: top 3 results — coverage, gaps, depth, freshness, format
+4. Funnel mapping: Awareness ("what is [topic]") -> Consideration ("best [topic] tools") -> Decision ("[your product] for [topic]")
 
 ### 3. Competitor Content Analysis
 
-**Competitor identification:** Search primary keyword (positions 1-10), check `context/competitor-analysis.md`, identify 3-5 direct competitors.
+Identify 3-5 direct competitors from primary keyword SERP (positions 1-10) and `context/competitor-analysis.md`.
 
 ```markdown
 ## Competitor: [Name] ([domain.com])
@@ -243,13 +233,13 @@ Watch for content performing well on one platform that hasn't migrated to others
 - **Content Gaps We Can Exploit**: [topics, angles, formats, audience segments they miss]
 ```
 
-**Competitor content matrix:**
+**Content matrix:**
 
 | Topic | Us | Competitor A | Competitor B | Competitor C | Gap? |
 |-------|-----|-------------|-------------|-------------|------|
 | [topic] | [status] | [status] | [status] | [status] | [Y/N] |
 
-Status: `none`, `thin` (<500 words), `basic` (500-1500), `comprehensive` (1500+), `pillar` (3000+)
+Status: `none`, `thin` (<500w), `basic` (500-1500), `comprehensive` (1500+), `pillar` (3000+)
 
 ### 4. Research Brief Output
 
@@ -289,7 +279,7 @@ Status: `none`, `thin` (<500 words), `basic` (500-1500), `comprehensive` (1500+)
 - [ ] Brief writer with this research for first article
 ```
 
-## Storing Research
+## Storage and Integration
 
 Save to the project's `context/` directory (see `content/context-templates.md`):
 
@@ -298,9 +288,7 @@ Save to the project's `context/` directory (see `content/context-templates.md`):
 - `context/target-keywords.md` — validated keyword targets
 - `context/niche-scorecards.md` — niche validation results
 
-These files are read automatically by `content/seo-writer.md` and `content/editor.md`.
-
-## Integration
+Read automatically by `content/seo-writer.md` and `content/editor.md`.
 
 - **Feeds into**: `content/seo-writer.md`, `content/content-calendar.md`, `content/context-templates.md`
 - **Uses data from**: `seo/dataforseo.md`, `seo/google-search-console.md`, `seo/keyword-research.md`
