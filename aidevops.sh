@@ -715,6 +715,32 @@ _update_check_tools() {
 	return 0
 }
 
+# Check for stale Homebrew-installed copy after git update (GH#11470)
+_update_check_homebrew() {
+	command -v brew &>/dev/null || return 0
+	brew list aidevops &>/dev/null 2>&1 || return 0
+	local brew_version=""
+	brew_version=$(brew info aidevops --json=v2 2>/dev/null | jq -r '.formulae[0].installed[0].version // empty' 2>/dev/null || true)
+	[[ -z "$brew_version" ]] && return 0
+	local current_version
+	current_version=$(get_version)
+	[[ -z "$current_version" ]] && return 0
+	if [[ "$brew_version" != "$current_version" ]]; then
+		echo ""
+		print_warning "Homebrew-installed copy is outdated ($brew_version vs $current_version)"
+		print_info "The Homebrew wrapper should prefer your git copy, but if your PATH"
+		print_info "resolves the Homebrew libexec copy directly, you'll run the old version."
+		echo ""
+		read -r -p "Run 'brew upgrade aidevops' now? [y/N] " response
+		if [[ "$response" =~ ^[Yy]$ ]]; then
+			brew upgrade aidevops 2>&1 || print_warning "brew upgrade failed — run manually: brew upgrade aidevops"
+		else
+			print_info "Run 'brew upgrade aidevops' to sync the Homebrew copy"
+		fi
+	fi
+	return 0
+}
+
 # Update/upgrade command
 cmd_update() {
 	local skip_project_sync=false
@@ -802,6 +828,7 @@ cmd_update() {
 	fi
 
 	_update_sync_projects "$skip_project_sync" "$(get_version)"
+	_update_check_homebrew
 	_update_check_planning
 	_update_check_tools
 	return 0
