@@ -21,7 +21,7 @@ tools:
 
 - **Purpose**: Discover, call, compose, and generate CLIs/typed clients for MCP servers
 - **Package**: `mcporter` (npm) | `steipete/tap/mcporter` (Homebrew)
-- **Repo**: [steipete/mcporter](https://github.com/steipete/mcporter) (MIT, 2k+ stars)
+- **Repo**: [steipete/mcporter](https://github.com/steipete/mcporter) (MIT, 2k+ stars) | **Site**: [mcporter.dev](https://mcporter.dev)
 - **Runtime**: Bun preferred (auto-detected), Node.js fallback
 
 **Install**:
@@ -52,7 +52,7 @@ brew tap steipete/tap && brew install mcporter          # Homebrew
 
 <!-- AI-CONTEXT-END -->
 
-## Discovery -- `mcporter list`
+## Discovery
 
 ```bash
 mcporter list                                    # all servers
@@ -64,9 +64,9 @@ mcporter list --json                             # machine-readable output
 mcporter list --verbose                          # show config source per server
 ```
 
-Single-server output renders TypeScript-style signatures. Required parameters always show; optional are hidden by default (add `--all-parameters` to reveal).
+Single-server output renders TypeScript-style signatures. Required parameters always show; optional hidden by default (`--all-parameters` to reveal).
 
-## Calling Tools -- `mcporter call`
+## Calling Tools
 
 ```bash
 # Flag style
@@ -79,18 +79,13 @@ mcporter call 'linear.create_comment(issueId: "ENG-123", body: "Looks good!")'
 mcporter linear.list_issues assignee=me
 ```
 
-**Useful flags:** `--config <path>` | `--root <path>` | `--tail-log` | `--output json|raw` | `--log-level debug|info|warn|error` | `--oauth-timeout <ms>`
+**Flags:** `--config <path>` | `--root <path>` | `--tail-log` | `--output json|raw` | `--log-level debug|info|warn|error` | `--oauth-timeout <ms>`
 
 **Auto-correction:** Fuzzy-matches tool names. Typo `listIssues` → auto-corrects to `list_issues`.
 
-**Timeouts** (default 30s):
+**Timeouts** (default 30s): `MCPORTER_LIST_TIMEOUT=120000 mcporter list vercel` | `MCPORTER_CALL_TIMEOUT=60000 mcporter call firecrawl.crawl url=...`
 
-```bash
-MCPORTER_LIST_TIMEOUT=120000 mcporter list vercel
-MCPORTER_CALL_TIMEOUT=60000 mcporter call firecrawl.crawl url=https://example.com
-```
-
-## CLI Generation -- `mcporter generate-cli`
+## CLI Generation
 
 ```bash
 mcporter generate-cli --command https://mcp.context7.com/mcp
@@ -99,7 +94,7 @@ mcporter generate-cli --command https://mcp.context7.com/mcp --compile   # nativ
 mcporter generate-cli linear --bundle dist/linear.js
 ```
 
-**Key flags:** `--name <name>` | `--bundle [path]` | `--compile [path]` | `--runtime bun|node` | `--include-tools a,b,c` | `--exclude-tools a,b,c` | `--minify` | `--from <artifact>`
+**Flags:** `--name <name>` | `--bundle [path]` | `--compile [path]` | `--runtime bun|node` | `--include-tools a,b,c` | `--exclude-tools a,b,c` | `--minify` | `--from <artifact>`
 
 Generated CLIs embed tool schemas (skip `listTools` round-trips). Regenerate from existing artifact:
 
@@ -108,7 +103,7 @@ mcporter inspect-cli dist/context7.js              # view embedded metadata
 mcporter generate-cli --from dist/context7.js      # regenerate with latest mcporter
 ```
 
-## Typed Client Emission -- `mcporter emit-ts`
+## Typed Client Emission
 
 ```bash
 mcporter emit-ts linear --out types/linear-tools.d.ts                    # types only
@@ -122,7 +117,7 @@ mcporter emit-ts linear --mode client --out clients/linear.ts            # full 
 
 **Flags:** `--mode types|client` | `--out <path>` | `--include-optional` | `--json`
 
-## OAuth Authentication -- `mcporter auth`
+## OAuth Authentication
 
 ```bash
 mcporter auth vercel                    # named server from config
@@ -130,7 +125,7 @@ mcporter auth https://mcp.example.com   # ad-hoc URL
 rm -rf ~/.mcporter/<server>/            # reset credentials
 ```
 
-Launches a temporary callback server on `127.0.0.1`, opens the authorization URL, exchanges the code, and persists tokens under `~/.mcporter/<server>/`.
+Launches a temporary callback server on `127.0.0.1`, completes OAuth flow, persists tokens under `~/.mcporter/<server>/`.
 
 ## Daemon Mode
 
@@ -187,16 +182,13 @@ mcporter config import cursor --copy
 
 ```typescript
 import { callOnce, createRuntime, createServerProxy } from "mcporter";
-
 // One-shot
 const result = await callOnce({ server: "firecrawl", toolName: "crawl", args: { url: "https://anthropic.com" } });
-
 // Pooled runtime
 const runtime = await createRuntime();
 const tools = await runtime.listTools("context7");
 const result = await runtime.callTool("context7", "resolve-library-id", { args: { libraryName: "react" } });
 await runtime.close();
-
 // Server proxy (camelCase API)
 const linear = createServerProxy(runtime, "linear");
 const docs = await linear.searchDocumentation({ query: "automations" });
@@ -232,9 +224,7 @@ MCPORTER_LIST_TIMEOUT=120000 mcporter list <server>             # slow startup
 
 ## Security
 
-**MCP servers are a distinct trust boundary.** Every MCP server runs as a persistent process with network access and full visibility into your AI assistant's conversation context.
-
-**Risks:**
+**MCP servers are a distinct trust boundary** — each runs as a persistent process with network access and full visibility into your AI assistant's conversation context.
 
 | Risk | Description |
 |------|-------------|
@@ -273,9 +263,5 @@ Detects: file read instructions (CRITICAL), credential exfiltration (CRITICAL), 
 
 ## References
 
-- **Repo**: [steipete/mcporter](https://github.com/steipete/mcporter) | **npm**: [mcporter](https://www.npmjs.com/package/mcporter) | **Site**: [mcporter.dev](https://mcporter.dev)
+- **Repo**: [steipete/mcporter](https://github.com/steipete/mcporter) | **npm**: [mcporter](https://www.npmjs.com/package/mcporter)
 - **MCP Spec**: [modelcontextprotocol/specification](https://github.com/modelcontextprotocol/specification)
-
-```bash
-mcporter call context7.resolve-library-id query="mcporter MCP toolkit" libraryName=mcporter
-```
