@@ -29,7 +29,7 @@ Full index in `subagent-index.toon`.
 
 ## Headless Dispatch
 
-ALWAYS use `headless-runtime-helper.sh run` for dispatching workers. This helper handles provider rotation, session persistence, backoff, and lifecycle reinforcement. NEVER use bare `opencode run` for dispatch — workers launched that way miss lifecycle reinforcement and stop after PR creation (GH#5096). NEVER use `claude`, `claude -p`, or any other CLI.
+ALWAYS use `headless-runtime-helper.sh run` for dispatching workers. This helper handles provider rotation, session persistence, backoff, and lifecycle reinforcement. NEVER use bare `claude run` for dispatch — workers launched that way miss lifecycle reinforcement and stop after PR creation (GH#5096). NEVER use `claude`, `claude -p`, or any other CLI.
 
 ### Dispatch Example
 
