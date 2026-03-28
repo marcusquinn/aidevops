@@ -177,13 +177,6 @@ Presentation ──calls──▶ Application ──uses──▶ Domain (interf
 Infrastructure ──────implements──────────────────────┘
 ```
 
-| From | To | Relationship |
-|------|----|-------------|
-| Presentation | Application | calls use case ports |
-| Application | Domain | uses entities, defines interfaces |
-| Infrastructure | Domain | implements repository/event interfaces |
-| Infrastructure | Application | implements unit-of-work, event publisher |
-
 ---
 
 ## Composition Root
@@ -201,8 +194,6 @@ Wire all dependencies at the application entry point (e.g. `infrastructure/confi
 ---
 
 ## Language-Agnostic Structure
-
-Dependency direction is the invariant: outer layers import inner layers, never the reverse.
 
 | Language | Root | Presentation alias |
 |----------|------|--------------------|
