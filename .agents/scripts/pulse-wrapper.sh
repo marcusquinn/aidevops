@@ -3444,6 +3444,11 @@ _complexity_scan_process_single_md_file() {
 This file was previously simplified (PR #${prev_pr}) but has since been modified. The content hash no longer matches the post-simplification state. Please re-evaluate."
 	fi
 
+	# Append signature footer
+	local sig_footer=""
+	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer 2>/dev/null || true)
+	issue_body="${issue_body}${sig_footer}"
+
 	local create_ok=false
 	if [[ "$is_regression" == true ]]; then
 		gh issue create --repo "$aidevops_slug" \
@@ -3601,6 +3606,11 @@ This is an automated scan. The function lengths are factual, but the best decomp
 **To approve or decline**, comment on this issue:
 - \`approved\` — removes the review gate and queues for automated dispatch
 - \`declined: <reason>\` — closes this issue (include your reason after the colon)"
+		# Append signature footer
+		local sig_footer2=""
+		sig_footer2=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer 2>/dev/null || true)
+		issue_body="${issue_body}${sig_footer2}"
+
 		local issue_key="$file_path"
 		if gh issue create --repo "$aidevops_slug" \
 			--title "simplification: reduce function complexity in ${issue_key} (${violation_count} functions >${COMPLEXITY_FUNC_LINE_THRESHOLD} lines)" \

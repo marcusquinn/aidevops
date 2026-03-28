@@ -342,6 +342,11 @@ log_framework_issue() {
 *Detected by framework-routing-helper in \`${source_repo}\`.*"
 	fi
 
+	# Append signature footer
+	local sig_footer=""
+	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer 2>/dev/null || true)
+	body="${body}${sig_footer}"
+
 	# Create the issue
 	local issue_url
 	if ! issue_url=$(gh issue create --repo "$slug" \

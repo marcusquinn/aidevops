@@ -268,10 +268,15 @@ _create_health_issue() {
 	gh label create "source:health-dashboard" --repo "$repo_slug" --color "C2E0C6" \
 		--description "Auto-created by stats-functions.sh health dashboard" --force 2>/dev/null || true
 
+	local health_body="Live ${runner_role} status for **${runner_user}**. Updated each pulse. Pin this issue for at-a-glance monitoring."
+	local sig_footer=""
+	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer 2>/dev/null || true)
+	health_body="${health_body}${sig_footer}"
+
 	local health_issue_number
 	health_issue_number=$(gh issue create --repo "$repo_slug" \
 		--title "${runner_prefix} starting..." \
-		--body "Live ${runner_role} status for **${runner_user}**. Updated each pulse. Pin this issue for at-a-glance monitoring." \
+		--body "$health_body" \
 		--label "$role_label" --label "$runner_user" --label "source:health-dashboard" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
 
 	if [[ -z "$health_issue_number" ]]; then
@@ -1483,9 +1488,14 @@ _ensure_quality_issue() {
 		gh label create "source:quality-sweep" --repo "$repo_slug" --color "C2E0C6" \
 			--description "Auto-created by stats-functions.sh quality sweep" --force 2>/dev/null || true
 
+		local qa_body="Persistent dashboard for automated code quality and simplification routines (ShellCheck, Qlty, SonarCloud, Codacy, CodeRabbit). The supervisor posts findings here and creates actionable issues from them. **Do not close this issue.**"
+		local qa_sig=""
+		qa_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer 2>/dev/null || true)
+		qa_body="${qa_body}${qa_sig}"
+
 		issue_number=$(gh issue create --repo "$repo_slug" \
 			--title "Code Audit Routines" \
-			--body "Persistent dashboard for automated code quality and simplification routines (ShellCheck, Qlty, SonarCloud, Codacy, CodeRabbit). The supervisor posts findings here and creates actionable issues from them. **Do not close this issue.**" \
+			--body "$qa_body" \
 			--label "quality-review" --label "persistent" --label "source:quality-sweep" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
 
 		if [[ -z "$issue_number" ]]; then
@@ -2475,6 +2485,11 @@ _create_simplification_issues() {
 		local issue_title="simplification: reduce ${smell_count} Qlty smells in ${file_basename}"
 		local issue_body
 		issue_body=$(_build_simplification_issue_body "$file_path" "$smell_count" "$rule_breakdown")
+
+		# Append signature footer
+		local qlty_sig=""
+		qlty_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer 2>/dev/null || true)
+		issue_body="${issue_body}${qlty_sig}"
 
 		if gh issue create --repo "$repo_slug" \
 			--title "$issue_title" \

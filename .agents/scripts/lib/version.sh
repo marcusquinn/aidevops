@@ -30,4 +30,40 @@ aidevops_find_version() {
 	else
 		echo "unknown"
 	fi
+	return 0
+}
+
+# aidevops_signature_footer - generate the signature footer for GitHub content
+#
+# Usage: body="${body}$(aidevops_signature_footer)"
+#        body="${body}$(aidevops_signature_footer --issue owner/repo#42)"
+#        body="${body}$(aidevops_signature_footer --issue owner/repo#42 --solved)"
+#
+# Passes all arguments through to gh-signature-helper.sh footer.
+# Auto-detects model from ANTHROPIC_MODEL / CLAUDE_MODEL env vars.
+# Returns empty string if the helper is not available (graceful degradation).
+aidevops_signature_footer() {
+	local helper_dir
+	helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd)"
+	local helper="${helper_dir}/gh-signature-helper.sh"
+
+	# Fallback to deployed location
+	if [[ ! -x "$helper" ]]; then
+		helper="${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh"
+	fi
+
+	if [[ ! -x "$helper" ]]; then
+		return 0
+	fi
+
+	# Auto-detect model from environment
+	local model_arg=""
+	local model="${ANTHROPIC_MODEL:-${CLAUDE_MODEL:-}}"
+	if [[ -n "$model" ]]; then
+		model_arg="--model ${model}"
+	fi
+
+	# shellcheck disable=SC2086
+	"$helper" footer $model_arg "$@" 2>/dev/null || true
+	return 0
 }
