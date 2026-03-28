@@ -23,38 +23,33 @@ const videoId = await generateVideo({
 // 2. Poll for completion (10-15+ min), then use in Remotion with OffthreadVideo
 ```
 
-## Choosing the Right Output Format
+## Output Format Selection
 
-| Your Composition | Recommended | Why |
-|------------------|-------------|-----|
-| Avatar as presenter with overlays | MP4 + background | Simpler, overlays go on top |
-| Loom-style (avatar over screen recording) | WebM + `closeUp`, mask in Remotion | Need transparency, apply circle mask in CSS |
-| Avatar overlaid ON other video/content | WebM (transparent) | Need to see through to content behind |
+| Composition Type | Format | Reason |
+|------------------|--------|--------|
+| Avatar as presenter with overlays | MP4 + background | Overlays go on top |
+| Loom-style (avatar over screen recording) | WebM + `closeUp`, CSS mask | Need transparency |
+| Avatar overlaid on other content | WebM (transparent) | See through to content behind |
 | Full-screen avatar | MP4 + background | Standard approach |
 
-**Use MP4 with background for most cases.** Use WebM when you need to see content *behind* the avatar.
+**Default to MP4 with background.** Use WebM only when content must show *behind* the avatar. WebM supports only `normal` and `closeUp` styles — use CSS `border-radius: 50%` for circular framing.
 
-**Note:** WebM only supports `normal` and `closeUp` styles. For circular framing, use CSS `border-radius: 50%` in Remotion.
+## Parallel Development
 
-## Parallel Development Workflow
+HeyGen generation takes **10-15+ min**. Work in parallel:
 
-HeyGen video generation takes **10-15+ minutes**. Don't wait — work in parallel:
+1. Start generation — save `video_id`, exit immediately
+2. Build Remotion composition with placeholder or `preview_video_url` (short loop)
+3. Check status periodically
+4. Swap placeholder for real URL once ready
 
-1. **Start HeyGen generation** — save `video_id` to a file, exit immediately
-2. **Build Remotion composition** — use a placeholder or the avatar's `preview_video_url` (a short loop)
-3. **Check HeyGen status** periodically or when done building
-4. **Swap placeholder** for real video URL once ready
-
-**Estimate duration from script**: ~150 words/minute → `wordCount / 150 * 60 * fps` frames.
-
-**Composition tip**: Design components to work with or without the avatar video so motion graphics can be tested independently.
+**Duration estimate**: ~150 words/minute → `wordCount / 150 * 60 * fps` frames. Design components to work with or without the avatar video for independent testing.
 
 ## Dimension Alignment
 
-**Critical**: Match HeyGen output dimensions to your Remotion composition.
+Match HeyGen output dimensions to Remotion composition — use shared constants:
 
 ```typescript
-// Shared dimension constants — use in both HeyGen and Remotion
 const DIMENSIONS = {
   landscape_1080p: { width: 1920, height: 1080 },
   landscape_720p:  { width: 1280, height: 720 },
@@ -68,7 +63,7 @@ type DimensionPreset = keyof typeof DIMENSIONS;
 
 ## Generating Avatar Video
 
-### Standard: MP4 with Background
+### MP4 with Background (Standard)
 
 ```typescript
 async function generateAvatarForRemotion(
@@ -101,8 +96,6 @@ async function generateAvatarForRemotion(
 
 ### Transparent Background (WebM)
 
-Only use when you need to see content *behind* the avatar:
-
 ```typescript
 // Different endpoint and structure from /v2/video/generate
 const response = await fetch("https://api.heygen.com/v1/video.webm", {
@@ -123,13 +116,11 @@ const response = await fetch("https://api.heygen.com/v1/video.webm", {
 
 ## Using HeyGen Video in Remotion
 
-### Always Use OffthreadVideo
-
-**Always use `OffthreadVideo` instead of `Video`** for HeyGen avatar videos. The basic `Video` component uses the browser's video decoder which isn't frame-accurate, causing jitter during rendering. `OffthreadVideo` extracts frames via FFmpeg for smooth, accurate playback. It's included in core `remotion` — no additional install needed.
+**Always use `OffthreadVideo`** — the basic `Video` component uses the browser's video decoder (not frame-accurate, causes jitter). `OffthreadVideo` extracts frames via FFmpeg. Included in core `remotion`.
 
 ### Composition Patterns
 
-**Basic usage:**
+**Basic:**
 
 ```tsx
 import { OffthreadVideo } from "remotion";
@@ -148,17 +139,14 @@ import { OffthreadVideo, AbsoluteFill, Sequence } from "remotion";
 
 export const AvatarWithMotionGraphics: React.FC<{ avatarWebmUrl: string }> = ({ avatarWebmUrl }) => (
   <AbsoluteFill>
-    {/* Layer 1: Background/content */}
     <AbsoluteFill style={{ backgroundColor: "#1a1a2e" }}>
       <YourMotionGraphics />
     </AbsoluteFill>
-    {/* Layer 2: Avatar with transparent background */}
     <OffthreadVideo
       src={avatarWebmUrl}
       transparent
       style={{ position: "absolute", bottom: 0, right: 0, width: "50%", height: "auto" }}
     />
-    {/* Layer 3: Overlays on top */}
     <Sequence from={30}><AnimatedTitle text="Welcome!" /></Sequence>
   </AbsoluteFill>
 );
@@ -186,9 +174,9 @@ export const LoomStyleComposition: React.FC<{
 );
 ```
 
-**Note:** WebM doesn't support `circle` style — use `normal` or `closeUp` and apply circular masking via CSS.
+WebM doesn't support `circle` style — use `normal`/`closeUp` with CSS circular masking.
 
-### Dynamic Duration with calculateMetadata
+### Dynamic Duration
 
 ```tsx
 import { CalculateMetadataFunction } from "remotion";
@@ -236,11 +224,9 @@ async function generateAvatarVideoForRemotion(script: string, outputPath: string
 }
 ```
 
-## Best Practices
+## Frame Rate Matching
 
-### Frame Rate Matching
-
-HeyGen default is 25 fps. Consider this when setting Remotion fps:
+HeyGen default is 25 fps. Options:
 
 ```typescript
 // Option 1: Match HeyGen's 25 fps
@@ -250,11 +236,9 @@ fps: 25
 <OffthreadVideo src={avatarVideoUrl} playbackRate={25/30} />
 ```
 
-### URL vs Download
+## URL vs Download
 
-**Use URL directly** for development (Remotion Studio preview, fast iteration).
-
-**Download first** for production (URLs expire after ~24h, repeated renders, offline rendering):
+Use URL directly for development (fast iteration). Download for production (URLs expire ~24h):
 
 ```typescript
 async function downloadVideoWithRetry(url: string, outputPath: string, maxRetries = 5): Promise<string> {
@@ -275,7 +259,7 @@ async function downloadVideoWithRetry(url: string, outputPath: string, maxRetrie
 const videoSrc = fs.existsSync(localPath) ? staticFile("avatar.mp4") : avatarVideoUrl;
 ```
 
-### Avatar Positioning
+## Avatar Positioning
 
 ```typescript
 const AVATAR_POSITIONS = {
@@ -296,7 +280,7 @@ const AVATAR_POSITIONS = {
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
-| Video not playing | CORS or format issue | Check URL accessibility; try downloading locally first |
+| Video not playing | CORS or format issue | Check URL accessibility; try downloading locally |
 | Dimension mismatch | HeyGen/Remotion dimensions differ | Use shared `VIDEO_CONFIG` constant for both |
-| Video jitter/stutter | Using `Video` instead of `OffthreadVideo` | Switch to `OffthreadVideo`; add `transparent` prop for WebM |
+| Video jitter/stutter | Using `Video` instead of `OffthreadVideo` | Switch to `OffthreadVideo`; add `transparent` for WebM |
 | Audio drift | Frame rate mismatch or encoding issue | Verify source fps; re-encode with consistent settings |
