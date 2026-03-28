@@ -36,44 +36,26 @@ tools:
 
 **Auto-detection order**: Spotlight (macOS) → notmuch → mu → error.
 
-- **Spotlight** — default on macOS. No config. Indexes Mail.app `.emlx` and standalone `.eml` files. Attachment content (PDF, Office, text) indexed by OS.
-- **notmuch** — preferred for power users/Linux. Requires local maildir (sync via `mbsync`/`offlineimap`). Rich query language; attachment filename search only.
+- **notmuch** — preferred for power users/Linux. Requires local maildir (sync via `mbsync`/`offlineimap`). Attachment filename search only.
 - **mu** — alternative to notmuch. MIME type filtering. Better Emacs integration (mu4e).
 
 ## Usage
 
 ```bash
-# Auto-detect backend and search
-mailbox-search-helper.sh search "project proposal"
-
-# Spotlight (macOS)
+mailbox-search-helper.sh search "project proposal"                                    # auto-detect
 mailbox-search-helper.sh search "invoice Q1 2026" --backend spotlight
-
-# notmuch with query syntax
 mailbox-search-helper.sh search "from:alice@example.com subject:contract" --backend notmuch
-
-# mu with date range
 mailbox-search-helper.sh search "from:alice date:20260101..20260401" --backend mu
-
-# Search attachment content (PDF)
 mailbox-search-helper.sh search-attachments "NDA agreement" --type pdf
-
-# Search all attachment types
 mailbox-search-helper.sh search-attachments "quarterly report" --type all
-
-# Check index status
 mailbox-search-helper.sh index-status
-
-# Set up notmuch
 mailbox-search-helper.sh setup --backend notmuch --maildir ~/Maildir
-
-# Set up mu
 mailbox-search-helper.sh setup --backend mu --maildir ~/Mail
 ```
 
 ## Output Format
 
-All search commands return a JSON array:
+All backends return a JSON array. Spotlight fields: `path`, `subject`, `from`, `date`, `backend`. notmuch adds: `id`, `tags`, `matched`, `total`, `files`.
 
 ```json
 [
@@ -87,44 +69,17 @@ All search commands return a JSON array:
 ]
 ```
 
-notmuch results include additional fields (`id`, `tags`, `matched`, `total`, `files`):
-
-```json
-[
-  {
-    "id": "thread:0000000000000001",
-    "subject": "Q1 Invoice - Project Alpha",
-    "from": "billing@vendor.com",
-    "date": "3 days ago",
-    "tags": ["inbox", "unread"],
-    "matched": 1,
-    "total": 3,
-    "files": ["/home/alice/Maildir/new/1234567890.msg"],
-    "backend": "notmuch"
-  }
-]
-```
-
 ## Spotlight (macOS)
 
-Indexes Mail.app `.emlx` files and standalone `.eml` files. Includes headers, body, and attachment content (PDF text, Office docs, plain text). Does **not** index encrypted attachments or binary formats without a registered importer.
+Indexes Mail.app `.emlx` and standalone `.eml` files — headers, body, and attachment content (PDF, Office, plain text). Does **not** index encrypted attachments or binary formats without a registered importer. **Limitations**: macOS only; requires Mail.app local sync; index rebuild after large imports can take minutes to hours.
 
 ### Query Syntax
 
 ```bash
-# Email body text
 mdfind "kMDItemContentType == 'com.apple.mail.emlx' && kMDItemTextContent == '*invoice*'cdw"
-
-# Sender
 mdfind "kMDItemAuthorEmailAddresses == '*alice@example.com*'"
-
-# Subject
 mdfind "kMDItemSubject == '*project proposal*'cdw"
-
-# Date range
 mdfind "kMDItemContentCreationDate >= $time.iso(2026-01-01T00:00:00Z)"
-
-# Attachment content (PDF)
 mdfind "kMDItemTextContent == '*NDA*'cdw && kMDItemContentType == 'com.adobe.pdf'"
 ```
 
@@ -138,8 +93,6 @@ sudo mdutil -E /                                                   # Re-index (s
 mdfind "kMDItemContentType == 'com.apple.mail.emlx'" | wc -l      # Message count
 ```
 
-**Limitations**: macOS only; requires Mail.app local sync; no boolean query language as rich as notmuch/mu; index rebuild after large imports can take minutes to hours.
-
 ## notmuch
 
 ### Setup
@@ -148,8 +101,6 @@ mdfind "kMDItemContentType == 'com.apple.mail.emlx'" | wc -l      # Message coun
 brew install isync   # macOS
 apt install isync    # Linux
 mbsync -a            # Sync IMAP to maildir (configure ~/.mbsyncrc first)
-
-# Initialize via helper or manually:
 mailbox-search-helper.sh setup --backend notmuch --maildir ~/Maildir
 # Manual: notmuch config set database.path ~/Maildir && notmuch new
 ```
@@ -169,19 +120,13 @@ notmuch search "attachment:*.pdf"
 notmuch search "from:billing@vendor.com subject:invoice date:2026.."
 ```
 
-### Tags
+### Tags and Indexing
 
 ```bash
 notmuch tag +inbox +unread -- "from:alice@example.com"
 notmuch tag -inbox -- "tag:inbox AND date:..1month"
 notmuch search --output=tags '*'
-```
-
-### Incremental Indexing
-
-```bash
-notmuch new   # Run after mbsync
-# Automate: */15 * * * * mbsync -a && notmuch new --quiet
+notmuch new   # Run after mbsync; automate: */15 * * * * mbsync -a && notmuch new --quiet
 ```
 
 ## mu
@@ -191,7 +136,6 @@ notmuch new   # Run after mbsync
 ```bash
 brew install mu              # macOS
 apt install maildir-utils    # Linux
-
 mailbox-search-helper.sh setup --backend mu --maildir ~/Maildir
 # Manual: mu init --maildir=~/Maildir && mu index
 ```
@@ -207,13 +151,7 @@ mu find "mime:application/vnd.openxmlformats-officedocument.wordprocessingml.doc
 mu find "flag:attach"
 mu find "from:billing@vendor.com subject:invoice date:20260101.."
 mu find --format=json "subject:contract"
-```
-
-### Incremental Indexing
-
-```bash
-mu index   # Run after new messages arrive
-# Automate with mbsync post-sync hook
+mu index   # Run after new messages arrive; automate with mbsync post-sync hook
 ```
 
 ## Attachment Content Search
@@ -228,17 +166,11 @@ For notmuch attachment content search, extract attachments and use a separate fu
 
 ## Integration with email-mailbox-helper.sh
 
-| Tool | When to use |
-|------|-------------|
-| `email-mailbox-helper.sh search` | IMAP SEARCH — live server state, no local index |
-| `mailbox-search-helper.sh search` | OS-level indexed — fast, offline, attachment content |
+Use `email-mailbox-helper.sh search` for live IMAP server state; use `mailbox-search-helper.sh` for fast offline indexed search with attachment content.
 
 ```bash
-# IMAP (server-side, live)
-email-mailbox-helper.sh search myaccount --query "SUBJECT invoice SINCE 01-Jan-2026"
-
-# OS-level (indexed, fast, attachment content)
-mailbox-search-helper.sh search "invoice Q1 2026" --backend spotlight
+email-mailbox-helper.sh search myaccount --query "SUBJECT invoice SINCE 01-Jan-2026"  # IMAP live
+mailbox-search-helper.sh search "invoice Q1 2026" --backend spotlight                  # indexed
 ```
 
 ## Troubleshooting
