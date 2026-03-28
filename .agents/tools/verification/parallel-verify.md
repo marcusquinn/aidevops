@@ -247,7 +247,7 @@ verify-operation-helper.sh config [--show|--set KEY=VALUE]
 
 - `reference/high-stakes-operations.md` -- Operation taxonomy (t1364.1)
 - `tools/context/model-routing.md` -- Model tier definitions and provider discovery
-- `tools/ai-assistants/models/gemini-reviewer.md` -- Cross-provider review pattern
+- `tools/ai-assistants/models-gemini-reviewer.md` -- Cross-provider review pattern
 - `scripts/verify-operation-helper.sh` -- CLI implementation
 - `scripts/observability-helper.sh` -- Metrics logging
 - `scripts/model-availability-helper.sh` -- Provider health checks

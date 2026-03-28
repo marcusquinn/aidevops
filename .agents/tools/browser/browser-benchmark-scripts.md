@@ -6,12 +6,12 @@ Reference scripts for `browser-benchmark.md`. All implement the same four tests 
 
 | File | Contents |
 |------|----------|
-| [`browser-benchmark-scripts/01-playwright.md`](browser-benchmark-scripts/01-playwright.md) | Sequential + parallel (multi-context, multi-browser, multi-page) |
-| [`browser-benchmark-scripts/02-dev-browser.md`](browser-benchmark-scripts/02-dev-browser.md) | Persistent Chrome via CDP — adapted from Playwright |
-| [`browser-benchmark-scripts/03-agent-browser.md`](browser-benchmark-scripts/03-agent-browser.md) | CLI-based sequential + 3 parallel sessions |
-| [`browser-benchmark-scripts/04-crawl4ai.md`](browser-benchmark-scripts/04-crawl4ai.md) | navigate + extract only (no form/multi-step); sequential vs parallel |
-| [`browser-benchmark-scripts/05-stagehand.md`](browser-benchmark-scripts/05-stagehand.md) | AI-driven act()/extract() — measures cold-start per run |
-| [`browser-benchmark-scripts/06-visual-verification.md`](browser-benchmark-scripts/06-visual-verification.md) | Screenshot + ARIA snapshot timing; WARNING: no fullPage:true |
+| [`browser-benchmark-scripts-01-playwright.md`](browser-benchmark-scripts-01-playwright.md) | Sequential + parallel (multi-context, multi-browser, multi-page) |
+| [`browser-benchmark-scripts-02-dev-browser.md`](browser-benchmark-scripts-02-dev-browser.md) | Persistent Chrome via CDP — adapted from Playwright |
+| [`browser-benchmark-scripts-03-agent-browser.md`](browser-benchmark-scripts-03-agent-browser.md) | CLI-based sequential + 3 parallel sessions |
+| [`browser-benchmark-scripts-04-crawl4ai.md`](browser-benchmark-scripts-04-crawl4ai.md) | navigate + extract only (no form/multi-step); sequential vs parallel |
+| [`browser-benchmark-scripts-05-stagehand.md`](browser-benchmark-scripts-05-stagehand.md) | AI-driven act()/extract() — measures cold-start per run |
+| [`browser-benchmark-scripts-06-visual-verification.md`](browser-benchmark-scripts-06-visual-verification.md) | Screenshot + ARIA snapshot timing; WARNING: no fullPage:true |
 
 ## Tool capability matrix
 

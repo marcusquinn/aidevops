@@ -217,7 +217,7 @@ These topics are documented in their canonical locations — loaded on demand, n
 
 - `tools/ai-assistants/opencode-server.md` — full server API reference
 - `tools/ai-assistants/overview.md` — AI assistant comparison
-- `tools/ai-assistants/runners/` — runner templates
+- `tools/ai-assistants/runners-` — runner templates
 - `scripts/runner-helper.sh` — runner management CLI
 - `scripts/cron-dispatch.sh`, `scripts/cron-helper.sh` — cron-triggered dispatch
 - `scripts/matrix-dispatch-helper.sh`, `services/communications/matrix-bot.md` — Matrix chat dispatch
