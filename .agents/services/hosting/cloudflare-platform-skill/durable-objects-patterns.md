@@ -7,7 +7,6 @@ Don't put all data in a single DO. For hierarchical data (workspaces → project
 ```typescript
 export class GameServer extends DurableObject<Env> {
   async createMatch(matchId: string): Promise<string> {
-    // Store child reference in parent
     this.ctx.storage.sql.exec(
       "INSERT INTO matches (id, created_at, status) VALUES (?, ?, ?)",
       matchId, Date.now(), "active"
@@ -16,7 +15,6 @@ export class GameServer extends DurableObject<Env> {
   }
 
   async routeToMatch(matchId: string, playerId: string, action: string) {
-    // Route to child DO - operations on different children run in parallel
     const childId = this.env.MATCH.idFromName(matchId);
     const child = this.env.MATCH.get(childId);
     return await child.handleAction(playerId, action);
@@ -49,7 +47,7 @@ app.all('*', async (c) => {
   return c.env.FLEET_DO.get(id).fetch(c.req.raw);
 });
 
-// Single unified DO class handles both manager and agent roles
+// Single DO class handles both manager and agent roles
 export class FleetDO extends DurableObject<Env> {
   async deleteWithCascade() {
     const data = await this.ctx.storage.get<{ agents: string[] }>('data');
@@ -59,7 +57,6 @@ export class FleetDO extends DurableObject<Env> {
       const child = this.env.FLEET_DO.get(this.env.FLEET_DO.idFromName(childPath));
       await child.fetch(new Request('https://internal' + childPath, { method: 'DELETE' }));
     }
-    
     await this.ctx.storage.deleteAll();
   }
 }
@@ -105,9 +102,8 @@ export class UserDO extends DurableObject<Env> {
   }
 }
 
-// Worker
-const id = env.USER_DO.idFromName(userId); // deterministic per-user routing
-const user = env.USER_DO.get(id);
+// Worker: deterministic per-user routing
+const stub = env.USER_DO.get(env.USER_DO.idFromName(userId));
 ```
 
 ## Colo-Aware Sharding
