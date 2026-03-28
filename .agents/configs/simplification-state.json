@@ -402,9 +402,9 @@
       "pr": 11590
     },
     ".agents/marketing-sales/direct-response-copy-templates-email-sequences.md": {
-      "hash": "5276f5042b6ad14eb6a1d4a658f4bdda279eb427",
-      "at": "2026-03-28T08:17:37Z",
-      "pr": 11571
+      "hash": "3b967730222fcfb2ae56d2aaadb1f199e1d71509",
+      "at": "2026-03-28T11:52:23Z",
+      "pr": 11820
     },
     ".agents/marketing-sales/direct-response-copy-templates-readme.md": {
       "hash": "2717d1e9cb1edfd85d932502b6de7c4765c8a7ec",
@@ -747,9 +747,9 @@
       "pr": 11712
     },
     ".agents/marketing-sales/meta-ads-campaigns-retargeting.md": {
-      "hash": "a9c426923d4e68ffcbda9632256e77e757a22e39",
-      "at": "2026-03-28T11:20:39Z",
-      "pr": 11746
+      "hash": "76a66a236cc7fbeb40d74384e9dbe4bd75a4a155",
+      "at": "2026-03-28T11:52:21Z",
+      "pr": 11822
     },
     ".agents/content/heygen-skill/rules-remotion-integration.md": {
       "hash": "5ccb546152546cd33344a76d42a4b90c0acd0dbd",
@@ -832,8 +832,8 @@
       "pr": 11802
     },
     ".agents/aidevops/requirements.md": {
-      "hash": "5d52c62638db37db1de4990969eab8b4ed182c7d",
-      "at": "2026-03-28T10:27:35Z",
+      "hash": "9a75f9e14252e2364ed8ceeb9e24e8df3a95e310",
+      "at": "2026-03-28T11:52:46Z",
       "pr": 11770
     },
     ".agents/tools/video/yt-dlp.md": {
@@ -910,6 +910,41 @@
       "hash": "61e87ef7f501310f73fbe54da1d9e0a76a38abae",
       "at": "2026-03-28T11:20:20Z",
       "pr": 11805
+    },
+    ".agents/aidevops/supervisor-module-map.md": {
+      "hash": "6dc1ff5f9d7243b29d768c024123338d11496a5f",
+      "at": "2026-03-28T11:52:24Z",
+      "pr": 11811
+    },
+    ".agents/business/company-runners.md": {
+      "hash": "8c78821205aacf320a7ed32b722b7c646a4e35af",
+      "at": "2026-03-28T11:52:25Z",
+      "pr": 11812
+    },
+    ".agents/tools/infrastructure/fireworks.md": {
+      "hash": "6025fc8a3ce3cadba1f1d8d00c699c8fe970b015",
+      "at": "2026-03-28T11:52:26Z",
+      "pr": 11813
+    },
+    ".agents/workflows/git-workflow.md": {
+      "hash": "549fdf7138a059f5338b5cc825a3280fb4ee9a48",
+      "at": "2026-03-28T11:52:27Z",
+      "pr": 11814
+    },
+    ".agents/marketing-sales/ad-creative-copywriting.md": {
+      "hash": "9571bbe5bcc23af71e7a7b6b7f1cf7d639000351",
+      "at": "2026-03-28T11:52:31Z",
+      "pr": 11823
+    },
+    ".agents/marketing-sales/direct-response-copy-templates-landing-page.md": {
+      "hash": "7d95922fef4d2c67466c89f4dc918f99fa7a76c4",
+      "at": "2026-03-28T11:52:38Z",
+      "pr": 11824
+    },
+    ".agents/seo/gsc-sitemaps.md": {
+      "hash": "7154caa038f21e800f7b6c5493f2553a9d7e8efb",
+      "at": "2026-03-28T11:52:39Z",
+      "pr": 11821
     }
   }
 }
