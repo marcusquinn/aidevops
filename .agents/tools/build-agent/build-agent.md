@@ -10,7 +10,8 @@ mode: subagent
 
 ## Quick Reference
 
-- **Budget**: ~50-100 instructions per agent; root AGENTS.md <150 lines, universally applicable only
+- **Budget**: ~50-100 instructions per agent; root AGENTS.md universally applicable only
+- **Subdivision**: Agent docs exceeding ~300 lines — split into entry point + sub-docs, don't cut to hit a line count
 - **MCP servers**: Disabled globally, enabled per-agent
 - **Code refs**: `rg "pattern"` search patterns, not `file:line` (line numbers drift)
 - **Subagents**: `agent-review.md` (review), `agent-testing.md` (testing)
@@ -117,6 +118,8 @@ marketing-sales/                          # Extended knowledge — flat, prefix-
 - `ls marketing-sales/meta-ads*` groups all Meta Ads knowledge; `*swipe*` finds swipe files
 - Max depth: 2 levels from `.agents/` — never 5+
 - Subdirectory only when a prefix group exceeds ~20 files. One level max.
+
+**Subdivision threshold (~300 lines):** Agent docs exceeding ~300 lines should be split into an entry point + sub-docs using the `{name}.md` + `{name}/` convention above. The goal is progressive disclosure (smaller always-loaded context, detail on demand) — not content reduction. Never set an arbitrary target line count for simplification; the resulting size is whatever remains after removing genuine noise and extracting sub-docs.
 
 ### Scripts: Flat by Design
 
