@@ -11,15 +11,11 @@ Full index in `subagent-index.toon`.
 | Build+ | Code: features, bug fixes, refactors, CI, PRs (default) |
 | Automate | Scheduling, dispatch, monitoring, background orchestration, pulse supervisor |
 | SEO | SEO audits, keyword research, GSC, schema markup |
-| Content | Blog posts, video scripts, social media, newsletters |
-| Marketing | Email campaigns, FluentCRM, landing pages |
-| Business | Company operations, runner configs, strategy |
-| Accounts | Financial operations, invoicing, receipts |
+| Content | All media production and distribution: blog, video, audio, image, social, newsletters, AI video generation |
+| Marketing-Sales | Email campaigns, FluentCRM, Meta Ads, CRO, direct response copy, CRM pipeline, proposals, outreach |
+| Business | Company operations, financial ops, invoicing, receipts, runner configs, strategy |
 | Legal | Compliance, terms of service, privacy policy |
 | Research | Tech research, competitive analysis, market research |
-| Sales | CRM pipeline, proposals, outreach |
-| Social-Media | Social media management, scheduling |
-| Video | Video generation, editing, prompt engineering |
 | Health | Health and wellness content |
 
 ## Routing Rules
@@ -41,6 +37,7 @@ ALWAYS use `headless-runtime-helper.sh run` for dispatching workers. This helper
 AGENTS_DIR="$(aidevops config get paths.agents_dir)"
 AGENTS_DIR="${AGENTS_DIR:-"$HOME/.aidevops/agents"}"
 HELPER="${AGENTS_DIR/#\~/$HOME}/scripts/headless-runtime-helper.sh"
+# Path is determined by 'paths.agents_dir' in config.jsonc
 
 # Code task (default — Build+ implied)
 $HELPER run \
@@ -59,5 +56,15 @@ $HELPER run \
   --dir ~/Git/myproject \
   --title "Issue #55: SEO audit" \
   --prompt "/full-loop Implement issue #55 -- Run SEO audit on landing pages" &
+sleep 2
+
+# Content task
+$HELPER run \
+  --role worker \
+  --session-key "issue-60" \
+  --agent Content \
+  --dir ~/Git/myproject \
+  --title "Issue #60: Blog post" \
+  --prompt "/full-loop Implement issue #60 -- Write launch announcement blog post" &
 sleep 2
 ```
