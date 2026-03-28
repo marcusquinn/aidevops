@@ -80,6 +80,9 @@ bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh set hcloud-token-pro
 
 # OpenAI - https://platform.openai.com/api-keys
 bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh set openai-api-key YOUR_KEY
+
+# Daytona - https://app.daytona.io/settings/api-keys
+bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh set daytona-api-key YOUR_KEY
 ```
 
 ### 4. Verify
