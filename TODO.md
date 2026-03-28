@@ -134,13 +134,13 @@ Session baseline grew from ~9.5k tokens (Mar 1) to ~21.8k tokens (Mar 27) in pro
   - [x] t1678.3 Create session-rename-helper.sh — `curl` to OpenCode API for session rename, port auto-detection ~30m model:sonnet pr:#6840 verified:2026-03-27
   - [x] t1678.4 Delete .disabled files and verify in fresh session ~15m model:sonnet pr:#6833 verified:2026-03-27
 
-- [ ] t1679 refactor: progressive-load build.txt — move rare sections to on-demand subagents — build.txt grew from ~5.6k to ~14k tokens (Mar 1-27). Sections used in <10% of sessions should be on-demand subagent docs with 1-line pointers in build.txt. Candidates: Conversational Memory Lookup (~600 tokens), Screenshot Size Limits (~400 tokens), External Repo Issue/PR Submission (~500 tokens), Parallel Model Verification (~300 tokens), Tamper-Evident Audit Logging (~200 tokens), Bash 3.2 Compatibility (~600 tokens), secret sections 8.1-8.4 (~1,200 tokens). Potential savings: ~3,800 tokens. Risk: safety-critical sections (secrets, bash compat) must retain enough inline to trigger on-demand loading. #refactor #efficiency ~4h model:opus logged:2026-03-27
-  - [ ] t1679.1 Extract Conversational Memory Lookup to reference/memory-lookup.md ~30m
-  - [ ] t1679.2 Extract Screenshot Size Limits to reference/screenshot-limits.md ~15m
-  - [ ] t1679.3 Extract External Repo Issue/PR Submission to reference/external-repo-submissions.md ~15m
-  - [ ] t1679.4 Extract Bash 3.2 Compatibility to reference/bash-compat.md ~15m
-  - [ ] t1679.5 Consolidate secret sections 8.1-8.4 into reference/secret-handling.md, keep 1-line trigger rules inline ~1h
-  - [ ] t1679.6 Verify no safety regressions — test that on-demand loading triggers correctly for each extracted section ~1h
+- [x] t1679 refactor: progressive-load build.txt — move rare sections to on-demand subagents — build.txt grew from ~5.6k to ~14k tokens (Mar 1-27). Sections used in <10% of sessions should be on-demand subagent docs with 1-line pointers in build.txt. Candidates: Conversational Memory Lookup (~600 tokens), Screenshot Size Limits (~400 tokens), External Repo Issue/PR Submission (~500 tokens), Parallel Model Verification (~300 tokens), Tamper-Evident Audit Logging (~200 tokens), Bash 3.2 Compatibility (~600 tokens), secret sections 8.1-8.4 (~1,200 tokens). Potential savings: ~3,800 tokens. Risk: safety-critical sections (secrets, bash compat) must retain enough inline to trigger on-demand loading. #refactor #efficiency ~4h model:opus logged:2026-03-27 completed:2026-03-28 ref:GH#12255
+  - [x] t1679.1 Extract Conversational Memory Lookup to reference/memory-lookup.md ~30m pr:#6827 verified:2026-03-28
+  - [x] t1679.2 Extract Screenshot Size Limits to reference/screenshot-limits.md ~15m pr:#6826 verified:2026-03-28
+  - [x] t1679.3 Extract External Repo Issue/PR Submission to reference/external-repo-submissions.md ~15m pr:#6829 verified:2026-03-28
+  - [x] t1679.4 Extract Bash 3.2 Compatibility to reference/bash-compat.md ~15m pr:#6834 verified:2026-03-28
+  - [x] t1679.5 Consolidate secret sections 8.1-8.4 into reference/secret-handling.md, keep 1-line trigger rules inline ~1h pr:#6841 verified:2026-03-28
+  - [x] t1679.6 Verify no safety regressions — test that on-demand loading triggers correctly for each extracted section ~1h verified:2026-03-28
 
 - [ ] t1680 refactor: progressive-load AGENTS.md — move large sections to on-demand subagents — AGENTS.md grew from ~3.9k to ~7.8k tokens (Mar 1-27). Candidates: Domain Index table (~800 tokens, 40+ rows), Self-Improvement section (~1,200 tokens), Agent Routing section (~600 tokens), Email/Outreach domain entries (~400 tokens), Capabilities section (~500 tokens). Potential savings: ~3,500 tokens. The Domain Index is the biggest single target — it's a lookup table that could be a TOON file loaded on demand. #refactor #efficiency ~3h model:opus logged:2026-03-27
   - [ ] t1680.1 Move Domain Index to on-demand reference (TOON or md) with 1-line pointer ~1h
