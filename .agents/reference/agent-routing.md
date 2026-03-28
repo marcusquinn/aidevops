@@ -25,7 +25,7 @@ Full index in `subagent-index.toon`.
 - If the task matches another domain, pass `--agent <name>` to `headless-runtime-helper.sh run`
 - When uncertain, default to Build+ — it can read subagent docs on demand
 - The agent choice affects which system prompt and domain knowledge the worker loads
-- **Bundle-aware routing (t1364.6):** Project bundles can define `agent_routing` overrides per task domain. For example, a content-site bundle routes `marketing` tasks to the Marketing agent. Check with `bundle-helper.sh get agent_routing <repo-path>`. Explicit `--agent` flags always override bundle defaults.
+- **Bundle-aware routing (t1364.6):** Project bundles can define `agent_routing` overrides per task domain. For example, a content-site bundle routes `marketing` tasks to the Marketing-Sales agent. Check with `bundle-helper.sh get agent_routing <repo-path>`. Explicit `--agent` flags always override bundle defaults.
 
 ## Headless Dispatch
 
