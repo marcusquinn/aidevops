@@ -7,7 +7,7 @@ metadata:
 
 # Video Generation
 
-The `/v2/video/generate` endpoint is the primary way to create AI avatar videos with HeyGen.
+The `/v2/video/generate` endpoint creates AI avatar videos with HeyGen.
 
 ## Video Output Formats
 
@@ -86,64 +86,9 @@ curl -X POST "https://api.heygen.com/v2/video/generate" \
 | `url` | string | Image/video URL |
 | `fit` | string | `"cover"` or `"contain"` |
 
-## TypeScript Types
-
-```typescript
-interface VideoInput {
-  character: {
-    type: "avatar" | "talking_photo";
-    avatar_id?: string;
-    talking_photo_id?: string;
-    avatar_style?: "normal" | "closeUp" | "circle";
-    scale?: number;
-    offset?: { x: number; y: number };
-  };
-  voice: {
-    type: "text" | "audio" | "silence";
-    input_text?: string;
-    voice_id?: string;
-    audio_url?: string;
-    duration?: number;
-    speed?: number;
-    pitch?: number;
-  };
-  background?: {
-    type?: "color" | "image" | "video";
-    value?: string;
-    url?: string;
-    fit?: "cover" | "contain";
-  };
-}
-
-interface VideoGenerateRequest {
-  video_inputs: VideoInput[];
-  dimension?: { width: number; height: number };
-  test?: boolean;
-  title?: string;
-  caption?: boolean;
-  callback_id?: string;
-  callback_url?: string;
-  folder_id?: string;
-}
-
-interface VideoGenerateResponse {
-  error: null | string;
-  data: { video_id: string };
-}
-
-async function generateVideo(config: VideoGenerateRequest): Promise<string> {
-  const response = await fetch("https://api.heygen.com/v2/video/generate", {
-    method: "POST",
-    headers: { "X-Api-Key": process.env.HEYGEN_API_KEY!, "Content-Type": "application/json" },
-    body: JSON.stringify(config),
-  });
-  const json: VideoGenerateResponse = await response.json();
-  if (json.error) throw new Error(json.error);
-  return json.data.video_id;
-}
-```
-
 ## Multi-Scene Videos
+
+Pass multiple objects in `video_inputs` (max 50). Each scene can have a different style, background, and voice segment.
 
 ```typescript
 const multiSceneConfig = {
@@ -158,11 +103,6 @@ const multiSceneConfig = {
       voice: { type: "text", input_text: "First, let's look at our dashboard.", voice_id: "1bd001e7e50f421d891986aad5158bc8" },
       background: { type: "image", url: "https://example.com/dashboard-bg.jpg" },
     },
-    {
-      character: { type: "avatar", avatar_id: "josh_lite3_20230714", avatar_style: "normal" },
-      voice: { type: "text", input_text: "Thanks for watching! Try it today.", voice_id: "1bd001e7e50f421d891986aad5158bc8" },
-      background: { type: "color", value: "#1a1a2e" },
-    },
   ],
   dimension: { width: 1920, height: 1080 },
 };
@@ -171,36 +111,43 @@ const multiSceneConfig = {
 ## Complete Workflow
 
 ```typescript
-async function createVideo(script: string, avatarId: string, voiceId: string) {
-  const videoId = await generateVideo({
-    video_inputs: [{
-      character: { type: "avatar", avatar_id: avatarId, avatar_style: "normal" },
-      voice: { type: "text", input_text: script, voice_id: voiceId },
-      background: { type: "color", value: "#FFFFFF" },
-    }],
-    dimension: { width: 1920, height: 1080 },
+async function generateVideo(config: VideoGenerateRequest): Promise<string> {
+  const res = await fetch("https://api.heygen.com/v2/video/generate", {
+    method: "POST",
+    headers: { "X-Api-Key": process.env.HEYGEN_API_KEY!, "Content-Type": "application/json" },
+    body: JSON.stringify(config),
   });
-
-  const videoUrl = await waitForVideo(videoId);
-  return videoUrl;
+  const json = await res.json();
+  if (json.error) throw new Error(json.error);
+  return json.data.video_id;
 }
 
+// Polls every 10s, up to 10 min. Generation typically takes 10–15 min — increase limit for long videos.
 async function waitForVideo(videoId: string): Promise<string> {
   for (let i = 0; i < 60; i++) {
-    const response = await fetch(
-      `https://api.heygen.com/v1/video_status.get?video_id=${videoId}`,
-      { headers: { "X-Api-Key": process.env.HEYGEN_API_KEY! } }
-    );
-    const { data } = await response.json();
+    const { data } = await fetch(`https://api.heygen.com/v1/video_status.get?video_id=${videoId}`,
+      { headers: { "X-Api-Key": process.env.HEYGEN_API_KEY! } }).then(r => r.json());
     if (data.status === "completed") return data.video_url;
     if (data.status === "failed") throw new Error(data.error || "Video generation failed");
     await new Promise(r => setTimeout(r, 10000));
   }
   throw new Error("Video generation timed out");
 }
+
+async function createVideo(script: string, avatarId: string, voiceId: string) {
+  const videoId = await generateVideo({
+    video_inputs: [{ character: { type: "avatar", avatar_id: avatarId, avatar_style: "normal" },
+      voice: { type: "text", input_text: script, voice_id: voiceId },
+      background: { type: "color", value: "#FFFFFF" } }],
+    dimension: { width: 1920, height: 1080 },
+  });
+  return waitForVideo(videoId);
+}
 ```
 
-## Production-Ready Workflow (with avatar auto-selection)
+## Production Workflow (with avatar auto-selection)
+
+Auto-selects first available avatar and its default voice when none specified. Set a 20-minute timeout — generation can take 15+ min.
 
 ```typescript
 async function generateAvatarVideo(script: string, options: { avatarId?: string; width?: number; height?: number } = {}) {
@@ -208,31 +155,25 @@ async function generateAvatarVideo(script: string, options: { avatarId?: string;
   let { avatarId } = options;
 
   if (!avatarId) {
-    const listData = await fetch("https://api.heygen.com/v2/avatars", {
+    const list = await fetch("https://api.heygen.com/v2/avatars", {
       headers: { "X-Api-Key": process.env.HEYGEN_API_KEY! },
     }).then(r => r.json());
-    if (!listData.data?.avatars?.length) throw new Error("No avatars available");
-    avatarId = listData.data.avatars[0].avatar_id;
+    if (!list.data?.avatars?.length) throw new Error("No avatars available");
+    avatarId = list.data.avatars[0].avatar_id;
   }
 
   const { data: avatar } = await fetch(`https://api.heygen.com/v2/avatar/${avatarId}/details`, {
     headers: { "X-Api-Key": process.env.HEYGEN_API_KEY! },
   }).then(r => r.json());
-
   if (!avatar.default_voice_id) throw new Error(`Avatar ${avatar.name} has no default voice`);
 
   const videoId = await generateVideo({
-    video_inputs: [{
-      character: { type: "avatar", avatar_id: avatar.id, avatar_style: "normal" },
+    video_inputs: [{ character: { type: "avatar", avatar_id: avatar.id, avatar_style: "normal" },
       voice: { type: "text", input_text: script, voice_id: avatar.default_voice_id, speed: 1.0 },
-      background: { type: "color", value: "#1a1a2e" },
-    }],
+      background: { type: "color", value: "#1a1a2e" } }],
     dimension: { width, height },
   });
-
-  // 20 minute timeout — generation can take 15+ min
-  const result = await waitForVideo(videoId, process.env.HEYGEN_API_KEY!, undefined, 1200000);
-  return { videoId, videoUrl: result.video_url, avatarId: avatar.id, voiceId: avatar.default_voice_id };
+  return { videoId, videoUrl: await waitForVideo(videoId), avatarId: avatar.id, voiceId: avatar.default_voice_id };
 }
 ```
 
@@ -253,16 +194,7 @@ async function generateAvatarVideo(script: string, options: { avatarId?: string;
 
 ## Transparent Background Videos (WebM)
 
-Use WebM **only** when the avatar must be composited over video content (e.g., Loom-style screen recording overlay). For overlays on top of the avatar, standard MP4 is sufficient.
-
-| Scenario | Format |
-|----------|--------|
-| Avatar with overlays on top | **MP4** |
-| Standard presenter | **MP4** |
-| Avatar over screen recording | **WebM** |
-| Avatar floating over video | **WebM** |
-
-**Note:** WebM only supports `normal` and `closeUp` styles — no `circle`. Apply circular masking in post.
+Use WebM **only** when compositing the avatar over video content (e.g., Loom-style overlay). For overlays on top of the avatar, standard MP4 is sufficient. WebM only supports `normal` and `closeUp` styles — no `circle`. Apply circular masking in post.
 
 ### WebM Request Fields
 
@@ -277,18 +209,12 @@ Use WebM **only** when the avatar must be composited over video content (e.g., L
 
 ```typescript
 async function generateTransparentVideo(script: string, avatarPoseId: string, voiceId: string): Promise<string> {
-  const response = await fetch("https://api.heygen.com/v1/video.webm", {
+  const { data } = await fetch("https://api.heygen.com/v1/video.webm", {
     method: "POST",
     headers: { "X-Api-Key": process.env.HEYGEN_API_KEY!, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      avatar_pose_id: avatarPoseId,
-      avatar_style: "normal",
-      input_text: script,
-      voice_id: voiceId,
-      dimension: { width: 1920, height: 1080 },
-    }),
-  });
-  const { data } = await response.json();
+    body: JSON.stringify({ avatar_pose_id: avatarPoseId, avatar_style: "normal",
+      input_text: script, voice_id: voiceId, dimension: { width: 1920, height: 1080 } }),
+  }).then(r => r.json());
   return data.video_id;
 }
 ```
@@ -298,19 +224,10 @@ async function generateTransparentVideo(script: string, avatarPoseId: string, vo
 ```tsx
 import { OffthreadVideo, AbsoluteFill } from "remotion";
 
-export const LoomStyleVideo: React.FC<{ screenRecordingUrl: string; avatarWebmUrl: string }> = ({
-  screenRecordingUrl, avatarWebmUrl
-}) => (
+export const LoomStyleVideo: React.FC<{ screenRecordingUrl: string; avatarWebmUrl: string }> = ({ screenRecordingUrl, avatarWebmUrl }) => (
   <AbsoluteFill>
     <OffthreadVideo src={screenRecordingUrl} style={{ width: "100%", height: "100%" }} />
-    <OffthreadVideo
-      src={avatarWebmUrl}
-      style={{
-        position: "absolute", bottom: 20, left: 20,
-        width: 150, height: 150,
-        borderRadius: "50%", overflow: "hidden", objectFit: "cover",
-      }}
-    />
+    <OffthreadVideo src={avatarWebmUrl} style={{ position: "absolute", bottom: 20, left: 20, width: 150, height: 150, borderRadius: "50%", overflow: "hidden", objectFit: "cover" }} />
   </AbsoluteFill>
 );
 ```
@@ -319,19 +236,7 @@ WebM videos use the same status polling endpoint as MP4.
 
 ## Error Handling
 
-```typescript
-async function generateVideoSafe(config: VideoGenerateRequest) {
-  try {
-    return { success: true, videoId: await generateVideo(config) };
-  } catch (error) {
-    if (error.message.includes("quota")) console.error("Insufficient credits");
-    else if (error.message.includes("avatar")) console.error("Invalid avatar ID");
-    else if (error.message.includes("voice")) console.error("Invalid voice ID");
-    else if (error.message.includes("script")) console.error("Script too long or invalid");
-    return { success: false, error: error.message };
-  }
-}
-```
+Wrap `generateVideo()` in try/catch. Common error keywords: `"quota"` → insufficient credits, `"avatar"` → invalid avatar ID, `"voice"` → invalid voice ID, `"script"` → script too long or invalid.
 
 ## Best Practices
 
