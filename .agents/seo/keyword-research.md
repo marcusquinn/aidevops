@@ -31,8 +31,6 @@ mode: subagent
 
 ### /keyword-research
 
-Basic keyword expansion from seed keywords.
-
 ```bash
 /keyword-research "best seo tools, keyword research"
 /keyword-research "best * for dogs"   # wildcard support
@@ -41,8 +39,6 @@ Basic keyword expansion from seed keywords.
 **Options**: `--limit N` (default: 100, max: 10,000) · `--provider dataforseo|serper|both` · `--csv` · `--min-volume N` · `--max-difficulty N` · `--intent informational|commercial|transactional|navigational` · `--contains "term"` · `--excludes "term"`
 
 ### /autocomplete-research
-
-Google autocomplete expansion for long-tail keywords.
 
 ```bash
 /autocomplete-research "how to lose weight"
@@ -56,7 +52,7 @@ Full SERP analysis with weakness detection and KeywordScore.
 /keyword-research-extended "best seo tools"
 ```
 
-**Additional options**: `--quick` (skip weakness detection) · `--full` (default) · `--ahrefs` (DR/UR metrics) · `--domain example.com` · `--competitor example.com` · `--gap yourdomain.com,competitor.com`
+**Additional options**: `--quick` · `--full` (default) · `--ahrefs` · `--domain example.com` · `--competitor example.com` · `--gap yourdomain.com,competitor.com`
 
 ## Output Format
 
@@ -124,7 +120,7 @@ KeywordScore (0–100) measures ranking opportunity from SERP weaknesses.
 
 ## Location & Language
 
-First run: prompt user to confirm US/English or select alternative. Subsequent runs: use saved preference. Override with `--location`.
+First run: confirm locale (default US/English). Subsequent runs: use saved preference. Override with `--location`.
 
 | Code | Location | Language |
 |------|----------|----------|
@@ -137,25 +133,15 @@ First run: prompt user to confirm US/English or select alternative. Subsequent r
 | `es-es` | Spain | Spanish |
 | `custom` | Enter location code | Any |
 
-Preferences saved to `~/.config/aidevops/keyword-research.json`:
-
-```json
-{
-  "default_locale": "us-en",
-  "default_provider": "dataforseo",
-  "default_limit": 100,
-  "include_ahrefs": false,
-  "csv_directory": "~/Downloads"
-}
-```
+Config (`~/.config/aidevops/keyword-research.json`): `default_locale`, `default_provider`, `default_limit` (100), `include_ahrefs` (false), `csv_directory` (`~/Downloads`).
 
 ## Provider Configuration
 
-**DataForSEO** (primary) — endpoints: `dataforseo_labs/google/keyword_suggestions/live`, `ranked_keywords/live`, `domain_intersection/live`, `backlinks/summary/live`, `serp/google/organic/live`, `onpage/instant_pages`. Credentials: `DATAFORSEO_USERNAME` + `DATAFORSEO_PASSWORD`.
-
-**Serper** (alternative) — faster, simpler. Endpoints: `search`, `autocomplete`. Credential: `SERPER_API_KEY`.
-
-**Ahrefs** (optional) — premium DR/UR metrics. Endpoints: `domain-rating`, `url-rating`. Credential: `AHREFS_API_KEY`.
+| Provider | Role | Credentials | Endpoints |
+|----------|------|-------------|-----------|
+| **DataForSEO** | Primary | `DATAFORSEO_USERNAME` + `DATAFORSEO_PASSWORD` | `keyword_suggestions/live`, `ranked_keywords/live`, `domain_intersection/live`, `backlinks/summary/live`, `serp/google/organic/live`, `onpage/instant_pages` |
+| **Serper** | Alternative (faster) | `SERPER_API_KEY` | `search`, `autocomplete` |
+| **Ahrefs** | Optional DR/UR | `AHREFS_API_KEY` | `domain-rating`, `url-rating` |
 
 ## Recommended Workflow
 
@@ -167,7 +153,6 @@ Preferences saved to `~/.config/aidevops/keyword-research.json`:
 6. **Export**: `--csv` — content planning spreadsheets
 
 ```bash
-# Examples
 /keyword-research "dog training" --min-volume 1000 --max-difficulty 40 --csv
 /autocomplete-research "how to train a puppy"
 /keyword-research-extended --competitor petco.com
@@ -177,7 +162,7 @@ Preferences saved to `~/.config/aidevops/keyword-research.json`:
 
 ## Result Limits
 
-Default: 100 results, then prompt "Retrieved 100 keywords. Need more? Enter number (max 10,000) or press Enter to continue."
+Default: 100 results. Prompts to retrieve more (max 10,000) before continuing.
 
 | Results | Approx. Cost |
 |---------|-------------|
@@ -187,21 +172,21 @@ Default: 100 results, then prompt "Retrieved 100 keywords. Need more? Enter numb
 
 ## Webmaster Tools Integration
 
-Keywords from GSC + Bing enriched with DataForSEO volume/difficulty data.
+GSC + Bing keywords enriched with DataForSEO volume/difficulty data.
 
 ```bash
-keyword-research-helper.sh sites                                     # list verified sites
+keyword-research-helper.sh sites
 keyword-research-helper.sh webmaster https://example.com            # last 30 days
-keyword-research-helper.sh webmaster https://example.com --days 90  # last 90 days
-keyword-research-helper.sh webmaster https://example.com --no-enrich # skip enrichment
-keyword-research-helper.sh webmaster https://example.com --csv      # export
+keyword-research-helper.sh webmaster https://example.com --days 90
+keyword-research-helper.sh webmaster https://example.com --no-enrich
+keyword-research-helper.sh webmaster https://example.com --csv
 ```
 
 **Output columns**: Keyword, Clicks, Impressions, CTR, Position, Volume, KD, CPC, Sources (GSC/Bing/Both)
 
-**Google Search Console setup**: Cloud Console → enable "Search Console API" → create Service Account → download JSON key → add service account email to GSC with "Full" permissions. Set `GOOGLE_APPLICATION_CREDENTIALS="/path/to/key.json"`.
+**GSC setup**: Cloud Console → enable "Search Console API" → create Service Account → download JSON key → add service account email to GSC with "Full" permissions → set `GOOGLE_APPLICATION_CREDENTIALS="/path/to/key.json"`.
 
-**Bing Webmaster Tools setup**: [bing.com/webmasters](https://www.bing.com/webmasters) → add/verify site → Settings → API Access → Generate API Key. Set `BING_WEBMASTER_API_KEY`.
+**Bing setup**: [bing.com/webmasters](https://www.bing.com/webmasters) → add/verify site → Settings → API Access → Generate API Key → set `BING_WEBMASTER_API_KEY`.
 
 ## Troubleshooting
 
