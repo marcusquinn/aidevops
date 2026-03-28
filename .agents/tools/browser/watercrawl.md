@@ -90,43 +90,19 @@ const result = await client.scrapeUrl('https://example.com', {
     only_main_content: true, include_links: true, wait_time: 2000
 });
 
-// Crawl with monitoring
+// Crawl with event monitoring
 const crawlRequest = await client.createCrawlRequest(
     'https://docs.example.com',
     { max_depth: 3, page_limit: 100, allowed_domains: ['docs.example.com'], exclude_paths: ['/api/*'] },
-    { only_main_content: true, include_links: true, wait_time: 2000 }
+    { only_main_content: true, include_links: true }
 );
 for await (const event of client.monitorCrawlRequest(crawlRequest.uuid)) {
-    if (event.type === 'state') console.log(`Status: ${event.data.status}, Pages: ${event.data.number_of_documents}`);
+    if (event.type === 'state') console.log(`Status: ${event.data.status}`);
     else if (event.type === 'result') console.log(`Crawled: ${event.data.url}`);
 }
-
-// Batch crawl
-const batchRequest = await client.createBatchCrawlRequest(
-    ['https://example.com/page1', 'https://example.com/page2', 'https://example.com/page3'],
-    { proxy_server: null },
-    { wait_time: 1000, include_html: true }
-);
-for await (const event of client.monitorCrawlRequest(batchRequest.uuid)) { /* handle events */ }
-
-// Web search
-const results = await client.createSearchRequest(
-    'AI web crawling frameworks',
-    { language: 'en', country: 'us', time_range: 'month', depth: 'advanced' },
-    10, true, true  // limit, sync, download
-);
-for (const r of results) console.log(`${r.title}: ${r.url}\n${r.description}`);
-
-// Sitemap
-const sitemap = await client.createSitemapRequest(
-    'https://example.com',
-    { include_subdomains: true, ignore_sitemap_xml: false, include_paths: [], exclude_paths: ['/admin/*'] },
-    true, true  // sync, download
-);
-const jsonSitemap     = await client.getSitemapResults(sitemap.uuid, 'json');
-const markdownSitemap = await client.getSitemapResults(sitemap.uuid, 'markdown');
-const graphSitemap    = await client.getSitemapResults(sitemap.uuid, 'graph');
 ```
+
+Full API: `createBatchCrawlRequest`, `createSearchRequest`, `createSitemapRequest` — see https://docs.watercrawl.dev/api/documentation/
 
 ## Python SDK
 
@@ -135,16 +111,15 @@ pip install watercrawl-py
 ```
 
 ```python
-from watercrawl import WaterCrawlAPIClient
-client = WaterCrawlAPIClient(api_key="your-api-key")
+import asyncio
+from watercrawl import WaterCrawlAPIClient, AsyncWaterCrawlAPIClient
 
+# Sync scrape
+client = WaterCrawlAPIClient(api_key="your-api-key")
 result = client.scrape_url("https://example.com",
     page_options={"only_main_content": True, "include_links": True, "wait_time": 2000})
 
-# Async
-import asyncio
-from watercrawl import AsyncWaterCrawlAPIClient
-
+# Async crawl
 async def crawl_site():
     client = AsyncWaterCrawlAPIClient(api_key="your-api-key")
     crawl_request = await client.create_crawl_request(
