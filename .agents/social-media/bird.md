@@ -20,230 +20,115 @@ tools:
 
 - **Purpose**: Fast X/Twitter CLI for tweeting, replying, and reading
 - **Install**: `npm i -g @steipete/bird` or `brew install steipete/tap/bird`
+- **One-shot**: `npx -y @steipete/bird whoami`
 - **Repo**: https://github.com/steipete/bird
-- **Auth**: Uses browser cookies (Safari, Chrome, Firefox)
+- **Auth**: Browser cookies (Safari, Chrome, Firefox) — no API keys needed
 
-**Quick Commands**:
+**Core Commands**:
 
 ```bash
-# Check logged-in account
-bird whoami
-
-# Read a tweet
-bird read https://x.com/user/status/1234567890123456789
-
-# Post a tweet
-bird tweet "Hello world!"
-
-# Reply to a tweet
-bird reply 1234567890123456789 "Great post!"
-
-# Search tweets
-bird search "from:steipete" -n 5
-
-# Get mentions
-bird mentions -n 5
+bird whoami                                              # Check logged-in account
+bird read https://x.com/user/status/1234567890123456789  # Read a tweet (or just ID)
+bird tweet "Hello world!"                                # Post a tweet
+bird reply 1234567890123456789 "Great post!"             # Reply to a tweet
+bird search "from:steipete" -n 5                         # Search tweets
+bird mentions -n 5                                       # Get mentions
+bird thread <url>                                        # View thread/conversation
+bird replies <id>                                        # View replies to a tweet
+bird bookmarks -n 5                                      # List bookmarks
+bird likes -n 5                                          # List liked tweets
+bird following -n 20                                     # Who you follow
+bird followers -n 20                                     # Who follows you
 ```
 
-**Key Features**:
+**Media**: `--media <path>` (up to 4 images/GIFs or 1 video) + `--alt <text>` for alt text. Formats: jpg, png, webp, gif, mp4, mov.
 
-- Tweet, reply, read via GraphQL API
-- Thread and conversation viewing
-- Search and mentions
-- Bookmarks and likes management
-- Following/followers lists
-- Media uploads (images, GIFs, video)
-- Browser cookie authentication (no API keys needed)
-
-**Auth Methods**: Browser cookies (Safari/Chrome/Firefox), or manual `--auth-token` and `--ct0`
+**Output**: `--json` for machine-readable output. `--plain` for stable output (no emoji/color).
 
 <!-- AI-CONTEXT-END -->
 
-## Installation
-
-### npm (recommended)
-
-```bash
-# Global install
-npm i -g @steipete/bird
-
-# One-shot (no install)
-npx -y @steipete/bird whoami
-```
-
-### Homebrew (macOS Apple Silicon)
-
-```bash
-brew install steipete/tap/bird
-```
-
 ## Authentication
 
-Bird uses your existing X/Twitter web session via browser cookies. No API keys or passwords required.
+Uses existing X/Twitter web session via browser cookies.
 
-### Cookie Sources (in order of precedence)
+**Cookie sources** (precedence order):
 
-1. CLI flags: `--auth-token`, `--ct0`
-2. Environment variables: `AUTH_TOKEN`, `CT0` (or `TWITTER_AUTH_TOKEN`, `TWITTER_CT0`)
+1. CLI flags: `--auth-token <token>`, `--ct0 <token>`
+2. Environment: `AUTH_TOKEN`/`CT0` (or `TWITTER_AUTH_TOKEN`/`TWITTER_CT0`)
 3. Browser cookies via `@steipete/sweet-cookie`
 
-### Browser Cookie Locations
+**Browser cookie paths**:
 
-| Browser | Cookie Path |
-|---------|-------------|
-| Safari | `~/Library/Cookies/Cookies.binarycookies` |
-| Chrome | `~/Library/Application Support/Google/Chrome/<Profile>/Cookies` |
+| Browser | Path |
+|---------|------|
+| Safari  | `~/Library/Cookies/Cookies.binarycookies` |
+| Chrome  | `~/Library/Application Support/Google/Chrome/<Profile>/Cookies` |
 | Firefox | `~/Library/Application Support/Firefox/Profiles/<profile>/cookies.sqlite` |
 
-### Verify Authentication
-
-```bash
-# Check which account is logged in
-bird whoami
-
-# Check available credentials
-bird check
-```
-
-### Manual Cookie Override
-
-```bash
-bird tweet "Hello" --auth-token YOUR_AUTH_TOKEN --ct0 YOUR_CT0_TOKEN
-```
+**Verify**: `bird whoami` (account info), `bird check` (credential status).
 
 ## Commands
 
-### Reading Tweets
+### Reading
 
 ```bash
-# Read a single tweet (URL or ID)
-bird read https://x.com/user/status/1234567890123456789
-bird read 1234567890123456789
-
-# Shorthand (just the URL/ID)
-bird 1234567890123456789
-
-# JSON output
-bird read 1234567890123456789 --json
-
-# View thread/conversation
-bird thread https://x.com/user/status/1234567890123456789
-
-# View replies to a tweet
-bird replies 1234567890123456789
+bird read <url-or-id>              # Single tweet
+bird 1234567890123456789           # Shorthand (just ID)
+bird read <id> --json              # JSON output
+bird thread <url>                  # Thread/conversation
+bird replies <id>                  # Replies to a tweet
 ```
 
-### Posting Tweets
+### Posting
 
 ```bash
-# Post a new tweet
 bird tweet "Hello world!"
-
-# Tweet with media (up to 4 images or 1 video)
 bird tweet "Check this out!" --media image.png --alt "Description"
-
-# Multiple images
 bird tweet "Photos" --media img1.png --media img2.png --alt "First" --alt "Second"
+bird tweet "Watch this!" --media video.mp4
 ```
 
 ### Replying
 
 ```bash
-# Reply to a tweet
-bird reply 1234567890123456789 "Great post!"
-
-# Reply with URL
-bird reply https://x.com/user/status/1234567890123456789 "Nice!"
-
-# Reply with media
-bird reply 1234567890123456789 "Here's my response" --media response.png
+bird reply <id-or-url> "Great post!"
+bird reply <id> "Here's my response" --media response.png
 ```
 
-### Search
+### Search and Mentions
 
 ```bash
-# Search tweets
-bird search "from:steipete" -n 5
-
-# Search with JSON output
 bird search "AI tools" -n 10 --json
-```
-
-### Mentions
-
-```bash
-# Your mentions
 bird mentions -n 5
-
-# Another user's mentions
-bird mentions --user @steipete -n 5
-
-# JSON output
-bird mentions -n 10 --json
+bird mentions --user @steipete -n 5 --json
 ```
 
-### Bookmarks
+### Bookmarks and Likes
 
 ```bash
-# List bookmarks
 bird bookmarks -n 5
-
-# Specific bookmark folder
-bird bookmarks --folder-id 123456789123456789 -n 5
-
-# All bookmarks with pagination
+bird bookmarks --folder-id <id> -n 5
 bird bookmarks --all --max-pages 2 --json
-
-# Remove bookmark
-bird unbookmark 1234567890123456789
-bird unbookmark https://x.com/user/status/1234567890123456789
-```
-
-### Likes
-
-```bash
-# List your liked tweets
-bird likes -n 5
-
-# JSON output
+bird unbookmark <id-or-url>
 bird likes -n 10 --json
 ```
 
 ### Following/Followers
 
 ```bash
-# Who you follow
 bird following -n 20
-
-# Who follows you
 bird followers -n 20
-
-# Another user's following/followers (by user ID)
-bird following --user 12345678 -n 10
-bird followers --user 12345678 -n 10
-```
-
-### Utility Commands
-
-```bash
-# Show help
-bird help
-bird help tweet
-
-# Refresh GraphQL query IDs cache
-bird query-ids --fresh
-
-# Version info
-bird --version
+bird following --user <user-id> -n 10   # Another user
+bird followers --user <user-id> -n 10
 ```
 
 ## Global Options
 
 | Option | Description |
 |--------|-------------|
-| `--auth-token <token>` | Set auth_token cookie manually |
-| `--ct0 <token>` | Set ct0 cookie manually |
-| `--cookie-source <browser>` | Choose browser (safari, chrome, firefox) |
+| `--auth-token <token>` | Manual auth_token cookie |
+| `--ct0 <token>` | Manual ct0 cookie |
+| `--cookie-source <browser>` | Browser: safari, chrome, firefox |
 | `--chrome-profile <name>` | Chrome profile for cookies |
 | `--firefox-profile <name>` | Firefox profile for cookies |
 | `--cookie-timeout <ms>` | Cookie extraction timeout |
@@ -257,17 +142,10 @@ bird --version
 
 ## Configuration
 
-### Config File (JSON5)
-
-Locations:
-- Global: `~/.config/bird/config.json5`
-- Project: `./.birdrc.json5`
-
-Example `~/.config/bird/config.json5`:
+**Config files** (JSON5): `~/.config/bird/config.json5` (global), `./.birdrc.json5` (project).
 
 ```json5
 {
-  // Cookie source order for browser extraction
   cookieSource: ["firefox", "safari"],
   firefoxProfile: "default-release",
   cookieTimeoutMs: 30000,
@@ -276,156 +154,56 @@ Example `~/.config/bird/config.json5`:
 }
 ```
 
-### Environment Variables
-
-```bash
-# Timeout settings
-BIRD_TIMEOUT_MS=20000
-BIRD_COOKIE_TIMEOUT_MS=30000
-BIRD_QUOTE_DEPTH=1
-```
+**Environment variables**: `BIRD_TIMEOUT_MS`, `BIRD_COOKIE_TIMEOUT_MS`, `BIRD_QUOTE_DEPTH`.
 
 ## JSON Output Schema
 
-### Tweet Object
+Key fields in tweet objects: `id`, `text`, `author` (`{ username, name }`), `authorId`, `createdAt`, `replyCount`, `retweetCount`, `likeCount`, `conversationId`, `inReplyToStatusId`, `quotedTweet`.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Tweet ID |
-| `text` | string | Full tweet text |
-| `author` | object | `{ username, name }` |
-| `authorId` | string? | Author's user ID |
-| `createdAt` | string | Timestamp |
-| `replyCount` | number | Number of replies |
-| `retweetCount` | number | Number of retweets |
-| `likeCount` | number | Number of likes |
-| `conversationId` | string | Thread conversation ID |
-| `inReplyToStatusId` | string? | Parent tweet ID (if reply) |
-| `quotedTweet` | object? | Embedded quote tweet |
-
-### User Object (following/followers)
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | User ID |
-| `username` | string | Username/handle |
-| `name` | string | Display name |
-| `description` | string? | User bio |
-| `followersCount` | number? | Followers count |
-| `followingCount` | number? | Following count |
-| `isBlueVerified` | boolean? | Blue verified flag |
-| `profileImageUrl` | string? | Profile image URL |
-| `createdAt` | string? | Account creation timestamp |
-
-## Media Uploads
-
-### Supported Formats
-
-- **Images**: jpg, jpeg, png, webp, gif
-- **Video**: mp4, mov
-
-### Limits
-
-- Up to 4 images/GIFs, OR 1 video (no mixing)
-- Video processing may take longer
-
-### Examples
-
-```bash
-# Single image with alt text
-bird tweet "Check this out!" --media photo.jpg --alt "A beautiful sunset"
-
-# Multiple images
-bird tweet "Photo dump" \
-  --media img1.png --alt "First image" \
-  --media img2.png --alt "Second image" \
-  --media img3.png --alt "Third image"
-
-# Video
-bird tweet "Watch this!" --media video.mp4
-```
+Key fields in user objects: `id`, `username`, `name`, `description`, `followersCount`, `followingCount`, `isBlueVerified`, `profileImageUrl`, `createdAt`.
 
 ## GraphQL Query IDs
 
-X rotates GraphQL query IDs frequently. Bird handles this automatically:
-
-- Ships with baseline mapping in `src/lib/query-ids.json`
-- Runtime cache at `~/.config/bird/query-ids-cache.json`
-- Auto-recovery on 404 errors (refreshes and retries)
-- TTL: 24 hours
-
-### Manual Refresh
+X rotates GraphQL query IDs frequently. Bird handles this automatically with a runtime cache (`~/.config/bird/query-ids-cache.json`, 24h TTL) and auto-recovery on 404 errors.
 
 ```bash
-# Force refresh query IDs
-bird query-ids --fresh
-
-# View current query IDs
-bird query-ids --json
+bird query-ids --fresh   # Force refresh
+bird query-ids --json    # View current IDs
 ```
 
-## Integration with aidevops
-
-### Use Cases
-
-1. **Social Media Automation**: Schedule and post content
-2. **Engagement Monitoring**: Track mentions and replies
-3. **Research**: Search and analyze tweets
-4. **Content Curation**: Bookmark and organize content
-5. **Analytics**: Export data for analysis
-
-### Example Workflows
+## Workflow Examples
 
 ```bash
 # Post announcement
 bird tweet "New release v2.0 is out! Check the changelog: https://example.com/changelog"
 
-# Monitor mentions and respond
+# Monitor mentions for help requests
 bird mentions -n 10 --json | jq '.[] | select(.text | contains("help"))'
 
 # Export bookmarks for analysis
 bird bookmarks --all --json > bookmarks.json
 
-# Thread a long post
+# Thread a long post (reply to each previous tweet)
 bird tweet "1/3 Here's a thread about..."
-# Get the tweet ID from output, then reply to it:
 bird reply <id_of_first_tweet> "2/3 Continuing the thread..."
-# Get the ID of the reply above to continue the thread:
 bird reply <id_of_second_tweet> "3/3 Final thoughts..."
-```
 
-### Combining with summarize
-
-```bash
-# Summarize a linked article and tweet about it
+# Summarize an article and tweet about it
 url="https://example.com/article"
 summary=$(summarize "$url" --length short --plain)
-bird tweet "Interesting read: $summary
-
-$url"
+bird tweet "Interesting read: $summary\n\n$url"
 ```
 
 ## Troubleshooting
 
-### Common Issues
+| Issue | Fix |
+|-------|-----|
+| Cookie extraction fails | Ensure browser is logged into X/Twitter |
+| Rate limiting (429) | Wait and retry, or use different account |
+| Query ID invalid (404) | Run `bird query-ids --fresh` |
+| Error 226 (automated request) | Bird auto-falls back to legacy endpoint |
 
-1. **Cookie extraction fails**: Ensure browser is logged into X/Twitter
-2. **Rate limiting (429)**: Wait and retry, or use different account
-3. **Query ID invalid (404)**: Run `bird query-ids --fresh`
-4. **Error 226 (automated request)**: Bird auto-falls back to legacy endpoint
-
-### Debug Mode
-
-```bash
-# Check credentials
-bird check
-
-# Verify account
-bird whoami
-
-# Test with plain output
-bird --plain check
-```
+**Debug**: `bird check` (credentials), `bird whoami` (account), `bird --plain check` (plain output).
 
 ## Disclaimer
 
