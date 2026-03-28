@@ -1,33 +1,23 @@
 # Architecture Diagrams
 
-Cloud and CI/CD infrastructure visualization using icons and groups.
+Cloud, CI/CD, and system architecture visualization.
 
-### Components
+## Architecture-Beta
 
 **Groups:** `group {id}({icon})[{title}]` / `group {id}({icon})[{title}] in {parent_id}`
-
 **Services:** `service {id}({icon})[{title}]` / `service {id}({icon})[{title}] in {group_id}`
-
 **Junctions:** `junction {id}` / `junction {id} in {group_id}`
 
-### Edges
+**Edges:** `{service}:{direction} {arrow} {direction}:{service}`
 
-`{service}:{direction} {arrow} {direction}:{service}`
-
-| Direction | Code | Arrow Types | Syntax |
-|-----------|------|-------------|--------|
+| Direction | Code | Arrow | Syntax |
+|-----------|------|-------|--------|
 | Top | `T` | Undirected | `--` |
 | Bottom | `B` | Right | `-->` |
 | Left | `L` | Left | `<--` |
 | Right | `R` | Bidirectional | `<-->` |
 
-### Icons
-
-Default: `cloud`, `database`, `disk`, `internet`, `server`
-
-Iconify (200,000+ icons): `logos:aws`, `logos:google-cloud`, etc.
-
-### Example
+**Icons:** Built-in: `cloud`, `database`, `disk`, `internet`, `server`. Iconify (200k+): `logos:aws`, `logos:google-cloud`, etc.
 
 ```mermaid
 architecture-beta
@@ -47,37 +37,14 @@ architecture-beta
     api1:R --> L:cache
 ```
 
----
-
 ## Block Diagrams
 
-System component layouts with flexible positioning.
+Layout-based system component diagrams with flexible positioning.
 
 **Columns:** `columns N` — controls layout width. **Spanning:** `a:1 b:2 c:3`
-
 **Shapes:** `["Rectangle"]` `("Rounded")` `(["Stadium"])` `[("Database")]` `(("Circle"))` `{"Diamond"}` `{{"Hexagon"}}`
-
-**Nested blocks:**
-
-```mermaid
-block-beta
-    columns 2
-    block:frontend
-        columns 1
-        UI["React App"]
-        State["Redux Store"]
-    end
-    block:backend
-        columns 1
-        API["REST API"]
-        DB[("PostgreSQL")]
-    end
-    frontend --> backend
-```
-
+**Nesting:** `block:name["Label"] ... end`
 **Styling:** `classDef name fill:#hex,stroke:#hex` then `class NodeId name`
-
-### Example: Three-Tier Architecture
 
 ```mermaid
 block-beta
@@ -105,26 +72,20 @@ block-beta
     class presentation,application,data tier
 ```
 
----
-
 ## C4 Diagrams
 
 Software architecture using the C4 model (Context, Container, Component, Code).
 
 | Type | Declaration | Level |
 |------|-------------|-------|
-| System Context | `C4Context` | 1 — Highest |
+| Context | `C4Context` | 1 — Highest |
 | Container | `C4Container` | 2 |
 | Component | `C4Component` | 3 |
 | Dynamic | `C4Dynamic` | Interactions |
 | Deployment | `C4Deployment` | Infrastructure |
 
-**Context elements:** `Person`, `Person_Ext`, `System`, `System_Ext`, `SystemDb`, `SystemQueue`, `Boundary`, `Enterprise_Boundary`
-
-**Container elements:** `Container(alias, label, tech, desc)`, `Container_Ext`, `ContainerDb`, `ContainerQueue`, `Container_Boundary`
-
+**Elements:** `Person(alias, label, desc)`, `Person_Ext`, `System`, `System_Ext`, `SystemDb`, `SystemQueue`, `Boundary`, `System_Boundary`, `Enterprise_Boundary`, `Container(alias, label, tech, desc)`, `Container_Ext`, `ContainerDb`, `ContainerQueue`, `Container_Boundary`, `Deployment_Node(alias, label, tech) { ... }`
 **Relationships:** `Rel(from, to, label[, tech])`, `BiRel()`, `Rel_U/D/L/R()`, `Rel_Back()`
-
 **Styling:** `UpdateElementStyle(alias, $fontColor, $bgColor)`, `UpdateRelStyle(from, to, $textColor, $lineColor)`
 
 ### C4Context
@@ -186,9 +147,7 @@ C4Deployment
     Rel(api, db, "SQL")
 ```
 
----
-
-## Kanban Diagrams
+## Kanban
 
 ```mermaid
 kanban
@@ -207,17 +166,7 @@ kanban
 
 **Metadata keys:** `ticket`, `assigned`, `priority`
 
-**Config:**
-
-```yaml
----
-config:
-  kanban:
-    ticketBaseUrl: 'https://jira.example.com/browse/#TICKET#'
----
-```
-
----
+**Config:** `ticketBaseUrl` links tickets — `'https://jira.example.com/browse/#TICKET#'` in `config.kanban`.
 
 ## Packet Diagrams
 
@@ -236,14 +185,11 @@ packet-beta
     192-255: "Data"
 ```
 
----
-
 ## Requirement Diagrams
 
 System requirements and traceability.
 
 **Types:** `requirement`, `functionalRequirement`, `interfaceRequirement`, `performanceRequirement`, `physicalRequirement`, `designConstraint`
-
 **Relationships:** `contains`, `copies`, `derives`, `satisfies`, `verifies`, `refines`, `traces`
 
 ```mermaid

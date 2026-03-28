@@ -19,6 +19,8 @@ Unified access to 100+ generative media models (images, videos, voice, audio) th
 
 **Base URL**: `https://platform.higgsfield.ai`
 
+**Use for**: text-to-image, image-to-video, character consistency across generations, multi-model comparison (FLUX, Kling, Seedance, etc.), webhook-based async pipelines.
+
 ## Quick Reference
 
 | Endpoint | Purpose | Model |
@@ -31,25 +33,16 @@ Unified access to 100+ generative media models (images, videos, voice, audio) th
 | `POST /api/characters` | Create character | - |
 | `GET /api/generation-results` | Poll job status | - |
 
-## When to Use
-
-- AI image generation (text-to-image), video generation (image-to-video)
-- Character consistency across generations
-- Multi-model comparison (FLUX, Kling, Seedance, etc.)
-- Webhook-based async generation pipelines
-
 ## Authentication
 
-Two formats depending on endpoint:
-
-**Header-based** (v1 endpoints: `/v1/text2image/soul`, `/v1/image2video/dop`):
+**v1 endpoints** (`/v1/text2image/soul`, `/v1/image2video/dop`):
 
 ```bash
 hf-api-key: {api-key}
 hf-secret: {secret}
 ```
 
-**Authorization header** (simplified endpoints: `/higgsfield-ai/dop/standard`):
+**Simplified endpoints** (`/higgsfield-ai/dop/standard`, Kling, Seedance):
 
 ```bash
 Authorization: Key {api-key}:{secret}
@@ -85,14 +78,14 @@ curl -X POST 'https://platform.higgsfield.ai/v1/text2image/soul' \
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `prompt` | string | Yes | Text description of image |
-| `width_and_height` | string | Yes | Dimensions (see supported sizes below) |
+| `width_and_height` | string | Yes | Dimensions (see supported sizes) |
 | `enhance_prompt` | boolean | No | Auto-enhance prompt (default: false) |
 | `quality` | string | No | `720p` or `1080p` (default: 1080p) |
 | `batch_size` | integer | No | 1 or 4 (default: 1) |
 | `seed` | integer | No | 1-1000000 for reproducibility |
 | `style_id` | uuid | No | Preset style ID |
 | `style_strength` | number | No | 0-1 (default: 1) |
-| `custom_reference_id` | string | No | Character ID for consistency (UUID) |
+| `custom_reference_id` | string | No | Character UUID for consistency |
 | `custom_reference_strength` | number | No | 0-1 (default: 1) |
 | `image_reference` | object | No | Reference image for guidance |
 
@@ -150,15 +143,13 @@ curl -X POST 'https://platform.higgsfield.ai/v1/image2video/dop' \
 
 ### Alternative Models (simplified API)
 
-All use `Authorization: Key {api-key}:{secret}` header and accept `image_url` + `prompt`:
+All use `Authorization: Key {api-key}:{secret}` and accept `image_url` + `prompt`:
 
 | Model | Endpoint | Extra params |
 |-------|----------|-------------|
 | DOP Standard | `/higgsfield-ai/dop/standard` | `duration` (seconds) |
 | Kling v2.1 Pro | `/kling-video/v2.1/pro/image-to-video` | - |
 | Seedance v1 Pro | `/bytedance/seedance/v1/pro/image-to-video` | - |
-
-Example (DOP Standard):
 
 ```bash
 curl -X POST 'https://platform.higgsfield.ai/higgsfield-ai/dop/standard' \
@@ -171,24 +162,22 @@ curl -X POST 'https://platform.higgsfield.ai/higgsfield-ai/dop/standard' \
   }'
 ```
 
-Kling and Seedance use the same request shape (without `duration`).
+Kling and Seedance use the same request shape without `duration`.
 
 ## Character Consistency
 
 Create reusable characters for consistent generation across images.
 
-**Create:**
-
 ```bash
+# Create character
 curl -X POST 'https://platform.higgsfield.ai/api/characters' \
   --header 'hf-api-key: {api-key}' \
   --header 'hf-secret: {secret}' \
   --form 'photo=@/path/to/photo.jpg'
+# Returns: { "id": "3eb3ad49-...", "photo_url": "https://cdn.higgsfield.ai/...", "created_at": "..." }
 ```
 
-Returns `{ "id": "3eb3ad49-...", "photo_url": "https://cdn.higgsfield.ai/...", "created_at": "..." }`
-
-**Use in generation** -- add to `params`:
+Use in generation by adding to `params`:
 
 ```json
 {
@@ -225,7 +214,7 @@ curl -X GET 'https://platform.higgsfield.ai/api/generation-results?id=job_789012
 }
 ```
 
-**Status values**: `queued`, `processing`, `completed`, `failed`. Results retained for 7 days.
+**Status values**: `queued`, `processing`, `completed`, `failed`. Results retained 7 days.
 
 ## Python SDK
 
@@ -233,7 +222,7 @@ curl -X GET 'https://platform.higgsfield.ai/api/generation-results?id=job_789012
 pip install higgsfield-client
 ```
 
-The SDK provides a simplified interface with unified parameters (`resolution`, `aspect_ratio`) that differ from the REST API (`width_and_height`, `quality`) -- translation is handled internally.
+SDK uses unified parameters (`resolution`, `aspect_ratio`) that differ from REST API (`width_and_height`, `quality`) -- translation handled internally.
 
 ```python
 import higgsfield_client
@@ -250,7 +239,6 @@ result = higgsfield_client.subscribe(
 print(result['images'][0]['url'])
 
 # Asynchronous: use subscribe_async() with await
-# result = await higgsfield_client.subscribe_async(...)
 ```
 
 ## Error Handling
@@ -259,7 +247,7 @@ print(result['images'][0]['url'])
 |------|------|--------|
 | 401 | Authentication | Invalid or missing API credentials |
 | 422 | Validation | `{"detail": [{"loc": ["body","params","prompt"], "msg": "Prompt cannot be empty", "type": "value_error"}]}` |
-| 429 | Rate limit | Platform auto-scales; implement exponential backoff for resilience |
+| 429 | Rate limit | Platform auto-scales; implement exponential backoff |
 
 ## Context7 Integration
 
@@ -270,23 +258,15 @@ query-docs("/websites/higgsfield_ai", "image-to-video models")
 query-docs("/websites/higgsfield_ai", "character consistency")
 ```
 
-## Related
-
-- **`./higgsfield-ui.md`** - UI automation subagent (uses subscription credits via browser, no API key needed)
-- [Higgsfield Docs](https://docs.higgsfield.ai/)
-- [Higgsfield Dashboard](https://cloud.higgsfield.ai)
-- `./remotion.md` - Programmatic video editing
-
-
 ## API vs UI
 
-| Feature | API (`higgsfield.md`) | UI (`higgsfield-ui.md`) |
-|---------|----------------------|------------------------|
+| Feature | API (`video-higgsfield.md`) | UI (`video-higgsfield-ui.md`) |
+|---------|---------------------------|-------------------------------|
 | Auth | API key + secret | Email/password login |
 | Credits | Pay-per-use API credits (separate pool) | Subscription credits (included in plan) |
 | Models | Soul, Popcorn, Reve, Seedream v4, DOP, Kling 2.1/2.6/3.0, Seedance | All API models + Nano Banana Pro, GPT Image, Flux Kontext, Wan, Sora, Veo, MiniMax, Grok + 86 apps |
 | Speed | Direct API calls (~5-30s) | Browser automation (~60s per generation) |
-| Best for | Programmatic pipelines, batch processing | Using subscription credits, accessing UI-only features |
+| Best for | Programmatic pipelines, batch processing | Subscription credits, UI-only features |
 
 ### Verified API Models (2026-02-10)
 

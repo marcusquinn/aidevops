@@ -10,21 +10,55 @@ tools:
   grep: true
 ---
 
-# Outscraper MCP Server
+# Outscraper Data Extraction
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
-- **Purpose**: Business intelligence extraction from Google Maps, Amazon, reviews, contacts
-- **Auth**: API key from <https://auth.outscraper.com/profile>
-- **Env Var**: `OUTSCRAPER_API_KEY` in `~/.config/aidevops/credentials.sh`
+- **Purpose**: Business intelligence from Google Maps, Amazon, reviews, contacts
+- **Auth**: `X-API-KEY` header; key from <https://auth.outscraper.com/profile>
+- **Env Var**: `OUTSCRAPER_API_KEY` in `~/.config/aidevops/credentials.sh` (600 perms)
 - **API Base**: `https://api.app.outscraper.com` (ignore `api.outscraper.cloud` in OpenAPI spec)
 - **Docs**: <https://app.outscraper.com/api-docs>
 - **SDK**: <https://github.com/outscraper/outscraper-python>
-- **No MCP required** — uses curl directly
+- **Pricing**: Metered per request — <https://outscraper.com/pricing/> (free tier available)
+- **No MCP required** — curl works directly; MCP server available for tool-based access
 
-**OpenCode Config** (`~/.config/opencode/opencode.json`):
+**MCP Tools** (25+): `google_maps_search`, `google_maps_reviews`, `google_maps_photos`, `google_maps_directions`, `google_search`, `google_search_news`, `google_play_reviews`, `amazon_reviews`, `tripadvisor_reviews`, `apple_store_reviews`, `youtube_comments`, `g2_reviews`, `trustpilot_reviews`, `glassdoor_reviews`, `capterra_reviews`, `yelp_reviews`, `emails_and_contacts`, `contacts_and_leads`, `phones_enricher`, `company_insights`, `email_validation`, `whitepages_phones`, `whitepages_addresses`, `amazon_products`, `company_websites_finder`, `similarweb`, `yelp_search`, `trustpilot_search`, `yellowpages_search`, `geocoding`, `reverse_geocoding`
+
+**Direct API** (not in MCP): `GET /profile/balance`, `GET /invoices`, `POST /tasks`, `GET /webhook-calls`, `GET /locations`
+
+**Verification**: `Search for coffee shops near Times Square NYC using Google Maps search and return the top 5 results with ratings.`
+
+**Tested tools** (Dec 2024): `google_search` — working; `google_maps_search` — working (minor null field warnings, non-blocking)
+
+<!-- AI-CONTEXT-END -->
+
+## Installation & Configuration
+
+**Prerequisites**: Python 3.10+, `uv` recommended
+
+```bash
+uvx outscraper-mcp-server          # run via uvx (recommended)
+uv add outscraper-mcp-server       # install permanently
+pip install outscraper-mcp-server  # or via pip
+```
+
+### MCP Server Config
+
+**Claude Desktop / Claude Code**:
+
+```bash
+claude mcp add-json outscraper --scope user '{
+  "type": "stdio",
+  "command": "uvx",
+  "args": ["outscraper-mcp-server"],
+  "env": {"OUTSCRAPER_API_KEY": "your_api_key_here"}
+}'
+```
+
+**OpenCode** (`~/.config/opencode/opencode.json`) — `"env"` key not supported, use bash wrapper:
 
 ```json
 "outscraper": {
@@ -34,28 +68,44 @@ tools:
 }
 ```
 
-**Verification**: `Search for coffee shops near Times Square NYC using Google Maps search and return the top 5 results with ratings.`
+OpenCode access: `@outscraper` subagent only (not enabled for main agents).
 
-**MCP Tools** (25+):
+**Cursor / Windsurf / Gemini CLI / VS Code / Kilo Code / Kiro** — all use the same pattern:
 
-- Google Maps: `google_maps_search`, `google_maps_reviews`, `google_maps_photos`, `google_maps_directions`
-- Search: `google_search`, `google_search_news`
-- Reviews: `google_play_reviews`, `amazon_reviews`, `tripadvisor_reviews`, `apple_store_reviews`, `youtube_comments`, `g2_reviews`, `trustpilot_reviews`, `glassdoor_reviews`, `capterra_reviews`, `yelp_reviews`
-- Business: `emails_and_contacts`, `contacts_and_leads`, `phones_enricher`, `company_insights`, `email_validation`, `whitepages_phones`, `whitepages_addresses`, `amazon_products`, `company_websites_finder`, `similarweb`
-- Search Platforms: `yelp_search`, `trustpilot_search`, `yellowpages_search`
-- Geo: `geocoding`, `reverse_geocoding`
+```json
+{
+  "mcpServers": {
+    "outscraper": {
+      "command": "uvx",
+      "args": ["outscraper-mcp-server"],
+      "env": { "OUTSCRAPER_API_KEY": "your_api_key_here" }
+    }
+  }
+}
+```
 
-**Direct API** (not in MCP): `GET /profile/balance`, `GET /invoices`, `POST /tasks`, `GET /webhook-calls`, `GET /locations`
+Config file locations:
 
-**Supported AI Tools**: OpenCode, Claude Code, Cursor, Windsurf, Gemini CLI, VS Code (Copilot), Raycast, custom MCP clients
+- **Cursor**: Settings → Tools & MCP → New MCP Server
+- **Windsurf**: `~/.codeium/windsurf/mcp_config.json`
+- **Gemini CLI**: `~/.gemini/settings.json` (user) or `.gemini/settings.json` (project)
+- **VS Code**: `.vscode/mcp.json` (use `"type": "stdio"` wrapper)
+- **Kilo Code**: MCP server icon → Edit Global MCP (add `"alwaysAllow": ["google_maps_search", "google_search"]`)
+- **Kiro**: Cmd+Shift+P → "Kiro: Open user MCP config" (use `"autoApprove"` instead of `"alwaysAllow"`)
 
-**OpenCode Access**: `@outscraper` subagent only (not enabled for main agents)
+**Droid (Factory.AI)**:
 
-<!-- AI-CONTEXT-END -->
+```bash
+droid mcp add outscraper "uvx" outscraper-mcp-server --env OUTSCRAPER_API_KEY=your_api_key_here
+```
+
+**Via Smithery (automatic)**:
+
+```bash
+npx -y @smithery/cli install outscraper-mcp-server --client claude
+```
 
 ## API Reference
-
-**Authentication**: API key in `X-API-KEY` header
 
 | Category | Endpoint | Method | Description |
 |----------|----------|--------|-------------|
@@ -101,158 +151,43 @@ tools:
 | `ui` | bool | Execute as UI task |
 | `webhook` | string | Callback URL for completion notification |
 
-## Installation
-
-**Prerequisites**: Python 3.10+, `uv` recommended
-
-```bash
-uvx outscraper-mcp-server          # run via uvx (recommended)
-uv add outscraper-mcp-server       # install permanently
-pip install outscraper-mcp-server  # or via pip
-```
-
-Get API key from <https://auth.outscraper.com/profile>. Add to `~/.config/aidevops/credentials.sh` (chmod 600):
-
-```bash
-export OUTSCRAPER_API_KEY="your_api_key_here"
-```
-
-## AI Tool Configurations
-
-### Claude Desktop / Claude Code
-
-```bash
-claude mcp add-json outscraper --scope user '{
-  "type": "stdio",
-  "command": "uvx",
-  "args": ["outscraper-mcp-server"],
-  "env": {"OUTSCRAPER_API_KEY": "your_api_key_here"}
-}'
-```
-
-### Cursor, Windsurf, Gemini CLI, VS Code, Kilo Code, Kiro
-
-All use the same `uvx` pattern — add to the tool's MCP config file:
-
-```json
-{
-  "mcpServers": {
-    "outscraper": {
-      "command": "uvx",
-      "args": ["outscraper-mcp-server"],
-      "env": {
-        "OUTSCRAPER_API_KEY": "your_api_key_here"
-      }
-    }
-  }
-}
-```
-
-Config file locations:
-- **Cursor**: Settings → Tools & MCP → New MCP Server
-- **Windsurf**: `~/.codeium/windsurf/mcp_config.json`
-- **Gemini CLI**: `~/.gemini/settings.json` (user) or `.gemini/settings.json` (project)
-- **VS Code**: `.vscode/mcp.json` (use `"type": "stdio"` wrapper)
-- **Kilo Code**: MCP server icon → Edit Global MCP (add `"alwaysAllow": ["google_maps_search", "google_search"]`)
-- **Kiro**: Cmd+Shift+P → "Kiro: Open user MCP config" (use `"autoApprove"` instead of `"alwaysAllow"`)
-
-**Droid (Factory.AI)**:
-
-```bash
-droid mcp add outscraper "uvx" outscraper-mcp-server --env OUTSCRAPER_API_KEY=your_api_key_here
-```
-
-**Via Smithery (automatic)**:
-
-```bash
-npx -y @smithery/cli install outscraper-mcp-server --client claude
-```
-
-## Python SDK Examples
+## Python SDK
 
 ```python
 from outscraper import ApiClient
-import requests
+import requests, time
 
 client = ApiClient(api_key='YOUR_API_KEY')
-
-# Direct API (for endpoints not in SDK)
 API_BASE = 'https://api.app.outscraper.com'
 headers = {'X-API-KEY': 'YOUR_API_KEY'}
-```
 
-### Account & Billing / Task Management
-
-```python
-# Account (direct API only)
+# Account & billing (direct API only)
 balance = requests.get(f'{API_BASE}/profile/balance', headers=headers).json()
 invoices = requests.get(f'{API_BASE}/invoices', headers=headers).json()
 
+# Task management (direct API only)
 task_data = {"service": "google_maps_search", "query": ["coffee shops manhattan"], "limit": 50}
-
-# Validate first (not in SDK)
 estimate = requests.post(f'{API_BASE}/tasks-validate', headers=headers, json=task_data).json()
-# {"valid": true, "estimated_cost": 5.00, ...}
-
-# Create task (not in SDK)
 task_id = requests.post(f'{API_BASE}/tasks', headers=headers, json=task_data).json()['id']
+tasks, has_more = client.get_tasks(page_size=1)  # check via SDK
+requests.delete(f'{API_BASE}/tasks/{task_id}', headers=headers)  # terminate
 
-# Check via SDK
-tasks, has_more = client.get_tasks(page_size=1)
-
-# Terminate (not in SDK)
-requests.delete(f'{API_BASE}/tasks/{task_id}', headers=headers)
-```
-
-### Async Pattern
-
-```python
-import time
-
+# Async pattern
 results = client.google_maps_search('restaurants brooklyn usa', limit=100, async_request=True)
 request_id = results['id']
-
 while True:
     result = client.get_request_archive(request_id)
     if result['status'] != 'Pending':
         break
     time.sleep(5)
-
 data = result.get('data', [])
-```
 
-### Webhook Integration
-
-```python
+# Webhook integration
 client.google_maps_reviews(
-    'ChIJrc9T9fpYwokRdvjYRHT8nI4',
-    reviews_limit=100,
-    async_request=True,
-    webhook='https://your-server.com/outscraper-callback'
+    'ChIJrc9T9fpYwokRdvjYRHT8nI4', reviews_limit=100,
+    async_request=True, webhook='https://your-server.com/outscraper-callback'
 )
 ```
-
-## Usage Examples
-
-```text
-# Local business research
-Search for "plumbers" near "Austin, TX" on Google Maps. For the top 10 results,
-get their ratings, review counts, and contact information.
-
-# Competitive review analysis
-Get the 50 most recent Trustpilot reviews for "competitor.com" and summarize
-the common complaints and praise points.
-
-# Lead generation
-Find software companies in the "CRM" space using Google search, then extract
-email contacts from their websites.
-
-# Market research
-Search for "electric vehicles" on Google News and return the top 20 articles
-from the past week with their sources and summaries.
-```
-
-**Tested tools** (Dec 2024): `google_search` — Working; `google_maps_search` — Working (minor null field warnings, non-blocking)
 
 ## Troubleshooting
 
@@ -262,13 +197,8 @@ from the past week with their sources and summaries.
 | `uvx: command not found` | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 | Connection refused / timeout | Check key at <https://auth.outscraper.com/profile>; verify connectivity |
 | Tool not found | Ensure MCP server enabled; restart AI tool; check agent has `outscraper_*: true` |
-| OpenCode `"env"` key not supported | Use bash wrapper: `"command": ["/bin/bash", "-c", "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uv tool run outscraper-mcp-server"]` |
 | `uvx` conflicts | Use `uv tool run outscraper-mcp-server` instead |
 | Python version errors | `brew install python@3.12` (macOS) |
-
-**Pricing**: Metered per request — <https://outscraper.com/pricing/>. Free tier available.
-
-**Security**: Never commit API keys. Use `OUTSCRAPER_API_KEY` env var or `~/.config/aidevops/credentials.sh` (600 perms).
 
 ## Related Documentation
 

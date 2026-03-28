@@ -157,7 +157,7 @@ A -->|text| B # Labeled
 | [mermaid-diagrams-skill/class-er.md](mermaid-diagrams-skill/class-er.md) | Classes, ER diagrams, relationships |
 | [mermaid-diagrams-skill/state-journey.md](mermaid-diagrams-skill/state-journey.md) | States, user journeys |
 | [mermaid-diagrams-skill/data-charts.md](mermaid-diagrams-skill/data-charts.md) | Gantt, Pie, Timeline, Quadrant |
-| [mermaid-diagrams-skill/architecture.md](mermaid-diagrams-skill/architecture.md) | C4, Block, Kanban |
+| [mermaid-diagrams-skill/architecture.md](mermaid-diagrams-skill/architecture.md) | Architecture, Block, C4, Kanban, Packet, Requirement |
 | [mermaid-diagrams-skill/cheatsheet.md](mermaid-diagrams-skill/cheatsheet.md) | All syntax quick reference |
 
 ## Resources
