@@ -18,8 +18,6 @@
 | 3 — Element | One element: headline, CTA, offer, thumbnail, hook | 5+ variations, everything else identical | Until 95% confidence + 50 conv/variant |
 | 4 — Audience-Message | Same creative across segments, or tailored messaging per segment | Budget weighted by audience size | 14 days |
 
-**Variable isolation:** Change ONE thing. `New video + same headline + same audience` = know it's the video. Multiple changes = unlearnable.
-
 ---
 
 ### Statistical Significance
@@ -31,7 +29,7 @@
 | Audience | 100+ | 95% | 14 days |
 | Format | 20+ | 95% | 7 days |
 
-- **95%+**: Declare winner and scale
+- **95%+**: Declare winner, scale
 - **90-94%**: Directional only — keep running if budget allows
 - **<90%**: Insufficient — do not declare winner
 
@@ -64,9 +62,7 @@ Calculators: VWO, Optimizely Stats Engine, AB Test Guide.
 
 ### Winner Identification & Scaling
 
-**Phases:** Days 1-3: eliminate non-starters (0 conv at $200+ spend). Days 4-7: accumulate data. Day 7+: declare winner if CPA 20%+ better than target, >10 conv/day potential, ≥95% confidence, stable trend.
-
-**Decision verdicts:**
+**Timeline:** Days 1-3: eliminate non-starters (0 conv at $200+ spend). Days 4-7: accumulate data. Day 7+: declare winner if CPA 20%+ better than target, >10 conv/day potential, 95%+ confidence, stable trend.
 
 | Verdict | Criteria | Action |
 |---------|----------|--------|
@@ -76,7 +72,7 @@ Calculators: VWO, Optimizely Stats Engine, AB Test Guide.
 | EXPAND AUDIENCE | Great efficiency, low volume | Broaden targeting |
 | KILL | CPA well above target, low engagement, declining | Pause immediately |
 
-**Scaling:** Gradual: $50-100/day → increase 15-20% every 3-4 days while KPI stability holds. Rapid (CPA 30%+ below target): cap individual increases at 20% to avoid re-entering learning phase; use spend caps, rollback triggers, and daily CPA/ROAS checks.
+**Scaling:** Gradual: $50-100/day start, increase 15-20% every 3-4 days while KPIs hold. Rapid (CPA 30%+ below target): cap increases at 20% to avoid re-entering learning phase; use spend caps, rollback triggers, daily CPA/ROAS checks.
 
 **Iterate on winners:** Different creator/same script, same creator/different hook, shorter cut, different product focus. Build a "creative cluster" around winning concepts.
 
@@ -95,17 +91,13 @@ Monthly: creative audit, performance ranking, fatigue analysis, testing insights
 
 ---
 
-### Testing Frameworks
-
-**Sequential:** Headlines (wk 1) → winning headline + images (wk 2) → winning combo + CTAs (wk 3) → + offers (wk 4). Build optimized creative layer by layer.
-
-**Champion vs. Challengers:** 1 champion (40% budget) + 4-5 challengers (15% each). Weekly: best challenger beats champion → swap; worst challenger replaced. Safe bet + continuous testing.
-
-**Bracket:** 8 variations equal budget → top 4 get more → top 2 battle → winner gets full budget. Fast elimination, efficient allocation.
-
----
-
 ### A/B Testing Methodology
+
+**Testing approaches:**
+
+- **Sequential:** Headlines (wk 1) → winning headline + images (wk 2) → winning combo + CTAs (wk 3) → + offers (wk 4). Layer-by-layer optimization.
+- **Champion vs. Challengers:** 1 champion (40% budget) + 4-5 challengers (15% each). Weekly: best challenger beats champion → swap; worst replaced.
+- **Bracket:** 8 variations equal budget → top 4 get more → top 2 battle → winner gets full budget. Fast elimination.
 
 **Priority testing order:**
 
@@ -116,18 +108,9 @@ Monthly: creative audit, performance ranking, fatigue analysis, testing insights
 | 3 (Medium) | Primary text, description, button color/text, length | Moderate |
 | 4 (Lower) | Emoji, capitalization, pricing display, urgency language | Incremental |
 
-**Steps:** Hypothesis → control vs. variant (all else identical) → equal split (80/20 when protecting strong control) → run per significance thresholds → analyze CPA/ROAS then CTR/CVR/watch time → scale winner, pause loser, document, plan next.
+**Process:** Hypothesis → control vs. variant (all else identical) → equal split (80/20 when protecting strong control) → run per significance thresholds → analyze CPA/ROAS then CTR/CVR/watch time → scale winner, pause loser, document, plan next.
 
-**Common mistakes:**
-
-| Mistake | Fix |
-|---------|-----|
-| Multiple variables | One variable at a time |
-| Stopping too early | Wait for significance + min sample + min duration |
-| Duration <7 days | Minimum 7 days (day-of-week variance) |
-| Unequal samples | Equal traffic split |
-| Optimizing for CTR | Optimize for primary business metric (CPA/ROAS) |
-| No documentation | Maintain test log with learnings |
+**Common mistakes:** Multiple variables (test one at a time) | Stopping too early (wait for significance + min sample + min duration) | Duration <7 days (day-of-week variance) | Unequal samples (equal traffic split) | Optimizing for CTR instead of CPA/ROAS | No documentation (maintain test log).
 
 **Test log fields:** ID | Date | Campaign | Hypothesis | Control | Variant(s) | Variable | Audience | Budget/variant | Duration | Results (CPA, CTR, conv, confidence) | Winner | Learnings | Next steps.
 
@@ -147,16 +130,7 @@ Build: winners library, losers library, best practices log (accumulated patterns
 | Copy Quality | /20 | Headline, primary text, CTA, tone/voice |
 | Offer & CTA | /15 | Offer strength, urgency/scarcity, friction reduction |
 
-Scoring per criterion: 5 = excellent, 3 = adequate, 1 = weak/missing.
-
-| Score | Rating | Action |
-|-------|--------|--------|
-| 90-100 | Excellent | Launch with high confidence |
-| 75-89 | Good | Launch with minor tweaks |
-| 60-74 | Average | Improve before launch |
-| <60 | Weak | Major revision needed |
-
-**Process:** Score before launch. Launch 75+, iterate 60-74, scrap <60. After 7 days compare pre-launch score to actual performance to build pattern recognition.
+Scoring: 5 = excellent, 3 = adequate, 1 = weak/missing. Launch 75+, iterate 60-74, scrap <60. After 7 days compare pre-launch score to actual performance for pattern recognition.
 
 ### Post-Launch Scorecard (100 pts, after 7 days)
 
@@ -206,9 +180,7 @@ DCO uses ML to test creative combinations automatically and serve the best-perfo
 
 ### Meta Dynamic Creative
 
-Up to 10 images/videos, 5 headlines, 5 primary texts, 5 descriptions. Meta tests all combinations, learns optimal pairings.
-
-**Setup:** Enable at ad level → upload assets → run 7+ days (50-100 conversions for learning) → review asset performance report.
+Up to 10 images/videos, 5 headlines, 5 primary texts, 5 descriptions. Meta tests all combinations, learns optimal pairings. Enable at ad level → upload assets → run 7+ days (50-100 conversions for learning) → review asset performance report.
 
 **Asset mix:**
 
@@ -238,7 +210,7 @@ Multiple video clips, text options, CTAs. TikTok assembles and tests combination
 | Strengths | Faster, tests at scale, continuous optimization, resource efficient | Complete control, isolate variables, precise audience-message match, brand-safe |
 | Weaknesses | Less control, can't isolate variables, less granular reporting | Time-intensive, slower learning, more production required |
 
-**Hybrid:** DCO for concept discovery → manual A/B to refine → DCO to scale. Checklist: max assets, diverse (not minor variations), each stands alone, headlines work in any combination, $50-100+/day budget, 7+ days, replaced low performers, documented learnings.
+**Hybrid:** DCO for concept discovery → manual A/B to refine → DCO to scale.
 
 ---
 
@@ -248,10 +220,10 @@ Multiple video clips, text options, CTAs. TikTok assembles and tests combination
 
 | Metric | Formula | Notes |
 |--------|---------|-------|
-| CPA | Spend / Conversions | Lower = better. Track trend over time. |
+| CPA | Spend / Conversions | Lower = better. Track trend. |
 | ROAS | Revenue / Ad Spend | Target 3-5x e-commerce. Break-even = 1 / Profit Margin. |
-| CTR | (Clicks / Impressions) × 100 | High CTR + low CVR = bad targeting or misleading ad. |
-| CVR | (Conversions / Clicks) × 100 | Benchmarks: e-commerce 2-5%, lead gen 5-15%, SaaS trials 3-10%. |
+| CTR | (Clicks / Impressions) x 100 | High CTR + low CVR = bad targeting or misleading ad. |
+| CVR | (Conversions / Clicks) x 100 | Benchmarks: e-commerce 2-5%, lead gen 5-15%, SaaS trials 3-10%. |
 
 **CTR benchmarks:**
 
@@ -271,9 +243,9 @@ Multiple video clips, text options, CTAs. TikTok assembles and tests combination
 | Metric | Good | Great | Excellent |
 |--------|------|-------|-----------|
 | Hook Rate (3s view) | 50%+ | 60%+ | 70%+ |
-| Hold Rate (avg watch) | 30-40% feed | 50-70% Stories/Reels | — |
-| ThruPlay rate | >25% | — | — |
-| Cost per ThruPlay | <$0.10 | <$0.05 | — |
+| Hold Rate (avg watch) | 30-40% feed | 50-70% Stories/Reels | -- |
+| ThruPlay rate | >25% | -- | -- |
+| Cost per ThruPlay | <$0.10 | <$0.05 | -- |
 
 View definitions: Facebook/Instagram = 3s, 10s, ThruPlay (end or 15s). YouTube = 30s or interaction. TikTok = any watch (1s+); full view = 100% completion.
 
@@ -285,21 +257,21 @@ View definitions: Facebook/Instagram = 3s, 10s, ThruPlay (end or 15s). YouTube =
 
 ### Facebook Quality Rankings
 
-| Ranking | Measures | Low score means |
-|---------|----------|-----------------|
+| Ranking | Measures | Low score fix |
+|---------|----------|---------------|
 | Quality Ranking | Ad quality vs. competitors for same audience | Improve visuals/messaging |
 | Engagement Rate Ranking | Expected engagement vs. competitors | Improve thumb-stop power, hook |
 | Conversion Rate Ranking | Expected CVR vs. competitors | Fix message match or landing page |
 
-Higher rankings = lower costs + better delivery. Improve via better creative, targeting, offer, and reducing negative feedback.
+Higher rankings = lower costs + better delivery.
 
-**Attribution:** Meta default = 7-day click + 1-day view. Google default = data-driven. Available models and windows vary by platform, objective, and account configuration — verify current settings in Meta Ads Manager and Google Ads before interpreting CPA/ROAS. Different windows/models will materially change reported performance.
+**Attribution:** Meta default = 7-day click + 1-day view. Google default = data-driven. Windows/models vary by platform, objective, and account — verify current settings before interpreting CPA/ROAS.
 
 **Monitoring:** Daily: spend, CPA/ROAS, volume, CTR drops. Weekly: winners/losers, fatigue, audience, quality rankings. Monthly: account health, creative library, patterns, competitive benchmarks.
 
 **Metrics by objective:** Awareness → CPM, reach, video views, ThruPlay. Consideration → CTR, CPC, video views. Conversion → CPA, ROAS, CVR.
 
-**ROI:** `(Revenue - Spend) / Spend × 100`. Break-even ROAS = `1 / Profit Margin` (e.g., 40% margin → 2.5x).
+**ROI:** `(Revenue - Spend) / Spend x 100`. Break-even ROAS = `1 / Profit Margin` (e.g., 40% margin = 2.5x).
 
 ### Tools
 
