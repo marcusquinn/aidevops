@@ -87,6 +87,7 @@ When a route needs server-side data, the `src/app/` file fetches and passes prop
 // src/app/products/[id]/page.tsx
 import { ProductDetailPage } from '@/pages/product-detail';
 import { getProductById, getProducts } from '@/entities/product';
+
 export default async function Page({ params }: { params: { id: string } }) {
   const product = await getProductById(params.id);
   return <ProductDetailPage product={product} />;
