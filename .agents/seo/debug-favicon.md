@@ -18,7 +18,7 @@ tools:
 
 - **Purpose**: Validate favicon setup, check all icon sizes, verify PWA manifest
 - **Method**: HTML parsing via curl + grep, manifest.json validation
-- **No API key required** - parses HTML directly
+- **No API key required** — parses HTML directly
 - **Reference**: https://opengraphdebug.com/favicon
 
 **Essential Icons**: `favicon.ico`, `apple-touch-icon.png`, `manifest.json` icons
@@ -29,7 +29,7 @@ tools:
 ## Quick Checks
 
 ```bash
-# Extract all favicon/icon links (case-insensitive, handles single/double quotes)
+# Extract all favicon/icon links
 curl -sL "https://example.com" \
   | grep -ioE "<link[^>]*rel=['\"](icon|shortcut icon|apple-touch-icon|manifest)['\"][^>]*>" \
   | head -20
@@ -40,41 +40,21 @@ curl -sI "https://example.com/favicon.ico" | head -1 | cut -d' ' -f2
 
 ## Platform Requirements
 
-### Browser Favicons
-
-| Icon | Size | Format | Purpose |
-|------|------|--------|---------|
-| `favicon.ico` | 16x16, 32x32, 48x48 | ICO (multi-size) | Legacy browsers |
+| Icon | Size | Format | Platform |
+|------|------|--------|----------|
+| `favicon.ico` | 16/32/48 | ICO (multi) | All browsers (legacy) |
 | `favicon.svg` | Scalable | SVG | Modern browsers |
 | `favicon-16x16.png` | 16x16 | PNG | Browser tabs |
 | `favicon-32x32.png` | 32x32 | PNG | Browser tabs (Retina) |
+| `apple-touch-icon.png` | 180x180 | PNG | iOS home screen (default) |
+| `apple-touch-icon-152x152.png` | 152x152 | PNG | iPad (non-Retina) |
+| `apple-touch-icon-167x167.png` | 167x167 | PNG | iPad Pro |
+| manifest icon | 192x192 | PNG | **Required** — PWA install |
+| manifest icon | 512x512 | PNG | **Required** — PWA splash |
+| manifest icon | 48/72/96/144 | PNG | Android (optional) |
+| `mstile-150x150.png` | 150x150 | PNG | Windows tiles |
 
-### Apple Touch Icons
-
-| Icon | Size | Purpose |
-|------|------|---------|
-| `apple-touch-icon.png` | 180x180 | iOS home screen (default) |
-| `apple-touch-icon-152x152.png` | 152x152 | iPad (non-Retina) |
-| `apple-touch-icon-167x167.png` | 167x167 | iPad Pro |
-| `apple-touch-icon-180x180.png` | 180x180 | iPhone (Retina) |
-
-### Android/PWA (manifest.json)
-
-| Size | Purpose |
-|------|---------|
-| 48x48 | Android notification (optional) |
-| 72x72 | Android home screen (optional) |
-| 96x96 | Android home screen (optional) |
-| 144x144 | Android home screen (optional) |
-| 192x192 | **Required** - PWA install |
-| 512x512 | **Required** - PWA splash screen |
-
-### Windows
-
-| Icon | Size | Purpose |
-|------|------|---------|
-| `mstile-150x150.png` | 150x150 | Windows tiles |
-| `browserconfig.xml` | - | Windows tile config |
+Windows also uses `browserconfig.xml` for tile configuration.
 
 ## HTML Implementation
 
@@ -87,25 +67,7 @@ curl -sI "https://example.com/favicon.ico" | head -1 | cut -d' ' -f2
 <link rel="manifest" href="/manifest.json">
 ```
 
-### Complete Setup
-
-```html
-<!-- Standard favicons -->
-<link rel="icon" type="image/x-icon" href="/favicon.ico">
-<link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
-<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
-<!-- Apple Touch Icons -->
-<link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="apple-touch-icon" sizes="152x152" href="/apple-touch-icon-152x152.png">
-<link rel="apple-touch-icon" sizes="167x167" href="/apple-touch-icon-167x167.png">
-<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-180x180.png">
-<!-- PWA / Windows -->
-<link rel="manifest" href="/manifest.json">
-<meta name="msapplication-TileColor" content="#ffffff">
-<meta name="msapplication-config" content="/browserconfig.xml">
-<meta name="theme-color" content="#ffffff">
-```
+For complete setup, add sized PNG icons from the platform table, plus `<meta name="theme-color">` and `<meta name="msapplication-config" content="/browserconfig.xml">`.
 
 ### manifest.json Example
 
@@ -131,74 +93,49 @@ curl -sI "https://example.com/favicon.ico" | head -1 | cut -d' ' -f2
 | 2 | Wrong Content-Type | ICO: `image/x-icon`, PNG: `image/png`, SVG: `image/svg+xml` |
 | 3 | Missing Apple Touch Icon | Add `<link rel="apple-touch-icon" href="/apple-touch-icon.png">` |
 | 4 | PWA install fails | Ensure manifest has 192x192 and 512x512 icons |
-| 5 | Icon URL resolution in manifest | Absolute (`/icons/icon-192.png`) or relative (`icon-192.png` — resolved relative to manifest location) |
+| 5 | Manifest URL resolution | Use absolute paths (`/icons/icon-192.png`); relative resolves from manifest location |
 | 6 | Cache issues | Add version query string: `href="/favicon.ico?v=2"` |
 
-## Full Audit Script
+## Audit Script
 
 ```bash
 #!/bin/bash
-# favicon-audit.sh - Full favicon audit
 url="${1:-https://example.com}"
 base_url=$(echo "$url" | grep -oE 'https?://[^/]+')
-
-echo "=== Favicon Audit: $url ==="
 html=$(curl -sL "$url")
-
-echo "## Direct favicon.ico Check"
+echo "=== Favicon Audit: $url ==="
 status=$(curl -sI "$base_url/favicon.ico" 2>/dev/null | head -1 | cut -d' ' -f2)
-printf "  /favicon.ico: %s\n" "${status:-unreachable}"
-
-echo ""
-echo "## HTML Icon Links"
+echo "favicon.ico: ${status:-unreachable}"
+# All icon links (standard + apple-touch)
 echo "$html" | grep -oE '<link[^>]+rel="[^"]*icon[^"]*"[^>]*>' | while read -r line; do
-  rel=$(echo "$line" | grep -oE 'rel="[^"]*"' | cut -d'"' -f2)
   href=$(echo "$line" | grep -oE 'href="[^"]*"' | cut -d'"' -f2)
   sizes=$(echo "$line" | grep -oE 'sizes="[^"]*"' | cut -d'"' -f2)
-  printf "  %-20s %-12s %s\n" "$rel" "${sizes:-n/a}" "$href"
+  echo "  ${sizes:-n/a} $href"
 done
-
-echo ""
-echo "## Apple Touch Icons"
-apple_icons=$(echo "$html" | grep -c 'apple-touch-icon')
-if [ "$apple_icons" -gt 0 ]; then
-  echo "$html" | grep -oE '<link[^>]+rel="apple-touch-icon[^"]*"[^>]*>' | while read -r line; do
-    href=$(echo "$line" | grep -oE 'href="[^"]*"' | cut -d'"' -f2)
-    sizes=$(echo "$line" | grep -oE 'sizes="[^"]*"' | cut -d'"' -f2)
-    printf "  %-12s %s\n" "${sizes:-180x180}" "$href"
-  done
-else
-  echo "  [MISSING] No apple-touch-icon found"
-fi
-
-echo ""
-echo "## PWA Manifest"
+echo "$html" | grep -oE '<link[^>]+rel="apple-touch-icon[^"]*"[^>]*>' | while read -r line; do
+  href=$(echo "$line" | grep -oE 'href="[^"]*"' | cut -d'"' -f2)
+  sizes=$(echo "$line" | grep -oE 'sizes="[^"]*"' | cut -d'"' -f2)
+  echo "  apple ${sizes:-180x180} $href"
+done
+# PWA manifest
 manifest_href=$(echo "$html" | grep -oE '<link[^>]+rel="manifest"[^>]+href="[^"]*"' | grep -oE 'href="[^"]*"' | cut -d'"' -f2)
 if [ -n "$manifest_href" ]; then
   [[ "$manifest_href" != http* ]] && manifest_href="${base_url}${manifest_href}"
-  echo "  URL: $manifest_href"
   manifest=$(curl -sL "$manifest_href" 2>/dev/null)
-  if [ -n "$manifest" ]; then
-    echo "  Icons:"
-    echo "$manifest" | jq -r '.icons[]? | "    \(.sizes)\t\(.src)"' 2>/dev/null || echo "    [Failed to parse]"
-    has_192=$(echo "$manifest" | jq -r '.icons[]? | select(.sizes == "192x192") | .src' 2>/dev/null)
-    has_512=$(echo "$manifest" | jq -r '.icons[]? | select(.sizes == "512x512") | .src' 2>/dev/null)
-    echo ""
-    echo "  PWA Requirements:"
-    [ -n "$has_192" ] && echo "    [OK] 192x192" || echo "    [MISSING] 192x192"
-    [ -n "$has_512" ] && echo "    [OK] 512x512" || echo "    [MISSING] 512x512"
-  fi
+  echo "manifest: $manifest_href"
+  echo "$manifest" | jq -r '.icons[]? | "  \(.sizes)\t\(.src)"' 2>/dev/null || echo "  [parse error]"
+  has_192=$(echo "$manifest" | jq -r '.icons[]? | select(.sizes == "192x192") | .src' 2>/dev/null)
+  has_512=$(echo "$manifest" | jq -r '.icons[]? | select(.sizes == "512x512") | .src' 2>/dev/null)
+  [ -n "$has_192" ] && echo "  [OK] 192x192" || echo "  [MISSING] 192x192"
+  [ -n "$has_512" ] && echo "  [OK] 512x512" || echo "  [MISSING] 512x512"
 else
-  echo "  [MISSING] No manifest.json link found"
+  echo "  [MISSING] No manifest link found"
 fi
-
-echo ""
-echo "## Theme Color"
 theme=$(echo "$html" | grep -oE '<meta[^>]+name="theme-color"[^>]+content="[^"]*"' | grep -oE 'content="[^"]*"' | cut -d'"' -f2)
-echo "  theme-color: ${theme:-[NOT SET]}"
+echo "theme-color: ${theme:-[NOT SET]}"
 ```
 
-## Favicon Generators
+## Generators
 
 - **RealFaviconGenerator**: https://realfavicongenerator.net/ (comprehensive)
 - **Favicon.io**: https://favicon.io/ (simple, free)
@@ -206,6 +143,6 @@ echo "  theme-color: ${theme:-[NOT SET]}"
 
 ## Related
 
-- `seo/debug-opengraph.md` - Open Graph meta tag validation
-- `tools/browser/playwright.md` - For JS-rendered pages
-- `seo/site-crawler.md` - Bulk favicon auditing
+- `seo/debug-opengraph.md` — Open Graph meta tag validation
+- `tools/browser/playwright.md` — For JS-rendered pages
+- `seo/site-crawler.md` — Bulk favicon auditing
