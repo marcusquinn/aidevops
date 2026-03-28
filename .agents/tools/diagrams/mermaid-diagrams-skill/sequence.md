@@ -2,111 +2,39 @@
 
 Sequence diagrams show interactions between participants over time. Ideal for API flows, protocols, and service communication.
 
-## Basic Syntax
-
-```mermaid
-sequenceDiagram
-    Alice->>Bob: Hello Bob
-    Bob-->>Alice: Hi Alice
-```
-
 ## Participants
 
-### Implicit Declaration
-
-Participants appear in order of first message:
-
-```mermaid
-sequenceDiagram
-    Client->>Server: Request
-    Server-->>Client: Response
-```
-
-### Explicit Declaration
-
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant A as API Gateway
-    participant S as Service
-    participant D as Database
-
-    C->>A: Request
-    A->>S: Forward
-    S->>D: Query
-```
-
-### Actors (Stick Figures)
+Participants appear in order of first mention, or declare explicitly with aliases. Use `actor` for stick figures, `create`/`destroy` for dynamic lifecycle:
 
 ```mermaid
 sequenceDiagram
     actor User
-    participant App as Application
-    participant DB as Database
+    participant C as Client
+    participant S as Service
+    participant D as Database
 
-    User->>App: Login
-    App->>DB: Validate
-```
-
-### Create and Destroy
-
-```mermaid
-sequenceDiagram
-    Alice->>Bob: Hello
-    create participant Carl
-    Alice->>Carl: Hi Carl
-    destroy Carl
-    Carl->>Alice: Goodbye
+    User->>C: Click
+    C->>S: Request
+    S->>D: Query
+    create participant Cache
+    S->>Cache: Store
+    destroy Cache
+    Cache->>S: Expired
 ```
 
 ## Message Types
 
 | Syntax | Description |
 |--------|-------------|
-| `->` | Solid line without arrow |
-| `-->` | Dotted line without arrow |
-| `->>` | Solid line with arrow (sync) |
-| `-->>` | Dotted line with arrow (async/response) |
-| `-x` | Solid line with cross (failed) |
-| `--x` | Dotted line with cross |
-| `-)` | Solid line with open arrow (async) |
-| `--)` | Dotted line with open arrow |
-
-```mermaid
-sequenceDiagram
-    A->>B: Sync request
-    B-->>A: Response
-    A-)C: Async message
-    C--x A: Failed
-```
+| `->>` | Solid line with arrow (sync call) |
+| `-->>` | Dotted line with arrow (response/async return) |
+| `-x` / `--x` | Solid/dotted line with cross (failed) |
+| `-)` / `--)` | Solid/dotted line with open arrow (async fire-and-forget) |
+| `->` / `-->` | Solid/dotted line without arrow (rare) |
 
 ## Activation (Lifeline)
 
-### Manual Activation
-
-```mermaid
-sequenceDiagram
-    Client->>+Server: Request
-    Server->>+Database: Query
-    Database-->>-Server: Results
-    Server-->>-Client: Response
-```
-
-### Explicit Activate/Deactivate
-
-```mermaid
-sequenceDiagram
-    Client->>Server: Request
-    activate Server
-    Server->>Database: Query
-    activate Database
-    Database-->>Server: Results
-    deactivate Database
-    Server-->>Client: Response
-    deactivate Server
-```
-
-### Nested Activation
+Use `+`/`-` suffixes on arrows for compact activation. Nesting supported. Equivalent explicit form: `activate`/`deactivate` on separate lines.
 
 ```mermaid
 sequenceDiagram
@@ -120,7 +48,7 @@ sequenceDiagram
 
 ## Control Flow
 
-### Alt (If/Else)
+Six constructs: `alt`/`else` (if/else), `opt` (optional), `loop`, `par`/`and` (parallel), `critical`/`option` (error handling), `break` (early exit).
 
 ```mermaid
 sequenceDiagram
@@ -132,31 +60,11 @@ sequenceDiagram
     else Invalid credentials
         API-->>Client: 401 Unauthorized
     end
-```
-
-### Opt (Optional)
-
-```mermaid
-sequenceDiagram
-    Client->>API: Request
-    API-->>Client: Response
 
     opt Cache result
         API->>Cache: Store response
     end
 ```
-
-### Loop
-
-```mermaid
-sequenceDiagram
-    loop Every 30 seconds
-        Client->>Server: Heartbeat
-        Server-->>Client: ACK
-    end
-```
-
-### Par (Parallel)
 
 ```mermaid
 sequenceDiagram
@@ -164,16 +72,8 @@ sequenceDiagram
         API->>UserService: Get user
     and Fetch orders
         API->>OrderService: Get orders
-    and Fetch products
-        API->>ProductService: Get products
     end
-    API-->>Client: Aggregated response
-```
 
-### Critical Section
-
-```mermaid
-sequenceDiagram
     critical Establish connection
         Client->>Server: Connect
     option Network timeout
@@ -182,8 +82,6 @@ sequenceDiagram
         Client->>Client: Use fallback
     end
 ```
-
-### Break (Early Exit)
 
 ```mermaid
 sequenceDiagram
@@ -195,63 +93,19 @@ sequenceDiagram
         API-->>Client: 401 Unauthorized
     end
 
-    API->>Service: Process
-    Service-->>API: Result
-    API-->>Client: 200 OK
-```
-
-## Notes
-
-```mermaid
-sequenceDiagram
-    participant A
-    participant B
-
-    Note left of A: Left note
-    Note right of B: Right note
-    Note over A: Over single
-    Note over A,B: Spanning note
-```
-
-```mermaid
-sequenceDiagram
-    Client->>+API: POST /orders
-    Note right of API: Validate request
-    API->>DB: Insert order
-    Note over API,DB: Transaction
-    DB-->>API: Order ID
-    API-->>-Client: 201 Created
-```
-
-## Autonumbering
-
-```mermaid
-sequenceDiagram
-    autonumber
-    Client->>API: Login
-    API->>Auth: Validate
-    Auth-->>API: Token
-    API-->>Client: Success
-```
-
-## Background Highlighting
-
-```mermaid
-sequenceDiagram
-    rect rgb(200, 220, 255)
-        Note over Client,API: Authentication
-        Client->>API: Login
-        API-->>Client: Token
-    end
-
-    rect rgb(220, 255, 200)
-        Note over Client,API: Data fetch
-        Client->>API: Get data
-        API-->>Client: Data
+    loop Every 30 seconds
+        Client->>Server: Heartbeat
+        Server-->>Client: ACK
     end
 ```
 
-## Participant Boxes
+## Styling and Layout
+
+**Notes:** `Note left of A`, `Note right of B`, `Note over A`, `Note over A,B` (spanning).
+
+**Autonumbering:** Add `autonumber` after `sequenceDiagram`.
+
+**Background highlighting** with `rect rgb(R, G, B)` and **participant boxes** with `box Color Label`:
 
 ```mermaid
 sequenceDiagram
@@ -264,10 +118,18 @@ sequenceDiagram
         participant D as Database
     end
 
-    U->>C: Click
-    C->>A: Request
-    A->>D: Query
-    D-->>A: Data
+    rect rgb(200, 220, 255)
+        Note over U,C: User interaction
+        U->>C: Click
+        C->>A: Request
+    end
+
+    rect rgb(220, 255, 200)
+        Note over A,D: Backend processing
+        A->>D: Query
+        D-->>A: Data
+    end
+
     A-->>C: Response
     C-->>U: Display
 ```
@@ -311,7 +173,7 @@ sequenceDiagram
     S-->>C: 101 Switching Protocols
 
     rect rgb(230, 245, 255)
-        Note over C,S: WebSocket connection established
+        Note over C,S: WebSocket established
         loop Bidirectional messaging
             C-)S: Send message
             S-)C: Push update
@@ -320,28 +182,6 @@ sequenceDiagram
 
     C->>S: Close frame
     S-->>C: Close ACK
-```
-
-### Retry with Exponential Backoff
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant C as Client
-    participant S as Server
-
-    C->>S: Request
-    S--xC: 503 Service Unavailable
-
-    loop Retry with backoff
-        Note right of C: Wait 1s, 2s, 4s...
-        C->>S: Retry request
-        alt Success
-            S-->>C: 200 OK
-        else Still failing
-            S--xC: 503
-        end
-    end
 ```
 
 ### Saga Pattern (Distributed Transaction)
@@ -356,10 +196,8 @@ sequenceDiagram
 
     O->>P: Reserve payment
     P-->>O: Payment reserved
-
     O->>I: Reserve inventory
     I-->>O: Inventory reserved
-
     O->>S: Schedule shipping
     S--xO: Shipping failed
 
@@ -388,12 +226,6 @@ sequenceDiagram
     loop Stream responses
         S-)C: Response chunk
     end
-
-    Note over C,S: Client streaming
-    loop Stream requests
-        C-)S: Request chunk
-    end
-    S-->>C: Final response
 
     Note over C,S: Bidirectional streaming
     par Client sends
