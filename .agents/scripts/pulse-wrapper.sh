@@ -3242,7 +3242,7 @@ _complexity_scan_create_md_issues() {
 	local scan_results="$1"
 	local repos_json="$2"
 	local aidevops_slug="$3"
-	local max_issues_per_run=5
+	local max_issues_per_run=200
 	local issues_created=0
 	local issues_skipped=0
 
@@ -3293,7 +3293,7 @@ _complexity_scan_create_issues() {
 	local scan_results="$1"
 	local repos_json="$2"
 	local aidevops_slug="$3"
-	local max_issues_per_run=5
+	local max_issues_per_run=200
 	local issues_created=0
 	local issues_skipped=0
 
