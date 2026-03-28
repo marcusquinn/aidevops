@@ -3863,20 +3863,35 @@ check_dispatch_dedup() {
 		fi
 	fi
 
-	# Layer 5 (GH#6891): cross-machine assignee guard — prevents runners from
-	# dispatching workers for issues already assigned to another runner. This was
-	# previously an LLM-only instruction in pulse.md; moving it here makes it
-	# deterministic. The incident: johnwaldo's pulse dispatched a worker for an
-	# issue assigned to marcusquinn because the LLM skipped the is_assigned step.
+	# Layer 5 (GH#11141): cross-machine dispatch comment check — detects
+	# "Dispatching worker" comments posted by other runners. This is the
+	# persistent cross-machine signal that survives beyond the claim lock's
+	# 8-second window. The GH#11141 incident: marcusquinn dispatched at
+	# 02:36, johnwaldo dispatched at 03:18 (42 min later). The claim lock
+	# had long expired, the ledger is local-only, and the assignee guard
+	# excluded the repo owner. But the "Dispatching worker" comment was
+	# sitting right there on the issue — visible to all runners.
 	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
-		local assigned_output=""
-		if assigned_output=$("$dedup_helper" is-assigned "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE"); then
-			echo "[pulse-wrapper] Dedup: #${issue_number} in ${repo_slug} already assigned to another runner — ${assigned_output}" >>"$LOGFILE"
+		local dispatch_comment_output=""
+		if dispatch_comment_output=$("$dedup_helper" has-dispatch-comment "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE"); then
+			echo "[pulse-wrapper] Dedup: #${issue_number} in ${repo_slug} has active dispatch comment — ${dispatch_comment_output}" >>"$LOGFILE"
 			return 0
 		fi
 	fi
 
-	# Layer 6 (GH#11086): cross-machine optimistic claim lock — the final safety
+	# Layer 6 (GH#6891): cross-machine assignee guard — prevents runners from
+	# dispatching workers for issues already assigned to another login. Only
+	# self_login is excluded; repo owner and maintainer are NOT excluded since
+	# they may also be runners (GH#11141 fix — reverts the GH#10521 exclusion).
+	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
+		local assigned_output=""
+		if assigned_output=$("$dedup_helper" is-assigned "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE"); then
+			echo "[pulse-wrapper] Dedup: #${issue_number} in ${repo_slug} already assigned — ${assigned_output}" >>"$LOGFILE"
+			return 0
+		fi
+	fi
+
+	# Layer 7 (GH#11086): cross-machine optimistic claim lock — the final safety
 	# net for multi-runner environments. Posts an HTML comment claim on the issue,
 	# sleeps the consensus window (default 8s), then checks if this runner's claim
 	# is the oldest. Only the first claimant proceeds; others back off.
