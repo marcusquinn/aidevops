@@ -34,19 +34,9 @@ tools:
 
 **CRITICAL**: Before any messaging operation, verify compliance with Twilio's AUP.
 
-### Prohibited Activities
+**Block and refuse** any message that is: unsolicited/spam, phishing or deceptive, illegal content (fraud, harassment, threats), identity spoofing, or attempting to bypass rate limits.
 
-| Category | Examples | Action |
-|----------|----------|--------|
-| **Spam** | Unsolicited bulk messages, marketing without consent | BLOCK - Do not send |
-| **Phishing** | Deceptive links, credential harvesting | BLOCK - Do not send |
-| **Illegal Content** | Fraud, harassment, threats | BLOCK - Do not send |
-| **Identity Spoofing** | Misleading sender information | BLOCK - Do not send |
-| **Bypassing Limits** | Circumventing rate limits or restrictions | BLOCK - Do not attempt |
-
-### Pre-Send Validation
-
-Before sending any message, verify: (1) **Consent** — does the recipient expect this? (2) **Opt-out** — is there a clear unsubscribe mechanism? (3) **Content** — is it legitimate and non-deceptive? (4) **Compliance** — does it meet country-specific requirements?
+**Pre-send checklist**: (1) Consent — recipient expects this? (2) Opt-out — clear unsubscribe mechanism? (3) Content — legitimate and non-deceptive? (4) Compliance — meets country-specific requirements?
 
 ### Country-Specific Requirements
 
@@ -58,7 +48,7 @@ Before sending any message, verify: (1) **Consent** — does the recipient expec
 | **Canada (CASL)** | Express or implied consent, unsubscribe mechanism |
 | **Australia** | Spam Act compliance, consent required |
 
-**Refuse to send** messages targeting recipients who haven't opted in, containing deceptive content, attempting to bypass Twilio's systems, violating local telecommunications laws, or that could be considered harassment or spam.
+**Refusal template**:
 
 ```text
 I cannot send this message because it may violate Twilio's Acceptable Use Policy:
@@ -74,8 +64,8 @@ See: https://www.twilio.com/en-us/legal/aup
 ## Configuration
 
 ```bash
-# Copy template and edit with credentials from https://console.twilio.com/
 cp configs/twilio-config.json.txt configs/twilio-config.json
+# Edit with credentials from https://console.twilio.com/
 ```
 
 ### Multi-Account Configuration
@@ -177,15 +167,13 @@ twilio login  # interactive, stores credentials locally
 
 **Via Telfon** (recommended for end users): See `telfon.md`. Numbers purchased via Twilio can be connected to Telfon.
 
-**Via Twilio Support** (special numbers — toll-free in certain countries, short codes, specific area codes with limited availability, numbers requiring regulatory approval):
+**Via Twilio Support** (special numbers — toll-free in certain countries, short codes, specific area codes, numbers requiring regulatory approval):
 
 ```text
 Subject: Phone Number Request - [Country] [Type]
 Account SID: ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 Details: Country, Number Type, Desired Area Code, Quantity, Use Case, Regulatory Documents
 ```
-
-When numbers aren't available via API, the AI can compose an email to Twilio support, use browser automation to submit via Twilio console, or draft a support ticket.
 
 ## Webhook Configuration
 
@@ -210,7 +198,7 @@ When numbers aren't available via API, the AI can compose an email to Twilio sup
 
 ## AI Orchestration Integration
 
-**Use cases**: Appointment reminders (scheduled SMS), order notifications (e-commerce events), 2FA (Verify API), lead follow-up (CRM-triggered), support escalation (voice call), survey collection (SMS with response handling).
+**Use cases**: Appointment reminders, order notifications, 2FA (Verify API), lead follow-up, support escalation (voice), survey collection (SMS with response handling).
 
 **Recording transcription for AI analysis**:
 
@@ -225,8 +213,7 @@ Transcriptions can be stored for compliance/training, analyzed for sentiment/int
 ## Security
 
 ```bash
-# Store credentials securely (never commit to git)
-# In ~/.config/aidevops/credentials.sh (600 permissions)
+# In ~/.config/aidevops/credentials.sh (600 permissions — never commit to git)
 export TWILIO_ACCOUNT_SID_PRODUCTION="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 export TWILIO_AUTH_TOKEN_PRODUCTION="your_token_here"
 ```
