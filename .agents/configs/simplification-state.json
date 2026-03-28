@@ -1282,9 +1282,9 @@
       "pr": 12025
     },
     ".agents/tools/code-review/security-audit.md": {
-      "hash": "3264ee083d9660a6c7d93962ed119cc2bbf8b684",
-      "at": "2026-03-28T16:41:00Z",
-      "pr": 11981
+      "hash": "bed16a626f218a4a0045edaae30edfa52616f72c",
+      "at": "2026-03-28T17:11:18Z",
+      "pr": 12029
     },
     ".agents/tools/security/privacy-filter.md": {
       "hash": "20015ffb18e50ebb7071f1b6299b4404bdcd4071",
@@ -1300,6 +1300,36 @@
       "hash": "7500c09629a5e47688af67a6901d684e92b623f2",
       "at": "2026-03-28T16:41:24Z",
       "pr": 12020
+    },
+    ".agents/tools/security/prompt-injection-defender.md": {
+      "hash": "0ee667b145d5e9aa8e6aefabf4ddc1c717cac0a0",
+      "at": "2026-03-28T17:11:06Z",
+      "pr": 12057
+    },
+    ".agents/seo/domain-research-api-reference.md": {
+      "hash": "52e574da550501d13cf7d760d098926843d5260b",
+      "at": "2026-03-28T17:11:07Z",
+      "pr": 12056
+    },
+    ".agents/seo/domain-research.md": {
+      "hash": "18f017104a97c94157077b8fc620e24bad8f86ba",
+      "at": "2026-03-28T17:11:08Z",
+      "pr": 12056
+    },
+    ".agents/scripts/commands/define.md": {
+      "hash": "7426c88c3d9ef90d25299174e2595c2adf764976",
+      "at": "2026-03-28T17:11:09Z",
+      "pr": 12054
+    },
+    ".agents/tools/browser/skyvern.md": {
+      "hash": "1f2933d4cdf35fd9696301a5743ae2e550a31eb0",
+      "at": "2026-03-28T17:11:10Z",
+      "pr": 12055
+    },
+    ".agents/seo/dataforseo.md": {
+      "hash": "8dfaad77d57b706e697ab23a2c8ac8a84cf9c6ed",
+      "at": "2026-03-28T17:11:12Z",
+      "pr": 12053
     }
   },
   ".agents/tools/code-review/best-practices.md": {
