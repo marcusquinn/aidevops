@@ -37,7 +37,7 @@ Every conversation creates a unique identity — no cross-conversation linkabili
 
 ## Agent Behaviour
 
-Help groups do things. Your value is connecting patterns across conversations — the contradiction nobody caught, the thing someone mentioned once that just became relevant. You're not running the group; you're serving it. Tell people they can train you by talking to you.
+Help groups do things. Connect patterns across conversations — the contradiction nobody caught, the thing someone mentioned once that just became relevant. You're not running the group; you're serving it.
 
 Detailed behavioural rules are delivered via the bridge script's `SYSTEM_MSG`.
 
@@ -62,7 +62,7 @@ CONV_ID=$(convos conversations join "<slug>" --profile-name "Your Name" --json -
 # Create
 CONV_ID=$(convos conversations create --name "Group Name" --profile-name "Your Name" --json --env production | jq -r '.conversationId')
 
-# Generate invite (shows QR code; always display full output)
+# Generate invite (always display full output — shows QR code)
 convos conversation invite "$CONV_ID"
 INVITE_URL=$(convos conversation invite "$CONV_ID" --json | jq -r '.url')
 
@@ -82,8 +82,6 @@ convos agent serve "$CONV_ID" --profile-name "Your Name" --env production
 convos agent serve --name "Group Name" --profile-name "Your Name" --env production
 convos agent serve "$CONV_ID" --profile-name "Your Name" --heartbeat 30 --env production
 ```
-
-On start: creates/attaches to conversation, prints QR invite to stderr, emits `ready`, processes pending joins, streams messages, accepts stdin commands, auto-adds new members.
 
 ### Events (stdout — one JSON object per line)
 
@@ -128,11 +126,9 @@ Messages with `catchup: true` were fetched during reconnection — consider igno
 
 ## Bridge Scripts
 
-> **AI AGENTS: YOU MUST USE A BRIDGE SCRIPT.**
->
-> Do not manually run `agent serve` and send messages separately — that creates race conditions and you will miss messages. Write the bridge script, run it as a **separate background process**, and let it handle the event loop. Never source it or run it inline — other processes sharing its file descriptors will leak output into agent serve's stdin.
+> **AI AGENTS: YOU MUST USE A BRIDGE SCRIPT.** Do not manually run `agent serve` and send messages separately — race conditions will cause missed messages. Run the bridge as a **separate background process**. Never source it or run it inline — shared file descriptors leak output into agent serve's stdin.
 
-Replace `your-ai-dispatch` with your backend. For aidevops: `Claude run --session-id "$SESSION_ID" --message "..."`. The sub-session retains history via `--session-id`. If stateless, prepend `SYSTEM_MSG` to every call. Lines starting with `{` are passed as stdin commands; other lines are sent as text messages.
+Replace `your-ai-dispatch` with your backend. For aidevops: `Claude run --session-id "$SESSION_ID" --message "..."` (retains history via `--session-id`). If stateless, prepend `SYSTEM_MSG` to every call. Lines starting with `{` are stdin commands; other lines are sent as text.
 
 ```bash
 #!/usr/bin/env bash
@@ -292,7 +288,7 @@ wait "$AGENT_PID"
 
 ## CLI Reference
 
-Always pass `--json` when parsing output programmatically.
+Always pass `--json` when parsing output programmatically. Use `--sync` before reading messages to ensure fresh data.
 
 ```bash
 # Members and profiles
@@ -343,12 +339,13 @@ convos conversation send-reaction "$CONV_ID" <message-id> remove "(thumbs up)"
 | Using Markdown in messages | Convos does not render Markdown — plain text only |
 | Sending via CLI while in agent mode | Use stdin commands — CLI sends create race conditions |
 | Forgetting `--env production` | Default is `dev` (test network) |
-| Replying to system events | Only `replyTo` messages with `typeId` of `text` or `reply` (bridge ignores `attachment` and other types) |
+| Replying to system events | Only `replyTo` messages with `typeId` of `text` or `reply` |
 | Not processing joins after invite | Run `process-join-requests` after invitee opens the link |
 | Referencing inbox IDs in chat | Fetch profiles and use display names |
 | Announcing tool usage in chat | Do it silently, respond naturally |
 | Responding to every message | Only speak when it adds something — react instead |
 | Launching the bridge twice | Template uses `flock` to prevent this |
+| Invite expired | Generate new: `convos conversation invite <id>`. Locking invalidates all existing invites |
 
 ## Troubleshooting
 
@@ -359,16 +356,7 @@ convos conversation send-reaction "$CONV_ID" <message-id> remove "(thumbs up)"
 | Join request times out | Invitee must open/scan invite URL *before* creator processes requests |
 | Messages not appearing | `convos conversation messages <id> --json --sync --limit 20` |
 | Permission denied on group ops | `convos conversation permissions <id> --json` — super admins only for add/remove/lock/explode |
-| Invite expired | Generate new: `convos conversation invite <id>`. Locking invalidates all existing invites |
 | Agent serve exits unexpectedly | Check stderr: invalid conversation ID, identity not found (`convos identity list`), network issues. Use `--heartbeat 30` |
-
-## Tips
-
-- Use `--json` when parsing output — human-readable format can change between versions
-- Use `--sync` before reading messages to ensure fresh data
-- Identities are automatic — creating or joining a conversation creates one
-- Show full QR code output when generating invites; in agent mode the QR path is in the `ready` event's `qrCodePath` field
-- Lock before exploding — prevents new joins while you prepare
 
 ## Related
 
