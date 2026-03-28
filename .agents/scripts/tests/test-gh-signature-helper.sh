@@ -201,7 +201,7 @@ echo ""
 echo "Test 11: session time auto-detection (no response time)"
 if [[ "${OPENCODE:-}" == "1" ]] && [[ -r "${HOME}/.local/share/opencode/opencode.db" ]]; then
 	result=$("$HELPER" generate --cli "OpenCode" --model "m" --tokens 1)
-	assert_contains "session time present" "for " "$result"
+	assert_contains "session time present" " in " "$result"
 	assert_not_contains "no response time" "to respond" "$result"
 else
 	echo "  SKIP: not running in OpenCode"

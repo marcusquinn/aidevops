@@ -557,9 +557,9 @@ _build_signature() {
 		sig="${sig} has used ${formatted} tokens"
 	fi
 
-	# "for Xm" (session time)
+	# "in Xm" (session time)
 	if [[ -n "$session_time_str" ]]; then
-		sig="${sig} for ${session_time_str}"
+		sig="${sig} in ${session_time_str}"
 	fi
 
 	# Total time or trailing period
