@@ -18,7 +18,7 @@ tools:
 
 ```bash
 transcription-helper.sh transcribe "https://youtu.be/VIDEO_ID"  # YouTube
-transcription-helper.sh transcribe recording.mp3 --model large-v3-turbo
+transcription-helper.sh transcribe recording.mp3 --model large-v3-turbo  # helper model name; native whisper uses --model turbo
 brew install yt-dlp ffmpeg && brew install --cask buzz           # macOS deps
 pip install openai-whisper faster-whisper assemblyai deepgram-sdk
 ```
@@ -37,7 +37,7 @@ pip install openai-whisper faster-whisper assemblyai deepgram-sdk
 | **Streaming** | No | No | Yes | Yes |
 | **Best for** | Private/offline | macOS GUI | Speaker ID, meetings | Real-time |
 
-**Decision flow**: Privacy/offline → Whisper/Buzz. Speaker diarization → AssemblyAI/Deepgram. Real-time → Deepgram. Highest accuracy → AssemblyAI U3 Pro. Free → Whisper turbo.
+**Decision flow**: Privacy/offline → Whisper/Buzz. Speaker diarization → AssemblyAI/Deepgram. Real-time → Deepgram. Highest accuracy (primary) → AssemblyAI U3 Pro; (extended) → ElevenLabs Scribe v2. Free → Whisper turbo.
 
 **Input sources**: YouTube (`yt-dlp -x --audio-format wav`), URL (`curl` + `ffmpeg`), local audio (`.wav .mp3 .flac .ogg .m4a`), local video (`ffmpeg -i input -vn -acodec pcm_s16le output.wav`).
 
