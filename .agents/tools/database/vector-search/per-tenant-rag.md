@@ -79,7 +79,7 @@ app.post('/api/search', async (req, res) => {
 });
 ```
 
-**Layer 3 — Validation**: Post-query ownership check logs `CROSS_TENANT_LEAK_DETECTED` and filters results where `metadata.orgId !== requestingOrgId`.
+**Layer 3 — Validation**: Post-query ownership check logs `CROSS_TENANT_LEAK_DETECTED` and filters results where `metadata.org_id !== requesting org_id`.
 
 **Layer 4 — Testing**: Integration test verifying tenant A cannot see tenant B's data after both upload documents.
 
@@ -89,7 +89,7 @@ app.post('/api/search', async (req, res) => {
 
 ### Stages 1-2: Ingest and Parse
 
-Validate MIME from magic bytes (not extension), scan for malware, enforce per-tenant quotas. Max 50MB. Parsers: PDF→Docling, DOCX→mammoth, HTML→readability, CSV→papaparse, TXT/MD→direct paragraph split.
+Validate MIME from magic bytes (not extension), scan for malware, enforce per-tenant quotas. Default max 50MB (overridden by plan quotas: `effectiveMaxFileSize = min(globalCap, planCap)`). Parsers: PDF→Docling, DOCX→mammoth, HTML→readability, CSV→papaparse, TXT/MD→direct paragraph split.
 
 ### Stage 3: Chunk
 
@@ -206,7 +206,7 @@ async function offboardTenantRAG(ctx: TenantContext) {
 }
 ```
 
-**Deletion guarantees**: Collection deletion is atomic. Object storage: paginate list+delete. Audit log persists after deletion (compliance). Trigger RAG cleanup in `beforeDelete` hook if org deletion cascades.
+**Deletion guarantees**: Qdrant/pgvector/zvec: synchronous atomic deletion. Cloudflare Vectorize: async (returns immediately, completes in seconds — poll or verify before confirming). Object storage: paginate list+delete. Audit log persists after deletion (compliance). Trigger RAG cleanup in `beforeDelete` hook if org deletion cascades.
 
 ## Storage Sizing and Quotas
 
