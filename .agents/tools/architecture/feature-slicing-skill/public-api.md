@@ -2,7 +2,7 @@
 
 > **Source:** [Public API Reference](https://feature-sliced.design/docs/reference/public-api)
 
-A public API is a **contract** between a slice and consuming code — an `index.ts` barrel file with explicit re-exports that controls what is accessible and how it can be imported.
+A public API is a **contract** — an `index.ts` barrel file with explicit re-exports controlling what a slice exposes.
 
 ## Three Goals
 
@@ -148,66 +148,3 @@ import { Button } from '@/shared/ui/Button';        // granular
 | Tree-shaking failures (unrelated utilities bundled) | Separate indices per component in `shared/` |
 | Weak enforcement (nothing prevents direct imports) | Review imports during code review |
 | Performance degradation (too many indices slow dev servers) | Consider monorepo for very large projects |
-
----
-
-## Complete Example
-
-```typescript
-// entities/product/model/types.ts
-export interface Product {
-  id: string;
-  name: string;
-  price: number;
-  imageUrl: string;
-  category: string;
-}
-
-export interface ProductFilters {
-  category?: string;
-  minPrice?: number;
-  maxPrice?: number;
-}
-```
-
-```typescript
-// entities/product/api/productApi.ts
-import { apiClient } from '@/shared/api';
-import type { Product, ProductFilters } from '../model/types';
-
-export async function getProducts(filters?: ProductFilters): Promise<Product[]> {
-  const { data } = await apiClient.get('/products', { params: filters });
-  return data;
-}
-
-export async function getProductById(id: string): Promise<Product> {
-  const { data } = await apiClient.get(`/products/${id}`);
-  return data;
-}
-```
-
-```tsx
-// entities/product/ui/ProductCard.tsx
-import type { Product } from '../model/types';
-
-export function ProductCard({ product, onSelect }: {
-  product: Product;
-  onSelect?: (product: Product) => void;
-}) {
-  return (
-    <div onClick={() => onSelect?.(product)}>
-      <img src={product.imageUrl} alt={product.name} />
-      <h3>{product.name}</h3>
-      <p>${product.price}</p>
-    </div>
-  );
-}
-```
-
-```typescript
-// entities/product/index.ts — the public API
-export { ProductCard } from './ui/ProductCard';
-export { getProducts, getProductById } from './api/productApi';
-export type { Product, ProductFilters } from './model/types';
-export { productSchema } from './model/schema';
-```
