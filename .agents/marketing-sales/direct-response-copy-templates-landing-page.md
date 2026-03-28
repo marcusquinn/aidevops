@@ -1,6 +1,6 @@
 # Landing Page Templates
 
-Copy-paste frameworks for different landing page types. Common Sections (Hero, Problem, Social Proof, Final CTA) appear once below — reference them from any template.
+Copy-paste frameworks for different landing page types. Common Sections appear once — reference from any template.
 
 ## Common Sections
 
@@ -22,6 +22,15 @@ You've tried:
 - [Solution 2] — but [why it fails]
 - [Solution 3] — but [why it fails]
 Meanwhile, [negative consequence escalates].
+```
+
+### SOLUTION
+
+```text
+Introducing [Product Name]
+The [category] that [key differentiator].
+Unlike [competitors], [Product] uses [unique approach] to [achieve result] without [common objection].
+[Screenshot or diagram]
 ```
 
 ### SOCIAL PROOF
@@ -60,15 +69,6 @@ Hero -> Problem -> Solution -> How It Works -> Features -> Social Proof -> Prici
 Trust: No credit card | Free [X] days | Cancel anytime
 Logos: Trusted by [X]+ [companies] including [Logo x5]
 [Product screenshot or demo video]
-```
-
-### SOLUTION
-
-```text
-Introducing [Product Name]
-The [category] that [key differentiator].
-Unlike [competitors], [Product] uses [unique approach] to [achieve result] without [common objection].
-[Screenshot or diagram]
 ```
 
 ### HOW IT WORKS
@@ -187,7 +187,6 @@ Module 2: [Name] — [What it covers] — Value: $[X]
 Bonuses (when you join today):
 BONUS #1: [Name] ($[X] value) — [Description]
 BONUS #2: [Name] ($[X] value) — [Description]
-(continue for all bonuses)
 Total Value: $[Big Number]
 Your Investment Today: $[Price] (or [X] payments of $[Y])
 ```
@@ -201,7 +200,7 @@ If you don't [achieve specific outcome] or you're not satisfied,
 email us within [X] days for a full refund. No questions asked.
 ```
 
-### FINAL CTA (sales-specific)
+### FINAL CTA
 
 ```text
 You Have Two Choices:

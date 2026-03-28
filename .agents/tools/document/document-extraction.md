@@ -26,46 +26,19 @@ tools:
 - **Workflow**: `tools/document/extraction-workflow.md` (tool selection, pipeline orchestration)
 - **PRD**: `todo/tasks/prd-document-extraction.md`
 
-**Quick start**:
-
 ```bash
-# Install dependencies
-document-extraction-helper.sh install --all
-
-# Extract supplier invoice (UK VAT, QuickFile-ready)
 document-extraction-helper.sh extract invoice.pdf --schema purchase-invoice --privacy local
-
-# Extract shop receipt
 document-extraction-helper.sh extract receipt.jpg --schema expense-receipt --privacy local
-
-# Scan for PII
 document-extraction-helper.sh pii-scan document.txt
-
-# List all schemas
-document-extraction-helper.sh schemas
+document-extraction-helper.sh schemas          # List all schemas
+document-extraction-helper.sh install --all    # Install dependencies
 ```
 
 <!-- AI-CONTEXT-END -->
 
 ## Architecture
 
-```text
-Document Input (PDF/DOCX/Image/HTML)
-         │
-    ┌────┴────┐
-    │ Docling  │  ← Document parsing (layout, tables, OCR)
-    └────┬────┘
-         │
-    ┌────┴──────────┐
-    │ ExtractThinker │  ← LLM-powered structured extraction
-    └────┬──────────┘
-         │
-    ┌────┴────────┐
-    │  Presidio    │  ← PII detection and redaction (optional)
-    └────┬────────┘
-         │
-    Structured Output (JSON/CSV/Markdown)
-```
+Pipeline: **Document Input** (PDF/DOCX/Image/HTML) → **Docling** (parsing, layout, tables, OCR) → **ExtractThinker** (LLM-powered structured extraction) → **Presidio** (PII detection/redaction, optional) → **Structured Output** (JSON/CSV/Markdown).
 
 ## Components
 
@@ -73,128 +46,57 @@ Document Input (PDF/DOCX/Image/HTML)
 
 IBM's document conversion library. Handles complex layouts, tables, and OCR.
 
-```bash
-pip install docling
-
-# Python usage
-from docling.document_converter import DocumentConverter
-converter = DocumentConverter()
-result = converter.convert("document.pdf")
-print(result.document.export_to_markdown())
-```
-
 - **Formats**: PDF, DOCX, PPTX, XLSX, HTML, images, AsciiDoc
 - **Features**: Table extraction, OCR (EasyOCR/Tesseract), layout analysis
 - **Repo**: https://github.com/DS4SD/docling
 
+```python
+from docling.document_converter import DocumentConverter
+result = DocumentConverter().convert("document.pdf")
+print(result.document.export_to_markdown())
+```
+
 ### ExtractThinker (LLM Extraction)
 
-Pydantic-based structured extraction using LLMs.
+Pydantic-based structured extraction using LLMs. Backends: Ollama (local), OpenAI, Anthropic, Google, Cloudflare Workers AI.
+
+- **Repo**: https://github.com/enoch3712/ExtractThinker
 
 ```python
-from extract_thinker import Extractor, Contract
+from extract_thinker import Extractor
 from pydantic import BaseModel
 
 class Invoice(BaseModel):
-    vendor: str
-    date: str
-    total: float
-    items: list[dict]
+    vendor: str; date: str; total: float; items: list[dict]
 
 extractor = Extractor()
 extractor.load_document_loader("docling")
 extractor.load_llm("ollama/llama3.2")  # Local model
-
 result = extractor.extract("invoice.pdf", Invoice)
-print(result.model_dump_json(indent=2))
 ```
-
-- **Repo**: https://github.com/enoch3712/ExtractThinker
-- **LLM backends**: Ollama (local), OpenAI, Anthropic, Google, Cloudflare Workers AI
 
 ### Presidio (PII Redaction)
 
-Microsoft's PII detection and anonymization.
+Microsoft's PII detection and anonymization. Entities: PERSON, EMAIL, PHONE, SSN, CREDIT_CARD, IBAN, IP_ADDRESS, etc.
+
+- **Repo**: https://github.com/microsoft/presidio
 
 ```python
 from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
 
-analyzer = AnalyzerEngine()
-anonymizer = AnonymizerEngine()
-
-text = "John Smith's SSN is 123-45-6789"
-results = analyzer.analyze(text=text, language="en")
-anonymized = anonymizer.anonymize(text=text, analyzer_results=results)
-print(anonymized.text)  # "<PERSON>'s SSN is <US_SSN>"
+results = AnalyzerEngine().analyze(text="John Smith's SSN is 123-45-6789", language="en")
+print(AnonymizerEngine().anonymize(text="John Smith's SSN is 123-45-6789", analyzer_results=results).text)
+# "<PERSON>'s SSN is <US_SSN>"
 ```
-
-- **Entities**: PERSON, EMAIL, PHONE, SSN, CREDIT_CARD, IBAN, IP_ADDRESS, etc.
-- **Repo**: https://github.com/microsoft/presidio
 
 ## Extraction Schemas
 
-> Full schema contracts with field descriptions, VAT handling, and QuickFile mapping:
-> `tools/document/extraction-schemas.md`
+Full schema contracts with field descriptions, VAT handling, and QuickFile mapping: `tools/document/extraction-schemas.md`
 
-### Accounting Schemas (UK VAT, QuickFile Integration)
+**Accounting** (UK VAT, QuickFile integration): `purchase-invoice` (supplier invoices), `expense-receipt` (till/shop receipts, fuel, meals), `credit-note` (supplier refunds).
 
-| Schema | Use Case | Command |
-|--------|----------|---------|
-| `purchase-invoice` | Supplier invoices with invoice number | `--schema purchase-invoice` |
-| `expense-receipt` | Till/shop receipts, fuel, meals | `--schema expense-receipt` |
-| `credit-note` | Supplier credit notes/refunds | `--schema credit-note` |
-
-### General Schemas
-
-| Schema | Use Case | Command |
-|--------|----------|---------|
-| `invoice` | Sales invoices (issued by you) | `--schema invoice` |
-| `receipt` | Generic receipts (no accounting) | `--schema receipt` |
-| `contract` | Contract key terms extraction | `--schema contract` |
-| `id-document` | Identity documents | `--schema id-document` |
-| `auto` | Auto-detect and convert to markdown | `--schema auto` |
-
-### Purchase Invoice (Summary)
-
-```python
-class PurchaseInvoice(BaseModel):
-    vendor_name: str
-    vendor_vat_number: str | None
-    invoice_number: str
-    invoice_date: str          # YYYY-MM-DD
-    due_date: str | None
-    subtotal: float
-    vat_amount: float          # Explicit VAT (not "tax")
-    total: float
-    currency: str              # Default: GBP
-    line_items: list[PurchaseLineItem]  # With per-line VAT rate + nominal code
-```
-
-### Expense Receipt (Summary)
-
-```python
-class ExpenseReceipt(BaseModel):
-    merchant_name: str
-    date: str                  # YYYY-MM-DD
-    total: float
-    vat_amount: float | None   # If shown on receipt
-    currency: str              # Default: GBP
-    items: list[ReceiptItem]
-    payment_method: str | None
-    expense_category: str | None  # Auto-categorised nominal code
-```
-
-### Contract
-
-```python
-class ContractSummary(BaseModel):
-    parties: list[str]
-    effective_date: str
-    termination_date: str | None
-    key_terms: list[str]
-    obligations: list[str]
-```
+**General**: `invoice` (sales invoices), `receipt` (generic, no accounting), `contract` (key terms), `id-document` (identity docs), `auto` (auto-detect → markdown).
 
 ## Privacy Modes
 
@@ -210,64 +112,48 @@ class ContractSummary(BaseModel):
 ### Via Helper Script (Recommended)
 
 ```bash
-# Install everything (core + PII + local LLM check)
-document-extraction-helper.sh install --all
-
-# Install only core (Docling + ExtractThinker)
-document-extraction-helper.sh install --core
-
-# Install PII detection (Presidio + spaCy)
-document-extraction-helper.sh install --pii
-
-# Check local LLM setup (Ollama)
-document-extraction-helper.sh install --llm
-
-# Verify installation
-document-extraction-helper.sh status
+document-extraction-helper.sh install --all     # Core + PII + local LLM check
+document-extraction-helper.sh install --core    # Docling + ExtractThinker only
+document-extraction-helper.sh install --pii     # Presidio + spaCy
+document-extraction-helper.sh install --llm     # Check Ollama setup
+document-extraction-helper.sh status            # Verify installation
 ```
+
+Creates an isolated venv at `~/.aidevops/.agent-workspace/python-env/document-extraction/`.
 
 ### Manual Installation
 
 ```bash
-# Core
-pip install docling extract-thinker
-
-# PII (optional)
-pip install presidio-analyzer presidio-anonymizer
-python -m spacy download en_core_web_lg
-
-# Local LLM (optional)
-brew install ollama && ollama pull llama3.2
-
-# OCR backends (optional)
-pip install easyocr  # or: brew install tesseract
+pip install docling extract-thinker                          # Core
+pip install presidio-analyzer presidio-anonymizer             # PII (optional)
+python -m spacy download en_core_web_lg                      # PII model
+brew install ollama && ollama pull llama3.2                   # Local LLM (optional)
+pip install easyocr  # or: brew install tesseract             # OCR backends (optional)
 ```
-
-The helper script creates an isolated Python venv at `~/.aidevops/.agent-workspace/python-env/document-extraction/` to avoid dependency conflicts.
 
 ## When to Use (vs Alternatives)
 
-| Feature | This Stack (Docling+ExtractThinker) | DocStrange | Unstract MCP |
-|---------|-------------------------------------|-----------|-------------|
-| **Privacy** | Full local processing via Ollama | Local GPU (CUDA) | Cloud or self-hosted |
-| **Schema control** | Pydantic models, custom schemas | JSON schema or field list | Pre-built extractors |
-| **PII redaction** | Built-in via Presidio | Not built-in | Manual |
-| **Setup** | pip install (3 packages) | `pip install docstrange` | Docker/server required |
-| **Best for** | Custom pipelines with PII | Quick extraction, scans | Enterprise workflows |
+| Feature | This Stack | DocStrange | Unstract MCP |
+|---------|-----------|-----------|-------------|
+| **Privacy** | Full local via Ollama | Local GPU (CUDA) | Cloud or self-hosted |
+| **Schema control** | Pydantic models, custom | JSON schema or field list | Pre-built extractors |
+| **PII redaction** | Built-in (Presidio) | Not built-in | Manual |
+| **Setup** | `pip install` (3 packages) | `pip install docstrange` | Docker/server required |
+| **Best for** | Custom pipelines + PII | Quick extraction, scans | Enterprise workflows |
 
-Use this stack when you need custom Pydantic schemas, PII redaction, or fully local CPU processing. Use DocStrange (`tools/document/docstrange.md`) for simpler setup with schema-based extraction and strong OCR. Use Unstract for enterprise ETL pipelines.
+Use this stack for custom Pydantic schemas, PII redaction, or fully local CPU processing. Use DocStrange (`tools/document/docstrange.md`) for simpler setup. Use Unstract for enterprise ETL.
 
 ## Related
 
-- `tools/document/extraction-schemas.md` - Full schema contracts with VAT handling and QuickFile mapping
-- `tools/document/extraction-workflow.md` - Workflow orchestration and tool selection guide
-- `scripts/document-extraction-helper.sh` - CLI helper script
-- `services/accounting/quickfile.md` - QuickFile MCP integration (target for extracted data)
-- `tools/document/docstrange.md` - DocStrange: simpler single-install alternative (NanoNets, 7B model, schema extraction)
-- `tools/conversion/pandoc.md` - Document format conversion
-- `tools/conversion/mineru.md` - PDF to markdown (layout-aware)
-- `tools/ocr/overview.md` - OCR tool selection guide (when to use which tool)
-- `tools/ocr/paddleocr.md` - PaddleOCR scene text OCR (screenshots, photos, scanned PDFs)
-- `tools/ocr/glm-ocr.md` - Local OCR via Ollama
-- `services/document-processing/unstract.md` - Self-hosted document processing (alternative)
-- `todo/tasks/prd-document-extraction.md` - Full PRD
+- `tools/document/extraction-schemas.md` — Full schema contracts (VAT, QuickFile mapping)
+- `tools/document/extraction-workflow.md` — Workflow orchestration and tool selection
+- `scripts/document-extraction-helper.sh` — CLI helper
+- `services/accounting/quickfile.md` — QuickFile MCP (target for extracted data)
+- `tools/document/docstrange.md` — Simpler single-install alternative (NanoNets, 7B model)
+- `tools/conversion/pandoc.md` — Document format conversion
+- `tools/conversion/mineru.md` — PDF to markdown (layout-aware)
+- `tools/ocr/overview.md` — OCR tool selection guide
+- `tools/ocr/paddleocr.md` — PaddleOCR (screenshots, photos, scanned PDFs)
+- `tools/ocr/glm-ocr.md` — Local OCR via Ollama
+- `services/document-processing/unstract.md` — Self-hosted document processing
+- `todo/tasks/prd-document-extraction.md` — Full PRD

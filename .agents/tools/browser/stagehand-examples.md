@@ -45,11 +45,8 @@ const productData = await stagehand.extract(
     "extract all product information from this page",
     z.object({
         products: z.array(z.object({
-            name: z.string(),
-            price: z.number(),
-            rating: z.number(),
-            availability: z.string(),
-            description: z.string()
+            name: z.string(), price: z.number(), rating: z.number(),
+            availability: z.string(), description: z.string()
         }))
     })
 );
@@ -57,7 +54,7 @@ const productData = await stagehand.extract(
 
 ## E-commerce
 
-### Product Comparison
+### Product Comparison (multi-site)
 
 ```javascript
 async function compareProducts(productQuery, sites = ["amazon.com", "ebay.com"]) {
@@ -68,10 +65,8 @@ async function compareProducts(productQuery, sites = ["amazon.com", "ebay.com"])
         const products = await stagehand.extract(
             "extract the first 5 products with prices and ratings",
             z.array(z.object({
-                name: z.string(),
-                price: z.number(),
-                rating: z.number().optional(),
-                url: z.string().optional()
+                name: z.string(), price: z.number(),
+                rating: z.number().optional(), url: z.string().optional()
             })).max(5)
         );
         results.push({ site, products });
@@ -96,7 +91,7 @@ async function monitorPrice(productUrl, targetPrice) {
 
 ## Data Collection
 
-### News Scraping
+Pattern: navigate → dismiss overlays → extract with typed Zod schema. Vary schema fields per domain (news, social media, reviews, etc.). Use nested objects for grouped metrics (e.g., `engagement: z.object({ likes, comments, shares })`).
 
 ```javascript
 async function scrapeNews(newsUrl, maxArticles = 10) {
@@ -105,31 +100,10 @@ async function scrapeNews(newsUrl, maxArticles = 10) {
     return stagehand.extract(
         `extract the first ${maxArticles} news articles`,
         z.array(z.object({
-            headline: z.string(),
-            summary: z.string(),
-            author: z.string().optional(),
-            publishDate: z.string().optional(),
-            category: z.string().optional(),
-            url: z.string().optional()
+            headline: z.string(), summary: z.string(),
+            author: z.string().optional(), publishDate: z.string().optional(),
+            category: z.string().optional(), url: z.string().optional()
         })).max(maxArticles)
-    );
-}
-```
-
-### Social Media Analytics
-
-```javascript
-async function analyzeSocialMedia(platform, hashtag) {
-    await stagehand.page.goto(`https://${platform}.com`);
-    await stagehand.act(`search for posts with hashtag ${hashtag}`);
-    return stagehand.extract(
-        "analyze the top posts for engagement metrics",
-        z.array(z.object({
-            content: z.string(),
-            author: z.string(),
-            engagement: z.object({ likes: z.number(), comments: z.number(), shares: z.number() }),
-            timestamp: z.string()
-        })).max(10)
     );
 }
 ```
@@ -137,6 +111,8 @@ async function analyzeSocialMedia(platform, hashtag) {
 ## Testing & QA
 
 ### User Journey Testing
+
+Chain `act()` steps with `observe()` verification between them:
 
 ```javascript
 async function testUserJourney(baseUrl) {
@@ -147,12 +123,11 @@ async function testUserJourney(baseUrl) {
         await stagehand.act("submit the registration form");
         results.push({ test: "registration", status: "passed",
             details: await stagehand.observe("check if registration was successful") });
-
+        // Repeat pattern: act → observe → push result for each journey step
         await stagehand.act("navigate to login page");
         await stagehand.act("login with the test credentials");
         results.push({ test: "login", status: "passed",
             details: await stagehand.observe("check if login was successful") });
-
         await stagehand.act("navigate to the main dashboard");
         results.push({ test: "dashboard", status: "passed",
             elements: await stagehand.observe("find all interactive elements on the dashboard") });
@@ -172,10 +147,8 @@ async function testAccessibility(url) {
         "identify potential accessibility issues on this page",
         z.object({
             issues: z.array(z.object({
-                type: z.string(),
-                element: z.string(),
-                severity: z.enum(["low", "medium", "high"]),
-                suggestion: z.string()
+                type: z.string(), element: z.string(),
+                severity: z.enum(["low", "medium", "high"]), suggestion: z.string()
             })),
             score: z.number()
         })
@@ -190,8 +163,7 @@ async function testAccessibility(url) {
 ```javascript
 async function autoApplyJobs(jobSearchUrl, criteria) {
     const agent = stagehand.agent({
-        cua: true,
-        model: "google/gemini-2.5-computer-use-preview-10-2025"
+        cua: true, model: "google/gemini-2.5-computer-use-preview-10-2025"
     });
     await stagehand.page.goto(jobSearchUrl);
     return agent.execute(`
@@ -219,7 +191,7 @@ async function conductResearch(topic, sources) {
 
 ## Framework Integration
 
-### Quality Assurance
+Compose Stagehand with other functions and MCP servers (Chrome DevTools for performance, Playwright for cross-browser, Context7 for docs):
 
 ```javascript
 async function runQualityChecks(websiteUrl) {
@@ -235,17 +207,6 @@ async function runQualityChecks(websiteUrl) {
 }
 ```
 
-### MCP Server Integration
-
-```javascript
-// Stagehand + Chrome DevTools MCP (performance) + Playwright MCP (cross-browser) + Context7 MCP (docs)
-async function comprehensiveAnalysis(url) {
-    await stagehand.page.goto(url);
-    const pageData = await stagehand.extract("extract all page content", z.any());
-    return { content: pageData, url };
-}
-```
-
 ## Best Practices
 
 ### Error Handling
@@ -256,13 +217,12 @@ async function robustAutomation(url) {
         await stagehand.init();
         await stagehand.page.goto(url);
         const pageState = await stagehand.observe("check if page loaded successfully");
-        if (pageState.includes("error") || pageState.includes("404")) {
+        if (pageState.includes("error") || pageState.includes("404"))
             throw new Error("Page failed to load");
-        }
     } catch (error) {
         console.error("Automation failed:", error);
     } finally {
-        await stagehand.close();
+        await stagehand.close();  // Always close in finally
     }
 }
 ```

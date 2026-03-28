@@ -867,9 +867,9 @@
       "pr": 11734
     },
     ".agents/content/production-writing.md": {
-      "hash": "b8102eb0a28d9dfe621b04dcc9f08db946e0d44a",
+      "hash": "525c4aab766775fa9f92155b85f58bcda67cf3ea",
       "at": "2026-03-28T11:20:42Z",
-      "pr": 11754
+      "pr": 11788
     },
     ".agents/tools/architecture/clean-ddd-hexagonal-skill/testing.md": {
       "hash": "5af5ce938a67c3463f9a55199509a22e202c68fc",
@@ -996,5 +996,10 @@
       "at": "2026-03-28T13:01:12Z",
       "pr": 11870
     }
+  },
+  ".agents/tools/code-review/best-practices.md": {
+    "hash": "f0869021889e61a681d25d171ebff01435b2294a",
+    "at": "2026-03-28T10:11:16Z",
+    "pr": 11771
   }
 }

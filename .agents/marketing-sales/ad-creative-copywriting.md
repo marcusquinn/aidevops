@@ -228,8 +228,7 @@ Good: "See which leads are ready to buy. Connect your entire tech stack. Make de
 
 Test: primary vs secondary benefit, question vs statement, long vs short, with/without numbers, personal vs impersonal, generic vs specific.
 
-Winning traits: specific (numbers, names), clear, relevant (matches pain/desire), urgent, beneficial.
-Avoid: vague, too clever (pun over clarity), too long, brand-focused, no differentiation.
+Winning traits: specific (numbers, names), clear, relevant (matches pain/desire), urgent, beneficial. Avoid: vague, too clever (pun over clarity), too long, brand-focused, no differentiation.
 
 ---
 
@@ -256,26 +255,12 @@ Voice stays constant; tone adapts per platform: LinkedIn (B2B) = formal, feature
 ### Brand Voice Guide Template
 
 ```text
-1. VOICE OVERVIEW
-   We are: [3-5 adjectives]  |  We are NOT: [3-5 adjectives]
-
-2. PERSONALITY TRAITS
-   [Trait]: Sounds like [example] / Doesn't sound like [counter-example]
-
-3. VOCABULARY
-   Words we use: [list]  |  Words we avoid: [word] -> use [alternative]
-   Jargon policy: [use/avoid/explain]
-
-4. GRAMMAR & MECHANICS
-   Contractions: [Always/Sometimes/Never]  |  Sentence length: [Short/Medium/Long]
-   Exclamation points: [Frequent/Occasional/Rare]  |  Emoji: [Yes/No/Platform-specific]
-
-5. VOICE BY CONTEXT
-   Acquisition (cold): [tone]  |  Retargeting (warm): [tone]
-   Customer comms: [tone]  |  Social: [tone]
-
+1. VOICE OVERVIEW: We are [3-5 adjectives] | We are NOT [3-5 adjectives]
+2. PERSONALITY TRAITS: [Trait]: Sounds like [example] / Doesn't sound like [counter-example]
+3. VOCABULARY: Words we use [list] | Words we avoid [word] -> use [alternative] | Jargon policy [use/avoid/explain]
+4. GRAMMAR: Contractions [Always/Sometimes/Never] | Sentence length [Short/Medium/Long] | Exclamation points [Frequent/Occasional/Rare] | Emoji [Yes/No/Platform-specific]
+5. VOICE BY CONTEXT: Acquisition (cold) [tone] | Retargeting (warm) [tone] | Customer comms [tone] | Social [tone]
 6. EXAMPLES: 5-10 on-brand + off-brand with explanations
-
 7. CHECKLIST: Does this sound like [BRAND]? Appropriate for platform/audience?
 ```
 
