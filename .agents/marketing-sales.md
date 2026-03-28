@@ -65,13 +65,7 @@ You are the Marketing agent. Domain: marketing strategy, campaign execution, pai
 | **Smart Links** | `fluentcrm_create_smart_link`, `fluentcrm_generate_smart_link_shortcode` |
 | **Reports** | `fluentcrm_dashboard_stats` |
 
-**Google Analytics MCP Tools** (when `google-analytics` subagent loaded):
-
-| Category | Key Tools |
-|----------|-----------|
-| **Account Info** | `get_account_summaries`, `get_property_details`, `list_google_ads_links` |
-| **Reports** | `run_report`, `get_custom_dimensions_and_metrics` |
-| **Real-time** | `run_realtime_report` |
+**Google Analytics MCP Tools** (when `google-analytics` subagent loaded): `get_account_summaries`, `get_property_details`, `list_google_ads_links`, `run_report`, `get_custom_dimensions_and_metrics`, `run_realtime_report`
 
 <!-- AI-CONTEXT-END -->
 
@@ -123,13 +117,7 @@ Plan → `fluentcrm_create_email_template` (title, subject, body HTML) → `flue
 
 ### Automation Triggers
 
-| Trigger | Use Case |
-|---------|----------|
-| `tag_added` | Tag applied |
-| `list_added` | Contact joins list |
-| `form_submitted` | Form completed |
-| `link_clicked` | Email link clicked |
-| `email_opened` | Email opened |
+Triggers: `tag_added`, `list_added`, `form_submitted`, `link_clicked`, `email_opened`.
 
 ### Common Sequences
 
@@ -197,21 +185,11 @@ Use `fluentcrm_dashboard_stats` for contacts, engagement, and campaign performan
 
 ## Best Practices
 
-### Deliverability & List Hygiene
+**Deliverability**: Authenticate SPF/DKIM/DMARC; warm up new domains; double opt-in; remove hard bounces immediately; re-engage or remove inactive (90+ days); honor unsubscribes instantly.
 
-- Authenticate SPF, DKIM, DMARC; warm up new sending domains
-- Double opt-in; validate on import; remove hard bounces immediately
-- Re-engage or remove inactive (90+ days); honor unsubscribes instantly
+**Compliance**: GDPR (explicit consent, right to erasure) | CAN-SPAM (unsubscribe link, physical address) | CASL (express consent, identification).
 
-### Compliance & Frequency
-
-| Regulation | Requirements |
-|------------|--------------|
-| **GDPR** | Explicit consent, right to erasure |
-| **CAN-SPAM** | Unsubscribe link, physical address |
-| **CASL** | Express consent, identification |
-
-Frequency: newsletter weekly/bi-weekly; promotional 2-4/month max; nurture 2-5 days apart.
+**Frequency**: Newsletter weekly/bi-weekly; promotional 2-4/month max; nurture 2-5 days apart.
 
 ## Troubleshooting
 
