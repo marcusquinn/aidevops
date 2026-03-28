@@ -23,7 +23,7 @@ tools:
 - **Platforms**: Linux x86_64/ARM64, macOS ARM64. No Windows.
 - **Repo**: <https://github.com/alibaba/zvec> (Apache-2.0)
 - **Docs**: <https://zvec.org/en/docs/>
-- **Parent guide**: `tools/database/vector-search.md` — decision flowchart, comparison matrix, per-tenant isolation
+- **Parent guide**: `tools/database/vector-search.md` — decision flowchart, comparison matrix, per-tenant isolation patterns, platform support matrix
 
 **Use when**: SaaS RAG with per-tenant document uploads. Zero network hop, collection-per-tenant isolation, built-in embeddings and rerankers.
 
@@ -69,7 +69,7 @@ Your App Process
 
 **Scalar**: `INT32`, `INT64`, `UINT32`, `UINT64`, `FLOAT`, `DOUBLE`, `STRING`, `BOOL`, `ARRAY_INT32`, `ARRAY_STRING`, etc.
 
-**Vector**: `VECTOR_FP32` (default), `VECTOR_FP16` (half memory), `VECTOR_INT8` (4x reduction, >95% recall with refiner), `SPARSE_VECTOR_FP32`, `SPARSE_VECTOR_FP16`
+**Vector**: `VECTOR_FP32` (default), `VECTOR_FP16` (half memory), `VECTOR_INT8` (4x memory reduction, >95% recall with refiner), `SPARSE_VECTOR_FP32`, `SPARSE_VECTOR_FP16`
 
 ```python
 import zvec
@@ -240,7 +240,7 @@ reranker = QwenReRanker(query="q", model="gte-rerank-v2", topn=10, rerank_field=
 
 ## Hybrid Search
 
-Combine dense semantic + sparse lexical. Schema needs both vector fields; insert docs with both embeddings.
+Combine dense semantic + sparse lexical matching. Schema needs both vector fields; insert docs with both embeddings.
 
 ```python
 from zvec.extension import DefaultLocalDenseEmbedding, DefaultLocalSparseEmbedding, RrfReRanker
@@ -270,7 +270,7 @@ results = collection.query(
 
 ## Node.js API
 
-camelCase mirror of Python. No extension ecosystem — bring your own embeddings (OpenAI SDK, Transformers.js). For production Node.js needing full pipeline, pgvector or hosted is more practical.
+camelCase mirror of Python. No extension ecosystem — bring your own embedding pipeline (OpenAI SDK, Transformers.js). For production Node.js needing full pipeline, pgvector or a hosted option is more practical.
 
 ```javascript
 const zvec = require('@zvec/zvec');
