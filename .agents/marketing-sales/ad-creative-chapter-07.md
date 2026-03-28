@@ -47,7 +47,7 @@ Memories form through: (1) **Novelty** — something unexpected, (2) **Emotion**
 
 ### Brand Awareness Testing
 
-**Test variables**: creative concepts (5+), length, messaging angle, tone, talent type. **Success metrics**: 3-second video plays, ThruPlay rate, engagement rate, brand lift studies (aided/unaided recall), branded search volume. **Budget rule (70/20/10)**: 70% proven winners, 20% promising variants, 10% experimental wild cards.
+**Test variables**: creative concepts (5+), length, messaging angle, tone, talent (founder/customer/actor/influencer). **Success metrics**: 3-second video plays, ThruPlay rate, engagement rate, brand lift studies (aided/unaided recall), branded search volume. **Budget rule (70/20/10)**: 70% proven winners, 20% promising variants, 10% experimental wild cards.
 
 ## Top-of-Funnel (TOFU) Strategies
 
@@ -87,7 +87,7 @@ Every brand story needs: (1) **Origin Story** — why we exist (founder's journe
 
 ### Serialized Story Creative
 
-Instead of one-off ads, create episodic content: **Customer Story Series** (meet → journey → 30 days in → transformation, 30-60s weekly), **Behind-the-Scenes Series** (production process highlighting brand values), **Educational Series** (topic spotlights that teach + feature products).
+Instead of one-off ads, create episodic content: **Customer Story Series** (meet → journey → 30 days in → transformation, 30-60s weekly), **Behind-the-Scenes Series** (e.g., Farm → Roasting → Quality Control → Packaging, highlights brand values), **Educational Series** (topic spotlights that teach + feature products).
 
 ### Character-Driven Brand Creative
 
@@ -119,7 +119,7 @@ Invite customers to share stories → curate best → amplify through paid media
 
 ### Platform Personality
 
-**Instagram**: visual perfection, aesthetic-first, lifestyle aspiration. **TikTok**: raw authenticity, entertainment-first, trend participation. **LinkedIn**: professional polish, thought leadership. **Twitter/X**: conversational, reactive, personality-forward. **YouTube**: long-form depth, educational value, production quality.
+**Instagram**: visual perfection, aesthetic-first, lifestyle aspiration. **TikTok**: raw authenticity, entertainment-first, trend participation, intentional "imperfection". **LinkedIn**: professional polish, thought leadership, business value. **Twitter/X**: conversational, reactive/timely, personality-forward, cultural commentary. **YouTube**: long-form depth, educational value, production quality, binge-worthy.
 
 ### Cross-Platform Campaign Example (New Product Launch)
 
@@ -169,7 +169,7 @@ CAMPAIGN: [Name] | OBJECTIVE: [Awareness/Consideration/Conversion]
 KEY MESSAGES (pick 2-3): [Message 1] / [Message 2] / [Message 3]
 MUST-INCLUDE: Product shown/mentioned, brand name, CTA: [Specific], Disclosure: #ad/#sponsored
 DO: Natural voice, authentic, genuine opinions, entertaining
-DON'T: Script word-for-word, over-sell, misrepresent, skip disclosure
+DON'T: Script word-for-word, over-sell, misrepresent product, skip disclosure
 SPECS: Platform / Format / Length / Due Date / Inspiration: [Link]
 ```
 
@@ -188,7 +188,7 @@ Brand codes are distinctive assets that trigger immediate brand recognition — 
 | Type | Examples |
 |------|---------|
 | Visual | Logo, color palette (Tiffany blue, UPS brown), typography (Coca-Cola script), mascot, patterns (Burberry check) |
-| Audio | Jingles ("Nationwide is on your side"), sound logos (Intel bong, McDonald's "ba da ba ba ba") |
+| Audio | Jingles ("Nationwide is on your side"), sound logos (Intel bong, McDonald's "ba da ba ba ba"), signature music |
 | Motion | Animation style (Pixar lamp hop), logo animation (Netflix "ta-dum") |
 | Verbal | Taglines ("Just Do It"), catchphrases ("Can you hear me now?"), brand vocabulary |
 
