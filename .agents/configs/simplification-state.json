@@ -16,7 +16,7 @@
       "at": "2026-03-27T21:25:06Z",
       "pr": 11016
     },
-    ".agents/tools/programming/modern-javascript-skill/references/ES2024.md": {
+    ".agents/tools/programming/modern-javascript-skill/es2024.md": {
       "hash": "5ff178dfe9603a724792aaef45d63f4b33fce7ef",
       "at": "2026-03-27T21:25:08Z",
       "pr": 11002
@@ -81,7 +81,7 @@
       "at": "2026-03-27T21:25:22Z",
       "pr": 11014
     },
-    ".agents/tools/architecture/feature-slicing-skill/references/CHEATSHEET.md": {
+    ".agents/tools/architecture/feature-slicing-skill/cheatsheet.md": {
       "hash": "b244fb8417fc27f0de33c83c86092f5bebd736f3",
       "at": "2026-03-27T21:25:23Z",
       "pr": 11018
