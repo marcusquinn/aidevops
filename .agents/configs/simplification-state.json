@@ -1115,6 +1115,31 @@
       "hash": "9a7f856e52fb6226b2661e21b00fee79fd906561",
       "at": "2026-03-28T14:16:17Z",
       "pr": 11906
+    },
+    ".agents/marketing-sales/ad-creative-campaign-management.md": {
+      "hash": "25789717a8ebdaf23d939bbbf2a70de8e9e6c00e",
+      "at": "2026-03-28T14:51:10Z",
+      "pr": 11938
+    },
+    ".agents/marketing-sales/direct-response-copy-swipe-file-headlines.md": {
+      "hash": "d070389302c44050de078cb0dd5e39097c2d9d3b",
+      "at": "2026-03-28T14:51:16Z",
+      "pr": 11929
+    },
+    ".agents/tools/diagrams/mermaid-diagrams-skill.md": {
+      "hash": "78727b54babac09c10d5b04015dc077dbe8373de",
+      "at": "2026-03-28T14:51:17Z",
+      "pr": 11935
+    },
+    ".agents/tools/diagrams/mermaid-diagrams-skill/architecture.md": {
+      "hash": "400d292b7a77abbfdcdb45b69ef168baffef2cdf",
+      "at": "2026-03-28T14:51:17Z",
+      "pr": 11935
+    },
+    ".agents/tools/video/remotion.md": {
+      "hash": "4ff044818b1d40d557297d63aa7d05bb336b0b84",
+      "at": "2026-03-28T14:51:24Z",
+      "pr": 11928
     }
   },
   ".agents/tools/code-review/best-practices.md": {
