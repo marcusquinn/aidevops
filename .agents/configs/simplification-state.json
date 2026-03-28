@@ -872,9 +872,9 @@
       "pr": 11788
     },
     ".agents/tools/architecture/clean-ddd-hexagonal-skill/testing.md": {
-      "hash": "5af5ce938a67c3463f9a55199509a22e202c68fc",
-      "at": "2026-03-28T11:20:44Z",
-      "pr": 11737
+      "hash": "2316ee0b050453056ecc075e712e88b436dd3dd9",
+      "at": "2026-03-28T13:38:11Z",
+      "pr": 11790
     },
     ".agents/workflows/ralph-loop.md": {
       "hash": "552b1c4af3571c286790521b4cf26446ab3bb729",
@@ -937,9 +937,9 @@
       "pr": 11885
     },
     ".agents/marketing-sales/direct-response-copy-templates-landing-page.md": {
-      "hash": "7d95922fef4d2c67466c89f4dc918f99fa7a76c4",
-      "at": "2026-03-28T11:52:38Z",
-      "pr": 11824
+      "hash": "cbaa0cc29c6e3639ea5254866f8fefe1c02a329c",
+      "at": "2026-03-28T13:37:36Z",
+      "pr": 11840
     },
     ".agents/seo/gsc-sitemaps.md": {
       "hash": "7154caa038f21e800f7b6c5493f2553a9d7e8efb",
@@ -987,13 +987,13 @@
       "pr": 11893
     },
     ".agents/tools/browser/stagehand-examples.md": {
-      "hash": "f557a876737b6ab698fa5dcf1d43b98305418786",
-      "at": "2026-03-28T13:01:11Z",
+      "hash": "728f1064ad1de2bb36719a8a9a10d14369695cde",
+      "at": "2026-03-28T13:37:46Z",
       "pr": 11838
     },
     ".agents/tools/ui/wxt.md": {
-      "hash": "33b6cdd803bd3f494efeed8385a62516279d0707",
-      "at": "2026-03-28T13:01:12Z",
+      "hash": "3705faa0407468fc44819d98501ad0ff13ca1934",
+      "at": "2026-03-28T13:37:50Z",
       "pr": 11870
     },
     ".agents/tools/code-review/secretlint.md": {
