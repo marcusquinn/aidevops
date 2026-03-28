@@ -32,22 +32,32 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
+## Gotchas
+
+1. **Very new** — December 2025. APIs may change. Small community.
+2. **Python-first** — Node.js bindings are early stage with no extension ecosystem.
+3. **No Windows** — Linux and macOS ARM64 only.
+4. **Single-process** — Only one process can open a collection at a time.
+5. **No ACID** — Use application-level locking for concurrent writes.
+6. **Memory per collection** — Use LRU cache to close idle tenant collections.
+7. **CPU compatibility** — Precompiled wheels likely require AVX-512; fails with `Illegal instruction` (exit 132) on AMD Zen 2 (AVX2 only). Verified on zvec 0.2.0, Python 3.12.3. Use pgvector or a hosted alternative on AMD Ryzen/EPYC Zen 2 servers.
+
 ## Installation
 
 ```bash
 pip install zvec                    # Python 3.10-3.12
 npm install @zvec/zvec              # Node.js (early stage)
-pip install sentence-transformers   # Local dense + sparse (SPLADE), ~80-100MB models
+pip install sentence-transformers   # Local dense + sparse (SPLADE)
 pip install dashtext                # BM25 sparse embeddings
-pip install openai                  # OpenAI or Jina (OpenAI-compatible)
+pip install openai                  # OpenAI/Jina embeddings
 pip install dashscope               # Qwen embeddings
 ```
 
 ## Core Concepts
 
-- **Collection**: Named container for documents (analogous to a table), lives at a filesystem path. One process per collection.
-- **Document** (`Doc`): A record with a string `id`, scalar fields, and one or more vector fields
-- **Schema**: Defines scalar fields (`FieldSchema`) and vector fields (`VectorSchema`)
+- **Collection**: Named container at a filesystem path (analogous to a table). One process per collection.
+- **Document** (`Doc`): Record with string `id`, scalar fields, and vector fields.
+- **Schema**: Defines scalar fields (`FieldSchema`) and vector fields (`VectorSchema`).
 
 ```text
 Your App Process
@@ -81,9 +91,9 @@ schema = zvec.CollectionSchema(
 )
 ```
 
-### Schema Evolution (DDL)
+### Schema Evolution
 
-No downtime, data re-ingestion, or reindexing required.
+No downtime or reindexing required.
 
 ```python
 collection.add_column(field_schema=zvec.FieldSchema("rating", zvec.DataType.INT32), expression="5")
@@ -92,7 +102,7 @@ collection.alter_column(old_name="publish_year", new_name="release_year")
 collection.alter_column(field_schema=zvec.FieldSchema("rating", zvec.DataType.FLOAT))
 ```
 
-**Limitations**: Cannot add or drop vector fields (coming soon). `add_column()` supports numerical scalar types only.
+**Limitations**: Cannot add/drop vector fields (coming soon). `add_column()` supports numerical scalar types only.
 
 ## Index Types
 
@@ -144,7 +154,7 @@ collection.delete_by_filter(filter="publish_year < 1900")
 
 ## Query API
 
-All writes are immediately visible — real-time, no eventual consistency delay.
+Writes are immediately visible — no eventual consistency delay.
 
 ```python
 # Single-vector search with filter
@@ -165,7 +175,7 @@ results = collection.query(filter="publish_year < 1999", topk=50)
 
 ## Embedding Functions
 
-No separate embedding service needed. All functions are thread-safe. Local models download on first use. Text modality only.
+Built-in, thread-safe. Local models download on first use. Text modality only.
 
 ### Local (No API Key)
 
@@ -213,7 +223,7 @@ sparse_emb = QwenSparseEmbedding(dimension=256)
 
 ## Rerankers
 
-All reranking functions are thread-safe.
+Thread-safe.
 
 | Reranker | When to use |
 |----------|-------------|
@@ -234,7 +244,7 @@ reranker = QwenReRanker(query="q", model="gte-rerank-v2", topn=10, rerank_field=
 
 ## Hybrid Search
 
-Combine dense semantic search with sparse lexical matching. Schema needs both vector fields (see Schema section); insert docs with both embeddings populated.
+Combine dense semantic + sparse lexical matching. Schema needs both vector fields; insert docs with both embeddings.
 
 ```python
 from zvec.extension import DefaultLocalDenseEmbedding, DefaultLocalSparseEmbedding, RrfReRanker
@@ -264,7 +274,7 @@ results = collection.query(
 
 ## Node.js API
 
-Mirrors Python with camelCase names. The Python extension ecosystem (embedding functions, rerankers) has **no Node.js equivalent** — bring your own embedding pipeline (OpenAI SDK, Transformers.js). For production Node.js needing the full pipeline, pgvector or a hosted option is more practical.
+Mirrors Python with camelCase. No extension ecosystem (embedding functions, rerankers) — bring your own embedding pipeline (OpenAI SDK, Transformers.js). For production Node.js needing the full pipeline, pgvector or a hosted option is more practical.
 
 ```javascript
 const zvec = require('@zvec/zvec');
@@ -281,7 +291,7 @@ collection.destroy();
 
 ## Performance
 
-Benchmarked using [VectorDBBench](https://github.com/zilliztech/VectorDBBench) on 16 vCPU / 64 GiB (g9i.4xlarge). Highest QPS among tested databases at >95% recall on 10M Cohere benchmark. Sub-millisecond search latency (in-process). INT8 quantization: ~25% memory vs FP32.
+Benchmarked on 16 vCPU / 64 GiB (g9i.4xlarge) using [VectorDBBench](https://github.com/zilliztech/VectorDBBench). Highest QPS among tested databases at >95% recall on 10M Cohere benchmark. Sub-millisecond search latency (in-process). INT8 quantization: ~25% memory vs FP32.
 
 ```bash
 pip install zvec==0.1.1 vectordbbench
@@ -294,16 +304,6 @@ vectordbbench zvec --path Performance768D1M --case-type Performance768D1M \
 ```
 
 **Note**: The "billions of vectors in milliseconds" README claim refers to Alibaba's internal Proxima deployment — not publicly verified at that scale.
-
-## Gotchas
-
-1. **Very new** — December 2025. APIs may change. Small community.
-2. **Python-first** — Node.js bindings are early stage with no extension ecosystem.
-3. **No Windows** — Linux and macOS ARM64 only.
-4. **Single-process** — Only one process can open a collection at a time.
-5. **No ACID** — Use application-level locking for concurrent writes.
-6. **Memory per collection** — Use LRU cache to close idle tenant collections.
-7. **CPU compatibility** — Precompiled wheels likely require AVX-512; fails with `Illegal instruction` (exit 132) on AMD Zen 2 (AVX2 only). Verified on zvec 0.2.0, Python 3.12.3. Use pgvector or a hosted alternative on AMD Ryzen/EPYC Zen 2 servers.
 
 ## Related Resources
 
