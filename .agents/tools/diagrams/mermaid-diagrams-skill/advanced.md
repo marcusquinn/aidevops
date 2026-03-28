@@ -2,10 +2,6 @@
 
 Configuration, theming, custom styling, troubleshooting, and export for Mermaid diagrams.
 
----
-
-# Configuration
-
 ## Init Directive
 
 ```mermaid
@@ -49,13 +45,11 @@ config:
 ---
 ```
 
----
-
-# Theme Variables
+## Theme Variables
 
 Themes: `default`, `dark`, `forest`, `neutral`, `base` — see cheatsheet `## Styling`.
 
-## Core Variables
+**Core variables:**
 
 | Variable | Description |
 |----------|-------------|
@@ -70,21 +64,14 @@ Themes: `default`, `dark`, `forest`, `neutral`, `base` — see cheatsheet `## St
 | `fontSize` | Base font size |
 | `fontFamily` | Font family |
 
-## Diagram-Specific Variables
+**Diagram-specific variables:**
 
-**Flowchart:** `nodeBorder`, `nodeTextColor`, `clusterBkg`, `clusterBorder`, `edgeLabelBackground`
+- **Flowchart:** `nodeBorder`, `nodeTextColor`, `clusterBkg`, `clusterBorder`, `edgeLabelBackground`
+- **Sequence:** `actorBorder`, `actorBkg`, `actorTextColor`, `activationBorderColor`, `activationBkgColor`, `signalColor`, `signalTextColor`, `noteBkgColor`, `noteBorderColor`, `noteTextColor`
+- **State:** `labelColor`, `altBackground`
+- **Gantt:** `gridColor`, `todayLineColor`, `taskTextColor`, `doneTaskBkgColor`, `activeTaskBkgColor`, `critBkgColor`, `taskBorderColor`
 
-**Sequence:** `actorBorder`, `actorBkg`, `actorTextColor`, `activationBorderColor`, `activationBkgColor`, `signalColor`, `signalTextColor`, `noteBkgColor`, `noteBorderColor`, `noteTextColor`
-
-**State:** `labelColor`, `altBackground`
-
-**Gantt:** `gridColor`, `todayLineColor`, `taskTextColor`, `doneTaskBkgColor`, `activeTaskBkgColor`, `critBkgColor`, `taskBorderColor`
-
----
-
-# Styling
-
-## Class-Based
+## Class-Based Styling
 
 ```mermaid
 flowchart LR
@@ -115,13 +102,9 @@ flowchart LR
 
 Properties: `fill`, `stroke`, `stroke-width`, `stroke-dasharray`, `color`, `font-weight`
 
----
+## Layout & Directives
 
-# Layout & Directives
-
-## ELK Renderer (v9.4+)
-
-Better complex layouts, predictable edge routing, improved subgraph positioning.
+**ELK Renderer (v9.4+):** Better complex layouts, predictable edge routing, improved subgraph positioning.
 
 ```mermaid
 %%{init: {"flowchart": {"defaultRenderer": "elk"}} }%%
@@ -130,7 +113,7 @@ flowchart TB
     B & C & D --> E
 ```
 
-## Common Init Options
+**Common init options:**
 
 ```javascript
 %%{init: {
@@ -143,9 +126,7 @@ flowchart TB
 
 Directive keys: `flowchart`, `sequenceDiagram`, `classDiagram`, `stateDiagram`, `erDiagram`, `gantt`
 
----
-
-# Security Levels
+## Security Levels
 
 | Level | Description |
 |-------|-------------|
@@ -161,13 +142,9 @@ flowchart LR
     click A href "https://example.com" _blank
 ```
 
----
+## Troubleshooting
 
-# Troubleshooting
-
-## Special Characters
-
-Escape with HTML entities or use quoted strings (see cheatsheet `## Special Characters` for entity table):
+**Special characters** — escape with HTML entities or use quoted strings (see cheatsheet `## Special Characters`):
 
 ```mermaid
 flowchart LR
@@ -176,7 +153,7 @@ flowchart LR
     C["Hash #35; symbol"]
 ```
 
-## Long Labels
+**Long labels:**
 
 ```mermaid
 flowchart LR
@@ -185,7 +162,7 @@ flowchart LR
     across multiple lines`"]
 ```
 
-## Arrow Syntax by Diagram Type
+**Arrow syntax by diagram type:**
 
 | Diagram | Sync | Async | Dotted |
 |---------|------|-------|--------|
@@ -194,23 +171,15 @@ flowchart LR
 | Class | `-->` | N/A | `..>` |
 | State | `-->` | N/A | N/A |
 
-## Debugging
+**Debugging:** Verify diagram type declaration; check unclosed brackets/quotes; match arrow syntax to type. Start minimal, add elements one at a time to isolate breaking change. Live editor: https://mermaid.live — export PNG/SVG for guaranteed rendering across platforms.
 
-- Verify diagram type declaration; check unclosed brackets/quotes; match arrow syntax to type
-- Start minimal, add elements one at a time to isolate breaking change
-- Live editor: https://mermaid.live — export PNG/SVG for guaranteed rendering across platforms
-
----
-
-# Accessibility & Performance
+## Accessibility & Performance
 
 **Accessibility:** Provide context text before diagrams for screen readers. HTML: `<div class="mermaid" role="img" aria-label="...">`.
 
 **Performance:** Split large diagrams. Use ELK for complex layouts. Prefer class-based styling over inline. Cache renders; lazy load in documentation.
 
----
-
-# Export
+## Export
 
 | Method | Command/Usage |
 |--------|--------------|
