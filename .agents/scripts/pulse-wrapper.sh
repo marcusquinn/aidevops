@@ -3309,7 +3309,7 @@ _complexity_scan_create_md_issues() {
 	local issues_skipped=0
 
 	# Total-open cap: stop creating when backlog is already large
-	_complexity_scan_check_open_cap "$aidevops_slug" 100 "Complexity scan (.md)" || return 0
+	_complexity_scan_check_open_cap "$aidevops_slug" 500 "Complexity scan (.md)" || return 0
 
 	local maintainer
 	maintainer=$(jq -r --arg slug "$aidevops_slug" \
@@ -3360,7 +3360,7 @@ _complexity_scan_create_issues() {
 	local issues_skipped=0
 
 	# Total-open cap: stop creating when backlog is already large
-	_complexity_scan_check_open_cap "$aidevops_slug" 100 "Complexity scan" || return 0
+	_complexity_scan_check_open_cap "$aidevops_slug" 500 "Complexity scan" || return 0
 
 	local maintainer
 	maintainer=$(jq -r --arg slug "$aidevops_slug" \
