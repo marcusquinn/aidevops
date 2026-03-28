@@ -34,14 +34,15 @@ GUARANTEE: [Risk Reversal]
 ### Example (SaaS)
 
 ```text
-CORE: Full Dashboard Access .......................... $149/mo
+CORE: Full Dashboard Access .......................... $149/mo market value
   • Unlimited tracking, monitoring, competitor analysis, review management
-BONUS 1: Done-For-You Setup .......................... $500 one-time (~$42/mo amortized)
-BONUS 2: Training Academy ............................ $297 one-time (~$25/mo amortized)
+BONUS 1: Done-For-You Setup .......................... $500 one-time (~$42/mo over 12 mo)
+BONUS 2: Training Academy ............................ $297 one-time (~$25/mo over 12 mo)
 BONUS 3: Priority Support ............................ $50/mo
 ─────────────────────────────────────────────────
-COMPARABLE VALUE: ~$266/mo → PRO PLAN: $79/mo ($69/mo annual)
-  ($149 + $50 recurring + ~$67/mo amortized one-time bonuses over 12 months)
+COMPARABLE MONTHLY VALUE: ~$266/mo
+  ($149 + $50 recurring = $199/mo + ~$67/mo amortized one-time bonuses)
+PRO PLAN: $79/mo ($69/mo annual)
 GUARANTEE: 30-Day Money Back. No long-term contracts.
 ─────────────────────────────────────────────────
 ```
@@ -111,7 +112,7 @@ Driven by **loss aversion** — people fear missing out more than they desire ga
 ### Urgency Copy Template
 
 ```text
-THIS OFFER EXPIRES IN: [Countdown Timer]
+THIS OFFER EXPIRES IN: [Countdown Timer — real deadline, no resets]
 After [deadline]:
 - [What they lose — bonus/price/access]
 - [Price increase / doors close]
@@ -151,6 +152,6 @@ A/B test one variable at a time. Run until statistical significance. Document re
 
 ## Further Reading
 
-- [Landing Page Structure](landing-page-structure.md) — where to place your offer
-- [Objection Handling](objection-handling.md) — addressing price concerns
-- [Email Sequences](email-sequences.md) — launch sequence offers
+- [Landing Page Structure](direct-response-copy-frameworks-landing-page-structure.md) — where to place your offer
+- [Objection Handling](direct-response-copy-frameworks-objection-handling.md) — addressing price concerns
+- [Email Sequences](direct-response-copy-frameworks-email-sequences.md) — launch sequence offers
