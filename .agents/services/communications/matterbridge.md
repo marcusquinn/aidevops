@@ -25,8 +25,6 @@ tools:
 - **Data**: `~/.aidevops/.agent-workspace/matterbridge/`
 - **Requires**: Go 1.18+ (build) or pre-compiled binary
 
-**Quick start**:
-
 ```bash
 matterbridge-helper.sh setup          # Download binary + interactive config
 matterbridge-helper.sh validate       # Validate config before starting
@@ -37,34 +35,11 @@ matterbridge-helper.sh start --daemon
 
 <!-- AI-CONTEXT-END -->
 
-## Natively Supported Platforms
+## Supported Platforms
 
-| Platform | Protocol | Notes |
-|----------|----------|-------|
-| Discord | Bot API | Requires bot token + server invite |
-| Gitter | REST API | GitHub-owned |
-| IRC | IRC | libera.chat, OFTC, etc. |
-| Keybase | Keybase API | |
-| Matrix | Client-Server API | E2E broken at bridge |
-| Mattermost | API v4 | Self-hosted or cloud |
-| Microsoft Teams | Graph API | Requires Azure app registration |
-| Mumble | Mumble protocol | Voice-only (text chat) |
-| Nextcloud Talk | Talk API | |
-| Rocket.Chat | REST + WebSocket | |
-| Slack | RTM/Events API | Bot token required |
-| SSH-chat | SSH | |
-| Telegram | Bot API | |
-| Twitch | IRC | Chat only |
-| VK | VK API | |
-| WhatsApp | go-whatsapp (legacy) / whatsmeow (multidevice) | Unofficial; ToS risk |
-| XMPP | XMPP | Jabber-compatible |
-| Zulip | Zulip API | |
+Discord, Gitter, IRC, Keybase, Matrix (E2E broken at bridge), Mattermost, Microsoft Teams (Azure app required), Mumble, Nextcloud Talk, Rocket.Chat, Slack, SSH-chat, Telegram, Twitch (chat only), VK, WhatsApp (whatsmeow multidevice — unofficial, ToS risk), XMPP, Zulip.
 
-### 3rd Party via Matterbridge API
-
-- **SimpleX**: [matterbridge-simplex](https://github.com/simplex-chat/matterbridge-simplex) adapter — routes via SimpleX CLI
-- **Delta Chat**: matterdelta
-- **Minecraft**: mattercraft, MatterBukkit
+**3rd party via Matterbridge API**: SimpleX ([matterbridge-simplex](https://github.com/simplex-chat/matterbridge-simplex)), Delta Chat (matterdelta), Minecraft (mattercraft, MatterBukkit).
 
 ## Installation
 
@@ -75,11 +50,7 @@ matterbridge-helper.sh start --daemon
 curl -L https://github.com/42wim/matterbridge/releases/latest/download/matterbridge-1.26.0-linux-64bit \
   -o /usr/local/bin/matterbridge && chmod +x /usr/local/bin/matterbridge
 
-# macOS Intel
-curl -L https://github.com/42wim/matterbridge/releases/latest/download/matterbridge-1.26.0-darwin-64bit \
-  -o /usr/local/bin/matterbridge && chmod +x /usr/local/bin/matterbridge
-
-# macOS Apple Silicon
+# macOS (Intel: darwin-64bit, Apple Silicon: darwin-arm64)
 curl -L https://github.com/42wim/matterbridge/releases/latest/download/matterbridge-1.26.0-darwin-arm64 \
   -o /usr/local/bin/matterbridge && chmod +x /usr/local/bin/matterbridge
 
@@ -93,21 +64,12 @@ Packages: `snap install matterbridge` / `scoop install matterbridge`
 ```bash
 go install github.com/42wim/matterbridge                                    # All bridges (~3GB RAM)
 go install -tags nomsteams github.com/42wim/matterbridge                    # Exclude MS Teams (~500MB)
-go install -tags whatsappmulti github.com/42wim/matterbridge@master         # WhatsApp multidevice (GPL3)
-go install -tags nomsteams,whatsappmulti github.com/42wim/matterbridge@master
+go install -tags nomsteams,whatsappmulti github.com/42wim/matterbridge@master  # WhatsApp multidevice (GPL3)
 ```
 
 ## Configuration
 
-### Config File Location
-
-```bash
-./matterbridge.toml                        # Current directory
-~/.config/aidevops/matterbridge.toml       # aidevops convention
-matterbridge -conf /path/to/matterbridge.toml  # Explicit path
-```
-
-### Basic Structure
+Config is searched in order: `./matterbridge.toml`, `~/.config/aidevops/matterbridge.toml`, or explicit `-conf /path/to/matterbridge.toml`.
 
 Every config has three sections:
 
@@ -164,83 +126,21 @@ enable=true
   channel="#myproject"
 ```
 
-### Nick Format Variables
+**Nick format variables**: `{NICK}` (username), `{PROTOCOL}` (platform), `{BRIDGE}` (instance), `{GATEWAY}` (gateway name).
 
-| Variable | Value |
-|----------|-------|
-| `{NICK}` | Sender's username |
-| `{PROTOCOL}` | Platform name (matrix, discord, etc.) |
-| `{BRIDGE}` | Bridge instance name |
-| `{GATEWAY}` | Gateway name |
+**One-way bridges**: Use `[[gateway.in]]` / `[[gateway.out]]` instead of `[[gateway.inout]]` to restrict message flow direction.
 
-### One-Way Bridges
+### Platform-Specific Notes
 
-```toml
-[[gateway]]
-name="announcements"
-enable=true
-
-  [[gateway.in]]
-  account="slack.work"
-  channel="announcements"
-
-  [[gateway.out]]
-  account="discord.myserver"
-  channel="announcements"
-
-  [[gateway.out]]
-  account="matrix.home"
-  channel="#announcements:example.com"
-```
-
-### Platform-Specific Configuration
-
-```toml
-# Matrix — use access token (preferred over password)
-[matrix.home]
-Server="https://matrix.example.com"
-Login="bridgebot"
-Token="<MATRIX_ACCESS_TOKEN>"   # aidevops secret set MATTERBRIDGE_MATRIX_TOKEN
-PreserveThreading=true
-
-# Discord — use webhooks for better username/avatar spoofing
-[discord.myserver]
-Token="Bot <DISCORD_BOT_TOKEN>"
-Server="My Server Name"
-WebhookURL="<DISCORD_WEBHOOK_URL>"   # aidevops secret set MATTERBRIDGE_DISCORD_WEBHOOK
-
-# Telegram — get group ID via @userinfobot
-[telegram.main]
-Token="<TELEGRAM_BOT_TOKEN>"   # aidevops secret set MATTERBRIDGE_TELEGRAM_TOKEN
-
-# Slack — use bot token (xoxb-...), not legacy xoxp-
-[slack.workspace]
-Token="<SLACK_BOT_TOKEN>"   # aidevops secret set MATTERBRIDGE_SLACK_TOKEN
-PrefixMessagesWithNick=true
-
-# IRC
-[irc.libera]
-Server="irc.libera.chat:6697"
-Nick="matterbridge"
-UseTLS=true
-NickServPassword="<IRC_NICKSERV_PASSWORD>"   # aidevops secret set MATTERBRIDGE_IRC_NICKSERV_PASSWORD
-
-# XMPP
-[xmpp.jabber]
-Server="jabber.example.com:5222"
-Jid="bridgebot@jabber.example.com"
-Password="<XMPP_PASSWORD>"   # aidevops secret set MATTERBRIDGE_XMPP_PASSWORD
-Muc="conference.jabber.example.com"
-Nick="matterbridge"
-
-# Mattermost
-[mattermost.work]
-Server="mattermost.example.com"
-Team="myteam"
-Login="bridgebot@example.com"
-Password="<MATTERMOST_PASSWORD>"   # aidevops secret set MATTERBRIDGE_MATTERMOST_PASSWORD
-PrefixMessagesWithNick=true
-```
+| Platform | Key options |
+|----------|-------------|
+| Matrix | Use `Token=` (access token) over `Password=`; `PreserveThreading=true` |
+| Discord | Add `WebhookURL=` for better username/avatar spoofing |
+| Slack | Use `xoxb-` bot token (not legacy `xoxp-`); `PrefixMessagesWithNick=true` |
+| IRC | `UseTLS=true`; `NickServPassword=` for registered nicks |
+| XMPP | Requires `Jid=`, `Muc=` (conference server), `Nick=` |
+| Mattermost | Requires `Server=`, `Team=`, `Login=`, `Password=` |
+| Telegram | Get group chat ID (negative integer) via `@userinfobot` |
 
 ### SimpleX via Adapter
 
@@ -252,35 +152,15 @@ go install github.com/simplex-chat/matterbridge-simplex@latest
 matterbridge-simplex --port 4242 --profile simplex-bridge
 ```
 
-```toml
-[api]
-  [api.simplex]
-  BindAddress="0.0.0.0:4243"
-  Token="<SIMPLEX_API_TOKEN>"   # aidevops secret set MATTERBRIDGE_SIMPLEX_API_TOKEN
-
-[[gateway]]
-name="simplex-matrix"
-enable=true
-
-  [[gateway.inout]]
-  account="api.simplex"
-  channel="api"
-
-  [[gateway.inout]]
-  account="matrix.home"
-  channel="#bridged:example.com"
-```
+Then configure an `[api.simplex]` block with `BindAddress="0.0.0.0:4243"` and `Token=`, and add a `[[gateway]]` with `account="api.simplex"` / `channel="api"` paired with your target platform account.
 
 **Note**: SimpleX E2E encryption is broken at the bridge boundary.
 
 ## Running
 
 ```bash
-# Foreground (debug)
-matterbridge -conf matterbridge.toml -debug
-
-# Background
-matterbridge -conf matterbridge.toml &
+matterbridge -conf matterbridge.toml -debug   # Foreground
+matterbridge -conf matterbridge.toml &        # Background
 ```
 
 ### Docker
@@ -294,7 +174,6 @@ docker run -d --name matterbridge --restart unless-stopped \
 ### Systemd
 
 ```ini
-# /etc/systemd/system/matterbridge.service
 [Unit]
 Description=Matterbridge chat bridge
 After=network.target
@@ -321,7 +200,7 @@ sudo journalctl -fu matterbridge
 [api]
   [api.myapi]
   BindAddress="127.0.0.1:4242"
-  Token="<MATTERBRIDGE_API_TOKEN>"   # aidevops secret set MATTERBRIDGE_API_TOKEN
+  Token="<MATTERBRIDGE_API_TOKEN>"
   Buffer=1000
 ```
 
