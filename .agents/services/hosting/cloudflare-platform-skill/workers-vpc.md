@@ -1,19 +1,19 @@
 # Cloudflare Workers VPC Skill
 
-Expert guidance for connecting Cloudflare Workers to private networks (AWS/Azure/GCP/on-prem) using TCP Sockets, Cloudflare Tunnel, and related technologies.
+Connect Workers to private networks (AWS/Azure/GCP/on-prem) via TCP Sockets, Cloudflare Tunnel, Hyperdrive, and Smart Placement.
 
-## What is Workers VPC Connectivity?
+## Core Technologies
 
-Workers VPC connectivity enables Workers to communicate with resources in private networks through:
+| Technology | Purpose |
+|-----------|---------|
+| **TCP Sockets** (`connect()`) | Direct outbound TCP from Workers |
+| **Cloudflare Tunnel** | Secure path to private networks without public IPs |
+| **Hyperdrive** | Optimized database connections with pooling |
+| **Smart Placement** | Auto-locate Workers near backend services |
 
-1. **TCP Sockets API** (`connect()`) - Direct outbound TCP connections from Workers
-2. **Cloudflare Tunnel** - Secure connections to private networks without exposing public IPs
-3. **Hyperdrive** - Optimized connections to external databases with pooling
-4. **Smart Placement** - Automatic Worker placement near backend services
+## TCP Sockets API
 
-## Core APIs
-
-### TCP Sockets (`connect()`)
+### Basic Connection
 
 ```typescript
 import { connect } from 'cloudflare:sockets';
@@ -63,36 +63,7 @@ interface Socket {
 }
 ```
 
-## Common Use Cases
-
-### Connect to Internal Database
-
-```typescript
-import { connect } from 'cloudflare:sockets';
-
-export default {
-  async fetch(req: Request) {
-    const socket = connect(
-      { hostname: "10.0.1.50", port: 5432 },
-      { secureTransport: "on" }
-    );
-
-    try {
-      await socket.opened;
-      const writer = socket.writable.getWriter();
-      await writer.write(new TextEncoder().encode("SELECT 1\n"));
-      await writer.close();
-      return new Response(socket.readable);
-    } catch (error) {
-      return new Response(`Connection failed: ${error}`, { status: 500 });
-    } finally {
-      await socket.close();
-    }
-  }
-};
-```
-
-### StartTLS Pattern (Opportunistic TLS)
+### StartTLS Pattern
 
 Many databases start insecure then upgrade:
 
@@ -116,7 +87,6 @@ await secureWriter.write(new TextEncoder().encode("AUTH\n"));
 ```typescript
 async function connectToPrivateService(host: string, port: number, data: string): Promise<string> {
   let socket: ReturnType<typeof connect> | null = null;
-
   try {
     socket = connect({ hostname: host, port }, { secureTransport: "on" });
     await socket.opened;
@@ -145,13 +115,13 @@ async function connectToPrivateService(host: string, port: number, data: string)
 }
 ```
 
-## Integration with Cloudflare Tunnel
+## Cloudflare Tunnel Integration
 
-```
-Worker → TCP Socket → Cloudflare Tunnel → Private Network
+```text
+Worker -> TCP Socket -> Cloudflare Tunnel -> Private Network
 ```
 
-**Setup:**
+### Setup
 
 ```bash
 # On private network server
@@ -183,7 +153,6 @@ const socket = connect({
 ## Wrangler Configuration
 
 ```toml
-# wrangler.toml
 name = "private-network-worker"
 main = "src/index.ts"
 compatibility_date = "2024-01-01"
@@ -212,7 +181,7 @@ export default {
 
 ## Hyperdrive for Databases
 
-For PostgreSQL/MySQL, prefer Hyperdrive over raw TCP sockets (better performance, connection pooling):
+For PostgreSQL/MySQL, prefer Hyperdrive over raw TCP sockets (connection pooling, lower latency):
 
 ```toml
 [[hyperdrive]]
@@ -234,19 +203,17 @@ export default {
 };
 ```
 
-## Limits and Considerations
-
-### TCP Socket Limits
+## Limits
 
 - **Max simultaneous connections:** 6 per Worker execution
 - **Blocked destinations:** Cloudflare IPs, `localhost`/`127.0.0.1`, port 25 (SMTP), Worker's own URL
-- **Scope:** Sockets must be created in handlers (fetch/scheduled/queue), not global scope
+- **Scope:** Sockets must be created in handlers (`fetch`/`scheduled`/`queue`), not global scope
 
 ```typescript
-// ❌ BAD: Creating socket in global scope
-// const globalSocket = connect({ hostname: "db", port: 5432 }); // ERROR
+// BAD: global scope -> ERROR
+// const globalSocket = connect({ hostname: "db", port: 5432 });
 
-// ✅ GOOD: Create in handler
+// GOOD: create in handler
 export default {
   async fetch(req: Request) {
     const socket = connect({ hostname: "db", port: 5432 });
@@ -255,7 +222,7 @@ export default {
 };
 ```
 
-### Security — Validate Destinations
+### Validate Destinations
 
 ```typescript
 function isAllowedHost(hostname: string): boolean {
@@ -280,11 +247,11 @@ function isAllowedHost(hostname: string): boolean {
 ## Best Practices
 
 1. **Always close sockets** in a `finally` block
-2. **Use Hyperdrive for databases** — better performance, connection pooling
-3. **Validate destinations** — prevent connections to unintended hosts
-4. **Handle errors gracefully** — catch on `socket.opened`, return 503 on failure
+2. **Use Hyperdrive for databases** -- connection pooling, better performance
+3. **Validate destinations** -- prevent connections to unintended hosts
+4. **Handle errors gracefully** -- catch on `socket.opened`, return 503 on failure
 5. **Use Smart Placement** for latency-sensitive applications
-6. **Prefer `fetch()` for HTTP** — use TCP sockets only when necessary
+6. **Prefer `fetch()` for HTTP** -- TCP sockets only when necessary
 
 ## Reference
 
@@ -293,7 +260,3 @@ function isAllowedHost(hostname: string): boolean {
 - [Hyperdrive](https://developers.cloudflare.com/hyperdrive/)
 - [Smart Placement](https://developers.cloudflare.com/workers/configuration/smart-placement/)
 - [Email Workers](https://developers.cloudflare.com/email-routing/email-workers/)
-
----
-
-This skill focuses exclusively on connecting Workers to private networks and VPCs. For general Workers development, see the `cloudflare-workers` skill.
