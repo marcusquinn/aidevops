@@ -17,7 +17,7 @@ Implementation of the [Ralph Wiggum technique](https://ghuntley.com/ralph/) for 
 
 ## Core Concept
 
-Ralph is a `while true` bash loop that repeatedly feeds an AI agent a prompt, letting it iteratively improve work until completion. The key insight: **externalize state to files/git, throw away context each iteration**.
+Ralph is a `while true` bash loop that repeatedly feeds an AI agent a prompt until completion. **Externalize state to files/git; throw away context each iteration.**
 
 ```text
 1. User starts loop with prompt + completion criteria
@@ -27,28 +27,26 @@ Ralph is a `while true` bash loop that repeatedly feeds an AI agent a prompt, le
 5. Repeat until completion or max iterations
 ```
 
-**Why it works:**
-
 | Context (bad for state) | Files + Git (good for state) |
 |------------------------|------------------------------|
 | Dies with the conversation | Persists across sessions |
 | Polluted by dead ends | Can be patched / rolled back |
 | Can't delete wrong turns | Git doesn't hallucinate |
 
-**Guardrails**: When something breaks, store it as a sign in the state file. Mistakes evaporate from context; lessons accumulate in files. Next iteration reads guardrails first.
+**Guardrails**: Store failures as signs in the state file. Mistakes evaporate from context; lessons accumulate in files. Next iteration reads guardrails first.
 
 **Evolving draft agents**: When a loop iteration discovers reusable domain patterns, capture them as a draft agent in `~/.aidevops/agents/draft/`. See `tools/build-agent/build-agent.md` "Agent Lifecycle Tiers".
 
 ## Quick Start
 
-> **Note:** `ralph-loop-helper.sh` has been archived (t1336). Use `/full-loop` for end-to-end development, or `/ralph-loop` for in-session loops.
+> `ralph-loop-helper.sh` archived (t1336). Use `/full-loop` for end-to-end development, or `/ralph-loop` for in-session loops.
 
 ```bash
 # End-to-end development loop (recommended)
 /full-loop "Build a REST API for todos"
 
 # In-session iteration
-/ralph-loop "Build a REST API for todos" --max-iterations 20 --completion-promise "TASK_COMPLETE"
+/ralph-loop "<prompt>" [--max-iterations <n>] [--completion-promise "<text>"]
 
 # Cancel active loop
 /cancel-ralph
@@ -65,28 +63,9 @@ Ralph is a `while true` bash loop that repeatedly feeds an AI agent a prompt, le
 | Docs-only | readme, changelog, docs/, documentation, typo, spelling | Stay on main (exit 0) |
 | Code | feature, fix, bug, implement, refactor, add, update, enhance | Create worktree (exit 2) |
 
-## Commands
-
-### /ralph-loop
-
-Start a Ralph loop in the current session (for tools with hook support).
-
-```bash
-/ralph-loop "<prompt>" [--max-iterations <n>] [--completion-promise "<text>"]
-```
-
-| Option | Default |
-|--------|---------|
-| `--max-iterations <n>` | unlimited |
-| `--completion-promise <text>` | none |
-
-### ralph-loop-helper.sh — ARCHIVED (t1336)
-
-Moved to `scripts/archived/ralph-loop-helper.sh`. Use `/full-loop` or `/ralph-loop` instead.
-
 ## State File
 
-Ralph stores state in `.agents/loop-state/ralph-loop.local.md` (gitignored):
+State stored in `.agents/loop-state/ralph-loop.local.md` (gitignored):
 
 ```yaml
 ---
@@ -114,7 +93,6 @@ Output the exact text in `<promise>` tags to signal completion:
 <promise>COMPLETE</promise>
 ```
 
-**Rules:**
 - Use `<promise>` XML tags exactly as shown
 - The statement MUST be completely and unequivocally TRUE
 - Do NOT output false statements to exit the loop
@@ -122,8 +100,6 @@ Output the exact text in `<promise>` tags to signal completion:
 ## Prompt Writing Best Practices
 
 ### 1. Clear Completion Criteria
-
-Always specify what "done" means:
 
 ```text
 Build a REST API for todos.
@@ -137,8 +113,6 @@ When complete:
 ```
 
 ### 2. Incremental Goals
-
-Break large tasks into phases:
 
 ```text
 Phase 1: User authentication (JWT, tests)
@@ -162,17 +136,15 @@ Implement feature X following TDD:
 
 ### 4. README Gate (MANDATORY before COMPLETE)
 
-Before emitting COMPLETE, check:
-
-1. Did this task add a new feature, tool, API, command, or config option? → **Update README.md**
-2. Did this task change existing user-facing behavior? → **Update README.md**
+1. New feature, tool, API, command, or config option? → **Update README.md**
+2. Changed existing user-facing behavior? → **Update README.md**
 3. Pure refactor, bugfix with no behavior change, or internal-only? → **SKIP**
 
-For aidevops repo: also run `readme-helper.sh check`. See `scripts/commands/full-loop.md` Step 3 for the full gate.
+For aidevops repo: also run `readme-helper.sh check`. See `scripts/commands/full-loop.md` Step 3.
 
 ### 5. Escape Hatches
 
-Always set `--max-iterations` and include stuck-handling in your prompt:
+Always set `--max-iterations` and include stuck-handling:
 
 ```text
 After 15 iterations, if not complete:
@@ -181,15 +153,15 @@ After 15 iterations, if not complete:
 - Suggest alternative approaches
 ```
 
-### 6. Replanning (don't patch a broken approach)
+### 6. Replanning
 
-If you've spent 3+ iterations on the same sub-problem without progress, STOP and replan from scratch. Signs you need to replan:
+If 3+ iterations on the same sub-problem without progress, STOP and replan. Signs:
 
-- Same error recurring across iterations despite fixes
-- Incremental patches making code more complex without solving root issue
+- Same error recurring despite fixes
+- Incremental patches increasing complexity without solving root issue
 - Tests still failing after 3+ attempts at the same approach
 
-A fresh strategy beats incremental fixes to a broken approach. Sunk cost is not a reason to continue.
+A fresh strategy beats incremental fixes to a broken approach.
 
 ## When to Use Ralph
 
@@ -199,11 +171,7 @@ A fresh strategy beats incremental fixes to a broken approach. Sunk cost is not 
 
 ## Full Development Loop
 
-For end-to-end automation (task → preflight → PR → review → merge → deploy), use `/full-loop`. Full docs: `scripts/commands/full-loop.md`.
-
-```text
-Task Development → Preflight → PR Create → PR Review → Merge → Release → Deploy
-```
+Use `/full-loop` for end-to-end automation. Full docs: `scripts/commands/full-loop.md`.
 
 | Phase | Promise |
 |-------|---------|
@@ -230,15 +198,11 @@ Adjust constants in `.agents/scripts/shared-constants.sh` (`CI_WAIT_FAST`, `CI_W
 ## Multi-Worktree Awareness
 
 ```bash
-# Show active worktrees and their loop status
 ~/.aidevops/agents/scripts/worktree-sessions.sh list
+# Output includes "Ralph loop: iteration X/Y" for worktrees with active loops
 ```
 
-Output includes "Ralph loop: iteration X/Y" for worktrees with active loops.
-
 ## OpenProse Integration
-
-For complex multi-agent orchestration, OpenProse DSL complements Ralph's iterative approach:
 
 ```prose
 # Parallel reviews (instead of sequential)
@@ -278,19 +242,9 @@ Full docs: `tools/ai-orchestration/openprose.md`.
 See `workflows/session-manager.md` for session lifecycle, completion detection, spawning patterns, and handoff templates.
 
 ```bash
-# After successful loop, start next task
 /full-loop "Next task description"
-
-# Or spawn a background session
+# Or spawn a background session:
 opencode run "Continue with next task" --agent Build+ &
-```
-
-## Upstream Sync
-
-Independent implementation inspired by the Claude Code ralph-wiggum plugin. Check for upstream changes:
-
-```bash
-~/.aidevops/agents/scripts/ralph-upstream-check.sh
 ```
 
 ## Learn More
@@ -299,3 +253,4 @@ Independent implementation inspired by the Claude Code ralph-wiggum plugin. Chec
 - Ralph Orchestrator: <https://github.com/mikeyobrien/ralph-orchestrator>
 - Claude Code plugin: <https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum>
 - OpenProse DSL: <https://github.com/openprose/prose>
+- Upstream sync: `~/.aidevops/agents/scripts/ralph-upstream-check.sh`
