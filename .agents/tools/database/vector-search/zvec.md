@@ -18,29 +18,28 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Embedded C++ vector database (Proxima engine) for server-side similarity search without a separate DB service
-- **Python**: `pip install zvec` (Python 3.10-3.12)
-- **Node.js**: `npm install @zvec/zvec` (early stage — core ops only, no extension ecosystem)
+- **Purpose**: Embedded C++ vector database (Proxima engine) — in-process similarity search, no separate DB service
+- **Install**: `pip install zvec` (Python 3.10-3.12) | `npm install @zvec/zvec` (Node.js, early stage — core ops only)
 - **Platforms**: Linux x86_64/ARM64, macOS ARM64. No Windows.
-- **Repo**: <https://github.com/alibaba/zvec> (8.4k stars, Apache-2.0)
+- **Repo**: <https://github.com/alibaba/zvec> (Apache-2.0)
 - **Docs**: <https://zvec.org/en/docs/>
-- **Parent guide**: `tools/database/vector-search.md` — decision flowchart, comparison matrix, per-tenant isolation patterns, platform support matrix
+- **Parent guide**: `tools/database/vector-search.md` — decision flowchart, comparison matrix, per-tenant isolation
 
-**When to use**: In-process vector search for SaaS RAG where each tenant uploads documents. Zero network hop, collection-per-tenant isolation, built-in embedding functions and rerankers.
+**Use when**: SaaS RAG with per-tenant document uploads. Zero network hop, collection-per-tenant isolation, built-in embeddings and rerankers.
 
-**When NOT to use**: Browser/WASM (native C++ binary), Windows servers, distributed multi-node clusters (use Milvus/Qdrant), already on Postgres (use pgvector), datasets >100M vectors needing distributed sharding.
+**Do NOT use**: Browser/WASM, Windows, distributed multi-node (use Milvus/Qdrant), already on Postgres (use pgvector), >100M vectors needing sharding.
 
 <!-- AI-CONTEXT-END -->
 
 ## Gotchas
 
 1. **Very new** — December 2025. APIs may change. Small community.
-2. **Python-first** — Node.js bindings are early stage with no extension ecosystem.
+2. **Python-first** — Node.js bindings lack extension ecosystem (embeddings, rerankers).
 3. **No Windows** — Linux and macOS ARM64 only.
-4. **Single-process** — Only one process can open a collection at a time.
-5. **No ACID** — Use application-level locking for concurrent writes.
-6. **Memory per collection** — Use LRU cache to close idle tenant collections.
-7. **CPU compatibility** — Precompiled wheels likely require AVX-512; fails with `Illegal instruction` (exit 132) on AMD Zen 2 (AVX2 only). Verified on zvec 0.2.0, Python 3.12.3. Use pgvector or a hosted alternative on AMD Ryzen/EPYC Zen 2 servers.
+4. **Single-process** — One process per collection.
+5. **No ACID** — Application-level locking for concurrent writes.
+6. **Memory per collection** — LRU cache to close idle tenant collections.
+7. **CPU compatibility** — Wheels require AVX-512; `Illegal instruction` (exit 132) on AMD Zen 2 (AVX2 only). Verified zvec 0.2.0, Python 3.12.3. Use pgvector on AMD Ryzen/EPYC Zen 2.
 
 ## Installation
 
@@ -55,7 +54,7 @@ pip install dashscope               # Qwen embeddings
 
 ## Core Concepts
 
-- **Collection**: Named container at a filesystem path (analogous to a table). One process per collection.
+- **Collection**: Named container at a filesystem path (like a table). One process per collection.
 - **Document** (`Doc`): Record with string `id`, scalar fields, and vector fields.
 - **Schema**: Defines scalar fields (`FieldSchema`) and vector fields (`VectorSchema`).
 
@@ -70,7 +69,7 @@ Your App Process
 
 **Scalar**: `INT32`, `INT64`, `UINT32`, `UINT64`, `FLOAT`, `DOUBLE`, `STRING`, `BOOL`, `ARRAY_INT32`, `ARRAY_STRING`, etc.
 
-**Vector**: `VECTOR_FP32` (default), `VECTOR_FP16` (half memory), `VECTOR_INT8` (4x memory reduction, >95% recall with refiner), `SPARSE_VECTOR_FP32`, `SPARSE_VECTOR_FP16`
+**Vector**: `VECTOR_FP32` (default), `VECTOR_FP16` (half memory), `VECTOR_INT8` (4x reduction, >95% recall with refiner), `SPARSE_VECTOR_FP32`, `SPARSE_VECTOR_FP16`
 
 ```python
 import zvec
@@ -177,13 +176,17 @@ results = collection.query(filter="publish_year < 1999", topk=50)
 
 Built-in, thread-safe. Local models download on first use. Text modality only.
 
-### Local (No API Key)
+| Function | Type | Model/Provider | Dimensions | Dependency / Env var |
+|----------|------|----------------|------------|----------------------|
+| `DefaultLocalDenseEmbedding` | Local | all-MiniLM-L6-v2 | 384 | `sentence-transformers` (~80MB) |
+| `DefaultLocalSparseEmbedding` | Local | SPLADE cocondenser | ~30k (sparse) | `sentence-transformers` (~100MB) |
+| `BM25EmbeddingFunction` | Local | DashText BM25 | variable (sparse) | `dashtext` |
+| `OpenAIDenseEmbedding` | API | OpenAI | 1536 (default) | `OPENAI_API_KEY` |
+| `JinaDenseEmbedding` | API | Jina AI | 768-1024 (Matryoshka) | `JINA_API_KEY` |
+| `QwenDenseEmbedding` | API | Alibaba Qwen | varies | `DASHSCOPE_API_KEY` |
+| `QwenSparseEmbedding` | API | Alibaba Qwen | sparse | `DASHSCOPE_API_KEY` |
 
-| Function | Model | Dimensions | Dependency |
-|----------|-------|------------|------------|
-| `DefaultLocalDenseEmbedding` | all-MiniLM-L6-v2 | 384 | `sentence-transformers` (~80MB) |
-| `DefaultLocalSparseEmbedding` | SPLADE cocondenser | ~30k (sparse) | `sentence-transformers` (~100MB) |
-| `BM25EmbeddingFunction` | DashText BM25 | variable (sparse) | `dashtext` |
+### Local Embeddings
 
 ```python
 from zvec.extension import DefaultLocalDenseEmbedding, DefaultLocalSparseEmbedding, BM25EmbeddingFunction
@@ -199,14 +202,7 @@ doc_emb   = DefaultLocalSparseEmbedding(encoding_type="document")
 bm25 = BM25EmbeddingFunction(corpus=["doc1...", "doc2..."], encoding_type="document", b=0.75, k1=1.2)
 ```
 
-### API-Based
-
-| Function | Provider | Dimensions | Env var |
-|----------|----------|------------|---------|
-| `OpenAIDenseEmbedding` | OpenAI | 1536 (default) | `OPENAI_API_KEY` |
-| `JinaDenseEmbedding` | Jina AI | 768-1024 (Matryoshka) | `JINA_API_KEY` |
-| `QwenDenseEmbedding` | Alibaba Qwen | varies | `DASHSCOPE_API_KEY` |
-| `QwenSparseEmbedding` | Alibaba Qwen | sparse | `DASHSCOPE_API_KEY` |
+### API-Based Embeddings
 
 ```python
 from zvec.extension import OpenAIDenseEmbedding, JinaDenseEmbedding, QwenDenseEmbedding, QwenSparseEmbedding
@@ -229,7 +225,7 @@ Thread-safe.
 |----------|-------------|
 | `RrfReRanker` | Multi-vector fusion (dense + sparse). No model needed. |
 | `WeightedReRanker` | Multi-vector with configurable weights. No model needed. |
-| `DefaultLocalReRanker` | Single-vector results needing deep semantic re-ranking. Local, free. |
+| `DefaultLocalReRanker` | Single-vector deep semantic re-ranking. Local, free. |
 | `QwenReRanker` | API-based re-ranking with Qwen models. |
 
 ```python
@@ -244,7 +240,7 @@ reranker = QwenReRanker(query="q", model="gte-rerank-v2", topn=10, rerank_field=
 
 ## Hybrid Search
 
-Combine dense semantic + sparse lexical matching. Schema needs both vector fields; insert docs with both embeddings.
+Combine dense semantic + sparse lexical. Schema needs both vector fields; insert docs with both embeddings.
 
 ```python
 from zvec.extension import DefaultLocalDenseEmbedding, DefaultLocalSparseEmbedding, RrfReRanker
@@ -274,7 +270,7 @@ results = collection.query(
 
 ## Node.js API
 
-Mirrors Python with camelCase. No extension ecosystem (embedding functions, rerankers) — bring your own embedding pipeline (OpenAI SDK, Transformers.js). For production Node.js needing the full pipeline, pgvector or a hosted option is more practical.
+camelCase mirror of Python. No extension ecosystem — bring your own embeddings (OpenAI SDK, Transformers.js). For production Node.js needing full pipeline, pgvector or hosted is more practical.
 
 ```javascript
 const zvec = require('@zvec/zvec');
@@ -291,7 +287,7 @@ collection.destroy();
 
 ## Performance
 
-Benchmarked on 16 vCPU / 64 GiB (g9i.4xlarge) using [VectorDBBench](https://github.com/zilliztech/VectorDBBench). Highest QPS among tested databases at >95% recall on 10M Cohere benchmark. Sub-millisecond search latency (in-process). INT8 quantization: ~25% memory vs FP32.
+Benchmarked on 16 vCPU / 64 GiB (g9i.4xlarge) with [VectorDBBench](https://github.com/zilliztech/VectorDBBench). Highest QPS at >95% recall on 10M Cohere benchmark. Sub-ms latency (in-process). INT8: ~25% memory vs FP32.
 
 ```bash
 pip install zvec==0.1.1 vectordbbench
