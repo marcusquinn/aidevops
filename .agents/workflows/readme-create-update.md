@@ -18,255 +18,152 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Generate comprehensive, maintainable README.md files
-- **Trigger**: `/readme` command or `@readme-create-update` mention
-- **Output**: README.md in project root (or specified location)
+- **Trigger**: `/readme` or `@readme-create-update`
+- **Output**: `README.md` in project root (or specified location)
 
-**Three Purposes of a README**:
-1. **Local Development** - Get running in minutes
-2. **Understanding the System** - How it works at a high level
-3. **Production Deployment** - Ship and maintain it
+**Three Purposes**: Local Development · Understanding the System · Production Deployment
 
 **Core Principles**:
 - Explore codebase BEFORE writing (detect stack, deployment, structure)
 - Prioritize maintainability over exhaustive detail
-- Avoid patterns that cause staleness (hardcoded counts, version numbers)
-- Use approximate counts with `~` or `+` suffix (e.g., `~15 agents`, `100+ scripts`)
-- Include AI-CONTEXT blocks for AI-readable documentation
-- Point to source files rather than duplicate content
+- Avoid staleness patterns: hardcoded counts, version numbers, full file listings
+- Use approximate counts (`~15 agents`, `100+ scripts`); point to source files, don't duplicate
 
 **Dynamic Counts (aidevops repo)**:
 
 ```bash
-# Check if counts are stale
-~/.aidevops/agents/scripts/readme-helper.sh check
-
-# Get current counts
-~/.aidevops/agents/scripts/readme-helper.sh counts
-
-# Preview updates
-~/.aidevops/agents/scripts/readme-helper.sh update
-
-# Apply updates
-~/.aidevops/agents/scripts/readme-helper.sh update --apply
+~/.aidevops/agents/scripts/readme-helper.sh check    # check staleness
+~/.aidevops/agents/scripts/readme-helper.sh counts   # current counts
+~/.aidevops/agents/scripts/readme-helper.sh update --apply  # apply updates
 ```
 
 **Commands**:
 
 ```bash
-# Create/update full README
-/readme
-
-# Update specific sections only
-/readme --sections "installation,usage"
+/readme                              # full create/update
+/readme --sections "installation,usage"  # update specific sections only
 ```
 
-**When to use `--sections`**:
-- After adding a feature (update usage/API sections)
-- After changing installation process
-- After adding troubleshooting for a new issue
-- When full regeneration would lose custom content
+Use `--sections` after adding a feature, changing install steps, or when full regeneration would lose custom content.
 
 <!-- AI-CONTEXT-END -->
 
 ## Before Writing
 
-### Step 1: Deep Codebase Exploration
+### Step 1: Detect Project Type and Deployment
 
-**CRITICAL**: Explore the codebase thoroughly before writing. Never assume - verify.
+**CRITICAL**: Explore before writing. Never assume — verify.
 
-**Detect Project Type**:
-
-| File | Indicates |
-|------|-----------|
-| `package.json` | Node.js/JavaScript/TypeScript |
-| `Cargo.toml` | Rust |
-| `go.mod` | Go |
-| `requirements.txt`, `pyproject.toml` | Python |
-| `Gemfile` | Ruby |
-| `composer.json` | PHP |
-| `*.sln`, `*.csproj` | .NET |
-| `setup.sh`, `Makefile` only | Shell/scripts project |
-
-**Detect Deployment Platform**:
-
-| File | Platform |
-|------|----------|
-| `Dockerfile`, `docker-compose.yml` | Docker |
-| `fly.toml` | Fly.io |
-| `vercel.json`, `.vercel/` | Vercel |
-| `netlify.toml` | Netlify |
-| `render.yaml` | Render |
-| `railway.json` | Railway |
-| `app.yaml` | Google App Engine |
-| `Procfile` | Heroku-like |
-| `.ebextensions/` | AWS Elastic Beanstalk |
-| `serverless.yml` | Serverless Framework |
-| `k8s/`, `kubernetes/` | Kubernetes |
-| `terraform/`, `*.tf` | Terraform/IaC |
-| `config/deploy.yml` | Kamal |
-| `coolify.json` | Coolify |
+| File | Project Type | | File | Platform |
+|------|--------------|-|------|----------|
+| `package.json` | Node.js/JS/TS | | `Dockerfile`, `docker-compose.yml` | Docker |
+| `Cargo.toml` | Rust | | `fly.toml` | Fly.io |
+| `go.mod` | Go | | `vercel.json`, `.vercel/` | Vercel |
+| `requirements.txt`, `pyproject.toml` | Python | | `netlify.toml` | Netlify |
+| `Gemfile` | Ruby | | `render.yaml` | Render |
+| `composer.json` | PHP | | `railway.json` | Railway |
+| `*.sln`, `*.csproj` | .NET | | `serverless.yml` | Serverless |
+| `setup.sh`, `Makefile` only | Shell/scripts | | `k8s/`, `*.tf` | K8s / Terraform |
 
 **Gather Information**:
 
 ```bash
-# Project structure (high-level)
-ls -la
-ls -la src/ app/ lib/ bin/ 2>/dev/null
-
-# Package info
-cat package.json 2>/dev/null | jq '{name, description, scripts}' 
-cat Cargo.toml 2>/dev/null | head -20
-cat pyproject.toml 2>/dev/null | head -30
-
-# Config files
-ls -la *.config.* .env.example .env.sample 2>/dev/null
-
-# CI/CD
-ls -la .github/workflows/ .gitlab-ci.yml 2>/dev/null
+ls -la; ls -la src/ app/ lib/ bin/ 2>/dev/null
+cat package.json 2>/dev/null | jq '{name,description,scripts}'
+ls -la *.config.* .env.example .github/workflows/ 2>/dev/null
 ```
 
 ### Step 2: Check Existing README
 
-If README.md exists:
-1. Read current content fully
-2. Identify sections that are accurate vs outdated
-3. Preserve custom content (badges, specific instructions, user additions)
-4. **Adapt to existing structure** - don't reorganize unless requested
-5. Update only what needs updating
+If README.md exists: read fully → identify accurate vs outdated sections → preserve custom content and structure → update only what needs updating. Don't reorganize unless requested.
 
 ### Step 3: Ask Only If Critical
 
-Only ask the user if you cannot determine:
-- What the project does (if not obvious from code/package.json)
-- Specific deployment credentials or URLs needed
-- Business context that affects documentation
-
-Otherwise, proceed with exploration and writing.
+Only ask if you cannot determine: what the project does, specific deployment credentials/URLs, or business context. Otherwise proceed.
 
 ## README Structure
 
 ### Recommended Section Order (New READMEs)
 
-1. **Title & Description** - What it is, who it's for
-2. **Badges** (optional) - Quality signals, version, license
-3. **Key Features** - Bullet list of capabilities
-4. **Quick Start** - Fastest path to running
-5. **Installation** - Detailed setup options
-6. **Usage** - Common commands and examples
-7. **Architecture** (complex projects) - High-level structure only
-8. **Configuration** - Environment variables, config files
-9. **Development** - Contributing, testing, building
-10. **Deployment** - Production setup (platform-specific)
-11. **Troubleshooting** - Common issues and solutions
-12. **License & Credits**
+1. Title & Description — what it is, who it's for
+2. Badges (optional) — quality signals, version, license
+3. Key Features — bullet list of capabilities
+4. Quick Start — fastest path to running
+5. Installation — detailed setup options
+6. Usage — common commands and examples
+7. Architecture (complex projects) — high-level structure only
+8. Configuration — environment variables, config files
+9. Development — contributing, testing, building
+10. Deployment — production setup (platform-specific)
+11. Troubleshooting — common issues and solutions
+12. License & Credits
 
 ### Section Templates
 
-#### Title & Description
-
+**Title & Description**:
 ```markdown
 # Project Name
-
 Brief description of what the project does and who it's for. 2-3 sentences max.
-
 > Optional tagline or key value proposition
 ```
 
-#### Badges
-
-Recommend relevant badges based on project:
+**Badges** — include based on what's configured:
 
 | Category | When to Include |
 |----------|-----------------|
 | Build/CI | If CI configured |
 | Code quality | If SonarCloud/Codacy/etc. configured |
-| Coverage | If tests with coverage |
 | Version | If published package |
 | License | Always for open source |
-| Downloads | If published package with traction |
 
 ```markdown
 [![Build Status](https://github.com/user/repo/workflows/CI/badge.svg)](https://github.com/user/repo/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ```
 
-#### Quick Start
-
+**Quick Start**:
 ````markdown
 ## Quick Start
-
 ```bash
-# Install
 npm install -g project-name
-
-# Run
 project-name start
 ```
-
 Open [http://localhost:3000](http://localhost:3000)
 ````
 
-#### Architecture (High-Level Only)
-
-**IMPORTANT**: Keep directory structures maintainable.
-
+**Architecture** — high-level only:
 ````markdown
 ## Architecture
-
 ```text
 project/
 ├── src/           # Source code
 │   ├── api/       # API routes
 │   └── lib/       # Shared utilities
-├── tests/         # Test files
-└── docs/          # Documentation
+└── tests/         # Test files
 ```
-
-See `docs/architecture.md` for detailed documentation.
+See `docs/architecture.md` for details.
 ````
+Avoid: listing every file, deep nesting (>2-3 levels), line counts, specific filenames that may change.
 
-**Avoid**:
-- Listing every file (goes stale immediately)
-- Deep nesting beyond 2-3 levels
-- Line counts or file sizes
-- Specific file names that may change
-
-#### Configuration
-
+**Configuration**:
 ````markdown
 ## Configuration
-
-### Environment Variables
-
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `DATABASE_URL` | PostgreSQL connection string | - |
 | `PORT` | Server port | `3000` |
 
-Copy `.env.example` to `.env` and configure:
-
-```bash
-cp .env.example .env
-```
+Copy `.env.example` to `.env` and configure.
 ````
 
-#### Troubleshooting
-
+**Troubleshooting**:
 ````markdown
 ## Troubleshooting
-
 ### Connection refused on port 3000
-
-**Cause**: Port already in use or server not started.
-
-**Solution**:
+**Cause**: Port in use or server not started.
 ```bash
-# Check what's using the port
-lsof -i :3000
-
-# Use different port
-PORT=3001 npm start
+lsof -i :3000        # check what's using the port
+PORT=3001 npm start  # use different port
 ```
 ````
 
@@ -286,90 +183,47 @@ PORT=3001 npm start
 ### Point to Source, Don't Duplicate
 
 ```markdown
-# Good: Points to source
+# Good: points to source
 See `src/config/defaults.ts` for all configuration options.
 
-# Bad: Duplicates source (will drift)
-The available options are:
-- option1: does X
-- option2: does Y
-[... lines that will go stale]
+# Bad: duplicates source (will drift)
+The available options are: option1: does X, option2: does Y ...
 ```
 
 ### AI-CONTEXT Blocks
 
-For AI-readable documentation, include condensed context:
-
 ```markdown
 <!-- AI-CONTEXT-START -->
-
 ## Quick Reference
-
 - **Purpose**: One-line description
 - **Stack**: Node.js, PostgreSQL, Redis
 - **Entry**: `src/index.ts`
-
-**Key Commands**:
-- `npm start` - Run development server
-- `npm test` - Run tests
-
+**Key Commands**: `npm start` · `npm test`
 <!-- AI-CONTEXT-END -->
 ```
 
 ### Collapsible Sections
 
-For detailed content most readers can skip, use collapsible sections **uncollapsed by default**:
-
-```markdown
-<details open>
-<summary>Advanced Configuration</summary>
-
-Detailed configuration options here...
-
-</details>
-```
-
-Users collapse sections they've read or don't need. Don't hide important content by default.
+Use `<details open>` for detailed content most readers can skip. Default open — users collapse what they've read. Don't hide important content by default.
 
 ## Platform-Specific Guidance
 
-### Node.js Projects
-
-- Document `engines` requirements from package.json
-- List key scripts from package.json
-- Note package manager (npm, yarn, pnpm, bun)
-- Include TypeScript setup if applicable
-
-### Python Projects
-
-- Specify Python version requirements
-- Document virtual environment setup
-- Include pip/poetry/uv installation options
-- Note system dependencies (libpq-dev, etc.)
-
-### Docker Projects
-
-- Include both Docker and non-Docker setup paths
-- Document required environment variables
-- Provide docker-compose examples for local dev
-- Note volume mounts for development
-
-### Monorepos
-
-- Document workspace structure at high level
-- Explain package relationships briefly
-- Provide commands for specific packages
-- Note shared dependencies
+| Platform | Key Points |
+|----------|-----------|
+| **Node.js** | Document `engines` from package.json; list key scripts; note package manager (npm/yarn/pnpm/bun); TypeScript setup if applicable |
+| **Python** | Specify Python version; document venv setup; include pip/poetry/uv options; note system deps (libpq-dev, etc.) |
+| **Docker** | Include both Docker and non-Docker paths; document env vars; provide docker-compose examples; note volume mounts |
+| **Monorepo** | Document workspace structure at high level; explain package relationships; provide per-package commands; note shared deps |
 
 ## Updating Existing READMEs
 
 When using `/readme --sections`:
 
-1. **Read entire existing README first**
-2. **Preserve structure** - Don't reorganize sections
-3. **Preserve custom content** - User additions, specific examples
-4. **Update only specified sections**
-5. **Maintain consistent style** with existing content
+1. Read entire existing README first
+2. Preserve structure — don't reorganize sections
+3. Preserve custom content — user additions, specific examples
+4. Update only specified sections
+5. Maintain consistent style with existing content
 
 ### Section Mapping
 
