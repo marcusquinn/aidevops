@@ -583,6 +583,12 @@ _build_signature() {
 		fi
 	fi
 
+	# If signature is just the version (no CLI, model, tokens, or time),
+	# append "automated scan" so it reads naturally on non-LLM issues
+	if [[ -z "$cli_name" ]] && [[ -z "$display_model" ]] && [[ -z "$has_stats" ]]; then
+		sig="${sig} automated scan."
+	fi
+
 	echo "$sig"
 	return 0
 }
