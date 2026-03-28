@@ -312,17 +312,7 @@ Before waiting for the maintainer to manually review `needs-maintainer-review` i
 
 **When to dispatch a triage review:**
 
-For each `needs-maintainer-review` issue/PR in the pre-fetched state, check whether an agent review comment already exists. An agent review comment is identified by containing the string `## Issue/PR Review:` or `## Review:` (the structured output format from `review-issue-pr.md`).
-
-```bash
-# Check if an agent review comment already exists
-REVIEW_EXISTS=$(gh api "repos/<slug>/issues/<number>/comments" \
-  --jq '[.[] | select(.body | test("## (Issue/PR )?Review:"))] | length')
-
-if [[ "$REVIEW_EXISTS" -eq 0 ]]; then
-  # No review yet — dispatch a triage review worker
-fi
-```
+Use the pre-fetched "Needs Maintainer Review — Triage Status" section (produced by `prefetch_triage_review_status()` in `pulse-wrapper.sh`). Each issue is already marked as **needs-review**, **reviewed**, or **unknown**. Dispatch only for items marked **needs-review** — do NOT re-query the GitHub API for comment checks here; the pre-fetched state is the single source of truth.
 
 **Skip triage review when:**
 
@@ -358,7 +348,7 @@ sleep 2
 
 Issues/PRs with `needs-maintainer-review` can be approved or declined by the maintainer commenting. Each cycle, fetch the maintainer's most recent comment on these items:
 
-- **"approved"** → remove `needs-maintainer-review`, add `status:available` (issues) or allow merge (PRs). If the triage review recommended a specific tier label (e.g., `tier:simple`), apply it.
+- **"approved"** → remove `needs-maintainer-review`, add `auto-dispatch` (issues) or allow merge (PRs). If the triage review recommended a specific tier label (e.g., `tier:simple`), apply it. The `auto-dispatch` label is the established pattern — see the command block in "Cross-Repo TODO Sync" below.
 - **"declined"** → close with the maintainer's reason
 - **Further direction** → if the maintainer's comment doesn't start with "approved" or "declined", treat it as additional context. On the next cycle, if no agent review exists that incorporates this direction, dispatch a new triage review worker with the maintainer's feedback included in the prompt.
 - **No matching comment from maintainer** → skip, check next cycle
@@ -516,7 +506,7 @@ fi
 # Fetch comments and check for maintainer approval/decline
 # Works for both issues and PRs (GitHub's issues API handles both)
 COMMENT_DATA=$(gh api "repos/<slug>/issues/<number>/comments" \
-  --jq "[.[] | select(.user.login == \"$MAINTAINER\")] | last | {body: .body, id: .id}")
+  --jq "[.[] | select(.user.login == \"$MAINTAINER\")] | last | {body: .body, id: .id, created_at: .created_at}")
 COMMENT_BODY=$(echo "$COMMENT_DATA" | jq -r '.body // empty' | tr '[:upper:]' '[:lower:]' | xargs)
 ```
 
@@ -566,8 +556,12 @@ gh pr close <number> --repo <slug> \
 3. **Comment contains further direction** (doesn't start with `approved` or `declined`) — the maintainer is providing feedback. If an agent triage review already exists but was posted BEFORE the maintainer's comment, dispatch a new triage review worker that incorporates the maintainer's feedback:
 
 ```bash
+# Note: COMMENT_DATA must include created_at for this comparison to work.
+# Update the COMMENT_DATA projection earlier in this section to:
+#   --jq "[.[] | select(.user.login == \"$MAINTAINER\")] | last | {body: .body, id: .id, created_at: .created_at}"
+
 # Check if the maintainer's comment is newer than the last agent review
-LAST_REVIEW_DATE=$(gh api "repos/<slug>/issues/<number>/comments" \
+LAST_REVIEW_DATE=$(gh api "repos/<slug>/issues/<number>/comments" --paginate \
   --jq '[.[] | select(.body | test("## (Issue/PR )?Review:"))] | last | .created_at' 2>/dev/null || echo "")
 MAINTAINER_COMMENT_DATE=$(echo "$COMMENT_DATA" | jq -r '.created_at // empty')
 

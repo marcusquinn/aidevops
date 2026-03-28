@@ -2713,13 +2713,24 @@ prefetch_triage_review_status() {
 			created_at=$(echo "$nmr_json" | jq -r ".[$i].createdAt")
 
 			# Check for agent review comment (contains "## Review:" or "## Issue/PR Review:")
+			# Use --paginate to handle issues with many comments (default page size is 30).
+			# On API failure, mark as "unknown" rather than falsely reporting "needs-review".
+			local review_response=""
 			local review_exists=0
-			review_exists=$(gh api "repos/${slug}/issues/${number}/comments" \
-				--jq '[.[] | select(.body | test("## (Issue/PR )?Review:"))] | length' 2>/dev/null) || review_exists=0
-			[[ "$review_exists" =~ ^[0-9]+$ ]] || review_exists=0
+			local api_ok=true
+			review_response=$(gh api "repos/${slug}/issues/${number}/comments" --paginate \
+				--jq '[.[] | select(.body | test("## (Issue/PR )?Review:"))] | length' 2>/dev/null) || api_ok=false
+
+			if [[ "$api_ok" == true ]]; then
+				review_exists="$review_response"
+				[[ "$review_exists" =~ ^[0-9]+$ ]] || review_exists=0
+			fi
 
 			local status_label
-			if [[ "$review_exists" -gt 0 ]]; then
+			if [[ "$api_ok" != true ]]; then
+				status_label="unknown"
+				echo "[pulse-wrapper] API error checking review status for ${slug}#${number}" >>"$LOGFILE"
+			elif [[ "$review_exists" -gt 0 ]]; then
 				status_label="reviewed"
 			else
 				status_label="needs-review"
