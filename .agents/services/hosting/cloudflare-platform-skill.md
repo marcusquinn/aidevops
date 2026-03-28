@@ -4,24 +4,21 @@ description: "Cloudflare platform development guidance — patterns, gotchas, de
 mode: subagent
 imported_from: external
 ---
-# cloudflare-platform
 
 # Cloudflare Platform Skill
 
-**Role**: Development guidance for building on the Cloudflare platform — patterns, gotchas, decision trees, and SDK usage. This skill is for **developers writing code that runs on Cloudflare** (Workers, Pages, D1, R2, KV, Durable Objects, AI, etc.).
+Development guidance for building on Cloudflare — patterns, gotchas, decision trees, SDK usage for Workers, Pages, D1, R2, KV, Durable Objects, AI, and 60+ products.
 
-> **Not for API operations**: To manage, configure, or update Cloudflare resources (DNS records, zone settings, deployments) use the Cloudflare Code Mode MCP — see `../../tools/api/cloudflare-mcp.md`.
+> **Not for API operations**: To manage/configure Cloudflare resources (DNS, zones, deployments) use the Cloudflare Code Mode MCP — see `../../tools/api/cloudflare-mcp.md`.
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
-- **Role**: Development guidance — patterns, gotchas, SDK usage, decision trees
-- **Scope**: Building code that runs ON Cloudflare (Workers, Pages, D1, R2, KV, DO, AI, etc.)
-- **Not for**: Managing/configuring CF resources → use `../../tools/api/cloudflare-mcp.md` (Code Mode MCP)
-- **Entry point**: Use decision trees below to find the right product, then load `./<product>.md`
-- **Reference format**: Multi-file (`patterns.md`, `gotchas.md`) or single-file; `api.md`/`configuration.md` superseded by Code Mode live OpenAPI queries
-- **60+ products** indexed below with direct entry-point paths
+- **Scope**: Code that runs ON Cloudflare (Workers, Pages, D1, R2, KV, DO, AI, etc.)
+- **Operations** (DNS, WAF, DDoS, R2 buckets, deployments): Code Mode MCP (`../../tools/api/cloudflare-mcp.md`)
+- **Entry point**: Decision trees below → load `./cloudflare-platform-skill/<product>.md`
+- **60+ products** indexed below with direct paths
 
 <!-- AI-CONTEXT-END -->
 
@@ -29,56 +26,26 @@ imported_from: external
 
 | Task | Tool |
 |------|------|
-| Manage DNS records, zones | Code Mode MCP (`tools/mcp/cloudflare-code-mode.md`) |
-| Configure WAF, DDoS, firewall rules | Code Mode MCP (`tools/mcp/cloudflare-code-mode.md`) |
-| Manage R2 buckets, Workers deployments | Code Mode MCP (`tools/mcp/cloudflare-code-mode.md`) |
-| Zero Trust, Access, Tunnel management | Code Mode MCP (`tools/mcp/cloudflare-code-mode.md`) |
-| Build a Worker (SDK, bindings, types) | This skill |
-| Configure wrangler.toml, local dev | This skill |
-| Debug Workers runtime issues | This skill |
-| Understand product architecture, patterns | This skill |
+| Manage DNS, zones, WAF, DDoS, firewall, R2 buckets, Workers deployments, Zero Trust, Access, Tunnels | Code Mode MCP (`tools/mcp/cloudflare-code-mode.md`) |
+| Build Workers, configure wrangler.toml, debug runtime, understand architecture | This skill |
 
-Consolidated skill for building on the Cloudflare platform. Use decision trees below to find the right product, then load detailed references.
+## File Structure
 
-## How to Use This Skill
+Each product directory may contain:
 
-### Reference File Structure
+| File | Purpose |
+|------|---------|
+| `README.md` | Overview, when to use, getting started — **read first** |
+| `patterns.md` | Common patterns, best practices |
+| `gotchas.md` | Pitfalls, limitations, edge cases |
 
-Each product in the skill directory contains a `README.md` as the entry point, which may be structured in one of two ways:
+Single-file products consolidate everything in `README.md`. API/configuration details: use Code Mode MCP (live OpenAPI) — `api.md`/`configuration.md` files removed.
 
-**Multi-file format (3 files):**
-
-| File | Purpose | When to Read |
-|------|---------|--------------|
-| `README.md` | Overview, when to use, getting started | **Always read first** |
-| `patterns.md` | Common patterns, best practices | Implementation guidance |
-| `gotchas.md` | Pitfalls, limitations, edge cases | Debugging, avoiding mistakes |
-
-> **API & configuration details**: Use the Cloudflare Code Mode MCP (`../../tools/api/cloudflare-mcp.md`) for live OpenAPI spec queries — `api.md` and `configuration.md` files have been removed as they are superseded by Code Mode's real-time spec access.
-
-**Single-file format:** All information consolidated in `README.md`.
-
-### Reading Order
-
-1. Start with `README.md`
-2. Then read additional files relevant to your task (if multi-file format):
-   - Implementation guidance → `patterns.md`
-   - Troubleshooting → `gotchas.md`
-   - API/configuration details → use Cloudflare Code Mode MCP (live OpenAPI)
-
-### Example Paths
-
-```
-./cloudflare-platform-skill/workflows.md         # Start here for Workflows
-./cloudflare-platform-skill/durable-objects-gotchas.md  # DO limitations
-./cloudflare-platform-skill/workers-ai.md        # Single-file - all Workers AI docs
-```
-
-## Quick Decision Trees
+## Decision Trees
 
 ### "I need to run code"
 
-```
+```text
 Need to run code?
 ├─ Serverless functions at the edge → workers/
 ├─ Full-stack web app with Git deploys → pages/
@@ -91,7 +58,7 @@ Need to run code?
 
 ### "I need to store data"
 
-```
+```text
 Need storage?
 ├─ Key-value (config, sessions, cache) → kv/
 ├─ Relational SQL → d1/ (SQLite) or hyperdrive/ (existing Postgres/MySQL)
@@ -105,7 +72,7 @@ Need storage?
 
 ### "I need AI/ML"
 
-```
+```text
 Need AI?
 ├─ Run inference (LLMs, embeddings, images) → workers-ai/
 ├─ Vector database for RAG/search → vectorize/
@@ -116,7 +83,7 @@ Need AI?
 
 ### "I need networking/connectivity"
 
-```
+```text
 Need networking?
 ├─ Expose local service to internet → tunnel/
 ├─ TCP/UDP proxy (non-HTTP) → spectrum/
@@ -128,7 +95,7 @@ Need networking?
 
 ### "I need security"
 
-```
+```text
 Need security?
 ├─ Web Application Firewall → waf/
 ├─ DDoS protection → ddos/
@@ -140,7 +107,7 @@ Need security?
 
 ### "I need media/content"
 
-```
+```text
 Need media?
 ├─ Image optimization/transformation → images/
 ├─ Video streaming/encoding → stream/
@@ -150,7 +117,7 @@ Need media?
 
 ### "I need infrastructure-as-code"
 
-```
+```text
 Need IaC?
 ├─ Pulumi → pulumi/
 ├─ Terraform → terraform/
