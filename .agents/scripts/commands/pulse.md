@@ -418,6 +418,31 @@ Serial merge for quality-debt: do not dispatch a second quality-debt worker for 
 
 Close quality-debt PRs that have been CONFLICTING for 24+ hours with a comment explaining they'll be superseded by smaller PRs. Relabel corresponding issues `status:available`.
 
+### Sweep-pulse dedup (GH#10308)
+
+The quality sweep (`stats-functions.sh`) and the pulse LLM are two independent systems that
+both discover code quality findings. Without coordination, they create duplicate issues for
+the same problems. The dedup contract:
+
+1. **The sweep creates issues with `source:quality-sweep` or `source:review-feedback` labels.**
+   These are the authoritative tracker for findings from ShellCheck, Qlty, SonarCloud, Codacy,
+   CodeRabbit, and merged PR review feedback.
+
+2. **The pre-fetched state separates sweep-tracked issues** into an "Already Tracked by Quality
+   Sweep" section. These issues are already filed — do NOT create new issues for the same
+   findings. Dispatch them as normal quality-debt/simplification-debt work when slots are
+   available.
+
+3. **Before creating any quality-related issue**, check whether an existing `quality-debt` or
+   `simplification-debt` issue already covers the same file or finding. Search by file path
+   in the title: `gh issue list --repo SLUG --label quality-debt --label simplification-debt
+   --state open --search "in:title FILENAME"`. If a match exists, skip creation.
+
+4. **The dashboard issue (labelled `persistent` + `quality-review`) is a reporting snapshot**
+   that may lag behind the codebase. The codebase is the primary source of truth. Do NOT
+   use dashboard findings as the sole basis for creating new issues — always verify against
+   the existing issue backlog first.
+
 ## Cross-Repo TODO Sync
 
 Issue creation (push) is handled exclusively by CI. The pulse runs pull and close only:

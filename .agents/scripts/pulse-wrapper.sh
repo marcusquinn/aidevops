@@ -594,15 +594,38 @@ _prefetch_single_repo() {
 		local issue_count
 		issue_count=$(echo "$filtered_json" | jq 'length')
 
-		if [[ "$issue_count" -gt 0 ]]; then
-			echo "### Open Issues ($issue_count)"
-			echo "$filtered_json" | jq -r '.[] | "- Issue #\(.number): \(.title) [labels: \(if (.labels | length) == 0 then "none" else (.labels | map(.name) | join(", ")) end)] [assignees: \(if (.assignees | length) == 0 then "none" else (.assignees | map(.login) | join(", ")) end)] [updated: \(.updatedAt)]"'
+		# GH#10308: Split issues into dispatchable vs quality-sweep-tracked.
+		# The sweep (stats-functions.sh) creates quality-debt and simplification-debt
+		# issues with source:quality-sweep labels. Showing these separately prevents
+		# the pulse LLM from independently creating duplicate issues for the same
+		# findings it reads from the quality dashboard comments.
+		local dispatchable_json sweep_tracked_json
+		dispatchable_json=$(echo "$filtered_json" | jq '[.[] | select(.labels | map(.name) | (index("source:quality-sweep") or index("source:review-feedback")) | not)]')
+		sweep_tracked_json=$(echo "$filtered_json" | jq '[.[] | select(.labels | map(.name) | (index("source:quality-sweep") or index("source:review-feedback")))]')
+
+		local dispatchable_count sweep_tracked_count
+		dispatchable_count=$(echo "$dispatchable_json" | jq 'length')
+		sweep_tracked_count=$(echo "$sweep_tracked_json" | jq 'length')
+
+		if [[ "$dispatchable_count" -gt 0 ]]; then
+			echo "### Open Issues ($dispatchable_count)"
+			echo "$dispatchable_json" | jq -r '.[] | "- Issue #\(.number): \(.title) [labels: \(if (.labels | length) == 0 then "none" else (.labels | map(.name) | join(", ")) end)] [assignees: \(if (.assignees | length) == 0 then "none" else (.assignees | map(.login) | join(", ")) end)] [updated: \(.updatedAt)]"'
 		else
 			echo "### Open Issues (0)"
 			echo "- None"
 		fi
 
 		echo ""
+
+		# GH#10308: Show quality-sweep-tracked issues so the LLM knows what's
+		# already filed and avoids creating duplicates from sweep findings.
+		if [[ "$sweep_tracked_count" -gt 0 ]]; then
+			echo "### Already Tracked by Quality Sweep ($sweep_tracked_count)"
+			echo "_These issues were auto-created by the quality sweep or review feedback pipeline._"
+			echo "_DO NOT create new issues for findings already covered below. Dispatch these as normal quality-debt/simplification-debt work._"
+			echo "$sweep_tracked_json" | jq -r '.[] | "- Issue #\(.number): \(.title) [labels: \(if (.labels | length) == 0 then "none" else (.labels | map(.name) | join(", ")) end)] [assignees: \(if (.assignees | length) == 0 then "none" else (.assignees | map(.login) | join(", ")) end)]"'
+			echo ""
+		fi
 	} >"$outfile"
 	return 0
 }
