@@ -1,8 +1,6 @@
 # Landing Page Templates
 
-Copy-paste frameworks for different landing page types. Shared sections (Social Proof, Final CTA, Problem) appear once in Common Sections — reference them from any template.
-
----
+Copy-paste frameworks for different landing page types. Common Sections (Hero, Problem, Social Proof, Final CTA) appear once below — reference them from any template.
 
 ## Common Sections
 
@@ -18,14 +16,11 @@ Copy-paste frameworks for different landing page types. Shared sections (Social 
 
 ```text
 Sound Familiar? / If you've ever [struggled with problem]...
-
 You're [doing painful activity] but [not getting desired result].
-
 You've tried:
 - [Solution 1] — but [why it fails]
 - [Solution 2] — but [why it fails]
 - [Solution 3] — but [why it fails]
-
 Meanwhile, [negative consequence escalates].
 ```
 
@@ -33,17 +28,12 @@ Meanwhile, [negative consequence escalates].
 
 ```text
 See What Our Customers Say / Join [X]+ [people] who've [action]
-
 "[Specific result achieved with product]"
 — [Name], [Title] at [Company]  [Photo]
-
 "[Quote about transformation/experience]"
 — [Name], [Title] at [Company]  [Photo]
-
 Case Study (optional):
   [Company Name] | Challenge: [X] | Solution: [X] | Result: [metrics]
-  [Read Full Case Study ->]
-
 Stats bar: [X]% average improvement | [X]+ customers | [X]/5 on G2
 ```
 
@@ -57,11 +47,9 @@ Trust signals: No credit card required | Set up in [X] min | [X]-day guarantee
 [Deadline/scarcity reason — if applicable]
 ```
 
----
-
 ## Template 1: SaaS Free Trial Page
 
-Sections in order: Hero -> Problem -> Solution -> How It Works -> Features -> Social Proof -> Pricing -> FAQ -> Final CTA
+Hero -> Problem -> Solution -> How It Works -> Features -> Social Proof -> Pricing -> FAQ -> Final CTA
 
 ### HERO
 
@@ -95,18 +83,15 @@ Unlike [competitors], [Product] uses [unique approach] to [achieve result] witho
 
 ```text
 Everything You Need to [Achieve Outcome]
-
 [Icon] [Feature Name] — [Benefit statement: what this means for you]
 [Icon] [Feature Name] — [Benefit statement]
-[Icon] [Feature Name] — [Benefit statement]
-[Icon] [Feature Name] — [Benefit statement]
+(repeat for each feature — aim for 4-6)
 ```
 
 ### PRICING
 
 ```text
 Simple, Transparent Pricing
-
 [Starter]              [Professional — MOST POPULAR]     [Enterprise]
 $[X]/mo                $[X]/mo                           Custom
 For [who]              For [who]                         For [who]
@@ -121,35 +106,23 @@ For [who]              For [who]                         For [who]
 ```text
 Q: How is [Product] different from [competitor]?
 A: Unlike [X], we [differentiator]. This means [benefit].
-
 Q: Does [Product] work with [common integration]?
 A: Yes! We integrate with [list]. Here's how: [brief explanation].
-
 Q: What if I'm not technical?
 A: Designed for [non-technical audience]. Most users set up in under [X] minutes, no coding.
-
 Q: How long to see results?
 A: Most customers see [specific result] within [timeframe]. Depends on [factors].
-
-Q: Cancellation policy?
-A: Cancel anytime — no contracts. Keep access until end of billing period.
-
-Q: What support do you offer?
-A: [Description]. [Response time]. [Channels].
 ```
-
----
 
 ## Template 2: Lead Magnet Page
 
-Sections in order: Hero -> What's Inside -> Social Proof -> About (optional) -> Final CTA
+Hero -> What's Inside -> Social Proof -> About (optional) -> Final CTA
 
 ### HERO
 
 ```text
 [Get/Download/Access] The [Adjective] [Resource Type] to [Achieve Outcome]
 Learn [what they'll learn] without [common objection].
-
 Name: [________]  Email: [________]  [Get Free Access]
 We respect your privacy. Unsubscribe anytime.
 [Image of lead magnet — PDF cover, video thumbnail, etc.]
@@ -162,8 +135,7 @@ Inside This Free [Guide/Checklist/Template], You'll Discover:
 - [Thing #1] — [Why this matters]
 - [Thing #2] — [Why this matters]
 - [Thing #3] — [Why this matters]
-- [Thing #4] — [Why this matters]
-- [Thing #5] — [Why this matters]
+(continue for each key takeaway)
 ```
 
 ### ABOUT (optional)
@@ -174,11 +146,9 @@ I've [achievement related to topic] for [impressive stat].
 This [resource] contains [origin story — why you created it].
 ```
 
----
-
 ## Template 3: Sales Page (Course/Product)
 
-Sections in order: Hero -> Problem -> Story -> Solution -> Offer -> Guarantee -> Final CTA
+Hero -> Problem -> Story -> Solution -> Offer -> Guarantee -> Final CTA
 
 ### HERO
 
@@ -211,16 +181,13 @@ Unlike [alternatives], [Product] works because [unique approach/insight].
 
 ```text
 Here's Everything You Get With [Product Name]
-
 Module 1: [Name] — [What it covers] — Value: $[X]
 Module 2: [Name] — [What it covers] — Value: $[X]
-[Continue for all modules]
-
+(continue for all modules)
 Bonuses (when you join today):
 BONUS #1: [Name] ($[X] value) — [Description]
 BONUS #2: [Name] ($[X] value) — [Description]
-BONUS #3: [Name] ($[X] value) — [Description]
-
+(continue for all bonuses)
 Total Value: $[Big Number]
 Your Investment Today: $[Price] (or [X] payments of $[Y])
 ```
@@ -244,41 +211,31 @@ Or click below and [start achieving outcome].
 Remember: You're protected by our [X]-day guarantee.
 ```
 
----
-
 ## Template 4: Webinar Registration Page
 
 ```text
 Free Training: How to [Achieve Specific Outcome] in [Timeframe]
 Join [Your Name] on [Date] at [Time] to learn [what they'll learn].
 [Date] | [Time] [Timezone] | [Duration] minutes
-
 Name: [________]  Email: [________]  [Reserve My Seat]
-
 You'll discover:
 - [Takeaway #1] — [Why this matters]
 - [Takeaway #2] — [Why this matters]
 - [Takeaway #3] — [Why this matters]
-
 Plus: Everyone who attends live gets [bonus/gift].
 About [Your Name]: [Brief credibility — 1-2 sentences]
 Only [X] spots available — [Reserve My Seat Now]
 Can't make it live? Register anyway — we'll send the recording.
 ```
 
----
-
 ## Quick Substitution Guide
 
 | Placeholder | Replace with |
 |---|---|
 | `[Product Name]` | Your actual product name |
-| `[X]` | Specific number |
+| `[X]` | Specific number or metric |
 | `[Desired Outcome]` | The main result they want |
 | `[Target Audience]` | Who you're talking to |
 | `[Objection]` | Main reason they might not buy |
 | `[Timeframe]` | How long to see results |
-| `[Feature]` / `[Benefit]` | Specific capability / what it does for them |
-| `[Unique Mechanism]` | Why your approach works |
-| `[Testimonial]` | Real customer quote |
-| `[CTA]` | Your call to action |
+| `[Unique Mechanism]` | Why your approach works differently |
