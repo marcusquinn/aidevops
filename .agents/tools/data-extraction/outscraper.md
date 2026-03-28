@@ -35,9 +35,9 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Installation & Configuration
+## Installation
 
-**Prerequisites**: Python 3.10+, `uv` recommended
+Python 3.10+ required. `uv` recommended.
 
 ```bash
 uvx outscraper-mcp-server          # run via uvx (recommended)
@@ -45,9 +45,9 @@ uv add outscraper-mcp-server       # install permanently
 pip install outscraper-mcp-server  # or via pip
 ```
 
-### MCP Server Config
+## MCP Server Config
 
-**Claude Desktop / Claude Code**:
+**Claude Code CLI** (recommended):
 
 ```bash
 claude mcp add-json outscraper --scope user '{
@@ -58,19 +58,7 @@ claude mcp add-json outscraper --scope user '{
 }'
 ```
 
-**OpenCode** (`~/.config/opencode/opencode.json`) — `"env"` key not supported, use bash wrapper:
-
-```json
-"outscraper": {
-  "type": "local",
-  "command": ["/bin/bash", "-c", "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uv tool run outscraper-mcp-server"],
-  "enabled": true
-}
-```
-
-OpenCode access: `@outscraper` subagent only (not enabled for main agents).
-
-**Cursor / Windsurf / Gemini CLI / VS Code / Kilo Code / Kiro** — all use the same pattern:
+**Standard JSON config** — used by Cursor, Windsurf, Gemini CLI, VS Code, Kilo Code, Kiro, Droid:
 
 ```json
 {
@@ -86,57 +74,42 @@ OpenCode access: `@outscraper` subagent only (not enabled for main agents).
 
 Config file locations:
 
-- **Cursor**: Settings → Tools & MCP → New MCP Server
-- **Windsurf**: `~/.codeium/windsurf/mcp_config.json`
-- **Gemini CLI**: `~/.gemini/settings.json` (user) or `.gemini/settings.json` (project)
-- **VS Code**: `.vscode/mcp.json` (use `"type": "stdio"` wrapper)
-- **Kilo Code**: MCP server icon → Edit Global MCP (add `"alwaysAllow": ["google_maps_search", "google_search"]`)
-- **Kiro**: Cmd+Shift+P → "Kiro: Open user MCP config" (use `"autoApprove"` instead of `"alwaysAllow"`)
+| Runtime | Config path |
+|---------|-------------|
+| Cursor | Settings > Tools & MCP > New MCP Server |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` |
+| Gemini CLI | `~/.gemini/settings.json` (user) or `.gemini/settings.json` (project) |
+| VS Code | `.vscode/mcp.json` (use `"type": "stdio"` wrapper) |
+| Kilo Code | MCP server icon > Edit Global MCP (`"alwaysAllow": ["google_maps_search", "google_search"]`) |
+| Kiro | Cmd+Shift+P > "Kiro: Open user MCP config" (`"autoApprove"` instead of `"alwaysAllow"`) |
+| Droid | `droid mcp add outscraper "uvx" outscraper-mcp-server --env OUTSCRAPER_API_KEY=your_api_key_here` |
+| Smithery | `npx -y @smithery/cli install outscraper-mcp-server --client claude` |
 
-**Droid (Factory.AI)**:
+**OpenCode** (`~/.config/opencode/opencode.json`) — `"env"` key not supported, use bash wrapper:
 
-```bash
-droid mcp add outscraper "uvx" outscraper-mcp-server --env OUTSCRAPER_API_KEY=your_api_key_here
+```json
+"outscraper": {
+  "type": "local",
+  "command": ["/bin/bash", "-c", "OUTSCRAPER_API_KEY=$OUTSCRAPER_API_KEY uv tool run outscraper-mcp-server"],
+  "enabled": true
+}
 ```
 
-**Via Smithery (automatic)**:
-
-```bash
-npx -y @smithery/cli install outscraper-mcp-server --client claude
-```
+OpenCode access: `@outscraper` subagent only (not enabled for main agents).
 
 ## API Reference
 
-| Category | Endpoint | Method | Description |
-|----------|----------|--------|-------------|
-| **Account** | `/profile/balance` | GET | Balance, status, upcoming invoice |
-| | `/invoices` | GET | Invoice history |
-| **Tasks** | `/tasks` | GET/POST | UI task history / create task |
-| | `/tasks-validate` | POST | Validate/estimate task cost |
-| | `/tasks/{id}` | PUT/DELETE | Restart / terminate task |
-| **Requests** | `/requests` | GET | Recent API requests (up to 100) |
-| | `/requests/{id}` | GET | Async request results |
-| | `/webhook-calls` | GET | Failed webhook calls (last 24h) |
-| | `/locations` | GET | Country locations for Google Maps |
-| **Google** | `/google-search-v3` | GET | Google Search results |
-| | `/google-search-news` | GET | Google News search |
-| | `/google-maps-search` | POST | Google Maps places (speed-optimized) |
-| | `/maps/reviews-v3` | GET | Google Maps reviews (speed-optimized) |
-| | `/maps/photos-v3`, `/maps/directions` | GET | Photos, directions |
-| | `/google-play/reviews` | GET | Google Play Store reviews |
-| **Amazon** | `/amazon/products-v2`, `/amazon/reviews` | GET | Product data and reviews |
-| **Reviews** | `/yelp-search`, `/yelp/reviews` | GET | Yelp search and reviews |
-| | `/tripadvisor/reviews`, `/appstore/reviews` | GET | Tripadvisor, Apple App Store |
-| | `/youtube-comments`, `/g2/reviews` | GET | YouTube comments, G2 reviews |
-| | `/trustpilot`, `/trustpilot/reviews` | GET | Trustpilot data and reviews |
-| | `/glassdoor/reviews`, `/capterra-reviews` | GET | Glassdoor, Capterra reviews |
-| **Business** | `/emails-and-contacts` | GET | Extract emails/contacts from domains |
-| | `/contacts-and-leads`, `/phones-enricher` | GET | Contacts with roles, phone validation |
-| | `/company-insights`, `/email-validator` | GET | Company data, email deliverability |
-| | `/company-website-finder`, `/similarweb` | GET | Website finder, traffic data |
-| | `/yellowpages-search` | GET | Yellow Pages search |
-| **Geo** | `/geocoding`, `/reverse-geocoding` | GET | Address ↔ coordinates |
-| **Whitepages** | `/whitepages-phones`, `/whitepages-addresses` | GET | Phone owner, address/resident lookup |
+| Category | Endpoints |
+|----------|-----------|
+| **Account** | `GET /profile/balance` (balance/status), `GET /invoices` |
+| **Tasks** | `GET/POST /tasks`, `POST /tasks-validate` (estimate cost), `PUT/DELETE /tasks/{id}` |
+| **Requests** | `GET /requests` (recent, up to 100), `GET /requests/{id}` (async results), `GET /webhook-calls` (failed, last 24h), `GET /locations` |
+| **Google** | `GET /google-search-v3`, `GET /google-search-news`, `POST /google-maps-search`, `GET /maps/reviews-v3`, `GET /maps/photos-v3`, `GET /maps/directions`, `GET /google-play/reviews` |
+| **Amazon** | `GET /amazon/products-v2`, `GET /amazon/reviews` |
+| **Reviews** | `GET /yelp-search`, `GET /yelp/reviews`, `GET /tripadvisor/reviews`, `GET /appstore/reviews`, `GET /youtube-comments`, `GET /g2/reviews`, `GET /trustpilot`, `GET /trustpilot/reviews`, `GET /glassdoor/reviews`, `GET /capterra-reviews` |
+| **Business** | `GET /emails-and-contacts`, `GET /contacts-and-leads`, `GET /phones-enricher`, `GET /company-insights`, `GET /email-validator`, `GET /company-website-finder`, `GET /similarweb`, `GET /yellowpages-search` |
+| **Geo** | `GET /geocoding`, `GET /reverse-geocoding` |
+| **Whitepages** | `GET /whitepages-phones`, `GET /whitepages-addresses` |
 
 ### Common Parameters
 
@@ -169,8 +142,8 @@ invoices = requests.get(f'{API_BASE}/invoices', headers=headers).json()
 task_data = {"service": "google_maps_search", "query": ["coffee shops manhattan"], "limit": 50}
 estimate = requests.post(f'{API_BASE}/tasks-validate', headers=headers, json=task_data).json()
 task_id = requests.post(f'{API_BASE}/tasks', headers=headers, json=task_data).json()['id']
-tasks, has_more = client.get_tasks(page_size=1)  # check via SDK
-requests.delete(f'{API_BASE}/tasks/{task_id}', headers=headers)  # terminate
+tasks, has_more = client.get_tasks(page_size=1)
+requests.delete(f'{API_BASE}/tasks/{task_id}', headers=headers)
 
 # Async pattern
 results = client.google_maps_search('restaurants brooklyn usa', limit=100, async_request=True)
@@ -200,7 +173,7 @@ client.google_maps_reviews(
 | `uvx` conflicts | Use `uv tool run outscraper-mcp-server` instead |
 | Python version errors | `brew install python@3.12` (macOS) |
 
-## Related Documentation
+## Related
 
 - [Crawl4AI](../browser/crawl4ai.md) — Web crawling for AI/LLM applications
 - [Stagehand](../browser/stagehand.md) — AI-powered browser automation
