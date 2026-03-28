@@ -342,6 +342,16 @@ This issue was automatically routed to the aidevops framework repo by \`framewor
 Filed from: $(git rev-parse --show-toplevel 2>/dev/null || echo 'unknown repo')"
 	fi
 
+	# Append signature footer
+	local sig_helper="${SCRIPT_DIR}/gh-signature-helper.sh"
+	if [[ -x "$sig_helper" ]]; then
+		local sig_footer
+		sig_footer=$("$sig_helper" footer 2>/dev/null || echo "")
+		if [[ -n "$sig_footer" ]]; then
+			body="${body}${sig_footer}"
+		fi
+	fi
+
 	if [[ "$dry_run" == "true" ]]; then
 		log_info "DRY RUN — would create issue on ${AIDEVOPS_SLUG}:"
 		log_info "  Title: $title"
