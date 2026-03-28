@@ -60,9 +60,9 @@ Critical failure modes: Store wrong collection → **data leak**; Query without 
 
 - **Layer 1 — Physical**: Collection-per-tenant scopes queries physically.
 - **Layer 2 — Application**: Derive collection name from authenticated `req.tenant.orgId`, never from user input or `req.body`.
-- **Layer 3 — Validation**: Post-query ownership check — log `CROSS_TENANT_LEAK_DETECTED` and filter results where `metadata.org_id !== requesting org_id`.
+- **Layer 3 — Validation**: Post-query ownership check — log `CROSS_TENANT_LEAK_DETECTED` and filter results where `metadata.org_id !== requesting_org_id`.
 - **Layer 4 — Testing**: Integration test verifying tenant A cannot see tenant B's data after both upload documents.
-- **Audit logging**: Log all RAG operations (upload, delete, search) to `audit_log` with `org_id`, `userId`, `action`, metadata.
+- **Audit logging**: Log all RAG operations (upload, delete, search) to `audit_log` with `org_id`, `user_id`, `action`, metadata.
 
 ## Pipeline Stage Details
 
@@ -72,7 +72,7 @@ Validate MIME from magic bytes (not extension), scan for malware, enforce per-te
 
 **Chunk sizes**: 256-512 (Q&A), **512-1024 (general, default)**, 1024-2048 (summarisation), variable/section-based (structured docs). Default overlap: 128 tokens.
 
-Required chunk metadata: `id` (`{document_id}_{chunk_index}`), `content`, `documentId`, `chunkIndex`, `totalChunks`, `sourceFile`, `orgId`, `uploadedBy`, `uploadedAt`, `embeddingModel`.
+Required chunk metadata: `id` (`{document_id}_{chunk_index}`), `content`, `document_id`, `chunk_index`, `total_chunks`, `source_file`, `org_id`, `uploaded_by`, `uploaded_at`, `embedding_model`.
 
 ### Stage 4: Embed
 
@@ -95,7 +95,7 @@ Required chunk metadata: `id` (`{document_id}_{chunk_index}`), `content`, `docum
 
 ### Stage 6: Query
 
-Pattern: derive `collectionName = rag_${ctx.orgId}`, check collection exists, embed query using the collection's stored model, search dense (and optionally sparse for hybrid), apply `minScore: 0.3` filter.
+Pattern: derive `collectionName = rag_${ctx.org_id}`, check collection exists, embed query using the collection's stored model, search dense (and optionally sparse for hybrid), apply `minScore: 0.3` filter.
 
 **Defaults**: `candidateCount: 20`, `minScore: 0.3`, `hybrid: false`, `hybridAlpha: 0.7`. Enable hybrid when users search specific terms/names/codes or documents contain domain jargon.
 
@@ -148,7 +148,7 @@ Plan quotas: free (50 docs / 100 MB / 10 MB file / 10K vectors), pro (5K docs / 
 
 ## Implementation Checklist
 
-- [ ] **Isolation**: Collection/namespace derived from `TenantContext.orgId`, never user input
+- [ ] **Isolation**: Collection/namespace derived from authenticated tenant context (`org_id`), never user input
 - [ ] **Lifecycle**: Onboarding creates collection; deletion destroys it + object storage
 - [ ] **Embedding model tracked**: Model ID stored with every vector
 - [ ] **Quotas enforced**: Per-plan limits on documents, storage, vectors
