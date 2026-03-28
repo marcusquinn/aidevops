@@ -1,10 +1,6 @@
 # Data Charts & Timelines
 
-Mermaid supports various chart types for data visualization, project planning, and chronological representation.
-
 ## Gantt Charts
-
-Project scheduling and timeline visualization.
 
 ```mermaid
 gantt
@@ -32,7 +28,7 @@ Axis format codes: `%Y` year, `%m` month (01-12), `%b` month abbr, `%d` day, `%a
 
 ### Task Syntax
 
-```
+```text
 Task name : [tags], [id], [start], [end/duration]
 ```
 
@@ -58,32 +54,7 @@ gantt
 
 Dependencies: `after a b` waits for both `a` and `b`. Excludes: `weekends`, specific dates (`2024-12-25`), or weekday names.
 
-### Example: Product Launch
-
-```mermaid
-gantt
-    title Product Launch
-    dateFormat YYYY-MM-DD
-
-    section Design
-    Research         :des1, 2024-01-01, 14d
-    Wireframes       :des2, after des1, 7d
-    Mockups          :des3, after des2, 14d
-
-    section Development
-    Frontend         :dev1, after des3, 21d
-    Backend          :dev2, after des3, 21d
-    Integration      :dev3, after dev1 dev2, 7d
-
-    section Launch
-    Testing          :test, after dev3, 14d
-    Deployment       :crit, deploy, after test, 3d
-    Launch           :milestone, after deploy, 0d
-```
-
 ## Pie Charts
-
-Show proportional data distribution.
 
 ```mermaid
 pie showData
@@ -95,37 +66,25 @@ pie showData
     "R&D" : 8
 ```
 
-Use `showData` to display values alongside the chart. Omit for labels-only.
+`showData` displays values alongside the chart. Omit for labels-only.
 
 ## Timeline Diagrams
 
-Chronological events and milestones.
-
 ```mermaid
 timeline
-    title Product Roadmap 2024
+    title Product Roadmap
 
     section Q1
         January : MVP Release
                 : Core Features Complete
-        February : User Testing
         March : Public Beta
 
     section Q2
         April : Mobile App Beta
-        May : API v2 Launch
         June : Enterprise Features
-
-    section Q3
-        July : International Expansion
-        August : Partner Integrations
-        September : Platform 2.0
-
-    section Q4
-        October : AI Features
-        November : Analytics Dashboard
-        December : Annual Review
 ```
+
+Multiple events per period: indent additional `: Event` lines under the same date.
 
 ## Quadrant Charts
 
@@ -149,11 +108,9 @@ quadrantChart
     Legacy Rewrite: [0.8, 0.5]
 ```
 
-Coordinates: `[x, y]` where both are 0–1. Quadrant 1: upper-right, 2: upper-left, 3: lower-left, 4: lower-right.
+Coordinates: `[x, y]` where both are 0-1. Quadrant 1: upper-right, 2: upper-left, 3: lower-left, 4: lower-right.
 
 ## XY Charts
-
-Line and bar charts for data trends.
 
 ```mermaid
 xychart-beta
@@ -168,8 +125,6 @@ xychart-beta
 Use `bar` for bar charts, `line` for line charts, or combine both.
 
 ## Sankey Diagrams
-
-Flow and allocation visualization.
 
 ```mermaid
 sankey-beta
@@ -193,8 +148,6 @@ Format: `Source, Destination, Value` (one per line).
 
 ## Treemap Diagrams
 
-Hierarchical data with area representation.
-
 ```mermaid
 treemap-beta
 
@@ -216,48 +169,25 @@ treemap-beta
 
 ## Mindmaps
 
-Hierarchical brainstorming and concept mapping.
-
-**Node shapes**: `((Circle))`, `[Square]`, `(Rounded)`, `))Bang((`, `)Cloud(`, `{{Hexagon}}`
+Node shapes: `((Circle))`, `[Square]`, `(Rounded)`, `))Bang((`, `)Cloud(`, `{{Hexagon}}`
 
 ```mermaid
 mindmap
     root((System Design))
         Frontend
-            Framework
-                React
-                Vue
-                Svelte
-            State
-                Redux
-                Zustand
-            Styling
-                Tailwind
-                CSS Modules
+            React
+            Vue
         Backend
-            Language
-                Node.js
-                Go
-            Database
-                PostgreSQL
-                Redis
-            API
-                REST
-                GraphQL
+            Node.js
+            PostgreSQL
         Infrastructure
-            Cloud
-                AWS
-                GCP
-            Containers
-                Docker
-                Kubernetes
-            CI/CD
-                GitHub Actions
+            Docker
+            Kubernetes
 ```
 
-## Git Graphs
+Hierarchy via indentation. Deeper nesting adds child nodes.
 
-Branch and merge visualization.
+## Git Graphs
 
 ```mermaid
 gitGraph
@@ -277,37 +207,3 @@ gitGraph
 ```
 
 Commit types: `commit` (normal), `commit type: HIGHLIGHT`, `commit type: REVERSE`.
-
-### Example: Git Flow
-
-```mermaid
-gitGraph
-    commit id: "Init"
-
-    branch develop
-    checkout develop
-    commit id: "Setup"
-
-    branch feature/login
-    checkout feature/login
-    commit id: "Login UI"
-    commit id: "Login API"
-    checkout develop
-    merge feature/login
-
-    branch release/1.0
-    checkout release/1.0
-    commit id: "Bump version"
-    checkout main
-    merge release/1.0 tag: "v1.0.0"
-    checkout develop
-    merge release/1.0
-
-    checkout main
-    branch hotfix/1.0.1
-    commit id: "Fix bug"
-    checkout main
-    merge hotfix/1.0.1 tag: "v1.0.1"
-    checkout develop
-    merge hotfix/1.0.1
-```
