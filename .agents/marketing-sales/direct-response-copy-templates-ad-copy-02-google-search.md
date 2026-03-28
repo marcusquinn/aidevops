@@ -1,5 +1,7 @@
 # Google Search Ad Templates
 
+Format: H1/H2/H3 = Headlines 1–3, D = Description.
+
 ## Template 1: Benefit-Problem-Proof
 
 ```text
