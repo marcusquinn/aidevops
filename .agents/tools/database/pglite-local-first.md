@@ -161,9 +161,11 @@ await client.electric.syncShapeToTable({
 
 ```typescript
 import { vector } from "@electric-sql/pglite/contrib/pgvector";
-const db = new PGlite({ extensions: { vector } });
+const db = new PGlite("idb://my-app", { extensions: { vector } });
 await db.exec("CREATE EXTENSION IF NOT EXISTS vector");
 ```
+
+> Omitting the data directory (`new PGlite({ extensions: { vector } })`) creates an in-memory instance — fine for tests, but data is lost on reload. Pass a persistence path for production use (see Persistence Modes above).
 
 Supported: pgvector, pg_trgm, ltree, hstore, uuid-ossp. Full list: https://pglite.dev/extensions/
 
@@ -171,10 +173,10 @@ Supported: pgvector, pg_trgm, ltree, hstore, uuid-ossp. Full list: https://pglit
 
 | Platform | Persistence | Notes |
 |----------|-------------|-------|
-| Electron (main) | Filesystem | Recommended; requires Electron 11.0+ for SharedArrayBuffer |
+| Electron (main) | Filesystem | Recommended; SharedArrayBuffer requires Electron 14+ (Chrome 92+ site isolation) |
 | Electron (renderer) | IndexedDB | Use multi-tab worker for shared access |
-| Tauri (webview) | Filesystem via Tauri API | Unconfirmed — not documented in upstream PGlite docs |
-| Browser extension (MV3) | IndexedDB | Use offscreen doc for heavy queries; unconfirmed in official docs |
+| Tauri (webview) | Filesystem via Tauri API | Community-reported; not in upstream docs |
+| Browser extension (MV3) | IndexedDB | Community-reported; use offscreen doc for heavy queries |
 | React Native / Expo | **Not supported** | WASM unsupported; use SQLite + PowerSync |
 | Node.js / Bun / Deno | Filesystem | Local dev without Docker Postgres |
 
