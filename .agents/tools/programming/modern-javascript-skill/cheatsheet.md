@@ -1,6 +1,6 @@
 # Modern JavaScript Cheatsheet
 
-Variables, arrow functions, destructuring, spread/rest, template literals, optional chaining, nullish coalescing, array methods, string methods, object methods, promises, async/await, classes, modules, Set/Map, iterators, generators, RegExp, BigInt, Temporal, resource management.
+Syntax-only quick reference (ES6-ES2025). For decision trees and migration patterns, see `modern-javascript-skill.md`.
 
 ## Variables & Scope
 
@@ -237,25 +237,3 @@ Temporal.Duration.from({ hours: 2 }); date.add({ months: 1 })  // Immutable
 @logged class User { @validate name; @memoize getData() { } }
 User[Symbol.metadata]  // Decorator Metadata
 ```
-
-## Quick Migration Guide
-
-| Legacy | Modern |
-|--------|--------|
-| `var x = 1` | `const x = 1` or `let x = 1` |
-| `function(x) { return x * 2 }` | `x => x * 2` |
-| `arr[arr.length - 1]` | `arr.at(-1)` |
-| `arr.sort()` | `arr.toSorted()` |
-| `arr.reverse()` | `arr.toReversed()` |
-| `arr.splice(i, 1)` | `arr.toSpliced(i, 1)` |
-| `arr[i] = val` | `arr.with(i, val)` |
-| `str.replace(/a/g, 'b')` | `str.replaceAll('a', 'b')` |
-| `obj.hasOwnProperty('k')` | `Object.hasOwn(obj, 'k')` |
-| `a && a.b && a.b.c` | `a?.b?.c` |
-| `x \|\| 'default'` | `x ?? 'default'` |
-| `Object.assign({}, a, b)` | `{ ...a, ...b }` |
-| `[].concat(a, b)` | `[...a, ...b]` |
-| `.then().catch()` | `async/await + try/catch` |
-| `let resolve; new Promise(r => resolve = r)` | `Promise.withResolvers()` |
-| `new Date()` | `Temporal.Now.*` (polyfill) |
-| Manual grouping with reduce | `Object.groupBy()` |
