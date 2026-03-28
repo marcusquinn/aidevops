@@ -75,8 +75,8 @@ HOOK: [First 3s direction]  |  BODY: [Key points]  |  CTA: [Action]
 SPECS: Format · Size · Length · Due  |  INSPIRATION: [Links]  |  METRICS: [Target]
 ```
 
-**DO:** Be specific · Include visual examples · Define success metrics · Allow creative freedom
-**DON'T:** Leave sections blank · Skip the "why" · Forget specs · Set unrealistic timelines
+**DO:** Be specific · Include visual examples · Define success metrics · Allow creative freedom.
+**DON'T:** Leave sections blank · Skip the "why" · Forget specs · Set unrealistic timelines.
 
 ---
 
@@ -84,7 +84,7 @@ SPECS: Format · Size · Length · Due  |  INSPIRATION: [Links]  |  METRICS: [Ta
 
 | Tool | Cost | Use |
 |------|------|-----|
-| Facebook Ad Library | Free | All active FB/IG ads. 3+ months running = likely winner. |
+| Facebook Ad Library | Free | All active FB/IG ads. 3+ months running = likely winner |
 | Google Ads Transparency | Free | Display/video only (not search) |
 | SpyFu / SEMrush / Ahrefs | Paid | Search ads, keywords, bid data, historical copy, spend estimates |
 | AdEspresso / Foreplay | Paid | Curated libraries, performance indicators, creative trends |
@@ -98,14 +98,14 @@ MESSAGING: Angle | Emotional trigger | Target audience | Differentiation
 INSIGHTS: What to learn | How to do better | Gaps they're leaving
 ```
 
-### Differentiation Strategy
+### Differentiation
 
-Three layers: **Commoditized** (say it better) · **Gaps** (own it) · **Unique strengths** (lead with it)
+Three layers: **Commoditized** (say it better) · **Gaps** (own it) · **Unique strengths** (lead with it).
 
 | Competitor Says | You Say |
 |-----------------|---------|
-| "Easy to use" | "So easy your team will actually use it — 4.9-star rating" |
-| "Manage projects" | "Manage projects without the chaos — everything in one view" |
+| "Easy to use" | "So easy your team will actually use it -- 4.9-star rating" |
+| "Manage projects" | "Manage projects without the chaos -- everything in one view" |
 | "Try free" | "Try free 60 days, no credit card, cancel anytime" |
 
 ### Monthly Audit (1-2h, first Monday)
@@ -115,16 +115,14 @@ Three layers: **Commoditized** (say it better) · **Gaps** (own it) · **Unique 
 3. **Analyze (30m):** Cross-competitor trends, messaging gaps, new offers
 4. **Act (30m):** 3-5 test concepts, update positioning
 
-**Tracking:** Competitor · Date · Platform · Format · Hook · Message · Offer · CTA · Screenshot · Status · Months running · Our response
-**Ethics:** Research and get inspired — never copy verbatim, steal assets, or imitate brand.
+**Track:** Competitor · Date · Platform · Format · Hook · Message · Offer · CTA · Screenshot · Status · Months running · Our response.
+**Ethics:** Research and get inspired -- never copy verbatim, steal assets, or imitate brand.
 
-**Insights → Action:** Competitor UGC running 6+ months → create 5 UGC ads, same format, our messaging · All competitors feature-focused → own "easy onboarding" with "setup in 5 min" series · Competitor running 40% discounts → position as premium or test offer vs. value messaging
+**Insights to action examples:** Competitor UGC running 6+ months -> create 5 UGC ads, same format, our messaging. All competitors feature-focused -> own "easy onboarding" with "setup in 5 min" series. Competitor running 40% discounts -> position as premium or test offer vs. value messaging.
 
 ---
 
 ## Seasonal & Trending Creative
-
-### Seasonal Calendar
 
 | Quarter | Key Events |
 |---------|------------|
@@ -133,52 +131,34 @@ Three layers: **Commoditized** (say it better) · **Gaps** (own it) · **Unique 
 | Q3 | Independence Day · Prime Day · Back to School · Labor Day |
 | Q4 | Halloween · Black Friday/Cyber Monday · Thanksgiving · Christmas · NYE |
 
-**Timeline:** 6-8w: concept → 4-6w: production → 2-4w: launch → monitor → analyze
-**Budget:** Evergreen 60-70% + Seasonal 30-40%
-**Don't force it** — seasonal angle must make sense for product. Good: "New Year, New Workspace — 40% Off." Bad: "Happy Halloween! Buy Our B2B SaaS! 👻"
-
-**Examples:** BFCM: bold text, countdown timers, urgency · New Year: before/after, resolution angle · Valentine's: gift or self-love angle + delivery deadline · Back to School: organization-focused, parent relief or student discount
+**Timeline:** 6-8w concept -> 4-6w production -> 2-4w launch -> monitor -> analyze. **Budget:** Evergreen 60-70% + Seasonal 30-40%.
+**Fit test:** Seasonal angle must make sense for product. Good: "New Year, New Workspace -- 40% Off." Bad: "Happy Halloween! Buy Our B2B SaaS!"
+**Examples:** BFCM: bold text, countdown timers, urgency. New Year: before/after, resolution angle. Valentine's: gift or self-love angle + delivery deadline. Back to School: organization-focused, parent relief or student discount.
 
 ### Trending Creative
 
-**Lifecycles:** Viral meme: 3-7d · Platform trend: 2-4w · Cultural event: 1-2w · News: 1-3d (or avoid)
-**Process:** Spot early → 24-48h turnaround → launch while relevant → kill when trend dies
-**Fit check:** Aligns with brand? Audience finds it relevant? Adds value (not just piggybacks)? Safe? If NO to any → skip.
-**Newsjacking:** Only positive/industry-relevant/non-controversial. Never tragedies or political topics.
+**Lifecycles:** Viral meme 3-7d · Platform trend 2-4w · Cultural event 1-2w · News 1-3d (or avoid).
+**Process:** Spot early -> 24-48h turnaround -> launch while relevant -> kill when trend dies.
+**Fit check:** Aligns with brand? Relevant to audience? Adds value? Safe? Any NO -> skip. **Newsjacking:** Only positive/industry-relevant/non-controversial. Never tragedies or political topics.
 
 ---
 
 ## Retargeting Creative Strategy
 
-### Funnel Segments
-
-| Level | Who | Window | Strategy | Example Message |
-|-------|-----|--------|----------|-----------------|
-| Site Visitors | Visited, didn't convert | 1-30d | Remind, address objections, social proof | "Still thinking about it? Here's what you should know..." |
+| Segment | Who | Window | Strategy | Example |
+|---------|-----|--------|----------|---------|
+| Site Visitors | Visited, didn't convert | 1-30d | Remind, address objections, social proof | "Still thinking about it?" |
 | Engaged Visitors | Multiple pages, 2+ min, video watched | 1-14d | Differentiation, stronger offers, case studies | "You spent 5 min on [Product]. Here's why 10K+ chose us." |
 | Cart Abandoners | Added to cart, didn't buy | 1-7d | Final objections, time-limited discount, urgency | "You left [Product] in your cart! Save 10% in next 24h." |
-| Past Customers | Already purchased | Varies | Reorder, upsell/cross-sell, loyalty, referral | "Time to reorder!" / "Customers who bought A love B — 30% off." |
+| Past Customers | Already purchased | Varies | Reorder, upsell/cross-sell, loyalty, referral | "Customers who bought A love B -- 30% off." |
 
-### Best Practices
+**Best practices:** (1) Acknowledge the relationship -- "Welcome back!" not "Discover our product!" (2) Dynamic creative -- show products they viewed (FB Dynamic Product Ads, Google Dynamic Remarketing). (3) Progressive messaging -- Day 1-3: features -> Day 4-7: testimonials -> Day 8-14: 15% off -> Day 15-30: 20% off. (4) Objections by segment -- Site visitors: ROI/testimonials · Cart abandoners: discount/free shipping · Past customers: new products. (5) Offer escalation -- Week 1: no offer -> Week 2: 10% -> Week 3: 20% -> Week 4+: 30% + bonus. Don't train them to wait. (6) Frequency caps -- Site visitors: 3-4/day · Engaged: 4-5/day · Cart abandoners: 5-6/day first 48h. Max window: 30-90 days. Exclude converters immediately.
 
-1. **Acknowledge the relationship** — "Welcome back!" not "Discover our product!"
-2. **Dynamic creative** — show products they viewed (FB Dynamic Product Ads, Google Dynamic Remarketing)
-3. **Progression** — Day 1-3: features → Day 4-7: testimonials → Day 8-14: 15% off → Day 15-30: 20% off
-4. **Objections by segment** — Site visitors: ROI/testimonials · Cart abandoners: discount/free shipping · Past customers: new products
-5. **Offer escalation** — Week 1: no offer → Week 2: 10% → Week 3: 20% → Week 4+: 30% + bonus. Don't train them to wait.
-6. **Frequency caps** — Site visitors: 3-4/day · Engaged: 4-5/day · Cart abandoners: 5-6/day first 48h. Max window: 30-90 days. Exclude converters immediately.
+**Creative formulas:** Reminder + Social Proof (reminder -> proof -> CTA) · Objection Handling (hesitation -> address -> proof -> reduce risk) · Urgency/Scarcity (delay -> urgency -> consequence -> CTA) · Value Stack (product -> everything included -> value vs. price -> CTA) · Comparison (research -> differentiation -> social proof).
 
-**Creative Formulas:** Reminder + Social Proof (reminder → proof → CTA) · Objection Handling (hesitation → address → proof → reduce risk) · Urgency/Scarcity (delay → urgency → consequence → CTA) · Value Stack (product → everything included → value vs. price → CTA) · Comparison (research → differentiation → social proof)
+**Benchmarks:** All retargeting segments see 2-4x higher CTR and 30-50% lower CPA vs cold. Conv. rates: Cart Abandoners 10-30%, Engaged Visitors 5-15%, Site Visitors 2-8%.
 
-### Performance Benchmarks
-
-| Segment | CTR vs Cold | CPA vs Cold | Conv. Rate |
-|---------|-------------|-------------|------------|
-| Cart Abandoners | 2-4x higher | 30-50% lower | 10-30% |
-| Engaged Visitors | 2-4x higher | 30-50% lower | 5-15% |
-| Site Visitors | 2-4x higher | 30-50% lower | 2-8% |
-
-### Common Mistakes
+### Common Retargeting Mistakes
 
 | Mistake | Fix |
 |---------|-----|
@@ -193,45 +173,28 @@ Three layers: **Commoditized** (say it better) · **Gaps** (own it) · **Unique 
 
 ## Ad Fatigue Prevention
 
-**Symptoms:** CTR down >20% WoW · CPA up >25% · Frequency >5 · Relevance score dropping · "I keep seeing this ad!" comments
-**Timeline:** Cold: 7-14d · Warm: 14-30d · Small audience (<50K): faster · Large (>1M): slower
+**Symptoms:** CTR down >20% WoW · CPA up >25% · Frequency >5 · Relevance score dropping · "I keep seeing this ad!" comments.
+**Onset:** Cold 7-14d · Warm 14-30d · Small audience (<50K) faster · Large (>1M) slower.
 
-### Prevention Strategies
+### Prevention
 
 **5-Creative Minimum:** 1 control + 2 iterations + 2 new concepts. Weekly: add 2-3 new, remove bottom 2, keep 5-7 active.
-
-**Iterate vs. New Concept:**
-- *Iterate* (change ONE element) when performing well but frequency rising: different creator, hook, text, length, visual style
-- *New concept* when fatiguing badly or reaching new segment: expert endorsement, demo, results montage, comparison, educational
-
-**Frequency Caps:** Cold: 4-5/week · Warm: 6-8/week · Hot: 8-10/week
-Triggers: >4 + declining CTR → add creatives · >6 + rising CPA → expand audience · >8 → pause and refresh
-
-**Creative Lifespan:** Day 1-14: launch → Day 15-30: peak → Day 31-45: optimal ROI → Day 46+: decline. At day 30: launch replacement. At day 60: retire.
-
+**Iterate vs. New Concept:** Iterate (change ONE element) when performing well but frequency rising: different creator, hook, text, length, visual style. New concept when fatiguing badly or reaching new segment: expert endorsement, demo, results montage, comparison, educational.
+**Frequency Caps:** Cold 4-5/week · Warm 6-8/week · Hot 8-10/week. Triggers: >4 + declining CTR -> add creatives · >6 + rising CPA -> expand audience · >8 -> pause and refresh.
+**Creative Lifespan:** Day 1-14 launch -> Day 15-30 peak -> Day 31-45 optimal ROI -> Day 46+ decline. At day 30: launch replacement. At day 60: retire.
 **Hook Swapping (video):** Keep body (3-60s), swap first 3s. Film 5-10 hooks, test as separate ads.
-
-**Platform Diversification:** FB/IG 60% · Google 20% · TikTok/LinkedIn/YouTube 20%
-
-**Fatigue-Resistant Tactics:** Evergreen angles · Modular video (10 hooks × 3 bodies × 5 CTAs = 150 combos) · Platform DCO for auto-rotation · Sequential messaging (each impression feels new)
+**Platform Diversification:** FB/IG 60% · Google 20% · TikTok/LinkedIn/YouTube 20%.
+**Fatigue-Resistant Tactics:** Evergreen angles · Modular video (10 hooks x 3 bodies x 5 CTAs = 150 combos) · Platform DCO for auto-rotation · Sequential messaging (each impression feels new).
 
 ### Severity Response
 
 | Severity | Symptoms | Action |
 |----------|----------|--------|
-| Light | CTR down 10-20% or frequency 4-5 | Add 2 creatives, expand audience 20% |
+| Light | CTR down 10-20%, frequency 4-5 | Add 2 creatives, expand audience 20% |
 | Moderate | CTR down 20-30%, CPA up 15-25%, frequency 5-7 | Add 3-5 creatives + audience expansion, pause 48-72h |
 | Severe | CTR down 30%+, CPA up 25%+, frequency 7+ | Kill immediately, launch 5+ replacements |
 
-### Production Volume
-
-| Spend/Month | Monthly Need |
-|-------------|-------------|
-| $10K | 20-30 creatives |
-| $50K | 50-100 creatives |
-| $200K+ | 100-200+ creatives |
-
-**Production mix:** UGC: 10-20 creators × 2-3 videos ($100-300/video) · In-house: 30-50/month · Agency: 20-40/month ($5K-20K) · Hybrid
+**Production volume:** $10K/mo -> 20-30 creatives · $50K -> 50-100 · $200K+ -> 100-200+. Mix: UGC 10-20 creators x 2-3 videos ($100-300/video) · In-house 30-50/month · Agency 20-40/month ($5K-20K) · Hybrid.
 
 ---
 
@@ -240,21 +203,18 @@ Triggers: >4 + declining CTR → add creatives · >6 + rising CPA → expand aud
 **1-second rule:** Viewer decides instantly. Need: visual intrigue · emotional trigger · curiosity gap · contrast · clarity at small size.
 
 **Faces:** Close-up 40-60% of frame, exaggerated expressions, direct eye contact. Avoid tiny/neutral/looking-away.
-**Emotions:** Shock → revealing results · Excitement → wins · Curiosity → teasers · Frustration → problems · Happy → tutorials
-
-**Text:** 3-6 words max · bold fonts (Impact, Montserrat Bold, Bebas Neue) · high contrast · never cover face
+**Emotions:** Shock -> results · Excitement -> wins · Curiosity -> teasers · Frustration -> problems · Happy -> tutorials.
+**Text:** 3-6 words max · bold fonts (Impact, Montserrat Bold, Bebas Neue) · high contrast · never cover face.
 **Formulas:** "$10K in 30 Days" · "How I [Result]" · "[A] vs. [B]" · "Don't [Mistake]" · "Why [Surprising Fact]?"
-
-**Color pairs:** Black+White · Yellow+Black · Red+White · Blue+Orange · Purple+Yellow
-**Avoid:** Yellow+White · Light blue+Light green · Dark blue+Black
+**Color pairs:** Black+White · Yellow+Black · Red+White · Blue+Orange · Purple+Yellow. **Avoid:** Yellow+White · Light blue+Light green · Dark blue+Black.
 
 ### Platform Specs
 
 | Platform | Specs | Notes |
 |----------|-------|-------|
-| YouTube | 1280×720 min, 16:9, <2MB, JPG/PNG | 3-6 words, face 40-60%, max 3 elements |
-| FB/IG Feed | 1080×1080 (sq), 1920×1080 (land) | Assume sound-off, larger text for mobile |
-| Stories/Reels | 1080×1920 | Text in middle third, avoid top/bottom 250px |
+| YouTube | 1280x720 min, 16:9, <2MB, JPG/PNG | 3-6 words, face 40-60%, max 3 elements |
+| FB/IG Feed | 1080x1080 (sq), 1920x1080 (land) | Assume sound-off, larger text for mobile |
+| Stories/Reels | 1080x1920 | Text in middle third, avoid top/bottom 250px |
 | TikTok/Shorts | 9:16 only | First frame = thumbnail, start with hook visual |
 
 ### Thumbnail Templates
@@ -267,7 +227,7 @@ Triggers: >4 + declining CTR → add creatives · >6 + rising CPA → expand aud
 | Over-the-Shoulder | Person looking at screen, arrow to key element | Tutorials, reviews |
 | Reaction | Large expressive face + result text | Results, surprising facts |
 
-### Common Mistakes
+### Common Thumbnail Mistakes
 
 | Mistake | Fix |
 |---------|-----|
@@ -278,4 +238,4 @@ Triggers: >4 + declining CTR → add creatives · >6 + rising CPA → expand aud
 | No human element | Add face with emotion (exception: product demos) |
 | Inconsistent branding | Establish template (fonts, colors, layout) and maintain |
 
-**Advanced:** Series branding (consistent template = recognition) · Curiosity gaps (blurred areas, partial info) · Social proof in thumbnail ("1M+ Views") · Negative space (less is more) · Movement suggestion (motion blur, mid-action pose)
+**Advanced:** Series branding (consistent template = recognition) · Curiosity gaps (blurred areas, partial info) · Social proof in thumbnail ("1M+ Views") · Negative space (less is more) · Movement suggestion (motion blur, mid-action pose).
