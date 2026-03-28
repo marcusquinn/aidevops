@@ -52,18 +52,8 @@ cp configs/vercel-cli-config.json.txt configs/vercel-cli-config.json
 ```json
 {
   "accounts": {
-    "personal": {
-      "team_name": "Personal",
-      "team_id": "",
-      "description": "Personal account",
-      "default_environment": "preview"
-    },
-    "company": {
-      "team_name": "Company Name",
-      "team_id": "team_abc123def456",
-      "description": "Company team account",
-      "default_environment": "preview"
-    }
+    "personal": { "team_name": "Personal", "team_id": "", "default_environment": "preview" },
+    "company": { "team_name": "Company Name", "team_id": "team_abc123def456", "default_environment": "preview" }
   },
   "projects": {
     "my-app": {
@@ -79,7 +69,7 @@ cp configs/vercel-cli-config.json.txt configs/vercel-cli-config.json
 }
 ```
 
-For team accounts, set `team_id` to the Vercel team slug. Leave empty for personal accounts.
+Set `team_id` to the Vercel team slug for team accounts; leave empty for personal.
 
 ## Usage
 
@@ -144,10 +134,10 @@ jobs:
 
 ## Security
 
-- Store tokens in environment variables, never in version control
-- Use team-scoped tokens for organisation projects; rotate regularly
-- Use separate env var values per environment (development/preview/production)
-- Enable HTTPS for all custom domains
+- Tokens in environment variables, never in version control; rotate regularly
+- Team-scoped tokens for organisation projects
+- Separate env var values per environment (development/preview/production)
+- HTTPS for all custom domains
 
 ## Troubleshooting
 
