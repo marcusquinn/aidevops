@@ -41,27 +41,25 @@ Need AI 24/7 from any device?
     NO  → Tier 1: Native Local
 ```
 
-**Tier 1 — Native Local** (simplest, fastest setup, no isolation):
-```bash
-curl -fsSL https://openclaw.ai/install.sh | bash
-openclaw onboard --install-daemon
-openclaw doctor
-```
+**Tier 1 — Native Local**: `curl -fsSL https://openclaw.ai/install.sh | bash && openclaw onboard --install-daemon && openclaw doctor`
 
 **Tier 2 — OrbStack Container** (isolated, easy reset):
+
 ```bash
 git clone https://github.com/openclaw/openclaw.git && cd openclaw
 ./docker-setup.sh  # builds image, runs onboarding, starts via Docker Compose
 ```
+
 Config and workspace bind-mounted from `~/.openclaw/`. See `tools/containers/orbstack.md`.
 
 **Tier 3 — Remote VPS** (always-on, any device):
+
 ```bash
 # 1. Provision VPS (min CX22: 2 vCPU, 4GB RAM) via @hetzner or @hostinger
 # 2. Install Tailscale on both machines (see @tailscale)
-# 3. SSH into VPS and install OpenClaw
-curl -fsSL https://openclaw.ai/install.sh | bash && openclaw onboard --install-daemon
+# 3. SSH into VPS: curl -fsSL https://openclaw.ai/install.sh | bash && openclaw onboard --install-daemon
 ```
+
 ```json5
 // ~/.openclaw/openclaw.json — Tailscale Serve config
 {
@@ -97,32 +95,23 @@ WhatsApp / Telegram / Slack / Discord / Signal / iMessage / Teams / WebChat
                 +-- macOS app / iOS / Android nodes
 ```
 
-Minimal config at `~/.openclaw/openclaw.json`:
-```json5
-{ agent: { model: "anthropic/claude-opus-4-6" } }
-```
-Full reference: https://docs.openclaw.ai/gateway/configuration
+Minimal config (`~/.openclaw/openclaw.json`): `{ agent: { model: "anthropic/claude-opus-4-6" } }` — full reference: https://docs.openclaw.ai/gateway/configuration
 
 ## Channel Setup
 
 Always configure allowlists before connecting.
 
 **WhatsApp** (QR pairing):
+
 ```bash
 openclaw channels login  # scan QR code
 openclaw pairing list whatsapp
 openclaw pairing approve whatsapp <code>
 ```
 
-**Telegram** — create bot via @BotFather, then:
-```json5
-{ channels: { telegram: { botToken: "123456:ABCDEF" } } }
-```
+**Telegram** — create bot via @BotFather, then: `{ channels: { telegram: { botToken: "123456:ABCDEF" } } }`
 
-**Discord** — create app at https://discord.com/developers/applications, then:
-```json5
-{ channels: { discord: { token: "your-bot-token" } } }
-```
+**Discord** — create app at https://discord.com/developers/applications, then: `{ channels: { discord: { token: "your-bot-token" } } }`
 
 **Slack** — set `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` env vars.
 
@@ -146,6 +135,7 @@ openclaw security audit --fix    # auto-fix common issues
 ```
 
 **Secure baseline config:**
+
 ```json5
 {
   gateway: {
@@ -172,11 +162,13 @@ openclaw security audit --fix    # auto-fix common issues
 | `disabled` | Ignore all inbound DMs | Channel-specific disable |
 
 **Group security** — always require mention:
+
 ```json5
 { channels: { whatsapp: { groups: { "*": { requireMention: true } }, groupPolicy: "allowlist" } } }
 ```
 
 **Session isolation** (multi-user, prevents cross-user context leakage):
+
 ```json5
 { session: { dmScope: "per-channel-peer" } }
 ```
@@ -184,14 +176,12 @@ openclaw security audit --fix    # auto-fix common issues
 **Prompt injection** — even with locked-down DMs, injection can happen via untrusted content (web pages, emails, attachments). Mitigations: use a read-only reader agent for untrusted content; keep `web_search`/`browser` off unless needed; enable sandboxing for agents touching untrusted input; keep secrets out of prompts.
 
 **Sandboxing:**
+
 ```json5
 { agents: { defaults: { sandbox: { mode: "non-main", scope: "agent", workspaceAccess: "none" } } } }
 ```
 
-**File permissions:**
-```bash
-chmod 700 ~/.openclaw && chmod 600 ~/.openclaw/openclaw.json
-```
+**File permissions:** `chmod 700 ~/.openclaw && chmod 600 ~/.openclaw/openclaw.json`
 
 ## CLI Commands
 
@@ -269,7 +259,5 @@ rm -rf ~/.openclaw/credentials && openclaw channels login  # reset credentials (
 
 ## Resources
 
-- https://openclaw.ai | https://docs.openclaw.ai
-- [Getting Started](https://docs.openclaw.ai/start/getting-started) | [Configuration](https://docs.openclaw.ai/gateway/configuration)
-- [Security](https://docs.openclaw.ai/gateway/security) | [Tailscale](https://docs.openclaw.ai/gateway/tailscale) | [Docker](https://docs.openclaw.ai/install/docker)
-- [Discord](https://discord.gg/openclaw) | [GitHub](https://github.com/openclaw/openclaw)
+- https://openclaw.ai | https://docs.openclaw.ai | [GitHub](https://github.com/openclaw/openclaw) | [Discord](https://discord.gg/openclaw)
+- [Getting Started](https://docs.openclaw.ai/start/getting-started) | [Configuration](https://docs.openclaw.ai/gateway/configuration) | [Security](https://docs.openclaw.ai/gateway/security) | [Tailscale](https://docs.openclaw.ai/gateway/tailscale) | [Docker](https://docs.openclaw.ai/install/docker)
