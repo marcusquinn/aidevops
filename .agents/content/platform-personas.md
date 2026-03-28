@@ -7,27 +7,22 @@ model: haiku
 
 # Platform Persona Adaptations
 
-Adapt your core brand voice for each platform. The base voice comes from `content/guidelines.md` and project-level `context/brand-voice.md` -- this subagent defines how to shift that voice per channel.
+Adapt your core brand voice for each platform. Base voice: `content/guidelines.md` or `context/brand-voice.md`. If `context/brand-identity.toon` exists, read it first — it defines tone, vocabulary, imagery style, and personality. See `tools/design/brand-identity.md`.
 
-**Brand identity integration**: When a project has `context/brand-identity.toon`, read it first for the base voice and visual identity before applying platform shifts below. The brand identity defines tone, vocabulary, imagery style, and personality that should carry through to every channel. See `tools/design/brand-identity.md`.
+**Workflow**: (1) establish core voice, (2) apply platform shift below, (3) keep identity constant — only delivery changes.
 
-## How to Use
+## Platform Quick Reference
 
-1. Establish your core voice in `content/guidelines.md` or `context/brand-voice.md`
-2. When writing for a specific platform, apply the adaptations below
-3. The core identity stays consistent -- only delivery changes
+| Platform | Register | Perspective | Cadence |
+|----------|----------|-------------|---------|
+| LinkedIn | Professional, thought-leadership | "I" (personal) / "We" (company) | 3-5x/week, Tue-Thu 8-10am |
+| Instagram | Casual, visual-first, aspirational | "We", behind-the-scenes | Mon-Fri 11am-1pm, 7-9pm |
+| YouTube | Educational, conversational | Direct "you", presenter-led | — |
+| X (Twitter) | Concise, opinionated | Personality-forward | Weekdays 9-11am, 1-3pm |
+| Facebook | Community-oriented, warm, local | "We" as neighbour | Wed-Fri 1-4pm |
+| Blog | Expert, thorough, SEO-aware | "We" (company), "you" (reader) | — |
 
 ## LinkedIn
-
-### Voice Adaptation
-
-- **Register**: Professional, authoritative, thought-leadership
-- **Perspective**: First-person ("I" for personal brands, "We" for company pages)
-- **Tone shift**: More formal than blog, less formal than whitepaper
-- **Reader**: Decision-makers, peers, potential clients
-- **Posting cadence**: 3-5x/week, Tuesday-Thursday mornings perform best
-
-### Structure
 
 | Format | Length | Best For |
 |--------|--------|----------|
@@ -36,31 +31,14 @@ Adapt your core brand voice for each platform. The base voice comes from `conten
 | **Carousel** | 8-12 slides, 20-40 words each | Frameworks, step-by-step guides |
 | **Document** | 5-15 pages | Reports, playbooks |
 
-### Best Practices
-
-- Open with a hook line (question, bold claim, or surprising stat)
-- Use line breaks liberally -- one thought per line
-- End with a question or clear CTA to drive engagement
-- Hashtags: 3-5 relevant ones, placed at the end
+- Open with a hook (question, bold claim, or surprising stat)
+- One thought per line; end with question or CTA
+- Hashtags: 3-5 at the end
 - Avoid: corporate jargon, "excited to announce", empty self-promotion
-- Optimal posting: Tuesday-Thursday, 8-10am local time
 
-### Example Adaptation
-
-**Core voice**: "We build custom timber windows that last decades."
-
-**LinkedIn**: "Most replacement windows fail within 15 years.\n\nWe engineered ours to last 30+.\n\nHere's what makes the difference (thread):"
+**Example**: Core: "We build custom timber windows that last decades." → LinkedIn: "Most replacement windows fail within 15 years.\n\nWe engineered ours to last 30+.\n\nHere's what makes the difference (thread):"
 
 ## Instagram
-
-### Voice Adaptation
-
-- **Register**: Casual, visual-first, aspirational
-- **Perspective**: "We" for brands, authentic and behind-the-scenes
-- **Tone shift**: Warmer, more personal than other channels
-- **Reader**: Visual browsers, lifestyle-oriented audience
-
-### Structure
 
 | Format | Caption Length | Best For |
 |--------|---------------|----------|
@@ -69,33 +47,14 @@ Adapt your core brand voice for each platform. The base voice comes from `conten
 | **Story** | 1-2 sentences overlay | Daily updates, polls, BTS |
 | **Reel** | 30-80 words caption | Process videos, quick tips |
 
-### Best Practices
-
-- Lead with the visual -- caption supports, not replaces
+- Lead with the visual — caption supports, not replaces
 - First line is the hook (visible before "more" truncation)
-- Use emoji sparingly as visual breaks, not decoration
-- Hashtags: 5-15 relevant ones (mix niche + broad), rotate sets
+- Emoji sparingly as visual breaks; hashtags: 5-15 (mix niche + broad), rotate sets
 - Alt text on every image (accessibility + SEO)
-- Place hashtags in first comment or end of caption (test both for reach)
+- Place hashtags in first comment or end of caption (test both)
 - Avoid: walls of text, hard-sell language, stock photo aesthetics
-- Optimal posting: Monday-Friday, 11am-1pm and 7-9pm local time
-
-### Example Adaptation
-
-**Core voice**: "We build custom timber windows that last decades."
-
-**Instagram**: "From raw Accoya to finished frame. Swipe to see the process. [arrow emoji]\n\nBuilt for Jersey's salt air. Built to last."
 
 ## YouTube
-
-### Voice Adaptation
-
-- **Register**: Educational, conversational, expert-but-approachable
-- **Perspective**: Direct address ("you"), presenter-led
-- **Tone shift**: More conversational than written content, explain as you go
-- **Reader**: Learners, researchers, how-to seekers
-
-### Structure
 
 | Format | Length | Best For |
 |--------|--------|----------|
@@ -104,35 +63,17 @@ Adapt your core brand voice for each platform. The base voice comes from `conten
 | **Deep dive** | 15-30 minutes | Case studies, comparisons |
 | **Vlog** | 5-10 minutes | Behind-the-scenes, day-in-life |
 
-### Best Practices
-
-- Title: keyword-front, under 60 characters, curiosity or value hook
-- Description: first 2 lines visible -- include keyword and value prop
+- Title: keyword-front, under 60 chars, curiosity or value hook
+- Description: first 2 lines visible — include keyword and value prop
 - Thumbnail: high contrast, readable text, expressive face or clear subject
-- Chapters: add timestamps for videos over 5 minutes
+- Chapters: timestamps for videos over 5 minutes
 - CTA: subscribe prompt at natural break, not forced intro
-- Avoid: clickbait that doesn't deliver, long intros, "don't forget to like and subscribe" as opener
-- Tags: 5-10 relevant keywords (include common misspellings)
+- Tags: 5-10 keywords (include common misspellings)
+- Avoid: clickbait, long intros, "don't forget to like and subscribe" as opener
 
-### Script Tone Guide
-
-```text
-Written: "Marine-grade coatings provide superior weather resistance."
-YouTube: "So we coat these with marine-grade finish -- the same stuff
-         they use on boats. And that's what stops them warping in
-         the salt air."
-```
+**Script tone**: Written: "Marine-grade coatings provide superior weather resistance." → YouTube: "So we coat these with marine-grade finish — the same stuff they use on boats. And that's what stops them warping in the salt air."
 
 ## X (Twitter)
-
-### Voice Adaptation
-
-- **Register**: Concise, opinionated, conversational
-- **Perspective**: Direct, personality-forward
-- **Tone shift**: Sharpest and most direct of all platforms
-- **Reader**: Fast scrollers, industry peers, news followers
-
-### Structure
 
 | Format | Length | Best For |
 |--------|--------|----------|
@@ -140,30 +81,11 @@ YouTube: "So we coat these with marine-grade finish -- the same stuff
 | **Thread** | 3-10 posts | Breakdowns, stories, tutorials |
 | **Quote post** | 1 sentence + context | Commentary, amplification |
 
-### Best Practices
-
-- Front-load the value -- no preamble
-- Threads: number them (1/7) or use a hook post + replies
-- One idea per post
+- Front-load the value — no preamble; one idea per post
+- Threads: number them (1/7) or use hook post + replies
 - Avoid: hashtag spam, @-mention chains, "RT if you agree"
-- Optimal posting: weekdays, 9-11am and 1-3pm local time
-
-### Example Adaptation
-
-**Core voice**: "We build custom timber windows that last decades."
-
-**X**: "Most window companies warranty 10 years. We warranty 30. Here's why that matters:"
 
 ## Facebook
-
-### Voice Adaptation
-
-- **Register**: Community-oriented, warm, local
-- **Perspective**: "We" as a neighbour, not a corporation
-- **Tone shift**: Most personal and community-focused
-- **Reader**: Local community, existing customers, referral network
-
-### Structure
 
 | Format | Length | Best For |
 |--------|--------|----------|
@@ -171,68 +93,27 @@ YouTube: "So we coat these with marine-grade finish -- the same stuff
 | **Event** | Brief description + details | Workshops, open days |
 | **Album** | 5-20 photos + captions | Project showcases |
 
-### Best Practices
-
-- Write like you're talking to a neighbour
-- Photos of real work outperform polished graphics
-- Ask questions to drive comments
-- Respond to every comment
+- Write like you're talking to a neighbour; respond to every comment
+- Photos of real work outperform polished graphics; ask questions to drive comments
 - Avoid: corporate tone, link-only posts, engagement bait
-- Optimal posting: Wednesday-Friday, 1-4pm local time
 
 ## Blog / Website
 
-### Voice Adaptation
+See `content/guidelines.md` for full formatting standards. See `content/social-bird.md` for X/Twitter API and `content/social-linkedin.md` for LinkedIn automation.
 
-- **Register**: Expert, thorough, SEO-aware
-- **Perspective**: "We" for company, "you" for reader
-- **Tone shift**: Most detailed and structured of all channels
-- **Reader**: Search visitors, researchers, potential customers
-
-### Structure
-
-See `content/guidelines.md` for full blog formatting standards. See `content/social-bird.md` for X/Twitter API integration and `content/social-linkedin.md` for LinkedIn automation. Key differences from social:
-
-- Longer form (1,500-3,000 words for pillar content)
-- H2/H3 hierarchy for scannability
-- Internal links (3-5 per article)
-- Meta title and description optimised for search (150-160 chars, include primary keyword)
-- One sentence per paragraph (per guidelines.md)
+- Longer form: 1,500-3,000 words for pillar content
+- H2/H3 hierarchy; internal links (3-5 per article); one sentence per paragraph
+- Meta title + description: 150-160 chars, include primary keyword
+- SEO: primary keyword in title + H1 + first 100 words + meta; secondary in H2s; image alt text; URL slug under 60 chars
 - Structured data: Article schema, FAQ schema where applicable, breadcrumbs
-- SEO: Primary keyword in title + H1 + first 100 words + meta. Secondary keywords in H2s. Image alt text with keywords. URL slug under 60 chars.
 
-## Adapting Your Core Voice
+## Adaptation Framework
 
-### The Adaptation Framework
+**Constant**: brand values, key messages, spelling conventions, honesty, expertise.
 
-When writing for any platform, apply this checklist:
+**Variable**: sentence length, formality, emoji/hashtags, content structure, CTA style, level of detail.
 
-1. **Start with core voice** from `guidelines.md` or `context/brand-voice.md`
-2. **Adjust register** (formal <-> casual) per platform table above
-3. **Adjust length** to platform norms
-4. **Adjust structure** (visual-first, text-first, video script)
-5. **Keep identity consistent** -- same values, different delivery
-
-### What Stays Constant
-
-- Brand values and positioning
-- Key messages and differentiators
-- Spelling conventions (British English if set in guidelines)
-- Honesty and authenticity
-- Expertise and authority
-
-### What Changes
-
-- Sentence length and complexity
-- Formality level
-- Use of emoji and hashtags
-- Content structure and formatting
-- Call-to-action style
-- Level of detail
-
-## Cross-Platform Content Repurposing
-
-One piece of content can feed multiple platforms:
+## Cross-Platform Repurposing
 
 ```text
 Blog post (2,000 words)
