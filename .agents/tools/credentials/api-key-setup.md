@@ -18,91 +18,49 @@ tools:
 
 ## Quick Reference
 
-- **Recommended**: `aidevops secret set NAME` (gopass encrypted, AI-safe)
+- **Recommended**: `aidevops secret set NAME` (gopass encrypted, AI-safe) — see `gopass.md`
 - **Plaintext fallback**: `~/.config/aidevops/credentials.sh` (600 permissions)
-- **Working Dirs**: `~/.aidevops/` (agno, stagehand, reports)
 - **Setup**: `bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh setup`
-
-**Encrypted storage** (recommended):
-
-- `aidevops secret init` - Initialize gopass store
-- `aidevops secret set NAME` - Store secret (hidden input, GPG-encrypted)
-- `aidevops secret list` - List names (never values)
-- `aidevops secret run CMD` - Inject secrets + redact output
-
-**Plaintext storage** (fallback):
-
-- `set <service-name> <VALUE>` - Store API key (converts to UPPER_CASE export)
-- `add 'export VAR="value"'` - Parse and store export command
-- `get <service-name>` - Retrieve key value
-- `list` - Show configured services (keys redacted)
-
-**Common Services**: codacy-project-token, sonar-token, coderabbit-api-key, hcloud-token-*, openai-api-key
+- **Multi-tenant**: `credential-helper.sh` — see `multi-tenant.md`
+- **Common Services**: codacy-project-token, sonar-token, coderabbit-api-key, hcloud-token-*, openai-api-key
 
 **Security**: NEVER accept secret values in AI conversation. Instruct users to run `aidevops secret set NAME` at their terminal.
+
 <!-- AI-CONTEXT-END -->
 
-## Directory Structure
-
-AI DevOps uses two directories for different purposes:
+## Storage Layout
 
 | Location | Purpose | Permissions |
 |----------|---------|-------------|
-| `~/.config/aidevops/` | **Secrets & credentials** | 700 (dir), 600 (files) |
-| `~/.aidevops/` | **Working directories** (agno, stagehand, reports) | Standard |
+| `~/.config/aidevops/credentials.sh` | API keys as shell exports | 600 |
+| `~/.config/aidevops/tenants/{tenant}/credentials.sh` | Per-tenant keys (see `multi-tenant.md`) | 600 |
+| `~/.config/aidevops/` | Secrets directory | 700 |
 
-## Security Principle
+**Principle**: API keys are stored ONLY in `~/.config/aidevops/credentials.sh` (or gopass), NEVER in repository files. This file is sourced by your shell on startup.
 
-**API keys are stored ONLY in `~/.config/aidevops/credentials.sh`, NEVER in repository files.**
+## Setup
 
-This file is automatically sourced by your shell (zsh and bash) on startup.
-
-## Setup Instructions
-
-### 1. Initialize Secure Storage
+### 1. Initialize
 
 ```bash
 bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh setup
 ```
 
-This will:
-
-- Create `~/.config/aidevops/` with secure permissions
-- Create `credentials.sh` for storing API keys
-- Add sourcing to your shell configs (`.zshrc`, `.bashrc`, `.bash_profile`)
+Creates `~/.config/aidevops/` (700), `credentials.sh` (600), and adds sourcing to `.zshrc`/`.bashrc`/`.bash_profile`.
 
 ### 2. Store API Keys
 
-#### Method A: Using the helper script
-
 ```bash
-# Service name format (converted to UPPER_CASE)
+# By service name (auto-converts to UPPER_CASE export)
 bash .agents/scripts/setup-local-api-keys.sh set vercel-token YOUR_TOKEN
-# Result: export VERCEL_TOKEN="YOUR_TOKEN"
+# → export VERCEL_TOKEN="YOUR_TOKEN"
 
-bash .agents/scripts/setup-local-api-keys.sh set sonar YOUR_TOKEN
-# Result: export SONAR="YOUR_TOKEN"
-```
-
-#### Method B: Paste export commands from services
-
-Many services give you an export command like:
-
-```bash
-export VERCEL_TOKEN="abc123"
-```
-
-Use the `add` command to parse and store it:
-
-```bash
-bash .agents/scripts/setup-local-api-keys.sh add 'export VERCEL_TOKEN="abc123"'
-```
-
-#### Method C: Direct env var name
-
-```bash
+# By env var name directly
 bash .agents/scripts/setup-local-api-keys.sh set SUPABASE_KEY abc123
-# Result: export SUPABASE_KEY="abc123"
+# → export SUPABASE_KEY="abc123"
+
+# Parse an export command from a service dashboard
+bash .agents/scripts/setup-local-api-keys.sh add 'export VERCEL_TOKEN="abc123"'
 ```
 
 ### 3. Common Services
@@ -124,157 +82,56 @@ bash .agents/scripts/setup-local-api-keys.sh set hcloud-token-projectname YOUR_T
 bash .agents/scripts/setup-local-api-keys.sh set openai-api-key YOUR_KEY
 ```
 
-### 4. Verify Storage
+### 4. Verify
 
 ```bash
-# List configured services (keys are not shown)
-bash .agents/scripts/setup-local-api-keys.sh list
-
-# Get a specific key
-bash .agents/scripts/setup-local-api-keys.sh get sonar-token
-
-# View the file directly (redacted)
-cat ~/.config/aidevops/credentials.sh | sed 's/=.*/=<REDACTED>/'
+bash .agents/scripts/setup-local-api-keys.sh list   # Services (keys redacted)
+bash .agents/scripts/setup-local-api-keys.sh get sonar-token  # Specific key
 ```
 
 ## How It Works
 
-1. **credentials.sh** contains all API keys as shell exports:
-
-   ```bash
-   export SONAR_TOKEN="xxx"
-   export OPENAI_API_KEY="xxx"
-   ```
-
-2. **Shell startup** sources this file automatically:
-
-   ```bash
-   # In ~/.zshrc and ~/.bashrc:
-   [[ -f ~/.config/aidevops/credentials.sh ]] && source ~/.config/aidevops/credentials.sh
-   ```
-
-3. **All processes** (terminals, scripts, MCPs) get access to the env vars
-
-## Storage Locations
-
-### Secrets (Secure - 600 permissions)
-
-- `~/.config/aidevops/credentials.sh` - Credential loader (sources active tenant)
-- `~/.config/aidevops/tenants/{tenant}/credentials.sh` - Per-tenant API keys and tokens
-
-### Working Directories (Standard permissions)
-
-- `~/.aidevops/agno/` - Agno AI framework
-- `~/.aidevops/agent-ui/` - Agent UI frontend
-- `~/.aidevops/stagehand/` - Browser automation
-- `~/.aidevops/reports/` - Generated reports
-- `~/.aidevops/mcp/` - MCP configurations
-
-### NEVER Store In
-
-- Repository files (any file in `~/Git/aidevops/`)
-- Documentation or code examples
-- Git-tracked configuration files
-
-## Security Features
-
-### File Permissions
+`credentials.sh` contains shell exports (`export SONAR_TOKEN="xxx"`). Shell startup sources it automatically:
 
 ```bash
-# Verify permissions
-ls -la ~/.config/aidevops/
-# drwx------ (700) for directory
-# -rw------- (600) for credentials.sh
+# Added to ~/.zshrc and ~/.bashrc by setup:
+[[ -f ~/.config/aidevops/credentials.sh ]] && source ~/.config/aidevops/credentials.sh
 ```
 
-### Fix Permissions
+All processes (terminals, scripts, MCPs) inherit these env vars.
+
+## Permissions
 
 ```bash
-chmod 700 ~/.config/aidevops
-chmod 600 ~/.config/aidevops/credentials.sh
+# Verify
+ls -la ~/.config/aidevops/
+# drwx------ (700) directory, -rw------- (600) credentials.sh
+
+# Fix if needed
+chmod 700 ~/.config/aidevops && chmod 600 ~/.config/aidevops/credentials.sh
 ```
 
 ## Troubleshooting
 
-### Key Not Found
+**Key not found**: Check storage (`setup-local-api-keys.sh get service-name`), check env (`echo $SERVICE_NAME`), re-add if missing.
 
-```bash
-# Check if stored
-bash .agents/scripts/setup-local-api-keys.sh get service-name
+**Changes not taking effect**: `source ~/.zshrc` (or `~/.bashrc`), or restart terminal.
 
-# Check environment
-echo $SERVICE_NAME
-
-# Re-add if missing
-bash .agents/scripts/setup-local-api-keys.sh set service-name YOUR_KEY
-```
-
-### Changes Not Taking Effect
-
-```bash
-# Reload shell config
-source ~/.zshrc  # or ~/.bashrc
-
-# Or restart terminal
-```
-
-### Shell Integration Missing
-
-```bash
-# Re-run setup to add sourcing to shell configs
-bash .agents/scripts/setup-local-api-keys.sh setup
-```
-
-## Multi-Tenant Support
-
-For managing multiple accounts (clients, environments, organizations):
-
-```bash
-# Initialize multi-tenant storage
-bash .agents/scripts/credential-helper.sh init
-
-# Create per-client tenants
-bash .agents/scripts/credential-helper.sh create client-acme
-bash .agents/scripts/credential-helper.sh set GITHUB_TOKEN ghp_xxx --tenant client-acme
-
-# Switch globally or per-project
-bash .agents/scripts/credential-helper.sh switch client-acme
-bash .agents/scripts/credential-helper.sh use client-acme  # per-project override
-```
-
-Note: with multi-tenant enabled, credentials live in
-`~/.config/aidevops/tenants/{tenant}/credentials.sh`; `~/.config/aidevops/credentials.sh`
-is now a loader for the active tenant.
-
-See `multi-tenant.md` for full documentation.
+**Shell integration missing**: Re-run `setup-local-api-keys.sh setup` to add sourcing lines.
 
 ## Best Practices
 
-1. **Use gopass** - Prefer `aidevops secret set` for encrypted storage
-2. **Single source** - Always add keys via `aidevops secret set`, `setup-local-api-keys.sh`, or `credential-helper.sh`
-3. **Regular rotation** - Rotate API keys every 90 days
-4. **Minimal permissions** - Use tokens with minimal required scopes
-5. **Monitor usage** - Check API usage in provider dashboards
-6. **Never commit** - API keys should never appear in git history
-7. **Use tenants** - Separate client/environment credentials with multi-tenant storage
-8. **AI-safe** - Never accept secret values in AI conversation context
-
-## Encrypted Storage (Recommended)
-
-For encrypted secret storage with gopass, see `tools/credentials/gopass.md`.
-
-```bash
-# Quick start
-aidevops secret init              # One-time setup
-aidevops secret set API_KEY       # Store (hidden input)
-aidevops secret run some-command  # Use (injected + redacted)
-```
+1. **Prefer gopass** — `aidevops secret set` for encrypted storage
+2. **Single source** — always add keys via `aidevops secret set`, `setup-local-api-keys.sh`, or `credential-helper.sh`
+3. **Rotate every 90 days**, use minimal-scope tokens, monitor usage in provider dashboards
+4. **Never commit** — API keys must never appear in git history
+5. **AI-safe** — never accept secret values in AI conversation context
 
 ## Beyond API Keys
 
-For config files and directories with secrets, see the full encryption stack:
-
+- **Encrypted storage (recommended)**: `tools/credentials/gopass.md`
+- **Multi-tenant credentials**: `tools/credentials/multi-tenant.md`
 - **Config files in git** (YAML/JSON with encrypted values): `tools/credentials/sops.md`
 - **Directory encryption at rest**: `tools/credentials/gocryptfs.md`
 - **Decision guide**: `tools/credentials/encryption-stack.md`
-- **Project setup**: `aidevops init sops` to add SOPS support to a project
+- **Project setup**: `aidevops init sops` to add SOPS support
