@@ -303,18 +303,12 @@ read_state() {
 # Handler commands
 # =============================================================================
 
-cmd_setup() {
-	local slug="$1"
-	local fork_path="$2"
+# setup_detect_commands <fork-path>
+# Detects and persists package manager, build command, and test command.
+# Prints the detected package manager name to stdout.
+setup_detect_commands() {
+	local fork_path="$1"
 
-	printf "${BLUE}[generic] setup: %s at %s${NC}\n" "$slug" "$fork_path"
-
-	if [[ ! -d "$fork_path" ]]; then
-		printf "${RED}Error: fork path not found: %s${NC}\n" "$fork_path" >&2
-		return 1
-	fi
-
-	# Detect package manager
 	local pm
 	pm="$(detect_package_manager "$fork_path")"
 	if [[ -z "$pm" ]]; then
@@ -324,19 +318,26 @@ cmd_setup() {
 	printf "  Detected package manager: %s\n" "$pm"
 	write_state "$fork_path" "package_manager" "$pm"
 
-	# Detect build command
 	local build_cmd
 	build_cmd="$(detect_build_command "$fork_path" "$pm")"
 	printf "  Detected build command: %s\n" "${build_cmd:-"(none)"}"
 	write_state "$fork_path" "build_cmd" "$build_cmd"
 
-	# Detect test command
 	local test_cmd
 	test_cmd="$(detect_test_command "$fork_path" "$pm")"
 	printf "  Detected test command: %s\n" "${test_cmd:-"(none)"}"
 	write_state "$fork_path" "test_cmd" "$test_cmd"
 
-	# Install dependencies based on package manager
+	echo "$pm"
+	return 0
+}
+
+# setup_install_deps <fork-path> <package-manager>
+# Installs dependencies for the detected package manager.
+setup_install_deps() {
+	local fork_path="$1"
+	local pm="$2"
+
 	case "$pm" in
 	npm)
 		printf "  Running: npm install\n"
@@ -405,6 +406,24 @@ cmd_setup() {
 		printf "  No automatic dependency install for %s — skipping\n" "$pm"
 		;;
 	esac
+	return 0
+}
+
+cmd_setup() {
+	local slug="$1"
+	local fork_path="$2"
+
+	printf "${BLUE}[generic] setup: %s at %s${NC}\n" "$slug" "$fork_path"
+
+	if [[ ! -d "$fork_path" ]]; then
+		printf "${RED}Error: fork path not found: %s${NC}\n" "$fork_path" >&2
+		return 1
+	fi
+
+	local pm
+	pm="$(setup_detect_commands "$fork_path")"
+
+	setup_install_deps "$fork_path" "$pm" || return 1
 
 	printf "${GREEN}[generic] setup complete${NC}\n"
 	return 0
