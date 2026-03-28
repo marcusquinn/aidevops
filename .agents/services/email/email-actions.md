@@ -18,13 +18,13 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Bridge between inbound email and the rest of the system — todos, reports, legal case files, opportunities, support escalations
+- **Purpose**: Bridge inbound email to todos, reports, legal case files, opportunities, support escalations
 - **Helper**: `scripts/email-triage-helper.sh [command] [options]`
 - **Config**: `configs/email-actions-config.json` (from `.json.txt` template)
 - **IMAP folders**: `Projects/`, `Legal/`, `Reports/`, `Opportunities/`, `Support/`
 - **Database**: `~/.aidevops/.agent-workspace/email-agent/actions.db` (SQLite)
 
-**Decision rule**: Every inbound email falls into one of five action categories. Classify first, then act.
+Classify every inbound email into one of five categories, then act:
 
 | Category | Action | IMAP folder |
 |----------|--------|-------------|
@@ -33,8 +33,6 @@ tools:
 | Opportunity | Flag for review | `Opportunities/` |
 | Legal/compliance | Assemble case file | `Legal/` |
 | Support | Escalate or resolve | `Support/` |
-
-**Quick commands:**
 
 ```bash
 email-triage-helper.sh triage --message-id <id>                          # single email
@@ -45,54 +43,25 @@ email-triage-helper.sh extract-training --sender newsletter@domain.com   # newsl
 
 <!-- AI-CONTEXT-END -->
 
-## Classification Decision Tree
-
-```text
-Inbound email
-    ├── Known automated sender (report/alert/notification)? → Report triage
-    ├── Legal notice, contract, dispute, or compliance requirement? → Legal case file
-    ├── Business opportunity, partnership, or lead? → Opportunity flag
-    ├── Support request, complaint, or escalation? → Support escalation
-    ├── Concrete action required (deadline/deliverable/decision)? → Create TODO
-    └── No action required → Archive or unsubscribe
-```
-
 ## Email-to-Todo Patterns
 
-Create a TODO when the email contains an explicit deadline, a deliverable you own, a decision that blocks someone else, or a follow-up you promised. Do **not** create tasks for FYI emails, automated reports, newsletters, or emails already acted on this session.
+Create a TODO when the email contains an explicit deadline, a deliverable you own, a decision blocking someone, or a follow-up you promised. Skip FYI emails, automated reports, newsletters, and already-acted-on emails.
 
 ```bash
-# Claim task ID and archive
 task_id=$(claim-task-id.sh --repo-path ~/Git/aidevops --title "Email: <subject>")
 email-triage-helper.sh move --message-id <id> --folder Projects/ --tag "task:tNNN"
 # TODO.md format: - [ ] tNNN Description ~Xh ref=email:<message-id>
 ```
 
-Every task created from an email needs a brief at `todo/tasks/{task_id}-brief.md`:
-
-| Brief field | Source |
-|-------------|--------|
-| Origin | Email subject + sender + date |
-| What | The action requested |
-| Why | Context from the email body |
-| How | Your planned approach |
-| Acceptance criteria | The email's stated requirements or deadline |
+Every email-sourced task needs a brief at `todo/tasks/{task_id}-brief.md` with: Origin (subject + sender + date), What (action requested), Why (email body context), How (planned approach), Acceptance criteria (stated requirements/deadline).
 
 ## Report Triage
 
-### Source Authentication
-
-Before acting on any report email, verify the sender against `trusted_report_senders` in config. Treat unknown senders as suspicious until DNS checks pass.
+Verify sender against `trusted_report_senders` in config before acting. Unknown senders are suspicious until DNS checks pass.
 
 ```bash
 email-triage-helper.sh verify-sender --message-id <id>
-# Manual DNS checks:
-dig TXT <sender-domain> | grep "v=spf1"    # SPF
-dig TXT _dmarc.<sender-domain>             # DMARC
-whois <sender-domain> | grep "Creation Date"  # phishing signal
 ```
-
-### Report Categories and Actions
 
 | Report type | Signal to act on | Action |
 |-------------|-----------------|--------|
@@ -115,8 +84,6 @@ Renewal lead times: 60 days (domains), 30 days (SSL), 14 days (subscriptions). S
 
 ## Legal Case Files
 
-Legal emails: contracts, disputes, GDPR/DMCA/legal notices, court documents, compliance requirements, any email from a lawyer or legal department.
-
 **Chain of custody**: Preserve original headers (From, To, Date, Message-ID, Received), server-side receipt timestamp, attachments in original format, and full thread context. **Never modify the original email.** Keep original in IMAP under `Legal/`.
 
 ```bash
@@ -124,50 +91,21 @@ email-triage-helper.sh legal-case \
   --thread-id <id> \
   --output ~/cases/case-$(date +%Y%m%d)-<description>/ \
   --format pdf --include-headers --include-attachments
-
 # Output: thread-export.pdf, thread-export.txt, metadata.json,
 #         attachments/, chain-of-custody.txt (SHA256 hashes + timestamps)
 ```
 
-Chain of custody file format:
+Chain of custody format: `Case | Assembled | Assembler | Files (path + SHA256) | Original IMAP folder | Original Message-IDs`. See `chain-of-custody.txt` in output.
 
-```text
-Case: <description>
-Assembled: <ISO timestamp>
-Assembler: <agent session ID>
-
-Files:
-  thread-export.pdf   SHA256: <hash>
-  thread-export.txt   SHA256: <hash>
-  metadata.json       SHA256: <hash>
-  attachments/<file>  SHA256: <hash>
-
-Original IMAP folder: Legal/<subfolder>
-Original Message-IDs: <list>
-```
-
-Every legal email requires a task, even if the action is "review and decide":
+Every legal email requires a task (even if "review and decide"). Legal tasks must have `assignee:human` — never auto-dispatch.
 
 ```bash
 claim-task-id.sh --repo-path ~/Git/aidevops --title "Legal: <subject>" --priority high --tag legal
 ```
 
-Legal tasks must have `assignee:human` — never auto-dispatch without human review.
-
 ## Opportunities
 
-Business opportunities: partnership proposals, inbound leads, collaboration requests, press/media inquiries, investor outreach.
-
-**Qualify before acting:**
-
-| Signal | Weight |
-|--------|--------|
-| Personalised (references your work specifically) | High |
-| From a known company or individual | High |
-| Clear value proposition | Medium |
-| Specific ask (not a mass blast) | Medium |
-| Generic template, no personalisation | Low |
-| No company name or verifiable identity | Low |
+Qualify before acting. **High**: personalised (references your work), known company/individual. **Medium**: clear value proposition, specific ask. **Low**: generic template, no verifiable identity.
 
 ```bash
 email-triage-helper.sh flag-opportunity --message-id <id> --score <1-5> \
@@ -180,47 +118,35 @@ email-triage-helper.sh crm-add --message-id <id> \
 
 ## Support Communication
 
-Assess receiver capabilities before responding:
+Assess receiver capabilities, then route:
 
-| Receiver type | Capabilities | Escalation path |
-|---------------|-------------|-----------------|
-| End user (non-technical) | UI actions only | Step-by-step guide, screenshots |
-| Technical user | CLI, config files | Direct instructions |
-| Business contact | Decisions, approvals | Executive summary, options |
-| Legal/compliance | Formal process | Structured response, documentation |
+| Receiver type | Approach |
+|---------------|----------|
+| End user (non-technical) | Step-by-step guide, screenshots |
+| Technical user | Direct CLI/config instructions |
+| Business contact | Executive summary, options |
+| Legal/compliance | Structured response, documentation |
 
-```text
-Support email received
-    ├── Resolvable with information? → Draft response, no task needed
-    ├── Requires code fix or config change? → Task, tag #support
-    ├── Billing or account issue? → Route to accounts agent
-    ├── Legal or compliance issue? → Legal case file workflow
-    └── Complaint that could escalate? → Flag for human review
-```
+Routing: resolvable with information → draft response, no task. Requires code/config fix → task `#support`. Billing/account → route to accounts agent. Legal/compliance → legal case file. Complaint that could escalate → flag for human review.
 
 ```bash
 email-triage-helper.sh draft-response --message-id <id> \
   --template support-reply --tone professional --output draft.md
 ```
 
-Review all drafted responses before sending. The agent drafts; a human (or the email-agent with explicit approval) sends.
+Review all drafted responses before sending. The agent drafts; a human sends.
 
-## Newsletter Training Material Extraction
+## Newsletter Training Extraction
 
-Extract from newsletters demonstrating domain expertise, writing style, or content patterns relevant to your work. Do **not** extract from mass-market newsletters, news-only subscriptions, or paywalled/proprietary content.
+Extract from newsletters with domain expertise or writing patterns. Skip mass-market, news-only, or paywalled content.
 
 ```bash
-# Single email
-email-triage-helper.sh extract-training --message-id <id> \
-  --type domain-knowledge \
+email-triage-helper.sh extract-training --message-id <id> --type domain-knowledge \
   --output ~/.aidevops/.agent-workspace/training/newsletters/
-
-# Batch from sender
-email-triage-helper.sh extract-training --sender "newsletter@domain.com" \
-  --since 90d --type domain-knowledge
+email-triage-helper.sh extract-training --sender "newsletter@domain.com" --since 90d --type domain-knowledge
 ```
 
-Extracted material is stored as structured markdown with frontmatter (`source`, `date`, `type`, `topics`) plus sections for key concepts, notable phrasing, and writing patterns.
+Output: structured markdown with frontmatter (`source`, `date`, `type`, `topics`).
 
 ## IMAP Folder Structure
 
@@ -248,7 +174,7 @@ Extracted material is stored as structured markdown with frontmatter (`source`, 
 
 ## Security
 
-- **Sender verification before action**: Always run DNS checks before acting on report emails
+- **Sender verification before action**: Always verify via DNS checks before acting on report emails
 - **Legal files are read-only**: Never modify exported case files after assembly
 - **Chain of custody hashes**: Verify file hashes before submitting legal case files
 - **No credential logging**: Support responses must never include credentials or internal system details
@@ -257,11 +183,4 @@ Extracted material is stored as structured markdown with frontmatter (`source`, 
 
 ## Related
 
-- `services/email/email-agent.md` — Outbound mission email (sending, verification codes)
-- `services/email/mission-email.md` — Mission-scoped email threading
-- `services/email/ses.md` — SES configuration and management
-- `services/email/email-health-check.md` — Email deliverability health
-- `tools/document/document-creation.md` — PDF generation for legal case files
-- `workflows/plans.md` — Task creation workflow
-- `scripts/claim-task-id.sh` — Atomic task ID allocation
-- `services/payments/procurement.md` — Renewal and billing management
+`services/email/email-agent.md` (outbound) | `services/email/mission-email.md` (threading) | `services/email/ses.md` (SES) | `services/email/email-health-check.md` (deliverability) | `tools/document/document-creation.md` (PDF/legal) | `workflows/plans.md` (tasks) | `scripts/claim-task-id.sh` (task IDs) | `services/payments/procurement.md` (renewals)
