@@ -75,8 +75,7 @@ HOOK: [First 3s direction]  |  BODY: [Key points]  |  CTA: [Action]
 SPECS: Format · Size · Length · Due  |  INSPIRATION: [Links]  |  METRICS: [Target]
 ```
 
-**DO:** Be specific · Include visual examples · Define success metrics · Allow creative freedom.
-**DON'T:** Leave sections blank · Skip the "why" · Forget specs · Set unrealistic timelines.
+**DO:** Be specific · Include visual examples · Define success metrics · Allow creative freedom. **DON'T:** Leave sections blank · Skip the "why" · Forget specs · Set unrealistic timelines.
 
 ---
 
@@ -115,8 +114,7 @@ Three layers: **Commoditized** (say it better) · **Gaps** (own it) · **Unique 
 3. **Analyze (30m):** Cross-competitor trends, messaging gaps, new offers
 4. **Act (30m):** 3-5 test concepts, update positioning
 
-**Track:** Competitor · Date · Platform · Format · Hook · Message · Offer · CTA · Screenshot · Status · Months running · Our response.
-**Ethics:** Research and get inspired -- never copy verbatim, steal assets, or imitate brand.
+**Track:** Competitor · Date · Platform · Format · Hook · Message · Offer · CTA · Screenshot · Status · Months running · Our response. **Ethics:** Research and get inspired -- never copy verbatim, steal assets, or imitate brand.
 
 **Insights to action examples:** Competitor UGC running 6+ months -> create 5 UGC ads, same format, our messaging. All competitors feature-focused -> own "easy onboarding" with "setup in 5 min" series. Competitor running 40% discounts -> position as premium or test offer vs. value messaging.
 
@@ -131,14 +129,14 @@ Three layers: **Commoditized** (say it better) · **Gaps** (own it) · **Unique 
 | Q3 | Independence Day · Prime Day · Back to School · Labor Day |
 | Q4 | Halloween · Black Friday/Cyber Monday · Thanksgiving · Christmas · NYE |
 
-**Timeline:** 6-8w concept -> 4-6w production -> 2-4w launch -> monitor -> analyze. **Budget:** Evergreen 60-70% + Seasonal 30-40%.
-**Fit test:** Seasonal angle must make sense for product. Good: "New Year, New Workspace -- 40% Off." Bad: "Happy Halloween! Buy Our B2B SaaS!"
+**Timeline:** 6-8w concept -> 4-6w production -> 2-4w launch -> monitor -> analyze. **Budget:** Evergreen 60-70% + Seasonal 30-40%. **Fit test:** Seasonal angle must make sense for product. Good: "New Year, New Workspace -- 40% Off." Bad: "Happy Halloween! Buy Our B2B SaaS!"
+
 **Examples:** BFCM: bold text, countdown timers, urgency. New Year: before/after, resolution angle. Valentine's: gift or self-love angle + delivery deadline. Back to School: organization-focused, parent relief or student discount.
 
 ### Trending Creative
 
-**Lifecycles:** Viral meme 3-7d · Platform trend 2-4w · Cultural event 1-2w · News 1-3d (or avoid).
-**Process:** Spot early -> 24-48h turnaround -> launch while relevant -> kill when trend dies.
+**Lifecycles:** Viral meme 3-7d · Platform trend 2-4w · Cultural event 1-2w · News 1-3d (or avoid). **Process:** Spot early -> 24-48h turnaround -> launch while relevant -> kill when trend dies.
+
 **Fit check:** Aligns with brand? Relevant to audience? Adds value? Safe? Any NO -> skip. **Newsjacking:** Only positive/industry-relevant/non-controversial. Never tragedies or political topics.
 
 ---
@@ -173,8 +171,7 @@ Three layers: **Commoditized** (say it better) · **Gaps** (own it) · **Unique 
 
 ## Ad Fatigue Prevention
 
-**Symptoms:** CTR down >20% WoW · CPA up >25% · Frequency >5 · Relevance score dropping · "I keep seeing this ad!" comments.
-**Onset:** Cold 7-14d · Warm 14-30d · Small audience (<50K) faster · Large (>1M) slower.
+**Symptoms:** CTR down >20% WoW · CPA up >25% · Frequency >5 · Relevance score dropping · "I keep seeing this ad!" comments. **Onset:** Cold 7-14d · Warm 14-30d · Small audience (<50K) faster · Large (>1M) slower.
 
 ### Prevention
 
@@ -202,13 +199,13 @@ Three layers: **Commoditized** (say it better) · **Gaps** (own it) · **Unique 
 
 **1-second rule:** Viewer decides instantly. Need: visual intrigue · emotional trigger · curiosity gap · contrast · clarity at small size.
 
-**Faces:** Close-up 40-60% of frame, exaggerated expressions, direct eye contact. Avoid tiny/neutral/looking-away.
-**Emotions:** Shock -> results · Excitement -> wins · Curiosity -> teasers · Frustration -> problems · Happy -> tutorials.
-**Text:** 3-6 words max · bold fonts (Impact, Montserrat Bold, Bebas Neue) · high contrast · never cover face.
-**Formulas:** "$10K in 30 Days" · "How I [Result]" · "[A] vs. [B]" · "Don't [Mistake]" · "Why [Surprising Fact]?"
+**Faces:** Close-up 40-60% of frame, exaggerated expressions, direct eye contact. Avoid tiny/neutral/looking-away. **Emotions:** Shock -> results · Excitement -> wins · Curiosity -> teasers · Frustration -> problems · Happy -> tutorials.
+
+**Text:** 3-6 words max · bold fonts (Impact, Montserrat Bold, Bebas Neue) · high contrast · never cover face. **Formulas:** "$10K in 30 Days" · "How I [Result]" · "[A] vs. [B]" · "Don't [Mistake]" · "Why [Surprising Fact]?"
+
 **Color pairs:** Black+White · Yellow+Black · Red+White · Blue+Orange · Purple+Yellow. **Avoid:** Yellow+White · Light blue+Light green · Dark blue+Black.
 
-### Platform Specs
+### Platform Specs & Templates
 
 | Platform | Specs | Notes |
 |----------|-------|-------|
@@ -216,8 +213,6 @@ Three layers: **Commoditized** (say it better) · **Gaps** (own it) · **Unique 
 | FB/IG Feed | 1080x1080 (sq), 1920x1080 (land) | Assume sound-off, larger text for mobile |
 | Stories/Reels | 1080x1920 | Text in middle third, avoid top/bottom 250px |
 | TikTok/Shorts | 9:16 only | First frame = thumbnail, start with hook visual |
-
-### Thumbnail Templates
 
 | Template | Layout | Best For |
 |----------|--------|----------|
