@@ -66,9 +66,9 @@ echo ""
 # Test 1: generate with explicit CLI, model, tokens
 # ─────────────────────────────────────────────────────────────────────────────
 echo "Test 1: generate with all explicit fields"
-result=$("$HELPER" generate --cli "OpenCode CLI" --cli-version "1.3.3" --model "anthropic/claude-opus-4-6" --tokens 1234)
+result=$("$HELPER" generate --cli "OpenCode" --cli-version "1.3.3" --model "anthropic/claude-opus-4-6" --tokens 1234)
 assert_contains "starts with aidevops" "[aidevops.sh](https://aidevops.sh)" "$result"
-assert_contains "contains CLI with in" "in [OpenCode CLI](https://opencode.ai) v1.3.3" "$result"
+assert_contains "contains CLI with plugin for" "plugin for [OpenCode](https://opencode.ai) v1.3.3" "$result"
 assert_contains "model strips provider prefix" "with claude-opus-4-6" "$result"
 assert_not_contains "no provider prefix" "anthropic/" "$result"
 assert_contains "contains formatted tokens" "used 1,234 tokens" "$result"
@@ -79,7 +79,7 @@ assert_contains "contains formatted tokens" "used 1,234 tokens" "$result"
 echo ""
 echo "Test 2: explicit --tokens 0 omits tokens"
 result=$("$HELPER" generate --cli "Claude Code" --cli-version "2.0.1" --model "anthropic/claude-sonnet-4-6" --tokens 0)
-assert_contains "contains Claude Code" "in [Claude Code](https://claude.ai/code) v2.0.1" "$result"
+assert_contains "contains Claude Code" "plugin for [Claude Code](https://claude.ai/code) v2.0.1" "$result"
 assert_not_contains "no tokens field" "tokens" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -87,7 +87,7 @@ assert_not_contains "no tokens field" "tokens" "$result"
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
 echo "Test 3: zero tokens omitted"
-result=$("$HELPER" generate --cli "OpenCode CLI" --model "anthropic/claude-opus-4-6" --tokens 0)
+result=$("$HELPER" generate --cli "OpenCode" --model "anthropic/claude-opus-4-6" --tokens 0)
 assert_not_contains "zero tokens omitted" "tokens" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -96,7 +96,7 @@ assert_not_contains "zero tokens omitted" "tokens" "$result"
 echo ""
 echo "Test 4: no model"
 result=$("$HELPER" generate --cli "Cursor" --tokens 0)
-assert_contains "contains Cursor link" "in [Cursor](https://cursor.com)" "$result"
+assert_contains "contains Cursor link" "plugin for [Cursor](https://cursor.com)" "$result"
 assert_contains "contains aidevops" "aidevops.sh" "$result"
 assert_not_contains "no model field" "with " "$result"
 
@@ -105,9 +105,9 @@ assert_not_contains "no model field" "with " "$result"
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
 echo "Test 5: footer includes --- separator"
-result=$("$HELPER" footer --cli "OpenCode CLI" --cli-version "1.0.0" --model "anthropic/claude-sonnet-4-6" --tokens 5000)
+result=$("$HELPER" footer --cli "OpenCode" --cli-version "1.0.0" --model "anthropic/claude-sonnet-4-6" --tokens 5000)
 assert_contains "contains ---" "---" "$result"
-assert_contains "contains signature" "in [OpenCode CLI](https://opencode.ai) v1.0.0" "$result"
+assert_contains "contains signature" "plugin for [OpenCode](https://opencode.ai) v1.0.0" "$result"
 assert_contains "contains tokens" "used 5,000 tokens" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -132,7 +132,7 @@ assert_contains "7-digit with commas" "1,234,567 tokens" "$result"
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
 echo "Test 7: CLI URL mapping"
-result=$("$HELPER" generate --cli "OpenCode CLI" --model "m")
+result=$("$HELPER" generate --cli "OpenCode" --model "m")
 assert_contains "OpenCode URL" "https://opencode.ai" "$result"
 
 result=$("$HELPER" generate --cli "Claude Code" --model "m")
@@ -177,7 +177,7 @@ assert_not_contains "no CLI markdown link" "[SomeNewTool](" "$result"
 echo ""
 echo "Test 9: environment variable overrides"
 result=$(AIDEVOPS_SIG_CLI="EnvCLI" AIDEVOPS_SIG_CLI_VERSION="9.9.9" AIDEVOPS_SIG_MODEL="test/model" AIDEVOPS_SIG_TOKENS="42000" "$HELPER" generate)
-assert_contains "env CLI name" "in EnvCLI" "$result"
+assert_contains "env CLI name" "plugin for EnvCLI" "$result"
 assert_contains "env CLI version" "v9.9.9" "$result"
 assert_contains "env model strips prefix" "with model" "$result"
 assert_contains "env tokens" "used 42,000 tokens" "$result"
@@ -188,7 +188,7 @@ assert_contains "env tokens" "used 42,000 tokens" "$result"
 echo ""
 echo "Test 10: auto-detect tokens from session DB"
 if [[ "${OPENCODE:-}" == "1" ]] && [[ -r "${HOME}/.local/share/opencode/opencode.db" ]]; then
-	result=$("$HELPER" generate --cli "OpenCode CLI" --model "anthropic/claude-opus-4-6")
+	result=$("$HELPER" generate --cli "OpenCode" --model "anthropic/claude-opus-4-6")
 	assert_contains "auto-detected tokens present" "tokens" "$result"
 else
 	echo "  SKIP: not running in OpenCode (auto-detect test requires OpenCode session DB)"
@@ -200,7 +200,7 @@ fi
 echo ""
 echo "Test 11: session time auto-detection (no response time)"
 if [[ "${OPENCODE:-}" == "1" ]] && [[ -r "${HOME}/.local/share/opencode/opencode.db" ]]; then
-	result=$("$HELPER" generate --cli "OpenCode CLI" --model "m" --tokens 1)
+	result=$("$HELPER" generate --cli "OpenCode" --model "m" --tokens 1)
 	assert_contains "session time present" "for " "$result"
 	assert_not_contains "no response time" "to respond" "$result"
 else
