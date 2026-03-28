@@ -28,20 +28,18 @@ model: sonnet
 
 ## Pre-flight Questions
 
-Before generating copy, scripts, or long-form content, work through:
+Before generating any content:
 
 1. What is the one thing the reader should do after reading this?
-2. Is the value front-loaded — would someone get something useful from the first paragraph alone?
-3. Is every section earning its place, or am I padding to fill a word count?
-4. Does the tone match the context — and am I matching it deliberately or defaulting?
+2. Is value front-loaded -- useful from the first paragraph alone?
+3. Is every section earning its place, or padding?
+4. Does the tone match the context deliberately, not by default?
 
 ## Output Formats
 
 ### Long-Form Script (YouTube, Podcast)
 
-Target: 8-15 minutes (1,200-2,200 words spoken)
-
-**Structure**:
+Target: 8-15 min (1,200-2,200 words). Every scene needs narration + visual direction. B-roll must be specific ("show screen recording of tool X dashboard", not "show relevant footage"). Mark emotional beats: [PAUSE], [EMPHASIS], [LOWER VOICE].
 
 ```text
 # [Title]
@@ -75,19 +73,9 @@ Target: 8-15 minutes (1,200-2,200 words spoken)
 [Suggested video tease]
 ```
 
-**Rules**:
-
-- Every scene has narration + visual direction
-- B-roll directions are specific ("show screen recording of tool X dashboard", not "show relevant footage")
-- Dialogue pacing: 8-second maximum chunks for AI voice generation
-- Include timestamp estimates for each scene
-- Mark emotional beats: [PAUSE], [EMPHASIS], [LOWER VOICE]
-
 ### Short-Form Script (TikTok, Reels, Shorts)
 
-Target: 30-60 seconds (75-150 words spoken)
-
-**Structure**:
+Target: 30-60 sec (75-150 words). Hook in first 1-3 seconds. Fast cuts (1-3s per shot). Captions mandatory (80%+ watch silent). Single idea, no tangents. End with loop potential (last frame connects to first).
 
 ```text
 # [Hook — first 1-3 seconds]
@@ -101,14 +89,6 @@ CAPTION: [Full text for silent viewers]
 SOUND: [Mood/genre suggestion]
 CUTS: [Cut timing — e.g., "cut every 1.5s"]
 ```
-
-**Rules**:
-
-- Hook must work in first 1-3 seconds (before scroll)
-- Fast cuts: 1-3 seconds per shot
-- Captions are mandatory (80%+ watch without sound)
-- Single idea only -- no tangents
-- End with loop potential (last frame connects to first)
 
 ### Social Copy
 
@@ -127,7 +107,7 @@ POST 8 (CTA): [Soft ask — follow, bookmark, reply]
 
 #### LinkedIn
 
-**Post format**:
+Target: 1,200-1,500 characters. Professional but not corporate.
 
 ```text
 [Hook line — bold or surprising]
@@ -141,11 +121,9 @@ POST 8 (CTA): [Soft ask — follow, bookmark, reply]
 #hashtag1 #hashtag2 #hashtag3
 ```
 
-Target: 1,200-1,500 characters. Professional but not corporate.
-
 #### Reddit
 
-**Post format**:
+No self-promotion. Value-first. Community-native tone.
 
 ```text
 Title: [Curiosity-driven, not clickbait]
@@ -156,11 +134,9 @@ Body:
 [Discussion prompt — genuine question for the community]
 ```
 
-Rules: No self-promotion. Value-first. Community-native tone.
-
 ### Blog Draft
 
-**Structure**:
+**SEO rules**: Target keyword in H1, first paragraph, and 1-2 H2s. 1,500-2,500 words. 3-5 internal links. Meta title under 60 chars (keyword-front-loaded). Meta description under 155 chars with CTA.
 
 ```text
 # [H1 — Target keyword, under 60 chars]
@@ -187,14 +163,6 @@ Rules: No self-promotion. Value-first. Community-native tone.
 ## [CTA Section]
 [Natural transition to offer/next step]
 ```
-
-**SEO rules**:
-
-- Target keyword in H1, first paragraph, and 1-2 H2s
-- 1,500-2,500 words for comprehensive coverage
-- Internal links: 3-5 to related content
-- Meta title: under 60 chars, keyword-front-loaded
-- Meta description: under 155 chars, includes CTA
 
 ### Email Copy
 
@@ -224,8 +192,6 @@ EMAIL 5 (Day 7): Last chance + FAQ
 ```
 
 ### Podcast Script
-
-**Talking points format**:
 
 ```text
 # Episode: [Title]
@@ -274,21 +240,17 @@ EMAIL 5 (Day 7): Last chance + FAQ
 
 ## Quality Checklist
 
-Before delivering any written output:
-
-- [ ] Hook is in the first line/sentence
-- [ ] Voice matches platform expectations
-- [ ] CTA is clear and singular
-- [ ] No cross-posting smell (platform-native language)
-- [ ] Dialogue chunks are under 8 seconds (for video)
-- [ ] Captions included (for video/short-form)
-- [ ] SEO elements present (for blog)
-- [ ] Subject line variants included (for email)
-- [ ] B-roll directions included (for video scripts)
+- [ ] Hook in first line/sentence
+- [ ] Voice matches platform (see table above)
+- [ ] Single clear CTA
+- [ ] Platform-native language (no cross-posting smell)
+- [ ] Video: dialogue chunks under 8s, captions included, B-roll directions present
+- [ ] Blog: SEO elements present (meta title, description, keywords)
+- [ ] Email: subject line variants included
 
 ## Related
 
-- `content/story.md` -- Provides the narrative framework and hook variants
+- `content/story.md` -- Narrative framework and hook variants
 - `content/production-image.md` -- Visual assets referenced in scripts
 - `content/production-video.md` -- Video production specs for script adaptation
 - `content/production-audio.md` -- Voice pipeline for script delivery
