@@ -18,61 +18,37 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Real-world performance testing from global locations with filmstrip, waterfall, and Core Web Vitals
+- **Purpose**: Real-browser performance testing from 40+ global locations — filmstrip, waterfall, Core Web Vitals
 - **API Base**: `https://www.webpagetest.org`
-- **API Key**: Required for public instance. Get from https://www.webpagetest.org/signup
+- **API Key**: Required. Sign up: <https://www.webpagetest.org/signup>
 - **Credential Storage**: `~/.config/aidevops/credentials.sh` as `WEBPAGETEST_API_KEY`
-- **Node.js Wrapper**: `npm install -g webpagetest` (CLI + API)
-- **Docs**: https://docs.webpagetest.org/api/reference/
+- **Node.js CLI**: `npm install -g webpagetest` (optional wrapper)
+- **Docs**: <https://docs.webpagetest.org/api/reference/>
 - **Related**: `tools/performance/performance.md`, `tools/browser/pagespeed.md`
 
 <!-- AI-CONTEXT-END -->
 
-## Overview
-
-WebPageTest (by Catchpoint) provides real-browser performance testing from 40+ global locations. Unlike synthetic Lighthouse audits, WebPageTest runs tests on real hardware with real network conditions, producing:
-
-- **Filmstrip view** - visual loading progression frame by frame
-- **Waterfall charts** - request-level timing for every resource
-- **Core Web Vitals** - LCP, CLS, INP, TTFB from real browsers
-- **Video capture** - visual comparison of page loads
-- **Multi-run median** - statistical accuracy across multiple test runs
-- **Connection throttling** - Cable, 3G, 4G, LTE, custom profiles
-- **Technology detection** - Wappalyzer integration identifies tech stack
-- **Accessibility** - Axe-core testing built in
-
 ## Setup
 
-### API Key
-
 ```bash
-# Sign up at https://www.webpagetest.org/signup
-# Store key securely
+# Store API key
 echo 'export WEBPAGETEST_API_KEY="your-key-here"' >> ~/.config/aidevops/credentials.sh
 source ~/.config/aidevops/credentials.sh
 ```
 
-### Node.js CLI (Optional)
-
-```bash
-npm install -g webpagetest
-
-# Test connectivity
-webpagetest status --key "$WEBPAGETEST_API_KEY"
-```
-
 ## API Usage
+
+All examples use `$WEBPAGETEST_API_KEY` via the `X-WPT-API-KEY` header. Base URL: `https://www.webpagetest.org`.
 
 ### Run a Test
 
 ```bash
-# Basic test (JSON response)
 curl -s -X POST \
   "https://www.webpagetest.org/runtest.php?url=https://example.com&f=json&runs=3&video=1&lighthouse=1" \
   -H "X-WPT-API-KEY: $WEBPAGETEST_API_KEY"
 ```
 
-Response returns a `testId` and URLs for results:
+Response:
 
 ```json
 {
@@ -85,99 +61,59 @@ Response returns a `testId` and URLs for results:
 }
 ```
 
-### Check Test Status
+### Check Status / Retrieve Results / Balance / Locations / Cancel
 
 ```bash
-# Poll until statusCode == 200
+# Poll until statusCode == 200 (100=started, 101=queued, 4xx=error)
 curl -s "https://www.webpagetest.org/testStatus.php?test=$TEST_ID&f=json"
-```
 
-Status codes: `100` = started, `101` = queued, `200` = complete, `4xx` = error.
-
-### Retrieve Results
-
-```bash
 # Full results with request breakdown
 curl -s "https://www.webpagetest.org/jsonResult.php?test=$TEST_ID&requests=1&breakdown=1&domains=1"
+
+# Remaining test balance
+curl -s "https://www.webpagetest.org/testBalance.php" -H "X-WPT-API-KEY: $WEBPAGETEST_API_KEY"
+
+# Available locations
+curl -s "https://www.webpagetest.org/getLocations.php?f=json" -H "X-WPT-API-KEY: $WEBPAGETEST_API_KEY" | jq '.data | keys'
+
+# Cancel a test
+curl -s "https://www.webpagetest.org/cancelTest.php?test=$TEST_ID" -H "X-WPT-API-KEY: $WEBPAGETEST_API_KEY"
 ```
 
-Key metrics in the response at `data.median.firstView`:
+### Result Metrics
+
+Key fields at `data.median.firstView`:
 
 | Field | Metric |
 |-------|--------|
 | `TTFB` | Time to First Byte (ms) |
-| `firstContentfulPaint` | First Contentful Paint (ms) |
+| `firstContentfulPaint` | FCP (ms) |
 | `chromeUserTiming.LargestContentfulPaint` | LCP (ms) |
 | `chromeUserTiming.CumulativeLayoutShift` | CLS |
-| `chromeUserTiming.InteractionToNextPaint` | INP (ms) — lab support varies by WPT version |
-| `TotalBlockingTime` | Total Blocking Time (ms) |
+| `chromeUserTiming.InteractionToNextPaint` | INP (ms) — lab support varies |
+| `TotalBlockingTime` | TBT (ms) |
 | `SpeedIndex` | Speed Index |
-| `fullyLoaded` | Fully Loaded Time (ms) |
-| `bytesIn` | Total bytes downloaded |
-| `requests` | Total request count |
-| `render` | Start Render time (ms) |
+| `fullyLoaded` | Fully Loaded (ms) |
+| `bytesIn` | Total bytes |
+| `requests` | Request count |
+| `render` | Start Render (ms) |
 | `domContentLoadedEventStart` | DCL (ms) |
 | `loadTime` | Load Time (ms) |
 
-### Check Remaining Balance
+## Test Configuration
 
-```bash
-curl -s "https://www.webpagetest.org/testBalance.php" \
-  -H "X-WPT-API-KEY: $WEBPAGETEST_API_KEY"
-# Returns: {"data":{"remaining":1175}}
-```
+Append parameters to the `runtest.php` URL. Key parameters:
 
-### List Available Locations
+| Parameter | Effect | Example |
+|-----------|--------|---------|
+| `runs=N` | Number of test runs | `runs=3` |
+| `video=1` | Enable video capture | |
+| `lighthouse=1` | Run Lighthouse audit | |
+| `mobile=1` | Mobile emulation | |
+| `fvonly=1` | First view only (faster) | |
+| `location=ID:Browser.Profile` | Test location + connectivity | `ec2-us-east-1:Chrome.Cable` |
 
-```bash
-curl -s "https://www.webpagetest.org/getLocations.php?f=json" \
-  -H "X-WPT-API-KEY: $WEBPAGETEST_API_KEY" | jq '.data | keys'
-```
-
-### Cancel a Test
-
-```bash
-curl -s "https://www.webpagetest.org/cancelTest.php?test=$TEST_ID" \
-  -H "X-WPT-API-KEY: $WEBPAGETEST_API_KEY"
-```
-
-## Common Test Configurations
-
-### Desktop - Cable (Default)
-
-```bash
-curl -s -X POST \
-  "https://www.webpagetest.org/runtest.php?url=https://example.com&f=json&runs=3&video=1&location=ec2-us-east-1:Chrome.Cable" \
-  -H "X-WPT-API-KEY: $WEBPAGETEST_API_KEY"
-```
-
-### Mobile - 4G
-
-```bash
-curl -s -X POST \
-  "https://www.webpagetest.org/runtest.php?url=https://example.com&f=json&runs=3&video=1&mobile=1&location=ec2-us-east-1:Chrome.4G" \
-  -H "X-WPT-API-KEY: $WEBPAGETEST_API_KEY"
-```
-
-### With Lighthouse
-
-```bash
-curl -s -X POST \
-  "https://www.webpagetest.org/runtest.php?url=https://example.com&f=json&lighthouse=1" \
-  -H "X-WPT-API-KEY: $WEBPAGETEST_API_KEY"
-```
-
-### First View Only (Faster)
-
-```bash
-curl -s -X POST \
-  "https://www.webpagetest.org/runtest.php?url=https://example.com&f=json&runs=3&fvonly=1" \
-  -H "X-WPT-API-KEY: $WEBPAGETEST_API_KEY"
-```
-
-### From Specific Region
-
-Common locations:
+### Locations
 
 | Location ID | Region |
 |-------------|--------|
@@ -205,42 +141,30 @@ Common locations:
 | `Dial` | 49 Kbps | 30 Kbps | 120ms | Dial-up |
 | `Native` | No shaping | - | - | Raw connection |
 
-## Node.js CLI Usage
+## Node.js CLI
+
+Optional alternative to curl. Install: `npm install -g webpagetest`.
 
 ```bash
-# Install
-npm install -g webpagetest
-
-# Run test
+# Run test (polls until complete)
 webpagetest test https://example.com \
   --key "$WEBPAGETEST_API_KEY" \
   --location ec2-us-east-1:Chrome.Cable \
-  --runs 3 \
-  --first \
-  --video \
-  --lighthouse \
-  --poll 10 \
-  --reporter json
+  --runs 3 --first --video --lighthouse \
+  --poll 10 --reporter json
 
-# Get results
+# Other commands
 webpagetest results $TEST_ID --key "$WEBPAGETEST_API_KEY" --reporter json
-
-# Check status
 webpagetest status $TEST_ID --key "$WEBPAGETEST_API_KEY"
-
-# List locations
 webpagetest locations --key "$WEBPAGETEST_API_KEY"
-
-# Check balance
 webpagetest testBalance --key "$WEBPAGETEST_API_KEY"
 ```
 
 ## Scripted Tests
 
-WebPageTest supports multi-step scripted tests for authenticated pages, SPAs, and complex flows:
+Multi-step tests for authenticated pages, SPAs, and complex flows:
 
 ```text
-// Navigate and wait for element
 navigate	https://example.com/login
 setValue	name=email	user@example.com
 setValue	name=password	password123
@@ -262,29 +186,25 @@ waitForComplete
 navigate	https://example.com/dashboard"
 ```
 
-## Workflow: Full Performance Audit
+## Workflows
 
-1. **Run test** with 3 runs, video, and Lighthouse enabled
-2. **Poll status** until `statusCode == 200`
-3. **Retrieve results** with `requests=1&breakdown=1&domains=1`
-4. **Extract key metrics** from `data.median.firstView`
-5. **Analyze waterfall** for bottlenecks (long TTFB, render-blocking resources, large assets)
-6. **Review filmstrip** for visual loading progression
-7. **Check Lighthouse** scores if enabled
-8. **Compare** against Core Web Vitals thresholds
+### Full Performance Audit
 
-## Workflow: Before/After Comparison
+1. Run test with `runs=3&video=1&lighthouse=1`
+2. Poll status until `statusCode == 200`
+3. Retrieve results with `requests=1&breakdown=1&domains=1`
+4. Extract metrics from `data.median.firstView`
+5. Analyse waterfall for bottlenecks (long TTFB, render-blocking resources, large assets)
+6. Review filmstrip for visual loading progression
+7. Check Lighthouse scores if enabled
+8. Compare against Core Web Vitals thresholds
+
+### Before/After Comparison
 
 1. Run baseline test, save `testId`
 2. Make performance changes
 3. Run comparison test with same location/connectivity
-4. Compare median metrics:
-   - LCP delta
-   - TTFB delta
-   - Speed Index delta
-   - Total Blocking Time delta
-   - Bytes transferred delta
-   - Request count delta
+4. Compare median metrics: LCP, TTFB, Speed Index, TBT, bytes transferred, request count
 
 ## When to Use WebPageTest vs Other Tools
 
