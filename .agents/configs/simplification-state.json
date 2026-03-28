@@ -1,0 +1,390 @@
+{
+  "_comment": null,
+  "files": {
+    ".agents/seo/analytics-tracking.md": {
+      "hash": "07ff0feec55ad3f8477a6badd724b479c1b09370",
+      "at": "2026-03-27T21:25:04Z",
+      "pr": 11015
+    },
+    ".agents/tools/credentials/gopass.md": {
+      "hash": "a59a0077d4d56694894c8cadef6b9c3a294dede0",
+      "at": "2026-03-27T21:25:05Z",
+      "pr": 11021
+    },
+    ".agents/marketing-sales/meta-ads-creative-hooks.md": {
+      "hash": "f7c8e3356361a9ab1941f729337bbf7d0f8447ef",
+      "at": "2026-03-27T21:25:06Z",
+      "pr": 11016
+    },
+    ".agents/tools/programming/modern-javascript-skill/es2024.md": {
+      "hash": "5ff178dfe9603a724792aaef45d63f4b33fce7ef",
+      "at": "2026-03-27T21:25:08Z",
+      "pr": 11002
+    },
+    ".agents/aidevops/providers.md": {
+      "hash": "18b8c2ddd2bb1ee1b0affc02c05ae860b8e902da",
+      "at": "2026-03-27T21:25:09Z",
+      "pr": 11003
+    },
+    ".agents/aidevops/services.md": {
+      "hash": "0fd05379ebb6a6ab079aaa0011c1dd8a5cca6af1",
+      "at": "2026-03-27T21:25:10Z",
+      "pr": 11004
+    },
+    ".agents/seo/semrush.md": {
+      "hash": "cc61832322267a222c9e557b04459de4a3520086",
+      "at": "2026-03-27T21:25:11Z",
+      "pr": 11006
+    },
+    ".agents/marketing-sales/cro-chapter-10.md": {
+      "hash": "730bf8258084ccd7a330cc2ac1032f1aedd4a370",
+      "at": "2026-03-27T21:25:12Z",
+      "pr": 11005
+    },
+    ".agents/scripts/commands/log-issue-aidevops.md": {
+      "hash": "24878e7d7abca4cf0b41a18e5dac1977978ec3c1",
+      "at": "2026-03-27T21:25:13Z",
+      "pr": 11007
+    },
+    ".agents/services/communications/xmtp.md": {
+      "hash": "0b5b1bb178865dc7efff9f7578cd26dd9bf82bc9",
+      "at": "2026-03-27T21:25:14Z",
+      "pr": 11009
+    },
+    ".agents/tools/credentials/multi-tenant.md": {
+      "hash": "efa55dc5b3f2f5222982c1c9f0214ad1e2601624",
+      "at": "2026-03-27T21:25:16Z",
+      "pr": 11008
+    },
+    ".agents/reference/high-stakes-operations.md": {
+      "hash": "ba39668c924d2e2d0137c766053513a98a2f2839",
+      "at": "2026-03-27T21:25:17Z",
+      "pr": 11012
+    },
+    ".agents/tools/architecture/feature-slicing-skill.md": {
+      "hash": "7a86b72e717f9805c458d44fa69e00b9b845addd",
+      "at": "2026-03-27T21:25:18Z",
+      "pr": 11010
+    },
+    ".agents/tools/automation/macos-automator.md": {
+      "hash": "f8771a0d1548af0fbdd76f1944d50ce6b1107f13",
+      "at": "2026-03-27T21:25:19Z",
+      "pr": 11011
+    },
+    ".agents/seo/data-export.md": {
+      "hash": "196b3c4788803c0b2b8d412752d3d262d7e6f8b2",
+      "at": "2026-03-27T21:25:21Z",
+      "pr": 11019
+    },
+    ".agents/tools/ai-generation/comfy-cli.md": {
+      "hash": "6d885b8f28374a6d71d6f4095a6015f3359a668e",
+      "at": "2026-03-27T21:25:22Z",
+      "pr": 11014
+    },
+    ".agents/tools/architecture/feature-slicing-skill/cheatsheet.md": {
+      "hash": "b244fb8417fc27f0de33c83c86092f5bebd736f3",
+      "at": "2026-03-27T21:25:23Z",
+      "pr": 11018
+    },
+    ".agents/tools/browser/anti-detect-browser.md": {
+      "hash": "647081565083b90f27fdce7d25dea9e153fc64a4",
+      "at": "2026-03-27T21:25:25Z",
+      "pr": 11017
+    },
+    ".agents/tools/code-review/snyk.md": {
+      "hash": "e248df7d21db7a21cef8b1e16e1e96f361e3e487",
+      "at": "2026-03-27T21:25:26Z",
+      "pr": 11013
+    },
+    ".agents/tools/ai-orchestration/crewai.md": {
+      "hash": "e1ed08282945b0708a6840e1d2bb38d92c3d3698",
+      "at": "2026-03-28T02:50:59Z",
+      "pr": 11274
+    },
+    ".agents/tools/build-mcp/api-wrapper.md": {
+      "hash": "68b6075506f6dc1153fec6d5aa78c05d213b0b73",
+      "at": "2026-03-28T02:51:01Z",
+      "pr": 11276
+    },
+    ".agents/tools/build-mcp/api-wrapper/patterns.md": {
+      "hash": "5aa65e858b380b38b44e647545eda3f1450543b2",
+      "at": "2026-03-28T02:51:01Z",
+      "pr": 11276
+    },
+    ".agents/aidevops/add-new-mcp-to-aidevops.md": {
+      "hash": "526e453f459ec07c5283fb2602c607a31ce3601f",
+      "at": "2026-03-28T02:51:02Z",
+      "pr": 11277
+    },
+    ".agents/marketing-sales/direct-response-copy-frameworks-objection-handling.md": {
+      "hash": "03a35fccab0f4d79526416af4049498f59eb1cf8",
+      "at": "2026-03-28T03:53:27Z",
+      "pr": 11336
+    },
+    ".agents/reference/configuration.md": {
+      "hash": "9502faea512b841b7a239e9e3c9cc0188f4fe855",
+      "at": "2026-03-28T04:30:48Z",
+      "pr": 11321
+    },
+    ".agents/scripts/stats-functions.sh": {
+      "hash": "500235eb7c29b89a44219c93701d3960837d9dca",
+      "at": "2026-03-28T02:51:08Z",
+      "pr": 11273
+    },
+    ".agents/workflows/plans.md": {
+      "hash": "df14ded060d7fadad72744ff67ec440ab2c94702",
+      "at": "2026-03-28T02:51:09Z",
+      "pr": 11279
+    },
+    ".agents/marketing-sales/meta-ads-creative-scripts.md": {
+      "hash": "9455fbf07187de24552aa591a8752fd7b3df2480",
+      "at": "2026-03-28T03:10:39Z",
+      "pr": 11297
+    },
+    ".agents/content/social-bird.md": {
+      "hash": "b2840ebff41ba9b78f7331487d6596373e8436e4",
+      "at": "2026-03-28T05:10:07Z",
+      "pr": 11354
+    },
+    ".agents/tools/programming/modern-javascript-skill/composition.md": {
+      "hash": "fe9da3d05db78aac6b072235efe8b74f5c9fcf2b",
+      "at": "2026-03-28T03:53:07Z",
+      "pr": 11328
+    },
+    ".agents/tools/programming/modern-javascript-skill/es2022-es2023.md": {
+      "hash": "5e5dfb7e18557b8e26c5c48c090c8df94eda485c",
+      "at": "2026-03-28T03:53:13Z",
+      "pr": 11337
+    },
+    ".agents/workflows/milestone-validation.md": {
+      "hash": "3e8c88a4d98e24993198b7a6cfc0c93b7825bd26",
+      "at": "2026-03-28T03:53:42Z",
+      "pr": 11286
+    },
+    ".agents/services/communications/discord.md": {
+      "hash": "44cce31bf11bd980e6b95270c913477c86348a15",
+      "at": "2026-03-28T03:53:47Z",
+      "pr": 11287
+    },
+    ".agents/tools/browser/pagespeed.md": {
+      "hash": "55b132de0f4ff15dd72cec557bf042cd56b93fec",
+      "at": "2026-03-28T03:53:49Z",
+      "pr": 11295
+    },
+    ".agents/tools/ai-orchestration/packaging.md": {
+      "hash": "4cbea04181622677bff0bdbb611cdd03a3401484",
+      "at": "2026-03-28T03:53:52Z",
+      "pr": 11296
+    },
+    ".agents/aidevops/mcp-integrations.md": {
+      "hash": "8c6204355b9b3ccc09bb3761ac1804e94bf76db2",
+      "at": "2026-03-28T03:53:54Z",
+      "pr": 11339
+    },
+    ".agents/tools/ai-assistants/opencode-server.md": {
+      "hash": "15e90e96d742cfe07ffd4cb37c340157d5a8bb74",
+      "at": "2026-03-28T03:53:56Z",
+      "pr": 11345
+    },
+    ".agents/tools/context/mcp-discovery.md": {
+      "hash": "b5851d90484fe52e39f87e3c7af8692778986208",
+      "at": "2026-03-28T03:53:59Z",
+      "pr": 11338
+    },
+    ".agents/tools/deployment/cloudron-app-packaging.md": {
+      "hash": "a6ddd4af870f4445d96eb4bf3c2d109fcb9219b7",
+      "at": "2026-03-28T03:54:01Z",
+      "pr": 11344
+    },
+    ".agents/tools/security/ip-reputation.md": {
+      "hash": "a1da2aa2f5e2f454f3c1dbcd3a7a819a72cd80dd",
+      "at": "2026-03-28T03:54:03Z",
+      "pr": 11342
+    },
+    ".agents/tools/ui/frontend-debugging.md": {
+      "hash": "272d16549c353500a19666d7ace227b34b2ae363",
+      "at": "2026-03-28T03:54:06Z",
+      "pr": 11340
+    },
+    ".agents/workflows/preflight.md": {
+      "hash": "c4695943d5555314205b87bb88020fb62de14b63",
+      "at": "2026-03-28T03:54:08Z",
+      "pr": 11341
+    },
+    ".agents/aidevops/recommendations.md": {
+      "hash": "67c3f660425b669feae3238d7b42589449caa860",
+      "at": "2026-03-28T03:54:11Z",
+      "pr": 11343
+    },
+    ".agents/services/communications/msteams.md": {
+      "hash": "9818d1daccf3f68d103ecba204aa56431dba6514",
+      "at": "2026-03-28T03:54:15Z",
+      "pr": 11346
+    },
+    ".agents/tools/browser/peekaboo.md": {
+      "hash": "294d232e9625b8a855f17cbea4498a4881a6b0bc",
+      "at": "2026-03-28T03:54:17Z",
+      "pr": 11348
+    },
+    ".agents/tools/database/vector-search.md": {
+      "hash": "d365046c212da54c3ab0ede8217cce083de484c5",
+      "at": "2026-03-28T03:54:19Z",
+      "pr": 11351
+    },
+    ".agents/seo/neuronwriter.md": {
+      "hash": "e6d78a192db4a98186ff9a1f428a07d6455ba42a",
+      "at": "2026-03-28T03:54:21Z",
+      "pr": 11350
+    },
+    ".agents/tools/wordpress/wp-preferred.md": {
+      "hash": "6664b61850bd5f84a8044f5dea501f4534b9a9d8",
+      "at": "2026-03-28T03:54:25Z",
+      "pr": 11353
+    },
+    ".agents/tools/git/opencode-github.md": {
+      "hash": "02c6d675ca2b756817bc639ec03d999e1f3ea58e",
+      "at": "2026-03-28T03:54:27Z",
+      "pr": 11349
+    },
+    ".agents/services/hosting/webhosting.md": {
+      "hash": "fb3877648d049a414407d7f9e6beb747c2f92f1d",
+      "at": "2026-03-28T03:54:32Z",
+      "pr": 11352
+    },
+    ".agents/services/communications/nextcloud-talk.md": {
+      "hash": "830399729c8d83ca4263bbf736ea549534989f63",
+      "at": "2026-03-28T03:54:35Z",
+      "pr": 11360
+    },
+    ".agents/services/outreach/smartlead.md": {
+      "hash": "8171133da8154e590bca4a6baa8a1bbe05051e05",
+      "at": "2026-03-28T03:54:38Z",
+      "pr": 11357
+    },
+    ".agents/tools/mobile/app-dev/swift.md": {
+      "hash": "d601962cd709d65d62ca882b09f763abe48b7e04",
+      "at": "2026-03-28T03:54:42Z",
+      "pr": 11358
+    },
+    ".agents/marketing-sales/cro-chapter-16.md": {
+      "hash": "920245116e79b04207fd2b808c5dcbfabea3eb17",
+      "at": "2026-03-28T04:30:24Z",
+      "pr": 11374
+    },
+    ".agents/marketing-sales/meta-ads-campaigns-decision-trees.md": {
+      "hash": "a7bcedab8040e2b400b7c2feca987e09bb0a8477",
+      "at": "2026-03-28T04:30:25Z",
+      "pr": 11381
+    },
+    ".agents/tools/database/vector-search/per-tenant-rag.md": {
+      "hash": "9c0a46c72bbf38115155d5214f0256365a03260b",
+      "at": "2026-03-28T06:40:00Z",
+      "pr": 11417
+    },
+    ".agents/tools/architecture/feature-slicing-skill/nextjs.md": {
+      "hash": "0fd2c402556f4d6804ce1a61eeaaaa9c3cecd541",
+      "at": "2026-03-28T06:59:34Z",
+      "pr": 11437
+    },
+    ".agents/marketing-sales/meta-ads-creative-formats.md": {
+      "hash": "f8a4f095bebc852b9ce58976d3b53e418bbe578e",
+      "at": "2026-03-28T06:39:54Z",
+      "pr": 11410
+    },
+    ".agents/marketing-sales/ad-creative-chapter-06.md": {
+      "hash": "3d34a8e028e8905a54af8dd939394d10bdf16d97",
+      "at": "2026-03-28T05:09:55Z",
+      "pr": 11414
+    },
+    ".agents/marketing-sales/direct-response-copy-swipe-file-ads.md": {
+      "hash": "8e2f8f2a6620debfe219e09c96cfeb634fb518a7",
+      "at": "2026-03-28T05:50:32Z",
+      "pr": 11411
+    },
+    ".agents/tools/voice/transcription.md": {
+      "hash": "00b7657112dc4b31c6064057fcd47e8d4651f7ee",
+      "at": "2026-03-28T05:10:01Z",
+      "pr": 11419
+    },
+    ".agents/tools/diagrams/mermaid-diagrams-skill/sequence.md": {
+      "hash": "162ba5164f7ffedc3b1d3497beabd56c6d58aaba",
+      "at": "2026-03-28T05:10:17Z",
+      "pr": 11392
+    },
+    ".agents/tools/architecture/clean-ddd-hexagonal-skill/cheatsheet.md": {
+      "hash": "7622759c028bec7b85f445a88ab175f13b055133",
+      "at": "2026-03-28T05:10:19Z",
+      "pr": 11393
+    },
+    ".agents/marketing-sales/ad-creative-chapter-10.md": {
+      "hash": "23e33ef44632a4467884d5d9bebf6452adf22160",
+      "at": "2026-03-28T05:10:32Z",
+      "pr": 11315
+    },
+    ".agents/marketing-sales/ad-creative-offers-landing.md": {
+      "hash": "a16b4767e518eb9f3f35e1b61d3d166390077009",
+      "at": "2026-03-28T05:50:34Z",
+      "pr": 11415
+    },
+    ".agents/services/database/postgres-drizzle-skill/queries.md": {
+      "hash": "2647d7cd620f871bdbc5ca89466f013792b777fd",
+      "at": "2026-03-28T06:40:05Z",
+      "pr": 11416
+    },
+    ".agents/tools/accessibility/accessibility-audit.md": {
+      "hash": "a817d02e74b66f8a1c9b785ac201f15af22f9100",
+      "at": "2026-03-28T05:50:48Z",
+      "pr": 11440
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/ai-gateway.md": {
+      "hash": "720c2836fca088d027ac637f8c69e97cb3c2764a",
+      "at": "2026-03-28T05:50:52Z",
+      "pr": 11443
+    },
+    ".agents/tools/programming/modern-javascript-skill/es2018-es2019.md": {
+      "hash": "b59a17a028d181e2f55c45e58c371ca999d9a2ee",
+      "at": "2026-03-28T05:50:55Z",
+      "pr": 11439
+    },
+    ".agents/services/database/postgres-drizzle-skill/postgres.md": {
+      "hash": "2633ce6d2343b370a13a3efea1ed735544a6883a",
+      "at": "2026-03-28T05:50:57Z",
+      "pr": 11448
+    },
+    ".agents/marketing-sales/direct-response-copy-frameworks-offer-construction.md": {
+      "hash": "10d31ffa27d8e38267882e04f099ce38899635f1",
+      "at": "2026-03-28T05:51:09Z",
+      "pr": 11363
+    },
+    ".agents/marketing-sales/meta-ads-audiences-first-party-data.md": {
+      "hash": "919e1c3ff2a04eb73ca6758f41296429f4ae0ee6",
+      "at": "2026-03-28T06:59:24Z",
+      "pr": 11536
+    },
+    ".agents/marketing-sales/direct-response-copy-templates-ad-copy.md": {
+      "hash": "9444b7012d9504a02de323de306df98a3b7896a9",
+      "at": "2026-03-28T06:59:25Z",
+      "pr": 11505
+    },
+    ".agents/marketing-sales/direct-response-copy-templates-vsl-script.md": {
+      "hash": "a3cd47b4a2f5d8f70d6f4272fe2fda22d98cba58",
+      "at": "2026-03-28T06:59:27Z",
+      "pr": 11511
+    },
+    ".agents/marketing-sales/cro-chapter-09.md": {
+      "hash": "948afdf84490638c264556e3352fccd4f6c243a9",
+      "at": "2026-03-28T07:37:26Z",
+      "pr": 11572
+    },
+    ".agents/reference/memory.md": {
+      "hash": "0a7c4c493f3a825b98e2de3928f718fa9095c966",
+      "at": "2026-03-28T07:37:36Z",
+      "pr": 11538
+    },
+    ".agents/marketing-sales/ad-creative-chapter-02.md": {
+      "hash": "810c244d317a3332c74dc2baafb34bf00cf5ab2f",
+      "at": "2026-03-28T07:37:37Z",
+      "pr": 11539
+    }
+  }
+}
