@@ -200,11 +200,16 @@ _detect_session_tokens() {
 		return 0
 	fi
 
+	# Sum all token types: input + output + cache reads + cache writes.
+	# Cache tokens are the bulk of API usage (context loaded each turn)
+	# and are billed (cache reads at reduced rate).
 	local total_tokens
 	total_tokens=$(sqlite3 "$db_path" "
 		SELECT COALESCE(
 			SUM(json_extract(data, '$.tokens.input')) +
-			SUM(json_extract(data, '$.tokens.output')), 0
+			SUM(json_extract(data, '$.tokens.output')) +
+			SUM(COALESCE(json_extract(data, '$.tokens.cache.read'), 0)) +
+			SUM(COALESCE(json_extract(data, '$.tokens.cache.write'), 0)), 0
 		)
 		FROM message
 		WHERE session_id='${session_id}'
@@ -220,22 +225,20 @@ _detect_session_tokens() {
 }
 
 # =============================================================================
-# Detect session time and response time from runtime DB
+# Detect session time from runtime DB
 # =============================================================================
-# Returns pipe-separated: session_seconds|response_seconds
-# Session time: now - session.time_created
-# Response time: now - last user message timestamp
+# Returns session duration in seconds (now - session.time_created), or empty.
 
-_detect_session_times() {
+_detect_session_time() {
 	local db_path="${HOME}/.local/share/opencode/opencode.db"
 
 	if [[ "${OPENCODE:-}" != "1" ]] && ! ps -o comm= -p "${PPID:-0}" 2>/dev/null | tr '[:upper:]' '[:lower:]' | grep -q opencode; then
-		echo "|"
+		echo ""
 		return 0
 	fi
 
 	if [[ ! -r "$db_path" ]] || ! command -v sqlite3 &>/dev/null; then
-		echo "|"
+		echo ""
 		return 0
 	fi
 
@@ -272,7 +275,7 @@ _detect_session_times() {
 	fi
 
 	if [[ -z "$session_id" ]]; then
-		echo "|"
+		echo ""
 		return 0
 	fi
 
@@ -282,15 +285,11 @@ _detect_session_times() {
 		FROM session WHERE id='${session_id}'
 	" 2>/dev/null || echo "")
 
-	local response_seconds
-	response_seconds=$(sqlite3 "$db_path" "
-		SELECT (strftime('%s','now') * 1000 - MAX(time_created)) / 1000
-		FROM message
-		WHERE session_id='${session_id}'
-		  AND json_extract(data, '$.role') = 'user'
-	" 2>/dev/null || echo "")
-
-	echo "${session_seconds}|${response_seconds}"
+	if [[ -n "$session_seconds" ]] && [[ "$session_seconds" -gt 0 ]] 2>/dev/null; then
+		echo "$session_seconds"
+	else
+		echo ""
+	fi
 	return 0
 }
 
@@ -478,27 +477,21 @@ _resolve_cli_inputs() {
 }
 
 # =============================================================================
-# _collect_time_metrics — gather session/response/total time strings
+# _collect_time_metrics — gather session and total time strings
 # =============================================================================
-# Outputs pipe-separated: session_time_str|response_time_str|total_time_str
+# Outputs pipe-separated: session_time_str|total_time_str
 
 _collect_time_metrics() {
 	local issue_ref="$1"
 	local issue_created="$2"
 
-	local session_time_str="" response_time_str="" total_time_str=""
+	local session_time_str="" total_time_str=""
 
-	local times_raw
-	times_raw=$(_detect_session_times)
-	local session_secs response_secs
-	session_secs="${times_raw%%|*}"
-	response_secs="${times_raw##*|}"
+	local session_secs
+	session_secs=$(_detect_session_time)
 
 	if [[ -n "$session_secs" ]] && [[ "$session_secs" -gt 0 ]] 2>/dev/null; then
 		session_time_str=$(_format_duration "$session_secs")
-	fi
-	if [[ -n "$response_secs" ]] && [[ "$response_secs" -gt 0 ]] 2>/dev/null; then
-		response_time_str=$(_format_duration "$response_secs")
 	fi
 
 	if [[ -n "$issue_ref" ]] || [[ -n "$issue_created" ]]; then
@@ -509,7 +502,7 @@ _collect_time_metrics() {
 		fi
 	fi
 
-	printf '%s|%s|%s\n' "$session_time_str" "$response_time_str" "$total_time_str"
+	printf '%s|%s\n' "$session_time_str" "$total_time_str"
 	return 0
 }
 
@@ -524,14 +517,19 @@ _build_signature() {
 	local cli_version="$3"
 	local tokens="$4"
 	local session_time_str="$5"
-	local response_time_str="$6"
-	local total_time_str="$7"
-	local solved="$8"
+	local total_time_str="$6"
+	local solved="$7"
 
 	local aidevops_version
 	aidevops_version=$(aidevops_find_version)
 
-	# Target: [aidevops.sh](...) v3.5.10 in [CLI](...) v1.3.3 with model used N tokens for Xm to respond in Ym, Zm since this issue was created.
+	# Strip provider prefix from model (anthropic/claude-opus-4-6 → claude-opus-4-6)
+	local display_model="$model"
+	if [[ "$display_model" == */* ]]; then
+		display_model="${display_model##*/}"
+	fi
+
+	# Target: [aidevops.sh](...) v3.5.10 in [CLI](...) v1.3.3 with claude-opus-4-6 used N tokens for Xm, Zm since this issue was created.
 	local sig="[aidevops.sh](https://aidevops.sh) v${aidevops_version}"
 
 	# "in [CLI] vX.Y.Z"
@@ -549,8 +547,8 @@ _build_signature() {
 	fi
 
 	# "with model"
-	if [[ -n "$model" ]]; then
-		sig="${sig} with ${model}"
+	if [[ -n "$display_model" ]]; then
+		sig="${sig} with ${display_model}"
 	fi
 
 	# "used N tokens"
@@ -565,22 +563,17 @@ _build_signature() {
 		sig="${sig} for ${session_time_str}"
 	fi
 
-	# "to respond in Ym" (response time)
-	if [[ -n "$response_time_str" ]]; then
-		sig="${sig} to respond in ${response_time_str}"
-	fi
-
 	# Total time or trailing period
 	local has_stats=""
 	if { [[ -n "$tokens" ]] && [[ "$tokens" != "0" ]]; } ||
-		[[ -n "$session_time_str" ]] || [[ -n "$response_time_str" ]] || [[ -n "$total_time_str" ]]; then
+		[[ -n "$session_time_str" ]] || [[ -n "$total_time_str" ]]; then
 		has_stats="true"
 	fi
 
 	if [[ -n "$total_time_str" ]]; then
 		if [[ "$solved" == "true" ]]; then
 			sig="${sig}. Solved in ${total_time_str}."
-		elif [[ -n "$session_time_str" ]] || [[ -n "$response_time_str" ]]; then
+		elif [[ -n "$session_time_str" ]]; then
 			sig="${sig}, ${total_time_str} since this issue was created."
 		else
 			sig="${sig} ${total_time_str} since this issue was created."
@@ -618,13 +611,13 @@ cmd_generate() {
 	# Collect time metrics
 	local time_metrics
 	time_metrics=$(_collect_time_metrics "$issue_ref" "$issue_created")
-	local session_time_str response_time_str total_time_str
-	IFS='|' read -r session_time_str response_time_str total_time_str <<<"$time_metrics"
+	local session_time_str total_time_str
+	IFS='|' read -r session_time_str total_time_str <<<"$time_metrics"
 
 	# Build and emit the signature
 	_build_signature \
 		"$model" "$cli_name" "$cli_version" "$tokens" \
-		"$session_time_str" "$response_time_str" "$total_time_str" "$solved"
+		"$session_time_str" "$total_time_str" "$solved"
 	return 0
 }
 
