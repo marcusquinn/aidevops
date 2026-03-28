@@ -36,7 +36,7 @@ tools:
 | `~/.config/aidevops/tenants/{tenant}/credentials.sh` | Per-tenant keys (see `multi-tenant.md`) | 600 |
 | `~/.config/aidevops/` | Secrets directory | 700 |
 
-**Principle**: API keys are stored ONLY in `~/.config/aidevops/credentials.sh` (or gopass), NEVER in repository files. This file is sourced by your shell on startup.
+**Principle**: API keys are stored ONLY under `~/.config/aidevops/` (default `credentials.sh`, or `tenants/{tenant}/credentials.sh` for multi-tenant) or in gopass — NEVER in repository files. The active credentials file is sourced by your shell on startup.
 
 ## Setup
 
@@ -49,6 +49,8 @@ bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh setup
 Creates `~/.config/aidevops/` (700), `credentials.sh` (600), and adds sourcing to `.zshrc`/`.bashrc`/`.bash_profile`.
 
 ### 2. Store API Keys
+
+Run from the repository root:
 
 ```bash
 # By service name (auto-converts to UPPER_CASE export)
@@ -94,7 +96,7 @@ bash .agents/scripts/setup-local-api-keys.sh get sonar-token  # Specific key
 `credentials.sh` contains shell exports (`export SONAR_TOKEN="xxx"`). Shell startup sources it automatically:
 
 ```bash
-# Added to ~/.zshrc and ~/.bashrc by setup:
+# Added to ~/.zshrc, ~/.bashrc, and ~/.bash_profile by setup:
 [[ -f ~/.config/aidevops/credentials.sh ]] && source ~/.config/aidevops/credentials.sh
 ```
 
