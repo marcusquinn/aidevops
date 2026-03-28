@@ -44,20 +44,12 @@ Reads Google's Discovery Service at runtime — new API endpoints auto-discovere
 ```bash
 npm install -g @googleworkspace/cli   # recommended
 brew install googleworkspace-cli      # Homebrew (macOS/Linux)
-cargo install --git https://github.com/googleworkspace/cli --locked  # from source
 # Pre-built binary: https://github.com/googleworkspace/cli/releases
 ```
 
 ## Authentication
 
 **Precedence (highest→lowest):** `GOOGLE_WORKSPACE_CLI_TOKEN` → `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` → `gws auth login` encrypted → `~/.config/gws/credentials.json`. Variables can also live in `.env`.
-
-| Situation | Method |
-|-----------|--------|
-| Local desktop with `gcloud` | `gws auth setup` (fastest) |
-| Local desktop, no `gcloud` | Manual OAuth (see below) |
-| CI / headless | Encrypted export (see below) |
-| Service account | `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/path/to/sa.json` |
 
 ### Interactive
 
@@ -94,34 +86,25 @@ Store credentials *content* in the secret manager, not a file path. Prefer encry
 
 ## Gmail
 
-### Triage (read-only)
-
 ```bash
+# Triage (read-only)
 gws gmail +triage                                        # 20 most recent unread
 gws gmail +triage --max 5 --query 'from:boss@example.com'
 gws gmail +triage --format json | jq '.[].subject'
-```
 
-### Send (write — confirm before executing)
-
-```bash
+# Send (write — confirm before executing)
 gws gmail +send --to alice@example.com --subject "Hello" --body "Hi Alice!"
 gws gmail +send --to alice@example.com --subject "Report" --body "<b>See attached.</b>" --html \
   --cc bob@example.com --bcc archive@example.com
-gws gmail +send --to alice@example.com --subject "Test" --body "Hi" --dry-run  # preview
-```
+gws gmail +send --to alice@example.com --subject "Test" --body "Hi" --dry-run
 
-### Reply / Reply-all / Forward
-
-```bash
-gws gmail +reply --message-id MESSAGE_ID --body "Thanks!"      # MESSAGE_ID from +triage --format json | jq '.[0].id'
+# Reply / Reply-all / Forward (write — confirm before executing)
+# MESSAGE_ID: gws gmail +triage --format json | jq '.[0].id'
+gws gmail +reply --message-id MESSAGE_ID --body "Thanks!"
 gws gmail +reply-all --message-id MESSAGE_ID --body "Noted."
 gws gmail +forward --message-id MESSAGE_ID --to newrecipient@example.com
-```
 
-### Label management
-
-```bash
+# Label management
 gws gmail users labels list --params '{"userId":"me"}' | jq '.labels[] | {id,name}'
 gws gmail users labels create --params '{"userId":"me"}' \
   --json '{"name":"aidevops/processed","labelListVisibility":"labelShow","messageListVisibility":"show"}'
@@ -129,11 +112,8 @@ gws gmail users messages modify --params '{"userId":"me","id":"MESSAGE_ID"}' \
   --json '{"addLabelIds":["LABEL_ID"]}'                        # apply label
 gws gmail users messages modify --params '{"userId":"me","id":"MESSAGE_ID"}' \
   --json '{"removeLabelIds":["INBOX"]}'                        # archive
-```
 
-### Search messages (raw API)
-
-```bash
+# Search (raw API)
 gws gmail users messages list \
   --params '{"userId":"me","q":"from:vendor@example.com subject:invoice","maxResults":10}' \
   | jq '.messages[].id'
@@ -144,37 +124,27 @@ gws gmail users messages get \
 
 ## Calendar
 
-### Agenda (read-only)
-
 ```bash
+# Agenda (read-only)
 gws calendar +agenda                                     # next 7 days, all calendars
 gws calendar +agenda --today --timezone America/New_York
 gws calendar +agenda --days 3 --calendar 'Work' --format table
-```
 
-### Create event (write — confirm before executing)
-
-```bash
+# Create event (write — confirm before executing)
 gws calendar +insert --summary "Standup" \
   --start "2026-06-17T09:00:00-07:00" --end "2026-06-17T09:30:00-07:00"
 gws calendar +insert --summary "Quarterly Review" \
   --start "2026-06-20T14:00:00Z" --end "2026-06-20T15:00:00Z" \
   --location "Conference Room A" --attendee alice@example.com --attendee bob@example.com
-```
 
-### List / search events (raw API)
-
-```bash
+# List / search (raw API)
 gws calendar events list \
   --params '{"calendarId":"primary","timeMin":"2026-06-01T00:00:00Z","timeMax":"2026-06-30T23:59:59Z","singleEvents":true,"orderBy":"startTime"}' \
   | jq '.items[] | {summary, start}'
 gws calendar freebusy query \
   --json '{"timeMin":"2026-06-17T09:00:00Z","timeMax":"2026-06-17T17:00:00Z","items":[{"id":"primary"}]}'
-```
 
-### Workflow helpers
-
-```bash
+# Workflow helpers
 gws workflow +standup-report    # today's meetings + open tasks
 gws workflow +meeting-prep      # agenda, attendees, linked docs for next meeting
 gws workflow +weekly-digest     # this week's meetings + unread email count
@@ -219,16 +189,7 @@ gws people connections list \
 | `GOOGLE_WORKSPACE_CLI_LOG_FILE` | Directory for JSON log files with daily rotation |
 | `GOOGLE_WORKSPACE_PROJECT_ID` | GCP project ID override for quota/billing |
 
-## Exit Codes
-
-| Code | Meaning |
-|------|---------|
-| `0` | Success |
-| `1` | API error (Google returned 4xx/5xx) |
-| `2` | Auth error (credentials missing, expired, or invalid) |
-| `3` | Validation error (bad arguments, unknown service, invalid flag) |
-| `4` | Discovery error (could not fetch API schema) |
-| `5` | Internal error |
+**Exit codes**: `0` success · `1` API error (4xx/5xx) · `2` auth error · `3` validation error · `4` discovery error · `5` internal error
 
 ## Skill Import
 
