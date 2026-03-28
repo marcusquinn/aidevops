@@ -19,73 +19,32 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Unified accessibility auditing for websites and HTML emails
-- **Helper**: `accessibility-helper.sh [audit|lighthouse|pa11y|email|contrast|bulk]`
+- **Helper**: `accessibility-helper.sh [audit|lighthouse|pa11y|wave|email|contrast|bulk]`
 - **Standards**: WCAG 2.1 Level A, AA (default), AAA; WCAG 2.2 where tooling supports
 - **Reports**: `~/.aidevops/reports/accessibility/`
-- **Related**: `tools/accessibility/accessibility.md` (tool reference), `services/email/email-testing.md` (email rendering)
-
-**Quick commands:**
+- **Related**: `tools/accessibility/accessibility.md` (tool reference), `services/email/email-testing.md`
 
 ```bash
-# Full web audit (Lighthouse + pa11y + WAVE, desktop + mobile)
-accessibility-helper.sh audit https://example.com
-
-# WAVE API only (comprehensive, CSS/JS-rendered analysis)
-accessibility-helper.sh wave https://example.com
-
-# WAVE with XPath locations for precise element identification
-accessibility-helper.sh wave https://example.com 3
-
-# Email HTML accessibility check
-accessibility-helper.sh email ./newsletter.html
-
-# Contrast ratio check
-accessibility-helper.sh contrast '#333333' '#ffffff'
-
-# Bulk audit from URL list
-accessibility-helper.sh bulk sites.txt
+accessibility-helper.sh audit https://example.com          # Full web audit (Lighthouse + pa11y + WAVE)
+accessibility-helper.sh wave https://example.com           # WAVE API (CSS/JS-rendered analysis)
+accessibility-helper.sh wave https://example.com 3         # WAVE with XPath element locations
+accessibility-helper.sh email ./newsletter.html            # Email HTML accessibility check
+accessibility-helper.sh contrast '#333333' '#ffffff'       # Contrast ratio check
+accessibility-helper.sh bulk sites.txt                     # Bulk audit from URL list
 ```
 
 <!-- AI-CONTEXT-END -->
 
-## Overview
-
-This agent orchestrates accessibility auditing across web and email channels. It combines automated tooling with manual review guidance to produce actionable remediation plans.
-
-| Channel | Tools | Coverage |
-|---------|-------|----------|
-| **Web (desktop)** | Lighthouse, pa11y, WAVE API | axe-core + HTML_CodeSniffer + WAVE engine |
-| **Web (mobile)** | Lighthouse mobile, pa11y, WAVE API (375px) | Touch targets, viewport, zoom |
-| **HTML email** | Built-in static analysis | Email-specific WCAG subset |
-| **Colour** | Built-in contrast calculator, WAVE contrast data | WCAG AA + AAA ratios |
-
 ## Audit Workflow
 
 ### 1. Scope Definition
-
-Before running tools, define the audit scope:
 
 - **Pages**: Homepage, key landing pages, forms, checkout, login
 - **Emails**: Transactional templates, marketing campaigns, automated sequences
 - **Standards**: WCAG 2.1 AA (default) or AAA for public sector / high-compliance
 - **Devices**: Desktop + mobile (both tested by default)
 
-### 2. Automated Scanning
-
-Run the full audit to get baseline scores:
-
-```bash
-# Single URL — runs Lighthouse (desktop + mobile) and pa11y
-accessibility-helper.sh audit https://example.com
-
-# Multiple URLs from file
-accessibility-helper.sh bulk sites.txt
-
-# Email template
-accessibility-helper.sh email ./templates/welcome.html
-```
-
-### 3. Results Interpretation
+### 2. Results Interpretation
 
 #### Web Audit Results
 
@@ -109,12 +68,9 @@ accessibility-helper.sh email ./templates/welcome.html
 | No heading structure | 1.3.1 Info and Relationships | Warning |
 | Colour-only indicators | 1.4.1 Use of Colour | Warning |
 
-### 4. Remediation Planning
-
-After scanning, prioritise fixes by impact and effort:
+### 3. Remediation Planning
 
 **High impact, low effort (fix first):**
-
 - Add missing `alt` attributes to images
 - Add `lang` attribute to `<html>` tag
 - Fix colour contrast failures (update CSS colours)
@@ -122,7 +78,6 @@ After scanning, prioritise fixes by impact and effort:
 - Replace generic link text with descriptive labels
 
 **High impact, higher effort:**
-
 - Add skip navigation links
 - Ensure full keyboard navigability
 - Add ARIA labels to interactive components
@@ -130,28 +85,14 @@ After scanning, prioritise fixes by impact and effort:
 - Ensure form inputs have associated labels
 
 **Medium impact:**
-
 - Add focus indicators for keyboard users
 - Ensure touch targets are at least 44x44px on mobile
 - Add `prefers-reduced-motion` media queries
 - Provide text alternatives for video/audio content
 
-### 5. Verification
-
-Re-run the audit after fixes to confirm resolution:
-
-```bash
-# Re-audit and compare scores
-accessibility-helper.sh audit https://example.com
-
-# Check specific contrast fix
-accessibility-helper.sh contrast '#595959' '#ffffff'
-```
-
 ## Web Accessibility Checklist
 
 ### Perceivable (WCAG Principle 1)
-
 - [ ] All images have meaningful `alt` text (or `alt=""` for decorative)
 - [ ] Video has captions; audio has transcripts
 - [ ] Colour is not the sole means of conveying information
@@ -160,7 +101,6 @@ accessibility-helper.sh contrast '#595959' '#ffffff'
 - [ ] Text spacing can be adjusted without loss of content
 
 ### Operable (WCAG Principle 2)
-
 - [ ] All functionality is keyboard accessible
 - [ ] No keyboard traps exist
 - [ ] Skip navigation link is present
@@ -170,7 +110,6 @@ accessibility-helper.sh contrast '#595959' '#ffffff'
 - [ ] Touch targets are at least 44x44 CSS pixels
 
 ### Understandable (WCAG Principle 3)
-
 - [ ] Page language is declared (`lang` attribute)
 - [ ] Language changes within content are marked
 - [ ] Form inputs have visible labels
@@ -178,7 +117,6 @@ accessibility-helper.sh contrast '#595959' '#ffffff'
 - [ ] Navigation is consistent across pages
 
 ### Robust (WCAG Principle 4)
-
 - [ ] HTML validates without significant errors
 - [ ] ARIA roles, states, and properties are correct
 - [ ] Custom components expose name, role, and value
@@ -197,150 +135,76 @@ accessibility-helper.sh contrast '#595959' '#ffffff'
 - [ ] Colour contrast meets WCAG AA (4.5:1 for body text)
 - [ ] Dark mode tested (add `<meta name="color-scheme" content="light dark">`)
 
-## Monitoring and Continuous Compliance
+## Tool Selection Guide
+
+| Scenario | Command |
+|----------|---------|
+| Quick score check | `accessibility-helper.sh lighthouse <url>` |
+| WCAG compliance audit | `accessibility-helper.sh pa11y <url> WCAG2AA` |
+| Comprehensive analysis | `accessibility-helper.sh wave <url>` |
+| Element-level issues | `accessibility-helper.sh wave <url> 3` |
+| Mobile accessibility | `accessibility-helper.sh wave-mobile <url>` |
+| Full web audit | `accessibility-helper.sh audit <url>` |
+| Email template check | `accessibility-helper.sh email <file>` |
+| Colour pair validation | `accessibility-helper.sh contrast <fg> <bg>` |
+| Multi-site monitoring | `accessibility-helper.sh bulk <urls-file>` |
+| Dynamic SPA content | Use `playwright` for JS-rendered pages |
+| Item documentation | `accessibility-helper.sh wave-docs <item-id>` |
+
+## Monitoring and CI/CD
 
 ### Scheduled Audits
 
-Use the bulk audit with a cron job for ongoing monitoring:
-
 ```bash
-# Create a URL list for monitored pages
-cat > ~/.aidevops/reports/accessibility/monitored-urls.txt << 'EOF'
-https://example.com
-https://example.com/contact
-https://example.com/products
-EOF
-
-# Run weekly via cron-helper
 cron-helper.sh add "accessibility-audit" \
   "0 6 * * 1" \
   "accessibility-helper.sh bulk ~/.aidevops/reports/accessibility/monitored-urls.txt"
-```
 
-### Score Tracking
-
-Track accessibility scores over time by comparing Lighthouse JSON reports:
-
-```bash
-# Extract score from report
+# Track scores over time
 jq -r '.categories.accessibility.score * 100' \
   ~/.aidevops/reports/accessibility/lighthouse_a11y_*.json
 ```
 
 ### CI/CD Integration
 
-Add accessibility checks to build pipelines:
-
 ```bash
 # Fail build if Lighthouse accessibility score drops below 90
 score=$(accessibility-helper.sh lighthouse https://staging.example.com \
   | sed $'s/\033\\[[0-9;]*m//g' | sed -E -n 's/.*Score: ([0-9]+).*/\1/p')
-if [[ -z "$score" ]]; then
-  echo "Error: Could not parse accessibility score from output." >&2
-  exit 1
-fi
-if [[ "$score" -lt 90 ]]; then
-  echo "Accessibility score $score% is below 90% threshold"
-  exit 1
-fi
+[[ -z "$score" ]] && echo "Error: Could not parse accessibility score" >&2 && exit 1
+[[ "$score" -lt 90 ]] && echo "Accessibility score $score% is below 90% threshold" && exit 1
 
 # Fail build if pa11y finds errors
 accessibility-helper.sh pa11y https://staging.example.com WCAG2AA
 ```
 
-## Tool Selection Guide
-
-| Scenario | Tool | Command |
-|----------|------|---------|
-| Quick score check | Lighthouse | `accessibility-helper.sh lighthouse <url>` |
-| WCAG compliance audit | pa11y | `accessibility-helper.sh pa11y <url> WCAG2AA` |
-| Comprehensive analysis | WAVE API | `accessibility-helper.sh wave <url>` |
-| Element-level issues | WAVE API (type 3/4) | `accessibility-helper.sh wave <url> 3` |
-| Mobile accessibility | WAVE API | `accessibility-helper.sh wave-mobile <url>` |
-| Full web audit | All tools | `accessibility-helper.sh audit <url>` |
-| Email template check | Built-in | `accessibility-helper.sh email <file>` |
-| Colour pair validation | Built-in | `accessibility-helper.sh contrast <fg> <bg>` |
-| Multi-site monitoring | Bulk | `accessibility-helper.sh bulk <urls-file>` |
-| Dynamic SPA content | Playwright | Use `playwright` for JS-rendered pages |
-| Real device rendering | Browser tools | `pagespeed-helper.sh` or Litmus/Email on Acid |
-| Item documentation | WAVE docs | `accessibility-helper.sh wave-docs <item-id>` |
-
-## Integration with Other Services
-
-| Service | Integration Point |
-|---------|-------------------|
-| **Email Testing** (`services/email/email-testing.md`) | Run `email` check alongside design rendering tests |
-| **Email Health** (`services/email/email-health-check.md`) | Deliverability + accessibility = complete email audit |
-| **PageSpeed** (`tools/browser/pagespeed.md`) | Lighthouse accessibility score included in performance reports |
-| **SEO** (`seo/`) | Overlapping concerns: alt text, headings, semantic HTML, lang attribute |
-| **Playwright** (`tools/browser/playwright.md`) | Dynamic content testing for SPAs and JS-rendered pages |
-| **Content** (`content.md`) | Apply accessibility guidelines during content production |
-
 ## Common Remediation Patterns
 
-### Fix: Missing Alt Text
-
 ```html
-<!-- Before -->
-<img src="hero.jpg">
+<!-- Missing alt text -->
+<img src="hero.jpg" alt="Team collaborating around a whiteboard">  <!-- informative -->
+<img src="divider.png" alt="" role="presentation">                 <!-- decorative -->
 
-<!-- After: informative image -->
-<img src="hero.jpg" alt="Team collaborating around a whiteboard">
-
-<!-- After: decorative image -->
-<img src="divider.png" alt="" role="presentation">
-```
-
-### Fix: Insufficient Contrast
-
-```bash
-# Check current contrast
-accessibility-helper.sh contrast '#999999' '#ffffff'
-# Result: 2.85:1 — FAIL AA normal text
-
-# Find a passing alternative
-accessibility-helper.sh contrast '#595959' '#ffffff'
-# Result: 7.00:1 — PASS AAA normal text
-```
-
-### Fix: Email Layout Table
-
-```html
-<!-- Before -->
-<table>
-  <tr><td>Content</td></tr>
-</table>
-
-<!-- After -->
+<!-- Email layout table -->
 <table role="presentation" border="0" cellpadding="0" cellspacing="0">
   <tr><td>Content</td></tr>
 </table>
-```
 
-### Fix: Generic Link Text
+<!-- Generic link text -->
+<a href="/report">View your accessibility report</a>  <!-- not "Click here" -->
 
-```html
-<!-- Before -->
-<a href="/report">Click here</a> to view your report.
-
-<!-- After -->
-<a href="/report">View your accessibility report</a>
-```
-
-### Fix: Missing Form Labels
-
-```html
-<!-- Before -->
-<input type="email" placeholder="Email">
-
-<!-- After -->
+<!-- Missing form label -->
 <label for="email">Email address</label>
 <input type="email" id="email" placeholder="you@example.com">
 ```
 
-## WCAG 2.2 Additions
+```bash
+# Contrast check — find a passing alternative
+accessibility-helper.sh contrast '#999999' '#ffffff'  # 2.85:1 — FAIL AA
+accessibility-helper.sh contrast '#595959' '#ffffff'  # 7.00:1 — PASS AAA
+```
 
-WCAG 2.2 (October 2023) adds criteria relevant to this audit:
+## WCAG 2.2 Additions (October 2023)
 
 | Criterion | Level | Description |
 |-----------|-------|-------------|
