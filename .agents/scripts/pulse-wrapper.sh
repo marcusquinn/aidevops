@@ -225,7 +225,7 @@ STATE_FILE="${HOME}/.aidevops/logs/pulse-state.txt"
 QUEUE_METRICS_FILE="${HOME}/.aidevops/logs/pulse-queue-metrics"
 SCOPE_FILE="${HOME}/.aidevops/logs/pulse-scope-repos"
 COMPLEXITY_SCAN_LAST_RUN="${HOME}/.aidevops/logs/complexity-scan-last-run"
-COMPLEXITY_SCAN_INTERVAL="${COMPLEXITY_SCAN_INTERVAL:-86400}" # 1 day in seconds (was 7 days)
+COMPLEXITY_SCAN_INTERVAL="${COMPLEXITY_SCAN_INTERVAL:-900}" # 15 min — runs each pulse cycle, per-run cap governs throughput
 DEDUP_CLEANUP_LAST_RUN="${HOME}/.aidevops/logs/dedup-cleanup-last-run"
 DEDUP_CLEANUP_INTERVAL="${DEDUP_CLEANUP_INTERVAL:-86400}"                       # 1 day in seconds
 DEDUP_CLEANUP_BATCH_SIZE="${DEDUP_CLEANUP_BATCH_SIZE:-50}"                      # Max issues to close per run
@@ -235,7 +235,7 @@ COMPLEXITY_MD_MIN_LINES="${COMPLEXITY_MD_MIN_LINES:-50}"                        
 WORKER_WATCHDOG_HELPER="${SCRIPT_DIR}/worker-watchdog.sh"
 
 # Validate complexity scan configuration (defined above, validated here)
-COMPLEXITY_SCAN_INTERVAL=$(_validate_int COMPLEXITY_SCAN_INTERVAL "$COMPLEXITY_SCAN_INTERVAL" 86400 3600)
+COMPLEXITY_SCAN_INTERVAL=$(_validate_int COMPLEXITY_SCAN_INTERVAL "$COMPLEXITY_SCAN_INTERVAL" 900 300)
 COMPLEXITY_FUNC_LINE_THRESHOLD=$(_validate_int COMPLEXITY_FUNC_LINE_THRESHOLD "$COMPLEXITY_FUNC_LINE_THRESHOLD" 100 50)
 COMPLEXITY_FILE_VIOLATION_THRESHOLD=$(_validate_int COMPLEXITY_FILE_VIOLATION_THRESHOLD "$COMPLEXITY_FILE_VIOLATION_THRESHOLD" 1 1)
 COMPLEXITY_MD_MIN_LINES=$(_validate_int COMPLEXITY_MD_MIN_LINES "$COMPLEXITY_MD_MIN_LINES" 50 10)
@@ -3242,7 +3242,7 @@ _complexity_scan_create_md_issues() {
 	local scan_results="$1"
 	local repos_json="$2"
 	local aidevops_slug="$3"
-	local max_issues_per_run=200
+	local max_issues_per_run=5
 	local issues_created=0
 	local issues_skipped=0
 
@@ -3293,7 +3293,7 @@ _complexity_scan_create_issues() {
 	local scan_results="$1"
 	local repos_json="$2"
 	local aidevops_slug="$3"
-	local max_issues_per_run=200
+	local max_issues_per_run=5
 	local issues_created=0
 	local issues_skipped=0
 
@@ -3381,7 +3381,7 @@ This is an automated scan. The function lengths are factual, but the best decomp
 }
 
 #######################################
-# Daily complexity scan (GH#5628)
+# Complexity scan (GH#5628)
 #
 # Scans both shell scripts (.sh) and agent docs (.md) for complexity:
 # - .sh files: functions exceeding COMPLEXITY_FUNC_LINE_THRESHOLD lines
@@ -3396,7 +3396,9 @@ This is an automated scan. The function lengths are factual, but the best decomp
 # .md issues get tier:thinking (opus) because doc simplification requires
 # deep reasoning to distinguish noise from institutional knowledge.
 #
-# Runs at most once per COMPLEXITY_SCAN_INTERVAL (default 1 day).
+# Runs at most once per COMPLEXITY_SCAN_INTERVAL (default 15 min — each
+# pulse cycle). Creates up to 5 issues per run; the open cap (100) is
+# the safety valve against backlog flooding.
 #
 # Returns: 0 always (best-effort, never breaks the pulse)
 #######################################
