@@ -277,9 +277,9 @@
       "pr": 11381
     },
     ".agents/tools/database/vector-search/per-tenant-rag.md": {
-      "hash": "139080e7022a0db6eeee43e89ddb5b8db89e2168",
-      "at": "2026-03-28T05:10:05Z",
-      "pr": 11391
+      "hash": "dc14f60f088f5457def9feea634dc70ecb9e81cc",
+      "at": "2026-03-28T05:50:35Z",
+      "pr": 11417
     },
     ".agents/tools/architecture/feature-slicing-skill/nextjs.md": {
       "hash": "4f5ed54db7eef3619cd797d22192d2aef90135d2",
@@ -297,8 +297,8 @@
       "pr": 11414
     },
     ".agents/marketing-sales/direct-response-copy-swipe-file-ads.md": {
-      "hash": "ef47a643424a280f1e21226855db532545f2597c",
-      "at": "2026-03-28T05:09:57Z",
+      "hash": "8e2f8f2a6620debfe219e09c96cfeb634fb518a7",
+      "at": "2026-03-28T05:50:32Z",
       "pr": 11411
     },
     ".agents/tools/voice/transcription.md": {
@@ -320,6 +320,41 @@
       "hash": "23e33ef44632a4467884d5d9bebf6452adf22160",
       "at": "2026-03-28T05:10:32Z",
       "pr": 11315
+    },
+    ".agents/marketing-sales/ad-creative-offers-landing.md": {
+      "hash": "a16b4767e518eb9f3f35e1b61d3d166390077009",
+      "at": "2026-03-28T05:50:34Z",
+      "pr": 11415
+    },
+    ".agents/services/database/postgres-drizzle-skill/queries.md": {
+      "hash": "24d97c062a3cb042bc5c34b399cb0c3a9543f472",
+      "at": "2026-03-28T05:50:39Z",
+      "pr": 11416
+    },
+    ".agents/tools/accessibility/accessibility-audit.md": {
+      "hash": "a817d02e74b66f8a1c9b785ac201f15af22f9100",
+      "at": "2026-03-28T05:50:48Z",
+      "pr": 11440
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/ai-gateway.md": {
+      "hash": "720c2836fca088d027ac637f8c69e97cb3c2764a",
+      "at": "2026-03-28T05:50:52Z",
+      "pr": 11443
+    },
+    ".agents/tools/programming/modern-javascript-skill/es2018-es2019.md": {
+      "hash": "b59a17a028d181e2f55c45e58c371ca999d9a2ee",
+      "at": "2026-03-28T05:50:55Z",
+      "pr": 11439
+    },
+    ".agents/services/database/postgres-drizzle-skill/postgres.md": {
+      "hash": "2633ce6d2343b370a13a3efea1ed735544a6883a",
+      "at": "2026-03-28T05:50:57Z",
+      "pr": 11448
+    },
+    ".agents/marketing-sales/direct-response-copy-frameworks-offer-construction.md": {
+      "hash": "10d31ffa27d8e38267882e04f099ce38899635f1",
+      "at": "2026-03-28T05:51:09Z",
+      "pr": 11363
     }
   }
 }
