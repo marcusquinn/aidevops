@@ -14,15 +14,10 @@ tools:
 
 # Plans Workflow
 
-<!-- AI-CONTEXT-START -->
-
 ## Quick Reference
 
-- **Purpose**: Save planning discussions as actionable tasks or plans
-- **Commands**: `/save-todo` (auto-detects), `/ready` (show unblocked), `/sync-beads` (sync to Beads)
+- **Commands**: `/save-todo` (auto-detects complexity), `/ready` (show unblocked), `/sync-beads` (sync to Beads)
 - **Principle**: Don't make user think about where to save
-
-**Files**:
 
 | File | Purpose |
 |------|---------|
@@ -36,11 +31,9 @@ tools:
 
 **Dependency Syntax**: `blocked-by:t001,t002` | `blocks:t003` | 2-space indentation = parent-child
 
-<!-- AI-CONTEXT-END -->
-
 ## Auto-Detection Logic
 
-When `/save-todo` is invoked, analyze the conversation for complexity signals:
+Analyze conversation for complexity signals when `/save-todo` is invoked:
 
 | Signal | Indicates | Action |
 |--------|-----------|--------|
@@ -49,9 +42,7 @@ When `/save-todo` is invoked, analyze the conversation for complexity signals:
 
 ## Ralph Classification
 
-Tasks can be classified as "Ralph-able" — suitable for autonomous iterative AI loops.
-
-**Criteria** (all required): clear success criteria, automated verification, bounded scope, no human judgment needed.
+"Ralph-able" = suitable for autonomous iterative AI loops. **Criteria** (all required): clear success criteria, automated verification, bounded scope, no human judgment needed.
 
 | Signal | Ralph-able? |
 |--------|-------------|
@@ -81,16 +72,13 @@ Add `#auto-dispatch` only when ALL inclusion criteria pass and NO exclusion crit
 
 ### MANDATORY: Task Brief Requirement
 
-**Every task MUST have a brief file** at `todo/tasks/{task_id}-brief.md`. A task without a brief is undevelopable — it loses the conversation context that informed it. Use `templates/brief-template.md`. Captures: origin (session ID, date, author), what, why, how (with file refs), acceptance criteria, context.
-
-**Session provenance is mandatory.** Detect runtime: `$OPENCODE_SESSION_ID`, `$CLAUDE_SESSION_ID`, or `{app}:unknown-{date}`.
+**Every task MUST have a brief file** at `todo/tasks/{task_id}-brief.md`. A task without a brief is undevelopable — it loses the conversation context that informed it. Use `templates/brief-template.md`. Captures: origin (session ID, date, author), what, why, how (with file refs), acceptance criteria, context. Detect runtime: `$OPENCODE_SESSION_ID`, `$CLAUDE_SESSION_ID`, or `{app}:unknown-{date}`.
 
 ### Task Description Quality (GH#6419)
 
 Task descriptions in TODO.md become GitHub issue titles — primary input to pulse duplicate detection. Include the **what** (action), **where** (component/file/feature area), and **when/why** (triggering condition). Exception: persistent/pinned monitoring issues keep their concise title style.
 
-**Good**: `Add WooCommerce tax fallback when no tax class matches product category`
-**Bad**: `Tax fallback`
+**Good**: `Add WooCommerce tax fallback when no tax class matches product category` | **Bad**: `Tax fallback`
 
 ### Save Flow
 
@@ -113,8 +101,6 @@ Format elements (all optional except id and description): `@owner`, `#tag`, `~es
 
 ## Starting Work from Plans
 
-When user says "Let's work on X":
-
 1. **Find**: `grep -i "{keyword}" TODO.md todo/PLANS.md`
 2. **Load context**: Read PRD/tasks files if they exist
 3. **Present**: `Found: "{title}" (~{estimate}) -- 1. Start working  2. View details  3. Different task`
@@ -122,7 +108,7 @@ When user says "Let's work on X":
 
 ## During Implementation
 
-Update PLANS.md in place: check off Progress items with timestamps, add Decision Log entries (`Decision:`, `Rationale:`, `Date:`), and record Surprises & Discoveries (`Observation:`, `Evidence:`, `Impact:`).
+Update PLANS.md in place: check off Progress items with timestamps, add Decision Log entries (`Decision:`, `Rationale:`, `Date:`), record Surprises & Discoveries (`Observation:`, `Evidence:`, `Impact:`).
 
 ## Completing a Plan
 
@@ -176,9 +162,7 @@ Configure per-repo in `.aidevops.json`: `{ "time_tracking": "prompt", "features"
 | **Unclaim** | Remove `assignee:` + `started:` → commit+push → sync to GH issue |
 | **Race protection** | Git push rejection = someone else claimed first. Pull, re-check, abort. |
 
-**Identity**: Set `AIDEVOPS_IDENTITY` env var, or defaults to `$(whoami)@$(hostname -s)`.
-
-**Status labels** on GitHub Issues: `status:available` → `status:claimed` → `status:in-review` → `status:done`
+**Identity**: Set `AIDEVOPS_IDENTITY` env var, or defaults to `$(whoami)@$(hostname -s)`. **Status labels**: `status:available` → `status:claimed` → `status:in-review` → `status:done`
 
 ## MANDATORY: Worker TODO.md Restriction
 
