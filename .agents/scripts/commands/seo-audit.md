@@ -32,8 +32,8 @@ Read `~/.aidevops/agents/seo/seo-audit-skill.md` for:
 - Common issues by site type
 
 Also read reference files:
-- `~/.aidevops/agents/seo/seo-audit-skill/references/ai-writing-detection.md`
-- `~/.aidevops/agents/seo/seo-audit-skill/references/aeo-geo-patterns.md`
+- `~/.aidevops/agents/seo/seo-audit-skill/ai-writing-detection.md`
+- `~/.aidevops/agents/seo/seo-audit-skill/aeo-geo-patterns.md`
 
 ### Step 3: Gather Data
 

@@ -345,8 +345,8 @@ Same format as above
 
 ## References
 
-- [AI Writing Detection](references/ai-writing-detection.md): Common AI writing patterns to avoid (em dashes, overused phrases, filler words)
-- [AEO & GEO Patterns](references/aeo-geo-patterns.md): Content patterns optimized for answer engines and AI citation
+- [AI Writing Detection](seo-audit-skill/ai-writing-detection.md): Common AI writing patterns to avoid (em dashes, overused phrases, filler words)
+- [AEO & GEO Patterns](seo-audit-skill/aeo-geo-patterns.md): Content patterns optimized for answer engines and AI citation
 
 ## Tools Referenced
 

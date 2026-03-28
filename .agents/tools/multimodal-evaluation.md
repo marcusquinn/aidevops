@@ -28,7 +28,7 @@ These models handle multiple modalities natively (not cascaded pipelines):
 | Gemini 2.0 Live / 2.5 | Text + Vision + Voice (streaming) | `voice-ai-models.md:89`, `pipecat-opencode.md:62` |
 | MiniCPM-o 4.5 | Text + Vision + Voice (S2S, open weights) | `voice-ai-models.md:90` |
 | Ultravox | Audio + Text (multimodal) | `voice-ai-models.md:91`, `pipecat-opencode.md:65` |
-| HeyGen Streaming Avatars | Voice + Video (avatar) | `heygen-skill/rules/streaming-avatars.md` |
+| HeyGen Streaming Avatars | Voice + Video (avatar) | `heygen-skill/rules-streaming-avatars.md` |
 | Higgsfield API | Image + Video + Voice + Audio (unified API) | `higgsfield.md:1-18` |
 
 ### Existing Cross-References (Already Working)
@@ -36,7 +36,7 @@ These models handle multiple modalities natively (not cascaded pipelines):
 The framework already links modalities where they intersect:
 
 1. **Voice -> Video**: `speech-to-speech.md:236-240` links to `tools/video/remotion.md` for video narration
-2. **Voice -> Video**: `voice-models.md:308` links to `heygen-skill/rules/voices.md` for AI voice cloning
+2. **Voice -> Video**: `voice-models.md:308` links to `heygen-skill/rules-voices.md` for AI voice cloning
 3. **Video -> Voice**: `heygen-skill.md` references voice selection for avatar videos
 4. **Vision -> OCR**: `peekaboo.md:517` links to `tools/ocr/glm-ocr.md` for OCR workflows
 5. **OCR -> Vision**: `glm-ocr.md:37` links back to Peekaboo for screen capture + OCR

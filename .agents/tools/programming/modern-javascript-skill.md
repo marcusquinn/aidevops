@@ -187,22 +187,22 @@ const [x, y] = getCoordinates();
 
 | File | Purpose |
 |------|---------|
-| [references/ES2016-ES2017.md](references/ES2016-ES2017.md) | includes, async/await, Object.values/entries, string padding |
-| [references/ES2018-ES2019.md](references/ES2018-ES2019.md) | rest/spread objects, flat/flatMap, RegExp named groups |
-| [references/ES2022-ES2023.md](references/ES2022-ES2023.md) | .at(), .toSorted(), .toReversed(), .findLast(), class features |
-| [references/ES2024.md](references/ES2024.md) | Object.groupBy, Promise.withResolvers, RegExp v flag |
-| [references/ES2025.md](references/ES2025.md) | Set methods, iterator helpers, using/await using |
-| [references/UPCOMING.md](references/UPCOMING.md) | Temporal API, Decorators, Decorator Metadata |
+| [modern-javascript-skill/es2016-es2017.md](modern-javascript-skill/es2016-es2017.md) | includes, async/await, Object.values/entries, string padding |
+| [modern-javascript-skill/es2018-es2019.md](modern-javascript-skill/es2018-es2019.md) | rest/spread objects, flat/flatMap, RegExp named groups |
+| [modern-javascript-skill/es2022-es2023.md](modern-javascript-skill/es2022-es2023.md) | .at(), .toSorted(), .toReversed(), .findLast(), class features |
+| [modern-javascript-skill/es2024.md](modern-javascript-skill/es2024.md) | Object.groupBy, Promise.withResolvers, RegExp v flag |
+| [modern-javascript-skill/es2025.md](modern-javascript-skill/es2025.md) | Set methods, iterator helpers, using/await using |
+| [modern-javascript-skill/upcoming.md](modern-javascript-skill/upcoming.md) | Temporal API, Decorators, Decorator Metadata |
 
 ### Pattern References
 
 | File | Purpose |
 |------|---------|
-| [references/PROMISES.md](references/PROMISES.md) | Promise fundamentals, async/await, combinators |
-| [references/CONCURRENCY.md](references/CONCURRENCY.md) | Parallel, batched, pool patterns, retry, cancellation |
-| [references/IMMUTABILITY.md](references/IMMUTABILITY.md) | Immutable data patterns, pure functions |
-| [references/COMPOSITION.md](references/COMPOSITION.md) | Higher-order functions, memoization, monads |
-| [references/CHEATSHEET.md](references/CHEATSHEET.md) | Quick syntax reference |
+| [modern-javascript-skill/promises.md](modern-javascript-skill/promises.md) | Promise fundamentals, async/await, combinators |
+| [modern-javascript-skill/concurrency.md](modern-javascript-skill/concurrency.md) | Parallel, batched, pool patterns, retry, cancellation |
+| [modern-javascript-skill/immutability.md](modern-javascript-skill/immutability.md) | Immutable data patterns, pure functions |
+| [modern-javascript-skill/composition.md](modern-javascript-skill/composition.md) | Higher-order functions, memoization, monads |
+| [modern-javascript-skill/cheatsheet.md](modern-javascript-skill/cheatsheet.md) | Quick syntax reference |
 
 ## Resources
 

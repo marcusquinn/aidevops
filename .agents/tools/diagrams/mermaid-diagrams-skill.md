@@ -152,13 +152,13 @@ A -->|text| B # Labeled
 
 | File | Purpose |
 |------|---------|
-| [references/FLOWCHARTS.md](references/FLOWCHARTS.md) | Nodes, edges, subgraphs, styling |
-| [references/SEQUENCE.md](references/SEQUENCE.md) | Participants, messages, activation |
-| [references/CLASS-ER.md](references/CLASS-ER.md) | Classes, ER diagrams, relationships |
-| [references/STATE-JOURNEY.md](references/STATE-JOURNEY.md) | States, user journeys |
-| [references/DATA-CHARTS.md](references/DATA-CHARTS.md) | Gantt, Pie, Timeline, Quadrant |
-| [references/ARCHITECTURE.md](references/ARCHITECTURE.md) | C4, Block, Kanban |
-| [references/CHEATSHEET.md](references/CHEATSHEET.md) | All syntax quick reference |
+| [mermaid-diagrams-skill/flowcharts.md](mermaid-diagrams-skill/flowcharts.md) | Nodes, edges, subgraphs, styling |
+| [mermaid-diagrams-skill/sequence.md](mermaid-diagrams-skill/sequence.md) | Participants, messages, activation |
+| [mermaid-diagrams-skill/class-er.md](mermaid-diagrams-skill/class-er.md) | Classes, ER diagrams, relationships |
+| [mermaid-diagrams-skill/state-journey.md](mermaid-diagrams-skill/state-journey.md) | States, user journeys |
+| [mermaid-diagrams-skill/data-charts.md](mermaid-diagrams-skill/data-charts.md) | Gantt, Pie, Timeline, Quadrant |
+| [mermaid-diagrams-skill/architecture.md](mermaid-diagrams-skill/architecture.md) | C4, Block, Kanban |
+| [mermaid-diagrams-skill/cheatsheet.md](mermaid-diagrams-skill/cheatsheet.md) | All syntax quick reference |
 
 ## Resources
 

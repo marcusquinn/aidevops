@@ -118,9 +118,9 @@ Keep cross-imports minimal. Consider merging entities if references are extensiv
 
 | File | Purpose |
 |------|---------|
-| [references/LAYERS.md](references/LAYERS.md) | Complete layer specs, flowcharts |
-| [references/PUBLIC-API.md](references/PUBLIC-API.md) | Export patterns, @x notation, tree-shaking |
-| [references/IMPLEMENTATION.md](references/IMPLEMENTATION.md) | Code patterns: entities, features, React Query |
-| [references/NEXTJS.md](references/NEXTJS.md) | App Router integration, page re-exports |
-| [references/MIGRATION.md](references/MIGRATION.md) | Incremental migration strategy |
-| [references/CHEATSHEET.md](references/CHEATSHEET.md) | Quick reference, import matrix |
+| [feature-slicing-skill/layers.md](feature-slicing-skill/layers.md) | Complete layer specs, flowcharts |
+| [feature-slicing-skill/public-api.md](feature-slicing-skill/public-api.md) | Export patterns, @x notation, tree-shaking |
+| [feature-slicing-skill/implementation.md](feature-slicing-skill/implementation.md) | Code patterns: entities, features, React Query |
+| [feature-slicing-skill/nextjs.md](feature-slicing-skill/nextjs.md) | App Router integration, page re-exports |
+| [feature-slicing-skill/migration.md](feature-slicing-skill/migration.md) | Incremental migration strategy |
+| [feature-slicing-skill/cheatsheet.md](feature-slicing-skill/cheatsheet.md) | Quick reference, import matrix |

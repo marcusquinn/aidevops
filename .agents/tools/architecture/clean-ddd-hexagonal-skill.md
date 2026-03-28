@@ -141,13 +141,13 @@ src/
 
 | File | Purpose |
 |------|---------|
-| [references/LAYERS.md](references/LAYERS.md) | Complete layer specifications |
-| [references/DDD-STRATEGIC.md](references/DDD-STRATEGIC.md) | Bounded contexts, context mapping |
-| [references/DDD-TACTICAL.md](references/DDD-TACTICAL.md) | Entities, value objects, aggregates (pseudocode) |
-| [references/HEXAGONAL.md](references/HEXAGONAL.md) | Ports, adapters, naming |
-| [references/CQRS-EVENTS.md](references/CQRS-EVENTS.md) | Command/query separation, events |
-| [references/TESTING.md](references/TESTING.md) | Unit, integration, architecture tests |
-| [references/CHEATSHEET.md](references/CHEATSHEET.md) | Quick decision guide |
+| [clean-ddd-hexagonal-skill/layers.md](clean-ddd-hexagonal-skill/layers.md) | Complete layer specifications |
+| [clean-ddd-hexagonal-skill/ddd-strategic.md](clean-ddd-hexagonal-skill/ddd-strategic.md) | Bounded contexts, context mapping |
+| [clean-ddd-hexagonal-skill/ddd-tactical.md](clean-ddd-hexagonal-skill/ddd-tactical.md) | Entities, value objects, aggregates (pseudocode) |
+| [clean-ddd-hexagonal-skill/hexagonal.md](clean-ddd-hexagonal-skill/hexagonal.md) | Ports, adapters, naming |
+| [clean-ddd-hexagonal-skill/cqrs-events.md](clean-ddd-hexagonal-skill/cqrs-events.md) | Command/query separation, events |
+| [clean-ddd-hexagonal-skill/testing.md](clean-ddd-hexagonal-skill/testing.md) | Unit, integration, architecture tests |
+| [clean-ddd-hexagonal-skill/cheatsheet.md](clean-ddd-hexagonal-skill/cheatsheet.md) | Quick decision guide |
 
 ## Sources
 

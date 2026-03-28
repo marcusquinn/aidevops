@@ -157,13 +157,13 @@ await db.transaction(async (tx) => {
 
 | File | Purpose |
 |------|---------|
-| [references/SCHEMA.md](references/SCHEMA.md) | Column types, constraints |
-| [references/QUERIES.md](references/QUERIES.md) | Operators, joins, aggregations |
-| [references/RELATIONS.md](references/RELATIONS.md) | One-to-many, many-to-many |
-| [references/MIGRATIONS.md](references/MIGRATIONS.md) | drizzle-kit workflows |
-| [references/POSTGRES.md](references/POSTGRES.md) | PG18 features, RLS, partitioning |
-| [references/PERFORMANCE.md](references/PERFORMANCE.md) | Indexing, optimization |
-| [references/CHEATSHEET.md](references/CHEATSHEET.md) | Quick reference |
+| [postgres-drizzle-skill/schema.md](postgres-drizzle-skill/schema.md) | Column types, constraints |
+| [postgres-drizzle-skill/queries.md](postgres-drizzle-skill/queries.md) | Operators, joins, aggregations |
+| [postgres-drizzle-skill/relations.md](postgres-drizzle-skill/relations.md) | One-to-many, many-to-many |
+| [postgres-drizzle-skill/migrations.md](postgres-drizzle-skill/migrations.md) | drizzle-kit workflows |
+| [postgres-drizzle-skill/postgres.md](postgres-drizzle-skill/postgres.md) | PG18 features, RLS, partitioning |
+| [postgres-drizzle-skill/performance.md](postgres-drizzle-skill/performance.md) | Indexing, optimization |
+| [postgres-drizzle-skill/cheatsheet.md](postgres-drizzle-skill/cheatsheet.md) | Quick reference |
 
 ## Resources
 
