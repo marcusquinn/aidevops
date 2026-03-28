@@ -171,14 +171,14 @@ Supported: pgvector, pg_trgm, ltree, hstore, uuid-ossp. Full list: https://pglit
 
 | Platform | Persistence | Notes |
 |----------|-------------|-------|
-| Electron (main) | Filesystem | Recommended; requires Electron 28+ for SharedArrayBuffer |
+| Electron (main) | Filesystem | Recommended; requires Electron 11.0+ for SharedArrayBuffer |
 | Electron (renderer) | IndexedDB | Use multi-tab worker for shared access |
-| Tauri (webview) | Filesystem via Tauri API | |
-| Browser extension (MV3) | IndexedDB | Use offscreen doc for heavy queries |
+| Tauri (webview) | Filesystem via Tauri API | Unconfirmed — not documented in upstream PGlite docs |
+| Browser extension (MV3) | IndexedDB | Use offscreen doc for heavy queries; unconfirmed in official docs |
 | React Native / Expo | **Not supported** | WASM unsupported; use SQLite + PowerSync |
 | Node.js / Bun / Deno | Filesystem | Local dev without Docker Postgres |
 
-**Gotchas**: (1) Single connection — no concurrent writers; use mutex/message queue for multi-window. (2) WASM startup 500ms-2s — show loading state, don't block app launch. (3) Check https://pglite.dev/extensions/ before assuming production extension parity. (4) No `LISTEN/NOTIFY` — use live query API instead.
+**Gotchas**: (1) Single connection — no concurrent writers; use mutex/message queue for multi-window. (2) WASM startup 500ms-2s — show loading state, don't block app launch. (3) Check https://pglite.dev/extensions/ before assuming production extension parity. (4) No `LISTEN/NOTIFY` — use live query API instead. (5) Tauri and browser extension (MV3) support is unconfirmed in official PGlite docs — verify against https://pglite.dev before relying on these platforms.
 
 ## Live Queries
 
