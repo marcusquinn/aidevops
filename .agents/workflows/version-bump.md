@@ -19,7 +19,7 @@ tools:
 ## Quick Reference
 
 - **Full release**: `.agents/scripts/version-manager.sh release [major|minor|patch] --skip-preflight`
-- **CRITICAL**: This single command does everything - bump, commit, tag, push, GitHub release
+- **CRITICAL**: This single command does everything — bump, commit, tag, push, GitHub release
 - **NEVER** run separate commands, manually edit VERSION, or bump versions yourself
 - **Files updated atomically**: VERSION, package.json, README.md badge, setup.sh, sonar-project.properties, .claude-plugin/marketplace.json
 - **Manual step**: Update CHANGELOG.md `[Unreleased]` to `[X.X.X] - YYYY-MM-DD` BEFORE running release
@@ -27,21 +27,9 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-This is the authoritative guide for AI agents performing version bumps in the aidevops repository.
-
 ## Critical: Never Edit VERSION Directly
 
-**DO NOT** manually edit the VERSION file. This causes version inconsistencies and CI failures.
-
-The script updates 6 files atomically:
-1. VERSION
-2. README.md (badge)
-3. sonar-project.properties
-4. setup.sh (header comment)
-5. package.json
-6. .claude-plugin/marketplace.json
-
-If you edit VERSION directly, the other 5 files become stale.
+**DO NOT** manually edit VERSION or any of the 6 version-tracked files. Editing one leaves the others stale and causes CI failures.
 
 **Always use**:
 
@@ -51,25 +39,12 @@ If you edit VERSION directly, the other 5 files become stale.
 .agents/scripts/version-manager.sh release [major|minor|patch]
 ```
 
-## The Primary Tool: version-manager.sh
-
-**Location**: `.agents/scripts/version-manager.sh`
-
-This script handles all version management tasks:
-
-- Bumps semantic versions (major/minor/patch)
-- Updates version references across 6 files
-- Validates version consistency
-- Creates git tags
-- Creates GitHub releases (via `gh` CLI)
-- Runs preflight quality checks
-
-## Complete Command Reference
+## Command Reference
 
 | Command | Purpose |
 |---------|---------|
-| `get` | Display current version from VERSION file |
-| `bump [type]` | Bump version and update all files |
+| `get` | Display current version |
+| `bump [type]` | Bump version and update all 6 files |
 | `validate` | Check version consistency across all files |
 | `release [type]` | Full release: bump, validate, tag, GitHub release |
 | `tag` | Create git tag for current version |
@@ -80,22 +55,13 @@ This script handles all version management tasks:
 ### Release Options
 
 ```bash
-# Standard release (runs preflight checks, requires changelog)
-.agents/scripts/version-manager.sh release patch
-
-# Bypass changelog check
-.agents/scripts/version-manager.sh release minor --force
-
-# Bypass preflight quality checks
-.agents/scripts/version-manager.sh release patch --skip-preflight
-
-# Bypass both
-.agents/scripts/version-manager.sh release patch --force --skip-preflight
+.agents/scripts/version-manager.sh release patch              # standard (runs preflight, requires changelog)
+.agents/scripts/version-manager.sh release minor --force      # bypass changelog check
+.agents/scripts/version-manager.sh release patch --skip-preflight  # bypass preflight
+.agents/scripts/version-manager.sh release patch --force --skip-preflight  # bypass both
 ```
 
 ## Files Updated Automatically
-
-The script updates these 6 files:
 
 | File | What's Updated |
 |------|----------------|
@@ -106,31 +72,14 @@ The script updates these 6 files:
 | `sonar-project.properties` | `sonar.projectVersion=X.X.X` |
 | `.claude-plugin/marketplace.json` | `"version": "X.X.X"` field |
 
-## The CHANGELOG.md Gap
+## CHANGELOG.md (Manual Step)
 
-**CHANGELOG.md requires manual update before running `release`.**
+CHANGELOG.md requires manual update before running `release`. The script checks for content in `[Unreleased]` but does NOT move it automatically.
 
-The script checks for content in `[Unreleased]` but does NOT automatically move it to a versioned section.
+Before running release:
 
-### Before Running Release
-
-1. Open `CHANGELOG.md`
-2. Change `## [Unreleased]` to `## [X.X.X] - YYYY-MM-DD`
-3. Add a new empty `## [Unreleased]` section above it
-4. Then run the release command
-
-### Example CHANGELOG Update
-
-Before:
-
-```markdown
-## [Unreleased]
-
-### Added
-- New feature X
-```
-
-After (for version 1.6.0):
+1. Change `## [Unreleased]` → `## [X.X.X] - YYYY-MM-DD`
+2. Add a new empty `## [Unreleased]` section above it
 
 ```markdown
 ## [Unreleased]
@@ -141,43 +90,26 @@ After (for version 1.6.0):
 - New feature X
 ```
 
-### Generating Changelog Content
+Preview suggested entries from commits:
 
 ```bash
-# Preview suggested changelog entries from commits
 .agents/scripts/version-manager.sh changelog-preview
 ```
 
 ## Recommended Workflow
 
-### Step 1: Validate Current State
-
 ```bash
+# 1. Validate current state (fix inconsistencies first)
 .agents/scripts/version-manager.sh validate
-```
 
-This catches stale versions before you start. Fix any inconsistencies first.
+# 2. Update CHANGELOG.md manually (see above)
 
-### Step 2: Update CHANGELOG.md
+# 3. Run release
+.agents/scripts/version-manager.sh release patch   # bug fixes
+.agents/scripts/version-manager.sh release minor   # new features
+.agents/scripts/version-manager.sh release major   # breaking changes
 
-Manually update the changelog (see gap section above).
-
-### Step 3: Run Release
-
-```bash
-# For bug fixes
-.agents/scripts/version-manager.sh release patch
-
-# For new features
-.agents/scripts/version-manager.sh release minor
-
-# For breaking changes
-.agents/scripts/version-manager.sh release major
-```
-
-### Step 4: Push Changes
-
-```bash
+# 4. Push
 git push && git push --tags
 ```
 
@@ -187,63 +119,31 @@ Follow [semver.org](https://semver.org/):
 
 | Type | When to Use | Example |
 |------|-------------|---------|
-| **patch** | Bug fixes, docs, minor improvements | 1.5.0 -> 1.5.1 |
-| **minor** | New features, service integrations | 1.5.0 -> 1.6.0 |
-| **major** | Breaking changes, API modifications | 1.5.0 -> 2.0.0 |
-
-## Validation Details
-
-The `validate` command checks:
-
-- VERSION file exists and contains expected version
-- README.md badge contains `Version-X.X.X-blue`
-- sonar-project.properties contains `sonar.projectVersion=X.X.X`
-- setup.sh contains `# Version: X.X.X`
-
-```bash
-# Example output
-[INFO] Validating version consistency across files...
-[SUCCESS] VERSION file: 1.5.0 ✓
-[SUCCESS] README.md badge: 1.5.0 ✓
-[SUCCESS] sonar-project.properties: 1.5.0 ✓
-[SUCCESS] setup.sh: 1.5.0 ✓
-[SUCCESS] All version references are consistent: 1.5.0
-```
+| **patch** | Bug fixes, docs, minor improvements | 1.5.0 → 1.5.1 |
+| **minor** | New features, service integrations | 1.5.0 → 1.6.0 |
+| **major** | Breaking changes, API modifications | 1.5.0 → 2.0.0 |
 
 ## Preflight Quality Checks
 
-The `release` command automatically runs `.agents/scripts/linters-local.sh` before proceeding.
-
-To bypass (not recommended):
-
-```bash
-.agents/scripts/version-manager.sh release patch --skip-preflight
-```
+The `release` command automatically runs `.agents/scripts/linters-local.sh`. Bypass with `--skip-preflight` (not recommended).
 
 ## Troubleshooting
 
-### Version Inconsistency Detected
+**Version inconsistency:**
 
 ```bash
-# See which files are out of sync
 .agents/scripts/version-manager.sh validate
-
-# Sync all files to current VERSION
-.agents/scripts/version-manager.sh bump patch  # or use sync if available
+.agents/scripts/version-manager.sh bump patch  # re-sync all files
 ```
 
-### GitHub Release Failed
-
-Ensure GitHub CLI is authenticated:
+**GitHub release failed** — check auth:
 
 ```bash
 gh auth status
 gh auth login  # if needed
 ```
 
-### Changelog Check Failed
-
-Either update CHANGELOG.md or bypass:
+**Changelog check failed** — update CHANGELOG.md or bypass:
 
 ```bash
 .agents/scripts/version-manager.sh release patch --force
@@ -251,33 +151,20 @@ Either update CHANGELOG.md or bypass:
 
 ## Related Workflows
 
-- `workflows/changelog.md` - Changelog management details
-- `workflows/release.md` - Full release process
-- `workflows/preflight.md` - Quality checks before release
+- `workflows/changelog.md` — Changelog management
+- `workflows/release.md` — Full release process
+- `workflows/preflight.md` — Quality checks before release
 
 ## AI Decision-Making for Release Type
 
-When performing releases, **determine the release type autonomously** by analyzing the changes:
+**Determine release type autonomously** — do not ask the user:
 
-1. Review commits since last release: `git log v{LAST_TAG}..HEAD --oneline`
-2. Categorize each change: bug fix, feature, or breaking change
-3. Apply semver rules - highest category wins:
-   - Any breaking change → `major`
-   - Any new feature (no breaking) → `minor`
-   - Only fixes/docs/improvements → `patch`
-4. State your analysis briefly and proceed with the release
+1. `git log v{LAST_TAG}..HEAD --oneline` — review commits since last release
+2. Categorize: bug fix, feature, or breaking change
+3. Apply semver — highest category wins
 
-**Do not ask the user** to choose patch/minor/major. The semver rules are deterministic - apply them based on the actual changes made.
-
-### Change Type Indicators
-
-| Commit Prefix | Type | Release |
-|---------------|------|---------|
-| `feat:` | New feature | minor |
-| `fix:` | Bug fix | patch |
-| `docs:` | Documentation | patch |
-| `chore:` | Maintenance | patch |
-| `refactor:` | Code restructure | patch |
-| `perf:` | Performance | patch |
-| `BREAKING CHANGE:` | Breaking | major |
-| `!` after type (e.g., `feat!:`) | Breaking | major |
+| Commit Prefix | Release Type |
+|---------------|-------------|
+| `feat:` | minor |
+| `fix:`, `docs:`, `chore:`, `refactor:`, `perf:` | patch |
+| `BREAKING CHANGE:` or `feat!:` / `fix!:` | major |
