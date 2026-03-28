@@ -74,12 +74,15 @@ npx repomix@latest . --stdout | pbcopy
 | Quick file subset | `quick . "**/*.ts"` | Minimal |
 | External repo analysis | `remote user/repo` or `npx repomix --remote user/repo` | Compressed |
 
-**Code Maps (compress mode)** extracts:
-- Class names and signatures
-- Function signatures
-- Interface definitions
-- Import/export statements
-- Omits: implementation details, comments, empty lines
+**Code Maps (compress mode)** extracts class/function signatures, interface definitions, import/export statements. Omits implementation details, comments, empty lines.
+
+**Token Budget**:
+
+| Context Size | Mode | Typical Use |
+|--------------|------|-------------|
+| < 10k tokens | `pack` | Small projects, specific files |
+| 10-50k tokens | `compress` | Medium projects |
+| 50k+ tokens | `compress` + patterns | Large projects, selective |
 
 ## CRITICAL: Remote Repository Guardrails
 
@@ -112,43 +115,6 @@ See `tools/context/context-guardrails.md` for full workflow and recovery procedu
 
 <!-- AI-CONTEXT-END -->
 
-## Overview
-
-Context Builder wraps [Repomix](https://github.com/yamadashy/repomix) (20k+ GitHub stars) to provide optimized context generation for AI coding assistants. It's inspired by [RepoPrompt](https://repoprompt.com/)'s Code Maps approach.
-
-### The Problem
-
-When asking AI assistants to help with code:
-- Copying entire files wastes tokens on implementation details
-- AI context windows are limited and expensive
-- Manual file selection is tedious and error-prone
-
-### The Solution
-
-Context Builder provides:
-- **Tree-sitter compression**: Extract code structure, not implementation
-- **Smart defaults**: Optimized for AI understanding
-- **Multiple output formats**: XML, Markdown, JSON, Plain
-- **Token analysis**: See which files consume the most tokens
-- **Remote repo support**: Analyze any GitHub repository
-
-## Installation
-
-The helper script is included in the aidevops framework:
-
-```bash
-# Already available at
-~/Git/aidevops/.agents/scripts/context-builder-helper.sh
-
-# Or add to PATH
-alias context-builder='~/Git/aidevops/.agents/scripts/context-builder-helper.sh'
-```text
-
-### Dependencies
-
-- **Node.js 18+** with npx
-- **Repomix** (auto-installed via npx)
-
 ## Usage Examples
 
 ### 1. Compress Mode (Recommended)
@@ -156,114 +122,63 @@ alias context-builder='~/Git/aidevops/.agents/scripts/context-builder-helper.sh'
 Extract code structure with ~80% token reduction:
 
 ```bash
-# Current directory
-./context-builder-helper.sh compress
-
-# Specific project
-./context-builder-helper.sh compress ~/projects/myapp
-
-# Output as markdown
+./context-builder-helper.sh compress                          # current directory
+./context-builder-helper.sh compress ~/projects/myapp        # specific project
 ./context-builder-helper.sh compress ~/projects/myapp markdown
-```text
+```
 
-**What gets extracted**:
+Compress extracts signatures only — implementation bodies are omitted:
 
 ```typescript
-// Original (full implementation)
-export class UserService {
-  private db: Database;
-  
-  constructor(db: Database) {
-    this.db = db;
-  }
-  
-  async getUser(id: string): Promise<User | null> {
-    const result = await this.db.query('SELECT * FROM users WHERE id = ?', [id]);
-    if (result.rows.length === 0) return null;
-    return this.mapToUser(result.rows[0]);
-  }
-  
-  private mapToUser(row: any): User {
-    return { id: row.id, name: row.name, email: row.email };
-  }
-}
-
-// Compressed (structure only)
+// Compressed output (structure only)
 export class UserService {
   private db: Database;
   constructor(db: Database);
   async getUser(id: string): Promise<User | null>;
   private mapToUser(row: any): User;
 }
-```text
+```
 
 ### 2. Full Pack Mode
 
 When you need complete implementation details:
 
 ```bash
-# XML format (default, best for Claude)
-./context-builder-helper.sh pack
-
-# Markdown format
+./context-builder-helper.sh pack                  # XML (default, best for Claude)
 ./context-builder-helper.sh pack . markdown
-
-# JSON format (structured data)
 ./context-builder-helper.sh pack . json
-```text
+```
 
 ### 3. Quick Mode
 
 Fast, focused context with auto-clipboard:
 
 ```bash
-# Pack and copy TypeScript files
 ./context-builder-helper.sh quick . "**/*.ts"
-
-# Pack specific directory
 ./context-builder-helper.sh quick src/components "**/*.tsx"
-```text
+```
 
 ### 4. Token Analysis
 
-Understand token distribution before packing:
-
 ```bash
-# Show files with 100+ tokens
-./context-builder-helper.sh analyze
-
-# Lower threshold for detailed view
-./context-builder-helper.sh analyze . 50
-
-# Analyze specific project
+./context-builder-helper.sh analyze              # files with 100+ tokens
+./context-builder-helper.sh analyze . 50         # lower threshold
 ./context-builder-helper.sh analyze ~/Git/aidevops 100
-```text
+```
 
 ### 5. Remote Repository
 
-Pack any GitHub repository without cloning:
-
 ```bash
-# GitHub URL
-./context-builder-helper.sh remote https://github.com/facebook/react
-
-# Short format
 ./context-builder-helper.sh remote facebook/react
-
-# Specific branch
 ./context-builder-helper.sh remote vercel/next.js canary
-
-# With output format
 ./context-builder-helper.sh remote sveltejs/svelte main markdown
-```text
+```
 
 ### 6. Compare Full vs Compressed
 
-See the token reduction in action:
-
 ```bash
 ./context-builder-helper.sh compare ~/projects/myapp
-```text
+```
 
 Output:
 
@@ -278,15 +193,11 @@ Output:
 └─────────────────────────────────────────────────┘
 
 Size reduction: 80.4%
-```text
-
-## Note on MCP
-
-While Repomix supports MCP server mode (`npx repomix --mcp`), this framework uses the CLI directly for better control and reliability. The helper script and direct CLI commands provide all needed functionality.
+```
 
 ## Output Files
 
-All output is saved to `~/.aidevops/.agent-workspace/work/context/`:
+All output saved to `~/.aidevops/.agent-workspace/work/context/`:
 
 ```text
 ~/.aidevops/.agent-workspace/work/context/
@@ -294,42 +205,22 @@ All output is saved to `~/.aidevops/.agent-workspace/work/context/`:
 ├── aidevops-compressed-20250129-143045.xml
 ├── react-remote-20250129-150000.xml
 └── myapp-quick-20250129-151030.md
-```text
+```
 
 File naming: `{repo-name}-{mode}-{timestamp}.{format}`
 
-## Best Practices
-
-### When to Use Each Mode
-
-| Mode | Use Case | Token Efficiency |
-|------|----------|------------------|
-| `compress` | Architecture review, refactoring planning | Best (~80% reduction) |
-| `pack` | Debugging specific implementations | Full detail |
-| `quick` | Focused questions about specific files | Minimal |
-| `remote` | Analyzing external libraries | Compressed by default |
-| `analyze` | Understanding large codebases | No output (analysis only) |
-
-### Token Budget Guidelines
-
-| Context Size | Recommended Mode | Typical Use |
-|--------------|------------------|-------------|
-| < 10k tokens | `pack` | Small projects, specific files |
-| 10-50k tokens | `compress` | Medium projects |
-| 50k+ tokens | `compress` + patterns | Large projects, selective |
-
-### Effective Patterns
+## Effective Patterns
 
 ```bash
-# For large projects, combine compression with patterns
+# Large projects: combine compression with patterns
 ./context-builder-helper.sh compress . --include "src/**/*.ts"
 
-# For monorepos, target specific packages
+# Monorepos: target specific packages
 ./context-builder-helper.sh compress packages/core
 
-# For debugging, pack only relevant directories
+# Debugging: pack only relevant directories
 ./context-builder-helper.sh pack src/services markdown
-```text
+```
 
 ## Comparison with RepoPrompt
 
@@ -345,48 +236,34 @@ File naming: `{repo-name}-{mode}-{timestamp}.{format}`
 
 ## Troubleshooting
 
-### Common Issues
+**"npx not found"** — install Node.js: `brew install node`
 
-**"npx not found"**
+**"Permission denied"** — `chmod +x ~/.aidevops/agents/scripts/context-builder-helper.sh`
 
-```bash
-# Install Node.js
-brew install node  # macOS
-```text
-
-**"Permission denied"**
+**Large output file** — use compression or filter:
 
 ```bash
-chmod +x ~/.aidevops/agents/scripts/context-builder-helper.sh
-```text
-
-**Large output file**
-
-```bash
-# Use compression
 ./context-builder-helper.sh compress
-
-# Or filter files
 ./context-builder-helper.sh pack . --include "src/**/*.ts" --ignore "**/*.test.ts"
-```text
+```
 
-## Integration with AI Assistants
-
-### Claude Code / OpenCode
+## Integration
 
 Use the `@context-builder` subagent or call the helper directly:
 
 ```text
 @context-builder compress ~/projects/myapp
-```text
+```
 
-### Manual Workflow
+Manual workflow:
 
-1. Generate context: `./context-builder-helper.sh compress .`
-2. Copy output: `cat ~/.aidevops/.agent-workspace/work/context/myapp-*.xml | pbcopy`
+1. Generate: `./context-builder-helper.sh compress .`
+2. Copy: `cat ~/.aidevops/.agent-workspace/work/context/myapp-*.xml | pbcopy`
 3. Paste into AI conversation with your question
 
-## Related Documentation
+**Note on MCP**: While Repomix supports MCP server mode (`npx repomix --mcp`), this framework uses the CLI directly for better control and reliability.
+
+## Related
 
 - [Repomix Documentation](https://repomix.com/guide/)
 - [RepoPrompt Concepts](https://repoprompt.com/docs)
