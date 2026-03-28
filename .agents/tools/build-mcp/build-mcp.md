@@ -32,13 +32,9 @@ npx @modelcontextprotocol/inspector  # Connect to http://localhost:3000/mcp
 | `deployment.md` | Adding MCP to AI assistants |
 | `api-wrapper.md` | Wrapping REST APIs as MCP |
 
-**Related Agents**:
-- `@code-standards` for linting TypeScript
-- `tools/context/context7.md` for MCP SDK docs
+**Related**: `@code-standards` (TypeScript linting), `tools/context/context7.md` (MCP SDK docs)
 
-**Git Workflow**:
-- Branch strategy: `workflows/branch.md`
-- Git operations: `tools/git.md`
+**Git Workflow**: `workflows/branch.md` (branching), `tools/git.md` (operations)
 
 **Testing**: Use OpenCode CLI to test new MCPs without restarting TUI:
 
@@ -51,15 +47,6 @@ See `tools/opencode/opencode.md` for CLI testing patterns.
 **MCPs to Enable**: context7, augment-context-engine, repomix
 
 <!-- AI-CONTEXT-END -->
-
-## Why TypeScript + Bun + ElysiaJS?
-
-| Criterion | Why This Stack |
-|-----------|----------------|
-| **Robustness** | Official MCP SDK, Zod validation, full spec compliance |
-| **Speed** | Bun is 3-4x faster than Node.js |
-| **Maintainability** | End-to-end type safety, auto-generated OpenAPI docs |
-| **Future-Proof** | Anthropic-backed spec, growing ecosystem |
 
 ## Project Structure
 
@@ -77,79 +64,17 @@ my-mcp/
 
 ## Core Patterns
 
-See `build-mcp/server-patterns.md` for complete tool, resource, and prompt registration patterns.
+See `build-mcp/server-patterns.md` for tool, resource, and prompt registration. See `build-mcp/transports.md` for transport selection (stdio, StreamableHTTP, SSE). See `build-mcp/deployment.md` for AI assistant configurations.
 
-**Minimal tool example**:
-
-```typescript
-server.tool(
-  'get_data',
-  { query: z.string().describe('Search query') },
-  async (args) => ({
-    content: [{ type: 'text', text: JSON.stringify(await fetchData(args.query)) }],
-  })
-);
-```
-
-## Transport Selection
-
-| Transport | Use Case |
-|-----------|----------|
-| stdio | Local dev, AI assistant spawns process |
-| StreamableHTTP | Production HTTP servers |
-| SSE | Legacy compatibility only |
-
-See `build-mcp/transports.md` for complete transport configuration.
-
-## Testing & Debugging
-
-```bash
-npx @modelcontextprotocol/inspector  # Connect to http://localhost:3000/mcp
-```
-
-Use `console.error()` for logging (stdout is MCP protocol).
-
-## Deployment
-
-See `build-mcp/deployment.md` for all AI assistant configurations.
-
-**OpenCode** (`~/.config/opencode/opencode.json`):
-
-```json
-{
-  "mcp": {
-    "my-mcp": {
-      "type": "local",
-      "command": ["bun", "run", "/path/to/my-mcp/src/index.ts"],
-      "enabled": true
-    }
-  }
-}
-```
-
-**Claude Code**: `claude mcp add my-mcp bun run /path/to/my-mcp/src/index.ts`
+**Claude Code quick deploy**: `claude mcp add my-mcp bun run /path/to/my-mcp/src/index.ts`
 
 ## AI-Friendly Tool Design
 
 See `build-mcp/server-patterns.md` for complete naming conventions.
 
-**Key rules**:
-- Name: `verb_noun` pattern (`get_user`, `list_items`, `create_order`)
-- Description: What it does, when to use, what it returns, side effects
-- Parameters: Always use `.describe()` with constraints
+**Key rules**: Name with `verb_noun` (`get_user`, `list_items`). Describe what it does, when to use, what it returns, side effects. Always use `.describe()` with constraints on parameters.
 
-```typescript
-// Good
-server.tool(
-  'get_user',
-  'Retrieves user by ID. Returns profile or null if not found.',
-  { id: z.string().uuid().describe('User ID (UUID format)') }
-);
-```
-
-## Common Patterns (Not Yet in Subagents)
-
-These patterns are frequently needed but not yet documented in subagents:
+## Common Patterns
 
 ### Authentication
 
@@ -194,41 +119,34 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
 
 ## Quality Standards
 
-1. **Validation**: Zod schemas with `.describe()`
-2. **Errors**: Return structured JSON in content, set `isError: true`
-3. **Logging**: `console.error()` only (stdout is protocol)
+1. **Validation**: Zod schemas with `.describe()` on every parameter
+2. **Errors**: Structured JSON in content, set `isError: true`
+3. **Logging**: `console.error()` only (stdout is MCP protocol)
 4. **Types**: Export input/output types
 
 Run `@code-standards` before committing TypeScript.
 
 ## Security for MCP Server Authors
 
-MCP servers are a trust boundary. Users grant your server access to their conversation context, credentials, and system. Build with security as a first-class concern.
+MCP servers are a trust boundary -- users grant access to conversation context, credentials, and system.
 
-**Tool response integrity** -- Never include instructions, directives, or behavioural suggestions in tool response content. Tool responses should contain only the requested data. Embedding instructions in responses is the primary vector for prompt injection via MCP (see `tools/security/prompt-injection-defender.md`).
-
-**Credential handling** -- Accept credentials via environment variables, not command-line arguments (which appear in process lists). Never log, persist, or transmit credentials beyond their intended use. Document the minimum required permissions for each credential.
-
-**Minimal permissions** -- Request only the API scopes and file system access your server needs. If your server only reads data, don't request write permissions. Document all required permissions in your README.
-
-**Dependency hygiene** -- Keep dependencies minimal and audited. Run `npx @socketsecurity/cli npm info <your-package>` before publishing. Pin dependency versions in `package.json` (not `@latest`). Use `npm audit` or Socket.dev in CI.
-
-**Input validation** -- Validate all tool arguments with Zod schemas. Never pass user-supplied strings directly to shell commands, SQL queries, or file paths without sanitisation.
-
-**Network transparency** -- Document all external network connections your server makes. Users should know which domains your server contacts and why. Avoid unexpected outbound connections.
+- **Tool response integrity**: Never include instructions or behavioural suggestions in tool responses. Responses must contain only requested data -- embedding instructions is the primary prompt injection vector (see `tools/security/prompt-injection-defender.md`).
+- **Credentials**: Accept via environment variables, not CLI arguments (visible in process lists). Never log, persist, or transmit beyond intended use. Document minimum required permissions.
+- **Minimal permissions**: Request only needed API scopes and filesystem access. Read-only server? Don't request write permissions. Document all permissions in README.
+- **Dependency hygiene**: Keep dependencies minimal and audited. Run `npx @socketsecurity/cli npm info <your-package>` before publishing. Pin versions (not `@latest`). Use `npm audit` or Socket.dev in CI.
+- **Input validation**: Validate all tool arguments with Zod. Never pass user-supplied strings directly to shell commands, SQL, or file paths without sanitisation.
+- **Network transparency**: Document all external network connections. Users should know which domains your server contacts and why.
 
 ## Consuming Remote MCPs
 
-The sections above cover **building** MCP servers. This section covers **consuming** third-party remote MCPs (Ahrefs, Outscraper, DataForSEO, etc.) from your AI assistant.
-
-### Local vs Remote MCP
+The sections above cover **building** MCP servers. This section covers **consuming** third-party remote MCPs.
 
 | Type | Transport | How it runs |
 |------|-----------|-------------|
-| **Local** | STDIO | Assistant spawns a process on your machine; communicates via stdin/stdout |
-| **Remote** | Streamable HTTP | Hosted by the provider; communicates via HTTP POST with `Accept: application/json, text/event-stream` |
+| **Local** | STDIO | Assistant spawns process; communicates via stdin/stdout |
+| **Remote** | Streamable HTTP | Provider-hosted; HTTP POST with `Accept: application/json, text/event-stream` |
 
-Remote MCPs may work on API plans that block direct REST access, because the provider hosts the server and controls the transport.
+Remote MCPs may work on API plans that block direct REST access (provider hosts the server and controls transport).
 
 ### OpenCode Remote MCP Config
 
@@ -247,11 +165,11 @@ In `~/.config/opencode/opencode.json`:
 }
 ```
 
-Key fields: `type` (`local` | `remote`), `url` (Streamable HTTP endpoint), `headers` (auth headers), `timeout` (ms, optional), `oauth` (OAuth config object, optional).
+Key fields: `type` (`local` | `remote`), `url` (Streamable HTTP endpoint), `headers` (auth), `timeout` (ms, optional), `oauth` (OAuth config, optional).
 
 ### Secure Key Injection
 
-Never paste API keys into conversation context. Inject them into the config file from gopass:
+Never paste API keys into conversation context. Inject from gopass:
 
 ```bash
 tmpfile=$(mktemp)
@@ -260,19 +178,18 @@ jq --arg key "$(gopass show -o provider/api-key)" \
   ~/.config/opencode/opencode.json > "$tmpfile" && mv "$tmpfile" ~/.config/opencode/opencode.json
 ```
 
-This keeps the key out of conversation transcripts and shell history (gopass prompts for GPG passphrase, not the key itself).
-
 ### Auth Debugging
 
 | HTTP Status | Meaning | Action |
 |-------------|---------|--------|
-| **401** | No auth sent or token invalid | Check `headers.Authorization` is set and the key is correct |
-| **403** | Auth valid but plan/scope insufficient | Upgrade API plan or request the required scope from the provider |
-| **405** | Wrong HTTP method or transport | Ensure the URL accepts POST with `Accept: application/json, text/event-stream` (Streamable HTTP, not REST) |
+| **401** | No auth or invalid token | Check `headers.Authorization` is set and key is correct |
+| **403** | Auth valid but insufficient scope/plan | Upgrade API plan or request required scope |
+| **405** | Wrong HTTP method or transport | Ensure URL accepts POST with Streamable HTTP headers |
 
 ## References
 
 Use Context7 MCP for current documentation:
+
 - MCP SDK: `resolve library-id for @modelcontextprotocol/sdk`
 - ElysiaJS: `resolve library-id for elysia`
 - Bun: `resolve library-id for bun`
