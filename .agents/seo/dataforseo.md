@@ -16,19 +16,16 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Comprehensive SEO data via DataForSEO APIs
 - **API**: REST at `https://api.dataforseo.com/v3/`
-- **Auth**: Basic auth (username:password) in `~/.config/aidevops/credentials.sh`
-- **Env Vars**: `DATAFORSEO_USERNAME`, `DATAFORSEO_PASSWORD`
-- **Docs**: https://docs.dataforseo.com/v3/
-- **No MCP required** - uses curl directly
-
-**Available Modules**:
+- **Auth**: Basic auth via `DATAFORSEO_USERNAME` + `DATAFORSEO_PASSWORD` in `~/.config/aidevops/credentials.sh`
+- **Docs**: <https://docs.dataforseo.com/v3/>
+- **Dashboard**: <https://app.dataforseo.com/>
+- **MCP config**: `configs/dataforseo-config.json.txt` (optional — curl works without MCP)
 
 | Module | Purpose |
 |--------|---------|
 | `SERP` | Real-time SERP data for Google, Bing, Yahoo |
-| `KEYWORDS_DATA` | Keyword research, search volume, CPC |
+| `KEYWORDS_DATA` | Search volume, CPC, keyword research |
 | `ONPAGE` | Website crawling, on-page SEO metrics |
 | `DATAFORSEO_LABS` | Keywords, SERPs, domains from proprietary databases |
 | `BACKLINKS` | Backlink analysis, referring domains, anchor text |
@@ -39,12 +36,21 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Direct API Access
+## Authentication
 
 ```bash
 source ~/.config/aidevops/credentials.sh
 export DFS_AUTH=$(echo -n "$DATAFORSEO_USERNAME:$DATAFORSEO_PASSWORD" | base64)
 ```
+
+Store credentials:
+
+```bash
+bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_USERNAME "your_username"
+bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_PASSWORD "your_password"
+```
+
+## API Examples
 
 ### SERP Results
 
@@ -76,96 +82,11 @@ curl -s -X POST "https://api.dataforseo.com/v3/backlinks/summary/live" \
 ### On-Page Crawl
 
 ```bash
-# Start crawl task
 curl -s -X POST "https://api.dataforseo.com/v3/on_page/task_post" \
   -H "Authorization: Basic $DFS_AUTH" \
   -H "Content-Type: application/json" \
   -d '[{"target": "example.com", "max_crawl_pages": 100}]'
 ```
-
-## Installation (MCP alternative)
-
-### Via setup.sh (Recommended)
-
-The aidevops `setup.sh` script automatically configures the DataForSEO MCP server.
-
-### Manual Installation
-
-```bash
-# Install globally
-npm install -g dataforseo-mcp-server
-
-# Or run via npx (no install needed)
-npx dataforseo-mcp-server
-```text
-
-## Configuration
-
-### Store Credentials
-
-```bash
-# Using the secure key management script
-bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_USERNAME "your_username"
-bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_PASSWORD "your_password"
-```text
-
-### OpenCode Configuration
-
-Add to `~/.config/opencode/opencode.json`:
-
-```json
-{
-  "mcp": {
-    "dataforseo": {
-      "type": "local",
-      "command": [
-        "/bin/bash",
-        "-c",
-        "source ~/.config/aidevops/credentials.sh && DATAFORSEO_USERNAME=$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=$DATAFORSEO_PASSWORD npx dataforseo-mcp-server"
-      ],
-      "enabled": true
-    }
-  }
-}
-```text
-
-### Claude Desktop Configuration
-
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "dataforseo": {
-      "command": "npx",
-      "args": ["dataforseo-mcp-server"],
-      "env": {
-        "DATAFORSEO_USERNAME": "your_username",
-        "DATAFORSEO_PASSWORD": "your_password"
-      }
-    }
-  }
-}
-```text
-
-### Cursor Configuration
-
-Add to `~/.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "dataforseo": {
-      "command": "npx",
-      "args": ["dataforseo-mcp-server"],
-      "env": {
-        "DATAFORSEO_USERNAME": "your_username",
-        "DATAFORSEO_PASSWORD": "your_password"
-      }
-    }
-  }
-}
-```text
 
 ## Environment Variables
 
@@ -174,86 +95,25 @@ Add to `~/.cursor/mcp.json`:
 export DATAFORSEO_USERNAME="your_username"
 export DATAFORSEO_PASSWORD="your_password"
 
-# Optional - Enable specific modules only
+# Optional — restrict to specific modules
 export ENABLED_MODULES="SERP,KEYWORDS_DATA,BACKLINKS,DATAFORSEO_LABS"
 
-# Optional - Return full API responses (default: false for concise output)
+# Optional — full API responses (default: false for concise output)
 export DATAFORSEO_FULL_RESPONSE="false"
 
-# Optional - Use simplified filter schema for ChatGPT compatibility
+# Optional — simplified filter schema for ChatGPT compatibility
 export DATAFORSEO_SIMPLE_FILTER="false"
-```text
+```
 
-## Usage Examples
+## MCP Server (Optional)
 
-### SERP Analysis
+For MCP-based access instead of curl, see `configs/dataforseo-config.json.txt` for runtime-specific configuration (Claude Desktop, Cursor, OpenCode). Install: `npm install -g dataforseo-mcp-server` or `npx dataforseo-mcp-server`.
 
-```javascript
-// Get real-time SERP data for a keyword
-await dataforseo.serp({
-  keyword: "best seo tools",
-  location_code: 2840, // United States
-  language_code: "en",
-  device: "desktop"
-});
-```text
+- **GitHub**: <https://github.com/dataforseo/mcp-server-typescript>
+- **npm**: <https://www.npmjs.com/package/dataforseo-mcp-server>
 
-### Keyword Research
+## Related
 
-```javascript
-// Get keyword data with search volume and CPC
-await dataforseo.keywords_data({
-  keywords: ["seo tools", "keyword research", "backlink checker"],
-  location_code: 2840,
-  language_code: "en"
-});
-```text
-
-### Backlink Analysis
-
-```javascript
-// Analyze backlinks for a domain
-await dataforseo.backlinks({
-  target: "example.com",
-  mode: "as_is",
-  limit: 100
-});
-```text
-
-### On-Page SEO Audit
-
-```javascript
-// Crawl and analyze a website
-await dataforseo.onpage({
-  target: "https://example.com",
-  max_crawl_pages: 100,
-  load_resources: true
-});
-```text
-
-### Domain Analytics
-
-```javascript
-// Get domain traffic and technology data
-await dataforseo.domain_analytics({
-  target: "example.com",
-  include_technologies: true
-});
-```text
-
-## Verification
-
-Test the integration:
-
-```text
-Use the DataForSEO MCP to get SERP data for "best seo tools" in the United States
-```text
-
-Expected: Search results with rankings, URLs, snippets, and related data.
-
-## Resources
-
-- **Official Docs**: https://docs.dataforseo.com/v3/
-- **MCP Server GitHub**: https://github.com/dataforseo/mcp-server-typescript
-- **npm Package**: https://www.npmjs.com/package/dataforseo-mcp-server
-- **API Dashboard**: https://app.dataforseo.com/
+- `seo/keyword-research.md` — keyword workflows using DataForSEO endpoints
+- `seo/backlink-checker.md` — backlink analysis workflows
+- `seo/data-export.md` — bulk data export via `seo-export-dataforseo.sh`
