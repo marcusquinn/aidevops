@@ -10,22 +10,27 @@ tools:
 
 # Company Function Runners
 
-Example AGENTS.md templates and setup for common company function runners.
-Each runner is created via `runner-helper.sh create` and gets its own
-personality file at `~/.aidevops/.agent-workspace/runners/<name>/AGENTS.md`.
+Example AGENTS.md templates for company function runners. Each runner is created
+via `runner-helper.sh create` and gets its own personality file at
+`~/.aidevops/.agent-workspace/runners/<name>/AGENTS.md`.
+
+## Runner Summary
+
+| Runner | Description | Model | Setup |
+|--------|-------------|-------|-------|
+| hiring-coordinator | Recruitment pipeline - screening, scheduling, offers | sonnet | `runner-helper.sh create hiring-coordinator --description "Recruitment pipeline management" --model sonnet` |
+| finance-reviewer | Expense/invoice review - OCR, compliance, QuickFile | sonnet | `runner-helper.sh create finance-reviewer --description "Expense and invoice review with QuickFile integration" --model sonnet` |
+| ops-monitor | Infrastructure monitoring - uptime, deploys, incidents | haiku | `runner-helper.sh create ops-monitor --description "Infrastructure and process monitoring" --model haiku` |
+| marketing-scheduler | Campaign scheduling - email, social, analytics | sonnet | `runner-helper.sh create marketing-scheduler --description "Campaign scheduling and marketing analytics" --model sonnet` |
+| support-triage | Customer issue classification and routing | haiku | `runner-helper.sh create support-triage --description "Customer issue classification and routing" --model haiku` |
+
+Bootstrap all at once: see [Full Company Setup Script](#full-company-setup-script) below.
 
 ## Hiring Coordinator
 
-Manages the recruitment pipeline: job descriptions, candidate screening,
-interview scheduling, and offer tracking.
+Manages recruitment: job descriptions, candidate screening, interview scheduling, offer tracking.
 
-### Setup
-
-```bash
-runner-helper.sh create hiring-coordinator \
-  --description "Recruitment pipeline management" \
-  --model sonnet
-```
+**Example:** `runner-helper.sh run hiring-coordinator "Summarise the 5 most recent applications for the Senior Engineer role"`
 
 ### AGENTS.md Template
 
@@ -49,28 +54,11 @@ You are a recruitment operations assistant. Your responsibilities:
 - Flag urgent items (offer deadlines, top candidate at risk) as priority:high
 ```
 
-### Example Tasks
-
-```bash
-runner-helper.sh run hiring-coordinator \
-  "Summarise the 5 most recent applications for the Senior Engineer role"
-
-runner-helper.sh run hiring-coordinator \
-  "Draft a job description for a DevOps Engineer based on our existing Senior Engineer posting"
-```
-
 ## Finance Reviewer
 
-Reviews expenses, processes invoices, and maintains financial hygiene.
-Integrates with QuickFile via the accounts agent.
+Reviews expenses, processes invoices, maintains financial hygiene. Integrates with QuickFile via the accounts agent.
 
-### Setup
-
-```bash
-runner-helper.sh create finance-reviewer \
-  --description "Expense and invoice review with QuickFile integration" \
-  --model sonnet
-```
+**Example:** `runner-helper.sh run finance-reviewer "Review the last 30 days of expenses and flag any over the 500 GBP threshold"`
 
 ### AGENTS.md Template
 
@@ -100,28 +88,11 @@ You are a financial operations assistant. Your responsibilities:
 - Flag duplicate invoices or policy violations immediately
 ```
 
-### Example Tasks
-
-```bash
-runner-helper.sh run finance-reviewer \
-  "Scan this month's receipts folder and extract all invoice data"
-
-runner-helper.sh run finance-reviewer \
-  "Review the last 30 days of expenses and flag any over the 500 GBP threshold"
-```
-
 ## Ops Monitor
 
-Monitors infrastructure health, deployment status, and operational processes.
-Lightweight — uses haiku tier for cost efficiency on routine checks.
+Monitors infrastructure health, deployment status, operational processes. Uses haiku tier for cost efficiency on routine checks.
 
-### Setup
-
-```bash
-runner-helper.sh create ops-monitor \
-  --description "Infrastructure and process monitoring" \
-  --model haiku
-```
+**Example:** `runner-helper.sh run ops-monitor "Check health endpoints for all production services and report status"`
 
 ### AGENTS.md Template
 
@@ -150,27 +121,11 @@ You are an operations monitoring assistant. Your responsibilities:
 - Immediate alerts for P1/P2 incidents
 ```
 
-### Example Tasks
-
-```bash
-runner-helper.sh run ops-monitor \
-  "Check health endpoints for all production services and report status"
-
-runner-helper.sh run ops-monitor \
-  "Review the last deployment log and confirm all services restarted cleanly"
-```
-
 ## Marketing Scheduler
 
-Manages campaign scheduling, content calendar, and marketing analytics.
+Manages campaign scheduling, content calendar, marketing analytics.
 
-### Setup
-
-```bash
-runner-helper.sh create marketing-scheduler \
-  --description "Campaign scheduling and marketing analytics" \
-  --model sonnet
-```
+**Example:** `runner-helper.sh run marketing-scheduler "Pull this week's campaign performance metrics and summarise trends"`
 
 ### AGENTS.md Template
 
@@ -204,13 +159,7 @@ You are a marketing operations assistant. Your responsibilities:
 
 Classifies incoming customer issues and routes to appropriate handlers.
 
-### Setup
-
-```bash
-runner-helper.sh create support-triage \
-  --description "Customer issue classification and routing" \
-  --model haiku
-```
+**Example:** `runner-helper.sh run support-triage "Classify and route the 10 newest unassigned support tickets"`
 
 ### AGENTS.md Template
 
@@ -237,44 +186,23 @@ You are a customer support triage assistant. Your responsibilities:
 
 ## Full Company Setup Script
 
-Create all runners in one go:
-
 ```bash
 #!/usr/bin/env bash
 # setup-company-runners.sh - Bootstrap all company function runners
-
 set -euo pipefail
-
-# Source shared constants for print_info
 . shared-constants.sh
 
 RUNNER="runner-helper.sh"
-
 print_info "Creating company function runners..."
 
-$RUNNER create hiring-coordinator \
-  --description "Recruitment pipeline - screening, scheduling, offers" \
-  --model sonnet
-
-$RUNNER create finance-reviewer \
-  --description "Expense/invoice review - OCR, compliance, QuickFile" \
-  --model sonnet
-
-$RUNNER create ops-monitor \
-  --description "Infrastructure monitoring - uptime, deploys, incidents" \
-  --model haiku
-
-$RUNNER create marketing-scheduler \
-  --description "Campaign scheduling - email, social, analytics" \
-  --model sonnet
-
-$RUNNER create support-triage \
-  --description "Customer issue classification and routing" \
-  --model haiku
+$RUNNER create hiring-coordinator  --description "Recruitment pipeline - screening, scheduling, offers" --model sonnet
+$RUNNER create finance-reviewer    --description "Expense/invoice review - OCR, compliance, QuickFile"  --model sonnet
+$RUNNER create ops-monitor         --description "Infrastructure monitoring - uptime, deploys, incidents" --model haiku
+$RUNNER create marketing-scheduler --description "Campaign scheduling - email, social, analytics"        --model sonnet
+$RUNNER create support-triage      --description "Customer issue classification and routing"              --model haiku
 
 print_info "Done. Runners created:"
 $RUNNER list
-
 echo ""
 print_info "Next steps:"
 print_info "  1. Edit each runner's AGENTS.md: runner-helper.sh edit <name>"
