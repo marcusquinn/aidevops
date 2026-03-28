@@ -32,8 +32,6 @@ tools:
  └── Summary: Intent vs Reality analysis
 ```
 
-**Quick Commands**:
-
 | Platform | Create | Review | Merge |
 |----------|--------|--------|-------|
 | GitHub | `gh pr create --fill` | `/pr review` | `gh pr merge --squash` |
@@ -46,78 +44,49 @@ tools:
 
 ### 1. Local Linting (`/linters-local`)
 
-```bash
-~/.aidevops/agents/scripts/linters-local.sh
-```
-
-Checks: ShellCheck, secretlint, pattern validation (return statements, positional parameters), markdown formatting.
+Run `~/.aidevops/agents/scripts/linters-local.sh` — checks ShellCheck, secretlint, pattern validation (return statements, positional parameters), markdown formatting.
 
 ### 2. Remote Auditing (`/code-audit-remote`)
 
-```bash
-~/.aidevops/agents/scripts/code-audit-helper.sh audit [repo]
-```
+Run `~/.aidevops/agents/scripts/code-audit-helper.sh audit [repo]` — CodeRabbit (AI review), Codacy (quality), SonarCloud (security/maintainability).
 
-Services: CodeRabbit (AI review), Codacy (quality analysis), SonarCloud (security/maintainability).
-
-**Monitored AI reviewers**:
-
-| Reviewer | Bot Username Pattern |
-|----------|---------------------|
-| CodeRabbit | `coderabbit*` |
-| Gemini Code Assist | `gemini-code-assist[bot]` |
-| Augment Code | `augment-code[bot]`, `augmentcode[bot]` |
-| GitHub Copilot | `copilot[bot]` |
+**Monitored AI reviewers**: `coderabbit*`, `gemini-code-assist[bot]`, `augment-code[bot]`/`augmentcode[bot]`, `copilot[bot]`.
 
 ### 3. Standards Compliance (`/code-standards`)
 
-Reference: `tools/code-review/code-standards.md`
-
-Standards: S7679 (positional params → local vars), S7682 (explicit returns), S1192 (constants for repeated strings), S1481 (no unused vars).
+Reference: `tools/code-review/code-standards.md`. Standards: S7679 (positional params -> local vars), S7682 (explicit returns), S1192 (constants for repeated strings), S1481 (no unused vars).
 
 ## Usage
 
 ```bash
-/pr review           # Review current branch's PR
-/pr review 123       # Review by number
-/pr review https://github.com/user/repo/pull/123
-
-/pr create           # Create PR after running all checks
-/pr create --draft
+/pr review                                          # Current branch's PR
+/pr review 123                                      # By number
+/pr review https://github.com/user/repo/pull/123    # By URL
+/pr create [--draft]                                # Create after checks
 ```
 
-**Full workflow**:
-
-```bash
-git push -u origin HEAD
-/pr review
-/pr create --fill
-gh pr merge --squash --delete-branch
-```
+**Full workflow**: `git push -u origin HEAD` -> `/pr review` -> `/pr create --fill` -> `gh pr merge --squash --delete-branch`
 
 ## Output Format
 
 ```markdown
-## PR Review: #123 - Add user authentication
+## PR Review: #123 - Title
 
 ### Quality Checks
-**Local Linting**: ShellCheck 0 violations | Secretlint 0 secrets | Pattern checks PASS
-**Remote Audit**: CodeRabbit 2 suggestions (minor) | SonarCloud 1 code smell (S1192) | Codacy A-grade
+**Local Linting**: ShellCheck N | Secretlint N | Pattern checks PASS/FAIL
+**Remote Audit**: CodeRabbit N suggestions | SonarCloud N smells | Codacy grade
 **Standards**: Return statements PASS | Positional parameters PASS | Error handling PASS
 
 ### Intent vs Reality
 | Claimed | Found In | Status |
 |---------|----------|--------|
-| OAuth2 flow | `auth/oauth.js` | Verified |
-| Session management | `session/manager.js` | Verified |
+| Feature X | `path/file` | Verified/Missing |
 
-**Undocumented Changes**: Modified `config/database.js` (not mentioned); added `lodash` dependency
+**Undocumented Changes**: List any changes not mentioned in PR description
 
 ### Recommendation
-- [ ] Address 1 code smell before merge
-- [ ] Document database config change in PR description
-
-**Overall**: CHANGES REQUESTED
+- [ ] Action items
+**Overall**: APPROVE / CHANGES REQUESTED
 ```
 
 ## Loop Commands
@@ -127,42 +96,25 @@ gh pr merge --squash --delete-branch
 | `/pr-loop` | Iterate until PR approved/merged | 10 iterations |
 | `/preflight-loop` | Iterate until preflight passes | 5 iterations |
 
-**Timeout recovery**:
-
-```bash
-gh pr view --json state,reviewDecision,statusCheckRollup
-/pr review    # Re-run single cycle
-/pr-loop      # Restart loop if multiple issues remain
-```
+**Timeout recovery**: `gh pr view --json state,reviewDecision,statusCheckRollup`, then `/pr review` (single cycle) or `/pr-loop` (restart loop).
 
 ## Fork Workflow (Non-Owner Repositories)
 
-**Detect non-owner status**:
+**Detect**: Compare `REPO_OWNER` from `git remote get-url origin` against `gh api user --jq '.login'`. Mismatch = fork workflow required.
 
 ```bash
-REPO_OWNER=$(git remote get-url origin | sed -E 's/.*[:/]([^/]+)\/[^/]+\.git$/\1/')
-CURRENT_USER=$(gh api user --jq '.login')
-[[ "$REPO_OWNER" != "$CURRENT_USER" ]] && echo "Fork workflow required"
-```
-
-**Setup and push**:
-
-```bash
-# GitHub
+# Setup (GitHub)
 gh repo fork {owner}/{repo} --clone=false
 git remote add fork git@github.com:{your-username}/{repo}.git
 git push fork {branch-name}
 gh pr create --repo {owner}/{repo} --head {your-username}:{branch-name}
 
-# GitLab
+# Setup (GitLab)
 glab repo fork {owner}/{repo}
 git remote add fork git@gitlab.com:{your-username}/{repo}.git
 glab mr create --target-project {owner}/{repo} --source-branch {branch-name}
-```
 
-**Keep fork updated**:
-
-```bash
+# Keep fork updated
 git fetch origin main && git checkout main && git merge origin/main && git push fork main
 git checkout {branch-name} && git rebase main && git push fork {branch-name} --force-with-lease
 ```
@@ -172,25 +124,22 @@ git checkout {branch-name} && git rebase main && git push fork {branch-name} --f
 ```bash
 # GitHub
 git push -u origin HEAD
-gh pr create --fill
-gh pr create --title "feat: Add user authentication" --body "## Summary
-- Implements OAuth2 flow
+gh pr create --fill                                    # Auto-fill from commits
+gh pr create --title "feat: ..." --body "## Summary
+- Description
 Closes #123"
-gh pr create --fill --draft
-gh pr create --fill --reviewer @username,@team
+gh pr create --fill --draft                            # Draft PR
+gh pr create --fill --reviewer @username,@team         # With reviewers
 
-# GitLab
-git push -u origin HEAD && glab mr create --fill
-
-# Gitea
-git push -u origin HEAD && tea pulls create --title "feat: ..." --description "..."
+# GitLab: git push -u origin HEAD && glab mr create --fill
+# Gitea:  git push -u origin HEAD && tea pulls create --title "feat: ..." --description "..."
 ```
 
 ## Merging Pull Requests
 
-| Strategy | Command | When to Use |
-|----------|---------|-------------|
-| Squash | `--squash` | Multiple commits → single clean commit (recommended) |
+| Strategy | Flag | When |
+|----------|------|------|
+| Squash | `--squash` | Multiple commits -> single clean commit (recommended) |
 | Merge | `--merge` | Preserve full commit history |
 | Rebase | `--rebase` | Linear history, no merge commits |
 
@@ -204,30 +153,15 @@ git push -u origin HEAD && tea pulls create --title "feat: ..." --description ".
 
 Add `skip-review-gate` label to bypass for docs-only PRs or repos without bots.
 
-```bash
-# GitHub
-gh pr merge 123 --squash
-gh pr merge 123 --squash --auto
-gh pr merge 123 --squash --delete-branch
-
-# GitLab
-glab mr merge 123 --squash
-glab mr merge 123 --when-pipeline-succeeds
-```
+**Merge commands**: `gh pr merge 123 --squash [--auto] [--delete-branch]` | GitLab: `glab mr merge 123 --squash [--when-pipeline-succeeds]`
 
 ## Task Status Updates
 
-```text
-Ready/Backlog → In Progress → In Review → Done
-   (branch)       (develop)      (PR)     (merge/release)
-```
+Flow: `Ready/Backlog` -> `In Progress` (branch) -> `In Review` (PR) -> `Done` (merge/release).
 
-On PR creation — add `pr:NNN` to task line and move to `## In Review`.
-On PR merge — mark `[x]`, add `completed:` timestamp, move to `## Done`.
-
-```bash
-~/.aidevops/agents/scripts/beads-sync-helper.sh push  # Sync after TODO.md updates
-```
+- **PR creation**: Add `pr:NNN` to task line, move to `## In Review`
+- **PR merge**: Mark `[x]`, add `completed:` timestamp, move to `## Done`
+- **Sync**: `~/.aidevops/agents/scripts/beads-sync-helper.sh push`
 
 ## Post-Merge Actions
 
@@ -240,27 +174,16 @@ On PR merge — mark `[x]`, add `completed:` timestamp, move to `## Done`.
 
 | Issue | Solution |
 |-------|----------|
-| Merge conflicts | `git merge main`, resolve, push |
+| Merge conflicts | `git checkout main && git pull && git checkout your-branch && git merge main`, resolve, `git add <files> && git commit && git push` |
 | Checks failing | Fix issues, push new commits |
 | Reviews pending | Request review or wait |
 | Branch protection | Ensure all requirements met |
 
-```bash
-# Resolve conflicts
-git checkout main && git pull origin main
-git checkout your-branch && git merge main
-# Resolve conflicts — see tools/git/conflict-resolution.md
-git add <resolved-files> && git commit -m "fix: resolve merge conflicts" && git push
-```
+See `tools/git/conflict-resolution.md` for detailed conflict resolution.
 
 ## Handling Contradictory AI Feedback
 
-When reviewers suggest opposite changes or contradict documented standards:
-
-1. **Verify actual behavior**: Test the code
-2. **Check authoritative sources**: Docs, official APIs, standards
-3. **Document your decision** in PR comments (what was contradictory, how you verified, why dismissing)
-4. **Proceed with merge** if feedback is demonstrably incorrect: `gh pr merge 123 --squash --delete-branch`
+When reviewers suggest opposite changes or contradict documented standards: (1) verify actual behavior by testing, (2) check authoritative sources (docs, APIs, standards), (3) document your decision in PR comments (what contradicted, how verified, why dismissing), (4) proceed with merge if feedback is demonstrably incorrect.
 
 ## Related Workflows
 
