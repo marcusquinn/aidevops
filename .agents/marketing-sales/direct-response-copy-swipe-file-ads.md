@@ -1,6 +1,6 @@
 # Ad Copy Swipe File
 
-High-converting ad examples for Facebook, Google, and social.
+High-converting ad examples for Facebook, Google, LinkedIn, and Twitter/X.
 
 ---
 
@@ -12,20 +12,11 @@ High-converting ad examples for Facebook, Google, and social.
 I wasted $10,000 on Facebook ads before I learned this...
 
 The problem wasn't my targeting. It wasn't my budget. It wasn't even my offer.
+It was my creative. I was testing ONE ad at a time when I should've been testing 10.
 
-It was my creative.
+Now I test 10-20 creatives per week. Result? My ROAS went from 1.2x to 4.7x in 90 days.
 
-I was testing ONE ad at a time when I should've been testing 10.
-
-Now I test 10-20 creatives per week.
-
-Result? My ROAS went from 1.2x to 4.7x in 90 days.
-
-Want to see the exact framework I use?
-
-I put together a free guide: "The Creative Testing System"
-
-Click below to grab it 👇
+Want to see the exact framework? I put together a free guide: "The Creative Testing System"
 
 [Learn More]
 ```
@@ -42,9 +33,7 @@ That's what happened when Sarah implemented our system.
 
 "I finally feel like I understand what makes an ad work. The framework changed everything."
 
-Want the same system Sarah used?
-
-[Get Free Training]
+Want the same system Sarah used? [Get Free Training]
 ```
 
 ### 3. Curiosity Gap — If-Then
@@ -53,16 +42,11 @@ Want the same system Sarah used?
 If you're spending $1,000+/month on ads and NOT seeing at least 3x ROAS...
 
 You're probably making one of these 3 mistakes:
-
 1. Testing too few creatives
 2. Wrong audience selection
 3. Broken funnel economics
 
-The good news? All 3 are fixable.
-
-I made a free checklist that shows you exactly what to fix.
-
-Download it here 👇
+The good news? All 3 are fixable. I made a free checklist that shows you exactly what to fix.
 
 [Get the Checklist]
 ```
@@ -73,19 +57,12 @@ Download it here 👇
 2 years ago, I was about to give up.
 
 My agency had 3 clients. I was working 60 hours a week. Making less than I did at my old job.
-
 Then I discovered one thing that changed everything: Productized services.
 
-Instead of custom projects, I created one repeatable offer.
+Instead of custom projects, I created one repeatable offer. Fast forward to today:
+→ 47 clients  → 30 hours/week  → Multiple 6 figures
 
-Fast forward to today:
-→ 47 clients
-→ 30 hours/week
-→ Multiple 6 figures
-
-Want to see how I structured it?
-
-[Link in bio / Learn More]
+Want to see how I structured it? [Link in bio / Learn More]
 ```
 
 ### 5. Listicle — Quick Value
@@ -99,11 +76,7 @@ Want to see how I structured it?
 4. Long forms (only ask what you need)
 5. No mobile optimization (60% of traffic)
 
-Fix these and watch your conversion rate climb.
-
-Want a full landing page audit checklist?
-
-Grab it free 👇
+Fix these and watch your conversion rate climb. Want a full audit checklist? Grab it free 👇
 
 [Download Checklist]
 ```
@@ -140,37 +113,23 @@ Grab it free 👇
 Struggling to prove your local SEO work is actually working?
 
 LocalRank shows you exactly where you rank—across every zip code, keyword, and location.
-
 Finally, reports your clients will actually understand.
 
-✓ Track unlimited keywords
-✓ Monitor citations automatically
-✓ White-label client reports
+✓ Track unlimited keywords  ✓ Monitor citations automatically  ✓ White-label client reports
 
-Join 3,000+ agencies already using LocalRank.
-
-[Start Your Free Trial]
+Join 3,000+ agencies already using LocalRank. [Start Your Free Trial]
 ```
 
 ### 10. Thought Leadership
 
 ```
-Hot take: The best marketers don't A/B test.
+Hot take: The best marketers don't A/B test. They A/B/C/D/E/F/G/H/I/J test.
 
-They A/B/C/D/E/F/G/H/I/J test.
+Testing one thing at a time is too slow. Here's what top performers do instead:
+→ Test 10+ creatives per week  → Kill losers fast (24-48 hours)
+→ Scale winners immediately    → Iterate on patterns, not guesses
 
-Testing one thing at a time is too slow.
-
-Here's what top performers do instead:
-
-→ Test 10+ creatives per week
-→ Kill losers fast (24-48 hours)
-→ Scale winners immediately
-→ Iterate on patterns, not guesses
-
-The volume of tests matters more than the quality of any single test.
-
-Agree or disagree? 👇
+The volume of tests matters more than the quality of any single test. Agree or disagree? 👇
 ```
 
 ---
@@ -181,9 +140,7 @@ Agree or disagree? 👇
 
 ```
 99% of landing pages fail because the headline doesn't answer one question:
-
 "What's in it for me?"
-
 If your headline doesn't pass this test, nothing else matters.
 ```
 
@@ -191,86 +148,22 @@ If your headline doesn't pass this test, nothing else matters.
 
 ```
 I've written copy for $100M+ in sales.
-
-Here are 10 copywriting secrets I wish I knew sooner:
-
-🧵 Thread:
+Here are 10 copywriting secrets I wish I knew sooner: 🧵
 ```
 
 ---
 
 ## Templates
 
-### Problem-Agitate-Solve (Facebook)
+**Problem-Agitate-Solve:** `[Problem] → [Agitation] → [Solution] → [Result] → [CTA + lead magnet]`
 
-```
-[Relatable problem statement]
+**Curiosity Gap:** `If you're [qualifier] and NOT getting [result]... You're making one of these mistakes: 1. [X] 2. [Y] 3. [Z]. The good news? [Promise]. [CTA]`
 
-[Agitation - make it worse]
+**Before/After:** `[TIME] ago, I was [before state]. [What changed]. Now: [after + numbers]. Want to see how? [CTA]`
 
-[Transition to solution]
+**Google Search:** `H1: [Primary Benefit] | H2: [Pain Point] | H3: [Offer/CTA] | Desc: [Problem]? [Product] helps [who] [achieve what]. [Proof]. [CTA].`
 
-[Specific result/benefit]
-
-[CTA + lead magnet offer]
-```
-
-### Curiosity Gap (Facebook)
-
-```
-If you're [qualifier] and NOT getting [desired result]...
-
-You're probably making one of these mistakes:
-
-1. [Mistake 1]
-2. [Mistake 2]
-3. [Mistake 3]
-
-The good news? [Promise of solution]
-
-[CTA]
-```
-
-### Before/After (Facebook)
-
-```
-[TIME] ago, I was [painful before state].
-
-[What changed - the insight/product/system]
-
-Now: [After state with specific numbers]
-
-Want to see how?
-
-[CTA]
-```
-
-### Google Search
-
-```
-H1: [Primary Benefit]
-H2: [Pain Point / Problem]
-H3: [Offer / CTA]
-
-Desc: [Problem acknowledgment]? [Product] helps [who] [achieve what]. [Proof point]. [CTA].
-```
-
-### Social Proof (Any Platform)
-
-```
-[Specific result achieved] in [timeframe].
-
-That's what [Customer/Number of customers] got with [Product].
-
-Before: [Pain point]
-After: [Transformation]
-
-[Brief testimonial]
-
-Want the same?
-
-[CTA]
-```
+**Social Proof:** `[Result] in [timeframe]. That's what [customer] got with [Product]. Before: [pain]. After: [transformation]. [Testimonial]. Want the same? [CTA]`
 
 ---
 
@@ -292,22 +185,14 @@ Want the same?
 
 ```
 You published the content. You did the keyword research. You built the links.
-
 But Google won't index your pages.
 
 You've tried manual submission. You've tried pinging. You've waited weeks. Nothing.
+What if you could force Google to index your pages in hours? That's what BrowserBlast does.
 
-What if you could force Google to index your pages in hours?
+→ 94% average indexing rate  → Bulk upload 10,000 URLs at once  → Used by 10,000+ SEO professionals
 
-That's what BrowserBlast does.
-
-→ 94% average indexing rate
-→ Bulk upload 10,000 URLs at once
-→ Used by 10,000+ SEO professionals
-
-Stop letting your content sit invisible.
-
-Start your free trial (no credit card required) 👇
+Stop letting your content sit invisible. Start your free trial (no credit card required) 👇
 
 [Get BrowserBlast Free]
 ```
@@ -315,21 +200,14 @@ Start your free trial (no credit card required) 👇
 ### LocalRank LinkedIn Ad
 
 ```
-The #1 question agency owners ask:
+The #1 question agency owners ask: "How do I prove my local SEO work is actually working?"
 
-"How do I prove to clients that my local SEO work is actually working?"
+Spreadsheets? Too manual. Screenshots? Unprofessional. Third-party trackers? Don't track local properly.
 
-Spreadsheets? Too manual. Screenshots? Unprofessional. Third-party rank trackers? Don't track local properly.
+LocalRank solves this. See exactly where you rank across every zip code.
+Generate white-label reports in 60 seconds. Track citation health automatically.
 
-LocalRank solves this.
-
-See exactly where you rank across every zip code.
-Generate white-label reports in 60 seconds.
-Track citation health automatically.
-
-Join 3,000+ agencies who finally have proof their work works.
-
-[Start Free Trial →]
+Join 3,000+ agencies who finally have proof their work works. [Start Free Trial →]
 ```
 
 ---
