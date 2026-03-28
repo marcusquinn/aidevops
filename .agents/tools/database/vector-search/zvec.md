@@ -35,11 +35,10 @@ tools:
 
 1. **Very new** — December 2025. APIs may change. Small community.
 2. **Python-first** — Node.js bindings lack extension ecosystem (embeddings, rerankers).
-3. **No Windows** — Linux and macOS ARM64 only.
-4. **Single-process** — One process per collection.
-5. **No ACID** — Application-level locking for concurrent writes.
-6. **Memory per collection** — LRU cache to close idle tenant collections.
-7. **CPU compatibility** — Wheels require AVX-512; `Illegal instruction` (exit 132) on AMD Zen 2 (AVX2 only). Verified zvec 0.2.0, Python 3.12.3. Use pgvector on AMD Ryzen/EPYC Zen 2.
+3. **Single-process** — One process per collection.
+4. **No ACID** — Application-level locking for concurrent writes.
+5. **Memory per collection** — LRU cache to close idle tenant collections.
+6. **CPU compatibility** — Wheels require AVX-512; `Illegal instruction` (exit 132) on AMD Zen 2 (AVX2 only). Verified zvec 0.2.0, Python 3.12.3. Use pgvector on AMD Ryzen/EPYC Zen 2.
 
 ## Installation
 
@@ -54,16 +53,16 @@ pip install dashscope               # Qwen embeddings
 
 ## Core Concepts
 
-- **Collection**: Named container at a filesystem path (like a table). One process per collection.
-- **Document** (`Doc`): Record with string `id`, scalar fields, and vector fields.
-- **Schema**: Defines scalar fields (`FieldSchema`) and vector fields (`VectorSchema`).
-
 ```text
 Your App Process
   +-- zvec (in-process C++ library)
         +-- Collection A (tenant_1)  -->  /data/vectors/tenant_1/
         +-- Collection B (tenant_2)  -->  /data/vectors/tenant_2/
 ```
+
+- **Collection**: Named container at a filesystem path (like a table). One process per collection.
+- **Document** (`Doc`): Record with string `id`, scalar fields, and vector fields.
+- **Schema**: Defines scalar fields (`FieldSchema`) and vector fields (`VectorSchema`).
 
 ## Schema & Data Types
 
@@ -92,7 +91,7 @@ schema = zvec.CollectionSchema(
 
 ### Schema Evolution
 
-No downtime or reindexing required.
+No downtime or reindexing required. Cannot add/drop vector fields (coming soon). `add_column()` supports numerical scalar types only.
 
 ```python
 collection.add_column(field_schema=zvec.FieldSchema("rating", zvec.DataType.INT32), expression="5")
@@ -100,8 +99,6 @@ collection.drop_column(field_name="old_field")          # Irreversible
 collection.alter_column(old_name="publish_year", new_name="release_year")
 collection.alter_column(field_schema=zvec.FieldSchema("rating", zvec.DataType.FLOAT))
 ```
-
-**Limitations**: Cannot add/drop vector fields (coming soon). `add_column()` supports numerical scalar types only.
 
 ## Index Types
 
@@ -172,7 +169,7 @@ results = collection.query(vectors=zvec.VectorQuery(field_name="embedding", id="
 results = collection.query(filter="publish_year < 1999", topk=50)
 ```
 
-## Embedding Functions
+## Embeddings & Rerankers
 
 Built-in, thread-safe. Local models download on first use. Text modality only.
 
@@ -186,11 +183,19 @@ Built-in, thread-safe. Local models download on first use. Text modality only.
 | `QwenDenseEmbedding` | API | Alibaba Qwen | varies | `DASHSCOPE_API_KEY` |
 | `QwenSparseEmbedding` | API | Alibaba Qwen | sparse | `DASHSCOPE_API_KEY` |
 
-### Local Embeddings
+| Reranker | When to use |
+|----------|-------------|
+| `RrfReRanker` | Multi-vector fusion (dense + sparse). No model needed. |
+| `WeightedReRanker` | Multi-vector with configurable weights. No model needed. |
+| `DefaultLocalReRanker` | Single-vector deep semantic re-ranking. Local, free. |
+| `QwenReRanker` | API-based re-ranking with Qwen models. |
 
 ```python
 from zvec.extension import DefaultLocalDenseEmbedding, DefaultLocalSparseEmbedding, BM25EmbeddingFunction
+from zvec.extension import OpenAIDenseEmbedding, JinaDenseEmbedding, QwenDenseEmbedding, QwenSparseEmbedding
+from zvec.extension import RrfReRanker, WeightedReRanker, DefaultLocalReRanker, QwenReRanker
 
+# Local embeddings
 emb    = DefaultLocalDenseEmbedding()                                  # Downloads ~80MB on first run
 emb_ms = DefaultLocalDenseEmbedding(model_source="modelscope")         # China mirror
 DefaultLocalDenseEmbedding.clear_cache()                               # Release model memory
@@ -200,13 +205,8 @@ query_emb = DefaultLocalSparseEmbedding(encoding_type="query")
 doc_emb   = DefaultLocalSparseEmbedding(encoding_type="document")
 
 bm25 = BM25EmbeddingFunction(corpus=["doc1...", "doc2..."], encoding_type="document", b=0.75, k1=1.2)
-```
 
-### API-Based Embeddings
-
-```python
-from zvec.extension import OpenAIDenseEmbedding, JinaDenseEmbedding, QwenDenseEmbedding, QwenSparseEmbedding
-
+# API-based embeddings
 emb = OpenAIDenseEmbedding(model="text-embedding-3-small", dimension=256)
 
 # Jina (Matryoshka: 32-1024 dims; 32K context; tasks: retrieval.query, retrieval.passage, text-matching, classification, separation)
@@ -215,25 +215,10 @@ doc_emb   = JinaDenseEmbedding(model="jina-embeddings-v5-text-small", dimension=
 
 dense_emb  = QwenDenseEmbedding(256, model="text-embedding-v3")
 sparse_emb = QwenSparseEmbedding(dimension=256)
-```
 
-## Rerankers
-
-Thread-safe.
-
-| Reranker | When to use |
-|----------|-------------|
-| `RrfReRanker` | Multi-vector fusion (dense + sparse). No model needed. |
-| `WeightedReRanker` | Multi-vector with configurable weights. No model needed. |
-| `DefaultLocalReRanker` | Single-vector deep semantic re-ranking. Local, free. |
-| `QwenReRanker` | API-based re-ranking with Qwen models. |
-
-```python
-from zvec.extension import RrfReRanker, WeightedReRanker, DefaultLocalReRanker, QwenReRanker
-from zvec import MetricType
-
+# Rerankers
 reranker = RrfReRanker(topn=10, rank_constant=60)                     # RRF: score = 1/(k+rank+1)
-reranker = WeightedReRanker(topn=10, metric=MetricType.COSINE, weights={"dense_emb": 0.7, "sparse_emb": 0.3})
+reranker = WeightedReRanker(topn=10, metric=zvec.MetricType.COSINE, weights={"dense_emb": 0.7, "sparse_emb": 0.3})
 reranker = DefaultLocalReRanker(query="q", topn=5, rerank_field="title", model_name="cross-encoder/ms-marco-MiniLM-L6-v2", device="cuda")
 reranker = QwenReRanker(query="q", model="gte-rerank-v2", topn=10, rerank_field="content")
 ```
@@ -260,7 +245,7 @@ results = collection.query(
     topk=10, reranker=RrfReRanker(topn=5),
 )
 
-# Two-stage retrieval: fast recall (top-100) → precise cross-encoder re-ranking (top-10)
+# Two-stage retrieval: fast recall (top-100) -> precise cross-encoder re-ranking (top-10)
 results = collection.query(
     vectors=zvec.VectorQuery(field_name="dense", vector=dense_emb.embed(query)),
     topk=100,
