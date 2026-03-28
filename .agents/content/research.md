@@ -15,7 +15,7 @@ tools:
 
 # Content Research
 
-Pre-writing research to validate niches, understand audiences, and analyse competitors before committing to content production.
+Pre-writing research to validate niches, understand audiences, and analyse competitors before content production.
 
 <!-- AI-CONTEXT-START -->
 
@@ -30,7 +30,7 @@ Pre-writing research to validate niches, understand audiences, and analyse compe
 
 ## Pre-flight
 
-Apply first-principles thinking, bias checks (confirmation, anchoring, availability, survivorship), and evidence evaluation per `prompts/build.txt` "Scientific reasoning" before generating research. Ask: what would disprove this conclusion?
+Apply first-principles thinking, bias checks (confirmation, anchoring, availability, survivorship), and evidence evaluation per `prompts/build.txt` "Scientific reasoning". Ask: what would disprove this conclusion?
 
 ## Workflow
 
@@ -74,7 +74,7 @@ Replace `[TOPIC/PRODUCT/NICHE]`, run in Perplexity Pro, store raw output in `con
 #### 30-Minute Expert Method
 
 1. **Reddit Scraping** (10 min) — 3-5 subreddits. Search "best [topic]", "vs", "alternative to", "frustrated with", "how to". Top 20-30 threads.
-2. **NotebookLM Ingestion** (5 min) — Project `[Niche] Research - [Date]`. Upload Reddit threads + competitor sites + existing research.
+2. **NotebookLM Ingestion** (5 min) — Upload Reddit threads + competitor sites + existing research.
 3. **AI Analysis** (15 min) — Extract: top 10 pain points, failed solutions, user language, objections, ideal customer profile.
 
 Save to `context/expert-brief-[niche].md`.
@@ -97,7 +97,7 @@ Extract pain points in EXACT audience language (critical for hooks, copy, resona
 **Purchase Trigger**: [What would make them buy NOW]
 ```
 
-Collect 20-30 pain points → cluster by theme → rank by frequency + severity → identify language patterns → map to content opportunities. Store in `context/pain-points-[niche].md`.
+Collect 20-30 pain points → cluster by theme → rank by frequency + severity → map to content opportunities. Store in `context/pain-points-[niche].md`.
 
 #### Creator Brain Clone Pattern
 
@@ -149,7 +149,7 @@ Analyze this video and provide:
 | YouTube | Long-form depth, tutorial formats, retention patterns |
 | LinkedIn | B2B angles, professional pain points, case studies |
 
-Watch for content performing well on one platform that hasn't migrated to others.
+Watch for content performing well on one platform that hasn't migrated to others. Use the migration matrix below to track coverage:
 
 | Topic | Reddit | TikTok | X | IG | YouTube | LinkedIn | Blog |
 |-------|--------|--------|---|----|---------|---------| ------|
@@ -180,32 +180,26 @@ At least 2 required before proceeding:
 
 | Signal | Source | Threshold |
 |--------|--------|-----------|
-| Search volume exists | DataForSEO / GSC | >100 monthly searches for primary keyword |
+| Search volume | DataForSEO / GSC | >100 monthly for primary keyword |
 | Forum activity | Reddit, Quora, niche forums | Active threads in last 90 days |
-| Competitor content exists | SERP analysis | 3+ competitors publishing on topic |
-| Social engagement | LinkedIn, X | Posts on topic get meaningful engagement |
-| Reddit discussion depth | 11-Dimension analysis | At least 5 dimensions show active discussion |
+| Competitor content | SERP analysis | 3+ competitors publishing on topic |
+| Social engagement | LinkedIn, X | Meaningful engagement on topic posts |
+| Reddit depth | 11-Dimension analysis | 5+ dimensions with active discussion |
 
 ### 2. Niche Validation
 
-**Formula**: `Viability Score = (Demand x Buying Intent x (1 / Competition)) x Business Fit`
+**Formula**: `Viability = (Demand × Buying Intent × (1 / Competition)) × Business Fit`
 
 **Scoring (1-5):**
 
-- **Demand** — Google Trends direction, Reddit activity (3+ active subreddits or 1 large 50K+), Whop marketplace (3+ active sellers = proven demand).
-- **Buying Intent** — High: Reddit "best [product] to buy", comparison queries, active Whop sales, affiliate programs, ads running. Low: only informational queries, no paid products, theoretical discussions.
-- **Competition (inverted)** — SERP DA: 5=DA<40, 4=DA 40-60, 3=DA 60-70, 2=DA 70-85, 1=DA 85+.
-- **Business Fit** — Monetization: affiliates (easiest), info products $5-$27, courses/coaching $100-$5K, SaaS $10-$100/mo, services $500+.
+| Factor | Weight | Signals |
+|--------|--------|---------|
+| Demand | 30% | Google Trends direction, Reddit activity (3+ subreddits or 1 large 50K+), Whop marketplace (3+ active sellers) |
+| Buying Intent | 30% | High: "best [X] to buy", comparison queries, active sales, affiliate programs, ads. Low: informational-only, no paid products |
+| Competition (inv.) | 25% | SERP DA: 5=DA<40, 4=DA 40-60, 3=DA 60-70, 2=DA 70-85, 1=DA 85+ |
+| Business Fit | 15% | Affiliates (easiest), info products $5-$27, courses $100-$5K, SaaS $10-$100/mo, services $500+ |
 
-| Factor | Weight | Score (1-5) | Weighted | Notes |
-|--------|--------|-------------|----------|-------|
-| Demand | 30% | | | Google Trends + Reddit + Whop |
-| Buying Intent | 30% | | | Commercial signals, price points |
-| Competition (inverted) | 25% | | | Lower competition = higher score |
-| Business Fit | 15% | | | Monetization alignment |
-| **TOTAL** | **100%** | | | **Weighted average** |
-
-**Thresholds:** 4.0+ = pillar + cluster strategy | 3.5-3.9 = 2-3 test pieces | 3.0-3.4 = only if Business Fit = 5 | 2.5-2.9 = deprioritise | <2.5 = skip.
+**Thresholds:** 4.0+ = pillar + cluster | 3.5-3.9 = 2-3 test pieces | 3.0-3.4 = only if Business Fit = 5 | 2.5-2.9 = deprioritise | <2.5 = skip.
 
 **Q4 Seasonality Bonus:** +0.5 to Buying Intent in Oct-Dec.
 
@@ -214,7 +208,7 @@ At least 2 required before proceeding:
 1. Pull primary keyword + 10-20 related terms with volume and difficulty (`seo/keyword-research.md`)
 2. SERP analysis: top 10 results — DA, word count, content type, freshness, gaps
 3. Content quality audit: top 3 results — coverage, gaps, depth, freshness, format
-4. Funnel mapping: Awareness ("what is [topic]") -> Consideration ("best [topic] tools") -> Decision ("[your product] for [topic]")
+4. Funnel mapping: Awareness ("what is [topic]") → Consideration ("best [topic] tools") → Decision ("[your product] for [topic]")
 
 ### 3. Competitor Content Analysis
 
@@ -233,13 +227,11 @@ Identify 3-5 direct competitors from primary keyword SERP (positions 1-10) and `
 - **Content Gaps We Can Exploit**: [topics, angles, formats, audience segments they miss]
 ```
 
-**Content matrix:**
+**Content matrix** — Status: `none`, `thin` (<500w), `basic` (500-1500w), `comprehensive` (1500-2999w), `pillar` (3000+w):
 
 | Topic | Us | Competitor A | Competitor B | Competitor C | Gap? |
 |-------|-----|-------------|-------------|-------------|------|
 | [topic] | [status] | [status] | [status] | [status] | [Y/N] |
-
-Status: `none`, `thin` (<500w), `basic` (500-1500), `comprehensive` (1500+), `pillar` (3000+)
 
 ### 4. Research Brief Output
 
