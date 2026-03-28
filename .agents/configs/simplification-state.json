@@ -282,8 +282,8 @@
       "pr": 11417
     },
     ".agents/tools/architecture/feature-slicing-skill/nextjs.md": {
-      "hash": "b41d1c5e80f0b6bf54fc44ef56cf466152cc9830",
-      "at": "2026-03-28T06:40:01Z",
+      "hash": "0fd2c402556f4d6804ce1a61eeaaaa9c3cecd541",
+      "at": "2026-03-28T06:59:34Z",
       "pr": 11437
     },
     ".agents/marketing-sales/meta-ads-creative-formats.md": {
@@ -355,6 +355,21 @@
       "hash": "10d31ffa27d8e38267882e04f099ce38899635f1",
       "at": "2026-03-28T05:51:09Z",
       "pr": 11363
+    },
+    ".agents/marketing-sales/meta-ads-audiences-first-party-data.md": {
+      "hash": "919e1c3ff2a04eb73ca6758f41296429f4ae0ee6",
+      "at": "2026-03-28T06:59:24Z",
+      "pr": 11536
+    },
+    ".agents/marketing-sales/direct-response-copy-templates-ad-copy.md": {
+      "hash": "9444b7012d9504a02de323de306df98a3b7896a9",
+      "at": "2026-03-28T06:59:25Z",
+      "pr": 11505
+    },
+    ".agents/marketing-sales/direct-response-copy-templates-vsl-script.md": {
+      "hash": "a3cd47b4a2f5d8f70d6f4272fe2fda22d98cba58",
+      "at": "2026-03-28T06:59:27Z",
+      "pr": 11511
     }
   }
 }
