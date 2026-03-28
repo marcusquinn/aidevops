@@ -1,10 +1,10 @@
 # Plugin System
 
-Third-party agent plugins extend aidevops with additional capabilities. Plugins are git repositories that deploy agents into namespaced directories, keeping them isolated from core agents.
+Third-party agent plugins extend aidevops with additional capabilities. Plugins are git repositories that deploy agents into namespaced directories, isolated from core agents.
 
 ## Schema
 
-Plugins are configured in `.aidevops.json` under the `plugins` array:
+`.aidevops.json` `plugins` array:
 
 ```json
 {
@@ -20,8 +20,6 @@ Plugins are configured in `.aidevops.json` under the `plugins` array:
 }
 ```
 
-### Fields
-
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | yes | Human-readable plugin name |
@@ -31,8 +29,6 @@ Plugins are configured in `.aidevops.json` under the `plugins` array:
 | `enabled` | boolean | no | Whether the plugin is active (default: `true`) |
 
 ## Deployment
-
-Plugins deploy to `~/.aidevops/agents/<namespace>/`:
 
 ```text
 ~/.aidevops/agents/
@@ -46,72 +42,35 @@ Plugins deploy to `~/.aidevops/agents/<namespace>/`:
 
 ## Namespacing Rules
 
-- Namespace must be a valid directory name (lowercase, alphanumeric, hyphens)
-- Namespace must NOT collide with core directories: `custom`, `draft`, `scripts`, `tools`, `services`, `workflows`, `templates`, `memory`, `plugins`
-- Each plugin gets its own isolated namespace directory
-- Plugins cannot write outside their namespace directory
-- Core agents are never overwritten by plugin deployment
+- Namespace must be lowercase, alphanumeric, hyphens only
+- Must NOT collide with reserved names: `custom`, `draft`, `scripts`, `tools`, `services`, `workflows`, `templates`, `memory`, `plugins`
+- Plugins are isolated to their namespace — cannot write outside it or overwrite core agents
 
 ## Lifecycle
 
-### Add a Plugin
-
 ```bash
+# Add — validates namespace, clones repo, registers in subagent index
 aidevops plugin add https://github.com/marcusquinn/aidevops-pro.git --namespace pro
-```
 
-This:
+# Update — pull latest from tracked branch and redeploy
+aidevops plugin update           # all enabled plugins
+aidevops plugin update pro       # specific plugin
 
-1. Validates the namespace doesn't collide with reserved names
-2. Adds the plugin entry to `.aidevops.json`
-3. Clones the repo to `~/.aidevops/agents/<namespace>/`
-4. Registers the plugin in the subagent index
+# Disable / Enable — disable removes deployed files, preserves config entry
+aidevops plugin disable pro
+aidevops plugin enable pro
 
-### Update Plugins
+# Remove — removes config entry and deployed files
+aidevops plugin remove pro
 
-```bash
-aidevops plugin update           # Update all enabled plugins
-aidevops plugin update pro       # Update a specific plugin
-```
-
-Pulls the latest from the tracked branch and redeploys.
-
-### Automatic Deployment
-
-Running `aidevops update` automatically deploys any enabled plugins that are not yet installed. Existing plugin directories are preserved (not re-cloned). Disabled plugin directories are cleaned up. Plugin namespaces are protected during clean mode deployments.
-
-To force a refresh of all plugins after update:
-
-```bash
-aidevops plugin update
-```
-
-### Disable / Enable
-
-```bash
-aidevops plugin disable pro      # Sets enabled: false, removes deployed files
-aidevops plugin enable pro       # Sets enabled: true, redeploys
-```
-
-Disabling removes the deployed directory but preserves the config entry.
-
-### Remove a Plugin
-
-```bash
-aidevops plugin remove pro       # Removes config entry and deployed files
-```
-
-### Create a New Plugin
-
-```bash
+# Create — scaffold new plugin from template [directory] [name] [namespace]
+# Generates: AGENTS.md, main agent file, example subagent, scripts/
 aidevops plugin init ./my-plugin my-plugin my-ns
 ```
 
-Arguments: `[directory] [name] [namespace]`. Scaffolds a plugin from the built-in template with placeholder substitution. The generated structure includes AGENTS.md, a main agent file, an example subagent, and a scripts directory.
+`aidevops update` auto-deploys enabled plugins not yet installed. Existing directories are preserved (not re-cloned). Disabled directories are cleaned up. Namespaces are protected during clean mode.
 
 ## Plugin Repository Structure
-
-A plugin repo should follow this structure:
 
 ```text
 plugin-repo/
@@ -125,11 +84,11 @@ plugin-repo/
 └── tools/             # Tool definitions (optional)
 ```
 
-The entire repo contents are deployed to `~/.aidevops/agents/<namespace>/`.
+Entire repo contents deploy to `~/.aidevops/agents/<namespace>/`.
 
 ## Plugin Manifest (plugin.json)
 
-The manifest declares a plugin's agents, hooks, scripts, and dependencies. It is optional — plugins without a manifest fall back to directory scanning for agent discovery.
+Optional — plugins without a manifest fall back to directory scanning for agent discovery.
 
 ```json
 {
@@ -155,8 +114,6 @@ The manifest declares a plugin's agents, hooks, scripts, and dependencies. It is
 }
 ```
 
-### Manifest Fields
-
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | yes | Plugin name (matches plugins.json entry) |
@@ -170,38 +127,19 @@ The manifest declares a plugin's agents, hooks, scripts, and dependencies. It is
 
 ### Agent Loader
 
-The `plugin-loader-helper.sh` script handles plugin discovery and agent loading:
-
 ```bash
-# Discover all installed plugins
-plugin-loader-helper.sh discover
-
-# Load agents from a specific plugin
-plugin-loader-helper.sh load pro
-
-# Validate plugin manifest(s)
-plugin-loader-helper.sh validate
-
-# List agents provided by plugins
-plugin-loader-helper.sh agents
-
-# Generate subagent-index entries
-plugin-loader-helper.sh index
-
-# Run a lifecycle hook
-plugin-loader-helper.sh hooks pro init
-
-# Show plugin system status
-plugin-loader-helper.sh status
+plugin-loader-helper.sh discover   # Discover all installed plugins
+plugin-loader-helper.sh load pro   # Load agents from a specific plugin
+plugin-loader-helper.sh validate   # Validate plugin manifest(s)
+plugin-loader-helper.sh agents     # List agents provided by plugins
+plugin-loader-helper.sh index      # Generate subagent-index entries
+plugin-loader-helper.sh hooks pro init  # Run a lifecycle hook
+plugin-loader-helper.sh status     # Show plugin system status
 ```
 
-Agent loading priority:
-1. If `plugin.json` exists with an `agents` array, use it (explicit declaration)
-2. Otherwise, scan the plugin directory for `.md` files and parse YAML frontmatter
+Loading priority: (1) `plugin.json` `agents` array if present; (2) scan directory for `.md` files with YAML frontmatter.
 
 ## Lifecycle Hooks
-
-Plugins can define shell scripts that run at specific lifecycle events:
 
 | Hook | When | Use Case |
 |------|------|----------|
@@ -209,24 +147,21 @@ Plugins can define shell scripts that run at specific lifecycle events:
 | `load` | Session start, agent loading | Environment setup, PATH additions |
 | `unload` | Disable, remove | Cleanup temp files, revoke registrations |
 
-Hooks receive environment variables:
+Environment variables available to hooks:
 - `AIDEVOPS_PLUGIN_NAMESPACE` — Plugin namespace
 - `AIDEVOPS_PLUGIN_DIR` — Plugin directory path
 - `AIDEVOPS_AGENTS_DIR` — Root agents directory
 - `AIDEVOPS_HOOK` — Current hook name (init, load, unload)
 
-Hook scripts are defined in the manifest under `hooks`, or discovered by convention at `scripts/on-{hook}.sh`.
+Hooks are defined in the manifest under `hooks`, or discovered by convention at `scripts/on-{hook}.sh`.
 
 ## Security
 
-- Plugins are user-installed and user-trusted
+- Plugins are user-installed and user-trusted — review source before installation
 - Plugin scripts are NOT auto-executed; they must be explicitly invoked
 - Plugin agents follow the same security rules as core agents (no credential exposure, pre-edit checks)
-- Review plugin source before installation
 
 ## Integration with Agent Tiers
-
-Plugins occupy a distinct tier alongside existing tiers:
 
 | Tier | Location | Survives Update | Source |
 |------|----------|-----------------|--------|
@@ -237,26 +172,17 @@ Plugins occupy a distinct tier alongside existing tiers:
 
 ## Configuration
 
-Plugin state is stored in `~/.config/aidevops/plugins.json` (global, not per-project). The file is auto-created on first use. Per-project `.aidevops.json` also has a `plugins` array for project-level plugin awareness.
-
-Run `aidevops plugin help` for full CLI documentation.
+Plugin state: `~/.config/aidevops/plugins.json` (global, auto-created on first use). Per-project plugin awareness: `.aidevops.json` `plugins` array. Run `aidevops plugin help` for full CLI documentation.
 
 ## Official Plugins
-
-The following plugins are maintained alongside the core aidevops framework:
 
 | Plugin | Namespace | Repo | Description |
 |--------|-----------|------|-------------|
 | **aidevops-pro** | `pro` | `https://github.com/marcusquinn/aidevops-pro.git` | Premium agents: advanced deployment, monitoring, cost optimisation |
 | **aidevops-anon** | `anon` | `https://github.com/marcusquinn/aidevops-anon.git` | Privacy agents: browser fingerprints, proxy rotation, identity isolation |
 
-### Quick Install
-
 ```bash
-# Install pro plugin
 aidevops plugin add https://github.com/marcusquinn/aidevops-pro.git --namespace pro
-
-# Install anon plugin
 aidevops plugin add https://github.com/marcusquinn/aidevops-anon.git --namespace anon
 ```
 
