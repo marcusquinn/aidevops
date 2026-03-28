@@ -26,15 +26,9 @@ tools:
 - **Docs**: <https://zvec.org/en/docs/>
 - **Parent guide**: `tools/database/vector-search.md` — decision flowchart, comparison matrix, per-tenant isolation patterns, platform support matrix
 
-**When to use Zvec**: In-process vector search for a SaaS app where each tenant uploads documents for RAG. Zero network hop, collection-per-tenant isolation, built-in embedding functions and rerankers.
+**When to use**: In-process vector search for SaaS RAG where each tenant uploads documents. Zero network hop, collection-per-tenant isolation, built-in embedding functions and rerankers.
 
-**When NOT to use Zvec**:
-
-- Browser/WASM apps (native C++ binary)
-- Windows servers
-- Distributed multi-node clusters (use Milvus or Qdrant)
-- Already on Postgres (use pgvector — one fewer dependency)
-- Datasets >100M vectors per collection needing distributed sharding
+**When NOT to use**: Browser/WASM (native C++ binary), Windows servers, distributed multi-node clusters (use Milvus/Qdrant), already on Postgres (use pgvector), datasets >100M vectors needing distributed sharding.
 
 <!-- AI-CONTEXT-END -->
 
@@ -43,29 +37,24 @@ tools:
 ```bash
 pip install zvec                    # Python 3.10-3.12
 npm install @zvec/zvec              # Node.js (early stage)
-
-# Optional: local embeddings
-pip install sentence-transformers   # Dense + sparse (SPLADE), ~80-100MB models
+pip install sentence-transformers   # Local dense + sparse (SPLADE), ~80-100MB models
 pip install dashtext                # BM25 sparse embeddings
-
-# Optional: API-based embeddings
 pip install openai                  # OpenAI or Jina (OpenAI-compatible)
 pip install dashscope               # Qwen embeddings
 ```
 
 ## Core Concepts
 
-```text
-Your App Process
-  +-- zvec (in-process C++ library via Python/Node.js bindings)
-        +-- Collection A (tenant_1)  -->  /data/vectors/tenant_1/
-        +-- Collection B (tenant_2)  -->  /data/vectors/tenant_2/
-        +-- No network hop, no separate server process
-```
-
-- **Collection**: Named container for documents (analogous to a table), lives at a filesystem path
+- **Collection**: Named container for documents (analogous to a table), lives at a filesystem path. One process per collection.
 - **Document** (`Doc`): A record with a string `id`, scalar fields, and one or more vector fields
 - **Schema**: Defines scalar fields (`FieldSchema`) and vector fields (`VectorSchema`)
+
+```text
+Your App Process
+  +-- zvec (in-process C++ library)
+        +-- Collection A (tenant_1)  -->  /data/vectors/tenant_1/
+        +-- Collection B (tenant_2)  -->  /data/vectors/tenant_2/
+```
 
 ## Schema & Data Types
 
@@ -80,20 +69,13 @@ schema = zvec.CollectionSchema(
     name="documents",
     fields=[
         zvec.FieldSchema("title", zvec.DataType.STRING, nullable=True),
-        zvec.FieldSchema("category", zvec.DataType.STRING, nullable=False),
-        zvec.FieldSchema(
-            name="price",
-            data_type=zvec.DataType.INT32,
-            index_param=zvec.InvertIndexParam(enable_range_optimization=True),
-        ),
+        zvec.FieldSchema("category", zvec.DataType.STRING),
+        zvec.FieldSchema("price", zvec.DataType.INT32,
+            index_param=zvec.InvertIndexParam(enable_range_optimization=True)),
     ],
     vectors=[
-        zvec.VectorSchema(
-            name="embedding",
-            data_type=zvec.DataType.VECTOR_FP32,
-            dimension=384,
-            index_param=zvec.HnswIndexParam(metric_type=zvec.MetricType.COSINE),
-        ),
+        zvec.VectorSchema("embedding", zvec.DataType.VECTOR_FP32, dimension=384,
+            index_param=zvec.HnswIndexParam(metric_type=zvec.MetricType.COSINE)),
         zvec.VectorSchema("sparse_emb", zvec.DataType.SPARSE_VECTOR_FP32),
     ],
 )
@@ -101,7 +83,7 @@ schema = zvec.CollectionSchema(
 
 ### Schema Evolution (DDL)
 
-Schema changes without downtime, data re-ingestion, or reindexing.
+No downtime, data re-ingestion, or reindexing required.
 
 ```python
 collection.add_column(field_schema=zvec.FieldSchema("rating", zvec.DataType.INT32), expression="5")
@@ -121,15 +103,11 @@ collection.alter_column(field_schema=zvec.FieldSchema("rating", zvec.DataType.FL
 | **Flat** | `FlatIndexParam` | Small collections (<100k), exact search | Exact results, O(n) search |
 
 ```python
-# HNSW — metric_type: L2, IP, or COSINE
 zvec.HnswIndexParam(metric_type=zvec.MetricType.COSINE, ef_construction=200, m=16)
-zvec.HnswQueryParam(ef=300)  # Search-time quality
-
-# IVF — nlist: sqrt(n) is a good starting point
-zvec.IVFIndexParam(nlist=1024)
+zvec.HnswQueryParam(ef=300)          # Search-time quality; metric_type: L2, IP, or COSINE
+zvec.IVFIndexParam(nlist=1024)       # nlist: sqrt(n) is a good starting point
 zvec.IVFQueryParam(nprobe=64)
 
-# Manage indexes after creation
 collection.create_index(field_name="embedding", index_param=zvec.HnswIndexParam(...))
 collection.create_index(field_name="category", index_param=zvec.InvertIndexParam())
 collection.drop_index(field_name="category")  # Scalar only; vector indexes cannot be dropped
@@ -140,35 +118,27 @@ collection.drop_index(field_name="category")  # Scalar only; vector indexes cann
 ```python
 zvec.init()  # Auto-detect resources (call once at startup; subsequent calls raise RuntimeError)
 
-# Production — parameters set to None fall back to cgroup-aware defaults (Docker/K8s friendly)
-zvec.init(
-    log_type=zvec.LogType.FILE, log_dir="/var/log/zvec", log_level=zvec.LogLevel.WARN,
-    query_threads=4, optimize_threads=2, memory_limit_mb=2048,
-)
+# Production — None values fall back to cgroup-aware defaults (Docker/K8s friendly)
+zvec.init(log_type=zvec.LogType.FILE, log_dir="/var/log/zvec", log_level=zvec.LogLevel.WARN,
+          query_threads=4, optimize_threads=2, memory_limit_mb=2048)
 
 collection = zvec.create_and_open(path="./my_collection", schema=schema)
 collection = zvec.open(path="./my_collection")
-
-print(collection.schema)  # Schema definition
-print(collection.stats)   # Doc count, size, etc.
-collection.optimize()     # Merge segments, rebuild indexes
-collection.destroy()      # Irreversible — deletes all data
+collection.schema; collection.stats   # Schema definition; doc count, size, etc.
+collection.optimize()                 # Merge segments, rebuild indexes
+collection.destroy()                  # Irreversible — deletes all data
 ```
 
 ## CRUD Operations
 
 ```python
-# Insert / upsert / update
 collection.insert(zvec.Doc(id="doc_1", fields={"title": "Example"}, vectors={"embedding": [0.1, 0.2, ...]}))
-collection.insert([doc1, doc2, doc3])                          # Batch
+collection.insert([doc1, doc2, doc3])                                          # Batch
 collection.upsert(zvec.Doc(id="doc_1", fields={"title": "Updated"}))
-collection.update(zvec.Doc(id="doc_1", fields={"category": "science"}))  # Partial
+collection.update(zvec.Doc(id="doc_1", fields={"category": "science"}))        # Partial update
 
-# Fetch / delete
-docs = collection.fetch("doc_1")
-docs = collection.fetch(["doc_1", "doc_2"])
-collection.delete(ids="doc_1")
-collection.delete(ids=["doc_1", "doc_2"])
+docs = collection.fetch(["doc_1", "doc_2"])                                    # Single ID or list
+collection.delete(ids=["doc_1", "doc_2"])                                      # Single ID or list
 collection.delete_by_filter(filter="publish_year < 1900")
 ```
 
@@ -177,7 +147,7 @@ collection.delete_by_filter(filter="publish_year < 1900")
 All writes are immediately visible — real-time, no eventual consistency delay.
 
 ```python
-# Single-vector search
+# Single-vector search with filter
 results = collection.query(
     vectors=zvec.VectorQuery(field_name="embedding", vector=[0.1, 0.2, ...]),
     topk=10,
@@ -187,29 +157,17 @@ results = collection.query(
 )
 
 # Query by stored document ID (reuse stored vector)
-results = collection.query(
-    vectors=zvec.VectorQuery(field_name="embedding", id="doc_1"), topk=10,
-)
-
-# Multi-vector with index-specific params
-results = collection.query(
-    vectors=[
-        zvec.VectorQuery(field_name="dense",  vector=dense_vec, param=zvec.HnswQueryParam(ef=300)),
-        zvec.VectorQuery(field_name="sparse", vector=sparse_vec),
-    ],
-    topk=50,
-    reranker=RrfReRanker(topn=10),
-)
+results = collection.query(vectors=zvec.VectorQuery(field_name="embedding", id="doc_1"), topk=10)
 
 # Filter-only (no vector search)
 results = collection.query(filter="publish_year < 1999", topk=50)
 ```
 
-## Built-in Embedding Functions
+## Embedding Functions
 
 No separate embedding service needed. All functions are thread-safe. Local models download on first use. Text modality only.
 
-### Local Embeddings (No API Key)
+### Local (No API Key)
 
 | Function | Model | Dimensions | Dependency |
 |----------|-------|------------|------------|
@@ -220,21 +178,18 @@ No separate embedding service needed. All functions are thread-safe. Local model
 ```python
 from zvec.extension import DefaultLocalDenseEmbedding, DefaultLocalSparseEmbedding, BM25EmbeddingFunction
 
-# Dense
-emb = DefaultLocalDenseEmbedding()  # Downloads ~80MB on first run
-emb_ms = DefaultLocalDenseEmbedding(model_source="modelscope")  # China mirror
-DefaultLocalDenseEmbedding.clear_cache()  # Release model memory
+emb    = DefaultLocalDenseEmbedding()                                  # Downloads ~80MB on first run
+emb_ms = DefaultLocalDenseEmbedding(model_source="modelscope")         # China mirror
+DefaultLocalDenseEmbedding.clear_cache()                               # Release model memory
 
-# Sparse (SPLADE — asymmetric: separate query/document encoders)
+# SPLADE — asymmetric: separate query/document encoders
 query_emb = DefaultLocalSparseEmbedding(encoding_type="query")
-doc_emb = DefaultLocalSparseEmbedding(encoding_type="document")
+doc_emb   = DefaultLocalSparseEmbedding(encoding_type="document")
 
-# BM25
-bm25 = BM25EmbeddingFunction(language="en", encoding_type="query")
-bm25_custom = BM25EmbeddingFunction(corpus=["doc1...", "doc2..."], encoding_type="document", b=0.75, k1=1.2)
+bm25 = BM25EmbeddingFunction(corpus=["doc1...", "doc2..."], encoding_type="document", b=0.75, k1=1.2)
 ```
 
-### API-Based Embeddings
+### API-Based
 
 | Function | Provider | Dimensions | Env var |
 |----------|----------|------------|---------|
@@ -271,80 +226,53 @@ All reranking functions are thread-safe.
 from zvec.extension import RrfReRanker, WeightedReRanker, DefaultLocalReRanker, QwenReRanker
 from zvec import MetricType
 
-reranker = RrfReRanker(topn=10, rank_constant=60)                                    # RRF: score = 1/(k+rank+1)
+reranker = RrfReRanker(topn=10, rank_constant=60)                     # RRF: score = 1/(k+rank+1)
 reranker = WeightedReRanker(topn=10, metric=MetricType.COSINE, weights={"dense_emb": 0.7, "sparse_emb": 0.3})
-reranker = DefaultLocalReRanker(query="query", topn=5, rerank_field="title",         # Cross-encoder (~80MB model)
-    model_name="cross-encoder/ms-marco-MiniLM-L6-v2", device="cuda")
-reranker = QwenReRanker(query="query", model="gte-rerank-v2", topn=10, rerank_field="content")
+reranker = DefaultLocalReRanker(query="q", topn=5, rerank_field="title", model_name="cross-encoder/ms-marco-MiniLM-L6-v2", device="cuda")
+reranker = QwenReRanker(query="q", model="gte-rerank-v2", topn=10, rerank_field="content")
 ```
 
 ## Hybrid Search
 
-Combine dense semantic search with sparse lexical matching in a single query.
+Combine dense semantic search with sparse lexical matching. Schema needs both vector fields (see Schema section); insert docs with both embeddings populated.
 
 ```python
-import zvec
 from zvec.extension import DefaultLocalDenseEmbedding, DefaultLocalSparseEmbedding, RrfReRanker
 
-dense_emb = DefaultLocalDenseEmbedding()
+dense_emb        = DefaultLocalDenseEmbedding()
 sparse_query_emb = DefaultLocalSparseEmbedding(encoding_type="query")
 sparse_doc_emb   = DefaultLocalSparseEmbedding(encoding_type="document")
 
-schema = zvec.CollectionSchema(
-    name="hybrid_docs",
-    fields=[zvec.FieldSchema("content", zvec.DataType.STRING)],
-    vectors=[
-        zvec.VectorSchema("dense",  zvec.DataType.VECTOR_FP32, dimension=dense_emb.dimension),
-        zvec.VectorSchema("sparse", zvec.DataType.SPARSE_VECTOR_FP32),
-    ],
-)
-collection = zvec.create_and_open(path="./hybrid_example", schema=schema)
-
-# Insert
-collection.insert([
-    zvec.Doc(id=f"doc_{i}", fields={"content": text},
-             vectors={"dense": dense_emb.embed(text), "sparse": sparse_doc_emb.embed(text)})
-    for i, text in enumerate(docs)
-])
-
-# Hybrid query with RRF
 query = "what is deep learning"
+
+# Hybrid query with RRF fusion
 results = collection.query(
     vectors=[
         zvec.VectorQuery(field_name="dense",  vector=dense_emb.embed(query)),
         zvec.VectorQuery(field_name="sparse", vector=sparse_query_emb.embed(query)),
     ],
-    topk=10,
-    reranker=RrfReRanker(topn=5),
+    topk=10, reranker=RrfReRanker(topn=5),
 )
-```
 
-### Two-Stage Retrieval Pattern
-
-```python
-# Stage 1: Fast recall (top-100 candidates)
-# Stage 2: Precise cross-encoder re-ranking (top-10 final)
-reranker = DefaultLocalReRanker(query=query, rerank_field="content", topn=10)
+# Two-stage retrieval: fast recall (top-100) → precise cross-encoder re-ranking (top-10)
 results = collection.query(
     vectors=zvec.VectorQuery(field_name="dense", vector=dense_emb.embed(query)),
     topk=100,
-    reranker=reranker,
+    reranker=DefaultLocalReRanker(query=query, rerank_field="content", topn=10),
 )
 ```
 
 ## Node.js API
 
-The `@zvec/zvec` Node.js API mirrors Python with camelCase names. The Python extension ecosystem (embedding functions, rerankers) has **no Node.js equivalent** — bring your own embedding pipeline (OpenAI SDK, Transformers.js). For production Node.js needing the full pipeline, pgvector or a hosted option is more practical.
+Mirrors Python with camelCase names. The Python extension ecosystem (embedding functions, rerankers) has **no Node.js equivalent** — bring your own embedding pipeline (OpenAI SDK, Transformers.js). For production Node.js needing the full pipeline, pgvector or a hosted option is more practical.
 
 ```javascript
 const zvec = require('@zvec/zvec');
-
 const schema = new zvec.CollectionSchema({
   name: "example",
   vectors: [new zvec.VectorSchema("embedding", zvec.DataType.VECTOR_FP32, 384)],
 });
 const collection = zvec.createAndOpen("./my_collection", schema);
-
 collection.insert([new zvec.Doc("doc_1", { embedding: [0.1, 0.2, ...] })]);
 const results = collection.querySync({ fieldName: "embedding", vector: [...], topk: 10 });
 collection.optimize();
@@ -356,7 +284,6 @@ collection.destroy();
 Benchmarked using [VectorDBBench](https://github.com/zilliztech/VectorDBBench) on 16 vCPU / 64 GiB (g9i.4xlarge). Highest QPS among tested databases at >95% recall on 10M Cohere benchmark. Sub-millisecond search latency (in-process). INT8 quantization: ~25% memory vs FP32.
 
 ```bash
-# Reproduce benchmarks
 pip install zvec==0.1.1 vectordbbench
 
 vectordbbench zvec --path Performance768D10M --case-type Performance768D10M \
