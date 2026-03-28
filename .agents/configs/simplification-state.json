@@ -112,9 +112,9 @@
       "pr": 11276
     },
     ".agents/aidevops/add-new-mcp-to-aidevops.md": {
-      "hash": "526e453f459ec07c5283fb2602c607a31ce3601f",
-      "at": "2026-03-28T02:51:02Z",
-      "pr": 11277
+      "hash": "385fd2d645f5c7685e81a1cf981591ba9c025b4e",
+      "at": "2026-03-28T14:16:10Z",
+      "pr": 11832
     },
     ".agents/marketing-sales/direct-response-copy-frameworks-objection-handling.md": {
       "hash": "a80eb99acba160fa0f034a4989c0b886f37a32a0",
@@ -987,9 +987,9 @@
       "pr": 11893
     },
     ".agents/tools/browser/stagehand-examples.md": {
-      "hash": "728f1064ad1de2bb36719a8a9a10d14369695cde",
-      "at": "2026-03-28T13:37:46Z",
-      "pr": 11838
+      "hash": "3204f26c9d748fd843fe6db79a36a18581e78b49",
+      "at": "2026-03-28T14:15:24Z",
+      "pr": 11899
     },
     ".agents/tools/ui/wxt.md": {
       "hash": "3705faa0407468fc44819d98501ad0ff13ca1934",
@@ -997,8 +997,8 @@
       "pr": 11870
     },
     ".agents/tools/code-review/secretlint.md": {
-      "hash": "204aa2a11cbd3d6715a90b3bd867749e92e7472d",
-      "at": "2026-03-28T13:37:18Z",
+      "hash": "856b7ef872c17141c3c19db1c7f1f0d04a442cbe",
+      "at": "2026-03-28T14:15:30Z",
       "pr": 11879
     },
     ".agents/tools/database/pglite-local-first.md": {
@@ -1015,6 +1015,106 @@
       "hash": "06e2affe5aaa285c3139fde0d808dc89c0140e31",
       "at": "2026-03-28T13:38:47Z",
       "pr": 11771
+    },
+    ".agents/tools/browser/dev-browser.md": {
+      "hash": "b91119084487e01388827e51faca29441bde9ce0",
+      "at": "2026-03-28T14:15:19Z",
+      "pr": 11921
+    },
+    ".agents/tools/code-review/code-standards.md": {
+      "hash": "6f18e4189c1acca11376f4001a33d583c46742e5",
+      "at": "2026-03-28T14:15:20Z",
+      "pr": 11922
+    },
+    ".agents/scripts/commands/full-loop.md": {
+      "hash": "8a350103e8b6a9977876cbb5cf6fd2679c4133af",
+      "at": "2026-03-28T14:15:27Z",
+      "pr": 11904
+    },
+    ".agents/workflows/pr.md": {
+      "hash": "2814eecb1a03db8967c46e83a046936cf3ecc5b5",
+      "at": "2026-03-28T14:15:29Z",
+      "pr": 11878
+    },
+    ".agents/tools/git/conflict-resolution.md": {
+      "hash": "f5933df58340b4ee0c5b329808c991807ed8a047",
+      "at": "2026-03-28T14:15:35Z",
+      "pr": 11909
+    },
+    ".agents/aidevops/configs.md": {
+      "hash": "d23f9f9bd20c081fdeacff30b9bd845e72a66a31",
+      "at": "2026-03-28T14:15:36Z",
+      "pr": 11897
+    },
+    ".agents/services/communications/twilio.md": {
+      "hash": "e0541a43f7a10413213681c64f35a4bfd4dd6616",
+      "at": "2026-03-28T14:15:37Z",
+      "pr": 11900
+    },
+    ".agents/marketing-sales/ad-creative-platform-google.md": {
+      "hash": "99985395fdf504ae5562f8f46d2d17a14629c43f",
+      "at": "2026-03-28T14:15:38Z",
+      "pr": 11903
+    },
+    ".agents/tools/ai-assistants/openclaw.md": {
+      "hash": "0c4d4c08590b9a3dc260a05d39c76148057c928c",
+      "at": "2026-03-28T14:15:40Z",
+      "pr": 11901
+    },
+    ".agents/content/video-wavespeed.md": {
+      "hash": "ef2bf4d381397992153760c0f74ea060eb5260fc",
+      "at": "2026-03-28T14:15:41Z",
+      "pr": 11895
+    },
+    ".agents/seo/debug-opengraph.md": {
+      "hash": "7ac97dce072fe9fa2c5cc80526b57b3618883608",
+      "at": "2026-03-28T14:15:42Z",
+      "pr": 11898
+    },
+    ".agents/aidevops/plugins.md": {
+      "hash": "b6beaa25a6400b7ce7586a389605bb7b5cde0b1c",
+      "at": "2026-03-28T14:15:43Z",
+      "pr": 11894
+    },
+    ".agents/services/hosting/local-hosting.md": {
+      "hash": "b8cfeb51df4a7588a4e19feada4a1ff3eddd5a1d",
+      "at": "2026-03-28T14:15:45Z",
+      "pr": 11918
+    },
+    ".agents/tools/data-extraction/outscraper.md": {
+      "hash": "a6ff4d6a6aae8fdf8f2c7dc0d6ae064ee4da1856",
+      "at": "2026-03-28T14:15:48Z",
+      "pr": 11916
+    },
+    ".agents/content/distribution-email.md": {
+      "hash": "28c765046fccce83806038dd7a6c4a21a8b4b8f7",
+      "at": "2026-03-28T14:15:50Z",
+      "pr": 11913
+    },
+    ".agents/services/database/postgres-drizzle-skill/migrations.md": {
+      "hash": "dc4f2a2e3391e9b86013342bf4563b77b07cea31",
+      "at": "2026-03-28T14:15:59Z",
+      "pr": 11917
+    },
+    ".agents/workflows/code-audit-remote.md": {
+      "hash": "58b0fd2ed083489003b72485e208a6adac4dbcb9",
+      "at": "2026-03-28T14:16:09Z",
+      "pr": 11825
+    },
+    ".agents/tools/credentials/api-key-setup.md": {
+      "hash": "ee10d602e9a5a6b081507cf9ff52a2d8fc4eed86",
+      "at": "2026-03-28T14:16:13Z",
+      "pr": 11908
+    },
+    ".agents/marketing-sales/ad-creative.md": {
+      "hash": "4ab10a843352fed5cff30fdb8055e0cb3a5b3e40",
+      "at": "2026-03-28T14:16:15Z",
+      "pr": 11902
+    },
+    ".agents/tools/mcp-toolkit/mcporter.md": {
+      "hash": "9a7f856e52fb6226b2661e21b00fee79fd906561",
+      "at": "2026-03-28T14:16:17Z",
+      "pr": 11906
     }
   },
   ".agents/tools/code-review/best-practices.md": {
