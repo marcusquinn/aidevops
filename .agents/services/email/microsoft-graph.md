@@ -19,8 +19,7 @@ tools:
 ## Quick Reference
 
 - **Helper**: `scripts/microsoft-graph-helper.sh`
-- **Config template**: `configs/microsoft-graph-config.json.txt`
-- **Working config**: `configs/microsoft-graph-config.json` (gitignored)
+- **Config template**: `configs/microsoft-graph-config.json.txt` → working: `configs/microsoft-graph-config.json` (gitignored)
 - **Token cache**: `~/.aidevops/.agent-workspace/microsoft-graph/token-cache.json` (0600)
 - **Auth flows**: Device flow (delegated, interactive) | Client credentials (app-only, headless)
 - **API**: Microsoft Graph v1.0 — `https://graph.microsoft.com/v1.0`
@@ -43,7 +42,7 @@ open https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsLis
 4. **Certificates & secrets** → New client secret (app-only only)
 5. Note **Application (client) ID** and **Directory (tenant) ID** from Overview
 
-### 2. Configure and Store Credentials
+### 2. Configure and Authenticate
 
 ```bash
 cp .agents/configs/microsoft-graph-config.json.txt .agents/configs/microsoft-graph-config.json
@@ -53,12 +52,8 @@ cp .agents/configs/microsoft-graph-config.json.txt .agents/configs/microsoft-gra
 aidevops secret set MSGRAPH_CLIENT_ID
 aidevops secret set MSGRAPH_TENANT_ID
 aidevops secret set MSGRAPH_CLIENT_SECRET  # app-only flow only
-```
 
-### 3. Authenticate
-
-```bash
-microsoft-graph-helper.sh auth                    # Device flow (delegated — opens browser)
+microsoft-graph-helper.sh auth                       # Device flow (delegated — opens browser)
 microsoft-graph-helper.sh auth --client-credentials  # App-only (headless)
 ```
 
@@ -69,71 +64,37 @@ microsoft-graph-helper.sh auth --client-credentials  # App-only (headless)
 | **Device flow** (delegated) | Interactive sessions, personal/shared mailboxes with user access | `Mail.ReadWrite Mail.Send Mail.ReadWrite.Shared Mail.Send.Shared MailboxSettings.ReadWrite offline_access` |
 | **Client credentials** (app-only) | Headless automation, CI/CD, shared mailboxes without user context | `https://graph.microsoft.com/.default` |
 
-**Device flow**: requests device code → user opens verification URL → signs in → script polls and caches token. Refresh token enables silent re-auth.
-
-**Client credentials**: app authenticates with `client_id + client_secret`. No user interaction. No refresh token — re-authenticates on expiry. Requires admin consent. **Cannot access personal mailboxes** — only shared mailboxes and tenant mailboxes with admin consent.
-
-### Token Lifecycle
+**Client credentials**: no user interaction, no refresh token — re-authenticates on expiry. Requires admin consent. **Cannot access personal mailboxes.**
 
 ```bash
 microsoft-graph-helper.sh token-status   # Check expiry and scopes (never shows values)
 microsoft-graph-helper.sh token-refresh  # Force refresh (uses refresh token if available)
 ```
 
-Token cache at `~/.aidevops/.agent-workspace/microsoft-graph/token-cache.json` (0600) stores access token, refresh token, expiry, and scopes — never printed to output.
+Token cache (0600) stores access token, refresh token, expiry, and scopes — never printed to output.
 
 ## Shared Mailbox Operations
 
 The authenticated user must have been granted access via Exchange Admin Center or PowerShell before Graph API calls succeed.
 
-### Reading Messages
-
 ```bash
-# List messages (all options)
-microsoft-graph-helper.sh list-messages \
-  --mailbox support@company.com \
-  --folder Inbox \
-  --limit 50 \
-  --since 2026-03-01T00:00:00Z
+# Read
+microsoft-graph-helper.sh list-messages --mailbox support@company.com --folder Inbox --limit 50 --since 2026-03-01T00:00:00Z
+microsoft-graph-helper.sh get-message   --mailbox support@company.com --id <message-id>
 
-# Get a specific message
-microsoft-graph-helper.sh get-message --mailbox support@company.com --id <message-id>
-```
+# Send (requires Mail.Send.Shared + SendAs or SendOnBehalf delegation)
+microsoft-graph-helper.sh send  --mailbox support@company.com --to customer@example.com --subject "Re: ..." --body "..."
+microsoft-graph-helper.sh send  --mailbox support@company.com --to customer@example.com --subject "Welcome" --body "<h1>...</h1>" --html
+microsoft-graph-helper.sh reply --mailbox support@company.com --id <message-id> --body "..."
 
-### Sending
-
-```bash
-# Send plain text
-microsoft-graph-helper.sh send \
-  --mailbox support@company.com \
-  --to customer@example.com \
-  --subject "Re: Your support request" \
-  --body "Hello, thank you for contacting us..."
-
-# Send HTML (add --html flag)
-microsoft-graph-helper.sh send --mailbox support@company.com --to customer@example.com \
-  --subject "Welcome" --body "<h1>Welcome!</h1><p>Thank you for joining.</p>" --html
-
-# Reply to a message
-microsoft-graph-helper.sh reply --mailbox support@company.com --id <message-id> \
-  --body "Thank you for your message..."
-```
-
-Requires `Mail.Send.Shared` permission and `SendAs` or `SendOnBehalf` delegation.
-
-### Organising Messages
-
-```bash
+# Organise
 microsoft-graph-helper.sh move   --mailbox support@company.com --id <id> --folder Archive
 microsoft-graph-helper.sh flag   --mailbox support@company.com --id <id> --flag read|unread|flagged
 microsoft-graph-helper.sh delete --mailbox support@company.com --id <message-id>
-```
 
-### Folder Management
-
-```bash
-microsoft-graph-helper.sh list-folders   --mailbox support@company.com
-microsoft-graph-helper.sh create-folder  --mailbox support@company.com --name "Resolved"
+# Folders
+microsoft-graph-helper.sh list-folders  --mailbox support@company.com
+microsoft-graph-helper.sh create-folder --mailbox support@company.com --name "Resolved"
 ```
 
 ## Delegation Management
@@ -141,41 +102,26 @@ microsoft-graph-helper.sh create-folder  --mailbox support@company.com --name "R
 Graph API does not expose mailbox permission management — use Exchange Online PowerShell or Microsoft 365 Admin Center.
 
 ```bash
-# Print PowerShell commands for granting/revoking access
+# Print PowerShell commands for granting/revoking access (roles: FullAccess | SendAs | SendOnBehalf)
 microsoft-graph-helper.sh grant-access  --mailbox support@company.com --user alice@company.com --role FullAccess
 microsoft-graph-helper.sh revoke-access --mailbox support@company.com --user alice@company.com
-# Roles: FullAccess | SendAs | SendOnBehalf
+microsoft-graph-helper.sh permissions   --mailbox support@company.com  # auto-replies, timezone, delegate options
 ```
 
 Execute the printed commands in Exchange Online PowerShell:
 
 ```powershell
 Connect-ExchangeOnline -UserPrincipalName admin@company.com
-
-# FullAccess — read/manage the mailbox
-Add-MailboxPermission -Identity 'support@company.com' -User 'alice@company.com' -AccessRights FullAccess -AutoMapping $true
-
-# SendAs — send as the shared mailbox address
-Add-RecipientPermission -Identity 'support@company.com' -Trustee 'alice@company.com' -AccessRights SendAs
-
-# SendOnBehalf — sends "on behalf of" (shows both addresses)
-Set-Mailbox -Identity 'support@company.com' -GrantSendOnBehalfTo 'alice@company.com'
+Add-MailboxPermission    -Identity 'support@company.com' -User 'alice@company.com' -AccessRights FullAccess -AutoMapping $true
+Add-RecipientPermission  -Identity 'support@company.com' -Trustee 'alice@company.com' -AccessRights SendAs
+Set-Mailbox              -Identity 'support@company.com' -GrantSendOnBehalfTo 'alice@company.com'
 ```
 
-### Mailbox Settings and Permissions
-
-```bash
-microsoft-graph-helper.sh permissions --mailbox support@company.com
-# Returns: automatic replies status, timezone, language, delegate meeting message delivery options
-```
-
-## Adapter Status
+## Status and Troubleshooting
 
 ```bash
 microsoft-graph-helper.sh status  # Config, credential names, token status
 ```
-
-## Troubleshooting
 
 | Error | Cause | Fix |
 |-------|-------|-----|
@@ -206,8 +152,8 @@ Use `/me` instead of `/users/{mailbox}` for the authenticated user's own mailbox
 ## Security Notes
 
 - **Credentials**: stored via `aidevops secret set` (gopass) or `credentials.sh` (0600). Never in config files or conversation.
-- **Token cache**: `~/.aidevops/.agent-workspace/microsoft-graph/token-cache.json` (0600). Contains access and refresh tokens — treat as a credential file.
-- **Client secret**: app-only flow only. Passed to curl via temp file (not command argument) to avoid process list exposure. Same for refresh tokens.
+- **Token cache**: (0600) — contains access and refresh tokens, treat as a credential file.
+- **Client secret**: app-only flow only. Passed to curl via temp file (not command argument) to avoid process list exposure.
 - **Delegation**: FullAccess grants full read/write/delete. Grant only the minimum required role.
 
 ## Related
@@ -215,5 +161,4 @@ Use `/me` instead of `/users/{mailbox}` for the authenticated user's own mailbox
 - `services/email/email-mailbox.md` — Mailbox organisation, triage, Sieve rules (IMAP/JMAP)
 - `services/email/email-agent.md` — Mission communication agent (send/receive/extract)
 - `services/email/email-providers.md` — Provider comparison including Microsoft 365
-- `scripts/email-agent-helper.sh` — SES-based email agent helper
 - `scripts/microsoft-graph-helper.sh` — This adapter's helper script
