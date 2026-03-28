@@ -2,20 +2,21 @@
 
 ### The 7 Primary Emotional Triggers
 
-Each trigger follows: description, trigger words, headline examples, copy framework (5-step), best-for/caution.
+Each trigger: description, trigger words, headlines, 5-step copy framework, best-for/caution.
 
 #### 1. FEAR (Loss Aversion)
 
-Loss aversion is 2-3x more powerful than gain attraction. Highlight what they'll lose, show consequences, create urgency.
+Loss aversion is 2-3x more powerful than gain attraction.
 
 **Triggers:** FOMO, losing money/status/time, being left behind, future regret, security threats
 **Headlines:** "Stop Losing $5K/Month to This Common Mistake" | "Your Competitors Are Using This. Are You?"
+**Framework (compact):**
 
 ```text
 [IDENTIFY LOSS]: "Every day you don't optimize your ads, you're burning money."
-[QUANTIFY LOSS]: "Our average client was wasting $8,500/month before finding us."
-[AMPLIFY CONSEQUENCES]: "That's $102,000 per year. What could you do with an extra $100K?"
-[PRESENT SOLUTION]: "One audit fixes it. Free for the next 10 people who book."
+[QUANTIFY]: "Our average client was wasting $8,500/month before finding us."
+[AMPLIFY]: "That's $102,000 per year. What could you do with an extra $100K?"
+[SOLUTION]: "One audit fixes it. Free for the next 10 people who book."
 [URGENCY]: "7 of 10 slots already claimed. Book now or wait 4 weeks."
 ```
 
@@ -27,29 +28,31 @@ Promise specific gains, show ROI/return multiples, demonstrate value multiplicat
 
 **Triggers:** Making money, getting more for less, exclusive access, status elevation, competitive advantage
 **Headlines:** "Turn $1,000 Into $10,000 in 90 Days" | "Get 5X More Leads at Half the Cost"
+**Framework (compact):**
 
 ```text
 [CURRENT STATE]: "You're spending $10K/month on ads."
-[MULTIPLY OUTCOME]: "What if you could get the same results for $4K/month?"
-[QUANTIFY GAIN]: "That's $72,000 saved per year."
-[SHOW PATH]: "Our clients average 58% cost reduction in 60 days."
-[MAKE OFFER]: "Free audit shows you exactly where you're overpaying."
+[MULTIPLY]: "What if you could get the same results for $4K/month?"
+[QUANTIFY]: "That's $72,000 saved per year."
+[PATH]: "Our clients average 58% cost reduction in 60 days."
+[OFFER]: "Free audit shows you exactly where you're overpaying."
 ```
 
 **Best for:** Financial products, business tools, discount promotions. **Caution:** Must be believable with proof.
 
 #### 3. CURIOSITY (Gap Theory)
 
-Humans must fill knowledge gaps. Create incomplete information, tease surprising insights, contradict common beliefs.
+Create incomplete information, tease surprising insights, contradict common beliefs.
 
 **Triggers:** Secrets/insider knowledge, surprising data, "what nobody tells you," contradictions
 **Headlines:** "The One Thing Top Advertisers Do (That You Don't)" | "Why Your Best-Performing Ad is Actually Losing You Money"
+**Framework (compact):**
 
 ```text
 [CREATE GAP]: "There's a reason 93% of Facebook ads fail. But it's not what you think."
 [AMPLIFY]: "It's not your targeting. Not your budget. Not even your product."
-[TEASE ANSWER]: "It's something so simple, most advertisers completely overlook it."
-[PROMISE REVEAL]: "I'll show you exactly what it is in this free training."
+[TEASE]: "It's something so simple, most advertisers completely overlook it."
+[REVEAL]: "I'll show you exactly what it is in this free training."
 [CTA]: "Register now - spots limited to 100 people."
 ```
 
@@ -61,6 +64,7 @@ Appeal to ideal self, connect to identity, offer status symbols, enable transfor
 
 **Triggers:** Physical appearance, social status, intelligence/sophistication, exclusivity/VIP, before/after transformations
 **Headlines:** "Look 10 Years Younger in 30 Days" | "Join the Top 1% of [Profession]"
+**Framework (compact):**
 
 ```text
 [CURRENT SELF]: "You're good at what you do. But 'good' isn't enough anymore."
@@ -74,33 +78,35 @@ Appeal to ideal self, connect to identity, offer status symbols, enable transfor
 
 #### 5. BELONGING (Tribal Identity)
 
-We fear exclusion and desire inclusion. Create in-group/out-group, show social proof, build community language.
+Create in-group/out-group dynamics, show social proof, build community language.
 
 **Triggers:** Community membership, shared values, exclusive groups, movement participation, peer approval
 **Headlines:** "Join 50,000 Marketers Who Refuse to Overpay for Ads" | "Finally, a [Product] for [Type of Person]"
+**Framework (compact):**
 
 ```text
-[IDENTIFY IN-GROUP]: "There are two types of business owners..."
-[DESCRIBE TRIBE]: "Those who chase every shiny tactic. And those who build systems that work."
+[IN-GROUP]: "There are two types of business owners..."
+[TRIBE]: "Those who chase every shiny tactic. And those who build systems that work."
 [CONTRAST]: "The first group is exhausted. The second grows predictably, month after month."
 [INVITATION]: "If you're ready to join the second group, this is for you."
-[COMMUNITY PROOF]: "5,200 members. All building sustainable businesses."
+[PROOF]: "5,200 members. All building sustainable businesses."
 ```
 
 **Best for:** Community-driven products, subscriptions, movements/causes, niche/lifestyle brands. **Caution:** Positive community, not out-group hate.
 
 #### 6. PRIDE (Achievement & Accomplishment)
 
-Celebrate accomplishments, enable skill mastery, show progression paths, affirm capability.
+Celebrate accomplishments, enable skill mastery, show progression paths.
 
 **Triggers:** Skill acquisition, goal achievement, milestone completion, recognition/awards, mastery
 **Headlines:** "Build Something You're Proud Of" | "From Zero to Expert in 90 Days"
+**Framework (compact):**
 
 ```text
-[RECOGNIZE EFFORT]: "You've been working hard. Showing up. Putting in the hours."
-[AFFIRM CAPABILITY]: "You have what it takes. You just need the right system."
-[PAINT ACHIEVEMENT]: "Imagine launching your first profitable campaign. Knowing you built this."
-[ENABLE PATH]: "Our step-by-step program takes you from setup to profit."
+[EFFORT]: "You've been working hard. Showing up. Putting in the hours."
+[AFFIRM]: "You have what it takes. You just need the right system."
+[ACHIEVEMENT]: "Imagine launching your first profitable campaign. Knowing you built this."
+[PATH]: "Our step-by-step program takes you from setup to profit."
 [CELEBRATE]: "Join 3,000+ students who've launched their first profitable campaign."
 ```
 
@@ -112,18 +118,21 @@ Channel existing frustration with the status quo toward your alternative.
 
 **Triggers:** Industry problems, unfair practices, wasted time/money, being taken advantage of, broken promises
 **Headlines:** "Tired of Agencies That Don't Deliver?" | "It Shouldn't Be This Hard to [Achieve Goal]"
+**Framework (compact):**
 
 ```text
 [VALIDATE]: "You're right to be frustrated. You've tried 3 agencies. Each one failed."
-[IDENTIFY PROBLEM]: "Most agencies optimize for their profit, not your results."
-[CHANNEL ANGER]: "We started because we were sick of seeing businesses get ripped off."
-[PRESENT ALTERNATIVE]: "Our model: we only make money when you make money."
+[PROBLEM]: "Most agencies optimize for their profit, not your results."
+[CHANNEL]: "We started because we were sick of seeing businesses get ripped off."
+[ALTERNATIVE]: "Our model: we only make money when you make money."
 [CTA]: "Ready for an agency that's actually on your side?"
 ```
 
 **Best for:** Challenger brands, disruptive products, reform-focused services. **Caution:** Validate, don't create anger. Don't attack competitors.
 
-### Trigger Selection & Combinations
+### Trigger Selection
+
+**Effective combinations:**
 
 | Combination | Example |
 |-------------|---------|
@@ -133,27 +142,9 @@ Channel existing frustration with the status quo toward your alternative.
 | Pride + Belonging | "Join a community of achievers who've mastered [skill]." |
 | Anger + Greed | "Stop getting ripped off. We'll show you how to get more for less." |
 
-**By Product Type:**
+**By product type:** B2B SaaS → Greed (ROI) + Fear (competition) | E-commerce fashion → Vanity + Belonging | Education/Courses → Pride + Curiosity | Fitness → Vanity + Pride | Financial Services → Greed + Fear | Insurance → Fear + Belonging | Luxury Goods → Vanity + Exclusivity (Greed) | Community/Membership → Belonging + Pride
 
-| Product Type | Primary | Secondary |
-|--------------|---------|-----------|
-| B2B SaaS | Greed (ROI) | Fear (competition) |
-| E-commerce (fashion) | Vanity | Belonging |
-| Education/Courses | Pride | Curiosity |
-| Fitness | Vanity | Pride |
-| Financial Services | Greed | Fear |
-| Insurance | Fear | Belonging |
-| Luxury Goods | Vanity | Exclusivity (Greed) |
-| Community/Membership | Belonging | Pride |
-
-**By Psychographic:**
-
-| Type | Primary | Proof Type |
-|------|---------|------------|
-| Early Adopters | Curiosity + Vanity | Beta results, tech specs |
-| Pragmatists | Belonging + Fear | User count, testimonials |
-| Value Seekers | Greed + Pride | Comparison charts, price breakdowns |
-| Premium Buyers | Vanity + Belonging | Materials, craftsmanship, prestige |
+**By psychographic:** Early Adopters → Curiosity + Vanity (beta results, tech specs) | Pragmatists → Belonging + Fear (user count, testimonials) | Value Seekers → Greed + Pride (comparison charts, price breakdowns) | Premium Buyers → Vanity + Belonging (materials, craftsmanship, prestige)
 
 ### A/B Testing Triggers
 
@@ -165,7 +156,7 @@ VARIANT 3: Vanity — "Transform from [current state] to [desired state]"
 VARIANT 4: Belonging — "Join [number]+ [type] who [achievement]"
 ```
 
-Run simultaneously, same audience. Measure CPA, CTR, engagement. Track which triggers perform best per segment, scale without fatigue, and align with brand.
+Measure CPA, CTR, engagement. Track best triggers per segment, scale without fatigue, align with brand.
 
 ---
 
@@ -181,7 +172,7 @@ Run simultaneously, same audience. Measure CPA, CTR, engagement. Track which tri
 | **Product Aware** | Social proof, address objections | Testimonials, risk reversal | Fear (FOMO) |
 | **Most Aware** | Reminders, special offers | Direct offers, cart abandonment, loyalty | Belonging |
 
-**Stage Examples (BAD → GOOD):**
+**Stage examples (bad → good):**
 
 ```text
 UNAWARE (email software): "Our platform has advanced automation" → "93% of small businesses don't follow up after the first email. Costing $50K+/year."
