@@ -1016,6 +1016,11 @@
       "at": "2026-03-28T13:38:47Z",
       "pr": 11771
     },
+    ".agents/workflows/code-audit-remote.md": {
+      "hash": "ee3d88acdee975bb4d937d27ee48e80f003016e1",
+      "at": "2026-03-28T11:39:16Z",
+      "pr": 11825
+    },
     ".agents/scripts/commands/full-loop.md": {
       "hash": "b5da86b3b8075f9e62573a4e2e135c70f527d1c6",
       "at": "2026-03-28T13:57:05Z",
