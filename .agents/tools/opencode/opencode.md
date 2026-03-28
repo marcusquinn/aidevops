@@ -19,7 +19,7 @@ tools:
 
 - **Primary Agent**: `aidevops` — full framework access
 - **Subagents**: hostinger, hetzner, wordpress, seo, code-quality, browser-automation, etc.
-- **Setup**: `./setup.sh` (from aidevops repo)
+- **Setup**: `cd ~/Git/aidevops && .agents/scripts/generate-opencode-agents.sh` — creates `~/.config/opencode/agent/` and updates `opencode.json`
 - **MCPs disabled globally** — enabled per-agent to save context tokens
 
 | Purpose | Path |
@@ -31,8 +31,7 @@ tools:
 | Credentials | `~/.config/aidevops/credentials.sh` |
 
 ```bash
-.agents/scripts/generate-opencode-agents.sh   # Install/update agents
-opencode auth login                            # Authenticate (v1.1.36+)
+opencode auth login   # Authenticate — see tools/opencode/opencode-anthropic-auth.md
 # Tab = switch primary agents | @agent-name = invoke subagent
 ```
 
@@ -40,27 +39,17 @@ opencode auth login                            # Authenticate (v1.1.36+)
 
 ## Authentication
 
-OpenCode v1.1.36+ includes Anthropic OAuth natively. No external plugin needed.
+See `tools/opencode/opencode-anthropic-auth.md` for full auth setup (OAuth pool, API key, version-specific notes).
+
+**Quick setup:**
 
 ```bash
 opencode auth login
-# Select: Anthropic → Claude Pro/Max (or Create an API Key)
+# v1.2.30+: Select "Anthropic Pool" (aidevops OAuth pool — recommended)
+# v1.1.36–v1.2.29: Select Anthropic → Claude Pro/Max
 ```
 
-| Method | Cost |
-|--------|------|
-| Claude Pro/Max | $0 (subscription covers usage) |
-| Create API Key / Manual API Key | Standard API rates |
-
-> Remove `opencode-anthropic-auth` plugin from `opencode.json` if present — double-loading causes a TypeError.
-
-## Installation
-
-```bash
-cd ~/Git/aidevops && .agents/scripts/generate-opencode-agents.sh
-```
-
-Creates `~/.config/opencode/agent/` with agent markdown files and updates `opencode.json`.
+> Do NOT add `opencode-anthropic-auth` to `opencode.json` plugins — double-loading causes a TypeError.
 
 ## Agent Architecture
 
@@ -132,15 +121,16 @@ TUI requires restart for config changes. Use CLI for quick testing:
 
 ```bash
 opencode run "List your available tools" --agent SEO
-opencode run "Test the serper MCP" --agent SEO 2>&1
 opencode run "Quick test" --agent Build+ --model anthropic/claude-sonnet-4-6
-```
 
-**Persistent server** (faster iteration — keeps MCPs warm):
-
-```bash
-opencode serve --port 4096                                          # Terminal 1
+# Persistent server (keeps MCPs warm — faster iteration)
+opencode serve --port 4096                                             # Terminal 1
 opencode run --attach http://localhost:4096 "Test query" --agent SEO  # Terminal 2
+
+# Helper shortcuts
+~/.aidevops/agents/scripts/opencode-test-helper.sh test-mcp dataforseo SEO
+~/.aidevops/agents/scripts/opencode-test-helper.sh list-tools Build+
+~/.aidevops/agents/scripts/opencode-test-helper.sh serve 4096
 ```
 
 | Scenario | Command |
@@ -148,12 +138,6 @@ opencode run --attach http://localhost:4096 "Test query" --agent SEO  # Terminal
 | New MCP added | `opencode run "List tools from [mcp]_*" --agent [agent]` |
 | MCP auth issues | `opencode run "Call [mcp]_[tool]" --agent [agent] 2>&1` |
 | Agent permissions | `opencode run "Try to write a file" --agent Build+` |
-
-```bash
-~/.aidevops/agents/scripts/opencode-test-helper.sh test-mcp dataforseo SEO
-~/.aidevops/agents/scripts/opencode-test-helper.sh list-tools Build+
-~/.aidevops/agents/scripts/opencode-test-helper.sh serve 4096
-```
 
 **Adding a new MCP:** Edit `opencode.json` → test with CLI → fix errors → restart TUI → update `generate-opencode-agents.sh`.
 
@@ -164,7 +148,6 @@ Credentials in `~/.config/aidevops/credentials.sh`:
 ```bash
 export HOSTINGER_API_TOKEN="your-token"
 export HCLOUD_TOKEN_AWARDSAPP="your-token"   # Hetzner per-account
-export HCLOUD_TOKEN_BRANDLIGHT="your-token"
 # GSC: service account JSON at ~/.config/aidevops/gsc-credentials.json
 ```
 
