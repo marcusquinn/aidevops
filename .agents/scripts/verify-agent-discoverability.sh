@@ -5,21 +5,25 @@
 # What was refactored (t1679/t1680 series):
 #   build.txt: Conversational Memory Lookup, Screenshot Size Limits,
 #              External Repo Submission, Bash 3.2 Compat, Secret Handling
-#   AGENTS.md: Domain Index table (t1680.1), Capabilities section (t1680.4)
-#   Reference files created for: self-improvement, agent-routing, audit-logging,
-#              model-verification, review-bot-gate (inline content retained in
-#              AGENTS.md/build.txt; reference files are on-demand supplements)
+#   AGENTS.md: Domain Index (t1680.1), Self-Improvement (t1680.2),
+#              Agent Routing (t1680.3), Capabilities (t1680.4)
+#   Inline content moved to reference files (on-demand reads):
+#              self-improvement.md, agent-routing.md, domain-index.md
+#   Supplement reference files (inline content retained in source):
+#              audit-logging.md, model-verification.md, review-bot-gate.md,
+#              memory-lookup.md, screenshot-limits.md, external-repo-submissions.md,
+#              bash-compat.md, secret-handling.md
 #
 # Discoverability checks:
 #   1. All extracted reference files exist and are non-empty
 #   2. build.txt has pointers to extracted reference files
 #   3. AGENTS.md Domain Index section has pointer to reference/domain-index.md
 #   4. reference/domain-index.md exists and has >=30 domain rows
-#   5. All 13 primary agent @mention files exist and are non-empty
+#   5. All 9 primary agent @mention files exist and are non-empty
 #   6. Capabilities section retains key capability entries
-#   7. Self-Improvement section retains key workflow references
-#   8. Agent Routing section retains key routing guidance
-#   9. subagent-index.toon TOON block counts are valid
+#   7. Self-Improvement section has pointer to reference/self-improvement.md
+#   8. Agent Routing section has pointer to reference/agent-routing.md
+#   9. subagent-index.toon TOON block counts are valid (>=9 agents, >=60 subagents)
 #  10. Critical scripts for self-improvement workflow are executable
 #
 # Usage: bash verify-agent-discoverability.sh [--agents-dir <path>]
@@ -156,20 +160,17 @@ fi
 # ─── Test 5: Primary agent @mention files ─────────────────────────────────────
 echo ""
 echo "=== 5. Primary Agent @Mention Files ==="
+# 9 primary agents as of t1680 refactor (marketing-sales.md consolidates marketing+sales)
 AGENT_FILES=(
 	"build-plus.md"
 	"automate.md"
-	"accounts.md"
 	"business.md"
 	"content.md"
 	"health.md"
 	"legal.md"
-	"marketing.md"
+	"marketing-sales.md"
 	"research.md"
-	"sales.md"
 	"seo.md"
-	"social-media.md"
-	"video.md"
 )
 for af in "${AGENT_FILES[@]}"; do
 	check_file_nonempty "$af" 100 "Primary agent file"
@@ -191,22 +192,36 @@ for cap in "${KEY_CAPS[@]}"; do
 	check_string_in_file "AGENTS.md" "$cap" "Capabilities: ${cap}"
 done
 
-# ─── Test 7: Self-Improvement section retains key workflow references ──────────
+# ─── Test 7: Self-Improvement section has pointer to reference file ───────────
+# After t1680.2 refactor: inline content moved to reference/self-improvement.md;
+# AGENTS.md retains only the section header + 1-line pointer.
 echo ""
 echo "=== 7. Self-Improvement Section Key References ==="
-check_string_in_file "AGENTS.md" "framework-issue-helper.sh" "AGENTS.md Self-Improvement: framework-issue-helper.sh reference"
-check_string_in_file "AGENTS.md" "PULSE_SCOPE_REPOS" "AGENTS.md Self-Improvement: PULSE_SCOPE_REPOS scope boundary"
 check_string_in_file "AGENTS.md" "## Self-Improvement" "AGENTS.md: Self-Improvement section present"
-# Also verify the reference file has the full content
+check_string_in_file "AGENTS.md" "reference/self-improvement.md" "AGENTS.md Self-Improvement: pointer to reference/self-improvement.md"
+# Verify the reference file has the full content (canonical source after refactor)
 check_string_in_file "reference/self-improvement.md" "framework-issue-helper.sh" "reference/self-improvement.md: framework-issue-helper.sh reference"
+check_string_in_file "reference/self-improvement.md" "PULSE_SCOPE_REPOS" "reference/self-improvement.md: PULSE_SCOPE_REPOS scope boundary"
 check_file_nonempty "reference/self-improvement.md" 2000 "reference/self-improvement.md: substantial content"
 
-# ─── Test 8: Agent Routing section retains key routing guidance ───────────────
+# ─── Test 8: Agent Routing section — content accessible (inline or via pointer) ─
+# After t1680.3 refactor: inline content moved to reference/agent-routing.md;
+# AGENTS.md retains only the section header + 1-line pointer.
+# This check passes if either the pointer OR inline content is present in AGENTS.md
+# (supports both pre- and post-refactor states during the PR merge window).
 echo ""
 echo "=== 8. Agent Routing Section Key References ==="
-check_string_in_file "AGENTS.md" "headless-runtime-helper.sh" "AGENTS.md Agent Routing: headless dispatch reference"
 check_string_in_file "AGENTS.md" "## Agent Routing" "AGENTS.md: Agent Routing section present"
-# Also verify the reference file has the full content
+# Check that routing content is accessible: either via pointer or inline
+AGENTS_MD="${AGENTS_DIR}/AGENTS.md"
+if grep -qF "reference/agent-routing.md" "$AGENTS_MD" 2>/dev/null; then
+	log_ok "AGENTS.md Agent Routing: pointer to reference/agent-routing.md"
+elif grep -qF "headless-runtime-helper.sh" "$AGENTS_MD" 2>/dev/null; then
+	log_ok "AGENTS.md Agent Routing: inline headless dispatch reference (pre-refactor state)"
+else
+	log_fail "AGENTS.md Agent Routing: neither pointer nor inline content found"
+fi
+# Verify the reference file has the full content (canonical source after refactor)
 check_string_in_file "reference/agent-routing.md" "headless-runtime-helper.sh" "reference/agent-routing.md: headless dispatch reference"
 check_string_in_file "reference/agent-routing.md" "--agent" "reference/agent-routing.md: --agent flag documented"
 check_file_nonempty "reference/agent-routing.md" 1000 "reference/agent-routing.md: substantial content"
@@ -219,12 +234,13 @@ if [[ ! -f "$TOON_FILE" ]]; then
 	log_fail "subagent-index.toon not found"
 else
 	# Extract declared count from TOON block header using sed (macOS-compatible)
-	# Format: <!--TOON:agents[13]{...}:
+	# Format: <!--TOON:agents[9]{...}:
+	# 9 primary agents as of t1680 refactor (marketing-sales.md consolidates marketing+sales)
 	AGENTS_COUNT=$(sed -n 's/.*<!--TOON:agents\[\([0-9]*\)\].*/\1/p' "$TOON_FILE" | head -1)
-	if [[ -n "$AGENTS_COUNT" && "$AGENTS_COUNT" -eq 13 ]]; then
-		log_ok "subagent-index.toon: agents block declares ${AGENTS_COUNT} agents"
+	if [[ -n "$AGENTS_COUNT" && "$AGENTS_COUNT" -ge 9 ]]; then
+		log_ok "subagent-index.toon: agents block declares ${AGENTS_COUNT} agents (expected >=9)"
 	elif [[ -n "$AGENTS_COUNT" ]]; then
-		log_warn "subagent-index.toon: agents block declares ${AGENTS_COUNT} agents (expected 13)"
+		log_fail "subagent-index.toon: agents block declares only ${AGENTS_COUNT} agents (expected >=9)"
 	else
 		log_fail "subagent-index.toon: could not parse agents block count"
 	fi
