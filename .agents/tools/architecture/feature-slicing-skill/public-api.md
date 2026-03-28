@@ -2,19 +2,13 @@
 
 > **Source:** [Public API Reference](https://feature-sliced.design/docs/reference/public-api)
 
-## What is a Public API?
+A public API is a **contract** between a slice and consuming code — an `index.ts` barrel file with explicit re-exports that controls what is accessible and how it can be imported.
 
-A public API is a **contract** between a slice and consuming code. It controls which objects are accessible and how they can be imported.
+## Three Goals
 
-**Implementation:** An `index.ts` barrel file with explicit re-exports.
-
----
-
-## Three Goals of Quality Public APIs
-
-1. **Protection from structural changes** — Shield consumers from internal refactoring
-2. **Behavioral transparency** — Significant changes reflect in the API
-3. **Selective exposure** — Only necessary parts exposed
+1. **Protection from structural changes** — shield consumers from internal refactoring
+2. **Behavioral transparency** — significant changes reflect in the API
+3. **Selective exposure** — only necessary parts exposed
 
 ---
 
@@ -29,8 +23,6 @@ export type { User, UserRole } from './model/types';
 export { userSchema } from './model/schema';
 ```
 
-**Usage:**
-
 ```typescript
 import { UserCard, type User } from '@/entities/user';
 ```
@@ -39,19 +31,12 @@ import { UserCard, type User } from '@/entities/user';
 
 ## Avoid Wildcard Exports
 
-**Don't do this:**
-
 ```typescript
+// Don't — reduces discoverability, exposes internals, harms tree-shaking
 export * from './ui';
 export * from './api';
 export * from './model';
 ```
-
-**Problems:**
-- Reduces discoverability
-- Accidentally exposes internals
-- Complicates refactoring
-- Harms tree-shaking
 
 ---
 
@@ -59,20 +44,17 @@ export * from './model';
 
 For large slices, define public APIs per segment:
 
-```
+```text
 entities/user/
 ├── ui/
 │   ├── UserCard.tsx
 │   ├── UserAvatar.tsx
-│   └── index.ts
+│   └── index.ts          # exports UserCard, UserAvatar
 ├── api/
-│   ├── userApi.ts
 │   └── index.ts
 ├── model/
-│   ├── types.ts
-│   ├── schema.ts
 │   └── index.ts
-└── index.ts
+└── index.ts               # re-exports from ./ui, ./api, ./model
 ```
 
 ```typescript
@@ -80,7 +62,7 @@ entities/user/
 export { UserCard } from './UserCard';
 export { UserAvatar } from './UserAvatar';
 
-// entities/user/index.ts
+// entities/user/index.ts — wildcard OK here (segment indices are curated)
 export * from './ui';
 export * from './api';
 export * from './model';
@@ -92,19 +74,17 @@ export * from './model';
 
 > [Official @x Documentation](https://feature-sliced.design/docs/reference/public-api#public-api-for-cross-imports)
 
-When entities legitimately reference each other:
+When entities legitimately reference each other, expose a scoped API via `@x/`:
 
-```
+```text
 entities/
 ├── song/
 │   ├── @x/
-│   │   └── artist.ts
-│   ├── model/
-│   │   └── types.ts
+│   │   └── artist.ts      # exports only what artist needs
+│   ├── model/types.ts
 │   └── index.ts
 └── artist/
-    ├── model/
-    │   └── types.ts
+    ├── model/types.ts
     └── index.ts
 ```
 
@@ -121,27 +101,19 @@ export interface Artist {
 }
 ```
 
-**Guidelines for @x:**
-- Keep cross-imports minimal
-- Document why the cross-reference exists
-- Consider merging entities if references are extensive
-- Use only on Entities layer
+**Rules:** Keep cross-imports minimal. Document why. Consider merging if references are extensive. Use only on Entities layer.
 
 ---
 
-## Avoiding Circular Imports
-
-**Problem:** Importing from index within a slice causes circulars.
+## Circular Imports
 
 ```typescript
-// ❌
-import { UserCard } from '../index';
-
-// ✅
-import { UserCard } from '../ui/UserCard';
+// Within a slice — use relative imports, NOT the barrel
+import { UserCard } from '../ui/UserCard';   // correct
+import { UserCard } from '../index';          // circular
 ```
 
-**Rule:** Within a slice, use relative imports. External consumers use the public API.
+External consumers use the public API (`@/entities/user`).
 
 ---
 
@@ -149,44 +121,33 @@ import { UserCard } from '../ui/UserCard';
 
 For large shared UI libraries, split into component-level indices:
 
-```
+```text
 shared/ui/
 ├── Button/
 │   ├── Button.tsx
 │   └── index.ts
 ├── Input/
-│   ├── Input.tsx
 │   └── index.ts
 ├── Modal/
-│   ├── Modal.tsx
 │   └── index.ts
 └── index.ts
 ```
 
-**Import patterns:**
-
 ```typescript
-import { Button, Input } from '@/shared/ui';
-
-import { Button } from '@/shared/ui/Button';
+import { Button, Input } from '@/shared/ui';       // standard
+import { Button } from '@/shared/ui/Button';        // granular
 ```
 
 ---
 
 ## Index File Challenges
 
-**Four major issues:**
-
-1. **Circular imports** — Internal files reimporting from index
-2. **Tree-shaking failures** — Unrelated utilities bundled together
-3. **Weak enforcement** — Nothing prevents direct imports technically
-4. **Performance degradation** — Too many indices slow dev servers
-
-**Solutions:**
-- Use relative imports within slices
-- Create separate indices per component in `shared/`
-- Review imports during code review
-- Consider monorepo for very large projects
+| Problem | Solution |
+|---------|----------|
+| Circular imports (internal files reimporting from index) | Use relative imports within slices |
+| Tree-shaking failures (unrelated utilities bundled) | Separate indices per component in `shared/` |
+| Weak enforcement (nothing prevents direct imports) | Review imports during code review |
+| Performance degradation (too many indices slow dev servers) | Consider monorepo for very large projects |
 
 ---
 
@@ -210,19 +171,6 @@ export interface ProductFilters {
 ```
 
 ```typescript
-// entities/product/model/schema.ts
-import { z } from 'zod';
-
-export const productSchema = z.object({
-  id: z.string(),
-  name: z.string().min(1),
-  price: z.number().positive(),
-  imageUrl: z.string().url(),
-  category: z.string(),
-});
-```
-
-```typescript
 // entities/product/api/productApi.ts
 import { apiClient } from '@/shared/api';
 import type { Product, ProductFilters } from '../model/types';
@@ -242,12 +190,10 @@ export async function getProductById(id: string): Promise<Product> {
 // entities/product/ui/ProductCard.tsx
 import type { Product } from '../model/types';
 
-interface ProductCardProps {
+export function ProductCard({ product, onSelect }: {
   product: Product;
   onSelect?: (product: Product) => void;
-}
-
-export function ProductCard({ product, onSelect }: ProductCardProps) {
+}) {
   return (
     <div onClick={() => onSelect?.(product)}>
       <img src={product.imageUrl} alt={product.name} />
@@ -259,7 +205,7 @@ export function ProductCard({ product, onSelect }: ProductCardProps) {
 ```
 
 ```typescript
-// entities/product/index.ts
+// entities/product/index.ts — the public API
 export { ProductCard } from './ui/ProductCard';
 export { getProducts, getProductById } from './api/productApi';
 export type { Product, ProductFilters } from './model/types';
