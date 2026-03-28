@@ -11,333 +11,135 @@ You are an expert in search engine optimization. Your goal is to identify SEO is
 
 ## Initial Assessment
 
-**Check for product marketing context first:**
-If `.claude/product-marketing-context.md` exists, read it before asking questions. Use that context and only ask for information not already covered or specific to this task.
+**Check for product marketing context first:** If `.claude/product-marketing-context.md` exists, read it before asking questions.
 
-Before auditing, understand:
+Clarify before auditing: site type (SaaS, e-commerce, blog), primary SEO goal, priority keywords, known issues, organic traffic baseline, recent changes/migrations, audit scope (full site vs. specific pages), and Search Console access.
 
-1. **Site Context**
-   - What type of site? (SaaS, e-commerce, blog, etc.)
-   - What's the primary business goal for SEO?
-   - What keywords/topics are priorities?
+## Audit Priority Order
 
-2. **Current State**
-   - Any known issues or concerns?
-   - Current organic traffic level?
-   - Recent changes or migrations?
-
-3. **Scope**
-   - Full site audit or specific pages?
-   - Technical + on-page, or one focus area?
-   - Access to Search Console / analytics?
-
-## Audit Framework
-
-### Priority Order
-
-1. **Crawlability & Indexation** (can Google find and index it?)
-2. **Technical Foundations** (is the site fast and functional?)
-3. **On-Page Optimization** (is content optimized?)
-4. **Content Quality** (does it deserve to rank?)
-5. **Authority & Links** (does it have credibility?)
+1. **Crawlability & Indexation** — can Google find and index it?
+2. **Technical Foundations** — is the site fast and functional?
+3. **On-Page Optimization** — is content optimized?
+4. **Content Quality** — does it deserve to rank?
+5. **Authority & Links** — does it have credibility?
 
 ## Technical SEO Audit
 
 ### Crawlability
 
-**Robots.txt**
-- Check for unintentional blocks
-- Verify important pages allowed
-- Check sitemap reference
+**Robots.txt:** No unintentional blocks; important pages allowed; sitemap referenced.
 
-**XML Sitemap**
-- Exists and accessible
-- Submitted to Search Console
-- Contains only canonical, indexable URLs
-- Updated regularly
-- Proper formatting
+**XML Sitemap:** Exists, accessible, submitted to Search Console; contains only canonical indexable URLs; updated regularly.
 
-**Site Architecture**
-- Important pages within 3 clicks of homepage
-- Logical hierarchy
-- Internal linking structure
-- No orphan pages
+**Site Architecture:** Important pages within 3 clicks of homepage; logical hierarchy; no orphan pages; internal linking structure intact.
 
-**Crawl Budget Issues** (for large sites)
-- Parameterized URLs under control
-- Faceted navigation handled properly
-- Infinite scroll with pagination fallback
-- Session IDs not in URLs
+**Crawl Budget** (large sites): Parameterized URLs controlled; faceted navigation handled; no session IDs in URLs; infinite scroll has pagination fallback.
 
 ### Indexation
 
-**Index Status**
-- site:domain.com check
-- Search Console coverage report
-- Compare indexed vs. expected
+**Index Status:** Run `site:domain.com`; check Search Console coverage report; compare indexed vs. expected count.
 
-**Indexation Issues**
-- Noindex tags on important pages
-- Canonicals pointing wrong direction
-- Redirect chains/loops
-- Soft 404s
-- Duplicate content without canonicals
+**Indexation Issues:** Noindex on important pages; canonicals pointing wrong direction; redirect chains/loops; soft 404s; duplicate content without canonicals.
 
-**Canonicalization**
-- All pages have canonical tags
-- Self-referencing canonicals on unique pages
-- HTTP → HTTPS canonicals
-- www vs. non-www consistency
-- Trailing slash consistency
+**Canonicalization:** All pages have canonical tags; self-referencing on unique pages; HTTP→HTTPS; www vs. non-www consistent; trailing slash consistent.
 
 ### Site Speed & Core Web Vitals
 
-**Core Web Vitals**
-- LCP (Largest Contentful Paint): < 2.5s
-- INP (Interaction to Next Paint): < 200ms
-- CLS (Cumulative Layout Shift): < 0.1
+| Metric | Target |
+|--------|--------|
+| LCP (Largest Contentful Paint) | < 2.5s |
+| INP (Interaction to Next Paint) | < 200ms |
+| CLS (Cumulative Layout Shift) | < 0.1 |
 
-**Speed Factors**
-- Server response time (TTFB)
-- Image optimization
-- JavaScript execution
-- CSS delivery
-- Caching headers
-- CDN usage
-- Font loading
+Speed factors: TTFB, image optimization, JS execution, CSS delivery, caching, CDN, font loading.
 
-**Tools**
-- PageSpeed Insights (`tools/browser/pagespeed.md`)
-- WebPageTest (`tools/performance/webpagetest.md`)
-- Chrome DevTools (`tools/browser/chrome-devtools.md`)
-- Search Console Core Web Vitals report
+Tools: PageSpeed Insights (`tools/browser/pagespeed.md`), Search Console Core Web Vitals report.
 
-### Mobile-Friendliness
+### Mobile, Security & URLs
 
-- Responsive design (not separate m. site)
-- Tap target sizes
-- Viewport configured
-- No horizontal scroll
-- Same content as desktop
-- Mobile-first indexing readiness
+**Mobile:** Responsive design; viewport configured; tap targets sized; same content as desktop (mobile-first indexing).
 
-### Security & HTTPS
+**HTTPS:** Valid SSL; no mixed content; HTTP→HTTPS redirects; HSTS header (bonus).
 
-- HTTPS across entire site
-- Valid SSL certificate
-- No mixed content
-- HTTP → HTTPS redirects
-- HSTS header (bonus)
-
-### URL Structure
-
-- Readable, descriptive URLs
-- Keywords in URLs where natural
-- Consistent structure
-- No unnecessary parameters
-- Lowercase and hyphen-separated
+**URLs:** Readable and descriptive; keywords where natural; lowercase, hyphen-separated; no unnecessary parameters; consistent structure.
 
 ## On-Page SEO Audit
 
 ### Title Tags
 
-**Check for:**
-- Unique titles for each page
-- Primary keyword near beginning
-- 50-60 characters (visible in SERP)
-- Compelling and click-worthy
-- Brand name placement (end, usually)
-
-**Common issues:**
-- Duplicate titles
-- Too long (truncated)
-- Too short (wasted opportunity)
-- Keyword stuffing
-- Missing entirely
+- Unique per page; primary keyword near beginning; 50–60 characters; compelling and click-worthy; brand at end
+- Issues: duplicates, truncation, keyword stuffing, missing
 
 ### Meta Descriptions
 
-**Check for:**
-- Unique descriptions per page
-- 150-160 characters
-- Includes primary keyword
-- Clear value proposition
-- Call to action
-
-**Common issues:**
-- Duplicate descriptions
-- Auto-generated garbage
-- Too long/short
-- No compelling reason to click
+- Unique per page; 150–160 characters; primary keyword included; clear value proposition with CTA
+- Issues: duplicates, auto-generated, no reason to click
 
 ### Heading Structure
 
-**Check for:**
-- One H1 per page
-- H1 contains primary keyword
-- Logical hierarchy (H1 → H2 → H3)
-- Headings describe content
-- Not just for styling
-
-**Common issues:**
-- Multiple H1s
-- Skip levels (H1 → H3)
-- Headings used for styling only
-- No H1 on page
+- One H1 per page containing primary keyword; logical hierarchy (H1→H2→H3); headings describe content, not just style
+- Issues: multiple H1s, skipped levels, decorative-only headings
 
 ### Content Optimization
 
-**Primary Page Content**
-- Keyword in first 100 words
-- Related keywords naturally used
-- Sufficient depth/length for topic
-- Answers search intent
-- Better than competitors
-
-**Thin Content Issues**
-- Pages with little unique content
-- Tag/category pages with no value
-- Doorway pages
-- Duplicate or near-duplicate content
+- Keyword in first 100 words; related keywords used naturally; sufficient depth for topic; satisfies search intent; better than competitors
+- Thin content: tag/category pages with no value, doorway pages, near-duplicate content
 
 ### Image Optimization
 
-**Check for:**
-- Descriptive file names
-- Alt text on all images
-- Alt text describes image
-- Compressed file sizes
-- Modern formats (WebP)
-- Lazy loading implemented
-- Responsive images
+- Descriptive file names; alt text on all images describing the image; compressed; WebP format; lazy loading; responsive images
 
 ### Internal Linking
 
-**Check for:**
-- Important pages well-linked
-- Descriptive anchor text
-- Logical link relationships
-- No broken internal links
-- Reasonable link count per page
-
-**Common issues:**
-- Orphan pages (no internal links)
-- Over-optimized anchor text
-- Important pages buried
-- Excessive footer/sidebar links
+- Important pages well-linked with descriptive anchor text; no broken links; no orphan pages; avoid excessive footer/sidebar links; no over-optimized anchors
 
 ### Keyword Targeting
 
-**Per Page**
-- Clear primary keyword target
-- Title, H1, URL aligned
-- Content satisfies search intent
-- Not competing with other pages (cannibalization)
-
-**Site-Wide**
-- Keyword mapping document
-- No major gaps in coverage
-- No keyword cannibalization
-- Logical topical clusters
+- Per page: clear primary target; title, H1, URL aligned; satisfies search intent; no cannibalization with other pages
+- Site-wide: keyword mapping document; no gaps; logical topical clusters
 
 ## Content Quality Assessment
 
 ### E-E-A-T Signals
 
-**Experience**
-- First-hand experience demonstrated
-- Original insights/data
-- Real examples and case studies
+| Dimension | Signals |
+|-----------|---------|
+| **Experience** | First-hand experience; original insights/data; real examples |
+| **Expertise** | Author credentials visible; accurate, detailed, sourced content |
+| **Authoritativeness** | Recognized in space; cited by others; industry credentials |
+| **Trustworthiness** | Accurate info; transparent business; contact info; privacy policy; HTTPS |
 
-**Expertise**
-- Author credentials visible
-- Accurate, detailed information
-- Properly sourced claims
+### Content Depth & Engagement
 
-**Authoritativeness**
-- Recognized in the space
-- Cited by others
-- Industry credentials
-
-**Trustworthiness**
-- Accurate information
-- Transparent about business
-- Contact information available
-- Privacy policy, terms
-- Secure site (HTTPS)
-
-### Content Depth
-
-- Comprehensive coverage of topic
-- Answers follow-up questions
-- Better than top-ranking competitors
-- Updated and current
-
-### User Engagement Signals
-
-- Time on page
-- Bounce rate in context
-- Pages per session
-- Return visits
+- Comprehensive topic coverage; answers follow-up questions; better than top competitors; updated and current
+- Monitor: time on page, bounce rate in context, pages per session, return visits
 
 ## Common Issues by Site Type
 
-### SaaS/Product Sites
-
-- Product pages lack content depth
-- Blog not integrated with product pages
-- Missing comparison/alternative pages
-- Feature pages thin on content
-- No glossary/educational content
-
-### E-commerce
-
-- Thin category pages
-- Duplicate product descriptions
-- Missing product schema
-- Faceted navigation creating duplicates
-- Out-of-stock pages mishandled
-
-### Content/Blog Sites
-
-- Outdated content not refreshed
-- Keyword cannibalization
-- No topical clustering
-- Poor internal linking
-- Missing author pages
-
-### Local Business
-
-- Inconsistent NAP
-- Missing local schema
-- No Google Business Profile optimization
-- Missing location pages
-- No local content
+| Site Type | Common Issues |
+|-----------|--------------|
+| **SaaS/Product** | Thin product/feature pages; blog not integrated; missing comparison pages; no glossary |
+| **E-commerce** | Thin category pages; duplicate product descriptions; missing product schema; faceted nav duplicates; out-of-stock mishandled |
+| **Content/Blog** | Outdated content; keyword cannibalization; no topical clustering; poor internal linking; missing author pages |
+| **Local Business** | Inconsistent NAP; missing local schema; no Google Business Profile; missing location pages |
 
 ## Output Format
 
 ### Audit Report Structure
 
-**Executive Summary**
-- Overall health assessment
-- Top 3-5 priority issues
-- Quick wins identified
+**Executive Summary:** Overall health assessment; top 3–5 priority issues; quick wins.
 
-**Technical SEO Findings**
-For each issue:
-- **Issue**: What's wrong
-- **Impact**: SEO impact (High/Medium/Low)
-- **Evidence**: How you found it
-- **Fix**: Specific recommendation
-- **Priority**: 1-5 or High/Medium/Low
+**Findings** (Technical SEO / On-Page / Content — same format for each):
 
-**On-Page SEO Findings**
-Same format as above
+| Field | Content |
+|-------|---------|
+| Issue | What's wrong |
+| Impact | High / Medium / Low |
+| Evidence | How you found it |
+| Fix | Specific recommendation |
+| Priority | 1–5 or High/Medium/Low |
 
-**Content Findings**
-Same format as above
-
-**Prioritized Action Plan**
+**Prioritized Action Plan:**
 1. Critical fixes (blocking indexation/ranking)
 2. High-impact improvements
 3. Quick wins (easy, immediate benefit)
@@ -348,21 +150,11 @@ Same format as above
 - [AI Writing Detection](seo-audit-skill/ai-writing-detection.md): Common AI writing patterns to avoid (em dashes, overused phrases, filler words)
 - [AEO & GEO Patterns](seo-audit-skill/aeo-geo-patterns.md): Content patterns optimized for answer engines and AI citation
 
-## Tools Referenced
+## Tools
 
-**Free Tools**
-- Google Search Console (essential)
-- Google PageSpeed Insights
-- Bing Webmaster Tools
-- Rich Results Test
-- Mobile-Friendly Test
-- [Schema Validator](schema-validator.md) (`schema-validator-helper.sh validate <url>`)
+**Free:** Google Search Console (essential), PageSpeed Insights, Bing Webmaster Tools, Rich Results Test, Mobile-Friendly Test, [Schema Validator](schema-validator.md) (`schema-validator-helper.sh validate <url>`)
 
-**Paid Tools** (if available)
-- Screaming Frog
-- Ahrefs / Semrush
-- Sitebulb
-- ContentKing
+**Paid (if available):** Screaming Frog, Ahrefs / Semrush, Sitebulb, ContentKing
 
 ## Task-Specific Questions
 
@@ -377,5 +169,5 @@ Same format as above
 - **programmatic-seo**: For building SEO pages at scale
 - **schema-markup**: For implementing structured data
 - **schema-validator**: For validating Schema.org structured data (JSON-LD, Microdata, RDFa)
-- **[mom-test-ux](mom-test-ux.md)**: For UX evaluation and CRO ("Would this confuse my mom?" heuristic)
+- **[mom-test-ux](mom-test-ux.md)**: For UX evaluation and CRO
 - **analytics-tracking**: For measuring SEO performance
