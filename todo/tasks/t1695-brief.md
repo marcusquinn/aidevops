@@ -40,6 +40,33 @@ Each handler in `.agents/scripts/foss-handlers/` implements:
 - `localdev-helper.sh` — HTTPS review URLs for HTTP-serving apps
 - `pre-edit-check.sh` — standard worktree workflow for the fix itself
 
+### Auto-response to maintainer feedback
+
+The orchestrator includes a `respond` subcommand for the PR feedback loop:
+
+```
+foss-contribution-helper.sh respond <slug> <pr-number>
+```
+
+Flow:
+1. `contribution-watch-helper.sh` detects new comment on our PR (existing)
+2. `prompt-guard-helper.sh scan` on comment body before LLM sees it
+   - Clean → auto-dispatch response worker
+   - Flagged → quarantine for human review, no auto-response
+3. Worker runs in sandboxed context (fake HOME, scoped token, fork worktree only):
+   - Code change requested → apply fix, run handler tests, push to fork, comment
+   - Question → answer from code context
+   - Rejection → close gracefully, note in `foss_config`
+   - Approval → no action needed
+
+Safety boundaries:
+- Worker sandboxing (t1412): scoped GitHub token (fork-only write), fake HOME, network tiering
+- No access to secrets or private repos from the worker context
+- Only auto-responds on `foss: true` repos — regular `contributed: true` repos still require interactive human response
+- Worst case (prompt-guard miss): worker writes to our fork and posts a comment. No secret exposure, no private repo access, no upstream merge capability.
+
+Pulse integration: `contribution-watch-helper.sh scan` detects items needing response. For `foss: true` repos, the pulse auto-dispatches a response worker instead of just surfacing in the greeting.
+
 ### Etiquette controls
 
 - Max PRs per repo per week (default 2, configurable per repo)
@@ -58,6 +85,9 @@ Each handler in `.agents/scripts/foss-handlers/` implements:
 - [ ] Budget ceiling checked before starting contribution
 - [ ] `contribution-watch-helper.sh` picks up the new PR for follow-up monitoring
 - [ ] PR descriptions include AI assistance disclosure and reference the upstream issue
+- [ ] `foss-contribution-helper.sh respond <slug> <pr>` auto-responds to clean maintainer feedback
+- [ ] Flagged comments (prompt-guard) are quarantined, not auto-responded to
+- [ ] Response worker is sandboxed: scoped token, fork-only write, no secret access
 
 ## Context
 
