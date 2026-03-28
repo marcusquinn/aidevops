@@ -1,5 +1,5 @@
 ---
-description: SimpleX Chat — install, bot API (TypeScript SDK + CLI), business addresses, SMP/XFTP self-hosted servers, protocol overview, voice/files, multi-platform, cross-device workarounds, and limitations
+description: SimpleX Chat — bot API (TypeScript SDK + CLI), install, self-hosted SMP/XFTP, cross-device, limitations
 mode: subagent
 tools:
   read: true
@@ -26,6 +26,7 @@ tools:
 - **Data**: `~/.simplex/` (SQLite: `simplex_v1_chat.db`, `simplex_v1_agent.db`)
 - **Protocol**: SMP (messaging), XFTP (files), WebRTC (calls) — all E2E encrypted
 - **Encryption**: Double ratchet (X3DH, Curve448) + NaCl crypto_box (Curve25519) + TLS 1.3
+- **Business addresses** (v6.2+): per-customer group chats — customer connects → new business chat. Use for support, sales, multi-agent triage.
 - **Docs**: https://simplex.chat/docs/ | https://github.com/simplex-chat/simplex-chat
 - **Bot API docs**: https://github.com/simplex-chat/simplex-chat/tree/stable/bots
 
@@ -47,7 +48,7 @@ On macOS: System Settings > Privacy & Security > Allow (Gatekeeper).
 
 **Apps**: [iOS](https://apps.apple.com/app/simplex-chat/id1605771084) | [Android](https://play.google.com/store/apps/details?id=chat.simplex.app) / [F-Droid](https://simplex.chat/fdroid/) | [Linux Flathub](https://flathub.org/apps/chat.simplex.simplex) | [macOS DMG / Windows MSI / AppImage](https://github.com/simplex-chat/simplex-chat/releases)
 
-Build from source: `git clone git@github.com:simplex-chat/simplex-chat.git && git checkout stable` then Docker (`DOCKER_BUILDKIT=1 docker build --output ~/.local/bin .`) or Haskell (`cabal install simplex-chat`, requires GHC 9.6.3).
+Build from source: `git clone git@github.com:simplex-chat/simplex-chat.git && git checkout stable` — Docker (`DOCKER_BUILDKIT=1 docker build --output ~/.local/bin .`) or Haskell (`cabal install simplex-chat`, requires GHC 9.6.3).
 
 ## CLI Usage
 
@@ -148,10 +149,6 @@ Tappable commands with hidden params: `/'role 2'` (UI shows `/role 2`, tapping s
 - **Tolerate unknown events** — ignore undocumented types, allow extra JSON properties
 - **File handling** — files on CLI's filesystem; bot accesses via local path
 - **Concurrent commands** — supported; TypeScript SDK sends sequentially by default
-
-## Business Addresses
-
-Business addresses (v6.2+) create per-customer group chats. Customer connects → new business chat (group under the hood). Business sees customer avatar; can add team members for escalation. Use cases: customer support, sales channels, service delivery, multi-agent triage.
 
 ## Protocol
 
