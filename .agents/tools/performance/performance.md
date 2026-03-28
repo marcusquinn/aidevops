@@ -29,47 +29,23 @@ mcp:
 **Quick commands**:
 
 ```bash
-# Full performance audit (Lighthouse + Core Web Vitals)
-/performance https://example.com
-
-# Specific categories
+/performance https://example.com                                    # Full audit
 /performance https://example.com --categories=performance,accessibility
-
-# Local dev server
-/performance http://localhost:3000
-
-# Compare before/after
-/performance https://example.com --compare baseline.json
+/performance http://localhost:3000                                   # Local dev
+/performance https://example.com --compare baseline.json            # Before/after
 ```
 
 <!-- AI-CONTEXT-END -->
 
-## Overview
-
-This subagent provides comprehensive web performance analysis inspired by [@elithrar's web-perf agent skill](https://x.com/elithrar/status/2006028034889887973). It uses Chrome DevTools MCP to assess:
-
-1. **Core Web Vitals** - FCP, LCP, CLS, FID, TTFB
-2. **Performance** - Load times, render blocking, JavaScript execution
-3. **Network Dependencies** - Third-party scripts, request chains, bundle sizes
-4. **Accessibility** - WCAG compliance, keyboard navigation, screen reader support
-
-The key advantage: running from within your repo means the output becomes immediate context for making improvements.
+Inspired by [@elithrar's web-perf agent skill](https://x.com/elithrar/status/2006028034889887973). Runs from within your repo so output becomes immediate context for making improvements.
 
 ## Setup
 
-### Chrome DevTools MCP
-
 ```bash
-# Install globally (recommended)
-npm install -g chrome-devtools-mcp
-
-# Or run via npx
-npx chrome-devtools-mcp@latest --headless
+npm install -g chrome-devtools-mcp   # or: npx chrome-devtools-mcp@latest --headless
 ```
 
-### MCP Configuration
-
-Add to your MCP config (Claude Code, OpenCode, etc.):
+MCP config (headless or connect to existing browser):
 
 ```json
 {
@@ -82,154 +58,82 @@ Add to your MCP config (Claude Code, OpenCode, etc.):
 }
 ```
 
-For connecting to an existing browser:
-
-```json
-{
-  "mcpServers": {
-    "chrome-devtools": {
-      "command": "npx",
-      "args": ["chrome-devtools-mcp@latest", "--browserUrl", "http://127.0.0.1:9222"]
-    }
-  }
-}
-```
+For existing browser: replace `"--headless"` with `"--browserUrl", "http://127.0.0.1:9222"`.
 
 ## Usage Workflows
 
-### 1. Full Performance Audit
-
-Run a comprehensive Lighthouse audit with Core Web Vitals:
+### Full Performance Audit
 
 ```javascript
-// Via Chrome DevTools MCP
 await chromeDevTools.lighthouse({
   url: "https://your-site.com",
   categories: ["performance", "accessibility", "best-practices", "seo"],
   device: "mobile"  // or "desktop"
 });
 
-// Get Core Web Vitals
 await chromeDevTools.measureWebVitals({
   url: "https://your-site.com",
   metrics: ["LCP", "FID", "CLS", "TTFB", "FCP"],
-  iterations: 3  // Average over multiple runs
+  iterations: 3
 });
 ```
 
-### 2. Network Dependency Analysis
-
-Identify third-party scripts and request chains impacting performance:
+### Network Dependency Analysis
 
 ```javascript
-// Monitor network requests
 await chromeDevTools.monitorNetwork({
   url: "https://your-site.com",
   filters: ["script", "xhr", "fetch"],
   captureHeaders: true,
   captureBody: false
 });
-
-// Analyze third-party impact
-// Look for:
-// - Scripts from external domains
-// - Long request chains (A -> B -> C)
-// - Large bundle sizes (>100KB compressed)
-// - Render-blocking resources
+// Look for: external domain scripts, long chains (A→B→C), bundles >100KB, render-blocking resources
 ```
 
-### 3. Local Development Testing
-
-Test your local dev server before deploying:
+### Local Development Testing
 
 ```javascript
-// Start your dev server first (e.g., npm run dev)
-await chromeDevTools.lighthouse({
-  url: "http://localhost:3000",
-  categories: ["performance"],
-  device: "desktop"
-});
-
-// Monitor for console errors during interaction
-await chromeDevTools.captureConsole({
-  url: "http://localhost:3000",
-  logLevel: "error",
-  duration: 30000
-});
+// Start dev server first (e.g., npm run dev)
+await chromeDevTools.lighthouse({ url: "http://localhost:3000", categories: ["performance"], device: "desktop" });
+await chromeDevTools.captureConsole({ url: "http://localhost:3000", logLevel: "error", duration: 30000 });
 ```
 
-### 4. Before/After Comparison
-
-Compare performance before and after changes:
+### Before/After Comparison
 
 ```javascript
-// Baseline (save results)
-const baseline = await chromeDevTools.lighthouse({
-  url: "https://your-site.com",
-  categories: ["performance"]
-});
-// Save baseline.json
-
-// After changes
-const after = await chromeDevTools.lighthouse({
-  url: "https://your-site.com",
-  categories: ["performance"]
-});
-
-// Compare key metrics:
-// - Performance score delta
-// - LCP improvement
-// - CLS reduction
-// - Total blocking time change
+const baseline = await chromeDevTools.lighthouse({ url: "https://your-site.com", categories: ["performance"] });
+// Save baseline.json, then after changes:
+const after = await chromeDevTools.lighthouse({ url: "https://your-site.com", categories: ["performance"] });
+// Compare: performance score delta, LCP improvement, CLS reduction, total blocking time change
 ```
 
-### 5. Accessibility Audit
-
-Check WCAG compliance and accessibility issues:
+### Accessibility Audit
 
 ```javascript
-await chromeDevTools.lighthouse({
-  url: "https://your-site.com",
-  categories: ["accessibility"],
-  device: "desktop"
-});
-
-// Common issues to check:
-// - Missing alt text on images
-// - Low color contrast
-// - Missing form labels
-// - Keyboard navigation issues
-// - ARIA attribute problems
+await chromeDevTools.lighthouse({ url: "https://your-site.com", categories: ["accessibility"], device: "desktop" });
+// Check: missing alt text, low color contrast, missing form labels, keyboard nav, ARIA attributes
 ```
 
 ## Core Web Vitals Thresholds
 
 | Metric | Good | Needs Improvement | Poor |
 |--------|------|-------------------|------|
-| **FCP** (First Contentful Paint) | <1.8s | 1.8s - 3.0s | >3.0s |
-| **LCP** (Largest Contentful Paint) | <2.5s | 2.5s - 4.0s | >4.0s |
-| **CLS** (Cumulative Layout Shift) | <0.1 | 0.1 - 0.25 | >0.25 |
-| **FID** (First Input Delay) | <100ms | 100ms - 300ms | >300ms |
-| **TTFB** (Time to First Byte) | <800ms | 800ms - 1800ms | >1800ms |
-| **INP** (Interaction to Next Paint) | <200ms | 200ms - 500ms | >500ms |
+| **FCP** (First Contentful Paint) | <1.8s | 1.8s–3.0s | >3.0s |
+| **LCP** (Largest Contentful Paint) | <2.5s | 2.5s–4.0s | >4.0s |
+| **CLS** (Cumulative Layout Shift) | <0.1 | 0.1–0.25 | >0.25 |
+| **FID** (First Input Delay) | <100ms | 100ms–300ms | >300ms |
+| **TTFB** (Time to First Byte) | <800ms | 800ms–1800ms | >1800ms |
+| **INP** (Interaction to Next Paint) | <200ms | 200ms–500ms | >500ms |
 
 ## Common Performance Issues & Fixes
 
 ### Slow LCP
 
-**Causes**:
-- Large hero images not optimized
-- Render-blocking CSS/JS
-- Slow server response (TTFB)
-- Client-side rendering delays
-
-**Fixes**:
+Causes: large hero images, render-blocking CSS/JS, slow TTFB, client-side rendering delays.
 
 ```html
-<!-- Preload critical images -->
+<!-- Preload critical images + use modern formats -->
 <link rel="preload" as="image" href="/hero.webp">
-
-<!-- Use modern image formats -->
 <picture>
   <source srcset="/hero.avif" type="image/avif">
   <source srcset="/hero.webp" type="image/webp">
@@ -239,158 +143,87 @@ await chromeDevTools.lighthouse({
 
 ### High CLS
 
-**Causes**:
-- Images without dimensions
-- Ads/embeds without reserved space
-- Web fonts causing FOUT/FOIT
-- Dynamic content injection
-
-**Fixes**:
+Causes: images without dimensions, ads/embeds without reserved space, web fonts (FOUT/FOIT), dynamic content injection.
 
 ```html
-<!-- Always set dimensions -->
+<!-- Set dimensions; reserve space; use font-display: swap -->
 <img src="/photo.jpg" width="800" height="600" alt="Photo">
+<div style="min-height: 250px;"><!-- Ad or embed --></div>
+```
 
-<!-- Reserve space for dynamic content -->
-<div style="min-height: 250px;">
-  <!-- Ad or embed loads here -->
-</div>
-
-<!-- Font display swap -->
-@font-face {
-  font-family: 'Custom';
-  font-display: swap;
-  src: url('/font.woff2') format('woff2');
-}
+```css
+@font-face { font-family: 'Custom'; font-display: swap; src: url('/font.woff2') format('woff2'); }
 ```
 
 ### Poor FID/INP
 
-**Causes**:
-- Long JavaScript tasks (>50ms)
-- Heavy main thread work
-- Large JavaScript bundles
-- Synchronous third-party scripts
-
-**Fixes**:
+Causes: long JS tasks (>50ms), heavy main thread, large bundles, synchronous third-party scripts.
 
 ```javascript
 // Break up long tasks
 function processItems(items) {
   const chunk = items.splice(0, 100);
   // Process chunk...
-  if (items.length > 0) {
-    requestIdleCallback(() => processItems(items));
-  }
+  if (items.length > 0) requestIdleCallback(() => processItems(items));
 }
-
-// Defer non-critical JS
-<script src="/analytics.js" defer></script>
-
-// Use web workers for heavy computation
-const worker = new Worker('/heavy-task.js');
+// Defer non-critical: <script src="/analytics.js" defer></script>
+// Offload heavy work: const worker = new Worker('/heavy-task.js');
 ```
 
 ### Slow TTFB
 
-**Causes**:
-- Slow database queries
-- No caching
-- Geographic distance to server
-- Cold starts (serverless)
+Causes: slow DB queries, no caching, geographic distance, cold starts (serverless).
 
-**Fixes**:
-- Add CDN (Cloudflare, Fastly, Vercel Edge)
-- Implement caching (Redis, Memcached)
-- Optimize database queries
-- Use edge functions for dynamic content
+Fixes: CDN (Cloudflare, Fastly, Vercel Edge), caching (Redis/Memcached), query optimization, edge functions.
 
 ## Network Dependency Best Practices
 
 ### Third-Party Script Audit
 
 ```javascript
-// Identify third-party scripts
-const thirdParty = requests.filter(r =>
-  !r.url.includes(yourDomain) &&
-  r.resourceType === 'script'
-);
-
-// Check for:
-// 1. Scripts blocking render
-// 2. Large bundle sizes (>50KB)
-// 3. Long chains (script A loads script B)
-// 4. Scripts without async/defer
+const thirdParty = requests.filter(r => !r.url.includes(yourDomain) && r.resourceType === 'script');
+// Check: render-blocking, bundles >50KB, chains (A loads B), missing async/defer
 ```
 
 ### Bundle Size Analysis
 
 ```bash
-# Analyze JavaScript bundles
 npx source-map-explorer dist/main.js
-
-# Check compressed sizes
-ls -la dist/*.js | awk '{print $5, $9}'
-gzip -c dist/main.js | wc -c  # Compressed size
+gzip -c dist/main.js | wc -c   # Compressed size
 ```
 
 ### Request Chain Optimization
 
 ```html
-<!-- Bad: Sequential loading -->
-<script src="/a.js"></script>  <!-- Loads b.js -->
-<script src="/b.js"></script>  <!-- Loads c.js -->
-
-<!-- Good: Parallel with preload -->
-<link rel="preload" as="script" href="/a.js">
-<link rel="preload" as="script" href="/b.js">
-<link rel="preload" as="script" href="/c.js">
+<!-- Bad: sequential -->  <script src="/a.js"></script>
+<!-- Good: parallel -->   <link rel="preload" as="script" href="/a.js">
+                          <link rel="preload" as="script" href="/b.js">
 ```
 
 ## Integration with Existing Tools
 
-### With PageSpeed Helper
-
 ```bash
-# Use pagespeed-helper.sh for quick audits
+# Quick audits
 ~/.aidevops/agents/scripts/pagespeed-helper.sh audit https://example.com
 
-# Use Chrome DevTools MCP for deeper analysis
-npx chrome-devtools-mcp@latest --headless
-```
-
-### With Browser Automation
-
-```bash
-# Start dev-browser for persistent testing
+# Persistent browser session
 ~/.aidevops/agents/scripts/dev-browser-helper.sh start
-
-# Connect Chrome DevTools MCP
 npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222
 ```
 
-### With CI/CD
+### CI/CD (GitHub Actions)
 
 ```yaml
-# GitHub Actions example
 - name: Performance Audit
   run: |
     npx lighthouse https://staging.example.com \
-      --output=json \
-      --output-path=lighthouse.json \
+      --output=json --output-path=lighthouse.json \
       --chrome-flags="--headless"
-
-    # Check performance score
     SCORE=$(jq '.categories.performance.score * 100 | round' lighthouse.json)
-    if [ "$SCORE" -lt 90 ]; then
-      echo "Performance score $SCORE is below threshold (90)"
-      exit 1
-    fi
+    if [ "$SCORE" -lt 90 ]; then echo "Score $SCORE below threshold (90)"; exit 1; fi
 ```
 
 ## Actionable Output Format
-
-When running performance analysis, provide output in this format for immediate action:
 
 ```markdown
 ## Performance Report: example.com
@@ -404,38 +237,27 @@ When running performance analysis, provide output in this format for immediate a
 | TTFB | 650ms | GOOD | <800ms |
 
 ### Top Issues (Priority Order)
-1. **CLS: 0.15** - Images without dimensions
-   - File: `src/components/Hero.tsx:24`
-   - Fix: Add `width` and `height` attributes
-
-2. **Render-blocking CSS** - 2 stylesheets
-   - Files: `styles/fonts.css`, `styles/above-fold.css`
-   - Fix: Inline critical CSS, defer non-critical
-
-3. **Large JavaScript bundle** - 245KB (gzipped)
-   - File: `dist/main.js`
-   - Fix: Code split, lazy load routes
+1. **CLS: 0.15** - Images without dimensions — `src/components/Hero.tsx:24` — Add `width`/`height`
+2. **Render-blocking CSS** - `styles/fonts.css`, `styles/above-fold.css` — Inline critical, defer rest
+3. **Large JS bundle** - 245KB gzipped — `dist/main.js` — Code split, lazy load routes
 
 ### Network Dependencies
-- 3 third-party scripts (analytics, chat, fonts)
-- Longest chain: 3 requests (Google Fonts)
+- 3 third-party scripts (analytics, chat, fonts); longest chain: 3 requests (Google Fonts)
 - Total blocking time: 120ms
 
-### Accessibility
-- Score: 92/100
-- 2 issues: Missing alt text (2 images)
+### Accessibility: 92/100 — 2 issues: missing alt text (2 images)
 ```
 
 ## Related Resources
 
-- [web.dev/vitals](https://web.dev/vitals/) - Core Web Vitals documentation
+- [web.dev/vitals](https://web.dev/vitals/) — Core Web Vitals documentation
 - [Chrome DevTools Performance](https://developer.chrome.com/docs/devtools/performance/)
 - [Lighthouse Scoring](https://developer.chrome.com/docs/lighthouse/performance/performance-scoring/)
 - [PageSpeed Insights](https://pagespeed.web.dev/)
 
 ## Related Subagents
 
-- `tools/performance/webpagetest.md` - WebPageTest API for real-world multi-location testing
-- `tools/browser/pagespeed.md` - PageSpeed Insights & Lighthouse CLI
-- `tools/browser/chrome-devtools.md` - Chrome DevTools MCP integration
-- `tools/browser/browser-automation.md` - Browser tool selection guide
+- `tools/performance/webpagetest.md` — WebPageTest API for real-world multi-location testing
+- `tools/browser/pagespeed.md` — PageSpeed Insights & Lighthouse CLI
+- `tools/browser/chrome-devtools.md` — Chrome DevTools MCP integration
+- `tools/browser/browser-automation.md` — Browser tool selection guide
