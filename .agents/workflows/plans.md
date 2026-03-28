@@ -102,8 +102,6 @@ Do NOT add `#auto-dispatch` when ANY of these are true:
 - Description says "investigate" or "evaluate" without a clear deliverable
 - Has `blocked-by:` dependencies on incomplete tasks
 
-`#auto-dispatch` is added only when all inclusion criteria pass and no exclusion criteria apply.
-
 ## Saving Work
 
 ### MANDATORY: Task Brief Requirement
@@ -313,7 +311,7 @@ Configure per-repo in `.aidevops.json`:
 
 **Status labels** on GitHub Issues: `status:available` -> `status:claimed` -> `status:in-review` -> `status:done`
 
-## MANDATORY: Worker TODO.md Restriction
+## MANDATORY: TODO.md Edit Rules
 
 **Workers (headless dispatch runners) must NEVER edit TODO.md directly.** This is the primary cause of merge conflicts when multiple workers + supervisor push to TODO.md on main simultaneously.
 
@@ -325,13 +323,13 @@ Configure per-repo in `.aidevops.json`:
 
 Workers communicate via: exit code (0 = success), log output, `mail-helper.sh send`, and PR creation. The supervisor updates TODO.md based on these signals during its pulse cycle.
 
-## MANDATORY: Commit and Push After TODO Changes
+**After ANY edit to TODO.md, todo/PLANS.md, or todo/tasks/*, commit and push immediately. Interactive sessions and supervisor only -- not workers.**
 
-After ANY edit to TODO.md, todo/PLANS.md, or todo/tasks/*, commit and push immediately. **Interactive sessions and supervisor only -- not workers.**
-
-**Planning-only changes** (on main): `~/.aidevops/agents/scripts/planning-commit-helper.sh "chore: add {description} to backlog"` -- no branch, no PR, uses `todo_commit_push()` for serialized locking.
-
-**Mixed changes** (planning + non-exception files): Create a worktree (`wt switch -c chore/todo-{slug}`), make changes, commit, push, PR, merge.
+| Condition | Action |
+|-----------|--------|
+| TODO.md-only changes | Commit directly on main via `planning-commit-helper.sh "chore: add {description} to backlog"` |
+| Mixed changes (TODO + code/agent files) | Create a worktree (`wt switch -c chore/todo-{slug}`), make changes, commit, push, PR, merge |
+| Adding 3+ unrelated items on a feature branch | Commit on main instead |
 
 **NEVER use `git checkout -b` or `git stash` in the main repo directory.**
 
@@ -351,25 +349,6 @@ gh issue create --title "t146: bug: supervisor no_pr retry counter non-functiona
 ```
 
 When creating both together: assign t-number -> create GitHub issue -> add TODO entry with `ref:GH#` -> commit and push immediately.
-
-## Git Branch Strategy for TODO.md Changes
-
-| Condition | Recommendation |
-|-----------|----------------|
-| TODO.md-only changes | Commit directly on main (no branch needed) |
-| Mixed changes (TODO + code/agent files) | Create a worktree |
-| Adding 3+ unrelated items on a feature branch | Suggest committing on main instead |
-
-Related work stays together; unrelated TODO-only backlog goes directly to main; mixed changes use a worktree. **NEVER use `git checkout -b` in the main repo directory.** Use `wt switch -c` for dedicated branches.
-
-## Integration with Other Workflows
-
-| Workflow | Integration |
-|----------|-------------|
-| `git-workflow.md` | Branch names derived from tasks/plans |
-| `branch.md` | Task 0.0 creates branch |
-| `preflight.md` | Run before marking plan complete |
-| `changelog.md` | Update on plan completion |
 
 ## Templates
 
