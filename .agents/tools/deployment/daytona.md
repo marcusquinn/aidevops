@@ -22,9 +22,9 @@ tools:
 - **SDK**: Python (`pip install daytona-sdk`) | TypeScript (`npm install @daytonaio/sdk`)
 - **CLI**: `daytona` — install: `brew install daytonaio/tap/daytona` or `curl -sf -L https://download.daytona.io/daytona/install.sh | sudo bash`
 - **API**: REST at `https://app.daytona.io/api` (Bearer token auth)
-- **Helper**: `daytona-helper.sh [create|start|stop|destroy|list|exec|snapshot|status] [args]` — note: helper uses `destroy` (maps to SDK `daytona.delete()` / REST `DELETE`)
+- **Helper**: `daytona-helper.sh [create|start|stop|destroy|list|exec|snapshot|status] [args]` — `destroy` maps to SDK `daytona.delete()` / REST `DELETE`
 - **Auth**: `daytona login` (browser) or `export DAYTONA_API_KEY="..."` + `aidevops secret set DAYTONA_API_KEY`
-- **Billing**: Per-second, resource-based (vCPU + RAM + disk). Stopped sandboxes: disk only. Archived: minimal storage cost.
+- **Billing**: Per-second, resource-based (vCPU + RAM + disk). Stopped: disk only. Archived: minimal storage.
 - **Isolation**: gVisor kernel-level sandbox per workspace
 
 **Use cases**: AI agent code execution, CI/CD ephemeral runners, preview environments, LLM tool-use sandboxes
@@ -35,31 +35,20 @@ tools:
 
 ```text
 create ──► running ──► stopped ──► archived ──► deleted
-              │            │           │
-              │            ▼           ▼
-              │         running     running
-              ▼            ▲
-           stopped ────────┘
+               │            │           │
+               │            ▼           ▼
+               │         running     running
+               ▼            ▲
+            stopped ────────┘
 ```
 
 ```bash
-# Create
 daytona-helper.sh create my-sandbox --template python-3.11 --cpus 2 --memory 4
-
-# Start / Stop (stopped = disk cost only)
 daytona-helper.sh start <sandbox-id>
 daytona-helper.sh stop <sandbox-id>
-
-# Execute
 daytona-helper.sh exec <sandbox-id> "python script.py"
-
-# Snapshot (preserves full state cheaply)
 daytona-helper.sh snapshot <sandbox-id> "after-deps-installed"
-
-# Destroy (eliminates all costs)
 daytona-helper.sh destroy <sandbox-id>
-
-# List
 daytona-helper.sh list
 ```
 
@@ -75,67 +64,21 @@ daytona-helper.sh list
 **GPU types**: A100 (80 GB), H100 (80 GB), L40S (48 GB).
 
 ```bash
-# Custom resources
 daytona create --cpus 8 --memory 32 --disk 100 --gpu a100-80gb
-
-# GPU sandbox
 daytona create --template python-3.11 --gpu h100-80gb --memory 64
 daytona exec <sandbox-id> -- nvidia-smi
 ```
 
-### Billing Model
-
-| State | Billed for |
-|-------|------------|
-| Running | vCPU + RAM + disk + GPU |
-| Stopped | Disk only |
-| Archived | Minimal storage |
-| Deleted | Nothing |
-
-**Cost control**: Stop sandboxes when idle. Archive for long-term storage. Set auto-stop/auto-archive/auto-delete intervals to prevent runaway costs.
-
-### Lifecycle Automation
+**Billing**: Running = vCPU + RAM + disk + GPU. Stopped = disk only. Archived = minimal storage. Deleted = free. Stop when idle; set auto-stop/auto-archive/auto-delete to prevent runaway costs.
 
 ```python
-from daytona import Daytona
-
-daytona = Daytona()
-sandbox = daytona.create()
-
-# Auto-stop after 30 min of inactivity (0 to disable)
-sandbox.set_autostop_interval(30)
-
-# Auto-archive 24h after stop
-sandbox.set_auto_archive_interval(1440)
-
-# Auto-delete 48h after stop (negative to disable)
-sandbox.set_auto_delete_interval(2880)
-
-# Refresh activity timer (resets auto-stop countdown)
-sandbox.refresh_activity()
+sandbox.set_autostop_interval(30)       # auto-stop after 30 min idle (0 to disable)
+sandbox.set_auto_archive_interval(1440) # auto-archive 24h after stop
+sandbox.set_auto_delete_interval(2880)  # auto-delete 48h after stop (negative to disable)
+sandbox.refresh_activity()              # reset auto-stop countdown
 ```
 
 ## Workspace Templates and Images
-
-### Snapshots (Pre-Built Environments)
-
-```python
-from daytona import Daytona, CreateSandboxFromSnapshotParams
-
-daytona = Daytona()
-
-# Default Python sandbox
-sandbox = daytona.create()
-
-# From a named snapshot with custom settings
-sandbox = daytona.create(CreateSandboxFromSnapshotParams(
-    language="python",
-    snapshot="my-snapshot-id",
-    env_vars={"DEBUG": "true"},
-    labels={"project": "my-app"},
-    auto_stop_interval=60,
-))
-```
 
 ### Custom Docker Images
 
@@ -143,35 +86,24 @@ sandbox = daytona.create(CreateSandboxFromSnapshotParams(
 from daytona import Daytona, CreateSandboxFromImageParams, Resources, Image
 
 daytona = Daytona()
-
-# From a Docker image string
+# From image string
 sandbox = daytona.create(CreateSandboxFromImageParams(
-    image="python:3.12-slim",
-    language="python",
+    image="python:3.12-slim", language="python",
     resources=Resources(cpu=2, memory=4, disk=20),
 ), timeout=150, on_snapshot_create_logs=print)
 
-# Declarative Image builder (installs deps at snapshot time)
-image = (
-    Image.base("alpine:3.18")
-    .pip_install(["numpy", "pandas"])
-    .env({"MY_VAR": "value"})
-)
-sandbox = daytona.create(CreateSandboxFromImageParams(
-    image=image,
-    language="python",
-    resources=Resources(cpu=4, memory=8),
-))
+# Declarative builder (installs deps at snapshot time)
+image = Image.base("alpine:3.18").pip_install(["numpy", "pandas"]).env({"MY_VAR": "value"})
+sandbox = daytona.create(CreateSandboxFromImageParams(image=image, language="python",
+    resources=Resources(cpu=4, memory=8)))
 ```
 
 ### CLI Templates
 
 ```bash
 daytona template list
-
 # Common: python-3.11 | node-20 | go-1.22 | rust-1.77 | ubuntu-22.04 | jupyter
 
-# Custom template from existing sandbox
 daytona template create --from-sandbox <sandbox-id> --name "my-ml-env"
 daytona create --template my-ml-env
 ```
@@ -179,16 +111,13 @@ daytona create --template my-ml-env
 ## Networking
 
 ```bash
-# Expose port publicly (returns public URL)
-daytona port expose <sandbox-id> 8080
-
-# Python SDK
-url = sandbox.network.expose_port(8080)
+daytona port expose <sandbox-id> 8080   # returns public URL
+url = sandbox.network.expose_port(8080) # Python SDK
 ```
 
 ## Security Isolation
 
-Daytona uses **gVisor** (kernel-level) — syscalls intercepted per sandbox, no shared kernel between sandboxes, network isolated by default. Root inside sandbox does not grant host access.
+Daytona uses **gVisor** (kernel-level) — syscalls intercepted per sandbox, no shared kernel, network isolated by default. Root inside sandbox does not grant host access.
 
 **Isolation levels**: gVisor (default), Sysbox, LVMs, VMs (configurable per deployment).
 
@@ -196,49 +125,38 @@ Daytona uses **gVisor** (kernel-level) — syscalls intercepted per sandbox, no 
 
 ## AI Agent Integration Patterns
 
-### Code Execution Sandbox
-
 ```python
+# Code execution sandbox (ephemeral — create, run, delete)
 from daytona import Daytona
-
 daytona = Daytona()
 
-def execute_agent_code(code: str) -> dict:
-    sandbox = daytona.create()
+def run_code(code: str) -> dict:
+    sb = daytona.create()
     try:
-        # Use code_run for direct code execution
-        result = sandbox.process.code_run(code)
-        return {"result": result.result, "exit_code": result.exit_code}
+        r = sb.process.code_run(code)
+        return {"result": r.result, "exit_code": r.exit_code}
     finally:
-        daytona.delete(sandbox)
+        daytona.delete(sb)
 
-# Or use exec for shell commands
-def execute_shell(command: str) -> dict:
-    sandbox = daytona.create()
+def run_shell(cmd: str) -> dict:
+    sb = daytona.create()
     try:
-        result = sandbox.process.exec(command, timeout=60)
-        return {"result": result.result, "exit_code": result.exit_code}
+        r = sb.process.exec(cmd, timeout=60)
+        return {"result": r.result, "exit_code": r.exit_code}
     finally:
-        daytona.delete(sandbox)
+        daytona.delete(sb)
 ```
 
-### CI/CD Ephemeral Runner
-
 ```bash
+# CI/CD ephemeral runner
 SANDBOX_ID=$(daytona-helper.sh create ci-runner-$CI_JOB_ID --template node-20)
-daytona-helper.sh exec "$SANDBOX_ID" "npm ci && npm test"
-EXIT_CODE=$?
-daytona-helper.sh destroy "$SANDBOX_ID"
-exit $EXIT_CODE
-```
+daytona-helper.sh exec "$SANDBOX_ID" "npm ci && npm test"; EXIT_CODE=$?
+daytona-helper.sh destroy "$SANDBOX_ID"; exit $EXIT_CODE
 
-### Preview Environment
-
-```bash
+# Preview environment
 SANDBOX_ID=$(daytona-helper.sh create "preview-pr-${PR_NUMBER}" --template node-20)
 daytona-helper.sh exec "$SANDBOX_ID" "npm ci && npm run build && npm start &"
-PUBLIC_URL=$(daytona port expose "$SANDBOX_ID" 3000)
-echo "Preview: $PUBLIC_URL"
+echo "Preview: $(daytona port expose "$SANDBOX_ID" 3000)"
 ```
 
 ## SDK Reference
@@ -249,28 +167,18 @@ echo "Preview: $PUBLIC_URL"
 from daytona import Daytona, CreateSandboxFromSnapshotParams, Resources
 
 daytona = Daytona()  # reads DAYTONA_API_KEY from env
-
-# Create
-sandbox = daytona.create()
 sandbox = daytona.create(CreateSandboxFromSnapshotParams(
-    language="python",
-    env_vars={"MY_VAR": "value"},
-    labels={"project": "my-app"},
-    auto_stop_interval=30,
+    language="python", env_vars={"MY_VAR": "value"},
+    labels={"project": "my-app"}, auto_stop_interval=30,
 ))
 
 # Lifecycle
-sandbox.stop(timeout=60)
-sandbox.start(timeout=60)
+sandbox.stop(timeout=60); sandbox.start(timeout=60)
 sandbox.resize(Resources(cpu=4, memory=8), timeout=60)
 daytona.delete(sandbox, timeout=60)
 
-# Execute code directly (uses sandbox language runtime)
-result = sandbox.process.code_run('print("hello")')
-print(result.result)       # "hello"
-print(result.exit_code)    # 0
-
-# Execute shell commands
+# Execute
+result = sandbox.process.code_run('print("hello")')  # result.result="hello", exit_code=0
 result = sandbox.process.exec("ls -la", timeout=10)
 result = sandbox.process.exec("echo $MY_VAR", cwd="/tmp", env={"MY_VAR": "Hello"})
 
@@ -278,11 +186,9 @@ result = sandbox.process.exec("echo $MY_VAR", cwd="/tmp", env={"MY_VAR": "Hello"
 sandbox.filesystem.write("/tmp/script.py", "print('hello')")
 content = sandbox.filesystem.read("/tmp/output.txt")
 
-# State inspection
+# Inspect
 sandbox.refresh_data()
 print(f"State: {sandbox.state}, CPU: {sandbox.cpu}, Memory: {sandbox.memory}GB")
-
-# List and filter
 all_sandboxes = daytona.list()
 ```
 
@@ -292,14 +198,10 @@ all_sandboxes = daytona.list()
 from daytona import AsyncDaytona, CreateSandboxFromImageParams, Resources, Image
 
 daytona = AsyncDaytona()
-
 image = Image.base("alpine:3.18").pip_install(["numpy"])
 sandbox = await daytona.create(CreateSandboxFromImageParams(
-    image=image,
-    language="python",
-    resources=Resources(cpu=2, memory=4),
-), timeout=120, on_snapshot_create_logs=lambda chunk: print(chunk, end=""))
-
+    image=image, language="python", resources=Resources(cpu=2, memory=4),
+), timeout=120, on_snapshot_create_logs=lambda c: print(c, end=""))
 result = await sandbox.process.code_run('import numpy; print(numpy.__version__)')
 await daytona.delete(sandbox)
 ```
@@ -310,29 +212,17 @@ await daytona.delete(sandbox)
 import { Daytona } from "@daytonaio/sdk";
 
 const daytona = new Daytona();  // reads DAYTONA_API_KEY from env
-
-// Create from snapshot
 const sandbox = await daytona.create({
-  language: "typescript",
-  envVars: { NODE_ENV: "test" },
-  autoStopInterval: 60,
+  language: "typescript", envVars: { NODE_ENV: "test" }, autoStopInterval: 60,
 });
-
-// Create from image with resources
 const sandbox2 = await daytona.create({
-  image: "node:20-slim",
-  language: "javascript",
+  image: "node:20-slim", language: "javascript",
   resources: { cpu: 2, memory: 4, disk: 20 },
 }, { timeout: 150, onSnapshotCreateLogs: console.log });
 
-// Execute
 const result = await sandbox.process.codeRun('console.log("hello")');
 const shellResult = await sandbox.process.exec("npm test", { timeout: 120 });
-
-// Lifecycle
-await sandbox.stop();
-await sandbox.start();
-await daytona.delete(sandbox);
+await sandbox.stop(); await sandbox.start(); await daytona.delete(sandbox);
 ```
 
 ## REST API
@@ -373,33 +263,16 @@ curl -X POST -H "$AUTH" -H "Content-Type: application/json" \
 
 ## Troubleshooting
 
-```bash
-# Sandbox fails to start
-daytona-helper.sh status <sandbox-id>
-daytona logs <sandbox-id>
-# Causes: resource limits exceeded, template not found, API key expired
-
-# Command timeout — increase the timeout value
-result = sandbox.process.exec("long-running-command", timeout=300)
-
-# Port not accessible — verify listening, then re-expose
-daytona exec <sandbox-id> -- ss -tlnp | grep 8080
-daytona port remove <sandbox-id> 8080 && daytona port expose <sandbox-id> 8080
-
-# High costs — stop running sandboxes
-daytona list --json | jq -r '.[] | select(.state=="running") | .id' | xargs -I{} daytona stop {}
-```
+| Symptom | Fix |
+|---------|-----|
+| Sandbox fails to start | `daytona-helper.sh status <id>` + `daytona logs <id>` — check resource limits, template name, API key |
+| Command timeout | Increase `timeout=300` in `process.exec()` |
+| Port not accessible | `daytona exec <id> -- ss -tlnp \| grep 8080` then `daytona port remove <id> 8080 && daytona port expose <id> 8080` |
+| High costs | `daytona list --json \| jq -r '.[] \| select(.state=="running") \| .id' \| xargs -I{} daytona stop {}` |
 
 ## Related
 
-- **Hosting comparison**: `tools/deployment/hosting-comparison.md` — Daytona vs Fly.io vs Coolify vs Cloudron vs Vercel decision guide
+- **Hosting comparison**: `tools/deployment/hosting-comparison.md`
 - **Helper script**: `.agents/scripts/daytona-helper.sh`
-
-## References
-
-- **Docs**: https://docs.daytona.io
-- **API**: https://docs.daytona.io/api
-- **Python SDK**: https://pypi.org/project/daytona-sdk/
-- **TypeScript SDK**: https://www.npmjs.com/package/@daytonaio/sdk
-- **GitHub**: https://github.com/daytonaio/daytona
-- **Pricing**: https://www.daytona.io/pricing
+- **Docs**: https://docs.daytona.io | **API**: https://docs.daytona.io/api | **Pricing**: https://www.daytona.io/pricing
+- **Python SDK**: https://pypi.org/project/daytona-sdk/ | **TypeScript SDK**: https://www.npmjs.com/package/@daytonaio/sdk | **GitHub**: https://github.com/daytonaio/daytona
