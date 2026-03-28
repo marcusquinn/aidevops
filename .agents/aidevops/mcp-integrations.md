@@ -20,34 +20,28 @@ tools:
 **Setup All**: `bash .agents/scripts/setup-mcp-integrations.sh all`
 **Validate**: `bash .agents/scripts/validate-mcp-integrations.sh`
 
-**Browser & Web**:
-- Chrome DevTools MCP: `claude mcp add chrome-devtools npx chrome-devtools-mcp@latest`
-- Playwright MCP: `npm install -g playwright-mcp`
-- Cloudflare Browser Rendering: Server-side scraping
-
-**SEO & Research**:
-- Ahrefs MCP: `AHREFS_API_KEY` required
-- Perplexity MCP: `PERPLEXITY_API_KEY` required
-- Google Search Console: `GOOGLE_APPLICATION_CREDENTIALS` (service account JSON)
-
-**Document Processing**:
-- Unstract MCP: `UNSTRACT_API_KEY` + `API_BASE_URL` required (Docker-based, self-hosted default)
-
-**Mobile Testing**:
-- iOS Simulator MCP: AI-driven iOS simulator interaction (tap, swipe, screenshot)
-
-**Development**:
-- Claude Code MCP: Claude Code automation (forked server)
-- Next.js DevTools MCP
-- Context7 MCP: Real-time library docs
-- LocalWP MCP: WordPress database access
-- Cloudflare Code Mode MCP: Workers, D1, KV, R2, Pages, AI Gateway via OAuth
-- MCPorter: Discover, call, compose, and generate CLIs/typed clients for MCP servers
-- OpenAPI Search MCP: Search and explore any OpenAPI spec — zero install, remote Cloudflare Worker
+| Category | Integration | Key Requirement |
+|----------|-------------|-----------------|
+| Browser & Web | Chrome DevTools MCP | `npx chrome-devtools-mcp@latest` |
+| | Playwright MCP | `npm install -g playwright-mcp` |
+| | Cloudflare Browser Rendering | Server-side scraping (account ID + API token) |
+| SEO & Research | Ahrefs MCP | `AHREFS_API_KEY` (passed as `API_KEY` via wrapper) |
+| | Perplexity MCP | `PERPLEXITY_API_KEY` |
+| | Google Search Console | `GOOGLE_APPLICATION_CREDENTIALS` (service account JSON) |
+| Document Processing | Unstract MCP | `UNSTRACT_API_KEY` + `API_BASE_URL` (Docker, self-hosted default) |
+| Mobile Testing | iOS Simulator MCP | macOS + Xcode + Facebook IDB |
+| Development | Claude Code MCP | Forked server (`github:marcusquinn/claude-code-mcp`) |
+| | Next.js DevTools MCP | |
+| | Context7 MCP | Real-time library docs |
+| | LocalWP MCP | WordPress database access |
+| | Cloudflare Code Mode MCP | OAuth via `mcp.cloudflare.com` |
+| | MCPorter | Discover, call, compose, generate CLIs for MCP servers |
+| | OpenAPI Search MCP | Remote Cloudflare Worker, no auth |
 
 **Config Location**: `configs/mcp-templates/`
 
 **Security**: MCP servers are a trust boundary -- they access conversation context, credentials, and network. Verify source, scan dependencies (`npx @socketsecurity/cli npm info <pkg>`), and scan source (`skill-scanner scan /path`) before installing. See `tools/mcp-toolkit/mcporter.md` "Security Considerations".
+
 <!-- AI-CONTEXT-END -->
 
 ## Setup Commands
@@ -57,6 +51,19 @@ tools:
 ```bash
 claude mcp add chrome-devtools npx chrome-devtools-mcp@latest
 # VS Code: code --add-mcp '{"name":"chrome-devtools","command":"npx","args":["chrome-devtools-mcp@latest"]}'
+```
+
+Full options (headless, viewport, logging):
+
+```json
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["chrome-devtools-mcp@latest", "--channel=canary", "--headless=true", "--isolated=true", "--viewport=1920x1080", "--logFile=/tmp/chrome-mcp.log"]
+    }
+  }
+}
 ```
 
 ### Playwright MCP
@@ -106,70 +113,54 @@ See `tools/mcp-toolkit/mcporter.md` for full documentation.
 
 ### OpenAPI Search MCP
 
-No installation — remote Cloudflare Worker, no auth required.
+No installation -- remote Cloudflare Worker, no auth required.
 
 ```bash
 # Claude Code
 claude mcp add --scope user openapi-search --transport http https://openapi-mcp.openapisearch.com/mcp
 ```
 
-**OpenCode** (`~/.config/opencode/opencode.json`):
+Config for other runtimes (OpenCode uses `~/.config/opencode/opencode.json`; Claude Desktop uses platform-specific `claude_desktop_config.json`):
 
 ```json
 {
-  "mcp": {
-    "openapi-search": {
-      "type": "remote",
-      "url": "https://openapi-mcp.openapisearch.com/mcp",
-      "enabled": false
-    }
+  "openapi-search": {
+    "type": "remote",
+    "url": "https://openapi-mcp.openapisearch.com/mcp"
   }
 }
 ```
 
-**Claude Desktop** config paths: macOS `~/Library/Application Support/Claude/claude_desktop_config.json`, Windows `%APPDATA%\Claude\claude_desktop_config.json`, Linux `~/.config/Claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "openapi-search": {
-      "type": "http",
-      "url": "https://openapi-mcp.openapisearch.com/mcp"
-    }
-  }
-}
-```
-
-**Tools**: `searchAPIs` (3000+ public APIs), `getAPIOverview`, `getOperationDetails`. Workflow: search → overview → details (minimal context usage).
+**Tools**: `searchAPIs` (3000+ public APIs), `getAPIOverview`, `getOperationDetails`. Workflow: search -> overview -> details (minimal context usage).
 
 Per-agent enablement: `tools/context/openapi-search.md` (disabled globally, enabled on-demand).
 
 ### Cloudflare Code Mode MCP
 
-No installation — remote server, OAuth-authenticated.
+No installation -- remote server, OAuth-authenticated. First connection opens browser OAuth flow to `dash.cloudflare.com`; token stored automatically.
 
 ```json
 { "cloudflare-api": { "url": "https://mcp.cloudflare.com/mcp" } }
 ```
 
-First connection opens browser OAuth flow to `dash.cloudflare.com`. Token stored automatically.
-
-**OpenCode** (`~/.config/opencode/config.json`):
-
-```json
-{
-  "mcp": {
-    "cloudflare-api": {
-      "type": "remote",
-      "url": "https://mcp.cloudflare.com/mcp"
-    }
-  }
-}
-```
+For OpenCode, use `"type": "remote"` wrapper in `~/.config/opencode/config.json`.
 
 **Tools**: Workers (deploy/update/tail), D1 (SQL), KV (get/put/delete/list), R2 (objects/buckets), Pages (projects/deployments), AI Gateway (logs/analytics), DNS, zone analytics.
 
 Per-agent enablement: `tools/api/cloudflare-mcp.md` (disabled globally, enabled on-demand).
+
+### Cloudflare Browser Rendering
+
+```json
+{
+  "mcpServers": {
+    "cloudflare-browser": {
+      "command": "npx",
+      "args": ["cloudflare-browser-rendering-mcp@latest", "--account-id=your_account_id", "--api-token=your_api_token"]
+    }
+  }
+}
+```
 
 ### Ahrefs MCP
 
@@ -207,7 +198,7 @@ claude mcp add google-search-console npx mcp-server-gsc@latest
 
 ### FluentCRM MCP
 
-Not published to npm — requires local build:
+Not published to npm -- requires local build:
 
 ```bash
 mkdir -p ~/.local/share/mcp-servers
@@ -221,7 +212,7 @@ export FLUENTCRM_API_USERNAME="your_username"
 export FLUENTCRM_API_PASSWORD="your_application_password"
 ```
 
-**OpenCode** (bash wrapper, disabled globally):
+OpenCode config (bash wrapper, disabled globally):
 
 ```json
 {
@@ -245,7 +236,7 @@ export UNSTRACT_API_KEY="your_api_key_here"
 export API_BASE_URL="http://backend.unstract.localhost/deployment/api/your-id/"
 ```
 
-**OpenCode** (Docker, disabled globally):
+OpenCode config (Docker, disabled globally):
 
 ```json
 {
@@ -257,62 +248,12 @@ export API_BASE_URL="http://backend.unstract.localhost/deployment/api/your-id/"
 }
 ```
 
-**Tool**: `unstract_tool` — submits files, polls for completion, returns structured JSON. Set `UNSTRACT_IMAGE_TAG` to pin version.
+**Tool**: `unstract_tool` -- submits files, polls for completion, returns structured JSON. Set `UNSTRACT_IMAGE_TAG` to pin version.
 
 Per-agent enablement: `services/document-processing/unstract.md`.
 
-## Advanced Configurations
-
-### Chrome DevTools (full options)
-
-```json
-{
-  "mcpServers": {
-    "chrome-devtools": {
-      "command": "npx",
-      "args": ["chrome-devtools-mcp@latest", "--channel=canary", "--headless=true", "--isolated=true", "--viewport=1920x1080", "--logFile=/tmp/chrome-mcp.log"]
-    }
-  }
-}
-```
-
-### Cloudflare Browser Rendering
-
-```json
-{
-  "mcpServers": {
-    "cloudflare-browser": {
-      "command": "npx",
-      "args": ["cloudflare-browser-rendering-mcp@latest", "--account-id=your_account_id", "--api-token=your_api_token"]
-    }
-  }
-}
-```
-
-## Environment Variables
-
-```bash
-export AHREFS_API_KEY="your_40_char_ahrefs_key"   # MCP receives as API_KEY via bash wrapper
-export PERPLEXITY_API_KEY="your_perplexity_key"
-export CLOUDFLARE_ACCOUNT_ID="your_account_id"
-export CLOUDFLARE_API_TOKEN="your_api_token"
-export UNSTRACT_API_KEY="your_unstract_api_key"
-export API_BASE_URL="http://backend.unstract.localhost/deployment/api/your-id/"
-export UNSTRACT_IMAGE_TAG="latest"                 # Optional: pin image version
-```
-
-## Validation
-
-```bash
-bash .agents/scripts/validate-mcp-integrations.sh
-# Expected: ✅ Overall status: EXCELLENT (100% success rate)
-```
-
 ## Resources
 
-- [Setup Script](.agents/scripts/setup-mcp-integrations.sh)
-- [Validation Script](.agents/scripts/validate-mcp-integrations.sh)
-- [Config Templates](configs/mcp-templates/)
-- [Chrome DevTools Guide](.agents/tools/browser/chrome-devtools.md)
-- [Playwright Guide](.agents/tools/browser/playwright.md)
+- [Setup Script](.agents/scripts/setup-mcp-integrations.sh) | [Validation Script](.agents/scripts/validate-mcp-integrations.sh) | [Config Templates](configs/mcp-templates/)
+- [Chrome DevTools Guide](.agents/tools/browser/chrome-devtools.md) | [Playwright Guide](.agents/tools/browser/playwright.md)
 - [Troubleshooting](.agents/aidevops/mcp-troubleshooting.md)
