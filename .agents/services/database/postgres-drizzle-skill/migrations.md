@@ -1,14 +1,10 @@
 # Drizzle Migrations
 
-Reference for managing database migrations with drizzle-kit.
-
-For base config and commands, see [cheatsheet-config.md](cheatsheet-config.md). This file covers migration-specific config, workflows, patterns, and troubleshooting.
-
----
+Reference for managing database migrations with drizzle-kit. For base config and commands, see [cheatsheet-config.md](cheatsheet-config.md).
 
 ## Migration-Specific Config
 
-**Multiple schema files:**
+Multiple schema files:
 
 ```typescript
 schema: './src/db/schema/*.ts',  // glob
@@ -16,7 +12,7 @@ schema: './src/db/schema/*.ts',  // glob
 schema: ['./src/db/schema/users.ts', './src/db/schema/posts.ts'],
 ```
 
-**Environment-specific credentials:**
+Environment-specific credentials:
 
 ```typescript
 dbCredentials: {
@@ -26,9 +22,7 @@ dbCredentials: {
 },
 ```
 
-**`verbose: true` and `strict: true`** in `defineConfig()` are recommended for migration safety.
-
----
+`verbose: true` and `strict: true` in `defineConfig()` are recommended for migration safety.
 
 ## Push vs Generate
 
@@ -40,27 +34,22 @@ dbCredentials: {
 | Team collaboration | Difficult | Easy |
 | Production use | Not recommended | Recommended |
 
-**Transitioning from push to migrate:**
+Transitioning from push to migrate:
 
 ```bash
 npx drizzle-kit pull      # pull current schema as baseline
 npx drizzle-kit generate  # future changes use generate
 ```
 
----
-
 ## Development Workflow
 
 ```bash
-# 1. Modify schema in TypeScript
-# 2. Generate and review migration
-npx drizzle-kit generate
-cat drizzle/0001_*.sql
-# 3. Apply locally
-npx drizzle-kit migrate
+npx drizzle-kit generate  # generate migration from schema changes
+cat drizzle/0001_*.sql     # review generated SQL
+npx drizzle-kit migrate   # apply locally
 ```
 
-**Output structure:**
+`generate` output structure:
 
 ```text
 drizzle/
@@ -71,11 +60,9 @@ drizzle/
     _journal.json
 ```
 
----
-
 ## Production Workflow
 
-**Option 1: Programmatic migration**
+**Option 1 -- Programmatic migration:**
 
 ```typescript
 // src/db/migrate.ts
@@ -97,7 +84,7 @@ runMigrations().catch(console.error);
 node -r tsx src/db/migrate.ts  # run before app starts
 ```
 
-**Option 2: CI/CD**
+**Option 2 -- CI/CD:**
 
 ```yaml
 - name: Run migrations
@@ -106,16 +93,16 @@ node -r tsx src/db/migrate.ts  # run before app starts
     DATABASE_URL: ${{ secrets.DATABASE_URL }}
 ```
 
-**Option 3: Application startup**
+**Option 3 -- Application startup:**
 
 ```typescript
 await migrate(db, { migrationsFolder: './drizzle' });
 app.listen(3000);
 ```
 
----
-
 ## Migration Patterns
+
+Add or remove table definitions from schema -- Drizzle generates the appropriate `CREATE TABLE` or `DROP TABLE`.
 
 ### Adding a column
 
@@ -131,7 +118,7 @@ name: text('name').notNull().default('Unknown'),
 
 ### Renaming a column
 
-**Warning:** Drizzle may generate DROP + ADD instead of RENAME. Use manual migration:
+Drizzle may generate DROP + ADD instead of RENAME. Use manual migration:
 
 ```sql
 ALTER TABLE "users" RENAME COLUMN "name" TO "full_name";
@@ -152,12 +139,6 @@ authorId: uuid('author_id').notNull().references(() => users.id)
 //   FOREIGN KEY ("author_id") REFERENCES "users"("id");
 ```
 
-### Creating / dropping a table
-
-Add or remove the table definition from schema. Drizzle generates the appropriate `CREATE TABLE` or `DROP TABLE` SQL.
-
----
-
 ## Custom Migrations
 
 ```sql
@@ -177,14 +158,12 @@ CREATE TRIGGER posts_search_update
   FOR EACH ROW EXECUTE FUNCTION posts_search_trigger();
 ```
 
-**Data migrations:**
+Data migrations:
 
 ```sql
 UPDATE users SET full_name = first_name || ' ' || last_name WHERE full_name IS NULL;
 UPDATE posts SET word_count = array_length(string_to_array(content, ' '), 1);
 ```
-
----
 
 ## Rollback Strategies
 
@@ -192,30 +171,26 @@ Drizzle doesn't generate automatic rollbacks. Tracking table: `SELECT * FROM __d
 
 - **Manual rollback script**: Create `drizzle/rollback/NNNN_name.sql` alongside each migration
 - **Point-in-time recovery**: Use PostgreSQL backup/restore for critical rollbacks
-- **Additive design**: Prefer nullable columns and feature flags — add before requiring
+- **Additive design**: Prefer nullable columns and feature flags -- add before requiring
 
 ```typescript
 newFeature: text('new_feature'),           // Phase 1: nullable (safe)
 newFeature: text('new_feature').notNull(), // Phase 2: required after backfill
 ```
 
----
-
 ## Best Practices
 
 1. **Review generated SQL** before applying: `cat drizzle/0001_*.sql`
 2. **Test on production copy**: `pg_dump production_db | psql test_db && npx drizzle-kit migrate --config=drizzle.config.test.ts`
-3. **One feature per migration** — easier to review and rollback
+3. **One feature per migration** -- easier to review and rollback
 4. **Wrap large data migrations** in `BEGIN; ... COMMIT;`
 5. **Zero-downtime indexes**: `CREATE INDEX CONCURRENTLY users_email_idx ON users(email);`
-6. **Version control migrations** — never add `drizzle/` to `.gitignore`
+6. **Version control migrations** -- never add `drizzle/` to `.gitignore`
 7. **CI validation**: `npx drizzle-kit generate && git diff --exit-code drizzle/`
-
----
 
 ## Troubleshooting
 
-**"Migration already applied"**
+**"Migration already applied"** -- check/fix the tracking table:
 
 ```sql
 SELECT * FROM __drizzle_migrations;
@@ -223,20 +198,20 @@ SELECT * FROM __drizzle_migrations;
 INSERT INTO __drizzle_migrations (hash, created_at) VALUES ('migration_hash', NOW());
 ```
 
-**"Schema out of sync"**
+**"Schema out of sync":**
 
 ```bash
 npx drizzle-kit pull
 diff src/db/schema.ts drizzle/schema.ts
 ```
 
-**"Cannot drop column"** — check for dependencies:
+**"Cannot drop column"** -- check for dependencies:
 
 ```sql
 SELECT * FROM pg_depend WHERE refobjid = 'table_name'::regclass;
 ```
 
-**Concurrent migration issues** — use advisory locks:
+**Concurrent migration issues** -- use advisory locks:
 
 ```typescript
 await db.execute(sql`SELECT pg_advisory_lock(12345)`);
