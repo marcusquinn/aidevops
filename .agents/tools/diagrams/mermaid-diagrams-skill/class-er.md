@@ -2,9 +2,11 @@
 
 Class diagrams model object-oriented structures. ER diagrams model database schemas and data relationships.
 
-# Class Diagrams
+## Class Diagrams
 
-## Class Definition
+### Definition & Members
+
+Visibility: `+` public, `-` private, `#` protected, `~` package/internal.
 
 ```mermaid
 classDiagram
@@ -17,21 +19,6 @@ classDiagram
         #validatePassword(pwd) bool
         -hashPassword(pwd) String
     }
-```
-
-### Visibility Modifiers
-
-| Symbol | Visibility |
-|--------|------------|
-| `+` | Public |
-| `-` | Private |
-| `#` | Protected |
-| `~` | Package/Internal |
-
-### Return Types
-
-```mermaid
-classDiagram
     class Repository {
         +findById(id) Entity
         +findAll() List~Entity~
@@ -40,7 +27,7 @@ classDiagram
     }
 ```
 
-## Relationships
+### Relationships
 
 | Syntax | Relationship |
 |--------|--------------|
@@ -65,13 +52,6 @@ classDiagram
 
 ### Cardinality
 
-```mermaid
-classDiagram
-    Customer "1" --> "*" Order : places
-    Order "1" --> "1..*" LineItem : contains
-    Order "0..1" --> "1" ShippingAddress : ships to
-```
-
 | Notation | Meaning |
 |----------|---------|
 | `1` | Exactly one |
@@ -81,7 +61,14 @@ classDiagram
 | `n` | Specific number |
 | `0..n` | Zero to n |
 
-## Annotations
+```mermaid
+classDiagram
+    Customer "1" --> "*" Order : places
+    Order "1" --> "1..*" LineItem : contains
+    Order "0..1" --> "1" ShippingAddress : ships to
+```
+
+### Annotations
 
 ```mermaid
 classDiagram
@@ -107,7 +94,7 @@ classDiagram
     }
 ```
 
-## Generic Types
+### Generic Types
 
 ```mermaid
 classDiagram
@@ -122,7 +109,7 @@ classDiagram
     Repository~User~ <|-- UserRepository
 ```
 
-## Namespaces
+### Namespaces
 
 ```mermaid
 classDiagram
@@ -139,7 +126,7 @@ classDiagram
     UserRepository ..|> IUserRepository
 ```
 
-## Notes & Styling
+### Notes & Styling
 
 ```mermaid
 classDiagram
@@ -147,16 +134,12 @@ classDiagram
     note for Order "Aggregate root for order management"
     class OrderItem
     note for OrderItem "Value object - immutable"
-```
-
-```mermaid
-classDiagram
     class Important
     class Normal
     style Important fill:#f9f,stroke:#333,stroke-width:4px
 ```
 
-## Example: Domain Model
+### Example: Domain Model
 
 ```mermaid
 classDiagram
@@ -206,11 +189,9 @@ classDiagram
     OrderItem --> Money : unitPrice
 ```
 
-# Entity Relationship Diagrams
+## Entity Relationship Diagrams
 
-## Relationship Notation (Crow's Foot)
-
-### Cardinality Symbols
+### Cardinality (Crow's Foot)
 
 | Left | Right | Meaning |
 |------|-------|---------|
@@ -221,8 +202,6 @@ classDiagram
 
 Line types: `--` (identifying/strong), `..` (non-identifying/weak).
 
-### Common Patterns
-
 ```mermaid
 erDiagram
     A ||--|| B : "one to one"
@@ -231,7 +210,9 @@ erDiagram
     G }|--|{ H : "many to many (required)"
 ```
 
-## Entity Attributes
+### Entity Attributes
+
+Modifiers: `PK` (primary key), `FK` (foreign key), `UK` (unique key).
 
 ```mermaid
 erDiagram
@@ -250,13 +231,7 @@ erDiagram
     USER ||--o{ ORDER : places
 ```
 
-| Modifier | Meaning |
-|----------|---------|
-| `PK` | Primary Key |
-| `FK` | Foreign Key |
-| `UK` | Unique Key |
-
-## Example: E-Commerce Schema
+### Example: E-Commerce Schema
 
 ```mermaid
 erDiagram
@@ -282,7 +257,7 @@ erDiagram
     SHIPPING { uuid id PK; uuid order_id FK UK; string carrier; string tracking_number; string status; timestamp shipped_at; timestamp delivered_at }
 ```
 
-## Example: Multi-Tenant SaaS
+### Example: Multi-Tenant SaaS
 
 ```mermaid
 erDiagram
