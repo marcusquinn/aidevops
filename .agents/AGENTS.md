@@ -35,6 +35,15 @@ New to aidevops? Type `/onboarding`.
 
 **Specialist subagents**: `@aidevops`, `@seo`, `@wordpress`, etc.
 
+## Errored MCP Server Guard (t1682)
+
+MCP servers that fail to start (e.g., "MCP error -32000: Connection closed", "spawn ENOENT", "ECONNREFUSED") may still have their tool schemas present in the tool list. Calling these tools wastes tokens and always fails.
+
+- When a tool call returns "MCP error -32000", "Connection closed", "spawn ENOENT", or similar startup errors, mark that MCP server as unavailable for the rest of the session. Do NOT retry tools from that server.
+- If you see tools in the tool list from a server that has previously errored, skip them entirely — do not attempt to call them.
+- To identify and fix errored MCP servers: `~/.aidevops/agents/scripts/mcp-diagnose.sh check-all`. This scans all enabled MCP servers and reports which ones are unavailable, with remediation steps.
+- To disable a persistently errored server: set `"enabled": false` in your runtime's MCP config for that server entry. This removes its tool schemas from context entirely. Claude Code CLI: `~/.config/Claude/Claude.json`; Claude Desktop (macOS): `~/Library/Application Support/Claude/claude_desktop_config.json`.
+
 ## Pre-Edit Git Check
 
 > **Skip this section if you don't have Edit/Write/Bash tools** (e.g., Plan+ agent). Instead, proceed directly to responding to the user.
