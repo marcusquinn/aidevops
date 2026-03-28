@@ -22,8 +22,8 @@ tools:
 - **Stack**: Docling (parsing) + ExtractThinker (LLM extraction) + Presidio (PII detection)
 - **Privacy**: Fully local processing via Ollama or Cloudflare Workers AI
 - **Helper**: `scripts/document-extraction-helper.sh`
-- **Schemas**: `tools/document/extraction-schemas.md` (full contracts with QuickFile mapping)
-- **Workflow**: `tools/document/extraction-workflow.md` (tool selection, pipeline orchestration)
+- **Schemas**: `tools/document/extraction-schemas.md` — accounting (`purchase-invoice`, `expense-receipt`, `credit-note`) and general (`invoice`, `receipt`, `contract`, `id-document`, `auto`)
+- **Workflow**: `tools/document/extraction-workflow.md`
 - **PRD**: `todo/tasks/prd-document-extraction.md`
 
 ```bash
@@ -90,14 +90,6 @@ print(AnonymizerEngine().anonymize(text="John Smith's SSN is 123-45-6789", analy
 # "<PERSON>'s SSN is <US_SSN>"
 ```
 
-## Extraction Schemas
-
-Full schema contracts with field descriptions, VAT handling, and QuickFile mapping: `tools/document/extraction-schemas.md`
-
-**Accounting** (UK VAT, QuickFile integration): `purchase-invoice` (supplier invoices), `expense-receipt` (till/shop receipts, fuel, meals), `credit-note` (supplier refunds).
-
-**General**: `invoice` (sales invoices), `receipt` (generic, no accounting), `contract` (key terms), `id-document` (identity docs), `auto` (auto-detect → markdown).
-
 ## Privacy Modes
 
 | Mode | LLM | PII Handling | Use Case |
@@ -141,13 +133,8 @@ pip install easyocr  # or: brew install tesseract             # OCR backends (op
 | **Setup** | `pip install` (3 packages) | `pip install docstrange` | Docker/server required |
 | **Best for** | Custom pipelines + PII | Quick extraction, scans | Enterprise workflows |
 
-Use this stack for custom Pydantic schemas, PII redaction, or fully local CPU processing. Use DocStrange (`tools/document/docstrange.md`) for simpler setup. Use Unstract for enterprise ETL.
-
 ## Related
 
-- `tools/document/extraction-schemas.md` — Full schema contracts (VAT, QuickFile mapping)
-- `tools/document/extraction-workflow.md` — Workflow orchestration and tool selection
-- `scripts/document-extraction-helper.sh` — CLI helper
 - `services/accounting/quickfile.md` — QuickFile MCP (target for extracted data)
 - `tools/document/docstrange.md` — Simpler single-install alternative (NanoNets, 7B model)
 - `tools/conversion/pandoc.md` — Document format conversion
@@ -156,4 +143,3 @@ Use this stack for custom Pydantic schemas, PII redaction, or fully local CPU pr
 - `tools/ocr/paddleocr.md` — PaddleOCR (screenshots, photos, scanned PDFs)
 - `tools/ocr/glm-ocr.md` — Local OCR via Ollama
 - `services/document-processing/unstract.md` — Self-hosted document processing
-- `todo/tasks/prd-document-extraction.md` — Full PRD
