@@ -14,9 +14,9 @@ tools:
 
 # Runway API
 
-AI-powered video, image, and audio generation. REST API with official Node.js and Python SDKs.
+AI video, image, and audio generation via REST API. Official Node.js and Python SDKs.
 
-**Base URL**: `https://api.dev.runwayml.com` | **Version header**: `X-Runway-Version: 2024-11-06`
+**Base URL**: `https://api.dev.runwayml.com` | **Version**: `X-Runway-Version: 2024-11-06` | **1 credit = $0.01**
 
 ## Authentication
 
@@ -25,22 +25,22 @@ Authorization: Bearer $RUNWAYML_API_SECRET
 aidevops secret set RUNWAYML_API_SECRET
 ```
 
-SDKs read `RUNWAYML_API_SECRET` from the environment automatically.
+SDKs read `RUNWAYML_API_SECRET` automatically.
 
-## Endpoints & Models
+## Endpoints
 
-| Endpoint | Purpose | Models | Pricing |
-|----------|---------|--------|---------|
-| `POST /v1/image_to_video` | Image to video | `gen4_turbo` (5cr/s), `veo3`/`veo3.1` (40cr/s), `veo3.1_fast` (15cr/s) | 1 credit = $0.01 |
-| `POST /v1/text_to_video` | Text to video | `veo3`, `veo3.1` (40cr/s audio, 20 no-audio), `veo3.1_fast` (15/10) | -- |
-| `POST /v1/video_to_video` | Video to video | `gen4_aleph` (15cr/s) | -- |
-| `POST /v1/text_to_image` | Text/image to image | `gen4_image` (5cr 720p, 8cr 1080p), `gen4_image_turbo` (2cr), `gemini_2.5_flash` (5cr) | -- |
-| `POST /v1/character_performance` | Character control | `act_two` (5cr/s) | -- |
-| `POST /v1/text_to_speech` | Text to speech | `eleven_multilingual_v2` (1cr/50 chars) | -- |
-| `POST /v1/speech_to_speech` | Voice conversion | `eleven_multilingual_sts_v2` (1cr/3s) | -- |
-| `POST /v1/sound_effect` | Sound effect gen | `eleven_text_to_sound_v2` (1cr/s) | -- |
-| `POST /v1/voice_dubbing` | Multi-language dub | `eleven_voice_dubbing` (1cr/2s output) | -- |
-| `POST /v1/voice_isolation` | Isolate voice | `eleven_voice_isolation` (1cr/6s) | -- |
+| Endpoint | Purpose | Models | Cost |
+|----------|---------|--------|------|
+| `POST /v1/image_to_video` | Image→video | `gen4_turbo` (5cr/s), `veo3`/`veo3.1` (40cr/s), `veo3.1_fast` (15cr/s) | per-second |
+| `POST /v1/text_to_video` | Text→video | `veo3`, `veo3.1` (40cr/s audio, 20 no-audio), `veo3.1_fast` (15/10) | per-second |
+| `POST /v1/video_to_video` | Video→video | `gen4_aleph` (15cr/s) | per-second |
+| `POST /v1/text_to_image` | Text/image→image | `gen4_image` (5cr 720p, 8cr 1080p), `gen4_image_turbo` (2cr), `gemini_2.5_flash` (5cr) | per-image |
+| `POST /v1/character_performance` | Character control | `act_two` (5cr/s) | per-second |
+| `POST /v1/text_to_speech` | TTS | `eleven_multilingual_v2` (1cr/50 chars) | per-char |
+| `POST /v1/speech_to_speech` | Voice conversion | `eleven_multilingual_sts_v2` (1cr/3s) | per-second |
+| `POST /v1/sound_effect` | SFX generation | `eleven_text_to_sound_v2` (1cr/s) | per-second |
+| `POST /v1/voice_dubbing` | Multi-lang dub | `eleven_voice_dubbing` (1cr/2s output) | per-second |
+| `POST /v1/voice_isolation` | Isolate voice | `eleven_voice_isolation` (1cr/6s) | per-second |
 | `GET /v1/tasks/{id}` | Poll task status | -- | -- |
 | `DELETE /v1/tasks/{id}` | Cancel/delete task | -- | -- |
 | `POST /v1/uploads` | Upload ephemeral file | -- | -- |
@@ -57,9 +57,9 @@ curl -X POST https://api.dev.runwayml.com/v1/image_to_video \
   -d '{"model":"gen4_turbo","promptImage":"https://example.com/image.jpg","promptText":"A timelapse on a sunny day","ratio":"1280:720","duration":5}'
 ```
 
-> Subsequent curl examples omit the three standard headers above for brevity.
+> Subsequent curl examples omit the three standard headers for brevity.
 
-SDK pattern (identical across all endpoints — shown once here):
+SDK pattern (identical across all endpoints — shown once):
 
 ```javascript
 const task = await client.imageToVideo.create({
@@ -75,7 +75,7 @@ task = client.image_to_video.create(
 ).wait_for_task_output()
 ```
 
-**Parameters**: `model` (required), `promptImage` (HTTPS URL/data URI/runway:// URI), `promptText` (<=1000 chars), `ratio` (required), `duration` (2-10s), `seed` (0-4294967295)
+**Params**: `model` (required), `promptImage` (HTTPS URL/data URI/runway:// URI), `promptText` (<=1000 chars), `ratio` (required), `duration` (2-10s), `seed` (0-4294967295)
 
 **Gen-4 Turbo ratios**: `1280:720`, `1584:672`, `1104:832`, `720:1280`, `832:1104`, `960:960`
 
@@ -86,7 +86,7 @@ curl -X POST https://api.dev.runwayml.com/v1/text_to_video \
   -d '{"model":"veo3.1","promptText":"A cinematic mountain landscape at golden hour","ratio":"1920:1080","duration":8,"audio":true}'
 ```
 
-**Parameters**: `model` (`veo3`/`veo3.1`/`veo3.1_fast`), `promptText` (<=1000 chars, required), `ratio` (`1280:720`/`720:1280`/`1080:1920`/`1920:1080`), `duration` (4/6/8s), `audio` (bool, default true -- affects pricing)
+**Params**: `model` (`veo3`/`veo3.1`/`veo3.1_fast`), `promptText` (<=1000 chars, required), `ratio` (`1280:720`/`720:1280`/`1080:1920`/`1920:1080`), `duration` (4/6/8s), `audio` (bool, default true — affects pricing)
 
 ## Video-to-Video (Gen-4 Aleph)
 
@@ -95,18 +95,18 @@ curl -X POST https://api.dev.runwayml.com/v1/video_to_video \
   -d '{"model":"gen4_aleph","videoUri":"https://example.com/input.mp4","promptText":"Add dramatic lighting","references":[{"type":"image","uri":"https://example.com/style.jpg"}]}'
 ```
 
-**Parameters**: `model` (`gen4_aleph`), `videoUri` (required), `promptText` (<=1000 chars, required), `references` (<=1 image), `seed`
+**Params**: `model` (`gen4_aleph`), `videoUri` (required), `promptText` (<=1000 chars, required), `references` (<=1 image), `seed`
 
 ## Text/Image to Image (Gen-4 Image)
 
-Use `@tag` syntax in prompts to reference tagged images.
+Use `@tag` in prompts to reference tagged images.
 
 ```bash
 curl -X POST https://api.dev.runwayml.com/v1/text_to_image \
   -d '{"model":"gen4_image","promptText":"@subject in a cyberpunk city","ratio":"1920:1080","referenceImages":[{"uri":"https://example.com/person.jpg","tag":"subject"}]}'
 ```
 
-**Parameters**: `model`, `promptText` (<=1000 chars, use `@tag` for refs), `ratio`, `referenceImages` (1-3 with `uri` + optional `tag`), `seed`
+**Params**: `model`, `promptText` (<=1000 chars, use `@tag` for refs), `ratio`, `referenceImages` (1-3 with `uri` + optional `tag`), `seed`
 
 **Gen-4 Image ratios**: `1024:1024`, `1080:1080`, `720:720`, `1168:880`, `1360:768`, `1440:1080`, `1808:768`, `1920:1080`, `2112:912`, `1280:720`, `960:720`, `1680:720`, `1080:1440`, `1080:1920`, `720:1280`, `720:960`
 
@@ -121,9 +121,9 @@ const task = await client.characterPerformance.create({
 }).waitForTaskOutput();
 ```
 
-**Parameters**: `model` (`act_two`), `character` (`{type:"image"/"video",uri}`), `reference` (`{type:"video",uri}` 3-30s), `bodyControl` (bool), `expressionIntensity` (1-5, default 3), `ratio`
+**Params**: `model` (`act_two`), `character` (`{type:"image"/"video",uri}`), `reference` (`{type:"video",uri}` 3-30s), `bodyControl` (bool), `expressionIntensity` (1-5, default 3), `ratio`
 
-## Audio Generation
+## Audio
 
 ### Text-to-Speech
 
@@ -135,7 +135,7 @@ const task = await client.textToSpeech.create({
 }).waitForTaskOutput();
 ```
 
-**Voice presets**: Maya, Arjun, Serene, Bernard, Billy, Mark, Clint, Mabel, Chad, Leslie, Eleanor, Elias, Elliot, Grungle, Brodie, Sandra, Kirk, Kylie, Lara, Lisa, Malachi, Marlene, Martin, Miriam, Monster, Paula, Pip, Rusty, Ragnar, Xylar, Maggie, Jack, Katie, Noah, James, Rina, Ella, Mariah, Frank, Claudia, Niki, Vincent, Kendrick, Myrna, Tom, Wanda, Benjamin, Kiana, Rachel
+**Presets**: Maya, Arjun, Serene, Bernard, Billy, Mark, Clint, Mabel, Chad, Leslie, Eleanor, Elias, Elliot, Grungle, Brodie, Sandra, Kirk, Kylie, Lara, Lisa, Malachi, Marlene, Martin, Miriam, Monster, Paula, Pip, Rusty, Ragnar, Xylar, Maggie, Jack, Katie, Noah, James, Rina, Ella, Mariah, Frank, Claudia, Niki, Vincent, Kendrick, Myrna, Tom, Wanda, Benjamin, Kiana, Rachel
 
 ### Speech-to-Speech
 
@@ -158,7 +158,7 @@ const task = await client.soundEffect.create({
 }).waitForTaskOutput();
 ```
 
-**Parameters**: `promptText` (<=3000 chars), `duration` (0.5-30s, auto if omitted), `loop` (bool)
+**Params**: `promptText` (<=3000 chars), `duration` (0.5-30s, auto if omitted), `loop` (bool)
 
 ### Voice Dubbing
 
@@ -170,7 +170,7 @@ const task = await client.voiceDubbing.create({
 }).waitForTaskOutput();
 ```
 
-**Parameters**: `audioUri`, `targetLang` (en/hi/pt/zh/es/fr/de/ja/ar/ru/ko/id/it/nl/tr/pl/sv/fil/ms/ro/uk/el/cs/da/fi/bg/hr/sk/ta), `disableVoiceCloning`, `dropBackgroundAudio`, `numSpeakers`
+**Params**: `audioUri`, `targetLang` (en/hi/pt/zh/es/fr/de/ja/ar/ru/ko/id/it/nl/tr/pl/sv/fil/ms/ro/uk/el/cs/da/fi/bg/hr/sk/ta), `disableVoiceCloning`, `dropBackgroundAudio`, `numSpeakers`
 
 ### Voice Isolation
 
@@ -181,13 +181,13 @@ const task = await client.voiceIsolation.create({
 }).waitForTaskOutput();
 ```
 
-Input: 4.6s-3600s duration.
+Input duration: 4.6s-3600s.
 
 ## Task Management
 
-All generation endpoints return a task ID (asynchronous). Poll at 5+ second intervals with jitter and exponential backoff.
+All generation endpoints return a task ID (async). Poll at 5+ second intervals with jitter and exponential backoff.
 
-**Status values**: `PENDING`, `THROTTLED`, `RUNNING`, `SUCCEEDED`, `FAILED`
+**Statuses**: `PENDING`, `THROTTLED`, `RUNNING`, `SUCCEEDED`, `FAILED`
 
 ```bash
 # Poll
@@ -199,7 +199,7 @@ curl -X DELETE https://api.dev.runwayml.com/v1/tasks/{task_id} \
   -H "Authorization: Bearer $RUNWAYML_API_SECRET" -H "X-Runway-Version: 2024-11-06"
 ```
 
-SDKs: `.waitForTaskOutput()` / `.wait_for_task_output()` (10-min default timeout). Error classes: `TaskFailedError` (check `.taskDetails`), `TaskTimedOutError`.
+SDKs: `.waitForTaskOutput()` / `.wait_for_task_output()` (10-min default timeout). Errors: `TaskFailedError` (check `.taskDetails`), `TaskTimedOutError`.
 
 ```javascript
 import { TaskFailedError } from '@runwayml/sdk';
@@ -219,7 +219,7 @@ import fs from 'node:fs';
 const uploadUri = await client.uploads.createEphemeral(fs.createReadStream('./input.mp4'));
 ```
 
-Ephemeral uploads expire after 24 hours. Use `uploadUri` in `videoUri`, `promptImage`, etc.
+Ephemeral uploads expire after 24h. Use `uploadUri` in `videoUri`, `promptImage`, etc.
 
 ## Input Requirements
 
@@ -229,7 +229,7 @@ Ephemeral uploads expire after 24 hours. Use `uploadUri` in `videoUri`, `promptI
 | Videos | MP4 (H.264/H.265/AV1), MOV, MKV, WebM | 32MB | 16MB | 200MB |
 | Audio | MP3, WAV, FLAC, M4A (AAC/ALAC), AAC | 32MB | 16MB | 200MB |
 
-Minimum image: 640x640px, maximum: 4K. Base64 increases size ~33% (5MB data URI = ~3.3MB binary).
+Min image: 640x640px, max: 4K. Base64 ~33% overhead (5MB data URI ≈ 3.3MB binary).
 
 ## Organization & Credits
 
@@ -246,17 +246,17 @@ const usage = await client.organization.retrieveUsage({ startDate: '2026-01-01',
 {"contentModeration": {"publicFigureThreshold": "low"}}
 ```
 
-Set `"low"` to be less strict about recognizable public figures.
+Set `"low"` for less strict public figure recognition.
 
-## Error Handling
+## Error Codes
 
-| HTTP Code | Meaning |
-|-----------|---------|
+| Code | Meaning |
+|------|---------|
 | 200 | Task created |
 | 400 | Bad request |
 | 401 | Invalid API key |
 | 404 | Task not found |
-| 429 | Rate limit exceeded |
+| 429 | Rate limited |
 
 ## Helper Script
 
@@ -279,14 +279,14 @@ runway-helper.sh usage --start 2026-01-01 --end 2026-02-01
 
 | Feature | Runway | Higgsfield |
 |---------|--------|------------|
-| Video models | Gen-4, Veo 3/3.1, Aleph, Act Two | DOP, Kling, Seedance |
-| Image models | Gen-4 Image, Gemini 2.5 Flash | Soul, Popcorn, Seedream |
-| Audio models | ElevenLabs TTS/STS/SFX/dubbing/isolation | None |
+| Video | Gen-4, Veo 3/3.1, Aleph, Act Two | DOP, Kling, Seedance |
+| Image | Gen-4 Image, Gemini 2.5 Flash | Soul, Popcorn, Seedream |
+| Audio | ElevenLabs TTS/STS/SFX/dubbing/isolation | None |
 | Auth | Bearer token (single key) | API key + secret (dual) |
-| SDKs | Official Node.js + Python | Python SDK |
-| Task polling | Built-in `.waitForTaskOutput()` | Manual polling |
-| Character control | Act Two (performance transfer) | Character consistency (reference ID) |
-| Best for | Full media pipeline (video+image+audio) | Multi-model access, budget options |
+| SDKs | Node.js + Python (official) | Python |
+| Task polling | `.waitForTaskOutput()` built-in | Manual |
+| Character | Act Two (performance transfer) | Reference ID consistency |
+| Best for | Full media pipeline (video+image+audio) | Multi-model access, budget |
 
 ## Related
 
