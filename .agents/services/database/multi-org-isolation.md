@@ -34,7 +34,7 @@ tools:
 
 ### Isolation Strategy: Row-Level Tenancy
 
-Row-level tenancy (shared database, shared schema, `org_id` column). Not schema-per-tenant or database-per-tenant — correct here because orgs share the same feature set, superadmin needs cross-org visibility, single migration path, and PostgreSQL RLS enforces at DB level.
+Row-level tenancy chosen (shared database, shared schema, `org_id` column) — orgs share the same feature set, superadmin needs cross-org visibility, single migration path, PostgreSQL RLS enforces at DB level.
 
 | Strategy | Pros | Cons | When to use |
 |----------|------|------|-------------|
@@ -68,70 +68,28 @@ organisations 1──* org_memberships *──1 users
 
 ### Core Tables
 
-```typescript
-export const organisations = pgTable('organisations', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  slug: varchar('slug', { length: 63 }).notNull().unique(), // URL-safe, used in routing
-  name: text('name').notNull(),
-  plan: text('plan', { enum: ['free', 'pro', 'enterprise'] }).notNull().default('free'),
-  settings: jsonb('settings').$type<OrgSettings>().default({}),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
-});
+Full definitions in `schemas/multi-org.ts`. Key design notes:
 
-// Users are global — can belong to multiple orgs. No password field (auth delegated).
-export const users = pgTable('users', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  email: varchar('email', { length: 255 }).notNull().unique(),
-  name: text('name'),
-  avatarUrl: text('avatar_url'),
-  lastActiveOrgId: uuid('last_active_org_id').references(() => organisations.id, { onDelete: 'set null' }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
-});
-
-export const roleEnum = pgEnum('org_role', ['owner', 'admin', 'member', 'viewer']);
-export const org_memberships = pgTable('org_memberships', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  orgId: uuid('org_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
-  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  role: roleEnum('role').notNull().default('member'),
-  invitedBy: uuid('invited_by').references(() => users.id, { onDelete: 'set null' }),
-  joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  uniqueIndex('org_memberships_org_user_idx').on(table.orgId, table.userId),
-  index('org_memberships_user_idx').on(table.userId),
-]);
-```
+- `organisations`: `slug` (varchar 63) is URL-safe, used in routing; `plan` enum: `free|pro|enterprise`
+- `users`: global — can belong to multiple orgs; no password field (auth delegated); `lastActiveOrgId` nullable
+- `org_memberships`: unique index on `(orgId, userId)`; roles: `owner|admin|member|viewer`
 
 ### Org-Scoped Tables Pattern
 
-All tenant-scoped tables spread `orgScoped`. Full definitions in `schemas/multi-org.ts`.
+All tenant-scoped tables spread `orgScoped`:
 
 ```typescript
 const orgScoped = {
   orgId: uuid('org_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
 };
-
-// org_credentials — representative example
-export const org_credentials = pgTable('org_credentials', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  ...orgScoped,
-  service: varchar('service', { length: 100 }).notNull(),
-  keyName: varchar('key_name', { length: 100 }).notNull(),
-  encryptedValue: text('encrypted_value').notNull(), // Never stored in plaintext
-  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
-}, (table) => [
-  uniqueIndex('org_credentials_org_service_key_idx').on(table.orgId, table.service, table.keyName),
-  index('org_credentials_org_idx').on(table.orgId),
-]);
-
-// ai_sessions — t004.4: adds composite org+user index for session scoping
-// memories — nullable org_id = personal; uses conditional index where(sql`org_id IS NOT NULL`)
-// audit_log — org_id NOT NULL; indexed on (org_id, action) and created_at
 ```
+
+Table-specific notes:
+
+- `org_credentials`: unique index on `(orgId, service, keyName)`; `encryptedValue` never stored in plaintext
+- `ai_sessions` — t004.4: composite org+user index for session scoping
+- `memories`: nullable `org_id` = personal; conditional index `where(sql\`org_id IS NOT NULL\`)`
+- `audit_log`: `org_id` NOT NULL; indexed on `(org_id, action)` and `created_at`
 
 ## Row-Level Security (RLS)
 
@@ -220,6 +178,8 @@ const allOrgs = await superadminDb.select().from(organisations);
 
 ## Integration with Existing Multi-Tenant Credentials
 
+File-based credential system continues to work for CLI/local development. Database schema adds server-side isolation for hosted/multi-user deployments.
+
 | Existing concept | New schema equivalent |
 |-----------------|----------------------|
 | Tenant name (e.g., `client-acme`) | `organisations.slug` |
@@ -227,8 +187,6 @@ const allOrgs = await superadminDb.select().from(organisations);
 | `active-tenant` file | `users.last_active_org_id` |
 | `.aidevops-tenant` project file | Project-level org binding (unchanged) |
 | `credential-helper.sh switch` | Org switch (update session + last_active) |
-
-The file-based credential system continues to work for CLI/local development. The database schema adds server-side isolation for hosted/multi-user deployments.
 
 ## Migration Path
 
