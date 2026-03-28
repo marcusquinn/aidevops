@@ -20,7 +20,7 @@ Loss aversion is 2-3x more powerful than gain attraction.
 [URGENCY]: "7 of 10 slots already claimed. Book now or wait 4 weeks."
 ```
 
-**Best for:** Problem-aware audiences, competitive markets, B2B, security/insurance. **Caution:** Balance fear with hope/solution.
+**Best for:** Problem-aware audiences, competitive markets, B2B, security/insurance. **Caution:** Don't manipulate or lie. Balance fear with hope/solution. Avoid overwhelming fear.
 
 #### 2. GREED (Desire for Gain)
 
@@ -56,7 +56,7 @@ Create incomplete information, tease surprising insights, contradict common beli
 [CTA]: "Register now - spots limited to 100 people."
 ```
 
-**Best for:** Cold audiences, educational content, lead magnets, thought leadership. **Caution:** Must deliver (no bait-and-switch).
+**Best for:** Cold audiences, educational content, lead magnets, thought leadership. **Caution:** Must deliver (no bait-and-switch); don't overuse (curiosity fatigue).
 
 #### 4. VANITY (Self-Image & Status)
 
@@ -110,7 +110,7 @@ Celebrate accomplishments, enable skill mastery, show progression paths.
 [CELEBRATE]: "Join 3,000+ students who've launched their first profitable campaign."
 ```
 
-**Best for:** Education/courses, skill development, fitness, creative tools. **Caution:** Celebrate effort, not just outcome.
+**Best for:** Education/courses, skill development, fitness, creative tools. **Caution:** Celebrate effort, not just outcome. Make achievement feel attainable.
 
 #### 7. ANGER/FRUSTRATION (Justified Rebellion)
 
@@ -128,7 +128,7 @@ Channel existing frustration with the status quo toward your alternative.
 [CTA]: "Ready for an agency that's actually on your side?"
 ```
 
-**Best for:** Challenger brands, disruptive products, reform-focused services. **Caution:** Validate, don't create anger. Don't attack competitors.
+**Best for:** Challenger brands, disruptive products, reform-focused services. **Caution:** Validate, don't create anger. Channel toward a solution. Don't attack competitors.
 
 ### Trigger Selection
 
@@ -144,7 +144,14 @@ Channel existing frustration with the status quo toward your alternative.
 
 **By product type:** B2B SaaS → Greed (ROI) + Fear (competition) | E-commerce fashion → Vanity + Belonging | Education/Courses → Pride + Curiosity | Fitness → Vanity + Pride | Financial Services → Greed + Fear | Insurance → Fear + Belonging | Luxury Goods → Vanity + Exclusivity (Greed) | Community/Membership → Belonging + Pride
 
-**By psychographic:** Early Adopters → Curiosity + Vanity (beta results, tech specs) | Pragmatists → Belonging + Fear (user count, testimonials) | Value Seekers → Greed + Pride (comparison charts, price breakdowns) | Premium Buyers → Vanity + Belonging (materials, craftsmanship, prestige)
+**By Psychographic:**
+
+| Type | Primary | Proof Type |
+|------|---------|------------|
+| Early Adopters (Innovation) | Curiosity + Vanity | Beta results, tech specs |
+| Pragmatists (Reliability) | Belonging + Fear | User count, testimonials |
+| Value Seekers (Smart spending) | Greed + Pride | Comparison charts, price breakdowns |
+| Premium Buyers (Exclusivity) | Vanity + Belonging | Materials, craftsmanship, prestige |
 
 ### A/B Testing Triggers
 
@@ -164,13 +171,13 @@ Measure CPA, CTR, engagement. Track best triggers per segment, scale without fat
 
 ### Awareness-Message Matrix
 
-| Stage | Strategy | Creative Approach | Primary Trigger |
-|-------|----------|-------------------|-----------------|
-| **Unaware** | Education, curiosity hooks, soft sell | Blog-style, "Did you know...", pattern interrupts | Curiosity |
-| **Problem Aware** | Validate problem, amplify pain | Problem-focused hooks, authority building | Fear/Anger |
-| **Solution Aware** | Differentiation, your approach vs. others | Comparison angles, case studies | Greed |
-| **Product Aware** | Social proof, address objections | Testimonials, risk reversal | Fear (FOMO) |
-| **Most Aware** | Reminders, special offers | Direct offers, cart abandonment, loyalty | Belonging |
+| Stage | Audience State | Strategy | Creative Approach | Primary Trigger |
+|-------|---------------|----------|-------------------|-----------------|
+| **Unaware** | No problem awareness | Education, curiosity hooks, soft sell | Blog-style, "Did you know...", pattern interrupts | Curiosity |
+| **Problem Aware** | Knows problem, not solution | Validate problem, amplify pain | Problem-focused hooks, authority building | Fear/Anger |
+| **Solution Aware** | Knows solutions, not yours | Differentiation, your approach vs. others | Comparison angles, case studies | Greed |
+| **Product Aware** | Considering you vs. others | Social proof, address objections | Testimonials, risk reversal | Fear (FOMO) |
+| **Most Aware** | Ready to buy from you | Reminders, special offers | Direct offers, cart abandonment, loyalty | Belonging |
 
 **Stage examples (bad → good):**
 
@@ -186,10 +193,10 @@ MOST AWARE (subscription): "Discover our subscription" → "You left this in you
 
 | Generation | Key Traits | Example |
 |-----------|------------|---------|
-| **Gen Z (18-25)** | Authentic, values-driven, mobile-first, ad-skeptical | "No cap, these are actually good. Sustainably made. Here's the proof." |
-| **Millennials (26-40)** | Experience > ownership, transparency, community | "Life's too short for [pain point]. Get [benefit] monthly, cancel anytime." |
+| **Gen Z (18-25)** | Authentic, values-driven, peer proof, mobile-first, ad-skeptical | "No cap, these are actually good. Sustainably made. Here's the proof." |
+| **Millennials (26-40)** | Experience > ownership, transparency, community, convenience | "Life's too short for [pain point]. Get [benefit] monthly, cancel anytime." |
 | **Gen X (41-56)** | Skeptical of hype, quality > quantity, results-focused | "No gimmicks. A product that works, backed by 10,000+ verified reviews." |
-| **Boomers (57-75)** | Trust/reputation, human connection, detail-oriented | "Family-owned since 1985. Trusted by 100,000+ customers. Call us." |
+| **Boomers (57-75)** | Trust/reputation, human connection, service-focused | "Family-owned since 1985. Trusted by 100,000+ customers. Call us." |
 
 ### Industry-Specific Messaging
 
