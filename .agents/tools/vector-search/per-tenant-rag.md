@@ -26,15 +26,11 @@ tools:
 - **Isolation strategy**: Collection-per-tenant (physical) or namespace/metadata filtering (logical)
 - **Pipeline**: Upload → Chunk → Embed → Store → Query → Rerank → LLM Context Assembly
 
-**This document covers SaaS app development** where users/organisations upload their own documents for RAG. It is NOT for the aidevops internal memory system (SQLite FTS5) or code search (osgrep).
+**Scope**: SaaS apps where users/organisations upload documents for RAG. NOT for aidevops internal memory (SQLite FTS5) or code search (osgrep).
 
 <!-- AI-CONTEXT-END -->
 
-## Architecture Overview
-
-A per-tenant RAG system must solve two problems simultaneously: (1) effective retrieval from unstructured documents, and (2) strict data isolation between tenants. Getting retrieval right but leaking data across tenants is a security incident. Getting isolation right but returning irrelevant chunks is a product failure.
-
-### End-to-End Pipeline
+## Pipeline Overview
 
 ```text
 User uploads file (PDF/DOCX/TXT/HTML/CSV)
@@ -48,41 +44,32 @@ User uploads file (PDF/DOCX/TXT/HTML/CSV)
   → [8. Assemble] System prompt + chunks + query; manage token budget
 ```
 
-### Stage Failure Modes
-
 | Stage | Failure mode | Impact |
 |-------|-------------|--------|
 | Parse | Garbled text extraction | All downstream stages work on garbage |
-| Chunk | Chunks too large or split mid-sentence | Embeddings capture noise |
+| Chunk | Too large or split mid-sentence | Embeddings capture noise |
 | Embed | Wrong model or dimension mismatch | Queries return random results |
-| Store | Wrong tenant collection | Data leak (security incident) |
-| Query | No tenant filter | Cross-tenant data exposure |
+| Store | Wrong tenant collection | **Data leak (security incident)** |
+| Query | No tenant filter | **Cross-tenant data exposure** |
 | Rerank | Skipped | Irrelevant chunks, LLM hallucinates |
 
-## Tenant Isolation Models
+## Tenant Isolation
 
-| Approach | Isolation level | Query overhead | Tenant limit | Best for |
-|----------|----------------|---------------|-------------|----------|
-| Collection-per-tenant | Physical | None | ~10K | **Default recommendation** |
-| Namespace-per-tenant | Logical (partition) | Namespace filter (fast) | ~50K | Cloudflare Vectorize |
+| Approach | Isolation | Query overhead | Tenant limit | Best for |
+|----------|----------|---------------|-------------|----------|
+| **Collection-per-tenant** | Physical | None | ~10K | **Default recommendation** |
+| Namespace-per-tenant | Logical (partition) | Namespace filter | ~50K | Cloudflare Vectorize |
 | Metadata filter | Logical (row-level) | Filter during search | Unlimited | Simple cases, few tenants |
 | pgvector + RLS | Logical (DB-level) | RLS policy check | Unlimited | Already on PostgreSQL |
 | Separate DB/index | Physical (full) | None | ~100 | Regulated/enterprise |
 
-### Recommended: Collection-Per-Tenant
+**Why collection-per-tenant wins**: Queries against tenant A's collection cannot return tenant B's data even with an application bug — no filter to forget. Tenant create/delete = collection create/drop. No orphaned vectors.
 
-**Why it wins**: A query against tenant A's collection cannot return tenant B's data even with an application bug — there is no filter to forget. Creating/deleting a tenant = creating/dropping a collection. No orphaned vectors.
+**When NOT to use**: >10K tenants (metadata overhead), tenants with <100 vectors each, or cross-tenant search is a product requirement.
 
-**When NOT to use**: >10K tenants (collection metadata overhead), tenants with <100 vectors each, or cross-tenant search is a product requirement.
+### Multi-Org Integration
 
-### Integration with Multi-Org Schema
-
-```text
-organisations.id (UUID)
-  → Vector collection: "rag_{org_id}"
-  → Object storage prefix: "uploads/{org_id}/"
-  → Metadata in vector store: org_id, uploaded_by, source_file, chunk_index
-```
+Collection naming: `rag_{org_id}`. Object storage: `uploads/{org_id}/`. Metadata per vector: `org_id`, `uploaded_by`, `source_file`, `chunk_index`.
 
 ```typescript
 import type { TenantContext } from './tenant-context';
@@ -95,11 +82,47 @@ async function searchDocuments(ctx: TenantContext, query: string, topK = 5): Pro
 }
 ```
 
-**Audit logging**: Log all RAG operations (upload, delete, search) to `audit_log` with `org_id`, `userId`, `action`, and metadata.
+### Cross-Tenant Prevention (4 Layers)
+
+**Layer 1 — Physical**: Collection-per-tenant scopes queries physically.
+
+**Layer 2 — Application**: Derive collection name from authenticated context, never user input:
+
+```typescript
+app.post('/api/search', async (req, res) => {
+  const collection = `rag_${req.tenant.orgId}`;  // From auth, not req.body
+  const results = await vectorDb.search(collection, ...);
+});
+```
+
+**Layer 3 — Validation**: Post-query ownership check with alerting:
+
+```typescript
+function validateTenantOwnership(results: ScoredChunk[], orgId: string): ScoredChunk[] {
+  return results.filter(r => {
+    if (r.metadata.orgId !== orgId) {
+      logger.error('CROSS_TENANT_LEAK_DETECTED', { requestingOrg: orgId, resultOrg: r.metadata.orgId, chunkId: r.id });
+      return false;
+    }
+    return true;
+  });
+}
+```
+
+**Layer 4 — Testing**: Integration test verifying isolation:
+
+```typescript
+it('cannot retrieve vectors from another tenant', async () => {
+  await uploadDocument(tenantA, 'secret-plans.pdf');
+  await uploadDocument(tenantB, 'public-info.pdf');
+  const results = await searchDocuments(tenantAContext, 'secret plans');
+  expect(results.filter(r => r.metadata.orgId === tenantB.orgId)).toHaveLength(0);
+});
+```
 
 ## Pipeline Stage Details
 
-### Stage 1: Ingest
+### 1. Ingest
 
 ```typescript
 const DEFAULT_INGEST_CONFIG = {
@@ -110,32 +133,32 @@ const DEFAULT_INGEST_CONFIG = {
 };
 ```
 
-**Security**: Validate MIME type from magic bytes (not extension), scan for malware, set per-tenant storage quotas.
+Validate MIME type from magic bytes (not extension), scan for malware, set per-tenant storage quotas.
 
-### Stage 2: Parse
+### 2. Parse
 
-| File type | Recommended parser | Notes |
-|-----------|-------------------|-------|
+| File type | Parser | Notes |
+|-----------|--------|-------|
 | PDF | Docling (IBM, Apache-2.0) | Best for complex layouts, tables, figures |
 | DOCX | mammoth | Preserves structure, ignores formatting |
 | HTML | mozilla/readability | Extracts article content, strips nav/ads |
 | CSV | papaparse | Row-per-chunk or grouped; include header as context |
 | TXT/MD | Direct | Split on paragraph boundaries |
 
-### Stage 3: Chunk
+### 3. Chunk
 
-**Recommended default: 512 tokens, 128 overlap.** Most embedding models are trained on 256-512 token passages. Larger chunks dilute the embedding signal; smaller chunks lose context. 128-token overlap prevents boundary information loss.
+**Default: 512 tokens, 128 overlap.** Most embedding models train on 256-512 token passages. Larger chunks dilute signal; smaller lose context.
 
 | Strategy | Chunk size | Overlap | Best for |
 |----------|-----------|---------|----------|
 | Small | 256-512 tokens | 64 tokens | Precise factual retrieval (Q&A) |
-| Medium | 512-1024 tokens | 128 tokens | General-purpose RAG (default) |
+| Medium | 512-1024 tokens | 128 tokens | **General-purpose RAG (default)** |
 | Large | 1024-2048 tokens | 256 tokens | Summarisation, long-form context |
 | Section-based | Variable | None | Structured documents with clear headings |
 
-Every chunk must carry: `id` (`{document_id}_{chunk_index}`), `content`, `documentId`, `chunkIndex`, `totalChunks`, `sourceFile`, `orgId`, `uploadedBy`, `uploadedAt`, `embeddingModel`.
+Required chunk metadata: `id` (`{document_id}_{chunk_index}`), `content`, `documentId`, `chunkIndex`, `totalChunks`, `sourceFile`, `orgId`, `uploadedBy`, `uploadedAt`, `embeddingModel`.
 
-### Stage 4: Embed
+### 4. Embed
 
 | Model | Dimensions | Quality (MTEB) | Cost | Notes |
 |-------|-----------|----------------|------|-------|
@@ -146,11 +169,11 @@ Every chunk must carry: `id` (`{document_id}_{chunk_index}`), `content`, `docume
 | Cloudflare Workers AI bge-base | 768 | Good | Included in Workers | Cloudflare-native |
 | BM25 (sparse, local) | Vocabulary-sized | N/A (lexical) | Free | Hybrid search complement |
 
-**Matryoshka embeddings**: Models like OpenAI text-embedding-3-small and Jina v3 support truncating dimensions (1536→512→256) with ~2-5% recall loss. Use when storage cost matters.
+**Matryoshka embeddings**: Models like text-embedding-3-small and Jina v3 support truncating dimensions (1536→512→256) with ~2-5% recall loss. Use when storage cost matters.
 
-**Critical rule**: Store the embedding model ID with every vector. When you change models, old vectors are incompatible with new query embeddings — you must re-embed all existing vectors or maintain separate collections per model version.
+**Critical**: Store the embedding model ID with every vector. Model changes make old vectors incompatible — re-embed all existing vectors or maintain separate collections per model version.
 
-### Stage 5: Store
+### 5. Store
 
 **HNSW parameters by tenant size**:
 
@@ -161,8 +184,6 @@ Every chunk must carry: `id` (`{document_id}_{chunk_index}`), `content`, `docume
 | 100K-1M | 32 | 200 | 150 |
 | >1M | 48 | 400 | 200 |
 
-**Index configuration by vector DB**:
-
 | Vector DB | Tenant isolation | Index type |
 |-----------|-----------------|------------|
 | zvec | Collection per org | HNSW (default), IVF |
@@ -170,7 +191,7 @@ Every chunk must carry: `id` (`{document_id}_{chunk_index}`), `content`, `docume
 | pgvector | RLS policy on org_id | IVF or HNSW |
 | Qdrant | Collection per org | HNSW |
 
-### Stage 6: Query
+### 6. Query
 
 ```typescript
 async function queryTenantRAG(ctx: TenantContext, query: string, config = DEFAULT_QUERY_CONFIG) {
@@ -193,13 +214,11 @@ async function queryTenantRAG(ctx: TenantContext, query: string, config = DEFAUL
 }
 ```
 
-**Default config**: `candidateCount: 20`, `minScore: 0.3`, `hybrid: false`, `hybridAlpha: 0.7`.
+**Defaults**: `candidateCount: 20`, `minScore: 0.3`, `hybrid: false`, `hybridAlpha: 0.7`. Use hybrid search when users search for specific terms/names/codes that semantic search misses, or documents contain domain-specific jargon.
 
-**Use hybrid search when**: Users search for specific terms/names/codes that semantic search misses, or documents contain domain-specific jargon.
+### 7. Rerank
 
-### Stage 7: Rerank
-
-Reranking is the highest-ROI improvement to a RAG pipeline — typically improves answer quality by 10-30%.
+Highest-ROI improvement to a RAG pipeline — typically 10-30% answer quality gain.
 
 | Strategy | Accuracy | Latency | Cost | When to use |
 |----------|----------|---------|------|-------------|
@@ -209,13 +228,11 @@ Reranking is the highest-ROI improvement to a RAG pipeline — typically improve
 | None | Baseline | 0ms | Free | Prototyping only |
 
 ```typescript
-// Cross-encoder
 async function rerankWithCrossEncoder(query: string, candidates: ScoredChunk[], topK = 5) {
   const pairs = candidates.map(c => ({ query, document: c.content, ...c }));
   return (await crossEncoder.rank(pairs)).sort((a, b) => b.score - a.score).slice(0, topK);
 }
 
-// RRF for hybrid search
 function reciprocalRankFusion(denseResults: ScoredChunk[], sparseResults: ScoredChunk[], alpha: number, k = 60) {
   const scores = new Map<string, number>();
   const chunks = new Map<string, ScoredChunk>();
@@ -225,7 +242,7 @@ function reciprocalRankFusion(denseResults: ScoredChunk[], sparseResults: Scored
 }
 ```
 
-### Stage 8: LLM Context Assembly
+### 8. LLM Context Assembly
 
 ```typescript
 function assembleContext(query: string, chunks: ScoredChunk[], config: ContextAssemblyConfig): string {
@@ -287,48 +304,9 @@ async function offboardTenantRAG(ctx: TenantContext) {
 }
 ```
 
-**Deletion guarantees**: Collection deletion is atomic. Object storage deletion must handle pagination (list + delete in batches). Audit log persists after deletion (compliance). Trigger RAG cleanup in a `beforeDelete` hook if org deletion cascades.
+Collection deletion is atomic. Object storage deletion must handle pagination (list + delete in batches). Audit log persists after deletion (compliance). Trigger RAG cleanup in a `beforeDelete` hook if org deletion cascades.
 
-## Cross-Tenant Search Prevention
-
-**Layer 1 (primary)**: Collection-per-tenant — queries are physically scoped. No filter to forget.
-
-**Layer 2 (application)**:
-```typescript
-// NEVER: collection name from user input
-// ALWAYS: collection name from authenticated context
-app.post('/api/search', async (req, res) => {
-  const collection = `rag_${req.tenant.orgId}`;  // Derived from auth, not req.body
-  const results = await vectorDb.search(collection, ...);
-});
-```
-
-**Layer 3 (belt-and-suspenders)**:
-```typescript
-function validateTenantOwnership(results: ScoredChunk[], orgId: string): ScoredChunk[] {
-  return results.filter(r => {
-    if (r.metadata.orgId !== orgId) {
-      logger.error('CROSS_TENANT_LEAK_DETECTED', { requestingOrg: orgId, resultOrg: r.metadata.orgId, chunkId: r.id });
-      return false;
-    }
-    return true;
-  });
-}
-```
-
-**Layer 4 (testing)**:
-```typescript
-it('cannot retrieve vectors from another tenant', async () => {
-  await uploadDocument(tenantA, 'secret-plans.pdf');
-  await uploadDocument(tenantB, 'public-info.pdf');
-  const results = await searchDocuments(tenantAContext, 'secret plans');
-  expect(results.filter(r => r.metadata.orgId === tenantB.orgId)).toHaveLength(0);
-});
-```
-
-## Storage Sizing Per Tenant
-
-### Vector Storage Estimation
+## Storage Sizing and Quotas
 
 | Component | Size per vector |
 |-----------|----------------|
@@ -345,8 +323,6 @@ it('cannot retrieve vectors from another tenant', async () => {
 | Small (100 docs, 50 pages avg) | ~25K | ~250 MB | ~125 MB |
 | Medium (1,000 docs) | ~250K | ~2.5 GB | ~1.25 GB |
 | Large (10,000 docs) | ~2.5M | ~25 GB | ~12.5 GB |
-
-### Per-Tenant Quotas
 
 ```typescript
 const PLAN_QUOTAS: Record<OrgPlan, TenantRAGQuotas> = {
