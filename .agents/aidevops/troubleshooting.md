@@ -35,7 +35,7 @@ tools:
 - Chrome DevTools: Install Chrome Canary, fix permissions
 - Playwright: `npx playwright install`
 - API Auth: Verify keys with curl, check env vars
-- Debug: `DEBUG=chrome-devtools-mcp bunx chrome-devtools-mcp@latest`
+- Debug: `DEBUG=chrome-devtools-mcp npx chrome-devtools-mcp@latest`
 - Diagnostics: `bash .agents/scripts/collect-mcp-diagnostics.sh`
 
 Use exponential backoff for transient failures.
