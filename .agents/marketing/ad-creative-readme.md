@@ -19,7 +19,7 @@ This skill teaches you to create scroll-stopping ad creative that drives results
 
 ## Structure
 
-Entry point: `SKILL.md` (compact index with core principles and quick references).
+Entry point: `ad-creative.md` (compact index with core principles and quick references).
 
 Sub-documents (loaded on demand):
 

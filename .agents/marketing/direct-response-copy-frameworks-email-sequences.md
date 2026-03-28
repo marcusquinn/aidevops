@@ -4,7 +4,7 @@
 
 Email converts at 2-5x the rate of social media, you own the list, and it delivers ~$36 ROI per $1 spent. Works for acquisition, nurturing, and retention.
 
-**For copy-paste templates**: See [Email Sequence Templates](../templates/email-sequences.md).
+**For copy-paste templates**: See [Email Sequence Templates](direct-response-copy-templates-email-sequences.md).
 
 ---
 
@@ -156,4 +156,4 @@ But here's the thing...
 
 - See [Headline Formulas](headline-formulas.md) for subject line inspiration
 - See [Objection Handling](objection-handling.md) for FAQ email content
-- See [Templates](../templates/email-sequences.md) for copy-paste templates
+- See [Templates](direct-response-copy-templates-email-sequences.md) for copy-paste templates

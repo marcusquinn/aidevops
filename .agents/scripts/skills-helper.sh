@@ -369,7 +369,7 @@ sentry=services/monitoring
 document=tools/document
 extract=tools/document
 ocr=tools/ocr
-receipt=tools/accounts"
+receipt=accounts"
 
 	local matched_categories=()
 	local line

@@ -176,7 +176,7 @@ Types: money-back, results guarantee, free trial, performance guarantee.
 
 ## Templates by Use Case
 
-See [Templates](../templates/landing-page.md) for copy-paste versions of each type.
+See [Templates](direct-response-copy-templates-landing-page.md) for copy-paste versions of each type.
 
 | Type | Key Sections |
 |------|-------------|
@@ -205,4 +205,4 @@ See [Templates](../templates/landing-page.md) for copy-paste versions of each ty
 
 - See [Headline Formulas](headline-formulas.md) for hero section headlines
 - See [Offer Construction](offer-construction.md) for pricing sections
-- See [Templates](../templates/landing-page.md) for copy-paste templates
+- See [Templates](direct-response-copy-templates-landing-page.md) for copy-paste templates

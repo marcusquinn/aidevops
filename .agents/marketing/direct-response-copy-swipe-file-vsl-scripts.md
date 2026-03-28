@@ -304,6 +304,6 @@ I'll see you inside."
 
 ## Further Reading
 
-- [Landing Page Structure](../frameworks/landing-page-structure.md) — written page framework
-- [Offer Construction](../frameworks/offer-construction.md) — value stacking
-- [Objection Handling](../frameworks/objection-handling.md) — FAQ sections
+- [Landing Page Structure](direct-response-copy-frameworks-landing-page-structure.md) — written page framework
+- [Offer Construction](direct-response-copy-frameworks-offer-construction.md) — value stacking
+- [Objection Handling](direct-response-copy-frameworks-objection-handling.md) — FAQ sections

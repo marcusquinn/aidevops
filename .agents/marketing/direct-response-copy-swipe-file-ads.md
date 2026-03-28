@@ -336,6 +336,6 @@ Join 3,000+ agencies who finally have proof their work works.
 
 ## Further Reading
 
-- [Headline Formulas](../frameworks/headline-formulas.md)
-- [Landing Page Structure](../frameworks/landing-page-structure.md)
-- [Offer Construction](../frameworks/offer-construction.md)
+- [Headline Formulas](direct-response-copy-frameworks-headline-formulas.md)
+- [Landing Page Structure](direct-response-copy-frameworks-landing-page-structure.md)
+- [Offer Construction](direct-response-copy-frameworks-offer-construction.md)

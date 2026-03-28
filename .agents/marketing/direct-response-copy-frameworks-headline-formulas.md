@@ -310,5 +310,5 @@ Lead with **curiosity or identity**.
 ## Further Reading
 
 - See [Landing Page Structure](landing-page-structure.md) for where to place headlines
-- See [Swipe File](../swipe-file/headlines.md) for real-world headline examples
-- See [Pre-Publish Checklist](../checklists/pre-publish.md) for final review steps
+- See [Swipe File](direct-response-copy-swipe-file-headlines.md) for real-world headline examples
+- See [Pre-Publish Checklist](direct-response-copy-checklists-pre-publish.md) for final review steps
