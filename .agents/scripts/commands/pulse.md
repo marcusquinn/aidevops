@@ -295,7 +295,7 @@ When closing any issue, ALWAYS comment first explaining why and linking to the P
 2. Workflow checks `authorAssociation` — if not OWNER/MEMBER/COLLABORATOR, applies `needs-maintainer-review` label and posts a welcome comment
 3. Pulse sees `needs-maintainer-review` → **skip, do not dispatch**
 4. Maintainer reviews the issue and either:
-   - Removes `needs-maintainer-review` and adds `status:available` → dispatchable next cycle
+   - Removes `needs-maintainer-review` and adds `auto-dispatch` → dispatchable next cycle
    - Asks for more information → keeps label
    - Closes as duplicate/invalid/out-of-scope
 
@@ -505,7 +505,8 @@ fi
 
 # Fetch comments and check for maintainer approval/decline
 # Works for both issues and PRs (GitHub's issues API handles both)
-COMMENT_DATA=$(gh api "repos/<slug>/issues/<number>/comments" \
+# --paginate ensures all comments are fetched on issues with many comments
+COMMENT_DATA=$(gh api "repos/<slug>/issues/<number>/comments" --paginate \
   --jq "[.[] | select(.user.login == \"$MAINTAINER\")] | last | {body: .body, id: .id, created_at: .created_at}")
 COMMENT_BODY=$(echo "$COMMENT_DATA" | jq -r '.body // empty' | tr '[:upper:]' '[:lower:]' | xargs)
 ```
@@ -556,10 +557,6 @@ gh pr close <number> --repo <slug> \
 3. **Comment contains further direction** (doesn't start with `approved` or `declined`) — the maintainer is providing feedback. If an agent triage review already exists but was posted BEFORE the maintainer's comment, dispatch a new triage review worker that incorporates the maintainer's feedback:
 
 ```bash
-# Note: COMMENT_DATA must include created_at for this comparison to work.
-# Update the COMMENT_DATA projection earlier in this section to:
-#   --jq "[.[] | select(.user.login == \"$MAINTAINER\")] | last | {body: .body, id: .id, created_at: .created_at}"
-
 # Check if the maintainer's comment is newer than the last agent review
 LAST_REVIEW_DATE=$(gh api "repos/<slug>/issues/<number>/comments" --paginate \
   --jq '[.[] | select(.body | test("## (Issue/PR )?Review:"))] | last | .created_at' 2>/dev/null || echo "")
