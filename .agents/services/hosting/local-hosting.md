@@ -19,7 +19,7 @@ tools:
 
 - **Primary CLI**: `localdev-helper.sh [run|init|add|rm|branch|db|list|status|help]`
 - **Legacy CLI**: `localhost-helper.sh [check-port|find-port|list-ports|kill-port|generate-cert|setup-dns|setup-proxy|create-app|start-mcp]`
-- **Port registry**: `~/.local-dev-proxy/ports.json` (range: 3100–3999)
+- **Port registry**: `~/.local-dev-proxy/ports.json` (range: 3100-3999)
 - **Certs**: `~/.local-ssl-certs/` | **Routes**: `~/.local-dev-proxy/conf.d/`
 - **Traefik**: `~/.local-dev-proxy/traefik.yml` | **Dashboard**: `http://localhost:8080`
 - **Shared Postgres**: `local-postgres` container on port 5432
@@ -44,14 +44,14 @@ Browser → /etc/hosts (127.0.0.1 myapp.local)
 
 | Component | Role | Config |
 |-----------|------|--------|
-| **/etc/hosts** | Maps `.local` for browsers (mDNS intercepts resolver — only reliable method) | `/etc/hosts` |
+| **/etc/hosts** | `.local` mapping for browsers (mDNS intercepts resolver) | `/etc/hosts` |
 | **dnsmasq** | Wildcard `*.local` → `127.0.0.1` (CLI tools only) | `$(brew --prefix)/etc/dnsmasq.conf` |
-| **macOS resolver** | Routes `.local` to dnsmasq for CLI tools | `/etc/resolver/local` |
+| **macOS resolver** | Routes `.local` to dnsmasq for CLI | `/etc/resolver/local` |
 | **Traefik v3.3** | Reverse proxy, TLS termination | `~/.local-dev-proxy/traefik.yml` |
 | **mkcert** | Browser-trusted wildcard certs | `~/.local-ssl-certs/` |
-| **Port registry** | app→port→domain mappings, collision detection | `~/.local-dev-proxy/ports.json` |
+| **Port registry** | app-port-domain mappings, collision detection | `~/.local-dev-proxy/ports.json` |
 
-**DNS note:** macOS reserves `.local` for mDNS. Browsers: `/etc/hosts` → mDNS (intercepts) → resolver (never reached). `localdev add` always writes `/etc/hosts`. dnsmasq handles wildcard subdomains for CLI tools only. Future: `.test` (RFC 6761) avoids the conflict but is a breaking change.
+**DNS:** macOS reserves `.local` for mDNS. Browsers use `/etc/hosts` → mDNS (intercepts resolver, never reached). `localdev add` always writes `/etc/hosts`. dnsmasq handles wildcard subdomains for CLI only. Future: `.test` (RFC 6761) avoids conflict but is breaking.
 
 ### Port Registry Format
 
@@ -66,7 +66,7 @@ Browser → /etc/hosts (127.0.0.1 myapp.local)
 }
 ```
 
-## CLI Reference — localdev-helper.sh
+## CLI — localdev-helper.sh
 
 **run** — Zero-config wrapper: auto-registers, resolves port, injects `PORT`/`HOST`, execs command.
 
@@ -118,7 +118,7 @@ localdev-helper.sh list    # Dashboard: NAME, URL, PORT, CERT, PROC, PROCESS
 localdev-helper.sh status  # Health: [OK] healthy [--] down [!!] missing [!?] partial
 ```
 
-## CLI Reference — localhost-helper.sh (Legacy)
+## CLI — localhost-helper.sh (Legacy)
 
 ```bash
 localhost-helper.sh check-port <port> | find-port [start] | list-ports | kill-port <port>
@@ -129,31 +129,13 @@ localhost-helper.sh start-mcp | stop-mcp | test-mcp | mcp-query "<sql>"
 
 ## OrbStack / Docker
 
-OrbStack preferred over Docker Desktop. Traefik uses `host.docker.internal` to reach host ports.
+OrbStack preferred over Docker Desktop. Traefik uses `host.docker.internal` for host ports.
 
 ```bash
 docker network create local-dev   # auto-created by localdev init or db start
 ```
 
-**Traefik Docker Compose** (`~/.local-dev-proxy/docker-compose.yml`):
-
-```yaml
-services:
-  traefik:
-    image: traefik:v3.3
-    container_name: local-traefik
-    restart: unless-stopped
-    ports: ["80:80", "443:443", "8080:8080"]
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./traefik.yml:/etc/traefik/traefik.yml:ro
-      - ./conf.d:/etc/traefik/conf.d:ro
-      - ~/.local-ssl-certs:/certs:ro
-    networks: [local-dev]
-networks:
-  local-dev:
-    external: true
-```
+**Traefik Docker Compose** — `~/.local-dev-proxy/docker-compose.yml`: `traefik:v3.3` container (`local-traefik`), ports 80/443/8080, mounts `traefik.yml`, `conf.d/`, `~/.local-ssl-certs/` read-only, on `local-dev` external network.
 
 ## Stack-Specific Guidance
 
@@ -167,10 +149,16 @@ networks:
 | **Laravel** | `php artisan serve --port=3100` |
 | **Bun** | `PORT=3100 bun run dev` |
 
-**Next.js stale lock (Next.js 16+):** `rm -f .next/dev/lock && PORT=3100 npm run dev`
-Or in `package.json`: `"dev": "rm -f .next/dev/lock && next dev --port ${PORT:-3000}"`
+**Next.js stale lock (16+):** `rm -f .next/dev/lock && PORT=3100 npm run dev`
+Or: `"dev": "rm -f .next/dev/lock && next dev --port ${PORT:-3000}"`
 
-**Turborepo quirks:** (1) Port may be hardcoded in `apps/web/package.json` — match registry. (2) `allowedDevOrigins: ["myapp.local"]` required in `next.config.ts` (Next.js 15+). (3) `with-env` loads `.env.local` from monorepo root — place `URL` and `DATABASE_URL` there. (4) Skip `localdev db start` if project has own `docker-compose.yml` on port 5432. (5) Stale lock: `rm -f apps/web/.next/dev/lock && pnpm dev:web`.
+**Turborepo quirks:**
+
+1. Port may be hardcoded in `apps/web/package.json` — match registry
+2. `allowedDevOrigins: ["myapp.local"]` required in `next.config.ts` (Next.js 15+)
+3. `with-env` loads `.env.local` from monorepo root — place `URL`/`DATABASE_URL` there
+4. Skip `localdev db start` if project has own `docker-compose.yml` on port 5432
+5. Stale lock: `rm -f apps/web/.next/dev/lock && pnpm dev:web`
 
 **Docker Compose projects:** Map to localdev port (`"3100:3000"`) and join `local-dev` network.
 
@@ -251,27 +239,8 @@ nohup npx -y http-server ~/.asc/web/homepage -p "$EDITOR_PORT" --silent > /tmp/a
 
 ## File Locations
 
-| Path | Purpose |
-|------|---------|
-| `~/.local-dev-proxy/traefik.yml` | Traefik static config |
-| `~/.local-dev-proxy/docker-compose.yml` | Traefik Docker Compose |
-| `~/.local-dev-proxy/conf.d/` | Per-app route files (hot-reloaded) |
-| `~/.local-dev-proxy/ports.json` | Port registry (apps + branches) |
-| `~/.local-dev-proxy/pgdata/` | Shared Postgres data |
-| `~/.local-dev-proxy/backup/` | Backups from init migration |
-| `~/.local-ssl-certs/` | mkcert certs and keys |
-| `/etc/resolver/local` | macOS resolver for `.local` |
-| `$(brew --prefix)/etc/dnsmasq.conf` | dnsmasq config |
+All under `~/.local-dev-proxy/`: `traefik.yml` (static config), `docker-compose.yml`, `conf.d/` (per-app routes, hot-reloaded), `ports.json` (registry), `pgdata/` (Postgres data), `backup/` (init migration). Certs: `~/.local-ssl-certs/`. System: `/etc/resolver/local`, `$(brew --prefix)/etc/dnsmasq.conf`.
 
 ## Legacy vs Current
 
-| Aspect | localhost-helper.sh | localdev-helper.sh |
-|--------|---------------------|---------------------|
-| Port range | 3000–9999 | 3100–3999 |
-| Traefik config | Single `dynamic.yml` | `conf.d/` (hot-reload) |
-| Traefik version | v2.10 | v3.3 |
-| Port registry | None | `ports.json` + collision detection |
-| Branch subdomains | Not supported | `branch` command |
-| Database management | Not supported | `db` command |
-| LocalWP detection | Basic | `sites.json` + `/etc/hosts` check |
-| Init automation | Manual | Single `init` command |
+`localhost-helper.sh` (legacy): ports 3000-9999, single `dynamic.yml`, Traefik v2.10, no port registry/branch subdomains/db management/LocalWP detection, manual init. `localdev-helper.sh` (current): ports 3100-3999, `conf.d/` hot-reload, Traefik v3.3, `ports.json` + collision detection, `branch`/`db` commands, `sites.json` + `/etc/hosts` LocalWP check, single `init` command.
