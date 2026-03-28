@@ -1,16 +1,10 @@
 # Chapter 12: Copy Testing Frameworks
 
-Copy changes can produce 20-100%+ conversion lifts. Three frameworks (PAS, AIDA, BAB), headline formulas, button copy, and microcopy optimization.
-
----
+Copy changes produce 20-100%+ conversion lifts. Three frameworks (PAS, AIDA, BAB), headline formulas, button copy, and microcopy optimization.
 
 ## PAS Framework (Problem-Agitate-Solution)
 
-Best for pain-point-driven products.
-
-1. **Problem** — Specific problem (reader thinks "that's me!")
-2. **Agitate** — Consequences of not solving it
-3. **Solution** — Your product as the clear answer
+Best for pain-point-driven products: (1) **Problem** — specific problem the reader identifies with, (2) **Agitate** — consequences of not solving it, (3) **Solution** — your product as the clear answer.
 
 | Element | Weak | Strong |
 |---------|------|--------|
@@ -18,7 +12,7 @@ Best for pain-point-driven products.
 | Agitate | "This can be frustrating." | "Every hour on manual bookkeeping is an hour not growing your business. Those errors cost thousands in missed deductions." |
 | Solution | "Our software helps with accounting." | "AutoBooks eliminates manual work, catches errors automatically, and keeps you audit-ready year-round." |
 
-**Examples:**
+**Industry examples:**
 
 | Industry | Problem | Agitate | Solution |
 |----------|---------|---------|----------|
@@ -36,16 +30,9 @@ Best for pain-point-driven products.
 
 **Writing exercise:** (1) Problem: 2-3 sentences — specific problem. (2) Agitate: 3-5 sentences — painful consequences, visceral. (3) Solution: 2-4 sentences — outcome. Test: read aloud. Would you care as the customer?
 
----
-
 ## AIDA Framework (Attention-Interest-Desire-Action)
 
-Classic customer journey from awareness to action.
-
-1. **Attention** — Compelling headline (3-5 seconds)
-2. **Interest** — Benefits and relevance
-3. **Desire** — Transformation and dream state
-4. **Action** — Clear CTA, remove friction
+Classic customer journey: (1) **Attention** — compelling headline (3-5 seconds), (2) **Interest** — benefits and relevance, (3) **Desire** — transformation and dream state, (4) **Action** — clear CTA, remove friction.
 
 | Element | Weak | Strong |
 |---------|------|--------|
@@ -56,7 +43,7 @@ Classic customer journey from awareness to action.
 
 Attention techniques: provocative questions, bold claims with proof, unexpected statements, personal relevance.
 
-**Examples:**
+**Industry examples:**
 
 | Industry | Attention | Interest | Desire | Action |
 |----------|-----------|----------|--------|--------|
@@ -70,8 +57,6 @@ Attention techniques: provocative questions, bold claims with proof, unexpected 
 | Tax Prep | "Missing These 17 Deductions" | Average taxpayer misses $1K+/year. | Finds every deduction with yes/no questions, avg $1,500 saved. | "Start Free—Pay When You File" |
 | Social Scheduling | "Stop Posting Manually to 5 Platforms Daily" | 2 hrs/day = 10 hrs/week on repetitive tasks. | Schedule a month in one sitting, AI optimal times. | "Free 14-Day Trial—No Card" |
 
----
-
 ## BAB Framework (Before-After-Bridge)
 
 Transformation-focused: current pain → desired future → your product as the bridge.
@@ -82,7 +67,7 @@ Transformation-focused: current pain → desired future → your product as the 
 | After | "You'll be more productive." | "You finish work by 2pm, take the afternoon off guilt-free. Get promoted." |
 | Bridge | "Our app helps with productivity." | "Our system prioritizes by impact, blocks distractions, tracks energy. 2x output in half the time in 7 days." |
 
-**Examples:**
+**Industry examples:**
 
 | Industry | Before | After | Bridge |
 |----------|--------|-------|--------|
@@ -96,11 +81,9 @@ Transformation-focused: current pain → desired future → your product as the 
 | Resume Writing | Applying to 50 jobs, zero interviews. | Interview requests for dream jobs within 60 days. | Certified writers, ATS-optimized, 300%+ interview rate. |
 | Email Marketing Agency | 50K subscribers making $2K/mo, declining open rates. | Same list generating $15K/mo, opens doubled. | Audit, rewrite, optimize, A/B test — 3-5x revenue in 90 days. |
 
----
-
 ## Headline Testing
 
-Headlines are often the only thing people read. A great headline can double conversions.
+Headlines are often the only thing people read — a great headline can double conversions.
 
 **Principles**: clarity over cleverness · benefit-focused · specific numbers · reader-relevant · curiosity-driven.
 
@@ -126,7 +109,7 @@ Headlines are often the only thing people read. A great headline can double conv
 
 **Specific Outcome (91-100):** [Result] in [Specific Timeframe] · Add [N] [Thing] in [Timeframe] · Reduce [Problem] by [%] · Increase [Metric] by [N/%] · Save [Time/Money] with [Product] · [Goal] Without [Sacrifice] · Double Your [Metric] in [Timeframe] · Cut [Negative] in Half · Boost [Metric] by [N]% · Achieve [Result] Even If [Limitation]
 
-### Headline Testing Priority
+### Testing Priority
 
 | Priority | Dimension | Control | Variant |
 |----------|-----------|---------|---------|
@@ -136,7 +119,7 @@ Headlines are often the only thing people read. A great headline can double conv
 | 4 | Format/structure | "How to Get More Customers" | "7 Ways to Get More Customers" |
 | 5 | Length | "Boost Conversions" | "The Complete Guide to Boosting Conversions on Every Page" |
 
-### Headline Test Results
+### Test Results
 
 | Page | Control | Variant | Lift |
 |------|---------|---------|------|
@@ -145,13 +128,9 @@ Headlines are often the only thing people read. A great headline can double conv
 
 **Takeaway**: Specific outcome and benefit-driven headlines consistently outperform generic/feature-based ones.
 
----
-
 ## Button Copy Testing
 
-Button text changes can increase conversions 20-100%+.
-
-**Principles**: verb-led · value-focused · first-person ("my" not "your") · specific (not "Submit") · low-friction.
+Button text changes can increase conversions 20-100%+. Principles: verb-led · value-focused · first-person ("my" not "your") · specific (not "Submit") · low-friction.
 
 ### 50 Button Copy Variations
 
@@ -163,15 +142,17 @@ Button text changes can increase conversions 20-100%+.
 | Consultation | Book My Free Consultation · Schedule Demo · Get My Free Audit · Request a Demo · Talk to an Expert · Book a Call · Get My Quote · Let's Talk · See It in Action · Schedule My Call |
 | Content/Webinar | Save My Spot · Register Now · Get the Slides · Download the Playbook · Get the Checklist · Get My Copy · Access the Vault · Get It Now · Join the Webinar · Claim My Seat |
 
-**Weak → Strong progression:**
+### Weak → Strong Progression
 
-- Lead Gen: "Submit" → "Download Free Guide" → "Send Me My Free Guide"
-- E-commerce: "Submit Order" → "Buy Now" → "Get Yours Today—Free Shipping"
-- SaaS: "Sign Up" → "Start Free Trial" → "Start My Free 14-Day Trial (No Card Required)"
-- Consultation: "Contact Us" → "Schedule Demo" → "Book My Free Demo—See Results in 15 Minutes"
-- Content: "Register" → "Save My Spot" → "Yes, Save My Seat for the Free Webinar"
+| Category | Weak | Better | Best |
+|----------|------|--------|------|
+| Lead Gen | "Submit" | "Download Free Guide" | "Send Me My Free Guide" |
+| E-commerce | "Submit Order" | "Buy Now" | "Get Yours Today—Free Shipping" |
+| SaaS | "Sign Up" | "Start Free Trial" | "Start My Free 14-Day Trial (No Card Required)" |
+| Consultation | "Contact Us" | "Schedule Demo" | "Book My Free Demo—See Results in 15 Minutes" |
+| Content | "Register" | "Save My Spot" | "Yes, Save My Seat for the Free Webinar" |
 
-### Button Copy Test Results
+### Test Results
 
 | Test | Control | Variant | Lift | Why |
 |------|---------|---------|------|-----|
@@ -181,7 +162,7 @@ Button text changes can increase conversions 20-100%+.
 | Demo Request | "Request Demo" | "See It in Action" | +16% | Curiosity-driven |
 | Webinar | "Register" | "Save My Spot" | +22% | Scarcity implied + first-person |
 
-### Button Copy Frameworks
+### Frameworks
 
 | Framework | Instead of | Use | Why |
 |-----------|-----------|-----|-----|
@@ -190,8 +171,6 @@ Button text changes can increase conversions 20-100%+.
 | Friction-Reduction | "Buy Now - $99" | "Try Risk-Free for 30 Days" | Reduces commitment fear |
 | Clarity | "Submit" | "Download My Free Guide" | Clear copy converts better |
 | Urgency | "Get Started" | "Get Started Today—Offer Ends Tonight" | Prompts immediate action |
-
----
 
 ## Microcopy Optimization
 
