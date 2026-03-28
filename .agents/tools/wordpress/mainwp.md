@@ -27,43 +27,14 @@ tools:
 - **Bulk ops**: `bulk-update-wp`, `bulk-update-plugins` for multiple site IDs
 - **Backup types**: full, db, files
 - **Related**: `@wp-admin` (calls this for fleet management), `@wp-preferred` (plugin recommendations)
+
 <!-- AI-CONTEXT-END -->
 
-MainWP is a powerful self-hosted WordPress management platform that allows you to manage multiple WordPress sites from a single dashboard with comprehensive API access.
-
-## Provider Overview
-
-### **MainWP Characteristics:**
-
-- **Service Type**: Self-hosted WordPress management platform
-- **Architecture**: Central dashboard managing multiple WordPress sites
-- **API Support**: Comprehensive REST API for automation
-- **Scalability**: Manage unlimited WordPress sites
-- **Security**: Built-in security scanning and monitoring
-- **Backup Management**: Automated backup scheduling and management
-- **Update Management**: Centralized WordPress, plugin, and theme updates
-
-### **Best Use Cases:**
-
-- **WordPress agencies** managing multiple client sites
-- **Large organizations** with multiple WordPress properties
-- **Developers** managing staging and production environments
-- **Automated WordPress maintenance** and monitoring
-- **Centralized security management** across WordPress sites
-- **Bulk operations** on multiple WordPress installations
-
-## 🔧 **Configuration**
-
-### **Setup Configuration:**
+## Configuration
 
 ```bash
-# Copy template
 cp configs/mainwp-config.json.txt configs/mainwp-config.json
-
-# Edit with your actual MainWP instance details
 ```
-
-### **Multi-Instance Configuration:**
 
 ```json
 {
@@ -86,17 +57,11 @@ cp configs/mainwp-config.json.txt configs/mainwp-config.json
 }
 ```
 
-### **API Credentials Setup:**
+Setup: install MainWP Dashboard → REST API Extension → generate credentials → install MainWP Child plugin on each site.
 
-1. **Install MainWP Dashboard** on your server
-2. **Install MainWP REST API Extension**
-3. **Generate API credentials** in MainWP Dashboard
-4. **Configure child sites** with MainWP Child plugin
-5. **Test API access** with the helper script
+## Commands
 
-## 🚀 **Usage Examples**
-
-### **Basic Commands:**
+### Basic
 
 ```bash
 # List all MainWP instances
@@ -112,7 +77,7 @@ cp configs/mainwp-config.json.txt configs/mainwp-config.json
 ./.agents/scripts/mainwp-helper.sh monitor production
 ```
 
-### **WordPress Management:**
+### WordPress Management
 
 ```bash
 # Update WordPress core for a site
@@ -131,7 +96,7 @@ cp configs/mainwp-config.json.txt configs/mainwp-config.json
 ./.agents/scripts/mainwp-helper.sh themes production 123
 ```
 
-### **Backup Management:**
+### Backup Management
 
 ```bash
 # Create full backup
@@ -147,7 +112,7 @@ cp configs/mainwp-config.json.txt configs/mainwp-config.json
 ./.agents/scripts/mainwp-helper.sh backups production 123
 ```
 
-### **Security Management:**
+### Security
 
 ```bash
 # Run security scan
@@ -163,7 +128,7 @@ cp configs/mainwp-config.json.txt configs/mainwp-config.json
 ./.agents/scripts/mainwp-helper.sh uptime production 123
 ```
 
-### **Bulk Operations:**
+### Bulk Operations
 
 ```bash
 # Bulk WordPress core updates
@@ -178,7 +143,7 @@ for site_id in 123 124 125; do
 done
 ```
 
-### **Site Monitoring:**
+### Site Monitoring
 
 ```bash
 # Get site status
@@ -191,42 +156,9 @@ done
 ./.agents/scripts/mainwp-helper.sh monitor production
 ```
 
-## 🛡️ **Security Best Practices**
+## Troubleshooting
 
-### **API Security:**
-
-- **Secure credentials**: Store API credentials securely
-- **HTTPS only**: Always use HTTPS for MainWP instances
-- **Regular rotation**: Rotate API credentials regularly
-- **Access control**: Limit API access to trusted systems
-- **Rate limiting**: Implement appropriate rate limiting
-
-### **MainWP Instance Security:**
-
-```bash
-# Regular security audits
-./.agents/scripts/mainwp-helper.sh audit-security production 123
-
-# Monitor security scan results
-./.agents/scripts/mainwp-helper.sh security-results production 123
-
-# Check uptime and availability
-./.agents/scripts/mainwp-helper.sh uptime production 123
-```
-
-### **WordPress Security:**
-
-- **Regular updates**: Keep WordPress core, plugins, and themes updated
-- **Security scanning**: Run regular security scans on all sites
-- **Backup verification**: Verify backup integrity regularly
-- **Access monitoring**: Monitor login attempts and access patterns
-- **SSL certificates**: Ensure all sites have valid SSL certificates
-
-## 🔍 **Troubleshooting**
-
-### **Common Issues:**
-
-#### **API Connection Errors:**
+### API Connection Errors
 
 ```bash
 # Verify API credentials
@@ -239,7 +171,7 @@ curl -I https://mainwp.yourdomain.com/wp-json/mainwp/v1/
 openssl s_client -connect mainwp.yourdomain.com:443
 ```
 
-#### **Site Sync Issues:**
+### Site Sync Issues
 
 ```bash
 # Force site sync
@@ -251,7 +183,7 @@ openssl s_client -connect mainwp.yourdomain.com:443
 # Verify child plugin is active on target site
 ```
 
-#### **Update Failures:**
+### Update Failures
 
 ```bash
 # Check site details for error messages
@@ -263,31 +195,14 @@ openssl s_client -connect mainwp.yourdomain.com:443
 # Check for maintenance mode or plugin conflicts
 ```
 
-## 📊 **Monitoring & Analytics**
+## Monitoring Scripts
 
-### **Site Health Monitoring:**
-
-```bash
-# Daily monitoring routine
-./.agents/scripts/mainwp-helper.sh monitor production
-
-# Check for sites needing updates
-./.agents/scripts/mainwp-helper.sh monitor production | grep "updates available"
-
-# Security status overview
-for site_id in $(./.agents/scripts/mainwp-helper.sh sites production | awk '{print $1}' | grep -E '^[0-9]+$'); do
-    ./.agents/scripts/mainwp-helper.sh security-results production $site_id
-done
-```
-
-### **Automated Monitoring:**
+### Daily monitoring routine
 
 ```bash
-# Create monitoring script
 #!/bin/bash
 INSTANCE="production"
 
-# Get sites needing attention
 echo "=== SITES NEEDING UPDATES ==="
 ./.agents/scripts/mainwp-helper.sh monitor $INSTANCE
 
@@ -307,20 +222,9 @@ for site_id in $(./.agents/scripts/mainwp-helper.sh sites $INSTANCE | awk '{prin
 done
 ```
 
-### **Performance Tracking:**
-
-- **Update success rates**: Track successful vs failed updates
-- **Backup completion**: Monitor backup success rates
-- **Site uptime**: Track site availability and performance
-- **Security scan results**: Monitor security scan outcomes
-- **Response times**: Track API response times and site performance
-
-## 🔄 **Backup & Disaster Recovery**
-
-### **Backup Strategies:**
+### Daily backup routine
 
 ```bash
-# Daily backup routine
 #!/bin/bash
 INSTANCE="production"
 
@@ -331,61 +235,11 @@ for site_id in $(./.agents/scripts/mainwp-helper.sh sites $INSTANCE | awk '{prin
 done
 ```
 
-### **Backup Verification:**
+### Backup verification
 
 ```bash
-# Verify recent backups
 for site_id in $(./.agents/scripts/mainwp-helper.sh sites production | awk '{print $1}' | grep -E '^[0-9]+$'); do
     echo "Backup status for site $site_id:"
     ./.agents/scripts/mainwp-helper.sh backups production $site_id | head -3
 done
 ```
-
-## 📚 **Best Practices**
-
-### **WordPress Management:**
-
-1. **Staged updates**: Test updates on staging before production
-2. **Regular backups**: Maintain regular backup schedules
-3. **Security monitoring**: Run regular security scans
-4. **Performance monitoring**: Monitor site performance and uptime
-5. **Documentation**: Document all maintenance procedures
-
-### **Automation Strategies:**
-
-- **Scheduled maintenance**: Automate routine maintenance tasks
-- **Update workflows**: Implement staged update procedures
-- **Backup verification**: Automate backup integrity checks
-- **Security monitoring**: Automate security scan scheduling
-- **Alert integration**: Integrate with monitoring and alerting systems
-
-### **Multi-Site Management:**
-
-- **Site categorization**: Organize sites by type and criticality
-- **Update policies**: Implement different update policies per site type
-- **Backup strategies**: Tailor backup frequency to site importance
-- **Security levels**: Apply appropriate security measures per site
-- **Access control**: Implement role-based access control
-
-## 🎯 **AI Assistant Integration**
-
-### **Automated WordPress Management:**
-
-- **Update orchestration**: Automated WordPress, plugin, and theme updates
-- **Backup management**: Automated backup scheduling and verification
-- **Security monitoring**: Automated security scanning and threat detection
-- **Performance optimization**: Automated performance monitoring and optimization
-- **Issue resolution**: Automated detection and resolution of common issues
-
-### **Intelligent Operations:**
-
-- **Predictive maintenance**: AI-driven maintenance scheduling
-- **Anomaly detection**: Automated detection of unusual site behavior
-- **Performance analysis**: Automated performance analysis and recommendations
-- **Security assessment**: Automated security posture assessment
-- **Capacity planning**: Automated resource usage analysis and planning
-
-  task: true
----
-
-**MainWP provides comprehensive WordPress management capabilities with powerful API access, making it ideal for automated WordPress site management at scale.** 🚀
