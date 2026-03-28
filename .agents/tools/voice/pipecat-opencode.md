@@ -172,37 +172,26 @@ For session continuity with an existing OpenCode session, proxy through the Open
 
 ## Service Options
 
-### STT
-| Service | Latency | Languages | Notes |
-|---------|---------|-----------|-------|
-| **Soniox** (recommended) | Low | 60+ | Real-time WebSocket, multilingual |
-| Deepgram | Low | 30+ | Nova-2 model |
-| Google Cloud STT | Medium | 125+ | Most languages |
-| Whisper (local) | Medium | 99 | No API key |
+Recommended defaults marked with **(rec)**. All services are swappable Pipecat processors.
 
-### LLM
-| Service | Latency | Notes |
-|---------|---------|-------|
-| **Anthropic** (recommended) | ~1-2s | Claude Sonnet, function calling, prompt caching |
-| OpenAI | ~1-2s | GPT-4o, mature function calling |
-| Google Gemini | ~1-2s | Gemini 2.5 Pro/Flash |
-| Local (Ollama/LM Studio) | Varies | No API cost, requires GPU |
-
-### TTS
-| Service | Latency | Notes |
-|---------|---------|-------|
-| **Cartesia Sonic** (recommended) | ~200ms | WebSocket streaming, word timestamps, SSML |
-| ElevenLabs | ~300ms | High quality, voice cloning |
-| OpenAI TTS | ~400ms | Simple API |
-| Kokoro (local) | ~100ms | No API key, macOS MLX |
-
-### S2S
-| Service | Latency | Notes |
-|---------|---------|-------|
-| OpenAI Realtime | ~500ms | Most mature, lowest latency |
-| AWS Nova Sonic | ~600ms | AWS ecosystem |
-| Gemini Multimodal Live | ~500ms | Google ecosystem |
-| Ultravox | ~700ms | Open weights available |
+| Type | Service | Latency | Notes |
+|------|---------|---------|-------|
+| STT | **Soniox** (rec) | Low | Real-time WebSocket, 60+ languages |
+| STT | Deepgram | Low | Nova-2, 30+ languages |
+| STT | Google Cloud STT | Medium | 125+ languages |
+| STT | Whisper (local) | Medium | No API key, 99 languages |
+| LLM | **Anthropic** (rec) | ~1-2s | Claude Sonnet, function calling, prompt caching |
+| LLM | OpenAI | ~1-2s | GPT-4o, mature function calling |
+| LLM | Google Gemini | ~1-2s | Gemini 2.5 Pro/Flash |
+| LLM | Local (Ollama/LM Studio) | Varies | No API cost, requires GPU |
+| TTS | **Cartesia Sonic** (rec) | ~200ms | WebSocket streaming, word timestamps, SSML |
+| TTS | ElevenLabs | ~300ms | High quality, voice cloning |
+| TTS | OpenAI TTS | ~400ms | Simple API |
+| TTS | Kokoro (local) | ~100ms | No API key, macOS MLX |
+| S2S | OpenAI Realtime | ~500ms | Most mature, lowest latency |
+| S2S | AWS Nova Sonic | ~600ms | AWS ecosystem |
+| S2S | Gemini Multimodal Live | ~500ms | Google ecosystem |
+| S2S | Ultravox | ~700ms | Open weights available |
 
 ## Web Client
 
@@ -233,7 +222,7 @@ Key npm packages: `@pipecat-ai/client-js`, `@pipecat-ai/client-react`, `@pipecat
 | Barge-in not working | Ensure VAD is configured; check mic isn't muted |
 | Echo/feedback loop | Use headphones or enable echo cancellation |
 
-## Configuration
+## Environment Variables
 
 ```bash
 SONIOX_API_KEY=       # Soniox STT (required)
@@ -243,11 +232,6 @@ DAILY_API_KEY=        # Daily.co transport (cloud mode)
 OPENAI_API_KEY=       # OpenAI LLM or Realtime S2S
 HF_HUB_OFFLINE=1     # Skip model update checks (faster startup)
 ```
-
-| Setup | Stack |
-|-------|-------|
-| Local (Apple Silicon) | Soniox + Anthropic Claude Sonnet + Cartesia Sonic + SmallWebRTCTransport |
-| Cloud | Soniox + Anthropic Claude Sonnet + Cartesia Sonic + Daily.co |
 
 ## See Also
 
