@@ -24,24 +24,14 @@ mcp:
 ## Quick Reference
 
 - **Purpose**: Semantic codebase retrieval via Augment's context engine
-- **Install**: `npm install -g @augmentcode/auggie@prerelease` (Node.js 22+ required)
+- **Install**: `npm install -g @augmentcode/auggie@prerelease` (Node.js 22+)
 - **Auth**: `auggie login` → credentials in `~/.augment/session.json`
 - **MCP Tool**: `codebase-retrieval`
 - **Docs**: <https://docs.augmentcode.com/context-services/mcp/overview>
 
-**Usage**: Use rg/fd for exact matches first. Use Augment for semantic understanding, cross-file context, and natural language queries.
+Use rg/fd for exact matches. Use Augment for semantic understanding, cross-file context, and natural language queries.
 
-| Feature | grep/glob | Augment Context Engine |
-|---------|-----------|------------------------|
-| Text matching | Exact patterns | Semantic understanding |
-| Cross-file context | Manual | Automatic |
-| Natural language | No | Yes |
-
-**Verification prompt**:
-
-```text
-What is this project? Please use codebase retrieval tool to get the answer.
-```
+**Verification**: Ask `What is this project? Please use codebase retrieval tool to get the answer.`
 
 <!-- AI-CONTEXT-END -->
 
@@ -53,7 +43,20 @@ auggie login        # opens browser for auth
 auggie token print  # verify authentication
 ```
 
-## AI Tool Configurations
+## Runtime Configurations
+
+### Claude Code
+
+```bash
+# User scope (all projects)
+claude mcp add-json auggie-mcp --scope user '{"type":"stdio","command":"auggie","args":["--mcp"]}'
+
+# Project scope
+claude mcp add-json auggie-mcp --scope project '{"type":"stdio","command":"auggie","args":["--mcp"]}'
+
+# With specific workspace
+claude mcp add-json auggie-mcp --scope user '{"type":"stdio","command":"auggie","args":["-w","/path/to/project","--mcp"]}'
+```
 
 ### OpenCode
 
@@ -73,19 +76,6 @@ auggie token print  # verify authentication
     "Build+": { "tools": { "augment-context-engine_*": true } }
   }
 }
-```
-
-### Claude Code
-
-```bash
-# User scope (all projects)
-claude mcp add-json auggie-mcp --scope user '{"type":"stdio","command":"auggie","args":["--mcp"]}'
-
-# Project scope
-claude mcp add-json auggie-mcp --scope project '{"type":"stdio","command":"auggie","args":["--mcp"]}'
-
-# With specific workspace
-claude mcp add-json auggie-mcp --scope user '{"type":"stdio","command":"auggie","args":["-w","/path/to/project","--mcp"]}'
 ```
 
 ### Cursor
@@ -148,7 +138,7 @@ Click ··· → Add Custom Server.
 
 ### GitHub Copilot
 
-`.vscode/mcp.json` in project root (use in Agent mode):
+`.vscode/mcp.json` in project root (Agent mode):
 
 ```json
 {
@@ -229,7 +219,7 @@ auggie token print
 # Output: TOKEN={"accessToken":"...","tenantURL":"...","scopes":["read","write"]}
 ```
 
-Set env vars:
+Set env vars for headless use:
 
 ```bash
 export AUGMENT_API_TOKEN="your-access-token"
@@ -238,13 +228,11 @@ export AUGMENT_API_URL="your-tenant-url"
 
 Pass via MCP config `env` block (OpenCode, Claude Code) or `--env` flags (Droid).
 
-**Credential storage**:
-
 | Method | Location |
 |--------|----------|
 | Interactive | `~/.augment/session.json` |
 | Environment | `AUGMENT_API_TOKEN` + `AUGMENT_API_URL` |
-| aidevops pattern | `~/.config/aidevops/credentials.sh` |
+| aidevops | `~/.config/aidevops/credentials.sh` |
 
 ## Troubleshooting
 
