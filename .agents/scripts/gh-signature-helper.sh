@@ -400,17 +400,17 @@ _format_number() {
 }
 
 # =============================================================================
-# generate — produce the signature line
+# _parse_generate_args — parse CLI args for cmd_generate
 # =============================================================================
+# Outputs pipe-separated: model|tokens|cli_name|cli_version|issue_ref|issue_created|solved
 
-cmd_generate() {
+_parse_generate_args() {
 	local model="${AIDEVOPS_SIG_MODEL:-}"
 	local tokens="${AIDEVOPS_SIG_TOKENS:-}"
 	local cli_name="${AIDEVOPS_SIG_CLI:-}"
 	local cli_version="${AIDEVOPS_SIG_CLI_VERSION:-}"
 	local issue_ref="" issue_created="" solved="false"
 
-	# Parse args
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--model)
@@ -445,7 +445,21 @@ cmd_generate() {
 		esac
 	done
 
-	# Auto-detect CLI if not provided
+	printf '%s|%s|%s|%s|%s|%s|%s\n' \
+		"$model" "$tokens" "$cli_name" "$cli_version" \
+		"$issue_ref" "$issue_created" "$solved"
+	return 0
+}
+
+# =============================================================================
+# _resolve_cli_inputs — auto-detect CLI name/version if not provided
+# =============================================================================
+# Outputs pipe-separated: cli_name|cli_version
+
+_resolve_cli_inputs() {
+	local cli_name="$1"
+	local cli_version="$2"
+
 	if [[ -z "$cli_name" ]]; then
 		local detected
 		detected=$(_detect_cli)
@@ -459,63 +473,19 @@ cmd_generate() {
 		fi
 	fi
 
-	# Auto-detect tokens from session DB if not provided
-	if [[ -z "$tokens" ]]; then
-		tokens=$(_detect_session_tokens)
-	fi
+	printf '%s|%s\n' "$cli_name" "$cli_version"
+	return 0
+}
 
-	# Get aidevops version
-	local aidevops_version
-	aidevops_version=$(aidevops_find_version)
+# =============================================================================
+# _collect_time_metrics — gather session/response/total time strings
+# =============================================================================
+# Outputs pipe-separated: session_time_str|response_time_str|total_time_str
 
-	# Build the signature parts
-	local parts=""
+_collect_time_metrics() {
+	local issue_ref="$1"
+	local issue_created="$2"
 
-	# Part 1: CLI with link and version
-	if [[ -n "$cli_name" ]]; then
-		local url
-		url=$(_cli_url "$cli_name")
-		if [[ -n "$url" ]]; then
-			if [[ -n "$cli_version" ]]; then
-				parts="[${cli_name}](${url}) v${cli_version}"
-			else
-				parts="[${cli_name}](${url})"
-			fi
-		else
-			if [[ -n "$cli_version" ]]; then
-				parts="${cli_name} v${cli_version}"
-			else
-				parts="${cli_name}"
-			fi
-		fi
-	fi
-
-	# --- Build natural-language sentence ---
-	# Target: [aidevops.sh](...) v3.5.10 in [CLI](...) v1.3.3 with model used N tokens for Xm to respond in Ym, Zm since this issue was created.
-
-	# Start with aidevops
-	local sig="[aidevops.sh](https://aidevops.sh) v${aidevops_version}"
-
-	# "in [CLI] vX.Y.Z"
-	if [[ -n "$cli_name" ]]; then
-		local url
-		url=$(_cli_url "$cli_name")
-		if [[ -n "$url" ]]; then
-			sig="${sig} in [${cli_name}](${url})"
-		else
-			sig="${sig} in ${cli_name}"
-		fi
-		if [[ -n "$cli_version" ]]; then
-			sig="${sig} v${cli_version}"
-		fi
-	fi
-
-	# "with model"
-	if [[ -n "$model" ]]; then
-		sig="${sig} with ${model}"
-	fi
-
-	# Detect time metrics
 	local session_time_str="" response_time_str="" total_time_str=""
 
 	local times_raw
@@ -539,12 +509,51 @@ cmd_generate() {
 		fi
 	fi
 
-	# "used N tokens" — only if we have tokens or time data to follow
-	local has_stats=""
-	if { [[ -n "$tokens" ]] && [[ "$tokens" != "0" ]]; } || [[ -n "$session_time_str" ]] || [[ -n "$response_time_str" ]] || [[ -n "$total_time_str" ]]; then
-		has_stats="true"
+	printf '%s|%s|%s\n' "$session_time_str" "$response_time_str" "$total_time_str"
+	return 0
+}
+
+# =============================================================================
+# _build_signature — assemble the natural-language signature string
+# =============================================================================
+# Args: model cli_name cli_version tokens session_time_str response_time_str total_time_str solved
+
+_build_signature() {
+	local model="$1"
+	local cli_name="$2"
+	local cli_version="$3"
+	local tokens="$4"
+	local session_time_str="$5"
+	local response_time_str="$6"
+	local total_time_str="$7"
+	local solved="$8"
+
+	local aidevops_version
+	aidevops_version=$(aidevops_find_version)
+
+	# Target: [aidevops.sh](...) v3.5.10 in [CLI](...) v1.3.3 with model used N tokens for Xm to respond in Ym, Zm since this issue was created.
+	local sig="[aidevops.sh](https://aidevops.sh) v${aidevops_version}"
+
+	# "in [CLI] vX.Y.Z"
+	if [[ -n "$cli_name" ]]; then
+		local url
+		url=$(_cli_url "$cli_name")
+		if [[ -n "$url" ]]; then
+			sig="${sig} in [${cli_name}](${url})"
+		else
+			sig="${sig} in ${cli_name}"
+		fi
+		if [[ -n "$cli_version" ]]; then
+			sig="${sig} v${cli_version}"
+		fi
 	fi
 
+	# "with model"
+	if [[ -n "$model" ]]; then
+		sig="${sig} with ${model}"
+	fi
+
+	# "used N tokens"
 	if [[ -n "$tokens" ]] && [[ "$tokens" != "0" ]]; then
 		local formatted
 		formatted=$(_format_number "$tokens")
@@ -561,7 +570,13 @@ cmd_generate() {
 		sig="${sig} to respond in ${response_time_str}"
 	fi
 
-	# Total time: "--solved" → "Solved in Xm." / default → ", Xm since this issue was created."
+	# Total time or trailing period
+	local has_stats=""
+	if { [[ -n "$tokens" ]] && [[ "$tokens" != "0" ]]; } ||
+		[[ -n "$session_time_str" ]] || [[ -n "$response_time_str" ]] || [[ -n "$total_time_str" ]]; then
+		has_stats="true"
+	fi
+
 	if [[ -n "$total_time_str" ]]; then
 		if [[ "$solved" == "true" ]]; then
 			sig="${sig}. Solved in ${total_time_str}."
@@ -575,6 +590,41 @@ cmd_generate() {
 	fi
 
 	echo "$sig"
+	return 0
+}
+
+# =============================================================================
+# generate — produce the signature line
+# =============================================================================
+
+cmd_generate() {
+	# Parse arguments
+	local parsed
+	parsed=$(_parse_generate_args "$@")
+	local model tokens cli_name cli_version issue_ref issue_created solved
+	IFS='|' read -r model tokens cli_name cli_version issue_ref issue_created solved <<<"$parsed"
+
+	# Auto-detect CLI name/version
+	local cli_resolved
+	cli_resolved=$(_resolve_cli_inputs "$cli_name" "$cli_version")
+	cli_name="${cli_resolved%%|*}"
+	cli_version="${cli_resolved##*|}"
+
+	# Auto-detect tokens from session DB if not provided
+	if [[ -z "$tokens" ]]; then
+		tokens=$(_detect_session_tokens)
+	fi
+
+	# Collect time metrics
+	local time_metrics
+	time_metrics=$(_collect_time_metrics "$issue_ref" "$issue_created")
+	local session_time_str response_time_str total_time_str
+	IFS='|' read -r session_time_str response_time_str total_time_str <<<"$time_metrics"
+
+	# Build and emit the signature
+	_build_signature \
+		"$model" "$cli_name" "$cli_version" "$tokens" \
+		"$session_time_str" "$response_time_str" "$total_time_str" "$solved"
 	return 0
 }
 
