@@ -18,9 +18,10 @@ tools:
 - Core methods: `act()`, `extract()`, `observe()`, `agent.execute()`
 - Data extraction: Zod schemas for structured output
 - Agent mode: `stagehand.agent({ cua: true, model: "..." })`
-- Error handling: try/catch with `stagehand.close()` in finally
-- Rate limiting: add delays, respect robots.txt
-- Integration: Chrome DevTools, Playwright, Context7 MCPs
+- Error handling: try/catch with `stagehand.close()` in finally; always close in finally block
+- Rate limiting: add delays between requests, respect robots.txt
+- Integration: Chrome DevTools (performance), Playwright (cross-browser), Context7 (docs)
+- Sections: Basic Usage, E-commerce, Data Collection, Testing & QA, Autonomous Agents, Best Practices
 <!-- AI-CONTEXT-END -->
 
 ## Basic Usage
@@ -38,7 +39,7 @@ await stagehand.act("submit the form");
 await stagehand.close();
 ```
 
-## Structured Data Extraction
+Extract structured data with Zod schemas:
 
 ```javascript
 const productData = await stagehand.extract(
@@ -189,9 +190,11 @@ async function conductResearch(topic, sources) {
 }
 ```
 
-## Framework Integration
+## Best Practices
 
-Compose Stagehand with other functions and MCP servers (Chrome DevTools for performance, Playwright for cross-browser, Context7 for docs):
+### Framework Integration
+
+Compose Stagehand with other MCP servers (Chrome DevTools for performance, Playwright for cross-browser, Context7 for docs):
 
 ```javascript
 async function runQualityChecks(websiteUrl) {
@@ -206,8 +209,6 @@ async function runQualityChecks(websiteUrl) {
     return { functional: functionalTests, performance: performanceData, timestamp: new Date().toISOString() };
 }
 ```
-
-## Best Practices
 
 ### Error Handling
 
