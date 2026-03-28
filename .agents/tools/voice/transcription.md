@@ -12,22 +12,15 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Transcribe audio/video from local files, YouTube URLs, or cloud uploads
 - **Helper**: `transcription-helper.sh [transcribe|models|configure|install|status] [options]`
-- **Default local model**: Whisper Large v3 Turbo (best speed/accuracy tradeoff)
-- **Dependencies**: `yt-dlp` (YouTube), `ffmpeg` (audio extraction), `faster-whisper` or `whisper.cpp` (local)
+- **Default**: Whisper Large v3 Turbo (best speed/accuracy tradeoff)
+- **Deps**: `yt-dlp` (YouTube), `ffmpeg` (audio extraction), `faster-whisper` or `whisper.cpp` (local)
 
 ```bash
-transcription-helper.sh transcribe "https://youtu.be/dQw4w9WgXcQ"  # YouTube
-transcription-helper.sh transcribe recording.mp3                    # Local file
+transcription-helper.sh transcribe "https://youtu.be/VIDEO_ID"  # YouTube
+transcription-helper.sh transcribe recording.mp3                # Local file
 transcription-helper.sh transcribe recording.mp3 --model large-v3-turbo
-transcription-helper.sh models
-```
-
-**Install all dependencies:**
-
-```bash
-brew install yt-dlp ffmpeg && brew install --cask buzz  # macOS
+brew install yt-dlp ffmpeg && brew install --cask buzz           # macOS deps
 pip install openai-whisper faster-whisper assemblyai deepgram-sdk
 ```
 
@@ -47,30 +40,17 @@ pip install openai-whisper faster-whisper assemblyai deepgram-sdk
 
 **Decision flow**: (1) Privacy/offline → Whisper or Buzz. (2) Speaker diarization → AssemblyAI or Deepgram. (3) Real-time → Deepgram. (4) Highest accuracy, cloud OK → AssemblyAI Universal-3 Pro. (5) Free, good enough → Whisper turbo locally.
 
----
-
-## Input Sources
-
-| Source | Detection | Extraction |
-|--------|-----------|------------|
-| YouTube URL | `youtu.be/` or `youtube.com/watch` | `yt-dlp -x --audio-format wav` |
-| Direct media URL | HTTP(S) with media extension | `curl` + `ffmpeg` if video |
-| Local audio | `.wav`, `.mp3`, `.flac`, `.ogg`, `.m4a` | Direct input |
-| Local video | `.mp4`, `.mkv`, `.webm`, `.avi` | `ffmpeg -i input -vn -acodec pcm_s16le` |
-
----
+**Input sources**: YouTube (`yt-dlp -x --audio-format wav`), direct URL (`curl` + `ffmpeg`), local audio (`.wav .mp3 .flac .ogg .m4a`), local video (`ffmpeg -i input -vn -acodec pcm_s16le output.wav`).
 
 ## Whisper (Local — OpenAI Original)
 
-Runs locally via Python. `faster-whisper` (CTranslate2-based) is significantly faster (2–4x typical speedup depending on hardware and model) with comparable accuracy.
+`faster-whisper` (CTranslate2-based) is 2–4x faster with comparable accuracy.
 
 ```bash
-whisper audio.mp3                                          # Basic (auto-detects language)
 whisper audio.mp3 --model medium --language en
 whisper audio.mp3 --model medium --output_format srt      # SRT subtitles
-whisper video.mp4 --model large --language en --output_format txt
-whisper french-audio.mp3 --task translate --model medium  # Translate to English
-whisper audio.mp3 --model medium --output_format json     # Word-level timestamps
+whisper audio.mp3 --model medium --output_format json     # word-level timestamps
+whisper french-audio.mp3 --task translate --model medium  # translate to English
 ```
 
 ### Model Selection
@@ -80,49 +60,42 @@ whisper audio.mp3 --model medium --output_format json     # Word-level timestamp
 | `tiny` | 75MB | Fastest | 6.0/10 | Draft/preview only |
 | `base` | 142MB | Fast | 7.3/10 | Quick transcription |
 | `small` | 461MB | Medium | 8.5/10 | Good balance, multilingual |
-| `medium` | 1.5GB | Slow | 9.0/10 | Solid quality, recommended default |
+| `medium` | 1.5GB | Slow | 9.0/10 | Recommended default |
 | `large-v3` | 2.9GB | Slowest | 9.8/10 | Best quality, best multilingual |
 | **`turbo`** | **1.5GB** | **Fast** | **9.7/10** | **Large-v3 quality at medium speed** |
 | NVIDIA Parakeet V2 | 474MB | Fastest | 9.4/10 | English-only |
 | Apple Speech | Built-in | Fast | 9.0/10 | macOS 26+, on-device |
 
-**Recommendation**: `medium` for most use cases; `turbo` when speed matters; `large-v3` for accuracy-critical work.
+**Recommendation**: `medium` for most; `turbo` when speed matters; `large-v3` for accuracy-critical work.
 
-### faster-whisper
+### faster-whisper / whisper.cpp
 
 ```python
+# faster-whisper (pip install faster-whisper)
 from faster_whisper import WhisperModel
 model = WhisperModel("medium", device="cpu", compute_type="int8")
-segments, info = model.transcribe("audio.mp3", language="en")
-for segment in segments:
-    print(f"[{segment.start:.2f}s] {segment.text}")
+for seg, _ in model.transcribe("audio.mp3", language="en"):
+    print(f"[{seg.start:.2f}s] {seg.text}")
 ```
 
-### whisper.cpp (C++ Native, Apple Silicon Optimised)
-
 ```bash
-git clone https://github.com/ggml-org/whisper.cpp
-cd whisper.cpp && make
+# whisper.cpp — Apple Silicon optimised (https://github.com/ggml-org/whisper.cpp)
+git clone https://github.com/ggml-org/whisper.cpp && cd whisper.cpp && make
 ./models/download-ggml-model.sh medium
 ./build/bin/whisper-cli -m models/ggml-medium.bin -f audio.wav -otxt -osrt
 ```
 
----
-
 ## Buzz (macOS GUI for Whisper)
 
-Desktop app wrapping Whisper models. No cloud, no API key. Formats: Audio (MP3, WAV, FLAC, OGG, M4A, WMA), Video (MP4, MKV, AVI, MOV, WebM), Output (TXT, SRT, VTT, JSON).
+Desktop app wrapping Whisper models. No cloud, no API key. Supports audio (MP3, WAV, FLAC, OGG, M4A, WMA), video (MP4, MKV, AVI, MOV, WebM), output (TXT, SRT, VTT, JSON).
 
 ```bash
-brew install --cask buzz    # macOS GUI — File → Open → model → Transcribe → Export
+brew install --cask buzz    # GUI — File → Open → model → Transcribe → Export
 pip install buzz-captions   # CLI / Python
-
 buzz transcribe audio.mp3 --model medium --output-format srt
 buzz transcribe foreign.mp3 --task translate --language auto
 buzz transcribe audio.mp3 --model-type faster-whisper --model large-v3
 ```
-
----
 
 ## AssemblyAI (Cloud — Speaker Diarization, High Accuracy)
 
@@ -132,28 +105,18 @@ Best for meeting transcription with speaker identification. `aidevops secret set
 import assemblyai as aai, os
 aai.settings.api_key = os.environ["ASSEMBLYAI_API_KEY"]
 
-# Basic
-transcript = aai.Transcriber().transcribe("audio.mp3")
-print(transcript.text)
-
 # Speaker diarization
 config = aai.TranscriptionConfig(speaker_labels=True, speakers_expected=3)
 transcript = aai.Transcriber().transcribe("meeting.mp3", config=config)
 for utterance in transcript.utterances:
     print(f"Speaker {utterance.speaker}: {utterance.text}")
 
-# Advanced features
-config = aai.TranscriptionConfig(
-    speaker_labels=True, auto_chapters=True, sentiment_analysis=True,
-    entity_detection=True, auto_highlights=True, language_detection=True,
-    punctuate=True, format_text=True
-)
-
-# Webhook (production async)
-config = aai.TranscriptionConfig(webhook_url="https://yourapp.com/webhook")
-transcript = aai.Transcriber().submit("audio.mp3", config=config)
+# Async webhook (production)
+transcript = aai.Transcriber().submit("audio.mp3", aai.TranscriptionConfig(webhook_url="https://yourapp.com/webhook"))
 print(transcript.id)  # poll later
 ```
+
+Additional `TranscriptionConfig` options: `auto_chapters`, `sentiment_analysis`, `entity_detection`, `auto_highlights`, `language_detection`, `punctuate`, `format_text`.
 
 ### Pricing
 
@@ -167,8 +130,6 @@ print(transcript.id)  # poll later
 
 > Last verified: March 2026 — [assemblyai.com/pricing](https://www.assemblyai.com/pricing)
 
----
-
 ## Deepgram (Cloud — Real-Time, Low Latency)
 
 Best for live transcription, call centres, and latency-sensitive applications. `aidevops secret set DEEPGRAM_API_KEY`
@@ -178,19 +139,12 @@ from deepgram import DeepgramClient, PrerecordedOptions
 import os
 
 dg = DeepgramClient(os.environ["DEEPGRAM_API_KEY"])
-options = PrerecordedOptions(model="nova-3", language="en", punctuate=True, diarize=True, smart_format=True)
-
-# Batch from file
+opts = PrerecordedOptions(model="nova-3", language="en", punctuate=True, diarize=True, smart_format=True)
 with open("audio.mp3", "rb") as f:
-    response = dg.listen.rest.v("1").transcribe_file({"buffer": f}, options)
-    print(response.results.channels[0].alternatives[0].transcript)
-
-# Batch from URL
-response = dg.listen.rest.v("1").transcribe_url({"url": "https://example.com/audio.mp3"}, PrerecordedOptions(model="nova-3", diarize=True))
-
-# Speaker diarization
-for word in response.results.channels[0].alternatives[0].words:
-    print(f"[Speaker {word.speaker}] {word.word}")
+    resp = dg.listen.rest.v("1").transcribe_file({"buffer": f}, opts)
+alt = resp.results.channels[0].alternatives[0]
+print(alt.transcript)
+for word in alt.words: print(f"[Speaker {word.speaker}] {word.word}")  # diarization
 ```
 
 ### Real-Time Streaming
@@ -199,18 +153,11 @@ for word in response.results.channels[0].alternatives[0].words:
 from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions
 import asyncio, os
 
-async def stream_microphone():
-    dg = DeepgramClient(os.environ["DEEPGRAM_API_KEY"])
-    connection = dg.listen.asyncwebsocket.v("1")
-
-    async def on_message(result, **kwargs):
-        sentence = result.channel.alternatives[0].transcript
-        if sentence:
-            print(sentence)
-
-    connection.on(LiveTranscriptionEvents.Transcript, on_message)
-    await connection.start(LiveOptions(model="nova-3", language="en-US", smart_format=True))
-    # feed audio chunks via connection.send(audio_chunk)
+dg = DeepgramClient(os.environ["DEEPGRAM_API_KEY"])
+conn = dg.listen.asyncwebsocket.v("1")
+conn.on(LiveTranscriptionEvents.Transcript, lambda r, **kw: print(r.channel.alternatives[0].transcript) or None)
+await conn.start(LiveOptions(model="nova-3", language="en-US", smart_format=True))
+# feed audio chunks via conn.send(audio_chunk)
 ```
 
 ### Models & Pricing
@@ -223,8 +170,6 @@ async def stream_microphone():
 | `nova-2` | 9.3/10 | $0.0058/min | Previous gen, wider language support |
 
 > Last verified: March 2026 — [deepgram.com/pricing](https://deepgram.com/pricing)
-
----
 
 ## Cloud APIs (Extended)
 
@@ -246,104 +191,53 @@ curl https://api.groq.com/openai/v1/audio/transcriptions \
   -F "file=@audio.wav" -F "model=whisper-large-v3" -F "response_format=verbose_json"
 ```
 
----
-
 ## Common Workflows
 
-### Meeting Transcription with Speaker Labels
-
 ```bash
-# AssemblyAI (speaker diarization)
+# Meeting — AssemblyAI speaker diarization
 python3 -c "
-import assemblyai as aai, os
-aai.settings.api_key = os.environ['ASSEMBLYAI_API_KEY']
+import assemblyai as aai, os; aai.settings.api_key = os.environ['ASSEMBLYAI_API_KEY']
 t = aai.Transcriber().transcribe('meeting.mp4', aai.TranscriptionConfig(speaker_labels=True, auto_chapters=True))
 for u in t.utterances: print(f'[Speaker {u.speaker}] {u.text}')
 "
 
-# Local Whisper (no speaker labels, but private)
-whisper meeting.mp4 --model medium --language en --output_format txt
-```
+# Meeting — local Whisper (private, no speaker labels)
+whisper meeting.mp4 --model medium --output_format txt
 
-### Video Subtitles (SRT/VTT)
-
-```bash
-# Local Whisper
+# Video subtitles — local
 whisper video.mp4 --model medium --output_format srt
 
-# AssemblyAI (cloud, higher accuracy)
+# Video subtitles — AssemblyAI (cloud, higher accuracy)
 python3 -c "
-import assemblyai as aai, os
-aai.settings.api_key = os.environ['ASSEMBLYAI_API_KEY']
+import assemblyai as aai, os; aai.settings.api_key = os.environ['ASSEMBLYAI_API_KEY']
 t = aai.Transcriber().transcribe('video.mp4')
 open('subtitles.srt', 'w').write(t.export_subtitles_srt())
 "
-```
 
-### Podcast Notes / Show Notes
+# Podcast — transcribe then summarise
+whisper episode.mp3 --model turbo --output_format txt
+cat episode.txt | claude "Summarise: key topics, notable quotes, action items, guest names"
 
-```bash
-whisper episode.mp3 --model turbo --language en --output_format txt
-cat episode.txt | claude "Summarise this podcast transcript into:
-1. Key topics (bullet points)
-2. Notable quotes (3-5)
-3. Action items mentioned
-4. Guest names and affiliations"
-```
+# Batch — local Whisper
+for f in recordings/*.mp3; do whisper "$f" --model medium --output_format txt --output_dir transcripts/; done
 
-### Batch Transcription
-
-```bash
-# Local Whisper
-for f in recordings/*.mp3; do
-  whisper "$f" --model medium --output_format txt --output_dir transcripts/
-done
-
-# Deepgram (parallel, faster)
+# Batch — Deepgram (faster, parallel)
 python3 -c "
-import os, glob
-from deepgram import DeepgramClient, PrerecordedOptions
+import os, glob; from deepgram import DeepgramClient, PrerecordedOptions
 dg = DeepgramClient(os.environ['DEEPGRAM_API_KEY'])
-options = PrerecordedOptions(model='nova-3', punctuate=True, smart_format=True)
+opts = PrerecordedOptions(model='nova-3', punctuate=True, smart_format=True)
 os.makedirs('transcripts', exist_ok=True)
-for path in glob.glob('recordings/*.mp3'):
-    with open(path, 'rb') as f:
-        resp = dg.listen.rest.v('1').transcribe_file({'buffer': f}, options)
-        out = path.replace('.mp3', '.txt').replace('recordings/', 'transcripts/')
-        open(out, 'w').write(resp.results.channels[0].alternatives[0].transcript)
-    print(f'Done: {path}')
+for p in glob.glob('recordings/*.mp3'):
+    r = dg.listen.rest.v('1').transcribe_file({'buffer': open(p,'rb')}, opts)
+    open(p.replace('recordings/','transcripts/').replace('.mp3','.txt'),'w').write(r.results.channels[0].alternatives[0].transcript)
 "
 ```
 
-### YouTube Video Transcription
+## Language & Output Reference
 
-```bash
-yt-dlp -x --audio-format mp3 -o "youtube_video.%(ext)s" "https://youtu.be/VIDEO_ID"
-whisper "youtube_video.mp3" --model medium --language en --output_format txt
-# Or use the helper (handles download + transcription):
-transcription-helper.sh transcribe "https://youtu.be/VIDEO_ID"
-```
+**Languages** — Whisper: 99 (`--language fr/zh/es`; full list: https://github.com/openai/whisper#available-models-and-languages). AssemblyAI: 99 (`language_code="fr"` or `language_detection=True`). Deepgram Nova-3: 36 (`language="fr"`); `nova-2` for 100+.
 
----
-
-## Language Support
-
-Whisper auto-detects language by default. Specify for accuracy: `--language fr` (French), `--language zh` (Chinese), `--language es` (Spanish). Supports 99 languages — full list: https://github.com/openai/whisper#available-models-and-languages
-
-AssemblyAI: 99 languages — `aai.TranscriptionConfig(language_code="fr")` or `language_detection=True`
-
-Deepgram Nova-3: 36 languages — `PrerecordedOptions(model="nova-3", language="fr")`. Use `nova-2` for broader coverage (100+ languages).
-
----
-
-## Output Formats
-
-| Format | Use Case | Tool support |
-|--------|----------|-------------|
-| `.txt` | Reading, search indexing, LLM input | All tools |
-| `.srt` | Video subtitles (most compatible) | Whisper, Buzz, AssemblyAI |
-| `.vtt` | Web video subtitles | Whisper, Buzz, AssemblyAI |
-| `.json` | Programmatic access, word timestamps | All tools |
+**Output formats**: `.txt` (all tools), `.srt`/`.vtt` subtitles (Whisper, Buzz, AssemblyAI), `.json` word timestamps (all tools).
 
 ---
 
