@@ -67,15 +67,14 @@ Check external contributor gate before ANY approve/merge (see Pre-merge checks b
 For each unassigned, non-blocked issue with no open PR, no active worker, and **no `needs-maintainer-review` label**:
 
 ```bash
-# Dedup guard (MANDATORY — all 6 layers run deterministically inside check_dispatch_dedup)
+# Dedup guard (MANDATORY — all 7 layers run deterministically inside check_dispatch_dedup)
 source ~/.aidevops/agents/scripts/pulse-wrapper.sh
 RUNNER_USER=$(gh api user --jq '.login' 2>/dev/null || whoami)
 
-# All dedup layers including cross-machine claim lock (GH#11086) are inside
-# check_dispatch_dedup. Layer 6 posts an HTML comment claim, sleeps the
-# consensus window, and checks who was first. Do NOT add a separate claim
-# step — it's already deterministic. Passing $RUNNER_USER as the 5th arg
-# is required for the assignee guard (Layer 5) and claim lock (Layer 6).
+# All dedup layers including dispatch comment check (GH#11141), assignee guard,
+# and cross-machine claim lock are inside check_dispatch_dedup. Passing
+# $RUNNER_USER as the 5th arg is required for the assignee guard (Layer 6),
+# dispatch comment check (Layer 5), and claim lock (Layer 7).
 if check_dispatch_dedup NUMBER SLUG "Issue #NUMBER: TITLE" "TASK_ID: TITLE" "$RUNNER_USER"; then continue; fi
 
 # Assign and dispatch
@@ -741,7 +740,7 @@ fi
 release_dispatch_claim <number> <slug> "$RUNNER_USER"
 ```
 
-`check_dispatch_dedup` runs all six checks in sequence: (1) in-flight dispatch ledger, (2) exact repo+issue process overlap, (3) title variants via dispatch-dedup-helper (e.g., `issue-3502` vs `Issue #3502: description`), (4) merged-PR evidence via close keywords and task-ID fallback, (5) cross-machine assignee guard (GH#6891) — prevents dispatching for issues already assigned to another runner, and (6) cross-machine optimistic claim lock (GH#11086) — posts an HTML comment claim, sleeps the consensus window, and checks who was first. Only the oldest claimant proceeds; others back off. This was previously an LLM-instructed step that runners could skip — the GH#11086 incident showed two runners dispatching on the same issue 45 seconds apart.
+`check_dispatch_dedup` runs all seven checks in sequence: (1) in-flight dispatch ledger, (2) exact repo+issue process overlap, (3) title variants via dispatch-dedup-helper (e.g., `issue-3502` vs `Issue #3502: description`), (4) merged-PR evidence via close keywords and task-ID fallback, (5) cross-machine dispatch comment check (GH#11141) — detects "Dispatching worker" comments posted by other runners, the persistent cross-machine signal that survives beyond the claim lock's 8-second window, (6) cross-machine assignee guard — blocks if assigned to any login other than self (GH#11141 fix: repo owner/maintainer are no longer excluded since they may also be runners), and (7) cross-machine optimistic claim lock (GH#11086) — posts an HTML comment claim, sleeps the consensus window, and checks who was first. Only the oldest claimant proceeds; others back off.
 
 The deterministic guard is the safety net, not the primary layer. Over time, as the intelligence scan catches more duplicates earlier, the deterministic guard should fire less often. See "Dedup health monitoring" below for how to track this.
 

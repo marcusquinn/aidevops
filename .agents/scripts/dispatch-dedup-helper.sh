@@ -394,19 +394,21 @@ _get_repo_maintainer() {
 # they miss workers running on other machines. The GitHub assignee is
 # the single source of truth visible to all runners.
 #
-# GH#10521: Distinguishes maintainer/owner assignment from runner
-# assignment. Issues assigned to the repo maintainer (from repos.json)
-# or the repo owner (from slug) are NOT blocked — only issues assigned
-# to other known runner accounts trigger the dedup guard.
+# GH#11141: Only self_login is excluded from the dedup check. The repo
+# owner and maintainer are NOT excluded — they may also be runners, and
+# excluding them caused double-dispatch when the owner's pulse assigned
+# an issue and another runner's pulse ignored the assignment (the
+# GH#10521 exclusion). The pulse already handles owner-assigned-but-
+# not-dispatched issues via status labels and staleness checks.
 #
 # Args:
 #   $1 = issue number
 #   $2 = repo slug (owner/repo)
 #   $3 = (optional) current runner login — if assigned to self, not a dup
 # Returns:
-#   exit 0 if assigned to another runner (do NOT dispatch)
-#   exit 1 if unassigned, assigned to self, or assigned to maintainer/owner (safe to dispatch)
-# Outputs: assignee info on stdout if assigned to another runner
+#   exit 0 if assigned to another login (do NOT dispatch)
+#   exit 1 if unassigned or assigned only to self (safe to dispatch)
+# Outputs: assignee info on stdout if assigned to another login
 #######################################
 is_assigned() {
 	local issue_number="$1"
@@ -433,62 +435,33 @@ is_assigned() {
 		return 1
 	fi
 
-	# Build the set of non-runner logins to exclude from the dedup check:
-	# 1. Current runner (self_login)
-	# 2. Repo maintainer from repos.json
-	# 3. Repo owner from slug (owner/repo → owner)
-	local -a non_runner_logins=()
-	if [[ -n "$self_login" ]]; then
-		non_runner_logins+=("$self_login")
-	fi
-
-	# Repo owner from slug (the part before /)
-	local repo_owner=""
-	repo_owner="${repo_slug%%/*}"
-	if [[ -n "$repo_owner" ]]; then
-		non_runner_logins+=("$repo_owner")
-	fi
-
-	# Repo maintainer from repos.json
-	local repo_maintainer=""
-	repo_maintainer=$(_get_repo_maintainer "$repo_slug")
-	if [[ -n "$repo_maintainer" ]]; then
-		non_runner_logins+=("$repo_maintainer")
-	fi
-
-	# Check if ALL assignees are non-runner logins (self, maintainer, or owner)
-	local has_runner_assignee=false
-	local runner_assignees=""
+	# Only exclude self_login. Any other assignee — including repo owner
+	# and maintainer — means the issue is claimed. This prevents double-
+	# dispatch when the owner is also a runner (GH#11141).
 	local -a assignee_array=()
 	local saved_ifs="${IFS:-}"
 	IFS=',' read -ra assignee_array <<<"$assignees"
 	IFS="$saved_ifs"
+
+	local other_assignees=""
 	local assignee
 	for assignee in "${assignee_array[@]}"; do
-		local is_non_runner=false
-		local non_runner
-		for non_runner in "${non_runner_logins[@]}"; do
-			if [[ "$assignee" == "$non_runner" ]]; then
-				is_non_runner=true
-				break
-			fi
-		done
-		if [[ "$is_non_runner" == "false" ]]; then
-			has_runner_assignee=true
-			if [[ -n "$runner_assignees" ]]; then
-				runner_assignees="${runner_assignees},${assignee}"
-			else
-				runner_assignees="$assignee"
-			fi
+		if [[ -n "$self_login" && "$assignee" == "$self_login" ]]; then
+			continue
+		fi
+		if [[ -n "$other_assignees" ]]; then
+			other_assignees="${other_assignees},${assignee}"
+		else
+			other_assignees="$assignee"
 		fi
 	done
 
-	if [[ "$has_runner_assignee" == "false" ]]; then
-		# All assignees are self, maintainer, or repo owner — safe to dispatch
+	if [[ -z "$other_assignees" ]]; then
+		# Only assignee is self (or no assignees) — safe to dispatch
 		return 1
 	fi
 
-	printf 'ASSIGNED: issue #%s in %s is assigned to runner(s) %s\n' "$issue_number" "$repo_slug" "$runner_assignees"
+	printf 'ASSIGNED: issue #%s in %s is assigned to %s\n' "$issue_number" "$repo_slug" "$other_assignees"
 	return 0
 }
 
@@ -558,6 +531,87 @@ has_open_pr() {
 }
 
 #######################################
+# Check whether an issue has a recent "Dispatching worker" comment
+# from another runner (GH#11141).
+#
+# The pulse agent posts a "Dispatching worker." comment on every issue
+# it dispatches. This is a persistent, cross-machine signal that a
+# worker is in-flight — unlike the dispatch ledger (local-only) or
+# the claim lock (8-second window). Checking for this comment catches
+# the gap between dispatch and PR creation across machines.
+#
+# A comment is considered active if it was posted within the last
+# DISPATCH_COMMENT_MAX_AGE seconds (default 4 hours — generous to
+# cover long-running workers). Only comments from other logins are
+# considered; self-posted comments are ignored.
+#
+# Args:
+#   $1 = issue number
+#   $2 = repo slug (owner/repo)
+#   $3 = self login (optional; comments from self are ignored)
+# Returns:
+#   exit 0 if a recent dispatch comment from another runner exists (do NOT dispatch)
+#   exit 1 if no recent dispatch comment (safe to dispatch)
+# Outputs:
+#   single-line reason when evidence is found
+#######################################
+has_dispatch_comment() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="${3:-}"
+
+	if [[ ! "$issue_number" =~ ^[0-9]+$ ]] || [[ -z "$repo_slug" ]]; then
+		return 1
+	fi
+
+	local max_age="${DISPATCH_COMMENT_MAX_AGE:-14400}" # 4 hours
+
+	local now_epoch
+	now_epoch=$(date -u '+%s')
+
+	# Fetch recent comments and look for "Dispatching worker" from non-self authors
+	local comments_json
+	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--jq '[.[] | select(.body | startswith("Dispatching worker")) | {author: .user.login, created_at: .created_at}]' \
+		2>/dev/null) || comments_json="[]"
+
+	if [[ -z "$comments_json" || "$comments_json" == "null" || "$comments_json" == "[]" ]]; then
+		return 1
+	fi
+
+	# Check each dispatch comment
+	local count
+	count=$(printf '%s' "$comments_json" | jq 'length' 2>/dev/null) || count=0
+
+	local i
+	for i in $(seq 0 $((count - 1))); do
+		local author created_at
+		author=$(printf '%s' "$comments_json" | jq -r ".[$i].author // \"\"" 2>/dev/null) || author=""
+		created_at=$(printf '%s' "$comments_json" | jq -r ".[$i].created_at // \"\"" 2>/dev/null) || created_at=""
+
+		# Skip self-posted comments
+		if [[ -n "$self_login" && "$author" == "$self_login" ]]; then
+			continue
+		fi
+
+		# Check age
+		if [[ -n "$created_at" ]]; then
+			local comment_epoch
+			comment_epoch=$(date -u -d "$created_at" '+%s' 2>/dev/null ||
+				TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$created_at" '+%s' 2>/dev/null ||
+				printf '%s' "0")
+			local age=$((now_epoch - comment_epoch))
+			if [[ "$age" -lt "$max_age" ]]; then
+				printf 'dispatch comment by %s posted %ds ago on issue #%s\n' "$author" "$age" "$issue_number"
+				return 0
+			fi
+		fi
+	done
+
+	return 1
+}
+
+#######################################
 # Show help
 #######################################
 show_help() {
@@ -569,9 +623,10 @@ Usage:
   dispatch-dedup-helper.sh is-duplicate <title>     Check if already running (exit 0=dup, 1=safe)
   dispatch-dedup-helper.sh has-open-pr <issue> <slug> [issue-title]
                                                     Check merged PR evidence (exit 0=evidence, 1=none)
+  dispatch-dedup-helper.sh has-dispatch-comment <issue> <slug> [self-login]
+                                                     Check for recent "Dispatching worker" comment (exit 0=found, 1=none)
   dispatch-dedup-helper.sh is-assigned <issue> <slug> [self-login]
-                                                      Check if assigned to another runner (exit 0=blocked, 1=free)
-                                                      Ignores repo owner (from slug) and maintainer (from repos.json)
+                                                       Check if assigned to another login (exit 0=blocked, 1=free)
   dispatch-dedup-helper.sh claim <issue> <slug> [runner-login]
                                                      Cross-machine claim lock (exit 0=won, 1=lost, 2=error)
   dispatch-dedup-helper.sh release <issue> <slug> [runner-login]
@@ -593,12 +648,19 @@ Examples:
     echo "Safe to dispatch"
   fi
 
-  # Check before dispatching (cross-machine assignee dedup — GH#10521)
-  # Only blocks for runner accounts, not repo owner/maintainer
+  # Check before dispatching (cross-machine assignee dedup — GH#11141)
+  # Blocks if assigned to any login other than self
   if dispatch-dedup-helper.sh is-assigned 2300 owner/repo mylogin; then
-    echo "Assigned to another runner — skip dispatch"
+    echo "Assigned to another login — skip dispatch"
   else
-    echo "Unassigned, assigned to self, or assigned to owner/maintainer — safe"
+    echo "Unassigned or assigned to self — safe"
+  fi
+
+  # Check before dispatching (dispatch comment dedup — GH#11141)
+  if dispatch-dedup-helper.sh has-dispatch-comment 2300 owner/repo mylogin; then
+    echo "Another runner already dispatched — skip"
+  else
+    echo "No recent dispatch comment — safe"
   fi
 
   # Check before dispatching (merged PR dedup)
@@ -648,6 +710,13 @@ main() {
 			return 1
 		}
 		is_assigned "$1" "$2" "${3:-}"
+		;;
+	has-dispatch-comment)
+		[[ $# -lt 2 ]] && {
+			echo "Error: has-dispatch-comment requires <issue-number> <repo-slug> [self-login]" >&2
+			return 1
+		}
+		has_dispatch_comment "$1" "$2" "${3:-}"
 		;;
 	has-open-pr)
 		[[ $# -lt 2 ]] && {
