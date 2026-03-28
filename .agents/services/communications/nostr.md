@@ -27,8 +27,6 @@ tools:
 - **Relay list**: [nostr.watch](https://nostr.watch/) | [relay.tools](https://relay.tools/)
 - **Clients**: Damus (iOS), Amethyst (Android), Primal (web/mobile), Snort (web), Coracle (web)
 
-**Key differentiator**: The entire protocol is JSON events signed with secp256k1 keys, relayed over WebSockets. No accounts, no servers to run, no registration. Censorship resistance comes from relay redundancy.
-
 **When to use Nostr vs other protocols**:
 
 | Criterion | Nostr | SimpleX | Matrix | XMTP | Bitchat |
@@ -79,7 +77,7 @@ Every piece of data is a signed JSON event:
 
 ### NIP-44: Versioned Encryption
 
-XChaCha20-Poly1305 (AEAD) with secp256k1 ECDH + HKDF. Improvements: authenticated encryption, padding to resist length analysis, versioned for future upgrades. Used by NIP-17 gift-wrapped DMs.
+XChaCha20-Poly1305 (AEAD) with secp256k1 ECDH + HKDF. Adds authenticated encryption, padding (resists length analysis), and versioning. Used by NIP-17 gift-wrapped DMs.
 
 ### NIP-17: Private Direct Messages (Gift-Wrapped)
 
@@ -106,8 +104,6 @@ Nostr identity is a secp256k1 keypair:
 | nsec | `nsec1...` | NIP-19 bech32-encoded private key (secret) |
 | nprofile | `nprofile1...` | NIP-19 pubkey + relay hints |
 
-No registration, no server, no phone number. The same keypair works across all clients and relays.
-
 ### Key Management for Bots
 
 ```bash
@@ -124,13 +120,13 @@ aidevops secret set NOSTR_BOT_NSEC
 npm install nostr-tools   # or: bun add nostr-tools
 ```
 
-nostr-tools is pure TypeScript — fully compatible with Bun. Use `bun:sqlite` for local state if needed. `@noble/secp256k1` is bundled. Node.js requires `websocket-polyfill`; Bun does not.
+Pure TypeScript — compatible with Bun (`@noble/secp256k1` bundled). Node.js requires `websocket-polyfill`; Bun does not.
 
 ## Bot Implementation
 
 ### DM-Only Bot (Current Scope)
 
-The aidevops Nostr bot operates in DM-only mode — listens for encrypted DMs from allowed pubkeys and dispatches to runners. Does not post publicly.
+Listens for encrypted DMs from allowed pubkeys and dispatches to runners.
 
 ```typescript
 import {
@@ -239,13 +235,9 @@ CMD ["bun", "run", "src/bot.ts"]
 
 ## Privacy and Security
 
-### Strengths
-- No phone/email required — keypair identity only
-- Decentralized — no single entity controls the network
-- Censorship-resistant — events replicated across independent relays
-- Lightning payments — NIP-57 zaps enable native Bitcoin payments
+**Strengths**: No phone/email required; decentralized; censorship-resistant; Lightning payments via NIP-57 zaps.
 
-### Weaknesses and Limitations
+### Weaknesses
 
 | Issue | NIP-04 | NIP-17 | Mitigation |
 |-------|--------|--------|------------|
@@ -253,16 +245,15 @@ CMD ["bun", "run", "src/bot.ts"]
 | Timestamps visible | Yes | No (randomized) | Use NIP-17 |
 | Forward secrecy | No | No | Use SimpleX for max privacy |
 | Key recovery | None | None | Backup nsec securely |
-
-**No forward secrecy**: Neither NIP-04 nor NIP-44 implements a ratcheting protocol. A compromised private key can decrypt all past messages. SimpleX remains stronger for maximum DM privacy.
-
-**Other limitations**: No offline support (requires internet to relays); NIP-17 client support varies; no native group DMs (NIP-17 supports it but client support is inconsistent); spam filtering is client-side only.
+| Offline support | No | No | — |
+| Group DMs | No | Partial | Client support varies |
+| Spam filtering | Client-side | Client-side | — |
 
 ### Threat Model
 
-Nostr **protects against**: Platform deplatforming, server seizure, censorship (relay redundancy), identity theft (secp256k1 signatures).
+**Protects against**: Platform deplatforming, server seizure, censorship (relay redundancy), identity theft (secp256k1 signatures).
 
-Nostr **does not protect against**: Metadata analysis (NIP-04), key compromise (all past NIP-04 DMs decryptable), relay collusion, sybil attacks, spam.
+**Does not protect against**: Metadata analysis (NIP-04), key compromise (all past NIP-04 DMs decryptable), relay collusion, sybil attacks, spam.
 
 ## Integration with aidevops
 
@@ -281,8 +272,6 @@ Nostr Client → Nostr Bot (Bun/Node.js) → aidevops Runner
 | Bot process | `.agents/scripts/nostr-bot/` (TypeScript/Bun) | DM listener + runner dispatch |
 
 **Matterbridge**: No native adapter. A custom adapter could bridge Nostr DMs to other platforms via Matterbridge's REST API.
-
-**Use cases**: Censorship-resistant dispatch, Lightning-integrated bots (NIP-57 zaps), cross-client access, pseudonymous operations, decentralized status notifications.
 
 ## Related
 
