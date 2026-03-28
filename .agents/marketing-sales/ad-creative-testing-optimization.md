@@ -9,7 +9,7 @@
 
 ---
 
-### Testing Framework (4 Levels)
+### Testing Framework
 
 | Level | What to test | Setup | Duration |
 |-------|-------------|-------|----------|
@@ -18,9 +18,7 @@
 | 3 — Element | One element: headline, CTA, offer, thumbnail, hook | 5+ variations, everything else identical | Until 95% confidence + 50 conv/variant |
 | 4 — Audience-Message | Same creative across segments, or tailored messaging per segment | Budget weighted by audience size | 14 days |
 
----
-
-### Statistical Significance
+**Statistical significance:**
 
 | Test type | Min conversions | Min confidence | Min duration |
 |-----------|----------------|----------------|--------------|
@@ -29,32 +27,39 @@
 | Audience | 100+ | 95% | 14 days |
 | Format | 20+ | 95% | 7 days |
 
-- **95%+**: Declare winner, scale
-- **90-94%**: Directional only — keep running if budget allows
-- **<90%**: Insufficient — do not declare winner
+**95%+**: Declare winner, scale. **90-94%**: Directional only — keep running if budget allows. **<90%**: Insufficient — do not declare winner. Calculators: VWO, Optimizely Stats Engine, AB Test Guide.
 
-Calculators: VWO, Optimizely Stats Engine, AB Test Guide.
+**Testing approaches:**
+
+- **Sequential:** Headlines (wk 1) → winning headline + images (wk 2) → winning combo + CTAs (wk 3) → + offers (wk 4).
+- **Champion vs. Challengers:** 1 champion (40% budget) + 4-5 challengers (15% each). Weekly: best challenger beats champion → swap; worst replaced.
+- **Bracket:** 8 variations equal budget → top 4 get more → top 2 battle → winner gets full budget.
+
+**Element priority order:**
+
+| Tier | Elements | Impact |
+|------|----------|--------|
+| 1 (Highest) | Hook (first 3s), value proposition, offer, creative format | Largest CPA/ROAS impact |
+| 2 (High) | Headline, visual, CTA, social proof | Significant CTR/CVR impact |
+| 3 (Medium) | Primary text, description, button color/text, length | Moderate |
+| 4 (Lower) | Emoji, capitalization, pricing display, urgency language | Incremental |
+
+**Process:** Hypothesis → control vs. variant (all else identical) → equal split (80/20 when protecting strong control) → run per significance thresholds → analyze CPA/ROAS then CTR/CVR/watch time → scale winner, pause loser, document, plan next.
+
+**Common mistakes:** Multiple variables (test one) | Stopping too early (wait for significance + min sample + min duration) | Duration <7 days (day-of-week variance) | Unequal samples | Optimizing CTR instead of CPA/ROAS | No documentation.
+
+**Test log fields:** ID | Date | Campaign | Hypothesis | Control | Variant(s) | Variable | Audience | Budget/variant | Duration | Results (CPA, CTR, conv, confidence) | Winner | Learnings | Next steps. Build: winners library, losers library, best practices log.
 
 ---
 
 ### Creative Fatigue
 
-**Symptoms:** CTR declining WoW, CPA rising, frequency >5, hook rate <35%.
-
-| Metric | Fresh | Fatigued |
-|--------|-------|----------|
-| CTR | Stable/rising | >20% drop from peak |
-| CPA | Stable/decreasing | >25% above baseline |
-| Frequency | <3 | >5 |
-| Hook rate (video) | >50% | <35% |
-
-**Refresh levels:**
-
-| Level | Changes | Lifespan extension |
-|-------|---------|-------------------|
-| Minor | Headline, thumbnail, offer, CTA | +7-14 days |
-| Moderate | New hook (first 3s), new image/video, rewrite text, update social proof | +14-30 days |
-| New creative | New concept, angle, format, creators | 30-90 days |
+| Metric | Fresh | Fatigued | Refresh |
+|--------|-------|----------|---------|
+| CTR | Stable/rising | >20% drop from peak | Minor: headline, thumbnail, offer, CTA (+7-14 days) |
+| CPA | Stable/decreasing | >25% above baseline | Moderate: new hook/image/video, rewrite text, update social proof (+14-30 days) |
+| Frequency | <3 | >5 | New creative: new concept, angle, format, creators (30-90 days) |
+| Hook rate (video) | >50% | <35% | |
 
 **Prevention:** Rotate 5-10 creatives/ad set, launch new weekly, retire bottom 20% bi-weekly, frequency cap max 4/7 days.
 
@@ -91,33 +96,6 @@ Monthly: creative audit, performance ranking, fatigue analysis, testing insights
 
 ---
 
-### A/B Testing Methodology
-
-**Testing approaches:**
-
-- **Sequential:** Headlines (wk 1) → winning headline + images (wk 2) → winning combo + CTAs (wk 3) → + offers (wk 4). Layer-by-layer optimization.
-- **Champion vs. Challengers:** 1 champion (40% budget) + 4-5 challengers (15% each). Weekly: best challenger beats champion → swap; worst replaced.
-- **Bracket:** 8 variations equal budget → top 4 get more → top 2 battle → winner gets full budget. Fast elimination.
-
-**Priority testing order:**
-
-| Tier | Elements | Impact |
-|------|----------|--------|
-| 1 (Highest) | Hook (first 3s), value proposition, offer, creative format | Largest CPA/ROAS impact |
-| 2 (High) | Headline, visual, CTA, social proof | Significant CTR/CVR impact |
-| 3 (Medium) | Primary text, description, button color/text, length | Moderate |
-| 4 (Lower) | Emoji, capitalization, pricing display, urgency language | Incremental |
-
-**Process:** Hypothesis → control vs. variant (all else identical) → equal split (80/20 when protecting strong control) → run per significance thresholds → analyze CPA/ROAS then CTR/CVR/watch time → scale winner, pause loser, document, plan next.
-
-**Common mistakes:** Multiple variables (test one at a time) | Stopping too early (wait for significance + min sample + min duration) | Duration <7 days (day-of-week variance) | Unequal samples (equal traffic split) | Optimizing for CTR instead of CPA/ROAS | No documentation (maintain test log).
-
-**Test log fields:** ID | Date | Campaign | Hypothesis | Control | Variant(s) | Variable | Audience | Budget/variant | Duration | Results (CPA, CTR, conv, confidence) | Winner | Learnings | Next steps.
-
-Build: winners library, losers library, best practices log (accumulated patterns).
-
----
-
 ## Ad Creative Scoring Rubrics
 
 ### Pre-Launch Scorecard (100 pts)
@@ -130,7 +108,7 @@ Build: winners library, losers library, best practices log (accumulated patterns
 | Copy Quality | /20 | Headline, primary text, CTA, tone/voice |
 | Offer & CTA | /15 | Offer strength, urgency/scarcity, friction reduction |
 
-Scoring: 5 = excellent, 3 = adequate, 1 = weak/missing. Launch 75+, iterate 60-74, scrap <60. After 7 days compare pre-launch score to actual performance for pattern recognition.
+Scoring: 5 = excellent, 3 = adequate, 1 = weak/missing. Launch 75+, iterate 60-74, scrap <60. Compare pre-launch score to actual performance after 7 days for pattern recognition.
 
 ### Post-Launch Scorecard (100 pts, after 7 days)
 
@@ -147,57 +125,29 @@ Actions: 85-100 scale aggressively | 70-84 scale moderately | 50-69 keep testing
 
 ### Video Scorecard (100 pts)
 
-| Element | Points | Criteria |
-|---------|--------|----------|
-| Hook (first 3s) | /30 | Visual scroll-stop (10), verbal/text hook (10), immediate relevance (10) |
-| Pacing | /15 | Cut frequency (5), energy level (5), maintains interest (5) |
-| Storytelling | /15 | Clear narrative arc (5), emotional connection (5), satisfying resolution (5) |
-| Audio | /10 | Sound quality (5), music choice (3), voice clarity (2) |
-| Captions | /10 | Readable/visible (5), synced (3), styled appropriately (2) |
-| CTA | /10 | Verbally stated (3), visually shown (3), clear next step (4) |
-| Branding | /5 | Product/brand clear (5), somewhat clear (3), unclear (0) |
-| Technical | /5 | Proper aspect ratio (2), good lighting (2), stable footage (1) |
+Hook (first 3s) /30: visual scroll-stop (10), verbal/text hook (10), immediate relevance (10). Pacing /15: cut frequency (5), energy level (5), maintains interest (5). Storytelling /15: clear narrative arc (5), emotional connection (5), satisfying resolution (5). Audio /10: sound quality (5), music choice (3), voice clarity (2). Captions /10: readable/visible (5), synced (3), styled (2). CTA /10: verbally stated (3), visually shown (3), clear next step (4). Branding /5: product/brand clear (5), somewhat clear (3), unclear (0). Technical /5: proper aspect ratio (2), good lighting (2), stable footage (1).
 
 ### Image Ad Scorecard (100 pts)
 
-| Element | Points | Criteria |
-|---------|--------|----------|
-| Visual impact | /25 | Thumb-stopping (10), clear focal point (8), color contrast (7) |
-| Composition | /20 | Rule of thirds/balance (7), hierarchy (7), not cluttered (6) |
-| Text overlay | /15 | Minimal text (5), high contrast/readable (5), complements headline (5) |
-| Product showcase | /15 | Product visible/clear (10), in context/lifestyle (5) |
-| Branding | /10 | Logo visible not overwhelming (5), brand colors (3), consistency (2) |
-| Mobile readiness | /10 | Works at small sizes (5), important elements centered (3), no tiny text (2) |
-| Platform fit | /5 | Looks native (5), somewhat native (3), out of place (0) |
+Visual impact /25: thumb-stopping (10), clear focal point (8), color contrast (7). Composition /20: rule of thirds/balance (7), hierarchy (7), not cluttered (6). Text overlay /15: minimal text (5), high contrast/readable (5), complements headline (5). Product showcase /15: product visible/clear (10), in context/lifestyle (5). Branding /10: logo visible not overwhelming (5), brand colors (3), consistency (2). Mobile readiness /10: works at small sizes (5), important elements centered (3), no tiny text (2). Platform fit /5: looks native (5), somewhat native (3), out of place (0).
 
 ---
 
 ## Dynamic Creative Optimization (DCO)
 
-DCO uses ML to test creative combinations automatically and serve the best-performing version per user.
-
-**Platforms:** Meta (Dynamic Creative), Google (RSA, RDA, Performance Max), TikTok (Smart Creative), Snapchat (Dynamic Ads), LinkedIn (Dynamic Ads).
+DCO uses ML to test creative combinations automatically and serve the best-performing version per user. **Platforms:** Meta (Dynamic Creative), Google (RSA, RDA, Performance Max), TikTok (Smart Creative), Snapchat (Dynamic Ads), LinkedIn (Dynamic Ads).
 
 ### Meta Dynamic Creative
 
 Up to 10 images/videos, 5 headlines, 5 primary texts, 5 descriptions. Meta tests all combinations, learns optimal pairings. Enable at ad level → upload assets → run 7+ days (50-100 conversions for learning) → review asset performance report.
 
-**Asset mix:**
-
-```text
-IMAGES/VIDEOS (10): 3 product-focused, 3 lifestyle/in-use, 2 before-after/testimonial, 2 promotional
-PRIMARY TEXT (5): 2 benefit hooks, 1 problem hook, 1 question hook, 1 social proof hook
-HEADLINES (5): 2 benefit-driven, 1 offer-focused, 1 social proof, 1 urgency-based
-DESCRIPTIONS (5): Offer details, guarantee/risk reversal, social proof, urgency, feature highlight
-```
+**Asset mix:** Images/videos (10): 3 product-focused, 3 lifestyle/in-use, 2 before-after/testimonial, 2 promotional. Primary text (5): 2 benefit hooks, 1 problem hook, 1 question hook, 1 social proof hook. Headlines (5): 2 benefit-driven, 1 offer-focused, 1 social proof, 1 urgency-based. Descriptions (5): offer details, guarantee/risk reversal, social proof, urgency, feature highlight.
 
 **Use DCO when:** quick concept testing, broad audiences, limited bandwidth. **Avoid when:** precise message control, isolated variable testing, brand-sensitive content.
 
 ### Google RSA / Performance Max
 
-**RSA:** 15 headlines + 4 descriptions. Review asset performance weekly. Replace "Low" assets. Iterate on 4-week cycles.
-
-**Performance Max:** 20 images (all 3 aspect ratios), 5 videos, 5 headlines, 5 long headlines, 5 descriptions, 5 logos. Provide audience signals (hints, not restrictions). Separate asset groups by product/segment. Replace poor performers weekly.
+**RSA:** 15 headlines + 4 descriptions. Review asset performance weekly. Replace "Low" assets. Iterate on 4-week cycles. **Performance Max:** 20 images (all 3 aspect ratios), 5 videos, 5 headlines, 5 long headlines, 5 descriptions, 5 logos. Provide audience signals (hints, not restrictions). Separate asset groups by product/segment. Replace poor performers weekly.
 
 ### TikTok Smart Creative
 
@@ -225,18 +175,7 @@ Multiple video clips, text options, CTAs. TikTok assembles and tests combination
 | CTR | (Clicks / Impressions) x 100 | High CTR + low CVR = bad targeting or misleading ad. |
 | CVR | (Conversions / Clicks) x 100 | Benchmarks: e-commerce 2-5%, lead gen 5-15%, SaaS trials 3-10%. |
 
-**CTR benchmarks:**
-
-| Platform | Good | Great |
-|----------|------|-------|
-| Facebook Feed | 1.5-2% | 3%+ |
-| Facebook Stories | 0.8-1.2% | 2%+ |
-| Instagram Feed | 1-1.5% | 2.5%+ |
-| Instagram Stories | 0.5-1% | 1.5%+ |
-| Google Search | 3-5% | 8%+ |
-| Google Display | 0.3-0.5% | 1%+ |
-| YouTube | 0.5-1% | 2%+ |
-| TikTok | 1-2% | 3%+ |
+**CTR benchmarks:** Facebook Feed 1.5-2% (great 3%+) | Facebook Stories 0.8-1.2% (2%+) | Instagram Feed 1-1.5% (2.5%+) | Instagram Stories 0.5-1% (1.5%+) | Google Search 3-5% (8%+) | Google Display 0.3-0.5% (1%+) | YouTube 0.5-1% (2%+) | TikTok 1-2% (3%+).
 
 ### Video Metrics
 
@@ -249,36 +188,16 @@ Multiple video clips, text options, CTAs. TikTok assembles and tests combination
 
 View definitions: Facebook/Instagram = 3s, 10s, ThruPlay (end or 15s). YouTube = 30s or interaction. TikTok = any watch (1s+); full view = 100% completion.
 
-### Engagement & Cost Metrics
+### Engagement, Cost & Quality
 
-**Engagement Rate:** Total engagements / Impressions. Average 1-3%, good 3-6%, excellent 6%+. Read comments for fatigue signals and objections.
+**Engagement Rate:** Total engagements / Impressions. Average 1-3%, good 3-6%, excellent 6%+. Read comments for fatigue signals and objections. **CPM:** Facebook $5-15, Instagram $5-10, LinkedIn $30-100, Google Display $2-10. **CPL:** B2C $5-20, B2B $50-200+.
 
-**CPM:** Facebook $5-15, Instagram $5-10, LinkedIn $30-100, Google Display $2-10. **CPL:** B2C $5-20, B2B $50-200+.
-
-### Facebook Quality Rankings
-
-| Ranking | Measures | Low score fix |
-|---------|----------|---------------|
-| Quality Ranking | Ad quality vs. competitors for same audience | Improve visuals/messaging |
-| Engagement Rate Ranking | Expected engagement vs. competitors | Improve thumb-stop power, hook |
-| Conversion Rate Ranking | Expected CVR vs. competitors | Fix message match or landing page |
-
-Higher rankings = lower costs + better delivery.
+**Facebook Quality Rankings:** Quality Ranking (ad quality vs. competitors — fix visuals/messaging) | Engagement Rate Ranking (expected engagement — improve thumb-stop power, hook) | Conversion Rate Ranking (expected CVR — fix message match or landing page). Higher rankings = lower costs + better delivery.
 
 **Attribution:** Meta default = 7-day click + 1-day view. Google default = data-driven. Windows/models vary by platform, objective, and account — verify current settings before interpreting CPA/ROAS.
 
-**Monitoring:** Daily: spend, CPA/ROAS, volume, CTR drops. Weekly: winners/losers, fatigue, audience, quality rankings. Monthly: account health, creative library, patterns, competitive benchmarks.
-
-**Metrics by objective:** Awareness → CPM, reach, video views, ThruPlay. Consideration → CTR, CPC, video views. Conversion → CPA, ROAS, CVR.
+**Monitoring cadence:** Daily: spend, CPA/ROAS, volume, CTR drops. Weekly: winners/losers, fatigue, audience, quality rankings. Monthly: account health, creative library, patterns, competitive benchmarks. **Metrics by objective:** Awareness → CPM, reach, video views, ThruPlay. Consideration → CTR, CPC, video views. Conversion → CPA, ROAS, CVR.
 
 **ROI:** `(Revenue - Spend) / Spend x 100`. Break-even ROAS = `1 / Profit Margin` (e.g., 40% margin = 2.5x).
 
-### Tools
-
-| Category | Tools |
-|----------|-------|
-| Native | Facebook Ads Manager, Google Ads, TikTok Ads Manager |
-| Attribution | Google Analytics, Triple Whale, Hyros, Northbeam |
-| Reporting | Looker Studio, Supermetrics, Funnel.io |
-| Creative intelligence | Foreplay.co, Madgicx, Motion.io, Smartly.io |
-| A/B calculators | VWO, Optimizely Stats Engine, AB Test Guide |
+**Tools:** Native: Facebook Ads Manager, Google Ads, TikTok Ads Manager. Attribution: Google Analytics, Triple Whale, Hyros, Northbeam. Reporting: Looker Studio, Supermetrics, Funnel.io. Creative intelligence: Foreplay.co, Madgicx, Motion.io, Smartly.io. A/B calculators: VWO, Optimizely Stats Engine, AB Test Guide.
