@@ -6,10 +6,7 @@ tools:
   write: true
   edit: true
   bash: true
-  glob: true
-  grep: true
   webfetch: true
-  task: true
 ---
 
 # LibPDF
@@ -107,21 +104,15 @@ pdf.removePage(0);
 ## Drawing on Pages
 
 ```typescript
-import { PDF, rgb, StandardFonts, degrees } from '@libpdf/core';
+import { rgb, StandardFonts, degrees } from '@libpdf/core';
 
 const page = pdf.addPage({ size: 'letter' });
 const font = await pdf.embedFont(StandardFonts.Helvetica);
 
 page.drawText('Hello, World!', { x: 50, y: 700, size: 24, font, color: rgb(0, 0, 0) });
-
-page.drawRectangle({ x: 50, y: 600, width: 200, height: 100,
-  color: rgb(0.9, 0.9, 0.9), borderColor: rgb(0, 0, 0), borderWidth: 1 });
-
-page.drawLine({ start: { x: 50, y: 500 }, end: { x: 250, y: 500 },
-  thickness: 2, color: rgb(0, 0, 0) });
-
-page.drawCircle({ x: 150, y: 400, size: 50,
-  color: rgb(0.8, 0.8, 1), borderColor: rgb(0, 0, 0.5), borderWidth: 1 });
+page.drawRectangle({ x: 50, y: 600, width: 200, height: 100, color: rgb(0.9, 0.9, 0.9), borderColor: rgb(0, 0, 0), borderWidth: 1 });
+page.drawLine({ start: { x: 50, y: 500 }, end: { x: 250, y: 500 }, thickness: 2, color: rgb(0, 0, 0) });
+page.drawCircle({ x: 150, y: 400, size: 50, color: rgb(0.8, 0.8, 1), borderColor: rgb(0, 0, 0.5), borderWidth: 1 });
 
 const image = await pdf.embedPng(imageBytes); // or embedJpg
 page.drawImage(image, { x: 50, y: 650, width: 100, height: 50 });
@@ -130,10 +121,9 @@ page.drawImage(image, { x: 50, y: 650, width: 100, height: 50 });
 ## Merge and Split
 
 ```typescript
-// Merge
 const merged = await PDF.merge([pdf1Bytes, pdf2Bytes, pdf3Bytes]);
 
-// Extract pages
+// Extract pages into new doc
 const newPdf = PDF.create();
 const [page1, page2] = await newPdf.copyPagesFrom(pdf, [0, 1]);
 newPdf.addPage(page1);
