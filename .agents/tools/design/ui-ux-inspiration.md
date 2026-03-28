@@ -37,47 +37,30 @@ model: sonnet
 
 ## Brand Identity Interview
 
-Run when a project has no `brand-identity.md` or user requests a rebrand. People describe preferences poorly but recognise them instantly — use concrete examples.
+Run when no `brand-identity.md` exists or user requests a rebrand. People describe preferences poorly but recognise them instantly -- use concrete examples.
 
 ### Step 1: Present Curated Examples
 
 Show 16 URLs across 4 style categories. User picks what resonates.
 
-**Minimal / Clean**
-
-| Site | Why |
-|------|-----|
-| https://linear.app | Monochrome, generous whitespace, sharp typography |
-| https://notion.so | Neutral tones, content-first, subtle UI chrome |
-| https://stripe.com | Gradient accents on clean white, precise grid |
-| https://vercel.com | Dark-mode-first, monospace accents, developer aesthetic |
-
-**Bold / Expressive**
-
-| Site | Why |
-|------|-----|
-| https://gumroad.com | Saturated colours, playful illustrations, strong CTAs |
-| https://figma.com | Vibrant gradients, rounded shapes, energetic motion |
-| https://pitch.com | Rich colour blocking, editorial typography, confident layout |
-| https://framer.com | Dark canvas, neon accents, cinematic scroll animations |
-
-**Editorial / Content-Rich**
-
-| Site | Why |
-|------|-----|
-| https://medium.com | Serif headings, reading-optimised line length, minimal distraction |
-| https://substack.com | Newsletter-native, author-centric, typographic hierarchy |
-| https://arstechnica.com | Dense information architecture, clear section hierarchy |
-| https://the-pudding.cool | Data-driven storytelling, immersive scroll, custom visualisations |
-
-**Craft / Premium**
-
-| Site | Why |
-|------|-----|
-| https://apple.com | Product-hero imagery, restrained palette, cinematic pacing |
-| https://rapha.cc | Photography-led, muted earth tones, luxury spacing |
-| https://aesop.com | Warm neutrals, serif type, tactile texture |
-| https://arc.net | Fluid animation, translucent layers, spatial UI |
+| Category | Site | Why |
+|----------|------|-----|
+| Minimal / Clean | https://linear.app | Monochrome, generous whitespace, sharp typography |
+| Minimal / Clean | https://notion.so | Neutral tones, content-first, subtle UI chrome |
+| Minimal / Clean | https://stripe.com | Gradient accents on clean white, precise grid |
+| Minimal / Clean | https://vercel.com | Dark-mode-first, monospace accents, developer aesthetic |
+| Bold / Expressive | https://gumroad.com | Saturated colours, playful illustrations, strong CTAs |
+| Bold / Expressive | https://figma.com | Vibrant gradients, rounded shapes, energetic motion |
+| Bold / Expressive | https://pitch.com | Rich colour blocking, editorial typography, confident layout |
+| Bold / Expressive | https://framer.com | Dark canvas, neon accents, cinematic scroll animations |
+| Editorial | https://medium.com | Serif headings, reading-optimised line length, minimal distraction |
+| Editorial | https://substack.com | Newsletter-native, author-centric, typographic hierarchy |
+| Editorial | https://arstechnica.com | Dense information architecture, clear section hierarchy |
+| Editorial | https://the-pudding.cool | Data-driven storytelling, immersive scroll, custom visualisations |
+| Craft / Premium | https://apple.com | Product-hero imagery, restrained palette, cinematic pacing |
+| Craft / Premium | https://rapha.cc | Photography-led, muted earth tones, luxury spacing |
+| Craft / Premium | https://aesop.com | Warm neutrals, serif type, tactile texture |
+| Craft / Premium | https://arc.net | Fluid animation, translucent layers, spatial UI |
 
 ### Step 2: User Selection
 
@@ -87,11 +70,11 @@ Show 16 URLs across 4 style categories. User picks what resonates.
 
 For each selected URL, run URL study (below) then synthesise:
 
-- **Colour direction**: warm/cool, saturated/muted, light/dark
-- **Typography direction**: serif/sans/mono, tight/loose tracking, heading weight
-- **Layout direction**: dense/spacious, grid/freeform, content-width
-- **Interaction direction**: minimal/animated, subtle/bold transitions
-- **Tone direction**: formal/casual, technical/approachable, minimal/decorative
+- **Colour**: warm/cool, saturated/muted, light/dark
+- **Typography**: serif/sans/mono, tight/loose tracking, heading weight
+- **Layout**: dense/spacious, grid/freeform, content-width
+- **Interaction**: minimal/animated, subtle/bold transitions
+- **Tone**: formal/casual, technical/approachable, minimal/decorative
 
 ### Step 4: Generate Brand Identity
 
@@ -111,21 +94,17 @@ Full-render extraction of a single URL using Playwright (`tools/browser/browser-
 
 ### Extraction Checklist
 
-For each category, extract computed styles from representative elements:
+Extract computed styles from representative elements in each category:
 
-**Colours**: backgrounds (primary, secondary, card/surface), text (heading, body, muted), accents (primary action, links, highlights), borders/dividers, gradients, dark mode palette.
-
-**Typography**: font families (heading, body, code, UI), sizes (h1-h6, body, small, caption), weights and where used, line heights, letter spacing, text transforms.
-
-**Layout**: max content width, container padding, grid system (columns, gutter, breakpoints), section spacing, header height/nav pattern, footer structure.
-
-**Buttons and Forms**: button variants (primary, secondary, ghost, destructive) with sizing, radius, and all states (default, hover, active, focus, disabled). Input fields with height, border, padding, placeholder colour, and states (default, focus, error, disabled, filled). Select/dropdown, checkbox/radio styling. Form layout pattern (stacked, inline, floating labels). Validation message styling.
-
-**Iconography**: library (Lucide, Heroicons, Phosphor, custom SVG), sizing scale, colour treatment, usage pattern (standalone, inline, button icons).
-
-**Imagery**: photography style, aspect ratios, image treatment (corners, shadows, overlays, filters), placeholder/loading pattern.
-
-**Copy Tone**: heading style (question, statement, imperative, playful), CTA wording patterns, error message tone, microcopy style (tooltips, empty states, loading).
+| Category | Extract |
+|----------|---------|
+| Colours | Backgrounds (primary, secondary, card/surface), text (heading, body, muted), accents (action, links, highlights), borders/dividers, gradients, dark mode palette |
+| Typography | Font families (heading, body, code, UI), sizes (h1-h6, body, small, caption), weights, line heights, letter spacing, text transforms |
+| Layout | Max content width, container padding, grid (columns, gutter, breakpoints), section spacing, header/nav, footer |
+| Buttons/Forms | Button variants (primary, secondary, ghost, destructive) with sizing, radius, all states. Input fields with height, border, padding, placeholder colour, all states. Select/dropdown, checkbox/radio. Form layout pattern. Validation styling |
+| Iconography | Library (Lucide, Heroicons, Phosphor, custom SVG), sizing scale, colour treatment, usage pattern |
+| Imagery | Photography style, aspect ratios, image treatment (corners, shadows, overlays, filters), placeholder/loading |
+| Copy Tone | Heading style (question, statement, imperative, playful), CTA patterns, error tone, microcopy style |
 
 ### Extraction Method
 
@@ -192,9 +171,9 @@ Process a bookmarks export or URL list into a pattern summary.
 **Workflow**:
 
 1. Parse input, extract URLs (ignore non-http), deduplicate, validate (HEAD request, skip 4xx/5xx)
-2. Run URL study extraction per URL — batches of 4 (Playwright concurrency limit), 2s delay between navigations, 30s timeout per page, skip failures
-3. Aggregate across all URLs: most common colour palettes (cluster by hue/saturation), font families (rank by frequency), layout patterns, button/form style clusters
-4. Generate summary: "You gravitate toward..." synthesis (top 3 patterns), notable outliers, recommended palette and typography from frequency analysis
+2. Run URL study per URL -- batches of 4 (Playwright concurrency limit), 2s delay, 30s timeout per page, skip failures
+3. Aggregate: most common colour palettes (cluster by hue/saturation), font families (rank by frequency), layout patterns, button/form style clusters
+4. Generate "You gravitate toward..." synthesis (top 3 patterns), notable outliers, recommended palette and typography
 5. Write to `brand-identity.md` or append to existing
 
 **Limits**: max 4 concurrent Playwright pages, 30s per-page timeout, 10 min total for up to 20 URLs.
