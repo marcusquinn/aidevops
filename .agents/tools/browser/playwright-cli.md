@@ -34,14 +34,7 @@ playwright-cli screenshot
 playwright-cli close
 ```
 
-**Key Advantages**:
-
-- **Ref-based selection**: Deterministic element targeting from snapshots (e1, e2, e3)
-- **Session isolation**: `--session` flag for parallel browser instances
-- **Headless by default**: Use `--headed` only for visual debugging
-- **Persistent profiles**: Sessions preserve cookies/storage between calls
-- **Tracing built-in**: `tracing-start/stop` for debugging
-- **Microsoft official**: Part of `@playwright/mcp`, actively maintained
+**Key Advantages**: Ref-based selection (deterministic `e1`/`e2`/`e3` targeting from snapshots), `--session` for parallel isolated instances, headless by default (`--headed` for debugging), persistent profiles (cookies/storage preserved), built-in tracing, Microsoft-maintained (`@playwright/mcp`).
 
 **Performance**: Navigate+screenshot ~1.9s, form fill ~1.4s (~2s cold start).
 
@@ -49,36 +42,23 @@ playwright-cli close
 
 **vs Playwriter MCP**: playwright-cli runs headless with isolated sessions. Playwriter uses your existing browser (headed, with extensions/passwords).
 
-**When to use**:
-
-- AI agent automation (forms, clicks, navigation)
-- CI/CD pipelines and shell scripts
-- Parallel browser sessions
-- Tasks that don't need your existing browser state
+**When to use**: AI agent automation (forms, clicks, navigation), CI/CD pipelines, parallel browser sessions, tasks that don't need existing browser state.
 
 <!-- AI-CONTEXT-END -->
 
 ## Installation
 
 ```bash
-# Install globally (recommended)
-bun install -g @playwright/mcp@latest   # Bun (preferred)
-npm install -g @playwright/mcp@latest   # npm alternative
-
-# Verify
-playwright-cli --help
+bun install -g @playwright/mcp@latest     # Bun (preferred)
+npm install -g @playwright/mcp@latest     # npm alternative
+playwright-cli --help                     # Verify
 
 # Without global install
 bunx @playwright/mcp playwright-cli --help   # ~0.3s
 npx @playwright/mcp playwright-cli --help    # ~2-3s
 ```
 
-**As Claude Code skill**:
-
-```bash
-/plugin marketplace add microsoft/playwright-cli
-/plugin install playwright-cli
-```
+As Claude Code skill: `/plugin marketplace add microsoft/playwright-cli` then `/plugin install playwright-cli`.
 
 ## Commands Reference
 
@@ -105,51 +85,31 @@ playwright-cli resize <width> <height>  # Resize browser window
 playwright-cli open <url> --headed      # Show browser window (debugging)
 ```
 
-### Navigation
+### Navigation / Keyboard / Mouse
 
 ```bash
 playwright-cli go-back                  # Navigate back
 playwright-cli go-forward               # Navigate forward
 playwright-cli reload                   # Reload page
-```
-
-### Keyboard
-
-```bash
 playwright-cli press <key>              # Press key (Enter, ArrowDown, Tab, etc.)
 playwright-cli keydown <key>            # Press key down
 playwright-cli keyup <key>              # Release key
-```
-
-### Mouse
-
-```bash
 playwright-cli mousemove <x> <y>        # Move mouse to position
 playwright-cli mousedown [button]       # Press mouse button
 playwright-cli mouseup [button]         # Release mouse button
 playwright-cli mousewheel <dx> <dy>     # Scroll mouse wheel
 ```
 
-### Save As
+### Screenshots / PDF / Tabs / DevTools
 
 ```bash
 playwright-cli screenshot               # Screenshot current page
 playwright-cli screenshot <ref>         # Screenshot specific element
 playwright-cli pdf                      # Save page as PDF
-```
-
-### Tabs
-
-```bash
 playwright-cli tab-list                 # List all tabs
 playwright-cli tab-new [url]            # Create new tab
 playwright-cli tab-close [index]        # Close tab
 playwright-cli tab-select <index>       # Switch to tab
-```
-
-### DevTools
-
-```bash
 playwright-cli console [min-level]      # List console messages
 playwright-cli network                  # List network requests
 playwright-cli run-code <code>          # Run Playwright code snippet
@@ -167,11 +127,7 @@ playwright-cli session-stop-all           # Stop all sessions
 playwright-cli session-delete [name]      # Delete session + profile data
 ```
 
-Set session via environment for all commands:
-
-```bash
-PLAYWRIGHT_CLI_SESSION=todo-app claude .
-```
+Set session via environment: `PLAYWRIGHT_CLI_SESSION=todo-app claude .`
 
 ## Examples
 
@@ -186,7 +142,7 @@ playwright-cli click e3
 playwright-cli snapshot
 ```
 
-### Multi-Tab Workflow
+### Multi-Tab + DevTools
 
 ```bash
 playwright-cli open https://example.com
@@ -194,19 +150,11 @@ playwright-cli tab-new https://example.com/other
 playwright-cli tab-list
 playwright-cli tab-select 0
 playwright-cli snapshot
+playwright-cli console                     # Check console messages
+playwright-cli network                     # Check network requests
 ```
 
-### Debugging with DevTools
-
-```bash
-playwright-cli open https://example.com
-playwright-cli click e4
-playwright-cli fill e7 "test"
-playwright-cli console
-playwright-cli network
-```
-
-### Tracing for Debug
+### Tracing
 
 ```bash
 playwright-cli open https://example.com
@@ -244,11 +192,6 @@ playwright-cli screenshot
 | **Extensions** | No | No | Yes (yours) | Possible |
 | **Cold start** | ~2s | ~3-5s (Rust) | ~1s (extension) | ~2s |
 
-- **agent-browser** — more CLI commands, Rust binary (but slower cold start)
-- **Playwriter** — need your existing browser sessions, extensions, passwords
-- **Stagehand** — natural language automation, self-healing selectors
-- **Playwright direct** — maximum speed, full API control, TypeScript projects
-
 ## Integration with Other Tools
 
 ### Chrome DevTools MCP
@@ -271,7 +214,7 @@ Use cases: performance profiling, network monitoring, CSS coverage, console erro
 | Medium | rebrowser-patches + playwright-cli | Hide automation signals |
 | High | Camoufox + Playwright API | Bot detection evasion, multi-account |
 
-playwright-cli uses Playwright under the hood and works with rebrowser-patches automatically if installed in the Playwright browsers directory. For maximum stealth with fingerprint rotation, use Camoufox directly. See `tools/browser/anti-detect-browser.md`.
+playwright-cli works with rebrowser-patches automatically if installed in the Playwright browsers directory. For maximum stealth with fingerprint rotation, use Camoufox directly. See `tools/browser/anti-detect-browser.md`.
 
 ## Related
 
