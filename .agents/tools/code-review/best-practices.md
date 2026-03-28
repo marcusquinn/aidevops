@@ -32,7 +32,7 @@ tools:
 
 ## Shell Script Standards (MANDATORY)
 
-Required for SonarCloud/CodeFactor/Codacy compliance:
+Required for SonarCloud/CodeFactor/Codacy compliance. Full rule reference: `code-standards.md`.
 
 ```bash
 # Function structure — local params, explicit return
@@ -52,18 +52,7 @@ readonly CONTENT_TYPE_JSON="Content-Type: application/json"
 readonly ERROR_UNKNOWN_COMMAND="Unknown command:"
 ```
 
-**Unused variable rule (S1481):** Prefer enhancement over deletion:
-
-```bash
-# ✅ Enhance rather than remove
-local port
-read -r port
-if [[ -n "$port" && "$port" != "22" ]]; then
-    ssh -p "$port" "$host"
-else
-    ssh "$host"
-fi
-```
+**S1481 (unused variables):** Prefer enhancing functionality over deleting — the variable often signals missing logic.
 
 ## Quality Tools
 
@@ -75,7 +64,21 @@ fi
 
 ## Runtime Behaviour Patterns
 
-These patterns cause silent failures, infinite loops, and race conditions that only appear at runtime. Static analysis cannot catch them.
+Patterns that cause silent failures, infinite loops, and race conditions. Static analysis cannot catch these.
+
+**Prevention rule:** Before implementing any pattern below, enumerate the complete state space — every possible state, event, and status value including errors. Implement handlers for all of them before writing the happy path.
+
+### Runtime Testing Signals
+
+| Pattern | Risk | Required testing |
+|---------|------|-----------------|
+| `switch`/`case` on status/state | Missing entry states | Trigger each state |
+| `while true` / unbounded loops | Infinite loop | Verify termination |
+| `setTimeout`/`setInterval` | Timer leak | Verify cleanup |
+| Payment/checkout flows | Duplicate charge | Full payment flow |
+| Auth token refresh | Race condition | Concurrent requests |
+| Webhook handlers | Missing event types | Send each event type |
+| Database migrations | Irreversible | Test on staging first |
 
 ### State Machines
 
@@ -86,7 +89,7 @@ Handle **all** possible states, not just the happy path. Missing states cause si
 **Detection keywords:** `status`, `state`, `phase`, `stage`, `step`, `mode`, `lifecycle`
 
 ```bash
-# ✅ Exhaustive shell state machine with explicit default
+# Exhaustive state machine with explicit default
 handle_deploy_state() {
     local state="$1"
     case "$state" in
@@ -105,29 +108,12 @@ handle_deploy_state() {
 }
 ```
 
-```typescript
-// ✅ TypeScript: exhaustive switch with explicit default
-function handlePaymentStatus(status: string) {
-  switch (status) {
-    case 'succeeded':  showSuccess(); break;
-    case 'failed':     showError(); break;
-    case 'pending':
-    case 'processing': showPending(); break;
-    case 'cancelled':  showCancelled(); break;
-    case 'refunded':   showRefunded(); break;
-    default:
-      console.error(`Unhandled payment status: ${status}`);
-      showError(`Unexpected status: ${status}`);
-  }
-}
-```
-
 #### Transition Guards
 
 Guard state transitions to prevent double-processing and duplicate charges:
 
 ```typescript
-// ✅ Only allow valid transitions from current state
+// Only allow valid transitions from current state
 class OrderProcessor {
   status: 'pending' | 'charging' | 'charged' | 'failed' = 'pending';
 
@@ -155,13 +141,13 @@ class OrderProcessor {
 ```
 
 ```bash
-# ✅ Shell transition guard
+# Shell transition guard
 DEPLOY_STATE="idle"
 transition_deploy_state() {
     local from_state="$1"
     local to_state="$2"
     if [[ "$DEPLOY_STATE" != "$from_state" ]]; then
-        echo "[transition_deploy_state] Invalid: $DEPLOY_STATE → $to_state (expected from: $from_state)" >&2
+        echo "[transition_deploy_state] Invalid: $DEPLOY_STATE -> $to_state (expected from: $from_state)" >&2
         return 1
     fi
     DEPLOY_STATE="$to_state"
@@ -176,7 +162,7 @@ transition_deploy_state() {
 Every polling loop **must** have: success, timeout, terminal failure, and max-iterations termination.
 
 ```bash
-# ✅ Safe polling with all four termination conditions
+# Safe polling with all four termination conditions
 wait_for_deploy() {
     local deploy_id="$1"
     local max_wait="${2:-300}"
@@ -268,19 +254,3 @@ async function waitForQuiescence(
   throw new Error(`Page did not reach quiescence within ${timeoutMs}ms`);
 }
 ```
-
-### Runtime Testing Signals
-
-These patterns require runtime testing — static analysis cannot verify them:
-
-| Pattern | Risk | Required testing |
-|---------|------|-----------------|
-| `switch`/`case` on status/state | Missing entry states | Trigger each state |
-| `while true` / unbounded loops | Infinite loop | Verify termination |
-| `setTimeout`/`setInterval` | Timer leak | Verify cleanup |
-| Payment/checkout flows | Duplicate charge | Full payment flow |
-| Auth token refresh | Race condition | Concurrent requests |
-| Webhook handlers | Missing event types | Send each event type |
-| Database migrations | Irreversible | Test on staging first |
-
-**Prevention rule:** Before implementing any of these patterns, enumerate the complete state space — every possible state, event, and status value including errors. Implement handlers for all of them before writing the happy path.
