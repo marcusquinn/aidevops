@@ -156,9 +156,11 @@ dg = DeepgramClient(os.environ["DEEPGRAM_API_KEY"])
 opts = PrerecordedOptions(model="nova-3", punctuate=True, smart_format=True)
 os.makedirs("transcripts", exist_ok=True)
 for p in glob.glob("recordings/*.mp3"):
-    r = dg.listen.rest.v("1").transcribe_file({"buffer": open(p, "rb")}, opts)
-    open(p.replace("recordings/", "transcripts/").replace(".mp3", ".txt"), "w").write(
-        r.results.channels[0].alternatives[0].transcript)
+    with open(p, "rb") as audio:
+        r = dg.listen.rest.v("1").transcribe_file({"buffer": audio}, opts)
+    out = os.path.join("transcripts", os.path.basename(p).replace(".mp3", ".txt"))
+    with open(out, "w") as f:
+        f.write(r.results.channels[0].alternatives[0].transcript)
 ```
 
 </details>
