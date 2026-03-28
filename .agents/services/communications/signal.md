@@ -25,8 +25,6 @@ tools:
 - **Registration**: SMS/voice + CAPTCHA, or QR code link to existing account
 - **Docs**: https://github.com/AsamK/signal-cli/wiki
 
-**When to use Signal vs alternatives**:
-
 | Criterion | Signal | SimpleX | Matrix | Telegram |
 |-----------|--------|---------|--------|----------|
 | User identifiers | Phone number (hidden via usernames) | None | `@user:server` | Phone number |
@@ -37,55 +35,32 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Installation
+## Privacy, Security, and Access Control
 
-**Recommended**: Docker or JVM install. See [signal-cli wiki](https://github.com/AsamK/signal-cli/wiki).
+**Servers store**: phone number (hashed), push tokens, registration/last-connection dates. **Not stored**: message content, contact lists, group memberships, who messages whom (sealed sender). Keys stored locally at `~/.local/share/signal-cli/data/+1234567890/account.db`.
 
-```bash
-# Docker (simplest)
-docker pull ghcr.io/asamk/signal-cli
-docker run -d --name signal-cli \
-  -v signal-cli-data:/home/.local/share/signal-cli \
-  -p 8080:8080 \
-  ghcr.io/asamk/signal-cli:latest \
-  daemon --http 0.0.0.0:8080
+**Bot security**: (1) treat all inbound as untrusted — sanitize before AI/shell; (2) allowlist by E.164/UUID; (3) sandbox commands; (4) isolate credentials; (5) scan with `prompt-guard-helper.sh` before AI dispatch.
 
-# JVM (requires JRE 25+)
-VERSION=$(curl -Ls -o /dev/null -w %{url_effective} \
-  https://github.com/AsamK/signal-cli/releases/latest | sed -e 's/^.*\/v//')
-curl -L -O "https://github.com/AsamK/signal-cli/releases/download/v${VERSION}/signal-cli-${VERSION}.tar.gz"
-sudo tar xf "signal-cli-${VERSION}.tar.gz" -C /opt
-sudo ln -sf "/opt/signal-cli-${VERSION}/bin/signal-cli" /usr/local/bin/
+Cross-reference: `tools/security/opsec.md`, `tools/credentials/gopass.md`, `tools/security/prompt-injection-defender.md`
+
+**Access control** — no built-in allowlists; filter on sender at the application layer. Identifier types: E.164 (`+XXXXXXXXXXX`), ACI UUID (`a1b2c3d4-...`), PNI (`PNI:a1b2c3d4-...`), username (`u:username.NNN`).
+
+```python
+ALLOWED = {"+1234567890", "+0987654321"}
+def handle_message(envelope):
+    sender = envelope.get("sourceNumber", "")
+    if sender not in ALLOWED:
+        return  # silently ignore
 ```
 
-GraalVM native binary (no JRE, experimental) and distro packages also available — see wiki. **Native library**: Bundled for x86_64 Linux/Windows/macOS; other architectures must provide `libsignal-client` ([wiki](https://github.com/AsamK/signal-cli/wiki/Provide-native-lib-for-libsignal)).
-
-## Registration
-
-**QR Code Linking (recommended)**: Links signal-cli as a secondary device (up to 5 per account):
-
 ```bash
-signal-cli link -n "aidevops-bot" | tee >(xargs -L 1 qrencode -t utf8)
-# Scan QR: Settings > Linked Devices > Link New Device
-signal-cli -a +1234567890 receive  # sync contacts/groups
+signal-cli -a +1234567890 block +BLOCKED_NUMBER
+signal-cli -a +1234567890 unblock +BLOCKED_NUMBER
+signal-cli --trust-new-identities on-first-use   # default (also: never, always)
+signal-cli -a +1234567890 trust -v VERIFIED_SAFETY_NUMBER +0987654321
 ```
 
-**SMS/Voice Verification**:
-
-```bash
-signal-cli -a +1234567890 register [--voice]  # SMS or voice call
-signal-cli -a +1234567890 verify 123-456 [--pin YOUR_PIN]
-```
-
-**CAPTCHA** (almost always required): Open https://signalcaptchas.org/registration/generate.html on the **same external IP** as signal-cli, solve, right-click "Open Signal" link, copy URL:
-
-```bash
-signal-cli -a +1234567890 register --captcha "signalcaptcha://signal-recaptcha-v2.somecode.registration.somelongcode"
-```
-
-PIN management: `setPin`, `removePin` — see wiki.
-
-## Daemon Mode
+## Daemon Mode (JSON-RPC)
 
 ### HTTP (recommended for bots)
 
@@ -94,17 +69,15 @@ signal-cli -a +1234567890 daemon --http [0.0.0.0:8080]  # default: localhost:808
 signal-cli daemon --http                                  # multi-account
 ```
 
-**HTTP endpoints**:
-
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/v1/rpc` | POST | JSON-RPC request (single or batch) |
 | `/api/v1/events` | GET | Server-Sent Events stream (incoming messages) |
 | `/api/v1/check` | GET | Health check (200 OK) |
 
-**Other transports**: TCP (`:7583`), Unix socket, stdin/stdout (`jsonRpc`), D-Bus. Multiple can run simultaneously: `daemon --http --socket --dbus`.
+Other transports: TCP (`:7583`), Unix socket, stdin/stdout (`jsonRpc`), D-Bus. Multiple simultaneous: `daemon --http --socket --dbus`.
 
-**Daemon options**: `--ignore-attachments`, `--ignore-stories`, `--send-read-receipts`, `--receive-mode` (`on-start`|`on-connection`|`manual`).
+Daemon options: `--ignore-attachments`, `--ignore-stories`, `--send-read-receipts`, `--receive-mode` (`on-start`|`on-connection`|`manual`).
 
 ### Systemd Service
 
@@ -123,10 +96,10 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-sudo systemctl daemon-reload && sudo systemctl enable --now signal-cli  # activate
+sudo systemctl daemon-reload && sudo systemctl enable --now signal-cli
 ```
 
-## JSON-RPC API
+### JSON-RPC API
 
 Standard JSON-RPC 2.0. Multi-account mode: include `"account":"+1234567890"` in params.
 
@@ -135,15 +108,13 @@ Standard JSON-RPC 2.0. Multi-account mode: include `"account":"+1234567890"` in 
 {"jsonrpc":"2.0","result":{"timestamp":1631458508784},"id":"1"}
 ```
 
-**Incoming message notification** (SSE / stdout): `{"jsonrpc":"2.0","method":"receive","params":{"envelope":{"source":"+1234567890","sourceUuid":"a1b2c3d4-...","sourceName":"Contact Name","timestamp":1631458508784,"dataMessage":{"message":"Hello!","expiresInSeconds":0,"attachments":[]}}}}`
+Incoming message notification (SSE / stdout): `{"jsonrpc":"2.0","method":"receive","params":{"envelope":{"source":"+1234567890","sourceUuid":"a1b2c3d4-...","sourceName":"Contact Name","timestamp":1631458508784,"dataMessage":{"message":"Hello!","expiresInSeconds":0,"attachments":[]}}}}`
 
-### Key Methods
+**Key methods**:
 
-**Messaging**: `send` (recipient/groupId, message, attachments, mention, quoteTimestamp, editTimestamp, sticker, viewOnce, textStyle), `sendReaction`, `sendTyping`, `sendReceipt`, `remoteDelete`, `sendPollCreate`, `sendPollVote`
-
-**Groups**: `updateGroup` (name, description, members, removeMember, admin, link, expiration), `quitGroup`, `joinGroup`, `listGroups`
-
-**Account**: `register`/`verify`/`unregister`, `updateAccount`, `updateProfile`, `listContacts`/`listIdentities`/`listDevices`, `getUserStatus`, `block`/`unblock`, `startLink`/`finishLink`
+- **Messaging**: `send` (recipient/groupId, message, attachments, mention, quoteTimestamp, editTimestamp, sticker, viewOnce, textStyle), `sendReaction`, `sendTyping`, `sendReceipt`, `remoteDelete`, `sendPollCreate`, `sendPollVote`
+- **Groups**: `updateGroup` (name, description, members, removeMember, admin, link, expiration), `quitGroup`, `joinGroup`, `listGroups`
+- **Account**: `register`/`verify`/`unregister`, `updateAccount`, `updateProfile`, `listContacts`/`listIdentities`/`listDevices`, `getUserStatus`, `block`/`unblock`, `startLink`/`finishLink`
 
 ```bash
 curl -s -X POST http://localhost:8080/api/v1/rpc -H "Content-Type: application/json" \
@@ -152,7 +123,55 @@ curl -N http://localhost:8080/api/v1/events  # SSE stream
 curl http://localhost:8080/api/v1/check      # health check
 ```
 
-## Messaging (CLI Reference)
+## Registration
+
+**QR Code Linking (recommended)** — links signal-cli as secondary device (up to 5 per account):
+
+```bash
+signal-cli link -n "aidevops-bot" | tee >(xargs -L 1 qrencode -t utf8)
+# Scan QR: Settings > Linked Devices > Link New Device
+signal-cli -a +1234567890 receive  # sync contacts/groups
+```
+
+**SMS/Voice Verification**:
+
+```bash
+signal-cli -a +1234567890 register [--voice]
+signal-cli -a +1234567890 verify 123-456 [--pin YOUR_PIN]
+```
+
+**CAPTCHA** (almost always required): Open https://signalcaptchas.org/registration/generate.html on the **same external IP** as signal-cli, solve, right-click "Open Signal" link, copy URL:
+
+```bash
+signal-cli -a +1234567890 register --captcha "signalcaptcha://signal-recaptcha-v2.somecode.registration.somelongcode"
+```
+
+PIN management: `setPin`, `removePin` — see wiki.
+
+## Installation
+
+Docker or JVM install recommended. See [signal-cli wiki](https://github.com/AsamK/signal-cli/wiki).
+
+```bash
+# Docker (simplest)
+docker pull ghcr.io/asamk/signal-cli
+docker run -d --name signal-cli \
+  -v signal-cli-data:/home/.local/share/signal-cli \
+  -p 8080:8080 \
+  ghcr.io/asamk/signal-cli:latest \
+  daemon --http 0.0.0.0:8080
+
+# JVM (requires JRE 25+)
+VERSION=$(curl -Ls -o /dev/null -w %{url_effective} \
+  https://github.com/AsamK/signal-cli/releases/latest | sed -e 's/^.*\/v//')
+curl -L -O "https://github.com/AsamK/signal-cli/releases/download/v${VERSION}/signal-cli-${VERSION}.tar.gz"
+sudo tar xf "signal-cli-${VERSION}.tar.gz" -C /opt
+sudo ln -sf "/opt/signal-cli-${VERSION}/bin/signal-cli" /usr/local/bin/
+```
+
+GraalVM native binary (no JRE, experimental) and distro packages also available — see wiki. Native library bundled for x86_64 Linux/Windows/macOS; other architectures must provide `libsignal-client` ([wiki](https://github.com/AsamK/signal-cli/wiki/Provide-native-lib-for-libsignal)).
+
+## CLI Messaging Reference
 
 For bot integration, prefer JSON-RPC equivalents above.
 
@@ -181,33 +200,6 @@ signal-cli -a +1234567890 updateGroup -g GROUP_ID -m +NEW -r +OLD --admin +ADMIN
 # List: listGroups -d -o json
 ```
 
-## Access Control
-
-No built-in allowlists — filter on sender identifiers at the application layer. **Identifier types**: E.164 (`+XXXXXXXXXXX`), ACI UUID (`a1b2c3d4-...`), PNI (`PNI:a1b2c3d4-...`), username (`u:username.NNN`).
-
-```python
-ALLOWED = {"+1234567890", "+0987654321"}
-def handle_message(envelope):
-    sender = envelope.get("sourceNumber", "")
-    if sender not in ALLOWED:
-        return  # silently ignore
-```
-
-```bash
-signal-cli -a +1234567890 block +BLOCKED_NUMBER
-signal-cli -a +1234567890 unblock +BLOCKED_NUMBER
-signal-cli --trust-new-identities on-first-use   # default (also: never, always)
-signal-cli -a +1234567890 trust -v VERIFIED_SAFETY_NUMBER +0987654321
-```
-
-## Privacy and Security
-
-**Servers store**: phone number (hashed), push tokens, registration/last-connection dates. **Not stored**: message content, contact lists, group memberships, who messages whom (sealed sender). Keys stored locally at `~/.local/share/signal-cli/data/+1234567890/account.db`.
-
-**Bot security**: (1) treat all inbound as untrusted — sanitize before AI/shell; (2) allowlist by E.164/UUID; (3) sandbox commands; (4) isolate credentials; (5) scan with `prompt-guard-helper.sh` before AI dispatch.
-
-Cross-reference: `tools/security/opsec.md`, `tools/credentials/gopass.md`, `tools/security/prompt-injection-defender.md`
-
 ## Configuration
 
 ```bash
@@ -218,7 +210,7 @@ cp ~/.local/share/signal-cli/data/+1234567890/account.db{,.bak.$(date +%Y%m%d)} 
 
 Options: `--service-environment live` (production, default), `--trust-new-identities on-first-use|always|never`, `--disable-send-log`.
 
-## Integration with aidevops — Minimal Bot Example (Shell)
+## aidevops Bot Example (Shell)
 
 ```bash
 #!/usr/bin/env bash
@@ -243,7 +235,7 @@ done
 
 Matterbridge does **not** natively support Signal. Options: (1) [signal-cli-rest-api](https://github.com/bbernhard/signal-cli-rest-api) wraps signal-cli as REST — connect via [Matterbridge API gateway](https://github.com/42wim/matterbridge/wiki/API) with custom middleware; (2) lightweight middleware subscribing to SSE events and forwarding to Matterbridge API.
 
-**Privacy Warning**: Bridging to unencrypted platforms (Discord, Slack, IRC) breaks E2E encryption at the bridge boundary.
+**Privacy warning**: Bridging to unencrypted platforms (Discord, Slack, IRC) breaks E2E encryption at the bridge boundary.
 
 ## Limitations
 
