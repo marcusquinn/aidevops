@@ -1,40 +1,48 @@
 # Cloudflare Tail Workers
 
-## Purpose
+Specialized Workers that consume execution events from producer Workers for logging, debugging, analytics, and observability.
 
-Expert guidance on Cloudflare Tail Workers—specialized Workers that consume execution events from producer Workers for logging, debugging, analytics, and observability.
+## Decision Tree
+
+```text
+Need observability for Workers?
+├─ Batch export to known tools (Sentry/Grafana/Honeycomb)?
+│  └─ Use OpenTelemetry export (not Tail Workers)
+├─ Custom real-time processing needed?
+│  ├─ Aggregated metrics? → Tail Worker + Analytics Engine
+│  ├─ Error tracking? → Tail Worker + external service
+│  ├─ Custom logging? → Tail Worker + KV/HTTP endpoint
+│  └─ Complex event processing? → Tail Worker + Durable Objects
+└─ Quick debugging? → `wrangler tail` (different from Tail Workers)
+```
 
 ## When to Use
 
-- Implementing observability/logging for Cloudflare Workers
+- Observability/logging for Cloudflare Workers
 - Processing Worker execution events, logs, exceptions
-- Building custom analytics or error tracking
-- Configuring real-time event streaming
+- Custom analytics or error tracking
+- Real-time event streaming
 - User mentions tail handlers, tail consumers, or producer Workers
 
 ## Core Concepts
 
-Tail Workers automatically process events from producer Workers after they finish executing. They receive:
+Tail Workers process events from producer Workers after execution completes. They receive:
+
 - HTTP request/response info
 - Console logs (`console.log/error/warn/debug`)
 - Uncaught exceptions
 - Execution outcomes (`ok`, `exception`, `exceededCpu`, etc.)
 - Diagnostic channel events
 
-**Key characteristics:**
-- Invoked AFTER producer finishes executing
-- Capture entire request lifecycle including Service Bindings and Dynamic Dispatch sub-requests
-- Billed by CPU time, not request count
-- Available on Workers Paid and Enterprise tiers
+**Key characteristics:** invoked AFTER producer finishes; capture entire request lifecycle including Service Bindings and Dynamic Dispatch sub-requests; billed by CPU time (not request count); requires Workers Paid or Enterprise tier.
 
-**Alternative: OpenTelemetry Export** — For batch exports to observability tools (Sentry, Grafana, Honeycomb), consider OTEL export instead. OTEL sends logs/traces in batches (more efficient). Tail Workers = advanced mode for custom processing.
+**Alternative — OpenTelemetry Export:** For batch exports to observability tools (Sentry, Grafana, Honeycomb), OTEL export is more efficient (batched). Tail Workers = custom processing mode.
 
 ## Basic Structure
 
 ```typescript
 export default {
   async tail(events: TailItem[], env: Env, ctx: ExecutionContext): Promise<void> {
-    // Process events from producer Worker
     // CRITICAL: Use ctx.waitUntil() for async work — tail handlers don't return values
     ctx.waitUntil(processEvents(events, env));
   }
@@ -83,9 +91,31 @@ tail_consumers = [{service = "my-tail-worker"}]
 }
 ```
 
-The Tail Worker itself needs no special config — just a `tail()` handler.
+The Tail Worker itself needs no special config — just a `tail()` handler. To remove a tail consumer, set `tail_consumers = []` and redeploy.
 
-## Common Use Cases
+## Common Pitfalls
+
+1. **Not using `ctx.waitUntil()`** — async work may not complete before handler returns
+2. **Missing `tail()` handler** — producer deployment fails if `tail_consumers` references a Worker without it
+3. **Outcome vs HTTP status** — `outcome` is script execution status, NOT HTTP status. A Worker can return 500 with `outcome='ok'`
+4. **Excessive logging** — Tail Workers invoke on EVERY producer invocation; be mindful of volume and costs
+5. **Blocking operations** — use `ctx.waitUntil()` for fire-and-forget; don't `await` unless necessary
+
+## Security & Privacy
+
+**Header redaction:** Headers containing `auth`, `key`, `secret`, `token`, `jwt` (case-insensitive), plus `cookie`/`set-cookie` → `"REDACTED"`.
+
+**URL redaction:** Hex IDs (32+ hex digits) and base-64 IDs (21+ chars) → `"REDACTED"`.
+
+**Bypassing redaction** (use with extreme caution):
+
+```typescript
+const unredacted = event.event?.request?.getUnredacted();
+```
+
+Only call when absolutely necessary. Never log unredacted sensitive data. Filter before external transmission.
+
+## Use Cases
 
 ### Send Logs to HTTP Endpoint
 
@@ -141,17 +171,15 @@ ctx.waitUntil(Promise.all(
 ));
 ```
 
-### Filter Specific Routes
+### Filter by Route / Multi-Destination
 
 ```typescript
+// Route filtering
 const apiEvents = events.filter(e => e.event?.request?.url?.includes('/api/'));
 if (apiEvents.length === 0) return;
 ctx.waitUntil(fetch(env.API_LOGS_ENDPOINT, { method: "POST", body: JSON.stringify(apiEvents) }));
-```
 
-### Multi-Destination Logging
-
-```typescript
+// Multi-destination: split by outcome
 const errors = events.filter(e => e.outcome === 'exception');
 const success = events.filter(e => e.outcome === 'ok');
 const tasks = [];
@@ -159,88 +187,6 @@ if (errors.length > 0) tasks.push(fetch(env.ERROR_ENDPOINT, { method: "POST", bo
 if (success.length > 0) tasks.push(fetch(env.SUCCESS_ENDPOINT, { method: "POST", body: JSON.stringify(success) }));
 ctx.waitUntil(Promise.all(tasks));
 ```
-
-## Security & Privacy
-
-### Automatic Redaction
-
-**Header redaction**: Headers containing `auth`, `key`, `secret`, `token`, `jwt` (case-insensitive), plus `cookie`/`set-cookie` → shown as `"REDACTED"`.
-
-**URL redaction**: Hex IDs (32+ hex digits) and base-64 IDs (21+ chars) → `"REDACTED"`.
-
-### Bypassing Redaction
-
-```typescript
-// Use with extreme caution
-const unredacted = event.event?.request?.getUnredacted();
-```
-
-Best practices: only call when absolutely necessary, never log unredacted sensitive data, filter before external transmission, use env vars for API keys.
-
-## Wrangler CLI
-
-```bash
-wrangler deploy                          # Deploy Tail Worker
-wrangler tail <producer-worker-name>     # Stream logs to terminal (NOT Tail Workers — different feature)
-```
-
-To remove a tail consumer, set `tail_consumers = []` in `wrangler.toml` and redeploy.
-
-## Testing & Development
-
-Tail Workers cannot be fully tested locally with `wrangler dev`. Deploy to staging:
-
-1. Deploy producer Worker to staging
-2. Deploy Tail Worker to staging
-3. Configure `tail_consumers` in producer
-4. Trigger producer Worker requests
-5. Verify Tail Worker receives events (check destination logs/storage)
-
-```typescript
-// Debugging pattern
-export default {
-  async tail(events, env, ctx) {
-    console.log('Received events:', events.length);
-    ctx.waitUntil(
-      (async () => {
-        try {
-          await processEvents(events, env);
-        } catch (error) {
-          console.error('Tail Worker error:', error);
-        }
-      })()
-    );
-  }
-};
-```
-
-## Advanced Patterns
-
-### Batching with Durable Objects
-
-```typescript
-const batch = await env.BATCH_DO.get(env.BATCH_DO.idFromName("batch"));
-ctx.waitUntil(batch.addEvents(events));
-```
-
-### Sampling
-
-```typescript
-const sampledEvents = events.filter(() => Math.random() < 0.1);  // 10%
-if (sampledEvents.length > 0) ctx.waitUntil(sendToEndpoint(sampledEvents, env));
-```
-
-### Workers for Platforms
-
-For dynamic dispatch Workers, `events` contains TWO elements (dispatch Worker event + user Worker event). Distinguish by `event.scriptName`.
-
-## Common Pitfalls
-
-1. **Not using `ctx.waitUntil()`** — async work may not complete before the handler returns
-2. **Missing `tail()` handler** — producer deployment fails if `tail_consumers` references a Worker without it
-3. **Outcome vs HTTP status** — `outcome` is script execution status, NOT HTTP status. A Worker can return 500 but have `outcome='ok'`
-4. **Excessive logging** — Tail Workers invoke on EVERY producer invocation; be mindful of volume and costs
-5. **Blocking operations** — don't `await` in tail handler unless necessary; use `ctx.waitUntil()` for fire-and-forget
 
 ## Integration Examples
 
@@ -282,18 +228,57 @@ ctx.waitUntil(
 );
 ```
 
-## Decision Tree
+## Advanced Patterns
 
+### Batching with Durable Objects
+
+```typescript
+const batch = await env.BATCH_DO.get(env.BATCH_DO.idFromName("batch"));
+ctx.waitUntil(batch.addEvents(events));
 ```
-Need observability for Workers?
-├─ Batch export to known tools (Sentry/Grafana/Honeycomb)?
-│  └─ Use OpenTelemetry export (not Tail Workers)
-├─ Custom real-time processing needed?
-│  ├─ Aggregated metrics? → Tail Worker + Analytics Engine
-│  ├─ Error tracking? → Tail Worker + external service
-│  ├─ Custom logging? → Tail Worker + KV/HTTP endpoint
-│  └─ Complex event processing? → Tail Worker + Durable Objects
-└─ Quick debugging? → `wrangler tail` (different from Tail Workers)
+
+### Sampling
+
+```typescript
+const sampledEvents = events.filter(() => Math.random() < 0.1);  // 10%
+if (sampledEvents.length > 0) ctx.waitUntil(sendToEndpoint(sampledEvents, env));
+```
+
+### Workers for Platforms
+
+For dynamic dispatch Workers, `events` contains TWO elements (dispatch Worker event + user Worker event). Distinguish by `event.scriptName`.
+
+## Testing & Development
+
+Tail Workers cannot be fully tested locally with `wrangler dev`. Deploy to staging:
+
+1. Deploy producer + Tail Worker to staging
+2. Configure `tail_consumers` in producer
+3. Trigger producer requests, verify Tail Worker receives events
+
+```typescript
+// Debugging pattern
+export default {
+  async tail(events, env, ctx) {
+    console.log('Received events:', events.length);
+    ctx.waitUntil(
+      (async () => {
+        try {
+          await processEvents(events, env);
+        } catch (error) {
+          console.error('Tail Worker error:', error);
+        }
+      })()
+    );
+  }
+};
+```
+
+## Wrangler CLI
+
+```bash
+wrangler deploy                          # Deploy Tail Worker
+wrangler tail <producer-worker-name>     # Stream logs to terminal (NOT Tail Workers — different feature)
 ```
 
 ## Related Resources
