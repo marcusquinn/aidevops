@@ -2,13 +2,11 @@
 
 > "Every sale has five basic obstacles: no need, no money, no hurry, no desire, no trust." — Zig Ziglar
 
-Every prospect has reasons NOT to buy. Great copy handles all five core objections — often without the reader consciously noticing.
+Handle all five core objections — often without the reader consciously noticing.
 
 ---
 
 ## 1. "I Don't Have This Problem" (No Need)
-
-**Why they think this:** They don't recognize the problem, they've normalized the pain, or they're unaware of what's possible.
 
 **A. Paint the problem vividly**
 
@@ -24,7 +22,7 @@ They're invisible. And every day they stay invisible,
 you're losing traffic to competitors who showed up first.
 ```
 
-**B. Quantify the cost of the problem**
+**B. Quantify the cost**
 
 ```text
 Let's do the math:
@@ -49,15 +47,13 @@ Do any of these sound familiar?
 If you nodded at any of these, you have an indexing problem.
 ```
 
-## 2. "I Don't Believe You" (No Trust)
+---
 
-**Why they think this:** Too good to be true, they've been burned before, or you're a stranger.
+## 2. "I Don't Believe You" (No Trust)
 
 **A. Social proof with specifics**
 
 ```text
-Don't take our word for it:
-
 "We went from 23% indexed to 94% in just 14 days.
  BrowserBlast literally saved our content strategy."
  — Sarah Chen, SEO Director, GrowthAgency
@@ -96,14 +92,13 @@ It's not magic. It's methodology.
 ```text
 Our team has worked with indexing since 2018.
 We've processed over 5 million URL submissions.
-We've seen what works and what doesn't.
 
 BrowserBlast is the result of 6 years of learning.
 ```
 
-## 3. "It's Too Expensive" (No Money)
+---
 
-**Why they think this:** Price is higher than expected, they don't see the value, or budget constraints are real.
+## 3. "It's Too Expensive" (No Money)
 
 **A. Compare to alternatives**
 
@@ -115,15 +110,11 @@ Let's look at your options:
 ❌ DIY with free tools: 10+ hours/week (at $50/hour = $2,000/month of your time)
 
 ✓ BrowserBlast: $49/month
-
-The choice is clear.
 ```
 
 **B. Calculate ROI**
 
 ```text
-Here's the math:
-
 BrowserBlast Pro: $49/month
 
 Average results:
@@ -141,15 +132,12 @@ that's a 10x return on your investment.
 $49/month = $1.63/day
 
 Less than a cup of coffee.
-
 For unlimited indexing of your entire site.
 ```
 
 **D. Reframe as investment**
 
 ```text
-This isn't an expense. It's an investment.
-
 Every day your content sits unindexed,
 you're losing potential customers.
 
@@ -159,8 +147,6 @@ $49/month to fix that isn't a cost—it's a bargain.
 **E. Payment plan option**
 
 ```text
-Too much all at once?
-
 Split it into 3 easy payments of $177.
 Same full access. Same results. Easier on your budget.
 ```
@@ -181,9 +167,9 @@ Plus, with our [guarantee], if it doesn't deliver,
 you get every penny back."
 ```
 
-## 4. "I'll Do This Later" (No Hurry)
+---
 
-**Why they think this:** No immediate pain, competing priorities, or procrastination.
+## 4. "I'll Do This Later" (No Hurry)
 
 **A. Quantify the cost of waiting**
 
@@ -196,9 +182,6 @@ Every day you wait:
 
 In 30 days of "later," you could have indexed 
 your entire content library.
-
-The question isn't "should I do this?"
-It's "why haven't I done this already?"
 ```
 
 **B. Create real urgency**
@@ -210,8 +193,6 @@ After that:
 • Price returns to $97/month
 • The bonus templates disappear
 • The onboarding call offer expires
-
-You can wait—but you'll pay more and get less.
 ```
 
 **C. Make starting easy**
@@ -243,8 +224,6 @@ Don't let "later" turn into "too late."
 ```text
 "I totally understand—this is a decision worth thinking about.
 
-Here's what I'd consider:
-
 Every [day/week/month] you wait, [cost of waiting].
 
 And with our [guarantee], you can try it risk-free.
@@ -255,9 +234,9 @@ If it does work, you [benefit].
 The only risk is missing out."
 ```
 
-## 5. "This Won't Work For Me" (No Fit)
+---
 
-**Why they think this:** Their situation feels unique, they've tried similar things, or they don't see themselves in your examples.
+## 5. "This Won't Work For Me" (No Fit)
 
 **A. Address specific situations**
 
@@ -269,8 +248,6 @@ BrowserBlast works for:
 ✓ E-commerce (index product pages)
 ✓ News/media (time-sensitive content)
 ✓ Agencies (manage multiple clients)
-
-If you have a website and want it indexed, we've got you.
 ```
 
 **B. "But what if..." FAQ**
@@ -294,8 +271,6 @@ A: Most tools just ping Google. We use a different
 **C. Show diverse case studies**
 
 ```text
-It works for businesses like yours:
-
 • E-commerce: "Indexed 2,000 product pages in 2 weeks"
 • SaaS blog: "Cut indexing time from 3 weeks to 3 days"
 • Local business: "All 15 location pages now ranking"
@@ -333,9 +308,9 @@ what you tried before, you get a full refund."
 
 ---
 
-## Where to Handle Objections in Your Copy
+## Where to Handle Objections
 
-### Woven Into Body Copy
+**Woven into body copy**
 
 ```text
 "You might be thinking this sounds too good to be true.
@@ -345,27 +320,21 @@ what you tried before, you get a full refund."
  The difference is [unique mechanism that explains why it works]."
 ```
 
-### Dedicated Section
+**Dedicated section**
 
 ```text
 STILL ON THE FENCE?
-
-Let me address the questions you might have:
 
 [Question 1]
 [Answer]
 
 [Question 2]
 [Answer]
-
-[etc.]
 ```
 
-### FAQ
+**FAQ**
 
 ```text
-FREQUENTLY ASKED QUESTIONS
-
 Q: How is this different from [competitor/alternative]?
 A: Unlike [X], we [unique value prop].
 
@@ -376,9 +345,7 @@ Q: How long does it take to see results?
 A: Most customers see [result] within [timeframe].
 ```
 
-### Testimonials
-
-Let customers handle objections for you:
+**Testimonials** — let customers handle objections for you:
 
 ```text
 "I was worried it wouldn't work for my small site, 
@@ -427,39 +394,20 @@ Let customers handle objections for you:
 
 ## Pre-Publish Checklist
 
-Before publishing, verify your copy addresses:
+**Need:** Problem clearly defined · Reader sees themselves in it · Cost of not solving is clear
 
-**Need:**
-- [ ] Problem is clearly defined
-- [ ] Reader can see themselves in the problem
-- [ ] Cost of not solving is clear
+**Trust:** Social proof is specific (names, companies, numbers) · Mechanism explained · Third-party validation present
 
-**Trust:**
-- [ ] Social proof is specific (names, companies, numbers)
-- [ ] Mechanism is explained (why it works)
-- [ ] Third-party validation is present
+**Money:** Value shown before price · Price compared to alternatives · ROI calculated or implied · Payment options reduce friction
 
-**Money:**
-- [ ] Value is clear before price is shown
-- [ ] Price is compared to alternatives
-- [ ] ROI is calculated or implied
-- [ ] Payment options reduce friction
+**Hurry:** Urgency present (and real) · Cost of waiting clear · Starting is easy (low friction)
 
-**Hurry:**
-- [ ] Urgency is present (and real)
-- [ ] Cost of waiting is clear
-- [ ] Starting is easy (low friction)
-
-**Fit:**
-- [ ] Target audience is clear
-- [ ] Different use cases are addressed
-- [ ] "But what if..." questions are answered
-- [ ] FAQ covers edge cases
+**Fit:** Target audience clear · Different use cases addressed · "But what if..." questions answered · FAQ covers edge cases
 
 ---
 
 ## Further Reading
 
-- See [Landing Page Structure](landing-page-structure.md) for where to place objection handling
-- See [Email Sequences](email-sequences.md) for objection-handling emails
-- See [Offer Construction](offer-construction.md) for guarantee types
+- [Landing Page Structure](landing-page-structure.md) — where to place objection handling
+- [Email Sequences](email-sequences.md) — objection-handling emails
+- [Offer Construction](offer-construction.md) — guarantee types
