@@ -402,9 +402,9 @@
       "pr": 11590
     },
     ".agents/marketing-sales/direct-response-copy-templates-email-sequences.md": {
-      "hash": "3b967730222fcfb2ae56d2aaadb1f199e1d71509",
-      "at": "2026-03-28T11:52:23Z",
-      "pr": 11820
+      "hash": "d9bb5856327361b06eb25357f21260724ba38d98",
+      "at": "2026-03-28T12:19:18Z",
+      "pr": 11841
     },
     ".agents/marketing-sales/direct-response-copy-templates-readme.md": {
       "hash": "2717d1e9cb1edfd85d932502b6de7c4765c8a7ec",
@@ -932,9 +932,9 @@
       "pr": 11814
     },
     ".agents/marketing-sales/ad-creative-copywriting.md": {
-      "hash": "9571bbe5bcc23af71e7a7b6b7f1cf7d639000351",
-      "at": "2026-03-28T11:52:31Z",
-      "pr": 11823
+      "hash": "0b059935dea2ffebd08189e08789d2f3fa3af4b3",
+      "at": "2026-03-28T12:19:17Z",
+      "pr": 11843
     },
     ".agents/marketing-sales/direct-response-copy-templates-landing-page.md": {
       "hash": "7d95922fef4d2c67466c89f4dc918f99fa7a76c4",
@@ -945,6 +945,11 @@
       "hash": "7154caa038f21e800f7b6c5493f2553a9d7e8efb",
       "at": "2026-03-28T11:52:39Z",
       "pr": 11821
+    },
+    ".agents/services/email/email-mailbox-search.md": {
+      "hash": "ae6964334f78f335903d2ac453388735b2014756",
+      "at": "2026-03-28T12:19:15Z",
+      "pr": 11839
     }
   }
 }
