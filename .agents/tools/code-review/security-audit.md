@@ -23,26 +23,11 @@ mcp:
 
 - **Command**: `/security-audit <repo-url>`
 - **Workspace**: `~/.aidevops/.agent-workspace/tmp/security-audit/`
-- **Reuses**: `security-helper.sh` (scan-deps), `secretlint-helper.sh` (secrets)
+- **Tools**: `security-helper.sh scan-deps` (OSV-Scanner), `secretlint-helper.sh` (credentials), `prompt-guard-helper.sh` (injection). See `tools/security/prompt-injection-defender.md`.
 - **Cleanup**: Always remove cloned repos after audit
 
-**Audit Categories:**
-
-| Category | Applies When |
-|----------|-------------|
-| Secrets/credentials | Always |
-| Dependency vulnerabilities | Lockfile present |
-| Hardcoded secret patterns | Always |
-| Unsafe code patterns | Per language |
-| GitHub Actions supply chain | `.github/workflows/` present |
-| Docker security | `Dockerfile` present |
-| Shell script security | `.sh` files present |
-| XSS / frontend patterns | JS/HTML present |
-| CORS configuration | Web server code present |
-| Auth / rate limiting | API server code present |
-| Insecure HTTP URLs | Always |
-| Prompt injection patterns | AI/agent code present |
-| Security automation (Dependabot) | Always |
+**Always:** secrets (§3.1), hardcoded secrets (§3.3), insecure HTTP URLs (§3.11), security automation (§3.13).  
+**Conditional:** deps (§3.2, lockfile), unsafe code (§3.4, per language), GH Actions (§3.5), Docker (§3.6), shell (§3.7), XSS (§3.8), CORS (§3.9), auth/rate-limit (§3.10), prompt injection (§3.12, AI code).
 
 <!-- AI-CONTEXT-END -->
 
@@ -67,9 +52,7 @@ ls Cargo.toml package.json requirements.txt go.mod Dockerfile .github/workflows/
 fd -e sh -e rs -e js -e ts -e py -e go --max-depth 3 2>/dev/null | head -5
 ```
 
-### 3. Scan Categories
-
-Run all applicable. Use `rg` for patterns. Parallelize independent scans.
+### 3. Scan Categories (run all applicable; parallelize independent scans)
 
 #### 3.1 Secrets (Always)
 
@@ -81,13 +64,7 @@ rg -in '(api[_-]?key|api[_-]?secret|access[_-]?token|auth[_-]?token|secret[_-]?k
 
 #### 3.2 Dependency Vulnerabilities (Lockfile present)
 
-| Package Manager | Command |
-|----------------|---------|
-| Cargo | `cargo audit` |
-| npm | `npm audit --json 2>/dev/null` |
-| pip | `pip audit -r requirements.txt 2>/dev/null` |
-| Go | `govulncheck ./... 2>/dev/null` |
-| Any | `osv-scanner --lockfile=<path> 2>/dev/null` |
+Cargo: `cargo audit` · npm: `npm audit --json` · pip: `pip audit -r requirements.txt` · Go: `govulncheck ./...` · Any: `osv-scanner --lockfile=<path>`
 
 #### 3.3 Hardcoded Secrets (Always)
 
@@ -112,15 +89,11 @@ rg -in '(token|secret|password|key)\s*[:=]\s*["\x27][A-Za-z0-9+/=]{20,}["\x27]' 
 #### 3.5 GitHub Actions Supply Chain (`.github/workflows/` present)
 
 ```bash
-# Unpinned actions (HIGH risk)
-rg -n 'uses:\s+[^#]+@(v\d|main|master|latest)' --glob '*.{yml,yaml}' -g '.github/**'
-# Workflows missing permissions block (HIGH risk)
-rg -L '^permissions:' --glob '*.{yml,yaml}' -g '.github/**'
-# Secrets echoed to logs
-rg -n 'echo.*\$\{\{\s*secrets\.' --glob '*.{yml,yaml}' -g '.github/**'
-# Third-party actions list
+rg -n 'uses:\s+[^#]+@(v\d|main|master|latest)' --glob '*.{yml,yaml}' -g '.github/**'  # Unpinned (HIGH)
+rg -L '^permissions:' --glob '*.{yml,yaml}' -g '.github/**'                             # Missing permissions (HIGH)
+rg -n 'echo.*\$\{\{\s*secrets\.' --glob '*.{yml,yaml}' -g '.github/**'                 # Secrets in logs
 rg -on 'uses:\s+([^/]+/[^@]+)@' --glob '*.{yml,yaml}' -g '.github/**' -r '$1' | \
-  grep -v -E '^[^:]+:(actions|github)/' | sort -u
+  grep -v -E '^[^:]+:(actions|github)/' | sort -u                                       # Third-party actions
 ```
 
 #### 3.6 Docker Security (`Dockerfile` present)
@@ -142,15 +115,13 @@ rg -n 'eval\s|curl.*\|\s*(bash|sh)' --glob '*.sh'
 #### 3.8 XSS / Frontend (JS/HTML present)
 
 ```bash
-rg -n 'innerHTML\s*=|dangerouslySetInnerHTML|v-html|document\.write\s*\(|\[innerHtml\]' \
-  --glob '*.{js,ts,jsx,tsx,vue,html}'
+rg -n 'innerHTML\s*=|dangerouslySetInnerHTML|v-html|document\.write\s*\(|\[innerHtml\]' --glob '*.{js,ts,jsx,tsx,vue,html}'
 ```
 
 #### 3.9 CORS (Web server code present)
 
 ```bash
-rg -in 'cors|access-control-allow-origin|origin.*\*|Access-Control-Allow-Credentials.*true' \
-  --glob '*.{js,ts,py,go,rs,rb,java}'
+rg -in 'cors|access-control-allow-origin|origin.*\*|Access-Control-Allow-Credentials.*true' --glob '*.{js,ts,py,go,rs,rb,java}'
 ```
 
 #### 3.10 Auth and Rate Limiting (API server present)
@@ -179,7 +150,7 @@ rg -in '(openai|anthropic|langchain|llama|ollama|ai\.run|completion)' \
   --glob '*.{js,ts,py,go,rs,sh}' -l | head -10
 ```
 
-For aidevops projects, verify `prompt-guard-helper.sh` integration. See `tools/security/prompt-injection-defender.md`.
+For aidevops projects, verify `prompt-guard-helper.sh` integration.
 
 #### 3.13 Security Automation (Always)
 
@@ -189,67 +160,36 @@ rg -l '(codeql|snyk|trivy|grype|osv-scanner|semgrep)' --glob '*.{yml,yaml}' -g '
 ls SECURITY.md .github/SECURITY.md 2>/dev/null
 ```
 
-### 4. Security Architecture Assessment (Qualitative)
+### 4. Security Architecture + Cleanup
 
-Review: auth model (API keys/OAuth/JWT/session), authorization (RBAC/ABAC), input validation layer, error handling (no internal detail leakage), logging (no sensitive data), encryption (TLS enforced, data at rest).
-
-### 5. Cleanup
+Review: auth model (API keys/OAuth/JWT/session), authorization (RBAC/ABAC), input validation, error handling (no internal detail leakage), logging (no sensitive data), encryption (TLS enforced, data at rest).
 
 ```bash
-rm -rf "$CLONE_DIR"
+rm -rf "$CLONE_DIR"  # Always remove cloned repo after audit
 ```
 
 ## Report Template
 
 ````markdown
 ## Security Audit Report: {repo-name}
-
 **Repository:** {url}  **Audit Date:** {ISO date}  **Languages:** {detected}
 **Overall Assessment:** {Excellent | Strong | Good | Needs Work | Critical Issues}
 
 ### Summary of Findings
-
 | Priority | Finding | Location | Category |
 |----------|---------|----------|----------|
 | HIGH | {description} | {file:line} | {category} |
-| MEDIUM | ... | ... | ... |
-| LOW | ... | ... | ... |
 
 ### Section Results
-
-| # | Category | Status | Notes |
-|---|----------|--------|-------|
-| 1 | Secrets/Credentials | PASS/FAIL/WARN | |
-| 2 | Dependency Vulnerabilities | PASS/FAIL/WARN/SKIP | |
-| 3 | Hardcoded Secret Patterns | PASS/FAIL/WARN | |
-| 4 | Unsafe Code Patterns | PASS/FAIL/WARN | |
-| 5 | GitHub Actions Supply Chain | PASS/FAIL/WARN/SKIP | |
-| 6 | Docker Security | PASS/FAIL/WARN/SKIP | |
-| 7 | Shell Script Security | PASS/FAIL/WARN/SKIP | |
-| 8 | Frontend Security (XSS) | PASS/FAIL/WARN/SKIP | |
-| 9 | CORS Configuration | PASS/FAIL/WARN/SKIP | |
-| 10 | Auth and Rate Limiting | PASS/FAIL/WARN/SKIP | |
-| 11 | Insecure HTTP URLs | PASS/WARN | |
-| 12 | Prompt Injection Defense | PASS/FAIL/WARN/SKIP | |
-| 13 | Security Automation | PASS/FAIL/WARN | |
-| 14 | Security Architecture | {assessment} | |
+One row per category (1–13 from Quick Reference + 14: Security Architecture). Status: `PASS/FAIL/WARN/SKIP`.
 
 ### Recommendations
-
 1. **{Priority}**: {actionable recommendation}
 ````
 
-## Severity Definitions
+## Severity and Assessment
 
-| Severity | Criteria |
-|----------|----------|
-| **CRITICAL** | Active credential exposure, RCE, no auth on sensitive endpoints |
-| **HIGH** | Unpinned GitHub Actions, missing USER in Docker, eval with user input, no rate limiting on auth |
-| **MEDIUM** | Excessive `.unwrap()`, missing Dependabot, wildcard CORS, http:// in production code |
-| **LOW** | Missing SECURITY.md, no multi-stage Docker build, minor ShellCheck warnings |
-| **INFO** | Best practice suggestions, architecture notes |
-
-## Overall Assessment Criteria
+**Severity:** CRITICAL = active credential exposure, RCE, no auth on sensitive endpoints · HIGH = unpinned GH Actions, missing USER in Docker, eval with user input, no rate limiting on auth · MEDIUM = excessive `.unwrap()`, missing Dependabot, wildcard CORS, http:// in production · LOW = missing SECURITY.md, no multi-stage Docker, minor ShellCheck · INFO = best practice suggestions.
 
 | Rating | Criteria |
 |--------|----------|
@@ -258,10 +198,3 @@ rm -rf "$CLONE_DIR"
 | **Good** | 0 CRITICAL, 1-2 HIGH, reasonable security practices |
 | **Needs Work** | 0 CRITICAL, 3+ HIGH or 10+ MEDIUM |
 | **Critical Issues** | Any CRITICAL finding, or 5+ HIGH findings |
-
-## Integration with Existing Tools
-
-- **`security-helper.sh scan-deps`**: Dependency vulnerability scanning via OSV-Scanner
-- **`secretlint-helper.sh`**: Credential detection
-- **`prompt-guard-helper.sh`**: Prompt injection pattern scanning. See `tools/security/prompt-injection-defender.md`.
-- **ShellCheck**: Shell script analysis (via `linters-local.sh` patterns)
