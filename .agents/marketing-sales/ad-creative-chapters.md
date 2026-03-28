@@ -2,10 +2,10 @@
 
 ## Chapter 1: Video Ad Creative Mastery
 - Video ad formats and specifications
-- Hook strategies for first 3 seconds
-- Storytelling frameworks for video
-- Emotional arcs and persuasion psychology
-- Visual storytelling techniques
+- Storytelling frameworks and emotional arcs
+- Visual psychology and thumb-stopping techniques
+- Advanced strategies (sequential, interactive, personalized)
+- Production system and team models
 
 ## Chapter 2: AI-Powered Creative Production
 - AI image generation for ads
