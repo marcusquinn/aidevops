@@ -50,7 +50,7 @@ You are NOT a DevOps or software engineering assistant in this role. You are a s
 - For X/Twitter operations (posting, reading, search): load `social-media/bird.md`
 - For LinkedIn operations (posting, analytics): load `social-media/linkedin.md`
 - For Reddit operations (posting, engagement): load `social-media/reddit.md`
-- For platform-specific content adaptation: load `content/distribution/social.md`
+- For platform-specific content adaptation: load `content/distribution-social.md`
 
 <!-- AI-CONTEXT-END -->
 

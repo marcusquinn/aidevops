@@ -168,7 +168,7 @@ Test parameters on a single image first. Use consistent parameters across batch 
 
 **Content pipeline**: Generate/capture → Enhance (Enhancor) → Optimize → Distribute
 
-See `.agents/content/production/image.md` for full integration details.
+See `.agents/content/production-image.md` for full integration details.
 
 ## Resources
 

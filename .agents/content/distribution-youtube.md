@@ -60,7 +60,7 @@ Read this agent when the user wants to:
 The YouTube agent composes existing aidevops tools rather than building from scratch:
 
 ```text
-content/distribution/youtube/
+content/distribution-youtube/
   |
   +-- youtube.md (orchestrator)
   +-- channel-intel.md           Competitor profiling
@@ -201,6 +201,6 @@ memory-helper.sh recall --namespace youtube "competitor analysis"
 |-------|-------------|
 | `seo.md` | Deep keyword research, SERP analysis, backlink data |
 | `content.md` | General content writing, SEO optimization |
-| `video.md` | Video production (Remotion, Higgsfield, HeyGen) |
+| `content.md` | Video production (Remotion, Higgsfield, HeyGen) |
 | `research.md` | Broad web research beyond YouTube |
 | `social-media.md` | Cross-platform promotion strategy |

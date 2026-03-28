@@ -143,7 +143,7 @@ Analyze this video and provide:
 
 3. Save working prompts to `context/video-styles/[style-name].md` (tagged by niche, format, production value, emotion).
 
-**Related:** `content/production/video.md`, `tools/video/video-prompt-design.md`.
+**Related:** `content/production-video.md`, `tools/video/video-prompt-design.md`.
 
 #### Cross-Platform Research
 
@@ -162,7 +162,7 @@ Watch for content performing well on one platform that hasn't migrated to others
 |-------|--------|--------|---|----|---------|---------| ------|
 | [topic] | ✓/○/✗ | ✓/○/✗ | ✓/○/✗ | ✓/○/✗ | ✓/○/✗ | ✓/○/✗ | ✓/○/✗ |
 
-`✓` = exists, `○` = opportunity, `✗` = poor fit. **Related:** `content/distribution/` for platform-specific adaptation guides.
+`✓` = exists, `○` = opportunity, `✗` = poor fit. **Related:** `content/distribution-*.md` for platform-specific adaptation guides.
 
 **Audience profile template:**
 

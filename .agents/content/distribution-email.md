@@ -271,8 +271,8 @@ Tag subscribers based on:
 
 **Distribution Channels**:
 
-- `content/distribution/youtube/` - Long-form YouTube content
-- `content/distribution/short-form.md` - TikTok, Reels, Shorts
-- `content/distribution/social.md` - X, LinkedIn, Reddit
-- `content/distribution/blog.md` - SEO-optimized articles
-- `content/distribution/podcast.md` - Audio-first distribution
+- `content/distribution-youtube/` - Long-form YouTube content
+- `content/distribution-short-form.md` - TikTok, Reels, Shorts
+- `content/distribution-social.md` - X, LinkedIn, Reddit
+- `content/distribution-blog.md` - SEO-optimized articles
+- `content/distribution-podcast.md` - Audio-first distribution

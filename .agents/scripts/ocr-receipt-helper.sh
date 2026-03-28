@@ -1120,7 +1120,7 @@ cmd_help() {
 	echo ""
 	echo "Related:"
 	echo "  document-extraction-helper.sh  - General document extraction"
-	echo "  accounts/receipt-ocr.md  - Subagent documentation"
+	echo "  business/accounts-receipt-ocr.md  - Subagent documentation"
 	echo "  tools/ocr/glm-ocr.md          - GLM-OCR model reference"
 	echo "  services/accounting/quickfile.md - QuickFile MCP integration"
 	return 0

@@ -171,6 +171,6 @@ AI: Running email accessibility audit on newsletter.html...
 
 - `services/email/email-health-check.md` - Full documentation
 - `services/email/email-testing.md` - Design rendering and delivery testing
-- `content/distribution/email.md` - Email content strategy
+- `content/distribution-email.md` - Email content strategy
 - `services/email/ses.md` - Amazon SES integration
 - `tools/accessibility/accessibility.md` - WCAG accessibility reference

@@ -16,7 +16,7 @@ tools:
 - **Purpose**: Plan, schedule, and track content across platforms with cadence tracking and gap analysis
 - **Helper**: `content-calendar-helper.sh` (SQLite-backed calendar with cadence engine)
 - **Workflow**: Gap analysis -> topic clustering -> calendar planning -> cadence tracking -> lifecycle management
-- **Related**: `content/optimization.md`, `content/distribution/`, `seo/keyword-research.md`, `seo/google-search-console.md`
+- **Related**: `content/optimization.md`, `content/distribution-*.md`, `seo/keyword-research.md`, `seo/google-search-console.md`
 
 **Key Commands**:
 
@@ -146,7 +146,7 @@ One story → multiple platforms over 5-7 days (diamond pipeline from `content.m
 | GSC | Performance tracking, gap detection | `seo/google-search-console.md` |
 | Content Guidelines | Platform voice and format specs | `content/guidelines.md` |
 | Content Optimization | A/B testing, analytics loops | `content/optimization.md` |
-| Distribution Agents | Platform-specific publishing | `content/distribution/` |
+| Distribution Agents | Platform-specific publishing | `content/distribution-*.md` |
 | TODO.md | Task tracking | Root `TODO.md` with `#content` tag |
 
 ## Analytics Feedback Loop

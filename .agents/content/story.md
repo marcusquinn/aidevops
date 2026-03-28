@@ -148,19 +148,19 @@ Technical: [Negatives: subtitles, watermark, text overlays, amateur quality]
 
 1. Fill the brief → select hook formula → generate 5 shots
 2. Score 5+ hook variants for Shot 1 on specificity/emotion/curiosity
-3. Generate image keyframes → feed each shot to `content/production/image.md`
+3. Generate image keyframes → feed each shot to `content/production-image.md`
 4. Generate video → Sora 2 Pro (UGC) or Veo 3.1 (cinematic)
 5. Assemble in editing tool; add text overlays in post (not in generation)
 
 ## Related
 
 - `content/research.md` — feeds into story design (audience data, pain points)
-- `content/production/writing.md` — expands story into full scripts and copy
-- `content/production/image.md` — UGC Brief Image Template for per-shot keyframes
+- `content/production-writing.md` — expands story into full scripts and copy
+- `content/production-image.md` — UGC Brief Image Template for per-shot keyframes
 - `content/optimization.md` — A/B tests hook variants and story angles
 - `content.md` — parent orchestrator (diamond pipeline)
 - `tools/video/video-prompt-design.md` — 7-component format used in each shot
-- `content/production/video.md` — video generation (Sora 2 Pro for UGC)
-- `content/production/audio.md` — UGC audio design (diegetic only)
-- `content/production/characters.md` — presenter consistency across shots
-- `content/distribution/short-form.md` — platform specs
+- `content/production-video.md` — video generation (Sora 2 Pro for UGC)
+- `content/production-audio.md` — UGC audio design (diegetic only)
+- `content/production-characters.md` — presenter consistency across shots
+- `content/distribution-short-form.md` — platform specs

@@ -1236,7 +1236,7 @@ Examples:
   # List available models
   real-video-enhancer-helper.sh models list
 
-For more information, see: .agents/video/real-video-enhancer.md
+For more information, see: .agents/content/video-real-video-enhancer.md
 EOF
 }
 

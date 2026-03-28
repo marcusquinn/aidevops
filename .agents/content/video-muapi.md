@@ -277,10 +277,11 @@ muapi-helper.sh status <request-id>
 
 ## Related
 
-- [MuAPI Documentation](https://muapi.ai/docs/introduction) | [Playground](https://muapi.ai/playground)
-- `video/wavespeed.md` — WaveSpeed AI (alternative unified API)
-- `video/runway.md` — Runway API (alternative media pipeline)
-- `tools/video/video-prompt-design.md` — Prompt engineering for video models
-- `tools/vision/image-generation.md` — Image generation workflows
-- `content/production/video.md` — Video production pipeline
-- `content/production/audio.md` — Audio production pipeline
+- [MuAPI Documentation](https://muapi.ai/docs/introduction)
+- [MuAPI Playground](https://muapi.ai/playground)
+- `content/video-wavespeed.md` - WaveSpeed AI (alternative unified API)
+- `content/video-runway.md` - Runway API (alternative media pipeline)
+- `tools/video/video-prompt-design.md` - Prompt engineering for video models
+- `tools/vision/image-generation.md` - Image generation workflows
+- `content/production-video.md` - Video production pipeline
+- `content/production-audio.md` - Audio production pipeline

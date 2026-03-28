@@ -236,10 +236,10 @@ Narration: "Follow for the full breakdown."
 
 - `content/research.md` — audience research and niche validation
 - `content/story.md` — hook formulas and narrative design
-- `content/production/writing.md` — script structure and pacing
-- `content/production/video.md` — Sora 2 Pro and Veo 3.1 workflows
-- `content/production/audio.md` — voice pipeline and LUFS levels
+- `content/production-writing.md` — script structure and pacing
+- `content/production-video.md` — Sora 2 Pro and Veo 3.1 workflows
+- `content/production-audio.md` — voice pipeline and LUFS levels
 - `content/optimization.md` — A/B testing and analytics loops
-- `video/higgsfield.md` — AI video generation
+- `content/video-higgsfield.md` — AI video generation
 - `tools/video/video-prompt-design.md` — video prompting frameworks
 - `tools/voice/speech-to-speech.md` — voice cloning and transformation

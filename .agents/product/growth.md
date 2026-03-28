@@ -42,7 +42,7 @@ All of the above?
 
 **Related agents**:
 
-- `content/distribution/short-form.md` - TikTok/Reels/Shorts production
+- `content/distribution-short-form.md` - TikTok/Reels/Shorts production
 - `marketing/ad-creative.md` - Ad creative production
 - `marketing/meta-ads.md` - Meta Ads campaigns
 - `marketing/direct-response-copy.md` - Copywriting frameworks
@@ -143,7 +143,7 @@ Most faceless accounts fail because they look random. Successful faceless accoun
 3. Post variations across all platforms
 4. This is how faceless pages hit millions of views — not from one viral video, but from systematically scaling a proven format
 
-See `content/distribution/short-form.md` for detailed production workflows, hook formulas, and platform-specific optimisation.
+See `content/distribution-short-form.md` for detailed production workflows, hook formulas, and platform-specific optimisation.
 
 ### 4. Founder-Led Content (Free — Authority Play)
 
@@ -250,7 +250,7 @@ Not all channels should start simultaneously. Recommended sequence:
 
 ## Related
 
-- `content/distribution/short-form.md` - TikTok/Reels/Shorts production
+- `content/distribution-short-form.md` - TikTok/Reels/Shorts production
 - `marketing/ad-creative.md` - Ad creative production (12 chapters)
 - `marketing/meta-ads.md` - Meta Ads campaigns
 - `marketing/direct-response-copy.md` - Copywriting frameworks

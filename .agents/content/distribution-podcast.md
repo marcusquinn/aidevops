@@ -24,7 +24,7 @@ model: sonnet
 - **Consistency beats quality** - Regular schedule matters more than production value
 - **Repurpose everything** - Every podcast episode feeds 5+ other channels
 
-**Voice Pipeline** (from `content/production/audio.md`):
+**Voice Pipeline** (from `content/production-audio.md`):
 
 1. CapCut AI voice cleanup (normalize accents, remove artifacts)
 2. ElevenLabs transformation (voice cloning or style transfer)
@@ -115,7 +115,7 @@ Solo Episode Outline:
 **Workflow**:
 
 1. **Extract audio** from YouTube video using `yt-dlp-helper.sh`
-2. **Process through voice pipeline** (`content/production/audio.md`)
+2. **Process through voice pipeline** (`content/production-audio.md`)
 3. **Add podcast intro/outro** (pre-recorded bumpers)
 4. **Edit for audio-only** - Remove visual references ("as you can see...")
 5. **Generate show notes** with timestamps
@@ -201,9 +201,9 @@ After studying 50 AI content creators for 6 months, I identified the
 - Pop filter
 - Headphones for monitoring
 
-**AI-Generated Audio** (from `content/production/audio.md`):
+**AI-Generated Audio** (from `content/production-audio.md`):
 
-1. **Script** from `content/production/writing.md`
+1. **Script** from `content/production-writing.md`
 2. **CapCut AI voice cleanup** - Normalize and clean
 3. **ElevenLabs transformation** - Voice clone or style transfer
 4. **Post-processing** - LUFS normalization, noise gate, compression
@@ -269,11 +269,11 @@ From one podcast episode, generate:
 
 | Output | Channel | How |
 |--------|---------|-----|
-| **Audiogram clips** (30-60s) | Short-form (`content/distribution/short-form.md`) | Extract best quotes, add waveform visual |
-| **Blog post** | Blog (`content/distribution/blog.md`) | Expand show notes into full article |
-| **Social quotes** | Social (`content/distribution/social.md`) | Key insights as X posts, LinkedIn quotes |
-| **Newsletter feature** | Email (`content/distribution/email.md`) | Episode summary + key takeaway |
-| **YouTube video** | YouTube (`content/distribution/youtube/`) | Record video version or add static image |
+| **Audiogram clips** (30-60s) | Short-form (`content/distribution-short-form.md`) | Extract best quotes, add waveform visual |
+| **Blog post** | Blog (`content/distribution-blog.md`) | Expand show notes into full article |
+| **Social quotes** | Social (`content/distribution-social.md`) | Key insights as X posts, LinkedIn quotes |
+| **Newsletter feature** | Email (`content/distribution-email.md`) | Episode summary + key takeaway |
+| **YouTube video** | YouTube (`content/distribution-youtube/`) | Record video version or add static image |
 | **Transcript** | Blog/SEO | Full transcript as long-form SEO content |
 
 ### Audiogram Production
@@ -314,20 +314,20 @@ From one podcast episode, generate:
 
 - `content/research.md` - Audience research and niche validation
 - `content/story.md` - Hook formulas and narrative design
-- `content/production/audio.md` - Voice pipeline and audio production
-- `content/production/writing.md` - Script writing
+- `content/production-audio.md` - Voice pipeline and audio production
+- `content/production-writing.md` - Script writing
 - `content/optimization.md` - A/B testing and analytics loops
 
 **Distribution Channels**:
 
-- `content/distribution/youtube/` - Long-form YouTube content
-- `content/distribution/short-form.md` - TikTok, Reels, Shorts
-- `content/distribution/social.md` - X, LinkedIn, Reddit
-- `content/distribution/blog.md` - SEO-optimized articles
-- `content/distribution/email.md` - Newsletters and sequences
+- `content/distribution-youtube/` - Long-form YouTube content
+- `content/distribution-short-form.md` - TikTok, Reels, Shorts
+- `content/distribution-social.md` - X, LinkedIn, Reddit
+- `content/distribution-blog.md` - SEO-optimized articles
+- `content/distribution-email.md` - Newsletters and sequences
 
 **Tools**:
 
 - `tools/voice/speech-to-speech.md` - Voice cloning and transformation
-- `content/production/audio.md` - Audio production pipeline
+- `content/production-audio.md` - Audio production pipeline
 - `youtube-helper.sh` - YouTube upload for video versions

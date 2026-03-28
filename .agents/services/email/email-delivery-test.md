@@ -257,5 +257,5 @@ Check: shared IP reputation issues · volume spikes · content variations trigge
 - `services/email/email-health-check.md` — DNS authentication (SPF, DKIM, DMARC)
 - `services/email/email-testing.md` — Design rendering and delivery infrastructure
 - `services/email/ses.md` — Amazon SES integration and reputation management
-- `content/distribution/email.md` — Email content strategy and sequences
+- `content/distribution-email.md` — Email content strategy and sequences
 - `scripts/commands/email-test-suite.md`, `scripts/commands/email-health-check.md`

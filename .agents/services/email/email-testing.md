@@ -144,6 +144,6 @@ email-health-check-helper.sh accessibility newsletter.html # 5. Standalone a11y
 - `tools/accessibility/accessibility-audit.md` - Email accessibility checks (WCAG compliance)
 - `services/email/email-health-check.md` - DNS authentication checks
 - `services/email/ses.md` - Amazon SES integration
-- `content/distribution/email.md` - Email content strategy
+- `content/distribution-email.md` - Email content strategy
 - `tools/accessibility/accessibility.md` - WCAG accessibility reference
 - `tools/browser/browser-automation.md` - For automated rendering tests

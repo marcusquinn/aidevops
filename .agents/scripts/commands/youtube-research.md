@@ -171,9 +171,9 @@ Next: /youtube script "100+ Python Concepts you Need to Know"
 
 ## Related
 
-- `content/distribution/youtube/youtube.md` - Main YouTube agent
-- `content/distribution/youtube/channel-intel.md` - Deep competitor profiling
-- `content/distribution/youtube/topic-research.md` - Advanced topic research
+- `content/distribution-youtube.md` - Main YouTube agent
+- `content/distribution-youtube-channel-intel.md` - Deep competitor profiling
+- `content/distribution-youtube-topic-research.md` - Advanced topic research
 - `/youtube setup` - Configure tracking
 - `/youtube script` - Generate scripts from research
 - `youtube-helper.sh` - YouTube Data API wrapper

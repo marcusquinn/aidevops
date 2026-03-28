@@ -16,7 +16,7 @@ Per-project brand identity bridging design and content agents. A designer picks 
 - **Template**: `context/brand-identity.toon` in each project repo
 - **8 dimensions**: Visual style, voice & tone, copywriting, imagery, iconography, buttons & forms, media & motion, brand positioning
 - **Create**: From scratch or existing site via `tools/design/ui-ux-inspiration.md`
-- **Related**: `content/guidelines.md`, `content/platform-personas.md`, `content/production/image.md`, `workflows/ui-verification.md`
+- **Related**: `content/guidelines.md`, `content/platform-personas.md`, `content/production-image.md`, `workflows/ui-verification.md`
 - **When to use**: Before any design or content work. If `context/brand-identity.toon` is missing, create one first.
 
 <!-- AI-CONTEXT-END -->
@@ -109,7 +109,7 @@ Every agent producing design or content output MUST check `context/brand-identit
 
 ## Relationship Map
 
-`context/brand-identity.toon` readers: `tools/design/ui-ux-inspiration.md` (writes it), `content/guidelines.md` (structural rules), `content/platform-personas.md` (voice shifts), `content/production/image.md` (image gen params), `content/production/characters.md` (character personality), `content/humanise.md` (preserve personality), `workflows/ui-verification.md` (adds constraints), `tools/design/ui-ux-catalogue.toon` (records choices).
+`context/brand-identity.toon` readers: `tools/design/ui-ux-inspiration.md` (writes it), `content/guidelines.md` (structural rules), `content/platform-personas.md` (voice shifts), `content/production-image.md` (image gen params), `content/production-characters.md` (character personality), `content/humanise.md` (preserve personality), `workflows/ui-verification.md` (adds constraints), `tools/design/ui-ux-catalogue.toon` (records choices).
 
 ## Example: Launchpad (developer deploy tool)
 

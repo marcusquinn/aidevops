@@ -46,7 +46,7 @@ Analyze structure (hook, intro, body, CTA), then generate unique version: same t
 
 ### Step 3: Generate Script
 
-Read `content/distribution/youtube/script-writer.md` for full guidance on hook formulas, pattern interrupt types, retention curve optimization, storytelling frameworks (AIDA, Hero's Journey, Problem-Solution-Result), B-roll markers, and pacing (120-150 words/minute).
+Read `content/distribution-youtube-script-writer.md` for full guidance on hook formulas, pattern interrupt types, retention curve optimization, storytelling frameworks (AIDA, Hero's Journey, Problem-Solution-Result), B-roll markers, and pacing (120-150 words/minute).
 
 Script sections: `[HOOK - 0:00-0:30]` → `[INTRO - 0:30-1:00]` → `[SECTION N - start:end]` (with `[B-roll: ...]` and `[Pattern interrupt: type]`) → `[CLIMAX]` → `[CTA]`
 
@@ -61,7 +61,7 @@ Output includes: title, target length, audience, hook formula, production notes 
 
 ### Step 5: Present Script
 
-Format as production-ready with header (title, length, audience, hook formula), timestamped sections, and production notes. See `content/distribution/youtube/script-writer.md` for full output format.
+Format as production-ready with header (title, length, audience, hook formula), timestamped sections, and production notes. See `content/distribution-youtube-script-writer.md` for full output format.
 
 ### Step 6: Store and Offer Follow-up
 
@@ -88,8 +88,8 @@ Offer: hook variants, thumbnail brief, title/tags/description optimization, B-ro
 
 ## Related
 
-- `content/distribution/youtube/youtube.md` - Main YouTube agent
-- `content/distribution/youtube/script-writer.md` - Full script writing guide (hook formulas, output format, worked examples)
+- `content/distribution-youtube.md` - Main YouTube agent
+- `content/distribution-youtube-script-writer.md` - Full script writing guide (hook formulas, output format, worked examples)
 - `content/story.md` - Storytelling frameworks and hook formulas
 - `/youtube research` - Research topics before scripting
 - `/youtube setup` - Configure channel and niche

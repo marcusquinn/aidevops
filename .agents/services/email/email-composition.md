@@ -339,6 +339,6 @@ Key settings:
 - `scripts/email-compose-helper.sh` — CLI for composition workflow
 - `services/email/email-agent.md` — Autonomous mission email (send/poll/extract)
 - `services/email/email-mailbox.md` — Mailbox management and triage
-- `content/distribution/email.md` — Subject line formulas, content strategy
+- `content/distribution-email.md` — Subject line formulas, content strategy
 - `marketing/direct-response-copy-frameworks-email-sequences.md` — Copywriting frameworks
 - `scripts/email-signature-parser-helper.sh` — Apple Mail signature extraction

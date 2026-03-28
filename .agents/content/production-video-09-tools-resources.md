@@ -3,15 +3,15 @@
 ## Internal References
 
 - `.agents/tools/video/video-prompt-design.md` — Veo 3 Meta Framework (7-component prompting)
-- `.agents/video/higgsfield.md` — Higgsfield API integration
-- `.agents/video/heygen-skill.md` — HeyGen Avatar API (talking-head generation)
-- `.agents/video/muapi.md` — MuAPI (VEED lipsync, face swap, VFX)
+- `.agents/content/video-higgsfield.md` — Higgsfield API integration
+- `.agents/content/heygen-skill.md` — HeyGen Avatar API (talking-head generation)
+- `.agents/content/video-muapi.md` — MuAPI (VEED lipsync, face swap, VFX)
 - `.agents/tools/video/remotion.md` — Programmatic video editing
 - `.agents/tools/voice/voice-models.md` — TTS model comparison (ElevenLabs, MiniMax, Qwen3-TTS)
 - `.agents/tools/voice/qwen3-tts.md` — Qwen3-TTS setup and voice cloning
-- `.agents/content/production/image.md` — Image generation (Nanobanana Pro, Midjourney, Freepik)
-- `.agents/content/production/audio.md` — Voice pipeline, 4-Layer Audio Design
-- `.agents/content/production/characters.md` — Character consistency (Facial Engineering, Character Bibles)
+- `.agents/content/production-image.md` — Image generation (Nanobanana Pro, Midjourney, Freepik)
+- `.agents/content/production-audio.md` — Voice pipeline, 4-Layer Audio Design
+- `.agents/content/production-characters.md` — Character consistency (Facial Engineering, Character Bibles)
 - `.agents/content/optimization.md` — A/B testing, seed bracketing automation
 - `.agents/scripts/seed-bracket-helper.sh` — Seed bracketing CLI
 

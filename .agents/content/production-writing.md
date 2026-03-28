@@ -289,8 +289,8 @@ Before delivering any written output:
 ## Related
 
 - `content/story.md` -- Provides the narrative framework and hook variants
-- `content/production/image.md` -- Visual assets referenced in scripts
-- `content/production/video.md` -- Video production specs for script adaptation
-- `content/production/audio.md` -- Voice pipeline for script delivery
-- `content/distribution/` -- Channel-specific conventions for final adaptation
+- `content/production-image.md` -- Visual assets referenced in scripts
+- `content/production-video.md` -- Video production specs for script adaptation
+- `content/production-audio.md` -- Voice pipeline for script delivery
+- `content/distribution-*.md` -- Channel-specific conventions for final adaptation
 - `content.md` -- Parent orchestrator (diamond pipeline)

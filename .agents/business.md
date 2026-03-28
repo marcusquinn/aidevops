@@ -1,6 +1,6 @@
 ---
 name: business
-description: Company orchestration - AI agents managing company functions via runners and coordinator dispatch
+description: Company orchestration - AI agents managing company functions including financial operations, invoicing, receipts
 mode: subagent
 tools:
   read: true
@@ -11,7 +11,8 @@ tools:
   grep: true
 subagents:
   - company-runners
-  - accounts
+  - accounts-receipt-ocr
+  - accounts-subscription-audit
   - sales
   - marketing
   - legal
@@ -29,7 +30,7 @@ subagents:
 
 **Related Agents**:
 
-- `accounts.md` - Financial operations (QuickFile)
+- `business.md` - Financial operations (QuickFile)
 - `sales.md` - Sales pipeline and CRM (FluentCRM)
 - `marketing.md` - Marketing campaigns and lead generation
 - `legal.md` - Legal compliance and contracts

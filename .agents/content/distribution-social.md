@@ -281,11 +281,11 @@ Happy to share more details on the research methodology if anyone's interested.
 
 **Distribution Channels**:
 
-- `content/distribution/youtube/` - Long-form YouTube content
-- `content/distribution/short-form.md` - TikTok, Reels, Shorts
-- `content/distribution/blog.md` - SEO-optimized articles
-- `content/distribution/email.md` - Newsletters and sequences
-- `content/distribution/podcast.md` - Audio-first distribution
+- `content/distribution-youtube/` - Long-form YouTube content
+- `content/distribution-short-form.md` - TikTok, Reels, Shorts
+- `content/distribution-blog.md` - SEO-optimized articles
+- `content/distribution-email.md` - Newsletters and sequences
+- `content/distribution-podcast.md` - Audio-first distribution
 
 **Tools**:
 

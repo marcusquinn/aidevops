@@ -117,7 +117,7 @@ AI: Campaign analytics for camp_101:
 
 ## Related
 
-- `content/distribution/email.md` - Newsletter and sequence strategy
+- `content/distribution-email.md` - Newsletter and sequence strategy
 - `services/email/email-testing.md` - Design and delivery testing workflow
 - `services/email/email-delivery-test.md` - Inbox placement and spam scoring
 - `services/email/email-health-check.md` - DNS and content precheck

@@ -143,5 +143,5 @@ Schema:
 
 ## Related
 
-- `accounts.md` - Financial operations agent
+- `business.md` - Financial operations agent
 - `tools/credentials/api-key-setup.md` - API key management (related spend)

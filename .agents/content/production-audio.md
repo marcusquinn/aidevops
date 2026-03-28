@@ -87,7 +87,7 @@ Per-word emotion tagging for natural AI speech. TTS engines with emotion support
 | `[urgent]` | CTAs, time-sensitive | CTA (final 5s) |
 | `[neutral]` | Default, informational | Any |
 
-Scripts from `content/production/writing.md` should include emotional block markup.
+Scripts from `content/production-writing.md` should include emotional block markup.
 
 ## 4-Layer Audio Design
 
@@ -160,6 +160,6 @@ For advanced use cases (custom LLMs, server/client deployment, phone integration
 - `tools/voice/voice-ai-models.md` — Complete model comparison (TTS, STT, S2S)
 - `tools/voice/voice-models.md` — TTS model comparison (ElevenLabs, MiniMax, Qwen3-TTS)
 - `tools/voice/pipecat-opencode.md` — Pipecat real-time voice pipeline
-- `content/production/writing.md` — Script structure, dialogue pacing, emotional cues
-- `content/production/video.md` — Video production and audio sync
+- `content/production-writing.md` — Script structure, dialogue pacing, emotional cues
+- `content/production-video.md` — Video production and audio sync
 - `content/optimization.md` — A/B testing audio variants

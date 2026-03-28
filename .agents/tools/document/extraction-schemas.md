@@ -336,7 +336,7 @@ Fields with confidence below 0.7 should be flagged for manual review.
 - `document-extraction.md` - Component reference (Docling, ExtractThinker, Presidio)
 - `extraction-workflow.md` - Pipeline orchestration and tool selection
 - `../../services/accounting/quickfile.md` - QuickFile MCP integration
-- `../../accounts.md` - Accounting agent
+- `../../business.md` - Accounting agent
 - `../../scripts/quickfile-helper.sh` - QuickFile recording bridge (t012.4)
 - `../../scripts/ocr-receipt-helper.sh` - OCR extraction pipeline
 - `../../../todo/tasks/prd-document-extraction.md` - Full PRD

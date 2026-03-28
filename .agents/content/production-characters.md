@@ -24,7 +24,7 @@ AI-powered character design and consistency management for video content, brand 
 - **Purpose**: Create and maintain consistent characters across AI-generated content
 - **Primary Techniques**: Facial engineering framework, character bibles, Sora 2 Cameos, Veo 3.1 Ingredients, Nanobanana character JSON
 - **Key Principle**: "Model recency arbitrage" — always use latest-gen models, older outputs get recognized as AI faster
-- **Related**: `content/production/image.md`, `content/production/video.md`, `tools/vision/image-generation.md`
+- **Related**: `content/production-image.md`, `content/production-video.md`, `tools/vision/image-generation.md`
 
 **When to Use**: Creating brand mascots, recurring video characters, influencer personas, character-driven content series, or any production requiring visual consistency across multiple outputs.
 
@@ -358,7 +358,7 @@ Track changes in a version log: Version | Changes | Reason | Audience Response.
 **Video**: Sora 2 Pro (UGC-style), Veo 3.1 (cinematic, character-consistent), Higgsfield (multi-model)
 **Voice**: ElevenLabs (cloning/transformation), CapCut (AI voice cleanup — use BEFORE ElevenLabs)
 
-**Related docs**: `content/production/image.md`, `content/production/video.md`, `content/production/audio.md`, `tools/vision/image-generation.md`, `tools/video/video-prompt-design.md`
+**Related docs**: `content/production-image.md`, `content/production-video.md`, `content/production-audio.md`, `tools/vision/image-generation.md`, `tools/video/video-prompt-design.md`
 
 ## Workflow Summary
 
@@ -368,7 +368,7 @@ Track changes in a version log: Version | Changes | Reason | Audience Response.
 
 **Maintain Consistency**: Regular audits → update bible on changes → upgrade AI models → regenerate assets → monitor feedback → iterate
 
-**Content Pipeline**: Research (`content/research.md`) → Story (`content/story.md`) → Production (writing, image, video, audio) → Distribution (`content/distribution/`) → Optimization (`content/optimization.md`)
+**Content Pipeline**: Research (`content/research.md`) → Story (`content/story.md`) → Production (writing, image, video, audio) → Distribution (`content/distribution-*.md`) → Optimization (`content/optimization.md`)
 
 ---
 

@@ -245,9 +245,9 @@ Source: [github.com/WaveSpeedAI/wavespeed-mcp](https://github.com/WaveSpeedAI/wa
 
 WaveSpeed serves as a unified backend for content production:
 
-- **Image generation**: Use via `content/production/image.md` workflows
-- **Video generation**: Use via `content/production/video.md` workflows
-- **Audio generation**: Use via `content/production/audio.md` workflows
+- **Image generation**: Use via `content/production-image.md` workflows
+- **Video generation**: Use via `content/production-video.md` workflows
+- **Audio generation**: Use via `content/production-audio.md` workflows
 
 The helper script can be called from other helpers and pipelines as a generation backend.
 

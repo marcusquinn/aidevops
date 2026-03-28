@@ -123,11 +123,11 @@ Before implementing, check AGENTS.md domain index. If the task touches a special
 
 | Task involves... | Read first |
 |------------------|------------|
-| Images/thumbnails | `content/production/image.md` |
-| Video/animation | `content/production/video.md` + `tools/video/video-prompt-design.md` |
-| UGC/ads/social | `content.md` → `content/story.md` → `content/production/` |
-| Audio/voice | `content/production/audio.md` + `tools/voice/speech-to-speech.md` |
-| SEO/blog posts | `seo/` + `content/distribution/` |
+| Images/thumbnails | `content/production-image.md` |
+| Video/animation | `content/production-video.md` + `tools/video/video-prompt-design.md` |
+| UGC/ads/social | `content.md` → `content/story.md` → `content/production-*.md` |
+| Audio/voice | `content/production-audio.md` + `tools/voice/speech-to-speech.md` |
+| SEO/blog posts | `seo/` + `content/distribution-*.md` |
 | WordPress | `tools/wordpress/wp-dev.md` |
 | UI/layout/design/CSS | `workflows/ui-verification.md` + `tools/browser/playwright-emulation.md` + `tools/browser/chrome-devtools.md` |
 | Design system/brand/style | `tools/design/design-inspiration.md` + `tools/design/ui-ux-inspiration.md` + `tools/design/ui-ux-catalogue.toon` + `tools/design/brand-identity.md` |

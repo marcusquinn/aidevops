@@ -24,7 +24,7 @@ Data-driven content improvement through systematic testing, variant generation, 
 - **Purpose**: Optimize content performance through A/B testing, variant generation, and analytics-driven iteration
 - **Input**: Published content, performance metrics, test hypotheses
 - **Output**: Winning variants, optimization recommendations, analytics insights
-- **Related**: `content/production/` (generates test variants), `content/distribution/` (platform-specific metrics), `content/research.md` (feeds next cycle)
+- **Related**: `content/production-*.md` (generates test variants), `content/distribution-*.md` (platform-specific metrics), `content/research.md` (feeds next cycle)
 
 **Key Principles**:
 - **10 variants minimum** before committing to an approach
@@ -88,7 +88,7 @@ thumbnail-helper.sh analyze VIDEO_ID
 
 ### Test Execution Workflow
 
-1. **Generate variants**: 10+ versions using `content/production/` agents
+1. **Generate variants**: 10+ versions using `content/production-*.md` agents
 2. **Deploy**: Platform-specific (YouTube A/B test, TikTok separate videos, Google Optimize for blog, email list split)
 3. **Collect**: 250+ samples per variant (CTR, retention, completion rate, time on page)
 4. **Analyze**: Calculate lift `(variant - baseline) / baseline * 100`; check 95% significance
@@ -109,7 +109,7 @@ Output as table: Type | Hook | Word Count
 
 ### Seed Bracketing for Video
 
-Systematically test seed ranges before committing to full production (see `content/production/video.md` for full details):
+Systematically test seed ranges before committing to full production (see `content/production-video.md` for full details):
 
 - **Seed ranges by content type**: People 1000-1999, Action 2000-2999, Landscape 3000-3999, Product 4000-4999
 - **Test bracket**: Generate 10 outputs with seeds 2000-2010; score on Composition (30%), Quality (30%), Style (20%), Accuracy (20%)
@@ -234,8 +234,8 @@ Example: "I spent $10K testing every AI video tool" (1M views) → replicate str
 
 ## Integration
 
-- **Feeds into**: `content/research.md` (analytics inform next research cycle), `content/production/` (winning patterns inform next batch)
-- **Uses data from**: `content/distribution/` (platform analytics), `content/production/` (variant generation)
+- **Feeds into**: `content/research.md` (analytics inform next research cycle), `content/production-*.md` (winning patterns inform next batch)
+- **Uses data from**: `content/distribution-*.md` (platform analytics), `content/production-*.md` (variant generation)
 - **Related**: `tools/task-management/beads.md` (task tracking), `reference/memory.md` (pattern storage)
 
 ## Next Steps

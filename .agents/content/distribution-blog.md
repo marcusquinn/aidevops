@@ -217,8 +217,8 @@ python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py quality article.md
 ### Post-Publish Checklist
 
 - [ ] Verify indexing (Google Search Console)
-- [ ] Share on social channels (`content/distribution/social.md`)
-- [ ] Include in next newsletter (`content/distribution/email.md`)
+- [ ] Share on social channels (`content/distribution-social.md`)
+- [ ] Include in next newsletter (`content/distribution-email.md`)
 - [ ] Internal link from 2-3 existing articles
 - [ ] Monitor rankings for target keyword (weekly for first month)
 
@@ -241,11 +241,11 @@ python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py quality article.md
 
 **Distribution Channels**:
 
-- `content/distribution/youtube/` - Long-form YouTube content
-- `content/distribution/short-form.md` - TikTok, Reels, Shorts
-- `content/distribution/social.md` - X, LinkedIn, Reddit
-- `content/distribution/email.md` - Newsletters and sequences
-- `content/distribution/podcast.md` - Audio-first distribution
+- `content/distribution-youtube/` - Long-form YouTube content
+- `content/distribution-short-form.md` - TikTok, Reels, Shorts
+- `content/distribution-social.md` - X, LinkedIn, Reddit
+- `content/distribution-email.md` - Newsletters and sequences
+- `content/distribution-podcast.md` - Audio-first distribution
 
 **WordPress**:
 

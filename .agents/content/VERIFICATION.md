@@ -18,7 +18,7 @@ All external tool references exist and are correct:
 - `tools/browser/crawl4ai.md` ✓
 - `seo/google-search-console.md` ✓
 - `seo/dataforseo.md` ✓
-- `video/higgsfield.md` ✓
+- `content/video-higgsfield.md` ✓
 - `tools/video/video-prompt-design.md` ✓
 - `tools/voice/speech-to-speech.md` ✓
 - `social-media/bird.md` ✓
@@ -37,9 +37,9 @@ All referenced helper scripts exist:
 ### ✅ Verified - Existing Content Files
 
 - `content/research.md` ✓
-- `content/production/image.md` ✓
-- `content/production/video.md` ✓
-- `content/production/audio.md` ✓
+- `content/production-image.md` ✓
+- `content/production-video.md` ✓
+- `content/production-audio.md` ✓
 - `content/guidelines.md` ✓
 - `content/platform-personas.md` ✓
 - `content/humanise.md` ✓
@@ -57,22 +57,22 @@ The following files are referenced in `content.md` but do not exist yet:
 1. `content/story.md` - Story design framework (7 hook formulas, 4-part script framework)
 
 **Production Phase:**
-2. `content/production/writing.md` - Writing production (scripts, copy, captions)
-3. `content/production/characters.md` - Character engineering (facial analysis, character bibles)
+2. `content/production-writing.md` - Writing production (scripts, copy, captions)
+3. `content/production-characters.md` - Character engineering (facial analysis, character bibles)
 
 **Distribution Phase - YouTube:**
-4. `content/distribution/youtube/channel-intel.md` - YouTube channel analysis
-5. `content/distribution/youtube/topic-research.md` - YouTube topic validation
-6. `content/distribution/youtube/script-writer.md` - YouTube long-form scripts
-7. `content/distribution/youtube/optimizer.md` - YouTube title/description/tags/thumbnails
-8. `content/distribution/youtube/pipeline.md` - YouTube end-to-end automation
+4. `content/distribution-youtube-channel-intel.md` - YouTube channel analysis
+5. `content/distribution-youtube-topic-research.md` - YouTube topic validation
+6. `content/distribution-youtube-script-writer.md` - YouTube long-form scripts
+7. `content/distribution-youtube-optimizer.md` - YouTube title/description/tags/thumbnails
+8. `content/distribution-youtube-pipeline.md` - YouTube end-to-end automation
 
 **Distribution Phase - Other Channels:**
-9. `content/distribution/short-form.md` - TikTok/Reels/Shorts (9:16, 1-3s cuts)
-10. `content/distribution/social.md` - X/LinkedIn/Reddit distribution
-11. `content/distribution/blog.md` - SEO-optimized blog articles
-12. `content/distribution/email.md` - Newsletter structure and sequences
-13. `content/distribution/podcast.md` - Audio-first distribution
+9. `content/distribution-short-form.md` - TikTok/Reels/Shorts (9:16, 1-3s cuts)
+10. `content/distribution-social.md` - X/LinkedIn/Reddit distribution
+11. `content/distribution-blog.md` - SEO-optimized blog articles
+12. `content/distribution-email.md` - Newsletter structure and sequences
+13. `content/distribution-podcast.md` - Audio-first distribution
 
 **Optimization Phase:**
 14. `content/optimization.md` - A/B testing, seed bracketing, analytics loops
@@ -100,21 +100,21 @@ Based on the diamond pipeline architecture, suggested implementation order:
 
 **Phase 1 - Core Pipeline:**
 1. `content/story.md` - Central to the "one story → many outputs" multiplier
-2. `content/production/writing.md` - First production output
+2. `content/production-writing.md` - First production output
 3. `content/optimization.md` - Feedback loop for iteration
 
 **Phase 2 - Primary Distribution:**
-4. `content/distribution/youtube/` subagents (5 files) - Primary long-form channel
-5. `content/distribution/short-form.md` - High-leverage short content
-6. `content/distribution/social.md` - Multi-platform reach
+4. `content/distribution-youtube/` subagents (5 files) - Primary long-form channel
+5. `content/distribution-short-form.md` - High-leverage short content
+6. `content/distribution-social.md` - Multi-platform reach
 
 **Phase 3 - Extended Distribution:**
-7. `content/distribution/blog.md` - SEO and evergreen content
-8. `content/distribution/email.md` - Owned audience
-9. `content/distribution/podcast.md` - Audio-first audience
+7. `content/distribution-blog.md` - SEO and evergreen content
+8. `content/distribution-email.md` - Owned audience
+9. `content/distribution-podcast.md` - Audio-first audience
 
 **Phase 4 - Advanced Production:**
-10. `content/production/characters.md` - Character consistency across outputs
+10. `content/production-characters.md` - Character consistency across outputs
 
 ## Related Tasks
 

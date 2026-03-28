@@ -117,11 +117,11 @@ comfy-cli-helper.sh snapshot-restore my-setup.json
 
 ## Integration
 
-- `content/production/image.md`, `content/production/video.md` — local ComfyUI generation pipeline
+- `content/production-image.md`, `content/production-video.md` — local ComfyUI generation pipeline
 - `tools/vision/image-generation.md` — local model inference
 - `tools/video/` — local video generation workflows
 
 ## Related
 
 - `tools/vision/overview.md` — Vision AI decision tree
-- `video/higgsfield.md` — Cloud-based AI generation
+- `content/video-higgsfield.md` — Cloud-based AI generation

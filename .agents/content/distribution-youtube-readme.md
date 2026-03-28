@@ -70,17 +70,17 @@ When the content pipeline fans out to YouTube:
 
 From one YouTube video, generate:
 
-- **YouTube Short** - Best 30-60s clip, 9:16 reformat (`content/distribution/short-form.md`)
-- **Blog post** - Transcript-based SEO article (`content/distribution/blog.md`)
-- **Social posts** - Key insights as X thread, LinkedIn post, Reddit discussion (`content/distribution/social.md`)
-- **Email** - Newsletter featuring video + key takeaways (`content/distribution/email.md`)
-- **Podcast** - Audio-only version with show notes (`content/distribution/podcast.md`)
+- **YouTube Short** - Best 30-60s clip, 9:16 reformat (`content/distribution-short-form.md`)
+- **Blog post** - Transcript-based SEO article (`content/distribution-blog.md`)
+- **Social posts** - Key insights as X thread, LinkedIn post, Reddit discussion (`content/distribution-social.md`)
+- **Email** - Newsletter featuring video + key takeaways (`content/distribution-email.md`)
+- **Podcast** - Audio-only version with show notes (`content/distribution-podcast.md`)
 
 ## Related Agents
 
 - `youtube.md` - Full YouTube orchestrator (this directory)
-- `content/production/video.md` - Video generation (Sora 2 Pro, Veo 3.1)
-- `content/production/audio.md` - Voice pipeline
+- `content/production-video.md` - Video generation (Sora 2 Pro, Veo 3.1)
+- `content/production-audio.md` - Voice pipeline
 - `content/story.md` - Narrative design and hook formulas
 - `content/optimization.md` - A/B testing and analytics
 - `youtube-helper.sh` - YouTube Data API v3 wrapper

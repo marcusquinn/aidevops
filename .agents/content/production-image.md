@@ -24,7 +24,7 @@ AI-powered image generation for thumbnails, social media graphics, blog headers,
 - **Purpose**: Generate consistent, high-quality images for content production pipeline
 - **Primary Tools**: Nanobanana Pro (JSON prompts), Midjourney (objects/environments), Freepik (characters), Seedream 4 (4K refinement), Ideogram (face swap)
 - **Key Techniques**: Style library system, annotated frame-to-video workflow, Shotdeck reference library, thumbnail factory pattern
-- **Related**: `tools/vision/image-generation.md` (model comparison), `content/production/video.md` (frame-to-video), `content/optimization.md` (A/B testing)
+- **Related**: `tools/vision/image-generation.md` (model comparison), `content/production-video.md` (frame-to-video), `content/optimization.md` (A/B testing)
 
 **When to Use**: Creating thumbnails, social media graphics, blog headers, product mockups, character portraits, or any visual asset for content distribution.
 
@@ -179,7 +179,7 @@ Generate a static image, annotate it with motion indicators, then feed to video 
 3. **Feed to video model** — Veo 3.1 (ingredients-to-video) or Sora 2. Prompt: "Animate this scene following the annotated motion indicators."
 4. **Refine** — adjust annotations and regenerate if motion is incorrect
 
-**Reference**: See `content/production/video.md` for Veo 3.1 ingredients-to-video workflow (NOT frame-to-video, which produces grainy output).
+**Reference**: See `content/production-video.md` for Veo 3.1 ingredients-to-video workflow (NOT frame-to-video, which produces grainy output).
 
 ## Shotdeck Reference Library Workflow
 
@@ -256,7 +256,7 @@ Post-processing step after generating with Nanobanana/Midjourney/Freepik. Use wh
 
 Enables character consistency across multiple images. Workflow: generate base character portrait → upload to Ideogram as reference face → generate new scenes → face swap.
 
-**Alternative**: See `content/production/characters.md` for Facial Engineering Framework.
+**Alternative**: See `content/production-characters.md` for Facial Engineering Framework.
 
 ## Platform-Specific Image Specs
 
@@ -344,19 +344,19 @@ enhancor-helper.sh batch --command enhance --input photoshoot.txt \
 
 **Best practices**: Start with `skin_refinement_level` 40-60; use `professional` mode for final deliverables; only enhance images that passed initial quality checks.
 
-Full API reference: `video/enhancor.md`.
+Full API reference: `content/video-enhancor.md`.
 
 ## Cross-References
 
 - **Brand identity**: `tools/design/brand-identity.md` — check `context/brand-identity.toon` for imagery style before generating
 - **Design catalogue**: `tools/design/ui-ux-catalogue.toon` — 96 colour palettes, 67 UI styles
 - **Model comparison**: `tools/vision/image-generation.md` — DALL-E 3, Midjourney, FLUX, SD XL
-- **Video production**: `content/production/video.md` — frame-to-video workflow, Veo 3.1
-- **Character consistency**: `content/production/characters.md` — Facial Engineering Framework
+- **Video production**: `content/production-video.md` — frame-to-video workflow, Veo 3.1
+- **Character consistency**: `content/production-characters.md` — Facial Engineering Framework
 - **A/B testing**: `content/optimization.md` — thumbnail variant testing, scoring, analytics
 - **UGC storyboard**: `content/story.md` — UGC Brief Storyboard template
 - **Video prompts**: `tools/video/video-prompt-design.md` — 7-component format
-- **Enhancor AI**: `video/enhancor.md` — portrait enhancement, upscaling, AI generation
+- **Enhancor AI**: `content/video-enhancor.md` — portrait enhancement, upscaling, AI generation
 
 ## See Also
 

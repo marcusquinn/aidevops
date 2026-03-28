@@ -128,6 +128,6 @@ real-video-enhancer-helper.sh upscale input.mp4 output.mp4 --scale 2 --verbose
 ## Related
 
 - `video-gen-helper.sh` — AI video generation (Sora, Veo, Higgsfield)
-- `content/production/video.md` — full production pipeline
+- `content/production-video.md` — full production pipeline
 - `remotion` — programmatic video creation
 - GitHub: https://github.com/TNTwise/REAL-Video-Enhancer (GPL-3.0)

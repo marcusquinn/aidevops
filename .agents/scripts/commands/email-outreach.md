@@ -126,4 +126,4 @@ AI: Campaign status for campaign_123:
 
 - `services/outreach/cold-outreach.md` - Strategy and guardrails
 - `services/email/email-health-check.md` - Authentication and infrastructure checks
-- `content/distribution/email.md` - Email copy and campaign performance guidance
+- `content/distribution-email.md` - Email copy and campaign performance guidance

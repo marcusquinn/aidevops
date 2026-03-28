@@ -144,6 +144,6 @@ For contrast ratio checks: `accessibility-helper.sh contrast '#fg' '#bg'`
 - `services/email/email-testing.md` - Design rendering and delivery testing
 - `services/email/ses.md` - Amazon SES integration
 - `services/hosting/dns.md` - DNS management
-- `content/distribution/email.md` - Email content strategy and best practices
+- `content/distribution-email.md` - Email content strategy and best practices
 - `tools/accessibility/accessibility.md` - WCAG accessibility reference
 - `tools/browser/browser-automation.md` - For mail-tester automation
