@@ -261,11 +261,6 @@
       "at": "2026-03-28T03:54:38Z",
       "pr": 11357
     },
-    ".agents/tools/mobile/app-dev/swift.md": {
-      "hash": "d601962cd709d65d62ca882b09f763abe48b7e04",
-      "at": "2026-03-28T03:54:42Z",
-      "pr": 11358
-    },
     ".agents/marketing-sales/cro-chapter-16.md": {
       "hash": "920245116e79b04207fd2b808c5dcbfabea3eb17",
       "at": "2026-03-28T04:30:24Z",
@@ -1346,15 +1341,15 @@
       "at": "2026-03-28T17:30:27Z",
       "pr": 12070
     },
-    ".agents/tools/mobile/app-dev/expo.md": {
-      "hash": "c79d78079b0efc3ced6143fe621ac6a78c11f9c2",
-      "at": "2026-03-28T17:30:29Z",
-      "pr": 12072
+    ".agents/tools/code-review/qlty.md": {
+      "hash": "3c3fef1897ddb0b0bb88a35205dfd4d6f715db13",
+      "at": "2026-03-28T18:36:46Z",
+      "pr": 12114
+    },
+    ".agents/tools/research/providers/wappalyzer.md": {
+      "hash": "0076ce1ed7c75e2759b1e4666e255fbea7ed8258",
+      "at": "2026-03-28T18:36:48Z",
+      "pr": 12115
     }
-  },
-  ".agents/tools/code-review/best-practices.md": {
-    "hash": "f0869021889e61a681d25d171ebff01435b2294a",
-    "at": "2026-03-28T10:11:16Z",
-    "pr": 11771
   }
 }
