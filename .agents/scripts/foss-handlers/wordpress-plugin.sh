@@ -633,57 +633,56 @@ cmd_cleanup() {
 # =============================================================================
 
 cmd_help() {
-	cat <<'EOF'
-wordpress-plugin.sh — FOSS contribution handler for WordPress plugins (t1696)
-
-USAGE
-  wordpress-plugin.sh <command> [args]
-
-COMMANDS
-  setup   <github-slug> [worktree-path]
-      Fork, clone, generate .wp-env.json (multisite), start wp-env,
-      register HTTPS .local domain via localdev.
-      Example: wordpress-plugin.sh setup afragen/git-updater
-
-  build   <plugin-dir>
-      Install composer/npm deps, activate plugin on single site + network.
-      Example: wordpress-plugin.sh build ~/Git/wordpress/git-updater
-
-  test    <plugin-dir>
-      Run PHPUnit (if phpunit.xml exists), check debug.log for PHP errors,
-      run Playwright smoke tests, run multisite checks.
-      Example: wordpress-plugin.sh test ~/Git/wordpress/git-updater
-
-  review  <plugin-dir> [branch-name]
-      Print review URLs. With branch-name, registers a branch subdomain
-      via localdev for side-by-side comparison.
-      Example: wordpress-plugin.sh review ~/Git/wordpress/git-updater bugfix-xyz
-
-  cleanup <plugin-dir>
-      Destroy wp-env, remove localdev registration, deregister port.
-      Example: wordpress-plugin.sh cleanup ~/Git/wordpress/git-updater
-
-  help
-      Show this help.
-
-PREREQUISITES
-  docker          — for wp-env containers
-  node >= 18      — for @wordpress/env
-  jq              — for JSON config generation
-  composer        — optional, for PHP deps
-  mkcert          — optional, for HTTPS .local (via localdev-helper.sh init)
-
-STATE FILE
-  ~/.aidevops/cache/foss-wp-handler.json
-
-SMOKE TEST TEMPLATE
-  foss-handlers/wp-plugin-smoke-test.spec.js
-  (used when plugin has no tests/e2e/ directory)
-
-REVIEW URLS
-  Current release : https://<slug>.local
-  Branch/worktree : https://<branch>.<slug>.local
-EOF
+	printf '%s\n' \
+		'wordpress-plugin.sh — FOSS contribution handler for WordPress plugins (t1696)' \
+		'' \
+		'USAGE' \
+		'  wordpress-plugin.sh <command> [args]' \
+		'' \
+		'COMMANDS' \
+		'  setup   <github-slug> [worktree-path]' \
+		'      Fork, clone, generate .wp-env.json (multisite), start wp-env,' \
+		'      register HTTPS .local domain via localdev.' \
+		'      Example: wordpress-plugin.sh setup afragen/git-updater' \
+		'' \
+		'  build   <plugin-dir>' \
+		'      Install composer/npm deps, activate plugin on single site + network.' \
+		'      Example: wordpress-plugin.sh build ~/Git/wordpress/git-updater' \
+		'' \
+		'  test    <plugin-dir>' \
+		'      Run PHPUnit (when phpunit.xml exists), check debug.log for PHP errors,' \
+		'      run Playwright smoke tests, run multisite checks.' \
+		'      Example: wordpress-plugin.sh test ~/Git/wordpress/git-updater' \
+		'' \
+		'  review  <plugin-dir> [branch-name]' \
+		'      Print review URLs. With branch-name, registers a branch subdomain' \
+		'      via localdev to enable side-by-side comparison.' \
+		'      Example: wordpress-plugin.sh review ~/Git/wordpress/git-updater bugfix-xyz' \
+		'' \
+		'  cleanup <plugin-dir>' \
+		'      Destroy wp-env, remove localdev registration, deregister port.' \
+		'      Example: wordpress-plugin.sh cleanup ~/Git/wordpress/git-updater' \
+		'' \
+		'  help' \
+		'      Show this help.' \
+		'' \
+		'PREREQUISITES' \
+		'  docker     — wp-env containers' \
+		'  node >= 18 — @wordpress/env' \
+		'  jq         — JSON config generation' \
+		'  composer   — optional, PHP deps' \
+		'  mkcert     — optional, HTTPS .local (via localdev-helper.sh init)' \
+		'' \
+		'STATE FILE' \
+		'  ~/.aidevops/cache/foss-wp-handler.json' \
+		'' \
+		'SMOKE TEST TEMPLATE' \
+		'  foss-handlers/wp-plugin-smoke-test.spec.js' \
+		'  (used when plugin has no tests/e2e/ directory)' \
+		'' \
+		'REVIEW URLS' \
+		'  Current release : https://<slug>.local' \
+		'  Branch/worktree : https://<branch>.<slug>.local'
 	return 0
 }
 
