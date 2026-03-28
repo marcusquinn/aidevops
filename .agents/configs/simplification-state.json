@@ -117,9 +117,9 @@
       "pr": 11277
     },
     ".agents/marketing-sales/direct-response-copy-frameworks-objection-handling.md": {
-      "hash": "03a35fccab0f4d79526416af4049498f59eb1cf8",
-      "at": "2026-03-28T03:53:27Z",
-      "pr": 11336
+      "hash": "a80eb99acba160fa0f034a4989c0b886f37a32a0",
+      "at": "2026-03-28T08:17:37Z",
+      "pr": 11571
     },
     ".agents/reference/configuration.md": {
       "hash": "9502faea512b841b7a239e9e3c9cc0188f4fe855",
@@ -372,9 +372,9 @@
       "pr": 11511
     },
     ".agents/marketing-sales/cro-chapter-09.md": {
-      "hash": "948afdf84490638c264556e3352fccd4f6c243a9",
-      "at": "2026-03-28T07:37:26Z",
-      "pr": 11572
+      "hash": "4d45e94ded75b90ef7e30518e072a5a643167370",
+      "at": "2026-03-28T08:17:36Z",
+      "pr": 11561
     },
     ".agents/reference/memory.md": {
       "hash": "0a7c4c493f3a825b98e2de3928f718fa9095c966",
@@ -385,6 +385,51 @@
       "hash": "810c244d317a3332c74dc2baafb34bf00cf5ab2f",
       "at": "2026-03-28T07:37:37Z",
       "pr": 11539
+    },
+    ".agents/tools/ai-assistants/headless-dispatch.md": {
+      "hash": "d6e0bde5d4b8b7c9b85083094139a82071b2bef7",
+      "at": "2026-03-28T08:17:32Z",
+      "pr": 11588
+    },
+    ".agents/tools/document/document-creation.md": {
+      "hash": "245a303a923bd18c0adc820adb9620f12d636d2b",
+      "at": "2026-03-28T08:17:34Z",
+      "pr": 11592
+    },
+    ".agents/tools/design/ui-ux-inspiration.md": {
+      "hash": "fb4a8985ec3089753355c7a13d0665c878034369",
+      "at": "2026-03-28T08:17:35Z",
+      "pr": 11590
+    },
+    ".agents/marketing-sales/direct-response-copy-templates-email-sequences.md": {
+      "hash": "5276f5042b6ad14eb6a1d4a658f4bdda279eb427",
+      "at": "2026-03-28T08:17:37Z",
+      "pr": 11571
+    },
+    ".agents/marketing-sales/direct-response-copy-templates-readme.md": {
+      "hash": "2717d1e9cb1edfd85d932502b6de7c4765c8a7ec",
+      "at": "2026-03-28T08:17:38Z",
+      "pr": 11571
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/tail-workers.md": {
+      "hash": "d909ab39413052950bcfff2d355bb102d17f8421",
+      "at": "2026-03-28T08:17:39Z",
+      "pr": 11562
+    },
+    ".agents/marketing-sales/meta-ads-optimization-scaling.md": {
+      "hash": "8034babf9a34b6f09f0cce7817a136ee38be0c1f",
+      "at": "2026-03-28T08:17:40Z",
+      "pr": 11564
+    },
+    ".agents/marketing-sales/meta-ads-optimization-troubleshooting.md": {
+      "hash": "684991a0c73063d140b0cfee3ad73691a479a34f",
+      "at": "2026-03-28T08:17:40Z",
+      "pr": 11564
+    },
+    ".agents/tools/database/vector-search/zvec.md": {
+      "hash": "1929000365507621f52d563ad2b63e9f51feab8d",
+      "at": "2026-03-28T08:17:41Z",
+      "pr": 11570
     }
   }
 }
