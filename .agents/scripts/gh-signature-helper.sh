@@ -200,16 +200,15 @@ _detect_session_tokens() {
 		return 0
 	fi
 
-	# Sum all token types: input + output + cache reads + cache writes.
-	# Cache tokens are the bulk of API usage (context loaded each turn)
-	# and are billed (cache reads at reduced rate).
+	# Sum input + output tokens only. Cache tokens (cache.read, cache.write)
+	# represent the same context re-loaded each turn — counting them
+	# cumulatively inflates the number by ~100x (175K context × N turns).
+	# Input + output reflects actual new content processed per session.
 	local total_tokens
 	total_tokens=$(sqlite3 "$db_path" "
 		SELECT COALESCE(
 			SUM(json_extract(data, '$.tokens.input')) +
-			SUM(json_extract(data, '$.tokens.output')) +
-			SUM(COALESCE(json_extract(data, '$.tokens.cache.read'), 0)) +
-			SUM(COALESCE(json_extract(data, '$.tokens.cache.write'), 0)), 0
+			SUM(json_extract(data, '$.tokens.output')), 0
 		)
 		FROM message
 		WHERE session_id='${session_id}'
