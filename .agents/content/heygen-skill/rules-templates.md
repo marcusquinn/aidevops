@@ -189,28 +189,6 @@ async function batchGenerateVideos(
 }
 ```
 
-## Complete Workflow
-
-```typescript
-async function createPersonalizedVideo(
-  templateId: string,
-  personalization: Record<string, string>
-): Promise<string> {
-  const template = await getTemplate(templateId);
-  const { valid, errors } = validateTemplateVariables(template, personalization);
-  if (!valid) throw new Error(`Validation: ${errors.join(", ")}`);
-  const videoId = await generateFromTemplate(templateId, personalization);
-  return waitForVideo(videoId); // see video-status.md
-}
-
-// Usage
-const url = await createPersonalizedVideo("template_abc123", {
-  customer_name: "John Smith",
-  product_name: "SuperWidget Pro",
-  offer_details: "Get 20% off your first order!",
-});
-```
-
 ## Best Practices
 
 - Use `test: true` to verify layout before production runs
@@ -219,6 +197,8 @@ const url = await createPersonalizedVideo("template_abc123", {
 - Validate all variables (presence + length + URL format) before generating
 - Define `max_length` on text variables in the template to prevent truncation
 - Use `callback_url` for large batches instead of polling
+
+Full workflow: `listTemplates` → `validateTemplateVariables` → `generateFromTemplate` → `waitForVideo` (see `rules-video-status.md`)
 
 ## Use Cases
 
