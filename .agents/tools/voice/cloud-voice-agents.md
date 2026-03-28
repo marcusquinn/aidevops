@@ -99,7 +99,7 @@ async with websockets.connect(url, extra_headers=headers) as ws:
 
 Open-weight omni-modal (8B params, OpenBMB). Architecture: SigLip-400M + Whisper-medium-300M + ChatTTS-200M + Qwen2.5-7B. End-to-end speech (no separate STT/TTS), bilingual EN+ZH, voice cloning, emotion/speed/style control. Outperforms GPT-4o-realtime on audio benchmarks.
 
-**Requirements**: Python 3.10+, PyTorch 2.3+, CUDA 8GB+ VRAM (16GB full omni), `transformers==4.44.2`. Apple Silicon: llama.cpp only.
+**Requirements**: Python 3.10+, PyTorch 2.3+, CUDA 8GB+ VRAM (16GB full omni), `transformers==4.44.2`. Apple Silicon: llama.cpp only (no MPS).
 
 **Docs**: [GitHub](https://github.com/OpenBMB/MiniCPM-o) | [HuggingFace](https://huggingface.co/openbmb/MiniCPM-o-2_6) | [Ollama](https://ollama.com/openbmb/minicpm-o2.6)
 
@@ -198,7 +198,7 @@ docker run --gpus all -p 8001:8001 nvcr.io/nim/nvidia/magpie-tts-multilingual:la
 |---------|----------|-------------|
 | Browser (WebRTC) | Customer-facing web | Browser <-> OpenAI Realtime API (or Pipecat + Daily.co). Client-side ephemeral keys. |
 | Phone Bot (SIP/Twilio) | Call centers, IVR | Phone -> Twilio -> SIP -> OpenAI Realtime, or WebSocket -> Pipecat. See `services/communications/twilio.md`. |
-| Self-Hosted | Healthcare, finance | MiniCPM-o (Apache-2.0) or Parakeet+LLM+Magpie NIM. No data leaves infrastructure. |
+| Self-Hosted | Healthcare, finance, air-gapped | MiniCPM-o (Apache-2.0) or Parakeet+LLM+Magpie NIM. No data leaves infrastructure. |
 | Hybrid | Cost/latency balance | Local STT -> Cloud LLM -> Local TTS. Only text hits cloud. See `speech-to-speech.md`. |
 
 ## Framework Selection
