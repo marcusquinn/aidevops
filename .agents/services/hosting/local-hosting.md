@@ -34,6 +34,16 @@ localdev-helper.sh add myapp    # Manual: cert + route + /etc/hosts + port
 
 <!-- AI-CONTEXT-END -->
 
+## Prerequisites
+
+```bash
+brew install dnsmasq mkcert && mkcert -install
+brew install orbstack   # or Docker Desktop
+localdev-helper.sh init
+```
+
+OrbStack preferred over Docker Desktop. Traefik uses `host.docker.internal` for host ports. Docker network `local-dev` auto-created by `localdev init` or `db start`.
+
 ## Architecture
 
 ```text
@@ -49,7 +59,7 @@ Browser → /etc/hosts (127.0.0.1 myapp.local)
 | **macOS resolver** | Routes `.local` to dnsmasq for CLI | `/etc/resolver/local` |
 | **Traefik v3.3** | Reverse proxy, TLS termination | `~/.local-dev-proxy/traefik.yml` |
 | **mkcert** | Browser-trusted wildcard certs | `~/.local-ssl-certs/` |
-| **Port registry** | app-port-domain mappings, collision detection | `~/.local-dev-proxy/ports.json` |
+| **Port registry** | App-port-domain mappings, collision detection | `~/.local-dev-proxy/ports.json` |
 
 **DNS:** macOS reserves `.local` for mDNS. Browsers use `/etc/hosts` → mDNS (intercepts resolver, never reached). `localdev add` always writes `/etc/hosts`. dnsmasq handles wildcard subdomains for CLI only. Future: `.test` (RFC 6761) avoids conflict but is breaking.
 
@@ -126,16 +136,6 @@ localhost-helper.sh generate-cert <domain>
 localhost-helper.sh create-app <name> <domain> <port> [ssl] [type]
 localhost-helper.sh start-mcp | stop-mcp | test-mcp | mcp-query "<sql>"
 ```
-
-## OrbStack / Docker
-
-OrbStack preferred over Docker Desktop. Traefik uses `host.docker.internal` for host ports.
-
-```bash
-docker network create local-dev   # auto-created by localdev init or db start
-```
-
-**Traefik Docker Compose** — `~/.local-dev-proxy/docker-compose.yml`: `traefik:v3.3` container (`local-traefik`), ports 80/443/8080, mounts `traefik.yml`, `conf.d/`, `~/.local-ssl-certs/` read-only, on `local-dev` external network.
 
 ## Stack-Specific Guidance
 
@@ -217,13 +217,15 @@ psql "postgresql://postgres:localdev@localhost:5432/postgres" -c "SELECT 1"
 # Port conflict: LOCALDEV_PG_PORT=5433 localdev-helper.sh db start
 ```
 
-## Prerequisites
+## File Locations
 
-```bash
-brew install dnsmasq mkcert && mkcert -install
-brew install orbstack   # or Docker Desktop
-localdev-helper.sh init
-```
+All under `~/.local-dev-proxy/`: `traefik.yml` (static config), `docker-compose.yml`, `conf.d/` (per-app routes, hot-reloaded), `ports.json` (registry), `pgdata/` (Postgres data), `backup/` (init migration). Certs: `~/.local-ssl-certs/`. System: `/etc/resolver/local`, `$(brew --prefix)/etc/dnsmasq.conf`.
+
+**Traefik Docker Compose** — `~/.local-dev-proxy/docker-compose.yml`: `traefik:v3.3` container (`local-traefik`), ports 80/443/8080, mounts `traefik.yml`, `conf.d/`, `~/.local-ssl-certs/` read-only, on `local-dev` external network.
+
+## Legacy vs Current
+
+`localhost-helper.sh` (legacy): ports 3000-9999, single `dynamic.yml`, Traefik v2.10, no port registry/branch subdomains/db management/LocalWP detection, manual init. `localdev-helper.sh` (current): ports 3100-3999, `conf.d/` hot-reload, Traefik v3.3, `ports.json` + collision detection, `branch`/`db` commands, `sites.json` + `/etc/hosts` LocalWP check, single `init` command.
 
 ## Tool-Specific: App Store Connect (asc-web)
 
@@ -236,11 +238,3 @@ EDITOR_PORT=$(jq -r '.apps["asc-editor"].port' ~/.local-dev-proxy/ports.json)
 nohup npx -y http-server ~/.asc/web/homepage -p "$EDITOR_PORT" --silent > /tmp/asc-editor.log 2>&1 &
 # → https://asc-web.local | https://asc-editor.local
 ```
-
-## File Locations
-
-All under `~/.local-dev-proxy/`: `traefik.yml` (static config), `docker-compose.yml`, `conf.d/` (per-app routes, hot-reloaded), `ports.json` (registry), `pgdata/` (Postgres data), `backup/` (init migration). Certs: `~/.local-ssl-certs/`. System: `/etc/resolver/local`, `$(brew --prefix)/etc/dnsmasq.conf`.
-
-## Legacy vs Current
-
-`localhost-helper.sh` (legacy): ports 3000-9999, single `dynamic.yml`, Traefik v2.10, no port registry/branch subdomains/db management/LocalWP detection, manual init. `localdev-helper.sh` (current): ports 3100-3999, `conf.d/` hot-reload, Traefik v3.3, `ports.json` + collision detection, `branch`/`db` commands, `sites.json` + `/etc/hosts` LocalWP check, single `init` command.
