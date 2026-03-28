@@ -67,10 +67,10 @@ echo ""
 # ─────────────────────────────────────────────────────────────────────────────
 echo "Test 1: generate with all explicit fields"
 result=$("$HELPER" generate --cli "OpenCode CLI" --cli-version "1.3.3" --model "anthropic/claude-opus-4-6" --tokens 1234)
-assert_contains "contains CLI link" "[OpenCode CLI](https://opencode.ai) v1.3.3" "$result"
-assert_contains "contains aidevops link" "[aidevops.sh](https://aidevops.sh)" "$result"
-assert_contains "contains model" "anthropic/claude-opus-4-6" "$result"
-assert_contains "contains formatted tokens" "1,234 tokens" "$result"
+assert_contains "starts with aidevops" "[aidevops.sh](https://aidevops.sh)" "$result"
+assert_contains "contains CLI with in" "in [OpenCode CLI](https://opencode.ai) v1.3.3" "$result"
+assert_contains "contains model with with" "with anthropic/claude-opus-4-6" "$result"
+assert_contains "contains formatted tokens" "used 1,234 tokens" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 2: generate with explicit --tokens 0 (should omit tokens)
@@ -78,7 +78,7 @@ assert_contains "contains formatted tokens" "1,234 tokens" "$result"
 echo ""
 echo "Test 2: explicit --tokens 0 omits tokens"
 result=$("$HELPER" generate --cli "Claude Code" --cli-version "2.0.1" --model "anthropic/claude-sonnet-4-6" --tokens 0)
-assert_contains "contains Claude Code link" "[Claude Code](https://claude.ai/code) v2.0.1" "$result"
+assert_contains "contains Claude Code" "in [Claude Code](https://claude.ai/code) v2.0.1" "$result"
 assert_not_contains "no tokens field" "tokens" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -94,11 +94,10 @@ assert_not_contains "zero tokens omitted" "tokens" "$result"
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
 echo "Test 4: no model"
-result=$("$HELPER" generate --cli "Cursor")
-assert_contains "contains Cursor link" "[Cursor](https://cursor.com)" "$result"
+result=$("$HELPER" generate --cli "Cursor" --tokens 0)
+assert_contains "contains Cursor link" "in [Cursor](https://cursor.com)" "$result"
 assert_contains "contains aidevops" "aidevops.sh" "$result"
-# Should only have CLI and aidevops, no trailing comma-model
-assert_not_contains "no model field" "anthropic" "$result"
+assert_not_contains "no model field" "with " "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 5: footer command includes --- separator
@@ -107,8 +106,8 @@ echo ""
 echo "Test 5: footer includes --- separator"
 result=$("$HELPER" footer --cli "OpenCode CLI" --cli-version "1.0.0" --model "anthropic/claude-sonnet-4-6" --tokens 5000)
 assert_contains "contains ---" "---" "$result"
-assert_contains "contains signature" "[OpenCode CLI](https://opencode.ai) v1.0.0" "$result"
-assert_contains "contains tokens" "5,000 tokens" "$result"
+assert_contains "contains signature" "in [OpenCode CLI](https://opencode.ai) v1.0.0" "$result"
+assert_contains "contains tokens" "used 5,000 tokens" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 6: comma formatting for various numbers
@@ -177,10 +176,10 @@ assert_not_contains "no CLI markdown link" "[SomeNewTool](" "$result"
 echo ""
 echo "Test 9: environment variable overrides"
 result=$(AIDEVOPS_SIG_CLI="EnvCLI" AIDEVOPS_SIG_CLI_VERSION="9.9.9" AIDEVOPS_SIG_MODEL="test/model" AIDEVOPS_SIG_TOKENS="42000" "$HELPER" generate)
-assert_contains "env CLI name" "EnvCLI" "$result"
+assert_contains "env CLI name" "in EnvCLI" "$result"
 assert_contains "env CLI version" "v9.9.9" "$result"
-assert_contains "env model" "test/model" "$result"
-assert_contains "env tokens" "42,000 tokens" "$result"
+assert_contains "env model" "with test/model" "$result"
+assert_contains "env tokens" "used 42,000 tokens" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 10: auto-detect tokens from OpenCode session DB (if running in OpenCode)
@@ -201,8 +200,8 @@ echo ""
 echo "Test 11: session and response time auto-detection"
 if [[ "${OPENCODE:-}" == "1" ]] && [[ -r "${HOME}/.local/share/opencode/opencode.db" ]]; then
 	result=$("$HELPER" generate --cli "OpenCode CLI" --model "m" --tokens 1)
-	assert_contains "session time present" "session:" "$result"
-	assert_contains "response time present" "response:" "$result"
+	assert_contains "session time present" "for " "$result"
+	assert_contains "response time present" "to respond in " "$result"
 else
 	echo "  SKIP: not running in OpenCode"
 fi
@@ -215,17 +214,30 @@ echo "Test 12: total time with --issue-created"
 two_hours_ago=$(date -u -v-2H "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "2 hours ago" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
 if [[ -n "$two_hours_ago" ]]; then
 	result=$("$HELPER" generate --cli "Test" --model "m" --tokens 1 --issue-created "$two_hours_ago")
-	assert_contains "total time present" "total:" "$result"
-	assert_contains "total time ~2h" "total: 2h" "$result"
+	assert_contains "total time present" "since this issue was created" "$result"
+	assert_contains "total time ~2h" "2h" "$result"
 else
 	echo "  SKIP: date command does not support relative time"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Test 13: help command exits cleanly
+# Test 13: --solved flag changes total time phrasing
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "Test 13: help command"
+echo "Test 13: --solved flag"
+if [[ -n "$two_hours_ago" ]]; then
+	result=$("$HELPER" generate --cli "Test" --model "m" --tokens 1 --issue-created "$two_hours_ago" --solved)
+	assert_contains "solved phrasing" "Solved in 2h" "$result"
+	assert_not_contains "no since phrasing" "since this issue" "$result"
+else
+	echo "  SKIP: date command does not support relative time"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 14: help command exits cleanly
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 14: help command"
 result=$("$HELPER" help 2>&1)
 assert_contains "help shows usage" "Usage:" "$result"
 assert_contains "help shows examples" "Examples:" "$result"

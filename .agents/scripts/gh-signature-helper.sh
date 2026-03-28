@@ -408,7 +408,7 @@ cmd_generate() {
 	local tokens="${AIDEVOPS_SIG_TOKENS:-}"
 	local cli_name="${AIDEVOPS_SIG_CLI:-}"
 	local cli_version="${AIDEVOPS_SIG_CLI_VERSION:-}"
-	local issue_ref="" issue_created=""
+	local issue_ref="" issue_created="" solved="false"
 
 	# Parse args
 	while [[ $# -gt 0 ]]; do
@@ -436,6 +436,10 @@ cmd_generate() {
 		--issue-created)
 			issue_created="$2"
 			shift 2
+			;;
+		--solved)
+			solved="true"
+			shift
 			;;
 		*) shift ;;
 		esac
@@ -486,27 +490,32 @@ cmd_generate() {
 		fi
 	fi
 
-	# Part 2: aidevops with link and version
-	local aidevops_part="[aidevops.sh](https://aidevops.sh) v${aidevops_version}"
-	if [[ -n "$parts" ]]; then
-		parts="${parts}, ${aidevops_part}"
-	else
-		parts="${aidevops_part}"
+	# --- Build natural-language sentence ---
+	# Target: [aidevops.sh](...) v3.5.10 in [CLI](...) v1.3.3 with model used N tokens for Xm to respond in Ym, Zm since this issue was created.
+
+	# Start with aidevops
+	local sig="[aidevops.sh](https://aidevops.sh) v${aidevops_version}"
+
+	# "in [CLI] vX.Y.Z"
+	if [[ -n "$cli_name" ]]; then
+		local url
+		url=$(_cli_url "$cli_name")
+		if [[ -n "$url" ]]; then
+			sig="${sig} in [${cli_name}](${url})"
+		else
+			sig="${sig} in ${cli_name}"
+		fi
+		if [[ -n "$cli_version" ]]; then
+			sig="${sig} v${cli_version}"
+		fi
 	fi
 
-	# Part 3: model
+	# "with model"
 	if [[ -n "$model" ]]; then
-		parts="${parts}, ${model}"
+		sig="${sig} with ${model}"
 	fi
 
-	# Part 4: tokens (formatted with commas)
-	if [[ -n "$tokens" ]] && [[ "$tokens" != "0" ]]; then
-		local formatted
-		formatted=$(_format_number "$tokens")
-		parts="${parts}, ${formatted} tokens"
-	fi
-
-	# Part 5: time metrics (session, response, total)
+	# Detect time metrics
 	local session_time_str="" response_time_str="" total_time_str=""
 
 	local times_raw
@@ -530,17 +539,42 @@ cmd_generate() {
 		fi
 	fi
 
-	if [[ -n "$session_time_str" ]]; then
-		parts="${parts}, session: ${session_time_str}"
-	fi
-	if [[ -n "$response_time_str" ]]; then
-		parts="${parts}, response: ${response_time_str}"
-	fi
-	if [[ -n "$total_time_str" ]]; then
-		parts="${parts}, total: ${total_time_str}"
+	# "used N tokens" — only if we have tokens or time data to follow
+	local has_stats=""
+	if { [[ -n "$tokens" ]] && [[ "$tokens" != "0" ]]; } || [[ -n "$session_time_str" ]] || [[ -n "$response_time_str" ]] || [[ -n "$total_time_str" ]]; then
+		has_stats="true"
 	fi
 
-	echo "$parts"
+	if [[ -n "$tokens" ]] && [[ "$tokens" != "0" ]]; then
+		local formatted
+		formatted=$(_format_number "$tokens")
+		sig="${sig} used ${formatted} tokens"
+	fi
+
+	# "for Xm" (session time)
+	if [[ -n "$session_time_str" ]]; then
+		sig="${sig} for ${session_time_str}"
+	fi
+
+	# "to respond in Ym" (response time)
+	if [[ -n "$response_time_str" ]]; then
+		sig="${sig} to respond in ${response_time_str}"
+	fi
+
+	# Total time: "--solved" → "Solved in Xm." / default → ", Xm since this issue was created."
+	if [[ -n "$total_time_str" ]]; then
+		if [[ "$solved" == "true" ]]; then
+			sig="${sig}. Solved in ${total_time_str}."
+		elif [[ -n "$session_time_str" ]] || [[ -n "$response_time_str" ]]; then
+			sig="${sig}, ${total_time_str} since this issue was created."
+		else
+			sig="${sig} ${total_time_str} since this issue was created."
+		fi
+	elif [[ -n "$has_stats" ]]; then
+		sig="${sig}."
+	fi
+
+	echo "$sig"
 	return 0
 }
 
@@ -580,6 +614,7 @@ Options:
   --cli-version VER         CLI version override (e.g., "1.3.3")
   --issue OWNER/REPO#NUM    GitHub issue ref for total time (e.g., owner/repo#42)
   --issue-created ISO       Issue creation timestamp for total time
+  --solved                  Use "Solved in Xm." instead of "Xm since this issue was created."
 
 Auto-detected fields (OpenCode sessions):
   - CLI name and version
