@@ -374,4 +374,4 @@ Should I use Meta or another platform?
 
 ---
 
-*Back to: [SKILL.md](../SKILL.md)*
+*Back to: [meta-ads.md](meta-ads.md)*

@@ -32,7 +32,7 @@ memory/,Cross-session memory - SQLite FTS5 storage,README
 seo/,Search optimization - keywords and rankings and UX/CRO,dataforseo|serper|semrush|neuronwriter|google-search-console|gsc-sitemaps|site-crawler|eeat-score|analytics-tracking|bing-webmaster-tools|screaming-frog|rich-results|debug-opengraph|debug-favicon|contentking|programmatic-seo|schema-validator|content-analyzer|seo-optimizer|keyword-mapper|mom-test-ux
 content/,Multi-media multi-channel content production - research to distribution,research|story|production/writing|production/image|production/video|production/audio|production/characters|distribution/youtube|distribution/short-form|distribution/social|distribution/blog|distribution/email|distribution/podcast|optimization|guidelines|platform-personas|humanise|seo-writer|meta-creator|editor|internal-linker|context-templates
 content/,Content tools - calendar planning summarization and extraction,content-calendar|summarize
-tools/marketing/,Paid advertising and CRO - Meta Ads campaigns ad creative direct response copywriting and conversion optimization,meta-ads|ad-creative|direct-response-copy|cro
+marketing/,Paid advertising and CRO - Meta Ads campaigns ad creative direct response copywriting and conversion optimization,meta-ads|ad-creative|direct-response-copy|cro
 social-media/,Social media tools - X/Twitter LinkedIn and Reddit,bird|linkedin|reddit
 tools/api/,API integrations - authentication ORM framework and Cloudflare MCP,better-auth|cloudflare-mcp|drizzle|hono|vercel-ai-sdk
 tools/build-agent/,Agent design - composing efficient agents,build-agent|agent-review|agent-testing

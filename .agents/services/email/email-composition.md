@@ -340,5 +340,5 @@ Key settings:
 - `services/email/email-agent.md` — Autonomous mission email (send/poll/extract)
 - `services/email/email-mailbox.md` — Mailbox management and triage
 - `content/distribution/email.md` — Subject line formulas, content strategy
-- `tools/marketing/direct-response-copy/frameworks/email-sequences.md` — Copywriting frameworks
+- `marketing/direct-response-copy-frameworks-email-sequences.md` — Copywriting frameworks
 - `scripts/email-signature-parser-helper.sh` — Apple Mail signature extraction

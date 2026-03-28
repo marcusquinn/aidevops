@@ -43,9 +43,9 @@ All of the above?
 **Related agents**:
 
 - `content/distribution/short-form.md` - TikTok/Reels/Shorts production
-- `tools/marketing/ad-creative/SKILL.md` - Ad creative production
-- `tools/marketing/meta-ads/SKILL.md` - Meta Ads campaigns
-- `tools/marketing/direct-response-copy/SKILL.md` - Copywriting frameworks
+- `marketing/ad-creative.md` - Ad creative production
+- `marketing/meta-ads.md` - Meta Ads campaigns
+- `marketing/direct-response-copy.md` - Copywriting frameworks
 - `services/outreach/cold-outreach.md` - Creator outreach at scale
 
 <!-- AI-CONTEXT-END -->
@@ -84,7 +84,7 @@ Total per viral video: ~$850. If 1M views generates $5k+ in revenue, the ROI is 
 **Management best practices**:
 
 - Always sign a contract covering content rights, exclusivity, and payment terms
-- Use the UGC brief template: `tools/marketing/meta-ads/creative/briefs/ugc-brief.md`
+- Use the UGC brief template: `marketing/meta-ads-creative-briefs-ugc-brief.md`
 - Communicate daily — creators who feel connected produce better content
 - Track performance per creator — double down on top performers, replace underperformers
 - Provide clear brand guidelines but allow creative freedom in delivery
@@ -212,7 +212,7 @@ The creative is everything in paid ads. A mediocre product with great creatives 
 - **Web/Desktop**: Use UTM parameters + your analytics tool (PostHog, GA4)
 - **Extensions**: Chrome Web Store referral tracking + UTM parameters on landing pages
 
-See `tools/marketing/meta-ads/SKILL.md` for detailed Meta Ads campaign setup and `tools/marketing/ad-creative/SKILL.md` for creative production.
+See `marketing/meta-ads.md` for detailed Meta Ads campaign setup and `marketing/ad-creative.md` for creative production.
 
 ## Channel Sequencing
 
@@ -251,10 +251,10 @@ Not all channels should start simultaneously. Recommended sequence:
 ## Related
 
 - `content/distribution/short-form.md` - TikTok/Reels/Shorts production
-- `tools/marketing/ad-creative/SKILL.md` - Ad creative production (12 chapters)
-- `tools/marketing/meta-ads/SKILL.md` - Meta Ads campaigns
-- `tools/marketing/direct-response-copy/SKILL.md` - Copywriting frameworks
-- `tools/marketing/cro/SKILL.md` - Landing page optimisation
+- `marketing/ad-creative.md` - Ad creative production (12 chapters)
+- `marketing/meta-ads.md` - Meta Ads campaigns
+- `marketing/direct-response-copy.md` - Copywriting frameworks
+- `marketing/cro.md` - Landing page optimisation
 - `services/outreach/cold-outreach.md` - Creator outreach at scale
 - `product/monetisation.md` - Revenue models (feeds growth ROI calculations)
 - `product/analytics.md` - Attribution and metrics tracking

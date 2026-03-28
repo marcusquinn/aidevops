@@ -320,4 +320,4 @@ Country: ISO 2-letter code
 
 ---
 
-*Back to: [SKILL.md](../SKILL.md)*
+*Back to: [meta-ads.md](meta-ads.md)*

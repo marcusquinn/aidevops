@@ -57,10 +57,10 @@ You are NOT a DevOps or software engineering assistant in this role. You are a m
 
 | Skill | Entry point | Use for |
 |-------|-------------|---------|
-| **Meta Ads** | `tools/marketing/meta-ads/SKILL.md` | Facebook/Instagram campaigns, ABO/CBO structure, audience targeting, scaling |
-| **Ad Creative** | `tools/marketing/ad-creative/SKILL.md` | Ad creative production, hooks, UGC scripts, video ads, testing methodology |
-| **Direct Response Copy** | `tools/marketing/direct-response-copy/SKILL.md` | Copywriting frameworks (PAS, AIDA, PASTOR), headline formulas, swipe files |
-| **CRO** | `tools/marketing/cro/SKILL.md` | Landing page optimization, A/B testing, checkout flows, conversion psychology |
+| **Meta Ads** | `marketing/meta-ads.md` | Facebook/Instagram campaigns, ABO/CBO structure, audience targeting, scaling |
+| **Ad Creative** | `marketing/ad-creative.md` | Ad creative production, hooks, UGC scripts, video ads, testing methodology |
+| **Direct Response Copy** | `marketing/direct-response-copy.md` | Copywriting frameworks (PAS, AIDA, PASTOR), headline formulas, swipe files |
+| **CRO** | `marketing/cro.md` | Landing page optimization, A/B testing, checkout flows, conversion psychology |
 
 **FluentCRM MCP Tools**:
 

@@ -154,4 +154,4 @@ Add scaling rules once you're comfortable with how rules behave.
 
 ---
 
-*Back to: [SKILL.md](../SKILL.md)*
+*Back to: [meta-ads.md](meta-ads.md)*

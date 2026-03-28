@@ -39,7 +39,7 @@ Deep-dive chapters: see `CHAPTERS.md` (12 chapters covering video mastery, AI pr
 
 ## Usage in aidevops
 
-Available at `tools/marketing/ad-creative/`. Reference via the Marketing agent or directly in prompts.
+Available at `marketing/ad-creative*.md`. Reference via the Marketing agent or directly in prompts.
 
 ## When to Use
 

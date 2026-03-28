@@ -20,7 +20,7 @@ This skill provides comprehensive CRO knowledge—from landing page optimization
 
 ## Usage in aidevops
 
-This skill is available at `tools/marketing/cro/`. Reference via the Marketing agent or directly in your prompts.
+This skill is available at `marketing/cro*.md`. Reference via the Marketing agent or directly in your prompts.
 
 ## Usage
 

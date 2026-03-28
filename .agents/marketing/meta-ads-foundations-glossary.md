@@ -163,4 +163,4 @@
 | Hook Rate | 3-Second Views ÷ Impressions × 100 |
 | MER | Total Revenue ÷ Total Marketing Spend |
 
-*Back to: [SKILL.md](../SKILL.md)*
+*Back to: [meta-ads.md](meta-ads.md)*

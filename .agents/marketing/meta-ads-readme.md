@@ -6,7 +6,7 @@ The most comprehensive Meta (Facebook/Instagram) advertising skill for AI agents
 
 ```
 skills/meta-ads/
-├── SKILL.md                    # Master overview & quick reference
+├── meta-ads.md                    # Master overview & quick reference
 ├── README.md                   # This file
 │
 ├── foundations/
@@ -80,7 +80,7 @@ npx degit indexsy/skills/meta-ads ./skills/meta-ads
 
 ## Quick Start
 
-1. Read `SKILL.md` for the overview
+1. Read `meta-ads.md` for the overview
 2. Set up the 3-campaign structure using `campaigns/`
 3. Create initial creatives using `creative/formats.md` and `creative/hooks.md`
 4. Launch with `checklists/campaign-launch.md`
