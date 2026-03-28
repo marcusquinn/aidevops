@@ -17,160 +17,128 @@ tools:
 
 ## Quick Reference
 
-**Before reporting a bug**: Check service status page first.
+**Before reporting a bug**: Check service status pages first.
 
-**Service Status Pages**:
-- GitHub: https://www.githubstatus.com/
-- GitLab: https://status.gitlab.com/
-- Cloudflare: https://www.cloudflarestatus.com/
-- Hetzner: https://status.hetzner.com/
-- Hostinger: https://status.hostinger.com/
-- SonarCloud: https://sonarcloudstatus.io/
-- Codacy: https://status.codacy.com/
-- Snyk: https://status.snyk.io/
+| Service | Status URL |
+|---------|-----------|
+| GitHub | https://www.githubstatus.com/ |
+| GitLab | https://status.gitlab.com/ |
+| Cloudflare | https://www.cloudflarestatus.com/ |
+| Hetzner | https://status.hetzner.com/ |
+| Hostinger | https://status.hostinger.com/ |
+| SonarCloud | https://sonarcloudstatus.io/ |
+| Codacy | https://status.codacy.com/ |
+| Snyk | https://status.snyk.io/ |
 
-**MCP Issues**:
+**MCP quick fixes**:
+
 - Chrome DevTools: Install Chrome Canary, fix permissions
-- Playwright: Install browsers (`bunx playwright install`)
+- Playwright: `npx playwright install`
 - API Auth: Verify keys with curl, check env vars
-- Debug: `DEBUG=chrome-devtools-mcp bunx chrome-devtools-mcp@latest`
+- Debug: `DEBUG=chrome-devtools-mcp npx chrome-devtools-mcp@latest`
 - Diagnostics: `bash .agents/scripts/collect-mcp-diagnostics.sh`
 
-**Retry Strategy**: Use exponential backoff for transient failures
+Use exponential backoff for transient failures.
+
 <!-- AI-CONTEXT-END -->
 
-## Common Issues & Solutions
+## Chrome DevTools MCP
 
-### **Chrome DevTools MCP Issues**
-
-#### **Issue: Chrome not launching**
+**Chrome not launching:**
 
 ```bash
-# Solution: Install Chrome Canary
 brew install --cask google-chrome-canary
-
-# Or use stable Chrome
-npx chrome-devtools-mcp@latest --channel=stable
+# or: npx chrome-devtools-mcp@latest --channel=stable
 ```
 
-#### **Issue: Permission denied errors**
+**Permission denied:**
 
 ```bash
-# Solution: Fix permissions
 sudo chown -R $(whoami) ~/.cache/puppeteer
 chmod +x ~/.cache/puppeteer/*/chrome-*/chrome
 ```
 
-#### **Issue: Headless mode not working**
+**Headless mode:**
 
 ```bash
-# Solution: Enable headless mode explicitly
 npx chrome-devtools-mcp@latest --headless=true --no-sandbox
 ```
 
-### **Playwright MCP Issues**
+**Performance args** (add to MCP config):
 
-#### **Issue: Browsers not installed**
-
-```bash
-# Solution: Install all browsers
-npx playwright install
-
-# Install specific browser
-npx playwright install chromium
+```json
+["--disable-dev-shm-usage", "--disable-gpu", "--disable-background-timer-throttling",
+ "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"]
 ```
 
-#### **Issue: Browser launch timeout**
+## Playwright MCP
+
+**Browsers not installed:**
 
 ```bash
-# Solution: Increase timeout and disable sandbox
+npx playwright install          # all browsers
+npx playwright install chromium # specific browser
+```
+
+**Launch timeout:**
+
+```bash
 npx playwright-mcp@latest --timeout=60000 --no-sandbox
 ```
 
-#### **Issue: WebKit not working on Linux**
+**WebKit on Linux — install dependencies:**
 
 ```bash
-# Solution: Install WebKit dependencies
-sudo apt-get install libwoff1 libopus0 libwebp6 libwebpdemux2 libenchant1c2a libgudev-1.0-0 libsecret-1-0 libhyphen0 libgdk-pixbuf2.0-0 libegl1 libnotify4 libxss1 libasound2
+npx playwright install-deps webkit
 ```
 
-### **API-Based MCP Issues**
+**Performance args:**
 
-#### **Issue: Ahrefs MCP "connection closed" error**
+```json
+["--disable-dev-shm-usage", "--disable-gpu", "--no-first-run", "--no-default-browser-check"]
+```
 
-This is a common issue with multiple potential causes:
+## API-Based MCP Issues
 
-**Cause 1: Wrong API key type**
+### Ahrefs "connection closed"
+
+Three common causes:
+
+**1. Wrong API key type** — JWT-style tokens (long, with dots) do not work. Use the standard ~40-character key from https://ahrefs.com/api.
 
 ```bash
-# JWT-style tokens (long, with dots) do NOT work
-# Use standard 40-character API key from https://ahrefs.com/api
-
-# Verify your key format - should be ~40 alphanumeric characters
-echo $AHREFS_API_KEY | wc -c  # Should be around 40-45
+echo $AHREFS_API_KEY | wc -c  # should be ~40-45
 ```
 
-**Cause 2: Wrong environment variable name**
+**2. Wrong env var name** — the `@ahrefs/mcp` package expects `API_KEY`, not `AHREFS_API_KEY`. Pass it explicitly.
 
-```bash
-# The @ahrefs/mcp package expects API_KEY, not AHREFS_API_KEY
-# Store as AHREFS_API_KEY in your env, but pass as API_KEY to the MCP
-```
-
-**Cause 3: OpenCode environment blocks don't expand variables**
-
-```bash
-# This does NOT work in OpenCode - treats ${AHREFS_API_KEY} as literal string:
-# "env": { "API_KEY": "${AHREFS_API_KEY}" }
-
-# Solution: Use bash wrapper pattern to expand at runtime:
-# "command": ["/bin/bash", "-c", "API_KEY=$AHREFS_API_KEY npx -y @ahrefs/mcp@latest"]
-```
-
-**Working OpenCode configuration:**
+**3. OpenCode env blocks don't expand variables** — `"API_KEY": "${AHREFS_API_KEY}"` is treated as a literal string. Use a bash wrapper:
 
 ```json
 {
   "ahrefs": {
     "type": "local",
-    "command": [
-      "/bin/bash",
-      "-c",
-      "API_KEY=$AHREFS_API_KEY /opt/homebrew/bin/npx -y @ahrefs/mcp@latest"
-    ],
+    "command": ["/bin/bash", "-c", "API_KEY=$AHREFS_API_KEY /opt/homebrew/bin/npx -y @ahrefs/mcp@latest"],
     "enabled": true
   }
 }
 ```
 
-**Verify API key works:**
+**Verify key works:**
 
 ```bash
-# Test the API directly
-curl -H "Authorization: Bearer $AHREFS_API_KEY" https://apiv2.ahrefs.com/v2/subscription_info
-
-# Should return JSON with subscription info, not an error
-```
-
-#### **Issue: Ahrefs API authentication failed**
-
-```bash
-# Solution: Verify API key
-export AHREFS_API_KEY="your_actual_api_key"
 curl -H "Authorization: Bearer $AHREFS_API_KEY" https://apiv2.ahrefs.com/v2/subscription_info
 ```
 
-#### **Issue: Perplexity API rate limiting**
+### Perplexity rate limiting
 
 ```bash
-# Solution: Implement rate limiting
-export PERPLEXITY_RATE_LIMIT="10" # requests per minute
+export PERPLEXITY_RATE_LIMIT="10"  # requests per minute
 ```
 
-#### **Issue: Cloudflare API errors**
+### Cloudflare API errors
 
 ```bash
-# Solution: Verify credentials
 export CLOUDFLARE_ACCOUNT_ID="your_account_id"
 export CLOUDFLARE_API_TOKEN="your_api_token"
 curl -X GET "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID" \
@@ -179,211 +147,118 @@ curl -X GET "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_I
 
 ## Debugging Steps
 
-### **1. Check MCP Server Status**
+**1. Check MCP server status:**
 
 ```bash
-# Test if MCP server is responding
 npx chrome-devtools-mcp@latest --test-connection
-
-# Check server logs
 tail -f /tmp/chrome-mcp.log
 ```
 
-### **2. Validate Configuration**
+**2. Validate configuration:**
 
 ```bash
-# Validate JSON configuration
 python -m json.tool configs/mcp-templates/complete-mcp-config.json
-
-# Test individual MCP
 npx chrome-devtools-mcp@latest --config-test
 ```
 
-### **3. Network Connectivity**
+**3. Network connectivity:**
 
 ```bash
-# Test network access
 curl -I https://api.ahrefs.com
 curl -I https://api.perplexity.ai
 curl -I https://api.cloudflare.com
 ```
 
-### **4. Environment Variables**
+**4. Check env vars:**
 
 ```bash
-# Check environment variables
-echo $AHREFS_API_KEY
-echo $PERPLEXITY_API_KEY
-echo $CLOUDFLARE_ACCOUNT_ID
-echo $CLOUDFLARE_API_TOKEN
+[ -n "$AHREFS_API_KEY" ] && echo "AHREFS_API_KEY set (${#AHREFS_API_KEY} chars)" || echo "AHREFS_API_KEY not set"
+[ -n "$PERPLEXITY_API_KEY" ] && echo "PERPLEXITY_API_KEY set (${#PERPLEXITY_API_KEY} chars)" || echo "PERPLEXITY_API_KEY not set"
+[ -n "$CLOUDFLARE_ACCOUNT_ID" ] && echo "CLOUDFLARE_ACCOUNT_ID set (${#CLOUDFLARE_ACCOUNT_ID} chars)" || echo "CLOUDFLARE_ACCOUNT_ID not set"
+[ -n "$CLOUDFLARE_API_TOKEN" ] && echo "CLOUDFLARE_API_TOKEN set (${#CLOUDFLARE_API_TOKEN} chars)" || echo "CLOUDFLARE_API_TOKEN not set"
 ```
 
-### **5. Test Configuration Changes with CLI**
-
-The OpenCode TUI requires restart to pick up `opencode.json` changes. Use CLI for quick testing:
+**5. Test config changes with CLI** (OpenCode TUI requires restart for `opencode.json` changes):
 
 ```bash
-# Test new MCP configuration
 opencode run "List available tools from dataforseo_*" --agent SEO
-
-# Debug MCP connection (shows errors in terminal)
 opencode run "Call serper_google_search with query 'test'" --agent SEO 2>&1
-
-# Verify agent has correct tool access
 opencode run "What MCP tools can you access?" --agent SEO
-
-# Test slash commands
-opencode run "/new-command arg1" --agent Build+
 ```
 
-**Workflow for adding new MCPs:**
+Workflow for adding new MCPs:
 
 1. Edit `~/.config/opencode/opencode.json`
-2. Test with CLI: `opencode run "Test [mcp]" --agent [agent] 2>&1`
-3. If working, restart TUI to use interactively
-4. If failing, check stderr output and iterate on config
+2. Test: `opencode run "Test [mcp]" --agent [agent] 2>&1`
+3. If working, restart TUI
+4. If failing, check stderr and iterate
 5. Update `generate-opencode-agents.sh` to persist changes
 
-**Helper script for common tests:**
+Helper scripts:
 
 ```bash
 ~/.aidevops/agents/scripts/opencode-test-helper.sh test-mcp dataforseo SEO
 ~/.aidevops/agents/scripts/opencode-test-helper.sh test-agent Build+
 ```
 
-## Performance Optimization
-
-### **Chrome DevTools Optimization**
-
-```json
-{
-  "chrome-devtools": {
-    "args": [
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-background-timer-throttling",
-      "--disable-backgrounding-occluded-windows",
-      "--disable-renderer-backgrounding"
-    ]
-  }
-}
-```
-
-### **Playwright Optimization**
-
-```json
-{
-  "playwright": {
-    "args": [
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--no-first-run",
-      "--no-default-browser-check"
-    ]
-  }
-}
-```
-
 ## Monitoring & Logging
 
-### **Enable Debug Logging**
+**Enable debug logging:**
 
 ```bash
-# Chrome DevTools debug
 DEBUG=chrome-devtools-mcp npx chrome-devtools-mcp@latest
-
-# Playwright debug
 DEBUG=pw:api npx playwright-mcp@latest
 ```
 
-### **Log File Locations**
+**Log file locations:**
 
 ```text
 Chrome DevTools: /tmp/chrome-mcp.log
-Playwright: /tmp/playwright-mcp.log
-API MCPs: ~/.mcp/logs/
-```
-
-### **Health Check Script**
-
-```bash
-#!/bin/bash
-# MCP Health Check
-echo "🔍 Checking MCP integrations..."
-
-# Test Chrome DevTools
-if npx chrome-devtools-mcp@latest --health-check; then
-  echo "✅ Chrome DevTools MCP: OK"
-else
-  echo "❌ Chrome DevTools MCP: FAILED"
-fi
-
-# Test Playwright
-if npx playwright-mcp@latest --health-check; then
-  echo "✅ Playwright MCP: OK"
-else
-  echo "❌ Playwright MCP: FAILED"
-fi
-
-# Test API connections
-if curl -s https://api.ahrefs.com > /dev/null; then
-  echo "✅ Ahrefs API: Reachable"
-else
-  echo "❌ Ahrefs API: Unreachable"
-fi
+Playwright:      /tmp/playwright-mcp.log
+API MCPs:        ~/.mcp/logs/
 ```
 
 ## Recovery Procedures
 
-### **Reset MCP Configuration**
+**Reset MCP configuration:**
 
 ```bash
-# Backup current config
 cp ~/.config/mcp/config.json ~/.config/mcp/config.json.backup
-
-# Reset to defaults
 rm ~/.config/mcp/config.json
 bash .agents/scripts/setup-mcp-integrations.sh all
 ```
 
-### **Clear Cache and Restart**
+**Clear cache and reinstall browsers:**
 
 ```bash
-# Clear browser cache
-rm -rf ~/.cache/puppeteer
-rm -rf ~/.cache/playwright
-
-# Reinstall browsers
+rm -rf ~/.cache/puppeteer ~/.cache/playwright
 npx playwright install --force
 ```
 
-### **Emergency Fallback**
+**Emergency fallback:**
 
 ```bash
-# Use basic configuration without advanced features
 npx chrome-devtools-mcp@latest --safe-mode
 npx playwright-mcp@latest --basic-mode
 ```
 
-## Getting Help
+## Diagnostics & Support
 
-### **Log Collection for Support**
+**Collect diagnostics:**
 
 ```bash
-# Collect diagnostic information
 bash .agents/scripts/collect-mcp-diagnostics.sh
-
-# This creates: mcp-diagnostics-$(date +%Y%m%d).tar.gz
+# creates: mcp-diagnostics-$(date +%Y%m%d).tar.gz
 ```
 
-### **Community Resources**
+**Community resources:**
 
 - [MCP GitHub Discussions](https://github.com/modelcontextprotocol/discussions)
 - [Chrome DevTools MCP Issues](https://github.com/chromedevtools/chrome-devtools-mcp/issues)
 - [Playwright Community](https://playwright.dev/community)
 
-### **Professional Support**
+**Vendor support:**
 
-- Ahrefs API Support: [support@ahrefs.com](mailto:support@ahrefs.com)
-- Cloudflare Support: [Cloudflare Support Portal](https://support.cloudflare.com/)
-- Perplexity API: [Perplexity Documentation](https://docs.perplexity.ai/)
+- Ahrefs: [support@ahrefs.com](mailto:support@ahrefs.com)
+- Cloudflare: [Cloudflare Support Portal](https://support.cloudflare.com/)
+- Perplexity: [Perplexity Documentation](https://docs.perplexity.ai/)
