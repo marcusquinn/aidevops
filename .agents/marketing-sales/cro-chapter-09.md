@@ -50,7 +50,7 @@ Use charm pricing for consumer products, impulse purchases, competitive markets.
 
 **Unit economics**: $499/mo for 25 users = "Less than $20/user/month"
 
-**Comparative framing**: Professional Photography $2,000 vs DIY ($800 + time + quality) vs Competitors ($3,000-$5,000). Website Security $99/mo vs Data breach ($4.24M avg, IBM) vs Legal fees ($100K+).
+**Comparative framing**: Professional Photography $2,000 vs DIY ($800 + time + quality) vs Competitors ($3,000–$5,000). Website Security $99/mo vs Data breach ($4.24M avg, IBM) vs Legal fees ($100K+).
 
 **Loss vs. gain framing**: Loss framing typically stronger ("Don't waste $10K/year on inefficient processes" > "Save $10K/year with automation"). Use loss framing for known pain points, security, prevention. Gain framing for new opportunities, aspirational products. Test both -- audiences differ.
 
@@ -149,10 +149,10 @@ Combine multiple trust signals near CTA: secure checkout badge + guarantee seal 
 | # | Company | Strengths | Opportunities |
 |---|---------|-----------|---------------|
 | 17 | **Fiverr** | Service packages, ratings visible, delivery time | Hidden service fees; race-to-bottom pricing |
-| 18 | **99designs** | Contest vs 1-to-1, money-back guarantee | Contest model confusing; $299-$1,299 swing |
+| 18 | **99designs** | Contest vs 1-to-1, money-back guarantee | Contest model confusing; $299–$1,299 swing |
 | 19 | **Upwork** | Transparent sliding fee structure, volume discounts | Confusing fee tiers; Plus membership value unclear |
 | 20 | **Freshbooks** | Client-count pricing, "Most popular" on Plus | Client limits feel arbitrary; Select custom pricing adds friction |
-| 21 | **Salesforce** | 4 editions, per-user, "Most popular", free trial | Overwhelming for SMBs; add-on costs hidden |
+| 21 | **Salesforce** | 4 editions, per-user, "Most popular", free trial | Overwhelming for SMBs; add-on/implementation costs hidden |
 | 22 | **Zendesk** | Product-based pricing, suite bundles, free trial | Multiple products confusing; too many options |
 | 23 | **Adobe CC** | Individual app vs All Apps, student discount (60%) | Monthly vs annual commitment confusing |
 | 24 | **Hootsuite** | 4 tiers, social account limits, "Most popular" | Team->Business jump steep ($129->$599); Enterprise opaque |
@@ -162,7 +162,7 @@ Combine multiple trust signals near CTA: secure checkout badge + guarantee seal 
 
 | # | Company | Strengths | Opportunities |
 |---|---------|-----------|---------------|
-| 26 | **Udemy** | Pay-once ownership, anchoring (original + sale), 30-day guarantee | Constant sales reduce trust; race to bottom ($10-15) |
+| 26 | **Udemy** | Pay-once ownership, anchoring (original + sale), 30-day guarantee | Constant sales reduce trust; race to bottom ($10–15) |
 | 27 | **Coursera** | Coursera Plus ($399/yr unlimited), free audit, financial aid | Confusing model (audit vs certificate vs subscription) |
 | 28 | **MasterClass** | Simple 3-plan all-access, 30-day guarantee, gift option | No monthly option; can't buy individual classes |
 | 29 | **LinkedIn Learning** | Monthly/annual, 35% annual discount, 1-month trial | Only individual and team; team pricing opaque |
