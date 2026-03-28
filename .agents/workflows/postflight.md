@@ -29,11 +29,9 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-Postflight catches issues that pre-release checks miss: CI/CD failures triggered by the release tag, delayed code review analysis (CodeRabbit, Codacy, SonarCloud), security vulnerabilities detected post-merge, and integration issues only visible in production-like environments.
-
 ## Critical: Avoiding Circular Dependencies
 
-Always exclude the postflight workflow itself when checking CI/CD status:
+Exclude the postflight workflow itself when checking CI/CD status:
 
 ```bash
 SELF_NAME="Verify Release Health"
@@ -41,17 +39,9 @@ gh api repos/{owner}/{repo}/commits/{sha}/check-runs \
   --jq "[.check_runs[] | select(.status != \"completed\" and .name != \"$SELF_NAME\")] | length"
 ```
 
-## Checking Both Main and Tag Workflows
-
-After a release, workflows run on two refs:
-
-```bash
-gh run list --branch=main --limit=5          # Main branch workflows
-gh run list --branch=v{VERSION} --limit=5    # Tag-triggered workflows
-gh run list --limit=10 --json name,status,conclusion,headBranch  # All recent
-```
-
 ## Postflight Checklist
+
+Check both `main` and tag refs: `gh run list --branch=main --limit=5` and `gh run list --branch=v{VERSION} --limit=5`.
 
 ### 1. CI/CD Pipeline Status
 
@@ -79,33 +69,9 @@ gh run list --limit=10 --json name,status,conclusion,headBranch  # All recent
 | npm audit | No high/critical issues |
 | Dependabot | No new alerts |
 
-## Verification Commands
-
-```bash
-# GitHub Actions status
-gh run list --limit=10
-gh run list --workflow=code-quality.yml --limit=5
-gh run list --workflow=postflight.yml --limit=1  # Verify postflight.yml itself passed
-gh run watch $(gh run list --limit=1 --json databaseId -q '.[0].databaseId') --exit-status
-
-# SonarCloud
-curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=marcusquinn_aidevops" | jq '.projectStatus.status'
-curl -s "https://sonarcloud.io/api/issues/search?componentKeys=marcusquinn_aidevops&resolved=false&ps=1" | jq '.total'
-
-# Codacy
-./.agents/scripts/codacy-cli.sh status
-
-# Security
-./.agents/scripts/snyk-helper.sh test
-secretlint "**/*" --format compact
-npm audit --audit-level=high
-```
-
-**Important**: When running postflight locally after a release:
-1. Wait for the GH Actions `postflight.yml` workflow to complete first
-2. Only declare success if ALL workflows (including `postflight.yml`) passed
-
 ## Postflight Script
+
+Wait for `postflight.yml` GH Actions workflow to complete before running locally. Only declare success if ALL workflows passed.
 
 ```bash
 #!/bin/bash
@@ -205,12 +171,9 @@ jobs:
       if: always()
       env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
       run: |
-        echo "## Postflight Report" >> $GITHUB_STEP_SUMMARY
-        echo "**Release**: ${{ github.event.release.tag_name || github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-        echo "### CI/CD Status" >> $GITHUB_STEP_SUMMARY
-        gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
-          --jq '.check_runs[] | "- **\(.name)**: \(.conclusion // .status)"' >> $GITHUB_STEP_SUMMARY
+        { echo "## Postflight Report"; echo "**Release**: ${{ github.event.release.tag_name || github.ref_name }}"; \
+          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
+          --jq '.check_runs[] | "- **\(.name)**: \(.conclusion // .status)"'; } >> $GITHUB_STEP_SUMMARY
 ```
 
 ## Rollback Procedures
@@ -227,50 +190,34 @@ jobs:
 ### Rollback Commands
 
 ```bash
-# Option A: Revert the release commit
+# Option A: Revert commit
 git revert <release-commit-hash> && git push origin main
-
-# Option B: Delete tag and release (if not widely distributed)
-gh release delete v{VERSION} --yes
-git tag -d v{VERSION} && git push origin --delete v{VERSION}
-
+# Option B: Delete tag+release (if not widely distributed)
+gh release delete v{VERSION} --yes && git tag -d v{VERSION} && git push origin --delete v{VERSION}
 # Option C: Hotfix release
-git checkout -b hotfix/v{VERSION}.1
-# Fix the issue
-git commit -m "fix: resolve critical issue from v{VERSION}"
-./.agents/scripts/version-manager.sh release patch
+git checkout -b hotfix/v{VERSION}.1 && git commit -m "fix: resolve critical issue" && ./.agents/scripts/version-manager.sh release patch
 ```
 
-### Post-Rollback Verification
-
-```bash
-gh run list --limit=5
-./.agents/scripts/linters-local.sh
-curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=marcusquinn_aidevops" | jq '.projectStatus.status'
-```
+Post-rollback: `gh run list --limit=5 && .agents/scripts/linters-local.sh`
 
 ## Handling SonarCloud Quality Gate Failures
 
-### Security Hotspots (Most Common)
+### Security Hotspots
 
-Security hotspots require **individual human review**, not blanket dismissal:
+Security hotspots require **individual human review**, not blanket dismissal.
 
 ```bash
 curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=marcusquinn_aidevops&status=TO_REVIEW" | \
   jq '{total: .paging.total, by_rule: ([.hotspots[] | .ruleKey] | group_by(.) | map({rule: .[0], count: length}))}'
 ```
 
-For each hotspot: open SonarCloud Security Hotspots page, review individually, mark as **Safe** (with comment), **Fixed** (code change), or **Acknowledged** (accepted risk with justification).
-
-**Common patterns in aidevops:**
+Review each individually in SonarCloud — mark **Safe** (with comment), **Fixed**, or **Acknowledged** (accepted risk). Never blanket-dismiss; real vulnerabilities hide among false positives.
 
 | Rule | Typical Resolution |
 |------|--------------------|
-| `shell:S5332` | Mark Safe: "Localhost HTTP is intentional for local dev servers" |
-| `shell:S6505` | Mark Safe: "Postinstall scripts required for package setup" |
-| `shell:S6506` | Mark Safe: "Installing from trusted npm registry" |
-
-**Why NOT to blanket-dismiss**: Real vulnerabilities hide among false positives; audit trails require documented decisions.
+| `shell:S5332` | Safe: "Localhost HTTP intentional for local dev" |
+| `shell:S6505` | Safe: "Postinstall scripts required for package setup" |
+| `shell:S6506` | Safe: "Installing from trusted npm registry" |
 
 ### Bugs, Vulnerabilities, or Code Smells
 
