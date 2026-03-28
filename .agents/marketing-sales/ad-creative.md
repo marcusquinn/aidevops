@@ -15,7 +15,7 @@ This skill is split into focused sub-documents for progressive loading. Read wha
 | [testing-optimization.md](testing-optimization.md) | Creative testing methodology, scoring rubrics, DCO, A/B testing, performance metrics | 203 |
 | [psychology-targeting.md](psychology-targeting.md) | Emotional triggers, cognitive biases, audience-message match | 229 |
 | [offers-landing.md](offers-landing.md) | Offer construction, pricing psychology, landing page congruence | 222 |
-| [campaign-management.md](campaign-management.md) | Creative briefs, competitor analysis, seasonal creative, retargeting, ad fatigue, thumbnails | 281 |
+| [campaign-management.md](campaign-management.md) | Creative briefs, competitor analysis, seasonal creative, retargeting, ad fatigue, thumbnails | 241 |
 | [ai-tools-reference.md](ai-tools-reference.md) | AI creative tools, implementation roadmap, quick-reference appendix | 253 |
 
 **Deep-dive chapters** (supplementary — see [CHAPTERS.md](CHAPTERS.md)):
