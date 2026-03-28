@@ -4,31 +4,15 @@
 
 Testing strategies for Clean Architecture + DDD + Hexagonal systems.
 
-**Key principles:**
-1. Test behavior, not implementation
-2. Domain tests need no mocks — domain layer is pure
-3. Mock at port boundaries — application tests mock driven ports
-4. Integration tests use real infra — actual database, message broker
-5. Test business rules in domain, not application or infrastructure
+**Key principles:** (1) Test behavior, not implementation. (2) Domain tests need no mocks — pure layer. (3) Mock at port boundaries. (4) Integration tests use real infra. (5) Test business rules in domain, not application or infrastructure.
 
-## Testing Pyramid
+**Testing pyramid:** Many fast unit tests (domain & application) → some integration tests → few slow E2E tests.
 
-```text
-E2E Tests          — Few, slow, expensive
-Integration Tests  — Some, moderate speed
-Unit Tests         — Many, fast, cheap (Domain & Application)
-```
-
----
-
-## Unit Tests
-
-### Domain Layer
+## Unit Tests — Domain Layer
 
 No mocks needed — domain has no dependencies.
 
 ```typescript
-// tests/domain/order/order.test.ts
 describe('Order', () => {
   it('creates with draft status and emits OrderCreated', () => {
     const order = Order.create(CustomerId.from('cust-123'));
@@ -64,7 +48,7 @@ describe('Order', () => {
   });
 });
 
-// Helpers — simple factory functions for test states
+// Helpers — factory functions for common test states
 const draft = () => Order.create(CustomerId.from('cust-123'));
 const withItems = () => { const o = draft(); o.addItem(ProductId.from('p1'), Quantity.create(1), Money.create(10, 'USD')); return o; };
 const confirmed = () => { const o = withItems(); o.setShippingAddress(new Address({ street: '1 Main St', city: 'Springfield', country: 'US', postcode: '12345' })); o.confirm(); return o; };
@@ -82,12 +66,11 @@ describe('Money', () => {
 });
 ```
 
-### Application Layer
+## Unit Tests — Application Layer
 
 Test use cases with mocked ports.
 
 ```typescript
-// tests/application/place_order/handler.test.ts
 describe('PlaceOrderHandler', () => {
   let orderRepo: MockOrderRepository;
   let eventPublisher: MockEventPublisher;
@@ -133,14 +116,11 @@ class MockEventPublisher implements IEventPublisher {
 }
 ```
 
----
-
-## Integration Tests
+## Integration Tests — Persistence
 
 Test adapters with real infrastructure.
 
 ```typescript
-// tests/integration/postgres/order_repository.test.ts
 describe('PostgresOrderRepository', () => {
   let pool: Pool;
   let repo: PostgresOrderRepository;
@@ -170,7 +150,6 @@ describe('PostgresOrderRepository', () => {
 ### API Integration Tests
 
 ```typescript
-// tests/integration/http/orders_api.test.ts
 describe('Orders API', () => {
   let pool: Pool;
   let app: Express;
@@ -200,14 +179,11 @@ describe('Orders API', () => {
 });
 ```
 
----
-
 ## Architecture Tests
 
 Enforce dependency rules at build time.
 
 ```typescript
-// tests/architecture/dependency_rules.test.ts
 import { filesOfProject } from 'ts-arch';
 
 describe('Architecture', () => {
@@ -228,8 +204,6 @@ describe('Architecture', () => {
 });
 ```
 
----
-
 ## Test Organization
 
 ```text
@@ -247,14 +221,11 @@ tests/
 └── helpers/           (test_database.ts, mock_factories.ts)
 ```
 
----
-
 ## Test Fixtures — Builder Pattern
 
 Fluent API with `clearEvents()` after construction so tests start with clean event state.
 
 ```typescript
-// tests/fixtures/order_fixtures.ts
 export class OrderBuilder {
   private customerId = CustomerId.from('default-customer');
   private items: Array<{ productId: ProductId; quantity: Quantity; price: Money }> = [];
