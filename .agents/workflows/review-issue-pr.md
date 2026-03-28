@@ -21,12 +21,11 @@ tools:
 - **Purpose**: Triage and review issues/PRs — interactive or pulse-automated
 - **Focus**: Validate the problem exists, evaluate if the solution is optimal
 - **When**: Before approving/merging contributions, or automatically by the pulse for `needs-maintainer-review` items
-- **Modes**: Interactive (user invokes `/review-issue-pr`) or headless (pulse dispatches for triage)
 
 **Core Questions**:
-1. **Is the issue real?** — Can we reproduce? Bug or expected behavior?
+1. **Is the issue real?** — Reproducible? Bug or expected behavior?
 2. **Is this the best solution?** — Simpler alternatives? Fits architecture?
-3. **Is the scope appropriate?** — Does the PR do exactly what's needed, no more?
+3. **Is the scope appropriate?** — PR does exactly what's needed, no more?
 
 <!-- AI-CONTEXT-END -->
 
@@ -44,10 +43,10 @@ tools:
 
 ### 2. Root Cause Analysis
 
-- What's the actual root cause? (Surface symptoms may hide deeper issues)
-- Is this a symptom of a larger problem? (Fixing symptoms creates tech debt)
-- Why wasn't this caught earlier? (May indicate missing tests or docs)
-- Are there related issues? (Batch fixes may be more efficient)
+- Actual root cause? (Surface symptoms may hide deeper issues)
+- Symptom of a larger problem? (Fixing symptoms creates tech debt)
+- Why wasn't this caught earlier? (Missing tests or docs?)
+- Related issues? (Batch fixes may be more efficient)
 
 ## PR Review Checklist
 
@@ -62,12 +61,7 @@ tools:
 | **Performance** | Introduces regressions? |
 | **Maintainability** | Easy to maintain, understand, debug? |
 
-Before approving, consider:
-- [ ] Could this use existing utilities/functions?
-- [ ] Is there a standard library solution?
-- [ ] Would a different approach be more maintainable?
-- [ ] Does the codebase already have a pattern for this?
-- [ ] Is the fix at the right abstraction level?
+Before approving: existing utilities? standard library? better approach? existing pattern? right abstraction level?
 
 ### 4. Scope Assessment
 
@@ -138,16 +132,16 @@ The review comment MUST contain `## Review:` or `## Issue/PR Review:` in the hea
 
 When invoked by the pulse supervisor (via `/review-issue-pr <number>`):
 
-1. Fetch the issue/PR using `gh issue view` or `gh pr view`
+1. Fetch issue/PR: `gh issue view` or `gh pr view`
 2. Read relevant codebase files referenced in the issue body
-3. Perform the full review checklist (problem validation, root cause, solution evaluation, scope)
-4. Post the review as a comment using `gh issue comment` or `gh pr comment`
-5. Do NOT modify labels — the pulse handles label transitions based on maintainer response
+3. Run the full review checklist (problem validation, root cause, solution evaluation, scope)
+4. Post review comment: `gh issue comment` or `gh pr comment`
+5. Do NOT modify labels — pulse handles label transitions based on maintainer response
 6. Exit cleanly — no worktree, no PR, no commit
 
-**The review comment is the only output.** The pulse detects it on the next cycle. The maintainer reads the review and responds with "approved", "declined", or further direction.
+**The review comment is the only output.** Pulse detects it on the next cycle; maintainer responds with "approved", "declined", or further direction.
 
-**Incorporating maintainer feedback:** If the dispatch prompt includes prior maintainer comments, incorporate that context and address the maintainer's specific concerns in the analysis.
+**Maintainer feedback:** If the dispatch prompt includes prior maintainer comments, address those specific concerns in the analysis.
 
 ## Common Scenarios
 
