@@ -14,9 +14,11 @@ tools:
 
 # Extraction Schemas
 
+<!-- AI-CONTEXT-START -->
+
 ## Quick Reference
 
-- **Pipeline**: Docling (parse) → ExtractThinker (extract) → QuickFile (record)
+- **Pipeline**: Docling (parse) -> ExtractThinker (extract) -> QuickFile (record)
 - **Helper**: `document-extraction-helper.sh extract file.pdf --schema <name>`
 
 | Document Type | Schema | QuickFile Target |
@@ -27,22 +29,30 @@ tools:
 | Credit note from supplier | `credit-note` | `quickfile_purchase_create` (negative) |
 | Generic receipt (non-accounting) | `receipt` | N/A |
 
-**Classification signals:**
+<!-- AI-CONTEXT-END -->
 
-```text
-"Invoice" / "Tax Invoice"  -> purchase-invoice (supplier) or invoice (you issued it)
-"Receipt" / "Till Receipt" -> expense-receipt
-"Credit Note" / "CN-"      -> credit-note
-"Estimate" / "Quote"       -> skip
-"Statement"                -> skip
+## Chapter Index
 
-Disambiguation:
-  Your company name in "From" field -> invoice (you issued it)
-  Your company name in "To" field   -> purchase-invoice (supplier issued it)
-  No invoice number + till format   -> expense-receipt
-```
+Full schema definitions, field mappings, and reference data in focused chapters:
 
-## Schemas
+| # | Chapter | Description |
+|---|---------|-------------|
+| 01 | [Design Principles](extraction-schemas/01-design-principles.md) | 8 schema design rules (field naming, types, VAT, confidence) |
+| 02 | [Purchase Invoice](extraction-schemas/02-purchase-invoice.md) | `PurchaseInvoice` + `VatRate` enum + `PurchaseLineItem` — full Pydantic models |
+| 03 | [Expense Receipt](extraction-schemas/03-expense-receipt.md) | `ExpenseReceipt` + `ExpenseCategory` enum + `ReceiptItem` — full Pydantic models |
+| 04 | [Credit Note](extraction-schemas/04-credit-note.md) | `CreditNote` model (reuses `PurchaseLineItem`) |
+| 05 | [Sales Invoice](extraction-schemas/05-sales-invoice.md) | `Invoice` + `SalesLineItem` — full Pydantic models |
+| 06 | [Generic Receipt](extraction-schemas/06-generic-receipt.md) | `Receipt` model (non-accounting, reuses `ReceiptItem`) |
+| 07 | [QuickFile Mapping](extraction-schemas/07-quickfile-mapping.md) | Field-to-parameter mapping tables for purchase and expense flows |
+| 08 | [VAT Handling](extraction-schemas/08-vat-handling.md) | UK VAT rate detection patterns + validation rules |
+| 09 | [Nominal Codes](extraction-schemas/09-nominal-codes.md) | Auto-categorisation table (merchant pattern -> nominal code) |
+| 10 | [Classification](extraction-schemas/10-classification.md) | Document type classification signals and disambiguation |
+| 11 | [Pipeline Integration](extraction-schemas/11-pipeline-integration.md) | CLI commands: single extract, batch, full pipeline (t012.4) |
+| 12 | [Validation](extraction-schemas/12-validation.md) | Confidence scoring and validation summary JSON format |
+
+## Compact Schema Reference
+
+All models in one block for quick inline reference. Full annotated versions in chapters 02-06.
 
 ```python
 from pydantic import BaseModel, Field
@@ -147,89 +157,6 @@ class Invoice(BaseModel):
     line_items: list[SalesLineItem] = Field(default_factory=list)
     payment_terms: Optional[str] = Field(default=None)
     document_type: str = Field(default="invoice")
-```
-
-## QuickFile Field Mapping
-
-`purchase-invoice` and `expense-receipt` both map to `quickfile_purchase_create`:
-
-| Extracted Field | QuickFile Parameter | purchase-invoice | expense-receipt |
-|----------------|---------------------|-----------------|-----------------|
-| `vendor_name` / `merchant_name` | Lookup → `supplierId` | Required | Required; create if not found |
-| `invoice_number` / `receipt_number` | `supplierRef` | Required | Optional |
-| `invoice_date` / `date` | `issueDate` | YYYY-MM-DD | YYYY-MM-DD |
-| `due_date` | `dueDate` | Or calc from `payment_terms` | — |
-| `currency` | `currency` | Default: GBP | Default: GBP |
-| `line_items[].description` / `items[].name` | `lines[].description` | Max 5000 chars | Single line from `total` if no items |
-| `line_items[].unit_price` / `items[].price` | `lines[].unitCost` | Per unit | qty=1 |
-| `line_items[].vat_rate` | `lines[].vatPercentage` | Default: 20 | Infer from `vat_amount` if missing |
-| `line_items[].nominal_code` / `expense_category` | `lines[].nominalCode` | Auto-categorise if missing | All lines same category |
-
-## VAT Handling
-
-| Receipt Pattern | Meaning | Rate |
-|----------------|---------|------|
-| `VAT @ 20%` | Standard rate | 20 |
-| `VAT @ 5%` | Reduced rate | 5 |
-| `VAT: 0.00` or `Zero rated` | Zero-rated | 0 |
-| `*` or `A` next to item | Standard rate (supermarket) | 20 |
-| `B` or no marker | Zero-rated (supermarket) | 0 |
-| `VAT Exempt` | Exempt | exempt |
-| `No VAT` or no VAT line | Out of scope | oos |
-| `Reverse Charge` | Reverse charge (B2B) | servrc |
-
-```text
-# VAT validation rules
-1. subtotal + vat_amount != total (>0.02 tolerance) -> flag for manual review
-2. vat_amount > 0 but no vendor_vat_number -> warning: VAT claimed without supplier VAT number
-3. line_items VAT sum != total vat_amount (>0.05 tolerance) -> recalculate from line items
-4. vat_rate not in [0, 5, 20, exempt, oos, servrc, cisrc, postgoods] -> flag as unusual
-```
-
-## Nominal Code Auto-Categorisation
-
-| Merchant/Item Pattern | Nominal Code | Category |
-|----------------------|-------------|----------|
-| Amazon, Staples, office supplies | 7504 | Stationery & Office Supplies |
-| Shell, BP, Esso, fuel, petrol, diesel | 7401 | Motor Expenses - Fuel |
-| Hotel, Airbnb, accommodation | 7403 | Hotel & Accommodation |
-| Restaurant, cafe, food, lunch | 7402 | Subsistence |
-| Train, bus, taxi, Uber, parking | 7400 | Travel & Subsistence |
-| Royal Mail, DHL, FedEx, postage | 7501 | Postage & Shipping |
-| BT, Vodafone, phone, broadband | 7502 | Telephone & Internet |
-| Adobe, Microsoft, SaaS, subscription | 7404 | Computer Software |
-| Google Ads, Facebook Ads, marketing | 6201 | Advertising & Marketing |
-| Accountant, solicitor, legal | 7600 | Professional Fees |
-| Plumber, electrician, repair | 7300 | Repairs & Maintenance |
-| *Default (no match)* | 5000 | General Purchases |
-
-## Extraction Pipeline
-
-```bash
-document-extraction-helper.sh extract invoice.pdf --schema purchase-invoice --privacy local
-document-extraction-helper.sh extract document.pdf --schema auto --privacy local
-document-extraction-helper.sh batch ./receipts/ --schema auto --privacy local
-
-# Full pipeline: extract -> review -> record
-document-extraction-helper.sh extract invoice.pdf --schema purchase-invoice --privacy local
-cat ~/.aidevops/.agent-workspace/work/document-extraction/invoice-extracted.json
-quickfile-helper.sh record-purchase invoice-extracted.json --auto-supplier
-quickfile-helper.sh batch-record ~/.aidevops/.agent-workspace/work/ocr-receipts/
-```
-
-## Confidence and Validation
-
-Fields with confidence < 0.7 are flagged for manual review.
-
-```json
-{
-  "extraction": { "...schema fields..." },
-  "validation": {
-    "vat_check": "pass", "total_check": "pass", "date_valid": true, "currency_detected": "GBP",
-    "confidence": { "vendor_name": 0.95, "total": 0.99, "vat_amount": 0.85, "line_items": 0.80 },
-    "warnings": [], "requires_review": false
-  }
-}
 ```
 
 ## Related
