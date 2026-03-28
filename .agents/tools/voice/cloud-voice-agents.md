@@ -21,7 +21,7 @@ tools:
 - **Purpose**: Deploy speech-to-speech voice agents in the cloud
 - **Models**: GPT-4o Realtime (OpenAI), MiniCPM-o 2.6 (open weights), NVIDIA Nemotron Speech (Riva NIM)
 - **Frameworks**: Pipecat (recommended), OpenAI Agents SDK, custom WebSocket/WebRTC
-- **Related**: `tools/voice/speech-to-speech.md` (cascaded), `tools/voice/pipecat-opencode.md` (Pipecat bridge), `tools/voice/voice-ai-models.md` (full model catalog)
+- **Related**: `tools/voice/speech-to-speech.md` (cascaded), `tools/voice/pipecat-opencode.md` (Pipecat bridge), `tools/voice/voice-ai-models.md` (model catalog), `tools/voice/voice-models.md` (TTS engines), `tools/infrastructure/cloud-gpu.md` (GPU deploy), `services/communications/twilio.md` (phone)
 
 **When to use**: Production voice agents, phone bots, customer service, real-time conversational AI. For local/dev voice, use `voice-helper.sh talk`.
 
@@ -190,13 +190,7 @@ docker run --gpus all -p 8001:8001 nvcr.io/nim/nvidia/magpie-tts-multilingual:la
 
 ### Composable Pipeline
 
-```text
-Audio In -> [Parakeet ASR NIM] -> Text -> [LLM (Claude/GPT/Nemotron)] -> Text -> [Magpie TTS NIM] -> Audio Out
-                                                                                        |
-                                                                            [StudioVoice NIM] (optional)
-```
-
-Any LLM works in the middle. Pipecat lacks native Riva integration -- use Riva gRPC API or NIM REST endpoints.
+`Audio -> [Parakeet ASR] -> Text -> [Any LLM] -> Text -> [Magpie TTS] -> Audio` (optional StudioVoice enhancement). Pipecat lacks native Riva integration — use Riva gRPC API or NIM REST endpoints.
 
 ## Deployment Patterns
 
@@ -220,9 +214,3 @@ Any LLM works in the middle. Pipecat lacks native Riva integration -- use Riva g
 ## Monitoring
 
 Key metrics: latency (speech end -> first audio byte), transcription accuracy, turn completion rate, cost per conversation. Use Pipecat metrics (`enable_metrics=True`) or OpenTelemetry.
-
-## See Also
-
-- `tools/voice/voice-models.md` -- TTS engine details
-- `tools/infrastructure/cloud-gpu.md` -- Cloud GPU deployment
-- `services/communications/twilio.md` -- Phone integration
