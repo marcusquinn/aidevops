@@ -18,9 +18,10 @@ tools:
 
 ## Quick Reference
 
-- **Install**: `npm install -g @playwright/mcp@latest`
+- **Install**: `npm install -g @playwright/mcp@latest` (or `bun install -g`)
 - **GitHub**: https://github.com/microsoft/playwright-cli
-- **Skill**: `/plugin marketplace add microsoft/playwright-cli`
+- **Skill**: `/plugin marketplace add microsoft/playwright-cli` then `/plugin install playwright-cli`
+- **License**: Apache-2.0 — part of `@playwright/mcp`
 
 **Core Workflow** (optimal for AI):
 
@@ -49,16 +50,10 @@ playwright-cli close
 ## Installation
 
 ```bash
-bun install -g @playwright/mcp@latest     # Bun (preferred)
-npm install -g @playwright/mcp@latest     # npm alternative
+bun install -g @playwright/mcp@latest     # Bun (preferred, ~0.3s without global install: bunx @playwright/mcp playwright-cli)
+npm install -g @playwright/mcp@latest     # npm alternative (~2-3s without global install: npx @playwright/mcp playwright-cli)
 playwright-cli --help                     # Verify
-
-# Without global install
-bunx @playwright/mcp playwright-cli --help   # ~0.3s
-npx @playwright/mcp playwright-cli --help    # ~2-3s
 ```
-
-As Claude Code skill: `/plugin marketplace add microsoft/playwright-cli` then `/plugin install playwright-cli`.
 
 ## Commands Reference
 
@@ -165,20 +160,6 @@ playwright-cli tracing-stop
 # Opens trace viewer with recorded actions
 ```
 
-### Todo App Demo
-
-```bash
-playwright-cli open https://demo.playwright.dev/todomvc/ --headed
-playwright-cli type "Buy groceries"
-playwright-cli press Enter
-playwright-cli type "Water flowers"
-playwright-cli press Enter
-playwright-cli snapshot                    # Get refs for the todo items
-playwright-cli check e21                   # Check first todo (ref from snapshot)
-playwright-cli check e35                   # Check second todo (ref from snapshot)
-playwright-cli screenshot
-```
-
 ## Comparison with Other Tools
 
 | Feature | playwright-cli | agent-browser | Playwriter | Stagehand |
@@ -221,10 +202,3 @@ playwright-cli works with rebrowser-patches automatically if installed in the Pl
 - `playwright.md` - Core Playwright automation (cross-browser, forms, security, API testing)
 - `playwright-emulation.md` - Device emulation (mobile, tablet, viewport, geolocation, locale, dark mode)
 - `browser-automation.md` - Tool selection decision tree
-
-## Resources
-
-- **GitHub**: https://github.com/microsoft/playwright-cli
-- **Skill**: https://github.com/microsoft/playwright-cli/tree/main/skills/playwright-cli
-- **License**: Apache-2.0
-- **Part of**: `@playwright/mcp` package
