@@ -19,61 +19,32 @@ tools:
 ## Quick Reference
 
 - **Purpose**: macOS screen capture, AI vision analysis, and complete GUI automation for AI agents
-- **Platform**: macOS 15+ (Sequoia) only
-- **Install CLI**: `brew install steipete/tap/peekaboo`
-- **Install MCP**: `npx -y @steipete/peekaboo`
-- **GitHub**: https://github.com/steipete/Peekaboo
-- **Website**: https://peekaboo.boo
+- **Platform**: macOS 15+ (Sequoia) only — requires Screen Recording + Accessibility permissions
+- **Install CLI**: `brew install steipete/tap/peekaboo` | **MCP**: `npx -y @steipete/peekaboo`
+- **GitHub**: https://github.com/steipete/Peekaboo | **Docs**: https://github.com/steipete/Peekaboo/tree/main/docs | **Website**: https://peekaboo.boo | **npm**: https://www.npmjs.com/package/@steipete/peekaboo
 
-**Core Capabilities**:
-- Pixel-accurate screen/window/menu bar captures with optional Retina 2x scaling
-- Natural language agent for chained automation (see, click, type, scroll, hotkey, menu, window, app, dock, space)
-- Menu and menubar discovery with structured JSON
-- Multi-provider AI vision: GPT-5.1, Claude 4.x, Grok 4, Gemini 2.5, Ollama
-
-**Requirements**: macOS Screen Recording + Accessibility permissions
-
-**Quick Start**:
+**Core Capabilities**: Pixel-accurate screen/window/menu bar captures (optional Retina 2x), natural language agent for chained automation (see, click, type, scroll, hotkey, menu, window, app, dock, space), menu/menubar discovery with structured JSON, multi-provider AI vision (GPT-5.1, Claude 4.x, Grok 4, Gemini 2.5, Ollama).
 
 ```bash
-# Capture full screen at Retina scale
-peekaboo image --mode screen --retina --path ~/Desktop/screen.png
-
-# Click a button by label
+peekaboo image --mode screen --retina --path ~/Desktop/screen.png       # Retina capture
 SNAPSHOT=$(peekaboo see --app Safari --json-output | jq -r '.data.snapshot_id')
-peekaboo click --on "Reload this page" --snapshot "$SNAPSHOT"
-
-# Natural language automation
-peekaboo agent "Open Notes and create a TODO list with three items"
+peekaboo click --on "Reload this page" --snapshot "$SNAPSHOT"           # Click by label
+peekaboo agent "Open Notes and create a TODO list with three items"     # Natural language
 ```
 
 <!-- AI-CONTEXT-END -->
 
-## Installation
+## Setup
 
 ```bash
-# CLI + App
-brew install steipete/tap/peekaboo
-
-# Verify
-peekaboo --version
-peekaboo permissions status
+brew install steipete/tap/peekaboo && peekaboo --version
+peekaboo permissions status       # Check permissions
+peekaboo permissions grant        # Opens System Preferences if needed
 ```
 
-## Permissions Setup
+Grant **Screen Recording** and **Accessibility** in System Preferences > Privacy & Security.
 
-```bash
-# Check and grant
-peekaboo permissions status
-peekaboo permissions grant  # Opens System Preferences
-```
-
-- **Screen Recording**: System Preferences > Privacy & Security > Screen Recording
-- **Accessibility**: System Preferences > Privacy & Security > Accessibility
-
-## Core Commands
-
-### Image Capture
+## Image Capture
 
 ```bash
 peekaboo image --mode screen --path ~/Desktop/screen.png          # Full screen
@@ -91,34 +62,33 @@ peekaboo image --mode screen --analyze "What applications are visible?"  # With 
 | `--path <file>` | Output file path |
 | `--analyze <prompt>` | AI vision analysis |
 
-### See (Capture + Annotate)
+## See, Click, Type
 
-Captures UI and returns snapshot with element IDs for subsequent actions:
-
-```bash
-peekaboo see --app Safari --json-output    # App UI with element annotations
-peekaboo see --mode screen --json-output   # Full screen with annotations
-# Returns snapshot_id for use with click/type commands
-```
-
-### Click
+**See** captures UI and returns a snapshot with element IDs for subsequent actions:
 
 ```bash
-peekaboo click --on @e42 --snapshot "$SNAPSHOT_ID"          # By element ID
-peekaboo click --on "Submit" --snapshot "$SNAPSHOT_ID"       # By label
-peekaboo click --x 100 --y 200                               # By coordinates
-peekaboo click --on "Login" --snapshot "$SNAPSHOT_ID" --wait 2000  # With wait
+peekaboo see --app Safari --json-output                             # App UI with annotations
+peekaboo see --mode screen --json-output                            # Full screen annotations
 ```
 
-### Type
+**Click** by element ID, label, or coordinates:
+
+```bash
+peekaboo click --on @e42 --snapshot "$SNAPSHOT_ID"                  # By element ID
+peekaboo click --on "Submit" --snapshot "$SNAPSHOT_ID"              # By label
+peekaboo click --x 100 --y 200                                      # By coordinates
+peekaboo click --on "Login" --snapshot "$SNAPSHOT_ID" --wait 2000   # With wait
+```
+
+**Type** text into focused fields:
 
 ```bash
 peekaboo type --text "Hello, World!"
-peekaboo type --text "new value" --clear          # Clear field first
+peekaboo type --text "new value" --clear                            # Clear field first
 peekaboo type --text "slow typing" --delay-ms 100
 ```
 
-### Press / Hotkey / Scroll / Swipe / Drag / Move
+## Input: Press, Hotkey, Scroll, Swipe, Drag, Move
 
 ```bash
 peekaboo press Enter                              # Single key
@@ -133,89 +103,62 @@ peekaboo move --to @e5                            # Move cursor to element
 peekaboo move --to 500,300 --screen-index 1       # Specific screen
 ```
 
-### Window Management
+## Window, App, Space Management
 
 ```bash
-peekaboo window list
-peekaboo window focus --app Safari
-peekaboo window move --app Safari --x 100 --y 100
+# Windows
+peekaboo window list | focus --app Safari | move --app Safari --x 100 --y 100
 peekaboo window resize --app Safari --width 1200 --height 800
 peekaboo window set-bounds --app Safari --x 0 --y 0 --width 1920 --height 1080
+
+# Apps
+peekaboo app list | launch Safari | quit Safari | relaunch Safari | switch Safari
+
+# Virtual desktops
+peekaboo space list | switch 2 | move-window --app Safari --space 3
 ```
 
-### App Control
+## Menu, Menubar, Dock, Dialog
 
 ```bash
-peekaboo app list
-peekaboo app launch Safari
-peekaboo app quit Safari
-peekaboo app relaunch Safari
-peekaboo app switch Safari
-```
-
-### Space (Virtual Desktops)
-
-```bash
-peekaboo space list
-peekaboo space switch 2
-peekaboo space move-window --app Safari --space 3
-```
-
-### Menu Interaction
-
-```bash
-peekaboo menu list --app Safari
-peekaboo menu list-all --app Safari
+# Menus
+peekaboo menu list --app Safari | list-all --app Safari
 peekaboo menu click --app Safari --menu "File" --item "New Window"
 peekaboo menu click-extra --app Safari --item "Extensions"
+
+# Menubar
+peekaboo menubar list | click --name "Wi-Fi" | click --index 3
+
+# Dock
+peekaboo dock list | launch Safari | right-click Safari | hide | show
+
+# Dialogs
+peekaboo dialog list | click --button "OK" | input --text "filename.txt"
+peekaboo dialog file --path ~/Documents/file.txt | dismiss
 ```
 
-### Menubar / Dock / Dialog
-
-```bash
-peekaboo menubar list
-peekaboo menubar click --name "Wi-Fi"
-peekaboo menubar click --index 3
-
-peekaboo dock list
-peekaboo dock launch Safari
-peekaboo dock right-click Safari
-peekaboo dock hide && peekaboo dock show
-
-peekaboo dialog list
-peekaboo dialog click --button "OK"
-peekaboo dialog input --text "filename.txt"
-peekaboo dialog file --path ~/Documents/file.txt
-peekaboo dialog dismiss
-```
-
-### Agent (Natural Language)
+## Agent (Natural Language)
 
 ```bash
 peekaboo agent "Open Safari and navigate to github.com"
 peekaboo agent --model gpt-5.1 "Find and click the login button"
-peekaboo agent --dry-run "Close all Safari windows"   # Show plan without executing
-peekaboo agent --resume                               # Resume previous session
+peekaboo agent --dry-run "Close all Safari windows"               # Show plan only
+peekaboo agent --resume                                           # Resume session
 peekaboo agent --max-steps 10 "Complete the checkout process"
 ```
 
-### Utility
+## Utility
 
 ```bash
-peekaboo sleep --duration 1000                        # Delay (ms)
-peekaboo clean --all-snapshots
-peekaboo clean --older-than 7d
+peekaboo sleep --duration 1000                    # Delay (ms)
+peekaboo clean --all-snapshots | --older-than 7d
 peekaboo tools --verbose --json-output
-peekaboo config init && peekaboo config show
-peekaboo config add openai && peekaboo config login anthropic
-peekaboo config models
+peekaboo config init | show | add openai | login anthropic | models
 ```
 
 ## MCP Server Configuration
 
-Add to your AI assistant config. Key env var: `PEEKABOO_AI_PROVIDERS`.
-
-**Claude Desktop** (`Developer > Edit Config`):
+Add to AI assistant config (Claude Desktop `Developer > Edit Config`, OpenCode, or Cursor):
 
 ```json
 {
@@ -229,94 +172,59 @@ Add to your AI assistant config. Key env var: `PEEKABOO_AI_PROVIDERS`.
 }
 ```
 
-**OpenCode** (`~/.config/opencode/opencode.json`) and **Cursor** (MCP settings) use the same structure with `"type": "stdio"` for OpenCode.
+OpenCode adds `"type": "stdio"` to the same structure.
 
 ## AI Providers
 
-| Provider | Models | Environment Variable |
-|----------|--------|---------------------|
+| Provider | Models | Env Var |
+|----------|--------|---------|
 | OpenAI | GPT-5.1, GPT-4.1, GPT-4o | `OPENAI_API_KEY` |
 | Anthropic | Claude 4.x | `ANTHROPIC_API_KEY` |
 | xAI | Grok 4-fast | `XAI_API_KEY` |
 | Google | Gemini 2.5 (pro/flash) | `GOOGLE_API_KEY` |
-| Ollama | llama3.3, llava, glm-ocr, etc. | Local (no key needed) |
+| Ollama | llama3.3, llava, glm-ocr, etc. | Local (no key) |
 
-**Recommended by task:**
-
-| Task | Model |
-|------|-------|
-| OCR / Document text extraction | `ollama/glm-ocr` |
-| General screen understanding | `ollama/llava` or cloud |
-| UI element detection | Cloud (GPT-4o, Claude) |
+**Recommended**: OCR/document extraction: `ollama/glm-ocr` | General screen: `ollama/llava` or cloud | UI element detection: cloud (GPT-4o, Claude).
 
 ```bash
-# Configure provider
 peekaboo config add openai
 export PEEKABOO_AI_PROVIDERS="openai/gpt-5.1,anthropic/claude-opus-4-6"
-
-# Ollama local models
-brew install ollama
-ollama pull llava && ollama pull glm-ocr
+# Ollama local
+brew install ollama && ollama pull llava && ollama pull glm-ocr
 peekaboo image --mode window --app Preview --analyze "Extract all text" --model ollama/glm-ocr
 ```
 
-**GLM-OCR** is recommended for OCR-heavy tasks. See `tools/ocr/glm-ocr.md` for standalone OCR workflows.
+**GLM-OCR** recommended for OCR-heavy tasks. See `tools/ocr/glm-ocr.md` for standalone OCR workflows.
 
-## Workflow Patterns
-
-### Automated Form Filling
+## Workflow: Form Filling
 
 ```bash
 SNAPSHOT=$(peekaboo see --app Safari --json-output | jq -r '.data.snapshot_id')
-peekaboo click --on "Email" --snapshot "$SNAPSHOT"
-peekaboo type --text "user@example.com"
-peekaboo click --on "Password" --snapshot "$SNAPSHOT"
-peekaboo type --text "secure-password"
+peekaboo click --on "Email" --snapshot "$SNAPSHOT" && peekaboo type --text "user@example.com"
+peekaboo click --on "Password" --snapshot "$SNAPSHOT" && peekaboo type --text "secure-password"
 peekaboo click --on "Submit" --snapshot "$SNAPSHOT"
-```
-
-### Multi-Window Workflow
-
-```bash
-peekaboo window list --json-output
-peekaboo window focus --app Safari --title "GitHub"
-peekaboo window set-bounds --app Safari --x 0 --y 0 --width 960 --height 1080
-peekaboo window set-bounds --app "VS Code" --x 960 --y 0 --width 960 --height 1080
 ```
 
 ## When to Use Peekaboo vs Other Tools
 
 | Use case | Tool |
 |----------|------|
-| macOS native app automation | **Peekaboo** |
-| Screen capture with AI analysis | **Peekaboo** |
-| Menu bar, dock, virtual desktops | **Peekaboo** |
+| macOS native app automation, screen capture with AI, menu bar/dock/spaces | **Peekaboo** |
 | Cross-platform web automation | agent-browser, Playwright, Stagehand |
 | Linux/Windows | Any cross-platform tool |
 
 ## Troubleshooting
 
 ```bash
-# Permission issues
+# Permissions
 peekaboo permissions status
 tccutil reset ScreenCapture com.steipete.Peekaboo
-tccutil reset Accessibility com.steipete.Peekaboo
-peekaboo permissions grant
+tccutil reset Accessibility com.steipete.Peekaboo && peekaboo permissions grant
 
-# MCP connection issues
-npx -y @steipete/peekaboo --help
+# MCP connection
+npx -y @steipete/peekaboo --help && node --version  # Requires 22+
 lsof -i :3000
-node --version  # Requires 22+
 
-# Snapshot issues
-peekaboo clean --all-snapshots
-ls -la ~/.peekaboo/snapshots/
+# Snapshots
+peekaboo clean --all-snapshots && ls -la ~/.peekaboo/snapshots/
 ```
-
-## Resources
-
-- **GitHub**: https://github.com/steipete/Peekaboo
-- **Website**: https://peekaboo.boo
-- **npm**: https://www.npmjs.com/package/@steipete/peekaboo
-- **Docs**: https://github.com/steipete/Peekaboo/tree/main/docs
-- **License**: MIT
