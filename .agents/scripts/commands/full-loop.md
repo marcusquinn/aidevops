@@ -26,26 +26,13 @@ Fatal modes: **GH#5317** (exits without PR), **GH#5096** (exits after PR). Do NO
 
 ## Step 0: Resolve Task ID
 
-Extract first positional arg from `$ARGUMENTS` (ignore flags). If `$ARGUMENTS` contains ` -- `, everything after is the task description (t158). Task ID (`t\d+`): resolve via inline ` -- `, TODO.md, or `gh issue list --search "$TASK_ID"`. Set session title: `"t061: Fix login bug"`. Otherwise use description directly. Extract issue number:
+Extract first positional arg from `$ARGUMENTS` (ignore flags). If `$ARGUMENTS` contains ` -- `, everything after is the task description (t158). Task ID (`t\d+`): resolve via inline ` -- `, TODO.md, or `gh issue list --search "$TASK_ID"`. Set session title: `"t061: Fix login bug"`. Otherwise use description directly.
 
-```bash
-ISSUE_NUM=$(echo "$ARGUMENTS" | sed -En 's/.*[Ii][Ss][Ss][Uu][Ee][[:space:]]*#*([0-9]+).*/\1/p' | head -1)
-```
+Extract issue number: `ISSUE_NUM=$(echo "$ARGUMENTS" | sed -En 's/.*[Ii][Ss][Ss][Uu][Ee][[:space:]]*#*([0-9]+).*/\1/p' | head -1)`
 
 ### Step 0.45: Task Decomposition Check (t1408.2)
 
-Skip if `--no-decompose` or already has subtasks.
-
-```bash
-DECOMPOSE_HELPER="$HOME/.aidevops/agents/scripts/task-decompose-helper.sh"
-if [[ -x "$DECOMPOSE_HELPER" && -n "$TASK_ID" ]]; then
-  HAS_SUBS=$(/bin/bash "$DECOMPOSE_HELPER" has-subtasks "$TASK_ID") || HAS_SUBS="false"
-  if [[ "$HAS_SUBS" == "false" ]]; then
-    CLASSIFY=$(/bin/bash "$DECOMPOSE_HELPER" classify "$TASK_DESC" --depth 0) || CLASSIFY=""
-    TASK_KIND=$(echo "$CLASSIFY" | jq -r '.kind // "atomic"' || echo "atomic")
-  fi
-fi
-```
+Skip if `--no-decompose` or already has subtasks. Run `task-decompose-helper.sh classify "$TASK_DESC" --depth 0` to get `kind`.
 
 - **Composite — interactive:** Show tree, ask `[Y/n/edit]`. Create child IDs via `claim-task-id.sh`, add `blocked-by:` edges, label parent `status:blocked`.
 - **Composite — headless:** Auto-decompose, exit: `DECOMPOSED: task $TASK_ID split into $SUBTASK_COUNT subtasks ($CHILD_IDS).`
@@ -89,14 +76,7 @@ Exit 0: already on feature branch. Exit 2: on main — auto-create worktree. Doc
 
 **Step 1.5 — Operation verification (t1364.3):** Source `verify-operation-helper.sh`, call `check_operation`/`verify_operation`. Critical/high → block or verify. Moderate → log. Low → skip. Config: `VERIFY_ENABLED`, `VERIFY_POLICY`, `VERIFY_TIMEOUT` (30s), `VERIFY_MODEL` (haiku).
 
----
-
-## Step 2: Start Full Loop
-
-```bash
-~/.aidevops/agents/scripts/full-loop-helper.sh start "$ARGUMENTS" --background
-~/.aidevops/agents/scripts/full-loop-helper.sh {status|logs|cancel}  # monitor
-```
+Start the loop: `~/.aidevops/agents/scripts/full-loop-helper.sh start "$ARGUMENTS" --background`
 
 `--headless` / `FULL_LOOP_HEADLESS=true`: suppresses prompts, prevents TODO.md edits.
 
