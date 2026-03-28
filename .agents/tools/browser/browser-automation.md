@@ -48,9 +48,7 @@ TEST your app?
   CI/CD → playwright-cli, agent-browser, or Playwright
 ```
 
-## AI Page Understanding
-
-ARIA snapshots are the default (50-200 tokens). Screenshots only for visual debugging (~1K tokens, vision model).
+## AI Page Understanding (ARIA preferred)
 
 ```javascript
 const aria = await page.locator('body').ariaSnapshot();          // ~0.01s, 50-200 tokens
@@ -63,9 +61,9 @@ const elements = await page.evaluate(() =>
 );
 ```
 
-## Performance Benchmarks
+## Performance Benchmarks (2026-01-24, macOS ARM64, headless, warm daemon)
 
-Tested 2026-01-24, macOS ARM64, headless, warm daemon. Reproduce: `browser-benchmark.md`.
+Reproduce: `browser-benchmark.md`.
 
 | Test | Playwright | dev-browser | agent-browser | Crawl4AI | Playwriter | Stagehand |
 |------|-----------|-------------|---------------|----------|------------|-----------|
@@ -98,9 +96,9 @@ Tested 2026-01-24, macOS ARM64, headless, warm daemon. Reproduce: `browser-bench
 
 ## Extensions and Password Managers
 
-**Unlock order**: Playwriter (already unlocked) > dev-browser (install in profile, unlock once) > Playwright persistent (load extension + `bw unlock`).
+**Unlock order**: Playwriter (already unlocked) > dev-browser (unlock once) > Playwright persistent (`bw unlock`).
 
-**Ad blocking**: Brave with Shields (no extension needed), or uBlock Origin in Playwright/dev-browser:
+**Ad blocking**: Brave Shields (built-in), or uBlock Origin in Playwright/dev-browser:
 
 ```javascript
 const context = await chromium.launchPersistentContext('/tmp/browser-profile', {
@@ -112,22 +110,16 @@ const context = await chromium.launchPersistentContext('/tmp/browser-profile', {
 
 ## Custom Browser Engines
 
-All of Playwright, Playwriter, Crawl4AI, and Stagehand support Brave, Edge, Chrome, and Mullvad (Firefox). playwright-cli, agent-browser, and WaterCrawl use bundled Chromium only.
-
-macOS paths: Brave `/Applications/Brave Browser.app/Contents/MacOS/Brave Browser` · Edge `/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge` · Chrome `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` · Mullvad `/Applications/Mullvad Browser.app/Contents/MacOS/mullvadbrowser`
-
-Store preference in `~/.config/aidevops/browser-prefs.json` (`preferred_browser`, `preferred_firefox`, `browser_paths`).
+Playwright, Playwriter, Crawl4AI, Stagehand support Brave/Edge/Chrome/Mullvad. playwright-cli, agent-browser, WaterCrawl: bundled Chromium only. macOS paths: `/Applications/{Brave Browser,Microsoft Edge,Google Chrome}.app/Contents/MacOS/{name}` · Mullvad: `/Applications/Mullvad Browser.app/Contents/MacOS/mullvadbrowser`. Config: `~/.config/aidevops/browser-prefs.json`.
 
 ## Chrome DevTools MCP
 
 ```bash
-npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222  # Connect to dev-browser
-npx chrome-devtools-mcp@latest --headless                           # Own headless Chrome
+npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222  # dev-browser
+npx chrome-devtools-mcp@latest --headless                           # own Chrome
 ```
 
-**Pair with**: dev-browser (profile + inspection), Playwright (speed + debugging), Playwriter (your browser).
-
-**Setup**: `watercrawl-helper.sh setup` | `anti-detect-helper.sh setup`
+**Pair with**: dev-browser (profile + inspection), Playwright (speed + debugging), Playwriter (your browser). **Setup**: `watercrawl-helper.sh setup` | `anti-detect-helper.sh setup`
 
 <!-- AI-CONTEXT-END -->
 
@@ -135,7 +127,7 @@ npx chrome-devtools-mcp@latest --headless                           # Own headle
 
 ### Playwright Direct
 
-> **Screenshot limit**: Never `fullPage: true` for AI vision — full-page can exceed 8000px (Anthropic hard-rejects). Resize: `magick screenshot.png -resize "1568x1568>" out.png`. See `prompts/build.txt`.
+> **Screenshot limit**: Never `fullPage: true` for AI vision — can exceed 8000px (hard-rejected). Resize: `magick screenshot.png -resize "1568x1568>" out.png`. See `prompts/build.txt`.
 
 ```javascript
 import { chromium } from 'playwright';
@@ -144,9 +136,8 @@ const page = await browser.newPage();
 await page.goto('https://example.com');
 await page.fill('input[name="email"]', 'user@example.com');
 await page.screenshot({ path: '/tmp/screenshot.png' });
-await page.context().storageState({ path: 'state.json' }); // Save auth
+await page.context().storageState({ path: 'state.json' }); // Restore: newContext({ storageState })
 await browser.close();
-// Restore: browser.newContext({ storageState: 'state.json' })
 ```
 
 ### Playwright CLI
@@ -175,7 +166,7 @@ await client.disconnect();
 EOF
 ```
 
-Profile at `~/.aidevops/dev-browser/skills/dev-browser/profiles/browser-data/` retains cookies, localStorage, and extension data.
+Profile: `~/.aidevops/dev-browser/skills/dev-browser/profiles/browser-data/` (cookies, localStorage, extensions).
 
 ### Agent-Browser
 
@@ -192,8 +183,9 @@ agent-browser close
 
 ### Crawl4AI
 
+Activate: `source ~/.aidevops/crawl4ai-venv/bin/activate`. **Caveat**: `use_persistent_context=True` crashes with concurrent `arun_many` — use separate crawler instances.
+
 ```python
-# source ~/.aidevops/crawl4ai-venv/bin/activate
 import asyncio
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
 from crawl4ai.extraction_strategy import JsonCssExtractionStrategy
@@ -213,15 +205,9 @@ async def extract():
 asyncio.run(extract())
 ```
 
-> `use_persistent_context=True` crashes with concurrent `arun_many` — use separate crawler instances.
-
 ### Playwriter
 
-```bash
-# Install extension: https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe
-# Click extension icon on tab to control (turns green), then:
-npx playwriter@latest
-```
+Install extension: `https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe`, then `npx playwriter@latest`.
 
 ```javascript
 import { chromium } from 'playwright-core';
@@ -265,7 +251,7 @@ await stagehand.close();
 agent-browser screenshot /tmp/debug.png && agent-browser errors && agent-browser snapshot -i
 ```
 
-**NEVER use curl to verify frontend fixes** — server returns 200 even when React crashes client-side. Self-diagnosis: Action fails → screenshot → errors/console → snapshot/URL → analyze → retry → ask user only if truly stuck.
+**NEVER use curl to verify frontend fixes** — server returns 200 even when React crashes client-side. Diagnosis flow: screenshot → errors/console → snapshot/URL → analyze → retry → ask user if stuck.
 
 ## Ethical Guidelines
 
