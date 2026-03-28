@@ -23,61 +23,49 @@ tools:
 - **Security**: Zero credential exposure, encrypted storage, confirmation prompts
 - **Performance**: <1s local ops, <5s API calls, 10+ concurrent operations
 - **MCP**: Real-time data access via MCP servers
-- **Categories**: Infrastructure, Deployment, Content, Security, Quality, Git, Email, DNS, Local
 - **Quality check**: `curl -s "https://sonarcloud.io/api/measures/component?component=marcusquinn_aidevops&metricKeys=bugs,vulnerabilities,code_smells"`
 - **ShellCheck**: `find .agents/scripts/ -name "*.sh" -exec shellcheck {} \;`
+
 <!-- AI-CONTEXT-END -->
 
 ## Core Requirements
 
-### **Functional Requirements**
+### Functional
 
-- **Multi-provider support**: Manage 25+ services through unified interfaces
-- **Secure credential management**: Enterprise-grade security for all credentials
-- **Consistent command patterns**: Unified command structure across all services
+- **Multi-provider**: Manage 25+ services through unified interfaces
+- **Secure credentials**: Enterprise-grade security for all credentials (see `security-requirements.md`)
+- **Consistent commands**: Unified `[service]-helper.sh [command] [account] [target]` pattern
 - **Real-time integration**: MCP server support for live data access
-- **Intelligent setup**: Guided configuration and setup assistance
-- **Comprehensive monitoring**: Health checks and status monitoring across all services
-- **Automated operations**: Support for automated DevOps workflows
-- **Error recovery**: Robust error handling and recovery mechanisms
+- **Guided setup**: AI-assisted configuration via `setup-wizard-helper.sh`
+- **Health monitoring**: Status checks across all services
+- **Automated ops**: Support for automated DevOps workflows
+- **Error recovery**: Robust error handling with retry and backoff
 
-### **Non-Functional Requirements**
+### Non-Functional
 
-- **Security**: Zero credential exposure, secure by default
-- **Reliability**: 99.9% uptime for critical operations
-- **Performance**: Sub-second response times for common operations
-- **Scalability**: Support for unlimited service accounts and resources
-- **Maintainability**: Modular architecture for easy extension
-- **Usability**: Clear documentation and intuitive command patterns
-- **Compatibility**: Cross-platform support (macOS, Linux, Windows)
-- **Auditability**: Complete audit trails for all operations
+| Requirement | Target |
+|-------------|--------|
+| Security | Zero credential exposure, secure by default |
+| Reliability | 99.9% uptime for critical operations |
+| Performance | <1s local, <5s API, <500ms MCP, <30s setup wizard |
+| Scalability | Unlimited accounts, 1000+ resources/service, 10+ concurrent ops |
+| Maintainability | Modular architecture, easy extension (see `extension.md`) |
+| Compatibility | macOS, Linux, Windows |
+| Auditability | Complete audit trails for all operations |
 
-### **🏆 Quality Requirements (MANDATORY)**
+## Quality Standards (Mandatory)
 
-**All code changes MUST maintain these quality standards:**
+All code changes MUST maintain these standards:
 
-#### **Code Quality Platforms**
+**Platforms**: SonarCloud (A-grade), CodeFactor (A-grade, 80%+ A-grade files), GitHub Actions (all checks pass), ShellCheck (zero violations)
 
-- **SonarCloud**: A-grade Security, Reliability, Maintainability ratings
-- **CodeFactor**: A-grade overall rating (80%+ A-grade files)
-- **GitHub Actions**: All CI/CD checks must pass
-- **ShellCheck**: Zero violations across all shell scripts
+**Metrics**: Zero security vulnerabilities, zero code duplication (0.0%), <400 code smells, professional shell scripting practices
 
-#### **Quality Metrics**
+**Validation process**:
 
-- **Zero Security Vulnerabilities**: Maintain perfect security rating
-- **Zero Code Duplication**: Keep duplication at 0.0%
-- **Minimal Code Smells**: Target <400 maintainability issues
-- **Professional Standards**: Follow established shell scripting best practices
-
-#### **Quality Validation Process**
-
-1. **Pre-commit**: Run ShellCheck on all modified shell scripts
+1. **Pre-commit**: ShellCheck on all modified shell scripts
 2. **Post-commit**: Verify SonarCloud and CodeFactor improvements
 3. **Continuous**: Monitor quality platforms for regressions
-4. **Documentation**: Update quality guidelines with new learnings
-
-**Quality Check Commands:**
 
 ```bash
 # SonarCloud status
@@ -90,212 +78,40 @@ curl -s "https://www.codefactor.io/repository/github/marcusquinn/aidevops"
 find .agents/scripts/ -name "*.sh" -exec shellcheck {} \;
 ```
 
-## 🏗️ **Service Categories & Capabilities**
+## Service Categories
 
-### **Infrastructure & Hosting**
+Full service catalogue with helpers, configs, and docs: `services.md`
 
-**Services**: Hostinger, Hetzner Cloud, Closte, Cloudron
-**Capabilities**:
+**Categories**: Infrastructure (Hostinger, Hetzner, Closte, Cloudron), Deployment (Coolify), Content (MainWP), Security (Vaultwarden), Code Quality (CodeRabbit, CodeFactor, Codacy, SonarCloud), Git (GitHub, GitLab, Gitea, Local), Email (Amazon SES), DNS (Cloudflare, Namecheap, Route 53), Domains/Registrars (Spaceship, 101domains), Dev/Local (Localhost, LocalWP, Context7 MCP, MCP Servers)
 
-- Server provisioning and management
-- Resource monitoring and scaling
-- Backup and disaster recovery
-- SSL certificate management
-- Load balancer configuration
+## Security Requirements
 
-### **Deployment & Orchestration**
+Full security requirements, incident response, and compliance: `security-requirements.md`
 
-**Services**: Coolify
-**Capabilities**:
+**Summary**: Encryption at rest, HTTPS/TLS transmission, role-based access, audit logging, credential rotation. Input validation, output sanitization, confirmation prompts for destructive ops, rate limiting, secure error messages. Restricted file permissions, process isolation, resource limits, vulnerability management.
 
-- Application deployment automation
-- Container orchestration
-- CI/CD pipeline management
-- Environment management
-- Rollback and recovery
+## Integration Requirements
 
-### **Content Management**
+### MCP Server Integration
 
-**Services**: MainWP
-**Capabilities**:
+- Real-time data access from all integrated services
+- Encrypted communications, graceful degradation when unavailable
+- Efficient caching, multi-server coordination
 
-- WordPress site management at scale
-- Plugin and theme updates
-- Security scanning and monitoring
-- Backup management
-- Performance optimization
+### External Service Integration
 
-### **Security & Secrets**
+- REST and GraphQL API support
+- Multiple auth methods (tokens, OAuth, API keys)
+- Webhook support, batch operations, automatic retry with exponential backoff
 
-**Services**: Vaultwarden
-**Capabilities**:
+### AI Assistant Integration
 
-- Secure credential storage and retrieval
-- Password generation and management
-- Team credential sharing
-- Audit logging and access control
-- Integration with all framework services
+- Rich context for AI decision making
+- AI-generated command validation before execution
+- Operation results fed back to AI systems
 
-### **Code Quality & Auditing**
+## Monitoring & Observability
 
-**Services**: CodeRabbit, CodeFactor, Codacy, SonarCloud
-**Capabilities**:
-
-- Automated code quality analysis
-- Security vulnerability detection
-- Code coverage reporting
-- Quality gate enforcement
-- Trend analysis and reporting
-
-### **Version Control & Git Platforms**
-
-**Services**: GitHub, GitLab, Gitea, Local Git
-**Capabilities**:
-
-- Repository creation and management
-- Branch and merge management
-- Issue and PR automation
-- CI/CD integration
-- Security and compliance scanning
-
-### **Email Services**
-
-**Services**: Amazon SES
-**Capabilities**:
-
-- Email delivery and monitoring
-- Bounce and complaint handling
-- Reputation management
-- Analytics and reporting
-- Template management
-
-### **Domain & DNS**
-
-**Services**: Spaceship, 101domains, Cloudflare DNS, Namecheap DNS, Route 53
-**Capabilities**:
-
-- Domain purchasing and management
-- DNS record management
-- SSL certificate provisioning
-- CDN configuration
-- Performance optimization
-
-### **Development & Local**
-
-**Services**: Localhost, LocalWP, Context7 MCP, MCP Servers
-**Capabilities**:
-
-- Local development environment setup
-- WordPress development with database access
-- Real-time documentation access
-- AI assistant data integration
-- Development workflow automation
-
-## 🔐 **Security Requirements**
-
-### **Credential Security**
-
-- **Encryption at rest**: All credentials encrypted when stored
-- **Secure transmission**: All API communications over HTTPS/TLS
-- **Access control**: Role-based access to credentials and operations
-- **Audit logging**: Complete audit trail for all credential access
-- **Regular rotation**: Automated credential rotation capabilities
-
-### **Operational Security**
-
-- **Input validation**: All inputs validated and sanitized
-- **Output sanitization**: No sensitive data in logs or output
-- **Confirmation prompts**: Required for destructive operations
-- **Rate limiting**: Respect service rate limits and implement backoff
-- **Error handling**: Secure error messages without data exposure
-
-### **Infrastructure Security**
-
-- **File permissions**: Restricted permissions on all configuration files
-- **Network security**: Secure communication channels only
-- **Process isolation**: Isolated execution environments
-- **Resource limits**: Appropriate resource limits and monitoring
-- **Vulnerability management**: Regular security updates and patches
-
-## 🚀 **Performance Requirements**
-
-### **Response Times**
-
-- **Command execution**: < 1 second for local operations
-- **API operations**: < 5 seconds for single API calls
-- **Bulk operations**: Progress reporting for long-running tasks
-- **MCP server response**: < 500ms for data retrieval
-- **Setup wizard**: < 30 seconds for complete assessment
-
-### **Throughput**
-
-- **Concurrent operations**: Support for 10+ concurrent operations
-- **Bulk processing**: Handle 100+ resources in batch operations
-- **API rate limits**: Respect and optimize within service limits
-- **Resource efficiency**: Minimal memory and CPU usage
-- **Network optimization**: Efficient API usage patterns
-
-### **Scalability**
-
-- **Service accounts**: Unlimited service accounts per provider
-- **Resource management**: Handle 1000+ resources per service
-- **Configuration size**: Support for large configuration files
-- **Log management**: Efficient log rotation and archival
-- **Cache management**: Intelligent caching for performance
-
-## 🔄 **Integration Requirements**
-
-### **MCP Server Integration**
-
-- **Real-time data access**: Live data from all integrated services
-- **Secure communication**: Encrypted MCP server communications
-- **Error handling**: Graceful degradation when MCP servers unavailable
-- **Performance optimization**: Efficient data retrieval and caching
-- **Multi-server support**: Coordinate across multiple MCP servers
-
-### **External Service Integration**
-
-- **API compatibility**: Support for REST and GraphQL APIs
-- **Authentication**: Support for various auth methods (tokens, OAuth, etc.)
-- **Webhook support**: Handle webhooks for real-time updates
-- **Batch operations**: Efficient bulk operations where supported
-- **Error recovery**: Automatic retry with exponential backoff
-
-### **AI Assistant Integration**
-
-- **Context awareness**: Provide rich context for AI decision making
-- **Command generation**: Support AI-generated command sequences
-- **Validation**: Validate AI-generated operations before execution
-- **Feedback loops**: Provide operation results back to AI systems
-- **Learning support**: Support for AI learning from operation outcomes
-
-## 📊 **Monitoring & Observability**
-
-### **Health Monitoring**
-
-- **Service health checks**: Regular health checks for all services
-- **Performance metrics**: Response time and throughput monitoring
-- **Error rate tracking**: Monitor and alert on error rates
-- **Resource utilization**: Monitor system resource usage
-- **Dependency monitoring**: Track external service dependencies
-
-### **Audit & Compliance**
-
-- **Operation logging**: Complete logs for all operations
-- **Access tracking**: Track all credential and resource access
-- **Change management**: Log all configuration and resource changes
-- **Compliance reporting**: Generate compliance reports as needed
-- **Data retention**: Appropriate data retention policies
-
-### **Alerting & Notification**
-
-- **Error alerting**: Immediate alerts for critical errors
-- **Performance degradation**: Alerts for performance issues
-- **Security events**: Immediate alerts for security incidents
-- **Maintenance windows**: Notifications for planned maintenance
-- **Status updates**: Regular status updates for long operations
-
-  task: true
----
-
-**These requirements ensure the framework provides enterprise-grade DevOps automation capabilities while maintaining security, performance, and reliability standards.** 🎯🔒⚡
+- **Health**: Regular service health checks, performance metrics, error rate tracking, dependency monitoring
+- **Audit**: Complete operation logs, access tracking, change management, compliance reporting, data retention
+- **Alerting**: Critical error alerts, performance degradation warnings, security event notifications, maintenance windows
