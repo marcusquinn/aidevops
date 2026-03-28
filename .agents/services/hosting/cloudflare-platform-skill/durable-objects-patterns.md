@@ -240,16 +240,14 @@ async alarm() {
 
 ## Best Practices
 
-**Design for Hibernation**: DOs should sleep by default, wake for meaningful work, then sleep again. All important state must persist to storage—in-memory state is lost on eviction. Use `blockConcurrencyWhile()` in constructor to reload state on wake. Design so any instance could disappear and reconstruct from storage.
+**Hibernation-first design**: Sleep by default, wake for meaningful work, sleep again. All state must persist to storage — in-memory state is lost on eviction. Use `blockConcurrencyWhile()` in constructor to reload state on wake. Use `idFromName()` for coordination, `newUniqueId()` for sharding, minimize constructor work, leverage WebSocket hibernation API.
 
-**Atom of Coordination**: Each DO should own ONE logical unit (user, room, document, session). If data spans multiple boundaries or doesn't have natural ownership, DO may be wrong choice.
+**Atom of Coordination**: Each DO owns ONE logical unit (user, room, document, session). If data spans multiple boundaries or lacks natural ownership, DO may be wrong choice.
 
-**Design**: Keep objects focused, use `idFromName()` for coordination, `newUniqueId()` for sharding, minimize constructor work, leverage WebSocket hibernation
+**Storage**: Prefer SQLite, create indexes judiciously, batch with transactions, set alarms for cleanup, use PITR before risky ops.
 
-**Storage**: Prefer SQLite, create indexes judiciously, batch with transactions, set alarms for cleanup, use PITR before risky ops
+**Performance**: One DO ~1000 req/s max — shard for more, cache in memory, avoid long ops, use alarms for deferred work.
 
-**Performance**: One DO ~1000 req/s max - shard for more, cache in memory, avoid long ops, use alarms for deferred work
+**Reliability**: Handle 503 with retry+backoff, design for cold starts, test migrations, monitor alarm retries.
 
-**Reliability**: Handle 503 with retry+backoff, design for cold starts, test migrations, monitor alarm retries
-
-**Security**: Validate inputs in Workers, don't trust user names, rate limit DO creation, use jurisdiction tags, encrypt sensitive data
+**Security**: Validate inputs in Workers, don't trust user-supplied names, rate limit DO creation, use jurisdiction tags, encrypt sensitive data.
