@@ -29,12 +29,10 @@ tools:
 ## Setup
 
 1. Sign up at [muapi.ai/signup](https://muapi.ai/signup), generate key at [muapi.ai/access-keys](https://muapi.ai/access-keys)
-2. Store: `aidevops secret set MUAPI_API_KEY` (or `echo 'export MUAPI_API_KEY="your-key"' >> ~/.config/aidevops/credentials.sh && chmod 600 ~/.config/aidevops/credentials.sh`)
+2. Store: `aidevops secret set MUAPI_API_KEY`
 3. Test: `muapi-helper.sh flux "A test image" --sync`
 
 ## API Pattern
-
-All endpoints: async POST → `request_id` → poll.
 
 ```bash
 # Submit
@@ -166,14 +164,7 @@ POST /api/v1/ai-product-photography     # High-converting assets (optional promp
 POST /api/storyboard/projects
 ```
 
-Cinematic production with character persistence across scenes/episodes:
-
-1. **Character Creation** — `StoryboardCharacter` with static (age, hair) and dynamic (outfit, mood) features
-2. **Project Setup** — Houses characters and creative brief
-3. **Episode Generation** — Generate or manually create episodes
-4. **Scene & Shot Definition** — Link shots to characters/backgrounds for consistency
-
-Uses Flux/Runway for asset generation. Assets feed into workflows for post-processing.
+Cinematic production with character persistence across scenes/episodes. Flow: Character (`StoryboardCharacter` with static/dynamic features) → Project (characters + brief) → Episodes → Scenes/Shots (linked to characters/backgrounds). Uses Flux/Runway for generation; assets feed into workflows for post-processing.
 
 ### Payments & Credits
 
@@ -183,7 +174,7 @@ GET  /api/v1/payments/credits                           # Balance
 GET  /api/v1/payments/usage                             # History
 ```
 
-Credit-based (`CreditWallet`): deductions by model cost and duration. Full usage log with cost/status/IO data. Enterprise: custom limits, private deployment billing, multi-key tracking.
+Credit-based (`CreditWallet`): deducted by model cost and duration. Usage log includes cost/status/IO. Enterprise: custom limits, private deployment billing, multi-key tracking.
 
 ## CLI Helper
 
@@ -238,11 +229,10 @@ muapi-helper.sh status <request-id>
 
 ## Related
 
-- [MuAPI Documentation](https://muapi.ai/docs/introduction)
-- [MuAPI Playground](https://muapi.ai/playground)
-- `content/video-wavespeed.md` - WaveSpeed AI (alternative unified API)
-- `content/video-runway.md` - Runway API (alternative media pipeline)
-- `tools/video/video-prompt-design.md` - Prompt engineering for video models
-- `tools/vision/image-generation.md` - Image generation workflows
-- `content/production-video.md` - Video production pipeline
-- `content/production-audio.md` - Audio production pipeline
+- [MuAPI Documentation](https://muapi.ai/docs/introduction) | [Playground](https://muapi.ai/playground)
+- `content/video-wavespeed.md` — WaveSpeed AI (alternative unified API)
+- `content/video-runway.md` — Runway API (alternative media pipeline)
+- `tools/video/video-prompt-design.md` — Prompt engineering for video models
+- `tools/vision/image-generation.md` — Image generation workflows
+- `content/production-video.md` — Video production pipeline
+- `content/production-audio.md` — Audio production pipeline
