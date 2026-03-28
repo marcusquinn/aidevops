@@ -21,12 +21,11 @@ tools:
 - **Type**: Pluggable linting tool to prevent committing credentials and secrets
 - **Install**: `npm install secretlint @secretlint/secretlint-rule-preset-recommend --save-dev`
 - **Quick start**: `npx @secretlint/quick-start "**/*"` (no install) or `docker run -v $(pwd):$(pwd) -w $(pwd) --rm secretlint/secretlint secretlint "**/*"`
-- **Init**: `npx secretlint --init` creates `.secretlintrc.json`
+- **Init**: `npx secretlint --init` creates `.secretlintrc.json` with `{ "rules": [{ "id": "@secretlint/secretlint-rule-preset-recommend" }] }`
 - **Config**: `.secretlintrc.json` (rules), `.secretlintignore` (exclusions)
-- **Commands**: `secretlint-helper.sh [install|init|scan|quick|docker|mask|sarif|hook|status|help]`
+- **Helper**: `secretlint-helper.sh [install|init|scan|quick|docker|mask|sarif|hook|status|help]`
 - **Exit codes**: 0=clean, 1=secrets found, 2=error
 - **Output formats**: stylish (default), json, compact, table, sarif, mask-result
-- **Detected secrets**: AWS, GCP, GitHub, OpenAI, Anthropic, Slack, npm, private keys, database strings, and more
 - **Pre-commit**: Husky+lint-staged or native git hooks supported
 
 <!-- AI-CONTEXT-END -->
@@ -45,38 +44,13 @@ tools:
 
 ## Detected Secret Types
 
-| Secret Type | Rule |
-|-------------|------|
-| AWS Access Keys & Secret Keys | `@secretlint/secretlint-rule-aws` |
-| GCP Service Account Keys | `@secretlint/secretlint-rule-gcp` |
-| GitHub Tokens (PAT, OAuth, App) | `@secretlint/secretlint-rule-github` |
-| npm Tokens | `@secretlint/secretlint-rule-npm` |
-| Private Keys (RSA, DSA, EC, OpenSSH) | `@secretlint/secretlint-rule-privatekey` |
-| Basic Auth in URLs | `@secretlint/secretlint-rule-basicauth` |
-| Slack Tokens & Webhooks | `@secretlint/secretlint-rule-slack` |
-| SendGrid API Keys | `@secretlint/secretlint-rule-sendgrid` |
-| Shopify API Keys | `@secretlint/secretlint-rule-shopify` |
-| OpenAI API Keys | `@secretlint/secretlint-rule-openai` |
-| Anthropic/Claude API Keys | `@secretlint/secretlint-rule-anthropic` |
-| Linear API Keys | `@secretlint/secretlint-rule-linear` |
-| 1Password Service Account Tokens | `@secretlint/secretlint-rule-1password` |
-| Database Connection Strings | `@secretlint/secretlint-rule-database-connection-string` |
+**Preset rules** (`@secretlint/secretlint-rule-preset-recommend`): AWS keys (`-rule-aws`), GCP service accounts (`-rule-gcp`), GitHub tokens (`-rule-github`), npm tokens (`-rule-npm`), private keys (`-rule-privatekey`), basic auth in URLs (`-rule-basicauth`), Slack tokens/webhooks (`-rule-slack`), SendGrid (`-rule-sendgrid`), Shopify (`-rule-shopify`), OpenAI (`-rule-openai`), Anthropic/Claude (`-rule-anthropic`), Linear (`-rule-linear`), 1Password (`-rule-1password`), database connection strings (`-rule-database-connection-string`).
 
 **Additional rules**: `@secretlint/secretlint-rule-pattern` (custom regex), `secretlint-rule-secp256k1-privatekey` (crypto keys), `secretlint-rule-no-k8s-kind-secret` (Kubernetes), `secretlint-rule-no-homedir`, `secretlint-rule-no-dotenv`, `secretlint-rule-filter-comments`.
 
 ## Configuration
 
-### Basic (.secretlintrc.json)
-
-```json
-{
-  "rules": [
-    { "id": "@secretlint/secretlint-rule-preset-recommend" }
-  ]
-}
-```
-
-### Advanced
+### Advanced (.secretlintrc.json)
 
 ```json
 {
@@ -101,15 +75,7 @@ tools:
 }
 ```
 
-### Rule Options
-
-| Option | Type | Description |
-|--------|------|-------------|
-| `id` | string | Rule package name |
-| `options` | object | Rule-specific options |
-| `disabled` | boolean | Disable the rule |
-| `allowMessageIds` | string[] | Message IDs to suppress |
-| `allows` | string[] | Patterns to allow (RegExp-like strings) |
+**Rule options**: `id` (package name), `options` (rule-specific), `disabled` (boolean), `allowMessageIds` (string[] — suppress specific message IDs), `allows` (string[] — RegExp-like patterns to allow).
 
 ### Ignore File (.secretlintignore)
 
@@ -127,18 +93,15 @@ tools:
 **/*.pdf
 ```
 
-## Ignoring by Comments
+### Inline Comment Directives
 
 ```javascript
 // secretlint-disable-next-line
 const API_KEY = "sk-test-12345";
-
 const config = { key: "secret-value" }; // secretlint-disable-line
-
 // secretlint-disable
 const TEST_KEYS = { aws: "AKIAIOSFODNN7EXAMPLE" };
 // secretlint-enable
-
 /* secretlint-disable @secretlint/secretlint-rule-github -- test credentials */
 const testToken = "ghs_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 /* secretlint-enable @secretlint/secretlint-rule-github */
@@ -151,7 +114,6 @@ secretlint "**/*"                                                              #
 secretlint "**/*" --format json                                                # JSON
 secretlint "**/*" --format @secretlint/secretlint-formatter-sarif > out.sarif  # SARIF (CI dashboards)
 secretlint .zsh_history --format=mask-result --output=.zsh_history             # Mask secrets in file
-
 # Via helper
 ./.agents/scripts/secretlint-helper.sh scan . json   # JSON
 ./.agents/scripts/secretlint-helper.sh sarif         # SARIF (requires @secretlint/secretlint-formatter-sarif)
@@ -161,12 +123,9 @@ secretlint .zsh_history --format=mask-result --output=.zsh_history             #
 ## Pre-commit Integration
 
 ```bash
-# Native git hook
-./.agents/scripts/secretlint-helper.sh hook
-
-# Husky + lint-staged (Node.js projects)
-./.agents/scripts/secretlint-helper.sh husky
-# Manual: npx husky-init && npm install lint-staged --save-dev
+./.agents/scripts/secretlint-helper.sh hook   # Native git hook
+./.agents/scripts/secretlint-helper.sh husky  # Husky + lint-staged (Node.js projects)
+# Manual husky: npx husky-init && npm install lint-staged --save-dev
 # package.json: "lint-staged": { "*": ["secretlint"] }
 # .husky/pre-commit: npx --no-install lint-staged
 ```
@@ -203,14 +162,13 @@ jobs:
       - run: npx secretlint "**/*"
 ```
 
-**Diff-only variant** (add before `setup-node` step):
+**Diff-only variant** — replace checkout and secretlint steps:
 
 ```yaml
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - uses: tj-actions/changed-files@v44
         id: changed-files
-      # replace `run: npx secretlint "**/*"` with:
       - if: steps.changed-files.outputs.any_changed == 'true'
         run: npm ci && npx secretlint ${{ steps.changed-files.outputs.all_changed_files }}
 ```
