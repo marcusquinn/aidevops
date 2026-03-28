@@ -25,188 +25,115 @@ tools:
 - **Local Dev**: `.local` suffix, SSL by default, port ranges (WordPress 10000+, APIs 8000+, MCP 8080+)
 - **MCP Ports**: Sequential allocation starting from base 8081
 - **Monitoring**: Weekly status checks, monthly token rotation, quarterly audits
+
 <!-- AI-CONTEXT-END -->
 
-This guide outlines proven best practices for infrastructure management and helps you select the right providers for your needs, based on real-world production setups.
+## Provider Selection
 
-## Available Providers
+### Hosting & Cloud
 
-### Hosting & Cloud Providers
-
-- **[Hostinger](HOSTINGER.md)** - Budget-friendly web hosting with good performance
-- **[Hetzner Cloud](HETZNER.md)** - German cloud provider with excellent price-to-performance
-- **[Closte](CLOSTE.md)** - VPS hosting with competitive pricing
-- **[Cloudron](CLOUDRON.md)** - Self-hosted app platform for easy application management
+| Provider | Best For | Price | Key Features | Docs |
+|----------|----------|-------|--------------|------|
+| Hostinger | Small-medium sites | $ | Easy management, good value | [HOSTINGER.md](HOSTINGER.md) |
+| Hetzner Cloud | Production apps | $$ | Excellent performance, API | [HETZNER.md](HETZNER.md) |
+| Closte | VPS hosting | $$ | Competitive pricing, flexibility | [CLOSTE.md](CLOSTE.md) |
 
 ### Deployment Platforms
 
-- **[Coolify](COOLIFY.md)** - Self-hosted alternative to Vercel/Netlify/Heroku
-- **[Cloudron](CLOUDRON.md)** - Self-hosted app platform with easy management
+| Platform | Best For | Complexity | Key Features | Docs |
+|----------|----------|------------|--------------|------|
+| Coolify | Self-hosted PaaS | Medium | Docker-based, full control | [COOLIFY.md](COOLIFY.md) |
+| Cloudron | App management | Low | One-click apps, easy management | [CLOUDRON.md](CLOUDRON.md) |
 
-### Email Services
+### DNS & Domain Management
 
-- **[Amazon SES](SES.md)** - Scalable email delivery with comprehensive monitoring
+| Provider | Best For | API Quality | Key Features | Docs |
+|----------|----------|-------------|--------------|------|
+| Cloudflare | Global performance | Excellent | CDN, security, analytics | [CLOUDFLARE-SETUP.md](CLOUDFLARE-SETUP.md) |
+| Spaceship | Modern domain mgmt | Excellent | Developer-friendly, competitive pricing | [SPACESHIP.md](SPACESHIP.md) |
+| 101domains | Large portfolios | Excellent | Extensive TLDs, privacy features | [101DOMAINS.md](101DOMAINS.md) |
+| Route 53 | AWS integration | Excellent | Advanced routing, health checks | [route53-dns-config.json.txt](../configs/route53-dns-config.json.txt) |
+| Namecheap | Domain registration | Limited | Affordable, basic DNS | [namecheap-dns-config.json.txt](../configs/namecheap-dns-config.json.txt) |
 
-### WordPress Management
+### Other Services
 
-- **[MainWP](MAINWP.md)** - Self-hosted WordPress management platform
-
-### Security & Secrets Management
-
-- **[Vaultwarden](VAULTWARDEN.md)** - Self-hosted password and secrets management
-
-### Code Quality & Security
-
-- **[Code Auditing](CODE-AUDITING.md)** - Multi-platform code quality and security analysis
-
-### Version Control & Git Platforms
-
-- **[Git Platforms](GIT-PLATFORMS.md)** - GitHub, GitLab, Gitea, and local Git management
-
-### Domain Management & Purchasing
-
-- **[Domain Purchasing](DOMAIN-PURCHASING.md)** - Automated domain purchasing and management
-
-### DNS & Domain Providers
-
-- **[Cloudflare DNS](CLOUDFLARE-SETUP.md)** - Global CDN and DNS with comprehensive API
-- **[Spaceship](SPACESHIP.md)** - Modern domain registrar with developer-friendly API
-- **[101domains](101DOMAINS.md)** - Comprehensive registrar with extensive TLD coverage
-- **[Namecheap DNS](../configs/namecheap-dns-config.json.txt)** - Domain registrar with DNS management
-- **[Route 53](../configs/route53-dns-config.json.txt)** - AWS DNS service with advanced features
+| Service | Purpose | Docs |
+|---------|---------|------|
+| Amazon SES | Scalable email delivery with analytics | [SES.md](SES.md) |
+| MainWP | Self-hosted WordPress management | [MAINWP.md](MAINWP.md) |
+| Vaultwarden | Self-hosted password/secrets management | [VAULTWARDEN.md](VAULTWARDEN.md) |
+| Code Auditing | Multi-platform code quality & security | [CODE-AUDITING.md](CODE-AUDITING.md) |
+| Git Platforms | GitHub, GitLab, Gitea, local Git | [GIT-PLATFORMS.md](GIT-PLATFORMS.md) |
+| Domain Purchasing | Automated domain purchasing | [DOMAIN-PURCHASING.md](DOMAIN-PURCHASING.md) |
 
 ### Local Development
 
-- **[LocalWP](LOCALWP-MCP.md)** - Local WordPress development with MCP integration
-- **[Localhost](LOCALHOST.md)** - Local development environment with .local domains
-- **[Context7 MCP](CONTEXT7-MCP-SETUP.md)** - Real-time documentation access for AI assistants
-- **[MCP Servers](MCP-SERVERS.md)** - Model Context Protocol server configuration
-
-### Web Crawling & Data Extraction
-
-- **[Crawl4AI](CRAWL4AI.md)** - AI-powered web crawler and scraper with LLM-friendly output
-
-## Provider Selection Guide
-
-### **For Web Hosting:**
-
-| Provider | Best For | Price Range | Key Features |
-|----------|----------|-------------|--------------|
-| **Hostinger** | Small-medium sites | $ | Easy management, good value |
-| **Hetzner Cloud** | Production apps | $$ | Excellent performance, API |
-| **Closte** | VPS hosting | $$ | Competitive pricing, flexibility |
-
-### **For Application Deployment:**
-
-| Platform | Best For | Complexity | Key Features |
-|----------|----------|------------|--------------|
-| **Coolify** | Self-hosted PaaS | Medium | Docker-based, full control |
-| **Cloudron** | App management | Low | One-click apps, easy management |
-
-### **For Email Delivery:**
-
-| Service | Best For | Complexity | Key Features |
-|---------|----------|------------|--------------|
-| **Amazon SES** | Scalable email delivery | Medium | High deliverability, comprehensive analytics |
-
-### **For DNS & Domain Management:**
-
-| Provider | Best For | API Quality | Key Features |
-|----------|----------|-------------|--------------|
-| **Cloudflare** | Global performance | Excellent | CDN, security, analytics |
-| **Spaceship** | Modern domain management | Excellent | Developer-friendly, competitive pricing |
-| **101domains** | Large portfolios | Excellent | Extensive TLDs, privacy features |
-| **Route 53** | AWS integration | Excellent | Advanced routing, health checks |
-| **Namecheap** | Domain registration | Limited | Affordable, basic DNS |
+| Tool | Purpose | Docs |
+|------|---------|------|
+| LocalWP | Local WordPress dev with MCP integration | [LOCALWP-MCP.md](LOCALWP-MCP.md) |
+| Localhost | `.local` domains, SSL, port management | [LOCALHOST.md](LOCALHOST.md) |
+| Context7 MCP | Real-time documentation for AI assistants | [CONTEXT7-MCP-SETUP.md](CONTEXT7-MCP-SETUP.md) |
+| MCP Servers | Model Context Protocol configuration | [MCP-SERVERS.md](MCP-SERVERS.md) |
+| Crawl4AI | AI-powered web crawler, LLM-friendly output | [CRAWL4AI.md](CRAWL4AI.md) |
 
 ## Infrastructure Organization
 
-### **Multi-Project Architecture**
+### Multi-Project Architecture
 
-- **Separate API tokens** for different projects/clients
-- **Descriptive naming**: Use clear project names (main, client-project, storagebox, client-projects)
-- **Account isolation**: Keep production, development, and client projects separate
-- **Documentation**: Maintain clear descriptions for each project/account
+- **Separate API tokens** per project/client
+- **Descriptive naming**: Clear project names (main, client-project, storagebox)
+- **Account isolation**: Separate production, development, and client environments
+- **Documentation**: Maintain descriptions for each project/account
 
-### **Hetzner Cloud Best Practices**
+### Hetzner Account Structure Example
 
 ```json
 {
   "accounts": {
-    "main": {
-      "api_token": "YOUR_MAIN_TOKEN",
-      "description": "Main production account"
-    },
-    "client-project": {
-      "api_token": "YOUR_CLIENT_PROJECT_TOKEN",
-      "description": "Client project account"
-    },
-    "storagebox": {
-      "api_token": "YOUR_STORAGE_TOKEN",
-      "description": "Storage and backup account"
-    }
+    "main": { "api_token": "YOUR_MAIN_TOKEN", "description": "Main production account" },
+    "client-project": { "api_token": "YOUR_CLIENT_PROJECT_TOKEN", "description": "Client project account" },
+    "storagebox": { "api_token": "YOUR_STORAGE_TOKEN", "description": "Storage and backup account" }
   }
 }
 ```
 
-### **Hostinger Multi-Site Management**
+### Hostinger Multi-Site Management
 
 - **Domain-based organization**: Group sites by domain/purpose
-- **Consistent paths**: Use standard `/domains/[domain]/public_html` structure
-- **Password management**: Separate password files for different server groups
+- **Consistent paths**: Standard `/domains/[domain]/public_html` structure
+- **Password management**: Separate password files per server group
 - **Site categorization**: Group by client, project type, or environment
 
 ## Security Best Practices
 
-### **API Token Management**
+### API Token Management
 
-- **Secure local storage**: Store tokens in `~/.config/aidevops/` (user-private only)
-- **Never in repository**: API tokens must never be stored in repository files
-- **Environment separation**: Different tokens for prod/dev/staging
-- **Regular rotation**: Rotate tokens quarterly
-- **Least privilege**: Use minimal required permissions
-- **Git exclusion**: Always add config files to `.gitignore`
+- Store in `~/.config/aidevops/` (user-private, 600 perms) -- never in repo
+- Different tokens for prod/dev/staging
+- Rotate quarterly, use least-privilege permissions
+- Always add config files to `.gitignore`
 
-### **SSH Key Standardization**
+### SSH Key Standardization
 
-- **Modern keys**: Use Ed25519 keys (faster, more secure)
-- **Key distribution**: Standardize keys across all servers
-- **Passphrase protection**: Protect private keys with passphrases
-- **Regular audits**: Audit and remove unused keys
+- Use Ed25519 keys (faster, more secure than RSA)
+- Standardize keys across all servers with passphrase protection
+- Audit and remove unused keys regularly
 
-### **Password Authentication (Hostinger/Closte)**
+### Password Authentication (Hostinger/Closte)
 
-- **Secure storage**: Store passwords in separate files with 600 permissions
-- **File naming**: Use descriptive names (`hostinger_password`, `closte_web_password`)
-- **sshpass usage**: Use sshpass for automated password authentication
-- **Git exclusion**: Add password files to `.gitignore`
+- Store passwords in separate files with 600 permissions (e.g., `hostinger_password`, `closte_web_password`)
+- Use `sshpass` for automated password authentication
+- Add password files to `.gitignore`
 
 ## Domain & SSL Management
 
-### **Local Development Domains**
+### Local Development
 
-- **Consistent naming**: Use `.local` suffix for all local development
-- **SSL by default**: Generate SSL certificates for all local domains
-- **Port standardization**: Use consistent port ranges (10000+ for WordPress)
-- **DNS resolution**: Setup dnsmasq for automatic `.local` resolution
+- `.local` suffix for all local domains; SSL certificates by default
+- Port ranges: WordPress 10000-10999, APIs 8000-8999, MCP 8080+, databases standard (5432/3306/6379)
+- Setup `dnsmasq` for automatic `.local` resolution
 
-### **LocalWP Integration**
-
-- **Site naming**: Use descriptive names matching project purpose
-- **Port mapping**: Map LocalWP ports to custom `.local` domains
-- **SSL certificates**: Generate certificates for LocalWP sites
-- **Traefik integration**: Use reverse proxy for clean domain access
-
-### **Production SSL**
-
-- **Let's Encrypt**: Use automated certificate generation
-- **Wildcard certificates**: For multi-subdomain setups
-- **Certificate monitoring**: Monitor expiration dates
-- **Renewal automation**: Automate certificate renewal
-
-## 🔧 **Development Environment Setup**
-
-### **LocalWP Best Practices**
+### LocalWP Integration
 
 ```bash
 # List LocalWP sites
@@ -219,23 +146,23 @@ This guide outlines proven best practices for infrastructure management and help
 ./.agents/scripts/localhost-helper.sh generate-cert plugin-testing.local
 ```
 
-### **Docker Development**
+Map LocalWP ports to custom `.local` domains. Use Traefik reverse proxy for clean domain access.
 
-- **Shared networks**: Use common network for all local containers
-- **Traefik labels**: Standardize Traefik configuration
-- **Volume management**: Consistent volume naming and paths
-- **Environment variables**: Use `.env` files for configuration
+### Production SSL
 
-### **Port Management**
+- Let's Encrypt with automated renewal
+- Wildcard certificates for multi-subdomain setups
+- Monitor expiration dates
 
-- **WordPress sites**: 10000-10999 range
-- **API services**: 8000-8999 range
-- **MCP servers**: 8080+ range (sequential allocation)
-- **Databases**: 5432 (PostgreSQL), 3306 (MySQL), 6379 (Redis)
+## Development Environment
 
-## 🤖 **MCP Integration Best Practices**
+### Docker
 
-### **Port Allocation**
+- Shared networks for all local containers
+- Standardize Traefik labels and volume naming
+- Use `.env` files for configuration
+
+### MCP Port Allocation
 
 ```json
 {
@@ -252,70 +179,15 @@ This guide outlines proven best practices for infrastructure management and help
 }
 ```
 
-### **Service Organization**
+Sequential allocation from base port. Use descriptive names matching account structure. Monitor MCP server health.
 
-- **Sequential ports**: Allocate ports sequentially starting from base
-- **Service naming**: Use descriptive names matching account structure
-- **Secure API storage**: Use secure local storage for API tokens (never in repository)
-- **Health monitoring**: Monitor MCP server health and availability
+## Monitoring & Maintenance
 
-## 📁 **File Organization**
+| Cadence | Tasks |
+|---------|-------|
+| Weekly | Server status, resource usage |
+| Monthly | API token rotation review |
+| Quarterly | SSH key audit, access permissions |
+| Annually | Security practices review |
 
-### **Configuration Structure**
-
-```text
-~/
-├── hetzner-config.json           # Hetzner API tokens
-├── hostinger-config.json         # Hostinger site configurations
-├── closte-config.json            # Closte server configurations
-├── .ssh/
-│   ├── hostinger_password        # Hostinger SSH password
-│   ├── closte_password           # Closte SSH password
-│   └── config                    # SSH client configuration
-└── Local Sites/                  # LocalWP sites
-    ├── plugin-testing/
-    └── waas/
-```
-
-### **Git Repository Structure**
-
-- **Helper scripts**: Root level for easy access
-- **Configuration samples**: In `configs/` directory
-- **Documentation**: In `.agents/` directory
-- **Provider scripts**: In `.agents/scripts/` directory
-
-## 🔍 **Monitoring & Maintenance**
-
-### **Regular Tasks**
-
-- **Weekly**: Check server status and resource usage
-- **Monthly**: Review and rotate API tokens
-- **Quarterly**: Audit SSH keys and access permissions
-- **Annually**: Review and update security practices
-
-### **Automation**
-
-- **Health checks**: Automated server health monitoring
-- **Backup verification**: Regular backup integrity checks
-- **Certificate monitoring**: SSL certificate expiration alerts
-- **Resource monitoring**: CPU, memory, and disk usage alerts
-
-## 🎯 **AI Assistant Integration**
-
-### **Context Documentation**
-
-- **Infrastructure inventory**: Maintain current server/site lists
-- **Access patterns**: Document common tasks and procedures
-- **Security guidelines**: Clear security boundaries and requirements
-- **Troubleshooting guides**: Common issues and solutions
-
-### **Command Standardization**
-
-- **Consistent interfaces**: Same command patterns across providers
-- **Error handling**: Comprehensive error messages and recovery suggestions
-- **Logging**: Detailed operation logs for audit and debugging
-- **Help systems**: Built-in help and usage examples
-
----
-
-**These practices are based on real production environments and have been proven to scale effectively while maintaining security and operational efficiency.**
+Automate: health checks, backup verification, SSL expiration alerts, resource monitoring (CPU/memory/disk).
