@@ -184,9 +184,12 @@ Get chat ID: add `@getidsbot` to group. Bot requirements: add to group, disable 
 
 **File limits**: 50 MB download / 20 MB upload (Bot API); 2 GB via [local server](https://github.com/tdlib/telegram-bot-api).
 
-**Rate limits**: ~30 msg/s global · 1 msg/s per chat · 20/min groups · 50 inline results/query. Use `@grammyjs/auto-retry` + `@grammyjs/transformer-throttler`.
+**Rate limits**: ~30 msg/s global · 1 msg/s per chat · 20/min groups · 50 inline results/query.
 
 ```typescript
+// bun add @grammyjs/auto-retry @grammyjs/transformer-throttler
+import { autoRetry } from "@grammyjs/auto-retry";
+import { apiThrottler } from "@grammyjs/transformer-throttler";
 bot.api.config.use(autoRetry());
 bot.api.config.use(apiThrottler());
 ```
