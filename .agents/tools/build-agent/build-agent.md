@@ -96,7 +96,7 @@ Main agent directories contain **strategy** knowledge — what needs doing and w
 | `services/` | Hosting, payments, communications, email providers | **How** to connect |
 | `workflows/` | Git flow, release, PR review, pre-edit checks | **How** to process |
 
-**Placement test:** "Would another agent use this independently without going through the owning agent?" Yes → `tools/` or `services/`. No → `{agent}/`.
+**Placement test:** "Would another agent use this independently without going through the owning agent?" Yes → `tools/`, `services/`, or `workflows/` (and `reference/` for operating rules). No → `{agent}/`.
 
 ### The `{name}.md` + `{name}/` Convention
 

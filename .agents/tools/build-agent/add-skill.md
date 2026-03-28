@@ -156,7 +156,7 @@ Already in aidevops format.
 
 Plain markdown without frontmatter.
 
-**Transposition:** Wrap in markdown with generated frontmatter:
+**Transposition:** Wrap in Markdown with generated frontmatter:
 
 ```markdown
 ---
