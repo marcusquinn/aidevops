@@ -12,8 +12,9 @@ import {
   numeric, decimal, real, doublePrecision,
   json, jsonb, pgEnum,
   index, uniqueIndex, primaryKey, foreignKey, check,
+  AnyPgColumn,
 } from 'drizzle-orm/pg-core';
-import { sql } from 'drizzle-orm';
+import { sql, isNull, arrayContains, arrayContained, arrayOverlaps } from 'drizzle-orm';
 ```
 
 ## Primary Keys
@@ -134,8 +135,7 @@ tags: text('tags').array(),
 scores: integer('scores').array(),
 categories: text('categories').array().default([]),
 
-// Querying
-import { arrayContains, arrayContained, arrayOverlaps } from 'drizzle-orm';
+// Querying (arrayContained, arrayOverlaps also available)
 .where(arrayContains(posts.tags, ['typescript', 'drizzle']))
 .where(arrayOverlaps(posts.tags, ['react', 'vue']))
 ```
@@ -143,11 +143,6 @@ import { arrayContains, arrayContained, arrayOverlaps } from 'drizzle-orm';
 ## Constraints
 
 ```typescript
-// Not null & default
-email: text('email').notNull(),
-status: text('status').notNull().default('active'),
-createdAt: timestamp('created_at').notNull().defaultNow(),
-
 // Unique (column-level)
 email: text('email').notNull().unique(),
 
@@ -179,7 +174,6 @@ authorId: uuid('author_id').notNull().references(() => users.id, {
 }),
 
 // Self-referential
-import { AnyPgColumn } from 'drizzle-orm/pg-core';
 parentId: uuid('parent_id').references((): AnyPgColumn => categories.id),
 
 // Composite foreign key
@@ -210,8 +204,6 @@ export const orderItems = pgTable('order_items', {
 ## Composite Primary Key
 
 ```typescript
-import { primaryKey } from 'drizzle-orm/pg-core';
-
 export const usersToGroups = pgTable('users_to_groups', {
   userId: uuid('user_id').notNull().references(() => users.id),
   groupId: uuid('group_id').notNull().references(() => groups.id),
@@ -245,7 +237,6 @@ export const users = pgTable('users', {
   index('active_users_email_idx').on(table.email).where(sql`deleted_at IS NULL`),
 ]);
 
-import { isNull } from 'drizzle-orm';
 const activeUsers = await db.select().from(users).where(isNull(users.deletedAt));
 ```
 
