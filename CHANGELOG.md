@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-03-28
+
+### Changed
+
+- Refactor: merge Social-Media into Content, Sales+Marketing into Marketing-Sales (#11372)
+- Maintenance: update simplification state registry
+
 ## [3.3.0] - 2026-03-28
 
 ### Changed
