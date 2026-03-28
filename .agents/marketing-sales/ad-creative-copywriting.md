@@ -90,138 +90,78 @@ Good: "See which leads are ready to buy. Connect your entire tech stack. Make de
 
 ---
 
-## Headline Formulas (102 templates)
+## Headline Formulas (Ad-Specific Subset)
+
+For the full 40+ headline formula library with detailed examples, see `direct-response-copy-frameworks-headline-formulas.md`.
+
+Below are the most effective categories for ad creative, with representative templates per category.
 
 ### How-To
 
 - How to [Outcome] Without [Objection]
 - How to [Benefit] in [Timeframe]
 - How to [Goal] Even If [Limiting Belief]
-- How [Type of Person] [Result]
 - How I [Result] and How You Can Too
-- How to Get [Result] Like [Aspirational Group]
-- How to [Something] Better Than [Current Method]
-- How to [Solve Problem] Once and For All
-- How to [Benefit] Starting [Timeframe]
-- How to Finally [Long-Sought Goal]
-- How to [Result] (Even If You've Tried Everything)
-- The Lazy Person's Guide to [Achievement]
-- How to [Difficult Thing] the Easy Way
-- How to [Goal] Without [Giving Up Pleasure]
 
 ### List
 
 - [Number] Ways to [Benefit]
-- [Number] [Things] That [Result]
-- [Number] Secrets to [Outcome]
-- [Number] Reasons Why [Statement]
-- [Number] [Things] Every [Person Type] Should Know
-- The Only [Number] [Things] You Need to [Goal]
 - [Number] Mistakes [Person Type] Make
 - [Number] Things Nobody Tells You About [Topic]
-- [Number] [Time Period] to [Outcome]
-- [Number] Steps to [Result]
-- The [Number] Best [Things] for [Purpose]
-- [Number] Simple Ways to [Improve Situation]
-- [Number] Proven [Methods] for [Goal]
-- [Number] [Things] You're [Doing Wrong]
-- [Number] Little-Known [Things] About [Topic]
+- The Only [Number] [Things] You Need to [Goal]
 
 ### Question
 
-- What [Happening/Trend]?
 - Are You [Making Mistake]?
 - What If [Hypothetical Scenario]?
-- Why [Surprising Fact]?
-- Have You Ever [Relatable Experience]?
-- What Would You Do If [Scenario]?
-- Is [Common Belief] Really True?
 - Do You Make These [Number] [Mistakes]?
-- Struggling to [Goal]?
-- Want to [Desired Outcome]?
 - Why Isn't [Expected Result] Working?
-- What's the Secret to [Achievement]?
-- Ready to [Take Action]?
-- What [Person Type] Don't Want You to Know
-- Which [Option A] or [Option B]?
 
 ### Command
 
-- [Verb] [Outcome] in [Timeframe]
 - Stop [Bad Behavior] and Start [Good Behavior]
-- [Action] Like [Aspirational Group]
 - Get [Benefit] Without [Objection]
-- Discover [Valuable Thing]
-- Build [Asset] in [Timeframe]
-- Transform [Current State] Into [Desired State]
-- Master [Skill] Fast
-- Unlock [Benefit/Ability]
 - Join [Number]+ [People] Who [Achievement]
+- Transform [Current State] Into [Desired State]
 
 ### Benefit-Driven
 
 - [Outcome] Without [Drawback]
-- The [Adjective] Way to [Goal]
 - [Benefit] in Just [Timeframe]
 - Finally, [Desired Outcome]
-- [Outcome] Guaranteed or [Assurance]
-- Get [Benefit] While You [Easy Activity]
-- [Benefit] Made Simple
 - The Simple [Solution] to [Complex Problem]
-- What [Person Type] Use to [Result]
 
 ### Curiosity
 
-- The [Adjective] [Thing] Nobody Talks About
-- Why [Unexpected Statement]
 - The Surprising Truth About [Topic]
-- What [Expert/Group] Know That You Don't
-- [Number] [Things] You Didn't Know About [Topic]
-- The [Adjective] Secret Behind [Phenomenon]
-- What Happens When You [Action]
-- The Real Reason [Phenomenon Occurs]
-- [Surprising Thing] That [Result]
 - Why [Conventional Wisdom] is Wrong
+- What [Expert/Group] Know That You Don't
+- [Surprising Thing] That [Result]
 
 ### Social Proof
 
 - How [Number]+ [People] [Result]
-- [Number]-Star Rated [Product/Service]
 - Trusted by [Impressive Names/Numbers]
-- Used by [Impressive People]
-- Winner: [Award/Recognition]
 - #1 [Category] in [Location/Platform]
-- Featured in [Prestigious Publication]
-- [Celebrity/Expert] Uses This
 - [Impressive Stat] Can't Be Wrong
 
 ### Warning/Urgency
 
 - Warning: [Negative Consequence]
 - Don't [Action] Until You [Do This First]
-- Stop [Wasteful Activity]
-- Before You [Action], Read This
 - [Number] Signs You're [Negative State]
-- What You're Getting Wrong About [Topic]
-- Why [Current Method] is Failing You
-- Time's Running Out to [Opportunity]
 - Last Chance to [Action]
-- Only [Number] Left
 
 ### Personal/Testimonial
 
 - How I [Result] in [Timeframe]
 - From [Negative State] to [Positive State]
-- I [Did Something Difficult] So You Don't Have To
-- The Day I [Significant Event]
 - My [Timeframe] Journey to [Achievement]
 
 ### Comparison
 
 - [Option A] vs. [Option B]: Which is Better?
 - Why [Your Solution] Beats [Alternative]
-- [Thing] is Dead. [New Thing] is Here
-- The Difference Between [Good] and [Great]
 - [Old Way] vs. [New Way]
 
 ### Headline Testing

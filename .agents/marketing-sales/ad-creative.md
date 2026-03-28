@@ -10,7 +10,7 @@ This skill is split into focused sub-documents for progressive loading. Read wha
 |---|---|---|
 | [platform-meta.md](platform-meta.md) | Meta/Facebook ad formats, specs, copy formulas, testing framework | 279 |
 | [platform-google.md](platform-google.md) | Google Search (RSA), Display (RDA), Performance Max, YouTube ads | 275 |
-| [copywriting.md](copywriting.md) | PAS/AIDA/BAB frameworks, 100+ headline formulas, brand voice | 277 |
+| [copywriting.md](copywriting.md) | PAS/AIDA/BAB frameworks, headline formulas (curated subset), brand voice | 217 |
 | [video-ugc.md](video-ugc.md) | Video ad hooks (first 3 seconds), UGC-style ad creation | 150 |
 | [testing-optimization.md](testing-optimization.md) | Creative testing methodology, scoring rubrics, DCO, A/B testing, performance metrics | 203 |
 | [psychology-targeting.md](psychology-targeting.md) | Emotional triggers, cognitive biases, audience-message match | 229 |
