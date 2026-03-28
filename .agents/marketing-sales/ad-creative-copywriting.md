@@ -73,13 +73,11 @@ Best for: Video ads (testimonial style), case studies, email sequences, landing 
 
 ### 6. Extended BAB (High-Ticket)
 
-BEFORE -> AFTER -> BRIDGE -> PROOF (data, testimonials) -> OFFER (clear package) -> RISK REVERSAL (guarantee) -> CTA (urgency)
+BEFORE → AFTER → BRIDGE → PROOF (data, testimonials) → OFFER (clear package) → RISK REVERSAL (guarantee) → CTA (urgency)
 
-**Example:** Google Ads agency -- Before: bleeding $15K/month at 4:1 ROAS. After: predictable 6:1 ROAS. Bridge: proprietary audit framework, 247 rebuilds. Proof: $12K account from 3.5:1 to 5.8:1 in 67 days. Offer: full rebuild, pay only on benchmarks. Risk reversal: 1.5x ROAS in 90 days or free. CTA: 5 audits this month.
+**Example (Google Ads agency):** Before: bleeding $15K/month at 4:1 ROAS. After: predictable 6:1 ROAS. Bridge: proprietary audit framework, 247 rebuilds. Proof: $12K account from 3.5:1 to 5.8:1 in 67 days. Offer: full rebuild, pay only on benchmarks. Risk reversal: 1.5x ROAS in 90 days or free. CTA: 5 audits this month.
 
-### 7. Features -> Benefits Translation
-
-Feature: What it is -> Advantage: What it does -> Benefit: What it means for THEM
+### 7. Features → Benefits Translation
 
 | Feature | Advantage | Benefit |
 |---|---|---|
@@ -228,10 +226,10 @@ Good: "See which leads are ready to buy. Connect your entire tech stack. Make de
 
 ### Headline Testing
 
-Test priority: Primary vs secondary benefit, question vs statement, long vs short, with/without numbers, personal vs impersonal, generic vs specific.
+Test: primary vs secondary benefit, question vs statement, long vs short, with/without numbers, personal vs impersonal, generic vs specific.
 
-Winning traits: Specific (numbers, names), clear, relevant (matches pain/desire), urgent, beneficial.
-Avoid: Too vague, too clever (pun over clarity), too long, too brand-focused, no differentiation.
+Winning traits: specific (numbers, names), clear, relevant (matches pain/desire), urgent, beneficial.
+Avoid: vague, too clever (pun over clarity), too long, brand-focused, no differentiation.
 
 ---
 
@@ -241,7 +239,7 @@ Avoid: Too vague, too clever (pun over clarity), too long, too brand-focused, no
 
 | Dimension | Axes |
 |---|---|
-| Personality | Formal <-> Casual, Serious <-> Playful, Respectful <-> Irreverent, Enthusiastic <-> Matter-of-fact |
+| Personality | Formal ↔ Casual, Serious ↔ Playful, Respectful ↔ Irreverent, Enthusiastic ↔ Matter-of-fact |
 | Vocabulary | Jargon (use/avoid/explain), complexity, slang, profanity |
 | Grammar | Sentence length, contractions, exclamation points, fragments |
 
