@@ -62,17 +62,7 @@ git merge --continue                # finish merge (or rebase/cherry-pick --cont
 
 ## Conflict Markers
 
-```text
-<<<<<<< HEAD (or ours)
-Your changes
-||||||| base (only with diff3 conflictstyle)
-Original version before either change
-=======
-Their changes
->>>>>>> branch-name (or theirs)
-```
-
-The `diff3` style (showing the base) is critical for understanding intent. Without it, you only see two versions and must guess the original. Git 2.35+ supports `zdiff3`, which produces shorter markers by removing common prefix/suffix lines.
+The `diff3` style (showing the base) is critical for understanding intent — without it you only see two versions and must guess the original.
 
 ```bash
 git config --global merge.conflictstyle diff3   # enable globally (strongly recommended)
@@ -108,19 +98,18 @@ git merge-file -p file.ours file.base file.theirs > <file>
 
 ## Scenario Workflows
 
-All scenarios follow the same pattern: resolve → `git add <resolved>` → `--continue` or `--abort`.
+All scenarios: resolve → `git add <resolved>` → `--continue` or `--abort`.
 
-### Merge (`git merge main`)
+### Merge
 
 ```bash
 git merge main
 git status && git diff              # identify and review conflicts
-# resolve, then:
 git add <resolved-files> && git merge --continue
 # or: git merge --abort
 ```
 
-### Rebase (`git rebase main`)
+### Rebase
 
 Rebase replays commits one at a time — you may resolve multiple conflicts.
 
@@ -136,25 +125,15 @@ git add <resolved-files> && git rebase --continue
 
 ```bash
 git cherry-pick <commit>
-# resolve, then:
 git add <resolved-files> && git cherry-pick --continue
 # or: git cherry-pick --abort
+# Flags: --no-commit (-n) to inspect first; -x to append source ref; -m 1 for merge commits
 ```
-
-Cherry-pick flags:
-
-| Flag                       | Purpose                                              |
-| -------------------------- | ---------------------------------------------------- |
-| `--no-commit` (`-n`)       | Apply without committing (inspect first)             |
-| `-x`                       | Append "(cherry picked from ...)" to message         |
-| `-m 1`                     | Cherry-pick a merge commit (specify mainline parent) |
-| `--strategy-option=theirs` | Their side wins on conflicts                         |
 
 ### Stash pop
 
 ```bash
 git stash pop
-# resolve, then:
 git add <resolved-files>
 git stash drop   # stash is NOT dropped automatically on conflict
 ```
@@ -176,23 +155,16 @@ Records conflict resolutions and auto-applies them next time the same conflict o
 
 ```bash
 git config --global rerere.enabled true
-```
 
-**How it works**: On conflict, rerere saves the preimage (conflict markers). After you resolve and commit, it saves the postimage. Next time the same conflict occurs, it auto-applies your resolution — but you still need to `git add` and verify.
-
-```bash
 git rerere status               # files with recorded preimages
 git rerere diff                 # current state vs recorded resolution
 git rerere remaining            # files still unresolved
 git rerere forget <path>        # delete a bad recorded resolution
-git rerere gc                   # prune old records
-
-# GC configuration
-git config gc.rerereUnresolved 15   # days to keep unresolved (default 15)
-git config gc.rerereResolved 60     # days to keep resolved (default 60)
 ```
 
-**Best use cases**: long-lived topic branches repeatedly rebased against main; test merges (merge to test, `reset --hard HEAD^`, later rebase); integration branches merging many topic branches for CI.
+**How it works**: On conflict, rerere saves the preimage. After you resolve and commit, it saves the postimage. Next time the same conflict occurs, it auto-applies — but you still need to `git add` and verify.
+
+**Best use cases**: long-lived topic branches repeatedly rebased against main; integration branches merging many topic branches for CI.
 
 **Safety**: Use `git cherry-pick --no-rerere-autoupdate <commit>` then `git rerere diff` to inspect before staging.
 
@@ -217,9 +189,11 @@ Before resolving, understand what each side changed: `git log --merge -p`. Check
    **Escalate when**: you cannot confidently map a diff change to a specific location (code was refactored/split/reformatted); resolution would require adding content from neither side; you feel the need to modify a file git did not mark as conflicted.
 
    **Format**:
+
    ```text
    ESCALATE: <file> | <description of ambiguity> | <options you see>
    ```
+
    Continue resolving all non-ambiguous conflicts normally. Return escalations at the end so the caller can collect user decisions and resume.
 
 ## AI-Assisted Resolution
@@ -233,13 +207,6 @@ Before resolving, understand what each side changed: `git log --merge -p`. Check
 Enable diff3 before using AI — it gives the model the base version for reasoning about intent. Provide `git log --merge -p` output as context. Review carefully — AI may not understand project conventions, build implications, or runtime behavior.
 
 ## Prevention
-
-```bash
-git config --global merge.conflictstyle diff3
-git config --global rerere.enabled true
-git config --global pull.rebase true
-git config --global diff.algorithm histogram
-```
 
 | Practice             | Effect                                                               |
 | -------------------- | -------------------------------------------------------------------- |
