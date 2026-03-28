@@ -19,12 +19,10 @@ tools:
 ## Quick Reference
 
 - **API**: `https://api.muapi.ai/api/v1` — auth via `x-api-key: $MUAPI_API_KEY` header
-- **Pattern**: Async submit → `request_id` → poll `/predictions/{id}/result` (statuses: `processing` → `completed` | `failed`)
+- **Pattern**: POST → `request_id` → poll `/predictions/{id}/result` (`processing` → `completed` | `failed`)
 - **Webhooks**: Append `?webhook=https://your.endpoint` to any generation endpoint
 - **CLI**: `muapi-helper.sh [flux|video-effects|vfx|motion|music|lipsync|face-swap|upscale|bg-remove|dress-change|stylize|product-shot|storyboard|agent-*|balance|usage|status|help]`
 - **Docs**: [muapi.ai/docs](https://muapi.ai/docs/introduction) | [Playground](https://muapi.ai/playground)
-
-**Capabilities**: Image generation (Flux Dev/Schnell/Pro/Max, Midjourney v7, HiDream) · Video (Wan 2.1/2.2, Runway Gen-3, Kling v2.1, Luma Dream Machine) · AI video effects & VFX · Motion controls · Music (Suno) · Lip-sync · Audio (MMAudio) · Specialized apps (face swap, upscale, bg-remove, dress change, stylize, product shot, object eraser, image extension, skin enhancer) · Storyboarding · Workflows · Agents
 
 <!-- AI-CONTEXT-END -->
 
@@ -36,7 +34,7 @@ tools:
 
 ## API Pattern
 
-All endpoints use the same async pattern. Submit a POST, receive `request_id`, poll for result:
+All endpoints: async POST → `request_id` → poll.
 
 ```bash
 # Submit
@@ -72,7 +70,7 @@ POST /api/v1/flux-dev-image
 
 ### AI Video Effects, VFX & Motion
 
-All use the same endpoint with different effect names:
+Single endpoint, different effect names:
 
 ```text
 POST /api/v1/generate_wan_ai_effects
@@ -88,13 +86,9 @@ POST /api/v1/generate_wan_ai_effects
 | `quality` | string | No | medium | medium, high |
 | `duration` | number | No | 5 | 5-10 seconds |
 
-**Effect categories:**
+**Effects:** AI (Cakeify, Film Noir, VHS Footage, Samurai, etc.) · VFX (Building Explosion, Car Explosion, Disintegration, Levitation, Lightning, Tornado, Fire, Ice) · Motion (360 Orbit, Zoom In/Out, Spin, Shake, Bounce, Pan Left/Right)
 
-- **AI Effects**: Cakeify, Film Noir, VHS Footage, Samurai, etc.
-- **VFX**: Building Explosion, Car Explosion, Disintegration, Levitation, Lightning, Tornado, Fire, Ice
-- **Motion**: 360 Orbit, Zoom In/Out, Spin, Shake, Bounce, Pan Left/Right
-
-### Music Generation (Suno)
+### Music (Suno)
 
 ```text
 POST /api/v1/suno-create-music     # New tracks
@@ -102,7 +96,7 @@ POST /api/v1/suno-remix-music      # Remix existing
 POST /api/v1/suno-extend-music     # Extend existing
 ```
 
-### Lip-Synchronization
+### Lip-Sync
 
 ```text
 POST /api/v1/sync-lipsync          # High-fidelity
@@ -124,7 +118,7 @@ POST /api/v1/mmaudio-v2/video-to-video   # Sync audio with video
 POST /api/workflow/{workflow_id}/run
 ```
 
-Multi-node execution graphs combining text, image, video, audio, and utility nodes. Build via web UI or Agentic Workflow Architect (natural language).
+Multi-node execution graphs (text, image, video, audio, utility nodes). Build via web UI or Agentic Workflow Architect (natural language).
 
 ### Agents
 
@@ -142,36 +136,26 @@ POST   /agents/{agent_id}/chat           # Chat (use conversation_id for memory)
 
 ### Specialized Apps
 
-All follow the standard async pattern. Common parameter: `image_url` (required for all).
-
-#### Portrait & Identity
+All async, all require `image_url`.
 
 ```text
+# Portrait & Identity
 POST /api/v1/ai-image-face-swap         # Face swap (images) — requires face_image
 POST /api/v1/ai-video-face-swap         # Face swap (videos) — requires face_image
 POST /api/v1/ai-skin-enhancer           # Skin retouching
-```
 
-#### Creative Transformations
-
-```text
+# Creative Transformations
 POST /api/v1/ai-dress-change            # Outfit swap (optional prompt)
 POST /api/v1/ai-ghibli-style            # Studio Ghibli stylization
 POST /api/v1/ai-anime-generator         # Anime transformation
-```
 
-#### Image Processing
-
-```text
+# Image Processing
 POST /api/v1/ai-image-upscale           # Resolution increase with detail regen
 POST /api/v1/ai-background-remover      # Subject isolation
 POST /api/v1/ai-object-eraser           # Inpainting removal (optional mask_url)
 POST /api/v1/ai-image-extension         # Outpaint (optional prompt)
-```
 
-#### Product & Marketing
-
-```text
+# Product & Marketing
 POST /api/v1/ai-product-shot            # Studio-quality backgrounds (optional prompt)
 POST /api/v1/ai-product-photography     # High-converting assets (optional prompt)
 ```
@@ -182,9 +166,9 @@ POST /api/v1/ai-product-photography     # High-converting assets (optional promp
 POST /api/storyboard/projects
 ```
 
-Cinematic production with character persistence across scenes and episodes:
+Cinematic production with character persistence across scenes/episodes:
 
-1. **Character Creation** — `StoryboardCharacter` with static features (age, hair) and dynamic features (outfit, mood)
+1. **Character Creation** — `StoryboardCharacter` with static (age, hair) and dynamic (outfit, mood) features
 2. **Project Setup** — Houses characters and creative brief
 3. **Episode Generation** — Generate or manually create episodes
 4. **Scene & Shot Definition** — Link shots to characters/backgrounds for consistency
@@ -199,26 +183,19 @@ GET  /api/v1/payments/credits                           # Balance
 GET  /api/v1/payments/usage                             # History
 ```
 
-Credit-based (`CreditWallet`): generations deduct based on model cost and duration. Full usage log with cost/status/IO data. Enterprise: custom limits, private deployment billing, multi-key tracking.
+Credit-based (`CreditWallet`): deductions by model cost and duration. Full usage log with cost/status/IO data. Enterprise: custom limits, private deployment billing, multi-key tracking.
 
 ## CLI Helper
 
 ```bash
-# Image
 muapi-helper.sh flux "A cyberpunk city at night"
 muapi-helper.sh flux "A portrait" --size 1024*1536 --steps 40
-
-# Video effects / VFX / Motion
 muapi-helper.sh video-effects "a cute kitten" --image URL --effect "Cakeify"
 muapi-helper.sh vfx "a car" --image URL --effect "Car Explosion"
 muapi-helper.sh motion "a person" --image URL --effect "360 Orbit"
-
-# Music & Audio
 muapi-helper.sh music "upbeat electronic track with synths"
 muapi-helper.sh lipsync --video URL --audio URL
-
-# Specialized apps
-muapi-helper.sh face-swap --image URL --face URL          # or --video URL --face URL --mode video
+muapi-helper.sh face-swap --image URL --face URL    # or --video URL --face URL --mode video
 muapi-helper.sh upscale --image URL
 muapi-helper.sh bg-remove --image URL
 muapi-helper.sh dress-change --image URL "red evening gown"
@@ -227,47 +204,31 @@ muapi-helper.sh product-shot --image URL "minimalist white studio"
 muapi-helper.sh object-erase --image URL --mask URL
 muapi-helper.sh image-extend --image URL "extend the landscape"
 muapi-helper.sh skin-enhance --image URL
-
-# Agents
 muapi-helper.sh agent-create "I want an agent that creates brand assets"
 muapi-helper.sh agent-chat <agent-id> "Design a logo for Vapor"
 muapi-helper.sh agent-list
-
-# Account
 muapi-helper.sh balance
 muapi-helper.sh usage
 muapi-helper.sh status <request-id>
 ```
 
-## Available Models
+## Models
 
 | Category | Models | Notes |
 |----------|--------|-------|
-| Image | Flux Dev/Schnell/Pro/Max | Professional text-to-image |
-| Image | Midjourney v7 | Aesthetic quality, reference support |
-| Image | HiDream | Speed-optimized, stylized |
-| Video | Wan 2.1/2.2 | Speech-to-video, LoRA support |
-| Video | Runway Gen-3/Act-Two | Cinematic motion |
-| Video | Kling v2.1 | Exceptional realism |
-| Video | Luma Dream Machine | Video reframing |
-| Audio | Suno | Music create/remix/extend |
-| Audio | MMAudio-v2 | Text-to-audio, video-to-audio sync |
-| Audio | Sync-Lipsync/LatentSync | Lip synchronization |
+| Image | Flux Dev/Schnell/Pro/Max, Midjourney v7, HiDream | Flux: professional; MJ: aesthetic; HiDream: fast/stylized |
+| Video | Wan 2.1/2.2, Runway Gen-3/Act-Two, Kling v2.1, Luma Dream Machine | Wan: speech-to-video/LoRA; Runway: cinematic; Kling: realism; Luma: reframing |
+| Audio | Suno, MMAudio-v2, Sync-Lipsync/LatentSync | Music create/remix/extend, text-to-audio, video-to-audio sync, lip-sync |
 
 ## MuAPI vs WaveSpeed vs Runway
 
 | Feature | MuAPI | WaveSpeed | Runway |
 |---------|-------|-----------|--------|
-| Image models | Flux, Midjourney, HiDream | Flux, DALL-E, Imagen, Z-Image | Gen-4 Image, Gemini |
-| Video models | Wan, Runway, Kling, Luma | Wan, Kling, Sora, Veo | Gen-4, Veo 3, Act Two |
+| Image | Flux, Midjourney, HiDream | Flux, DALL-E, Imagen, Z-Image | Gen-4 Image, Gemini |
+| Video | Wan, Runway, Kling, Luma | Wan, Kling, Sora, Veo | Gen-4, Veo 3, Act Two |
 | Audio | Suno, MMAudio, lipsync | Ace Step, TTS | ElevenLabs TTS/STS/SFX |
-| VFX/Effects | Built-in effects library | None | None |
-| Specialized Apps | Face swap, upscale, bg-remove, dress change, stylize, product shot | None | None |
-| Storyboarding | Character persistence, episodic | None | None |
-| Workflows | Node-based pipelines | None | None |
-| Agents | Persistent AI personas | None | None |
+| Unique | VFX/effects, specialized apps, storyboarding, workflows, agents | Unified model access | Full media pipeline |
 | Auth | `x-api-key` header | Bearer token | Bearer token |
-| Best for | Creative orchestration, effects | Unified model access | Full media pipeline |
 
 ## Troubleshooting
 
