@@ -71,10 +71,10 @@ tools/wordpress/,WordPress ecosystem - local dev and fleet,wp-dev|wp-admin|local
 tools/containers/,Container runtimes - Docker and Linux VMs on macOS and remote dispatch via SSH/Tailscale,orbstack|remote-dispatch
 tools/infrastructure/,Infrastructure - cloud GPU deployment and compute,cloud-gpu
 tools/local-models/,Local AI model inference - llama.cpp setup GGUF models usage tracking disk cleanup,local-models|huggingface
-services/accessibility/,Unified web and email accessibility auditing - WCAG compliance remediation and monitoring,accessibility-audit
+tools/accessibility/,Unified web and email accessibility auditing - WCAG compliance remediation and monitoring,accessibility-audit
 services/hosting/,Hosting providers - DNS and cloud servers and local dev,local-hosting|localhost|hostinger|hetzner|cloudflare|cloudflare-platform|cloudron|closte
 services/networking/,Networking - mesh VPN and secure device connectivity,tailscale|netbird
-services/email/,Email services - mailbox operations provider setup security intelligence and autonomous mission communication,ses|email-agent|email-mailbox|email-actions|email-intelligence|email-providers|email-security|email-health-check|email-testing|email-delivery-test|email-design-test|email-delivery-testing|email-design-testing|email-composition|email-inbound-commands|thunderbird
+services/email/,Email services - mailbox operations provider setup security intelligence and autonomous mission communication,ses|email-agent|email-mailbox|email-actions|email-intelligence|email-providers|email-security|email-health-check|email-testing|email-delivery-test|email-design-test|email-composition|email-inbound-commands|thunderbird
 services/outreach/,Cold outreach and deliverability tooling - warmup strategy compliance platform selection mailbox scaling and WarmForge orchestration,cold-outreach|warmforge|smartlead|instantly|manyreach
 services/communications/,Communications - SMS voice Discord bot Matrix bot multi-platform chat bridging encrypted messaging Bluetooth mesh and Web3 messaging,bitchat|convos|discord|google-chat|imessage|matrix-bot|matterbridge|msteams|nextcloud-talk|nostr|signal|simplex|slack|telegram|telfon|twilio|urbit|whatsapp|xmtp
 services/crm/,CRM integration - contact management,fluentcrm

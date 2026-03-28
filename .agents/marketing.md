@@ -441,6 +441,6 @@ After each campaign: review open/click rates by segment, identify top content, n
 | Template rendering | Use `services/email/email-design-test.md` for cross-client testing |
 | Delivery issues | Use `services/email/email-delivery-test.md` for inbox placement and spam scoring |
 | Pre-send validation | Run `email-test-suite-helper.sh test-design <file>` and `check-placement <domain>` for comprehensive checks. See `services/email/email-testing.md` for full testing suite docs |
-| Accessibility issues | Use `services/accessibility/accessibility-audit.md` for WCAG compliance |
+| Accessibility issues | Use `tools/accessibility/accessibility-audit.md` for WCAG compliance |
 
 Docs: [FluentCRM](https://fluentcrm.com/docs/) | [REST API](https://rest-api.fluentcrm.com/) | `.agents/services/crm/fluentcrm.md`

@@ -199,7 +199,7 @@ Choose one illustration style and maintain consistency:
 - [ ] No information conveyed by colour alone
 - [ ] Focus indicators visible for keyboard/switch navigation
 
-See `services/accessibility/accessibility-audit.md` for comprehensive auditing.
+See `tools/accessibility/accessibility-audit.md` for comprehensive auditing.
 
 ## Related
 
@@ -210,4 +210,4 @@ See `services/accessibility/accessibility-audit.md` for comprehensive auditing.
 - `tools/ui/tailwind-css.md` - Tailwind CSS
 - `tools/ui/shadcn.md` - shadcn/ui component library
 - `tools/design/design-inspiration.md` - 60+ design resources
-- `services/accessibility/accessibility-audit.md` - Accessibility auditing
+- `tools/accessibility/accessibility-audit.md` - Accessibility auditing

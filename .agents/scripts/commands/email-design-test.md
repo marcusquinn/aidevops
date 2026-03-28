@@ -105,6 +105,6 @@ AI: Running sandbox test (no actual screenshots)...
 
 ## Related
 
-- `services/email/email-design-testing.md` - Full documentation
+- `services/email/email-design-test.md` - Full documentation
 - `services/email/email-testing.md` - Design rendering + delivery testing
 - `services/email/email-health-check.md` - DNS authentication checks

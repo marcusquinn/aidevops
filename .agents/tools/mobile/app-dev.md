@@ -54,7 +54,7 @@
 - `tools/browser/remotion-best-practices-skill.md` - Animated previews and App Store videos
 - `tools/vision/overview.md` - Image generation for app assets
 - `tools/deployment/coolify.md` - Self-hosted backend deployment
-- `services/accessibility/accessibility-audit.md` - Accessibility compliance
+- `tools/accessibility/accessibility-audit.md` - Accessibility compliance
 - `tools/browser/extension-dev.md` - Shares product/ subagents for cross-platform concerns
 
 **Mobile tool stack**:

@@ -109,6 +109,6 @@ AI: Checking deliverability across major providers...
 
 ## Related
 
-- `services/email/email-delivery-testing.md` - Full documentation
+- `services/email/email-delivery-test.md` - Full documentation
 - `services/email/email-health-check.md` - DNS authentication checks
 - `services/email/email-testing.md` - Design rendering tests

@@ -257,7 +257,7 @@ Tag subscribers based on:
 
 **Email Services**:
 
-- `services/accessibility/accessibility-audit.md` - Email accessibility checks (WCAG compliance)
+- `tools/accessibility/accessibility-audit.md` - Email accessibility checks (WCAG compliance)
 - `services/email/email-health-check.md` - DNS authentication and deliverability
 - `services/email/email-testing.md` - Design rendering and delivery testing overview
 - `services/email/email-design-test.md` - Cross-client rendering tests (Litmus, Email on Acid)

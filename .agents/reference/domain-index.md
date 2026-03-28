@@ -28,7 +28,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | Local Development | `services/hosting/local-hosting.md` |
 | Hosting/Deployment | `tools/deployment/hosting-comparison.md`, `tools/deployment/fly-io.md`, `tools/deployment/coolify.md`, `tools/deployment/vercel.md`, `tools/deployment/uncloud.md`, `tools/deployment/daytona.md` |
 | Infrastructure | `tools/infrastructure/cloud-gpu.md`, `tools/containers/orbstack.md`, `tools/containers/remote-dispatch.md` |
-| Accessibility | `services/accessibility/accessibility-audit.md` |
+| Accessibility | `tools/accessibility/accessibility-audit.md` |
 | OpenAPI exploration | `tools/context/openapi-search.md` |
 | Local models | `tools/local-models/local-models.md`, `tools/local-models/huggingface.md`, `scripts/local-model-helper.sh` |
 | Bundles | `bundles/*.json`, `scripts/bundle-helper.sh`, `tools/context/model-routing.md` |

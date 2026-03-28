@@ -247,4 +247,4 @@ compare -metric RMSE baseline-m1/index-desktop-1440x900.png current-m2/index-des
 - `tools/browser/playwright.md` — Playwright API reference
 - `tools/browser/stagehand.md` — Stagehand for unknown page structures
 - `scripts/accessibility/playwright-contrast.mjs` — WCAG contrast checking
-- `services/accessibility/accessibility-audit.md` — Full accessibility audit workflow
+- `tools/accessibility/accessibility-audit.md` — Full accessibility audit workflow

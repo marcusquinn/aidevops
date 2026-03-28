@@ -117,7 +117,7 @@ agent-device close
 - Test with VoiceOver (iOS) / TalkBack (Android)
 - Check colour contrast ratios
 - Verify Dynamic Type support
-- See `services/accessibility/accessibility-audit.md`
+- See `tools/accessibility/accessibility-audit.md`
 
 ### Performance Testing
 
@@ -184,4 +184,4 @@ Before submitting to app stores, verify:
 - `tools/mobile/maestro.md` - E2E test flows
 - `tools/mobile/ios-simulator-mcp.md` - Simulator interaction
 - `tools/browser/playwright-emulation.md` - Mobile web testing
-- `services/accessibility/accessibility-audit.md` - Accessibility
+- `tools/accessibility/accessibility-audit.md` - Accessibility

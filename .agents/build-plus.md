@@ -132,7 +132,7 @@ Before implementing, check AGENTS.md domain index. If the task touches a special
 | UI/layout/design/CSS | `workflows/ui-verification.md` + `tools/browser/playwright-emulation.md` + `tools/browser/chrome-devtools.md` |
 | Design system/brand/style | `tools/design/design-inspiration.md` + `tools/design/ui-ux-inspiration.md` + `tools/design/ui-ux-catalogue.toon` + `tools/design/brand-identity.md` |
 | Browser automation | `tools/browser/browser-automation.md` |
-| Accessibility | `services/accessibility/accessibility-audit.md` |
+| Accessibility | `tools/accessibility/accessibility-audit.md` |
 | Local dev / .local / ports / proxy / HTTPS / LocalWP | `services/hosting/local-hosting.md` |
 
 ## Planning Workflow (Deliberation Mode)
