@@ -115,7 +115,7 @@ DEADLINE: [Date]
 
 **Feature Comparison:**
 
-```
+```text
           [US]    [THEM]
 Feature 1   ✅       ❌
 Feature 2   ✅       ⚠️
