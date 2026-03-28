@@ -24,20 +24,9 @@ tools:
 - **Docs**: Use Context7 MCP for latest Swift and SwiftUI documentation
 - **Min target**: iOS 17+ (for latest SwiftUI features)
 - **Architecture**: MVVM with SwiftUI, Swift Concurrency (async/await)
+- **Scaffold**: `xcodebuild-mcp scaffold_ios_project`
 
-**When to choose Swift over Expo**:
-
-- Deep Apple ecosystem integration (HealthKit, HomeKit, Siri Intents, Widgets)
-- Maximum native performance (games, AR, complex animations)
-- Apple Watch, tvOS, or visionOS targets
-- Hybrid native + web content apps (WebKit for SwiftUI provides first-class WebView support)
-- Leveraging Swift-specific libraries
-
-**Project scaffold via XcodeBuildMCP**:
-
-```text
-Use xcodebuild-mcp scaffold_ios_project to create a new project
-```
+**When to choose Swift over Expo**: deep Apple ecosystem integration (HealthKit, HomeKit, Siri, Widgets), maximum native performance (games, AR, complex animations), Apple Watch/tvOS/visionOS targets, hybrid native+web content (WebKit for SwiftUI), Swift-specific libraries.
 
 <!-- AI-CONTEXT-END -->
 
@@ -45,46 +34,28 @@ Use xcodebuild-mcp scaffold_ios_project to create a new project
 
 ```text
 MyApp/
-├── MyApp.swift              # App entry point (@main)
+├── MyApp.swift              # @main entry point
 ├── ContentView.swift        # Root view
-├── Info.plist               # App configuration
-├── Assets.xcassets/         # Images, colours, app icon
-├── Models/                  # Data models
-│   ├── User.swift
-│   └── AppState.swift
+├── Info.plist
+├── Assets.xcassets/
+├── Models/                  # Data models (User, AppState)
 ├── Views/                   # SwiftUI views
-│   ├── Home/
-│   │   ├── HomeView.swift
-│   │   └── HomeViewModel.swift
-│   ├── Onboarding/
-│   │   ├── OnboardingView.swift
-│   │   └── OnboardingStep.swift
+│   ├── Home/                # HomeView + HomeViewModel
+│   ├── Onboarding/          # OnboardingView + OnboardingStep
 │   ├── Settings/
-│   │   └── SettingsView.swift
-│   └── Components/          # Reusable UI components
-│       ├── PrimaryButton.swift
-│       └── CardView.swift
-├── Services/                # Business logic, API clients
-│   ├── APIService.swift
-│   ├── AuthService.swift
-│   └── NotificationService.swift
-├── Stores/                  # State management
-│   └── AppStore.swift
-├── Extensions/              # Swift extensions
-│   ├── Color+Theme.swift
-│   └── View+Modifiers.swift
-├── Resources/               # Fonts, localisation
-│   └── Localizable.xcstrings
-└── Tests/
-    ├── UnitTests/
-    └── UITests/
+│   └── Components/          # Reusable UI (PrimaryButton, CardView)
+├── Services/                # API clients, auth, notifications
+├── Stores/                  # State management (AppStore)
+├── Extensions/              # Color+Theme, View+Modifiers
+├── Resources/               # Fonts, Localizable.xcstrings
+└── Tests/                   # UnitTests/, UITests/
 ```
 
 ## Development Standards
 
 ### SwiftUI Patterns
 
-**MVVM with Observable**:
+**MVVM with Observable** — break views into small, focused components (<100 lines per file):
 
 ```swift
 @Observable
@@ -105,11 +76,7 @@ final class HomeViewModel {
 }
 ```
 
-**View composition**: Break views into small, focused components. Each view file should be under 100 lines.
-
 ### Design System
-
-Define a theme that matches the app's brand:
 
 ```swift
 extension Color {
@@ -128,8 +95,6 @@ extension Font {
 ```
 
 ### Animations
-
-SwiftUI provides excellent built-in animation support:
 
 - `withAnimation(.spring())` for natural transitions
 - `.matchedGeometryEffect` for shared element transitions
@@ -158,8 +123,6 @@ SwiftUI provides excellent built-in animation support:
 
 ### Swift Concurrency
 
-Use structured concurrency throughout:
-
 - `async/await` for all asynchronous operations
 - `Task` groups for parallel work
 - `@MainActor` for UI updates
@@ -181,9 +144,7 @@ Use structured concurrency throughout:
 > iOS 26+ / macOS 26+ / visionOS 26+. Requires `import WebKit`.
 > Source: WWDC 2025 Session 231 — "Meet WebKit for SwiftUI".
 
-First-class SwiftUI views for embedding web content — replaces the old `WKWebView` UIKit/AppKit bridge pattern.
-
-**Compatibility**: These APIs require iOS 26+. For apps targeting earlier versions, guard with `#available` and provide a `WKWebView` fallback:
+First-class SwiftUI views for embedding web content — replaces the old `WKWebView` UIKit/AppKit bridge pattern. For apps targeting earlier versions, guard with `#available`:
 
 ```swift
 var body: some View {
@@ -214,11 +175,11 @@ struct ArticleView: View {
 }
 ```
 
-`WebPage` is an `@Observable` class exposing: `url`, `title`, `isLoading`, `estimatedProgress`, `themeColor`, `isAtTop`, `isAtBottom`.
+`WebPage` is `@Observable`, exposing: `url`, `title`, `isLoading`, `estimatedProgress`, `themeColor`, `isAtTop`, `isAtBottom`.
 
 ### JavaScript Bridge
 
-Call JavaScript with typed argument dictionaries and get typed results:
+Typed argument dictionaries with typed results:
 
 ```swift
 let count: Int = try await page.callJavaScript(
@@ -231,23 +192,18 @@ Arguments and return values are automatically bridged between Swift and JavaScri
 
 ### Custom URL Schemes
 
-Serve bundled HTML/CSS/JS via custom URL schemes using `URLSchemeHandler`:
+Serve bundled HTML/CSS/JS via `URLSchemeHandler`. Load with `app-resource:///index.html` — content stays local, no network requests:
 
 ```swift
 WebView(page)
     .urlScheme("app-resource") { request in
-        guard
-            let url = request.url,
-            !url.path.isEmpty
-        else {
+        guard let url = request.url, !url.path.isEmpty else {
             return .init(statusCode: 400, headerFields: [:], data: Data())
         }
-
         let relativePath = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard let fileURL = Bundle.main.resourceURL?.appendingPathComponent(relativePath) else {
             return .init(statusCode: 404, headerFields: [:], data: Data())
         }
-
         do {
             let data = try Data(contentsOf: fileURL)
             return .init(statusCode: 200, headerFields: [:], data: data)
@@ -257,22 +213,18 @@ WebView(page)
     }
 ```
 
-Load with `app-resource:///index.html` — content stays local, no network requests.
-
 ### Navigation Policy
 
-Control which navigations are allowed using `WebPage.NavigationDeciding`:
+Control allowed navigations via `WebPage.NavigationDeciding`:
 
 ```swift
 page.navigationDeciding = .handler { action in
-    if action.request.url?.host == "example.com" {
-        return .allow
-    }
+    if action.request.url?.host == "example.com" { return .allow }
     return .cancel
 }
 ```
 
-### View Modifiers
+### WebView Modifiers
 
 | Modifier | Purpose |
 |----------|---------|
@@ -283,45 +235,29 @@ page.navigationDeciding = .handler { action in
 
 ## Build and Test
 
-### Using XcodeBuildMCP
+### XcodeBuildMCP
 
 ```text
-# Discover project
-discover_projs
-
-# Build for simulator
-build_sim --scheme MyApp
-
-# Run tests
-test_sim --scheme MyApp
-
-# Build and run
-build_run_sim --scheme MyApp
-
-# Screenshot current state
-screenshot
+discover_projs                          # Discover project
+build_sim --scheme MyApp                # Build for simulator
+test_sim --scheme MyApp                 # Run tests
+build_run_sim --scheme MyApp            # Build and run
+screenshot                              # Screenshot current state
 ```
 
 ### Local Xcode Commands
 
 ```bash
-# Build
 xcodebuild -scheme MyApp -destination 'platform=iOS Simulator,name=iPhone 16 Pro'
-
-# Test
 xcodebuild test -scheme MyApp -destination 'platform=iOS Simulator,name=iPhone 16 Pro'
-
-# Archive for distribution
-xcodebuild archive -scheme MyApp -archivePath MyApp.xcarchive
+xcodebuild archive -scheme MyApp -archivePath MyApp.xcarchive  # Distribution
 ```
 
 ## TestFlight Setup
 
 1. Configure signing in Xcode (Automatically manage signing)
-2. Archive the app (`Product > Archive`)
-3. Upload to App Store Connect via Xcode Organizer
-4. Add internal testers in App Store Connect
-5. External testing requires App Review approval
+2. Archive (`Product > Archive`) and upload via Xcode Organizer
+3. Add internal testers in App Store Connect (external requires App Review)
 
 Or use `xcodebuild-mcp` device tools for direct device deployment during development.
 
