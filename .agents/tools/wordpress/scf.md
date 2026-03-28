@@ -21,21 +21,23 @@ tools:
 
 ## Quick Reference
 
-- **Plugin**: Secure Custom Fields (SCF) - community fork of ACF
+- **Plugin**: Secure Custom Fields (SCF) — community fork of ACF
 - **Field Groups**: `acf-field-group` post type
 - **Fields**: `acf-field` post type
-- **Meta Storage**: `{field_name}` for value, `_{field_name}` for field key reference
+- **Meta Storage**: `{field_name}` = value, `_{field_name}` = field key reference
 
 **Critical Rules**:
-1. **Select fields**: Set `return_format` to `"value"`, save the choice KEY not label
-2. **Checkbox fields**: Set `return_format` to `"value"`, save array of choice KEYS
-3. **Group sub-fields**: Store as SEPARATE `acf-field` posts with `post_parent` = group field ID
+
+1. **Select fields**: `return_format` → `"value"`, save choice KEY not label
+2. **Checkbox fields**: `return_format` → `"value"`, save array of choice KEYS
+3. **Group sub-fields**: Separate `acf-field` posts with `post_parent` = group field ID
 4. **Field key references**: Always set `_{field_name}` meta to the field key
 
 **Common Issues**:
-- Field shows wrong value → Missing `_{field_name}` meta key reference
-- Group sub-fields not saving → Sub-fields in `post_content` instead of separate posts
-- Select shows default → `return_format` not set to `"value"`
+
+- Wrong value displayed → missing `_{field_name}` meta key reference
+- Group sub-fields not saving → sub-fields in `post_content` instead of separate posts
+- Select shows default → `return_format` not `"value"`
 
 <!-- AI-CONTEXT-END -->
 
@@ -49,10 +51,8 @@ SELECT ID, post_title, post_name, post_status FROM wp_posts WHERE post_type = 'a
 
 | Column | Purpose |
 |--------|---------|
-| `ID` | Field group ID |
-| `post_title` | Display name |
-| `post_name` | Unique key (e.g., `group_abc123`) |
-| `post_content` | Serialized settings (location rules, etc.) |
+| `post_name` | Unique key (`group_abc123`) |
+| `post_content` | Serialized settings (location rules) |
 | `post_status` | `publish` or `acf-disabled` |
 
 **Fields** (`post_type = 'acf-field'`):
@@ -64,9 +64,9 @@ FROM wp_posts WHERE post_type = 'acf-field' AND post_parent = {group_id} ORDER B
 
 | Column | Purpose |
 |--------|---------|
-| `post_name` | Field key (e.g., `field_abc123`) |
-| `post_excerpt` | Field name (used in meta_key) |
-| `post_parent` | Parent field group ID (or parent group field ID for sub-fields) |
+| `post_name` | Field key (`field_abc123`) |
+| `post_excerpt` | Field name (used as `meta_key`) |
+| `post_parent` | Parent field group ID (or group field ID for sub-fields) |
 | `post_content` | Serialized field configuration |
 
 **Field values** (`wp_postmeta`): `{field_name}` = value · `_{field_name}` = field key reference (REQUIRED)
@@ -119,7 +119,6 @@ $select_config = [
     'return_format' => 'value',  // CRITICAL
     'multiple' => 0
 ];
-
 update_field('my_select', 'option1', $post_id);  // KEY, not 'Option One'
 ```
 
@@ -134,22 +133,15 @@ $checkbox_config = [
     'choices' => ['Google My Business' => 'Google My Business', 'Facebook Page' => 'Facebook Page'],
     'return_format' => 'value'  // CRITICAL
 ];
-
 update_field('my_checkboxes', ['Google My Business', 'Facebook Page'], $post_id);
 ```
 
-### True/False and Date/Time
+### Other Field Types
 
-```php
-// True/False
-$boolean_config = ['key' => 'field_my_toggle', 'name' => 'my_toggle', 'label' => 'My Toggle',
-    'type' => 'true_false', 'default_value' => 0, 'ui' => 1];
-update_field('my_toggle', 1, $post_id);  // or true/false
-
-// Date/Time Picker
-$datetime_config = ['key' => 'field_my_datetime', 'name' => 'my_datetime', 'label' => 'My DateTime',
-    'type' => 'date_time_picker', 'display_format' => 'd/m/Y H:i', 'return_format' => 'Y-m-d H:i:s'];
-```
+| Type | Config key | Value format | Example |
+|------|-----------|--------------|---------|
+| `true_false` | `'ui' => 1, 'default_value' => 0` | `1` / `0` | `update_field('my_toggle', 1, $post_id)` |
+| `date_time_picker` | `'display_format' => 'd/m/Y H:i', 'return_format' => 'Y-m-d H:i:s'` | ISO string | `update_field('my_datetime', '2024-01-15 09:30:00', $post_id)` |
 
 ## Programmatic Field Updates
 
@@ -180,11 +172,11 @@ update_post_meta($post_id, '_social_media_google_my_business', 'field_646a486822
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Field shows wrong/default value | Missing `_{field_name}` meta | `update_post_meta($post_id, '_field_name', 'field_abc123')` |
-| Group sub-fields not saving | Sub-fields in `post_content` | Recreate with sub-fields as separate posts |
-| Select shows default despite correct value | `return_format` not `"value"` or saving label | Fix config (see below) or save key not label |
-| Duplicate field keys | Multiple posts with same `post_name` | Delete duplicates, keep correct one |
-| Values in wrong meta keys | `post_excerpt` (field name) is empty | Update `post_excerpt` and `post_content` config |
+| Wrong/default value | Missing `_{field_name}` meta | `update_post_meta($post_id, '_field_name', 'field_abc123')` |
+| Group sub-fields not saving | Sub-fields in `post_content` | Recreate as separate `acf-field` posts |
+| Select shows default | `return_format` not `"value"` or saving label | Fix config (see below) or save key |
+| Duplicate field keys | Multiple posts with same `post_name` | Delete duplicates |
+| Values in wrong meta keys | Empty `post_excerpt` | Update `post_excerpt` and `post_content` config |
 
 **Fix select `return_format` via database**:
 
@@ -206,7 +198,7 @@ $duplicates = $wpdb->get_results("SELECT post_name, COUNT(*) as count FROM {$wpd
     WHERE post_type = 'acf-field' GROUP BY post_name HAVING count > 1");
 ```
 
-**Fix empty field name** (`post_excerpt`):
+**Fix empty `post_excerpt`**:
 
 ```php
 $wpdb->update($wpdb->posts, ['post_excerpt' => 'correct_name'], ['ID' => $field_id]);
@@ -235,16 +227,12 @@ wp post meta list {post_id} | grep field_name
 # Set field value with key reference
 wp eval '$post_id = 123; update_field("field_name", "value", $post_id);
     update_post_meta($post_id, "_field_name", "field_key_here"); echo "Done";'
-```
 
-## Field Key Discovery
-
-```bash
-# From database
+# Discover field key from field name
 wp eval 'global $wpdb; $field = $wpdb->get_row("SELECT post_name FROM {$wpdb->posts}
     WHERE post_type = \"acf-field\" AND post_excerpt = \"field_name_here\""); echo $field->post_name;'
 
-# From ACF API
+# Discover field key via ACF API
 wp eval '$groups = acf_get_field_groups(); foreach ($groups as $group) {
     $fields = acf_get_fields($group["key"]);
     foreach ($fields as $field) { if ($field["name"] === "field_name_here") echo $field["key"]; }}'
