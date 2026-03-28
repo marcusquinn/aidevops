@@ -1332,9 +1332,9 @@
       "pr": 12071
     },
     ".agents/services/hosting/cloudflare-platform-skill/durable-objects-patterns.md": {
-      "hash": "62f99632673bac51be04950cae0df0312fe4efd3",
-      "at": "2026-03-28T17:30:26Z",
-      "pr": 12069
+      "hash": "955301443c3fc1556d8d226fa318dc99d277c7ef",
+      "at": "2026-03-28T20:56:10Z",
+      "pr": 12189
     },
     ".agents/tools/browser/fingerprint-profiles.md": {
       "hash": "d910625e173f65063d64d51ca549494b97a2ba87",
@@ -1412,9 +1412,9 @@
       "pr": 12165
     },
     ".agents/tools/wordpress/wp-dev.md": {
-      "hash": "a5927166eee2b79a8803470f7bcd99fed72b10ab",
-      "at": "2026-03-28T20:16:47Z",
-      "pr": 12166
+      "hash": "aeead744dd3a6ab5c8a9e6cf300adf03cbebceb9",
+      "at": "2026-03-28T20:55:30Z",
+      "pr": 12191
     },
     ".agents/content/distribution-short-form.md": {
       "hash": "8350ba659dc7fbcbecd70b55d52b65d296ce5401",
@@ -1445,6 +1445,31 @@
       "hash": "629aa3a1df673d6e5df7310d173da5d3938aa04e",
       "at": "2026-03-28T20:17:06Z",
       "pr": 12171
+    },
+    ".agents/tools/mobile/app-dev-swift.md": {
+      "hash": "6e91c84b3a04746c00e777f19d2aaadce0ffd3e5",
+      "at": "2026-03-28T20:55:52Z",
+      "pr": 12197
+    },
+    ".agents/tools/context/context7.md": {
+      "hash": "1d98876794a7dc00b2cd2126492a54302f051af8",
+      "at": "2026-03-28T20:56:05Z",
+      "pr": 12182
+    },
+    ".agents/marketing-sales/ad-creative-ai-tools-reference.md": {
+      "hash": "8faff4defc9b64a16a6da7b996a86d29763bb87e",
+      "at": "2026-03-28T20:56:07Z",
+      "pr": 12183
+    },
+    ".agents/seo/eeat-score.md": {
+      "hash": "bb9c0e98f32d0453eb08cbbb4222f06c1a13b007",
+      "at": "2026-03-28T20:56:08Z",
+      "pr": 12181
+    },
+    ".agents/tools/automation/cron-agent.md": {
+      "hash": "fbf1c6bc76acc1436d3da1b0b34296be5193de5a",
+      "at": "2026-03-28T20:56:11Z",
+      "pr": 12184
     }
   }
 }
