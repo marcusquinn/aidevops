@@ -2,7 +2,7 @@
 
 ## Shared Conventions
 
-**Defaults for all templates** (don't repeat in each email):
+**Defaults for all templates** (omit from each email):
 
 - Greeting: `Hey [First Name],` or `[First Name],`
 - Sign-off: `[Your Name]` (solo brand) or `— [Your Name/Team]` (SaaS/company)
@@ -159,7 +159,7 @@ P.S. Your trial lasts [X] days. Let's make them count!
 
 **Subject:** Have you tried [Key Feature] yet? / The [Feature] trick most users miss
 
-Send twice during trial — first for the core hook feature, second for a power-user feature most overlook.
+Send twice — first for the core hook feature (Day 2), second for a power-user feature most overlook (Day 10).
 
 ```
 Most [Product] users say [Feature Name] is what hooked them.
@@ -169,13 +169,13 @@ Try it now: [Link directly to feature]
 Not sure how? 2-minute tutorial: [Video link]
 ```
 
-Email 5 variant: include step-by-step (3-4 steps) + screenshot for the power-user feature.
+Email 5 variant: add step-by-step (3-4 steps) + screenshot for the power-user feature.
 
 ### Email 3: Social Proof (Day 4)
 
 **Subject:** "[Result achieved]" — How [Customer] uses [Product]
 
-Uses **Social Proof pattern**. Add: "They did it by [specific action in the product]." Hard CTA to relevant feature link.
+Uses **Social Proof pattern**. Add: "They did it by [specific action in the product]." Hard CTA to feature link.
 
 ### Email 4: Check-in (Day 7)
 
@@ -193,7 +193,7 @@ Things you might not have discovered yet:
 
 **Subject:** Your trial ends in 2 days
 
-Uses **Urgency pattern**, adapted for trial context. Losses: access to key features, data/work created. CTA: `[Upgrade Now →]`. Offer extension: "If you need more time, just reply."
+Uses **Urgency pattern** (trial context). Losses: key feature access, data/work created. CTA: `[Upgrade Now →]`. Offer extension: "If you need more time, just reply."
 
 ### Email 7: Last Day (Day 14)
 
@@ -256,21 +256,19 @@ P.S. [Scarcity/urgency element]
 
 **Subject:** "I can't believe this actually worked" — [Customer Name]
 
-Uses **Social Proof pattern**. Frame as launch momentum: "The response to [Product Name] has been incredible." Hard CTA.
+Uses **Social Proof pattern**. Open with: "The response to [Product Name] has been incredible." Hard CTA.
 
 ### Email 5: FAQ/Objections (Day 4)
 
 **Subject:** Your [Product] questions, answered
 
-Uses **Objection Handling pattern**. Add product-specific Qs:
-- "How long to see results?" → [Answer]
-- "What's included exactly?" → [Brief summary]
+Uses **Objection Handling pattern**. Add product-specific Qs: "How long to see results?" → [Answer]; "What's included exactly?" → [Brief summary].
 
 ### Email 6: Urgency (Day 6)
 
 **Subject:** 48 hours left for [bonus/price]
 
-Uses **Urgency pattern**. Losses = launch bonuses + price increase.
+Uses **Urgency pattern**. Losses: launch bonuses + price increase.
 
 ### Email 7: Final Hours (Day 7)
 
