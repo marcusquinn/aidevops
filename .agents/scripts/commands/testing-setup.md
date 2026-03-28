@@ -15,15 +15,7 @@ Arguments: $ARGUMENTS
 
 ## Purpose
 
-Most repos have ad-hoc testing — some scripts, maybe a runner, but no consistent structure. This command provides a structured onboarding flow that:
-
-1. Detects the project type via bundle system
-2. Discovers what testing infrastructure already exists
-3. Identifies gaps between current state and bundle-recommended quality gates
-4. Generates configuration files and scripts to fill those gaps
-5. Verifies the setup works end-to-end
-
-The output is a working test configuration — not a plan or recommendation.
+Most repos have ad-hoc testing. This command provides structured onboarding: detect project type, discover existing infrastructure, identify gaps against bundle-recommended quality gates, generate configuration, and verify end-to-end. The output is a working test configuration — not a plan.
 
 ## Workflow
 
@@ -36,31 +28,17 @@ QUALITY_GATES=$(echo "$BUNDLE" | jq -r '.quality_gates[]')
 SKIP_GATES=$(echo "$BUNDLE" | jq -r '.skip_gates[]' 2>/dev/null)
 ```
 
-Display the detected bundle and its quality gates:
-
-```text
-Project type: web-app (auto-detected from package.json, tsconfig.json)
-Quality gates: eslint, prettier, typescript-check, secretlint, jest, vitest
-Skipped gates: shellcheck, shfmt, return-statements, positional-parameters
-```
-
-If no bundle is detected, fall back to `cli-tool` (most conservative). If the user disagrees with the detection, let them override:
+Display detected bundle and quality gates. If no bundle detected, fall back to `cli-tool` (most conservative). Let user override:
 
 ```text
 Override bundle? [Enter to accept, or type bundle name]
-1. web-app (detected)
-2. cli-tool
-3. library
-4. infrastructure
-5. content-site
-6. agent
+1. web-app (detected)  2. cli-tool  3. library
+4. infrastructure      5. content-site  6. agent
 ```
 
 ### Step 2: Discover Existing Test Infrastructure
 
-Run `testing-setup-helper.sh discover .` to scan the project for existing test tooling:
-
-**Detection targets:**
+Run `testing-setup-helper.sh discover .` to scan for existing tooling:
 
 | Category | What to find | How |
 |----------|-------------|-----|
@@ -73,116 +51,50 @@ Run `testing-setup-helper.sh discover .` to scan the project for existing test t
 | E2E/integration | `playwright.config.*`, `cypress.config.*`, `*.spec.ts` | File glob |
 | Quality gates | `linters-local.sh` integration, pre-commit hooks | Not yet detected (TODO: t1660.2+) |
 
-Display results as a status table:
-
-```text
-=== Existing Test Infrastructure ===
-
-  [found]   jest (package.json devDependencies)
-  [found]   eslint (eslintrc.json)
-  [found]   prettier (.prettierrc)
-  [found]   tests/ directory (12 test files)
-  [missing] vitest (bundle recommends, not installed)
-  [missing] coverage configuration
-  [missing] CI test step in workflows
-  [missing] pre-commit hooks
-```
+Display results as `[found]`/`[missing]` status table with source details.
 
 ### Step 3: Gap Analysis
 
-Compare discovered infrastructure against bundle quality gates. For each gate:
+Compare discovered infrastructure against bundle quality gates:
 
 | Gate Status | Action |
 |-------------|--------|
-| **found + configured** | Verify it runs: execute the test command, report pass/fail |
+| **found + configured** | Verify it runs: execute test command, report pass/fail |
 | **found + misconfigured** | Show what's wrong, offer to fix |
 | **missing + recommended** | Offer to install and configure |
 | **missing + skipped** | Note as intentionally skipped by bundle |
 
-Present the gap analysis as an actionable summary:
-
-```text
-=== Gap Analysis ===
-
-Ready (2):
-  eslint — configured, 0 errors on last run
-  prettier — configured, all files formatted
-
-Needs attention (2):
-  jest — installed but no config file, tests may not run correctly
-  typescript-check — tsconfig.json exists but strict mode disabled
-
-Missing (recommended by bundle) (1):
-  vitest — not installed, bundle recommends for unit testing
-
-Skipped by bundle (2):
-  shellcheck — not relevant for web-app projects
-  shfmt — not relevant for web-app projects
-```
+Present as actionable summary grouped by: Ready, Needs attention, Missing (recommended), Skipped by bundle.
 
 ### Step 4: Interactive Configuration
 
-For each gap, walk through configuration:
-
-**4a. Missing test runner installation:**
+For each gap, walk through configuration interactively. Pattern for each item:
 
 ```text
-Install vitest? Bundle 'web-app' recommends it for unit testing.
-1. Yes — install and create vitest.config.ts (recommended)
+Install <tool>? Bundle '<bundle>' recommends it for <purpose>.
+1. Yes — install and create config (recommended)
 2. Skip — I'll handle this manually
-3. Use jest instead — already installed
+3. Use <alternative> instead — already installed
 ```
 
-If yes, the agent performs the installation directly:
-- Adds the dependency (`npm install -D vitest` / `pip install pytest` / etc.)
-- Creates a minimal config file from templates
-- Creates a sample test file if no tests exist
-- Adds a `test` script to package.json (if applicable)
+**Configuration categories:**
 
-> **Note:** Runner installation is agent-driven (the agent runs the appropriate
-> package manager commands), not a helper subcommand. The helper provides
-> `discover`, `gaps`, `status`, and `verify` — the deterministic parts.
-> Installation requires judgment (choosing between alternatives, handling
-> conflicts) and is handled by the agent directly.
+- **Missing test runner** — install dependency, create minimal config, create sample test if none exist, add `test` script to package.json
+- **Missing coverage** — configure c8/istanbul with 80% threshold (or custom)
+- **Missing CI integration** — add test step to existing workflow or create new one
+- **Pre-commit hooks** — install aidevops hooks or husky/lint-staged
 
-**4b. Missing coverage configuration:**
-
-```text
-Set up code coverage?
-1. Yes — configure c8/istanbul with 80% threshold (recommended)
-2. Yes — configure with custom threshold
-3. Skip
-```
-
-**4c. Missing CI integration:**
-
-```text
-Add test step to CI pipeline?
-1. Yes — add to existing .github/workflows/ (recommended)
-2. Create new test workflow
-3. Skip — I'll configure CI separately
-```
-
-**4d. Pre-commit hooks:**
-
-```text
-Install pre-commit quality hooks?
-1. Yes — install aidevops hooks (recommended)
-2. Yes — install husky/lint-staged
-3. Skip
-```
+> **Note:** Runner installation is agent-driven (requires judgment for choosing alternatives, handling conflicts). The helper provides `discover`, `gaps`, `status`, and `verify` — the deterministic parts.
 
 ### Step 5: Generate Configuration
 
-After collecting choices, generate all configuration files. The agent creates these directly:
+After collecting choices, create all configuration files directly:
 
 - Test runner configs (vitest.config.ts, jest.config.js, pytest.ini, etc.)
 - Coverage configs (.nycrc, c8 config in vitest.config.ts, etc.)
 - CI workflow additions (test job in GitHub Actions)
 - Pre-commit hook installation
-- `.aidevops-testing.json` — project-level testing metadata for future commands
-
-The `.aidevops-testing.json` file records what was configured:
+- `.aidevops-testing.json` — project-level testing metadata:
 
 ```json
 {
@@ -198,42 +110,20 @@ The `.aidevops-testing.json` file records what was configured:
 
 ### Step 6: Verification
 
-Run the configured test stack to verify everything works:
-
 ```bash
 testing-setup-helper.sh verify .
 ```
 
-This executes each configured runner and reports results:
+Executes each configured runner and reports `[pass]`/`[fail]`/`[skip]` per gate.
 
-```text
-=== Test Verification ===
+### Step 7: Summary
 
-  [pass] vitest
-  [pass] eslint
-  [pass] prettier
-  [pass] typescript-check
+Display what was configured, files created/modified, and next steps:
 
-  Results: 4 passed, 0 failed, 0 skipped
-```
-
-### Step 7: Summary and Next Steps
-
-Display what was configured and suggest next steps:
-
-```text
-=== Testing Setup Complete ===
-
-Configured: vitest, eslint, prettier, typescript-check, coverage (80%)
-Files created: vitest.config.ts, .aidevops-testing.json
-Files modified: package.json (added test scripts)
-
-Next steps:
-  1. Write tests for your existing code
-  2. Run 'testing-setup-helper.sh status' to check test health
-  3. Push to trigger CI pipeline test step
-  4. Consider '/testing-coverage' to identify untested code paths
-```
+1. Write tests for existing code
+2. Run `testing-setup-helper.sh status` to check test health
+3. Push to trigger CI pipeline test step
+4. Consider `/testing-coverage` to identify untested code paths
 
 ## Options
 
@@ -246,8 +136,6 @@ Next steps:
 | `--verify-only` | Run verification on existing setup without changes |
 
 ## Bundle-to-Runner Mapping
-
-Default test runner recommendations per bundle:
 
 | Bundle | Primary Runner | Secondary | Coverage Tool |
 |--------|---------------|-----------|---------------|
