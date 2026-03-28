@@ -148,10 +148,10 @@ Channel existing frustration with the status quo toward your alternative.
 
 | Type | Primary | Proof Type |
 |------|---------|------------|
-| Early Adopters (Innovation) | Curiosity + Vanity | Beta results, tech specs |
-| Pragmatists (Reliability) | Belonging + Fear | User count, testimonials |
-| Value Seekers (Smart spending) | Greed + Pride | Comparison charts, price breakdowns |
-| Premium Buyers (Exclusivity) | Vanity + Belonging | Materials, craftsmanship, prestige |
+| Early Adopters (Innovation, first access) | Curiosity + Vanity | Beta results, tech specs |
+| Pragmatists (Proven, reliable) | Belonging + Fear | User count, testimonials |
+| Value Seekers (Best price, smart spending) | Greed + Pride | Comparison charts, price breakdowns |
+| Premium Buyers (Quality, exclusivity) | Vanity + Belonging | Materials, craftsmanship, prestige |
 
 ### A/B Testing Triggers
 
@@ -193,10 +193,10 @@ MOST AWARE (subscription): "Discover our subscription" → "You left this in you
 
 | Generation | Key Traits | Example |
 |-----------|------------|---------|
-| **Gen Z (18-25)** | Authentic, values-driven, peer proof, mobile-first, ad-skeptical | "No cap, these are actually good. Sustainably made. Here's the proof." |
-| **Millennials (26-40)** | Experience > ownership, transparency, community, convenience | "Life's too short for [pain point]. Get [benefit] monthly, cancel anytime." |
-| **Gen X (41-56)** | Skeptical of hype, quality > quantity, results-focused | "No gimmicks. A product that works, backed by 10,000+ verified reviews." |
-| **Boomers (57-75)** | Trust/reputation, human connection, service-focused | "Family-owned since 1985. Trusted by 100,000+ customers. Call us." |
+| **Gen Z (18-25)** | Authentic/raw, values-driven, peer proof, mobile-first, meme-fluent, ad-skeptical | "No cap, these are actually good. Sustainably made. Here's the proof." |
+| **Millennials (26-40)** | Experience > ownership, transparency, community, convenience, nostalgic | "Life's too short for [pain point]. Get [benefit] monthly, cancel anytime." |
+| **Gen X (41-56)** | Skeptical of hype, authentic, quality > quantity, results-focused | "No gimmicks. A product that works, backed by 10,000+ verified reviews." |
+| **Boomers (57-75)** | Trust/reputation, human connection, detail-oriented, service-focused | "Family-owned since 1985. Trusted by 100,000+ customers. Call us." |
 
 ### Industry-Specific Messaging
 
@@ -210,7 +210,11 @@ MOST AWARE (subscription): "Discover our subscription" → "You left this in you
 
 ### Testing Framework
 
-Segment → message per segment → match format/tone/proof → run simultaneously → winners become control → expand.
+- Segment by demographics, psychographics, awareness stage, behavior
+- One message per segment — match language, pain/desire, trigger
+- Match creative format to consumption habits, tone to expectations, proof to decision criteria
+- Run all variants simultaneously, measure by segment, find message-market fit
+- Winners become control, create variations, expand to similar segments
 
 **Example:** Freelancers 25-35 (Fear+Pride, UGC) → $32 CPA winner | Corporate 35-50 (Fear+Greed, professional) → $45 CPA | Students 18-24 (Pride+Belonging) → $78 CPA wrong fit. Action: Scale #1, iterate #2, pause #3.
 
