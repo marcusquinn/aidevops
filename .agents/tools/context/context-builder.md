@@ -23,60 +23,43 @@ note: Uses repomix CLI directly (not MCP) for better control and reliability
 - **Tool**: Repomix CLI via helper script or direct `npx repomix` commands
 - **Key Feature**: Tree-sitter compression (~80% token reduction)
 - **Output Dir**: `~/.aidevops/.agent-workspace/work/context/`
+- **Invocation**: `@context-builder compress ~/projects/myapp` or call helper directly
 
-**Helper Script Commands**:
-
-```bash
-# Compress mode (recommended) - extracts code structure only
-~/.aidevops/agents/scripts/context-builder-helper.sh compress [path]
-
-# Full pack with smart defaults
-~/.aidevops/agents/scripts/context-builder-helper.sh pack [path] [xml|markdown|json]
-
-# Quick mode - auto-copies to clipboard
-~/.aidevops/agents/scripts/context-builder-helper.sh quick [path] [pattern]
-
-# Analyze token usage per file
-~/.aidevops/agents/scripts/context-builder-helper.sh analyze [path] [threshold]
-
-# Pack remote GitHub repo
-~/.aidevops/agents/scripts/context-builder-helper.sh remote user/repo [branch]
-
-# Compare full vs compressed
-~/.aidevops/agents/scripts/context-builder-helper.sh compare [path]
-```
-
-**Direct CLI Commands** (when helper unavailable):
+### Helper Script
 
 ```bash
-# Pack local directory with compression
-npx repomix@latest . --compress --output context.xml
-
-# Pack remote repository
-npx repomix@latest --remote user/repo --compress --output context.xml
-
-# Pack with specific patterns
-npx repomix@latest . --include "src/**/*.ts" --ignore "**/*.test.ts"
-
-# Analyze token usage
-npx repomix@latest . --token-count-tree 100
-
-# Output to stdout (pipe to clipboard or other tools)
-npx repomix@latest . --stdout | pbcopy
+~/.aidevops/agents/scripts/context-builder-helper.sh <command> [args]
 ```
 
-**When to Use**:
+| Command | Usage | Notes |
+|---------|-------|-------|
+| `compress [path]` | Extract code structure only (signatures, imports) | **Recommended** — ~80% token reduction |
+| `pack [path] [xml\|markdown\|json]` | Full pack with smart defaults | XML default, best for Claude |
+| `quick [path] [pattern]` | Auto-copies to clipboard | Fast, focused subset |
+| `analyze [path] [threshold]` | Token usage per file | Default threshold: 100 tokens |
+| `remote user/repo [branch]` | Pack remote GitHub repo | See guardrails below |
+| `compare [path]` | Full vs compressed side-by-side | Shows size reduction % |
+
+### Direct CLI (when helper unavailable)
+
+```bash
+npx repomix@latest . --compress --output context.xml       # Compressed pack
+npx repomix@latest --remote user/repo --compress            # Remote repo
+npx repomix@latest . --include "src/**/*.ts" --ignore "**/*.test.ts"  # Filtered
+npx repomix@latest . --token-count-tree 100                 # Token analysis
+npx repomix@latest . --stdout | pbcopy                      # Pipe to clipboard
+```
+
+### Mode Selection
 
 | Scenario | Command | Token Impact |
 |----------|---------|--------------|
-| Share full codebase with AI | `pack` or `npx repomix .` | Full tokens |
-| Architecture understanding | `compress` or `npx repomix . --compress` | ~80% reduction |
+| Architecture understanding | `compress` | ~80% reduction |
+| Full implementation details | `pack` | Full tokens |
 | Quick file subset | `quick . "**/*.ts"` | Minimal |
-| External repo analysis | `remote user/repo` or `npx repomix --remote user/repo` | Compressed |
+| External repo analysis | `remote user/repo` | Compressed |
 
-**Code Maps (compress mode)** extracts class/function signatures, interface definitions, import/export statements. Omits implementation details, comments, empty lines.
-
-**Token Budget**:
+### Token Budget
 
 | Context Size | Mode | Typical Use |
 |--------------|------|-------------|
@@ -86,17 +69,17 @@ npx repomix@latest . --stdout | pbcopy
 
 ## CRITICAL: Remote Repository Guardrails
 
-**NEVER blindly pack a remote repository.** Follow this escalation:
+**NEVER blindly pack a remote repository.** Escalation:
 
-1. **Fetch README first** - `gh api repos/{owner}/{repo}/readme --jq '.content' | base64 -d` (~1-5K tokens)
-2. **Check repo size** - `gh api repos/{user}/{repo} --jq '.size'` (size in KB)
-3. **Apply size thresholds**:
+1. **Fetch README first**: `gh api repos/{owner}/{repo}/readme --jq '.content' | base64 -d` (~1-5K tokens)
+2. **Check repo size**: `gh api repos/{user}/{repo} --jq '.size'` (size in KB)
+3. **Apply thresholds**:
 
 | Repo Size (KB) | Est. Tokens | Action |
 |----------------|-------------|--------|
 | < 500 | < 50K | Safe for compressed pack |
 | 500-2000 | 50-200K | Use `--include` patterns only |
-| > 2000 | > 200K | **NEVER full pack** - targeted files only |
+| > 2000 | > 200K | **NEVER full pack** — targeted files only |
 
 4. **Use patterns**:
 
@@ -104,10 +87,10 @@ npx repomix@latest . --stdout | pbcopy
 npx repomix@latest --remote user/repo --include "README.md,src/**/*.ts,docs/**" --compress
 ```
 
-**What NOT to do:**
+**Dangerous** — packs entire repo without size check:
 
 ```bash
-# DANGEROUS - packs entire repo without size check
+# DON'T DO THIS
 npx repomix@latest --remote https://github.com/some/large-repo
 ```
 
@@ -115,19 +98,23 @@ See `tools/context/context-guardrails.md` for full workflow and recovery procedu
 
 <!-- AI-CONTEXT-END -->
 
-## Usage Examples
-
-### 1. Compress Mode (Recommended)
-
-Extract code structure with ~80% token reduction:
+## Usage Patterns
 
 ```bash
-./context-builder-helper.sh compress                          # current directory
-./context-builder-helper.sh compress ~/projects/myapp        # specific project
-./context-builder-helper.sh compress ~/projects/myapp markdown
+# Large projects: compression + patterns
+context-builder-helper.sh compress . --include "src/**/*.ts"
+
+# Monorepos: target specific packages
+context-builder-helper.sh compress packages/core
+
+# Debugging: pack only relevant directories
+context-builder-helper.sh pack src/services markdown
+
+# Remote repos with branch
+context-builder-helper.sh remote vercel/next.js canary
 ```
 
-Compress extracts signatures only — implementation bodies are omitted:
+**Compress mode** extracts class/function signatures, interface definitions, import/export statements. Omits implementation bodies, comments, empty lines:
 
 ```typescript
 // Compressed output (structure only)
@@ -139,132 +126,19 @@ export class UserService {
 }
 ```
 
-### 2. Full Pack Mode
-
-When you need complete implementation details:
-
-```bash
-./context-builder-helper.sh pack                  # XML (default, best for Claude)
-./context-builder-helper.sh pack . markdown
-./context-builder-helper.sh pack . json
-```
-
-### 3. Quick Mode
-
-Fast, focused context with auto-clipboard:
-
-```bash
-./context-builder-helper.sh quick . "**/*.ts"
-./context-builder-helper.sh quick src/components "**/*.tsx"
-```
-
-### 4. Token Analysis
-
-```bash
-./context-builder-helper.sh analyze              # files with 100+ tokens
-./context-builder-helper.sh analyze . 50         # lower threshold
-./context-builder-helper.sh analyze ~/Git/aidevops 100
-```
-
-### 5. Remote Repository
-
-```bash
-./context-builder-helper.sh remote facebook/react
-./context-builder-helper.sh remote vercel/next.js canary
-./context-builder-helper.sh remote sveltejs/svelte main markdown
-```
-
-### 6. Compare Full vs Compressed
-
-```bash
-./context-builder-helper.sh compare ~/projects/myapp
-```
-
-Output:
-
-```text
-┌─────────────────────────────────────────────────┐
-│              Context Comparison                 │
-├─────────────────────────────────────────────────┤
-│ Metric               │       Full │ Compressed │
-├─────────────────────────────────────────────────┤
-│ File Size            │       2.1M │       412K │
-│ Lines                │      45230 │       8921 │
-└─────────────────────────────────────────────────┘
-
-Size reduction: 80.4%
-```
-
 ## Output Files
 
-All output saved to `~/.aidevops/.agent-workspace/work/context/`:
-
-```text
-~/.aidevops/.agent-workspace/work/context/
-├── aidevops-full-20250129-143022.xml
-├── aidevops-compressed-20250129-143045.xml
-├── react-remote-20250129-150000.xml
-└── myapp-quick-20250129-151030.md
-```
-
-File naming: `{repo-name}-{mode}-{timestamp}.{format}`
-
-## Effective Patterns
-
-```bash
-# Large projects: combine compression with patterns
-./context-builder-helper.sh compress . --include "src/**/*.ts"
-
-# Monorepos: target specific packages
-./context-builder-helper.sh compress packages/core
-
-# Debugging: pack only relevant directories
-./context-builder-helper.sh pack src/services markdown
-```
-
-## Comparison with RepoPrompt
-
-| Feature | Context Builder | RepoPrompt |
-|---------|-----------------|------------|
-| Code Maps | Yes (Tree-sitter) | Yes (AST) |
-| Token Reduction | ~80% | ~80% |
-| Visual File Selection | CLI patterns | GUI tree |
-| AI Context Builder | Manual | Auto-suggest |
-| MCP Integration | Yes | Yes |
-| Platform | Cross-platform | macOS only |
-| Cost | Free (open source) | Freemium |
+Saved to `~/.aidevops/.agent-workspace/work/context/`. Naming: `{repo-name}-{mode}-{timestamp}.{format}`
 
 ## Troubleshooting
 
-**"npx not found"** — install Node.js: `brew install node`
-
-**"Permission denied"** — `chmod +x ~/.aidevops/agents/scripts/context-builder-helper.sh`
-
-**Large output file** — use compression or filter:
-
-```bash
-./context-builder-helper.sh compress
-./context-builder-helper.sh pack . --include "src/**/*.ts" --ignore "**/*.test.ts"
-```
-
-## Integration
-
-Use the `@context-builder` subagent or call the helper directly:
-
-```text
-@context-builder compress ~/projects/myapp
-```
-
-Manual workflow:
-
-1. Generate: `./context-builder-helper.sh compress .`
-2. Copy: `cat ~/.aidevops/.agent-workspace/work/context/myapp-*.xml | pbcopy`
-3. Paste into AI conversation with your question
-
-**Note on MCP**: While Repomix supports MCP server mode (`npx repomix --mcp`), this framework uses the CLI directly for better control and reliability.
+- **"npx not found"**: Install Node.js — `brew install node`
+- **"Permission denied"**: `chmod +x ~/.aidevops/agents/scripts/context-builder-helper.sh`
+- **Large output**: Use `compress` mode or filter with `--include`/`--ignore` patterns
 
 ## Related
 
 - [Repomix Documentation](https://repomix.com/guide/)
-- [RepoPrompt Concepts](https://repoprompt.com/docs)
 - [aidevops Framework](~/Git/aidevops/AGENTS.md)
+
+**Note on MCP**: Repomix supports MCP server mode (`npx repomix --mcp`), but this framework uses the CLI directly for better control and reliability.
