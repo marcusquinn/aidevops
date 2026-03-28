@@ -119,7 +119,7 @@ Changelog: `feat:` → Added, `fix:` → Fixed, `docs:`/`perf:`/`refactor:` → 
 
 **4.1 Preflight:** Quality checks, auto-fixes. See `workflows/preflight.md`.
 
-**4.2 PR Create:** Verify `gh auth`, rebase onto `origin/main`, push, create PR. **PR body MUST include `Closes #NNN`** (only mechanism creating a GitHub PR-issue link). Backtick-escape issue refs in bug descriptions to avoid unintended closes.
+**4.2 PR Create:** Verify `gh auth`, rebase onto `origin/main`, push, create PR. **PR body MUST include `Closes #NNN`** (only mechanism creating a GitHub PR-issue link). Backtick-escape issue refs in bug descriptions to avoid unintended closes. **Append signature footer** to the PR body: run `SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL")` and append `${SIG_FOOTER}` as the last content in the `--body`.
 
 ### 4.3 Label Update — `status:in-review` (t1343 — MANDATORY)
 
