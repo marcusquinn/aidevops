@@ -108,6 +108,7 @@ Knowledge bases (skill docs, domain reference) whose size comes from breadth, no
 3. **Apply project standards** — but standards themselves are not simplification targets.
 4. **Enhance clarity without losing depth.** Reduce nesting, improve naming, remove "what" comments (not "why").
 5. **Maintain balance.** Avoid over-simplification that removes helpful abstractions or loses edge-case handling.
+6. **No arbitrary line targets.** Never set a target line count for simplification. The resulting size is whatever remains after removing genuine noise. Dispatchers and issue creators must not invent reduction targets — this creates pressure to cut content for the sake of a number, conflicting with principle 1. For large files, subdivide per `build-agent.md` (~300-line threshold) instead of compressing.
 
 ## Usage
 
