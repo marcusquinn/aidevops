@@ -1,5 +1,5 @@
 ---
-description: Review external issues and PRs - validate problems and evaluate proposed solutions
+description: Review external issues and PRs - validate problems and evaluate proposed solutions. Used interactively and by the pulse supervisor for automated triage of needs-maintainer-review items.
 mode: subagent
 tools:
   read: true
@@ -18,9 +18,10 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Triage and review issues/PRs submitted by external contributors
+- **Purpose**: Triage and review issues/PRs — interactive or pulse-automated
 - **Focus**: Validate the problem exists, evaluate if the solution is optimal
-- **When**: Before approving/merging external contributions
+- **When**: Before approving/merging contributions, or automatically by the pulse for `needs-maintainer-review` items
+- **Modes**: Interactive (user invokes `/review-issue-pr`) or headless (pulse dispatches for triage)
 
 **Core Questions**:
 
@@ -115,8 +116,10 @@ gh pr diff 456 --stat
 
 ## Review Output Format
 
+The review comment MUST contain `## Review:` or `## Issue/PR Review:` in the heading — this is the marker the pulse uses to detect whether a triage review has already been posted (idempotency guard).
+
 ```markdown
-## Issue/PR Review: #123 - [Title]
+## Review: Approved / Needs Changes / Decline
 
 ### Issue Validation
 
@@ -129,7 +132,7 @@ gh pr diff 456 --stat
 
 **Root Cause**: [Brief description]
 
-### Solution Evaluation
+### Solution Evaluation (if PR or proposed fix)
 
 | Criterion | Assessment | Notes |
 |-----------|------------|-------|
@@ -138,28 +141,39 @@ gh pr diff 456 --stat
 | Completeness | Good/Needs Work | [edge cases covered?] |
 | Consistency | Good/Needs Work | [follows patterns?] |
 
-**Alternative Approaches Considered**:
-1. [Alternative 1] - [why not chosen]
+**Alternative Approaches (Recommended)**:
+1. [Recommended approach] - [why]
 
 ### Scope Assessment
 
-- [ ] All changes documented in PR description
-- [ ] No unrelated changes
-- [ ] Minimal diff for the fix
-- [ ] No "while I was here" additions
-
-**Undocumented Changes**: [list any, or "None"]
+- Scope creep risk: Low/Medium/High
+- Complexity: Low (tier:simple) / Medium (default sonnet) / High (tier:thinking)
 
 ### Recommendation
 
-**Decision**: APPROVE / REQUEST CHANGES / CLOSE
+**Decision**: APPROVE / REQUEST CHANGES / DECLINE
 
-**Required Changes** (if any):
-1. [Change 1]
+**Suggested labels**: [e.g., `tier:simple`, `bug`, `status:available`]
 
-**Suggestions** (optional):
-1. [Suggestion 1]
+**Implementation guidance** (if approving):
+1. [Key implementation step]
+2. [Test case to add]
 ```
+
+## Headless / Pulse-Driven Mode
+
+When invoked by the pulse supervisor (via `/review-issue-pr <number>`), this workflow runs headlessly:
+
+1. **Fetch the issue/PR** using `gh issue view` or `gh pr view`
+2. **Read the relevant codebase files** referenced in the issue body
+3. **Perform the full review checklist** (problem validation, root cause, solution evaluation, scope)
+4. **Post the review as a comment** on the issue/PR using `gh issue comment` or `gh pr comment`
+5. **Do NOT modify labels** — the pulse handles label transitions based on the maintainer's response
+6. **Exit cleanly** — this is an operational task, not a code change. No worktree, no PR, no commit.
+
+**The review comment is the only output.** The pulse detects it on the next cycle and knows the issue has been triaged. The maintainer reads the review and responds with "approved", "declined", or further direction.
+
+**Incorporating maintainer feedback:** If the dispatch prompt includes prior maintainer comments (e.g., "The maintainer asked: can this be done without adding a dependency?"), incorporate that context into the review. Address the maintainer's specific concerns in the analysis.
 
 ## Common Scenarios
 
