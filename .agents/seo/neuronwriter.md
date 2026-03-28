@@ -16,90 +16,65 @@ tools:
 ## Quick Reference
 
 - **Purpose**: SEO content optimization, NLP term recommendations, content scoring, competitor analysis
-- **API**: `https://app.neuronwriter.com/neuron-api/0.5/writer`
-- **Auth**: API key in `X-API-KEY` header, stored in `~/.config/aidevops/credentials.sh` as `NEURONWRITER_API_KEY`
-- **Plan**: Gold plan or higher required
+- **API base**: `https://app.neuronwriter.com/neuron-api/0.5/writer`
+- **Auth**: `X-API-KEY` header — key stored in `~/.config/aidevops/credentials.sh` as `NEURONWRITER_API_KEY`
+- **Plan**: Gold or higher required
 - **Docs**: https://neuronwriter.com/faq/
-- **No MCP required** - uses curl directly
+- **No MCP required** — uses curl directly
 
 **API requests consume monthly limits** (same cost as using the NeuronWriter UI).
 
 <!-- AI-CONTEXT-END -->
 
-## Authentication
+## Common Curl Pattern
+
+All endpoints use POST with the same headers. Define once per script:
 
 ```bash
 source ~/.config/aidevops/credentials.sh
+NW_API="https://app.neuronwriter.com/neuron-api/0.5/writer"
+NW_HEADERS=(-H "X-API-KEY: $NEURONWRITER_API_KEY" -H "Accept: application/json" -H "Content-Type: application/json")
 ```
+
+Do not use `https://app.neuronwriter.com/api/v1/` — that is a different API.
+
+Usage: `curl -s -X POST "$NW_API/<endpoint>" "${NW_HEADERS[@]}" -d '<json>'`
 
 ## API Endpoints
 
-All endpoints use POST. All require the `X-API-KEY` header.
-Do not use `https://app.neuronwriter.com/api/v1/` for Neuron API calls.
+### `/list-projects`
 
-### List Projects
-
-```bash
-curl -s -X POST "https://app.neuronwriter.com/neuron-api/0.5/writer/list-projects" \
-  -H "X-API-KEY: $NEURONWRITER_API_KEY" \
-  -H "Accept: application/json" \
-  -H "Content-Type: application/json"
-```
-
-Response:
-
-```json
-[
-  {"project": "ed0b47151fb35b02", "name": "My SEO Project", "language": "English", "engine": "google.co.uk"},
-  {"project": "e6a3198027aa1b96", "name": "E-commerce Content", "language": "English", "engine": "google.co.uk"}
-]
-```
-
-### Create New Query (`/new-query`)
-
-Creates a content writer query for a keyword. Takes ~60 seconds to process.
+Returns array of `{project, name, language, engine}`.
 
 ```bash
-curl -s -X POST "https://app.neuronwriter.com/neuron-api/0.5/writer/new-query" \
-  -H "X-API-KEY: $NEURONWRITER_API_KEY" \
-  -H "Accept: application/json" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "project": "ed0b47151fb35b02",
-    "keyword": "trail running shoes",
-    "engine": "google.co.uk",
-    "language": "English"
-  }'
+curl -s -X POST "$NW_API/list-projects" "${NW_HEADERS[@]}"
+```
+
+### `/new-query`
+
+Creates a content writer query for a keyword. Takes ~60s to process.
+
+```bash
+curl -s -X POST "$NW_API/new-query" "${NW_HEADERS[@]}" \
+  -d '{"project": "PROJECT_ID", "keyword": "trail running shoes", "engine": "google.co.uk", "language": "English"}'
 ```
 
 | Param | Description |
 |-------|-------------|
-| `project` | Project ID from project URL or `/list-projects` |
+| `project` | Project ID from `/list-projects` or project URL |
 | `keyword` | Target keyword to analyse |
 | `engine` | Search engine (e.g. `google.com`, `google.co.uk`) |
 | `language` | Content language (e.g. `English`) |
 
-Response:
+Returns `{query, query_url, share_url, readonly_url}`.
 
-```json
-{
-  "query": "32dee2a89374a722",
-  "query_url": "https://app.neuronwriter.com/analysis/view/32dee2a89374a722",
-  "share_url": "https://app.neuronwriter.com/analysis/share/32dee2a89374a722/...",
-  "readonly_url": "https://app.neuronwriter.com/analysis/content-preview/32dee2a89374a722/..."
-}
-```
-
-### Get Query Recommendations (`/get-query`)
+### `/get-query`
 
 Retrieves SEO recommendations after processing (~60s after `/new-query`).
 
 ```bash
-curl -s -X POST "https://app.neuronwriter.com/neuron-api/0.5/writer/get-query" \
-  -H "X-API-KEY: $NEURONWRITER_API_KEY" \
-  -H "Accept: application/json" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "32dee2a89374a722"}'
+curl -s -X POST "$NW_API/get-query" "${NW_HEADERS[@]}" \
+  -d '{"query": "QUERY_ID"}'
 ```
 
 Response (when `status == "ready"`):
@@ -113,20 +88,13 @@ Response (when `status == "ready"`):
 | `ideas` | Suggested questions, People Also Ask, content questions |
 | `competitors` | SERP competitors with URLs, titles, content scores |
 
-### List Queries (`/list-queries`)
+### `/list-queries`
 
 Filter queries within a project.
 
 ```bash
-curl -s -X POST "https://app.neuronwriter.com/neuron-api/0.5/writer/list-queries" \
-  -H "X-API-KEY: $NEURONWRITER_API_KEY" \
-  -H "Accept: application/json" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "project": "ed0b47151fb35b02",
-    "status": "ready",
-    "source": "neuron-api"
-  }'
+curl -s -X POST "$NW_API/list-queries" "${NW_HEADERS[@]}" \
+  -d '{"project": "PROJECT_ID", "status": "ready", "source": "neuron-api"}'
 ```
 
 | Param | Description |
@@ -139,16 +107,13 @@ curl -s -X POST "https://app.neuronwriter.com/neuron-api/0.5/writer/list-queries
 | `language` | Filter by language |
 | `engine` | Filter by search engine |
 
-### Get Content (`/get-content`)
+### `/get-content`
 
 Retrieve the last saved content revision for a query.
 
 ```bash
-curl -s -X POST "https://app.neuronwriter.com/neuron-api/0.5/writer/get-content" \
-  -H "X-API-KEY: $NEURONWRITER_API_KEY" \
-  -H "Accept: application/json" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "32dee2a89374a722", "revision_type": "all"}'
+curl -s -X POST "$NW_API/get-content" "${NW_HEADERS[@]}" \
+  -d '{"query": "QUERY_ID", "revision_type": "all"}'
 ```
 
 | Param | Description |
@@ -156,31 +121,15 @@ curl -s -X POST "https://app.neuronwriter.com/neuron-api/0.5/writer/get-content"
 | `query` | Query ID |
 | `revision_type` | `manual` (default) or `all` (includes autosave) |
 
-Response:
+Returns `{content, title, description, created, type}` — `content` is HTML, `type` is `manual` or `autosave`.
 
-| Key | Description |
-|-----|-------------|
-| `content` | HTML content |
-| `title` | Page title |
-| `description` | Meta description |
-| `created` | Revision timestamp |
-| `type` | `manual` or `autosave` |
-
-### Import Content (`/import-content`)
+### `/import-content`
 
 Push HTML content into the NeuronWriter editor. Creates a new content revision.
 
 ```bash
-curl -s -X POST "https://app.neuronwriter.com/neuron-api/0.5/writer/import-content" \
-  -H "X-API-KEY: $NEURONWRITER_API_KEY" \
-  -H "Accept: application/json" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "32dee2a89374a722",
-    "html": "<h1>Your Article Title</h1><p>Article content...</p>",
-    "title": "Your Article Title",
-    "description": "Meta description for the article."
-  }'
+curl -s -X POST "$NW_API/import-content" "${NW_HEADERS[@]}" \
+  -d '{"query": "QUERY_ID", "html": "<h1>Title</h1><p>Content...</p>", "title": "Title", "description": "Meta description."}'
 ```
 
 | Param | Description |
@@ -193,30 +142,23 @@ curl -s -X POST "https://app.neuronwriter.com/neuron-api/0.5/writer/import-conte
 | `id` | Optional: HTML element ID to extract content from (with `url`) |
 | `class` | Optional: HTML element class to extract content from (with `url`) |
 
-Response: `{"status": "ok", "content_score": 25}`
+Returns `{"status": "ok", "content_score": 25}`.
 
-### Evaluate Content (`/evaluate-content`)
+### `/evaluate-content`
 
-Same parameters and response as `/import-content`, but does **not** save a revision. Use this to score content without modifying the editor.
+Same parameters as `/import-content`, but does **not** save a revision. Use to score content without modifying the editor.
 
 ```bash
-curl -s -X POST "https://app.neuronwriter.com/neuron-api/0.5/writer/evaluate-content" \
-  -H "X-API-KEY: $NEURONWRITER_API_KEY" \
-  -H "Accept: application/json" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "32dee2a89374a722",
-    "html": "<h1>Your Article Title</h1><p>Article content...</p>"
-  }'
+curl -s -X POST "$NW_API/evaluate-content" "${NW_HEADERS[@]}" \
+  -d '{"query": "QUERY_ID", "html": "<h1>Title</h1><p>Content...</p>"}'
 ```
 
-## Common Workflows
+## Workflows
 
 ### Create Query and Poll for Results
 
 ```bash
 source ~/.config/aidevops/credentials.sh
-
 NW_API="https://app.neuronwriter.com/neuron-api/0.5/writer"
 NW_HEADERS=(-H "X-API-KEY: $NEURONWRITER_API_KEY" -H "Accept: application/json" -H "Content-Type: application/json")
 
@@ -230,7 +172,7 @@ if [[ -z "$QUERY_ID" || "$QUERY_ID" == "null" ]]; then
   exit 1
 fi
 
-# 2. Poll until ready (check every 15s, max 5 min)
+# 2. Poll until ready (every 15s, max 5 min)
 for i in $(seq 1 20); do
   PAYLOAD=$(jq -n --arg qid "$QUERY_ID" '{query: $qid}')
   STATUS=$(curl -s -X POST "$NW_API/get-query" "${NW_HEADERS[@]}" \
@@ -250,26 +192,21 @@ curl -s -X POST "$NW_API/get-query" "${NW_HEADERS[@]}" \
   -d "$PAYLOAD" | jq '.terms_txt.content_basic'
 ```
 
-### Score Existing Content Against a Query
+### Score Existing Content
 
 ```bash
 source ~/.config/aidevops/credentials.sh
-
 curl -s -X POST "https://app.neuronwriter.com/neuron-api/0.5/writer/evaluate-content" \
   -H "X-API-KEY: $NEURONWRITER_API_KEY" \
   -H "Accept: application/json" \
   -H "Content-Type: application/json" \
-  -d '{
-    "query": "EXISTING_QUERY_ID",
-    "url": "https://example.com/your-article"
-  }' | jq '.content_score'
+  -d '{"query": "EXISTING_QUERY_ID", "url": "https://example.com/your-article"}' | jq '.content_score'
 ```
 
 ### Bulk Keyword Analysis
 
 ```bash
 source ~/.config/aidevops/credentials.sh
-
 NW_API="https://app.neuronwriter.com/neuron-api/0.5/writer"
 NW_HEADERS=(-H "X-API-KEY: $NEURONWRITER_API_KEY" -H "Accept: application/json" -H "Content-Type: application/json")
 
@@ -299,25 +236,11 @@ done
 ## Setup
 
 1. Get API key from NeuronWriter profile > "Neuron API access" tab
-2. Store securely:
-
-```bash
-bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set NEURONWRITER_API_KEY "your_api_key"
-```
-
-3. Verify:
-
-```bash
-source ~/.config/aidevops/credentials.sh
-curl -s -X POST "https://app.neuronwriter.com/neuron-api/0.5/writer/list-projects" \
-  -H "X-API-KEY: $NEURONWRITER_API_KEY" \
-  -H "Accept: application/json" \
-  -H "Content-Type: application/json" | jq .
-```
+2. Store: `bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set NEURONWRITER_API_KEY "your_api_key"`
+3. Verify: run `/list-projects` (see above)
 
 ## Resources
 
 - **Official Docs**: https://neuronwriter.com/faq/
 - **Roadmap**: https://roadmap.neuronwriter.com/p/neuron-api-HOPZZB
 - **Dashboard**: https://app.neuronwriter.com/
-- **Plan Required**: Gold or higher
