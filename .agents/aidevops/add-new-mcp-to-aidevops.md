@@ -50,24 +50,22 @@ Gather before starting — use WebFetch for official setup guides per AI tool:
 
 | Item | Example |
 |------|---------|
-| **Official docs URL** | `https://docs.example.com/mcp/overview` |
-| **Install command** | `npm install -g @example/mcp@latest` |
-| **Auth method** | CLI login, API key, OAuth |
-| **Credentials location** | `~/.example/session.json` |
-| **MCP tool names** | `codebase-retrieval`, `search-docs` |
-| **Prerequisites** | Node.js 22+, Python 3.8+ |
+| Official docs URL | `https://docs.example.com/mcp/overview` |
+| Install command | `npm install -g @example/mcp@latest` |
+| Auth method | CLI login, API key, OAuth |
+| Credentials location | `~/.example/session.json` |
+| MCP tool names | `codebase-retrieval`, `search-docs` |
+| Prerequisites | Node.js 22+, Python 3.8+ |
 
 ```bash
 npm view @example/mcp --json | head -50
 command -v example-cli
 npm docs @example/mcp
-# Pre-flight: verify latest version before configuring
+# Version check — MCP methods change between versions; outdated commands cause "Connection closed" errors
 npm view {package} version  # Latest available
 {tool} --version            # Currently installed
 npm update -g {package}     # Update if outdated
 ```
-
-**Why version check matters**: MCP integration methods change between versions. Outdated commands cause "Connection closed" errors.
 
 ## Step 2: Determine Agent Enablement
 
@@ -81,9 +79,9 @@ Ask the user which agents need this MCP:
 
 Create `.agents/tools/{category}/{mcp-name}.md`. Use `.agents/tools/context/augment-context-engine.md` as reference template.
 
-**Categories**: `context/` (codebase/docs), `code-review/` (linting/security), `deployment/` (CI/CD), `browser/` (web automation), `git/` (VCS), `credentials/` (secrets), `ai-assistants/` (AI tool config).
+**Categories**: `context/`, `code-review/`, `deployment/`, `browser/`, `git/`, `credentials/`, `ai-assistants/`.
 
-**Required Sections**: (1) AI-CONTEXT-START block (purpose, install, auth, tool names, docs URL, config snippet, verification prompt, supported assistants, enabled agents), (2) What It Does, (3) Prerequisites, (4) Installation, (5) AI Assistant Configurations (one section per assistant), (6) Verification, (7) Non-Interactive Setup, (8) Troubleshooting, (9) Updates.
+**Required sections**: AI-CONTEXT-START block (purpose, install, auth, tool names, docs URL, config snippet, verification prompt, supported assistants, enabled agents), What It Does, Prerequisites, Installation, AI Assistant Configurations (one per assistant), Verification, Non-Interactive Setup, Troubleshooting, Updates.
 
 ## Step 4: Create Config Templates
 
@@ -119,7 +117,7 @@ configure_{mcp_name}_mcp() {
 }
 ```
 
-**Config Locations**:
+**Config locations by assistant**:
 
 | Assistant | Config Location | Method |
 |-----------|-----------------|--------|
@@ -169,7 +167,7 @@ for agent, cfg in d.get('agent',{}).items():
 ~/.aidevops/agents/scripts/opencode-test-helper.sh test-mcp {mcp-name} Build+
 ```
 
-If CLI tests pass, restart OpenCode TUI for interactive verification.
+Restart OpenCode TUI for interactive verification after CLI tests pass.
 After implementation: `@agent-review Review the new {mcp-name} documentation and configuration`
 
 ## Completion Checklist
@@ -186,7 +184,7 @@ After implementation: `@agent-review Review the new {mcp-name} documentation and
 
 ## Common Patterns
 
-**MCP Config Formats**:
+**MCP config formats by assistant**:
 
 | Assistant | Format | Key Differences |
 |-----------|--------|-----------------|
@@ -198,7 +196,7 @@ After implementation: `@agent-review Review the new {mcp-name} documentation and
 | Gemini CLI | No type field | User or project level |
 | Droid | CLI-based | `droid mcp add` command |
 
-**Workspace Path Handling**:
+**Workspace path handling**:
 
 ```json
 // Cursor/Windsurf (macOS/Linux)
