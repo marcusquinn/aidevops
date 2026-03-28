@@ -1,31 +1,20 @@
-# Cloudflare R2 SQL Skill
+# Cloudflare R2 SQL
 
-Serverless distributed query engine for Apache Iceberg tables in R2 Data Catalog. Serverless, zero egress fees, open beta (free beyond standard R2 storage costs).
+Serverless distributed query engine for Apache Iceberg tables in R2 Data Catalog. Zero egress fees, open beta (free beyond standard R2 storage costs).
 
 ## Core Concepts
 
-### Apache Iceberg Table Format
+**Apache Iceberg**: Open table format for large-scale analytics — ACID transactions, schema evolution (add/rename/drop columns without rewriting data), optimized metadata (avoids full table scans). Supported by Spark, Trino, Snowflake, DuckDB, ClickHouse, PyIceberg.
 
-- Open table format for large-scale analytics; ACID transactions
-- Schema evolution — add/rename/drop columns without rewriting data
-- Optimized metadata — avoids full table scans via indexed metadata
-- Supported by Spark, Trino, Snowflake, DuckDB, ClickHouse, PyIceberg
+**R2 Data Catalog**: Managed Iceberg catalog built into R2 bucket; standard Iceberg REST interface. Single source of truth for table metadata via immutable snapshots. Supports multiple query engines safely accessing same tables.
 
-### R2 Data Catalog
+**Architecture**:
 
-- Managed Iceberg catalog built into R2 bucket; standard Iceberg REST interface
-- Single source of truth for table metadata via immutable snapshots
-- Supports multiple query engines safely accessing same tables
+- **Query Planner**: top-down metadata investigation, multi-layer pruning (partition/column/row-group), streaming pipeline with early termination, uses partition and column stats (min/max, null counts)
+- **Query Execution**: coordinator distributes to workers across Cloudflare network; workers run Apache DataFusion; Arrow IPC format; Parquet column pruning; ranged reads from R2
+- **Aggregation**: scatter-gather (sum, count, avg) or shuffling (ORDER BY/HAVING via hash partitioning)
 
-### Architecture
-
-**Query Planner**: top-down metadata investigation, multi-layer pruning (partition/column/row-group), streaming pipeline with early termination, uses partition and column stats (min/max, null counts).
-
-**Query Execution**: coordinator distributes to workers across Cloudflare network; workers run Apache DataFusion; Arrow IPC format; Parquet column pruning; ranged reads from R2.
-
-**Aggregation**: scatter-gather (sum, count, avg) or shuffling (ORDER BY/HAVING via hash partitioning).
-
-## Setup & Configuration
+## Setup
 
 ### 1. Enable R2 Data Catalog
 
@@ -33,11 +22,11 @@ Serverless distributed query engine for Apache Iceberg tables in R2 Data Catalog
 npx wrangler r2 bucket catalog enable <bucket-name>
 ```
 
-Note the Warehouse name and Catalog URI from output. (Dashboard: R2 Object Storage → bucket → Settings → R2 Data Catalog → Enable.)
+Note the Warehouse name and Catalog URI from output. (Dashboard: R2 Object Storage > bucket > Settings > R2 Data Catalog > Enable.)
 
 ### 2. Create API Token
 
-Permissions required: R2 Admin Read & Write (includes R2 SQL Read). Dashboard: R2 Object Storage → Manage API tokens → Create API token → Admin Read & Write.
+Permissions required: R2 Admin Read & Write (includes R2 SQL Read). Dashboard: R2 Object Storage > Manage API tokens > Create API token > Admin Read & Write.
 
 ### 3. Configure Environment
 
@@ -45,7 +34,7 @@ Permissions required: R2 Admin Read & Write (includes R2 SQL Read). Dashboard: R
 export WRANGLER_R2_SQL_AUTH_TOKEN=<your-token>
 ```
 
-## Common Code Patterns
+## Code Patterns
 
 ### Wrangler CLI Query
 
@@ -54,7 +43,7 @@ npx wrangler r2 sql query "<warehouse-name>" "
   SELECT * FROM namespace.table_name WHERE condition LIMIT 10"
 ```
 
-### PyIceberg Setup
+### PyIceberg
 
 ```python
 from pyiceberg.catalog.rest import RestCatalog
@@ -148,20 +137,18 @@ GROUP BY category HAVING SUM(amount) > 10000 LIMIT 10;
 Comparison: `=`, `!=`, `<`, `<=`, `>`, `>=`, `LIKE`, `BETWEEN`, `IS NULL`, `IS NOT NULL`
 Logical: `AND` (higher precedence), `OR` (lower precedence)
 
-**CRITICAL**: `ORDER BY` only supports partition key columns. LIMIT range: 1–10,000 (default 500).
+**CRITICAL**: `ORDER BY` only supports partition key columns. LIMIT range: 1-10,000 (default 500).
 
 ## Pipelines Integration
 
 Schema file (`schema.json`):
 
 ```json
-{
-  "fields": [
-    {"name": "user_id", "type": "string", "required": true},
-    {"name": "event_type", "type": "string", "required": true},
-    {"name": "amount", "type": "float64", "required": false}
-  ]
-}
+{"fields": [
+  {"name": "user_id", "type": "string", "required": true},
+  {"name": "event_type", "type": "string", "required": true},
+  {"name": "amount", "type": "float64", "required": false}
+]}
 ```
 
 ```bash
@@ -178,16 +165,16 @@ curl -X POST https://{stream-id}.ingest.cloudflare.com \
   -d '[{"user_id": "user_123", "event_type": "purchase", "amount": 29.99}]'
 ```
 
-## Performance Optimization
+## Performance
 
 - **Partitioning**: choose key based on query patterns (day(timestamp), hour(timestamp), region). Required for ORDER BY.
 - **Query**: use WHERE filters, specify LIMIT, filter on high-selectivity columns first.
-- **File size**: 100–500MB Parquet files after compression; use 300+ second roll intervals in Pipelines.
-- **Pruning** (automatic): partition-level → file-level (column stats) → row-group level.
+- **File size**: 100-500MB Parquet files after compression; use 300+ second roll intervals in Pipelines.
+- **Pruning** (automatic): partition-level > file-level (column stats) > row-group level.
 
 ## Iceberg Metadata Structure
 
-```
+```text
 bucket/
   metadata/
     snap-{id}.avro          # Snapshot (points to manifest list)
@@ -198,18 +185,16 @@ bucket/
     00000-0-{uuid}.parquet  # Data files
 ```
 
-Hierarchy: Table metadata JSON → Snapshot → Manifest list → Manifest files → Parquet row group stats.
+Hierarchy: Table metadata JSON > Snapshot > Manifest list > Manifest files > Parquet row group stats.
 
-## Limitations & Best Practices
-
-### Current Limitations (Open Beta)
+## Limitations (Open Beta)
 
 - `ORDER BY` only on partition key columns
 - `COUNT(*)` only — `COUNT(column)` not supported
 - No aliases in SELECT, no subqueries, joins, or CTEs
 - No nested column access; LIMIT max 10,000
 
-### Best Practices
+## Best Practices
 
 - Partition by time dimension for time-series data; use `BETWEEN` for time ranges
 - Combine filters with `AND` for better pruning; use compression (zstd recommended)
@@ -254,7 +239,7 @@ Currently open beta — no charges beyond standard R2 costs. 30+ days notice bef
 | "Token authentication failed" | Verify `WRANGLER_R2_SQL_AUTH_TOKEN`; ensure R2 Admin Read & Write + SQL Read permissions; token may be expired |
 | "Table not found" | `SHOW DATABASES`; `SHOW TABLES IN namespace`; ensure catalog enabled on bucket |
 | "No data returned" | Check WHERE conditions; verify BETWEEN time range; try removing filters |
-| Slow queries | Check partition pruning; reduce LIMIT; ensure filters on partition key; review Parquet file sizes (100–500MB) |
+| Slow queries | Check partition pruning; reduce LIMIT; ensure filters on partition key; review Parquet file sizes (100-500MB) |
 | Query timeout | Add more restrictive WHERE filters; reduce LIMIT; consider better partitioning |
 
 ## Resources
