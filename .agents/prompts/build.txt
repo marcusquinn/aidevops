@@ -185,12 +185,12 @@ Git is the audit trail. Chain: TODO → issue → worktree → PR → merge. Gap
 3. Add TODO entry WITH `ref:GH#NNN` in same commit. Split commits → duplicate issues.
 4. Code changes still need worktree + PR.
 
-**GitHub comment signature footer:** Every issue, PR, and comment created by aidevops agents MUST include a signature footer. Use `gh-signature-helper.sh footer --model <model-id> [--issue OWNER/REPO#NUM]` to generate it. Example output:
+**GitHub comment signature footer:** Every issue, PR, and comment created by aidevops agents MUST include a signature footer. Use `gh-signature-helper.sh footer --model <model-id> [--issue OWNER/REPO#NUM] [--solved]` to generate it. Example output:
 ```
 ---
-[aidevops.sh](https://aidevops.sh) v3.5.10 in [OpenCode CLI](https://opencode.ai) v1.3.3 with anthropic/claude-opus-4-6 used 65,009 tokens for 42m to respond in 13m, 31m since this issue was created.
+[aidevops.sh](https://aidevops.sh) v3.5.12 in [OpenCode CLI](https://opencode.ai) v1.3.3 with claude-opus-4-6 used 38,800,000 tokens for 42m, 31m since this issue was created.
 ```
-The helper auto-detects CLI, version, tokens, session time, and response time from the runtime DB. Pass `--issue` for total time since issue creation. Append the footer as the last line of every `gh issue comment`, `gh issue create`, and `gh pr create` body. See `scripts/commands/pulse.md` for dispatch/kill/merge comment templates.
+The helper auto-detects CLI, version, tokens (including cache), and session time from the runtime DB. Pass `--issue` for total time since issue creation. Pass `--solved` on closing comments for "Solved in Xm." phrasing. Append the footer as the last line of every `gh issue comment`, `gh issue create`, and `gh pr create` body. See `scripts/commands/pulse.md` for dispatch/kill/merge comment templates.
 
 **Self-improvement routing (t1541):** Framework-level tasks → `framework-routing-helper.sh log-framework-issue`. Project tasks → current repo. Framework tasks in project repos are invisible to maintainers.
 

@@ -69,7 +69,8 @@ echo "Test 1: generate with all explicit fields"
 result=$("$HELPER" generate --cli "OpenCode CLI" --cli-version "1.3.3" --model "anthropic/claude-opus-4-6" --tokens 1234)
 assert_contains "starts with aidevops" "[aidevops.sh](https://aidevops.sh)" "$result"
 assert_contains "contains CLI with in" "in [OpenCode CLI](https://opencode.ai) v1.3.3" "$result"
-assert_contains "contains model with with" "with anthropic/claude-opus-4-6" "$result"
+assert_contains "model strips provider prefix" "with claude-opus-4-6" "$result"
+assert_not_contains "no provider prefix" "anthropic/" "$result"
 assert_contains "contains formatted tokens" "used 1,234 tokens" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -178,7 +179,7 @@ echo "Test 9: environment variable overrides"
 result=$(AIDEVOPS_SIG_CLI="EnvCLI" AIDEVOPS_SIG_CLI_VERSION="9.9.9" AIDEVOPS_SIG_MODEL="test/model" AIDEVOPS_SIG_TOKENS="42000" "$HELPER" generate)
 assert_contains "env CLI name" "in EnvCLI" "$result"
 assert_contains "env CLI version" "v9.9.9" "$result"
-assert_contains "env model" "with test/model" "$result"
+assert_contains "env model strips prefix" "with model" "$result"
 assert_contains "env tokens" "used 42,000 tokens" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -197,11 +198,11 @@ fi
 # Test 11: session and response time auto-detection (OpenCode only)
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "Test 11: session and response time auto-detection"
+echo "Test 11: session time auto-detection (no response time)"
 if [[ "${OPENCODE:-}" == "1" ]] && [[ -r "${HOME}/.local/share/opencode/opencode.db" ]]; then
 	result=$("$HELPER" generate --cli "OpenCode CLI" --model "m" --tokens 1)
 	assert_contains "session time present" "for " "$result"
-	assert_contains "response time present" "to respond in " "$result"
+	assert_not_contains "no response time" "to respond" "$result"
 else
 	echo "  SKIP: not running in OpenCode"
 fi
