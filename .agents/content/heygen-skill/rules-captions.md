@@ -7,113 +7,90 @@ metadata:
 
 # Video Captions
 
-HeyGen can automatically generate captions (subtitles) for your videos, improving accessibility and engagement.
+HeyGen auto-generates captions (subtitles) for videos, improving accessibility and engagement.
 
 ## Enabling Captions
 
-Captions can be enabled when generating a video:
+Add `caption: true` to the video config for default styling, or pass a `CaptionConfig` object:
 
 ```typescript
 const videoConfig = {
   video_inputs: [
     {
-      character: {
-        type: "avatar",
-        avatar_id: "josh_lite3_20230714",
-        avatar_style: "normal",
-      },
-      voice: {
-        type: "text",
-        input_text: "Hello! This video will have automatic captions.",
-        voice_id: "1bd001e7e50f421d891986aad5158bc8",
-      },
+      character: { type: "avatar", avatar_id: "josh_lite3_20230714", avatar_style: "normal" },
+      voice: { type: "text", input_text: "Hello! This video will have automatic captions.", voice_id: "1bd001e7e50f421d891986aad5158bc8" },
     },
   ],
-  // Caption settings (availability varies by plan)
-  caption: true,
+  caption: true, // or CaptionConfig object below
 };
 ```
 
-## Caption Configuration Options
+## Caption Configuration
 
 ```typescript
 interface CaptionConfig {
-  // Enable/disable captions
   enabled: boolean;
-
-  // Caption style
   style?: {
     font_family?: string;
-    font_size?: number;
+    font_size?: number;    // px — minimum 24 for standard, larger for mobile
     font_color?: string;
     background_color?: string;
     position?: "top" | "bottom";
   };
-
-  // Language for caption generation
-  language?: string;
+  language?: string; // auto-detected from voice language if omitted
 }
 ```
 
-## Caption Styles
-
-### Basic Captions
+Styled example:
 
 ```typescript
-const config = {
-  video_inputs: [...],
-  caption: true, // Enable with default styling
-};
-```
-
-### Styled Captions
-
-```typescript
-const config = {
-  video_inputs: [...],
-  caption: {
-    enabled: true,
-    style: {
-      font_family: "Arial",
-      font_size: 32,
-      font_color: "#FFFFFF",
-      background_color: "rgba(0, 0, 0, 0.7)",
-      position: "bottom",
-    },
+caption: {
+  enabled: true,
+  style: {
+    font_family: "Arial",
+    font_size: 32,
+    font_color: "#FFFFFF",
+    background_color: "rgba(0, 0, 0, 0.7)",
+    position: "bottom",
   },
-};
+}
 ```
 
-## Multi-Language Captions
+Multi-language: captions are generated in the voice's language automatically. No extra config needed.
 
-For videos in different languages, captions are generated based on the voice language:
+## Caption Presets
+
+| Preset | Font | Size | Color | Background | Position |
+|--------|------|------|-------|------------|----------|
+| default | Arial | 32 | #FFFFFF | rgba(0,0,0,0.7) | bottom |
+| minimal | Arial | 28 | #FFFFFF | transparent | bottom |
+| bold | Arial | 36 | #FFFFFF | rgba(0,0,0,0.9) | bottom |
+| branded | Roboto | 30 | #00D1FF | rgba(26,26,46,0.9) | bottom |
 
 ```typescript
-// Spanish video with Spanish captions
-const spanishConfig = {
-  video_inputs: [
-    {
-      character: {
-        type: "avatar",
-        avatar_id: "josh_lite3_20230714",
-        avatar_style: "normal",
-      },
-      voice: {
-        type: "text",
-        input_text: "¡Hola! Este video tendrá subtítulos en español.",
-        voice_id: "spanish_voice_id",
-      },
-    },
-  ],
-  caption: true,
+interface CaptionStyle {
+  font_family: string;
+  font_size: number;
+  font_color: string;
+  background_color: string;
+  position: "top" | "bottom";
+}
+
+const captionPresets: Record<string, CaptionStyle> = {
+  default: { font_family: "Arial", font_size: 32, font_color: "#FFFFFF", background_color: "rgba(0, 0, 0, 0.7)", position: "bottom" },
+  minimal: { font_family: "Arial", font_size: 28, font_color: "#FFFFFF", background_color: "transparent", position: "bottom" },
+  bold:    { font_family: "Arial", font_size: 36, font_color: "#FFFFFF", background_color: "rgba(0, 0, 0, 0.9)", position: "bottom" },
+  branded: { font_family: "Roboto", font_size: 30, font_color: "#00D1FF", background_color: "rgba(26, 26, 46, 0.9)", position: "bottom" },
 };
+
+function createCaptionConfig(preset: keyof typeof captionPresets) {
+  return { enabled: true, style: captionPresets[preset] };
+}
 ```
 
 ## Working with SRT Files
 
 ### Downloading SRT
-
-After video generation, you may be able to download the SRT file:
 
 ```typescript
 async function downloadSrt(videoId: string): Promise<string> {
@@ -121,18 +98,12 @@ async function downloadSrt(videoId: string): Promise<string> {
     `https://api.heygen.com/v1/video/${videoId}/srt`,
     { headers: { "X-Api-Key": process.env.HEYGEN_API_KEY! } }
   );
-
-  if (!response.ok) {
-    throw new Error("Failed to download SRT");
-  }
-
+  if (!response.ok) throw new Error("Failed to download SRT");
   return response.text();
 }
 ```
 
-### SRT File Format
-
-Standard SRT format:
+### SRT Format
 
 ```srt
 1
@@ -148,151 +119,50 @@ automatic captions generated.
 They sync with the audio.
 ```
 
-### Using Custom SRT
+### Custom SRT for Translation
 
-For video translation, you can provide your own SRT:
+Provide your own SRT when translating videos:
 
 ```typescript
 const translationConfig = {
   input_video_id: "original_video_id",
   output_languages: ["es-ES", "fr-FR"],
-  srt_key: "path/to/custom.srt", // Custom SRT file
+  srt_key: "path/to/custom.srt",
   srt_role: "input", // "input" or "output"
 };
 ```
 
-## Caption Positioning
+## Platform-Specific Positioning
 
-### Bottom (Default)
+- **TikTok / Instagram Reels**: Use `position: "top"` with `font_size: 42`+. Avoid bottom 20% (covered by platform UI).
+- **YouTube**: Standard bottom captions. Also supports closed captions upload via YouTube Studio.
+- **LinkedIn**: Captions highly recommended (many watch without sound). Professional styling preferred.
 
-Standard position for most videos:
+## Video Translation Integration
 
-```typescript
-caption: {
-  enabled: true,
-  style: {
-    position: "bottom"
-  }
-}
-```
-
-### Top
-
-For videos where bottom space is occupied:
+When using video translation, captions are auto-generated in the target language:
 
 ```typescript
-caption: {
-  enabled: true,
-  style: {
-    position: "top"
-  }
-}
-```
-
-## Accessibility Best Practices
-
-1. **Always enable captions** - Improves accessibility for deaf/hard-of-hearing viewers
-2. **Use high contrast** - White text on dark background or vice versa
-3. **Readable font size** - At least 24px for standard video, larger for mobile
-4. **Don't cover important content** - Position captions away from key visual elements
-5. **Sync timing** - Ensure captions match audio timing accurately
-
-## Caption Helper Functions
-
-```typescript
-interface CaptionStyle {
-  font_family: string;
-  font_size: number;
-  font_color: string;
-  background_color: string;
-  position: "top" | "bottom";
-}
-
-const captionPresets: Record<string, CaptionStyle> = {
-  default: {
-    font_family: "Arial",
-    font_size: 32,
-    font_color: "#FFFFFF",
-    background_color: "rgba(0, 0, 0, 0.7)",
-    position: "bottom",
-  },
-  minimal: {
-    font_family: "Arial",
-    font_size: 28,
-    font_color: "#FFFFFF",
-    background_color: "transparent",
-    position: "bottom",
-  },
-  bold: {
-    font_family: "Arial",
-    font_size: 36,
-    font_color: "#FFFFFF",
-    background_color: "rgba(0, 0, 0, 0.9)",
-    position: "bottom",
-  },
-  branded: {
-    font_family: "Roboto",
-    font_size: 30,
-    font_color: "#00D1FF",
-    background_color: "rgba(26, 26, 46, 0.9)",
-    position: "bottom",
-  },
-};
-
-function createCaptionConfig(preset: keyof typeof captionPresets) {
-  return {
-    enabled: true,
-    style: captionPresets[preset],
-  };
-}
-```
-
-## Social Media Caption Considerations
-
-### TikTok / Instagram Reels
-
-- Position captions in center or upper portion
-- Avoid bottom 20% (covered by UI elements)
-- Use larger font sizes for mobile viewing
-
-```typescript
-const socialCaptions = {
-  enabled: true,
-  style: {
-    font_size: 42,
-    position: "top", // Avoid bottom UI elements
-  },
-};
-```
-
-### YouTube
-
-- Standard bottom captions work well
-- YouTube also supports closed captions upload
-
-### LinkedIn
-
-- Captions highly recommended (many watch without sound)
-- Professional styling preferred
-
-## Limitations
-
-- Caption styles may be limited depending on your subscription tier
-- Some advanced caption features may require the web interface
-- Multi-speaker caption detection may have limited availability
-- Caption accuracy depends on audio quality and speech clarity
-
-## Integration with Video Translation
-
-When using video translation, captions are automatically handled:
-
-```typescript
-// Video translation includes caption generation
 const translationConfig = {
   input_video_id: "original_video_id",
   output_languages: ["es-ES"],
-  // Captions generated in target language
+  // Captions generated in target language automatically
 };
 ```
 
-See [video-translation.md](video-translation.md) for more details.
+See [video-translation.md](video-translation.md) for details.
+
+## Accessibility Best Practices
+
+1. **Always enable captions** — improves accessibility for deaf/hard-of-hearing viewers
+2. **Use high contrast** — white text on dark background or vice versa
+3. **Readable font size** — at least 24px standard, larger for mobile
+4. **Avoid covering content** — position captions away from key visual elements
+5. **Sync timing** — ensure captions match audio timing accurately
+
+## Limitations
+
+- Caption styles may be limited by subscription tier
+- Some advanced features require the web interface
+- Multi-speaker caption detection has limited availability
+- Caption accuracy depends on audio quality and speech clarity
