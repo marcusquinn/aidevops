@@ -1,5 +1,5 @@
 ---
-description: Cross-platform privacy comparison matrix — encryption, metadata, self-hosting, open source, data sovereignty, AI training, and runner dispatch suitability for all supported chat platform integrations
+description: Privacy/security comparison matrix for all 15 chat platform integrations — select by threat model. Max privacy → SimpleX. E2E mainstream → Signal. Corporate compliance → Nextcloud Talk. Censorship resistance → Nostr/Urbit. Related: `tools/security/opsec.md`, `services/communications/`.
 mode: subagent
 tools:
   read: true
@@ -14,18 +14,7 @@ tools:
 
 # Chat Platform Privacy Comparison Matrix
 
-<!-- AI-CONTEXT-START -->
-
-**Purpose**: Side-by-side privacy/security comparison of all 15 chat platform integrations.
-**Use**: Select platform for your threat model. Related: `tools/security/opsec.md`, individual docs in `services/communications/`.
-
-**Decision shortcut**: Maximum privacy → SimpleX. Mainstream E2E → Signal. Corporate compliance → Nextcloud Talk (self-hosted) or accept Slack/Teams/Google Chat trade-offs. Censorship resistance → Nostr or Urbit.
-
-<!-- AI-CONTEXT-END -->
-
-## Comparison Matrix
-
-### Encryption
+## Encryption
 
 | Platform | E2E Default | Bot E2E | Protocol |
 |----------|-------------|---------|----------|
@@ -239,9 +228,4 @@ tools:
 
 ## Related
 
-- `tools/security/opsec.md` — Threat modeling, platform trust matrix, network privacy
-- `services/communications/simplex.md`, `signal.md`, `matrix-bot.md`, `telegram.md`
-- `services/communications/whatsapp.md`, `imessage.md`, `nostr.md`, `slack.md`
-- `services/communications/discord.md`, `google-chat.md`, `msteams.md`
-- `services/communications/nextcloud-talk.md`, `urbit.md`, `bitchat.md`, `xmtp.md`
-- `services/communications/matterbridge.md` — Cross-platform bridging
+`tools/security/opsec.md` · `services/communications/` (per-platform docs) · `services/communications/matterbridge.md`
