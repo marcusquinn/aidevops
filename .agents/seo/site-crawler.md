@@ -22,6 +22,7 @@ tools:
 - **Browser Tools**: `tools/browser/crawl4ai.md`, `tools/browser/playwriter.md`
 - **Output**: `~/Downloads/{domain}/{datestamp}/` with `_latest` symlink
 - **Formats**: CSV, XLSX, JSON, HTML reports
+- **Config**: `~/.config/aidevops/site-crawler.json`
 
 ```bash
 site-crawler-helper.sh crawl https://example.com                          # Full crawl
@@ -37,39 +38,13 @@ site-crawler-helper.sh audit-schema https://example.com
 
 <!-- AI-CONTEXT-END -->
 
-## Crawl Capabilities
+## Capabilities
 
-### Core SEO Data
+**Core SEO data:** URLs (status, content type, response time, size), titles (text, length, missing/duplicate), meta descriptions (text, length, missing/duplicate), meta robots (index/noindex, follow/nofollow, canonical, directives), headings (H1/H2 content, missing/duplicate/multiple), links (internal/external, follow/nofollow, anchor text, broken), images (URL, alt text, size, missing alt), redirects (301/302/307, chains, loops, destination), canonicals (self-referencing, conflicts), hreflang (language codes, return links, conflicts), structured data (JSON-LD, Microdata, RDFa extraction/validation).
 
-| Category | Data Collected |
-|----------|----------------|
-| **URLs** | Address, status code, content type, response time, file size |
-| **Page Titles** | Title text, length, missing/duplicate detection |
-| **Meta Descriptions** | Description text, length, missing/duplicate detection |
-| **Meta Robots** | Index/noindex, follow/nofollow, canonical, robots directives |
-| **Headings** | H1, H2 content, missing/duplicate/multiple detection |
-| **Links** | Internal/external, follow/nofollow, anchor text, broken links |
-| **Images** | URL, alt text, file size, missing alt detection |
-| **Redirects** | Type (301/302/307), chains, loops, final destination |
-| **Canonicals** | Canonical URL, self-referencing, conflicts |
-| **Hreflang** | Language codes, return links, conflicts |
-| **Structured Data** | JSON-LD, Microdata, RDFa extraction and validation |
-
-### Advanced Features
-
-| Feature | Description |
-|---------|-------------|
-| **JavaScript Rendering** | Crawl SPAs (React, Vue, Angular) via Chromium |
-| **Custom Extraction** | XPath, CSS selectors, regex for any HTML data |
-| **Robots.txt Analysis** | Blocked URLs, directives, crawl delays |
-| **XML Sitemap Analysis** | Parse sitemaps, find orphan/missing pages |
-| **Duplicate Detection** | MD5 hash for exact duplicates, similarity scoring |
-| **Crawl Depth** | Track URL depth in site architecture |
-| **Word Count** | Content length analysis per page |
+**Advanced:** JS rendering via Chromium (React, Vue, Angular SPAs), custom extraction (XPath, CSS selectors, regex), robots.txt analysis (blocked URLs, directives, crawl delays), XML sitemap analysis (orphan/missing pages), duplicate detection (MD5 hash, similarity scoring), crawl depth tracking, word count analysis.
 
 ## Usage
-
-### Crawl Configuration
 
 ```bash
 # Scope limiting
@@ -80,61 +55,49 @@ site-crawler-helper.sh crawl https://example.com \
 # JavaScript rendering for SPAs
 site-crawler-helper.sh crawl https://spa-site.com --render-js
 
-# Custom user agent / robots override
+# User agent / robots override
 site-crawler-helper.sh crawl https://example.com --user-agent "Googlebot"
 site-crawler-helper.sh crawl https://example.com --ignore-robots
 
 # Export format
 site-crawler-helper.sh crawl https://example.com --format all   # csv + xlsx
 site-crawler-helper.sh crawl https://example.com --output ~/SEO-Audits/
-```
 
-### Authenticated Crawls
-
-```bash
+# Authenticated crawl
 site-crawler-helper.sh crawl https://example.com \
   --auth-type form \
   --login-url https://example.com/login \
   --username user@example.com \
   --password-env SITE_PASSWORD
-```
 
-See `tools/browser/playwriter.md` for browser automation details.
-
-### XML Sitemap Generation
-
-```bash
+# Sitemap generation
 site-crawler-helper.sh generate-sitemap https://example.com
 site-crawler-helper.sh generate-sitemap https://example.com \
   --changefreq weekly \
   --priority-rules "/blog/*:0.8,/*:0.5" \
   --exclude "/admin/*,/private/*"
 # Output: ~/Downloads/example.com/_latest/sitemap.xml
-```
 
-### Crawl Comparison
-
-```bash
+# Crawl comparison
 site-crawler-helper.sh compare https://example.com              # latest vs previous
 site-crawler-helper.sh compare \
   ~/Downloads/example.com/2025-01-10_091500 \
   ~/Downloads/example.com/2025-01-15_143022
 # Output: changes-report.xlsx (new/removed URLs, changed meta, redirect changes)
-```
 
-### Debug
-
-```bash
+# Debug
 site-crawler-helper.sh crawl https://example.com --verbose
 site-crawler-helper.sh crawl https://example.com --save-html
 ```
+
+See `tools/browser/playwriter.md` for browser automation details.
 
 ## Output Structure
 
 ```text
 ~/Downloads/example.com/
 ├── 2025-01-15_143022/
-│   ├── crawl-data.xlsx          # Full crawl data
+│   ├── crawl-data.xlsx          # Full crawl data (all columns below)
 │   ├── crawl-data.csv
 │   ├── broken-links.csv         # 4XX/5XX errors
 │   ├── redirects.csv            # Redirect chains
@@ -148,56 +111,11 @@ site-crawler-helper.sh crawl https://example.com --save-html
 └── _latest -> 2025-01-15_143022
 ```
 
-## Spreadsheet Columns
+**crawl-data.xlsx columns:** URL, Status Code, Status (OK/Redirect/Client Error/Server Error), Content Type, Title, Title Length, Meta Description, Description Length, H1, H1 Count, H2, H2 Count, Canonical, Meta Robots, Word Count, Response Time (ms), File Size (bytes), Crawl Depth, Inlinks, Outlinks, External Links, Images, Images Missing Alt.
 
-### crawl-data.xlsx
+**broken-links.csv columns:** Broken URL, Status Code, Source URL, Anchor Text, Link Type (Internal/External).
 
-| Column | Description |
-|--------|-------------|
-| URL | Full page URL |
-| Status Code | HTTP response code |
-| Status | OK / Redirect / Client Error / Server Error |
-| Content Type | MIME type |
-| Title | Page title |
-| Title Length | Character count |
-| Meta Description | Description content |
-| Description Length | Character count |
-| H1 | First H1 content |
-| H1 Count | Number of H1 tags |
-| H2 | First H2 content |
-| H2 Count | Number of H2 tags |
-| Canonical | Canonical URL |
-| Meta Robots | Robots directives |
-| Word Count | Text content word count |
-| Response Time | Server response in ms |
-| File Size | Page size in bytes |
-| Crawl Depth | Clicks from homepage |
-| Inlinks | Internal links to page |
-| Outlinks | Links from page |
-| External Links | External links from page |
-| Images | Number of images |
-| Images Missing Alt | Images without alt text |
-
-### broken-links.csv
-
-| Column | Description |
-|--------|-------------|
-| Broken URL | The 4XX/5XX URL |
-| Status Code | Error code |
-| Source URL | Page containing the link |
-| Anchor Text | Link text |
-| Link Type | Internal/External |
-
-### redirects.csv
-
-| Column | Description |
-|--------|-------------|
-| Original URL | Starting URL |
-| Status Code | 301/302/307/308 |
-| Redirect URL | Target URL |
-| Final URL | End of chain |
-| Chain Length | Number of hops |
-| Chain | Full redirect path |
+**redirects.csv columns:** Original URL, Status Code (301/302/307/308), Redirect URL, Final URL, Chain Length, Chain (full path).
 
 ## Configuration
 
@@ -219,18 +137,14 @@ site-crawler-helper.sh crawl https://example.com --save-html
 }
 ```
 
-## Rate Limiting & Politeness
-
-- Robots.txt honored by default (`--ignore-robots` to override)
-- Crawl-delay directive respected from robots.txt
-- Request delay and concurrent requests configurable (see config above)
+**Rate limiting:** Robots.txt honored by default (`--ignore-robots` to override). Crawl-delay directive respected. Request delay and concurrent requests configurable above.
 
 ## Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
 | Crawl blocked | Check robots.txt, try different user-agent |
-| JavaScript not rendering | Use `--render-js` flag |
+| JS not rendering | Use `--render-js` flag |
 | Missing pages | Increase `--depth` or check internal linking |
 | Slow crawl | Reduce `--concurrent-requests` or increase `--request-delay` |
 | Memory issues | Reduce `--max-urls` or use disk storage mode |
