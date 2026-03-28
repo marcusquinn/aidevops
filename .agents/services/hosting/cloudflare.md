@@ -17,21 +17,17 @@ tools:
 
 | Intent | Resource |
 |--------|----------|
-| **Manage/configure/update** Cloudflare resources (DNS, WAF, DDoS, R2, Workers, zones, rules, etc.) | `.agents/tools/mcp/cloudflare-code-mode.md` — Code Mode MCP (2,500+ endpoints, live OpenAPI) |
-| **Build/develop** on the Cloudflare platform (Workers, Pages, D1, KV, Durable Objects, AI, etc.) | [`cloudflare-platform-skill.md`](cloudflare-platform-skill.md) — patterns, gotchas, decision trees, SDK usage |
+| **Manage/configure** Cloudflare resources (DNS, WAF, DDoS, R2, Workers, zones, rules) | `.agents/tools/mcp/cloudflare-code-mode.md` — Code Mode MCP (2,500+ endpoints, live OpenAPI) |
+| **Build/develop** on the Cloudflare platform (Workers, Pages, D1, KV, Durable Objects, AI) | [`cloudflare-platform-skill.md`](cloudflare-platform-skill.md) — patterns, gotchas, decision trees, SDK usage |
 | **Auth/token setup** for API access | This file (below) |
-
-> **Operations** (DNS records, WAF rules, zone settings, R2 buckets, Worker deployments): use Code Mode MCP via `.agents/tools/mcp/cloudflare-code-mode.md`.
->
-> **Development** (building Workers, integrating D1, using KV bindings, AI gateway patterns): use [`cloudflare-platform-skill.md`](cloudflare-platform-skill.md).
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
-- **Auth**: Use API Tokens (NOT Global API Keys)
+- **Auth**: API Tokens only (NEVER Global API Keys)
 - **Token creation**: Dashboard > My Profile > API Tokens > Create Token
-- **Permissions needed**: Zone:Read, DNS:Read, DNS:Edit (scope to specific zones)
+- **Permissions**: Zone:Read, DNS:Read, DNS:Edit (scope to specific zones)
 - **Config**: `configs/cloudflare-dns-config.json`
 - **Account ID**: Dashboard > Right sidebar > 32-char hex
 - **Zone ID**: Domain overview > Right sidebar > 32-char hex
@@ -42,47 +38,25 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-> **Building on Cloudflare?** (Workers, Pages, D1, R2, KV, Durable Objects, AI, etc.) → see [`cloudflare-platform-skill.md`](cloudflare-platform-skill.md) which covers 60+ products with patterns, gotchas, decision trees, and SDK references.
->
-> **Managing CF resources via MCP?** (deploy Workers, run D1 SQL, manage KV, trigger Pages builds) → see `tools/api/cloudflare-mcp.md` for the Code Mode MCP (no token setup needed — uses OAuth).
+## Why API Tokens Over Global API Keys
 
-This guide shows you how to securely set up Cloudflare API access for local AI-assisted development, DevOps, and system administration.
+| | Global API Keys | API Tokens |
+|---|---|---|
+| Scope | Unrestricted account access | Scoped to specific permissions/zones |
+| Billing | Can modify billing/settings | Cannot (unless explicitly granted) |
+| Expiry | Never expire | Configurable expiration |
+| Audit | Hard to trace actions | Clear usage logs |
+| Revocation | Affects entire account | Revoke individually |
 
-## SECURITY FIRST: Never Use Global API Keys!
+**Rule: Always use API Tokens. Global API Keys are a single point of failure if compromised.**
 
-### **❌ DON'T Use Global API Keys Because:**
+## Token Setup
 
-- **Unrestricted access** to your entire Cloudflare account
-- **Can modify billing** and account settings
-- **Can delete zones** and critical configurations
-- **Never expire** automatically
-- **Hard to audit** what actions were performed
-- **Single point of failure** if compromised
+### 1. Create Token
 
-### **✅ DO Use API Tokens Because:**
-
-- **Scoped permissions** - only access what you need
-- **Zone-specific** - limit to specific domains
-- **Time-limited** - set expiration dates
-- **Auditable** - clear logs of token usage
-- **Revocable** - easy to disable without affecting other services
-
-## 🔧 **Step-by-Step API Token Setup**
-
-### **1. Create API Tokens for Each Account**
-
-#### **For Each Cloudflare Account:**
-
-1. **Log into Cloudflare Dashboard**
-2. **Go to**: My Profile → API Tokens
-3. **Click**: "Create Token"
-4. **Use**: "Custom token" template
-
-#### **Recommended Token Configuration:**
-
-**Token Name**: `AI-Assistant-DevOps-[AccountName]`
-
-**Permissions**:
+1. Dashboard > My Profile > API Tokens > Create Token > Custom token
+2. **Name**: `AI-Assistant-DevOps-[AccountName]`
+3. **Permissions**:
 
 ```text
 Zone:Read          - Read zone information
@@ -92,52 +66,23 @@ DNS:Edit           - Modify DNS records
 Zone Settings:Read - Read zone settings (optional)
 ```
 
-**Zone Resources**:
+4. **Zone Resources**: Include > Specific zones > [Select your domains]
+5. **IP Filtering** (recommended): Include > [Your home/office IP]
+6. **Expiration**: Set to 1 year maximum
 
-```text
-Include: Specific zones → [Select your domains]
-```
+### 2. Collect IDs
 
-**Client IP Address Filtering** (Recommended):
+- **Account ID**: Dashboard right sidebar > 32-char hex string
+- **Zone IDs**: Domain overview > right sidebar (collect for each managed domain)
+- **Email**: Account email (used for some API calls)
 
-```text
-Include: [Your home/office IP address]
-```
-
-**TTL (Time to Live)**:
-
-```text
-Set expiration: 1 year maximum
-```
-
-### **2. Get Required Information**
-
-For each account, collect:
-
-#### **Account ID**:
-
-- **Dashboard**: Right sidebar → Account ID
-- **Copy**: The 32-character hex string
-
-#### **Zone IDs**:
-
-- **Go to**: Domain overview page
-- **Right sidebar**: Zone ID
-- **Copy**: For each domain you'll manage
-
-#### **Email Address**:
-
-- **Account email**: Used for some API calls
-
-### **3. Configure Your Local Setup**
-
-#### **Copy Template**:
+### 3. Configure Locally
 
 ```bash
 cp configs/cloudflare-dns-config.json.txt configs/cloudflare-dns-config.json
 ```
 
-#### **Edit Configuration**:
+Edit the config:
 
 ```json
 {
@@ -167,68 +112,27 @@ cp configs/cloudflare-dns-config.json.txt configs/cloudflare-dns-config.json
 }
 ```
 
-## 🛡️ **Security Best Practices**
+## Security Best Practices
 
-### **Token Management**:
+- **Separate tokens** per Cloudflare account with descriptive names
+- **Minimum permissions** scoped to specific zones (not all zones)
+- **IP restrictions** and **expiration dates** always set
+- **Never commit** tokens to git; use env vars for CI/CD
+- **File permissions**: `chmod 600` on config files
+- **Rotate** every 6-12 months, after team changes, or immediately if compromised
+- **Audit** active tokens regularly in the dashboard
 
-- **Separate tokens** for each Cloudflare account
-- **Descriptive names** for easy identification
-- **Regular rotation** (every 6-12 months)
-- **Immediate revocation** if compromised
-
-### **Permission Scoping**:
-
-- **Minimum required permissions** only
-- **Specific zones** rather than all zones
-- **IP restrictions** when possible
-- **Expiration dates** always set
-
-### **Local Security**:
-
-- **Never commit** actual tokens to git
-- **Use environment variables** for CI/CD
-- **Secure file permissions** (600) on config files
-- **Regular audits** of active tokens
-
-## 🔍 **Testing Your Setup**
-
-### **Test API Access**:
+## Testing
 
 ```bash
-# Test with curl
 curl -X GET "https://api.cloudflare.com/client/v4/zones" \
   -H "Authorization: Bearer YOUR_API_TOKEN" \
   -H "Content-Type: application/json"
 ```
 
-### **Expected Response**:
+Success returns `"success": true` with your zone list.
 
-```json
-{
-  "success": true,
-  "errors": [],
-  "messages": [],
-  "result": [
-    {
-      "id": "zone-id-here",
-      "name": "yourdomain.com",
-      "status": "active"
-    }
-  ]
-}
-```
-
-## 🤖 **AI Assistant Integration**
-
-### **Benefits for AI Development**:
-
-- **Automated DNS management** for development environments
-- **Dynamic subdomain creation** for feature branches
-- **SSL certificate automation** via Cloudflare
-- **Traffic routing** for A/B testing
-- **Security rule management** for development APIs
-
-### **Common AI-Assisted Tasks**:
+## Common AI-Assisted Tasks
 
 ```bash
 # Create development subdomain
@@ -241,29 +145,18 @@ curl -X GET "https://api.cloudflare.com/client/v4/zones" \
 ./.agents/scripts/dns-helper.sh create-record business staging.company.com A 10.0.1.50
 ```
 
-## 🚨 **Emergency Procedures**
+Use cases: automated DNS for dev environments, dynamic subdomains for feature branches, SSL automation, traffic routing for A/B testing, security rule management for dev APIs.
 
-### **If Token is Compromised**:
+## If a Token Is Compromised
 
 1. **Immediately revoke** the token in Cloudflare dashboard
 2. **Check audit logs** for unauthorized changes
 3. **Create new token** with fresh permissions
-4. **Update local configuration** with new token
-5. **Review security practices** to prevent future issues
+4. **Update local config** with the new token
+5. **Review practices** to prevent recurrence
 
-### **Token Rotation Schedule**:
+## Resources
 
-- **Every 6 months**: Rotate all API tokens
-- **Before major deployments**: Verify token validity
-- **After team changes**: Review and rotate shared access
-- **Security incidents**: Immediate rotation
-
-## 📚 **Additional Resources**
-
-- **Cloudflare API Docs**: https://developers.cloudflare.com/api/
-- **Token Management**: https://developers.cloudflare.com/fundamentals/api/get-started/create-token/
-- **Security Best Practices**: https://developers.cloudflare.com/fundamentals/api/get-started/security/
-
----
-
-**Remember: Security first! Always use API tokens with minimal required permissions.** 🔒
+- [Cloudflare API Docs](https://developers.cloudflare.com/api/)
+- [Token Management](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/)
+- [Security Best Practices](https://developers.cloudflare.com/fundamentals/api/get-started/security/)
