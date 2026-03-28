@@ -817,9 +817,9 @@
       "pr": 11675
     },
     ".agents/tools/code-review/best-practices.md": {
-      "hash": "5452355d63f9c6d3d99961da0c31446fe8129baf",
-      "at": "2026-03-28T10:27:05Z",
-      "pr": 11759
+      "hash": "b8f93fd83e04dc301d838178a7b7523e35382166",
+      "at": "2026-03-28T13:38:46Z",
+      "pr": 11771
     },
     ".agents/content/video-muapi.md": {
       "hash": "3deffc1afc21c9cb3daf10a540c802fc70e437df",
@@ -1010,6 +1010,11 @@
       "hash": "05d5bf0448bc16590c5b0b35b9606b70bc417e95",
       "at": "2026-03-28T13:37:20Z",
       "pr": 11871
+    },
+    ".agents/tools/code-review/runtime-patterns.md": {
+      "hash": "06e2affe5aaa285c3139fde0d808dc89c0140e31",
+      "at": "2026-03-28T13:38:47Z",
+      "pr": 11771
     }
   },
   ".agents/tools/code-review/best-practices.md": {
