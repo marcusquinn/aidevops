@@ -21,20 +21,10 @@ tools:
 - **Purpose**: Embedded Postgres (WASM) for desktop/extension apps that share schema with a production Postgres backend
 - **Package**: `@electric-sql/pglite` (~3MB gzipped)
 - **Drizzle adapter**: `drizzle-orm/pglite`
-- **Sync**: ElectricSQL (`@electric-sql/pglite-sync`) - pull-only in v1
+- **Sync**: ElectricSQL (`@electric-sql/pglite-sync`) - pull-only in v1; writes require API calls
 - **Docs**: https://pglite.dev/docs/
 - **Repo**: https://github.com/electric-sql/pglite
 - **License**: Apache 2.0 / PostgreSQL License (dual)
-
-**When to use PGlite**: You have a Postgres production DB with Drizzle `pg-core` schemas and need an embedded local database in an Electron, Tauri, or browser extension app. PGlite lets you reuse the exact same schema, migrations, and queries locally.
-
-**When NOT to use PGlite**:
-
-- React Native / Expo mobile apps (WASM not supported in RN runtime)
-- CLI tools or shell scripts (no CLI interface; use SQLite)
-- High-frequency write workloads (WASM overhead, ~5k inserts/sec vs ~50k for native SQLite)
-- Datasets >500MB local (memory pressure from WASM)
-- Projects using SQLite schemas (`sqliteTable`) - no benefit, added complexity
 
 <!-- AI-CONTEXT-END -->
 
@@ -50,20 +40,20 @@ Is your production DB PostgreSQL?
       YES --> PGlite (shared schema, zero translation layer)
 ```
 
-### Why PGlite over SQLite when production is Postgres
+### PGlite vs SQLite comparison
 
 | Factor | PGlite | SQLite |
 |--------|--------|--------|
 | Schema sharing | Same `pgTable` / `pgEnum` / `timestamp` | Requires separate `sqliteTable` schema |
 | Migrations | Identical SQL for local and production | Separate migration sets per dialect |
 | Drizzle dialect | `drizzle-orm/pglite` (pg-core) | `drizzle-orm/better-sqlite3` (sqlite-core) |
-| Type fidelity | Full: enums, timestamps, booleans | Lossy: enum->text, timestamp->text, boolean->integer |
+| Type fidelity | Full: enums, timestamps, booleans | Lossy: enum→text, timestamp→text, boolean→integer |
 | ORM code reuse | 100% - same queries work everywhere | Separate query layer per dialect |
 | Performance | ~3-5x slower than native SQLite (WASM) | Native speed |
 | Bundle size | +3MB gzipped (WASM binary) | ~1MB native addon |
 | Startup time | 500ms-2s (WASM init) | <50ms |
 
-**The schema compatibility advantage is decisive.** Maintaining two Drizzle dialects (pg-core for prod, sqlite-core for local) means duplicate schemas, separate migrations, type mapping bugs, and divergent query logic. PGlite eliminates all of this.
+**Do not use PGlite for**: React Native/Expo (WASM unsupported), CLI tools (use SQLite), high-frequency writes (>5k/sec), datasets >500MB, or projects already on SQLite schemas.
 
 ## Implementation Pattern
 
@@ -254,16 +244,9 @@ await client.electric.syncShapeToTable({
 });
 ```
 
-**ElectricSQL v1 limitations**:
+**ElectricSQL v1 limitations**: pull-only (writes require API calls), requires Postgres logical replication, self-hosting needs Docker, large initial shape loads can be slow.
 
-- Pull-only (server to client). Writes require API calls.
-- Requires Postgres with logical replication enabled.
-- Self-hosting Electric requires Docker + Postgres config.
-- Large initial shape loads can be slow.
-
-### Alternative: no sync (offline-only local DB)
-
-For apps that don't need server sync (local-only tools, dev utilities), PGlite works standalone with filesystem or IndexedDB persistence. No ElectricSQL needed.
+For apps that don't need server sync, PGlite works standalone with filesystem or IndexedDB persistence — no ElectricSQL needed.
 
 ## Persistence Options
 
@@ -298,7 +281,7 @@ await db.exec(`
 
 Supported extensions include: pgvector, pg_trgm, ltree, hstore, uuid-ossp. Check https://pglite.dev/extensions/ for the full list.
 
-## Platform Compatibility Matrix
+## Platform Compatibility
 
 | Platform | Runtime | PGlite works? | Persistence | Notes |
 |----------|---------|---------------|-------------|-------|
@@ -310,7 +293,7 @@ Supported extensions include: pgvector, pg_trgm, ltree, hstore, uuid-ossp. Check
 | Node.js / Bun | Server | Yes | Filesystem | Useful for local dev without Docker Postgres |
 | Deno | Server | Yes | Filesystem | |
 
-## Performance Characteristics
+## Performance
 
 ```text
 Approximate benchmarks (Apple Silicon, 100k rows):
@@ -330,7 +313,7 @@ better-sqlite3 (native):
   Startup:             <50ms
 ```
 
-PGlite is 3-10x slower than native SQLite. This is acceptable for desktop/extension CRUD workloads but not suitable for high-throughput ingestion or real-time analytics on large datasets.
+PGlite is 3-10x slower than native SQLite. Acceptable for desktop/extension CRUD workloads; not suitable for high-throughput ingestion or real-time analytics on large datasets.
 
 ## Gotchas
 
