@@ -126,6 +126,26 @@
   },
 
   // ---------------------------------------------------------------------------
+  // foss — FOSS contribution budget and etiquette controls (t1697)
+  // ---------------------------------------------------------------------------
+  "foss": {
+    // Master switch for all FOSS contribution activity.
+    // When false, foss-contribution-helper.sh check/scan will refuse all attempts.
+    // Env override: AIDEVOPS_FOSS_ENABLED
+    "enabled": false,
+
+    // Daily token ceiling across all FOSS repos combined.
+    // Contributions are refused once this limit is reached for the day.
+    // Counter resets at UTC midnight. Env override: AIDEVOPS_FOSS_MAX_DAILY_TOKENS
+    "max_daily_tokens": 50000,
+
+    // Maximum number of simultaneous FOSS contribution workers.
+    // Prevents runaway parallel contributions to multiple repos at once.
+    // Env override: AIDEVOPS_FOSS_MAX_CONCURRENT
+    "max_concurrent_contributions": 2
+  },
+
+  // ---------------------------------------------------------------------------
   // safety — Security hooks, verification, and protective measures
   // ---------------------------------------------------------------------------
   "safety": {

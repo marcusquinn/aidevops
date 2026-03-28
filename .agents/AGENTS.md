@@ -199,6 +199,14 @@ Planning files go direct to main. Code changes need worktree + PR. Workers NEVER
 - `pulse_hours` — optional object `{"start": N, "end": N}` (24h local time). When set, the pulse only dispatches for this repo during the specified window. Overnight windows are supported (e.g., `{"start": 17, "end": 5}` runs 17:00–05:00). Repos without this field run 24/7 (default). Example: `"pulse_hours": {"start": 17, "end": 5}` to avoid conflicts with daytime work.
 - `pulse_expires` — optional ISO date string `"YYYY-MM-DD"`. When today is past this date, the pulse auto-sets `pulse: false` in repos.json and stops dispatching. Useful for temporary pulse windows (e.g., "help clear the backlog this week"). The field is inert once `pulse: false` is written.
 - `contributed: true` — external repos where we've authored or commented on issues/PRs. No merge/dispatch/TODO powers — only monitors for new activity needing reply. Managed by `contribution-watch-helper.sh` (notification-driven, excludes managed `pulse: true` repos).
+- `foss: true` — mark repo as a FOSS contribution target. Enables `foss-contribution-helper.sh` budget enforcement and issue scanning. Combine with `app_type` and `foss_config`. See `reference/foss-contributions.md`.
+- `app_type` — app type classification for FOSS repos. Values: `wordpress-plugin`, `php-composer`, `node`, `python`, `go`, `macos-app`, `browser-extension`, `cli-tool`, `electron`, `cloudron-package`, `generic`.
+- `foss_config` — per-repo FOSS contribution controls (object):
+  - `max_prs_per_week` (int, default 2) — max PRs to open per week
+  - `token_budget_per_issue` (int, default 10000) — max tokens per contribution attempt; enforced by `foss-contribution-helper.sh check`
+  - `blocklist` (bool, default false) — set `true` if maintainer asked us to stop contributing
+  - `disclosure` (bool, default true) — include AI assistance note in PRs
+  - `labels_filter` (array, default `["help wanted", "good first issue", "bug"]`) — issue labels to scan for
 - `local_only: true` — repos with no remote (skip all `gh` operations)
 - `priority` — `"tooling"` (infrastructure/tools), `"product"` (user-facing), `"profile"` (GitHub profile, docs-only)
 - `maintainer` — GitHub username of the repo maintainer. Used by code-simplifier for issue assignment and other maintainer-gated workflows. Auto-detected from `gh api user` on registration; falls back to slug owner if missing.

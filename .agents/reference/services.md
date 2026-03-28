@@ -120,6 +120,24 @@ Monitors external issues/PRs for new activity needing reply, using the GitHub No
 
 **Security**: Automated scans are deterministic metadata checks (no LLM). Comment bodies are only shown in interactive sessions after `prompt-guard-helper.sh scan`.
 
+## FOSS Contributions
+
+Manages FOSS contribution targets with per-repo etiquette controls and a global daily token budget. Enforces rate limits and blocklists before dispatching contribution workers.
+
+**CLI**: `foss-contribution-helper.sh scan|check|budget|record|reset|status`
+
+- `scan [--dry-run]` — list eligible FOSS repos (respects `labels_filter`, skips `blocklist: true`)
+- `check <slug> [tokens]` — gate check before contributing (budget + rate limit + blocklist)
+- `budget` — show daily token usage vs ceiling
+- `record <slug> <tokens>` — record token usage after a contribution attempt
+- `status` — show all FOSS repos and their config
+
+**Config**: `config.jsonc` `foss` section — `enabled`, `max_daily_tokens`, `max_concurrent_contributions`.
+
+**repos.json fields**: `foss: true`, `app_type`, `foss_config` (see `reference/foss-contributions.md`).
+
+**Full docs**: `reference/foss-contributions.md`
+
 ## Auto-Update
 
 Automatic polling for new releases. Checks GitHub every 10 minutes and runs `aidevops update` when a new version is available. Safe to run while AI sessions are active.
