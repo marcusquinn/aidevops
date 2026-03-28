@@ -209,7 +209,7 @@ Edge Functions: ~$0.60/million invocations. Serverless Functions: ~$0.18/GB-hour
 
 ## AI Model Inference Hosting
 
-For AI model inference, fine-tuning, and custom model hosting, see the dedicated infrastructure agents. Managed platforms (Fireworks, Together AI, Cloudflare Workers AI, NEAR AI Cloud) expose OpenAI-compatible APIs — change `base_url` only. Cloud GPU (raw providers) depends on the inference server you deploy: vLLM and TGI expose OpenAI-compatible APIs; other stacks may not.
+For AI model inference, fine-tuning, and custom model hosting, see the dedicated infrastructure agents. Managed platforms (Fireworks, Together AI, Cloudflare Workers AI, NEAR AI Cloud) expose OpenAI-compatible APIs -- change `base_url` only. Cloud GPU (raw providers) depends on the inference server you deploy: vLLM and TGI expose OpenAI-compatible APIs; other stacks may not -- verify your runtime's API compatibility and auth behaviour before integrating.
 
 ### Platform Comparison
 

@@ -89,6 +89,7 @@ curl https://api.fireworks.ai/inference/v1/chat/completions \
   -d '{"model": "accounts/fireworks/models/deepseek-v3p1", "messages": [{"role": "user", "content": "Hello"}]}'
 
 # OpenAI SDK (Python) — just change base_url
+import os
 from openai import OpenAI
 client = OpenAI(api_key=os.environ["FIREWORKS_API_KEY"], base_url="https://api.fireworks.ai/inference/v1")
 response = client.chat.completions.create(model="accounts/fireworks/models/deepseek-v3p1", messages=[...])
@@ -138,13 +139,13 @@ curl https://api.fireworks.ai/inference/v1/chat/completions \
 # Upload from local files
 firectl model create <MODEL_ID> /path/to/files/
 
-# Upload from S3 (use env vars or IAM role — never pass credentials as CLI flags)
+# Upload from S3 (use env vars or IAM role -- never pass credentials as CLI flags)
 # Option A: environment variables (preferred)
 export AWS_ACCESS_KEY_ID="<KEY>"
 export AWS_SECRET_ACCESS_KEY="<SECRET>"
 firectl model create <MODEL_ID> s3://<BUCKET>/<PATH>/
-# Option B: IAM role (recommended for EC2/ECS — no credentials needed)
-# Attach an IAM role with S3 read access to the instance; firectl picks it up automatically
+# Option B: IAM role/profile (recommended for EC2/ECS -- no credentials needed)
+AWS_PROFILE=<PROFILE> firectl model create <MODEL_ID> s3://<BUCKET>/<PATH>/
 
 # Upload LoRA adapter
 firectl model create <MODEL_ID> /path/to/adapter/ \
