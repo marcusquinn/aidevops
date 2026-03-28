@@ -237,7 +237,7 @@ TikTok, Reels, Shorts. Format: 9:16, 1-3s cuts, hook-first, 60s max, fast cuts, 
 - **LinkedIn** — professional, thought leadership
 - **Reddit** — community-native, anti-promotional
 
-References: `tools/social-media/bird.md`, `tools/social-media/linkedin.md`, `tools/social-media/reddit.md`
+References: `social-media/bird.md`, `social-media/linkedin.md`, `social-media/reddit.md`
 
 ### Blog (`content/distribution/blog.md`)
 

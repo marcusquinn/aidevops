@@ -170,5 +170,5 @@ result = extractor.extract("record.pdf", MedicalRecord)
 - `tools/conversion/mineru.md` — PDF to markdown
 - `services/document-processing/unstract.md` — enterprise document processing
 - `tools/pdf/overview.md` — PDF manipulation (form filling, signing)
-- `tools/accounts/receipt-ocr.md` — receipt/invoice OCR with QuickFile
+- `accounts/receipt-ocr.md` — receipt/invoice OCR with QuickFile
 - `todo/tasks/prd-document-extraction.md` — full PRD

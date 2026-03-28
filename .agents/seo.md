@@ -330,7 +330,7 @@ See `seo/image-seo.md` for the full workflow, `seo/moondream.md` for the vision 
 ### Content Optimization
 
 Integrate with `content.md` for:
-- Content calendar planning and gap analysis (`tools/content/content-calendar.md`)
+- Content calendar planning and gap analysis (`content/content-calendar.md`)
 - SEO-optimized content writing (`content/seo-writer.md`)
 - Meta title/description generation (`content/meta-creator.md`)
 - Internal linking strategy (`content/internal-linker.md`)
@@ -338,7 +338,7 @@ Integrate with `content.md` for:
 
 **Content analysis workflow** (from SEO Machine integration):
 
-1. **Plan**: Use `tools/content/content-calendar.md` for gap analysis and scheduling
+1. **Plan**: Use `content/content-calendar.md` for gap analysis and scheduling
 2. **Research**: `/keyword-research` + `/autocomplete-research`
 3. **Write**: Use `content/seo-writer.md` with keyword targets
 4. **Analyze**: `seo-content-analyzer.py analyze` for quality score

@@ -24,7 +24,7 @@ Pre-writing research to validate niches, understand audiences, and analyse compe
 - **Purpose**: Audience research, niche validation, competitor content analysis
 - **Input**: Topic, niche, or URL(s) to analyse
 - **Output**: Research brief with audience profile, niche viability score, competitor gaps
-- **Related**: `content/seo-writer.md` (uses research output), `content/context-templates.md` (stores findings), `tools/content/content-calendar.md` (prioritises topics)
+- **Related**: `content/seo-writer.md` (uses research output), `content/context-templates.md` (stores findings), `content/content-calendar.md` (prioritises topics)
 
 <!-- AI-CONTEXT-END -->
 
@@ -302,6 +302,6 @@ These files are read automatically by `content/seo-writer.md` and `content/edito
 
 ## Integration
 
-- **Feeds into**: `content/seo-writer.md`, `tools/content/content-calendar.md`, `content/context-templates.md`
+- **Feeds into**: `content/seo-writer.md`, `content/content-calendar.md`, `content/context-templates.md`
 - **Uses data from**: `seo/dataforseo.md`, `seo/google-search-console.md`, `seo/keyword-research.md`
 - **Related**: `research.md` (general research agent), `seo/content-analyzer.md` (post-writing analysis)

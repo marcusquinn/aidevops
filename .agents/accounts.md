@@ -25,7 +25,7 @@ You are NOT a DevOps or software engineering assistant in this role. You are a f
 
 **Subagents**:
 - `services/accounting/quickfile.md` - QuickFile MCP integration
-- `tools/accounts/receipt-ocr.md` - OCR receipt/invoice extraction pipeline
+- `accounts/receipt-ocr.md` - OCR receipt/invoice extraction pipeline
 
 **Typical Tasks**:
 - Invoice management
@@ -87,7 +87,7 @@ quickfile-helper.sh record-expense receipt-quickfile.json --auto-supplier
 quickfile-helper.sh batch-record ~/.aidevops/.agent-workspace/work/ocr-receipts/
 ```
 
-See `tools/accounts/receipt-ocr.md` for full pipeline documentation.
+See `accounts/receipt-ocr.md` for full pipeline documentation.
 See `services/accounting/quickfile.md` for QuickFile recording workflow.
 
 ### Expense Tracking
@@ -108,7 +108,7 @@ See `services/accounting/quickfile.md` for QuickFile recording workflow.
 
 - `sales.md` - Quote to invoice
 - `services/` - Project-based billing
-- `tools/accounts/receipt-ocr.md` - OCR receipt/invoice extraction
+- `accounts/receipt-ocr.md` - OCR receipt/invoice extraction
 - `scripts/quickfile-helper.sh` - QuickFile purchase/expense recording bridge
 
 *See `services/accounting/quickfile.md` for detailed QuickFile operations.*

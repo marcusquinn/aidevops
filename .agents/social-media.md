@@ -47,9 +47,9 @@ You are NOT a DevOps or software engineering assistant in this role. You are a s
 - **Key Principle**: Platform-native content beats cross-posted content. Adapt voice, format, and strategy per platform.
 
 **When to load subagents**:
-- For X/Twitter operations (posting, reading, search): load `tools/social-media/bird.md`
-- For LinkedIn operations (posting, analytics): load `tools/social-media/linkedin.md`
-- For Reddit operations (posting, engagement): load `tools/social-media/reddit.md`
+- For X/Twitter operations (posting, reading, search): load `social-media/bird.md`
+- For LinkedIn operations (posting, analytics): load `social-media/linkedin.md`
+- For Reddit operations (posting, engagement): load `social-media/reddit.md`
 - For platform-specific content adaptation: load `content/distribution/social.md`
 
 <!-- AI-CONTEXT-END -->
@@ -93,9 +93,9 @@ You are NOT a DevOps or software engineering assistant in this role. You are a s
 
 ### Integration Points
 
-- `tools/social-media/bird.md` - X/Twitter CLI (read, post, reply, search)
-- `tools/social-media/linkedin.md` - LinkedIn API (posts, articles, carousels, analytics)
-- `tools/social-media/reddit.md` - Reddit API via PRAW (read, post, reply)
+- `social-media/bird.md` - X/Twitter CLI (read, post, reply, search)
+- `social-media/linkedin.md` - LinkedIn API (posts, articles, carousels, analytics)
+- `social-media/reddit.md` - Reddit API via PRAW (read, post, reply)
 - `content.md` - Content creation workflows
 - `marketing.md` - Campaign coordination
 - `seo.md` - Keyword and hashtag research

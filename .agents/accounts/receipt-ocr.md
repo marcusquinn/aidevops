@@ -266,4 +266,4 @@ ocr-receipt-helper.sh status
 - `tools/document/extraction-workflow.md` - General document extraction workflow
 - `tools/document/document-extraction.md` - Docling + ExtractThinker + Presidio
 - `services/accounting/quickfile.md` - QuickFile MCP integration
-- `tools/accounts/subscription-audit.md` - Subscription tracking from receipts
+- `accounts/subscription-audit.md` - Subscription tracking from receipts
