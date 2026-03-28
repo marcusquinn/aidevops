@@ -76,7 +76,7 @@ export function HomePage() {
   );
 }
 
-// src/pages/home/index.ts
+// src/pages/home/index.ts — public API barrel
 export { HomePage } from './ui/HomePage';
 ```
 
@@ -96,25 +96,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     </html>
   );
 }
-```
 
-```typescript
-// src/app/providers/index.tsx
+// src/app/providers/index.tsx — wrap all context providers here
 'use client';
-
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ThemeProvider } from 'next-themes';
-
-const queryClient = new QueryClient();
-
 export function Providers({ children }: { children: React.ReactNode }) {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider attribute="class" defaultTheme="system">
-        {children}
-      </ThemeProvider>
-    </QueryClientProvider>
-  );
+  return <QueryClientProvider client={queryClient}>
+    <ThemeProvider>{children}</ThemeProvider>
+  </QueryClientProvider>;
 }
 ```
 
@@ -127,11 +115,7 @@ When a route needs server-side data, the `src/app/` file fetches and passes prop
 import { ProductDetailPage } from '@/pages/product-detail';
 import { getProductById } from '@/entities/product';
 
-interface Props {
-  params: { id: string };
-}
-
-export default async function Page({ params }: Props) {
+export default async function Page({ params }: { params: { id: string } }) {
   const product = await getProductById(params.id);
   return <ProductDetailPage product={product} />;
 }
@@ -144,36 +128,24 @@ export async function generateStaticParams() {
 
 ### Server Actions in Features
 
-Colocate server actions in the feature's `api/` segment:
+Colocate server actions in the feature's `api/` segment with `'use server'`:
 
 ```typescript
 // src/features/auth/api/actions.ts
 'use server';
-
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { loginSchema } from '../model/schema';
 
 export async function loginAction(formData: FormData) {
-  const rawData = {
-    email: formData.get('email'),
-    password: formData.get('password'),
-  };
-
-  const result = loginSchema.safeParse(rawData);
-  if (!result.success) {
-    return { errors: result.error.flatten().fieldErrors };
-  }
+  const result = loginSchema.safeParse(Object.fromEntries(formData));
+  if (!result.success) return { errors: result.error.flatten().fieldErrors };
 
   const response = await fetch(`${process.env.API_URL}/auth/login`, {
-    method: 'POST',
-    body: JSON.stringify(result.data),
+    method: 'POST', body: JSON.stringify(result.data),
     headers: { 'Content-Type': 'application/json' },
   });
-
-  if (!response.ok) {
-    return { errors: { form: ['Invalid credentials'] } };
-  }
+  if (!response.ok) return { errors: { form: ['Invalid credentials'] } };
 
   const { token } = await response.json();
   cookies().set('token', token, { httpOnly: true, secure: true });
@@ -185,7 +157,7 @@ export async function loginAction(formData: FormData) {
 
 ## Pages Router (Next.js 12 — Legacy)
 
-For projects still on Pages Router, the key difference: Next.js `pages/` lives at root (not `src/`), FSD pages stay in `src/pages/`.
+Key difference: Next.js `pages/` lives at root (not `src/`), FSD pages stay in `src/pages/`.
 
 ```text
 pages/                    # Next.js Pages Router (root)
@@ -204,24 +176,9 @@ src/
 ```
 
 ```typescript
-// pages/_app.tsx
+// pages/_app.tsx — thin re-export
 export { CustomApp as default } from '@/app/custom-app';
 
-// src/app/custom-app/CustomApp.tsx
-import type { AppProps } from 'next/app';
-import { Providers } from '../providers';
-import '../styles/globals.css';
-
-export function CustomApp({ Component, pageProps }: AppProps) {
-  return (
-    <Providers>
-      <Component {...pageProps} />
-    </Providers>
-  );
-}
-```
-
-```typescript
 // pages/products/[id].tsx — data fetching stays in the route file
 import { ProductDetailPage } from '@/pages/product-detail';
 import { getProductById } from '@/entities/product';
@@ -242,14 +199,7 @@ export const getServerSideProps: GetServerSideProps = async ({ params }) => {
 
 ```json
 // tsconfig.json
-{
-  "compilerOptions": {
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["./src/*"]
-    }
-  }
-}
+{ "compilerOptions": { "baseUrl": ".", "paths": { "@/*": ["./src/*"] } } }
 ```
 
 ---
@@ -265,42 +215,22 @@ FSD is frontend-focused. Two options for API routes:
 
 ### Database Queries
 
-Keep database logic in `shared/db/`, expose through entity APIs:
+Keep database logic in `shared/db/`, expose through entity APIs — never import DB directly in pages/widgets:
 
 ```typescript
-// shared/db/client.ts
-import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
-
-const client = postgres(process.env.DATABASE_URL!);
-export const db = drizzle(client);
-```
-
-```typescript
-// shared/db/queries/products.ts
-import { db } from '../client';
-import { products } from '../schema';
-import { eq } from 'drizzle-orm';
-
-export async function getAllProducts() {
-  return db.select().from(products);
-}
-
+// shared/db/queries/products.ts — raw DB access
+export async function getAllProducts() { return db.select().from(products); }
 export async function getProductById(id: string) {
   return db.select().from(products).where(eq(products.id, id)).limit(1);
 }
-```
 
-```typescript
 // entities/product/api/productApi.ts — maps DB rows to domain models
 import { getAllProducts, getProductById as dbGetProduct } from '@/shared/db/queries/products';
 import { mapProductRow } from '../model/mapper';
 
 export async function getProducts() {
-  const rows = await getAllProducts();
-  return rows.map(mapProductRow);
+  return (await getAllProducts()).map(mapProductRow);
 }
-
 export async function getProductById(id: string) {
   const [row] = await dbGetProduct(id);
   return row ? mapProductRow(row) : null;
@@ -321,72 +251,34 @@ export function middleware(request: NextRequest) {
   const isAuthPage = request.nextUrl.pathname.startsWith('/login');
   const isProtected = request.nextUrl.pathname.startsWith('/dashboard');
 
-  if (isProtected && !token) {
-    return NextResponse.redirect(new URL('/login', request.url));
-  }
-  if (isAuthPage && token) {
-    return NextResponse.redirect(new URL('/dashboard', request.url));
-  }
+  if (isProtected && !token) return NextResponse.redirect(new URL('/login', request.url));
+  if (isAuthPage && token) return NextResponse.redirect(new URL('/dashboard', request.url));
   return NextResponse.next();
 }
 
-export const config = {
-  matcher: ['/dashboard/:path*', '/login'],
-};
+export const config = { matcher: ['/dashboard/:path*', '/login'] };
 ```
 
 ---
 
-## Next.js Conventions in FSD
+## Next.js File Conventions in FSD
 
 Use standard Next.js file conventions (`loading.tsx`, `error.tsx`, `not-found.tsx`) in `src/app/` route directories, importing skeletons/UI from FSD layers:
 
 ```typescript
 // src/app/products/loading.tsx
 import { ProductListSkeleton } from '@/widgets/product-list';
-export default function Loading() {
-  return <ProductListSkeleton />;
-}
+export default function Loading() { return <ProductListSkeleton />; }
 ```
 
-```typescript
-// src/app/products/error.tsx
-'use client';
-import { Button } from '@/shared/ui';
-
-export default function Error({ error, reset }: { error: Error; reset: () => void }) {
-  return (
-    <div className="flex flex-col items-center justify-center min-h-screen">
-      <h2 className="text-xl font-bold mb-4">Something went wrong!</h2>
-      <p className="text-gray-600 mb-4">{error.message}</p>
-      <Button onClick={reset}>Try again</Button>
-    </div>
-  );
-}
-```
-
-```typescript
-// src/app/products/[id]/not-found.tsx
-import Link from 'next/link';
-
-export default function NotFound() {
-  return (
-    <div className="flex flex-col items-center justify-center min-h-screen">
-      <h2 className="text-xl font-bold mb-4">Product Not Found</h2>
-      <Link href="/products" className="text-blue-600 hover:underline">
-        Back to Products
-      </Link>
-    </div>
-  );
-}
-```
+Same pattern for `error.tsx` (import error UI from `shared/ui`, use `'use client'` + `reset` prop) and `not-found.tsx` (import link/UI from shared).
 
 ---
 
-## Best Practices
+## Key Rules
 
 1. **Thin route files** — only re-exports and data fetching in `src/app/`
-2. **All UI/logic in FSD layers** — components, state, business logic
+2. **All UI/logic in FSD layers** — components, state, business logic stay in `pages/widgets/features/entities/shared`
 3. **Path aliases** — `@/*` for clean cross-layer imports
 4. **Server Components by default** — add `'use client'` only when needed
 5. **Colocate server actions** — in feature's `api/` segment with `'use server'`
