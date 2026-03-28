@@ -21,44 +21,19 @@ tools:
 - **Auth**: Bearer token in `~/.config/aidevops/credentials.sh` as `HOSTINGER_API_TOKEN`
 - **SSH**: Port 65002, password auth (no SSH keys on shared)
 - **Panel**: Custom hPanel
-- **No MCP required** - uses curl for API, sshpass for SSH
+- **No MCP required** — uses curl for API, sshpass for SSH
 
 <!-- AI-CONTEXT-END -->
 
-Hostinger is a popular web hosting provider offering shared hosting, VPS, and cloud hosting solutions with competitive pricing and good performance.
+## Configuration
 
-## Provider Overview
-
-### **Hostinger Characteristics:**
-
-- **Hosting Type**: Shared hosting, VPS, Cloud hosting
-- **SSH Access**: Available on VPS and higher plans
-- **Control Panel**: Custom hPanel (user-friendly)
-- **SSH Authentication**: Password-based (SSH keys not supported on shared hosting)
-- **API Support**: Limited API functionality
-- **Pricing**: Budget-friendly with good value
-- **Performance**: Good performance for the price point
-
-### **Best Use Cases:**
-
-- **Small to medium websites** with moderate traffic
-- **WordPress hosting** with optimized performance
-- **Development environments** for testing and staging
-- **Cost-effective hosting** for multiple domains
-- **Beginner-friendly** hosting with easy management
-
-## 🔧 **Configuration**
-
-### **Setup Configuration:**
+Copy template and edit with server details:
 
 ```bash
-# Copy template
 cp configs/hostinger-config.json.txt configs/hostinger-config.json
-
-# Edit with your actual server details
 ```
 
-### **Configuration Structure:**
+Config structure:
 
 ```json
 {
@@ -81,205 +56,71 @@ cp configs/hostinger-config.json.txt configs/hostinger-config.json
 }
 ```
 
-### **Password File Setup:**
+Password file setup:
 
 ```bash
-# Create secure password file
 echo 'your-hostinger-password' > ~/.ssh/hostinger_password
 chmod 600 ~/.ssh/hostinger_password
-
-# Install sshpass for password authentication
-brew install sshpass  # macOS
+brew install sshpass   # macOS
 sudo apt-get install sshpass  # Linux
 ```
 
-## 🚀 **Usage Examples**
-
-### **Basic Commands:**
+## Commands
 
 ```bash
-# List all Hostinger sites
+# Site management
 ./.agents/scripts/hostinger-helper.sh list
-
-# Connect to a site
 ./.agents/scripts/hostinger-helper.sh connect example.com
-
-# Upload files to a site
-./.agents/scripts/hostinger-helper.sh upload example.com /local/path /remote/path
-
-# Download files from a site
-./.agents/scripts/hostinger-helper.sh download example.com /remote/path /local/path
-
-# Execute command on server
 ./.agents/scripts/hostinger-helper.sh exec example.com 'ls -la'
-```
 
-### **File Management:**
-
-```bash
-# Upload website files
+# File transfer
 ./.agents/scripts/hostinger-helper.sh upload example.com ./dist/ /domains/example.com/public_html/
-
-# Backup website
 ./.agents/scripts/hostinger-helper.sh download example.com /domains/example.com/public_html/ ./backup/
 
-# Update specific files
-./.agents/scripts/hostinger-helper.sh upload example.com ./index.html /domains/example.com/public_html/index.html
-```
-
-### **Database Operations:**
-
-```bash
-# Access MySQL (if available)
-./.agents/scripts/hostinger-helper.sh exec example.com 'mysql -u username -p database_name'
-
-# Backup database
+# Database
 ./.agents/scripts/hostinger-helper.sh exec example.com 'mysqldump -u username -p database_name > backup.sql'
 ```
 
-## 🛡️ **Security Considerations**
+## Security
 
-### **Password Security:**
+- Store passwords in files with 600 permissions; never commit them
+- SSH keys not supported on shared hosting — password auth only
+- Port 65002 (non-standard); be aware of concurrent connection limits
 
-- **Secure storage**: Store passwords in files with 600 permissions
-- **Never commit**: Add password files to .gitignore
-- **Regular rotation**: Change passwords periodically
-- **Strong passwords**: Use complex, unique passwords
-
-### **SSH Security:**
-
-- **Non-standard port**: Hostinger uses port 65002
-- **Password authentication**: SSH keys not supported on shared hosting
-- **Connection limits**: Be aware of concurrent connection limits
-- **IP restrictions**: Consider IP-based access restrictions if available
-
-### **File Permissions:**
+Set web file permissions:
 
 ```bash
-# Set proper permissions for web files
 ./.agents/scripts/hostinger-helper.sh exec example.com 'chmod 644 /domains/example.com/public_html/*.html'
 ./.agents/scripts/hostinger-helper.sh exec example.com 'chmod 755 /domains/example.com/public_html/scripts/'
 ```
 
-## 🔍 **Troubleshooting**
+## Troubleshooting
 
-### **Common Issues:**
+**Connection refused**: Verify SSH is enabled on your plan, check hostname and port 65002, confirm password.
 
-#### **Connection Refused:**
+**Permission denied**: Username format is `u` followed by numbers (e.g. `u123456789`). Check password file has 600 perms and sshpass is installed.
 
-```bash
-# Check if SSH is enabled on your plan
-# Verify server hostname and port (usually 65002)
-# Ensure password is correct
-```
-
-#### **Permission Denied:**
+**File upload issues**:
 
 ```bash
-# Verify username format (usually u followed by numbers)
-# Check password file permissions (should be 600)
-# Ensure sshpass is installed
-```
-
-#### **File Upload Issues:**
-
-```bash
-# Check destination path exists
 ./.agents/scripts/hostinger-helper.sh exec example.com 'ls -la /domains/example.com/'
-
-# Verify disk space
-./.agents/scripts/hostinger-helper.sh exec example.com 'df -h'
-
-# Check file permissions
-./.agents/scripts/hostinger-helper.sh exec example.com 'ls -la /domains/example.com/public_html/'
-```
-
-## 📊 **Performance Optimization**
-
-### **Website Performance:**
-
-```bash
-# Enable compression (if supported)
-./.agents/scripts/hostinger-helper.sh exec example.com 'echo "gzip on;" >> /domains/example.com/.htaccess'
-
-# Optimize images before upload
-# Use tools like imagemin or tinypng before uploading
-
-# Monitor resource usage
-./.agents/scripts/hostinger-helper.sh exec example.com 'top'
 ./.agents/scripts/hostinger-helper.sh exec example.com 'df -h'
 ```
 
-### **Caching Strategies:**
-
-- **Browser caching**: Configure .htaccess for static assets
-- **CDN integration**: Use Cloudflare or similar CDN
-- **Image optimization**: Compress images before upload
-- **Minification**: Minify CSS/JS before deployment
-
-## 🔄 **Backup & Deployment**
-
-### **Automated Backups:**
-
-```bash
-# Create backup script
-#!/bin/bash
-DATE=$(date +%Y%m%d_%H%M%S)
-./.agents/scripts/hostinger-helper.sh download example.com /domains/example.com/public_html/ ./backups/example.com_$DATE/
-```
-
-### **Deployment Workflow:**
+## Deployment
 
 ```bash
 # Build and deploy
 npm run build
 ./.agents/scripts/hostinger-helper.sh upload example.com ./dist/ /domains/example.com/public_html/
 
-# Verify deployment
+# Verify
 ./.agents/scripts/hostinger-helper.sh exec example.com 'ls -la /domains/example.com/public_html/'
 ```
 
-## 📚 **Best Practices**
+Backup before major changes:
 
-### **Development Workflow:**
-
-1. **Local development**: Develop and test locally first
-2. **Staging environment**: Use subdomain for staging
-3. **Backup before deploy**: Always backup before major changes
-4. **Incremental updates**: Upload only changed files when possible
-5. **Monitor performance**: Check site performance after deployments
-
-### **File Organization:**
-
-- **Consistent structure**: Maintain consistent directory structure
-- **Version control**: Use Git for source code management
-- **Documentation**: Document deployment procedures
-- **Environment configs**: Separate configs for different environments
-
-### **Monitoring:**
-
-- **Uptime monitoring**: Use services like UptimeRobot
-- **Performance monitoring**: Monitor page load times
-- **Error logging**: Check server logs regularly
-- **Resource usage**: Monitor disk space and bandwidth
-
-## 🎯 **AI Assistant Integration**
-
-### **Automated Tasks:**
-
-- **Deployment automation**: Automated file uploads after builds
-- **Backup scheduling**: Regular automated backups
-- **Performance monitoring**: Automated performance checks
-- **Security scanning**: Regular security audits
-- **Content updates**: Automated content deployment
-
-### **Monitoring & Alerts:**
-
-- **Uptime alerts**: Notifications for site downtime
-- **Performance alerts**: Warnings for slow performance
-- **Security alerts**: Notifications for security issues
-- **Resource alerts**: Warnings for high resource usage
-
----
-
-**Hostinger provides excellent value for money with good performance, making it ideal for small to medium websites and development environments.** 🚀
+```bash
+DATE=$(date +%Y%m%d_%H%M%S)
+./.agents/scripts/hostinger-helper.sh download example.com /domains/example.com/public_html/ ./backups/example.com_$DATE/
+```
