@@ -87,6 +87,7 @@ Desktop Whisper wrapper. No cloud/API key. Audio: MP3/WAV/FLAC/OGG/M4A/WMA. Vide
 
 ```bash
 brew install --cask buzz                                         # GUI: File → Open → Transcribe → Export
+pip install buzz-captions                                        # CLI package
 buzz transcribe audio.mp3 --model medium --output-format srt     # CLI
 buzz transcribe foreign.mp3 --task translate --language auto
 buzz transcribe audio.mp3 --model-type faster-whisper --model large-v3
@@ -137,6 +138,7 @@ for word in alt.words: print(f"[Speaker {word.speaker}] {word.word}")
 
 ```python
 from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions
+import os
 dg = DeepgramClient(os.environ["DEEPGRAM_API_KEY"])
 conn = dg.listen.asyncwebsocket.v("1")
 conn.on(LiveTranscriptionEvents.Transcript, lambda r, **kw: print(r.channel.alternatives[0].transcript) or None)
