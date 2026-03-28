@@ -38,14 +38,12 @@ External Skill (GitHub or ClawdHub)
         ↓
     Transpose to aidevops Format (see below)
         ↓
-    Register in skill-sources.json
+    Place in .agents/ using category detection
         ↓
-    setup.sh creates symlinks to:
-    - ~/.config/opencode/skills/
-    - ~/.codex/skills/
-    - ~/.claude/skills/
-    - ~/.config/amp/tools/
+    Register in skill-sources.json
 ```
+
+Ingested skills live in `.agents/` alongside all other knowledge — same naming, same discovery, same progressive disclosure. No symlinks to external runtime skill directories. Runtimes that support `.agents/` (or AGENTS.md-based discovery) find ingested skills through the same mechanisms as native agents. The `.agents/` convention replaces the isolated `SKILL.md`-per-directory pattern used by other runtimes.
 
 ## Transposition Rules
 
@@ -284,35 +282,18 @@ Default: `tools/{skill-name}/`
 # Up to date: vercel-deploy
 ```
 
-## Integration with setup.sh
+## Why Not Symlinks to Runtime Skill Directories
 
-After importing skills, `setup.sh` creates symlinks:
+Other runtimes (Claude Code, Codex, Amp) have their own skill directories (`~/.claude/skills/`, `~/.codex/skills/`, etc.) using a `SKILL.md`-per-directory convention. We previously created symlinks from `.agents/` into these directories.
 
-```bash
-# In setup.sh
-create_skill_symlinks() {
-    local skill_sources="$AGENTS_DIR/configs/skill-sources.json"
-    
-    if [[ -f "$skill_sources" ]] && command -v jq &>/dev/null; then
-        # Create symlinks to various AI assistant skill directories
-        jq -r '.skills[] | .local_path' "$skill_sources" | while read -r path; do
-            local skill_name=$(basename "$path" .md)
-            
-            # OpenCode
-            ln -sf "$AGENTS_DIR/$path" "$HOME/.config/opencode/skills/$skill_name/SKILL.md"
-            
-            # Codex
-            ln -sf "$AGENTS_DIR/$path" "$HOME/.codex/skills/$skill_name/SKILL.md"
-            
-            # Claude Code
-            ln -sf "$AGENTS_DIR/$path" "$HOME/.claude/skills/$skill_name/SKILL.md"
-            
-            # Amp
-            ln -sf "$AGENTS_DIR/$path" "$HOME/.config/amp/tools/$skill_name.md"
-        done
-    fi
-}
-```
+**This is no longer the approach.** Reasons:
+
+- **Isolated discovery**: Each runtime's skill directory is a silo. Skills can't cross-reference each other or link to tools/services/workflows.
+- **Flat structure**: One `SKILL.md` per directory with no naming convention — doesn't scale, can't sort/group/search by prefix.
+- **Duplicate paths**: Symlinks create a parallel discovery path that diverges from `.agents/` — agents find different content depending on which path they follow.
+- **No progressive disclosure**: The `SKILL.md` pattern is all-or-nothing. Our `{name}-skill.md` + `{name}-skill/` convention loads the entry point first, extended knowledge on demand.
+
+Runtimes that support `.agents/` or `AGENTS.md`-based discovery find ingested skills through the same mechanisms as native agents. For runtimes that only support their own skill directories, the `generate-skills.sh` script can produce compatible output as a build step — but `.agents/` is the source of truth.
 
 ## Popular Skills to Import
 
@@ -377,5 +358,5 @@ It does NOT check for semantic duplicates. Use `/add-skill list` to review.
 - `scripts/add-skill-helper.sh` - Main implementation
 - `scripts/clawdhub-helper.sh` - ClawdHub browser-based fetcher
 - `scripts/skill-update-helper.sh` - Automated update checking
-- `scripts/generate-skills.sh` - SKILL.md generation for aidevops agents
-- `build-agent.md` - Agent design patterns
+- `scripts/generate-skills.sh` - Compatibility output for runtimes that only support SKILL.md directories
+- `build-agent.md` - Agent design patterns (see "Folder Organization" for naming conventions)
