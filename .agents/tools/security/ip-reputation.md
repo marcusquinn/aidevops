@@ -17,87 +17,40 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Vet VPS/server/proxy IPs before purchase or deployment — check if they are burned (blacklisted, flagged)
-- **Helper**: `ip-reputation-helper.sh`
-- **Slash command**: `/ip-check <ip>`
-- **Providers**: 11 providers (5 free/no-key, 6 free-tier with API key)
-- **Output formats**: `table` (default), `json`, `markdown`, `compact`
+- **Helper**: `ip-reputation-helper.sh` | **Slash command**: `/ip-check <ip>`
+- **Providers**: 11 (5 free/no-key, 6 free-tier with API key)
+- **Output**: `table` (default), `json`, `markdown`, `compact`
 - **Cache**: SQLite, per-provider TTL (1h–7d), auto-prune expired entries
 - **Rate limits**: HTTP 429 detection with exponential backoff retry
 
 <!-- AI-CONTEXT-END -->
 
-## Use Cases
-
-- Vet a VPS IP before purchasing a server
-- Check if a proxy/VPN IP is burned before use
-- Batch-screen a list of IPs for deployment
-- Generate a markdown report for audit/compliance
-- Cross-reference with email DNSBL blacklists
-
 ## Commands
 
 ```bash
-# Check a single IP (table output)
+# Single IP check (table output)
 ip-reputation-helper.sh check 1.2.3.4
 
-# Check with JSON output
+# Output formats: json, markdown, compact
 ip-reputation-helper.sh check 1.2.3.4 -f json
+ip-reputation-helper.sh check 1.2.3.4 -f compact        # one-line, for scripting
 
-# Check with markdown report output
-ip-reputation-helper.sh check 1.2.3.4 --format markdown
-
-# Generate detailed markdown report
+# Detailed markdown report
 ip-reputation-helper.sh report 1.2.3.4
 
-# Batch check from file (one IP per line)
+# Batch check (one IP per line)
 ip-reputation-helper.sh batch ips.txt
+ip-reputation-helper.sh batch ips.txt --rate-limit 1 --dnsbl-overlap -f json
 
-# Batch with rate limiting and DNSBL overlap
-ip-reputation-helper.sh batch ips.txt --rate-limit 1 --dnsbl-overlap
-
-# Batch with JSON output
-ip-reputation-helper.sh batch ips.txt -f json
-
-# Use a single provider only
+# Single provider only
 ip-reputation-helper.sh check 1.2.3.4 --provider abuseipdb
 
-# Compact one-line output (for scripting)
-ip-reputation-helper.sh check 1.2.3.4 --format compact
-
-# Disable color output
-ip-reputation-helper.sh check 1.2.3.4 --no-color
-
-# Bypass cache for fresh results
-ip-reputation-helper.sh check 1.2.3.4 --no-cache
-
-# List all providers and their status
-ip-reputation-helper.sh providers
-
-# Show cache statistics
-ip-reputation-helper.sh cache-stats
-
-# Clear cache for a provider
+# Cache and rate limit management
+ip-reputation-helper.sh providers              # list all providers + status
+ip-reputation-helper.sh cache-stats            # cache statistics
 ip-reputation-helper.sh cache-clear --provider abuseipdb
-
-# Clear cache for a specific IP
 ip-reputation-helper.sh cache-clear --ip 1.2.3.4
-
-# Show rate limit status per provider
-ip-reputation-helper.sh rate-limit-status
-
-# Show help
-ip-reputation-helper.sh help
-```
-
-## Subcommand Help
-
-```bash
-# Per-subcommand help (--help flag)
-ip-reputation-helper.sh check --help
-ip-reputation-helper.sh batch --help
-ip-reputation-helper.sh report --help
-ip-reputation-helper.sh cache-clear --help
+ip-reputation-helper.sh rate-limit-status      # per-provider rate limit status
 ```
 
 ## Providers
@@ -135,123 +88,23 @@ ip-reputation-helper.sh cache-clear --help
 
 ## Output Formats
 
-### Table (default)
-
-Terminal-friendly colored output with per-provider breakdown, including cache hit/miss
-indicators and source column (cached vs live):
+**Table** (default) — colored terminal output with per-provider breakdown, cache hit/miss indicators:
 
 ```text
-=== IP Reputation Report ===
-IP:          1.2.3.4
-Scanned:     2026-02-19T12:00:00Z
-Risk Level:  CLEAN (score: 2/100)
-Verdict:     SAFE — no significant flags detected
+IP: 1.2.3.4 | Risk: CLEAN (2/100) | Providers: 8/10 | Cache: 5 hit, 3 miss
+Tor: NO | Proxy: NO | VPN: NO
 
-Summary:
-  Providers:  8/10 responded
-  Listed by:  0 provider(s)
-  Cache:      5 hit(s), 3 miss(es)
-  Tor:        NO
-  Proxy:      NO
-  VPN:        NO
-
-Provider Results:
-  Provider           Risk       Score    Source   Details
-  --------           ----       -----    ------   -------
-  Spamhaus DNSBL     clean      0        cached   clean
-  ProxyCheck.io      clean      0        live     clean
-  ...
-```
-
-### JSON (`-f json`)
-
-Machine-readable structured output with cache statistics:
-
-```json
-{
-  "ip": "1.2.3.4",
-  "scan_time": "2026-02-19T12:00:00Z",
-  "unified_score": 2,
-  "risk_level": "clean",
-  "recommendation": "SAFE — no significant flags detected",
-  "summary": {
-    "providers_queried": 10,
-    "providers_responded": 8,
-    "providers_errored": 2,
-    "listed_by": 0,
-    "is_tor": false,
-    "is_proxy": false,
-    "is_vpn": false,
-    "cache_hits": 5,
-    "cache_misses": 3
-  },
-  "providers": [...]
-}
-```
-
-### Compact (`-f compact`)
-
-One-line summary per IP, suitable for scripting and batch pipelines:
-
-```text
-1.2.3.4  CLEAN (2/100)  listed:0  flags:none
-```
-
-### Markdown (`report` subcommand or `--format markdown`)
-
-Full markdown report suitable for documentation or audit, includes cache statistics
-and source column:
-
-```markdown
-# IP Reputation Report: 1.2.3.4
-
-- **Scanned**: 2026-02-19T12:00:00Z
-- **Risk Level**: CLEAN (2/100)
-- **Verdict**: SAFE — no significant flags detected
-
-## Summary
-
-| Metric | Value |
-|--------|-------|
-| Providers queried | 10 |
-| Cache hits | 5 |
-| Cache misses | 3 |
-...
-
-## Provider Results
-
-| Provider | Risk Level | Score | Source | Listed | Details |
-|----------|-----------|-------|--------|--------|---------|
+Provider           Risk    Score  Source  Details
+Spamhaus DNSBL     clean   0      cached  clean
+ProxyCheck.io      clean   0      live    clean
 ...
 ```
 
-## API Key Setup
+**JSON** (`-f json`) — structured output with `unified_score`, `risk_level`, `recommendation`, per-provider results, and `summary` (providers queried/responded/errored, is_tor/proxy/vpn, cache hits/misses).
 
-Store keys via `aidevops secret set NAME` (never paste in conversation):
+**Compact** (`-f compact`) — one-line per IP: `1.2.3.4  CLEAN (2/100)  listed:0  flags:none`
 
-```bash
-aidevops secret set ABUSEIPDB_API_KEY
-aidevops secret set VIRUSTOTAL_API_KEY
-aidevops secret set IPQUALITYSCORE_API_KEY
-aidevops secret set SCAMALYTICS_API_KEY
-aidevops secret set SHODAN_API_KEY
-aidevops secret set IPHUB_API_KEY
-# Optional (increases rate limits):
-aidevops secret set PROXYCHECK_API_KEY
-aidevops secret set GREYNOISE_API_KEY
-```
-
-Keys are loaded automatically from `~/.config/aidevops/credentials.sh`.
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `IP_REP_TIMEOUT` | `15` | Per-provider timeout (seconds) |
-| `IP_REP_FORMAT` | `table` | Default output format |
-| `IP_REP_CACHE_DIR` | `~/.cache/ip-reputation` | SQLite cache directory |
-| `IP_REP_CACHE_TTL` | `86400` | Default cache TTL (seconds) |
-| `IP_REP_RATE_LIMIT` | `2` | Batch requests/second per provider |
+**Markdown** (`report` or `-f markdown`) — full report with summary table, provider results table, cache statistics. Suitable for audit/compliance documentation.
 
 ## Options Reference
 
@@ -267,42 +120,40 @@ Keys are loaded automatically from `~/.config/aidevops/credentials.sh`.
 | `--rate-limit <n>` | | Batch requests/second (default: 2) |
 | `--dnsbl-overlap` | | Cross-reference with email DNSBL in batch mode |
 
-## Integration with Email Health Check
+## Environment Variables
 
-The `--dnsbl-overlap` flag in batch mode cross-references results with the same
-DNSBL zones used by `email-health-check-helper.sh` (zen.spamhaus.org, bl.spamcop.net,
-b.barracudacentral.org). Useful when vetting IPs for email sending.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `IP_REP_TIMEOUT` | `15` | Per-provider timeout (seconds) |
+| `IP_REP_FORMAT` | `table` | Default output format |
+| `IP_REP_CACHE_DIR` | `~/.cache/ip-reputation` | SQLite cache directory |
+| `IP_REP_CACHE_TTL` | `86400` | Default cache TTL (seconds) |
+| `IP_REP_RATE_LIMIT` | `2` | Batch requests/second per provider |
+
+## API Key Setup
+
+Store keys via `aidevops secret set NAME` (never paste in conversation). Keys load automatically from `~/.config/aidevops/credentials.sh`.
+
+```bash
+# Required for keyed providers:
+aidevops secret set ABUSEIPDB_API_KEY
+aidevops secret set VIRUSTOTAL_API_KEY
+aidevops secret set IPQUALITYSCORE_API_KEY
+aidevops secret set SCAMALYTICS_API_KEY
+aidevops secret set SHODAN_API_KEY
+aidevops secret set IPHUB_API_KEY
+# Optional (increases rate limits):
+aidevops secret set PROXYCHECK_API_KEY
+aidevops secret set GREYNOISE_API_KEY
+```
 
 ## Rate Limit Handling
 
-Provider APIs enforce rate limits (e.g., AbuseIPDB 1000/day, VirusTotal 500/day).
-The helper handles this automatically:
-
-1. **HTTP 429 detection**: Provider scripts capture HTTP status codes and return
-   structured `rate_limited` errors with `retry_after` hints
-2. **Exponential backoff**: On 429, the helper retries up to 2 times with
-   exponential backoff (2s, 4s)
-3. **Cooldown tracking**: Rate-limited providers are recorded in SQLite with
-   their cooldown period; subsequent queries skip them until the cooldown expires
-4. **Status monitoring**: `rate-limit-status` command shows per-provider rate
-   limit history, hit counts, and current cooldown status
-
-```bash
-# Check which providers are currently rate-limited
-ip-reputation-helper.sh rate-limit-status
-```
+Provider APIs enforce rate limits (e.g., AbuseIPDB 1000/day, VirusTotal 500/day). The helper handles this automatically: HTTP 429 detection → exponential backoff retry (2s, 4s, up to 2 retries) → cooldown tracking in SQLite (subsequent queries skip rate-limited providers until cooldown expires). Monitor with `rate-limit-status`.
 
 ## Caching
 
-Results are cached in SQLite (`~/.cache/ip-reputation/cache.db`) with per-provider
-TTLs. Cache features:
-
-- **Auto-prune**: Expired entries are automatically cleaned up once per hour
-- **Hit/miss tracking**: Output shows how many results came from cache vs live queries
-- **Per-provider TTL**: DNSBL providers (1h), proxy detectors (6h), abuse databases (24h),
-  Shodan (7d)
-- **Bypass**: Use `--no-cache` to force fresh queries
-- **Management**: `cache-stats` shows statistics, `cache-clear` removes entries
+Results cached in SQLite (`~/.cache/ip-reputation/cache.db`) with per-provider TTLs: DNSBL (1h), proxy detectors (6h), abuse databases (24h), Shodan (7d). Auto-prune runs hourly. Output shows cache hit/miss counts. Bypass with `--no-cache`; manage with `cache-stats` and `cache-clear`.
 
 ## Scoring Algorithm
 
@@ -310,6 +161,10 @@ TTLs. Cache features:
 2. Unified score = weighted average across responding providers
 3. Boost applied if 2+ providers agree on listing (+10) or 3+ agree (+15)
 4. Final risk level determined by unified score thresholds
+
+## DNSBL Integration
+
+The `--dnsbl-overlap` flag in batch mode cross-references results with the same DNSBL zones used by `email-health-check-helper.sh` (zen.spamhaus.org, bl.spamcop.net, b.barracudacentral.org). Useful when vetting IPs for email sending.
 
 ## Related
 
