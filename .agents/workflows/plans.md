@@ -37,8 +37,8 @@ Analyze conversation for complexity signals when `/save-todo` is invoked:
 
 | Signal | Indicates | Action |
 |--------|-----------|--------|
-| Single action item / < 2h estimate / "quick" or "simple" | Simple | TODO.md only |
-| Multiple distinct steps / research needed / >= 2h / multi-session / PRD needed | Complex | PLANS.md + TODO.md |
+| Single action / < 2h / "quick" or "simple" | Simple | TODO.md only |
+| Multiple steps / research / >= 2h / multi-session / PRD needed | Complex | PLANS.md + TODO.md |
 
 ## Ralph Classification
 
@@ -72,11 +72,11 @@ Add `#auto-dispatch` only when ALL inclusion criteria pass and NO exclusion crit
 
 ### MANDATORY: Task Brief Requirement
 
-**Every task MUST have a brief file** at `todo/tasks/{task_id}-brief.md`. A task without a brief is undevelopable — it loses the conversation context that informed it. Use `templates/brief-template.md`. Captures: origin (session ID, date, author), what, why, how (with file refs), acceptance criteria, context. Detect runtime: `$OPENCODE_SESSION_ID`, `$CLAUDE_SESSION_ID`, or `{app}:unknown-{date}`.
+Every task MUST have `todo/tasks/{task_id}-brief.md`. Use `templates/brief-template.md`. Captures: origin (session ID, date, author), what, why, how (with file refs), acceptance criteria, context. Detect runtime: `$OPENCODE_SESSION_ID`, `$CLAUDE_SESSION_ID`, or `{app}:unknown-{date}`.
 
 ### Task Description Quality (GH#6419)
 
-Task descriptions in TODO.md become GitHub issue titles — primary input to pulse duplicate detection. Include the **what** (action), **where** (component/file/feature area), and **when/why** (triggering condition). Exception: persistent/pinned monitoring issues keep their concise title style.
+Task descriptions in TODO.md become GitHub issue titles — primary input to pulse duplicate detection. Include **what** (action), **where** (component/file/feature area), **when/why** (triggering condition). Exception: persistent/pinned monitoring issues keep concise titles.
 
 **Good**: `Add WooCommerce tax fallback when no tax class matches product category` | **Bad**: `Tax fallback`
 
