@@ -9,13 +9,9 @@ tools:
   bash: true
 ---
 
-Configure testing infrastructure for the current project. Detects the project bundle, discovers existing test tooling, identifies gaps, and generates configuration with bundle-aware defaults.
+Configure testing infrastructure for the current project. Detects bundle, discovers existing tooling, identifies gaps against bundle quality gates, generates configuration, and verifies end-to-end.
 
 Arguments: $ARGUMENTS
-
-## Purpose
-
-Most repos have ad-hoc testing. This command provides structured onboarding: detect project type, discover existing infrastructure, identify gaps against bundle-recommended quality gates, generate configuration, and verify end-to-end. The output is a working test configuration — not a plan.
 
 ## Workflow
 
@@ -28,30 +24,23 @@ QUALITY_GATES=$(echo "$BUNDLE" | jq -r '.quality_gates[]')
 SKIP_GATES=$(echo "$BUNDLE" | jq -r '.skip_gates[]' 2>/dev/null)
 ```
 
-Display detected bundle and quality gates. If no bundle detected, fall back to `cli-tool` (most conservative). Let user override:
+Display detected bundle and quality gates. No bundle → fall back to `cli-tool`. Offer override (web-app, cli-tool, library, infrastructure, content-site, agent).
 
-```text
-Override bundle? [Enter to accept, or type bundle name]
-1. web-app (detected)  2. cli-tool  3. library
-4. infrastructure      5. content-site  6. agent
-```
+### Step 2: Discover Existing Infrastructure
 
-### Step 2: Discover Existing Test Infrastructure
-
-Run `testing-setup-helper.sh discover .` to scan for existing tooling:
+Run `testing-setup-helper.sh discover .` to scan:
 
 | Category | What to find | How |
 |----------|-------------|-----|
-| Test runners | jest, vitest, pytest, cargo test, go test, bats | `package.json` scripts/devDeps, `pyproject.toml`, `Cargo.toml`, `go.mod`, `*.bats` files |
+| Test runners | jest, vitest, pytest, cargo test, go test, bats | `package.json` scripts/devDeps, `pyproject.toml`, `Cargo.toml`, `go.mod`, `*.bats` |
 | Test directories | `tests/`, `test/`, `__tests__/`, `spec/`, `*_test.go` | Directory/file existence |
 | Test configs | `jest.config.*`, `vitest.config.*`, `pytest.ini`, `.bats` | File glob |
 | CI pipelines | `.github/workflows/`, `.gitlab-ci.yml` | File existence, grep for test steps |
 | Linter configs | `.eslintrc*`, `.prettierrc*`, `tsconfig.json`, `.shellcheckrc` | File glob |
 | Coverage configs | `.nycrc`, `coverage/`, `jest --coverage`, `c8`, `istanbul` | Config files, package.json scripts |
 | E2E/integration | `playwright.config.*`, `cypress.config.*`, `*.spec.ts` | File glob |
-| Quality gates | `linters-local.sh` integration, pre-commit hooks | Not yet detected (TODO: t1660.2+) |
 
-Display results as `[found]`/`[missing]` status table with source details.
+Display `[found]`/`[missing]` status table with source details.
 
 ### Step 3: Gap Analysis
 
@@ -59,42 +48,24 @@ Compare discovered infrastructure against bundle quality gates:
 
 | Gate Status | Action |
 |-------------|--------|
-| **found + configured** | Verify it runs: execute test command, report pass/fail |
+| **found + configured** | Verify it runs — execute test command, report pass/fail |
 | **found + misconfigured** | Show what's wrong, offer to fix |
 | **missing + recommended** | Offer to install and configure |
 | **missing + skipped** | Note as intentionally skipped by bundle |
 
-Present as actionable summary grouped by: Ready, Needs attention, Missing (recommended), Skipped by bundle.
+Group results: Ready, Needs attention, Missing (recommended), Skipped by bundle.
 
 ### Step 4: Interactive Configuration
 
-For each gap, walk through configuration interactively. Pattern for each item:
+For each gap, offer: (1) install and configure (recommended), (2) skip — handle manually, (3) use alternative already installed.
 
-```text
-Install <tool>? Bundle '<bundle>' recommends it for <purpose>.
-1. Yes — install and create config (recommended)
-2. Skip — I'll handle this manually
-3. Use <alternative> instead — already installed
-```
+**Categories:** missing test runner (install dep, create config, sample test, add `test` script), missing coverage (c8/istanbul, 80% threshold default), missing CI integration (add test step to workflow), pre-commit hooks (aidevops hooks or husky/lint-staged).
 
-**Configuration categories:**
-
-- **Missing test runner** — install dependency, create minimal config, create sample test if none exist, add `test` script to package.json
-- **Missing coverage** — configure c8/istanbul with 80% threshold (or custom)
-- **Missing CI integration** — add test step to existing workflow or create new one
-- **Pre-commit hooks** — install aidevops hooks or husky/lint-staged
-
-> **Note:** Runner installation is agent-driven (requires judgment for choosing alternatives, handling conflicts). The helper provides `discover`, `gaps`, `status`, and `verify` — the deterministic parts.
+> Runner installation is agent-driven (requires judgment for alternatives, conflict handling). The helper provides `discover`, `gaps`, `status`, `verify` — the deterministic parts.
 
 ### Step 5: Generate Configuration
 
-After collecting choices, create all configuration files directly:
-
-- Test runner configs (vitest.config.ts, jest.config.js, pytest.ini, etc.)
-- Coverage configs (.nycrc, c8 config in vitest.config.ts, etc.)
-- CI workflow additions (test job in GitHub Actions)
-- Pre-commit hook installation
-- `.aidevops-testing.json` — project-level testing metadata:
+Create all configuration files from collected choices: test runner configs, coverage configs, CI workflow additions, pre-commit hooks, and `.aidevops-testing.json`:
 
 ```json
 {
@@ -108,17 +79,13 @@ After collecting choices, create all configuration files directly:
 }
 ```
 
-### Step 6: Verification
+### Step 6: Verify and Summarize
 
 ```bash
 testing-setup-helper.sh verify .
 ```
 
-Executes each configured runner and reports `[pass]`/`[fail]`/`[skip]` per gate.
-
-### Step 7: Summary
-
-Display what was configured, files created/modified, and next steps:
+Execute each configured runner — report `[pass]`/`[fail]`/`[skip]` per gate. Then display files created/modified and next steps:
 
 1. Write tests for existing code
 2. Run `testing-setup-helper.sh status` to check test health
