@@ -31,26 +31,16 @@ tools:
 
 ## End-to-End Pipeline
 
-```text
-User uploads file (PDF/DOCX/TXT/HTML/CSV)
-  → [1. Ingest]  Validate type/size/malware; store original in R2/S3 keyed by org_id
-  → [2. Parse]   PDF: Docling | DOCX: mammoth | HTML: readability | CSV: papaparse | TXT: direct
-  → [3. Chunk]   512-1024 tokens, 128 overlap, recursive character splitting
-  → [4. Embed]   Batch 32-128 chunks; store model ID with vectors
-  → [5. Store]   One collection/namespace per org_id; HNSW index
-  → [6. Query]   Embed query; search ONLY tenant's collection; topK=20 candidates
-  → [7. Rerank]  Cross-encoder or RRF; return top-5 with metadata
-  → [8. Assemble] System prompt + chunks + query; manage token budget
-```
+1. **Ingest** — Validate MIME/size/malware; store original in R2/S3 keyed by `org_id`
+2. **Parse** — PDF: Docling | DOCX: mammoth | HTML: readability | CSV: papaparse | TXT: direct
+3. **Chunk** — 512-1024 tokens, 128 overlap, recursive character splitting
+4. **Embed** — Batch 32-128 chunks; store model ID with vectors
+5. **Store** — One collection/namespace per `org_id`; HNSW index
+6. **Query** — Embed query; search ONLY tenant's collection; topK=20 candidates
+7. **Rerank** — Cross-encoder or RRF; return top-5 with metadata
+8. **Assemble** — System prompt + chunks + query; manage token budget
 
-| Stage | Failure mode | Impact |
-|-------|-------------|--------|
-| Parse | Garbled text extraction | All downstream garbage |
-| Chunk | Too large / mid-sentence split | Embeddings capture noise |
-| Embed | Wrong model or dimension mismatch | Random results |
-| Store | Wrong tenant collection | **Data leak** |
-| Query | No tenant filter | **Cross-tenant exposure** |
-| Rerank | Skipped | Irrelevant chunks, hallucination |
+Critical failure modes: Store wrong collection → **data leak**; Query without tenant filter → **cross-tenant exposure**; Skip rerank → hallucination. Parse/chunk/embed errors corrupt all downstream output.
 
 ## Tenant Isolation
 
@@ -62,55 +52,40 @@ User uploads file (PDF/DOCX/TXT/HTML/CSV)
 | pgvector + RLS | Logical (DB-level) | RLS check | Unlimited | Already on PostgreSQL |
 | Separate DB/index | Physical (full) | None | ~100 | Regulated/enterprise |
 
-**Recommended: Collection-per-tenant.** Queries against tenant A's collection cannot return tenant B's data even with application bugs — no filter to forget. **When NOT to use**: >10K tenants, tenants with <100 vectors, or cross-tenant search required.
+**Recommended: Collection-per-tenant.** Queries against tenant A's collection cannot return tenant B's data even with application bugs. **When NOT to use**: >10K tenants, tenants with <100 vectors, or cross-tenant search required.
 
 **Naming convention**: Collection `rag_{org_id}`, object storage `uploads/{org_id}/`. Metadata on every vector: `org_id`, `uploaded_by`, `source_file`, `chunk_index`.
 
 ### Cross-Tenant Prevention (Defence in Depth)
 
-**Layer 1 — Physical**: Collection-per-tenant scopes queries physically.
-
-**Layer 2 — Application**: Collection name from authenticated context, never user input:
-
-```typescript
-app.post('/api/search', async (req, res) => {
-  const collection = `rag_${req.tenant.orgId}`;  // From auth, not req.body
-  const results = await vectorDb.search(collection, ...);
-});
-```
-
-**Layer 3 — Validation**: Post-query ownership check logs `CROSS_TENANT_LEAK_DETECTED` and filters results where `metadata.org_id !== requesting org_id`.
-
-**Layer 4 — Testing**: Integration test verifying tenant A cannot see tenant B's data after both upload documents.
-
-**Audit logging**: Log all RAG operations (upload, delete, search) to `audit_log` with `org_id`, `userId`, `action`, metadata.
+- **Layer 1 — Physical**: Collection-per-tenant scopes queries physically.
+- **Layer 2 — Application**: Derive collection name from authenticated `req.tenant.orgId`, never from user input or `req.body`.
+- **Layer 3 — Validation**: Post-query ownership check — log `CROSS_TENANT_LEAK_DETECTED` and filter results where `metadata.org_id !== requesting org_id`.
+- **Layer 4 — Testing**: Integration test verifying tenant A cannot see tenant B's data after both upload documents.
+- **Audit logging**: Log all RAG operations (upload, delete, search) to `audit_log` with `org_id`, `userId`, `action`, metadata.
 
 ## Pipeline Stage Details
 
-### Stages 1-2: Ingest and Parse
+### Stages 1-3: Ingest, Parse, Chunk
 
-Validate MIME from magic bytes (not extension), scan for malware, enforce per-tenant quotas. Default max 50MB (overridden by plan quotas: `effectiveMaxFileSize = min(globalCap, planCap)`). Parsers: PDF→Docling, DOCX→mammoth, HTML→readability, CSV→papaparse, TXT/MD→direct paragraph split.
+Validate MIME from magic bytes (not extension), scan for malware, enforce per-tenant quotas. Default max 50MB (`effectiveMaxFileSize = min(globalCap, planCap)`).
 
-### Stage 3: Chunk
-
-**Default: 512 tokens, 128 overlap.** Sizes: 256-512 (Q&A), 512-1024 (general, default), 1024-2048 (summarisation), variable/section-based (structured docs).
+**Chunk sizes**: 256-512 (Q&A), **512-1024 (general, default)**, 1024-2048 (summarisation), variable/section-based (structured docs). Default overlap: 128 tokens.
 
 Required chunk metadata: `id` (`{document_id}_{chunk_index}`), `content`, `documentId`, `chunkIndex`, `totalChunks`, `sourceFile`, `orgId`, `uploadedBy`, `uploadedAt`, `embeddingModel`.
 
 ### Stage 4: Embed
 
-| Model | Dims | Quality | Cost | Notes |
-|-------|------|---------|------|-------|
-| OpenAI text-embedding-3-small | 1536 (or 512/256) | High | $0.02/1M tok | Best quality/cost |
-| OpenAI text-embedding-3-large | 3072 (or 1024/256) | Highest | $0.13/1M tok | Quality-critical |
-| Jina v3 | 1024 (Matryoshka→256) | High | $0.02/1M tok | Multilingual |
-| Sentence Transformers (local) | 384 | Good | Free | No API dependency |
-| Cloudflare Workers AI bge-base | 768 | Good | Included | Cloudflare-native |
-| BM25 (sparse, local) | Vocab-sized | Lexical | Free | Hybrid complement |
+| Model | Dims | Cost | Notes |
+|-------|------|------|-------|
+| OpenAI text-embedding-3-small | 1536 (Matryoshka→512/256) | $0.02/1M tok | Best quality/cost |
+| OpenAI text-embedding-3-large | 3072 (Matryoshka→1024/256) | $0.13/1M tok | Quality-critical |
+| Jina v3 | 1024 (Matryoshka→256) | $0.02/1M tok | Multilingual |
+| Sentence Transformers (local) | 384 | Free | No API dependency |
+| Cloudflare Workers AI bge-base | 768 | Included | Cloudflare-native |
+| BM25 (sparse, local) | Vocab-sized | Free | Hybrid complement |
 
-**Matryoshka embeddings**: Truncate dimensions (1536→512→256) with ~2-5% recall loss. Use when storage cost matters.
-
-**Critical**: Store embedding model ID with every vector. Model changes make old vectors incompatible — re-embed or maintain separate collections per model version.
+**Critical**: Store embedding model ID with every vector. Model changes make old vectors incompatible — re-embed or maintain separate collections per model version. Matryoshka truncation (1536→512→256) saves storage with ~2-5% recall loss.
 
 ### Stage 5: Store
 
@@ -120,48 +95,15 @@ Required chunk metadata: `id` (`{document_id}_{chunk_index}`), `content`, `docum
 
 ### Stage 6: Query
 
-```typescript
-async function queryTenantRAG(ctx: TenantContext, query: string, config = DEFAULT_QUERY_CONFIG) {
-  const collectionName = `rag_${ctx.orgId}`;
-  if (!await vectorDb.collectionExists(collectionName)) throw new TenantError('RAG_NOT_ENABLED', ctx.orgId);
-  const queryEmbedding = await embed(query, getCollectionModel(collectionName));
-
-  let results: ScoredChunk[];
-  if (config.hybrid) {
-    const [dense, sparse] = await Promise.all([
-      vectorDb.search(collectionName, { vector: queryEmbedding, topK: config.candidateCount }),
-      vectorDb.searchSparse(collectionName, { query, topK: config.candidateCount }),
-    ]);
-    results = reciprocalRankFusion(dense, sparse, config.hybridAlpha);
-  } else {
-    results = await vectorDb.search(collectionName, { vector: queryEmbedding, topK: config.candidateCount });
-  }
-  return results.filter(r => r.score >= config.minScore);
-}
-```
+Pattern: derive `collectionName = rag_${ctx.orgId}`, check collection exists, embed query using the collection's stored model, search dense (and optionally sparse for hybrid), apply `minScore: 0.3` filter.
 
 **Defaults**: `candidateCount: 20`, `minScore: 0.3`, `hybrid: false`, `hybridAlpha: 0.7`. Enable hybrid when users search specific terms/names/codes or documents contain domain jargon.
 
 ### Stage 7: Rerank
 
-Highest-ROI improvement — typically 10-30% answer quality gain.
+Highest-ROI improvement — typically 10-30% answer quality gain. Use cross-encoder (highest accuracy, 50-200ms latency) or RRF (<1ms, free). Never skip in production.
 
-| Strategy | Accuracy | Latency | Cost |
-|----------|----------|---------|------|
-| Cross-encoder | Highest | 50-200ms/20 candidates | API/GPU |
-| RRF | Good | <1ms | Free |
-| Weighted scoring | Moderate | <1ms | Free |
-| None | Baseline | 0ms | Free (prototyping only) |
-
-```typescript
-function reciprocalRankFusion(dense: ScoredChunk[], sparse: ScoredChunk[], alpha: number, k = 60) {
-  const scores = new Map<string, number>();
-  const chunks = new Map<string, ScoredChunk>();
-  dense.forEach((c, rank) => { scores.set(c.id, (scores.get(c.id) ?? 0) + alpha / (k + rank + 1)); chunks.set(c.id, c); });
-  sparse.forEach((c, rank) => { scores.set(c.id, (scores.get(c.id) ?? 0) + (1 - alpha) / (k + rank + 1)); if (!chunks.has(c.id)) chunks.set(c.id, c); });
-  return Array.from(scores.entries()).sort(([, a], [, b]) => b - a).map(([id, score]) => ({ ...chunks.get(id)!, score }));
-}
-```
+RRF: score = `alpha / (k + rank + 1)` (dense) + `(1-alpha) / (k + rank + 1)` (sparse), sum by chunk ID, sort descending. Default `k=60`, `alpha=0.7`.
 
 ### Stage 8: LLM Context Assembly
 
@@ -173,40 +115,18 @@ Assemble system prompt + retrieved chunks + user query within token budget. Incl
 
 ### Onboarding
 
-```typescript
-async function onboardTenantRAG(ctx: TenantContext, config?: Partial<EmbeddingConfig>) {
-  const collectionName = `rag_${ctx.orgId}`;
-  const embeddingConfig = { ...DEFAULT_EMBEDDING_CONFIG, ...config };
-  await vectorDb.createCollection(collectionName, {
-    dimension: embeddingConfig.dimensions, metric: 'cosine',
-    indexType: 'hnsw', hnswConfig: { m: 16, efConstruction: 100 },
-  });
-  await db.update(organisations).set({
-    settings: sql`jsonb_set(COALESCE(settings, '{}'), '{rag}', ${JSON.stringify({
-      enabled: true, embeddingModel: embeddingConfig.modelId,
-      dimensions: embeddingConfig.dimensions, createdAt: new Date().toISOString(),
-    })}::jsonb)`,
-  }).where(eq(organisations.id, ctx.orgId));
-  await db.insert(auditLog).values({ orgId: ctx.orgId, userId: ctx.userId,
-    action: 'rag:tenant_onboarded', entityType: 'rag_collection',
-    metadata: { collectionName, embeddingModel: embeddingConfig.modelId, dimensions: embeddingConfig.dimensions } });
-}
-```
+1. Create vector collection `rag_{org_id}` with `metric: cosine`, `indexType: hnsw`, `m: 16`, `efConstruction: 100`, dimension from embedding config.
+2. Update `organisations.settings` JSONB: set `rag.enabled`, `rag.embeddingModel`, `rag.dimensions`, `rag.createdAt`.
+3. Insert `audit_log` row: `action: rag:tenant_onboarded`, `entityType: rag_collection`, include `collectionName` and embedding config in metadata.
 
 ### Deletion
 
-```typescript
-async function offboardTenantRAG(ctx: TenantContext) {
-  const collectionName = `rag_${ctx.orgId}`;
-  await vectorDb.deleteCollection(collectionName);
-  await objectStorage.deletePrefix(`uploads/${ctx.orgId}/`);
-  await db.update(organisations).set({ settings: sql`settings - 'rag'` }).where(eq(organisations.id, ctx.orgId));
-  await db.insert(auditLog).values({ orgId: ctx.orgId, userId: ctx.userId,
-    action: 'rag:tenant_offboarded', entityType: 'rag_collection', metadata: { collectionName } });
-}
-```
+1. Delete vector collection `rag_{org_id}`.
+2. Delete object storage prefix `uploads/{org_id}/` (paginate for large buckets).
+3. Remove `rag` key from `organisations.settings` JSONB.
+4. Insert `audit_log` row: `action: rag:tenant_offboarded`.
 
-**Deletion guarantees**: Qdrant/pgvector/zvec: synchronous atomic deletion. Cloudflare Vectorize: async (returns immediately, completes in seconds — poll or verify before confirming). Object storage: paginate list+delete. Audit log persists after deletion (compliance). Trigger RAG cleanup in `beforeDelete` hook if org deletion cascades.
+**Deletion notes**: Qdrant/pgvector/zvec delete synchronously. Cloudflare Vectorize is async — poll or verify before confirming. Audit log persists after deletion (compliance). Trigger RAG cleanup in `beforeDelete` hook if org deletion cascades.
 
 ## Storage Sizing and Quotas
 
@@ -222,13 +142,7 @@ async function offboardTenantRAG(ctx: TenantContext) {
 | Medium (1K docs) | ~250K | ~2.5 GB | ~1.25 GB |
 | Large (10K docs) | ~2.5M | ~25 GB | ~12.5 GB |
 
-```typescript
-const PLAN_QUOTAS: Record<OrgPlan, TenantRAGQuotas> = {
-  free:       { maxDocuments: 50,      maxStorageBytes: 100 * 1024 * 1024,         maxFileSize: 10 * 1024 * 1024,   maxVectors: 10_000 },
-  pro:        { maxDocuments: 5_000,   maxStorageBytes: 5 * 1024 * 1024 * 1024,    maxFileSize: 50 * 1024 * 1024,   maxVectors: 500_000 },
-  enterprise: { maxDocuments: 100_000, maxStorageBytes: 100 * 1024 * 1024 * 1024,  maxFileSize: 200 * 1024 * 1024,  maxVectors: 10_000_000 },
-};
-```
+Plan quotas: free (50 docs / 100 MB / 10 MB file / 10K vectors), pro (5K docs / 5 GB / 50 MB file / 500K vectors), enterprise (100K docs / 100 GB / 200 MB file / 10M vectors).
 
 **Cost optimisation**: (1) Matryoshka 512d saves 3x storage, ~3% recall loss. (2) Local models eliminate API costs. (3) Lazy embedding on first query if upload >> query volume. (4) INT8 quantization: 4x storage reduction, ~1% recall loss (zvec, Qdrant). (5) TTL: auto-delete chunks not queried in 90+ days.
 
