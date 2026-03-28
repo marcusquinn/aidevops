@@ -109,7 +109,7 @@ The `.md` file is the entry point — it contains the agent persona, capabilitie
 
 ```text
 # Single-file agent (fits in one file)
-sales.md
+legal.md
 
 # Multi-file agent (needs extended knowledge)
 marketing-sales.md                        # Entry point — strategy, capabilities
