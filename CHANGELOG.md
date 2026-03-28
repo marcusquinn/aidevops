@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-03-28
+
+### Changed
+
+- Refactor: merge Video into Content, Accounts into Business (#11347)
+- Documentation: tighten opencode-github.md from 328 to 192 lines (41% reduction) (#11349)
+- Refactor: merge Video into Content, Accounts into Business
+
 ## [3.2.9] - 2026-03-28
 
 ### Changed
