@@ -15,11 +15,9 @@ flowchart TB
     style Persistence fill:#6b7280,stroke:#4b5563,color:white
 ```
 
----
-
 ## Entity
 
-Identity-based object that persists through time. Equal if same ID regardless of attributes.
+Identity-based object. Equal if same ID regardless of attributes.
 
 ```
 abstract class Entity<ID>:
@@ -38,11 +36,9 @@ class OrderItem extends Entity<OrderItemId>:
     subtotal() -> Money: return this.unitPrice.multiply(this.quantity.value)
 ```
 
----
-
 ## Value Object
 
-Attribute-defined, immutable, no identity. Equal if all attributes equal. Self-validating.
+Attribute-defined, immutable, no identity. Self-validating.
 
 | Value Object | Attributes | Validation |
 |--------------|-----------|------------|
@@ -86,18 +82,11 @@ class OrderId extends ValueObject<{value}>:
         return new OrderId({value})
 ```
 
----
-
 ## Aggregate
 
-Cluster of entities/value objects with a single consistency boundary and entry point.
+Consistency boundary with a single root entry point.
 
-**Rules:**
-1. One aggregate root — single entry point for all modifications
-2. Reference by ID only — never by direct object reference
-3. One transaction per aggregate — eventual consistency between aggregates
-4. Aggregate enforces its own invariants
-5. Prefer smaller aggregates
+**Rules:** (1) One aggregate root — single entry point. (2) Reference by ID only. (3) One transaction per aggregate — eventual consistency between aggregates. (4) Aggregate enforces its own invariants. (5) Prefer smaller aggregates.
 
 **Sizing heuristics:**
 
@@ -107,8 +96,6 @@ Cluster of entities/value objects with a single consistency boundary and entry p
 | Lines of code (root) | <500 | 500-1000 | >1000: Split |
 | Transaction lock time | <100ms | 100-500ms | >500ms: Split |
 | Concurrent conflicts | Rare | Occasional | Frequent: Split |
-
-Can parts be eventually consistent? → Separate. Do all parts change together? → Same. Independent lifecycles? → Separate.
 
 ```
 abstract class AggregateRoot<ID> extends Entity<ID>:
@@ -167,13 +154,9 @@ class Order extends AggregateRoot<OrderId>:
     itemCount() -> int: return this.items.reduce((sum, item) => sum + item.quantity.value, 0)
 ```
 
----
-
 ## Repository
 
-Collection-like access to aggregates. Interface in domain, implementation in infrastructure.
-
-**Rules:** One repository per aggregate (not per entity/table). Save/load entire aggregates. Complex queries belong in separate read models.
+Collection-like access to aggregates. Interface in domain, implementation in infrastructure. One repository per aggregate (not per entity/table). Complex queries belong in separate read models.
 
 ```
 interface OrderRepository:
@@ -183,18 +166,15 @@ interface OrderRepository:
     delete(order: Order)
     nextId() -> OrderId
 
-# Separate read model for complex queries (not in repository)
 interface OrderReadModel:
     findByStatus(status) -> List<OrderSummaryDTO>
     findByDateRange(start, end) -> List<OrderSummaryDTO>
     countByCustomer(customerId) -> int
 ```
 
----
-
 ## Domain Event
 
-Records something significant that happened. Immutable, past-tense naming, contains data needed by consumers.
+Immutable record of something significant. Past-tense naming. Contains data needed by consumers.
 
 ```
 abstract class DomainEvent:
@@ -221,11 +201,9 @@ class OrderShipped extends DomainEvent:
     trackingNumber: TrackingNumber
 ```
 
----
-
 ## Domain Service
 
-Stateless operations that don't fit within an entity or value object. Use when: operation involves multiple aggregates, requires external information, or significant business logic belongs to no single entity.
+Stateless operations spanning multiple aggregates or requiring external information.
 
 ```
 interface PricingService:
@@ -248,11 +226,9 @@ class ShippingCostCalculatorImpl implements ShippingCostCalculator:
         return total
 ```
 
----
-
 ## Factory
 
-Encapsulates complex aggregate/entity creation. Use when: creation logic is complex, invariants must be enforced during creation, or object graphs are needed.
+Encapsulates complex aggregate creation when invariants must be enforced or object graphs are needed.
 
 ```
 interface OrderFactory:
@@ -270,11 +246,9 @@ class OrderFactoryImpl implements OrderFactory:
         return order
 ```
 
----
-
 ## Specification Pattern
 
-Encapsulates business rules for querying or validation.
+Encapsulates composable business rules for querying or validation.
 
 ```
 interface Specification<T>:
