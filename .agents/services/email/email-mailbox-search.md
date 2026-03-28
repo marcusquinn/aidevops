@@ -34,10 +34,7 @@ tools:
 | **notmuch** | macOS + Linux | `notmuch new` | Filename only | Rich: `from:`, `subject:`, `date:`, `tag:` |
 | **mu** | macOS + Linux | `mu init && mu index` | MIME type filter | Rich: `from:`, `subject:`, `date:`, `mime:` |
 
-**Auto-detection order**: Spotlight (macOS) → notmuch → mu → error.
-
-- **notmuch** — preferred for power users/Linux. Requires local maildir (sync via `mbsync`/`offlineimap`). Attachment filename search only.
-- **mu** — alternative to notmuch. MIME type filtering. Better Emacs integration (mu4e).
+**Auto-detection order**: Spotlight (macOS) → notmuch → mu → error. notmuch preferred for power users/Linux (requires local maildir via `mbsync`/`offlineimap`). mu is the alternative with better Emacs integration (mu4e).
 
 ## Usage
 
@@ -55,23 +52,15 @@ mailbox-search-helper.sh setup --backend mu --maildir ~/Mail
 
 ## Output Format
 
-All backends return a JSON array. Spotlight fields: `path`, `subject`, `from`, `date`, `backend`. notmuch adds: `id`, `tags`, `matched`, `total`, `files`.
+All backends return JSON arrays. Fields: `path`, `subject`, `from`, `date`, `backend`. notmuch adds: `id`, `tags`, `matched`, `total`, `files`.
 
 ```json
-[
-  {
-    "path": "/Users/alice/Library/Mail/V10/.../message.emlx",
-    "subject": "Q1 Invoice - Project Alpha",
-    "from": "billing@vendor.com",
-    "date": "2026-03-01 09:15:00 +0000",
-    "backend": "spotlight"
-  }
-]
+[{"path": "/Users/alice/Library/Mail/V10/.../message.emlx", "subject": "Q1 Invoice - Project Alpha", "from": "billing@vendor.com", "date": "2026-03-01 09:15:00 +0000", "backend": "spotlight"}]
 ```
 
 ## Spotlight (macOS)
 
-Indexes Mail.app `.emlx` and standalone `.eml` files — headers, body, and attachment content (PDF, Office, plain text). Does **not** index encrypted attachments or binary formats without a registered importer. **Limitations**: macOS only; requires Mail.app local sync; index rebuild after large imports can take minutes to hours.
+Indexes Mail.app `.emlx` and standalone `.eml` files — headers, body, and attachment content (PDF, Office, plain text). Does **not** index encrypted attachments or binary formats without a registered importer. Requires Mail.app local sync; index rebuild after large imports can take minutes to hours.
 
 ### Query Syntax
 
@@ -110,14 +99,10 @@ mailbox-search-helper.sh setup --backend notmuch --maildir ~/Maildir
 ```bash
 notmuch search "from:alice@example.com"
 notmuch search "subject:invoice"
-notmuch search "date:1month..today"
-notmuch search "date:2026-01-01..2026-03-31"
-notmuch search "from:alice AND subject:contract"
-notmuch search "from:alice OR from:bob"
-notmuch search "invoice NOT spam"
+notmuch search "date:2026-01-01..2026-03-31"              # also: date:1month..today
+notmuch search "from:alice AND subject:contract"           # AND, OR, NOT supported
 notmuch search "tag:inbox AND tag:unread"
 notmuch search "attachment:*.pdf"
-notmuch search "from:billing@vendor.com subject:invoice date:2026.."
 ```
 
 ### Tags and Indexing
@@ -146,10 +131,8 @@ mailbox-search-helper.sh setup --backend mu --maildir ~/Maildir
 mu find "from:alice@example.com"
 mu find "subject:invoice"
 mu find "date:20260101..20260401"
-mu find "mime:application/pdf"
-mu find "mime:application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+mu find "mime:application/pdf"                             # MIME type filter
 mu find "flag:attach"
-mu find "from:billing@vendor.com subject:invoice date:20260101.."
 mu find --format=json "subject:contract"
 mu index   # Run after new messages arrive; automate with mbsync post-sync hook
 ```
@@ -175,33 +158,12 @@ mailbox-search-helper.sh search "invoice Q1 2026" --backend spotlight           
 
 ## Troubleshooting
 
-### Spotlight Returns No Results
-
-1. `mdutil -s /` — confirm indexing enabled
-2. Verify Mail.app has downloaded messages locally (not IMAP-only)
-3. `mdfind "kMDItemContentType == 'com.apple.mail.emlx'" | wc -l` — check count
-4. Count is 0: `sudo mdutil -E /` (takes time)
-5. `.eml` files: verify not excluded in Privacy settings
-
-### notmuch Returns No Results
-
-1. `notmuch config get database.path` — check path
-2. `ls ~/Maildir/` — verify maildir has messages
-3. `notmuch new` — re-index
-4. `notmuch count` / `notmuch search '*'` — test
-
-### mu Returns No Results
-
-1. `mu info` — check database
-2. `ls ~/Maildir/` — verify maildir
-3. `mu index` — re-index
-4. `mu find '*'` — test
-
-### Attachment Content Not Found
-
-- **Spotlight**: check importers with `mdimport -L`
-- **notmuch**: attachment content not indexed — filename search only
-- **mu**: MIME type filter only — not full-text content
+| Problem | Steps |
+|---------|-------|
+| **Spotlight: no results** | `mdutil -s /` (indexing enabled?) → verify Mail.app local sync → `mdfind "kMDItemContentType == 'com.apple.mail.emlx'" \| wc -l` (count=0? `sudo mdutil -E /`) → check `.eml` not excluded in Privacy settings |
+| **notmuch: no results** | `notmuch config get database.path` (correct?) → `ls ~/Maildir/` (has messages?) → `notmuch new` → `notmuch count` / `notmuch search '*'` |
+| **mu: no results** | `mu info` (database ok?) → `ls ~/Maildir/` (has messages?) → `mu index` → `mu find '*'` |
+| **Attachment content not found** | Spotlight: `mdimport -L` (check importers). notmuch: content not indexed, filename only. mu: MIME type filter only, not full-text. |
 
 ## Related
 
