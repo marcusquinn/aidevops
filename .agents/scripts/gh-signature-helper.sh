@@ -220,6 +220,158 @@ _detect_session_tokens() {
 }
 
 # =============================================================================
+# Detect session time and response time from runtime DB
+# =============================================================================
+# Returns pipe-separated: session_seconds|response_seconds
+# Session time: now - session.time_created
+# Response time: now - last user message timestamp
+
+_detect_session_times() {
+	local db_path="${HOME}/.local/share/opencode/opencode.db"
+
+	if [[ "${OPENCODE:-}" != "1" ]] && ! ps -o comm= -p "${PPID:-0}" 2>/dev/null | tr '[:upper:]' '[:lower:]' | grep -q opencode; then
+		echo "|"
+		return 0
+	fi
+
+	if [[ ! -r "$db_path" ]] || ! command -v sqlite3 &>/dev/null; then
+		echo "|"
+		return 0
+	fi
+
+	local cwd repo_root canonical_dir
+	cwd=$(pwd 2>/dev/null || echo "")
+	repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "$cwd")
+	canonical_dir="${repo_root%%.*}"
+
+	# Find session using PID-matching strategy (same as _detect_session_tokens)
+	local session_id=""
+	if [[ -n "${OPENCODE_PID:-}" ]]; then
+		local pid_start_epoch lstart
+		lstart=$(ps -o lstart= -p "$OPENCODE_PID" 2>/dev/null || echo "")
+		if [[ -n "$lstart" ]]; then
+			pid_start_epoch=$(date -j -f "%a %b %d %H:%M:%S %Y" "$lstart" "+%s" 2>/dev/null ||
+				date -d "$lstart" "+%s" 2>/dev/null || echo "")
+		fi
+		if [[ -n "$pid_start_epoch" ]]; then
+			local pid_start_ms=$((pid_start_epoch * 1000))
+			session_id=$(sqlite3 "$db_path" "
+				SELECT id FROM session
+				WHERE directory IN ('${cwd}', '${repo_root}', '${canonical_dir}')
+				ORDER BY ABS(time_created - ${pid_start_ms}) ASC LIMIT 1
+			" 2>/dev/null || echo "")
+		fi
+	fi
+
+	if [[ -z "$session_id" ]]; then
+		session_id=$(sqlite3 "$db_path" "
+			SELECT id FROM session
+			WHERE directory IN ('${cwd}', '${repo_root}', '${canonical_dir}')
+			ORDER BY time_updated DESC LIMIT 1
+		" 2>/dev/null || echo "")
+	fi
+
+	if [[ -z "$session_id" ]]; then
+		echo "|"
+		return 0
+	fi
+
+	local session_seconds
+	session_seconds=$(sqlite3 "$db_path" "
+		SELECT (strftime('%s','now') * 1000 - time_created) / 1000
+		FROM session WHERE id='${session_id}'
+	" 2>/dev/null || echo "")
+
+	local response_seconds
+	response_seconds=$(sqlite3 "$db_path" "
+		SELECT (strftime('%s','now') * 1000 - MAX(time_created)) / 1000
+		FROM message
+		WHERE session_id='${session_id}'
+		  AND json_extract(data, '$.role') = 'user'
+	" 2>/dev/null || echo "")
+
+	echo "${session_seconds}|${response_seconds}"
+	return 0
+}
+
+# =============================================================================
+# Detect total time from issue creation to now
+# =============================================================================
+# Accepts --issue OWNER/REPO#NUMBER or --issue-created ISO-TIMESTAMP.
+
+_detect_total_time() {
+	local issue_ref="$1"
+	local issue_created="$2"
+
+	if [[ -n "$issue_created" ]]; then
+		local created_epoch now_epoch
+		if date -j -f "%Y-%m-%dT%H:%M:%SZ" "$issue_created" "+%s" &>/dev/null 2>&1; then
+			created_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$issue_created" "+%s" 2>/dev/null || echo "")
+		else
+			created_epoch=$(date -d "$issue_created" "+%s" 2>/dev/null || echo "")
+		fi
+		if [[ -n "$created_epoch" ]]; then
+			now_epoch=$(date "+%s")
+			echo $((now_epoch - created_epoch))
+			return 0
+		fi
+	fi
+
+	if [[ -n "$issue_ref" ]] && command -v gh &>/dev/null; then
+		local repo_slug issue_number created_at
+		repo_slug="${issue_ref%%#*}"
+		issue_number="${issue_ref##*#}"
+		if [[ -n "$repo_slug" ]] && [[ -n "$issue_number" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
+			created_at=$(gh api "repos/${repo_slug}/issues/${issue_number}" --jq '.created_at' 2>/dev/null || echo "")
+			if [[ -n "$created_at" ]]; then
+				_detect_total_time "" "$created_at"
+				return $?
+			fi
+		fi
+	fi
+
+	echo ""
+	return 0
+}
+
+# =============================================================================
+# Format duration in seconds to human-readable
+# =============================================================================
+# Examples: 45 → "45s", 120 → "2m", 3700 → "1h 1m", 90061 → "1d 1h"
+
+_format_duration() {
+	local seconds="$1"
+	if [[ -z "$seconds" ]] || [[ "$seconds" -le 0 ]] 2>/dev/null; then
+		echo ""
+		return 0
+	fi
+
+	local days hours minutes
+	days=$((seconds / 86400))
+	hours=$(((seconds % 86400) / 3600))
+	minutes=$(((seconds % 3600) / 60))
+
+	if [[ $days -gt 0 ]]; then
+		if [[ $hours -gt 0 ]]; then
+			echo "${days}d ${hours}h"
+		else
+			echo "${days}d"
+		fi
+	elif [[ $hours -gt 0 ]]; then
+		if [[ $minutes -gt 0 ]]; then
+			echo "${hours}h ${minutes}m"
+		else
+			echo "${hours}h"
+		fi
+	elif [[ $minutes -gt 0 ]]; then
+		echo "${minutes}m"
+	else
+		echo "${seconds}s"
+	fi
+	return 0
+}
+
+# =============================================================================
 # Format number with commas (Bash 3.2 compatible)
 # =============================================================================
 
@@ -256,6 +408,7 @@ cmd_generate() {
 	local tokens="${AIDEVOPS_SIG_TOKENS:-}"
 	local cli_name="${AIDEVOPS_SIG_CLI:-}"
 	local cli_version="${AIDEVOPS_SIG_CLI_VERSION:-}"
+	local issue_ref="" issue_created=""
 
 	# Parse args
 	while [[ $# -gt 0 ]]; do
@@ -274,6 +427,14 @@ cmd_generate() {
 			;;
 		--cli-version)
 			cli_version="$2"
+			shift 2
+			;;
+		--issue)
+			issue_ref="$2"
+			shift 2
+			;;
+		--issue-created)
+			issue_created="$2"
 			shift 2
 			;;
 		*) shift ;;
@@ -345,6 +506,40 @@ cmd_generate() {
 		parts="${parts}, ${formatted} tokens"
 	fi
 
+	# Part 5: time metrics (session, response, total)
+	local session_time_str="" response_time_str="" total_time_str=""
+
+	local times_raw
+	times_raw=$(_detect_session_times)
+	local session_secs response_secs
+	session_secs="${times_raw%%|*}"
+	response_secs="${times_raw##*|}"
+
+	if [[ -n "$session_secs" ]] && [[ "$session_secs" -gt 0 ]] 2>/dev/null; then
+		session_time_str=$(_format_duration "$session_secs")
+	fi
+	if [[ -n "$response_secs" ]] && [[ "$response_secs" -gt 0 ]] 2>/dev/null; then
+		response_time_str=$(_format_duration "$response_secs")
+	fi
+
+	if [[ -n "$issue_ref" ]] || [[ -n "$issue_created" ]]; then
+		local total_secs
+		total_secs=$(_detect_total_time "$issue_ref" "$issue_created")
+		if [[ -n "$total_secs" ]] && [[ "$total_secs" -gt 0 ]] 2>/dev/null; then
+			total_time_str=$(_format_duration "$total_secs")
+		fi
+	fi
+
+	if [[ -n "$session_time_str" ]]; then
+		parts="${parts}, session: ${session_time_str}"
+	fi
+	if [[ -n "$response_time_str" ]]; then
+		parts="${parts}, response: ${response_time_str}"
+	fi
+	if [[ -n "$total_time_str" ]]; then
+		parts="${parts}, total: ${total_time_str}"
+	fi
+
 	echo "$parts"
 	return 0
 }
@@ -369,8 +564,8 @@ show_help() {
 gh-signature-helper.sh — Generate signature footer for GitHub comments
 
 Usage:
-  gh-signature-helper.sh generate [--model MODEL] [--tokens N] [--cli NAME] [--cli-version VER]
-  gh-signature-helper.sh footer   [--model MODEL] [--tokens N] [--cli NAME] [--cli-version VER]
+  gh-signature-helper.sh generate [OPTIONS]
+  gh-signature-helper.sh footer   [OPTIONS]
   gh-signature-helper.sh help
 
 Commands:
@@ -379,10 +574,18 @@ Commands:
   help        Show this help
 
 Options:
-  --model MODEL         Model ID (e.g., anthropic/claude-opus-4-6)
-  --tokens N            Token count for the session
-  --cli NAME            CLI name override (e.g., "OpenCode CLI")
-  --cli-version VER     CLI version override (e.g., "1.3.3")
+  --model MODEL             Model ID (e.g., anthropic/claude-opus-4-6)
+  --tokens N                Token count (auto-detected from OpenCode DB if omitted)
+  --cli NAME                CLI name override (e.g., "OpenCode CLI")
+  --cli-version VER         CLI version override (e.g., "1.3.3")
+  --issue OWNER/REPO#NUM    GitHub issue ref for total time (e.g., owner/repo#42)
+  --issue-created ISO       Issue creation timestamp for total time
+
+Auto-detected fields (OpenCode sessions):
+  - CLI name and version
+  - Token count (input+output from session DB)
+  - Session time (duration since session start)
+  - Response time (duration since last user message)
 
 Environment variables (override auto-detection):
   AIDEVOPS_SIG_CLI          CLI name
@@ -394,14 +597,11 @@ Examples:
   # Auto-detect everything, just specify model
   gh-signature-helper.sh generate --model anthropic/claude-opus-4-6
 
-  # Full footer with all fields
-  gh-signature-helper.sh footer --model anthropic/claude-sonnet-4-6 --tokens 45000
-
-  # Override CLI detection
-  gh-signature-helper.sh generate --cli "OpenCode CLI" --cli-version "1.3.3" --model anthropic/claude-opus-4-6 --tokens 1234
+  # With issue ref for total time (queries GitHub API)
+  gh-signature-helper.sh footer --model anthropic/claude-sonnet-4-6 --issue owner/repo#42
 
   # Use in a gh issue comment
-  FOOTER=$(gh-signature-helper.sh footer --model anthropic/claude-sonnet-4-6)
+  FOOTER=$(gh-signature-helper.sh footer --model anthropic/claude-sonnet-4-6 --issue owner/repo#42)
   gh issue comment 42 --repo owner/repo --body "Comment body${FOOTER}"
 EOF
 	return 0

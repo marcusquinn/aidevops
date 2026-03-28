@@ -195,10 +195,37 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Test 11: help command exits cleanly
+# Test 11: session and response time auto-detection (OpenCode only)
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "Test 11: help command"
+echo "Test 11: session and response time auto-detection"
+if [[ "${OPENCODE:-}" == "1" ]] && [[ -r "${HOME}/.local/share/opencode/opencode.db" ]]; then
+	result=$("$HELPER" generate --cli "OpenCode CLI" --model "m" --tokens 1)
+	assert_contains "session time present" "session:" "$result"
+	assert_contains "response time present" "response:" "$result"
+else
+	echo "  SKIP: not running in OpenCode"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 12: total time with --issue-created
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 12: total time with --issue-created"
+two_hours_ago=$(date -u -v-2H "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "2 hours ago" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
+if [[ -n "$two_hours_ago" ]]; then
+	result=$("$HELPER" generate --cli "Test" --model "m" --tokens 1 --issue-created "$two_hours_ago")
+	assert_contains "total time present" "total:" "$result"
+	assert_contains "total time ~2h" "total: 2h" "$result"
+else
+	echo "  SKIP: date command does not support relative time"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 13: help command exits cleanly
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 13: help command"
 result=$("$HELPER" help 2>&1)
 assert_contains "help shows usage" "Usage:" "$result"
 assert_contains "help shows examples" "Examples:" "$result"
