@@ -54,13 +54,9 @@ Native S2S: lower latency, less controllable. Cascaded: swappable components, ea
 
 ## GPT-4o Realtime
 
-Native S2S (GA 2025). WebRTC (browser), WebSocket (server), SIP (telephony).
+Native S2S (GA 2025). WebRTC (browser), WebSocket (server), SIP (telephony). Model: `gpt-realtime` (GA) or `gpt-4o-realtime-preview` (legacy). Features: native audio I/O, emotion-aware (9+ voices), function calling, input transcription.
 
-**Features**: Native audio I/O, emotion-aware (9+ voices), function calling, input transcription. Model: `gpt-realtime` (GA) or `gpt-4o-realtime-preview` (legacy).
-
-**Pricing**: Input ~$40/1M tokens, output ~$80/1M tokens, cached ~$2.50/1M tokens.
-
-**Voices**: alloy, ash, ballad, coral, echo, fable, marin, sage, shimmer, verse.
+**Pricing**: Input ~$40/1M tokens, output ~$80/1M tokens, cached ~$2.50/1M tokens. **Voices**: alloy, ash, ballad, coral, echo, fable, marin, sage, shimmer, verse.
 
 **Docs**: [API reference](https://platform.openai.com/docs/guides/realtime) | [Voice agents quickstart](https://openai.github.io/openai-agents-js/guides/voice-agents/quickstart/)
 
@@ -115,9 +111,7 @@ async with websockets.connect(url, extra_headers=headers) as ws:
 
 ## MiniCPM-o 2.6
 
-Open-weight omni-modal (8B params, OpenBMB). Architecture: SigLip-400M + Whisper-medium-300M + ChatTTS-200M + Qwen2.5-7B.
-
-**Features**: End-to-end speech (no separate STT/TTS), bilingual EN+ZH, configurable voices via audio system prompt, voice cloning, emotion/speed/style control, multimodal live streaming. Outperforms GPT-4o-realtime on audio benchmarks.
+Open-weight omni-modal (8B params, OpenBMB). Architecture: SigLip-400M + Whisper-medium-300M + ChatTTS-200M + Qwen2.5-7B. End-to-end speech (no separate STT/TTS), bilingual EN+ZH, configurable voices via audio system prompt, voice cloning, emotion/speed/style control, multimodal live streaming. Outperforms GPT-4o-realtime on audio benchmarks.
 
 **Requirements**: Python 3.10+, PyTorch 2.3+, CUDA 8GB+ VRAM (16GB full omni), `transformers==4.44.2`. Apple Silicon: llama.cpp only (no MPS).
 
@@ -179,20 +173,11 @@ for r in model.streaming_generate(
     play_audio(r.audio_wav, r.sampling_rate)
 ```
 
-### Deployment Options
-
-| Method | Notes |
-|--------|-------|
-| HuggingFace Transformers | Default, see code above |
-| vLLM | High-throughput server deployment |
-| llama.cpp | CPU inference on edge devices |
-| Ollama | `ollama run openbmb/minicpm-o2.6` |
-| int4 quantized | `openbmb/MiniCPM-o-2_6-int4` (reduced VRAM) |
-| GGUF | 16 quantization sizes available |
+**Deployment options**: HuggingFace Transformers (default), vLLM (high-throughput), llama.cpp (CPU/edge), `ollama run openbmb/minicpm-o2.6`, int4 quantized (`openbmb/MiniCPM-o-2_6-int4`), GGUF (16 quantization sizes).
 
 ## NVIDIA Nemotron Speech (Riva NIM)
 
-Enterprise speech AI: composable ASR (Parakeet) + TTS (Magpie) + NMT as NIM microservices via NVIDIA Riva.
+Enterprise speech AI: composable ASR (Parakeet) + TTS (Magpie) + NMT as NIM microservices.
 
 **Key specs**: Parakeet TDT 0.6B v2 (#1 HF ASR leaderboard, 6.05% WER, 50x faster), Magpie TTS (17+ languages), Zero-Shot voice cloning, StudioVoice noise removal, Riva Translate (36 languages).
 
@@ -218,26 +203,20 @@ Enterprise speech AI: composable ASR (Parakeet) + TTS (Magpie) + NMT as NIM micr
 | Magpie TTS Zero-Shot | EN+ | Yes (short sample) | Yes | API |
 | Magpie TTS Flow | EN+ | Yes (short sample) | Yes | API |
 
-### Setup (NIM API)
+### Setup
 
 ```bash
+# NIM API
 aidevops secret set NVIDIA_API_KEY
-
 curl -X POST "https://integrate.api.nvidia.com/v1/asr" \
   -H "Authorization: Bearer ${NVIDIA_API_KEY}" \
   -H "Content-Type: multipart/form-data" \
   -F "file=@audio.wav" \
   -F "model=nvidia/parakeet-ctc-0_6b-asr"
-```
 
-### Setup (Self-Hosted NIM)
-
-```bash
-docker run --gpus all -p 8000:8000 \
-  nvcr.io/nim/nvidia/parakeet-ctc-0_6b-asr:latest
-
-docker run --gpus all -p 8001:8001 \
-  nvcr.io/nim/nvidia/magpie-tts-multilingual:latest
+# Self-hosted NIM
+docker run --gpus all -p 8000:8000 nvcr.io/nim/nvidia/parakeet-ctc-0_6b-asr:latest
+docker run --gpus all -p 8001:8001 nvcr.io/nim/nvidia/magpie-tts-multilingual:latest
 ```
 
 ### Composable Pipeline
