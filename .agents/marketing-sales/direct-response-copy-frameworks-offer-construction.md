@@ -4,88 +4,44 @@
 
 ## What Is an Offer?
 
-An offer is **everything the customer gets when they say yes**—not just the product, but the complete package of value, bonuses, guarantees, and terms.
+An offer is **everything the customer gets when they say yes** — the complete package of value, bonuses, guarantees, and terms.
 
-**A great offer includes:**
-- The core product/service
-- Bonuses that increase perceived value
-- A guarantee that removes risk
-- Urgency or scarcity (when real)
-- Clear terms (what they pay, what they get, when)
+**Components:** core product/service, bonuses (perceived value), guarantee (risk removal), urgency/scarcity (when real), clear terms (price, deliverables, timeline).
 
-**The Offer Hierarchy:**
-1. Best offer + weak copy = can still convert
-2. Strong copy + weak offer = struggles
-3. Strong copy + strong offer = unstoppable
+**Offer Hierarchy:** Best offer + weak copy still converts. Strong copy + weak offer struggles. Both strong = unstoppable.
 
 ---
 
-## The Value Stacking Formula
+## Value Stacking
 
-Value stacking shows customers they're getting way more value than they're paying for.
+Show customers they're getting far more value than they're paying for.
 
-### Structure
+### Template
 
 ```text
 CORE OFFER: [Main Product] .................. $X,XXX Value
-
 BONUS 1: [Fast-Action Bonus] ................ $XXX Value
 BONUS 2: [Complementary Tool/Resource] ...... $XXX Value
 BONUS 3: [Access/Community] ................. $XXX Value
 BONUS 4: [Support/Implementation] ........... $XXX Value
-
 TOTAL VALUE: $XX,XXX
-
 YOUR PRICE TODAY: $XXX
-
 GUARANTEE: [Risk Reversal]
 ```
 
-### Rules for Effective Value Stacking
+**Rules:** Bonuses must be relevant to core offer success. Values must be believable. Anchor with total value before revealing price. Make bonuses tangible (specific deliverables, not vague promises).
 
-1. **Bonuses must be relevant** — They should help the customer succeed with the core offer
-2. **Values must be believable** — Don't inflate ridiculously
-3. **Anchor with the total first** — Show the full value before revealing the price
-4. **Make bonuses tangible** — Specific deliverables, not vague promises
-
-### Example Value Stack (SaaS)
+### Example (SaaS)
 
 ```text
-LOCALRANK PRO PLAN
-
-CORE PLATFORM
-Full LocalRank Dashboard Access ...................... $149/mo Value
-  • Unlimited rank tracking
-  • Citation monitoring
-  • Competitor analysis
-  • Review management
-
-INCLUDED BONUS 1: ONBOARDING
-Done-For-You Setup ($500 if purchased separately) .... Included
-  • We configure your account
-  • Import your locations
-  • Set up tracking
-
-INCLUDED BONUS 2: TRAINING
-LocalRank Academy ($297 value) ....................... Included
-  • Video walkthroughs
-  • Best practices guides
-  • Certification program
-
-INCLUDED BONUS 3: SUPPORT
-Priority Support ($50/mo value) ...................... Included
-  • Same-day responses
-  • Dedicated account manager
-  • Quarterly strategy calls
-
+CORE: Full Dashboard Access .......................... $149/mo Value
+  • Unlimited tracking, monitoring, competitor analysis, review management
+BONUS 1: Done-For-You Setup ($500 value) ............. Included
+BONUS 2: Training Academy ($297 value) ............... Included
+BONUS 3: Priority Support ($50/mo value) ............. Included
 ─────────────────────────────────────────────────
-COMPARABLE VALUE: $346/mo
-
-PRO PLAN PRICE: Just $79/mo
-(Paid annually = $69/mo — Save $120/year)
-
-GUARANTEE: 30-Day Money Back
-Try it risk-free. No long-term contracts.
+COMPARABLE VALUE: $346/mo → PRO PLAN: $79/mo ($69/mo annual)
+GUARANTEE: 30-Day Money Back. No long-term contracts.
 ─────────────────────────────────────────────────
 ```
 
@@ -95,60 +51,44 @@ Try it risk-free. No long-term contracts.
 
 ### Price Anchoring
 
-Show a higher price first to make your price feel reasonable.
+Show a higher price first to make yours feel reasonable.
 
-**Techniques:**
-1. **Compare to alternatives:** "Agencies charge $5,000/mo for this—do it yourself for $79"
+1. **Compare to alternatives:** "Agencies charge $5,000/mo — do it yourself for $79"
 2. **Compare to cost of problem:** "How much is a lost customer worth? $500? $5,000?"
-3. **Compare to individual components:** "Separately, these would cost $2,088"
+3. **Compare to components:** "Separately, these would cost $2,088"
 4. **Compare to previous price:** "Usually $997, today $497"
 
 ### Charm Pricing
 
-Prices ending in 7, 9, or 95 feel more like deals (e.g., $97 instead of $100, $497 instead of $500).
+Prices ending in 7, 9, or 95 feel like deals ($97 not $100, $497 not $500).
 
 ### Payment Plans
 
-Reduce friction by breaking large amounts into smaller payments.
-
-```text
-ONE-TIME PAYMENT: $497 (Best Value - Save $34)
-— or —
-3 MONTHLY PAYMENTS: $177/month
-```
-
-**Rule:** Monthly total should be slightly more than one-time (incentivizes full payment) but not so much it feels punitive.
+Break large amounts into smaller payments: `$497 one-time (save $34) — or — 3x $177/month`. Monthly total should be slightly more than one-time (incentivizes full payment) but not punitive.
 
 ### The 10x Rule
 
-Your offer should deliver **10x the value** of the price. This is the "no-brainer threshold"—when the value is so obviously greater than the price that saying no feels foolish.
+Deliver **10x the value** of the price — the "no-brainer threshold" where saying no feels foolish.
 
 ---
 
 ## Guarantee Types
 
-A strong guarantee removes the fear of making a wrong decision.
-
-| Type | Template | When to Use |
-|------|----------|-------------|
-| **Money-Back** | "Try [Product] for 30 days. If you don't love it, full refund. No questions asked." | Most situations (standard) |
-| **Results-Based** | "Use [Product] for 60 days. If you don't see [specific result] after implementing, full refund." | Confident in results + filter serious buyers |
-| **Risk Reversal** | "If [Product] doesn't [outcome] within [timeframe], we'll refund you AND [extra compensation]." | Ultra-bold statement needed |
-| **Free Trial** | "Try free for 14 days. No credit card required. Cancel anytime." | SaaS and subscriptions |
-| **Double Money Back** | "If [Product] doesn't [result], we'll refund AND pay you $100 for your trouble." | Overcoming extreme skepticism |
+| Type | Template | Best For |
+|------|----------|----------|
+| **Money-Back** | "Try for 30 days. Full refund if you don't love it. No questions asked." | Most situations |
+| **Results-Based** | "60 days. If you don't see [result] after implementing, full refund." | High confidence + filter serious buyers |
+| **Risk Reversal** | "If it doesn't [outcome] in [timeframe], refund AND [extra compensation]." | Bold positioning |
+| **Free Trial** | "14 days free. No credit card. Cancel anytime." | SaaS/subscriptions |
+| **Double Money Back** | "Refund AND $100 for your trouble if it doesn't [result]." | Extreme skepticism |
 
 ### Guarantee Copy Formula
 
 ```text
 [GUARANTEE NAME]
-
 Try [Product] for [timeframe].
-
-If [condition—what they need to experience],
-just [action—email us / fill out form], and we'll [action—refund you].
-
-[Optional: No questions asked / No hassle / Simple process]
-
+If [condition], just [action], and we'll [refund action].
+[Optional: No questions asked / No hassle]
 You have nothing to lose and [big benefit] to gain.
 ```
 
@@ -156,92 +96,60 @@ You have nothing to lose and [big benefit] to gain.
 
 ## Urgency & Scarcity
 
-Urgency and scarcity work because of **loss aversion**—people fear missing out more than they desire gaining.
+Driven by **loss aversion** — people fear missing out more than they desire gaining.
 
-### Legitimate Urgency Tactics
-
-| Type | Example | When to Use |
-|------|---------|-------------|
+| Type | Example | Use Case |
+|------|---------|----------|
 | **Deadline** | "Offer ends Friday at midnight" | Limited-time promotions |
-| **Limited quantity** | "Only 50 spots available" | Cohort-based or capacity-limited |
+| **Limited quantity** | "Only 50 spots available" | Cohort/capacity-limited |
 | **Rising price** | "Price goes up $100 on Monday" | Launch sequences |
 | **Bonus expiration** | "Bonuses disappear in 48 hours" | Launch incentives |
-| **Seasonal** | "Black Friday pricing—this week only" | Holiday sales |
-| **Cart expiration** | "Your cart will expire in 24 hours" | Cart abandonment |
+| **Seasonal** | "Black Friday pricing — this week only" | Holiday sales |
+| **Cart expiration** | "Your cart expires in 24 hours" | Cart abandonment |
 
 ### Urgency Copy Template
 
 ```text
-⏰ THIS OFFER EXPIRES IN:
-[Countdown Timer]
-
+THIS OFFER EXPIRES IN: [Countdown Timer]
 After [deadline]:
-❌ [What they'll lose - bonus/price/access]
-❌ [What they'll lose - bonus/price/access]
-❌ [Price increase / doors close]
-
+- [What they lose — bonus/price/access]
+- [Price increase / doors close]
 This is the lowest price [Product] will ever be.
-
-[Get Instant Access Now →]
+[CTA Button →]
 ```
 
-**Warning:** Never fake urgency. Countdown timers that reset, "limited spots" that aren't limited, and "sale ends today" that runs forever destroy trust. Only use urgency that's real.
+**Never fake urgency.** Resetting timers, unlimited "limited spots", and perpetual "sale ends today" destroy trust.
 
 ---
 
-## Offer Testing Framework
+## Offer Testing
 
-### What to Test (In Order of Impact)
+Test in order of impact:
 
 1. **Price point** — $97 vs $197 vs $297
 2. **Guarantee** — 30 day vs 60 day vs lifetime
-3. **Bonuses** — Which bonuses increase conversions?
-4. **Payment options** — One-time vs payment plan vs both
-5. **Urgency elements** — With deadline vs without
+3. **Bonuses** — which increase conversions?
+4. **Payment options** — one-time vs plan vs both
+5. **Urgency** — with deadline vs without
 
-### How to Test
-
-1. Run A/B tests with significant traffic
-2. Test one variable at a time
-3. Run until statistical significance
-4. Document winners and losers
+A/B test one variable at a time. Run until statistical significance. Document results.
 
 ---
 
 ## Offer Checklist
 
-Before launching, verify:
-
-**Value:**
-- [ ] Core offer is clearly defined
-- [ ] Benefits outweigh features
-- [ ] Value stack adds up to 5-10x the price
-- [ ] Bonuses are relevant and desirable
-
-**Price:**
-- [ ] Price anchoring is used
-- [ ] Payment plan option (for $200+ offers)
-- [ ] Price point tested or researched
-
-**Risk Reversal:**
-- [ ] Guarantee is strong and clear
-- [ ] Guarantee terms are reasonable
-- [ ] Guarantee is prominent on page
-
-**Urgency:**
-- [ ] Urgency element is real (not fake)
-- [ ] Deadline or scarcity is clearly stated
-- [ ] Consequences of waiting are spelled out
-
-**CTA:**
-- [ ] Single, clear call to action
-- [ ] CTA button text is action-oriented
-- [ ] CTA appears multiple times on page
+| Area | Verify |
+|------|--------|
+| **Value** | Core offer clearly defined. Benefits > features. Stack = 5-10x price. Bonuses relevant. |
+| **Price** | Anchoring used. Payment plan for $200+. Price tested/researched. |
+| **Risk Reversal** | Guarantee strong, clear, reasonable, prominent on page. |
+| **Urgency** | Real (not fake). Deadline/scarcity stated. Consequences of waiting clear. |
+| **CTA** | Single clear action. Button text action-oriented. Appears multiple times. |
 
 ---
 
 ## Further Reading
 
-- See [Landing Page Structure](landing-page-structure.md) for where to place your offer
-- See [Objection Handling](objection-handling.md) for addressing price concerns
-- See [Email Sequences](email-sequences.md) for launch sequence offers
+- [Landing Page Structure](landing-page-structure.md) — where to place your offer
+- [Objection Handling](objection-handling.md) — addressing price concerns
+- [Email Sequences](email-sequences.md) — launch sequence offers
