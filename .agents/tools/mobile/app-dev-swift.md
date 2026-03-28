@@ -19,14 +19,11 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Build native iOS apps with Swift and SwiftUI
-- **IDE**: Xcode (use `xcodebuild-mcp` for AI-driven build/test)
-- **Docs**: Use Context7 MCP for latest Swift and SwiftUI documentation
-- **Min target**: iOS 17+ (for latest SwiftUI features)
-- **Architecture**: MVVM with SwiftUI, Swift Concurrency (async/await)
+- **IDE**: Xcode — use `xcodebuild-mcp` for AI-driven build/test
+- **Docs**: Context7 MCP for latest Swift/SwiftUI docs
+- **Min target**: iOS 17+ | **Architecture**: MVVM + Swift Concurrency (async/await)
 - **Scaffold**: `xcodebuild-mcp scaffold_ios_project`
-
-**When to choose Swift over Expo**: deep Apple ecosystem integration (HealthKit, HomeKit, Siri, Widgets), maximum native performance (games, AR, complex animations), Apple Watch/tvOS/visionOS targets, hybrid native+web content (WebKit for SwiftUI), Swift-specific libraries.
+- **Choose Swift over Expo when**: deep Apple ecosystem (HealthKit, HomeKit, Siri, Widgets), max native performance (games, AR), Watch/tvOS/visionOS targets, WebKit hybrid content, Swift-specific libraries
 
 <!-- AI-CONTEXT-END -->
 
@@ -55,7 +52,7 @@ MyApp/
 
 ### SwiftUI Patterns
 
-**MVVM with Observable** — break views into small, focused components (<100 lines per file):
+**MVVM with `@Observable`** — keep views <100 lines per file:
 
 ```swift
 @Observable
@@ -96,11 +93,11 @@ extension Font {
 
 ### Animations
 
-- `withAnimation(.spring())` for natural transitions
-- `.matchedGeometryEffect` for shared element transitions
-- `.transition()` for view enter/exit
-- `TimelineView` for continuous animations
-- `sensoryFeedback()` modifier for haptics paired with animations
+- `withAnimation(.spring())` — natural transitions
+- `.matchedGeometryEffect` — shared element transitions
+- `.transition()` — view enter/exit
+- `TimelineView` — continuous animations
+- `sensoryFeedback()` — haptics paired with animations
 
 ### Native Capabilities
 
@@ -123,11 +120,11 @@ extension Font {
 
 ### Swift Concurrency
 
-- `async/await` for all asynchronous operations
-- `Task` groups for parallel work
-- `@MainActor` for UI updates
-- `AsyncStream` for continuous data (sensors, location)
-- `Sendable` conformance for thread safety
+- `async/await` — all async operations
+- `Task` groups — parallel work
+- `@MainActor` — UI updates
+- `AsyncStream` — continuous data (sensors, location)
+- `Sendable` — thread safety conformance
 
 ### Data Persistence
 
@@ -141,10 +138,9 @@ extension Font {
 
 ## Hybrid Content (WebKit for SwiftUI)
 
-> iOS 26+ / macOS 26+ / visionOS 26+. Requires `import WebKit`.
-> Source: WWDC 2025 Session 231 — "Meet WebKit for SwiftUI".
+> iOS 26+ / macOS 26+ / visionOS 26+. Requires `import WebKit`. Source: WWDC 2025 Session 231.
 
-First-class SwiftUI views for embedding web content — replaces the old `WKWebView` UIKit/AppKit bridge pattern. For apps targeting earlier versions, guard with `#available`:
+Replaces `WKWebView` UIKit/AppKit bridge. Guard with `#available` for earlier targets:
 
 ```swift
 var body: some View {
@@ -175,11 +171,11 @@ struct ArticleView: View {
 }
 ```
 
-`WebPage` is `@Observable`, exposing: `url`, `title`, `isLoading`, `estimatedProgress`, `themeColor`, `isAtTop`, `isAtBottom`.
+`WebPage` is `@Observable`: `url`, `title`, `isLoading`, `estimatedProgress`, `themeColor`, `isAtTop`, `isAtBottom`.
 
 ### JavaScript Bridge
 
-Typed argument dictionaries with typed results:
+Typed args, typed results — automatically bridged between Swift and JS:
 
 ```swift
 let count: Int = try await page.callJavaScript(
@@ -188,11 +184,9 @@ let count: Int = try await page.callJavaScript(
 )
 ```
 
-Arguments and return values are automatically bridged between Swift and JavaScript types.
-
 ### Custom URL Schemes
 
-Serve bundled HTML/CSS/JS via `URLSchemeHandler`. Load with `app-resource:///index.html` — content stays local, no network requests:
+Serve bundled HTML/CSS/JS via `URLSchemeHandler` — load with `app-resource:///index.html`, no network requests:
 
 ```swift
 WebView(page)
@@ -215,7 +209,7 @@ WebView(page)
 
 ### Navigation Policy
 
-Control allowed navigations via `WebPage.NavigationDeciding`:
+Control navigations via `WebPage.NavigationDeciding`:
 
 ```swift
 page.navigationDeciding = .handler { action in
@@ -238,11 +232,11 @@ page.navigationDeciding = .handler { action in
 ### XcodeBuildMCP
 
 ```text
-discover_projs                          # Discover project
-build_sim --scheme MyApp                # Build for simulator
-test_sim --scheme MyApp                 # Run tests
-build_run_sim --scheme MyApp            # Build and run
-screenshot                              # Screenshot current state
+discover_projs                   # Discover project
+build_sim --scheme MyApp         # Build for simulator
+test_sim --scheme MyApp          # Run tests
+build_run_sim --scheme MyApp     # Build and run
+screenshot                       # Screenshot current state
 ```
 
 ### Local Xcode Commands
@@ -253,13 +247,13 @@ xcodebuild test -scheme MyApp -destination 'platform=iOS Simulator,name=iPhone 1
 xcodebuild archive -scheme MyApp -archivePath MyApp.xcarchive  # Distribution
 ```
 
-## TestFlight Setup
+## TestFlight
 
-1. Configure signing in Xcode (Automatically manage signing)
+1. Configure signing (Automatically manage signing in Xcode)
 2. Archive (`Product > Archive`) and upload via Xcode Organizer
 3. Add internal testers in App Store Connect (external requires App Review)
 
-Or use `xcodebuild-mcp` device tools for direct device deployment during development.
+Use `xcodebuild-mcp` device tools for direct device deployment during development.
 
 ## Related
 
