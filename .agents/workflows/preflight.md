@@ -23,7 +23,7 @@ tools:
 - **Skip**: `version-manager.sh release [type] --force --skip-preflight`
 - **Fast mode**: `.agents/scripts/linters-local.sh --fast`
 
-**Check Phases** (fast → slow):
+**Check Phases** (fast -> slow):
 1. Version consistency (~1s, blocking)
 2. ShellCheck + Secretlint (~10s, blocking)
 3. Markdown + return statements (~20s, blocking)
@@ -31,11 +31,7 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Purpose
-
-Preflight ensures code quality before version bumping and release. It catches issues early, preventing broken releases.
-
-## What Preflight Checks
+## Check Phases
 
 ### Phase 1: Instant Blocking (~2s)
 
@@ -67,55 +63,29 @@ Preflight ensures code quality before version bumping and release. It catches is
 | SonarCloud status | API check | Advisory |
 | Codacy grade | API check | Advisory |
 
-## Running Preflight
-
-### Automatic (Recommended)
-
-Preflight runs automatically during release:
+## Commands
 
 ```bash
-# Preflight runs before version bump
+# Automatic (recommended) — runs before version bump
 .agents/scripts/version-manager.sh release minor
-```
 
-### Manual
-
-Run quality checks independently:
-
-```bash
 # Full quality check
 .agents/scripts/linters-local.sh
 
 # Fast checks only (ShellCheck, secrets, returns)
 .agents/scripts/linters-local.sh --fast
 
-# Specific checks
+# Individual checks
 shellcheck .agents/scripts/*.sh
 npx secretlint "**/*"
+.agents/scripts/secretlint-helper.sh scan
+.agents/scripts/version-manager.sh validate
 ```
 
-## Integration with Release
+## Release Integration
 
 ```text
-release command
-    │
-    ▼
-┌─────────────┐
-│  PREFLIGHT  │ ◄── Fails here = no version changes
-└─────────────┘
-    │ pass
-    ▼
-┌─────────────┐
-│  CHANGELOG  │ ◄── Validates changelog content
-└─────────────┘
-    │ pass
-    ▼
-┌─────────────┐
-│ VERSION BUMP│ ◄── Updates VERSION, README, etc.
-└─────────────┘
-    │
-    ▼
-   ... tag, release ...
+release command → PREFLIGHT (fail = no version changes) → CHANGELOG → VERSION BUMP → tag, release
 ```
 
 ## Bypassing Preflight
@@ -123,89 +93,61 @@ release command
 For emergency hotfixes only:
 
 ```bash
-# Skip preflight (use with caution)
 .agents/scripts/version-manager.sh release patch --skip-preflight
-
-# Skip both preflight and changelog
-.agents/scripts/version-manager.sh release patch --skip-preflight --force
+.agents/scripts/version-manager.sh release patch --skip-preflight --force  # skip changelog too
 ```
 
-**When to skip:**
-- Critical security hotfix that can't wait
-- CI/CD is down but release is urgent
-- False positive blocking release
-
-**Never skip for:**
-- Convenience
-- "I'll fix it later"
-- Avoiding legitimate issues
+**Skip when**: critical security hotfix, CI/CD down + urgent release, false positive blocking release.
+**Never skip for**: convenience, "I'll fix it later", avoiding legitimate issues.
 
 ## Check Details
 
 ### ShellCheck
 
-Lints all shell scripts for common issues:
+Zero violations required (errors are blocking).
 
 ```bash
-# Run manually
-shellcheck .agents/scripts/*.sh
-
-# Check specific file
-shellcheck .agents/scripts/version-manager.sh
+shellcheck .agents/scripts/*.sh                        # all scripts
+shellcheck .agents/scripts/version-manager.sh          # specific file
+shellcheck -f gcc .agents/scripts/problem-script.sh    # detailed output
 ```
-
-**Must pass**: Zero violations (errors are blocking)
 
 ### Secretlint
 
-Detects accidentally committed secrets:
+Detects: AWS keys, GitHub tokens, OpenAI keys, private keys, database URLs.
 
-```bash
-# Run manually
-npx secretlint "**/*"
+False positives: add to `.secretlintignore`:
 
-# With helper
-.agents/scripts/secretlint-helper.sh scan
+```text
+tests/fixtures/*
+path/to/false-positive.txt
 ```
-
-**Detects**: AWS keys, GitHub tokens, OpenAI keys, private keys, database URLs
 
 ### Version Consistency
 
-Ensures VERSION file matches all references:
+Checks VERSION matches: README badge, sonar-project.properties, setup.sh.
 
 ```bash
-.agents/scripts/version-manager.sh validate
+# Fix mismatches by re-running bump
+.agents/scripts/version-manager.sh bump patch
 ```
-
-**Checks**: VERSION, README badge, sonar-project.properties, setup.sh
 
 ### SonarCloud Status
 
-Checks current quality gate status:
-
 ```bash
-# Via linters-local.sh
-.agents/scripts/linters-local.sh
-
-# Direct API (requires SONAR_TOKEN)
 curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=marcusquinn_aidevops"
 ```
 
 ### SonarCloud Security Hotspots
 
-Security hotspots are code patterns that require human review. They are NOT automatically bugs - they need individual assessment.
+Security hotspots require individual human review — they are NOT automatically bugs.
 
-**Preferred approach**: Review and resolve each hotspot individually in SonarCloud:
+**Resolution options** (in SonarCloud UI):
+- **Safe**: code is secure (add comment explaining why)
+- **Fixed**: code changes made to address it
+- **Acknowledged**: known issue, accepted risk (add justification)
 
-1. Open the hotspot in SonarCloud UI
-2. Review the code and context
-3. Mark as one of:
-   - **Safe**: The code is secure (add comment explaining why)
-   - **Fixed**: You've made code changes to address it
-   - **Acknowledged**: Known issue, accepted risk (add justification)
-
-**Common hotspot types and typical resolutions**:
+**Common hotspot types**:
 
 | Rule | Description | Typical Resolution |
 |------|-------------|-------------------|
@@ -213,15 +155,7 @@ Security hotspots are code patterns that require human review. They are NOT auto
 | `shell:S6505` | npm install without --ignore-scripts | Safe if trusted packages; scripts needed for setup |
 | `shell:S6506` | Package manager security | Safe if from trusted registries |
 
-**Do NOT**:
-- Blanket-dismiss all hotspots without review
-- Disable rules globally without justification
-- Ignore hotspots hoping they'll go away
-
-**Why individual review matters**:
-- Catches real security issues mixed with false positives
-- Documents security decisions for audit trails
-- Prevents rule fatigue from hiding actual vulnerabilities
+**Do NOT** blanket-dismiss hotspots, disable rules without justification, or ignore them.
 
 ```bash
 # View current hotspots
@@ -233,83 +167,19 @@ curl -s "https://sonarcloud.io/api/hotspots/search?projectKey=marcusquinn_aidevo
   jq '[.hotspots[] | .ruleKey] | group_by(.) | map({rule: .[0], count: length})'
 ```
 
-## Troubleshooting
+## Worktree and Pre-existing Issues
 
-### ShellCheck Violations
+Preflight in a worktree checks **worktree files**, not deployed `~/.aidevops/agents/`. Issues resolve only after merge + `./setup.sh` redeployment.
 
-```bash
-# See specific issues
-shellcheck -f gcc .agents/scripts/problem-script.sh
-
-# Auto-fix some issues (with shellcheck-fix if available)
-# Or manually fix based on SC codes
-```
-
-### Secretlint False Positives
-
-Add to `.secretlintignore`:
-
-```text
-# Ignore test fixtures
-tests/fixtures/*
-
-# Ignore specific file
-path/to/false-positive.txt
-```
-
-### Version Mismatch
+Preflight reports ALL issues including pre-existing ones. To isolate your changes:
 
 ```bash
-# Check current state
-.agents/scripts/version-manager.sh validate
-
-# Fix by re-running bump
-.agents/scripts/version-manager.sh bump patch
+git diff main --name-only                                          # files you changed
+git diff main --name-only -z -- '*.sh' | xargs -0 shellcheck      # your shell changes only
 ```
 
-## Worktree Awareness
-
-When running preflight in a worktree, checks run against the **worktree's files**, not the deployed `~/.aidevops/agents/` version. This means:
-
-- Pre-existing issues in the deployed version won't be fixed by worktree changes
-- Issues will only be resolved after merge and redeployment (`./setup.sh`)
-- Focus on issues introduced by your changes, not inherited technical debt
-
-## Pre-existing vs New Issues
-
-Preflight checks report ALL issues, including pre-existing ones. When the loop hits max iterations or you see many violations:
-
-### Identifying New vs Pre-existing Issues
-
-```bash
-# See what files you changed
-git diff main --name-only
-
-# Check issues only in your changed shell scripts
-# Uses -z/xargs -0 to handle filenames with spaces safely
-git diff main --name-only -z -- '*.sh' | xargs -0 shellcheck
-```
-
-### When to Proceed Despite Issues
-
-If all remaining issues are **pre-existing** (not introduced by your PR):
-
-1. Verify your changes don't add new violations
-2. Document pre-existing issues for future cleanup
-3. Proceed with PR creation
-4. Note in PR description: "Pre-existing issues not addressed in this PR"
-
-### When to Fix Issues
-
-Fix issues that are:
-- Introduced by your changes
-- In files you're already modifying
-- Quick wins (< 5 minutes to fix)
-
-Defer issues that are:
-- Pre-existing in untouched files
-- Require significant refactoring
-- Outside the scope of your PR
+**Fix**: issues introduced by your changes, issues in files you're modifying, quick wins (< 5 min).
+**Defer**: pre-existing issues in untouched files, significant refactoring, out-of-scope work. Note in PR: "Pre-existing issues not addressed in this PR".
 
 ## Related Workflows
 
