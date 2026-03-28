@@ -86,7 +86,7 @@ When a route needs server-side data, the `src/app/` file fetches and passes prop
 ```typescript
 // src/app/products/[id]/page.tsx
 import { ProductDetailPage } from '@/pages/product-detail';
-import { getProductById } from '@/entities/product';
+import { getProductById, getProducts } from '@/entities/product';
 export default async function Page({ params }: { params: { id: string } }) {
   const product = await getProductById(params.id);
   return <ProductDetailPage product={product} />;
@@ -180,10 +180,10 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 export function middleware(request: NextRequest) {
   const token = request.cookies.get('token')?.value;
-  const isAuth = request.nextUrl.pathname.startsWith('/login');
+  const isLoginRoute = request.nextUrl.pathname.startsWith('/login');
   const isProtected = request.nextUrl.pathname.startsWith('/dashboard');
   if (isProtected && !token) return NextResponse.redirect(new URL('/login', request.url));
-  if (isAuth && token) return NextResponse.redirect(new URL('/dashboard', request.url));
+  if (isLoginRoute && token) return NextResponse.redirect(new URL('/dashboard', request.url));
   return NextResponse.next();
 }
 export const config = { matcher: ['/dashboard/:path*', '/login'] };
