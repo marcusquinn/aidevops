@@ -1022,8 +1022,8 @@
       "pr": 11944
     },
     ".agents/scripts/commands/full-loop.md": {
-      "hash": "08254d18afde3da2a006b6cf876ae27d2c3a7197",
-      "at": "2026-03-28T20:16:41Z",
+      "hash": "2eeeca1b29f37da006c4497e49fcb041fbfbe0b8",
+      "at": "2026-03-28T23:06:40Z",
       "pr": 12164
     },
     ".agents/workflows/pr.md": {
@@ -1550,6 +1550,36 @@
       "hash": "9bb00be8a5060b8b66412adc859335c7d193546d",
       "at": "2026-03-28T21:59:23Z",
       "pr": 12247
+    },
+    ".agents/marketing-sales/ad-creative-chapter-01.md": {
+      "hash": "e832ef8eb425956cec38a250eede0227342a4d79",
+      "at": "2026-03-28T23:05:56Z",
+      "pr": 12325
+    },
+    ".agents/marketing-sales/ad-creative-chapters.md": {
+      "hash": "7389f5acbff5e5b272cc97a5c5285e8a9b735427",
+      "at": "2026-03-28T23:05:56Z",
+      "pr": 12325
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/terraform-gotchas.md": {
+      "hash": "2111a2577e4e29eec771f709231f08fa22db2fc0",
+      "at": "2026-03-28T23:05:57Z",
+      "pr": 12324
+    },
+    ".agents/scripts/commands/new-task.md": {
+      "hash": "efc169b2e604ea55058ffa7ebae2224cc5286699",
+      "at": "2026-03-28T23:05:58Z",
+      "pr": 12328
+    },
+    ".agents/scripts/commands/runners.md": {
+      "hash": "e15f89fc275c14393073efaa842849957733470c",
+      "at": "2026-03-28T23:06:00Z",
+      "pr": 12326
+    },
+    ".agents/seo/debug-favicon.md": {
+      "hash": "f9e871983fc1d52343dd069d7652c33e7268ae92",
+      "at": "2026-03-28T23:06:01Z",
+      "pr": 12327
     }
   }
 }
