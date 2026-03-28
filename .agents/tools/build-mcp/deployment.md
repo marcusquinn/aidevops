@@ -19,7 +19,6 @@ tools:
 
 - **Purpose**: MCP server configuration for AI assistants with native MCP support
 - **Preferred**: OpenCode (native MCP, Tab-based agents)
-- **Config Formats**: JSON (mcpServers), CLI commands, VS Code MCP
 
 **Config Format Groups**:
 
@@ -48,52 +47,36 @@ Edit `~/.config/opencode/opencode.json`:
       "enabled": true
     }
   },
-  "tools": {
-    "my-mcp_*": false
-  },
+  "tools": { "my-mcp_*": false },
   "agent": {
-    "Build+": {
-      "tools": {
-        "my-mcp_*": true
-      }
-    }
+    "Build+": { "tools": { "my-mcp_*": true } }
   }
 }
 ```
 
-**With environment variables**:
-
-```json
-{
-  "mcp": {
-    "my-mcp": {
-      "type": "local",
-      "command": ["/bin/bash", "-c", "API_KEY=$MY_API_KEY bun run /path/to/my-mcp/src/index.ts"],
-      "enabled": true
-    }
-  }
-}
-```
+**With environment variables** — wrap in bash: `["/bin/bash", "-c", "API_KEY=$MY_API_KEY bun run /path/to/my-mcp/src/index.ts"]`
 
 ## Claude Code (CLI)
 
 ```bash
-# Add MCP server
 claude mcp add my-mcp bun run /path/to/my-mcp/src/index.ts
-
-# With environment variables
 claude mcp add my-mcp --env API_KEY=your-key bun run /path/to/my-mcp/src/index.ts
 
-# User scope (all projects)
+# Scope variants
 claude mcp add-json my-mcp --scope user '{"type":"stdio","command":"bun","args":["run","/path/to/my-mcp/src/index.ts"]}'
-
-# Project scope
 claude mcp add-json my-mcp --scope project '{"type":"stdio","command":"bun","args":["run","/path/to/my-mcp/src/index.ts"]}'
 ```
 
-## Claude Desktop
+## Standard mcpServers Format
 
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+The following tools share the same `mcpServers` JSON schema. Config file paths differ:
+
+| Tool | Config file |
+|------|-------------|
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Cursor | Settings → Tools & MCP → New MCP Server |
+| Windsurf | `.windsurf/mcp.json` (project) or global config |
+| Gemini CLI | `~/.gemini/settings.json` (user) or `.gemini/settings.json` (project) |
 
 ```json
 {
@@ -109,24 +92,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 }
 ```
 
-## Cursor
-
-Settings → Tools & MCP → New MCP Server:
-
-**macOS/Linux**:
-
-```json
-{
-  "mcpServers": {
-    "my-mcp": {
-      "command": "bun",
-      "args": ["run", "/path/to/my-mcp/src/index.ts"]
-    }
-  }
-}
-```
-
-**With workspace path**:
+**Cursor — workspace-relative path**:
 
 ```json
 {
@@ -139,22 +105,61 @@ Settings → Tools & MCP → New MCP Server:
 }
 ```
 
-## Windsurf
+### Kilo Code
 
-Edit `.windsurf/mcp.json` in project or global config:
+Click MCP server icon → Edit Global MCP. Same `mcpServers` schema with tool approval fields:
 
 ```json
 {
   "mcpServers": {
     "my-mcp": {
       "command": "bun",
-      "args": ["run", "/path/to/my-mcp/src/index.ts"]
+      "type": "stdio",
+      "args": ["run", "/path/to/my-mcp/src/index.ts"],
+      "disabled": false,
+      "alwaysAllow": ["tool_name"]
     }
   }
 }
 ```
 
-## Continue.dev
+### Kiro
+
+Open command palette (Cmd+Shift+P) → **Kiro: Open workspace MCP config** (workspace) or **Kiro: Open user MCP config** (user):
+
+```json
+{
+  "mcpServers": {
+    "my-mcp": {
+      "command": "bun",
+      "args": ["run", "/path/to/my-mcp/src/index.ts"],
+      "disabled": false,
+      "autoApprove": ["tool_name"]
+    }
+  }
+}
+```
+
+## VS Code MCP Format
+
+### GitHub Copilot
+
+Create `.vscode/mcp.json` in project root. Use in Agent mode for MCP tool access:
+
+```json
+{
+  "servers": {
+    "my-mcp": {
+      "type": "stdio",
+      "command": "bun",
+      "args": ["run", "/path/to/my-mcp/src/index.ts"]
+    }
+  },
+  "inputs": []
+}
+```
+
+### Continue.dev
 
 Edit `.continue/config.json`:
 
@@ -174,9 +179,9 @@ Edit `.continue/config.json`:
 }
 ```
 
-## Cody (Sourcegraph)
+### Cody (Sourcegraph)
 
-Edit VS Code settings or `.vscode/settings.json`:
+Edit `.vscode/settings.json`:
 
 ```json
 {
@@ -197,158 +202,42 @@ Click ··· → Add Custom Server:
 {
   "my-mcp": {
     "command": "bun",
-    "args": ["run", "/path/to/my-mcp/src/index.ts"],
-    "env": {}
+    "args": ["run", "/path/to/my-mcp/src/index.ts"]
   }
 }
 ```
-
-## GitHub Copilot
-
-Create `.vscode/mcp.json` in project root:
-
-```json
-{
-  "servers": {
-    "my-mcp": {
-      "type": "stdio",
-      "command": "bun",
-      "args": ["run", "/path/to/my-mcp/src/index.ts"]
-    }
-  },
-  "inputs": []
-}
-```
-
-**Note**: Use in Agent mode for MCP tool access.
-
-## Kilo Code
-
-Click MCP server icon → Edit Global MCP:
-
-```json
-{
-  "mcpServers": {
-    "my-mcp": {
-      "command": "bun",
-      "type": "stdio",
-      "args": ["run", "/path/to/my-mcp/src/index.ts"],
-      "disabled": false,
-      "alwaysAllow": ["tool_name"]
-    }
-  }
-}
-```
-
-## Kiro
-
-Open command palette (Cmd+Shift+P):
-
-- **Kiro: Open workspace MCP config (JSON)** - Workspace level
-- **Kiro: Open user MCP config (JSON)** - User level
-
-```json
-{
-  "mcpServers": {
-    "my-mcp": {
-      "command": "bun",
-      "args": ["run", "/path/to/my-mcp/src/index.ts"],
-      "disabled": false,
-      "autoApprove": ["tool_name"]
-    }
-  }
-}
-```
-
-## Gemini CLI
-
-Edit `~/.gemini/settings.json` (user) or `.gemini/settings.json` (project):
-
-```json
-{
-  "mcpServers": {
-    "my-mcp": {
-      "command": "bun",
-      "args": ["run", "/path/to/my-mcp/src/index.ts"]
-    }
-  }
-}
-```
-
-## Droid (Factory.AI)
-
-```bash
-# Add MCP server
-droid mcp add my-mcp bun run /path/to/my-mcp/src/index.ts
-
-# With environment variables
-droid mcp add my-mcp bun run /path/to/my-mcp/src/index.ts --env API_KEY=your-key
-```
-
-## Warp AI
-
-> **Note**: Warp is a terminal with AI features, not a native MCP client. This is a workaround pattern.
-
-Warp doesn't have native MCP support. Use shell aliases to invoke MCP tools manually:
-
-```bash
-# ~/.zshrc or ~/.bashrc
-alias mcp-my-tool="bun run /path/to/my-mcp/src/index.ts"
-```
-
-For true MCP integration, use OpenCode or Claude Code in Warp terminal.
 
 ## Aider
 
-Add to `.aider.conf.yml`:
+`.aider.conf.yml` or CLI flag:
 
 ```yaml
 mcp-servers:
   - name: my-mcp
     command: bun
-    args:
-      - run
-      - /path/to/my-mcp/src/index.ts
+    args: [run, /path/to/my-mcp/src/index.ts]
 ```
 
-Or use command line:
+CLI: `aider --mcp-server "bun run /path/to/my-mcp/src/index.ts"`
+
+## Droid (Factory.AI)
 
 ```bash
-aider --mcp-server "bun run /path/to/my-mcp/src/index.ts"
+droid mcp add my-mcp bun run /path/to/my-mcp/src/index.ts
+droid mcp add my-mcp bun run /path/to/my-mcp/src/index.ts --env API_KEY=your-key
 ```
 
-## Qwen CLI
+## Limited/No Native MCP
 
-> **Note**: Qwen CLI MCP support is experimental. Verify current documentation.
-
-Edit `~/.qwen/config.json` (if supported):
-
-```json
-{
-  "mcp": {
-    "servers": {
-      "my-mcp": {
-        "command": "bun",
-        "args": ["run", "/path/to/my-mcp/src/index.ts"]
-      }
-    }
-  }
-}
-```
-
-## LiteLLM
-
-> **Note**: LiteLLM is a proxy/gateway, not an AI assistant. MCP support depends on the underlying client.
-
-If using LiteLLM with an MCP-capable client, configure the client directly. LiteLLM proxies requests but doesn't manage MCP connections.
-
-For direct tool calling via LiteLLM API, see their function calling documentation.
+- **Warp AI**: No native MCP. Use `alias mcp-my-tool="bun run /path/to/my-mcp/src/index.ts"` as a workaround, or run OpenCode/Claude Code inside Warp.
+- **Qwen CLI**: Experimental — verify current docs before using. Config key: `mcp.servers.<name>` in `~/.qwen/config.json`.
+- **LiteLLM**: Proxy/gateway, not an AI assistant. Configure the underlying MCP-capable client directly.
 
 ## HTTP Transport (Remote Servers)
 
 For MCPs deployed as HTTP services:
 
-### OpenCode
+**OpenCode** — use `type: remote`:
 
 ```json
 {
@@ -362,7 +251,7 @@ For MCPs deployed as HTTP services:
 }
 ```
 
-### Claude Desktop
+**Claude Desktop** — bridge via `mcp-remote-client`:
 
 ```json
 {
@@ -377,10 +266,4 @@ For MCPs deployed as HTTP services:
 
 ## Verification
 
-After configuring, test with:
-
-```text
-What tools are available from my-mcp? Please list them.
-```
-
-The AI should list all registered tools from your MCP server.
+After configuring, ask the AI: `What tools are available from my-mcp? Please list them.`
