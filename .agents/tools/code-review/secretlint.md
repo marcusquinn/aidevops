@@ -27,19 +27,20 @@ tools:
 - **Exit codes**: 0=clean, 1=secrets found, 2=error
 - **Output formats**: stylish (default), json, compact, table, sarif, mask-result
 - **Pre-commit**: Husky+lint-staged or native git hooks supported
+- **Quality pipeline**: `linters-local.sh` and `pre-commit-hook.sh` both include secretlint
 
 <!-- AI-CONTEXT-END -->
 
 ## Quick Start
 
 ```bash
-./.agents/scripts/secretlint-helper.sh install        # Local install (recommended)
-./.agents/scripts/secretlint-helper.sh quick          # Quick scan without installation
-./.agents/scripts/secretlint-helper.sh docker         # Docker (no Node.js required)
-./.agents/scripts/secretlint-helper.sh status         # Check installation status
-./.agents/scripts/secretlint-helper.sh init           # Initialize configuration
-./.agents/scripts/secretlint-helper.sh scan           # Scan all files
-./.agents/scripts/secretlint-helper.sh scan "src/**/*"  # Scan specific directory
+secretlint-helper.sh install        # Local install (recommended)
+secretlint-helper.sh quick          # Quick scan without installation
+secretlint-helper.sh docker         # Docker (no Node.js required)
+secretlint-helper.sh status         # Check installation status
+secretlint-helper.sh init           # Initialize configuration
+secretlint-helper.sh scan           # Scan all files
+secretlint-helper.sh scan "src/**/*"  # Scan specific directory
 ```
 
 ## Detected Secret Types
@@ -75,7 +76,7 @@ tools:
 }
 ```
 
-**Rule options**: `id` (package name), `options` (rule-specific), `disabled` (boolean), `allowMessageIds` (string[] — suppress specific message IDs), `allows` (string[] — RegExp-like patterns to allow).
+**Rule options**: `id` (package name), `options` (rule-specific), `disabled` (boolean), `allowMessageIds` (string[] -- suppress specific message IDs), `allows` (string[] -- RegExp-like patterns to allow).
 
 ### Ignore File (.secretlintignore)
 
@@ -88,12 +89,10 @@ tools:
 **/testdata/**
 **/package-lock.json
 **/pnpm-lock.yaml
-**/*.png
-**/*.jpg
-**/*.pdf
+**/*.{png,jpg,pdf}
 ```
 
-### Inline Comment Directives
+### Inline Directives
 
 ```javascript
 // secretlint-disable-next-line
@@ -115,16 +114,16 @@ secretlint "**/*" --format json                                                #
 secretlint "**/*" --format @secretlint/secretlint-formatter-sarif > out.sarif  # SARIF (CI dashboards)
 secretlint .zsh_history --format=mask-result --output=.zsh_history             # Mask secrets in file
 # Via helper
-./.agents/scripts/secretlint-helper.sh scan . json   # JSON
-./.agents/scripts/secretlint-helper.sh sarif         # SARIF (requires @secretlint/secretlint-formatter-sarif)
-./.agents/scripts/secretlint-helper.sh mask .env.example
+secretlint-helper.sh scan . json   # JSON
+secretlint-helper.sh sarif         # SARIF (requires @secretlint/secretlint-formatter-sarif)
+secretlint-helper.sh mask .env.example
 ```
 
 ## Pre-commit Integration
 
 ```bash
-./.agents/scripts/secretlint-helper.sh hook   # Native git hook
-./.agents/scripts/secretlint-helper.sh husky  # Husky + lint-staged (Node.js projects)
+secretlint-helper.sh hook   # Native git hook
+secretlint-helper.sh husky  # Husky + lint-staged (Node.js projects)
 # Manual husky: npx husky-init && npm install lint-staged --save-dev
 # package.json: "lint-staged": { "*": ["secretlint"] }
 # .husky/pre-commit: npx --no-install lint-staged
@@ -156,21 +155,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # For diff-only scanning: add fetch-depth: 0, tj-actions/changed-files@v44,
+      # then pass changed files list instead of "**/*"
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
       - run: npm ci
       - run: npx secretlint "**/*"
-```
-
-**Diff-only variant** — replace checkout and secretlint steps:
-
-```yaml
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
-      - uses: tj-actions/changed-files@v44
-        id: changed-files
-      - if: steps.changed-files.outputs.any_changed == 'true'
-        run: npm ci && npx secretlint ${{ steps.changed-files.outputs.all_changed_files }}
 ```
 
 ### GitLab CI
@@ -212,16 +202,9 @@ Docker image includes: `secretlint-rule-preset-recommend`, `secretlint-rule-patt
 | `secretlint command not found` | `npx secretlint "**/*"` or `npm install -g secretlint @secretlint/secretlint-rule-preset-recommend` |
 | Exit code 2 (config/install error) | `secretlint-helper.sh status`; reinstall or `rm .secretlintrc.json && secretlint-helper.sh init` |
 
-**Performance** — add to `.secretlintignore`: `**/node_modules/**`, `**/dist/**`, `**/*.lock`
+**Performance**: add to `.secretlintignore`: `**/node_modules/**`, `**/dist/**`, `**/*.lock`
 
-**False positives** — allow patterns in rule `options.allows` (see Advanced config above) or use inline `// secretlint-disable-line`
-
-## Quality Pipeline Integration
-
-```bash
-./.agents/scripts/linters-local.sh      # Includes secretlint
-./.agents/scripts/pre-commit-hook.sh    # Includes secretlint
-```
+**False positives**: allow patterns in rule `options.allows` (see Advanced config above) or use inline `// secretlint-disable-line`
 
 ## Resources
 
