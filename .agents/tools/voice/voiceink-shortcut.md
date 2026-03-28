@@ -14,16 +14,10 @@ tools:
 
 - **Purpose**: Send VoiceInk voice transcriptions to an OpenCode server session via macOS Shortcut
 - **Flow**: VoiceInk transcription -> macOS Shortcut -> HTTP POST -> OpenCode server -> AI response
-- **Prerequisites**: VoiceInk (macOS), OpenCode server running (`opencode serve`)
+- **Prerequisites**: [VoiceInk](https://apps.apple.com/app/voiceink-ai-transcription/id6478838191) (macOS, local Whisper STT), OpenCode server running (`opencode serve`)
 - **Related**: `tools/ai-assistants/opencode-server.md`, `tools/voice/speech-to-speech.md`
 
 <!-- AI-CONTEXT-END -->
-
-## Overview
-
-[VoiceInk](https://apps.apple.com/app/voiceink-ai-transcription/id6478838191) is a macOS app that provides fast, local Whisper-based voice transcription. It supports custom actions that run after transcription completes, including macOS Shortcuts and shell scripts.
-
-This guide connects VoiceInk to the OpenCode server API so you can speak a command and have it executed by your AI coding agent.
 
 ```text
 ┌──────────┐    ┌──────────────┐    ┌──────────────────┐    ┌──────────────┐
@@ -39,10 +33,6 @@ This guide connects VoiceInk to the OpenCode server API so you can speak a comma
 ### 1. Start OpenCode Server
 
 ```bash
-# Default (localhost:4096)
-opencode serve
-
-# With fixed port (recommended for Shortcuts)
 opencode serve --port 4096
 
 # With auth (if exposing beyond localhost)
@@ -52,19 +42,18 @@ OPENCODE_SERVER_PASSWORD=your-password opencode serve --port 4096
 ### 2. Create or Identify a Session
 
 ```bash
-# Create a dedicated voice session
 curl -s -X POST http://localhost:4096/session \
   -H "Content-Type: application/json" \
   -d '{"title": "Voice Commands"}' | jq -r '.id'
 ```
 
-Save the returned session ID. You can also use an existing session from the OpenCode TUI.
+Save the returned session ID (or use an existing session from the OpenCode TUI).
 
 ### 3. Configure the macOS Shortcut
 
-#### Option A: macOS Shortcuts App (Recommended)
+#### Option A: Shortcuts App (Recommended)
 
-Create a new Shortcut in the Shortcuts app with these actions:
+Create a new Shortcut with these actions:
 
 1. **Receive** input from VoiceInk (text)
 2. **Set Variable** `transcription` to the Shortcut Input
@@ -93,12 +82,12 @@ Replace `SESSION_ID` with your actual session ID.
 
 | Endpoint | Behaviour | Use When |
 |----------|-----------|----------|
-| `/session/:id/prompt_async` | Returns 204 immediately | Default - non-blocking, fast |
+| `/session/:id/prompt_async` | Returns 204 immediately | Default - non-blocking |
 | `/session/:id/message` | Waits for full AI response | You want the response in the Shortcut |
 
 #### Option B: Shell Script Action
 
-VoiceInk can also run shell scripts. Create a script:
+VoiceInk can also run shell scripts directly:
 
 ```bash
 #!/bin/bash
@@ -129,7 +118,6 @@ curl -s -X POST "${local_server}/session/${local_session_id}/prompt_async" \
   -H "Content-Type: application/json" \
   -d "{\"parts\": [{\"type\": \"text\", \"text\": ${local_json_text}}]}"
 
-# Optional: macOS notification
 osascript -e 'display notification "Sent to OpenCode" with title "VoiceInk"'
 ```
 
@@ -137,28 +125,24 @@ osascript -e 'display notification "Sent to OpenCode" with title "VoiceInk"'
 chmod +x ~/.local/bin/voiceink-to-opencode.sh
 ```
 
-Then configure VoiceInk to run this script as a custom action.
-
 ### 4. Configure VoiceInk Action
 
-In VoiceInk preferences:
+In VoiceInk preferences > **Actions** (or **Custom Actions**):
 
-1. Open **Actions** (or **Custom Actions**)
-2. Add a new action
-3. Set the trigger (e.g., a specific keyword prefix, or make it the default action)
-4. Choose either:
-   - **Run Shortcut**: Select the Shortcut you created in Option A
+1. Add a new action
+2. Set the trigger (e.g., keyword prefix, or default action)
+3. Choose either:
+   - **Run Shortcut**: Select the Shortcut from Option A
    - **Run Script**: Point to `~/.local/bin/voiceink-to-opencode.sh`
 
 ## Advanced Configuration
 
 ### Session Auto-Discovery
 
-Instead of hardcoding a session ID, discover the most recent active session:
+Discover the most recent active session instead of hardcoding an ID:
 
 ```bash
 #!/bin/bash
-# Get the most recent session ID
 local_session_id=""
 local_session_id=$(curl -s http://localhost:4096/session | jq -r '.[0].id')
 
@@ -169,10 +153,8 @@ curl -s -X POST "http://localhost:4096/session/${local_session_id}/prompt_async"
 
 ### With Authentication
 
-If the server requires auth:
-
 ```bash
-# In shell script
+# Shell script — add -u flag
 curl -s -X POST "http://localhost:4096/session/${local_session_id}/prompt_async" \
   -u "user:${OPENCODE_SERVER_PASSWORD}" \
   -H "Content-Type: application/json" \
@@ -182,8 +164,6 @@ curl -s -X POST "http://localhost:4096/session/${local_session_id}/prompt_async"
 In macOS Shortcuts, add an `Authorization` header with value `Basic <base64(user:password)>`.
 
 ### Sync Mode with Response Display
-
-To see the AI response after speaking:
 
 ```bash
 #!/bin/bash
@@ -202,7 +182,6 @@ local_response=$(curl -s -X POST "${local_server}/session/${local_session_id}/me
   -H "Content-Type: application/json" \
   -d "{\"parts\": [{\"type\": \"text\", \"text\": ${local_json_text}}]}")
 
-# Extract text from response and show as notification
 local_reply=""
 local_reply=$(echo "$local_response" | jq -r '.parts[] | select(.type=="text") | .text' | head -c 200)
 
@@ -230,17 +209,11 @@ Use VoiceInk's action matching to route different voice commands:
 | Auth failure | Check `OPENCODE_SERVER_PASSWORD` matches server config |
 | Shortcut not triggering | Verify VoiceInk action is set to "Run Shortcut" with correct name |
 
-### Verify Server is Running
-
-```bash
-curl -s http://localhost:4096/global/health | jq .
-```
-
 ### Test the Flow Manually
 
 ```bash
-# 1. Check server
-curl -s http://localhost:4096/global/health
+# 1. Health check
+curl -s http://localhost:4096/global/health | jq .
 
 # 2. List sessions
 curl -s http://localhost:4096/session | jq '.[].id'
