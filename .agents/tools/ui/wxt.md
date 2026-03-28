@@ -19,13 +19,10 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Modern framework for building cross-browser extensions with HMR, auto-imports, and TypeScript
+- **Purpose**: Cross-browser extension framework with HMR, auto-imports, TypeScript
 - **Docs**: Use Context7 MCP for latest WXT documentation
-- **GitHub**: https://github.com/wxt-dev/wxt (5k+ stars, MIT)
-- **Website**: https://wxt.dev
+- **GitHub**: https://github.com/wxt-dev/wxt (5k+ stars, MIT) | **Website**: https://wxt.dev
 - **Used by**: TurboStarter (`~/Git/turbostarter/core/apps/extension/`)
-
-**Why WXT over alternatives**:
 
 | Feature | WXT | Plasmo | Vanilla MV3 |
 |---------|-----|--------|-------------|
@@ -43,26 +40,15 @@ tools:
 ## Quick Start
 
 ```bash
-# Create new project
-npx wxt@latest init my-extension
-# Choose: React, Vue, Svelte, Solid, or Vanilla
+npx wxt@latest init my-extension    # Choose: React, Vue, Svelte, Solid, Vanilla
+cd my-extension && npm install
 
-cd my-extension
-npm install
-
-# Development (Chrome with HMR)
-npm run dev
-
-# Development (Firefox)
-npm run dev:firefox
-
-# Production build
-npm run build           # Chrome MV3
-npm run build:firefox   # Firefox MV2/MV3
-
-# Package for store submission
-npm run zip             # Creates .zip for Chrome Web Store
-npm run zip:firefox     # Creates .zip for Firefox Add-ons
+npm run dev              # Dev with HMR (Chrome)
+npm run dev:firefox      # Dev (Firefox)
+npm run build            # Production (Chrome MV3)
+npm run build:firefox    # Production (Firefox MV2/MV3)
+npm run zip              # Package for Chrome Web Store
+npm run zip:firefox      # Package for Firefox Add-ons
 ```
 
 ## Project Structure
@@ -70,28 +56,17 @@ npm run zip:firefox     # Creates .zip for Firefox Add-ons
 ```text
 my-extension/
 ├── wxt.config.ts              # WXT configuration
-├── package.json
-├── tsconfig.json
 ├── entrypoints/               # Auto-discovered entry points
 │   ├── background.ts          # Service worker
 │   ├── content.ts             # Content script (or content/index.ts)
-│   ├── popup/                 # Popup UI
-│   │   ├── index.html
-│   │   └── main.tsx
+│   ├── popup/                 # Popup UI (index.html + main.tsx)
 │   ├── options/               # Options page
-│   │   ├── index.html
-│   │   └── main.tsx
 │   ├── sidepanel/             # Side panel (Chrome 114+)
-│   │   ├── index.html
-│   │   └── main.tsx
 │   └── newtab/                # New tab override
-│       ├── index.html
-│       └── main.tsx
 ├── components/                # Shared components
 ├── hooks/                     # Shared hooks
 ├── utils/                     # Shared utilities
-├── assets/                    # Static assets
-│   └── icon.png               # Extension icon
+├── assets/                    # Static assets (icon.png)
 └── public/                    # Copied to output as-is
 ```
 
@@ -102,44 +77,31 @@ my-extension/
 import { defineConfig } from 'wxt';
 
 export default defineConfig({
-  // UI framework
   modules: ['@wxt-dev/module-react'],  // or vue, svelte, solid
-
-  // Manifest configuration
   manifest: {
     name: 'My Extension',
     description: 'A great extension',
     permissions: ['storage', 'activeTab'],
     host_permissions: ['https://api.example.com/*'],
   },
-
-  // Build targets
-  // WXT auto-generates correct manifest for each browser
   runner: {
     startUrls: ['https://example.com'],  // Open on dev start
   },
 });
 ```
 
-## Entrypoint Configuration
+## Entrypoints
 
-Each entrypoint file exports configuration via `defineBackground`, `defineContentScript`, etc.:
+Each entrypoint exports config via `defineBackground`, `defineContentScript`, etc.
 
 ### Background (Service Worker)
 
 ```typescript
 // entrypoints/background.ts
 export default defineBackground(() => {
-  console.log('Extension started');
-
-  // Listen for messages
   browser.runtime.onMessage.addListener((message, sender) => {
-    if (message.type === 'getData') {
-      return fetchData(message.url);
-    }
+    if (message.type === 'getData') return fetchData(message.url);
   });
-
-  // Alarms for periodic tasks
   browser.alarms.create('sync', { periodInMinutes: 30 });
   browser.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === 'sync') syncData();
@@ -150,14 +112,12 @@ export default defineBackground(() => {
 ### Content Script
 
 ```typescript
-// entrypoints/content.ts
+// entrypoints/content.ts — basic injection
 export default defineContentScript({
   matches: ['https://*.example.com/*'],
   runAt: 'document_idle',
-
   main() {
     console.log('Content script loaded on', window.location.href);
-    // Modify page, inject UI, etc.
   },
 });
 ```
@@ -165,14 +125,13 @@ export default defineContentScript({
 ### Content Script with UI (Shadow DOM)
 
 ```typescript
-// entrypoints/content/index.tsx
+// entrypoints/content/index.tsx — with React UI in shadow DOM
 import ReactDOM from 'react-dom/client';
 import App from './App';
 
 export default defineContentScript({
   matches: ['https://*.example.com/*'],
   cssInjectionMode: 'ui',
-
   async main(ctx) {
     const ui = await createShadowRootUi(ctx, {
       name: 'my-extension-ui',
@@ -183,9 +142,7 @@ export default defineContentScript({
         root.render(<App />);
         return root;
       },
-      onRemove: (root) => {
-        root?.unmount();
-      },
+      onRemove: (root) => root?.unmount(),
     });
     ui.mount();
   },
@@ -194,13 +151,12 @@ export default defineContentScript({
 
 ## Storage
 
-WXT provides a typed storage API:
+Typed storage API with sync/local/session areas:
 
 ```typescript
 // utils/storage.ts
 import { storage } from 'wxt/storage';
 
-// Define typed storage items
 export const userPreferences = storage.defineItem<{
   theme: 'light' | 'dark';
   notifications: boolean;
@@ -208,19 +164,15 @@ export const userPreferences = storage.defineItem<{
   fallback: { theme: 'light', notifications: true },
 });
 
-// Usage
+// Usage: getValue, setValue, watch
 const prefs = await userPreferences.getValue();
 await userPreferences.setValue({ theme: 'dark', notifications: true });
-
-// Watch for changes
-userPreferences.watch((newValue) => {
-  console.log('Preferences changed:', newValue);
-});
+userPreferences.watch((newValue) => console.log('Changed:', newValue));
 ```
 
 ## Messaging
 
-Type-safe messaging between extension contexts:
+Type-safe messaging between extension contexts via `@webext-core/messaging`:
 
 ```typescript
 // utils/messaging.ts
@@ -230,33 +182,15 @@ interface ProtocolMap {
   getData: (url: string) => { data: string };
   getTab: () => { tabId: number };
 }
-
 export const { sendMessage, onMessage } = defineExtensionMessaging<ProtocolMap>();
 
-// Background handler
-onMessage('getData', async ({ data: url }) => {
-  const response = await fetch(url);
-  return { data: await response.text() };
-});
-
-// Content script / popup caller
-const result = await sendMessage('getData', 'https://api.example.com/data');
+// Background: onMessage('getData', async ({ data: url }) => { ... });
+// Caller:     const result = await sendMessage('getData', 'https://api.example.com/data');
 ```
 
 ## Cross-Browser
 
-WXT automatically handles browser differences:
-
-- Uses `browser` namespace (auto-polyfilled for Chrome)
-- Generates correct manifest format per browser
-- Handles MV2 vs MV3 differences
-- Conditional code via `import.meta.env.BROWSER`:
-
-```typescript
-if (import.meta.env.BROWSER === 'firefox') {
-  // Firefox-specific code
-}
-```
+WXT handles browser differences automatically: `browser` namespace (auto-polyfilled for Chrome), correct manifest format per browser, MV2/MV3 differences. Conditional code: `import.meta.env.BROWSER === 'firefox'`.
 
 ## Build Commands
 
