@@ -23,61 +23,18 @@ tools:
 - **Config**: `configs/uncloud-config.json`
 - **Script**: `.agents/scripts/uncloud-helper.sh`
 - **Docs**: https://uncloud.run/docs
-- **Source**: https://github.com/psviderski/uncloud (Apache-2.0, 4.6k stars, Go)
+- **Source**: https://github.com/psviderski/uncloud (Apache-2.0, Go)
 - **Status**: Active development, not yet production-ready (v0.16.0 as of Jan 2026)
-- **Commands**: `status|machines|services|deploy|run|scale|logs|exec|inspect|volumes|dns|caddy|help`
-- **Usage**: `./.agents/scripts/uncloud-helper.sh [command] [args]`
-
-**Key features**: WireGuard mesh networking, Docker Compose format, no control plane, Caddy reverse proxy with auto HTTPS, Unregistry (registryless image push), managed DNS (*.uncld.dev), rolling deployments.
+- **Stack**: Docker + WireGuard mesh + Corrosion (CRDT SQLite) + Caddy (auto HTTPS)
+- **Key features**: No control plane, Docker Compose format, Unregistry (registryless image push), managed DNS (*.uncld.dev), rolling deployments
 
 <!-- AI-CONTEXT-END -->
 
-Uncloud is a lightweight clustering and container orchestration tool that deploys and manages containerised applications across a network of Docker hosts. It bridges the gap between Docker Compose and Kubernetes.
-
-## Provider Overview
-
-### Characteristics
-
-- **Deployment Type**: Multi-machine container orchestration
-- **Technology**: Docker containers + WireGuard mesh + distributed SQLite (Corrosion)
-- **Format**: Docker Compose files (compose.yaml)
-- **Networking**: Automatic WireGuard mesh with peer discovery and NAT traversal
-- **Proxy**: Built-in Caddy reverse proxy with auto HTTPS (Let's Encrypt)
-- **Architecture**: Decentralised, no control plane, no quorum
-- **DNS**: Managed `*.uncld.dev` subdomains or custom domains
-- **Images**: Direct push via Unregistry (no external registry needed)
-- **Footprint**: ~150 MB RAM per machine daemon
-
-### Best Use Cases
-
-- **Multi-machine deployments** across cloud VMs, bare metal, hybrid setups
-- **Outgrowing Docker Compose** with zero-downtime deployments and replicas
-- **Self-hosting and homelabs** with simple scaling
-- **Edge computing** with machines in different locations/providers
-- **Dev/staging environments** mirroring production
-- **Agencies** hosting multiple client projects on shared infrastructure
-
-### Comparison with Other Providers
-
-| Provider | Type | Best For |
-|----------|------|----------|
-| Coolify | Self-hosted PaaS | Single-server apps, managed UI experience |
-| Vercel | Serverless | Static sites, JAMstack, Next.js |
-| Cloudron | Self-hosted PaaS | App store experience, managed updates |
-| **Uncloud** | **Multi-machine orchestration** | **Cross-server deployments, Docker clusters** |
-
 ## Configuration
 
-### Setup Configuration
-
 ```bash
-# Copy template
 cp configs/uncloud-config.json.txt configs/uncloud-config.json
-
-# Edit with your cluster details
 ```
-
-### Cluster Configuration
 
 ```json
 {
@@ -99,19 +56,13 @@ cp configs/uncloud-config.json.txt configs/uncloud-config.json
 
 ## Installation
 
-### CLI Installation
-
 ```bash
 # macOS/Linux via Homebrew
 brew install psviderski/tap/uncloud
 
 # macOS/Linux via curl
 curl -fsS https://get.uncloud.run/install.sh | sh
-```
 
-### Cluster Initialisation
-
-```bash
 # Initialise first machine (installs Docker, uncloudd, WireGuard)
 uc machine init root@your-server-ip
 
@@ -122,121 +73,74 @@ uc machine add --name web-2 root@second-server-ip
 uc machine ls
 ```
 
-## Usage Examples
+## Usage
 
-### Service Management
+### Services
 
 ```bash
-# Run a service from a Docker image
-uc run -p app.example.com:8000/https image/my-app
-
-# Deploy from a compose.yaml file
-uc deploy
-
-# List services
-uc ls
-
-# View service logs
-uc logs my-service
-
-# Execute command in a service container
-uc exec my-service -- sh
-
-# Scale a service
-uc scale my-service 3
-
-# Stop/start services
-uc stop my-service
-uc start my-service
-
-# Remove a service
-uc rm my-service
+uc run -p app.example.com:8000/https image/my-app   # Run from image
+uc deploy                                             # Deploy from compose.yaml
+uc ls                                                 # List services
+uc logs my-service                                    # View logs
+uc exec my-service -- sh                              # Shell into container
+uc scale my-service 3                                 # Scale replicas
+uc stop my-service                                    # Stop
+uc start my-service                                   # Start
+uc rm my-service                                      # Remove
 ```
 
-### Machine Management
+### Machines
 
 ```bash
-# List machines in cluster
-uc machine ls
-
-# Add a machine
-uc machine add --name node-3 root@third-server-ip
-
-# Rename a machine
-uc machine rename old-name new-name
-
-# Remove a machine
-uc machine rm node-3
-
-# Update machine configuration
-uc machine update node-1 --ssh root@new-ip
+uc machine ls                                         # List
+uc machine add --name node-3 root@third-server-ip     # Add
+uc machine rename old-name new-name                   # Rename
+uc machine rm node-3                                  # Remove
+uc machine update node-1 --ssh root@new-ip            # Update config
 ```
 
-### Image Management (Unregistry)
+### Images (Unregistry)
 
 ```bash
-# Push a local Docker image directly to cluster machines (no registry needed)
-uc image push my-app:latest
-
-# List images on cluster machines
-uc image ls
+uc image push my-app:latest                           # Push directly (no registry)
+uc image ls                                           # List on cluster
 ```
 
-### DNS Management
+### DNS
 
 ```bash
-# Show cluster domain
-uc dns show
-
-# Reserve a cluster domain
-uc dns reserve
-
-# Release a cluster domain
-uc dns release
+uc dns show                                           # Show cluster domain
+uc dns reserve                                        # Reserve *.uncld.dev domain
+uc dns release                                        # Release domain
 ```
 
 ### Caddy Reverse Proxy
 
 ```bash
-# Show current Caddy configuration
-uc caddy config
-
-# Deploy/upgrade Caddy across all machines
-uc caddy deploy
+uc caddy config                                       # Show config
+uc caddy deploy                                       # Deploy/upgrade across machines
 ```
 
-### Volume Management
+### Volumes
 
 ```bash
-# Create a volume on a specific machine
-uc volume create my-data --machine web-1
-
-# List volumes
-uc volume ls
-
-# Inspect a volume
-uc volume inspect my-data
-
-# Remove a volume
-uc volume rm my-data
+uc volume create my-data --machine web-1              # Create on specific machine
+uc volume ls                                          # List
+uc volume inspect my-data                             # Inspect
+uc volume rm my-data                                  # Remove
 ```
 
-### Context Management (Multi-Cluster)
+### Contexts (Multi-Cluster)
 
 ```bash
-# List cluster contexts
-uc ctx ls
-
-# Switch to a different cluster
-uc ctx use staging
-
-# Change default connection for current context
-uc ctx connection
+uc ctx ls                                             # List clusters
+uc ctx use staging                                    # Switch cluster
+uc ctx connection                                     # Change default connection
 ```
 
 ## Compose File
 
-Uncloud uses standard Docker Compose format with deployment extensions:
+Standard Docker Compose format with deployment extensions:
 
 ```yaml
 services:
@@ -260,104 +164,62 @@ volumes:
 
 ```yaml
 ports:
-  # HTTPS with custom domain
-  - "app.example.com:8000/https"
-  # HTTP only
-  - "app.example.com:8000/http"
-  # TCP port (host:container)
-  - "8080:8000/tcp"
-  # UDP port
-  - "53:53/udp"
+  - "app.example.com:8000/https"    # HTTPS with custom domain
+  - "app.example.com:8000/http"     # HTTP only
+  - "8080:8000/tcp"                 # TCP (host:container)
+  - "53:53/udp"                     # UDP
 ```
 
 ## Helper Script
 
-The `uncloud-helper.sh` script wraps common `uc` CLI operations:
+`.agents/scripts/uncloud-helper.sh` wraps common `uc` operations:
 
 ```bash
-# Check cluster status
 ./.agents/scripts/uncloud-helper.sh status
-
-# List machines
 ./.agents/scripts/uncloud-helper.sh machines
-
-# List services
 ./.agents/scripts/uncloud-helper.sh services
-
-# Deploy from compose.yaml
 ./.agents/scripts/uncloud-helper.sh deploy
-
-# Run a service
 ./.agents/scripts/uncloud-helper.sh run my-app:latest -p app.example.com:8000/https
-
-# View logs
 ./.agents/scripts/uncloud-helper.sh logs my-service
-
-# Scale a service
 ./.agents/scripts/uncloud-helper.sh scale my-service 3
 ```
 
 ## Troubleshooting
 
-### Common Issues
-
 **Machine init fails:**
 
 ```bash
-# Verify SSH access
-ssh root@your-server-ip 'echo ok'
-
-# Check Docker is running
-ssh root@your-server-ip 'docker info'
-
-# Check uncloudd service
-ssh root@your-server-ip 'systemctl status uncloud'
+ssh root@your-server-ip 'echo ok'              # Verify SSH
+ssh root@your-server-ip 'docker info'           # Check Docker
+ssh root@your-server-ip 'systemctl status uncloud'  # Check daemon
 ```
 
 **Services not accessible:**
 
 ```bash
-# Check service status
-uc ls
-uc inspect my-service
-
-# Check Caddy config
-uc caddy config
-
-# Check WireGuard connectivity
-uc wg show
-
-# Verify DNS
-dig app.example.com
+uc ls && uc inspect my-service                  # Service status
+uc caddy config                                 # Caddy config
+uc wg show                                      # WireGuard connectivity
+dig app.example.com                             # DNS resolution
 ```
 
 **Container networking issues:**
 
 ```bash
-# Check WireGuard mesh
-uc wg show
-
-# Verify machine connectivity
-uc machine ls
-
-# Check container IPs
-uc ps
+uc wg show                                      # WireGuard mesh
+uc machine ls                                   # Machine connectivity
+uc ps                                           # Container IPs
 ```
 
-### Uninstalling
-
-```bash
-# Uninstall Uncloud from a machine (run on the machine)
-uncloud-uninstall
-```
+**Uninstall:** Run `uncloud-uninstall` on the target machine.
 
 ## Security
 
-- **WireGuard encryption**: All inter-machine traffic encrypted
-- **SSH-based management**: CLI communicates via SSH tunnels
-- **No exposed ports**: Only SSH (22), HTTP (80), HTTPS (443), WireGuard (51820) needed
-- **Container isolation**: Standard Docker container isolation
-- **Auto HTTPS**: Let's Encrypt certificates via Caddy
+- All inter-machine traffic encrypted via WireGuard
+- CLI communicates via SSH tunnels
+- Only SSH (22), HTTP (80), HTTPS (443), WireGuard (51820) exposed
+- Auto HTTPS via Let's Encrypt (Caddy)
+- Standard Docker container isolation
 
 ## Architecture
 
@@ -382,7 +244,7 @@ Local Machine                    Remote Machines
                                  +------------------+
 ```
 
-- **uncloudd**: Machine daemon (Go binary) managing containers and cluster state
+- **uncloudd**: Machine daemon (Go) managing containers and cluster state
 - **corrosion**: CRDT-based distributed SQLite for peer-to-peer state sync (by Fly.io)
-- **WireGuard**: Encrypted mesh network with automatic peer discovery
-- **Caddy**: Reverse proxy running globally on all machines, auto-configures from cluster state
+- **WireGuard**: Encrypted mesh with automatic peer discovery
+- **Caddy**: Reverse proxy on all machines, auto-configures from cluster state
