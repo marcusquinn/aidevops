@@ -76,19 +76,15 @@ block-beta
 
 Software architecture using the C4 model (Context, Container, Component, Code).
 
-| Type | Declaration | Level |
-|------|-------------|-------|
-| Context | `C4Context` | 1 — Highest |
-| Container | `C4Container` | 2 |
-| Component | `C4Component` | 3 |
-| Dynamic | `C4Dynamic` | Interactions |
-| Deployment | `C4Deployment` | Infrastructure |
+**Diagram types:** `C4Context` (L1), `C4Container` (L2), `C4Component` (L3), `C4Dynamic` (interactions), `C4Deployment` (infrastructure)
 
 **Elements:** `Person(alias, label, desc)`, `Person_Ext`, `System`, `System_Ext`, `SystemDb`, `SystemQueue`, `Boundary`, `System_Boundary`, `Enterprise_Boundary`, `Container(alias, label, tech, desc)`, `Container_Ext`, `ContainerDb`, `ContainerQueue`, `Container_Boundary`, `Deployment_Node(alias, label, tech) { ... }`
+
 **Relationships:** `Rel(from, to, label[, tech])`, `BiRel()`, `Rel_U/D/L/R()`, `Rel_Back()`
+
 **Styling:** `UpdateElementStyle(alias, $fontColor, $bgColor)`, `UpdateRelStyle(from, to, $textColor, $lineColor)`
 
-### C4Context
+### Context + Container
 
 ```mermaid
 C4Context
@@ -99,8 +95,6 @@ C4Context
     Rel(user, system, "Uses")
     Rel(system, email, "Sends emails")
 ```
-
-### C4Container
 
 ```mermaid
 C4Container
@@ -118,7 +112,7 @@ C4Container
     Rel(api, queue, "Publishes", "AMQP")
 ```
 
-### C4Dynamic
+### Dynamic + Deployment
 
 ```mermaid
 C4Dynamic
@@ -130,8 +124,6 @@ C4Dynamic
     Rel(api, db, "2. Insert order")
     Rel(api, user, "3. Order created")
 ```
-
-### C4Deployment
 
 ```mermaid
 C4Deployment
@@ -164,9 +156,7 @@ kanban
         task3[Project setup]
 ```
 
-**Metadata keys:** `ticket`, `assigned`, `priority`
-
-**Config:** `ticketBaseUrl` links tickets — `'https://jira.example.com/browse/#TICKET#'` in `config.kanban`.
+**Metadata:** `ticket`, `assigned`, `priority`. Config `ticketBaseUrl` in `config.kanban` links tickets — `'https://jira.example.com/browse/#TICKET#'`.
 
 ## Packet Diagrams
 
