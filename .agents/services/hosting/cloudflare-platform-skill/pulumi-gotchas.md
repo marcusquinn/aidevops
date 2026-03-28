@@ -2,59 +2,26 @@
 
 ## Common Errors
 
-**1. Account ID Missing**
-
-```
-error: Missing required property 'accountId'
-```
-
-Solution: Add to config or pass explicitly.
-
-**2. Binding Name Mismatch**
-Worker expects `MY_KV` but binding uses different name.
-Solution: Match binding names in Pulumi and worker code.
-
-**3. Resource Not Found**
-
-```
-error: resource 'abc123' not found
-```
-
-Solution: Ensure resources exist in correct account/zone.
-
-**4. API Token Permissions**
-Solution: Verify token has required permissions (Workers, KV, R2, etc.).
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `Missing required property 'accountId'` | Account ID not set | Add to stack config or pass explicitly |
+| Binding name mismatch | Worker expects `MY_KV` but binding differs | Match binding names in Pulumi and worker code |
+| `resource 'abc123' not found` | Resource missing in account/zone | Ensure resource exists in correct account/zone |
+| API token permissions error | Token lacks required scopes | Verify token has Workers, KV, R2, D1 permissions |
 
 ## Debugging
 
-**Enable verbose logging:**
-
 ```bash
-pulumi up --logtostderr -v=9
-```
-
-**Preview changes:**
-
-```bash
-pulumi preview
-```
-
-**View resource state:**
-
-```bash
-pulumi stack export
-```
-
-**Inspect specific resource:**
-
-```bash
+pulumi up --logtostderr -v=9   # verbose logging
+pulumi preview                  # preview changes
+pulumi stack export             # view resource state
 pulumi stack --show-urns
-pulumi state delete <urn> # Use with caution
+pulumi state delete <urn>       # use with caution
 ```
 
 ## Best Practices
 
-### 1. Use Stack Configuration
+### Stack Configuration
 
 ```yaml
 # Pulumi.<stack>.yaml
@@ -66,7 +33,7 @@ config:
   app:zoneId: "xyz789"
 ```
 
-### 2. Explicit Provider Configuration
+### Explicit Provider Configuration
 
 ```typescript
 const devProvider = new cloudflare.Provider("dev", {apiToken: devToken});
@@ -75,27 +42,23 @@ const prodProvider = new cloudflare.Provider("prod", {apiToken: prodToken});
 const devWorker = new cloudflare.WorkerScript("dev-worker", {
     accountId: devAccountId, name: "worker", content: code,
 }, {provider: devProvider});
-
-const prodWorker = new cloudflare.WorkerScript("prod-worker", {
-    accountId: prodAccountId, name: "worker", content: code,
-}, {provider: prodProvider});
 ```
 
-### 3. Resource Naming Conventions
+### Resource Naming
 
 ```typescript
 const stack = pulumi.getStack();
 const kv = new cloudflare.WorkersKvNamespace(`${stack}-kv`, {accountId, title: `${stack}-my-kv`});
 ```
 
-### 4. Protect Production Resources
+### Protect Production Resources
 
 ```typescript
-const prodDb = new cloudflare.D1Database("prod-db", {accountId, name: "production-database"}, 
-    {protect: true}); // Cannot delete without removing protect
+const prodDb = new cloudflare.D1Database("prod-db", {accountId, name: "production-database"},
+    {protect: true});
 ```
 
-### 5. Use dependsOn for Ordering
+### Dependency Ordering
 
 ```typescript
 const migration = new command.local.Command("migration", {
@@ -105,20 +68,7 @@ const migration = new command.local.Command("migration", {
 const worker = new cloudflare.WorkerScript("worker", {
     accountId, name: "worker", content: code,
     d1DatabaseBindings: [{name: "DB", databaseId: db.id}],
-}, {dependsOn: [migration]}); // Ensure migrations run first
-```
-
-### 6. Resource Tagging Pattern
-
-```typescript
-function createResource(name: string, type: string) {
-    const stack = pulumi.getStack();
-    const fullName = `${stack}-${type}-${name}`;
-    return new cloudflare.WorkersKvNamespace(fullName, {accountId, title: fullName});
-}
-
-const userCache = createResource("user-cache", "kv");
-const sessionCache = createResource("session-cache", "kv");
+}, {dependsOn: [migration]});
 ```
 
 ## Security
@@ -127,7 +77,7 @@ const sessionCache = createResource("session-cache", "kv");
 
 ```typescript
 const config = new pulumi.Config();
-const apiKey = config.requireSecret("apiKey"); // Encrypted in state
+const apiKey = config.requireSecret("apiKey");
 
 const worker = new cloudflare.WorkerScript("worker", {
     accountId, name: "my-worker", content: code,
@@ -135,22 +85,13 @@ const worker = new cloudflare.WorkerScript("worker", {
 });
 ```
 
-**Store secrets:**
-
 ```bash
 pulumi config set --secret apiKey "secret-value"
-```
-
-**Use environment variables:**
-
-```bash
 export CLOUDFLARE_API_TOKEN="..."
-pulumi up
 ```
 
-### API Token Scopes
+### API Token Scopes (minimal permissions)
 
-Create tokens with minimal permissions:
 - Workers: `Workers Routes:Edit`, `Workers Scripts:Edit`
 - KV: `Workers KV Storage:Edit`
 - R2: `R2:Edit`
@@ -166,21 +107,9 @@ Create tokens with minimal permissions:
 
 ## Performance
 
-### Reduce State Size
-
-- Avoid storing large files in state
-- Use `ignoreChanges` for frequently changing properties
-- Use external build processes
-
-### Parallel Updates
-
-Pulumi automatically parallelizes independent resource updates.
-
-### Refresh Strategy
-
-```bash
-pulumi refresh --yes # Sync state with actual infrastructure
-```
+- Avoid storing large files in state; use `ignoreChanges` for frequently changing properties
+- Pulumi automatically parallelizes independent resource updates
+- `pulumi refresh --yes` — sync state with actual infrastructure
 
 ## Migration
 
@@ -192,16 +121,9 @@ pulumi import cloudflare:index/workersKvNamespace:WorkersKvNamespace my-kv <name
 pulumi import cloudflare:index/r2Bucket:R2Bucket my-bucket <account_id>/<bucket_name>
 ```
 
-### From Terraform
+### From Terraform / Wrangler
 
-Use `pulumi import` and rewrite configs in Pulumi DSL.
-
-### From Wrangler
-
-1. Create Pulumi resources matching wrangler.toml
-2. Import existing resources
-3. Verify with `pulumi preview`
-4. Switch to Pulumi for deployments
+Use `pulumi import` and rewrite configs in Pulumi DSL. For wrangler.toml: create matching Pulumi resources, import, verify with `pulumi preview`, then switch deployments.
 
 ## CI/CD
 
@@ -240,11 +162,7 @@ deploy:
 
 ## Resources
 
-- **Pulumi Registry:** https://www.pulumi.com/registry/packages/cloudflare/
-- **API Docs:** https://www.pulumi.com/registry/packages/cloudflare/api-docs/
-- **GitHub:** https://github.com/pulumi/pulumi-cloudflare
-- **Cloudflare Docs:** https://developers.cloudflare.com/
-- **Workers Docs:** https://developers.cloudflare.com/workers/
-
----
-See: [README.md](./README.md), [patterns.md](./patterns.md)
+- [Pulumi Registry](https://www.pulumi.com/registry/packages/cloudflare/)
+- [API Docs](https://www.pulumi.com/registry/packages/cloudflare/api-docs/)
+- [GitHub](https://github.com/pulumi/pulumi-cloudflare)
+- [Cloudflare Workers Docs](https://developers.cloudflare.com/workers/)
