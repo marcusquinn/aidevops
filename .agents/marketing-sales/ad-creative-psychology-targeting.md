@@ -10,7 +10,16 @@ Loss aversion is 2-3x more powerful than gain attraction.
 
 **Triggers:** FOMO, losing money/status/time, being left behind, future regret, security threats
 **Headlines:** "Stop Losing $5K/Month to This Common Mistake" | "Your Competitors Are Using This. Are You?"
-**Framework:** [IDENTIFY LOSS] "Every day you don't optimize your ads, you're burning money." → [QUANTIFY] "Our average client was wasting $8,500/month before finding us." → [AMPLIFY] "That's $102,000 per year. What could you do with an extra $100K?" → [SOLUTION] "One audit fixes it. Free for the next 10 people who book." → [URGENCY] "7 of 10 slots already claimed. Book now or wait 4 weeks."
+**Framework:**
+
+```text
+[IDENTIFY LOSS]: "Every day you don't optimize your ads, you're burning money."
+[QUANTIFY LOSS]: "Our average client was wasting $8,500/month before finding us."
+[AMPLIFY CONSEQUENCES]: "That's $102,000 per year. What could you do with an extra $100K?"
+[PRESENT SOLUTION]: "One audit fixes it. Free for the next 10 people who book."
+[URGENCY]: "7 of 10 slots already claimed. Book now or wait 4 weeks."
+```
+
 **Best for:** Problem-aware audiences, competitive markets, B2B, security/insurance. **Caution:** Balance fear with hope/solution.
 
 #### 2. GREED (Desire for Gain)
@@ -19,7 +28,16 @@ Promise specific gains, show ROI/return multiples, demonstrate value multiplicat
 
 **Triggers:** Making money, getting more for less, exclusive access, status elevation, competitive advantage
 **Headlines:** "Turn $1,000 Into $10,000 in 90 Days" | "Get 5X More Leads at Half the Cost"
-**Framework:** [CURRENT STATE] "You're spending $10K/month on ads." → [MULTIPLY] "What if you could get the same results for $4K/month?" → [QUANTIFY] "That's $72,000 saved per year." → [PATH] "Our clients average 58% cost reduction in 60 days." → [OFFER] "Free audit shows you exactly where you're overpaying."
+**Framework:**
+
+```text
+[CURRENT STATE]: "You're spending $10K/month on ads."
+[MULTIPLY OUTCOME]: "What if you could get the same results for $4K/month?"
+[QUANTIFY GAIN]: "That's $72,000 saved per year."
+[SHOW PATH]: "Our clients average 58% cost reduction in 60 days."
+[MAKE OFFER]: "Free audit shows you exactly where you're overpaying."
+```
+
 **Best for:** Financial products, business tools, discount promotions. **Caution:** Must be believable with proof.
 
 #### 3. CURIOSITY (Gap Theory)
@@ -28,7 +46,16 @@ Create incomplete information, tease surprising insights, contradict common beli
 
 **Triggers:** Secrets/insider knowledge, surprising data, "what nobody tells you," contradictions
 **Headlines:** "The One Thing Top Advertisers Do (That You Don't)" | "Why Your Best-Performing Ad is Actually Losing You Money"
-**Framework:** [CREATE GAP] "There's a reason 93% of Facebook ads fail. But it's not what you think." → [AMPLIFY] "It's not your targeting. Not your budget. Not even your product." → [TEASE] "It's something so simple, most advertisers completely overlook it." → [REVEAL] "I'll show you exactly what it is in this free training." → [CTA] "Register now - spots limited to 100 people."
+**Framework:**
+
+```text
+[CREATE GAP]: "There's a reason 93% of Facebook ads fail. But it's not what you think."
+[AMPLIFY]: "It's not your targeting. Not your budget. Not even your product."
+[TEASE ANSWER]: "It's something so simple, most advertisers completely overlook it."
+[PROMISE REVEAL]: "I'll show you exactly what it is in this free training."
+[CTA]: "Register now - spots limited to 100 people."
+```
+
 **Best for:** Cold audiences, educational content, lead magnets, thought leadership. **Caution:** Must deliver (no bait-and-switch).
 
 #### 4. VANITY (Self-Image & Status)
@@ -37,7 +64,16 @@ Appeal to ideal self, connect to identity, offer status symbols, enable transfor
 
 **Triggers:** Physical appearance, social status, intelligence/sophistication, exclusivity/VIP, before/after transformations
 **Headlines:** "Look 10 Years Younger in 30 Days" | "Join the Top 1% of [Profession]"
-**Framework:** [CURRENT SELF] "You're good at what you do. But 'good' isn't enough anymore." → [DESIRED SELF] "The leaders in your industry use tools you don't have access to. Yet." → [GAP] "The difference between you and them? One certification." → [TRANSFORMATION] "Add 'Google Ads Certified' to your LinkedIn. Watch inquiries double." → [CTA] "Join 47,000 certified professionals. Spots open now."
+**Framework:**
+
+```text
+[CURRENT SELF]: "You're good at what you do. But 'good' isn't enough anymore."
+[DESIRED SELF]: "The leaders in your industry use tools you don't have access to. Yet."
+[GAP]: "The difference between you and them? One certification."
+[TRANSFORMATION]: "Add 'Google Ads Certified' to your LinkedIn. Watch inquiries double."
+[CTA]: "Join 47,000 certified professionals. Spots open now."
+```
+
 **Best for:** Beauty/fitness/fashion, luxury goods, professional development. **Caution:** Aspirational, not superficial. Don't shame current state.
 
 #### 5. BELONGING (Tribal Identity)
@@ -46,7 +82,16 @@ Create in-group/out-group dynamics, show social proof, build community language.
 
 **Triggers:** Community membership, shared values, exclusive groups, movement participation, peer approval
 **Headlines:** "Join 50,000 Marketers Who Refuse to Overpay for Ads" | "Finally, a [Product] for [Type of Person]"
-**Framework:** [IN-GROUP] "There are two types of business owners..." → [TRIBE] "Those who chase every shiny tactic. And those who build systems that work." → [CONTRAST] "The first group is exhausted. The second grows predictably, month after month." → [INVITATION] "If you're ready to join the second group, this is for you." → [PROOF] "5,200 members. All building sustainable businesses."
+**Framework:**
+
+```text
+[IDENTIFY IN-GROUP]: "There are two types of business owners..."
+[DESCRIBE TRIBE]: "Those who chase every shiny tactic. And those who build systems that work."
+[CONTRAST]: "The first group is exhausted. The second grows predictably, month after month."
+[INVITATION]: "If you're ready to join the second group, this is for you."
+[COMMUNITY PROOF]: "5,200 members. All building sustainable businesses."
+```
+
 **Best for:** Community-driven products, subscriptions, movements/causes, niche/lifestyle brands. **Caution:** Positive community, not out-group hate.
 
 #### 6. PRIDE (Achievement & Accomplishment)
@@ -55,7 +100,16 @@ Celebrate accomplishments, enable skill mastery, show progression paths.
 
 **Triggers:** Skill acquisition, goal achievement, milestone completion, recognition/awards, mastery
 **Headlines:** "Build Something You're Proud Of" | "From Zero to Expert in 90 Days"
-**Framework:** [EFFORT] "You've been working hard. Showing up. Putting in the hours." → [AFFIRM] "You have what it takes. You just need the right system." → [ACHIEVEMENT] "Imagine launching your first profitable campaign. Knowing you built this." → [PATH] "Our step-by-step program takes you from setup to profit." → [CELEBRATE] "Join 3,000+ students who've launched their first profitable campaign."
+**Framework:**
+
+```text
+[RECOGNIZE EFFORT]: "You've been working hard. Showing up. Putting in the hours."
+[AFFIRM CAPABILITY]: "You have what it takes. You just need the right system."
+[PAINT ACHIEVEMENT]: "Imagine launching your first profitable campaign. Knowing you built this."
+[ENABLE PATH]: "Our step-by-step program takes you from setup to profit."
+[CELEBRATE]: "Join 3,000+ students who've launched their first profitable campaign."
+```
+
 **Best for:** Education/courses, skill development, fitness, creative tools. **Caution:** Celebrate effort, not just outcome.
 
 #### 7. ANGER/FRUSTRATION (Justified Rebellion)
@@ -64,7 +118,16 @@ Channel existing frustration with the status quo toward your alternative.
 
 **Triggers:** Industry problems, unfair practices, wasted time/money, being taken advantage of, broken promises
 **Headlines:** "Tired of Agencies That Don't Deliver?" | "It Shouldn't Be This Hard to [Achieve Goal]"
-**Framework:** [VALIDATE] "You're right to be frustrated. You've tried 3 agencies. Each one failed." → [PROBLEM] "Most agencies optimize for their profit, not your results." → [CHANNEL] "We started because we were sick of seeing businesses get ripped off." → [ALTERNATIVE] "Our model: we only make money when you make money." → [CTA] "Ready for an agency that's actually on your side?"
+**Framework:**
+
+```text
+[VALIDATE]: "You're right to be frustrated. You've tried 3 agencies. Each one failed."
+[IDENTIFY PROBLEM]: "Most agencies optimize for their profit, not your results."
+[CHANNEL ANGER]: "We started because we were sick of seeing businesses get ripped off."
+[PRESENT ALTERNATIVE]: "Our model: we only make money when you make money."
+[CTA]: "Ready for an agency that's actually on your side?"
+```
+
 **Best for:** Challenger brands, disruptive products, reform-focused services. **Caution:** Validate, don't create anger. Don't attack competitors.
 
 ### Trigger Selection
