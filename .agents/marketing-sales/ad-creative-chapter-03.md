@@ -46,7 +46,7 @@ Educational:      "Here's how to..." / "Stop doing this and start doing that"
 
 ## 3. Google Ads
 
-> **Full reference**: `ad-creative-platform-google.md` — RSA, RDA, Performance Max, YouTube ads (275 lines).
+> **Full reference**: `ad-creative-platform-google.md` — RSA, RDA, Performance Max, YouTube ads (226 lines).
 
 ### Search (Intent-Based)
 
