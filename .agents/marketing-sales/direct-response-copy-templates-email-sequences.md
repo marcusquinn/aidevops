@@ -11,7 +11,7 @@
 
 ## Reusable Patterns
 
-### Pattern: Social Proof
+### Social Proof
 
 ```
 I want to introduce you to [Customer Name].
@@ -24,7 +24,7 @@ The key insight? [What made the difference]
 [CTA — soft or hard depending on sequence stage]
 ```
 
-### Pattern: Objection Handling (Q&A)
+### Objection Handling (Q&A)
 
 ```
 Here are the questions most people have:
@@ -35,7 +35,7 @@ Here are the questions most people have:
 [CTA]
 ```
 
-### Pattern: Urgency / Final Push
+### Urgency / Final Push
 
 ```
 [What's ending] disappear in [timeframe].
@@ -155,9 +155,11 @@ You're in! Fastest way to get value from [Product]:
 P.S. Your trial lasts [X] days. Let's make them count!
 ```
 
-### Email 2: Feature Highlight (Day 2)
+### Emails 2 & 5: Feature Highlight (Day 2, Day 10)
 
-**Subject:** Have you tried [Key Feature] yet?
+**Subject:** Have you tried [Key Feature] yet? / The [Feature] trick most users miss
+
+Send twice during trial — first for the core hook feature, second for a power-user feature most overlook.
 
 ```
 Most [Product] users say [Feature Name] is what hooked them.
@@ -166,6 +168,8 @@ Most [Product] users say [Feature Name] is what hooked them.
 Try it now: [Link directly to feature]
 Not sure how? 2-minute tutorial: [Video link]
 ```
+
+Email 5 variant: include step-by-step (3-4 steps) + screenshot for the power-user feature.
 
 ### Email 3: Social Proof (Day 4)
 
@@ -184,12 +188,6 @@ Things you might not have discovered yet:
 • [Missed feature]  • [Underutilized feature]  • [Pro tip]
 [Log in to [Product] →]
 ```
-
-### Email 5: Feature Highlight #2 (Day 10)
-
-**Subject:** The [Feature] trick most users miss
-
-Same structure as Email 2. Focus on a power-user feature most overlook. Include step-by-step (3-4 steps) + screenshot.
 
 ### Email 6: Trial Ending Soon (Day 12)
 
