@@ -28,36 +28,34 @@ model: sonnet
 
 **Design workflow** (apply in order):
 
-1. **Check brand identity** -- does `brand-identity.md` exist for this project? If yes, use it. If no, run the brand identity interview.
+1. **Check brand identity** -- does `brand-identity.md` exist? If yes, use it. If no, run brand identity interview.
 2. **Consult catalogue** -- check `ui-ux-catalogue.toon` for matching style presets and palettes.
-3. **Check inspiration** -- does the user have reference URLs? If yes, run URL study. If no, present curated examples from `design-inspiration.md`.
-4. **Apply quality gates** -- validate extracted patterns against accessibility (WCAG 2.1 AA), performance (no layout shift from web fonts), and platform conventions (Apple HIG / Material Design).
+3. **Check inspiration** -- user has reference URLs? Run URL study. No URLs? Present curated examples from `design-inspiration.md`.
+4. **Apply quality gates** -- validate against accessibility (WCAG 2.1 AA), performance, and platform conventions.
 
 <!-- AI-CONTEXT-END -->
 
 ## Brand Identity Interview
 
-Run this when a project has no `brand-identity.md` or the user requests a rebrand.
-
-**Goal**: Discover the user's visual preferences through concrete examples rather than abstract questions. People describe what they like poorly but recognise it instantly.
+Run when a project has no `brand-identity.md` or user requests a rebrand. People describe preferences poorly but recognise them instantly — use concrete examples.
 
 ### Step 1: Present Curated Examples
 
-Show 16 example URLs across 4 style categories. The user picks what resonates.
+Show 16 URLs across 4 style categories. User picks what resonates.
 
 **Minimal / Clean**
 
-| Site | Why it's here |
-|------|---------------|
-| https://linear.app | Monochrome palette, generous whitespace, sharp typography |
-| https://notion.so | Neutral tones, content-first layout, subtle UI chrome |
+| Site | Why |
+|------|-----|
+| https://linear.app | Monochrome, generous whitespace, sharp typography |
+| https://notion.so | Neutral tones, content-first, subtle UI chrome |
 | https://stripe.com | Gradient accents on clean white, precise grid |
 | https://vercel.com | Dark-mode-first, monospace accents, developer aesthetic |
 
 **Bold / Expressive**
 
-| Site | Why it's here |
-|------|---------------|
+| Site | Why |
+|------|-----|
 | https://gumroad.com | Saturated colours, playful illustrations, strong CTAs |
 | https://figma.com | Vibrant gradients, rounded shapes, energetic motion |
 | https://pitch.com | Rich colour blocking, editorial typography, confident layout |
@@ -65,17 +63,17 @@ Show 16 example URLs across 4 style categories. The user picks what resonates.
 
 **Editorial / Content-Rich**
 
-| Site | Why it's here |
-|------|---------------|
+| Site | Why |
+|------|-----|
 | https://medium.com | Serif headings, reading-optimised line length, minimal distraction |
-| https://substack.com | Newsletter-native layout, author-centric, typographic hierarchy |
+| https://substack.com | Newsletter-native, author-centric, typographic hierarchy |
 | https://arstechnica.com | Dense information architecture, clear section hierarchy |
 | https://the-pudding.cool | Data-driven storytelling, immersive scroll, custom visualisations |
 
 **Craft / Premium**
 
-| Site | Why it's here |
-|------|---------------|
+| Site | Why |
+|------|-----|
 | https://apple.com | Product-hero imagery, restrained palette, cinematic pacing |
 | https://rapha.cc | Photography-led, muted earth tones, luxury spacing |
 | https://aesop.com | Warm neutrals, serif type, tactile texture |
@@ -83,26 +81,24 @@ Show 16 example URLs across 4 style categories. The user picks what resonates.
 
 ### Step 2: User Selection
 
-Ask the user:
-
 > Which 2-4 of these sites feel closest to what you want? You can also share any other URLs you admire -- they don't need to be in the same industry.
 
 ### Step 3: Extract Patterns from Choices
 
-For each selected URL, run the URL study workflow (below) and then synthesise:
+For each selected URL, run URL study (below) then synthesise:
 
-- **Colour direction**: warm/cool, saturated/muted, light/dark preference
+- **Colour direction**: warm/cool, saturated/muted, light/dark
 - **Typography direction**: serif/sans/mono, tight/loose tracking, heading weight
-- **Layout direction**: dense/spacious, grid/freeform, content-width preference
+- **Layout direction**: dense/spacious, grid/freeform, content-width
 - **Interaction direction**: minimal/animated, subtle/bold transitions
 - **Tone direction**: formal/casual, technical/approachable, minimal/decorative
 
 ### Step 4: Generate Brand Identity
 
-Write findings to `tools/design/brand-identity.md` with:
+Write to `tools/design/brand-identity.md`:
 
 - Primary and secondary colour palette (hex values)
-- Typography stack (font families, sizes, weights, line heights)
+- Typography stack (families, sizes, weights, line heights)
 - Spacing scale (base unit, common multiples)
 - Component style notes (border radius, shadow depth, button style)
 - Tone and voice summary
@@ -111,90 +107,42 @@ Write findings to `tools/design/brand-identity.md` with:
 
 ## URL Study Workflow
 
-Full-render extraction of a single URL using Playwright. Use this for any site the user wants to study.
+Full-render extraction of a single URL using Playwright (`tools/browser/browser-automation.md`).
 
 ### Extraction Checklist
 
-Use Playwright (`tools/browser/browser-automation.md`) to visit the URL and extract:
+For each category, extract computed styles from representative elements:
 
-**Colours**
+**Colours**: backgrounds (primary, secondary, card/surface), text (heading, body, muted), accents (primary action, links, highlights), borders/dividers, gradients, dark mode palette.
 
-- Background colours (primary, secondary, card/surface)
-- Text colours (heading, body, muted/secondary)
-- Accent/brand colours (primary action, links, highlights)
-- Border and divider colours
-- Gradient definitions (if used)
-- Dark mode palette (if the site supports it)
+**Typography**: font families (heading, body, code, UI), sizes (h1-h6, body, small, caption), weights and where used, line heights, letter spacing, text transforms.
 
-**Typography**
+**Layout**: max content width, container padding, grid system (columns, gutter, breakpoints), section spacing, header height/nav pattern, footer structure.
 
-- Font families (heading, body, code/mono, UI/label)
-- Font sizes (h1-h6, body, small, caption)
-- Font weights used (and where each weight appears)
-- Line heights and letter spacing
-- Text transform patterns (uppercase labels, sentence case headings)
+**Buttons and Forms**: button variants (primary, secondary, ghost, destructive) with sizing, radius, and all states (default, hover, active, focus, disabled). Input fields with height, border, padding, placeholder colour, and states (default, focus, error, disabled, filled). Select/dropdown, checkbox/radio styling. Form layout pattern (stacked, inline, floating labels). Validation message styling.
 
-**Layout**
+**Iconography**: library (Lucide, Heroicons, Phosphor, custom SVG), sizing scale, colour treatment, usage pattern (standalone, inline, button icons).
 
-- Max content width and container padding
-- Grid system (columns, gutter, breakpoints if detectable)
-- Section spacing (vertical rhythm between major sections)
-- Header height and navigation pattern (sticky, hamburger, sidebar)
-- Footer structure
+**Imagery**: photography style, aspect ratios, image treatment (corners, shadows, overlays, filters), placeholder/loading pattern.
 
-**Buttons and Forms**
-
-- Button variants (primary, secondary, ghost, destructive)
-- Button sizing (height, padding, font size, border radius)
-- Button states: default, hover, active, focus, disabled
-- Input field styling (height, border, padding, placeholder colour)
-- Input states: default, focus, error, disabled, filled
-- Select/dropdown styling
-- Checkbox and radio styling
-- Form layout pattern (stacked, inline, floating labels)
-- Validation message styling (position, colour, icon)
-
-**Iconography**
-
-- Icon library (Lucide, Heroicons, Phosphor, custom SVG)
-- Icon sizing scale
-- Icon colour treatment (monochrome, multi-colour, accent-matched)
-- Icon usage pattern (standalone, inline with text, button icons)
-
-**Imagery**
-
-- Photography style (product, lifestyle, abstract, illustration)
-- Image aspect ratios used
-- Image treatment (rounded corners, shadows, overlays, filters)
-- Placeholder/loading pattern
-
-**Copy Tone**
-
-- Heading style (question, statement, imperative, playful)
-- CTA wording patterns (action verbs, urgency, benefit-led)
-- Error message tone (technical, friendly, apologetic)
-- Microcopy style (tooltips, empty states, loading messages)
+**Copy Tone**: heading style (question, statement, imperative, playful), CTA wording patterns, error message tone, microcopy style (tooltips, empty states, loading).
 
 ### Extraction Method
 
 ```text
-1. Navigate to URL with Playwright (headed mode for full render)
-2. Wait for fonts and images to load (networkidle)
+1. Navigate with Playwright (headed mode, full render)
+2. Wait for fonts/images (networkidle)
 3. Take full-page screenshot for reference
 4. Extract computed styles from representative elements:
-   - Traverse the DOM and collect a representative sample across headings,
-     body text, containers/cards (including div-based components), form controls,
-     navigation, and interactive elements (buttons, links, chips, badges).
-   - Skip hidden/offscreen/zero-size nodes and deduplicate by a normalised style
-     signature to avoid brute-force per-element extraction on large pages.
-   - Keep enough examples to cover unique visual patterns (typically 20-40 nodes),
-     prioritising above-the-fold and repeated UI components.
-   - For each unique pattern, record: font-family, font-size, font-weight,
-     line-height, letter-spacing, color, background-color, border,
-     border-radius, padding, margin, box-shadow
-5. Extract CSS custom properties (design tokens):
-   - getComputedStyle(document.documentElement) for all --* properties
-6. Check for dark mode: prefers-color-scheme media query or toggle
+   - Sample across headings, body text, containers/cards, form controls,
+     navigation, interactive elements (buttons, links, chips, badges)
+   - Skip hidden/offscreen/zero-size nodes; deduplicate by normalised style signature
+   - Target 20-40 unique pattern nodes, prioritising above-the-fold and repeated components
+   - Record per pattern: font-family, font-size, font-weight, line-height,
+     letter-spacing, color, background-color, border, border-radius, padding,
+     margin, box-shadow
+5. Extract CSS custom properties (design tokens) from document.documentElement
+6. Check dark mode: prefers-color-scheme media query or toggle
 7. Capture button/input hover states via Playwright hover actions
 8. Record all findings in structured format
 ```
@@ -204,31 +152,27 @@ Use Playwright (`tools/browser/browser-automation.md`) to visit the URL and extr
 ```markdown
 ## URL Study: {url}
 **Date**: {ISO date}
-**Screenshot**: {path to saved screenshot}
+**Screenshot**: {path}
 
 ### Colours
 | Role | Hex | Usage |
 |------|-----|-------|
 | Background (primary) | #ffffff | Page background |
-| ... | ... | ... |
 
 ### Typography
 | Element | Family | Size | Weight | Line Height |
 |---------|--------|------|--------|-------------|
 | h1 | Inter | 48px | 700 | 1.2 |
-| ... | ... | ... | ... | ... |
 
 ### Buttons
 | Variant | BG | Text | Border | Radius | Hover BG |
 |---------|-----|------|--------|--------|----------|
 | Primary | #000 | #fff | none | 8px | #333 |
-| ... | ... | ... | ... | ... | ... |
 
 ### Forms
 | Element | Height | Border | Radius | Focus Border |
 |---------|--------|--------|--------|--------------|
 | Input | 40px | 1px #e0e0e0 | 6px | 2px #0066ff |
-| ... | ... | ... | ... | ... |
 
 ### Layout
 - Max width: {value}
@@ -241,63 +185,42 @@ Use Playwright (`tools/browser/browser-automation.md`) to visit the URL and extr
 
 ## Bulk URL Import
 
-Process a bookmarks folder export or a plain list of URLs and generate a pattern summary.
+Process a bookmarks export or URL list into a pattern summary.
 
-### Input Formats
+**Input formats**: Bookmarks HTML (`<DT><A HREF="...">`), plain text (one URL per line), markdown list (`- [Label](url)`).
 
-- **Bookmarks HTML**: Standard browser export (`<DT><A HREF="...">`)
-- **Plain text**: One URL per line
-- **Markdown list**: `- https://example.com` or `- [Label](https://example.com)`
+**Workflow**:
 
-### Workflow
+1. Parse input, extract URLs (ignore non-http), deduplicate, validate (HEAD request, skip 4xx/5xx)
+2. Run URL study extraction per URL — batches of 4 (Playwright concurrency limit), 2s delay between navigations, 30s timeout per page, skip failures
+3. Aggregate across all URLs: most common colour palettes (cluster by hue/saturation), font families (rank by frequency), layout patterns, button/form style clusters
+4. Generate summary: "You gravitate toward..." synthesis (top 3 patterns), notable outliers, recommended palette and typography from frequency analysis
+5. Write to `brand-identity.md` or append to existing
 
-```text
-1. Parse input to extract URLs (ignore non-http entries)
-2. Deduplicate and validate (HEAD request, skip 4xx/5xx)
-3. For each valid URL, run the URL study extraction (above)
-   - Process in batches of 4 (Playwright concurrency limit)
-   - Skip URLs that fail to load within 30 seconds
-4. Aggregate findings across all URLs:
-   - Most common colour palettes (cluster by hue/saturation)
-   - Most common font families (rank by frequency)
-   - Layout pattern distribution (content width, grid usage)
-   - Button/form style clusters
-5. Generate pattern summary with:
-   - "You gravitate toward..." synthesis (top 3 patterns)
-   - Outliers worth noting (unique treatments from specific URLs)
-   - Recommended palette and typography based on frequency analysis
-6. Write summary to brand-identity.md or append to existing
-```
-
-### Concurrency and Rate Limiting
-
-- Maximum 4 concurrent Playwright pages
-- 2-second delay between navigation starts (avoid rate limiting)
-- 30-second timeout per page (skip slow sites)
-- Total batch timeout: 10 minutes for up to 20 URLs
+**Limits**: max 4 concurrent Playwright pages, 30s per-page timeout, 10 min total for up to 20 URLs.
 
 ## Quality Gates
 
-Before finalising any brand identity or design recommendation, validate against:
+Validate before finalising any brand identity or design recommendation:
 
 ### Accessibility (WCAG 2.1 AA)
 
-- All text/background colour combinations meet 4.5:1 contrast ratio (3:1 for large text)
-- Focus indicators are visible (not just colour change)
-- Interactive elements have minimum 44x44px touch targets
-- Font sizes are at least 16px for body text
+- Text/background contrast: 4.5:1 minimum (3:1 for large text)
+- Visible focus indicators (not just colour change)
+- Interactive elements: minimum 44x44px touch targets
+- Body text: at least 16px
 
 ### Performance
 
-- Recommended fonts are available on Google Fonts or system font stacks (avoid obscure web fonts that add load time)
+- Prefer Google Fonts or system font stacks (avoid obscure web fonts adding load time)
 - Colour palette works without gradients (graceful degradation)
 - Layout doesn't depend on JavaScript for initial render
 
 ### Platform Conventions
 
-- iOS projects: cross-reference with Apple HIG (`developer.apple.com/design/human-interface-guidelines`)
-- Android projects: cross-reference with Material Design (`m3.material.io`)
-- Web projects: check against common component library defaults (shadcn/ui, Radix)
+- iOS: cross-reference Apple HIG (`developer.apple.com/design/human-interface-guidelines`)
+- Android: cross-reference Material Design (`m3.material.io`)
+- Web: check against common component library defaults (shadcn/ui, Radix)
 
 ## Related
 
