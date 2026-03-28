@@ -311,6 +311,11 @@ create_issue() {
 		return 1
 	fi
 
+	# Append signature footer
+	local sig_footer=""
+	sig_footer=$("${SCRIPT_DIR}/gh-signature-helper.sh" footer 2>/dev/null || true)
+	body="${body}${sig_footer}"
+
 	print_info "Creating issue in $owner/$repo_name"
 
 	if gh issue create --repo "$owner/$repo_name" --title "$title" --body "$body"; then

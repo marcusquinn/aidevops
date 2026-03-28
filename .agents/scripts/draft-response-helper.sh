@@ -263,6 +263,11 @@ _create_notification_issue() {
 	# Issue title: use plain text description, NO owner/repo#N pattern
 	local safe_title="Draft reply: ${title}"
 
+	# Append signature footer
+	local sig_footer=""
+	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer 2>/dev/null || true)
+	issue_body="${issue_body}${sig_footer}"
+
 	local issue_url
 	issue_url=$(gh issue create \
 		--repo "$slug" \

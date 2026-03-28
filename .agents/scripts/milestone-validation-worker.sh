@@ -1055,6 +1055,11 @@ create_fix_tasks() {
 
 **Validation criteria:** Re-run milestone validation after fix to confirm resolution."
 
+				# Append signature footer
+				local mv_sig=""
+				mv_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer 2>/dev/null || true)
+				issue_body="${issue_body}${mv_sig}"
+
 				local issue_url
 				gh label create "source:mission-validation" --repo "$repo_slug" \
 					--description "Auto-created by milestone-validation-worker.sh" \
