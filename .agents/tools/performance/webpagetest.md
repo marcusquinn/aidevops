@@ -165,6 +165,7 @@ webpagetest testBalance --key "$WEBPAGETEST_API_KEY"
 Multi-step tests for authenticated pages, SPAs, and complex flows:
 
 ```text
+// Navigate and wait for element
 navigate	https://example.com/login
 setValue	name=email	user@example.com
 setValue	name=password	password123
