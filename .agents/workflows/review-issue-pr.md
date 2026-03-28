@@ -54,14 +54,12 @@ tools:
 
 | Criterion | Questions to Ask |
 |-----------|------------------|
-| **Simplicity** | Is there a simpler way? Could this be a one-liner? |
+| **Simplicity** | Simpler way? One-liner? Existing utility or stdlib? |
 | **Correctness** | Fixes root cause, not just symptom? |
-| **Completeness** | Handles edge cases and error conditions? |
-| **Consistency** | Follows existing codebase patterns? |
+| **Completeness** | Edge cases and error conditions handled? |
+| **Consistency** | Follows existing codebase patterns? Right abstraction level? |
 | **Performance** | Introduces regressions? |
 | **Maintainability** | Easy to maintain, understand, debug? |
-
-Before approving: existing utilities? standard library? better approach? existing pattern? right abstraction level?
 
 ### 4. Scope Assessment
 
@@ -84,7 +82,7 @@ Before approving: existing utilities? standard library? better approach? existin
 
 ## Review Output Format
 
-The review comment MUST contain `## Review:` or `## Issue/PR Review:` in the heading — this is the marker the pulse uses to detect whether a triage review has already been posted (idempotency guard).
+Heading MUST contain `## Review:` or `## Issue/PR Review:` — pulse idempotency guard uses this marker to detect existing triage reviews.
 
 ```markdown
 ## Review: Approved / Needs Changes / Decline
@@ -94,83 +92,72 @@ The review comment MUST contain `## Review:` or `## Issue/PR Review:` in the hea
 | Check | Status | Notes |
 |-------|--------|-------|
 | Reproducible | Yes/No | [details] |
-| Not duplicate | Yes/No | [related issues if any] |
+| Not duplicate | Yes/No | [related issues] |
 | Actual bug | Yes/No | [or expected behavior?] |
-| In scope | Yes/No | [alignment with project goals] |
+| In scope | Yes/No | [project goal alignment] |
 
 **Root Cause**: [Brief description]
 
-### Solution Evaluation (if PR or proposed fix)
+### Solution Evaluation (if PR)
 
 | Criterion | Assessment | Notes |
 |-----------|------------|-------|
 | Simplicity | Good/Needs Work | [simpler alternatives?] |
 | Correctness | Good/Needs Work | [fixes root cause?] |
-| Completeness | Good/Needs Work | [edge cases covered?] |
+| Completeness | Good/Needs Work | [edge cases?] |
 | Consistency | Good/Needs Work | [follows patterns?] |
 
-**Alternative Approaches (Recommended)**:
-1. [Recommended approach] - [why]
+**Alternatives**: [Recommended approach] - [why]
 
-### Scope Assessment
+### Scope & Recommendation
 
-- Scope creep risk: Low/Medium/High
-- Complexity: Low (tier:simple) / Medium (default sonnet) / High (tier:thinking)
-
-### Recommendation
-
-**Decision**: APPROVE / REQUEST CHANGES / DECLINE
-
-**Suggested labels**: [e.g., `tier:simple`, `bug`, `status:available`]
-
-**Implementation guidance** (if approving):
-1. [Key implementation step]
-2. [Test case to add]
+- Scope creep: Low/Medium/High
+- Complexity: Low (`tier:simple`) / Medium (sonnet) / High (`tier:thinking`)
+- **Decision**: APPROVE / REQUEST CHANGES / DECLINE
+- **Labels**: [e.g., `tier:simple`, `bug`, `status:available`]
+- **Implementation guidance**: [key steps, test cases to add]
 ```
 
 ## Headless / Pulse-Driven Mode
 
-When invoked by the pulse supervisor (via `/review-issue-pr <number>`):
+When invoked by pulse (via `/review-issue-pr <number>`):
 
 1. Fetch issue/PR: `gh issue view` or `gh pr view`
-2. Read relevant codebase files referenced in the issue body
-3. Run the full review checklist (problem validation, root cause, solution evaluation, scope)
+2. Read codebase files referenced in the issue body
+3. Run full review checklist (validation, root cause, solution, scope)
 4. Post review comment: `gh issue comment` or `gh pr comment`
-5. Do NOT modify labels — pulse handles label transitions based on maintainer response
+5. Do NOT modify labels — pulse handles label transitions
 6. Exit cleanly — no worktree, no PR, no commit
 
-**The review comment is the only output.** Pulse detects it on the next cycle; maintainer responds with "approved", "declined", or further direction.
-
-**Maintainer feedback:** If the dispatch prompt includes prior maintainer comments, address those specific concerns in the analysis.
+The review comment is the only output. Pulse detects it next cycle; maintainer responds with "approved", "declined", or direction. If dispatch prompt includes prior maintainer comments, address those concerns specifically.
 
 ## Common Scenarios
 
 ### Issue is Not a Bug
 
 ```markdown
-Thanks for reporting this! After investigation, this appears to be expected behavior:
-- [Explanation of why this is by design]
-- [Link to relevant documentation]
+After investigation, this is expected behavior:
+- [Why this is by design]
+- [Link to docs]
 
-If you believe this should work differently, please open a feature request.
-Closing as "not a bug" — feel free to reopen with additional context.
+To request different behavior, open a feature request. Closing as "not a bug" — reopen with additional context if needed.
 ```
 
 ### PR Fixes Symptom, Not Cause
 
 ```markdown
-Thanks for the PR! The fix works for the reported case, but we should address the root cause:
+The fix works for the reported case, but the root cause should be addressed:
 - **Current approach**: [what the PR does]
-- **Root cause**: [actual underlying issue]
+- **Root cause**: [underlying issue]
 - **Suggested approach**: [better solution]
 
-Would you be open to updating the PR? Happy to discuss.
+Would you be open to updating? Happy to discuss.
 ```
 
 ### PR Has Scope Creep
 
 ```markdown
-The core fix looks good, but some changes should be in separate PRs:
+Core fix looks good, but some changes should be separate PRs:
 - **In scope** (keep): [change 1], [change 2]
 - **Out of scope** (separate PR): [change 3] — [reason]
 
@@ -180,11 +167,11 @@ Could you split this into focused PRs?
 ### Better Alternative Exists
 
 ```markdown
-Thanks for tackling this! There's a simpler approach to consider:
+There's a simpler approach:
 - **Your approach**: [summary]
 - **Alternative**: [simpler solution] — preferable because [reason]
 
-Would you be open to updating the PR? Or I can make the change — just let me know.
+Would you be open to updating? Or I can make the change.
 ```
 
 ## CLI Commands
