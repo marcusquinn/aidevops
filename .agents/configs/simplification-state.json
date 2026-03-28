@@ -1,5 +1,5 @@
 {
-  "_comment": "Tracks files that have been simplified. Hash is git blob SHA of the file at simplification time. When the scan sees a file here with a matching hash, it skips issue creation. When the hash differs (file changed), it creates a regression issue.",
+  "_comment": null,
   "files": {
     ".agents/seo/analytics-tracking.md": {
       "hash": "07ff0feec55ad3f8477a6badd724b479c1b09370",
@@ -116,11 +116,6 @@
       "at": "2026-03-28T02:51:02Z",
       "pr": 11277
     },
-    ".agents/marketing.md": {
-      "hash": "1e27a16e684cf8fbc5b3bb26e38580a2a59b1d3e",
-      "at": "2026-03-28T02:51:03Z",
-      "pr": 11275
-    },
     ".agents/marketing-sales/direct-response-copy-frameworks-objection-handling.md": {
       "hash": "03a35fccab0f4d79526416af4049498f59eb1cf8",
       "at": "2026-03-28T03:53:27Z",
@@ -156,35 +151,10 @@
       "at": "2026-03-28T03:53:07Z",
       "pr": 11328
     },
-    ".agents/marketing/direct-response-copy-templates-landing-page.md": {
-      "hash": "a82f659f9a89ed7c8563bbbdd673f3a2db97e83d",
-      "at": "2026-03-28T03:53:11Z",
-      "pr": 11334
-    },
     ".agents/tools/programming/modern-javascript-skill/es2022-es2023.md": {
       "hash": "5e5dfb7e18557b8e26c5c48c090c8df94eda485c",
       "at": "2026-03-28T03:53:13Z",
       "pr": 11337
-    },
-    ".agents/marketing/meta-ads-optimization-metrics.md": {
-      "hash": "cdbd666064fccd0929002a4de6e08792d0d89340",
-      "at": "2026-03-28T03:53:24Z",
-      "pr": 11329
-    },
-    ".agents/marketing/cro-chapter-03.md": {
-      "hash": "78180c695a030f793a2b005a94691608a6575318",
-      "at": "2026-03-28T03:53:30Z",
-      "pr": 11333
-    },
-    ".agents/marketing/direct-response-copy-templates-email-sequences.md": {
-      "hash": "befc3dd14c09e7a302b1dd26ea652ec365ae5314",
-      "at": "2026-03-28T03:53:33Z",
-      "pr": 11331
-    },
-    ".agents/marketing/direct-response-copy-frameworks-offer-construction.md": {
-      "hash": "ea7ff470ba073b21ab88f669e294794c00d30a58",
-      "at": "2026-03-28T03:53:40Z",
-      "pr": 11303
     },
     ".agents/workflows/milestone-validation.md": {
       "hash": "3e8c88a4d98e24993198b7a6cfc0c93b7825bd26",
@@ -295,6 +265,26 @@
       "hash": "d601962cd709d65d62ca882b09f763abe48b7e04",
       "at": "2026-03-28T03:54:42Z",
       "pr": 11358
+    },
+    ".agents/marketing-sales/cro-chapter-16.md": {
+      "hash": "920245116e79b04207fd2b808c5dcbfabea3eb17",
+      "at": "2026-03-28T04:30:24Z",
+      "pr": 11374
+    },
+    ".agents/marketing-sales/meta-ads-campaigns-decision-trees.md": {
+      "hash": "a7bcedab8040e2b400b7c2feca987e09bb0a8477",
+      "at": "2026-03-28T04:30:25Z",
+      "pr": 11381
+    },
+    ".agents/tools/database/vector-search/per-tenant-rag.md": {
+      "hash": "d1117045325ba8a4bbaeff0647b674918ec1912e",
+      "at": "2026-03-28T04:30:27Z",
+      "pr": 11391
+    },
+    ".agents/tools/architecture/feature-slicing-skill/nextjs.md": {
+      "hash": "4f5ed54db7eef3619cd797d22192d2aef90135d2",
+      "at": "2026-03-28T04:30:34Z",
+      "pr": 11322
     }
   }
 }
