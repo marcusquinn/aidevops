@@ -36,15 +36,6 @@ tools:
 
 **Dependency Syntax**: `blocked-by:t001,t002` | `blocks:t003` | 2-space indentation = parent-child
 
-**Workflow**:
-
-```text
-Planning Conversation -> /save-todo -> Auto-detect -> Save appropriately
-Future Session -> "Work on X" -> Load context -> git-workflow.md
-                              -> /ready -> Show unblocked tasks
-                              -> /sync-beads -> Sync to Beads for graph view
-```
-
 <!-- AI-CONTEXT-END -->
 
 ## Auto-Detection Logic
@@ -68,41 +59,23 @@ Tasks can be classified as "Ralph-able" -- suitable for autonomous iterative AI 
 | "Refactor until clean" | Maybe (needs specific criteria) |
 | "Make it look better" / "Design the API" / "Debug production issue" | No |
 
-**Tagging**:
+**Tagging**: `- [ ] t042 Fix all ShellCheck violations #ralph(SHELLCHECK_CLEAN) ~1h` with optional `ralph-promise:`, `ralph-verify:`, `ralph-max:` fields.
 
-```markdown
-- [ ] t042 Fix all ShellCheck violations in scripts/ #ralph ~1h
-  ralph-promise: "SHELLCHECK_CLEAN"
-  ralph-verify: "shellcheck .agents/scripts/*.sh"
-  ralph-max: 10
-
-# Shorthand
-- [ ] t042 Fix all ShellCheck violations #ralph(SHELLCHECK_CLEAN) ~1h
-```
-
-**Running**: `/ralph-loop "$(grep -E '^- \[ \] t042\s' TODO.md | head -n1)" --completion-promise "SHELLCHECK_CLEAN" --max-iterations 10` or `/ralph-task t042`
+**Running**: `/ralph-task t042` or `/ralph-loop "$(grep -E '^- \[ \] t042\s' TODO.md | head -n1)" --completion-promise "SHELLCHECK_CLEAN" --max-iterations 10`
 
 **Quality loop integration**: Preflight (`/preflight-loop`, `PREFLIGHT_PASS`), PR Review (`/pr-loop`, `PR_APPROVED`), Postflight (`/postflight-loop`, `RELEASE_HEALTHY`).
 
 ## Auto-Dispatch Tagging
 
-Add `#auto-dispatch` when ALL of these are true:
+Add `#auto-dispatch` only when ALL inclusion criteria pass and NO exclusion criteria apply:
 
-- Clear fix/feature description with specific files or patterns
-- Bounded scope (~1h or less estimated)
-- No user credentials, accounts, or purchases needed
-- No design decisions requiring user preference
-- Verification is automatable (tests, ShellCheck, syntax check, browser test)
-
-Do NOT add `#auto-dispatch` when ANY of these are true:
-
-- Requires credentials, top-up accounts, or purchases
-- Is a `#plan` needing decomposition first
-- Requires hardware setup or external service configuration
-- Description says "investigate" or "evaluate" without a clear deliverable
-- Has `blocked-by:` dependencies on incomplete tasks
-
-`#auto-dispatch` is added only when all inclusion criteria pass and no exclusion criteria apply.
+| Include (ALL required) | Exclude (ANY blocks) |
+|------------------------|----------------------|
+| Clear fix/feature with specific files or patterns | Requires credentials, accounts, or purchases |
+| Bounded scope (~1h or less) | Is a `#plan` needing decomposition first |
+| No design decisions requiring user preference | Requires hardware or external service setup |
+| Verification is automatable (tests, ShellCheck, syntax, browser) | Description says "investigate"/"evaluate" without clear deliverable |
+| | Has `blocked-by:` dependencies on incomplete tasks |
 
 ## Saving Work
 
@@ -116,15 +89,11 @@ Use `templates/brief-template.md`. The brief captures: origin (session ID, date,
 
 ### Task Description Quality (GH#6419)
 
-Task descriptions in TODO.md become GitHub issue titles. Write them so a reader scanning 50 issues can immediately tell whether two describe the same work. This is the primary input to the pulse's duplicate detection.
-
-Exception: persistent/pinned monitoring issues keep their existing concise title style.
+Task descriptions in TODO.md become GitHub issue titles. Write them so a reader scanning 50 issues can immediately tell whether two describe the same work (primary input to pulse duplicate detection). Include the **what** (action), **where** (component/file/feature area), and **when/why** (triggering condition). Exception: persistent/pinned monitoring issues keep their existing concise title style.
 
 **Good**: `Add WooCommerce tax fallback when no tax class matches product category` | `Fix infinite redirect loop on /login when session cookie is expired`
 
 **Bad**: `Tax fallback` | `Fix login bug`
-
-Include the **what** (action), **where** (component/file/feature area), and **when/why** (triggering condition).
 
 ### Step 1: Extract from Conversation
 
@@ -132,33 +101,16 @@ Title, description, estimate (`~Xh (ai:Xh test:Xh read:Xm)`), tags, context, ses
 
 ### Step 2: Present with Auto-Detection
 
-**Simple tasks:**
+**Simple**: `Saving to TODO.md: "{title}" ~{estimate} | Creating brief: todo/tasks/{task_id}-brief.md | 1. Confirm  2. Add more details  3. Create full plan instead`
 
-```text
-Saving to TODO.md: "{title}" ~{estimate}
-Creating brief: todo/tasks/{task_id}-brief.md
-1. Confirm  2. Add more details  3. Create full plan instead
-```
-
-**Complex work:**
-
-```text
-This looks like complex work. Creating execution plan.
-Title: {title} | Estimate: ~{estimate} | Phases: {count}
-Creating brief: todo/tasks/{task_id}-brief.md
-1. Confirm and create plan + brief  2. Simplify to TODO.md + brief  3. Add more context
-```
+**Complex**: `This looks like complex work. Creating execution plan. Title: {title} | Estimate: ~{estimate} | Phases: {count} | Creating brief: todo/tasks/{task_id}-brief.md | 1. Confirm and create plan + brief  2. Simplify to TODO.md + brief  3. Add more context`
 
 ### Step 3: Save Appropriately
 
 #### Simple Save (TODO.md + brief)
 
 1. Create brief at `todo/tasks/{task_id}-brief.md`
-2. Add to TODO.md Backlog:
-
-```markdown
-- [ ] t{NNN} {title} #{tag} ~{estimate} logged:{YYYY-MM-DD}
-```
+2. Add to TODO.md Backlog: `- [ ] t{NNN} {title} #{tag} ~{estimate} logged:{YYYY-MM-DD}`
 
 Format elements (all optional except id and description): `@owner`, `#tag`, `~estimate`, `logged:YYYY-MM-DD`, `blocked-by:t001,t002`, `blocks:t003`.
 
@@ -166,37 +118,9 @@ Format elements (all optional except id and description): `@owner`, `#tag`, `~es
 
 #### Complex Save (PLANS.md + TODO.md)
 
-1. Create PLANS.md entry:
-
-```markdown
-### [{YYYY-MM-DD}] {Title}
-
-**Status:** Planning | **Estimate:** ~{estimate}
-**PRD:** [todo/tasks/prd-{slug}.md](tasks/prd-{slug}.md) (if needed)
-
-#### Purpose
-{Why this work matters}
-
-#### Progress
-- [ ] ({timestamp}) Phase 1: {description} ~{est}
-- [ ] ({timestamp}) Phase 2: {description} ~{est}
-
-#### Context from Discussion
-{Key decisions, research findings, constraints}
-
-#### Decision Log
-(To be populated during implementation)
-
-#### Surprises & Discoveries
-(To be populated during implementation)
-```
-
+1. Create PLANS.md entry using `templates/plans-template.md`. Required sections: **Status/Estimate**, **Purpose**, **Progress** (timestamped phases), **Context from Discussion**, **Decision Log**, **Surprises & Discoveries**.
 2. Add reference to TODO.md: `- [ ] {title} #plan -> [todo/PLANS.md#{slug}] ~{estimate} logged:{YYYY-MM-DD}`
 3. Optionally create PRD/tasks if scope warrants (`/create-prd`, `/generate-tasks`)
-
-## Context Preservation
-
-Always capture from the conversation: decisions and rationale, research findings, constraints, open questions, related links. This goes into PLANS.md "Context from Discussion" so future sessions have full context.
 
 ## Starting Work from Plans
 
@@ -209,23 +133,7 @@ When user says "Let's work on X":
 
 ## During Implementation
 
-Update progress, record decisions, and note surprises in PLANS.md:
-
-```markdown
-#### Progress
-- [x] (2025-01-14 10:00Z) Research API endpoints
-- [ ] (2025-01-15 09:00Z) Implement core logic <-- IN PROGRESS
-
-#### Decision Log
-- **Decision:** Use TypeScript + Bun stack
-  **Rationale:** Matches existing MCP patterns, faster builds
-  **Date:** 2025-01-14
-
-#### Surprises & Discoveries
-- **Observation:** Ahrefs rate limits are per-minute, not per-day
-  **Evidence:** API docs state 500 requests/minute
-  **Impact:** Need to implement request queuing
-```
+Update PLANS.md in place: check off Progress items with timestamps, add Decision Log entries (`Decision:`, `Rationale:`, `Date:`), and record Surprises & Discoveries (`Observation:`, `Evidence:`, `Impact:`).
 
 ## Completing a Plan
 
@@ -239,21 +147,11 @@ Update progress, record decisions, and note surprises in PLANS.md:
 
 **Generate PRD** (`/create-prd`): Ask clarifying questions with numbered options. Create PRD in `todo/tasks/prd-{slug}.md` using `templates/prd-template.md`.
 
-**Generate Tasks** (`/generate-tasks`):
-
-- **Phase 1**: Present high-level tasks with estimates, ask "Go" to generate sub-tasks.
-- **Phase 2**: Create in `todo/tasks/tasks-{slug}.md`:
-
-```markdown
-- [ ] 0.0 Create feature branch
-  - [ ] 0.1 Create and checkout: `git checkout -b feature/{slug}`
-- [ ] 1.0 {First major task}
-  - [ ] 1.1 {Sub-task}
-```
+**Generate Tasks** (`/generate-tasks`): Phase 1 — present high-level tasks with estimates, ask "Go". Phase 2 — create in `todo/tasks/tasks-{slug}.md` with numbered hierarchy (`0.0`, `1.0`, `1.1`, etc.) using `templates/tasks-template.md`.
 
 ## Time Estimation
 
-Use calibrated tiers from `reference/planning-detail.md` (based on 340 completed tasks). Default `~30m` for most tasks. Estimates >= 2h trigger auto-subtasking. See that file for the full tier table and calibration data.
+Use calibrated tiers from `reference/planning-detail.md` (based on 340 completed tasks). Default `~30m` for most tasks. Estimates >= 2h trigger auto-subtasking.
 
 ## Dependencies and Blocking
 
@@ -264,39 +162,19 @@ Use calibrated tiers from `reference/planning-detail.md` (based on 340 completed
   - [ ] t001.2 Another subtask ~1h blocks:t003
 ```
 
-**TOON machine-readable format**:
-
-```markdown
-<!--TOON:dependencies[N]{from_id,to_id,type}:
-t019.2,t019.1,blocked-by
-t019.3,t019.2,blocked-by
--->
-```
+**TOON machine-readable format**: `<!--TOON:dependencies[N]{from_id,to_id,type}: t019.2,t019.1,blocked-by -->`
 
 **`/ready` command**: `~/.aidevops/agents/scripts/todo-ready.sh` -- shows tasks with no open blockers and lists blocked tasks with their dependencies.
 
 ## Beads Integration
 
-```bash
-/sync-beads push   # TODO.md -> Beads
-/sync-beads pull   # Beads -> TODO.md
-/sync-beads        # Two-way sync with conflict detection
-# or: ~/.aidevops/agents/scripts/beads-sync-helper.sh [push|pull|sync]
-```
-
-**Sync guarantees**: Lock file, checksum verification, conflict detection, audit trail in `.beads/sync.log`, command-led only (no automatic sync).
+`/sync-beads push` (TODO→Beads) | `/sync-beads pull` (Beads→TODO) | `/sync-beads` (two-way with conflict detection). Script: `beads-sync-helper.sh [push|pull|sync]`. Guarantees: lock file, checksum verification, audit trail in `.beads/sync.log`, command-led only.
 
 **Beads UIs**: `bv` (graph analytics), `npx beads-ui start` (web dashboard), `bdui` (terminal), `perles` (BQL queries), `M-x beads-list` (Emacs).
 
 ## Time Tracking Configuration
 
-Configure per-repo in `.aidevops.json`:
-
-```json
-{ "time_tracking": "prompt", "features": ["planning", "time-tracking", "beads"] }
-```
-
-`true` = always prompt | `false` = never | `prompt` = ask once per session. Use `/log-time-spent` to manually log time.
+Configure per-repo in `.aidevops.json`: `{ "time_tracking": "prompt", "features": ["planning", "time-tracking", "beads"] }`. Values: `true` = always prompt | `false` = never | `prompt` = ask once per session. Use `/log-time-spent` to manually log time.
 
 ## Distributed Task Claiming (t164/t165)
 
@@ -341,16 +219,9 @@ After ANY edit to TODO.md, todo/PLANS.md, or todo/tasks/*, commit and push immed
 
 - **GitHub issue titles** MUST be prefixed with their TODO.md task ID: `t{NNN}: {title}`
 - **TODO.md tasks** MUST reference their GitHub issue: `ref:GH#{NNN}`
+- When creating both together: assign t-number -> create GitHub issue -> add TODO entry with `ref:GH#` -> commit and push immediately.
 
-```bash
-# Create issue with t-number prefix
-gh issue create --title "t146: bug: supervisor no_pr retry counter non-functional" ...
-
-# TODO.md entry with ref
-- [ ] t146 bug: supervisor no_pr retry counter #bugfix ~15m logged:2026-02-07 ref:GH#439
-```
-
-When creating both together: assign t-number -> create GitHub issue -> add TODO entry with `ref:GH#` -> commit and push immediately.
+Example: `- [ ] t146 bug: supervisor no_pr retry counter #bugfix ~15m logged:2026-02-07 ref:GH#439`
 
 ## Git Branch Strategy for TODO.md Changes
 
@@ -360,7 +231,7 @@ When creating both together: assign t-number -> create GitHub issue -> add TODO 
 | Mixed changes (TODO + code/agent files) | Create a worktree |
 | Adding 3+ unrelated items on a feature branch | Suggest committing on main instead |
 
-Related work stays together; unrelated TODO-only backlog goes directly to main; mixed changes use a worktree. **NEVER use `git checkout -b` in the main repo directory.** Use `wt switch -c` for dedicated branches.
+**NEVER use `git checkout -b` in the main repo directory.** Use `wt switch -c` for dedicated branches.
 
 ## Integration with Other Workflows
 
