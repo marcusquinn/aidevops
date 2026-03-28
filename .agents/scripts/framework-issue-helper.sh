@@ -279,22 +279,19 @@ EOF
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# log_framework_issue TITLE BODY LABEL DRY_RUN
+# _validate_gh_prereqs TITLE
 #
-# Creates an issue on marcusquinn/aidevops. Deduplicates by title.
+# Validates that title is non-empty and gh CLI is installed and authenticated.
+# Returns 0 on success, 1 on failure.
 # ─────────────────────────────────────────────────────────────────────────────
-log_framework_issue() {
+_validate_gh_prereqs() {
 	local title="$1"
-	local body="$2"
-	local label="${3:-bug}"
-	local dry_run="${4:-false}"
 
 	if [[ -z "$title" ]]; then
 		log_error "Title is required"
 		return 1
 	fi
 
-	# Check gh CLI is available
 	if ! command -v gh &>/dev/null; then
 		log_error "GitHub CLI (gh) not installed — cannot create issue"
 		log_error "Install with: brew install gh (macOS) or apt install gh (Linux)"
@@ -306,28 +303,51 @@ log_framework_issue() {
 		return 1
 	fi
 
-	# Deduplication: search for existing issues with similar title
+	return 0
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# _find_duplicate_issue TITLE
+#
+# Searches for an existing issue with a similar title on the aidevops repo.
+# Prints the issue number to stdout if found, empty string otherwise.
+# Returns 0 if a duplicate was found, 1 otherwise.
+# ─────────────────────────────────────────────────────────────────────────────
+_find_duplicate_issue() {
+	local title="$1"
 	local search_terms
 	search_terms=$(printf '%s' "$title" | sed 's/^[a-zA-Z0-9_-]*: *//')
-	if [[ -n "$search_terms" ]]; then
-		local existing_issue
-		existing_issue=$(gh issue list --repo "$AIDEVOPS_SLUG" \
-			--state all --search "\"$search_terms\" in:title is:issue" \
-			--json number --limit 1 -q '.[0].number' 2>/dev/null || echo "")
-		if [[ -n "$existing_issue" && "$existing_issue" != "null" ]]; then
-			log_warn "Existing issue found: ${AIDEVOPS_SLUG}#${existing_issue} — skipping duplicate creation"
-			echo "issue_url=https://github.com/${AIDEVOPS_SLUG}/issues/${existing_issue}"
-			echo "issue_num=${existing_issue}"
-			echo "status=duplicate"
-			return 0
-		fi
+
+	if [[ -z "$search_terms" ]]; then
+		return 1
 	fi
 
-	# Auto-generate body if not provided
-	if [[ -z "$body" ]]; then
-		local diagnostics
-		diagnostics=$(gather_diagnostics 2>/dev/null || echo "")
-		body="## Description
+	local existing_issue
+	existing_issue=$(gh issue list --repo "$AIDEVOPS_SLUG" \
+		--state all --search "\"$search_terms\" in:title is:issue" \
+		--json number --limit 1 -q '.[0].number' 2>/dev/null || echo "")
+
+	if [[ -n "$existing_issue" && "$existing_issue" != "null" ]]; then
+		echo "$existing_issue"
+		return 0
+	fi
+
+	return 1
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# _build_issue_body TITLE
+#
+# Auto-generates a standard issue body from TITLE with diagnostics and context.
+# Prints the body to stdout.
+# ─────────────────────────────────────────────────────────────────────────────
+_build_issue_body() {
+	local title="$1"
+	local diagnostics
+	diagnostics=$(gather_diagnostics 2>/dev/null || echo "")
+
+	cat <<EOF
+## Description
 
 ${title}
 
@@ -339,11 +359,21 @@ ${diagnostics}
 
 This issue was automatically routed to the aidevops framework repo by \`framework-issue-helper.sh\` because it contains framework-level indicators (references to ~/.aidevops/ files, framework scripts, or supervisor/pulse concepts).
 
-Filed from: $(git rev-parse --show-toplevel 2>/dev/null || echo 'unknown repo')"
-	fi
+Filed from: $(git rev-parse --show-toplevel 2>/dev/null || echo 'unknown repo')
+EOF
+	return 0
+}
 
-	# Append signature footer
+# ─────────────────────────────────────────────────────────────────────────────
+# _append_signature_footer BODY
+#
+# Appends the gh signature footer to BODY if the helper is available.
+# Prints the (possibly augmented) body to stdout.
+# ─────────────────────────────────────────────────────────────────────────────
+_append_signature_footer() {
+	local body="$1"
 	local sig_helper="${SCRIPT_DIR}/gh-signature-helper.sh"
+
 	if [[ -x "$sig_helper" ]]; then
 		local sig_footer
 		sig_footer=$("$sig_helper" footer 2>/dev/null || echo "")
@@ -351,6 +381,66 @@ Filed from: $(git rev-parse --show-toplevel 2>/dev/null || echo 'unknown repo')"
 			body="${body}${sig_footer}"
 		fi
 	fi
+
+	printf '%s' "$body"
+	return 0
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# _emit_issue_result ISSUE_URL
+#
+# Extracts the issue number from ISSUE_URL and prints structured output.
+# ─────────────────────────────────────────────────────────────────────────────
+_emit_issue_result() {
+	local issue_url="$1"
+	local issue_num
+	issue_num=$(printf '%s' "$issue_url" | grep -oE '[0-9]+$' || echo "")
+
+	if [[ -n "$issue_num" ]]; then
+		log_success "Created framework issue: ${AIDEVOPS_SLUG}#${issue_num}"
+		log_success "URL: $issue_url"
+		echo "issue_url=${issue_url}"
+		echo "issue_num=${issue_num}"
+		echo "status=created"
+	else
+		log_warn "Issue created but could not extract number from: $issue_url"
+		echo "issue_url=${issue_url}"
+		echo "status=created"
+	fi
+
+	return 0
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# log_framework_issue TITLE BODY LABEL DRY_RUN
+#
+# Creates an issue on marcusquinn/aidevops. Deduplicates by title.
+# ─────────────────────────────────────────────────────────────────────────────
+log_framework_issue() {
+	local title="$1"
+	local body="$2"
+	local label="${3:-bug}"
+	local dry_run="${4:-false}"
+
+	_validate_gh_prereqs "$title" || return 1
+
+	# Deduplication: search for existing issues with similar title
+	local existing_issue
+	existing_issue=$(_find_duplicate_issue "$title" 2>/dev/null || echo "")
+	if [[ -n "$existing_issue" ]]; then
+		log_warn "Existing issue found: ${AIDEVOPS_SLUG}#${existing_issue} — skipping duplicate creation"
+		echo "issue_url=https://github.com/${AIDEVOPS_SLUG}/issues/${existing_issue}"
+		echo "issue_num=${existing_issue}"
+		echo "status=duplicate"
+		return 0
+	fi
+
+	# Auto-generate body if not provided
+	if [[ -z "$body" ]]; then
+		body=$(_build_issue_body "$title")
+	fi
+
+	body=$(_append_signature_footer "$body")
 
 	if [[ "$dry_run" == "true" ]]; then
 		log_info "DRY RUN — would create issue on ${AIDEVOPS_SLUG}:"
@@ -373,21 +463,7 @@ Filed from: $(git rev-parse --show-toplevel 2>/dev/null || echo 'unknown repo')"
 		return 1
 	}
 
-	local issue_num
-	issue_num=$(printf '%s' "$issue_url" | grep -oE '[0-9]+$' || echo "")
-
-	if [[ -n "$issue_num" ]]; then
-		log_success "Created framework issue: ${AIDEVOPS_SLUG}#${issue_num}"
-		log_success "URL: $issue_url"
-		echo "issue_url=${issue_url}"
-		echo "issue_num=${issue_num}"
-		echo "status=created"
-	else
-		log_warn "Issue created but could not extract number from: $issue_url"
-		echo "issue_url=${issue_url}"
-		echo "status=created"
-	fi
-
+	_emit_issue_result "$issue_url"
 	return 0
 }
 
