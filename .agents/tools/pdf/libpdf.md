@@ -18,172 +18,89 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: PDF parsing, modification, form filling, digital signatures
-- **Package**: `@libpdf/core`
-- **Install**: `npm install @libpdf/core` | `bun add @libpdf/core` | `pnpm add @libpdf/core`
-- **Docs**: https://libpdf.dev
-- **GitHub**: https://github.com/LibPDF-js/core
-- **License**: MIT (fontbox: Apache-2.0)
+- **Package**: `@libpdf/core` — `npm install @libpdf/core` | `bun add @libpdf/core`
+- **Docs**: https://libpdf.dev | **GitHub**: https://github.com/LibPDF-js/core
+- **License**: MIT (fontbox: Apache-2.0) | **Runtime**: Node.js 20+, Bun, modern browsers
 
-**Key Features**:
-- Parse any PDF (graceful fallback for malformed documents)
-- Incremental saves (preserve existing signatures)
-- Digital signatures (PAdES B-B, B-T, B-LT, B-LTA)
-- Form filling (text, checkbox, radio, dropdown, signature)
-- Form flattening (bake fields into page content)
-- Encryption (RC4, AES-128, AES-256)
-- Merge and split documents
-- Text extraction with position info
-- Font embedding (TTF/OpenType with subsetting)
-- Images (JPEG, PNG with alpha)
-
-**Runtime**: Node.js 20+, Bun, modern browsers (Web Crypto)
+**Features**: PDF parse (graceful fallback), incremental saves, digital signatures (PAdES B-B/T/LT/LTA), form fill/flatten, encryption (RC4/AES-128/AES-256), merge/split, text extraction, font embedding (TTF/OpenType), images (JPEG/PNG).
 
 **Known Limitations**:
-- No signature verification (signing works, verification planned)
-- No TrueType Collections (.ttc) — extract individual fonts first
-- JBIG2/JPEG2000 passthrough only (preserved but not decoded)
-- No certificate encryption (password encryption works)
-- JavaScript actions ignored (form calculations not executed)
+- No signature verification (planned) | No TrueType Collections (.ttc)
+- JBIG2/JPEG2000 passthrough only | No certificate encryption | JavaScript actions ignored
 
 <!-- AI-CONTEXT-END -->
 
-## Core Concepts
-
-### Loading and Saving
+## Loading and Saving
 
 ```typescript
 import { PDF } from '@libpdf/core';
 
-// Load from bytes (Uint8Array, ArrayBuffer, Buffer)
-const pdf = await PDF.load(bytes);
+const pdf = await PDF.load(bytes);                              // Uint8Array, ArrayBuffer, Buffer
+const pdf = await PDF.load(bytes, { credentials: 'password' }); // encrypted
+const pdf = PDF.create();                                       // new document
 
-// Load encrypted PDF
-const pdf = await PDF.load(bytes, { credentials: 'password' });
-
-// Create new PDF
-const pdf = PDF.create();
-
-// Save (returns Uint8Array)
-const output = await pdf.save();
-
-// Incremental save (preserves signatures)
-const output = await pdf.save({ incremental: true });
+const output = await pdf.save();                               // returns Uint8Array
+const output = await pdf.save({ incremental: true });          // preserves signatures
 ```
 
 ## Form Filling
 
 ```typescript
-const pdf = await PDF.load(bytes);
 const form = await pdf.getForm();
 
-// Get fields
-const fieldNames = form.getFieldNames();
-const textField = form.getTextField('name');
-const checkbox = form.getCheckBox('agree');
-const radio = form.getRadioGroup('gender');
-const dropdown = form.getDropdown('country');
-
-// Fill individual fields
-textField.setText('Jane Doe');
-checkbox.check();
-radio.select('female');
-dropdown.select('United States');
-
-// Or fill multiple fields at once
+// Fill multiple fields at once (preferred)
 form.fill({
   name: 'Jane Doe',
   email: 'jane@example.com',
-  agreed: true,
-  gender: 'female',
-  country: 'United States',
+  agreed: true,        // checkbox
+  gender: 'female',   // radio group
+  country: 'United States', // dropdown
 });
 
-const filled = await pdf.save();
+// Or access individual fields
+form.getTextField('name').setText('Jane Doe');
+form.getCheckBox('agree').check();
+form.getRadioGroup('gender').select('female');
+form.getDropdown('country').select('United States');
 
-// Flatten (bake fields into page content, non-editable)
-form.flatten();
-const flattened = await pdf.save();
+form.flatten(); // bake fields into page content (non-editable)
+const output = await pdf.save();
 ```
 
 ## Digital Signatures
 
-### Create Signer and Sign
-
 ```typescript
 import { PDF, P12Signer } from '@libpdf/core';
-import { readFile } from 'fs/promises';
 
-const p12Bytes = await readFile('certificate.p12');
 const signer = await P12Signer.create(p12Bytes, 'certificate-password');
-
 const pdf = await PDF.load(bytes);
 
-// Basic signature
-const { bytes: signed } = await pdf.sign({ signer });
-
-// With metadata
 const { bytes: signed } = await pdf.sign({
   signer,
   reason: 'I approve this document',
   location: 'New York, NY',
   contactInfo: 'jane@example.com',
-});
-
-// Visible signature
-const { bytes: signed } = await pdf.sign({
-  signer,
-  reason: 'Approved',
-  appearance: {
-    page: 0,
-    rect: { x: 50, y: 50, width: 200, height: 50 },
-  },
+  appearance: { page: 0, rect: { x: 50, y: 50, width: 200, height: 50 } }, // visible
 });
 ```
 
-### PAdES Levels
+**PAdES Levels** (add options progressively):
 
-```typescript
-// B-B (Basic) — default
-const { bytes } = await pdf.sign({ signer });
-
-// B-T (with timestamp)
-const { bytes } = await pdf.sign({
-  signer,
-  timestampServer: 'http://timestamp.digicert.com',
-});
-
-// B-LT (Long-Term with revocation info)
-const { bytes } = await pdf.sign({
-  signer,
-  timestampServer: 'http://timestamp.digicert.com',
-  embedRevocationInfo: true,
-});
-
-// B-LTA (Long-Term Archival)
-const { bytes } = await pdf.sign({
-  signer,
-  timestampServer: 'http://timestamp.digicert.com',
-  embedRevocationInfo: true,
-  archiveTimestamp: true,
-});
-```
+| Level | Options |
+|-------|---------|
+| B-B (Basic, default) | `{ signer }` |
+| B-T (Timestamp) | `+ timestampServer: 'http://timestamp.digicert.com'` |
+| B-LT (Long-Term) | `+ embedRevocationInfo: true` |
+| B-LTA (Archival) | `+ archiveTimestamp: true` |
 
 ## Page Manipulation
 
 ```typescript
-// Get pages
 const pages = await pdf.getPages();
-const firstPage = pages[0];
-const { width, height } = firstPage; // e.g., 612x792 for US Letter
+const { width, height } = pages[0]; // e.g., 612×792 for US Letter
 
-// Add pages
-const page = pdf.addPage();
-const page = pdf.addPage({ size: 'letter' }); // or 'a4', 'legal', etc.
-const page = pdf.addPage({ width: 612, height: 792 });
-pdf.insertPage(0, page); // Insert at position
-
-// Remove pages
+const page = pdf.addPage({ size: 'letter' }); // 'a4', 'legal', or { width, height }
+pdf.insertPage(0, page);
 pdf.removePage(0);
 ```
 
@@ -192,35 +109,20 @@ pdf.removePage(0);
 ```typescript
 import { PDF, rgb, StandardFonts, degrees } from '@libpdf/core';
 
-const pdf = PDF.create();
 const page = pdf.addPage({ size: 'letter' });
 const font = await pdf.embedFont(StandardFonts.Helvetica);
 
-// Text
 page.drawText('Hello, World!', { x: 50, y: 700, size: 24, font, color: rgb(0, 0, 0) });
 
-// Rectangle
-page.drawRectangle({
-  x: 50, y: 600, width: 200, height: 100,
-  color: rgb(0.9, 0.9, 0.9),
-  borderColor: rgb(0, 0, 0), borderWidth: 1,
-});
+page.drawRectangle({ x: 50, y: 600, width: 200, height: 100,
+  color: rgb(0.9, 0.9, 0.9), borderColor: rgb(0, 0, 0), borderWidth: 1 });
 
-// Line
-page.drawLine({
-  start: { x: 50, y: 500 }, end: { x: 250, y: 500 },
-  thickness: 2, color: rgb(0, 0, 0),
-});
+page.drawLine({ start: { x: 50, y: 500 }, end: { x: 250, y: 500 },
+  thickness: 2, color: rgb(0, 0, 0) });
 
-// Circle
-page.drawCircle({
-  x: 150, y: 400, size: 50,
-  color: rgb(0.8, 0.8, 1),
-  borderColor: rgb(0, 0, 0.5), borderWidth: 1,
-});
+page.drawCircle({ x: 150, y: 400, size: 50,
+  color: rgb(0.8, 0.8, 1), borderColor: rgb(0, 0, 0.5), borderWidth: 1 });
 
-// Image
-const imageBytes = await readFile('logo.png');
 const image = await pdf.embedPng(imageBytes); // or embedJpg
 page.drawImage(image, { x: 50, y: 650, width: 100, height: 50 });
 ```
@@ -228,26 +130,21 @@ page.drawImage(image, { x: 50, y: 650, width: 100, height: 50 });
 ## Merge and Split
 
 ```typescript
-// Merge multiple PDFs
+// Merge
 const merged = await PDF.merge([pdf1Bytes, pdf2Bytes, pdf3Bytes]);
-const output = await merged.save();
 
-// Extract pages to new document
-const pdf = await PDF.load(bytes);
+// Extract pages
 const newPdf = PDF.create();
 const [page1, page2] = await newPdf.copyPagesFrom(pdf, [0, 1]);
 newPdf.addPage(page1);
 newPdf.addPage(page2);
-const output = await newPdf.save();
 ```
 
 ## Text Extraction
 
 ```typescript
-const pdf = await PDF.load(bytes);
 for (const page of pdf.getPages()) {
-  const result = page.extractText();
-  console.log(result.text);
+  const { text } = page.extractText();
 }
 ```
 
@@ -262,13 +159,8 @@ const output = await pdf.save({
   userPassword: 'user-password',
   ownerPassword: 'owner-password',
   permissions: {
-    printing: 'highResolution',
-    modifying: false,
-    copying: true,
-    annotating: true,
-    fillingForms: true,
-    contentAccessibility: true,
-    documentAssembly: false,
+    printing: 'highResolution', modifying: false, copying: true,
+    annotating: true, fillingForms: true, contentAccessibility: true, documentAssembly: false,
   },
 });
 ```
@@ -276,15 +168,11 @@ const output = await pdf.save({
 ## Attachments
 
 ```typescript
-// Embed file
-const fileBytes = await readFile('data.csv');
 await pdf.attach(fileBytes, 'data.csv', { mimeType: 'text/csv', description: 'Exported data' });
 
-// Extract attachments
 const attachments = await pdf.getAttachments();
-for (const attachment of attachments) {
-  const bytes = await attachment.getData();
-  await writeFile(attachment.name, bytes);
+for (const a of attachments) {
+  await writeFile(a.name, await a.getData());
 }
 ```
 
@@ -306,11 +194,9 @@ try {
 
 ## Common Patterns
 
-### Fill and Sign Workflow
+### Fill and Sign
 
 ```typescript
-import { PDF, P12Signer } from '@libpdf/core';
-
 async function fillAndSign(
   pdfBytes: Uint8Array,
   formData: Record<string, string | boolean>,
@@ -329,41 +215,22 @@ async function fillAndSign(
 ### Add Watermark
 
 ```typescript
-import { PDF, rgb, StandardFonts, degrees } from '@libpdf/core';
-
 async function addWatermark(pdfBytes: Uint8Array, text: string): Promise<Uint8Array> {
   const pdf = await PDF.load(pdfBytes);
   const font = await pdf.embedFont(StandardFonts.HelveticaBold);
   for (const page of pdf.getPages()) {
     const { width, height } = page;
     page.drawText(text, {
-      x: width / 2 - 100, y: height / 2,
-      size: 50, font,
-      color: rgb(0.8, 0.8, 0.8),
-      rotate: degrees(45), opacity: 0.3,
+      x: width / 2 - 100, y: height / 2, size: 50, font,
+      color: rgb(0.8, 0.8, 0.8), rotate: degrees(45), opacity: 0.3,
     });
   }
-  return await pdf.save();
-}
-```
-
-### Batch Processing
-
-```typescript
-async function processPDFs(files: string[]): Promise<void> {
-  for (const file of files) {
-    const bytes = await readFile(file);
-    const pdf = await PDF.load(bytes);
-    const form = await pdf.getForm();
-    form.fill({ processedDate: new Date().toISOString() });
-    const output = await pdf.save();
-    await writeFile(file.replace('.pdf', '-processed.pdf'), output);
-  }
+  return pdf.save();
 }
 ```
 
 ## Related
 
 - `overview.md` — PDF tools selection guide
-- `tools/browser/playwright.md` — For PDF rendering/screenshots
+- `tools/browser/playwright.md` — PDF rendering/screenshots
 - `tools/code-review/code-standards.md` — TypeScript best practices
