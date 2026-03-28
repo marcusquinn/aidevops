@@ -402,9 +402,9 @@
       "pr": 11590
     },
     ".agents/marketing-sales/direct-response-copy-templates-email-sequences.md": {
-      "hash": "d9bb5856327361b06eb25357f21260724ba38d98",
-      "at": "2026-03-28T12:19:18Z",
-      "pr": 11841
+      "hash": "5af4b4e800d180cb185bfa6d14ee93f2fc2661e9",
+      "at": "2026-03-28T13:37:24Z",
+      "pr": 11886
     },
     ".agents/marketing-sales/direct-response-copy-templates-readme.md": {
       "hash": "2717d1e9cb1edfd85d932502b6de7c4765c8a7ec",
@@ -932,9 +932,9 @@
       "pr": 11814
     },
     ".agents/marketing-sales/ad-creative-copywriting.md": {
-      "hash": "0b059935dea2ffebd08189e08789d2f3fa3af4b3",
-      "at": "2026-03-28T12:19:17Z",
-      "pr": 11843
+      "hash": "797777145365782185769e625b807eb3d0c0b0f4",
+      "at": "2026-03-28T13:37:23Z",
+      "pr": 11885
     },
     ".agents/marketing-sales/direct-response-copy-templates-landing-page.md": {
       "hash": "7d95922fef4d2c67466c89f4dc918f99fa7a76c4",
@@ -947,44 +947,44 @@
       "pr": 11821
     },
     ".agents/services/email/email-mailbox-search.md": {
-      "hash": "ae6964334f78f335903d2ac453388735b2014756",
-      "at": "2026-03-28T12:19:15Z",
-      "pr": 11839
+      "hash": "26c7c333d46a5319b598173b36c5c30124126c81",
+      "at": "2026-03-28T13:37:26Z",
+      "pr": 11869
     },
     ".agents/tools/browser/crawl4ai-resources.md": {
-      "hash": "0dfcf5f7dccd4fb6230ff9c86571aebc7cb832e6",
-      "at": "2026-03-28T13:00:57Z",
+      "hash": "3b91d1b3383285e813ef8eed5303e3a6fa8fa99d",
+      "at": "2026-03-28T13:37:22Z",
       "pr": 11858
     },
     ".agents/tools/build-mcp/build-mcp.md": {
-      "hash": "011bbdb6bb11427a0d8b27c195a96427f89db225",
-      "at": "2026-03-28T13:00:58Z",
+      "hash": "9b3ca67c49dd5bf0af66b01061561502620de8b3",
+      "at": "2026-03-28T13:37:27Z",
       "pr": 11844
     },
     ".agents/tools/deployment/daytona.md": {
-      "hash": "dba4e71b1e6c5b109b764b115a0e6edd2986f1dd",
-      "at": "2026-03-28T13:00:59Z",
+      "hash": "752d573096d1a59e09ee119494e907e2e17d34ee",
+      "at": "2026-03-28T13:37:28Z",
       "pr": 11846
     },
     ".agents/tools/ocr/ocr-research.md": {
-      "hash": "550b3d759426dae22ed192810a85c2f13d8c332f",
-      "at": "2026-03-28T13:01:01Z",
+      "hash": "667a0af0fe47f5c2c316520d13beb61f1f9d0b7f",
+      "at": "2026-03-28T13:37:30Z",
       "pr": 11857
     },
     ".agents/seo/contentking.md": {
-      "hash": "72687052121c77b1fa4af4b5300f11291826b3a3",
-      "at": "2026-03-28T13:01:02Z",
+      "hash": "ce7ecac379f3bc6552cf23ad3bd149902b0ace12",
+      "at": "2026-03-28T13:37:31Z",
       "pr": 11845
     },
     ".agents/services/email/mission-email.md": {
-      "hash": "a159479f3a7a89fd7a455085507a2a97ccc5d7e9",
-      "at": "2026-03-28T13:01:05Z",
-      "pr": 11842
+      "hash": "bf5446200b94e750fce11fc719c2904f47bd67c5",
+      "at": "2026-03-28T13:37:15Z",
+      "pr": 11889
     },
     ".agents/tools/mobile/app-store-connect.md": {
-      "hash": "177ca90c1c84ad979fa2e77e9ac4cc4b14cce9b3",
-      "at": "2026-03-28T13:01:10Z",
-      "pr": 11830
+      "hash": "8023c5d46c6d784bbc762f59d4c57d549e15903e",
+      "at": "2026-03-28T13:37:17Z",
+      "pr": 11893
     },
     ".agents/tools/browser/stagehand-examples.md": {
       "hash": "f557a876737b6ab698fa5dcf1d43b98305418786",
@@ -995,6 +995,21 @@
       "hash": "33b6cdd803bd3f494efeed8385a62516279d0707",
       "at": "2026-03-28T13:01:12Z",
       "pr": 11870
+    },
+    ".agents/tools/code-review/secretlint.md": {
+      "hash": "204aa2a11cbd3d6715a90b3bd867749e92e7472d",
+      "at": "2026-03-28T13:37:18Z",
+      "pr": 11879
+    },
+    ".agents/tools/database/pglite-local-first.md": {
+      "hash": "a526ab3d084340459373932bac5da8213aa09e25",
+      "at": "2026-03-28T13:37:19Z",
+      "pr": 11872
+    },
+    ".agents/tools/document/document-extraction.md": {
+      "hash": "05d5bf0448bc16590c5b0b35b9606b70bc417e95",
+      "at": "2026-03-28T13:37:20Z",
+      "pr": 11871
     }
   },
   ".agents/tools/code-review/best-practices.md": {
