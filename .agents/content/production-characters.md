@@ -56,7 +56,7 @@ EXPRESSIONS: resting [neutral/slight smile/serious/contemplative] | common expre
 DISTINCTIVE: unique identifiers [scars, moles, birthmarks, asymmetries] | memorable characteristics [what makes this face instantly recognizable]
 ```
 
-Store analysis as JSON: `character_id`, `face_structure` (7 fields), `eyes` (8), `nose` (5), `mouth` (7), `skin` (5), `hair` (6), `expressions` (4), `distinctive` (array). Hex codes for all colors. Save to `characters/[name]/facial-engineering.json`.
+Store as JSON: `character_id`, `face_structure` (7 fields), `eyes` (8), `nose` (5), `mouth` (7), `skin` (5), `hair` (6), `expressions` (4), `distinctive` (array). Hex codes for all colors. Save to `characters/[name]/facial-engineering.json`.
 
 ## Character Bible Template
 
@@ -200,13 +200,11 @@ Define once, reference from all character templates. Ensures visual constants ac
 
 **Current generation (2026)**: Sora 2 Pro, Veo 3.1, Nanobanana Pro, FLUX.1 Pro, Midjourney v7
 
-**On model upgrade**: Test consistency → update prompts → regenerate reference images/Cameos/Ingredients/JSON templates → update brand post-processing → document quirks → archive old outputs.
+**On model upgrade**: Test consistency → update prompts → regenerate reference assets (images/Cameos/Ingredients/JSON) → update brand post-processing → document quirks → archive old outputs.
 
-## Character Consistency Verification
+## Consistency Verification
 
 **Checklist**: facial features (shape, eyes, nose, mouth, skin, hair, distinctive) | body & wardrobe (build, height, style, colors, accessories, posture) | expression & behavior | brand alignment (lighting, color grading, post-processing)
-
-### Cross-Content Consistency
 
 | Context | Facial features | Wardrobe | Lighting | Camera |
 |---------|----------------|----------|----------|--------|
@@ -225,7 +223,7 @@ Define once, reference from all character templates. Ensures visual constants ac
 
 ## Multi-Character Management
 
-**Differentiation Matrix**:
+**Differentiation Matrix** — ensure distinct visual markers, complementary (not overlapping) expertise, consistent relationship dynamics, same brand identity across all:
 
 | Character | Face Shape | Eye Color | Hair | Wardrobe | Personality | Voice |
 |-----------|------------|-----------|------|----------|-------------|-------|
@@ -233,13 +231,9 @@ Define once, reference from all character templates. Ensures visual constants ac
 | Sarah | Heart | Green | Blonde | Colorful | Energetic | Upbeat |
 | Marcus | Square | Blue | Brown | Professional | Authoritative | Deep |
 
-Rules: distinct visual markers per character; consistent relationship dynamics; complementary (not overlapping) expertise; same brand identity across all.
-
 ## Character Evolution
 
-**Can change**: wardrobe, hair style, expressions, expertise, confidence
-**Must stay consistent**: facial bone structure, eye color/shape, skin tone, core personality, voice, distinctive features
-**Version log**: Version | Changes | Reason | Audience Response
+**Can change**: wardrobe, hair style, expressions, expertise, confidence. **Must stay consistent**: facial bone structure, eye color/shape, skin tone, core personality, voice, distinctive features. **Version log**: Version | Changes | Reason | Audience Response.
 
 ## Tools & Resources
 
@@ -251,14 +245,7 @@ Rules: distinct visual markers per character; consistent relationship dynamics; 
 
 ## Workflow Summary
 
-**New Character**: Define purpose → facial engineering → character bible → reference assets → JSON templates → test consistency → document in library
-
-**Existing Character**: Reference bible → load template (Nanobanana/Sora/Veo) → adapt → generate → verify consistency → publish → document evolution
-
-**Maintain Consistency**: Regular audits → update bible on changes → upgrade AI models → regenerate assets → monitor feedback → iterate
-
-**Content Pipeline**: Research (`content/research.md`) → Story (`content/story.md`) → Production (writing, image, video, audio) → Distribution (`content/distribution-*.md`) → Optimization (`content/optimization.md`)
-
----
-
-**Last Updated**: 2026-03-28 | **Version**: 1.2 | **Related Tasks**: t199.7
+- **New Character**: Define purpose → facial engineering → character bible → reference assets → JSON templates → test consistency → document in library
+- **Existing Character**: Reference bible → load template (Nanobanana/Sora/Veo) → adapt → generate → verify consistency → publish → document evolution
+- **Maintain Consistency**: Regular audits → update bible on changes → upgrade AI models → regenerate assets → monitor feedback → iterate
+- **Content Pipeline**: Research (`content/research.md`) → Story (`content/story.md`) → Production (writing, image, video, audio) → Distribution (`content/distribution-*.md`) → Optimization (`content/optimization.md`)
