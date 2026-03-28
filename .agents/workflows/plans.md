@@ -49,7 +49,7 @@ When `/save-todo` is invoked, analyze the conversation for complexity signals:
 
 ## Ralph Classification
 
-Tasks can be classified as "Ralph-able" -- suitable for autonomous iterative AI loops.
+Tasks can be classified as "Ralph-able" — suitable for autonomous iterative AI loops.
 
 **Criteria** (all required): clear success criteria, automated verification, bounded scope, no human judgment needed.
 
@@ -81,33 +81,22 @@ Add `#auto-dispatch` only when ALL inclusion criteria pass and NO exclusion crit
 
 ### MANDATORY: Task Brief Requirement
 
-**Every task MUST have a brief file** at `todo/tasks/{task_id}-brief.md`. A task without a brief is undevelopable -- it loses the conversation context that informed it.
-
-Use `templates/brief-template.md`. The brief captures: origin (session ID, date, author), what (clear deliverable), why (problem/need/value), how (technical approach, file references), acceptance criteria, and context from the conversation.
+**Every task MUST have a brief file** at `todo/tasks/{task_id}-brief.md`. A task without a brief is undevelopable — it loses the conversation context that informed it. Use `templates/brief-template.md`. Captures: origin (session ID, date, author), what, why, how (with file refs), acceptance criteria, context.
 
 **Session provenance is mandatory.** Detect runtime: `$OPENCODE_SESSION_ID`, `$CLAUDE_SESSION_ID`, or `{app}:unknown-{date}`.
 
 ### Task Description Quality (GH#6419)
 
-Task descriptions in TODO.md become GitHub issue titles. Write them so a reader scanning 50 issues can immediately tell whether two describe the same work (primary input to pulse duplicate detection). Include the **what** (action), **where** (component/file/feature area), and **when/why** (triggering condition). Exception: persistent/pinned monitoring issues keep their existing concise title style.
+Task descriptions in TODO.md become GitHub issue titles — primary input to pulse duplicate detection. Include the **what** (action), **where** (component/file/feature area), and **when/why** (triggering condition). Exception: persistent/pinned monitoring issues keep their concise title style.
 
-**Good**: `Add WooCommerce tax fallback when no tax class matches product category` | `Fix infinite redirect loop on /login when session cookie is expired`
+**Good**: `Add WooCommerce tax fallback when no tax class matches product category`
+**Bad**: `Tax fallback`
 
-**Bad**: `Tax fallback` | `Fix login bug`
+### Save Flow
 
-### Step 1: Extract from Conversation
+Extract from conversation: title, description, estimate (`~Xh (ai:Xh test:Xh read:Xm)`), tags, context, session ID.
 
-Title, description, estimate (`~Xh (ai:Xh test:Xh read:Xm)`), tags, context, session ID.
-
-### Step 2: Present with Auto-Detection
-
-**Simple**: `Saving to TODO.md: "{title}" ~{estimate} | Creating brief: todo/tasks/{task_id}-brief.md | 1. Confirm  2. Add more details  3. Create full plan instead`
-
-**Complex**: `This looks like complex work. Creating execution plan. Title: {title} | Estimate: ~{estimate} | Phases: {count} | Creating brief: todo/tasks/{task_id}-brief.md | 1. Confirm and create plan + brief  2. Simplify to TODO.md + brief  3. Add more context`
-
-### Step 3: Save Appropriately
-
-#### Simple Save (TODO.md + brief)
+**Simple** — present: `Saving to TODO.md: "{title}" ~{estimate} | Creating brief: todo/tasks/{task_id}-brief.md | 1. Confirm  2. Add more details  3. Create full plan instead`
 
 1. Create brief at `todo/tasks/{task_id}-brief.md`
 2. Add to TODO.md Backlog: `- [ ] t{NNN} {title} #{tag} ~{estimate} logged:{YYYY-MM-DD}`
@@ -116,7 +105,7 @@ Format elements (all optional except id and description): `@owner`, `#tag`, `~es
 
 **Auto-dispatch gate**: Only add `#auto-dispatch` if the brief has at least 2 specific acceptance criteria, a non-empty How section with file references, and a clear What section.
 
-#### Complex Save (PLANS.md + TODO.md)
+**Complex** — present: `This looks like complex work. Creating execution plan. Title: {title} | Estimate: ~{estimate} | Phases: {count} | Creating brief: todo/tasks/{task_id}-brief.md | 1. Confirm and create plan + brief  2. Simplify to TODO.md + brief  3. Add more context`
 
 1. Create PLANS.md entry using `templates/plans-template.md`. Required sections: **Status/Estimate**, **Purpose**, **Progress** (timestamped phases), **Context from Discussion**, **Decision Log**, **Surprises & Discoveries**.
 2. Add reference to TODO.md: `- [ ] {title} #plan -> [todo/PLANS.md#{slug}] ~{estimate} logged:{YYYY-MM-DD}`
@@ -164,7 +153,7 @@ Use calibrated tiers from `reference/planning-detail.md` (based on 340 completed
 
 **TOON machine-readable format**: `<!--TOON:dependencies[N]{from_id,to_id,type}: t019.2,t019.1,blocked-by -->`
 
-**`/ready` command**: `~/.aidevops/agents/scripts/todo-ready.sh` -- shows tasks with no open blockers and lists blocked tasks with their dependencies.
+**`/ready` command**: `~/.aidevops/agents/scripts/todo-ready.sh` — shows tasks with no open blockers and lists blocked tasks with their dependencies.
 
 ## Beads Integration
 
@@ -178,22 +167,22 @@ Configure per-repo in `.aidevops.json`: `{ "time_tracking": "prompt", "features"
 
 ## Distributed Task Claiming (t164/t165)
 
-**TODO.md is the master source of truth** for task ownership. GitHub issues are a public interface -- bi-directionally synced but never authoritative over TODO.md.
+**TODO.md is the master source of truth** for task ownership. GitHub issues are a public interface — bi-directionally synced but never authoritative over TODO.md.
 
 | Step | What happens |
 |------|-------------|
-| **Claim** | `git pull` -> check `assignee:` -> add `assignee:identity started:ISO` -> commit+push -> sync to GH issue |
-| **Check** | `grep "assignee:"` on task line -- instant, offline |
-| **Unclaim** | Remove `assignee:` + `started:` -> commit+push -> sync to GH issue |
+| **Claim** | `git pull` → check `assignee:` → add `assignee:identity started:ISO` → commit+push → sync to GH issue |
+| **Check** | `grep "assignee:"` on task line — instant, offline |
+| **Unclaim** | Remove `assignee:` + `started:` → commit+push → sync to GH issue |
 | **Race protection** | Git push rejection = someone else claimed first. Pull, re-check, abort. |
 
 **Identity**: Set `AIDEVOPS_IDENTITY` env var, or defaults to `$(whoami)@$(hostname -s)`.
 
-**Status labels** on GitHub Issues: `status:available` -> `status:claimed` -> `status:in-review` -> `status:done`
+**Status labels** on GitHub Issues: `status:available` → `status:claimed` → `status:in-review` → `status:done`
 
 ## MANDATORY: Worker TODO.md Restriction
 
-**Workers (headless dispatch runners) must NEVER edit TODO.md directly.** This is the primary cause of merge conflicts when multiple workers + supervisor push to TODO.md on main simultaneously.
+**Workers (headless dispatch runners) must NEVER edit TODO.md directly.** Primary cause of merge conflicts when multiple workers + supervisor push to TODO.md on main simultaneously.
 
 | Actor | May edit TODO.md? | How they report status |
 |-------|-------------------|----------------------|
@@ -201,15 +190,15 @@ Configure per-repo in `.aidevops.json`: `{ "time_tracking": "prompt", "features"
 | **Interactive user session** | Yes (via `planning-commit-helper.sh`) | Directly updates TODO.md |
 | **Worker** (headless runner) | **NO** | Exit code + log output + mailbox + PR creation |
 
-Workers communicate via: exit code (0 = success), log output, `mail-helper.sh send`, and PR creation. The supervisor updates TODO.md based on these signals during its pulse cycle.
-
 ## MANDATORY: Commit and Push After TODO Changes
 
-After ANY edit to TODO.md, todo/PLANS.md, or todo/tasks/*, commit and push immediately. **Interactive sessions and supervisor only -- not workers.**
+After ANY edit to TODO.md, todo/PLANS.md, or todo/tasks/*, commit and push immediately. **Interactive sessions and supervisor only — not workers.**
 
-**Planning-only changes** (on main): `~/.aidevops/agents/scripts/planning-commit-helper.sh "chore: add {description} to backlog"` -- no branch, no PR, uses `todo_commit_push()` for serialized locking.
-
-**Mixed changes** (planning + non-exception files): Create a worktree (`wt switch -c chore/todo-{slug}`), make changes, commit, push, PR, merge.
+| Condition | Action |
+|-----------|--------|
+| TODO.md-only changes | Commit directly on main — `planning-commit-helper.sh "chore: add {description} to backlog"` |
+| Mixed changes (TODO + code/agent files) | Create a worktree (`wt switch -c chore/todo-{slug}`), make changes, commit, push, PR, merge |
+| Adding 3+ unrelated items on a feature branch | Suggest committing on main instead |
 
 **NEVER use `git checkout -b` or `git stash` in the main repo directory.**
 
@@ -219,19 +208,9 @@ After ANY edit to TODO.md, todo/PLANS.md, or todo/tasks/*, commit and push immed
 
 - **GitHub issue titles** MUST be prefixed with their TODO.md task ID: `t{NNN}: {title}`
 - **TODO.md tasks** MUST reference their GitHub issue: `ref:GH#{NNN}`
-- When creating both together: assign t-number -> create GitHub issue -> add TODO entry with `ref:GH#` -> commit and push immediately.
+- When creating both together: assign t-number → create GitHub issue → add TODO entry with `ref:GH#` → commit and push immediately.
 
 Example: `- [ ] t146 bug: supervisor no_pr retry counter #bugfix ~15m logged:2026-02-07 ref:GH#439`
-
-## Git Branch Strategy for TODO.md Changes
-
-| Condition | Recommendation |
-|-----------|----------------|
-| TODO.md-only changes | Commit directly on main (no branch needed) |
-| Mixed changes (TODO + code/agent files) | Create a worktree |
-| Adding 3+ unrelated items on a feature branch | Suggest committing on main instead |
-
-**NEVER use `git checkout -b` in the main repo directory.** Use `wt switch -c` for dedicated branches.
 
 ## Integration with Other Workflows
 
@@ -244,7 +223,7 @@ Example: `- [ ] t146 bug: supervisor no_pr retry counter #bugfix ~15m logged:202
 
 ## Templates
 
-- `templates/prd-template.md` -- PRD structure
-- `templates/tasks-template.md` -- Task list format
-- `templates/todo-template.md` -- TODO.md for new repos
-- `templates/plans-template.md` -- PLANS.md for new repos
+- `templates/prd-template.md` — PRD structure
+- `templates/tasks-template.md` — Task list format
+- `templates/todo-template.md` — TODO.md for new repos
+- `templates/plans-template.md` — PLANS.md for new repos
