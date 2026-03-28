@@ -597,8 +597,8 @@
       "pr": 11616
     },
     ".agents/marketing-sales/ad-creative-psychology-targeting.md": {
-      "hash": "28200053613d34529f70017afd9ff2c513dd5d03",
-      "at": "2026-03-28T08:58:06Z",
+      "hash": "c37b3f2fadeaae4f147248efd4fa535e89f1d96b",
+      "at": "2026-03-28T10:27:52Z",
       "pr": 11655
     },
     ".agents/marketing-sales/direct-response-copy-swipe-file-vsl-scripts-example.md": {
@@ -727,9 +727,9 @@
       "pr": 11615
     },
     ".agents/workflows/postflight.md": {
-      "hash": "2ae4b85e8101aea460e2031ffc5560c653bccf7d",
-      "at": "2026-03-28T09:17:33Z",
-      "pr": 11714
+      "hash": "4e10936d7f2007c0c034ff2f2d8f8110bdf3d0dc",
+      "at": "2026-03-28T10:27:12Z",
+      "pr": 11739
     },
     ".agents/content/heygen-skill/rules-backgrounds.md": {
       "hash": "7abf186ddedbabd5128f34ee918393a187de8cc3",
@@ -752,9 +752,9 @@
       "pr": 11724
     },
     ".agents/content/heygen-skill/rules-remotion-integration.md": {
-      "hash": "5642d959165b452f2c132f2d2ecdb7d484e06061",
-      "at": "2026-03-28T09:17:43Z",
-      "pr": 11716
+      "hash": "5ccb546152546cd33344a76d42a4b90c0acd0dbd",
+      "at": "2026-03-28T10:27:14Z",
+      "pr": 11740
     },
     ".agents/services/payments/procurement.md": {
       "hash": "cd9fc50f3fc0400fc70f712e5b20868aaa9ce293",
@@ -767,8 +767,8 @@
       "pr": 11723
     },
     ".agents/content/distribution-youtube-topic-research.md": {
-      "hash": "5cad3eadce10ee33a862ef8040dc746457b7bf8a",
-      "at": "2026-03-28T09:39:21Z",
+      "hash": "ac315d49d22c94177ed28329b2d060a4b69134d5",
+      "at": "2026-03-28T10:27:21Z",
       "pr": 11708
     },
     ".agents/content/heygen-skill/rules-captions.md": {
@@ -777,18 +777,18 @@
       "pr": 11707
     },
     ".agents/services/database/postgres-drizzle-skill/cheatsheet.md": {
-      "hash": "1679befdbb328a28617cb3e59957a033bba35409",
-      "at": "2026-03-28T09:39:23Z",
+      "hash": "07b30b06de54ff4544c7f468a6c6ba2d25215784",
+      "at": "2026-03-28T10:27:24Z",
       "pr": 11709
     },
     ".agents/services/database/postgres-drizzle-skill/schema.md": {
-      "hash": "99ebb3bdfd27856e94ed29c7851699d12739ef67",
-      "at": "2026-03-28T09:39:23Z",
+      "hash": "ed1952db54651cd46710ca9cfa4db950635e42a6",
+      "at": "2026-03-28T10:27:24Z",
       "pr": 11709
     },
     ".agents/tools/ui/i18next.md": {
-      "hash": "ad0db76988832be07bb31badbcc1eb57283d0424",
-      "at": "2026-03-28T09:39:25Z",
+      "hash": "ce750937b182da6a4a2cce512b141f16da789fcd",
+      "at": "2026-03-28T10:27:25Z",
       "pr": 11710
     },
     ".agents/services/database/postgres-drizzle-skill/relations.md": {
@@ -797,24 +797,44 @@
       "pr": 11717
     },
     ".agents/tools/build-mcp/server-patterns.md": {
-      "hash": "5eb6823c314d82301636ec87d7ff3720480cea13",
-      "at": "2026-03-28T09:39:31Z",
+      "hash": "c0e5bf0399f60ae53b3b09082ac6ced4debb8c76",
+      "at": "2026-03-28T10:27:33Z",
       "pr": 11679
     },
     ".agents/tools/git/worktrunk.md": {
-      "hash": "cd84573d4010381648d025eb355743bcf1396d87",
-      "at": "2026-03-28T09:39:32Z",
-      "pr": 11678
+      "hash": "bafc956a55ed67b84dfc0722955434b85dd6202e",
+      "at": "2026-03-28T10:27:11Z",
+      "pr": 11760
     },
     ".agents/content/distribution-youtube-pipeline.md": {
-      "hash": "de1a4b45ed69d1c248513eee27d35b778fd00045",
-      "at": "2026-03-28T09:39:34Z",
+      "hash": "b913e4fa0f868e7d1f6a7843d91d8f3795160fe3",
+      "at": "2026-03-28T10:27:36Z",
       "pr": 11676
     },
     ".agents/content/heygen-skill/rules-video-generation.md": {
-      "hash": "e6c74b411a5ea6ce2e63aa71a20cbd312b695a3f",
-      "at": "2026-03-28T09:39:35Z",
+      "hash": "929341bdb16beeda9c31e050b53eddbe5badfd72",
+      "at": "2026-03-28T10:27:38Z",
       "pr": 11675
+    },
+    ".agents/tools/code-review/best-practices.md": {
+      "hash": "5452355d63f9c6d3d99961da0c31446fe8129baf",
+      "at": "2026-03-28T10:27:05Z",
+      "pr": 11759
+    },
+    ".agents/content/video-muapi.md": {
+      "hash": "a857b59d604b9fe3bf5e9597fc345230bf1a8f50",
+      "at": "2026-03-28T10:27:06Z",
+      "pr": 11758
+    },
+    ".agents/tools/browser/playwright-cli.md": {
+      "hash": "fdf7aff0466057895e0db9d597f5d80785f0b3f0",
+      "at": "2026-03-28T10:27:07Z",
+      "pr": 11757
+    },
+    ".agents/aidevops/requirements.md": {
+      "hash": "5d52c62638db37db1de4990969eab8b4ed182c7d",
+      "at": "2026-03-28T10:27:35Z",
+      "pr": 11674
     }
   }
 }
