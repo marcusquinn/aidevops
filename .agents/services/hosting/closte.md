@@ -32,7 +32,7 @@ tools:
 
 ## Caching & Dev Mode
 
-Closte uses aggressive caching (Litespeed Page Cache + Object Cache/Redis + CDN). Enable Dev Mode before CLI/SSH edits — it disables all caching layers so you see real-time database state.
+Closte uses aggressive caching (Litespeed Page Cache + Object Cache/Redis + CDN). Enable Dev Mode before any CLI/SSH edits — disables all caching layers so you see real-time state.
 
 ```bash
 wp closte devmode enable   # before edits
@@ -41,12 +41,7 @@ wp closte devmode disable  # after edits — restores caching
 
 **Via Dashboard:** Sites > [Your Site] > Settings > Development Mode toggle.
 
-**Object cache flush** (if Admin Panel still shows stale data):
-
-```bash
-wp cache flush
-wp cache flush --url=https://example.com  # multisite
-```
+If Admin Panel still shows stale data after Dev Mode: `wp cache flush` (add `--url=https://example.com` for multisite).
 
 ## Configuration
 
@@ -73,9 +68,9 @@ cp configs/closte-config.json.txt configs/closte-config.json
 }
 ```
 
-Hostname resolves to `mysql.cluster` or a specific IP — use the value from Closte Dashboard > Access.
+Hostname: use value from Closte Dashboard > Access (`mysql.cluster` or a specific IP).
 
-**SSH (password auth only — no keys):**
+**SSH setup (password auth only — no keys):**
 
 ```bash
 brew install sshpass          # macOS
@@ -163,49 +158,38 @@ if ( $from_cloudflare
 }
 ```
 
-For multisite: this goes in the shared `wp-config.php` — applies to all sites.
+For multisite: add once to the shared `wp-config.php` — all sites inherit it.
 
 ### Step 2: Cloudflare Zone Settings
 
-1. Add domain to Cloudflare (free plan sufficient).
-2. Update registrar nameservers to Cloudflare's assigned nameservers.
-3. DNS: enable proxy (orange cloud) on `A` record for `@` and `CNAME` for `www`.
-4. **SSL/TLS mode** → **Full (strict)**. Never use "Flexible" — sends plaintext to origin.
-5. **Minimum TLS Version** → **TLS 1.2** (SSL/TLS > Edge Certificates). This eliminates the B grade.
-6. **Always Use HTTPS** → enable.
-7. **HSTS** → enable, `max-age` ≥ 6 months, `includeSubDomains`.
+1. Add domain to Cloudflare (free plan sufficient); update registrar nameservers.
+2. DNS: enable proxy (orange cloud) on `A` record for `@` and `CNAME` for `www`.
+3. **SSL/TLS mode** → **Full (strict)**. Never use "Flexible" — sends plaintext to origin.
+4. **Minimum TLS Version** → **TLS 1.2** (SSL/TLS > Edge Certificates). Eliminates the B grade.
+5. **Always Use HTTPS** → enable.
+6. **HSTS** → enable, `max-age` ≥ 6 months, `includeSubDomains`.
 
 ### Step 3: Verification
 
 ```bash
-# Verify Cloudflare is proxying
-curl -sI https://example.com | grep -i cf-ray
-
-# Verify no redirect loop
-curl -sI https://example.com | head -5
-
-# Verify TLS 1.1 rejected at edge
-curl --tlsv1.1 --tls-max 1.1 https://example.com 2>&1 | head -3
-# Expected: SSL handshake failure
-# Alternative: openssl s_client -connect example.com:443 -tls1_1 < /dev/null 2>&1 | head -5
+curl -sI https://example.com | grep -i cf-ray          # Cloudflare proxying
+curl -sI https://example.com | head -5                  # no redirect loop
+curl --tlsv1.1 --tls-max 1.1 https://example.com 2>&1 | head -3  # TLS 1.1 rejected (expect SSL handshake failure)
 ```
 
 ### Multisite with Domain Mapping
 
-- Each mapped domain needs its own Cloudflare zone (free plan, one zone per domain).
-- Apply the same settings (Full strict, min TLS 1.2, HSTS) to each zone.
-- `wp-config.php` snippet is shared — add once; all sites inherit it.
-- DNS for each domain must point to Closte's IP with proxy enabled.
+Each mapped domain needs its own Cloudflare zone (free plan). Apply the same settings (Full strict, min TLS 1.2, HSTS) to each zone. DNS for each domain must point to Closte's IP with proxy enabled.
 
 ### Known Interactions
 
 | Component | Behaviour | Action |
 |-----------|-----------|--------|
-| Let's Encrypt renewal | HTTP-01 challenge can be blocked by Cloudflare cache. | Create a Cache Rule to bypass on `/.well-known/acme-challenge/*`. |
-| Closte Dashboard warnings | Shows "DNS not pointing to us" (detects CF IPs). | Safe to ignore — site works correctly. |
-| RSSSL `.htaccess` test | Test request goes through Cloudflare, may fail. | Ignore — RSSSL functions normally with the `wp-config.php` snippet. |
-| Litespeed Cache CDN | Conflicts with Cloudflare CDN (double-caching). | Disable Closte CDN (Dashboard > CDN) when using Cloudflare proxy. Keep Page Cache and Object Cache. |
-| Cloudflare APO | Conflicts with Litespeed Cache. | If using APO, disable Litespeed Page Cache. Generally Litespeed alone is sufficient. |
+| Let's Encrypt renewal | HTTP-01 challenge blocked by Cloudflare cache. | Cache Rule: bypass on `/.well-known/acme-challenge/*`. |
+| Closte Dashboard warnings | Shows "DNS not pointing to us" (detects CF IPs). | Safe to ignore. |
+| RSSSL `.htaccess` test | Test request via Cloudflare may fail. | Ignore — RSSSL works with the `wp-config.php` snippet. |
+| Litespeed Cache CDN | Conflicts with Cloudflare CDN (double-caching). | Disable Closte CDN (Dashboard > CDN); keep Page Cache and Object Cache. |
+| Cloudflare APO | Conflicts with Litespeed Cache. | If using APO, disable Litespeed Page Cache. Litespeed alone is usually sufficient. |
 
 ## Troubleshooting
 
