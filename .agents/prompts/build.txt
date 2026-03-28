@@ -188,9 +188,9 @@ Git is the audit trail. Chain: TODO → issue → worktree → PR → merge. Gap
 **GitHub comment signature footer:** Every issue, PR, and comment created by aidevops agents MUST include a signature footer. Use `gh-signature-helper.sh footer --model <model-id> [--issue OWNER/REPO#NUM] [--solved]` to generate it. Example output:
 ```
 ---
-[aidevops.sh](https://aidevops.sh) v3.5.35 plugin for [OpenCode](https://opencode.ai) v1.3.3 with claude-opus-4-6 used 1,658,312 tokens for 42m. Solved in 3d 4h.
+[aidevops.sh](https://aidevops.sh) v3.5.36 plugin for [OpenCode](https://opencode.ai) v1.3.3 with claude-opus-4-6 has used 1,658,312 tokens for 42m. Solved in 3d 4h.
 ```
-The helper auto-detects CLI, version, tokens (including cache), and session time from the runtime DB. Pass `--issue` on comments to existing issues for "Xm since this issue was created." phrasing. Pass `--solved` on closing comments for "Solved in Xm." phrasing. Do NOT pass `--issue` when creating new issues (the issue doesn't exist yet). Append the footer as the last line of every `gh issue comment`, `gh issue create`, and `gh pr create` body. See `scripts/commands/pulse.md` for dispatch/kill/merge comment templates.
+The helper auto-detects CLI, version, tokens (including cache), and session time from the runtime DB. Pass `--issue` on comments to existing issues for "Overall, Xm since this issue was created." phrasing. Pass `--solved` on closing comments for "Solved in Xm." phrasing. Do NOT pass `--issue` when creating new issues (the issue doesn't exist yet). Append the footer as the last line of every `gh issue comment`, `gh issue create`, and `gh pr create` body. See `scripts/commands/pulse.md` for dispatch/kill/merge comment templates.
 
 **Self-improvement routing (t1541):** Framework-level tasks → `framework-routing-helper.sh log-framework-issue`. Project tasks → current repo. Framework tasks in project repos are invisible to maintainers.
 

@@ -555,7 +555,7 @@ _build_signature() {
 	if [[ -n "$tokens" ]] && [[ "$tokens" != "0" ]]; then
 		local formatted
 		formatted=$(_format_number "$tokens")
-		sig="${sig} used ${formatted} tokens"
+		sig="${sig} has used ${formatted} tokens"
 	fi
 
 	# "for Xm" (session time)
@@ -570,16 +570,18 @@ _build_signature() {
 		has_stats="true"
 	fi
 
+	# Trailing period before optional total time
+	if [[ -n "$has_stats" ]]; then
+		sig="${sig}."
+	fi
+
+	# Total time as a separate sentence
 	if [[ -n "$total_time_str" ]]; then
 		if [[ "$solved" == "true" ]]; then
-			sig="${sig}. Solved in ${total_time_str}."
-		elif [[ -n "$session_time_str" ]]; then
-			sig="${sig}, ${total_time_str} since this issue was created."
+			sig="${sig} Solved in ${total_time_str}."
 		else
-			sig="${sig} ${total_time_str} since this issue was created."
+			sig="${sig} Overall, ${total_time_str} since this issue was created."
 		fi
-	elif [[ -n "$has_stats" ]]; then
-		sig="${sig}."
 	fi
 
 	echo "$sig"
