@@ -1085,11 +1085,11 @@
       "hash": "75edb74d82b5c0ef79b5dda64026b3145359d72f",
       "at": "2026-03-28T10:12:10Z",
       "pr": 11735
+    },
+    ".agents/tools/code-review/best-practices.md": {
+      "hash": "f0869021889e61a681d25d171ebff01435b2294a",
+      "at": "2026-03-28T10:11:16Z",
+      "pr": 11771
     }
-  },
-  ".agents/tools/code-review/best-practices.md": {
-    "hash": "f0869021889e61a681d25d171ebff01435b2294a",
-    "at": "2026-03-28T10:11:16Z",
-    "pr": 11771
   }
 }
