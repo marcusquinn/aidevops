@@ -60,16 +60,18 @@ bd mcp                                           # MCP server (for AI tools)
 
 ```bash
 ~/.aidevops/agents/scripts/beads-sync-helper.sh push [/path/to/project]  # TODO.md → Beads
-~/.aidevops/agents/scripts/beads-sync-helper.sh pull                      # Beads → TODO.md
+~/.aidevops/agents/scripts/beads-sync-helper.sh pull                      # Beads → TODO.md (manual merge required)
 ~/.aidevops/agents/scripts/beads-sync-helper.sh status                    # Check sync status
-~/.aidevops/agents/scripts/beads-sync-helper.sh push --force              # Force push (conflict resolution)
-~/.aidevops/agents/scripts/beads-sync-helper.sh pull --force              # Force pull (conflict resolution)
+~/.aidevops/agents/scripts/beads-sync-helper.sh sync                      # Two-way sync with conflict detection
+~/.aidevops/agents/scripts/beads-sync-helper.sh sync --force              # Force sync (TODO.md wins on conflict)
 ~/.aidevops/agents/scripts/todo-ready.sh                                  # Show unblocked tasks
 ~/.aidevops/agents/scripts/todo-ready.sh --json                           # JSON output
 ~/.aidevops/agents/scripts/todo-ready.sh --count                          # Count only
 ```
 
-**Conflict resolution**: When both TODO.md and Beads have changes, sync warns. Review both sources, then use `--force` to resolve.
+**Conflict resolution**: When both TODO.md and Beads have changes, run `status` first to review both sources.
+Then use `sync --force` to resolve — the helper treats TODO.md as the winner.
+Note: `pull` exports Beads data but does not auto-update TODO.md; manual merge is required.
 
 ## Viewers
 
