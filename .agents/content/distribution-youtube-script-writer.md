@@ -19,16 +19,14 @@ Generate YouTube video scripts optimized for audience retention. Supports struct
 
 ## Pre-flight Questions
 
-Before writing a video script, work through:
+Before writing, work through:
 
-1. What is the single takeaway — and does every section of the script serve it?
+1. What is the single takeaway — and does every section serve it?
 2. Why would someone watch past 30 seconds — what tension or promise holds them?
 3. What does the viewer already know — where does this video meet them?
 4. What would make this indistinguishable from the last 10 videos on this topic — and how do we avoid that?
 
 ## Script Structure
-
-Every YouTube script follows this retention-optimized structure:
 
 ```text
 HOOK (0-30s)   — Pattern interrupt + promise + credibility. Goal: stop the scroll.
@@ -40,30 +38,19 @@ CTA (final 30s)— Subscribe + next video + comment prompt. Goal: convert to sub
 
 ### Pattern Interrupts
 
-Insert every 2-3 minutes to reset attention:
-
-| Type | Example |
-|------|---------|
-| Curiosity gap | "But here's where it gets weird..." |
-| Story pivot | "That's what I thought too, until..." |
-| Direct address | "Now you might be thinking..." |
-| Visual change | "[B-roll / graphic / screen change]" |
-| Tease ahead | "And the third one is the one nobody expects..." |
-| Reframe | "But forget everything I just said, because..." |
+Insert every 2-3 minutes to reset attention: curiosity gap ("But here's where it gets weird..."), story pivot ("That's what I thought too, until..."), direct address ("Now you might be thinking..."), visual change ([B-roll / graphic / screen change]), tease ahead ("And the third one is the one nobody expects..."), reframe ("But forget everything I just said, because...").
 
 ## Hook Formulas
 
-The hook is the most critical part. Use these proven formulas:
-
-| Formula | Pattern | Example |
-|---------|---------|---------|
-| **Bold Claim** | Surprising statement that challenges assumptions | "This $5 tool outperforms every $500 alternative I've tested." |
-| **Question** | Question the viewer desperately wants answered | "Why do 90% of YouTube channels never reach 1,000 subscribers?" |
-| **Story** | Drop into the middle of a compelling story | "Three months ago, I made a video that got 47 views. Last week, it hit 2 million." |
-| **Contrarian** | Statement that goes against popular belief | "Everything you've been told about YouTube SEO is wrong." |
-| **Result** | Show the end result, then explain how | "This channel went from 0 to 100K subscribers in 6 months. Here's exactly how." |
-| **Problem-Agitate** | Name a pain point, then make it worse | "Your YouTube thumbnails are costing you views. And the fix isn't what you think." |
-| **Curiosity Gap** | Reveal partial information that demands completion | "There's one setting in YouTube Studio that 95% of creators never touch. It changed everything for me." |
+| Formula | Example |
+|---------|---------|
+| **Bold Claim** — surprising statement challenging assumptions | "This $5 tool outperforms every $500 alternative I've tested." |
+| **Question** — viewer desperately wants answered | "Why do 90% of YouTube channels never reach 1,000 subscribers?" |
+| **Story** — drop into the middle of a compelling story | "Three months ago, I made a video that got 47 views. Last week, it hit 2 million." |
+| **Contrarian** — goes against popular belief | "Everything you've been told about YouTube SEO is wrong." |
+| **Result** — show end result, then explain how | "This channel went from 0 to 100K subscribers in 6 months. Here's exactly how." |
+| **Problem-Agitate** — name pain point, make it worse | "Your thumbnails are costing you views. And the fix isn't what you think." |
+| **Curiosity Gap** — partial info that demands completion | "There's one setting in YouTube Studio that 95% of creators never touch. It changed everything for me." |
 
 ## Storytelling Frameworks
 
@@ -90,8 +77,6 @@ youtube-helper.sh transcript COMPETITOR_VIDEO_ID
 
 ### Step 2: Generate the Script
 
-**Prompt pattern**:
-
 > Write a YouTube video script for: [topic]
 >
 > **Channel voice**: [from memory — formal/casual, humor style, expertise level]
@@ -110,7 +95,7 @@ youtube-helper.sh transcript COMPETITOR_VIDEO_ID
 > Competitor angles to AVOID: [from topic research]
 > Our unique angle: [from topic research]
 
-### Step 3: Review Against Retention Signals
+### Step 3: Retention Checklist
 
 | Checkpoint | Verify |
 |-----------|--------|
@@ -126,22 +111,16 @@ youtube-helper.sh transcript COMPETITOR_VIDEO_ID
 
 Transform a competitor's successful video into a unique script with your voice and angle.
 
-### Step 1: Extract Source Structure
-
 ```bash
 youtube-helper.sh transcript VIDEO_ID > /tmp/source_transcript.txt
 youtube-helper.sh video VIDEO_ID
 ```
 
-### Step 2: Analyze and Remix
+**Analyze**: Extract hook formula, storytelling framework, key points, pattern interrupts, CTA approach, and what drove success.
 
-**Analyze prompt**: Extract hook formula, storytelling framework, key points, pattern interrupts, CTA approach, and what drove success.
+**Remix**: Write a NEW script covering the SAME topic from [new angle], using MY channel voice, adding [new information/perspective], keeping structural elements that worked. No copied phrases or examples.
 
-**Remix prompt**: Write a NEW script covering the SAME topic from [new angle], using MY channel voice, adding [new information/perspective], keeping structural elements that worked. No copied phrases or examples.
-
-### Remix Modes
-
-| Mode | Description |
+| Remix mode | Description |
 |------|-------------|
 | Same topic, new angle | Different perspective on same subject |
 | Same structure, new topic | Apply successful format to different subject |
@@ -153,42 +132,23 @@ youtube-helper.sh video VIDEO_ID
 
 ```markdown
 ## [Video Title]
-
 **Target length**: [X min / Y words] | **Framework**: [name] | **Primary keyword**: [keyword]
-
 ---
-
 ### [00:00] HOOK
 [Script text with delivery notes]
 [VISUAL: description]
-
 ### [00:30] INTRO
 [Script text]
-[VISUAL: description]
-
 ### [01:00] Section 1: [Title]
 [Script text]
 [PATTERN INTERRUPT: type and text]
 [VISUAL: description]
-
-### [03:00] Section 2: [Title]
-[Script text]
-[PATTERN INTERRUPT: type and text]
-
-[... continue sections ...]
-
-### [XX:XX] CTA
-[Script text — specific to content, not generic]
-
+### [03:00] Section 2: [Title] — [... continue sections ...] — [XX:XX] CTA
+[CTA: specific to content, not generic]
 ---
-
 ## Metadata
-
-**Suggested titles**: [Option 1] / [Option 2] / [Option 3]
-
-**Chapter timestamps**:
-00:00 - Hook/Intro | 00:30 - Section 1 | 03:00 - Section 2 | ...
-
+**Titles**: [Option 1] / [Option 2] / [Option 3]
+**Chapters**: 00:00 - Hook/Intro | 00:30 - Section 1 | 03:00 - Section 2 | ...
 **Tags**: [tag1], [tag2], [tag3], ...
 ```
 
