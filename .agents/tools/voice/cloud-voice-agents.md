@@ -43,13 +43,14 @@ Native S2S: lower latency, less controllable. Cascaded: swappable components, ea
 
 ## Model Comparison
 
-| Model | Type | Latency | VRAM | License | Languages | Best For |
-|-------|------|---------|------|---------|-----------|----------|
-| GPT-4o Realtime | Cloud API | ~300ms | N/A | Proprietary | 50+ | Production cloud, lowest latency |
-| MiniCPM-o 2.6 | Open weights | ~500ms | 8-16GB | Apache-2.0 | EN, ZH | Self-hosted, privacy, multimodal |
-| NVIDIA Nemotron Speech | NIM API/Self-host | ~200-400ms | Varies | Mixed | 25+ (ASR), 17+ (TTS) | Enterprise, on-prem, NVIDIA GPUs |
-| Gemini 2.0 Live | Cloud API | ~350ms | N/A | Proprietary | 40+ | Google ecosystem, multimodal |
-| AWS Nova Sonic | Cloud API | ~600ms | N/A | Proprietary | 7 | AWS ecosystem |
+| Model | Type | Latency | VRAM | License | Languages | ~Cost/Min | Best For |
+|-------|------|---------|------|---------|-----------|-----------|----------|
+| GPT-4o Realtime | Cloud API | ~300ms | N/A | Proprietary | 50+ | $0.06 | Production cloud, lowest latency |
+| MiniCPM-o 2.6 | Open weights | ~500ms | 8-16GB | Apache-2.0 | EN, ZH | $0.01-0.03 (GPU) | Self-hosted, privacy, multimodal |
+| NVIDIA Nemotron Speech | NIM API/Self-host | ~200-400ms | Varies | Mixed | 25+ (ASR), 17+ (TTS) | GPU / free tier | Enterprise, on-prem, NVIDIA GPUs |
+| Gemini 2.0 Live | Cloud API | ~350ms | N/A | Proprietary | 40+ | $0.04 | Google ecosystem, multimodal |
+| AWS Nova Sonic | Cloud API | ~600ms | N/A | Proprietary | 7 | — | AWS ecosystem |
+| Cascaded (Groq STT + Claude + EdgeTTS) | Mixed | Varies | N/A | Mixed | Many | $0.02 | Mix of free and paid |
 
 ## GPT-4o Realtime
 
@@ -57,7 +58,9 @@ Native S2S (GA 2025). WebRTC (browser), WebSocket (server), SIP (telephony).
 
 **Features**: Native audio I/O, emotion-aware (9+ voices), function calling, input transcription. Model: `gpt-realtime` (GA) or `gpt-4o-realtime-preview` (legacy).
 
-**Pricing**: Input ~$40/1M tokens, output ~$80/1M tokens, cached ~$2.50/1M tokens (~$0.06/min).
+**Pricing**: Input ~$40/1M tokens, output ~$80/1M tokens, cached ~$2.50/1M tokens.
+
+**Voices**: alloy, ash, ballad, coral, echo, fable, marin, sage, shimmer, verse.
 
 **Docs**: [API reference](https://platform.openai.com/docs/guides/realtime) | [Voice agents quickstart](https://openai.github.io/openai-agents-js/guides/voice-agents/quickstart/)
 
@@ -110,13 +113,11 @@ async with websockets.connect(url, extra_headers=headers) as ws:
     }))
 ```
 
-**Voices**: alloy, ash, ballad, coral, echo, fable, marin, sage, shimmer, verse.
-
 ## MiniCPM-o 2.6
 
 Open-weight omni-modal (8B params, OpenBMB). Architecture: SigLip-400M + Whisper-medium-300M + ChatTTS-200M + Qwen2.5-7B.
 
-**Features**: End-to-end speech (no separate STT/TTS), bilingual EN+ZH, configurable voices via audio system prompt, voice cloning, emotion/speed/style control, multimodal live streaming. Outperforms GPT-4o-realtime on audio benchmarks. 8GB+ VRAM, iPad, or cloud.
+**Features**: End-to-end speech (no separate STT/TTS), bilingual EN+ZH, configurable voices via audio system prompt, voice cloning, emotion/speed/style control, multimodal live streaming. Outperforms GPT-4o-realtime on audio benchmarks.
 
 **Requirements**: Python 3.10+, PyTorch 2.3+, CUDA 8GB+ VRAM (16GB full omni), `transformers==4.44.2`. Apple Silicon: llama.cpp only (no MPS).
 
@@ -135,35 +136,23 @@ from transformers import AutoModel, AutoTokenizer
 
 model = AutoModel.from_pretrained(
     "openbmb/MiniCPM-o-2_6",
-    trust_remote_code=True,
-    attn_implementation="sdpa",
+    trust_remote_code=True, attn_implementation="sdpa",
     torch_dtype=torch.bfloat16,
-    init_vision=False,  # speech-only mode
-    init_audio=True,
-    init_tts=True,
+    init_vision=False, init_audio=True, init_tts=True,
 )
 model = model.eval().cuda()
-tokenizer = AutoTokenizer.from_pretrained(
-    "openbmb/MiniCPM-o-2_6", trust_remote_code=True
-)
+tokenizer = AutoTokenizer.from_pretrained("openbmb/MiniCPM-o-2_6", trust_remote_code=True)
 model.init_tts()
 
 ref_audio, _ = librosa.load("reference_voice.wav", sr=16000, mono=True)
-sys_prompt = model.get_sys_prompt(
-    ref_audio=ref_audio, mode="audio_assistant", language="en"
-)
+sys_prompt = model.get_sys_prompt(ref_audio=ref_audio, mode="audio_assistant", language="en")
 
 user_audio, _ = librosa.load("user_question.wav", sr=16000, mono=True)
 msgs = [sys_prompt, {"role": "user", "content": [user_audio]}]
 
 res = model.chat(
-    msgs=msgs,
-    tokenizer=tokenizer,
-    sampling=True,
-    max_new_tokens=128,
-    use_tts_template=True,
-    generate_audio=True,
-    temperature=0.3,
+    msgs=msgs, tokenizer=tokenizer, sampling=True, max_new_tokens=128,
+    use_tts_template=True, generate_audio=True, temperature=0.3,
     output_audio_path="response.wav",
 )
 ```
@@ -174,9 +163,7 @@ res = model.chat(
 model.reset_session()
 session_id = "voice-agent-001"
 
-model.streaming_prefill(
-    session_id=session_id, msgs=[sys_prompt], tokenizer=tokenizer
-)
+model.streaming_prefill(session_id=session_id, msgs=[sys_prompt], tokenizer=tokenizer)
 
 for chunk in audio_chunks:
     model.streaming_prefill(
@@ -187,7 +174,7 @@ for chunk in audio_chunks:
 
 for r in model.streaming_generate(
     session_id=session_id, tokenizer=tokenizer,
-    temperature=0.5, generate_audio=True
+    temperature=0.5, generate_audio=True,
 ):
     play_audio(r.audio_wav, r.sampling_rate)
 ```
@@ -253,7 +240,7 @@ docker run --gpus all -p 8001:8001 \
   nvcr.io/nim/nvidia/magpie-tts-multilingual:latest
 ```
 
-### Composable Voice Agent Pipeline
+### Composable Pipeline
 
 ```text
 Audio In -> [Parakeet ASR NIM] -> Text -> [LLM (Claude/GPT/Nemotron)] -> Text -> [Magpie TTS NIM] -> Audio Out
@@ -267,21 +254,10 @@ Any LLM works in the middle. Pipecat lacks native Riva integration — use Riva 
 
 | Pattern | Best For | Architecture |
 |---------|----------|-------------|
-| Browser (WebRTC) | Customer-facing web apps, support chatbots | Browser ↔ OpenAI Realtime API (or Pipecat + Daily.co). OpenAI Agents SDK or SmallWebRTCTransport. Client-side ephemeral keys. |
-| Phone Bot (SIP/Twilio) | Call centers, IVR replacement, appointment booking | Phone → Twilio → SIP → OpenAI Realtime API, or WebSocket → Pipecat. See `services/communications/twilio.md`. |
-| Self-Hosted (Privacy) | Healthcare, finance, government, air-gapped | MiniCPM-o 2.6 (Apache-2.0) or Parakeet+LLM+Magpie NIM. No data leaves infrastructure. |
-| Hybrid (Cloud LLM + Local Speech) | Cost/latency/quality balance | Local Parakeet STT → Cloud Claude/GPT → Local Magpie TTS. Only text hits cloud. Same as `speech-to-speech.md` with `--llm open_api`. |
-
-## Cost Comparison
-
-| Solution | Approx. Cost/Min | Notes |
-|----------|-------------------|-------|
-| GPT-4o Realtime | ~$0.06 | Audio token pricing |
-| Gemini 2.0 Live | ~$0.04 | Audio token pricing |
-| MiniCPM-o (self-hosted) | GPU cost only | ~$0.01-0.03 on cloud GPU |
-| NVIDIA Riva NIM (self-hosted) | GPU cost only | Enterprise license required |
-| NVIDIA NIM API | Free tier available | Rate-limited |
-| Cascaded (Groq STT + Claude + EdgeTTS) | ~$0.02 | Mix of free and paid |
+| Browser (WebRTC) | Customer-facing web apps | Browser <-> OpenAI Realtime API (or Pipecat + Daily.co). Client-side ephemeral keys. |
+| Phone Bot (SIP/Twilio) | Call centers, IVR replacement | Phone -> Twilio -> SIP -> OpenAI Realtime, or WebSocket -> Pipecat. See `services/communications/twilio.md`. |
+| Self-Hosted (Privacy) | Healthcare, finance, air-gapped | MiniCPM-o (Apache-2.0) or Parakeet+LLM+Magpie NIM. No data leaves infrastructure. |
+| Hybrid | Cost/latency balance | Local STT -> Cloud LLM -> Local TTS. Only text hits cloud. See `speech-to-speech.md`. |
 
 ## Framework Selection
 
@@ -295,7 +271,7 @@ Any LLM works in the middle. Pipecat lacks native Riva integration — use Riva 
 
 ## Monitoring
 
-Monitor: latency (speech end → first audio byte), transcription accuracy (log STT output), turn completion rate, cost per conversation. Use Pipecat metrics (`enable_metrics=True`) or OpenTelemetry.
+Key metrics: latency (speech end -> first audio byte), transcription accuracy, turn completion rate, cost per conversation. Use Pipecat metrics (`enable_metrics=True`) or OpenTelemetry.
 
 ## See Also
 
