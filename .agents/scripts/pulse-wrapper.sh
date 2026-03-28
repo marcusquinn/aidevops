@@ -2839,10 +2839,9 @@ _complexity_scan_collect_md_violations() {
 	# - build.txt, AGENTS.md, pulse.md: core infrastructure (code-simplifier.md)
 	# - templates/: template files meant to be copied, not compressed
 	# - README.md: navigation/index docs, not instruction docs
-	# - references/: reference corpora — split into chapters, not compressed
-	# - todo/, plans: planning files, not code
+	# - todo/: planning files, not code
 	local protected_pattern='prompts/build\.txt|^\.agents/AGENTS\.md|^AGENTS\.md|scripts/commands/pulse\.md'
-	local excluded_dirs='_archive/|archived/|/templates/|/references/|/todo/'
+	local excluded_dirs='_archive/|archived/|/templates/|/todo/'
 	local excluded_files='/README\.md$'
 
 	local md_files
