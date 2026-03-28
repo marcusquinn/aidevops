@@ -9,9 +9,9 @@ aidevops uses two complementary configuration files.
 | `~/.config/aidevops/config.jsonc` | JSONC | Framework behaviour: updates, models, safety, quality, orchestration, paths | `config-helper.sh` / `aidevops config` |
 | `~/.config/aidevops/settings.json` | JSON | User preferences: onboarding state, UI, model routing defaults | `settings-helper.sh` |
 
-Both files are created automatically on first run. Neither is required — sensible defaults apply when absent.
+Both created automatically on first run. Neither required — sensible defaults apply when absent.
 
-`settings.json` was introduced first (t1379) as a lightweight key-value store. `config.jsonc` was added later (t2730) as a namespaced, schema-validated system. Over time, `config.jsonc` is the primary configuration surface.
+`settings.json` was introduced first (t1379) as a lightweight key-value store. `config.jsonc` was added later (t2730) as a namespaced, schema-validated system. `config.jsonc` is the primary configuration surface going forward.
 
 ## Precedence (highest wins)
 
@@ -19,7 +19,7 @@ Both files are created automatically on first run. Neither is required — sensi
 2. **User config file** — persistent overrides
 3. **Built-in defaults** — hardcoded in the helper or defaults file
 
-Defaults file (do not edit — overwritten on `aidevops update`):
+Defaults file (overwritten on `aidevops update` — do not edit):
 
 ```text
 ~/.aidevops/agents/configs/aidevops.defaults.jsonc
@@ -50,18 +50,26 @@ settings-helper.sh list                          # List all
 eval "$(settings-helper.sh export-env)"          # Export as shell env vars
 ```
 
+**Schema validation** — add `"$schema"` to your config for editor autocomplete:
+
+```jsonc
+{
+  "$schema": "~/.aidevops/agents/configs/aidevops-config.schema.json"
+}
+```
+
+Schema file: `~/.aidevops/agents/configs/aidevops-config.schema.json`. Programmatic access:
+
+```bash
+source ~/.aidevops/agents/scripts/config-helper.sh
+value=$(_jsonc_get "updates.auto_update")
+```
+
 ---
 
 ## config.jsonc — Full Reference
 
-Supports `//` line comments, `/* block comments */`, and trailing commas. Schema for editor autocomplete:
-
-```jsonc
-{
-  "$schema": "~/.aidevops/agents/configs/aidevops-config.schema.json",
-  // your overrides here
-}
-```
+Supports `//` line comments, `/* block comments */`, and trailing commas.
 
 ### updates
 
@@ -76,7 +84,7 @@ Auto-update behaviour for aidevops, skills, tools, and OpenClaw.
 | `updates.tool_auto_update` | boolean | `true` | `AIDEVOPS_TOOL_AUTO_UPDATE` | Update installed tools (npm, brew, pip) when idle. |
 | `updates.tool_freshness_hours` | integer | `6` | `AIDEVOPS_TOOL_FRESHNESS_HOURS` | Hours between tool freshness checks. Min: 1. |
 | `updates.tool_idle_hours` | integer | `6` | `AIDEVOPS_TOOL_IDLE_HOURS` | Required idle hours before tool updates run. Min: 1. |
-| `updates.openclaw_auto_update` | boolean | `true` | `AIDEVOPS_OPENCLAW_AUTO_UPDATE` | Check for OpenClaw updates (only if `openclaw` CLI is installed). |
+| `updates.openclaw_auto_update` | boolean | `true` | `AIDEVOPS_OPENCLAW_AUTO_UPDATE` | Check for OpenClaw updates (only if `openclaw` CLI installed). |
 | `updates.openclaw_freshness_hours` | integer | `24` | `AIDEVOPS_OPENCLAW_FRESHNESS_HOURS` | Hours between OpenClaw update checks. Min: 1. |
 
 ### integrations
@@ -123,7 +131,7 @@ Model routing, tiers, provider configuration, rate limits, fallback chains, and 
 
 #### models.tiers
 
-Each tier maps to an ordered list of models. The first available model is used. If all are unavailable, the optional `fallback` tier is tried.
+Each tier maps to an ordered list of models. First available model is used; optional `fallback` tier is tried if all are unavailable.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -196,21 +204,7 @@ Provider endpoint and authentication configuration.
 
 #### models.fallback_chains
 
-Per-tier fallback chains for model-level failover. Each key is a tier name; value is an ordered list of model identifiers.
-
-**Default chains:**
-
-| Tier | Chain |
-|------|-------|
-| `haiku` | `anthropic/claude-haiku-4-5` |
-| `flash` | `anthropic/claude-haiku-4-5` |
-| `sonnet` | `anthropic/claude-sonnet-4-6` |
-| `pro` | `anthropic/claude-sonnet-4-6` |
-| `opus` | `anthropic/claude-opus-4-6` |
-| `coding` | `anthropic/claude-opus-4-6`, `anthropic/claude-sonnet-4-6` |
-| `eval` | `anthropic/claude-sonnet-4-6` |
-| `health` | `anthropic/claude-sonnet-4-6` |
-| `default` | `anthropic/claude-sonnet-4-6` |
+Per-tier fallback chains for model-level failover. Each key is a tier name; value is an ordered list of model identifiers. By default, each tier's chain matches its `models.tiers` model list (e.g., `coding` chain = `[claude-opus-4-6, claude-sonnet-4-6]`). The `default` chain resolves to `anthropic/claude-sonnet-4-6`.
 
 #### models.fallback_triggers
 
@@ -386,88 +380,48 @@ Directory and file path configuration. Supports `~` for home directory.
 
 ---
 
-## settings.json — Full Reference
+## settings.json — Reference
 
-Standard JSON (no comments). Canonical file for user preferences and onboarding state.
-
-- **Location:** `~/.config/aidevops/settings.json`
-- **Helper:** `~/.aidevops/agents/scripts/settings-helper.sh`
+Standard JSON (no comments). Location: `~/.config/aidevops/settings.json`. Helper: `settings-helper.sh`.
 
 Many `settings.json` keys mirror `config.jsonc` namespaces. When both are set, `config.jsonc` takes precedence for framework scripts; `settings.json` is used by `settings-helper.sh` consumers.
 
-### auto_update
+### Mirrored keys (config.jsonc takes precedence)
 
-Mirrors `updates` in `config.jsonc`.
+| settings.json key | Mirrors config.jsonc | Env Override |
+|-------------------|---------------------|-------------|
+| `auto_update.enabled` | `updates.auto_update` | `AIDEVOPS_AUTO_UPDATE` |
+| `auto_update.interval_minutes` | `updates.update_interval_minutes` | `AIDEVOPS_UPDATE_INTERVAL` |
+| `auto_update.skill_auto_update` | `updates.skill_auto_update` | `AIDEVOPS_SKILL_AUTO_UPDATE` |
+| `auto_update.skill_freshness_hours` | `updates.skill_freshness_hours` | `AIDEVOPS_SKILL_FRESHNESS_HOURS` |
+| `auto_update.tool_auto_update` | `updates.tool_auto_update` | `AIDEVOPS_TOOL_AUTO_UPDATE` |
+| `auto_update.tool_freshness_hours` | `updates.tool_freshness_hours` | `AIDEVOPS_TOOL_FRESHNESS_HOURS` |
+| `auto_update.tool_idle_hours` | `updates.tool_idle_hours` | `AIDEVOPS_TOOL_IDLE_HOURS` |
+| `auto_update.openclaw_auto_update` | `updates.openclaw_auto_update` | `AIDEVOPS_OPENCLAW_AUTO_UPDATE` |
+| `auto_update.openclaw_freshness_hours` | `updates.openclaw_freshness_hours` | `AIDEVOPS_OPENCLAW_FRESHNESS_HOURS` |
+| `supervisor.pulse_enabled` | `orchestration.supervisor_pulse` | `AIDEVOPS_SUPERVISOR_PULSE` |
+| `repo_sync.enabled` | `orchestration.repo_sync` | `AIDEVOPS_REPO_SYNC` |
+| `quality.shellcheck_enabled` | `quality` namespace | -- |
+| `quality.sonarcloud_enabled` | `quality` namespace | -- |
+| `quality.write_time_linting` | `quality` namespace | -- |
 
-| Key | Type | Default | Env Override | Description |
-|-----|------|---------|-------------|-------------|
-| `auto_update.enabled` | boolean | `true` | `AIDEVOPS_AUTO_UPDATE` | Master switch. |
-| `auto_update.interval_minutes` | number | `10` | `AIDEVOPS_UPDATE_INTERVAL` | Minutes between checks. Range: 1-1440. |
-| `auto_update.skill_auto_update` | boolean | `true` | `AIDEVOPS_SKILL_AUTO_UPDATE` | Skill freshness checks. |
-| `auto_update.skill_freshness_hours` | number | `24` | `AIDEVOPS_SKILL_FRESHNESS_HOURS` | Hours between skill checks. |
-| `auto_update.tool_auto_update` | boolean | `true` | `AIDEVOPS_TOOL_AUTO_UPDATE` | Tool updates when idle. |
-| `auto_update.tool_freshness_hours` | number | `6` | `AIDEVOPS_TOOL_FRESHNESS_HOURS` | Hours between tool checks. |
-| `auto_update.tool_idle_hours` | number | `6` | `AIDEVOPS_TOOL_IDLE_HOURS` | Required idle hours before tool updates. |
-| `auto_update.openclaw_auto_update` | boolean | `true` | `AIDEVOPS_OPENCLAW_AUTO_UPDATE` | OpenClaw update checks. |
-| `auto_update.openclaw_freshness_hours` | number | `24` | `AIDEVOPS_OPENCLAW_FRESHNESS_HOURS` | Hours between OpenClaw checks. |
+### settings.json-only keys
 
-### supervisor
-
-Controls the autonomous orchestration supervisor. Mirrors `orchestration` in `config.jsonc`.
-
-| Key | Type | Default | Env Override | Description |
-|-----|------|---------|-------------|-------------|
-| `supervisor.pulse_enabled` | boolean | `true` | `AIDEVOPS_SUPERVISOR_PULSE` | Enable the supervisor pulse scheduler. |
-| `supervisor.pulse_interval_seconds` | number | `120` | -- | Seconds between pulse cycles. Range: 30-3600. |
-| `supervisor.stale_threshold_seconds` | number | `1800` | -- | Seconds before a worker is considered stale/stuck. |
-| `supervisor.circuit_breaker_max_failures` | number | `3` | -- | Consecutive failures before circuit breaker pauses dispatch. |
-| `supervisor.strategic_review_hours` | number | `4` | -- | Hours between opus-tier strategic reviews of queue health. |
-
-### repo_sync
-
-Controls daily git repository synchronisation. Mirrors `orchestration.repo_sync` in `config.jsonc`.
-
-| Key | Type | Default | Env Override | Description |
-|-----|------|---------|-------------|-------------|
-| `repo_sync.enabled` | boolean | `true` | `AIDEVOPS_REPO_SYNC` | Daily `git pull --ff-only` on clean repos. |
-| `repo_sync.schedule` | string | `"daily"` | -- | Sync schedule. Only `daily` is supported. |
-
-### quality
-
-Controls code quality tools. Mirrors `quality` in `config.jsonc`.
+These keys exist only in `settings.json` (no `config.jsonc` equivalent):
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `quality.shellcheck_enabled` | boolean | `true` | Run ShellCheck on shell scripts. |
-| `quality.sonarcloud_enabled` | boolean | `true` | Run SonarCloud analysis. |
-| `quality.write_time_linting` | boolean | `true` | Lint files immediately after each edit. |
-
-### model_routing
-
-Controls AI model selection and cost management.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `model_routing.default_tier` | string | `"sonnet"` | Default tier for tasks without an explicit tier. Options: `haiku`, `sonnet`, `opus`, `flash`, `pro`. |
+| `supervisor.pulse_interval_seconds` | number | `120` | Seconds between pulse cycles. Range: 30-3600. |
+| `supervisor.stale_threshold_seconds` | number | `1800` | Seconds before a worker is considered stale/stuck. |
+| `supervisor.circuit_breaker_max_failures` | number | `3` | Consecutive failures before circuit breaker pauses dispatch. |
+| `supervisor.strategic_review_hours` | number | `4` | Hours between opus-tier strategic reviews of queue health. |
+| `repo_sync.schedule` | string | `"daily"` | Sync schedule. Only `daily` supported. |
+| `model_routing.default_tier` | string | `"sonnet"` | Default tier for tasks without explicit tier. Options: `haiku`, `sonnet`, `opus`, `flash`, `pro`. |
 | `model_routing.budget_tracking_enabled` | boolean | `true` | Track per-provider API spend. |
 | `model_routing.prefer_subscription` | boolean | `true` | Prefer subscription plans over API billing when both available. |
-
-### onboarding
-
-Tracks onboarding state. Written by `/onboarding`, readable by scripts.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
 | `onboarding.completed` | boolean | `false` | Whether the user has completed `/onboarding`. |
 | `onboarding.work_type` | string | `""` | User's primary work type (e.g., `"web"`, `"devops"`, `"seo"`, `"WordPress"`). |
 | `onboarding.familiarity` | array | `[]` | Concepts the user is familiar with (e.g., `["git", "terminal", "api_keys"]`). |
-
-### ui
-
-Controls terminal output behaviour.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
 | `ui.color_output` | boolean | `true` | Enable coloured terminal output. |
 | `ui.verbose` | boolean | `false` | Enable verbose/debug output in scripts. |
 
@@ -477,20 +431,11 @@ Controls terminal output behaviour.
 
 ### From environment variables
 
-Env vars continue to work as the highest-priority override. To migrate to config files, remove `AIDEVOPS_*` exports from your shell config and set the equivalent values in `config.jsonc` or `settings.json`.
-
-| Env var | config.jsonc key | settings.json key |
-|---------|-----------------|-------------------|
-| `AIDEVOPS_AUTO_UPDATE=false` | `updates.auto_update` | `auto_update.enabled` |
-| `AIDEVOPS_UPDATE_INTERVAL=30` | `updates.update_interval_minutes` | `auto_update.interval_minutes` |
-| `AIDEVOPS_SKILL_AUTO_UPDATE=false` | `updates.skill_auto_update` | `auto_update.skill_auto_update` |
-| `AIDEVOPS_TOOL_AUTO_UPDATE=false` | `updates.tool_auto_update` | `auto_update.tool_auto_update` |
-| `AIDEVOPS_SUPERVISOR_PULSE=false` | `orchestration.supervisor_pulse` | `supervisor.pulse_enabled` |
-| `AIDEVOPS_REPO_SYNC=false` | `orchestration.repo_sync` | `repo_sync.enabled` |
+Env vars continue to work as the highest-priority override. To migrate to config files, remove `AIDEVOPS_*` exports from your shell config and set the equivalent values via `aidevops config set`.
 
 ### From feature-toggles.conf
 
-The legacy `~/.config/aidevops/feature-toggles.conf` is automatically migrated to `config.jsonc` on first use. The old file is preserved but no longer read. To trigger manually:
+The legacy `~/.config/aidevops/feature-toggles.conf` is automatically migrated to `config.jsonc` on first use. The old file is preserved but no longer read. Manual trigger:
 
 ```bash
 aidevops config migrate
@@ -512,34 +457,6 @@ chmod 600 ~/Git/aidevops/configs/*-config.json
 ```
 
 See [the full service configuration reference](../.agents/aidevops/configs.md).
-
----
-
-## Schema Validation
-
-Schema at `~/.aidevops/agents/configs/aidevops-config.schema.json`.
-
-**Editor autocomplete** — add `"$schema"` to your config:
-
-```jsonc
-{
-  "$schema": "~/.aidevops/agents/configs/aidevops-config.schema.json"
-}
-```
-
-**CLI validation:**
-
-```bash
-aidevops config validate
-```
-
-**Programmatic access from scripts:**
-
-```bash
-source ~/.aidevops/agents/scripts/config-helper.sh
-value=$(_jsonc_get "updates.auto_update")
-# Or: value=$(~/.aidevops/agents/scripts/config-helper.sh get updates.auto_update)
-```
 
 ---
 
