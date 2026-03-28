@@ -362,14 +362,14 @@
       "pr": 11536
     },
     ".agents/marketing-sales/direct-response-copy-templates-ad-copy.md": {
-      "hash": "9444b7012d9504a02de323de306df98a3b7896a9",
-      "at": "2026-03-28T06:59:25Z",
-      "pr": 11505
+      "hash": "bfc16d8c1bc4e6a8229cc555eba0d72de8ece0d7",
+      "at": "2026-03-28T08:17:45Z",
+      "pr": 11593
     },
     ".agents/marketing-sales/direct-response-copy-templates-vsl-script.md": {
-      "hash": "a3cd47b4a2f5d8f70d6f4272fe2fda22d98cba58",
-      "at": "2026-03-28T06:59:27Z",
-      "pr": 11511
+      "hash": "c8fa5d2f257f52a1d7c9c49ca9d78e6be247623e",
+      "at": "2026-03-28T08:17:46Z",
+      "pr": 11591
     },
     ".agents/marketing-sales/cro-chapter-09.md": {
       "hash": "4d45e94ded75b90ef7e30518e072a5a643167370",
@@ -430,6 +430,66 @@
       "hash": "1929000365507621f52d563ad2b63e9f51feab8d",
       "at": "2026-03-28T08:17:41Z",
       "pr": 11570
+    },
+    ".agents/tools/diagrams/mermaid-diagrams-skill/class-er.md": {
+      "hash": "e3929bc050f03d955e21543cfed73a4b69880579",
+      "at": "2026-03-28T08:17:42Z",
+      "pr": 11589
+    },
+    ".agents/tools/wordpress/wp-admin.md": {
+      "hash": "a02a72943cc4820447f81c73216b0f095c3f64e5",
+      "at": "2026-03-28T08:17:43Z",
+      "pr": 11587
+    },
+    ".agents/tools/wordpress/wp-cli-reference.md": {
+      "hash": "0425ba4c94fd45b032e849987736bc4073970a7e",
+      "at": "2026-03-28T08:17:43Z",
+      "pr": 11587
+    },
+    ".agents/marketing-sales/direct-response-copy-templates-ad-copy-01-facebook-instagram.md": {
+      "hash": "4bfed86699b1e5a25050b85f099ca3fc580574d8",
+      "at": "2026-03-28T08:17:45Z",
+      "pr": 11593
+    },
+    ".agents/marketing-sales/direct-response-copy-templates-ad-copy-02-google-search.md": {
+      "hash": "f9ecc39136c90a2feb8bc9075f3e95ba23fccddd",
+      "at": "2026-03-28T08:17:45Z",
+      "pr": 11593
+    },
+    ".agents/marketing-sales/direct-response-copy-templates-ad-copy-03-linkedin.md": {
+      "hash": "a3c8015dc17258f154c7bdd4e4ccf0d4586a06db",
+      "at": "2026-03-28T08:17:45Z",
+      "pr": 11593
+    },
+    ".agents/marketing-sales/direct-response-copy-templates-ad-copy-04-twitter.md": {
+      "hash": "615623c2156bb8eee3a9409900b33a895768e08d",
+      "at": "2026-03-28T08:17:45Z",
+      "pr": 11593
+    },
+    ".agents/marketing-sales/direct-response-copy-templates-ad-copy-05-reference.md": {
+      "hash": "d34fe0576cb0cb1c1770a278ad5e149bba1480d0",
+      "at": "2026-03-28T08:17:45Z",
+      "pr": 11593
+    },
+    ".agents/tools/conversion/pandoc.md": {
+      "hash": "557667b032774727658d22f6b1c5392ec4a83660",
+      "at": "2026-03-28T08:17:47Z",
+      "pr": 11595
+    },
+    ".agents/content/research.md": {
+      "hash": "e3b17c7a0ac3b38bcc5f94611a9b7830d1258b36",
+      "at": "2026-03-28T08:17:48Z",
+      "pr": 11600
+    },
+    ".agents/tools/performance/webpagetest.md": {
+      "hash": "e0b3e8da23436e916aecd40d37bceeea48f99642",
+      "at": "2026-03-28T08:17:50Z",
+      "pr": 11594
+    },
+    ".agents/tools/browser/crawl4ai.md": {
+      "hash": "967373980ca56ec85cb795eb9426efb91ff23ddb",
+      "at": "2026-03-28T08:17:51Z",
+      "pr": 11599
     }
   }
 }
