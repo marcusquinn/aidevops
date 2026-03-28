@@ -31,19 +31,11 @@ model: sonnet
 
 ### Weekly Newsletter
 
-**Structure**:
-
-1. **Subject line** — curiosity hook or specific value promise (under 50 chars)
-2. **Preview text** — extends the hook, not repeats it (under 90 chars)
-3. **Personal opener** (2-3 sentences) — story, observation, or lesson
-4. **Main content** (200-400 words) — one key insight or framework
-5. **Content roundup** (3-5 links) — best content from the week
-6. **CTA** — one clear action (reply, click, share)
-7. **PS line** — secondary offer or personal note (highest-read section after subject)
+**Structure**: (1) Subject line — curiosity hook or value promise, under 50 chars. (2) Preview text — extends the hook, under 90 chars. (3) Personal opener (2-3 sentences). (4) Main content (200-400 words) — one key insight. (5) Content roundup (3-5 links). (6) CTA — one clear action. (7) PS line — secondary offer (highest-read section after subject).
 
 **Cadence**: Weekly, same day and time (consistency builds habit).
 
-**Example adaptation from pipeline**:
+**Example**:
 
 ```text
 Subject: The 5 mistakes killing AI influencers
@@ -72,7 +64,7 @@ PS - Reply "GUIDE" for early access to my free AI content system guide.
 
 ### Welcome Sequence (5-7 emails)
 
-**Purpose**: Onboard new subscribers, establish value, segment by interest.
+Onboard new subscribers, establish value, segment by interest.
 
 | Email | Timing | Purpose | Content |
 |-------|--------|---------|---------|
@@ -84,7 +76,7 @@ PS - Reply "GUIDE" for early access to my free AI content system guide.
 | **6** | Day 10 | Soft pitch | Introduce paid offering with value framing |
 | **7** | Day 14 | Direct pitch | Clear CTA with urgency or bonus |
 
-**Principles**: Each email stands alone. Build trust before asking. Segment based on clicks. Remove non-openers after email 3.
+Each email stands alone. Build trust before asking. Segment based on clicks. Remove non-openers after email 3.
 
 ### Launch Sequence (5-7 emails)
 
@@ -100,9 +92,7 @@ PS - Reply "GUIDE" for early access to my free AI content system guide.
 
 ### Nurture Sequence
 
-**Cadence**: Weekly or bi-weekly for subscribers who didn't convert.
-
-**Content mix**: 60% educational (tips, frameworks) · 20% story-driven (experiences, case studies) · 10% curated (resources, tools) · 10% promotional (soft pitches).
+Weekly or bi-weekly for subscribers who didn't convert. Content mix: 60% educational (tips, frameworks) · 20% story-driven (experiences, case studies) · 10% curated (resources, tools) · 10% promotional (soft pitches).
 
 ## Subject Line Formulas
 
@@ -117,17 +107,11 @@ PS - Reply "GUIDE" for early access to my free AI content system guide.
 | **Curiosity** | "The AI video secret nobody talks about" | Open loop |
 | **Social proof** | "How [Name] went from 0 to 100k with AI content" | Aspirational |
 
-**Rules**: No ALL CAPS or excessive punctuation (spam triggers). Use personalization tokens when available. A/B test 2-3 variants per send.
+No ALL CAPS or excessive punctuation (spam triggers). Use personalization tokens. A/B test 2-3 variants per send.
 
 ## Email Design
 
-### Mobile-First Layout
-
-- **Width**: 600px max · **Body font**: 16px+ · **Headings**: 22px+
-- **CTA button**: 44px min height, high contrast
-- **Images**: Optional, not required for message · **Single column** only
-
-### Format Selection
+**Mobile-first layout**: 600px max width · 16px+ body font · 22px+ headings · 44px min CTA button height, high contrast · images optional · single column only.
 
 | Format | Best For | Open Rate Impact |
 |--------|----------|-----------------|
@@ -135,9 +119,7 @@ PS - Reply "GUIDE" for early access to my free AI content system guide.
 | **Light HTML** | Branded newsletters, B2C | Moderate (professional) |
 | **Heavy HTML** | E-commerce, promotions | Lower (feels promotional) |
 
-## Segmentation Strategy
-
-### By Behavior
+## Segmentation
 
 | Segment | Criteria | Content Strategy |
 |---------|----------|-----------------|
@@ -147,9 +129,7 @@ PS - Reply "GUIDE" for early access to my free AI content system guide.
 | **Buyers** | Purchased any product | Upsell, loyalty, exclusive content |
 | **Clickers** | Clicked specific topic links | Topic-specific content and offers |
 
-### By Interest
-
-Tag subscribers based on: lead magnet downloaded, links clicked in newsletters, survey responses, purchase history.
+Tag subscribers by: lead magnet downloaded, links clicked, survey responses, purchase history.
 
 ## FluentCRM Automation
 
