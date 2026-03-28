@@ -140,6 +140,11 @@
       "hash": "df14ded060d7fadad72744ff67ec440ab2c94702",
       "at": "2026-03-28T02:51:09Z",
       "pr": 11079
+    },
+    ".agents/marketing/meta-ads-creative-scripts.md": {
+      "hash": "9455fbf07187de24552aa591a8752fd7b3df2480",
+      "at": "2026-03-28T03:10:39Z",
+      "pr": 11297
     }
   }
 }
