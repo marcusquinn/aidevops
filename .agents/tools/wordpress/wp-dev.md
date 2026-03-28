@@ -71,9 +71,9 @@ wp mcp-adapter serve --server=mcp-adapter-default-server --user=admin
 | GitHub Actions | Works* | N/A | Works |
 | Best For | Quick testing | Full dev | CI/Testing |
 
-*Playground may be flaky in CI.
+*Playground may be flaky in CI. LocalWP sites: `~/Local Sites/`. WP-CLI: `/Applications/Local.app/Contents/Resources/extraResources/bin/wp-cli.phar`
 
-### WordPress Playground
+**Playground:**
 
 ```bash
 npx @wp-playground/cli server --port=8888 --blueprint=blueprint.json
@@ -81,11 +81,7 @@ npx @wp-playground/cli server --port=8888 --blueprint=blueprint.json
 
 Blueprint schema: `https://playground.wordpress.net/blueprint-schema.json`. Key steps: `defineWpConfigConsts` (WP_DEBUG), `installPlugin`, `enableMultisite`. Docs: [Blueprints](https://wordpress.github.io/wordpress-playground/blueprints).
 
-### LocalWP
-
-Sites: `~/Local Sites/`. WP-CLI: `/Applications/Local.app/Contents/Resources/extraResources/bin/wp-cli.phar`
-
-### wp-env (Docker/CI)
+**wp-env** (Docker/CI):
 
 ```bash
 wp-env start   # npm install -g @wordpress/env
@@ -147,7 +143,7 @@ ln -s ~/Git/wordpress/plugin-slug "~/Local Sites/test-site/app/public/wp-content
 
 ### Patching Pro/Closed Plugins
 
-Create a companion plugin (`{slug}-fix`) that survives updates:
+Create a companion plugin (`{slug}-fix`) that survives updates. Guard with `class_exists`/`function_exists`. Use priority > 10. Document issue URL and affected versions. Version-gate: `version_compare(ORIGINAL_PLUGIN_VERSION, '2.4.0', '<')`.
 
 ```php
 <?php
@@ -162,8 +158,6 @@ add_filter('original_filter', 'my_fixed_filter', 999);
 function my_fixed_filter($value) { return $modified_value; }
 ```
 
-Guard with `class_exists`/`function_exists`. Use priority > 10. Document issue URL and affected versions. Version-gate: `version_compare(ORIGINAL_PLUGIN_VERSION, '2.4.0', '<')`.
-
 ### Syncing with LocalWP
 
 ```bash
@@ -174,19 +168,13 @@ rsync -av --delete --exclude='.git' --exclude='node_modules' --exclude='vendor' 
 
 ## Debugging
 
-### Debug Constants
-
-In `wp-config.php`: `WP_DEBUG=true`, `WP_DEBUG_LOG=true` (→ `wp-content/debug.log`), `WP_DEBUG_DISPLAY=false`, `SCRIPT_DEBUG=true`, `SAVEQUERIES=true`.
+**Debug constants** in `wp-config.php`: `WP_DEBUG=true`, `WP_DEBUG_LOG=true` (→ `wp-content/debug.log`), `WP_DEBUG_DISPLAY=false`, `SCRIPT_DEBUG=true`, `SAVEQUERIES=true`.
 
 Logs: `~/Local Sites/site-name/app/public/wp-content/debug.log` (LocalWP) | `wp-env run cli tail -f /var/www/html/wp-content/debug.log` (wp-env)
 
-### Query Monitor
+**Query Monitor**: `wp plugin install query-monitor --activate` — shows DB queries, PHP errors, HTTP requests, hooks, template hierarchy, memory.
 
-`wp plugin install query-monitor --activate` — shows DB queries, PHP errors, HTTP requests, hooks, template hierarchy, memory.
-
-### OpenCode PHP LSP (Intelephense)
-
-If WordPress symbols are unresolved (`add_action`, `WP_Query`), configure `~/.config/opencode/config.json` with `lsp.intelephense` using local binary path, `extensions: ["php"]`, and `intelephense.stubs` including `"wordpress"`. If diagnostics persist, clear/rebuild cache. Do not suggest Claude-specific commands (e.g., `/lsp-restart`) in OpenCode sessions.
+**OpenCode PHP LSP (Intelephense)**: If WordPress symbols are unresolved (`add_action`, `WP_Query`), configure `~/.config/opencode/config.json` with `lsp.intelephense` using local binary path, `extensions: ["php"]`, and `intelephense.stubs` including `"wordpress"`. If diagnostics persist, clear/rebuild cache. Do not suggest Claude-specific commands (e.g., `/lsp-restart`) in OpenCode sessions.
 
 **Error Diagnosis**: Enable `WP_DEBUG` → check `debug.log` → Query Monitor → `@localwp` for DB → `wp hook list` → `wp profile` or Code Profiler Pro.
 
