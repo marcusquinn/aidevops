@@ -45,28 +45,25 @@ Target: 8-15 min (1,200-2,200 words); example timeline below runs ~11 min. Every
 # [Title]
 
 ## HOOK (0:00-0:15)
-[Opening line — pattern interrupt or bold claim]
+[Opening line -- pattern interrupt or bold claim]
 [Visual: B-roll description or camera direction]
 
 ## SCENE 1: [Setup] (0:15-2:00)
-[Narration — 8-second chunks max]
+[Narration -- 8-second chunks max]
 [Visual: B-roll / screen recording / graphic]
 [Transition: bridge sentence to next scene]
 
 ## SCENE 2: [Problem/Story] (2:00-5:00)
-[Narration]
-[Visual: ...]
+[Narration]  [Visual: ...]
 
 ## SCENE 3: [Solution/Insight] (5:00-8:00)
-[Narration]
-[Visual: ...]
+[Narration]  [Visual: ...]
 
 ## SCENE 4: [Proof/Examples] (8:00-10:00)
-[Narration]
-[Visual: ...]
+[Narration]  [Visual: ...]
 
 ## CTA (10:00-10:30)
-[Soft sell — natural transition from content]
+[Soft sell -- natural transition from content]
 [Visual: end screen, subscribe animation]
 
 ## END SCREEN (10:30-11:00)
@@ -78,30 +75,23 @@ Target: 8-15 min (1,200-2,200 words); example timeline below runs ~11 min. Every
 Target: 30-60 sec (75-150 words). Hook in first 1-3 seconds. Fast cuts (1-3s per shot). Captions mandatory (80%+ watch silent). Single idea, no tangents. End with loop potential (last frame connects to first).
 
 ```text
-# [Hook — first 1-3 seconds]
+# [Hook -- first 1-3 seconds]
 
-[Setup — 5-12 seconds]
-[Payoff — 10-20 seconds]
-[Twist or reinforcement — 5-10 seconds]
-[CTA — 3 seconds]
+[Setup -- 5-12 seconds]
+[Payoff -- 10-20 seconds]
+[Twist or reinforcement -- 5-10 seconds]
+[CTA -- 3 seconds]
 
 CAPTION: [Full text for silent viewers]
 SOUND: [Mood/genre suggestion]
-CUTS: [Cut timing — e.g., "cut every 1.5s"]
+CUTS: [Cut timing -- e.g., "cut every 1.5s"]
 ```
 
 ### Social Copy
 
 #### X (Twitter)
 
-**Thread format**:
-
-```text
-POST 1 (HOOK): [Under 280 chars, standalone value]
-POST 2: [Expand on the hook]
-POST 3-7: [One point per post, each standalone]
-POST 8 (CTA): [Soft ask — follow, bookmark, reply]
-```
+**Thread**: POST 1 (HOOK, under 280 chars, standalone value) → POST 2 (expand) → POST 3-7 (one point per post, each standalone) → POST 8 (CTA: follow, bookmark, reply).
 
 **Single post**: Under 280 chars. Front-load value. Personality-forward.
 
@@ -110,13 +100,13 @@ POST 8 (CTA): [Soft ask — follow, bookmark, reply]
 Target: 1,200-1,500 characters. Professional but not corporate.
 
 ```text
-[Hook line — bold or surprising]
+[Hook line -- bold or surprising]
 
-[2-3 short paragraphs — insight, story, or data]
+[2-3 short paragraphs -- insight, story, or data]
 
-[Key takeaway — one sentence]
+[Key takeaway -- one sentence]
 
-[CTA — question or invitation to discuss]
+[CTA -- question or invitation to discuss]
 
 #hashtag1 #hashtag2 #hashtag3
 ```
@@ -129,9 +119,9 @@ No self-promotion. Value-first. Community-native tone.
 Title: [Curiosity-driven, not clickbait]
 
 Body:
-[Context — why you're posting, what you found]
-[Value — the insight, data, or resource]
-[Discussion prompt — genuine question for the community]
+[Context -- why you're posting, what you found]
+[Value -- the insight, data, or resource]
+[Discussion prompt -- genuine question for the community]
 ```
 
 ### Blog Draft
@@ -139,21 +129,19 @@ Body:
 **SEO rules**: Target keyword in H1, first paragraph, and 1-2 H2s. 1,500-2,500 words. 3-5 internal links. Meta title under 60 chars (keyword-front-loaded). Meta description under 155 chars with CTA.
 
 ```text
-# [H1 — Target keyword, under 60 chars]
+# [H1 -- Target keyword, under 60 chars]
 
-[Intro paragraph — hook + promise + what they'll learn]
+[Intro paragraph -- hook + promise + what they'll learn]
 
-## [H2 — Section 1]
-[Content — 200-400 words]
+## [H2 -- Section 1]
+[Content -- 200-400 words]
 
-## [H2 — Section 2]
-[Content — 200-400 words]
+## [H2 -- Section 2]
+[Content -- 200-400 words]
 
-### [H3 — Subsection if needed]
-[Content]
+### [H3 -- Subsection if needed]
 
-## [H2 — Section 3]
-[Content]
+## [H2 -- Section 3]
 
 ## Key Takeaways
 - [Bullet 1]
@@ -166,22 +154,22 @@ Body:
 
 ### Email Copy
 
-**Newsletter format**:
+**Newsletter**: 300-500 word body, single narrative thread.
 
 ```text
 SUBJECT: [5 variants for A/B testing]
-PREVIEW: [Under 90 chars — extends the subject line]
+PREVIEW: [Under 90 chars -- extends the subject line]
 
-[Opening hook — personal, story-driven]
+[Opening hook -- personal, story-driven]
 
-[Body — single narrative thread, 300-500 words]
+[Body -- single narrative thread]
 
-[CTA — one clear action, button or link]
+[CTA -- one clear action, button or link]
 
 P.S. [Secondary hook or bonus value]
 ```
 
-**Sequence email format**:
+**Sequence**:
 
 ```text
 EMAIL 1 (Day 0): Welcome + immediate value
@@ -197,7 +185,7 @@ EMAIL 5 (Day 7): Last chance + FAQ
 # Episode: [Title]
 
 ## INTRO (0:00-1:00)
-- [Hook — why this matters today]
+- [Hook -- why this matters today]
 - [What they'll learn]
 - [Sponsor read if applicable]
 
@@ -207,16 +195,14 @@ EMAIL 5 (Day 7): Last chance + FAQ
 - [Anecdote or example]
 
 ## SEGMENT 2: [Topic] (5:00-10:00)
-- [Talking point 1]
-- [Talking point 2]
+- [Talking points]
 
 ## SEGMENT 3: [Topic] (10:00-15:00)
-- [Talking point 1]
 - [Key insight]
 
 ## OUTRO (15:00-16:00)
-- [Summary — one sentence]
-- [CTA — subscribe, review, share]
+- [Summary -- one sentence]
+- [CTA -- subscribe, review, share]
 - [Next episode tease]
 
 ## SHOW NOTES
