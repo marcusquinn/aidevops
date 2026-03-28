@@ -22,29 +22,17 @@ tools:
 - **CRITICAL**: This single command does everything — bump, commit, tag, push, GitHub release
 - **NEVER** run separate commands, manually edit VERSION, or bump versions yourself
 - **Files updated atomically**: VERSION, package.json, README.md badge, setup.sh, sonar-project.properties, .claude-plugin/marketplace.json
-- **Manual step**: Update CHANGELOG.md `[Unreleased]` to `[X.X.X] - YYYY-MM-DD` BEFORE running release
-- **Preflight**: Quality checks run automatically (bypass with `--skip-preflight`)
+- **Manual step**: Update CHANGELOG.md `[Unreleased]` → `[X.X.X] - YYYY-MM-DD` BEFORE running release
+- **Preflight**: Quality checks (`.agents/scripts/linters-local.sh`) run automatically; bypass with `--skip-preflight`
 
 <!-- AI-CONTEXT-END -->
 
-## Critical: Never Edit VERSION Directly
-
-**DO NOT** manually edit VERSION or any of the 6 version-tracked files. Editing one leaves the others stale and causes CI failures.
-
-**Always use**:
-
-```bash
-.agents/scripts/version-manager.sh bump [major|minor|patch]
-# or for full release:
-.agents/scripts/version-manager.sh release [major|minor|patch]
-```
-
-## Command Reference
+## Commands
 
 | Command | Purpose |
 |---------|---------|
 | `get` | Display current version |
-| `bump [type]` | Bump version and update all 6 files |
+| `bump [type]` | Bump version, update all 6 files |
 | `validate` | Check version consistency across all files |
 | `release [type]` | Full release: bump, validate, tag, GitHub release |
 | `tag` | Create git tag for current version |
@@ -72,11 +60,11 @@ tools:
 | `sonar-project.properties` | `sonar.projectVersion=X.X.X` |
 | `.claude-plugin/marketplace.json` | `"version": "X.X.X"` field |
 
+**DO NOT** manually edit any of these files — editing one leaves the others stale and causes CI failures.
+
 ## CHANGELOG.md (Manual Step)
 
-CHANGELOG.md requires manual update before running `release`. The script checks for content in `[Unreleased]` but does NOT move it automatically.
-
-Before running release:
+CHANGELOG.md requires manual update before `release`. The script checks for `[Unreleased]` content but does NOT move it automatically.
 
 1. Change `## [Unreleased]` → `## [X.X.X] - YYYY-MM-DD`
 2. Add a new empty `## [Unreleased]` section above it
@@ -90,30 +78,18 @@ Before running release:
 - New feature X
 ```
 
-Preview suggested entries from commits:
-
-```bash
-.agents/scripts/version-manager.sh changelog-preview
-```
+Preview suggested entries: `.agents/scripts/version-manager.sh changelog-preview`
 
 ## Recommended Workflow
 
 ```bash
-# 1. Validate current state (fix inconsistencies first)
-.agents/scripts/version-manager.sh validate
-
+.agents/scripts/version-manager.sh validate          # 1. Fix inconsistencies first
 # 2. Update CHANGELOG.md manually (see above)
-
-# 3. Run release
-.agents/scripts/version-manager.sh release patch   # bug fixes
-.agents/scripts/version-manager.sh release minor   # new features
-.agents/scripts/version-manager.sh release major   # breaking changes
-
-# 4. Push
-git push && git push --tags
+.agents/scripts/version-manager.sh release patch     # 3. Bug fixes (or minor/major)
+git push && git push --tags                          # 4. Push
 ```
 
-## Semantic Versioning Rules
+## Semantic Versioning
 
 Follow [semver.org](https://semver.org/):
 
@@ -123,37 +99,13 @@ Follow [semver.org](https://semver.org/):
 | **minor** | New features, service integrations | 1.5.0 → 1.6.0 |
 | **major** | Breaking changes, API modifications | 1.5.0 → 2.0.0 |
 
-## Preflight Quality Checks
-
-The `release` command automatically runs `.agents/scripts/linters-local.sh`. Bypass with `--skip-preflight` (not recommended).
-
 ## Troubleshooting
 
-**Version inconsistency:**
-
-```bash
-.agents/scripts/version-manager.sh validate
-.agents/scripts/version-manager.sh bump patch  # re-sync all files
-```
-
-**GitHub release failed** — check auth:
-
-```bash
-gh auth status
-gh auth login  # if needed
-```
-
-**Changelog check failed** — update CHANGELOG.md or bypass:
-
-```bash
-.agents/scripts/version-manager.sh release patch --force
-```
-
-## Related Workflows
-
-- `workflows/changelog.md` — Changelog management
-- `workflows/release.md` — Full release process
-- `workflows/preflight.md` — Quality checks before release
+| Problem | Fix |
+|---------|-----|
+| Version inconsistency | `version-manager.sh validate` then `version-manager.sh bump patch` to re-sync |
+| GitHub release failed | `gh auth status` → `gh auth login` if needed |
+| Changelog check failed | Update CHANGELOG.md or `version-manager.sh release patch --force` |
 
 ## AI Decision-Making for Release Type
 
@@ -168,3 +120,9 @@ gh auth login  # if needed
 | `feat:` | minor |
 | `fix:`, `docs:`, `chore:`, `refactor:`, `perf:` | patch |
 | `BREAKING CHANGE:` or `feat!:` / `fix!:` | major |
+
+## Related
+
+- `workflows/changelog.md` — Changelog management
+- `workflows/release.md` — Full release process
+- `workflows/preflight.md` — Quality checks before release
