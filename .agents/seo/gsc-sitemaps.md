@@ -28,25 +28,27 @@ tools:
 **Commands**:
 
 ```bash
-# Submit sitemap for single domain
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit example.com
+# Submit sitemap (single or multiple domains)
+gsc-sitemap-helper.sh submit example.com
+gsc-sitemap-helper.sh submit example.com example.net example.org
+gsc-sitemap-helper.sh submit --file domains.txt
 
-# Submit sitemaps for multiple domains
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit example.com example.net example.org
+# Custom sitemap path
+gsc-sitemap-helper.sh submit example.com --sitemap news-sitemap.xml
 
-# Submit from file (one domain per line)
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit --file domains.txt
+# Status and listing
+gsc-sitemap-helper.sh status example.com
+gsc-sitemap-helper.sh list example.com
 
-# Check sitemap status
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh status example.com
-
-# List all sitemaps for a domain
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh list example.com
+# Batch options
+gsc-sitemap-helper.sh submit --dry-run example.com example.net
+gsc-sitemap-helper.sh submit --skip-existing example.com example.net
 ```
 
-**Note**: Add `~/.aidevops/agents/scripts` to your PATH for shorter commands, or use the full path as shown above.
+> All commands use full path `~/.aidevops/agents/scripts/gsc-sitemap-helper.sh`, or add `~/.aidevops/agents/scripts` to PATH.
 
 **Prerequisites**:
+
 - Domain verified in Google Search Console
 - Sitemap accessible at URL (test with `curl https://example.com/sitemap.xml`)
 - User logged into Google in the Chrome profile
@@ -56,9 +58,8 @@ tools:
 
 ## When to Use
 
-- After deploying a new site
-- After adding `sitemap.xml` to a domain
-- When setting up multiple domains (like a portfolio of sites)
+- After deploying a new site or adding `sitemap.xml`
+- When setting up multiple domains (portfolio of sites)
 - After major site restructuring that changes sitemap content
 
 ## How It Works
@@ -74,7 +75,7 @@ tools:
 
 ### Chrome Profile Setup
 
-Uses `chromium.launchPersistentContext()` with a dedicated profile directory and stealth flags to avoid "browser isn't secure" warnings:
+Uses `chromium.launchPersistentContext()` with stealth flags to avoid "browser isn't secure" warnings:
 
 ```javascript
 {
@@ -91,7 +92,7 @@ Uses `chromium.launchPersistentContext()` with a dedicated profile directory and
 ### GSC UI Specifics
 
 - **SUBMIT button**: A `div[role="button"]` not a `<button>` element
-- **Sidebar conflict**: There's also a "Submit feedback" link - must avoid clicking that
+- **Sidebar conflict**: "Submit feedback" link exists — must avoid clicking it
 - **Button location**: Found relative to input field (walk up DOM to find container)
 - **Input format**: Requires FULL URL: `https://www.domain.com/sitemap.xml` not just `sitemap.xml`
 - **Button state**: Disabled until input has valid content
@@ -115,7 +116,7 @@ const submitBtn = await input.evaluateHandle(el => {
 
 ### Detecting Already Submitted
 
-Look for sitemap in table (not just page content, as "sitemap.xml" appears in input placeholder):
+Look for sitemap in table (not page content — "sitemap.xml" appears in input placeholder):
 
 ```javascript
 const sitemapInTable = await page.$('table:has-text("sitemap.xml")') ||
@@ -139,143 +140,41 @@ Store in `~/.config/aidevops/gsc-config.json`:
 
 ## First-Time Setup
 
-1. **Install dependencies**:
-
-   ```bash
-   ~/.aidevops/agents/scripts/gsc-sitemap-helper.sh setup
-   ```
-
-2. **Login to Google** (first run opens browser for manual login):
-
-   ```bash
-   ~/.aidevops/agents/scripts/gsc-sitemap-helper.sh login
-   ```
-
-3. **Verify access**:
-
-   ```bash
-   ~/.aidevops/agents/scripts/gsc-sitemap-helper.sh list example.com
-   ```
-
-## Usage Examples
-
-> **Note**: Use the full path `~/.aidevops/agents/scripts/gsc-sitemap-helper.sh`, or add
-> `~/.aidevops/agents/scripts` to your `PATH` for shorter commands.
-
-### Single Domain
-
 ```bash
-# Submit sitemap for one domain
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit example.com
+# 1. Install dependencies
+gsc-sitemap-helper.sh setup
 
-# With custom sitemap path
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit example.com --sitemap news-sitemap.xml
-```
+# 2. Login to Google (opens browser for manual login)
+gsc-sitemap-helper.sh login
 
-### Multiple Domains
-
-```bash
-# Submit to multiple domains
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit example.com example.net example.org
-
-# From file
-printf 'example.com\nexample.net\nexample.org\n' > domains.txt
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit --file domains.txt
-```
-
-### Status Checking
-
-```bash
-# Check if sitemap is submitted
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh status example.com
-
-# List all sitemaps for a domain
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh list example.com
-```
-
-### Batch Operations
-
-```bash
-# Dry run (show what would be done)
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit --dry-run example.com example.net
-
-# Skip already-submitted domains
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit --skip-existing example.com example.net
+# 3. Verify access
+gsc-sitemap-helper.sh list example.com
 ```
 
 ## Troubleshooting
 
-### "Browser isn't secure" Warning
+| Problem | Solution |
+|---------|----------|
+| "Browser isn't secure" warning | Close all Chrome, delete profile (`rm -rf ~/.aidevops/.agent-workspace/chrome-gsc-profile`), re-run `gsc-sitemap-helper.sh login` |
+| "No access" error | Domain not verified in GSC — check https://search.google.com/search-console |
+| Submit button not clicking | Check screenshot in `~/.aidevops/.agent-workspace/gsc-screenshots/`; script uses DOM traversal to find correct button (not feedback link) |
+| Session expired | Re-login: `gsc-sitemap-helper.sh login` |
+| Sitemap not accessible | Verify: `curl -I https://www.example.com/sitemap.xml` (expect 200 OK, Content-Type: application/xml) |
 
-The script uses stealth flags to prevent this. If it still appears:
-
-1. Close all Chrome instances
-2. Delete the profile: `rm -rf ~/.aidevops/.agent-workspace/chrome-gsc-profile`
-3. Run `~/.aidevops/agents/scripts/gsc-sitemap-helper.sh login` to create fresh profile
-
-### "No access" Error
-
-- Domain not verified in GSC for this Google account
-- Check GSC manually: https://search.google.com/search-console
-
-### Submit Button Not Clicking
-
-- Check screenshot in `~/.aidevops/.agent-workspace/gsc-screenshots/`
-- May be clicking feedback button instead of submit
-- Script uses DOM traversal to find correct button
-
-### Session Expired
+## Integration Examples
 
 ```bash
-# Re-login to refresh session
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh login
-```
+# After crawling a site
+site-crawler-helper.sh crawl https://example.com
+gsc-sitemap-helper.sh submit example.com
 
-### Sitemap Not Accessible
+# WordPress fleet via MainWP
+mainwp-helper.sh list-sites | awk '{print $2}' > wp-domains.txt
+gsc-sitemap-helper.sh submit --file wp-domains.txt
 
-Before submitting, verify sitemap is accessible:
-
-```bash
-curl -I https://www.example.com/sitemap.xml
-# Should return 200 OK with Content-Type: application/xml
-```
-
-## Integration with Other Tools
-
-### With Site Crawler
-
-After crawling a site, submit its sitemap:
-
-```bash
-# Crawl site
-~/.aidevops/agents/scripts/site-crawler-helper.sh crawl https://example.com
-
-# Submit sitemap
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit example.com
-```
-
-### With MainWP (WordPress Fleet)
-
-Submit sitemaps for all managed WordPress sites:
-
-```bash
-# Get domains from MainWP
-~/.aidevops/agents/scripts/mainwp-helper.sh list-sites | awk '{print $2}' > wp-domains.txt
-
-# Submit sitemaps
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit --file wp-domains.txt
-```
-
-### With Coolify Deployments
-
-After deploying a new site:
-
-```bash
-# Deploy site
-~/.aidevops/agents/scripts/coolify-helper.sh deploy my-app
-
-# Submit sitemap
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit my-app.example.com
+# After Coolify deployment
+coolify-helper.sh deploy my-app
+gsc-sitemap-helper.sh submit my-app.example.com
 ```
 
 ## Related
