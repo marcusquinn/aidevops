@@ -215,7 +215,7 @@ await db.transaction(async (tx) => {
 // Manual rollback
 await db.transaction(async (tx) => {
   const [user] = await tx.insert(users).values({ ... }).returning();
-  if ((await checkBalance(user.id)) < 0) tx.rollback();
+  if ((await checkBalance(user.id)) < 0) tx.rollback;
   await tx.insert(orders).values({ userId: user.id, ... });
 });
 
