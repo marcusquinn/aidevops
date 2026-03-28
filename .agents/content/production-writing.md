@@ -39,7 +39,7 @@ Before generating any content:
 
 ### Long-Form Script (YouTube, Podcast)
 
-Target: 8-15 min (1,200-2,200 words). Every scene needs narration + visual direction. B-roll must be specific ("show screen recording of tool X dashboard", not "show relevant footage"). Mark emotional beats: [PAUSE], [EMPHASIS], [LOWER VOICE].
+Target: 8-15 min (1,200-2,200 words); example timeline below runs ~11 min. Every scene needs narration + visual direction. B-roll must be specific ("show screen recording of tool X dashboard", not "show relevant footage"). Mark emotional beats: [PAUSE], [EMPHASIS], [LOWER VOICE].
 
 ```text
 # [Title]
@@ -80,9 +80,9 @@ Target: 30-60 sec (75-150 words). Hook in first 1-3 seconds. Fast cuts (1-3s per
 ```text
 # [Hook — first 1-3 seconds]
 
-[Setup — 5 seconds]
-[Payoff — 10-15 seconds]
-[Twist or reinforcement — 5 seconds]
+[Setup — 5-12 seconds]
+[Payoff — 10-20 seconds]
+[Twist or reinforcement — 5-10 seconds]
 [CTA — 3 seconds]
 
 CAPTION: [Full text for silent viewers]
