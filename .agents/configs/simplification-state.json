@@ -382,9 +382,9 @@
       "pr": 11539
     },
     ".agents/tools/ai-assistants/headless-dispatch.md": {
-      "hash": "20a2b084bb99b2dbe3be83b9e401c57a65892173",
-      "at": "2026-03-28T21:59:16Z",
-      "pr": 12246
+      "hash": "47592db66559ea86da28f61d1000a0d80ce39edb",
+      "at": "2026-03-28T22:39:24Z",
+      "pr": 12307
     },
     ".agents/tools/document/document-creation.md": {
       "hash": "245a303a923bd18c0adc820adb9620f12d636d2b",
@@ -1407,8 +1407,8 @@
       "pr": 12162
     },
     ".agents/scripts/gh-signature-helper.sh": {
-      "hash": "d3ba198cda83ba1d1983d9519b7daa4e17085e1f",
-      "at": "2026-03-28T21:59:31Z",
+      "hash": "b68a5ffa6b9e6d53bd6e466dffd608624966d7ed",
+      "at": "2026-03-28T22:40:03Z",
       "pr": 12165
     },
     ".agents/tools/wordpress/wp-dev.md": {
@@ -1437,9 +1437,9 @@
       "pr": 12249
     },
     ".agents/workflows/review-issue-pr.md": {
-      "hash": "0d84c8778368f7a92f07f4c9204fd6083d77a98b",
-      "at": "2026-03-28T21:59:17Z",
-      "pr": 12239
+      "hash": "14ac8f78bcfbb8ec23df3e37c021b7cd512c2f5b",
+      "at": "2026-03-28T22:39:25Z",
+      "pr": 12308
     },
     ".agents/tools/browser/browser-qa.md": {
       "hash": "629aa3a1df673d6e5df7310d173da5d3938aa04e",
@@ -1512,9 +1512,9 @@
       "pr": 12244
     },
     ".agents/tools/git/opencode-github-security.md": {
-      "hash": "15130ab6fa943e358b7b4f4aec160ca9c889f919",
-      "at": "2026-03-28T21:59:06Z",
-      "pr": 12248
+      "hash": "7614267ce5278cc0f8d3e46a9301f179a610b9f3",
+      "at": "2026-03-28T22:39:20Z",
+      "pr": 12309
     },
     ".agents/tools/animation/animejs.md": {
       "hash": "2cc7e8f8fff0b22547936f54457f003ad77b7784",
@@ -1522,14 +1522,14 @@
       "pr": 12241
     },
     ".agents/tools/build-mcp/deployment.md": {
-      "hash": "e5a6f8d0abcaadde8288e1bbc4151c173e9bb7c2",
-      "at": "2026-03-28T21:59:09Z",
-      "pr": 12238
+      "hash": "0229a7490f42dcf4f3b8c0958fefd7ff53f3b8a2",
+      "at": "2026-03-28T22:39:22Z",
+      "pr": 12311
     },
     ".agents/tools/browser/chrome-devtools.md": {
-      "hash": "29e50632ce2fa5fba879fb8c239d777026054390",
-      "at": "2026-03-28T21:59:10Z",
-      "pr": 12243
+      "hash": "13576e2127eccb1c8555a5b12660265ac4ebd8aa",
+      "at": "2026-03-28T22:39:23Z",
+      "pr": 12310
     },
     ".agents/tools/opencode/opencode.md": {
       "hash": "c1946355da50dc0ba2001b5582c2699600faff95",
