@@ -37,6 +37,8 @@ Ralph is a `while true` bash loop that repeatedly feeds an AI agent a prompt unt
 
 **Evolving draft agents**: When a loop iteration discovers reusable domain patterns, capture them as a draft agent in `~/.aidevops/agents/draft/`. See `tools/build-agent/build-agent.md` "Agent Lifecycle Tiers".
 
+**When to use:** Well-defined tasks with clear success criteria, tasks requiring iteration (getting tests to pass), greenfield projects, tasks with automatic verification. **Not for:** tasks requiring human judgment, one-shot operations, unclear success criteria, production debugging.
+
 ## Quick Start
 
 > `ralph-loop-helper.sh` archived (t1336). Use `/full-loop` for end-to-end development, or `/ralph-loop` for in-session loops.
@@ -114,13 +116,7 @@ When complete:
 
 ### 2. Incremental Goals
 
-```text
-Phase 1: User authentication (JWT, tests)
-Phase 2: Product catalog (list/search, tests)
-Phase 3: Shopping cart (add/remove, tests)
-
-Output <promise>COMPLETE</promise> when all phases done.
-```
+Break large tasks into phases, each with explicit acceptance criteria. Output `<promise>COMPLETE</promise>` only when all phases are done.
 
 ### 3. Self-Correction Loop
 
@@ -162,26 +158,6 @@ If 3+ iterations on the same sub-problem without progress, STOP and replan. Sign
 - Tests still failing after 3+ attempts at the same approach
 
 A fresh strategy beats incremental fixes to a broken approach.
-
-## When to Use Ralph
-
-**Good for:** Well-defined tasks with clear success criteria, tasks requiring iteration (getting tests to pass), greenfield projects, tasks with automatic verification.
-
-**Not good for:** Tasks requiring human judgment, one-shot operations, unclear success criteria, production debugging.
-
-## Full Development Loop
-
-Use `/full-loop` for end-to-end automation. Full docs: `scripts/commands/full-loop.md`.
-
-| Phase | Promise |
-|-------|---------|
-| Task Development | `TASK_COMPLETE` |
-| Preflight | `PREFLIGHT_PASS` |
-| PR Review | `PR_MERGED` |
-| Postflight | `RELEASE_HEALTHY` |
-| Deploy (aidevops only) | `DEPLOYED` |
-
-State: `.agents/loop-state/full-loop.local.md` (gitignored). Resume: `full-loop-helper.sh resume`.
 
 ## CI/CD Timing
 
@@ -237,16 +213,6 @@ loop until **task complete** (max: 50):
 
 Full docs: `tools/ai-orchestration/openprose.md`.
 
-## Session Completion & Spawning
-
-See `workflows/session-manager.md` for session lifecycle, completion detection, spawning patterns, and handoff templates.
-
-```bash
-/full-loop "Next task description"
-# Or spawn a background session:
-opencode run "Continue with next task" --agent Build+ &
-```
-
 ## Learn More
 
 - Original technique: <https://ghuntley.com/ralph/>
@@ -254,3 +220,5 @@ opencode run "Continue with next task" --agent Build+ &
 - Claude Code plugin: <https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum>
 - OpenProse DSL: <https://github.com/openprose/prose>
 - Upstream sync: `~/.aidevops/agents/scripts/ralph-upstream-check.sh`
+- Full development loop: `scripts/commands/full-loop.md`
+- Session lifecycle: `workflows/session-manager.md`
