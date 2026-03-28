@@ -7,14 +7,12 @@
 
 Relations are **application-level** (not database constraints). They enable the relational queries API.
 
+## Schema (shared across examples)
+
 ```typescript
 import { relations } from 'drizzle-orm';
-import { pgTable, uuid, text, timestamp, integer } from 'drizzle-orm/pg-core';
-```
+import { pgTable, uuid, text, timestamp, integer, primaryKey, AnyPgColumn } from 'drizzle-orm/pg-core';
 
-## One-to-Many
-
-```typescript
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull(),
@@ -26,27 +24,6 @@ export const posts = pgTable('posts', {
   authorId: uuid('author_id').notNull().references(() => users.id),
 });
 
-export const usersRelations = relations(users, ({ many }) => ({
-  posts: many(posts),
-}));
-
-export const postsRelations = relations(posts, ({ one }) => ({
-  author: one(users, {
-    fields: [posts.authorId],
-    references: [users.id],
-  }),
-}));
-
-// Query
-const userWithPosts = await db.query.users.findFirst({
-  where: eq(users.id, userId),
-  with: { posts: true },
-});
-```
-
-## One-to-One
-
-```typescript
 export const profiles = pgTable('profiles', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').notNull().unique().references(() => users.id),
@@ -54,27 +31,6 @@ export const profiles = pgTable('profiles', {
   avatarUrl: text('avatar_url'),
 });
 
-export const usersRelations = relations(users, ({ one }) => ({
-  profile: one(profiles),
-}));
-
-export const profilesRelations = relations(profiles, ({ one }) => ({
-  user: one(users, {
-    fields: [profiles.userId],
-    references: [users.id],
-  }),
-}));
-
-// Query
-const userWithProfile = await db.query.users.findFirst({
-  where: eq(users.id, userId),
-  with: { profile: true },
-});
-```
-
-## Many-to-Many
-
-```typescript
 export const groups = pgTable('groups', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull(),
@@ -89,6 +45,56 @@ export const usersToGroups = pgTable('users_to_groups', {
   primaryKey({ columns: [table.userId, table.groupId] }),
 ]);
 
+export const categories = pgTable('categories', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: text('name').notNull(),
+  parentId: uuid('parent_id').references((): AnyPgColumn => categories.id),
+});
+```
+
+## One-to-Many
+
+```typescript
+export const usersRelations = relations(users, ({ many }) => ({
+  posts: many(posts),
+}));
+
+export const postsRelations = relations(posts, ({ one }) => ({
+  author: one(users, {
+    fields: [posts.authorId],
+    references: [users.id],
+  }),
+}));
+
+const userWithPosts = await db.query.users.findFirst({
+  where: eq(users.id, userId),
+  with: { posts: true },
+});
+```
+
+## One-to-One
+
+```typescript
+export const usersRelations = relations(users, ({ one }) => ({
+  profile: one(profiles),
+}));
+
+export const profilesRelations = relations(profiles, ({ one }) => ({
+  user: one(users, {
+    fields: [profiles.userId],
+    references: [users.id],
+  }),
+}));
+
+const userWithProfile = await db.query.users.findFirst({
+  where: eq(users.id, userId),
+  with: { profile: true },
+});
+```
+
+## Many-to-Many
+
+```typescript
 export const usersRelations = relations(users, ({ many }) => ({
   usersToGroups: many(usersToGroups),
 }));
@@ -117,14 +123,6 @@ const groups = userWithGroups?.usersToGroups.map(utg => ({
 ## Self-Referential
 
 ```typescript
-import { AnyPgColumn } from 'drizzle-orm/pg-core';
-
-export const categories = pgTable('categories', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  name: text('name').notNull(),
-  parentId: uuid('parent_id').references((): AnyPgColumn => categories.id),
-});
-
 export const categoriesRelations = relations(categories, ({ one, many }) => ({
   parent: one(categories, {
     fields: [categories.parentId],
@@ -134,7 +132,7 @@ export const categoriesRelations = relations(categories, ({ one, many }) => ({
   children: many(categories, { relationName: 'parent' }),
 }));
 
-// Query (2 levels deep)
+// 2 levels deep
 const category = await db.query.categories.findFirst({
   where: eq(categories.id, categoryId),
   with: {
@@ -174,10 +172,9 @@ const user = await db.query.users.findFirst({
 if (!user) throw new NotFoundError();
 ```
 
-### With Relations
+### Nested + Filtered Relations
 
 ```typescript
-// Multiple + nested
 const userWithAll = await db.query.users.findFirst({
   where: eq(users.id, userId),
   with: {
@@ -187,7 +184,6 @@ const userWithAll = await db.query.users.findFirst({
   },
 });
 
-// Nested with filtering
 const userWithRecentPosts = await db.query.users.findFirst({
   where: eq(users.id, userId),
   with: {
@@ -200,7 +196,7 @@ const userWithRecentPosts = await db.query.users.findFirst({
 });
 ```
 
-### Selecting Columns
+### Column Selection + Computed Fields
 
 ```typescript
 // Include specific columns
@@ -220,11 +216,8 @@ const userWithPostTitles = await db.query.users.findFirst({
     posts: { columns: { id: true, title: true } },
   },
 });
-```
 
-### Custom Extras (Computed Fields)
-
-```typescript
+// Computed extras via subquery
 const usersWithPostCount = await db.query.users.findMany({
   extras: {
     postCount: sql<number>`(
