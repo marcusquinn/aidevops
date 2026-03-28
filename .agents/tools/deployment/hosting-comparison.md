@@ -250,3 +250,12 @@ NVIDIA Cloud (build.nvidia.com): Free cloud endpoints for prototyping (1000 API 
 | Batch processing at scale | Fireworks or Together AI (50% off) | Cloud GPU |
 | GPU clusters for training | Together AI (GPU Clusters) | Cloud GPU providers |
 | Cheapest experimentation | Cloudflare (10K free neurons/day) | NVIDIA Cloud (free credits) |
+
+## Related
+
+- `tools/deployment/fly-io.md` — Fly.io deployment agent (flyctl, Machines API, Sprites, Tigris)
+- `tools/deployment/daytona.md` — Daytona sandbox agent (gVisor, GPU, ephemeral CI)
+- `tools/deployment/coolify.md` — Coolify self-hosted PaaS agent
+- `tools/deployment/vercel.md` — Vercel serverless/edge agent
+- `tools/deployment/uncloud.md` — Uncloud multi-machine container orchestration
+- `.agents/scripts/fly-io-helper.sh` — Fly.io CLI helper (deploy, scale, secrets, volumes, logs, ssh, postgres)
