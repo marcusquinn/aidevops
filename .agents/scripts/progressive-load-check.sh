@@ -81,9 +81,11 @@ check_inline_only() {
 
 	[[ "$QUIET" != "--quiet" ]] && printf "\n[%s]\n" "$section"
 
-	local match_count
-	match_count=$(grep -cE "$inline_pattern" "$source_file" 2>/dev/null || echo "0")
-	if [[ "$match_count" -gt 0 ]]; then
+	# Use grep -q to avoid the grep -c exit-1-on-no-match bug where
+	# "count=$(grep -c ... || echo 0)" produces "0\n0" (two lines).
+	local match_count=0
+	if grep -qE "$inline_pattern" "$source_file" 2>/dev/null; then
+		match_count=$(grep -cE "$inline_pattern" "$source_file" 2>/dev/null)
 		log_info "still inline ($match_count matching lines) — no extraction yet"
 	else
 		log_fail "section appears missing from $(basename "$source_file") (pattern: $inline_pattern)"
@@ -101,11 +103,13 @@ check_build_txt_extractions() {
 		"screenshot-limits.md" \
 		"reference/screenshot-limits\.md"
 
-	# Secret Handling (8.1-8.4): reference file is a supplement; inline content kept in build.txt
-	check_inline_only \
-		"Secret Handling (8.1-8.4) — inline + reference/secret-handling.md supplement" \
+	# Secret Handling (8.1-8.4): extracted to reference/secret-handling.md by t1679.5.
+	# Inline trigger (pointer comment) retained in build.txt; full rules in reference file.
+	check_extraction \
+		"Secret Handling (8.1-8.4)" \
 		"$BUILD_TXT" \
-		"8\.1 Session transcript|8\.2 Secret as command|8\.3 Post-execution|8\.4 App config"
+		"secret-handling.md" \
+		"reference/secret-handling\.md"
 
 	check_extraction \
 		"External Repo Issue/PR Submission" \
