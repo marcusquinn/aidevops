@@ -82,7 +82,7 @@ find .agents/scripts/ -name "*.sh" -exec shellcheck {} \;
 
 Full service catalogue with helpers, configs, and docs: `services.md`
 
-**Categories**: Infrastructure (Hostinger, Hetzner, Closte, Cloudron), Deployment (Coolify), Content (MainWP), Security (Vaultwarden), Code Quality (CodeRabbit, CodeFactor, Codacy, SonarCloud), Git (GitHub, GitLab, Gitea, Local), Email (Amazon SES), DNS (Cloudflare, Namecheap, Route 53, Spaceship, 101domains), Dev/Local (Localhost, LocalWP, Context7 MCP, MCP Servers)
+**Categories**: Infrastructure (Hostinger, Hetzner, Closte, Cloudron), Deployment (Coolify), Content (MainWP), Security (Vaultwarden), Code Quality (CodeRabbit, CodeFactor, Codacy, SonarCloud), Git (GitHub, GitLab, Gitea, Local), Email (Amazon SES), DNS (Cloudflare, Namecheap, Route 53), Domains/Registrars (Spaceship, 101domains), Dev/Local (Localhost, LocalWP, Context7 MCP, MCP Servers)
 
 ## Security Requirements
 
