@@ -10,24 +10,25 @@ Polish sweet spot: too polished → "This is an ad" (skepticism); too rough → 
 
 ### UGC Structures
 
-**1. Problem-Solution** — "I used to struggle with [problem]" → demo product → "Now I [outcome]" → CTA
-
-**2. Testimonial Review** — "Okay I have to tell you about [product]" → "I was skeptical but..." → show results → "Honestly, it's amazing"
-
-**3. Day-in-the-Life** — "Come with me to [activity]" → product naturally appears → subtle/explicit recommendation
-
-**4. Unboxing** — "[Product] just arrived!" → open and reveal → genuine first impression → quick demo
-
-**5. Tutorial/How-To** — "Here's how I [use product] for [outcome]" → steps → end result
+| Structure | Opening | Middle | Close |
+|-----------|---------|--------|-------|
+| Problem-Solution | "I used to struggle with [problem]" | "Then I found [product]" + demo | "Now I [outcome]" + CTA |
+| Testimonial | "Okay I have to tell you about [product]" | "I was skeptical but..." + proof | "Honestly, it's amazing" |
+| Day-in-the-Life | "Come with me to [activity]" | Product naturally appears in context | Subtle or explicit recommendation |
+| Unboxing | "[Product] just arrived!" | Open, reveal, genuine reaction | Quick use demonstration |
+| Tutorial | "Here's how I [use product] for [outcome]" | Walk through steps | Show end result |
 
 ### UGC Hooks
 
-- "Okay I need to tell you about..." / "I was today years old when I discovered..."
-- "Why did nobody tell me about this sooner?" / "My honest review of [product]"
-- "If you're like me and struggle with [problem]..." / "This is the best purchase I've made this year"
-- "You need this if you [situation]"
-
-**Length:** Feed/Reels 15-30s | Stories 15s | In-stream 30-60s
+```text
+"Okay I need to tell you about..."
+"I was today years old when I discovered..."
+"Why did nobody tell me about this sooner?"
+"My honest review of [product]"
+"If you're like me and struggle with [problem]..."
+"This is the best purchase I've made this year"
+"You need this if you [situation]"
+```
 
 ### Finding and Briefing Creators
 
@@ -39,9 +40,19 @@ Polish sweet spot: too polished → "This is an ad" (skepticism); too rough → 
 | Minisocial | Bulk UGC | $1,500-3,000/package |
 | Fiverr/Upwork | Budget | $50-200/video |
 
+**Pricing by creator tier (2026):**
+
+| Creator Type | Per Video |
+|--------------|-----------|
+| Micro (1K-10K followers) | $100-250 |
+| Small (10K-50K followers) | $200-500 |
+| Medium (50K-200K followers) | $400-1,000 |
+| Large (200K+ followers) | $1,000+ |
+| Professional UGC actors | $150-400 |
+
 **Creator Brief Template:**
 
-```
+```text
 BRAND: [Name] | PRODUCT: [What it is] | WEBSITE: [URL]
 TARGET AUDIENCE: [Age, gender, interests, pain points]
 KEY MESSAGES: [Main benefit] / [Secondary benefit] / [Differentiator]
@@ -51,16 +62,6 @@ MUST AVOID: Competitors by name, [restrictions]
 SPECS: [X-Y seconds], vertical 9:16, 1080x1920 min, clear audio
 DEADLINE: [Date]
 ```
-
-**UGC Pricing Benchmarks (2026):**
-
-| Creator Type | Per Video |
-|--------------|-----------|
-| Micro (1K-10K followers) | $100-250 |
-| Small (10K-50K followers) | $200-500 |
-| Medium (50K-200K followers) | $400-1,000 |
-| Large (200K+ followers) | $1,000+ |
-| Professional UGC actors | $150-400 |
 
 ---
 
@@ -107,7 +108,7 @@ DEADLINE: [Date]
 
 **Us vs Them:**
 
-```
+```text
 [OLD WAY]          [YOUR WAY]
 ❌ Pain point       ✅ Solution
 ❌ Pain point       ✅ Solution
@@ -169,9 +170,8 @@ Card 1: Setup (problem) | Card 2: Conflict (why it's hard) | Card 3: Solution | 
 **80% watch without sound. Captions are mandatory.**
 
 - Burned-in preferred; SRT files as backup
-- White or yellow text with black outline/shadow
-- Min 5% of screen height; placed in lower third, not covered by UI
-- Create for sound-off, enhance for sound-on
+- White or yellow text with black outline/shadow, min 5% of screen height
+- Placed in lower third, not covered by UI; create for sound-off, enhance for sound-on
 
 ---
 
@@ -200,14 +200,14 @@ Card 1: Setup (problem) | Card 2: Conflict (why it's hard) | Card 3: Solution | 
 
 | Format | Feed | Stories | Reels | Audience Network |
 |--------|------|---------|-------|------------------|
-| Single Image | ✅ Great | ✅ Great | ⚠️ OK | ✅ Great |
-| Carousel | ✅ Great | ✅ Great | ❌ No | ⚠️ OK |
-| Video | ✅ Great | ✅ Great | ✅ Great | ✅ Great |
-| Collection | ✅ Great | ❌ No | ❌ No | ❌ No |
+| Single Image | Great | Great | OK | Great |
+| Carousel | Great | Great | No | OK |
+| Video | Great | Great | Great | Great |
+| Collection | Great | No | No | No |
 
 ### Format Selection Guide
 
-```
+```text
 Single key message?          → Single image or short video
 Multiple features/products?  → Carousel
 Complex story/demonstration? → Video (30-60s)
@@ -218,7 +218,7 @@ Social proof/testimonials?   → UGC video or quote static
 
 ### Testing Format Hypothesis
 
-```
+```text
 Ad Set 1: Same message, Video format
 Ad Set 2: Same message, Static image
 Ad Set 3: Same message, Carousel
