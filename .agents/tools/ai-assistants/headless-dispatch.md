@@ -23,7 +23,7 @@ tools:
 - **Runners**: `runner-helper.sh [create|run|status|list|stop|destroy]` → `~/.aidevops/.agent-workspace/runners/`
 
 **Use for**: parallel tasks, scheduled/cron AI work, CI/CD, chat-triggered dispatch (Matrix/Discord/Slack via OpenClaw), background tasks.
-**Don't use for**: interactive dev (use TUI), frequent human-in-the-loop (see [Worker Uncertainty](#worker-uncertainty-framework)), single quick questions.
+**Don't use for**: interactive dev (use TUI), frequent human-in-the-loop, single quick questions.
 
 **Draft agents**: Share domain instructions across workers via `~/.aidevops/agents/draft/`. See `tools/build-agent/build-agent.md`.
 **Remote dispatch**: `tools/containers/remote-dispatch.md` (SSH/Tailscale with credential forwarding).
@@ -31,6 +31,17 @@ tools:
 > **Never use bare `opencode run` for dispatch** — skips lifecycle reinforcement, workers stop after PR creation (GH#5096). Always use `headless-runtime-helper.sh run`.
 
 <!-- AI-CONTEXT-END -->
+
+## Security
+
+1. **Network**: `--hostname 127.0.0.1` (default) | Set `OPENCODE_SERVER_PASSWORD` for network exposure
+2. **Permissions**: `OPENCODE_PERMISSION` env var for headless autonomy (`'{"*":"allow"}'` for CI/CD)
+3. **Credentials**: Never pass secrets in prompts — use environment variables. Delete sessions after use.
+4. **Scoped tokens** (t1412.2): Workers get minimal-permission GitHub tokens (`contents:write`, `pull_requests:write`, `issues:write`) scoped to target repo. Flow: `worker-token-helper.sh create --repo owner/repo --ttl 3600` → `GH_TOKEN` env → worker executes → `worker-token-helper.sh revoke`. Strategies: GitHub App installation tokens (repo-scoped, 1h TTL) or delegated tokens (advisory tracking, configurable TTL). Disable: `WORKER_SCOPED_TOKENS=false`.
+5. **Worker sandbox** (t1412.1): Headless workers run with fake HOME — only `.gitconfig`, `GH_TOKEN`, `.aidevops/` symlink (read-only), MCP config, writable XDG dirs. No access to `~/.ssh/`, gopass, `credentials.sh`, cloud/publish tokens, browser profiles. `WORKER_SANDBOX_ENABLED=true` (default). CLI: `worker-sandbox-helper.sh create <task_id>` → auto-clean on exit → `cleanup-stale` for >24h.
+6. **Network tiering** (t1412.3): 5-tier domain classification. Tier 5 (exfiltration) denied, Tier 4 (unknown) flagged. Config: `configs/network-tiers.conf`. See `network-tier-helper.sh`.
+
+**GitHub App setup** (recommended for t1412.2): Create at `https://github.com/settings/apps/new` with Contents/PRs/Issues R&W. Install on account/org, download private key, configure `~/.config/aidevops/github-app.json` (app_id, private_key_path, installation_id) with 600 permissions.
 
 ## Dispatch Methods
 
@@ -115,12 +126,17 @@ Pulse supervisor handles staggering automatically (`RAM_PER_WORKER_MB`, `RAM_RES
 | Plan → implement → verify | Sequential — each step depends on previous |
 | Decomposed subtasks | Batch (`batch-strategy-helper.sh`) |
 
-**Batch strategies (t1408.4)**: `depth-first` (default, finish one branch before next) or `breadth-first` (one subtask per branch per batch).
-`batch-strategy-helper.sh next-batch --strategy depth-first --tasks "$JSON" --concurrency "$SLOTS"` — respects `blocked_by:` dependencies.
+**Batch strategies (t1408.4)**: `depth-first` (default) or `breadth-first` (one subtask per branch per batch). `batch-strategy-helper.sh next-batch --strategy depth-first --tasks "$JSON" --concurrency "$SLOTS"` — respects `blocked_by:` dependencies.
 
 ### SDK Parallel
 
-Use `Promise.all` to create sessions and dispatch concurrently. Monitor via SSE (`client.event.subscribe()`). See SDK docs for full API.
+Use `Promise.all` for concurrent sessions. Monitor via SSE (`client.event.subscribe()`). See SDK docs for full API.
+
+### OAuth-Aware Dispatch Routing (t1163)
+
+When `SUPERVISOR_PREFER_OAUTH=true` (default), Anthropic model requests route through Claude CLI if OAuth available (zero marginal cost). Non-Anthropic models always use `opencode` CLI. Override: `export SUPERVISOR_CLI=opencode`. Detection: checks `~/.claude/` credentials, cached 5 min.
+
+Budget tracking: `budget-tracker-helper.sh configure claude-oauth --billing-type subscription`
 
 ## Runners
 
@@ -142,6 +158,8 @@ runner-helper.sh status code-reviewer | runner-helper.sh list | runner-helper.sh
 ```
 
 Each runner gets its own `AGENTS.md` defining personality, rules, and output format. Memory is namespaced (`memory-helper.sh store/recall --namespace "runner-name"`). Inter-runner communication via mailbox (`mail-helper.sh send --to/--from`).
+
+Templates: [code-reviewer](runners/code-reviewer.md), [seo-analyst](runners/seo-analyst.md). See [runners/README.md](runners/README.md).
 
 ## Custom Agents
 
@@ -169,97 +187,6 @@ opencode auth login                                           # interactive setu
 opencode run -m openrouter/anthropic/claude-sonnet-4-6 "Task" # override per dispatch
 ```
 
-### OAuth-Aware Dispatch Routing (t1163)
-
-When `SUPERVISOR_PREFER_OAUTH=true` (default), Anthropic model requests route through Claude CLI if OAuth available (zero marginal cost). Non-Anthropic models always use `opencode` CLI. Override: `export SUPERVISOR_CLI=opencode`. Detection: checks `~/.claude/` credentials, cached 5 min.
-
-Budget tracking: `budget-tracker-helper.sh configure claude-oauth --billing-type subscription`
-
-## Security
-
-1. **Network**: `--hostname 127.0.0.1` (default) | Set `OPENCODE_SERVER_PASSWORD` for network exposure
-2. **Permissions**: `OPENCODE_PERMISSION` env var for headless autonomy (`'{"*":"allow"}'` for CI/CD)
-3. **Credentials**: Never pass secrets in prompts — use environment variables. Delete sessions after use.
-4. **Scoped tokens** (t1412.2): Workers get minimal-permission GitHub tokens (`contents:write`, `pull_requests:write`, `issues:write`) scoped to target repo. Flow: dispatch → `worker-token-helper.sh create --repo owner/repo --ttl 3600` → `GH_TOKEN` env → worker executes → `worker-token-helper.sh revoke`. Two strategies: GitHub App installation tokens (repo-scoped by GitHub, 1h TTL, one-time setup) or delegated tokens (advisory tracking, configurable TTL). Disable: `export WORKER_SCOPED_TOKENS=false`.
-5. **Worker sandbox** (t1412.1): Headless workers run with fake HOME containing only `.gitconfig`, `GH_TOKEN`, `.aidevops/` symlink (read-only), MCP config, writable XDG dirs. No access to `~/.ssh/`, gopass, `credentials.sh`, cloud/publish tokens, browser profiles. `WORKER_SANDBOX_ENABLED=true` (default), `WORKER_SANDBOX_BASE=/tmp/aidevops-worker`. Interactive sessions never sandboxed. CLI: `worker-sandbox-helper.sh create <task_id>` → auto-clean on exit → `cleanup-stale` for >24h.
-6. **Network tiering** (t1412.3): 5-tier domain classification. Tier 5 (exfiltration) denied, Tier 4 (unknown) flagged. Config: `configs/network-tiers.conf`. See `scripts/network-tier-helper.sh`.
-
-**GitHub App setup** (recommended for t1412.2): Create at `https://github.com/settings/apps/new` with Contents/PRs/Issues R&W. Install on account/org, download private key, configure `~/.config/aidevops/github-app.json` (app_id, private_key_path, installation_id) with 600 permissions.
-
-## Worker Uncertainty Framework
-
-Defines when workers proceed autonomously vs exit with BLOCKED.
-
-```text
-Encounter ambiguity
-├── Can infer from context + conventions? → proceed, document in commit
-├── Wrong answer = irreversible damage? → exit with explanation
-├── Affects only my task scope? → proceed with simplest approach
-└── Cross-task architectural decision → exit (needs human input)
-```
-
-**Proceed autonomously**: multiple valid approaches (pick simplest), style ambiguity (follow conventions), vague but clear intent (document in commit), equivalent patterns (match precedent), minor adjacent issues (note in PR body), unclear coverage (match neighbors).
-
-**Exit with BLOCKED**: task contradicts codebase, requires breaking public API, task appears done/obsolete, missing deps/credentials, architectural decisions affecting other tasks, create-vs-modify with data loss risk, multiple interpretations with very different outcomes.
-
-Example: `BLOCKED: Task says 'update the auth endpoint' but there are 3 auth endpoints (JWT, OAuth, API key). Need clarification.`
-
-**Supervisor integration**: Worker proceeds → normal PR review. Worker BLOCKED → supervisor clarifies/retries or creates prerequisite. Unclear error → diagnostic worker (`-diag-N`).
-
-## Lineage Context for Subtask Workers (t1408)
-
-When dispatching subtasks (dot-notation IDs like `t1408.3`), include a lineage block to prevent scope drift and duplicate work. Include when task ID has a dot AND siblings may run in parallel.
-
-```text
-TASK LINEAGE:
-  0. [parent] Build a CRM with contacts, deals, and email (t1408)
-    1. Implement contact management module (t1408.1)
-    2. Implement deal pipeline module (t1408.2)  <-- THIS TASK
-    3. Implement email integration module (t1408.3)
-
-LINEAGE RULES:
-- Focus ONLY on your task ("<-- THIS TASK"). Do NOT duplicate sibling work.
-- For cross-sibling deps, define stubs and document in PR body.
-- If blocked by sibling, exit BLOCKED specifying which.
-```
-
-**Assembling**: Extract parent/siblings from TODO.md using `PARENT_ID="${TASK_ID%.*}"`. `task-decompose-helper.sh format-lineage` does not yet support task-id lookup (t1408.1); use manual grep assembly until then.
-
-**Dispatch**: Use `headless-runtime-helper.sh run` with `${LINEAGE_BLOCK}` appended to `--prompt`. Workers read lineage at start, check sibling descriptions before implementing, create stub interfaces for cross-deps, reference lineage in PR body, exit BLOCKED on hard sibling dependencies.
-
-## Pre-Dispatch Task Decomposition (t1408.2)
-
-Tasks are classified as **atomic** (dispatch directly) or **composite** (split into 2-5 subtasks with dependency edges).
-
-- **Interactive**: show decomposition tree, ask Y/n/edit → create child TODOs + briefs → dispatch leaves
-- **Pulse**: auto-proceed (depth limit: 3) → create children → dispatch leaves
-- **Integration points**: `/full-loop` (Step 0.45), `/pulse` (Step 3), `/new-task` (Step 5.5), `/mission`
-
-```bash
-task-decompose-helper.sh classify "Build auth with login and OAuth" --depth 0  # ~$0.001 haiku
-task-decompose-helper.sh decompose "Build auth with login and OAuth" --max-subtasks 5
-task-decompose-helper.sh format-lineage --parent "Build auth" \
-  --children '[{"description": "login"}, {"description": "OAuth"}]' --current 1
-task-decompose-helper.sh has-subtasks t1408 --todo-file ./TODO.md
-```
-
-Config: `DECOMPOSE_MAX_DEPTH=3`, `DECOMPOSE_MODEL=haiku`, `DECOMPOSE_ENABLED=true`.
-
-**Principle**: "When in doubt, atomic" — over-decomposition creates more overhead than under-decomposition. Reuse `claim-task-id.sh`, `blocked-by:`, standard briefs. Skip already-decomposed tasks.
-
-## Worker Efficiency Protocol
-
-Injected via supervisor dispatch to maximise output per token (~300-500 token overhead, 20-100x ROI on avoided retries).
-
-1. **TodoWrite decomposition** — 3-7 subtasks at session start. Last: "Push and create PR". Survives compaction.
-2. **Commit early** — `git add -A && git commit` per subtask. After first: `git push -u origin HEAD && gh pr create --draft`. Supervisor auto-promotes draft PRs.
-3. **ShellCheck gate** (t234) — Before push, if `.sh` changed: `shellcheck -x -S warning` and fix.
-4. **Research offloading** — Task sub-agents for 500+ line files. Fresh context, concise summaries.
-5. **Parallel sub-work (MANDATORY)** — Task tool for independent ops concurrently. Sequential for: same-file writes, dependent steps, git ops, shared resources.
-6. **Checkpoint** — `session-checkpoint-helper.sh save` per subtask for resume on restart.
-7. **Fail fast** — Verify assumptions before coding. Exit BLOCKED after one failed retry.
-8. **Token minimisation** — Read file ranges, concise commits.
-
 ## CI/CD Integration
 
 ```yaml
@@ -277,14 +204,14 @@ jobs:
           OPENCODE_PERMISSION: '{"*":"allow"}'
 ```
 
-## Runner Templates
+## Worker Behaviour (Cross-References)
 
-| Template | Description |
-|----------|-------------|
-| [code-reviewer](runners/code-reviewer.md) | Security and quality review with structured output |
-| [seo-analyst](runners/seo-analyst.md) | SEO analysis with issue/opportunity tables |
+These topics are documented in their canonical locations — loaded on demand, not duplicated here:
 
-See [runners/README.md](runners/README.md) for creating runners from templates.
+- **Worker Uncertainty Framework** (t158/t174/t176): `scripts/commands/full-loop.md` "Headless Dispatch Rules" — when to proceed vs exit BLOCKED
+- **Worker Efficiency Protocol**: `prompts/worker-efficiency-protocol.md` — TodoWrite decomposition, commit-early, ShellCheck gate, parallel sub-work
+- **Lineage Context for Subtasks** (t1408/t1408.3): `scripts/commands/full-loop.md` Step 1.7 — scope isolation for dot-notation task IDs
+- **Task Decomposition** (t1408.2): `reference/orchestration.md` "Task Decomposition" — atomic vs composite classification, `task-decompose-helper.sh`
 
 ## Related
 
