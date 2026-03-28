@@ -156,7 +156,7 @@ runner-helper.sh status code-reviewer | runner-helper.sh list | runner-helper.sh
 
 Each runner has its own `AGENTS.md` (personality, rules, output format), namespaced memory (`memory-helper.sh store/recall --namespace "runner-name"`), and mailbox (`mail-helper.sh send --to/--from`).
 
-Templates: [code-reviewer](runners/code-reviewer.md), [seo-analyst](runners/seo-analyst.md). See [runners/README.md](runners/README.md).
+Templates: [code-reviewer](runners-code-reviewer.md), [seo-analyst](runners-seo-analyst.md). See [runners-README.md](runners-README.md).
 
 ## Custom Agents
 
@@ -207,7 +207,7 @@ These topics are documented in their canonical locations — loaded on demand, n
 
 - `tools/ai-assistants/opencode-server.md` — full server API reference
 - `tools/ai-assistants/overview.md` — AI assistant comparison
-- `tools/ai-assistants/runners-` — runner templates
+- `tools/ai-assistants/runners-README.md` — runner templates index
 - `scripts/runner-helper.sh` — runner management CLI
 - `scripts/cron-dispatch.sh`, `scripts/cron-helper.sh` — cron-triggered dispatch
 - `scripts/matrix-dispatch-helper.sh`, `services/communications/matrix-bot.md` — Matrix chat dispatch
