@@ -286,16 +286,17 @@ deploy_aidevops_agents() {
 	# Create target directory
 	mkdir -p "$target_dir"
 
-	# If clean mode, remove stale files first (preserving user and plugin directories)
-	if [[ "$CLEAN_MODE" == "true" ]]; then
-		local -a preserved_dirs=("custom" "draft")
-		if [[ ${#plugin_namespaces[@]} -gt 0 ]]; then
-			for pns in "${plugin_namespaces[@]}"; do
-				preserved_dirs+=("$pns")
-			done
-		fi
-		_deploy_agents_clean_mode "$target_dir" "${preserved_dirs[@]}" || return 1
+	# Always clean stale files from previous deployments. Files that were
+	# moved or deleted in the source repo would otherwise persist in the
+	# deployed directory indefinitely (rsync without --delete is additive).
+	# Preserves user directories (custom/, draft/) and plugin namespaces.
+	local -a preserved_dirs=("custom" "draft")
+	if [[ ${#plugin_namespaces[@]} -gt 0 ]]; then
+		for pns in "${plugin_namespaces[@]}"; do
+			preserved_dirs+=("$pns")
+		done
 	fi
+	_deploy_agents_clean_mode "$target_dir" "${preserved_dirs[@]}" || return 1
 
 	# Copy all agent files and folders, excluding:
 	# - loop-state/ (local runtime state, not agents)
