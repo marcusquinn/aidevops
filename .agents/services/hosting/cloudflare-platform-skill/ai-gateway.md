@@ -2,15 +2,6 @@
 
 Universal gateway for AI model providers with analytics, caching, rate limiting, and routing.
 
-## When to Use
-
-- Setting up AI Gateway for any AI provider (OpenAI, Anthropic, Workers AI, etc.)
-- Implementing caching, rate limiting, or request retry/fallback
-- Configuring dynamic routing with A/B testing or model fallbacks
-- Managing provider API keys securely with BYOK
-- Setting up observability with logging and custom metadata
-- Integrating AI Gateway with Cloudflare Workers or external applications
-
 ## Core Concepts
 
 ```
@@ -28,10 +19,10 @@ Your App → AI Gateway → AI Provider (OpenAI, Anthropic, etc.)
 - **Unauthenticated**: Open access (not recommended for production)
 - **Authenticated**: Requires `cf-aig-authorization` header with Cloudflare API token (recommended)
 
-**Provider authentication:**
-1. **Unified Billing**: Use AI Gateway billing to pay for inference
-2. **BYOK (Store Keys)**: Store provider API keys in Cloudflare dashboard
-3. **Request Headers**: Include provider API key in each request
+**Provider authentication:** Unified Billing | BYOK (store keys in dashboard) | Request Headers (per-request key)
+
+**Required env vars:** `CF_ACCOUNT_ID` | `GATEWAY_ID` | `CF_API_TOKEN` | `PROVIDER_API_KEY`
+(Account ID: Dashboard → Overview; Gateway ID: Dashboard → AI Gateway)
 
 ## Common Patterns
 
@@ -57,18 +48,9 @@ const response = await client.chat.completions.create({
 });
 ```
 
-### Pattern 2: Provider-Specific Endpoints
+For provider-specific endpoints (original API schema): change `baseURL` to `.../compat` → `.../openai` (or other provider slug).
 
-Use when you need the original provider's API schema.
-
-```typescript
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  baseURL: `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}/openai`
-});
-```
-
-### Pattern 3: Workers AI Binding with Gateway
+### Pattern 2: Workers AI Binding with Gateway
 
 ```typescript
 export default {
@@ -83,7 +65,7 @@ export default {
 };
 ```
 
-### Pattern 4: Custom Metadata for Tracking
+### Pattern 3: Custom Metadata for Tracking
 
 Tag requests with user IDs, teams, or other identifiers (max 5 metadata entries).
 
@@ -100,22 +82,11 @@ const response = await openai.chat.completions.create(
 );
 ```
 
-### Pattern 5: Per-Request Caching Control
+### Pattern 4: Per-Request Caching Control
 
-```bash
-# Skip cache
-curl ... --header 'cf-aig-skip-cache: true' ...
+Cache headers: `cf-aig-skip-cache: true` | `cf-aig-cache-ttl: <seconds>` (60s–1 month) | `cf-aig-cache-key: <key>` | Response: `cf-aig-cache-status: HIT|MISS`
 
-# Custom cache TTL (1 hour)
-curl ... --header 'cf-aig-cache-ttl: 3600' ...
-
-# Custom cache key
-curl ... --header 'cf-aig-cache-key: greeting-response' ...
-```
-
-Cache headers: `cf-aig-skip-cache: true` | `cf-aig-cache-ttl: <seconds>` (min 60s, max 1 month) | `cf-aig-cache-key: <key>` | Response: `cf-aig-cache-status: HIT|MISS`
-
-### Pattern 6: BYOK (Bring Your Own Keys)
+### Pattern 5: BYOK (Bring Your Own Keys)
 
 Store provider keys in dashboard, remove from code.
 
@@ -131,7 +102,7 @@ const client = new OpenAI({
 });
 ```
 
-### Pattern 7: Dynamic Routing with Fallbacks
+### Pattern 6: Dynamic Routing with Fallbacks
 
 ```typescript
 const response = await client.chat.completions.create({
@@ -144,7 +115,7 @@ const response = await client.chat.completions.create({
 
 **Use cases**: A/B testing, rate/budget limits per user/team, model fallbacks on errors, conditional routing (paid vs free users).
 
-### Pattern 8: Error Handling
+### Pattern 7: Error Handling
 
 ```typescript
 try {
@@ -189,27 +160,17 @@ curl https://api.cloudflare.com/client/v4/accounts/{account_id}/ai-gateway/gatew
 ### Wrangler Integration
 
 ```toml
-# wrangler.toml
-name = "my-worker"
-main = "src/index.ts"
-compatibility_date = "2024-01-01"
-
 [ai]
 binding = "AI"
-
 [[ai.gateway]]
 id = "my-gateway"
-
 [vars]
 CF_ACCOUNT_ID = "your-account-id"
 GATEWAY_ID = "my-gateway"
 # Secrets via: wrangler secret put CF_API_TOKEN
 ```
 
-### API Token Permissions
-
-- AI Gateway - Read (for gateway access)
-- AI Gateway - Edit (for gateway management)
+**API Token Permissions:** AI Gateway - Read (access) | AI Gateway - Edit (management)
 
 ## Supported Providers
 
@@ -235,9 +196,7 @@ See [full provider list](https://developers.cloudflare.com/ai-gateway/usage/prov
 
 ## Observability
 
-**Analytics Dashboard** (Dashboard → AI Gateway → Select gateway): request count, token usage, cost tracking, cache hit rate, error rates, latency percentiles.
-
-**Log entry fields**: user prompt & model response, provider & model, timestamp, status, token usage, cost, duration (ms), cache status, custom metadata, request/event ID.
+**Analytics Dashboard** (Dashboard → AI Gateway → Select gateway): request count, token usage, cost, cache hit rate, error rates, latency percentiles. Log fields: prompt/response, provider, model, status, tokens, cost, duration, cache status, metadata, request ID.
 
 **Custom cost tracking** (for models not in Cloudflare's pricing database):
 
@@ -247,38 +206,7 @@ curl https://api.cloudflare.com/client/v4/accounts/{account_id}/ai-gateway/gatew
   -d '{"model": "custom-model-v1", "input_cost": 0.01, "output_cost": 0.03}'
 ```
 
-## Advanced Use Cases
-
-### Multi-Model Chat with Fallbacks
-
-Configure in dashboard: Route `dynamic/smart-chat` → Try GPT-4 first → Fallback to Claude if error → Fallback to Llama if both fail.
-
-```typescript
-const response = await client.chat.completions.create({
-  model: 'dynamic/smart-chat',
-  messages: [{ role: 'user', content: 'Complex reasoning task' }]
-});
-```
-
-### A/B Testing Models
-
-Dashboard: Create route with Percentage node (50% gpt-4o-mini, 50% claude-sonnet-4-6). Analyze logs to compare quality/cost/latency.
-
-```typescript
-const response = await client.chat.completions.create({
-  model: 'dynamic/ab-test',
-  messages: [{ role: 'user', content: prompt }],
-  headers: { 'cf-aig-metadata': JSON.stringify({ experiment: 'model-comparison-v1' }) }
-});
-```
-
-### Semantic Caching (Future)
-
-Currently, caching requires identical requests. Semantic caching is planned. Workaround: use `cf-aig-cache-key` with a normalized/hashed prompt.
-
-## Debugging & Troubleshooting
-
-### Common Issues
+## Troubleshooting
 
 | Error | Cause | Fix |
 |-------|-------|-----|
@@ -287,14 +215,6 @@ Currently, caching requires identical requests. Semantic caching is planned. Wor
 | **429 Rate Limited** | Gateway rate limit exceeded | Implement backoff or use dynamic routing |
 | **Cache not working** | Requests not identical, or caching disabled | Check `cf-aig-cache-status` header, verify caching enabled |
 | **Logs not appearing** | Log limit reached or logging disabled | Check 10M limit, verify logs enabled, wait 30-60s |
-
-### Check Gateway Status
-
-```bash
-# List all gateways
-curl https://api.cloudflare.com/client/v4/accounts/{account_id}/ai-gateway/gateways \
-  -H "Authorization: Bearer $CF_API_TOKEN"
-```
 
 Dashboard → Gateway → Logs. Filter examples: `status: error`, `provider: openai`, `metadata.userId: user123`, `cost > 0.01`.
 
@@ -326,21 +246,14 @@ DELETE /accounts/{account_id}/ai-gateway/gateways/{gateway_id}/logs
 
 ## Best Practices
 
-1. **Always use authenticated gateways in production** — prevents unauthorized access, required for BYOK
-2. **Use BYOK for provider keys** — removes keys from codebase, easier rotation, centralized management
-3. **Add custom metadata to all requests** — track users/teams/environments, filter logs effectively
-4. **Configure appropriate rate limits** — prevent runaway costs, use dynamic routing for per-user limits
-5. **Enable caching for deterministic prompts** — support bots, static content generation, reduces costs & latency
-6. **Use dynamic routing for resilience** — model fallbacks, A/B testing without code changes, gradual rollouts
-7. **Monitor logs regularly** — set up automatic log deletion, export for long-term analysis, track cost trends
-8. **Test with provider-specific endpoints first** — validates provider integration, easier debugging
-
-## Examples Repository
-
-- [NextChat](https://github.com/ChatGPTNextWeb/NextChat/blob/main/app/utils/cloudflare.ts) - URL parsing utilities
-- [LibreChat](https://github.com/danny-avila/LibreChat) - Multi-provider chat with AI Gateway
-- [Continue.dev](https://github.com/continuedev/continue/blob/main/core/llm/llms/Cloudflare.ts) - IDE integration
-- [Big-AGI](https://github.com/enricoros/big-AGI) - Complex gateway path handling
+- **Authenticated gateways in production** — prevents unauthorized access, required for BYOK
+- **BYOK for provider keys** — removes keys from codebase, easier rotation, centralized management
+- **Custom metadata on all requests** — track users/teams/environments, filter logs effectively
+- **Rate limits** — prevent runaway costs; use dynamic routing for per-user limits
+- **Cache deterministic prompts** — support bots, static content; reduces costs & latency
+- **Dynamic routing for resilience** — model fallbacks, A/B testing without code changes
+- **Monitor logs** — set up automatic log deletion, export for long-term analysis, track cost trends
+- **Test provider-specific endpoints first** — validates provider integration, easier debugging
 
 ## Resources
 
@@ -348,22 +261,3 @@ DELETE /accounts/{account_id}/ai-gateway/gateways/{gateway_id}/logs
 - [API Reference](https://developers.cloudflare.com/api/resources/ai_gateway/)
 - [Provider Guides](https://developers.cloudflare.com/ai-gateway/usage/providers/)
 - [Workers AI Integration](https://developers.cloudflare.com/workers-ai/)
-- [Discord Community](https://discord.cloudflare.com)
-
-## Quick Reference
-
-```bash
-# Create gateway
-Dashboard → AI → AI Gateway → Create Gateway
-
-# Basic request
-const client = new OpenAI({
-  baseURL: `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}/compat`
-});
-
-# Required env vars
-CF_ACCOUNT_ID=xxx  GATEWAY_ID=xxx  CF_API_TOKEN=xxx  PROVIDER_API_KEY=xxx
-
-# Account ID: Dashboard → Overview → Account ID
-# Gateway ID: Dashboard → AI Gateway → Gateway name/ID
-```
