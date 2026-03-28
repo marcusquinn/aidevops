@@ -38,6 +38,9 @@ pr_body='WIP - incremental commits'
 [[ -n "$gh_issue" ]] && pr_body="${pr_body}
 
 Ref #${gh_issue}"
+# Append signature footer (auto-detects CLI, aidevops version)
+SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL" 2>/dev/null || echo "")
+pr_body="${pr_body}${SIG_FOOTER}"
 gh pr create --draft --title '<task-id>: <description>' --body "$pr_body"
 ```
 

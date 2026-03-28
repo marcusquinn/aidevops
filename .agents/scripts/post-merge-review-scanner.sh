@@ -67,6 +67,14 @@ create_issue() {
 	gh label create "source:review-scanner" --repo "$repo" \
 		--description "Auto-created by post-merge-review-scanner.sh" --color "C2E0C6" --force || true
 	local body
+	# Build signature footer
+	local sig_footer=""
+	local sig_helper
+	sig_helper="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/gh-signature-helper.sh"
+	if [[ -x "$sig_helper" ]]; then
+		sig_footer=$("$sig_helper" footer 2>/dev/null || echo "")
+	fi
+
 	body="## Unaddressed review bot suggestions
 
 PR #${pr} was merged with unaddressed review bot feedback.
@@ -74,9 +82,7 @@ PR #${pr} was merged with unaddressed review bot feedback.
 
 ### Actionable comments
 
-${summary}
----
-*Auto-created by post-merge-review-scanner.sh (t1386)*"
+${summary}${sig_footer}"
 	gh issue create --repo "$repo" --title "$title" --label "$SCANNER_LABEL,source:review-scanner" --body "$body"
 }
 
