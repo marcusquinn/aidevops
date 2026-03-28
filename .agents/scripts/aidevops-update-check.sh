@@ -22,8 +22,14 @@ detect_app() {
 	# Check environment variables set by various tools
 	if [[ "${OPENCODE:-}" == "1" ]]; then
 		app_name="OpenCode"
-		# OpenCode doesn't have --version flag, check package.json
-		app_version=$(jq -r '.version // empty' ~/.bun/install/global/node_modules/opencode-ai/package.json 2>/dev/null || echo "")
+		# Try multiple version detection methods (install path varies: bun, npm, homebrew)
+		app_version=$(opencode --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+		if [[ -z "$app_version" ]]; then
+			app_version=$(npm list -g opencode-ai --json 2>/dev/null | jq -r '.dependencies["opencode-ai"].version // empty' 2>/dev/null || echo "")
+		fi
+		if [[ -z "$app_version" ]]; then
+			app_version=$(jq -r '.version // empty' ~/.bun/install/global/node_modules/opencode-ai/package.json 2>/dev/null || echo "")
+		fi
 	elif [[ -n "${CLAUDE_CODE:-}" ]] || [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
 		app_name="Claude Code"
 		app_version=$(claude --version 2>/dev/null | head -1 | sed 's/ (Claude Code)//' || echo "")

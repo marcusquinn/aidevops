@@ -185,11 +185,11 @@ Git is the audit trail. Chain: TODO → issue → worktree → PR → merge. Gap
 3. Add TODO entry WITH `ref:GH#NNN` in same commit. Split commits → duplicate issues.
 4. Code changes still need worktree + PR.
 
-**GitHub comment signature footer:** Every issue, PR, and comment created by aidevops agents MUST include a signature footer. Use `gh-signature-helper.sh footer --model <model-id>` to generate it, or compose manually:
+**GitHub comment signature footer:** Every issue, PR, and comment created by aidevops agents MUST include a signature footer. Use `gh-signature-helper.sh footer --model <model-id> [--tokens N]` to generate it, or compose manually:
 ```
 \n---\n[CLI Name](url) vX.Y.Z, [aidevops.sh](https://aidevops.sh) vX.Y.Z, provider/model-id, N tokens
 ```
-Tokens are optional (omit when unavailable). The helper auto-detects the runtime CLI and aidevops version. Append the footer as the last line of every `gh issue comment`, `gh issue create`, and `gh pr create` body. See `scripts/commands/pulse.md` for dispatch/kill/merge comment templates.
+The helper auto-detects the runtime CLI (with version) and aidevops version. Append the footer as the last line of every `gh issue comment`, `gh issue create`, and `gh pr create` body. Token count: pass `--tokens` when available from session usage data; omit when the runtime doesn't expose it. The model ID should be the full `provider/model-name` (e.g., `anthropic/claude-opus-4-6`). See `scripts/commands/pulse.md` for dispatch/kill/merge comment templates.
 
 **Self-improvement routing (t1541):** Framework-level tasks → `framework-routing-helper.sh log-framework-issue`. Project tasks → current repo. Framework tasks in project repos are invisible to maintainers.
 

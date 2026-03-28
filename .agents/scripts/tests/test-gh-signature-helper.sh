@@ -73,11 +73,11 @@ assert_contains "contains model" "anthropic/claude-opus-4-6" "$result"
 assert_contains "contains formatted tokens" "1,234 tokens" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Test 2: generate with no tokens (should omit tokens)
+# Test 2: generate with explicit --tokens 0 (should omit tokens)
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "Test 2: generate without tokens"
-result=$("$HELPER" generate --cli "Claude Code" --cli-version "2.0.1" --model "anthropic/claude-sonnet-4-6")
+echo "Test 2: explicit --tokens 0 omits tokens"
+result=$("$HELPER" generate --cli "Claude Code" --cli-version "2.0.1" --model "anthropic/claude-sonnet-4-6" --tokens 0)
 assert_contains "contains Claude Code link" "[Claude Code](https://claude.ai/code) v2.0.1" "$result"
 assert_not_contains "no tokens field" "tokens" "$result"
 
@@ -183,10 +183,22 @@ assert_contains "env model" "test/model" "$result"
 assert_contains "env tokens" "42,000 tokens" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Test 10: help command exits cleanly
+# Test 10: auto-detect tokens from OpenCode session DB (if running in OpenCode)
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "Test 10: help command"
+echo "Test 10: auto-detect tokens from session DB"
+if [[ "${OPENCODE:-}" == "1" ]] && [[ -r "${HOME}/.local/share/opencode/opencode.db" ]]; then
+	result=$("$HELPER" generate --cli "OpenCode CLI" --model "anthropic/claude-opus-4-6")
+	assert_contains "auto-detected tokens present" "tokens" "$result"
+else
+	echo "  SKIP: not running in OpenCode (auto-detect test requires OpenCode session DB)"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 11: help command exits cleanly
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 11: help command"
 result=$("$HELPER" help 2>&1)
 assert_contains "help shows usage" "Usage:" "$result"
 assert_contains "help shows examples" "Examples:" "$result"

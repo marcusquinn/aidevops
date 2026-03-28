@@ -84,7 +84,14 @@ _detect_cli() {
 
 	if [[ "${OPENCODE:-}" == "1" ]]; then
 		app_name="OpenCode CLI"
-		app_version=$(jq -r '.version // empty' ~/.bun/install/global/node_modules/opencode-ai/package.json 2>/dev/null || echo "")
+		# Try multiple version detection methods (install path varies: bun, npm, homebrew)
+		app_version=$(opencode --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+		if [[ -z "$app_version" ]]; then
+			app_version=$(npm list -g opencode-ai --json 2>/dev/null | jq -r '.dependencies["opencode-ai"].version // empty' 2>/dev/null || echo "")
+		fi
+		if [[ -z "$app_version" ]]; then
+			app_version=$(jq -r '.version // empty' ~/.bun/install/global/node_modules/opencode-ai/package.json 2>/dev/null || echo "")
+		fi
 	elif [[ -n "${CLAUDE_CODE:-}" ]] || [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
 		app_name="Claude Code"
 		app_version=$(claude --version 2>/dev/null | head -1 | sed 's/ (Claude Code)//' || echo "")
@@ -137,6 +144,78 @@ _detect_cli() {
 	fi
 
 	echo "${app_name}|${app_version}"
+	return 0
+}
+
+# =============================================================================
+# Auto-detect session token count from runtime DB
+# =============================================================================
+# Queries the runtime's session database for cumulative token usage.
+# Currently supports OpenCode (SQLite DB at ~/.local/share/opencode/opencode.db).
+# Returns total input+output tokens for the most recent session in the current
+# working directory, or empty string if unavailable.
+
+_detect_session_tokens() {
+	local db_path="${HOME}/.local/share/opencode/opencode.db"
+
+	# Only attempt for OpenCode (other runtimes can be added later)
+	if [[ "${OPENCODE:-}" != "1" ]] && ! ps -o comm= -p "${PPID:-0}" 2>/dev/null | tr '[:upper:]' '[:lower:]' | grep -q opencode; then
+		echo ""
+		return 0
+	fi
+
+	if [[ ! -r "$db_path" ]]; then
+		echo ""
+		return 0
+	fi
+
+	if ! command -v sqlite3 &>/dev/null; then
+		echo ""
+		return 0
+	fi
+
+	# Find the most recently updated session matching the current directory
+	local cwd
+	cwd=$(pwd 2>/dev/null || echo "")
+	if [[ -z "$cwd" ]]; then
+		echo ""
+		return 0
+	fi
+
+	# Also check the canonical repo root and worktree's linked repo
+	local repo_root canonical_dir
+	repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "$cwd")
+	# Worktree paths like ~/Git/repo.branch-name → canonical is ~/Git/repo
+	canonical_dir="${repo_root%%.*}"
+
+	local session_id
+	session_id=$(sqlite3 "$db_path" "
+		SELECT id FROM session
+		WHERE directory IN ('${cwd}', '${repo_root}', '${canonical_dir}')
+		ORDER BY time_updated DESC LIMIT 1
+	" 2>/dev/null || echo "")
+
+	if [[ -z "$session_id" ]]; then
+		echo ""
+		return 0
+	fi
+
+	local total_tokens
+	total_tokens=$(sqlite3 "$db_path" "
+		SELECT COALESCE(
+			SUM(json_extract(data, '$.tokens.input')) +
+			SUM(json_extract(data, '$.tokens.output')), 0
+		)
+		FROM message
+		WHERE session_id='${session_id}'
+		  AND json_extract(data, '$.tokens.input') > 0
+	" 2>/dev/null || echo "")
+
+	if [[ -n "$total_tokens" ]] && [[ "$total_tokens" -gt 0 ]] 2>/dev/null; then
+		echo "$total_tokens"
+	else
+		echo ""
+	fi
 	return 0
 }
 
@@ -213,6 +292,11 @@ cmd_generate() {
 				cli_version=""
 			fi
 		fi
+	fi
+
+	# Auto-detect tokens from session DB if not provided
+	if [[ -z "$tokens" ]]; then
+		tokens=$(_detect_session_tokens)
 	fi
 
 	# Get aidevops version
