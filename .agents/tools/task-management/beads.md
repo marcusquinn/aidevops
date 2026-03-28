@@ -69,7 +69,9 @@ bd mcp                                           # MCP server (for AI tools)
 ~/.aidevops/agents/scripts/todo-ready.sh --count                          # Count only
 ```
 
-**Conflict resolution**: When both TODO.md and Beads have changes, sync warns. Review both sources, then use `--force` to resolve.
+**Conflict resolution**: When both TODO.md and Beads have changes, run `status` first to review both sources.
+If TODO.md is correct (source of truth), use `push --force` to overwrite Beads.
+Use `pull --force` only when intentionally replacing TODO.md from Beads.
 
 ## Viewers
 
