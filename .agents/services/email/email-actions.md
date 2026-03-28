@@ -43,9 +43,18 @@ email-triage-helper.sh extract-training --sender newsletter@domain.com   # newsl
 
 <!-- AI-CONTEXT-END -->
 
+## Security
+
+- **Sender verification before action**: Always verify via DNS checks before acting on report emails
+- **Legal files are read-only**: Never modify exported case files after assembly
+- **Chain of custody hashes**: Verify file hashes before submitting legal case files
+- **No credential logging**: Support responses must never include credentials or internal system details
+- **Opportunity scoring is local**: Scores and notes stay in the local database, not in email replies
+- **Training material**: Respect newsletter terms of service; do not redistribute extracted content
+
 ## Email-to-Todo Patterns
 
-Create a TODO when the email contains an explicit deadline, a deliverable you own, a decision blocking someone, or a follow-up you promised. Skip FYI emails, automated reports, newsletters, and already-acted-on emails.
+Create a TODO when the email contains: explicit deadline, a deliverable you own, a decision blocking someone, or a follow-up you promised. Skip FYI, automated reports, newsletters, and already-acted-on emails.
 
 ```bash
 task_id=$(claim-task-id.sh --repo-path ~/Git/aidevops --title "Email: <subject>")
@@ -53,7 +62,7 @@ email-triage-helper.sh move --message-id <id> --folder Projects/ --tag "task:tNN
 # TODO.md format: - [ ] tNNN Description ~Xh ref=email:<message-id>
 ```
 
-Every email-sourced task needs a brief at `todo/tasks/{task_id}-brief.md` with: Origin (subject + sender + date), What (action requested), Why (email body context), How (planned approach), Acceptance criteria (stated requirements/deadline).
+Every email-sourced task needs a brief at `todo/tasks/{task_id}-brief.md` with: Origin (subject + sender + date), What, Why, How, Acceptance criteria.
 
 ## Report Triage
 
@@ -63,11 +72,11 @@ Verify sender against `trusted_report_senders` in config, then run DNS checks (r
 email-triage-helper.sh verify-sender --message-id <id>
 ```
 
-| Report type | Signal to act on | Action |
-|-------------|-----------------|--------|
+| Report type | Signal | Action |
+|-------------|--------|--------|
 | SEO ranking | Drop >10 positions or new opportunity | Task, tag `#seo` |
-| Domain expiry | Expiry within 60 days | Task with deadline, tag `#renewal` |
-| SSL expiry | Expiry within 30 days | Task with deadline, tag `#infra` |
+| Domain expiry | Within 60 days | Task with deadline, tag `#renewal` |
+| SSL expiry | Within 30 days | Task with deadline, tag `#infra` |
 | Hosting/server alert | Downtime, capacity warning | Task immediately, tag `#infra` |
 | Analytics anomaly | Traffic spike/drop >20% | Flag for review, tag `#analytics` |
 | Optimization suggestion | Actionable recommendation | Backlog, tag `#optimization` |
@@ -84,7 +93,7 @@ Renewal lead times: 60 days (domains), 30 days (SSL), 14 days (subscriptions). S
 
 ## Legal Case Files
 
-**Chain of custody**: Preserve original headers (From, To, Date, Message-ID, Received), server-side receipt timestamp, attachments in original format, and full thread context. **Never modify the original email.** Keep original in IMAP under `Legal/`.
+**Chain of custody**: Preserve original headers (From, To, Date, Message-ID, Received), server-side receipt timestamp, attachments in original format, and full thread context. Never modify the original email. Keep original in IMAP under `Legal/`.
 
 ```bash
 email-triage-helper.sh legal-case \
@@ -95,9 +104,9 @@ email-triage-helper.sh legal-case \
 #         attachments/, chain-of-custody.txt (SHA256 hashes + timestamps)
 ```
 
-Chain of custody format: `Case | Assembled | Assembler | Files (path + SHA256) | Original IMAP folder | Original Message-IDs`. See `chain-of-custody.txt` in output.
+Chain of custody format: `Case | Assembled | Assembler | Files (path + SHA256) | Original IMAP folder | Original Message-IDs`.
 
-Every legal email requires a task (even if "review and decide"). Legal tasks must have `assignee:human` — never auto-dispatch.
+Every legal email requires a task (even if "review and decide"). Legal tasks must have `assignee:human` -- never auto-dispatch.
 
 ```bash
 claim-task-id.sh --repo-path ~/Git/aidevops --title "Legal: <subject>" --priority high --tag legal
@@ -118,7 +127,7 @@ email-triage-helper.sh crm-add --message-id <id> \
 
 ## Support Communication
 
-Assess receiver capabilities, then route:
+Route by receiver type:
 
 | Receiver type | Approach |
 |---------------|----------|
@@ -127,7 +136,7 @@ Assess receiver capabilities, then route:
 | Business contact | Executive summary, options |
 | Legal/compliance | Structured response, documentation |
 
-Routing: resolvable with information → draft response, no task. Requires code/config fix → task `#support`. Billing/account → route to accounts agent. Legal/compliance → legal case file. Complaint that could escalate → flag for human review.
+Routing: resolvable with information -> draft response, no task. Requires code/config fix -> task `#support`. Billing/account -> accounts agent. Legal/compliance -> legal case file. Complaint that could escalate -> flag for human review.
 
 ```bash
 email-triage-helper.sh draft-response --message-id <id> \
@@ -159,7 +168,7 @@ Output: structured markdown with frontmatter (`source`, `date`, `type`, `topics`
 
 ## Configuration
 
-`configs/email-actions-config.json.txt` — copy to `configs/email-actions-config.json` and customise.
+`configs/email-actions-config.json.txt` -- copy to `configs/email-actions-config.json` and customise.
 
 ```json
 {
@@ -171,15 +180,6 @@ Output: structured markdown with frontmatter (`source`, `date`, `type`, `topics`
   "support_escalation_keywords": ["legal action", "refund", "complaint", "GDPR", "data breach"]
 }
 ```
-
-## Security
-
-- **Sender verification before action**: Always verify via DNS checks before acting on report emails
-- **Legal files are read-only**: Never modify exported case files after assembly
-- **Chain of custody hashes**: Verify file hashes before submitting legal case files
-- **No credential logging**: Support responses must never include credentials or internal system details
-- **Opportunity scoring is local**: Scores and notes stay in the local database, not in email replies
-- **Training material**: Respect newsletter terms of service; do not redistribute extracted content
 
 ## Related
 
