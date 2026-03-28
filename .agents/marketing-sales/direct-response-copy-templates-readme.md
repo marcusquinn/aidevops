@@ -5,7 +5,7 @@ Copy-paste templates for common direct response formats.
 ## Contents
 
 - [Landing Page Template](landing-page.md)
-- [Email Sequence Templates](email-sequences.md)
+- [Email Sequence Templates](direct-response-copy-templates-email-sequences.md)
 - [VSL Script Template](vsl-script.md)
 - [Ad Copy Templates](ad-copy.md)
 

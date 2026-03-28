@@ -232,5 +232,5 @@ doesn't work better than what you tried before."
 ## Further Reading
 
 - [Landing Page Structure](landing-page-structure.md) — where to place objection handling
-- [Email Sequences](email-sequences.md) — objection-handling emails
+- [Email Sequences](direct-response-copy-templates-email-sequences.md) — objection-handling emails
 - [Offer Construction](offer-construction.md) — guarantee types
