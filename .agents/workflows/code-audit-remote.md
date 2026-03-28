@@ -22,8 +22,7 @@ tools:
 - **Services**: CodeRabbit (AI review), Codacy (quality), SonarCloud (security)
 - **Script**: `~/.aidevops/agents/scripts/code-audit-helper.sh`
 - **When**: PR review phase, after local linting passes
-
-**Quick Commands**:
+- **Workflow Position**: `/linters-local` -> `/code-audit-remote` -> `/pr` summary
 
 ```bash
 # Run all remote audits
@@ -35,70 +34,33 @@ bash ~/.aidevops/agents/scripts/codacy-cli.sh analyze
 bash ~/.aidevops/agents/scripts/sonarcloud-cli.sh analyze
 ```
 
-**Workflow Position**: `/linters-local` -> `/code-audit-remote` -> `/pr` summary
-
 <!-- AI-CONTEXT-END -->
 
-## Purpose
+## Services
 
-The `/code-audit-remote` command calls external quality services via their APIs to provide:
+| Service | Focus | Strengths | API |
+|---------|-------|-----------|-----|
+| CodeRabbit | AI-powered code reviews | Context-aware suggestions, security analysis, best practices | REST + MCP |
+| Codacy | Code quality analysis | 40+ languages, auto-fix suggestions, team collaboration | REST + CLI |
+| SonarCloud | Security & maintainability | Industry standard rules, quality gates, tech debt tracking | Web API |
 
-1. **AI-powered code review** (CodeRabbit) - Contextual suggestions, security analysis
-2. **Code quality analysis** (Codacy) - 40+ languages, auto-fix suggestions
-3. **Security scanning** (SonarCloud) - Vulnerability detection, technical debt tracking
-
-This complements `/linters-local` which runs fast, offline checks.
-
-## Services Overview
-
-### CodeRabbit
-
-- **Focus**: AI-powered code reviews
-- **Strengths**: Context-aware suggestions, security analysis, best practices
-- **API**: REST API with MCP integration
-- **Use Case**: Automated PR review with intelligent feedback
+### Service-Specific Commands
 
 ```bash
-# Review current repository
+# CodeRabbit
 bash ~/.aidevops/agents/scripts/coderabbit-cli.sh review
-
-# Analyze specific directory
 bash ~/.aidevops/agents/scripts/coderabbit-cli.sh analyze .agents/scripts/
-```
 
-### Codacy
-
-- **Focus**: Comprehensive code quality analysis
-- **Strengths**: 40+ languages, auto-fix for safe violations, team collaboration
-- **API**: Full REST API with CLI support
-- **Use Case**: Enterprise code quality management
-
-```bash
-# Run Codacy analysis
+# Codacy
 bash ~/.aidevops/agents/scripts/codacy-cli.sh analyze
-
-# Upload results
 bash ~/.aidevops/agents/scripts/codacy-cli.sh upload results.sarif
-```
 
-### SonarCloud
-
-- **Focus**: Security and maintainability analysis
-- **Strengths**: Industry standard, comprehensive rules, quality gates
-- **API**: Extensive web API
-- **Use Case**: Professional security and quality analysis
-
-```bash
-# Run SonarCloud analysis
+# SonarCloud
 bash ~/.aidevops/agents/scripts/sonarcloud-cli.sh analyze
-
-# Check current issues
 curl -s "https://sonarcloud.io/api/issues/search?componentKeys=marcusquinn_aidevops&resolved=false&ps=1" | jq '.total'
 ```
 
 ## Usage
-
-### Run All Remote Audits
 
 ```bash
 # Comprehensive audit across all services
@@ -106,25 +68,19 @@ bash ~/.aidevops/agents/scripts/code-audit-helper.sh audit my-repository
 
 # Generate detailed report
 bash ~/.aidevops/agents/scripts/code-audit-helper.sh report my-repository audit-report.json
-```
 
-### Individual Service Commands
-
-```bash
-# CodeRabbit
+# Per-service via helper (pattern: [service]-[action] [account] [target])
 bash ~/.aidevops/agents/scripts/code-audit-helper.sh coderabbit-repos personal
 bash ~/.aidevops/agents/scripts/code-audit-helper.sh coderabbit-analysis personal repo-id
-
-# Codacy
 bash ~/.aidevops/agents/scripts/code-audit-helper.sh codacy-repos organization
 bash ~/.aidevops/agents/scripts/code-audit-helper.sh codacy-quality organization my-repo
-
-# SonarCloud
 bash ~/.aidevops/agents/scripts/code-audit-helper.sh sonarcloud-projects personal
 bash ~/.aidevops/agents/scripts/code-audit-helper.sh sonarcloud-measures personal project-key
 ```
 
 ## Output Format
+
+Reports follow this structure per service:
 
 ```markdown
 ## Remote Audit Results
@@ -141,15 +97,12 @@ bash ~/.aidevops/agents/scripts/code-audit-helper.sh sonarcloud-measures persona
 
 ### SonarCloud Analysis
 - **Quality Gate**: Passed
-- **Bugs**: 0
-- **Vulnerabilities**: 0
+- **Bugs**: 0 | **Vulnerabilities**: 0
 - **Code Smells**: 1 (S1192 - repeated string)
 - **Technical Debt**: 15 minutes
 ```
 
 ## Quality Gates
-
-### Recommended Thresholds
 
 | Metric | Minimum | Target |
 |--------|---------|--------|
@@ -159,53 +112,20 @@ bash ~/.aidevops/agents/scripts/code-audit-helper.sh sonarcloud-measures persona
 | Code Smells | <10 major | <5 total |
 | Duplicated Lines | <3% | <1% |
 
-### Gate Configuration
-
-```json
-{
-  "quality_gates": {
-    "code_coverage": {
-      "minimum": 80,
-      "target": 90,
-      "fail_build": true
-    },
-    "security_hotspots": {
-      "maximum": 0,
-      "severity": "high",
-      "fail_build": true
-    }
-  }
-}
-```
+Gate config (`fail_build: true` for coverage <80% and high-severity security hotspots).
 
 ## MCP Integration
 
-### Available MCP Servers
-
 ```bash
-# Start CodeRabbit MCP server
+# Start MCP servers for real-time analysis during development
 bash ~/.aidevops/agents/scripts/code-audit-helper.sh start-mcp coderabbit 3003
-
-# Start Codacy MCP server
 bash ~/.aidevops/agents/scripts/code-audit-helper.sh start-mcp codacy 3004
-
-# Start SonarCloud MCP server
 bash ~/.aidevops/agents/scripts/code-audit-helper.sh start-mcp sonarcloud 3005
 ```
 
-### AI Assistant Capabilities
+MCP enables: real-time code analysis, automated quality reports, security vulnerability detection, context-aware review suggestions, and quality trend analysis.
 
-With MCP integration, AI assistants can:
-
-- **Real-time code analysis** during development
-- **Automated quality reports** generation
-- **Security vulnerability** detection and reporting
-- **Code review assistance** with context-aware suggestions
-- **Quality trend analysis** over time
-
-## CI/CD Integration
-
-### GitHub Actions
+## CI/CD Integration (GitHub Actions)
 
 ```yaml
 name: Code Quality Audit
@@ -229,16 +149,10 @@ jobs:
 
 ## Configuration
 
-### Setup
-
 ```bash
-# Copy template
+# Copy template, then edit with your service API tokens
 cp configs/code-audit-config.json.txt configs/code-audit-config.json
-
-# Edit with your service API tokens
 ```
-
-### Multi-Service Configuration
 
 ```json
 {
