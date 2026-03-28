@@ -32,9 +32,7 @@ tools:
 
 ## Architecture Overview
 
-### Isolation Strategy: Row-Level Tenancy
-
-Row-level tenancy chosen (shared database, shared schema, `org_id` column) — orgs share the same feature set, superadmin needs cross-org visibility, single migration path, PostgreSQL RLS enforces at DB level.
+Row-level tenancy (shared database, shared schema, `org_id` column) — orgs share the same feature set, superadmin needs cross-org visibility, single migration path, PostgreSQL RLS enforces at DB level.
 
 | Strategy | Pros | Cons | When to use |
 |----------|------|------|-------------|
@@ -50,7 +48,7 @@ Row-level tenancy chosen (shared database, shared schema, `org_id` column) — o
 | **Org-optional** | Nullable | Conditional | memories, patterns (can be global or org-specific) |
 | **Global** | None | None | organisations, users, system_config |
 
-## Schema Design
+## Schema
 
 ### Entity Relationship
 
@@ -176,9 +174,9 @@ const superadminDb = drizzle(superuserPool);
 const allOrgs = await superadminDb.select().from(organisations);
 ```
 
-## Integration with Existing Multi-Tenant Credentials
+## Credential System Integration
 
-File-based credential system continues to work for CLI/local development. Database schema adds server-side isolation for hosted/multi-user deployments.
+File-based credential system continues for CLI/local development. Database schema adds server-side isolation for hosted/multi-user deployments.
 
 | Existing concept | New schema equivalent |
 |-----------------|----------------------|
