@@ -2,9 +2,7 @@
 
 > Sources: [Blue Book](https://www.domainlanguage.com/ddd/blue-book/) — Evans (2003) · [Bounded Context](https://martinfowler.com/bliki/BoundedContext.html) · [Anti-Corruption Layer](https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/acl.html) · [Domain Analysis for Microservices](https://learn.microsoft.com/en-us/azure/architecture/microservices/model/domain-analysis)
 
-Strategic DDD patterns decompose large systems into manageable parts with clear boundaries. **DDD is fundamentally collaborative** — patterns emerge from conversations with domain experts, not from coding alone.
-
----
+Strategic DDD decomposes large systems into manageable parts with clear boundaries. **DDD is fundamentally collaborative** — patterns emerge from conversations with domain experts, not from coding alone.
 
 ## Domain Discovery Techniques
 
@@ -25,8 +23,6 @@ Purple sticky: Problem / Question
 ### Context Mapping Workshop
 
 For existing systems: list all systems/services → identify team ownership → draw upstream/downstream relationships → label relationship types (ACL, Conformist, etc.) → identify pain points.
-
----
 
 ## Ubiquitous Language
 
@@ -56,15 +52,11 @@ class Order {
 }
 ```
 
----
-
 ## Bounded Contexts
 
-A **semantic boundary** where a particular domain model applies. Within a bounded context, terms have precise, unambiguous meaning.
+A **semantic boundary** where a particular domain model applies. Within a bounded context, terms have precise, unambiguous meaning. The same real-world concept may have different representations across contexts.
 
 > **Key insight:** Polysemy across departments is natural — "the dominant boundary factor is human culture and language variation." — Martin Fowler
-
-Each bounded context has its own ubiquitous language, its own model, and the same real-world concept may have different representations across contexts.
 
 ### Example: E-Commerce System
 
@@ -98,8 +90,6 @@ flowchart TB
 
 In microservices, each bounded context typically becomes a separate service with its own database.
 
----
-
 ## Subdomains
 
 Areas of business expertise. Subdomains are **discovered**, not designed.
@@ -111,8 +101,6 @@ Areas of business expertise. Subdomains are **discovered**, not designed.
 | **Generic** | Commodity, buy/outsource | Low | Email sending, payments |
 
 **Identification:** What makes us different? → Core · What do we need but isn't our specialty? → Supporting · What does everyone need the same way? → Generic
-
----
 
 ## Context Mapping
 
@@ -207,8 +195,6 @@ flowchart TB
     style Stripe fill:#6b7280,stroke:#4b5563,color:white
 ```
 
----
-
 ## Integration Patterns
 
 ### Domain Events for Context Integration
@@ -272,8 +258,6 @@ class BillingOrderPlacedHandler {
   }
 }
 ```
-
----
 
 ## Strategic Design Checklist
 
