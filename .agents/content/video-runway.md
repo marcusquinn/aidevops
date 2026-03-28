@@ -14,9 +14,9 @@ tools:
 
 # Runway API
 
-Runway provides AI-powered video, image, and audio generation through a REST API with official Node.js and Python SDKs.
+AI-powered video, image, and audio generation. REST API with official Node.js and Python SDKs.
 
-**Base URL**: `https://api.dev.runwayml.com` | **API Version header**: `X-Runway-Version: 2024-11-06`
+**Base URL**: `https://api.dev.runwayml.com` | **Version header**: `X-Runway-Version: 2024-11-06`
 
 ## Authentication
 
@@ -25,27 +25,27 @@ Authorization: Bearer $RUNWAYML_API_SECRET
 aidevops secret set RUNWAYML_API_SECRET
 ```
 
-The SDKs automatically read `RUNWAYML_API_SECRET` from the environment.
+SDKs read `RUNWAYML_API_SECRET` from the environment automatically.
 
 ## Endpoints & Models
 
 | Endpoint | Purpose | Models | Pricing |
 |----------|---------|--------|---------|
 | `POST /v1/image_to_video` | Image to video | `gen4_turbo` (5cr/s), `veo3`/`veo3.1` (40cr/s), `veo3.1_fast` (15cr/s) | 1 credit = $0.01 |
-| `POST /v1/text_to_video` | Text to video | `veo3`, `veo3.1` (40cr/s audio, 20 no-audio), `veo3.1_fast` (15/10) | — |
-| `POST /v1/video_to_video` | Video to video | `gen4_aleph` (15cr/s) | — |
-| `POST /v1/text_to_image` | Text/image to image | `gen4_image` (5cr 720p, 8cr 1080p), `gen4_image_turbo` (2cr), `gemini_2.5_flash` (5cr) | — |
-| `POST /v1/character_performance` | Character control | `act_two` (5cr/s) | — |
-| `POST /v1/text_to_speech` | Text to speech | `eleven_multilingual_v2` (1cr/50 chars) | — |
-| `POST /v1/speech_to_speech` | Voice conversion | `eleven_multilingual_sts_v2` (1cr/3s) | — |
-| `POST /v1/sound_effect` | Sound effect gen | `eleven_text_to_sound_v2` (1cr/s) | — |
-| `POST /v1/voice_dubbing` | Multi-language dub | `eleven_voice_dubbing` (1cr/2s output) | — |
-| `POST /v1/voice_isolation` | Isolate voice | `eleven_voice_isolation` (1cr/6s) | — |
-| `GET /v1/tasks/{id}` | Poll task status | — | — |
-| `DELETE /v1/tasks/{id}` | Cancel/delete task | — | — |
-| `POST /v1/uploads` | Upload ephemeral file | — | — |
-| `GET /v1/organization` | Org info + credits | — | — |
-| `POST /v1/organization/usage` | Credit usage query | — | — |
+| `POST /v1/text_to_video` | Text to video | `veo3`, `veo3.1` (40cr/s audio, 20 no-audio), `veo3.1_fast` (15/10) | -- |
+| `POST /v1/video_to_video` | Video to video | `gen4_aleph` (15cr/s) | -- |
+| `POST /v1/text_to_image` | Text/image to image | `gen4_image` (5cr 720p, 8cr 1080p), `gen4_image_turbo` (2cr), `gemini_2.5_flash` (5cr) | -- |
+| `POST /v1/character_performance` | Character control | `act_two` (5cr/s) | -- |
+| `POST /v1/text_to_speech` | Text to speech | `eleven_multilingual_v2` (1cr/50 chars) | -- |
+| `POST /v1/speech_to_speech` | Voice conversion | `eleven_multilingual_sts_v2` (1cr/3s) | -- |
+| `POST /v1/sound_effect` | Sound effect gen | `eleven_text_to_sound_v2` (1cr/s) | -- |
+| `POST /v1/voice_dubbing` | Multi-language dub | `eleven_voice_dubbing` (1cr/2s output) | -- |
+| `POST /v1/voice_isolation` | Isolate voice | `eleven_voice_isolation` (1cr/6s) | -- |
+| `GET /v1/tasks/{id}` | Poll task status | -- | -- |
+| `DELETE /v1/tasks/{id}` | Cancel/delete task | -- | -- |
+| `POST /v1/uploads` | Upload ephemeral file | -- | -- |
+| `GET /v1/organization` | Org info + credits | -- | -- |
+| `POST /v1/organization/usage` | Credit usage query | -- | -- |
 
 ## Image-to-Video (Gen-4 Turbo)
 
@@ -57,8 +57,11 @@ curl -X POST https://api.dev.runwayml.com/v1/image_to_video \
   -d '{"model":"gen4_turbo","promptImage":"https://example.com/image.jpg","promptText":"A timelapse on a sunny day","ratio":"1280:720","duration":5}'
 ```
 
+> Subsequent curl examples omit the three standard headers above for brevity.
+
+SDK pattern (identical across all endpoints — shown once here):
+
 ```javascript
-// Node.js SDK
 const task = await client.imageToVideo.create({
   model: 'gen4_turbo', promptImage: 'https://example.com/image.jpg',
   promptText: 'A timelapse on a sunny day', ratio: '1280:720', duration: 5,
@@ -66,14 +69,13 @@ const task = await client.imageToVideo.create({
 ```
 
 ```python
-# Python SDK
 task = client.image_to_video.create(
     model='gen4_turbo', prompt_image='https://example.com/image.jpg',
     prompt_text='A timelapse on a sunny day', ratio='1280:720', duration=5,
 ).wait_for_task_output()
 ```
 
-**Parameters**: `model` (required), `promptImage` (HTTPS URL/data URI/runway:// URI), `promptText` (≤1000 chars), `ratio` (required), `duration` (2-10s), `seed` (0-4294967295)
+**Parameters**: `model` (required), `promptImage` (HTTPS URL/data URI/runway:// URI), `promptText` (<=1000 chars), `ratio` (required), `duration` (2-10s), `seed` (0-4294967295)
 
 **Gen-4 Turbo ratios**: `1280:720`, `1584:672`, `1104:832`, `720:1280`, `832:1104`, `960:960`
 
@@ -81,25 +83,19 @@ task = client.image_to_video.create(
 
 ```bash
 curl -X POST https://api.dev.runwayml.com/v1/text_to_video \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $RUNWAYML_API_SECRET" \
-  -H "X-Runway-Version: 2024-11-06" \
   -d '{"model":"veo3.1","promptText":"A cinematic mountain landscape at golden hour","ratio":"1920:1080","duration":8,"audio":true}'
 ```
 
-**Parameters**: `model` (`veo3`/`veo3.1`/`veo3.1_fast`), `promptText` (≤1000 chars, required), `ratio` (`1280:720`/`720:1280`/`1080:1920`/`1920:1080`), `duration` (4/6/8s), `audio` (bool, default true — affects pricing)
+**Parameters**: `model` (`veo3`/`veo3.1`/`veo3.1_fast`), `promptText` (<=1000 chars, required), `ratio` (`1280:720`/`720:1280`/`1080:1920`/`1920:1080`), `duration` (4/6/8s), `audio` (bool, default true -- affects pricing)
 
 ## Video-to-Video (Gen-4 Aleph)
 
 ```bash
 curl -X POST https://api.dev.runwayml.com/v1/video_to_video \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $RUNWAYML_API_SECRET" \
-  -H "X-Runway-Version: 2024-11-06" \
   -d '{"model":"gen4_aleph","videoUri":"https://example.com/input.mp4","promptText":"Add dramatic lighting","references":[{"type":"image","uri":"https://example.com/style.jpg"}]}'
 ```
 
-**Parameters**: `model` (`gen4_aleph`), `videoUri` (required), `promptText` (≤1000 chars, required), `references` (≤1 image), `seed`
+**Parameters**: `model` (`gen4_aleph`), `videoUri` (required), `promptText` (<=1000 chars, required), `references` (<=1 image), `seed`
 
 ## Text/Image to Image (Gen-4 Image)
 
@@ -107,13 +103,10 @@ Use `@tag` syntax in prompts to reference tagged images.
 
 ```bash
 curl -X POST https://api.dev.runwayml.com/v1/text_to_image \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $RUNWAYML_API_SECRET" \
-  -H "X-Runway-Version: 2024-11-06" \
   -d '{"model":"gen4_image","promptText":"@subject in a cyberpunk city","ratio":"1920:1080","referenceImages":[{"uri":"https://example.com/person.jpg","tag":"subject"}]}'
 ```
 
-**Parameters**: `model`, `promptText` (≤1000 chars, use `@tag` for refs), `ratio`, `referenceImages` (1-3 with `uri` + optional `tag`), `seed`
+**Parameters**: `model`, `promptText` (<=1000 chars, use `@tag` for refs), `ratio`, `referenceImages` (1-3 with `uri` + optional `tag`), `seed`
 
 **Gen-4 Image ratios**: `1024:1024`, `1080:1080`, `720:720`, `1168:880`, `1360:768`, `1440:1080`, `1808:768`, `1920:1080`, `2112:912`, `1280:720`, `960:720`, `1680:720`, `1080:1440`, `1080:1920`, `720:1280`, `720:960`
 
@@ -165,7 +158,7 @@ const task = await client.soundEffect.create({
 }).waitForTaskOutput();
 ```
 
-**Parameters**: `promptText` (≤3000 chars), `duration` (0.5-30s, auto if omitted), `loop` (bool)
+**Parameters**: `promptText` (<=3000 chars), `duration` (0.5-30s, auto if omitted), `loop` (bool)
 
 ### Voice Dubbing
 
@@ -188,29 +181,25 @@ const task = await client.voiceIsolation.create({
 }).waitForTaskOutput();
 ```
 
-Input must be 4.6s-3600s duration.
+Input: 4.6s-3600s duration.
 
 ## Task Management
 
-All generation endpoints return a task ID. Tasks are asynchronous.
+All generation endpoints return a task ID (asynchronous). Poll at 5+ second intervals with jitter and exponential backoff.
 
 **Status values**: `PENDING`, `THROTTLED`, `RUNNING`, `SUCCEEDED`, `FAILED`
 
-**Polling**: 5+ second intervals with jitter and exponential backoff.
-
 ```bash
-# Poll status
+# Poll
 curl https://api.dev.runwayml.com/v1/tasks/{task_id} \
-  -H "Authorization: Bearer $RUNWAYML_API_SECRET" \
-  -H "X-Runway-Version: 2024-11-06"
+  -H "Authorization: Bearer $RUNWAYML_API_SECRET" -H "X-Runway-Version: 2024-11-06"
 
 # Cancel
 curl -X DELETE https://api.dev.runwayml.com/v1/tasks/{task_id} \
-  -H "Authorization: Bearer $RUNWAYML_API_SECRET" \
-  -H "X-Runway-Version: 2024-11-06"
+  -H "Authorization: Bearer $RUNWAYML_API_SECRET" -H "X-Runway-Version: 2024-11-06"
 ```
 
-Both SDKs provide `.waitForTaskOutput()` / `.wait_for_task_output()` (10-minute default timeout):
+SDKs: `.waitForTaskOutput()` / `.wait_for_task_output()` (10-min default timeout). Error classes: `TaskFailedError` (check `.taskDetails`), `TaskTimedOutError`.
 
 ```javascript
 import { TaskFailedError } from '@runwayml/sdk';
@@ -228,10 +217,9 @@ try {
 ```javascript
 import fs from 'node:fs';
 const uploadUri = await client.uploads.createEphemeral(fs.createReadStream('./input.mp4'));
-// Use uploadUri in videoUri, promptImage, etc.
 ```
 
-Ephemeral uploads expire after 24 hours.
+Ephemeral uploads expire after 24 hours. Use `uploadUri` in `videoUri`, `promptImage`, etc.
 
 ## Input Requirements
 
@@ -241,12 +229,7 @@ Ephemeral uploads expire after 24 hours.
 | Videos | MP4 (H.264/H.265/AV1), MOV, MKV, WebM | 32MB | 16MB | 200MB |
 | Audio | MP3, WAV, FLAC, M4A (AAC/ALAC), AAC | 32MB | 16MB | 200MB |
 
-Minimum image: 640x640px, maximum: 4K. Base64 encoding increases size ~33% (5MB data URI ≈ 3.3MB binary).
-
-```javascript
-// Data URI example
-const dataUri = `data:image/png;base64,${fs.readFileSync('example.png').toString('base64')}`;
-```
+Minimum image: 640x640px, maximum: 4K. Base64 increases size ~33% (5MB data URI = ~3.3MB binary).
 
 ## Organization & Credits
 
@@ -255,23 +238,6 @@ const details = await client.organization.retrieve();
 console.log(details.creditBalance);
 
 const usage = await client.organization.retrieveUsage({ startDate: '2026-01-01', beforeDate: '2026-02-01' });
-```
-
-## Helper Script
-
-```bash
-runway-helper.sh credits
-runway-helper.sh video --image https://example.com/photo.jpg --prompt "Camera pans" --model gen4_turbo --ratio 1280:720 --duration 5
-runway-helper.sh video --prompt "A cinematic mountain landscape" --model veo3.1 --ratio 1920:1080 --duration 8
-runway-helper.sh image --prompt "@subject in a garden" --ref https://example.com/person.jpg:subject --model gen4_image --ratio 1920:1080
-runway-helper.sh tts --text "Hello world" --voice Leslie
-runway-helper.sh sts --audio https://example.com/audio.mp3 --voice Maggie
-runway-helper.sh sfx --prompt "A thunderstorm with heavy rain" --duration 10
-runway-helper.sh dub --audio https://example.com/audio.mp3 --lang es
-runway-helper.sh isolate --audio https://example.com/audio.mp3
-runway-helper.sh status {task-id}
-runway-helper.sh cancel {task-id}
-runway-helper.sh usage --start 2026-01-01 --end 2026-02-01
 ```
 
 ## Content Moderation
@@ -292,7 +258,22 @@ Set `"low"` to be less strict about recognizable public figures.
 | 404 | Task not found |
 | 429 | Rate limit exceeded |
 
-SDK error classes: `TaskFailedError` (check `.taskDetails`), `TaskTimedOutError`
+## Helper Script
+
+```bash
+runway-helper.sh credits
+runway-helper.sh video --image https://example.com/photo.jpg --prompt "Camera pans" --model gen4_turbo --ratio 1280:720 --duration 5
+runway-helper.sh video --prompt "A cinematic mountain landscape" --model veo3.1 --ratio 1920:1080 --duration 8
+runway-helper.sh image --prompt "@subject in a garden" --ref https://example.com/person.jpg:subject --model gen4_image --ratio 1920:1080
+runway-helper.sh tts --text "Hello world" --voice Leslie
+runway-helper.sh sts --audio https://example.com/audio.mp3 --voice Maggie
+runway-helper.sh sfx --prompt "A thunderstorm with heavy rain" --duration 10
+runway-helper.sh dub --audio https://example.com/audio.mp3 --lang es
+runway-helper.sh isolate --audio https://example.com/audio.mp3
+runway-helper.sh status {task-id}
+runway-helper.sh cancel {task-id}
+runway-helper.sh usage --start 2026-01-01 --end 2026-02-01
+```
 
 ## Runway vs Higgsfield
 
