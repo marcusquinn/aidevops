@@ -2993,6 +2993,68 @@ _simplification_state_record() {
 	return 0
 }
 
+# Prune stale entries from simplification state (files that no longer exist).
+# This handles file moves/renames/deletions — entries for non-existent files
+# are removed so they don't cause false "regressed" status or accumulate.
+# Arguments: $1 - repo_path, $2 - state_file path
+# Returns: 0 = pruned (or nothing to prune), 1 = error
+# Outputs to stdout: number of entries pruned
+_simplification_state_prune() {
+	local repo_path="$1"
+	local state_file="$2"
+
+	if [[ ! -f "$state_file" ]]; then
+		echo "0"
+		return 0
+	fi
+
+	local all_paths
+	all_paths=$(jq -r '.files | keys[]' "$state_file" 2>/dev/null) || {
+		echo "0"
+		return 1
+	}
+
+	local pruned=0
+	local stale_paths=""
+	while IFS= read -r file_path; do
+		[[ -z "$file_path" ]] && continue
+		local full_path="${repo_path}/${file_path}"
+		if [[ ! -f "$full_path" ]]; then
+			stale_paths="${stale_paths}${file_path}\n"
+			pruned=$((pruned + 1))
+		fi
+	done <<<"$all_paths"
+
+	if [[ "$pruned" -gt 0 ]]; then
+		local tmp_file
+		tmp_file=$(mktemp)
+		# Remove all stale entries in one jq pass
+		local jq_filter=".files"
+		while IFS= read -r sp; do
+			[[ -z "$sp" ]] && continue
+			jq_filter="${jq_filter} | del(.[\"${sp}\"])"
+		done < <(printf '%b' "$stale_paths")
+		jq "${jq_filter} | {\"_comment\": ._comment, \"files\": .}" "$state_file" >"$tmp_file" 2>/dev/null || {
+			# Fallback: remove one at a time
+			cp "$state_file" "$tmp_file"
+			while IFS= read -r sp; do
+				[[ -z "$sp" ]] && continue
+				local tmp2
+				tmp2=$(mktemp)
+				jq --arg fp "$sp" 'del(.files[$fp])' "$tmp_file" >"$tmp2" 2>/dev/null && mv "$tmp2" "$tmp_file" || rm -f "$tmp2"
+			done < <(printf '%b' "$stale_paths")
+		}
+		mv "$tmp_file" "$state_file" || {
+			rm -f "$tmp_file"
+			echo "0"
+			return 1
+		}
+	fi
+
+	echo "$pruned"
+	return 0
+}
+
 # Commit and push simplification state to main (planning data, not code).
 # Arguments: $1 - repo_path
 _simplification_state_push() {
@@ -3529,6 +3591,14 @@ run_weekly_complexity_scan() {
 	# workers without requiring them to update the state file explicitly.
 	local state_file="${aidevops_path}/.agents/configs/simplification-state.json"
 	local state_updated=false
+
+	# Prune stale entries (files moved/renamed/deleted since last scan)
+	local pruned_count
+	pruned_count=$(_simplification_state_prune "$aidevops_path" "$state_file")
+	if [[ "$pruned_count" -gt 0 ]]; then
+		echo "[pulse-wrapper] simplification-state: pruned $pruned_count stale entries (files no longer exist)" >>"$LOGFILE"
+		state_updated=true
+	fi
 	local closed_issues
 	closed_issues=$(gh issue list --repo "$aidevops_slug" \
 		--label "simplification-debt" --state closed \
