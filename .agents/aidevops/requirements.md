@@ -32,40 +32,37 @@ tools:
 
 ### Functional
 
-- **Multi-provider**: Manage 25+ services through unified interfaces
-- **Secure credentials**: Enterprise-grade security for all credentials (see `security-requirements.md`)
-- **Consistent commands**: Unified `[service]-helper.sh [command] [account] [target]` pattern
+- **Multi-provider support**: 25+ services through unified interfaces
+- **Secure credential management**: Enterprise-grade security (details: `security-requirements.md`)
+- **Consistent command patterns**: Helper scripts follow `scripts/[service]-helper.sh [command] [account] [target]` as the base convention, but individual scripts accept service-specific positional parameters (e.g., `url`, `report_type`, `issue_number`, `repo_slug`, `tenant`). A fully standardized CLI interface across all helpers is a planned future framework improvement.
 - **Real-time integration**: MCP server support for live data access
-- **Guided setup**: AI-assisted configuration via `setup-wizard-helper.sh`
-- **Health monitoring**: Status checks across all services
-- **Automated ops**: Support for automated DevOps workflows
+- **Intelligent setup**: Guided configuration via setup wizard
+- **Comprehensive monitoring**: Health checks across all services
+- **Automated operations**: DevOps workflow automation
 - **Error recovery**: Robust error handling with retry and backoff
 
 ### Non-Functional
 
-| Requirement | Target |
-|-------------|--------|
-| Security | Zero credential exposure, secure by default |
-| Reliability | 99.9% uptime for critical operations |
-| Performance | <1s local, <5s API, <500ms MCP, <30s setup wizard |
-| Scalability | Unlimited accounts, 1000+ resources/service, 10+ concurrent ops |
-| Maintainability | Modular architecture, easy extension (see `extension.md`) |
-| Compatibility | macOS, Linux, Windows |
-| Auditability | Complete audit trails for all operations |
+- **Security**: Zero credential exposure, secure by default (details: `security-requirements.md`)
+- **Performance**: Sub-second local ops, <5s API calls, <500ms MCP responses
+- **Scalability**: Unlimited service accounts, 1000+ resources per service, 10+ concurrent ops
+- **Maintainability**: Modular architecture (details: `architecture.md`)
+- **Compatibility**: Cross-platform (macOS, Linux, Windows)
+- **Auditability**: Complete audit trails for all operations
 
 ## Quality Standards (Mandatory)
 
-All code changes MUST maintain these standards:
+All code changes must maintain these standards. Also enforced in `prompts/build.txt`.
 
-**Platforms**: SonarCloud (A-grade), CodeFactor (A-grade, 80%+ A-grade files), GitHub Actions (all checks pass), ShellCheck (zero violations)
+**Platforms**: SonarCloud (A-grade), CodeFactor (A-grade), GitHub Actions (all checks pass), ShellCheck (zero violations)
 
-**Metrics**: Zero security vulnerabilities, zero code duplication (0.0%), <400 code smells, professional shell scripting practices
+**Metrics**: Zero security vulnerabilities, 0.0% code duplication, <400 code smells
 
 **Validation process**:
 
-1. **Pre-commit**: ShellCheck on all modified shell scripts
-2. **Post-commit**: Verify SonarCloud and CodeFactor improvements
-3. **Continuous**: Monitor quality platforms for regressions
+1. Pre-commit: ShellCheck on modified shell scripts
+2. Post-commit: Verify SonarCloud/CodeFactor improvements
+3. Continuous: Monitor quality platforms for regressions
 
 ```bash
 # SonarCloud status
@@ -80,38 +77,23 @@ find .agents/scripts/ -name "*.sh" -exec shellcheck {} \;
 
 ## Service Categories
 
-Full service catalogue with helpers, configs, and docs: `services.md`
+| Category | Services | Key Capabilities |
+|----------|----------|-----------------|
+| Infrastructure & Hosting | Hostinger, Hetzner Cloud, Closte, Cloudron | Provisioning, monitoring, scaling, backup, SSL |
+| Deployment & Orchestration | Coolify | App deployment, container orchestration, CI/CD, rollback |
+| Content Management | MainWP | WordPress at scale, plugin/theme updates, security scanning |
+| Security & Secrets | Vaultwarden | Credential storage, password generation, team sharing, audit logging |
+| Code Quality & Auditing | CodeRabbit, CodeFactor, Codacy, SonarCloud | Automated analysis, vulnerability detection, quality gates |
+| Version Control | GitHub, GitLab, Gitea, Local Git | Repo management, PR automation, CI/CD integration |
+| Email | Amazon SES | Delivery, bounce handling, reputation management |
+| Domain & DNS | Spaceship, 101domains, Cloudflare, Namecheap, Route 53 | Domain management, DNS records, SSL, CDN |
+| Development & Local | Localhost, LocalWP, Context7 MCP, MCP Servers | Local dev environments, real-time docs, AI integration |
 
-**Categories**: Infrastructure (Hostinger, Hetzner, Closte, Cloudron), Deployment (Coolify), Content (MainWP), Security (Vaultwarden), Code Quality (CodeRabbit, CodeFactor, Codacy, SonarCloud), Git (GitHub, GitLab, Gitea, Local), Email (Amazon SES), DNS (Cloudflare, Namecheap, Route 53), Domains/Registrars (Spaceship, 101domains), Dev/Local (Localhost, LocalWP, Context7 MCP, MCP Servers)
+## Cross-Cutting Concerns
 
-## Security Requirements
+Detailed requirements for these areas live in dedicated files:
 
-Full security requirements, incident response, and compliance: `security-requirements.md`
-
-**Summary**: Encryption at rest, HTTPS/TLS transmission, role-based access, audit logging, credential rotation. Input validation, output sanitization, confirmation prompts for destructive ops, rate limiting, secure error messages. Restricted file permissions, process isolation, resource limits, vulnerability management.
-
-## Integration Requirements
-
-### MCP Server Integration
-
-- Real-time data access from all integrated services
-- Encrypted communications, graceful degradation when unavailable
-- Efficient caching, multi-server coordination
-
-### External Service Integration
-
-- REST and GraphQL API support
-- Multiple auth methods (tokens, OAuth, API keys)
-- Webhook support, batch operations, automatic retry with exponential backoff
-
-### AI Assistant Integration
-
-- Rich context for AI decision making
-- AI-generated command validation before execution
-- Operation results fed back to AI systems
-
-## Monitoring & Observability
-
-- **Health**: Regular service health checks, performance metrics, error rate tracking, dependency monitoring
-- **Audit**: Complete operation logs, access tracking, change management, compliance reporting, data retention
-- **Alerting**: Critical error alerts, performance degradation warnings, security event notifications, maintenance windows
+- **Security**: `security-requirements.md` -- credential management, incident response, compliance
+- **Architecture**: `architecture.md` -- service patterns, extension guide, naming conventions
+- **Quality enforcement**: `prompts/build.txt` -- write-time linting, pre-commit checks
+- **Monitoring & observability**: Health checks, error alerting, and audit logging are implemented per-service in each `*-helper.sh` script
