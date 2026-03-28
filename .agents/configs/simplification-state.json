@@ -112,9 +112,9 @@
       "pr": 11276
     },
     ".agents/aidevops/add-new-mcp-to-aidevops.md": {
-      "hash": "385fd2d645f5c7685e81a1cf981591ba9c025b4e",
-      "at": "2026-03-28T14:16:10Z",
-      "pr": 11832
+      "hash": "818de6a118b3981cbc732aace97a1220ad7f27ee",
+      "at": "2026-03-28T16:41:22Z",
+      "pr": 12006
     },
     ".agents/marketing-sales/direct-response-copy-frameworks-objection-handling.md": {
       "hash": "a80eb99acba160fa0f034a4989c0b886f37a32a0",
@@ -567,9 +567,9 @@
       "pr": 11688
     },
     ".agents/tools/voice/cloud-voice-agents.md": {
-      "hash": "19b6d81e4e9281e815be96d88f223d9a98252587",
-      "at": "2026-03-28T08:57:55Z",
-      "pr": 11645
+      "hash": "b389dcd17c677b3e21bc86397670fbf4d8a61b98",
+      "at": "2026-03-28T16:40:25Z",
+      "pr": 12005
     },
     ".agents/marketing-sales/direct-response-copy-swipe-file-vsl-scripts.md": {
       "hash": "816a5f35e7ca6b338deae7db62c3058d317b96d6",
@@ -1077,14 +1077,14 @@
       "pr": 11894
     },
     ".agents/services/hosting/local-hosting.md": {
-      "hash": "a6b0388253e14733c4703ac06dfac3dde45c3f74",
-      "at": "2026-03-28T15:30:58Z",
-      "pr": 11918
+      "hash": "ac2a557901e0a9c39b034b664927c37847635345",
+      "at": "2026-03-28T16:41:15Z",
+      "pr": 12026
     },
     ".agents/tools/data-extraction/outscraper.md": {
-      "hash": "bb5e954bf616deeb4634d3fab7521afcd8d0d2c1",
-      "at": "2026-03-28T15:31:00Z",
-      "pr": 11916
+      "hash": "a3e3c1fee3571f9cfe07e4f90d47e3aa0c2c758a",
+      "at": "2026-03-28T16:41:16Z",
+      "pr": 12021
     },
     ".agents/content/distribution-email.md": {
       "hash": "d218dc3fdd2a3e501978d431530820ce810b354e",
@@ -1167,19 +1167,19 @@
       "pr": 11988
     },
     ".agents/content/production-image.md": {
-      "hash": "7877c8e83fa02239c78d47e537c073939c23d0ab",
-      "at": "2026-03-28T16:00:28Z",
-      "pr": 11973
+      "hash": "b3409136a94a117c8a727fa3e1ca400d77806a36",
+      "at": "2026-03-28T16:40:38Z",
+      "pr": 12023
     },
     ".agents/tools/voice/voiceink-shortcut.md": {
-      "hash": "ed9c4916c972e1bb31c1584a07b20d3d9eb8c700",
-      "at": "2026-03-28T16:00:30Z",
-      "pr": 11963
+      "hash": "1d7af55d9fbf66d24dcb4f1cbba443617f0c992c",
+      "at": "2026-03-28T16:40:39Z",
+      "pr": 12017
     },
     ".agents/scripts/commands/testing-setup.md": {
-      "hash": "52157379b837b5701fe3d85967c51f410679a782",
-      "at": "2026-03-28T16:00:31Z",
-      "pr": 11964
+      "hash": "f653aacf0e67efffd18058625b81f790e9c9f741",
+      "at": "2026-03-28T16:40:41Z",
+      "pr": 12013
     },
     ".agents/workflows/multi-repo-workspace.md": {
       "hash": "00ea218df67c941a8858e0da60f7c252c850db7a",
@@ -1205,6 +1205,101 @@
       "hash": "a56ed459849e479aaed06d6ac42bf0d60a28adf9",
       "at": "2026-03-28T16:00:51Z",
       "pr": 11994
+    },
+    ".agents/tools/wordpress/scf.md": {
+      "hash": "4c62a3f4c5312a10699889660578437def83e31e",
+      "at": "2026-03-28T16:40:07Z",
+      "pr": 12035
+    },
+    ".agents/workflows/readme-create-update.md": {
+      "hash": "f54854963d94f3c9b4e15769c07b3c8c27db1c5a",
+      "at": "2026-03-28T16:40:10Z",
+      "pr": 12038
+    },
+    ".agents/services/email/email-actions.md": {
+      "hash": "6e4fd843160e764848c98da37b2234e11ddfa56d",
+      "at": "2026-03-28T16:40:11Z",
+      "pr": 12039
+    },
+    ".agents/tools/architecture/feature-slicing-skill/public-api.md": {
+      "hash": "52069355367fb596967a8aef0bb6ad7f8e9861c3",
+      "at": "2026-03-28T16:40:13Z",
+      "pr": 12030
+    },
+    ".agents/product/growth.md": {
+      "hash": "97246dfba596c1be9241c0b669c611df856e71bc",
+      "at": "2026-03-28T16:40:15Z",
+      "pr": 12037
+    },
+    ".agents/services/email/email-delivery-test.md": {
+      "hash": "229f4a8a141175830e0207dbb58b13d9146b22ab",
+      "at": "2026-03-28T16:40:17Z",
+      "pr": 12041
+    },
+    ".agents/services/email/openpgp-setup.md": {
+      "hash": "f893cd98da28874d714707765c45a895d991cede",
+      "at": "2026-03-28T16:40:18Z",
+      "pr": 12040
+    },
+    ".agents/tools/programming/modern-javascript-skill/cheatsheet.md": {
+      "hash": "5043165087af14cf58963d7a76e48ceed463cb6d",
+      "at": "2026-03-28T16:40:20Z",
+      "pr": 12042
+    },
+    ".agents/services/hosting/cloudron.md": {
+      "hash": "e9d97dc1a3a3dbe0bb45134f1148c74954fa577c",
+      "at": "2026-03-28T16:40:22Z",
+      "pr": 12046
+    },
+    ".agents/tools/voice/pipecat-opencode.md": {
+      "hash": "53d34b6a543b30dcbc6141ccea72d1364e7ae07d",
+      "at": "2026-03-28T16:40:27Z",
+      "pr": 12019
+    },
+    ".agents/marketing-sales/meta-ads.md": {
+      "hash": "19b4754a783dd4b878bb5cf4032420f1cfab931d",
+      "at": "2026-03-28T16:40:30Z",
+      "pr": 12024
+    },
+    ".agents/tools/context/augment-context-engine.md": {
+      "hash": "bbae0554351a40b90c0df31e139c6391601f3e2b",
+      "at": "2026-03-28T16:40:32Z",
+      "pr": 12015
+    },
+    ".agents/tools/conversion/mineru.md": {
+      "hash": "beeb4a49df5e2a8ea91da9100ae2ba8887cf6b3d",
+      "at": "2026-03-28T16:40:36Z",
+      "pr": 12012
+    },
+    ".agents/marketing-sales/cro-chapter-14.md": {
+      "hash": "a15acda5b82f46b01af4961ff5c01fa7483e5cea",
+      "at": "2026-03-28T16:40:42Z",
+      "pr": 12027
+    },
+    ".agents/content/production-characters.md": {
+      "hash": "f26a85f43d79aed7426a749dab9407537412d65b",
+      "at": "2026-03-28T16:40:48Z",
+      "pr": 12025
+    },
+    ".agents/tools/code-review/security-audit.md": {
+      "hash": "3264ee083d9660a6c7d93962ed119cc2bbf8b684",
+      "at": "2026-03-28T16:41:00Z",
+      "pr": 11981
+    },
+    ".agents/tools/security/privacy-filter.md": {
+      "hash": "20015ffb18e50ebb7071f1b6299b4404bdcd4071",
+      "at": "2026-03-28T16:41:02Z",
+      "pr": 12014
+    },
+    ".agents/tools/security/shannon.md": {
+      "hash": "a48914d21141559b0cf7677395979bd17f429b85",
+      "at": "2026-03-28T16:41:03Z",
+      "pr": 12016
+    },
+    ".agents/business/accounts-receipt-ocr.md": {
+      "hash": "7500c09629a5e47688af67a6901d684e92b623f2",
+      "at": "2026-03-28T16:41:24Z",
+      "pr": 12020
     }
   },
   ".agents/tools/code-review/best-practices.md": {
