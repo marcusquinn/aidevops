@@ -71,7 +71,7 @@ assert_contains "starts with aidevops" "[aidevops.sh](https://aidevops.sh)" "$re
 assert_contains "contains CLI with plugin for" "plugin for [OpenCode](https://opencode.ai) v1.3.3" "$result"
 assert_contains "model strips provider prefix" "with claude-opus-4-6" "$result"
 assert_not_contains "no provider prefix" "anthropic/" "$result"
-assert_contains "contains formatted tokens" "used 1,234 tokens" "$result"
+assert_contains "contains formatted tokens" "has used 1,234 tokens" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 2: generate with explicit --tokens 0 (should omit tokens)
@@ -108,7 +108,7 @@ echo "Test 5: footer includes --- separator"
 result=$("$HELPER" footer --cli "OpenCode" --cli-version "1.0.0" --model "anthropic/claude-sonnet-4-6" --tokens 5000)
 assert_contains "contains ---" "---" "$result"
 assert_contains "contains signature" "plugin for [OpenCode](https://opencode.ai) v1.0.0" "$result"
-assert_contains "contains tokens" "used 5,000 tokens" "$result"
+assert_contains "contains tokens" "has used 5,000 tokens" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 6: comma formatting for various numbers
@@ -180,7 +180,7 @@ result=$(AIDEVOPS_SIG_CLI="EnvCLI" AIDEVOPS_SIG_CLI_VERSION="9.9.9" AIDEVOPS_SIG
 assert_contains "env CLI name" "plugin for EnvCLI" "$result"
 assert_contains "env CLI version" "v9.9.9" "$result"
 assert_contains "env model strips prefix" "with model" "$result"
-assert_contains "env tokens" "used 42,000 tokens" "$result"
+assert_contains "env tokens" "has used 42,000 tokens" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 10: auto-detect tokens from OpenCode session DB (if running in OpenCode)
@@ -215,7 +215,7 @@ echo "Test 12: total time with --issue-created"
 two_hours_ago=$(date -u -v-2H "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "2 hours ago" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
 if [[ -n "$two_hours_ago" ]]; then
 	result=$("$HELPER" generate --cli "Test" --model "m" --tokens 1 --issue-created "$two_hours_ago")
-	assert_contains "total time present" "since this issue was created" "$result"
+	assert_contains "total time present" "Overall, 2h since this issue was created" "$result"
 	assert_contains "total time ~2h" "2h" "$result"
 else
 	echo "  SKIP: date command does not support relative time"
