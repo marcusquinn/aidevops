@@ -30,15 +30,7 @@ tools:
 | Codacy | https://status.codacy.com/ |
 | Snyk | https://status.snyk.io/ |
 
-**MCP quick fixes**:
-
-- Chrome DevTools: Install Chrome Canary, fix permissions
-- Playwright: `npx playwright install`
-- API Auth: Verify keys with curl, check env vars
-- Debug: `DEBUG=chrome-devtools-mcp npx chrome-devtools-mcp@latest`
-- Diagnostics: `bash .agents/scripts/collect-mcp-diagnostics.sh`
-
-Use exponential backoff for transient failures.
+**MCP quick fixes**: Chrome DevTools → install Chrome Canary, fix permissions. Playwright → `npx playwright install`. API auth → verify keys with curl, check env vars. Debug → `DEBUG=chrome-devtools-mcp npx chrome-devtools-mcp@latest`. Diagnostics → `bash .agents/scripts/collect-mcp-diagnostics.sh`. Use exponential backoff for transient failures.
 
 <!-- AI-CONTEXT-END -->
 
@@ -58,11 +50,7 @@ sudo chown -R $(whoami) ~/.cache/puppeteer
 chmod +x ~/.cache/puppeteer/*/chrome-*/chrome
 ```
 
-**Headless mode:**
-
-```bash
-npx chrome-devtools-mcp@latest --headless=true --no-sandbox
-```
+**Headless mode:** `npx chrome-devtools-mcp@latest --headless=true --no-sandbox`
 
 **Performance args** (add to MCP config):
 
@@ -80,17 +68,9 @@ npx playwright install          # all browsers
 npx playwright install chromium # specific browser
 ```
 
-**Launch timeout:**
+**Launch timeout:** `npx playwright-mcp@latest --timeout=60000 --no-sandbox`
 
-```bash
-npx playwright-mcp@latest --timeout=60000 --no-sandbox
-```
-
-**WebKit on Linux — install dependencies:**
-
-```bash
-npx playwright install-deps webkit
-```
+**WebKit on Linux:** `npx playwright install-deps webkit`
 
 **Performance args:**
 
@@ -102,17 +82,11 @@ npx playwright install-deps webkit
 
 ### Ahrefs "connection closed"
 
-Three common causes:
+Three causes:
 
-**1. Wrong API key type** — JWT-style tokens (long, with dots) do not work. Use the standard ~40-character key from https://ahrefs.com/api.
-
-```bash
-echo $AHREFS_API_KEY | wc -c  # should be ~40-45
-```
-
-**2. Wrong env var name** — the `@ahrefs/mcp` package expects `API_KEY`, not `AHREFS_API_KEY`. Pass it explicitly.
-
-**3. OpenCode env blocks don't expand variables** — `"API_KEY": "${AHREFS_API_KEY}"` is treated as a literal string. Use a bash wrapper:
+1. **Wrong API key type** — JWT-style tokens (long, with dots) don't work. Use the ~40-char key from https://ahrefs.com/api. Verify: `echo $AHREFS_API_KEY | wc -c` (should be ~40-45).
+2. **Wrong env var name** — `@ahrefs/mcp` expects `API_KEY`, not `AHREFS_API_KEY`. Pass explicitly.
+3. **OpenCode env blocks don't expand variables** — `"API_KEY": "${AHREFS_API_KEY}"` is literal. Use a bash wrapper:
 
 ```json
 {
@@ -124,11 +98,7 @@ echo $AHREFS_API_KEY | wc -c  # should be ~40-45
 }
 ```
 
-**Verify key works:**
-
-```bash
-curl -H "Authorization: Bearer $AHREFS_API_KEY" https://apiv2.ahrefs.com/v2/subscription_info
-```
+**Verify key:** `curl -H "Authorization: Bearer $AHREFS_API_KEY" https://apiv2.ahrefs.com/v2/subscription_info`
 
 ### Perplexity rate limiting
 
@@ -145,9 +115,9 @@ curl -X GET "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_I
   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
 ```
 
-## Debugging Steps
+## Debugging
 
-**1. Check MCP server status:**
+**1. MCP server status:**
 
 ```bash
 npx chrome-devtools-mcp@latest --test-connection
@@ -178,45 +148,27 @@ curl -I https://api.cloudflare.com
 [ -n "$CLOUDFLARE_API_TOKEN" ] && echo "CLOUDFLARE_API_TOKEN set (${#CLOUDFLARE_API_TOKEN} chars)" || echo "CLOUDFLARE_API_TOKEN not set"
 ```
 
-**5. Test config changes with CLI** (OpenCode TUI requires restart for `opencode.json` changes):
+**5. Test MCP config changes** (OpenCode TUI requires restart for `opencode.json` changes):
 
 ```bash
 opencode run "List available tools from dataforseo_*" --agent SEO
 opencode run "Call serper_google_search with query 'test'" --agent SEO 2>&1
-opencode run "What MCP tools can you access?" --agent SEO
 ```
 
-Workflow for adding new MCPs:
+Workflow: edit `~/.config/opencode/opencode.json` → test with `opencode run` → restart TUI if working → update `generate-opencode-agents.sh` to persist.
 
-1. Edit `~/.config/opencode/opencode.json`
-2. Test: `opencode run "Test [mcp]" --agent [agent] 2>&1`
-3. If working, restart TUI
-4. If failing, check stderr and iterate
-5. Update `generate-opencode-agents.sh` to persist changes
-
-Helper scripts:
-
-```bash
-~/.aidevops/agents/scripts/opencode-test-helper.sh test-mcp dataforseo SEO
-~/.aidevops/agents/scripts/opencode-test-helper.sh test-agent Build+
-```
+Helper: `~/.aidevops/agents/scripts/opencode-test-helper.sh test-mcp dataforseo SEO`
 
 ## Monitoring & Logging
 
-**Enable debug logging:**
+**Debug logging:**
 
 ```bash
 DEBUG=chrome-devtools-mcp npx chrome-devtools-mcp@latest
 DEBUG=pw:api npx playwright-mcp@latest
 ```
 
-**Log file locations:**
-
-```text
-Chrome DevTools: /tmp/chrome-mcp.log
-Playwright:      /tmp/playwright-mcp.log
-API MCPs:        ~/.mcp/logs/
-```
+**Log locations:** Chrome DevTools: `/tmp/chrome-mcp.log` | Playwright: `/tmp/playwright-mcp.log` | API MCPs: `~/.mcp/logs/`
 
 ## Recovery Procedures
 
@@ -251,14 +203,6 @@ bash .agents/scripts/collect-mcp-diagnostics.sh
 # creates: mcp-diagnostics-$(date +%Y%m%d).tar.gz
 ```
 
-**Community resources:**
+**Resources:** [MCP GitHub Discussions](https://github.com/modelcontextprotocol/discussions) | [Chrome DevTools MCP Issues](https://github.com/chromedevtools/chrome-devtools-mcp/issues) | [Playwright Community](https://playwright.dev/community)
 
-- [MCP GitHub Discussions](https://github.com/modelcontextprotocol/discussions)
-- [Chrome DevTools MCP Issues](https://github.com/chromedevtools/chrome-devtools-mcp/issues)
-- [Playwright Community](https://playwright.dev/community)
-
-**Vendor support:**
-
-- Ahrefs: [support@ahrefs.com](mailto:support@ahrefs.com)
-- Cloudflare: [Cloudflare Support Portal](https://support.cloudflare.com/)
-- Perplexity: [Perplexity Documentation](https://docs.perplexity.ai/)
+**Vendor support:** [Ahrefs](mailto:support@ahrefs.com) | [Cloudflare](https://support.cloudflare.com/) | [Perplexity](https://docs.perplexity.ai/)
