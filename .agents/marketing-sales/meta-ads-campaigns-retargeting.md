@@ -20,15 +20,11 @@ Showing ads to people who already interacted with your brand (site visit, engage
 | Prospecting (lookalike) | 60-80% |
 | Prospecting (broad) | 70-90% |
 
-Many retargeting conversions would have happened anyway. CPA looks great; true value is lower.
+Many conversions would have happened anyway. CPA looks great; true value is lower.
 
-### Retargeting vs Prospecting Budget
+### Retargeting vs Prospecting
 
-Retargeting audience is finite. Prospecting creates the retargeting pool — without it, the pool shrinks.
-
-```text
-Prospecting → Website visitors → Retargeting pool → Conversions → Fund more prospecting
-```
+Retargeting audience is finite. Prospecting creates the pool — without it, the pool shrinks: `Prospecting → Visitors → RT pool → Conversions → Fund more prospecting`.
 
 ---
 
@@ -232,7 +228,7 @@ Audience (All Visitors): Size 10,000 × CVR 2% × Max CPA $30 = $6,000/month max
 
 ## Dynamic Ads (DPA)
 
-Automatically show users products they've viewed or related products based on catalog data.
+Auto-show users products they've viewed or related items from catalog data.
 
 **Requirements:** Product catalog in Commerce Manager, Pixel with product events (ViewContent, AddToCart, Purchase), matching product IDs between pixel and catalog.
 
@@ -243,12 +239,7 @@ Automatically show users products they've viewed or related products based on ca
 | Purchased | Cross-sell/upsell |
 | Broad (prospecting) | Products likely to interest |
 
-**Best practices:**
-
-- High-quality product images, accurate prices, clear titles, in-stock only
-- Add overlay (discount, free shipping)
-- Exclude already purchased
-- Use product set filters (price >$20, category = bestsellers)
+**Best practices:** High-quality images, accurate prices, clear titles, in-stock only. Add overlay (discount, free shipping). Exclude already purchased. Use product set filters (price >$20, category = bestsellers).
 
 **Template copy:**
 
@@ -294,13 +285,10 @@ Engagers → Exclude All Website Visitors, Purchases
 
 ## Checklist
 
-**Setup:** Pixel installed with all events · Custom audiences created · Proper exclusions in place · Descriptive naming convention
-
-**Creative:** Different creative per segment · Messaging matches funnel stage · Offers appropriate to intent · Dynamic ads for product viewers
-
-**Monitoring:** Frequency under control (<5x weekly) · CPA meeting targets · Audience not shrinking · No negative feedback spikes
-
-**Optimization:** Test new creative quarterly · Adjust windows based on data · Balance with prospecting spend · Review incrementality periodically
+- **Setup:** Pixel with all events · Custom audiences · Proper exclusions · Descriptive naming
+- **Creative:** Different creative per segment · Messaging matches funnel stage · Offers match intent · Dynamic ads for product viewers
+- **Monitoring:** Frequency <5x weekly · CPA on target · Audience not shrinking · No negative feedback spikes
+- **Optimization:** New creative quarterly · Adjust windows from data · Balance with prospecting · Review incrementality periodically
 
 ---
 
