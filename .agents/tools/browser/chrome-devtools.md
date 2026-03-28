@@ -64,16 +64,12 @@ npx chrome-devtools-mcp@latest --categoryEmulation false --categoryPerformance f
 
 ```javascript
 await chromeDevTools.lighthouse({
-  url: "https://your-website.com",
+  url: "https://example.com",
   categories: ["performance", "accessibility", "best-practices", "seo"],
   device: "desktop"
 });
 
-await chromeDevTools.measureWebVitals({
-  url: "https://your-website.com",
-  metrics: ["LCP", "FID", "CLS", "TTFB"],
-  iterations: 5
-});
+await chromeDevTools.measureWebVitals({ url: "https://example.com", metrics: ["LCP", "FID", "CLS", "TTFB"], iterations: 5 });
 ```
 
 ## Web Scraping & Data Extraction
@@ -84,25 +80,16 @@ await chromeDevTools.extractData({
   selectors: { title: "h1", description: ".description", links: "a[href]" }
 });
 
-await chromeDevTools.screenshot({
-  url: "https://your-website.com",
-  fullPage: true,
-  format: "png",
-  quality: 90
-});
+await chromeDevTools.screenshot({ url: "https://example.com", fullPage: true, format: "png", quality: 90 });
 ```
 
 ## Debugging & Testing
 
 ```javascript
-await chromeDevTools.captureConsole({
-  url: "https://your-website.com",
-  logLevel: "error",
-  duration: 30000
-});
+await chromeDevTools.captureConsole({ url: "https://example.com", logLevel: "error", duration: 30000 });
 
 await chromeDevTools.monitorNetwork({
-  url: "https://your-website.com",
+  url: "https://example.com",
   filters: ["xhr", "fetch", "document"],
   captureHeaders: true,
   captureBody: true
@@ -111,38 +98,20 @@ await chromeDevTools.monitorNetwork({
 
 ## Network Throttling
 
-### Global (all requests)
+| | `emulate` (global) | `throttleRequest` (per-request) |
+|---|---|---|
+| Scope | All requests | Specific URL patterns |
+| Precision | Coarse | Fine-grained |
+| Chrome version | All | 144+ |
 
 ```javascript
-await chromeDevTools.emulate({
-  url: "https://your-website.com",
-  networkConditions: {
-    offline: false,
-    latency: 200,
-    downloadThroughput: 50 * 1024,
-    uploadThroughput: 20 * 1024
-  }
-});
+// Global — presets: "Slow 3G", "Fast 3G", "Offline"
+await chromeDevTools.emulate({ url: "https://example.com", networkConditions: "Slow 3G" });
+await chromeDevTools.emulate({ url: "https://example.com", networkConditions: { offline: false, latency: 200, downloadThroughput: 50 * 1024, uploadThroughput: 20 * 1024 } });
 
-// Preset: "Slow 3G", "Fast 3G", "Offline"
-await chromeDevTools.emulate({ url: "...", networkConditions: "Slow 3G" });
-```
-
-### Per-request (Chrome 144+)
-
-Throttles specific URL patterns without affecting the rest of the page. Right-click any request in the Network panel → "Throttle request URL" for manual use.
-
-```javascript
-await chromeDevTools.throttleRequest({
-  url: "https://your-website.com",   // page to navigate to before applying rules
-  requestPattern: "**/api/slow-endpoint",
-  latency: 3000,
-  downloadThroughput: 50 * 1024
-});
-
-// Multiple patterns — rules evaluated in order, first match wins
+// Per-request (Chrome 144+) — rules evaluated in order, first match wins
 await chromeDevTools.throttleRequests({
-  url: "https://your-website.com",
+  url: "https://example.com",
   rules: [
     { pattern: "**/api/critical", latency: 0, downloadThroughput: -1 },  // no throttle
     { pattern: "**/api/*", latency: 1500, downloadThroughput: 200 * 1024 },
@@ -151,27 +120,14 @@ await chromeDevTools.throttleRequests({
 });
 ```
 
-| | `emulate` (global) | `throttleRequest` (per-request) |
-|---|---|---|
-| Scope | All requests | Specific URL patterns |
-| Precision | Coarse | Fine-grained |
-| Chrome version | All | 144+ |
-
 ## Mobile Testing
 
 ```javascript
-await chromeDevTools.emulateDevice({
-  url: "https://your-website.com",
-  device: "iPhone 12 Pro",
-  orientation: "portrait"
-});
+await chromeDevTools.emulateDevice({ url: "https://example.com", device: "iPhone 12 Pro", orientation: "portrait" });
 
 await chromeDevTools.simulateTouch({
-  url: "https://your-website.com",
-  actions: [
-    { type: "tap", x: 100, y: 200 },
-    { type: "swipe", startX: 100, startY: 300, endX: 300, endY: 300 }
-  ]
+  url: "https://example.com",
+  actions: [{ type: "tap", x: 100, y: 200 }, { type: "swipe", startX: 100, startY: 300, endX: 300, endY: 300 }]
 });
 ```
 
@@ -179,50 +135,27 @@ await chromeDevTools.simulateTouch({
 
 ```javascript
 await chromeDevTools.extractSEO({
-  url: "https://your-website.com",
+  url: "https://example.com",
   elements: ["title", "meta[name='description']", "meta[property^='og:']", "link[rel='canonical']"]
 });
 
-await chromeDevTools.validateStructuredData({
-  url: "https://your-website.com",
-  schemas: ["Organization", "WebSite", "Article"]
-});
+await chromeDevTools.validateStructuredData({ url: "https://example.com", schemas: ["Organization", "WebSite", "Article"] });
 ```
 
-## Automation Workflows
+## Automation & Visual Testing
 
 ```javascript
 // Multi-page analysis
 for (const url of urls) {
-  await chromeDevTools.comprehensiveAnalysis({
-    url,
-    includePerformance: true,
-    includeSEO: true,
-    includeAccessibility: true
-  });
+  await chromeDevTools.comprehensiveAnalysis({ url, includePerformance: true, includeSEO: true, includeAccessibility: true });
 }
 
 // A/B comparison
-await chromeDevTools.comparePages({
-  urlA: "https://your-website.com/version-a",
-  urlB: "https://your-website.com/version-b",
-  metrics: ["performance", "visual-diff", "accessibility"]
-});
-```
+await chromeDevTools.comparePages({ urlA: "https://example.com/a", urlB: "https://example.com/b", metrics: ["performance", "visual-diff", "accessibility"] });
 
-## Visual Testing
+// Visual regression
+await chromeDevTools.visualRegression({ url: "https://example.com", baseline: "/path/to/baseline.png", threshold: 0.1, highlightDifferences: true });
 
-```javascript
-await chromeDevTools.visualRegression({
-  url: "https://your-website.com",
-  baseline: "/path/to/baseline.png",
-  threshold: 0.1,
-  highlightDifferences: true
-});
-
-await chromeDevTools.analyzeCSSCoverage({
-  url: "https://your-website.com",
-  reportUnused: true,
-  minifyRecommendations: true
-});
+// CSS coverage
+await chromeDevTools.analyzeCSSCoverage({ url: "https://example.com", reportUnused: true, minifyRecommendations: true });
 ```
