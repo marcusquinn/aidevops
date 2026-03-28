@@ -36,19 +36,13 @@ tools:
 
 ## Installation
 
-### CLI (Linux/macOS)
-
 ```bash
 curl -fsSLo simplex-install.sh https://raw.githubusercontent.com/simplex-chat/simplex-chat/stable/install.sh
 less simplex-install.sh  # Review before executing
 bash simplex-install.sh
 ```
 
-On macOS: System Settings > Privacy & Security > Allow (Gatekeeper).
-
-**Apps**: [iOS](https://apps.apple.com/app/simplex-chat/id1605771084) | [Android](https://play.google.com/store/apps/details?id=chat.simplex.app) / [F-Droid](https://simplex.chat/fdroid/) | [Linux Flathub](https://flathub.org/apps/chat.simplex.simplex) | [macOS DMG / Windows MSI / AppImage](https://github.com/simplex-chat/simplex-chat/releases)
-
-Build from source: `git clone git@github.com:simplex-chat/simplex-chat.git && git checkout stable` — Docker (`DOCKER_BUILDKIT=1 docker build --output ~/.local/bin .`) or Haskell (`cabal install simplex-chat`, requires GHC 9.6.3).
+macOS: System Settings > Privacy & Security > Allow (Gatekeeper). Apps: [iOS](https://apps.apple.com/app/simplex-chat/id1605771084) | [Android](https://play.google.com/store/apps/details?id=chat.simplex.app) / [F-Droid](https://simplex.chat/fdroid/) | [Desktop](https://github.com/simplex-chat/simplex-chat/releases). Build from source: `git clone git@github.com:simplex-chat/simplex-chat.git && git checkout stable` (Docker or `cabal install simplex-chat`, GHC 9.6.3).
 
 ## CLI Usage
 
@@ -66,11 +60,9 @@ simplex-chat -p 5225 --create-bot-display-name "MyBot" --create-bot-allow-files
 
 ## Bot API
 
-### Command / Event Format
+Bot sends: `{ "corrId": "1", "cmd": "/ad" }` — CLI responds with matching `corrId`. CLI pushes events without `corrId`. Full reference: [Commands](https://github.com/simplex-chat/simplex-chat/blob/stable/bots/api/COMMANDS.md) | [Events](https://github.com/simplex-chat/simplex-chat/blob/stable/bots/api/EVENTS.md) | [Types](https://github.com/simplex-chat/simplex-chat/blob/stable/bots/api/TYPES.md)
 
-Bot sends: `{ "corrId": "1", "cmd": "/ad" }` — CLI responds with matching `corrId`. CLI pushes events without `corrId`.
-
-Full reference: [Commands](https://github.com/simplex-chat/simplex-chat/blob/stable/bots/api/COMMANDS.md) | [Events](https://github.com/simplex-chat/simplex-chat/blob/stable/bots/api/EVENTS.md) | [Types](https://github.com/simplex-chat/simplex-chat/blob/stable/bots/api/TYPES.md)
+**ChatRef syntax**: `@<contactId>` (DM), `#<groupId>` (group), `*<noteFolderId>` (local notes). Example: `/_send @42 json [...]`
 
 ### Key API Commands
 
@@ -98,10 +90,6 @@ Full reference: [Commands](https://github.com/simplex-chat/simplex-chat/blob/sta
 | `receivedGroupInvitation` | Bot invited to group | Call `/_join #<groupId>` |
 
 **Error events** (`messageError`, `chatError`, `chatErrors`): Log but do not fail — common network/delivery errors.
-
-### ChatRef Syntax
-
-`@<contactId>` (DM), `#<groupId>` (group), `*<noteFolderId>` (local notes). Example: `/_send @42 json [...]`
 
 ### TypeScript SDK
 
@@ -150,26 +138,6 @@ Tappable commands with hidden params: `/'role 2'` (UI shows `/role 2`, tapping s
 - **File handling** — files on CLI's filesystem; bot accesses via local path
 - **Concurrent commands** — supported; TypeScript SDK sends sequentially by default
 
-## Protocol
-
-**SMP**: Pairs of uni-directional queues. Double ratchet (X3DH, Curve448) + NaCl crypto_box (Curve25519) + 2-hop onion routing + stateless servers (memory only) + TLS 1.3 + Ed448 server auth.
-
-**XFTP**: Files split into fixed-size chunks, padded, E2E encrypted, distributed across relays. Upload once, multi-recipient. 48-hour default retention.
-
-**WebRTC**: E2E encrypted calls. ICE via SMP. Mobile/desktop only (not CLI). Self-hostable TURN/STUN: `simplex.chat/docs/webrtc.html`
-
-**Voice/files**: Voice received via `newChatItems` with file info; send via `APISendMessages` with `MsgContent` type `voice`. Speech-to-text: `.agents/tools/voice/speech-to-speech.md`. File transfer: `/f @contact /path` (CLI) or `APISendMessages` with attachment (bot must share filesystem with CLI).
-
-## Cross-Device Workarounds
-
-**Core limitation**: Cannot sync a profile across multiple devices simultaneously.
-
-**Option 1 — XRCP**: Run CLI on server (`simplex-chat -p 5225`), enable Developer Tools in desktop app, SSH tunnel (`ssh -R 12345:127.0.0.1:12345 -N user@server`), then in CLI: `/crc <link>` + `/verify remote ctrl <code>`.
-
-**Option 2 — Cloud CLI + tmux**: `useradd -m simplex-cli && tmux new -s simplex-cli && su - simplex-cli && simplex-chat -p 5225`. Detach: Ctrl+B D. Reattach: `tmux attach -t simplex-cli`.
-
-**Option 3 — Database migration**: Settings > Database > Export → transfer → Import. **Warning**: Same database on two devices simultaneously causes delivery failures and data corruption.
-
 ## Self-Hosted Servers
 
 Requirements: VPS, domain, ports 443 + 5223 (SMP) open.
@@ -196,14 +164,21 @@ Docker (SMP): set `ADDR=smp.example.com` in `.env`, fetch `docker-compose-smp-co
 
 Add to apps: Settings > Network & Servers > SMP/XFTP Servers > Add. Only affects new connections.
 
+## Cross-Device Workarounds
+
+**Core limitation**: Cannot sync a profile across multiple devices simultaneously.
+
+- **XRCP**: Run CLI on server (`simplex-chat -p 5225`), enable Developer Tools in desktop app, SSH tunnel (`ssh -R 12345:127.0.0.1:12345 -N user@server`), then in CLI: `/crc <link>` + `/verify remote ctrl <code>`.
+- **Cloud CLI + tmux**: `useradd -m simplex-cli && tmux new -s simplex-cli && su - simplex-cli && simplex-chat -p 5225`. Detach: Ctrl+B D. Reattach: `tmux attach -t simplex-cli`.
+- **Database migration**: Settings > Database > Export → transfer → Import. **Warning**: Same database on two devices simultaneously causes delivery failures and data corruption.
+
 ## Limitations
 
-- **Cross-device**: No simultaneous multi-device sync. See [Cross-Device Workarounds](#cross-device-workarounds).
+- **Cross-device**: No simultaneous multi-device sync (see Cross-Device Workarounds above).
 - **Single profile per instance**: Multiple CLI instances need separate DB prefixes (`-d bot1`, `-d bot2`) on different ports.
 - **Owner role recovery**: Lost group owner profile cannot be recovered. Add backup owner proactively.
 - **Group stability**: Delayed delivery, member list desync, 1000+ members experimental.
 - **No server-side search**: All messages E2E encrypted. Local search in mobile/desktop only.
-- **Bot WebSocket security**: No built-in auth. Require TLS reverse proxy + HTTP basic auth + firewall.
 - **XFTP file limits**: Depends on server storage quota and 48-hour default retention.
 - **AGPL-3.0 SDK**: Bot code importing SDK must be AGPL-3.0 compatible or use raw WebSocket API. Internal-only bots exempt from source disclosure.
 - **Push notifications**: Optional via Apple/Google — privacy trade-off. Alternative: periodic background fetch.
@@ -220,7 +195,6 @@ Add to apps: Settings > Network & Servers > SMP/XFTP Servers > Add. Only affects
 
 | Component | File | Task |
 |-----------|------|------|
-| Subagent doc | `.agents/services/communications/simplex.md` | t1327.2 |
 | Helper script | `.agents/scripts/simplex-helper.sh` | t1327.3 |
 | Bot framework | `.agents/scripts/simplex-bot/` (TypeScript/Bun) | t1327.4 |
 | Mailbox transport | `.agents/scripts/mail-helper.sh` | t1327.5 |
