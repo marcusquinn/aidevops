@@ -747,9 +747,9 @@
       "pr": 11712
     },
     ".agents/marketing-sales/meta-ads-campaigns-retargeting.md": {
-      "hash": "58549869d08f9b9b994ea8611c5e89ac49b80525",
-      "at": "2026-03-28T09:17:42Z",
-      "pr": 11724
+      "hash": "a9c426923d4e68ffcbda9632256e77e757a22e39",
+      "at": "2026-03-28T11:20:39Z",
+      "pr": 11746
     },
     ".agents/content/heygen-skill/rules-remotion-integration.md": {
       "hash": "5ccb546152546cd33344a76d42a4b90c0acd0dbd",
@@ -767,9 +767,9 @@
       "pr": 11723
     },
     ".agents/content/distribution-youtube-topic-research.md": {
-      "hash": "ac315d49d22c94177ed28329b2d060a4b69134d5",
-      "at": "2026-03-28T10:27:21Z",
-      "pr": 11708
+      "hash": "d8d475231eff5b53cf27de5ab31aeedaec403e2f",
+      "at": "2026-03-28T11:20:29Z",
+      "pr": 11801
     },
     ".agents/content/heygen-skill/rules-captions.md": {
       "hash": "5e31cf7b1019f79f2f70a450083143cd6704e356",
@@ -807,9 +807,9 @@
       "pr": 11760
     },
     ".agents/content/distribution-youtube-pipeline.md": {
-      "hash": "b913e4fa0f868e7d1f6a7843d91d8f3795160fe3",
-      "at": "2026-03-28T10:27:36Z",
-      "pr": 11676
+      "hash": "ec344423c7366d10312a8ca44f60ca4232d34097",
+      "at": "2026-03-28T11:20:33Z",
+      "pr": 11763
     },
     ".agents/content/heygen-skill/rules-video-generation.md": {
       "hash": "929341bdb16beeda9c31e050b53eddbe5badfd72",
@@ -822,14 +822,14 @@
       "pr": 11759
     },
     ".agents/content/video-muapi.md": {
-      "hash": "a857b59d604b9fe3bf5e9597fc345230bf1a8f50",
-      "at": "2026-03-28T10:27:06Z",
-      "pr": 11758
+      "hash": "3deffc1afc21c9cb3daf10a540c802fc70e437df",
+      "at": "2026-03-28T11:20:21Z",
+      "pr": 11800
     },
     ".agents/tools/browser/playwright-cli.md": {
-      "hash": "fdf7aff0466057895e0db9d597f5d80785f0b3f0",
-      "at": "2026-03-28T10:27:07Z",
-      "pr": 11757
+      "hash": "978be4b5b3043cfee751f9c966ba27ddd7fe5182",
+      "at": "2026-03-28T11:20:22Z",
+      "pr": 11802
     },
     ".agents/aidevops/requirements.md": {
       "hash": "5d52c62638db37db1de4990969eab8b4ed182c7d",
@@ -837,49 +837,79 @@
       "pr": 11674
     },
     ".agents/tools/video/yt-dlp.md": {
-      "hash": "f6670e2f1e2416da0f1bb53e81e8e4a9300424cb",
-      "at": "2026-03-28T10:47:03Z",
+      "hash": "93855bd751f355d6ef75134ba3322330fcb7d596",
+      "at": "2026-03-28T11:20:27Z",
       "pr": 11752
     },
     ".agents/content/distribution-youtube-optimizer.md": {
-      "hash": "9922c5b42878dd13831d1782ec570517ff4b9b9b",
-      "at": "2026-03-28T10:47:08Z",
+      "hash": "08796da4159346de335feb979d6ce0af181bb8ff",
+      "at": "2026-03-28T11:20:34Z",
       "pr": 11731
     },
     ".agents/tools/credentials/gocryptfs.md": {
-      "hash": "04155164bc0cac5f952ff48be25c0e15294862ec",
-      "at": "2026-03-28T10:47:09Z",
+      "hash": "8e128a21d4783c5499f073213aee1a20491893d5",
+      "at": "2026-03-28T11:20:36Z",
       "pr": 11730
     },
     ".agents/tools/ui/nextjs-layouts.md": {
-      "hash": "089bba77a41bd9aa516bba079ab368be0f8256a5",
-      "at": "2026-03-28T10:47:10Z",
+      "hash": "df90871ad91810f05326405fe711c4ff4be9460b",
+      "at": "2026-03-28T11:20:37Z",
       "pr": 11732
     },
     ".agents/content/distribution-social.md": {
-      "hash": "69b274252fdc342abaed24265b6209195d9559b9",
-      "at": "2026-03-28T10:47:11Z",
+      "hash": "4ca38ce265bdd7a4921aeed56567dd38e5e98c32",
+      "at": "2026-03-28T11:20:38Z",
       "pr": 11733
     },
     ".agents/tools/architecture/clean-ddd-hexagonal-skill/ddd-tactical.md": {
-      "hash": "8bb87636cdfcc4f03f5d13774edd520dafb3d80a",
-      "at": "2026-03-28T10:47:14Z",
+      "hash": "a53f3400bd5c9142c7f9b186523697b16c1a28e2",
+      "at": "2026-03-28T11:20:40Z",
       "pr": 11734
     },
     ".agents/content/production-writing.md": {
-      "hash": "5dfec16dd0714d452505a973b64d39384039c1f0",
-      "at": "2026-03-28T10:47:15Z",
+      "hash": "b8102eb0a28d9dfe621b04dcc9f08db946e0d44a",
+      "at": "2026-03-28T11:20:42Z",
       "pr": 11754
     },
     ".agents/tools/architecture/clean-ddd-hexagonal-skill/testing.md": {
-      "hash": "5633937e0084e3b7c10a531927e42490cad8f8a4",
-      "at": "2026-03-28T10:47:16Z",
+      "hash": "5af5ce938a67c3463f9a55199509a22e202c68fc",
+      "at": "2026-03-28T11:20:44Z",
       "pr": 11737
     },
     ".agents/workflows/ralph-loop.md": {
-      "hash": "ef13d1618f7ac8e660dd4887015a1b8dfbe2232b",
-      "at": "2026-03-28T10:47:46Z",
-      "pr": 11689
+      "hash": "552b1c4af3571c286790521b4cf26446ab3bb729",
+      "at": "2026-03-28T11:20:12Z",
+      "pr": 11789
+    },
+    ".agents/marketing-sales/meta-ads-audiences-targeting-strategies.md": {
+      "hash": "9802f4e7f19b67d5a8a45f1a137209082a585d4c",
+      "at": "2026-03-28T11:20:14Z",
+      "pr": 11791
+    },
+    ".agents/tools/api/vercel-ai-sdk.md": {
+      "hash": "e0a51bc87d3615a985b527cfe0265571672e2095",
+      "at": "2026-03-28T11:20:15Z",
+      "pr": 11792
+    },
+    ".agents/tools/ai-orchestration/overview.md": {
+      "hash": "1dca5c066203b5e0a14c4406e64b3f8e06aa3f85",
+      "at": "2026-03-28T11:20:16Z",
+      "pr": 11793
+    },
+    ".agents/tools/wordpress/mainwp.md": {
+      "hash": "e16169565844b28fa00ca62439a068eec8dd965f",
+      "at": "2026-03-28T11:20:17Z",
+      "pr": 11794
+    },
+    ".agents/services/hosting/hostinger.md": {
+      "hash": "bdc3391799c0fb32ef11f6d610f48f7debae2194",
+      "at": "2026-03-28T11:20:19Z",
+      "pr": 11804
+    },
+    ".agents/tools/architecture/clean-ddd-hexagonal-skill/ddd-strategic.md": {
+      "hash": "61e87ef7f501310f73fbe54da1d9e0a76a38abae",
+      "at": "2026-03-28T11:20:20Z",
+      "pr": 11805
     }
   }
 }
