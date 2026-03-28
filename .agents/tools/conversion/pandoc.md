@@ -34,7 +34,8 @@ tools:
 brew install pandoc poppler
 
 # Ubuntu/Debian
-sudo apt-get install pandoc poppler-utils
+sudo apt update
+sudo apt install pandoc poppler-utils
 
 # CentOS/RHEL
 sudo yum install pandoc poppler-utils
