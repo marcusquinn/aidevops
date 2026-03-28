@@ -53,14 +53,9 @@ curl -fsSL "https://github.com/netbirdio/netbird/releases/download/${NETBIRD_VER
 bash /tmp/netbird-setup.sh
 ```
 
-Deploys: `netbird-server` (management + signal + relay + STUN), `dashboard`, `traefik` (TLS).
-
 ### Database & IdP
 
-| Engine | Use case |
-|--------|----------|
-| SQLite (default) | <50 peers, no HA |
-| PostgreSQL | Production, HA |
+**DB**: SQLite (default, <50 peers, no HA) or PostgreSQL (production, HA).
 
 **IdP**: Embedded Dex (quickstart). Production: any OIDC provider — Keycloak, Zitadel, Authentik, PocketID, Google Workspace, Entra ID, Okta, Auth0. Cloudron users: built-in OIDC works directly.
 
@@ -97,7 +92,7 @@ docker compose pull netbird-server dashboard && docker compose up -d --force-rec
 
 ### Coolify / Dokploy (Traefik-based PaaS)
 
-Full feature parity with standalone (Traefik native). Generate config on a temp machine with `[1] Existing Traefik`, then adapt compose: remove Traefik service, add Traefik labels to dashboard, expose `3478:3478/udp`. Key labels:
+Full feature parity with standalone (Traefik native). Generate config with `[1] Existing Traefik`, adapt compose: remove Traefik service, add labels to dashboard, expose `3478:3478/udp`. Key labels:
 
 ```yaml
 # netbird-server: ports: ["3478:3478/udp"]
@@ -191,23 +186,19 @@ curl -s .../api/peers -H "Authorization: Token <TOKEN>" | jq '.[] | {name,ip,con
 # Create policy: POST /api/policies  {"name":"...","enabled":true,"rules":[{"sources":["<group-id>"],"destinations":["<group-id>"],"bidirectional":true,"protocol":"all","action":"accept"}]}
 ```
 
-Full API reference: https://docs.netbird.io/api
-
 ### Terraform
 
 Provider: `netbirdio/netbird` (registry.terraform.io). Resources: `netbird_group`, `netbird_setup_key`, `netbird_policy`, `netbird_route`, `netbird_dns`. Configure with `server_url` + `token`.
 
 ## Reverse Proxy Feature (v0.65+, beta)
 
-Exposes internal mesh services publicly with automatic TLS and optional SSO/password/PIN auth.
-
-**How**: Map public domain → internal peer + port → NetBird provisions TLS + WireGuard tunnel → HTTPS terminated at proxy, forwarded through mesh.
+Exposes internal mesh services publicly with automatic TLS and optional SSO/password/PIN auth. Maps public domain → internal peer + port → HTTPS terminated at proxy, forwarded through mesh.
 
 **Requires**: `netbirdio/netbird-proxy` + Traefik (TLS passthrough) + DNS for proxy domain.
 
 **Features**: Path routing, custom domains, HA, ACME or static TLS, hot reload.
 
-**Limitations**: Traefik only (no nginx/Cloudron), no Rosenpass, beta status.
+**Limitations**: Traefik only (no nginx/Cloudron), no Rosenpass, beta.
 
 ## vs Tailscale
 
