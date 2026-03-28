@@ -19,21 +19,9 @@ tools:
 
 - **Purpose**: Standardized process for adding new MCP server integrations
 - **Output Files**: Documentation, config templates, setup script updates
-- **Coverage**: All supported AI assistants (see list below)
+- **Supported AI Assistants**: OpenCode, Cursor, Claude Code/Desktop, Gemini CLI, Windsurf, Continue.dev, Cody, Zed, GitHub Copilot, Kilo Code, Kiro, Droid (Factory.AI), Warp AI, Aider, Qwen
 
-**Supported AI Assistants**: OpenCode, Cursor, Claude Code/Desktop, Gemini CLI, Windsurf, Continue.dev, Cody, Zed, GitHub Copilot, Kilo Code, Kiro, Droid (Factory.AI), Warp AI, Aider, Qwen
-
-**Steps**:
-
-1. Research MCP (official docs, npm/pip package, GitHub)
-2. Create `.agents/tools/{category}/{mcp-name}.md` documentation
-3. Create `configs/{mcp-name}-config.json.txt` template
-4. Create `configs/mcp-templates/{mcp-name}.json` snippets
-5. Update `.agents/scripts/generate-opencode-agents.sh` (selected agents only)
-6. Update `.agents/scripts/ai-cli-config.sh` (add configure function)
-7. Update `setup.sh` (if prerequisites needed)
-8. Run quality checks and linters
-9. Test with verification prompt
+**Steps**: (1) Research MCP, (2) Determine agent enablement, (3) Create `.agents/tools/{category}/{mcp-name}.md`, (4) Create config templates, (5) Update `generate-opencode-agents.sh`, (6) Update `ai-cli-config.sh`, (7) Update `setup.sh` if needed, (8) Run quality checks, (9) Test with verification prompt.
 
 **MCP Tool Enablement Strategy**:
 
@@ -58,78 +46,44 @@ tools:
 
 ## Step 1: Research the MCP
 
-| Item | Description | Example |
-|------|-------------|---------|
-| **Official docs URL** | Primary documentation source | `https://docs.example.com/mcp/overview` |
-| **Install command** | npm/pip/binary installation | `npm install -g @example/mcp@latest` |
-| **Auth method** | How users authenticate | CLI login, API key, OAuth |
-| **Credentials location** | Where auth is stored | `~/.example/session.json` |
-| **MCP tool names** | Tools exposed by the MCP | `codebase-retrieval`, `search-docs` |
-| **Prerequisites** | Required dependencies | Node.js 22+, Python 3.8+ |
-| **Supported AI tools** | Which tools have official docs | OpenCode, Cursor, Claude Code, etc. |
+Gather before starting — use WebFetch for official setup guides per AI tool:
+
+| Item | Example |
+|------|---------|
+| **Official docs URL** | `https://docs.example.com/mcp/overview` |
+| **Install command** | `npm install -g @example/mcp@latest` |
+| **Auth method** | CLI login, API key, OAuth |
+| **Credentials location** | `~/.example/session.json` |
+| **MCP tool names** | `codebase-retrieval`, `search-docs` |
+| **Prerequisites** | Node.js 22+, Python 3.8+ |
 
 ```bash
 npm view @example/mcp --json | head -50
 command -v example-cli
 npm docs @example/mcp
-```
-
-Use WebFetch to gather official setup guides for each AI tool the MCP supports.
-
-## Step 1.5: Pre-Flight Version Check (CRITICAL)
-
-Before configuring any MCP, verify you have the latest version:
-
-```bash
+# Pre-flight: verify latest version before configuring
 npm view {package} version  # Latest available
 {tool} --version            # Currently installed
 npm update -g {package}     # Update if outdated
 ```
 
-**Why**: MCP integration methods change between versions. Outdated commands cause "Connection closed" errors.
+**Why version check matters**: MCP integration methods change between versions. Outdated commands cause "Connection closed" errors.
 
 ## Step 2: Determine Agent Enablement
 
-Ask the user which agents need this MCP, then document the decision:
+Ask the user which agents need this MCP:
 
 > "Which agents should have `{mcp-name}_*: true`?
 > Available: Build+, Accounts, AI-DevOps, Content, Health, Legal, Marketing, Research, Sales, SEO, WordPress
 > Common patterns: codebase/context tools → Build+, AI-DevOps, Research; domain-specific → relevant domain only"
 
-```markdown
-| Agent | Enabled | Rationale |
-|-------|---------|-----------|
-| Build+ | Yes | Primary development agent |
-| WordPress | No | Not relevant |
-```
-
 ## Step 3: Create Documentation File
 
-Create `.agents/tools/{category}/{mcp-name}.md`. Use `.agents/tools/context/augment-context-engine.md` as the reference template.
+Create `.agents/tools/{category}/{mcp-name}.md`. Use `.agents/tools/context/augment-context-engine.md` as reference template.
 
-**File Location Categories**:
+**Categories**: `context/` (codebase/docs), `code-review/` (linting/security), `deployment/` (CI/CD), `browser/` (web automation), `git/` (VCS), `credentials/` (secrets), `ai-assistants/` (AI tool config).
 
-| Category | Use For |
-|----------|---------|
-| `context/` | Codebase understanding, documentation lookup |
-| `code-review/` | Linting, security scanning, quality analysis |
-| `deployment/` | CI/CD, hosting, infrastructure |
-| `browser/` | Web automation, scraping, testing |
-| `git/` | Version control, repository management |
-| `credentials/` | Secret management, API keys |
-| `ai-assistants/` | AI tool configuration, integration |
-
-**Required Sections**:
-
-1. AI-CONTEXT-START block: Purpose, Install, Auth, MCP tool names, Docs URL, OpenCode config snippet, Verification prompt, Supported Assistants, Enabled Agents
-2. What It Does
-3. Prerequisites
-4. Installation
-5. AI Assistant Configurations (one section per assistant: OpenCode, Claude Code, Cursor, Windsurf, Continue.dev, Cody, Zed, GitHub Copilot, Kilo Code, Kiro, Gemini CLI, Droid, Warp AI, Aider, Qwen)
-6. Verification
-7. Non-Interactive Setup (CI/CD)
-8. Troubleshooting
-9. Updates
+**Required Sections**: (1) AI-CONTEXT-START block (purpose, install, auth, tool names, docs URL, config snippet, verification prompt, supported assistants, enabled agents), (2) What It Does, (3) Prerequisites, (4) Installation, (5) AI Assistant Configurations (one section per assistant), (6) Verification, (7) Non-Interactive Setup, (8) Troubleshooting, (9) Updates.
 
 ## Step 4: Create Config Templates
 
@@ -159,8 +113,7 @@ configure_{mcp_name}_mcp() {
         log_info "Install with: {install command}"
         return 0
     fi
-    # Configure each detected assistant: OpenCode, Cursor, Gemini CLI,
-    # Claude Code, Windsurf, Continue.dev, Droid, etc.
+    # Configure each detected assistant
     log_success "{MCP Name} configured for detected AI assistants"
     return 0
 }
@@ -214,18 +167,15 @@ for agent, cfg in d.get('agent',{}).items():
 
 # Test MCP accessibility (no restart required)
 ~/.aidevops/agents/scripts/opencode-test-helper.sh test-mcp {mcp-name} Build+
-# Or: opencode run "List tools from {mcp-name}" --agent Build+
 ```
 
 If CLI tests pass, restart OpenCode TUI for interactive verification.
-
 After implementation: `@agent-review Review the new {mcp-name} documentation and configuration`
 
-## Post-Implementation Checklist
+## Completion Checklist
 
-- [ ] Documentation follows template structure
-- [ ] All AI assistants have configuration documented
-- [ ] Config template and MCP snippets file created
+- [ ] Documentation follows template structure (all AI assistants covered)
+- [ ] Config template (`configs/`) and MCP snippets file created
 - [ ] `generate-opencode-agents.sh` updated for selected agents only
 - [ ] `ai-cli-config.sh` has configure function for all assistants
 - [ ] `setup.sh` updated if prerequisites needed
@@ -253,20 +203,17 @@ After implementation: `@agent-review Review the new {mcp-name} documentation and
 ```json
 // Cursor/Windsurf (macOS/Linux)
 "args": ["-c", "cmd --mcp -w \"${WORKSPACE_FOLDER_PATHS%%,*}\""]
-
 // Cursor/Windsurf (Windows)
 "args": ["-Command", "cmd --mcp -w \"($env:WORKSPACE_FOLDER_PATHS -split ',')[0]\""]
-
 // Zed
 "args": ["-c", "cmd --mcp -w $(pwd)"]
-
 // Generic
 "args": ["--mcp", "-w", "/path/to/project"]
 ```
 
-## Example Implementation
+## Reference Implementation
 
-See the Augment Context Engine implementation for reference patterns:
+See Augment Context Engine for patterns — search `augment-context-engine` in:
 
 | File | Purpose |
 |------|---------|
@@ -276,5 +223,3 @@ See the Augment Context Engine implementation for reference patterns:
 | `.agents/scripts/generate-opencode-agents.sh` | Agent config |
 | `.agents/scripts/ai-cli-config.sh` | CLI config function |
 | `setup.sh` | Setup function |
-
-Search for `augment-context-engine` in these files to see the patterns.
