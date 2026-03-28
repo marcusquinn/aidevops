@@ -16,7 +16,7 @@ A complete Video Sales Letter script framework. Replace `[BRACKETS]` with your c
 | Guarantee | 14:00-15:00 | Remove risk | 40-42 |
 | Close | 15:00-16:00 | Final CTA | 43-46 |
 
-**Total:** 15-20 min for mid-ticket ($500-2000). Adjust by price point — see [VSL Best Practices](direct-response-copy-swipe-file-vsl-scripts.md#vsl-best-practices).
+**Total:** 15-20 min for mid-ticket ($500-2000). Adjust by price point — see "VSL Best Practices" in [VSL Scripts Swipe File](direct-response-copy-swipe-file-vsl-scripts.md#vsl-best-practices).
 
 ---
 
