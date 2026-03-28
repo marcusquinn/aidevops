@@ -1,14 +1,15 @@
-## Copywriting Frameworks for Ads
+# Ad Creative Copywriting
+
+## Copywriting Frameworks
 
 ### 1. PAS (Problem-Agitate-Solution)
 
-```
+```text
 P: Identify the PROBLEM
 A: AGITATE the pain (consequences, not features)
 S: Present the SOLUTION
-```
 
-```
+Example:
 PROBLEM: "Wasting 10+ hours per week on manual data entry?"
 AGITATE: "While you're buried in spreadsheets, your competitors are growing. Every hour of manual work is an hour not spent on strategy."
 SOLUTION: "AutoFlow eliminates 95% of manual data entry. 2,000+ companies saved 1,500 hours last month."
@@ -18,14 +19,13 @@ SOLUTION: "AutoFlow eliminates 95% of manual data entry. 2,000+ companies saved 
 
 ### 2. AIDA (Attention-Interest-Desire-Action)
 
-```
+```text
 A: Grab ATTENTION (relevant hook, not just shocking)
 I: Build INTEREST (expand on the hook)
 D: Create DESIRE (emotional — paint the picture)
 A: Prompt ACTION (urgency or risk of loss)
-```
 
-```
+Example:
 ATTENTION: "6 Months Ago I Was Working Minimum Wage. Today I Made $12K This Month."
 INTEREST: "I learned one skill companies desperately need: data analysis. Online, in 12 weeks."
 DESIRE: "Working from anywhere, $75-150/hr, doing work that matters. Companies are hiring as fast as they can find qualified people."
@@ -36,13 +36,12 @@ ACTION: "12-week intensive. Next cohort March 15. 30 spots. Apply now."
 
 ### 3. BAB (Before-After-Bridge)
 
-```
+```text
 B: BEFORE state (current pain — make it relatable)
 A: AFTER state (desired outcome — aspirational but believable)
 B: BRIDGE (your product/service — specific, not vague)
-```
 
-```
+Example:
 BEFORE: "You're tired of starting diets that last 3 days. Every Monday is 'the day' and by Wednesday you're back to old habits."
 AFTER: "Waking up with energy. Looking in the mirror and liking what you see. Wearing clothes you thought you'd never fit into again."
 BRIDGE: "FitMatch pairs you with a coach who texts daily, celebrates wins, and adjusts when life gets crazy. 5,000+ transformations."
@@ -53,7 +52,7 @@ BRIDGE: "FitMatch pairs you with a coach who texts daily, celebrates wins, and a
 ### 4. The 4 Us (Copy Audit Checklist)
 
 | Criterion | Weak | Strong |
-|-----------|------|--------|
+|---|---|---|
 | **Useful** | "Get better results" | "Reduce churn by 34%" |
 | **Urgent** | No deadline | "15 spots left in March" |
 | **Unique** | Generic claim | "Predictive retention system" |
@@ -63,13 +62,12 @@ BRIDGE: "FitMatch pairs you with a coach who texts daily, celebrates wins, and a
 
 ### 5. Star-Story-Solution
 
-```
+```text
 STAR: Relatable character (mirror target customer)
 STORY: Their journey/struggle (specific details, include "aha moment")
 SOLUTION: How they overcame it with your product (specific, believable results)
-```
 
-```
+Example:
 STAR: "Meet Sarah. 34, marketing manager, mom of two. Zero time for herself."
 STORY: "After her second kid — no time for the gym. Home workouts interrupted. Felt tired, unhealthy, frustrated."
 SOLUTION: "15-minute guided workouts. No gym, no equipment. In 90 days: lost 22 pounds, more energy. 'It fits my life instead of forcing me to fit its schedule.'"
@@ -79,7 +77,7 @@ SOLUTION: "15-minute guided workouts. No gym, no equipment. In 90 days: lost 22 
 
 ### 6. Extended BAB (High-Ticket)
 
-```
+```text
 BEFORE → AFTER → BRIDGE → PROOF (data, testimonials) → OFFER (clear package) → RISK REVERSAL (guarantee) → CTA (urgency)
 ```
 
@@ -87,12 +85,12 @@ BEFORE → AFTER → BRIDGE → PROOF (data, testimonials) → OFFER (clear pack
 
 ### 7. Features → Benefits Translation
 
-```
+```text
 Feature: What it is → Advantage: What it does → Benefit: What it means for THEM
 ```
 
 | Feature | Advantage | Benefit |
-|---------|-----------|---------|
+|---|---|---|
 | Cooling gel foam | Regulates temperature | Wake up refreshed, not sweaty |
 | AI email automation | Sends personalized emails on behavior | More sales while you sleep |
 | 12-week program | Step-by-step progression | No guessing what to do next |
@@ -107,7 +105,7 @@ Feature: What it is → Advantage: What it does → Benefit: What it means for T
 ### How-To (15)
 
 | # | Template |
-|---|----------|
+|---|---|
 | 1 | How to [Outcome] Without [Objection] |
 | 2 | How to [Benefit] in [Timeframe] |
 | 3 | How to [Goal] Even If [Limiting Belief] |
@@ -127,7 +125,7 @@ Feature: What it is → Advantage: What it does → Benefit: What it means for T
 ### List (15)
 
 | # | Template |
-|---|----------|
+|---|---|
 | 16 | [Number] Ways to [Benefit] |
 | 17 | [Number] [Things] That [Result] |
 | 18 | [Number] Secrets to [Outcome] |
@@ -147,7 +145,7 @@ Feature: What it is → Advantage: What it does → Benefit: What it means for T
 ### Question (15)
 
 | # | Template |
-|---|----------|
+|---|---|
 | 31 | What [Happening/Trend]? |
 | 32 | Are You [Making Mistake]? |
 | 33 | What If [Hypothetical Scenario]? |
@@ -167,7 +165,7 @@ Feature: What it is → Advantage: What it does → Benefit: What it means for T
 ### Command (10)
 
 | # | Template |
-|---|----------|
+|---|---|
 | 46 | [Verb] [Outcome] in [Timeframe] |
 | 47 | Stop [Bad Behavior] and Start [Good Behavior] |
 | 48 | [Action] Like [Aspirational Group] |
@@ -182,7 +180,7 @@ Feature: What it is → Advantage: What it does → Benefit: What it means for T
 ### Benefit-Driven (10)
 
 | # | Template |
-|---|----------|
+|---|---|
 | 56 | [Outcome] Without [Drawback] |
 | 57 | The [Adjective] Way to [Goal] |
 | 58 | [Benefit] in Just [Timeframe] |
@@ -197,7 +195,7 @@ Feature: What it is → Advantage: What it does → Benefit: What it means for T
 ### Curiosity (10)
 
 | # | Template |
-|---|----------|
+|---|---|
 | 66 | The [Adjective] [Thing] Nobody Talks About |
 | 67 | Why [Unexpected Statement] |
 | 68 | The Surprising Truth About [Topic] |
@@ -212,7 +210,7 @@ Feature: What it is → Advantage: What it does → Benefit: What it means for T
 ### Social Proof (10)
 
 | # | Template |
-|---|----------|
+|---|---|
 | 76 | How [Number]+ [People] [Result] |
 | 77 | Join [Number] [People] Who [Benefit] |
 | 78 | [Number]-Star Rated [Product/Service] |
@@ -227,7 +225,7 @@ Feature: What it is → Advantage: What it does → Benefit: What it means for T
 ### Warning/Urgency (10)
 
 | # | Template |
-|---|----------|
+|---|---|
 | 86 | Warning: [Negative Consequence] |
 | 87 | Don't [Action] Until You [Do This First] |
 | 88 | Stop [Wasteful Activity] |
@@ -242,7 +240,7 @@ Feature: What it is → Advantage: What it does → Benefit: What it means for T
 ### Personal/Testimonial (5)
 
 | # | Template |
-|---|----------|
+|---|---|
 | 96 | How I [Result] in [Timeframe] |
 | 97 | From [Negative State] to [Positive State] |
 | 98 | I [Did Something Difficult] So You Don't Have To |
@@ -252,7 +250,7 @@ Feature: What it is → Advantage: What it does → Benefit: What it means for T
 ### Comparison (5)
 
 | # | Template |
-|---|----------|
+|---|---|
 | 101 | [Option A] vs. [Option B]: Which is Better? |
 | 102 | Why [Your Solution] Beats [Alternative] |
 | 103 | [Thing] is Dead. [New Thing] is Here |
@@ -272,7 +270,7 @@ Feature: What it is → Advantage: What it does → Benefit: What it means for T
 ### Voice Dimensions
 
 | Dimension | Axes |
-|-----------|------|
+|---|---|
 | Personality | Formal ↔ Casual, Serious ↔ Playful, Respectful ↔ Irreverent, Enthusiastic ↔ Matter-of-fact |
 | Vocabulary | Jargon (use/avoid/explain), complexity, slang, profanity |
 | Grammar | Sentence length, contractions, exclamation points, fragments |
@@ -289,7 +287,7 @@ Feature: What it is → Advantage: What it does → Benefit: What it means for T
 
 ### Brand Voice Guide Template
 
-```
+```text
 1. VOICE OVERVIEW
    We are: [3-5 adjectives]  |  We are NOT: [3-5 adjectives]
 
@@ -316,7 +314,7 @@ Feature: What it is → Advantage: What it does → Benefit: What it means for T
 ### Common Voice Mistakes
 
 | Mistake | Fix |
-|---------|-----|
+|---|---|
 | Inconsistent voice across ads | Pick one voice, stick to it |
 | Wrong platform voice (corporate on TikTok) | Match platform expectations |
 | Forced slang | Be authentic to YOUR brand |
