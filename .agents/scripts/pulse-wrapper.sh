@@ -4101,28 +4101,6 @@ check_dispatch_dedup() {
 }
 
 #######################################
-# Release the dispatch claim comment after a worker has been dispatched.
-# Call this after the dispatch command succeeds. Non-fatal — errors are logged
-# but do not block the dispatch flow.
-#
-# Arguments:
-#   $1 - issue number
-#   $2 - repo slug (owner/repo)
-#   $3 - runner login (optional; auto-detected if omitted)
-#######################################
-release_dispatch_claim() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local self_login="${3:-}"
-
-	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
-	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
-		"$dedup_helper" release "$issue_number" "$repo_slug" "$self_login" >>"$LOGFILE" 2>&1 || true
-	fi
-	return 0
-}
-
-#######################################
 # Check issue comments for terminal blocker patterns (GH#5141)
 #
 # Scans the last N comments on an issue for known patterns that indicate

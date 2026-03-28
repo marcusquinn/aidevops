@@ -23,10 +23,6 @@
 #     Exit 1 = claim lost (another runner was first — do NOT dispatch)
 #     Exit 2 = error (fail-open — caller should proceed with dispatch)
 #
-#   dispatch-claim-helper.sh release <issue-number> <repo-slug> [runner-login]
-#     Clean up claim comments posted by this runner.
-#     Exit 0 = cleaned up (or nothing to clean)
-#
 #   dispatch-claim-helper.sh check <issue-number> <repo-slug>
 #     Check if any active claim exists on this issue.
 #     Exit 0 = active claim exists (do NOT dispatch)
@@ -281,8 +277,6 @@ cmd_claim() {
 	local claims
 	claims=$(_fetch_claims "$issue_number" "$repo_slug") || {
 		echo "CLAIM_ERROR: failed to fetch claims — proceeding (fail-open)" >&2
-		# Clean up our claim on error
-		_delete_comment "$repo_slug" "$comment_id" 2>/dev/null || true
 		return 2
 	}
 
@@ -317,63 +311,6 @@ cmd_claim() {
 	_delete_comment "$repo_slug" "$comment_id" 2>/dev/null || true
 
 	return 1
-}
-
-#######################################
-# Release (clean up) claim comments posted by this runner.
-#
-# Args:
-#   $1 = issue number
-#   $2 = repo slug (owner/repo)
-#   $3 = runner login (optional, auto-detected)
-# Returns:
-#   exit 0 = cleaned up (or nothing to clean)
-#######################################
-cmd_release() {
-	local issue_number="${1:-}"
-	local repo_slug="${2:-}"
-	local runner_login="${3:-}"
-
-	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
-		echo "Error: release requires <issue-number> <repo-slug>" >&2
-		return 1
-	fi
-
-	local runner
-	runner=$(_resolve_runner "$runner_login") || runner="unknown"
-
-	local claims
-	claims=$(_fetch_claims "$issue_number" "$repo_slug") || {
-		echo "Warning: failed to fetch claims for cleanup" >&2
-		return 0
-	}
-
-	local claim_count
-	claim_count=$(printf '%s' "$claims" | jq 'length' 2>/dev/null) || claim_count=0
-
-	if [[ "$claim_count" -eq 0 ]]; then
-		return 0
-	fi
-
-	# Delete all claim comments from this runner
-	local deleted=0
-	local i
-	for i in $(seq 0 $((claim_count - 1))); do
-		local claim_runner claim_id
-		claim_runner=$(printf '%s' "$claims" | jq -r ".[$i].runner // \"\"" 2>/dev/null) || claim_runner=""
-		claim_id=$(printf '%s' "$claims" | jq -r ".[$i].id // \"\"" 2>/dev/null) || claim_id=""
-
-		if [[ "$claim_runner" == "$runner" && -n "$claim_id" ]]; then
-			_delete_comment "$repo_slug" "$claim_id" 2>/dev/null && deleted=$((deleted + 1))
-		fi
-	done
-
-	if [[ "$deleted" -gt 0 ]]; then
-		printf 'RELEASED: cleaned up %d claim comment(s) for runner=%s on issue #%s\n' \
-			"$deleted" "$runner" "$issue_number"
-	fi
-
-	return 0
 }
 
 #######################################
@@ -436,10 +373,6 @@ Usage:
     Exit 1 = claim lost (do NOT dispatch)
     Exit 2 = error (fail-open — proceed with dispatch)
 
-  dispatch-claim-helper.sh release <issue-number> <repo-slug> [runner-login]
-    Clean up claim comments posted by this runner.
-    Exit 0 = cleaned up (or nothing to clean)
-
   dispatch-claim-helper.sh check <issue-number> <repo-slug>
     Check if any active claim exists on this issue.
     Exit 0 = active claim exists (do NOT dispatch)
@@ -458,7 +391,7 @@ Protocol:
   2. Waits DISPATCH_CLAIM_WINDOW seconds for other runners
   3. Fetches all claim comments on the issue
   4. Oldest claim wins — others back off and delete their claims
-  5. Winner proceeds with dispatch, calls 'release' after dispatch completes
+  5. Winner proceeds with dispatch; claim comment persists as audit trail
 
 Examples:
   # Claim before dispatching (in pulse dedup guard)
@@ -466,8 +399,6 @@ Examples:
   if dispatch-claim-helper.sh claim 42 owner/repo "$RUNNER"; then
     # Won the claim — dispatch worker
     headless-runtime-helper.sh run --session-key "issue-42" ...
-    # Clean up after dispatch
-    dispatch-claim-helper.sh release 42 owner/repo "$RUNNER"
   else
     exit_code=$?
     if [[ $exit_code -eq 1 ]]; then
@@ -491,9 +422,6 @@ main() {
 	case "$command" in
 	claim)
 		cmd_claim "$@"
-		;;
-	release)
-		cmd_release "$@"
 		;;
 	check)
 		cmd_check "$@"
