@@ -12,7 +12,7 @@ every vague reference — match the source to the question.
 
 ## Tier 1 — Local cached (instant, zero cost)
 
-1. **Cross-session memory**: `memory-helper.sh recall "keywords"` (CLI) or `aidevops_memory_recall` (MCP tool) — curated signal, most likely to have the answer. Solutions, decisions, preferences, patterns.
+1. **Cross-session memory**: `memory-helper.sh recall "keywords"` (CLI) or `aidevops_memory` MCP tool with `action: "recall"` — curated signal, most likely to have the answer. Solutions, decisions, preferences, patterns.
 2. **TODO.md + completed tasks**: `rg "keyword" TODO.md` — task IDs, PR numbers, completion dates, brief descriptions of all past work.
 
 ## Tier 2 — Local indexed (fast, local I/O)
