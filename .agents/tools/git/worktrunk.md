@@ -22,6 +22,7 @@ tools:
 - **Install**: `brew install max-sixty/worktrunk/wt` (macOS/Linux) | `cargo install worktrunk`
 - **Shell Integration**: `wt config shell install` (enables directory switching)
 - **Docs**: https://worktrunk.dev
+- **Fallback**: `~/.aidevops/agents/scripts/worktree-helper.sh` (no dependencies)
 
 **Core Commands**:
 
@@ -35,21 +36,7 @@ wt merge                    # Squash/rebase/merge + cleanup
 wt select                   # fzf-like worktree selector
 ```
 
-**Fallback**: `~/.aidevops/agents/scripts/worktree-helper.sh` (no dependencies)
 <!-- AI-CONTEXT-END -->
-
-## Overview
-
-Worktrunk makes git worktrees as easy as branches. It's designed for running multiple AI agents in parallel, each in their own working directory.
-
-**Why Worktrunk over raw git worktree?**
-
-| Task | Worktrunk | Plain git |
-|------|-----------|-----------|
-| Switch worktrees | `wt switch feat` | `cd ../repo.feat` |
-| Create + start Claude | `wt switch -c -x claude feat` | `git worktree add -b feat ../repo.feat && cd ../repo.feat && claude` |
-| Clean up | `wt remove` | `cd ../repo && git worktree remove ../repo.feat && git branch -d feat` |
-| List with status | `wt list` | `git worktree list` (paths only) |
 
 ## Installation
 
@@ -60,169 +47,69 @@ brew install max-sixty/worktrunk/wt && wt config shell install
 # Cargo (Rust)
 cargo install worktrunk && wt config shell install
 
-# Windows (winget)
+# Windows (winget) — 'wt' conflicts with Windows Terminal, use 'git-wt'
 winget install max-sixty.worktrunk
-git-wt config shell install  # Note: 'wt' conflicts with Windows Terminal
+git-wt config shell install
 ```
 
 **Shell integration is required** for `wt switch` to change directories. Without it, commands only print the path.
 
-## Core Commands
+## Commands
 
-### wt switch - Switch/Create Worktrees
+### wt switch
 
 ```bash
-# Switch to existing worktree (or create if branch exists)
-wt switch feature/auth
-
-# Create new branch + worktree
-wt switch -c feature/new-thing
-
-# Create + execute command (e.g., start Claude Code)
-wt switch -c -x claude feature/ai-task
+wt switch feature/auth              # Switch to existing (or create if branch exists)
+wt switch -c feature/new-thing      # Create new branch + worktree
+wt switch -c -x claude feature/task # Create + execute command (e.g., start Claude Code)
 wt switch -c -x "npm install" feature/setup
 ```
 
-### wt list - List Worktrees
+### wt list
+
+Shows branch name, path, CI status, PR link, and dirty/clean status.
+
+### wt remove
 
 ```bash
-wt list
-
-# Output includes:
-# - Branch name
-# - Path
-# - CI status (if GitHub Actions configured)
-# - PR link (if PR exists)
-# - Dirty/clean status
+wt remove                       # Remove current worktree (prompts confirmation)
+wt remove feature/old-thing     # Remove specific worktree
+wt remove -f feature/old-thing  # Force (skip confirmation)
 ```
 
-### wt remove - Remove Worktree
+### wt merge
 
 ```bash
-# Remove current worktree (prompts for confirmation)
-wt remove
-
-# Remove specific worktree
-wt remove feature/old-thing
-
-# Force remove (skip confirmation)
-wt remove -f feature/old-thing
+wt merge           # Interactive (choose squash/rebase/merge)
+wt merge --squash  # Squash merge directly
+wt merge --rebase  # Rebase merge
 ```
 
-### wt merge - Merge Workflow
+After merge, Worktrunk: switches to main/master, pulls latest, removes the worktree, deletes the local branch.
 
-```bash
-# Interactive merge (choose squash/rebase/merge)
-wt merge
+### wt select
 
-# Squash merge directly
-wt merge --squash
-
-# Rebase merge
-wt merge --rebase
-```
-
-After merge, worktrunk:
-1. Switches to main/master
-2. Pulls latest changes
-3. Removes the worktree
-4. Deletes the local branch
-
-### wt select - Interactive Selector
-
-```bash
-# fzf-like selector for worktrees
-wt select
-```
+Interactive fzf-like worktree selector.
 
 ## Hooks
 
-Worktrunk supports hooks for automated setup. Create `.worktrunk/hooks/` in your repo:
+Create `.worktrunk/hooks/` in your repo. Available hooks: `post-create`, `pre-merge`, `post-merge`, `pre-remove`.
 
 ```bash
 # .worktrunk/hooks/post-create
 #!/bin/bash
-# Runs after creating a new worktree
 npm install
 ```
 
-Available hooks:
-- `post-create` - After worktree creation
-- `pre-merge` - Before merge
-- `post-merge` - After merge
-- `pre-remove` - Before removal
+### Localdev Hooks (t1224.8)
 
-## Configuration
-
-```bash
-# View current config
-wt config show
-
-# Set path template (default: ../repo.branch)
-wt config set path_template "../{repo}.{branch}"
-
-# Set default merge strategy
-wt config set merge_strategy squash
-```
-
-## LLM Commit Messages
-
-Worktrunk integrates with [llm](https://llm.datasette.io/) for AI-generated commit messages:
-
-```bash
-# Install llm
-pip install llm
-
-# Configure (uses your default LLM)
-wt config set llm_commits true
-
-# Now commits auto-generate messages from diffs
-git add .
-wt commit  # Generates message via LLM
-```
-
-## Integration with aidevops
-
-### Recommended Workflow
-
-1. **Use `wt` as primary tool** when installed
-2. **Fall back to `worktree-helper.sh`** if wt unavailable
-
-```bash
-# Check if wt is available
-if command -v wt &>/dev/null; then
-    wt switch -c feature/my-feature
-else
-    ~/.aidevops/agents/scripts/worktree-helper.sh add feature/my-feature
-    cd ~/Git/repo-feature-my-feature
-fi
-```
-
-### Pre-Edit Check Integration
-
-The `pre-edit-check.sh` script works with both tools:
-- Detects if on protected branch
-- Suggests worktree creation
-- In loop mode, auto-creates worktree
-
-### Localdev Integration (t1224.8)
-
-When creating a worktree for a project registered with `localdev add`, `worktree-helper.sh` automatically:
-
-1. Detects the project name from the repo path
-2. Runs `localdev branch <project> <branch>` to create a subdomain route
-3. Outputs the branch-specific URL (e.g., `http://feature-xyz.myapp.local` — `https://` if mkcert/local CA is configured)
-
-When removing a worktree, the corresponding branch route is auto-cleaned.
-
-Route creation works with both `worktree-helper.sh` (auto-detected) and Worktrunk's `post-create` hook (see below). **Route removal is only automatic when using `worktree-helper.sh`**; Worktrunk users should add a `pre-remove` hook for cleanup.
+Route creation is automatic with `worktree-helper.sh` but requires explicit hooks for Worktrunk. **Route removal is only automatic with `worktree-helper.sh`** — Worktrunk users must add a `pre-remove` hook.
 
 ```bash
 # .worktrunk/hooks/post-create — add to your project repo
 #!/bin/bash
 branch="$(git branch --show-current)"
 project="$(basename "$(git worktree list --porcelain | head -1 | cut -d' ' -f2-)")"
-# Adjust LOCALDEV_HELPER if aidevops is installed to a custom path
 LOCALDEV_HELPER="${AIDEVOPS_HOME:-$HOME/.aidevops}/agents/scripts/localdev-helper.sh"
 "$LOCALDEV_HELPER" branch "$project" "$branch" 2>/dev/null || true
 ```
@@ -232,68 +119,39 @@ LOCALDEV_HELPER="${AIDEVOPS_HOME:-$HOME/.aidevops}/agents/scripts/localdev-helpe
 #!/bin/bash
 branch="$(git branch --show-current)"
 project="$(basename "$(git worktree list --porcelain | head -1 | cut -d' ' -f2-)")"
-# Adjust LOCALDEV_HELPER if aidevops is installed to a custom path
 LOCALDEV_HELPER="${AIDEVOPS_HOME:-$HOME/.aidevops}/agents/scripts/localdev-helper.sh"
 "$LOCALDEV_HELPER" branch rm "$project" "$branch" 2>/dev/null || true
 ```
 
-### Session Naming
-
-After creating a worktree, sync the session name:
+## Configuration
 
 ```bash
-# Claude Code MCP tool
-session-rename_sync_branch
+wt config show                                    # View current config
+wt config set path_template "../{repo}.{branch}"  # Path template (default: ../repo.branch)
+wt config set merge_strategy squash               # Default merge strategy
 ```
 
-## Comparison: Worktrunk vs worktree-helper.sh
+## LLM Commit Messages
 
-| Feature | Worktrunk (`wt`) | worktree-helper.sh |
-|---------|------------------|-------------------|
-| Shell integration | Built-in (cd support) | Prints path only |
-| Hooks | Yes (post-create, etc.) | No |
-| CI status | Yes (in `wt list`) | No |
-| PR links | Yes (in `wt list`) | No |
-| Merge workflow | `wt merge` (squash/rebase) | Manual |
-| LLM commits | Yes (via llm) | No |
-| Dependencies | Rust binary | Bash only |
-| Installation | brew/cargo/winget | Already deployed |
+Integrates with [llm](https://llm.datasette.io/) for AI-generated commit messages:
 
-**Recommendation**: Use Worktrunk when available for better UX. Use worktree-helper.sh as fallback or in minimal environments.
+```bash
+pip install llm
+wt config set llm_commits true
+git add . && wt commit  # Generates message via LLM from diff
+```
 
 ## Troubleshooting
 
-### "wt: command not found"
-
-Shell integration not installed:
-
-```bash
-wt config shell install
-source ~/.zshrc  # or ~/.bashrc
-```
-
-### "Branch already checked out"
-
-Each branch can only be in one worktree:
-
-```bash
-wt list  # Find where branch is checked out
-wt remove feature/auth  # Remove if not needed
-```
-
-### Windows: "wt" opens Windows Terminal
-
-On Windows, `wt` is aliased to Windows Terminal. Use `git-wt` instead:
-
-```bash
-git-wt switch feature/auth
-```
-
-Or disable the Windows Terminal alias in Settings.
+| Problem | Fix |
+|---------|-----|
+| `wt: command not found` | `wt config shell install && source ~/.zshrc` |
+| "Branch already checked out" | `wt list` to find it, `wt remove` if not needed |
+| Windows: `wt` opens Terminal | Use `git-wt` instead, or disable the Windows Terminal alias |
 
 ## Related
 
-- `workflows/worktree.md` - Full worktree workflow documentation
-- `workflows/git-workflow.md` - Branch naming and conventions
-- `scripts/worktree-helper.sh` - Fallback bash implementation
-- https://worktrunk.dev - Official documentation
+- `workflows/worktree.md` — Full worktree workflow, comparison table, integration patterns
+- `workflows/git-workflow.md` — Branch naming and conventions
+- `scripts/worktree-helper.sh` — Fallback bash implementation
+- https://worktrunk.dev — Official documentation
