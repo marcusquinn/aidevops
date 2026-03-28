@@ -47,6 +47,10 @@ npx expo start
 | `expo-location` | GPS and geolocation |
 | `expo-camera` | Camera access |
 | `expo-local-authentication` | Biometric auth (Face ID, fingerprint) |
+| `expo-file-system` | Local file management |
+| `expo-sharing` | Share content to other apps |
+| `expo-clipboard` | Copy/paste |
+| `expo-linking` | Deep links, URL schemes |
 | `react-native-reanimated` | Performant animations |
 | `react-native-gesture-handler` | Touch gestures |
 | `@react-native-async-storage/async-storage` | Local data persistence |
@@ -67,18 +71,18 @@ app/
 │   ├── login.tsx        # Login screen
 │   └── register.tsx     # Registration screen
 ├── (onboarding)/        # First-run experience
-│   ├── welcome.tsx      # Welcome screen
-│   ├── setup.tsx        # Setup preferences
-│   └── ready.tsx        # Ready to use
+│   ├── welcome.tsx
+│   ├── setup.tsx
+│   └── ready.tsx
 ├── _layout.tsx          # Root layout
 ├── +not-found.tsx       # 404 screen
-└── modal.tsx            # Modal screen
+└── modal.tsx
 components/
 ├── ui/                  # Reusable UI components
 ├── forms/               # Form components
 └── shared/              # Shared utilities
 constants/
-├── Colors.ts            # Colour palette
+├── Colors.ts            # Colour palette (light/dark tokens)
 ├── Layout.ts            # Spacing, sizing
 └── Typography.ts        # Font families, sizes
 hooks/                   # Custom React hooks
@@ -89,147 +93,57 @@ assets/                  # Images, fonts, icons
 
 ## Development Standards
 
-### TypeScript
+**TypeScript**: Always use TypeScript. Define interfaces for all props, state, and API responses.
 
-Always use TypeScript. Define interfaces for all props, state, and API responses.
+**Styling**: Prefer `StyleSheet.create()` for performance. Use a design token system in `constants/Colors.ts` with `light` and `dark` variants covering `primary`, `background`, `surface`, `text`, `textSecondary`, `border`, `success`, `warning`, `error`.
 
-### Styling
-
-Prefer `StyleSheet.create()` for performance. Use a design token system:
-
-```typescript
-// constants/Colors.ts
-export const Colors = {
-  light: {
-    primary: '#007AFF',
-    background: '#FFFFFF',
-    surface: '#F2F2F7',
-    text: '#000000',
-    textSecondary: '#8E8E93',
-    border: '#C6C6C8',
-    success: '#34C759',
-    warning: '#FF9500',
-    error: '#FF3B30',
-  },
-  dark: {
-    primary: '#0A84FF',
-    background: '#000000',
-    surface: '#1C1C1E',
-    text: '#FFFFFF',
-    textSecondary: '#8E8E93',
-    border: '#38383A',
-    success: '#30D158',
-    warning: '#FF9F0A',
-    error: '#FF453A',
-  },
-};
-```
-
-### Animations
-
-Use `react-native-reanimated` for performant animations. Avoid `Animated` API for complex animations.
-
-Key patterns:
-
-- `useSharedValue` + `useAnimatedStyle` for UI animations
-- `withSpring` for natural-feeling transitions
-- `withTiming` for precise duration control
-- `Layout` animations for list item enter/exit
-- `expo-haptics` paired with animations for tactile feedback
-
-### Navigation
-
-Use Expo Router file-based routing:
+**Navigation** (Expo Router file-based routing):
 
 - `(group)` folders for layout groups (tabs, auth, onboarding)
 - `[param]` for dynamic routes
 - `_layout.tsx` for shared layout per group
 - `+not-found.tsx` for 404 handling
 
-### State Management
+**Animations**: Use `react-native-reanimated` — not the `Animated` API — for complex animations. Key APIs: `useSharedValue` + `useAnimatedStyle`, `withSpring`, `withTiming`, `Layout` animations. Pair with `expo-haptics` for tactile feedback.
 
-For most apps, use React Context + `useReducer` or Zustand:
+**State Management**:
 
-- **Simple state**: React Context + `useReducer`
-- **Complex state**: Zustand (lightweight, no boilerplate)
-- **Server state**: TanStack Query (React Query) for API data
-- **Persistent state**: `@react-native-async-storage/async-storage`
-- **Secure state**: `expo-secure-store` for tokens and credentials
+- **Simple**: React Context + `useReducer`
+- **Complex**: Zustand (lightweight, no boilerplate)
+- **Server**: TanStack Query (React Query) for API data
+- **Persistent**: `@react-native-async-storage/async-storage`
+- **Secure**: `expo-secure-store` for tokens and credentials
 
-### Native Features
-
-Expo provides managed access to device capabilities:
-
-| Feature | Package | Use Case |
-|---------|---------|----------|
-| Haptics | `expo-haptics` | Button feedback, success/error signals |
-| Sensors | `expo-sensors` | Motion tracking, step counting |
-| Location | `expo-location` | GPS, geofencing |
-| Camera | `expo-camera` | Photo/video capture |
-| Biometrics | `expo-local-authentication` | Face ID, fingerprint |
-| Notifications | `expo-notifications` | Push and local notifications |
-| Secure storage | `expo-secure-store` | Tokens, credentials |
-| File system | `expo-file-system` | Local file management |
-| Sharing | `expo-sharing` | Share content to other apps |
-| Clipboard | `expo-clipboard` | Copy/paste |
-| Linking | `expo-linking` | Deep links, URL schemes |
-
-### Performance
+**Performance**:
 
 - Use `expo-image` instead of `Image` for optimised loading
-- Implement `FlatList` with `getItemLayout` for long lists
-- Use `React.memo` for expensive list items
-- Defer non-critical renders with `useDeferredValue` for heavy components
+- `FlatList` with `getItemLayout` for long lists
+- `React.memo` for expensive list items
+- `useDeferredValue` for heavy non-critical renders
 - Profile with React DevTools and Flipper
 
 ## EAS Build and Submit
 
-### Build for Testing
-
 ```bash
-# Install EAS CLI
 npm install -g eas-cli
-
-# Configure
 eas build:configure
 
-# Build for iOS simulator
-eas build --platform ios --profile development
+eas build --platform ios --profile development    # iOS simulator
+eas build --platform android --profile development # Android emulator
+eas build --platform ios --profile preview         # TestFlight
+eas build --platform ios --profile production      # App Store
 
-# Build for Android emulator
-eas build --platform android --profile development
-
-# Build for TestFlight
-eas build --platform ios --profile preview
-
-# Build for production
-eas build --platform ios --profile production
-```
-
-### Submit to Stores
-
-```bash
-# Submit to App Store
-eas submit --platform ios
-
-# Submit to Google Play
-eas submit --platform android
+eas submit --platform ios      # Submit to App Store
+eas submit --platform android  # Submit to Google Play
 ```
 
 ## Local Development
 
 ```bash
-# Start dev server
-npx expo start
-
-# Run on iOS simulator
-npx expo run:ios
-
-# Run on Android emulator
-npx expo run:android
-
-# Prebuild native projects (for custom native code)
-npx expo prebuild
+npx expo start           # Start dev server
+npx expo run:ios         # Run on iOS simulator
+npx expo run:android     # Run on Android emulator
+npx expo prebuild        # Generate native projects (for custom native code)
 ```
 
 ## Testing Integration
