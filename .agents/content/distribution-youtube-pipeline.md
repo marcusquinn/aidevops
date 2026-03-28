@@ -15,17 +15,14 @@ tools:
 
 # YouTube Automated Pipeline
 
-Cron-driven autonomous pipeline for YouTube competitor research and content generation. Each phase runs as an isolated worker with fresh context, storing results in memory. Solves the "context filling up" problem by decomposing research into independent tasks.
+Cron-driven autonomous pipeline for YouTube competitor research and content generation. Each phase runs as an isolated worker with fresh context, storing results in memory — solves context overflow by decomposing research into independent tasks.
 
 ## When to Use
 
-Read this subagent when the user wants to:
-
-- Set up automated daily/weekly competitor monitoring
-- Run the full research-to-script pipeline autonomously
-- Configure cron jobs for YouTube research
-- Understand how the pipeline phases connect
-- Debug or monitor pipeline execution
+- Automated daily/weekly competitor monitoring
+- Full research-to-script pipeline (autonomous or manual)
+- Cron job configuration for YouTube research
+- Pipeline debugging and monitoring
 
 ## Architecture
 
@@ -59,15 +56,7 @@ Supervisor Pulse
         Output: summary email/mailbox message
 ```
 
-### Why This Solves Context Overflow
-
-| Problem | Solution |
-|---------|----------|
-| Browser screenshots fill context | API-first: YouTube Data API + yt-dlp, no browser needed |
-| Single session accumulates too much data | Each worker has fresh context, does one job, exits |
-| Research state lost between sessions | Memory persists in SQLite across all sessions |
-| Manual intervention required | Cron triggers supervisor, supervisor dispatches workers |
-| Can't run overnight | Workers are headless Claude sessions, no UI needed |
+**Key design decisions:** API-first (YouTube Data API + yt-dlp, no browser/screenshots), each worker gets fresh context and does one job, memory persists in SQLite across sessions, cron triggers supervisor which dispatches headless workers.
 
 ## Setup
 
@@ -95,7 +84,7 @@ memory-helper.sh store --type WORKING_SOLUTION --namespace youtube \
 
 ### Step 2: Create Pipeline Tasks
 
-Add tasks to TODO.md for the supervisor:
+Add to TODO.md for the supervisor:
 
 ```markdown
 - [ ] yt-intel YouTube channel intel scan @runner #youtube ~30m
@@ -107,7 +96,6 @@ Add tasks to TODO.md for the supervisor:
 ### Step 3: Create Supervisor Batch
 
 ```bash
-# Add tasks to supervisor
 supervisor-helper.sh add yt-intel --repo "$(pwd)" \
   --description "Scan competitor channels for new videos and outliers"
 
@@ -120,7 +108,7 @@ supervisor-helper.sh add yt-scripts --repo "$(pwd)" \
 supervisor-helper.sh add yt-optimize --repo "$(pwd)" \
   --description "Generate titles, tags, descriptions for draft scripts"
 
-# Create batch with sequential execution (dependencies)
+# Sequential execution (respects dependencies)
 supervisor-helper.sh batch "youtube-daily" \
   --concurrency 1 \
   --tasks "yt-intel,yt-research,yt-scripts,yt-optimize"
@@ -132,17 +120,15 @@ supervisor-helper.sh batch "youtube-daily" \
 # Install supervisor cron pulse (checks every 2 minutes)
 supervisor-helper.sh cron install
 
-# Or add a specific YouTube pipeline cron job
+# Or add a specific YouTube pipeline cron (daily at 6 AM)
 cron-helper.sh add "youtube-pipeline" \
   --schedule "0 6 * * *" \
   --command "supervisor-helper.sh pulse --batch youtube-daily"
 ```
 
-This runs the pipeline every day at 6 AM.
-
 ## Worker Instructions
 
-Each worker receives specific instructions via the supervisor. Here are the prompts:
+Each worker receives these prompts via the supervisor:
 
 ### Worker 1: Channel Intel
 
@@ -216,35 +202,21 @@ You are a YouTube metadata optimizer. Your task is to generate titles, tags, and
 
 ## Monitoring
 
-### Check Pipeline Status
-
 ```bash
-# Supervisor dashboard
+# Pipeline status
 supervisor-helper.sh dashboard --batch youtube-daily
-
-# Check worker status
 supervisor-helper.sh status youtube-daily
 
-# Check mailbox for reports
+# Reports and quota
 mail-helper.sh check
-
-# Check quota usage
 youtube-helper.sh quota
-```
 
-### View Results
-
-```bash
-# Recall latest intel
+# Recent results
 memory-helper.sh recall --namespace youtube "Intel scan" --recent
-
-# Recall topic opportunities
 memory-helper.sh recall --namespace youtube-topics "Opportunity" --recent
 
-# List generated scripts
+# Generated scripts and learned patterns
 ls ~/.aidevops/.agent-workspace/work/youtube/scripts/
-
-# Check patterns learned
 memory-helper.sh recall --namespace youtube-patterns --recent
 ```
 
@@ -257,7 +229,7 @@ memory-helper.sh recall --namespace youtube-patterns --recent
 | **Trending check** | 2x/week | ~200 units | Fast-moving niches |
 | **Deep analysis** | Monthly | ~1000 units | Comprehensive competitor review |
 
-With 10,000 daily quota units, you can run the full pipeline daily and still have 9,700 units for ad-hoc research.
+With 10,000 daily quota units, the full pipeline can run daily with ~9,700 units remaining for ad-hoc research.
 
 ## Troubleshooting
 
@@ -291,7 +263,7 @@ With 10,000 daily quota units, you can run the full pipeline daily and still hav
 
 ## Related
 
-- `youtube.md` — Main YouTube orchestrator (this directory)
+- `youtube.md` — Main YouTube orchestrator
 - `channel-intel.md` — Worker 1 detailed instructions
 - `topic-research.md` — Worker 2 detailed instructions
 - `script-writer.md` — Worker 3 detailed instructions
