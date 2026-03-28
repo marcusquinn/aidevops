@@ -5,7 +5,7 @@ mode: subagent
 
 # Add Skill - External Skill Import System
 
-Import skills from external sources (GitHub repos, ClawdHub registry) and convert them to aidevops format while preserving knowledge and handling conflicts intelligently.
+Ingest skills from external sources (GitHub repos, ClawdHub registry) and transpose them to aidevops format while preserving all knowledge and handling conflicts intelligently.
 
 ## Quick Reference
 
@@ -36,7 +36,7 @@ External Skill (GitHub or ClawdHub)
         ↓
     Present Merge Options (if conflicts)
         ↓
-    Convert to aidevops Format
+    Transpose to aidevops Format (see below)
         ↓
     Register in skill-sources.json
         ↓
@@ -46,6 +46,75 @@ External Skill (GitHub or ClawdHub)
     - ~/.claude/skills/
     - ~/.config/amp/tools/
 ```
+
+## Transposition Rules
+
+Ingested skills retain the `-skill` suffix as a provenance marker — this enables `skill-update-helper.sh` to identify and check all ingested skills for upstream changes. The internal structure is flattened to match our `{name}.md` + `{name}/` convention with flat, descriptively-named files.
+
+### Entry Point Rename
+
+Upstream `SKILL.md` → `{name}-skill.md` (named entry point at the target category level).
+
+### Flatten Nested Directories
+
+Upstream nested structure is flattened using prefix-based naming:
+
+| Upstream path | Transposed path |
+|---------------|-----------------|
+| `SKILL.md` | `{name}-skill.md` |
+| `references/SCHEMA.md` | `{name}-skill/schema.md` |
+| `references/QUERIES.md` | `{name}-skill/queries.md` |
+| `references/CHEATSHEET/01-schema.md` | `{name}-skill/cheatsheet-schema.md` |
+| `references/CHEATSHEET/02-relations.md` | `{name}-skill/cheatsheet-relations.md` |
+| `rules/authentication.md` | `{name}-skill/rules-authentication.md` |
+| `rules/avatars.md` | `{name}-skill/rules-avatars.md` |
+
+### Example: Upstream vs Transposed
+
+```text
+# Upstream (postgres-drizzle skill)
+SKILL.md
+references/
+├── SCHEMA.md
+├── QUERIES.md
+├── MIGRATIONS.md
+├── PERFORMANCE.md
+├── RELATIONS.md
+├── POSTGRES.md
+├── CHEATSHEET.md
+└── CHEATSHEET/
+    ├── 01-schema.md
+    ├── 02-relations.md
+    ├── 03-queries.md
+    ├── 04-mutations.md
+    ├── 05-config.md
+    └── 06-reference.md
+
+# Transposed (aidevops format)
+postgres-drizzle-skill.md                    # Entry point (was SKILL.md)
+postgres-drizzle-skill/                      # Flat reference files
+├── schema.md
+├── queries.md
+├── migrations.md
+├── performance.md
+├── relations.md
+├── postgres.md
+├── cheatsheet.md
+├── cheatsheet-schema.md
+├── cheatsheet-relations.md
+├── cheatsheet-queries.md
+├── cheatsheet-mutations.md
+├── cheatsheet-config.md
+└── cheatsheet-reference.md
+```
+
+### Benefits
+
+- `ls {name}-skill/` shows all reference material at a glance
+- `ls {name}-skill/cheatsheet*` groups all cheatsheet files
+- Entry point is discoverable by filename alongside sibling agents
+- `-skill` suffix enables automated upstream update detection
+- Max depth is 2 levels from parent directory
 
 ## Supported Input Formats
 
@@ -75,19 +144,19 @@ Instructions for the AI agent...
 command examples
 ```
 
-**Conversion:** Preserve frontmatter, add `mode: subagent` and `imported_from: external`.
+**Transposition:** Preserve frontmatter, add `mode: subagent` and `imported_from: external`. Rename `SKILL.md` → `{name}-skill.md`. Flatten nested directories per transposition rules above.
 
 ### AGENTS.md (aidevops/Windsurf)
 
 Already in aidevops format.
 
-**Conversion:** Direct copy, ensure `mode: subagent` is set.
+**Transposition:** Direct copy, ensure `mode: subagent` is set.
 
 ### .cursorrules (Cursor)
 
 Plain markdown without frontmatter.
 
-**Conversion:** Wrap in markdown with generated frontmatter:
+**Transposition:** Wrap in markdown with generated frontmatter:
 
 ```markdown
 ---
@@ -104,7 +173,7 @@ imported_from: cursorrules
 
 Any markdown file (README.md, etc.).
 
-**Conversion:** Copy as-is, add frontmatter if missing.
+**Transposition:** Copy as-is, add frontmatter if missing. Rename to `{name}-skill.md`.
 
 ## Conflict Resolution
 

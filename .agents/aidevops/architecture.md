@@ -131,3 +131,35 @@ Full extension guide: `.agents/aidevops/extension.md`
 ### Security Standards
 
 All services must implement: API token validation, rate limiting awareness, secure credential storage, input validation, error message sanitization, audit logging, confirmation prompts for destructive operations.
+
+## Knowledge Organization Model
+
+The `.agents/` directory organizes knowledge along two axes: **strategy** (what to do) and **execution** (how to do it). Full conventions in `tools/build-agent/build-agent.md` "Folder Organization".
+
+### Strategy: Main Agent Directories
+
+Main agents at root (e.g., `marketing.md`, `seo.md`) own domain strategy — methodology, audience knowledge, campaign planning. Their matching directories (`marketing/`, `seo/`) contain extended strategy knowledge loaded on demand.
+
+### Execution: Cross-Domain Directories
+
+| Directory | Contains | Used by |
+|-----------|----------|---------|
+| `tools/` | Capabilities — browser, git, database, code review, deployment | Any agent |
+| `services/` | Integrations — hosting, payments, communications, email providers | Any agent |
+| `workflows/` | Processes — git flow, release, PR review | Any agent |
+| `reference/` | Operating rules — planning, sessions, security | Any agent |
+
+### Scripts: Flat and Cross-Domain
+
+All scripts live flat in `scripts/` — intentionally not grouped into domain folders. Scripts are shared utilities callable by any agent. The prefix naming convention (`email-*`, `seo-*`, `browser-*`) provides grouping via filesystem sort and glob patterns without imposing ownership.
+
+- `*-helper.sh` suffix = agent-callable utilities (distinguishes from framework infrastructure scripts)
+- Discovery: `ls scripts/email-*`, `rg --files -g "scripts/seo-*"`
+
+### Flat Files Over Nested Folders
+
+Inside any directory, prefer flat files with descriptive prefix-based names over nested subdirectories. File names provide sorting, grouping, and keyword discoverability. `ls {dir}/` should show everything at a glance. Max depth from `.agents/` should be 2 levels for agent knowledge. See `tools/build-agent/build-agent.md` for examples.
+
+### Ingested Skills
+
+External skills retain the `-skill` suffix as a provenance marker enabling automated upstream update checks. On ingestion, upstream structure (nested `references/`, `rules/`, `SKILL.md` entry points) is transposed to match our flat `{name}-skill.md` + `{name}-skill/` convention. See `tools/build-agent/add-skill.md`.

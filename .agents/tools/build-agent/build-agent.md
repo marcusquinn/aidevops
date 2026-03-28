@@ -68,15 +68,129 @@ tools:
 ```text
 .agents/
 ├── AGENTS.md           # Entry point (ALLCAPS)
-├── {domain}.md         # Main agents at root (lowercase)
-├── {domain}/           # Subagents for that domain
-├── tools/              # Cross-domain utilities
-├── services/           # External integrations
-├── workflows/          # Process guides
-└── scripts/commands/   # Slash command definitions
+├── {agent}.md          # Main agents at root (lowercase, strategy/what)
+├── {agent}/            # Extended knowledge for that agent (flat files)
+├── tools/              # Cross-domain capabilities (how to do it)
+├── services/           # External integrations (how to connect)
+├── workflows/          # Process guides (how to process)
+├── reference/          # Operating rules (how to operate)
+├── scripts/            # Shared helper scripts (flat, cross-domain)
+├── scripts/commands/   # Slash command definitions
+├── configs/            # Configuration templates and schemas
+├── bundles/            # Project-type presets
+├── templates/          # Reusable templates
+├── rules/              # Enforced constraints
+├── tests/              # Agent test suites
+├── custom/             # User's private agents (survives updates)
+└── draft/              # R&D experimental (survives updates)
 ```
 
-- Naming: lowercase with hyphens; ALLCAPS only for entry points. Tooling uses `find -mindepth 2` for subagent discovery.
+### Strategy vs Execution Split
+
+Main agent directories contain **strategy** knowledge — what needs doing and why. Cross-domain directories contain **execution** knowledge — how to do it with specific tools and services.
+
+| Location | Contains | Nature |
+|----------|----------|--------|
+| `{agent}.md` + `{agent}/` | Domain strategy, methodology, audience knowledge | **What** to do |
+| `tools/` | Browser, git, database, code review, deployment tools | **How** to do it |
+| `services/` | Hosting, payments, communications, email providers | **How** to connect |
+| `workflows/` | Git flow, release, PR review, pre-edit checks | **How** to process |
+
+**Placement test:** "Would another agent use this independently without going through the owning agent?" Yes → `tools/` or `services/`. No → `{agent}/`.
+
+### The `{name}.md` + `{name}/` Convention
+
+Every agent or knowledge area follows the same pattern:
+
+- **Single-file agent**: `{name}.md` at the appropriate level. No directory needed.
+- **Multi-file agent**: `{name}.md` (entry point, always loaded) + `{name}/` (extended knowledge, loaded on demand).
+
+The `.md` file is the entry point — it contains the agent persona, capabilities overview, and pointers to extended knowledge. The directory contains deeper reference material that's only loaded when a specific sub-topic is needed.
+
+```text
+# Single-file agent (fits in one file)
+sales.md
+
+# Multi-file agent (needs extended knowledge)
+marketing.md                              # Entry point — strategy, capabilities
+marketing/                                # Extended knowledge — loaded on demand
+├── meta-ads.md                           # Meta Ads strategy and methodology
+├── meta-ads-audiences.md                 # Audience targeting reference
+├── meta-ads-campaigns.md                 # Campaign structure reference
+├── direct-response-copy.md               # DR copy methodology
+├── direct-response-copy-swipe-emails.md  # Email swipe file
+├── cro.md                                # Conversion rate optimization
+└── ad-creative.md                        # Ad creative methodology
+```
+
+### Flat Files with Descriptive Names (Prefer Over Nesting)
+
+Inside agent directories, prefer flat files with prefix-based naming over nested subdirectories. File names provide sorting, grouping, hierarchy, and keyword discoverability.
+
+```text
+# Good: flat, discoverable, sortable
+marketing/
+├── meta-ads.md
+├── meta-ads-audiences.md
+├── meta-ads-campaigns.md
+├── meta-ads-creative.md
+├── meta-ads-optimization.md
+├── direct-response-copy.md
+├── direct-response-copy-swipe-emails.md
+└── direct-response-copy-templates.md
+
+# Avoid: nested folders that hide content
+marketing/
+├── meta-ads/
+│   ├── audiences/
+│   │   └── targeting.md
+│   └── campaigns/
+│       └── structure.md
+└── direct-response-copy/
+    └── swipe-file/
+        └── emails/
+            └── welcome.md
+```
+
+**Benefits of flat naming:**
+- `ls marketing/` shows everything at a glance
+- `ls marketing/meta-ads*` groups all Meta Ads knowledge
+- `ls marketing/*swipe*` finds all swipe files across sub-topics
+- `rg --files -g "marketing/meta-ads*"` loads all Meta Ads context
+- Max depth is 2 levels from `.agents/` — never 5+
+
+**When to use a subdirectory:** Only when a single prefix group exceeds ~20 files of reference material. Even then, one level max.
+
+### Scripts: Flat by Design
+
+Scripts live flat in `scripts/` because they're cross-domain — any agent can call any script. The prefix naming convention (`email-*`, `seo-*`, `browser-*`) provides grouping via filesystem sort and glob patterns.
+
+- `*-helper.sh` = agent-callable utilities (agents run these)
+- Other `.sh` = framework infrastructure (setup, deployment, CI)
+- `scripts/commands/` = slash command documentation
+
+Discovery: `ls scripts/email-*`, `rg --files -g "scripts/seo-*"`.
+
+### Ingested Skills
+
+Skills imported from external sources (GitHub, ClawdHub) retain the `-skill` suffix as a provenance marker. This enables `skill-update-helper.sh` to identify and check all ingested skills for upstream changes.
+
+**Transposition on ingestion:** External skill structure is flattened to match our convention:
+
+| Upstream format | aidevops format |
+|-----------------|-----------------|
+| `SKILL.md` (entry point) | `{name}-skill.md` (named entry point) |
+| `{name}-skill/references/*.md` | `{name}-skill/{topic}.md` (flat) |
+| `{name}-skill/rules/*.md` | `{name}-skill/rules-{topic}.md` (flat) |
+| Nested `references/CHEATSHEET/*.md` | `{name}-skill/cheatsheet-{topic}.md` (flat) |
+
+The `-skill` suffix distinguishes ingested knowledge from native agents. See `add-skill.md` for full ingestion workflow.
+
+### Naming Conventions
+
+- **Files**: lowercase with hyphens (`kebab-case`). ALLCAPS only for entry points (`AGENTS.md`).
+- **Scripts**: `[domain]-[function]-helper.sh` for agent-callable, plain `[name].sh` for framework infra.
+- **Python scripts**: `snake_case` (Python convention) — exception to kebab-case rule.
 - **File structure** — main agents: `# Name` → `<!-- AI-CONTEXT-START -->` Quick Reference `<!-- AI-CONTEXT-END -->` → Detailed docs. Subagents: YAML frontmatter + content.
 - **Slash commands**: NEVER define inline in main agents. Generic → `scripts/commands/{command}.md`. Domain-specific → `{domain}/{subagent}.md`.
 
