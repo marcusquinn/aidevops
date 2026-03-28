@@ -11,24 +11,19 @@ model: sonnet
 
 ## Quick Reference
 
-- **Purpose**: Distribute content across social platforms with platform-native tone and format
-- **Platforms**: X (Twitter), LinkedIn, Reddit
-- **Key Principle**: Same story, different delivery - adapt voice and format per platform
-- **Success Metrics**: Engagement rate, shares, profile visits, link clicks
+- **Purpose**: Distribute content across X, LinkedIn, Reddit with platform-native tone and format
+- **Key Principle**: Same story, different delivery — adapt voice and format per platform
+- **Metrics**: Engagement rate, shares, profile visits, link clicks
 
 **Critical Rules**:
 
-- **Platform-native tone** - Each platform has distinct expectations; cross-posting identical content underperforms
-- **No promotional language on Reddit** - Community-first, value-first, or get downvoted
-- **Hook-first on X** - Front-load value in first line (visible before truncation)
-- **Professional framing on LinkedIn** - Thought leadership, not sales pitch
-- **One idea per post** - Clarity beats comprehensiveness on social
+- **Platform-native tone** — cross-posting identical content underperforms
+- **No promotional language on Reddit** — community-first or get downvoted
+- **Hook-first on X** — front-load value in first line (visible before truncation)
+- **Professional framing on LinkedIn** — thought leadership, not sales pitch
+- **One idea per post** — clarity beats comprehensiveness
 
-**Platform Tool References**:
-
-- `content/social-bird.md` - X (Twitter) automation and scheduling
-- `content/social-linkedin.md` - LinkedIn posting and analytics
-- `content/social-reddit.md` - Reddit engagement and community management
+**Platform Tools**: `tools/social-media/bird.md` (X), `tools/social-media/linkedin.md`, `tools/social-media/reddit.md`
 
 <!-- AI-CONTEXT-END -->
 
@@ -36,35 +31,20 @@ model: sonnet
 
 ### X (Twitter)
 
-**Voice**: Concise, opinionated, personality-forward. Sharpest and most direct of all platforms.
-
-**Formats**:
+**Voice**: Concise, opinionated, personality-forward. Sharpest of all platforms.
 
 | Format | Length | Best For |
 |--------|--------|----------|
-| **Single post** | 1-2 sentences (under 280 chars) | Hot takes, links, announcements |
+| **Single post** | Under 280 chars | Hot takes, links, announcements |
 | **Thread** | 3-10 posts | Breakdowns, stories, tutorials |
 | **Quote post** | 1 sentence + context | Commentary, amplification |
 | **Poll** | Question + 2-4 options | Engagement, audience research |
 
-**Thread Structure**:
+**Thread structure**: Hook (bold claim/stat/question) → Context (why it matters) → Body (3-7 posts, one insight each) → Summary (one sentence) → CTA (follow/repost/bookmark/link). Number posts (1/7).
 
-1. **Hook post** - Bold claim, surprising stat, or question (this determines reach)
-2. **Context** - Why this matters, who it's for
-3. **Body** - 3-7 posts with one insight each
-4. **Summary** - Key takeaway in one sentence
-5. **CTA** - Follow, repost, bookmark, or link
+**Rules**: No preamble. Line breaks for scannability. 0-2 hashtags max (X penalizes spam). Best times: weekdays 9-11am, 1-3pm local.
 
-**Best Practices**:
-
-- Front-load value - no preamble, no "I've been thinking about..."
-- Number thread posts (1/7) for readability
-- One idea per post
-- Use line breaks for scannability
-- Optimal posting: weekdays, 9-11am and 1-3pm local time
-- Hashtags: 0-2 maximum (X penalizes hashtag spam)
-
-**Content Adaptation from Pipeline**:
+**Example adaptation**:
 
 ```text
 Story: "Why 95% of AI influencers fail"
@@ -81,8 +61,6 @@ X Thread (7 posts):
 
 **Voice**: Professional, authoritative, thought-leadership. More formal than X, less formal than whitepaper.
 
-**Formats**:
-
 | Format | Length | Best For |
 |--------|--------|----------|
 | **Text post** | 150-300 words | Opinions, lessons, quick insights |
@@ -91,25 +69,11 @@ X Thread (7 posts):
 | **Document** | 5-15 pages | Reports, playbooks |
 | **Poll** | Question + 4 options | Engagement, market research |
 
-**Post Structure**:
+**Post structure**: Hook line (visible before "see more") → Line break → Body (one thought per line) → Key insight → CTA (question or link).
 
-1. **Hook line** - Question, bold claim, or surprising stat (visible before "see more")
-2. **Line break** - Forces "see more" click
-3. **Body** - One thought per line, liberal line breaks
-4. **Insight** - Key takeaway or lesson
-5. **CTA** - Question to drive comments, or link
+**Rules**: Liberal line breaks. 3-5 hashtags at end. Personal stories outperform corporate announcements. Avoid: corporate jargon, "excited to announce", empty self-promotion. Best times: Tue-Thu 8-10am local. Reply to every comment (algorithm boost).
 
-**Best Practices**:
-
-- Open with a hook that stops the scroll
-- Use line breaks liberally - one thought per line
-- End with a question or clear CTA to drive engagement
-- Hashtags: 3-5 relevant ones, placed at the end
-- Avoid: corporate jargon, "excited to announce", empty self-promotion
-- Optimal posting: Tuesday-Thursday, 8-10am local time
-- Personal stories outperform corporate announcements
-
-**Content Adaptation from Pipeline**:
+**Example adaptation**:
 
 ```text
 Story: "Why 95% of AI influencers fail"
@@ -149,8 +113,6 @@ What's your biggest challenge with AI content? Drop it below.
 
 **Voice**: Community-native, authentic, anti-promotional. Reddit users detect and punish marketing instantly.
 
-**Formats**:
-
 | Format | Best For |
 |--------|----------|
 | **Text post** | Discussions, questions, sharing experiences |
@@ -158,25 +120,11 @@ What's your biggest challenge with AI content? Drop it below.
 | **Comment** | Adding value to existing discussions |
 | **AMA** | Building authority in a niche |
 
-**Subreddit Strategy**:
+**Subreddit strategy**: Identify target subreddits → Lurk to learn norms → Add value (answer questions, share experiences) → Build karma → Share content only when genuinely relevant.
 
-1. **Identify target subreddits** - Where does your audience discuss your topic?
-2. **Lurk first** - Understand community norms, rules, and tone
-3. **Add value** - Answer questions, share experiences, provide resources
-4. **Build karma** - Genuine participation before any self-promotion
-5. **Share content** - Only when genuinely relevant and valuable
+**Rules**: Never lead with self-promotion. Write like a community member. Use subreddit language/conventions. Follow self-promotion rules (typically 10:1 ratio). Respond to comments. Best times: weekday mornings US time.
 
-**Best Practices**:
-
-- **Never** lead with self-promotion - provide value first
-- Write like a community member, not a marketer
-- Share personal experience and lessons learned
-- Use the subreddit's language and conventions
-- Respond to comments on your posts
-- Follow each subreddit's self-promotion rules (typically 10:1 ratio)
-- Optimal posting: weekday mornings (US time zones)
-
-**Content Adaptation from Pipeline**:
+**Example adaptation**:
 
 ```text
 Story: "Why 95% of AI influencers fail"
@@ -217,44 +165,27 @@ Happy to share more details on the research methodology if anyone's interested.
 
 | Platform | Frequency | Best Times | Content Mix |
 |----------|-----------|------------|-------------|
-| **X** | 3-5 posts/day | 9-11am, 1-3pm | 50% value, 30% engagement, 20% promotion |
-| **LinkedIn** | 1-2 posts/day | Tue-Thu, 8-10am | 60% thought leadership, 30% stories, 10% promotion |
-| **Reddit** | 2-3 posts/week | Weekday mornings | 90% value/discussion, 10% content sharing |
+| **X** | 3-5/day | 9-11am, 1-3pm | 50% value, 30% engagement, 20% promotion |
+| **LinkedIn** | 1-2/day | Tue-Thu 8-10am | 60% thought leadership, 30% stories, 10% promotion |
+| **Reddit** | 2-3/week | Weekday mornings | 90% value/discussion, 10% content sharing |
 
-### Batch Production Workflow
+### Batch Workflow
 
-1. **Start with story** from `content/story.md`
-2. **Generate platform variants** using adaptation matrix above
-3. **Review tone** against platform profiles
-4. **Schedule** using platform tools or Buffer/Hootsuite
-5. **Monitor** engagement and iterate
+1. Start with story from `content/story.md`
+2. Generate platform variants using adaptation matrix
+3. Review tone against platform profiles
+4. Schedule using platform tools or Buffer/Hootsuite
+5. Monitor engagement and iterate
 
-## Engagement Strategy
+## Engagement
 
-### X Engagement
+| Platform | Daily Actions |
+|----------|--------------|
+| **X** | Reply to comments within 1hr. Quote-repost industry posts with your take. Engage 10-20 niche accounts. Pin best thread. |
+| **LinkedIn** | Reply to every comment (algorithm boost). Comment on 5-10 network posts. Share others' content with added perspective. |
+| **Reddit** | Answer niche subreddit questions. Upvote quality posts. Build genuine relationships. Never argue — provide evidence and move on. |
 
-- Reply to comments within 1 hour
-- Quote-repost relevant industry posts with your take
-- Engage with 10-20 accounts in your niche daily
-- Pin your best-performing thread
-
-### LinkedIn Engagement
-
-- Reply to every comment on your posts (algorithm boost)
-- Comment on 5-10 posts from your network daily
-- Share others' content with your perspective added
-- Join and participate in relevant LinkedIn groups
-
-### Reddit Engagement
-
-- Answer questions in your niche subreddits daily
-- Upvote and comment on quality posts
-- Build genuine relationships with community members
-- Never argue - provide evidence and move on
-
-## Analytics and Optimization
-
-### Key Metrics per Platform
+## Analytics
 
 | Platform | Primary Metric | Secondary Metrics |
 |----------|---------------|-------------------|
@@ -262,34 +193,12 @@ Happy to share more details on the research methodology if anyone's interested.
 | **LinkedIn** | Engagement rate + reach | Profile views, connection requests, article reads |
 | **Reddit** | Upvotes + comment quality | Karma growth, cross-post performance |
 
-### A/B Testing (from `content/optimization.md`)
+**A/B testing** (details in `content/optimization.md`): Test 3-5 hook variants per topic. 250-impression minimum before judging. Below 2% engagement = revise. Above 3% = scale and repurpose.
 
-- Test 3-5 hook variants per topic
-- Measure engagement rate (not just likes)
-- 250-impression minimum before judging
-- Below 2% engagement = revise approach
-- Above 3% engagement = scale and repurpose
+## Related
 
-## Related Agents and Tools
+**Content Pipeline**: `content/research.md` (audience research), `content/story.md` (hooks/narrative), `content/platform-personas.md` (legacy voice), `content/optimization.md` (A/B testing)
 
-**Content Pipeline**:
+**Distribution**: `content/distribution/youtube/`, `content/distribution/short-form.md`, `content/distribution/blog.md`, `content/distribution/email.md`, `content/distribution/podcast.md`
 
-- `content/research.md` - Audience research and niche validation
-- `content/story.md` - Hook formulas and narrative design
-- `content/platform-personas.md` - Legacy platform voice adaptations
-- `content/optimization.md` - A/B testing and analytics loops
-
-**Distribution Channels**:
-
-- `content/distribution-youtube/` - Long-form YouTube content
-- `content/distribution-short-form.md` - TikTok, Reels, Shorts
-- `content/distribution-blog.md` - SEO-optimized articles
-- `content/distribution-email.md` - Newsletters and sequences
-- `content/distribution-podcast.md` - Audio-first distribution
-
-**Tools**:
-
-- `content/social-bird.md` - X (Twitter) automation
-- `content/social-linkedin.md` - LinkedIn posting
-- `content/social-reddit.md` - Reddit engagement
-- `content/humanise.md` - Remove AI writing patterns
+**Tools**: `tools/social-media/bird.md` (X), `tools/social-media/linkedin.md`, `tools/social-media/reddit.md`, `content/humanise.md` (AI pattern removal)
