@@ -45,52 +45,27 @@ tools:
 | **SOPS** | Structured config files committed to git | Encrypted in-place in repo |
 | **gocryptfs** | Entire directories of sensitive data | FUSE encrypted filesystem |
 
-**Use gocryptfs when**:
-
-- Protecting entire directories of sensitive data at rest
-- Workspace-level encryption for agent work directories
-- Storing files that shouldn't be in git but need encryption
-- Protecting database dumps, backups, or exported data
-- Creating isolated encrypted workspaces for different projects
-
-**Use gopass when**:
-
-- Individual API keys or tokens
-- Secrets that need AI-safe subprocess injection
-
-**Use SOPS when**:
-
-- Config files that need to be version-controlled in git
-- Structured data (YAML, JSON) with some encrypted fields
-
 ## Installation
 
 ```bash
-# Install gocryptfs + FUSE
+# Recommended
 gocryptfs-helper.sh install
 
-# Or manually:
-# macOS (requires macFUSE)
+# Manual — macOS (requires macFUSE)
 brew install gocryptfs
 brew install --cask macfuse
+# May require restart + Security & Privacy approval for macFUSE
 
-# Linux (Debian/Ubuntu)
+# Manual — Linux (Debian/Ubuntu)
 sudo apt-get install -y gocryptfs fuse3
 
-# Linux (Arch)
+# Manual — Linux (Arch)
 sudo pacman -S gocryptfs
 ```
 
-### Prerequisites
-
-- **FUSE**: Required for transparent filesystem overlay
-  - macOS: [macFUSE](https://osxfuse.github.io/) (`brew install --cask macfuse`)
-  - Linux: fuse3 (`apt install fuse3`)
-- **Kernel support**: FUSE kernel module (included in most Linux distros)
+**Prerequisites**: FUSE kernel module — macOS: [macFUSE](https://osxfuse.github.io/), Linux: fuse3.
 
 ## Workspace Vaults
-
-The simplest way to use gocryptfs with aidevops is through named vaults:
 
 ```bash
 # Create a vault for sensitive project data
@@ -110,7 +85,7 @@ gocryptfs-helper.sh close project-secrets
 gocryptfs-helper.sh list
 ```
 
-### Vault Storage Layout
+### Storage Layout
 
 ```text
 ~/.aidevops/.agent-workspace/
@@ -127,65 +102,19 @@ gocryptfs-helper.sh list
 For encrypting arbitrary directories outside the workspace:
 
 ```bash
-# Initialize an encrypted directory
 gocryptfs-helper.sh init /path/to/encrypted
-
-# Mount it
 gocryptfs-helper.sh mount /path/to/encrypted /path/to/mount
-
-# Use the mount point normally
 cp sensitive-file.txt /path/to/mount/
-
-# Unmount when done
 gocryptfs-helper.sh unmount /path/to/mount
 ```
 
 ## Use Cases
 
-### 1. Agent Workspace Protection
+- **Agent workspace protection** -- Encrypted workspace per project for sensitive intermediate files
+- **Database dump protection** -- Vault for `pg_dump`/`mysqldump` output, encrypted at rest when closed
+- **Client data isolation** -- Per-client vaults (`client-acme`, `client-globex`), open only what you need
 
-Protect the agent workspace directory where sensitive operations happen:
-
-```bash
-# Create an encrypted workspace for a specific project
-gocryptfs-helper.sh create myproject-workspace
-
-# Open it before starting work
-gocryptfs-helper.sh open myproject-workspace
-
-# Agent can now safely store intermediate files
-# ~/.aidevops/.agent-workspace/mounts/myproject-workspace/
-
-# Close when session ends
-gocryptfs-helper.sh close myproject-workspace
-```
-
-### 2. Database Dump Protection
-
-```bash
-# Create vault for database exports
-gocryptfs-helper.sh create db-exports
-
-# Open and export
-gocryptfs-helper.sh open db-exports
-pg_dump mydb > ~/.aidevops/.agent-workspace/mounts/db-exports/mydb.sql
-
-# Close - dump is now encrypted at rest
-gocryptfs-helper.sh close db-exports
-```
-
-### 3. Client Data Isolation
-
-```bash
-# Per-client encrypted vaults
-gocryptfs-helper.sh create client-acme
-gocryptfs-helper.sh create client-globex
-
-# Open only the vault you need
-gocryptfs-helper.sh open client-acme
-# Work with client data...
-gocryptfs-helper.sh close client-acme
-```
+All follow the same pattern: `create <name>` → `open <name>` → work → `close <name>`.
 
 ## Security Properties
 
@@ -198,30 +127,18 @@ gocryptfs-helper.sh close client-acme
 | **Key derivation** | scrypt (memory-hard, resistant to brute force) |
 | **Forward secrecy** | Each file has unique nonce |
 
-### What gocryptfs Protects Against
+**Protects against**: disk theft/loss, unauthorized access when locked, file name leakage, tampering.
 
-- Disk theft or loss (data encrypted at rest)
-- Unauthorized file access when vault is locked
-- File name leakage (names are encrypted)
-- Tampering detection (GCM authentication)
-
-### What gocryptfs Does NOT Protect Against
-
-- Access while vault is mounted (files are readable)
-- Memory forensics while mounted
-- Root access on the running system
-- Weak passwords (use strong passphrases)
+**Does NOT protect against**: access while mounted, memory forensics while mounted, root access on running system, weak passwords.
 
 ## Agent Instructions
-
-When an AI agent needs to work with gocryptfs:
 
 1. **Never accept vault passwords** -- Passwords are entered interactively by the user
 2. **Check mount status** -- `gocryptfs-helper.sh status` before operations
 3. **Close vaults after use** -- `gocryptfs-helper.sh close <name>` when done
 4. **Use workspace vaults** -- Prefer named vaults over raw init/mount
 
-**Prohibited commands** (NEVER run in agent context):
+**Prohibited** (NEVER run in agent context):
 
 - Accepting or storing vault passwords
 - `cat gocryptfs.conf` -- contains encrypted master key
@@ -232,22 +149,18 @@ When an AI agent needs to work with gocryptfs:
 ### macFUSE Not Found (macOS)
 
 ```bash
-# Install macFUSE
 brew install --cask macfuse
-
 # May require system restart and Security & Privacy approval
-# System Preferences > Security & Privacy > Allow macFUSE
 ```
 
 ### Permission Denied on Mount
 
 ```bash
-# Check FUSE permissions
-ls -la /dev/fuse  # Linux
+# Check FUSE permissions (Linux)
+ls -la /dev/fuse
 
-# Add user to fuse group (Linux)
+# Add user to fuse group (Linux) — requires logout/login
 sudo usermod -aG fuse $USER
-# Log out and back in
 ```
 
 ### Unmount Fails (Device Busy)
@@ -256,7 +169,7 @@ sudo usermod -aG fuse $USER
 # Check what's using the mount
 lsof +D /path/to/mount
 
-# Force unmount (use with caution)
+# Force unmount
 # macOS:
 diskutil unmount force /path/to/mount
 # Linux:
