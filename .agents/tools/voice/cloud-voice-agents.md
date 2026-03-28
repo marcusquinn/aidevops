@@ -18,20 +18,18 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Deploy speech-to-speech voice agents in the cloud using leading S2S models
+- **Purpose**: Deploy speech-to-speech voice agents in the cloud
 - **Models**: GPT-4o Realtime (OpenAI), MiniCPM-o 2.6 (open weights), NVIDIA Nemotron Speech (Riva NIM)
 - **Frameworks**: Pipecat (recommended), OpenAI Agents SDK, custom WebSocket/WebRTC
-- **Local S2S pipeline**: `tools/voice/speech-to-speech.md` (cascaded VAD+STT+LLM+TTS)
-- **Pipecat integration**: `tools/voice/pipecat-opencode.md` (real-time voice bridge)
-- **Model catalog**: `tools/voice/voice-ai-models.md` (full model comparison)
+- **Local S2S**: `tools/voice/speech-to-speech.md` (cascaded VAD+STT+LLM+TTS)
+- **Pipecat**: `tools/voice/pipecat-opencode.md` (real-time voice bridge)
+- **Model catalog**: `tools/voice/voice-ai-models.md` (full comparison)
 
-**When to use**: Building production voice agents, phone bots, customer service agents, or real-time conversational AI that runs in the cloud. For local/development voice interaction, use `voice-helper.sh talk` instead.
+**When to use**: Production voice agents, phone bots, customer service, real-time conversational AI in the cloud. For local/dev voice, use `voice-helper.sh talk`.
 
 <!-- AI-CONTEXT-END -->
 
 ## Architecture
-
-Two approaches:
 
 ```text
 Native S2S:  Audio In -> [S2S Model] -> Audio Out
@@ -41,7 +39,7 @@ Cascaded:    Audio In -> [STT] -> [LLM] -> [TTS] -> Audio Out
              Examples: Parakeet STT + Claude + Magpie TTS (via NVIDIA Riva)
 ```
 
-Native S2S is lower latency but less controllable. Cascaded pipelines let you swap components independently and are easier to debug.
+Native S2S: lower latency, less controllable. Cascaded: swappable components, easier to debug.
 
 ## Model Comparison
 
@@ -55,11 +53,11 @@ Native S2S is lower latency but less controllable. Cascaded pipelines let you sw
 
 ## GPT-4o Realtime
 
-OpenAI's native S2S model (GA 2025). Supports WebRTC (browser), WebSocket (server), and SIP (telephony).
+Native S2S (GA 2025). WebRTC (browser), WebSocket (server), SIP (telephony).
 
-**Features**: Native audio understanding/generation, emotion-aware output (9+ voices), function calling, input transcription. Model: `gpt-realtime` (GA) or `gpt-4o-realtime-preview` (legacy).
+**Features**: Native audio I/O, emotion-aware (9+ voices), function calling, input transcription. Model: `gpt-realtime` (GA) or `gpt-4o-realtime-preview` (legacy).
 
-**Pricing**: Audio input ~$40/1M tokens, output ~$80/1M tokens, cached input ~$2.50/1M tokens (~$0.06/min typical).
+**Pricing**: Input ~$40/1M tokens, output ~$80/1M tokens, cached ~$2.50/1M tokens (~$0.06/min).
 
 **Docs**: [API reference](https://platform.openai.com/docs/guides/realtime) | [Voice agents quickstart](https://openai.github.io/openai-agents-js/guides/voice-agents/quickstart/)
 
@@ -116,11 +114,11 @@ async with websockets.connect(url, extra_headers=headers) as ws:
 
 ## MiniCPM-o 2.6
 
-Open-weight omni-modal model (8B params) by OpenBMB. Handles vision, speech, and multimodal live streaming. Architecture: SigLip-400M + Whisper-medium-300M + ChatTTS-200M + Qwen2.5-7B.
+Open-weight omni-modal (8B params, OpenBMB). Architecture: SigLip-400M + Whisper-medium-300M + ChatTTS-200M + Qwen2.5-7B.
 
-**Features**: End-to-end speech (no separate STT/TTS), bilingual EN+ZH, configurable voices via audio system prompt, voice cloning from short reference audio, emotion/speed/style control, multimodal live streaming. Outperforms GPT-4o-realtime on audio benchmarks (ASR, STT translation). Runs on 8GB+ VRAM, iPad, or cloud.
+**Features**: End-to-end speech (no separate STT/TTS), bilingual EN+ZH, configurable voices via audio system prompt, voice cloning, emotion/speed/style control, multimodal live streaming. Outperforms GPT-4o-realtime on audio benchmarks. 8GB+ VRAM, iPad, or cloud.
 
-**Requirements**: Python 3.10+, PyTorch 2.3+, CUDA GPU 8GB+ VRAM (16GB for full omni), `transformers==4.44.2` (specific version required). Apple Silicon: via llama.cpp (MPS not directly supported).
+**Requirements**: Python 3.10+, PyTorch 2.3+, CUDA 8GB+ VRAM (16GB full omni), `transformers==4.44.2`. Apple Silicon: llama.cpp only (no MPS).
 
 **Docs**: [GitHub](https://github.com/OpenBMB/MiniCPM-o) | [HuggingFace](https://huggingface.co/openbmb/MiniCPM-o-2_6) | [Ollama](https://ollama.com/openbmb/minicpm-o2.6)
 
@@ -207,15 +205,15 @@ for r in model.streaming_generate(
 
 ## NVIDIA Nemotron Speech (Riva NIM)
 
-NVIDIA's speech AI stack for enterprise voice agents. Composable pipeline of ASR (Parakeet), TTS (Magpie), and NMT models deployed as NIM microservices via NVIDIA Riva.
+Enterprise speech AI: composable ASR (Parakeet) + TTS (Magpie) + NMT as NIM microservices via NVIDIA Riva.
 
-**Features**: Parakeet TDT 0.6B v2 (#1 HuggingFace ASR leaderboard, 6.05% WER), Parakeet RNNT 1.1B (25 languages), Magpie TTS Multilingual (17+ languages), Magpie TTS Zero-Shot (voice cloning), StudioVoice (noise removal), Riva Translate (36 languages). 50x faster inference than alternatives (Parakeet v2).
+**Key specs**: Parakeet TDT 0.6B v2 (#1 HF ASR leaderboard, 6.05% WER, 50x faster), Magpie TTS (17+ languages), Zero-Shot voice cloning, StudioVoice noise removal, Riva Translate (36 languages).
 
-**Requirements**: NVIDIA GPU (A100/H100 for NIM self-hosting), Docker + NVIDIA Container Toolkit, NVIDIA AI Enterprise license (production NIM). Free API: https://build.nvidia.com/explore/speech
+**Requirements**: NVIDIA GPU (A100/H100 for NIM self-hosting), Docker + NVIDIA Container Toolkit, AI Enterprise license (production). Free API: https://build.nvidia.com/explore/speech
 
 **Docs**: [NVIDIA NIM Speech](https://build.nvidia.com/explore/speech) | [Parakeet v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2) | [Riva docs](https://docs.nvidia.com/deeplearning/riva/)
 
-### ASR Models (Nemotron Speech / Parakeet)
+### ASR Models (Parakeet)
 
 | Model | Params | Languages | WER | Speed (RTFx) | NIM |
 |-------|--------|-----------|-----|-------------|-----|
@@ -263,16 +261,16 @@ Audio In -> [Parakeet ASR NIM] -> Text -> [LLM (Claude/GPT/Nemotron)] -> Text ->
                                                                             [StudioVoice NIM] (optional enhancement)
 ```
 
-Use any LLM in the middle (Claude, GPT-4o, Llama, Nemotron). Pipecat does not have a native NVIDIA Riva integration yet — use the Riva gRPC API as a custom service or the NIM REST endpoints.
+Any LLM works in the middle. Pipecat lacks native Riva integration — use Riva gRPC API or NIM REST endpoints.
 
 ## Deployment Patterns
 
 | Pattern | Best For | Architecture |
 |---------|----------|-------------|
-| Browser (WebRTC) | Customer-facing web apps, support chatbots | Browser ↔ OpenAI Realtime API (or Pipecat + Daily.co). Use OpenAI Agents SDK or SmallWebRTCTransport. Client-side ephemeral keys. |
+| Browser (WebRTC) | Customer-facing web apps, support chatbots | Browser ↔ OpenAI Realtime API (or Pipecat + Daily.co). OpenAI Agents SDK or SmallWebRTCTransport. Client-side ephemeral keys. |
 | Phone Bot (SIP/Twilio) | Call centers, IVR replacement, appointment booking | Phone → Twilio → SIP → OpenAI Realtime API, or WebSocket → Pipecat. See `services/communications/twilio.md`. |
-| Self-Hosted (Privacy) | Healthcare, finance, government, air-gapped | MiniCPM-o 2.6 (single-model, Apache-2.0) or Parakeet+LLM+Magpie NIM (enterprise composable). No data leaves infrastructure. |
-| Hybrid (Cloud LLM + Local Speech) | Balancing cost, latency, quality | Local Parakeet STT → Cloud Claude/GPT → Local Magpie TTS. Speech stays local; only text hits cloud (lower cost). Same as `speech-to-speech.md` with `--llm open_api`. |
+| Self-Hosted (Privacy) | Healthcare, finance, government, air-gapped | MiniCPM-o 2.6 (Apache-2.0) or Parakeet+LLM+Magpie NIM. No data leaves infrastructure. |
+| Hybrid (Cloud LLM + Local Speech) | Cost/latency/quality balance | Local Parakeet STT → Cloud Claude/GPT → Local Magpie TTS. Only text hits cloud. Same as `speech-to-speech.md` with `--llm open_api`. |
 
 ## Cost Comparison
 
@@ -297,7 +295,7 @@ Use any LLM in the middle (Claude, GPT-4o, Llama, Nemotron). Pipecat does not ha
 
 ## Monitoring
 
-For production voice agents, monitor latency (speech end → first audio byte), transcription accuracy (log STT output), turn completion rate, and cost per conversation (token/minute per provider). Use Pipecat's built-in metrics (`enable_metrics=True`) or instrument with OpenTelemetry.
+Monitor: latency (speech end → first audio byte), transcription accuracy (log STT output), turn completion rate, cost per conversation. Use Pipecat metrics (`enable_metrics=True`) or OpenTelemetry.
 
 ## See Also
 
