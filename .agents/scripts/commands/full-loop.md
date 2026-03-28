@@ -185,7 +185,7 @@ if [[ "$REPO_SLUG" == "marcusquinn/aidevops" ]]; then
 fi
 ```
 
-**4.7 Issue Closing Comment (MANDATORY):** Post structured comment on every linked issue: **What was done**, **Testing Evidence** (level: `runtime-verified`/`self-assessed`/`untested`, smoke checks), **Key decisions**, **Files changed** (path — what/why), **Blockers**, **Follow-up needs**, **Released in** (aidevops only). Every section ≥1 bullet ("None"/"N/A" if empty). Gate — no `FULL_LOOP_COMPLETE` until posted.
+**4.7 Issue Closing Comment (MANDATORY):** Post structured comment on every linked issue: **What was done**, **Testing Evidence** (level: `runtime-verified`/`self-assessed`/`untested`, smoke checks), **Key decisions**, **Files changed** (path — what/why), **Blockers**, **Follow-up needs**, **Released in** (aidevops only). Every section ≥1 bullet ("None"/"N/A" if empty). Append a signature footer (see `build.txt` "GitHub comment signature footer" — use `gh-signature-helper.sh footer --model <model>`). Gate — no `FULL_LOOP_COMPLETE` until posted.
 
 ### 4.8 Worktree Cleanup (GH#6740 — MANDATORY)
 

@@ -670,16 +670,16 @@ Every comment the supervisor posts on an issue or PR must be **sufficient for a 
 
 When dispatching a worker, comment on the issue with:
 
-Read the aidevops version: `AIDEVOPS_VERSION=$(cat ~/.aidevops/agents/VERSION 2>/dev/null || echo "unknown")`.
+Generate the signature footer: `SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "<full model ID>")`.
 
 ```bash
+SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "<full model ID, e.g., anthropic/claude-sonnet-4-6>")
 gh issue comment <number> --repo <slug> --body "Dispatching worker.
-- **[aidevops.sh](https://github.com/marcusquinn/aidevops)**: v${AIDEVOPS_VERSION}
-- **Model**: <tier and full model ID, e.g., sonnet (anthropic/claude-sonnet-4-6)>
 - **Branch**: <branch name, e.g., fix/t748-ai-migration>
 - **Scope**: <1-line description of what the worker should do>
 - **Attempt**: <N of M, e.g., 1 of 1, or 3 of 3 (escalated to opus)>
-- **Direction**: <any specific guidance, e.g., 'focus on migration chain from PR #213'>"
+- **Direction**: <any specific guidance, e.g., 'focus on migration chain from PR #213'>
+${SIG_FOOTER}"
 ```
 
 **Required fields in kill/failure comments:**
@@ -687,13 +687,13 @@ gh issue comment <number> --repo <slug> --body "Dispatching worker.
 When killing a worker or closing a failed PR, comment with:
 
 ```bash
+SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "<tier used>")
 gh issue comment <number> --repo <slug> --body "Worker killed after <duration> with <N> commits (struggle_ratio: <ratio>).
-- **[aidevops.sh](https://github.com/marcusquinn/aidevops)**: v${AIDEVOPS_VERSION}
-- **Model**: <tier used>
 - **Branch**: <branch name>
 - **Reason**: <why it was killed — thrashing, timeout, CI loop, etc.>
 - **Diagnosis**: <1-line hypothesis of what went wrong>
-- **Next action**: <re-dispatch at same tier / escalate to opus / needs manual review>"
+- **Next action**: <re-dispatch at same tier / escalate to opus / needs manual review>
+${SIG_FOOTER}"
 # IMPORTANT: <duration> MUST come from the process_uptime field in the Active
 # Workers pre-fetched data (sourced from ps etime = actual process lifetime).
 # Do NOT compute duration from dispatch comment timestamps, branch ages, or
@@ -706,11 +706,11 @@ gh issue comment <number> --repo <slug> --body "Worker killed after <duration> w
 When merging a PR or closing an issue as done:
 
 ```bash
+SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "<tier that succeeded>")
 gh issue comment <number> --repo <slug> --body "Completed via PR #<N>.
-- **[aidevops.sh](https://github.com/marcusquinn/aidevops)**: v${AIDEVOPS_VERSION}
-- **Model**: <tier that succeeded>
 - **Attempts**: <total attempts including failures>
-- **Duration**: <wall-clock from first dispatch to merge>"
+- **Duration**: <wall-clock from first dispatch to merge>
+${SIG_FOOTER}"
 ```
 
 **Why this matters:** Without these fields, auditing a task requires reading pulse logs, cross-referencing `ps` output timestamps, and guessing which model was used. The t748 incident had 7 kill comments that all said "Worker killed after Xh with 0 commits" but none recorded the model tier, making it impossible to determine whether escalation was attempted. Issue comments are the state dashboard — they must be self-contained.

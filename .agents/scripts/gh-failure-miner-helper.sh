@@ -649,6 +649,16 @@ create_or_preview_issue() {
 		return 0
 	fi
 
+	# Append signature footer
+	local sig_helper="${SCRIPT_DIR}/gh-signature-helper.sh"
+	if [[ -x "$sig_helper" ]]; then
+		local sig_footer
+		sig_footer=$("$sig_helper" footer 2>/dev/null || echo "")
+		if [[ -n "$sig_footer" ]]; then
+			body="${body}${sig_footer}"
+		fi
+	fi
+
 	local create_cmd=(gh issue create --repo "$repo_slug" --title "$title" --body "$body" --label bug --label "source:ci-failure-miner")
 	local label
 	for label in ${extra_labels[@]+"${extra_labels[@]}"}; do
