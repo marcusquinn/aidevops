@@ -747,9 +747,9 @@
       "pr": 11712
     },
     ".agents/marketing-sales/meta-ads-campaigns-retargeting.md": {
-      "hash": "a9c426923d4e68ffcbda9632256e77e757a22e39",
-      "at": "2026-03-28T11:20:39Z",
-      "pr": 11746
+      "hash": "76a66a236cc7fbeb40d74384e9dbe4bd75a4a155",
+      "at": "2026-03-28T11:52:21Z",
+      "pr": 11822
     },
     ".agents/content/heygen-skill/rules-remotion-integration.md": {
       "hash": "5ccb546152546cd33344a76d42a4b90c0acd0dbd",
@@ -833,7 +833,7 @@
     },
     ".agents/aidevops/requirements.md": {
       "hash": "9a75f9e14252e2364ed8ceeb9e24e8df3a95e310",
-      "at": "2026-03-28T11:39:16Z",
+      "at": "2026-03-28T11:52:46Z",
       "pr": 11770
     },
     ".agents/tools/video/yt-dlp.md": {
@@ -913,7 +913,7 @@
     },
     ".agents/aidevops/supervisor-module-map.md": {
       "hash": "6dc1ff5f9d7243b29d768c024123338d11496a5f",
-      "at": "2026-03-28T11:39:04Z",
+      "at": "2026-03-28T11:52:24Z",
       "pr": 11811
     },
     ".agents/business/company-runners.md": {
@@ -987,9 +987,9 @@
       "pr": 11893
     },
     ".agents/tools/browser/stagehand-examples.md": {
-      "hash": "728f1064ad1de2bb36719a8a9a10d14369695cde",
-      "at": "2026-03-28T13:37:46Z",
-      "pr": 11838
+      "hash": "3204f26c9d748fd843fe6db79a36a18581e78b49",
+      "at": "2026-03-28T13:57:03Z",
+      "pr": 11899
     },
     ".agents/tools/ui/wxt.md": {
       "hash": "3705faa0407468fc44819d98501ad0ff13ca1934",
@@ -997,8 +997,8 @@
       "pr": 11870
     },
     ".agents/tools/code-review/secretlint.md": {
-      "hash": "204aa2a11cbd3d6715a90b3bd867749e92e7472d",
-      "at": "2026-03-28T13:37:18Z",
+      "hash": "856b7ef872c17141c3c19db1c7f1f0d04a442cbe",
+      "at": "2026-03-28T13:57:08Z",
       "pr": 11879
     },
     ".agents/tools/database/pglite-local-first.md": {
@@ -1016,10 +1016,65 @@
       "at": "2026-03-28T13:38:47Z",
       "pr": 11771
     },
-    ".agents/workflows/code-audit-remote.md": {
-      "hash": "ee3d88acdee975bb4d937d27ee48e80f003016e1",
-      "at": "2026-03-28T11:39:16Z",
-      "pr": 11825
+    ".agents/scripts/commands/full-loop.md": {
+      "hash": "b5da86b3b8075f9e62573a4e2e135c70f527d1c6",
+      "at": "2026-03-28T13:57:05Z",
+      "pr": 11904
+    },
+    ".agents/workflows/pr.md": {
+      "hash": "2814eecb1a03db8967c46e83a046936cf3ecc5b5",
+      "at": "2026-03-28T13:57:06Z",
+      "pr": 11878
+    },
+    ".agents/tools/git/conflict-resolution.md": {
+      "hash": "f5933df58340b4ee0c5b329808c991807ed8a047",
+      "at": "2026-03-28T13:57:11Z",
+      "pr": 11909
+    },
+    ".agents/aidevops/configs.md": {
+      "hash": "fecc0e08b16083bdd8f7e82c6f1636c136af3287",
+      "at": "2026-03-28T13:57:12Z",
+      "pr": 11897
+    },
+    ".agents/services/communications/twilio.md": {
+      "hash": "e0541a43f7a10413213681c64f35a4bfd4dd6616",
+      "at": "2026-03-28T13:57:13Z",
+      "pr": 11900
+    },
+    ".agents/marketing-sales/ad-creative-platform-google.md": {
+      "hash": "99985395fdf504ae5562f8f46d2d17a14629c43f",
+      "at": "2026-03-28T13:57:14Z",
+      "pr": 11903
+    },
+    ".agents/tools/ai-assistants/openclaw.md": {
+      "hash": "0c4d4c08590b9a3dc260a05d39c76148057c928c",
+      "at": "2026-03-28T13:57:15Z",
+      "pr": 11901
+    },
+    ".agents/content/video-wavespeed.md": {
+      "hash": "ef2bf4d381397992153760c0f74ea060eb5260fc",
+      "at": "2026-03-28T13:57:17Z",
+      "pr": 11895
+    },
+    ".agents/seo/debug-opengraph.md": {
+      "hash": "7ac97dce072fe9fa2c5cc80526b57b3618883608",
+      "at": "2026-03-28T13:57:18Z",
+      "pr": 11898
+    },
+    ".agents/aidevops/plugins.md": {
+      "hash": "b6beaa25a6400b7ce7586a389605bb7b5cde0b1c",
+      "at": "2026-03-28T13:57:19Z",
+      "pr": 11894
+    },
+    ".agents/marketing-sales/ad-creative.md": {
+      "hash": "4ab10a843352fed5cff30fdb8055e0cb3a5b3e40",
+      "at": "2026-03-28T13:57:38Z",
+      "pr": 11902
+    },
+    ".agents/tools/mcp-toolkit/mcporter.md": {
+      "hash": "9a7f856e52fb6226b2661e21b00fee79fd906561",
+      "at": "2026-03-28T13:57:39Z",
+      "pr": 11906
     }
   },
   ".agents/tools/code-review/best-practices.md": {
