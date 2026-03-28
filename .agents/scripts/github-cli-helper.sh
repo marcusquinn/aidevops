@@ -410,6 +410,11 @@ create_pr() {
 		return 1
 	fi
 
+	# Append signature footer to PR body
+	local sig_footer=""
+	sig_footer=$("${SCRIPT_DIR}/gh-signature-helper.sh" footer 2>/dev/null || true)
+	body="${body}${sig_footer}"
+
 	print_info "Creating pull request in $owner/$repo_name"
 
 	local gh_args=("--repo" "$owner/$repo_name" "--title" "$title" "--base" "$base_branch")
