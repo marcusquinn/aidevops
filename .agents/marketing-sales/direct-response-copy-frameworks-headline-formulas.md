@@ -2,20 +2,13 @@
 
 > "On the average, five times as many people read the headline as read the body copy." — David Ogilvy
 
-## Why Headlines Matter
-
-Your headline has one job: **get them to read the next line.**
-
-- 8 out of 10 people will read your headline
-- Only 2 out of 10 will read the rest
-- A great headline can increase response by 10x
-- Always write 25+ headline variations before choosing
+A headline's one job: **get them to read the next line.** 80% read the headline; 20% read the rest. A great headline can increase response 10x. Always write 25+ variations before choosing.
 
 ---
 
 ## The 4 U's Framework
 
-Every headline should score high on at least 3 of these:
+Score high on at least 3:
 
 | U | Question | Example Upgrade |
 |---|----------|-----------------|
@@ -208,107 +201,28 @@ Every headline should score high on at least 3 of these:
 
 ---
 
-## Power Words to Boost Any Headline
+## Power Words by Category
 
-### Urgency Words
-Now, Today, Instant, Fast, Quick, Limited, Deadline, Hurry, Before, Last Chance, Expires, Final, Rush
+**Urgency:** Now, Today, Instant, Fast, Quick, Limited, Deadline, Hurry, Before, Last Chance, Expires, Final, Rush
 
-### Exclusivity Words
-Secret, Insider, Private, Members-Only, VIP, Exclusive, Hidden, Underground, Classified
+**Exclusivity:** Secret, Insider, Private, Members-Only, VIP, Exclusive, Hidden, Underground, Classified
 
-### Curiosity Words
-Surprising, Shocking, Unusual, Strange, Weird, Unexpected, Counterintuitive, Little-Known
+**Curiosity:** Surprising, Shocking, Unusual, Strange, Weird, Unexpected, Counterintuitive, Little-Known
 
-### Safety/Trust Words
-Proven, Guaranteed, Tested, Secure, Safe, Risk-Free, Certified, Official, Authentic
+**Safety/Trust:** Proven, Guaranteed, Tested, Secure, Safe, Risk-Free, Certified, Official, Authentic
 
-### Value Words
-Free, Bonus, Save, Discount, Value, Bargain, Reduced, Affordable, Budget
+**Value:** Free, Bonus, Save, Discount, Value, Bargain, Reduced, Affordable, Budget
 
-### Results Words
-Results, Works, Effective, Powerful, Successful, Winning, Breakthrough, Revolutionary
+**Results:** Results, Works, Effective, Powerful, Successful, Winning, Breakthrough, Revolutionary
 
-### Emotion Words
-Amazing, Incredible, Remarkable, Extraordinary, Mind-Blowing, Life-Changing, Transform
+**Emotion:** Amazing, Incredible, Remarkable, Extraordinary, Mind-Blowing, Life-Changing, Transform
 
 ---
 
-## Headline Testing Checklist
+## Related
 
-Before choosing your final headline, ask:
-
-- [ ] Does it promise a clear benefit?
-- [ ] Would I click this if I saw it in a feed?
-- [ ] Does it speak to my specific audience?
-- [ ] Is it believable (not too hype-y)?
-- [ ] Does it create curiosity or urgency?
-- [ ] Does it pass the "so what?" test?
-- [ ] Is it specific (numbers, outcomes, timeframes)?
-- [ ] Does it work with the awareness level of my audience?
-
----
-
-## Headlines by Awareness Level
-
-### Most Aware (They know your product)
-Lead with the **offer**.
-- "50% Off [Product] — Today Only"
-- "[Product] Version 3.0 is Here"
-- "Your [Product] Upgrade is Waiting"
-
-### Product Aware (They know you, not convinced)
-Lead with **differentiation**.
-- "Why 5,000 Companies Switched to [Product]"
-- "[Product]: The Only [Category] with [Unique Feature]"
-- "See Why [Competitor] Users Are Switching"
-
-### Solution Aware (They know solutions exist)
-Lead with your **unique mechanism**.
-- "The [Unique Method] for [Desired Outcome]"
-- "How [Mechanism] Gets You [Benefit] Without [Pain]"
-- "Introducing: [New Approach] to [Problem]"
-
-### Problem Aware (They know the problem)
-Lead with the **problem**.
-- "Struggling With [Problem]?"
-- "Finally: A Solution for [Problem]"
-- "Stop [Problem] in Its Tracks"
-
-### Unaware (They don't know they have a problem)
-Lead with **curiosity or identity**.
-- "What [Their Group] Need to Know About [Topic]"
-- "[Surprising Fact About Topic]"
-- "The Truth About [Common Belief]"
-
----
-
-## Example Headlines for Jacky's Businesses
-
-### LocalRank.so
-- "Get Found on Google Maps Without SEO Experience"
-- "The 7 Local SEO Mistakes Killing Your Rankings"
-- "Why 3,000 Local Businesses Trust LocalRank"
-- "See Exactly Why You're Not Ranking on Google Maps"
-- "Your Competitors Are Already Using This. Are You?"
-
-### BrowserBlast
-- "Index Your Pages in Hours, Not Weeks"
-- "Stop Waiting for Google — Force Your Pages to Index"
-- "The Indexing Solution 10,000 SEOs Swear By"
-- "Why Your Content Marketing Isn't Working (Hint: It's Not Indexed)"
-- "Finally: Predictable Google Indexing"
-
-### Indexsy
-- "Done-For-You SEO That Actually Works"
-- "The SEO Agency That Guarantees Results"
-- "Why DIY SEO is Costing You Customers"
-- "From Page 10 to Page 1: The Indexsy Method"
-- "Stop Guessing. Start Ranking."
-
----
-
-## Further Reading
-
-- See [Landing Page Structure](landing-page-structure.md) for where to place headlines
-- See [Swipe File](direct-response-copy-swipe-file-headlines.md) for real-world headline examples
-- See [Pre-Publish Checklist](direct-response-copy-checklists-pre-publish.md) for final review steps
+- [Headline Testing Checklist](direct-response-copy-checklists-headline-testing.md) -- full pre-publish headline evaluation
+- [Headlines by Awareness Level](direct-response-copy.md) -- Schwartz's five levels with headline approach per level
+- [Headline Swipe File](direct-response-copy-swipe-file-headlines.md) -- 50+ real-world headlines with analysis and brand examples
+- [Landing Page Structure](direct-response-copy-frameworks-landing-page-structure.md) -- where to place headlines
+- [Pre-Publish Checklist](direct-response-copy-checklists-pre-publish.md) -- final review steps
