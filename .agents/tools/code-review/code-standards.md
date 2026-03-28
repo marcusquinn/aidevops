@@ -18,82 +18,113 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Code quality standards reference — SonarCloud, CodeFactor, Codacy, ShellCheck
+- **Purpose**: Code quality standards reference (SonarCloud, CodeFactor, Codacy, ShellCheck)
 - **Target**: A-grade across all platforms, zero critical violations
-- **Workflow**: Reference during development → validated by `linters-local.sh`
+- **Workflow**: Reference during development, validated by `/linters-local`
 
 **Validation**:
 
 ```bash
 ~/.aidevops/agents/scripts/linters-local.sh                              # all checks
+grep -L "return [01]" .agents/scripts/*.sh                               # S7682
+grep -n '\$[1-9]' .agents/scripts/*.sh | grep -v 'local.*=.*\$[1-9]'   # S7679
 find .agents/scripts/ -name "*.sh" -exec shellcheck {} \;               # ShellCheck
 npx markdownlint-cli2 "**/*.md" --ignore node_modules                   # Markdown
 ~/.aidevops/agents/scripts/secretlint-helper.sh scan                    # Secrets
 ```
 
-**Quality scripts**: `linters-local.sh` (all checks), `quality-fix.sh` (auto-fix), `pre-commit-hook.sh` (git hook), `secretlint-helper.sh` (secret detection).
-
 <!-- AI-CONTEXT-END -->
 
-## Critical Standards (Zero Tolerance)
+## Critical Rules (Zero Tolerance)
 
-| Rule | Requirement | Check |
-|------|-------------|-------|
-| S7682 | Explicit `return 0` or `return 1` in every function | `grep -L "return [01]" .agents/scripts/*.sh` |
-| S7679 | `local param="$1"` — never use `$1` directly | `grep -n '\$[1-9]' *.sh \| grep -v 'local.*=.*\$[1-9]'` |
-| S1192 | `readonly` constants for strings used 3+ times | Manual review |
-| S1481 | No unused variables — remove or use declared vars | Linter-detected |
-| ShellCheck | Zero violations on all `.sh` files | `shellcheck script.sh` |
+### S7682 - Explicit Return Statements
 
-### S7682 + S7679 — Canonical Pattern
+Every function MUST end with `return 0` or `return 1`.
 
 ```bash
 function_name() {
     local param="$1"
-    local command="${1:-help}"
     # logic
     return 0
 }
 ```
 
-### S1192 — String Constants
+### S7679 - No Direct Positional Parameters
+
+Assign positional params to locals first — never use `$1`/`$2` directly in function bodies.
+
+```bash
+main() {
+    local command="${1:-help}"
+    local account_name="$2"
+    local target="$3"
+    case "$command" in
+        "list") list_items "$account_name" ;;
+    esac
+    return 0
+}
+```
+
+### S1192 - Constants for Repeated Strings
+
+Define constants for strings used 3+ times. Audit: `grep -o '"[^"]*"' script.sh | sort | uniq -c | sort -nr | head -5`
 
 ```bash
 readonly ERROR_ACCOUNT_REQUIRED="Account name is required"
 print_error "$ERROR_ACCOUNT_REQUIRED"
 ```
 
-## Security Hotspots (SonarCloud Suppressions)
+### S1481 / ShellCheck
+
+No unused variables. All scripts must pass `shellcheck` with zero violations.
+
+## Security Hotspots (Acceptable SONAR Patterns)
 
 SonarCloud flags these patterns. Acceptable when documented with `# SONAR:` comments.
 
-| Pattern | Rule | When to suppress |
-|---------|------|-----------------|
-| HTTP string detection | S5332 | Detecting insecure URLs for audit, not using them |
-| Localhost HTTP output | S5332 | Local dev without SSL is intentional |
-| Curl pipe to bash | S4423 | Official installers (bun, nvm, rustup) from verified HTTPS |
+**HTTP string detection (S5332)** — detecting insecure URLs, not using them:
 
 ```bash
 # SONAR: Detecting insecure URLs for security audit, not using them
 non_https=$(echo "$data" | jq '[.items[] | select(.url | startswith("http://"))] | length')
-
-# SONAR: Official Bun installer from verified HTTPS source
-curl -fsSL https://bun.sh/install | bash
 ```
 
-**Fix** (don't suppress): actual HTTP in production, unverified installer sources. For unknown sources, download and inspect first: `curl -fsSL URL -o /tmp/install.sh && less /tmp/install.sh && bash /tmp/install.sh`.
+**Localhost HTTP (S5332)** — local dev without SSL:
+
+```bash
+if [[ "$ssl" == "true" ]]; then
+    print_info "Access your app at: https://$domain"
+else
+    # SONAR: Local dev without SSL is intentional
+    print_info "Access your app at: http://$domain"
+fi
+```
+
+**Curl pipe to bash (S4423)** — official installers only:
+
+```bash
+# SONAR: Official Bun installer from verified HTTPS source
+curl -fsSL https://bun.sh/install | bash
+
+# Better for unknown sources — download and inspect first
+curl -fsSL https://example.com/install.sh -o /tmp/install.sh && less /tmp/install.sh && bash /tmp/install.sh
+```
+
+**Suppress vs fix**: Suppress for official installers (bun, nvm, rustup), localhost dev, URL detection. Fix for actual HTTP in production or unverified sources.
 
 ## Platform Targets
 
-| Platform | Target |
-|----------|--------|
-| SonarCloud | Quality Gate passed, 0 bugs/vulnerabilities, <50 code smells, <400 min debt, A on security/reliability/maintainability |
-| CodeFactor | A overall, >85% A-grade files, 0 critical issues |
-| Codacy | A grade, 0 security/error-prone issues |
+| Platform | Metric | Target |
+|----------|--------|--------|
+| SonarCloud | Quality Gate / Bugs / Vulnerabilities | Passed / 0 / 0 |
+| SonarCloud | Code Smells / Technical Debt | <50 / <400 min |
+| SonarCloud | Security / Reliability / Maintainability | A |
+| CodeFactor | Overall Grade / A-grade Files / Critical | A / >85% / 0 |
+| Codacy | Grade / Security / Error Prone | A / 0 / 0 |
 
 ## Markdown Standards
 
-All markdown files must pass markdownlint with zero violations.
+All markdown files must pass markdownlint with zero violations. Auto-fix: `npx markdownlint-cli2 "**/*.md" --fix`
 
 | Rule | Requirement |
 |------|-------------|
@@ -102,36 +133,42 @@ All markdown files must pass markdownlint with zero violations.
 | MD012 | No multiple consecutive blank lines |
 | MD031 | Blank lines before and after fenced code blocks |
 
-Auto-fix: `npx markdownlint-cli2 "**/*.md" --fix`
-
 ## Python Projects
 
-Worktree-specific failure modes differ from single-checkout development. Gitignored artifacts (`.venv/`, `__pycache__/`, build dirs) exist only where created — they do not transfer between worktrees.
+### Worktrees and Virtual Environments
 
-### Venvs in Worktrees
+Gitignored artifacts (`.venv/`, `__pycache__/`, build dirs) exist only where created — they do not transfer between worktrees.
 
 | Situation | Correct action |
 |-----------|----------------|
-| Canonical repo has `.venv/` | Create fresh `.venv/` in worktree, or activate canonical venv by absolute path (never `pip install -e` from worktree) |
+| Canonical repo has `.venv/` | Create fresh `.venv/` in worktree, or activate canonical venv by absolute path without `pip install -e` from worktree |
 | `pyproject.toml` but no `.venv/` | `python3 -m venv .venv && pip install -e ".[dev]"` inside worktree |
-| Verifying package install | Throwaway venv inside worktree — never modify canonical venv from a worktree |
+| Verifying package install | Throwaway venv inside worktree — never modify canonical repo's venv |
 
-### Editable Installs (.pth Hazard)
+### Editable Installs
 
-`pip install -e` writes the worktree's absolute path into a `.pth` file. When the worktree is removed, that path breaks imports.
-
-**Rule**: Never run `pip install -e` from a worktree using a venv outside the worktree. Always use a throwaway venv inside the worktree:
+`pip install -e` writes the worktree's absolute path into a `.pth` file. When the worktree is removed, that path breaks imports. **Rule**: Never run `pip install -e` from a worktree using a venv outside the worktree.
 
 ```bash
+# Unsafe — writes worktree path into canonical venv's .pth
+pip install -e shared/project/
+
+# Safe — throwaway venv inside the worktree
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e shared/project/
 ```
 
-### Installation Scope
+### Installation Scope and Requirements
 
-Never install to user-local or system scope. Always use a project `.venv/`. Verify: `pip --version` must show a path inside the project's `.venv/`.
+Always use a project `.venv/` — never install to user-local or system scope. Verify: `pip --version` must show a path inside the project's `.venv/`.
 
-### Requirements Discipline
+```bash
+# Unsafe — packages go to ~/.local/lib/python3.x/
+pip install crawl4ai
+
+# Safe
+source .venv/bin/activate && pip install crawl4ai
+```
 
 | File | When to use |
 |------|-------------|
@@ -139,11 +176,11 @@ Never install to user-local or system scope. Always use a project `.venv/`. Veri
 | `requirements.txt` | Legacy projects or simple scripts |
 | `requirements-dev.txt` | Dev-only deps (pytest, mypy, ruff) |
 
-**A venv that cannot be recreated from committed files is a defect.**
+After installing: `pip install -e ".[dev]"` (pyproject.toml) or `pip freeze > requirements.txt` (pin manually). **A venv that cannot be recreated from committed files is a defect.**
 
-### Project AGENTS.md — Dev Environment Section
+### Project AGENTS.md — Development Environment Section
 
-When a Python project lacks a "Development Environment" section, add:
+When a Python project lacks a "Development Environment" section, add one:
 
 ```markdown
 ## Development Environment
