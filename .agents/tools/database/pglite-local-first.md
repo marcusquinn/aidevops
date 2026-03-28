@@ -122,14 +122,16 @@ Renderer: expose type-safe IPC wrappers (`ipcRenderer.invoke("db:items:list")`),
 Same `createLocalDb` pattern with `idb://` persistence. Wrap in a lazy singleton (service workers restart on every message):
 
 ```typescript
-let db: ReturnType<typeof drizzle>;
-export async function getDb() {
-  if (!db) {
-    const client = new PGlite("idb://extension-data");
-    await client.waitReady;
-    db = drizzle({ client, schema, casing: "snake_case" });
+let dbPromise: Promise<ReturnType<typeof drizzle>>;
+export function getDb() {
+  if (!dbPromise) {
+    dbPromise = (async () => {
+      const client = new PGlite("idb://extension-data");
+      await client.waitReady;
+      return drizzle({ client, schema, casing: "snake_case" });
+    })();
   }
-  return db;
+  return dbPromise;
 }
 ```
 
