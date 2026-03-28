@@ -14,178 +14,64 @@ tools:
 
 # Multi-Repository Workspace Guidelines
 
-This document provides guidelines for AI assistants working in workspaces that contain multiple repository folders.
+Core principle: **scope every operation to the current repository**. Never assume features, dependencies, or patterns from one repo exist in another.
 
-## Understanding Multi-Repository Workspaces
+## Risks
 
-Modern development environments often include multiple repository folders in a single workspace. This allows working on related projects simultaneously or referencing code from one project while working on another.
+| Risk | Description |
+|------|-------------|
+| **Feature hallucination** | Assuming features from Repo A exist in Repo B (most critical) |
+| **Cross-repo code bleed** | Suggesting patterns/APIs/imports from another repo — causes style mismatches, wrong dependencies, incorrect API assumptions |
+| **Documentation confusion** | Documenting features that exist only in other workspace repos |
+| **Scope creep** | Suggesting changes based on other repos, inflating scope |
+| **Dependency confusion** | Assuming shared dependencies exist across repos when they don't |
 
-### Common Workspace Configurations
+## Rules
 
-1. **Microservices Architecture**: Multiple service repositories in one workspace
-2. **Monorepo with Dependencies**: Main repo with shared library repos
-3. **Plugin/Extension Ecosystems**: Core project with plugin repositories
-4. **Reference Repositories**: Including repos purely for reference or inspiration
-5. **Multi-Platform Projects**: Web, mobile, and API repos together
+### 1. Verify Repository Context First
 
-## Potential Issues in Multi-Repository Workspaces
-
-### 1. Feature Hallucination
-
-The most critical issue - assuming features from one repository should exist in another, or documenting non-existent features based on code seen in other repositories.
-
-**Example**: Seeing authentication code in Repo A and documenting it as existing in Repo B.
-
-### 2. Cross-Repository Code References
-
-Referencing or suggesting code patterns from one repository when working on another leads to:
-- Inconsistent coding styles
-- Mismatched dependencies
-- Incorrect API assumptions
-
-### 3. Documentation Confusion
-
-Creating documentation that includes features or functionality from other repositories in the workspace.
-
-### 4. Scope Creep
-
-Suggesting changes or improvements based on other repositories, leading to scope creep and feature bloat.
-
-### 5. Dependency Confusion
-
-Assuming shared dependencies exist across repositories when they don't.
-
-## Best Practices for AI Assistants
-
-### 1. Repository Verification
-
-**ALWAYS** verify which repository you're currently working in before:
-
-- Making code suggestions
-- Creating or updating documentation
-- Discussing features or functionality
-- Implementing new features
-- Running commands
+Before making suggestions, documenting features, implementing changes, or running commands:
 
 ```bash
-# Verify current repository
-pwd
-git remote -v
-git rev-parse --show-toplevel
+git rev-parse --show-toplevel   # repo root
+git remote -v                   # confirm identity
+git branch --show-current       # branch context
 ```
 
-### 2. Explicit Code Search Scoping
+### 2. Scope All Searches
 
-When searching for code or functionality:
+Limit code searches to the current repository. Verify search result paths are within the current repo before using them.
 
-- Explicitly limit searches to the current repository
-- Use repository-specific paths in search queries
-- Verify search results are from the current repository before using them
-- Check file paths in search results
+```bash
+git grep "featureName"                          # respects .gitignore, scoped to repo
+grep -r "featureName" --include="*.js" .        # explicit current-dir scope
+```
 
-### 3. Feature Verification Process
+### 3. Verify Before Documenting
 
-Before documenting or implementing a feature:
+1. Search for actual implementation in the current repo (not just references/comments)
+2. Review existing docs for intended functionality
+3. If uncertain, ask the developer — don't infer from other repos
 
-1. **Check the codebase**: Search for relevant code in the current repository only
-2. **Verify functionality**: Look for actual implementation, not just references or comments
-3. **Check documentation**: Review existing documentation to understand intended functionality
-4. **Ask for clarification**: If uncertain, ask the developer to confirm the feature's existence or scope
+### 4. Cross-Repo Inspiration
 
-### 4. Documentation Guidelines
+When implementing features inspired by another repo: explicitly mark as new functionality, adapt to the current repo's architecture, and confirm with the developer that adding it is appropriate.
 
-When creating or updating documentation:
+### 5. Handle Repository Switches
 
-1. **Repository-specific content**: Only document features that exist in the current repository
-2. **Verify before documenting**: Check the codebase to confirm features actually exist
-3. **Clear boundaries**: Make it clear which repository the documentation applies to
-4. **Accurate feature descriptions**: Describe features as implemented, not as they might be in other repos
+When the developer switches repos: acknowledge the switch, reset assumptions (don't carry over context from the previous repo), and verify the new repo's structure, tooling, and conventions.
 
-### 5. Cross-Repository Inspiration
+## Verification Checklist
 
-When implementing features inspired by other repositories:
-
-1. **Explicit attribution**: Clearly state the feature is inspired by another repository
-2. **New implementation**: Treat it as a new feature being added, not existing
-3. **Repository-appropriate adaptation**: Adapt to fit the current repository's architecture
-4. **Developer confirmation**: Confirm with the developer that adding the feature is appropriate
-
-## Repository Context Verification Checklist
-
-Before making significant changes or recommendations:
+Before significant changes or recommendations:
 
 - [ ] Verified current working directory/repository
-- [ ] Confirmed repository name and purpose
-- [ ] Checked that code searches are limited to current repository
-- [ ] Verified features exist in current repository before documenting them
-- [ ] Ensured documentation reflects only current repository's functionality
-- [ ] Confirmed any cross-repository inspiration is clearly marked as new functionality
-- [ ] Checked dependencies are appropriate for current repository
+- [ ] Confirmed code searches are scoped to current repo
+- [ ] Verified features exist in current repo before documenting
+- [ ] Ensured cross-repo inspiration is marked as new functionality
+- [ ] Checked dependencies are appropriate for current repo
 
-## Example Verification Workflow
-
-### 1. Check Current Repository
-
-```bash
-# Get repository root
-git rev-parse --show-toplevel
-
-# Get remote information
-git remote -v
-
-# Check branch context
-git branch --show-current
-```
-
-### 2. Verify Feature Existence
-
-```bash
-# Search within current repo only
-grep -r "featureName" --include="*.js" .
-
-# Use git grep (respects .gitignore)
-git grep "featureName"
-
-# Check specific files
-ls -la src/features/
-```
-
-### 3. Document with Clear Repository Context
-
-```markdown
-# [Repository Name] - Feature Documentation
-
-This documentation applies to the [repository-name] repository.
-
-## Features
-- Feature A (verified in src/features/a.js)
-- Feature B (verified in src/features/b.js)
-```
-
-### 4. When Suggesting New Features
-
-```markdown
-## Proposed Feature: [Name]
-
-**Note**: This feature is inspired by [other-repo] but does not currently exist
-in this repository.
-
-**Rationale for adding**: [Explain why it's appropriate]
-
-**Implementation approach**: [Repository-specific approach]
-```
-
-## Handling Repository Switching
-
-When the developer switches between repositories in the workspace:
-
-1. **Acknowledge the switch**: Confirm the new repository context
-2. **Reset context**: Don't carry over assumptions from the previous repository
-3. **Verify new environment**: Check the structure and features of the new repository
-4. **Update documentation references**: Reference documentation specific to the new repository
-5. **Check for differences**: Note any differences in tooling, dependencies, or conventions
-
-## Common Multi-Repo Patterns
+## Common Workspace Layouts
 
 ### Monorepo with Packages
 
@@ -201,11 +87,7 @@ workspace/
 └── package.json        # Root workspace config
 ```
 
-**Key considerations**:
-
-- Shared dependencies are managed at root level
-- Package-specific dependencies in each package
-- Cross-package imports use workspace protocols
+Shared dependencies at root level. Package-specific deps in each package. Cross-package imports use workspace protocols.
 
 ### Multiple Separate Repos
 
@@ -217,52 +99,16 @@ workspace/
 └── infrastructure/     # IaC configurations
 ```
 
-**Key considerations**:
-
-- Each repo has its own dependencies
-- No implicit sharing between repos
-- Must explicitly publish/consume shared code
-
-## Tools for Multi-Repo Management
-
-### Git Worktrees
-
-```bash
-# Create a worktree for a branch
-git worktree add ../feature-branch feature-branch
-
-# List worktrees
-git worktree list
-
-# Remove a worktree
-git worktree remove ../feature-branch
-```
-
-### Repository-Specific Configuration
-
-Each repository should have:
-- `.editorconfig` - Editor settings
-- `.gitignore` - Ignore patterns
-- `package.json` or equivalent - Dependencies
-- `README.md` - Repository documentation
-- `.github/` or `.gitlab/` - CI/CD configuration
+Each repo has its own dependencies — no implicit sharing. Shared code must be explicitly published/consumed.
 
 ## Warning Signs of Context Confusion
 
-Watch for these indicators that context may be mixed:
+1. Import paths that don't exist in the current repo
+2. API references from a different repo
+3. Configuration suggestions belonging to another repo
+4. Test files that don't exist in the current repo
+5. Documentation mentioning features from other repos
 
-1. **Import paths don't exist**: Suggesting imports from paths not in current repo
-2. **API mismatches**: Referencing APIs that exist in a different repo
-3. **Configuration confusion**: Suggesting config that belongs to another repo
-4. **Test file mismatches**: Running tests that don't exist in current repo
-5. **Documentation inconsistencies**: Docs mention features from other repos
+## Recovery
 
-## Recovery from Context Confusion
-
-If you realize context has been mixed:
-
-1. **Stop immediately**: Don't continue with potentially incorrect assumptions
-2. **Verify current repository**: Re-confirm which repo you're in
-3. **Review recent actions**: Check if any incorrect changes were made
-4. **Correct documentation**: Update any documentation that mixed contexts
-5. **Communicate clearly**: Inform the developer about the confusion and corrections
+If context has been mixed: **stop immediately**, re-verify which repo you're in, review recent actions for incorrect changes, correct any mixed documentation, and inform the developer about the confusion and corrections.
