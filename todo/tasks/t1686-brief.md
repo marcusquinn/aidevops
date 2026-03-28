@@ -20,7 +20,7 @@ Startup jitter (0-30s) reduces but doesn't eliminate collisions. The dispatch le
 ## How
 
 New `dispatch-claim-helper.sh` implementing a claim protocol:
-1. Post HTML comment claim on the issue: `<!-- DISPATCH_CLAIM nonce=UUID runner=LOGIN ts=ISO -->`
+1. Post plain-text claim comment on the issue: `DISPATCH_CLAIM nonce=UUID runner=LOGIN ts=ISO`
 2. Sleep consensus window (default 8s, configurable via `DISPATCH_CLAIM_WINDOW`)
 3. Re-read issue comments, find all `DISPATCH_CLAIM` comments within the window
 4. If this runner's claim is chronologically first → exit 0 (won, proceed)
@@ -33,7 +33,7 @@ Integration: new `claim` subcommand in `dispatch-dedup-helper.sh`, updated dedup
 
 - [ ] `dispatch-claim-helper.sh claim <issue> <slug>` returns exit 0 (won) or exit 1 (lost)
 - [ ] `dispatch-claim-helper.sh release <issue> <slug>` cleans up claim comments
-- [ ] HTML comments are invisible in rendered GitHub issue view
+- [ ] Plain-text comments are visible in rendered GitHub issue view
 - [ ] API failures fail-open (proceed with dispatch)
 - [ ] Consensus window configurable via `DISPATCH_CLAIM_WINDOW` env var
 - [ ] ShellCheck clean

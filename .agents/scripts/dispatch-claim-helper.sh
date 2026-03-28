@@ -3,7 +3,7 @@
 #
 # Implements optimistic locking for dispatch dedup across multiple runners.
 # Before dispatching a worker for an issue, a runner posts a claim comment
-# (HTML comment — invisible in rendered view), waits a consensus window,
+# (plain text — visible in rendered view), waits a consensus window,
 # then checks if its claim is the oldest. Only the first claimant proceeds;
 # others back off.
 #
@@ -11,7 +11,7 @@
 # runners can both read "unassigned" before either writes their assignment.
 #
 # Protocol:
-#   1. Post claim: <!-- DISPATCH_CLAIM nonce=UUID runner=LOGIN ts=ISO -->
+#   1. Post claim: DISPATCH_CLAIM nonce=UUID runner=LOGIN ts=ISO
 #   2. Sleep consensus window (DISPATCH_CLAIM_WINDOW, default 8s)
 #   3. Re-read comments, find all DISPATCH_CLAIM within the window
 #   4. Oldest claim wins — others back off and delete their claim
@@ -46,7 +46,7 @@ DISPATCH_CLAIM_WINDOW="${DISPATCH_CLAIM_WINDOW:-8}"
 DISPATCH_CLAIM_MAX_AGE="${DISPATCH_CLAIM_MAX_AGE:-120}"
 
 # Claim comment marker — used as both the posting format and the search pattern.
-# HTML comment format: invisible in rendered GitHub issue view.
+# Plain text format: visible in rendered GitHub issue view.
 CLAIM_MARKER="DISPATCH_CLAIM"
 
 #######################################
@@ -111,7 +111,7 @@ _resolve_runner() {
 
 #######################################
 # Post a claim comment on a GitHub issue.
-# The comment is an HTML comment — invisible in rendered view.
+# The comment is plain text — visible in rendered view.
 #
 # Args:
 #   $1 = issue number
@@ -131,7 +131,7 @@ _post_claim() {
 	local ts="$5"
 
 	local body
-	body="<!-- ${CLAIM_MARKER} nonce=${nonce} runner=${runner} ts=${ts} -->"
+	body="${CLAIM_MARKER} nonce=${nonce} runner=${runner} ts=${ts}"
 
 	local comment_id
 	comment_id=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
@@ -189,7 +189,7 @@ _fetch_claims() {
 	# Fetch last 30 comments (more than enough for claim window)
 	local comments_json
 	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-		--jq '[.[] | select(.body | test("<!-- '"${CLAIM_MARKER}"' ")) | {id: .id, body: .body, created_at: .created_at}]' \
+		--jq '[.[] | select(.body | test("'"${CLAIM_MARKER}"' nonce=")) | {id: .id, body: .body, created_at: .created_at}]' \
 		2>/dev/null) || {
 		echo "Error: failed to fetch comments for #${issue_number} in ${repo_slug}" >&2
 		return 1
@@ -426,8 +426,8 @@ show_help() {
 dispatch-claim-helper.sh — Cross-machine dispatch claim via GitHub comments (t1686)
 
 Implements optimistic locking to prevent multiple runners from dispatching
-workers for the same issue. Uses HTML comments (invisible in rendered view)
-as a distributed lock mechanism via GitHub's append-only comment timeline.
+workers for the same issue. Uses plain-text comments as a distributed lock
+mechanism via GitHub's append-only comment timeline.
 
 Usage:
   dispatch-claim-helper.sh claim <issue-number> <repo-slug> [runner-login]
@@ -454,7 +454,7 @@ Environment:
   DISPATCH_CLAIM_MAX_AGE   Max age of claim comments in seconds (default: 120)
 
 Protocol:
-  1. Runner posts HTML comment claim with unique nonce
+  1. Runner posts plain-text claim comment with unique nonce
   2. Waits DISPATCH_CLAIM_WINDOW seconds for other runners
   3. Fetches all claim comments on the issue
   4. Oldest claim wins — others back off and delete their claims

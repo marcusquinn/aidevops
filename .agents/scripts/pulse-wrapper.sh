@@ -4062,7 +4062,7 @@ check_dispatch_dedup() {
 	fi
 
 	# Layer 7 (GH#11086): cross-machine optimistic claim lock — the final safety
-	# net for multi-runner environments. Posts an HTML comment claim on the issue,
+	# net for multi-runner environments. Posts a plain-text claim comment on the issue,
 	# sleeps the consensus window (default 8s), then checks if this runner's claim
 	# is the oldest. Only the first claimant proceeds; others back off.
 	#
