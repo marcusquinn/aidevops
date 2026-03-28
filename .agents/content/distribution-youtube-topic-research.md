@@ -17,14 +17,6 @@ tools:
 
 Find video topics with proven demand but low competition. Combines YouTube search data, competitor analysis, keyword research, and trend detection.
 
-## When to Use
-
-- Find video topic ideas or content gaps (topics competitors haven't covered)
-- Detect rising trends before they peak
-- Cluster keywords into video topic groups
-- Generate unique angles on proven topics
-- Validate topic search demand
-
 ## Data Sources
 
 | Source | What It Provides | Tool |
@@ -38,11 +30,9 @@ Find video topics with proven demand but low competition. Combines YouTube searc
 
 ## Workflow: Content Gap Analysis
 
-Compare what competitors cover vs what's missing.
+Compare what competitors cover vs what's missing. Run for 3-5 competitors.
 
 ### Step 1: Extract Competitor Topic Maps
-
-For each of 3-5 competitors, get video titles and cluster by topic:
 
 ```bash
 youtube-helper.sh videos @competitor 200 json | node -e "
@@ -54,7 +44,7 @@ process.stdin.on('data', d => {
 
 **Prompt**: "Group these [N] video titles from [competitor] into topic clusters. For each: topic name, video count, view trend (up/down)."
 
-### Step 2: Map Your Own Coverage
+### Step 2: Map Your Coverage
 
 ```bash
 youtube-helper.sh videos @yourchannel 200 json | node -e "
@@ -99,7 +89,7 @@ Returns: video rankings, estimated search volume, competition level, related key
 
 ### Method 3: Competitor Upload Velocity
 
-Multiple competitors suddenly covering a topic = trending signal.
+Multiple competitors suddenly covering a topic = trending signal. Look for the same topic across channels within a 2-week window.
 
 ```bash
 for ch in @comp1 @comp2 @comp3; do
@@ -108,8 +98,6 @@ for ch in @comp1 @comp2 @comp3; do
     echo ""
 done
 ```
-
-Look for the same topic across multiple channels within a 2-week window.
 
 ### Method 4: Google Trends via Serper
 
@@ -121,7 +109,7 @@ Group related keywords into video topics. One video = one keyword cluster.
 
 ### Step 1: Seed Keywords
 
-Search YouTube for 5-10 broad niche keywords:
+Search YouTube for 5-10 broad niche keywords.
 
 ```bash
 for kw in "keyword1" "keyword2" "keyword3"; do
@@ -133,7 +121,7 @@ done
 
 ### Step 2: Extract Related Terms
 
-From search results, extract video titles (natural keyword variations), tags, and description keywords:
+From search results, extract video titles (natural keyword variations), tags, and description keywords.
 
 ```bash
 youtube-helper.sh video VIDEO_ID json | node -e "
@@ -160,10 +148,10 @@ Find the unique take that hasn't been done on a proven topic.
 
 ### Step 1: Analyze Existing Coverage
 
+Get transcripts of top 3 videos to understand their angle.
+
 ```bash
 youtube-helper.sh search "topic" video 20
-
-# Get transcripts of top 3 videos to understand their angle
 youtube-helper.sh transcript VIDEO_ID_1
 youtube-helper.sh transcript VIDEO_ID_2
 youtube-helper.sh transcript VIDEO_ID_3
