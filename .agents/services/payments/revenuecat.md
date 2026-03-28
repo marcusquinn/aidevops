@@ -164,4 +164,4 @@ Configure in dashboard to sync subscription events with your backend:
 - `product/monetisation.md` - Revenue model strategy and paywall design
 - `services/payments/superwall.md` - Advanced paywall A/B testing
 - `services/payments/stripe.md` - Web payment processing
-- `tools/mobile/app-dev/publishing.md` - App Store submission with payments
+- `tools/mobile/app-dev-publishing.md` - App Store submission with payments

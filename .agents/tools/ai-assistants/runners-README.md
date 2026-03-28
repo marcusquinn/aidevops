@@ -54,4 +54,4 @@ See `tools/build-agent/build-agent.md` "Agent Lifecycle Tiers" for the full prom
 
 ## Parallel vs Sequential
 
-See the [decision guide](../headless-dispatch.md#parallel-vs-sequential) in headless-dispatch.md.
+See the [decision guide](headless-dispatch.md#parallel-vs-sequential) in headless-dispatch.md.

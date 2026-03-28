@@ -13,7 +13,7 @@ The current per-modality structure (`tools/voice/`, `tools/video/`, `tools/brows
 | Directory | Files | Purpose |
 |-----------|-------|---------|
 | `tools/voice/` | 9 files | TTS, STT, S2S, transcription, voice bridge, Pipecat |
-| `tools/video/` | 5 files + heygen-skill/ + remotion/ | Video generation, prompt design, downloading |
+| `tools/video/` | 5 files + heygen-skill/ + remotion-*.md | Video generation, prompt design, downloading |
 | `tools/browser/peekaboo.md` | 1 file | Screen capture + AI vision analysis |
 | `tools/ocr/` | 1 file | Local document OCR (GLM-OCR via Ollama) |
 | `tools/mobile/` | 6 files | iOS/macOS device automation |

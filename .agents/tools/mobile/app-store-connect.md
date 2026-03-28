@@ -201,7 +201,7 @@ Skills are loaded on-demand when relevant tasks are detected — not pre-loaded 
 ## Related
 
 - `tools/mobile/app-dev.md` — Full mobile development lifecycle
-- `tools/mobile/app-dev/publishing.md` — App Store submission checklists and compliance
+- `tools/mobile/app-dev-publishing.md` — App Store submission checklists and compliance
 - `tools/mobile/xcodebuild-mcp.md` — Xcode build/test/deploy MCP
 - `tools/mobile/ios-simulator-mcp.md` — Simulator interaction MCP
 - `services/payments/revenuecat.md` — Subscription management
