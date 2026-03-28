@@ -22,7 +22,7 @@ tools:
 - **Auth**: OAuth 2.0 via Cloudflare dashboard (browser flow on first connect)
 - **Config key**: `cloudflare-api` in `configs/mcp-servers-config.json.txt`
 - **Setup guide**: `aidevops/mcp-integrations.md` → Cloudflare Code Mode MCP section
-- **Platform docs**: `services/hosting/cloudflare-platform.md` (60 products, API refs)
+- **Platform docs**: `services/hosting/cloudflare-platform-skill.md` (60 products, API refs)
 
 **Capabilities**:
 - Workers: deploy, update, list, tail logs
@@ -204,6 +204,6 @@ To invoke this subagent: reference `tools/api/cloudflare-mcp.md` in your agent's
 ## Related Docs
 
 - `services/hosting/cloudflare.md` — DNS/CDN API setup, token scoping, security
-- `services/hosting/cloudflare-platform.md` — Full platform reference (Workers, D1, R2, KV, Pages, AI, 60 products)
+- `services/hosting/cloudflare-platform-skill.md` — Full platform reference (Workers, D1, R2, KV, Pages, AI, 60 products)
 - `aidevops/mcp-integrations.md` — All MCP integrations overview and setup
 - `configs/mcp-servers-config.json.txt` — Master MCP server config template

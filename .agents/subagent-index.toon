@@ -72,7 +72,7 @@ tools/containers/,Container runtimes - Docker and Linux VMs on macOS and remote 
 tools/infrastructure/,Infrastructure - cloud GPU deployment and compute,cloud-gpu
 tools/local-models/,Local AI model inference - llama.cpp setup GGUF models usage tracking disk cleanup,local-models|huggingface
 tools/accessibility/,Unified web and email accessibility auditing - WCAG compliance remediation and monitoring,accessibility-audit
-services/hosting/,Hosting providers - DNS and cloud servers and local dev,local-hosting|localhost|hostinger|hetzner|cloudflare|cloudflare-platform|cloudron|closte
+services/hosting/,Hosting providers - DNS and cloud servers and local dev,local-hosting|localhost|hostinger|hetzner|cloudflare|cloudflare-platform-skill|cloudron|closte
 services/networking/,Networking - mesh VPN and secure device connectivity,tailscale|netbird
 services/email/,Email services - mailbox operations provider setup security intelligence and autonomous mission communication,ses|email-agent|email-mailbox|email-actions|email-intelligence|email-providers|email-security|email-health-check|email-testing|email-delivery-test|email-design-test|email-composition|email-inbound-commands|thunderbird
 services/outreach/,Cold outreach and deliverability tooling - warmup strategy compliance platform selection mailbox scaling and WarmForge orchestration,cold-outreach|warmforge|smartlead|instantly|manyreach

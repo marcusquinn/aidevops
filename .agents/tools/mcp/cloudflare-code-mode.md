@@ -26,10 +26,10 @@ The Cloudflare Code Mode MCP server provides access to the **entire Cloudflare A
 | Configure DDoS protection, firewall rules | Code Mode MCP |
 | Manage R2 buckets, Workers deployments | Code Mode MCP |
 | Zero Trust, Access policies | Code Mode MCP |
-| Build a Worker (SDK, bindings, patterns) | `cloudflare-platform` skill |
-| Configure wrangler.toml, local dev | `cloudflare-platform` skill |
-| Debug Workers runtime issues | `cloudflare-platform` skill |
-| Understand Cloudflare product architecture | `cloudflare-platform` skill |
+| Build a Worker (SDK, bindings, patterns) | `cloudflare-platform-skill` |
+| Configure wrangler.toml, local dev | `cloudflare-platform-skill` |
+| Debug Workers runtime issues | `cloudflare-platform-skill` |
+| Understand Cloudflare product architecture | `cloudflare-platform-skill` |
 
 ## Setup
 

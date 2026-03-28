@@ -22,7 +22,7 @@ tools:
 - **Multi-org schema**: `services/database/multi-org-isolation.md`
 - **Tenant context model**: `services/database/schemas/tenant-context.ts`
 - **Multi-org schema (Drizzle)**: `services/database/schemas/multi-org.ts`
-- **Cloudflare Vectorize**: `services/hosting/cloudflare-platform/references/vectorize/README.md`
+- **Cloudflare Vectorize**: `services/hosting/cloudflare-platform-skill/vectorize.md`
 - **Isolation strategy**: Collection-per-tenant (physical) or namespace/metadata filtering (logical)
 - **Pipeline**: Upload → Chunk → Embed → Store → Query → Rerank → LLM Context Assembly
 

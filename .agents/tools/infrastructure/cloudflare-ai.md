@@ -169,4 +169,4 @@ Workers AI is most valuable when combined with the Cloudflare platform:
 - `tools/infrastructure/together.md` -- managed inference + GPU clusters
 - `tools/infrastructure/nearai.md` -- TEE-backed private inference
 - `tools/deployment/hosting-comparison.md` -- full platform comparison
-- Cloudflare platform skill: load with `/skill cloudflare-platform`
+- Cloudflare platform skill: load with `/skill cloudflare-platform-skill`

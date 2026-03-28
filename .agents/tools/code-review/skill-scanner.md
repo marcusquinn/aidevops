@@ -66,11 +66,11 @@ skills during import. CRITICAL/HIGH findings block import unless `--force`.
 aidevops skill scan
 
 # Scan specific skill
-aidevops skill scan cloudflare-platform
+aidevops skill scan cloudflare-platform-skill
 
 # Via security-helper directly
 security-helper.sh skill-scan all
-security-helper.sh skill-scan cloudflare-platform
+security-helper.sh skill-scan cloudflare-platform-skill
 ```
 
 ### Setup-time scanning

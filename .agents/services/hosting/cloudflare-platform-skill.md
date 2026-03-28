@@ -19,7 +19,7 @@ imported_from: external
 - **Role**: Development guidance — patterns, gotchas, SDK usage, decision trees
 - **Scope**: Building code that runs ON Cloudflare (Workers, Pages, D1, R2, KV, DO, AI, etc.)
 - **Not for**: Managing/configuring CF resources → use `../../tools/api/cloudflare-mcp.md` (Code Mode MCP)
-- **Entry point**: Use decision trees below to find the right product, then load `./references/<product>/README.md`
+- **Entry point**: Use decision trees below to find the right product, then load `./<product>.md`
 - **Reference format**: Multi-file (`patterns.md`, `gotchas.md`) or single-file; `api.md`/`configuration.md` superseded by Code Mode live OpenAPI queries
 - **60+ products** indexed below with direct entry-point paths
 
@@ -44,7 +44,7 @@ Consolidated skill for building on the Cloudflare platform. Use decision trees b
 
 ### Reference File Structure
 
-Each product in `./references/<product>/` contains a `README.md` as the entry point, which may be structured in one of two ways:
+Each product in the skill directory contains a `README.md` as the entry point, which may be structured in one of two ways:
 
 **Multi-file format (3 files):**
 
@@ -69,9 +69,9 @@ Each product in `./references/<product>/` contains a `README.md` as the entry po
 ### Example Paths
 
 ```
-./references/workflows/README.md         # Start here for Workflows
-./references/durable-objects/gotchas.md  # DO limitations
-./references/workers-ai/README.md        # Single-file - all Workers AI docs
+./cloudflare-platform-skill/workflows.md         # Start here for Workflows
+./cloudflare-platform-skill/durable-objects-gotchas.md  # DO limitations
+./cloudflare-platform-skill/workers-ai.md        # Single-file - all Workers AI docs
 ```
 
 ## Quick Decision Trees
@@ -163,108 +163,108 @@ Need IaC?
 
 | Product | Entry File |
 |---------|------------|
-| Workers | `./references/workers/README.md` |
-| Pages | `./references/pages/README.md` |
-| Pages Functions | `./references/pages-functions/README.md` |
-| Durable Objects | `./references/durable-objects/README.md` |
-| Workflows | `./references/workflows/README.md` |
-| Containers | `./references/containers/README.md` |
-| Workers for Platforms | `./references/workers-for-platforms/README.md` |
-| Cron Triggers | `./references/cron-triggers/README.md` |
-| Tail Workers | `./references/tail-workers/README.md` |
-| Snippets | `./references/snippets/README.md` |
-| Smart Placement | `./references/smart-placement/README.md` |
+| Workers | `./cloudflare-platform-skill/workers.md` |
+| Pages | `./cloudflare-platform-skill/pages.md` |
+| Pages Functions | `./cloudflare-platform-skill/pages-functions.md` |
+| Durable Objects | `./cloudflare-platform-skill/durable-objects.md` |
+| Workflows | `./cloudflare-platform-skill/workflows.md` |
+| Containers | `./cloudflare-platform-skill/containers.md` |
+| Workers for Platforms | `./cloudflare-platform-skill/workers-for-platforms.md` |
+| Cron Triggers | `./cloudflare-platform-skill/cron-triggers.md` |
+| Tail Workers | `./cloudflare-platform-skill/tail-workers.md` |
+| Snippets | `./cloudflare-platform-skill/snippets.md` |
+| Smart Placement | `./cloudflare-platform-skill/smart-placement.md` |
 
 ### Storage & Data
 
 | Product | Entry File |
 |---------|------------|
-| KV | `./references/kv/README.md` |
-| D1 | `./references/d1/README.md` |
-| R2 | `./references/r2/README.md` |
-| Queues | `./references/queues/README.md` |
-| Hyperdrive | `./references/hyperdrive/README.md` |
-| DO Storage | `./references/do-storage/README.md` |
-| Secrets Store | `./references/secrets-store/README.md` |
-| Pipelines | `./references/pipelines/README.md` |
-| R2 Data Catalog | `./references/r2-data-catalog/README.md` |
-| R2 SQL | `./references/r2-sql/README.md` |
+| KV | `./cloudflare-platform-skill/kv.md` |
+| D1 | `./cloudflare-platform-skill/d1.md` |
+| R2 | `./cloudflare-platform-skill/r2.md` |
+| Queues | `./cloudflare-platform-skill/queues.md` |
+| Hyperdrive | `./cloudflare-platform-skill/hyperdrive.md` |
+| DO Storage | `./cloudflare-platform-skill/do-storage.md` |
+| Secrets Store | `./cloudflare-platform-skill/secrets-store.md` |
+| Pipelines | `./cloudflare-platform-skill/pipelines.md` |
+| R2 Data Catalog | `./cloudflare-platform-skill/r2-data-catalog.md` |
+| R2 SQL | `./cloudflare-platform-skill/r2-sql.md` |
 
 ### AI & Machine Learning
 
 | Product | Entry File |
 |---------|------------|
-| Workers AI | `./references/workers-ai/README.md` |
-| Vectorize | `./references/vectorize/README.md` |
-| Agents SDK | `./references/agents-sdk/README.md` |
-| AI Gateway | `./references/ai-gateway/README.md` |
-| AI Search | `./references/ai-search/README.md` |
+| Workers AI | `./cloudflare-platform-skill/workers-ai.md` |
+| Vectorize | `./cloudflare-platform-skill/vectorize.md` |
+| Agents SDK | `./cloudflare-platform-skill/agents-sdk.md` |
+| AI Gateway | `./cloudflare-platform-skill/ai-gateway.md` |
+| AI Search | `./cloudflare-platform-skill/ai-search.md` |
 
 ### Networking & Connectivity
 
 | Product | Entry File |
 |---------|------------|
-| Tunnel | `./references/tunnel/README.md` |
-| Spectrum | `./references/spectrum/README.md` |
-| TURN | `./references/turn/README.md` |
-| Network Interconnect | `./references/network-interconnect/README.md` |
-| Argo Smart Routing | `./references/argo-smart-routing/README.md` |
-| Workers VPC | `./references/workers-vpc/README.md` |
+| Tunnel | `./cloudflare-platform-skill/tunnel.md` |
+| Spectrum | `./cloudflare-platform-skill/spectrum.md` |
+| TURN | `./cloudflare-platform-skill/turn.md` |
+| Network Interconnect | `./cloudflare-platform-skill/network-interconnect.md` |
+| Argo Smart Routing | `./cloudflare-platform-skill/argo-smart-routing.md` |
+| Workers VPC | `./cloudflare-platform-skill/workers-vpc.md` |
 
 ### Security
 
 | Product | Entry File |
 |---------|------------|
-| WAF | `./references/waf/README.md` |
-| DDoS Protection | `./references/ddos/README.md` |
-| Bot Management | `./references/bot-management/README.md` |
-| API Shield | `./references/api-shield/README.md` |
-| Turnstile | `./references/turnstile/README.md` |
+| WAF | `./cloudflare-platform-skill/waf.md` |
+| DDoS Protection | `./cloudflare-platform-skill/ddos.md` |
+| Bot Management | `./cloudflare-platform-skill/bot-management.md` |
+| API Shield | `./cloudflare-platform-skill/api-shield.md` |
+| Turnstile | `./cloudflare-platform-skill/turnstile.md` |
 
 ### Media & Content
 
 | Product | Entry File |
 |---------|------------|
-| Images | `./references/images/README.md` |
-| Stream | `./references/stream/README.md` |
-| Browser Rendering | `./references/browser-rendering/README.md` |
-| Zaraz | `./references/zaraz/README.md` |
+| Images | `./cloudflare-platform-skill/images.md` |
+| Stream | `./cloudflare-platform-skill/stream.md` |
+| Browser Rendering | `./cloudflare-platform-skill/browser-rendering.md` |
+| Zaraz | `./cloudflare-platform-skill/zaraz.md` |
 
 ### Real-Time Communication
 
 | Product | Entry File |
 |---------|------------|
-| RealtimeKit | `./references/realtimekit/README.md` |
-| Realtime SFU | `./references/realtime-sfu/README.md` |
+| RealtimeKit | `./cloudflare-platform-skill/realtimekit.md` |
+| Realtime SFU | `./cloudflare-platform-skill/realtime-sfu.md` |
 
 ### Developer Tools
 
 | Product | Entry File |
 |---------|------------|
-| Wrangler | `./references/wrangler/README.md` |
-| Miniflare | `./references/miniflare/README.md` |
-| C3 | `./references/c3/README.md` |
-| Observability | `./references/observability/README.md` |
-| Analytics Engine | `./references/analytics-engine/README.md` |
-| Web Analytics | `./references/web-analytics/README.md` |
-| Sandbox | `./references/sandbox/README.md` |
-| Workerd | `./references/workerd/README.md` |
-| Workers Playground | `./references/workers-playground/README.md` |
+| Wrangler | `./cloudflare-platform-skill/wrangler.md` |
+| Miniflare | `./cloudflare-platform-skill/miniflare.md` |
+| C3 | `./cloudflare-platform-skill/c3.md` |
+| Observability | `./cloudflare-platform-skill/observability.md` |
+| Analytics Engine | `./cloudflare-platform-skill/analytics-engine.md` |
+| Web Analytics | `./cloudflare-platform-skill/web-analytics.md` |
+| Sandbox | `./cloudflare-platform-skill/sandbox.md` |
+| Workerd | `./cloudflare-platform-skill/workerd.md` |
+| Workers Playground | `./cloudflare-platform-skill/workers-playground.md` |
 
 ### Infrastructure as Code
 
 | Product | Entry File |
 |---------|------------|
-| Pulumi | `./references/pulumi/README.md` |
-| Terraform | `./references/terraform/README.md` |
+| Pulumi | `./cloudflare-platform-skill/pulumi.md` |
+| Terraform | `./cloudflare-platform-skill/terraform.md` |
 | API (Code Mode MCP) | `.agents/tools/mcp/cloudflare-code-mode.md` |
 
 ### Other Services
 
 | Product | Entry File |
 |---------|------------|
-| Email Routing | `./references/email-routing/README.md` |
-| Email Workers | `./references/email-workers/README.md` |
-| Static Assets | `./references/static-assets/README.md` |
-| Bindings | `./references/bindings/README.md` |
-| Cache Reserve | `./references/cache-reserve/README.md` |
+| Email Routing | `./cloudflare-platform-skill/email-routing.md` |
+| Email Workers | `./cloudflare-platform-skill/email-workers.md` |
+| Static Assets | `./cloudflare-platform-skill/static-assets.md` |
+| Bindings | `./cloudflare-platform-skill/bindings.md` |
+| Cache Reserve | `./cloudflare-platform-skill/cache-reserve.md` |

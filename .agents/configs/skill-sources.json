@@ -40,15 +40,15 @@
       "notes": "Distilled from upstream README into 7-component meta prompt framework subagent"
     },
     {
-      "name": "cloudflare-platform",
+      "name": "cloudflare-platform-skill",
       "upstream_url": "https://github.com/dmmulroy/cloudflare-skill",
       "upstream_commit": "c4696d5389f95e9546b075759ff8326deac1fba7",
-      "local_path": ".agents/services/hosting/cloudflare-platform.md",
+      "local_path": ".agents/services/hosting/cloudflare-platform-skill.md",
       "format_detected": "skill-md-nested",
       "imported_at": "2026-01-21T05:12:00Z",
       "last_checked": "2026-01-21T05:12:00Z",
       "merge_strategy": "added",
-      "notes": "Includes 60 product reference directories in .agents/services/hosting/cloudflare-platform/references/"
+      "notes": "Includes 60 product reference directories in .agents/services/hosting/cloudflare-platform-skill/"
     },
     {
       "name": "heygen",
