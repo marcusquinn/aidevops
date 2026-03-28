@@ -1,14 +1,14 @@
 # VSL Script Template
 
-A complete Video Sales Letter script framework.
+A complete Video Sales Letter script framework. Replace `[BRACKETS]` with your content.
 
-## Quick Reference: VSL Structure
+## Quick Reference
 
-| Section | Duration | Purpose | Slides |
-|---------|----------|---------|--------|
-| Hook | 0:00-0:30 | Stop the scroll, create intrigue | 1-2 |
+| Section | Time | Purpose | Slides |
+|---------|------|---------|--------|
+| Hook | 0:00-0:30 | Stop scroll, create intrigue | 1-2 |
 | Problem | 0:30-2:00 | Identify their pain | 3-5 |
-| Agitate | 2:00-3:30 | Make the pain feel urgent | 6-8 |
+| Agitate | 2:00-3:30 | Make pain urgent | 6-8 |
 | Story | 3:30-7:00 | Build connection, show transformation | 9-15 |
 | Mechanism | 7:00-9:00 | Explain why your solution works | 16-22 |
 | Proof | 9:00-11:00 | Social proof, results | 23-28 |
@@ -16,13 +16,13 @@ A complete Video Sales Letter script framework.
 | Guarantee | 14:00-15:00 | Remove risk | 40-42 |
 | Close | 15:00-16:00 | Final CTA | 43-46 |
 
-**Total:** 15-20 min for mid-ticket ($500-2000). Adjust by price point — see Best Practices.
+**Total:** 15-20 min for mid-ticket ($500-2000). Adjust by price point — see [VSL Best Practices](direct-response-copy-swipe-file-vsl-scripts.md#vsl-best-practices).
 
-## Full VSL Script Template
+---
 
-### [SECTION 1: HOOK — 0:00-0:30]
+## Hook — 0:00-0:30
 
-**Text on screen:** "[Big Promise or Intriguing Statement]"
+**On screen:** "[Big Promise or Intriguing Statement]"
 
 ```text
 "If you [specific situation they're in]...
@@ -35,9 +35,9 @@ I'm going to show you [specific promise].
 But first, let me ask you something..."
 ```
 
-First 5 seconds must hook. Call out your specific audience, promise specific value, create curiosity.
+First 5 seconds must hook. Call out your audience, promise specific value, create curiosity.
 
-### [SECTION 2: PROBLEM — 0:30-2:00]
+## Problem — 0:30-2:00
 
 ```text
 "Do you ever feel like [emotional description of problem]?
@@ -57,7 +57,7 @@ If that sounds familiar, you're not alone."
 
 Get them nodding "yes, that's me." Be specific, acknowledge what they've already tried.
 
-### [SECTION 3: AGITATE — 2:00-3:30]
+## Agitate — 2:00-3:30
 
 ```text
 "Here's the thing most people don't realize:
@@ -71,9 +71,9 @@ And the worst part? [The escalating consequence if they don't act].
 I know this because I was in the exact same spot."
 ```
 
-Make them feel the cost of inaction. Create urgency without being manipulative. Transition to your story.
+Make them feel the cost of inaction. Transition to your story.
 
-### [SECTION 4: STORY — 3:30-7:00]
+## Story — 3:30-7:00
 
 ```text
 "[Timeframe] ago, I was [in their painful situation].
@@ -101,9 +101,9 @@ Since then, I've [credibility builder]:
 And I've helped [number] people do the same thing."
 ```
 
-Make your story relatable with specific details. Show the turning point clearly, build credibility naturally.
+Make your story relatable with specific details. Show the turning point, build credibility naturally.
 
-### [SECTION 5: MECHANISM — 7:00-9:00]
+## Mechanism — 7:00-9:00
 
 ```text
 "Here's why this works when other approaches fail:
@@ -124,7 +124,7 @@ I call it [Name of Your Method/System]."
 
 Explain WHY your solution works. Challenge conventional wisdom, name your unique approach.
 
-### [SECTION 6: SOCIAL PROOF — 9:00-11:00]
+## Social Proof — 9:00-11:00
 
 ```text
 "But don't just take my word for it.
@@ -146,9 +146,9 @@ These aren't special cases. This is what happens when you [follow your method].
 And it can happen for you too."
 ```
 
-Use specific results with numbers. Show before/after transformations with quotes in their words. Vary customer types.
+Use specific results with numbers. Show before/after transformations. Vary customer types.
 
-### [SECTION 7: OFFER — 11:00-14:00]
+## Offer — 11:00-14:00
 
 ```text
 "That's why I created [Product Name].
@@ -156,41 +156,29 @@ Use specific results with numbers. Show before/after transformations with quotes
 
 Here's everything you get:
 
-COMPONENT 1: [Name]
-[Description of what it includes and what they'll learn/get]
-This alone is worth $[X]
+COMPONENT 1: [Name] — [Description] — Value: $[X]
+COMPONENT 2: [Name] — [Description] — Value: $[X]
+COMPONENT 3: [Name] — [Description] — Value: $[X]
 
-COMPONENT 2: [Name]
-[Description] — Value: $[X]
+Total Value: $[Sum]
 
-COMPONENT 3: [Name]
-[Description] — Value: $[X]
+But that's not all. When you join today, you also get:
 
-[Continue for all main components]
-Total Value: $[Sum of Components]
+BONUS 1: [Name] — $[X] Value — [Why valuable]
+BONUS 2: [Name] — $[X] Value — [Why valuable]
+BONUS 3: [Name] — $[X] Value — [Why valuable]
 
-But that's not all. When you join today, you also get these bonuses:
-
-BONUS 1: [Name] — $[X] Value
-[Why this bonus is valuable]
-
-BONUS 2: [Name] — $[X] Value
-[Why this bonus is valuable]
-
-BONUS 3: [Name] — $[X] Value
-[Why this bonus is valuable]
-
-Total Value When You Add It All Up: $[Big Number]
+Total Value: $[Big Number]
 
 But your investment today isn't $[Big Number].
 It's not even $[Medium Number].
-Your total investment for everything you see here is just $[Actual Price].
+Your total investment is just $[Actual Price].
 Or [X] payments of $[Y] if that works better for you."
 ```
 
-Present each component clearly with assigned values. Build the stack dramatically so the price feels small.
+Present each component with assigned values. Build the stack so the price feels small.
 
-### [SECTION 8: GUARANTEE — 14:00-15:00]
+## Guarantee — 14:00-15:00
 
 ```text
 "And here's the thing — you're completely protected.
@@ -206,12 +194,12 @@ satisfied for any reason—just email us within [X] days.
 We'll give you a full refund. No questions asked.
 
 That means you literally have nothing to lose.
-Either [Product Name] works for you, or you get your money back. It's that simple."
+Either [Product Name] works for you, or you get your money back."
 ```
 
-Name your guarantee, explain exactly how it works, remove all perceived risk.
+Name your guarantee, explain how it works, remove all perceived risk.
 
-### [SECTION 9: CLOSE — 15:00-16:00]
+## Close — 15:00-16:00
 
 ```text
 "So here's where we are. You have a choice to make.
@@ -219,7 +207,6 @@ Name your guarantee, explain exactly how it works, remove all perceived risk.
 Option 1: Leave this page and keep doing what you've been doing.
 Keep [struggling with problem].
 Keep [experiencing negative consequence].
-Keep [another consequence].
 
 Or...
 
@@ -237,23 +224,12 @@ I can't wait to see you inside.
 [Your Name]"
 ```
 
-Present clear contrast between status quo and action. Clear next-step instructions, end with confidence.
+Present clear contrast between status quo and action. Clear next steps, end with confidence.
 
 ---
 
-## VSL Best Practices
+## Related
 
-**Delivery:** Conversational (not "salesy"), vary pace/energy, pause for emphasis, talk to one person.
-
-**Visuals:** Simple slides > talking head for most of VSL. Text on screen reinforces key points. Show proof (screenshots, testimonials). Progress indicator keeps viewers engaged.
-
-**Length by price point:**
-
-| Price | Duration |
-|-------|----------|
-| Lead magnet | 5-10 min |
-| Low ticket ($100-500) | 10-20 min |
-| Mid ticket ($500-2000) | 20-35 min |
-| High ticket ($2000+) | 30-60 min |
-
-**What to test first:** (1) The hook — first 30 seconds matter most, (2) different story angles, (3) offer presentation order, (4) CTA placement and language.
+- [VSL Scripts Swipe File](direct-response-copy-swipe-file-vsl-scripts.md) — PASTOR framework, complete example, best practices, length-by-price guidance
+- [Landing Page Structure](direct-response-copy-frameworks-landing-page-structure.md) — written page framework
+- [Offer Construction](direct-response-copy-frameworks-offer-construction.md) — value stacking
