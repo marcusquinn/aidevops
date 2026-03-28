@@ -17,13 +17,6 @@ tools:
 
 Cron-driven autonomous pipeline for YouTube competitor research and content generation. Each phase runs as an isolated worker with fresh context, storing results in memory — solves context overflow by decomposing research into independent tasks.
 
-## When to Use
-
-- Automated daily/weekly competitor monitoring
-- Full research-to-script pipeline (autonomous or manual)
-- Cron job configuration for YouTube research
-- Pipeline debugging and monitoring
-
 ## Architecture
 
 ```text
@@ -133,8 +126,6 @@ Each worker receives these prompts via the supervisor:
 ### Worker 1: Channel Intel
 
 ```text
-You are a YouTube research worker. Your task is to scan competitor channels.
-
 1. Recall competitor list: memory-helper.sh recall --namespace youtube "Competitor"
 2. For each competitor:
    a. Run: youtube-helper.sh channel @handle json
@@ -151,8 +142,6 @@ You are a YouTube research worker. Your task is to scan competitor channels.
 ### Worker 2: Topic Research
 
 ```text
-You are a YouTube research worker. Your task is to find content opportunities.
-
 1. Recall intel data: memory-helper.sh recall --namespace youtube "Intel scan"
 2. Recall my channel topics: memory-helper.sh recall --namespace youtube "My channel"
 3. Extract topic clusters from competitor videos (group by title keywords)
@@ -170,8 +159,6 @@ You are a YouTube research worker. Your task is to find content opportunities.
 ### Worker 3: Script Generation
 
 ```text
-You are a YouTube script writer. Your task is to draft scripts for top opportunities.
-
 1. Recall opportunities: memory-helper.sh recall --namespace youtube-topics "Opportunity"
 2. Recall channel voice: memory-helper.sh recall --namespace youtube "Channel voice"
 3. Select top 3 opportunities by demand/competition ratio
@@ -187,8 +174,6 @@ You are a YouTube script writer. Your task is to draft scripts for top opportuni
 ### Worker 4: Optimization
 
 ```text
-You are a YouTube metadata optimizer. Your task is to generate titles, tags, and descriptions.
-
 1. Read draft scripts from: ~/.aidevops/.agent-workspace/work/youtube/scripts/
 2. For each script:
    a. Generate 5 title options with CTR signals
@@ -203,21 +188,17 @@ You are a YouTube metadata optimizer. Your task is to generate titles, tags, and
 ## Monitoring
 
 ```bash
-# Pipeline status
+# Pipeline status and quota
 supervisor-helper.sh dashboard --batch youtube-daily
 supervisor-helper.sh status youtube-daily
-
-# Reports and quota
-mail-helper.sh check
 youtube-helper.sh quota
+mail-helper.sh check
 
-# Recent results
+# View results
 memory-helper.sh recall --namespace youtube "Intel scan" --recent
 memory-helper.sh recall --namespace youtube-topics "Opportunity" --recent
-
-# Generated scripts and learned patterns
-ls ~/.aidevops/.agent-workspace/work/youtube/scripts/
 memory-helper.sh recall --namespace youtube-patterns --recent
+ls ~/.aidevops/.agent-workspace/work/youtube/scripts/
 ```
 
 ## Frequency Recommendations
