@@ -57,7 +57,7 @@ Every email-sourced task needs a brief at `todo/tasks/{task_id}-brief.md` with: 
 
 ## Report Triage
 
-Verify sender against `trusted_report_senders` in config before acting. Unknown senders are suspicious until DNS checks pass.
+Verify sender against `trusted_report_senders` in config, then run DNS checks (required for all senders, including trusted). Unknown senders are suspicious until both checks pass.
 
 ```bash
 email-triage-helper.sh verify-sender --message-id <id>
