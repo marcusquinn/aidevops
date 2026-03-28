@@ -60,7 +60,7 @@ Build characters with 15+ specific attributes for consistency across generations
 [EMOTIONAL_STATE], [ACCESSORIES], [VOICE_CHARACTERISTICS]
 ```
 
-**Required attributes**: Age, ethnicity, gender, hair (colour/style/length/texture), eyes (colour/shape), facial features, build (height/weight/type), clothing (style/colour/fit/material), posture, mannerisms, emotional baseline, voice, distinctive features, professional indicators, personality markers.
+Required attributes: age, ethnicity, gender, hair (colour/style/length/texture), eyes, facial features, build, clothing, posture, mannerisms, emotional baseline, voice, distinctive features, professional indicators, personality markers.
 
 **Consistency rule**: Use the exact same character description wording across all prompts in a series.
 
@@ -87,6 +87,10 @@ Build characters with 15+ specific attributes for consistency across generations
 | `handheld` | Authenticity, energy |
 | `crane shot` | Dramatic reveals |
 
+**Movement quality modifiers** (add to Action component): `natural movement`, `energetic movement`, `slow and deliberate`, `graceful`, `confident`, `fluid`
+
+**Physics keywords**: `realistic physics governing all actions`, `proper weight and balance`, `natural fluid dynamics`
+
 #### Camera Positioning Syntax
 
 Always include spatial context for the camera:
@@ -97,13 +101,6 @@ as the character demonstrates the product"
 ```
 
 ### Dialogue Design
-
-**Colon format prevents subtitle generation**:
-
-```text
-CORRECT: The character looks at camera and says: 'This changes everything.'
-WRONG:   The character says 'This changes everything.'
-```
 
 **8-second rule**: 12-15 words, 20-25 syllables maximum per generation.
 
@@ -122,8 +119,6 @@ Always specify tone and delivery:
 Sounds: quiet office ambiance, keyboard typing, no audience sounds, professional atmosphere
 ```
 
-**Domain-specific audio libraries**:
-
 | Setting | Audio Elements |
 |---------|---------------|
 | Kitchen | Sizzling, chopping, boiling, utensils, ambiance |
@@ -141,16 +136,6 @@ poor lighting, blurry footage, low resolution, artifacts, unwanted objects,
 inconsistent character appearance, audio sync issues, amateur quality,
 distorted hands, oversaturation, compression noise, camera shake
 ```
-
-### Movement and Physics
-
-**Movement quality modifiers** (add to Action component):
-
-`natural movement`, `energetic movement`, `slow and deliberate`, `graceful`, `confident`, `fluid`
-
-**Physics keywords** (for realistic results):
-
-`realistic physics governing all actions`, `proper weight and balance`, `natural fluid dynamics`
 
 ### Selfie Video Formula
 
@@ -173,82 +158,21 @@ looks very film-like. [He/She] says: "[DIALOGUE_8S_MAX]"
 
 ## Post-Processing Enhancement
 
-After generating video with AI models (Veo, Sora, Runway), enhance output quality through upscaling, frame interpolation, and denoising using **REAL Video Enhancer**.
+After generating with Veo/Sora/Runway, enhance via `real-video-enhancer-helper.sh`. See `content/video-real-video-enhancer.md` for full docs.
 
-### When to Use Post-Processing
+| Use Case | Enhancement |
+|----------|-------------|
+| Social media delivery | 720p → 1080p upscale + 24fps → 60fps interpolation |
+| Cinematic to social | 24fps → 48/60fps interpolation |
+| Low-quality source | Denoise + upscale |
+| 4K delivery | 1080p → 4K upscale |
+| Artifact removal | H.264 decompression |
 
-| Use Case | Enhancement | Result |
-|----------|-------------|--------|
-| **Social Media Delivery** | 720p → 1080p upscale + 24fps → 60fps interpolation | Smooth, high-quality social content |
-| **Cinematic to Social** | 24fps → 48/60fps interpolation | Cinematic footage adapted for social platforms |
-| **Low-Quality Source** | Denoise + upscale | Clean, professional output from compressed sources |
-| **4K Delivery** | 1080p → 4K upscale | High-resolution output for premium platforms |
-| **Artifact Removal** | H.264 decompression | Remove compression artifacts from AI-generated video |
-
-### Quick Enhancement Workflow
-
-```bash
-# After generating with Veo/Sora/Runway
-video-gen-helper.sh generate "your prompt" --model veo-3 --output raw.mp4
-
-# Enhance for social media (1080p, 60fps)
-real-video-enhancer-helper.sh enhance raw.mp4 final.mp4 \
-  --scale 2 \
-  --fps 60 \
-  --denoise
-
-# Verify output
-ffprobe final.mp4  # Check resolution and frame rate
-```
-
-### Enhancement Options
-
-**Upscaling** (improve resolution):
-
-```bash
-# 2x upscale (720p → 1080p or 1080p → 4K)
-real-video-enhancer-helper.sh upscale input.mp4 output.mp4 --scale 2
-
-# 4x upscale (540p → 1080p or 720p → 4K)
-real-video-enhancer-helper.sh upscale input.mp4 output.mp4 --scale 4
-```
-
-**Frame Interpolation** (increase frame rate):
-
-```bash
-# 24fps → 60fps (cinematic to social)
-real-video-enhancer-helper.sh interpolate input.mp4 output.mp4 --fps 60
-
-# 24fps → 48fps (balanced smoothness)
-real-video-enhancer-helper.sh interpolate input.mp4 output.mp4 --fps 48
-```
-
-**Denoising** (remove compression artifacts):
-
-```bash
-# Clean up noisy/compressed video
-real-video-enhancer-helper.sh denoise input.mp4 output.mp4
-```
-
-**Full Pipeline** (upscale + interpolate + denoise):
-
-```bash
-# Maximum quality enhancement
-real-video-enhancer-helper.sh enhance input.mp4 output.mp4 \
-  --scale 2 \
-  --fps 60 \
-  --denoise \
-  --upscale-model realesrgan \
-  --interpolate-model gmfss
-```
-
-### Integration with Video Production
-
-See `content/production-video.md` for full production pipeline integration and `content/video-real-video-enhancer.md` for detailed documentation.
-
-**Typical workflow**:
+**Typical production workflow**:
 1. **Prompt Design** (this guide) → Craft optimal prompts
 2. **Generation** (`video-gen-helper.sh`) → Generate with Sora/Veo/Runway
-3. **Enhancement** (`real-video-enhancer-helper.sh`) → Upscale, interpolate, denoise
+3. **Enhancement** (`real-video-enhancer-helper.sh enhance raw.mp4 final.mp4 --scale 2 --fps 60 --denoise`) → Upscale, interpolate, denoise
 4. **Post-Production** (color grading, audio mixing) → Final polish
 5. **Distribution** (platform-specific encoding) → Deliver to platforms
+
+See `content/production-video.md` for full pipeline integration.
