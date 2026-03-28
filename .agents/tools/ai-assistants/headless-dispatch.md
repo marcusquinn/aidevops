@@ -103,6 +103,21 @@ Pulse supervisor handles staggering automatically (`RAM_PER_WORKER_MB`, `RAM_RES
 
 **Worker monitoring**: `worker-watchdog.sh --status` (active workers) | `--install` (launchd auto-detection of hung/idle workers with transcript-tail inspection before kill).
 
+### Parallel vs Sequential
+
+| Scenario | Pattern |
+|----------|---------|
+| PR review (security + quality + style) | Parallel — independent read-only |
+| Bug fix + tests | Sequential — tests depend on fix |
+| Multi-page SEO audit | Parallel — each page independent |
+| Refactor + update docs | Sequential — docs depend on refactored code |
+| Tests for 5 modules | Parallel — each module independent |
+| Plan → implement → verify | Sequential — each step depends on previous |
+| Decomposed subtasks | Batch (`batch-strategy-helper.sh`) |
+
+**Batch strategies (t1408.4)**: `depth-first` (default, finish one branch before next) or `breadth-first` (one subtask per branch per batch).
+`batch-strategy-helper.sh next-batch --strategy depth-first --tasks "$JSON" --concurrency "$SLOTS"` — respects `blocked_by:` dependencies.
+
 ### SDK Parallel
 
 Use `Promise.all` to create sessions and dispatch concurrently. Monitor via SSE (`client.event.subscribe()`). See SDK docs for full API.
@@ -165,37 +180,11 @@ Budget tracking: `budget-tracker-helper.sh configure claude-oauth --billing-type
 1. **Network**: `--hostname 127.0.0.1` (default) | Set `OPENCODE_SERVER_PASSWORD` for network exposure
 2. **Permissions**: `OPENCODE_PERMISSION` env var for headless autonomy (`'{"*":"allow"}'` for CI/CD)
 3. **Credentials**: Never pass secrets in prompts — use environment variables. Delete sessions after use.
-4. **Scoped tokens** (t1412.2): Workers get minimal-permission GitHub tokens scoped to target repo
-5. **Worker sandbox** (t1412.1): Headless workers run with isolated HOME directory
+4. **Scoped tokens** (t1412.2): Workers get minimal-permission GitHub tokens (`contents:write`, `pull_requests:write`, `issues:write`) scoped to target repo. Flow: dispatch → `worker-token-helper.sh create --repo owner/repo --ttl 3600` → `GH_TOKEN` env → worker executes → `worker-token-helper.sh revoke`. Two strategies: GitHub App installation tokens (repo-scoped by GitHub, 1h TTL, one-time setup) or delegated tokens (advisory tracking, configurable TTL). Disable: `export WORKER_SCOPED_TOKENS=false`.
+5. **Worker sandbox** (t1412.1): Headless workers run with fake HOME containing only `.gitconfig`, `GH_TOKEN`, `.aidevops/` symlink (read-only), MCP config, writable XDG dirs. No access to `~/.ssh/`, gopass, `credentials.sh`, cloud/publish tokens, browser profiles. `WORKER_SANDBOX_ENABLED=true` (default), `WORKER_SANDBOX_BASE=/tmp/aidevops-worker`. Interactive sessions never sandboxed. CLI: `worker-sandbox-helper.sh create <task_id>` → auto-clean on exit → `cleanup-stale` for >24h.
 6. **Network tiering** (t1412.3): 5-tier domain classification. Tier 5 (exfiltration) denied, Tier 4 (unknown) flagged. Config: `configs/network-tiers.conf`. See `scripts/network-tier-helper.sh`.
 
-### Scoped Worker Tokens (t1412.2)
-
-Workers receive scoped, short-lived GitHub tokens limiting blast radius from prompt injection.
-
-**Flow**: Dispatch → `worker-token-helper.sh create --repo owner/repo --ttl 3600` → `GH_TOKEN` env var → worker executes → `worker-token-helper.sh revoke --token-file <path>`
-
-**Permissions**: `contents:write`, `pull_requests:write`, `issues:write` (minimal PR workflow set).
-
-| Strategy | Scoping | TTL | Setup |
-|----------|---------|-----|-------|
-| GitHub App installation token | Enforced by GitHub (repo-scoped) | 1h | One-time App install |
-| Delegated token | Advisory (tracked locally) | Configurable (1h default) | None (zero-config) |
-
-**GitHub App setup** (recommended): Create at `https://github.com/settings/apps/new` with Contents/PRs/Issues R&W permissions. Install on account/org, download private key, configure `~/.config/aidevops/github-app.json` (app_id, private_key_path, installation_id) with 600 permissions.
-
-**CLI**: `worker-token-helper.sh status|create|validate|cleanup`. Disable: `export WORKER_SCOPED_TOKENS=false`.
-
-### Worker Sandbox (t1412.1)
-
-Headless workers run with a **fake HOME** containing only: `.gitconfig` (name/email), `GH_TOKEN` (env var), `.aidevops/` symlink (read-only), MCP config (defs only), writable XDG dirs. No access to `~/.ssh/`, gopass, `credentials.sh`, cloud tokens, publish tokens, or browser profiles.
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `WORKER_SANDBOX_ENABLED` | `true` | Set `false` to disable |
-| `WORKER_SANDBOX_BASE` | `/tmp/aidevops-worker` | Base path for sandbox dirs |
-
-Interactive sessions are never sandboxed. Lifecycle: `worker-sandbox-helper.sh create <task_id>` → auto-clean on exit → stale (>24h) via `cleanup-stale`.
+**GitHub App setup** (recommended for t1412.2): Create at `https://github.com/settings/apps/new` with Contents/PRs/Issues R&W. Install on account/org, download private key, configure `~/.config/aidevops/github-app.json` (app_id, private_key_path, installation_id) with 600 permissions.
 
 ## Worker Uncertainty Framework
 
@@ -236,7 +225,7 @@ LINEAGE RULES:
 
 **Assembling**: Extract parent/siblings from TODO.md using `PARENT_ID="${TASK_ID%.*}"`. `task-decompose-helper.sh format-lineage` does not yet support task-id lookup (t1408.1); use manual grep assembly until then.
 
-**Dispatch**: Use `headless-runtime-helper.sh run` with `${LINEAGE_BLOCK}` appended to the `--prompt`. Workers read lineage at start, check sibling descriptions before implementing, create stub interfaces for cross-deps, reference lineage in PR body, exit BLOCKED on hard sibling dependencies.
+**Dispatch**: Use `headless-runtime-helper.sh run` with `${LINEAGE_BLOCK}` appended to `--prompt`. Workers read lineage at start, check sibling descriptions before implementing, create stub interfaces for cross-deps, reference lineage in PR body, exit BLOCKED on hard sibling dependencies.
 
 ## Pre-Dispatch Task Decomposition (t1408.2)
 
@@ -270,27 +259,6 @@ Injected via supervisor dispatch to maximise output per token (~300-500 token ov
 6. **Checkpoint** — `session-checkpoint-helper.sh save` per subtask for resume on restart.
 7. **Fail fast** — Verify assumptions before coding. Exit BLOCKED after one failed retry.
 8. **Token minimisation** — Read file ranges, concise commits.
-
-## Parallel vs Sequential
-
-| Scenario | Pattern | Why |
-|----------|---------|-----|
-| PR review (security + quality + style) | Parallel | Independent read-only |
-| Bug fix + tests | Sequential | Tests depend on fix |
-| Multi-page SEO audit | Parallel | Each page independent |
-| Refactor + update docs | Sequential | Docs depend on refactored code |
-| Tests for 5 modules | Parallel | Each module independent |
-| Plan → implement → verify | Sequential | Each step depends on previous |
-| Decomposed subtasks | Batch | `batch-strategy-helper.sh` |
-
-### Batch Strategies (t1408.4)
-
-- **depth-first** (default): Finish one branch before next. Use when branches have implicit deps.
-- **breadth-first**: One subtask per branch per batch. Use when truly independent.
-
-`batch-strategy-helper.sh next-batch --strategy depth-first --tasks "$JSON" --concurrency "$SLOTS"` — respects `blocked_by:` dependencies.
-
-**Hybrid pattern**: Parallel analysis phase → sequential implementation phase based on results.
 
 ## CI/CD Integration
 
