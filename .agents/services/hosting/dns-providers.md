@@ -26,52 +26,27 @@ tools:
 - **Record types**: A, AAAA, CNAME, MX, TXT, CAA, NS
 - **Operations**: `propagation-check`, `export`, `import`, `backup`, `compare`
 - **Security**: DNSSEC, CAA records, audit logging
+
 <!-- AI-CONTEXT-END -->
 
-This guide covers DNS management across multiple providers including Cloudflare, Namecheap, Route 53, and other DNS services through a unified interface.
+## Configuration
 
-## DNS Providers Overview
+Copy the relevant template and populate credentials:
 
-### **Supported DNS Providers:**
-
-- **Cloudflare DNS** - Global CDN with comprehensive DNS management
-- **Namecheap DNS** - Domain registrar with integrated DNS hosting
-- **Route 53** - AWS DNS service with advanced routing capabilities
-- **Other DNS Providers** - Generic DNS provider support
-
-### **Unified DNS Management:**
-
-The DNS helper provides a consistent interface across all providers while maintaining provider-specific configurations and capabilities.
-
-## 🔧 **Configuration**
-
-### **Provider-Specific Configurations:**
-
-#### **Cloudflare DNS:**
-
-```bash
-# Copy template
-cp configs/cloudflare-dns-config.json.txt configs/cloudflare-dns-config.json
-```
+**Cloudflare** (`configs/cloudflare-dns-config.json`):
 
 ```json
 {
   "accounts": {
     "personal": {
       "api_token": "YOUR_CLOUDFLARE_API_TOKEN_HERE",
-      "email": "your-email@domain.com",
-      "description": "Personal Cloudflare account"
+      "email": "your-email@domain.com"
     }
   }
 }
 ```
 
-#### **Namecheap DNS:**
-
-```bash
-# Copy template
-cp configs/namecheap-dns-config.json.txt configs/namecheap-dns-config.json
-```
+**Namecheap** (`configs/namecheap-dns-config.json`):
 
 ```json
 {
@@ -79,19 +54,13 @@ cp configs/namecheap-dns-config.json.txt configs/namecheap-dns-config.json
     "personal": {
       "api_user": "your-namecheap-username",
       "api_key": "YOUR_NAMECHEAP_API_KEY_HERE",
-      "client_ip": "YOUR_WHITELISTED_IP_HERE",
-      "description": "Personal Namecheap account"
+      "client_ip": "YOUR_WHITELISTED_IP_HERE"
     }
   }
 }
 ```
 
-#### **Route 53:**
-
-```bash
-# Copy template
-cp configs/route53-dns-config.json.txt configs/route53-dns-config.json
-```
+**Route 53** (`configs/route53-dns-config.json`):
 
 ```json
 {
@@ -99,237 +68,97 @@ cp configs/route53-dns-config.json.txt configs/route53-dns-config.json
     "production": {
       "aws_access_key_id": "YOUR_AWS_ACCESS_KEY_ID_HERE",
       "aws_secret_access_key": "YOUR_AWS_SECRET_ACCESS_KEY_HERE",
-      "region": "us-east-1",
-      "description": "Production AWS account"
+      "region": "us-east-1"
     }
   }
 }
 ```
 
-## 🚀 **Usage Examples**
+## Usage
 
-### **Unified DNS Commands:**
+### Core operations
 
 ```bash
-# List DNS records across providers
+# List records
 ./.agents/scripts/dns-helper.sh records cloudflare personal example.com
-./.agents/scripts/dns-helper.sh records namecheap personal example.com
-./.agents/scripts/dns-helper.sh records route53 production example.com
 
-# Add DNS records
+# Add record: [provider] [account] [domain] [name] [type] [value]
 ./.agents/scripts/dns-helper.sh add cloudflare personal example.com www A 192.168.1.100
-./.agents/scripts/dns-helper.sh add namecheap personal example.com mail A 192.168.1.101
-./.agents/scripts/dns-helper.sh add route53 production example.com api A 192.168.1.102
 
-# Update DNS records
+# Update record
 ./.agents/scripts/dns-helper.sh update cloudflare personal example.com record-id www A 192.168.1.200
 
-# Delete DNS records
+# Delete record
 ./.agents/scripts/dns-helper.sh delete cloudflare personal example.com record-id
 ```
 
-### **Provider-Specific Features:**
-
-#### **Cloudflare Advanced Features:**
+### Cloudflare-specific
 
 ```bash
-# Enable Cloudflare proxy
 ./.agents/scripts/dns-helper.sh proxy-enable cloudflare personal example.com record-id
-
-# Configure page rules
 ./.agents/scripts/dns-helper.sh page-rule cloudflare personal example.com "*.example.com/*" cache-everything
-
-# Get analytics
 ./.agents/scripts/dns-helper.sh analytics cloudflare personal example.com
 ```
 
-#### **Route 53 Advanced Features:**
+### Route 53-specific
 
 ```bash
-# Create health check
 ./.agents/scripts/dns-helper.sh health-check route53 production example.com https://example.com/health
-
-# Configure weighted routing
 ./.agents/scripts/dns-helper.sh weighted-routing route53 production example.com www A 192.168.1.100 50
-
-# Set up geolocation routing
 ./.agents/scripts/dns-helper.sh geo-routing route53 production example.com www A 192.168.1.100 US
 ```
 
-## 🛡️ **Security Best Practices**
+## Security
 
-### **API Security:**
-
-- **Token scoping**: Use API tokens with minimal required permissions
-- **Regular rotation**: Rotate API credentials every 6-12 months
-- **Secure storage**: Store credentials in secure configuration files
-- **Access monitoring**: Monitor API usage and access patterns
-- **IP restrictions**: Use IP restrictions where supported
-
-### **DNS Security:**
+- Use API tokens with minimal required permissions; rotate every 6-12 months
+- Enable MFA on all DNS provider accounts
+- Enable audit logging for all DNS changes
 
 ```bash
-# Enable DNSSEC (where supported)
+# DNSSEC
 ./.agents/scripts/dns-helper.sh enable-dnssec cloudflare personal example.com
 
-# Configure CAA records
+# CAA record (restrict certificate issuance)
 ./.agents/scripts/dns-helper.sh add cloudflare personal example.com @ CAA "0 issue letsencrypt.org"
 
-# Set up monitoring
-./.agents/scripts/dns-helper.sh monitor cloudflare personal example.com
-```
-
-### **Access Control:**
-
-- **Multi-factor authentication**: Enable MFA on all DNS provider accounts
-- **Role-based access**: Use role-based access control where available
-- **Audit logging**: Enable audit logging for all DNS changes
-- **Change approval**: Implement change approval workflows for critical domains
-- **Backup configurations**: Maintain backups of DNS configurations
-
-## 🔍 **Troubleshooting**
-
-### **Common Issues:**
-
-#### **DNS Propagation:**
-
-```bash
-# Check DNS propagation
-dig @8.8.8.8 example.com
-nslookup example.com 1.1.1.1
-
-# Test from multiple locations
-./.agents/scripts/dns-helper.sh propagation-check example.com
-
-# Check TTL values
-./.agents/scripts/dns-helper.sh ttl-check example.com
-```
-
-#### **API Authentication:**
-
-```bash
-# Test API connectivity
+# Auth test
 ./.agents/scripts/dns-helper.sh test-auth cloudflare personal
-./.agents/scripts/dns-helper.sh test-auth namecheap personal
-./.agents/scripts/dns-helper.sh test-auth route53 production
-
-# Verify API permissions
 ./.agents/scripts/dns-helper.sh check-permissions cloudflare personal
 ```
 
-#### **Record Conflicts:**
+## Troubleshooting
 
 ```bash
-# Check for conflicting records
+# Propagation
+dig @8.8.8.8 example.com
+./.agents/scripts/dns-helper.sh propagation-check example.com
+./.agents/scripts/dns-helper.sh ttl-check example.com
+
+# Conflicts / validation
 ./.agents/scripts/dns-helper.sh conflict-check cloudflare personal example.com
-
-# Validate DNS configuration
 ./.agents/scripts/dns-helper.sh validate cloudflare personal example.com
-
-# Compare configurations across providers
 ./.agents/scripts/dns-helper.sh compare example.com cloudflare:personal namecheap:personal
 ```
 
-## 📊 **Monitoring & Analytics**
-
-### **DNS Health Monitoring:**
+## Monitoring & Reporting
 
 ```bash
-# Monitor DNS resolution
 ./.agents/scripts/dns-helper.sh monitor-resolution example.com
-
-# Check DNS performance
 ./.agents/scripts/dns-helper.sh performance-check example.com
-
-# Monitor DNS changes
 ./.agents/scripts/dns-helper.sh change-log cloudflare personal example.com
-```
-
-### **Analytics & Reporting:**
-
-```bash
-# Get DNS query analytics (Cloudflare)
-./.agents/scripts/dns-helper.sh analytics cloudflare personal example.com
-
-# Generate DNS report
 ./.agents/scripts/dns-helper.sh report cloudflare personal example.com
-
-# Export DNS configuration
-./.agents/scripts/dns-helper.sh export cloudflare personal example.com > dns-backup.json
 ```
 
-## 🔄 **Migration & Backup**
-
-### **DNS Migration:**
+## Migration & Backup
 
 ```bash
-# Export DNS records from source
+# Export → import (migration)
 ./.agents/scripts/dns-helper.sh export namecheap personal example.com > source-dns.json
-
-# Import DNS records to destination
 ./.agents/scripts/dns-helper.sh import cloudflare personal example.com source-dns.json
-
-# Verify migration
 ./.agents/scripts/dns-helper.sh compare example.com namecheap:personal cloudflare:personal
-```
 
-### **Backup & Restore:**
-
-```bash
-# Backup DNS configuration
+# Backup / restore
 ./.agents/scripts/dns-helper.sh backup cloudflare personal example.com
-
-# Restore DNS configuration
 ./.agents/scripts/dns-helper.sh restore cloudflare personal example.com backup-file.json
-
-# Schedule automated backups
 ./.agents/scripts/dns-helper.sh schedule-backup cloudflare personal daily
 ```
-
-## 📚 **Best Practices**
-
-### **DNS Management:**
-
-1. **Consistent TTL values**: Use appropriate TTL values for different record types
-2. **Change documentation**: Document all DNS changes with reasons
-3. **Testing procedures**: Test DNS changes in staging environments first
-4. **Rollback plans**: Have rollback procedures for DNS changes
-5. **Monitoring**: Monitor DNS resolution and performance continuously
-
-### **Multi-Provider Strategy:**
-
-- **Primary/secondary**: Use primary and secondary DNS providers for redundancy
-- **Geographic distribution**: Use different providers in different regions
-- **Load balancing**: Distribute DNS queries across multiple providers
-- **Failover**: Implement automatic failover between providers
-- **Cost optimization**: Balance cost and performance across providers
-
-### **Automation:**
-
-- **Infrastructure as Code**: Manage DNS configurations as code
-- **CI/CD integration**: Integrate DNS changes into deployment pipelines
-- **Automated testing**: Test DNS configurations automatically
-- **Change approval**: Implement automated change approval workflows
-- **Monitoring integration**: Integrate with monitoring and alerting systems
-
-## 🎯 **AI Assistant Integration**
-
-### **Automated DNS Management:**
-
-- **Intelligent routing**: AI-driven DNS routing decisions
-- **Performance optimization**: Automated DNS performance optimization
-- **Security monitoring**: Automated DNS security monitoring
-- **Change management**: Automated DNS change management and approval
-- **Incident response**: Automated DNS incident detection and response
-
-### **Multi-Provider Orchestration:**
-
-- **Provider selection**: AI-driven provider selection based on performance
-- **Load balancing**: Intelligent load balancing across DNS providers
-- **Failover management**: Automated failover between DNS providers
-- **Cost optimization**: AI-driven cost optimization across providers
-- **Compliance monitoring**: Automated compliance monitoring across providers
-
----
-
-**The unified DNS management system provides comprehensive DNS capabilities across multiple providers with consistent interfaces and advanced automation features.** 🚀
