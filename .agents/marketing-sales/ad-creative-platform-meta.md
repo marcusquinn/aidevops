@@ -37,20 +37,21 @@
 
 **CTA button options**: Learn More, Shop Now, Sign Up, Download, Get Quote, Apply Now, Book Now, Contact Us, Get Showtimes, Listen Now, See Menu, Subscribe, Watch More, Install Now.
 
-### Ad Formats
+**Recommended primary text length by objective**: Awareness 50-100 chars, Consideration 100-250 chars, Conversion 150-500 chars.
 
-#### 1. Image Ads
+### Universal Creative Principles
 
-Single image — foundation format. Simple to create, easy to test.
+These apply across all formats. Format-specific sections below add only what differs.
 
-**Creative principles:**
-- High-quality visuals (sharp, well-lit; authentic UGC or professional photography)
-- One clear value proposition per image — avoid clutter
-- Mobile-first: readable on 6-inch screens without zooming
-- Text overlays: 5-7 words max, contrasting colors, avoid covering key visuals
-- Test compositions: close-up vs wide, product-only vs lifestyle, people vs no people, before/after
+- **Hook in first 3 seconds** — pattern interrupt, question, bold claim, or visual surprise
+- **Sound-off design** — 85% of Facebook videos watched without sound; captions/subtitles mandatory, story must work without audio
+- **Mobile-first** — readable on 6-inch screens without zooming
+- **Vertical (9:16) or square (1:1)** outperform horizontal (16:9)
+- **Show product in use** — demonstrate transformation, don't just describe
+- **One clear value proposition** per creative — avoid clutter
+- **Text overlays**: 5-7 words max, contrasting colors, avoid covering key visuals
 
-**Copy formula:**
+### Copy Formula (All Formats)
 
 ```text
 PRIMARY TEXT:
@@ -81,30 +82,37 @@ DESCRIPTION: Free returns. Cancel anytime.
 CTA: Shop Now
 ```
 
-**Recommended primary text length by objective:**
-- Awareness: 50-100 chars
-- Consideration: 100-250 chars
-- Conversion: 150-500 chars
+### Hook Formulas
+
+- **Question**: "Still [doing old way]?"
+- **Bold claim**: "We increased conversions by 340% in 30 days"
+- **Negative**: "Stop [common mistake]"
+- **Curiosity**: "The [adjective] [noun] nobody talks about"
+- **Contrast**: "[Common belief] is dead. Here's what works now"
+- **Story**: "6 months ago I [problem]. Today I [solution]"
+- **Direct**: "[Benefit] without [objection]"
+
+### Headline Formulas
+
+- **Benefit**: "[Benefit] in [timeframe]"
+- **How-to**: "How to [achieve desire] without [objection]"
+- **List**: "[Number] Ways to [benefit]"
+- **Question**: "Want [desire]?"
+- **Offer**: "[Discount] Off [Product]"
+- **New**: "New: [Product/Feature]"
+- **Free**: "Free [Lead Magnet]"
+
+### Ad Formats
+
+#### 1. Image Ads
+
+Single image — foundation format. Test compositions: close-up vs wide, product-only vs lifestyle, people vs none, before/after. High-quality visuals (sharp, well-lit; authentic UGC or professional photography).
 
 #### 2. Video Ads
 
-85% of Facebook videos watched without sound — captions are mandatory, not optional.
+**Recommended length by objective**: Awareness 6-15s, Consideration 15-30s, Conversion 30-90s, Retargeting 6-20s.
 
-**Recommended length by objective:**
-- Awareness: 6-15 sec
-- Consideration: 15-30 sec
-- Conversion: 30-90 sec
-- Retargeting: 6-20 sec
-
-**Creative principles:**
-- Hook in first 3 seconds (pattern interrupt, question, bold claim, visual surprise)
-- Design for sound-off: captions/subtitles for all spoken content, story understandable without audio
-- Vertical (9:16) or square (1:1) outperform horizontal (16:9)
-- Cut every 2-4 seconds for feed; faster for Reels
-- Show product in use — demonstrate transformation, don't just describe it
-- Match platform energy: Feed = storytelling, Stories = raw/authentic, Reels = entertaining/fast
-
-**Video structure formulas:**
+Cut every 2-4 seconds for feed; faster for Reels. Match platform energy: Feed = storytelling, Stories = raw/authentic, Reels = entertaining/fast.
 
 **15-Second Performance Video:**
 
@@ -136,7 +144,7 @@ CTA: Shop Now
 55-60s: CTA
 ```
 
-**UGC-Style Video (consistently outperforms polished brand content):**
+**UGC-Style Video** (consistently outperforms polished brand content):
 
 ```text
 0-2s:  AUTHENTIC HOOK (person speaking to camera)
@@ -151,14 +159,7 @@ UGC visual elements: smartphone-shot vertical, natural lighting, authentic setti
 
 #### 3. Carousel Ads
 
-2-10 cards (images, videos, or mixed), each with its own link.
-
-**Strategic card ordering:**
-- Card 1: Best-performing creative (highest view rate)
-- Middle cards: Features, benefits, or story progression
-- Final card: Strong CTA
-
-**Use cases with formulas:**
+2-10 cards (images, videos, or mixed), each with its own link. Card 1: best-performing creative (highest view rate). Middle: features/benefits/story progression. Final: strong CTA. Each headline should work independently and create curiosity to swipe. Consistent color palette and framing across cards.
 
 **Product Showcase:**
 
@@ -185,13 +186,9 @@ Cards 1-N: Numbered steps with visual demonstration
 Final: CTA to learn more or buy
 ```
 
-**Design rules**: Consistent color palette and framing across cards. Each headline should work independently and create curiosity to swipe.
-
 #### 4. Collection Ads
 
-Mobile-only. Cover image/video + 4 product thumbnails from catalog. Opens Instant Experience on tap.
-
-**Cover media**: Lifestyle imagery showing products in context; video outperforms static. **Product grid**: Feature best sellers in the 4 visible slots, match to cover theme, price for impulse purchase.
+Mobile-only. Cover image/video + 4 product thumbnails from catalog. Opens Instant Experience on tap. Video cover outperforms static. Feature best sellers in the 4 visible slots, match to cover theme, price for impulse purchase.
 
 **Instant Experience design**: Fast loading (<3 sec critical), high-quality product images, clear descriptions, customer reviews/ratings, obvious "Add to Cart", size/color selectors.
 
@@ -199,9 +196,7 @@ Mobile-only. Cover image/video + 4 product thumbnails from catalog. Opens Instan
 
 #### 5. Instant Experience (Canvas) Ads
 
-Full-screen mobile-only interactive format. Can include photos, videos, carousels, product sets, text blocks, buttons. Loads instantly — optimize for <3 sec on 3G.
-
-**Screen flow formula:**
+Full-screen mobile-only interactive format. Can include photos, videos, carousels, product sets, text blocks, buttons. Optimize for <3 sec load on 3G.
 
 ```text
 Screen 1: HOOK — full-screen video/image + bold headline
@@ -214,9 +209,7 @@ Screen 6: CTA — strong action button + offer/incentive
 
 #### 6. Story Ads
 
-Full-screen vertical (9:16) between user stories. Image stories display 5 seconds.
-
-**Creative principles**: Shoot natively for 9:16 (don't crop horizontal). Immediate hook on first frame. Sound-optional with captions. Native feel (looks like user content, not polished ad). Include visual CTA + swipe-up mechanic.
+Full-screen vertical (9:16) between user stories. Image stories display 5 seconds. Shoot natively for 9:16 (don't crop horizontal). Native feel (looks like user content, not polished ad). Include visual CTA + swipe-up mechanic.
 
 **6-Second Story Ad:**
 
@@ -238,15 +231,9 @@ Full-screen vertical (9:16) between user stories. Image stories display 5 second
 
 #### 7. Reel Ads
 
-Fastest-growing placement. Entertainment-first — make it fun/interesting/inspiring, not a hard sell. Audio is required (unlike feed). 9-15 seconds for maximum completion rate.
+Fastest-growing placement. Entertainment-first — fun/interesting/inspiring, not hard sell. Audio required (Reels play with sound on by default). 9-15 seconds for maximum completion rate.
 
-**Key differences from other video:**
-- Entertainment > education
-- Use trending audio and formats
-- Cut every 1-2 seconds, sync to music beats
-- Creator style > brand style (raw and real > perfect and produced)
-- Subtle product integration — show don't tell, save hard sell for caption
-- Sound is critical (Reels play with sound on by default)
+Key differences from other video: entertainment > education, trending audio/formats, cut every 1-2 seconds synced to beats, creator style > brand style (raw > produced), subtle product integration — show don't tell, save hard sell for caption.
 
 **9-Second Reel Ad (max completion):**
 
@@ -274,26 +261,6 @@ Fastest-growing placement. Entertainment-first — make it fun/interesting/inspi
 12-25s: DEMO (showing it in action)
 25-30s: RESULT + CTA (their recommendation)
 ```
-
-### Hook Formulas (All Formats)
-
-- **Question**: "Still [doing old way]?"
-- **Bold claim**: "We increased conversions by 340% in 30 days"
-- **Negative**: "Stop [common mistake]"
-- **Curiosity**: "The [adjective] [noun] nobody talks about"
-- **Contrast**: "[Common belief] is dead. Here's what works now"
-- **Story**: "6 months ago I [problem]. Today I [solution]"
-- **Direct**: "[Benefit] without [objection]"
-
-### Headline Formulas
-
-- **Benefit**: "[Benefit] in [timeframe]"
-- **How-to**: "How to [achieve desire] without [objection]"
-- **List**: "[Number] Ways to [benefit]"
-- **Question**: "Want [desire]?"
-- **Offer**: "[Discount] Off [Product]"
-- **New**: "New: [Product/Feature]"
-- **Free**: "Free [Lead Magnet]"
 
 ### Creative Testing Framework
 
