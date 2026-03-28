@@ -132,9 +132,9 @@
       "pr": 11273
     },
     ".agents/workflows/plans.md": {
-      "hash": "c8b0fe2ab07b4ddc6e1f3e9f07cfa5c270f6658c",
-      "at": "2026-03-28T20:17:07Z",
-      "pr": 12180
+      "hash": "49bf06fcdbffb673c1ccf8721d85339087909a02",
+      "at": "2026-03-28T21:27:24Z",
+      "pr": 12215
     },
     ".agents/marketing-sales/meta-ads-creative-scripts.md": {
       "hash": "9455fbf07187de24552aa591a8752fd7b3df2480",
@@ -1407,8 +1407,8 @@
       "pr": 12162
     },
     ".agents/scripts/gh-signature-helper.sh": {
-      "hash": "2276e415025e09e3477e9cbdb1eb015409687562",
-      "at": "2026-03-28T20:16:46Z",
+      "hash": "79190a1b928cb4a4d87f8407781b337738093be8",
+      "at": "2026-03-28T21:27:37Z",
       "pr": 12165
     },
     ".agents/tools/wordpress/wp-dev.md": {
@@ -1470,6 +1470,26 @@
       "hash": "fbf1c6bc76acc1436d3da1b0b34296be5193de5a",
       "at": "2026-03-28T20:56:11Z",
       "pr": 12184
+    },
+    ".agents/marketing-sales/meta-ads-creative-briefs-ugc-brief.md": {
+      "hash": "b3cbdabb7633b010839689527b084c198f34bdc9",
+      "at": "2026-03-28T21:27:17Z",
+      "pr": 12217
+    },
+    ".agents/seo/keyword-research.md": {
+      "hash": "d00bca2d9a784bfd220b4afd767d384d83bea740",
+      "at": "2026-03-28T21:27:18Z",
+      "pr": 12220
+    },
+    ".agents/services/email/microsoft-graph.md": {
+      "hash": "953bb07aef8c8ed23c023cc574b6390196e3b16d",
+      "at": "2026-03-28T21:27:21Z",
+      "pr": 12218
+    },
+    ".agents/services/hosting/closte.md": {
+      "hash": "a9295d1bd4b72a378606ad987d9ea3d5385734c8",
+      "at": "2026-03-28T21:27:23Z",
+      "pr": 12219
     }
   }
 }
