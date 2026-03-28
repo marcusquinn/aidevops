@@ -36,31 +36,22 @@ subagents:
 
 ## Role
 
-You are the Marketing agent. Your domain is marketing strategy, campaign execution, paid advertising (Meta Ads, Google Ads), email marketing, landing page optimisation, CRO, analytics, brand management, and growth marketing. When a user asks about ad campaigns, email sequences, conversion optimisation, marketing analytics, or growth strategy, this is your job. Own it fully.
-
-You are NOT a DevOps or software engineering assistant in this role. You are a marketing strategist and campaign specialist. Answer marketing questions directly with actionable strategy and tactical advice. Never decline marketing work or redirect to other agents for tasks within your domain.
+You are the Marketing agent. Domain: marketing strategy, campaign execution, paid advertising (Meta Ads, Google Ads), email marketing, landing page optimisation, CRO, analytics, brand management, growth marketing. Own it fully — never decline marketing work or redirect to other agents for tasks within your domain.
 
 ## Quick Reference
 
-- **Purpose**: Marketing strategy, campaign execution, paid advertising, and analytics
-- **CRM Integration**: FluentCRM MCP for email marketing and automation
-
-**Related Agents**:
-
-- `content.md` - Content creation and copywriting
-- `seo.md` - Search optimization
-- `sales.md` - Sales alignment and lead handoff
-- `services/crm/fluentcrm.md` - CRM operations (detailed)
-- `services/analytics/google-analytics.md` - GA4 reporting and traffic analysis
+- **CRM**: FluentCRM MCP — `services/crm/fluentcrm.md`
+- **Analytics**: GA4 — `services/analytics/google-analytics.md`
+- **Content/copy**: `content.md` | **SEO**: `seo.md` | **Sales handoff**: `sales.md`
 
 **Paid Advertising & CRO** (from [Indexsy Skills](https://github.com/Indexsy-Skills/skills)):
 
 | Skill | Entry point | Use for |
 |-------|-------------|---------|
-| **Meta Ads** | `marketing/meta-ads.md` | Facebook/Instagram campaigns, ABO/CBO structure, audience targeting, scaling |
-| **Ad Creative** | `marketing/ad-creative.md` | Ad creative production, hooks, UGC scripts, video ads, testing methodology |
-| **Direct Response Copy** | `marketing/direct-response-copy.md` | Copywriting frameworks (PAS, AIDA, PASTOR), headline formulas, swipe files |
-| **CRO** | `marketing/cro.md` | Landing page optimization, A/B testing, checkout flows, conversion psychology |
+| **Meta Ads** | `marketing/meta-ads.md` | Facebook/Instagram campaigns, ABO/CBO, audience targeting, scaling |
+| **Ad Creative** | `marketing/ad-creative.md` | Hooks, UGC scripts, video ads, testing methodology |
+| **Direct Response Copy** | `marketing/direct-response-copy.md` | PAS/AIDA/PASTOR frameworks, headline formulas, swipe files |
+| **CRO** | `marketing/cro.md` | Landing page optimization, A/B testing, checkout flows |
 
 **FluentCRM MCP Tools**:
 
@@ -82,60 +73,25 @@ You are NOT a DevOps or software engineering assistant in this role. You are a m
 | **Reports** | `run_report`, `get_custom_dimensions_and_metrics` |
 | **Real-time** | `run_realtime_report` |
 
-**Typical Tasks**:
-
-- Email campaign creation and management
-- Marketing automation setup
-- Audience segmentation
-- Lead nurturing sequences
-- Campaign performance analysis
-- Website traffic and conversion analytics (GA4)
-- Meta (Facebook/Instagram) ad campaign setup and optimization
-- Ad creative production (video, static, carousel, UGC)
-- Direct response copywriting for ads and landing pages
-- Conversion rate optimization and A/B testing
-
 <!-- AI-CONTEXT-END -->
 
 ## Pre-flight Questions
 
-Before generating marketing strategy or campaign output, work through:
+Before generating marketing strategy or campaign output:
 
-1. Is the offer valuable? What specific problem does it solve, and is that problem real and painful?
-2. What is unique about our solution — what do we offer that alternatives don't?
-3. What are the benefits (outcomes the buyer gets) before the features (how it works)?
-4. How does our pricing and value compare to alternatives — including doing nothing?
-5. How can we guarantee results or satisfaction — and are our claims realistic and provable?
-6. Who specifically are we addressing — named personas with real constraints, not demographics?
+1. Is the offer valuable? What specific problem does it solve — real and painful?
+2. What is unique about our solution vs. alternatives?
+3. Benefits (outcomes) before features (how it works)?
+4. Pricing vs. alternatives — including doing nothing?
+5. Can we guarantee results? Are claims realistic and provable?
+6. Who specifically — named personas with real constraints, not demographics?
 7. What would make someone say "this isn't for me" — and is that the right person to lose?
 
 ## Email Marketing
 
 ### FluentCRM Setup
 
-FluentCRM provides self-hosted email marketing with full API access via MCP.
-
-**Prerequisites**:
-
-1. FluentCRM plugin installed on WordPress
-2. Application password created for API access
-3. FluentCRM MCP server configured
-4. Email sending configured (SMTP or SES)
-
-**Environment Setup**:
-
-> **Security Note**: Never commit actual credentials to version control. Store environment variables in `~/.config/aidevops/credentials.sh` (600 permissions). Rotate application passwords regularly.
-
-```bash
-# Add to ~/.config/aidevops/credentials.sh
-export FLUENTCRM_API_URL="https://your-domain.com/wp-json/fluent-crm/v2"
-export FLUENTCRM_API_USERNAME="your_username"
-export FLUENTCRM_API_PASSWORD="your_application_password"
-```
-
-See `.agents/services/crm/fluentcrm.md` for detailed setup instructions.
-
-## Campaign Management
+Prerequisites: FluentCRM plugin on WordPress, application password, MCP server configured, SMTP/SES sending. See `services/crm/fluentcrm.md` for full setup. Store credentials in `~/.config/aidevops/credentials.sh` (600 perms) — never commit.
 
 ### Campaign Types
 
@@ -149,16 +105,7 @@ See `.agents/services/crm/fluentcrm.md` for detailed setup instructions.
 
 ### Creating a Campaign
 
-```text
-1. Plan — goals, audience, messaging
-2. Create template: fluentcrm_create_email_template (title, subject, body HTML)
-3. Create campaign: fluentcrm_create_campaign (title, subject, template_id, recipient_list)
-4. Test — send test emails, check rendering
-5. Schedule — set send time for optimal engagement
-6. Monitor and optimize — track opens, clicks, conversions; A/B test
-```
-
-## Email Templates
+Plan → `fluentcrm_create_email_template` (title, subject, body HTML) → `fluentcrm_create_campaign` (title, subject, template_id, recipient_list) → test → schedule → monitor.
 
 ### Template Best Practices
 
@@ -166,31 +113,11 @@ See `.agents/services/crm/fluentcrm.md` for detailed setup instructions.
 |---------|---------------|
 | **Subject** | 40-60 chars, personalized, clear value |
 | **Preheader** | Complement subject, 40-100 chars |
-| **Header** | Logo, clear branding |
 | **Body** | Single column, scannable, mobile-first |
 | **CTA** | Clear, contrasting button, above fold |
 | **Footer** | Unsubscribe link, contact info, social |
 
-### Template Variables
-
-FluentCRM supports personalization:
-
-```html
-{{contact.first_name}} - First name
-{{contact.last_name}} - Last name
-{{contact.email}} - Email address
-{{contact.full_name}} - Full name
-{{contact.custom.field_name}} - Custom fields
-```
-
-### Creating Templates
-
-```text
-fluentcrm_create_email_template with:
-- title: "Welcome Email Template"
-- subject: "Welcome to {{company_name}}, {{contact.first_name}}!"
-- body: "<html>...</html>"
-```
+**Personalization variables**: `{{contact.first_name}}`, `{{contact.last_name}}`, `{{contact.email}}`, `{{contact.full_name}}`, `{{contact.custom.field_name}}`
 
 ## Marketing Automation
 
@@ -198,200 +125,63 @@ fluentcrm_create_email_template with:
 
 | Trigger | Use Case |
 |---------|----------|
-| `tag_added` | When tag is applied |
-| `list_added` | When contact joins list |
-| `form_submitted` | When form is completed |
-| `link_clicked` | When email link is clicked |
-| `email_opened` | When email is opened |
+| `tag_added` | Tag applied |
+| `list_added` | Contact joins list |
+| `form_submitted` | Form completed |
+| `link_clicked` | Email link clicked |
+| `email_opened` | Email opened |
 
-### Common Automation Sequences
+### Common Sequences
 
-#### Welcome Sequence
+| Sequence | Trigger | Schedule |
+|----------|---------|----------|
+| **Welcome** | `list_added` (Newsletter) | Day 0: welcome → Day 2: value → Day 5: product intro → Day 7: social proof → Day 10: soft CTA |
+| **Lead Nurture** | `tag_added` (lead-mql) | Day 0: education → Day 3: case study → Day 7: comparison → Day 10: demo invite → Day 14: follow-up |
+| **Re-engagement** | `tag_added` (inactive-90-days) | Day 0: "we miss you" → Day 3: best content → Day 7: offer → Day 14: last chance + unsub |
 
-```text
-Trigger: list_added (Newsletter list)
-Day 0: Welcome email
-Day 2: Value content email
-Day 5: Product introduction
-Day 7: Social proof / testimonials
-Day 10: Soft CTA
-```
-
-#### Lead Nurture Sequence
-
-```text
-Trigger: tag_added (lead-mql)
-Day 0: Educational content
-Day 3: Case study
-Day 7: Comparison guide
-Day 10: Demo invitation
-Day 14: Follow-up if no response
-```
-
-#### Re-engagement Sequence
-
-```text
-Trigger: tag_added (inactive-90-days)
-Day 0: "We miss you" email
-Day 3: Best content roundup
-Day 7: Special offer
-Day 14: Last chance + unsubscribe option
-```
-
-### Creating Automations
-
-```text
-fluentcrm_create_automation with:
-- title: "Welcome Sequence"
-- description: "New subscriber welcome series"
-- trigger: "list_added"
-
-Then configure steps in FluentCRM admin:
-1. Add email actions
-2. Set delays between emails
-3. Add conditions and branches
-4. Set exit conditions
-```
+Create with `fluentcrm_create_automation` (title, description, trigger), then configure steps, delays, conditions, and exit conditions in FluentCRM admin.
 
 ## Audience Segmentation
 
-### Segmentation Strategies
+| Segment Type | Tag Pattern | Use Case |
+|--------------|-------------|----------|
+| **Demographic** | `industry-*`, `company-size-*` | Targeted messaging |
+| **Behavioral** | `engaged-*`, `downloaded-*` | Engagement-based |
+| **Lifecycle** | `lead-*`, `customer-*` | Stage-appropriate |
+| **Interest** | `interest-*`, `product-*` | Relevant content |
+| **Source** | `source-*`, `campaign-*` | Attribution |
 
-| Segment Type | Tags/Lists | Use Case |
-|--------------|------------|----------|
-| **Demographic** | industry-*, company-size-* | Targeted messaging |
-| **Behavioral** | engaged-*, downloaded-* | Engagement-based |
-| **Lifecycle** | lead-*, customer-* | Stage-appropriate |
-| **Interest** | interest-*, product-* | Relevant content |
-| **Source** | source-*, campaign-* | Attribution |
-
-### Creating Segments
-
-```text
-# Create list for segment
-fluentcrm_create_list with:
-- title: "Enterprise Prospects"
-- slug: "enterprise-prospects"
-- description: "Companies with 500+ employees interested in enterprise plan"
-
-# Add contacts matching criteria
-fluentcrm_attach_contact_to_list with subscriberId and listIds
-```
-
-### Dynamic Segmentation
-
-Use tags for dynamic segments that update automatically:
-
-```text
-# Create behavior tags
-fluentcrm_create_tag with:
-- title: "Engaged - Last 30 Days"
-- slug: "engaged-30-days"
-
-# Automation applies/removes based on activity
-```
+Use `fluentcrm_create_list` for static segments; `fluentcrm_create_tag` + automation for dynamic segments that update on activity.
 
 ## Smart Links
 
-### Trackable Links
-
-Smart Links track clicks and can trigger actions:
-
-```text
-fluentcrm_create_smart_link with:
-- title: "Product Demo CTA"
-- slug: "demo-cta"
-- target_url: "https://your-site.com/demo"
-- apply_tags: [tag_id for 'clicked-demo-cta']
-```
-
-### Use Cases
-
-| Use Case | Configuration |
-|----------|---------------|
-| **Content tracking** | Apply interest tags on click |
-| **Lead scoring** | Apply engagement tags |
-| **Segmentation** | Add to lists on click |
-| **Retargeting** | Tag for ad audiences |
-
-### Generating Shortcodes
-
-```text
-fluentcrm_generate_smart_link_shortcode with:
-- slug: "demo-cta"
-- linkText: "Request a Demo"
-
-Returns: <a href="{{fc_smart_link slug='demo-cta'}}">Request a Demo</a>
-```
+Track clicks and trigger actions: `fluentcrm_create_smart_link` (title, slug, target_url, apply_tags). Use cases: content tracking, lead scoring, segmentation, retargeting. Generate shortcodes with `fluentcrm_generate_smart_link_shortcode` (slug, linkText).
 
 ## Content Marketing Integration
 
-For platform-specific voice (LinkedIn, Instagram, YouTube, X, Facebook), see `content/platform-personas.md`.
+Platform-specific voice: `content/platform-personas.md`.
 
-### Content to Campaign Workflow
-
-1. Create content (`content.md`) → adapt for platforms → optimize for SEO (`seo.md`)
-2. Create email template with post excerpt; create campaign targeting relevant interest tags
-3. Add smart link to track clicks; schedule for optimal send time; track engagement
+**Content to Campaign**: Create content (`content.md`) → adapt for platforms → SEO (`seo.md`) → email template with excerpt → campaign targeting interest tags → smart link for click tracking → schedule → monitor.
 
 ## Lead Generation
 
-### Lead Magnet Workflow
+**Lead Magnet Workflow**: Create magnet → landing page with form → `fluentcrm_create_list` → delivery automation → nurture sequence.
 
-1. **Create lead magnet** (ebook, guide, template)
-2. **Create landing page** with form
-3. **Create FluentCRM list** for leads
-4. **Set up automation** for delivery
-5. **Create nurture sequence** for follow-up
+**Form integrations**: Fluent Forms, WPForms, Gravity Forms, Contact Form 7, custom API.
 
-### Form Integration
-
-FluentCRM integrates with:
-
-- Fluent Forms
-- WPForms
-- Gravity Forms
-- Contact Form 7
-- Custom forms via API
-
-### Lead Handoff to Sales
-
-```text
-# When lead is qualified:
-1. Apply 'lead-mql' tag
-2. Automation notifies sales team
-3. Sales reviews and accepts
-4. Apply 'lead-sql' tag
-5. Remove from marketing sequences
-```
+**Lead Handoff**: Apply `lead-mql` tag → automation notifies sales → sales accepts → apply `lead-sql` tag → remove from marketing sequences.
 
 ## Analytics & Reporting
 
-### Key Metrics
-
-| Metric | Target | How to Improve |
-|--------|--------|----------------|
-| **Open Rate** | 20-30% | Better subjects, send time |
-| **Click Rate** | 2-5% | Better CTAs, content |
+| Metric | Target | Lever |
+|--------|--------|-------|
+| **Open Rate** | 20-30% | Subject lines, send time |
+| **Click Rate** | 2-5% | CTAs, content relevance |
 | **Conversion Rate** | 1-3% | Landing page optimization |
-| **Unsubscribe Rate** | <0.5% | Better targeting, frequency |
-| **List Growth** | 5-10%/mo | More lead magnets, promotion |
+| **Unsubscribe Rate** | <0.5% | Targeting, frequency |
+| **List Growth** | 5-10%/mo | Lead magnets, promotion |
 
-### Dashboard Stats
-
-```text
-fluentcrm_dashboard_stats
-
-Returns:
-- Total contacts
-- New contacts this period
-- Email engagement metrics
-- Campaign performance
-```
-
-### Campaign Analysis
-
-After each campaign: review open/click rates by segment, identify top content, note unsubscribes and complaints, document learnings.
+Use `fluentcrm_dashboard_stats` for contacts, engagement, and campaign performance. After each campaign: review rates by segment, identify top content, document learnings.
 
 ## A/B Testing
 
@@ -403,17 +193,17 @@ After each campaign: review open/click rates by segment, identify top content, n
 | **CTA** | Button text, color, placement |
 | **Content** | Long vs. short, format |
 
-**Process**: Create two variations → split audience → send to 10-20% test group → wait 24-48h → send winner to remainder.
+**Process**: Two variations → 10-20% test split → 24-48h → send winner to remainder.
 
 ## Best Practices
 
 ### Deliverability & List Hygiene
 
-- Authenticate with SPF, DKIM, DMARC; warm up new sending domains
-- Double opt-in; validate emails on import; remove hard bounces immediately
+- Authenticate SPF, DKIM, DMARC; warm up new sending domains
+- Double opt-in; validate on import; remove hard bounces immediately
 - Re-engage or remove inactive (90+ days); honor unsubscribes instantly
 
-### Compliance
+### Compliance & Frequency
 
 | Regulation | Requirements |
 |------------|--------------|
@@ -421,16 +211,9 @@ After each campaign: review open/click rates by segment, identify top content, n
 | **CAN-SPAM** | Unsubscribe link, physical address |
 | **CASL** | Express consent, identification |
 
-### Frequency
-
-- Newsletter: Weekly or bi-weekly
-- Promotional: 2-4 per month max
-- Transactional: As needed
-- Nurture: Spaced 2-5 days apart
+Frequency: newsletter weekly/bi-weekly; promotional 2-4/month max; nurture 2-5 days apart.
 
 ## Troubleshooting
-
-### Common Issues
 
 | Issue | Solution |
 |-------|----------|
@@ -438,9 +221,9 @@ After each campaign: review open/click rates by segment, identify top content, n
 | High unsubscribes | Review frequency, improve targeting |
 | Bounces | Clean list, validate emails |
 | Spam complaints | Better consent, relevant content |
-| Template rendering | Use `services/email/email-design-test.md` for cross-client testing |
-| Delivery issues | Use `services/email/email-delivery-test.md` for inbox placement and spam scoring |
-| Pre-send validation | Run `email-test-suite-helper.sh test-design <file>` and `check-placement <domain>` for comprehensive checks. See `services/email/email-testing.md` for full testing suite docs |
-| Accessibility issues | Use `tools/accessibility/accessibility-audit.md` for WCAG compliance |
+| Template rendering | `services/email/email-design-test.md` |
+| Delivery issues | `services/email/email-delivery-test.md` |
+| Pre-send validation | `email-test-suite-helper.sh test-design <file>` + `check-placement <domain>`. See `services/email/email-testing.md` |
+| Accessibility | `tools/accessibility/accessibility-audit.md` |
 
-Docs: [FluentCRM](https://fluentcrm.com/docs/) | [REST API](https://rest-api.fluentcrm.com/) | `.agents/services/crm/fluentcrm.md`
+Docs: [FluentCRM](https://fluentcrm.com/docs/) | [REST API](https://rest-api.fluentcrm.com/) | `services/crm/fluentcrm.md`
