@@ -25,19 +25,17 @@ tools:
 - **Matterbridge**: Native support via Graph API (see `matterbridge.md`)
 - **Docs**: [Bot Framework](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/what-are-bots) | [Graph API](https://learn.microsoft.com/en-us/graph/api/overview) | [Adaptive Cards](https://adaptivecards.io/) | [Manifest Schema](https://learn.microsoft.com/en-us/microsoftteams/platform/resources/schema/manifest-schema)
 
-**Architecture**: Webhook-based — Microsoft pushes activities to your HTTPS endpoint (no persistent WebSocket). Bot must be publicly reachable (ngrok/dev tunnels for dev). No E2E encryption — all messages accessible to Microsoft and tenant admins via eDiscovery. For sensitive comms, use SimpleX or Matrix.
+**Architecture**: Webhook-based — Microsoft pushes activities to your HTTPS endpoint (no persistent WebSocket). Bot must be publicly reachable (ngrok/dev tunnels for dev).
 
-**Security**: Store credentials (`appId`, `clientSecret`, `tenantId`) in gopass (`aidevops secret set MSTEAMS_*`). Never commit secrets. Bot output captured by Microsoft 365 eDiscovery/compliance systems.
+**Security**: No E2E encryption — messages accessible to Microsoft and tenant admins via eDiscovery. For sensitive comms, use SimpleX or Matrix. Store credentials in gopass (`aidevops secret set MSTEAMS_*`). Never commit secrets. Bot output captured by M365 compliance systems.
 
 <!-- AI-CONTEXT-END -->
 
-## Architecture
-
 ```text
 Teams Client --> Bot Framework Service (Azure) --> Your Bot Server (Node.js/Express)
-                        |
-                        v
-              Microsoft Graph API (channels, files, users, teams)
+                        |                          |
+                        v                          v
+              Microsoft Graph API          Runner Dispatch (aidevops)
 ```
 
 ## Setup
@@ -55,7 +53,7 @@ az bot update --resource-group mygroup --name aidevops-teams-bot \
 az bot msteams create --resource-group mygroup --name aidevops-teams-bot
 ```
 
-### 2. Teams App Manifest (key fields)
+### 2. Teams App Manifest
 
 Full schema: [Manifest Schema](https://learn.microsoft.com/en-us/microsoftteams/platform/resources/schema/manifest-schema). RSC permissions allow team/chat data access without tenant-wide admin consent.
 
@@ -74,16 +72,11 @@ Full schema: [Manifest Schema](https://learn.microsoft.com/en-us/microsoftteams/
 }
 ```
 
-```bash
-zip -j aidevops-teams-bot.zip manifest.json outline-32x32.png color-192x192.png
-# Sideload: Teams > Apps > Manage your apps > Upload a custom app
-```
+Sideload: `zip -j aidevops-teams-bot.zip manifest.json outline-32x32.png color-192x192.png` → Teams > Apps > Manage your apps > Upload a custom app.
 
 ### 3. Bot Server (Node.js)
 
-```bash
-npm install botbuilder express
-```
+`npm install botbuilder express`
 
 ```javascript
 const { BotFrameworkAdapter, TeamsActivityHandler, CardFactory } = require("botbuilder");
@@ -115,20 +108,16 @@ devtunnel create --allow-anonymous && devtunnel port create -p 3978 && devtunnel
 
 ## Messaging
 
-### Conversation Types
-
-| Type | Scope | Bot Mention Required | Threading |
-|------|-------|---------------------|-----------|
+| Type | Scope | Mention Required | Threading |
+|------|-------|-----------------|-----------|
 | Personal (DM) | 1:1 with bot | No | Flat |
-| Channel | Team channel | Yes (`@BotName`) | Posts with reply threads |
+| Channel | Team channel | Yes (`@BotName`) | Reply threads |
 | Group chat | Multi-user chat | Yes (`@BotName`) | Flat |
 
-### Sending Messages, Cards, and Threading
-
 ```javascript
-await context.sendActivity("Hello from the bot!");
+await context.sendActivity("Plain text message");
 
-// Adaptive Card — see adaptivecards.io/designer for schema
+// Adaptive Card (schema: adaptivecards.io/designer)
 const card = CardFactory.adaptiveCard({ type: "AdaptiveCard", version: "1.5",
   body: [{ type: "TextBlock", text: "Task Result", weight: "Bolder" }],
   actions: [{ type: "Action.OpenUrl", title: "View PR", url: "https://github.com/..." }] });
@@ -139,7 +128,7 @@ const { MicrosoftAppCredentials, ConnectorClient } = require("botframework-conne
 const client = new ConnectorClient(new MicrosoftAppCredentials(appId, appPassword), { baseUri: context.activity.serviceUrl });
 await client.conversations.sendToConversation(conversationId, { type: "message", text: "..." });
 
-// Thread reply (channel only)
+// Thread reply (channel only) — set conversation.id to channelId;messageid=parentMessageId
 await context.sendActivity({ type: "message", text: "Reply", conversation: { id: `${channelId};messageid=${parentMessageId}` } });
 
 // New top-level channel post (Graph API required)
@@ -148,11 +137,11 @@ await graphClient.api(`/teams/${teamId}/channels/${channelId}/messages`).post({ 
 
 ## File Handling
 
-| Context | Upload mechanism | Storage |
-|---------|-----------------|---------|
-| Personal (DM) | Inline attachment | Bot Framework blob storage |
-| Channel | SharePoint via Graph API | Team's SharePoint document library |
-| Group chat | OneDrive via Graph API | Sender's OneDrive |
+| Context | Mechanism | Storage |
+|---------|-----------|---------|
+| Personal (DM) | Inline attachment | Bot Framework blob |
+| Channel | SharePoint via Graph | Team's SharePoint doc library |
+| Group chat | OneDrive via Graph | Sender's OneDrive |
 
 ```javascript
 for (const attachment of context.activity.attachments || []) {
@@ -162,7 +151,7 @@ for (const attachment of context.activity.attachments || []) {
 }
 ```
 
-## Graph API Integration
+## Graph API
 
 ```javascript
 const { Client } = require("@microsoft/microsoft-graph-client");
@@ -176,19 +165,19 @@ const messages = await graphClient.api(`/teams/${teamId}/channels/${channelId}/m
 await graphClient.api(`/teams/${teamId}/channels/${channelId}/messages`).post({ body: { contentType: "html", content: "<b>Done</b>" } });
 ```
 
-**Required Graph API permissions** (Azure AD app registration):
+**Required permissions** (Azure AD app registration):
 
 | Permission | Type | Use |
 |------------|------|-----|
-| `ChannelMessage.Read.All` / `.Send` | Application | Read/send channel messages |
-| `Chat.Read` | Delegated | Read DM/group chat messages |
-| `Files.ReadWrite.All` | Application | Upload/download files |
-| `User.Read.All` | Application | Look up user profiles |
-| `TeamsActivity.Send` | Application | Send activity feed notifications |
+| `ChannelMessage.Read.All` / `.Send` | Application | Channel messages |
+| `Chat.Read` | Delegated | DM/group chat messages |
+| `Files.ReadWrite.All` | Application | File upload/download |
+| `User.Read.All` | Application | User profile lookup |
+| `TeamsActivity.Send` | Application | Activity feed notifications |
 
-## Access Control
+## Access Control and Configuration
 
-Use immutable `aadObjectId` from the activity payload as the primary access control key. `SingleTenant` restricts to your Azure AD tenant; `MultiTenant` accepts any tenant (for published apps / ISVs).
+Use immutable `aadObjectId` from the activity payload as the primary key. `SingleTenant` restricts to your Azure AD tenant; `MultiTenant` accepts any tenant (ISVs).
 
 ```javascript
 function isAllowedUser(aadObjectId) {
@@ -207,9 +196,7 @@ function isAllowedConversation(context) {
 }
 ```
 
-## Configuration
-
-`~/.config/aidevops/msteams-bot.json` (600 permissions). `appId`/`clientSecret` stored in gopass.
+`~/.config/aidevops/msteams-bot.json` (600 permissions). `appId`/`clientSecret` in gopass. Empty arrays = all allowed. `channelMappings`: channel ID → runner name.
 
 ```json
 {
@@ -224,9 +211,7 @@ function isAllowedConversation(context) {
 }
 ```
 
-`allowedUsers`/`allowedTeams`/`allowedChannels`: empty = all allowed. `channelMappings`: channel ID → runner name. `maxPromptLength`: 3000. `responseTimeout`: 600s.
-
-## Runner Dispatch Integration
+## Runner Dispatch
 
 ```javascript
 const execFileAsync = require("util").promisify(require("child_process").execFile);
@@ -266,7 +251,7 @@ enable = true
 
 ## Deployment
 
-### Azure App Service
+**Azure App Service:**
 
 ```bash
 az webapp create --resource-group mygroup --plan myplan --name aidevops-teams-bot --runtime "NODE:18-lts"
@@ -275,20 +260,19 @@ az webapp config appsettings set --resource-group mygroup --name aidevops-teams-
 az webapp deployment source config-zip --resource-group mygroup --name aidevops-teams-bot --src bot.zip
 ```
 
-### Docker / Systemd (Self-Hosted)
+**Docker / Systemd (self-hosted):**
 
 ```bash
-# Docker: use --env-file for credentials; reverse proxy (Caddy/Nginx) for TLS
 docker run -d --name msteams-bot --restart unless-stopped -p 3978:3978 \
   --env-file /etc/msteams-bot/env aidevops-teams-bot:latest
-# Systemd: EnvironmentFile=/etc/msteams-bot/env, ExecStart=/usr/bin/node index.js
+# Reverse proxy (Caddy/Nginx) for TLS. Systemd: EnvironmentFile=/etc/msteams-bot/env
 ```
 
-## Privacy, Security, and Compliance
+## Privacy and Compliance
 
 **No E2E encryption.** TLS 1.2+ in transit, encrypted at rest, but accessible in plaintext to Microsoft and tenant admins via eDiscovery, DLP, and compliance tools. Legal holds preserve messages even if deleted. Copilot for M365 processes Teams messages by default (restrict via Purview sensitivity labels on E3/E5).
 
-**Network requirements**: Outbound: `login.botframework.com`, `login.microsoftonline.com`, `graph.microsoft.com`, `smba.trafficmanager.net`, `*.botframework.com`. Inbound: HTTPS (443).
+**Network**: Outbound: `login.botframework.com`, `login.microsoftonline.com`, `graph.microsoft.com`, `smba.trafficmanager.net`, `*.botframework.com`. Inbound: HTTPS (443).
 
 **Security checklist**: (1) Single-tenant only (2) AAD object ID allowlists (3) Channel allowlists (4) No secrets in responses (5) Credentials in gopass/Azure Key Vault (6) Verify Bot Framework JWT on incoming requests (7) Per-user rate limiting.
 
@@ -296,26 +280,25 @@ docker run -d --name msteams-bot --restart unless-stopped -p 3978:3978 \
 
 | Issue | Solution |
 |-------|----------|
-| Bot not receiving messages | Verify messaging endpoint URL in Azure Bot resource; check HTTPS certificate |
-| 401 Unauthorized | Verify App ID and Client Secret; check token validation logic |
-| Bot not appearing in Teams | Sideload the app manifest ZIP; check Teams admin policies |
+| Bot not receiving messages | Verify messaging endpoint URL in Azure Bot resource; check HTTPS cert |
+| 401 Unauthorized | Verify App ID and Client Secret; check token validation |
+| Bot not appearing in Teams | Sideload manifest ZIP; check Teams admin policies |
 | Messages not delivered to channel | Ensure bot is @mentioned; check RSC permissions |
-| File upload fails | Verify `Files.ReadWrite.All` Graph API permission; check SharePoint access |
-| Adaptive Card not rendering | Validate at adaptivecards.io/designer; check version compatibility |
-| Proactive messages fail | Store and reuse `serviceUrl` and `conversationId` from previous activities |
-| Graph API 403 | Check application permissions in Azure AD; ensure admin consent granted |
+| File upload fails | Verify `Files.ReadWrite.All` permission; check SharePoint access |
+| Adaptive Card not rendering | Validate at adaptivecards.io/designer; check version compat |
+| Proactive messages fail | Store and reuse `serviceUrl` + `conversationId` from prior activities |
+| Graph API 403 | Check app permissions in Azure AD; ensure admin consent granted |
 
 ## Limitations
 
 - **Platform lock-in**: Azure AD + Bot Framework + Graph API required — no self-hosted alternative
-- **Message format**: Adaptive Cards are Teams-specific; HTML support limited; 28 KB text / 40 KB card limits
+- **Message format**: Adaptive Cards are Teams-specific; HTML limited; 28 KB text / 40 KB card limits
 - **Threading**: DMs and group chats are flat; top-level channel posts require Graph API
-- **Closed source**: No way to audit server-side code, verify encryption claims, or self-host Teams infrastructure
+- **Closed source**: No way to audit server-side code, verify encryption claims, or self-host
 
 ## Related
 
 - `services/communications/matterbridge.md` — Multi-platform bridge (native Teams support)
-- `services/communications/matrix-bot.md` — Matrix bot integration (self-hosted, E2E optional)
+- `services/communications/matrix-bot.md` — Matrix bot (self-hosted, E2E optional)
 - `services/communications/simplex.md` — SimpleX Chat (zero-knowledge, E2E encrypted)
 - `tools/security/opsec.md` — Operational security guidance
-- `tools/ai-assistants/headless-dispatch.md` — Headless dispatch patterns
