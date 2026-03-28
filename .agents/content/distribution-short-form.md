@@ -11,70 +11,48 @@ model: sonnet
 
 ## Quick Reference
 
-- **Purpose**: Optimize content for TikTok, Instagram Reels, and YouTube Shorts
-- **Format**: 9:16 vertical video, 15-90 seconds, hook-first structure
-- **Key Platforms**: TikTok, Instagram Reels, YouTube Shorts, Snapchat Spotlight
+- **Purpose**: Optimize content for TikTok, Instagram Reels, YouTube Shorts, Snapchat Spotlight
+- **Format**: 9:16 vertical video, 15-90s, hook-first structure
 - **Success Metrics**: Completion rate, shares, saves, watch time
 
-**Critical Rules**:
-
-- **Hook in first 1-3 seconds** - Pattern interrupt or immediate value
-- **Fast cuts** - 1-3 second shots maximum
-- **9:16 aspect ratio** - Vertical video only
-- **60s sweet spot** - Optimal length for all platforms (15-90s range)
-- **Trending sounds** - Platform-specific audio trends
-- **Captions required** - 80%+ watch without sound
-- **No watermarks** - Cross-posting penalties on all platforms
+**Critical Rules**: Hook in first 1-3s (pattern interrupt or immediate value) · Fast cuts (1-3s max) · 9:16 aspect ratio · 60s sweet spot (15-90s range) · Trending sounds · Captions required (80%+ watch without sound) · No watermarks (cross-posting penalties)
 
 **Platform Pacing**:
 
-| Platform | Optimal Length | Cut Speed | Sound Strategy |
-|----------|---------------|-----------|----------------|
-| TikTok | 15-60s | 1-2s cuts | Trending sounds critical |
-| Reels | 30-60s | 2-3s cuts | Original audio + trending |
-| Shorts | 30-60s | 2-3s cuts | Music library or original |
-| Snapchat | 15-30s | 1-2s cuts | Original audio preferred |
+| Platform | Optimal Length | Cut Speed | Sound Strategy | Cadence | Peak Times (local) |
+|----------|---------------|-----------|----------------|---------|-------------------|
+| TikTok | 15-60s | 1-2s cuts | Trending sounds critical | 1-3/day | 6-9am, 12-3pm, 7-11pm |
+| Reels | 30-60s | 2-3s cuts | Original audio + trending | 1-2/day | 9-11am, 1-3pm, 7-9pm |
+| Shorts | 30-60s | 2-3s cuts | Music library or original | 1-2/day | 12-3pm, 6-9pm |
+| Snapchat | 15-30s | 1-2s cuts | Original audio preferred | 1-2/day | 10am-12pm, 5-8pm |
 
-**Content Type Presets**:
-
-- **UGC-style** - 1-3s cuts, handheld feel, authentic voice
-- **Educational** - 2-4s cuts, text overlays, clear narration
-- **Entertainment** - 1-2s cuts, music-driven, visual hooks
-- **Product showcase** - 2-3s cuts, benefit-focused, CTA at end
+**Content Type Presets**: UGC-style (1-3s cuts, handheld, authentic voice) · Educational (2-4s cuts, text overlays, narration) · Entertainment (1-2s cuts, music-driven, visual hooks) · Product showcase (2-3s cuts, benefit-focused, CTA at end)
 
 <!-- AI-CONTEXT-END -->
 
 ## Hook-First Structure
 
-The first 1-3 seconds determine 80%+ of your completion rate.
+First 1-3 seconds determine 80%+ of completion rate.
 
 **7 Hook Formulas**:
-
-1. **Bold Claim** - "This AI tool made me $10k in 3 days"
-2. **Question** - "Why do 95% of AI influencers fail?"
-3. **Story** - "I spent $5k on AI video tools. Here's what worked."
-4. **Contrarian** - "Stop using ChatGPT for content creation"
-5. **Result** - "From 0 to 100k followers in 30 days"
-6. **Problem-Agitate** - "Your AI videos look fake. Here's why."
-7. **Curiosity Gap** - "The AI video secret nobody talks about"
+1. **Bold Claim** — "This AI tool made me $10k in 3 days"
+2. **Question** — "Why do 95% of AI influencers fail?"
+3. **Story** — "I spent $5k on AI video tools. Here's what worked."
+4. **Contrarian** — "Stop using ChatGPT for content creation"
+5. **Result** — "From 0 to 100k followers in 30 days"
+6. **Problem-Agitate** — "Your AI videos look fake. Here's why."
+7. **Curiosity Gap** — "The AI video secret nobody talks about"
 
 **Visual Hook Patterns**: extreme close-up, unexpected action (pattern interrupt), bold text overlay, before/after split, POV shot.
 
 ## Script Structure
 
-**4-Part Framework**:
+**4-Part Framework**: Hook (1-3s) · Storytelling (10-30s) · Soft Sell (5-15s) · CTA (1-3s)
 
-### 1. Hook (1-3s)
-Visual + verbal pattern interrupt, text overlay with bold claim, immediate value promise.
-
-### 2. Storytelling (10-30s)
-Before/During/After arc, problem → failed solutions → discovery, fast cuts (1-3s per shot).
-
-### 3. Soft Sell (5-15s)
-Solution reveal, benefit-focused, social proof or result, subtle CTA.
-
-### 4. CTA (1-3s)
-Follow for more / link in bio / comment keyword / save for later.
+- **Hook**: Visual + verbal pattern interrupt, text overlay with bold claim, immediate value promise
+- **Storytelling**: Before/During/After arc, problem → failed solutions → discovery, fast cuts (1-3s/shot)
+- **Soft Sell**: Solution reveal, benefit-focused, social proof or result, subtle CTA
+- **CTA**: Follow for more / link in bio / comment keyword / save for later
 
 **Example Script (Educational, 20s)**:
 
@@ -102,75 +80,30 @@ Narration: "Follow for the full breakdown."
 
 ## Platform-Specific Optimization
 
-### TikTok
-- **Algorithm**: completion rate, shares/saves, comments, watch time
-- **Sound**: trending sounds within 24-48h of peak; original for evergreen
-- **Hashtags**: 3-5 max, mix trending + niche + branded; avoid banned tags
-- **Cadence**: 1-3/day; peak times 6-9am, 12-3pm, 7-11pm local
-
-### Instagram Reels
-- **Algorithm**: shares to Stories/DMs, saves, completion rate, engagement
-- **Sound**: original audio for reach, trending for discovery
-- **Hashtags**: 3-5 in caption or first comment
-- **Cadence**: 1-2/day; peak times 9-11am, 1-3pm, 7-9pm local; cross-post to Feed
-
-### YouTube Shorts
-- **Algorithm**: watch time (total minutes), CTR from Shorts feed, engagement, shares
-- **Sound**: YouTube Audio Library or original; voiceover clarity (viewers often have sound on)
-- **Title**: front-load keywords; use `#Shorts` + 2-3 topic tags
-- **Cadence**: 1-2/day; peak times 12-3pm, 6-9pm local; link to long-form in description
-
-### Snapchat Spotlight
-- **Algorithm**: unique content (no watermarks/reposts), completion rate, shares
-- **Sound**: original audio strongly preferred; no copyrighted music (strict enforcement)
-- **Guidelines**: no logos/watermarks, no clickbait, limited reach for political content
-- **Cadence**: 1-2/day; peak times 10am-12pm, 5-8pm local
+- **TikTok**: Algorithm weights completion rate, shares/saves, comments, watch time. Trending sounds within 24-48h of peak; original for evergreen. 3-5 hashtags (mix trending + niche + branded; avoid banned tags).
+- **Reels**: Algorithm weights shares to Stories/DMs, saves, completion rate. Original audio for reach, trending for discovery. 3-5 hashtags in caption or first comment. Cross-post to Feed.
+- **Shorts**: Algorithm weights watch time (total minutes), CTR from Shorts feed. YouTube Audio Library or original; voiceover clarity (viewers often have sound on). Front-load keywords in title; use `#Shorts` + 2-3 topic tags. Link to long-form in description.
+- **Snapchat**: Algorithm weights unique content (no watermarks/reposts), completion rate, shares. Original audio strongly preferred; no copyrighted music (strict enforcement). No logos/watermarks, no clickbait, limited reach for political content.
 
 ## Production Workflow
 
-### 1. Script and Storyboard
-- Hook-first script (6-12 words for hook)
-- Shot-by-shot breakdown (1-3s per shot)
-- Dialogue pacing (8-second chunks for AI video)
-- Text overlay and sound effect cues
-
-### 2. Video Generation
-
-**Sora 2 Pro** (UGC-style): 9:16, 1-3s cuts, handheld, natural light, seed 2000-3000
-
-**Veo 3.1** (cinematic): 9:16, 2-5s cuts, smooth movements, professional lighting, ingredients-to-video workflow
-
-### 3. Audio Production
-
-**Voice Pipeline**: CapCut AI voice cleanup → ElevenLabs transformation
-
-**LUFS Levels**:
-- TikTok/Reels/Snapchat: -10 to -12 LUFS (louder for mobile)
-- Shorts: -12 to -14 LUFS
-
-**Audio Mix**: Dialogue -10 LUFS (primary), Music -18 to -20 LUFS (background), SFX -5 to -15 LUFS
-
-### 4. Captions and Text Overlays
-
-- Auto-captions via CapCut, Descript, or platform tools (85-95% accurate — edit for accuracy)
-- Style: bold, high contrast, easy to read on mobile
-- Hook text in first frame, 2-3 key-point overlays, CTA text at end
-- Position: center or lower third (avoid top — platform UI overlap)
+1. **Script and Storyboard** — hook-first script (6-12 words for hook), shot-by-shot breakdown (1-3s/shot), dialogue pacing (8s chunks for AI video), text overlay and SFX cues
+2. **Video Generation**:
+   - **Sora 2 Pro** (UGC-style): 9:16, 1-3s cuts, handheld, natural light, seed 2000-3000
+   - **Veo 3.1** (cinematic): 9:16, 2-5s cuts, smooth movements, professional lighting, ingredients-to-video workflow
+3. **Audio Production** — Voice pipeline: CapCut AI voice cleanup → ElevenLabs transformation. LUFS: TikTok/Reels/Snapchat -10 to -12 (louder for mobile), Shorts -12 to -14. Mix: Dialogue -10 LUFS (primary), Music -18 to -20 LUFS (background), SFX -5 to -15 LUFS
+4. **Captions and Text Overlays** — Auto-captions via CapCut, Descript, or platform tools (85-95% accurate — edit for accuracy). Style: bold, high contrast, mobile-readable. Hook text in first frame, 2-3 key-point overlays, CTA text at end. Position: center or lower third (avoid top — platform UI overlap).
 
 ## Optimization and Testing
 
-### A/B Testing
-
-- **Hook variants**: test 5-10 different hooks per topic (same content, different first 3s)
-- **Thumbnail variants** (Shorts/Reels): test 3-5 images, measure CTR
-- **Sound variants**: trending vs original, measure reach and engagement
+**A/B Testing**: Hook variants (5-10 per topic, same content different first 3s) · Thumbnail variants (Shorts/Reels: 3-5 images, measure CTR) · Sound variants (trending vs original, measure reach and engagement)
 
 **250-Sample Rule**: wait for 250+ views before judging.
 - Below 2% engagement → kill
 - Above 2% → scale (boost or repost)
 - Above 3% → go aggressive (paid promotion)
 
-### Platform Metrics Targets
+**Platform Metrics Targets**:
 
 | Platform | Primary Metric | Target |
 |----------|---------------|--------|
@@ -181,12 +114,11 @@ Narration: "Follow for the full breakdown."
 | Shorts | CTR from feed | 5%+ |
 | Shorts | Engagement rate | 3%+ |
 
-**Retention analysis**: use platform analytics to identify exact drop-off points in hook (0-3s), mid-video, and CTA sections.
+Use platform analytics to identify drop-off points in hook (0-3s), mid-video, and CTA sections.
 
 ## Cross-Platform Strategy
 
-### Repurposing Workflow
-
+**Repurposing Workflow**:
 1. Create master version (9:16, 60s, captions burned in, no watermark)
 2. **TikTok**: add trending sound overlay, 3-5 hashtags
 3. **Reels**: original or trending audio, location/product tags, 3-5 hashtags
@@ -196,19 +128,13 @@ Narration: "Follow for the full breakdown."
 
 **Content Mix**: 50% educational, 30% entertainment/storytelling, 20% promotional.
 
-## Monetization Strategy
+## Monetization
 
-### Affiliate Links
-- TikTok: link in bio (1 link; use Linktree for multiple)
-- Reels: link in bio (multiple links allowed)
-- Shorts: link in description (multiple links allowed)
-- Comment pinning: "Comment 'AI' for the link" + DM automation via ManyChat
+**Affiliate Links**: TikTok — link in bio (1 link; use Linktree for multiple) · Reels — link in bio (multiple links allowed) · Shorts — link in description (multiple links allowed) · Comment pinning: "Comment 'AI' for the link" + DM automation via ManyChat
 
-### Info Products
-- $5-27 price point for impulse buys from cold traffic
-- Upsell ladder to higher-ticket products
+**Info Products**: $5-27 price point for impulse buys from cold traffic; upsell ladder to higher-ticket products.
 
-### Platform Monetization
+**Platform Monetization**:
 
 | Platform | Requirement | Rate |
 |----------|------------|------|
