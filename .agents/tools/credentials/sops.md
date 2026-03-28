@@ -34,9 +34,22 @@ tools:
 - `sops-helper.sh status` -- Show SOPS status and encrypted files
 - `sops-helper.sh install` -- Install SOPS and age
 
-**CRITICAL**: Decrypted content should NEVER be written to unencrypted files on disk. Use `sops decrypt` to stdout or `sops edit` for in-place editing.
-
 <!-- AI-CONTEXT-END -->
+
+## Agent Security Rules
+
+**CRITICAL**: Decrypted content NEVER written to unencrypted files on disk. Use `sops decrypt` to stdout or `sops edit` for in-place editing.
+
+1. **Never decrypt to disk** -- Use `sops decrypt <file>` to stdout
+2. **Never expose age private keys** -- Key file at `~/.config/sops/age/keys.txt`
+3. **Use sops-helper.sh** -- Wrapper handles common operations safely
+4. **Check encryption status** -- `sops-helper.sh status <file>` before operations
+
+**Prohibited commands** (NEVER run in agent context):
+
+- `cat ~/.config/sops/age/keys.txt` -- exposes private key
+- `sops decrypt <file> > plaintext.yaml` -- writes secrets to disk
+- `echo $SOPS_AGE_KEY` -- leaks key material
 
 ## When to Use SOPS vs gopass vs gocryptfs
 
@@ -46,47 +59,33 @@ tools:
 | **SOPS** | Structured config files committed to git | Encrypted in-place in repo |
 | **gocryptfs** | Entire directories of sensitive data | FUSE encrypted filesystem |
 
-**Use SOPS when**:
+**SOPS**: config files need git versioning with secrets, team review of structure without seeing values, key rotation without re-creating files, CI/CD decryption during deployment.
 
-- Config files need to be version-controlled (git) but contain secrets
-- Team members need to review config structure without seeing secret values
-- You need key rotation without re-creating files
-- CI/CD needs to decrypt configs during deployment
+**gopass**: individual API keys/tokens, secrets that should never appear in git, AI agent subprocess injection.
 
-**Use gopass when**:
-
-- Individual API keys or tokens
-- Secrets that should never appear in git
-- AI agent subprocess injection
-
-**Use gocryptfs when**:
-
-- Protecting entire directories at rest
-- Workspace-level encryption
-- Data that doesn't need git versioning
+**gocryptfs**: directory-level encryption at rest, workspace-level encryption, data that doesn't need git versioning.
 
 ## Installation
 
 ```bash
-# Install SOPS + age (recommended backend)
+# Recommended (handles platform detection)
 sops-helper.sh install
 
-# Or manually:
-# macOS
+# Manual — macOS
 brew install sops age
 
-# Linux (Debian/Ubuntu)
+# Manual — Linux (Debian/Ubuntu)
 sudo apt-get install -y age
 # SOPS: download from https://github.com/getsops/sops/releases
 
-# Linux (Arch)
+# Manual — Linux (Arch)
 sudo pacman -S sops age
 ```
 
 ## Setup
 
 ```bash
-# Initialize SOPS with age backend (recommended)
+# Initialize with age backend (recommended)
 sops-helper.sh init
 
 # Or with GPG backend
@@ -96,18 +95,13 @@ sops-helper.sh init --backend gpg
 sops-helper.sh status
 ```
 
-This creates:
-
-1. An age key pair at `~/.config/sops/age/keys.txt`
-2. A `.sops.yaml` config in the repository root
-3. A git diff driver for transparent decrypted diffs
+Creates: (1) age key pair at `~/.config/sops/age/keys.txt`, (2) `.sops.yaml` config in repo root, (3) git diff driver for transparent decrypted diffs.
 
 ## Usage
 
-### Encrypting Config Files
+### Encrypt and commit
 
 ```bash
-# Create a config file with secrets
 cat > database.enc.yaml << 'EOF'
 database:
   host: db.example.com
@@ -117,15 +111,12 @@ database:
   ssl: true
 EOF
 
-# Encrypt it (in-place)
 sops-helper.sh encrypt database.enc.yaml
-
-# The file is now safe to commit
 git add database.enc.yaml
 git commit -m "feat: add encrypted database config"
 ```
 
-### Viewing Decrypted Content
+### View and edit
 
 ```bash
 # Decrypt to stdout (never writes to disk)
@@ -133,25 +124,17 @@ sops-helper.sh decrypt database.enc.yaml
 
 # Pipe to other commands
 sops-helper.sh decrypt database.enc.yaml | yq '.database.host'
-```
 
-### Editing Encrypted Files
-
-```bash
 # Opens $EDITOR with decrypted content, re-encrypts on save
 sops-helper.sh edit database.enc.yaml
-```
 
-### Key Rotation
-
-```bash
-# Rotate data encryption key (re-encrypts with new DEK)
+# Rotate data encryption key
 sops-helper.sh rotate database.enc.yaml
 ```
 
 ## File Naming Convention
 
-SOPS matches files based on `.sops.yaml` creation rules. The default config uses:
+SOPS matches files based on `.sops.yaml` creation rules:
 
 | Pattern | Example |
 |---------|---------|
@@ -183,17 +166,16 @@ creation_rules:
 
 ## Team Sharing
 
-### Adding Team Members (age)
+### Adding team members (age)
 
 ```bash
 # Team member generates their age key
 age-keygen -o ~/.config/sops/age/keys.txt
 
-# They share their PUBLIC key (safe to share)
+# Share PUBLIC key (safe to share)
 grep "public key:" ~/.config/sops/age/keys.txt
 
-# Add their public key to .sops.yaml
-# Multiple keys = any key holder can decrypt
+# Add public key to .sops.yaml (multiple keys = any key holder can decrypt)
 creation_rules:
   - path_regex: \.enc\.(yaml|yml|json|env|ini)$
     age: >-
@@ -201,13 +183,13 @@ creation_rules:
       age1def...teammate-key
 ```
 
-### Adding Team Members (GPG)
+### Adding team members (GPG)
 
 ```bash
 # Import teammate's public key
 gpg --import teammate-public-key.asc
 
-# Add their fingerprint to .sops.yaml
+# Add fingerprint to .sops.yaml
 creation_rules:
   - path_regex: \.enc\.(yaml|yml|json|env|ini)$
     pgp: >-
@@ -220,9 +202,9 @@ sops updatekeys database.enc.yaml
 
 ## Git Integration
 
-### Diff Driver
+### Diff driver
 
-The `sops-helper.sh init` command configures a git diff driver:
+`sops-helper.sh init` configures a git diff driver for decrypted diffs:
 
 ```bash
 # .gitattributes
@@ -232,13 +214,10 @@ The `sops-helper.sh init` command configures a git diff driver:
 git config diff.sopsdiffer.textconv "sops decrypt"
 ```
 
-This shows decrypted diffs in `git diff` and `git log -p`.
-
-### Pre-commit Hook
+### Pre-commit hook
 
 ```bash
 # Prevent committing unencrypted files that should be encrypted
-# Add to .pre-commit-config.yaml or git hooks
 for file in $(git diff --cached --name-only | grep '\.enc\.'); do
     if ! grep -q '"sops"' "$file" 2>/dev/null && ! grep -q "sops:" "$file" 2>/dev/null; then
         echo "ERROR: $file appears unencrypted. Run: sops-helper.sh encrypt $file"
@@ -261,28 +240,13 @@ done
     rm config.yaml  # Clean up
 ```
 
-### Environment Variable
+### Environment variable
 
 ```bash
 # Set SOPS_AGE_KEY for non-interactive decryption
 export SOPS_AGE_KEY=$(cat ~/.config/sops/age/keys.txt)
 sops decrypt config.enc.yaml
 ```
-
-## Agent Instructions
-
-When an AI agent needs to work with SOPS-encrypted files:
-
-1. **Never decrypt to disk** -- Use `sops decrypt <file>` to stdout
-2. **Never expose age private keys** -- The key file is at `~/.config/sops/age/keys.txt`
-3. **Use sops-helper.sh** -- Wrapper handles common operations safely
-4. **Check encryption status** -- `sops-helper.sh status <file>` before operations
-
-**Prohibited commands** (NEVER run in agent context):
-
-- `cat ~/.config/sops/age/keys.txt` -- exposes private key
-- `sops decrypt <file> > plaintext.yaml` -- writes secrets to disk
-- `echo $SOPS_AGE_KEY` -- leaks key material
 
 ## Architecture
 
