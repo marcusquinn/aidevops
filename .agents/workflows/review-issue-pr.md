@@ -24,15 +24,9 @@ tools:
 - **Modes**: Interactive (user invokes `/review-issue-pr`) or headless (pulse dispatches for triage)
 
 **Core Questions**:
-
 1. **Is the issue real?** — Can we reproduce? Bug or expected behavior?
 2. **Is this the best solution?** — Simpler alternatives? Fits architecture?
 3. **Is the scope appropriate?** — Does the PR do exactly what's needed, no more?
-
-```bash
-gh issue view 123 --json title,body,labels,author
-gh pr view 456 --json title,body,files,additions,deletions
-```
 
 <!-- AI-CONTEXT-END -->
 
@@ -48,26 +42,12 @@ gh pr view 456 --json title,body,files,additions,deletions
 | **Actual bug** | Bug or expected behavior? | Check docs, design decisions |
 | **In scope** | Within project scope? | Check project goals, roadmap |
 
-```bash
-gh issue view 123 --json title,body,labels,state
-gh issue list --search "keyword" --state all
-gh issue view 123 --json body | jq -r '.body' | grep -i "version\|environment"
-```
-
 ### 2. Root Cause Analysis
 
-| Question | Why It Matters |
-|----------|----------------|
-| What's the actual root cause? | Surface symptoms may hide deeper issues |
-| Is this a symptom of a larger problem? | Fixing symptoms creates tech debt |
-| Why wasn't this caught earlier? | May indicate missing tests or docs |
-| Are there related issues? | Batch fixes may be more efficient |
-
-```bash
-rg "relevant_function" --type js --type ts --type py --type sh
-git log --oneline -20 -- path/to/affected/file
-gh issue list --search "related keyword" --json number,title
-```
+- What's the actual root cause? (Surface symptoms may hide deeper issues)
+- Is this a symptom of a larger problem? (Fixing symptoms creates tech debt)
+- Why wasn't this caught earlier? (May indicate missing tests or docs)
+- Are there related issues? (Batch fixes may be more efficient)
 
 ## PR Review Checklist
 
@@ -97,12 +77,6 @@ Before approving, consider:
 | Refactoring mixed with fixes | Hard to review, may hide issues |
 | "While I was here" changes | Increases risk, harder to revert |
 | Missing from PR description | Undocumented changes are suspicious |
-
-```bash
-gh pr view 456 --json files | jq -r '.files[].path'
-gh pr view 456 --json body,files
-gh pr diff 456 --stat
-```
 
 ### 5. Architecture Alignment
 
@@ -162,18 +136,18 @@ The review comment MUST contain `## Review:` or `## Issue/PR Review:` in the hea
 
 ## Headless / Pulse-Driven Mode
 
-When invoked by the pulse supervisor (via `/review-issue-pr <number>`), this workflow runs headlessly:
+When invoked by the pulse supervisor (via `/review-issue-pr <number>`):
 
-1. **Fetch the issue/PR** using `gh issue view` or `gh pr view`
-2. **Read the relevant codebase files** referenced in the issue body
-3. **Perform the full review checklist** (problem validation, root cause, solution evaluation, scope)
-4. **Post the review as a comment** on the issue/PR using `gh issue comment` or `gh pr comment`
-5. **Do NOT modify labels** — the pulse handles label transitions based on the maintainer's response
-6. **Exit cleanly** — this is an operational task, not a code change. No worktree, no PR, no commit.
+1. Fetch the issue/PR using `gh issue view` or `gh pr view`
+2. Read relevant codebase files referenced in the issue body
+3. Perform the full review checklist (problem validation, root cause, solution evaluation, scope)
+4. Post the review as a comment using `gh issue comment` or `gh pr comment`
+5. Do NOT modify labels — the pulse handles label transitions based on maintainer response
+6. Exit cleanly — no worktree, no PR, no commit
 
-**The review comment is the only output.** The pulse detects it on the next cycle and knows the issue has been triaged. The maintainer reads the review and responds with "approved", "declined", or further direction.
+**The review comment is the only output.** The pulse detects it on the next cycle. The maintainer reads the review and responds with "approved", "declined", or further direction.
 
-**Incorporating maintainer feedback:** If the dispatch prompt includes prior maintainer comments (e.g., "The maintainer asked: can this be done without adding a dependency?"), incorporate that context into the review. Address the maintainer's specific concerns in the analysis.
+**Incorporating maintainer feedback:** If the dispatch prompt includes prior maintainer comments, incorporate that context and address the maintainer's specific concerns in the analysis.
 
 ## Common Scenarios
 
@@ -223,13 +197,16 @@ Would you be open to updating the PR? Or I can make the change — just let me k
 
 ```bash
 gh issue view 123 --json title,body,labels,author,createdAt,comments
+gh issue list --search "keyword" --state all
 gh pr view 456 --json title,body,files,additions,deletions,author
-gh pr diff 456
+gh pr diff 456 --stat
 gh pr checks 456
 gh pr review 456 --comment --body "Comment text"
 gh pr review 456 --request-changes --body "Please address..."
 gh pr review 456 --approve --body "LGTM!"
 gh issue close 123 --comment "Closing because..."
+rg "relevant_function" --type js --type ts --type py --type sh
+git log --oneline -20 -- path/to/affected/file
 ```
 
 ## Labels for Triage
