@@ -40,25 +40,7 @@ Skip if `--no-decompose` or already has subtasks. Run `task-decompose-helper.sh 
 
 **Step 0.5 — Claim (t1017):** Adds `assignee:<identity> started:<ISO>` to TODO.md via commit+push. Push rejection = claimed → **STOP**. Skip when not a task ID or `--no-claim`.
 
-**Step 0.6 — Label `status:in-progress`:** Find linked issue: (1) `$ISSUE_NUM`, (2) TODO.md `ref:GH#NNN`, (3) `gh issue list --search "${TASK_ID}:"`.
-
-```bash
-if [[ -n "$ISSUE_NUM" && "$ISSUE_NUM" != "null" ]]; then
-  REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
-  ISSUE_STATE=$(gh issue view "$ISSUE_NUM" --repo "$REPO" --json state -q .state 2>/dev/null || echo "UNKNOWN")
-  if [[ "$ISSUE_STATE" != "OPEN" ]]; then
-    echo "[t1343/#2452] Issue #$ISSUE_NUM is $ISSUE_STATE — aborting worker"
-    exit 0
-  fi
-  WORKER_USER=$(gh api user --jq '.login' 2>/dev/null || whoami)
-  gh issue edit "$ISSUE_NUM" --repo "$REPO" --add-assignee "$WORKER_USER" --add-label "status:in-progress" 2>/dev/null || true
-  for STALE in "status:available" "status:queued" "status:claimed"; do
-    gh issue edit "$ISSUE_NUM" --repo "$REPO" --remove-label "$STALE" 2>/dev/null || true
-  done
-fi
-```
-
-Label lifecycle: `available` → `queued` → `in-progress` → `in-review` → `done`. Stale: 3+ hours with no PR → pulse relabels `status:available`.
+**Step 0.6 — Label `status:in-progress`** (lifecycle: `available` → `queued` → `in-progress` → `in-review` → `done`; stale 3+ hrs → pulse relabels `available`)**:** Find linked issue: (1) `$ISSUE_NUM`, (2) TODO.md `ref:GH#NNN`, (3) `gh issue list --search "${TASK_ID}:"`. Abort if issue is not `OPEN` (t1343/#2452). Assign worker, add `status:in-progress`, remove stale labels.
 
 **Step 0.7 — Label dispatch model:** Detect from `$ANTHROPIC_MODEL`/`$CLAUDE_MODEL` or system prompt. Map: `*opus*`→`dispatched:opus`, `*sonnet*`→`dispatched:sonnet`, `*haiku*`→`dispatched:haiku`. Remove stale labels first.
 
@@ -92,21 +74,7 @@ Iterate until emitting `<promise>TASK_COMPLETE</promise>`.
 2. **README gate (t099)** — update if user-facing features change; skip for refactor/bugfix. aidevops: also `readme-helper.sh check`
 3. Conventional commits; headless rules observed; every deferred finding has tracked task+issue
 4. **Runtime testing gate (t1660.7)** — risk-appropriate verification (see below)
-5. **Commit+PR gate (GH#5317 — MANDATORY):**
-
-    ```bash
-    UNCOMMITTED=$(git status --porcelain | wc -l | tr -d ' ')
-    if [[ "$UNCOMMITTED" -gt 0 ]]; then
-      git add -A && git commit -m "feat: complete implementation (GH#5317 commit gate)"
-    fi
-    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-    if [[ "$CURRENT_BRANCH" != "main" && "$CURRENT_BRANCH" != "master" ]]; then
-      git push -u origin HEAD 2>/dev/null || git push origin HEAD
-      gh pr view >/dev/null 2>&1 || echo "[GH#5317] No PR — proceed to Step 4"
-    fi
-    ```
-
-    **Do NOT emit `TASK_COMPLETE` with uncommitted changes or no PR.**
+5. **Commit+PR gate (GH#5317 — MANDATORY):** Commit all changes, push branch, ensure PR exists. **Do NOT emit `TASK_COMPLETE` with uncommitted changes or no PR.**
 
 **Actionable findings:** `findings-to-tasks-helper.sh create --input <findings.txt> --repo-path "$(git rev-parse --show-toplevel)" --source <type>`. PR body: `actionable_findings_total=N`, `fixed_in_pr=N`, `deferred_tasks_created=N`, `coverage=100%`.
 
@@ -147,7 +115,7 @@ Changelog: `feat:` → Added, `fix:` → Fixed, `docs:`/`perf:`/`refactor:` → 
 
 ---
 
-## Step 4: Post-Merge
+## Step 4: PR, Review & Merge
 
 **4.1 Preflight:** Quality checks, auto-fixes. See `workflows/preflight.md`.
 
