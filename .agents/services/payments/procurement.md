@@ -23,22 +23,13 @@ tools:
 - **Config**: `configs/procurement-config.json` (from `.json.txt` template)
 - **Credentials**: Vaultwarden for card details; `aidevops secret` for API keys
 - **Audit**: All transactions logged to mission folder `receipts/` and git-tracked
+- **Key principle**: Every spend must have a mission ID, budget check, and receipt. No autonomous spend without pre-approved budget.
 
-**Provider recommendation**: Stripe Issuing (primary) or Revolut Business (alternative).
-
-- **Stripe Issuing**: Best API, granular spending controls, real-time authorization webhooks, developer-first. Requires Stripe Issuing programme approval.
-- **Revolut Business**: Native UK/EU, good API, near-instant card creation. Better for teams already on Revolut.
-- **Lithic**: Most granular controls, API-first, but US-focused and requires programme setup.
-
-**Key principle**: Every spend must have a mission ID, budget check, and receipt. No autonomous spend without pre-approved budget.
+**Providers**: Stripe Issuing (primary), Revolut Business (alternative), Lithic (US-focused).
 
 <!-- AI-CONTEXT-END -->
 
 ## Provider Comparison
-
-### Recommendation: Stripe Issuing (Primary)
-
-**Why Stripe Issuing over alternatives:**
 
 | Criterion | Stripe Issuing | Revolut Business | Privacy.com | Lithic |
 |-----------|---------------|-----------------|-------------|--------|
@@ -51,32 +42,23 @@ tools:
 | Existing integration | Already in aidevops (`stripe.md`) | None | None | None |
 | Pricing | 0.2% + 20p/txn (UK) | Included in plan | Free tier available | Per-card + per-txn |
 
-**Decision**: Stripe Issuing is the primary recommendation because:
-
-1. aidevops already has Stripe integration (`services/payments/stripe.md`)
-2. Synchronous authorization webhooks enable real-time budget enforcement (approve/decline before charge)
-3. Best-in-class API with comprehensive SDKs
-4. MCC (Merchant Category Code) blocking prevents misuse
-5. Single platform for both receiving payments (existing) and making payments (new)
-
-**Alternative**: Revolut Business if the user already has a Revolut Business account or prefers native UK/EU banking. The helper script supports both providers via a provider abstraction.
+**Why Stripe Issuing**: Existing aidevops integration (`services/payments/stripe.md`), synchronous authorization webhooks for real-time budget enforcement, MCC blocking, single platform for receiving and making payments. Use Revolut Business if already on Revolut or prefer native UK/EU banking — the helper script supports both via provider abstraction.
 
 ### Provider Setup
 
-#### Stripe Issuing Setup
+**Stripe Issuing:**
 
-1. Apply for Stripe Issuing access at https://dashboard.stripe.com/issuing
-2. Complete KYC/KYB verification (business identity, directors, beneficial owners)
+1. Apply at https://dashboard.stripe.com/issuing
+2. Complete KYC/KYB verification
 3. Fund the Issuing balance (pre-funded model)
 4. Create a cardholder for the AI agent
 5. Store API key: `aidevops secret set STRIPE_ISSUING_SECRET_KEY`
 
-#### Revolut Business Setup
+**Revolut Business:**
 
-1. Open Revolut Business account at https://business.revolut.com
-2. Enable API access in Business settings
-3. Generate API certificate and token
-4. Store credentials: `aidevops secret set REVOLUT_API_TOKEN`
+1. Open account at https://business.revolut.com
+2. Enable API access, generate certificate and token
+3. Store credentials: `aidevops secret set REVOLUT_API_TOKEN`
 
 ## Architecture
 
@@ -95,14 +77,7 @@ Mission Budget ($500)
     └── Requires manual approval to spend
 ```
 
-**Rules:**
-
-- Each mission has a total budget set at scoping time
-- Each milestone gets a sub-budget allocated from the mission budget
-- Each purchase gets a dedicated virtual card with a spending limit equal to or less than the allocated amount
-- Cards are frozen immediately after successful purchase
-- Reserve funds (20% default) require explicit human approval
-- Budget exhaustion triggers mission pause + human notification
+**Rules**: Each purchase gets a dedicated virtual card with spending limit ≤ allocated amount. Cards frozen immediately after successful purchase. Reserve funds (20% default) require human approval. Budget exhaustion triggers mission pause + human notification.
 
 ### Transaction Lifecycle
 
@@ -134,8 +109,6 @@ Mission Budget ($500)
 ```
 
 ### Audit Trail
-
-Every transaction produces:
 
 ```text
 {mission-id}/receipts/
@@ -184,8 +157,6 @@ procurement-helper.sh reconcile --mission M001
 
 ## Vaultwarden Integration
 
-Card credentials are stored in Vaultwarden, not in mission files or environment variables:
-
 ```text
 Vaultwarden Organization: "aidevops-missions"
 ├── Collection: "M001-crm-project"
@@ -196,20 +167,13 @@ Vaultwarden Organization: "aidevops-missions"
 │   └── Card: ic_openai_credits
 ```
 
-**Workflow:**
-
-1. `procurement-helper.sh create-card` creates the card via Stripe API
-2. Card details are immediately stored in Vaultwarden via `bw` CLI
-3. When a purchase needs card details, retrieve from Vaultwarden
-4. Card details are never logged, printed, or stored in git
+**Workflow**: `create-card` creates via Stripe API → card details stored in Vaultwarden via `bw` CLI → retrieved from Vaultwarden when needed for purchase → never logged, printed, or stored in git.
 
 See `tools/credentials/vaultwarden.md` for Vaultwarden CLI usage.
 
 ## Spending Controls
 
 ### MCC (Merchant Category Code) Restrictions
-
-Lock cards to specific merchant categories to prevent misuse:
 
 ```text
 Allowed MCCs for mission procurement:
@@ -231,26 +195,21 @@ Allowed MCCs for mission procurement:
 | $200 - $500 | Requires human confirmation |
 | > $500 | Requires human confirmation + 24h cooling period |
 
-These thresholds are configurable in `configs/procurement-config.json`.
+Configurable in `configs/procurement-config.json`.
 
 ## Security
 
 - **Card details**: Stored exclusively in Vaultwarden, never in git or logs
-- **API keys**: Stored via `aidevops secret set` (gopass or credentials.sh)
+- **API keys**: Via `aidevops secret set` (gopass or credentials.sh)
 - **Budget limits**: Enforced at card level (Stripe) AND application level (helper script)
 - **Audit trail**: All transactions git-tracked in mission ledger
-- **Card lifecycle**: Cards frozen immediately after use; closed when mission completes
-- **Reserve funds**: 20% of mission budget held back, requires human approval
+- **Card lifecycle**: Frozen after use; closed when mission completes
 - **MCC locking**: Cards restricted to relevant merchant categories
 - **Webhook verification**: All Stripe webhooks verified with signing secret
 
 ## Configuration
 
-### Config Template
-
-See `configs/procurement-config.json.txt` for the template. Copy to `configs/procurement-config.json` and customise.
-
-Key settings:
+Template: `configs/procurement-config.json.txt` → copy to `configs/procurement-config.json`.
 
 ```json
 {
@@ -268,18 +227,11 @@ Key settings:
 }
 ```
 
-## Integration with Mission System
+## Mission System Integration
 
-The procurement agent is invoked by the mission orchestrator when a milestone requires purchases:
+The mission orchestrator invokes procurement when a milestone requires purchases: identifies resource requirements → allocates budget per milestone → procurement agent creates card, executes purchase, captures receipt → budget ledger updated and committed → orchestrator continues.
 
-1. Mission orchestrator identifies resource requirements during decomposition
-2. Budget is allocated per milestone
-3. When a feature needs a purchase, the orchestrator invokes the procurement agent
-4. Procurement agent creates a card, executes the purchase, captures the receipt
-5. Budget ledger is updated and committed to git
-6. Mission orchestrator continues with the next feature
-
-**Mission state file integration:**
+**Mission state file example:**
 
 ```markdown
 ## Resources
