@@ -35,18 +35,9 @@ Unified access to 100+ generative media models (images, videos, voice, audio) th
 
 ## Authentication
 
-**v1 endpoints** (`/v1/text2image/soul`, `/v1/image2video/dop`):
+**v1 endpoints** (`/v1/text2image/soul`, `/v1/image2video/dop`): headers `hf-api-key: {api-key}` + `hf-secret: {secret}`
 
-```bash
-hf-api-key: {api-key}
-hf-secret: {secret}
-```
-
-**Simplified endpoints** (`/higgsfield-ai/dop/standard`, Kling, Seedance):
-
-```bash
-Authorization: Key {api-key}:{secret}
-```
+**Simplified endpoints** (`/higgsfield-ai/dop/standard`, Kling, Seedance): header `Authorization: Key {api-key}:{secret}`
 
 Credentials in `~/.config/aidevops/credentials.sh`:
 
@@ -94,19 +85,11 @@ curl -X POST 'https://platform.higgsfield.ai/v1/text2image/soul' \
 ### Response
 
 ```json
-{
-  "id": "3c90c3cc-0d44-4b50-8888-8dd25736052a",
-  "type": "text2image_soul",
+{ "id": "3c90c3cc-0d44-4b50-8888-8dd25736052a", "type": "text2image_soul",
   "created_at": "2023-11-07T05:31:56Z",
-  "jobs": [{
-    "id": "job-123",
-    "status": "queued",
-    "results": {
-      "min": { "type": "image/png", "url": "https://..." },
-      "raw": { "type": "image/png", "url": "https://..." }
-    }
-  }]
-}
+  "jobs": [{ "id": "job-123", "status": "queued",
+    "results": { "min": { "type": "image/png", "url": "https://..." },
+                 "raw": { "type": "image/png", "url": "https://..." } } }] }
 ```
 
 ## Image-to-Video
@@ -122,10 +105,7 @@ curl -X POST 'https://platform.higgsfield.ai/v1/image2video/dop' \
     "params": {
       "model": "dop-turbo",
       "prompt": "A cat walking gracefully through a garden",
-      "input_images": [{
-        "type": "image_url",
-        "image_url": "https://example.com/cat.jpg"
-      }],
+      "input_images": [{ "type": "image_url", "image_url": "https://example.com/cat.jpg" }],
       "enhance_prompt": true
     }
   }'
@@ -155,11 +135,8 @@ All use `Authorization: Key {api-key}:{secret}` and accept `image_url` + `prompt
 curl -X POST 'https://platform.higgsfield.ai/higgsfield-ai/dop/standard' \
   --header 'Authorization: Key {api-key}:{secret}' \
   --header 'Content-Type: application/json' \
-  --data '{
-    "image_url": "https://example.com/image.jpg",
-    "prompt": "Woman walks down Tokyo street with neon lights",
-    "duration": 5
-  }'
+  --data '{ "image_url": "https://example.com/image.jpg",
+    "prompt": "Woman walks down Tokyo street with neon lights", "duration": 5 }'
 ```
 
 Kling and Seedance use the same request shape without `duration`.
@@ -169,32 +146,22 @@ Kling and Seedance use the same request shape without `duration`.
 Create reusable characters for consistent generation across images.
 
 ```bash
-# Create character
+# Create character — returns { "id": "3eb3ad49-...", "photo_url": "https://cdn.higgsfield.ai/...", "created_at": "..." }
 curl -X POST 'https://platform.higgsfield.ai/api/characters' \
   --header 'hf-api-key: {api-key}' \
   --header 'hf-secret: {secret}' \
   --form 'photo=@/path/to/photo.jpg'
-# Returns: { "id": "3eb3ad49-...", "photo_url": "https://cdn.higgsfield.ai/...", "created_at": "..." }
 ```
 
-Use in generation by adding to `params`:
-
-```json
-{
-  "custom_reference_id": "3eb3ad49-775d-40bd-b5e5-38b105108780",
-  "custom_reference_strength": 0.9
-}
-```
+Use in generation by adding to `params`: `{ "custom_reference_id": "3eb3ad49-775d-40bd-b5e5-38b105108780", "custom_reference_strength": 0.9 }`
 
 ## Webhook Integration
 
 Add a `webhook` object to any generation request:
 
 ```json
-{
-  "webhook": { "url": "https://your-server.com/webhook", "secret": "your-webhook-secret" },
-  "params": { "prompt": "..." }
-}
+{ "webhook": { "url": "https://your-server.com/webhook", "secret": "your-webhook-secret" },
+  "params": { "prompt": "..." } }
 ```
 
 ## Job Status Polling
@@ -205,14 +172,7 @@ curl -X GET 'https://platform.higgsfield.ai/api/generation-results?id=job_789012
   --header 'hf-secret: {secret}'
 ```
 
-```json
-{
-  "id": "job_789012",
-  "status": "completed",
-  "results": [{ "type": "image", "url": "https://cdn.higgsfield.ai/generations/img_123.jpg" }],
-  "retention_expires_at": "2023-12-14T10:30:00Z"
-}
-```
+Response: `{ "id": "job_789012", "status": "completed", "results": [{ "type": "image", "url": "https://cdn.higgsfield.ai/generations/img_123.jpg" }], "retention_expires_at": "2023-12-14T10:30:00Z" }`
 
 **Status values**: `queued`, `processing`, `completed`, `failed`. Results retained 7 days.
 
@@ -230,14 +190,9 @@ import higgsfield_client
 # Synchronous
 result = higgsfield_client.subscribe(
     'bytedance/seedream/v4/text-to-image',
-    arguments={
-        'prompt': 'A serene lake at sunset with mountains',
-        'resolution': '2K',
-        'aspect_ratio': '16:9'
-    }
-)
+    arguments={'prompt': 'A serene lake at sunset with mountains',
+               'resolution': '2K', 'aspect_ratio': '16:9'})
 print(result['images'][0]['url'])
-
 # Asynchronous: use subscribe_async() with await
 ```
 
