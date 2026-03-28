@@ -234,28 +234,6 @@ const usersWithPostCount = await db.query.users.findMany({
 });
 ```
 
-## Complex Example: Feed Query
-
-```typescript
-const feed = await db.query.posts.findMany({
-  where: eq(posts.published, true),
-  orderBy: [desc(posts.createdAt)],
-  limit: 20,
-  columns: { id: true, title: true, createdAt: true },
-  with: {
-    author: { columns: { id: true, name: true } },
-  },
-  extras: {
-    commentCount: sql<number>`(
-      SELECT count(*) FROM comments WHERE comments.post_id = posts.id
-    )`.as('comment_count'),
-    likeCount: sql<number>`(
-      SELECT count(*) FROM likes WHERE likes.post_id = posts.id
-    )`.as('like_count'),
-  },
-});
-```
-
 ## Type Inference
 
 ```typescript
@@ -264,16 +242,12 @@ import type { InferSelectModel, InferInsertModel } from 'drizzle-orm';
 type User = InferSelectModel<typeof users>;
 type NewUser = InferInsertModel<typeof users>;
 
-// Infer from query result
+// Infer from query result (includes relations)
 const getUser = async (id: string) => db.query.users.findFirst({
   where: eq(users.id, id),
   with: { posts: true },
 });
 type UserWithPosts = NonNullable<Awaited<ReturnType<typeof getUser>>>;
-
-// Partial select
-const result = await db.select({ id: users.id, email: users.email }).from(users);
-type UserBasic = typeof result[number];
 ```
 
 ## Relations vs Joins
@@ -285,13 +259,13 @@ type UserBasic = typeof result[number];
 
 ```typescript
 // Relational — nested result: { id, name, posts: [{ id, title }, ...] }
-const userWithPosts = await db.query.users.findFirst({
+const nested = await db.query.users.findFirst({
   where: eq(users.id, userId),
   with: { posts: true },
 });
 
 // Join — flat result: [{ users: { id, name }, posts: { id, title } | null }, ...]
-const userWithPosts = await db
+const flat = await db
   .select()
   .from(users)
   .leftJoin(posts, eq(posts.authorId, users.id))
