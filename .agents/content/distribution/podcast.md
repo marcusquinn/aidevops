@@ -142,7 +142,7 @@ Submit RSS feed to all major platforms:
 |----------|-------|
 | **Apple Podcasts** | Podcasts Connect, 24-48h review |
 | **Spotify** | Spotify for Podcasters, near-instant |
-| **Google Podcasts** | Auto-indexed from RSS |
+| **YouTube Music** | Migrated from Google Podcasts, auto-indexed |
 | **Amazon Music** | Amazon Music for Podcasters, 24-48h review |
 | **Overcast** | Auto-indexed from Apple |
 | **Pocket Casts** | Auto-indexed |
