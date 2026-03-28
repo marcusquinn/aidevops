@@ -3,7 +3,6 @@
 ## Shared Conventions
 
 **Defaults for all templates** (omit from each email):
-
 - Greeting: `Hey [First Name],` or `[First Name],`
 - Sign-off: `[Your Name]` (solo brand) or `— [Your Name/Team]` (SaaS/company)
 - Every email ends with a reply invitation ("Just reply", "Hit reply", etc.)
@@ -50,7 +49,6 @@ If you've been on the fence, now's the time.
 ## Welcome Sequence (5 Emails)
 
 ### Email 1: Welcome + Delivery (Day 0)
-
 **Subject:** Welcome to [Brand] + Your [Resource] Is Here
 
 ```
@@ -64,7 +62,6 @@ P.S. The [specific section/page] is my favorite part—start there.
 ```
 
 ### Email 2: Quick Win (Day 1)
-
 **Subject:** Try this [timeframe] trick for [quick result]
 
 ```
@@ -76,7 +73,6 @@ Try it today. Tomorrow, I'll share [preview of next email].
 ```
 
 ### Email 3: Story + Lesson (Day 3)
-
 **Subject:** The [mistake/discovery] that changed everything
 
 ```
@@ -88,13 +84,11 @@ If you're in a similar spot: [Specific action step]
 ```
 
 ### Email 4: Social Proof (Day 5)
-
 **Subject:** How [Customer Name] [achieved specific result]
 
 Uses **Social Proof pattern**. Soft CTA: preview tomorrow's offer.
 
 ### Email 5: Offer (Day 7)
-
 **Subject:** Ready to [achieve their desired outcome]?
 
 ```
@@ -111,7 +105,6 @@ P.S. [Urgency element—deadline, limited spots, etc.]
 ## Cart Abandonment Sequence (3 Emails)
 
 ### Email 1: Reminder (1 Hour After)
-
 **Subject:** Did something go wrong?
 
 ```
@@ -121,13 +114,11 @@ If you ran into any issues, just hit reply.
 ```
 
 ### Email 2: Objection Handling (24 Hours)
-
 **Subject:** Quick question about your [Product] order
 
 Uses **Objection Handling pattern**. Include cart link after Q&A block.
 
 ### Email 3: Final Push + Incentive (48 Hours)
-
 **Subject:** [First Name], one more thing before you go
 
 ```
@@ -142,7 +133,6 @@ P.S. [Guarantee reminder]
 ## SaaS Trial Sequence (7 Emails)
 
 ### Email 1: Welcome + Quick Start (Day 0)
-
 **Subject:** Welcome to [Product]! Here's how to start
 
 ```
@@ -156,7 +146,6 @@ P.S. Your trial lasts [X] days. Let's make them count!
 ```
 
 ### Emails 2 & 5: Feature Highlight (Day 2, Day 10)
-
 **Subject:** Have you tried [Key Feature] yet? / The [Feature] trick most users miss
 
 Send twice — first for the core hook feature (Day 2), second for a power-user feature most overlook (Day 10).
@@ -172,13 +161,11 @@ Not sure how? 2-minute tutorial: [Video link]
 Email 5 variant: add step-by-step (3-4 steps) + screenshot for the power-user feature.
 
 ### Email 3: Social Proof (Day 4)
-
 **Subject:** "[Result achieved]" — How [Customer] uses [Product]
 
 Uses **Social Proof pattern**. Add: "They did it by [specific action in the product]." Hard CTA to feature link.
 
 ### Email 4: Check-in (Day 7)
-
 **Subject:** How's [Product] working for you?
 
 ```
@@ -190,13 +177,11 @@ Things you might not have discovered yet:
 ```
 
 ### Email 6: Trial Ending Soon (Day 12)
-
 **Subject:** Your trial ends in 2 days
 
 Uses **Urgency pattern** (trial context). Losses: key feature access, data/work created. CTA: `[Upgrade Now →]`. Offer extension: "If you need more time, just reply."
 
 ### Email 7: Last Day (Day 14)
-
 **Subject:** Your trial expires today
 
 ```
@@ -211,7 +196,6 @@ As a thank you, use code [CODE] for [discount] off your first [month/year].
 ## Launch Sequence (7 Emails)
 
 ### Email 1: Announcement/Teaser (Day -3)
-
 **Subject:** Something new is coming...
 
 ```
@@ -224,7 +208,6 @@ P.S. [Optional: early access or waitlist CTA]
 ```
 
 ### Email 2: Problem Agitation (Day -1)
-
 **Subject:** The real reason [problem] happens
 
 ```
@@ -238,7 +221,6 @@ Tomorrow, I'll show you a different approach.
 ```
 
 ### Email 3: Launch Day (Day 0)
-
 **Subject:** It's here: [Product Name] is LIVE
 
 ```
@@ -253,25 +235,21 @@ P.S. [Scarcity/urgency element]
 ```
 
 ### Email 4: Story/Case Study (Day 2)
-
 **Subject:** "I can't believe this actually worked" — [Customer Name]
 
 Uses **Social Proof pattern**. Open with: "The response to [Product Name] has been incredible." Hard CTA.
 
 ### Email 5: FAQ/Objections (Day 4)
-
 **Subject:** Your [Product] questions, answered
 
 Uses **Objection Handling pattern**. Add product-specific Qs: "How long to see results?" → [Answer]; "What's included exactly?" → [Brief summary].
 
 ### Email 6: Urgency (Day 6)
-
 **Subject:** 48 hours left for [bonus/price]
 
 Uses **Urgency pattern**. Losses: launch bonuses + price increase.
 
 ### Email 7: Final Hours (Day 7)
-
 **Subject:** [FINAL] Last chance for [Product Name]
 
 ```
