@@ -148,10 +148,10 @@ See `tools/browser/remotion-best-practices-skill.md` for Remotion patterns.
 
 For apps that include video content or need promotional videos:
 
-- `tools/video/wavespeed.md` - 200+ video generation models
-- `tools/video/real-video-enhancer.md` - Upscale and enhance video
+- `video/wavespeed.md` - 200+ video generation models
+- `video/real-video-enhancer.md` - Upscale and enhance video
 - `tools/video/remotion.md` - Programmatic video creation
-- Seedance 3.0 via `tools/video/higgsfield.md` - AI video generation
+- Seedance 3.0 via `video/higgsfield.md` - AI video generation
 
 ## Related
 

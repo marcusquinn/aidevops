@@ -333,4 +333,4 @@ The full S2S pipeline above is for advanced use cases (custom LLMs, server/clien
 - `tools/infrastructure/cloud-gpu.md` - Cloud GPU deployment guide (provider comparison, setup, cost optimization)
 - `services/communications/twilio.md` - Phone integration
 - `tools/video/remotion.md` - Video narration
-- `tools/video/heygen-skill/rules/voices.md` - AI voice cloning
+- `video/heygen-skill/rules/voices.md` - AI voice cloning

@@ -18,7 +18,7 @@ All external tool references exist and are correct:
 - `tools/browser/crawl4ai.md` ✓
 - `seo/google-search-console.md` ✓
 - `seo/dataforseo.md` ✓
-- `tools/video/higgsfield.md` ✓
+- `video/higgsfield.md` ✓
 - `tools/video/video-prompt-design.md` ✓
 - `tools/voice/speech-to-speech.md` ✓
 - `social-media/bird.md` ✓

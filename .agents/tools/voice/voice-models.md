@@ -338,6 +338,6 @@ brew install ffmpeg yt-dlp              # Required for transcription pipeline
 - `tools/voice/speech-to-speech.md` - Full voice pipeline (VAD+STT+LLM+TTS)
 - `tools/voice/transcription.md` - STT/transcription models and cloud APIs
 - `tools/voice/buzz.md` - Buzz offline transcription GUI
-- `tools/video/heygen-skill/rules/voices.md` - AI voice cloning for video
+- `video/heygen-skill/rules/voices.md` - AI voice cloning for video
 - `voice-helper.sh` - CLI for voice operations
 - `voice-bridge.py` - Python voice bridge implementation

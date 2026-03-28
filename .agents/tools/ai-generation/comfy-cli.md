@@ -124,4 +124,4 @@ comfy-cli-helper.sh snapshot-restore my-setup.json
 ## Related
 
 - `tools/vision/overview.md` — Vision AI decision tree
-- `tools/video/higgsfield.md` — Cloud-based AI generation
+- `video/higgsfield.md` — Cloud-based AI generation

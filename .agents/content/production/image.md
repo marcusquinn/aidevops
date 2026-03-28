@@ -344,7 +344,7 @@ enhancor-helper.sh batch --command enhance --input photoshoot.txt \
 
 **Best practices**: Start with `skin_refinement_level` 40-60; use `professional` mode for final deliverables; only enhance images that passed initial quality checks.
 
-Full API reference: `tools/video/enhancor.md`.
+Full API reference: `video/enhancor.md`.
 
 ## Cross-References
 
@@ -356,7 +356,7 @@ Full API reference: `tools/video/enhancor.md`.
 - **A/B testing**: `content/optimization.md` — thumbnail variant testing, scoring, analytics
 - **UGC storyboard**: `content/story.md` — UGC Brief Storyboard template
 - **Video prompts**: `tools/video/video-prompt-design.md` — 7-component format
-- **Enhancor AI**: `tools/video/enhancor.md` — portrait enhancement, upscaling, AI generation
+- **Enhancor AI**: `video/enhancor.md` — portrait enhancement, upscaling, AI generation
 
 ## See Also
 

@@ -403,8 +403,8 @@ Effect names are case-sensitive. Use the exact name from the MuAPI playground (e
 
 - [MuAPI Documentation](https://muapi.ai/docs/introduction)
 - [MuAPI Playground](https://muapi.ai/playground)
-- `tools/video/wavespeed.md` - WaveSpeed AI (alternative unified API)
-- `tools/video/runway.md` - Runway API (alternative media pipeline)
+- `video/wavespeed.md` - WaveSpeed AI (alternative unified API)
+- `video/runway.md` - Runway API (alternative media pipeline)
 - `tools/video/video-prompt-design.md` - Prompt engineering for video models
 - `tools/vision/image-generation.md` - Image generation workflows
 - `content/production/video.md` - Video production pipeline

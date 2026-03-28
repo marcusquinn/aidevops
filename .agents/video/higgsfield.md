@@ -374,7 +374,7 @@ query-docs("/websites/higgsfield_ai", "character consistency")
 
 ## Related
 
-- **`tools/video/higgsfield-ui.md`** - UI automation subagent (uses subscription credits via browser, no API key needed)
+- **`video/higgsfield-ui.md`** - UI automation subagent (uses subscription credits via browser, no API key needed)
 - [Higgsfield Docs](https://docs.higgsfield.ai/)
 - [Higgsfield Dashboard](https://cloud.higgsfield.ai)
 - `tools/video/remotion.md` - Programmatic video editing

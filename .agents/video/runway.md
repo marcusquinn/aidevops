@@ -309,7 +309,7 @@ SDK error classes: `TaskFailedError` (check `.taskDetails`), `TaskTimedOutError`
 
 ## Related
 
-- `tools/video/higgsfield.md` - Higgsfield API (alternative multi-model platform)
+- `video/higgsfield.md` - Higgsfield API (alternative multi-model platform)
 - `tools/video/video-prompt-design.md` - Video prompt engineering
 - `content/production/video.md` - Video production pipeline
 - `tools/vision/image-generation.md` - Image generation overview

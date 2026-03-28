@@ -244,7 +244,7 @@ real-video-enhancer-helper.sh enhance input.mp4 output.mp4 \
 
 ### Integration with Video Production
 
-See `content/production/video.md` for full production pipeline integration and `tools/video/real-video-enhancer.md` for detailed documentation.
+See `content/production/video.md` for full production pipeline integration and `video/real-video-enhancer.md` for detailed documentation.
 
 **Typical workflow**:
 1. **Prompt Design** (this guide) → Craft optimal prompts

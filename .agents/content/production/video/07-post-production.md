@@ -33,4 +33,4 @@ real-video-enhancer-helper.sh enhance input.mp4 output.mp4 --scale 2 --fps 60 --
 
 Add subtle grain for organic, less-AI-detected aesthetic. DaVinci Resolve settings: grain_size 0.5-0.8, intensity 5-10%, color_variation 2-5%. Always for cinematic; optional for UGC; selective for commercial.
 
-See `tools/video/real-video-enhancer.md` for full documentation.
+See `video/real-video-enhancer.md` for full documentation.

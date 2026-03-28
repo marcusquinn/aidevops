@@ -240,6 +240,6 @@ Narration: "Follow for the full breakdown."
 - `content/production/video.md` — Sora 2 Pro and Veo 3.1 workflows
 - `content/production/audio.md` — voice pipeline and LUFS levels
 - `content/optimization.md` — A/B testing and analytics loops
-- `tools/video/higgsfield.md` — AI video generation
+- `video/higgsfield.md` — AI video generation
 - `tools/video/video-prompt-design.md` — video prompting frameworks
 - `tools/voice/speech-to-speech.md` — voice cloning and transformation

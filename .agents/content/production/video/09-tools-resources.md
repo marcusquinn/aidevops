@@ -3,9 +3,9 @@
 ## Internal References
 
 - `.agents/tools/video/video-prompt-design.md` — Veo 3 Meta Framework (7-component prompting)
-- `.agents/tools/video/higgsfield.md` — Higgsfield API integration
-- `.agents/tools/video/heygen-skill.md` — HeyGen Avatar API (talking-head generation)
-- `.agents/tools/video/muapi.md` — MuAPI (VEED lipsync, face swap, VFX)
+- `.agents/video/higgsfield.md` — Higgsfield API integration
+- `.agents/video/heygen-skill.md` — HeyGen Avatar API (talking-head generation)
+- `.agents/video/muapi.md` — MuAPI (VEED lipsync, face swap, VFX)
 - `.agents/tools/video/remotion.md` — Programmatic video editing
 - `.agents/tools/voice/voice-models.md` — TTS model comparison (ElevenLabs, MiniMax, Qwen3-TTS)
 - `.agents/tools/voice/qwen3-tts.md` — Qwen3-TTS setup and voice cloning

@@ -55,7 +55,8 @@ tools/document/,Document extraction - conversion structured data extraction sche
 tools/ocr/,OCR and text extraction - scene text screenshots documents and local processing,overview|paddleocr|glm-ocr|ocr-research
 accounts/,Accounting tools - receipt OCR subscription audit,receipt-ocr|subscription-audit
 tools/ai-generation/,AI generation management - ComfyUI install nodes models workflows via comfy-cli,comfy-cli
-tools/video/,Video creation and generation - programmatic editing and AI generation APIs,remotion|higgsfield|runway|wavespeed|yt-dlp|video-prompt-design|real-video-enhancer
+video/,AI video generation services - HeyGen Higgsfield Runway WaveSpeed enhancers and video direction,heygen-skill|higgsfield|runway|wavespeed|enhancor|real-video-enhancer|muapi|video-director
+tools/video/,Video creation tools - programmatic editing download and prompt design (cross-domain),remotion|yt-dlp|video-prompt-design
 tools/vision/,Vision AI - image generation understanding and editing with local and cloud models,overview|image-generation|image-understanding|image-editing
 tools/voice/,Voice AI - TTS/STT/S2S model catalog voice bridge Pipecat pipeline cloud voice agents and audio transcription (Whisper Buzz AssemblyAI Deepgram),voice-models|voice-ai-models|speech-to-speech|cloud-voice-agents|voice-bridge|hyprwhspr|pipecat-opencode|transcription|buzz|qwen3-tts
 tools/research/,Website research - tech stack detection and analysis providers,providers/crft-lookup

@@ -44,7 +44,7 @@ MiniMax: best quality-to-effort ratio, natural-sounding by default, $5/month for
 | **VEED Fabric 1.0** | Highest | Higher | Maximum quality, premium content |
 | **InfiniteTalk** | Good | Free (self-hosted) | Budget/self-hosted |
 
-HeyGen: upload starting image as photo avatar, upload voice audio, generate. See `tools/video/heygen-skill.md`. VEED: via MuAPI lipsync endpoint `POST /api/v1/veed-lipsync` (see `tools/video/muapi.md`).
+HeyGen: upload starting image as photo avatar, upload voice audio, generate. See `video/heygen-skill.md`. VEED: via MuAPI lipsync endpoint `POST /api/v1/veed-lipsync` (see `video/muapi.md`).
 
 ## Step 5: Post-Processing
 
