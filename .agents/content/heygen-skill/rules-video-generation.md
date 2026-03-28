@@ -16,7 +16,7 @@ The `/v2/video/generate` endpoint creates AI avatar videos with HeyGen.
 | `/v2/video/generate` | MP4 | **Standard** — videos with background (most common) |
 | `/v1/video.webm` | WebM | Transparent background — only when overlaying avatar on video content |
 
-## Basic Video Generation
+## Basic Request
 
 ```bash
 curl -X POST "https://api.heygen.com/v2/video/generate" \
@@ -45,7 +45,7 @@ curl -X POST "https://api.heygen.com/v2/video/generate" \
 
 | Field | Type | Req | Description |
 |-------|------|:---:|-------------|
-| `video_inputs` | array | ✓ | Array of 1–50 video input objects |
+| `video_inputs` | array | Y | 1-50 video input objects |
 | `dimension` | object | | `{width, height}` |
 | `title` | string | | Video name |
 | `test` | boolean | | Watermarked, no credits consumed |
@@ -58,9 +58,9 @@ curl -X POST "https://api.heygen.com/v2/video/generate" \
 
 | Field | Type | Req | Description |
 |-------|------|:---:|-------------|
-| `type` | string | ✓ | `"avatar"` or `"talking_photo"` |
-| `avatar_id` | string | ✓* | Required when type is `"avatar"` |
-| `talking_photo_id` | string | ✓* | Required when type is `"talking_photo"` |
+| `type` | string | Y | `"avatar"` or `"talking_photo"` |
+| `avatar_id` | string | Y* | Required when type=`"avatar"` |
+| `talking_photo_id` | string | Y* | Required when type=`"talking_photo"` |
 | `avatar_style` | string | | `"normal"`, `"closeUp"`, or `"circle"` |
 | `scale` | number | | Avatar scale factor |
 | `offset` | object | | Position offset `{x, y}` |
@@ -69,12 +69,12 @@ curl -X POST "https://api.heygen.com/v2/video/generate" \
 
 | Field | Type | Req | Description |
 |-------|------|:---:|-------------|
-| `type` | string | ✓ | `"text"`, `"audio"`, or `"silence"` |
-| `voice_id` | string | ✓* | Required when type is `"text"` |
-| `input_text` | string | ✓* | Required when type is `"text"` |
-| `audio_url` | string | ✓* | Required when type is `"audio"` |
-| `duration` | number | ✓* | Seconds, required when type is `"silence"` |
-| `speed` | number | | 0.5–2.0 (default 1.0) |
+| `type` | string | Y | `"text"`, `"audio"`, or `"silence"` |
+| `voice_id` | string | Y* | Required when type=`"text"` |
+| `input_text` | string | Y* | Required when type=`"text"` |
+| `audio_url` | string | Y* | Required when type=`"audio"` |
+| `duration` | number | Y* | Seconds, required when type=`"silence"` |
+| `speed` | number | | 0.5-2.0 (default 1.0) |
 | `pitch` | number | | -20 to 20 (default 0) |
 
 ### video_inputs[].background
@@ -82,13 +82,13 @@ curl -X POST "https://api.heygen.com/v2/video/generate" \
 | Field | Type | Description |
 |-------|------|-------------|
 | `type` | string | `"color"`, `"image"`, or `"video"` |
-| `value` | string | Hex color (when type is `"color"`) |
+| `value` | string | Hex color (when type=`"color"`) |
 | `url` | string | Image/video URL |
 | `fit` | string | `"cover"` or `"contain"` |
 
 ## Multi-Scene Videos
 
-Pass multiple objects in `video_inputs` (max 50). Each scene can have a different style, background, and voice segment.
+Pass multiple objects in `video_inputs` (max 50). Each scene can have different style, background, and voice.
 
 ```typescript
 const multiSceneConfig = {
@@ -108,7 +108,9 @@ const multiSceneConfig = {
 };
 ```
 
-## Complete Workflow
+## Production Workflow
+
+Auto-selects first available avatar and its default voice when none specified. Uses polling from [video-status.md](video-status.md).
 
 ```typescript
 async function generateVideo(config: VideoGenerateRequest): Promise<string> {
@@ -122,34 +124,6 @@ async function generateVideo(config: VideoGenerateRequest): Promise<string> {
   return json.data.video_id;
 }
 
-// Polls every 10s, up to 10 min. Generation typically takes 10–15 min — increase limit for long videos.
-async function waitForVideo(videoId: string): Promise<string> {
-  for (let i = 0; i < 60; i++) {
-    const { data } = await fetch(`https://api.heygen.com/v1/video_status.get?video_id=${videoId}`,
-      { headers: { "X-Api-Key": process.env.HEYGEN_API_KEY! } }).then(r => r.json());
-    if (data.status === "completed") return data.video_url;
-    if (data.status === "failed") throw new Error(data.error || "Video generation failed");
-    await new Promise(r => setTimeout(r, 10000));
-  }
-  throw new Error("Video generation timed out");
-}
-
-async function createVideo(script: string, avatarId: string, voiceId: string) {
-  const videoId = await generateVideo({
-    video_inputs: [{ character: { type: "avatar", avatar_id: avatarId, avatar_style: "normal" },
-      voice: { type: "text", input_text: script, voice_id: voiceId },
-      background: { type: "color", value: "#FFFFFF" } }],
-    dimension: { width: 1920, height: 1080 },
-  });
-  return waitForVideo(videoId);
-}
-```
-
-## Production Workflow (with avatar auto-selection)
-
-Auto-selects first available avatar and its default voice when none specified. Set a 20-minute timeout — generation can take 15+ min.
-
-```typescript
 async function generateAvatarVideo(script: string, options: { avatarId?: string; width?: number; height?: number } = {}) {
   const { width = 1920, height = 1080 } = options;
   let { avatarId } = options;
@@ -177,6 +151,8 @@ async function generateAvatarVideo(script: string, options: { avatarId?: string;
 }
 ```
 
+For polling (`waitForVideo`) and download patterns, see [video-status.md](video-status.md). Generation typically takes 10-15 min — set timeouts to 15-20 min.
+
 ## Script Features
 
 **Pauses:** `<break time="1s"/>` — must have spaces before and after. See [voices.md](voices.md).
@@ -200,12 +176,12 @@ Use WebM **only** when compositing the avatar over video content (e.g., Loom-sty
 
 | Field | Type | Req | Description |
 |-------|------|:---:|-------------|
-| `avatar_pose_id` | string | ✓ | Avatar pose ID |
-| `avatar_style` | string | ✓ | `"normal"` or `"closeUp"` only |
-| `input_text` | string | ✓* | Required if not using `input_audio` |
-| `voice_id` | string | ✓* | Required with `input_text` |
-| `input_audio` | string | ✓* | Required if not using `input_text` |
-| `dimension` | object | | `{width, height}` (default: 1280×720) |
+| `avatar_pose_id` | string | Y | Avatar pose ID |
+| `avatar_style` | string | Y | `"normal"` or `"closeUp"` only |
+| `input_text` | string | Y* | Required if not using `input_audio` |
+| `voice_id` | string | Y* | Required with `input_text` |
+| `input_audio` | string | Y* | Required if not using `input_text` |
+| `dimension` | object | | `{width, height}` (default: 1280x720) |
 
 ```typescript
 async function generateTransparentVideo(script: string, avatarPoseId: string, voiceId: string): Promise<string> {
@@ -219,30 +195,17 @@ async function generateTransparentVideo(script: string, avatarPoseId: string, vo
 }
 ```
 
-### Loom-Style Compositing (Remotion)
-
-```tsx
-import { OffthreadVideo, AbsoluteFill } from "remotion";
-
-export const LoomStyleVideo: React.FC<{ screenRecordingUrl: string; avatarWebmUrl: string }> = ({ screenRecordingUrl, avatarWebmUrl }) => (
-  <AbsoluteFill>
-    <OffthreadVideo src={screenRecordingUrl} style={{ width: "100%", height: "100%" }} />
-    <OffthreadVideo src={avatarWebmUrl} style={{ position: "absolute", bottom: 20, left: 20, width: 150, height: 150, borderRadius: "50%", overflow: "hidden", objectFit: "cover" }} />
-  </AbsoluteFill>
-);
-```
-
-WebM videos use the same status polling endpoint as MP4.
+WebM videos use the same status polling endpoint as MP4. For Loom-style compositing and other Remotion patterns, see [remotion-integration.md](rules-remotion-integration.md).
 
 ## Error Handling
 
-Wrap `generateVideo()` in try/catch. Common error keywords: `"quota"` → insufficient credits, `"avatar"` → invalid avatar ID, `"voice"` → invalid voice ID, `"script"` → script too long or invalid.
+Wrap `generateVideo()` in try/catch. Common error keywords: `"quota"` (insufficient credits), `"avatar"` (invalid avatar ID), `"voice"` (invalid voice ID), `"script"` (script too long or invalid).
 
 ## Best Practices
 
 1. **Preview avatars first** — download `preview_image_url` before committing to generation (see [avatars.md](avatars.md))
 2. **Use avatar's default voice** — `default_voice_id` is pre-matched for natural results; fallback: match gender manually (see [voices.md](voices.md))
 3. **Use test mode** — validate configurations without consuming credits
-4. **Set generous timeouts** — 15–20 minutes; generation often takes 10–15 min
+4. **Set generous timeouts** — 15-20 min; generation often takes 10-15 min
 5. **Consider async patterns** — save `video_id` and check status later for long videos (see [video-status.md](video-status.md))
 6. **Match dimensions to use case** — see [dimensions.md](dimensions.md)
