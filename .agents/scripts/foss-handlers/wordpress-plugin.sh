@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC1091
-# wordpress-plugin.sh — FOSS contribution handler for WordPress plugins (t1696)
+# wordpress-plugin.sh — FOSS contribution handler: WordPress plugins (t1696)
 #
-# Implements the foss-contribution-helper.sh handler interface for WordPress plugins.
-# Sets up wp-env with multisite, integrates with localdev for HTTPS review URLs,
+# Implements the foss-contribution-helper.sh handler interface: WordPress plugins.
+# Sets up wp-env with multisite, integrates with localdev to provide HTTPS review URLs,
 # runs PHPUnit + Playwright smoke tests, and cleans up all resources.
 #
 # Handler interface (required by foss-contribution-helper.sh):
 #   setup   <github-slug> [worktree-path]   Fork, clone, wp-env start, localdev register
 #   build   <plugin-dir>                    Activate plugin, install composer/npm deps
-#   test    <plugin-dir>                    PHPUnit (if available) + Playwright smoke tests
+#   test    <plugin-dir>                    PHPUnit (available) + Playwright smoke tests
 #   review  <plugin-dir> [branch-name]      Print review URLs (current + branch)
 #   cleanup <plugin-dir>                    wp-env destroy, localdev rm, port deregistration
 #
@@ -22,18 +22,18 @@
 #   wordpress-plugin.sh cleanup ~/Git/wordpress/git-updater
 #
 # Prerequisites:
-#   - Docker (for wp-env)
-#   - Node.js >= 18 + npm (for @wordpress/env)
-#   - localdev-helper.sh (for HTTPS .local domains)
+#   - Docker (required by wp-env)
+#   - Node.js >= 18 + npm (required by @wordpress/env)
+#   - localdev-helper.sh (required by HTTPS .local domains)
 #   - mkcert (installed by localdev-helper.sh init)
-#   - Optional: composer (for PHPUnit), playwright (for E2E smoke tests)
+#   - Optional: composer (PHP deps), playwright (E2E smoke tests)
 #
 # State file: ~/.aidevops/cache/foss-wp-handler.json
 # Smoke test template: foss-handlers/wp-plugin-smoke-test.spec.js
 
 set -euo pipefail
 
-# PATH normalisation for launchd/MCP environments
+# PATH normalisation: launchd/MCP environments
 export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
@@ -42,15 +42,15 @@ AGENTS_SCRIPTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=../shared-constants.sh
 source "${AGENTS_SCRIPTS_DIR}/shared-constants.sh" 2>/dev/null || true
 
-# Fallback colours if shared-constants.sh not loaded
+# Fallback colours when shared-constants.sh not loaded
 [[ -z "${RED+x}" ]] && RED='\033[0;31m'
 [[ -z "${GREEN+x}" ]] && GREEN='\033[0;32m'
 [[ -z "${YELLOW+x}" ]] && YELLOW='\033[1;33m'
 [[ -z "${BLUE+x}" ]] && BLUE='\033[0;34m'
 [[ -z "${NC+x}" ]] && NC='\033[0m'
 
-# Fallback print helpers if shared-constants.sh not loaded
-if ! command -v print_info >/dev/null 2>&1; then
+# Fallback print helpers when shared-constants.sh not loaded
+_define_print_helpers() {
 	print_info() {
 		printf "${BLUE}[INFO]${NC} %s\n" "$1"
 		return 0
@@ -67,7 +67,8 @@ if ! command -v print_info >/dev/null 2>&1; then
 		printf "${YELLOW}[WARN]${NC} %s\n" "$1"
 		return 0
 	}
-fi
+}
+command -v print_info >/dev/null 2>&1 || _define_print_helpers
 
 # =============================================================================
 # Configuration
@@ -90,7 +91,7 @@ readonly WP_DEBUG_CONFIG='{"WP_DEBUG":true,"WP_DEBUG_LOG":true,"WP_DEBUG_DISPLAY
 # Utility helpers
 # =============================================================================
 
-# Derive a safe slug from a GitHub slug (owner/repo → repo)
+# Derive a safe slug from a GitHub slug (owner/repo -> repo)
 plugin_slug_from_github() {
 	local github_slug="${1:-}"
 	echo "${github_slug##*/}" | tr '[:upper:]' '[:lower:]' | tr '_' '-'
@@ -144,15 +145,13 @@ state_del() {
 	return 0
 }
 
-# Check if a command exists
+# Check that a command exists; print error + optional install hint on failure
 require_cmd() {
 	local cmd="${1:-}"
 	local install_hint="${2:-}"
 	if ! command -v "$cmd" >/dev/null 2>&1; then
 		print_error "Required command not found: $cmd"
-		if [[ -n "$install_hint" ]]; then
-			print_info "Install: $install_hint"
-		fi
+		[[ -n "$install_hint" ]] && print_info "Install: $install_hint"
 		return 1
 	fi
 	return 0
@@ -176,18 +175,15 @@ find_available_wp_env_port() {
 # wp-env.json generation
 # =============================================================================
 
-# Generate .wp-env.json with multisite config for a plugin directory.
-# Writes the file into the plugin directory (or a temp dir if plugin dir
-# doesn't have write permission).
+# Generate .wp-env.json with multisite config — writes into the plugin directory.
 generate_wp_env_json() {
 	local plugin_dir="${1:-}"
 	local wp_port="${2:-8888}"
 	local slug
 	slug="$(basename "$plugin_dir")"
 
-	print_info "Generating .wp-env.json for ${slug} (port ${wp_port}, multisite)"
+	print_info "Generating .wp-env.json: ${slug} (port ${wp_port}, multisite)"
 
-	# Build multisite config object
 	local multisite_config
 	multisite_config=$(jq -n \
 		--argjson debug "$WP_DEBUG_CONFIG" \
@@ -207,7 +203,6 @@ generate_wp_env_json() {
 			"BLOG_ID_CURRENT_SITE": 1
 		}')
 
-	# Write .wp-env.json
 	jq -n \
 		--arg plugin "." \
 		--argjson config "$multisite_config" \
@@ -226,6 +221,195 @@ generate_wp_env_json() {
 }
 
 # =============================================================================
+# Build sub-helpers (extracted to reduce nesting depth)
+# =============================================================================
+
+# Install Composer dependencies when composer.json is present
+_install_composer_deps() {
+	local plugin_dir="${1:-}"
+	if [[ ! -f "${plugin_dir}/composer.json" ]]; then
+		return 0
+	fi
+	if ! command -v composer >/dev/null 2>&1; then
+		print_warning "composer not found — skipping PHP dependency install"
+		print_info "Install: brew install composer"
+		return 0
+	fi
+	print_info "Installing Composer dependencies..."
+	if composer install --no-interaction --prefer-dist --working-dir="$plugin_dir" 2>&1; then
+		print_success "Composer install complete"
+	else
+		print_warning "Composer install failed — continuing without PHP deps"
+	fi
+	return 0
+}
+
+# Install npm dependencies when package.json is present
+_install_npm_deps() {
+	local plugin_dir="${1:-}"
+	if [[ ! -f "${plugin_dir}/package.json" ]]; then
+		return 0
+	fi
+	if ! command -v npm >/dev/null 2>&1; then
+		return 0
+	fi
+	print_info "Installing npm dependencies..."
+	if npm install --prefix "$plugin_dir" 2>&1; then
+		print_success "npm install complete"
+	else
+		print_warning "npm install failed — continuing without JS deps"
+	fi
+	return 0
+}
+
+# Activate plugin on multisite network (best-effort)
+_activate_plugin_network() {
+	local slug="${1:-}"
+	print_info "Checking multisite network activation..."
+	if wp-env run cli wp plugin is-active "$slug" --network 2>/dev/null; then
+		print_info "Plugin already network-active"
+		return 0
+	fi
+	if wp-env run cli wp plugin activate "$slug" --network 2>&1; then
+		print_success "Plugin network-activated on multisite"
+	else
+		print_info "Network activation skipped (may not be network-activatable)"
+	fi
+	return 0
+}
+
+# =============================================================================
+# Test sub-helpers (extracted to reduce nesting depth)
+# =============================================================================
+
+# Run Playwright smoke tests against the given base URL; returns 1 on failure
+_run_playwright_tests() {
+	local smoke_test_file="${1:-}"
+	local base_url="${2:-}"
+	local slug="${3:-}"
+
+	if [[ ! -f "$smoke_test_file" ]]; then
+		print_warning "No smoke test file found — skipping Playwright tests"
+		print_info "Expected: ${smoke_test_file}"
+		return 0
+	fi
+	if ! command -v npx >/dev/null 2>&1; then
+		print_warning "npx not found — skipping Playwright smoke tests"
+		return 0
+	fi
+	print_info "Running Playwright smoke tests (base URL: ${base_url})..."
+	if WP_BASE_URL="$base_url" WP_PLUGIN_SLUG="$slug" \
+		npx playwright test "$smoke_test_file" \
+		--reporter=line 2>&1; then
+		print_success "Playwright smoke tests: PASS"
+	else
+		print_error "Playwright smoke tests: FAIL"
+		return 1
+	fi
+	return 0
+}
+
+# =============================================================================
+# Review sub-helpers (extracted to reduce nesting depth)
+# =============================================================================
+
+# Register a branch subdomain via localdev and print the URL
+_register_branch_url() {
+	local slug="${1:-}"
+	local branch_name="${2:-}"
+	local branch_subdomain
+	branch_subdomain="$(echo "$branch_name" | tr '/' '-' | tr '_' '-' | tr '[:upper:]' '[:lower:]')"
+	local branch_port
+	branch_port="$(find_available_wp_env_port)" || branch_port=""
+	if [[ -z "$branch_port" ]]; then
+		return 0
+	fi
+	if "$LOCALDEV_HELPER" branch "$slug" "$branch_subdomain" "$branch_port" 2>/dev/null; then
+		print_info "  HTTPS : https://${branch_subdomain}.${slug}.local"
+	else
+		print_info "  Branch URL registration failed — use HTTP"
+		print_info "  HTTP  : http://localhost:${branch_port}"
+	fi
+	return 0
+}
+
+# =============================================================================
+# Cleanup sub-helpers (extracted to reduce nesting depth)
+# =============================================================================
+
+# Stop and destroy the wp-env environment
+_destroy_wp_env() {
+	local plugin_dir="${1:-}"
+	if [[ ! -f "${plugin_dir}/.wp-env.json" ]]; then
+		print_info "No .wp-env.json found — skipping wp-env destroy"
+		return 0
+	fi
+	print_info "Destroying wp-env environment..."
+	if wp-env destroy --yes 2>&1; then
+		print_success "wp-env destroyed"
+	else
+		print_warning "wp-env destroy failed — may already be stopped"
+	fi
+	rm -f "${plugin_dir}/.wp-env.json"
+	return 0
+}
+
+# Remove localdev registration by plugin slug
+_remove_localdev_reg() {
+	local slug="${1:-}"
+	if [[ ! -x "$LOCALDEV_HELPER" ]]; then
+		return 0
+	fi
+	print_info "Removing localdev registration for ${slug}..."
+	if "$LOCALDEV_HELPER" rm "$slug" 2>/dev/null; then
+		print_success "localdev: removed ${slug}.local"
+	else
+		print_info "localdev: ${slug} was not registered (already removed)"
+	fi
+	return 0
+}
+
+# =============================================================================
+# Setup sub-helpers (extracted to reduce nesting depth)
+# =============================================================================
+
+# Clone the plugin repo when not already present
+_clone_plugin() {
+	local github_slug="${1:-}"
+	local plugin_dir="${2:-}"
+	if [[ -d "$plugin_dir" ]]; then
+		print_info "Plugin directory already exists: ${plugin_dir}"
+		return 0
+	fi
+	print_info "Cloning ${github_slug} -> ${plugin_dir}"
+	mkdir -p "$(dirname "$plugin_dir")"
+	if ! git clone "https://github.com/${github_slug}.git" "$plugin_dir"; then
+		print_error "Failed to clone ${github_slug}"
+		return 1
+	fi
+	print_success "Cloned ${github_slug}"
+	return 0
+}
+
+# Register plugin with localdev for HTTPS .local domain
+_register_localdev() {
+	local slug="${1:-}"
+	local wp_port="${2:-}"
+	if [[ ! -x "$LOCALDEV_HELPER" ]]; then
+		print_warning "localdev-helper.sh not found — skipping HTTPS domain registration"
+		print_info "HTTP access: http://localhost:${wp_port}"
+		return 0
+	fi
+	print_info "Registering ${slug} with localdev (port ${wp_port})..."
+	if "$LOCALDEV_HELPER" add "$slug" "$wp_port" 2>/dev/null; then
+		print_success "Registered: https://${slug}.local -> localhost:${wp_port}"
+	else
+		print_warning "localdev registration failed — HTTP access only at http://localhost:${wp_port}"
+	fi
+	return 0
+}
+
+# =============================================================================
 # setup command
 # =============================================================================
 
@@ -236,7 +420,7 @@ cmd_setup() {
 	if [[ -z "$github_slug" ]]; then
 		print_error "Usage: wordpress-plugin.sh setup <github-slug> [worktree-path]"
 		print_info "  github-slug: e.g. afragen/git-updater"
-		print_info "  worktree-path: optional path to an existing worktree for a fix branch"
+		print_info "  worktree-path: optional path to an existing worktree (fix branch)"
 		return 1
 	fi
 
@@ -250,10 +434,7 @@ cmd_setup() {
 	local plugin_dir
 	plugin_dir="$(plugin_dir_from_slug "$slug")"
 
-	# Use worktree path if provided, otherwise use default clone dir
-	if [[ -n "$worktree_path" ]]; then
-		plugin_dir="$worktree_path"
-	fi
+	[[ -n "$worktree_path" ]] && plugin_dir="$worktree_path"
 
 	print_info "=== WordPress Plugin Handler: setup ==="
 	print_info "GitHub slug : $github_slug"
@@ -261,20 +442,8 @@ cmd_setup() {
 	print_info "Plugin dir  : $plugin_dir"
 	echo ""
 
-	# Step 1: Clone if not already present
-	if [[ ! -d "$plugin_dir" ]]; then
-		print_info "Cloning ${github_slug} → ${plugin_dir}"
-		mkdir -p "$(dirname "$plugin_dir")"
-		if ! git clone "https://github.com/${github_slug}.git" "$plugin_dir"; then
-			print_error "Failed to clone ${github_slug}"
-			return 1
-		fi
-		print_success "Cloned ${github_slug}"
-	else
-		print_info "Plugin directory already exists: ${plugin_dir}"
-	fi
+	_clone_plugin "$github_slug" "$plugin_dir" || return 1
 
-	# Step 2: Install @wordpress/env if not present
 	if ! command -v wp-env >/dev/null 2>&1; then
 		print_info "Installing @wordpress/env globally..."
 		npm install -g @wordpress/env || {
@@ -283,12 +452,10 @@ cmd_setup() {
 		}
 	fi
 
-	# Step 3: Find available port and generate .wp-env.json
 	local wp_port
 	wp_port="$(find_available_wp_env_port)" || return 1
 	generate_wp_env_json "$plugin_dir" "$wp_port" || return 1
 
-	# Step 4: Start wp-env
 	print_info "Starting wp-env (port ${wp_port})..."
 	if ! wp-env start --update 2>&1; then
 		print_error "wp-env start failed"
@@ -296,20 +463,8 @@ cmd_setup() {
 	fi
 	print_success "wp-env started on port ${wp_port}"
 
-	# Step 5: Register with localdev for HTTPS .local domain
-	if [[ -x "$LOCALDEV_HELPER" ]]; then
-		print_info "Registering ${slug} with localdev (port ${wp_port})..."
-		if "$LOCALDEV_HELPER" add "$slug" "$wp_port" 2>/dev/null; then
-			print_success "Registered: https://${slug}.local → localhost:${wp_port}"
-		else
-			print_warning "localdev registration failed — HTTP access only at http://localhost:${wp_port}"
-		fi
-	else
-		print_warning "localdev-helper.sh not found — skipping HTTPS domain registration"
-		print_info "HTTP access: http://localhost:${wp_port}"
-	fi
+	_register_localdev "$slug" "$wp_port"
 
-	# Step 6: Persist state
 	state_set "${slug}:port" "$wp_port"
 	state_set "${slug}:dir" "$plugin_dir"
 	state_set "${slug}:github" "$github_slug"
@@ -318,9 +473,7 @@ cmd_setup() {
 	print_success "=== Setup complete ==="
 	print_info "Plugin dir : ${plugin_dir}"
 	print_info "wp-env URL : http://localhost:${wp_port}"
-	if [[ -x "$LOCALDEV_HELPER" ]]; then
-		print_info "HTTPS URL  : https://${slug}.local"
-	fi
+	[[ -x "$LOCALDEV_HELPER" ]] && print_info "HTTPS URL  : https://${slug}.local"
 	print_info "Next: wordpress-plugin.sh build ${plugin_dir}"
 	return 0
 }
@@ -347,34 +500,9 @@ cmd_build() {
 
 	print_info "=== WordPress Plugin Handler: build (${slug}) ==="
 
-	# Step 1: Install Composer dependencies if composer.json exists
-	if [[ -f "${plugin_dir}/composer.json" ]]; then
-		if command -v composer >/dev/null 2>&1; then
-			print_info "Installing Composer dependencies..."
-			if composer install --no-interaction --prefer-dist --working-dir="$plugin_dir" 2>&1; then
-				print_success "Composer install complete"
-			else
-				print_warning "Composer install failed — continuing without PHP deps"
-			fi
-		else
-			print_warning "composer not found — skipping PHP dependency install"
-			print_info "Install: brew install composer"
-		fi
-	fi
+	_install_composer_deps "$plugin_dir"
+	_install_npm_deps "$plugin_dir"
 
-	# Step 2: Install npm dependencies if package.json exists
-	if [[ -f "${plugin_dir}/package.json" ]]; then
-		if command -v npm >/dev/null 2>&1; then
-			print_info "Installing npm dependencies..."
-			if npm install --prefix "$plugin_dir" 2>&1; then
-				print_success "npm install complete"
-			else
-				print_warning "npm install failed — continuing without JS deps"
-			fi
-		fi
-	fi
-
-	# Step 3: Activate plugin in wp-env
 	print_info "Activating plugin in wp-env..."
 	if wp-env run cli wp plugin activate "$slug" 2>&1; then
 		print_success "Plugin activated: ${slug}"
@@ -382,17 +510,7 @@ cmd_build() {
 		print_warning "Plugin activation failed — check wp-env is running"
 	fi
 
-	# Step 4: Activate on multisite network if applicable
-	print_info "Checking multisite network activation..."
-	if wp-env run cli wp plugin is-active "$slug" --network 2>/dev/null; then
-		print_info "Plugin already network-active"
-	else
-		if wp-env run cli wp plugin activate "$slug" --network 2>&1; then
-			print_success "Plugin network-activated on multisite"
-		else
-			print_info "Network activation skipped (may not be network-activatable)"
-		fi
-	fi
+	_activate_plugin_network "$slug"
 
 	echo ""
 	print_success "=== Build complete ==="
@@ -423,11 +541,9 @@ cmd_test() {
 
 	print_info "=== WordPress Plugin Handler: test (${slug}) ==="
 
-	# Step 1: PHPUnit (if tests exist)
+	# PHPUnit (when tests exist)
 	local has_phpunit=false
-	if [[ -f "${plugin_dir}/phpunit.xml" ]] || [[ -f "${plugin_dir}/phpunit.xml.dist" ]]; then
-		has_phpunit=true
-	fi
+	[[ -f "${plugin_dir}/phpunit.xml" ]] || [[ -f "${plugin_dir}/phpunit.xml.dist" ]] && has_phpunit=true
 
 	if [[ "$has_phpunit" == "true" ]]; then
 		print_info "Running PHPUnit tests..."
@@ -441,8 +557,8 @@ cmd_test() {
 		print_info "No phpunit.xml found — skipping PHPUnit"
 	fi
 
-	# Step 2: Check debug.log for PHP fatal errors
-	print_info "Checking debug.log for PHP errors..."
+	# Check debug.log — PHP fatal errors
+	print_info "Checking debug.log: PHP errors..."
 	local debug_log_errors
 	debug_log_errors="$(wp-env run cli cat /var/www/html/wp-content/debug.log 2>/dev/null | grep -ciE '(Fatal error|PHP Fatal|PHP Parse error)' || echo 0)"
 	if [[ "$debug_log_errors" -gt 0 ]]; then
@@ -453,37 +569,19 @@ cmd_test() {
 		print_success "debug.log: no PHP fatal errors"
 	fi
 
-	# Step 3: Playwright smoke tests
+	# Playwright smoke tests
 	local smoke_test_file="${plugin_dir}/tests/e2e/wp-plugin-smoke-test.spec.js"
-	# Fall back to the generic template if no plugin-specific E2E tests exist
-	if [[ ! -f "$smoke_test_file" ]]; then
-		smoke_test_file="$SMOKE_TEST_TEMPLATE"
+	[[ ! -f "$smoke_test_file" ]] && smoke_test_file="$SMOKE_TEST_TEMPLATE"
+
+	local slug_port
+	slug_port="$(state_get "${slug}:port")"
+	local base_url="http://localhost:${slug_port:-8888}"
+
+	if ! _run_playwright_tests "$smoke_test_file" "$base_url" "$slug"; then
+		test_passed=false
 	fi
 
-	if [[ -f "$smoke_test_file" ]]; then
-		if command -v npx >/dev/null 2>&1; then
-			local slug_port
-			slug_port="$(state_get "${slug}:port")"
-			local base_url="http://localhost:${slug_port:-8888}"
-
-			print_info "Running Playwright smoke tests (base URL: ${base_url})..."
-			if WP_BASE_URL="$base_url" WP_PLUGIN_SLUG="$slug" \
-				npx playwright test "$smoke_test_file" \
-				--reporter=line 2>&1; then
-				print_success "Playwright smoke tests: PASS"
-			else
-				print_error "Playwright smoke tests: FAIL"
-				test_passed=false
-			fi
-		else
-			print_warning "npx not found — skipping Playwright smoke tests"
-		fi
-	else
-		print_warning "No smoke test file found — skipping Playwright tests"
-		print_info "Expected: ${smoke_test_file}"
-	fi
-
-	# Step 4: Multisite-specific checks
+	# Multisite-specific checks
 	print_info "Running multisite checks..."
 	_run_multisite_checks "$slug" || test_passed=false
 
@@ -498,18 +596,16 @@ cmd_test() {
 }
 
 # Run multisite-specific checks: verify plugin works on sub-sites,
-# check for multisite-incompatible code patterns.
+# check multisite-incompatible code patterns.
 _run_multisite_checks() {
 	local slug="${1:-}"
 
-	# Check plugin is active on network
 	if wp-env run cli wp plugin is-active "$slug" --network 2>/dev/null; then
 		print_success "Multisite: plugin is network-active"
 	else
 		print_info "Multisite: plugin is not network-active (may be site-specific)"
 	fi
 
-	# Check for common multisite incompatibility patterns in PHP files
 	local incompatible_patterns=0
 	if command -v rg >/dev/null 2>&1; then
 		incompatible_patterns="$(rg -l 'get_option\s*\(\s*['"'"'"]blogname['"'"'"]' \
@@ -544,33 +640,14 @@ cmd_review() {
 	print_info "=== WordPress Plugin Handler: review (${slug}) ==="
 	echo ""
 
-	# Current release URL
 	print_info "Current release:"
 	print_info "  HTTP  : http://localhost:${wp_port:-8888}"
-	if [[ -x "$LOCALDEV_HELPER" ]]; then
-		print_info "  HTTPS : https://${slug}.local"
-	fi
+	[[ -x "$LOCALDEV_HELPER" ]] && print_info "  HTTPS : https://${slug}.local"
 
-	# Branch/worktree URL (if branch provided)
 	if [[ -n "$branch_name" ]]; then
 		echo ""
 		print_info "Branch: ${branch_name}"
-		if [[ -x "$LOCALDEV_HELPER" ]]; then
-			# Register branch subdomain if not already registered
-			local branch_subdomain
-			branch_subdomain="$(echo "$branch_name" | tr '/' '-' | tr '_' '-' | tr '[:upper:]' '[:lower:]')"
-			local branch_port
-			branch_port="$(find_available_wp_env_port)" || branch_port=""
-
-			if [[ -n "$branch_port" ]]; then
-				if "$LOCALDEV_HELPER" branch "$slug" "$branch_subdomain" "$branch_port" 2>/dev/null; then
-					print_info "  HTTPS : https://${branch_subdomain}.${slug}.local"
-				else
-					print_info "  Branch URL registration failed — use HTTP"
-					print_info "  HTTP  : http://localhost:${branch_port}"
-				fi
-			fi
-		fi
+		[[ -x "$LOCALDEV_HELPER" ]] && _register_branch_url "$slug" "$branch_name"
 	fi
 
 	echo ""
@@ -595,30 +672,9 @@ cmd_cleanup() {
 
 	print_info "=== WordPress Plugin Handler: cleanup (${slug}) ==="
 
-	# Step 1: Stop and destroy wp-env
-	if [[ -f "${plugin_dir}/.wp-env.json" ]]; then
-		print_info "Destroying wp-env environment..."
-		if wp-env destroy --yes 2>&1; then
-			print_success "wp-env destroyed"
-		else
-			print_warning "wp-env destroy failed — may already be stopped"
-		fi
-		rm -f "${plugin_dir}/.wp-env.json"
-	else
-		print_info "No .wp-env.json found — skipping wp-env destroy"
-	fi
+	_destroy_wp_env "$plugin_dir"
+	_remove_localdev_reg "$slug"
 
-	# Step 2: Remove localdev registration
-	if [[ -x "$LOCALDEV_HELPER" ]]; then
-		print_info "Removing localdev registration for ${slug}..."
-		if "$LOCALDEV_HELPER" rm "$slug" 2>/dev/null; then
-			print_success "localdev: removed ${slug}.local"
-		else
-			print_info "localdev: ${slug} was not registered (already removed)"
-		fi
-	fi
-
-	# Step 3: Clear state
 	state_del "${slug}:port"
 	state_del "${slug}:dir"
 	state_del "${slug}:github"
@@ -634,7 +690,7 @@ cmd_cleanup() {
 
 cmd_help() {
 	printf '%s\n' \
-		'wordpress-plugin.sh — FOSS contribution handler for WordPress plugins (t1696)' \
+		'wordpress-plugin.sh — FOSS contribution handler: WordPress plugins (t1696)' \
 		'' \
 		'USAGE' \
 		'  wordpress-plugin.sh <command> [args]' \
@@ -650,13 +706,13 @@ cmd_help() {
 		'      Example: wordpress-plugin.sh build ~/Git/wordpress/git-updater' \
 		'' \
 		'  test    <plugin-dir>' \
-		'      Run PHPUnit (when phpunit.xml exists), check debug.log for PHP errors,' \
+		'      Run PHPUnit (phpunit.xml present), check debug.log, PHP errors,' \
 		'      run Playwright smoke tests, run multisite checks.' \
 		'      Example: wordpress-plugin.sh test ~/Git/wordpress/git-updater' \
 		'' \
 		'  review  <plugin-dir> [branch-name]' \
 		'      Print review URLs. With branch-name, registers a branch subdomain' \
-		'      via localdev to enable side-by-side comparison.' \
+		'      via localdev — side-by-side comparison.' \
 		'      Example: wordpress-plugin.sh review ~/Git/wordpress/git-updater bugfix-xyz' \
 		'' \
 		'  cleanup <plugin-dir>' \
@@ -667,11 +723,11 @@ cmd_help() {
 		'      Show this help.' \
 		'' \
 		'PREREQUISITES' \
-		'  docker     — wp-env containers' \
-		'  node >= 18 — @wordpress/env' \
-		'  jq         — JSON config generation' \
-		'  composer   — optional, PHP deps' \
-		'  mkcert     — optional, HTTPS .local (via localdev-helper.sh init)' \
+		'  docker          — required by wp-env containers' \
+		'  node >= 18      — required by @wordpress/env' \
+		'  jq              — required by JSON config generation' \
+		'  composer        — optional, PHP deps' \
+		'  mkcert          — optional, HTTPS .local (via localdev-helper.sh init)' \
 		'' \
 		'STATE FILE' \
 		'  ~/.aidevops/cache/foss-wp-handler.json' \
