@@ -17,16 +17,7 @@ tools:
 
 Feature-rich command-line audio/video downloader supporting YouTube and thousands of other sites. Downloads to `~/Downloads/` in organized, named folders.
 
-## When to Use
-
-Read this agent when the user wants to:
-
-- Download YouTube videos (single, playlist, or channel)
-- Extract audio from YouTube videos (MP3, M4A)
-- Extract audio from **local video files** (MP4, MKV, etc.)
-- Download subtitles/transcripts from videos
-- Archive a YouTube channel or playlist
-- Get video metadata without downloading
+Use when the user wants to download videos/audio, extract audio from local files, get transcripts, or archive channels/playlists.
 
 ## Quick Reference
 
@@ -46,8 +37,6 @@ Read this agent when the user wants to:
 
 ## Output Directory Structure
 
-Downloads are organized into named folders under `~/Downloads/`:
-
 ```text
 ~/Downloads/
   yt-dlp-video-{title}-{yyyy-mm-dd-hh-mm}/
@@ -61,7 +50,7 @@ Override with `--output-dir <path>`.
 
 ## Default Settings
 
-All downloads include these defaults (configurable via `~/.config/yt-dlp/config`):
+Configurable via `~/.config/yt-dlp/config`:
 
 | Setting | Default | Override |
 |---------|---------|----------|
@@ -76,51 +65,29 @@ All downloads include these defaults (configurable via `~/.config/yt-dlp/config`
 
 ## Common Workflows
 
-### Download a single video
-
 ```bash
+# Single video
 yt-dlp-helper.sh video "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-```
 
-### Extract audio as MP3
-
-```bash
+# Audio as MP3
 yt-dlp-helper.sh audio "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-```
 
-### Download entire playlist
-
-```bash
+# Full playlist
 yt-dlp-helper.sh playlist "https://www.youtube.com/playlist?list=PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf"
-```
 
-### Download channel archive
-
-```bash
+# Channel archive
 yt-dlp-helper.sh channel "https://www.youtube.com/@channelname"
-```
 
-### Get transcript only (no video/audio)
-
-```bash
+# Transcript only
 yt-dlp-helper.sh transcript "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-```
 
-### Download with browser cookies (private/age-restricted)
-
-```bash
+# Private/age-restricted (browser cookies)
 yt-dlp-helper.sh video "https://www.youtube.com/watch?v=PRIVATE" --cookies
-```
 
-### Download in 4K
-
-```bash
+# 4K download
 yt-dlp-helper.sh video "https://www.youtube.com/watch?v=dQw4w9WgXcQ" --format 4k
-```
 
-### Download to custom directory
-
-```bash
+# Custom output directory
 yt-dlp-helper.sh video "https://www.youtube.com/watch?v=dQw4w9WgXcQ" --output-dir ~/Videos/research
 ```
 
@@ -138,7 +105,7 @@ yt-dlp-helper.sh video "https://www.youtube.com/watch?v=dQw4w9WgXcQ" --output-di
 
 ## Configuration File
 
-The `config` command generates `~/.config/yt-dlp/config`:
+`config` command generates `~/.config/yt-dlp/config`:
 
 ```text
 --output ~/Downloads/%(title)s.%(ext)s
@@ -162,20 +129,11 @@ The `config` command generates `~/.config/yt-dlp/config`:
 
 ## SponsorBlock Integration
 
-yt-dlp integrates with SponsorBlock to skip/remove sponsor segments:
-
 ```bash
-# Remove sponsor segments (default)
---sponsorblock-remove sponsor
-
-# Remove all non-content segments
---sponsorblock-remove all
-
-# Mark segments in chapters instead of removing
---sponsorblock-mark all
-
-# Disable SponsorBlock
---no-sponsorblock
+--sponsorblock-remove sponsor   # Remove sponsor segments (default)
+--sponsorblock-remove all       # Remove all non-content segments
+--sponsorblock-mark all         # Mark segments in chapters instead
+--no-sponsorblock               # Disable SponsorBlock
 ```
 
 Categories: `sponsor`, `intro`, `outro`, `selfpromo`, `preview`, `filler`, `interaction`, `music_offtopic`, `poi_highlight`, `chapter`, `all`.
@@ -183,40 +141,24 @@ Categories: `sponsor`, `intro`, `outro`, `selfpromo`, `preview`, `filler`, `inte
 ## Subtitle/Transcript Options
 
 ```bash
-# Auto-generated English subtitles (default)
---write-auto-subs --sub-langs en --convert-subs srt
-
-# All available subtitle languages
---write-subs --sub-langs all
-
-# Specific languages
---write-subs --sub-langs "en,es,fr"
-
-# Embed subtitles into video file
---embed-subs
+--write-auto-subs --sub-langs en --convert-subs srt   # Auto-generated English (default)
+--write-subs --sub-langs all                           # All available languages
+--write-subs --sub-langs "en,es,fr"                   # Specific languages
+--embed-subs                                           # Embed into video file
 ```
 
 ## Local File Conversion
 
-Extract audio from local video files using ffmpeg (no yt-dlp or internet required):
+Extract audio from local video files using ffmpeg (no internet required):
 
 ```bash
-# Single file -> MP3
-yt-dlp-helper.sh convert ~/Videos/lecture.mp4
-
-# Directory of videos -> M4A
-yt-dlp-helper.sh convert ~/Videos/ --format m4a
-
-# To FLAC (lossless)
-yt-dlp-helper.sh convert recording.mkv --format flac
-
-# Custom output directory
-yt-dlp-helper.sh convert ~/Videos/ --format opus --output-dir ~/Music/converted
+yt-dlp-helper.sh convert ~/Videos/lecture.mp4              # Single file -> MP3
+yt-dlp-helper.sh convert ~/Videos/ --format m4a            # Directory -> M4A
+yt-dlp-helper.sh convert recording.mkv --format flac       # To FLAC (lossless)
+yt-dlp-helper.sh convert ~/Videos/ --output-dir ~/Music/   # Custom output dir
 ```
 
-Supported input formats: `mp4`, `mkv`, `webm`, `avi`, `mov`, `flv`, `wmv`, `m4v`, `ts`.
-
-Supported output audio formats:
+Input: `mp4`, `mkv`, `webm`, `avi`, `mov`, `flv`, `wmv`, `m4v`, `ts`.
 
 | Format | Codec | Use case |
 |--------|-------|----------|
@@ -231,10 +173,8 @@ Supported output audio formats:
 For private, age-restricted, or member-only content:
 
 ```bash
-# Use browser cookies (recommended)
 yt-dlp-helper.sh video <url> --cookies
-
-# This uses: --cookies-from-browser chrome
+# Uses: --cookies-from-browser chrome
 # Alternatives: firefox, safari, edge, brave, opera, vivaldi
 ```
 
@@ -250,25 +190,16 @@ yt-dlp-helper.sh video <url> --cookies
 
 ## Dependencies
 
-Both dependencies are installed automatically by `yt-dlp-helper.sh install`:
+Installed automatically by `yt-dlp-helper.sh install`:
 
 | Dependency | Purpose | Manual install |
 |------------|---------|----------------|
 | **yt-dlp** | Core downloader (YouTube + 1000s of sites) | `brew install yt-dlp` or `pip install yt-dlp` |
 | **ffmpeg** | Merge video+audio, extract audio, convert formats | `brew install ffmpeg` |
 
-The `install` command auto-detects your OS and package manager:
-- **macOS**: Homebrew (`brew install yt-dlp ffmpeg`)
-- **Linux (Debian/Ubuntu)**: apt + pip (`apt install ffmpeg && pip install yt-dlp`)
-- **Linux (Fedora)**: dnf + pip
-- **Linux (Arch)**: pacman (`pacman -S yt-dlp ffmpeg`)
-- **Fallback**: pip for yt-dlp, manual ffmpeg install
-
-Every download command checks for yt-dlp/ffmpeg and prompts you to run `install` if missing.
+OS detection: macOS (Homebrew), Debian/Ubuntu (apt+pip), Fedora (dnf+pip), Arch (pacman). Falls back to pip+manual ffmpeg. Every download command checks for dependencies and prompts to run `install` if missing.
 
 ## Context7 Integration
-
-For up-to-date yt-dlp documentation:
 
 ```text
 resolve-library-id("yt-dlp")
