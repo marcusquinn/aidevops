@@ -24,7 +24,7 @@ tools:
 - **Config template**: `configs/multi-org-config.json.txt`
 - **Helper**: `.agents/scripts/multi-org-helper.sh`
 - **Isolation strategy**: Row-level with `org_id` foreign key on all tenant-scoped tables
-- **Context resolution**: Request header > session > project config > default org
+- **Context resolution**: Request header > session > URL path > project config > user default > single org > 403
 
 **Sibling tasks**: t004.2 (middleware), t004.3 (org-switching UI), t004.4 (AI context isolation), t004.5 (integration tests)
 
@@ -34,15 +34,13 @@ tools:
 
 ### Isolation Strategy: Row-Level Tenancy
 
-Row-level tenancy (shared database, shared schema, `org_id` column) — not schema-per-tenant or database-per-tenant.
+Row-level tenancy (shared database, shared schema, `org_id` column). Not schema-per-tenant or database-per-tenant — correct here because orgs share the same feature set, superadmin needs cross-org visibility, single migration path, and PostgreSQL RLS enforces at DB level.
 
 | Strategy | Pros | Cons | When to use |
 |----------|------|------|-------------|
 | **Row-level** (chosen) | Simple ops, easy cross-org queries for superadmin, single migration path | Requires discipline on every query | <1000 orgs, shared infrastructure |
 | Schema-per-tenant | Strong isolation, easy per-tenant backup | Migration complexity, connection pooling | Regulated industries |
 | Database-per-tenant | Strongest isolation | Operational nightmare at scale | Enterprise with dedicated infra |
-
-Row-level is correct here: orgs share the same feature set, superadmin needs cross-org visibility, single migration path, PostgreSQL RLS enforces at DB level.
 
 ### Data Classification
 
@@ -81,6 +79,7 @@ export const organisations = pgTable('organisations', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });
 
+// Users are global — can belong to multiple orgs. No password field (auth delegated).
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   email: varchar('email', { length: 255 }).notNull().unique(),
@@ -90,10 +89,8 @@ export const users = pgTable('users', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });
-// Users are global — can belong to multiple orgs. No password field (auth delegated).
 
 export const roleEnum = pgEnum('org_role', ['owner', 'admin', 'member', 'viewer']);
-
 export const org_memberships = pgTable('org_memberships', {
   id: uuid('id').primaryKey().defaultRandom(),
   orgId: uuid('org_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
@@ -109,11 +106,14 @@ export const org_memberships = pgTable('org_memberships', {
 
 ### Org-Scoped Tables Pattern
 
+All tenant-scoped tables spread `orgScoped`. Full definitions in `schemas/multi-org.ts`.
+
 ```typescript
 const orgScoped = {
   orgId: uuid('org_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
 };
 
+// org_credentials — representative example
 export const org_credentials = pgTable('org_credentials', {
   id: uuid('id').primaryKey().defaultRandom(),
   ...orgScoped,
@@ -127,62 +127,10 @@ export const org_credentials = pgTable('org_credentials', {
   uniqueIndex('org_credentials_org_service_key_idx').on(table.orgId, table.service, table.keyName),
   index('org_credentials_org_idx').on(table.orgId),
 ]);
-```
 
-### AI Session Isolation (critical for t004.4)
-
-```typescript
-export const ai_sessions = pgTable('ai_sessions', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  ...orgScoped,
-  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  model: varchar('model', { length: 100 }),
-  context: jsonb('context').$type<SessionContext>().default({}),
-  startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
-  endedAt: timestamp('ended_at', { withTimezone: true }),
-}, (table) => [
-  index('ai_sessions_org_idx').on(table.orgId),
-  index('ai_sessions_user_idx').on(table.userId),
-  index('ai_sessions_org_user_idx').on(table.orgId, table.userId),
-]);
-```
-
-### Org-Scoped Memory
-
-```typescript
-export const memories = pgTable('memories', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  orgId: uuid('org_id').references(() => organisations.id, { onDelete: 'cascade' }), // nullable = personal
-  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  content: text('content').notNull(),
-  confidence: text('confidence', { enum: ['low', 'medium', 'high'] }).notNull().default('medium'),
-  namespace: varchar('namespace', { length: 100 }),
-  accessCount: integer('access_count').notNull().default(0),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  index('memories_org_idx').on(table.orgId),
-  index('memories_user_idx').on(table.userId),
-  index('memories_org_scoped_idx').on(table.orgId, table.userId).where(sql`org_id IS NOT NULL`),
-]);
-```
-
-### Audit Log
-
-```typescript
-export const audit_log = pgTable('audit_log', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  orgId: uuid('org_id').notNull().references(() => organisations.id, { onDelete: 'cascade' }),
-  userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
-  action: varchar('action', { length: 100 }).notNull(),
-  entityType: varchar('entity_type', { length: 100 }).notNull(),
-  entityId: uuid('entity_id'),
-  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  index('audit_log_org_idx').on(table.orgId),
-  index('audit_log_org_action_idx').on(table.orgId, table.action),
-  index('audit_log_created_idx').on(table.createdAt),
-]);
+// ai_sessions — t004.4: adds composite org+user index for session scoping
+// memories — nullable org_id = personal; uses conditional index where(sql`org_id IS NOT NULL`)
+// audit_log — org_id NOT NULL; indexed on (org_id, action) and created_at
 ```
 
 ## Row-Level Security (RLS)
@@ -197,10 +145,12 @@ ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
 
 CREATE ROLE app_user;
 
+-- Standard org isolation (org_credentials, ai_sessions, audit_log)
 CREATE POLICY org_isolation ON org_credentials FOR ALL TO app_user
   USING (org_id = current_setting('app.current_org_id')::uuid);
-
 CREATE POLICY org_isolation ON ai_sessions FOR ALL TO app_user
+  USING (org_id = current_setting('app.current_org_id')::uuid);
+CREATE POLICY org_isolation ON audit_log FOR ALL TO app_user
   USING (org_id = current_setting('app.current_org_id')::uuid);
 
 -- Memories: org-scoped OR personal (org_id IS NULL and user owns it)
@@ -209,9 +159,6 @@ CREATE POLICY org_or_personal ON memories FOR ALL TO app_user
     org_id = current_setting('app.current_org_id')::uuid
     OR (org_id IS NULL AND user_id = current_setting('app.current_user_id')::uuid)
   );
-
-CREATE POLICY org_isolation ON audit_log FOR ALL TO app_user
-  USING (org_id = current_setting('app.current_org_id')::uuid);
 ```
 
 ### Setting Context Per Request
@@ -223,18 +170,6 @@ await db.execute(sql`SELECT set_config('app.current_user_id', ${userId}, true)`)
 ```
 
 ## Tenant Context Model
-
-### Context Resolution Chain
-
-```text
-1. Request header: X-Org-Id (API calls, worker dispatch)
-2. Session/cookie: org_id claim in JWT or session store
-3. URL path: /org/:slug/... (web UI routing)
-4. Project config: .aidevops-tenant file (CLI/local dev)
-5. User default: users.last_active_org_id
-6. Single org: If user belongs to exactly one org, use it
-7. Error: No org context — return 403 or prompt org selection
-```
 
 ### TenantContext Type
 
@@ -255,40 +190,25 @@ export type OrgPlan = 'free' | 'pro' | 'enterprise';
 ### Middleware Flow
 
 ```text
-Request
-  │
-  ▼
-[Auth Middleware] ─── Verify JWT/session → userId
-  │
-  ▼
-[Tenant Middleware] ─── Resolve org context → TenantContext
-  │                     Set RLS variables (app.current_org_id, app.current_user_id)
-  │                     Verify membership (user belongs to org)
-  │                     Attach TenantContext to request
-  │
-  ▼
-[Route Handler] ─── Access ctx.tenant.orgId for queries (all queries filtered by RLS)
-  │
-  ▼
-[Audit Middleware] ─── Log mutation with orgId, userId, action
+[Auth Middleware]   → verify JWT/session → userId
+[Tenant Middleware] → resolve org context (header > session > URL > project_config > user_default > single_org)
+                    → set RLS vars (app.current_org_id, app.current_user_id)
+                    → verify membership → attach TenantContext to request
+[Route Handler]     → ctx.tenant.orgId (all queries filtered by RLS)
+[Audit Middleware]  → log mutation with orgId, userId, action
 ```
 
 ### Org Switching (t004.3)
 
 1. Verify user has membership in target org
-2. Update `users.last_active_org_id` to new org
+2. Update `users.last_active_org_id`
 3. Issue new session token with updated `org_id` claim
 4. Clear org-specific caches (AI context, memory namespace)
 5. Redirect to `/org/:slug/dashboard`
 
 ### Worker/Headless Context
 
-```bash
-# In worker dispatch prompt or environment
-X-Org-Id: <org-uuid>
-# Or via credential-helper resolution
-credential-helper.sh export --tenant <org-slug>
-```
+Pass `X-Org-Id: <org-uuid>` header, or resolve via `credential-helper.sh export --tenant <org-slug>`.
 
 ### Cross-Org Operations (Superadmin)
 
@@ -319,25 +239,6 @@ The file-based credential system continues to work for CLI/local development. Th
 | 3 | t004.3 | Org switcher component, session context management |
 | 4 | t004.4 | Namespace AI sessions, memories, patterns per org |
 | 5 | t004.5 | Cross-org boundary tests, RLS verification, org switching integration tests |
-
-## TypeScript Types
-
-```typescript
-export interface OrgSettings {
-  defaultModelTier?: 'haiku' | 'sonnet' | 'opus';
-  dailyBudgetUsd?: number;
-  allowedProviders?: string[];
-  features?: Record<string, boolean>;
-  branding?: { primaryColor?: string; logoUrl?: string };
-}
-
-export interface SessionContext {
-  model?: string;
-  memoryNamespace?: string;
-  tokenUsage?: { input: number; output: number };
-  metadata?: Record<string, unknown>;
-}
-```
 
 ## Related
 
