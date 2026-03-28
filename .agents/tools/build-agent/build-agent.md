@@ -52,10 +52,10 @@ tools:
 ---
 ```
 
-- MCP tool patterns (subagents only): `context7_*: true`, `wordpress-mcp_*: true`. Path-based permissions → `opencode.json`.
-- MCP tool filtering (future `includeTools` — 17k→1.5k token savings): `mcp_requirements: { chrome-devtools: { tools: [navigate_page, take_screenshot] } }`
-- **Main-branch write restrictions** (`write/edit: true` on `main`/`master`): ALLOWED: `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`. BLOCKED: all other files.
-- **MCP config** (global disabled, per-agent enabled in `opencode.json`): `"mcp": { "hostinger-api": { "enabled": false } }` + `"agent": { "hostinger": { "tools": { "hostinger-api_*": true } } }`
+- **MCP tool patterns** (subagents only): `context7_*: true`, `wordpress-mcp_*: true`. Path-based → `opencode.json`.
+- **MCP tool filtering** (future `includeTools` — 17k→1.5k token savings): `mcp_requirements: { chrome-devtools: { tools: [navigate_page, take_screenshot] } }`
+- **Main-branch write restrictions**: ALLOWED: `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`. BLOCKED: all other files.
+- **MCP config** (global disabled, per-agent enabled): `"mcp": { "hostinger-api": { "enabled": false } }` + `"agent": { "hostinger": { "tools": { "hostinger-api_*": true } } }`
 
 ## Architecture & References
 
@@ -87,8 +87,6 @@ tools:
 
 ### Strategy vs Execution Split
 
-Main agent directories contain **strategy** knowledge — what needs doing and why. Cross-domain directories contain **execution** knowledge — how to do it with specific tools and services.
-
 | Location | Contains | Nature |
 |----------|----------|--------|
 | `{agent}.md` + `{agent}/` | Domain strategy, methodology, audience knowledge | **What** to do |
@@ -96,86 +94,40 @@ Main agent directories contain **strategy** knowledge — what needs doing and w
 | `services/` | Hosting, payments, communications, email providers | **How** to connect |
 | `workflows/` | Git flow, release, PR review, pre-edit checks | **How** to process |
 
-**Placement test:** "Would another agent use this independently without going through the owning agent?" Yes → `tools/`, `services/`, or `workflows/` (and `reference/` for operating rules). No → `{agent}/`.
+**Placement test:** "Would another agent use this independently?" Yes → `tools/`/`services/`/`workflows/`/`reference/`. No → `{agent}/`.
 
 ### The `{name}.md` + `{name}/` Convention
 
-Every agent or knowledge area follows the same pattern:
+- **Single-file**: `{name}.md` — no directory needed
+- **Multi-file**: `{name}.md` (entry point, always loaded) + `{name}/` (extended knowledge, on demand)
 
-- **Single-file agent**: `{name}.md` at the appropriate level. No directory needed.
-- **Multi-file agent**: `{name}.md` (entry point, always loaded) + `{name}/` (extended knowledge, loaded on demand).
-
-The `.md` file is the entry point — it contains the agent persona, capabilities overview, and pointers to extended knowledge. The directory contains deeper reference material that's only loaded when a specific sub-topic is needed.
+Prefer flat files with prefix-based naming (sorting, grouping, keyword discoverability):
 
 ```text
-# Single-file agent (fits in one file)
-legal.md
-
-# Multi-file agent (needs extended knowledge)
+legal.md                                  # Single-file agent
 marketing-sales.md                        # Entry point — strategy, capabilities
-marketing-sales/                          # Extended knowledge — loaded on demand
-├── meta-ads.md                           # Meta Ads strategy and methodology
-├── meta-ads-audiences.md                 # Audience targeting reference
-├── meta-ads-campaigns.md                 # Campaign structure reference
-├── direct-response-copy.md               # DR copy methodology
-├── direct-response-copy-swipe-emails.md  # Email swipe file
-├── cro.md                                # Conversion rate optimization
-└── ad-creative.md                        # Ad creative methodology
-```
-
-### Flat Files with Descriptive Names (Prefer Over Nesting)
-
-Inside agent directories, prefer flat files with prefix-based naming over nested subdirectories. File names provide sorting, grouping, hierarchy, and keyword discoverability.
-
-```text
-# Good: flat, discoverable, sortable
-marketing-sales/
+marketing-sales/                          # Extended knowledge — flat, prefix-grouped
 ├── meta-ads.md
 ├── meta-ads-audiences.md
 ├── meta-ads-campaigns.md
-├── meta-ads-creative.md
-├── meta-ads-optimization.md
 ├── direct-response-copy.md
-├── direct-response-copy-swipe-emails.md
-└── direct-response-copy-templates.md
-
-# Avoid: nested folders that hide content
-marketing-sales/
-├── meta-ads/
-│   ├── audiences/
-│   │   └── targeting.md
-│   └── campaigns/
-│       └── structure.md
-└── direct-response-copy/
-    └── swipe-file/
-        └── emails/
-            └── welcome.md
+└── direct-response-copy-swipe-emails.md
 ```
 
-**Benefits of flat naming:**
-- `ls marketing-sales/` shows everything at a glance
-- `ls marketing-sales/meta-ads*` groups all Meta Ads knowledge
-- `ls marketing-sales/*swipe*` finds all swipe files across sub-topics
-- `rg --files -g "marketing-sales/meta-ads*"` loads all Meta Ads context
-- Max depth is 2 levels from `.agents/` — never 5+
-
-**When to use a subdirectory:** Only when a single prefix group exceeds ~20 files of reference material. Even then, one level max.
+- `ls marketing-sales/meta-ads*` groups all Meta Ads knowledge; `*swipe*` finds swipe files
+- Max depth: 2 levels from `.agents/` — never 5+
+- Subdirectory only when a prefix group exceeds ~20 files. One level max.
 
 ### Scripts: Flat by Design
 
-Scripts live flat in `scripts/` because they're cross-domain — any agent can call any script. The prefix naming convention (`email-*`, `seo-*`, `browser-*`) provides grouping via filesystem sort and glob patterns.
+Scripts live flat in `scripts/` — cross-domain, any agent can call any script. Prefix naming (`email-*`, `seo-*`) provides grouping.
 
-- `*-helper.sh` = agent-callable utilities (agents run these)
-- Other `.sh` = framework infrastructure (setup, deployment, CI)
+- `*-helper.sh` = agent-callable utilities; other `.sh` = framework infrastructure
 - `scripts/commands/` = slash command documentation
-
-Discovery: `ls scripts/email-*`, `rg --files -g "scripts/seo-*"`.
 
 ### Ingested Skills
 
-Skills imported from external sources (GitHub, ClawdHub) retain the `-skill` suffix as a provenance marker. This enables `skill-update-helper.sh` to identify and check all ingested skills for upstream changes.
-
-**Transposition on ingestion:** External skill structure is flattened to match our convention:
+External skills retain `-skill` suffix as provenance marker (`skill-update-helper.sh` uses it for upstream checks). Structure is flattened on ingestion:
 
 | Upstream format | aidevops format |
 |-----------------|-----------------|
@@ -184,7 +136,7 @@ Skills imported from external sources (GitHub, ClawdHub) retain the `-skill` suf
 | `{name}-skill/rules/*.md` | `{name}-skill/rules-{topic}.md` (flat) |
 | Nested `references/CHEATSHEET/*.md` | `{name}-skill/cheatsheet-{topic}.md` (flat) |
 
-The `-skill` suffix distinguishes ingested knowledge from native agents. See `add-skill.md` for full ingestion workflow.
+See `add-skill.md` for full ingestion workflow.
 
 ### Naming Conventions
 
@@ -227,13 +179,13 @@ Linter order: (1) deterministic (ShellCheck, ESLint, Ruff/Pylint), (2) static an
 
 ## Post-Creation Terse Pass (MANDATORY)
 
-Every token in an agent doc is paid for on every load. Compress before committing.
+Every token costs on every load. Compress before committing.
 
-**Compress:** verbose phrasing → direct rule; narrative context → keep task ID, drop story; redundant examples → keep one; multi-sentence explanations of one rule → single sentence.
+**Compress:** verbose phrasing → direct rule; narrative → keep task ID, drop story; redundant examples → keep one; multi-sentence rule → single sentence.
 
-**Preserve (never compress):** task IDs (`tNNN`), issue refs (`GH#NNN`), all rules/constraints, file paths, command examples, code blocks, safety-critical detail.
+**Preserve:** task IDs (`tNNN`), issue refs (`GH#NNN`), all rules/constraints, file paths, command examples, code blocks, safety-critical detail.
 
-Target: reference cards, not tutorials. Evidence: terse pass on `build.txt` achieved 63% byte reduction with zero rule loss. See `tools/code-review/code-simplifier.md` "Prose tightening".
+Target: reference cards, not tutorials. Evidence: 63% byte reduction on `build.txt` with zero rule loss. See `tools/code-review/code-simplifier.md` "Prose tightening".
 
 ## Code Examples: When to Include
 
@@ -280,10 +232,10 @@ Self-checks: "Faster CLI alternative?" and "Could this return >50K tokens?" See 
 4. Shared - Add to aidevops for everyone (PR to .agents/)
 ```
 
-- **Draft**: `~/.aidevops/agents/draft/` with `status: draft` + `created` date. Promotion: log TODO → promote to `custom/` or `.agents/` via PR, or discard.
+- **Draft**: `status: draft` + `created` date. Promote to `custom/` or `.agents/` via PR, or discard.
 - **Custom**: Never shared, never overwritten (`custom/mycompany/`, `custom/clients/`).
 - **Shared**: Feature branch + PR. No proprietary info.
-- **Orchestration agents**: Create drafts for reusable patterns. Log TODO, reference draft in Task calls, note in completion summary.
+- **Orchestration agents**: Draft reusable patterns. Log TODO, reference in Task calls.
 
 ## Cache-Aware Prompt Patterns
 
