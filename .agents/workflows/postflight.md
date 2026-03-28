@@ -21,10 +21,8 @@ tools:
 - **Purpose**: Verify release health after `release.md` completes
 - **Trigger**: After tag creation and GitHub release publication
 - **Timeouts**: CI/CD 10 min, code review tools 5 min
-- **Commands**:
-  - `gh run list --workflow=code-quality.yml --limit=5`
-  - `gh api repos/{owner}/{repo}/commits/{sha}/check-runs`
-  - `.agents/scripts/linters-local.sh`
+- **Script**: `.agents/scripts/postflight-check.sh` (canonical implementation)
+- **GH Actions**: `.github/workflows/postflight.yml` (automated on release publish)
 - **Rollback**: See [Rollback Procedures](#rollback-procedures)
 
 <!-- AI-CONTEXT-END -->
@@ -69,112 +67,15 @@ Check both `main` and tag refs: `gh run list --branch=main --limit=5` and `gh ru
 | npm audit | No high/critical issues |
 | Dependabot | No new alerts |
 
-## Postflight Script
+## Running Postflight
 
 Wait for `postflight.yml` GH Actions workflow to complete before running locally. Only declare success if ALL workflows passed.
 
-```bash
-#!/bin/bash
-set -euo pipefail
-TIMEOUT_CI=600; POLL_INTERVAL=30; MAX_ATTEMPTS=20
+**Local**: `.agents/scripts/postflight-check.sh` — runs CI/CD wait, SonarCloud gate, Snyk, and Secretlint checks with proper timeouts and error handling.
 
-echo "=== Postflight Verification === $(date)"
+**Automated**: `.github/workflows/postflight.yml` — triggers on `release: published` and `workflow_dispatch`. Runs the same checks in CI with step summary reporting.
 
-# 1. CI/CD
-RUN_ID=$(gh run list --limit=1 --json databaseId -q '.[0].databaseId')
-STATUS=$(gh run list --limit=1 --json status -q '.[0].status')
-[[ "$STATUS" == "in_progress" || "$STATUS" == "queued" ]] && \
-  timeout $TIMEOUT_CI gh run watch "$RUN_ID" --exit-status
-CONCLUSION=$(gh run view "$RUN_ID" --json conclusion -q '.conclusion')
-[[ "$CONCLUSION" != "success" ]] && { gh run view "$RUN_ID" --log-failed; exit 1; }
-echo "CI/CD: PASSED"
-
-# 2. SonarCloud
-SONAR_STATUS=$(curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=marcusquinn_aidevops" | jq -r '.projectStatus.status')
-[[ "$SONAR_STATUS" != "OK" ]] && echo "WARNING: SonarCloud: $SONAR_STATUS" || echo "SonarCloud: PASSED"
-
-# 3. Security
-command -v snyk &>/dev/null && \
-  (snyk test --severity-threshold=high --json 2>/dev/null | jq -e '.vulnerabilities | length == 0' >/dev/null \
-    && echo "Snyk: PASSED" || echo "WARNING: Snyk found vulnerabilities") || echo "Snyk: SKIPPED"
-
-command -v secretlint &>/dev/null && \
-  (secretlint "**/*" --format compact 2>/dev/null && echo "Secretlint: PASSED" || { echo "ERROR: secrets found"; exit 1; }) \
-  || echo "Secretlint: SKIPPED"
-
-echo "=== Postflight Complete === $(date)"
-```
-
-## Automated Postflight (GitHub Actions)
-
-```yaml
-# .github/workflows/postflight.yml
-name: Postflight Verification
-on:
-  release:
-    types: [published]
-  workflow_dispatch:
-    inputs:
-      tag: { description: 'Tag to verify', required: false }
-
-jobs:
-  postflight:
-    name: Verify Release Health
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        ref: ${{ github.event.inputs.tag || github.ref }}
-        fetch-depth: 0
-
-    - name: Wait for CI/CD
-      env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
-      run: |
-        sleep 60
-        for i in {1..20}; do
-          PENDING=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
-            --jq '[.check_runs[] | select(.status != "completed")] | length')
-          [[ "$PENDING" == "0" ]] && break
-          echo "Waiting for $PENDING check runs... ($i/20)"; sleep 30
-        done
-
-    - name: Verify CI/CD
-      env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
-      run: |
-        FAILED=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
-          --jq '[.check_runs[] | select(.conclusion == "failure")] | length')
-        [[ "$FAILED" != "0" ]] && { echo "::error::$FAILED check runs failed"; exit 1; }
-        echo "All CI/CD checks passed"
-
-    - name: SonarCloud Quality Gate
-      run: |
-        STATUS=$(curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=marcusquinn_aidevops" \
-          | jq -r '.projectStatus.status')
-        [[ "$STATUS" != "OK" ]] && echo "::warning::SonarCloud: $STATUS" || echo "SonarCloud: PASSED"
-
-    - name: Security Scan
-      env: { SNYK_TOKEN: "${{ secrets.SNYK_TOKEN }}" }
-      continue-on-error: true
-      run: |
-        npm install -g snyk
-        snyk auth ${{ secrets.SNYK_TOKEN }} || true
-        snyk test --severity-threshold=high || echo "::warning::Security vulnerabilities found"
-
-    - name: Check for Secrets
-      continue-on-error: true
-      run: |
-        npm install -g secretlint @secretlint/secretlint-rule-preset-recommend
-        secretlint "**/*" --format compact || { echo "::error::Potential secrets detected"; exit 1; }
-
-    - name: Generate Report
-      if: always()
-      env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
-      run: |
-        { echo "## Postflight Report"; echo "**Release**: ${{ github.event.release.tag_name || github.ref_name }}"; \
-          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
-          --jq '.check_runs[] | "- **\(.name)**: \(.conclusion // .status)"'; } >> $GITHUB_STEP_SUMMARY
-```
+Do not duplicate these scripts inline — they are the source of truth. Read them directly when implementation details are needed.
 
 ## Rollback Procedures
 
