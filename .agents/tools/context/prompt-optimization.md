@@ -25,59 +25,26 @@ tools:
 - **Metrics**: Technical accuracy, security awareness, actionability, completeness
 - **Process**: Week 1 Foundation → Week 2 Refinement → Week 3 Specialization → Ongoing Maintenance
 - **Integration**: Export optimized prompts to provider scripts, quality workflows
+
 <!-- AI-CONTEXT-END -->
-
-## Overview
-
-This guide covers comprehensive prompt optimization strategies using both DSPy (programmatic optimization) and DSPyGround (visual playground) within the AI DevOps Framework.
 
 ## Optimization Workflow
 
-### **Phase 1: Initial Development (DSPyGround)**
+| Phase | Steps |
+|-------|-------|
+| **1. DSPyGround** | Bootstrap basic prompt → interactive refinement → collect samples (50+, positive + negative) |
+| **2. DSPy** | Export samples → convert to training format → apply optimizers → compare metrics → deploy |
+| **3. Iterate** | Monitor → collect edge cases → re-optimize → A/B test → measure impact |
 
-1. **Bootstrap with Basic Prompt**
-   - Start with simple, clear instructions
-   - Define core functionality and constraints
-   - Test basic scenarios interactively
+## Practical Example: DevOps Assistant
 
-2. **Interactive Refinement**
-   - Use DSPyGround's chat interface
-   - Collect diverse conversation samples
-   - Identify edge cases and failure modes
-
-3. **Sample Collection**
-   - Save positive examples (good responses)
-   - Mark negative examples (problematic responses)
-   - Organize samples into logical groups
-
-### **Phase 2: Automated Optimization (DSPy)**
-
-1. **Data Preparation**
-   - Export samples from DSPyGround
-   - Convert to DSPy training format
-   - Create validation and test sets
-
-2. **Systematic Optimization**
-   - Apply multiple DSPy optimizers
-   - Compare performance metrics
-   - Select best-performing variants
-
-3. **Production Deployment**
-   - Integrate optimized prompts
-   - Monitor performance metrics
-   - Iterate based on real-world feedback
-
-## Practical Examples
-
-### **DevOps Assistant Optimization**
-
-#### **Initial Prompt (DSPyGround)**
+**Initial prompt:**
 
 ```typescript
 systemPrompt: `You are a DevOps assistant. Help with server management.`
 ```
 
-#### **Refined Prompt (After DSPyGround)**
+**Refined prompt (after DSPyGround):**
 
 ```typescript
 systemPrompt: `You are an expert DevOps engineer with 10+ years of experience.
@@ -91,20 +58,18 @@ Your expertise includes:
 - Security best practices and compliance
 
 Guidelines:
-- Provide specific, actionable solutions
-- Include relevant commands and configurations
+- Provide specific, actionable solutions with commands and configurations
 - Explain potential risks and mitigation strategies
-- Suggest best practices and industry standards
 - Ask clarifying questions when requirements are unclear
 
 Always prioritize security, reliability, and maintainability.`
 ```
 
-#### **DSPy Optimization Code**
+**DSPy optimization:**
 
 ```python
 import dspy
-from dspy.teleprompt import BootstrapFewShot
+from dspy.teleprompt import BootstrapFewShot, MIPRO
 
 class DevOpsAssistant(dspy.Signature):
     """Expert DevOps assistance with practical, secure solutions."""
@@ -112,14 +77,13 @@ class DevOpsAssistant(dspy.Signature):
     solution = dspy.OutputField(desc="Detailed, actionable solution")
 
 class DevOpsModule(dspy.Module):
-    def **init**(self):
-        super().**init**()
+    def __init__(self):
+        super().__init__()
         self.generate_solution = dspy.ChainOfThought(DevOpsAssistant)
 
     def forward(self, query):
         return self.generate_solution(query=query)
 
-# Training data from DSPyGround samples
 trainset = [
     dspy.Example(
         query="How do I deploy a Node.js app with zero downtime?",
@@ -128,38 +92,24 @@ trainset = [
     # More examples from DSPyGround
 ]
 
-# Optimize
 teleprompter = BootstrapFewShot(metric=devops_accuracy_metric)
 optimized_assistant = teleprompter.compile(DevOpsModule(), trainset=trainset)
+
+# For more complex optimization:
+# teleprompter = MIPRO(metric=metric, num_candidates=20, init_temperature=1.0)
 ```
 
-### **Code Review Assistant**
-
-#### **DSPyGround Configuration**
+## DSPyGround Configuration
 
 ```typescript
 export default {
-  systemPrompt: `You are a senior software engineer conducting code reviews.
-
-  Focus on:
-  - Code quality and maintainability
-  - Security vulnerabilities
-  - Performance implications
-  - Best practices adherence
-
-  Provide constructive feedback with specific suggestions.`,
+  systemPrompt: `...`,  // see refined prompt above
 
   tools: {
     analyzeCode: tool({
       description: 'Analyze code for issues',
-      parameters: z.object({
-        code: z.string(),
-        language: z.string(),
-      }),
-      execute: async ({ code, language }) => {
-        // Static analysis integration
-        return analyzeCodeQuality(code, language);
-      },
+      parameters: z.object({ code: z.string(), language: z.string() }),
+      execute: async ({ code, language }) => analyzeCodeQuality(code, language),
     }),
   },
 
@@ -171,168 +121,60 @@ export default {
 }
 ```
 
-#### **DSPy Implementation**
-
-```python
-class CodeReview(dspy.Signature):
-    """Comprehensive code review with actionable feedback."""
-    code = dspy.InputField(desc="Code to review")
-    language = dspy.InputField(desc="Programming language")
-    review = dspy.OutputField(desc="Detailed code review with suggestions")
-
-class CodeReviewModule(dspy.Module):
-    def **init**(self):
-        super().**init**()
-        self.review_code = dspy.ChainOfThought(CodeReview)
-
-    def forward(self, code, language):
-        return self.review_code(code=code, language=language)
-
-# Multi-stage optimization
-from dspy.teleprompt import MIPRO
-
-teleprompter = MIPRO(
-    metric=code_review_quality_metric,
-    num_candidates=20,
-    init_temperature=1.0
-)
-optimized_reviewer = teleprompter.compile(CodeReviewModule(), trainset=code_samples)
-```
-
-## Metrics and Evaluation
-
-### **Custom Metrics for DevOps**
+## Metrics
 
 ```python
 def devops_accuracy_metric(example, pred, trace=None):
-    """Evaluate DevOps solution accuracy."""
-    # Check for security considerations
     security_score = check_security_mentions(pred.solution)
-
-    # Verify technical accuracy
     technical_score = verify_technical_details(pred.solution, example.query)
-
-    # Assess actionability
     actionability_score = assess_actionability(pred.solution)
-
     return (security_score + technical_score + actionability_score) / 3
 
 def code_review_quality_metric(example, pred, trace=None):
-    """Evaluate code review quality."""
-    # Check for common issues identification
     issue_detection = check_issue_detection(pred.review, example.code)
-
-    # Assess suggestion quality
     suggestion_quality = evaluate_suggestions(pred.review)
-
-    # Verify constructive tone
     tone_score = assess_constructive_tone(pred.review)
-
     return (issue_detection + suggestion_quality + tone_score) / 3
 ```
 
-### **DSPyGround Metrics Configuration**
+**DSPyGround metric dimensions:**
 
 ```typescript
 metricsPrompt: {
-  evaluation_instructions: `You are an expert evaluator for DevOps AI assistants.
-
-  Evaluate responses across these dimensions:
+  evaluation_instructions: `Evaluate DevOps AI assistant responses across:
   - Technical accuracy and completeness
   - Security awareness and best practices
-  - Clarity and actionability of instructions
-  - Appropriate level of detail for the context`,
+  - Clarity and actionability
+  - Appropriate level of detail`,
 
   dimensions: {
-    technical_accuracy: {
-      name: 'Technical Accuracy',
-      description: 'Is the technical information correct and up-to-date?',
-      weight: 1.0
-    },
-    security_awareness: {
-      name: 'Security Awareness',
-      description: 'Does the response consider security implications?',
-      weight: 0.9
-    },
-    actionability: {
-      name: 'Actionability',
-      description: 'Can the user immediately implement the solution?',
-      weight: 0.8
-    },
-    completeness: {
-      name: 'Completeness',
-      description: 'Does the response address all aspects of the question?',
-      weight: 0.7
-    }
+    technical_accuracy: { weight: 1.0 },
+    security_awareness: { weight: 0.9 },
+    actionability:      { weight: 0.8 },
+    completeness:       { weight: 0.7 }
   }
 }
 ```
 
-## Iterative Improvement Process
+## Iterative Improvement Schedule
 
-### **Week 1: Foundation**
-
-1. Create basic prompts in DSPyGround
-2. Collect 50+ diverse samples
-3. Run initial GEPA optimization
-4. Deploy improved prompts
-
-### **Week 2: Refinement**
-
-1. Monitor real-world performance
-2. Collect edge cases and failures
-3. Add negative examples to training
-4. Re-optimize with expanded dataset
-
-### **Week 3: Specialization**
-
-1. Create domain-specific variants
-2. Optimize for specific use cases
-3. A/B test different approaches
-4. Measure business impact
-
-### **Ongoing: Maintenance**
-
-1. Regular performance monitoring
-2. Quarterly re-optimization
-3. Adaptation to new requirements
-4. Integration of user feedback
+| Phase | Actions |
+|-------|---------|
+| **Week 1** | Create basic prompts, collect 50+ samples, run initial GEPA optimization, deploy |
+| **Week 2** | Monitor real-world performance, collect failures, add negative examples, re-optimize |
+| **Week 3** | Create domain-specific variants, A/B test, measure business impact |
+| **Ongoing** | Quarterly re-optimization, adapt to new requirements, integrate user feedback |
 
 ## Best Practices
 
-### **Sample Quality**
+**Samples:** Diverse scenarios, real-world quality, balanced positive/negative, preserve context.
 
-- **Diversity**: Cover various scenarios and edge cases
-- **Quality**: Use real-world, high-quality examples
-- **Balance**: Include both positive and negative examples
-- **Context**: Preserve conversation context and nuance
+**Optimization:** Start with BootstrapFewShot → MIPRO for complex cases. Measure multiple metrics. Validate on held-out sets.
 
-### **Optimization Strategy**
+**Deployment:** Gradual rollout → monitor closely → maintain rollback versions → collect feedback for next iteration.
 
-- **Start Simple**: Begin with basic optimizers
-- **Iterate Gradually**: Make incremental improvements
-- **Measure Everything**: Track multiple metrics consistently
-- **Validate Thoroughly**: Test on held-out datasets
+## Integration
 
-### **Production Deployment**
-
-- **Gradual Rollout**: Deploy to small user groups first
-- **Monitor Closely**: Track performance and user satisfaction
-- **Rollback Ready**: Maintain previous versions for quick rollback
-- **Continuous Learning**: Collect feedback for next iteration
-
-## Integration Points
-
-### **With AI DevOps Framework**
-
-- Export optimized prompts to provider scripts
-- Integrate with quality control workflows
-- Use in documentation generation
-- Apply to server management tasks
-
-### **With External Systems**
-
-- CI/CD pipeline integration
-- Monitoring and alerting systems
-- Code review platforms
-- Documentation platforms
+- Export optimized prompts to provider scripts and quality workflows
+- CI/CD pipeline integration for automated re-optimization
+- Monitoring/alerting for performance regression detection
