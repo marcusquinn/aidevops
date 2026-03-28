@@ -191,6 +191,7 @@ The `-skill` suffix distinguishes ingested knowledge from native agents. See `ad
 - **Files**: lowercase with hyphens (`kebab-case`). ALLCAPS only for entry points (`AGENTS.md`).
 - **Scripts**: `[domain]-[function]-helper.sh` for agent-callable, plain `[name].sh` for framework infra.
 - **Python scripts**: `snake_case` (Python convention) — exception to kebab-case rule.
+- **Subagent discovery**: Tooling uses `find -mindepth 2` to discover subagents (skips root-level main agents).
 - **File structure** — main agents: `# Name` → `<!-- AI-CONTEXT-START -->` Quick Reference `<!-- AI-CONTEXT-END -->` → Detailed docs. Subagents: YAML frontmatter + content.
 - **Slash commands**: NEVER define inline in main agents. Generic → `scripts/commands/{command}.md`. Domain-specific → `{domain}/{subagent}.md`.
 
