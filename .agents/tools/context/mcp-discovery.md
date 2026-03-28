@@ -19,46 +19,33 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Discover MCP tools without loading all definitions upfront
-- **Pattern**: Search → Find MCP → Enable → Use
+- **Pattern**: Search -> Find MCP -> Enable -> Use
 - **Script**: `~/.aidevops/agents/scripts/mcp-index-helper.sh`
-- **Alternative**: MCPorter (`npx mcporter list`) — ad-hoc discovery across all configured MCP clients
-
-**Commands (mcp-index-helper.sh)**:
+- **Alternative**: MCPorter (`npx mcporter list`) -- ad-hoc discovery across all configured MCP clients
 
 ```bash
 # Search for tools by capability
-mcp-index-helper.sh search "screenshot"
+mcp-index-helper.sh search "screenshot web"
 mcp-index-helper.sh search "seo keyword"
 
-# List all MCPs or specific one
+# List all MCPs or a specific one
 mcp-index-helper.sh list
 mcp-index-helper.sh list context7
 
 # Find which MCP provides a tool
 mcp-index-helper.sh get-mcp "query-docs"
 
-# Show index status
-mcp-index-helper.sh status
-```
+# Sync / rebuild index
+mcp-index-helper.sh sync
+mcp-index-helper.sh rebuild   # force full rebuild
+mcp-index-helper.sh status    # show DB path, last sync, tool counts
 
-**Commands (MCPorter — alternative)**:
-
-```bash
-# Discover all configured MCP servers and their tools
-npx mcporter list
-
-# List tools for a specific server
-npx mcporter list context7
-
-# Find and call a tool directly
+# MCPorter alternative (reads all configured MCP clients live)
+npx mcporter list                          # all servers
+npx mcporter list context7 --schema        # one server with schemas
 npx mcporter call context7.resolve-library-id libraryName=react
+npx mcporter generate-cli --command https://mcp.context7.com/mcp --compile
 ```
-
-**Why this matters**:
-
-- MCP tool definitions consume context tokens
-- Loading all MCPs upfront wastes tokens on unused tools
-- On-demand discovery loads only what's needed
 
 **Disabled MCPs** (enabled via subagents):
 
@@ -73,7 +60,7 @@ npx mcporter call context7.resolve-library-id libraryName=react
 
 | MCP | Subagent | Notes |
 |-----|----------|-------|
-| `grep_app` / `gh_grep` | `@github-search` | For GitHub code search (no MCP used) |
+| `grep_app` / `gh_grep` | `@github-search` | GitHub code search (no MCP used) |
 
 **Primary search**: `rg`/`fd` (local, instant). Use `@augment-context-engine` for semantic search.
 
@@ -81,112 +68,45 @@ npx mcporter call context7.resolve-library-id libraryName=react
 
 ## Architecture
 
-### The Problem
+MCP tool definitions consume context tokens (e.g. `context7` ~2K, `repomix` ~5K, `chrome-devtools` ~17K for 50+ tools). Loading all MCPs globally means every conversation pays this cost even when most tools go unused.
 
-Each MCP server exposes tool definitions that consume context tokens:
-- `context7`: ~2K tokens for 2 tools
-- `repomix`: ~5K tokens for 8 tools
-- `chrome-devtools`: ~17K tokens for 50+ tools
+**Lazy-load pattern** (inspired by [Amp's approach](https://ampcode.com/news/lazy-load-mcp-with-skills)):
 
-Loading all MCPs globally means every conversation pays this token cost, even when most tools aren't used.
-
-### The Solution
-
-**Lazy-load MCP pattern** (inspired by [Amp's approach](https://ampcode.com/news/lazy-load-mcp-with-skills)):
-
-1. **Index**: Extract tool descriptions into SQLite FTS5 database
+1. **Index**: Tool descriptions extracted into SQLite FTS5 (`~/.aidevops/.agent-workspace/mcp-index/mcp-tools.db`)
 2. **Search**: Agent queries index for needed capability
 3. **Discover**: Index returns which MCP provides the tool
 4. **Enable**: Agent enables that specific MCP
-5. **Use**: Tool is now available with minimal token overhead
+5. **Use**: Tool available with minimal token overhead
 
-### Index Structure
+**Auto-sync triggers**: `opencode.json` modified, index >24h old, or index missing.
 
-```text
-~/.aidevops/.agent-workspace/mcp-index/
-└── mcp-tools.db          # SQLite FTS5 database
-    ├── mcp_tools         # Tool metadata
-    ├── mcp_tools_fts     # Full-text search index
-    └── sync_metadata     # Sync state tracking
-```
+**Token savings** (on-demand vs all-MCPs-loaded):
 
-## Usage Patterns
+| Scenario | All Loaded | On-Demand | Savings |
+|----------|------------|-----------|---------|
+| Simple code task | ~50K | ~5K | 90% |
+| SEO analysis | ~50K | ~12K | 76% |
+| Browser automation | ~50K | ~20K | 60% |
 
-### Pattern 1: Capability Search
+## MCPorter
 
-When you need a capability but don't know which MCP provides it:
-
-```bash
-# "I need to take screenshots of web pages"
-mcp-index-helper.sh search "screenshot web"
-
-# Output:
-# MCP         Tool                    Description
-# playwriter  playwriter_screenshot   Take screenshot of current page
-# chrome-devtools  chrome-devtools_screenshot  Capture page screenshot
-```
-
-### Pattern 2: Tool Lookup
-
-When you know a tool name but need the MCP:
-
-```bash
-mcp-index-helper.sh get-mcp "query-docs"
-# Output: context7
-```
-
-### Pattern 3: MCP Exploration
-
-When exploring what tools an MCP provides:
-
-```bash
-mcp-index-helper.sh list dataforseo
-# Output:
-# Tool                    Description
-# dataforseo_serp         Search engine results page data
-# dataforseo_keywords     Keyword research and metrics
-# dataforseo_backlinks    Backlink analysis
-```
-
-## MCPorter: Alternative Discovery Method
-
-[MCPorter](https://mcporter.dev) (`steipete/mcporter`, MIT) is a TypeScript runtime, CLI, and code-generation toolkit that provides an alternative approach to MCP discovery. Unlike `mcp-index-helper.sh` (which queries a local SQLite index built from your `opencode.json`), MCPorter reads directly from all configured MCP clients (Claude Code, Claude Desktop, Cursor, Codex, Windsurf, OpenCode, VS Code) and queries live servers.
-
-### When to use MCPorter vs mcp-index-helper.sh
+[MCPorter](https://mcporter.dev) (`steipete/mcporter`, MIT) is a TypeScript runtime/CLI that reads directly from all configured MCP clients (Claude Code, Claude Desktop, Cursor, Codex, Windsurf, OpenCode, VS Code) and queries live servers -- unlike `mcp-index-helper.sh` which queries a local SQLite index.
 
 | Scenario | Use |
 |----------|-----|
-| Searching the local index for a capability | `mcp-index-helper.sh search "capability"` |
+| Searching local index for a capability | `mcp-index-helper.sh search "capability"` |
 | Discovering tools across all MCP clients | `npx mcporter list` |
 | Calling a tool ad-hoc without config changes | `npx mcporter call server.tool arg=value` |
 | Generating a typed CLI or TypeScript client | `npx mcporter generate-cli` / `mcporter emit-ts` |
 | Keeping stateful servers warm between calls | `mcporter daemon start` |
 
-### Quick start
-
-```bash
-# Zero-install: list all configured MCP servers
-npx mcporter list
-
-# Inspect a specific server's tools
-npx mcporter list context7 --schema
-
-# Call a tool directly
-npx mcporter call context7.resolve-library-id libraryName=react
-
-# Generate a standalone CLI from any MCP server
-npx mcporter generate-cli --command https://mcp.context7.com/mcp --compile
-```
-
-MCPorter auto-merges configs from all supported AI assistants, so `mcporter list` shows the union of all your configured servers without any additional setup.
-
-See `tools/mcp-toolkit/mcporter.md` for full documentation and `aidevops/mcp-integrations.md` for setup instructions.
+See `tools/mcp-toolkit/mcporter.md` for full docs and `aidevops/mcp-integrations.md` for setup.
 
 ## Integration with Agents
 
 ### Subagent Frontmatter
 
-Subagents declare which MCPs they need via the `mcp:` field:
+Subagents declare MCP requirements via the `mcp:` field:
 
 ```yaml
 ---
@@ -200,21 +120,11 @@ mcp:
 ---
 ```
 
-When a subagent with `mcp:` is invoked, the agent should:
-
-1. Read the subagent file to get instructions
-2. Note the MCP requirement in the frontmatter
-3. Use the MCP tools as documented in the subagent
-
-**Note**: The `mcp:` field is declarative - it documents which MCP the subagent
-requires. The actual enabling happens in `generate-opencode-agents.sh` which
-configures OpenCode's per-agent tool permissions.
+The `mcp:` field is declarative -- it documents which MCP the subagent requires. Actual enabling happens in `generate-opencode-agents.sh` (per-agent tool permissions).
 
 ### Main Agent Pattern
 
-Main agents don't enable MCPs directly. They:
-1. Reference subagents that have MCP access
-2. Or use the discovery pattern to find needed tools
+Main agents don't enable MCPs directly. They reference subagents that have MCP access, or use the discovery pattern:
 
 ```markdown
 # Good: Main agent references subagent
@@ -225,7 +135,7 @@ tools:
   dataforseo_*: true  # DON'T DO THIS in main agents
 ```
 
-### OpenCode Configuration
+### Runtime Configuration
 
 In `opencode.json`, MCPs are disabled globally and enabled per-agent:
 
@@ -246,68 +156,11 @@ In `opencode.json`, MCPs are disabled globally and enabled per-agent:
 }
 ```
 
-## Sync and Maintenance
+## Future: includeTools Filtering
 
-### Automatic Sync
+When OpenCode implements `includeTools` ([#7399](https://github.com/anomalyco/opencode/issues/7399)), agents can specify exact tools needed -- e.g. reducing chrome-devtools from ~17K to ~1.5K tokens by requesting only 2 of 50+ tools. The current index prepares for this by tracking tool-level metadata.
 
-The index auto-syncs when:
-- `opencode.json` is modified
-- Index is older than 24 hours
-- Index doesn't exist
-
-### Manual Sync
-
-```bash
-# Sync from current config
-mcp-index-helper.sh sync
-
-# Force rebuild (clears and recreates)
-mcp-index-helper.sh rebuild
-```
-
-### Status Check
-
-```bash
-mcp-index-helper.sh status
-
-# Output:
-# Database: ~/.aidevops/.agent-workspace/mcp-index/mcp-tools.db
-# Last sync: 2025-01-21 05:30:00
-# MCP servers: 12
-# Tools indexed: 45
-# Globally enabled tools: 8
-# Disabled (on-demand): 37
-```
-
-## Token Savings
-
-Example savings from on-demand loading:
-
-| Scenario | All MCPs Loaded | On-Demand | Savings |
-|----------|-----------------|-----------|---------|
-| Simple code task | ~50K tokens | ~5K tokens | 90% |
-| SEO analysis | ~50K tokens | ~12K tokens | 76% |
-| Browser automation | ~50K tokens | ~20K tokens | 60% |
-
-The savings compound over a conversation as context accumulates.
-
-## Future: OpenCode includeTools Support
-
-When OpenCode implements `includeTools` filtering ([#7399](https://github.com/anomalyco/opencode/issues/7399)), agents can specify exactly which tools they need:
-
-```yaml
----
-mcp_requirements:
-  chrome-devtools:
-    tools: [navigate_page, take_screenshot]  # Only these 2 of 50+ tools
----
-```
-
-This would reduce chrome-devtools from ~17K to ~1.5K tokens.
-
-The current index prepares for this by tracking tool-level metadata.
-
-## Security Note
+## Security
 
 MCP servers are a trust boundary. Before enabling or installing a new MCP server discovered through `mcp-index-helper.sh` or MCPorter, verify the source and scan dependencies. See `tools/mcp-toolkit/mcporter.md` "Security Considerations" for the full risk model and pre-install checklist.
 
