@@ -20,17 +20,7 @@ tools:
 
 - **Purpose**: Choose and implement vector search for per-tenant RAG pipelines in SaaS applications
 - **Primary recommendation**: zvec (embedded, collection-per-tenant) or pgvector (if already on Postgres)
-- **Scope**: Application-level vector search for user/org document retrieval — NOT for aidevops internal use (which stays on SQLite FTS5)
-
-| Option | Type | Package/Service |
-|--------|------|-----------------|
-| zvec | Embedded (C++ in-process) | `zvec` (PyPI) / `@zvec/zvec` (npm, early) |
-| pgvector | Postgres extension | `pgvector` extension + `drizzle-orm` |
-| Cloudflare Vectorize | Managed (edge) | Cloudflare Workers binding |
-| PGlite + pgvector | Embedded (WASM) | `@electric-sql/pglite` + pgvector extension |
-| Pinecone | Hosted | `@pinecone-database/pinecone` |
-| Qdrant | Self-hosted or cloud | `@qdrant/js-client-rest` |
-| Weaviate | Self-hosted or cloud | `weaviate-client` |
+- **Scope**: Application-level vector search — NOT for aidevops internal use (which stays on SQLite FTS5)
 
 <!-- AI-CONTEXT-END -->
 
@@ -55,8 +45,6 @@ Need vector search for SaaS with per-tenant data?
 |---------|------|----------|-----------|-----------------|----------|--------|----------|
 | Deployment | In-process | Postgres ext. | CF edge | In-process (WASM) | Hosted | Self/cloud | Self/cloud |
 | Max vectors | 10M+ | 100M+ | 5M/index | ~500K (WASM) | Billions | 100M+ | 100M+ |
-| Dense search | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Sparse search | Yes (native) | No (tsvector) | No | No | Sparse+dense | Sparse+dense | BM25 |
 | Hybrid search | Yes (multi-vector) | Manual (2 queries) | No | Manual | Yes | Yes | Yes |
 | Built-in embeddings | Yes (local + API) | No | Workers AI | Via ext. | Inference API | FastEmbed | Built-in |
 | Built-in rerankers | RRF, weighted, cross-encoder | No | No | No | No | No | Reranker modules |
@@ -68,15 +56,27 @@ Need vector search for SaaS with per-tenant data?
 
 ### Cost Model
 
-| Option | Fixed | Per-query | Storage | Notes |
-|--------|-------|-----------|---------|-------|
-| zvec | $0 | $0 | Disk only | Cheapest at scale |
-| pgvector | $0 | $0 | Postgres | Shares existing infra |
-| Vectorize | $0.01/1M queries | $0.04/1M vectors/mo | Included | Free: 30M queries/mo, 5M vectors |
-| PGlite+pgvector | $0 | $0 | Client disk | Client-side only |
-| Pinecone | $0 starter | $0 (2M vectors) | $0.33/1M/mo | Serverless: pay per read/write unit |
-| Qdrant Cloud | $0 (1GB free) | Per-node | Included | Self-hosted: $0 |
-| Weaviate Cloud | $0 sandbox | Per-node | Included | Self-hosted: $0 |
+| Option | Fixed | Per-query | Notes |
+|--------|-------|-----------|-------|
+| zvec | $0 | $0 | Cheapest at scale (disk only) |
+| pgvector | $0 | $0 | Shares existing Postgres infra |
+| Vectorize | $0.01/1M queries | $0.04/1M vectors/mo | Free: 30M queries/mo, 5M vectors |
+| PGlite+pgvector | $0 | $0 | Client-side only |
+| Pinecone | $0 starter | $0 (2M vectors) | Serverless: pay per read/write unit; $0.33/1M/mo |
+| Qdrant Cloud | $0 (1GB free) | Per-node | Self-hosted: $0 |
+| Weaviate Cloud | $0 sandbox | Per-node | Self-hosted: $0 |
+
+### Platform Support
+
+| Platform | zvec | pgvector | Vectorize | PGlite+pgvector | Pinecone | Qdrant | Weaviate |
+|----------|------|----------|-----------|-----------------|----------|--------|----------|
+| Node.js / Bun | Early | Yes | No (Workers only) | Yes (WASM) | Yes | Yes | Yes |
+| Python | Full | Yes | No | No | Yes | Yes | Yes |
+| CF Workers | No | No (no TCP) | Yes (native) | No (no FS) | Yes (HTTP) | Yes (HTTP) | Yes (HTTP) |
+| Electron / Browser ext. | No / No | No / No | No / No | Yes / Yes (IndexedDB) | Yes / Yes | Yes / Yes | Yes / Yes |
+| Docker / Linux | Yes | Yes | No | Yes | Yes | Yes | Yes |
+| macOS (ARM64) | Yes | Yes | No | Yes | Yes | Yes | Yes |
+| Windows | No | Yes | No | Yes | Yes | Yes | Yes |
 
 ## Per-Tenant Isolation Patterns
 
@@ -158,9 +158,7 @@ export default {
       metadata: { source_file: "report.pdf", chunk_index: 0 },
     }]);
     const results = await env.VECTORIZE_INDEX.query(queryVector, {
-      topK: 5,
-      namespace: orgId,
-      returnMetadata: "all",
+      topK: 5, namespace: orgId, returnMetadata: "all",
     });
     return Response.json(results.matches);
   },
@@ -169,7 +167,7 @@ export default {
 
 Zero ops, edge latency, automatic scaling. Cloudflare-only, 5M vectors/index, no hybrid search.
 
-### Pattern 4: Hosted Services (Pinecone, Qdrant, Weaviate)
+### Pattern 4: Hosted Services (Pinecone, Qdrant)
 
 ```typescript
 // Pinecone — physical isolation via namespaces
@@ -179,8 +177,7 @@ const results = await index.namespace(orgId).query({ vector: queryVector, topK: 
 
 // Qdrant — logical isolation via payload filtering
 await client.search("documents", {
-  vector: queryVector,
-  limit: 5,
+  vector: queryVector, limit: 5,
   filter: { must: [{ key: "org_id", match: { value: orgId } }] },
   with_payload: true,
 });
@@ -198,20 +195,17 @@ Upload → [Chunking] 512-1024 tokens, 128-token overlap
        → [LLM Context] system + retrieved chunks + user query
 ```
 
-**Embedding models**: zvec built-in: all-MiniLM-L6-v2 (384d, free, local) · OpenAI: text-embedding-3-small (1536d) · Jina v5: jina-embeddings-v5-text-nano (1024d, Matryoshka to 256d)
+**Embedding models**: zvec built-in: all-MiniLM-L6-v2 (384d, free, local) | OpenAI: text-embedding-3-small (1536d) | Jina v5: jina-embeddings-v5-text-nano (1024d, Matryoshka to 256d)
 
 ## zvec Deep Dive
 
-An in-process C++ vector database built on Alibaba's Proxima engine. No separate server, no network hop. Apache 2.0.
+In-process C++ vector database built on Alibaba's Proxima engine. No separate server, no network hop. Apache 2.0.
 
-- **Repo**: https://github.com/alibaba/zvec (~8.4k stars)
-- **Created**: December 2025 — very new
+- **Repo**: https://github.com/alibaba/zvec (~8.4k stars) | Created December 2025 — very new
 - **Platforms**: Linux (x86_64, ARM64), macOS (ARM64). No Windows.
 - **Bindings**: Python (full), Node.js (core ops only, early stage)
-
-**Index types**: HNSW, IVF (SOAR), FLAT, HNSW-Sparse, Flat-Sparse, Inverted
-
-**Quantization**: INT4, INT8 (recommended — ~4x memory reduction, minimal recall loss), FP16
+- **Index types**: HNSW, IVF (SOAR), FLAT, HNSW-Sparse, Flat-Sparse, Inverted
+- **Quantization**: INT4, INT8 (recommended — ~4x memory reduction, minimal recall loss), FP16
 
 **Built-in embedding functions** (Python only):
 
@@ -249,74 +243,39 @@ results = collection.query(
 
 ### Node.js Status
 
-`@zvec/zvec` (v0.2.1) provides core database operations via native C++ bindings. The Python extension ecosystem (embedding functions, rerankers) has **no Node.js equivalent**. For Node.js: use zvec for storage/retrieval, bring your own embedding pipeline (OpenAI SDK, Transformers.js). For production Node.js needing the full pipeline, pgvector or a hosted option is more practical.
+`@zvec/zvec` (v0.2.1) provides core database operations via native C++ bindings. The Python extension ecosystem (embedding functions, rerankers) has no Node.js equivalent. For Node.js: use zvec for storage/retrieval, bring your own embedding pipeline (OpenAI SDK, Transformers.js). For production Node.js needing the full pipeline, pgvector or a hosted option is more practical.
 
-### Performance
+### Performance and Platform Gotchas
 
 Published benchmarks (Cohere 10M dataset, 16 vCPU / 64GB, INT8): 1-5ms search latency, ~25% memory vs FP32. The "billions of vectors in milliseconds" README claim refers to Alibaba's internal Proxima deployment — not publicly verified at that scale.
 
-### zvec Gotchas
+**AMD Zen 2 incompatibility**: Tested with zvec 0.2.0 (`manylinux_2_28_x86_64` wheel), Python 3.12.3 — `Illegal instruction` (exit 132) on AMD Ryzen 9 3900 (Zen 2). Precompiled binary likely requires AVX-512; Zen 2 has AVX2 only. Use pgvector or a hosted alternative on AMD Ryzen/EPYC Zen 2 servers. Intel w/ AVX-512 and macOS ARM64 expected OK.
 
-1. **Very new** — December 2025. APIs may change. Small community.
-2. **Python-first** — Node.js bindings are early stage with no extension ecosystem.
-3. **No Windows** — Linux and macOS only.
-4. **Single-process** — Only one process can open a collection at a time.
-5. **No ACID** — Use application-level locking for concurrent writes.
-6. **Memory per collection** — Use LRU cache to close idle tenant collections.
+## Gotchas
 
-### Platform Compatibility — Verified
+**zvec-specific:**
 
-Tested with zvec 0.2.0 (`manylinux_2_28_x86_64` wheel), Python 3.12.3:
+1. **Very new** (December 2025) — APIs may change, small community
+2. **Python-first** — Node.js bindings early stage, no extension ecosystem
+3. **No Windows** — Linux and macOS only
+4. **Single-process** — only one process can open a collection at a time
+5. **No ACID** — use application-level locking for concurrent writes
+6. **Memory per collection** — use LRU cache to close idle tenant collections
 
-| Platform | Result | Notes |
-|----------|--------|-------|
-| Linux x86_64 (AMD Ryzen 9 3900, Zen 2) | FAIL — `Illegal instruction` (exit 132) | Precompiled binary likely requires AVX-512; Zen 2 has AVX2 only |
-| Linux x86_64 (Intel w/ AVX-512) | Expected OK | Alibaba CI likely targets Intel Xeon |
-| macOS ARM64 | Expected OK | Separate `macosx_11_0_arm64` wheel on PyPI |
-| Windows | N/A | No wheel available |
+**All options:**
 
-**Implication**: zvec cannot be used on AMD Zen 2 or older without building from source. Use pgvector or a hosted alternative on AMD Ryzen/EPYC Zen 2 servers.
-
-## Platform Support Matrix
-
-| Platform | zvec | pgvector | Vectorize | PGlite+pgvector | Pinecone | Qdrant | Weaviate |
-|----------|------|----------|-----------|-----------------|----------|--------|----------|
-| Node.js / Bun | Early | Yes | No (Workers only) | Yes (WASM) | Yes | Yes | Yes |
-| Python | Full | Yes | No | No | Yes | Yes | Yes |
-| Cloudflare Workers | No | No (no TCP) | Yes (native) | No (no FS) | Yes (HTTP) | Yes (HTTP) | Yes (HTTP) |
-| Electron | Possible | Via pg driver | No | Yes (WASM) | Yes | Yes | Yes |
-| Browser extension | No | No | No | Yes (IndexedDB) | Yes | Yes | Yes |
-| Docker / Linux server | Yes | Yes | No | Yes | Yes | Yes | Yes |
-| macOS (ARM64) | Yes | Yes | No | Yes | Yes | Yes | Yes |
-| Windows | No | Yes | No | Yes | Yes | Yes | Yes |
-
-## When to Use What
-
-| Scenario | Recommendation | Why |
-|----------|---------------|-----|
-| Already on Postgres, <10M vectors/tenant | **pgvector** | Zero new dependencies, SQL filtering, ACID |
-| No Postgres, zero ops, Python app | **zvec** | In-process, built-in embeddings + rerankers, free |
-| Cloudflare Workers app | **Vectorize** | Native edge integration, zero ops |
-| Client-side (Electron/extension) | **PGlite + pgvector** | WASM, works offline |
-| >100M vectors | **Pinecone** or **Qdrant** | Purpose-built for scale |
-| Regulated industry, strict isolation | **Qdrant self-hosted** or **zvec** | Full data control |
-| Prototyping / MVP | **Pinecone free tier** | Fastest to start, 2M vectors free |
-| Node.js, need full pipeline today | **pgvector** or **Pinecone** | zvec Node.js ecosystem too early |
-
-## Gotchas (All Options)
-
-1. **Embedding model lock-in** — Changing models requires re-embedding all vectors. Matryoshka models (Jina v5) offer dimension flexibility without re-embedding.
-2. **Dimension mismatch** — Inserting 384d vectors into a 1536d index silently pads or fails. Always validate dimensions match.
+1. **Embedding model lock-in** — changing models requires re-embedding all vectors. Matryoshka models (Jina v5) offer dimension flexibility without re-embedding.
+2. **Dimension mismatch** — inserting 384d vectors into a 1536d index silently pads or fails. Always validate dimensions match.
 3. **Recall vs speed** — HNSW `ef_search` and `ef_construction` trade recall for speed. Start with defaults, benchmark with your data.
-4. **Stale embeddings** — When source documents update, chunks and embeddings must be re-generated. Track `document_version` in metadata.
+4. **Stale embeddings** — when source documents update, chunks and embeddings must be re-generated. Track `document_version` in metadata.
 5. **Cost surprise with hosted** — Pinecone/Weaviate Cloud costs scale with stored vectors AND queries. A 10M vector index with high QPS can cost $100+/month.
 6. **PGlite+pgvector limits** — WASM overhead limits practical dataset to ~500K vectors.
-7. **Vectorize lock-in** — Only works in Cloudflare Workers. Use pgvector locally for development.
+7. **Vectorize lock-in** — only works in Cloudflare Workers. Use pgvector locally for development.
 
 ## Related
 
 - `tools/database/pglite-local-first.md` — PGlite (local-first embedded Postgres)
 - `services/database/postgres-drizzle-skill.md` — Postgres + Drizzle
 - `reference/memory.md` — SQLite FTS5 (aidevops cross-session memory, NOT app vector search)
-- https://github.com/alibaba/zvec · https://github.com/pgvector/pgvector
-- https://developers.cloudflare.com/vectorize/ · https://www.pinecone.io/ · https://qdrant.tech/ · https://weaviate.io/
+- https://github.com/alibaba/zvec | https://github.com/pgvector/pgvector
+- https://developers.cloudflare.com/vectorize/ | https://www.pinecone.io/ | https://qdrant.tech/ | https://weaviate.io/
