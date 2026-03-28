@@ -23,27 +23,8 @@ tools:
 - **One-shot**: `npx -y @steipete/bird whoami`
 - **Repo**: https://github.com/steipete/bird
 - **Auth**: Browser cookies (Safari, Chrome, Firefox) — no API keys needed
-
-**Core Commands**:
-
-```bash
-bird whoami                                              # Check logged-in account
-bird read https://x.com/user/status/1234567890123456789  # Read a tweet (or just ID)
-bird tweet "Hello world!"                                # Post a tweet
-bird reply 1234567890123456789 "Great post!"             # Reply to a tweet
-bird search "from:steipete" -n 5                         # Search tweets
-bird mentions -n 5                                       # Get mentions
-bird thread <url>                                        # View thread/conversation
-bird replies <id>                                        # View replies to a tweet
-bird bookmarks -n 5                                      # List bookmarks
-bird likes -n 5                                          # List liked tweets
-bird following -n 20                                     # Who you follow
-bird followers -n 20                                     # Who follows you
-```
-
-**Media**: `--media <path>` (up to 4 images/GIFs or 1 video) + `--alt <text>` for alt text. Formats: jpg, png, webp, gif, mp4, mov.
-
-**Output**: `--json` for machine-readable output. `--plain` for stable output (no emoji/color).
+- **Output**: `--json` for machine-readable, `--plain` for stable (no emoji/color)
+- **Media**: `--media <path>` (up to 4 images/GIFs or 1 video) + `--alt <text>`. Formats: jpg, png, webp, gif, mp4, mov.
 
 <!-- AI-CONTEXT-END -->
 
@@ -55,25 +36,30 @@ Uses existing X/Twitter web session via browser cookies.
 
 1. CLI flags: `--auth-token <token>`, `--ct0 <token>`
 2. Environment: `AUTH_TOKEN`/`CT0` (or `TWITTER_AUTH_TOKEN`/`TWITTER_CT0`)
-3. Browser cookies via `@steipete/sweet-cookie`
-
-**Browser cookie paths**:
-
-| Browser | Path |
-|---------|------|
-| Safari  | `~/Library/Cookies/Cookies.binarycookies` |
-| Chrome  | `~/Library/Application Support/Google/Chrome/<Profile>/Cookies` |
-| Firefox | `~/Library/Application Support/Firefox/Profiles/<profile>/cookies.sqlite` |
+3. Browser cookies via `@steipete/sweet-cookie` (Safari, Chrome, Firefox)
 
 **Verify**: `bird whoami` (account info), `bird check` (credential status).
+
+**Config files** (JSON5): `~/.config/bird/config.json5` (global), `./.birdrc.json5` (project).
+
+```json5
+{
+  cookieSource: ["firefox", "safari"],
+  firefoxProfile: "default-release",
+  cookieTimeoutMs: 30000,
+  timeoutMs: 20000,
+  quoteDepth: 1
+}
+```
+
+**Environment variables**: `BIRD_TIMEOUT_MS`, `BIRD_COOKIE_TIMEOUT_MS`, `BIRD_QUOTE_DEPTH`.
 
 ## Commands
 
 ### Reading
 
 ```bash
-bird read <url-or-id>              # Single tweet
-bird 1234567890123456789           # Shorthand (just ID)
+bird read <url-or-id>              # Single tweet (or just pass bare ID)
 bird read <id> --json              # JSON output
 bird thread <url>                  # Thread/conversation
 bird replies <id>                  # Replies to a tweet
@@ -95,30 +81,20 @@ bird reply <id-or-url> "Great post!"
 bird reply <id> "Here's my response" --media response.png
 ```
 
-### Search and Mentions
+### Search, Mentions, and Social
 
 ```bash
 bird search "AI tools" -n 10 --json
 bird mentions -n 5
 bird mentions --user @steipete -n 5 --json
-```
-
-### Bookmarks and Likes
-
-```bash
 bird bookmarks -n 5
 bird bookmarks --folder-id <id> -n 5
 bird bookmarks --all --max-pages 2 --json
 bird unbookmark <id-or-url>
 bird likes -n 10 --json
-```
-
-### Following/Followers
-
-```bash
 bird following -n 20
 bird followers -n 20
-bird following --user <user-id> -n 10   # Another user
+bird following --user <user-id> -n 10   # Another user's list
 bird followers --user <user-id> -n 10
 ```
 
@@ -140,27 +116,11 @@ bird followers --user <user-id> -n 10
 | `--media <path>` | Attach media file (repeatable, up to 4) |
 | `--alt <text>` | Alt text for media (repeatable) |
 
-## Configuration
-
-**Config files** (JSON5): `~/.config/bird/config.json5` (global), `./.birdrc.json5` (project).
-
-```json5
-{
-  cookieSource: ["firefox", "safari"],
-  firefoxProfile: "default-release",
-  cookieTimeoutMs: 30000,
-  timeoutMs: 20000,
-  quoteDepth: 1
-}
-```
-
-**Environment variables**: `BIRD_TIMEOUT_MS`, `BIRD_COOKIE_TIMEOUT_MS`, `BIRD_QUOTE_DEPTH`.
-
 ## JSON Output Schema
 
-Key fields in tweet objects: `id`, `text`, `author` (`{ username, name }`), `authorId`, `createdAt`, `replyCount`, `retweetCount`, `likeCount`, `conversationId`, `inReplyToStatusId`, `quotedTweet`.
+Tweet fields: `id`, `text`, `author` (`{ username, name }`), `authorId`, `createdAt`, `replyCount`, `retweetCount`, `likeCount`, `conversationId`, `inReplyToStatusId`, `quotedTweet`.
 
-Key fields in user objects: `id`, `username`, `name`, `description`, `followersCount`, `followingCount`, `isBlueVerified`, `profileImageUrl`, `createdAt`.
+User fields: `id`, `username`, `name`, `description`, `followersCount`, `followingCount`, `isBlueVerified`, `profileImageUrl`, `createdAt`.
 
 ## GraphQL Query IDs
 
@@ -187,11 +147,6 @@ bird bookmarks --all --json > bookmarks.json
 bird tweet "1/3 Here's a thread about..."
 bird reply <id_of_first_tweet> "2/3 Continuing the thread..."
 bird reply <id_of_second_tweet> "3/3 Final thoughts..."
-
-# Summarize an article and tweet about it
-url="https://example.com/article"
-summary=$(summarize "$url" --length short --plain)
-bird tweet "Interesting read: $summary\n\n$url"
 ```
 
 ## Troubleshooting
@@ -207,7 +162,7 @@ bird tweet "Interesting read: $summary\n\n$url"
 
 ## Disclaimer
 
-This tool uses X/Twitter's undocumented web GraphQL API with cookie authentication. X can change endpoints, query IDs, and anti-bot behavior at any time - expect potential breakage.
+This tool uses X/Twitter's undocumented web GraphQL API with cookie authentication. X can change endpoints, query IDs, and anti-bot behavior at any time — expect potential breakage.
 
 ## Resources
 
