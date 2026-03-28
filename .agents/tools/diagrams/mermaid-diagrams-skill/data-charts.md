@@ -7,44 +7,9 @@ gantt
     title Project Timeline
     dateFormat YYYY-MM-DD
     axisFormat %b %d
-
-    section Phase 1
-    Task A           :a1, 2024-01-01, 30d
-    Task B           :a2, after a1, 20d
-
-    section Phase 2
-    Task C           :2024-02-15, 15d
-```
-
-### Date Formats
-
-| Format | Example |
-|--------|---------|
-| `YYYY-MM-DD` | 2024-01-15 |
-| `DD/MM/YYYY` | 15/01/2024 |
-| `MM-DD-YYYY` | 01-15-2024 |
-
-Axis format codes: `%Y` year, `%m` month (01-12), `%b` month abbr, `%d` day, `%a` weekday abbr.
-
-### Task Syntax
-
-```text
-Task name : [tags], [id], [start], [end/duration]
-```
-
-| Tag | Effect |
-|-----|--------|
-| `done` | Completed (grayed) |
-| `active` | In progress |
-| `crit` | Critical path (red) |
-| `milestone` | Milestone marker |
-
-```mermaid
-gantt
-    dateFormat YYYY-MM-DD
     excludes weekends
 
-    section Tasks
+    section Phase 1
     Completed task    :done, t1, 2024-01-01, 7d
     Active task       :active, t2, after t1, 7d
     Critical task     :crit, t3, after t2, 5d
@@ -52,7 +17,17 @@ gantt
     Milestone         :milestone, m1, after t4, 0d
 ```
 
+### Task Syntax
+
+```text
+Task name : [tags], [id], [start], [end/duration]
+```
+
+Tags: `done` (completed/grayed), `active` (in progress), `crit` (critical path/red), `milestone` (marker).
+
 Dependencies: `after a b` waits for both `a` and `b`. Excludes: `weekends`, specific dates (`2024-12-25`), or weekday names.
+
+Date formats: `YYYY-MM-DD`, `DD/MM/YYYY`, `MM-DD-YYYY`. Axis codes: `%Y` year, `%m` month, `%b` month abbr, `%d` day, `%a` weekday abbr.
 
 ## Pie Charts
 
@@ -73,22 +48,17 @@ pie showData
 ```mermaid
 timeline
     title Product Roadmap
-
     section Q1
-        January : MVP Release
-                : Core Features Complete
+        January : MVP Release : Core Features Complete
         March : Public Beta
-
     section Q2
         April : Mobile App Beta
         June : Enterprise Features
 ```
 
-Multiple events per period: indent additional `: Event` lines under the same date.
+Multiple events per period: add `: Event` entries on the same date line.
 
 ## Quadrant Charts
-
-Four-quadrant analysis (effort/impact, priority matrices).
 
 ```mermaid
 quadrantChart
@@ -99,16 +69,14 @@ quadrantChart
     quadrant-2 Evaluate Carefully
     quadrant-3 Avoid
     quadrant-4 Reassess
-
     Kubernetes: [0.3, 0.9]
     Serverless: [0.4, 0.8]
     GraphQL: [0.5, 0.7]
     Blockchain: [0.9, 0.4]
     AI/ML: [0.6, 0.85]
-    Legacy Rewrite: [0.8, 0.5]
 ```
 
-Coordinates: `[x, y]` where both are 0-1. Quadrant 1: upper-right, 2: upper-left, 3: lower-left, 4: lower-right.
+Coordinates: `[x, y]` from 0-1. Quadrants: 1=upper-right, 2=upper-left, 3=lower-left, 4=lower-right.
 
 ## XY Charts
 
@@ -117,7 +85,6 @@ xychart-beta
     title "Revenue vs Costs"
     x-axis [Jan, Feb, Mar, Apr, May, Jun]
     y-axis "Amount ($K)" 0 --> 150
-
     bar "Revenue" [80, 95, 105, 120, 135, 150]
     line "Costs" [60, 65, 70, 75, 80, 85]
 ```
@@ -132,19 +99,13 @@ sankey-beta
 Revenue, Engineering, 450
 Revenue, Marketing, 200
 Revenue, Sales, 150
-Revenue, Operations, 120
-Revenue, R&D, 80
 
 Engineering, Salaries, 350
 Engineering, Tools, 50
 Engineering, Cloud, 50
-
-Marketing, Digital, 120
-Marketing, Events, 50
-Marketing, Content, 30
 ```
 
-Format: `Source, Destination, Value` (one per line).
+Format: `Source, Destination, Value` (one per line). Multi-level flows chain source nodes.
 
 ## Treemap Diagrams
 
@@ -155,21 +116,12 @@ treemap-beta
     "components": 45
     "pages": 30
     "utils": 15
-    "hooks": 10
-
 "tests"
     "unit": 20
     "integration": 15
-    "e2e": 10
-
-"docs"
-    "api": 8
-    "guides": 12
 ```
 
 ## Mindmaps
-
-Node shapes: `((Circle))`, `[Square]`, `(Rounded)`, `))Bang((`, `)Cloud(`, `{{Hexagon}}`
 
 ```mermaid
 mindmap
@@ -185,7 +137,7 @@ mindmap
             Kubernetes
 ```
 
-Hierarchy via indentation. Deeper nesting adds child nodes.
+Node shapes: `((Circle))`, `[Square]`, `(Rounded)`, `))Bang((`, `)Cloud(`, `{{Hexagon}}`. Hierarchy via indentation.
 
 ## Git Graphs
 
@@ -193,16 +145,10 @@ Hierarchy via indentation. Deeper nesting adds child nodes.
 gitGraph
     commit id: "v1.0.0" tag: "v1.0.0"
     branch feature/auth
-    checkout feature/auth
     commit id: "Add login"
     commit id: "Add logout"
     checkout main
-    branch feature/api
-    checkout feature/api
-    commit id: "Add endpoints"
-    checkout main
     merge feature/auth id: "Merge auth"
-    merge feature/api id: "Merge api"
     commit id: "v1.1.0" tag: "v1.1.0"
 ```
 
