@@ -83,7 +83,7 @@ _detect_cli() {
 	local app_name="" app_version=""
 
 	if [[ "${OPENCODE:-}" == "1" ]]; then
-		app_name="OpenCode CLI"
+		app_name="OpenCode"
 		# Try multiple version detection methods (install path varies: bun, npm, homebrew)
 		app_version=$(opencode --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
 		if [[ -z "$app_version" ]]; then
@@ -123,7 +123,7 @@ _detect_cli() {
 		parent_lower=$(printf '%s' "$parent" | tr '[:upper:]' '[:lower:]')
 		case "$parent_lower" in
 		*opencode*)
-			app_name="OpenCode CLI"
+			app_name="OpenCode"
 			app_version=$(opencode --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
 			if [[ -z "$app_version" ]]; then
 				app_version=$(npm list -g opencode-ai --json 2>/dev/null | jq -r '.dependencies["opencode-ai"].version // empty' 2>/dev/null || echo "")
@@ -532,14 +532,14 @@ _build_signature() {
 	# Target: [aidevops.sh](...) v3.5.10 in [CLI](...) v1.3.3 with claude-opus-4-6 used N tokens for Xm, Zm since this issue was created.
 	local sig="[aidevops.sh](https://aidevops.sh) v${aidevops_version}"
 
-	# "in [CLI] vX.Y.Z"
+	# "plugin for [CLI] vX.Y.Z"
 	if [[ -n "$cli_name" ]]; then
 		local url
 		url=$(_cli_url "$cli_name")
 		if [[ -n "$url" ]]; then
-			sig="${sig} in [${cli_name}](${url})"
+			sig="${sig} plugin for [${cli_name}](${url})"
 		else
-			sig="${sig} in ${cli_name}"
+			sig="${sig} plugin for ${cli_name}"
 		fi
 		if [[ -n "$cli_version" ]]; then
 			sig="${sig} v${cli_version}"
