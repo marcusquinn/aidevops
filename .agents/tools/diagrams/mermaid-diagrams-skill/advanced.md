@@ -1,6 +1,6 @@
 # Advanced Configuration & Styling
 
-Theming, configuration, custom styling, and troubleshooting for Mermaid diagrams.
+Configuration, theming, custom styling, troubleshooting, and export for Mermaid diagrams.
 
 ---
 
@@ -51,19 +51,9 @@ config:
 
 ---
 
-# Themes
-
-| Theme | Description |
-|-------|-------------|
-| `default` | Default blue |
-| `dark` | Dark mode |
-| `forest` | Green |
-| `neutral` | Grayscale |
-| `base` | Base for customization |
-
----
-
 # Theme Variables
+
+Themes: `default`, `dark`, `forest`, `neutral`, `base` — see cheatsheet `## Styling`.
 
 ## Core Variables
 
@@ -123,16 +113,7 @@ flowchart LR
     linkStyle default stroke:gray,stroke-width:1px
 ```
 
-### Style Properties
-
-| Property | Example |
-|----------|---------|
-| `fill` | `fill:#3b82f6` |
-| `stroke` | `stroke:#2563eb` |
-| `stroke-width` | `stroke-width:2px` |
-| `stroke-dasharray` | `stroke-dasharray:5,5` |
-| `color` | `color:white` |
-| `font-weight` | `font-weight:bold` |
+Properties: `fill`, `stroke`, `stroke-width`, `stroke-dasharray`, `color`, `font-weight`
 
 ---
 
@@ -186,7 +167,7 @@ flowchart LR
 
 ## Special Characters
 
-Escape with HTML entities or use quoted strings:
+Escape with HTML entities or use quoted strings (see cheatsheet `## Special Characters` for entity table):
 
 ```mermaid
 flowchart LR
@@ -194,12 +175,6 @@ flowchart LR
     B["Arrow -> symbol"]
     C["Hash #35; symbol"]
 ```
-
-| Char | Entity | Char | Entity |
-|------|--------|------|--------|
-| `#` | `#35;` | `"` | `#quot;` |
-| `<` | `#lt;` | `>` | `#gt;` |
-| `&` | `#amp;` | `{` | `#123;` / `}` | `#125;` |
 
 ## Long Labels
 
