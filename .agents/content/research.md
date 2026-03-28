@@ -227,7 +227,7 @@ Identify 3-5 direct competitors from primary keyword SERP (positions 1-10) and `
 - **Content Gaps We Can Exploit**: [topics, angles, formats, audience segments they miss]
 ```
 
-**Content matrix** — Status: `none`, `thin` (<500w), `basic` (500-1500), `comprehensive` (1500+), `pillar` (3000+):
+**Content matrix** — Status: `none`, `thin` (<500w), `basic` (500-1500w), `comprehensive` (1500-2999w), `pillar` (3000+w):
 
 | Topic | Us | Competitor A | Competitor B | Competitor C | Gap? |
 |-------|-----|-------------|-------------|-------------|------|
