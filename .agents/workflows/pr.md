@@ -40,22 +40,6 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Orchestrated Checks
-
-### 1. Local Linting (`/linters-local`)
-
-Run `~/.aidevops/agents/scripts/linters-local.sh` — checks ShellCheck, secretlint, pattern validation (return statements, positional parameters), markdown formatting.
-
-### 2. Remote Auditing (`/code-audit-remote`)
-
-Run `~/.aidevops/agents/scripts/code-audit-helper.sh audit [repo]` — CodeRabbit (AI review), Codacy (quality), SonarCloud (security/maintainability).
-
-**Monitored AI reviewers**: `coderabbit*`, `gemini-code-assist[bot]`, `augment-code[bot]`/`augmentcode[bot]`, `copilot[bot]`.
-
-### 3. Standards Compliance (`/code-standards`)
-
-Reference: `tools/code-review/code-standards.md`. Standards: S7679 (positional params -> local vars), S7682 (explicit returns), S1192 (constants for repeated strings), S1481 (no unused vars).
-
 ## Usage
 
 ```bash
@@ -67,72 +51,18 @@ Reference: `tools/code-review/code-standards.md`. Standards: S7679 (positional p
 
 **Full workflow**: `git push -u origin HEAD` -> `/pr review` -> `/pr create --fill` -> `gh pr merge --squash --delete-branch`
 
-## Output Format
-
-```markdown
-## PR Review: #123 - Title
-
-### Quality Checks
-**Local Linting**: ShellCheck N | Secretlint N | Pattern checks PASS/FAIL
-**Remote Audit**: CodeRabbit N suggestions | SonarCloud N smells | Codacy grade
-**Standards**: Return statements PASS | Positional parameters PASS | Error handling PASS
-
-### Intent vs Reality
-| Claimed | Found In | Status |
-|---------|----------|--------|
-| Feature X | `path/file` | Verified/Missing |
-
-**Undocumented Changes**: List any changes not mentioned in PR description
-
-### Recommendation
-- [ ] Action items
-**Overall**: APPROVE / CHANGES REQUESTED
-```
-
-## Loop Commands
-
-| Command | Purpose | Default Limit |
-|---------|---------|---------------|
-| `/pr-loop` | Iterate until PR approved/merged | 10 iterations |
-| `/preflight-loop` | Iterate until preflight passes | 5 iterations |
-
-**Timeout recovery**: `gh pr view --json state,reviewDecision,statusCheckRollup`, then `/pr review` (single cycle) or `/pr-loop` (restart loop).
-
-## Fork Workflow (Non-Owner Repositories)
-
-**Detect**: Compare `REPO_OWNER` from `git remote get-url origin` against `gh api user --jq '.login'`. Mismatch = fork workflow required.
-
-```bash
-# Setup (GitHub)
-gh repo fork {owner}/{repo} --clone=false
-git remote add fork git@github.com:{your-username}/{repo}.git
-git push fork {branch-name}
-gh pr create --repo {owner}/{repo} --head {your-username}:{branch-name}
-
-# Setup (GitLab)
-glab repo fork {owner}/{repo}
-git remote add fork git@gitlab.com:{your-username}/{repo}.git
-glab mr create --target-project {owner}/{repo} --source-branch {branch-name}
-
-# Keep fork updated
-git fetch origin main && git checkout main && git merge origin/main && git push fork main
-git checkout {branch-name} && git rebase main && git push fork {branch-name} --force-with-lease
-```
-
 ## Creating Pull Requests
 
 ```bash
 # GitHub
 git push -u origin HEAD
 gh pr create --fill                                    # Auto-fill from commits
-gh pr create --title "feat: ..." --body "## Summary
-- Description
-Closes #123"
+gh pr create --title "feat: ..." --body "Closes #123"  # Custom title/body
 gh pr create --fill --draft                            # Draft PR
 gh pr create --fill --reviewer @username,@team         # With reviewers
 
 # GitLab: git push -u origin HEAD && glab mr create --fill
-# Gitea:  git push -u origin HEAD && tea pulls create --title "feat: ..." --description "..."
+# Gitea:  git push -u origin HEAD && tea pulls create --title "feat: ..."
 ```
 
 ## Merging Pull Requests
@@ -153,7 +83,34 @@ gh pr create --fill --reviewer @username,@team         # With reviewers
 
 Add `skip-review-gate` label to bypass for docs-only PRs or repos without bots.
 
-**Merge commands**: `gh pr merge 123 --squash [--auto] [--delete-branch]` | GitLab: `glab mr merge 123 --squash [--when-pipeline-succeeds]`
+**Merge**: `gh pr merge 123 --squash [--auto] [--delete-branch]` | GitLab: `glab mr merge 123 --squash [--when-pipeline-succeeds]`
+
+## Orchestrated Checks
+
+### 1. Local Linting (`/linters-local`)
+
+Run `~/.aidevops/agents/scripts/linters-local.sh` — ShellCheck, secretlint, pattern validation (return statements, positional parameters), markdown formatting.
+
+### 2. Remote Auditing (`/code-audit-remote`)
+
+Run `~/.aidevops/agents/scripts/code-audit-helper.sh audit [repo]` — CodeRabbit (AI review), Codacy (quality), SonarCloud (security/maintainability). Monitored AI reviewers: `coderabbit*`, `gemini-code-assist[bot]`, `augment-code[bot]`/`augmentcode[bot]`, `copilot[bot]`.
+
+### 3. Standards Compliance (`/code-standards`)
+
+Reference: `tools/code-review/code-standards.md`. Standards: S7679 (positional params -> local vars), S7682 (explicit returns), S1192 (constants for repeated strings), S1481 (no unused vars).
+
+## Output Format
+
+Report structure: `## PR Review: #NNN - Title` with sections: **Quality Checks** (local linting counts, remote audit results, standards pass/fail), **Intent vs Reality** (table: Claimed | Found In | Status — flag undocumented changes), **Recommendation** (action items, overall APPROVE / CHANGES REQUESTED).
+
+## Loop Commands
+
+| Command | Purpose | Default Limit |
+|---------|---------|---------------|
+| `/pr-loop` | Iterate until PR approved/merged | 10 iterations |
+| `/preflight-loop` | Iterate until preflight passes | 5 iterations |
+
+**Timeout recovery**: `gh pr view --json state,reviewDecision,statusCheckRollup`, then `/pr review` (single cycle) or `/pr-loop` (restart loop).
 
 ## Task Status Updates
 
@@ -170,16 +127,35 @@ Flow: `Ready/Backlog` -> `In Progress` (branch) -> `In Review` (PR) -> `Done` (m
 3. Update local main: `git checkout main && git pull origin main`
 4. Create release if applicable: see `workflows/release.md`
 
+## Fork Workflow (Non-Owner Repositories)
+
+**Detect**: Compare `git remote get-url origin` owner against `gh api user --jq '.login'`. Mismatch = fork workflow.
+
+```bash
+# GitHub fork setup
+gh repo fork {owner}/{repo} --clone=false
+git remote add fork git@github.com:{your-username}/{repo}.git
+git push fork {branch-name}
+gh pr create --repo {owner}/{repo} --head {your-username}:{branch-name}
+
+# GitLab fork setup
+glab repo fork {owner}/{repo}
+git remote add fork git@gitlab.com:{your-username}/{repo}.git
+glab mr create --target-project {owner}/{repo} --source-branch {branch-name}
+
+# Keep fork updated
+git fetch origin main && git checkout main && git merge origin/main && git push fork main
+git checkout {branch-name} && git rebase main && git push fork {branch-name} --force-with-lease
+```
+
 ## Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
-| Merge conflicts | `git checkout main && git pull && git checkout your-branch && git merge main`, resolve, `git add <files> && git commit && git push` |
+| Merge conflicts | `git merge main`, resolve, `git add && git commit && git push`. See `tools/git/conflict-resolution.md` |
 | Checks failing | Fix issues, push new commits |
 | Reviews pending | Request review or wait |
 | Branch protection | Ensure all requirements met |
-
-See `tools/git/conflict-resolution.md` for detailed conflict resolution.
 
 ## Handling Contradictory AI Feedback
 
