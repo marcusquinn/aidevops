@@ -554,23 +554,23 @@ _build_signature() {
 	if [[ -n "$tokens" ]] && [[ "$tokens" != "0" ]]; then
 		local formatted
 		formatted=$(_format_number "$tokens")
-		sig="${sig} has used ${formatted} tokens"
+		sig="${sig} spent ${formatted} tokens"
 	fi
 
-	# "in Xm" (session time)
+	# "in Xm on this." (session time)
 	if [[ -n "$session_time_str" ]]; then
-		sig="${sig} in ${session_time_str}"
+		sig="${sig} in ${session_time_str} on this."
 	fi
 
-	# Total time or trailing period
+	# Total time or trailing period (only if no session time already added period)
 	local has_stats=""
 	if { [[ -n "$tokens" ]] && [[ "$tokens" != "0" ]]; } ||
 		[[ -n "$session_time_str" ]] || [[ -n "$total_time_str" ]]; then
 		has_stats="true"
 	fi
 
-	# Trailing period before optional total time
-	if [[ -n "$has_stats" ]]; then
+	# Trailing period if we had stats but no session time (which already ends with period)
+	if [[ -n "$has_stats" ]] && [[ -z "$session_time_str" ]]; then
 		sig="${sig}."
 	fi
 
