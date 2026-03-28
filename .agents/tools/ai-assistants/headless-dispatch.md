@@ -21,6 +21,7 @@ tools:
 - **One-shot**: `opencode run "prompt"` | **Warm server**: `opencode run --attach http://localhost:4096 "prompt"`
 - **Server**: `opencode serve [--port 4096]` | **SDK**: `npm install @opencode-ai/sdk`
 - **Runners**: `runner-helper.sh [create|run|status|list|stop|destroy]` → `~/.aidevops/.agent-workspace/runners/`
+- **Model override**: `opencode run -m openrouter/anthropic/claude-sonnet-4-6 "Task"` | Auth: `opencode auth login`
 
 **Use for**: parallel tasks, scheduled/cron AI work, CI/CD, chat-triggered dispatch (Matrix/Discord/Slack via OpenClaw), background tasks.
 **Don't use for**: interactive dev (use TUI), frequent human-in-the-loop, single quick questions.
@@ -37,11 +38,9 @@ tools:
 1. **Network**: `--hostname 127.0.0.1` (default) | Set `OPENCODE_SERVER_PASSWORD` for network exposure
 2. **Permissions**: `OPENCODE_PERMISSION` env var for headless autonomy (`'{"*":"allow"}'` for CI/CD)
 3. **Credentials**: Never pass secrets in prompts — use environment variables. Delete sessions after use.
-4. **Scoped tokens** (t1412.2): Workers get minimal-permission GitHub tokens (`contents:write`, `pull_requests:write`, `issues:write`) scoped to target repo. Flow: `worker-token-helper.sh create --repo owner/repo --ttl 3600` → `GH_TOKEN` env → worker executes → `worker-token-helper.sh revoke`. Strategies: GitHub App installation tokens (repo-scoped, 1h TTL) or delegated tokens (advisory tracking, configurable TTL). Disable: `WORKER_SCOPED_TOKENS=false`.
-5. **Worker sandbox** (t1412.1): Headless workers run with fake HOME — only `.gitconfig`, `GH_TOKEN`, `.aidevops/` symlink (read-only), MCP config, writable XDG dirs. No access to `~/.ssh/`, gopass, `credentials.sh`, cloud/publish tokens, browser profiles. `WORKER_SANDBOX_ENABLED=true` (default). CLI: `worker-sandbox-helper.sh create <task_id>` → auto-clean on exit → `cleanup-stale` for >24h.
+4. **Scoped tokens** (t1412.2): Workers get minimal-permission GitHub tokens (`contents:write`, `pull_requests:write`, `issues:write`) scoped to target repo. Flow: `worker-token-helper.sh create --repo owner/repo --ttl 3600` → `GH_TOKEN` env → worker executes → `worker-token-helper.sh revoke`. GitHub App installation tokens (repo-scoped, 1h TTL) or delegated tokens (configurable TTL). Disable: `WORKER_SCOPED_TOKENS=false`. Setup: `https://github.com/settings/apps/new` → Contents/PRs/Issues R&W → configure `~/.config/aidevops/github-app.json` (600 perms).
+5. **Worker sandbox** (t1412.1): Fake HOME — only `.gitconfig`, `GH_TOKEN`, `.aidevops/` symlink (read-only), MCP config, writable XDG dirs. No `~/.ssh/`, gopass, `credentials.sh`, cloud/publish tokens, browser profiles. `WORKER_SANDBOX_ENABLED=true` (default). CLI: `worker-sandbox-helper.sh create <task_id>` → auto-clean on exit.
 6. **Network tiering** (t1412.3): 5-tier domain classification. Tier 5 (exfiltration) denied, Tier 4 (unknown) flagged. Config: `configs/network-tiers.conf`. See `network-tier-helper.sh`.
-
-**GitHub App setup** (recommended for t1412.2): Create at `https://github.com/settings/apps/new` with Contents/PRs/Issues R&W. Install on account/org, download private key, configure `~/.config/aidevops/github-app.json` (app_id, private_key_path, installation_id) with 600 permissions.
 
 ## Dispatch Methods
 
@@ -128,9 +127,7 @@ Pulse supervisor handles staggering automatically (`RAM_PER_WORKER_MB`, `RAM_RES
 
 **Batch strategies (t1408.4)**: `depth-first` (default) or `breadth-first` (one subtask per branch per batch). `batch-strategy-helper.sh next-batch --strategy depth-first --tasks "$JSON" --concurrency "$SLOTS"` — respects `blocked_by:` dependencies.
 
-### SDK Parallel
-
-Use `Promise.all` for concurrent sessions. Monitor via SSE (`client.event.subscribe()`). See SDK docs for full API.
+**SDK parallel**: Use `Promise.all` for concurrent sessions. Monitor via SSE (`client.event.subscribe()`).
 
 ### OAuth-Aware Dispatch Routing (t1163)
 
@@ -157,7 +154,7 @@ runner-helper.sh run code-reviewer "Review src/auth/" --attach http://localhost:
 runner-helper.sh status code-reviewer | runner-helper.sh list | runner-helper.sh destroy code-reviewer
 ```
 
-Each runner gets its own `AGENTS.md` defining personality, rules, and output format. Memory is namespaced (`memory-helper.sh store/recall --namespace "runner-name"`). Inter-runner communication via mailbox (`mail-helper.sh send --to/--from`).
+Each runner has its own `AGENTS.md` (personality, rules, output format), namespaced memory (`memory-helper.sh store/recall --namespace "runner-name"`), and mailbox (`mail-helper.sh send --to/--from`).
 
 Templates: [code-reviewer](runners/code-reviewer.md), [seo-analyst](runners/seo-analyst.md). See [runners/README.md](runners/README.md).
 
@@ -179,13 +176,6 @@ You are a security expert. Identify OWASP Top 10 issues, verify input validation
 ```
 
 Usage: `opencode run --agent security-reviewer "Audit the auth module"`
-
-## Model Provider Flexibility
-
-```bash
-opencode auth login                                           # interactive setup
-opencode run -m openrouter/anthropic/claude-sonnet-4-6 "Task" # override per dispatch
-```
 
 ## CI/CD Integration
 
