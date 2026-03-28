@@ -250,7 +250,7 @@ server.tool('search_documents',
 );
 ```
 
-**Parameter descriptions** — include constraints and format:
+**Parameter descriptions** — include constraints, format, and use specific types:
 
 ```typescript
 // BAD
@@ -264,36 +264,18 @@ status: z.enum(['pending', 'active', 'completed']).describe('Filter by status')
 limit: z.number().min(1).max(100).optional().default(20).describe('Results per page (1-100, default: 20)')
 date: z.string().describe('Date in ISO 8601 format (YYYY-MM-DD)')
 user_id: z.string().uuid().describe('ID of the user who owns this resource')
-```
-
-**Use specific types** — validates at schema level:
-
-```typescript
 email: z.string().email().describe('User email address')
 url: z.string().url().describe('Webhook URL')
 count: z.number().int().positive().describe('Number of items')
 ```
 
-**Return structured JSON** (not unstructured text):
+**Return structured JSON** (not unstructured text). **Handle errors with `isError`** (don't throw — that crashes the tool call):
 
 ```typescript
 return { content: [{ type: 'text', text: JSON.stringify({ success: true, data: result }, null, 2) }] };
-```
 
-**Handle errors with `isError`** (don't throw — that crashes the tool call):
-
-```typescript
 return {
   content: [{ type: 'text', text: JSON.stringify({ error: true, code: 'NOT_FOUND', message: 'Item not found' }) }],
   isError: true,
 };
-```
-
-**Document side effects in description**:
-
-```typescript
-server.tool('get_user', 'Retrieves user details. Read-only operation.', { /* ... */ });
-server.tool('update_user', 'Updates user profile fields. Modifies the user record in the database.', { /* ... */ });
-server.tool('delete_user', 'Permanently deletes user and all data. IRREVERSIBLE. Requires confirmation.', { /* ... */ });
-server.tool('send_email', 'Sends an email to the specified recipient. Cannot be undone once sent.', { /* ... */ });
 ```
