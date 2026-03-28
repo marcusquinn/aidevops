@@ -37,7 +37,7 @@ pip install openai-whisper faster-whisper assemblyai deepgram-sdk
 | **Streaming** | No | No | Yes | Yes |
 | **Best for** | Private/offline | macOS GUI | Speaker ID, meetings | Real-time |
 
-**Decision flow**: Privacy/offline → Whisper/Buzz. Speaker diarization → AssemblyAI/Deepgram. Real-time → Deepgram. Highest accuracy (primary) → AssemblyAI U3 Pro; (extended) → ElevenLabs Scribe v2. Free → Whisper turbo.
+**Decision flow**: Privacy/offline → Whisper/Buzz. Speaker diarization → AssemblyAI/Deepgram. Real-time → Deepgram. Highest accuracy → ElevenLabs Scribe v2 (9.9/10); best full-featured cloud → AssemblyAI U3 Pro (diarization + chapters). Free → Whisper turbo.
 
 **Input sources**: YouTube (`yt-dlp -x --audio-format wav`), URL (`curl` + `ffmpeg`), local audio (`.wav .mp3 .flac .ogg .m4a`), local video (`ffmpeg -i input -vn -acodec pcm_s16le output.wav`).
 
@@ -145,6 +145,23 @@ conn.on(LiveTranscriptionEvents.Transcript, lambda r, **kw: print(r.channel.alte
 await conn.start(LiveOptions(model="nova-3", language="en-US", smart_format=True))
 # feed audio chunks via conn.send(audio_chunk)
 ```
+
+<details>
+<summary>Batch processing example</summary>
+
+```python
+import os, glob
+from deepgram import DeepgramClient, PrerecordedOptions
+dg = DeepgramClient(os.environ["DEEPGRAM_API_KEY"])
+opts = PrerecordedOptions(model="nova-3", punctuate=True, smart_format=True)
+os.makedirs("transcripts", exist_ok=True)
+for p in glob.glob("recordings/*.mp3"):
+    r = dg.listen.rest.v("1").transcribe_file({"buffer": open(p, "rb")}, opts)
+    open(p.replace("recordings/", "transcripts/").replace(".mp3", ".txt"), "w").write(
+        r.results.channels[0].alternatives[0].transcript)
+```
+
+</details>
 
 | Model | Accuracy | Cost | Notes |
 |-------|----------|------|-------|
