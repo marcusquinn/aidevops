@@ -332,9 +332,9 @@
       "pr": 11416
     },
     ".agents/tools/accessibility/accessibility-audit.md": {
-      "hash": "a817d02e74b66f8a1c9b785ac201f15af22f9100",
-      "at": "2026-03-28T05:50:48Z",
-      "pr": 11440
+      "hash": "50607e3251694a312978efe741fd95eb6e47de55",
+      "at": "2026-03-28T08:18:26Z",
+      "pr": 11634
     },
     ".agents/services/hosting/cloudflare-platform-skill/ai-gateway.md": {
       "hash": "720c2836fca088d027ac637f8c69e97cb3c2764a",
@@ -357,8 +357,8 @@
       "pr": 11363
     },
     ".agents/marketing-sales/meta-ads-audiences-first-party-data.md": {
-      "hash": "919e1c3ff2a04eb73ca6758f41296429f4ae0ee6",
-      "at": "2026-03-28T06:59:24Z",
+      "hash": "1ad15971973eec338e831dc24839609eb1f473e3",
+      "at": "2026-03-28T08:18:20Z",
       "pr": 11536
     },
     ".agents/marketing-sales/direct-response-copy-templates-ad-copy.md": {
@@ -490,6 +490,61 @@
       "hash": "967373980ca56ec85cb795eb9426efb91ff23ddb",
       "at": "2026-03-28T08:17:51Z",
       "pr": 11599
+    },
+    ".agents/content/heygen-skill/rules-dimensions.md": {
+      "hash": "f32c728a54e3edca1d713da0d536cb4b63299882",
+      "at": "2026-03-28T08:18:14Z",
+      "pr": 11610
+    },
+    ".agents/services/email/google-workspace.md": {
+      "hash": "4b531a500197e553c70b2a23e6a3ed9b2b4d09fa",
+      "at": "2026-03-28T08:18:15Z",
+      "pr": 11613
+    },
+    ".agents/tools/architecture/feature-slicing-skill/layers.md": {
+      "hash": "aa5a10592a8a28db7e01ce256df9e7aa7ab57c76",
+      "at": "2026-03-28T08:18:16Z",
+      "pr": 11537
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/vectorize-gotchas.md": {
+      "hash": "10d5c38ac748a992e4619c4042a5ac685b009b3f",
+      "at": "2026-03-28T08:18:21Z",
+      "pr": 11631
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/vectorize-patterns.md": {
+      "hash": "aa4bc86ba1d820a999ff48479bc7af02bc524485",
+      "at": "2026-03-28T08:18:21Z",
+      "pr": 11631
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/vectorize.md": {
+      "hash": "c1d8339d4d9148d438f87b89220e85fa82e4c859",
+      "at": "2026-03-28T08:18:21Z",
+      "pr": 11631
+    },
+    ".agents/tools/voice/cloud-tts-apis.md": {
+      "hash": "0a7ff7444bf603ab6328a2248b32bd9faf422b02",
+      "at": "2026-03-28T08:18:23Z",
+      "pr": 11637
+    },
+    ".agents/tools/voice/local-tts-models.md": {
+      "hash": "a2985fa793b132d716e99ec9f9dd6eaf8252485a",
+      "at": "2026-03-28T08:18:24Z",
+      "pr": 11637
+    },
+    ".agents/tools/voice/voice-models.md": {
+      "hash": "1048bd3b6ac334dea9f2685aef4b09642f318673",
+      "at": "2026-03-28T08:18:24Z",
+      "pr": 11637
+    },
+    ".agents/services/hosting/101domains.md": {
+      "hash": "504d151b93c6073272de3fca00e08e6118720cf9",
+      "at": "2026-03-28T08:18:27Z",
+      "pr": 11633
+    },
+    ".agents/marketing-sales/ad-creative-chapter-05.md": {
+      "hash": "f8ded271e66b8024f24caa8a841ea58da90a709a",
+      "at": "2026-03-28T08:18:28Z",
+      "pr": 11555
     }
   }
 }
