@@ -11,8 +11,6 @@
 
 ## Reusable Patterns
 
-Archetypes referenced by name across sequences. Sequence-specific customisations noted inline.
-
 ### Pattern: Social Proof
 
 ```
@@ -173,7 +171,7 @@ Not sure how? 2-minute tutorial: [Video link]
 
 **Subject:** "[Result achieved]" — How [Customer] uses [Product]
 
-Uses **Social Proof pattern**. Add product attribution: "They did it by [specific action in the product]." Hard CTA to relevant feature link.
+Uses **Social Proof pattern**. Add: "They did it by [specific action in the product]." Hard CTA to relevant feature link.
 
 ### Email 4: Check-in (Day 7)
 
@@ -191,7 +189,7 @@ Things you might not have discovered yet:
 
 **Subject:** The [Feature] trick most users miss
 
-Same structure as Email 2. Focus on a power-user feature most people overlook. Include step-by-step (3-4 steps) + screenshot.
+Same structure as Email 2. Focus on a power-user feature most overlook. Include step-by-step (3-4 steps) + screenshot.
 
 ### Email 6: Trial Ending Soon (Day 12)
 
@@ -267,7 +265,6 @@ Uses **Social Proof pattern**. Frame as launch momentum: "The response to [Produ
 **Subject:** Your [Product] questions, answered
 
 Uses **Objection Handling pattern**. Add product-specific Qs:
-
 - "How long to see results?" → [Answer]
 - "What's included exactly?" → [Brief summary]
 
