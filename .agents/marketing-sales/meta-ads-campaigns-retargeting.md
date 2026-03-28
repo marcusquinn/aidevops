@@ -1,20 +1,17 @@
 # Retargeting Campaign
 
-> Retargeting converts warm audiences into customers. It's your most efficient spend — but also the most limited.
+> Most efficient spend — but most limited pool and lowest incrementality. Don't over-invest.
 
 ---
 
-## Retargeting Fundamentals
+## Fundamentals
 
-### What Is Retargeting?
+Showing ads to people who already interacted with your brand (site visit, engagement, cart, existing customer).
 
-Showing ads to people who have already interacted with your brand: visited your website, engaged with content, started but didn't complete a purchase, or are existing customers.
+- 2% convert on first visit; retargeted visitors 70% more likely to convert
+- 3-7 touchpoints before purchase is typical
 
-**The Numbers:** 2% of visitors convert on first visit. 98% leave without buying. Retargeted visitors are 70% more likely to convert. 3-7 touchpoints before purchase is typical.
-
-### The Incrementality Warning
-
-Retargeting has the LOWEST incrementality of any campaign type.
+### Incrementality Warning
 
 | Campaign Type | Typical Incrementality |
 |---------------|----------------------|
@@ -23,17 +20,14 @@ Retargeting has the LOWEST incrementality of any campaign type.
 | Prospecting (lookalike) | 60-80% |
 | Prospecting (broad) | 70-90% |
 
-Many retargeting conversions would have happened anyway. CPA looks amazing, but true value is lower. Don't over-invest.
+Many retargeting conversions would have happened anyway. CPA looks great; true value is lower.
 
 ### Retargeting vs Prospecting Budget
 
-Retargeting audience is LIMITED (finite pool). Prospecting creates the retargeting pool. Without prospecting, retargeting pool shrinks.
+Retargeting audience is finite. Prospecting creates the retargeting pool — without it, the pool shrinks.
 
-```
-Prospecting → Creates website visitors
-Website visitors → Become retargeting pool
-Retargeting → Converts warm visitors
-Conversions → Fund more prospecting
+```text
+Prospecting → Website visitors → Retargeting pool → Conversions → Fund more prospecting
 ```
 
 ---
@@ -43,6 +37,7 @@ Conversions → Fund more prospecting
 ### Website Visitor Audiences
 
 **By Page Type:**
+
 | Audience | Setup | Best Use |
 |----------|-------|----------|
 | All visitors | URL contains [domain] | General retargeting |
@@ -52,8 +47,9 @@ Conversions → Fund more prospecting
 | Blog readers | URL contains /blog/ | Content-based nurture |
 
 **By Time Window:**
-| Window | Audience Temperature | Typical CPA |
-|--------|---------------------|-------------|
+
+| Window | Temperature | Typical CPA |
+|--------|-------------|-------------|
 | 1-3 days | Hot | Lowest |
 | 4-7 days | Warm | Low |
 | 8-14 days | Cooling | Medium |
@@ -73,7 +69,7 @@ Conversions → Fund more prospecting
 
 ### Engagement Audiences
 
-- People who engaged with your Page (liked, commented, shared, messaged, saved, engaged with ads/events)
+- Page engagers (liked, commented, shared, messaged, saved, engaged with ads/events)
 - Time windows: 30, 60, 90, 180, 365 days
 
 ### Customer Lists
@@ -89,7 +85,7 @@ Conversions → Fund more prospecting
 
 ### Naming Convention
 
-```
+```text
 RT_[SOURCE]_[WINDOW]_[SPECIFICS]
 
 Examples:
@@ -104,9 +100,10 @@ RT_List_Customers_All
 
 ## Retargeting Windows
 
-### Optimal Windows by Industry
+### By Industry
 
-**E-commerce (Low Price Point <$100):**
+**E-commerce (<$100):**
+
 | Window | Budget % | Message Focus |
 |--------|----------|---------------|
 | 1-3 days | 40% | Cart reminder, urgency |
@@ -114,7 +111,8 @@ RT_List_Customers_All
 | 8-14 days | 20% | New offer, discount |
 | 15-30 days | 10% | Final attempt |
 
-**E-commerce (High Price Point >$500):**
+**E-commerce (>$500):**
+
 | Window | Budget % | Message Focus |
 |--------|----------|---------------|
 | 1-7 days | 30% | More info, FAQ |
@@ -123,6 +121,7 @@ RT_List_Customers_All
 | 31-60 days | 20% | Special offer |
 
 **B2B SaaS:**
+
 | Window | Budget % | Message Focus |
 |--------|----------|---------------|
 | 1-7 days | 20% | Value proposition |
@@ -131,6 +130,7 @@ RT_List_Customers_All
 | 31-90 days | 30% | Content nurture |
 
 **Lead Gen:**
+
 | Window | Budget % | Message Focus |
 |--------|----------|---------------|
 | 1-3 days | 35% | Form reminder |
@@ -138,9 +138,9 @@ RT_List_Customers_All
 | 8-14 days | 25% | Different angle |
 | 15-30 days | 10% | Final push |
 
-### The 180-Day Waste Problem
+### 180-Day Waste
 
-Avoid 180-day retargeting windows. Someone who visited 6 months ago probably forgot about you, may have solved their problem, and is basically cold traffic. Keep retargeting under 30-60 days. After 60 days, move to prospecting lookalike or use very light touch (awareness only).
+Avoid 180-day windows. After 60 days, move to prospecting lookalike or awareness-only. Visitors from 6 months ago are effectively cold traffic.
 
 ---
 
@@ -154,11 +154,12 @@ Avoid 180-day retargeting windows. Someone who visited 6 months ago probably for
 | Engagers (30 days) | 2-3x | Casual interest |
 | Engagers (60+ days) | 1-2x | Light touch |
 
-**High frequency works when:** very hot audience, short window, different creative each impression, time-sensitive offer.
+| Condition | High Frequency |
+|-----------|---------------|
+| Works | Hot audience, short window, creative rotation, time-sensitive offer |
+| Hurts | Same ad repeated, long window, no rotation, non-urgent message |
 
-**High frequency hurts when:** same ad repeatedly, long window, no creative rotation, non-urgent message.
-
-**Setting caps:** `Ad Set → Edit → Optimization & Delivery → Frequency Cap`. Or use Reach & Frequency buying type for guaranteed control. If you can't set caps, control frequency through budget (lower = lower frequency), audience size (bigger = lower frequency), and creative rotation.
+**Setting caps:** `Ad Set → Edit → Optimization & Delivery → Frequency Cap`. Or use Reach & Frequency buying type. Without caps, control via budget (lower = lower frequency), audience size (bigger = lower frequency), and creative rotation.
 
 | Placement | Acceptable Frequency |
 |-----------|---------------------|
@@ -171,8 +172,6 @@ Avoid 180-day retargeting windows. Someone who visited 6 months ago probably for
 
 ## Sequential Retargeting
 
-Show different messages based on where someone is in their journey.
-
 | Stage | User Behavior | Message Focus | Creative Type |
 |-------|---------------|---------------|---------------|
 | 1 | Page view only | Problem/solution intro | Educational video |
@@ -181,13 +180,11 @@ Show different messages based on where someone is in their journey.
 | 4 | Abandoned checkout | Urgency, discount | Offer with deadline |
 | 5 | Purchased | Upsell/cross-sell | Related products |
 
-**Creative examples:**
+**Example copy by stage:**
 
-Stage 1: `"Discovered [Your Brand]? Here's what 10,000+ customers already know..." → Learn More`
-
-Stage 2: `"Still thinking about [Product]? Here's what [Customer Name] said..." [testimonial] → See More Reviews`
-
-Stage 3: `"Complete your order — [Product] is waiting. ✓ Free shipping ✓ 30-day returns ✓ 24/7 support → Complete Purchase"`
+- **Stage 1:** `"Discovered [Brand]? Here's what 10,000+ customers already know..." → Learn More`
+- **Stage 2:** `"Still thinking about [Product]? Here's what [Customer] said..." → See More Reviews`
+- **Stage 3:** `"Complete your order — [Product] is waiting. ✓ Free shipping ✓ 30-day returns ✓ 24/7 support → Complete Purchase"`
 
 **Progressive offer strategy:**
 
@@ -199,7 +196,7 @@ Stage 3: `"Complete your order — [Product] is waiting. ✓ Free shipping ✓ 3
 | 4 | 15% + urgency | Final push |
 | 5 | N/A (purchased) | Upsell at full price |
 
-Warning: Don't train customers to expect discounts. Use sparingly.
+Don't train customers to expect discounts. Use sparingly.
 
 ---
 
@@ -212,7 +209,8 @@ Warning: Don't train customers to expect discounts. Use sparingly.
 | 50-100K visitors/mo | 20-25% |
 | 100K+ visitors/mo | 25-30% |
 
-**Prioritize by intent:**
+**By intent:**
+
 | Segment | Budget Priority |
 |---------|-----------------|
 | Cart abandoners | 30-40% of RT budget |
@@ -221,19 +219,20 @@ Warning: Don't train customers to expect discounts. Use sparingly.
 | All site visitors | 10-15% |
 | Engagers only | 5-10% |
 
-**Calculate expected value:**
-```
+**Expected value calculation:**
+
+```text
 Audience (Cart Abandoners): Size 1,000 × CVR 10% × Max CPA $30 = $3,000/month max budget
 Audience (All Visitors): Size 10,000 × CVR 2% × Max CPA $30 = $6,000/month max budget
 ```
 
-**Diminishing returns signals:** frequency >5 sustained, CPA rising while reach stays flat, negative feedback increasing, ROAS declining. Response: cap RT at 25-30% of total spend, shift budget to prospecting, build larger RT pool before increasing.
+**Diminishing returns signals:** frequency >5 sustained, CPA rising while reach flat, negative feedback increasing, ROAS declining. Cap RT at 25-30% of total spend and shift to prospecting.
 
 ---
 
 ## Dynamic Ads (DPA)
 
-Automatically show users products they've viewed, related products, or products they might like based on catalog data.
+Automatically show users products they've viewed or related products based on catalog data.
 
 **Requirements:** Product catalog in Commerce Manager, Pixel with product events (ViewContent, AddToCart, Purchase), matching product IDs between pixel and catalog.
 
@@ -244,10 +243,16 @@ Automatically show users products they've viewed, related products, or products 
 | Purchased | Cross-sell/upsell |
 | Broad (prospecting) | Products likely to interest |
 
-**Best practices:** High-quality product images, accurate prices, clear titles, in-stock items only. Add overlay (discount, free shipping). Exclude already purchased. Use product set filters (price >$20, category = bestsellers).
+**Best practices:**
+
+- High-quality product images, accurate prices, clear titles, in-stock only
+- Add overlay (discount, free shipping)
+- Exclude already purchased
+- Use product set filters (price >$20, category = bestsellers)
 
 **Template copy:**
-```
+
+```text
 Primary text: {{product.name}} is waiting for you! | You viewed this — still interested?
 Headline: Shop Now | {{product.price}} - Limited Stock | Free Shipping on {{product.name}}
 ```
@@ -256,7 +261,7 @@ Headline: Shop Now | {{product.price}} - Limited Stock | Free Shipping on {{prod
 
 ## Campaign Structure
 
-```
+```text
 Campaign: Retargeting (CBO or ABO, Objective: Conversions)
 ├── Ad Set 1: Cart Abandoners (3 days)
 │   ├── Audience: AddToCart, exclude Purchase, 3 days
@@ -277,7 +282,8 @@ Campaign: Retargeting (CBO or ABO, Objective: Conversions)
 ```
 
 **Exclusion waterfall:**
-```
+
+```text
 Cart Abandoners → Exclude Purchases
 High Intent → Exclude Cart Abandoners, Purchases
 Site Visitors → Exclude High Intent, Cart Abandoners, Purchases
@@ -286,11 +292,11 @@ Engagers → Exclude All Website Visitors, Purchases
 
 ---
 
-## Retargeting Checklist
+## Checklist
 
 **Setup:** Pixel installed with all events · Custom audiences created · Proper exclusions in place · Descriptive naming convention
 
-**Creative:** Different creative per audience segment · Messaging matches funnel stage · Offers appropriate to intent level · Dynamic ads for product viewers
+**Creative:** Different creative per segment · Messaging matches funnel stage · Offers appropriate to intent · Dynamic ads for product viewers
 
 **Monitoring:** Frequency under control (<5x weekly) · CPA meeting targets · Audience not shrinking · No negative feedback spikes
 
