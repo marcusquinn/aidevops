@@ -36,7 +36,7 @@ tools:
 | `~/.config/aidevops/tenants/{tenant}/credentials.sh` | Per-tenant keys (see `multi-tenant.md`) | 600 |
 | `~/.config/aidevops/` | Secrets directory | 700 |
 
-**Principle**: API keys are stored ONLY under `~/.config/aidevops/` (default `credentials.sh`, or `tenants/{tenant}/credentials.sh` for multi-tenant) or in gopass — NEVER in repository files. The active credentials file is sourced by your shell on startup.
+**Principle**: API keys are stored ONLY in `~/.config/aidevops/credentials.sh` (default), `~/.config/aidevops/tenants/{tenant}/credentials.sh` (multi-tenant), or in gopass — NEVER in repository files. Both credential file locations are under `~/.config/aidevops/` and are the single source of truth. The active credentials file is sourced by your shell on startup.
 
 ## Setup
 
@@ -46,49 +46,47 @@ tools:
 bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh setup
 ```
 
-Creates `~/.config/aidevops/` (700), `credentials.sh` (600), and adds sourcing to `.zshrc`/`.bashrc`/`.bash_profile`.
+Creates `~/.config/aidevops/` (700), `credentials.sh` (600), and adds a sourcing line to `~/.zshrc` (and `~/.bashrc`/`~/.bash_profile` if present).
 
 ### 2. Store API Keys
 
-Run from the repository root:
-
 ```bash
 # By service name (auto-converts to UPPER_CASE export)
-bash .agents/scripts/setup-local-api-keys.sh set vercel-token YOUR_TOKEN
+bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh set vercel-token YOUR_TOKEN
 # → export VERCEL_TOKEN="YOUR_TOKEN"
 
 # By env var name directly
-bash .agents/scripts/setup-local-api-keys.sh set SUPABASE_KEY abc123
+bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh set SUPABASE_KEY abc123
 # → export SUPABASE_KEY="abc123"
 
 # Parse an export command from a service dashboard
-bash .agents/scripts/setup-local-api-keys.sh add 'export VERCEL_TOKEN="abc123"'
+bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh add 'export VERCEL_TOKEN="abc123"'
 ```
 
 ### 3. Common Services
 
 ```bash
 # Codacy - https://app.codacy.com/account/api-tokens
-bash .agents/scripts/setup-local-api-keys.sh set codacy-project-token YOUR_TOKEN
+bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh set codacy-project-token YOUR_TOKEN
 
 # SonarCloud - https://sonarcloud.io/account/security
-bash .agents/scripts/setup-local-api-keys.sh set sonar-token YOUR_TOKEN
+bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh set sonar-token YOUR_TOKEN
 
 # CodeRabbit - https://app.coderabbit.ai/settings
-bash .agents/scripts/setup-local-api-keys.sh set coderabbit-api-key YOUR_KEY
+bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh set coderabbit-api-key YOUR_KEY
 
 # Hetzner Cloud - https://console.hetzner.cloud/projects/*/security/tokens
-bash .agents/scripts/setup-local-api-keys.sh set hcloud-token-projectname YOUR_TOKEN
+bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh set hcloud-token-projectname YOUR_TOKEN
 
 # OpenAI - https://platform.openai.com/api-keys
-bash .agents/scripts/setup-local-api-keys.sh set openai-api-key YOUR_KEY
+bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh set openai-api-key YOUR_KEY
 ```
 
 ### 4. Verify
 
 ```bash
-bash .agents/scripts/setup-local-api-keys.sh list   # Services (keys redacted)
-bash .agents/scripts/setup-local-api-keys.sh get sonar-token  # Specific key
+bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh list   # Services (keys redacted)
+bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh get sonar-token  # Specific key
 ```
 
 ## How It Works
@@ -96,7 +94,7 @@ bash .agents/scripts/setup-local-api-keys.sh get sonar-token  # Specific key
 `credentials.sh` contains shell exports (`export SONAR_TOKEN="xxx"`). Shell startup sources it automatically:
 
 ```bash
-# Added to ~/.zshrc, ~/.bashrc, and ~/.bash_profile by setup:
+# Added to ~/.zshrc (and ~/.bashrc/~/.bash_profile if present) by setup:
 [[ -f ~/.config/aidevops/credentials.sh ]] && source ~/.config/aidevops/credentials.sh
 ```
 
