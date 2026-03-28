@@ -12,10 +12,6 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
-## Overview
-
-Profile management system replicating commercial anti-detect browsers (AdsPower, GoLogin, OctoBrowser). Each profile maintains its own fingerprint, cookies, proxy, and browsing state.
-
 ## Profile Storage
 
 ```text
