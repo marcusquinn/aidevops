@@ -61,9 +61,6 @@ export { userSchema, type UserFormData } from './model/schema';
 
 ## Feature: Authentication
 
-- Features own state (stores), forms, action handlers
-- Import from entities; entities never import from features
-
 ```typescript
 // features/auth/model/store.ts — Zustand with persistence
 import { create } from 'zustand';
@@ -126,8 +123,6 @@ export function LoginForm() {
 
 ## Widget: Header
 
-Widgets compose features and entities into reusable UI blocks (layer above features).
-
 ```tsx
 // widgets/header/ui/Header.tsx
 import { Link } from 'react-router-dom';
@@ -154,8 +149,6 @@ export { Header } from './ui/Header';
 
 ## Page: Product Detail
 
-Pages compose widgets, features, and entities into route screens. One slice per route.
-
 ```tsx
 // pages/product-detail/ui/ProductDetailPage.tsx
 import { useLoaderData } from 'react-router-dom';
@@ -173,8 +166,6 @@ export { productDetailLoader } from './api/loader';
 ```
 
 ## Shared: API Client
-
-`shared/` has no slices — domain-agnostic infrastructure only.
 
 ```typescript
 // shared/api/client.ts
