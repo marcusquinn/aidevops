@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-03-28
+
+### Changed
+
+- Refactor: flatten remaining nested dirs in tools/ (#12107)
+
 ## [3.4.193] - 2026-03-28
 
 ### Changed
