@@ -150,7 +150,7 @@ curl -X POST 'https://platform.higgsfield.ai/v1/image2video/dop' \
 
 ### Alternative Models (simplified API)
 
-All use `Authorization: Key {api_key}:{api_secret}` header and accept `image_url` + `prompt`:
+All use `Authorization: Key {api-key}:{secret}` header and accept `image_url` + `prompt`:
 
 | Model | Endpoint | Extra params |
 |-------|----------|-------------|
@@ -162,7 +162,7 @@ Example (DOP Standard):
 
 ```bash
 curl -X POST 'https://platform.higgsfield.ai/higgsfield-ai/dop/standard' \
-  --header 'Authorization: Key {api_key}:{api_secret}' \
+  --header 'Authorization: Key {api-key}:{secret}' \
   --header 'Content-Type: application/json' \
   --data '{
     "image_url": "https://example.com/image.jpg",
@@ -225,7 +225,7 @@ curl -X GET 'https://platform.higgsfield.ai/api/generation-results?id=job_789012
 }
 ```
 
-**Status values**: `pending`, `processing`, `completed`, `failed`. Results retained for 7 days.
+**Status values**: `queued`, `processing`, `completed`, `failed`. Results retained for 7 days.
 
 ## Python SDK
 
@@ -272,10 +272,10 @@ query-docs("/websites/higgsfield_ai", "character consistency")
 
 ## Related
 
-- **`content/video-higgsfield-ui.md`** - UI automation subagent (uses subscription credits via browser, no API key needed)
+- **`./higgsfield-ui.md`** - UI automation subagent (uses subscription credits via browser, no API key needed)
 - [Higgsfield Docs](https://docs.higgsfield.ai/)
 - [Higgsfield Dashboard](https://cloud.higgsfield.ai)
-- `tools/video/remotion.md` - Programmatic video editing
+- `./remotion.md` - Programmatic video editing
 
 
 ## API vs UI
@@ -300,7 +300,7 @@ query-docs("/websites/higgsfield_ai", "character consistency")
 
 ## Related
 
-- **`video/higgsfield-ui.md`** -- UI automation subagent (uses subscription credits via browser, no API key needed)
+- **`./higgsfield-ui.md`** -- UI automation subagent (uses subscription credits via browser, no API key needed)
 - [Higgsfield Docs](https://docs.higgsfield.ai/)
 - [Higgsfield Dashboard](https://cloud.higgsfield.ai)
-- `tools/video/remotion.md` -- Programmatic video editing
+- `./remotion.md` -- Programmatic video editing
