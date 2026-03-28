@@ -122,9 +122,9 @@
       "pr": 11336
     },
     ".agents/reference/configuration.md": {
-      "hash": "8f88704d9a8ee1c9e58fa589d4bb30ccbb182e0f",
-      "at": "2026-03-28T02:51:06Z",
-      "pr": 11279
+      "hash": "9502faea512b841b7a239e9e3c9cc0188f4fe855",
+      "at": "2026-03-28T04:30:48Z",
+      "pr": 11321
     },
     ".agents/scripts/stats-functions.sh": {
       "hash": "500235eb7c29b89a44219c93701d3960837d9dca",
