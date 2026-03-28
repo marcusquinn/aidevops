@@ -53,21 +53,9 @@ Edit `~/.config/opencode/opencode.json`:
 }
 ```
 
-**With env vars** — wrap in bash: `["/bin/bash", "-c", "API_KEY=$MY_API_KEY bun run /path/to/my-mcp/src/index.ts"]`
+**Env vars** — wrap in bash: `["/bin/bash", "-c", "API_KEY=$MY_API_KEY bun run /path/to/my-mcp/src/index.ts"]`
 
-**HTTP transport** — use `type: remote`:
-
-```json
-{
-  "mcp": {
-    "my-mcp": {
-      "type": "remote",
-      "url": "https://my-mcp.example.com/mcp",
-      "enabled": true
-    }
-  }
-}
-```
+**HTTP transport** — use `"type": "remote"` with `"url": "https://my-mcp.example.com/mcp"` (same structure, replace `type`/`command` with `type`/`url`).
 
 ## CLI Commands
 
@@ -76,10 +64,7 @@ Edit `~/.config/opencode/opencode.json`:
 ```bash
 claude mcp add my-mcp bun run /path/to/my-mcp/src/index.ts
 claude mcp add my-mcp --env API_KEY=your-key bun run /path/to/my-mcp/src/index.ts
-
-# Scope variants
 claude mcp add-json my-mcp --scope user '{"type":"stdio","command":"bun","args":["run","/path/to/my-mcp/src/index.ts"]}'
-claude mcp add-json my-mcp --scope project '{"type":"stdio","command":"bun","args":["run","/path/to/my-mcp/src/index.ts"]}'
 ```
 
 ### Droid (Factory.AI)
@@ -111,104 +96,29 @@ Shared JSON schema used by Claude Desktop (`~/Library/Application Support/Claude
 - **Kilo Code** — add `"type": "stdio"`, `"disabled": false`, `"alwaysAllow": ["tool_name"]`
 - **Kiro** — add `"disabled": false`, `"autoApprove": ["tool_name"]`
 
-**HTTP transport** (Claude Desktop) — bridge via `mcp-remote-client`:
-
-```json
-{
-  "mcpServers": {
-    "my-mcp": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote-client", "https://my-mcp.example.com/mcp"]
-    }
-  }
-}
-```
+**HTTP transport** (Claude Desktop) — bridge via `mcp-remote-client`: `"command": "npx", "args": ["-y", "mcp-remote-client", "https://my-mcp.example.com/mcp"]`
 
 ## VS Code MCP Format
 
-### GitHub Copilot
+All VS Code-based tools use stdio transport with the same command/args pattern. Config locations differ:
 
-Create `.vscode/mcp.json` (Agent mode only):
+| Tool | Config file | Key path |
+|------|-------------|----------|
+| GitHub Copilot | `.vscode/mcp.json` | `servers.<name>` (Agent mode only) |
+| Continue.dev | `.continue/config.json` | `experimental.modelContextProtocolServers[]` |
+| Cody | `.vscode/settings.json` | `cody.experimental.mcp.servers.<name>` |
 
-```json
-{
-  "servers": {
-    "my-mcp": {
-      "type": "stdio",
-      "command": "bun",
-      "args": ["run", "/path/to/my-mcp/src/index.ts"]
-    }
-  },
-  "inputs": []
-}
-```
-
-### Continue.dev
-
-Edit `.continue/config.json`:
-
-```json
-{
-  "experimental": {
-    "modelContextProtocolServers": [
-      {
-        "transport": {
-          "type": "stdio",
-          "command": "bun",
-          "args": ["run", "/path/to/my-mcp/src/index.ts"]
-        }
-      }
-    ]
-  }
-}
-```
-
-### Cody (Sourcegraph)
-
-Edit `.vscode/settings.json`:
-
-```json
-{
-  "cody.experimental.mcp.servers": {
-    "my-mcp": {
-      "command": "bun",
-      "args": ["run", "/path/to/my-mcp/src/index.ts"]
-    }
-  }
-}
-```
+All use `"type": "stdio", "command": "bun", "args": ["run", "/path/to/my-mcp/src/index.ts"]` nested under their key path. Continue.dev wraps in a `transport` object within the array.
 
 ## Other Formats
 
-### Zed
+**Zed** — Click ... > Add Custom Server: `{ "my-mcp": { "command": "bun", "args": ["run", "/path/to/my-mcp/src/index.ts"] } }`
 
-Click ... > Add Custom Server:
-
-```json
-{
-  "my-mcp": {
-    "command": "bun",
-    "args": ["run", "/path/to/my-mcp/src/index.ts"]
-  }
-}
-```
-
-### Aider
-
-`.aider.conf.yml` or CLI flag:
-
-```yaml
-mcp-servers:
-  - name: my-mcp
-    command: bun
-    args: [run, /path/to/my-mcp/src/index.ts]
-```
-
-CLI: `aider --mcp-server "bun run /path/to/my-mcp/src/index.ts"`
+**Aider** — `.aider.conf.yml`: `mcp-servers: [{ name: my-mcp, command: bun, args: [run, /path/to/my-mcp/src/index.ts] }]` or CLI: `aider --mcp-server "bun run /path/to/my-mcp/src/index.ts"`
 
 ## Limited/No Native MCP
 
-- **Warp AI**: No native MCP. Workaround: `alias mcp-my-tool="bun run /path/to/my-mcp/src/index.ts"`, or run OpenCode/Claude Code inside Warp.
+- **Warp AI**: No native MCP. Run OpenCode/Claude Code inside Warp, or alias: `alias mcp-my-tool="bun run /path/to/my-mcp/src/index.ts"`
 - **Qwen CLI**: Experimental — verify current docs. Config: `mcp.servers.<name>` in `~/.qwen/config.json`.
 - **LiteLLM**: Proxy/gateway, not an AI assistant. Configure the underlying MCP-capable client directly.
 
