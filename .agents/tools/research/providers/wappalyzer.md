@@ -6,11 +6,9 @@ tools: [bash, read, write]
 
 # Wappalyzer OSS Provider
 
-Local/offline technology stack detection using `@ryntab/wappalyzer-node`. Identifies CMS, frameworks, analytics, CDN, JS libraries, UI frameworks (2000+ technologies). No API key or browser required.
+Local/offline technology stack detection via `@ryntab/wappalyzer-node`. Identifies 2000+ technologies (CMS, frameworks, analytics, CDN, JS libraries, UI frameworks). No API key or browser required.
 
-**Files:**
-- `wappalyzer-helper.sh` — CLI orchestrator with caching and dependency management
-- `wappalyzer-detect.mjs` — Node.js wrapper; do **not** invoke directly
+**Scripts:** `wappalyzer-helper.sh` (CLI orchestrator, caching) · `wappalyzer-detect.mjs` (Node.js wrapper — do not invoke directly)
 
 ## Installation
 
@@ -24,20 +22,13 @@ wappalyzer-helper.sh status    # verify
 ## Usage
 
 ```bash
-# Detect (no cache)
-wappalyzer-helper.sh detect https://example.com
-
-# Detect with 7-day cache (recommended for repeated lookups)
-wappalyzer-helper.sh detect-cached https://example.com
-
-# Cache management
-wappalyzer-helper.sh cache-clear   # clear ~/.aidevops/cache/wappalyzer/
-
-# Help
+wappalyzer-helper.sh detect https://example.com          # no cache
+wappalyzer-helper.sh detect-cached https://example.com   # 7-day cache (recommended)
+wappalyzer-helper.sh cache-clear                         # clear ~/.aidevops/cache/wappalyzer/
 wappalyzer-helper.sh help
 ```
 
-Cache files are SHA-256-keyed JSON in `~/.aidevops/cache/wappalyzer/`. Results expire after 7 days.
+Cache files: SHA-256-keyed JSON in `~/.aidevops/cache/wappalyzer/`, expire after 7 days.
 
 ### Environment Variables
 
@@ -48,7 +39,7 @@ Cache files are SHA-256-keyed JSON in `~/.aidevops/cache/wappalyzer/`. Results e
 
 ## Output Format
 
-JSON in the common schema — no normalisation needed:
+Common schema — no `jq` normalisation needed for `tech-stack-helper.sh`:
 
 ```json
 {
@@ -70,23 +61,14 @@ JSON in the common schema — no normalisation needed:
 }
 ```
 
-Fields: `slug` (lowercase-hyphenated id), `confidence` (0–100), `version`/`description`/`website` (null if unavailable), `source` always `"wappalyzer"`.
-
-## Integration with tech-stack-helper.sh
-
-Output is already in the common schema — no `jq` normalisation needed. The orchestrator calls:
-
-```bash
-wappalyzer-helper.sh detect "$url"          # no cache
-wappalyzer-helper.sh detect-cached "$url"   # with cache
-```
+`slug`: lowercase-hyphenated id. `confidence`: 0–100. `version`/`description`/`website`: null if unavailable. `source`: always `"wappalyzer"`.
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
 | `@ryntab/wappalyzer-node` not found | `wappalyzer-helper.sh install` or `npm install -g @ryntab/wappalyzer-node` |
-| Node.js not found | `brew install node` (macOS) or install Node.js 18+ for your platform |
+| Node.js not found | `brew install node` (macOS) or install Node.js 18+ |
 | Detection times out | `WAPPALYZER_TIMEOUT=60 wappalyzer-helper.sh detect https://slow-site.com` |
 | Stale cache results | `wappalyzer-helper.sh cache-clear && wappalyzer-helper.sh detect https://example.com` |
 
