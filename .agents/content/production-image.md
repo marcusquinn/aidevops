@@ -20,7 +20,7 @@ tools:
 ## Quick Reference
 
 - **Tools**: Nanobanana Pro (JSON prompts), Midjourney (objects/environments), Freepik (characters), Seedream 4 (4K refinement), Ideogram (face swap)
-- **Techniques**: Style library system, annotated frame-to-video, Shotdeck references, thumbnail factory
+- **Techniques**: Style library, annotated frame-to-video, Shotdeck references, thumbnail factory
 - **Related**: `tools/vision/image-generation.md`, `content/production-video.md`, `content/optimization.md`
 
 <!-- AI-CONTEXT-END -->
@@ -37,9 +37,19 @@ Text in images?                 → DALL-E 3 or Ideogram
 Local/open-source?              → FLUX.1 or SD XL (tools/vision/image-generation.md)
 ```
 
+## Tool-Specific Prompting
+
+**Midjourney**: `[SUBJECT] [ACTION] in [ENVIRONMENT], [LIGHTING], [STYLE], [CAMERA], --ar 16:9 --style raw --v 6 --no text, watermark` — always `--style raw` for production.
+
+**Freepik**: Character-driven scenes (team photos, lifestyle, testimonials). Specify demographics, emotion, environment, style.
+
+**Seedream 4**: Post-processing upscale after initial generation. 4K print/video prep. Only refine images that passed quality checks.
+
+**Ideogram**: Face swap for character consistency. Generate base portrait, upload as reference, generate new scenes, swap. Alt: `content/production-characters.md` (Facial Engineering Framework).
+
 ## Nanobanana Pro JSON Schema
 
-Save working JSON as named templates, swap `subject`/`concept`, keep brand consistency.
+Save working JSON as named templates; swap `subject`/`concept`, keep brand consistency.
 
 ```json
 {
@@ -65,21 +75,6 @@ Swap `subject`, `concept`, `focal_point` per shot; keep lighting/color/style con
 | **Magazine Cover** | YouTube thumbnails, hero images | Canon R5, 85mm f/1.2, dramatic front+rim | 9:16 |
 | **Street Photography** | Authentic lifestyle, UGC | Leica Q2, 28mm f/1.7, overcast, monochromatic | 3:2 |
 
-## Style Library
-
-Save winning templates as `brand-thumbnail-v1.json`. Reuse by swapping `subject` and `concept`.
-
-**Storage**: `~/.aidevops/.agent-workspace/work/[project]/style-library/` or version-control in content repo.
-
-| Category | Use Case | Key Attributes |
-|----------|----------|----------------|
-| **Thumbnails** | YouTube, blog headers | High contrast, bold colors, centered, 16:9 |
-| **Social Graphics** | Instagram, Twitter, LinkedIn | Platform aspect ratios, vibrant, clear focal point |
-| **Product Shots** | E-commerce, reviews | Clean backgrounds, natural lighting |
-| **Character Portraits** | About pages, team bios | Professional lighting, neutral backgrounds |
-| **Lifestyle** | Blog content, storytelling | Environmental context, natural lighting |
-| **Editorial** | Magazine-style content | Dramatic lighting, bold composition |
-
 ## Thumbnail Factory
 
 ```bash
@@ -104,22 +99,34 @@ thumbnail-helper.sh analyze VIDEO_ID
 
 **Threshold**: 7.5+ only. Below = regenerate.
 
-## Image-to-Video Workflows
+## Style Library
 
-### Annotated Frame-to-Video
+Save winning templates as `brand-thumbnail-v1.json`. Reuse by swapping `subject` and `concept`.
 
-1. **Generate base frame** — Nanobanana Pro or Midjourney (16:9, subject in starting position)
-2. **Annotate** — arrows (direction), labels (action), timing markers. Color: red=character, blue=camera, green=object
-3. **Feed to video model** — Veo 3.1 or Sora 2: "Animate this scene following the annotated motion indicators."
-4. **Refine** — adjust annotations, regenerate if motion incorrect
+**Storage**: `~/.aidevops/.agent-workspace/work/[project]/style-library/` or version-control in content repo.
 
-See `content/production-video.md` for Veo 3.1 ingredients-to-video (NOT frame-to-video, which produces grainy output).
+| Category | Use Case | Key Attributes |
+|----------|----------|----------------|
+| **Thumbnails** | YouTube, blog headers | High contrast, bold colors, centered, 16:9 |
+| **Social Graphics** | Instagram, Twitter, LinkedIn | Platform aspect ratios, vibrant, clear focal point |
+| **Product Shots** | E-commerce, reviews | Clean backgrounds, natural lighting |
+| **Character Portraits** | About pages, team bios | Professional lighting, neutral backgrounds |
+| **Lifestyle** | Blog content, storytelling | Environmental context, natural lighting |
+| **Editorial** | Magazine-style content | Dramatic lighting, bold composition |
 
-### Shotdeck Reference
+## Platform Specs
 
-1. Find reference on [Shotdeck](https://shotdeck.com/) by mood, genre, or visual style
-2. Reverse-engineer with Gemini: "Analyze this cinematic frame. Describe composition, lighting, color palette (hex codes), camera settings, mood. Output as structured data."
-3. Map analysis to Nanobanana JSON schema, adjust `subject`/`concept`, keep composition/lighting/color
+| Platform | Dimensions | Ratio | Notes |
+|----------|------------|-------|-------|
+| **YouTube Thumbnail** | 1280x720 | 16:9 | Max 2MB, high contrast |
+| **Instagram Feed** | 1080x1080 | 1:1 | Square, vibrant |
+| **Instagram Story** | 1080x1920 | 9:16 | Vertical, text-safe zones |
+| **Twitter/X** | 1200x675 | 16:9 | Clear at small size |
+| **LinkedIn** | 1200x627 | 1.91:1 | Professional aesthetic |
+| **Pinterest** | 1000x1500 | 2:3 | Vertical, text overlay friendly |
+| **Blog Header** | 1920x1080 | 16:9 | High res, SEO alt text |
+
+**Formats**: JPG (photos), PNG (transparency/overlays), WebP (web).
 
 ## Color and Camera Reference
 
@@ -140,29 +147,22 @@ Specify exact hex codes (not "blue" or "warm tones"). Use [Coolors.co](https://c
 | **Street** | Leica Q2 | 28mm f/1.7 | f/5.6, 1/500s, ISO 800 | film grain |
 | **Cinematic** | RED Komodo 6K | 35mm f/1.4 | f/2.0, 1/50s, ISO 800 | film grain |
 
-## Tool-Specific Prompting
+## Image-to-Video Workflows
 
-**Midjourney**: `[SUBJECT] [ACTION] in [ENVIRONMENT], [LIGHTING], [STYLE], [CAMERA], --ar 16:9 --style raw --v 6 --no text, watermark` — always `--style raw` for production.
+### Annotated Frame-to-Video
 
-**Freepik**: Character-driven scenes (team photos, lifestyle, testimonials). Specify demographics, emotion, environment, style.
+1. **Generate base frame** — Nanobanana Pro or Midjourney (16:9, subject in starting position)
+2. **Annotate** — arrows (direction), labels (action), timing markers. Color: red=character, blue=camera, green=object
+3. **Feed to video model** — Veo 3.1 or Sora 2: "Animate this scene following the annotated motion indicators."
+4. **Refine** — adjust annotations, regenerate if motion incorrect
 
-**Seedream 4**: Post-processing upscale after initial generation. 4K print/video prep. Only refine images that passed quality checks.
+See `content/production-video.md` for Veo 3.1 ingredients-to-video (NOT frame-to-video, which produces grainy output).
 
-**Ideogram**: Face swap for character consistency. Generate base portrait, upload as reference, generate new scenes, swap. Alt: `content/production-characters.md` (Facial Engineering Framework).
+### Shotdeck Reference
 
-## Platform Specs
-
-| Platform | Dimensions | Ratio | Notes |
-|----------|------------|-------|-------|
-| **YouTube Thumbnail** | 1280x720 | 16:9 | Max 2MB, high contrast |
-| **Instagram Feed** | 1080x1080 | 1:1 | Square, vibrant |
-| **Instagram Story** | 1080x1920 | 9:16 | Vertical, text-safe zones |
-| **Twitter/X** | 1200x675 | 16:9 | Clear at small size |
-| **LinkedIn** | 1200x627 | 1.91:1 | Professional aesthetic |
-| **Pinterest** | 1000x1500 | 2:3 | Vertical, text overlay friendly |
-| **Blog Header** | 1920x1080 | 16:9 | High res, SEO alt text |
-
-**Formats**: JPG (photos), PNG (transparency/overlays), WebP (web).
+1. Find reference on [Shotdeck](https://shotdeck.com/) by mood, genre, or visual style
+2. Reverse-engineer with Gemini: "Analyze this cinematic frame. Describe composition, lighting, color palette (hex codes), camera settings, mood. Output as structured data."
+3. Map analysis to Nanobanana JSON schema, adjust `subject`/`concept`, keep composition/lighting/color
 
 ## UGC Keyframe Template
 
