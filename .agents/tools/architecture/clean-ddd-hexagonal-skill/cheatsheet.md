@@ -4,46 +4,13 @@
 
 ## Layer Summary
 
-```mermaid
-flowchart TB
-    subgraph Infra["INFRASTRUCTURE (Adapters)"]
-        I1["REST/gRPC controllers"]
-        I2["CLI handlers"]
-        I3["Framework code"]
-        I4["Database repositories"]
-        I5["Message publishers"]
-        I6["External service clients"]
-    end
+| Layer | Responsibility | Depends On |
+|-------|---------------|------------|
+| **Domain** | Business logic, entities, rules | Nothing |
+| **Application** | Use cases, orchestration, DTOs, ports | Domain |
+| **Infrastructure** | DB repos, API clients, controllers, CLI, messaging | Application, Domain |
 
-    subgraph App["APPLICATION (Use Cases)"]
-        A1["Command/Query handlers"]
-        A2["DTOs"]
-        A3["Transaction management"]
-        A4["Port interfaces"]
-        A5["Application services"]
-        A6["Event dispatching"]
-    end
-
-    subgraph Domain["DOMAIN (Business Logic)"]
-        D1["Entities"]
-        D2["Aggregates"]
-        D3["Repository interfaces"]
-        D4["Business rules"]
-        D5["Value Objects"]
-        D6["Domain Events"]
-        D7["Domain Services"]
-        D8["Specifications"]
-    end
-
-    Infra -->|depends on| App
-    App -->|depends on| Domain
-
-    style Infra fill:#6366f1,stroke:#4f46e5,color:white
-    style App fill:#3b82f6,stroke:#2563eb,color:white
-    style Domain fill:#10b981,stroke:#059669,color:white
-```
-
-*Dependencies point inward*
+*Dependencies point inward. Full layer details: [layers.md](layers.md)*
 
 ---
 
@@ -51,7 +18,7 @@ flowchart TB
 
 ### "Where does this code go?"
 
-```
+```text
 Is it a business rule or constraint?
 ├── YES → Domain layer
 └── NO ↓
@@ -67,7 +34,7 @@ Is it dealing with external systems (DB, API, UI)?
 
 ### "Entity or Value Object?"
 
-```
+```text
 Does it have a unique identity that persists?
 ├── YES → Entity
 └── NO ↓
@@ -79,7 +46,7 @@ Is it defined entirely by its attributes?
 
 ### "Aggregate boundary?"
 
-```
+```text
 Must these objects change together atomically?
 ├── YES → Same aggregate
 └── NO ↓
@@ -91,7 +58,7 @@ Can one exist without the other?
 
 ### "Domain Service or Entity method?"
 
-```
+```text
 Does it naturally belong to one entity?
 ├── YES → Entity method
 └── NO ↓
@@ -107,134 +74,62 @@ Is it stateless business logic?
 
 ---
 
-## Common Patterns Quick Reference
+## Pattern Templates
 
-### Value Object Template
+Compact pseudocode. Full TypeScript examples: [ddd-tactical.md](ddd-tactical.md), [layers.md](layers.md).
 
-```typescript
-export class Money {
-  private constructor(
-    private readonly _amount: number,
-    private readonly _currency: string,
-  ) {}
+### Value Object
 
-  static create(amount: number, currency: string): Money {
-    if (amount < 0) throw new Error('Negative');
-    return new Money(amount, currency);
-  }
-
-  add(other: Money): Money {
-    return Money.create(this._amount + other._amount, this._currency);
-  }
-
-  get amount(): number { return this._amount; }
-  get currency(): string { return this._currency; }
-
-  equals(other: Money): boolean {
-    return this._amount === other._amount && this._currency === other._currency;
-  }
-}
+```text
+class Money (immutable):
+  private constructor(amount: number, currency: string)
+  static create(amount, currency) → validate → new Money(...)
+  add(other: Money) → Money.create(this.amount + other.amount, currency)
+  equals(other) → amount == other.amount && currency == other.currency
 ```
 
-### Entity Template
+### Entity
 
-```typescript
-export class OrderItem extends Entity<OrderItemId> {
-  private _quantity: Quantity;
-
-  private constructor(id: OrderItemId, private readonly _productId: ProductId, quantity: Quantity) {
-    super(id);
-    this._quantity = quantity;
-  }
-
-  static create(productId: ProductId, quantity: Quantity): OrderItem {
-    return new OrderItem(OrderItemId.generate(), productId, quantity);
-  }
-
-  increaseQuantity(amount: number): void {
-    this._quantity = this._quantity.add(amount);
-  }
-
-  get productId(): ProductId { return this._productId; }
-  get quantity(): Quantity { return this._quantity; }
-}
+```text
+class OrderItem extends Entity<OrderItemId>:
+  static create(productId, quantity) → new OrderItem(generate_id(), ...)
+  increaseQuantity(amount) → mutate internal state
+  identity-based equality (same ID = same entity)
 ```
 
-### Aggregate Root Template
+### Aggregate Root
 
-```typescript
-export class Order extends AggregateRoot<OrderId> {
-  private _items: OrderItem[] = [];
-  private _status: OrderStatus;
-
-  private constructor(id: OrderId, customerId: CustomerId) {
-    super(id);
-    this._customerId = customerId;
-    this._status = OrderStatus.Draft;
-  }
-
-  static create(customerId: CustomerId): Order {
-    const order = new Order(OrderId.generate(), customerId);
-    order.addDomainEvent(new OrderCreated(order.id, customerId));
-    return order;
-  }
-
-  addItem(productId: ProductId, quantity: Quantity, price: Money): void {
-    this.assertCanModify();
-    this._items.push(OrderItem.create(productId, quantity, price));
-  }
-
-  confirm(): void {
-    this.assertCanModify();
-    if (this._items.length === 0) throw new EmptyOrderError();
-    this._status = OrderStatus.Confirmed;
-    this.addDomainEvent(new OrderConfirmed(this.id, this.total));
-  }
-
-  private assertCanModify(): void {
-    if (this._status === OrderStatus.Cancelled) {
-      throw new InvalidOrderStateError('Order is cancelled');
-    }
-  }
-
-  get total(): Money { /* ... */ }
-}
+```text
+class Order extends AggregateRoot<OrderId>:
+  items: OrderItem[], status: OrderStatus
+  static create(customerId) → new Order(...) + emit OrderCreated event
+  addItem(productId, quantity, price) → guard state + push item
+  confirm() → guard state + require items + emit OrderConfirmed
+  private assertCanModify() → throw if cancelled
 ```
 
-### Repository Interface Template
+### Repository Interface
 
-```typescript
-export interface IOrderRepository {
-  findById(id: OrderId): Promise<Order | null>;
-  save(order: Order): Promise<void>;
-  delete(order: Order): Promise<void>;
-}
+```text
+interface IOrderRepository:
+  findById(id: OrderId) → Order | null
+  save(order: Order) → void
+  delete(order: Order) → void
 ```
 
-### Use Case Handler Template
+### Use Case Handler
 
-```typescript
-export class PlaceOrderHandler {
-  constructor(
-    private readonly orderRepo: IOrderRepository,
-    private readonly productRepo: IProductRepository,
-    private readonly eventPublisher: IEventPublisher,
-  ) {}
-
-  async execute(command: PlaceOrderCommand): Promise<OrderId> {
-    const order = Order.create(CustomerId.from(command.customerId));
-
-    for (const item of command.items) {
-      const product = await this.productRepo.findById(item.productId);
-      order.addItem(product.id, Quantity.create(item.quantity), product.price);
-    }
-
-    await this.orderRepo.save(order);
-    await this.eventPublisher.publishAll(order.domainEvents);
-
-    return order.id;
-  }
-}
+```text
+class PlaceOrderHandler:
+  constructor(orderRepo, productRepo, eventPublisher)
+  execute(command):
+    order = Order.create(command.customerId)
+    for item in command.items:
+      product = productRepo.findById(item.productId)
+      order.addItem(product.id, Quantity(item.quantity), product.price)
+    orderRepo.save(order)
+    eventPublisher.publishAll(order.domainEvents)
+    return order.id
 ```
 
 ---
@@ -274,71 +169,30 @@ export class PlaceOrderHandler {
 | **Application** | ✅ | ✅ | ❌ |
 | **Infrastructure** | ✅ | ✅ | ✅ |
 
-✅ = Can depend on
-❌ = Cannot depend on
+✅ = Can depend on | ❌ = Cannot depend on
 
 ---
 
-## Hexagonal Quick Reference
+## Hexagonal Architecture
 
-```mermaid
-flowchart LR
-    subgraph Driver["DRIVER (Left/Primary/Inbound)"]
-        direction TB
-        D1["REST Controller"]
-        D2["gRPC Service"]
-        D3["CLI Command"]
-        D4["Message Consumer"]
-        DP["Port (Interface)"]
-        D1 & D2 & D3 & D4 -->|calls| DP
-    end
+Driver (inbound) adapters → **Driver Ports** (use case interfaces) → Application Core → **Driven Ports** (repository/service interfaces) → Driven (outbound) adapters.
 
-    subgraph App["Application"]
-        Core[" "]
-    end
+- **Driver side:** REST controllers, gRPC services, CLI commands, message consumers call ports
+- **Driven side:** Database repos, message publishers, external API clients, cache adapters implement ports
 
-    subgraph Driven["DRIVEN (Right/Secondary/Outbound)"]
-        direction TB
-        DRP["Port (Interface)"]
-        DR1["Database Repository"]
-        DR2["Message Publisher"]
-        DR3["External API Client"]
-        DR4["Cache Adapter"]
-        DR1 & DR2 & DR3 & DR4 -->|implements| DRP
-    end
-
-    Driver -->|"How world\nuses app"| App
-    App -->|"How app\nuses world"| Driven
-
-    style Driver fill:#3b82f6,stroke:#2563eb,color:white
-    style App fill:#10b981,stroke:#059669,color:white
-    style Driven fill:#f59e0b,stroke:#d97706,color:white
-```
+Full diagram and patterns: [hexagonal.md](hexagonal.md)
 
 ---
 
 ## When to Use / Skip
 
-### Use Clean + DDD + Hexagonal When:
+**Use Clean + DDD + Hexagonal when:** complex business domain with many rules, long-lived system (years), large team (5+), need to swap infrastructure, high test coverage required, multiple entry points (API, CLI, events, jobs).
 
-- ✅ Complex business domain with many rules
-- ✅ Long-lived system (years of maintenance)
-- ✅ Large team (5+ developers)
-- ✅ Need to swap infrastructure (DB, broker, etc.)
-- ✅ High test coverage required
-- ✅ Multiple entry points (API, CLI, events, scheduled jobs)
-
-### Skip When:
-
-- ❌ Simple CRUD application (most applications)
-- ❌ Prototype / MVP / throwaway code
-- ❌ Small team (1-2 devs)
-- ❌ Short-lived project
-- ❌ Trivial business logic
+**Skip when:** simple CRUD, prototype/MVP/throwaway, small team (1-2), short-lived project, trivial business logic.
 
 ### Complexity Ladder (Start Simple)
 
-```
+```text
 Level 1: Simple layered (Controller → Service → Repository)
    ↓ When business rules grow complex
 Level 2: Domain model (Entities with behavior)
@@ -350,35 +204,13 @@ Level 4: CQRS (Separate read/write models)
 Level 5: Event Sourcing (Store events, derive state)
 ```
 
-**Don't skip levels.** Each level adds complexity. Move up only when you've proven the current level insufficient.
+**Don't skip levels.** Each adds complexity. Move up only when current level is proven insufficient.
 
 ---
 
 ## File Naming Conventions
 
-```
-domain/
-├── order/
-│   ├── order.ts                    # Aggregate root
-│   ├── order_item.ts               # Entity
-│   ├── value_objects.ts            # OrderId, Money, etc.
-│   ├── events.ts                   # OrderCreated, etc.
-│   ├── repository.ts               # IOrderRepository
-│   ├── services.ts                 # Domain services
-│   └── errors.ts                   # OrderError, etc.
-
-application/
-├── place_order/
-│   ├── command.ts                  # PlaceOrderCommand
-│   ├── handler.ts                  # PlaceOrderHandler
-│   └── port.ts                     # IPlaceOrderUseCase
-
-infrastructure/
-├── postgres/
-│   ├── order_repository.ts         # PostgresOrderRepository
-│   └── mappers/
-│       └── order_mapper.ts         # Domain <-> DB mapping
-```
+See [layers.md](layers.md) "Domain Layer" section for the canonical directory structure (`domain/`, `application/`, `infrastructure/`).
 
 ---
 
@@ -386,24 +218,16 @@ infrastructure/
 
 ### Books
 
-- Clean Architecture (Robert C. Martin, 2017)
-- Domain-Driven Design (Eric Evans, 2003)
-- Implementing Domain-Driven Design (Vaughn Vernon, 2013)
-- Hexagonal Architecture Explained (Alistair Cockburn, 2024)
-- Get Your Hands Dirty on Clean Architecture (Tom Hombergs, 2019)
+- Clean Architecture (Martin, 2017) · Domain-Driven Design (Evans, 2003)
+- Implementing DDD (Vernon, 2013) · Hexagonal Architecture Explained (Cockburn, 2024)
+- Get Your Hands Dirty on Clean Architecture (Hombergs, 2019)
 
 ### Reference Implementations
 
-- Go: [bxcodec/go-clean-arch](https://github.com/bxcodec/go-clean-arch)
-- Rust: [flosse/clean-architecture-with-rust](https://github.com/flosse/clean-architecture-with-rust)
-- Python: [cdddg/py-clean-arch](https://github.com/cdddg/py-clean-arch)
-- TypeScript: [jbuget/nodejs-clean-architecture-app](https://github.com/jbuget/nodejs-clean-architecture-app)
-- .NET: [jasontaylordev/CleanArchitecture](https://github.com/jasontaylordev/CleanArchitecture)
-- Java: [thombergs/buckpal](https://github.com/thombergs/buckpal)
+- [Go](https://github.com/bxcodec/go-clean-arch) · [Rust](https://github.com/flosse/clean-architecture-with-rust) · [Python](https://github.com/cdddg/py-clean-arch)
+- [TypeScript](https://github.com/jbuget/nodejs-clean-architecture-app) · [.NET](https://github.com/jasontaylordev/CleanArchitecture) · [Java](https://github.com/thombergs/buckpal)
 
 ### Official Documentation
 
-- https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html
-- https://alistair.cockburn.us/hexagonal-architecture/
-- https://www.domainlanguage.com/ddd/
-- https://martinfowler.com/tags/domain%20driven%20design.html
+- [Clean Architecture](https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html) · [Hexagonal Architecture](https://alistair.cockburn.us/hexagonal-architecture/)
+- [DDD Reference](https://www.domainlanguage.com/ddd/) · [Fowler on DDD](https://martinfowler.com/tags/domain%20driven%20design.html)
