@@ -124,6 +124,7 @@ bench_navigate() {
   end=$(python3 -c 'import time; print(time.time())')
   python3 -c "print(f'{$end - $start:.2f}')"
   agent-browser close
+  return 0
 }
 
 bench_formFill() {
@@ -138,6 +139,7 @@ bench_formFill() {
   end=$(python3 -c 'import time; print(time.time())')
   python3 -c "print(f'{$end - $start:.2f}')"
   agent-browser close
+  return 0
 }
 
 bench_extract() {
@@ -148,6 +150,7 @@ bench_extract() {
   end=$(python3 -c 'import time; print(time.time())')
   python3 -c "print(f'{$end - $start:.2f}')"
   agent-browser close
+  return 0
 }
 
 bench_multiStep() {
@@ -160,6 +163,7 @@ bench_multiStep() {
   end=$(python3 -c 'import time; print(time.time())')
   python3 -c "print(f'{$end - $start:.2f}')"
   agent-browser close
+  return 0
 }
 
 echo "=== agent-browser Benchmark ==="
@@ -403,6 +407,6 @@ async function benchVisual() {
 benchVisual();
 ```
 
-**Visual verification workflow**: Navigate → viewport screenshot (no `fullPage: true`) → ARIA snapshot → AI analyses both → decide next action.
+**Workflow**: Navigate → viewport screenshot (no `fullPage: true`) → ARIA snapshot → AI analyses both → decide next action.
 
 **Key metrics**: screenshot file size (token cost), ARIA node count, time to screenshot-ready, whether ARIA alone suffices vs needing vision.
