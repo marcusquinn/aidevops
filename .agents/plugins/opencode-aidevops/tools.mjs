@@ -160,10 +160,9 @@ function createPreEditCheckTool(scriptsDir) {
  *
  * @param {string} scriptsDir - Path to scripts directory
  * @param {function} run - Shell command runner
- * @param {object} _pipelines - Quality pipeline functions (unused — kept for API compatibility)
  * @returns {Record<string, object>}
  */
-export function createTools(scriptsDir, run, _pipelines) {
+export function createTools(scriptsDir, run) {
   return {
     aidevops: createAidevopsTool(run),
     aidevops_memory: createMemoryTool(scriptsDir, run),
