@@ -1351,8 +1351,10 @@ update_health_issues() {
 #   4. Codacy — via API if CODACY_API_TOKEN available
 #   5. SonarCloud — via API if sonar-project.properties exists
 #
-# The supervisor (LLM) reads the comment on the next pulse and creates
-# actionable GitHub issues for findings that warrant fixes.
+# The sweep creates simplification-debt issues directly (with
+# source:quality-sweep label). The pulse LLM dispatches these as normal
+# work — it should NOT independently create issues for the same findings.
+# See GH#10308 for the sweep-pulse dedup contract.
 #######################################
 run_daily_quality_sweep() {
 	# Time-of-day gate — only run during Anthropic's 2x usage boost hours.
@@ -2873,7 +2875,9 @@ _build_quality_issue_body() {
 ${bot_coverage_section}
 
 ---
-_Auto-updated by daily quality sweep. Comments below contain detailed findings per sweep. Do not edit manually._
+_Auto-updated by daily quality sweep. Findings as of \`${sweep_time}\` — may not reflect recent merges between sweeps._
+_The codebase is the primary source of truth. This dashboard is a reporting snapshot that may lag behind reality._
+_Do not edit manually._
 BODY
 	return 0
 }
