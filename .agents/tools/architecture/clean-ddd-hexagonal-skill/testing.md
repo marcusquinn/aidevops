@@ -13,7 +13,7 @@ Testing strategies for Clean Architecture + DDD + Hexagonal systems.
 
 ## Testing Pyramid
 
-```
+```text
 E2E Tests          — Few, slow, expensive
 Integration Tests  — Some, moderate speed
 Unit Tests         — Many, fast, cheap (Domain & Application)
@@ -64,29 +64,11 @@ describe('Order', () => {
   });
 });
 
+// Helpers — simple factory functions for test states
 const draft = () => Order.create(CustomerId.from('cust-123'));
-
-const testAddress = () =>
-  new Address({ street: '1 Main St', city: 'Springfield', country: 'US', postcode: '12345' });
-
-const withItems = () => {
-  const o = draft();
-  o.addItem(ProductId.from('p1'), Quantity.create(1), Money.create(10, 'USD'));
-  return o;
-};
-
-const confirmed = () => {
-  const o = withItems();
-  o.setShippingAddress(testAddress());
-  o.confirm();
-  return o;
-};
-
-const cancelled = () => {
-  const o = withItems();
-  o.cancel('test');
-  return o;
-};
+const withItems = () => { const o = draft(); o.addItem(ProductId.from('p1'), Quantity.create(1), Money.create(10, 'USD')); return o; };
+const confirmed = () => { const o = withItems(); o.setShippingAddress(new Address({ street: '1 Main St', city: 'Springfield', country: 'US', postcode: '12345' })); o.confirm(); return o; };
+const cancelled = () => { const o = withItems(); o.cancel('test'); return o; };
 ```
 
 ### Value Objects
@@ -135,19 +117,19 @@ describe('PlaceOrderHandler', () => {
   });
 });
 
-// Mock implementations — implement port interfaces, no framework dependencies
+// Mocks — implement port interfaces, no framework dependencies
 class MockOrderRepository implements IOrderRepository {
   savedOrders: Order[] = [];
   private fail = false;
-  async findById(id: OrderId): Promise<Order | null> { return this.savedOrders.find(o => o.id.equals(id)) ?? null; }
-  async save(order: Order): Promise<void> { if (this.fail) throw new Error('Simulated'); this.savedOrders.push(order); }
-  async delete(order: Order): Promise<void> { this.savedOrders.splice(this.savedOrders.findIndex(o => o.id.equals(order.id)), 1); }
-  simulateErrorOnSave(): void { this.fail = true; }
+  async findById(id: OrderId) { return this.savedOrders.find(o => o.id.equals(id)) ?? null; }
+  async save(order: Order) { if (this.fail) throw new Error('Simulated'); this.savedOrders.push(order); }
+  async delete(order: Order) { this.savedOrders.splice(this.savedOrders.findIndex(o => o.id.equals(order.id)), 1); }
+  simulateErrorOnSave() { this.fail = true; }
 }
 class MockEventPublisher implements IEventPublisher {
   publishedEvents: DomainEvent[] = [];
-  async publish(e: DomainEvent): Promise<void> { this.publishedEvents.push(e); }
-  async publishAll(es: DomainEvent[]): Promise<void> { this.publishedEvents.push(...es); }
+  async publish(e: DomainEvent) { this.publishedEvents.push(e); }
+  async publishAll(es: DomainEvent[]) { this.publishedEvents.push(...es); }
 }
 ```
 
@@ -222,6 +204,8 @@ describe('Orders API', () => {
 
 ## Architecture Tests
 
+Enforce dependency rules at build time.
+
 ```typescript
 // tests/architecture/dependency_rules.test.ts
 import { filesOfProject } from 'ts-arch';
@@ -248,7 +232,7 @@ describe('Architecture', () => {
 
 ## Test Organization
 
-```
+```text
 tests/
 ├── unit/
 │   ├── domain/        (order/, shared/)
@@ -265,16 +249,16 @@ tests/
 
 ---
 
-## Test Fixtures & Builders
+## Test Fixtures — Builder Pattern
 
-Builder pattern — fluent API, `clearEvents()` after construction so tests start with clean event state.
+Fluent API with `clearEvents()` after construction so tests start with clean event state.
 
 ```typescript
 // tests/fixtures/order_fixtures.ts
 export class OrderBuilder {
   private customerId = CustomerId.from('default-customer');
   private items: Array<{ productId: ProductId; quantity: Quantity; price: Money }> = [];
-  private confirmed = false;  // Builder flag — actual Order uses OrderStatus enum
+  private confirmed = false;
 
   withCustomer(id: string): this { this.customerId = CustomerId.from(id); return this; }
   withItem(productId: string, qty: number, price: number): this {
