@@ -38,20 +38,14 @@ tools:
 brew install tddworks/tap/asccli
 
 # Create API key at https://appstoreconnect.apple.com/access/integrations/api
-asc auth login \
-  --key-id YOUR_KEY_ID \
-  --issuer-id YOUR_ISSUER_ID \
-  --private-key-path ~/.asc/AuthKey_XXXXXX.p8 \
-  --name personal        # optional alias; defaults to "default"
-
+asc auth login --key-id YOUR_KEY_ID --issuer-id YOUR_ISSUER_ID \
+  --private-key-path ~/.asc/AuthKey_XXXXXX.p8 --name personal  # alias; default: "default"
 asc auth check            # verify active credentials
 asc apps list             # find your app ID
 asc init --app-id <id>    # pin app — skip --app-id on future commands
 ```
 
-**Multi-account**: Save multiple accounts with `--name`, switch with `asc auth use <name>`. Credentials stored in `~/.asc/credentials.json`.
-
-**Credential security**: `asc auth login` stores the private key PEM in `~/.asc/credentials.json`. Never commit this file. Use `--private-key-path` — never pass key content as a command argument.
+**Multi-account**: `--name` to save, `asc auth use <name>` to switch. Credentials in `~/.asc/credentials.json` — never commit. Use `--private-key-path`, never pass key content as an argument.
 
 ## Project Context Resolution
 
@@ -172,10 +166,8 @@ Since v0.1.57, web apps are hosted at asccli.app. Run `asc web-server` to start 
 
 ```bash
 asc web-server                    # default ports 8420/8421
-asc web-server --port 18420       # custom port (binds N and N+1)
+asc web-server --port 18420       # custom port — binds N and N+1 (HTTP/HTTPS); leave gap of 2
 ```
-
-**Port collision**: `asc web-server --port N` binds **two** ports: `N` (HTTP) and `N+1` (HTTPS). Leave a gap of at least 2 between this and other services.
 
 ## Agent Skills
 
@@ -204,7 +196,7 @@ Skills are loaded on-demand when relevant tasks are detected — not pre-loaded 
 | **Maestro** | Repeatable scripted E2E test flows |
 | **RevenueCat** | Server-side subscription tracking, analytics |
 
-**Typical lifecycle**: Build (xcodebuild-mcp) → Test (maestro + ios-simulator-mcp) → Upload (`asc builds archive --upload`) → TestFlight (`asc testflight`) → Metadata (`asc version-localizations`) → Screenshots (`asc app-shots generate` + `asc screenshots upload`) → Submit (`asc versions check-readiness` + `asc versions submit`) → Monitor (`asc reviews list`, `asc perf-metrics list`)
+**Lifecycle**: Build (xcodebuild-mcp) → Test (maestro + ios-simulator-mcp) → Upload (`asc builds archive --upload`) → TestFlight (`asc testflight`) → Metadata (`asc version-localizations`) → Screenshots (`asc app-shots generate` + `asc screenshots upload`) → Submit (`asc versions check-readiness` + `asc versions submit`) → Monitor (`asc reviews list`, `asc perf-metrics list`)
 
 ## Related
 
