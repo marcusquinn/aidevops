@@ -1,12 +1,10 @@
 # Metrics Explained
 
-> Every metric you'll see in Ads Manager, what it means, and benchmarks.
-
----
+> Every metric in Ads Manager — definitions, formulas, and benchmarks.
 
 ## Primary Metrics by Objective
 
-### For Purchase/Sales Campaigns
+### Purchase/Sales
 
 | Metric | Definition | Good | Great |
 |--------|------------|------|-------|
@@ -15,7 +13,7 @@
 | **Purchase Value** | Total revenue | Growing | Target met |
 | **AOV** | Revenue ÷ Orders | Stable+ | Increasing |
 
-### For Lead Generation
+### Lead Generation
 
 | Metric | Definition | Good | Great |
 |--------|------------|------|-------|
@@ -23,14 +21,14 @@
 | **Cost per Demo** | Spend ÷ Demos | <$150 | <$80 |
 | **Lead-to-SQL %** | SQLs ÷ Leads × 100 | 20%+ | 35%+ |
 
-### For App Installs
+### App Installs
 
 | Metric | Definition | Good | Great |
 |--------|------------|------|-------|
 | **CPI** | Spend ÷ Installs | Category avg | Below avg |
 | **Install Rate** | Installs ÷ Clicks | 5%+ | 10%+ |
 
-### For Awareness
+### Awareness
 
 | Metric | Definition | Good | Great |
 |--------|------------|------|-------|
@@ -38,11 +36,9 @@
 | **CPM** | Cost per 1000 impressions | <$15 | <$8 |
 | **Ad Recall Lift** | Estimated memory | Growing | Target met |
 
----
-
 ## Engagement Metrics
 
-### Click Metrics
+### Clicks
 
 | Metric | Definition | Good | Great |
 |--------|------------|------|-------|
@@ -52,7 +48,7 @@
 | **CPC (Link)** | Spend ÷ Link Clicks | <$2 | <$1 |
 | **Outbound CTR** | Outbound Clicks ÷ Impressions | 0.5%+ | 1%+ |
 
-### Video Metrics
+### Video
 
 | Metric | Definition | Good | Great |
 |--------|------------|------|-------|
@@ -62,7 +58,7 @@
 | **Avg Watch Time** | Total Watch Time ÷ Views | 5s+ | 10s+ |
 | **CPV (ThruPlay)** | Spend ÷ ThruPlays | <$0.05 | <$0.02 |
 
-### Landing Page Metrics
+### Landing Page
 
 | Metric | Definition | Good | Great |
 |--------|------------|------|-------|
@@ -71,20 +67,13 @@
 | **Bounce Rate** | Single page visits | <70% | <50% |
 | **Conversion Rate** | Conversions ÷ LPV | 5%+ | 15%+ |
 
----
+## Cost Metrics Deep Dive
 
-## Cost Metrics
+### CPM Factors
 
-### CPM (Cost Per 1000 Impressions)
+- Audience size (smaller = higher), competition (more = higher), ad quality (lower = higher)
+- Seasonality (Q4 = higher), placement (Feed > Audience Network)
 
-**What Affects CPM:**
-- Audience size (smaller = higher)
-- Competition (more = higher)
-- Ad quality (lower = higher)
-- Time of year (Q4 = higher)
-- Placement (Feed > Audience Network)
-
-**Typical CPMs by Industry:**
 | Industry | Average CPM |
 |----------|------------|
 | E-commerce | $10-15 |
@@ -92,40 +81,21 @@
 | Finance | $20-30 |
 | Gaming | $8-12 |
 
-### CPC (Cost Per Click)
+### CPC & CPA Formulas
 
-**Formula:**
 ```
-CPC = Spend ÷ Clicks
-    = CPM ÷ (CTR × 10)
-```
-
-**Lower CPC Through:**
-- Higher CTR (more clicks per impression)
-- Lower CPM (cheaper impressions)
-- Better ad relevance
-
-### CPA (Cost Per Action)
-
-**Formula:**
-```
-CPA = Spend ÷ Actions
-    = CPC ÷ Conversion Rate
+CPC = Spend ÷ Clicks = CPM ÷ (CTR × 10)
+CPA = Spend ÷ Actions = CPC ÷ Conversion Rate
 ```
 
-**Lower CPA Through:**
-- Lower CPC
-- Higher conversion rate
-- Better landing page
-- Better offer
-
----
+**Lower CPC through:** higher CTR, lower CPM, better ad relevance.
+**Lower CPA through:** lower CPC, higher conversion rate, better landing page/offer.
 
 ## Quality Metrics
 
 ### Ad Relevance Diagnostics
 
-Meta rates your ad on three dimensions:
+Meta rates ads on three dimensions — **Quality Ranking**, **Engagement Rate Ranking**, **Conversion Rate Ranking** — each compared to competitors:
 
 | Ranking | Meaning |
 |---------|---------|
@@ -135,140 +105,87 @@ Meta rates your ad on three dimensions:
 | Below Average (Bottom 20%) | Fix immediately |
 | Below Average (Bottom 10%) | Serious issue |
 
-**Quality Ranking:**
-How your ad's perceived quality compares to competitors.
-
-**Engagement Rate Ranking:**
-Expected engagement compared to competitors.
-
-**Conversion Rate Ranking:**
-Expected conversion rate compared to competitors.
-
 ### Frequency
 
-**Formula:**
 ```
 Frequency = Impressions ÷ Reach
 ```
 
-**Frequency Guidelines:**
 | Campaign Type | Warning | Action Needed |
 |---------------|---------|---------------|
 | Prospecting | 2.5+ | 3.5+ |
 | Retargeting | 4.0+ | 6.0+ |
 | Brand Awareness | 3.0+ | 5.0+ |
 
-**High Frequency Signs:**
-- CTR declining
-- CPA increasing
-- Negative feedback increasing
-- Same audience seeing ad repeatedly
+**High frequency signs:** CTR declining, CPA increasing, negative feedback increasing, same audience seeing ad repeatedly.
 
----
-
-## Conversion Metrics
+## Conversion & Revenue Metrics
 
 ### Conversion Rate
 
-**Formula:**
-```
-CVR = Conversions ÷ Clicks × 100
-```
-
-**Or:**
 ```
 CVR = Conversions ÷ Landing Page Views × 100
 ```
 
-**Benchmarks:**
 | Industry | Good CVR | Great CVR |
 |----------|----------|-----------|
 | E-commerce | 2-4% | 5%+ |
 | Lead Gen | 10-15% | 20%+ |
 | SaaS Trial | 5-10% | 15%+ |
 
-### ROAS (Return on Ad Spend)
+### ROAS & Break-Even
 
-**Formula:**
 ```
 ROAS = Revenue ÷ Ad Spend
+Breakeven ROAS = 1 ÷ Profit Margin   (e.g. 30% margin → 3.33x)
+Breakeven CPA  = AOV × Gross Margin % (e.g. $80 AOV × 60% → $48)
 ```
 
-**Example:**
-- Ad Spend: $1,000
-- Revenue: $4,000
-- ROAS: 4x (or 400%)
-
-**Breakeven ROAS:**
-```
-Breakeven ROAS = 1 ÷ Profit Margin
-```
-
-**Example:**
-- Profit Margin: 30%
-- Breakeven ROAS: 1 ÷ 0.30 = 3.33x
+**Example:** $1,000 spend, $4,000 revenue → ROAS 4x (400%).
 
 ### MER (Marketing Efficiency Ratio)
 
-**Formula:**
 ```
 MER = Total Revenue ÷ Total Marketing Spend
 ```
 
-**Why MER > ROAS:**
-- Accounts for all channels
-- Reduces attribution arguments
-- Business-level view
+Advantages over ROAS: accounts for all channels, reduces attribution arguments, provides business-level view.
 
----
+### Contribution Margin
+
+```
+Contribution Margin = Revenue - COGS - Ad Spend - Variable Costs
+CM% = Contribution Margin / Revenue × 100
+```
+
+### Incrementality-Adjusted Metrics
+
+```
+Incremental ROAS = Raw ROAS × Incrementality %
+Example: 3.0x × 60% lift = 1.8x true value
+```
+
+Use for budget allocation, channel comparison, and true ROI reporting.
 
 ## Custom Metrics to Create
 
 ### In Ads Manager
 
-**Click to LPV Ratio:**
-```
-Landing Page Views ÷ Link Clicks × 100
-Purpose: Identify page load issues
-```
-
-**Hook Rate:**
-```
-3-Second Video Views ÷ Impressions × 100
-Purpose: Measure hook effectiveness
-```
-
-**Hold Rate:**
-```
-ThruPlays ÷ 3-Second Video Views × 100
-Purpose: Measure content engagement
-```
+| Metric | Formula | Purpose |
+|--------|---------|---------|
+| Click to LPV Ratio | Landing Page Views ÷ Link Clicks × 100 | Identify page load issues |
+| Hook Rate | 3-Second Video Views ÷ Impressions × 100 | Measure hook effectiveness |
+| Hold Rate | ThruPlays ÷ 3-Second Video Views × 100 | Measure content engagement |
+| Cost Per LPV | Amount Spent ÷ Landing Page Views | Landing page cost efficiency |
 
 ### In Spreadsheet
 
-**True CPA (Adjusted for Quality):**
-```
-Ad Spend ÷ Qualified Conversions
-Purpose: Real cost of quality conversions
-```
+| Metric | Formula | Purpose |
+|--------|---------|---------|
+| True CPA | Ad Spend ÷ Qualified Conversions | Real cost of quality conversions |
+| Blended ROAS | Total Revenue ÷ Total Ad Spend (all platforms) | True return across channels |
 
-**Blended ROAS:**
-```
-Total Revenue ÷ Total Ad Spend (all platforms)
-Purpose: True return across channels
-```
-
-**Contribution Margin:**
-```
-(Revenue - COGS - Ad Spend) ÷ Revenue × 100
-Purpose: True profitability
-```
-
----
-
-## Reading Metrics Together
-
-### Diagnostic Combos
+## Diagnostic Combos
 
 | High | Low | Likely Issue |
 |------|-----|--------------|
@@ -280,132 +197,35 @@ Purpose: True profitability
 
 ### Performance Patterns
 
-**Healthy Campaign:**
-```
-CPM: Stable
-CTR: 1%+
-CVR: Meeting target
-CPA: At or below target
-Frequency: <3
-```
-
-**Fatiguing Campaign:**
-```
-CPM: Rising or stable
-CTR: Declining
-Frequency: Rising (>3)
-CPA: Rising
-Action: Refresh creative
-```
-
-**Quality Issue:**
-```
-CPM: High or rising
-CTR: Low
-Quality Ranking: Below Average
-Action: Improve creative/targeting
-```
-
----
+| Pattern | CPM | CTR | Frequency | CPA | Action |
+|---------|-----|-----|-----------|-----|--------|
+| **Healthy** | Stable | 1%+ | <3 | At/below target | Maintain |
+| **Fatiguing** | Rising/stable | Declining | Rising (>3) | Rising | Refresh creative |
+| **Quality issue** | High/rising | Low | — | — | Improve creative/targeting |
 
 ## Metric Review Cadence
 
-### Daily
-- Spend (on budget?)
-- CPA/ROAS (meeting targets?)
-- Any delivery issues?
+- **Daily:** Spend (on budget?), CPA/ROAS (meeting targets?), delivery issues
+- **Weekly:** CTR trend, frequency, creative performance, audience performance
+- **Monthly:** Overall ROAS/CPA vs target, attribution review, creative refresh needs, budget allocation
 
-### Weekly
-- CTR trend
-- Frequency
-- Creative performance
-- Audience performance
+## Cohort Analysis
 
-### Monthly
-- Overall ROAS/CPA vs target
-- Attribution review
-- Creative refresh needs
-- Budget allocation review
+Track acquisition cohort performance over time:
 
----
-
-## Advanced Metrics Analysis
-
-### Cohort Analysis
-
-Track how different acquisition cohorts perform over time:
-
-**Monthly Cohort Example:**
 | Cohort | Month 1 Revenue | Month 3 Revenue | LTV at 6 Months |
 |--------|-----------------|-----------------|-----------------|
 | Jan Acquired | $100 | $180 | $320 |
 | Feb Acquired | $95 | $165 | $290 |
 | Mar Acquired | $110 | $195 | $350 |
 
-### Incrementality-Adjusted Metrics
+## Recommended Custom Columns
 
-Use for budget allocation, channel comparison, and true ROI reporting.
+Create in Ads Manager → Columns → Customize Columns:
 
-```
-Incremental ROAS = Raw ROAS × Incrementality %
-Example: 3.0x × 60% lift = 1.8x true value
-```
-
-### Contribution Margin & Break-Even
-
-```
-Contribution Margin = Revenue - COGS - Ad Spend - Variable Costs
-CM% = Contribution Margin / Revenue × 100
-
-Break-Even ROAS = 1 / Gross Margin %   (e.g. 60% margin → 1.67x)
-Break-Even CPA  = AOV × Gross Margin % (e.g. $80 AOV × 60% → $48)
-```
-
----
-
-## Custom Columns Setup
-
-### Recommended Custom Columns
-
-Create these in Ads Manager → Columns → Customize Columns:
-
-**For Ecommerce:**
-1. ROAS (Purchase)
-2. Cost Per Purchase
-3. Purchase Conversion Value
-4. Website Purchases
-5. CTR (Link Click)
-6. CPM
-7. Frequency
-8. Reach
-
-**For Lead Gen:**
-1. Cost Per Lead
-2. Leads
-3. Lead Conversion Rate
-4. CTR (Link Click)
-5. Landing Page Views
-6. CPM
-7. Frequency
-8. Quality Ranking
-
-**For Video:**
-1. ThruPlay Cost
-2. ThruPlays
-3. 3-Second Video Views
-4. Video Average Watch Time
-5. CTR (All)
-6. CPM
-7. Reach
-8. Frequency
-
-### Calculated Metrics to Add
-
-| Metric | Formula |
-|--------|---------|
-| Hook Rate | `3-Second Video Views / Impressions × 100` |
-| Landing Page View Rate | `Landing Page Views / Link Clicks × 100` |
-| Cost Per LPV | `Amount Spent / Landing Page Views` |
+- **Ecommerce:** ROAS, Cost Per Purchase, Purchase Conversion Value, Website Purchases, CTR (Link Click), CPM, Frequency, Reach
+- **Lead Gen:** Cost Per Lead, Leads, Lead Conversion Rate, CTR (Link Click), Landing Page Views, CPM, Frequency, Quality Ranking
+- **Video:** ThruPlay Cost, ThruPlays, 3-Second Video Views, Video Average Watch Time, CTR (All), CPM, Reach, Frequency
 
 ---
 
