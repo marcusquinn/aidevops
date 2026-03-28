@@ -1,18 +1,10 @@
-# Cloudflare Vectorize Skill
+# Cloudflare Vectorize
 
-Expert guidance for Cloudflare Vectorize - globally distributed vector database for AI applications.
+Vector database for AI applications. Stores and queries embeddings for semantic search, recommendations, classification, and anomaly detection. Integrates with Workers AI.
 
-## Overview
-
-Vectorize stores and queries vector embeddings for semantic search, recommendations, classification, and anomaly detection. Seamlessly integrates with Workers AI.
-
-**Key specs**: Up to 1536 dimensions (32-bit float), up to 5M vectors per index (V2), 3 distance metrics, metadata filtering (up to 10 indexes per index), namespace support.
-
-**Status**: Generally Available (GA) — requires Wrangler 3.71.0+
+**Key specs**: Up to 1536 dimensions (float32), 5M vectors/index (V2), 3 distance metrics, metadata filtering (10 indexes/index), namespace support. GA — requires Wrangler 3.71.0+
 
 ## Index Configuration
-
-### Creating Indexes
 
 ```bash
 npx wrangler@latest vectorize create <index-name> \
@@ -22,43 +14,31 @@ npx wrangler@latest vectorize create <index-name> \
 
 **CRITICAL: Index configuration is immutable after creation. Cannot change dimensions or metric.**
 
-#### Distance Metrics
+Naming: lowercase/numeric ASCII, start with letter, dashes only, < 32 chars. E.g., `production-doc-search`.
 
-| Metric | Best For | Score Interpretation |
-|--------|----------|---------------------|
-| `euclidean` | Absolute distance, spatial data | Lower = closer (0.0 = identical) |
-| `cosine` | Text embeddings, semantic similarity | Higher = closer (1.0 = identical) |
-| `dot-product` | Recommendation systems, normalized vectors | Higher = closer |
-
-- Text/semantic search → `cosine` (most common)
-- Image similarity → `euclidean`
-- Pre-normalized vectors → `dot-product`
-
-#### Naming Conventions
-
-Lowercase/numeric ASCII, start with letter, dashes only, < 32 characters. E.g., `production-doc-search`.
+| Metric | Best For | Score |
+|--------|----------|-------|
+| `euclidean` | Spatial data | Lower = closer (0.0 = identical) |
+| `cosine` | Text/semantic similarity | Higher = closer (1.0 = identical) |
+| `dot-product` | Recommendations, normalized vectors | Higher = closer |
 
 ### Metadata Indexes
-
-Enable filtering on metadata properties (up to 10 per index):
 
 ```bash
 # Create BEFORE inserting vectors — existing vectors won't be indexed retroactively
 npx wrangler vectorize create-metadata-index <index-name> \
   --property-name=<field-name> \
   --type=<string|number|boolean>
-```
 
-- String fields: first 64 bytes indexed (UTF-8 boundary); number fields: float64 precision
-- **High cardinality** (UUIDs, ms timestamps): Good for `$eq`, poor for range queries — bucket to 5-min windows
-- **Low cardinality** (enum values, status): Good for filters
-
-```bash
 npx wrangler vectorize list-metadata-index <index-name>
 npx wrangler vectorize delete-metadata-index <index-name> --property-name=<field>
 npx wrangler vectorize info <index-name>          # vector count, processed mutations
 npx wrangler vectorize list-vectors <index-name> --count=100 --cursor=<cursor>
 ```
+
+- String fields: first 64 bytes indexed (UTF-8); number fields: float64 precision
+- **High cardinality** (UUIDs, ms timestamps): Good for `$eq`, poor for range queries — bucket to 5-min windows
+- **Low cardinality** (enum values, status): Good for filters
 
 ## Worker Binding
 
@@ -81,8 +61,6 @@ export interface Env { VECTORIZE: Vectorize; }
 
 ## Vector Operations
 
-### Vector Format
-
 ```typescript
 interface VectorizeVector {
   id: string;              // Unique identifier (max 64 bytes)
@@ -93,8 +71,6 @@ interface VectorizeVector {
 ```
 
 Values stored as Float32 (Float64 converted on insert). Dense arrays only.
-
-### Insert vs Upsert
 
 ```typescript
 // INSERT: Ignore duplicates (first wins)
@@ -120,37 +96,19 @@ const matches = await env.VECTORIZE.query(queryVector, {
 });
 // Returns: { count: number, matches: Array<{ id, score, values?, metadata? }> }
 
-// Query by existing vector ID
 await env.VECTORIZE.queryById("some-vector-id", { topK: 5, returnValues: true });
-
-// Retrieve specific vectors
 await env.VECTORIZE.getByIds(["11", "22", "33"]);
-
-// Delete by IDs (async)
-await env.VECTORIZE.deleteByIds(["11", "22", "33"]);
-
-// Get index config
+await env.VECTORIZE.deleteByIds(["11", "22", "33"]);  // async
 await env.VECTORIZE.describe();  // { dimensions, metric, vectorCount? }
 ```
 
 ### Metadata Filtering
 
 ```typescript
-// Implicit $eq
-filter: { category: "electronics" }
-
-// Explicit operators
-filter: {
-  category: { $ne: "deprecated" },
-  price: { $gte: 10, $lt: 100 },
-  tags: { $in: ["featured", "sale"] }
-}
-
-// Nested metadata with dot notation
-filter: { "product.brand": "acme" }
-
-// Prefix search via range
-filter: { category: { $gte: "elec", $lt: "eled" } }  // Matches "electronics"
+filter: { category: "electronics" }                          // Implicit $eq
+filter: { category: { $ne: "deprecated" }, price: { $gte: 10, $lt: 100 }, tags: { $in: ["featured", "sale"] } }
+filter: { "product.brand": "acme" }                          // Dot notation
+filter: { category: { $gte: "elec", $lt: "eled" } }          // Prefix search
 ```
 
 **Operators**: `$eq` (implicit), `$ne`, `$in`, `$nin`, `$lt`, `$lte`, `$gt`, `$gte`
@@ -159,16 +117,12 @@ filter: { category: { $gte: "elec", $lt: "eled" } }  // Matches "electronics"
 
 ## Namespaces
 
-Partition vectors within a single index by customer, tenant, or category.
+Partition vectors within a single index. **Limits**: 50,000 (Paid) / 1,000 (Free). Max 64 bytes per name.
 
 ```typescript
-await env.VECTORIZE.insert([
-  { id: "1", values: [...], namespace: "customer-abc" }
-]);
+await env.VECTORIZE.insert([{ id: "1", values: [...], namespace: "customer-abc" }]);
 const matches = await env.VECTORIZE.query(queryVector, { namespace: "customer-abc" });
 ```
-
-**Limits**: 50,000 namespaces (Paid) / 1,000 (Free). Max 64 bytes per namespace name.
 
 ## Integration Patterns
 
@@ -193,13 +147,9 @@ const matches = await env.VECTORIZE.query(response.data[0].embedding, { topK: 5 
 ### RAG Pattern
 
 ```typescript
-// 1. Generate query embedding
 const embeddings = await env.AI.run("@cf/baai/bge-base-en-v1.5", { text: [query] });
-// 2. Search Vectorize
 const matches = await env.VECTORIZE.query(embeddings.data[0], { topK: 5, returnMetadata: "all" });
-// 3. Fetch full documents from R2/D1/KV
 const documents = await Promise.all(matches.matches.map(m => env.R2_BUCKET.get(m.metadata?.r2_key).then(o => o?.text())));
-// 4. Generate response with context
 const llmResponse = await env.AI.run("@cf/meta/llama-3-8b-instruct", {
   prompt: `Context: ${documents.filter(Boolean).join("\n\n")}\n\nQuestion: ${query}\n\nAnswer:`
 });
@@ -207,15 +157,11 @@ const llmResponse = await env.AI.run("@cf/meta/llama-3-8b-instruct", {
 
 ## CLI Operations
 
-### Bulk Upload (NDJSON)
-
 ```bash
-# File format: { "id": "1", "values": [0.1, 0.2, ...], "metadata": {"url": "/doc/1"}}
+# Bulk upload (NDJSON): { "id": "1", "values": [0.1, 0.2, ...], "metadata": {"url": "/doc/1"}}
 npx wrangler vectorize insert <index-name> --file=embeddings.ndjson
-# Max 5000 vectors per file — use multiple files for larger batches
+# Max 5000 vectors per file
 ```
-
-### Python HTTP API
 
 ```python
 url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/vectorize/v2/indexes/{index_name}/insert"
@@ -223,11 +169,9 @@ with open('embeddings.ndjson', 'rb') as f:
     resp = requests.post(url, headers={"Authorization": f"Bearer {api_token}"}, files=dict(vectors=f))
 ```
 
-## Performance Optimization
+## Performance
 
-### Write Throughput
-
-Vectorize batches up to 200K vectors OR 1000 operations per job. Batch size matters:
+**Write throughput** — batch 1000-2500 vectors per operation (Vectorize batches up to 200K vectors OR 1000 ops/job):
 
 ```typescript
 // BAD: 250,000 individual inserts = 250 jobs = ~1 hour
@@ -239,8 +183,7 @@ for (let i = 0; i < vectors.length; i += 2500) {
 }
 ```
 
-### Query Performance
-
+**Query performance**:
 - `returnValues: true` → high-precision scoring (slower, topK max 20)
 - Default → approximate scoring (faster, topK max 100)
 - Namespace filters applied first (fastest); high-cardinality range queries degrade performance
@@ -251,13 +194,12 @@ for (let i = 0; i < vectors.length; i += 2500) {
 | Resource | Limit |
 |----------|-------|
 | Indexes per account | 50,000 (Paid) / 100 (Free) |
-| Max dimensions | 1536 (32-bit float) |
-| Max vector ID length | 64 bytes |
+| Max dimensions | 1536 (float32) |
+| Max vector ID / namespace name | 64 bytes |
 | Metadata per vector | 10 KiB |
 | Max topK (no values/metadata) | 100 |
 | Max topK (with values/metadata) | 20 |
-| Insert batch size (Workers) | 1000 |
-| Insert batch size (HTTP API) | 5000 |
+| Insert batch (Workers / HTTP API) | 1000 / 5000 |
 | Max vectors per index | 5,000,000 |
 | Max namespaces | 50,000 (Paid) / 1,000 (Free) |
 | Max upload size | 100 MB |
@@ -278,21 +220,11 @@ const matches = await env.VECTORIZE.query(queryVector, { namespace: `tenant-${te
 const matches = await env.VECTORIZE.query(queryVector, { filter: { tenantId } });
 ```
 
-## Best Practices & Common Mistakes
+## Best Practices
 
-**Do:**
-1. Create metadata indexes BEFORE inserting vectors (existing vectors not retroactively indexed)
-2. Use `upsert` for updates — `insert` ignores duplicates
-3. Batch 1000-2500 vectors per operation for optimal throughput
-4. Use `returnMetadata: "indexed"` for speed, `"all"` only when needed
-5. Use namespace filtering instead of metadata when possible (faster)
-6. Handle async operations — inserts/upserts take seconds to be queryable
+**Do**: Create metadata indexes before inserting vectors. Use `upsert` for updates. Batch 1000-2500 vectors. Use `returnMetadata: "indexed"` for speed. Prefer namespace filtering over metadata (faster). Handle async — inserts take seconds to be queryable.
 
-**Don't:**
-1. Pass wrong data shape: Workers AI → `embeddings.data[0]`; OpenAI → `response.data[0].embedding`
-2. Return all values/metadata by default — impacts performance and topK limit
-3. Use high-cardinality range queries — bucket or use discrete values
-4. Forget `npx wrangler types` after config changes
+**Don't**: Pass wrong data shape (Workers AI → `embeddings.data[0]`; OpenAI → `response.data[0].embedding`). Return all values/metadata by default. Use high-cardinality range queries. Forget `npx wrangler types` after config changes.
 
 ## Troubleshooting
 
@@ -305,19 +237,11 @@ const matches = await env.VECTORIZE.query(queryVector, { filter: { tenantId } })
 
 ## Resources
 
-- [Official Docs](https://developers.cloudflare.com/vectorize/)
-- [Client API Reference](https://developers.cloudflare.com/vectorize/reference/client-api/)
-- [Metadata Filtering](https://developers.cloudflare.com/vectorize/reference/metadata-filtering/)
-- [Limits](https://developers.cloudflare.com/vectorize/platform/limits/)
-- [Workers AI Models](https://developers.cloudflare.com/workers-ai/models/#text-embeddings)
-- [Wrangler Commands](https://developers.cloudflare.com/workers/wrangler/commands/#vectorize)
-- [Discord: #vectorize](https://discord.cloudflare.com)
+- [Docs](https://developers.cloudflare.com/vectorize/) · [Client API](https://developers.cloudflare.com/vectorize/reference/client-api/) · [Metadata Filtering](https://developers.cloudflare.com/vectorize/reference/metadata-filtering/) · [Limits](https://developers.cloudflare.com/vectorize/platform/limits/) · [Workers AI Models](https://developers.cloudflare.com/workers-ai/models/#text-embeddings) · [Wrangler Commands](https://developers.cloudflare.com/workers/wrangler/commands/#vectorize)
 
 ## Related
 
 - **Vector search decision guide**: `tools/database/vector-search.md` — compare Vectorize with zvec, pgvector, and other vector databases
 - **Multi-org isolation**: `services/database/multi-org-isolation.md` — tenant isolation schema patterns
 
----
-
-**Version:** V2 (GA) - Requires Wrangler 3.71.0+
+**Version:** V2 (GA) — Wrangler 3.71.0+
