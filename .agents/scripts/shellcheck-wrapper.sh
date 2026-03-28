@@ -107,10 +107,22 @@ _find_real_shellcheck() {
 
 	# Fast path: check .real sibling of this script's location first.
 	# When setup.sh replaces the binary, it moves it to shellcheck.real.
-	# This avoids expensive PATH scanning and realpath resolution.
-	local self_dir
-	self_dir="$(dirname "${BASH_SOURCE[0]}" 2>/dev/null || echo ".")"
+	# Resolve symlinks before computing self_dir so that when the wrapper is
+	# invoked via a symlink (e.g. /opt/homebrew/bin/shellcheck → Cellar path),
+	# self_dir reflects the symlink's directory (/opt/homebrew/bin/) where the
+	# .real sibling lives — not the Cellar directory the symlink resolves to.
+	local self_resolved
+	self_resolved="$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+	# Also check the unresolved (symlink) directory — covers the case where
+	# setup.sh placed the wrapper at the symlink path and .real is co-located.
+	local self_dir self_link_dir
+	self_dir="$(dirname "$self_resolved" 2>/dev/null || echo ".")"
+	self_link_dir="$(dirname "${BASH_SOURCE[0]}" 2>/dev/null || echo ".")"
 	local sibling="${self_dir}/shellcheck.real"
+	# If the resolved and unresolved dirs differ, also check the symlink dir
+	if [[ "$self_dir" != "$self_link_dir" && ! -x "$sibling" ]]; then
+		sibling="${self_link_dir}/shellcheck.real"
+	fi
 	if [[ -x "$sibling" ]]; then
 		printf '%s' "$sibling"
 		return 0
@@ -126,8 +138,8 @@ _find_real_shellcheck() {
 	done
 
 	# Slow path: search PATH, skipping this wrapper script and any copies of it
-	local self
-	self="$(realpath "${BASH_SOURCE[0]}" 2>/dev/null || readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+	# Reuse self_resolved computed above (avoids redundant realpath call)
+	local self="$self_resolved"
 
 	local dir
 	while IFS= read -r -d ':' dir || [[ -n "$dir" ]]; do
