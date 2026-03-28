@@ -38,28 +38,24 @@ project/
 │   ├── 20240502100843_create_users_table.sql
 │   └── 20240503142030_add_email_to_users.sql
 ├── seeds/                      # Initial/test data
-│   └── 001_base_data.sql
 └── scripts/
     ├── migrate.sh              # Run pending migrations
     └── rollback.sh             # Rollback last migration
 ```
 
-Prefix schema files with numbers to control execution order (dependencies). Use gaps (00, 01, 10, 20, 30, 90) to allow insertions.
+Prefix schema files with numbers to control execution order. Use gaps (00, 01, 10, 20, 30, 90) to allow insertions.
 
 ## Declarative Schema Workflow (Recommended)
 
 | Approach | Pros | Cons |
 |----------|------|------|
-| **Declarative** | Single source of truth, easy to review, auto-generated migrations | Requires diff tool, some edge cases |
+| **Declarative** | Single source of truth, auto-generated migrations | Requires diff tool, some edge cases |
 | **Imperative** | Full control, works everywhere | Scattered across files, manual, error-prone |
 
 ### Writing Schema Files
 
-Each file declares the desired state of related tables:
-
 ```sql
 -- schemas/10_users.sql
-
 CREATE TABLE IF NOT EXISTS "users" (
     "id" SERIAL PRIMARY KEY,
     "email" VARCHAR(255) NOT NULL UNIQUE,
@@ -67,22 +63,7 @@ CREATE TABLE IF NOT EXISTS "users" (
     "created_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-
--- Related function
-CREATE OR REPLACE FUNCTION update_updated_at()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = CURRENT_TIMESTAMP;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER users_updated_at
-    BEFORE UPDATE ON users
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at();
 ```
 
 ### Generating and Applying Migrations
@@ -119,7 +100,6 @@ For these, create manual migration files alongside generated ones.
 ```typescript
 // schemas/users.ts
 import { pgTable, serial, text, timestamp } from 'drizzle-orm/pg-core';
-
 export const users = pgTable('users', {
   id: serial('id').primaryKey(),
   email: text('email').notNull().unique(),
@@ -147,7 +127,6 @@ atlas migrate diff add_users \
   --to "file://schema.sql" \
   --dev-url "docker://postgres/15"
 
-# Apply versioned migrations
 atlas migrate apply -u "postgres://..."
 ```
 
@@ -187,27 +166,23 @@ rails db:migrate:redo              # Rollback + migrate
 ```text
 {YYYYMMDDHHMMSS}_{action}_{target}_{details}.sql
 
-Examples:
 20240502100843_create_users_table.sql
 20240502101659_add_email_to_users.sql
 20240503142030_drop_legacy_sessions_table.sql
 20240504083015_add_index_email_unique_to_users.sql
-20240505091200_rename_name_to_full_name_in_users.sql
 ```
 
-### Action Prefixes
+| Prefix | Purpose |
+|--------|---------|
+| `create_` | New table |
+| `add_` | New column/index |
+| `drop_` | Remove table/column |
+| `rename_` | Rename column/table |
+| `alter_` | Modify column type |
+| `seed_` | Initial data |
+| `backfill_` | Data migration |
 
-| Prefix | Purpose | Example |
-|--------|---------|---------|
-| `create_` | New table | `create_users_table.sql` |
-| `add_` | New column/index | `add_email_to_users.sql` |
-| `drop_` | Remove table/column | `drop_legacy_table.sql` |
-| `rename_` | Rename column/table | `rename_name_to_full_name_in_users.sql` |
-| `alter_` | Modify column type | `alter_price_to_decimal_in_products.sql` |
-| `seed_` | Initial data | `seed_default_roles.sql` |
-| `backfill_` | Data migration | `backfill_user_status.sql` |
-
-**Bad names to avoid**: `migration_1.sql`, `fix_stuff.sql`, `20240502_changes.sql`, `update_db.sql`
+**Bad names**: `migration_1.sql`, `fix_stuff.sql`, `20240502_changes.sql`, `update_db.sql`
 
 ## File Structure
 
@@ -223,27 +198,20 @@ CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     email VARCHAR(255) NOT NULL UNIQUE,
     name VARCHAR(255),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-
-CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 
 -- ====== DOWN ======
 DROP INDEX IF EXISTS idx_users_email;
 DROP TABLE IF EXISTS users;
 ```
 
-### Idempotent Migrations (Preferred)
+### Idempotent Column Addition (PostgreSQL)
 
-Write migrations that can run multiple times safely:
+`ALTER TABLE ADD COLUMN` has no `IF NOT EXISTS` — use a guard:
 
 ```sql
--- PostgreSQL
-CREATE TABLE IF NOT EXISTS users (...);
-CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-
--- Column addition (PostgreSQL — no IF NOT EXISTS for ALTER TABLE ADD COLUMN)
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -315,7 +283,6 @@ For risky changes (rename column, change type), use three phases:
 
 ```sql
 -- Phase 1: EXPAND (add new, keep old)
--- 20240601_add_email_new_to_users.sql
 ALTER TABLE users ADD COLUMN email_new VARCHAR(255);
 UPDATE users SET email_new = email;
 
@@ -323,7 +290,6 @@ UPDATE users SET email_new = email;
 -- Deploy code that writes to BOTH columns, reads from new
 
 -- Phase 3: CONTRACT (remove old)
--- 20240615_drop_old_email_from_users.sql
 ALTER TABLE users DROP COLUMN email;
 ALTER TABLE users RENAME COLUMN email_new TO email;
 ```
@@ -336,50 +302,26 @@ ALTER TABLE users RENAME COLUMN email_new TO email;
 | Add NOT NULL column | Caution | Add nullable → backfill → add constraint |
 | Drop column | Caution | Remove from code first → wait → drop |
 | Rename column | Caution | Expand-contract pattern |
-| Add index | Caution | Use `CONCURRENTLY` (PostgreSQL) |
+| Add index | Caution | `CREATE INDEX CONCURRENTLY` (PostgreSQL) — non-blocking |
 | Change column type | Caution | Create new column → migrate → drop old |
-
-### Concurrent Index Creation (PostgreSQL)
-
-```sql
--- Non-blocking (safe for production)
-CREATE INDEX CONCURRENTLY idx_users_email ON users(email);
-
--- Blocks writes during creation (avoid on large tables)
-CREATE INDEX idx_users_email ON users(email);
-```
 
 ## Git Workflow Integration
 
-### Branch Naming and Commits
+**Pre-push checklist:**
+1. Migration has both UP and DOWN sections; DOWN actually reverses UP
+2. Tested locally (run up, run down, run up again)
+3. No modifications to already-pushed migrations
+4. Timestamp is current (regenerate if rebasing)
+
+**Team collaboration:** Pull before creating. Use timestamps (not sequential numbers). One migration per PR when possible. Timestamp collision on rebase: rebasing developer renames their file with a new timestamp.
+
+**Commit messages** (conventional commits):
 
 ```bash
-# Branch naming
-git checkout -b feature/add-user-preferences-table   # Schema changes
-git checkout -b bugfix/fix-orders-foreign-key         # Bug fixes
-git checkout -b chore/backfill-user-status            # Data migrations
-
-# Commit messages (conventional commits)
 git commit -m "feat(db): add user_preferences table with indexes"
 git commit -m "fix(db): correct foreign key constraint on orders"
 git commit -m "chore(db): backfill user status from legacy field"
 ```
-
-### Pre-Push Checklist
-
-1. Migration has both UP and DOWN sections
-2. DOWN section actually reverses the UP changes
-3. Tested locally (run up, run down, run up again)
-4. No modifications to already-pushed migrations
-5. Timestamp is current (regenerate if rebasing)
-
-### Team Collaboration
-
-- **Pull before creating** new migrations
-- **Use timestamps** (not sequential numbers) for ordering
-- **One migration per PR** when possible
-- **Rebase carefully** — may need to regenerate timestamps
-- If two developers create migrations with the same timestamp, the rebasing developer renames their file with a new timestamp
 
 ## CI/CD Integration
 
@@ -388,51 +330,34 @@ name: Database Migration
 on:
   push:
     branches: [main]
-    paths:
-      - 'migrations/**'
+    paths: ['migrations/**']
 
 jobs:
   migrate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Backup database
-        run: |
-          pg_dump $DATABASE_URL > backup_$(date +%Y%m%d_%H%M%S).sql
+        run: pg_dump $DATABASE_URL > backup_$(date +%Y%m%d_%H%M%S).sql
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-
       - name: Run migrations
-        run: |
-          # Your migration tool command
-          flyway migrate
-          # OR: npx prisma migrate deploy
-          # OR: bundle exec rails db:migrate
+        run: flyway migrate   # OR: npx prisma migrate deploy / rails db:migrate
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-
-      - name: Verify migration
-        run: |
-          psql $DATABASE_URL -c "SELECT 1"
+      - name: Verify
+        run: psql $DATABASE_URL -c "SELECT 1"
 ```
 
-## Migration Tracking Table
-
-Most tools create a tracking table automatically. Example (Flyway):
+Most tools create a tracking table automatically. To inspect (Flyway example):
 
 ```sql
 SELECT version, description, installed_on, success
-FROM flyway_schema_history
-ORDER BY installed_rank;
+FROM flyway_schema_history ORDER BY installed_rank;
 ```
 
-Raw SQL runner (framework-agnostic):
+Framework-agnostic raw runner:
 
 ```bash
-#!/bin/bash
-for f in migrations/*.sql; do
-    echo "Running $f..."
-    psql $DATABASE_URL -f "$f"
-done
+for f in migrations/*.sql; do psql $DATABASE_URL -f "$f"; done
 ```
