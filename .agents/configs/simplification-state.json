@@ -477,9 +477,9 @@
       "pr": 11595
     },
     ".agents/content/research.md": {
-      "hash": "e3b17c7a0ac3b38bcc5f94611a9b7830d1258b36",
-      "at": "2026-03-28T08:17:48Z",
-      "pr": 11600
+      "hash": "0844a394bf378618e923c821a3246e54fead511f",
+      "at": "2026-03-28T08:57:54Z",
+      "pr": 11644
     },
     ".agents/tools/performance/webpagetest.md": {
       "hash": "e0b3e8da23436e916aecd40d37bceeea48f99642",
@@ -497,8 +497,8 @@
       "pr": 11610
     },
     ".agents/services/email/google-workspace.md": {
-      "hash": "4b531a500197e553c70b2a23e6a3ed9b2b4d09fa",
-      "at": "2026-03-28T08:18:15Z",
+      "hash": "d25ed82148411a5ce44101400e445cb3293c4e96",
+      "at": "2026-03-28T08:58:52Z",
       "pr": 11613
     },
     ".agents/tools/architecture/feature-slicing-skill/layers.md": {
@@ -545,6 +545,186 @@
       "hash": "f8ded271e66b8024f24caa8a841ea58da90a709a",
       "at": "2026-03-28T08:18:28Z",
       "pr": 11555
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/workers-vpc.md": {
+      "hash": "fd8d3ba366abc324f0738e2e11fce322d92c654b",
+      "at": "2026-03-28T08:57:49Z",
+      "pr": 11677
+    },
+    ".agents/marketing-sales/ad-creative-chapter-03.md": {
+      "hash": "91daa72c48e3e774ee187eea4c3cbc6227d51497",
+      "at": "2026-03-28T08:57:51Z",
+      "pr": 11681
+    },
+    ".agents/services/communications/convos-bridge-template.sh": {
+      "hash": "cd850bc9a35a947206c1a4cf2e67313bb90f9644",
+      "at": "2026-03-28T08:57:52Z",
+      "pr": 11688
+    },
+    ".agents/services/communications/convos.md": {
+      "hash": "74e396568b01688f29f86d799f049f5b624b9205",
+      "at": "2026-03-28T08:57:52Z",
+      "pr": 11688
+    },
+    ".agents/tools/voice/cloud-voice-agents.md": {
+      "hash": "19b6d81e4e9281e815be96d88f223d9a98252587",
+      "at": "2026-03-28T08:57:55Z",
+      "pr": 11645
+    },
+    ".agents/marketing-sales/direct-response-copy-swipe-file-vsl-scripts.md": {
+      "hash": "816a5f35e7ca6b338deae7db62c3058d317b96d6",
+      "at": "2026-03-28T08:57:56Z",
+      "pr": 11647
+    },
+    ".agents/content/video-runway.md": {
+      "hash": "54c5b2fe2d3cdd00e23f192d5f869c927b6e573e",
+      "at": "2026-03-28T08:58:00Z",
+      "pr": 11646
+    },
+    ".agents/marketing-sales/ad-creative-testing-optimization.md": {
+      "hash": "2f60c87e51dac14c539d02ba1a796a98b995c2c4",
+      "at": "2026-03-28T08:58:01Z",
+      "pr": 11614
+    },
+    ".agents/tools/diagrams/mermaid-diagrams-skill/data-charts.md": {
+      "hash": "ea8a64811a9c35a4274183f1c0c215be8c2a6aec",
+      "at": "2026-03-28T08:58:03Z",
+      "pr": 11602
+    },
+    ".agents/content.md": {
+      "hash": "2f71b51f39307e001e3af0bae81c5fc440c2da9b",
+      "at": "2026-03-28T08:58:04Z",
+      "pr": 11616
+    },
+    ".agents/marketing-sales/ad-creative-psychology-targeting.md": {
+      "hash": "28200053613d34529f70017afd9ff2c513dd5d03",
+      "at": "2026-03-28T08:58:06Z",
+      "pr": 11655
+    },
+    ".agents/marketing-sales/direct-response-copy-swipe-file-vsl-scripts-example.md": {
+      "hash": "219b3f24929e0866af7e05c36250a267a5f2e952",
+      "at": "2026-03-28T08:58:28Z",
+      "pr": 11597
+    },
+    ".agents/marketing-sales/direct-response-copy-swipe-file-vsl-scripts-pastor-framework.md": {
+      "hash": "229aaf2fa58645152ccdd4ece9d723068b251f4a",
+      "at": "2026-03-28T08:58:28Z",
+      "pr": 11597
+    },
+    ".agents/tools/credentials/sops.md": {
+      "hash": "927fea51df6b5ed15ee41b1473f26bf7b526ca38",
+      "at": "2026-03-28T08:58:29Z",
+      "pr": 11560
+    },
+    ".agents/tools/api/better-auth.md": {
+      "hash": "8494627274fa59f222b8c19aeb61280ded29e8ec",
+      "at": "2026-03-28T08:58:32Z",
+      "pr": 11566
+    },
+    ".agents/aidevops/extension.md": {
+      "hash": "6b76dd6fa41470a5d1d4e5ebeea7af1b13b6a1e8",
+      "at": "2026-03-28T08:58:33Z",
+      "pr": 11565
+    },
+    ".agents/tools/wordpress/localwp.md": {
+      "hash": "e2a3ea522c2f0a4739825f594f236c92f0eee0fa",
+      "at": "2026-03-28T08:58:34Z",
+      "pr": 11563
+    },
+    ".agents/marketing-sales/ad-creative-platform-meta.md": {
+      "hash": "130ac72c8435b342b5be159ed84ab6633efdf4fa",
+      "at": "2026-03-28T08:58:35Z",
+      "pr": 11574
+    },
+    ".agents/marketing-sales/direct-response-copy-frameworks-headline-formulas.md": {
+      "hash": "9c23835b93de53e0d6371a5f753c1409e0374d9d",
+      "at": "2026-03-28T08:58:42Z",
+      "pr": 11548
+    },
+    ".agents/tools/document/extraction-schemas.md": {
+      "hash": "fa0ee1f8e92a38842d98674241507fd0cde43a81",
+      "at": "2026-03-28T08:58:45Z",
+      "pr": 11601
+    },
+    ".agents/tools/document/extraction-schemas/01-design-principles.md": {
+      "hash": "c557fde290bb52a65fa91d603c4366fdb0fcf3e7",
+      "at": "2026-03-28T08:58:45Z",
+      "pr": 11601
+    },
+    ".agents/tools/document/extraction-schemas/02-purchase-invoice.md": {
+      "hash": "d9c194618044c58a6f3a364bba869683957b26c1",
+      "at": "2026-03-28T08:58:45Z",
+      "pr": 11601
+    },
+    ".agents/tools/document/extraction-schemas/03-expense-receipt.md": {
+      "hash": "8c0553d204c9f8e111f7bb211d9b8e99a8fac453",
+      "at": "2026-03-28T08:58:45Z",
+      "pr": 11601
+    },
+    ".agents/tools/document/extraction-schemas/04-credit-note.md": {
+      "hash": "c58830493ee6a0ae1b3f77c6fb18a20db5e87ed4",
+      "at": "2026-03-28T08:58:45Z",
+      "pr": 11601
+    },
+    ".agents/tools/document/extraction-schemas/05-sales-invoice.md": {
+      "hash": "50c68e48c09eb85c30259361ceadadca01795e5e",
+      "at": "2026-03-28T08:58:45Z",
+      "pr": 11601
+    },
+    ".agents/tools/document/extraction-schemas/06-generic-receipt.md": {
+      "hash": "8cd493fef922d42decca280eaaec76c32de7f324",
+      "at": "2026-03-28T08:58:45Z",
+      "pr": 11601
+    },
+    ".agents/tools/document/extraction-schemas/07-quickfile-mapping.md": {
+      "hash": "329bb22bc68c98571c6bd075a6458573830bcd99",
+      "at": "2026-03-28T08:58:45Z",
+      "pr": 11601
+    },
+    ".agents/tools/document/extraction-schemas/08-vat-handling.md": {
+      "hash": "74ea1c15f941a48b3cb8d0a62dc8fa3ec590dd86",
+      "at": "2026-03-28T08:58:45Z",
+      "pr": 11601
+    },
+    ".agents/tools/document/extraction-schemas/09-nominal-codes.md": {
+      "hash": "7210b70a3f8072de3d50be138635dced20594d9d",
+      "at": "2026-03-28T08:58:45Z",
+      "pr": 11601
+    },
+    ".agents/tools/document/extraction-schemas/10-classification.md": {
+      "hash": "8822a182e225ee7360107f5e1938e4fc844670e3",
+      "at": "2026-03-28T08:58:45Z",
+      "pr": 11601
+    },
+    ".agents/tools/document/extraction-schemas/11-pipeline-integration.md": {
+      "hash": "377abccc10cb93b5f8b51010a48d6d947553b71c",
+      "at": "2026-03-28T08:58:45Z",
+      "pr": 11601
+    },
+    ".agents/tools/document/extraction-schemas/12-validation.md": {
+      "hash": "85fb1862ed295cbba2a8c11ed8ccef35d25fc2c4",
+      "at": "2026-03-28T08:58:45Z",
+      "pr": 11601
+    },
+    ".agents/content/distribution-youtube-script-writer.md": {
+      "hash": "e7d74dc2884f946d2d3ad41287926a426d0b0edb",
+      "at": "2026-03-28T08:58:46Z",
+      "pr": 11603
+    },
+    ".agents/seo/site-crawler.md": {
+      "hash": "b57ba3a5214383ec97ea5c4838fabcd0ce900a20",
+      "at": "2026-03-28T08:58:48Z",
+      "pr": 11598
+    },
+    ".agents/services/communications/signal.md": {
+      "hash": "652f531e6f54f9fd38da5c5bd61889672eac4acf",
+      "at": "2026-03-28T08:58:53Z",
+      "pr": 11620
+    },
+    ".agents/tools/deployment/vercel.md": {
+      "hash": "c2084ec268e00720815607590f8bab4bc7082c53",
+      "at": "2026-03-28T08:58:54Z",
+      "pr": 11615
     }
   }
 }
