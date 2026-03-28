@@ -20,13 +20,13 @@ Default search format. Provide up to 15 headlines + 4 descriptions; Google's ML 
 
 **RSA Best Practices:**
 
-1. **Maximize assets** — provide all 15 headlines and 4 descriptions
-2. **Keyword inclusion** — primary keyword in 2+ headlines; use dynamic keyword insertion
-3. **Unique messaging** — each headline adds distinct value; avoid synonymous phrases
-4. **Standalone readability** — every headline/description must make sense independently (any combination, any order)
+1. **Maximize assets** — all 15 headlines + 4 descriptions
+2. **Keyword inclusion** — primary keyword in 2+ headlines; use dynamic insertion
+3. **Unique messaging** — each headline adds distinct value; no synonymous phrases
+4. **Standalone readability** — every asset must make sense in any combination/order
 5. **CTA variety** — mix Buy/Get/Try/Start/Download; test questions vs. statements
-6. **Benefit + feature + proof mix** — balance benefits, features, differentiators, and social proof across headlines
-7. **Length variation** — mix short (15-20 char) and long (28-30 char) for combination flexibility
+6. **Benefit + feature + proof mix** — balance across headlines
+7. **Length variation** — mix short (15-20 char) and long (28-30 char)
 
 **Headline Formula (15 headlines):**
 
@@ -91,11 +91,11 @@ File types: JPG/PNG/GIF (non-animated), max 5120 KB.
 **RDA Best Practices:**
 
 1. **Fill all slots** — 15 images, 5 logos, 5 headlines, 5 descriptions
-2. **Image quality** — high-res, minimal text (<20% of image), product in context; mix product shots with lifestyle
-3. **Logos** — transparent background, readable at small sizes, both square and landscape
-4. **Text-in-image** — keep minimal; don't repeat ad copy; Google may crop
-5. **Headlines** — short: punchy/benefit-focused; long: complete value proposition with keyword
-6. **Descriptions** — each unique angle; cover benefits, social proof, urgency, features, CTA
+2. **Image quality** — high-res, <20% text, product in context; mix product + lifestyle
+3. **Logos** — transparent background, readable small, both square + landscape
+4. **Text-in-image** — minimal; don't repeat ad copy; Google may crop
+5. **Headlines** — short: punchy/benefit; long: full value prop with keyword
+6. **Descriptions** — unique angle each; cover benefits, social proof, urgency, features, CTA
 
 **RDA Asset Formula:**
 
@@ -154,11 +154,11 @@ File types: JPG/PNG, max 5120 KB. Max 100 asset groups per campaign.
 
 **PMax Best Practices:**
 
-1. **Maximize asset diversity** — fill all slots; different assets perform differently per channel
-2. **All three image ratios** — landscape, square, portrait; 15-20 images total mixing product, lifestyle, and promotional
-3. **Video is essential** — at least 1, recommend 5; create PMax-specific (not recycled); vertical for Shorts/Discover, horizontal for in-stream
-4. **Headline/description strategy** — same principles as RSA: unique, standalone, keyword-rich, benefit-focused
-5. **Asset group organization** — separate groups by product category, customer segment, or offer
+1. **Maximize asset diversity** — fill all slots; assets perform differently per channel
+2. **All three image ratios** — landscape, square, portrait; 15-20 images mixing product/lifestyle/promo
+3. **Video is essential** — min 1, recommend 5; PMax-specific (not recycled); vertical for Shorts/Discover, horizontal for in-stream
+4. **Headline/description strategy** — same as RSA: unique, standalone, keyword-rich, benefit-focused
+5. **Asset group organization** — separate by product category, customer segment, or offer
 
 **PMax Asset Formula:**
 
@@ -216,7 +216,7 @@ D5: 90-day comfort guarantee. If they don't feel amazing, send them back. No que
 30-45s (CLOSE):    Testimonial/results, clear offer, strong CTA, brand reinforcement
 ```
 
-**Key tactics:** Front-load the message (assume many skip). Fast cuts pre-skip, can slow after. Reward non-skippers with deeper value. Test multiple 5s hooks with same body.
+**Key tactics:** Front-load (assume many skip). Fast cuts pre-skip, slow after. Reward non-skippers with deeper value. Test multiple 5s hooks with same body.
 
 #### Bumper Ads (Non-Skippable, 6s)
 
@@ -251,7 +251,7 @@ Event Promo:     [0-2s] Event visual/dates → [2-4s] Key speakers → [4-6s] "R
 45-60s: Soft CTA
 ```
 
-**Key tactics:** Fast cuts, trending audio, text overlays. Less "ad-like" than in-stream. Sound matters — use trending music, sync visuals to audio. No skip button; hook prevents scroll.
+**Key tactics:** Fast cuts, trending audio, text overlays. Less "ad-like" than in-stream. Sound matters — trending music, sync visuals to beat. No skip button; hook prevents scroll.
 
 ### Google Display Network Best Practices
 
@@ -260,9 +260,9 @@ Event Promo:     [0-2s] Event visual/dates → [2-4s] Key speakers → [4-6s] "R
 **Key principles:**
 
 - CTA button = highest contrast element; use brand colors strategically
-- Headline: 5 words or fewer; single CTA; minimal copy; clear value proposition
-- Animation: first 3s matter most; end on strong CTA frame; 15-30s total; loop 2-3x then stop
-- Ensure readability across all sizes; test color variations
+- Headline: ≤5 words; single CTA; minimal copy; clear value proposition
+- Animation: first 3s matter most; end on CTA frame; 15-30s total; loop 2-3x then stop
+- Readable across all sizes; test color variations
 
 **Display campaign types:**
 
