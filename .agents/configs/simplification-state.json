@@ -1097,8 +1097,8 @@
       "pr": 11917
     },
     ".agents/workflows/code-audit-remote.md": {
-      "hash": "58b0fd2ed083489003b72485e208a6adac4dbcb9",
-      "at": "2026-03-28T14:16:09Z",
+      "hash": "2702ee79b7d0f63a13b19d69171f937db3e37064",
+      "at": "2026-03-28T15:31:24Z",
       "pr": 11825
     },
     ".agents/tools/credentials/api-key-setup.md": {
