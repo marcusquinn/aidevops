@@ -7,68 +7,21 @@ metadata:
 
 # Video Dimensions and Resolution
 
-HeyGen supports various video dimensions and aspect ratios to fit different platforms and use cases.
+## Supported Resolutions
 
-## Standard Resolutions
+| Aspect Ratio | 720p (W x H) | 1080p (W x H) | Platforms |
+|--------------|---------------|----------------|-----------|
+| 16:9 | 1280 x 720 | 1920 x 1080 | YouTube, LinkedIn |
+| 9:16 | 720 x 1280 | 1080 x 1920 | TikTok, Instagram Reels, YouTube Shorts |
+| 1:1 | 720 x 720 | 1080 x 1080 | Instagram Feed |
+| 4:3 | 960 x 720 | 1440 x 1080 | Presentations |
+| 4:5 | 576 x 720 | 864 x 1080 | Instagram portrait |
 
-### Landscape (16:9)
+**Platform defaults:** YouTube/LinkedIn → 16:9 1080p. TikTok/Reels/Shorts → 9:16 1080p. Instagram Feed → 1:1 1080p. Twitter/X → 16:9 720p.
 
-| Resolution | Width | Height | Use Case |
-|------------|-------|--------|----------|
-| 720p | 1280 | 720 | Standard quality, faster processing |
-| 1080p | 1920 | 1080 | High quality, most common |
-
-### Portrait (9:16)
-
-| Resolution | Width | Height | Use Case |
-|------------|-------|--------|----------|
-| 720p | 720 | 1280 | Mobile-first content |
-| 1080p | 1080 | 1920 | High quality vertical |
-
-### Square (1:1)
-
-| Resolution | Width | Height | Use Case |
-|------------|-------|--------|----------|
-| 720p | 720 | 720 | Social media posts |
-| 1080p | 1080 | 1080 | High quality square |
-
-## Setting Dimensions
-
-### TypeScript
-
-```typescript
-// Landscape 1080p
-const landscapeConfig = {
-  video_inputs: [...],
-  dimension: {
-    width: 1920,
-    height: 1080
-  }
-};
-
-// Portrait 1080p
-const portraitConfig = {
-  video_inputs: [...],
-  dimension: {
-    width: 1080,
-    height: 1920
-  }
-};
-
-// Square 1080p
-const squareConfig = {
-  video_inputs: [...],
-  dimension: {
-    width: 1080,
-    height: 1080
-  }
-};
-```
-
-### curl
+## API Shape
 
 ```bash
-# Landscape 1080p
 curl -X POST "https://api.heygen.com/v2/video/generate" \
   -H "X-Api-Key: $HEYGEN_API_KEY" \
   -H "Content-Type: application/json" \
@@ -81,7 +34,7 @@ curl -X POST "https://api.heygen.com/v2/video/generate" \
   }'
 ```
 
-## Dimension Helper Functions
+## Dimension Helper
 
 ```typescript
 type AspectRatio = "16:9" | "9:16" | "1:1" | "4:3" | "4:5";
@@ -125,56 +78,9 @@ const tikTokDimensions = getDimensions("9:16", "1080p");
 const instagramDimensions = getDimensions("1:1", "1080p");
 ```
 
-## Platform-Specific Recommendations
-
-### YouTube
-
-```typescript
-const youtubeConfig = {
-  video_inputs: [...],
-  dimension: { width: 1920, height: 1080 }, // 16:9 landscape
-};
-```
-
-### TikTok / Instagram Reels / YouTube Shorts
-
-```typescript
-const shortFormConfig = {
-  video_inputs: [...],
-  dimension: { width: 1080, height: 1920 }, // 9:16 portrait
-};
-```
-
-### Instagram Feed Post
-
-```typescript
-const instagramFeedConfig = {
-  video_inputs: [...],
-  dimension: { width: 1080, height: 1080 }, // 1:1 square
-};
-```
-
-### LinkedIn
-
-```typescript
-const linkedinConfig = {
-  video_inputs: [...],
-  dimension: { width: 1920, height: 1080 }, // 16:9 landscape preferred
-};
-```
-
-### Twitter/X
-
-```typescript
-const twitterConfig = {
-  video_inputs: [...],
-  dimension: { width: 1280, height: 720 }, // 16:9, 720p is common
-};
-```
-
 ## Avatar IV Dimensions
 
-For Avatar IV (photo-based avatars), dimensions are set via orientation:
+Photo-based avatars use orientation instead of explicit dimensions:
 
 ```typescript
 type VideoOrientation = "portrait" | "landscape" | "square";
@@ -193,19 +99,7 @@ function getAvatarIVDimensions(orientation: VideoOrientation): Dimensions {
 
 ## Custom Dimensions
 
-HeyGen supports custom dimensions within limits:
-
-```typescript
-const customConfig = {
-  video_inputs: [...],
-  dimension: {
-    width: 1600,
-    height: 900  // Custom 16:9 at non-standard resolution
-  }
-};
-```
-
-### Dimension Constraints
+### Constraints
 
 - **Minimum**: 128px on any side
 - **Maximum**: 4096px on any side
@@ -226,23 +120,20 @@ function validateDimensions(width: number, height: number): boolean {
 }
 ```
 
-## Resolution vs. Credit Cost
-
-Higher resolutions may consume more credits:
+## Credit Cost
 
 | Resolution | Relative Cost |
 |------------|---------------|
 | 720p | Base rate |
 | 1080p | ~1.5x base rate |
 
-Consider using 720p for drafts and testing, then 1080p for final output.
+Use 720p for drafts/testing, 1080p for final output.
 
-## Background Considerations
+## Background Matching
 
 Match background image/video dimensions to your video dimensions:
 
 ```typescript
-// For 1080p landscape video
 const config = {
   video_inputs: [
     {
@@ -258,7 +149,9 @@ const config = {
 };
 ```
 
-## Creating a Video Config Factory
+## Video Config Factory
+
+Combines platform lookup, quality scaling, and avatar/voice config:
 
 ```typescript
 interface VideoConfigOptions {
