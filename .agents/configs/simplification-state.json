@@ -1075,6 +1075,11 @@
       "hash": "9a7f856e52fb6226b2661e21b00fee79fd906561",
       "at": "2026-03-28T13:57:39Z",
       "pr": 11906
+    },
+    ".agents/content/video-higgsfield.md": {
+      "hash": "75edb74d82b5c0ef79b5dda64026b3145359d72f",
+      "at": "2026-03-28T10:12:10Z",
+      "pr": 11735
     }
   },
   ".agents/tools/code-review/best-practices.md": {
