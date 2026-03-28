@@ -509,10 +509,146 @@ check_dedup() {
 # _get_pid_cpu, _get_process_tree_cpu) provided by worker-lifecycle-common.sh
 
 #######################################
+# Print the Open PRs section for a repo (GH#5627)
+#
+# Fetches open PRs and emits a markdown section to stdout.
+# Called from _prefetch_single_repo inside a subshell redirect.
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#######################################
+_prefetch_repo_prs() {
+	local slug="$1"
+
+	# PRs (createdAt included for daily PR cap — GH#3821)
+	local pr_json
+	pr_json=$(gh pr list --repo "$slug" --state open \
+		--json number,title,reviewDecision,statusCheckRollup,updatedAt,headRefName,createdAt \
+		--limit "$PULSE_PREFETCH_PR_LIMIT" 2>/dev/null) || pr_json="[]"
+
+	local pr_count
+	pr_count=$(echo "$pr_json" | jq 'length')
+
+	if [[ "$pr_count" -gt 0 ]]; then
+		echo "### Open PRs ($pr_count)"
+		echo "$pr_json" | jq -r '.[] | "- PR #\(.number): \(.title) [checks: \(if .statusCheckRollup == null or (.statusCheckRollup | length) == 0 then "none" elif (.statusCheckRollup | all((.conclusion // .state) == "SUCCESS")) then "PASS" elif (.statusCheckRollup | any((.conclusion // .state) == "FAILURE")) then "FAIL" else "PENDING" end)] [review: \(if .reviewDecision == null or .reviewDecision == "" then "NONE" else .reviewDecision end)] [branch: \(.headRefName)] [updated: \(.updatedAt)]"'
+	else
+		echo "### Open PRs (0)"
+		echo "- None"
+	fi
+
+	echo ""
+	return 0
+}
+
+#######################################
+# Print the Daily PR Cap section for a repo (GH#5627)
+#
+# Counts ALL PRs created today (open+merged+closed) to enforce the
+# daily cap. Must use --state all — open-only undercounts (GH#3821,
+# GH#4412). Emits a markdown section to stdout.
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#######################################
+_prefetch_repo_daily_cap() {
+	local slug="$1"
+
+	local today_utc
+	today_utc=$(date -u +%Y-%m-%d)
+	local daily_cap_json
+	daily_cap_json=$(gh pr list --repo "$slug" --state all \
+		--json createdAt --limit 200 2>/dev/null) || daily_cap_json="[]"
+	local daily_pr_count
+	daily_pr_count=$(echo "$daily_cap_json" | jq --arg today "$today_utc" \
+		'[.[] | select(.createdAt | startswith($today))] | length') || daily_pr_count=0
+	[[ "$daily_pr_count" =~ ^[0-9]+$ ]] || daily_pr_count=0
+	local daily_pr_remaining=$((DAILY_PR_CAP - daily_pr_count))
+	if [[ "$daily_pr_remaining" -lt 0 ]]; then
+		daily_pr_remaining=0
+	fi
+
+	echo "### Daily PR Cap"
+	if [[ "$daily_pr_count" -ge "$DAILY_PR_CAP" ]]; then
+		echo "- **DAILY PR CAP REACHED** — ${daily_pr_count}/${DAILY_PR_CAP} PRs created today (UTC)"
+		echo "- **DO NOT dispatch new workers for this repo.** Wait for the next UTC day."
+		echo "[pulse-wrapper] Daily PR cap reached for ${slug}: ${daily_pr_count}/${DAILY_PR_CAP}" >>"$LOGFILE"
+	else
+		echo "- PRs created today: ${daily_pr_count}/${DAILY_PR_CAP} (${daily_pr_remaining} remaining)"
+	fi
+
+	echo ""
+	return 0
+}
+
+#######################################
+# Print the Open Issues sections for a repo (GH#5627)
+#
+# Fetches open issues, filters managed labels, splits into dispatchable
+# vs quality-sweep-tracked, and emits markdown sections to stdout.
+# Called from _prefetch_single_repo inside a subshell redirect.
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#######################################
+_prefetch_repo_issues() {
+	local slug="$1"
+
+	# Issues (include assignees for dispatch dedup)
+	# Filter out supervisor/contributor/persistent/quality-review issues —
+	# these are managed by pulse-wrapper.sh and must not be touched by the
+	# pulse agent. Exposing them in pre-fetched state causes the LLM to
+	# close them as "stale", creating churn (wrapper recreates on next cycle).
+	local issue_json
+	issue_json=$(gh issue list --repo "$slug" --state open \
+		--json number,title,labels,updatedAt,assignees \
+		--limit "$PULSE_PREFETCH_ISSUE_LIMIT" 2>/dev/null) || issue_json="[]"
+
+	# Remove issues with supervisor, contributor, persistent, or quality-review labels
+	local filtered_json
+	filtered_json=$(echo "$issue_json" | jq '[.[] | select(.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review")) | not)]')
+
+	# GH#10308: Split issues into dispatchable vs quality-sweep-tracked.
+	# The sweep (stats-functions.sh) creates quality-debt and simplification-debt
+	# issues with source:quality-sweep labels. Showing these separately prevents
+	# the pulse LLM from independently creating duplicate issues for the same
+	# findings it reads from the quality dashboard comments.
+	local dispatchable_json sweep_tracked_json
+	dispatchable_json=$(echo "$filtered_json" | jq '[.[] | select(.labels | map(.name) | (index("source:quality-sweep") or index("source:review-feedback")) | not)]')
+	sweep_tracked_json=$(echo "$filtered_json" | jq '[.[] | select(.labels | map(.name) | (index("source:quality-sweep") or index("source:review-feedback")))]')
+
+	local dispatchable_count sweep_tracked_count
+	dispatchable_count=$(echo "$dispatchable_json" | jq 'length')
+	sweep_tracked_count=$(echo "$sweep_tracked_json" | jq 'length')
+
+	if [[ "$dispatchable_count" -gt 0 ]]; then
+		echo "### Open Issues ($dispatchable_count)"
+		echo "$dispatchable_json" | jq -r '.[] | "- Issue #\(.number): \(.title) [labels: \(if (.labels | length) == 0 then "none" else (.labels | map(.name) | join(", ")) end)] [assignees: \(if (.assignees | length) == 0 then "none" else (.assignees | map(.login) | join(", ")) end)] [updated: \(.updatedAt)]"'
+	else
+		echo "### Open Issues (0)"
+		echo "- None"
+	fi
+
+	echo ""
+
+	# GH#10308: Show quality-sweep-tracked issues so the LLM knows what's
+	# already filed and avoids creating duplicates from sweep findings.
+	if [[ "$sweep_tracked_count" -gt 0 ]]; then
+		echo "### Already Tracked by Quality Sweep ($sweep_tracked_count)"
+		echo "_These issues were auto-created by the quality sweep or review feedback pipeline._"
+		echo "_DO NOT create new issues for findings already covered below. Dispatch these as normal quality-debt/simplification-debt work._"
+		echo "$sweep_tracked_json" | jq -r '.[] | "- Issue #\(.number): \(.title) [labels: \(if (.labels | length) == 0 then "none" else (.labels | map(.name) | join(", ")) end)] [assignees: \(if (.assignees | length) == 0 then "none" else (.assignees | map(.login) | join(", ")) end)]"'
+		echo ""
+	fi
+	return 0
+}
+
+#######################################
 # Fetch PR, issue, and daily-cap data for a single repo (GH#5627)
 #
 # Runs inside a subshell (called from prefetch_state parallel loop).
 # Writes a compact markdown summary to the specified output file.
+# Delegates to focused helpers for each data section.
 #
 # Arguments:
 #   $1 - repo slug (owner/repo)
@@ -527,105 +663,9 @@ _prefetch_single_repo() {
 	{
 		echo "## ${slug} (${path})"
 		echo ""
-
-		# PRs (createdAt included for daily PR cap — GH#3821)
-		local pr_json
-		pr_json=$(gh pr list --repo "$slug" --state open \
-			--json number,title,reviewDecision,statusCheckRollup,updatedAt,headRefName,createdAt \
-			--limit "$PULSE_PREFETCH_PR_LIMIT" 2>/dev/null) || pr_json="[]"
-
-		local pr_count
-		pr_count=$(echo "$pr_json" | jq 'length')
-
-		if [[ "$pr_count" -gt 0 ]]; then
-			echo "### Open PRs ($pr_count)"
-			echo "$pr_json" | jq -r '.[] | "- PR #\(.number): \(.title) [checks: \(if .statusCheckRollup == null or (.statusCheckRollup | length) == 0 then "none" elif (.statusCheckRollup | all((.conclusion // .state) == "SUCCESS")) then "PASS" elif (.statusCheckRollup | any((.conclusion // .state) == "FAILURE")) then "FAIL" else "PENDING" end)] [review: \(if .reviewDecision == null or .reviewDecision == "" then "NONE" else .reviewDecision end)] [branch: \(.headRefName)] [updated: \(.updatedAt)]"'
-		else
-			echo "### Open PRs (0)"
-			echo "- None"
-		fi
-
-		echo ""
-
-		# Daily PR cap (GH#3821, GH#4412) — count ALL PRs created today
-		# (open, merged, and closed) to prevent CodeRabbit quota exhaustion.
-		# Must use --state all because PRs merged/closed earlier today are
-		# excluded from the open-only pr_json, causing an undercount that
-		# lets the pulse dispatch workers past the real cap.
-		local today_utc
-		today_utc=$(date -u +%Y-%m-%d)
-		local daily_cap_json
-		daily_cap_json=$(gh pr list --repo "$slug" --state all \
-			--json createdAt --limit 200 2>/dev/null) || daily_cap_json="[]"
-		local daily_pr_count
-		daily_pr_count=$(echo "$daily_cap_json" | jq --arg today "$today_utc" \
-			'[.[] | select(.createdAt | startswith($today))] | length') || daily_pr_count=0
-		[[ "$daily_pr_count" =~ ^[0-9]+$ ]] || daily_pr_count=0
-		local daily_pr_remaining=$((DAILY_PR_CAP - daily_pr_count))
-		if [[ "$daily_pr_remaining" -lt 0 ]]; then
-			daily_pr_remaining=0
-		fi
-
-		echo "### Daily PR Cap"
-		if [[ "$daily_pr_count" -ge "$DAILY_PR_CAP" ]]; then
-			echo "- **DAILY PR CAP REACHED** — ${daily_pr_count}/${DAILY_PR_CAP} PRs created today (UTC)"
-			echo "- **DO NOT dispatch new workers for this repo.** Wait for the next UTC day."
-			echo "[pulse-wrapper] Daily PR cap reached for ${slug}: ${daily_pr_count}/${DAILY_PR_CAP}" >>"$LOGFILE"
-		else
-			echo "- PRs created today: ${daily_pr_count}/${DAILY_PR_CAP} (${daily_pr_remaining} remaining)"
-		fi
-
-		echo ""
-
-		# Issues (include assignees for dispatch dedup)
-		# Filter out supervisor/contributor/persistent/quality-review issues —
-		# these are managed by pulse-wrapper.sh and must not be touched by the
-		# pulse agent. Exposing them in pre-fetched state causes the LLM to
-		# close them as "stale", creating churn (wrapper recreates on next cycle).
-		local issue_json
-		issue_json=$(gh issue list --repo "$slug" --state open \
-			--json number,title,labels,updatedAt,assignees \
-			--limit "$PULSE_PREFETCH_ISSUE_LIMIT" 2>/dev/null) || issue_json="[]"
-
-		# Remove issues with supervisor, contributor, persistent, or quality-review labels
-		local filtered_json
-		filtered_json=$(echo "$issue_json" | jq '[.[] | select(.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review")) | not)]')
-
-		local issue_count
-		issue_count=$(echo "$filtered_json" | jq 'length')
-
-		# GH#10308: Split issues into dispatchable vs quality-sweep-tracked.
-		# The sweep (stats-functions.sh) creates quality-debt and simplification-debt
-		# issues with source:quality-sweep labels. Showing these separately prevents
-		# the pulse LLM from independently creating duplicate issues for the same
-		# findings it reads from the quality dashboard comments.
-		local dispatchable_json sweep_tracked_json
-		dispatchable_json=$(echo "$filtered_json" | jq '[.[] | select(.labels | map(.name) | (index("source:quality-sweep") or index("source:review-feedback")) | not)]')
-		sweep_tracked_json=$(echo "$filtered_json" | jq '[.[] | select(.labels | map(.name) | (index("source:quality-sweep") or index("source:review-feedback")))]')
-
-		local dispatchable_count sweep_tracked_count
-		dispatchable_count=$(echo "$dispatchable_json" | jq 'length')
-		sweep_tracked_count=$(echo "$sweep_tracked_json" | jq 'length')
-
-		if [[ "$dispatchable_count" -gt 0 ]]; then
-			echo "### Open Issues ($dispatchable_count)"
-			echo "$dispatchable_json" | jq -r '.[] | "- Issue #\(.number): \(.title) [labels: \(if (.labels | length) == 0 then "none" else (.labels | map(.name) | join(", ")) end)] [assignees: \(if (.assignees | length) == 0 then "none" else (.assignees | map(.login) | join(", ")) end)] [updated: \(.updatedAt)]"'
-		else
-			echo "### Open Issues (0)"
-			echo "- None"
-		fi
-
-		echo ""
-
-		# GH#10308: Show quality-sweep-tracked issues so the LLM knows what's
-		# already filed and avoids creating duplicates from sweep findings.
-		if [[ "$sweep_tracked_count" -gt 0 ]]; then
-			echo "### Already Tracked by Quality Sweep ($sweep_tracked_count)"
-			echo "_These issues were auto-created by the quality sweep or review feedback pipeline._"
-			echo "_DO NOT create new issues for findings already covered below. Dispatch these as normal quality-debt/simplification-debt work._"
-			echo "$sweep_tracked_json" | jq -r '.[] | "- Issue #\(.number): \(.title) [labels: \(if (.labels | length) == 0 then "none" else (.labels | map(.name) | join(", ")) end)] [assignees: \(if (.assignees | length) == 0 then "none" else (.assignees | map(.login) | join(", ")) end)]"'
-			echo ""
-		fi
+		_prefetch_repo_prs "$slug"
+		_prefetch_repo_daily_cap "$slug"
+		_prefetch_repo_issues "$slug"
 	} >"$outfile"
 	return 0
 }
