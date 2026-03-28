@@ -34,7 +34,7 @@ Product strategy and management agent. Covers the full product lifecycle from id
 
 ## Related Agents
 
-- **Marketing** (`marketing.md`) - Demand generation, advertising, CRO
+- **Marketing** (`marketing-sales.md`) - Demand generation, advertising, CRO
 - **Content** (`content.md`) - Content strategy for product marketing
 - **SEO** (`seo.md`) - Organic acquisition channel
 - **Build+** (`build-plus.md`) - Implementation of product features

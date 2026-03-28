@@ -203,4 +203,4 @@ memory-helper.sh recall --namespace youtube "competitor analysis"
 | `content.md` | General content writing, SEO optimization |
 | `content.md` | Video production (Remotion, Higgsfield, HeyGen) |
 | `research.md` | Broad web research beyond YouTube |
-| `social-media.md` | Cross-platform promotion strategy |
+| `content.md` | Cross-platform promotion strategy |

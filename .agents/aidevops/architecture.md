@@ -138,7 +138,7 @@ The `.agents/` directory organizes knowledge along two axes: **strategy** (what 
 
 ### Strategy: Main Agent Directories
 
-Main agents at root (e.g., `marketing.md`, `seo.md`) own domain strategy — methodology, audience knowledge, campaign planning. Their matching directories (`marketing/`, `seo/`) contain extended strategy knowledge loaded on demand.
+Main agents at root (e.g., `marketing-sales.md`, `seo.md`) own domain strategy — methodology, audience knowledge, campaign planning. Their matching directories (`marketing-sales/`, `seo/`) contain extended strategy knowledge loaded on demand.
 
 ### Execution: Cross-Domain Directories
 

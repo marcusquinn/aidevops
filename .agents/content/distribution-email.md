@@ -15,7 +15,7 @@ model: sonnet
 - **Formats**: Weekly newsletter, welcome sequence, launch sequence, nurture sequence
 - **Key Principle**: Permission-based, value-first, relationship-building
 - **Success Metrics**: Open rate, click rate, reply rate, unsubscribe rate
-- **CRM Integration**: FluentCRM via `marketing.md` and `services/crm/fluentcrm.md`
+- **CRM Integration**: FluentCRM via `marketing-sales.md` and `services/crm/fluentcrm.md`
 
 **Critical Rules**:
 
@@ -202,7 +202,7 @@ Tag subscribers based on:
 
 ## FluentCRM Integration
 
-**From `marketing.md` and `services/crm/fluentcrm.md`**:
+**From `marketing-sales.md` and `services/crm/fluentcrm.md`**:
 
 ```bash
 # Create a new email campaign
@@ -252,7 +252,7 @@ Tag subscribers based on:
 
 **CRM and Marketing**:
 
-- `marketing.md` - Marketing orchestrator with FluentCRM integration
+- `marketing-sales.md` - Marketing orchestrator with FluentCRM integration
 - `services/crm/fluentcrm.md` - CRM operations and automation
 
 **Email Services**:

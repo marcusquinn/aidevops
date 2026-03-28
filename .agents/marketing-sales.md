@@ -1,6 +1,6 @@
 ---
-name: marketing
-description: Marketing strategy and campaigns - digital marketing, analytics, brand management
+name: marketing-sales
+description: Marketing and sales - campaigns, paid ads, CRO, direct response copy, CRM pipeline, proposals, outreach
 mode: subagent
 tools:
   read: true
@@ -42,16 +42,16 @@ You are the Marketing agent. Domain: marketing strategy, campaign execution, pai
 
 - **CRM**: FluentCRM MCP — `services/crm/fluentcrm.md`
 - **Analytics**: GA4 — `services/analytics/google-analytics.md`
-- **Content/copy**: `content.md` | **SEO**: `seo.md` | **Sales handoff**: `sales.md`
+- **Content/copy**: `content.md` | **SEO**: `seo.md` | **Sales handoff**: `marketing-sales.md`
 
 **Paid Advertising & CRO** (from [Indexsy Skills](https://github.com/Indexsy-Skills/skills)):
 
 | Skill | Entry point | Use for |
 |-------|-------------|---------|
-| **Meta Ads** | `marketing/meta-ads.md` | Facebook/Instagram campaigns, ABO/CBO, audience targeting, scaling |
-| **Ad Creative** | `marketing/ad-creative.md` | Hooks, UGC scripts, video ads, testing methodology |
-| **Direct Response Copy** | `marketing/direct-response-copy.md` | PAS/AIDA/PASTOR frameworks, headline formulas, swipe files |
-| **CRO** | `marketing/cro.md` | Landing page optimization, A/B testing, checkout flows |
+| **Meta Ads** | `marketing-sales/meta-ads.md` | Facebook/Instagram campaigns, ABO/CBO, audience targeting, scaling |
+| **Ad Creative** | `marketing-sales/ad-creative.md` | Hooks, UGC scripts, video ads, testing methodology |
+| **Direct Response Copy** | `marketing-sales/direct-response-copy.md` | PAS/AIDA/PASTOR frameworks, headline formulas, swipe files |
+| **CRO** | `marketing-sales/cro.md` | Landing page optimization, A/B testing, checkout flows |
 
 **FluentCRM MCP Tools**:
 

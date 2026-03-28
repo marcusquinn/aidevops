@@ -41,6 +41,10 @@ subagents:
   - editor
   - internal-linker
   - context-templates
+  # Social media platforms (merged from social-media)
+  - social-bird
+  - social-linkedin
+  - social-reddit
   # Built-in
   - general
   - explore
@@ -246,7 +250,7 @@ TikTok, Reels, Shorts. Format: 9:16, 1-3s cuts, hook-first, 60s max, fast cuts, 
 - **LinkedIn** — professional, thought leadership
 - **Reddit** — community-native, anti-promotional
 
-References: `social-media/bird.md`, `social-media/linkedin.md`, `social-media/reddit.md`
+References: `content/social-bird.md`, `content/social-linkedin.md`, `content/social-reddit.md`
 
 ### Blog (`content/distribution-blog.md`)
 
@@ -254,7 +258,7 @@ SEO-optimized articles. References: `seo/`. Legacy tools: `content/seo-writer.md
 
 ### Email (`content/distribution-email.md`)
 
-Newsletter structure, sequence design. References: `marketing.md` (FluentCRM integration).
+Newsletter structure, sequence design. References: `marketing-sales.md` (FluentCRM integration).
 
 ### Podcast (`content/distribution-podcast.md`)
 

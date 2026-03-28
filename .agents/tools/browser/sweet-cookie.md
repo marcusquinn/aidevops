@@ -219,4 +219,4 @@ crawl4ai https://app.example.com --cookies /path/to/cookies.json
 - `tools/browser/agent-browser.md` - CLI browser automation (default)
 - `tools/browser/stagehand.md` - AI-powered browser automation
 - `tools/browser/playwriter.md` - Chrome extension MCP for existing sessions
-- `social-media/bird.md` - X/Twitter CLI (uses sweet-cookie)
+- `content/social-bird.md` - X/Twitter CLI (uses sweet-cookie)

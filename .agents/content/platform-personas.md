@@ -191,7 +191,7 @@ YouTube: "So we coat these with marine-grade finish -- the same stuff
 
 ### Structure
 
-See `content/guidelines.md` for full blog formatting standards. See `social-media/bird.md` for X/Twitter API integration and `social-media/linkedin.md` for LinkedIn automation. Key differences from social:
+See `content/guidelines.md` for full blog formatting standards. See `content/social-bird.md` for X/Twitter API integration and `content/social-linkedin.md` for LinkedIn automation. Key differences from social:
 
 - Longer form (1,500-3,000 words for pillar content)
 - H2/H3 hierarchy for scannability
