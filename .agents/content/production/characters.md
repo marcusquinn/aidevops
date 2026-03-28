@@ -15,24 +15,21 @@ tools:
 
 # Character Production
 
-AI-powered character design and consistency management for video content, brand personas, and multi-scene productions using facial engineering, character bibles, and cross-platform character reuse.
-
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
 - **Purpose**: Create and maintain consistent characters across AI-generated content
 - **Primary Techniques**: Facial engineering framework, character bibles, Sora 2 Cameos, Veo 3.1 Ingredients, Nanobanana character JSON
-- **Key Principle**: "Model recency arbitrage" — always use latest-gen models, older outputs get recognized as AI faster
+- **Key Principle**: "Model recency arbitrage" — always use latest-gen models; older outputs get recognized as AI faster
+- **When to Use**: Brand mascots, recurring video characters, influencer personas, character-driven series, any production requiring visual consistency across multiple outputs
 - **Related**: `content/production/image.md`, `content/production/video.md`, `tools/vision/image-generation.md`
-
-**When to Use**: Creating brand mascots, recurring video characters, influencer personas, character-driven content series, or any production requiring visual consistency across multiple outputs.
 
 <!-- AI-CONTEXT-END -->
 
 ## Facial Engineering Framework
 
-Exhaustive facial analysis enables consistency across 100+ outputs. The more detailed your facial specification, the more consistent your character will be.
+Exhaustive facial analysis enables consistency across 100+ outputs. The more detailed your specification, the more consistent your character.
 
 ### Comprehensive Facial Analysis Prompt
 
@@ -116,9 +113,7 @@ DISTINCTIVE FEATURES:
 - Aging markers: [specific to age range]
 ```
 
-### Facial Engineering Output Format
-
-Store the analysis as JSON for reuse across tools. Structure mirrors the analysis prompt:
+### Facial Engineering JSON (store for reuse across tools)
 
 ```json
 {
@@ -176,14 +171,13 @@ Store the analysis as JSON for reuse across tools. Structure mirrors the analysi
 ## Production Notes
 Platform workflows: Sora 2 Cameos, Veo 3.1 Ingredients, Nanobanana JSON (see sections below).
 **Voice** (if applicable): [Pitch, tone, accent, pace] | **ElevenLabs voice ID**: | **Emotional range**:
+**Evolution log**: Version | Changes | Reason | Audience Response
 
 ## Reference Assets
 **Image**: facial engineering, full-body, wardrobe | **Video**: movement, expression | **Voice**: sample, emotional range
 ```
 
 ## Character Context Profile (Prompt-Ready)
-
-Lightweight version for AI prompt context windows:
 
 ```text
 CHARACTER: [Name]
@@ -229,22 +223,7 @@ characters/[character-name]/
 **ALWAYS use Ingredients-to-Video** (upload face as ingredient, reference in prompt).
 **NEVER use Frame-to-Video** (produces grainy, yellow-tinted, inconsistent output).
 
-### Reference Face Generation
-
-Generate with Nanobanana Pro or Midjourney:
-
-```json
-{
-  "subject": "[Paste facial engineering description]",
-  "concept": "Professional character reference portrait",
-  "composition": {"framing": "close-up", "angle": "eye-level", "focal_point": "eyes", "depth_of_field": "shallow"},
-  "lighting": {"type": "studio", "direction": "three-point", "quality": "soft diffused", "color_temperature": "neutral (5500K)"},
-  "style": {"aesthetic": "photorealistic", "texture": "smooth"},
-  "technical": {"resolution": "4K", "aspect_ratio": "1:1"}
-}
-```
-
-### Veo 3.1 Prompt Structure
+Generate reference face with Nanobanana Pro or Midjourney, then use in Veo:
 
 ```text
 INGREDIENTS:
@@ -285,7 +264,7 @@ Template variants: `templates/characters/[name]/` — `base.json`, `thumbnail-ex
 
 ## Brand Identity Template
 
-Define once, reference from all character templates to ensure visual constants (lighting direction, color temperature, mood, post-processing LUT, camera model/lens/settings):
+Define once, reference from all character templates to ensure visual constants:
 
 ```json
 {
@@ -301,7 +280,14 @@ Define once, reference from all character templates to ensure visual constants (
 
 ## Model Recency Arbitrage
 
-**Always use latest-generation AI models.** Audience AI-detection timeline: 0-3 months (cutting-edge) → 3-6 months (patterns recognizable) → 6-12 months ("AI look" obvious) → 12+ months (dated).
+**Always use latest-generation AI models.** AI-detection timeline:
+
+| Age | Detection risk |
+|-----|---------------|
+| 0–3 months | Cutting-edge, undetectable |
+| 3–6 months | Patterns recognizable |
+| 6–12 months | "AI look" obvious |
+| 12+ months | Dated |
 
 **Current generation (2026)**: Sora 2 Pro, Veo 3.1, Nanobanana Pro, FLUX.1 Pro, Midjourney v7
 
@@ -350,26 +336,23 @@ Rules: distinct visual markers per character; consistent relationship dynamics; 
 **Can change**: wardrobe, hair style, expressions, expertise, confidence
 **Must stay consistent**: facial bone structure, eye color/shape, skin tone, core personality, voice, distinctive features
 
-Track changes in a version log: Version | Changes | Reason | Audience Response.
+Track changes in the bible's Evolution log (Version | Changes | Reason | Audience Response).
+
+## Workflows
+
+**New Character**: Define purpose → facial engineering → character bible → reference assets → JSON templates → test consistency → document in library
+
+**Existing Character**: Reference bible → load template (Nanobanana/Sora/Veo) → adapt → generate → verify consistency → publish → update evolution log
+
+**Maintain Consistency**: Regular audits → update bible on changes → upgrade AI models → regenerate assets → monitor feedback → iterate
 
 ## Tools & Resources
 
 **Image**: Nanobanana Pro (JSON prompts), Midjourney (objects/environments), Freepik (character scenes), Seedream 4 (4K refinement), Ideogram (face swap, text)
 **Video**: Sora 2 Pro (UGC-style), Veo 3.1 (cinematic, character-consistent), Higgsfield (multi-model)
 **Voice**: ElevenLabs (cloning/transformation), CapCut (AI voice cleanup — use BEFORE ElevenLabs)
-
 **Related docs**: `content/production/image.md`, `content/production/video.md`, `content/production/audio.md`, `tools/vision/image-generation.md`, `tools/video/video-prompt-design.md`
-
-## Workflow Summary
-
-**New Character**: Define purpose → facial engineering → character bible → reference assets → JSON templates → test consistency → document in library
-
-**Existing Character**: Reference bible → load template (Nanobanana/Sora/Veo) → adapt → generate → verify consistency → publish → document evolution
-
-**Maintain Consistency**: Regular audits → update bible on changes → upgrade AI models → regenerate assets → monitor feedback → iterate
-
-**Content Pipeline**: Research (`content/research.md`) → Story (`content/story.md`) → Production (writing, image, video, audio) → Distribution (`content/distribution/`) → Optimization (`content/optimization.md`)
 
 ---
 
-**Last Updated**: 2026-03-25 | **Version**: 1.1 | **Related Tasks**: t199.7
+**Last Updated**: 2026-03-27 | **Version**: 1.2 | **Related Tasks**: t199.7
