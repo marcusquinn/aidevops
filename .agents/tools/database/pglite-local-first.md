@@ -39,23 +39,25 @@ Is your production DB PostgreSQL?
       YES --> PGlite (shared schema, zero translation layer)
 ```
 
-**Do NOT use PGlite for**: React Native/Expo (WASM unsupported), CLI tools, high-frequency writes (>5k/sec), datasets >500MB, or SQLite-schema projects.
+**Do NOT use PGlite for**: high-frequency writes (>5k/sec), datasets >500MB, or SQLite-schema projects.
 
 | Factor | PGlite | SQLite |
 |--------|--------|--------|
-| Schema sharing | Same `pgTable`/`pgEnum`/`timestamp` | Requires separate `sqliteTable` schema |
-| Migrations | Identical SQL for local and production | Separate migration sets per dialect |
-| Drizzle dialect | `drizzle-orm/pglite` (pg-core) | `drizzle-orm/better-sqlite3` (sqlite-core) |
+| Schema/migrations | Same `pgTable`/`pgEnum`/`timestamp`, identical SQL, 100% ORM reuse | Separate `sqliteTable` schema, dialect, migration sets, query layer |
 | Type fidelity | Full: enums, timestamps, booleans | Lossy: enum->text, timestamp->text, boolean->integer |
-| ORM code reuse | 100% — same queries everywhere | Separate query layer per dialect |
 | Cold startup | 500ms-2s | <50ms |
-| SELECT by PK | ~0.5ms | ~0.1ms |
-| Complex JOIN | ~15ms | ~5ms |
-| Full scan | ~80ms | ~20ms |
-| INSERT throughput | ~5k/sec | ~50k/sec |
+| Perf (100k rows, Apple Silicon) | SELECT ~0.5ms, JOIN ~15ms, scan ~80ms, INSERT ~5k/s | SELECT ~0.1ms, JOIN ~5ms, scan ~20ms, INSERT ~50k/s |
 | Bundle size | +3MB gzipped | ~1MB native addon |
 
-PGlite is 3-10x slower than native SQLite — acceptable for desktop/extension CRUD, not for high-throughput ingestion or real-time analytics. Benchmarks on Apple Silicon, 100k rows.
+3-10x slower than native SQLite — acceptable for desktop/extension CRUD, not for high-throughput ingestion.
+
+## Persistence Modes
+
+| Mode | Constructor | Use case |
+|------|-------------|----------|
+| In-memory | `new PGlite()` | Tests |
+| Filesystem | `new PGlite("./path")` | Electron, Tauri, Node |
+| IndexedDB | `new PGlite("idb://name")` | Extension, PWA |
 
 ## Implementation Pattern
 
@@ -76,13 +78,7 @@ export const items = pgTable("items", {
 });
 ```
 
-```typescript
-// packages/db/src/server.ts (PRODUCTION - existing, unchanged)
-import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
-import * as schema from "./schema";
-export const db = drizzle({ client: postgres(process.env.DATABASE_URL!), schema, casing: "snake_case" });
-```
+Production server uses `drizzle-orm/postgres-js` with the same schema — no changes needed.
 
 ```typescript
 // packages/db/src/local.ts (NEW - PGlite for desktop/extension)
@@ -102,18 +98,9 @@ export async function createLocalDb(dataDir: string) {
 Run PGlite in the main process. **Security**: never expose raw SQL over IPC — a compromised renderer could escalate to full DB access. Expose named operations only.
 
 ```typescript
-// apps/desktop/src/main/database.ts
-import { createLocalDb } from "@workspace/db/local";
-import { eq } from "drizzle-orm";
-import { app, ipcMain } from "electron";
-import { migrate } from "drizzle-orm/pglite/migrator";
-import path from "path";
-import * as schema from "@workspace/db/schema";
-
-let db: Awaited<ReturnType<typeof createLocalDb>>;
-
+// apps/desktop/src/main/database.ts — main process only
 export async function initDatabase() {
-  db = await createLocalDb(path.join(app.getPath("userData"), "pgdata"));
+  const db = await createLocalDb(path.join(app.getPath("userData"), "pgdata"));
   // __dirname unreliable in asar — bundle migrations as extraResources
   await migrate(db, {
     migrationsFolder: app.isPackaged
@@ -128,25 +115,13 @@ export async function initDatabase() {
 }
 ```
 
-```typescript
-// apps/desktop/src/renderer/db.ts — type-safe IPC wrappers, no raw SQL
-import { ipcRenderer } from "electron";
-export const items = {
-  list: () => ipcRenderer.invoke("db:items:list"),
-  get: (id: string) => ipcRenderer.invoke("db:items:get", id),
-};
-```
+Renderer: expose type-safe IPC wrappers (`ipcRenderer.invoke("db:items:list")`), never raw SQL.
 
 ### 3. Browser extension (WXT / Manifest V3)
 
-Runs in service worker or offscreen document with IndexedDB persistence. Wrap in a lazy singleton to avoid re-init on every message:
+Same `createLocalDb` pattern with `idb://` persistence. Wrap in a lazy singleton (service workers restart on every message):
 
 ```typescript
-// apps/extension/src/background/database.ts
-import { PGlite } from "@electric-sql/pglite";
-import { drizzle } from "drizzle-orm/pglite";
-import * as schema from "@workspace/db/schema";
-
 let db: ReturnType<typeof drizzle>;
 export async function getDb() {
   if (!db) {
@@ -158,9 +133,9 @@ export async function getDb() {
 }
 ```
 
-### 4. Tauri integration
+### 4. Tauri
 
-Same `createLocalDb` pattern — use `appDataDir()` from `@tauri-apps/api/path` for filesystem persistence: `new PGlite(\`${await appDataDir()}/pgdata\`)`.
+Same `createLocalDb` — use `appDataDir()` from `@tauri-apps/api/path`: `new PGlite(\`${await appDataDir()}/pgdata\`)`.
 
 ## Sync with Production Postgres
 
@@ -180,33 +155,28 @@ await client.electric.syncShapeToTable({
 
 **ElectricSQL v1 limitations**: pull-only (writes require API), requires Postgres logical replication, self-hosting needs Docker, large initial shape loads can be slow. For apps without server sync, PGlite works standalone.
 
-## Persistence and Extensions
-
-**Persistence**: in-memory `new PGlite()` (tests), filesystem `new PGlite("./path")` (Electron/Tauri/Node), IndexedDB `new PGlite("idb://name")` (extension/PWA).
+## Extensions
 
 ```typescript
-import { PGlite } from "@electric-sql/pglite";
 import { vector } from "@electric-sql/pglite/contrib/pgvector";
-
 const db = new PGlite({ extensions: { vector } });
 await db.exec("CREATE EXTENSION IF NOT EXISTS vector");
-await db.exec(`CREATE TABLE embeddings (id TEXT PRIMARY KEY, content TEXT, embedding vector(1536))`);
 ```
 
 Supported: pgvector, pg_trgm, ltree, hstore, uuid-ossp. Full list: https://pglite.dev/extensions/
 
 ## Platform Compatibility and Gotchas
 
-| Platform | Runtime | Persistence | Notes |
-|----------|---------|-------------|-------|
-| Electron (main) | Node.js | Filesystem | Recommended; requires Electron 28+ for SharedArrayBuffer |
-| Electron (renderer) | Chromium | IndexedDB | Use multi-tab worker for shared access |
-| Tauri (webview) | WebView | Filesystem via Tauri API | |
-| Browser extension (MV3) | Service worker | IndexedDB | Use offscreen doc for heavy queries |
-| React Native / Expo | Hermes/JSC | **Not supported** | WASM unsupported; use SQLite + PowerSync |
-| Node.js / Bun / Deno | Server | Filesystem | Local dev without Docker Postgres |
+| Platform | Persistence | Notes |
+|----------|-------------|-------|
+| Electron (main) | Filesystem | Recommended; requires Electron 28+ for SharedArrayBuffer |
+| Electron (renderer) | IndexedDB | Use multi-tab worker for shared access |
+| Tauri (webview) | Filesystem via Tauri API | |
+| Browser extension (MV3) | IndexedDB | Use offscreen doc for heavy queries |
+| React Native / Expo | **Not supported** | WASM unsupported; use SQLite + PowerSync |
+| Node.js / Bun / Deno | Filesystem | Local dev without Docker Postgres |
 
-**Gotchas**: (1) Single connection — no concurrent writers; use mutex/message queue for multi-window. (2) WASM startup 500ms-2s — show loading state, don't block app launch. (3) Bundle +3MB gzipped. (4) Check https://pglite.dev/extensions/ before assuming production extension parity. (5) No `LISTEN/NOTIFY` — use live query API instead (see below).
+**Gotchas**: (1) Single connection — no concurrent writers; use mutex/message queue for multi-window. (2) WASM startup 500ms-2s — show loading state, don't block app launch. (3) Check https://pglite.dev/extensions/ before assuming production extension parity. (4) No `LISTEN/NOTIFY` — use live query API instead.
 
 ## Live Queries
 
