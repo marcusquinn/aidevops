@@ -31,8 +31,8 @@ subagents:
 **Related Agents**:
 
 - `business.md` - Financial operations (QuickFile)
-- `sales.md` - Sales pipeline and CRM (FluentCRM)
-- `marketing.md` - Marketing campaigns and lead generation
+- `marketing-sales.md` - Sales pipeline and CRM (FluentCRM)
+- `marketing-sales.md` - Marketing campaigns and lead generation
 - `legal.md` - Legal compliance and contracts
 
 **Key Scripts**:

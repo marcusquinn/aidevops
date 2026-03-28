@@ -87,12 +87,10 @@ Not every task is code. The framework has multiple primary agents, each with dom
 | Automate | Scheduling, dispatch, monitoring, background orchestration, pulse supervisor |
 | SEO | SEO audits, keyword research, GSC, schema markup |
 | Content | All media production and distribution: blog, video, audio, image, social, newsletters, AI video generation |
-| Marketing | Email campaigns, FluentCRM, landing pages |
+| Marketing-Sales | Email campaigns, FluentCRM, Meta Ads, CRO, direct response copy, CRM pipeline, proposals, outreach |
 | Business | Company operations, financial ops, invoicing, receipts, runner configs, strategy |
 | Legal | Compliance, terms of service, privacy policy |
 | Research | Tech research, competitive analysis, market research |
-| Sales | CRM pipeline, proposals, outreach |
-| Social-Media | Social media management, scheduling |
 | Health | Health and wellness content |
 
 **Routing rules:**

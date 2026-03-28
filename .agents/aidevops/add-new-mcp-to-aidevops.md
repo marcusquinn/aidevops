@@ -47,7 +47,7 @@ tools:
 tools:
   fluentcrm_*: true
 
-# In sales.md (MAIN AGENT) - NO MCP tools here
+# In marketing-sales.md (MAIN AGENT) - NO MCP tools here
 tools:
   read: true
 ```

@@ -26,9 +26,9 @@ model: sonnet
 
 **Platform Tool References**:
 
-- `social-media/bird.md` - X (Twitter) automation and scheduling
-- `social-media/linkedin.md` - LinkedIn posting and analytics
-- `social-media/reddit.md` - Reddit engagement and community management
+- `content/social-bird.md` - X (Twitter) automation and scheduling
+- `content/social-linkedin.md` - LinkedIn posting and analytics
+- `content/social-reddit.md` - Reddit engagement and community management
 
 <!-- AI-CONTEXT-END -->
 
@@ -289,7 +289,7 @@ Happy to share more details on the research methodology if anyone's interested.
 
 **Tools**:
 
-- `social-media/bird.md` - X (Twitter) automation
-- `social-media/linkedin.md` - LinkedIn posting
-- `social-media/reddit.md` - Reddit engagement
+- `content/social-bird.md` - X (Twitter) automation
+- `content/social-linkedin.md` - LinkedIn posting
+- `content/social-reddit.md` - Reddit engagement
 - `content/humanise.md` - Remove AI writing patterns

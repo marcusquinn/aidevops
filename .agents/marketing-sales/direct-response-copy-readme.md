@@ -4,7 +4,7 @@ Write high-converting copy for landing pages, emails, ads, and VSLs using proven
 
 ## Usage in aidevops
 
-This skill is available at `marketing/direct-response-copy*.md`. Reference `direct-response-copy.md` directly or via the Marketing agent's Paid Advertising & CRO domain index.
+This skill is available at `marketing-sales/direct-response-copy*.md`. Reference `direct-response-copy.md` directly or via the Marketing agent's Paid Advertising & CRO domain index.
 
 ## What's Included
 

@@ -100,7 +100,7 @@ gcloud auth application-default login \
 }
 ```
 
-**Per-agent enablement:** Enabled via `google_analytics_mcp_*: true` in this subagent's `tools:` section. Main agents (`seo.md`, `marketing.md`, `sales.md`) reference this subagent — MCP only loads when needed.
+**Per-agent enablement:** Enabled via `google_analytics_mcp_*: true` in this subagent's `tools:` section. Main agents (`seo.md`, `marketing-sales.md`, `marketing-sales.md`) reference this subagent — MCP only loads when needed.
 
 ## Account & Property Management
 
@@ -161,7 +161,7 @@ gcloud auth application-default login \
 
 ## Related
 
-- `seo.md`, `marketing.md`, `sales.md` — domain agents that invoke this subagent
+- `seo.md`, `marketing-sales.md`, `marketing-sales.md` — domain agents that invoke this subagent
 - `seo/google-search-console.md` — GSC integration for search data
 - [Google Analytics MCP](https://github.com/googleanalytics/google-analytics-mcp)
 - [GA4 Data API](https://developers.google.com/analytics/devguides/reporting/data/v1)

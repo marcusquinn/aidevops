@@ -21,10 +21,10 @@ All external tool references exist and are correct:
 - `content/video-higgsfield.md` ✓
 - `tools/video/video-prompt-design.md` ✓
 - `tools/voice/speech-to-speech.md` ✓
-- `social-media/bird.md` ✓
-- `social-media/linkedin.md` ✓
-- `social-media/reddit.md` ✓
-- `marketing.md` ✓
+- `content/social-bird.md` ✓
+- `content/social-linkedin.md` ✓
+- `content/social-reddit.md` ✓
+- `marketing-sales.md` ✓
 
 ### ✅ Verified - Helper Scripts
 

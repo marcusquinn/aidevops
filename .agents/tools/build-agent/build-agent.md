@@ -112,8 +112,8 @@ The `.md` file is the entry point — it contains the agent persona, capabilitie
 sales.md
 
 # Multi-file agent (needs extended knowledge)
-marketing.md                              # Entry point — strategy, capabilities
-marketing/                                # Extended knowledge — loaded on demand
+marketing-sales.md                        # Entry point — strategy, capabilities
+marketing-sales/                          # Extended knowledge — loaded on demand
 ├── meta-ads.md                           # Meta Ads strategy and methodology
 ├── meta-ads-audiences.md                 # Audience targeting reference
 ├── meta-ads-campaigns.md                 # Campaign structure reference
@@ -129,7 +129,7 @@ Inside agent directories, prefer flat files with prefix-based naming over nested
 
 ```text
 # Good: flat, discoverable, sortable
-marketing/
+marketing-sales/
 ├── meta-ads.md
 ├── meta-ads-audiences.md
 ├── meta-ads-campaigns.md
@@ -140,7 +140,7 @@ marketing/
 └── direct-response-copy-templates.md
 
 # Avoid: nested folders that hide content
-marketing/
+marketing-sales/
 ├── meta-ads/
 │   ├── audiences/
 │   │   └── targeting.md
@@ -153,10 +153,10 @@ marketing/
 ```
 
 **Benefits of flat naming:**
-- `ls marketing/` shows everything at a glance
-- `ls marketing/meta-ads*` groups all Meta Ads knowledge
-- `ls marketing/*swipe*` finds all swipe files across sub-topics
-- `rg --files -g "marketing/meta-ads*"` loads all Meta Ads context
+- `ls marketing-sales/` shows everything at a glance
+- `ls marketing-sales/meta-ads*` groups all Meta Ads knowledge
+- `ls marketing-sales/*swipe*` finds all swipe files across sub-topics
+- `rg --files -g "marketing-sales/meta-ads*"` loads all Meta Ads context
 - Max depth is 2 levels from `.agents/` — never 5+
 
 **When to use a subdirectory:** Only when a single prefix group exceeds ~20 files of reference material. Even then, one level max.

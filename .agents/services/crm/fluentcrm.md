@@ -97,7 +97,7 @@ ls dist/fluentcrm-mcp-server.js  # verify build
 }
 ```
 
-**Per-Agent Enablement**: FluentCRM tools are enabled via `fluentcrm_*: true` in this subagent's `tools:` section. Main agents (`sales.md`, `marketing.md`) reference this subagent for CRM operations, ensuring the MCP is only loaded when needed.
+**Per-Agent Enablement**: FluentCRM tools are enabled via `fluentcrm_*: true` in this subagent's `tools:` section. Main agents (`marketing-sales.md`, `marketing-sales.md`) reference this subagent for CRM operations, ensuring the MCP is only loaded when needed.
 
 ### WordPress Setup
 
@@ -195,8 +195,8 @@ curl -u "username:app_password" \
 
 ## Related
 
-- `sales.md` — Sales workflows with FluentCRM
-- `marketing.md` — Marketing campaigns with FluentCRM
+- `marketing-sales.md` — Sales workflows with FluentCRM
+- `marketing-sales.md` — Marketing campaigns with FluentCRM
 - `services/email/ses.md` — Email delivery via SES
 - FluentCRM Docs: https://fluentcrm.com/docs/
 - FluentCRM REST API: https://rest-api.fluentcrm.com/
