@@ -2,7 +2,7 @@
 
 ## Parent-Child Relationships
 
-Don't put all data in a single DO. For hierarchical data (workspaces → projects, game servers → matches), create separate child DOs. Parent coordinates and tracks children; children handle own state independently.
+Don't put all data in a single DO. For hierarchical data (workspaces → projects, game servers → matches), create separate child DOs. Parent coordinates; children handle own state independently.
 
 ```typescript
 export class GameServer extends DurableObject<Env> {
@@ -54,8 +54,6 @@ export class FleetDO extends DurableObject<Env> {
   async deleteWithCascade() {
     const data = await this.ctx.storage.get<{ agents: string[] }>('data');
     const myPath = /* derive from context */;
-    
-    // Cascade delete to all children
     for (const agent of data?.agents || []) {
       const childPath = myPath === '/' ? `/${agent}` : `${myPath}/${agent}`;
       const child = this.env.FLEET_DO.get(this.env.FLEET_DO.idFromName(childPath));
@@ -112,31 +110,24 @@ const id = env.USER_DO.idFromName(userId); // deterministic per-user routing
 const user = env.USER_DO.get(id);
 ```
 
-Benefits: natural ownership boundary, hibernates between user activity, WebSocket for real-time updates.
-
 ## Colo-Aware Sharding
 
-Use `request.cf.colo` for geographic distribution. Rate limit per-colo before hitting DO.
+Use `request.cf.colo` (IATA airport code, e.g., "SFO") for geographic distribution. Rate limit per-colo before hitting DO.
 
 ```typescript
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const userId = new URL(request.url).searchParams.get("userId") || "unknown";
-    const colo = request.cf?.colo || "unknown";
-    const shardKey = `${colo}:${userId}`;
-    
+    const shardKey = `${request.cf?.colo || "unknown"}:${userId}`;
+
     // Rate limit per-colo (counters not shared across datacenters)
     const { success } = await env.RATE_LIMITER.limit({ key: shardKey });
     if (!success) return new Response("Rate limited", { status: 429 });
-    
-    // Route to colo-aware DO shard
-    const stub = env.MY_DO.get(env.MY_DO.idFromName(shardKey));
-    return await stub.fetch(request);
+
+    return await env.MY_DO.get(env.MY_DO.idFromName(shardKey)).fetch(request);
   }
 }
 ```
-
-`request.cf.colo` returns IATA airport code (e.g., "SFO", "LHR"). Useful for high-throughput systems needing geographic awareness.
 
 ## Rate Limiting
 
@@ -240,7 +231,7 @@ async alarm() {
 
 ## Best Practices
 
-**Hibernation-first design**: Sleep by default, wake for meaningful work, sleep again. All state must persist to storage — in-memory state is lost on eviction. Use `blockConcurrencyWhile()` in constructor to reload state on wake. Use `idFromName()` for coordination, `newUniqueId()` for sharding, minimize constructor work, leverage WebSocket hibernation API.
+**Hibernation-first**: Sleep by default, wake for meaningful work, sleep again. All state must persist to storage — in-memory state is lost on eviction. Use `blockConcurrencyWhile()` in constructor to reload state on wake. Use `idFromName()` for coordination, `newUniqueId()` for sharding. Leverage WebSocket hibernation API.
 
 **Atom of Coordination**: Each DO owns ONE logical unit (user, room, document, session). If data spans multiple boundaries or lacks natural ownership, DO may be wrong choice.
 
