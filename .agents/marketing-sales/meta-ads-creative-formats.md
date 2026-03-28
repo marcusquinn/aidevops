@@ -6,82 +6,30 @@
 
 ## UGC (User Generated Content)
 
-### What Makes Great UGC
-
-UGC works because it looks like content from a friend, not a brand.
-
-| Polish Level | Perception |
-|--------------|------------|
-| Too polished | "This is an ad" → skepticism |
-| Too rough | "This is unprofessional" → distrust |
-| Sweet spot | "This is a real person's opinion" → trust |
+Polish sweet spot: too polished → "This is an ad" (skepticism); too rough → distrust; natural → trust.
 
 ### UGC Structures
 
-**1. Problem-Solution**
-```
-Opening: "I used to struggle with [problem]"
-Middle: "Then I found [product]"
-Demo: Show product in use
-Result: "Now I [outcome]"
-CTA: "You should try it"
-```
+**1. Problem-Solution** — "I used to struggle with [problem]" → demo product → "Now I [outcome]" → CTA
 
-**2. Testimonial Review**
-```
-Opening: "Okay I have to tell you about [product]"
-Middle: "I was skeptical but..."
-Proof: Show results/product
-Close: "Honestly, it's amazing"
-```
+**2. Testimonial Review** — "Okay I have to tell you about [product]" → "I was skeptical but..." → show results → "Honestly, it's amazing"
 
-**3. Day-in-the-Life**
-```
-Opening: "Come with me to [activity]"
-Integration: Product naturally appears
-Context: Show how product fits life
-Close: Subtle or explicit recommendation
-```
+**3. Day-in-the-Life** — "Come with me to [activity]" → product naturally appears → subtle/explicit recommendation
 
-**4. Unboxing**
-```
-Opening: "[Product] just arrived!"
-Middle: Open and reveal
-Reaction: Genuine first impression
-Demo: Quick use demonstration
-```
+**4. Unboxing** — "[Product] just arrived!" → open and reveal → genuine first impression → quick demo
 
-**5. Tutorial/How-To**
-```
-Opening: "Here's how I [use product] for [outcome]"
-Steps: Walk through process
-Result: Show end result
-```
+**5. Tutorial/How-To** — "Here's how I [use product] for [outcome]" → steps → end result
 
-### UGC Hooks That Work
+### UGC Hooks
 
-```
-"Okay I need to tell you about..."
-"I was today years old when I discovered..."
-"Why did nobody tell me about this sooner?"
-"My honest review of [product]"
-"If you're like me and struggle with [problem]..."
-"This is the best purchase I've made this year"
-"You need this if you [situation]"
-```
+- "Okay I need to tell you about..." / "I was today years old when I discovered..."
+- "Why did nobody tell me about this sooner?" / "My honest review of [product]"
+- "If you're like me and struggle with [problem]..." / "This is the best purchase I've made this year"
+- "You need this if you [situation]"
 
-### UGC Length by Placement
-
-| Placement | Optimal Length |
-|-----------|---------------|
-| Feed | 15-30 seconds |
-| Stories | 15 seconds |
-| Reels | 15-30 seconds |
-| In-stream | 30-60 seconds |
+**Length:** Feed/Reels 15-30s | Stories 15s | In-stream 30-60s
 
 ### Finding and Briefing Creators
-
-**Platforms:**
 
 | Platform | Type | Price Range |
 |----------|------|-------------|
@@ -92,18 +40,14 @@ Result: Show end result
 | Fiverr/Upwork | Budget | $50-200/video |
 
 **Creator Brief Template:**
+
 ```
 BRAND: [Name] | PRODUCT: [What it is] | WEBSITE: [URL]
-
 TARGET AUDIENCE: [Age, gender, interests, pain points]
-
 KEY MESSAGES: [Main benefit] / [Secondary benefit] / [Differentiator]
-
 VIDEO STYLE: [Testimonial/Tutorial/Unboxing/etc.]
-
 MUST INCLUDE: Product in use, [specific feature], mention [key benefit], CTA: [action]
 MUST AVOID: Competitors by name, [restrictions]
-
 SPECS: [X-Y seconds], vertical 9:16, 1080x1920 min, clear audio
 DEADLINE: [Date]
 ```
@@ -122,7 +66,7 @@ DEADLINE: [Date]
 
 ## Founder/Talking Head
 
-**Best For:** Building brand trust, explaining complex products, B2B/SaaS, differentiation (no competitor can copy your founder), retargeting.
+**Best For:** Brand trust, complex products, B2B/SaaS, differentiation (no competitor can copy your founder), retargeting.
 
 ### Setup Options
 
@@ -134,31 +78,11 @@ DEADLINE: [Date]
 
 ### Script Frameworks
 
-**Problem-Solution:**
-```
-0-3s: "Are you still [pain point]?"
-3-10s: "I was too. That's why I built [product]."
-10-20s: "[Product] helps you [benefit] by [how]."
-20-30s: "[Social proof or result]"
-30-35s: "Try it free at [CTA]"
-```
-
-**Origin Story:**
-```
-0-5s: "Three years ago, I was [frustrated situation]"
-5-15s: "I tried everything: [list failed solutions]"
-15-25s: "So I built [product] to [solve it properly]"
-25-35s: "Now [X] people use it to [outcome]"
-35-40s: "Join them at [CTA]"
-```
-
-**Myth-Busting:**
-```
-0-3s: "Everyone thinks [common belief]. They're wrong."
-3-15s: "The truth is [contrary reality]."
-15-25s: "That's why [product] does [different approach]."
-25-30s: "See for yourself: [CTA]"
-```
+| Framework | Script |
+|-----------|--------|
+| **Problem-Solution** | 0-3s: "Are you still [pain point]?" → 3-10s: "I was too. That's why I built [product]." → 10-20s: "[Product] helps you [benefit] by [how]." → 20-30s: "[Social proof]" → 30-35s: "Try it free at [CTA]" |
+| **Origin Story** | 0-5s: "Three years ago, I was [frustrated situation]" → 5-15s: "I tried everything: [list]" → 15-25s: "So I built [product] to [solve it]" → 25-35s: "Now [X] people use it to [outcome]" → 35-40s: "Join them at [CTA]" |
+| **Myth-Busting** | 0-3s: "Everyone thinks [common belief]. They're wrong." → 3-15s: "The truth is [contrary reality]." → 15-25s: "That's why [product] does [different approach]." → 25-30s: "See for yourself: [CTA]" |
 
 ### Authenticity vs Polish
 
@@ -175,23 +99,14 @@ DEADLINE: [Date]
 
 ## Static Images
 
-### Image Styles That Work
+**Styles:** Lifestyle photography, product hero shots, graphic/designed (bold typography), screenshots/data (results, before/after), meme/native style.
 
-1. **Lifestyle Photography** — product in real-life context, aspirational setting
-2. **Product Hero Shots** — clean, multiple angles, detail shots
-3. **Graphic/Designed** — bold typography, clear value proposition, brand colors
-4. **Screenshots/Data** — results dashboard, before/after metrics, app interface
-5. **Meme/Native Style** — looks organic to feed, humor or relatability
-
-### Text Overlay Best Practices
-
-- More text = often lower delivery. Keep key message in ~20% of image.
-- Text hierarchy: HEADLINE (large, bold) → Supporting text → CTA (contrast color)
-- Minimum 24px on mobile, high contrast, max 2 font styles per image
+**Text Overlay:** Keep key message in ~20% of image. Hierarchy: HEADLINE → supporting text → CTA (contrast color). Min 24px on mobile, high contrast, max 2 font styles.
 
 ### Comparison Images
 
 **Us vs Them:**
+
 ```
 [OLD WAY]          [YOUR WAY]
 ❌ Pain point       ✅ Solution
@@ -199,6 +114,7 @@ DEADLINE: [Date]
 ```
 
 **Feature Comparison:**
+
 ```
           [US]    [THEM]
 Feature 1   ✅       ❌
@@ -214,26 +130,15 @@ Price      $XX     $XXX
 
 **Best For:** Multiple products, step-by-step processes, feature showcases, storytelling, portfolio/case studies.
 
-**Optimal Card Count:** 3-5 cards (users rarely swipe past 5). First card must work standalone — many users don't swipe.
+**Optimal Card Count:** 3-5 (users rarely swipe past 5). First card must work standalone.
 
-### Card Sequencing Options
+### Card Sequencing
 
-**Hook → Benefit → Benefit → Proof → CTA**
-```
-Card 1: Attention-grabbing hook image
-Card 2-3: Benefits explained
-Card 4: Social proof (testimonial, stats)
-Card 5: CTA + offer
-```
+**Hook → Benefit → Benefit → Proof → CTA:**
+Card 1: Attention-grabbing hook | Cards 2-3: Benefits | Card 4: Social proof | Card 5: CTA + offer
 
-**Mini-Story Framework:**
-```
-Card 1: Setup (situation/problem)
-Card 2: Conflict (why it's hard)
-Card 3: Solution (your product)
-Card 4: Resolution (success)
-Card 5: Call to Action
-```
+**Mini-Story:**
+Card 1: Setup (problem) | Card 2: Conflict (why it's hard) | Card 3: Solution | Card 4: Resolution | Card 5: CTA
 
 ---
 
@@ -259,22 +164,18 @@ Card 5: Call to Action
 | Reels | 15-30s | 15-30s | 15-30s |
 | In-stream | 30-60s | 60-120s | 30-60s |
 
-### Caption/Subtitle Requirements
+### Captions
 
 **80% watch without sound. Captions are mandatory.**
 
-- Burned-in (permanent in video) — Recommended; SRT files as backup
+- Burned-in preferred; SRT files as backup
 - White or yellow text with black outline/shadow
-- Large enough to read on mobile (minimum 5% of screen height)
-- Placed in lower third, not covered by UI
-
-**Best Practice:** Create for sound-off, enhance for sound-on.
+- Min 5% of screen height; placed in lower third, not covered by UI
+- Create for sound-off, enhance for sound-on
 
 ---
 
 ## AI-Generated Creative
-
-### Tools by Category
 
 | Category | Tool | Best For | Quality |
 |----------|------|----------|---------|
@@ -289,12 +190,7 @@ Card 5: Call to Action
 
 **Poor use cases:** Replacing real testimonials, detailed product photography, founder/person content, anything requiring trust.
 
-**Best results — AI + Human hybrid:**
-```
-AI generates background → Human overlays real product
-AI writes variations → Human selects and edits
-AI generates B-roll → Human edits with real footage
-```
+**AI + Human hybrid:** AI generates background/variations/B-roll → Human overlays real product, selects/edits, cuts with real footage.
 
 **Legal:** FTC requires disclosure of AI-generated endorsements. Check tool's commercial use rights. Avoid generating copyrighted characters/brands.
 
