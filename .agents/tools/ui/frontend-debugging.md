@@ -19,41 +19,17 @@ tools:
 ## Quick Reference
 
 - **Golden Rule**: Always verify frontend fixes with browser screenshot, never trust curl alone
-- **Hydration errors**: Usually mean server/client mismatch or invalid component types
+- **Hydration errors**: Server/client mismatch or invalid component types
 - **Monorepo gotchas**: Webpack loaders (SVGR, etc.) don't cross package boundaries
 - **Browser tool**: `dev-browser` agent for visual verification
 
-**When to read this guide**:
-- Debugging React/Next.js errors
-- "Something went wrong" or blank page issues
-- Hydration mismatch errors
-- Working in monorepo `packages/` directories
-- After curl returns 200 but user reports errors
+**When to use**: React/Next.js errors, blank pages, hydration mismatches, monorepo `packages/` work, curl returns 200 but user reports errors.
 
 <!-- AI-CONTEXT-END -->
 
-## The Browser Verification Rule
+## Browser Verification (CRITICAL)
 
-**CRITICAL**: HTTP status codes and HTML responses do NOT verify frontend functionality.
-
-### Why curl Lies
-
-```bash
-# This returns 200 OK even when React crashes client-side:
-curl -s https://myapp.local -o /dev/null -w "%{http_code}"
-# Output: 200
-
-# The HTML contains the error boundary, not the actual app:
-curl -s https://myapp.local | grep -o "Something went wrong"
-# Output: Something went wrong
-```
-
-**The server returns 200 because**:
-- Next.js SSR renders the error boundary successfully
-- The HTTP response is valid HTML
-- The crash happens during client-side hydration
-
-### Always Use Browser Verification
+HTTP status codes do NOT verify frontend functionality. Next.js SSR renders error boundaries with 200 OK — the crash happens during client-side hydration. `curl` will show success while the app is broken.
 
 After ANY frontend fix, verify with actual browser rendering:
 
@@ -61,187 +37,12 @@ After ANY frontend fix, verify with actual browser rendering:
 # Start dev-browser if not running
 bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start
 
-# Take screenshot to verify
+# Verify page + capture console errors
 cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx <<'EOF'
 import { connect, waitForPageLoad } from "@/client.js";
 
 const client = await connect("http://localhost:9222");
 const page = await client.page("verify");
-
-await page.goto("https://myapp.local");
-await waitForPageLoad(page);
-
-// Check for error indicators
-const hasError = await page.evaluate(() => {
-  const body = document.body.innerText;
-  return body.includes("Something went wrong") || 
-         body.includes("Error:") ||
-         body.includes("Unhandled Runtime Error");
-});
-
-if (hasError) {
-  console.log("ERROR DETECTED - taking screenshot");
-  await page.screenshot({ path: "tmp/error-state.png", fullPage: true });
-} else {
-  console.log("Page loaded successfully");
-  await page.screenshot({ path: "tmp/success-state.png" });
-}
-
-console.log({ url: page.url(), title: await page.title(), hasError });
-await client.disconnect();
-EOF
-```
-
-### When to Trigger Browser Verification
-
-Automatically suggest browser verification when:
-
-1. **After fixing any frontend error** - especially hydration/render errors
-2. **User reports "not working"** but curl returns 200
-3. **Modifying shared UI packages** in monorepos
-4. **Changing component imports** or export patterns
-5. **After clearing caches** (.next, node_modules)
-
-## React Hydration Errors
-
-### Understanding Hydration
-
-Hydration = React attaching event handlers to server-rendered HTML. Fails when:
-- Server HTML doesn't match client render
-- Component returns invalid type (object instead of function)
-- Browser APIs used during SSR
-
-### Common Error Patterns
-
-| Error Message | Likely Cause | Solution |
-|---------------|--------------|----------|
-| `Element type is invalid: expected string... got: object` | Import returning wrong type | Check import path, verify export is React component |
-| `Hydration failed because initial UI does not match` | Server/client mismatch | Check for browser-only code, use `useEffect` for client-only |
-| `Text content does not match` | Dynamic content in SSR | Use `suppressHydrationWarning` or move to client component |
-| `Cannot read properties of undefined` | Missing data during SSR | Add null checks, use loading states |
-
-### The "got: object" Pattern
-
-This specific error almost always means an import is returning the wrong type:
-
-```typescript
-// BAD: SVGR import in shared package (returns object, not component)
-import Logo from "./svg/logo.svg";  // Returns { src: "...", height: ..., width: ... }
-
-// GOOD: Inline React component
-export const Logo = (props: SVGProps<SVGSVGElement>) => (
-  <svg viewBox="0 0 100 100" {...props}>
-    <path d="..." />
-  </svg>
-);
-```
-
-**Debugging steps**:
-1. Find the component mentioned in error (e.g., `Header`)
-2. Check all imports in that component
-3. Look for non-standard imports (SVG, JSON, CSS modules)
-4. Verify each import returns expected type
-
-## Monorepo Package Boundaries
-
-### The Webpack Loader Problem
-
-Webpack loaders (SVGR, CSS modules, etc.) only process files within the app's webpack pipeline.
-
-```text
-apps/web/                    # Webpack processes this
-  src/
-    components/
-      Logo.tsx               # Can use: import Logo from "./logo.svg"
-      
-packages/ui/                 # Transpiled by Next.js, NOT webpack
-  src/
-    icons.tsx                # CANNOT use: import Logo from "./logo.svg"
-                             # SVG import returns raw object, not component
-```
-
-### What Works vs What Doesn't
-
-| Pattern | In App (`apps/web/`) | In Package (`packages/ui/`) |
-|---------|---------------------|----------------------------|
-| `import X from "./file.svg"` (SVGR) | Works | **Broken** - returns object |
-| `import styles from "./file.module.css"` | Works | **Broken** - returns object |
-| `import data from "./file.json"` | Works | Works (JSON is universal) |
-| Inline React components | Works | Works |
-| `@svgr/webpack` configured | Works | **Not applied** |
-
-### Solutions for Shared Packages
-
-**Option 1: Inline SVG Components (Recommended)**
-
-```typescript
-// packages/ui/shared/src/assets/icons.tsx
-import type { SVGProps } from "react";
-
-export const Logo = (props: SVGProps<SVGSVGElement>) => (
-  <svg viewBox="0 0 100 100" fill="currentColor" {...props}>
-    <path d="M10 10 L90 10 L90 90 L10 90 Z" />
-  </svg>
-);
-
-export const Icon = (props: SVGProps<SVGSVGElement>) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" {...props}>
-    <path strokeLinecap="round" d="M12 4v16m-8-8h16" />
-  </svg>
-);
-```
-
-**Option 2: Build-time SVG transformation**
-
-Configure the shared package to transform SVGs during its own build:
-
-```json
-// packages/ui/package.json
-{
-  "scripts": {
-    "build": "tsup --loader '.svg=dataurl'"
-  }
-}
-```
-
-**Option 3: Re-export from app**
-
-Keep SVG imports in the app, re-export to packages:
-
-```typescript
-// apps/web/src/assets/icons.ts
-export { default as Logo } from "./svg/logo.svg";
-
-// packages/ui uses the app's exports (requires careful dependency management)
-```
-
-### Detection Checklist
-
-When working in `packages/` directories, check for:
-
-- [ ] SVG imports (`import X from "*.svg"`)
-- [ ] CSS module imports (`import styles from "*.module.css"`)
-- [ ] Any webpack-loader-dependent imports
-- [ ] Assets that work in `apps/` but might not in `packages/`
-
-## Debugging Workflow
-
-### Step 1: Reproduce with Browser
-
-```bash
-# Don't trust curl - use browser
-bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start
-# Navigate to URL, take screenshot
-```
-
-### Step 2: Check Console Errors
-
-```bash
-cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx <<'EOF'
-import { connect, waitForPageLoad } from "@/client.js";
-
-const client = await connect("http://localhost:9222");
-const page = await client.page("debug");
 
 // Capture console errors
 const errors: string[] = [];
@@ -253,67 +54,107 @@ page.on('pageerror', err => errors.push(err.message));
 await page.goto("https://myapp.local");
 await waitForPageLoad(page);
 
-console.log("Console errors:", errors);
+const hasError = await page.evaluate(() => {
+  const body = document.body.innerText;
+  return body.includes("Something went wrong") ||
+         body.includes("Error:") ||
+         body.includes("Unhandled Runtime Error");
+});
+
+if (hasError) {
+  console.log("ERROR DETECTED");
+  await page.screenshot({ path: "tmp/error-state.png", fullPage: true });
+} else {
+  console.log("Page loaded successfully");
+  await page.screenshot({ path: "tmp/success-state.png" });
+}
+
+console.log({ url: page.url(), title: await page.title(), hasError, errors });
 await client.disconnect();
 EOF
 ```
 
-### Step 3: Identify Component
+**Trigger browser verification when**: fixing frontend errors (especially hydration/render), user reports "not working" but curl returns 200, modifying shared UI packages, changing component imports/exports, after clearing caches (.next, node_modules).
 
-From error message, find the failing component:
-- `Check the render method of 'Header'` → Look at Header component
-- Trace imports back to source
+## React Hydration Errors
 
-### Step 4: Verify Import Types
+Hydration = React attaching event handlers to server-rendered HTML. Fails when server HTML doesn't match client render, component returns invalid type, or browser APIs are used during SSR.
+
+### Error Patterns
+
+| Error Message | Cause | Fix |
+|---------------|-------|-----|
+| `Element type is invalid: expected string... got: object` | Import returning wrong type | Check import path, verify export is React component |
+| `Hydration failed because initial UI does not match` | Server/client mismatch | Use `useEffect` for client-only code |
+| `Text content does not match` | Dynamic content in SSR | `suppressHydrationWarning` or client component |
+| `Cannot read properties of undefined` | Missing data during SSR | Add null checks, use loading states |
+
+### The "got: object" Pattern
+
+This error almost always means an import returns the wrong type — common with SVG imports in shared packages:
 
 ```typescript
-// Add temporary debug logging
-console.log("Logo type:", typeof Logo, Logo);
-// Object = broken import
-// Function = valid React component
+// BAD: SVGR import in shared package (returns { src, height, width }, not component)
+import Logo from "./svg/logo.svg";
+
+// GOOD: Inline React component
+import type { SVGProps } from "react";
+export const Logo = (props: SVGProps<SVGSVGElement>) => (
+  <svg viewBox="0 0 100 100" fill="currentColor" {...props}>
+    <path d="M10 10 L90 10 L90 90 L10 90 Z" />
+  </svg>
+);
 ```
 
-### Step 5: Fix and Verify with Browser
+**Debug steps**: Find component in error → check all imports → look for non-standard imports (SVG, JSON, CSS modules) → verify each returns expected type. Add `console.log("X type:", typeof X, X)` — object = broken, function = valid component.
 
-After fix, ALWAYS verify with browser screenshot, not curl.
+## Monorepo Package Boundaries
+
+Webpack loaders (SVGR, CSS modules) only process files within the app's webpack pipeline. Shared packages under `packages/` are transpiled by Next.js but NOT processed by webpack loaders.
+
+| Pattern | In `apps/web/` | In `packages/ui/` |
+|---------|---------------|-------------------|
+| `import X from "./file.svg"` (SVGR) | Works | **Broken** — returns object |
+| `import styles from "./file.module.css"` | Works | **Broken** — returns object |
+| `import data from "./file.json"` | Works | Works (JSON is universal) |
+| Inline React components | Works | Works |
+| `@svgr/webpack` configured | Works | **Not applied** |
+
+### Solutions for Shared Packages
+
+**Option 1: Inline SVG components (recommended)** — see the `Logo` example above. Works everywhere, no loader dependency.
+
+**Option 2: Build-time SVG transformation** — configure the package's own build:
+
+```json
+// packages/ui/package.json
+{
+  "scripts": { "build": "tsup --loader '.svg=dataurl'" }
+}
+```
+
+**Option 3: Re-export from app** — keep SVG imports in `apps/web/`, re-export to packages (requires careful dependency management).
+
+**Detection checklist** for `packages/` directories: SVG imports (`*.svg`), CSS module imports (`*.module.css`), any webpack-loader-dependent imports, assets that work in `apps/` but might not in `packages/`.
 
 ## CSS Scroll Debugging
 
-### The "Scroll Trapped in Sidebar" Pattern
+### "Scroll Trapped in Sidebar" Pattern
 
-**Symptom**: Mouse wheel doesn't scroll the page when cursor is over a sidebar or panel.
+**Symptom**: Mouse wheel doesn't scroll the page when cursor is over a sidebar/panel.
 
-**Root Cause Priority** (check in this order):
+**Root cause priority** (check in order):
 
-1. **Global CSS** - `overscroll-behavior: none` on `*` or ancestors
-2. **Overflow on non-scrollable content** - `overflow-auto` creates scroll container even when content fits
-3. **Overlapping elements** - Rails, handles, or invisible buttons intercepting events
-4. **JS event handlers** - Only consider after ruling out CSS causes
+1. **Global CSS** — `overscroll-behavior: none` on `*` or ancestors
+2. **Overflow on non-scrollable content** — `overflow-auto` creates scroll container even when content fits
+3. **Overlapping elements** — Rails, handles, or invisible buttons intercepting events
+4. **JS event handlers** — only consider after ruling out CSS causes
 
-**Anti-pattern**: Adding complex JS wheel event handlers before checking CSS:
-
-```tsx
-// DON'T DO THIS FIRST - check CSS overscroll-behavior instead
-const handleWheel = (e: WheelEvent) => {
-  const isScrollable = el.scrollHeight > el.clientHeight;
-  if (!isScrollable) {
-    window.scrollBy({ top: e.deltaY });
-    e.preventDefault();
-  }
-};
-```
-
-**Correct debugging flow**:
-
-1. Open DevTools → Computed styles on the scroll-trapped element
-2. Check `overscroll-behavior` on the element AND its children
-3. Check `overflow` - is it creating an unnecessary scroll container?
-4. Check for absolutely-positioned elements overlapping the area
-5. Only if CSS is correct, investigate JS event handlers
+**Anti-pattern**: Adding JS wheel event handlers before checking CSS. Always check `overscroll-behavior` and `overflow` in DevTools Computed styles first — on the element AND its children. Check for absolutely-positioned elements overlapping the area. Only investigate JS handlers if CSS is correct.
 
 See `tools/ui/tailwind-css.md` for the Tailwind fix pattern.
 
-## Related Resources
+## Related
 
 - **Browser automation**: `tools/browser/dev-browser.md`
 - **React patterns**: `tools/ui/shadcn.md`
