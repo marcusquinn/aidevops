@@ -27,11 +27,9 @@ tools:
 
 ## When to Use
 
-- **Signing up for services** (API providers, SaaS platforms, cloud services)
-- **Requesting API access** (developer programs, partner APIs)
-- **Communicating with vendors** (support tickets, billing inquiries)
-- **Receiving verification codes** (email verification, 2FA setup)
-- **Account activation** (waiting for approval, responding to verification requests)
+- Signing up for services, requesting API access, communicating with vendors
+- Receiving verification codes (email verification, 2FA setup)
+- Account activation (waiting for approval, responding to verification requests)
 
 ## Architecture
 
@@ -74,7 +72,6 @@ mission-email-helper.sh
 ### Send
 
 ```bash
-# Template send
 mission-email-helper.sh send \
   --account production \
   --from noreply@yourdomain.com \
@@ -85,7 +82,6 @@ mission-email-helper.sh send \
   --var USE_CASE="Automated integration" \
   --var SENDER_NAME="John Smith"
 
-# Plain text (with thread)
 mission-email-helper.sh send \
   --account production \
   --from noreply@yourdomain.com \
@@ -100,7 +96,6 @@ mission-email-helper.sh send \
 ```bash
 mission-email-helper.sh receive --account production --mailbox my-ses-bucket/inbound
 
-# Filter by thread and date
 mission-email-helper.sh receive \
   --account production \
   --mailbox my-ses-bucket/inbound \
@@ -173,14 +168,7 @@ Record threads in the mission state file:
 | Stripe API access | api | pending | Thread: thr-20260228-143022-a1b2c3d4 |
 ```
 
-**Orchestrator workflow:**
-
-1. **Create thread** before first contact
-2. **Send email** using appropriate template
-3. **Poll for responses** with `receive`
-4. **Extract codes** — auto-extracted and stored in DB
-5. **Hand off credentials** to `credential-helper.sh`
-6. **Mark thread** `resolved` when complete
+**Orchestrator workflow:** Create thread → send email (template) → poll `receive` → extract codes (auto-stored in DB) → hand off to `credential-helper.sh` → mark thread `resolved`.
 
 **Credential handoff:**
 
