@@ -142,9 +142,9 @@
       "pr": 11297
     },
     ".agents/content/social-bird.md": {
-      "hash": "3468736a31ae90ba52430e926919c952e3f9f77a",
-      "at": "2026-03-28T12:00:00Z",
-      "pr": 11294
+      "hash": "b2840ebff41ba9b78f7331487d6596373e8436e4",
+      "at": "2026-03-28T05:10:07Z",
+      "pr": 11354
     },
     ".agents/tools/programming/modern-javascript-skill/composition.md": {
       "hash": "fe9da3d05db78aac6b072235efe8b74f5c9fcf2b",
@@ -277,14 +277,49 @@
       "pr": 11381
     },
     ".agents/tools/database/vector-search/per-tenant-rag.md": {
-      "hash": "d1117045325ba8a4bbaeff0647b674918ec1912e",
-      "at": "2026-03-28T04:30:27Z",
+      "hash": "139080e7022a0db6eeee43e89ddb5b8db89e2168",
+      "at": "2026-03-28T05:10:05Z",
       "pr": 11391
     },
     ".agents/tools/architecture/feature-slicing-skill/nextjs.md": {
       "hash": "4f5ed54db7eef3619cd797d22192d2aef90135d2",
       "at": "2026-03-28T04:30:34Z",
       "pr": 11322
+    },
+    ".agents/marketing-sales/meta-ads-creative-formats.md": {
+      "hash": "83e7d0bb30285a6eaf3e2605b10acdf1c4de1f46",
+      "at": "2026-03-28T05:09:54Z",
+      "pr": 11410
+    },
+    ".agents/marketing-sales/ad-creative-chapter-06.md": {
+      "hash": "3d34a8e028e8905a54af8dd939394d10bdf16d97",
+      "at": "2026-03-28T05:09:55Z",
+      "pr": 11414
+    },
+    ".agents/marketing-sales/direct-response-copy-swipe-file-ads.md": {
+      "hash": "ef47a643424a280f1e21226855db532545f2597c",
+      "at": "2026-03-28T05:09:57Z",
+      "pr": 11411
+    },
+    ".agents/tools/voice/transcription.md": {
+      "hash": "00b7657112dc4b31c6064057fcd47e8d4651f7ee",
+      "at": "2026-03-28T05:10:01Z",
+      "pr": 11419
+    },
+    ".agents/tools/diagrams/mermaid-diagrams-skill/sequence.md": {
+      "hash": "162ba5164f7ffedc3b1d3497beabd56c6d58aaba",
+      "at": "2026-03-28T05:10:17Z",
+      "pr": 11392
+    },
+    ".agents/tools/architecture/clean-ddd-hexagonal-skill/cheatsheet.md": {
+      "hash": "7622759c028bec7b85f445a88ab175f13b055133",
+      "at": "2026-03-28T05:10:19Z",
+      "pr": 11393
+    },
+    ".agents/marketing-sales/ad-creative-chapter-10.md": {
+      "hash": "23e33ef44632a4467884d5d9bebf6452adf22160",
+      "at": "2026-03-28T05:10:32Z",
+      "pr": 11315
     }
   }
 }
