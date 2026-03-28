@@ -34,13 +34,14 @@ GUARANTEE: [Risk Reversal]
 ### Example (SaaS)
 
 ```text
-CORE: Full Dashboard Access .......................... $149/mo Value
+CORE: Full Dashboard Access .......................... $149/mo
   • Unlimited tracking, monitoring, competitor analysis, review management
-BONUS 1: Done-For-You Setup ($500 value) ............. Included
-BONUS 2: Training Academy ($297 value) ............... Included
-BONUS 3: Priority Support ($50/mo value) ............. Included
+BONUS 1: Done-For-You Setup .......................... $500 one-time (~$42/mo amortized)
+BONUS 2: Training Academy ............................ $297 one-time (~$25/mo amortized)
+BONUS 3: Priority Support ............................ $50/mo
 ─────────────────────────────────────────────────
-COMPARABLE VALUE: $346/mo → PRO PLAN: $79/mo ($69/mo annual)
+COMPARABLE VALUE: $265/mo → PRO PLAN: $79/mo ($69/mo annual)
+  ($149 + $50 recurring + $66/mo amortized one-time bonuses over 12 months)
 GUARANTEE: 30-Day Money Back. No long-term contracts.
 ─────────────────────────────────────────────────
 ```
@@ -140,7 +141,7 @@ A/B test one variable at a time. Run until statistical significance. Document re
 
 | Area | Verify |
 |------|--------|
-| **Value** | Core offer clearly defined. Benefits > features. Stack = 5-10x price. Bonuses relevant. |
+| **Value** | Core offer clearly defined. Benefits > features. Stack = 10x+ price (5x minimum floor). Bonuses relevant. |
 | **Price** | Anchoring used. Payment plan for $200+. Price tested/researched. |
 | **Risk Reversal** | Guarantee strong, clear, reasonable, prominent on page. |
 | **Urgency** | Real (not fake). Deadline/scarcity stated. Consequences of waiting clear. |
