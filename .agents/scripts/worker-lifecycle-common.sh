@@ -636,7 +636,10 @@ _compute_struggle_ratio() {
 		return 0
 	fi
 
-	# Count commits since worker start
+	# Count commits since worker start.
+	# Use process age (elapsed_seconds) as the time window for git log.
+	# This is the most reliable anchor — it measures how long the worker
+	# process has been alive, which is what we want for commit counting.
 	local commits=0
 	if [[ -d "${worktree_dir}/.git" || -f "${worktree_dir}/.git" ]]; then
 		local since_seconds_ago="${elapsed_seconds}"
@@ -645,11 +648,19 @@ _compute_struggle_ratio() {
 		commits=$( (git -C "$worktree_dir" log --oneline --since="${since_seconds_ago} seconds ago" || true) | wc -l | tr -d ' ')
 	fi
 
-	# Estimate message count from OpenCode session DB
+	# Count messages from the session DB (runtime-aware).
+	# Supports both OpenCode (opencode.db) and Claude Code (~/.claude/projects/).
+	# When neither DB is available, return n/a — NEVER fabricate message counts
+	# from elapsed time. The old heuristic (messages = elapsed_minutes × 2)
+	# produced false positives: a 19-minute worker could be reported as "17h
+	# with struggle_ratio: 48" when the process age was inherited from a
+	# long-lived parent or stale worktree. See GH#11278.
 	local messages=0
+	local db_available=false
 	local db_path="${HOME}/.local/share/opencode/opencode.db"
 
 	if [[ -f "$db_path" ]]; then
+		db_available=true
 		local session_id
 		session_id=$(_resolve_session_id_from_cmd "$cmd")
 
@@ -673,11 +684,13 @@ PY
 		fi
 	fi
 
-	# Fallback: estimate from elapsed time if DB query failed
-	# Conservative heuristic: ~2 messages per minute for an active worker
-	if [[ "$messages" -eq 0 && "$elapsed_seconds" -gt 300 ]]; then
-		local elapsed_minutes=$((elapsed_seconds / 60))
-		messages=$((elapsed_minutes * 2))
+	# If no session DB is available (e.g., Claude Code runtime without
+	# OpenCode DB), return n/a. Do NOT fabricate message counts from
+	# elapsed time — that heuristic is the root cause of false struggle
+	# ratio reports (GH#11278).
+	if [[ "$db_available" == "false" ]]; then
+		echo "n/a|${commits}|0|"
+		return 0
 	fi
 
 	# Compute ratio

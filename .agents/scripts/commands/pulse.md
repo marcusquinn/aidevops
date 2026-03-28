@@ -493,7 +493,7 @@ gh pr close <number> --repo <slug> \
 
 ### Kill stuck workers
 
-Check `ps axo pid,etime,command | grep '\.opencode run' | grep '/full-loop Implement issue #' | grep -v '/pulse'`. Any worker running 3+ hours with no open PR is likely stuck. Kill it: `kill <pid>`. Comment on the issue with the full audit-quality fields (model, branch, reason, diagnosis, next action — see "Audit-quality state in issue and PR comments" below). This frees a slot. If the worker has recent commits or an open PR with activity, leave it alone — it's making progress.
+Check the Active Workers section in the pre-fetched state. Each worker line includes `process_uptime` and `elapsed_seconds` — these are the **authoritative** duration values from `ps etime` (how long the worker process has been alive). Use `process_uptime` as the `<duration>` in kill comments. Do NOT compute duration from dispatch comment timestamps, branch creation times, or worktree ages — those may reflect prior attempts, not the current worker session. Any worker running 3+ hours with no open PR is likely stuck. Kill it: `kill <pid>`. Comment on the issue with the full audit-quality fields (model, branch, reason, diagnosis, next action — see "Audit-quality state in issue and PR comments" below). This frees a slot. If the worker has recent commits or an open PR with activity, leave it alone — it's making progress.
 
 Before killing a worker for thrash, read the latest worker transcript/log tail and attempt one targeted coaching intervention unless the worker is clearly hard-stuck (for example: repeated identical fatal error, no commits for many hours, or provider backoff exhaustion). Coaching intervention means: post a concise issue comment with the exact blocker pattern, then re-dispatch with a narrower acceptance target and explicit checkpoint deadline. If that coached retry still fails to produce a checkpoint, then kill/requeue and comment why completion was not possible.
 
@@ -508,6 +508,8 @@ The "Active Workers" section in the pre-fetched state includes a `struggle_ratio
 - **`thrashing`**: ratio > 50, elapsed > 1 hour. The worker has been unproductive for a long time. Strongly consider killing it (`kill <pid>`) and re-dispatching with a simpler scope or more context in the issue body.
 
 **This is an informational signal, not an auto-kill trigger.** Workers doing legitimate research or planning may have high message counts with few commits — that's expected for the first 30 minutes. The flags only activate after the minimum elapsed time. Use your judgment: a worker with `struggle_ratio: 45` at 35 minutes that just made its first commit is recovering, not stuck.
+
+**`n/a` ratio:** When the struggle ratio shows `n/a`, the session DB was unavailable (e.g., Claude Code runtime without OpenCode DB). Do NOT fabricate or estimate the ratio — report it as `n/a` in kill comments. The `elapsed` time from `ps etime` is the process age, which is reliable for the worker's own process but should not be used to estimate message counts.
 
 **Configuration** (env vars in pulse-wrapper.sh):
 - `STRUGGLE_RATIO_THRESHOLD` — ratio above which to flag (default: 30)
@@ -563,6 +565,11 @@ gh issue comment <number> --repo <slug> --body "Worker killed after <duration> w
 - **Reason**: <why it was killed — thrashing, timeout, CI loop, etc.>
 - **Diagnosis**: <1-line hypothesis of what went wrong>
 - **Next action**: <re-dispatch at same tier / escalate to opus / needs manual review>"
+# IMPORTANT: <duration> MUST come from the process_uptime field in the Active
+# Workers pre-fetched data (sourced from ps etime = actual process lifetime).
+# Do NOT compute duration from dispatch comment timestamps, branch ages, or
+# worktree creation times — those reflect prior attempts, not this worker.
+# If struggle_ratio is n/a, omit it rather than fabricating a value.
 ```
 
 **Required fields in merge/completion comments:**

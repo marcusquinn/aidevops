@@ -1589,9 +1589,14 @@ prefetch_active_workers() {
 			local pid etime cmd
 			read -r pid etime cmd <<<"$line"
 
-			# Compute elapsed seconds for struggle ratio
+			# Compute elapsed seconds for struggle ratio.
+			# This is the AUTHORITATIVE process age — use it for kill comments.
+			# Do NOT compute duration from dispatch comment timestamps or
+			# branch/worktree creation times, which may reflect prior attempts.
 			local elapsed_seconds
 			elapsed_seconds=$(_get_process_age "$pid")
+			local formatted_duration
+			formatted_duration=$(_format_duration "$elapsed_seconds")
 
 			# Compute struggle ratio (t1367)
 			local sr_result
@@ -1608,7 +1613,7 @@ prefetch_active_workers() {
 				sr_display="${sr_display}]"
 			fi
 
-			echo "- PID $pid (uptime: $etime): $cmd${sr_display}"
+			echo "- PID $pid (process_uptime: ${formatted_duration}, elapsed_seconds: ${elapsed_seconds}): $cmd${sr_display}"
 		done
 	fi
 
