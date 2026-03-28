@@ -84,7 +84,7 @@ Software architecture using the C4 model (Context, Container, Component, Code).
 | Dynamic | `C4Dynamic` | Interactions |
 | Deployment | `C4Deployment` | Infrastructure |
 
-**Elements:** `Person(alias, label, desc)`, `Person_Ext`, `System`, `System_Ext`, `SystemDb`, `SystemQueue`, `Boundary`, `Enterprise_Boundary`, `Container(alias, label, tech, desc)`, `Container_Ext`, `ContainerDb`, `ContainerQueue`, `Container_Boundary`, `Deployment_Node(alias, label, tech) { ... }`
+**Elements:** `Person(alias, label, desc)`, `Person_Ext`, `System`, `System_Ext`, `SystemDb`, `SystemQueue`, `Boundary`, `System_Boundary`, `Enterprise_Boundary`, `Container(alias, label, tech, desc)`, `Container_Ext`, `ContainerDb`, `ContainerQueue`, `Container_Boundary`, `Deployment_Node(alias, label, tech) { ... }`
 **Relationships:** `Rel(from, to, label[, tech])`, `BiRel()`, `Rel_U/D/L/R()`, `Rel_Back()`
 **Styling:** `UpdateElementStyle(alias, $fontColor, $bgColor)`, `UpdateRelStyle(from, to, $textColor, $lineColor)`
 
