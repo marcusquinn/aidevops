@@ -44,36 +44,23 @@ server.tool('greet', { name: z.string().describe('Name to greet') },
 );
 ```
 
-### Tool with Optional Parameters
+### Tool with Optional Parameters and Enums
 
 ```typescript
 server.tool('search', {
     query: z.string().describe('Search query'),
+    status: z.enum(['active', 'inactive', 'pending']).describe('Filter by status'),
     limit: z.number().optional().default(10).describe('Max results'),
     offset: z.number().optional().default(0).describe('Result offset'),
   },
   async (args) => {
-    const results = await performSearch(args.query, args.limit, args.offset);
+    const results = await performSearch(args.query, args.status, args.limit, args.offset);
     return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
   }
 );
 ```
 
-### Tool with Enum Validation
-
-```typescript
-server.tool('set_status', {
-    status: z.enum(['active', 'inactive', 'pending']).describe('New status'),
-    reason: z.string().optional().describe('Reason for change'),
-  },
-  async (args) => {
-    await updateStatus(args.status, args.reason);
-    return { content: [{ type: 'text', text: `Status updated to: ${args.status}` }] };
-  }
-);
-```
-
-### Tool with Complex Input
+### Tool with Nested Schema
 
 ```typescript
 const AddressSchema = z.object({
@@ -84,13 +71,9 @@ const AddressSchema = z.object({
 server.tool('create_contact', {
     name: z.string().describe('Contact name'),
     email: z.string().email().describe('Email address'),
-    phone: z.string().optional().describe('Phone number'),
     address: AddressSchema.optional().describe('Mailing address'),
   },
-  async (args) => {
-    const contact = await createContact(args);
-    return { content: [{ type: 'text', text: JSON.stringify(contact) }] };
-  }
+  async (args) => ({ content: [{ type: 'text', text: JSON.stringify(await createContact(args)) }] })
 );
 ```
 
@@ -146,35 +129,28 @@ server.tool('fetch_data', { url: z.string().url().describe('URL to fetch') },
 ## Resource Patterns
 
 ```typescript
-// Static
+// Static resource
 server.resource('README', 'resource://readme', async () => ({
   contents: [{ uri: 'resource://readme', mimeType: 'text/markdown', text: '# My MCP Server\n\n...' }],
 }));
 
-// Dynamic
-server.resource('Config', 'resource://config', async () => {
-  const config = await loadConfig();
-  return { contents: [{ uri: 'resource://config', mimeType: 'application/json', text: JSON.stringify(config, null, 2) }] };
-});
+// Dynamic (load at request time)
+server.resource('Config', 'resource://config', async () => ({
+  contents: [{ uri: 'resource://config', mimeType: 'application/json',
+    text: JSON.stringify(await loadConfig(), null, 2) }],
+}));
 
-// File
-server.resource('Schema', 'file://schema.json', async () => {
-  const content = await readFile('./schema.json', 'utf-8');
-  return { contents: [{ uri: 'file://schema.json', mimeType: 'application/json', text: content }] };
-});
-
-// Parameterized
+// Parameterized URI
 server.resource('User Profile', 'resource://user/{id}', async (uri) => {
-  const id = uri.pathname.split('/').pop();
-  const user = await getUser(id);
+  const user = await getUser(uri.pathname.split('/').pop());
   return { contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(user) }] };
 });
 
-// Binary
-server.resource('Logo', 'resource://logo.png', async () => {
-  const buffer = await readFile('./logo.png');
-  return { contents: [{ uri: 'resource://logo.png', mimeType: 'image/png', blob: buffer.toString('base64') }] };
-});
+// Binary (use blob instead of text)
+server.resource('Logo', 'resource://logo.png', async () => ({
+  contents: [{ uri: 'resource://logo.png', mimeType: 'image/png',
+    blob: (await readFile('./logo.png')).toString('base64') }],
+}));
 ```
 
 ## Prompt Patterns
@@ -203,72 +179,50 @@ server.prompt('code_review', 'Review code for issues', {
   })
 );
 
-// With optional context
-server.prompt('analyze_with_context', 'Analyze data with additional context', {
-    data: z.string().describe('Data to analyze'),
-    context: z.string().optional().describe('Additional context'),
-    focus: z.enum(['performance', 'security', 'quality']).describe('Analysis focus'),
-  },
-  async (args) => ({
-    description: `${args.focus} analysis prompt`,
-    messages: [
-      ...(args.context ? [{ role: 'system' as const, content: { type: 'text' as const, text: args.context } }] : []),
-      { role: 'user', content: { type: 'text', text: `Analyze the following with focus on ${args.focus}:\n\n${args.data}` } },
-    ],
-  })
-);
+// Conditional messages: use spread to include system message only when context is provided
+// ...(args.context ? [{ role: 'system' as const, content: { type: 'text' as const, text: args.context } }] : [])
 ```
 
-## Naming & Descriptions
+## Naming & Description Best Practices
 
-Use `snake_case` `verb_noun`. Avoid: `do_thing`, `process`, `getUser` (camelCase), `tool_get_user` (redundant prefix).
+Use `snake_case` `verb_noun`. Compound: `get_user_with_orders`, `list_active_sessions`, `deploy_to_production`. Avoid: `do_thing`, `process`, `getUser` (camelCase), `tool_get_user` (redundant prefix).
 
-For compound actions: `get_user_with_orders`, `list_active_sessions`, `deploy_to_production`, `generate_report`.
-
-**Tool descriptions** — cover what it does, when to use it, and side effects:
+**Tool descriptions** -- state what it does, when to use it, and side effects:
 
 ```typescript
-// BAD: vague, missing side-effect info
-server.tool('get_data', 'Gets data', { /* ... */ });
+// BAD: vague, no side-effect info
 server.tool('delete_user', 'Deletes a user', { /* ... */ });
 
 // GOOD: clear purpose, constraints, side effects
 server.tool('get_user',
-  'Retrieves a user by their unique ID. Returns user profile including name, email, and role. Returns null if user not found.',
+  'Retrieves a user by their unique ID. Returns profile including name, email, role. Returns null if not found. Read-only.',
   { id: z.string().uuid().describe('Unique user identifier (UUID format)') }
 );
 server.tool('delete_user',
-  'Permanently deletes a user account and all associated data. This action cannot be undone. Requires admin privileges.',
+  'Permanently deletes user and all data. IRREVERSIBLE. Requires admin privileges.',
   { id: z.string().uuid().describe('User ID to delete') }
 );
 server.tool('search_documents',
   'Full-text search across all documents. Use when looking for documents by content rather than by ID. Supports wildcards and phrase matching.',
   {
     query: z.string().describe('Search query (supports * wildcards and "exact phrases")'),
-    limit: z.number().optional().default(20).describe('Maximum results to return'),
+    limit: z.number().min(1).max(100).optional().default(20).describe('Results per page (1-100, default: 20)'),
   }
+);
+server.tool('send_email',
+  'Sends an email to the specified recipient. Cannot be undone once sent.',
+  { /* ... */ }
 );
 ```
 
-**Parameter descriptions** — include constraints and format:
+**Parameter descriptions** -- include constraints and format:
 
 ```typescript
-// BAD
-query: z.string()                           // No description
-query: z.string().describe('Query')         // Redundant
-limit: z.number().describe('Limit')         // Missing constraints
-
-// GOOD
+// BAD: z.string() (no describe), z.string().describe('Query') (redundant), z.number().describe('Limit') (no constraints)
+// GOOD: specific types, constraints, format hints
 query: z.string().describe('Search query - supports wildcards (*) and exact phrases ("...")')
-status: z.enum(['pending', 'active', 'completed']).describe('Filter by status')
 limit: z.number().min(1).max(100).optional().default(20).describe('Results per page (1-100, default: 20)')
 date: z.string().describe('Date in ISO 8601 format (YYYY-MM-DD)')
-user_id: z.string().uuid().describe('ID of the user who owns this resource')
-```
-
-**Use specific types** — validates at schema level:
-
-```typescript
 email: z.string().email().describe('User email address')
 url: z.string().url().describe('Webhook URL')
 count: z.number().int().positive().describe('Number of items')
@@ -280,20 +234,4 @@ count: z.number().int().positive().describe('Number of items')
 return { content: [{ type: 'text', text: JSON.stringify({ success: true, data: result }, null, 2) }] };
 ```
 
-**Handle errors with `isError`** (don't throw — that crashes the tool call):
-
-```typescript
-return {
-  content: [{ type: 'text', text: JSON.stringify({ error: true, code: 'NOT_FOUND', message: 'Item not found' }) }],
-  isError: true,
-};
-```
-
-**Document side effects in description**:
-
-```typescript
-server.tool('get_user', 'Retrieves user details. Read-only operation.', { /* ... */ });
-server.tool('update_user', 'Updates user profile fields. Modifies the user record in the database.', { /* ... */ });
-server.tool('delete_user', 'Permanently deletes user and all data. IRREVERSIBLE. Requires confirmation.', { /* ... */ });
-server.tool('send_email', 'Sends an email to the specified recipient. Cannot be undone once sent.', { /* ... */ });
-```
+**Handle errors with `isError`** (don't throw -- crashes the tool call). See "Tool with Error Handling" pattern above.
