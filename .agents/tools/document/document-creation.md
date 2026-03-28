@@ -66,7 +66,7 @@ document-creation-helper.sh template draft --type letter --format odt
 Unifies document format operations into a single decision tree. Routes to specialist agents (MinerU, DocStrange, LibPDF) when appropriate, handles everything else.
 
 ```text
-Input → [Detect format] → [Select tool (preferred → fallback)] → [Convert/Create] → [Validate] → Output
+Input → [Detect format] → [Select tool (preferred → fallback)] → [Convert/Create] → [Validate (exists, non-empty, valid format)] → Output
 ```
 
 ## Tool Selection Matrix
@@ -198,7 +198,7 @@ Use programmatic creation (odfpy/python-docx) when: document structure is data-d
 | Tier | Install | Tools |
 |------|---------|-------|
 | 1: Minimal | `pandoc poppler` | pandoc (md/docx/odt/html/epub/rst/latex/pptx/xlsx/csv/tsv/rtf), poppler (pdftotext/pdfimages/pdfinfo/pdftohtml) |
-| 2: Standard | + Python libs | odfpy (ODT/ODS/ODP), python-docx (DOCX), openpyxl (XLSX) |
+| 2: Standard | + Python libs | odfpy (programmatic ODT/ODS/ODP), python-docx (programmatic DOCX), openpyxl (programmatic XLSX) |
 | 3: Full | + LibreOffice | `soffice --headless --convert-to <format>` — highest fidelity for office conversions |
 
 ### Specialist Tools (routed to, not owned)
