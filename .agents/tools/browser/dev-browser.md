@@ -24,87 +24,36 @@ tools:
 - **Profile**: `~/.aidevops/dev-browser/skills/dev-browser/profiles/browser-data/`
 - **Scripts**: Execute via `bun x tsx` inline scripts
 - **Install**: `bash ~/.aidevops/agents/scripts/dev-browser-helper.sh setup`
+- **Benchmarks**: 14% faster, 39% cheaper, 43% fewer turns than Playwright MCP
 
-**Key Advantages**:
-- **Near-Playwright speed**: Navigate 1.4s, form fill 1.3s, extraction 1.1s
-- **Persistent profile**: Cookies, localStorage, extensions survive server restarts
-- **Stateful pages**: Pages persist across script executions within a session
-- **Highly consistent**: 1.07s avg reliability with only ±0.02s variance
-- **Codebase-aware**: Read source code to write selectors directly
-- **LLM-friendly**: ARIA snapshots for element discovery
-- **Headless mode**: `start-headless` for no visible window
+**Advantages**: navigate 1.4s, form fill 1.3s, extraction 1.1s (±0.02s); persistent cookies/localStorage/extensions; ARIA snapshots for element discovery; codebase-aware selectors; Chrome DevTools MCP on port 9222: `npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222`
 
-**Profile Persistence** (survives server restarts):
-- Cookies (stay logged into sites)
-- localStorage and sessionStorage
-- Browser cache
-- Extension data (install extensions in headed mode, persists across restarts)
+**When to Use / Not Use**:
 
-**Extensions**: Install in headed mode (`start` not `start-headless`), then extensions persist in profile. Password managers need manual unlock once per session. uBlock Origin can be installed in the profile for ad/tracker blocking.
-
-**Custom browser**: Dev-browser uses Playwright's bundled Chromium by default. To use Brave, Edge, or Chrome instead, modify the server launch configuration to pass `executablePath`. Alternatively, use Brave for built-in ad blocking without needing uBlock Origin. See "Custom Browser Engine" section below.
-
-**Parallel**: Named pages (`client.page("name")`) share the same profile (not isolated). For isolation, use Playwright direct with multiple contexts.
-
-**AI Page Understanding**: Use ARIA snapshots (`client.getAISnapshot("main")`) - returns structured element tree with refs. Faster and cheaper than screenshots for AI automation.
-
-**Chrome DevTools MCP**: Already on port 9222 - connect via `npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222` for Lighthouse, network monitoring, CSS coverage.
-
-**When to Use**:
-- Testing local dev servers (localhost:3000, etc.)
-- Multi-step workflows (login -> navigate -> action)
-- Iterative debugging with visual feedback
-- When you need to stay logged into sites across sessions
-- When you have source code access for selectors
-- When you want Chrome DevTools MCP inspection alongside automation
-
-**When NOT to Use**:
-- Need to use YOUR existing Chrome profile -> use Playwriter
-- Need parallel isolated sessions -> use Playwright direct
-- Natural language automation -> use Stagehand
+| Use | Don't Use |
+|-----|-----------|
+| Local dev servers, multi-step workflows | Need YOUR existing Chrome profile → Playwriter |
+| Stay logged in across sessions | Parallel isolated sessions → Playwright direct |
+| Source code access for selectors | Natural language automation → Stagehand |
 
 <!-- AI-CONTEXT-END -->
 
 ## Setup
 
 ```bash
-# Complete setup (installs Bun if needed, clones repo, installs deps)
-bash ~/.aidevops/agents/scripts/dev-browser-helper.sh setup
-
-# Start server (reuses existing browser profile - stays logged in!)
-bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start
-
-# Start with fresh profile (no cookies, clean slate)
-bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start-clean
-
-# Check status (shows profile info)
-bash ~/.aidevops/agents/scripts/dev-browser-helper.sh status
-
-# View profile details
-bash ~/.aidevops/agents/scripts/dev-browser-helper.sh profile
-
-# Reset profile (delete all browser data)
-bash ~/.aidevops/agents/scripts/dev-browser-helper.sh reset-profile
-
-# Stop server
-bash ~/.aidevops/agents/scripts/dev-browser-helper.sh stop
+bash ~/.aidevops/agents/scripts/dev-browser-helper.sh setup          # Install (Bun + deps)
+bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start          # Start (reuses profile)
+bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start-headless # Start headless
+bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start-clean    # Start with fresh profile
+bash ~/.aidevops/agents/scripts/dev-browser-helper.sh status         # Check status
+bash ~/.aidevops/agents/scripts/dev-browser-helper.sh profile        # View profile details
+bash ~/.aidevops/agents/scripts/dev-browser-helper.sh reset-profile  # Delete all browser data
+bash ~/.aidevops/agents/scripts/dev-browser-helper.sh stop           # Stop server
 ```
 
 ## Usage Pattern
 
-### 1. Start Server First
-
-The server must be running before executing scripts:
-
-```bash
-bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start
-# Or for headless mode:
-bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start-headless
-```
-
-### 2. Execute Scripts Inline
-
-Scripts are executed via `bun x tsx` with heredoc:
+Start the server, then execute scripts via `bun x tsx` heredoc:
 
 ```bash
 cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx <<'EOF'
@@ -121,74 +70,53 @@ await client.disconnect();
 EOF
 ```
 
-### 3. Key Principles
-
-1. **Small scripts**: Each script does ONE thing
-2. **Evaluate state**: Always log state at the end
-3. **Use page names**: `"main"`, `"checkout"`, `"login"` - pages persist by name
+**Key principles:**
+1. **Small scripts**: each does ONE thing
+2. **Evaluate state**: always log state at the end
+3. **Use page names**: `"main"`, `"checkout"`, `"login"` — pages persist by name
 4. **Disconnect to exit**: `await client.disconnect()` at the end
-5. **Plain JS in evaluate**: No TypeScript inside `page.evaluate()`
+5. **Plain JS in evaluate**: no TypeScript inside `page.evaluate()`
 
 ## Element Discovery
 
-### ARIA Snapshot (Unknown Pages)
-
-When you don't know the page structure, get an ARIA snapshot:
+### ARIA Snapshot (unknown page structure)
 
 ```bash
 cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx <<'EOF'
 import { connect, waitForPageLoad } from "@/client.js";
-
 const client = await connect("http://localhost:9222");
 const page = await client.page("main");
-
 await page.goto("https://example.com");
 await waitForPageLoad(page);
-
 const snapshot = await client.getAISnapshot("main");
-console.log(snapshot);
-
+console.log(snapshot); // returns elements with refs: e1, e2, ...
 await client.disconnect();
 EOF
 ```
-
-The snapshot returns elements with refs like `e1`, `e2`, etc.
 
 ### Interact with Refs
 
-Use refs from the snapshot to interact:
-
 ```bash
 cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx <<'EOF'
 import { connect, waitForPageLoad } from "@/client.js";
-
 const client = await connect("http://localhost:9222");
 const page = await client.page("main");
-
-// Click element by ref from snapshot
 const element = await client.selectSnapshotRef("main", "e5");
 await element.click();
 await waitForPageLoad(page);
-
 await client.disconnect();
 EOF
 ```
 
-### Use Source Code Selectors
-
-When you have access to the source code, use selectors directly:
+### Source Code Selectors
 
 ```bash
 cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx <<'EOF'
-import { connect, waitForPageLoad } from "@/client.js";
-
+import { connect } from "@/client.js";
 const client = await connect("http://localhost:9222");
 const page = await client.page("main");
-
-// Use selectors from source code
 await page.click('[data-testid="submit-button"]');
 await page.fill('input[name="email"]', 'test@example.com');
-
 await client.disconnect();
 EOF
 ```
@@ -197,24 +125,17 @@ EOF
 
 ### Navigate and Screenshot
 
-> **Screenshot size limit**: Do NOT use `fullPage: true` for screenshots intended for AI vision review. Full-page captures can exceed 8000px, which crashes the session (Anthropic hard-rejects images >8000px on any dimension). Use viewport-sized screenshots for AI review. If full-page is needed for human review, resize before including in conversation: `magick tmp/full.png -resize "1568x1568>" tmp/full-resized.png`. See `prompts/build.txt` "Screenshot Size Limits".
+> **Screenshot size limit**: Do NOT use `fullPage: true` for AI vision review — full-page captures can exceed 8000px (Anthropic hard-rejects images >8000px). Use viewport-sized screenshots for AI. For human review: `magick tmp/full.png -resize "1568x1568>" tmp/full-resized.png`. See `prompts/build.txt` "Screenshot Size Limits".
 
 ```bash
 cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx <<'EOF'
 import { connect, waitForPageLoad } from "@/client.js";
-
 const client = await connect("http://localhost:9222");
 const page = await client.page("main");
-
 await page.goto("http://localhost:3000/dashboard");
 await waitForPageLoad(page);
-
-// Viewport-sized screenshot (safe for AI review)
-await page.screenshot({ path: "tmp/dashboard.png" });
-// Full-page: save to disk only -- resize before sending to AI vision
-// await page.screenshot({ path: "tmp/full.png", fullPage: true });
-
-console.log("Screenshots saved to tmp/");
+await page.screenshot({ path: "tmp/dashboard.png" }); // viewport-sized (safe for AI)
+// await page.screenshot({ path: "tmp/full.png", fullPage: true }); // resize before AI vision
 await client.disconnect();
 EOF
 ```
@@ -224,17 +145,13 @@ EOF
 ```bash
 cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx <<'EOF'
 import { connect, waitForPageLoad } from "@/client.js";
-
 const client = await connect("http://localhost:9222");
 const page = await client.page("main");
-
 await page.fill('input[name="username"]', 'testuser');
 await page.fill('input[name="password"]', 'testpass');
 await page.click('button[type="submit"]');
-
 await waitForPageLoad(page);
 console.log({ url: page.url(), title: await page.title() });
-
 await client.disconnect();
 EOF
 ```
@@ -244,49 +161,39 @@ EOF
 ```bash
 cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx <<'EOF'
 import { connect } from "@/client.js";
-
 const client = await connect("http://localhost:9222");
 const page = await client.page("main");
-
-// Extract text content
 const heading = await page.textContent('h1');
 const items = await page.$$eval('.item', els => els.map(e => e.textContent));
-
 console.log({ heading, items });
 await client.disconnect();
 EOF
 ```
 
-### Multi-Page Workflow
-
-Pages persist by name, enabling multi-step workflows:
+### Multi-Page Workflow (pages persist by name)
 
 ```bash
 # Step 1: Login
 cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx <<'EOF'
 import { connect, waitForPageLoad } from "@/client.js";
 const client = await connect("http://localhost:9222");
-const page = await client.page("app");  // Named "app"
-
+const page = await client.page("app");
 await page.goto("http://localhost:3000/login");
 await page.fill('input[name="email"]', 'user@example.com');
 await page.fill('input[name="password"]', 'password');
 await page.click('button[type="submit"]');
 await waitForPageLoad(page);
-
 console.log("Logged in:", page.url());
 await client.disconnect();
 EOF
 
-# Step 2: Navigate (same page persists!)
+# Step 2: Navigate (same "app" page — still logged in!)
 cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx <<'EOF'
 import { connect, waitForPageLoad } from "@/client.js";
 const client = await connect("http://localhost:9222");
-const page = await client.page("app");  // Same "app" page, still logged in!
-
+const page = await client.page("app");
 await page.goto("http://localhost:3000/settings");
 await waitForPageLoad(page);
-
 console.log("Settings page:", await page.title());
 await client.disconnect();
 EOF
@@ -294,36 +201,31 @@ EOF
 
 ## Custom Browser Engine (Brave, Edge, Chrome)
 
-Dev-browser uses Playwright's bundled Chromium by default. To use a custom browser, you need to modify the server's launch configuration to pass `executablePath` to Playwright.
-
-### Modifying the Server Launch
-
-The dev-browser server script launches Playwright internally. To use a custom browser, set the `BROWSER_EXECUTABLE` environment variable before starting:
+Set `BROWSER_EXECUTABLE` before starting:
 
 ```bash
-# Use Brave (built-in Shields for ad/tracker blocking)
+# Brave (built-in ad/tracker blocking)
 BROWSER_EXECUTABLE="/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" \
   bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start
 
-# Use Edge (enterprise SSO, Azure AD)
+# Edge (enterprise SSO, Azure AD)
 BROWSER_EXECUTABLE="/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" \
   bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start
 
-# Use Chrome
+# Chrome
 BROWSER_EXECUTABLE="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start
 ```
 
-**Note**: Custom browser support depends on the dev-browser server accepting `executablePath` in its Playwright launch options. If the server doesn't expose this, use Playwright direct with `launchPersistentContext` for the same persistent profile behaviour with a custom browser.
+**Note**: If the server doesn't expose `executablePath`, use Playwright direct with `launchPersistentContext` for persistent profile + custom browser.
 
-### Installing Extensions (uBlock Origin)
+### Installing Extensions (e.g. uBlock Origin)
 
-1. Start dev-browser in **headed mode**: `dev-browser-helper.sh start` (not `start-headless`)
-2. Navigate to the Chrome Web Store in the browser
-3. Install uBlock Origin (or any extension)
-4. The extension persists in the profile directory across restarts
+1. Start in **headed mode**: `dev-browser-helper.sh start` (not `start-headless`)
+2. Navigate to Chrome Web Store and install the extension
+3. Extension persists in profile across restarts
 
-**Alternative**: Use Brave browser instead - Brave Shields provides equivalent ad/tracker blocking without needing uBlock Origin.
+**Alternative**: Use Brave — Shields provides equivalent ad/tracker blocking without uBlock Origin.
 
 ## Comparison with Other Browser Tools
 
@@ -338,32 +240,20 @@ BROWSER_EXECUTABLE="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
 
 ## Troubleshooting
 
-### Server Not Running
-
 ```bash
-# Check if server is running
+# Server not running
 bash ~/.aidevops/agents/scripts/dev-browser-helper.sh status
-
-# Start server
 bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start
-```
 
-### Port 9222 In Use
-
-```bash
-# Find process using port
+# Port 9222 in use
 lsof -i :9222
-
-# Kill if needed
 kill $(lsof -t -i :9222)
-
-# Restart server
 bash ~/.aidevops/agents/scripts/dev-browser-helper.sh restart
-```
 
-### Script Errors
+# Bun not found
+curl -fsSL https://bun.sh/install | bash
+source ~/.bashrc  # or ~/.zshrc
 
-```bash
 # Debug with screenshot
 cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx <<'EOF'
 import { connect } from "@/client.js";
@@ -375,18 +265,7 @@ await client.disconnect();
 EOF
 ```
 
-### Bun Not Found
-
-```bash
-# Install Bun
-curl -fsSL https://bun.sh/install | bash
-
-# Reload shell
-source ~/.bashrc  # or ~/.zshrc
-```
-
 ## Resources
 
 - **GitHub**: https://github.com/SawyerHood/dev-browser
-- **Benchmarks**: 14% faster, 39% cheaper, 43% fewer turns than Playwright MCP
 - **License**: MIT
