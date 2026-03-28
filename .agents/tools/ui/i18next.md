@@ -31,6 +31,8 @@ tools:
 | Nested key path wrong | `t("ai.sidebar.title")` returns key | Check JSON structure matches dot notation |
 | Namespace not loaded | Translation returns key | Ensure namespace is loaded in component |
 | Type safety | No autocomplete for keys | Use typed `useTranslation` hook |
+| Wrong namespace | `useTranslation("common")` but key is in `dashboard` | Check which JSON file contains the key |
+| Missing "use client" | `useTranslation` hook fails in server component | Use server translation for server components |
 
 **File Structure**:
 
@@ -48,91 +50,20 @@ packages/i18n/src/translations/
     └── common.json
 ```
 
-**Adding New Translation Key**:
+**Adding a New Translation Key** — update ALL locales together:
 
 ```bash
-# 1. Add to English first
-# packages/i18n/src/translations/en/common.json
-
-# 2. Find same location in other locales
+# Find insertion point across all locales
 grep -n '"feedback":' packages/i18n/src/translations/*/common.json
-
-# 3. Add to ALL locales at same position
-```
-
-**Translation JSON Pattern**:
-
-```json
-{
-  "ai": {
-    "sidebar": {
-      "title": "Awards AI",
-      "subtitle": "Your awards assistant",
-      "open": "Open AI assistant",
-      "close": "Close AI assistant",
-      "placeholder": "Ask me anything...",
-      "prompts": {
-        "search": "Find relevant awards",
-        "help": "Writing tips"
-      }
-    }
-  }
-}
-```
-
-**Usage in Components**:
-
-```tsx
-import { useTranslation } from "@workspace/i18n";
-
-function Component() {
-  const { t } = useTranslation("common");
-  
-  return (
-    <div>
-      <h1>{t("ai.sidebar.title")}</h1>
-      <p>{t("ai.sidebar.subtitle")}</p>
-      <button aria-label={t("ai.sidebar.open")}>
-        Open
-      </button>
-    </div>
-  );
-}
-```
-
-**Locale-Specific Translations**:
-
-| Locale | Example Key | Translation |
-|--------|-------------|-------------|
-| `en` | `social` | "Social" |
-| `de` | `social` | "Soziale Medien" |
-| `es` | `social` | "Redes sociales" |
-| `fr` | `social` | "Réseaux sociaux" |
-
-<!-- AI-CONTEXT-END -->
-
-## Detailed Patterns
-
-### Adding Translations to Multiple Locales
-
-When adding a new key, update all locales:
-
-```bash
-# Find the insertion point in all locales
-grep -n '"feedback"' packages/i18n/src/translations/*/common.json
-
-# Output:
 # de/common.json:44:  "feedback": "Feedback",
 # en/common.json:44:  "feedback": "Feedback",
 # es/common.json:44:  "feedback": "Comentarios",
 # fr/common.json:44:  "feedback": "Commentaires",
 ```
 
-Then add the new key after `feedback` in each file:
+Then add after `feedback` in each locale:
 
 ```json
-// Add to each locale's common.json:
-
 // en/common.json
 "feedback": "Feedback",
 "social": "Social",
@@ -150,12 +81,17 @@ Then add the new key after `feedback` in each file:
 "social": "Réseaux sociaux",
 ```
 
-### Nested Translations
+**Translation JSON Pattern** (supports nesting):
 
 ```json
 {
   "ai": {
     "sidebar": {
+      "title": "Awards AI",
+      "subtitle": "Your awards assistant",
+      "open": "Open AI assistant",
+      "close": "Close AI assistant",
+      "placeholder": "Ask me anything...",
       "welcome": {
         "title": "How can I help?",
         "description": "Ask me about finding awards..."
@@ -165,11 +101,29 @@ Then add the new key after `feedback` in each file:
 }
 ```
 
+**Usage in Components**:
+
 ```tsx
-// Access nested keys with dot notation
-t("ai.sidebar.welcome.title")
-t("ai.sidebar.welcome.description")
+import { useTranslation } from "@workspace/i18n";
+
+function Component() {
+  const { t } = useTranslation("common");
+
+  return (
+    <div>
+      <h1>{t("ai.sidebar.title")}</h1>
+      <p>{t("ai.sidebar.subtitle")}</p>
+      {/* Nested keys use dot notation */}
+      <p>{t("ai.sidebar.welcome.title")}</p>
+      <button aria-label={t("ai.sidebar.open")}>Open</button>
+    </div>
+  );
+}
 ```
+
+<!-- AI-CONTEXT-END -->
+
+## Detailed Patterns
 
 ### Interpolation
 
@@ -201,18 +155,17 @@ t("dashboard:stats.title")
 ### Server Components (Next.js App Router)
 
 ```tsx
-// Use server-side translation
 import { getTranslation } from "@workspace/i18n/server";
 
 // Next.js 15+: params is a Promise
-export default async function Page({ 
-  params 
-}: { 
-  params: { locale: string } 
+export default async function Page({
+  params
+}: {
+  params: { locale: string }
 }) {
   const { locale } = params;
   const { t } = await getTranslation(locale, "common");
-  
+
   return <h1>{t("title")}</h1>;
 }
 
@@ -227,7 +180,7 @@ export default async function Page({
 
 ```tsx
 // Define translation keys type
-type TranslationKeys = 
+type TranslationKeys =
   | "ai.sidebar.title"
   | "ai.sidebar.subtitle"
   | "ai.sidebar.open"
@@ -237,24 +190,6 @@ type TranslationKeys =
 const { t } = useTranslation<TranslationKeys>("common");
 t("ai.sidebar.title"); // Autocomplete works!
 ```
-
-## Common Mistakes
-
-1. **Forgetting locale files**
-   - Always update en, de, es, fr (or all configured locales)
-   - Use grep to find insertion points
-
-2. **Wrong namespace**
-   - Check which JSON file contains the key
-   - Use correct namespace in `useTranslation`
-
-3. **Missing "use client"**
-   - `useTranslation` hook requires client component
-   - Use server translation for server components
-
-4. **Key not found returns key**
-   - Check JSON structure matches dot notation
-   - Verify namespace is loaded
 
 ## Validation Script
 
