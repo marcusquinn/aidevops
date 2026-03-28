@@ -6,13 +6,9 @@ Serverless distributed query engine for Apache Iceberg tables in R2 Data Catalog
 
 **Apache Iceberg**: Open table format for large-scale analytics — ACID transactions, schema evolution (add/rename/drop columns without rewriting data), optimized metadata (avoids full table scans). Supported by Spark, Trino, Snowflake, DuckDB, ClickHouse, PyIceberg.
 
-**R2 Data Catalog**: Managed Iceberg catalog built into R2 bucket; standard Iceberg REST interface. Single source of truth for table metadata via immutable snapshots. Supports multiple query engines safely accessing same tables.
+**R2 Data Catalog**: Managed Iceberg catalog built into R2 bucket; standard Iceberg REST interface. Single source of truth for table metadata via immutable snapshots.
 
-**Architecture**:
-
-- **Query Planner**: top-down metadata investigation, multi-layer pruning (partition/column/row-group), streaming pipeline with early termination, uses partition and column stats (min/max, null counts)
-- **Query Execution**: coordinator distributes to workers across Cloudflare network; workers run Apache DataFusion; Arrow IPC format; Parquet column pruning; ranged reads from R2
-- **Aggregation**: scatter-gather (sum, count, avg) or shuffling (ORDER BY/HAVING via hash partitioning)
+**Architecture**: Query Planner does top-down metadata investigation with multi-layer pruning (partition/column/row-group), streaming pipeline with early termination, uses partition and column stats (min/max, null counts). Query Execution: coordinator distributes to workers across Cloudflare network running Apache DataFusion; Arrow IPC format; Parquet column pruning; ranged reads from R2. Aggregation: scatter-gather (sum, count, avg) or shuffling (ORDER BY/HAVING via hash partitioning).
 
 ## Setup
 
@@ -66,7 +62,6 @@ df = pa.table({"id": [1, 2, 3], "name": ["Alice", "Bob", "Charlie"], "score": [8
 table = catalog.create_table(("default", "people"), schema=df.schema)
 table.append(df)
 
-# Query
 scanned = table.scan().to_arrow()
 print(scanned.to_pandas())
 ```
@@ -96,13 +91,11 @@ DESCRIBE ns.table_name;  -- Describe table
 ### SELECT Patterns
 
 ```sql
--- With conditions
 SELECT * FROM ns.table
 WHERE timestamp BETWEEN '2025-01-01T00:00:00Z' AND '2025-01-31T23:59:59Z'
   AND status = 200
 LIMIT 100;
 
--- Complex conditions
 SELECT * FROM ns.table
 WHERE (status = 404 OR status = 500) AND method = 'POST' AND user_agent IS NOT NULL
 ORDER BY timestamp DESC;
@@ -123,14 +116,7 @@ GROUP BY category HAVING SUM(amount) > 10000 LIMIT 10;
 
 ### Data Types
 
-| Type | Description | Example |
-|------|-------------|---------|
-| integer | Whole numbers | 1, 42, -10 |
-| float | Decimals | 1.5, 3.14 |
-| string | Text (quoted) | 'hello', 'GET' |
-| boolean | true/false | true, false |
-| timestamp | RFC3339 | '2025-01-01T00:00:00Z' |
-| date | YYYY-MM-DD | '2025-01-01' |
+`integer` (1, 42), `float` (1.5, 3.14), `string` ('hello'), `boolean` (true/false), `timestamp` (RFC3339: '2025-01-01T00:00:00Z'), `date` ('2025-01-01')
 
 ### Operators & Limits
 
@@ -165,12 +151,13 @@ curl -X POST https://{stream-id}.ingest.cloudflare.com \
   -d '[{"user_id": "user_123", "event_type": "purchase", "amount": 29.99}]'
 ```
 
-## Performance
+## Performance & Best Practices
 
 - **Partitioning**: choose key based on query patterns (day(timestamp), hour(timestamp), region). Required for ORDER BY.
-- **Query**: use WHERE filters, specify LIMIT, filter on high-selectivity columns first.
-- **File size**: 100-500MB Parquet files after compression; use 300+ second roll intervals in Pipelines.
+- **Query**: use WHERE filters, specify LIMIT, filter on high-selectivity columns first. Combine filters with `AND` for better pruning.
+- **File size**: 100-500MB Parquet files after compression; use 300+ second roll intervals in Pipelines. Use zstd compression.
 - **Pruning** (automatic): partition-level > file-level (column stats) > row-group level.
+- **Syntax**: quote string values; use RFC3339 for timestamps; no implicit type conversions.
 
 ## Iceberg Metadata Structure
 
@@ -194,12 +181,6 @@ Hierarchy: Table metadata JSON > Snapshot > Manifest list > Manifest files > Par
 - No aliases in SELECT, no subqueries, joins, or CTEs
 - No nested column access; LIMIT max 10,000
 
-## Best Practices
-
-- Partition by time dimension for time-series data; use `BETWEEN` for time ranges
-- Combine filters with `AND` for better pruning; use compression (zstd recommended)
-- Quote string values; use RFC3339 for timestamps; no implicit type conversions
-
 ## Connecting Other Engines
 
 R2 Data Catalog supports the standard Iceberg REST catalog API.
@@ -220,7 +201,7 @@ Snowflake, DuckDB, Trino, ClickHouse: supported via Iceberg REST catalog protoco
 
 ## Pricing (Future)
 
-Currently open beta — no charges beyond standard R2 costs. 30+ days notice before billing begins.
+Open beta — no charges beyond standard R2 costs. 30+ days notice before billing begins.
 
 | Item | Rate |
 |------|------|
@@ -236,10 +217,10 @@ Currently open beta — no charges beyond standard R2 costs. 30+ days notice bef
 | Error | Fix |
 |-------|-----|
 | "ORDER BY column not in partition key" | Only partition key columns allowed; check with DESCRIBE; remove ORDER BY or adjust partitioning |
-| "Token authentication failed" | Verify `WRANGLER_R2_SQL_AUTH_TOKEN`; ensure R2 Admin Read & Write + SQL Read permissions; token may be expired |
-| "Table not found" | `SHOW DATABASES`; `SHOW TABLES IN namespace`; ensure catalog enabled on bucket |
-| "No data returned" | Check WHERE conditions; verify BETWEEN time range; try removing filters |
-| Slow queries | Check partition pruning; reduce LIMIT; ensure filters on partition key; review Parquet file sizes (100-500MB) |
+| "Token authentication failed" | Verify `WRANGLER_R2_SQL_AUTH_TOKEN`; ensure R2 Admin Read & Write permissions; check expiry |
+| "Table not found" | `SHOW DATABASES` then `SHOW TABLES IN namespace`; ensure catalog enabled on bucket |
+| "No data returned" | Check WHERE conditions and BETWEEN time range; try removing filters |
+| Slow queries | Check partition pruning; reduce LIMIT; ensure filters on partition key; target 100-500MB Parquet files |
 | Query timeout | Add more restrictive WHERE filters; reduce LIMIT; consider better partitioning |
 
 ## Resources
