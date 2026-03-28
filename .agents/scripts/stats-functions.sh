@@ -2725,35 +2725,26 @@ _compute_badge_indicator() {
 }
 
 #######################################
-# Update the quality review issue body with a stats dashboard
+# Gather all stats needed for the quality issue dashboard body.
 #
-# Mirrors the supervisor health issue pattern: the body shows at-a-glance
-# stats (gate status, backlog, bot coverage, scan history), while daily
-# sweep comments preserve the full history.
+# Collects debt backlog, PR scan lifetime stats, bot coverage,
+# badge indicator, and simplification progress for a single repo.
 #
 # Arguments:
 #   $1 - repo slug
-#   $2 - issue number
-#   $3 - gate status (OK/ERROR/WARN/UNKNOWN)
-#   $4 - total SonarCloud issues
-#   $5 - high/critical count
-#   $6 - sweep timestamp (ISO)
-#   $7 - tool count
-#   $8 - qlty smell count (optional)
-#   $9 - qlty grade (optional)
+#   $2 - gate_status (OK/ERROR/WARN/UNKNOWN)
+#   $3 - qlty_grade (A/B/C/D/F/UNKNOWN)
+# Output: newline-delimited fields:
+#   debt_open, debt_closed, debt_total, debt_resolution_pct,
+#   prs_scanned_lifetime, issues_created_lifetime,
+#   bot_coverage_section, badge_indicator, simplified_count
 #######################################
-_update_quality_issue_body() {
+_gather_quality_issue_stats() {
 	local repo_slug="$1"
-	local issue_number="$2"
-	local gate_status="$3"
-	local total_issues="$4"
-	local high_critical="$5"
-	local sweep_time="$6"
-	local tool_count="$7"
-	local qlty_smell_count="${8:-0}"
-	local qlty_grade="${9:-UNKNOWN}"
+	local gate_status="$2"
+	local qlty_grade="$3"
 
-	# --- Quality-debt backlog stats ---
+	# Quality-debt backlog stats
 	local debt_raw
 	debt_raw=$(_compute_debt_stats "$repo_slug")
 	local debt_open="${debt_raw%%|*}"
@@ -2763,7 +2754,7 @@ _update_quality_issue_body() {
 	local debt_total="${debt_remainder%%|*}"
 	local debt_resolution_pct="${debt_remainder#*|}"
 
-	# --- PR scan lifetime stats from state file ---
+	# PR scan lifetime stats from state file
 	local slug_safe="${repo_slug//\//-}"
 	local scan_state_file="${HOME}/.aidevops/logs/review-scan-state-${slug_safe}.json"
 	local prs_scanned_lifetime=0
@@ -2775,16 +2766,15 @@ _update_quality_issue_body() {
 	[[ "$prs_scanned_lifetime" =~ ^[0-9]+$ ]] || prs_scanned_lifetime=0
 	[[ "$issues_created_lifetime" =~ ^[0-9]+$ ]] || issues_created_lifetime=0
 
-	# --- Bot review coverage on open PRs (t1411) ---
+	# Bot review coverage on open PRs (t1411)
 	local bot_coverage_section
 	bot_coverage_section=$(_compute_bot_coverage "$repo_slug")
 
-	# --- Badge status indicator ---
+	# Badge status indicator
 	local badge_indicator
 	badge_indicator=$(_compute_badge_indicator "$gate_status" "$qlty_grade")
 
-	# --- Simplification progress ---
-	# Count files tracked in simplification state (git-committed registry)
+	# Simplification progress — count files tracked in simplification state
 	local simplified_count=0
 	local repo_path
 	repo_path=$(jq -r --arg slug "$repo_slug" \
@@ -2798,21 +2788,57 @@ _update_quality_issue_body() {
 		simplified_count=$(jq '.files | length' "$state_file" 2>/dev/null) || simplified_count=0
 	fi
 
-	# Sanitize all variables to single-line values — prevents multi-line
-	# tool output (e.g., ShellCheck findings) from leaking into the dashboard
-	# table when the newline-delimited passing from _run_sweep_tools breaks.
-	gate_status="${gate_status%%$'\n'*}"
-	total_issues="${total_issues%%$'\n'*}"
-	high_critical="${high_critical%%$'\n'*}"
-	qlty_grade="${qlty_grade%%$'\n'*}"
-	qlty_smell_count="${qlty_smell_count%%$'\n'*}"
-	# Validate numeric fields — fall back to 0/UNKNOWN if corrupted
-	[[ "$total_issues" =~ ^[0-9]+$ ]] || total_issues=0
-	[[ "$high_critical" =~ ^[0-9]+$ ]] || high_critical=0
-	[[ "$qlty_smell_count" =~ ^[0-9]+$ ]] || qlty_smell_count=0
+	printf '%s\n' \
+		"$debt_open" "$debt_closed" "$debt_total" "$debt_resolution_pct" \
+		"$prs_scanned_lifetime" "$issues_created_lifetime" \
+		"$bot_coverage_section" "$badge_indicator" "$simplified_count"
+	return 0
+}
 
-	# --- Assemble dashboard body ---
-	local body="## Code Audit Routines
+#######################################
+# Build the quality issue dashboard body markdown.
+#
+# Pure formatting function — no API calls. All data pre-gathered by caller.
+#
+# Arguments:
+#   $1  - sweep_time
+#   $2  - repo_slug
+#   $3  - tool_count
+#   $4  - badge_indicator
+#   $5  - gate_status
+#   $6  - total_issues
+#   $7  - high_critical
+#   $8  - qlty_grade
+#   $9  - qlty_smell_count
+#   $10 - debt_open
+#   $11 - debt_closed
+#   $12 - simplified_count
+#   $13 - debt_resolution_pct
+#   $14 - prs_scanned_lifetime
+#   $15 - issues_created_lifetime
+#   $16 - bot_coverage_section
+# Output: body markdown to stdout
+#######################################
+_build_quality_issue_body() {
+	local sweep_time="$1"
+	local repo_slug="$2"
+	local tool_count="$3"
+	local badge_indicator="$4"
+	local gate_status="$5"
+	local total_issues="$6"
+	local high_critical="$7"
+	local qlty_grade="$8"
+	local qlty_smell_count="$9"
+	local debt_open="${10}"
+	local debt_closed="${11}"
+	local simplified_count="${12}"
+	local debt_resolution_pct="${13}"
+	local prs_scanned_lifetime="${14}"
+	local issues_created_lifetime="${15}"
+	local bot_coverage_section="${16}"
+
+	cat <<BODY
+## Code Audit Routines
 
 **Last sweep**: \`${sweep_time}\`
 **Repo**: \`${repo_slug}\`
@@ -2847,7 +2873,114 @@ _update_quality_issue_body() {
 ${bot_coverage_section}
 
 ---
-_Auto-updated by daily quality sweep. Comments below contain detailed findings per sweep. Do not edit manually._"
+_Auto-updated by daily quality sweep. Comments below contain detailed findings per sweep. Do not edit manually._
+BODY
+	return 0
+}
+
+#######################################
+# Update the quality review issue title if stats have changed.
+#
+# Avoids unnecessary API calls by comparing the new title to the
+# current one before issuing an edit.
+#
+# Arguments:
+#   $1 - issue_number
+#   $2 - repo_slug
+#   $3 - debt_open
+#   $4 - debt_closed
+#   $5 - simplified_count
+#######################################
+_update_quality_issue_title() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local debt_open="$3"
+	local debt_closed="$4"
+	local simplified_count="$5"
+
+	local quality_title="Code Audit Routines — Open: ${debt_open} | Closed: ${debt_closed} | Simplified: ${simplified_count}"
+	local current_title
+	current_title=$(gh issue view "$issue_number" --repo "$repo_slug" --json title --jq '.title' 2>>"$LOGFILE" || echo "")
+	if [[ "$current_title" != "$quality_title" ]]; then
+		gh issue edit "$issue_number" --repo "$repo_slug" --title "$quality_title" 2>>"$LOGFILE" >/dev/null || true
+	fi
+	return 0
+}
+
+#######################################
+# Update the quality review issue body with a stats dashboard
+#
+# Mirrors the supervisor health issue pattern: the body shows at-a-glance
+# stats (gate status, backlog, bot coverage, scan history), while daily
+# sweep comments preserve the full history.
+#
+# Delegates to:
+#   _gather_quality_issue_stats  — collects all stats (API calls)
+#   _build_quality_issue_body    — assembles markdown (pure formatting)
+#   _update_quality_issue_title  — updates title if changed
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - issue number
+#   $3 - gate status (OK/ERROR/WARN/UNKNOWN)
+#   $4 - total SonarCloud issues
+#   $5 - high/critical count
+#   $6 - sweep timestamp (ISO)
+#   $7 - tool count
+#   $8 - qlty smell count (optional)
+#   $9 - qlty grade (optional)
+#######################################
+_update_quality_issue_body() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	local gate_status="$3"
+	local total_issues="$4"
+	local high_critical="$5"
+	local sweep_time="$6"
+	local tool_count="$7"
+	local qlty_smell_count="${8:-0}"
+	local qlty_grade="${9:-UNKNOWN}"
+
+	# Sanitize inputs to single-line values — prevents multi-line tool output
+	# (e.g., ShellCheck findings) from leaking into the dashboard table.
+	gate_status="${gate_status%%$'\n'*}"
+	total_issues="${total_issues%%$'\n'*}"
+	high_critical="${high_critical%%$'\n'*}"
+	qlty_grade="${qlty_grade%%$'\n'*}"
+	qlty_smell_count="${qlty_smell_count%%$'\n'*}"
+	# Validate numeric fields — fall back to 0 if corrupted
+	[[ "$total_issues" =~ ^[0-9]+$ ]] || total_issues=0
+	[[ "$high_critical" =~ ^[0-9]+$ ]] || high_critical=0
+	[[ "$qlty_smell_count" =~ ^[0-9]+$ ]] || qlty_smell_count=0
+
+	# Gather all stats via temp file (avoids subshell variable loss)
+	local stats_tmp
+	stats_tmp=$(mktemp)
+	_gather_quality_issue_stats "$repo_slug" "$gate_status" "$qlty_grade" >"$stats_tmp"
+
+	local debt_open debt_closed debt_total debt_resolution_pct
+	local prs_scanned_lifetime issues_created_lifetime
+	local bot_coverage_section badge_indicator simplified_count
+	{
+		IFS= read -r debt_open
+		IFS= read -r debt_closed
+		IFS= read -r debt_total
+		IFS= read -r debt_resolution_pct
+		IFS= read -r prs_scanned_lifetime
+		IFS= read -r issues_created_lifetime
+		IFS= read -r bot_coverage_section
+		IFS= read -r badge_indicator
+		IFS= read -r simplified_count
+	} <"$stats_tmp"
+	rm -f "$stats_tmp"
+
+	local body
+	body=$(_build_quality_issue_body \
+		"$sweep_time" "$repo_slug" "$tool_count" "$badge_indicator" \
+		"$gate_status" "$total_issues" "$high_critical" \
+		"$qlty_grade" "$qlty_smell_count" \
+		"$debt_open" "$debt_closed" "$simplified_count" "$debt_resolution_pct" \
+		"$prs_scanned_lifetime" "$issues_created_lifetime" "$bot_coverage_section")
 
 	# Update issue body — redirect stderr to log for debugging on failure
 	local edit_stderr
@@ -2856,14 +2989,8 @@ _Auto-updated by daily quality sweep. Comments below contain detailed findings p
 		return 0
 	}
 
-	# Update issue title — clean summary stats only, no raw tool output
-	local quality_title="Code Audit Routines — Open: ${debt_open} | Closed: ${debt_closed} | Simplified: ${simplified_count}"
-	# Only update title if it changed (avoid unnecessary API calls)
-	local current_title
-	current_title=$(gh issue view "$issue_number" --repo "$repo_slug" --json title --jq '.title' 2>>"$LOGFILE" || echo "")
-	if [[ "$current_title" != "$quality_title" ]]; then
-		gh issue edit "$issue_number" --repo "$repo_slug" --title "$quality_title" 2>>"$LOGFILE" >/dev/null || true
-	fi
+	_update_quality_issue_title "$issue_number" "$repo_slug" \
+		"$debt_open" "$debt_closed" "$simplified_count"
 
 	echo "[stats] Quality sweep: updated dashboard on #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 	return 0
