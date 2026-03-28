@@ -45,11 +45,13 @@ cd my-extension && npm install
 
 npm run dev              # Dev with HMR (Chrome)
 npm run dev:firefox      # Dev (Firefox)
-npm run build            # Production (Chrome MV3)
-npm run build:firefox    # Production (Firefox MV2/MV3)
-npm run zip              # Package for Chrome Web Store
-npm run zip:firefox      # Package for Firefox Add-ons
+npm run build            # Production → .output/chrome-mv3/
+npm run build:firefox    # Production → .output/firefox-mv2/
+npm run zip              # Package → .output/chrome-mv3.zip
+npm run zip:firefox      # Package → .output/firefox-mv2.zip
 ```
+
+Direct CLI: `wxt build -b edge` → `.output/edge-mv3/` | `wxt build -b safari` → `.output/safari-mv3/`
 
 ## Project Structure
 
@@ -92,7 +94,7 @@ export default defineConfig({
 
 ## Entrypoints
 
-Each entrypoint exports config via `defineBackground`, `defineContentScript`, etc.
+Auto-discovered from `entrypoints/`. Each exports config via `defineBackground`, `defineContentScript`, etc.
 
 ### Background (Service Worker)
 
@@ -190,18 +192,7 @@ export const { sendMessage, onMessage } = defineExtensionMessaging<ProtocolMap>(
 
 ## Cross-Browser
 
-WXT handles browser differences automatically: `browser` namespace (auto-polyfilled for Chrome), correct manifest format per browser, MV2/MV3 differences. Conditional code: `import.meta.env.BROWSER === 'firefox'`.
-
-## Build Commands
-
-| Command | Output |
-|---------|--------|
-| `wxt build` | `.output/chrome-mv3/` |
-| `wxt build -b firefox` | `.output/firefox-mv2/` |
-| `wxt build -b edge` | `.output/edge-mv3/` |
-| `wxt build -b safari` | `.output/safari-mv3/` |
-| `wxt zip` | `.output/chrome-mv3.zip` |
-| `wxt zip -b firefox` | `.output/firefox-mv2.zip` |
+`browser` namespace auto-polyfilled for Chrome; correct manifest format per browser; MV2/MV3 differences handled automatically. Conditional: `import.meta.env.BROWSER === 'firefox'`.
 
 ## Related
 
