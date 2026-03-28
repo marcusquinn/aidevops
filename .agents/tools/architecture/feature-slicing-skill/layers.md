@@ -1,50 +1,20 @@
-# FSD Layers Reference
+# FSD Layers Reference — Detailed Specs
 
 > **Source:** [Layers Reference](https://feature-sliced.design/docs/reference/layers) | [FSD Overview](https://feature-sliced.design/docs/get-started/overview)
 
-## Layer Hierarchy
-
-Arranged from highest to lowest responsibility. Each layer can only import from layers below it.
-
-| Layer | Purpose | Has Slices | Required |
-|-------|---------|------------|----------|
-| `app/` | Application initialization, providers, routing | No | Yes |
-| `pages/` | Route-based screens | Yes | Yes |
-| `widgets/` | Complex reusable UI blocks | Yes | No |
-| `features/` | User interactions with business value | Yes | No |
-| `entities/` | Business domain models | Yes | No |
-| `shared/` | Reusable infrastructure | No | Yes |
+Layer hierarchy, import rule, and placement decisions are in the parent `feature-slicing-skill.md`. This file provides per-layer detail.
 
 **Note:** `processes/` layer is DEPRECATED. Use pages with composition instead.
 
 ---
 
-## Import Rule
-
-```
-app/      → can import: pages, widgets, features, entities, shared
-pages/    → can import: widgets, features, entities, shared
-widgets/  → can import: features, entities, shared
-features/ → can import: entities, shared
-entities/ → can import: shared (use @x for cross-entity)
-shared/   → can import: external packages only
-```
-
-**Exception:** `app/` and `shared/` have no slices, so internal cross-segment imports are allowed.
-
----
-
-## Layer Details
-
-### Shared Layer
+## Shared Layer
 
 > [Shared Layer Docs](https://feature-sliced.design/docs/reference/layers#shared)
 
 Foundation layer for external connections and utilities. **No business domain knowledge.**
 
-**Segments:**
-
-```
+```text
 shared/
 ├── api/           # Backend client, request functions, interceptors
 ├── ui/            # Business-agnostic UI (buttons, inputs, modals)
@@ -55,28 +25,21 @@ shared/
 └── types/         # Global TypeScript types (utility types)
 ```
 
-**Guidelines:**
-- Avoid generic names: `components/`, `hooks/`, `utils/`
-- Use purpose-driven segment names
+- Use purpose-driven segment names — avoid `components/`, `hooks/`, `utils/`
 - Should be extractable to a separate package
 - NO domain logic
 
-**TypeScript Types:**
-- Utility types → `shared/lib/utility-types`
-- DTOs → `shared/api` near request functions
-- Avoid generic `shared/types` folder
+**TypeScript types:** Utility types → `shared/lib/utility-types`. DTOs → `shared/api` near request functions. Avoid generic `shared/types` folder.
 
 ---
 
-### Entities Layer
+## Entities Layer
 
 > [Entities Layer Docs](https://feature-sliced.design/docs/reference/layers#entities)
 
 Real-world business concepts the application works with.
 
-**Structure:**
-
-```
+```text
 entities/
 ├── user/
 │   ├── ui/           # UserAvatar, UserCard, UserBadge
@@ -93,17 +56,9 @@ entities/
     └── ...
 ```
 
-**What belongs here:**
-- Data models and TypeScript interfaces
-- API functions for CRUD operations
-- Reusable UI representations
-- Validation schemas (Zod, Yup)
-- Entity-specific mappers (DTO → Domain)
+**Belongs here:** Data models/interfaces, CRUD API functions, reusable UI representations, validation schemas (Zod, Yup), entity-specific mappers (DTO → Domain).
 
-**What doesn't belong:**
-- User interactions (→ features)
-- Page layouts (→ pages)
-- Composed UI blocks (→ widgets)
+**Does NOT belong:** User interactions (→ features), page layouts (→ pages), composed UI blocks (→ widgets).
 
 **Cross-Entity References (@x Notation):**
 
@@ -111,7 +66,7 @@ entities/
 
 When entities must reference each other:
 
-```
+```text
 entities/
 ├── product/
 │   ├── @x/
@@ -131,7 +86,7 @@ import type { ProductId } from '@/entities/product/@x/order';
 
 ---
 
-### Features Layer
+## Features Layer
 
 > [Features Layer Docs](https://feature-sliced.design/docs/reference/layers#features)
 
@@ -139,9 +94,7 @@ User-facing interactions that provide business value.
 
 **Key principle:** Not everything is a feature. Per [FSD v2.1](https://github.com/feature-sliced/documentation/releases/tag/v2.1), keep non-reused interactions in page slices.
 
-**Structure:**
-
-```
+```text
 features/
 ├── auth/
 │   ├── ui/           # LoginForm, LogoutButton
@@ -160,7 +113,7 @@ features/
     └── index.ts
 ```
 
-**Feature vs Entity Decision:**
+**Feature vs Entity:**
 
 | Entity | Feature |
 |--------|---------|
@@ -171,20 +124,15 @@ features/
 
 ---
 
-### Widgets Layer
+## Widgets Layer
 
 > [Widgets Layer Docs](https://feature-sliced.design/docs/reference/layers#widgets)
 
 Large, self-sufficient UI components reused across multiple pages.
 
-**When to use widgets:**
-- Component is reused across multiple pages
-- Component is complex with multiple children
-- Component delivers a complete use case
+**Use when:** reused across multiple pages, complex with multiple children, delivers a complete use case.
 
-**Structure:**
-
-```
+```text
 widgets/
 ├── header/
 │   ├── ui/           # Header, NavMenu, UserDropdown
@@ -197,9 +145,7 @@ widgets/
     └── index.ts
 ```
 
-**Widget vs Feature:**
-- Widget = composed UI block (visual)
-- Feature = user interaction (behavioral)
+**Widget vs Feature:** Widget = composed UI block (visual). Feature = user interaction (behavioral).
 
 Widgets often compose multiple features:
 
@@ -210,21 +156,17 @@ import { LogoutButton } from '@/features/auth';
 import { SearchBox } from '@/features/search';
 ```
 
-**Don't create widgets for:**
-- Single-use components (keep in page)
-- Simple compositions (compose in page directly)
+**Don't create widgets for:** single-use components (keep in page) or simple compositions (compose in page directly).
 
 ---
 
-### Pages Layer
+## Pages Layer
 
 > [Pages Layer Docs](https://feature-sliced.design/docs/reference/layers#pages)
 
 Individual screens or routes. One slice per route (generally).
 
-**Structure:**
-
-```
+```text
 pages/
 ├── home/
 │   ├── ui/           # HomePage, HeroSection
@@ -241,8 +183,6 @@ pages/
     └── index.ts
 ```
 
-**Guidelines:**
-- One slice per route (generally)
 - Similar pages can share a slice (login/register)
 - Pages compose widgets, features, entities
 - Minimal business logic — delegate to lower layers
@@ -250,15 +190,13 @@ pages/
 
 ---
 
-### App Layer
+## App Layer
 
 > [App Layer Docs](https://feature-sliced.design/docs/reference/layers#app)
 
 Application-wide configuration and initialization.
 
-**Structure:**
-
-```
+```text
 app/
 ├── providers/        # React context, store setup
 │   ├── ThemeProvider.tsx
@@ -272,48 +210,4 @@ app/
 └── index.tsx         # Entry point
 ```
 
-**Responsibilities:**
-- Initialize application state
-- Set up routing
-- Configure global providers
-- Define global styles
-- Application-wide error boundaries
-
----
-
-## Layer Selection Flowchart
-
-```
-START: Where does this code go?
-│
-├─ Reusable infrastructure without business logic?
-│  └─ YES → shared/
-│
-├─ Business domain object/data model?
-│  └─ YES → entities/
-│
-├─ User interaction with business value?
-│  ├─ YES, reused across pages → features/
-│  └─ YES, single page only → Keep in pages/ slice
-│
-├─ Complex, reusable UI composition?
-│  └─ YES → widgets/
-│
-├─ Route/screen component?
-│  └─ YES → pages/
-│
-└─ App-wide initialization/config?
-   └─ YES → app/
-```
-
----
-
-## Common Mistakes
-
-1. **Features in entities** — Entities are data, features are actions
-2. **Single-use widgets** — Keep in pages/ instead (v2.1)
-3. **Business logic in shared** — Shared must be domain-agnostic
-4. **Too many layers** — Start with shared, pages, app; add as needed
-5. **Importing upward** — Strictly forbidden
-6. **Generic segment names** — Use purpose-driven: `api/`, `model/`, `ui/`
-7. **Everything is a feature** — Only reused interactions qualify
+Responsibilities: initialize application state, set up routing, configure global providers, define global styles, application-wide error boundaries.
