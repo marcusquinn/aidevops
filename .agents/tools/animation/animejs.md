@@ -9,8 +9,6 @@ context7_id: /websites/animejs
 ---
 # Anime.js
 
-Lightweight JavaScript animation library. Works with CSS properties, SVG, DOM attributes, and JS objects.
-
 ## Quick Reference
 
 ```javascript
@@ -127,7 +125,6 @@ tl.seek('content');
 ## Stagger
 
 ```javascript
-// Basic
 animate('.items', { translateY: [50, 0], delay: stagger(100) });
 
 // Options
@@ -165,7 +162,6 @@ animate('.element', { ...path(), duration: 2000, ease: 'linear' });
 
 ```javascript
 animate('.element', {
-  translateX: 250,
   onBegin: (anim) => {},
   onUpdate: (anim) => {},   // anim.progress (0–100)
   onLoop: (anim) => {},
