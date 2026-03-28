@@ -21,7 +21,8 @@ tools:
 - **Purpose**: Headless browser automation CLI designed specifically for AI agents
 - **Install**: `npm install -g @playwright/mcp@latest`
 - **GitHub**: https://github.com/microsoft/playwright-cli
-- **Skill**: Available as Claude Code skill via `/plugin marketplace add microsoft/playwright-cli`
+- **Skill**: `/plugin marketplace add microsoft/playwright-cli`
+- **Headed mode** (debug only): `playwright-cli open <url> --headed`
 
 **Core Workflow** (optimal for AI):
 
@@ -81,45 +82,6 @@ npx @playwright/mcp playwright-cli --help    # ~2-3s (registry lookup)
 /plugin marketplace add microsoft/playwright-cli
 /plugin install playwright-cli
 ```
-
-**Manual skill installation**:
-
-```bash
-mkdir -p .claude/skills/playwright-cli
-curl -o .claude/skills/playwright-cli/SKILL.md \
-  https://raw.githubusercontent.com/microsoft/playwright-cli/main/skills/playwright-cli/SKILL.md
-```
-
-## Core Workflow
-
-### The Snapshot + Ref Pattern
-
-This is the **recommended workflow for AI agents**:
-
-```bash
-# 1. Navigate and get snapshot
-playwright-cli open https://example.com
-playwright-cli snapshot
-
-# 2. AI identifies target refs from snapshot
-# Output includes refs like:
-# - heading "Example Domain" [ref=e1] [level=1]
-# - button "Submit" [ref=e2]
-# - textbox "Email" [ref=e3]
-
-# 3. Execute actions using refs
-playwright-cli click e2
-playwright-cli fill e3 "input text"
-
-# 4. Get new snapshot if page changed
-playwright-cli snapshot
-```
-
-**Why use refs?**
-
-- **Deterministic**: Ref points to exact element from snapshot
-- **Fast**: No DOM re-query needed
-- **AI-friendly**: Snapshot + ref workflow is optimal for LLMs
 
 ## Commands Reference
 
@@ -202,53 +164,15 @@ playwright-cli tracing-stop             # Stop trace recording
 ```bash
 playwright-cli --session=name open <url>  # Use named session
 playwright-cli session-list               # List all sessions
-playwright-cli session-stop [name]        # Stop session
+playwright-cli session-stop [name]        # Stop session (keeps profile)
 playwright-cli session-stop-all           # Stop all sessions
 playwright-cli session-delete [name]      # Delete session data and profile
 ```
 
-## Sessions
-
-Playwright CLI uses persistent profiles by default. Cookies and storage are preserved between calls.
-
-### Named Sessions
-
-Run multiple isolated browser instances:
-
-```bash
-# Different sessions for different tasks
-playwright-cli open https://playwright.dev
-playwright-cli --session=example open https://example.com
-playwright-cli session-list
-
-# Work in specific session
-playwright-cli --session=example click e4
-playwright-cli --session=example snapshot
-```
-
-### Environment Variable
-
-Set session via environment for all commands:
+Cookies and storage are preserved between calls. Set session via environment for all commands:
 
 ```bash
 PLAYWRIGHT_CLI_SESSION=todo-app claude .
-```
-
-### Session Management
-
-```bash
-playwright-cli session-list             # List all sessions
-playwright-cli session-stop [name]      # Stop session (keeps profile)
-playwright-cli session-stop-all         # Stop all sessions
-playwright-cli session-delete [name]    # Delete session + profile data
-```
-
-## Headed Mode
-
-Show the browser window for debugging:
-
-```bash
-playwright-cli open https://playwright.dev --headed
 ```
 
 ## Examples
@@ -296,20 +220,6 @@ playwright-cli tracing-stop
 # Opens trace viewer with recorded actions
 ```
 
-### Todo App Demo
-
-```bash
-playwright-cli open https://demo.playwright.dev/todomvc/ --headed
-playwright-cli type "Buy groceries"
-playwright-cli press Enter
-playwright-cli type "Water flowers"
-playwright-cli press Enter
-playwright-cli snapshot                    # Get refs for the todo items
-playwright-cli check e21                   # Check first todo (ref from snapshot)
-playwright-cli check e35                   # Check second todo (ref from snapshot)
-playwright-cli screenshot
-```
-
 ## Comparison with Other Tools
 
 | Feature | playwright-cli | agent-browser | Playwriter | Stagehand |
@@ -323,19 +233,10 @@ playwright-cli screenshot
 | **Extensions** | No | No | Yes (yours) | Possible |
 | **Cold start** | ~2s | ~3-5s (Rust) | ~1s (extension) | ~2s |
 
-### When to Use playwright-cli
-
-- **AI agent automation** - Snapshot + ref pattern for LLMs
-- **CLI-first workflows** - Shell scripts, CI/CD pipelines
-- **Multi-session automation** - Parallel browser instances
-- **Microsoft ecosystem** - Official Playwright tooling
-
-### When to Use Other Tools
-
-- **agent-browser** - More CLI commands, Rust binary (but slower cold start)
-- **Playwriter** - Need your existing browser sessions, extensions, passwords
-- **Stagehand** - Natural language automation, self-healing selectors
-- **Playwright direct** - Maximum speed, full API control, TypeScript projects
+- **agent-browser** — more CLI commands, Rust binary (but slower cold start)
+- **Playwriter** — need your existing browser sessions, extensions, passwords
+- **Stagehand** — natural language automation, self-healing selectors
+- **Playwright direct** — maximum speed, full API control, TypeScript projects
 
 ## Integration with Other Tools
 
@@ -352,11 +253,7 @@ playwright-cli open https://example.com --headed
 npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222
 ```
 
-**Use cases**:
-- Performance profiling with Lighthouse while automating
-- Network monitoring during form submissions
-- CSS coverage analysis
-- Console error capture
+**Use cases**: performance profiling with Lighthouse, network monitoring, CSS coverage analysis, console error capture.
 
 See `tools/browser/chrome-devtools.md` for full DevTools capabilities.
 
@@ -375,9 +272,7 @@ playwright-cli uses Playwright under the hood, so it works with the anti-detect 
 playwright-cli open https://bot-detection-test.com
 ```
 
-**Full anti-detect (Camoufox)**:
-
-For maximum stealth with fingerprint rotation, use Camoufox directly with Playwright API rather than playwright-cli. See `tools/browser/anti-detect-browser.md`.
+**Full anti-detect (Camoufox)**: For maximum stealth with fingerprint rotation, use Camoufox directly with Playwright API rather than playwright-cli. See `tools/browser/anti-detect-browser.md`.
 
 | Stealth Level | Tool | Use Case |
 |---------------|------|----------|
