@@ -8,15 +8,15 @@ This skill is split into focused sub-documents for progressive loading. Read wha
 
 | Sub-document | Sections | Lines |
 |---|---|---|
-| [platform-meta.md](platform-meta.md) | Meta/Facebook ad formats, specs, copy formulas, testing framework | 1130 |
-| [platform-google.md](platform-google.md) | Google Search (RSA), Display (RDA), Performance Max, YouTube ads | 720 |
-| [copywriting.md](copywriting.md) | PAS/AIDA/BAB frameworks, 100+ headline formulas, brand voice | 1109 |
-| [video-ugc.md](video-ugc.md) | Video ad hooks (first 3 seconds), UGC-style ad creation | 998 |
-| [testing-optimization.md](testing-optimization.md) | Creative testing methodology, scoring rubrics, DCO, A/B testing, performance metrics | 2199 |
-| [psychology-targeting.md](psychology-targeting.md) | Emotional triggers, cognitive biases, audience-message match | 900 |
-| [offers-landing.md](offers-landing.md) | Offer construction, pricing psychology, landing page congruence | 1190 |
-| [campaign-management.md](campaign-management.md) | Creative briefs, competitor analysis, seasonal creative, retargeting, ad fatigue, thumbnails | 2916 |
-| [ai-tools-reference.md](ai-tools-reference.md) | AI creative tools, implementation roadmap, quick-reference appendix | 831 |
+| [platform-meta.md](platform-meta.md) | Meta/Facebook ad formats, specs, copy formulas, testing framework | 279 |
+| [platform-google.md](platform-google.md) | Google Search (RSA), Display (RDA), Performance Max, YouTube ads | 275 |
+| [copywriting.md](copywriting.md) | PAS/AIDA/BAB frameworks, 100+ headline formulas, brand voice | 277 |
+| [video-ugc.md](video-ugc.md) | Video ad hooks (first 3 seconds), UGC-style ad creation | 150 |
+| [testing-optimization.md](testing-optimization.md) | Creative testing methodology, scoring rubrics, DCO, A/B testing, performance metrics | 203 |
+| [psychology-targeting.md](psychology-targeting.md) | Emotional triggers, cognitive biases, audience-message match | 229 |
+| [offers-landing.md](offers-landing.md) | Offer construction, pricing psychology, landing page congruence | 222 |
+| [campaign-management.md](campaign-management.md) | Creative briefs, competitor analysis, seasonal creative, retargeting, ad fatigue, thumbnails | 281 |
+| [ai-tools-reference.md](ai-tools-reference.md) | AI creative tools, implementation roadmap, quick-reference appendix | 253 |
 
 **Deep-dive chapters** (supplementary — see [CHAPTERS.md](CHAPTERS.md)):
 
