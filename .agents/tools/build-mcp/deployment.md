@@ -21,19 +21,17 @@ tools:
 - **Preferred**: OpenCode (native MCP, Tab-based agents)
 - **Scope**: aidevops configures MCPs for OpenCode only. Other formats documented for MCP developers.
 
-**Config Format Groups**:
-
 | Format | Assistants |
 |--------|------------|
 | JSON (mcpServers) | OpenCode, Claude Desktop, Cursor, Windsurf, Kilo Code, Kiro, Gemini CLI |
 | CLI command | Claude Code, Droid |
 | VS Code MCP | GitHub Copilot, Continue.dev, Cody |
 | Custom | Zed, Aider |
-| Limited/None | Warp AI (terminal), Qwen (experimental), LiteLLM (proxy) |
+| Limited/None | Warp AI, Qwen (experimental), LiteLLM (proxy) |
 
 <!-- AI-CONTEXT-END -->
 
-All examples below use this placeholder command: `bun run /path/to/my-mcp/src/index.ts`
+All examples use: `bun run /path/to/my-mcp/src/index.ts`
 
 ## OpenCode (Preferred)
 
@@ -71,7 +69,9 @@ Edit `~/.config/opencode/opencode.json`:
 }
 ```
 
-## Claude Code (CLI)
+## CLI Commands
+
+### Claude Code
 
 ```bash
 claude mcp add my-mcp bun run /path/to/my-mcp/src/index.ts
@@ -82,18 +82,16 @@ claude mcp add-json my-mcp --scope user '{"type":"stdio","command":"bun","args":
 claude mcp add-json my-mcp --scope project '{"type":"stdio","command":"bun","args":["run","/path/to/my-mcp/src/index.ts"]}'
 ```
 
+### Droid (Factory.AI)
+
+```bash
+droid mcp add my-mcp bun run /path/to/my-mcp/src/index.ts
+droid mcp add my-mcp bun run /path/to/my-mcp/src/index.ts --env API_KEY=your-key
+```
+
 ## Standard mcpServers Format
 
-Shared JSON schema. Config file paths differ per tool:
-
-| Tool | Config location |
-|------|-----------------|
-| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` |
-| Cursor | Settings > Tools & MCP > New MCP Server |
-| Windsurf | `.windsurf/mcp.json` (project) or global config |
-| Gemini CLI | `~/.gemini/settings.json` (user) or `.gemini/settings.json` (project) |
-| Kilo Code | MCP server icon > Edit Global MCP |
-| Kiro | Cmd+Shift+P > **Kiro: Open workspace MCP config** or **Kiro: Open user MCP config** |
+Shared JSON schema used by Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json`), Cursor (Settings > Tools & MCP), Windsurf (`.windsurf/mcp.json`), Gemini CLI (`~/.gemini/settings.json`), Kilo Code (MCP server icon > Edit Global MCP), and Kiro (Cmd+Shift+P > Kiro: Open MCP config).
 
 ```json
 {
@@ -130,7 +128,7 @@ Shared JSON schema. Config file paths differ per tool:
 
 ### GitHub Copilot
 
-Create `.vscode/mcp.json` in project root. Use in Agent mode:
+Create `.vscode/mcp.json` (Agent mode only):
 
 ```json
 {
@@ -207,13 +205,6 @@ mcp-servers:
 ```
 
 CLI: `aider --mcp-server "bun run /path/to/my-mcp/src/index.ts"`
-
-### Droid (Factory.AI)
-
-```bash
-droid mcp add my-mcp bun run /path/to/my-mcp/src/index.ts
-droid mcp add my-mcp bun run /path/to/my-mcp/src/index.ts --env API_KEY=your-key
-```
 
 ## Limited/No Native MCP
 
