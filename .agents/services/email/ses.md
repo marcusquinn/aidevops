@@ -26,43 +26,17 @@ tools:
 - **Test addresses**: success@simulator.amazonses.com, bounce@simulator.amazonses.com
 - **DKIM**: Enable for all domains
 - **IAM policy**: ses:GetSendQuota, ses:SendEmail, sesv2:ListSuppressedDestinations
+
 <!-- AI-CONTEXT-END -->
 
-Amazon Simple Email Service (SES) is a cloud-based email sending service designed to help digital marketers and application developers send marketing, notification, and transactional emails.
-
-## Provider Overview
-
-### **Amazon SES Characteristics:**
-
-- **Service Type**: Cloud-based email delivery service
-- **Global Regions**: Multiple AWS regions available
-- **Authentication**: AWS IAM credentials required
-- **API Support**: Comprehensive REST API and AWS CLI
-- **Pricing**: Pay-per-use with volume discounts
-- **Deliverability**: High deliverability with reputation management
-- **Compliance**: GDPR, HIPAA, and other compliance standards
-
-### **Best Use Cases:**
-
-- **Transactional emails** (order confirmations, password resets)
-- **Marketing campaigns** with high deliverability requirements
-- **Application notifications** and alerts
-- **Email reputation management** and monitoring
-- **Multi-tenant applications** with separate email domains
-- **Development and testing** with sandbox mode
-
-## 🔧 **Configuration**
-
-### **Setup Configuration:**
+## Configuration
 
 ```bash
-# Copy template
+# Copy template and edit with actual AWS credentials
 cp configs/ses-config.json.txt configs/ses-config.json
-
-# Edit with your actual AWS credentials and settings
 ```
 
-### **Multi-Account Configuration:**
+**Multi-account config (`configs/ses-config.json`):**
 
 ```json
 {
@@ -87,117 +61,51 @@ cp configs/ses-config.json.txt configs/ses-config.json
 }
 ```
 
-### **AWS CLI Setup:**
+**AWS CLI** (credentials managed per account — no `aws configure` needed):
 
 ```bash
-# Install AWS CLI
-brew install awscli  # macOS
+brew install awscli   # macOS
 sudo apt-get install awscli  # Linux
-
-# Verify installation
 aws --version
-
-# The helper script will use credentials from the config file
-# No need to run 'aws configure' - credentials are managed per account
 ```
 
-## 🚀 **Usage Examples**
-
-### **Basic Commands:**
+## Commands
 
 ```bash
-# List all SES accounts
-./.agents/scripts/ses-helper.sh accounts
+# Account overview
+ses-helper.sh accounts
+ses-helper.sh quota production
+ses-helper.sh stats production
+ses-helper.sh monitor production
 
-# Get sending quota
-./.agents/scripts/ses-helper.sh quota production
+# Identity management
+ses-helper.sh verified-emails production
+ses-helper.sh verified-domains production
+ses-helper.sh verify-email production newuser@yourdomain.com
+ses-helper.sh verify-domain production newdomain.com
+ses-helper.sh verify-identity production yourdomain.com
 
-# Get sending statistics
-./.agents/scripts/ses-helper.sh stats production
+# DKIM
+ses-helper.sh dkim production yourdomain.com
+ses-helper.sh enable-dkim production yourdomain.com
 
-# Monitor email delivery
-./.agents/scripts/ses-helper.sh monitor production
+# Reputation & suppression
+ses-helper.sh reputation production
+ses-helper.sh suppressed production
+ses-helper.sh suppression-details production user@example.com
+ses-helper.sh remove-suppression production user@example.com
+
+# Testing
+ses-helper.sh send-test production noreply@yourdomain.com test@example.com "Subject" "Body"
+ses-helper.sh send-test production noreply@yourdomain.com success@simulator.amazonses.com "Success Test"
+ses-helper.sh send-test production noreply@yourdomain.com bounce@simulator.amazonses.com "Bounce Test"
+ses-helper.sh debug production problematic@example.com
+ses-helper.sh audit production
 ```
 
-### **Identity Management:**
+## IAM Policy
 
-```bash
-# List verified email addresses
-./.agents/scripts/ses-helper.sh verified-emails production
-
-# List verified domains
-./.agents/scripts/ses-helper.sh verified-domains production
-
-# Verify new email address
-./.agents/scripts/ses-helper.sh verify-email production newuser@yourdomain.com
-
-# Verify new domain
-./.agents/scripts/ses-helper.sh verify-domain production newdomain.com
-
-# Check identity verification status
-./.agents/scripts/ses-helper.sh verify-identity production yourdomain.com
-```
-
-### **DKIM Configuration:**
-
-```bash
-# Get DKIM attributes
-./.agents/scripts/ses-helper.sh dkim production yourdomain.com
-
-# Enable DKIM for domain
-./.agents/scripts/ses-helper.sh enable-dkim production yourdomain.com
-
-# Check DKIM status for email
-./.agents/scripts/ses-helper.sh dkim production noreply@yourdomain.com
-```
-
-### **Reputation & Deliverability:**
-
-```bash
-# Check account reputation
-./.agents/scripts/ses-helper.sh reputation production
-
-# List suppressed destinations (bounces/complaints)
-./.agents/scripts/ses-helper.sh suppressed production
-
-# Get details for suppressed email
-./.agents/scripts/ses-helper.sh suppression-details production user@example.com
-
-# Remove email from suppression list
-./.agents/scripts/ses-helper.sh remove-suppression production user@example.com
-```
-
-### **Testing & Debugging:**
-
-```bash
-# Send test email
-./.agents/scripts/ses-helper.sh send-test production noreply@yourdomain.com test@example.com "Test Subject" "Test message body"
-
-# Debug delivery issues for specific email
-./.agents/scripts/ses-helper.sh debug production problematic@example.com
-
-# Audit complete SES configuration
-./.agents/scripts/ses-helper.sh audit production
-
-# Test with SES simulator addresses
-./.agents/scripts/ses-helper.sh send-test production noreply@yourdomain.com success@simulator.amazonses.com "Success Test"
-./.agents/scripts/ses-helper.sh send-test production noreply@yourdomain.com bounce@simulator.amazonses.com "Bounce Test"
-```
-
-## 🛡️ **Security Best Practices**
-
-### **AWS Credentials Security:**
-
-- **IAM users**: Create dedicated IAM users for SES access
-- **Minimal permissions**: Grant only required SES permissions
-- **Access keys rotation**: Rotate access keys regularly
-- **Secure storage**: Store credentials in secure configuration files
-- **Environment separation**: Use different AWS accounts for prod/staging
-
-### **SES-Specific Security:**
-
-```bash
-# Recommended IAM policy for SES helper script
+```json
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -223,177 +131,71 @@ aws --version
 }
 ```
 
-### **Email Security:**
+Use dedicated IAM users per environment. Rotate access keys regularly. Use separate AWS accounts for prod/staging.
 
-- **DKIM signing**: Enable DKIM for all verified domains
-- **SPF records**: Configure proper SPF records
-- **DMARC policy**: Implement DMARC for domain protection
-- **Bounce handling**: Monitor and handle bounces properly
-- **Complaint handling**: Process complaints promptly
-
-## 🔍 **Troubleshooting**
-
-### **Common Issues:**
-
-#### **Authentication Errors:**
+## Monitoring
 
 ```bash
-# Check AWS credentials
-aws sts get-caller-identity
-
-# Verify region configuration
-aws configure get region
-
-# Test SES access
-./.agents/scripts/ses-helper.sh quota production
+# Daily routine
+ses-helper.sh monitor production   # bounce rate, complaint rate, quota, reputation
+ses-helper.sh stats production
 ```
 
-#### **Sending Limits:**
+Thresholds: bounce < 5%, complaint < 0.1%. Alert script skeleton:
 
 ```bash
-# Check current quota
-./.agents/scripts/ses-helper.sh quota production
-
-# Monitor sending rate
-./.agents/scripts/ses-helper.sh stats production
-
-# Request limit increase through AWS Support if needed
-```
-
-#### **Delivery Issues:**
-
-```bash
-# Check reputation
-./.agents/scripts/ses-helper.sh reputation production
-
-# Look for suppressed destinations
-./.agents/scripts/ses-helper.sh suppressed production
-
-# Debug specific email
-./.agents/scripts/ses-helper.sh debug production problematic@example.com
-
-# Check bounce/complaint rates
-./.agents/scripts/ses-helper.sh monitor production
-```
-
-#### **Verification Problems:**
-
-```bash
-# Check verification status
-./.agents/scripts/ses-helper.sh verify-identity production yourdomain.com
-
-# Re-verify domain
-./.agents/scripts/ses-helper.sh verify-domain production yourdomain.com
-
-# Check DNS records
-dig TXT _amazonses.yourdomain.com
-```
-
-## 📊 **Monitoring & Analytics**
-
-### **Key Metrics to Monitor:**
-
-```bash
-# Daily monitoring routine
-./.agents/scripts/ses-helper.sh monitor production
-
-# Key metrics include:
-# - Send quota utilization
-# - Bounce rate (should be < 5%)
-# - Complaint rate (should be < 0.1%)
-# - Reputation score
-# - Suppressed destinations count
-```
-
-### **Automated Monitoring:**
-
-```bash
-# Create monitoring script
 #!/bin/bash
 ACCOUNT="production"
 BOUNCE_THRESHOLD=5.0
 COMPLAINT_THRESHOLD=0.1
-
-# Get current stats
-STATS=$(./.agents/scripts/ses-helper.sh stats $ACCOUNT)
-
-# Parse and alert if thresholds exceeded
-# (Add your alerting logic here)
+STATS=$(ses-helper.sh stats "$ACCOUNT")
+# Add alerting logic
 ```
 
-### **Performance Optimization:**
+## Troubleshooting
 
-- **Send rate optimization**: Gradually increase sending volume
-- **List hygiene**: Remove bounced and complained addresses
-- **Content optimization**: Avoid spam trigger words
-- **Authentication setup**: Implement SPF, DKIM, and DMARC
-- **Reputation monitoring**: Monitor sender reputation regularly
-
-## 🔄 **Backup & Compliance**
-
-### **Configuration Backup:**
+**Auth errors:**
 
 ```bash
-# Export SES configuration
-./.agents/scripts/ses-helper.sh audit production > ses-config-backup-$(date +%Y%m%d).txt
-
-# Backup verified identities
-./.agents/scripts/ses-helper.sh verified-emails production > verified-emails-backup.txt
-./.agents/scripts/ses-helper.sh verified-domains production > verified-domains-backup.txt
+aws sts get-caller-identity
+ses-helper.sh quota production
 ```
 
-### **Compliance Considerations:**
+**Sending limits:**
 
-- **Data retention**: Configure appropriate data retention policies
-- **Bounce processing**: Implement proper bounce and complaint handling
-- **Unsubscribe handling**: Provide easy unsubscribe mechanisms
-- **Privacy compliance**: Follow GDPR, CAN-SPAM, and other regulations
-- **Audit trails**: Maintain logs of email sending activities
+```bash
+ses-helper.sh quota production   # check current
+ses-helper.sh stats production   # monitor rate
+# Request increase via AWS Support if needed
+```
 
-## 📚 **Best Practices**
+**Delivery issues:**
 
-### **Email Deliverability:**
+```bash
+ses-helper.sh reputation production
+ses-helper.sh suppressed production
+ses-helper.sh debug production problematic@example.com
+ses-helper.sh monitor production
+```
 
-1. **Warm up gradually**: Start with small volumes and increase slowly
-2. **Monitor metrics**: Keep bounce rate < 5%, complaint rate < 0.1%
-3. **Clean lists regularly**: Remove invalid and unengaged addresses
-4. **Authenticate properly**: Set up SPF, DKIM, and DMARC
-5. **Content quality**: Avoid spam triggers and maintain good content
+**Verification problems:**
 
-### **Account Management:**
+```bash
+ses-helper.sh verify-identity production yourdomain.com
+ses-helper.sh verify-domain production yourdomain.com
+dig TXT _amazonses.yourdomain.com
+```
 
-- **Separate environments**: Use different accounts for prod/staging
-- **Monitor quotas**: Track sending limits and request increases proactively
-- **Handle bounces**: Process bounces and complaints promptly
-- **Regular audits**: Perform regular configuration audits
-- **Documentation**: Document all configurations and procedures
+## Compliance & Backup
 
-### **Development Workflow:**
+```bash
+# Export config snapshot
+ses-helper.sh audit production > ses-config-backup-$(date +%Y%m%d).txt
+ses-helper.sh verified-emails production > verified-emails-backup.txt
+ses-helper.sh verified-domains production > verified-domains-backup.txt
+```
 
-- **Test thoroughly**: Use SES simulator addresses for testing
-- **Staging environment**: Test all changes in staging first
-- **Gradual rollout**: Deploy email changes gradually
-- **Monitor closely**: Watch metrics closely after changes
-- **Rollback plan**: Have rollback procedures ready
-
-## 🎯 **AI Assistant Integration**
-
-### **Automated Email Management:**
-
-- **Delivery monitoring**: Automated monitoring of email delivery metrics
-- **Reputation tracking**: Automated reputation and compliance monitoring
-- **Issue detection**: Automated detection of delivery issues
-- **Bounce processing**: Automated bounce and complaint handling
-- **Performance optimization**: Automated recommendations for improvement
-
-### **Troubleshooting Automation:**
-
-- **Delivery debugging**: Automated diagnosis of delivery issues
-- **Configuration validation**: Automated SES configuration checks
-- **Performance analysis**: Automated analysis of sending patterns
-- **Alert generation**: Automated alerts for threshold breaches
-- **Report generation**: Automated delivery and performance reports
-
----
-
-**Amazon SES provides enterprise-grade email delivery with comprehensive monitoring and management capabilities, making it ideal for applications requiring reliable email delivery.** 🚀
+- Configure SPF, DKIM, DMARC for all sending domains
+- Process bounces and complaints promptly; maintain suppression list
+- Provide unsubscribe mechanisms; follow GDPR/CAN-SPAM
+- Warm up new sending IPs gradually; clean lists regularly
