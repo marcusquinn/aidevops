@@ -17,7 +17,7 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Test emails against spam filters, verify inbox placement, and analyze content deliverability
+- **Purpose**: Test emails against spam filters, verify inbox placement, analyze content deliverability
 - **Scripts**: `email-test-suite-helper.sh check-placement [domain]`, `email-health-check-helper.sh check [domain]`
 - **Focus**: Content-level spam triggers, provider-specific filtering, seed list testing, reputation signals
 - **Complements**: `email-health-check.md` (DNS auth), `email-testing.md` (design rendering + infrastructure)
@@ -31,11 +31,34 @@ email-test-suite-helper.sh analyze-headers headers.txt   # Header analysis (spam
 
 <!-- AI-CONTEXT-END -->
 
-## Spam Filter Testing
+## Testing Workflow
 
-### How Spam Filters Score Emails
+```bash
+# 1. DNS and authentication
+email-health-check-helper.sh check example.com
 
-Modern spam filters use weighted scoring (SpamAssassin threshold: 5.0).
+# 2. Infrastructure and placement score
+email-test-suite-helper.sh check-placement example.com
+
+# 3. SMTP connectivity
+email-test-suite-helper.sh test-smtp-domain example.com
+
+# 4. Design rendering (if HTML email)
+email-test-suite-helper.sh test-design newsletter.html
+
+# 5. Send to mail-tester.com (manual — send real email, check score)
+
+# 6. Send to seed accounts (manual — check inbox vs spam placement)
+
+# 7. Analyze headers from spam-folder copies
+email-test-suite-helper.sh analyze-headers spam-headers.txt
+
+# 8. Monitor post-send: Google Postmaster Tools, Microsoft SNDS, ESP dashboard
+```
+
+## Spam Filter Scoring
+
+Weighted scoring system (SpamAssassin threshold: 5.0):
 
 | Category | Weight | Examples |
 |----------|--------|----------|
@@ -109,13 +132,13 @@ spamassassin -t -D < test-email.eml 2>&1 | grep -E "^(score|hits|required)"
 | Under 40% text | High | Likely flagged |
 | Image-only | Very High | Almost certainly spam |
 
-Always include meaningful text alongside images. Include at least 500 characters of visible text.
+Include at least 500 characters of visible text alongside images.
 
 ## Inbox Placement Testing
 
 ### Seed List Testing
 
-Create test accounts on each major provider, send from production infrastructure, check folder placement.
+Send from production infrastructure to test accounts on each major provider. Check folder placement:
 
 | Provider | Folders to Check |
 |----------|-----------------|
@@ -126,7 +149,7 @@ Create test accounts on each major provider, send from production infrastructure
 | iCloud Mail | Inbox, Junk |
 | AOL Mail | Inbox, Spam |
 
-### External Placement Testing Services
+### External Placement Services
 
 | Service | Seed Accounts | Pricing |
 |---------|--------------|---------|
@@ -136,7 +159,7 @@ Create test accounts on each major provider, send from production infrastructure
 | MailGenius | Gmail-focused | Free tier |
 | Mailtrap | Sandbox | Free tier |
 
-**mail-tester.com**: Visit → copy unique address → send real email from production → check score (aim 9/10+). Common deductions: missing List-Unsubscribe (−1.0), no DKIM (−0.5), no SPF (−1.0), no DMARC (−1.0), blacklisted (−0.5).
+**mail-tester.com**: Visit, copy unique address, send real email from production, check score (aim 9/10+). Common deductions: missing List-Unsubscribe (−1.0), no DKIM (−0.5), no SPF (−1.0), no DMARC (−1.0), blacklisted (−0.5).
 
 ## Provider-Specific Filtering
 
@@ -150,9 +173,7 @@ Create test accounts on each major provider, send from production infrastructure
 | One-click unsubscribe | High | RFC 8058 List-Unsubscribe-Post header required |
 | Spam complaint rate | Very High | Must stay under 0.1% (Google Postmaster Tools) |
 
-**Gmail tabs**: Primary (personal/conversational) · Promotions (marketing — expected for bulk) · Updates (transactional) · Social (social platform notifications)
-
-Monitor at: postmaster.google.com (domain reputation, spam rate, auth success rates)
+**Tabs**: Primary (personal/conversational) · Promotions (marketing — expected for bulk) · Updates (transactional) · Social (social platform notifications). Monitor: postmaster.google.com
 
 ### Outlook / Microsoft 365
 
@@ -162,7 +183,7 @@ Monitor at: postmaster.google.com (domain reputation, spam rate, auth success ra
 | Authentication | High | SPF, DKIM required; DMARC recommended |
 | Junk Email Reporting | High | User reports directly affect reputation |
 
-Monitor at: sendersupport.olc.protection.outlook.com/snds
+Monitor: sendersupport.olc.protection.outlook.com/snds
 
 ### Yahoo / AOL
 
@@ -170,8 +191,8 @@ Requirements since Feb 2024: SPF or DKIM for all senders · DMARC for bulk (>500
 
 ## Reputation Management
 
-| Factor | How to Check | Target |
-|--------|-------------|--------|
+| Factor | Check With | Target |
+|--------|-----------|--------|
 | IP reputation | Google Postmaster, SNDS, SenderScore | High/Good |
 | Domain reputation | Google Postmaster, Talos Intelligence | High/Good |
 | Bounce rate | ESP dashboard | Under 2% |
@@ -192,9 +213,9 @@ Requirements since Feb 2024: SPF or DKIM for all senders · DMARC for bulk (>500
 
 Pause if bounce rate exceeds 5% or complaints exceed 0.1%. Never send to purchased/scraped lists during warming.
 
-### Feedback Loop (FBL) Setup
+### Feedback Loop (FBL) Registration
 
-Register for complaint feedback loops to receive spam notifications:
+Register for complaint notifications and auto-unsubscribe complainers:
 
 | Provider | FBL Registration |
 |----------|-----------------|
@@ -202,33 +223,6 @@ Register for complaint feedback loops to receive spam notifications:
 | Yahoo/AOL | help.yahoo.com/kb/postmaster |
 | Comcast | postmaster.comcast.net |
 | Cloudmark | csi.cloudmark.com/en/feedback |
-
-Automatically unsubscribe complainers. Track complaint sources. Investigate spikes.
-
-## Testing Workflow
-
-```bash
-# 1. DNS and authentication
-email-health-check-helper.sh check example.com
-
-# 2. Infrastructure and placement score
-email-test-suite-helper.sh check-placement example.com
-
-# 3. SMTP connectivity
-email-test-suite-helper.sh test-smtp-domain example.com
-
-# 4. Design rendering (if HTML email)
-email-test-suite-helper.sh test-design newsletter.html
-
-# 5. Send to mail-tester.com (manual — send real email, check score)
-
-# 6. Send to seed accounts (manual — check inbox vs spam placement)
-
-# 7. Analyze headers from spam-folder copies
-email-test-suite-helper.sh analyze-headers spam-headers.txt
-
-# 8. Monitor post-send: Google Postmaster Tools, Microsoft SNDS, ESP dashboard
-```
 
 ## Troubleshooting
 
@@ -246,11 +240,11 @@ email-test-suite-helper.sh analyze-headers spam-headers.txt
 
 ### Email Landing in Promotions (Gmail)
 
-Promotions tab is not spam — emails are delivered. For Primary tab: use plain text, personal tone, avoid marketing language, encourage replies. For bulk marketing, Promotions placement is normal — focus on subject line quality.
+Promotions tab is not spam — emails are delivered. For Primary tab: use plain text, personal tone, avoid marketing language, encourage replies. For bulk marketing, Promotions placement is normal.
 
 ### Intermittent Delivery Failures
 
-Check: shared IP reputation issues · volume spikes · content variations triggering filters · DKIM key rotation alignment · new blacklist additions.
+Check: shared IP reputation · volume spikes · content variations triggering filters · DKIM key rotation alignment · new blacklist additions.
 
 ## Related
 
