@@ -40,8 +40,8 @@ BONUS 1: Done-For-You Setup .......................... $500 one-time (~$42/mo am
 BONUS 2: Training Academy ............................ $297 one-time (~$25/mo amortized)
 BONUS 3: Priority Support ............................ $50/mo
 ─────────────────────────────────────────────────
-COMPARABLE VALUE: $265/mo → PRO PLAN: $79/mo ($69/mo annual)
-  ($149 + $50 recurring + $66/mo amortized one-time bonuses over 12 months)
+COMPARABLE VALUE: ~$266/mo → PRO PLAN: $79/mo ($69/mo annual)
+  ($149 + $50 recurring + ~$67/mo amortized one-time bonuses over 12 months)
 GUARANTEE: 30-Day Money Back. No long-term contracts.
 ─────────────────────────────────────────────────
 ```
@@ -141,7 +141,7 @@ A/B test one variable at a time. Run until statistical significance. Document re
 
 | Area | Verify |
 |------|--------|
-| **Value** | Core offer clearly defined. Benefits > features. Stack = 10x+ price (5x minimum floor). Bonuses relevant. |
+| **Value** | Core offer clearly defined. Benefits > features. Stack ≥ 10x price. Bonuses relevant. |
 | **Price** | Anchoring used. Payment plan for $200+. Price tested/researched. |
 | **Risk Reversal** | Guarantee strong, clear, reasonable, prominent on page. |
 | **Urgency** | Real (not fake). Deadline/scarcity stated. Consequences of waiting clear. |
