@@ -24,10 +24,7 @@ animate('.items', { scale: [0, 1], delay: stagger(100, { from: 'center' }) });
 
 ```bash
 npm install animejs
-```
-
-```html
-<script src="https://cdn.jsdelivr.net/npm/animejs@4/lib/anime.min.js"></script>
+# or CDN: <script src="https://cdn.jsdelivr.net/npm/animejs@4/lib/anime.min.js"></script>
 ```
 
 ## Targets
@@ -64,14 +61,10 @@ animate('.element', {
 
 ## Easing
 
-| Category | Functions |
-|----------|-----------|
-| Linear | `linear` |
-| Quad–Quint | `in/out/inOut` + `Quad`, `Cubic`, `Quart`, `Quint` |
-| Sine/Expo/Circ | `in/out/inOut` + `Sine`, `Expo`, `Circ` |
-| Back/Elastic/Bounce | `in/out/inOut` + `Back`, `Elastic`, `Bounce` |
+Standard: `in/out/inOut` + `Quad`, `Cubic`, `Quart`, `Quint`, `Sine`, `Expo`, `Circ`, `Back`, `Elastic`, `Bounce`
 
 ```javascript
+ease: 'outExpo'
 ease: 'out(3)'                        // power shorthand
 ease: 'spring(mass, stiffness, damping, velocity)'
 ease: 'cubicBezier(0.5, 0, 0.5, 1)'
@@ -180,9 +173,7 @@ anim.completed;   // boolean
 ## Utilities
 
 ```javascript
-import { utils } from 'animejs';
-
-utils.$('.selector');              // DOM selection
+utils.$('.selector');              // DOM selection (import { utils } from 'animejs')
 utils.random(0, 100);              // float; pass true for integer
 utils.clamp(value, 0, 100);
 utils.mapRange(value, 0, 1, 0, 100);
