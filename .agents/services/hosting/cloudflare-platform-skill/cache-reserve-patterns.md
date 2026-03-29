@@ -4,42 +4,24 @@
 
 ### 1. Always Enable Tiered Cache
 
-```typescript
-// Cache Reserve is designed for use WITH Tiered Cache
-const configuration = {
-  tieredCache: 'enabled',    // Required for optimal performance
-  cacheReserve: 'enabled',   // Works best with Tiered Cache
-  
-  hierarchy: [
-    'Lower-Tier Cache (visitor)',
-    'Upper-Tier Cache (origin region)',
-    'Cache Reserve (persistent)',
-    'Origin'
-  ]
-};
-```
+Cache Reserve is designed for use **with** Tiered Cache. Enable both: Dashboard → Caching → Tiered Cache → Smart Tiered Cache Topology, then enable Cache Reserve.
 
 ### 2. Set Appropriate Cache-Control Headers
 
 ```typescript
 // Origin response headers for Cache Reserve eligibility
 const originHeaders = {
-  'Cache-Control': 'public, max-age=86400', // 24 hours minimum 10 hours
-  'Content-Length': '1024000', // Required for eligibility
-  'Cache-Tag': 'images,product-123', // Optional: For purging
-  'ETag': '"abc123"', // Optional: Support revalidation
-  'Last-Modified': 'Wed, 21 Oct 2025 07:28:00 GMT',
-  
-  // Avoid: Prevents caching
-  // 'Set-Cookie': 'session=xyz',  // Remove or use private directive
-  // 'Vary': '*',                  // Not compatible
+  'Cache-Control': 'public, max-age=86400', // min 10 hours (36000s)
+  'Content-Length': '1024000',              // required for eligibility
+  'Cache-Tag': 'images,product-123',        // optional: for purging
+  'ETag': '"abc123"',                       // optional: revalidation
+  // Avoid: 'Set-Cookie' (prevents caching), 'Vary: *' (not compatible)
 };
 ```
 
 ### 3. Use Cache Rules for Fine-Grained Control
 
 ```typescript
-// Different TTLs for different content types
 const cacheRules = [
   {
     description: 'Long-term cache for immutable assets',
@@ -73,36 +55,19 @@ const cacheRules = [
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const response = await fetch(request);
-    
-    if (response.ok) {
-      const headers = new Headers(response.headers);
-      
-      // Set minimum 10-hour cache
-      headers.set('Cache-Control', 'public, max-age=36000');
-      
-      // Remove Set-Cookie if present (prevents caching)
-      headers.delete('Set-Cookie');
-      
-      // Ensure Content-Length is present
-      if (!headers.has('Content-Length')) {
-        const blob = await response.blob();
-        headers.set('Content-Length', blob.size.toString());
-        
-        return new Response(blob, {
-          status: response.status,
-          statusText: response.statusText,
-          headers
-        });
-      }
-      
-      return new Response(response.body, {
-        status: response.status,
-        statusText: response.statusText,
-        headers
-      });
+    if (!response.ok) return response;
+
+    const headers = new Headers(response.headers);
+    headers.set('Cache-Control', 'public, max-age=36000'); // min 10 hours
+    headers.delete('Set-Cookie');
+
+    if (!headers.has('Content-Length')) {
+      const blob = await response.blob();
+      headers.set('Content-Length', blob.size.toString());
+      return new Response(blob, { status: response.status, headers });
     }
-    
-    return response;
+
+    return new Response(response.body, { status: response.status, headers });
   }
 };
 ```
@@ -110,45 +75,38 @@ export default {
 ### 5. Hostname Best Practices
 
 ```typescript
-// ✅ CORRECT: Use Worker's hostname for efficient caching
+// ✅ Keep the Worker's hostname — avoids unnecessary DNS lookups
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    return await fetch(request); // Keep the Worker's hostname
+    return await fetch(request);
   }
 };
 
-// ❌ WRONG: Overriding hostname causes unnecessary DNS lookups
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
-    url.hostname = 'different-host.com'; // Avoid this!
-    return await fetch(url.toString());
-  }
-};
+// ❌ Don't override hostname
+const url = new URL(request.url);
+url.hostname = 'different-host.com'; // causes DNS lookup, breaks caching
 ```
 
 ## Architecture Patterns
 
 ### Multi-Tier Caching + Immutable Assets
 
-```typescript
-// Optimal: L1 (visitor) → L2 (region) → L3 (Cache Reserve) → Origin
-// Each miss backfills all upstream layers
+L1 (visitor) → L2 (region) → L3 (Cache Reserve) → Origin. Each miss backfills all upstream layers.
 
-// Immutable asset optimization with content hashing
+```typescript
+// Immutable asset optimization: detect content-hashed filenames
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const isImmutable = /\.[a-f0-9]{8,}\.(js|css|jpg|png|woff2)$/.test(url.pathname);
-    
     const response = await fetch(request);
-    
+
     if (isImmutable) {
       const headers = new Headers(response.headers);
       headers.set('Cache-Control', 'public, max-age=31536000, immutable'); // 1 year
       return new Response(response.body, { status: response.status, headers });
     }
-    
+
     return response;
   }
 };
@@ -156,21 +114,18 @@ export default {
 
 ## Cost Optimization
 
-```typescript
-// Typical savings: 50-80% reduction in origin egress
-// Origin cost (AWS: $0.09/GB) vs Cache Reserve ($0.015/GB-month + $0.36/M reads)
+Typical savings: 50–80% reduction in origin egress.
+Origin cost (AWS): ~$0.09/GB vs Cache Reserve: $0.015/GB-month + $0.36/M reads.
 
-// 1. Set appropriate TTLs
-const optimizeTTL = {
-  tooShort: 3600,    // 1 hour - not eligible
-  optimal: 86400,    // 24 hours - reduces rewrites
-  tooLong: 2592000   // 30 days - use cautiously
-};
+| TTL | Effect |
+|-----|--------|
+| < 10 hours (36000s) | Not eligible |
+| 24 hours (86400s) | Optimal — reduces rewrites |
+| 30 days (2592000s) | Use cautiously for truly stable assets |
 
-// 2. Cache high-value, stable assets: images, media, fonts, archives
-// 3. Exclude frequently changing: /api/, user-specific, JSON data
-// 4. Note: Cache Reserve requests uncompressed from origin, compresses for visitors
-```
+- Cache: images, media, fonts, archives
+- Exclude: `/api/`, user-specific content, frequently changing JSON
+- Note: Cache Reserve fetches uncompressed from origin; compresses for visitors
 
 ## See Also
 
