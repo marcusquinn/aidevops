@@ -1745,6 +1745,11 @@
       "hash": "45cc10462795e6230b70b2f068bb95b4e53612f2",
       "at": "2026-03-29T03:15:47Z",
       "pr": 12346
+    },
+    ".agents/reference/foss-contributions.md": {
+      "hash": "7a70a570a9191eedf42aa4c3c21dfcd875a6e983",
+      "at": "2026-03-29T03:52:33Z",
+      "pr": 12538
     }
   }
 }
