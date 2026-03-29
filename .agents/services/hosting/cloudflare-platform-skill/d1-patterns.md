@@ -1,5 +1,7 @@
 # D1 Patterns & Best Practices
 
+Common patterns for Cloudflare D1 (SQLite-compatible serverless database). All queries use parameterised bindings — never string-interpolate user input.
+
 ## Pagination
 
 ```typescript
@@ -67,7 +69,7 @@ const [user, posts, comments] = await env.DB.batch([
 
 // ❌ Avoid N+1 queries
 for (const post of posts) {
-  const author = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(post.user_id).first(); // Bad: multiple round trips
+  const author = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(post.user_id).first(); // N+1: one round trip per post
 }
 
 // ✅ Use JOINs instead
@@ -81,7 +83,7 @@ const postsWithAuthors = await env.DB.prepare(`
 ## Multi-Tenant SaaS
 
 ```typescript
-// Each tenant gets own database
+// Isolate tenants with one D1 database each; bind all as `TENANT_*` in wrangler.toml
 export default {
   async fetch(request: Request, env: { [key: `TENANT_${string}`]: D1Database }) {
     const tenantId = request.headers.get('X-Tenant-ID');
@@ -135,10 +137,12 @@ async function getEventStats(startDate: string, endDate: string, env: Env) {
 
 ## Time Travel & Backups
 
+30-day point-in-time restore window. Export/import via SQL dump.
+
 ```bash
-wrangler d1 time-travel restore <db-name> --timestamp="2024-01-15T14:30:00Z"  # Point-in-time
-wrangler d1 time-travel info <db-name>  # List restore points (30-day window)
-wrangler d1 export <db-name> --remote --output=./backup.sql  # Full export
-wrangler d1 export <db-name> --remote --no-schema --output=./data.sql  # Data only
-wrangler d1 execute <db-name> --remote --file=./backup.sql  # Import
+wrangler d1 time-travel restore <db-name> --timestamp="2024-01-15T14:30:00Z"  # restore to point-in-time
+wrangler d1 time-travel info <db-name>                                         # list available restore points
+wrangler d1 export <db-name> --remote --output=./backup.sql                    # full export (schema + data)
+wrangler d1 export <db-name> --remote --no-schema --output=./data.sql          # data only
+wrangler d1 execute <db-name> --remote --file=./backup.sql                     # import
 ```
