@@ -15,7 +15,7 @@ AI DevOps can contribute to FOSS projects on your behalf, subject to per-repo et
 {
   "foss": {
     "enabled": true,
-    "max_daily_tokens": 50000,
+    "max_daily_tokens": 200000,
     "max_concurrent_contributions": 2
   }
 }
@@ -86,7 +86,7 @@ foss-contribution-helper.sh check owner/some-oss-project
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `foss.enabled` | bool | `false` | Master switch. All contributions refused when `false`. |
-| `foss.max_daily_tokens` | int | `50000` | Daily token ceiling across all repos. Resets at UTC midnight. |
+| `foss.max_daily_tokens` | int | `200000` | Daily token ceiling across all repos. Resets at UTC midnight. |
 | `foss.max_concurrent_contributions` | int | `2` | Max simultaneous contribution workers. |
 
 **Env overrides**: `AIDEVOPS_FOSS_ENABLED`, `AIDEVOPS_FOSS_MAX_DAILY_TOKENS`, `AIDEVOPS_FOSS_MAX_CONCURRENT`
@@ -138,9 +138,9 @@ foss-contribution-helper.sh record owner/repo 7500
 foss-contribution-helper.sh budget
 # FOSS Contribution Budget
 #   Enabled:              true
-#   Max daily tokens:     50000
-#   Used today:           12500 (25%)
-#   Remaining:            37500
+#   Max daily tokens:     200000
+#   Used today:           12500 (6%)
+#   Remaining:            187500
 #   Max concurrent:       2
 ```
 

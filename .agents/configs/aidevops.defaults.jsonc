@@ -137,7 +137,7 @@
     // Daily token ceiling across all FOSS repos combined.
     // Contributions are refused once this limit is reached for the day.
     // Counter resets at UTC midnight. Env override: AIDEVOPS_FOSS_MAX_DAILY_TOKENS
-    "max_daily_tokens": 50000,
+    "max_daily_tokens": 200000,
 
     // Maximum number of simultaneous FOSS contribution workers.
     // Prevents runaway parallel contributions to multiple repos at once.

@@ -52,7 +52,7 @@ LOGFILE="${HOME}/.aidevops/logs/foss-contribution.log"
 
 # Global defaults (overridden by config.jsonc foss section)
 DEFAULT_FOSS_ENABLED="true"
-DEFAULT_MAX_DAILY_TOKENS=50000
+DEFAULT_MAX_DAILY_TOKENS=200000
 DEFAULT_MAX_CONCURRENT=2
 
 # Per-repo defaults (overridden by repos.json foss_config)
@@ -620,7 +620,7 @@ Valid app_type values:
 
 Global config (config.jsonc foss section):
   foss.enabled: true                    Enable/disable all FOSS contributions
-  foss.max_daily_tokens: 50000          Daily token ceiling across all repos
+  foss.max_daily_tokens: 200000         Daily token ceiling across all repos
   foss.max_concurrent_contributions: 2  Max simultaneous contribution workers
 
 Examples:
