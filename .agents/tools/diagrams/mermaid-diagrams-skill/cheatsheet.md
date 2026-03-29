@@ -19,7 +19,7 @@
 
 ## Flowchart
 
-Direction: `TB`/`TD` (top-bottom) `BT` `LR` `RL`
+**Direction:** `TB`/`TD` (top-bottom) `BT` `LR` `RL`
 
 **Nodes:** `A[Rect]` `B(Rounded)` `C([Stadium])` `D[[Subroutine]]` `E[(Database)]` `F((Circle))` `G{Diamond}` `H{{Hexagon}}` `I[/Parallelogram/]` `J(((Double)))`
 
@@ -30,7 +30,7 @@ Direction: `TB`/`TD` (top-bottom) `BT` `LR` `RL`
 | `A --o B` | Circle end | `A --x B` | Cross end |
 | `A <--> B` | Bidirectional | `A -->\|text\| B` | Labeled |
 
-**Subgraph:** `subgraph Name` ... `end` (nestable, linkable between subgraphs)
+**Subgraph:** `subgraph Name` ... `end` — nestable, linkable between subgraphs
 
 ## Sequence Diagram
 
@@ -80,17 +80,17 @@ Direction: `TB`/`TD` (top-bottom) `BT` `LR` `RL`
 
 **Format:** `Task name : [tags], [id], [start], [end/duration]`
 
-**Tags:** `done` `active` `crit` `milestone` -- **Dependencies:** `after t1` `after t1 t2`
+**Tags:** `done` `active` `crit` `milestone` | **Dependencies:** `after t1` `after t1 t2`
 
 **Example:** `Completed :done, t1, 2024-01-01, 7d` `Active :active, t2, after t1, 5d` `Milestone :milestone, m1, 2024-01-20, 0d`
 
 ## Pie Chart
 
-`pie showData` then indented `title Chart Title` and `"Label 1" : 42` entries.
+**Format:** `pie showData` with indented `title Chart Title` and `"Label" : value` entries.
 
 ## Timeline
 
-`timeline` then indented `title Title`, `section Period`, `Date : Event 1 : Event 2`.
+**Format:** `timeline` with indented `title Title`, `section Period`, `Date : Event 1 : Event 2`.
 
 ## C4 Diagrams
 
@@ -106,15 +106,15 @@ Direction: `TB`/`TD` (top-bottom) `BT` `LR` `RL`
 
 **Services:** `service id(icon)[Title]` `service id(icon)[Title] in group`
 
-**Edges:** `a:R --> L:b` `a:T --> B:b` `<-->` bidirectional
+**Edges:** `a:R --> L:b` (right→left) `a:T --> B:b` (top→bottom) `<-->` (bidirectional)
 
 **Icons:** `cloud` `database` `disk` `internet` `server`
 
 ## Styling
 
-**Theme init:** `%%{init: {'theme': 'dark'}}%%` -- Themes: `default` `dark` `forest` `neutral` `base`
+**Themes:** `%%{init: {'theme': 'dark'}}%%` — `default` `dark` `forest` `neutral` `base`
 
-**Custom:** `%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#3b82f6', 'lineColor': '#64748b'}}}%%`
+**Custom vars:** `%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#3b82f6', 'lineColor': '#64748b'}}}%%`
 
 **Node styling:** `classDef myClass fill:#f00,stroke:#333,color:#fff` `A:::myClass` `style A fill:#f00`
 
