@@ -6,10 +6,10 @@ tools: [read, write, edit, bash, glob, grep, task]
 
 # OpenProse - Multi-Agent Orchestration DSL
 
-**Use OpenProse for**: multi-agent orchestration, repeatable workflows, parallel session spawning, AI-evaluated conditions. Use aidevops scripts for single-agent DevOps tasks and deterministic logic.
+Use for multi-agent orchestration, repeatable workflows, parallel session spawning, and AI-evaluated conditions. Use aidevops scripts for single-agent DevOps tasks and deterministic logic.
 
 - **Repo**: <https://github.com/openprose/prose>
-- **Telemetry**: Disabled by default in aidevops. Override: `"OPENPROSE_TELEMETRY": "disabled"` in `.prose/state.json` or `--no-telemetry`
+- **Telemetry**: Disabled by default. Override: `"OPENPROSE_TELEMETRY": "disabled"` in `.prose/state.json` or `--no-telemetry`
 
 **Install:**
 
@@ -150,8 +150,6 @@ session "Synthesize all reviews"
 
 ### Development Loop with Quality Gates
 
-See `scripts/commands/full-loop.md` for the canonical workflow. OpenProse equivalent:
-
 ```prose
 agent developer:
   model: opus
@@ -174,6 +172,4 @@ if **any checks failed**:
 
 ## Related
 
-`overview.md` · `workflows/ralph-loop.md` · `scripts/commands/full-loop.md` · `tools/context/dspy.md` · `tools/context/toon.md`
-
-**Resources**: [Repo](https://github.com/openprose/prose) · [Language Spec](https://github.com/openprose/prose/blob/main/skills/open-prose/docs.md) · [VM Semantics](https://github.com/openprose/prose/blob/main/skills/open-prose/prose.md) · [Examples](https://github.com/openprose/prose/tree/main/examples)
+`overview.md` · `workflows/ralph-loop.md` · `scripts/commands/full-loop.md` · `tools/context/dspy.md` · `tools/context/toon.md` · [Repo](https://github.com/openprose/prose) · [Language Spec](https://github.com/openprose/prose/blob/main/skills/open-prose/docs.md) · [VM Semantics](https://github.com/openprose/prose/blob/main/skills/open-prose/prose.md) · [Examples](https://github.com/openprose/prose/tree/main/examples)
