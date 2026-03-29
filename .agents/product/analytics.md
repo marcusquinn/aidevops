@@ -31,8 +31,8 @@ Open-source preferred. All self-hostable on Coolify — see `tools/deployment/co
 
 | Tool | Purpose | Notes |
 |------|---------|-------|
-| **PostHog** | Product analytics, feature flags, session replay | Self-hosted or free cloud tier |
-| **Sentry** | Crash reporting, error tracking, performance | Self-hosted or free cloud tier |
+| **PostHog** | Product analytics, feature flags, session replay | Self-hosted or free cloud |
+| **Sentry** | Crash reporting, error tracking, performance | Self-hosted or free cloud |
 | **Plausible** | Privacy-friendly web analytics | Self-hosted or paid cloud |
 | **Umami** | Simple web analytics | Self-hosted or free cloud |
 | **RevenueCat** | Subscription analytics, cohort analysis | Mobile (iOS + Android) |
@@ -53,21 +53,17 @@ Platform dashboards: App Store Connect (iOS), Google Play Console (Android), Chr
 
 ### Engagement
 
-| Metric | Signal |
-|--------|--------|
-| DAU/MAU ratio | Stickiness (> 20% good) |
-| Session length / sessions per day | Time spent, return frequency |
-| Core action completion | Users doing the main thing |
+- **DAU/MAU ratio** — stickiness (> 20% good)
+- **Session length / frequency** — time spent, return rate
+- **Core action completion** — users doing the main thing
 
 ### Revenue (if monetised)
 
-| Metric | Signal |
-|--------|--------|
-| Trial-to-paid conversion | Paywall effectiveness |
-| MRR / ARPU | Business health, monetisation efficiency |
-| Churn rate / LTV | Subscriber loss, long-term value |
+- **Trial-to-paid** — paywall effectiveness
+- **MRR / ARPU** — business health
+- **Churn / LTV** — subscriber loss, long-term value
 
-RevenueCat provides most revenue metrics out of the box for mobile. For web/desktop, use Stripe dashboard or custom analytics.
+RevenueCat provides most revenue metrics for mobile. Web/desktop: Stripe dashboard or custom analytics.
 
 ### Quality
 
@@ -78,27 +74,19 @@ RevenueCat provides most revenue metrics out of the box for mobile. For web/desk
 | API error rate | < 1% | Sentry / custom |
 | Store rating | > 4.5 stars | Store dashboards |
 
-## User Feedback Loops
+## Feedback Loops
 
-**In-product**: Rating prompt after positive experience (not randomly). Low-friction feedback form in settings. Feature request upvote system. Bug reports with automatic context (device, OS, screen).
+- **In-product**: Rating prompt after positive experience (not randomly). Low-friction feedback form in settings. Feature request upvoting. Bug reports with automatic context (device, OS, screen).
+- **Store reviews**: Monitor daily (automate with store APIs). Respond to negatives with solutions. Track common themes to prioritise features.
 
-**Store reviews**: Monitor daily (automate with store APIs). Respond to negative reviews with solutions. Track common themes to prioritise features.
+## Iteration Cycle
 
-### Analytics-Driven Iteration
-
-```text
-1. Identify metric below target
-2. Hypothesise cause (e.g., "users drop off at step 3 of onboarding")
-3. Design experiment (A/B test or feature change)
-4. Implement and measure
-5. Keep winner, iterate on losers
-```
+Identify metric below target → hypothesise cause → design experiment (A/B or feature change) → implement and measure → keep winner, iterate on losers.
 
 ## Implementation
 
-**Event tracking**: Track actions, not screens (what users DO, not where they GO). Naming: `verb_noun` (e.g., `complete_onboarding`, `start_workout`, `purchase_premium`). Include relevant properties (duration, count, category). Don't over-track — focus on events that inform decisions.
-
-**Privacy compliance**: Respect App Tracking Transparency (iOS). Provide analytics opt-out. Avoid PII unless necessary. GDPR/CCPA compliance when applicable. Prefer privacy-friendly tools (PostHog, Plausible).
+- **Event naming**: Track actions not screens — `verb_noun` (e.g., `complete_onboarding`, `purchase_premium`). Include relevant properties (duration, count, category). Don't over-track — focus on decision-informing events.
+- **Privacy**: Respect App Tracking Transparency (iOS). Provide analytics opt-out. Avoid PII unless necessary. GDPR/CCPA compliance. Prefer privacy-friendly tools (PostHog, Plausible).
 
 ## Related
 
