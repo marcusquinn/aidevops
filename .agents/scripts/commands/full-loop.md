@@ -74,6 +74,7 @@ Iterate until emitting `<promise>TASK_COMPLETE</promise>`.
 3. Conventional commits; headless rules observed; every deferred finding has tracked task+issue
 4. **Runtime testing gate (t1660.7)** — risk-appropriate verification (see below)
 5. **Commit+PR gate (GH#5317 — MANDATORY):** Commit all changes, push branch, ensure PR exists. **Do NOT emit `TASK_COMPLETE` with uncommitted changes or no PR.**
+6. **Signature footer gate (GH#12805 — MANDATORY):** PR body and issue closing comment MUST contain the `aidevops.sh` signature footer. Verify: `echo "$PR_BODY" | grep -q 'aidevops.sh'`. Missing signature = incomplete PR.
 
 **Actionable findings:** `findings-to-tasks-helper.sh create --input <findings.txt> --repo-path "$(git rev-parse --show-toplevel)" --source <type>`. PR body: `actionable_findings_total=N`, `fixed_in_pr=N`, `deferred_tasks_created=N`, `coverage=100%`.
 
@@ -120,8 +121,28 @@ Changelog: `feat:` → Added, `fix:` → Fixed, `docs:`/`perf:`/`refactor:` → 
 
 **4.2 PR Create:** Verify `gh auth`, rebase onto `origin/main`, push, create PR.
 - **PR body MUST include `Closes #NNN`** — only mechanism creating a GitHub PR-issue link. Backtick-escape issue refs in bug descriptions to avoid unintended closes.
-- **Signature footer:** `SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL")` — append as last content in `--body`.
 - **Origin label:** `--label "origin:worker"` or `--label "origin:interactive"` (detect via `detect_session_origin` from `shared-constants.sh`; infer: headless → worker, user present → interactive).
+- **Signature footer (GH#12805 — MANDATORY):** Generate BEFORE `gh pr create`. The PR body MUST end with the signature. Verify after creation.
+
+```bash
+# Generate signature footer — MUST be appended to PR body
+SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL")
+
+gh pr create --title "$PR_TITLE" --body "$(cat <<EOF
+${PR_BODY}
+
+Closes #${ISSUE_NUM}
+${SIG_FOOTER}
+EOF
+)" --label "$ORIGIN_LABEL"
+
+# Verify signature was included (fail-closed)
+PR_BODY_CHECK=$(gh pr view --json body -q .body)
+if ! echo "$PR_BODY_CHECK" | grep -q 'aidevops.sh'; then
+  echo "[GH#12805] ERROR: PR missing signature footer — editing to add"
+  gh pr edit --body "${PR_BODY_CHECK}${SIG_FOOTER}"
+fi
+```
 
 ### 4.3 Label Update — `status:in-review` (t1343 — MANDATORY)
 
@@ -155,7 +176,36 @@ if [[ "$REPO_SLUG" == "marcusquinn/aidevops" ]]; then
 fi
 ```
 
-**4.7 Issue Closing Comment (MANDATORY):** Post structured comment on every linked issue covering: **What was done**, **Testing Evidence** (level + smoke checks), **Key decisions**, **Files changed** (path — what/why), **Blockers**, **Follow-up needs**, **Released in** (aidevops only). Every section ≥1 bullet ("None"/"N/A" if empty). Append signature: `gh-signature-helper.sh footer --model <model> --issue <slug>#<number> --solved`. Gate — no `FULL_LOOP_COMPLETE` until posted.
+**4.7 Issue Closing Comment (MANDATORY):** Post structured comment on every linked issue covering: **What was done**, **Testing Evidence** (level + smoke checks), **Key decisions**, **Files changed** (path — what/why), **Blockers**, **Follow-up needs**, **Released in** (aidevops only). Every section ≥1 bullet ("None"/"N/A" if empty). Gate — no `FULL_LOOP_COMPLETE` until posted.
+
+**Signature footer on closing comment (GH#12805 — MANDATORY):**
+
+```bash
+SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer \
+  --model "$ANTHROPIC_MODEL" --issue "$REPO_SLUG#$ISSUE_NUM" --solved)
+
+gh issue comment "$ISSUE_NUM" --repo "$REPO_SLUG" --body "$(cat <<EOF
+## What was done
+- ...
+
+## Testing Evidence
+- ...
+
+## Key decisions
+- ...
+
+## Files changed
+- ...
+
+## Blockers
+- None
+
+## Follow-up needs
+- None
+${SIG_FOOTER}
+EOF
+)"
+```
 
 **4.8 Postflight + Deploy:** Verify release health. Deploy: `setup.sh --non-interactive` (aidevops repos only). Emit: `<promise>FULL_LOOP_COMPLETE</promise>`
 
