@@ -34,13 +34,9 @@ Inbound: Messages.app decrypts to local SQLite → BlueBubbles detects via files
 
 ## BlueBubbles (Recommended)
 
-**Requirements**: macOS 11+, Messages.app signed in, Full Disk Access + Accessibility, persistent GUI session.
+**Requirements**: macOS 11+, Messages.app signed in, Full Disk Access + Accessibility, persistent GUI session. **Install**: Download DMG from [GitHub Releases](https://github.com/BlueBubblesApp/bluebubbles-server/releases) (Homebrew cask deprecated 2026-09-01). Right-click Open (Gatekeeper), grant Full Disk Access + Accessibility, set password, configure Cloudflare tunnel.
 
-**Install**: Download DMG from [GitHub Releases](https://github.com/BlueBubblesApp/bluebubbles-server/releases) (Homebrew cask deprecated 2026-09-01). Right-click Open (Gatekeeper), grant Full Disk Access + Accessibility, set password, configure Cloudflare tunnel.
-
-**Server config**: Port `1234` · Password (header only — query params are logged) · Proxy: Cloudflare · Poll: `1000ms`
-
-**Headless**: `caffeinate -d` to prevent sleep; complete iCloud 2FA interactively first.
+**Server config**: Port `1234` · Password (header only — query params are logged) · Proxy: Cloudflare · Poll: `1000ms` · **Headless**: `caffeinate -d` to prevent sleep; complete iCloud 2FA interactively first.
 
 ### REST API
 
@@ -115,13 +111,11 @@ check_and_restart "Messages"; check_and_restart "BlueBubbles"
 
 ## Access Control
 
-**API**: Bind to `127.0.0.1`; Cloudflare tunnel for remote; block port 1234 externally. Store password: `aidevops secret set BLUEBUBBLES_PASSWORD`.
-
-**Bot-level** (in bot process, not BlueBubbles): allowlist by phone/email · allowlist by group · command-level permissions · rate limiting · `prompt-guard-helper.sh` before passing to AI
+**API**: Bind to `127.0.0.1`; Cloudflare tunnel for remote; block port 1234 externally. Store password: `aidevops secret set BLUEBUBBLES_PASSWORD`. **Bot-level** (in bot process, not BlueBubbles): allowlist by phone/email · allowlist by group · command-level permissions · rate limiting · `prompt-guard-helper.sh` before passing to AI.
 
 ## Privacy and Security
 
-**iMessage encryption**: Classic: RSA-OAEP + AES-128-CTR · iOS 13+: ECIES P-256 + AES-128-CTR · PQ3 (iOS 17.4+): post-quantum + AES-256-CTR · Signing: ECDSA P-256 · Key verification: CKV (iOS 17.2+, optional)
+**iMessage encryption**: E2E via RSA-OAEP/ECIES P-256 (iOS 13+)/PQ3 AES-256-CTR (iOS 17.4+); ECDSA P-256 signing; CKV key verification (iOS 17.2+, optional).
 
 **Apple can see**: Metadata (who, when, IP), contact graph. **Cannot see**: Content; backups with ADP enabled.
 
@@ -158,6 +152,4 @@ macOS only · Apple ID required · no official Apple API · Messages.app crashes
 
 ## Related
 
-`simplex.md` · `matrix-bot.md` · `matterbridge.md` · `tools/security/opsec.md` · `tools/ai-assistants/headless-dispatch.md`
-
-[BlueBubbles docs](https://docs.bluebubbles.app/) · [Apple iMessage security](https://support.apple.com/guide/security/imessage-security-overview-secd9764312f/web) · [imsg CLI](https://github.com/steipete/imsg)
+`simplex.md` · `matrix-bot.md` · `matterbridge.md` · `tools/security/opsec.md` · `tools/ai-assistants/headless-dispatch.md` · [BlueBubbles docs](https://docs.bluebubbles.app/) · [Apple iMessage security](https://support.apple.com/guide/security/imessage-security-overview-secd9764312f/web) · [imsg CLI](https://github.com/steipete/imsg)
