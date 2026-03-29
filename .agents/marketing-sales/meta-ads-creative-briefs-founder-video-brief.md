@@ -6,13 +6,7 @@
 
 ## Video Objective
 
-**Type:** 
-- [ ] Origin Story (why you started)
-- [ ] Product Explainer (what it does)
-- [ ] Direct Response (drive action)
-- [ ] Myth-Buster (challenge status quo)
-- [ ] FAQ/Objection Handler
-- [ ] Company Update/Announcement
+**Type:** Origin Story / Product Explainer / Direct Response / Myth-Buster / FAQ / Announcement
 
 **Goal:** [Primary action you want viewers to take]
 
@@ -20,184 +14,85 @@
 
 ## Script
 
-### Hook (0-5 seconds)
-```
-[Write your opening line - this is the most important part]
-```
+**Hook (0-5s):** [Opening line — most important]
 
-### Body (5-25 seconds)
+**Body (5-25s):**
 ```
-[Main content of the message]
-
-Key Points:
+[Main message]
 1. 
 2. 
 3. 
 ```
 
-### Proof/Credibility (25-35 seconds)
-```
-[Social proof, results, credentials]
-```
+**Proof (25-35s):** [Social proof, results, credentials]
 
-### CTA (35-45 seconds)
-```
-[Clear call to action]
-```
+**CTA (35-45s):** [Clear call to action — URL: ]
 
 ---
 
 ## Technical Setup
 
-### Camera
-- [ ] iPhone on tripod
-- [ ] Webcam
-- [ ] Mirrorless/DSLR
-- [ ] Professional video
+**Camera:** iPhone/tripod · Webcam · Mirrorless/DSLR · Professional  
+**Framing:** Medium shot (chest up) or close-up (head/shoulders). Eye line: at lens or slightly above.
 
-**Framing:** Medium shot (chest up) or close-up (head and shoulders)
+**Audio:** Lav mic · Shotgun · AirPods · Built-in (backup only)  
+**Environment:** Quiet room, no echo.
 
-**Eye Line:** Look at lens or slightly above (not down)
+**Lighting:** Natural window (soft) · Ring light · Key+fill · Professional  
+**Tip:** Light in front of you, not behind.
 
-### Audio
-- [ ] Lav mic
-- [ ] Shotgun mic
-- [ ] AirPods (acceptable)
-- [ ] Built-in mic (backup only)
-
-**Environment:** Quiet room, no echo, no background noise
-
-### Lighting
-- [ ] Natural window light (best if soft)
-- [ ] Ring light
-- [ ] Key + fill lights
-- [ ] Professional setup
-
-**Tip:** Light should be in front of you, not behind you
-
-### Background
-- [ ] Home office
-- [ ] Company office
-- [ ] Neutral/branded wall
-- [ ] Blurred background
-
-**What to include:** Subtle brand elements, books, plants
-**What to avoid:** Clutter, distractions, personal items
+**Background:** Home office · Company office · Neutral/branded wall · Blurred  
+Include: subtle brand elements, books, plants. Avoid: clutter, distractions.
 
 ---
 
-## Outfit Guidelines
+## Outfit
 
-**DO:**
-- Solid colors (no small patterns)
-- Colors that pop against background
-- What you'd actually wear
-- Look put-together but not overdressed
-
-**DON'T:**
-- Thin stripes or small patterns (moiré effect)
-- All white or all black
-- Busy logos
-- Casual to the point of sloppy
+**Do:** Solid colors, colors that pop against background, natural/put-together look.  
+**Don't:** Thin stripes/small patterns (moiré), all white/black, busy logos, sloppy casual.
 
 ---
 
-## Delivery Notes
+## Delivery
 
-### Tone
-- [ ] Conversational and casual
-- [ ] Energetic and enthusiastic
-- [ ] Calm and authoritative
-- [ ] Passionate and personal
+**Tone:** Conversational · Energetic · Calm/authoritative · Passionate  
+**Pacing:** Slightly faster than normal conversation. Natural pauses OK. Not rushed, not slow.  
+**Script method:** Teleprompter (sounds scripted) · Bullet points (more natural) · Memorized key lines + improv
 
-### Pacing
-- Not too fast (sounds desperate)
-- Not too slow (loses attention)
-- Natural pauses are okay
-- Aim for slightly faster than normal conversation
-
-### Teleprompter vs Notes
-- [ ] Teleprompter (use sparingly, sounds scripted)
-- [ ] Bullet points (more natural)
-- [ ] Memorized key lines + improv
-
-### Tips for Natural Delivery
-1. Record yourself practicing first
-2. Talk like you're telling a friend
-3. It's okay to mess up - keep rolling
-4. Hand gestures are good
-5. Smile at least once
+**Tips:** Record a practice take first. Talk like you're telling a friend. Keep rolling through mistakes. Use hand gestures. Smile at least once.
 
 ---
 
 ## Shot List
 
-**Must Capture:**
-- [ ] Full talking head video (multiple takes)
-- [ ] Key lines said 2-3 different ways
-- [ ] Reaction shots / "listening" shots
+**Must capture:** Full talking head (multiple takes), key lines said 2-3 different ways, reaction shots.
 
-**B-Roll to Capture:**
-- [ ] Using the product
-- [ ] Working at desk
-- [ ] Team interaction
-- [ ] Product close-ups
-- [ ] Logo/branding elements
+**B-roll:** Product in use · Working at desk · Team interaction · Product close-ups · Logo/branding
 
 ---
 
-## Format Requirements
+## Format
 
-**Primary:** 9:16 (Vertical) for Reels/Stories
-**Secondary:** 1:1 (Square) or 4:5 (Tall) for Feed
-**Backup:** 16:9 (Horizontal) for flexibility
-
-**Tip:** Frame loose to allow for cropping to different ratios
+**Primary:** 9:16 (Reels/Stories) · **Secondary:** 1:1 or 4:5 (Feed) · **Backup:** 16:9  
+**Tip:** Frame loose to allow cropping to different ratios.
 
 ---
 
 ## Post-Production
 
-**Editor will add:**
-- [ ] Captions
-- [ ] B-roll cutaways
-- [ ] Lower thirds/text
-- [ ] Music
-- [ ] Brand elements
+**Editor adds:** Captions · B-roll cutaways · Lower thirds/text · Music · Brand elements
 
-**Provide to editor:**
-- All takes (labeled)
-- B-roll footage
-- Script/key quotes
-- Brand assets (logo, colors)
+**Provide to editor:** All takes (labeled) · B-roll footage · Script/key quotes · Brand assets (logo, colors)
 
 ---
 
 ## Self-Review Checklist
 
-Before sending to editor:
-
-- [ ] Message is clear in first 5 seconds
-- [ ] Audio is clean
-- [ ] Lighting flatters your face
-- [ ] Background is appropriate
-- [ ] You sound natural, not reading
-- [ ] Key points are covered
-- [ ] CTA is clear
+- [ ] Message clear in first 5 seconds
+- [ ] Audio clean
+- [ ] Lighting flatters face
+- [ ] Background appropriate
+- [ ] Sounds natural, not read
+- [ ] Key points covered
+- [ ] CTA clear
 - [ ] Multiple takes for key moments
-
----
-
-## Quick Reference
-
-**Opening Line:**
-[Your hook]
-
-**Key Stat/Proof:**
-[Your evidence]
-
-**CTA:**
-[Your call to action]
-
-**Website:**
-[URL to mention]
