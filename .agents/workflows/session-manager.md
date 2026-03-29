@@ -51,27 +51,21 @@ tools:
 
 # macOS Terminal.app
 osascript -e 'tell application "Terminal" to do script "cd ~/Git/<project>-feature-parallel-task && opencode"'
-
-# iTerm (responds to both "iTerm" and "iTerm2")
+# iTerm
 osascript -e 'tell application "iTerm" to tell current window to create tab with default profile command "cd ~/Git/<project>-feature-parallel-task && opencode"'
+# Linux (gnome-terminal / konsole / kitty)
+gnome-terminal --tab -- bash -c "cd ~/Git/<project> && opencode; exec bash"
+konsole --new-tab -e bash -c "cd ~/Git/<project> && opencode"
+kitty @ launch --type=tab --cwd=~/Git/<project> opencode
 ```
 
 ### Background / Headless
 
 ```bash
 opencode run "Continue with task X" --agent Build+ &
-
-# Persistent server for multiple sessions
+# Persistent server
 opencode serve --port 4097 &
 opencode run --attach http://localhost:4097 "Task description" --agent Build+
-```
-
-### Linux Terminals
-
-```bash
-gnome-terminal --tab -- bash -c "cd ~/Git/<project> && opencode; exec bash"
-konsole --new-tab -e bash -c "cd ~/Git/<project> && opencode"
-kitty @ launch --type=tab --cwd=~/Git/<project> opencode
 ```
 
 ## Session Handoff
@@ -79,17 +73,13 @@ kitty @ launch --type=tab --cwd=~/Git/<project> opencode
 ```bash
 cat > .session-handoff.md << EOF
 # Session Handoff
-**Previous session**: $(date)
 **Branch**: $(git branch --show-current)
 **Last commit**: $(git log -1 --oneline)
 ## Completed
 - {list completed items}
 ## Continue With
-- {next task description}
-## Context
-- {relevant context for continuation}
+- {next task}
 EOF
-
 opencode run "Read .session-handoff.md and continue the work" --agent Build+
 ```
 
@@ -108,32 +98,21 @@ opencode run "Read .session-handoff.md and continue the work" --agent Build+
 
 Context compaction in 1h+ sessions can lose task state. Checkpoint to disk after each task.
 
-### Checkpoint Commands
-
 ```bash
-# Save after completing each task
+# Save after each task
 session-checkpoint-helper.sh save \
-  --task "t135.9" \
-  --next "t135.11,t014,t025" \
-  --worktree "/path/to/worktree" \
-  --batch "batch2-quality" \
+  --task "t135.9" --next "t135.11,t014,t025" \
+  --worktree "/path/to/worktree" --batch "batch2-quality" \
   --note "Completed trap cleanup for 29 scripts" \
   --elapsed "90" --target "240"
 
-# Reload before starting any new task (especially after compaction)
-session-checkpoint-helper.sh load
-
-# Check staleness
-session-checkpoint-helper.sh status
-
-# Generate continuation prompt for new session
-session-checkpoint-helper.sh continuation
-
-# Auto-save with state detection
+session-checkpoint-helper.sh load        # Reload before any new task (esp. after compaction)
+session-checkpoint-helper.sh status      # Check staleness
+session-checkpoint-helper.sh continuation # Generate continuation prompt
 session-checkpoint-helper.sh auto-save --task "t135.9" --note "Completed X"
 ```
 
-### When to Checkpoint
+**When to checkpoint:**
 
 | Event | Action |
 |-------|--------|
