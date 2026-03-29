@@ -1,5 +1,5 @@
 ---
-description: Google Chat bot integration — HTTP webhook mode, Google Cloud project setup, service account auth, DM/space messaging, Adaptive Cards, access control, and aidevops runner dispatch
+description: Google Chat bot integration — HTTP webhook, service account auth, DM/space messaging, Cards, access control, runner dispatch
 mode: subagent
 tools:
   read: true
@@ -28,7 +28,7 @@ tools:
 google-chat-helper.sh setup  # Interactive wizard
 ```
 
-**Privacy warning**: No E2E encryption. Google retains all messages; Workspace admins have full read access. Gemini AI may use workspace data for training unless your admin configures DPAs and opts out. See [Privacy and Security](#privacy-and-security).
+**Privacy warning**: No E2E encryption. Google retains all messages; admins have full read access. Gemini AI may train on workspace data unless DPA configured. See [Privacy and Security](#privacy-and-security).
 
 <!-- AI-CONTEXT-END -->
 
@@ -51,7 +51,7 @@ chmod 600 ~/.config/aidevops/google-chat-sa-key.json
 
 ### Step 2: Configure Chat App
 
-Google Cloud Console > APIs & Services > Google Chat API > Configuration: set HTTP endpoint URL, enable "Receive 1:1 messages" and "Join spaces and group conversations", set Authentication Audience to HTTP endpoint URL.
+Cloud Console > APIs & Services > Google Chat API > Configuration: set HTTP endpoint URL, enable "Receive 1:1 messages" + "Join spaces and group conversations", set Authentication Audience to endpoint URL.
 
 ### Step 3: Public URL
 
@@ -82,7 +82,7 @@ Google Cloud Console > APIs & Services > Google Chat API > Configuration: set HT
 
 ### Inbound (Google to Bot)
 
-> **CRITICAL**: Verify Google's bearer token on every request — without this, anyone who discovers the webhook URL can send forged events.
+> **CRITICAL**: Verify Google's bearer token on every request — without this, anyone can send forged events.
 
 ```typescript
 import { createRemoteJWKSet, jwtVerify } from "jose";
@@ -90,63 +90,49 @@ const JWKS = createRemoteJWKSet(new URL("https://www.googleapis.com/service_acco
 async function verifyGoogleChatToken(token: string, audience: string): Promise<boolean> {
   await jwtVerify(token, JWKS, { issuer: "chat@system.gserviceaccount.com", audience });
   return true;
-}
+} // Validate: iss = chat@system.gserviceaccount.com, aud = project number or endpoint URL
 ```
-
-Validate: `iss` = `chat@system.gserviceaccount.com`, `aud` = your project number or endpoint URL.
 
 ### Outbound (Bot to Google)
 
 ```typescript
 import { GoogleAuth } from "google-auth-library";
 const auth = new GoogleAuth({ keyFile: config.serviceAccountKeyPath, scopes: ["https://www.googleapis.com/auth/chat.bot"] });
-const client = await auth.getClient();
-await client.request({ url: "https://chat.googleapis.com/v1/spaces/SPACE_ID/messages", method: "POST", data: { text: "Analysis complete..." } });
+await (await auth.getClient()).request({ url: "https://chat.googleapis.com/v1/spaces/SPACE_ID/messages", method: "POST", data: { text: "..." } });
 ```
 
 ## Event Types
 
 | Event Type | Trigger | Action |
 |------------|---------|--------|
-| `ADDED_TO_SPACE` | Bot added to space or DM started | Send welcome message |
+| `ADDED_TO_SPACE` | Bot added to space/DM | Send welcome message |
 | `REMOVED_FROM_SPACE` | Bot removed | Clean up, log |
-| `MESSAGE` | User mentions bot or sends DM | Parse prompt, dispatch runner |
-| `CARD_CLICKED` | User clicks card button | Handle card action |
+| `MESSAGE` | User mentions bot or DMs | Parse prompt, dispatch runner |
+| `CARD_CLICKED` | Card button click | Handle card action |
 
-Key payload fields: `message.argumentText` (prompt, bot mention stripped), `user.email` (access control), `space.name` (runner mapping), `message.thread.name` (threading).
+Payload: `message.argumentText` (prompt, mention stripped), `user.email` (ACL), `space.name` (runner mapping), `message.thread.name` (threading).
 
 ## Messaging
 
 **Sync (< 30s)**: Return `{ "text": "..." }` directly in HTTP response body.
 
-**Async (> 30s)**: Return a `cardsV2` acknowledgment card immediately, then post full response via Chat API:
-
-```bash
-curl -X POST "https://chat.googleapis.com/v1/spaces/SPACE_ID/messages" \
-  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-  -H "Content-Type: application/json" \
-  -d '{ "text": "Analysis complete...", "thread": { "name": "spaces/SPACE_ID/threads/THREAD_ID" }, "threadReply": true }'
-```
+**Async (> 30s)**: Return `cardsV2` acknowledgment immediately, then POST full response via `https://chat.googleapis.com/v1/spaces/SPACE_ID/messages` with `Authorization: Bearer <token>`, `thread.name`, and `threadReply: true`.
 
 ### Card v2 (Adaptive Cards)
 
-Structure: `cardsV2[].card` with `header` (`title`, `subtitle`) and `sections[].widgets`. See [Card v2 reference](https://developers.google.com/workspace/chat/api/reference/rest/v1/cards).
-
-**Card limits**: 1 card/message, 100 sections, 100 widgets/section, 4096 chars/widget, 40 chars/button. Image URLs must be public HTTPS. Test across web, Gmail sidebar, and mobile.
+Structure: `cardsV2[].card` with `header` (`title`, `subtitle`) and `sections[].widgets`. Limits: 1 card/message, 100 sections, 100 widgets/section, 4096 chars/widget, 40 chars/button. Public HTTPS image URLs only. Test across web, Gmail sidebar, mobile. See [Card v2 reference](https://developers.google.com/workspace/chat/api/reference/rest/v1/cards).
 
 ## Space-to-Runner Mapping and Access Control
 
 ```bash
 google-chat-helper.sh map 'spaces/AAAA1234' code-reviewer
-google-chat-helper.sh mappings   # list
+google-chat-helper.sh mappings   # list all
 google-chat-helper.sh unmap 'spaces/AAAA1234'
 ```
 
-DMs use `defaultRunner`. If unconfigured, bot responds with a help message.
+DMs use `defaultRunner`; unconfigured = help message. `allowedUsers` restricts to specific emails; empty = all domain users.
 
-`allowedUsers` restricts to specific emails; empty (`[]`) allows all Workspace domain users.
-
-**Permission check order**: token verification → domain → allowlist → space mapping. Domain-level control: Google Admin Console > Apps > Google Workspace > Google Chat > Chat apps settings.
+**Permission check order**: token verification → domain → allowlist → space mapping. Domain control: Google Admin Console > Apps > Google Workspace > Google Chat > Chat apps settings.
 
 ## Operations
 
@@ -160,64 +146,51 @@ google-chat-helper.sh test-event message "Test message from CLI" # test event
 google-chat-helper.sh test-auth                                  # verify token
 ```
 
-**Health**: `GET /health` → `{"status":"ok","uptime":3600,"spaces":3,"lastEvent":"..."}`
-
-**Runners**: `runner-helper.sh create <name> --description "..."` | `runner-helper.sh edit <name>`
+**Health**: `GET /health` → `{"status":"ok","uptime":3600,"spaces":3,"lastEvent":"..."}`. **Runners**: `runner-helper.sh create <name> --description "..."` | `runner-helper.sh edit <name>`
 
 ## Privacy and Security
 
-| Aspect | Status | Notes |
-|--------|--------|-------|
-| E2E encryption | None | TLS in transit only |
-| Server-side storage | All messages | Google retains all Chat messages; admins have full read access |
-| Data/retention | Google-controlled | Per Workspace settings; configurable via Google Vault |
-| Gemini AI training | Risk | Workspace data may train Google AI unless DPA configured |
+| Aspect | Status |
+|--------|--------|
+| E2E encryption | None — TLS in transit only |
+| Server-side storage | Google retains all messages; admins have full read access |
+| Data/retention | Google-controlled; configurable via Google Vault |
+| Gemini AI training | Risk — workspace data may train AI unless DPA configured |
 
-**Gemini warning**: Review your org's Workspace DPA and verify Gemini AI settings (Google Admin Console > Apps > Additional Google services > Gemini) before deploying a bot handling sensitive data. For sensitive communications, prefer Matrix (self-hosted) or SimpleX — see `tools/security/opsec.md`.
+**Gemini warning**: Verify Gemini AI settings (Admin Console > Additional Google services > Gemini) and Workspace DPA before deploying with sensitive data. For sensitive comms, prefer Matrix or SimpleX — see `tools/security/opsec.md`.
 
-**Bot security rules**:
-
-- `verifyGoogleTokens: true` always — prevents forged requests
-- Service account key: 600 permissions, never commit to git
-- `allowedUsers`: restrict to specific users, not entire domain
-- Scan inbound with `prompt-guard-helper.sh`; scan outbound for credential patterns
-- Use reverse proxy (Caddy/Cloudflare) for TLS — don't expose bot directly
-- Log all events; redact sensitive content
-- FCM note: Google uses Firebase Cloud Messaging for mobile push — FCM infrastructure knows when users receive Chat notifications
+**Bot security rules**: `verifyGoogleTokens: true` always (prevents forged requests) | SA key: 600 perms, never commit | `allowedUsers`: restrict to specific users | Scan inbound with `prompt-guard-helper.sh`, outbound for credential patterns | Reverse proxy (Caddy/Cloudflare) for TLS | Log all events, redact sensitive content | FCM note: Google FCM infrastructure knows when users receive Chat push notifications.
 
 ## Limitations
 
 | Limitation | Detail |
 |------------|--------|
-| 30s response window | Return acknowledgment card immediately; post full response async |
+| 30s response window | Return ack card immediately; full response async |
 | No Matterbridge | Requires custom API bridge or relay bot |
-| Workspace required | Cannot use with free Gmail accounts |
-| Card rendering varies | Test across web, Gmail sidebar, and mobile |
+| Workspace required | Free Gmail accounts unsupported |
+| Card rendering varies | Test across web, Gmail sidebar, mobile |
 | Rate limits | 60 msg/min per space; 50,000 spaces max |
-| Thread limits | Space-scoped only; bot cannot create threads proactively |
+| Thread limits | Space-scoped; bot cannot create threads proactively |
 
 ## Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
-| Bot not receiving events | Verify public URL is accessible; check Chat API configuration |
-| 401 Unauthorized | Verify service account key is valid; check `chat.bot` scope |
-| Token verification fails | Ensure `verifyGoogleTokens: true`; check clock sync (JWT expiry) |
-| Bot not visible to users | Check Chat app visibility in Google Cloud Console |
-| Async messages not posting | Verify service account has `chat.bot` scope; check space name format |
-| Cards not rendering | Validate Card v2 JSON; check for unsupported widget types |
-| Rate limited | Reduce frequency; implement exponential backoff |
-| Bot removed from space | Check `REMOVED_FROM_SPACE` events in logs; re-add bot |
+| Not receiving events | Verify public URL accessible; check Chat API config |
+| 401 Unauthorized | Verify SA key valid; check `chat.bot` scope |
+| Token verification fails | `verifyGoogleTokens: true`; check clock sync (JWT expiry) |
+| Bot not visible | Check Chat app visibility in Cloud Console |
+| Async messages fail | Verify `chat.bot` scope; check space name format |
+| Cards not rendering | Validate Card v2 JSON; check widget types |
+| Rate limited | Reduce frequency; exponential backoff |
 
 ## Related
 
-- `services/communications/matrix-bot.md` — Matrix bot (self-hosted, E2E encrypted)
-- `services/communications/simplex.md` — SimpleX Chat (zero-knowledge)
-- `services/communications/matterbridge.md` — Multi-platform chat bridge (40+ platforms)
-- `tools/security/opsec.md` — Platform trust matrix, E2E status, metadata warnings
+- `services/communications/matrix-bot.md` — Matrix (self-hosted, E2E)
+- `services/communications/simplex.md` — SimpleX (zero-knowledge)
+- `services/communications/matterbridge.md` — Chat bridge (40+ platforms)
+- `tools/security/opsec.md` — Platform trust matrix
 - `tools/security/prompt-injection-defender.md` — Prompt injection scanning
-- `tools/ai-assistants/headless-dispatch.md` — Headless AI dispatch patterns
+- `tools/ai-assistants/headless-dispatch.md` — Headless dispatch
 - `scripts/runner-helper.sh` — Runner management
-- [Google Chat API](https://developers.google.com/workspace/chat/api/reference/rest)
-- [Google Chat Card v2](https://developers.google.com/workspace/chat/api/reference/rest/v1/cards)
-- [Google Workspace DPA](https://workspace.google.com/terms/dpa_terms.html)
+- [Chat API](https://developers.google.com/workspace/chat/api/reference/rest) | [Card v2](https://developers.google.com/workspace/chat/api/reference/rest/v1/cards) | [Workspace DPA](https://workspace.google.com/terms/dpa_terms.html)
