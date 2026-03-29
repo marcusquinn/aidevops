@@ -107,12 +107,9 @@ const users = await db.query.users.findMany({ columns: { id: true, email: true }
 ### Batch Operations
 
 ```typescript
-// Batch insert
-await db.insert(usersTable).values(users);
-// Chunk large batches
-const BATCH_SIZE = 1000;
-for (let i = 0; i < users.length; i += BATCH_SIZE) {
-  await db.insert(usersTable).values(users.slice(i, i + BATCH_SIZE));
+await db.insert(usersTable).values(users);  // batch insert
+for (let i = 0; i < users.length; i += 1000) {  // chunk large batches
+  await db.insert(usersTable).values(users.slice(i, i + 1000));
 }
 // Bulk CASE update
 await db.execute(sql`
@@ -181,10 +178,7 @@ async function getCachedUser(userId: string) {
   if (user) await redis.setex(cacheKey, 3600, JSON.stringify(user));
   return user;
 }
-async function updateUser(userId: string, data: Partial<User>) {
-  await db.update(users).set(data).where(eq(users.id, userId));
-  await redis.del(`user:${userId}`);
-}
+// On write: await db.update(users).set(data).where(eq(users.id, userId)); await redis.del(`user:${userId}`);
 ```
 
 ## Pagination
