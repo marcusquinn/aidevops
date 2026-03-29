@@ -29,8 +29,6 @@ tools:
 
 ## Voice Production Pipeline
 
-### Critical 2-Step Workflow
-
 **NEVER feed raw AI video audio directly to ElevenLabs** — it amplifies artifacts.
 
 ```text
@@ -57,7 +55,7 @@ voice-helper.sh voices            # List available TTS voices
 | Instant Clone | 10-30 second clean clip | Quick personas |
 | Professional Clone | 3-5 minutes | AI influencer personas (highest fidelity) |
 
-**Source quality rules**: Single speaker, quiet environment, clear pronunciation. Clone from existing content → run CapCut cleanup first.
+**Source quality**: Single speaker, quiet environment, clear pronunciation. Cloning from existing content → run CapCut cleanup first.
 
 **Alternative**: MiniMax TTS — talking-head content where ElevenLabs is overkill. $5/month for 120 min; 10-second clip for voice clone. See `tools/voice/voice-models.md`.
 
@@ -110,8 +108,6 @@ Scripts from `content/production-writing.md` should include emotional block mark
 
 ## LUFS Reference
 
-**Platform targets:**
-
 | Platform | Target LUFS | Notes |
 |----------|-------------|-------|
 | YouTube | -14 to -16 | Normalizes to -14 |
@@ -120,8 +116,6 @@ Scripts from `content/production-writing.md` should include emotional block mark
 | Broadcast TV | -23 to -24 | EBU R128 |
 | Streaming (Netflix) | -27 | Wide dynamic range |
 | Audiobook | -18 to -23 | Consistent, comfortable |
-
-**Measuring LUFS:**
 
 ```bash
 ffmpeg -i input.mp4 -af loudnorm=print_format=json -f null -
@@ -142,8 +136,7 @@ voice-helper.sh voices                        # List available TTS voices
 voice-helper.sh benchmark                     # Test component speeds
 ```
 
-**Architecture**: `Mic → Silero VAD → Whisper MLX (1.4s) → OpenCode run --attach (~4-6s) → Edge TTS (0.4s) → Speaker`
-**Round-trip**: ~6-8s conversational, longer for tool execution.
+**Architecture**: `Mic → Silero VAD → Whisper MLX (1.4s) → OpenCode run --attach (~4-6s) → Edge TTS (0.4s) → Speaker`. Round-trip: ~6-8s conversational, longer for tool execution.
 
 | Service | Details | CLI |
 |---------|---------|-----|
