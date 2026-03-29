@@ -36,9 +36,7 @@
 | **CPM** | Cost per 1000 impressions | <$15 | <$8 |
 | **Ad Recall Lift** | Estimated memory | Growing | Target met |
 
-## Engagement Metrics
-
-### Clicks
+## Click Metrics
 
 | Metric | Definition | Good | Great |
 |--------|------------|------|-------|
@@ -48,7 +46,7 @@
 | **CPC (Link)** | Spend ÷ Link Clicks | <$2 | <$1 |
 | **Outbound CTR** | Outbound Clicks ÷ Impressions | 0.5%+ | 1%+ |
 
-### Video
+## Video Metrics
 
 | Metric | Definition | Good | Great |
 |--------|------------|------|-------|
@@ -58,20 +56,18 @@
 | **Avg Watch Time** | Total Watch Time ÷ Views | 5s+ | 10s+ |
 | **CPV (ThruPlay)** | Spend ÷ ThruPlays | <$0.05 | <$0.02 |
 
-### Landing Page
+## Landing Page Metrics
 
 | Metric | Definition | Good | Great |
 |--------|------------|------|-------|
 | **Landing Page Views** | Confirmed page loads | Close to clicks | = Clicks |
 | **LPV vs Clicks Gap** | LPV ÷ Clicks | 80%+ | 95%+ |
 | **Bounce Rate** | Single page visits | <70% | <50% |
-| **Conversion Rate** | Conversions ÷ LPV | 5%+ | 15%+ |
+| **LP Conversion Rate** | Conversions ÷ LPV | 5%+ | 15%+ |
 
 ## Cost Metrics
 
-### CPM Factors
-
-Higher CPM: smaller audience, more competition, lower ad quality, Q4 seasonality, premium placements (Feed > Audience Network).
+**CPM factors:** smaller audience, more competition, lower ad quality, Q4 seasonality, premium placements (Feed > Audience Network).
 
 | Industry | Average CPM |
 |----------|------------|
@@ -80,8 +76,6 @@ Higher CPM: smaller audience, more competition, lower ad quality, Q4 seasonality
 | Finance | $20-30 |
 | Gaming | $8-12 |
 
-### CPC & CPA
-
 ```text
 CPC = Spend ÷ Clicks = CPM ÷ (CTR × 10)    ← lower via: higher CTR, lower CPM, better relevance
 CPA = Spend ÷ Actions = CPC ÷ Conversion Rate ← lower via: lower CPC, higher CVR, better LP/offer
@@ -89,7 +83,9 @@ CPA = Spend ÷ Actions = CPC ÷ Conversion Rate ← lower via: lower CPC, higher
 
 ## Quality Metrics
 
-### Ad Relevance Diagnostics (Quality / Engagement Rate / Conversion Rate Rankings)
+### Ad Relevance Diagnostics
+
+Quality / Engagement Rate / Conversion Rate Rankings:
 
 | Ranking | Meaning |
 |---------|---------|
@@ -115,15 +111,11 @@ High frequency signals: declining CTR, rising CPA, increasing negative feedback.
 
 ## Conversion & Revenue Metrics
 
-### Conversion Rate
-
 | Industry | Good CVR | Great CVR |
 |----------|----------|-----------|
 | E-commerce | 2-4% | 5%+ |
 | Lead Gen | 10-15% | 20%+ |
 | SaaS Trial | 5-10% | 15%+ |
-
-### Revenue Formulas
 
 ```text
 CVR             = Conversions ÷ Landing Page Views × 100
@@ -142,9 +134,9 @@ Use MER for cross-channel budget allocation. Use Incremental ROAS for true ROI r
 
 | Metric | Formula | Purpose |
 |--------|---------|---------|
-| Click to LPV Ratio | Landing Page Views ÷ Link Clicks × 100 | Page load issues |
-| Cost Per LPV | Amount Spent ÷ Landing Page Views | LP cost efficiency |
-| True CPA | Ad Spend ÷ Qualified Conversions | Quality conversion cost |
+| Click to LPV Ratio | LPV ÷ Link Clicks × 100 | Detect page load issues |
+| Cost Per LPV | Spend ÷ LPV | LP cost efficiency |
+| True CPA | Spend ÷ Qualified Conversions | Quality conversion cost |
 | Blended ROAS | Total Revenue ÷ Total Ad Spend (all platforms) | Cross-channel return |
 
 ## Diagnostic Patterns
@@ -157,9 +149,9 @@ Use MER for cross-channel budget allocation. Use Incremental ROAS for true ROI r
 | **LP problem** | Normal | Good | — | High | Fix landing page |
 | **Audience exhausted** | Rising | Declining | High | Rising | Expand audience |
 
-## Metric Review Cadence
+## Review Cadence
 
-- **Daily:** Spend (on budget?), CPA/ROAS (meeting targets?), delivery issues
+- **Daily:** Spend, CPA/ROAS, delivery issues
 - **Weekly:** CTR trend, frequency, creative performance, audience performance
 - **Monthly:** Overall ROAS/CPA vs target, attribution review, creative refresh needs, budget allocation
 
