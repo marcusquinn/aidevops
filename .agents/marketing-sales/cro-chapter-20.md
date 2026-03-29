@@ -118,45 +118,12 @@
 
 ## 20.4 CRO Maturity Model
 
-### Level 1: Reactive
+| Level | Name | Characteristics |
+|-------|------|----------------|
+| 1 | Reactive | Ad-hoc testing, limited resources, basic tools, no formal process |
+| 2 | Developing | Regular testing, dedicated resources, standard tools, emerging process |
+| 3 | Defined | Structured program, full-time team, advanced tools, documented process |
+| 4 | Managed | Optimized program, center of excellence, integrated stack, metrics-driven |
+| 5 | Optimizing | Innovation leader, industry best practice, custom solutions, continuous improvement |
 
-- Ad-hoc testing
-- Limited resources
-- Basic tools
-- No formal process
-
-### Level 2: Developing
-
-- Regular testing
-- Dedicated resources
-- Standard tools
-- Emerging process
-
-### Level 3: Defined
-
-- Structured program
-- Full-time team
-- Advanced tools
-- Documented process
-
-### Level 4: Managed
-
-- Optimized program
-- Center of excellence
-- Integrated stack
-- Metrics-driven
-
-### Level 5: Optimizing
-
-- Innovation leader
-- Industry best practice
-- Custom solutions
-- Continuous improvement
-
-**Advancement Roadmap:**
-- Capability assessment
-- Gap analysis
-- Investment planning
-- Milestone definition
-
-This chapter provides enterprise organizations with frameworks for building and scaling world-class CRO programs.
+**Advancement Roadmap:** Capability assessment → gap analysis → investment planning → milestone definition
