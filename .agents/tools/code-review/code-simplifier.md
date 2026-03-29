@@ -146,6 +146,9 @@ EXISTING=$(gh issue list --repo <slug> \
 if [[ "$EXISTING" -gt 0 ]]; then
   echo "Skipping <file_path> — existing open simplification-debt issue found"
 else
+  # Generate signature footer (auto-detects model, tokens, time from session DB)
+  SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer 2>/dev/null || echo "")
+
   gh issue create --repo <slug> \
     --title "simplification: <brief description>" \
     --label "simplification-debt" --label "needs-maintainer-review" \
@@ -155,7 +158,8 @@ else
 ---
 **To approve or decline**, comment on this issue:
 - \`approved\` — removes the review gate and queues for automated dispatch
-- \`declined: <reason>\` — closes this issue"
+- \`declined: <reason>\` — closes this issue
+${SIG_FOOTER}"
 fi
 ```
 
