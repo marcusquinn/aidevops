@@ -293,6 +293,73 @@ _detect_session_time() {
 }
 
 # =============================================================================
+# Sum token counts from all signature footers on an issue's comments
+# =============================================================================
+# Fetches issue comments, filters to the authenticated GitHub user, extracts
+# token counts from signature footers ("spent N tokens" or "has used N tokens"),
+# and returns the sum. This is a lower bound — workers killed before commenting
+# are not counted.
+#
+# Args: $1 - issue_ref (OWNER/REPO#NUMBER)
+# Output: total token count (integer), or empty string if unavailable
+
+_sum_issue_tokens() {
+	local issue_ref="$1"
+
+	if [[ -z "$issue_ref" ]] || ! command -v gh &>/dev/null; then
+		echo ""
+		return 0
+	fi
+
+	local repo_slug issue_number
+	repo_slug="${issue_ref%%#*}"
+	issue_number="${issue_ref##*#}"
+
+	if [[ -z "$repo_slug" ]] || [[ -z "$issue_number" ]] || ! [[ "$issue_number" =~ ^[0-9]+$ ]]; then
+		echo ""
+		return 0
+	fi
+
+	# Get the authenticated user's login
+	local gh_user
+	gh_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+	if [[ -z "$gh_user" ]]; then
+		echo ""
+		return 0
+	fi
+
+	# Fetch all comments by this user, extract token counts from signature footers
+	# Patterns: "spent 1,234 tokens" (current) and "has used 1,234 tokens" (older)
+	local token_values
+	token_values=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--paginate --jq ".[] | select(.user.login == \"${gh_user}\") | .body" 2>/dev/null |
+		grep -oE '(spent|has used) [0-9,]+ tokens' |
+		grep -oE '[0-9,]+' |
+		tr -d ',' || echo "")
+
+	if [[ -z "$token_values" ]]; then
+		echo ""
+		return 0
+	fi
+
+	# Sum all extracted values
+	local total=0
+	local val
+	while IFS= read -r val; do
+		if [[ -n "$val" ]] && [[ "$val" =~ ^[0-9]+$ ]]; then
+			total=$((total + val))
+		fi
+	done <<<"$token_values"
+
+	if [[ "$total" -gt 0 ]]; then
+		echo "$total"
+	else
+		echo ""
+	fi
+	return 0
+}
+
+# =============================================================================
 # Detect total time from issue creation to now
 # =============================================================================
 # Accepts --issue OWNER/REPO#NUMBER or --issue-created ISO-TIMESTAMP.
@@ -508,7 +575,7 @@ _collect_time_metrics() {
 # =============================================================================
 # _build_signature — assemble the natural-language signature string
 # =============================================================================
-# Args: model cli_name cli_version tokens session_time_str response_time_str total_time_str solved
+# Args: model cli_name cli_version tokens session_time_str total_time_str solved issue_total_tokens
 
 _build_signature() {
 	local model="$1"
@@ -518,6 +585,7 @@ _build_signature() {
 	local session_time_str="$5"
 	local total_time_str="$6"
 	local solved="$7"
+	local issue_total_tokens="${8:-}"
 
 	local aidevops_version
 	aidevops_version=$(aidevops_find_version)
@@ -583,9 +651,16 @@ _build_signature() {
 		fi
 	fi
 
+	# Issue total tokens (cumulative across all sessions on this issue)
+	if [[ -n "$issue_total_tokens" ]] && [[ "$issue_total_tokens" != "0" ]]; then
+		local formatted_total
+		formatted_total=$(_format_number "$issue_total_tokens")
+		sig="${sig} ${formatted_total} total tokens on this issue."
+	fi
+
 	# If signature is just the version (no CLI, model, tokens, or time),
 	# append "automated scan" so it reads naturally on non-LLM issues
-	if [[ -z "$cli_name" ]] && [[ -z "$display_model" ]] && [[ -z "$has_stats" ]]; then
+	if [[ -z "$cli_name" ]] && [[ -z "$display_model" ]] && [[ -z "$has_stats" ]] && [[ -z "$issue_total_tokens" ]]; then
 		sig="${sig} automated scan."
 	fi
 
@@ -621,10 +696,27 @@ cmd_generate() {
 	local session_time_str total_time_str
 	IFS='|' read -r session_time_str total_time_str <<<"$time_metrics"
 
+	# Sum issue total tokens (prior comments + current session) when --issue is set
+	local issue_total_tokens=""
+	if [[ -n "$issue_ref" ]]; then
+		local prior_tokens
+		prior_tokens=$(_sum_issue_tokens "$issue_ref")
+		if [[ -n "$prior_tokens" ]] && [[ "$prior_tokens" -gt 0 ]] 2>/dev/null; then
+			local current_tokens="${tokens:-0}"
+			# Strip non-digits from current_tokens (may have commas from env var)
+			current_tokens=$(printf '%s' "$current_tokens" | tr -cd '0-9')
+			current_tokens="${current_tokens:-0}"
+			issue_total_tokens=$((prior_tokens + current_tokens))
+		elif [[ -n "$tokens" ]] && [[ "$tokens" != "0" ]]; then
+			# No prior comments with tokens, but we have current session tokens
+			issue_total_tokens="$tokens"
+		fi
+	fi
+
 	# Build and emit the signature
 	_build_signature \
 		"$model" "$cli_name" "$cli_version" "$tokens" \
-		"$session_time_str" "$total_time_str" "$solved"
+		"$session_time_str" "$total_time_str" "$solved" "$issue_total_tokens"
 	return 0
 }
 
@@ -662,7 +754,7 @@ Options:
   --tokens N                Token count (auto-detected from OpenCode DB if omitted)
   --cli NAME                CLI name override (e.g., "OpenCode CLI")
   --cli-version VER         CLI version override (e.g., "1.3.3")
-  --issue OWNER/REPO#NUM    GitHub issue ref for total time (e.g., owner/repo#42)
+  --issue OWNER/REPO#NUM    GitHub issue ref for total time and token summing
   --issue-created ISO       Issue creation timestamp for total time
   --solved                  Use "Solved in Xm." instead of "Xm since this issue was created."
 
@@ -670,7 +762,9 @@ Auto-detected fields (OpenCode sessions):
   - CLI name and version
   - Token count (input+output from session DB)
   - Session time (duration since session start)
-  - Response time (duration since last user message)
+  - Issue total tokens (sum of all signature footers by the authenticated
+    GitHub user on the issue's comments, plus current session tokens).
+    Lower bound — workers killed before commenting are not counted.
 
 Environment variables (override auto-detection):
   AIDEVOPS_SIG_CLI          CLI name
