@@ -1,14 +1,14 @@
 # Sales Emails
 
-High-converting sales email examples with analysis.
+High-converting sales email swipe file with pattern analysis.
 
 ---
 
-### 6. Ramit Sethi — Launch Email (Opening)
+### 6. Ramit Sethi — Launch (Opening)
 
 **Subject:** Zero to Launch is NOW OPEN (spots limited)
 
-```
+```text
 I want to tell you about a student named [Name].
 
 [Story about student's transformation]
@@ -23,7 +23,7 @@ to a small group of new students.
 
 Here's what you get:
 • [Benefit 1]
-• [Benefit 2]  
+• [Benefit 2]
 • [Benefit 3]
 
 Plus these bonuses (only for this launch):
@@ -43,25 +43,25 @@ I'll see you inside.
 P.S. Doors close Friday at 11:59pm. No extensions.
 ```
 
-**Why it works:** Opens with success story (proof), before/after transformation, limited time + exclusivity, clear deadline.
+**Patterns:** Social proof via student story → before/after transformation → scarcity (5 days, small group) → exclusivity filter → hard deadline in P.S.
 
 ---
 
-### 7. SaaS Trial Ending — Urgency
+### 7. SaaS Trial Expiry — Urgency
 
 **Subject:** Your trial ends tomorrow
 
-```
+```text
 Hey [Name],
 
 Quick heads up: your [Product] trial expires tomorrow.
 
-That means in 24 hours, you'll lose access to:
+In 24 hours, you'll lose access to:
 • All your saved [work/data]
 • The [key feature] you set up
 • [Other thing they created]
 
-The good news? It takes 30 seconds to upgrade 
+The good news? It takes 30 seconds to upgrade
 and keep everything intact.
 
 [KEEP MY ACCOUNT →]
@@ -73,7 +73,7 @@ We're here to help.
 — [Name/Team]
 ```
 
-**Why it works:** Specific deadline, loss aversion (what they'll lose), easy solution (30 seconds), open to questions.
+**Patterns:** Specific deadline → loss aversion (itemised losses) → low-friction solution (30 seconds) → reply escape valve.
 
 ---
 
@@ -81,7 +81,7 @@ We're here to help.
 
 **Subject:** Did something go wrong?
 
-```
+```text
 Hey [Name],
 
 I noticed you started checking out but didn't finish.
@@ -104,7 +104,7 @@ P.S. If you decided it's not right for you, that's
 totally fine too. Just let me know and I'll stop bugging you.
 ```
 
-**Why it works:** Personal (not automated) tone, addresses common objections, open-ended dialogue, P.S. reduces pressure.
+**Patterns:** Personal (not automated) tone → surfaces objections as questions → open dialogue → P.S. pressure release.
 
 ---
 
@@ -112,7 +112,7 @@ totally fine too. Just let me know and I'll stop bugging you.
 
 **Subject:** Free training: [Specific Outcome] in [Timeframe]
 
-```
+```text
 [Name],
 
 What if you could [achieve desired outcome] in the next [timeframe]?
@@ -139,4 +139,4 @@ See you there,
 [Name]
 ```
 
-**Why it works:** Clear benefit in subject, specific time/date, bullet takeaways, replay removes friction.
+**Patterns:** Outcome-first subject → specific time/date → bullet takeaways → replay removes attendance friction.
