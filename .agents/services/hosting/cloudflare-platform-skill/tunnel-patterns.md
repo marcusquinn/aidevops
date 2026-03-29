@@ -80,17 +80,13 @@ ingress:
   - service: http_status:404
 ```
 
-Run on multiple machines:
+Run the same command on each server — Cloudflare automatically load balances:
 
 ```bash
-# Server 1
-cloudflared tunnel run my-tunnel
-
-# Server 2 (same config)
 cloudflared tunnel run my-tunnel
 ```
 
-Cloudflare automatically load balances. Long-lived connections (WebSocket, SSH) will drop during updates.
+Long-lived connections (WebSocket, SSH) drop during replica updates.
 
 ## Use Cases
 
