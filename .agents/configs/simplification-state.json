@@ -1102,9 +1102,9 @@
       "pr": 11908
     },
     ".agents/marketing-sales/ad-creative.md": {
-      "hash": "5f15bf5c531e8ca2d4c6cde4ce7595f07fddfa65",
-      "at": "2026-03-29T01:52:03Z",
-      "pr": 12451
+      "hash": "0fd2f3ed67a352a6b59ca35f1cb1be0ca62f691f",
+      "at": "2026-03-29T03:42:39Z",
+      "pr": 12505
     },
     ".agents/tools/mcp-toolkit/mcporter.md": {
       "hash": "9a7f856e52fb6226b2661e21b00fee79fd906561",
@@ -1627,9 +1627,9 @@
       "pr": 12442
     },
     ".agents/tools/browser/playwriter.md": {
-      "hash": "f651e0a3987dd6247f155c855562a0e53356ede0",
-      "at": "2026-03-29T02:37:06Z",
-      "pr": 12434
+      "hash": "98bfa1b0dde9a405a0f3a07aa1ae3eaadc42801a",
+      "at": "2026-03-29T03:42:40Z",
+      "pr": 12516
     },
     ".agents/services/networking/tailscale.md": {
       "hash": "e930b52dfd40905e93923b036c57b9ffc2bfa011",
@@ -1662,8 +1662,8 @@
       "pr": 12504
     },
     ".agents/content/heygen-skill/rules-voices.md": {
-      "hash": "4c7485054c3a22416ec9e22be9b5ff6770b13527",
-      "at": "2026-03-29T03:15:06Z",
+      "hash": "a85f36f5c5e028f989dbc0e75caf3c9e337c12e9",
+      "at": "2026-03-29T03:42:42Z",
       "pr": 12508
     },
     ".agents/marketing-sales/ad-creative-chapter-12.md": {
@@ -1697,8 +1697,8 @@
       "pr": 12513
     },
     ".agents/content/heygen-skill/rules-quota.md": {
-      "hash": "24c151f3b04d998fce46b352196048e50bfeec5f",
-      "at": "2026-03-29T03:15:19Z",
+      "hash": "4ea886afaf8162b1a347d8d9029d7ee954cbde5d",
+      "at": "2026-03-29T03:42:53Z",
       "pr": 12515
     },
     ".agents/tools/ui/tailwind-css.md": {
@@ -1737,14 +1737,19 @@
       "pr": 12526
     },
     ".agents/tools/ui/shadcn.md": {
-      "hash": "3073314fe08144070bcc17f4cfd8357ea8c5d28d",
-      "at": "2026-03-29T03:15:30Z",
+      "hash": "8e0d8de098a34d9c367a88cf73867e574be7be11",
+      "at": "2026-03-29T03:43:05Z",
       "pr": 12523
     },
     ".agents/scripts/foss-handlers/generic.sh": {
       "hash": "45cc10462795e6230b70b2f068bb95b4e53612f2",
       "at": "2026-03-29T03:15:47Z",
       "pr": 12346
+    },
+    ".agents/reference/foss-contributions.md": {
+      "hash": "7a70a570a9191eedf42aa4c3c21dfcd875a6e983",
+      "at": "2026-03-29T03:43:20Z",
+      "pr": 12538
     }
   }
 }
