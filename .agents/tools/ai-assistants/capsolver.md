@@ -19,9 +19,8 @@ tools:
 ## Quick Reference
 
 - Setup: `./.agents/scripts/crawl4ai-helper.sh capsolver-setup`
-- API key: `export CAPSOLVER_API_KEY="CAP-xxxxx"` from dashboard.capsolver.com
+- API key: `export CAPSOLVER_API_KEY="CAP-xxxxx"` (from dashboard.capsolver.com)
 - Crawl: `./.agents/scripts/crawl4ai-helper.sh captcha-crawl URL captcha_type site_key`
-- CAPTCHA types and pricing: see table below
 - Python: `import capsolver; capsolver.api_key = "KEY"; solution = capsolver.solve({...})`
 - Config: `configs/capsolver-config.json`, `configs/capsolver-example.py`
 
@@ -47,19 +46,10 @@ tools:
 ./.agents/scripts/crawl4ai-helper.sh install
 ./.agents/scripts/crawl4ai-helper.sh docker-setup
 ./.agents/scripts/crawl4ai-helper.sh capsolver-setup
-
-# API key from https://dashboard.capsolver.com/dashboard/overview
 export CAPSOLVER_API_KEY="CAP-xxxxxxxxxxxxxxxxxxxxx"
 ```
 
-**Browser extension alternative**: Install [CapSolver Chrome Extension](https://chrome.google.com/webstore/detail/capsolver/pgojnojmmhpofjgdmaebadhbocahppod), configure API key, enable auto-solving. For automatic CAPTCHA detection, run Crawl4AI with a persistent browser profile that has the extension installed:
-
-```python
-browser_config = BrowserConfig(
-    use_persistent_context=True,
-    user_data_dir="/path/to/profile/with/extension"
-)
-```
+**Browser extension alternative**: Install [CapSolver Chrome Extension](https://chrome.google.com/webstore/detail/capsolver/pgojnojmmhpofjgdmaebadhbocahppod), configure API key, enable auto-solving. Use with a persistent browser profile: `BrowserConfig(use_persistent_context=True, user_data_dir="/path/to/profile/with/extension")`.
 
 ## Usage
 
@@ -78,24 +68,17 @@ from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
 
 capsolver.api_key = "CAP-xxxxxxxxxxxxxxxxxxxxx"
 
-async def solve_recaptcha_v2():
-    site_url = "https://recaptcha-demo.appspot.com/recaptcha-v2-checkbox.php"
-    site_key = "6LfW6wATAAAAAHLqO2pb8bDBahxlMxNdo9g947u9"
+solution = capsolver.solve({
+    "type": "ReCaptchaV2TaskProxyLess",
+    "websiteURL": site_url,
+    "websiteKey": site_key,
+})
+token = solution["gRecaptchaResponse"]
 
-    solution = capsolver.solve({
-        "type": "ReCaptchaV2TaskProxyLess",
-        "websiteURL": site_url,
-        "websiteKey": site_key,
-    })
-    token = solution["gRecaptchaResponse"]
-
-    async with AsyncWebCrawler(config=BrowserConfig(headless=False)) as crawler:
-        js_code = f"""
-            document.getElementById('g-recaptcha-response').value = '{token}';
-            document.querySelector('button[type="submit"]').click();
-        """
-        result = await crawler.arun(url=site_url, config=CrawlerRunConfig(js_code=js_code, js_only=True))
-        return result.markdown
+# Inject token and submit
+js_code = f"document.getElementById('g-recaptcha-response').value = '{token}'; document.querySelector('button[type=\"submit\"]').click();"
+async with AsyncWebCrawler(config=BrowserConfig(headless=False)) as crawler:
+    result = await crawler.arun(url=site_url, config=CrawlerRunConfig(js_code=js_code, js_only=True))
 ```
 
 ### Cloudflare Turnstile (Python)
@@ -103,8 +86,8 @@ async def solve_recaptcha_v2():
 ```python
 solution = capsolver.solve({
     "type": "AntiTurnstileTaskProxyLess",
-    "websiteURL": "https://clifford.io/demo/cloudflare-turnstile",
-    "websiteKey": "0x4AAAAAAAGlwMzq_9z6S9Mh",
+    "websiteURL": site_url,
+    "websiteKey": site_key,
 })
 token = solution["token"]
 # Inject: document.querySelector('input[name="cf-turnstile-response"]').value = token
