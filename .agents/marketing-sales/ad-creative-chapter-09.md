@@ -2,15 +2,13 @@
 
 ## 9.1 AI-Powered Creative Optimization
 
-### Machine Learning for Creative Generation
-
 **Generative AI for Visual Assets** — Midjourney, DALL-E 3, Stable Diffusion enable:
 - Unlimited product imagery variations (backgrounds, lighting, compositions)
 - Culturally diverse talent without photoshoots
 - Seasonal variations of evergreen assets
 - Concept art for video storyboards
 
-Prompt engineering is the key skill. Maintain prompt libraries for consistent on-brand output. Example: `"Professional business woman in modern office, looking at laptop screen, soft natural lighting, shallow depth of field, corporate blue color palette, photorealistic, 8k quality."`
+Maintain prompt libraries for consistent on-brand output. Example: `"Professional business woman in modern office, looking at laptop screen, soft natural lighting, shallow depth of field, corporate blue color palette, photorealistic, 8k quality."`
 
 **AI Copywriting** — LLMs (Jasper, Copy.ai, ChatGPT) generate headline variations, body copy, CTAs, and platform-specific adaptations. Best practice: AI generates 50–100 variants → human selects 10–15 for live testing.
 
@@ -25,13 +23,11 @@ DCO auto-assembles personalized ads from component assets using real-time signal
 | Data Integration | Real-time user context, behavioral signals, environment |
 | Feedback Loop | Continuous learning from conversion outcomes |
 
-**Signals used:** demographics, behavioral history, time/weather/events, device, campaign performance.
+**Signals:** demographics, behavioral history, time/weather/events, device, campaign performance.
 
 **Use cases:** e-commerce (browsing-matched products), travel (real-time pricing), financial services (life-stage messaging).
 
-### Real-Time Creative Personalization
-
-Beyond DCO: neural rendering, NLG, style transfer, video synthesis generate unique content per impression. Current implementations use hybrid approaches (pre-generate + cache) due to latency, cost, and quality-control constraints.
+**Beyond DCO:** neural rendering, NLG, style transfer, video synthesis generate unique content per impression. Current implementations use hybrid approaches (pre-generate + cache) due to latency, cost, and quality-control constraints.
 
 ---
 
@@ -49,8 +45,6 @@ Beyond DCO: neural rendering, NLG, style transfer, video synthesis generate uniq
 
 ### Frequency Management
 
-**Optimal frequency by channel:**
-
 | Channel | Exposures Before Fatigue |
 |---------|--------------------------|
 | Meta/Facebook | 3–5 |
@@ -66,11 +60,7 @@ Beyond DCO: neural rendering, NLG, style transfer, video synthesis generate uniq
 
 ## 9.3 Cross-Channel Creative Consistency
 
-### Brand Consistency Framework
-
-**Visual:** color palette, typography, logo treatment, photography style, iconography, layout grids.
-
-**Messaging:** value proposition, brand voice, message hierarchy, proof points, CTA language.
+**Visual consistency:** color palette, typography, logo treatment, photography style, iconography, layout grids. **Messaging consistency:** value proposition, brand voice, message hierarchy, proof points, CTA language.
 
 **Channel adaptations:**
 
@@ -116,7 +106,7 @@ Platforms: Instagram Shopping, TikTok Shop, Pinterest Buyable Pins, Meta Shops.
 
 **Voice assistants:** Alexa Skills, Google Assistant actions, smart speaker audio branding.
 
-**Audio best practices:** strong 3-second hook, clear brand ID, sonic branding, explicit CTA, repetition for recall.
+**Best practices:** strong 3-second hook, clear brand ID, sonic branding, explicit CTA, repetition for recall.
 
 ---
 
@@ -130,7 +120,7 @@ Platforms: Instagram Shopping, TikTok Shop, Pinterest Buyable Pins, Meta Shops.
 | 2 — Iterative | Refine winners, test elements | Larger | Focused |
 | 3 — Maintenance | Refresh to prevent fatigue | Full | Full |
 
-**Innovation accounting metrics:** win rate, learning rate, time to insight, implementation rate.
+**Innovation accounting:** win rate, learning rate, time to insight, implementation rate.
 
 ### Audience-Creative Fit
 
@@ -147,9 +137,9 @@ Test 3–5 concepts per segment; identify cross-segment winners (broad appeal) a
 
 **Tools:** SEMrush, SpyFu, Pathmatics, Kantar, Facebook Ad Library, TikTok Creative Center.
 
-**Analysis dimensions:** messaging strategy, visual approach, format mix, frequency/cadence, estimated spend.
+**Analysis:** messaging strategy, visual approach, format mix, frequency/cadence, estimated spend.
 
-**Opportunities to identify:** underserved messaging angles, visual whitespace, underutilized formats, timing gaps.
+**Opportunities:** underserved messaging angles, visual whitespace, underutilized formats, timing gaps.
 
 ---
 
@@ -175,8 +165,6 @@ Test 3–5 concepts per segment; identify cross-segment winners (broad appeal) a
 | Testing | Experimental concepts |
 | Reactive | Real-time trend response |
 
-**Agile cadence:** 1–2 week sprints, prioritized backlog, daily standups, post-campaign retrospectives.
-
 ### Cost-Quality-Speed Trade-offs
 
 | Strategy | Quality | Cost | Speed |
@@ -191,13 +179,11 @@ Test 3–5 concepts per segment; identify cross-segment winners (broad appeal) a
 
 | Trend | Opportunity | Risk |
 |-------|-------------|------|
-| Synthetic media | Personalized video at scale, multilingual, multilingual | Brand safety, consumer trust, regulation |
+| Synthetic media | Personalized video at scale, multilingual | Brand safety, consumer trust, regulation |
 | Privacy-first | Contextual targeting, cohort messaging, 1P data activation | Reduced personalization depth |
 | Immersive (VR/AR/spatial) | 3D experiences, spatial audio, virtual showrooms | Production cost, adoption curve |
 
-**Evolving roles:** Creative strategists blend data analysis, automation proficiency, AI prompt engineering, cross-channel technical knowledge.
-
-**Human-AI split:** Human = strategy, concept, emotional resonance, brand judgment. AI = production, variation, optimization, analysis.
+**Human-AI split:** Human = strategy, concept, emotional resonance, brand judgment. AI = production, variation, optimization, analysis. Creative strategists increasingly blend data analysis, automation proficiency, and AI prompt engineering.
 
 ---
 
