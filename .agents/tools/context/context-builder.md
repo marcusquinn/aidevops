@@ -22,7 +22,7 @@ note: Uses repomix CLI directly (not MCP) for better control and reliability
 - **Purpose**: Generate token-efficient context for AI coding assistants
 - **Tool**: Repomix CLI via helper script or direct `npx repomix` commands
 - **Key Feature**: Tree-sitter compression (~80% token reduction)
-- **Output Dir**: `~/.aidevops/.agent-workspace/work/context/`
+- **Output**: `~/.aidevops/.agent-workspace/work/context/{repo}-{mode}-{timestamp}.{format}`
 - **Invocation**: `@context-builder compress ~/projects/myapp` or call helper directly
 
 ### Helper Script
@@ -98,7 +98,7 @@ See `tools/context/context-guardrails.md` for full workflow and recovery procedu
 
 <!-- AI-CONTEXT-END -->
 
-## Usage Patterns
+## Usage Examples
 
 ```bash
 # Large projects: compression + patterns
@@ -114,31 +114,17 @@ context-builder-helper.sh pack src/services markdown
 context-builder-helper.sh remote vercel/next.js canary
 ```
 
-**Compress mode** extracts class/function signatures, interface definitions, import/export statements. Omits implementation bodies, comments, empty lines:
-
-```typescript
-// Compressed output (structure only)
-export class UserService {
-  private db: Database;
-  constructor(db: Database);
-  async getUser(id: string): Promise<User | null>;
-  private mapToUser(row: any): User;
-}
-```
-
-## Output Files
-
-Saved to `~/.aidevops/.agent-workspace/work/context/`. Naming: `{repo-name}-{mode}-{timestamp}.{format}`
+**Compress mode** extracts class/function signatures, interface definitions, import/export statements — omits implementation bodies, comments, empty lines.
 
 ## Troubleshooting
 
-- **"npx not found"**: Install Node.js — `brew install node`
+- **"npx not found"**: `brew install node`
 - **"Permission denied"**: `chmod +x ~/.aidevops/agents/scripts/context-builder-helper.sh`
 - **Large output**: Use `compress` mode or filter with `--include`/`--ignore` patterns
 
 ## Related
 
 - [Repomix Documentation](https://repomix.com/guide/)
-- [aidevops Framework](~/Git/aidevops/AGENTS.md)
+- `tools/context/context-guardrails.md` — remote repo safety workflow
 
 **Note on MCP**: Repomix supports MCP server mode (`npx repomix --mcp`), but this framework uses the CLI directly for better control and reliability.
