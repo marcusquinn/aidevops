@@ -44,9 +44,7 @@ Skip if `--no-decompose` or already has subtasks. Run `task-decompose-helper.sh 
 **Step 0.6 — Label `status:in-progress`** (lifecycle: `available` → `queued` → `in-progress` → `in-review` → `done`; stale 3+ hrs → pulse relabels `available`)**:** Find linked issue: (1) `$ISSUE_NUM`, (2) TODO.md `ref:GH#NNN`, (3) `gh issue list --search "${TASK_ID}:"`. Abort if issue is not `OPEN` (t1343/#2452). Assign worker, add `status:in-progress`, remove stale labels.
 
 **Step 0.7 — Label dispatch model:** Detect from `$ANTHROPIC_MODEL`/`$CLAUDE_MODEL` or system prompt. Map: `*opus*`→`dispatched:opus`, `*sonnet*`→`dispatched:sonnet`, `*haiku*`→`dispatched:haiku`. Remove stale labels first.
-
-**Step 0.8 — Label session origin:** Detect via `session_origin_label` (from `shared-constants.sh`). Adds `origin:worker` (headless/pulse dispatch) or `origin:interactive` (user session). Applied automatically by `claim-task-id.sh`, `issue-sync-helper.sh`, and `pulse-wrapper.sh`. TODO.md tags `#worker`/`#interactive` also map to these labels.
-
+**Step 0.8 — Label session origin:** Detect via `session_origin_label` (from `shared-constants.sh`). Adds `origin:worker` or `origin:interactive`. TODO.md tags `#worker`/`#interactive` map to these labels.
 **Step 1.7 — Lineage context (t1408.3):** If dispatch prompt contains `TASK LINEAGE:` block: (1) only implement `<-- THIS TASK`, (2) stub sibling dependencies, (3) no sibling work, (4) include lineage in PR body, (5) hard dependency not stub-able → exit `BLOCKED`.
 
 ---
@@ -61,9 +59,7 @@ Exit 0: already on feature branch. Exit 2: on main — auto-create worktree. Doc
 
 **Step 1.5 — Operation verification (t1364.3):** Source `verify-operation-helper.sh`, call `check_operation`/`verify_operation`. Critical/high → block or verify. Moderate → log. Low → skip. Config: `VERIFY_ENABLED`, `VERIFY_POLICY`, `VERIFY_TIMEOUT` (30s), `VERIFY_MODEL` (haiku).
 
-Start the loop: `~/.aidevops/agents/scripts/full-loop-helper.sh start "$ARGUMENTS" --background`
-
-`--headless` / `FULL_LOOP_HEADLESS=true`: suppresses prompts, prevents TODO.md edits.
+Start the loop: `~/.aidevops/agents/scripts/full-loop-helper.sh start "$ARGUMENTS" --background`. `--headless` / `FULL_LOOP_HEADLESS=true`: suppresses prompts, prevents TODO.md edits.
 
 ---
 
@@ -122,7 +118,10 @@ Changelog: `feat:` → Added, `fix:` → Fixed, `docs:`/`perf:`/`refactor:` → 
 
 **4.1 Preflight:** Quality checks, auto-fixes. See `workflows/preflight.md`.
 
-**4.2 PR Create:** Verify `gh auth`, rebase onto `origin/main`, push, create PR. **PR body MUST include `Closes #NNN`** (only mechanism creating a GitHub PR-issue link). Backtick-escape issue refs in bug descriptions to avoid unintended closes. **Append signature footer** to the PR body: run `SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL")` and append `${SIG_FOOTER}` as the last content in the `--body`. **Add origin label** to the PR: include `--label "origin:worker"` or `--label "origin:interactive"` based on session type (detect via `detect_session_origin` from `shared-constants.sh`, or infer: headless → worker, user present → interactive).
+**4.2 PR Create:** Verify `gh auth`, rebase onto `origin/main`, push, create PR.
+- **PR body MUST include `Closes #NNN`** — only mechanism creating a GitHub PR-issue link. Backtick-escape issue refs in bug descriptions to avoid unintended closes.
+- **Signature footer:** `SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL")` — append as last content in `--body`.
+- **Origin label:** `--label "origin:worker"` or `--label "origin:interactive"` (detect via `detect_session_origin` from `shared-constants.sh`; infer: headless → worker, user present → interactive).
 
 ### 4.3 Label Update — `status:in-review` (t1343 — MANDATORY)
 
@@ -156,7 +155,7 @@ if [[ "$REPO_SLUG" == "marcusquinn/aidevops" ]]; then
 fi
 ```
 
-**4.7 Issue Closing Comment (MANDATORY):** Post structured comment on every linked issue: **What was done**, **Testing Evidence** (level: `runtime-verified`/`self-assessed`/`untested`, smoke checks), **Key decisions**, **Files changed** (path — what/why), **Blockers**, **Follow-up needs**, **Released in** (aidevops only). Every section ≥1 bullet ("None"/"N/A" if empty). Append a signature footer: `gh-signature-helper.sh footer --model <model> --issue <slug>#<number> --solved`. Gate — no `FULL_LOOP_COMPLETE` until posted.
+**4.7 Issue Closing Comment (MANDATORY):** Post structured comment on every linked issue covering: **What was done**, **Testing Evidence** (level + smoke checks), **Key decisions**, **Files changed** (path — what/why), **Blockers**, **Follow-up needs**, **Released in** (aidevops only). Every section ≥1 bullet ("None"/"N/A" if empty). Append signature: `gh-signature-helper.sh footer --model <model> --issue <slug>#<number> --solved`. Gate — no `FULL_LOOP_COMPLETE` until posted.
 
 **4.8 Postflight + Deploy:** Verify release health. Deploy: `setup.sh --non-interactive` (aidevops repos only). Emit: `<promise>FULL_LOOP_COMPLETE</promise>`
 
