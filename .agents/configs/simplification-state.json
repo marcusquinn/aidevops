@@ -1407,9 +1407,9 @@
       "pr": 12162
     },
     ".agents/scripts/gh-signature-helper.sh": {
-      "hash": "28ac60bb1bf31ed872a1fe1df90a71f073c0e705",
-      "at": "2026-03-29T07:02:33Z",
-      "pr": 12559
+      "hash": "e395bd11dd11b46c3444f74a196a4ba48e2e9f3f",
+      "at": "2026-03-29T13:19:54Z",
+      "pr": 12971
     },
     ".agents/tools/wordpress/wp-dev.md": {
       "hash": "aeead744dd3a6ab5c8a9e6cf300adf03cbebceb9",
@@ -1582,9 +1582,9 @@
       "pr": 12327
     },
     ".agents/tools/code-review/code-simplifier.md": {
-      "hash": "16060410cb16b5b3d10cb77e44a10fb4a0051c32",
-      "at": "2026-03-29T00:03:35Z",
-      "pr": 12360
+      "hash": "301f002b5a6dbe5ce8c90735604e21f1e84a3770",
+      "at": "2026-03-29T13:19:54Z",
+      "pr": 12971
     },
     ".agents/tools/build-agent/add-skill.md": {
       "hash": "36065ac3559aa2e929cbb858c8220961454f9dd9",
@@ -1842,9 +1842,9 @@
       "pr": 12582
     },
     ".agents/scripts/tests/test-gh-signature-helper.sh": {
-      "hash": "fb79d924aa342c18f0c5d9f39d90bdc26152a2a2",
-      "at": "2026-03-29T07:02:33Z",
-      "pr": 12559
+      "hash": "260aaa1fea5e42ba585a4c6cc8996794f9c7c2c6",
+      "at": "2026-03-29T13:19:54Z",
+      "pr": 12971
     },
     ".agents/tools/research/tech-stack-lookup.md": {
       "hash": "bb8bdd9ccd46c7cc0742a5ba1849bb47746c2110",
