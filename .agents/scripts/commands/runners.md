@@ -13,11 +13,9 @@ Arguments: $ARGUMENTS
 
 ## Scope
 
-**`/runners` is a targeted dispatch tool, not a supervisor.** It resolves the specified items, dispatches one worker per item, shows the dispatch table, and stops.
+**`/runners` is a targeted dispatch tool, not a supervisor.** It resolves specified items, dispatches one worker per item, shows the dispatch table, and stops. It does NOT run supervisor phases, auto-pickup, stale recovery, or audit checks — use `/pulse` for unattended slot-filling (see `scripts/commands/pulse.md`).
 
-It does **NOT** run supervisor phases, auto-pickup unrelated tasks, stale claim recovery, phantom queue reconciliation, AI lifecycle evaluation, CodeRabbit pulse, or audit checks. For unattended operation that fills all available slots, use `/pulse` (see `scripts/commands/pulse.md`).
-
-Workers are independent — they succeed or fail on their own. `/runners` never reads source code, implements features, runs tests, pushes branches, or resolves merge conflicts. If a worker fails, improve the worker's instructions, not the dispatcher.
+Workers are independent — `/runners` never touches source code, tests, branches, or merge conflicts. If a worker fails, improve the worker's instructions, not the dispatcher.
 
 ## Input Types
 
@@ -34,29 +32,21 @@ Workers are independent — they succeed or fail on their own. `/runners` never 
 For each input, resolve to a description:
 
 ```bash
-# GitHub issue/PR numbers (GH#NNN format)
 gh issue view 267 --repo <slug> --json number,title,url
 gh pr view 268 --repo <slug> --json number,title,headRefName,url
-
-# Task IDs — look up in TODO.md
 grep -E "^- \[ \] t083 " TODO.md
-
-# PR numbers — fetch from GitHub
-gh pr view 382 --json number,title,headRefName,url
-
-# Issue URLs — fetch from GitHub
 gh issue view 42 --repo user/repo --json number,title,url
 ```
 
 ## Step 2: Dispatch Workers
 
-Launch each worker via `headless-runtime-helper.sh run`. This is the **ONLY** correct dispatch path — it constructs the full lifecycle prompt, handles provider rotation, session persistence, and backoff. NEVER use bare `opencode run` — workers launched that way miss lifecycle reinforcement and stop after PR creation (GH#5096).
+Launch each worker via `headless-runtime-helper.sh run` — the **ONLY** correct dispatch path. It constructs the full lifecycle prompt, handles provider rotation, session persistence, and backoff. NEVER use bare `opencode run` (workers miss lifecycle reinforcement and stop after PR creation — GH#5096).
 
 ```bash
 AGENTS_DIR="$(aidevops config get paths.agents_dir)"
 HELPER="${AGENTS_DIR/#\~/$HOME}/scripts/headless-runtime-helper.sh"
 
-# Code task (Build+ is default — omit --agent)
+# Code task (Build+ default — omit --agent)
 $HELPER run \
   --role worker \
   --session-key "task-t083" \
@@ -65,7 +55,7 @@ $HELPER run \
   --prompt "/full-loop t083 -- <description>" &
 sleep 2
 
-# Specialist or operational task (no /full-loop for non-code ops)
+# Specialist/operational task (no /full-loop)
 $HELPER run \
   --role worker \
   --session-key "seo-weekly" \
@@ -75,7 +65,7 @@ $HELPER run \
   --prompt "/seo-export --account client-a --format summary" &
 sleep 2
 
-# PR or issue
+# Issue dispatch
 $HELPER run \
   --role worker \
   --session-key "issue-42" \
@@ -107,27 +97,3 @@ After dispatching, show the user what was launched:
 ```
 
 Then stop. The next `/pulse` cycle (or the user) can check outcomes and dispatch follow-ups.
-
-## Examples
-
-All items in a single `/runners` invocation dispatch concurrently — each becomes a separate background process.
-
-```bash
-# Dispatch specific GitHub issues
-/runners GH#267 GH#268
-
-# Dispatch specific tasks
-/runners t083 t084 t085
-
-# Fix specific PRs
-/runners #382 #383
-
-# Work on a GitHub issue
-/runners https://github.com/user/repo/issues/42
-
-# Free-form task
-/runners "Add rate limiting to the API endpoints"
-
-# Multiple mixed items
-/runners t083 #382 "Fix the login bug"
-```
