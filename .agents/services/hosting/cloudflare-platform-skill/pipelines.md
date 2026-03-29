@@ -99,11 +99,11 @@ Output path: `bucket/analytics/events/year=2025/month=01/day=11/uuid.parquet`
 
 ## Wrangler Commands
 
-All subcommands support `list | get <ID> | delete <ID>`. Deleting a stream also deletes dependent pipelines and buffered events.
+All subcommands support `[list|get <ID>|delete <ID>]`. Deleting a stream also deletes dependent pipelines and buffered events.
 
 ```bash
-npx wrangler pipelines setup | list | get <ID> | delete <ID>
-npx wrangler pipelines create my-pipeline --sql "..." | --sql-file transform.sql
+npx wrangler pipelines setup [list|get <ID>|delete <ID>]
+npx wrangler pipelines create my-pipeline --sql "..."          # or: --sql-file transform.sql
 npx wrangler pipelines streams create my-stream --schema-file schema.json
 npx wrangler pipelines sinks create my-sink --type r2-data-catalog --bucket B --namespace N --table T --catalog-token TOKEN
 ```
@@ -120,7 +120,7 @@ Create catalog token: R2 > Manage API tokens > Create Account API Token > Admin 
 
 ## Best Practices
 
-- **Schema:** Structured streams with `required: true` on critical fields. `int64` for timestamps, `float64` for decimals. Recreate to change schemas. Avoid deep nesting.
+- **Schema:** Structured streams with `required: true` on critical fields. Use native `timestamp` type for temporal columns; use `int64` only for epoch-style representations (e.g., seconds or milliseconds since epoch). `float64` for decimals. Recreate to change schemas. Avoid deep nesting.
 - **Performance:** Low latency: `--roll-interval 10`. Query perf: `--roll-interval 300 --roll-size 100`. `zstd` for ratio, `snappy` for speed. Filter early with `WHERE`.
 - **Workers:** Bindings (no token management). Batch: `send([e1, e2, ...])`. `ctx.waitUntil()` for fire-and-forget.
 - **HTTP:** Auth in production. CORS for browsers. Arrays for batch efficiency. Retry on 4xx/5xx.
