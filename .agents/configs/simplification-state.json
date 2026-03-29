@@ -1352,9 +1352,9 @@
       "pr": 12115
     },
     ".agents/services/communications/matterbridge.md": {
-      "hash": "576ddae451d926082965c44b6cf63faf1453f289",
-      "at": "2026-03-28T19:15:27Z",
-      "pr": 12116
+      "hash": "10f123307b4f6919f65b9c46a2e9b5aecf37ef37",
+      "at": "2026-03-29T01:04:18Z",
+      "pr": 12399
     },
     ".agents/services/communications/simplex.md": {
       "hash": "0fae9edf453dabb06fafed112e578d6f45e0f96c",
@@ -1407,8 +1407,8 @@
       "pr": 12162
     },
     ".agents/scripts/gh-signature-helper.sh": {
-      "hash": "c1fc31cc418452ddfb321df133b3b629c2e25b33",
-      "at": "2026-03-29T00:24:15Z",
+      "hash": "b2cdb3f68c39e64945eaca17413b112a56838905",
+      "at": "2026-03-29T01:04:15Z",
       "pr": 12165
     },
     ".agents/tools/wordpress/wp-dev.md": {
@@ -1585,6 +1585,36 @@
       "hash": "16060410cb16b5b3d10cb77e44a10fb4a0051c32",
       "at": "2026-03-29T00:03:35Z",
       "pr": 12360
+    },
+    ".agents/tools/build-agent/add-skill.md": {
+      "hash": "36065ac3559aa2e929cbb858c8220961454f9dd9",
+      "at": "2026-03-29T01:03:17Z",
+      "pr": 12376
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/sandbox-patterns.md": {
+      "hash": "49d87469f73578ad10a6c6de4715c7b60af41b7f",
+      "at": "2026-03-29T01:03:18Z",
+      "pr": 12379
+    },
+    ".agents/content/distribution-youtube.md": {
+      "hash": "a44106f7677388ea6146e99c5c94de36b9e337ba",
+      "at": "2026-03-29T01:03:19Z",
+      "pr": 12386
+    },
+    ".agents/tools/build-mcp/transports.md": {
+      "hash": "733acaf8682f80a53cd3c2a996c0571adf7ac018",
+      "at": "2026-03-29T01:04:08Z",
+      "pr": 12394
+    },
+    ".agents/marketing-sales/meta-ads-campaigns-testing-abo.md": {
+      "hash": "be737a2fe12892ef6479a1939cbe4b6fee46db16",
+      "at": "2026-03-29T01:04:17Z",
+      "pr": 12395
+    },
+    ".agents/marketing-sales/ad-creative-chapter-08.md": {
+      "hash": "cff567e1f6215e9c459e5d97d022a93f34d1c322",
+      "at": "2026-03-29T01:04:19Z",
+      "pr": 12398
     }
   }
 }
