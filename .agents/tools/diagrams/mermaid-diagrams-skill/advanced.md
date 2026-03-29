@@ -3,14 +3,6 @@
 ## Init Directive
 
 ```mermaid
-%%{init: { 'theme': 'dark' } }%%
-flowchart LR
-    A --> B
-```
-
-With `themeVariables`:
-
-```mermaid
 %%{init: {
   'theme': 'base',
   'themeVariables': {
@@ -49,17 +41,18 @@ Themes: `default`, `dark`, `forest`, `neutral`, `base` — see cheatsheet `## St
 
 | Variable | Description |
 |----------|-------------|
-| `primaryColor` | Main node color |
+| `primaryColor` | Main node fill |
 | `primaryTextColor` | Text in primary nodes |
 | `primaryBorderColor` | Primary node border |
 | `secondaryColor` | Secondary elements |
-| `tertiaryColor` | Tertiary/background |
+| `tertiaryColor` | Background/tertiary |
 | `lineColor` | Edge/arrow color |
 | `textColor` | General text |
 | `background` | Diagram background |
 | `fontSize` | Base font size |
 | `fontFamily` | Font family |
 
+Diagram-specific variables:
 - **Flowchart:** `nodeBorder`, `nodeTextColor`, `clusterBkg`, `clusterBorder`, `edgeLabelBackground`
 - **Sequence:** `actorBorder`, `actorBkg`, `actorTextColor`, `activationBorderColor`, `activationBkgColor`, `signalColor`, `signalTextColor`, `noteBkgColor`, `noteBorderColor`, `noteTextColor`
 - **State:** `labelColor`, `altBackground`
@@ -98,15 +91,6 @@ Properties: `fill`, `stroke`, `stroke-width`, `stroke-dasharray`, `color`, `font
 
 **ELK Renderer (v9.4+):** Better complex layouts, predictable edge routing, improved subgraph positioning.
 
-```mermaid
-%%{init: {"flowchart": {"defaultRenderer": "elk"}} }%%
-flowchart TB
-    A --> B & C & D
-    B & C & D --> E
-```
-
-All diagram types:
-
 ```
 %%{init: {
   'theme': 'default',
@@ -127,12 +111,7 @@ Directive keys: `flowchart`, `sequenceDiagram`, `classDiagram`, `stateDiagram`, 
 | `antiscript` | Allows HTML, blocks scripts |
 | `sandbox` | iframe sandbox |
 
-```mermaid
-%%{init: { 'securityLevel': 'loose' }}%%
-flowchart LR
-    A --> B
-    click A href "https://example.com" _blank
-```
+Use `securityLevel: 'loose'` to enable `click` handlers (e.g., `click A href "https://example.com" _blank`).
 
 ## Troubleshooting
 
