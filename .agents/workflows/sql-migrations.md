@@ -168,4 +168,4 @@ jobs:
       - run: psql $DATABASE_URL -c "SELECT 1"
 ```
 
-Most tools auto-create a tracking table (e.g., `flyway_schema_history`). Framework-agnostic runner: `for f in migrations/*.sql; do psql $DATABASE_URL -f "$f"; done`.
+Most tools auto-create a tracking table (e.g., `flyway_schema_history`). If you must run SQL directly, execute only unapplied files tracked in a migrations table (do not replay all files each run).
