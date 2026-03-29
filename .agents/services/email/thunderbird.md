@@ -37,43 +37,19 @@ thunderbird-helper.sh gen-config \
 
 Supported providers: Cloudron, Gmail, Google Workspace, Outlook, Microsoft 365, Proton Mail, Fastmail, mailbox.org, Tuta, Yahoo, Zoho, GMX, IONOS, Namecheap, mail.com, StartMail, Disroot, ChatMail, iCloud.
 
-### Autoconfig XML Format
+### Autoconfig XML
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<clientConfig version="1.1">
-  <emailProvider id="example.com">
-    <domain>example.com</domain>
-    <displayName>Example Mail</displayName>
-    <incomingServer type="imap">
-      <hostname>mail.example.com</hostname>
-      <port>993</port>
-      <socketType>SSL</socketType>
-      <authentication>password-cleartext</authentication>
-      <username>%EMAILADDRESS%</username>
-    </incomingServer>
-    <outgoingServer type="smtp">
-      <hostname>mail.example.com</hostname>
-      <port>465</port>
-      <socketType>SSL</socketType>
-      <authentication>password-cleartext</authentication>
-      <username>%EMAILADDRESS%</username>
-    </outgoingServer>
-  </emailProvider>
-</clientConfig>
-```
-
-`%EMAILADDRESS%` is substituted automatically by Thunderbird.
+The helper generates Mozilla ISPDB v1.1 XML with `<incomingServer type="imap">` (993/SSL) and `<outgoingServer type="smtp">` (465/SSL). `%EMAILADDRESS%` is substituted by Thunderbird automatically.
 
 ### Auto-Discovery URL Order
 
-```
+```text
 1. https://autoconfig.<domain>/mail/config-v1.1.xml
 2. https://<domain>/.well-known/autoconfig/mail/config-v1.1.xml
 3. https://autoconfig.thunderbird.net/v1.1/<domain>
 ```
 
-**Manual import** (if auto-discovery unavailable): Account Settings > Account Actions > Add Mail Account > Configure manually.
+**Manual import**: Account Settings > Account Actions > Add Mail Account > Configure manually.
 
 ## Sieve Rule Deployment
 
@@ -108,22 +84,7 @@ IMAP_PASSWORD=$(gopass show -o mail/user@example.com) \
 
 When `sieve-connect` is unavailable, the helper prints the script with provider-specific upload instructions.
 
-### Example Sieve Rules
-
-See `services/email/email-mailbox.md` "Sieve Rule Patterns" for complete examples.
-
-```sieve
-require ["fileinto", "imap4flags"];
-
-if address :domain :is "from" ["paypal.com", "stripe.com"] {
-    if header :contains "subject" ["receipt", "invoice", "payment"] {
-        fileinto "Transactions"; stop;
-    }
-}
-if header :contains "subject" ["action required", "please review", "approval needed"] {
-    addflag "$Task";
-}
-```
+See `services/email/email-mailbox.md` "Sieve Rule Patterns" for complete Sieve examples.
 
 ## OpenPGP Key Import
 
@@ -134,40 +95,9 @@ thunderbird-helper.sh openpgp-guide --email user@example.com
 thunderbird-helper.sh openpgp-guide --email user@example.com --key-file ~/keys/user@example.com.asc
 ```
 
-**Import steps**: Tools > Account Settings > End-To-End Encryption > Add Key > Import Personal OpenPGP Key (or "Use external key through GnuPG" for system keyring) > Use this key by default > enable sign unencrypted + encrypt drafts.
+**Import path**: Tools > Account Settings > End-To-End Encryption > Add Key > Import Personal OpenPGP Key (or "Use external key through GnuPG" for system keyring).
 
-```bash
-# Generate new key pair (RSA 4096, no expiry)
-gpg --full-generate-key
-
-# Export public key for sharing
-gpg --armor --export user@example.com > user-public.asc
-
-# Export private key for backup — run in terminal, NOT in AI chat
-gpg --armor --export-secret-keys user@example.com > user-private.asc
-```
-
-**Keyring note**: Thunderbird maintains its own OpenPGP keyring, separate from system GnuPG. Use "external key through GnuPG" to share keys, or export/import manually.
-
-## Account Setup Workflow
-
-```bash
-# 1. Generate config
-thunderbird-helper.sh gen-config --provider cloudron --email user@example.com --output ~/tb-config.xml
-
-# 2. Host at autoconfig.<domain> (optional, for auto-discovery)
-# scp ~/tb-config.xml server:/var/www/autoconfig.example.com/mail/config-v1.1.xml
-
-# 3. Thunderbird: Add Mail Account > enter email + password (auto-fetches config)
-
-# 4. Deploy Sieve rules
-IMAP_PASSWORD=$(gopass show -o mail/user@example.com) \
-  thunderbird-helper.sh deploy-sieve --server mail.example.com --user user@example.com \
-    --script ~/.aidevops/sieve/sort-rules.sieve
-
-# 5. Import OpenPGP key
-thunderbird-helper.sh openpgp-guide --email user@example.com
-```
+**Keyring note**: Thunderbird maintains its own OpenPGP keyring, separate from system GnuPG. Use "external key through GnuPG" to share keys, or export/import manually. Private key export: run `gpg --armor --export-secret-keys` in terminal, NOT in AI chat.
 
 ## Troubleshooting
 
