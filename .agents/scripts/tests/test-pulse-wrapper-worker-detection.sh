@@ -408,6 +408,98 @@ test_check_dispatch_dedup_treats_merged_pr_as_duplicate() {
 	return 0
 }
 
+test_dispatch_with_dedup_blocks_when_duplicate() {
+	local original_script_dir="$SCRIPT_DIR"
+	SCRIPT_DIR="$TEST_ROOT"
+
+	set_ps_fixture ""
+	# Dedup helper returns 0 for has-open-pr → duplicate detected → check_dispatch_dedup returns 0
+	set_dedup_helper_fixture 0 'merged PR #1145 references issue #9999 via "closes" keyword'
+
+	local dispatch_rc=0
+	dispatch_with_dedup "9999" "marcusquinn/aidevops" "Issue #9999: test dedup" "t9999: test dedup" \
+		"testuser" "/tmp/aidevops" "/full-loop test" || dispatch_rc=$?
+
+	SCRIPT_DIR="$original_script_dir"
+
+	if [[ "$dispatch_rc" -eq 1 ]]; then
+		print_result "dispatch_with_dedup blocks when dedup detects duplicate (GH#12436)" 0
+		return 0
+	fi
+
+	print_result "dispatch_with_dedup blocks when dedup detects duplicate (GH#12436)" 1 \
+		"Expected exit 1 (blocked), got ${dispatch_rc}"
+	return 0
+}
+
+test_dispatch_with_dedup_proceeds_when_no_duplicate() {
+	local original_script_dir="$SCRIPT_DIR"
+	SCRIPT_DIR="$TEST_ROOT"
+
+	set_ps_fixture ""
+
+	# Create a dedup helper that passes all layers (no duplicate):
+	# - is-duplicate → exit 1 (no match)
+	# - has-open-pr → exit 1 (no PR)
+	# - has-dispatch-comment → exit 1 (no comment)
+	# - is-assigned → exit 1 (not assigned)
+	# - claim → exit 0 (claim won)
+	cat >"${TEST_ROOT}/dispatch-dedup-helper.sh" <<'FIXTURE'
+#!/usr/bin/env bash
+set -euo pipefail
+command_name="${1:-}"
+case "$command_name" in
+claim) exit 0 ;;
+*) exit 1 ;;
+esac
+FIXTURE
+	chmod +x "${TEST_ROOT}/dispatch-dedup-helper.sh"
+
+	# Create a no-op HEADLESS_RUNTIME_HELPER stub so the worker launch succeeds
+	local original_helper="$HEADLESS_RUNTIME_HELPER"
+	HEADLESS_RUNTIME_HELPER="${TEST_ROOT}/headless-stub.sh"
+	cat >"$HEADLESS_RUNTIME_HELPER" <<'STUB'
+#!/usr/bin/env bash
+# Stub: do nothing, exit immediately
+exit 0
+STUB
+	chmod +x "$HEADLESS_RUNTIME_HELPER"
+
+	# Create dispatch-ledger-helper.sh stub:
+	# check-issue → exit 1 (no in-flight entry, layer 1 passes)
+	# record → exit 0 (success, used after dispatch)
+	cat >"${TEST_ROOT}/dispatch-ledger-helper.sh" <<'STUB'
+#!/usr/bin/env bash
+case "${1:-}" in
+check-issue) exit 1 ;;
+*) exit 0 ;;
+esac
+STUB
+	chmod +x "${TEST_ROOT}/dispatch-ledger-helper.sh"
+
+	# Stub gh to avoid real API calls
+	gh() { return 0; }
+	export -f gh
+
+	local dispatch_rc=0
+	dispatch_with_dedup "8888" "marcusquinn/aidevops" "Issue #8888: test pass" "t8888: test pass" \
+		"testuser" "/tmp/aidevops" "/full-loop test" || dispatch_rc=$?
+
+	# Restore
+	HEADLESS_RUNTIME_HELPER="$original_helper"
+	SCRIPT_DIR="$original_script_dir"
+	unset -f gh
+
+	if [[ "$dispatch_rc" -eq 0 ]]; then
+		print_result "dispatch_with_dedup proceeds when no duplicate detected (GH#12436)" 0
+		return 0
+	fi
+
+	print_result "dispatch_with_dedup proceeds when no duplicate detected (GH#12436)" 1 \
+		"Expected exit 0 (dispatched), got ${dispatch_rc}"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -425,6 +517,8 @@ main() {
 	test_counts_review_issue_pr_workers
 	test_review_issue_pr_session_key_fallback_dedup
 	test_check_dispatch_dedup_treats_merged_pr_as_duplicate
+	test_dispatch_with_dedup_blocks_when_duplicate
+	test_dispatch_with_dedup_proceeds_when_no_duplicate
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

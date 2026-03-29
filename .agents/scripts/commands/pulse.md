@@ -67,26 +67,16 @@ Check external contributor gate before ANY approve/merge (see Pre-merge checks b
 For each unassigned, non-blocked issue with no open PR, no active worker, and **no `needs-maintainer-review` label**:
 
 ```bash
-# Dedup guard (MANDATORY — all 7 layers run deterministically inside check_dispatch_dedup)
+# Atomic dispatch (GH#12436 — dedup+assign+launch in single call, cannot be skipped)
 source ~/.aidevops/agents/scripts/pulse-wrapper.sh
 RUNNER_USER=$(gh api user --jq '.login' 2>/dev/null || whoami)
 
-# All dedup layers including dispatch comment check (GH#11141), assignee guard,
-# and cross-machine claim lock are inside check_dispatch_dedup. Passing
-# $RUNNER_USER as the 5th arg is required for the assignee guard (Layer 6),
-# dispatch comment check (Layer 5), and claim lock (Layer 7).
-if check_dispatch_dedup NUMBER SLUG "Issue #NUMBER: TITLE" "TASK_ID: TITLE" "$RUNNER_USER"; then continue; fi
-
-# Assign and dispatch
-gh issue edit NUMBER --repo SLUG --add-assignee "$RUNNER_USER" --add-label "status:queued" 2>/dev/null || true
-
-~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
-  --role worker \
-  --session-key "issue-NUMBER" \
-  --dir PATH \
-  --title "Issue #NUMBER: TITLE" \
-  --prompt "/full-loop Implement issue #NUMBER (URL) -- DESCRIPTION" &
-sleep 2
+# dispatch_with_dedup runs all 7 dedup layers, assigns the issue, launches the
+# worker, and records in the dispatch ledger — atomically. The LLM cannot skip
+# the dedup guard because it is inside the function. Returns 0=dispatched,
+# 1=blocked by dedup, 2=dispatch error.
+dispatch_with_dedup NUMBER SLUG "Issue #NUMBER: TITLE" "TASK_ID: TITLE" "$RUNNER_USER" PATH \
+  "/full-loop Implement issue #NUMBER (URL) -- DESCRIPTION" || continue
 ```
 
 Repeat until `AVAILABLE` slots are filled or no dispatchable issues remain.

@@ -4383,6 +4383,73 @@ check_dispatch_dedup() {
 }
 
 #######################################
+# Atomic dispatch: dedup guard + assign + launch in a single call (GH#12436)
+#
+# Root cause of GH#12141 and GH#12155: the pulse.md instructed the LLM to
+# run check_dispatch_dedup, then gh issue edit, then headless-runtime-helper.sh
+# as three separate steps. The LLM skipped check_dispatch_dedup entirely in
+# both incidents — zero DISPATCH_CLAIM comments were posted. This function
+# makes the dedup guard non-skippable by wrapping all three steps into a
+# single deterministic call. The LLM calls one function; the function
+# enforces all 7 dedup layers before assigning and launching.
+#
+# Arguments:
+#   $1 - issue_number
+#   $2 - repo_slug (owner/repo)
+#   $3 - dispatch_title (e.g., "Issue #42: Fix auth")
+#   $4 - issue_title (e.g., "t042: Fix auth" — for merged-PR fallback)
+#   $5 - self_login (runner's GitHub login)
+#   $6 - repo_path (local path to the repo for the worker)
+#   $7 - prompt (full prompt string for the worker, e.g., "/full-loop ...")
+#   $8 - session_key (optional; defaults to "issue-${issue_number}")
+#
+# Exit codes:
+#   0 - dispatched successfully
+#   1 - dedup guard blocked dispatch (duplicate detected)
+#   2 - dispatch failed after passing dedup (assign or launch error)
+#######################################
+dispatch_with_dedup() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local dispatch_title="$3"
+	local issue_title="${4:-}"
+	local self_login="${5:-}"
+	local repo_path="$6"
+	local prompt="$7"
+	local session_key="${8:-issue-${issue_number}}"
+
+	# All 7 dedup layers — cannot be skipped
+	if check_dispatch_dedup "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" "$self_login"; then
+		echo "[dispatch_with_dedup] Dedup guard blocked #${issue_number} in ${repo_slug}" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Assign issue and label as queued
+	gh issue edit "$issue_number" --repo "$repo_slug" \
+		--add-assignee "$self_login" --add-label "status:queued" 2>/dev/null || true
+
+	# Launch worker
+	"$HEADLESS_RUNTIME_HELPER" run \
+		--role worker \
+		--session-key "$session_key" \
+		--dir "$repo_path" \
+		--title "$dispatch_title" \
+		--prompt "$prompt" &
+	local worker_pid="$!"
+	sleep 2
+
+	# Record in dispatch ledger
+	local ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
+	if [[ -x "$ledger_helper" ]]; then
+		"$ledger_helper" record --issue "$issue_number" --repo "$repo_slug" \
+			--pid "$worker_pid" --title "$dispatch_title" 2>/dev/null || true
+	fi
+
+	echo "[dispatch_with_dedup] Dispatched worker PID ${worker_pid} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # Check issue comments for terminal blocker patterns (GH#5141)
 #
 # Scans the last N comments on an issue for known patterns that indicate
