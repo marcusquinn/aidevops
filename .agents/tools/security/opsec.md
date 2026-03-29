@@ -18,8 +18,6 @@ tools:
 
 **Related**: `tools/security/tirith.md` · `tools/security/tamper-evident-audit.md` · `tools/credentials/encryption-stack.md` · `services/communications/simplex.md` · `tools/security/prompt-injection-defender.md`
 
-**Sections**: [Threat Modeling](#threat-modeling) · [Platform Trust Matrix](#platform-trust-matrix) · [Network Privacy](#network-privacy) · [Anti-Detect Browsers](#anti-detect-browsers) · [Device Hygiene](#device-hygiene) · [CI/CD AI Agent Security](#cicd-ai-agent-security)
-
 <!-- AI-CONTEXT-END -->
 
 ## Threat Modeling
@@ -70,35 +68,19 @@ AI agents processing untrusted content are vulnerable to indirect prompt injecti
 | **Google Chat** | No | Full access by Google + admins | Google account | Yes (Gemini) |
 | **MS Teams** | No | Full access by Microsoft + admins | M365 account | Yes (Copilot) |
 
-Self-hostable: SimpleX, Matrix, Nextcloud Talk, Bitchat, Nostr, Urbit. Partial: Signal, XMTP. Closed: iMessage, Telegram, WhatsApp, Slack, Discord, Google Chat, Teams.
-
 **AI training opt-out**: Slack (admin emails Slack) · Discord (User Settings > Privacy) · Google Chat (admin disables Gemini) · Teams (tenant admin) · WhatsApp (metadata only, no opt-out). Signal/SimpleX/Nextcloud/Matrix/Nostr/Urbit: never trained.
+
+**Tier guidance**: T1 → any E2E + VPN. T2 → Signal, SimpleX, Matrix (self-hosted), Nextcloud Talk. T3 → SimpleX + Mullvad VPN, Nostr + Tor. T4 → SimpleX (no identifiers), Urbit (sovereign), Nostr. T5 → SimpleX (disappearing messages) + full-disk encryption. **SimpleX**: near-zero metadata, no persistent identity. **Matrix**: team collaboration, bot ecosystem, federation.
 
 **Full comparison**: `services/communications/privacy-comparison.md`
 
-### Privacy Tiers
-
-| Threat Tier | Recommended | Avoid |
-|-------------|-------------|-------|
-| T1 | Any E2E + VPN | Unencrypted email, SMS |
-| T2 | Signal, SimpleX, Matrix (self-hosted), Nextcloud Talk | Slack, Discord, Teams, Google Chat |
-| T3 | SimpleX, Signal + Mullvad VPN, Nostr + Tor | Any platform without E2E |
-| T4 | SimpleX (no identifiers), Urbit (sovereign), Nostr | Any platform requiring phone/email or closed-source server |
-| T5 | SimpleX (disappearing messages) + full-disk encryption | Any platform with cloud backups |
-
-**SimpleX**: near-zero metadata, no persistent identity, T3-T4. **Matrix**: team collaboration, bot ecosystem, federation, T2-T3.
-
 ## Network Privacy
 
-### VPN Providers
+**VPN**: **Mullvad** (T3-T4 — cash/Monero, no email, account number only, audited no-logs) · **IVPN** (Gibraltar, anonymous payment, open-source client) · **ProtonVPN** (Switzerland, free tier, Proton ecosystem). All support WireGuard and Tor.
 
-All three support WireGuard and Tor. **Mullvad** is strongest for T3-T4 (cash/Monero, no email, account number only, audited no-logs). **IVPN** (Gibraltar, anonymous payment, open-source client). **ProtonVPN** (Switzerland, free tier, Proton ecosystem).
+**[NetBird](https://netbird.io)** (Apache-2.0) — encrypted P2P WireGuard overlay for secure access to self-hosted services without exposing ports. Install: `https://pkgs.netbird.io` (review script before executing), then `netbird up --setup-key YOUR_SETUP_KEY`.
 
-### NetBird (Zero-Trust Overlay)
-
-[NetBird](https://netbird.io) (Apache-2.0) — encrypted P2P WireGuard overlay. Use case: secure access to self-hosted services without exposing ports. Install via `https://pkgs.netbird.io` (review script before executing), then `netbird up --setup-key YOUR_SETUP_KEY`.
-
-### DNS Privacy (systemd-resolved)
+**DNS Privacy** (systemd-resolved):
 
 ```ini
 [Resolve]
@@ -122,28 +104,15 @@ curl -fsSL https://raw.githubusercontent.com/arkenfox/user.js/master/user.js \
 
 ## Device Hygiene
 
-### Full-Disk Encryption
+**Full-disk encryption**: macOS → FileVault 2 (AES-XTS 128-bit) · Linux → LUKS2 (`cryptsetup luksFormat --type luks2`) · Windows → BitLocker (TPM-backed; avoid T4 — MS key escrow risk) · iOS/Android → built-in (enabled by passcode / default on Android 10+).
 
-| OS | Tool | Notes |
-|----|------|-------|
-| macOS | FileVault 2 | Built-in, AES-XTS 128-bit |
-| Linux | LUKS2 | `cryptsetup luksFormat --type luks2` |
-| Windows | BitLocker | TPM-backed; avoid T4 (MS key escrow risk) |
-| iOS/Android | Built-in | Enabled by passcode / default on Android 10+ |
-
-### Travel / Duress Profiles
-
-- **iOS**: Guided Access or Shortcuts to lock to specific apps at border crossings
-- **Android**: Work Profile (Shelter app) — separate encrypted container
-- **macOS**: Separate user account with minimal data
-- **SimpleX**: Multiple chat profiles; keep sensitive profile on separate device
-- **Linux**: `mokutil --sb-state` to verify Secure Boot; `sudo fwupdmgr update` for firmware
+**Travel / duress**: iOS → Guided Access or Shortcuts to lock apps at border crossings · Android → Work Profile (Shelter app) · macOS → separate user account with minimal data · SimpleX → multiple chat profiles; keep sensitive profile on separate device · Linux → `mokutil --sb-state` (Secure Boot); `sudo fwupdmgr update` (firmware).
 
 ## Operational Patterns
 
-- **Compartmentalization**: Separate devices per threat context; separate browser profiles per identity; never mix identities across compartments
-- **Metadata hygiene**: Strip EXIF (`exiftool -all= image.jpg`); UTC timezone; vary message timing and writing style
-- **Key management**: YubiKey for SSH/GPG/FIDO2; air-gapped CA key generation; rotate SMP cert every 3 months. See `tools/credentials/encryption-stack.md`
+- **Compartmentalization**: Separate devices per threat context; separate browser profiles per identity; never mix identities across compartments.
+- **Metadata hygiene**: Strip EXIF (`exiftool -all= image.jpg`); UTC timezone; vary message timing and writing style.
+- **Key management**: YubiKey for SSH/GPG/FIDO2; air-gapped CA key generation; rotate SMP cert every 3 months. See `tools/credentials/encryption-stack.md`.
 
 ## Incident Response
 
@@ -155,11 +124,11 @@ curl -fsSL https://raw.githubusercontent.com/arkenfox/user.js/master/user.js \
 
 CI/CD agents operate autonomously with cached credentials and shell access — high-value targets for prompt injection. **Clinejection** attack chain: malicious issue title → AI triage bot → `npm install` from typosquatted repo → cache poisoning → credential theft → malicious npm publish.
 
-**Threat vectors**: Issue/PR title injection (Critical) · PR diff injection (Critical) · Commit message injection (High) · Dependency metadata (High) · Webhook payload manipulation (Medium)
+**Threat vectors**: Issue/PR title injection (Critical) · PR diff injection (Critical) · Commit message injection (High) · Dependency metadata (High) · Webhook payload manipulation (Medium).
 
-### Rules
+**Rules**:
 
-**1. Never give AI bots shell access + credentials in the same context.**
+1. **Never give AI bots shell access + credentials in the same context.**
 
 ```yaml
 # BAD: bot has shell access AND inherited credentials
@@ -171,19 +140,14 @@ CI/CD agents operate autonomously with cached credentials and shell access — h
   with: { github-token: "${{ secrets.GITHUB_TOKEN }}", mode: comment-only }
 ```
 
-**2. Use short-lived tokens.** GitHub App installation tokens or OIDC — not long-lived PATs.
+2. **Use short-lived tokens.** GitHub App installation tokens or OIDC — not long-lived PATs.
+3. **Minimal permissions.** `contents: read`, `pull-requests: write` — nothing else.
+4. **Scan untrusted inputs before AI processing.** Pipe PR title + body through `prompt-guard-helper.sh scan-stdin`; gate AI step on `if: success()`.
+5. **No wildcard user allowlists.** Use named collaborators, not `"*"`.
+6. **Isolate AI agent jobs from deployment jobs.** Deployment environment must require approval.
+7. **Pin actions to commit SHAs, not tags.** Tags can be moved to malicious commits.
 
-**3. Minimal permissions.** `contents: read`, `pull-requests: write` — nothing else.
-
-**4. Scan untrusted inputs before AI processing.** Pipe PR title + body through `prompt-guard-helper.sh scan-stdin` before passing to any AI step. Gate the AI step on `if: success()`.
-
-**5. No wildcard user allowlists.** Use named collaborators, not `"*"`.
-
-**6. Isolate AI agent jobs from deployment jobs.** Deployment environment must require approval.
-
-**7. Pin actions to commit SHAs, not tags.** Tags can be moved to malicious commits.
-
-### Checklist
+**Checklist**:
 
 - [ ] Explicit `permissions` block with minimal scopes; no long-lived PATs
 - [ ] No access to publish tokens (npm, PyPI, Docker Hub) or deployment credentials
