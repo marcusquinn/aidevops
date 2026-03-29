@@ -11,13 +11,9 @@ model: sonnet
 
 ## Quick Reference
 
-- **Purpose**: Craft platform-agnostic narratives for any media format or distribution channel
-- **Input**: Research brief (from `content/research.md`) or topic + audience
-- **Output**: Story package: hook variants, narrative arc, transformation framework, angle selection
-- **Key Principle**: One story, many outputs — design the narrative once, adapt everywhere
-
-**Critical Rules**:
-
+- **Input**: Research brief (`content/research.md`) or topic + audience
+- **Output**: Story package — hook variants, narrative arc, transformation framework, angle selection
+- **Principle**: One story, many outputs — design the narrative once, adapt everywhere
 - **Hook-first always** — every output starts with the hook, regardless of platform
 - **6-12 word constraint** on hooks — forces clarity and punch
 - **Proven first, original second** — 97% proven structure, 3% unique twist
