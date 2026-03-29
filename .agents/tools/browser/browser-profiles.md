@@ -16,21 +16,15 @@ tools:
 
 ```text
 ~/.aidevops/.agent-workspace/browser-profiles/
-├── profiles.json          # Profile index (metadata)
-├── persistent/
-│   └── account-1/
-│       ├── fingerprint.json    # Fixed fingerprint config
-│       ├── proxy.json          # Assigned proxy
-│       ├── cookies.json        # Saved cookies
-│       ├── storage-state.json  # Playwright storageState
-│       ├── user-data/          # Full browser profile dir
-│       └── metadata.json       # Created, last-used, notes
-├── clean/                 # Template profiles (no state)
-│   └── default/
-│       └── fingerprint.json    # Random on each launch
-└── warmup/                # Pre-warmed profiles
-    └── account-3/
-        └── history.json        # Browsing history to replay
+├── profiles.json              # Profile index
+├── persistent/{name}/         # Cookies + fingerprint preserved
+│   ├── fingerprint.json       # Fixed fingerprint config
+│   ├── proxy.json             # Assigned proxy
+│   ├── cookies.json / storage-state.json  # Session state
+│   ├── user-data/             # Full browser profile dir
+│   └── metadata.json          # Created, last-used, notes
+├── clean/default/             # Fresh identity each launch
+└── warmup/{name}/history.json # Pre-warmed browsing history
 ```
 
 ## Profile Types
@@ -43,45 +37,25 @@ tools:
 | `disposable` | Single-use, auto-deleted | Maximum anonymity |
 
 ```bash
-# Create
+# Create / Launch / Warmup
 anti-detect-helper.sh profile create "name" --type persistent|clean|warm|disposable
-anti-detect-helper.sh profile create "name" --proxy "http://user:pass@host:port"
-anti-detect-helper.sh profile create "name" --os windows --browser firefox
-
-# Launch (loads saved state for persistent; random identity for clean)
-anti-detect-helper.sh launch --profile "name"
-
-# Disposable (no profile saved)
+anti-detect-helper.sh profile create "name" --proxy "http://user:pass@host:port" [--os windows --browser firefox]
+anti-detect-helper.sh launch --profile "name"                    # Loads saved state (persistent) or random identity (clean)
 anti-detect-helper.sh launch --disposable [--proxy "socks5://proxy:1080"]
+anti-detect-helper.sh warmup "name" --duration 30m               # Visits popular sites, scrolls, builds history
 
-# Warm a profile (visits popular sites, scrolls, builds history)
-anti-detect-helper.sh warmup "name" --duration 30m
-```
-
-## Profile Operations
-
-```bash
+# CRUD + Bulk
 anti-detect-helper.sh profile list [--format json]
-anti-detect-helper.sh profile show "name"
-anti-detect-helper.sh profile update "name" --proxy "new-proxy:8080" [--notes "text"]
+anti-detect-helper.sh profile show "name" [--format json]
 anti-detect-helper.sh profile delete "name" [--keep-cookies]
-anti-detect-helper.sh profile clone "source" "destination"
-```
-
-### Bulk Operations
-
-```bash
+anti-detect-helper.sh profile clone "source-name" "target-name"
+anti-detect-helper.sh profile update "name" --proxy "new-proxy:8080" [--notes "text"]
 anti-detect-helper.sh profile bulk-create --count 10 --prefix "worker" --type clean
 anti-detect-helper.sh profile bulk-delete --type clean
-anti-detect-helper.sh profile export --output /tmp/profiles-backup.tar.gz
-anti-detect-helper.sh profile import --input /tmp/profiles-backup.tar.gz
-```
+anti-detect-helper.sh profile export|import --output|--input /tmp/profiles-backup.tar.gz
 
-### Cookie Management
-
-```bash
-anti-detect-helper.sh cookies export "profile" --output cookies.txt   # Netscape format
-anti-detect-helper.sh cookies import "profile" --input cookies.txt
+# Cookies
+anti-detect-helper.sh cookies export|import "profile" --output|--input cookies.txt  # Netscape format
 anti-detect-helper.sh cookies import-browser "profile" --browser chrome --domain example.com
 anti-detect-helper.sh cookies clear "profile" [--domain example.com]
 ```
@@ -106,8 +80,7 @@ def load_profile(name: str) -> dict:
     }
 
 def save_profile_state(name: str, context):
-    profile_dir = PROFILES_DIR / "persistent" / name
-    context.storage_state(path=str(profile_dir / "storage-state.json"))
+    context.storage_state(path=str(PROFILES_DIR / "persistent" / name / "storage-state.json"))
 ```
 
 ### Launch with Profile (Camoufox)
@@ -116,18 +89,13 @@ def save_profile_state(name: str, context):
 def launch_with_profile(profile_name: str, headless: bool = True):
     profile = load_profile(profile_name)
     kwargs = {"headless": headless, "config": profile["fingerprint"]}
-    if profile["proxy"]:
-        kwargs["proxy"] = profile["proxy"]
-    if profile.get("geoip"):
-        kwargs["geoip"] = True
-
+    if profile["proxy"]:  kwargs["proxy"] = profile["proxy"]
+    if profile.get("geoip"):  kwargs["geoip"] = True
     with Camoufox(**kwargs) as browser:
         context = browser.contexts[0]
-        # Camoufox doesn't support storageState directly — load cookies manually
-        if profile["storage_state"]:
+        if profile["storage_state"]:  # Camoufox: load cookies manually (no storageState support)
             storage = json.loads(Path(profile["storage_state"]).read_text())
-            if storage.get("cookies"):
-                context.add_cookies(storage["cookies"])
+            if storage.get("cookies"):  context.add_cookies(storage["cookies"])
         page = context.pages[0] if context.pages else context.new_page()
         yield page, context
         save_profile_state(profile_name, context)
@@ -138,17 +106,15 @@ def launch_with_profile(profile_name: str, headless: bool = True):
 ```python
 def launch_chromium_stealth(profile_name: str, headless: bool = True):
     profile = load_profile(profile_name)
-    profile_dir = PROFILES_DIR / "persistent" / profile_name / "user-data"
-
+    fp = profile["fingerprint"]
     with sync_playwright() as p:
         browser = p.chromium.launch_persistent_context(
-            user_data_dir=str(profile_dir),
+            user_data_dir=str(PROFILES_DIR / "persistent" / profile_name / "user-data"),
             headless=headless,
             args=["--disable-blink-features=AutomationControlled", "--no-first-run"],
-            viewport={"width": profile["fingerprint"].get("screen_width", 1920),
-                      "height": profile["fingerprint"].get("screen_height", 1080)},
-            user_agent=profile["fingerprint"].get("user_agent"),
-            proxy=profile["proxy"] if profile["proxy"] else None,
+            viewport={"width": fp.get("screen_width", 1920), "height": fp.get("screen_height", 1080)},
+            user_agent=fp.get("user_agent"),
+            proxy=profile["proxy"] or None,
         )
         page = browser.pages[0] if browser.pages else browser.new_page()
         yield page, browser
@@ -171,12 +137,10 @@ async def warmup_profile(profile_name: str, duration_minutes: int = 30):
         page = await browser.new_page()
         end_time = asyncio.get_event_loop().time() + (duration_minutes * 60)
         while asyncio.get_event_loop().time() < end_time:
-            url = random.choice(WARMUP_SITES)
             try:
-                await page.goto(url, timeout=15000)
+                await page.goto(random.choice(WARMUP_SITES), timeout=15000)
                 await asyncio.sleep(random.uniform(3, 15))
                 await page.evaluate("window.scrollBy(0, window.innerHeight * Math.random())")
-                await asyncio.sleep(random.uniform(1, 5))
                 if random.random() > 0.6:
                     links = await page.query_selector_all("a[href^='http']")
                     if links:
@@ -189,17 +153,17 @@ async def warmup_profile(profile_name: str, duration_minutes: int = 30):
         save_profile_state(profile_name, browser.contexts[0])
 ```
 
-## vs Commercial Tools (AdsPower / GoLogin / OctoBrowser)
+## vs Commercial Tools
 
-**This system advantages:** free, open-source, local storage (JSON/dirs), Firefox/Camoufox engine, BrowserForge fingerprints, Git-based team sharing, CLI bulk ops, Python/Bash API, script-based warming.
+**This system:** free, open-source, local JSON/dir storage, Camoufox/BrowserForge fingerprints, Git-based sharing, CLI bulk ops, Python/Bash API, script-based warming.
 
-**Commercial tools:** cloud storage, proprietary fingerprints, GUI-only bulk ops, REST API, manual warming; $9–329/mo depending on tier.
+**Commercial (AdsPower/GoLogin/OctoBrowser):** cloud storage, proprietary fingerprints, GUI-only bulk ops, REST API, manual warming; $9-329/mo.
 
 ## Integration Points
 
-- **Proxy assignment**: See `proxy-integration.md` for per-profile proxy routing
-- **Fingerprint generation**: See `fingerprint-profiles.md` for Camoufox/BrowserForge
-- **Cookie extraction**: See `sweet-cookie.md` for importing from real browsers
-- **CAPTCHA solving**: See `capsolver.md` for when anti-detect isn't enough
+- **Proxy**: [proxy-integration.md](proxy-integration.md) — per-profile proxy routing
+- **Fingerprints**: [fingerprint-profiles.md](fingerprint-profiles.md) — Camoufox/BrowserForge generation
+- **Cookies**: [sweet-cookie.md](sweet-cookie.md) — importing from real browsers
+- **CAPTCHA**: [capsolver.md](capsolver.md) — when anti-detect isn't enough
 
 <!-- AI-CONTEXT-END -->
