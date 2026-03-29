@@ -159,13 +159,7 @@ PR title: `{task-id}: {description}`. Task ID is `tNNN` (from TODO.md) or `GH#NN
 
 Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `main`, and treat the Git ref as an internal detail inside the linked worktree. User-facing guidance should talk about the worktree path, not "using a branch". Re-read files at worktree path before editing. NEVER remove others' worktrees.
 
-**Traceability:**
-- PR title MUST have task ID (`{task-id}: {description}`). No exceptions.
-- PR body MUST include `Closes #NNN` — only mechanism creating GitHub PR-issue link.
-- Every dispatched task MUST have a GitHub issue. Issue number in TODO.md as `ref=GH#NNN`.
-- Link both sides when closing (issue→PR, PR→issue).
-
-**GitHub comment signature footer:** Every issue, PR, and comment created by aidevops agents MUST include a signature footer. Use `gh-signature-helper.sh footer --model <model-id> [--issue OWNER/REPO#NUM] [--solved]` to generate it. The helper auto-detects CLI, version, tokens (input+output, excluding cache), and session time from the runtime DB. Pass `--issue` on comments to existing issues. Pass `--solved` on closing comments. Do NOT pass `--issue` when creating new issues. Append the footer as the last line of every `gh issue comment`, `gh issue create`, and `gh pr create` body. See `scripts/commands/pulse.md` for dispatch/kill/merge comment templates.
+**Traceability and signature footer:** Hard rules in `prompts/build.txt` (sections "Traceability" and "#8 Signature footer"). Link both sides when closing (issue→PR, PR→issue). Do NOT pass `--issue` when creating new issues (the issue doesn't exist yet). See `scripts/commands/pulse.md` for dispatch/kill/merge comment templates.
 
 **Self-improvement routing (t1541):** Framework-level tasks → `framework-routing-helper.sh log-framework-issue`. Project tasks → current repo. Framework tasks in project repos are invisible to maintainers.
 
