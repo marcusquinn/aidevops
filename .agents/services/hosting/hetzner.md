@@ -24,20 +24,20 @@ tools:
 - **Server types**: CX (shared), CPX (dedicated vCPU), CCX (dedicated CPU)
 - **Docs**: https://docs.hetzner.cloud/
 
-**No MCP required** - this subagent uses curl directly. Zero context cost until invoked.
+**No MCP required** - uses curl directly. Zero context cost until invoked.
 
 <!-- AI-CONTEXT-END -->
 
 ## Authentication
 
 ```bash
-# Load token for a specific project
+# Load token and set auth header (reuse $AUTH in all requests)
 source ~/.config/aidevops/credentials.sh
 export HCLOUD_TOKEN="$HCLOUD_TOKEN_MYPROJECT"
+AUTH="Authorization: Bearer $HCLOUD_TOKEN"
 
 # Verify access
-curl -s -H "Authorization: Bearer $HCLOUD_TOKEN" \
-  https://api.hetzner.cloud/v1/servers | python3 -c "
+curl -s -H "$AUTH" https://api.hetzner.cloud/v1/servers | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
 for s in d.get('servers',[]):
@@ -46,104 +46,78 @@ for s in d.get('servers',[]):
 
 ## API Operations
 
-### List Servers
+All endpoints use base URL `https://api.hetzner.cloud/v1`. Pass `-H "$AUTH"` on every request.
+
+### Resource Endpoints (GET)
+
+| Resource | Endpoint | Notes |
+|----------|----------|-------|
+| Servers | `/servers` | List all; `/servers/{id}` for details |
+| Volumes | `/volumes` | |
+| Firewalls | `/firewalls` | |
+| SSH Keys | `/ssh_keys` | |
+| Server Types | `/server_types` | See formatter below |
+| Images | `/images?type=system&status=available` | See formatter below |
 
 ```bash
-curl -s -H "Authorization: Bearer $HCLOUD_TOKEN" \
-  https://api.hetzner.cloud/v1/servers | python3 -m json.tool
-```
-
-### Get Server Details
-
-```bash
-curl -s -H "Authorization: Bearer $HCLOUD_TOKEN" \
-  https://api.hetzner.cloud/v1/servers/{id} | python3 -m json.tool
+# Generic list pattern
+curl -s -H "$AUTH" https://api.hetzner.cloud/v1/{resource}
 ```
 
 ### Server Actions
 
 ```bash
 # Actions: poweron, poweroff, reboot, shutdown, reset_password
-curl -s -X POST -H "Authorization: Bearer $HCLOUD_TOKEN" \
+curl -s -X POST -H "$AUTH" \
   https://api.hetzner.cloud/v1/servers/{id}/actions/{action}
 ```
 
 ### Create Server
 
 ```bash
-curl -s -X POST -H "Authorization: Bearer $HCLOUD_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "my-server",
-    "server_type": "cx22",
-    "image": "ubuntu-24.04",
-    "location": "fsn1",
-    "ssh_keys": ["my-key"]
-  }' \
+curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"name":"my-server","server_type":"cx22","image":"ubuntu-24.04","location":"fsn1","ssh_keys":["my-key"]}' \
   https://api.hetzner.cloud/v1/servers
 ```
 
 ### Delete Server
 
 ```bash
-curl -s -X DELETE -H "Authorization: Bearer $HCLOUD_TOKEN" \
-  https://api.hetzner.cloud/v1/servers/{id}
+curl -s -X DELETE -H "$AUTH" https://api.hetzner.cloud/v1/servers/{id}
 ```
 
-### Volumes
+### Create Volume
 
 ```bash
-# List
-curl -s -H "Authorization: Bearer $HCLOUD_TOKEN" \
-  https://api.hetzner.cloud/v1/volumes
-
-# Create
-curl -s -X POST -H "Authorization: Bearer $HCLOUD_TOKEN" \
-  -H "Content-Type: application/json" \
+curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
   -d '{"name":"data","size":50,"location":"fsn1","format":"ext4"}' \
   https://api.hetzner.cloud/v1/volumes
-```
-
-### Firewalls
-
-```bash
-curl -s -H "Authorization: Bearer $HCLOUD_TOKEN" \
-  https://api.hetzner.cloud/v1/firewalls
-```
-
-### SSH Keys
-
-```bash
-curl -s -H "Authorization: Bearer $HCLOUD_TOKEN" \
-  https://api.hetzner.cloud/v1/ssh_keys
 ```
 
 ### Snapshots & Backups
 
 ```bash
 # Enable backups
-curl -s -X POST -H "Authorization: Bearer $HCLOUD_TOKEN" \
+curl -s -X POST -H "$AUTH" \
   https://api.hetzner.cloud/v1/servers/{id}/actions/enable_backup
 
 # Create snapshot
-curl -s -X POST -H "Authorization: Bearer $HCLOUD_TOKEN" \
-  -H "Content-Type: application/json" \
+curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
   -d '{"description":"pre-upgrade"}' \
   https://api.hetzner.cloud/v1/servers/{id}/actions/create_image
 ```
 
-### Server Types & Images
+### Output Formatters
 
 ```bash
-# Available server types
-curl -s -H "Authorization: Bearer $HCLOUD_TOKEN" \
-  https://api.hetzner.cloud/v1/server_types | python3 -c "
+# Server types
+curl -s -H "$AUTH" https://api.hetzner.cloud/v1/server_types | python3 -c "
 import json,sys
 for t in json.load(sys.stdin)['server_types']:
   print(f\"{t['name']:<10} {t['cores']}c {t['memory']:.0f}GB {t['description']}\")"
 
 # Available images
-curl -s -H "Authorization: Bearer $HCLOUD_TOKEN" \
+curl -s -H "$AUTH" \
   "https://api.hetzner.cloud/v1/images?type=system&status=available" | python3 -c "
 import json,sys
 for i in json.load(sys.stdin)['images']:
@@ -152,7 +126,7 @@ for i in json.load(sys.stdin)['images']:
 
 ## Multi-Project Setup
 
-Each Hetzner Cloud project gets its own API token. Store them in `~/.config/aidevops/credentials.sh`:
+Each Hetzner Cloud project gets its own API token. Store in `~/.config/aidevops/credentials.sh`:
 
 ```bash
 export HCLOUD_TOKEN_PROJECTA="hc_..."
@@ -160,6 +134,7 @@ export HCLOUD_TOKEN_PROJECTB="hc_..."
 ```
 
 To get a token:
+
 1. https://console.hetzner.cloud → Select project
 2. Security → API Tokens → Generate API Token
 3. Read & Write permissions → Copy token
