@@ -19,34 +19,14 @@ tools:
 ## Quick Reference
 
 - **Full release**: `.agents/scripts/version-manager.sh release [major|minor|patch] --skip-preflight`
-- **CRITICAL**: Always use the script above — it updates all 6 version files atomically
-- **NEVER** manually edit VERSION, bump versions yourself, or use separate commands
-
-**Before releasing**: Commit all changes first:
-
-```bash
-git status --short
-git add -A && git commit -m "feat: description of changes"
-```
-
-- **Auto-changelog**: Release script auto-generates CHANGELOG.md from conventional commits
-- **Create tag**: `.agents/scripts/version-manager.sh tag`
-- **GitHub release**: `.agents/scripts/version-manager.sh github-release`
-- **Postflight**: `.agents/scripts/postflight-check.sh`
-- **Deploy locally**: `./setup.sh` (aidevops repo only)
+- **CRITICAL**: Always use the script — it updates all 6 version files atomically
+- **NEVER** manually edit VERSION, bump versions, or use separate commands
+- **Version bump only**: `workflows/version-bump.md`
+- **Changelog format**: `workflows/changelog.md`
+- **Postflight**: `workflows/postflight.md`
 - **Validator**: `.agents/scripts/validate-version-consistency.sh`
-- **Version bump only**: See `workflows/version-bump.md`
-- **Changelog format**: See `workflows/changelog.md`
 
 <!-- AI-CONTEXT-END -->
-
-For version number management only, see `workflows/version-bump.md`. For changelog format, see `workflows/changelog.md`. For merging branches, see `workflows/git-workflow.md` and `workflows/pr.md`.
-
-## Pre-Release Checklist
-
-- [ ] All working changes committed — release script **refuses** if uncommitted changes exist
-- [ ] Tests passing
-- [ ] CHANGELOG.md has unreleased content (or use `--force`)
 
 ## Quick Release (aidevops)
 
@@ -62,76 +42,55 @@ This atomically: checks uncommitted changes → bumps version in all 6 files (VE
 
 **DO NOT** run separate bump/tag/push commands.
 
-## Auto-Changelog Generation
-
-| Commit Type | Changelog Section |
-|-------------|-------------------|
-| `feat:` | Added |
-| `fix:` | Fixed |
-| `docs:`, `refactor:`, `perf:` | Changed |
-| `security:` | Security |
-| `BREAKING CHANGE:` | Removed (BREAKING) |
-| `deprecate:` | Deprecated |
-| `chore:` | (excluded) |
-
-See `workflows/changelog.md` for full format rules and examples.
+**Prerequisites**: All changes committed (script refuses otherwise), tests passing, CHANGELOG.md has unreleased content (or use `--force`).
 
 ## Manual Release Steps (Non-aidevops Repos)
 
 ```bash
 # 1. Quality checks
-./.agents/scripts/linters-local.sh   # or: npm run lint && npm test
+./.agents/scripts/linters-local.sh
 
-# 2. Changelog preview (optional)
-./.agents/scripts/version-manager.sh changelog-preview
-
-# 3. Commit version changes
+# 2. Commit version changes
 git add -A && git commit -m "chore(release): prepare v{MAJOR}.{MINOR}.{PATCH}"
 
-# 4. Tag
+# 3. Tag and push
 ./.agents/scripts/version-manager.sh tag
-# or: git tag -a v{VERSION} -m "Release v{VERSION}"
-
-# 5. Push
 git push origin main && git push origin --tags
 
-# 6. GitHub/GitLab release
+# 4. GitHub/GitLab release
 ./.agents/scripts/version-manager.sh github-release
-# or: gh release create v{VERSION} --title "v{VERSION}" --notes-file RELEASE_NOTES.md ./dist/*
+# or: gh release create v{VERSION} --title "v{VERSION}" --notes-file RELEASE_NOTES.md
 # or: glab release create v{VERSION} --name "v{VERSION}" --notes-file RELEASE_NOTES.md
 ```
 
-## Post-Release Tasks
-
-**GitHub auth** (prerequisite): `brew install gh && gh auth login` (preferred) or `export GITHUB_TOKEN=your_personal_access_token` (fallback, needs `repo` scope).
+## Post-Release
 
 **Deploy** (aidevops only): `cd ~/Git/aidevops && ./setup.sh`
 
-**Task completion** (automatic): The release script scans commits since last release for task IDs (t001, t001.1, etc.) and auto-marks them complete in TODO.md.
+**Task completion** (automatic): Release script scans commits since last release for task IDs (t001, t001.1, etc.) and auto-marks them complete in TODO.md.
 
 ```bash
 .agents/scripts/version-manager.sh list-task-ids    # Preview
 .agents/scripts/version-manager.sh auto-mark-tasks  # Run manually
 ```
 
-**Postflight**: `./.agents/scripts/postflight-check.sh` or `gh run watch $(gh run list --limit=1 --json databaseId -q '.[0].databaseId') --exit-status`. See `workflows/postflight.md` for verification and rollback.
+**Postflight**: `./.agents/scripts/postflight-check.sh` — see `workflows/postflight.md` for verification and rollback.
 
 **Follow-up**: Verify artifacts/download links, update docs site, notify stakeholders, update dependent projects, close milestone.
 
-## Rollback Procedures
+**GitHub auth** (prerequisite): `gh auth login` (preferred) or `export GITHUB_TOKEN=...` (fallback, needs `repo` scope).
+
+## Rollback
 
 ```bash
 # Identify the issue
 git log --oneline -10
 git diff v{PREVIOUS} v{CURRENT}
 
-# Create hotfix
+# Hotfix or revert
 git checkout -b hotfix/v{NEW_PATCH}
 git commit -m "fix: resolve critical issue"
-
-# Or revert
-git revert <commit-hash>
-git commit -m "revert: rollback v{CURRENT}"
+# or: git revert <commit-hash> && git commit -m "revert: rollback v{CURRENT}"
 ```
 
 ## Troubleshooting
@@ -140,6 +99,6 @@ git commit -m "revert: rollback v{CURRENT}"
 |-------|----------|
 | Tag already exists | `git tag -d v{VERSION} && git push origin --delete v{VERSION}` then re-tag |
 | GitHub CLI not authenticated | `gh auth login` (token needs `repo` scope) |
-| Version mismatch | `./.agents/scripts/version-manager.sh validate` — see `version-bump.md` for fixing |
+| Version mismatch | `./.agents/scripts/version-manager.sh validate` — see `version-bump.md` |
 
-See `workflows/version-bump.md` for semantic versioning rules (major/minor/patch).
+See `workflows/version-bump.md` for semantic versioning rules.
