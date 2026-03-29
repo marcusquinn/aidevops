@@ -108,7 +108,7 @@ Knowledge bases (skill docs, domain reference) whose size comes from breadth, no
 3. **Apply project standards** — but standards themselves are not simplification targets.
 4. **Enhance clarity without losing depth.** Reduce nesting, improve naming, remove "what" comments (not "why").
 5. **Maintain balance.** Avoid over-simplification that removes helpful abstractions or loses edge-case handling.
-6. **No arbitrary line targets.** Never set a target line count for simplification. The resulting size is whatever remains after removing genuine noise. Dispatchers and issue creators must not invent reduction targets — this creates pressure to cut content for the sake of a number, conflicting with principle 1. For large files, subdivide per `build-agent.md` (~300-line threshold) instead of compressing.
+6. **No arbitrary line targets.** Never set a target line count — the resulting size is whatever remains after removing genuine noise. Invented targets create pressure to cut content for a number, conflicting with principle 1. For large files, subdivide per `build-agent.md` (~300-line threshold) instead of compressing.
 
 ## Usage
 
@@ -180,15 +180,13 @@ Issue created [simplification-debt + needs-maintainer-review] + assigned
   └─ deferred (no comment) → no change
 ```
 
-## Integration with Quality Workflow
+## Quality Workflow and Pulse Integration
 
 **Automated daily scan (GH#5628):** `pulse-wrapper.sh` creates `simplification-debt` issues for files exceeding per-file violation threshold (default: 1+ functions >100 lines). Deduplicated by repo-relative file path. No file size gate (t1679) — classification determines action. Config: `COMPLEXITY_SCAN_INTERVAL` (default 1 day), `COMPLEXITY_FILE_VIOLATION_THRESHOLD` (default 1), `COMPLEXITY_MD_MIN_LINES` (default 50).
 
 **CI threshold ratchet (GH#5628):** Thresholds in `.agents/configs/complexity-thresholds.conf` (`FUNCTION_COMPLEXITY_THRESHOLD`, `NESTING_DEPTH_THRESHOLD`, `FILE_SIZE_THRESHOLD`). Lower after simplification PRs merge.
 
-## Pulse and Supervisor Integration
-
-Approved issues enter dispatch at **priority 8** (below quality-debt, above oldest-issues). Concurrency cap: 10% of worker slots, 30% combined cap with quality-debt. See `scripts/commands/pulse.md`.
+**Dispatch priority:** Approved issues enter at **priority 8** (below quality-debt, above oldest-issues). Concurrency cap: 10% of worker slots, 30% combined cap with quality-debt. See `scripts/commands/pulse.md`.
 
 **Codacy signal (GH#5628):** Grade B or below → temporary priority boost to 7. Workers fix issues → grade recovers → priority returns to normal.
 
