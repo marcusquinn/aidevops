@@ -11,8 +11,6 @@ tools:
 
 # Cloudron Server Operations
 
-The `cloudron` CLI manages apps on a Cloudron server. All commands operate on apps, not the server itself.
-
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
@@ -21,7 +19,7 @@ The `cloudron` CLI manages apps on a Cloudron server. All commands operate on ap
 - **Upstream skill**: [git.cloudron.io/docs/skills](https://git.cloudron.io/docs/skills) (`cloudron-server-ops`)
 - **Install**: `sudo npm install -g cloudron` (on your PC/Mac, NOT the server)
 - **Login**: `cloudron login my.example.com` (browser-based; 9.1+ uses OIDC/passkey)
-- **CI/CD**: `--server <domain> --token <api-token>` for non-interactive use (get token from `https://my.example.com/#/profile`)
+- **CI/CD**: `--server <domain> --token <api-token>` (get token from `https://my.example.com/#/profile`); example: `cloudron update --server my.example.com --token <token> --app blog.example.com --image user/image:tag`
 - **Token stored**: `~/.cloudron.json`; self-signed TLS: add `--allow-selfsigned`
 - **Also see**: `cloudron-helper.sh` for multi-server management via API
 
@@ -162,6 +160,3 @@ cloudron completion             # shell completion
 | `--allow-selfsigned` | Accept self-signed TLS certificates |
 | `--no-wait` | Do not wait for the operation to complete |
 
-## CI/CD Integration
-
-Non-interactive use: add `--server <domain> --token <api-token>` (see Global Options). Example: `cloudron update --server my.example.com --token <token> --app blog.example.com --image user/image:tag`
