@@ -46,7 +46,9 @@ anti-detect-helper.sh warmup "name" --duration 30m               # Visits popula
 
 # CRUD + Bulk
 anti-detect-helper.sh profile list [--format json]
-anti-detect-helper.sh profile show|delete|clone "name" [--keep-cookies]
+anti-detect-helper.sh profile show "name" [--format json]
+anti-detect-helper.sh profile delete "name" [--keep-cookies]
+anti-detect-helper.sh profile clone "source-name" "target-name"
 anti-detect-helper.sh profile update "name" --proxy "new-proxy:8080" [--notes "text"]
 anti-detect-helper.sh profile bulk-create --count 10 --prefix "worker" --type clean
 anti-detect-helper.sh profile bulk-delete --type clean
@@ -159,9 +161,9 @@ async def warmup_profile(profile_name: str, duration_minutes: int = 30):
 
 ## Integration Points
 
-- **Proxy**: `proxy-integration.md` — per-profile proxy routing
-- **Fingerprints**: `fingerprint-profiles.md` — Camoufox/BrowserForge generation
-- **Cookies**: `sweet-cookie.md` — importing from real browsers
-- **CAPTCHA**: `capsolver.md` — when anti-detect isn't enough
+- **Proxy**: [proxy-integration.md](proxy-integration.md) — per-profile proxy routing
+- **Fingerprints**: [fingerprint-profiles.md](fingerprint-profiles.md) — Camoufox/BrowserForge generation
+- **Cookies**: [sweet-cookie.md](sweet-cookie.md) — importing from real browsers
+- **CAPTCHA**: [capsolver.md](capsolver.md) — when anti-detect isn't enough
 
 <!-- AI-CONTEXT-END -->
