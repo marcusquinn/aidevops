@@ -36,16 +36,6 @@ after(async () => {
 });
 ```
 
-## Build Before Tests
-
-```js
-import { spawnSync } from "node:child_process";
-
-before(() => {
-  spawnSync("npx wrangler build", { shell: true, stdio: "pipe" });
-});
-```
-
 ## Testing Durable Objects
 
 ```js
@@ -53,14 +43,13 @@ test("durable object state", async () => {
   const ns = await mf.getDurableObjectNamespace("COUNTER");
   const id = ns.idFromName("test-counter");
   const stub = ns.get(id);
-  
+
   const res1 = await stub.fetch("http://localhost/increment");
   assert.strictEqual(await res1.text(), "1");
-  
+
   const res2 = await stub.fetch("http://localhost/increment");
   assert.strictEqual(await res2.text(), "2");
-  
-  // Direct storage access
+
   const storage = await mf.getDurableObjectStorage(id);
   const count = await storage.get("count");
   assert.strictEqual(count, 2);
@@ -72,14 +61,13 @@ test("durable object state", async () => {
 ```js
 test("queue message processing", async () => {
   const worker = await mf.getWorker();
-  
+
   const result = await worker.queue("my-queue", [
     { id: "msg1", timestamp: new Date(), body: { userId: 123 }, attempts: 1 },
   ]);
-  
+
   assert.strictEqual(result.outcome, "ok");
-  
-  // Verify side effects
+
   const kv = await mf.getKVNamespace("QUEUE_LOG");
   const log = await kv.get("msg1");
   assert.ok(log);
@@ -91,12 +79,12 @@ test("queue message processing", async () => {
 ```js
 test("scheduled cron handler", async () => {
   const worker = await mf.getWorker();
-  
+
   const result = await worker.scheduled({
     scheduledTime: new Date("2024-01-01T00:00:00Z"),
     cron: "0 0 * * *",
   });
-  
+
   assert.strictEqual(result.outcome, "ok");
 });
 ```
@@ -191,23 +179,6 @@ test("my test", async () => {
   } finally {
     await mf.dispose();
   }
-});
-```
-
-## Error Handling Tests
-
-```js
-test("handles 404", async () => {
-  const res = await mf.dispatchFetch("http://localhost/not-found");
-  assert.strictEqual(res.status, 404);
-});
-
-test("handles invalid input", async () => {
-  const res = await mf.dispatchFetch("http://localhost/api", {
-    method: "POST",
-    body: "invalid json",
-  });
-  assert.strictEqual(res.status, 400);
 });
 ```
 
