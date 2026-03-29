@@ -757,9 +757,9 @@
       "pr": 11713
     },
     ".agents/tools/build-agent/build-agent.md": {
-      "hash": "7c5ee462156bc31066db55062103a1746b4c0d9c",
-      "at": "2026-03-29T11:51:52Z",
-      "pr": 12918
+      "hash": "1a8143907ffc913652d31b2051cef64e60465686",
+      "at": "2026-03-29T12:36:30Z",
+      "pr": 12957
     },
     ".agents/content/distribution-youtube-topic-research.md": {
       "hash": "d8d475231eff5b53cf27de5ab31aeedaec403e2f",
@@ -1782,14 +1782,14 @@
       "pr": 12665
     },
     ".agents/services/communications/whatsapp.md": {
-      "hash": "7b16feba44a1a61b10b7e4175a28840a4996ea25",
-      "at": "2026-03-29T08:10:56Z",
-      "pr": 12761
+      "hash": "dbc5cdbcdc61a880b5ca1c2746408002cc6fa7ac",
+      "at": "2026-03-29T12:37:29Z",
+      "pr": 12821
     },
     ".agents/tools/ai-orchestration/openprose.md": {
-      "hash": "b742fec6a8830c2e17ea9b115bff5ce8aafe7bca",
-      "at": "2026-03-29T11:51:47Z",
-      "pr": 12919
+      "hash": "ba19a1257768526c285139ea83bbd0e96cb0674f",
+      "at": "2026-03-29T12:36:28Z",
+      "pr": 12949
     },
     ".agents/content/heygen-skill/rules-avatars.md": {
       "hash": "e600865474071a7973fe0ed89b4fd361065e080a",
@@ -2037,9 +2037,9 @@
       "pr": 12823
     },
     ".agents/tools/ai-assistants/capsolver.md": {
-      "hash": "8394d92195a60933f28ef60d69c0b60837020d94",
-      "at": "2026-03-29T11:19:52Z",
-      "pr": 12885
+      "hash": "934e330cfc0b1a30efe5bf139296ae882f868709",
+      "at": "2026-03-29T12:36:41Z",
+      "pr": 12953
     },
     ".agents/workflows/session-review.md": {
       "hash": "0209719f0b5eb68905b4edbdc6bffe1fa8d8a54d",
@@ -2052,14 +2052,14 @@
       "pr": 12890
     },
     ".agents/tools/credentials/vaultwarden.md": {
-      "hash": "af8f3116bacb5f63ec2648c294a2ae9a2fb4670a",
-      "at": "2026-03-29T11:19:56Z",
-      "pr": 12882
+      "hash": "49a473adf85c8382799bc059d99c1693cbea98a9",
+      "at": "2026-03-29T12:36:43Z",
+      "pr": 12951
     },
     ".agents/services/payments/superwall.md": {
-      "hash": "e945006ef69924d2b938a2fdde4484f298864cb3",
-      "at": "2026-03-29T11:20:05Z",
-      "pr": 12883
+      "hash": "1c533274b85654214054f396d45e2b1d09425b85",
+      "at": "2026-03-29T12:36:44Z",
+      "pr": 12952
     },
     ".agents/tools/browser/extension-dev/publishing.md": {
       "hash": "7fe8e877846c0dc155d639a1b5dd214e47c7e499",
@@ -2082,9 +2082,9 @@
       "pr": 12920
     },
     ".agents/tools/voice/speech-to-speech.md": {
-      "hash": "ffc53a77a8f5f13c1db11ffc9956a4606a010374",
-      "at": "2026-03-29T11:51:50Z",
-      "pr": 12921
+      "hash": "e7d0ed38a67b19ea3ef05112081fff1a453ce21e",
+      "at": "2026-03-29T12:36:29Z",
+      "pr": 12956
     },
     ".agents/tools/diagrams/mermaid-diagrams-skill/advanced.md": {
       "hash": "66bd6cabafb5379b9b183e5c0721e35852080713",
@@ -2095,6 +2095,86 @@
       "hash": "2a9c49266d0a50ef42a41c590041ff6aeb62135c",
       "at": "2026-03-29T09:20:58Z",
       "pr": 12824
+    },
+    ".agents/tools/research/providers/unbuilt.md": {
+      "hash": "24d4b4257014273b29b58f5e185f3320e798dad0",
+      "at": "2026-03-29T12:36:25Z",
+      "pr": 12945
+    },
+    ".agents/marketing-sales/meta-ads-checklists-weekly-review.md": {
+      "hash": "8ddae4fd98efd953d4ecaa242553ad3eda337a92",
+      "at": "2026-03-29T12:36:27Z",
+      "pr": 12947
+    },
+    ".agents/scripts/commands/mission.md": {
+      "hash": "e13208184cee9ed81fd7f6bddfef98bbcd41b5f5",
+      "at": "2026-03-29T12:36:32Z",
+      "pr": 12959
+    },
+    ".agents/services/analytics/google-analytics.md": {
+      "hash": "ee41c3c82de9e7f7dfa997caf2efea635a61fd7f",
+      "at": "2026-03-29T12:36:33Z",
+      "pr": 12950
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/tunnel-patterns.md": {
+      "hash": "b194dbf29525881c1c8296a33806387d7ca7fe7f",
+      "at": "2026-03-29T12:36:34Z",
+      "pr": 12955
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/network-interconnect-gotchas.md": {
+      "hash": "07e97feffa7bc2100478d39e614278ab867ba605",
+      "at": "2026-03-29T12:36:58Z",
+      "pr": 12944
+    },
+    ".agents/seo/seo-audit-skill.md": {
+      "hash": "d8493f42e8ba01527667d283942af955218a834f",
+      "at": "2026-03-29T12:37:05Z",
+      "pr": 12948
+    },
+    ".agents/tools/video/remotion-audio.md": {
+      "hash": "c5cce614253505277075e44f178650fab250bd7b",
+      "at": "2026-03-29T12:37:07Z",
+      "pr": 12942
+    },
+    ".agents/aidevops/security-requirements.md": {
+      "hash": "8b86459a5459bd0be5402ca5660bfd99fa54a782",
+      "at": "2026-03-29T12:37:08Z",
+      "pr": 12946
+    },
+    ".agents/marketing-sales/cro-chapter-03.md": {
+      "hash": "ac80d924629caf06f25a2c2bf503c1aa2267d8de",
+      "at": "2026-03-29T12:37:09Z",
+      "pr": 12954
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/network-interconnect-patterns.md": {
+      "hash": "e0498ebcd0125ebedaa97fd88662f8aeff47412a",
+      "at": "2026-03-29T12:37:11Z",
+      "pr": 12909
+    },
+    ".agents/product/validation.md": {
+      "hash": "74840e4aa9e8d619ae82517ca6a1b43a00f99b56",
+      "at": "2026-03-29T12:37:13Z",
+      "pr": 12910
+    },
+    ".agents/scripts/commands/youtube-setup.md": {
+      "hash": "d3f66f792c780e690b58d7f976c01c3d64f09a52",
+      "at": "2026-03-29T12:37:14Z",
+      "pr": 12943
+    },
+    ".agents/services/communications/urbit.md": {
+      "hash": "dc74bf7135da0ba31e070bedbe6be841d6b9588b",
+      "at": "2026-03-29T12:37:15Z",
+      "pr": 12911
+    },
+    ".agents/services/email/email-intelligence.md": {
+      "hash": "4046abd7e9e4fffe477b2aa6fedd74cc46fb9708",
+      "at": "2026-03-29T12:37:18Z",
+      "pr": 12912
+    },
+    ".agents/content/distribution-youtube-channel-intel.md": {
+      "hash": "e7acafaec5e56e608968ecc99a7005352995560c",
+      "at": "2026-03-29T12:37:24Z",
+      "pr": 12791
     }
   }
 }
