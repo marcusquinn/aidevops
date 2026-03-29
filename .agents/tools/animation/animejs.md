@@ -103,7 +103,7 @@ tl.seek('content');
 |-------------------|-------------|
 | `play()` / `pause()` | Start / pause |
 | `restart()` / `reverse()` | Restart / reverse direction |
-| `seek(time)` | Jump to ms or progress 0–1 |
+| `seek(time)` | Jump to time in ms (`anim.progress = 0.5` for %) |
 | `complete()` / `cancel()` | Jump to end / stop and reset |
 | `revert()` | Restore initial state |
 | `progress` / `currentTime` | 0–100 / ms elapsed |
@@ -111,7 +111,7 @@ tl.seek('content');
 
 ```javascript
 const anim = animate('.element', { translateX: 250, autoplay: false });
-anim.play(); anim.pause(); anim.seek(0.5);
+anim.play(); anim.pause(); anim.seek(anim.duration * 0.5);
 ```
 
 ## Stagger
