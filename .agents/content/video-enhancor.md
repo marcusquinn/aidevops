@@ -10,26 +10,9 @@ tools: [bash, read, write, edit]
 
 **CLI**: `enhancor-helper.sh` — `.agents/scripts/enhancor-helper.sh`
 
-**Base URL**: `https://apireq.enhancor.ai/api`
+**Base URL**: `https://apireq.enhancor.ai/api` | **Auth**: `x-api-key` header — `aidevops secret set ENHANCOR_API_KEY`
 
-**Auth**: API key via `x-api-key` header — `aidevops secret set ENHANCOR_API_KEY`
-
-## Quick Start
-
-```bash
-# Skin enhancement (v3 model)
-enhancor-helper.sh enhance --img-url https://example.com/portrait.jpg \
-    --model enhancorv3 --skin-refinement 50 --resolution 2048 --sync -o result.png
-
-# Portrait upscale
-enhancor-helper.sh upscale --img-url https://example.com/portrait.jpg \
-    --mode professional --sync -o upscaled.png
-
-# AI image generation
-enhancor-helper.sh generate "A serene mountain landscape at sunset" \
-    --model kora_pro_cinema --generation-mode 4k_ultra --size landscape_16:9 \
-    --sync -o generated.png
-```
+**Resources**: [Website](https://www.enhancor.ai/) · [API Docs](https://github.com/rohan-kulkarni-25/enhancor-api-docs)
 
 ## Commands
 
@@ -44,11 +27,21 @@ enhancor-helper.sh generate "A serene mountain landscape at sunset" \
 | `batch` | — | Batch process from URL file |
 | `setup` | — | API key setup |
 
+```bash
+# Skin enhancement (v3)
+enhancor-helper.sh enhance --img-url URL --model enhancorv3 --skin-refinement 50 --resolution 2048 --sync -o result.png
+
+# Portrait upscale
+enhancor-helper.sh upscale --img-url URL --mode professional --sync -o upscaled.png
+
+# AI image generation
+enhancor-helper.sh generate "A serene mountain landscape at sunset" \
+    --model kora_pro_cinema --generation-mode 4k_ultra --size landscape_16:9 --sync -o generated.png
+```
+
 ## Enhance Parameters
 
-**Models**:
-- `enhancorv1`: Standard — face/body modes, enhancement modes (`standard`/`heavy`)
-- `enhancorv3`: Advanced — mask support, higher resolution, more realism control
+**Models**: `enhancorv1` (standard — face/body modes, `standard`/`heavy` enhancement) · `enhancorv3` (advanced — mask support, higher resolution, more realism control)
 
 | Parameter | Range | Notes |
 |-----------|-------|-------|
@@ -63,16 +56,14 @@ enhancor-helper.sh generate "A serene mountain landscape at sunset" \
 **Area control** (pass flags to keep unchanged): `--area-background`, `--area-skin`, `--area-hair`, `--area-nose`, `--area-eye-g`, `--area-r-eye`, `--area-l-eye`, `--area-r-brow`, `--area-l-brow`, `--area-mouth`, `--area-u-lip`, `--area-l-lip`, `--area-neck`, `--area-cloth`
 
 ```bash
-# Advanced v3 with granular control
+# v3 with granular control
 enhancor-helper.sh enhance --img-url URL \
     --model enhancorv3 --skin-refinement 70 --skin-realism 1.5 \
-    --portrait-depth 0.3 --resolution 2048 --area-background --area-hair \
-    --sync -o enhanced.png
+    --portrait-depth 0.3 --resolution 2048 --area-background --area-hair --sync -o enhanced.png
 
 # With mask (v3 only)
 enhancor-helper.sh enhance --img-url URL \
-    --model enhancorv3 --mask-url https://example.com/mask.png --mask-expand 10 \
-    --sync -o masked_enhanced.png
+    --model enhancorv3 --mask-url https://example.com/mask.png --mask-expand 10 --sync -o masked.png
 ```
 
 ## Upscale Parameters
@@ -99,14 +90,12 @@ enhancor-helper.sh detailed --img-url URL --sync -o detailed.png
 
 ```bash
 # Cinematic 4K
-enhancor-helper.sh generate "Epic sci-fi cityscape with neon lights" \
-    --model kora_pro_cinema --generation-mode 4k_ultra --size landscape_16:9 \
-    --sync -o cinematic.png
+enhancor-helper.sh generate "Epic sci-fi cityscape" \
+    --model kora_pro_cinema --generation-mode 4k_ultra --size landscape_16:9 --sync -o cinematic.png
 
 # Image-to-image
 enhancor-helper.sh generate "Transform into watercolor painting style" \
-    --img-url https://example.com/reference.jpg --generation-mode 2k_pro \
-    --size custom_2048_1536 --sync -o transformed.png
+    --img-url https://example.com/reference.jpg --generation-mode 2k_pro --size custom_2048_1536 --sync -o transformed.png
 ```
 
 ## Async Queue Workflow
@@ -115,11 +104,7 @@ All APIs are async queue-based: **Submit → Poll → Download**
 
 **Status codes**: `PENDING` → `IN_QUEUE` → `IN_PROGRESS` → `COMPLETED` / `FAILED`
 
-Use `--sync` to auto-poll and download. Manual check:
-
-```bash
-enhancor-helper.sh status REQUEST_ID --api /realistic-skin/v1
-```
+Use `--sync` to auto-poll and download. Manual check: `enhancor-helper.sh status REQUEST_ID --api /realistic-skin/v1`
 
 ## Global Options
 
@@ -131,28 +116,17 @@ enhancor-helper.sh status REQUEST_ID --api /realistic-skin/v1
 | `-o FILE` | — | Output file (requires `--sync`) |
 | `--webhook URL` | — | Callback on completion |
 
-```bash
-# Custom poll/timeout
-enhancor-helper.sh enhance --img-url URL --sync --poll 10 --timeout 900 -o result.png
-
-# Webhook
-enhancor-helper.sh enhance --img-url URL --webhook https://your-webhook.com/callback
-```
-
 **Webhook payload**: `{"request_id": "...", "result": "https://.../image.png", "status": "success"}`
 
 ## Batch Processing
 
 ```bash
 # urls.txt: one URL per line
-enhancor-helper.sh batch --command enhance --input urls.txt \
-    --output-dir results/ --model enhancorv3 --skin-refinement 50
-
-enhancor-helper.sh batch --command upscale --input urls.txt \
-    --output-dir results/ --mode professional
+enhancor-helper.sh batch --command enhance --input urls.txt --output-dir results/ --model enhancorv3 --skin-refinement 50
+enhancor-helper.sh batch --command upscale --input urls.txt --output-dir results/ --mode professional
 ```
 
-Test parameters on a single image first. Use consistent parameters across batch for uniform results.
+Test parameters on a single image first. Use consistent parameters across a batch for uniform results.
 
 ## Error Handling
 
@@ -169,9 +143,3 @@ Test parameters on a single image first. Use consistent parameters across batch 
 **Content pipeline**: Generate/capture → Enhance (Enhancor) → Optimize → Distribute
 
 See `.agents/content/production-image.md` for full integration details.
-
-## Resources
-
-- **Website**: https://www.enhancor.ai/
-- **API Docs**: https://github.com/rohan-kulkarni-25/enhancor-api-docs
-- **Helper Script**: `.agents/scripts/enhancor-helper.sh`
