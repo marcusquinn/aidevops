@@ -21,25 +21,25 @@ model: haiku
 
 - **Default**: `sonnet` (best cost/capability balance)
 - **Cost spectrum**: local (free) → composer2 → flash → haiku → sonnet → pro → opus
-- **Rule**: use the smallest model that produces acceptable quality
+- **Rule**: smallest model that produces acceptable quality
 
 ## Model Tiers
 
 | Tier | Model | Cost | Use When |
 |------|-------|------|----------|
-| `local` | llama.cpp (user GGUF) | $0 | Privacy/on-device, offline, bulk, experimentation; <32K context |
-| `composer2` | cursor/composer-2 | ~0.17x | Complex multi-file coding, large refactors (requires Cursor OAuth pool t1549) |
-| `flash` | gemini-2.5-flash-preview-05-20 | ~0.20x | >50K token context, summarization, bulk processing, research sweeps |
-| `haiku` | claude-haiku-4-5-20251001 | ~0.25x | Classification/triage, simple transforms, commit messages, routing decisions |
-| `sonnet` | claude-sonnet-4-6 | 1x | Code implementation, review, debugging, documentation — most dev tasks |
-| `pro` | gemini-2.5-pro | ~1.5x | >100K token codebases + complex reasoning |
+| `local` | llama.cpp (user GGUF) | $0 | Privacy/offline, bulk, experimentation; <32K context |
+| `composer2` | cursor/composer-2 | ~0.17x | Multi-file coding, large refactors (requires Cursor OAuth pool t1549) |
+| `flash` | gemini-2.5-flash-preview-05-20 | ~0.20x | >50K context, summarization, bulk processing, research sweeps |
+| `haiku` | claude-haiku-4-5-20251001 | ~0.25x | Classification, triage, simple transforms, commit messages, routing |
+| `sonnet` | claude-sonnet-4-6 | 1x | Code, review, debugging, docs — most dev tasks |
+| `pro` | gemini-2.5-pro | ~1.5x | >100K codebases + complex reasoning |
 | `opus` | claude-opus-4-6 | ~3x | Architecture, novel problems, security audits, complex trade-offs |
 
-**Model IDs**: Always fully-qualified (e.g., `claude-sonnet-4-6`, not `claude-sonnet-4`). Short-form causes `ProviderModelNotFoundError`. CLI: `anthropic/claude-sonnet-4-6`, `google/gemini-2.5-pro`.
+**Model IDs**: Always fully-qualified (e.g., `claude-sonnet-4-6`, not `claude-sonnet-4`). Short-form causes `ProviderModelNotFoundError`. CLI prefix: `anthropic/`, `google/`.
 
 **`local` fallback**: Privacy → FAIL (require `--allow-cloud`). Cost → fall back to `composer2`.
 
-**Billing**: Subscription plans recommended for regular use. API keys for testing/burst.
+**Billing**: Subscription plans for regular use. API keys for testing/burst.
 
 ## Decision Flowchart
 
@@ -73,7 +73,7 @@ Set `model: haiku` (or any tier) in YAML frontmatter. Absent → `sonnet`. `loca
 ## Headless Dispatch
 
 - **Pulse supervisor**: Anthropic sonnet only — OpenAI models exit without activity (proven). Pin: `PULSE_MODEL=anthropic/claude-sonnet-4-6`.
-- **Workers**: Any provider. `AIDEVOPS_HEADLESS_MODELS` is rotation with backoff, not escalation. For tier escalation, use `tier:thinking` labels.
+- **Workers**: Any provider. `AIDEVOPS_HEADLESS_MODELS` is rotation with backoff, not escalation. Tier escalation: use `tier:thinking` labels.
 - **Default**: `anthropic/claude-sonnet-4-6`.
 
 ```bash
@@ -114,7 +114,7 @@ Integration: `cron-dispatch.sh` reads `model_defaults.implementation`; pulse use
 
 ## Failure-Based Escalation (t1416)
 
-After 2 failed attempts, escalate to next tier (sonnet → opus via `--model anthropic/claude-opus-4-6`). One opus (~3x) costs less than 3+ failed sonnet dispatches. Every dispatch/kill comment MUST include model tier for escalation auditing.
+After 2 failed attempts, escalate to next tier (sonnet → opus via `--model anthropic/claude-opus-4-6`). One opus (~3x) < 3+ failed sonnet dispatches. Every dispatch/kill comment MUST include model tier for escalation auditing.
 
 ## Tier Drift Detection (t1191)
 
