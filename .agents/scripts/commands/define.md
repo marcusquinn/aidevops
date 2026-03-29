@@ -105,7 +105,8 @@ When `--headless` or `$ARGUMENTS` contains ` -- ` (supervisor dispatch), skip in
 2. Apply default assumptions for that type
 3. Generate brief with `Created by: ai-supervisor` in Origin
 4. Write to `todo/tasks/{task_id}-brief.md`
-5. No confirmation — save immediately
+5. Add `#worker` tag to TODO.md entry (headless sessions are always workers)
+6. No confirmation — save immediately
 
 ## Example
 
