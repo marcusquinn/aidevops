@@ -1,5 +1,7 @@
 # Mermaid Quick Reference Cheatsheet
 
+Syntax-at-a-glance. For full examples and patterns, see the chapter files linked in each section.
+
 ## Diagram Declarations
 
 | Diagram | Declaration | Diagram | Declaration |
@@ -17,108 +19,75 @@
 | Packet | `packet-beta` | Requirement | `requirementDiagram` |
 | Treemap | `treemap-beta` | | |
 
-## Flowchart
+## Flowchart (detail: `flowcharts.md`)
 
-**Direction:** `TB`/`TD` (top-bottom) `BT` `LR` `RL`
+**Direction:** `TB`/`TD` `BT` `LR` `RL`
 
 **Nodes:** `A[Rect]` `B(Rounded)` `C([Stadium])` `D[[Subroutine]]` `E[(Database)]` `F((Circle))` `G{Diamond}` `H{{Hexagon}}` `I[/Parallelogram/]` `J(((Double)))`
 
-| Edge | Meaning | Edge | Meaning |
-|------|---------|------|---------|
-| `A --> B` | Solid arrow | `A --- B` | Solid line |
-| `A -.-> B` | Dotted arrow | `A ==> B` | Thick arrow |
-| `A --o B` | Circle end | `A --x B` | Cross end |
-| `A <--> B` | Bidirectional | `A -->\|text\| B` | Labeled |
+**Edges:** `-->` solid arrow, `---` line, `-.->` dotted, `==>` thick, `--o` circle end, `--x` cross end, `<-->` bidirectional, `-->\|text\|` labeled
 
-**Subgraph:** `subgraph Name` ... `end` — nestable, linkable between subgraphs
+**Subgraph:** `subgraph Name` ... `end` — nestable, linkable
 
-## Sequence Diagram
+## Sequence Diagram (detail: `sequence.md`)
 
-| Message | Meaning | Message | Meaning |
-|---------|---------|---------|---------|
-| `A->>B` | Sync (solid) | `A-->>B` | Response (dotted) |
-| `A-xB` | Failed | `A-)B` | Async |
-| `A->>+B` | Activate B | `B-->>-A` | Deactivate B |
+**Messages:** `->>` sync, `-->>` response, `-x` failed, `-)` async, `->>+`/`-->>-` activate/deactivate
 
 **Control flow:** `alt`/`else`/`end` `opt`/`end` `loop`/`end` `par`/`and`/`end` `critical`/`option`/`end` `break`/`end`
 
 **Notes:** `Note right of A: Text` `Note over A,B: Spanning`
 
-## Class Diagram
+## Class Diagram (detail: `class-er.md`)
 
 **Visibility:** `+` Public `-` Private `#` Protected `~` Package
 
-| Relationship | Meaning | Relationship | Meaning |
-|-------------|---------|-------------|---------|
-| `A <\|-- B` | Inheritance | `A *-- B` | Composition |
-| `A o-- B` | Aggregation | `A --> B` | Association |
-| `A ..> B` | Dependency | `A ..\|> B` | Realization |
+**Relationships:** `<\|--` inheritance, `*--` composition, `o--` aggregation, `-->` association, `..>` dependency, `..\|>` realization
 
-**Cardinality:** `A "1" --> "*" B : has` `A "0..1" --> "1..*" B`
+**Cardinality:** `A "1" --> "*" B : has` | **Annotations:** `<<interface>>` `<<enumeration>>`
 
-**Annotations:** `class A { <<interface>> +method() }` `class B { <<enumeration>> VALUE1 }`
+## ER Diagram (detail: `class-er.md`)
 
-## ER Diagram
+**Cardinality:** `\|\|--\|\|` one-one, `\|\|--o{` one-many, `}o--o{` many-many (opt), `}\|--\|{` many-many (req)
 
-| Symbol | Meaning | Symbol | Meaning |
-|--------|---------|--------|---------|
-| `\|\|--\|\|` | One to one | `\|\|--o{` | One to many |
-| `}o--o{` | Many-many (opt) | `}\|--\|{` | Many-many (req) |
-| `--` | Identifying | `..` | Non-identifying |
+**Line type:** `--` identifying, `..` non-identifying
 
-**Attributes:** `ENTITY { type name PK` `type name FK` `type name UK` `type name }`
+**Attributes:** `ENTITY { type name PK` `type name FK` `type name UK` `}`
 
-## State Diagram
+## State Diagram (detail: `state-journey.md`)
 
-**Transitions:** `[*] --> State1` `State1 --> State2` `State2 --> [*]` (self: `S --> S`)
+**Transitions:** `[*] --> State1` `State1 --> State2` `State2 --> [*]`
 
-**Composite:** `state Parent { [*] --> Child1` `Child1 --> Child2 }`
+**Composite:** `state Parent { [*] --> Child }` | **Special:** `<<choice>>` `<<fork>>` `<<join>>`
 
-**Choice/Fork/Join:** `state check <<choice>>` `state fork <<fork>>` `state join <<join>>`
-
-## Gantt Chart
+## Gantt Chart (detail: `data-charts.md`)
 
 **Format:** `Task name : [tags], [id], [start], [end/duration]`
 
-**Tags:** `done` `active` `crit` `milestone` | **Dependencies:** `after t1` `after t1 t2`
+**Tags:** `done` `active` `crit` `milestone` | **Dependencies:** `after t1`
 
-**Example:** `Completed :done, t1, 2024-01-01, 7d` `Active :active, t2, after t1, 5d` `Milestone :milestone, m1, 2024-01-20, 0d`
+## Pie / Timeline (detail: `data-charts.md`)
 
-## Pie Chart
+**Pie:** `pie showData` then `"Label" : value` | **Timeline:** `timeline` then `section Period` then `Date : Event`
 
-**Format:** `pie showData` with indented `title Chart Title` and `"Label" : value` entries.
+## C4 Diagrams (detail: `architecture.md`)
 
-## Timeline
+**Elements:** `Person(alias, "Label", "Desc")` `System(...)` `System_Ext(...)` `Container(alias, "Label", "Tech", "Desc")` `ContainerDb(...)` `Component(...)`
 
-**Format:** `timeline` with indented `title Title`, `section Period`, `Date : Event 1 : Event 2`.
+**Relations:** `Rel(from, to, "Label")` `BiRel(...)` | **Boundaries:** `System_Boundary(alias, "Label") { ... }`
 
-## C4 Diagrams
+## Architecture Diagram (detail: `architecture.md`)
 
-**Elements:** `Person(alias, "Label", "Desc")` `System(alias, "Label", "Desc")` `System_Ext(...)` `Container(alias, "Label", "Tech", "Desc")` `ContainerDb(...)` `Component(alias, "Label", "Tech", "Desc")`
+**Groups:** `group id(icon)[Title] in parent` | **Services:** `service id(icon)[Title] in group`
 
-**Relations:** `Rel(from, to, "Label")` `Rel(from, to, "Label", "Tech")` `BiRel(from, to, "Label")`
+**Edges:** `a:R --> L:b` `a:T --> B:b` `<-->` | **Icons:** `cloud` `database` `disk` `internet` `server`
 
-**Boundaries:** `System_Boundary(alias, "Label") { Container(...) }`
-
-## Architecture Diagram
-
-**Groups:** `group id(icon)[Title]` `group id(icon)[Title] in parent`
-
-**Services:** `service id(icon)[Title]` `service id(icon)[Title] in group`
-
-**Edges:** `a:R --> L:b` (right→left) `a:T --> B:b` (top→bottom) `<-->` (bidirectional)
-
-**Icons:** `cloud` `database` `disk` `internet` `server`
-
-## Styling
+## Styling (detail: `advanced.md`)
 
 **Themes:** `%%{init: {'theme': 'dark'}}%%` — `default` `dark` `forest` `neutral` `base`
 
-**Custom vars:** `%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#3b82f6', 'lineColor': '#64748b'}}}%%`
+**Custom vars:** `%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#3b82f6'}}}%%`
 
-**Node styling:** `classDef myClass fill:#f00,stroke:#333,color:#fff` `A:::myClass` `style A fill:#f00`
-
-**Link styling:** `linkStyle 0 stroke:red` `linkStyle default stroke:gray`
+**Node:** `classDef cls fill:#f00,stroke:#333` `A:::cls` `style A fill:#f00` | **Link:** `linkStyle 0 stroke:red`
 
 ## Special Characters
 
