@@ -7,19 +7,13 @@ model: haiku
 
 # Content Context Templates
 
-Templates for project-level context files that guide SEO content creation. Adapted from [TheCraigHewitt/seomachine](https://github.com/TheCraigHewitt/seomachine) (MIT License).
+Project-level context files for SEO content creation. Adapted from [TheCraigHewitt/seomachine](https://github.com/TheCraigHewitt/seomachine) (MIT License).
 
-## Setup
-
-Create a `context/` directory in your project root and populate these templates:
+Create a `context/` directory and populate from templates below. Subagents (`seo-writer.md`, `editor.md`, `internal-linker.md`) check for these files automatically.
 
 ```bash
 mkdir -p context
 ```
-
-The content writing subagents (`content/seo-writer.md`, `content/editor.md`, `content/internal-linker.md`) automatically check for these files before writing.
-
-## Templates
 
 ### context/brand-voice.md
 
@@ -181,15 +175,3 @@ Keywords competitors rank for that we don't:
 - Schema markup: Article, FAQ, HowTo as appropriate
 ```
 
-## Usage
-
-Content subagents check for these files automatically:
-
-```bash
-# Check what context is available
-ls context/ 2>/dev/null || ls .aidevops/context/ 2>/dev/null
-
-# Initialize context for a new project
-mkdir -p context
-# Then populate templates above with your project's information
-```
