@@ -17,18 +17,19 @@ tools:
 
 ## Quick Reference
 
-**Supported Registrars**:
-- **Spaceship**: 500+ TLDs, bulk ops, auto-renewal
-- **101domains**: 1000+ TLDs, premium domains, reseller support
+**Registrars**:
+- **Spaceship**: 500+ TLDs, bulk ops, auto-renewal — full API support
+- **101domains**: 1000+ TLDs, premium domains, reseller support — comprehensive API
 
 **Commands** (`spaceship-helper.sh`):
 - `check-availability <account> <domain>` — check single domain
 - `bulk-check <account> <domains...>` — check multiple domains
 - `purchase <account> <domain> <years> <auto_renew>` — buy domain (requires confirmation)
 - `domains <account>` — list registered domains
+- `domain-details <account> <domain>` — domain details
 - `monitor-expiration <account> <days>` — check expiring domains
 
-**Security**: confirmation required, spending limits configurable, audit trails
+**Security**: confirmation required on every purchase; configure `max_purchase_amount` and `daily_purchase_limit` to cap spend; all purchases logged and auditable; enable domain locking and 2FA on registrar account
 
 **TLD Recommendations**:
 - Web apps: `.com`, `.app`, `.io`
@@ -36,14 +37,6 @@ tools:
 - E-commerce: `.shop`, `.store`
 
 <!-- AI-CONTEXT-END -->
-
-## Registrars
-
-### Spaceship
-Full API support — instant registration, bulk operations, auto-renewal, 500+ TLDs.
-
-### 101domains
-Comprehensive API — bulk availability checking, premium domains, reseller support, 1000+ TLDs.
 
 ## Configuration
 
@@ -74,10 +67,8 @@ Comprehensive API — bulk availability checking, premium domains, reseller supp
 ### Availability Checking
 
 ```bash
-# Single domain
 ./.agents/scripts/spaceship-helper.sh check-availability personal example.com
 
-# Bulk check
 ./.agents/scripts/spaceship-helper.sh bulk-check personal \
   myproject.com myproject.net myproject.io myproject.app myproject.dev
 ```
@@ -85,7 +76,7 @@ Comprehensive API — bulk availability checking, premium domains, reseller supp
 ### Purchasing
 
 ```bash
-# Purchase with auto-renewal (confirmation prompt shown)
+# 1 year with auto-renewal
 ./.agents/scripts/spaceship-helper.sh purchase personal mynewdomain.com 1 true
 
 # Multi-year
@@ -95,25 +86,11 @@ Comprehensive API — bulk availability checking, premium domains, reseller supp
 ./.agents/scripts/spaceship-helper.sh purchase personal temporary-project.com 1 false
 ```
 
-Purchase flow:
-```
-[INFO] Checking availability before purchase...
-[SUCCESS] Domain newproject.com is available — Price: $12.99
-[WARNING] This action will charge your account. Continue? (y/N)
-y
-[SUCCESS] Domain purchased successfully
-```
-
 ### Portfolio Management
 
 ```bash
-# List domains
 ./.agents/scripts/spaceship-helper.sh domains personal
-
-# Domain details
 ./.agents/scripts/spaceship-helper.sh domain-details personal mydomain.com
-
-# Expiration monitoring
 ./.agents/scripts/spaceship-helper.sh monitor-expiration personal 30
 ```
 
@@ -146,21 +123,7 @@ Multi-environment strategy:
 
 ## AI Assistant Workflow
 
-When asked to purchase a domain for a project:
-
-1. Analyse project type → suggest name candidates
-2. Bulk-check availability across recommended TLDs
-3. Compare pricing and renewal costs
-4. Present recommendation with rationale
-5. Execute purchase after explicit user confirmation
-6. Configure DNS and add domain to project config
-
-## Security
-
-- All purchases require explicit confirmation
-- Configure `max_purchase_amount` and `daily_purchase_limit` to cap spend
-- All purchases are logged and auditable
-- Enable domain locking and 2FA on registrar account
+When asked to purchase a domain: analyse project type → suggest name candidates → bulk-check availability across recommended TLDs → compare pricing and renewal costs → present recommendation with rationale → execute after explicit user confirmation → configure DNS and add domain to project config.
 
 ## Portfolio Best Practices
 
