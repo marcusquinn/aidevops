@@ -322,7 +322,7 @@ Before merging ANY PR:
 
 ### PR triage
 
-- **Green CI + no blocking reviews** → approve then merge: `approve_collaborator_pr <number> <slug> <author>` then `gh pr merge <number> --repo <slug> --squash`. If the PR resolves an issue, comment on the issue to link the merged PR, then close it: `gh issue comment <number> --repo <slug> --body "Completed via PR #<N>."` then `gh issue close <number> --repo <slug>`.
+- **Green CI + no blocking reviews** → approve then merge: `approve_collaborator_pr <number> <slug> <author>` then `gh pr merge <number> --repo <slug> --squash`. If the PR resolves an issue, comment on both the PR and the issue to link them, then close the issue: `gh issue comment <issue> --repo <slug> --body "Completed via PR #<N>. merged to main."` then `gh issue close <issue> --repo <slug>`.
 - **Green CI + WAITING on review bots** → skip, run `request-retry`
 - **Failing CI** → check if systemic (same check fails on 3+ PRs). If systemic, file a workflow issue instead of dispatching per-PR fixes. If per-PR, dispatch a fix worker.
 - **Open 6+ hours with no recent commits** → something is stuck. Comment, consider closing and re-filing.

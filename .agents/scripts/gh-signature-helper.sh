@@ -724,7 +724,7 @@ _format_number() {
 # =============================================================================
 # _parse_generate_args — parse CLI args for cmd_generate
 # =============================================================================
-# Outputs pipe-separated: model|tokens|cli_name|cli_version|issue_ref|issue_created|solved|no_session
+# Outputs pipe-separated: model|tokens|cli_name|cli_version|issue_ref|issue_created|solved|no_session|session_type_override|time_secs
 
 _parse_generate_args() {
 	local model="${AIDEVOPS_SIG_MODEL:-}"
@@ -732,6 +732,7 @@ _parse_generate_args() {
 	local cli_name="${AIDEVOPS_SIG_CLI:-}"
 	local cli_version="${AIDEVOPS_SIG_CLI_VERSION:-}"
 	local issue_ref="" issue_created="" solved="false" no_session="false"
+	local session_type_override="" time_secs=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -767,13 +768,22 @@ _parse_generate_args() {
 			no_session="true"
 			shift
 			;;
+		--session-type)
+			session_type_override="$2"
+			shift 2
+			;;
+		--time)
+			time_secs="$2"
+			shift 2
+			;;
 		*) shift ;;
 		esac
 	done
 
-	printf '%s|%s|%s|%s|%s|%s|%s|%s\n' \
+	printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
 		"$model" "$tokens" "$cli_name" "$cli_version" \
-		"$issue_ref" "$issue_created" "$solved" "$no_session"
+		"$issue_ref" "$issue_created" "$solved" "$no_session" \
+		"$session_type_override" "$time_secs"
 	return 0
 }
 
@@ -902,6 +912,8 @@ _build_signature() {
 			sig="${sig} on this with the user in an interactive session."
 		elif [[ "$session_type" == "worker" ]]; then
 			sig="${sig} on this as a headless worker."
+		elif [[ "$session_type" == "routine" ]]; then
+			sig="${sig} on this as a headless bash routine."
 		else
 			sig="${sig} on this."
 		fi
@@ -947,7 +959,9 @@ cmd_generate() {
 	local parsed
 	parsed=$(_parse_generate_args "$@")
 	local model tokens cli_name cli_version issue_ref issue_created solved no_session
-	IFS='|' read -r model tokens cli_name cli_version issue_ref issue_created solved no_session <<<"$parsed"
+	local session_type_override time_secs
+	IFS='|' read -r model tokens cli_name cli_version issue_ref issue_created solved no_session \
+		session_type_override time_secs <<<"$parsed"
 
 	# Auto-detect CLI name/version
 	local cli_resolved
@@ -992,6 +1006,14 @@ cmd_generate() {
 
 		# Detect session type (interactive vs worker)
 		session_type=$(_detect_session_type)
+	fi
+
+	# Apply explicit overrides (--time and --session-type take precedence)
+	if [[ -n "$time_secs" ]] && [[ "$time_secs" -gt 0 ]] 2>/dev/null; then
+		session_time_str=$(_format_duration "$time_secs")
+	fi
+	if [[ -n "$session_type_override" ]]; then
+		session_type="$session_type_override"
 	fi
 
 	# Build and emit the signature
