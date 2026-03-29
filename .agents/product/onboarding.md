@@ -29,8 +29,6 @@ tools:
 
 ### Pattern 1: Value-First (Recommended)
 
-Show core value immediately, then ask for setup.
-
 ```text
 1. Welcome (brand + one-line value prop)
 2. Core experience preview (show what the product does)
@@ -40,8 +38,6 @@ Show core value immediately, then ask for setup.
 ```
 
 ### Pattern 2: Progressive Setup
-
-Collect information to personalise the experience.
 
 ```text
 1. Welcome
@@ -53,8 +49,6 @@ Collect information to personalise the experience.
 
 ### Pattern 3: Feature Tour
 
-Walk through key features with interactive demos.
-
 ```text
 1. Welcome
 2. Feature 1 demo (interactive, not just text)
@@ -63,8 +57,6 @@ Walk through key features with interactive demos.
 ```
 
 ### Pattern 4: Hard Paywall (High-revenue B2C)
-
-Force a payment decision immediately after onboarding, before any product usage. Used by many top-grossing consumer apps.
 
 ```text
 1. Welcome (brand + bold value prop)
@@ -75,9 +67,7 @@ Force a payment decision immediately after onboarding, before any product usage.
 6. Hard paywall (unskippable — pay or start free trial)
 ```
 
-**When to use**: B2C products where competitors successfully use hard paywalls. Validate by checking top-grossing competitors.
-
-**Trade-offs**:
+**When to use**: B2C where competitors use hard paywalls. Validate against top-grossing competitors.
 
 | Aspect | Hard Paywall | Soft Paywall (feature-gated) |
 |--------|-------------|------------------------------|
@@ -87,17 +77,17 @@ Force a payment decision immediately after onboarding, before any product usage.
 | App Store ratings | Risk of negative reviews | Generally better |
 | Best for | Proven niches with validated demand | New/unvalidated products |
 
-**Key principle**: Weak onboarding + hard paywall drives users away; strong onboarding + hard paywall maximises revenue from motivated users. Pricing: mirror top competitors, A/B test once you have traffic.
+**Key principle**: Weak onboarding + hard paywall drives users away. Strong onboarding + hard paywall maximises revenue. Mirror top competitor pricing; A/B test once you have traffic.
 
 ## Design Principles
 
-**Every screen must earn its place** — add a screen only if the user needs the information now, it can't be deferred to in-context education, and it increases the chance they become a regular user.
+**Every screen must earn its place** — add a screen only if the user needs the information now, it can't be deferred, and it increases the chance they become a regular user.
 
 **Skip always visible** (except hard paywall): "Skip" button, progress indicator, back navigation.
 
 ### Permission Requests
 
-Request in context, not upfront:
+Request in context, not upfront. Exception: if the core function requires a permission (e.g., camera app), request during onboarding with a clear explanation.
 
 | Permission | When to Ask |
 |------------|-------------|
@@ -107,8 +97,6 @@ Request in context, not upfront:
 | Health data | When user enables health tracking |
 | Browser permissions | When user triggers the feature needing it |
 
-Exception: if the product's core function requires a permission (e.g., camera app), request it during onboarding with a clear explanation.
-
 ### Account Creation
 
 Defer unless required for core functionality:
@@ -117,19 +105,17 @@ Defer unless required for core functionality:
 - **Optional**: Sync across devices, social features
 - **Required**: Multi-user, cloud-based, subscription products
 
-When required, offer: Sign in with Apple (mandatory on iOS if any third-party sign-in exists) → Sign in with Google → Email + password.
+When required: Sign in with Apple (mandatory on iOS if any third-party sign-in exists) → Sign in with Google → Email + password.
 
 ### Paywall Placement
 
-See `product/monetisation.md` for detailed strategy.
+See `product/monetisation.md` for detailed strategy. If competitors use hard paywalls successfully, follow their lead; otherwise show paywall after first core action.
 
 | Position | Pros | Cons |
 |----------|------|------|
 | After onboarding, before product (hard) | High visibility, maximises revenue per install | User hasn't experienced value |
 | After first core action (soft) | User has experienced value | Lower visibility |
 | After 3 days of use (delayed) | Highest conversion | Delayed revenue |
-
-If competitors use hard paywalls successfully, follow their lead. For unvalidated products, show the paywall after the user completes their first core action.
 
 ## Onboarding Metrics
 
