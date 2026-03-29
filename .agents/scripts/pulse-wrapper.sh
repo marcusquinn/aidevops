@@ -820,6 +820,15 @@ _append_prefetch_sub_helpers() {
 	cat "$triage_tmp" >>"$STATE_FILE"
 	rm -f "$triage_tmp"
 
+	# Append status:needs-info contributor reply status
+	local needs_info_tmp
+	needs_info_tmp=$(mktemp)
+	run_cmd_with_timeout 30 prefetch_needs_info_replies "$repo_entries" >"$needs_info_tmp" 2>/dev/null || {
+		echo "[pulse-wrapper] prefetch_needs_info_replies timed out after 30s (non-fatal)" >>"$LOGFILE"
+	}
+	cat "$needs_info_tmp" >>"$STATE_FILE"
+	rm -f "$needs_info_tmp"
+
 	return 0
 }
 
@@ -2812,6 +2821,109 @@ prefetch_triage_review_status() {
 		echo "**Total pending triage reviews: ${total_pending}**"
 		echo ""
 		echo "[pulse-wrapper] Triage review status: ${total_pending} issues pending review" >>"$LOGFILE"
+	fi
+
+	return 0
+}
+
+#######################################
+# Pre-fetch contributor reply status for status:needs-info issues
+#
+# For each pulse-enabled repo, finds issues with the status:needs-info
+# label and checks whether the original issue author has commented since
+# the label was applied. This enables the pulse to relabel issues back
+# to needs-maintainer-review when the contributor provides the requested
+# information.
+#
+# Detection: compare the label event timestamp (from timeline API) or
+# issue updatedAt against the most recent comment from the issue author.
+# If the author commented after the label was applied, mark as "replied".
+#
+# Arguments:
+#   $1 - repo_entries (slug|path pairs, one per line)
+# Output: needs-info reply status section to stdout
+#######################################
+prefetch_needs_info_replies() {
+	local repo_entries="$1"
+	local found_any=false
+	local total_replied=0
+
+	while IFS='|' read -r slug path; do
+		[[ -n "$slug" ]] || continue
+
+		# Get status:needs-info issues for this repo
+		local ni_json
+		ni_json=$(gh issue list --repo "$slug" --label "status:needs-info" \
+			--state open --json number,title,author,createdAt,updatedAt \
+			--limit 50 2>/dev/null) || ni_json="[]"
+
+		local ni_count
+		ni_count=$(echo "$ni_json" | jq 'length')
+		[[ "$ni_count" -gt 0 ]] || continue
+
+		if [[ "$found_any" == false ]]; then
+			echo ""
+			echo "# Needs Info — Contributor Reply Status"
+			echo ""
+			echo "Issues with \`status:needs-info\` label. For items marked **replied**, relabel to"
+			echo "\`needs-maintainer-review\` so the triage pipeline re-evaluates with the new information."
+			echo ""
+			found_any=true
+		fi
+
+		echo "## ${slug}"
+		echo ""
+
+		local i=0
+		while [[ "$i" -lt "$ni_count" ]]; do
+			local number title author created_at
+			number=$(echo "$ni_json" | jq -r ".[$i].number")
+			title=$(echo "$ni_json" | jq -r ".[$i].title")
+			author=$(echo "$ni_json" | jq -r ".[$i].author.login")
+			created_at=$(echo "$ni_json" | jq -r ".[$i].createdAt")
+
+			# Find when status:needs-info was applied via timeline events
+			# Fall back to updatedAt if timeline API fails
+			local label_date=""
+			local api_ok=true
+			label_date=$(gh api "repos/${slug}/issues/${number}/timeline" --paginate \
+				--jq '[.[] | select(.event == "labeled" and .label.name == "status:needs-info")] | last | .created_at' 2>/dev/null) || api_ok=false
+
+			if [[ "$api_ok" != true || -z "$label_date" || "$label_date" == "null" ]]; then
+				# Fall back: use issue updatedAt as approximate label time
+				label_date=$(echo "$ni_json" | jq -r ".[$i].updatedAt")
+			fi
+
+			# Check for author comments after the label was applied
+			local author_replied=false
+			local latest_author_comment_date=""
+			latest_author_comment_date=$(gh api "repos/${slug}/issues/${number}/comments" --paginate \
+				--jq "[.[] | select(.user.login == \"${author}\")] | last | .created_at" 2>/dev/null) || latest_author_comment_date=""
+
+			if [[ -n "$latest_author_comment_date" && "$latest_author_comment_date" != "null" && "$latest_author_comment_date" > "$label_date" ]]; then
+				author_replied=true
+			fi
+
+			local status_label
+			if [[ "$author_replied" == true ]]; then
+				status_label="replied"
+				total_replied=$((total_replied + 1))
+			else
+				status_label="waiting"
+			fi
+
+			echo "- Issue #${number}: ${title} [author: @${author}] [status: **${status_label}**] [labeled: ${label_date}]"
+
+			i=$((i + 1))
+		done
+
+		echo ""
+	done <<<"$repo_entries"
+
+	if [[ "$found_any" == true ]]; then
+		echo "**Total contributor replies pending action: ${total_replied}**"
+		echo ""
+		echo "[pulse-wrapper] Needs-info reply status: ${total_replied} issues with contributor replies" >>"$LOGFILE"
 	fi
 
 	return 0
