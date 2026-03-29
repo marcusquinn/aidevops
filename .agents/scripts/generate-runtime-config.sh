@@ -360,16 +360,25 @@ if output_format == "opencode-json":
         print(f"Error: Failed to load {config_path}: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Disable default and demoted agents
-    sorted_agents["build"] = {"disable": True}
-    sorted_agents["plan"] = {"disable": True}
-    sorted_agents["Plan+"] = {"disable": True}
-    sorted_agents["AI-DevOps"] = {"disable": True}
-    sorted_agents["Browser-Extension-Dev"] = {"disable": True}
-    sorted_agents["Mobile-App-Dev"] = {"disable": True}
+    # Guard: if no primary agents were discovered, skip writing agent config
+    # to avoid leaving OpenCode with only disabled entries (fatal crash:
+    # "undefined is not an object evaluating agents()[0].name").
+    # This can happen if the deploy step hasn't completed or the agents
+    # directory was cleaned but not yet repopulated.
+    if not primary_agents:
+        print("  WARNING: No primary agents discovered — skipping agent config update", file=sys.stderr)
+        print("  (agents directory may be empty or deploy incomplete)", file=sys.stderr)
+    else:
+        # Disable default and demoted agents
+        sorted_agents["build"] = {"disable": True}
+        sorted_agents["plan"] = {"disable": True}
+        sorted_agents["Plan+"] = {"disable": True}
+        sorted_agents["AI-DevOps"] = {"disable": True}
+        sorted_agents["Browser-Extension-Dev"] = {"disable": True}
+        sorted_agents["Mobile-App-Dev"] = {"disable": True}
 
-    config['agent'] = sorted_agents
-    config['default_agent'] = "Build+"
+        config['agent'] = sorted_agents
+        config['default_agent'] = "Build+"
 
     # Instructions — merge into existing list to preserve user-added entries
     instructions_path = os.path.expanduser("~/.aidevops/agents/AGENTS.md")
