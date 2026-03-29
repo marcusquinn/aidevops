@@ -295,6 +295,59 @@ JSON
 	return 0
 }
 
+test_counts_standalone_opencode_binary_workers() {
+	# GH#12361: Workers dispatched via headless-runtime-helper.sh without
+	# sandbox-exec-helper.sh run as /bin/.opencode processes directly.
+	# These must be counted as active workers, not excluded.
+	set_ps_fixture "600 S 00:15 /opt/homebrew/lib/node_modules/opencode-ai/bin/.opencode run \"/full-loop Implement issue #12361\" --dir /tmp/aidevops --session-key issue-12361 --title Issue #12361
+601 S 00:20 /opt/homebrew/lib/node_modules/opencode-ai/bin/.opencode run \"/full-loop Implement issue #12362\" --dir /tmp/aidevops --session-key issue-12362 --title Issue #12362
+602 S 00:25 opencode run --dir /tmp/aidevops --title Issue #12363 \"/full-loop Implement issue #12363\""
+
+	local count
+	count=$(count_active_workers)
+	# All three are standalone workers (no sandbox launcher) — all must be counted
+	if [[ "$count" != "3" ]]; then
+		print_result "count_active_workers counts standalone /bin/.opencode workers (GH#12361)" 1 "Expected 3, got ${count}"
+		return 0
+	fi
+
+	print_result "count_active_workers counts standalone /bin/.opencode workers (GH#12361)" 0
+	return 0
+}
+
+test_deduplicates_chain_but_keeps_standalone_opencode_binary() {
+	# GH#12361: Mix of sandbox-launched chain and standalone /bin/.opencode worker.
+	# The chain (issue #5001) should deduplicate to 1; the standalone (issue #12361)
+	# should be kept — total 2 logical workers.
+	set_ps_fixture "700 S 01:00 bash /home/user/.aidevops/agents/scripts/sandbox-exec-helper.sh run --timeout 3600 --allow-secret-io -- /opt/homebrew/bin/opencode run \"/full-loop Implement issue #5001\" --dir /tmp/aidevops --title Issue #5001
+701 S 01:00 node /opt/homebrew/bin/opencode run \"/full-loop Implement issue #5001\" --dir /tmp/aidevops --title Issue #5001
+702 S 01:00 /opt/homebrew/lib/node_modules/opencode-ai/bin/.opencode run \"/full-loop Implement issue #5001\" --dir /tmp/aidevops --title Issue #5001
+710 S 00:15 /opt/homebrew/lib/node_modules/opencode-ai/bin/.opencode run \"/full-loop Implement issue #12361\" --dir /tmp/aidevops --session-key issue-12361 --title Issue #12361"
+
+	local count
+	count=$(count_active_workers)
+	if [[ "$count" != "2" ]]; then
+		print_result "count_active_workers deduplicates chain but keeps standalone /bin/.opencode worker" 1 "Expected 2, got ${count}"
+		return 0
+	fi
+
+	# Verify the sandbox launcher (PID 700) is kept for the chain, not the binary child
+	local output
+	output=$(list_active_worker_processes)
+	if ! echo "$output" | grep -q "^700 "; then
+		print_result "count_active_workers deduplicates chain but keeps standalone /bin/.opencode worker" 1 "Expected sandbox launcher PID 700 in output"
+		return 0
+	fi
+	# Verify the standalone worker (PID 710) is kept
+	if ! echo "$output" | grep -q "^710 "; then
+		print_result "count_active_workers deduplicates chain but keeps standalone /bin/.opencode worker" 1 "Expected standalone worker PID 710 in output"
+		return 0
+	fi
+
+	print_result "count_active_workers deduplicates chain but keeps standalone /bin/.opencode worker" 0
+	return 0
+}
+
 test_check_dispatch_dedup_treats_merged_pr_as_duplicate() {
 	local original_script_dir="$SCRIPT_DIR"
 	SCRIPT_DIR="$TEST_ROOT"
@@ -325,6 +378,8 @@ main() {
 	test_repo_issue_detection_uses_filtered_worker_list
 	test_excludes_zombie_and_stopped_processes
 	test_has_worker_for_repo_issue_session_key_fallback
+	test_counts_standalone_opencode_binary_workers
+	test_deduplicates_chain_but_keeps_standalone_opencode_binary
 	test_check_dispatch_dedup_treats_merged_pr_as_duplicate
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
