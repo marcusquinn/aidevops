@@ -18,11 +18,9 @@ tools:
 
 ## Quick Reference
 
-- **Repo**: [github.com/42wim/matterbridge](https://github.com/42wim/matterbridge) (7.4K stars, Apache-2.0, Go)
-- **Version**: v1.26.0 (stable)
+- **Repo**: [42wim/matterbridge](https://github.com/42wim/matterbridge) (7.4K stars, Apache-2.0, Go) — v1.26.0 stable
 - **Script**: `matterbridge-helper.sh [setup|start|stop|status|logs|validate]`
-- **Config**: `~/.config/aidevops/matterbridge.toml` (600 permissions)
-- **Data**: `~/.aidevops/.agent-workspace/matterbridge/`
+- **Config**: `~/.config/aidevops/matterbridge.toml` (600 perms) | **Data**: `~/.aidevops/.agent-workspace/matterbridge/`
 - **Requires**: Go 1.18+ (build) or pre-compiled binary
 
 ```bash
@@ -31,9 +29,11 @@ matterbridge-helper.sh validate       # Validate config before starting
 matterbridge-helper.sh start --daemon
 ```
 
-**Security**: E2E encryption is broken at bridge boundaries — messages are decrypted and re-encrypted (or sent plaintext) at the bridge host. Avoid bridging sensitive channels to unencrypted platforms. See `tools/security/opsec.md`.
-
 <!-- AI-CONTEXT-END -->
+
+## Security
+
+**E2E encryption is broken at bridge boundaries** — the bridge host decrypts and re-encrypts (or sends plaintext) all messages. Run on a trusted, hardened host (NetBird/WireGuard). Avoid bridging sensitive channels to unencrypted platforms. Store credentials in gopass (`aidevops secret set MATTERBRIDGE_DISCORD_TOKEN`); config: `chmod 600 matterbridge.toml`. See `tools/security/opsec.md` for platform trust matrix.
 
 ## Supported Platforms
 
@@ -43,86 +43,52 @@ Discord, Gitter, IRC, Keybase, Matrix (E2E broken at bridge), Mattermost, Micros
 
 ## Installation
 
-### Binary (Recommended)
-
 ```bash
-# Linux (64-bit)
+# Binary (replace linux-64bit with darwin-arm64 for Apple Silicon, darwin-64bit for Intel Mac)
 curl -L https://github.com/42wim/matterbridge/releases/latest/download/matterbridge-1.26.0-linux-64bit \
   -o /usr/local/bin/matterbridge && chmod +x /usr/local/bin/matterbridge
-
-# macOS — use darwin-64bit (Intel) or darwin-arm64 (Apple Silicon)
-curl -L https://github.com/42wim/matterbridge/releases/latest/download/matterbridge-1.26.0-darwin-arm64 \
-  -o /usr/local/bin/matterbridge && chmod +x /usr/local/bin/matterbridge
-```
-
-Packages: `snap install matterbridge` / `scoop install matterbridge`
-
-### Build from Source
-
-```bash
-go install github.com/42wim/matterbridge                                       # All bridges (~3GB RAM)
-go install -tags nomsteams github.com/42wim/matterbridge                       # Exclude MS Teams (~500MB)
-go install -tags nomsteams,whatsappmulti github.com/42wim/matterbridge@master  # WhatsApp multidevice (GPL3)
+# Packages: snap install matterbridge | scoop install matterbridge
+# Build from source (all bridges ~3GB RAM; -tags nomsteams ~500MB; add whatsappmulti for WhatsApp GPL3)
+go install github.com/42wim/matterbridge
 ```
 
 ## Configuration
 
-Config search order: `./matterbridge.toml`, `~/.config/aidevops/matterbridge.toml`, or `-conf /path/to/matterbridge.toml`.
-
-Three sections: **protocol blocks** (credentials per platform), **`[general]`** (global settings), **`[[gateway]]`** (bridge definitions).
+Config search order: `./matterbridge.toml`, `~/.config/aidevops/matterbridge.toml`, or `-conf /path/to/matterbridge.toml`. Three sections: **protocol blocks** (credentials per platform), **`[general]`** (global settings), **`[[gateway]]`** (bridge definitions).
 
 > **Security**: Values below are `<PLACEHOLDER>` examples. Store actual tokens via `aidevops secret set NAME` (gopass). See `tools/credentials/gopass.md`.
 
 ```toml
-[matrix]
-  [matrix.home]
-  Server="https://matrix.example.com"
-  Login="bridgebot"
-  Password="<MATRIX_PASSWORD>"
-  RemoteNickFormat="[{PROTOCOL}] <{NICK}> "
-
-[discord]
-  [discord.myserver]
-  Token="Bot <DISCORD_BOT_TOKEN>"
-  Server="My Discord Server"
-
-[telegram]
-  [telegram.main]
-  Token="<TELEGRAM_BOT_TOKEN>"
-
-[irc]
-  [irc.libera]
-  Server="irc.libera.chat:6667"
-  Nick="matterbridge"
-  UseTLS=true
-
+# Protocol blocks — one per platform (see Platform-Specific Notes for all options)
+[matrix.home]
+Server="https://matrix.example.com"
+Login="bridgebot"
+Password="<MATRIX_PASSWORD>"
+RemoteNickFormat="[{PROTOCOL}] <{NICK}> "
+[discord.myserver]
+Token="Bot <DISCORD_BOT_TOKEN>"
+Server="My Discord Server"
+[telegram.main]
+Token="<TELEGRAM_BOT_TOKEN>"
+[irc.libera]
+Server="irc.libera.chat:6667"
+Nick="matterbridge"
+UseTLS=true
+# Global + gateway
 [general]
 RemoteNickFormat="[{PROTOCOL}/{BRIDGE}] <{NICK}> "
-
 [[gateway]]
 name="mybridge"
 enable=true
-
   [[gateway.inout]]
   account="matrix.home"
   channel="#general:example.com"
-
   [[gateway.inout]]
   account="discord.myserver"
   channel="general"
-
-  [[gateway.inout]]
-  account="telegram.main"
-  channel="-1001234567890"  # Group chat ID (negative)
-
-  [[gateway.inout]]
-  account="irc.libera"
-  channel="#myproject"
 ```
 
-**Nick format variables**: `{NICK}`, `{PROTOCOL}`, `{BRIDGE}`, `{GATEWAY}`.
-
-**One-way bridges**: Use `[[gateway.in]]` / `[[gateway.out]]` instead of `[[gateway.inout]]`.
+**Nick format variables**: `{NICK}`, `{PROTOCOL}`, `{BRIDGE}`, `{GATEWAY}`. **One-way bridges**: Use `[[gateway.in]]` / `[[gateway.out]]` instead of `[[gateway.inout]]`. Add more `[[gateway.inout]]` blocks for Telegram (`channel="-1001234567890"`), IRC, etc.
 
 ### Platform-Specific Notes
 
@@ -138,72 +104,31 @@ enable=true
 
 ### SimpleX via Adapter
 
-SimpleX is not natively supported. Use [matterbridge-simplex](https://github.com/simplex-chat/matterbridge-simplex):
-
-```bash
-curl -o- https://raw.githubusercontent.com/simplex-chat/simplex-chat/stable/install.sh | bash
-go install github.com/simplex-chat/matterbridge-simplex@latest
-matterbridge-simplex --port 4242 --profile simplex-bridge
-```
-
-Configure `[api.simplex]` with `BindAddress="0.0.0.0:4243"` and `Token=`, then add a `[[gateway]]` with `account="api.simplex"` / `channel="api"` paired with your target platform. E2E encryption is broken at the bridge boundary.
+Not natively supported — use [matterbridge-simplex](https://github.com/simplex-chat/matterbridge-simplex): install SimpleX CLI, then `go install github.com/simplex-chat/matterbridge-simplex@latest && matterbridge-simplex --port 4242 --profile simplex-bridge`. Configure `[api.simplex]` with `BindAddress="0.0.0.0:4243"` and `Token=`, add `[[gateway]]` with `account="api.simplex"` / `channel="api"`. E2E encryption is broken at the bridge boundary.
 
 ## Running
 
 ```bash
-matterbridge -conf matterbridge.toml -debug   # Foreground
-matterbridge -conf matterbridge.toml &        # Background
-```
-
-### Docker
-
-```bash
+matterbridge -conf matterbridge.toml -debug   # Foreground with debug
+matterbridge -conf matterbridge.toml &         # Background
 docker run -d --name matterbridge --restart unless-stopped \
-  -v /path/to/matterbridge.toml:/etc/matterbridge/matterbridge.toml:ro \
-  42wim/matterbridge:stable
+  -v /path/to/matterbridge.toml:/etc/matterbridge/matterbridge.toml:ro 42wim/matterbridge:stable
 ```
 
-### Systemd
-
-```ini
-[Unit]
-Description=Matterbridge chat bridge
-After=network.target
-
-[Service]
-Type=simple
-User=matterbridge
-ExecStart=/usr/local/bin/matterbridge -conf /etc/matterbridge/matterbridge.toml
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl daemon-reload && sudo systemctl enable --now matterbridge
-sudo journalctl -fu matterbridge
-```
+**Systemd**: Unit with `Type=simple`, `User=matterbridge`, `ExecStart=/usr/local/bin/matterbridge -conf /etc/matterbridge/matterbridge.toml`, `Restart=on-failure`. Then `systemctl daemon-reload && systemctl enable --now matterbridge`.
 
 ## REST API
 
-```toml
-[api]
-  [api.myapi]
-  BindAddress="127.0.0.1:4242"
-  Token="<MATTERBRIDGE_API_TOKEN>"
-  Buffer=1000
-```
+Add to config: `[api.myapi]` with `BindAddress="127.0.0.1:4242"`, `Token="<MATTERBRIDGE_API_TOKEN>"`, `Buffer=1000`.
 
 ```bash
+# Send message
 curl -X POST http://localhost:4242/api/message \
   -H "Authorization: Bearer <MATTERBRIDGE_API_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"text": "Hello from API", "username": "bot", "gateway": "mybridge"}'
-
-curl http://localhost:4242/api/messages \
-  -H "Authorization: Bearer <MATTERBRIDGE_API_TOKEN>"
+# Read messages
+curl http://localhost:4242/api/messages -H "Authorization: Bearer <MATTERBRIDGE_API_TOKEN>"
 ```
 
 ## Troubleshooting
@@ -218,21 +143,7 @@ curl http://localhost:4242/api/messages \
 | High memory on build | Use `-tags nomsteams` to reduce build memory to ~500MB |
 | IRC nick conflicts | Set `NickServPassword` or use unique nick |
 
-## Security
-
-**E2E encryption is broken at bridge boundaries** — the bridge host has access to all message content. Mitigations:
-
-- Run on a trusted, hardened host (NetBird/WireGuard to restrict access)
-- Avoid bridging sensitive channels to unencrypted platforms (IRC, Slack, Discord)
-- Store credentials in gopass: `aidevops secret set MATTERBRIDGE_DISCORD_TOKEN`
-- Config file: `chmod 600 matterbridge.toml`
-
-See `tools/security/opsec.md` for full platform trust matrix and threat modeling.
-
 ## Related
 
 - `services/communications/matrix-bot.md`, `simplex.md`, `telegram.md`, `signal.md`, `whatsapp.md`, `slack.md`, `discord.md`, `msteams.md`, `nextcloud-talk.md`
-- `services/communications/nostr.md`, `imessage.md`, `google-chat.md`, `urbit.md` — no native Matterbridge support
-- `services/communications/bitchat.md` — Bluetooth mesh, offline P2P
-- `services/communications/xmtp.md` — Web3 messaging, agent SDK
-- `tools/security/opsec.md` — Platform trust matrix, privacy comparison
+- `services/communications/nostr.md`, `imessage.md`, `google-chat.md`, `urbit.md` — no native Matterbridge support; `bitchat.md` — Bluetooth mesh; `xmtp.md` — Web3 messaging; `tools/security/opsec.md` — platform trust matrix
