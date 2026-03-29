@@ -8,11 +8,7 @@ POST /zones/{zone_id}/api_gateway/user_schemas
 
 # 2. Configure JWT validation
 POST /zones/{zone_id}/api_gateway/token_validation
-{
-  "name": "Auth0",
-  "location": {"header": "Authorization"},
-  "jwks": "{...}"
-}
+{"name": "Auth0", "location": {"header": "Authorization"}, "jwks": "{...}"}
 
 # 3. Create JWT rule
 POST /zones/{zone_id}/api_gateway/jwt_validation_rules
@@ -24,19 +20,9 @@ PUT /zones/{zone_id}/api_gateway/settings/schema_validation
 
 ## Progressive Rollout
 
-```
-1. Log mode: Observe false positives
-   - Schema: Action = Log
-   - JWT: Action = Log
-
-2. Block subset: Protect critical endpoints
-   - Change specific endpoint actions to Block
-   - Monitor firewall events
-
-3. Full enforcement: Block all violations
-   - Change default action to Block
-   - Handle fallthrough with custom rule
-```
+1. **Log mode** — Schema + JWT action = Log; observe false positives
+2. **Block subset** — Change critical endpoint actions to Block; monitor firewall events
+3. **Full enforcement** — Default action = Block; handle fallthrough with custom rule
 
 ## Fallthrough Detection (Zombie APIs)
 
@@ -108,19 +94,9 @@ Cloudflare Edge
 
 ## Monitoring
 
-**Security Events:**
+**Security Events:** Security > Events — Filter: Action = block, Service = API Shield
 
-```
-Security > Events
-Filter: Action = block, Service = API Shield
-```
-
-**Firewall Analytics:**
-
-```
-Analytics > Security
-Filter by cf.api_gateway.* fields
-```
+**Firewall Analytics:** Analytics > Security — Filter by `cf.api_gateway.*` fields
 
 **Logpush fields:**
 
@@ -148,4 +124,4 @@ Filter by cf.api_gateway.* fields
 | Volumetric Abuse | Enterprise (add-on) |
 | Full Suite | Enterprise add-on |
 
-Enterprise: 10K ops (contact for higher), non-contract preview available.
+Enterprise: 10K ops (contact for higher); non-contract preview available.
