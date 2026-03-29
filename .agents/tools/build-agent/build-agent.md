@@ -11,7 +11,7 @@ mode: subagent
 ## Quick Reference
 
 - **Budget**: ~50-100 instructions per agent; root AGENTS.md universally applicable only
-- **Subdivision**: Agent docs exceeding ~300 lines — split into entry point + sub-docs, don't cut to hit a line count
+- **Subdivision**: Docs >~300 lines → split into entry point + sub-docs; don't cut to hit a line count
 - **MCP servers**: Disabled globally, enabled per-agent
 - **Code refs**: `rg "pattern"` search patterns, not `file:line` (line numbers drift)
 - **Subagents**: `agent-review.md` (review), `agent-testing.md` (testing)
@@ -57,11 +57,7 @@ tools:
 - **MCP tool filtering** (future `includeTools` — 17k→1.5k token savings): `mcp_requirements: { chrome-devtools: { tools: [navigate_page, take_screenshot] } }`
 - **Main-branch write restrictions**: ALLOWED: `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`. BLOCKED: all other files.
 - **MCP config** (global disabled, per-agent enabled): `"mcp": { "hostinger-api": { "enabled": false } }` + `"agent": { "hostinger": { "tools": { "hostinger-api_*": true } } }`
-
-## Architecture & References
-
 - **Source of truth**: `.agents/` → deployed to `~/.aidevops/agents/` by `setup.sh`. Stubs: `.opencode/agent/` via `generate-opencode-agents.sh`.
-- **Code refs**: search patterns, not line numbers. Hierarchy: function name → unique string → comment marker → broader pattern.
 - **Deployment sync**: changes in `.agents/` require `./setup.sh`. Offer to run on create/rename/move/merge/delete.
 
 ## Folder Organization
@@ -118,15 +114,11 @@ marketing-sales/                          # Extended knowledge — flat, prefix-
 - `ls marketing-sales/meta-ads*` groups all Meta Ads knowledge; `*swipe*` finds swipe files
 - Max depth: 2 levels from `.agents/` — never 5+
 - Subdirectory only when a prefix group exceeds ~20 files. One level max.
-
-**Subdivision threshold (~300 lines):** Agent docs exceeding ~300 lines should be split into an entry point + sub-docs using the `{name}.md` + `{name}/` convention above. The goal is progressive disclosure (smaller always-loaded context, detail on demand) — not content reduction. Never set an arbitrary target line count for simplification; the resulting size is whatever remains after removing genuine noise and extracting sub-docs.
+- **Subdivision threshold (~300 lines):** Split into entry point + sub-docs for progressive disclosure (smaller always-loaded context, detail on demand) — not content reduction. Resulting size = whatever remains after removing genuine noise.
 
 ### Scripts: Flat by Design
 
-Scripts live flat in `scripts/` — cross-domain, any agent can call any script. Prefix naming (`email-*`, `seo-*`) provides grouping.
-
-- `*-helper.sh` = agent-callable utilities; other `.sh` = framework infrastructure
-- `scripts/commands/` = slash command documentation
+Scripts live flat in `scripts/` — cross-domain, any agent can call any script. Prefix naming (`email-*`, `seo-*`) provides grouping. `*-helper.sh` = agent-callable utilities; other `.sh` = framework infrastructure. `scripts/commands/` = slash command documentation.
 
 ### Ingested Skills
 
@@ -155,9 +147,8 @@ See `add-skill.md` for full ingestion workflow.
 | Situation | Action |
 |-----------|--------|
 | >75% success, 3+ samples | Use pattern data (overrides static rule) |
-| Sparse/inconclusive | Fall back to routing rules |
+| Insufficient data | Use routing rules, record outcomes |
 | Contradicts routing rules | Note conflict in agent docs |
-| No data yet | Use routing rules, record outcomes |
 
 Record: `/remember "SUCCESS/FAILURE: agent with model — reason"`. Frontmatter: `model: sonnet  # 87% success, 14 samples`. Full docs: `tools/context/model-routing.md`.
 
@@ -196,13 +187,11 @@ Target: reference cards, not tutorials. Evidence: 63% byte reduction on `build.t
 
 **Avoid**: code exists in codebase (use search pattern); external library (use Context7 MCP); will become outdated (point to source).
 
-When a code example fails: update if outdated, add conditions if context-dependent, check for duplicates.
-
 ## Self-Assessment Protocol
 
 **Triggers**: Observable failure, user correction, contradiction with Context7/codebase, staleness.
 
-**Process**: (1) Complete current task. (2) Identify root cause. (3) `rg "pattern" .agents/` — list ALL files needing coordinated updates. (4) Propose: `"Agent Feedback: While [task], I noticed [issue] in .agents/[file].md. Related: [other-files]. Suggested: [change]. Update after completing?"`
+**Process**: (1) Complete current task. (2) Identify root cause. (3) `rg "pattern" .agents/` — list ALL files needing coordinated updates. (4) Propose fix with evidence, ask user to confirm before applying.
 
 ## Tool Selection
 
@@ -226,14 +215,7 @@ Self-checks: "Faster CLI alternative?" and "Could this return >50K tokens?" See 
 | **Sourced** | `~/.aidevops/agents/custom/<source>/` | Yes | In private repo | Synced from private Git repos |
 | **Shared** | `.agents/` in repo | Yes (deployed) | Yes | Open-source, submitted via PR |
 
-**When creating an agent, ask the user:**
-
-```text
-1. Draft  - Experimental (draft/)
-2. Custom - Private, stays on your machine (custom/)
-3. Sourced - In a private Git repo (custom/<source>/)
-4. Shared - Add to aidevops for everyone (PR to .agents/)
-```
+When creating an agent, ask the user which tier: Draft (experimental), Custom (private), Sourced (private Git repo), or Shared (PR to `.agents/`).
 
 - **Draft**: `status: draft` + `created` date. Promote to `custom/` or `.agents/` via PR, or discard.
 - **Custom**: Never shared, never overwritten (`custom/mycompany/`, `custom/clients/`).
