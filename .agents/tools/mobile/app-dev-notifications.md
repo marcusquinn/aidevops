@@ -19,12 +19,9 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Implement push and local notifications that drive retention without annoying users
 - **Expo**: `expo-notifications` (free, built-in push service)
 - **Swift**: `UserNotifications` framework + APNs
 - **Cross-platform**: Firebase Cloud Messaging (FCM), OneSignal, ntfy (self-hosted)
-
-**Notification decision tree**:
 
 | Need | Solution | Cost |
 |------|----------|------|
@@ -38,46 +35,34 @@ tools:
 
 ## Notification Strategy
 
-### When to Notify
+**Only notify when valuable, timely, and actionable.**
 
-Notifications should be **valuable, timely, and actionable**:
+| Good | Bad |
+|------|-----|
+| User's chosen daily reminder | "We miss you!" (guilt trip) |
+| Streak about to break (opted in) | Random feature announcements |
+| Meaningful event (message, goal) | "Check out what's new!" |
+| Time-sensitive (delivery, appointment) | Marketing promotions |
 
-| Good Notifications | Bad Notifications |
-|-------------------|-------------------|
-| Reminder for user's chosen daily action | "We miss you!" (guilt trip) |
-| Streak about to break (if user opted in) | Random feature announcements |
-| Meaningful event (message received, goal achieved) | "Check out what's new!" |
-| Time-sensitive information (delivery, appointment) | Marketing promotions |
+**Permission timing:** Never request during onboarding. Wait until user completes first core action → show value proposition → system dialog. If denied, respect it; offer again in settings.
 
-### Permission Request Timing
+**Frequency:**
 
-Never request notification permission during onboarding. Instead:
-
-1. User completes their first core action
-2. Show value proposition: "Want a daily reminder to keep your streak?"
-3. User taps "Yes, remind me"
-4. System permission dialog appears
-5. If denied, respect it — offer again later in settings
-
-### Frequency Guidelines
-
-| App Type | Recommended Frequency |
-|----------|----------------------|
+| App Type | Frequency |
+|----------|-----------|
 | Habit tracker | 1x daily (user-chosen time) |
-| Social app | Real-time for messages, batched for likes/follows |
+| Social app | Real-time messages, batched likes/follows |
 | News/content | 1-3x daily, user-configurable |
-| Utility | Only when actionable (e.g., task due) |
-| E-commerce | Sparingly (order updates, not promotions) |
+| Utility | Only when actionable |
+| E-commerce | Order updates only, not promotions |
 
 ## Expo Push Notifications
-
-### Setup
 
 ```bash
 npx expo install expo-notifications expo-device expo-constants
 ```
 
-### Register for Push
+**Register for push:**
 
 ```typescript
 import * as Notifications from 'expo-notifications';
@@ -105,7 +90,7 @@ async function registerForPushNotifications() {
 }
 ```
 
-### Send Push (Server-Side)
+**Send push (server-side):**
 
 ```bash
 curl -X POST https://exp.host/--/api/v2/push/send \
@@ -118,43 +103,27 @@ curl -X POST https://exp.host/--/api/v2/push/send \
   }'
 ```
 
-### Local Notifications
-
-For reminders and scheduled notifications that don't need a server:
+**Local notifications** (no server needed):
 
 ```typescript
 await Notifications.scheduleNotificationAsync({
-  content: {
-    title: "Daily Reminder",
-    body: "Time for your daily check-in!",
-    sound: true,
-  },
-  trigger: {
-    type: 'daily',
-    hour: 9,
-    minute: 0,
-  },
+  content: { title: "Daily Reminder", body: "Time for your daily check-in!", sound: true },
+  trigger: { type: 'daily', hour: 9, minute: 0 },
 });
 ```
 
 ## Self-Hosted: ntfy
 
-Open-source push notification service, deployable on Coolify:
+Open-source, deployable on Coolify. HTTP PUT/POST to send; Android/iOS/web/CLI clients. No usage limits when self-hosted. See https://ntfy.sh.
 
-- **URL**: https://ntfy.sh
-- **Self-host**: Docker image available, deploy on Coolify
-- **Free**: No usage limits when self-hosted
-- **Simple**: HTTP PUT/POST to send, subscribe via URL
-- **Cross-platform**: Android app, iOS app, web, CLI
+## Content Best Practices
 
-## Notification Content Best Practices
-
-- **Title**: Short, clear, actionable (< 50 characters)
-- **Body**: One sentence, specific value (< 100 characters)
-- **Deep link**: Tap should go directly to relevant screen
-- **Rich media**: Use images/icons when they add value
-- **Grouping**: Batch related notifications (e.g., "3 new messages")
-- **Silent**: Use silent notifications for background data sync
+- **Title**: < 50 chars, actionable
+- **Body**: One sentence, specific value, < 100 chars
+- **Deep link**: Tap → relevant screen directly
+- **Rich media**: Only when it adds value
+- **Grouping**: Batch related (e.g., "3 new messages")
+- **Silent**: Use for background data sync
 
 ## Related
 
