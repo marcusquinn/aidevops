@@ -47,7 +47,7 @@ setup_git_clis() {
 
 		if [[ "$pkg_manager" != "unknown" ]]; then
 			echo ""
-			read -r -p "Install Git CLI tools (${missing_packages[*]}) using $pkg_manager? [Y/n]: " install_git_clis
+			setup_prompt install_git_clis "Install Git CLI tools (${missing_packages[*]}) using $pkg_manager? [Y/n]: " "Y"
 
 			if [[ "$install_git_clis" =~ ^[Yy]?$ ]]; then
 				print_info "Installing ${missing_packages[*]}..."
@@ -229,10 +229,7 @@ setup_file_discovery_tools() {
 		pkg_manager=$(detect_package_manager)
 
 		if [[ "$pkg_manager" != "unknown" ]]; then
-			local install_fd_tools="y"
-			if [[ "$INTERACTIVE_MODE" == "true" ]]; then
-				read -r -p "Install file discovery tools (${missing_packages[*]}) using $pkg_manager? [Y/n]: " install_fd_tools
-			fi
+			setup_prompt install_fd_tools "Install file discovery tools (${missing_packages[*]}) using $pkg_manager? [Y/n]: " "Y"
 
 			if [[ "$install_fd_tools" =~ ^[Yy]?$ ]]; then
 				_install_file_discovery_packages "$pkg_manager" "${missing_packages[@]}"
@@ -271,10 +268,7 @@ setup_rtk() {
 		echo "  Single binary, zero dependencies, <10ms overhead."
 		echo ""
 
-		local install_rtk="n"
-		if [[ "$INTERACTIVE_MODE" == "true" ]]; then
-			read -r -p "Install rtk for token-optimized CLI output? [y/N]: " install_rtk
-		fi
+		setup_prompt install_rtk "Install rtk for token-optimized CLI output? [y/N]: " "n"
 
 		if [[ "$install_rtk" =~ ^[Yy]$ ]]; then
 			VERIFIED_INSTALL_SHELL="sh"
@@ -371,11 +365,7 @@ setup_shell_linting_tools() {
 
 		if [[ "$pkg_manager" != "unknown" ]]; then
 			local install_linters
-			if [[ "${NON_INTERACTIVE:-}" == "true" ]]; then
-				install_linters="Y"
-			else
-				read -r -p "Install missing shell linting tools using $pkg_manager? [Y/n]: " install_linters
-			fi
+			setup_prompt install_linters "Install missing shell linting tools using $pkg_manager? [Y/n]: " "Y"
 
 			if [[ "$install_linters" =~ ^[Yy]?$ ]]; then
 				if install_packages "$pkg_manager" "${missing_tools[@]}"; then
@@ -508,10 +498,8 @@ setup_qlty_cli() {
 	echo "  - Used by the daily code quality sweep (pulse-wrapper.sh)"
 	echo ""
 
-	local install_qlty="Y"
-	if [[ "${NON_INTERACTIVE:-}" != "true" ]]; then
-		read -r -p "Install Qlty CLI? [Y/n]: " install_qlty
-	fi
+	local install_qlty
+	setup_prompt install_qlty "Install Qlty CLI? [Y/n]: " "Y"
 
 	if [[ "$install_qlty" =~ ^[Yy]?$ ]]; then
 		if command -v curl >/dev/null 2>&1; then
@@ -612,7 +600,7 @@ _check_worktrunk_shell_integration() {
 	if [[ "$wt_integrated" == "false" ]]; then
 		print_info "Shell integration not detected"
 		local install_shell
-		read -r -p "Install Worktrunk shell integration (enables 'wt switch' to change directories)? [Y/n]: " install_shell
+		setup_prompt install_shell "Install Worktrunk shell integration (enables 'wt switch' to change directories)? [Y/n]: " "Y"
 		if [[ "$install_shell" =~ ^[Yy]?$ ]]; then
 			_setup_worktrunk_shell_integration
 		fi
@@ -625,7 +613,7 @@ _check_worktrunk_shell_integration() {
 # Install Worktrunk via Homebrew and set up shell integration.
 _install_worktrunk_brew() {
 	local install_wt
-	read -r -p "Install Worktrunk via Homebrew? [Y/n]: " install_wt
+	setup_prompt install_wt "Install Worktrunk via Homebrew? [Y/n]: " "Y"
 
 	if [[ "$install_wt" =~ ^[Yy]?$ ]]; then
 		if run_with_spinner "Installing Worktrunk via Homebrew" brew install max-sixty/worktrunk/wt; then
@@ -652,7 +640,7 @@ _install_worktrunk_brew() {
 # Install Worktrunk via Cargo and set up shell integration.
 _install_worktrunk_cargo() {
 	local install_wt
-	read -r -p "Install Worktrunk via Cargo? [Y/n]: " install_wt
+	setup_prompt install_wt "Install Worktrunk via Cargo? [Y/n]: " "Y"
 
 	if [[ "$install_wt" =~ ^[Yy]?$ ]]; then
 		if run_with_spinner "Installing Worktrunk via Cargo" cargo install worktrunk; then
@@ -714,7 +702,7 @@ setup_worktrunk() {
 # Trigger OpenCode extension install in Zed via the zed:// URI scheme.
 _install_opencode_ext_for_zed() {
 	local install_opencode_ext
-	read -r -p "Install OpenCode extension for Zed? [Y/n]: " install_opencode_ext
+	setup_prompt install_opencode_ext "Install OpenCode extension for Zed? [Y/n]: " "Y"
 	if [[ "$install_opencode_ext" =~ ^[Yy]?$ ]]; then
 		print_info "Installing OpenCode extension..."
 		if [[ "$(uname)" == "Darwin" ]]; then
@@ -789,7 +777,7 @@ _install_tabby_linux() {
 # Offer and perform Tabby terminal installation.
 _install_tabby() {
 	local install_tabby
-	read -r -p "Install Tabby terminal? [Y/n]: " install_tabby
+	setup_prompt install_tabby "Install Tabby terminal? [Y/n]: " "Y"
 
 	if [[ "$install_tabby" =~ ^[Yy]?$ ]]; then
 		if [[ "$(uname)" == "Darwin" ]]; then
@@ -816,7 +804,7 @@ _install_tabby() {
 # Offer and perform Zed editor installation, then optionally install OpenCode extension.
 _install_zed_and_opencode_ext() {
 	local install_zed
-	read -r -p "Install Zed editor? [Y/n]: " install_zed
+	setup_prompt install_zed "Install Zed editor? [Y/n]: " "Y"
 
 	if [[ "$install_zed" =~ ^[Yy]?$ ]]; then
 		local zed_installed=false
@@ -976,11 +964,7 @@ setup_cursor_cli() {
 	echo ""
 
 	local install_cursor
-	if [[ "${NON_INTERACTIVE:-}" != "true" ]]; then
-		read -r -p "Install Cursor CLI? [Y/n]: " install_cursor
-	else
-		install_cursor="Y"
-	fi
+	setup_prompt install_cursor "Install Cursor CLI? [Y/n]: " "Y"
 
 	if [[ "$install_cursor" =~ ^[Yy]?$ ]]; then
 		print_info "Installing Cursor CLI..."
@@ -1071,7 +1055,7 @@ setup_minisim() {
 	fi
 
 	local install_minisim
-	read -r -p "Install MiniSim? [Y/n]: " install_minisim
+	setup_prompt install_minisim "Install MiniSim? [Y/n]: " "Y"
 
 	if [[ "$install_minisim" =~ ^[Yy]?$ ]]; then
 		if run_with_spinner "Installing MiniSim" brew install --cask minisim; then
@@ -1118,7 +1102,7 @@ setup_claudebar() {
 	echo ""
 
 	local install_claudebar
-	read -r -p "Install ClaudeBar? [Y/n]: " install_claudebar
+	setup_prompt install_claudebar "Install ClaudeBar? [Y/n]: " "Y"
 
 	if [[ "$install_claudebar" =~ ^[Yy]?$ ]]; then
 		if run_with_spinner "Installing ClaudeBar" brew install --cask claudebar; then
@@ -1141,10 +1125,21 @@ setup_ssh_key() {
 
 	if [[ ! -f ~/.ssh/id_ed25519 ]]; then
 		print_warning "Ed25519 SSH key not found"
-		read -r -p "Generate new Ed25519 SSH key? [Y/n]: " generate_key
+
+		# SSH key generation requires email input — skip in non-interactive mode
+		if [[ "${NON_INTERACTIVE:-false}" == "true" ]] || [[ ! -t 0 ]]; then
+			print_info "Skipping SSH key generation (non-interactive mode)"
+			return 0
+		fi
+
+		setup_prompt generate_key "Generate new Ed25519 SSH key? [Y/n]: " "Y"
 
 		if [[ "$generate_key" =~ ^[Yy]?$ ]]; then
-			read -r -p "Enter your email address: " email
+			setup_prompt email "Enter your email address: " ""
+			if [[ -z "$email" ]]; then
+				print_warning "No email provided — skipping SSH key generation"
+				return 0
+			fi
 			install -d -m 700 ~/.ssh
 			ssh-keygen -t ed25519 -C "$email" -f ~/.ssh/id_ed25519
 			print_success "SSH key generated"
@@ -1420,10 +1415,10 @@ setup_nodejs() {
 	local pkg_manager
 	pkg_manager=$(detect_package_manager)
 
+	local install_node
 	case "$pkg_manager" in
 	brew)
-		local install_node
-		read -r -p "Install Node.js via Homebrew? [Y/n]: " install_node
+		setup_prompt install_node "Install Node.js via Homebrew? [Y/n]: " "Y"
 		if [[ "$install_node" =~ ^[Yy]?$ ]]; then
 			if run_with_spinner "Installing Node.js" brew install node; then
 				print_success "Node.js installed: $(node --version)"
@@ -1433,15 +1428,13 @@ setup_nodejs() {
 		fi
 		;;
 	apt)
-		local install_node
-		read -r -p "Install Node.js via apt? [Y/n]: " install_node
+		setup_prompt install_node "Install Node.js via apt? [Y/n]: " "Y"
 		if [[ "$install_node" =~ ^[Yy]?$ ]]; then
 			_install_nodejs_apt
 		fi
 		;;
 	dnf | yum)
-		local install_node
-		read -r -p "Install Node.js via $pkg_manager? [Y/n]: " install_node
+		setup_prompt install_node "Install Node.js via $pkg_manager? [Y/n]: " "Y"
 		if [[ "$install_node" =~ ^[Yy]?$ ]]; then
 			if sudo "$pkg_manager" install -y nodejs npm; then
 				print_success "Node.js installed: $(node --version)"
@@ -1451,8 +1444,7 @@ setup_nodejs() {
 		fi
 		;;
 	pacman)
-		local install_node
-		read -r -p "Install Node.js via pacman? [Y/n]: " install_node
+		setup_prompt install_node "Install Node.js via pacman? [Y/n]: " "Y"
 		if [[ "$install_node" =~ ^[Yy]?$ ]]; then
 			if sudo pacman -S --noconfirm nodejs npm; then
 				print_success "Node.js installed: $(node --version)"
@@ -1462,8 +1454,7 @@ setup_nodejs() {
 		fi
 		;;
 	apk)
-		local install_node
-		read -r -p "Install Node.js via apk? [Y/n]: " install_node
+		setup_prompt install_node "Install Node.js via apk? [Y/n]: " "Y"
 		if [[ "$install_node" =~ ^[Yy]?$ ]]; then
 			if sudo apk add nodejs npm; then
 				print_success "Node.js installed: $(node --version)"
@@ -1510,10 +1501,8 @@ setup_opencode_cli() {
 	echo "  It provides an AI-powered terminal interface for development tasks."
 	echo ""
 
-	local install_oc="Y"
-	if [[ "$NON_INTERACTIVE" != "true" ]]; then
-		read -r -p "Install OpenCode via $installer? [Y/n]: " install_oc || install_oc="Y"
-	fi
+	local install_oc
+	setup_prompt install_oc "Install OpenCode via $installer? [Y/n]: " "Y"
 	if [[ "$install_oc" =~ ^[Yy]?$ ]]; then
 		if run_with_spinner "Installing OpenCode" npm_global_install "$install_pkg"; then
 			print_success "OpenCode installed"
@@ -1566,10 +1555,8 @@ setup_codex_cli() {
 	echo "  It provides an AI-powered terminal interface using OpenAI models."
 	echo ""
 
-	local install_codex="Y"
-	if [[ "${NON_INTERACTIVE:-}" != "true" ]]; then
-		read -r -p "Install Codex via $installer? [Y/n]: " install_codex || install_codex="Y"
-	fi
+	local install_codex
+	setup_prompt install_codex "Install Codex via $installer? [Y/n]: " "Y"
 	if [[ "$install_codex" =~ ^[Yy]?$ ]]; then
 		if run_with_spinner "Installing Codex" npm_global_install "$install_pkg"; then
 			print_success "Codex installed"
@@ -1651,10 +1638,8 @@ setup_droid_cli() {
 	echo "  It provides autonomous coding capabilities with Factory.AI models."
 	echo ""
 
-	local install_droid="Y"
-	if [[ "${NON_INTERACTIVE:-}" != "true" ]]; then
-		read -r -p "Install Droid CLI? [Y/n]: " install_droid || install_droid="Y"
-	fi
+	local install_droid
+	setup_prompt install_droid "Install Droid CLI? [Y/n]: " "Y"
 	if [[ "$install_droid" =~ ^[Yy]?$ ]]; then
 		print_info "Installing Droid CLI..."
 		if command -v curl >/dev/null 2>&1; then
@@ -1708,10 +1693,8 @@ setup_google_workspace_cli() {
 	echo "  Used by Email, Business, and Accounts agents for Google Workspace integration."
 	echo ""
 
-	local install_gws="Y"
-	if [[ "$NON_INTERACTIVE" != "true" ]]; then
-		read -r -p "Install Google Workspace CLI via $installer? [Y/n]: " install_gws || install_gws="Y"
-	fi
+	local install_gws
+	setup_prompt install_gws "Install Google Workspace CLI via $installer? [Y/n]: " "Y"
 	if [[ "$install_gws" =~ ^[Yy]?$ ]]; then
 		if run_with_spinner "Installing Google Workspace CLI" npm_global_install "$install_pkg"; then
 			print_success "Google Workspace CLI installed"
@@ -1755,7 +1738,7 @@ setup_orbstack_vm() {
 		return 0
 	fi
 
-	read -r -p "Install OrbStack? [y/N]: " install_orb
+	setup_prompt install_orb "Install OrbStack? [y/N]: " "n"
 	if [[ "$install_orb" =~ ^[Yy]$ ]]; then
 		if run_with_spinner "Installing OrbStack" brew install --cask orbstack; then
 			print_success "OrbStack installed"

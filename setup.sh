@@ -422,6 +422,32 @@ npm_global_install() {
 	fi
 }
 
+# Prompt the user for input, with non-interactive fallback.
+# In non-interactive mode (NON_INTERACTIVE=true or stdin is not a TTY),
+# automatically returns the default value without blocking.
+# Usage: setup_prompt "variable_name" "Prompt text [Y/n]: " "default_value"
+# Example: setup_prompt answer "Install foo? [Y/n]: " "Y"
+#          [[ "$answer" =~ ^[Yy]?$ ]] && install_foo
+# Returns: 0 always (sets the named variable via printf -v)
+setup_prompt() {
+	local var_name="$1"
+	local prompt_text="$2"
+	local default_value="${3:-}"
+
+	# Non-interactive: use default without prompting
+	if [[ "${NON_INTERACTIVE:-false}" == "true" ]] || [[ ! -t 0 ]]; then
+		# shellcheck disable=SC2059  # var_name is a variable name, not a format string
+		printf -v "$var_name" '%s' "$default_value"
+		return 0
+	fi
+
+	local _setup_prompt_reply=""
+	read -r -p "$prompt_text" _setup_prompt_reply || _setup_prompt_reply="$default_value"
+	# shellcheck disable=SC2059  # var_name is a variable name, not a format string
+	printf -v "$var_name" '%s' "$_setup_prompt_reply"
+	return 0
+}
+
 # Confirm step in interactive mode
 # Usage: confirm_step "Step description" && function_to_run
 # Returns: 0 if confirmed or not interactive, 1 if skipped
