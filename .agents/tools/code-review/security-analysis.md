@@ -66,25 +66,26 @@ mcp:
 
 ## Integrations
 
-**OSV-Scanner** (deps): npm/Yarn/pnpm, pip, Go, Cargo, Composer, Maven/Gradle.
+**OSV-Scanner** (deps): npm/Yarn/pnpm, pip, Go, Cargo, Composer, Maven/Gradle. [Docs](https://github.com/google/osv-scanner) | [OSV DB](https://osv.dev/)
 
-**VirusTotal**: SHA256 hash lookup against 70+ AV engines, domain/URL scanning. Rate-limited (16s between requests, max 8 per skill scan). Verdicts: SAFE, MALICIOUS, SUSPICIOUS, UNKNOWN. Does not block imports (Cisco Skill Scanner is the security gate). API key: `aidevops secret set VIRUSTOTAL_MARCUSQUINN` (gopass) or `~/.config/aidevops/credentials.sh`.
+**VirusTotal**: SHA256 hash lookup against 70+ AV engines, domain/URL scanning. Rate-limited (16s between requests, max 8 per skill scan). Verdicts: SAFE, MALICIOUS, SUSPICIOUS, UNKNOWN. Does not block imports (Cisco Skill Scanner is the security gate). API key: `aidevops secret set VIRUSTOTAL_MARCUSQUINN` (gopass) or `~/.config/aidevops/credentials.sh`. [API v3](https://docs.virustotal.com/reference/overview)
 
-**Ferret** (AI CLI configs): Detects prompt injection, jailbreaks, credential leaks, backdoors in Claude Code, Cursor, Windsurf, Continue, Aider, Cline. 65+ rules across 9 threat categories.
+**Ferret** (AI CLI configs): Detects prompt injection, jailbreaks, credential leaks, backdoors in Claude Code, Cursor, Windsurf, Continue, Aider, Cline. 65+ rules across 9 threat categories. [Docs](https://github.com/fubak/ferret-scan)
 
 ```bash
 npm install -g ferret-scan   # or: npx ferret-scan
-# Docs: github.com/fubak/ferret-scan
 # Custom rules: .ferretrc.json | Exclude known issues: ferret baseline create
 ```
+
+**Shannon** (pentesting): Taint analysis (Pro), exploit validation. **Snyk Code** / **SonarCloud** / **CodeQL**: dependency scanning, taint analysis, CI/CD integration. **Gemini CLI Security** MCP: `find_line_numbers`, `get_audit_scope`, `run_poc`. [CWE DB](https://cwe.mitre.org/) | [OWASP Top 10](https://owasp.org/Top10/)
 
 ## Output
 
 ```text
 .security-analysis/
-├── SECURITY_REPORT.md          # Human-readable report
-├── security-report.json        # Machine-readable JSON
-└── security-report.sarif       # SARIF format for CI/CD
+├── SECURITY_REPORT.md    # Human-readable
+├── security-report.json  # Machine-readable
+└── security-report.sarif # SARIF for CI/CD
 ```
 
 Each finding includes: severity, file, lines, CWE, description, vulnerable code, remediation.
@@ -155,35 +156,9 @@ Tools: `find_line_numbers` (exact line numbers), `get_audit_scope` (git diff sco
 | Medium | 30d | Schedule for next sprint |
 | Low | 90d | Address in maintenance cycle |
 
-## Tool Comparison
-
-| Feature | This Tool | Shannon | Ferret | VirusTotal | Snyk Code | SonarCloud | CodeQL |
-|---------|-----------|---------|--------|------------|-----------|------------|--------|
-| AI-Powered | Yes | Yes | No | No | Partial | No | No |
-| Taint Analysis | Yes | Yes (Pro) | No | No | Yes | Yes | Yes |
-| Git History Scan | Yes | No | No | No | No | No | No |
-| Full Codebase | Yes | Yes | Yes | No | Yes | Yes | Yes |
-| Dependency Scan | Via OSV | No | No | No | Yes | Yes | No |
-| File Hash / AV | No | No | No | Yes (70+) | No | No | No |
-| Domain/URL Scan | No | No | No | Yes | No | No | No |
-| LLM Safety | Yes | No | Yes | No | No | No | No |
-| AI CLI Configs | Via Ferret | No | Yes | No | No | No | No |
-| Prompt Injection | Yes | No | Yes | No | No | No | No |
-| Exploit Validation | No | Yes | No | No | No | No | No |
-| Local/Offline | Yes | Yes | Yes | No | No | No | Yes |
-| MCP Integration | Yes | No | No | No | Yes | No | No |
-
 ## Troubleshooting
 
 - **"No files in scope"**: Check `git status` and `git diff --stat`.
 - **"OSV-Scanner not found"**: `go install github.com/google/osv-scanner/cmd/osv-scanner@latest` or `brew install osv-scanner`.
 - **"Analysis timeout"**: Target specific paths or use `analyze branch` instead of `analyze full`.
 - **"Too many false positives"**: Use `vuln_allowlist.txt` or `ferret baseline create`.
-
-## Resources
-
-- [OSV-Scanner](https://github.com/google/osv-scanner) | [OSV Database](https://osv.dev/)
-- [Ferret Scan](https://github.com/fubak/ferret-scan)
-- [VirusTotal](https://www.virustotal.com/) | [VT API v3](https://docs.virustotal.com/reference/overview)
-- [CWE Database](https://cwe.mitre.org/) | [OWASP Top 10](https://owasp.org/Top10/)
-- [Gemini CLI Security](https://github.com/gemini-cli-extensions/security)
