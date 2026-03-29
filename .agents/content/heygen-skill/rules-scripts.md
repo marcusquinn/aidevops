@@ -21,13 +21,6 @@ AI avatar scripts differ from human presenter scripts — pacing, pauses, and pr
 | 450 | 3 min |
 | 750 | 5 min |
 
-```typescript
-function estimateDuration(script: string, speed = 1.0): number {
-  const words = script.split(/\s+/).filter(w => w.length > 0).length;
-  return (words / (150 * speed)) * 60; // seconds
-}
-```
-
 ## Sentence Structure
 
 10-20 words per sentence. AI voices handle shorter sentences more naturally. Split run-ons at natural pause points.
@@ -48,7 +41,7 @@ function estimateDuration(script: string, speed = 1.0): number {
 <break time="Xs"/>
 ```
 
-Always space before and after: `word <break time="1s"/> next word`. Use seconds (`1.5s`), not milliseconds. Self-closing only.
+Always space before and after: `word <break time="1s"/> next word`. Use seconds (`1.5s`), not milliseconds. Self-closing only. Consecutive breaks combine: `<break time="1s"/> <break time="0.5s"/>` = 1.5s.
 
 ### Pause Reference
 
@@ -59,20 +52,6 @@ Always space before and after: `word <break time="1s"/> next word`. Use seconds 
 | 1-1.5s | Section changes, setup for key points |
 | 1.5-2s | Dramatic reveals, important announcements |
 | 2s+ | Use sparingly — can feel unnatural |
-
-Consecutive breaks are combined: `<break time="1s"/> <break time="0.5s"/>` = 1.5s pause.
-
-### Example
-
-```typescript
-const script = `
-Welcome to our product overview. <break time="1s"/>
-Today I'll cover three key features. <break time="0.5s"/>
-First, let's look at the dashboard. <break time="1.5s"/>
-As you can see, it's designed for simplicity. <break time="0.5s"/>
-Every action is just one click away.
-`;
-```
 
 ## Script Templates
 
@@ -156,10 +135,6 @@ const multiSceneVideo = {
 2. Count words — verify expected duration
 3. Check break tags — proper spacing and syntax
 4. Preview with short clip — generate a 10-second test for pronunciation uncertainty
-
-```typescript
-const testScript = script.split('.').slice(0, 2).join('.') + '.';
-```
 
 ## Voice Speed
 
