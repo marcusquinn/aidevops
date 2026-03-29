@@ -32,16 +32,11 @@ model: sonnet
 
 ### `/compare-models [models...] [--task TASK]`
 
-Full comparison with optional live data fetch from provider pricing pages.
-
 ```bash
 /compare-models claude-sonnet-4-6 gpt-4o gemini-2.5-pro
-/compare-models --task "code review"
-/compare-models --tier medium
-/compare-models --pricing
+/compare-models --task "code review"   # --tier low|medium|high
+/compare-models --pricing              # --context --capabilities --providers --free
 ```
-
-Options: `--task DESCRIPTION`, `--tier low|medium|high`, `--pricing`, `--context`, `--capabilities`, `--providers`, `--free`
 
 ### `/compare-models-free [models...] [--task TASK]`
 
@@ -59,8 +54,6 @@ Offline comparison using only embedded reference data. No web fetches, no API ca
 ```
 
 ### Enrich with Live Data (full mode only)
-
-Fetch latest pricing and cross-reference against embedded data:
 
 - Anthropic: `https://docs.anthropic.com/en/docs/about-claude/models`
 - OpenAI: `https://platform.openai.com/docs/models`
@@ -84,8 +77,6 @@ Budget option: {model} — {reason}
 
 ### Pattern Data (t1098)
 
-Helper automatically includes live success rates. Example alongside static specs:
-
 ```text
 sonnet: $3.00/$15.00 per 1M tokens, 200K context — 85% (n=47) success
 ```
@@ -97,7 +88,7 @@ sonnet: $3.00/$15.00 per 1M tokens, 200K context — 85% (n=47) success
 
 ### Prompt Version Tracking (t1396)
 
-Track which prompt version produced each result. `--prompt-file` auto-resolves git short hash as version; `--prompt-version` sets explicit tag.
+`--prompt-file` auto-resolves git short hash as version; `--prompt-version` sets explicit tag. Enables regression detection across prompt versions.
 
 ```bash
 ~/.aidevops/agents/scripts/observability-helper.sh record \
@@ -115,8 +106,6 @@ Track which prompt version produced each result. `--prompt-file` auto-resolves g
 ~/.aidevops/agents/scripts/compare-models-helper.sh results --prompt-version a1b2c3d
 ```
 
-Enables regression detection: run the same dataset against two prompt versions and compare scores.
-
 ### Actionable Advice
 
 For each comparison include:
@@ -128,7 +117,7 @@ For each comparison include:
 
 ## Model Discovery
 
-Discover which providers the user has configured before comparing:
+Run before comparing to filter results to models the user can actually use:
 
 ```bash
 ~/.aidevops/agents/scripts/compare-models-helper.sh discover           # check configured API keys
@@ -137,11 +126,9 @@ Discover which providers the user has configured before comparing:
 ~/.aidevops/agents/scripts/compare-models-helper.sh discover --json    # machine-readable
 ```
 
-Key lookup order: env vars → gopass secrets → `~/.config/aidevops/credentials.sh`. Use discovery output to filter results to models the user can actually use.
+Key lookup order: env vars → gopass secrets → `~/.config/aidevops/credentials.sh`.
 
 ## Live Model Benchmarking (t1393)
-
-Send the same prompt to multiple models and compare outputs with latency, tokens, cost, and optional LLM-as-judge scoring.
 
 ```bash
 ~/.aidevops/agents/scripts/compare-models-helper.sh bench "Explain quicksort" claude-sonnet-4-6 gpt-4o
@@ -161,11 +148,7 @@ Output format:
 | gemini-2.5-pro         | 1.8s    | 150/350         | $0.0071 | 0.90        |
 ```
 
-Results stored at `~/.aidevops/.agent-workspace/observability/bench-results.jsonl`:
-
-```jsonl
-{"ts":"2026-03-05T10:00:00Z","prompt_hash":"abc123","model":"claude-sonnet-4-6","latency_ms":1200,"tokens_in":150,"tokens_out":320,"cost":0.0062,"judge_score":0.92,"output_hash":"def456"}
-```
+Results stored at `~/.aidevops/.agent-workspace/observability/bench-results.jsonl`.
 
 | Flag | Description |
 |------|-------------|
