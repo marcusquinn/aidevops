@@ -40,53 +40,21 @@ if [[ -z "$NEURONWRITER_API_KEY" ]]; then
 fi
 ```
 
-### Step 3: Read the NeuronWriter Subagent
+### Step 3: Execute Action
 
-Read `seo/neuronwriter.md` for full API reference, then execute the appropriate endpoint.
+Read `seo/neuronwriter.md` for full API reference and curl patterns, then execute:
 
-Use NeuronWriter API base `https://app.neuronwriter.com/neuron-api/0.5/writer` with POST methods.
-Do not use `https://app.neuronwriter.com/api/v1/` for this command flow.
+| Action | Endpoint(s) | Notes |
+|--------|-------------|-------|
+| `analyze` (default) | `/list-projects` → `/new-query` → poll `/get-query` | Poll every 15s, max 5 min, until `status == "ready"` |
+| `score` | `/evaluate-content` | Does not save a revision |
+| `import` | `/import-content` | Creates a new content revision |
+| `get` | `/get-query` | Returns terms, ideas, competitors |
+| `content` | `/get-content` | Returns saved HTML, title, description |
+| `projects` | `/list-projects` | Returns project names, IDs, languages, engines |
+| `queries` | `/list-queries` | Supports `--status`, `--keyword`, `--tag` filters |
 
-### Step 4: Execute Action
-
-**For `analyze` (default):**
-
-1. List projects to find the right one (or use `--project <id>` if provided)
-2. Call `/new-query` with the keyword
-3. Poll `/get-query` every 15 seconds until `status == "ready"` (max 5 minutes)
-4. Present NLP recommendations in a structured format
-
-**For `score`:**
-
-1. Call `/evaluate-content` with the query ID and URL or HTML
-2. Report the content score
-
-**For `import`:**
-
-1. Call `/import-content` with the query ID and URL or HTML
-2. Report the content score and editor URL
-
-**For `get`:**
-
-1. Call `/get-query` with the query ID
-2. Present recommendations (terms, ideas, competitors)
-
-**For `content`:**
-
-1. Call `/get-content` with the query ID
-2. Return the saved HTML content, title, and description
-
-**For `projects`:**
-
-1. Call `/list-projects`
-2. Display project names, IDs, languages, and engines
-
-**For `queries`:**
-
-1. Call `/list-queries` with the project ID
-2. Optionally filter by `--status`, `--keyword`, `--tag`
-
-### Step 5: Report Results
+### Step 4: Report Results
 
 **For `analyze`, present recommendations as:**
 
@@ -136,56 +104,19 @@ Query: 32dee2a89374a722
 
 ## Examples
 
-**Analyze a keyword:**
-
 ```text
 /neuronwriter trail running shoes
-```
-
-**Analyze with specific project and engine:**
-
-```text
 /neuronwriter analyze "best running gear" --project ed0b47151fb35b02 --engine google.co.uk
-```
-
-**Score a URL against an existing query:**
-
-```text
 /neuronwriter score 32dee2a89374a722 https://example.com/running-shoes
-```
-
-**Import content into the editor:**
-
-```text
 /neuronwriter import 32dee2a89374a722 https://example.com/running-shoes
-```
-
-**Get recommendations for an existing query:**
-
-```text
 /neuronwriter get 32dee2a89374a722
-```
-
-**List all projects:**
-
-```text
 /neuronwriter projects
-```
-
-**List ready queries in a project:**
-
-```text
 /neuronwriter queries ed0b47151fb35b02 --status ready
-```
-
-**Check API key status:**
-
-```text
 /neuronwriter status
 ```
 
 ## Related
 
-- `seo/neuronwriter.md` - Full API reference and authentication details
+- `seo/neuronwriter.md` — full API reference, curl patterns, authentication, error handling
 - NeuronWriter requires Gold plan or higher for API access
 - API requests consume the same monthly limits as the NeuronWriter UI
