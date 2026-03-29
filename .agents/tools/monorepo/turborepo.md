@@ -24,16 +24,6 @@ tools:
 - **Docs**: Use Context7 MCP for current documentation
 - **Features**: Incremental builds with caching · Parallel task execution · Remote caching (Vercel) · Dependency-aware task ordering
 
-**Common Commands**:
-
-```bash
-pnpm dev                              # all packages
-pnpm build                            # all packages
-pnpm --filter web dev                 # single package
-pnpm --filter @workspace/ui build     # by full name
-pnpm --filter web... build            # package + dependencies
-```
-
 **Workspace Structure**:
 
 ```text
@@ -75,6 +65,20 @@ pnpm --filter web... build            # package + dependencies
 
 ## Patterns
 
+### Filtering
+
+```bash
+pnpm dev                               # all packages
+pnpm build                             # all packages
+pnpm --filter web dev                  # single package
+pnpm --filter @workspace/ui build      # by full name
+pnpm --filter web... build             # package + dependencies
+pnpm --filter ...web build             # package + dependents
+pnpm --filter web --filter mobile dev  # multiple
+pnpm --filter "./packages/*" build     # by directory
+pnpm --filter "!web" build             # exclude
+```
+
 ### Package.json Exports
 
 ```json
@@ -103,21 +107,11 @@ Use `"workspace:*"` protocol (not `"*"`):
 { "dependencies": { "@workspace/ui-web": "workspace:*", "@workspace/api": "workspace:*" } }
 ```
 
-### Filtering
-
-```bash
-pnpm --filter web dev                  # single
-pnpm --filter web... build             # + dependencies
-pnpm --filter ...web build             # + dependents
-pnpm --filter web --filter mobile dev  # multiple
-pnpm --filter "./packages/*" build     # by directory
-pnpm --filter "!web" build             # exclude
-```
-
 ### Environment Variables
 
+Use `dotenv-cli` to load `.env` before turbo:
+
 ```bash
-# "with-env" loads .env via dotenv-cli before turbo (equivalent: pnpm dotenv -- turbo build)
 pnpm with-env turbo build
 ```
 
