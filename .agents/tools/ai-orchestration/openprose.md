@@ -22,9 +22,7 @@ tools:
 
 ```bash
 # Claude Code
-claude plugin marketplace add https://github.com/openprose/prose.git
-claude plugin install open-prose@prose
-
+claude plugin marketplace add https://github.com/openprose/prose.git && claude plugin install open-prose@prose
 # OpenCode
 git clone https://github.com/openprose/prose.git ~/.config/opencode/skill/open-prose
 ```
@@ -34,8 +32,8 @@ git clone https://github.com/openprose/prose.git ~/.config/opencode/skill/open-p
 ### Sessions & Agents
 
 ```prose
-session "Do something"                    # Simple session
-session: myAgent                          # With agent
+session "Do something"
+session: myAgent
   prompt: "Task prompt"
   context: previousResult
 
@@ -48,11 +46,11 @@ agent researcher:
 ### Variables & Context
 
 ```prose
-let result = session "Get result"         # Mutable
-const config = session "Get config"       # Immutable
+let result = session "Get result"         # mutable
+const config = session "Get config"       # immutable
 session "Use both"
-  context: [result, config]               # Array form
-  context: { result, config }             # Object form
+  context: [result, config]               # array
+  context: { result, config }             # object
 ```
 
 ### Parallel Execution
@@ -62,11 +60,11 @@ parallel:                                 # Default: wait for all
   a = session "Task A"
   b = session "Task B"
 
-parallel ("first"):                       # Race - first wins
-parallel ("any"):                         # First success
-parallel ("all"):                         # Wait for all (explicit)
-parallel (on-fail: "continue"):           # Let all complete
-parallel (on-fail: "ignore"):             # Treat failures as success
+parallel ("first"):                       # race - first wins
+parallel ("any"):                         # first success
+parallel ("all"):                         # wait for all (explicit)
+parallel (on-fail: "continue"):           # let all complete
+parallel (on-fail: "ignore"):             # treat failures as success
 ```
 
 ### Loops
@@ -78,7 +76,7 @@ repeat 3:
 for topic in ["AI", "ML", "DL"]:
   session "Research" context: topic
 
-parallel for item in items:              # Fan-out
+parallel for item in items:              # fan-out
   session "Process" context: item
 
 loop until **all tests pass** (max: 10):
@@ -137,12 +135,12 @@ let results = items
 
 ## Integration with aidevops
 
-```text
-OpenProse  →  workflow orchestration ("run these agents in parallel, loop until done")
-DSPy       →  prompt optimization (optimized prompts work in agent definitions)
-Context7   →  library docs  |  Augment → code search  |  LLM-TLDR → summarize
-TOON       →  token-efficient serialization (40-70% fewer tokens; encode large context before passing between sessions)
-```
+| Tool | Role |
+|------|------|
+| OpenProse | Workflow orchestration — parallel agents, loops, conditions |
+| DSPy | Prompt optimization — optimized prompts work in agent definitions |
+| Context7 | Library docs; Augment → code search; LLM-TLDR → summarize |
+| TOON | Token-efficient serialization (40-70% fewer tokens) — encode large context before passing between sessions |
 
 ## Patterns
 
