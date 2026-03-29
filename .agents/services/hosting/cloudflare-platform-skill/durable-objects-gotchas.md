@@ -18,89 +18,72 @@
 
 ### Duration Billing Trap
 
-DOs bill for **wall-clock time** while active, not CPU time. WebSocket open 8 hours = 8 hours duration billing, even if DO processed 50 small messages.
+DOs bill for **wall-clock time** while active, not CPU time. WebSocket open 8 hours = 8 hours billed, even if only 50 small messages were processed.
 
-**Fix**: Use Hibernatable WebSockets API. DO sleeps while maintaining connections, only wakes (and bills) when messages arrive.
+**Fix**: Use Hibernatable WebSockets API — DO sleeps while maintaining connections, only wakes (and bills) when messages arrive.
 
 ### storage.list() on Every Request
 
 Storage reads are cheap but not free. Calling `storage.list()` or multiple `storage.get()` on every request adds up.
 
-**Fix**: Profile actual usage. Options:
-- `storage.get(['key1', 'key2', 'key3'])` - cheapest if only need specific keys
-- `storage.list()` once on wake, cache in memory - cheapest if serving many requests per wake cycle
-- Single `storage.get('allData')` with combined object - cheapest if often need multiple keys together
+**Fix**: Choose the cheapest pattern for your access shape:
+- `storage.get(['k1','k2','k3'])` — if you need specific keys
+- `storage.list()` once on wake, cache in memory — if serving many requests per wake cycle
+- Single `storage.get('allData')` with combined object — if you often need multiple keys together
 
 ### Alarm Recursion
 
-Scheduling `setAlarm()` every 5 minutes = 288 wake-ups/day × minimum billable duration. Across thousands of DOs, you're waking them all whether work exists or not.
+Scheduling `setAlarm()` every 5 minutes = 288 wake-ups/day per DO. Across thousands of DOs, you're waking them all whether work exists or not.
 
-**Fix**: Only schedule alarms when actual work is pending. Check if alarm is needed before setting.
+**Fix**: Only schedule alarms when actual work is pending.
 
 ### WebSocket Never Closes
 
-If users close browser tabs without proper disconnect and you don't handle it, connection stays "open" from DO's perspective, preventing hibernation.
+Browser tab closes without proper disconnect leave connections "open" from the DO's perspective, preventing hibernation.
 
-**Fix**:
-1. Handle `webSocketClose` and `webSocketError` events
-2. Implement heartbeat/ping-pong to detect dead connections
-3. Use Hibernatable WebSockets API properly
+**Fix**: Handle `webSocketClose` and `webSocketError` events; implement heartbeat/ping-pong to detect dead connections; use Hibernatable WebSockets API.
 
 ### Singleton vs Sharding
 
-Global singleton DO handling all traffic = bottleneck + continuous duration billing (never hibernates).
+A global singleton DO handling all traffic never hibernates and becomes a bottleneck.
 
 | Design | Cost Pattern |
 |--------|--------------|
 | One global DO | Never hibernates, continuous billing |
-| Per-user DO | Each only wakes for their requests, most hibernate |
+| Per-user DO | Each hibernates between requests |
 | Per-user-per-hour | Many cold starts, many minimum durations |
 
-**Fix**: Use per-entity DOs (per-user, per-room, per-document). They hibernate between activity.
+**Fix**: Use per-entity DOs (per-user, per-room, per-document).
 
-### Batching Reads
+### Batching Reads and Writes
 
-Five separate `storage.get()` calls > one `storage.get(['k1','k2','k3','k4','k5'])`. Each operation has overhead.
+Multiple separate `storage.get()` calls cost more than one batched call. Multiple writes without intervening `await` are automatically coalesced into a single atomic transaction.
 
-**Fix**: Batch reads/writes. Writes without intervening `await` are automatically coalesced into single atomic transaction.
+**Fix**: Batch reads with `storage.get(['k1','k2','k3','k4','k5'])`. Group writes without `await` between them.
 
 ### Hibernation State Loss
 
-In-memory state is **lost** when DO hibernates or evicts. Waking DO reconstructs from storage.
+In-memory state is **lost** when a DO hibernates or evicts. Every wake is potentially cold.
 
-**Fix**:
-1. Store all important state in SQLite storage
-2. Use `blockConcurrencyWhile()` in constructor to load state on wake
-3. Cache in memory for current wake cycle only
-4. Accept every wake is potentially "cold"
+**Fix**: Store all important state in SQLite storage. Use `blockConcurrencyWhile()` in the constructor to load state on wake; cache in memory for the current wake cycle only.
 
 ### Fan-Out Tax
 
-Event notifying 1,000 DOs = 1,000 DO invocations billed immediately. Queue pattern doesn't reduce invocations but provides retries and batching.
+Notifying 1,000 DOs = 1,000 DO invocations billed immediately.
 
-**Fix**: For time-sensitive, accept cost. For deferrable, use Queues for retry/dead-letter handling.
+**Fix**: For time-sensitive fan-out, accept the cost. For deferrable work, use Queues for retry and dead-letter handling.
 
 ### Idempotency Key Explosion
 
-Creating one DO per idempotency key (used once) = millions of single-use DOs that persist until deleted.
+One DO per idempotency key (used once) = millions of single-use DOs that persist until deleted.
 
-**Fix**:
-1. Hash idempotency keys into N sharded buckets
-2. Store records as rows in single DO's SQLite table
-3. Implement TTL cleanup via alarms
-4. Consider if KV is sufficient (if strong consistency not needed)
-
-### Storage Compaction
-
-Individual writes billed per-operation. Writing 100 events individually = 100× the write operations vs batching.
-
-**Fix**: Batch writes. Multiple `INSERT` statements without intervening `await` coalesce into single transaction.
+**Fix**: Hash keys into N sharded buckets; store records as rows in a single DO's SQLite table; implement TTL cleanup via alarms. Use KV instead if strong consistency isn't required.
 
 ### waitUntil() Behavior
 
-`ctx.waitUntil()` keeps DO alive (billed) until promises resolve. Waiting for slow external calls = paying for wait time.
+`ctx.waitUntil()` keeps the DO alive (billed) until promises resolve. Slow external calls = paying for wait time.
 
-**Fix**: For true background work, use alarms or Queues instead of `waitUntil()`.
+**Fix**: Use alarms or Queues for true background work instead of `waitUntil()`.
 
 ### KV vs DO Storage
 
@@ -116,7 +99,7 @@ For read-heavy, write-rare, eventually-consistent-OK data: **KV is cheaper**.
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
-| DO overloaded (503) | Single DO bottleneck | Shard across DOs with random/deterministic IDs |
+| DO overloaded (503) | Single DO bottleneck | Shard with random/deterministic IDs |
 | Storage quota exceeded | Write failures | Upgrade plan or cleanup via alarms |
 | CPU exceeded | Terminated mid-request | Increase `limits.cpu_ms` or chunk work |
 | WebSockets disconnect | Eviction | Use hibernation + reconnection logic |
