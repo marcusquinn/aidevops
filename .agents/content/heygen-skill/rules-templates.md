@@ -48,17 +48,6 @@ async function listTemplates(): Promise<Template[]> {
 }
 ```
 
-```python
-def list_templates() -> list:
-    res = requests.get(
-        "https://api.heygen.com/v2/templates",
-        headers={"X-Api-Key": os.environ["HEYGEN_API_KEY"]}
-    )
-    data = res.json()
-    if data.get("error"): raise Exception(data["error"])
-    return data["data"]["templates"]
-```
-
 **Response shape:**
 
 ```json
@@ -85,7 +74,7 @@ def list_templates() -> list:
 
 | Field | Type | Req | Description |
 |-------|------|:---:|-------------|
-| `variables` | object | ✓ | Key-value pairs matching template variable names |
+| `variables` | object | Y | Key-value pairs matching template variable names |
 | `test` | boolean | | Watermarked output, no credits consumed |
 | `title` | string | | Video name for organization |
 | `callback_id` | string | | Custom ID for webhook tracking |
@@ -128,18 +117,6 @@ async function generateFromTemplate(
 }
 ```
 
-```python
-def generate_from_template(template_id: str, variables: dict, test: bool = False) -> str:
-    res = requests.post(
-        f"https://api.heygen.com/v2/template/{template_id}/generate",
-        headers={"X-Api-Key": os.environ["HEYGEN_API_KEY"], "Content-Type": "application/json"},
-        json={"test": test, "variables": variables}
-    )
-    data = res.json()
-    if data.get("error"): raise Exception(data["error"])
-    return data["data"]["video_id"]
-```
-
 ## Variable Types
 
 | Type | Value format | Example keys |
@@ -170,6 +147,8 @@ function validateTemplateVariables(
 
 ## Batch Generation
 
+Loop over recipients with a 1s delay between requests to avoid rate limits:
+
 ```typescript
 async function batchGenerateVideos(
   templateId: string,
@@ -183,7 +162,7 @@ async function batchGenerateVideos(
       personalized_message: r.customMessage,
     });
     videoIds.push(id);
-    await new Promise((res) => setTimeout(res, 1000)); // rate limiting
+    await new Promise((res) => setTimeout(res, 1000));
   }
   return videoIds;
 }
@@ -192,13 +171,12 @@ async function batchGenerateVideos(
 ## Best Practices
 
 - Use `test: true` to verify layout before production runs
-- Cache template details — avoid repeated GET calls per batch item
-- Add 1 s delay between batch requests to avoid rate limits
+- Cache template details -- avoid repeated GET calls per batch item
 - Validate all variables (presence + length + URL format) before generating
 - Define `max_length` on text variables in the template to prevent truncation
 - Use `callback_url` for large batches instead of polling
 
-Full workflow: `listTemplates` → `validateTemplateVariables` → `generateFromTemplate` → `waitForVideo` (see `rules-video-status.md`)
+Full workflow: `listTemplates` -> `validateTemplateVariables` -> `generateFromTemplate` -> `waitForVideo` (see `rules-video-status.md`)
 
 ## Use Cases
 
