@@ -9,11 +9,11 @@ metadata:
 
 Photo avatars animate a static photo to speak. Three tiers of quality:
 
-| Type | Description | Quality |
-|------|-------------|---------|
-| Talking Photo | Basic photo animation | Good |
-| Photo Avatar | Enhanced with motion | Better |
-| Avatar IV | Latest generation | Best |
+| Type | Quality |
+|------|---------|
+| Talking Photo | Good |
+| Photo Avatar | Better |
+| Avatar IV | Best |
 
 ## Talking Photo
 
@@ -42,20 +42,7 @@ const videoId = await generateVideo(videoConfig);
 
 ## Avatar IV
 
-Avatar IV provides improved quality and natural motion.
-
 ```typescript
-interface AvatarIVRequest {
-  photo_s3_key: string;
-  script: string;
-  voice_id: string;
-  video_orientation?: "portrait" | "landscape" | "square";
-  video_title?: string;
-  fit?: "cover" | "contain";
-  custom_motion_prompt?: string;
-  enhance_custom_motion_prompt?: boolean;
-}
-
 const response = await fetch("https://api.heygen.com/v2/video/av4/generate", {
   method: "POST",
   headers: { "X-Api-Key": process.env.HEYGEN_API_KEY!, "Content-Type": "application/json" },
@@ -63,16 +50,16 @@ const response = await fetch("https://api.heygen.com/v2/video/av4/generate", {
     photo_s3_key: "path/to/photo.jpg",
     script: "Hello! This is Avatar IV.",
     voice_id: "1bd001e7e50f421d891986aad5158bc8",
-    video_orientation: "portrait",
+    video_orientation: "portrait",   // "portrait" | "landscape" | "square"
+    fit: "cover",                    // "cover" (fill, may crop) | "contain" (fit, may show bg)
     custom_motion_prompt: "nodding head and smiling",
     enhance_custom_motion_prompt: true,
-  } satisfies AvatarIVRequest),
+  }),
 });
 const { data: { video_id } } = await response.json();
 ```
 
 **Orientations:** `portrait` (720×1280, TikTok/Stories), `landscape` (1280×720, YouTube/Web), `square` (720×720, Instagram Feed).
-**Fit:** `cover` (fill frame, may crop), `contain` (fit entire image, may show background).
 
 ## Generating AI Photo Avatars
 
@@ -90,19 +77,6 @@ const { data: { video_id } } = await response.json();
 | `appearance` | string | Clothing, mood, lighting, background. Max 1000 chars |
 
 ```typescript
-interface GeneratePhotoAvatarRequest {
-  name: string;
-  age: "Young Adult" | "Early Middle Age" | "Late Middle Age" | "Senior" | "Unspecified";
-  gender: "Woman" | "Man" | "Unspecified";
-  ethnicity: "White" | "Black" | "Asian American" | "East Asian" | "South East Asian" | "South Asian" | "Middle Eastern" | "Pacific" | "Hispanic" | "Unspecified";
-  orientation: "square" | "horizontal" | "vertical";
-  pose: "half_body" | "close_up" | "full_body";
-  style: "Realistic" | "Pixar" | "Cinematic" | "Vintage" | "Noir" | "Cyberpunk" | "Unspecified";
-  appearance: string;  // max 1000 chars
-  callback_url?: string;
-  callback_id?: string;
-}
-
 // Generate
 const genResponse = await fetch("https://api.heygen.com/v2/photo_avatar/photo/generate", {
   method: "POST",
@@ -116,7 +90,7 @@ const genResponse = await fetch("https://api.heygen.com/v2/photo_avatar/photo/ge
     pose: "half_body",
     style: "Realistic",
     appearance: "Professional man in a modern office, dark gray suit, confident expression, soft natural lighting",
-  } satisfies GeneratePhotoAvatarRequest),
+  }),
 });
 const { data: { generation_id } } = await genResponse.json();
 
@@ -134,11 +108,9 @@ async function waitForPhotoGeneration(generationId: string): Promise<string> {
 }
 ```
 
-**If user provides a vague request** like "create a professional man", ask for missing fields OR apply reasonable defaults: `"Early Middle Age"`, `"Realistic"` style, `"half_body"` pose, `"horizontal"` orientation.
+**Vague requests:** ask for missing fields OR apply defaults: `"Early Middle Age"`, `"Realistic"` style, `"half_body"` pose, `"horizontal"` orientation.
 
-**Appearance prompt tips:**
-- Good: "Professional woman with shoulder-length brown hair, light blue button-down, warm smile, soft studio lighting, clean white background"
-- Avoid: vague descriptions, conflicting attributes, specific real people
+**Appearance tips:** Be specific — "Professional woman with shoulder-length brown hair, light blue button-down, warm smile, soft studio lighting, clean white background". Avoid vague descriptions, conflicting attributes, or specific real people.
 
 ## Photo Avatar Groups
 
@@ -171,6 +143,8 @@ await fetch("https://api.heygen.com/v2/photo_avatar/avatar_group/add", {
 | Expression | Neutral or slight smile |
 | Background | Simple, uncluttered |
 
+Side-profile and full-body photos have limited animation support. Some expressions may look unnatural; processing time varies by complexity.
+
 ## Managing Photo Avatars
 
 ```typescript
@@ -184,11 +158,3 @@ await fetch(`https://api.heygen.com/v2/photo_avatar/${id}`, {
   headers: { "X-Api-Key": process.env.HEYGEN_API_KEY! },
 });
 ```
-
-## Best Practices & Limitations
-
-- Use high-quality, front-facing portraits with neutral expressions
-- Test different photos — results vary by image
-- Use Avatar IV for highest quality; organize with groups
-- Side-profile and full-body photos have limited animation support
-- Some expressions may look unnatural; processing time varies by complexity
