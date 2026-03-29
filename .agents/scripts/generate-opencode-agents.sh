@@ -493,21 +493,26 @@ sorted_agents = dict(sorted(primary_agents.items(), key=lambda x: sort_key(x[0])
 # Build+ is now the unified coding agent (Plan+ and AI-DevOps consolidated)
 # =============================================================================
 
-sorted_agents["build"] = {"disable": True}
-sorted_agents["plan"] = {"disable": True}
-# Disable demoted agents (now subagents accessible via @mention)
-sorted_agents["Plan+"] = {"disable": True}
-sorted_agents["AI-DevOps"] = {"disable": True}
-sorted_agents["Browser-Extension-Dev"] = {"disable": True}
-sorted_agents["Mobile-App-Dev"] = {"disable": True}
-print("  Disabled default 'build' and 'plan' agents")
-print("  Disabled 'Plan+', 'AI-DevOps', 'Browser-Extension-Dev', 'Mobile-App-Dev' (available as @subagents)")
+# Guard: skip agent config if no primary agents discovered (avoids fatal OpenCode crash)
+if not primary_agents:
+    print("  WARNING: No primary agents discovered — skipping agent config update", file=sys.stderr)
+    print("  (agents directory may be empty or deploy incomplete)", file=sys.stderr)
+else:
+    sorted_agents["build"] = {"disable": True}
+    sorted_agents["plan"] = {"disable": True}
+    # Disable demoted agents (now subagents accessible via @mention)
+    sorted_agents["Plan+"] = {"disable": True}
+    sorted_agents["AI-DevOps"] = {"disable": True}
+    sorted_agents["Browser-Extension-Dev"] = {"disable": True}
+    sorted_agents["Mobile-App-Dev"] = {"disable": True}
+    print("  Disabled default 'build' and 'plan' agents")
+    print("  Disabled 'Plan+', 'AI-DevOps', 'Browser-Extension-Dev', 'Mobile-App-Dev' (available as @subagents)")
 
-config['agent'] = sorted_agents
+    config['agent'] = sorted_agents
 
-# Set Build+ as the default agent (first in Tab cycle, auto-selected on startup)
-config['default_agent'] = "Build+"
-print("  Set Build+ as default agent")
+    # Set Build+ as the default agent (first in Tab cycle, auto-selected on startup)
+    config['default_agent'] = "Build+"
+    print("  Set Build+ as default agent")
 
 # =============================================================================
 # INSTRUCTIONS - Auto-load aidevops AGENTS.md for full framework context
