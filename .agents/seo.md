@@ -53,46 +53,16 @@ subagents:
 
 **Subagents** (`seo/` and `services/analytics/`):
 
-| Subagent | Purpose |
-|----------|---------|
-| `keyword-research.md` | Keyword research with SERP weakness detection (17 types, KeywordScore 0-100) |
-| `google-search-console.md` | GSC queries, search performance, index coverage |
-| `gsc-sitemaps.md` | Sitemap submission via Playwright browser automation |
-| `dataforseo.md` | SERP data, keywords, backlinks, on-page (REST API) |
-| `serper.md` | Google Search API (web, images, news, places) |
-| `ahrefs.md` | Backlinks, organic keywords, domain rating (REST API v3) |
-| `semrush.md` | Domain analytics, keywords, backlinks, competitor research |
-| `site-crawler.md` | Site auditing — links, meta, redirects (Screaming Frog-like) |
-| `screaming-frog.md` | Screaming Frog SEO Spider CLI integration |
-| `eeat-score.md` | E-E-A-T content quality scoring (7 criteria, 1-10) |
-| `contentking.md` | Real-time SEO monitoring and change tracking |
-| `ranking-opportunities.md` | Quick wins, striking distance, cannibalization analysis |
-| `analytics-tracking.md` | GA4 setup, event tracking, conversions, UTM, attribution |
-| `rich-results.md` | Google Rich Results Test via browser automation |
-| `debug-opengraph.md` | Validate Open Graph meta tags |
-| `debug-favicon.md` | Validate favicon setup across platforms |
-| `programmatic-seo.md` | SEO pages at scale with templates and keyword clustering |
-| `image-seo.md` | AI-powered alt text, filenames, tags (Moondream); upscaling via `upscale.md` |
-| `content-analyzer.md` | Content analysis (readability, keywords, SEO quality) |
-| `seo-optimizer.md` | On-page SEO audit with prioritized recommendations |
-| `keyword-mapper.md` | Keyword placement, density, and distribution analysis |
-| `geo-strategy.md` | AI search visibility — criteria extraction, retrieval-first optimization |
-| `sro-grounding.md` | Selection Rate Optimization for grounding snippet coverage |
-| `query-fanout-research.md` | Query decomposition and thematic fan-out for content planning |
-| `ai-hallucination-defense.md` | Detect brand hallucination risk, consistency and claim-evidence audits |
-| `ai-agent-discovery.md` | Validate autonomous agents can discover key site information |
-| `ai-search-readiness.md` | End-to-end orchestration: fan-out → GEO → SRO → consistency → discoverability |
-| `google-analytics.md` | GA4 reporting, traffic analysis, user behavior |
-| `data-export.md` | Export SEO data from GSC, Bing, Ahrefs, DataForSEO to TOON format |
+- **Research**: `keyword-research` (SERP weakness, 17 types, KeywordScore 0-100) | `ranking-opportunities` (quick wins, striking distance, cannibalization) | `query-fanout-research` (thematic fan-out) | `keyword-mapper` (placement/density) | `domain-research`
+- **Data providers**: `google-search-console` (queries, performance, index) | `dataforseo` (SERP, keywords, backlinks, on-page REST API) | `serper` (Google Search API) | `ahrefs` (backlinks, DR, REST API v3) | `semrush` (domain analytics, competitor research)
+- **Analytics**: `google-analytics` (GA4 reporting) | `analytics-tracking` (GA4 setup, events, UTM, attribution)
+- **Technical**: `site-crawler` (links, meta, redirects) | `screaming-frog` (SEO Spider CLI) | `contentking` (real-time monitoring) | `pagespeed`
+- **Content**: `content-analyzer` (readability, keywords, quality) | `seo-optimizer` (on-page audit) | `eeat-score` (7 criteria, 1-10) | `programmatic-seo` (pages at scale)
+- **AI search**: `geo-strategy` (criteria extraction, retrieval-first) | `sro-grounding` (snippet selection) | `ai-hallucination-defense` (claim-evidence audits) | `ai-agent-discovery` (discoverability) | `ai-search-readiness` (end-to-end orchestration)
+- **Media/debug**: `image-seo` (alt text, Moondream) | `upscale` | `moondream` | `rich-results` (browser automation) | `debug-opengraph` | `debug-favicon`
+- **Export**: `data-export` (GSC, Bing, Ahrefs, DataForSEO → TOON) | `gsc-sitemaps` (Playwright submission)
 
-**Content Analysis** (adapted from [SEO Machine](https://github.com/TheCraigHewitt/seomachine)):
-
-```bash
-python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py analyze article.md --keyword "target keyword"
-python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py readability article.md
-python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py quality article.md
-python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py intent "search query"
-```
+**Content analysis** ([SEO Machine](https://github.com/TheCraigHewitt/seomachine)): `python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py {analyze|readability|keywords|quality|intent} <file|query> [--keyword "kw"]`
 
 **Testing**: `opencode run "/keyword-research 'test query'" --agent SEO` (see `tools/opencode/opencode.md`).
 
@@ -102,45 +72,25 @@ python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py intent "search query"
 
 ### Keyword Research
 
-`/keyword-research "seed keywords"` | `/autocomplete-research "question"` | `/keyword-research-extended "top keywords"`
-
-See `seo/keyword-research.md` for Domain/Competitor/Gap research modes and provider configuration.
-
-### Search Performance
-
-GSC MCP for query performance, CTR, position tracking, index coverage. See `seo/google-search-console.md`.
+`/keyword-research "seed keywords"` | `/autocomplete-research "question"` | `/keyword-research-extended "top keywords"`. See `seo/keyword-research.md` for Domain/Competitor/Gap modes. GSC MCP for query performance, CTR, position tracking, index coverage (`seo/google-search-console.md`).
 
 ### AI Search Optimization (GEO and SRO)
 
-Retrieval-first workflow for AI search surfaces:
+Retrieval-first workflow: baseline → fanout → GEO → SRO → hallucination defense → agent discovery. Focus: deterministic retrieval signals (content clarity, structure, consistency, discoverability). Full scorecard: `seo/ai-search-readiness.md`.
 
-0. `/seo-ai-baseline example.com` — capture grounding eligibility, coverage, selection, integrity, discoverability baselines
-1. `/seo-fanout "target query"` — model thematic sub-queries (`seo/query-fanout-research.md`)
-2. `/seo-geo example.com` — extract decision criteria, map coverage gaps (`seo/geo-strategy.md`)
-3. `/seo-sro example.com` — improve snippet selection and grounding density (`seo/sro-grounding.md`)
-4. `/seo-hallucination-defense example.com` — remove contradictions and unsupported claims (`seo/ai-hallucination-defense.md`)
-5. `/seo-agent-discovery example.com` — validate autonomous agents can find key information (`seo/ai-agent-discovery.md`)
+### SERP, Backlinks, and Technical SEO
 
-Focus: deterministic retrieval signals (content clarity, structure, consistency, discoverability). Full scorecard: `seo/ai-search-readiness.md`.
-
-### SERP and Backlink Analysis
-
-- **SERP**: DataForSEO (comprehensive + keyword metrics) or Serper (quick searches). See `seo/dataforseo.md`, `seo/serper.md`.
-- **Backlinks**: DataForSEO (referring domains, anchor text) or Ahrefs (full profiles). See `seo/ahrefs.md`.
-
-### Technical SEO
-
-PageSpeed/Core Web Vitals (`tools/browser/pagespeed.md`), mobile usability, structured data, on-page analysis (DataForSEO), site crawling (`seo/site-crawler.md`), real-time monitoring (`seo/contentking.md`).
+- **SERP**: DataForSEO (comprehensive) or Serper (quick) | **Backlinks**: DataForSEO or Ahrefs
+- **PageSpeed / CWV**: `tools/browser/pagespeed.md` | **On-page**: DataForSEO
+- **Site crawling**: `seo/site-crawler.md` | **Real-time monitoring**: `seo/contentking.md`
 
 ### Site Auditing
 
 ```bash
-site-crawler-helper.sh crawl https://example.com
-site-crawler-helper.sh audit-links https://example.com
-site-crawler-helper.sh audit-meta https://example.com
+site-crawler-helper.sh {crawl|audit-links|audit-meta|audit-redirects} https://example.com
 ```
 
-Output: `~/Downloads/{domain}/{datestamp}/` with CSV/XLSX reports.
+Output: `~/Downloads/{domain}/{datestamp}/` (CSV/XLSX).
 
 ### E-E-A-T Content Quality
 
@@ -154,31 +104,17 @@ Scores 7 criteria (1-10): Authorship, Citation, Effort, Originality, Intent, Sub
 ### Sitemap Submission
 
 ```bash
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit example.com           # single or multiple domains
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit --file domains.txt     # from file
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh status example.com
+gsc-sitemap-helper.sh submit example.com [example.net ...]  # or --file domains.txt
+gsc-sitemap-helper.sh status example.com
 ```
 
-Uses Playwright with persistent Chrome profile. First-time: `gsc-sitemap-helper.sh login`.
+Uses Playwright with persistent Chrome profile. First-time: `gsc-sitemap-helper.sh login`. Full path: `~/.aidevops/agents/scripts/gsc-sitemap-helper.sh`.
 
-### Data Export and Opportunity Analysis
+### Data Export, Image SEO, and Content Optimization
 
-```bash
-/seo-export all example.com --days 90     # Export from GSC, Bing, Ahrefs, DataForSEO
-/seo-opportunities example.com --days 90  # Export + analyze in one step
-```
-
-**Analysis types**: Quick Wins (pos 4-20), Striking Distance (pos 11-30), Low CTR, Cannibalization. Output: `~/.aidevops/.agent-workspace/work/seo-data/{domain}/`. See `seo/data-export.md`, `seo/ranking-opportunities.md`.
-
-### Image SEO
-
-AI-powered via `seo/image-seo.md`: alt text (WCAG-compliant, Moondream), SEO filenames, keyword tags, quality upscaling. See `seo/moondream.md`, `seo/upscale.md`.
-
-### Content Optimization
-
-Integrates with `content.md`: content calendar, SEO writing, meta generation, internal linking, editing. Per-project SEO config: `content/context-templates.md`.
-
-Workflow: Plan → Research (`/keyword-research`) → Write → Analyze (`seo-content-analyzer.py`) → Optimize (`seo/seo-optimizer.md`) → Edit → Publish.
+- **Opportunities**: Quick Wins (pos 4-20), Striking Distance (pos 11-30), Low CTR, Cannibalization. Output: `~/.aidevops/.agent-workspace/work/seo-data/{domain}/`.
+- **Image SEO**: AI-powered alt text (WCAG-compliant, Moondream), SEO filenames, keyword tags, upscaling. See `seo/image-seo.md`.
+- **Content**: Integrate with `content.md` (calendar, SEO writing, meta, internal linking, editing). Per-project config: `content/context-templates.md`. Workflow: Plan → Research → Write → Analyze → Optimize (`seo/seo-optimizer.md`) → Edit → Publish.
 
 ## Tool Comparison
 
