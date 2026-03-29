@@ -137,7 +137,6 @@ let results = items
 
 | Tool | Role |
 |------|------|
-| OpenProse | Workflow orchestration — parallel agents, loops, conditions |
 | DSPy | Prompt optimization — optimized prompts work in agent definitions |
 | Context7 | Library docs; Augment → code search; LLM-TLDR → summarize |
 | TOON | Token-efficient serialization (40-70% fewer tokens) — encode large context before passing between sessions |
@@ -157,6 +156,8 @@ session "Synthesize all reviews"
 
 ### Development Loop with Quality Gates
 
+See `scripts/commands/full-loop.md` for the canonical full-loop workflow. OpenProse equivalent:
+
 ```prose
 agent developer:
   model: opus
@@ -175,17 +176,6 @@ if **any checks failed**:
   loop until **all checks pass** (max: 5):
     session "Fix remaining issues"
       context: { lint, types, tests }
-
-let pr = session "Create pull request with gh pr create --fill"
-
-loop until **PR is merged** (max: 20):
-  parallel:
-    ci = session "Check CI status"
-    review = session "Check review status"
-  if **CI failed**:
-    session "Fix CI issues and push"
-  if **changes requested**:
-    session "Address review feedback and push"
 ```
 
 ## Related
