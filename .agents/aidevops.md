@@ -42,95 +42,37 @@ subagents:
 
 # AI DevOps - Framework Operations Subagent
 
-> **Note**: AI-DevOps is now a subagent, not a primary agent. Use `@aidevops` when you need
-> framework-specific operations (setup, troubleshooting, architecture). Build+ is the primary
-> unified coding agent.
-
-<!-- AI-CONTEXT-START -->
-
 ## Quick Reference
 
-- **Purpose**: Manage and extend the aidevops framework
-- **Repo**: `~/Git/aidevops/`
-- **User Install**: `~/.aidevops/agents/`
+- **Repo**: `~/Git/aidevops/` | **Install**: `~/.aidevops/agents/`
+- **Setup**: `./setup.sh` | **Quality**: `.agents/scripts/linters-local.sh` | **Release**: `.agents/scripts/version-manager.sh release [major|minor|patch]`
 - **Scripts**: `.agents/scripts/[service]-helper.sh [command] [account] [target]`
+- **Subagents**: `aidevops/setup.md`, `aidevops/troubleshooting.md`, `aidevops/architecture.md`
+- **Agent dev**: `tools/build-agent/` | **MCP dev**: `tools/build-mcp/`
 
-**Key Operations**:
-- Setup: `./setup.sh`
-- Quality check: `.agents/scripts/linters-local.sh`
-- Release: `.agents/scripts/version-manager.sh release [major|minor|patch]`
+**Services**: Hostinger, Hetzner, Closte, Cloudron, Coolify, Vercel, WordPress (MainWP/LocalWP), SonarCloud, Codacy, CodeRabbit, Snyk, Secretlint, GitHub/GitLab/Gitea, Cloudflare, Spaceship, 101domains, Route53, Vaultwarden, Amazon SES, Crawl4AI
 
-**Subagents** (`aidevops/`):
-- `setup.md` - AI guide to setup.sh
-- `troubleshooting.md` - Service status, debugging
-- `architecture.md` - Framework structure
+**MCP ports**: 3001 LocalWP DB · 3002 Vaultwarden · + Chrome DevTools, Playwright, Ahrefs, Context7, GSC
 
-**Related Subagents** (in `tools/`):
-- `tools/build-agent/` - Agent design and composition
-- `tools/build-mcp/` - MCP server development
-
-**Services**: Hostinger, Hetzner, Cloudflare, GitHub/GitLab/Gitea, MainWP,
-Vaultwarden, SonarCloud, Codacy, CodeRabbit, Snyk, Crawl4AI, MCP integrations
-
-**Testing**: Use OpenCode CLI to test config changes without restarting TUI:
-
-```bash
-opencode run "Test query" --agent AI-DevOps
-```text
-
-See `tools/opencode/opencode.md` for CLI testing patterns.
-
-<!-- AI-CONTEXT-END -->
-
-## Framework Overview
-
-AI DevOps provides comprehensive infrastructure management for AI agents:
-
-- **Infrastructure**: Hostinger, Hetzner, Closte, Cloudron
-- **Deployment**: Coolify, Vercel
-- **Content**: WordPress (MainWP, LocalWP)
-- **Quality**: SonarCloud, Codacy, CodeRabbit, Snyk, Secretlint
-- **Git**: GitHub, GitLab, Gitea with CLI integrations
-- **DNS/Domains**: Cloudflare, Spaceship, 101domains, Route53
-- **Security**: Vaultwarden, credential management
-- **Email**: Amazon SES
-
-## Command Pattern
-
-All services follow unified patterns:
-
-```bash
-.agents/scripts/[service]-helper.sh [command] [account] [target] [options]
-
-# Common commands
-help                    # Show service-specific help
-accounts|instances      # List configured accounts
-monitor|audit|status    # Service monitoring
-```text
+**Testing**: `opencode run "Test query" --agent AI-DevOps` — see `tools/opencode/opencode.md`
 
 ## Configuration
 
 ```bash
-# Templates (committed)
-configs/[service]-config.json.txt
-
-# Working configs (gitignored)
-configs/[service]-config.json
-
-# Credentials
-~/.config/aidevops/credentials.sh
-```text
+configs/[service]-config.json.txt   # Templates (committed)
+configs/[service]-config.json       # Working configs (gitignored)
+~/.config/aidevops/credentials.sh   # Credentials
+```
 
 ## Quality Standards
 
 - SonarCloud: A-grade (zero vulnerabilities, bugs)
 - ShellCheck: Zero violations
-- Pattern: `local var="$1"` not `$1` directly
-- Explicit `return 0/1` in all functions
+- Pattern: `local var="$1"` not `$1` directly; explicit `return 0/1` in all functions
 
 ## Extending the Framework
 
-See `aidevops/extension.md` for adding new services:
+See `aidevops/extension.md`:
 
 1. Create helper script following existing patterns
 2. Add config template
@@ -138,20 +80,10 @@ See `aidevops/extension.md` for adding new services:
 4. Update service index
 5. Test thoroughly
 
-## MCP Integrations
-
-```text
-Port 3001: LocalWP WordPress database
-Port 3002: Vaultwarden credentials
-+ Chrome DevTools, Playwright, Ahrefs, Context7, GSC MCPs
-```text
-
 ## OpenCode Plugins
 
 **Anthropic OAuth** (built-in since OpenCode v1.1.36+): Enables Claude Pro/Max authentication.
 
 ```bash
-# Authenticate after setup
-opencode auth login
-# Select: Anthropic → Claude Pro/Max
-```text
+opencode auth login   # Select: Anthropic → Claude Pro/Max
+```
