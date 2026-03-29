@@ -12,9 +12,7 @@ Maintain prompt libraries for consistent on-brand output. Example: `"Professiona
 
 **AI Copywriting** — LLMs (Jasper, Copy.ai, ChatGPT) generate headline variations, body copy, CTAs, and platform-specific adaptations. Best practice: AI generates 50–100 variants → human selects 10–15 for live testing.
 
-### Dynamic Creative Optimization (DCO)
-
-DCO auto-assembles personalized ads from component assets using real-time signals.
+**Dynamic Creative Optimization (DCO)** — auto-assembles personalized ads from component assets using real-time signals.
 
 | Component | Description |
 |-----------|-------------|
@@ -28,8 +26,6 @@ DCO auto-assembles personalized ads from component assets using real-time signal
 **Use cases:** e-commerce (browsing-matched products), travel (real-time pricing), financial services (life-stage messaging).
 
 **Beyond DCO:** neural rendering, NLG, style transfer, video synthesis generate unique content per impression. Current implementations use hybrid approaches (pre-generate + cache) due to latency, cost, and quality-control constraints.
-
----
 
 ## 9.2 Creative Sequencing for Customer Journeys
 
@@ -56,8 +52,6 @@ DCO auto-assembles personalized ads from component assets using real-time signal
 
 **Refresh strategies:** asset variation (same message, new visuals), message rotation, format change, audience exclusion.
 
----
-
 ## 9.3 Cross-Channel Creative Consistency
 
 **Visual consistency:** color palette, typography, logo treatment, photography style, iconography, layout grids. **Messaging consistency:** value proposition, brand voice, message hierarchy, proof points, CTA language.
@@ -82,8 +76,6 @@ DCO auto-assembles personalized ads from component assets using real-time signal
 
 **Technical:** shoot with crop flexibility, video safe zones for aspect ratios, text as separate layers, modular motion graphics.
 
----
-
 ## 9.4 Emerging Creative Formats
 
 ### AR Advertising
@@ -107,8 +99,6 @@ Platforms: Instagram Shopping, TikTok Shop, Pinterest Buyable Pins, Meta Shops.
 **Voice assistants:** Alexa Skills, Google Assistant actions, smart speaker audio branding.
 
 **Best practices:** strong 3-second hook, clear brand ID, sonic branding, explicit CTA, repetition for recall.
-
----
 
 ## 9.5 Creative Experimentation Methodologies
 
@@ -141,8 +131,6 @@ Test 3–5 concepts per segment; identify cross-segment winners (broad appeal) a
 
 **Opportunities:** underserved messaging angles, visual whitespace, underutilized formats, timing gaps.
 
----
-
 ## 9.6 Creative Production at Scale
 
 ### Modular Creative Systems
@@ -173,8 +161,6 @@ Test 3–5 concepts per segment; identify cross-segment winners (broad appeal) a
 | Always-on performance | Medium | Medium | Medium |
 | Testing/reactive | Lower | Low | Fast |
 
----
-
 ## 9.7 Future of Performance Creative
 
 | Trend | Opportunity | Risk |
@@ -184,8 +170,6 @@ Test 3–5 concepts per segment; identify cross-segment winners (broad appeal) a
 | Immersive (VR/AR/spatial) | 3D experiences, spatial audio, virtual showrooms | Production cost, adoption curve |
 
 **Human-AI split:** Human = strategy, concept, emotional resonance, brand judgment. AI = production, variation, optimization, analysis. Creative strategists increasingly blend data analysis, automation proficiency, and AI prompt engineering.
-
----
 
 ## 9.8 Implementation Checklist
 
