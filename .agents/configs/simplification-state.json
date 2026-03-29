@@ -1407,8 +1407,8 @@
       "pr": 12162
     },
     ".agents/scripts/gh-signature-helper.sh": {
-      "hash": "92e4d9adc4f2017480a171fd61c14f6876e6f585",
-      "at": "2026-03-29T03:15:20Z",
+      "hash": "28ac60bb1bf31ed872a1fe1df90a71f073c0e705",
+      "at": "2026-03-29T04:12:49Z",
       "pr": 12396
     },
     ".agents/tools/wordpress/wp-dev.md": {
@@ -1447,9 +1447,9 @@
       "pr": 12171
     },
     ".agents/tools/mobile/app-dev-swift.md": {
-      "hash": "d27215290fea61b4f036405bedc16867db3935bc",
-      "at": "2026-03-29T01:52:34Z",
-      "pr": 12450
+      "hash": "15ec4fad109dcdce50f6ed4a70d117caff12f906",
+      "at": "2026-03-29T04:12:26Z",
+      "pr": 12506
     },
     ".agents/tools/context/context7.md": {
       "hash": "1d98876794a7dc00b2cd2126492a54302f051af8",
@@ -1537,9 +1537,9 @@
       "pr": 12240
     },
     ".agents/tools/browser/browser-profiles.md": {
-      "hash": "d719a6a108c1d6f84089ca53d09bc82579c5aa85",
-      "at": "2026-03-29T01:52:18Z",
-      "pr": 12449
+      "hash": "2a2c771f4ff870ad450a92a0f9ad950f3f16e3cb",
+      "at": "2026-03-29T04:12:29Z",
+      "pr": 12501
     },
     ".agents/services/networking/netbird.md": {
       "hash": "824fc7ee7cdc7e08351310bdb9f99dcf91a3848e",
@@ -1747,9 +1747,14 @@
       "pr": 12346
     },
     ".agents/reference/foss-contributions.md": {
-      "hash": "7a70a570a9191eedf42aa4c3c21dfcd875a6e983",
-      "at": "2026-03-29T03:43:20Z",
+      "hash": "1f7a58760371b4f0c2b28ad93a420be273cbef05",
+      "at": "2026-03-29T04:13:19Z",
       "pr": 12538
+    },
+    ".agents/content/distribution-podcast.md": {
+      "hash": "0a2c98014bbe0588383437327d0b71e81a574af5",
+      "at": "2026-03-29T04:12:24Z",
+      "pr": 12557
     }
   }
 }
