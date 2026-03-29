@@ -49,9 +49,8 @@ animate('.element', {
   // Timing
   duration: 1000, delay: 500, endDelay: 200,
 
-  // Easing
+  // Easing — see Easing section for full options
   ease: 'outExpo',
-  ease: 'spring(1, 80, 10, 0)',
 
   // Playback
   loop: true, alternate: true, reversed: true, autoplay: false,
@@ -64,7 +63,6 @@ animate('.element', {
 Standard: `in/out/inOut` + `Quad`, `Cubic`, `Quart`, `Quint`, `Sine`, `Expo`, `Circ`, `Back`, `Elastic`, `Bounce`
 
 ```javascript
-ease: 'outExpo'
 ease: 'out(3)'                        // power shorthand
 ease: 'spring(mass, stiffness, damping, velocity)'
 ease: 'cubicBezier(0.5, 0, 0.5, 1)'
@@ -101,13 +99,20 @@ tl.label('intro').add('.title', { opacity: 1 }).label('content').add('.body', { 
 tl.seek('content');
 ```
 
-| Method | Description |
-|--------|-------------|
+| Method / Property | Description |
+|-------------------|-------------|
 | `play()` / `pause()` | Start / pause |
 | `restart()` / `reverse()` | Restart / reverse direction |
 | `seek(time)` | Jump to ms or progress 0–1 |
 | `complete()` / `cancel()` | Jump to end / stop and reset |
 | `revert()` | Restore initial state |
+| `progress` / `currentTime` | 0–100 / ms elapsed |
+| `paused` / `completed` | Boolean state |
+
+```javascript
+const anim = animate('.element', { translateX: 250, autoplay: false });
+anim.play(); anim.pause(); anim.seek(0.5);
+```
 
 ## Stagger
 
@@ -144,30 +149,12 @@ animate('.element', { ...path(), duration: 2000, ease: 'linear' });
 ```javascript
 animate('.element', {
   onBegin: (anim) => {},
-  onUpdate: (anim) => {},   // anim.progress (0–100)
-  onLoop: (anim) => {},
+  onUpdate: (anim) => {},     // anim.progress (0–100)
   onComplete: (anim) => {},
-  onPause: (anim) => {},
-  onRender: (anim) => {},
-  onBeforeUpdate: (anim) => {}
+  onLoop: (anim) => {},       // also: onPause, onRender, onBeforeUpdate
 });
 
 await animate('.box1', { translateX: 100 });  // promises supported
-```
-
-## Playback Control
-
-```javascript
-const anim = animate('.element', { translateX: 250, autoplay: false });
-
-anim.play(); anim.pause(); anim.restart(); anim.reverse();
-anim.seek(500);   // ms
-anim.seek(0.5);   // progress 0–1
-
-anim.progress;    // 0–100
-anim.currentTime; // ms
-anim.paused;      // boolean
-anim.completed;   // boolean
 ```
 
 ## Utilities
