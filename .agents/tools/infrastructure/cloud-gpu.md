@@ -1,5 +1,5 @@
 ---
-description: "Cloud GPU deployment guide for AI model hosting - provider comparison, SSH setup, Docker deployment, model caching, cost optimization"
+description: "Cloud GPU deployment - provider comparison, SSH/Docker setup, model caching, cost optimization"
 mode: subagent
 tools:
   read: true
@@ -91,11 +91,11 @@ curl http://<instance-ip>:8000/v1/completions -H "Content-Type: application/json
 
 ## Cost Optimization
 
-**Strategies:** Spot instances (50-80% savings, risk of termination) | Off-peak (10-30%) | Smaller GPU + quantization (40-60%) | Serverless/RunPod (pay per request, cold starts) | Reserved/Lambda (20-30%, commitment) | Vast.ai auction (50-70% vs fixed).
+Spot instances (50-80% savings, termination risk) | Off-peak (10-30%) | Smaller GPU + quantization (40-60%) | Serverless/RunPod (pay per request, cold starts) | Reserved/Lambda (20-30%, commitment) | Vast.ai auction (50-70% vs fixed).
 
 **Quantization**: 4-bit GPTQ/AWQ cuts VRAM ~75%. Llama 3.1 70B: FP16 ~140GB -> 4-bit ~35GB (1x A100). Search HuggingFace for `TheBloke/<model>-GPTQ` or `<model>-AWQ`.
 
-**Auto-shutdown** (30min idle -- provider-native alternatives: RunPod auto-stop, Vast.ai max idle, Lambda API):
+**Auto-shutdown** (30min idle -- alternatives: RunPod auto-stop, Vast.ai max idle, Lambda API):
 
 ```bash
 */5 * * * * GPU_UTIL=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader | awk '{print $1+0}'); \
@@ -107,21 +107,12 @@ curl http://<instance-ip>:8000/v1/completions -H "Content-Type: application/json
 
 ## Monitoring + Troubleshooting
 
-**Health check:**
-
 ```bash
+# Health check
 nvidia-smi --query-gpu=name,memory.total,memory.used,temperature.gpu,utilization.gpu --format=csv,noheader
-```
-
-**CUDA check:**
-
-```bash
+# CUDA check
 python3 -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"
-```
-
-**Continuous monitoring:**
-
-```bash
+# Continuous monitoring (background)
 nvidia-smi --query-gpu=timestamp,utilization.gpu,memory.used,temperature.gpu --format=csv -l 30 > /tmp/gpu_metrics.csv &
 ```
 
