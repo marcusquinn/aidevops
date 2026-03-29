@@ -696,20 +696,18 @@ cmd_generate() {
 	local session_time_str total_time_str
 	IFS='|' read -r session_time_str total_time_str <<<"$time_metrics"
 
-	# Sum issue total tokens (prior comments + current session) when --issue is set
+	# Sum issue total tokens (prior comments + current session) when --issue is set.
+	# Only show when there are prior comments with tokens — otherwise the total
+	# equals the current session's count, which is redundant.
 	local issue_total_tokens=""
 	if [[ -n "$issue_ref" ]]; then
 		local prior_tokens
 		prior_tokens=$(_sum_issue_tokens "$issue_ref")
 		if [[ -n "$prior_tokens" ]] && [[ "$prior_tokens" -gt 0 ]] 2>/dev/null; then
 			local current_tokens="${tokens:-0}"
-			# Strip non-digits from current_tokens (may have commas from env var)
 			current_tokens=$(printf '%s' "$current_tokens" | tr -cd '0-9')
 			current_tokens="${current_tokens:-0}"
 			issue_total_tokens=$((prior_tokens + current_tokens))
-		elif [[ -n "$tokens" ]] && [[ "$tokens" != "0" ]]; then
-			# No prior comments with tokens, but we have current session tokens
-			issue_total_tokens="$tokens"
 		fi
 	fi
 
