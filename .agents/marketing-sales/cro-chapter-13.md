@@ -4,56 +4,29 @@ Heatmaps and session recordings reveal how users actually interact with your sit
 
 ## Heatmap Types
 
-| Type | What It Shows | Key Question |
-|------|--------------|--------------|
-| **Click** | Where users click/tap | Are CTAs getting clicked? Are non-clickable elements being clicked? |
-| **Scroll** | How far users scroll | Do users reach the CTA? Where do they drop off? |
-| **Move** | Mouse cursor movement (desktop) | Where is attention? Are there hesitation points? |
-| **Attention** | Time spent per area | What content gets read vs ignored? |
+| Type | What It Shows | Check |
+|------|--------------|-------|
+| **Click** | Where users click/tap | CTAs clicked? Non-clickable elements clicked? Tap targets large enough (mobile)? |
+| **Scroll** | How far users scroll | % reaching CTA? Where do most drop off? Important content below scroll depth? |
+| **Move** | Mouse cursor movement (desktop) | Where is attention? Hesitation points (hover without click)? Aligns with clicks? |
+| **Attention** | Time spent per area | What gets read vs ignored? Attention distributed logically? |
 
-### Click Heatmap — Example Insights
+**Colour scale:** Red = high → Orange/Yellow = medium → Blue/Green = low → White/Gray = none
 
-```text
-1,000 clicks on product image (not clickable) / 0 clicks on "View Details"
-→ Action: Make image clickable or add "Click to enlarge" text
+### Example Insights by Type
 
-500 clicks on "Free Shipping" text (looks like button, isn't)
-→ Action: Make it a button or visually differentiate it
-```
-
-### Scroll Heatmap — Example Insights
-
-```text
-60% of users never scroll past hero section / CTA at 70% page depth
-→ Action: Add CTA above fold OR create sticky CTA
-
-90% engagement at top → 40% middle → 10% bottom
-→ Action: Move important content higher, cut fluff, add visual breaks
-```
-
-### Move Heatmap — Example Insights
-
-```text
-Cursors hovering over price 10+ seconds, then leaving without clicking
-→ Action: Add guarantees/testimonials near pricing
-
-Users reading first 3 bullets, skipping rest
-→ Action: Limit to 3–5 bullets, restructure for scannability
-```
-
-### Attention Heatmap — Example Insights
-
-```text
-2s on headline / 30s on image / 0s on benefits section
-→ Action: Make benefits more visual/scannable or reposition
-
-20+ seconds on navigation menu (confusion signal)
-→ Action: Simplify navigation labels or structure
-```
+| Type | Pattern | Action |
+|------|---------|--------|
+| Click | 1,000 clicks on product image (not clickable), 0 on "View Details" | Make image clickable or add "Click to enlarge" |
+| Click | 500 clicks on "Free Shipping" text (looks like button) | Make it a button or visually differentiate |
+| Scroll | 60% never scroll past hero; CTA at 70% depth | Add CTA above fold or sticky CTA |
+| Scroll | 90% top → 40% middle → 10% bottom | Move key content higher; add visual breaks |
+| Move | Cursors hover over price 10+ seconds, then leave | Add guarantees/testimonials near pricing |
+| Move | Users read first 3 bullets, skip rest | Limit to 3–5 bullets; restructure for scannability |
+| Attention | 2s on headline / 30s on image / 0s on benefits | Make benefits more visual/scannable or reposition |
+| Attention | 20+ seconds on nav menu | Simplify navigation labels or structure |
 
 ## Reading Heatmaps
-
-**Colour scale:** Red = high activity → Orange/Yellow = medium → Blue/Green = low → White/Gray = none
 
 ### Good Patterns
 
@@ -115,7 +88,7 @@ Users reading first 3 bullets, skipping rest
 
 ## Session Recording Methodology
 
-**Don't watch randomly** — segment first.
+**Don't watch randomly** — segment first. Log each finding as: Issue / Frequency (e.g. 8/20 recordings) / Action / Priority.
 
 | Segment | Purpose | Sample Size |
 |---------|---------|-------------|
@@ -125,56 +98,15 @@ Users reading first 3 bullets, skipping rest
 
 **Additional filters:** traffic source (paid vs organic vs email), device (mobile vs desktop).
 
-**Note-taking template:**
-
-```text
-Issue: Users confused by navigation
-Frequency: 8/20 recordings
-Action: Simplify nav labels
-Priority: High
-```
-
-## Analysis Checklists
-
-### Click Heatmap
-- [ ] Are CTAs getting clicked? If not, why?
-- [ ] Are users clicking non-clickable elements?
-- [ ] Are users clicking the wrong elements?
-- [ ] Are there unexpected click patterns?
-- [ ] Mobile: Are tap targets large enough?
-
-### Scroll Heatmap
-- [ ] What % of users reach the CTA?
-- [ ] Where do most users drop off?
-- [ ] Is important content below average scroll depth?
-- [ ] Are there visual barriers preventing scrolling?
-
-### Move Heatmap
-- [ ] Where are cursors spending the most time?
-- [ ] Are there hesitation patterns (hovering without clicking)?
-- [ ] Do move patterns align with click patterns?
-
-### Attention Heatmap
-- [ ] What gets the most attention? Is it what you want?
-- [ ] What gets ignored? Should it be more prominent?
-- [ ] Is attention distributed logically?
-
 ## Sample Size Guidelines
 
-| Traffic Level | Sessions/Month | Data Needed |
-|--------------|---------------|-------------|
-| High | 10,000+ | 1–2 weeks |
-| Medium | 1,000–10,000 | 2–4 weeks |
-| Low | <1,000 | 1–3 months |
+| Traffic Level | Sessions/Month | Data Needed | Threshold |
+|--------------|---------------|-------------|-----------|
+| High | 10,000+ | 1–2 weeks | 2,000+ = statistically confident |
+| Medium | 1,000–10,000 | 2–4 weeks | 500–1,000 = reliable insights |
+| Low | <1,000 | 1–3 months | 100–200 = initial patterns |
 
-**Thresholds:**
-- 100–200 sessions: initial patterns
-- 500–1,000: reliable insights
-- 2,000+: statistically confident
-- Conversion pages: minimum 50 conversions + 500 non-conversions
-- Per-segment analysis: minimum 200–500 sessions per segment
-
-> Too little data (< 20 sessions) = noise from single outlier users. Too much (> 5,000) = diminishing returns; patterns stabilise.
+Conversion pages: minimum 50 conversions + 500 non-conversions. Per-segment: minimum 200–500 sessions. < 20 sessions = noise; > 5,000 = diminishing returns.
 
 ## Combining Heatmaps with Analytics
 
