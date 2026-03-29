@@ -425,6 +425,11 @@ create_pr() {
 		gh_args+=("--body" "$body")
 	fi
 
+	# Add session origin label (origin:worker or origin:interactive)
+	local origin_label
+	origin_label=$(session_origin_label)
+	gh_args+=("--label" "$origin_label")
+
 	if gh pr create "${gh_args[@]}"; then
 		print_success "$SUCCESS_PR_CREATED"
 	else

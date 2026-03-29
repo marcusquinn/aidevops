@@ -1218,12 +1218,19 @@ _push_and_create_pr() {
 	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$pr_body" 2>/dev/null || true)
 	pr_body="${pr_body}${sig_footer}"
 
+	# Detect session origin for PR label
+	local origin_label="origin:worker"
+	if type detect_session_origin &>/dev/null; then
+		origin_label="origin:$(detect_session_origin)"
+	fi
+
 	local pr_create_output
 	pr_create_output=$(gh pr create \
 		--head "$branch_name" \
 		--base "$default_branch" \
 		--title "$pr_title" \
 		--body "$pr_body" \
+		--label "$origin_label" \
 		--repo "$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo '')" \
 		2>&1) || {
 		log_error "Failed to create PR for $label: ${pr_create_output}"
@@ -1653,7 +1660,13 @@ ${failed_note}
 
 	local repo_name_with_owner
 	repo_name_with_owner=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || true)
-	local pr_create_args=("--head" "$branch_name" "--base" "$default_branch" "--title" "$pr_title" "--body" "$pr_body")
+	# Detect session origin for PR label
+	local batch_origin_label="origin:worker"
+	if type detect_session_origin &>/dev/null; then
+		batch_origin_label="origin:$(detect_session_origin)"
+	fi
+
+	local pr_create_args=("--head" "$branch_name" "--base" "$default_branch" "--title" "$pr_title" "--body" "$pr_body" "--label" "$batch_origin_label")
 	if [[ -n "$repo_name_with_owner" ]]; then
 		pr_create_args+=("--repo" "$repo_name_with_owner")
 	fi
