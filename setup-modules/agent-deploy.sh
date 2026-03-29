@@ -685,7 +685,7 @@ setup_beads() {
 # _install_bv_tool: install the bv (beads_viewer) TUI tool.
 # Returns 0 if installed, 1 if skipped or failed.
 _install_bv_tool() {
-	read -r -p "  Install bv (TUI with PageRank, critical path, graph analytics)? [Y/n]: " install_viewer
+	setup_prompt install_viewer "  Install bv (TUI with PageRank, critical path, graph analytics)? [Y/n]: " "Y"
 	if [[ ! "$install_viewer" =~ ^[Yy]?$ ]]; then
 		print_info "Install later:"
 		print_info "  Homebrew: brew tap dicklesworthstone/tap && brew install dicklesworthstone/tap/bv"
@@ -711,7 +711,7 @@ _install_bv_tool() {
 		fi
 	else
 		# Offer verified install script (download-then-execute, not piped)
-		read -r -p "  Install bv via install script? [Y/n]: " use_script
+		setup_prompt use_script "  Install bv via install script? [Y/n]: " "Y"
 		if [[ "$use_script" =~ ^[Yy]?$ ]]; then
 			if verified_install "bv (beads viewer)" "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh"; then
 				print_info "Run: bv (in a beads-enabled project)"
@@ -738,14 +738,14 @@ _install_beads_node_tools() {
 		echo "$count"
 		return 0
 	fi
-	read -r -p "  Install beads-ui (Web dashboard)? [Y/n]: " install_web
+	setup_prompt install_web "  Install beads-ui (Web dashboard)? [Y/n]: " "Y"
 	if [[ "$install_web" =~ ^[Yy]?$ ]]; then
 		if run_with_spinner "Installing beads-ui" npm_global_install beads-ui; then
 			print_info "Run: beads-ui"
 			count=$((count + 1))
 		fi
 	fi
-	read -r -p "  Install bdui (React/Ink TUI)? [Y/n]: " install_bdui
+	setup_prompt install_bdui "  Install bdui (React/Ink TUI)? [Y/n]: " "Y"
 	if [[ "$install_bdui" =~ ^[Yy]?$ ]]; then
 		if run_with_spinner "Installing bdui" npm_global_install bdui; then
 			print_info "Run: bdui"
@@ -762,7 +762,7 @@ _install_perles() {
 	if ! command -v cargo &>/dev/null; then
 		return 1
 	fi
-	read -r -p "  Install perles (BQL query language TUI)? [Y/n]: " install_perles
+	setup_prompt install_perles "  Install perles (BQL query language TUI)? [Y/n]: " "Y"
 	if [[ ! "$install_perles" =~ ^[Yy]?$ ]]; then
 		return 1
 	fi
@@ -782,7 +782,7 @@ setup_beads_ui() {
 	echo "  • perles (Rust)      - BQL query language TUI"
 	echo ""
 
-	read -r -p "Install optional Beads UI tools? [Y/n]: " install_beads_ui
+	setup_prompt install_beads_ui "Install optional Beads UI tools? [Y/n]: " "Y"
 
 	if [[ ! "$install_beads_ui" =~ ^[Yy]?$ ]]; then
 		print_info "Skipped Beads UI tools (can install later from beads.md docs)"
