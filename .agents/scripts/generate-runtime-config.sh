@@ -410,6 +410,26 @@ if output_format == "opencode-json":
             existing.append(instructions_path)
         config['instructions'] = existing
 
+    # Plugin registration — ensure the aidevops plugin is registered.
+    # The plugin provides OAuth Bearer auth, quality hooks, agent loading,
+    # and MCP tool management. Without it, OpenCode falls back to x-api-key
+    # mode which breaks OAuth authentication entirely.
+    # setup.sh (setup-modules/mcp-setup.sh) is the primary registrar, but
+    # if the config was rebuilt (e.g. after truncation recovery), the plugin
+    # key may be lost. This guard re-registers it.
+    aidevops_plugin_url = "file://" + os.path.expanduser(
+        "~/.aidevops/agents/plugins/opencode-aidevops/index.mjs"
+    )
+    plugin_list = config.get('plugin', [])
+    if not isinstance(plugin_list, list):
+        plugin_list = [plugin_list] if plugin_list else []
+    if aidevops_plugin_url not in plugin_list:
+        plugin_list.append(aidevops_plugin_url)
+        config['plugin'] = plugin_list
+        print(f"  Re-registered aidevops plugin (was missing from config)", file=sys.stderr)
+    else:
+        config['plugin'] = plugin_list
+
     # Provider options — prompt caching
     if 'provider' not in config:
         config['provider'] = {}
