@@ -85,45 +85,16 @@ subagents:
 | `google-analytics.md` | GA4 reporting, traffic analysis, user behavior |
 | `data-export.md` | Export SEO data from GSC, Bing, Ahrefs, DataForSEO to TOON format |
 
-Each subagent has curl examples. Load the relevant one when needed.
-
 **Content Analysis** (adapted from [SEO Machine](https://github.com/TheCraigHewitt/seomachine)):
 
 ```bash
 python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py analyze article.md --keyword "target keyword"
 python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py readability article.md
-python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py keywords article.md --keyword "keyword"
 python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py quality article.md
 python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py intent "search query"
 ```
 
-**Commands**:
-
-```bash
-/keyword-research "best seo tools, keyword research"
-/autocomplete-research "how to lose weight"
-/keyword-research-extended "dog training tips"
-/keyword-research-extended --competitor petco.com
-/keyword-research-extended --gap mysite.com,competitor.com
-/seo-opportunities example.com --days 90
-
-# AI search readiness
-/seo-fanout "best personal injury lawyer chicago"
-/seo-geo example.com
-/seo-sro example.com
-/seo-hallucination-defense example.com
-/seo-agent-discovery example.com
-/seo-ai-readiness example.com
-/seo-ai-baseline example.com
-```
-
-**Testing**: Use OpenCode CLI to test SEO commands without restarting TUI:
-
-```bash
-opencode run "/keyword-research 'test query'" --agent SEO
-```
-
-See `tools/opencode/opencode.md` for CLI testing patterns.
+**Testing**: `opencode run "/keyword-research 'test query'" --agent SEO` (see `tools/opencode/opencode.md`).
 
 <!-- AI-CONTEXT-END -->
 
@@ -131,17 +102,13 @@ See `tools/opencode/opencode.md` for CLI testing patterns.
 
 ### Keyword Research
 
-```bash
-/keyword-research "seed keywords"           # Expand seed keywords
-/autocomplete-research "question phrase"    # Long-tail discovery
-/keyword-research-extended "top keywords"   # Full SERP analysis with weakness detection
-```
+`/keyword-research "seed keywords"` | `/autocomplete-research "question"` | `/keyword-research-extended "top keywords"`
 
 See `seo/keyword-research.md` for Domain/Competitor/Gap research modes and provider configuration.
 
 ### Search Performance
 
-Use Google Search Console MCP for query performance, CTR, position tracking, and index coverage. See `seo/google-search-console.md`.
+GSC MCP for query performance, CTR, position tracking, index coverage. See `seo/google-search-console.md`.
 
 ### AI Search Optimization (GEO and SRO)
 
@@ -163,10 +130,7 @@ Focus: deterministic retrieval signals (content clarity, structure, consistency,
 
 ### Technical SEO
 
-- PageSpeed / Core Web Vitals (`tools/browser/pagespeed.md`)
-- Mobile usability, structured data validation, on-page analysis (DataForSEO)
-- Site crawling: `seo/site-crawler.md`
-- Real-time monitoring: `seo/contentking.md`
+PageSpeed/Core Web Vitals (`tools/browser/pagespeed.md`), mobile usability, structured data, on-page analysis (DataForSEO), site crawling (`seo/site-crawler.md`), real-time monitoring (`seo/contentking.md`).
 
 ### Site Auditing
 
@@ -174,7 +138,6 @@ Focus: deterministic retrieval signals (content clarity, structure, consistency,
 site-crawler-helper.sh crawl https://example.com
 site-crawler-helper.sh audit-links https://example.com
 site-crawler-helper.sh audit-meta https://example.com
-site-crawler-helper.sh audit-redirects https://example.com
 ```
 
 Output: `~/Downloads/{domain}/{datestamp}/` with CSV/XLSX reports.
@@ -186,30 +149,26 @@ eeat-score-helper.sh analyze ~/Downloads/example.com/_latest/crawl-data.json
 eeat-score-helper.sh score https://example.com/article
 ```
 
-Scores 7 criteria (1-10): Authorship, Citation, Effort, Originality, Intent, Subjective Quality, Writing.
-Output: `{domain}-eeat-score-{date}.xlsx`.
+Scores 7 criteria (1-10): Authorship, Citation, Effort, Originality, Intent, Subjective Quality, Writing. Output: `{domain}-eeat-score-{date}.xlsx`.
 
 ### Sitemap Submission
 
 ```bash
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit example.com
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit example.com example.net example.org
-~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit --file domains.txt
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit example.com           # single or multiple domains
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit --file domains.txt     # from file
 ~/.aidevops/agents/scripts/gsc-sitemap-helper.sh status example.com
 ```
 
 Uses Playwright with persistent Chrome profile. First-time: `gsc-sitemap-helper.sh login`.
 
-### Data Export & Opportunity Analysis
+### Data Export and Opportunity Analysis
 
 ```bash
-/seo-export all example.com --days 90   # Export from GSC, Bing, Ahrefs, DataForSEO
-/seo-analyze example.com                # Analyze for opportunities
-/seo-opportunities example.com --days 90  # Both in one step
+/seo-export all example.com --days 90     # Export from GSC, Bing, Ahrefs, DataForSEO
+/seo-opportunities example.com --days 90  # Export + analyze in one step
 ```
 
-**Analysis types**: Quick Wins (pos 4-20), Striking Distance (pos 11-30), Low CTR, Cannibalization.
-Output: `~/.aidevops/.agent-workspace/work/seo-data/{domain}/`. See `seo/data-export.md`, `seo/ranking-opportunities.md`.
+**Analysis types**: Quick Wins (pos 4-20), Striking Distance (pos 11-30), Low CTR, Cannibalization. Output: `~/.aidevops/.agent-workspace/work/seo-data/{domain}/`. See `seo/data-export.md`, `seo/ranking-opportunities.md`.
 
 ### Image SEO
 
@@ -217,11 +176,9 @@ AI-powered via `seo/image-seo.md`: alt text (WCAG-compliant, Moondream), SEO fil
 
 ### Content Optimization
 
-Integrate with `content.md`: content calendar (`content/content-calendar.md`), SEO writing (`content/seo-writer.md`), meta generation (`content/meta-creator.md`), internal linking (`content/internal-linker.md`), editing (`content/editor.md`).
+Integrates with `content.md`: content calendar, SEO writing, meta generation, internal linking, editing. Per-project SEO config: `content/context-templates.md`.
 
 Workflow: Plan → Research (`/keyword-research`) → Write → Analyze (`seo-content-analyzer.py`) → Optimize (`seo/seo-optimizer.md`) → Edit → Publish.
-
-Per-project SEO config: see `content/context-templates.md` for brand voice, style guide, keyword, and competitor templates.
 
 ## Tool Comparison
 
