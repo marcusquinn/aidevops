@@ -28,6 +28,7 @@ content-calendar-helper.sh list [--stage draft] [--platform youtube]
 content-calendar-helper.sh due --days 7
 content-calendar-helper.sh stats
 content-calendar-helper.sh export --format [json|csv]
+# Analytics loop: cadence --weeks 1 → gaps --days 7 → due --days 7 → stats
 ```
 
 <!-- AI-CONTEXT-END -->
@@ -89,7 +90,7 @@ content-calendar-helper.sh export --format [json|csv]
 | Transactional | Landing page, pricing | Purchase, sign up |
 | Navigational | Documentation, FAQ | Product link, support |
 
-**Pillars strategy**: Define 3-5 pillars mapping to business goals. Every cluster links to its pillar. Cross-link related clusters (3-5 internal links per post). Update pillar pages quarterly. View distribution: `content-calendar-helper.sh stats`
+**Pillars**: 3-5 pillars mapped to business goals. Every cluster links to its pillar; 3-5 internal links per post. Update pillar pages quarterly. View: `content-calendar-helper.sh stats`
 
 ## Calendar Structure
 
@@ -104,7 +105,7 @@ content-calendar-helper.sh export --format [json|csv]
 
 **Weekly task format**: `- [ ] MON: Draft "Topic A" (cluster: CI/CD) @author #blog ~3h`
 
-**Multi-channel fan-out**: One story → multiple platforms over 5-7 days (diamond pipeline from `content.md`). Schedule with `content-calendar-helper.sh schedule <id> <date> <platform> [--time HH:MM]` following the stagger rule.
+**Multi-channel fan-out**: One story → multiple platforms over 5-7 days (diamond pipeline from `content.md`). Use `content-calendar-helper.sh schedule <id> <date> <platform> [--time HH:MM]` per stagger rule.
 
 ## Seasonality
 
@@ -127,7 +128,7 @@ content-calendar-helper.sh export --format [json|csv]
 | `promote` | 5-7 days | Cross-platform adapts posted |
 | `analyze` | 14-30 days | GSC impressions/clicks, engagement metrics |
 
-Advancing to `publish` auto-updates schedule entries to `published` and logs to cadence tracker.
+Advancing to `publish` auto-updates schedule entries and logs to cadence tracker.
 
 ## Integration Points
 
@@ -140,13 +141,3 @@ Advancing to `publish` auto-updates schedule entries to `published` and logs to 
 | Distribution Agents | Platform-specific publishing | `content/distribution-*.md` |
 | TODO.md | Task tracking | Root `TODO.md` with `#content` tag |
 
-## Analytics Feedback Loop
-
-Publish → cadence analysis → gap analysis → update calendar → repeat.
-
-```bash
-content-calendar-helper.sh cadence --weeks 1   # last week performance
-content-calendar-helper.sh gaps --days 7       # missing next week
-content-calendar-helper.sh due --days 7        # upcoming items
-content-calendar-helper.sh stats               # overall health
-```
