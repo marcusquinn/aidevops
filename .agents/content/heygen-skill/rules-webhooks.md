@@ -7,15 +7,15 @@ metadata:
 
 # Webhooks
 
-Webhooks push notifications to your server when async operations complete, avoiding polling.
+Push notifications to your server when async operations complete, avoiding polling.
 
 ## Endpoint Requirements
-
-Your webhook endpoint must:
 
 1. Accept POST requests
 2. Return 200 within 5 seconds
 3. Process events asynchronously (respond first, then handle)
+4. Handle duplicate deliveries (same event may arrive multiple times)
+5. Use job queues for expensive processing
 
 ```typescript
 import express from "express";
@@ -48,6 +48,8 @@ async function processWebhookEvent(event: HeyGenWebhookEvent) {
 
 app.listen(3000);
 ```
+
+**Local testing:** Use `ngrok http 3000` and register the ngrok URL as your webhook endpoint.
 
 ## Event Types
 
@@ -112,16 +114,14 @@ curl -X POST "https://api.heygen.com/v1/webhook.add" \
 
 ## Callback IDs
 
-Track which video triggered a webhook by passing `callback_id` during generation:
+Pass `callback_id` during video generation to correlate webhooks to your records:
 
 ```typescript
-// In video generation config
 const videoConfig = {
   video_inputs: [...],
   callback_id: "order_12345", // Your custom identifier
 };
 
-// In webhook handler — correlate back to your records
 async function handleVideoSuccess(event: VideoSuccessEvent) {
   const { video_id, video_url, callback_id } = event.event_data;
   if (callback_id) {
@@ -131,9 +131,9 @@ async function handleVideoSuccess(event: VideoSuccessEvent) {
 }
 ```
 
-## Security
+## Security — Signature Verification
 
-### Signature Verification
+Validate `x-heygen-signature` header using HMAC-SHA256:
 
 ```typescript
 import crypto from "crypto";
@@ -166,22 +166,6 @@ app.post("/webhook/heygen", (req, res) => {
 });
 ```
 
-### Event Validation
-
-```typescript
-const VALID_EVENT_TYPES = [
-  "avatar_video.success",
-  "avatar_video.fail",
-  "video_translate.success",
-  "video_translate.fail",
-];
-
-function isValidHeygenEvent(event: any): boolean {
-  return !!(event.event_type && event.event_data
-    && VALID_EVENT_TYPES.includes(event.event_type));
-}
-```
-
 ## Retry Handling
 
 ```typescript
@@ -203,23 +187,3 @@ async function processWebhookEvent(event: HeyGenWebhookEvent) {
   await storeFailedEvent(event); // Manual review queue
 }
 ```
-
-## Testing Locally
-
-Use ngrok to expose your local endpoint:
-
-```bash
-ngrok http 3000
-# Register the ngrok URL: https://abc123.ngrok.io/webhook/heygen
-```
-
-## Best Practices
-
-1. **Respond first, process async** — return 200 within 5 seconds
-2. **Handle duplicates** — same event may arrive multiple times
-3. **Use callback IDs** — correlate webhooks to your original requests
-4. **Verify signatures** — validate `x-heygen-signature` header with HMAC
-5. **Retry with backoff** — handle transient processing failures
-6. **Log payloads** — store raw webhook data for debugging
-7. **Queue heavy work** — use job queues for expensive processing
-8. **Prefer webhooks over polling** — lower latency, lower API usage
