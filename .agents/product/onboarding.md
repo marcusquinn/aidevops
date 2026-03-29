@@ -67,7 +67,7 @@ tools:
 6. Hard paywall (unskippable — pay or start free trial)
 ```
 
-**When to use**: B2C where competitors use hard paywalls. Validate against top-grossing competitors.
+Use when B2C competitors use hard paywalls. Validate against top-grossing competitors.
 
 | Aspect | Hard Paywall | Soft Paywall (feature-gated) |
 |--------|-------------|------------------------------|
@@ -77,21 +77,21 @@ tools:
 | App Store ratings | Risk of negative reviews | Generally better |
 | Best for | Proven niches with validated demand | New/unvalidated products |
 
-**Key principle**: Weak onboarding + hard paywall drives users away. Strong onboarding + hard paywall maximises revenue. Mirror top competitor pricing; A/B test once you have traffic.
+Weak onboarding + hard paywall = users leave. Strong onboarding + hard paywall = max revenue. Mirror top competitor pricing; A/B test once you have traffic.
 
 ## Design Principles
 
-**Every screen must earn its place** — add a screen only if the user needs the information now, it can't be deferred, and it increases the chance they become a regular user.
+Add a screen only if the user needs the info now, it can't be deferred, and it increases retention.
 
-**Skip always visible** (except hard paywall): "Skip" button, progress indicator, back navigation.
+**Skip always visible** (except hard paywall): skip button, progress indicator, back navigation.
 
 ### Permission Requests
 
-Request in context, not upfront. Exception: if the core function requires a permission (e.g., camera app), request during onboarding with a clear explanation.
+Request in context, not upfront. Exception: core-function permissions (e.g., camera app) — request during onboarding with clear explanation.
 
 | Permission | When to Ask |
 |------------|-------------|
-| Notifications | After user completes first action |
+| Notifications | After first action |
 | Location | When user opens map/location feature |
 | Camera | When user taps camera button |
 | Health data | When user enables health tracking |
@@ -105,7 +105,7 @@ Defer unless required for core functionality:
 - **Optional**: Sync across devices, social features
 - **Required**: Multi-user, cloud-based, subscription products
 
-When required: Sign in with Apple (mandatory on iOS if any third-party sign-in exists) → Sign in with Google → Email + password.
+When required: Sign in with Apple (mandatory on iOS if any third-party sign-in exists) → Google → Email + password.
 
 ### Paywall Placement
 
@@ -113,7 +113,7 @@ See `product/monetisation.md` for detailed strategy. If competitors use hard pay
 
 | Position | Pros | Cons |
 |----------|------|------|
-| After onboarding, before product (hard) | High visibility, maximises revenue per install | User hasn't experienced value |
+| After onboarding, before product (hard) | High visibility, max revenue per install | User hasn't experienced value |
 | After first core action (soft) | User has experienced value | Lower visibility |
 | After 3 days of use (delayed) | Highest conversion | Delayed revenue |
 
@@ -131,14 +131,14 @@ See `product/monetisation.md` for detailed strategy. If competitors use hard pay
 
 | Platform | Key considerations |
 |----------|--------------------|
-| Mobile | Full-screen swipeable screens; haptic feedback; show onboarding in App Store screenshots |
-| Browser extension | 1-3 screens on new tab after install; show extension in action on a real webpage |
+| Mobile | Full-screen swipeable; haptic feedback; show onboarding in App Store screenshots |
+| Browser extension | 1-3 screens on new tab after install; show extension on a real webpage |
 | Desktop | First-run wizard; offer "quick start" vs "full setup" |
-| Web app | Part of signup flow; progressive profiling; empty states ARE onboarding — design them to guide action |
+| Web app | Part of signup flow; progressive profiling; empty states ARE onboarding — guide action |
 
 ## Animation and Polish
 
-Onboarding is the product's first impression — invest in smooth transitions, subtle animations (Lottie, Remotion), haptic feedback (mobile), and intentional loading states. See `product/ui-design.md` for standards.
+First impression — invest in smooth transitions, subtle animations (Lottie, Remotion), haptic feedback (mobile), intentional loading states. See `product/ui-design.md`.
 
 ## Related
 
