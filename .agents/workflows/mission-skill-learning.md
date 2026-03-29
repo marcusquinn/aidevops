@@ -101,7 +101,9 @@ These surface automatically when planning missions (`/recall "mission patterns"`
 ### Mission Orchestrator (Phase 5)
 
 1. Run `mission-skill-learner.sh scan <mission-dir>`
-2. For each suggestion with score >= 40: promote if generally useful, leave if project-specific
+2. For each suggestion with score >= 40, promote based on tier:
+   - **Score >= 40 and < 85 (draft/custom)**: promote directly via CLI — `mission-skill-learner.sh promote <path> draft` (score 40–69) or `mission-skill-learner.sh promote <path> custom` (score 70–84); leave project-specific artifacts in place
+   - **Score >= 85 (shared)**: do NOT use CLI promote; create a PR to the aidevops repo and follow the shared-tier review workflow (see Promotion Lifecycle table above)
 3. Record decisions in the mission's "Mission Agents" table
 4. File GitHub issues for framework improvements; record in "Framework Improvements" section
 
