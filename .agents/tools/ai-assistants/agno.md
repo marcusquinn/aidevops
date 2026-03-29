@@ -18,24 +18,20 @@ tools:
 
 ## Quick Reference
 
-- Agno: Enterprise AI agent operating system (AgentOS) running locally
-- Setup: `bash .agents/scripts/agno-setup.sh setup`
-- Start: `~/.aidevops/scripts/start-agno-stack.sh`
-- Stop: `~/.aidevops/scripts/stop-agno-stack.sh`
-- Status: `~/.aidevops/scripts/agno-status.sh`
-- URLs: Agent-UI http://localhost:3000, AgentOS API http://localhost:8000, Docs /docs
-- Config: `~/.aidevops/agno/.env` (OPENAI_API_KEY required)
-- Agents: DevOps Assistant, Code Review Assistant, Documentation Assistant
-- Requirements: Python 3.8+, Node.js 18+
-- Install: `pip install "agno[all]"` in venv at `~/.aidevops/agno/venv/`
-- Privacy: Complete local processing, zero external data transmission
+- **Setup:** `bash .agents/scripts/agno-setup.sh setup` (one-time)
+- **Start/Stop/Status:** `start-agno-stack.sh` / `stop-agno-stack.sh` / `agno-status.sh` (in `~/.aidevops/scripts/`)
+- **URLs:** Agent-UI http://localhost:3000 · AgentOS API http://localhost:8000 · Docs /docs
+- **Config:** `~/.aidevops/agno/.env` — `OPENAI_API_KEY` required
+- **Agents:** DevOps Assistant, Code Review Assistant, Documentation Assistant
+- **Requirements:** Python 3.8+, Node.js 18+
+- **Privacy:** Complete local processing, zero external data transmission
 
 <!-- AI-CONTEXT-END -->
 
-## Installation
+## Setup
 
 ```bash
-# Quick setup (recommended)
+# Recommended
 bash .agents/scripts/agno-setup.sh setup
 
 # Manual: AgentOS
@@ -70,22 +66,19 @@ NEXT_PUBLIC_APP_NAME=AI DevOps Assistant
 PORT=3000
 ```
 
-## Service Management
+## Service Commands
 
-```bash
-bash .agents/scripts/agno-setup.sh setup        # One-time setup
-bash .agents/scripts/agno-setup.sh check        # Check prerequisites
-bash .agents/scripts/agno-setup.sh agno         # Setup AgentOS only
-bash .agents/scripts/agno-setup.sh ui           # Setup Agent-UI only
+| Command | Purpose |
+|---------|---------|
+| `agno-setup.sh setup` | One-time setup |
+| `agno-setup.sh check` | Check prerequisites |
+| `agno-setup.sh agno` | AgentOS only |
+| `agno-setup.sh ui` | Agent-UI only |
+| `start-agno-stack.sh` | Start both services |
+| `stop-agno-stack.sh` | Stop services |
+| `agno-status.sh` | Check status |
 
-~/.aidevops/scripts/start-agno-stack.sh         # Start both services
-~/.aidevops/scripts/stop-agno-stack.sh          # Stop services
-~/.aidevops/scripts/agno-status.sh              # Check status
-
-# Update
-cd ~/.aidevops/agno && source venv/bin/activate && pip install --upgrade "agno[all]"
-cd ~/.aidevops/agent-ui && npm update
-```
+Update: `cd ~/.aidevops/agno && source venv/bin/activate && pip install --upgrade "agno[all]"` · `cd ~/.aidevops/agent-ui && npm update`
 
 ## Available Agents
 
