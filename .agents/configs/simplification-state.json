@@ -2395,6 +2395,11 @@
       "hash": "d1ab934388110ed38c41c414ad164ff2b78414a3",
       "at": "2026-03-29T19:49:56Z",
       "pr": 13222
+    },
+    ".agents/tools/vision/image-generation.md": {
+      "hash": "68fb24cbb02218008d86f1fb1381347f5ac1e533",
+      "at": "2026-03-29T19:51:31Z",
+      "pr": 13249
     }
   }
 }
