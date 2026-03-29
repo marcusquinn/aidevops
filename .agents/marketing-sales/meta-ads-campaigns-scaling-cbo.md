@@ -11,7 +11,7 @@
 | Minimum | At/below target, 3+ days | 50+ | >0.8% |
 | Ideal | 20%+ below target | 100+ | >1.5% |
 
-**Duplicate Ad Set (recommended)** — preserves optimization history and pixel learning. Winning ad set → Duplicate → select Scale campaign → turn ON in scale, OFF in testing.
+**Duplicate Ad Set (recommended)** — preserves pixel learning. Winning ad set → Duplicate → select Scale campaign → turn ON in scale, OFF in testing.
 
 **Duplicate Ad Only** — adding a variation to an existing scale ad set.
 
@@ -41,7 +41,7 @@ Advantage+ Audience: ON
 CBO evaluates hourly. Example at $1,000/day: $20 CPA ad set → $500 | $30 CPA → $300 | $50 CPA → $200.
 
 **Minimum budget:** `Target CPA × 10` per ad set. 3 ad sets at $30 CPA → $900+ campaign budget.
-**Minimum spend limits:** `Target CPA × 3-5` — forces CBO to give new ad sets fair chance when competing with established ones.
+**Minimum spend limits:** `Target CPA × 3-5` — forces CBO to give new ad sets fair chance against established ones.
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
@@ -79,7 +79,7 @@ Max 5-6 similar ad sets (internal competition). Start with 2-3.
 
 ### New Creatives (Safest)
 
-Test in ABO → find winner → add to existing winning scale ad set. No learning reset, creative diversity fights fatigue.
+Test in ABO → find winner → add to existing winning scale ad set. No learning reset; creative diversity fights fatigue.
 
 ### Scaling Sequence
 
@@ -89,20 +89,14 @@ Test in ABO → find winner → add to existing winning scale ad set. No learnin
 
 ## Performance Diagnostics
 
-```text
-CPM up?        → Competition or quality issue
-CTR down?      → Creative fatigue
-CVR down?      → Landing page or offer issue
-Frequency high? → Audience saturation
-```
-
 | Symptom | Cause | Action |
 |---------|-------|--------|
+| CPM rising | Competition or quality issue | Review ad quality, check auction overlap |
+| CTR declining | Creative fatigue | Refresh creative |
+| CVR declining | Landing page or offer issue | Test landing page |
+| Frequency >3 | Audience saturation | Expand audience |
 | Sudden CPA spike | Algorithm reset/competition | Wait 48h |
 | Gradual CPA rise | Creative fatigue | New creative |
-| CTR declining | Ad fatigue | Refresh creative |
-| Frequency >3 | Audience saturation | Expand audience |
-| CVR declining | Landing page issue | Test landing page |
 
 **Fatigue signals:** CTR declining week-over-week, frequency >2.5-3.0, CPA rising while CPM stable, same creative 3+ weeks. **Refresh** if 1-2 ads fatigued (add new). **Kill** if all fatigued, CPA 50%+ above target sustained.
 
