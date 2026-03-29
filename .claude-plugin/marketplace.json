@@ -6,11 +6,7 @@
   },
   "metadata": {
     "description": "AI DevOps Framework - comprehensive DevOps automation with 25+ service integrations",
-<<<<<<< Updated upstream
-    "version": "<<<<<<< Updated upstream..2"
-=======
-    "version": "<<<<<<< Updated upstream..2"
->>>>>>> Stashed changes
+    "version": "3.5.326"
   },
   "plugins": [
     {
