@@ -54,20 +54,6 @@ Response:
 
 ## Implementation
 
-### Browser — fetch credentials from backend
-
-```typescript
-async function getTURNConfig(): Promise<RTCIceServer[]> {
-  const { iceServers } = await fetch('/api/turn-credentials').then(r => r.json());
-  return [
-    { urls: 'stun:stun.cloudflare.com:3478' },
-    { urls: iceServers.urls, username: iceServers.username, credential: iceServers.credential }
-  ];
-}
-
-const peerConnection = new RTCPeerConnection({ iceServers: await getTURNConfig() });
-```
-
 ### Backend — generate credentials (Node.js/TypeScript)
 
 ```typescript
@@ -88,6 +74,20 @@ async function generateTURNCredentials(keyId: string, keySecret: string, ttl = 8
 
 Cache credentials client-side; refresh 60s before expiry (`expiresAt: now + ttl * 1000 - 60000`).
 
+### Browser — fetch credentials from backend
+
+```typescript
+async function getTURNConfig(): Promise<RTCIceServer[]> {
+  const { iceServers } = await fetch('/api/turn-credentials').then(r => r.json());
+  return [
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: iceServers.urls, username: iceServers.username, credential: iceServers.credential }
+  ];
+}
+
+const peerConnection = new RTCPeerConnection({ iceServers: await getTURNConfig() });
+```
+
 ### Cloudflare Worker
 
 ```typescript
@@ -95,14 +95,9 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (new URL(request.url).pathname !== '/turn-credentials') return new Response('Not found', { status: 404 });
     if (!request.headers.get('Authorization')) return new Response('Unauthorized', { status: 401 });
-
     const res = await fetch(
       `https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate`,
-      {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${env.TURN_KEY_SECRET}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ttl: 3600 })
-      }
+      { method: 'POST', headers: { 'Authorization': `Bearer ${env.TURN_KEY_SECRET}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ ttl: 3600 }) }
     );
     if (!res.ok) return new Response('Failed to generate credentials', { status: 500 });
     const { iceServers } = await res.json();
@@ -114,37 +109,13 @@ export default {
 };
 ```
 
-## Configuration
+Env vars: `TURN_KEY_ID` (var), `TURN_KEY_SECRET` (secret via `wrangler secret put TURN_KEY_SECRET`), `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`.
 
-### Environment Variables
+## Limits & TLS
 
-```bash
-CLOUDFLARE_ACCOUNT_ID=your_account_id
-CLOUDFLARE_API_TOKEN=your_api_token
-TURN_KEY_ID=your_turn_key_id
-TURN_KEY_SECRET=your_turn_key_secret
-```
+**Rate limits** (per user): >5 new unique IPs/sec, 5–10k pps, 50–100 Mbps. Exceeding causes packet drops.
 
-### Wrangler
-
-```toml
-name = "turn-credentials-api"
-main = "src/index.ts"
-compatibility_date = "2024-01-01"
-
-[vars]
-TURN_KEY_ID = "your-turn-key-id"
-
-# Store TURN_KEY_SECRET via: wrangler secret put TURN_KEY_SECRET
-```
-
-## Limits
-
-Per allocation (per user): >5 new unique IPs/sec, 5–10k pps, 50–100 Mbps. Exceeding limits causes packet drops.
-
-## TLS
-
-Supported: TLS 1.1, 1.2, 1.3. Recommended ciphers: `AEAD-AES128-GCM-SHA256`, `AEAD-AES256-GCM-SHA384`, `AEAD-CHACHA20-POLY1305-SHA256` (TLS 1.3); `ECDHE-ECDSA-AES128-GCM-SHA256`, `ECDHE-RSA-AES128-GCM-SHA256` (TLS 1.2).
+**TLS**: 1.1, 1.2, 1.3. Recommended ciphers: `AEAD-AES128-GCM-SHA256`, `AEAD-AES256-GCM-SHA384`, `AEAD-CHACHA20-POLY1305-SHA256` (TLS 1.3); `ECDHE-ECDSA-AES128-GCM-SHA256`, `ECDHE-RSA-AES128-GCM-SHA256` (TLS 1.2).
 
 ## Security Best Practices
 
