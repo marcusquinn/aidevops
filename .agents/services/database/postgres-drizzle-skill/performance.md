@@ -2,11 +2,11 @@
 
 PostgreSQL and Drizzle ORM performance reference.
 
-## Indexing Strategies
+## Indexing
 
 ### B-Tree (Default)
 
-Best for: equality, range queries, sorting, LIKE with left anchor.
+Equality, range, sorting, left-anchored LIKE.
 
 ```sql
 CREATE INDEX users_email_idx ON users(email);
@@ -26,7 +26,7 @@ export const users = pgTable('users', {
 
 ### Partial Indexes
 
-Index only rows matching a condition — smaller, faster.
+Index only matching rows — smaller, faster.
 
 ```sql
 CREATE INDEX active_users_email_idx ON users(email) WHERE deleted_at IS NULL;
@@ -40,10 +40,10 @@ index('active_users_idx').on(table.email).where(sql`deleted_at IS NULL`)
 ### Covering Indexes (INCLUDE)
 
 ```sql
-CREATE INDEX orders_user_idx ON orders(user_id) INCLUDE (status, total);  -- enables index-only scan
+CREATE INDEX orders_user_idx ON orders(user_id) INCLUDE (status, total);  -- index-only scan
 ```
 
-### GIN Indexes for JSONB
+### GIN for JSONB
 
 | Class | Size | Operators | Best For |
 |-------|------|-----------|----------|
@@ -66,9 +66,7 @@ CREATE INDEX events_type_idx ON events((data->>'type'));
 -- lower(email) = '...' uses index; email = 'UPPER@...' does NOT
 ```
 
-## Query Optimization
-
-### EXPLAIN ANALYZE
+## EXPLAIN ANALYZE
 
 ```sql
 EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
@@ -77,9 +75,9 @@ SELECT * FROM orders WHERE user_id = '123' AND status = 'pending';
 
 **Key metrics:** `actual time` (ms), `rows` (estimated vs actual), `Buffers: shared hit/read` (cache vs disk).
 
-**Problem indicators:** Large estimated/actual row discrepancy; high `shared read`; Seq Scan on large tables; Nested Loop with high loop count.
+**Red flags:** Large estimated/actual row discrepancy; high `shared read`; Seq Scan on large tables; Nested Loop with high loop count.
 
-## Drizzle Query Optimization
+## Drizzle Queries
 
 ### Prepared Statements
 
@@ -90,16 +88,16 @@ const getUserById = db.select().from(users)
 const user = await getUserById.execute({ id: 'uuid-1' });
 ```
 
-### Avoid N+1 Queries
+### N+1 Prevention
 
 ```typescript
-// N+1 (bad)
+// BAD: N+1
 for (const post of posts) {
   const author = await db.select().from(users).where(eq(users.id, post.authorId));
 }
-// relational query — single JOIN (good)
+// GOOD: relational query (single JOIN)
 const posts = await db.query.posts.findMany({ with: { author: true } });
-// manual join (good)
+// GOOD: manual join
 const posts = await db.select().from(posts).leftJoin(users, eq(posts.authorId, users.id));
 ```
 
@@ -110,7 +108,7 @@ const users = await db.select({ id: users.id, email: users.email }).from(users);
 const users = await db.query.users.findMany({ columns: { id: true, email: true } });
 ```
 
-### Batch and Bulk Operations
+### Batch Operations
 
 ```typescript
 // Batch insert
@@ -144,7 +142,7 @@ await db.transaction(async (tx) => {
 
 ## Connection Pooling
 
-Each PostgreSQL connection uses ~10MB RAM. PgBouncer connections use ~2KB.
+PostgreSQL connection: ~10MB RAM. PgBouncer connection: ~2KB.
 
 ### PgBouncer
 
@@ -168,13 +166,11 @@ default_pool_size = 20
 
 **Transaction pooling limitations:** No `SET SESSION` (use `SET LOCAL`); no `PREPARE` without config; temp tables must be created/dropped in same transaction.
 
-### Drizzle
+### Drizzle Pool Config
 
 ```typescript
-// pg driver
-const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 20, idleTimeoutMillis: 30000 });
-// postgres.js driver
-const client = postgres(process.env.DATABASE_URL!, { max: 20, idle_timeout: 30, connect_timeout: 10 });
+const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 20, idleTimeoutMillis: 30000 });  // pg
+const client = postgres(process.env.DATABASE_URL!, { max: 20, idle_timeout: 30, connect_timeout: 10 });    // postgres.js
 const db = drizzle(pool, { schema });  // or drizzle(client, { schema })
 ```
 
