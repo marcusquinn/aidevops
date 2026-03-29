@@ -663,6 +663,8 @@ map_tags_to_labels() {
 		hardening) label="quality" ;;
 		sync) label="git" ;;
 		docs) label="documentation" ;;
+		worker) label="origin:worker" ;;
+		interactive) label="origin:interactive" ;;
 		esac
 
 		labels="${labels:+$labels,}$label"

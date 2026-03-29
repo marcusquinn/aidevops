@@ -305,7 +305,11 @@ _push_create_issue() {
 		status_label="status:claimed"
 		gh_create_label "$repo" "status:claimed" "D93F0B" "Task is claimed"
 	}
-	local all_labels="${labels:+${labels},}${status_label}"
+	# Add session origin label (origin:worker or origin:interactive)
+	local origin_label
+	origin_label=$(session_origin_label)
+	gh_create_label "$repo" "$origin_label" "C5DEF5" "Created from ${origin_label#origin:} session"
+	local all_labels="${labels:+${labels},}${status_label},${origin_label}"
 
 	# Race-condition guard: re-check immediately before creating
 	local recheck
