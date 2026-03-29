@@ -24,11 +24,11 @@ mcp:
 - **Helper**: `.agents/scripts/security-helper.sh`
 - **Commands**: `analyze [scope]` | `scan-deps` | `history [commits]` | `skill-scan` | `vt-scan` | `ferret` | `report`
 - **Scopes**: `diff` (default), `staged`, `branch`, `full`
-- **Output**: `.security-analysis/` directory with reports
+- **Output**: `.security-analysis/` — `SECURITY_REPORT.md`, `security-report.json`, `security-report.sarif`
 - **Severity**: critical > high > medium > low > info
 - **Benchmarks**: 90% precision, 93% recall (OpenSSF CVE Benchmark)
-- **Integrations**: OSV-Scanner (deps), Secretlint (secrets), Ferret (AI configs), VirusTotal (file/URL/domain), Shannon (pentesting), Snyk (optional)
-- **MCP**: `gemini-cli-security` tools: find_line_numbers, get_audit_scope, run_poc
+- **Integrations**: OSV-Scanner (deps), Secretlint (secrets), Ferret (AI configs), VirusTotal (file/URL/domain), Shannon (pentesting), Snyk/SonarCloud/CodeQL (optional)
+- **MCP**: `gemini-cli-security` — `find_line_numbers`, `get_audit_scope`, `run_poc`
 
 **Vulnerability Categories**:
 
@@ -48,15 +48,15 @@ mcp:
 
 ```bash
 ./.agents/scripts/security-helper.sh analyze [diff|staged|branch|full]
-./.agents/scripts/security-helper.sh history 50                          # or abc123..def456, --since=, --author=
+./.agents/scripts/security-helper.sh history 50          # or abc123..def456, --since=, --author=
 ./.agents/scripts/security-helper.sh scan-deps [path]
-./.agents/scripts/security-helper.sh skill-scan                          # Cisco + VirusTotal advisory
+./.agents/scripts/security-helper.sh skill-scan          # Cisco + VirusTotal advisory
 ./.agents/scripts/security-helper.sh vt-scan [status|file|url|domain|skill] [target]
-./.agents/scripts/security-helper.sh ferret                              # AI CLI config scan
+./.agents/scripts/security-helper.sh ferret              # AI CLI config scan
 ./.agents/scripts/security-helper.sh report [--format=sarif]
 ```
 
-**Development workflow**: Pre-commit (`analyze staged`) → PR review (`analyze branch`) → weekly (`analyze full`) → post-dep-change (`scan-deps`).
+**Workflow**: Pre-commit (`analyze staged`) → PR review (`analyze branch`) → weekly (`analyze full`) → post-dep-change (`scan-deps`).
 
 ## Two-Pass Investigation Model
 
@@ -77,18 +77,7 @@ npm install -g ferret-scan   # or: npx ferret-scan
 # Custom rules: .ferretrc.json | Exclude known issues: ferret baseline create
 ```
 
-**Shannon** (pentesting): Taint analysis (Pro), exploit validation. **Snyk Code** / **SonarCloud** / **CodeQL**: dependency scanning, taint analysis, CI/CD integration. **Gemini CLI Security** MCP: `find_line_numbers`, `get_audit_scope`, `run_poc`. [CWE DB](https://cwe.mitre.org/) | [OWASP Top 10](https://owasp.org/Top10/)
-
-## Output
-
-```text
-.security-analysis/
-├── SECURITY_REPORT.md    # Human-readable
-├── security-report.json  # Machine-readable
-└── security-report.sarif # SARIF for CI/CD
-```
-
-Each finding includes: severity, file, lines, CWE, description, vulnerable code, remediation.
+**Shannon** (pentesting): Taint analysis (Pro), exploit validation. **Snyk Code** / **SonarCloud** / **CodeQL**: dependency scanning, taint analysis, CI/CD integration. [CWE DB](https://cwe.mitre.org/) | [OWASP Top 10](https://owasp.org/Top10/)
 
 ## Allowlisting and Exceptions
 
@@ -144,8 +133,6 @@ Always verify before allowlisting. Include reason. Prefer code fixes over suppre
   }
 }
 ```
-
-Tools: `find_line_numbers` (exact line numbers), `get_audit_scope` (git diff scope), `run_poc` (proof-of-concept exploits).
 
 ## Remediation SLAs
 
