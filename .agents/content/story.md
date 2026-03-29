@@ -13,7 +13,6 @@ model: sonnet
 
 - **Input**: Research brief (`content/research.md`) or topic + audience
 - **Output**: Story package — hook variants, narrative arc, transformation framework, angle selection
-- **Principle**: One story, many outputs — design the narrative once, adapt everywhere
 - **Hook-first always** — every output starts with the hook, regardless of platform
 - **6-12 word constraint** on hooks — forces clarity and punch
 - **Proven first, original second** — 97% proven structure, 3% unique twist
@@ -94,8 +93,6 @@ model: sonnet
 
 ## UGC Brief Storyboard
 
-Multi-shot storyboard from a business brief. Uses 4-Part Script Framework + 7-component video prompt format (`tools/video/video-prompt-design.md`).
-
 ### Input Brief
 
 ```text
@@ -144,9 +141,8 @@ Technical: [Negatives: subtitles, watermark, text overlays, amateur quality]
 
 1. Fill brief → select hook formula → generate 5 shots
 2. Score 5+ hook variants (Shot 1) on specificity/emotion/curiosity
-3. Image keyframes → feed each shot to `content/production-image.md`
-4. Video → Sora 2 Pro (UGC) or Veo 3.1 (cinematic)
-5. Assemble; add text overlays in post (not in generation)
+3. Image keyframes → `content/production-image.md`; video → Sora 2 Pro (UGC) or Veo 3.1 (cinematic)
+4. Assemble; add text overlays in post (not in generation)
 
 ## Related
 
