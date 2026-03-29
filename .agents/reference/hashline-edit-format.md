@@ -1,6 +1,6 @@
 # Hashline Edit Format
 
-Content-addressed line reference system used in oh-my-pi's coding agent. Each line is identified by `LINE#HASH` — a combined address and staleness check. Hash mismatches on stale reads fail loudly with actionable output rather than silently corrupting the file.
+Content-addressed line reference system (`LINE#HASH`) used in oh-my-pi's coding agent. Hash mismatches on stale reads fail loudly with actionable output rather than silently corrupting the file.
 
 **Source**: `oh-my-pi/packages/coding-agent/src/patch/hashline.ts`
 
@@ -8,7 +8,7 @@ Content-addressed line reference system used in oh-my-pi's coding agent. Each li
 
 ## Line Reference Format
 
-```
+```text
 LINENUM#HASH:CONTENT   ← display format (shown to model)
 "LINENUM#HASH"         ← reference format (used in edit operations)
 ```
@@ -26,11 +26,7 @@ Example: `1#ZP:function hi() {` / `"5#aa"` — line 5, hash `aa`.
 - **Output**: 2 chars from alphabet `ZPMQVRWSNKTXJBYH` (visually distinct, unlikely in code tokens)
 - **Encoding**: low byte of xxHash32 (`& 0xff`) indexes a 256-entry lookup table; each entry maps high/low nibbles to the alphabet
 
-### `parseTag(ref)`
-
-```
-/^\s*[>+-]*\s*(\d+)\s*#\s*([ZPMQVRWSNKTXJBYH]{2})/
-```
+### `parseTag(ref)` — regex: `/^\s*[>+-]*\s*(\d+)\s*#\s*([ZPMQVRWSNKTXJBYH]{2})/`
 
 Strips leading `>+` markers, surrounding whitespace, and optional trailing display suffixes. Tolerates diff markers in model output.
 
@@ -67,7 +63,7 @@ export type HashlineEdit =
 
 ### HashlineMismatchError
 
-```
+```text
 2 lines have changed since last read. Use the updated LINE#HASH references shown below (>>> marks changed lines).
 
     3#ZP:function hi() {
@@ -122,21 +118,19 @@ Models often include the anchor line in replacement content even though it's not
 
 ### 2. Line merge detection: `maybeExpandSingleLineMerge`
 
-Models sometimes merge two adjacent lines into one. Only triggered for `set` with `content.length === 1`.
+Only triggered for `set` with `content.length === 1`. Detects when a model merges two adjacent lines into one.
 
-**Case A — absorbed next line**: `origLooksLikeContinuation` when `stripTrailingContinuationTokens(origCanon).length < origCanon.length`. Tokens: `&&`, `||`, `??`, `?`, `:`, `=`, `,`, `+`, `-`, `*`, `/`, `.`, `(`. Check: `newCanon` contains both `origCanonForMatch` and `nextCanon` in order within `origCanon.length + nextCanon.length + 32`. Result: `{ startLine: line, deleteCount: 2 }`.
-
-**Case B — absorbed previous line**: previous line ends with continuation token. Uses `stripMergeOperatorChars` (removes `|`, `&`, `?`) for operator changes like `||` → `??`. Check: `newCanonForMergeOps` contains both `prevCanonForMatch` and `origCanonForMergeOps` in order. Result: `{ startLine: line-1, deleteCount: 2 }`.
-
-**Guard**: `explicitlyTouchedLines` prevents merge detection from consuming a line targeted by another edit.
+- **Case A — absorbed next line**: `origLooksLikeContinuation` when `stripTrailingContinuationTokens` shortens the canonical form. Continuation tokens: `&&`, `||`, `??`, `?`, `:`, `=`, `,`, `+`, `-`, `*`, `/`, `.`, `(`. Result: `{ startLine: line, deleteCount: 2 }`.
+- **Case B — absorbed previous line**: previous line ends with continuation token; uses `stripMergeOperatorChars` (removes `|`, `&`, `?`) for operator changes like `||` → `??`. Result: `{ startLine: line-1, deleteCount: 2 }`.
+- **Guard**: `explicitlyTouchedLines` prevents merge detection from consuming a line targeted by another edit.
 
 ### 3. Wrapped line restoration: `restoreOldWrappedLines`
 
-Models sometimes reflow a single logical line into multiple lines. Algorithm: build `canonToOld: Map<strippedContent, { line, count }>` from `oldLines`; for each span of 2–10 consecutive `newLines`, compute `canonSpan = stripAllWhitespace(joined)`; if it matches a unique old line (`count=1`, `length >= 6`) and is unique in new output, apply back-to-front: `splice(start, len, replacement)`.
+Models sometimes reflow a single logical line into multiple lines. Builds `canonToOld: Map<strippedContent, { line, count }>` from `oldLines`; for each span of 2–10 consecutive `newLines`, if `canonSpan` matches a unique old line (`count=1`, `length >= 6`) and is unique in new output, restores it back-to-front via `splice`.
 
 ### 4. Indent restoration: `restoreIndentForPairedReplacement`
 
-Only when `oldLines.length === newLines.length`. For each pair: if `newLines[i]` has no leading whitespace but `oldLines[i]` does, prepend `oldLines[i]`'s indent. Returns original array if unchanged.
+Only when `oldLines.length === newLines.length`. For each pair: if `newLines[i]` has no leading whitespace but `oldLines[i]` does, prepend `oldLines[i]`'s indent.
 
 ---
 
@@ -154,12 +148,12 @@ Only when `oldLines.length === newLines.length`. For each pair: if `newLines[i]`
 ## Implementation Notes
 
 - **Autocorrect**: set `PI_HL_AUTOCORRECT=1` before calling `applyHashlineEdits`; without it all heuristics are bypassed.
-- **Bottom-up is mandatory**: apply highest-line-first; top-down shifts line numbers for subsequent edits. `applyHashlineEdits` handles this; custom implementations must replicate it.
+- **Bottom-up mandatory**: apply highest-line-first to avoid shifting line numbers for subsequent edits. `applyHashlineEdits` handles this; custom implementations must replicate it.
 - **Hash collision**: 2 chars from 16-char alphabet = 256 values, ~0.4% collision per line. Line number is the primary address; hash is a staleness signal, not a cryptographic guarantee.
 
 ### Error recovery flow
 
-```
+```text
 1. Call applyHashlineEdits(content, edits)
 2. If HashlineMismatchError:
    a. Use error.remaps: Map<"LINE#OLD", "LINE#NEW"> to update stale refs
@@ -172,15 +166,15 @@ Only when `oldLines.length === newLines.length`. For each pair: if `newLines[i]`
 
 ### Deduplication key format
 
-```
+Content is `\n`-joined `content[]`.
+
+```text
 "s:{line}:{content}"             // set
 "r:{first}:{last}:{content}"     // replace
 "i:{after}:{content}"            // append
 "ib:{before}:{content}"          // prepend
 "ix:{after}:{before}:{content}"  // insert
 ```
-
-Content is `\n`-joined `content[]`.
 
 ---
 
