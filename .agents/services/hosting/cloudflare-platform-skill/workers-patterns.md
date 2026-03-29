@@ -33,7 +33,7 @@ const corsHeaders = {
 };
 
 if (request.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
-// Add corsHeaders to response
+// Spread corsHeaders into your final Response headers
 ```
 
 ## Routing
@@ -61,6 +61,7 @@ const [user, posts] = await Promise.all([fetch('/api/user/1'), fetch('/api/posts
 ## Streaming
 
 ```typescript
+// ReadableStream
 const stream = new ReadableStream({
   async start(controller) {
     for (let i = 0; i < 1000; i++) {
@@ -70,11 +71,8 @@ const stream = new ReadableStream({
     controller.close();
   }
 });
-```
 
-## Transform Streams
-
-```typescript
+// Transform pipeline
 response.body.pipeThrough(new TextDecoderStream()).pipeThrough(
   new TransformStream({ transform(chunk, c) { c.enqueue(chunk.toUpperCase()); } })
 ).pipeThrough(new TextEncoderStream());
@@ -132,7 +130,7 @@ if (!auth?.startsWith('Bearer ')) return new Response('Unauthorized', { status: 
 
 ## Rate Limiting
 
-See [Durable Objects](../durable-objects/README.md) for stateful rate limiting patterns.
+See [Durable Objects patterns](./durable-objects-patterns.md) for stateful rate-limiting patterns.
 
 ## Gradual Rollouts
 
@@ -144,4 +142,4 @@ if (bucket < rolloutPercent) return newFeature(request);
 
 ## See Also
 
-- [Gotchas](./gotchas.md) - Common issues
+- [Gotchas](./workers-gotchas.md) - Common issues
