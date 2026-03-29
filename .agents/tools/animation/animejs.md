@@ -2,10 +2,8 @@
 name: animejs
 description: "Anime.js - Lightweight JavaScript animation library for CSS, SVG, DOM attributes and JS objects"
 mode: subagent
-imported_from: context7
 upstream_url: https://github.com/juliangarnier/anime
 docs_url: https://animejs.com/documentation
-context7_id: /websites/animejs
 ---
 # Anime.js
 
@@ -100,19 +98,15 @@ animate('.element', {
 ```javascript
 const tl = createTimeline({ defaults: { duration: 500, ease: 'outExpo' }, loop: 2 });
 
-// Time positioning
 tl.add('.el1', { x: 100 })             // after previous
   .add('.el2', { x: 100 }, '+=200')    // 200ms after previous ends
   .add('.el3', { x: 100 }, '-=100')    // 100ms before previous ends
   .add('.el4', { x: 100 }, 500)        // absolute 500ms
   .add('.el5', { x: 100 }, 'myLabel'); // at label
 
-// Labels
 tl.label('intro').add('.title', { opacity: 1 }).label('content').add('.body', { translateY: 0 });
 tl.seek('content');
 ```
-
-### Timeline Methods
 
 | Method | Description |
 |--------|-------------|
@@ -127,25 +121,19 @@ tl.seek('content');
 ```javascript
 animate('.items', { translateY: [50, 0], delay: stagger(100) });
 
-// Options
 stagger(value, {
   start: 500, from: 'center',   // 'first', 'last', 'center', index
   direction: 'reverse', ease: 'outQuad',
   grid: [10, 10], axis: 'x'    // grid stagger
 });
 
-// Value stagger
-animate('.items', {
-  translateX: stagger(10),          // 0, 10, 20...
-  rotate: stagger([0, 360], { ease: 'outQuad' })
-});
+// Value stagger: translateX: stagger(10) → 0, 10, 20...
+animate('.items', { rotate: stagger([0, 360], { ease: 'outQuad' }) });
 ```
 
 ## SVG
 
 ```javascript
-import { animate, svg } from 'animejs';
-
 // Line drawing
 const drawable = svg.createDrawable('.path');
 animate(drawable, { draw: ['0 0', '0 1', '1 1'], duration: 2000, ease: 'inOutQuad' });
@@ -171,9 +159,7 @@ animate('.element', {
   onBeforeUpdate: (anim) => {}
 });
 
-// Async/await
-await animate('.box1', { translateX: 100 });
-await animate('.box2', { translateY: 100 });
+await animate('.box1', { translateX: 100 });  // promises supported
 ```
 
 ## Playback Control
@@ -182,14 +168,13 @@ await animate('.box2', { translateY: 100 });
 const anim = animate('.element', { translateX: 250, autoplay: false });
 
 anim.play(); anim.pause(); anim.restart(); anim.reverse();
-anim.seek(500);    // ms
-anim.seek(0.5);    // progress 0–1
+anim.seek(500);   // ms
+anim.seek(0.5);   // progress 0–1
 
-// Properties
-anim.progress;     // 0–100
-anim.currentTime;  // ms
-anim.paused;       // boolean
-anim.completed;    // boolean
+anim.progress;    // 0–100
+anim.currentTime; // ms
+anim.paused;      // boolean
+anim.completed;   // boolean
 ```
 
 ## Utilities
