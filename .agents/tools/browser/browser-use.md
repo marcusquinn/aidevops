@@ -82,7 +82,7 @@ agent = Agent(task="...", llm=ChatAnthropic(model="claude-sonnet-4-6"))
 
 ## CLI
 
-Persistent browser automation from the command line -- the browser stays running between commands:
+Persistent browser session from the command line:
 
 ```bash
 browser-use open https://example.com    # Navigate to URL
@@ -95,25 +95,12 @@ browser-use close                       # Close browser
 
 ## Templates
 
-Generate ready-to-run starter files:
-
 ```bash
 uvx browser-use init --template default    # Minimal setup
 uvx browser-use init --template advanced   # All config options with comments
 uvx browser-use init --template tools      # Custom tools examples
 uvx browser-use init --template default --output my_agent.py  # Custom path
 ```
-
-## Key Features
-
-- **Vision + DOM**: Combines screenshot analysis with DOM extraction for robust element identification
-- **Multi-tab support**: Navigate across multiple tabs and windows
-- **File handling**: Upload and download files
-- **Form filling**: Intelligent form detection and completion
-- **Error recovery**: Automatic retry with alternative strategies
-- **Custom tools**: Register Python functions as agent tools
-- **CLI**: Persistent browser session with element-indexed interaction
-- **Cloud mode**: Stealth browsers with CAPTCHA handling via Browser Use Cloud
 
 ## Custom Tools
 
@@ -135,8 +122,6 @@ agent = Agent(
 ```
 
 ## Cloud Mode
-
-Use managed stealth browsers for CAPTCHA handling, proxy rotation, and scalable parallel execution:
 
 ```python
 from browser_use import Agent, Browser, ChatBrowserUse
