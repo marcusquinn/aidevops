@@ -87,12 +87,6 @@ Use TodoWrite frequently. Break complex tasks into steps. Mark todos completed i
 - `rg --files -g '<pattern>'` for content + file list
 - Glob as last resort only
 
-# Token-Optimized CLI Output (t1430)
-# rtk: optional CLI proxy, 60-90% token reduction on git/gh commands.
-- When `rtk` installed, prefer `rtk` prefix for: `git status/log/diff`, `gh pr list/view`
-- Do NOT use rtk for: file reading (use Read), content search (use Grep), machine-readable output (--json, --porcelain, jq pipelines), test assertions, piped commands, verbatim diffs
-- rtk optional — if not installed, use commands normally
-
 # Code Search Priority
 1. grep/rg — exact string matching (fast)
 2. Augment Context Engine — semantic search
@@ -170,37 +164,8 @@ Reference code as `file_path:line_number` for easy navigation.
 # Log security ops: `audit-log-helper.sh log <type> <message>`. NEVER log credential values.
 # Full details: `reference/audit-logging.md`
 
-# Git Workflow and Traceability
-Git is the audit trail. Chain: TODO → issue → worktree → PR → merge. Gaps = audit failures.
-
-**Traceability:**
-- PR title MUST have task ID (`{task-id}: {description}`). No exceptions.
-- PR body MUST include `Closes #NNN` — only mechanism creating GitHub PR-issue link.
-- Every dispatched task MUST have a GitHub issue. Issue number in TODO.md as `ref=GH#NNN`.
-- Link both sides when closing (issue→PR, PR→issue).
-
-**Cross-repo task creation:**
-1. `claim-task-id.sh --repo-path <target-repo> --title "desc"` (atomic). NEVER grep TODO.md.
-2. Create GitHub issue BEFORE pushing TODO.md.
-3. Add TODO entry WITH `ref:GH#NNN` in same commit. Split commits → duplicate issues.
-4. Code changes still need worktree + PR.
-
-**GitHub comment signature footer:** Every issue, PR, and comment created by aidevops agents MUST include a signature footer. Use `gh-signature-helper.sh footer --model <model-id> [--issue OWNER/REPO#NUM] [--solved]` to generate it. Example output:
-```
----
-[aidevops.sh](https://aidevops.sh) v3.5.100 plugin for [OpenCode](https://opencode.ai) v1.3.3 with claude-opus-4-6 spent 42m and 118,502 tokens on this. Solved in 3d 4h.
-```
-The helper auto-detects CLI, version, tokens (input+output, excluding cache), and session time from the runtime DB. Pass `--issue` on comments to existing issues for "Overall, Xm since this issue was created." phrasing. Pass `--solved` on closing comments for "Solved in Xm." phrasing. Do NOT pass `--issue` when creating new issues (the issue doesn't exist yet). Append the footer as the last line of every `gh issue comment`, `gh issue create`, and `gh pr create` body. See `scripts/commands/pulse.md` for dispatch/kill/merge comment templates.
-
-**Self-improvement routing (t1541):** Framework-level tasks → `framework-routing-helper.sh log-framework-issue`. Project tasks → current repo. Framework tasks in project repos are invisible to maintainers.
-
-**Pulse scope (t1405):** `PULSE_SCOPE_REPOS` limits code changes. Issues allowed anywhere. Empty/unset = no restriction.
-
-# External Repo Issue/PR Submission (t1407)
-# Check templates and CONTRIBUTING.md first. Bots auto-close non-conforming submissions.
-# Full guide: `reference/external-repo-submissions.md`
-
-**Git-readiness:** Non-git project with ongoing development? Flag: "No git tracking. Consider `git init` + `aidevops init`."
+# Git Workflow
+Git is the audit trail. Traceability details: AGENTS.md "Git Workflow" section.
 
 **Pre-edit rules:**
 - Before ANY file modification: run `pre-edit-check.sh`
@@ -210,8 +175,7 @@ The helper auto-detects CLI, version, tokens (input+output, excluding cache), an
 - NEVER revert others' changes without explicit user request
 
 # Quality Standards
-- SonarCloud A-grade. ShellCheck zero violations.
-- `local var="$1"` pattern. Explicit returns. Conventional commits.
+- ShellCheck zero violations. `local var="$1"` pattern. Explicit returns.
 
 # Bash 3.2 Compatibility (macOS default)
 # Full rules: `reference/bash-compat.md`
@@ -220,16 +184,6 @@ The helper auto-detects CLI, version, tokens (input+output, excluding cache), an
 - Fix linter violations in code, not linter config. Config changes need documented rationale.
 - After editing code: run relevant linter before next edit. Shell: `shellcheck`. MD: `markdownlint-cli2`.
 - Fix immediately, don't batch for commit time.
-
-# Agent Framework
-- Agents in `~/.aidevops/agents/`. Subagents on-demand, not upfront.
-- YAML frontmatter: tools, model tier, MCP dependencies.
-- Progressive disclosure: pointers to subagents, not inline content.
-
-# Conversational Memory Lookup
-# User references past work ("remember when...")? Search progressively:
-# memory recall → TODO.md → git log → transcripts → GitHub API.
-# Full guide: `reference/memory-lookup.md`
 
 # Intelligence Over Determinism (CORE PRINCIPLE)
 You are an LLM. You can read, understand context, assess state, and act. No regex or state machine can do this. The framework gives goals, tools, boundaries — not scripts.
@@ -252,15 +206,6 @@ Short, concise, GitHub-flavored markdown. Numbered options for prompts.
 
 # AI Suggestion Verification
 Never apply AI tool suggestions without independent verification. AI reviewers hallucinate.
-
-# Review Bot Gate (t1382, GH#3827)
-# Before merging: `review-bot-gate-helper.sh check <PR_NUMBER>`.
-# Read bot reviews before merging. Full workflow: `reference/review-bot-gate.md`
-
-# Context Compaction Survival
-# Preserve on compaction: (1) task IDs+states, (2) batch/concurrency, (3) worktree+branch,
-# (4) PR numbers, (5) next 3 actions, (6) blockers, (7) key paths.
-# Checkpoint: ~/.aidevops/.agent-workspace/tmp/session-checkpoint.md
 
 # Model-Specific Reinforcements
 - Follow project conventions — check imports, configs, neighbouring files.
