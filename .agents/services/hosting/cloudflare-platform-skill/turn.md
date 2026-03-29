@@ -35,40 +35,11 @@ Content-Type: application/json
 {"ttl": 86400}
 ```
 
-Response:
-
-```json
-{
-  "iceServers": {
-    "urls": [
-      "stun:stun.cloudflare.com:3478",
-      "turn:turn.cloudflare.com:3478?transport=udp",
-      "turn:turn.cloudflare.com:3478?transport=tcp",
-      "turns:turn.cloudflare.com:5349?transport=tcp"
-    ],
-    "username": "generated-username",
-    "credential": "generated-credential"
-  }
-}
-```
+Response: `{ "iceServers": { "urls": [...], "username": "...", "credential": "..." } }`
 
 ## Implementation
 
-### Browser — fetch credentials from backend
-
-```typescript
-async function getTURNConfig(): Promise<RTCIceServer[]> {
-  const { iceServers } = await fetch('/api/turn-credentials').then(r => r.json());
-  return [
-    { urls: 'stun:stun.cloudflare.com:3478' },
-    { urls: iceServers.urls, username: iceServers.username, credential: iceServers.credential }
-  ];
-}
-
-const peerConnection = new RTCPeerConnection({ iceServers: await getTURNConfig() });
-```
-
-### Backend — generate credentials (Node.js/TypeScript)
+### Backend — generate credentials
 
 ```typescript
 async function generateTURNCredentials(keyId: string, keySecret: string, ttl = 86400) {
@@ -81,12 +52,21 @@ async function generateTURNCredentials(keyId: string, keySecret: string, ttl = 8
     }
   );
   if (!res.ok) throw new Error(`TURN credential generation failed: ${res.status}`);
-  const { iceServers } = await res.json();
-  return { username: iceServers.username, credential: iceServers.credential, urls: iceServers.urls };
+  return (await res.json()).iceServers;
 }
 ```
 
 Cache credentials client-side; refresh 60s before expiry (`expiresAt: now + ttl * 1000 - 60000`).
+
+### Browser — fetch from backend
+
+```typescript
+const { iceServers } = await fetch('/api/turn-credentials').then(r => r.json());
+const pc = new RTCPeerConnection({ iceServers: [
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  { urls: iceServers.urls, username: iceServers.username, credential: iceServers.credential }
+]});
+```
 
 ### Cloudflare Worker
 
@@ -95,64 +75,39 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (new URL(request.url).pathname !== '/turn-credentials') return new Response('Not found', { status: 404 });
     if (!request.headers.get('Authorization')) return new Response('Unauthorized', { status: 401 });
-
     const res = await fetch(
       `https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate`,
-      {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${env.TURN_KEY_SECRET}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ttl: 3600 })
-      }
+      { method: 'POST', headers: { 'Authorization': `Bearer ${env.TURN_KEY_SECRET}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ ttl: 3600 }) }
     );
     if (!res.ok) return new Response('Failed to generate credentials', { status: 500 });
     const { iceServers } = await res.json();
-    return new Response(JSON.stringify({ iceServers: [
+    return Response.json({ iceServers: [
       { urls: 'stun:stun.cloudflare.com:3478' },
       { urls: iceServers.urls, username: iceServers.username, credential: iceServers.credential }
-    ]}), { headers: { 'Content-Type': 'application/json' } });
+    ]});
   }
 };
 ```
 
 ## Configuration
 
-### Environment Variables
+Environment: `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `TURN_KEY_ID`, `TURN_KEY_SECRET`
 
-```bash
-CLOUDFLARE_ACCOUNT_ID=your_account_id
-CLOUDFLARE_API_TOKEN=your_api_token
-TURN_KEY_ID=your_turn_key_id
-TURN_KEY_SECRET=your_turn_key_secret
-```
+Wrangler: set `TURN_KEY_ID` in `[vars]`, store secret via `wrangler secret put TURN_KEY_SECRET`.
 
-### Wrangler
+## Limits & TLS
 
-```toml
-name = "turn-credentials-api"
-main = "src/index.ts"
-compatibility_date = "2024-01-01"
+Per allocation: >5 new unique IPs/sec, 5–10k pps, 50–100 Mbps. Exceeding causes packet drops.
 
-[vars]
-TURN_KEY_ID = "your-turn-key-id"
+TLS 1.1–1.3 supported. Recommended: `AEAD-AES128-GCM-SHA256`, `AEAD-AES256-GCM-SHA384`, `AEAD-CHACHA20-POLY1305-SHA256` (1.3); `ECDHE-ECDSA-AES128-GCM-SHA256`, `ECDHE-RSA-AES128-GCM-SHA256` (1.2).
 
-# Store TURN_KEY_SECRET via: wrangler secret put TURN_KEY_SECRET
-```
+## Security
 
-## Limits
-
-Per allocation (per user): >5 new unique IPs/sec, 5–10k pps, 50–100 Mbps. Exceeding limits causes packet drops.
-
-## TLS
-
-Supported: TLS 1.1, 1.2, 1.3. Recommended ciphers: `AEAD-AES128-GCM-SHA256`, `AEAD-AES256-GCM-SHA384`, `AEAD-CHACHA20-POLY1305-SHA256` (TLS 1.3); `ECDHE-ECDSA-AES128-GCM-SHA256`, `ECDHE-RSA-AES128-GCM-SHA256` (TLS 1.2).
-
-## Security Best Practices
-
-1. **Never expose TURN key secrets client-side** — always generate credentials server-side
-2. **Rate-limit credential generation** — 5s cooldown per client minimum
-3. **Set appropriate TTLs** — 1800–3600s for short sessions; 86400s max
-4. **Validate client authentication** before generating credentials
-5. **Monitor usage** — track generation requests, alert on anomalies
+1. Never expose TURN key secrets client-side — generate credentials server-side
+2. Rate-limit credential generation (5s cooldown per client minimum)
+3. Set appropriate TTLs: 1800–3600s for short sessions, 86400s max
+4. Validate client authentication before generating credentials
+5. Monitor usage — track generation requests, alert on anomalies
 
 ## Troubleshooting
 
@@ -162,12 +117,7 @@ Supported: TLS 1.1, 1.2, 1.3. Recommended ciphers: `AEAD-AES128-GCM-SHA256`, `AE
 | Slow connection | ICE candidate gathering, firewall blocking WebRTC ports, try TURN over TLS `:443` |
 | High packet loss | Rate limits (5–10k pps, 50–100 Mbps), client network quality |
 
-### Debug ICE
-
-```typescript
-pc.addEventListener('icecandidate', e => e.candidate && console.log('ICE:', e.candidate.type, e.candidate.protocol));
-pc.addEventListener('iceconnectionstatechange', () => console.log('ICE state:', pc.iceConnectionState));
-```
+Debug ICE: `pc.addEventListener('icecandidate', e => e.candidate && console.log('ICE:', e.candidate.type, e.candidate.protocol));`
 
 ## Architecture
 
