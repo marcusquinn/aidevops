@@ -3,7 +3,11 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 3.5.324
+<<<<<<< Updated upstream
+# Version: <<<<<<< Updated upstream..2
+=======
+# Version: <<<<<<< Updated upstream..2
+>>>>>>> Stashed changes
 
 set -euo pipefail
 
