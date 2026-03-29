@@ -28,7 +28,7 @@ mode: subagent
 
 ```text
 project/
-├── schemas/          # Declarative schema files (source of truth; prefix: 00, 01, 10, 20…)
+├── schemas/          # Declarative schema files (source of truth; prefix: 00, 01, 10, 20...)
 ├── migrations/       # Generated migration files
 ├── seeds/            # Initial/test data
 └── scripts/
@@ -40,11 +40,11 @@ project/
 
 | Tool | Generate | Apply | Rollback |
 |------|----------|-------|----------|
-| **Supabase** | `supabase db diff -f name` | `supabase migration up` | — |
-| **Drizzle** | `npx drizzle-kit generate` | `npx drizzle-kit migrate` | — |
+| **Supabase** | `supabase db diff -f name` | `supabase migration up` | -- |
+| **Drizzle** | `npx drizzle-kit generate` | `npx drizzle-kit migrate` | -- |
 | **Prisma** | `npx prisma migrate dev --name name` | `npx prisma migrate deploy` | `npx prisma migrate resolve --rolled-back <name>` |
-| **Atlas** | `atlas migrate diff name --dir file://migrations --to file://schema.sql --dev-url docker://postgres/15` | `atlas migrate apply -u "postgres://..."` | — |
-| **migra** | `migra $DB schemas/` | `psql $DB -f file.sql` | — |
+| **Atlas** | `atlas migrate diff name --dir file://migrations --to file://schema.sql --dev-url docker://postgres/15` | `atlas migrate apply -u "postgres://..."` | -- |
+| **migra** | `migra $DB schemas/` | `psql $DB -f file.sql` | -- |
 | **Flyway** | N/A (imperative) | `flyway migrate` | `flyway undo` |
 | **Laravel** | `php artisan make:migration` | `php artisan migrate` | `php artisan migrate:rollback --step=1` |
 | **Rails** | `rails g migration` | `rails db:migrate` | `rails db:rollback STEP=1` |
@@ -100,13 +100,13 @@ BEGIN
 END $$;
 ```
 
-**Schema vs data migrations (keep separate):**
+**Keep schema and data migrations separate:**
 
 ```sql
--- V6__add_status_column.sql (Schema — fast, reversible)
+-- V6__add_status_column.sql (Schema -- fast, reversible)
 ALTER TABLE orders ADD COLUMN status VARCHAR(20) DEFAULT 'pending';
 
--- V7__backfill_order_status.sql (Data — slow, may be irreversible)
+-- V7__backfill_order_status.sql (Data -- slow, may be irreversible)
 UPDATE orders SET status = 'completed' WHERE shipped_at IS NOT NULL;
 UPDATE orders SET status = 'pending' WHERE shipped_at IS NULL;
 ```
@@ -130,25 +130,25 @@ Point-in-time recovery: `pg_dump`/`pg_restore` (PostgreSQL), `mysqldump` (MySQL)
 | Operation | Safe? | Strategy |
 |-----------|-------|----------|
 | Add nullable column | Yes | Direct |
-| Add NOT NULL column | Caution | Add nullable → backfill → add constraint |
-| Drop column | Caution | Remove from code first → wait → drop |
+| Add NOT NULL column | Caution | Add nullable -> backfill -> add constraint |
+| Drop column | Caution | Remove from code first -> wait -> drop |
 | Rename column | Caution | Expand-contract pattern |
 | Add index | Caution | `CREATE INDEX CONCURRENTLY` (PostgreSQL) |
-| Change column type | Caution | New column → migrate data → drop old |
+| Change column type | Caution | New column -> migrate data -> drop old |
 
-**Expand-contract:** (1) EXPAND — add new column, copy data, deploy code writing both/reading new. (2) CONTRACT — drop old column, rename new.
+**Expand-contract:** (1) EXPAND -- add new column, copy data, deploy code writing both/reading new. (2) CONTRACT -- drop old column, rename new.
 
 ## Git and CI/CD
 
-**Pre-push checklist:** (1) UP and DOWN sections present, (2) DOWN reverses UP, (3) tested locally (up → down → up), (4) no modifications to pushed migrations, (5) timestamp is current (regenerate on rebase).
+**Pre-push checklist:** UP and DOWN sections present; DOWN reverses UP; tested locally (up -> down -> up); no modifications to pushed migrations; timestamp is current (regenerate on rebase).
 
 **Review:** Verify only expected changes, no unintended destructive ops, correct types/constraints.
 
-**Team rules:** Pull before creating migrations. Timestamps not sequential numbers. One migration per PR. Rebase carefully — regenerate timestamps for conflicts.
+**Team rules:** Pull before creating migrations. Timestamps not sequential numbers. One migration per PR. Rebase carefully -- regenerate timestamps for conflicts.
 
 **Commit messages:** `feat(db): add user_preferences table`, `fix(db): correct FK on orders`, `chore(db): backfill user status`.
 
-**CI/CD:** Trigger on `push` to `main` with `paths: ['migrations/**']`. Steps: backup → migrate → verify.
+**CI/CD:** Trigger on `push` to `main` with `paths: ['migrations/**']`. Steps: backup -> migrate -> verify.
 
 ```yaml
 name: Database Migration
@@ -168,9 +168,11 @@ jobs:
       - run: psql $DATABASE_URL -c "SELECT 1"
 ```
 
-Most tools auto-create a tracking table (e.g., `flyway_schema_history`). **Prefer a managed tool** — it handles ordering, locking, and state tracking automatically.
+Most tools auto-create a tracking table (e.g., `flyway_schema_history`). **Prefer a managed tool** -- it handles ordering, locking, and state tracking automatically.
 
-**Framework-agnostic runner (stateful):** If you must run SQL directly without a migration tool, gate execution on a tracking table — never replay all files on every invocation.
+## Framework-Agnostic Runner
+
+If running SQL directly without a migration tool, gate execution on a tracking table -- never replay all files on every invocation.
 
 ```sql
 -- Bootstrap: create the tracking table once
@@ -182,7 +184,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 ```bash
 #!/usr/bin/env bash
-# scripts/migrate.sh — apply only unapplied migrations in order
+# scripts/migrate.sh -- apply only unapplied migrations in order
 set -euo pipefail
 
 DB_URL="${DATABASE_URL:?DATABASE_URL is required}"
@@ -199,8 +201,8 @@ compgen -G "migrations/*.sql" > /dev/null || { echo "No migration files found.";
 
 for f in migrations/*.sql; do
   name="$(basename "$f")"
-  # psql -v binds the filename as a safe literal (:'name') — no shell interpolation into SQL.
-  # \i runs the migration file; the INSERT records it — both inside one transaction.
+  # psql -v binds the filename as a safe literal (:'name') -- no shell interpolation into SQL.
+  # \i runs the migration file; the INSERT records it -- both inside one transaction.
   # pg_advisory_xact_lock serialises concurrent runners on the same DB.
   psql "$DB_URL" -v "name=$name" <<SQL
 SELECT pg_advisory_xact_lock(hashtext('schema_migrations'));
@@ -217,12 +219,6 @@ SQL
 done
 ```
 
-> **Note:** `\i` inside a transaction applies the migration file and the `INSERT` records it atomically in one psql session. For production use, prefer a dedicated migration tool (Flyway, Atlas, Prisma Migrate) which handles locking, ordering, and checksums natively.
+Key properties: idempotent (`WHERE NOT EXISTS` guard), ordered (lexicographic glob with timestamp-prefixed filenames), auditable (`schema_migrations` records what ran and when), safe filenames (`psql -v "name=$name"` with `:'name'` avoids SQL injection), concurrent-safe (`pg_advisory_xact_lock`), empty-directory safe (`compgen -G` guard).
 
-Key properties of this pattern:
-- **Idempotent**: the `WHERE NOT EXISTS` guard prevents double-application.
-- **Ordered**: glob expansion is lexicographic — use timestamp-prefixed filenames (`YYYYMMDDHHMMSS_name.sql`) to guarantee order.
-- **Auditable**: `schema_migrations` records what ran and when.
-- **Safe filenames**: `psql -v "name=$name"` with `:'name'` avoids SQL injection from filenames containing quotes.
-- **Concurrent-safe**: `pg_advisory_xact_lock` serialises concurrent runner instances.
-- **Empty-directory safe**: `compgen -G` guard exits cleanly when no `.sql` files exist.
+> **Note:** `\i` inside a transaction applies the migration file and the `INSERT` records it atomically in one psql session. For production, prefer a dedicated migration tool (Flyway, Atlas, Prisma Migrate) which handles locking, ordering, and checksums natively.
