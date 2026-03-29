@@ -2,188 +2,85 @@
 
 ## 12.1 The Scientific Method for Creative
 
-### The Creative Testing Process
-
-**Step 1: Hypothesis Formation**
-
-Form testable hypotheses: "If we [change], then [metric] will [increase/decrease] because [reasoning]."
-
+**Step 1: Hypothesis** — "If we [change], then [metric] will [increase/decrease] because [reasoning]."
 Example: "If we add customer testimonials to hero images, then CTR will increase 15% because social proof reduces perceived risk."
 
-**Step 2: Test Design**
+**Step 2: Test Design** — Control (existing best performer) vs. Variation (single change). Set sample size for statistical significance, duration 3-7 days minimum (accounts for day-of-week effects), and primary success metric.
 
-- **Control**: Existing best performer
-- **Variation**: Single change from control
-- **Sample Size**: Calculate required conversions for statistical significance
-- **Duration**: Minimum 3-7 days (accounts for day-of-week effects)
-- **Success Metric**: Primary metric for decision-making
+**Step 3: Execution** — Equal budget, random audience assignment, consistent placement/targeting, clean data collection.
 
-**Step 3: Execution**
+**Step 4: Analysis** — Statistical significance (95% confidence minimum), practical significance (lift magnitude), segment differences, secondary metric impacts.
 
-- Equal budget allocation between variations
-- Random audience assignment
-- Consistent placement and targeting
-- Clean data collection setup
-
-**Step 4: Analysis**
-
-- Statistical significance (95% confidence minimum)
-- Practical significance (lift magnitude)
-- Segment performance differences
-- Secondary metric impacts
-
-**Step 5: Implementation**
-
-- Scale winning variations
-- Document insights in knowledge base
-- Plan follow-up tests
-- Share learnings across team
+**Step 5: Implementation** — Scale winners, document insights, plan follow-up tests, share learnings.
 
 ## 12.2 Types of Creative Tests
 
 ### Element Testing
 
-**Headline**
-- Emotional vs. rational appeals
-- Question vs. statement formats
-- Length variations (short, medium, long)
-- Benefit vs. feature focus
-- Urgency vs. evergreen messaging
-
-**Visual**
-- Lifestyle vs. product-focused imagery
-- Color palette variations
-- Talent diversity and representation
-- Background context changes
-- Image orientation and cropping
-
-**CTA**
-- Action verb variations ("Get," "Start," "Try," "Claim")
-- Benefit inclusion ("Get My Free Trial" vs. "Start Free Trial")
-- Urgency indicators ("Now," "Today," limited time mention)
-- Button color and design
-- Placement within creative
+| Element | Test Dimensions |
+|---------|----------------|
+| **Headline** | Emotional vs. rational; question vs. statement; length; benefit vs. feature; urgency vs. evergreen |
+| **Visual** | Lifestyle vs. product; color palette; talent diversity; background; orientation/cropping |
+| **CTA** | Action verb ("Get," "Start," "Try," "Claim"); benefit inclusion; urgency indicators; button color/placement |
 
 ### Format Testing
 
-- Static image vs. video
-- Single image vs. carousel
-- Short-form vs. long-form video
-- Story format vs. feed placement
-- Interactive vs. static
+Static vs. video · Single image vs. carousel · Short vs. long-form video · Story vs. feed · Interactive vs. static
 
 ### Concept Testing
 
-- Problem-solution vs. aspiration-based
-- Humor vs. serious tone
-- User-generated vs. brand-produced
-- Educational vs. entertainment focus
-- Direct response vs. brand storytelling
+Problem-solution vs. aspiration · Humor vs. serious · UGC vs. brand-produced · Educational vs. entertainment · Direct response vs. brand storytelling
 
 ## 12.3 Test Prioritization Frameworks
 
-### ICE Framework (1-10 scale)
+**ICE Score = Impact × Confidence × Ease** (each 1-10; prioritize highest)
 
-- **Impact**: Potential effect on key metrics (10=transformational, 5=meaningful, 1=incremental)
-- **Confidence**: Likelihood of success based on evidence (10=strong data, 5=some evidence, 1=intuition)
-- **Ease**: Resource requirements (10=minimal effort, 5=moderate production, 1=major production)
+- **Impact**: Effect on key metrics (10=transformational, 5=meaningful, 1=incremental)
+- **Confidence**: Likelihood of success (10=strong data, 5=some evidence, 1=intuition)
+- **Ease**: Resource requirements (10=minimal, 5=moderate production, 1=major production)
 
-**ICE Score = Impact × Confidence × Ease** — prioritize highest scores.
-
-### RICE Framework
-
-Add Reach for resource-constrained prioritization:
-
-- **Reach**: Number of users affected (10=all audiences, 5=major segments, 1=niche subset)
-
-**RICE Score = (Reach × Impact × Confidence) ÷ Effort**
+**RICE Score = (Reach × Impact × Confidence) ÷ Effort** — add Reach for resource-constrained prioritization (10=all audiences, 5=major segments, 1=niche subset).
 
 ## 12.4 Sample Size and Statistical Significance
 
-### Calculating Required Sample Size
+**Required sample size**: Use online calculators with baseline conversion rate, MDE, 80% power, 95% significance.
 
-Use online calculators considering: baseline conversion rate, minimum detectable effect (MDE), statistical power (80%), significance level (95%).
+Rules of thumb: 100 conversions/variation (high-volume) · 50 conversions with larger effect sizes (lower volume) · 10,000+ impressions/variation (brand campaigns).
 
-**Rule of Thumb:**
-- High-volume campaigns: 100 conversions per variation minimum
-- Lower volume: 50 conversions with larger effect sizes
-- Brand campaigns: 10,000+ impressions per variation
-
-### Understanding Statistical Significance
-
-**Confidence Level**: Probability that observed difference is real
-- 95% confidence = 5% chance of false positive
-- 99% confidence = 1% chance of false positive
-
-**P-Value**: Probability that results occurred by chance
-- P < 0.05 = statistically significant at 95% confidence
-- P < 0.01 = statistically significant at 99% confidence
-
-**Practical vs. Statistical Significance**: A 2% lift with 99% confidence may not justify production costs; a 50% lift with 90% confidence likely is. Consider both.
+**Key concepts:**
+- 95% confidence = 5% false positive rate (p < 0.05); 99% confidence = 1% (p < 0.01)
+- Practical vs. statistical significance: a 2% lift at 99% confidence may not justify production costs; a 50% lift at 90% confidence likely does. Consider both.
 
 ## 12.5 Common Testing Pitfalls
 
 | Pitfall | Problem | Solution |
 |---------|---------|----------|
-| Multiple variables | Can't identify what drove results | Test one change at a time, or use multivariate with sufficient traffic |
-| Ending too early | False conclusions from insufficient data | Use pre-determined sample sizes; avoid peeking daily |
-| Atypical periods | Holidays/events skew results | Avoid known atypical periods or extend duration to normalize |
-| Ignoring segments | Overall winner may fail in key segments | Analyze by audience segment, geography, and platform |
-| Novelty effects | New creative wins because it's different, not better | Monitor over time — true winners maintain performance |
+| Multiple variables | Can't isolate cause | Test one change at a time, or multivariate with sufficient traffic |
+| Ending too early | False conclusions | Pre-determine sample sizes; avoid daily peeking |
+| Atypical periods | Holidays/events skew results | Avoid known atypical periods or extend duration |
+| Ignoring segments | Overall winner may fail in key segments | Analyze by audience, geography, platform |
+| Novelty effects | New creative wins because it's different | Monitor over time — true winners maintain performance |
 
 ## 12.6 Building a Testing Culture
 
-### Test Velocity Metrics
+**Velocity metrics**: Tests/month · Win rate · Learning rate · Implementation rate · Time to insight
 
-- **Tests per month**: Volume of experiments
-- **Win rate**: Percentage of tests beating control
-- **Learning rate**: Insights generated per test
-- **Implementation rate**: Percentage of insights applied
-- **Time to insight**: Speed from hypothesis to conclusion
+**Testing backlog**: Capture ideas from all team members → score with ICE/RICE → review weekly → archive irrelevant ideas.
 
-### The Testing Backlog
-
-- Capture ideas from all team members
-- Score using ICE or RICE framework
-- Review and prioritize weekly
-- Archive ideas that become irrelevant
-
-### Documentation Standards
-
+**Documentation template:**
 ```
-Test ID: [Unique identifier]
-Date: [Test period]
-Hypothesis: [Testable prediction]
-Variations: [Description of control and variants]
-Sample size: [Number of users/conversions]
-Results: [Performance data by variation]
-Winner: [Winning variation and confidence level]
-Learnings: [Key insights]
-Next steps: [Follow-up actions]
+Test ID / Date / Hypothesis / Variations / Sample size / Results / Winner (confidence) / Learnings / Next steps
 ```
 
-### Sharing Learnings
-
-- Weekly creative review meetings
-- Monthly testing retrospectives
-- Quarterly creative strategy sessions
-- Internal wiki or knowledge base
+**Sharing cadence**: Weekly creative reviews · Monthly retrospectives · Quarterly strategy sessions · Internal wiki/knowledge base
 
 ## 12.7 Advanced Testing Methodologies
 
-### Sequential Testing
+**Sequential Testing**: A vs. Control → winner becomes new Control → repeat. Faster initial insight, less traffic required; slower for comprehensive learning.
 
-Test A vs. Control → Winner becomes new Control → repeat until no further improvement.
+**Multi-Armed Bandit**: Algorithmically shifts traffic toward better performers during the test. Reduces opportunity cost; useful for high-traffic/low-risk tests. Requires technical implementation; can mask true performance differences.
 
-Benefits: Faster to initial insight, requires less traffic. Drawbacks: Takes longer for comprehensive learning.
-
-### Multi-Armed Bandit
-
-Algorithmically allocates traffic to better-performing variations during the test — automatically shifts toward winners, reduces opportunity cost of underperformers. Useful for high-traffic, low-risk tests. Requires technical implementation; can mask true performance differences.
-
-### Bayesian Testing
-
-Uses probability that a variation is best (vs. p-values), allows continuous monitoring without p-hacking concerns, more intuitive for business decisions. Tools: VWO and Optimizely offer Bayesian options.
+**Bayesian Testing**: Uses probability that a variation is best (vs. p-values). Allows continuous monitoring without p-hacking concerns; more intuitive for business decisions. Available in VWO and Optimizely.
 
 ## 12.8 Testing Program Maturity
 
