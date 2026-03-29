@@ -12,23 +12,38 @@ tools: [read, write, edit, bash, glob, grep, webfetch, task, context7_*]
 
 - **Purpose**: High-performance build system for JS/TS monorepos
 - **Package Manager**: pnpm (recommended), npm, yarn
-- **Docs**: Context7 MCP · **Features**: Incremental caching · Parallel execution · Remote caching (Vercel)
+- **Docs**: [turbo.build/repo/docs](https://turbo.build/repo/docs) (via Context7 MCP) · **Features**: Incremental caching · Parallel execution · Remote caching (Vercel)
 
-**Commands**: `pnpm dev` (all) · `pnpm --filter web dev` (single) · `pnpm --filter web... build` (+ deps)
+**Commands**: `pnpm dev` (all) · `pnpm build` (all) · `pnpm --filter web dev` (single) · `pnpm --filter @workspace/ui build` (full name) · `pnpm --filter web... build` (+ deps)
 
-**Structure**: `apps/{web,mobile,extension}` · `packages/{ui,api,db,auth,shared}` · `tooling/{eslint,typescript}`
+**Structure**:
 
-**Naming**: `packages/ui/web` → `@workspace/ui-web` → `import from "@workspace/ui-web/button"`
+```text
+apps/     (web, mobile, extension)
+packages/ (ui, api, db, auth, i18n, shared)
+tooling/  (eslint, typescript, prettier)
+```
+
+**Package Naming**:
+
+| Location | Name Pattern | Import |
+|----------|--------------|--------|
+| `packages/ui/web` | `@workspace/ui-web` | `@workspace/ui-web/button` |
+| `packages/db` | `@workspace/db` | `@workspace/db/schema` |
+| `tooling/eslint` | `@workspace/eslint-config` | `@workspace/eslint-config` |
 
 **turbo.json**:
 
 ```json
-{ "$schema": "https://turbo.build/schema.json",
+{
+  "$schema": "https://turbo.build/schema.json",
   "tasks": {
-    "build": { "dependsOn": ["^build"], "outputs": [".next/**", "dist/**"] },
-    "dev": { "cache": false, "persistent": true },
-    "lint": { "dependsOn": ["^build"] }, "typecheck": { "dependsOn": ["^build"] }
-  } }
+    "build":     { "dependsOn": ["^build"], "outputs": [".next/**", "dist/**"] },
+    "dev":       { "cache": false, "persistent": true },
+    "lint":      { "dependsOn": ["^build"] },
+    "typecheck": { "dependsOn": ["^build"] }
+  }
+}
 ```
 
 <!-- AI-CONTEXT-END -->
