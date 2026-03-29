@@ -15,8 +15,6 @@ tools:
 
 # YouTube Channel Intelligence
 
-Analyze YouTube channels for competitive insights: upload patterns, engagement metrics, outlier videos, content DNA, and strategic positioning. Use for channel profiling, competitor comparison, outlier detection, content DNA extraction, and engagement ratio calculation.
-
 ## Quick Reference
 
 ```bash
@@ -29,25 +27,11 @@ youtube-helper.sh quota                    # Check quota before heavy ops
 
 ## Channel Profiling Workflow
 
-### Step 1: Basic Channel Data
+1. **Channel data** — `youtube-helper.sh channel @handle json`. Extract: subscriber count, total views, video count, creation date, upload frequency (total videos / channel age).
 
-```bash
-youtube-helper.sh channel @handle json
-```
+2. **Video enumeration** — `youtube-helper.sh videos @handle 200 json`. Calculate: avg views/video, median views, upload frequency, view trend (recent vs historical), duration distribution.
 
-Extract: subscriber count, total views, video count, creation date, description, upload frequency (total videos / channel age).
-
-### Step 2: Video Enumeration
-
-```bash
-youtube-helper.sh videos @handle 200 json
-```
-
-Calculate: average views/video, median views (more robust than average), upload frequency, view trend (recent vs historical), duration distribution.
-
-### Step 3: Outlier Detection
-
-Threshold: **3x the channel's median views**.
+3. **Outlier detection** — threshold: **3x channel median views**.
 
 ```bash
 youtube-helper.sh videos @handle 200 json | node -e "
@@ -75,9 +59,7 @@ process.stdin.on('data', d => {
 "
 ```
 
-### Step 4: Content DNA Extraction
-
-Analyze outlier videos for: topic clusters, title patterns (numbers/questions/how-to/brackets), duration sweet spot, thumbnail style (use `image-understanding.md`), hook patterns (transcripts of top 5, first 30 seconds).
+4. **Content DNA** — analyze outliers for: topic clusters, title patterns (numbers/questions/how-to/brackets), duration sweet spot, thumbnail style (use `image-understanding.md`), hook patterns (transcripts of top 5, first 30 seconds).
 
 ```bash
 for vid in VIDEO_ID_1 VIDEO_ID_2 VIDEO_ID_3; do
@@ -87,14 +69,7 @@ for vid in VIDEO_ID_1 VIDEO_ID_2 VIDEO_ID_3; do
 done
 ```
 
-### Step 5: Store Findings in Memory
-
-```bash
-memory-helper.sh store --type WORKING_SOLUTION --namespace youtube \
-  "Channel profile @handle: [subs] subs, [views/vid] avg views, uploads [freq]. \
-   Content DNA: [topics], [formats]. Outlier pattern: [description]. \
-   Weakness: [gap identified]."
-```
+5. **Store findings** — `memory-helper.sh store --type WORKING_SOLUTION --namespace youtube "Channel profile @handle: [subs] subs, [views/vid] avg views, uploads [freq]. Content DNA: [topics], [formats]. Outlier pattern: [description]. Weakness: [gap identified]."`
 
 ## Competitor Comparison Matrix
 
