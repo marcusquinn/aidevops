@@ -13,7 +13,7 @@ Write clean, performant, maintainable JavaScript using modern language features.
 
 ### "Which array method should I use?"
 
-```
+```text
 What do I need?
 ├─ Transform each element           → .map()
 ├─ Keep some elements               → .filter()
@@ -29,7 +29,7 @@ What do I need?
 
 ### "How do I handle nullish values?"
 
-```
+```text
 Nullish handling?
 ├─ Safe property access              → obj?.prop / obj?.[key]
 ├─ Safe method call                  → obj?.method?.()
@@ -41,7 +41,7 @@ Nullish handling?
 
 ### "Should I mutate or copy?"
 
-```
+```text
 Always prefer non-mutating methods:
 ├─ Sort array      → .toSorted()    (not .sort())
 ├─ Reverse array   → .toReversed()  (not .reverse())
@@ -67,120 +67,6 @@ Always prefer non-mutating methods:
 | ES2024 | 2024 | Object.groupBy(), Map.groupBy(), Promise.withResolvers(), RegExp v flag, resizable ArrayBuffer |
 | ES2025 | 2025 | Iterator helpers (.map, .filter, .take), Set methods (.union, .intersection), RegExp.escape(), using/await using |
 
-## Modernization Patterns
-
-```javascript
-// Array access (ES2022)
-const last = arr.at(-1);
-const secondLast = arr.at(-2);
-
-// Non-mutating array ops (ES2023) — never mutate with .sort()/.reverse()/.splice()
-const sorted = arr.toSorted((a, b) => a - b);
-const reversed = arr.toReversed();
-const updated = arr.with(2, 'new value');
-const removed = arr.toSpliced(1, 1);
-
-// String replacement (ES2021)
-const result = str.replaceAll('foo', 'bar'); // not str.replace(/foo/g, 'bar')
-
-// Grouping (ES2024) — replaces verbose .reduce() accumulator pattern
-const grouped = Object.groupBy(items, item => item.category);
-
-// Nullish handling — ?? and ?. only match null/undefined, not 0/''/false
-const value = input ?? 'default';           // not input || 'default'
-const name = user?.profile?.name;           // not user && user.profile && ...
-
-// Property existence (ES2022) — hasOwnProperty can be overwritten
-if (Object.hasOwn(obj, 'key')) { }
-
-// Logical assignment (ES2021)
-obj.prop ??= 'default';  // Assign if null/undefined
-obj.count ||= 0;         // Assign if falsy
-obj.enabled &&= check(); // Assign if truthy
-```
-
-## Async Patterns
-
-### Promise Combinators
-
-```javascript
-// Wait for all, fail if any fails
-const [users, posts] = await Promise.all([fetchUsers(), fetchPosts()]);
-
-// Wait for all, get status of each
-const results = await Promise.allSettled([fetchA(), fetchB()]);
-results.forEach(r => {
-  if (r.status === 'fulfilled') console.log(r.value);
-  else console.error(r.reason);
-});
-
-// First to succeed
-const fastest = await Promise.any([fetchFromCDN1(), fetchFromCDN2()]);
-
-// First to settle
-const winner = await Promise.race([fetchData(), timeout(5000)]);
-```
-
-### Promise.withResolvers (ES2024) and Top-Level Await (ES2022)
-
-```javascript
-// Expose resolve/reject outside constructor (replaces let resolve, reject + new Promise)
-const { promise, resolve, reject } = Promise.withResolvers();
-
-// Top-level await in ES modules
-const config = await fetch('/config.json').then(r => r.json());
-const db = await connectDatabase(config);
-export { db };
-```
-
-## Functional Patterns
-
-### Immutable Object Updates
-
-```javascript
-const updated = { ...user, age: 31 };                               // Add/update
-const { password, ...userWithoutPassword } = user;                  // Remove
-const nested = { ...state, user: { ...state.user, name: 'New' } }; // Nested
-```
-
-### Array Transformations
-
-```javascript
-// flatMap for filter+map in single pass
-const activeNames = users.flatMap(u => u.active ? [u.name] : []);
-
-// ES2024: Group then process
-const byStatus = Object.groupBy(users, u => u.active ? 'active' : 'inactive');
-const activeNames = byStatus.active?.map(u => u.name) ?? [];
-```
-
-### Composition
-
-```javascript
-const pipe = (...fns) => x => fns.reduce((v, f) => f(v), x);
-
-const processUser = pipe(
-  user => ({ ...user, name: user.name.trim() }),
-  user => ({ ...user, email: user.email.toLowerCase() }),
-  user => ({ ...user, createdAt: new Date() })
-);
-```
-
-## Destructuring Patterns
-
-```javascript
-// Object: rename, default, nested, rest
-const { name: userName, age = 18 } = user;
-const { address: { city, country } } = user;
-const { id, ...userData } = user;
-
-// Array: skip, rest, swap, function returns
-const [first, , third] = array;
-const [head, ...tail] = array;
-[a, b] = [b, a];
-const [x, y] = getCoordinates();
-```
-
 ## Reference Documentation
 
 ### ES Version References
@@ -202,7 +88,7 @@ const [x, y] = getCoordinates();
 | [modern-javascript-skill/concurrency.md](modern-javascript-skill/concurrency.md) | Parallel, batched, pool patterns, retry, cancellation |
 | [modern-javascript-skill/immutability.md](modern-javascript-skill/immutability.md) | Immutable data patterns, pure functions |
 | [modern-javascript-skill/composition.md](modern-javascript-skill/composition.md) | Higher-order functions, memoization, monads |
-| [modern-javascript-skill/cheatsheet.md](modern-javascript-skill/cheatsheet.md) | Quick syntax reference |
+| [modern-javascript-skill/cheatsheet.md](modern-javascript-skill/cheatsheet.md) | Quick syntax reference — destructuring, modernization patterns, all methods |
 
 ## Resources
 
