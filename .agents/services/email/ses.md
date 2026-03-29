@@ -69,7 +69,7 @@ Credentials managed per account — no `aws configure` needed. Prerequisite: `aw
 ses-helper.sh accounts
 ses-helper.sh quota production
 ses-helper.sh stats production
-ses-helper.sh monitor production
+ses-helper.sh monitor production   # bounce rate, complaint rate, quota, reputation
 
 # Identity management
 ses-helper.sh verified-emails production
@@ -88,8 +88,7 @@ ses-helper.sh suppressed production
 ses-helper.sh suppression-details production user@example.com
 ses-helper.sh remove-suppression production user@example.com
 
-# Testing
-ses-helper.sh send-test production noreply@yourdomain.com test@example.com "Subject" "Body"
+# Testing (use simulator addresses for bounce/success testing)
 ses-helper.sh send-test production noreply@yourdomain.com success@simulator.amazonses.com "Success Test"
 ses-helper.sh send-test production noreply@yourdomain.com bounce@simulator.amazonses.com "Bounce Test"
 ses-helper.sh debug production problematic@example.com
@@ -126,15 +125,6 @@ ses-helper.sh audit production
 
 Dedicated IAM users per environment. Rotate access keys regularly. Separate AWS accounts for prod/staging.
 
-## Monitoring
-
-```bash
-ses-helper.sh monitor production   # bounce rate, complaint rate, quota, reputation
-ses-helper.sh stats production
-```
-
-Thresholds: bounce < 5%, complaint < 0.1%.
-
 ## Troubleshooting
 
 | Problem | Commands |
@@ -152,7 +142,4 @@ ses-helper.sh verified-emails production > verified-emails-backup.txt
 ses-helper.sh verified-domains production > verified-domains-backup.txt
 ```
 
-- Configure SPF, DKIM, DMARC for all sending domains
-- Process bounces and complaints promptly; maintain suppression list
-- Provide unsubscribe mechanisms; follow GDPR/CAN-SPAM
-- Warm up new sending IPs gradually; clean lists regularly
+Configure SPF, DKIM, DMARC for all sending domains. Process bounces and complaints promptly; maintain suppression list. Provide unsubscribe mechanisms; follow GDPR/CAN-SPAM. Warm up new sending IPs gradually; clean lists regularly.
