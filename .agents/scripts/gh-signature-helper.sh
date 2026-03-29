@@ -746,7 +746,8 @@ cmd_footer() {
 	fi
 
 	local sig
-	sig=$(cmd_generate "${args[@]}")
+	# ${args[@]+"${args[@]}"} handles empty array under set -u (Bash 3.2 compat)
+	sig=$(cmd_generate ${args[@]+"${args[@]}"})
 	printf '\n---\n%s\n' "$sig"
 	return 0
 }
