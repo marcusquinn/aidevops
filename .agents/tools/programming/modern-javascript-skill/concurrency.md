@@ -15,7 +15,6 @@ const results = await Array.fromAsync(processSequentially(items));
 ## Parallel Execution
 
 ```javascript
-// All at once
 const results = await Promise.all(items.map(item => processItem(item)));
 ```
 
