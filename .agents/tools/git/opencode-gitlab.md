@@ -19,8 +19,9 @@ tools:
 ## Quick Reference
 
 - **Trigger**: `@opencode` in any issue/MR comment
-- **Runs on**: Your GitLab CI runners (code never leaves your environment)
+- **Runs on**: Your GitLab CI runners — code never leaves your environment
 - **Docs**: <https://opencode.ai/docs/gitlab/>
+- **Security**: API keys stored in CI/CD Variables (masked); all pipeline runs auditable in CI/CD > Pipelines
 
 | Command | Result |
 |---------|--------|
@@ -28,7 +29,7 @@ tools:
 | `@opencode fix this` | Creates branch, implements fix, opens MR |
 | `@opencode review this MR` | Reviews code, suggests improvements |
 
-**Requirements**: GitLab CI/CD enabled, CI/CD variables (`ANTHROPIC_API_KEY`, `GITLAB_TOKEN_OPENCODE`, `GITLAB_HOST`), service account with `api` + `read_repository` + `write_repository` scopes.
+**Requirements**: GitLab CI/CD enabled; CI/CD variables `ANTHROPIC_API_KEY`, `GITLAB_TOKEN_OPENCODE`, `GITLAB_HOST`; service account with `api` + `read_repository` + `write_repository` scopes.
 
 <!-- AI-CONTEXT-END -->
 
@@ -46,7 +47,7 @@ Settings > CI/CD > Variables:
 |----------|-------|-----------|--------|
 | `ANTHROPIC_API_KEY` | Your API key | Yes | Yes |
 | `GITLAB_TOKEN_OPENCODE` | Service account token | Yes | Yes |
-| `GITLAB_HOST` | `gitlab.com` or your instance | No | No |
+| `GITLAB_HOST` | `gitlab.com` or your self-hosted instance URL | No | No |
 
 ### Step 3: Create CI/CD Pipeline
 
@@ -72,7 +73,7 @@ opencode:
     # Configure git
     - git config --global user.email "opencode@gitlab.com"
     - git config --global user.name "OpenCode"
-    # Setup OpenCode auth (supports multiple providers)
+    # Setup OpenCode auth (supports multiple providers — remove unused entries)
     - mkdir -p ~/.local/share/opencode
     - |
       cat > ~/.local/share/opencode/auth.json << EOF
@@ -82,7 +83,7 @@ opencode:
       }
       EOF
   script:
-    # Specify model with --model (e.g., anthropic/claude-sonnet-4-6)
+    # Override model with --model (e.g., anthropic/claude-sonnet-4-6)
     - opencode run "$AI_FLOW_INPUT"
     - |
       if [ -n "$(git status --porcelain)" ]; then
@@ -95,24 +96,7 @@ opencode:
     GIT_DEPTH: 1
 ```
 
-### Step 4: Configure Webhook (Optional)
-
-For automatic triggering on comments: Settings > Webhooks > set URL to your pipeline trigger URL, trigger on Note events (issues and MRs).
-
-## Configuration
-
-**Self-hosted GitLab**: Set `GITLAB_HOST` to your instance URL in CI/CD variables (e.g., `gitlab.company.com`).
-
-**Custom model**: Pass `--model` flag in the script section (e.g., `opencode run --model anthropic/claude-sonnet-4-6 "$AI_FLOW_INPUT"`).
-
-**Provider selection**: Include only the providers you use in `auth.json`. Remove unused entries from the template above.
-
-## Security
-
-- **Runs on YOUR runners** -- code never leaves your GitLab CI environment
-- **Secrets in CI/CD Variables** -- API keys stored securely, masked in logs
-- **Service account isolation** -- dedicated account for OpenCode operations
-- **Audit trail** -- all pipeline runs visible in CI/CD > Pipelines
+**Webhook (optional)**: Settings > Webhooks > set URL to your pipeline trigger URL, trigger on Note events (issues and MRs) for automatic triggering on comments.
 
 ## Troubleshooting
 
