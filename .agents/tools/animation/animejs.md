@@ -10,6 +10,8 @@ docs_url: https://animejs.com/documentation
 ## Quick Reference
 
 ```javascript
+// npm install animejs  |  CDN: https://cdn.jsdelivr.net/npm/animejs@4/lib/anime.min.js
+// Targets: CSS selector, DOM element, NodeList, JS object, array
 import { animate, createTimeline, stagger, utils, svg } from 'animejs';
 
 animate('.element', { translateX: 250, opacity: 0.5, duration: 800, ease: 'outExpo' });
@@ -19,23 +21,6 @@ tl.add('.box1', { translateX: 100 }).add('.box2', { translateY: 100 }, '-=200');
 
 animate('.items', { scale: [0, 1], delay: stagger(100, { from: 'center' }) });
 ```
-
-## Installation
-
-```bash
-npm install animejs
-# or CDN: <script src="https://cdn.jsdelivr.net/npm/animejs@4/lib/anime.min.js"></script>
-```
-
-## Targets
-
-| Type | Example |
-|------|---------|
-| CSS Selector | `'.my-class'`, `'#my-id'` |
-| DOM Element | `document.querySelector('.el')` |
-| NodeList | `document.querySelectorAll('.els')` |
-| JS Object | `{ x: 0, y: 0 }` |
-| Array | `[element1, element2]` |
 
 ## Animation Parameters
 
@@ -180,6 +165,4 @@ utils.round(3.14159, 2);           // 3.14
 
 ## Resources
 
-- [Official Documentation](https://animejs.com/documentation)
-- [GitHub Repository](https://github.com/juliangarnier/anime)
 - [CodePen Examples](https://codepen.io/collection/XLebem)
