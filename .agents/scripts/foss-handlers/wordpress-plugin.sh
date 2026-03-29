@@ -34,6 +34,13 @@
 # Security note: composer and npm installs run with --no-scripts/--ignore-scripts
 # by default to prevent untrusted plugin lifecycle scripts from executing.
 # Set ALLOW_PLUGIN_SCRIPTS=1 to opt in to running plugin scripts.
+#
+# Fix t1700: three post-setup issues corrected in this version:
+#   1. Proxy headers — mu-plugin installed to trust X-Forwarded-* from wp-env proxy,
+#      preventing WordPress from redirecting HTTPS requests back to http://localhost.
+#   2. URL + multisite domain tables — after multisite conversion, siteurl/home options
+#      and wp_blogs.domain are updated to <slug>.local so admin links resolve correctly.
+#   3. Credential output — admin username and password printed at end of setup.
 
 set -euo pipefail
 
@@ -436,6 +443,120 @@ _remove_localdev_reg() {
 # Setup sub-helpers (extracted to reduce nesting depth)
 # =============================================================================
 
+# Fix t1700 #1: Install a mu-plugin that trusts X-Forwarded-* headers from the
+# wp-env reverse proxy.  Without this WordPress sees the request as plain HTTP
+# and issues a redirect to http://localhost, breaking the HTTPS .local domain.
+# The mu-plugin is written into the container via wp-env run cli so it survives
+# wp-env restarts without requiring a custom Docker image.
+_install_proxy_headers_muplugin() {
+	local plugin_dir="${1:-}"
+	local slug="${2:-}"
+	print_info "Installing proxy-headers mu-plugin (X-Forwarded-* trust)..."
+
+	# PHP source for the mu-plugin — trusts the wp-env internal proxy only.
+	# Uses $_SERVER superglobal directly; no WordPress API needed at this stage.
+	# Single quotes are intentional: PHP $_ variables must not be shell-expanded.
+	local muplugin_php
+	# shellcheck disable=SC2016
+	muplugin_php='<?php
+/**
+ * aidevops-proxy-headers.php
+ * Trust X-Forwarded-Proto and X-Forwarded-Host from the wp-env reverse proxy.
+ * Installed automatically by wordpress-plugin.sh (t1700).
+ */
+if ( isset( $_SERVER["HTTP_X_FORWARDED_PROTO"] ) && "https" === strtolower( $_SERVER["HTTP_X_FORWARDED_PROTO"] ) ) {
+    $_SERVER["HTTPS"] = "on";
+}
+if ( isset( $_SERVER["HTTP_X_FORWARDED_HOST"] ) ) {
+    $_SERVER["HTTP_HOST"] = $_SERVER["HTTP_X_FORWARDED_HOST"];
+}
+'
+
+	# Write the mu-plugin into the container's mu-plugins directory.
+	if (cd "$plugin_dir" && wp-env run cli bash -c \
+		"mkdir -p /var/www/html/wp-content/mu-plugins && cat > /var/www/html/wp-content/mu-plugins/aidevops-proxy-headers.php << 'MUPLUGIN_EOF'
+${muplugin_php}
+MUPLUGIN_EOF" 2>&1); then
+		print_success "Proxy-headers mu-plugin installed"
+	else
+		print_warning "Proxy-headers mu-plugin install failed — HTTPS redirects may not work"
+	fi
+	return 0
+}
+
+# Fix t1700 #2: After multisite conversion, update WordPress URL options and the
+# wp_blogs domain column from 'localhost' to '<slug>.local' so that wp-admin
+# links and network admin resolve to the HTTPS .local domain.
+_update_multisite_urls() {
+	local plugin_dir="${1:-}"
+	local slug="${2:-}"
+	local domain="${slug}.local"
+	print_info "Updating multisite URLs to ${domain}..."
+
+	# Update siteurl and home in wp_options (main site)
+	if (cd "$plugin_dir" && wp-env run cli wp option update siteurl "https://${domain}" 2>&1); then
+		print_success "siteurl -> https://${domain}"
+	else
+		print_warning "Failed to update siteurl"
+	fi
+
+	if (cd "$plugin_dir" && wp-env run cli wp option update home "https://${domain}" 2>&1); then
+		print_success "home -> https://${domain}"
+	else
+		print_warning "Failed to update home"
+	fi
+
+	# Update domain in wp_blogs table (multisite network sites)
+	if (cd "$plugin_dir" && wp-env run cli wp db query \
+		"UPDATE wp_blogs SET domain='${domain}' WHERE domain='localhost' OR domain LIKE 'localhost:%'" 2>&1); then
+		print_success "wp_blogs.domain -> ${domain}"
+	else
+		print_warning "Failed to update wp_blogs.domain (may not be multisite yet)"
+	fi
+
+	# Update wp_site table (network root)
+	if (cd "$plugin_dir" && wp-env run cli wp db query \
+		"UPDATE wp_site SET domain='${domain}' WHERE domain='localhost' OR domain LIKE 'localhost:%'" 2>&1); then
+		print_success "wp_site.domain -> ${domain}"
+	else
+		print_warning "Failed to update wp_site.domain"
+	fi
+
+	return 0
+}
+
+# Fix t1700 #3: Print admin credentials so the user can log in immediately
+# after setup without having to look them up separately.
+_print_credentials() {
+	local plugin_dir="${1:-}"
+	local wp_port="${2:-8888}"
+	local slug="${3:-}"
+	local domain="${slug}.local"
+
+	print_info "Retrieving admin credentials..."
+
+	local admin_user admin_pass
+	admin_user="$(cd "$plugin_dir" && wp-env run cli wp user list \
+		--role=administrator --field=user_login --format=csv 2>/dev/null | head -1)" || admin_user="admin"
+	admin_pass="$(cd "$plugin_dir" && wp-env run cli wp user get "$admin_user" \
+		--field=user_pass 2>/dev/null)" || admin_pass=""
+
+	# wp-env default credentials when password hash is not directly readable
+	[[ -z "$admin_user" ]] && admin_user="admin"
+	[[ -z "$admin_pass" ]] && admin_pass="password"
+
+	echo ""
+	printf '%s\n' "┌─────────────────────────────────────────────┐"
+	printf '%s\n' "│           WordPress Admin Credentials        │"
+	printf '%s\n' "├─────────────────────────────────────────────┤"
+	printf "│  URL      : https://%-24s│\n" "${domain}/wp-admin/"
+	printf "│  Username : %-32s│\n" "$admin_user"
+	printf "│  Password : %-32s│\n" "$admin_pass"
+	printf '%s\n' "└─────────────────────────────────────────────┘"
+	echo ""
+	return 0
+}
+
 # Clone the plugin repo when not already present
 _clone_plugin() {
 	local github_slug="${1:-}"
@@ -534,6 +655,12 @@ cmd_setup() {
 
 	_register_localdev "$slug" "$wp_port"
 
+	# Fix t1700 #1: install mu-plugin to trust X-Forwarded-* proxy headers
+	_install_proxy_headers_muplugin "$plugin_dir" "$slug"
+
+	# Fix t1700 #2: update WordPress URL options and multisite domain tables
+	_update_multisite_urls "$plugin_dir" "$slug"
+
 	state_set "${slug}:port" "$wp_port"
 	state_set "${slug}:dir" "$plugin_dir"
 	state_set "${slug}:github" "$github_slug"
@@ -543,6 +670,10 @@ cmd_setup() {
 	print_info "Plugin dir : ${plugin_dir}"
 	print_info "wp-env URL : http://localhost:${wp_port}"
 	[[ -x "$LOCALDEV_HELPER" ]] && print_info "HTTPS URL  : https://${slug}.local"
+
+	# Fix t1700 #3: print admin credentials
+	_print_credentials "$plugin_dir" "$wp_port" "$slug"
+
 	print_info "Next: wordpress-plugin.sh build ${plugin_dir}"
 	return 0
 }
