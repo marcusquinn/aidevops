@@ -78,7 +78,11 @@ It's NOT a tagline, positioning statement, feature list, or generic marketing sp
 - Headline: benefit vs. outcome, specific vs. general, question vs. statement, short vs. long
 - Messaging: feature vs. benefit, problem vs. solution, emotional vs. rational, you-focused vs. we-focused
 
-Example test: Control: "Project Management Software for Teams" | Variant A: "Deliver Projects On Time, Every Time" | Variant B: "Never Miss Another Deadline" | Variant C: "Get 30% More Done in the Same Time"
+Example test:
+- Control: "Project Management Software for Teams"
+- Variant A: "Deliver Projects On Time, Every Time"
+- Variant B: "Never Miss Another Deadline"
+- Variant C: "Get 30% More Done in the Same Time"
 
 ### Voice and Tone
 
