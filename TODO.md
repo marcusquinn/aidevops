@@ -146,12 +146,12 @@ Session baseline grew from ~9.5k tokens (Mar 1) to ~21.8k tokens (Mar 27) in pro
   - [x] t1679.5 Consolidate secret sections 8.1-8.4 into reference/secret-handling.md, keep 1-line trigger rules inline ~1h pr:#6841 verified:2026-03-28
   - [x] t1679.6 Verify no safety regressions — test that on-demand loading triggers correctly for each extracted section ~1h verified:2026-03-28
 
-- [ ] t1680 refactor: progressive-load AGENTS.md — move large sections to on-demand subagents — AGENTS.md grew from ~3.9k to ~7.8k tokens (Mar 1-27). Candidates: Domain Index table (~800 tokens, 40+ rows), Self-Improvement section (~1,200 tokens), Agent Routing section (~600 tokens), Email/Outreach domain entries (~400 tokens), Capabilities section (~500 tokens). Potential savings: ~3,500 tokens. The Domain Index is the biggest single target — it's a lookup table that could be a TOON file loaded on demand. #refactor #efficiency ~3h model:opus logged:2026-03-27
-  - [ ] t1680.1 Move Domain Index to on-demand reference (TOON or md) with 1-line pointer ~1h
-  - [ ] t1680.2 Move Self-Improvement to on-demand subagent doc ~30m
-  - [ ] t1680.3 Move Agent Routing to on-demand subagent doc ~30m
-  - [ ] t1680.4 Trim Capabilities to essential pointers only ~30m
-  - [ ] t1680.5 Verify agent discoverability not degraded — test @mention, domain routing, self-improvement filing ~30m
+- [x] t1680 refactor: progressive-load AGENTS.md — move large sections to on-demand subagents — AGENTS.md grew from ~3.9k to ~7.8k tokens (Mar 1-27). Candidates: Domain Index table (~800 tokens, 40+ rows), Self-Improvement section (~1,200 tokens), Agent Routing section (~600 tokens), Email/Outreach domain entries (~400 tokens), Capabilities section (~500 tokens). Potential savings: ~3,500 tokens. The Domain Index is the biggest single target — it's a lookup table that could be a TOON file loaded on demand. #refactor #efficiency ~3h model:opus logged:2026-03-27 pr:#12288 verified:2026-03-28
+  - [x] t1680.1 Move Domain Index to on-demand reference (TOON or md) with 1-line pointer ~1h pr:#6828 verified:2026-03-28
+  - [x] t1680.2 Move Self-Improvement to on-demand subagent doc ~30m pr:#6837 verified:2026-03-28
+  - [x] t1680.3 Move Agent Routing to on-demand subagent doc ~30m pr:#6832 verified:2026-03-28
+  - [x] t1680.4 Trim Capabilities to essential pointers only ~30m pr:#6838 verified:2026-03-28
+  - [x] t1680.5 Verify agent discoverability not degraded — test @mention, domain routing, self-improvement filing ~30m pr:#6850 verified:2026-03-28
 
 - [ ] t1681 audit: consolidate plugin tools.mjs (7 tools, ~3.2k tokens) — the opencode-aidevops plugin registers 7 tools (aidevops CLI, memory_recall, memory_store, pre_edit_check, quality_check, install_hooks, model-accounts-pool). Assess: can any be merged (e.g., memory_recall + memory_store into single memory tool)? Can quality_check be removed (duplicates .opencode/tool/quality-check which we just disabled)? Can install_hooks be bash-only? #refactor #efficiency ~1h model:sonnet logged:2026-03-27
 
