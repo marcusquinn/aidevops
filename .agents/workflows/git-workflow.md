@@ -77,7 +77,7 @@ Record timestamps in TODO.md or PLANS.md. **Worker restriction**: Headless worke
 
 ## Branch Naming from Planning Files
 
-Lookup: `grep -i "{keyword}" TODO.md todo/PLANS.md` and `ls todo/tasks/*{keyword}* 2>/dev/null`.
+Lookup: `grep -i "{keyword}" TODO.md todo/PLANS.md 2>/dev/null` and `ls todo/tasks/*{keyword}* 2>/dev/null`.
 
 | Source | Pattern | Example |
 |--------|---------|---------|
@@ -108,7 +108,7 @@ Claude Code PreToolUse hooks block destructive git/filesystem commands before ex
 
 **Safe (allowlisted)**: `git checkout -b`, `git restore --staged`, `git clean -n`/`--dry-run`, `rm -rf /tmp/...`, `git push --force-with-lease`.
 
-Management: `install-hooks-helper.sh [status|install|test|uninstall]`. Files: `~/.aidevops/hooks/git_safety_guard.py` (guard), `~/.claude/settings.json` (config). Installed by `setup.sh`. Requires Python 3 + Claude Code restart.
+Management: `${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/install-hooks-helper.sh [status|install|test|uninstall]`. Files: `~/.aidevops/hooks/git_safety_guard.py` (guard), `~/.claude/settings.json` (config). Installed by `setup.sh`. Requires Python 3 + Claude Code restart.
 
 **Limitations**: Regex-based; obfuscated commands may bypass. Safety net for honest mistakes, not a security boundary.
 
@@ -126,7 +126,7 @@ After postflight, delete merged branches. Keep unmerged unless stale (>30 days) 
 
 ```bash
 git checkout main && git pull origin main
-git branch --merged main | grep -vE "^\*|main|develop" | xargs -r git branch -d
+git branch --merged main | grep -vE '^\*|^(main|develop)$' | xargs -r git branch -d
 git push origin --delete {branch-name}  # Remote
 git remote prune origin
 ```
