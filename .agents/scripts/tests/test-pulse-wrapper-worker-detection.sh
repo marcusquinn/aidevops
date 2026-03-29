@@ -367,6 +367,29 @@ test_counts_review_issue_pr_workers() {
 	return 0
 }
 
+test_review_issue_pr_session_key_fallback_dedup() {
+	# GH#12374 CodeRabbit feedback: /review-issue-pr workers may not carry
+	# "Issue #NNN" markers but DO have --session-key issue-NNN. The dedup_key
+	# extraction must fall back to --session-key so these workers are
+	# deduplicated and counted correctly.
+	set_ps_fixture "900 S 00:10 opencode run --dir /tmp/aidevops --session-key issue-9010 --title review-9010 \"/review-issue-pr 9010\"
+901 S 00:10 /opt/homebrew/lib/node_modules/opencode-ai/bin/.opencode run --dir /tmp/aidevops --session-key issue-9010 --title review-9010 \"/review-issue-pr 9010\"
+902 S 00:15 opencode run --dir /tmp/aidevops --session-key issue-9011 --title review-9011 \"/review-issue-pr 9011\""
+
+	local count
+	count=$(count_active_workers)
+	# PIDs 900+901 share session-key issue-9010 + same --dir → deduplicate to 1
+	# PID 902 is a separate worker (issue-9011) → 1
+	# Total: 2
+	if [[ "$count" != "2" ]]; then
+		print_result "review-issue-pr session-key fallback deduplicates correctly (GH#12374)" 1 "Expected 2, got ${count}"
+		return 0
+	fi
+
+	print_result "review-issue-pr session-key fallback deduplicates correctly (GH#12374)" 0
+	return 0
+}
+
 test_check_dispatch_dedup_treats_merged_pr_as_duplicate() {
 	local original_script_dir="$SCRIPT_DIR"
 	SCRIPT_DIR="$TEST_ROOT"
@@ -400,6 +423,7 @@ main() {
 	test_counts_standalone_opencode_binary_workers
 	test_deduplicates_chain_but_keeps_standalone_opencode_binary
 	test_counts_review_issue_pr_workers
+	test_review_issue_pr_session_key_fallback_dedup
 	test_check_dispatch_dedup_treats_merged_pr_as_duplicate
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

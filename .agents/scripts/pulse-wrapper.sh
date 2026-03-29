@@ -1642,6 +1642,12 @@ list_active_worker_processes() {
 				gsub(/[^0-9]/, "", rest)
 				issue = rest
 			}
+			# Fallback: extract from --session-key issue-NNN when no Issue #/issue- marker
+			if (issue == "" && match($0, /--session-key[[:space:]]+issue-([0-9]+)/)) {
+				rest = substr($0, RSTART, RLENGTH)
+				gsub(/[^0-9]/, "", rest)
+				issue = rest
+			}
 			# Extract --dir path for dedup key (same issue in different repos
 			# = different logical workers)
 			dir = ""
