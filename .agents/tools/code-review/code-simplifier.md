@@ -72,8 +72,6 @@ Low-confidence findings: flag as "worth discussing." Create issues with `simplif
 
 ### Prose tightening for agent docs (high confidence)
 
-Remove filler and narrative that doesn't change agent behaviour.
-
 **Preservation rules**: KEEP task IDs (`tNNN`), issue refs (`GH#NNN`), incident identifiers, rules/constraints (compress wording not the rule), file paths, command examples, code blocks, safety-critical detail.
 
 **Evidence (t1679):** `build.txt` 63% reduction (45k→17k), `AGENTS.md` 48% (22k→12k) — zero rule loss, 25 critical patterns verified.
@@ -99,12 +97,20 @@ Knowledge bases whose size comes from breadth, not verbosity. Reads like a textb
 - Intentional repetition across agent docs serving different audiences
 - Error-prevention rules with supporting data
 
+Example of a non-target:
+
+```bash
+# DISABLED: qlty fmt introduces invalid shell syntax (adds "|| exit" after
+# "then" clauses). Auto-formatting removed from both monitor and fix paths.
+# See: https://github.com/marcusquinn/aidevops/issues/333
+```
+
 ## Core Principles
 
 1. **Preserve everything with purpose.** Uncertain → it stays.
 2. **Remove decorative noise.** Emojis/formatting adding no information. Exception: genuine UI/UX purpose.
 3. **Apply project standards** — standards themselves are not simplification targets.
-4. **Enhance clarity without losing depth.** Reduce nesting, improve naming, remove "what" comments (not "why"). Avoid over-simplification that removes helpful abstractions or edge-case handling.
+4. **Enhance clarity without losing depth.** Reduce nesting, improve naming, remove "what" comments (not "why"). Don't remove helpful abstractions or edge-case handling.
 5. **No arbitrary line targets.** Size is whatever remains after removing genuine noise. Large files: subdivide per `build-agent.md` (~300-line threshold) instead of compressing.
 
 ## Usage
@@ -116,14 +122,6 @@ Knowledge bases whose size comes from breadth, not verbosity. Reads like a textb
 ```
 
 Scope detection: `git diff --name-only HEAD~1` + `git diff --name-only --staged`. Workflow: analyse → human review → approved items become issues → worker implements via worktree + PR.
-
-## Example: NOT a simplification target
-
-```bash
-# DISABLED: qlty fmt introduces invalid shell syntax (adds "|| exit" after
-# "then" clauses). Auto-formatting removed from both monitor and fix paths.
-# See: https://github.com/marcusquinn/aidevops/issues/333
-```
 
 ## Human Gate Workflow
 
@@ -160,7 +158,7 @@ fi
 
 ### Maintainer review
 
-`gh issue list --label simplification-debt --label needs-maintainer-review`
+List pending: `gh issue list --label simplification-debt --label needs-maintainer-review`
 
 - **Approve**: comment `approved` → pulse removes gate, adds `auto-dispatch` → dispatched → PR → merged → `status:done`
 - **Decline**: comment `declined: <reason>` → pulse closes issue
