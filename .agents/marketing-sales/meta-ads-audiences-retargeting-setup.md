@@ -1,18 +1,8 @@
 # Retargeting Setup Guide
 
-> Step-by-step guide to setting up retargeting audiences.
-
----
-
 ## Website Custom Audiences
 
-**Create:**
-```
-Ads Manager → Audiences → Create Audience → Custom Audience → Website
-→ Choose pixel → Set events + retention window
-```
-
-### Essential Audiences
+**Create:** Ads Manager → Audiences → Create Audience → Custom Audience → Website → Choose pixel → Set events + retention window
 
 | Audience Name | Configuration |
 |---------------|--------------|
@@ -26,24 +16,9 @@ Ads Manager → Audiences → Create Audience → Custom Audience → Website
 | Purchasers 180d | Purchase event, 180 days |
 | High-Intent Pages 7d | URL contains /pricing OR /demo, 7 days |
 
-### URL-Based Examples
+**URL examples:** `/pricing` → `RT_Pricing_14d` (14d) · `/blog` → `RT_Blog_30d` (30d)
 
-```
-# Pricing page visitors
-URL contains: /pricing | Retention: 14d | Name: RT_Pricing_14d
-
-# Blog readers
-URL contains: /blog | Retention: 30d | Name: RT_Blog_30d
-```
-
-### Event-Based Example (Cart Abandoners)
-
-```
-Include: AddToCart
-Exclude: Purchase
-Retention: 14 days
-Name: RT_Cart_NoPurchase_14d
-```
+**Cart abandoner config:** Include: AddToCart · Exclude: Purchase · Retention: 14d · Name: `RT_Cart_NoPurchase_14d`
 
 **Standard events:** PageView, ViewContent, AddToCart, InitiateCheckout, Purchase, Lead, CompleteRegistration
 
@@ -53,38 +28,28 @@ Name: RT_Cart_NoPurchase_14d
 
 ### Video Viewers
 
-```
-Create Audience → Custom Audience → Video
-```
+**Create:** Custom Audience → Video
 
 | Option | Meaning |
 |--------|---------|
 | 3 seconds | Viewed at least 3s |
 | 10 seconds | Viewed at least 10s |
-| 25% | Watched 25% |
-| 50% | Watched 50% |
-| 75% | Watched 75% |
-| 95% | Watched 95% |
+| 25% / 50% / 75% / 95% | Watched that % |
 | ThruPlay | 15s+ or completed |
 
-**Recommended:** Video_50%_30d (mid-funnel), Video_75%_60d (high intent), Video_95%_60d (highest intent)
+**Recommended:** Video_50%_30d (mid-funnel) · Video_75%_60d (high intent) · Video_95%_60d (highest intent)
 
 ### Page / Instagram Engagement
 
-```
-Create Audience → Custom Audience → Facebook Page (or Instagram Account)
-```
+**Create:** Custom Audience → Facebook Page (or Instagram Account)
 
 **Options:** Everyone who engaged · Anyone who visited · Engaged with any post or ad · Clicked CTA · Sent message · Saved page/post
 
 **Recommended:** "Engaged with any post or ad" — 60 days
 
-### Ad Engagement (Lead Forms)
+### Lead Form Engagement
 
-```
-Create Audience → Custom Audience → Lead form
-→ People who opened but didn't submit
-```
+**Create:** Custom Audience → Lead form → People who opened but didn't submit
 
 ---
 
@@ -96,12 +61,7 @@ email,phone,fn,ln,ct,st,country,zip
 john@example.com,+14155551234,John,Smith,San Francisco,CA,US,94102
 ```
 
-**Upload:**
-```
-Create Audience → Custom Audience → Customer list
-→ Upload CSV → Map columns → Review match rate
-→ Name: Customers_All_[Date]
-```
+**Upload:** Custom Audience → Customer list → Upload CSV → Map columns → Review match rate → Name: `Customers_All_[Date]`
 
 **Expected match rates:**
 
@@ -147,14 +107,10 @@ Exclude: Purchasers 90d
 
 ## Pixel Event Configuration
 
-**Event Setup Tool:**
-```
-Data Sources → Select Pixel → Settings → Open Event Setup Tool
-→ Navigate to website → Configure events via interface
-```
+**Event Setup Tool:** Data Sources → Select Pixel → Settings → Open Event Setup Tool → Navigate to website → Configure events via interface
 
 **AEM event priority (rank 8 events by value):**
-```
+
 1. Purchase (highest)
 2. InitiateCheckout
 3. AddToCart
@@ -163,13 +119,8 @@ Data Sources → Select Pixel → Settings → Open Event Setup Tool
 6. ViewContent
 7. Search
 8. PageView (lowest)
-```
 
-**Test events:**
-```
-Events Manager → Data Sources → Pixel → Test Events tab
-→ Open website → Complete actions → Verify events fire
-```
+**Test events:** Events Manager → Data Sources → Pixel → Test Events tab → Open website → Complete actions → Verify events fire
 
 ---
 
@@ -182,15 +133,9 @@ Events Manager → Data Sources → Pixel → Test Events tab
 | Remove old audiences | Quarterly |
 | Update segment definitions | Quarterly |
 
-**Naming convention:**
-```
-[Type]_[Specifics]_[Window]
-RT_Web_AllVisitors_14d
-RT_Web_CartAbandoners_7d
-RT_Video_75pct_30d
-RT_Engage_PageLikes_60d
-LAL_Customers_HighLTV_1pct
-```
+**Naming convention:** `[Type]_[Specifics]_[Window]`
+- `RT_Web_AllVisitors_14d` · `RT_Web_CartAbandoners_7d` · `RT_Video_75pct_30d`
+- `RT_Engage_PageLikes_60d` · `LAL_Customers_HighLTV_1pct`
 
 **Archiving:** Add "ARCHIVE" prefix, move to Archive folder. Don't delete (breaks historical reports).
 
