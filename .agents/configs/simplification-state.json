@@ -2390,6 +2390,11 @@
       "hash": "5e96cd787b4b8b6ae97d6f3113978c0b334e5484",
       "at": "2026-03-29T19:05:52Z",
       "pr": 13190
+    },
+    ".agents/marketing-sales/ad-creative-chapter-11.md": {
+      "hash": "d1ab934388110ed38c41c414ad164ff2b78414a3",
+      "at": "2026-03-29T19:49:56Z",
+      "pr": 13222
     }
   }
 }
