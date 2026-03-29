@@ -24,8 +24,6 @@ export const users = pgTable('users', {
 
 ### Partial Indexes
 
-Index only matching rows — smaller, faster.
-
 ```sql
 CREATE INDEX active_users_email_idx ON users(email) WHERE deleted_at IS NULL;
 CREATE INDEX pending_orders_idx ON orders(created_at) WHERE status = 'pending';
