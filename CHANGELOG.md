@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.311] - 2026-03-29
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- use atomic JSON writes to prevent config truncation on crash (#13181)
+
 ## [3.5.297] - 2026-03-29
 
 ### Changed
