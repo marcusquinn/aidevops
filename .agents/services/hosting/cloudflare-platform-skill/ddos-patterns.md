@@ -11,16 +11,17 @@ const config = {
     action: "execute",
     action_parameters: {
       id: managedRulesetId,
-      overrides: { sensitivity_level: "eoff" }, // Effectively off
+      overrides: { sensitivity_level: "eoff" },
     },
   }],
 };
 ```
 
-## Route-specific Sensitivity
+## Route-Specific Sensitivity
+
+Bursty API endpoints need lower sensitivity than static pages.
 
 ```typescript
-// Lower sensitivity for bursty API endpoints
 const config = {
   description: "Route-specific protection",
   rules: [
@@ -45,6 +46,8 @@ const config = {
 ```
 
 ## Progressive Enhancement
+
+Gradual rollout: MONITORING (week 1) → LOW (week 2) → MEDIUM (week 3) → HIGH (week 4).
 
 ```typescript
 enum ProtectionLevel { MONITORING = "monitoring", LOW = "low", MEDIUM = "medium", HIGH = "high" }
@@ -72,13 +75,11 @@ async function setProtectionLevel(zoneId: string, level: ProtectionLevel, manage
 
   return fetch(/* ... */);
 }
-
-// Gradual rollout: Week 1 MONITORING → Week 2 LOW → Week 3 MEDIUM → Week 4 HIGH
 ```
 
-## Dynamic Response to Attacks
+## Dynamic Response
 
-Worker that auto-escalates on attack detection and de-escalates on cron when quiet.
+Worker that auto-escalates on attack detection, de-escalates via cron when quiet.
 
 ```typescript
 // Env: CLOUDFLARE_API_TOKEN, ZONE_ID, KV_NAMESPACE (KVNamespace)
@@ -103,14 +104,15 @@ export default {
 };
 ```
 
-## Multi-rule Tiered Protection (Enterprise Advanced)
+## Multi-Rule Tiered Protection (Enterprise Advanced)
+
+Up to 10 rules with different conditions per zone.
 
 ```typescript
-// Up to 10 rules with different conditions
 const config = {
   description: "Multi-tier DDoS protection",
   rules: [
-    { // Strictest for unknown traffic
+    { // Unknown traffic — strictest
       expression: "not ip.src in $known_ips and not cf.bot_management.score gt 30",
       action: "execute",
       action_parameters: {
@@ -118,7 +120,7 @@ const config = {
         overrides: { sensitivity_level: "default", action: "block" },
       },
     },
-    { // Medium for verified bots
+    { // Verified bots — medium
       expression: "cf.bot_management.verified_bot",
       action: "execute",
       action_parameters: {
@@ -126,7 +128,7 @@ const config = {
         overrides: { sensitivity_level: "medium", action: "managed_challenge" },
       },
     },
-    { // Low for trusted IPs
+    { // Trusted IPs — low
       expression: "ip.src in $trusted_ips",
       action: "execute",
       action_parameters: {
@@ -140,4 +142,4 @@ const config = {
 
 ## Defense in Depth
 
-Combine DDoS with WAF, Rate Limiting, Bot Management. Layer protections at different levels.
+Layer DDoS with WAF custom rules, Rate Limiting, and Bot Management. Each operates at a different phase — DDoS fires first (L3/4 then L7), then WAF, then rate limiting. See `waf-patterns.md`, `bot-management-patterns.md`.
