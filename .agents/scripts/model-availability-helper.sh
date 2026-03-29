@@ -120,7 +120,7 @@ get_tier_models() {
 		haiku) echo "anthropic/claude-haiku-4-5|opencode/gemini-3-flash" ;;
 		flash) echo "google/gemini-2.5-flash|opencode/gemini-3-flash" ;;
 		sonnet) echo "anthropic/claude-sonnet-4-6|openai/gpt-5.3-codex" ;;
-		pro) echo "google/gemini-2.5-pro|opencode/gemini-3-pro" ;;
+		pro) echo "google/gemini-2.5-pro|opencode/gemini-3.1-pro" ;;
 		opus) echo "anthropic/claude-opus-4-6|openai/gpt-5.4" ;;
 		health) echo "anthropic/claude-sonnet-4-6|google/gemini-2.5-flash" ;;
 		eval) echo "anthropic/claude-sonnet-4-6|google/gemini-2.5-flash" ;;
@@ -197,6 +197,45 @@ _opencode_model_exists() {
 			'[.[] | .models[$m] // empty] | length > 0' "$OPENCODE_MODELS_CACHE" >/dev/null 2>&1
 		return $?
 	fi
+}
+
+# Validate an opencode/ model ID against the models cache (GH#12470).
+# If the model ID is stale (not in cache), logs a warning and returns 1.
+# This catches hardcoded model IDs that drift from the actual registry.
+# Usage: _validate_opencode_model_id "opencode/gemini-3.1-pro"
+# Returns: 0 if valid or non-opencode model, 1 if stale opencode model ID
+_validate_opencode_model_id() {
+	local model_spec="$1"
+	local provider="${model_spec%%/*}"
+
+	# Only validate opencode/ prefixed models
+	if [[ "$provider" != "opencode" ]]; then
+		return 0
+	fi
+
+	# Skip validation if opencode is not available
+	if ! _is_opencode_available; then
+		return 0
+	fi
+
+	if _opencode_model_exists "$model_spec"; then
+		return 0
+	fi
+
+	# Model not found in cache — it's stale
+	local model_id="${model_spec#*/}"
+	print_warning "Stale opencode model ID: $model_spec not found in models cache (GH#12470)"
+
+	# Try to suggest the correct ID by fuzzy-matching in the opencode provider
+	local suggestion
+	suggestion=$(jq -r --arg m "$model_id" \
+		'.opencode.models | keys[] | select(contains($m) or ($m | contains(.)))' \
+		"$OPENCODE_MODELS_CACHE" 2>/dev/null | head -1)
+	if [[ -n "$suggestion" ]]; then
+		print_info "Did you mean: opencode/$suggestion?"
+	fi
+
+	return 1
 }
 
 # =============================================================================
@@ -1006,6 +1045,18 @@ resolve_tier() {
 	primary="${tier_spec%%|*}"
 	fallback="${tier_spec#*|}"
 
+	# Validate opencode model IDs against the models cache (GH#12470).
+	# If a hardcoded opencode/ model ID is stale, skip it rather than
+	# dispatching workers with an invalid ID that fails at startup.
+	if ! _validate_opencode_model_id "$primary"; then
+		[[ "$quiet" != "true" ]] && print_warning "Skipping stale primary model: $primary"
+		primary=""
+	fi
+	if ! _validate_opencode_model_id "$fallback"; then
+		[[ "$quiet" != "true" ]] && print_warning "Skipping stale fallback model: $fallback"
+		fallback=""
+	fi
+
 	# Rate limit check (t1330): if primary provider is at throttle risk,
 	# try fallback first to avoid hitting rate limits
 	local primary_provider
@@ -1028,7 +1079,7 @@ resolve_tier() {
 	fi
 
 	# Try primary
-	if check_model_available "$primary" "$force" "true"; then
+	if [[ -n "$primary" ]] && check_model_available "$primary" "$force" "true"; then
 		echo "$primary"
 		[[ "$quiet" != "true" ]] && print_success "Resolved $tier -> $primary (primary)"
 		return 0
