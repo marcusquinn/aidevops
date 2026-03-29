@@ -15,28 +15,19 @@ tools:
 
 # React Email - Email Templates with React
 
-<!-- AI-CONTEXT-START -->
-
-## Quick Reference
-
-- **Purpose**: Build responsive, cross-client email templates using React components
 - **Docs**: Use Context7 MCP for latest React Email documentation
 - **GitHub**: https://github.com/resend/react-email (15k+ stars, MIT)
-- **Website**: https://react.email
 - **Used by**: TurboStarter (`~/Git/turbostarter/core/packages/email/`)
-
-<!-- AI-CONTEXT-END -->
 
 ## Quick Start
 
 ```bash
 npm install @react-email/components react-email
 # Or standalone: npx create-email@latest
+npx react-email dev  # Preview at http://localhost:3000 with live reload
 ```
 
 ## Components
-
-Pre-built components that render correctly across email clients:
 
 | Component | Purpose |
 |-----------|---------|
@@ -74,12 +65,7 @@ import {
   Tailwind,
 } from '@react-email/components';
 
-interface WelcomeEmailProps {
-  name: string;
-  actionUrl: string;
-}
-
-export default function WelcomeEmail({ name, actionUrl }: WelcomeEmailProps) {
+export default function WelcomeEmail({ name, actionUrl }: { name: string; actionUrl: string }) {
   return (
     <Html>
       <Head />
@@ -107,12 +93,6 @@ export default function WelcomeEmail({ name, actionUrl }: WelcomeEmailProps) {
     </Html>
   );
 }
-```
-
-## Development Preview
-
-```bash
-npx react-email dev  # Opens http://localhost:3000 with live reload
 ```
 
 ## Rendering to HTML
@@ -183,7 +163,6 @@ packages/email/
 - **Keep emails simple** — complex layouts break in Outlook
 - **Always include plain text** fallback
 - **Use absolute URLs** for images (email clients don't load relative paths)
-- **Inline styles** are more reliable than CSS classes (React Email handles this)
 
 ## Related
 
