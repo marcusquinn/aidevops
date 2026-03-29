@@ -29,17 +29,13 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Architecture
+## Components
 
 ```text
 Microphone/Socket -> [VAD] -> [STT] -> [LLM] -> [TTS] -> Speaker/Socket
 ```
 
-Four-stage cascaded pipeline via thread-safe queues; each stage runs in its own thread.
-
-## Components
-
-### VAD — Silero VAD v5 (default, production-grade)
+### VAD — Silero VAD v5
 
 Key params: `--thresh` (sensitivity), `--min_speech_ms`, `--min_silence_ms`
 
@@ -117,7 +113,7 @@ Requires multilingual STT (e.g., `--stt_model_name large-v3`) and multilingual T
 
 ## CLI Parameters
 
-All params use prefix convention: `--stt_*`, `--lm_*`, `--tts_*`, `--melo_*`. Generation params use `_gen_` infix: `--stt_gen_max_new_tokens 128`.
+Prefix convention: `--stt_*`, `--lm_*`, `--tts_*`, `--melo_*`. Generation params use `_gen_` infix: `--stt_gen_max_new_tokens 128`.
 
 Full reference: `python s2s_pipeline.py -h` or [arguments_classes/](https://github.com/huggingface/speech-to-speech/tree/main/arguments_classes)
 
@@ -149,7 +145,7 @@ Full reference: `python s2s_pipeline.py -h` or [arguments_classes/](https://gith
 
 ## Voice Bridge (Recommended for Agent Use)
 
-For talking directly to your AI coding agent, use the voice bridge — simpler, faster, integrates with OpenCode:
+Simpler, faster, integrates with OpenCode directly:
 
 ```bash
 voice-helper.sh talk                              # start voice conversation
