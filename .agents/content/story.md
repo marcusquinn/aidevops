@@ -11,7 +11,7 @@ model: sonnet
 
 ## Quick Reference
 
-- **Purpose**: Craft platform-agnostic narratives that adapt to any media format or distribution channel
+- **Purpose**: Craft platform-agnostic narratives for any media format or distribution channel
 - **Input**: Research brief (from `content/research.md`) or topic + audience
 - **Output**: Story package: hook variants, narrative arc, transformation framework, angle selection
 - **Key Principle**: One story, many outputs — design the narrative once, adapt everywhere
@@ -51,9 +51,9 @@ model: sonnet
 
 | Part | Weight | Content |
 |------|--------|---------|
-| **Hook** | first 5-10s | Pattern interrupt or value promise. Must work standalone (previews, thumbnails, subject lines). |
+| **Hook** | first 5-10s | Pattern interrupt or value promise. Standalone-capable (previews, thumbnails, subject lines). |
 | **Story** | 60-70% | Before state (pain) → Struggle (failed attempts) → After state (transformation) |
-| **Soft Sell** | 15-20% | Transition naturally from story to CTA. Frame as logical next step, not pitch. |
+| **Soft Sell** | 15-20% | Natural story-to-CTA transition. Frame as next step, not pitch. |
 | **Visual Cues** | throughout | B-roll directions, image suggestions, tone shifts, formatting cues |
 
 **Story frameworks**: AIDA · Three-Act · Hero's Journey · Problem-Solution-Result · Listicle with Stakes
@@ -62,7 +62,7 @@ model: sonnet
 
 | Angle | When to Use | Platforms |
 |-------|-------------|-----------|
-| **Pain** | Audience is frustrated, searching for solutions | Blog, email, YouTube |
+| **Pain** | Audience frustrated, seeking solutions | Blog, email, YouTube |
 | **Aspiration** | Audience wants to level up | Short-form, social, YouTube |
 | **Contrarian** | Conventional wisdom is wrong | X, Reddit, podcast |
 | **Educational** | Audience needs to learn a skill | Blog, YouTube, podcast |
@@ -98,7 +98,7 @@ model: sonnet
 
 ## UGC Brief Storyboard
 
-Multi-shot storyboard from a business description. Uses 4-Part Script Framework + 7-component video prompt format (`tools/video/video-prompt-design.md`).
+Multi-shot storyboard from a business brief. Uses 4-Part Script Framework + 7-component video prompt format (`tools/video/video-prompt-design.md`).
 
 ### Input Brief
 
