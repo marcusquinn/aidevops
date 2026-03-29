@@ -108,6 +108,9 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+- [ ] t1699 fix: localdev ANSI escape codes corrupt Traefik route YAML files — `_cmd_branch_assign_port()` writes ANSI-colored `print_info`/`print_success` to stdout, then returns port via `echo`. When called as `port="$(...)"`, ANSI codes get captured into `$port` and written into Traefik YAML. Causes Traefik file watcher to error on every reload, blocking ALL route reloads. 9 corrupt files found in one session. Fix: redirect `print_*` to stderr in functions returning values via stdout, audit all `$(...)` call sites, add YAML validation after route file creation. #bugfix #local-dev #auto-dispatch ~2h model:sonnet ref:GH#12421 logged:2026-03-29
+- [ ] t1700 fix: wordpress-plugin handler missing proxy headers, URL config, and credential output — handler doesn't create mu-plugin for X-Forwarded-* header trust (causes redirect to localhost), doesn't update WordPress URLs + multisite domain tables to `.local` domain after multisite conversion, doesn't print login credentials after setup. End-to-end test with afragen/git-updater required manual fixes for all three. #bugfix #foss #wordpress #auto-dispatch ~2h model:sonnet ref:GH#12423 logged:2026-03-29
+
 ### Windows Platform Support
 
 - [ ] t1689 feat: add Windows schtasks support to schedulers.sh — no background OAuth token refresh exists on Windows (MINGW64/Git Bash). `schedulers.sh` only handles macOS (launchd) and Linux (cron). Add `schtasks` code path to run `oauth-pool-helper.sh refresh anthropic` every 30 min. #feature #windows #auto-dispatch ~2h model:sonnet ref:GH#6900 logged:2026-03-27
