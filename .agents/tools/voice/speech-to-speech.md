@@ -32,20 +32,11 @@ tools:
 
 ## Architecture
 
-Four-stage cascaded pipeline via thread-safe queues:
+Four-stage cascaded pipeline via thread-safe queues. Each stage runs in its own thread; audio streams via socket or local device.
 
 ```text
 Microphone/Socket -> [VAD] -> [STT] -> [LLM] -> [TTS] -> Speaker/Socket
-                      |         |        |         |
-                   Silero    Whisper   Any HF    Parler
-                   VAD v5    variants  instruct  Melo
-                             Parafor.  OpenAI    ChatTTS
-                             Faster-W  MLX-LM    Kokoro
-                             Parakeet            FacebookMMS
-                             Moonshine           Pocket
 ```
-
-Each stage runs in its own thread. Audio streams via socket (server/client) or local audio device.
 
 ## Components
 
@@ -93,31 +84,19 @@ Model: `--lm_model_name <model>` or `--mlx_lm_model_name <model>`
 
 ## Deployment
 
+GPU sizing: 4GB VRAM minimum, 8–16GB recommended. See `tools/infrastructure/cloud-gpu.md`.
+
 ```bash
-# macOS Apple Silicon (MPS)
-speech-to-speech-helper.sh start --local-mac
-# Equivalent: python s2s_pipeline.py --local_mac_optimal_settings --device mps \
-#   --stt parakeet-tdt --llm mlx-lm --tts kokoro \
-#   --mlx_lm_model_name mlx-community/Meta-Llama-3.1-8B-Instruct-4bit
-
-# CUDA GPU (torch compile optimizations)
-speech-to-speech-helper.sh start --cuda
-# Equivalent: python s2s_pipeline.py --recv_host 0.0.0.0 --send_host 0.0.0.0 \
-#   --lm_model_name microsoft/Phi-3-mini-4k-instruct \
-#   --stt_compile_mode reduce-overhead --tts_compile_mode default
-
-# Server/client (remote GPU — RunPod, Vast.ai, Lambda, NVIDIA Cloud)
-speech-to-speech-helper.sh start --server          # on GPU server
-speech-to-speech-helper.sh client --host <ip>      # on local machine
-# Or: python listen_and_play.py --host <server-ip>
-
-# Docker (pytorch 2.4.0-cuda12.1-cudnn9-devel, ports 12345/12346, GPU device 0)
-speech-to-speech-helper.sh start --docker
+speech-to-speech-helper.sh start --local-mac   # macOS Apple Silicon (MPS)
+speech-to-speech-helper.sh start --cuda        # CUDA GPU (torch compile optimizations)
+speech-to-speech-helper.sh start --server      # server/client — run on GPU server
+speech-to-speech-helper.sh client --host <ip>  # connect from local machine
+speech-to-speech-helper.sh start --docker      # Docker (pytorch 2.4.0-cuda12.1, ports 12345/12346)
 ```
 
-GPU sizing: 4GB VRAM minimum, 8–16GB recommended. See `tools/infrastructure/cloud-gpu.md` for provider comparison, SSH setup, model caching, cost optimization.
-
 ## Setup
+
+**Requirements:** Python 3.10+, PyTorch 2.4+, `uv`, CUDA 12.1+ or Apple Silicon, `sounddevice`, ~4GB VRAM.
 
 ```bash
 speech-to-speech-helper.sh setup
@@ -127,8 +106,6 @@ uv pip install -r requirements.txt          # CUDA/Linux
 uv pip install -r requirements_mac.txt      # macOS
 python -m unidic download                   # MeloTTS only
 ```
-
-**Requirements:** Python 3.10+, PyTorch 2.4+, `uv`, CUDA 12.1+ or Apple Silicon, `sounddevice`, ~4GB VRAM minimum.
 
 ## Multi-Language
 
@@ -184,9 +161,7 @@ voice-helper.sh devices | voices | benchmark
 
 **Architecture:** `Mic -> Silero VAD -> Whisper MLX (1.4s) -> OpenCode run --attach (~4-6s) -> Edge TTS (0.4s) -> Speaker`
 
-**Round-trip:** ~6–8s conversational, longer for tool execution.
-
-**Features:** Swappable STT/TTS engines; voice exit phrases ("that's all", "goodbye"); STT sanity checking; session handback (transcript on exit); Esc interrupt; graceful TUI degradation.
+**Round-trip:** ~6–8s conversational, longer for tool execution. Supports swappable STT/TTS engines, voice exit phrases, STT sanity checking, session handback, Esc interrupt, and graceful TUI degradation.
 
 The full S2S pipeline is for advanced use cases: custom LLMs, server/client deployment, multi-language, phone integration.
 
