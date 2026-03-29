@@ -85,9 +85,7 @@ interface VideoAgentRequest {
 }
 
 async function generateWithVideoAgent(
-  prompt: string,
-  config?: VideoAgentConfig,
-  files?: { asset_id: string }[]
+  request: VideoAgentRequest
 ): Promise<string> {
   const response = await fetch(
     "https://api.heygen.com/v1/video_agent/generate",
@@ -97,11 +95,7 @@ async function generateWithVideoAgent(
         "X-Api-Key": process.env.HEYGEN_API_KEY!,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        prompt,
-        ...(config && { config }),
-        ...(files?.length && { files }),
-      }),
+      body: JSON.stringify(request),
     }
   );
 
@@ -111,16 +105,16 @@ async function generateWithVideoAgent(
 }
 
 // Basic
-const id1 = await generateWithVideoAgent(
-  "Create a 30-second welcome video for new employees at a tech startup."
-);
+const id1 = await generateWithVideoAgent({
+  prompt: "Create a 30-second welcome video for new employees at a tech startup.",
+});
 
 // With config + files
-const id2 = await generateWithVideoAgent(
-  "Present quarterly sales results. Professional tone, data-focused.",
-  { duration_sec: 120, avatar_id: "josh_lite3_20230714", orientation: "landscape" },
-  [{ asset_id: "chart_screenshot_id" }]
-);
+const id2 = await generateWithVideoAgent({
+  prompt: "Present quarterly sales results. Professional tone, data-focused.",
+  config: { duration_sec: 120, avatar_id: "josh_lite3_20230714", orientation: "landscape" },
+  files: [{ asset_id: "chart_screenshot_id" }],
+});
 ```
 
 ## Writing Effective Prompts
