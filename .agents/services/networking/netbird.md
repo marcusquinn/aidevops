@@ -28,21 +28,13 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Architecture
-
-```text
-Management (state/ACLs) + Signal (ICE) + Relay (TURN)
-  └── WireGuard P2P mesh — data never flows through management server
-```
-
 ## Self-Hosting
 
-### Requirements & Quickstart
+**Architecture**: Management (state/ACLs) + Signal (ICE) + Relay (TURN) → WireGuard P2P mesh. Data never flows through management server.
 
-| Resource | Min | Recommended |
-|----------|-----|-------------|
-| CPU/RAM | 1 vCPU / 2 GB | 2 vCPU / 4 GB |
-| Ports | TCP 80, 443 + **UDP 3478** (direct, not proxyable) | — |
+### Quickstart
+
+Min: 1 vCPU / 2 GB RAM. Ports: TCP 80, 443 + **UDP 3478** (direct, not proxyable).
 
 ```bash
 export NETBIRD_DOMAIN=netbird.example.com
@@ -53,13 +45,7 @@ curl -fsSL "https://github.com/netbirdio/netbird/releases/download/${NETBIRD_VER
 bash /tmp/netbird-setup.sh
 ```
 
-### Database & IdP
-
-**DB**: SQLite (default, <50 peers, no HA) or PostgreSQL (production, HA).
-
-**IdP**: Embedded Dex (quickstart). Production: any OIDC provider — Keycloak, Zitadel, Authentik, PocketID, Google Workspace, Entra ID, Okta, Auth0. Cloudron users: built-in OIDC works directly.
-
-**JWT Group Sync**: Settings > Groups > JWT group sync → set claim name (usually `groups`).
+**DB**: SQLite (default, <50 peers, no HA) or PostgreSQL (production, HA). **IdP**: Embedded Dex (quickstart); production: any OIDC — Keycloak, Zitadel, Authentik, PocketID, Google Workspace, Entra ID, Okta, Auth0. Cloudron: built-in OIDC works directly. **JWT Group Sync**: Settings > Groups > JWT group sync → claim name (usually `groups`).
 
 ### Critical Gotchas
 
@@ -75,11 +61,7 @@ bash /tmp/netbird-setup.sh
 
 ### Standalone VPS
 
-**Sizing**: 1-25 peers → 1 vCPU / 2 GB (~$4-6/mo Hetzner CX22); 25-100 peers → 2 vCPU / 4 GB.
-
-**DNS**: A `netbird` → server IP; optional CNAME `proxy` + `*.proxy` → `netbird.example.com`.
-
-**Post-install**: Open dashboard, create admin on `/setup`, create PAT (Settings > Personal Access Tokens), create setup keys.
+**Sizing**: 1-25 peers → 1 vCPU / 2 GB (~$4-6/mo Hetzner CX22); 25-100 peers → 2 vCPU / 4 GB. **DNS**: A `netbird` → server IP; optional CNAME `proxy` + `*.proxy` → `netbird.example.com`. **Post-install**: Open dashboard, create admin on `/setup`, create PAT (Settings > Personal Access Tokens), create setup keys.
 
 ```bash
 # Health check
@@ -92,7 +74,7 @@ docker compose pull netbird-server dashboard && docker compose up -d --force-rec
 
 ### Coolify / Dokploy (Traefik-based PaaS)
 
-Full feature parity with standalone (Traefik native). Generate config with `[1] Existing Traefik`, adapt compose: remove Traefik service, add labels to dashboard, expose `3478:3478/udp`. Key labels:
+Full feature parity with standalone. Generate config with `[1] Existing Traefik`, adapt compose: remove Traefik service, add labels to dashboard, expose `3478:3478/udp`.
 
 ```yaml
 # netbird-server: ports: ["3478:3478/udp"]
@@ -112,7 +94,7 @@ Dokploy: identical, use `../files/` prefix for bind mount persistence.
 
 Package: https://github.com/marcusquinn/cloudron-netbird-app. Add-ons: `postgresql`, `localstorage`, `oidc`, `turn`.
 
-**Reverse proxy not supported** — requires Traefik TLS passthrough; Cloudron uses nginx (architectural constraint, not a packaging issue). Core mesh VPN unaffected.
+**Reverse proxy not supported** — requires Traefik TLS passthrough; Cloudron uses nginx (architectural constraint). Core mesh VPN unaffected.
 
 ### Feature Comparison
 
@@ -142,17 +124,17 @@ docker run -d --name netbird --cap-add NET_ADMIN --cap-add SYS_ADMIN \
 curl -fsSL https://pkgs.netbird.io/install.sh | sudo sh && sudo netbird up --setup-key <KEY>
 ```
 
-| Platform | Install | Gotchas |
-|----------|---------|---------|
-| macOS | Homebrew | None |
-| Linux / ARM / Proxmox host | Install script | None |
-| Windows | MSI | Run as admin |
-| Docker | Container | `NET_ADMIN` + `SYS_ADMIN` caps |
-| Proxmox LXC | Install script | Add `/dev/tun` passthrough to `/etc/pve/lxc/<CTID>.conf` |
-| Synology | SSH + install script | Create TUN device reboot script in DSM Task Scheduler |
-| pfSense | Official `.pkg` | Static Port NAT rule (Firewall > NAT > Outbound > Hybrid) |
-| OPNSense / TrueNAS | Install script | None |
-| iOS / Android | App Store / Play Store | No setup key support |
+| Platform | Gotchas |
+|----------|---------|
+| macOS (Homebrew) | None |
+| Linux / ARM / Proxmox host | None |
+| Windows (MSI) | Run as admin |
+| Docker (`NET_ADMIN` + `SYS_ADMIN`) | Caps required |
+| Proxmox LXC | Add `/dev/tun` passthrough to `/etc/pve/lxc/<CTID>.conf` |
+| Synology (SSH) | Create TUN device reboot script in DSM Task Scheduler |
+| pfSense (official `.pkg`) | Static Port NAT rule (Firewall > NAT > Outbound > Hybrid) |
+| OPNSense / TrueNAS | None |
+| iOS / Android (App Store / Play Store) | No setup key support |
 
 ## aidevops Integration
 
@@ -163,7 +145,7 @@ curl -fsSL https://pkgs.netbird.io/install.sh | sudo sh && sudo netbird up --set
 curl -s -X POST "https://netbird.example.com/api/setup-keys" \
   -H "Authorization: Token <API_TOKEN>" -H "Content-Type: application/json" \
   -d '{"name":"aidevops-workers","type":"reusable","expires_in":604800,"auto_groups":["ai-workers"],"usage_limit":50}'
-# Then install client (see Client Installation) and: sudo netbird up --setup-key "$NETBIRD_SETUP_KEY"
+# Then install client and: sudo netbird up --setup-key "$NETBIRD_SETUP_KEY"
 ```
 
 ### Access Control Groups
@@ -194,11 +176,7 @@ Provider: `netbirdio/netbird` (registry.terraform.io). Resources: `netbird_group
 
 Exposes internal mesh services publicly with automatic TLS and optional SSO/password/PIN auth. Maps public domain → internal peer + port → HTTPS terminated at proxy, forwarded through mesh.
 
-**Requires**: `netbirdio/netbird-proxy` + Traefik (TLS passthrough) + DNS for proxy domain.
-
-**Features**: Path routing, custom domains, HA, ACME or static TLS, hot reload.
-
-**Limitations**: Traefik only (no nginx/Cloudron), no Rosenpass, beta.
+**Requires**: `netbirdio/netbird-proxy` + Traefik (TLS passthrough) + DNS for proxy domain. **Features**: Path routing, custom domains, HA, ACME or static TLS, hot reload. **Limitations**: Traefik only (no nginx/Cloudron), no Rosenpass, beta.
 
 ## vs Tailscale
 
@@ -224,7 +202,7 @@ netbird down && rm -rf /etc/netbird/ && netbird up --setup-key <KEY>  # reset
 ```
 
 | Issue | Solution |
-|-------|----------|
+|-------|---------|
 | Peers disconnected | UDP 3478 open? WireGuard UDP firewall rules? |
 | Management unreachable | DNS, TLS cert, Docker containers running? |
 | Setup key rejected | Expired or usage limit reached — check dashboard |
