@@ -1,8 +1,8 @@
-# Cloudflare Pipelines Skill
+# Cloudflare Pipelines
 
-ETL streaming platform: ingest events, transform with SQL, deliver to R2 as Apache Iceberg tables or Parquet/JSON.
+ETL streaming: ingest events → SQL transforms → R2 as Apache Iceberg or Parquet/JSON.
 
-**Components:** Streams (durable buffered queues, structured or unstructured) → Pipelines (SQL transforms, immutable — delete/recreate to modify) → Sinks (R2 Data Catalog with Iceberg/ACID, or R2 Storage as Parquet/JSON; exactly-once delivery).
+**Components:** Streams (durable buffered queues) → Pipelines (SQL transforms, immutable — delete/recreate to modify) → Sinks (R2 Data Catalog with Iceberg/ACID, or R2 Storage as Parquet/JSON; exactly-once delivery).
 
 **Status:** Open beta, Workers Paid plan required, no charge beyond R2 storage/operations.
 
@@ -26,7 +26,6 @@ npx wrangler pipelines create my-pipeline \
 {
   "fields": [
     { "name": "user_id", "type": "string", "required": true },
-    { "name": "event_type", "type": "string", "required": true },
     { "name": "amount", "type": "float64", "required": false },
     { "name": "tags", "type": "list", "required": false, "items": { "type": "string" } },
     { "name": "metadata", "type": "struct", "required": false,
@@ -39,7 +38,7 @@ npx wrangler pipelines create my-pipeline \
 
 ## Writing Data
 
-**Worker Binding (recommended):** Config — `wrangler.toml`: `[[pipelines]]` with `pipeline = "<STREAM_ID>"`, `binding = "STREAM"`. Or `wrangler.jsonc`: `{ "pipelines": [{ "pipeline": "<STREAM_ID>", "binding": "STREAM" }] }`.
+**Worker Binding (recommended):** `wrangler.toml`: `[[pipelines]]` with `pipeline = "<STREAM_ID>"`, `binding = "STREAM"`. Or `wrangler.jsonc`: `{ "pipelines": [{ "pipeline": "<STREAM_ID>", "binding": "STREAM" }] }`.
 
 ```typescript
 export default {
@@ -63,12 +62,9 @@ curl -X POST https://{stream-id}.ingest.cloudflare.com \
 ## SQL Transformations
 
 ```sql
-INSERT INTO my_sink SELECT * FROM my_stream                                    -- pass-through
-INSERT INTO my_sink SELECT * FROM my_stream WHERE event_type = 'purchase' AND amount > 100  -- filter
-INSERT INTO my_sink SELECT user_id, UPPER(event_type) as event_type,           -- transform
-  amount * 1.1 as amount_with_tax,
-  CASE WHEN amount > 1000 THEN 'high_value' WHEN amount > 100 THEN 'medium_value' ELSE 'low_value' END as tier
-FROM my_stream WHERE event_type IN ('purchase', 'refund')
+INSERT INTO my_sink SELECT * FROM my_stream WHERE event_type = 'purchase' AND amount > 100
+INSERT INTO my_sink SELECT user_id, UPPER(event_type) as event_type, amount * 1.1 as amount_with_tax,
+  CASE WHEN amount > 1000 THEN 'high' ELSE 'low' END as tier FROM my_stream
 ```
 
 **Constraints:** No JOINs across streams (single stream per pipeline). Pipelines immutable after creation.
@@ -98,17 +94,17 @@ npx wrangler pipelines sinks create my-sink \
   --access-key-id YOUR_KEY --secret-access-key YOUR_SECRET
 ```
 
-Files: `bucket/analytics/events/year=2025/month=01/day=11/uuid.parquet`
+Output path: `bucket/analytics/events/year=2025/month=01/day=11/uuid.parquet`
 
 ## Wrangler Commands
+
+All subcommands support `list | get <ID> | delete <ID>`. Deleting a stream also deletes dependent pipelines and buffered events.
 
 ```bash
 npx wrangler pipelines setup | list | get <ID> | delete <ID>
 npx wrangler pipelines create my-pipeline --sql "..." | --sql-file transform.sql
 npx wrangler pipelines streams create my-stream --schema-file schema.json
-npx wrangler pipelines streams list | get <ID> | delete <ID>  # WARNING: deletes dependent pipelines + buffered events
 npx wrangler pipelines sinks create my-sink --type r2-data-catalog --bucket B --namespace N --table T --catalog-token TOKEN
-npx wrangler pipelines sinks list | get <ID> | delete <ID>
 ```
 
 ## Auth & Permissions
@@ -123,7 +119,7 @@ Create catalog token: R2 > Manage API tokens > Create Account API Token > Admin 
 
 ## Best Practices
 
-- **Schema:** Structured streams with `required: true` on critical fields. `int64` for timestamps, `float64` for decimals. Don't change schemas (recreate). Avoid deep nesting.
+- **Schema:** Structured streams with `required: true` on critical fields. `int64` for timestamps, `float64` for decimals. Recreate to change schemas. Avoid deep nesting.
 - **Performance:** Low latency: `--roll-interval 10`. Query perf: `--roll-interval 300 --roll-size 100`. `zstd` for ratio, `snappy` for speed. Filter early with `WHERE`.
 - **Workers:** Bindings (no token management). Batch: `send([e1, e2, ...])`. `ctx.waitUntil()` for fire-and-forget.
 - **HTTP:** Auth in production. CORS for browsers. Arrays for batch efficiency. Retry on 4xx/5xx.
