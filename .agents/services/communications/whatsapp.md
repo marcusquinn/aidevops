@@ -21,12 +21,13 @@ tools:
 - **Type**: WhatsApp Web API client — unofficial, reverse-engineered protocol
 - **Library**: [Baileys](https://github.com/WhiskeySockets/Baileys) (TypeScript, MIT, 10K+ stars)
 - **Runtime**: Node.js 20+ or Bun
-- **Protocol**: WhatsApp multi-device (linked device, no phone required after pairing; up to 4 linked devices per account)
+- **Protocol**: Multi-device (linked device, no phone required after pairing; up to 4 linked devices per account)
 - **Encryption**: Signal Protocol E2E for message content (WhatsApp-implemented, not Baileys)
-- **Auth**: QR code scan or pairing code from WhatsApp mobile app
+- **Auth**: QR code scan or pairing code from WhatsApp mobile app; sessions invalidated after ~14 days inactivity
 - **Session store**: File-based (`useMultiFileAuthState`); SQLite/Redis/PostgreSQL require custom `AuthenticationState`
 - **Docs**: https://github.com/WhiskeySockets/Baileys | https://whiskeysockets.github.io/Baileys/
 - **npm**: `baileys` (formerly `@whiskeysockets/baileys`)
+- **Limitations**: No voice/video calls; one account per bot; up to 1024 group members; any WA protocol change can break Baileys without warning (maintainers typically update within days)
 
 **When to use Baileys vs alternatives**:
 
@@ -48,7 +49,7 @@ npm install @bufbuild/protobuf  # Optional: better protobuf performance
 # Optional: qrcode-terminal, pino, link-preview-js, sharp, fluent-ffmpeg
 ```
 
-### Minimal Setup
+## Minimal Setup
 
 ```typescript
 import makeWASocket, { DisconnectReason, useMultiFileAuthState, WASocket } from "baileys"
@@ -62,6 +63,8 @@ async function startBot(): Promise<void> {
   sock.ev.on("connection.update", ({ connection, lastDisconnect }) => {
     if (connection === "close") {
       const code = (lastDisconnect?.error as Boom)?.output?.statusCode
+      // Reconnect delays: restartRequired→1s, connectionClosed/Lost/timedOut→5s, default→15s
+      // loggedOut: delete auth_info/, restart for new QR
       if (code !== DisconnectReason.loggedOut) setTimeout(() => startBot(), 3000)
     }
   })
@@ -77,7 +80,7 @@ async function startBot(): Promise<void> {
 startBot()
 ```
 
-**QR / Pairing**: `printQRInTerminal: true` for QR. Pairing code: `sock.requestPairingCode("1234567890")` → enter in WhatsApp > Linked Devices. Sessions persist; invalidated after ~14 days inactivity — monitor `DisconnectReason.loggedOut`.
+**QR / Pairing**: `printQRInTerminal: true` for QR. Pairing code: `sock.requestPairingCode("1234567890")` → enter in WhatsApp > Linked Devices.
 
 ## JID Format
 
@@ -148,7 +151,7 @@ function isRateLimited(sender: string): boolean {
 
 **NOT protected — Meta metadata harvesting**: contact graph (who/when/frequency), group membership, usage patterns, device info, IP address, message timestamps. Meta uses this for ad targeting across Facebook/Instagram/WhatsApp. Backups may use Meta-held keys. Meta AI processes message content when invoked.
 
-### ToS Risk (Baileys)
+**ToS Risk (Baileys)**:
 
 | Risk | Likelihood | Mitigation |
 |------|-----------|------------|
@@ -191,7 +194,7 @@ commands.set("/run", async (ctx) => {
 
 ## Matterbridge Integration
 
-Matterbridge natively supports WhatsApp via [whatsmeow](https://github.com/tulir/whatsmeow) (Go). Bridges WhatsApp to 20+ platforms without custom bot code.
+Matterbridge natively supports WhatsApp via [whatsmeow](https://github.com/tulir/whatsmeow) (Go). Bridges WhatsApp to 20+ platforms without custom bot code. Build with `-tags whatsappmulti` (excluded from default binary due to GPL3): `go install -tags whatsappmulti github.com/42wim/matterbridge@latest`
 
 ```toml
 [whatsapp]
@@ -209,31 +212,7 @@ enable=true
   channel="#bridged:example.com"
 ```
 
-Build with multi-device support (excluded from default binary due to GPL3):
-
-```bash
-go install -tags whatsappmulti github.com/42wim/matterbridge@latest
-```
-
 **Note**: E2E encryption is broken at the bridge — the bridge host has plaintext access. See `tools/security/opsec.md`.
-
-## Connection Reconnect Delays
-
-| `DisconnectReason` | Delay |
-|--------------------|-------|
-| `loggedOut` | Delete `auth_info/`, restart for new QR |
-| `restartRequired` | 1s |
-| `connectionClosed` / `connectionLost` / `timedOut` | 5s |
-| default | 15s |
-
-## Limitations
-
-- **Account ban risk**: Unofficial. Risk increases with high volume, rapid group ops, bulk contact additions, no human-like delays.
-- **No voice/video calls**: Call protocol not reverse-engineered in Baileys.
-- **Platform dependency**: Any WhatsApp protocol change can break Baileys without warning (maintainers typically update within days).
-- **Phone required**: A phone number and WhatsApp mobile app are required for initial setup.
-- **One account per bot**: Cannot run multiple Baileys instances on the same account.
-- **Group size**: Up to 1024 members; Communities features may lag behind the official app.
 
 ## Related
 
@@ -243,7 +222,5 @@ go install -tags whatsappmulti github.com/42wim/matterbridge@latest
 - `services/communications/xmtp.md` — XMTP (Web3 messaging, wallet identity)
 - `tools/security/opsec.md` — Platform trust matrix, metadata warnings
 - `tools/security/prompt-injection-defender.md` — Prompt injection defense for bot inputs
-- Baileys GitHub: https://github.com/WhiskeySockets/Baileys
-- Baileys Docs: https://whiskeysockets.github.io/Baileys/
 - WhatsApp Security Whitepaper: https://www.whatsapp.com/security/WhatsApp-Security-Whitepaper.pdf
-- Matterbridge: https://github.com/42wim/matterbridge (build with `-tags whatsappmulti`)
+- Matterbridge: https://github.com/42wim/matterbridge
