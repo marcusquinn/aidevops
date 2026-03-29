@@ -20,26 +20,18 @@ tools:
 
 - **Purpose**: Self-hosted alternative to Vercel/Netlify/Heroku
 - **Install**: `curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash`
-- **Requirements**: 2GB+ RAM, Ubuntu 20.04+/Debian 11+, ports 22/80/443/8000
+- **Requirements**: 2GB+ RAM (4GB+ recommended), Ubuntu 20.04+/Debian 11+, ports 22/80/443/8000
 - **Dashboard**: `https://your-server-ip:8000`
-- **Helper**: `.agents/scripts/coolify-helper.sh`
-- **Commands**: `list` | `connect [server]` | `open [server]` | `status [server]` | `apps [server]` | `exec [server] [cmd]`
-- **Config**: `configs/coolify-config.json`
-- **Features**: Git deployments, databases (PostgreSQL/MySQL/MongoDB/Redis), SSL automation, Docker containers
-- **Docs**: https://coolify.io/docs
+- **Config**: `configs/coolify-config.json` (copy from `configs/coolify-config.json.txt`)
+- **Operations**: See `coolify.md` for helper commands, monitoring, troubleshooting
 
 <!-- AI-CONTEXT-END -->
 
-## Prerequisites
-
-**Server:** 2GB+ RAM (4GB+ recommended), Ubuntu 20.04+/Debian 11+, root/sudo access, domain pointing to server, ports 22/80/443/8000 open.
-
-**Local:** SSH key, Git repositories, DNS configured.
-
 ## Installation
 
+**Prerequisites:** SSH key, root/sudo access, domain pointing to server, DNS configured.
+
 ```bash
-# Connect and install
 ssh root@your-server-ip
 curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash
 
@@ -62,13 +54,15 @@ apt install unattended-upgrades -y && dpkg-reconfigure -plow unattended-upgrades
 2. Create admin account
 3. Add server details and domain
 4. Generate SSH keys for Git access
-5. Go to Settings → API Tokens → create token
+5. Settings → API Tokens → create token
 
 ## Framework Configuration
 
 ```bash
 cp configs/coolify-config.json.txt configs/coolify-config.json
 ```
+
+Edit `configs/coolify-config.json`:
 
 ```json
 {
@@ -90,63 +84,15 @@ cp configs/coolify-config.json.txt configs/coolify-config.json
 }
 ```
 
+Add entries under `servers` for staging/prod environments.
+
 ## Deploying Applications
 
-**Static site (React/Vue/Angular):** Create app → connect Git repo → build command: `npm run build` → output dir: `dist` → configure domain → deploy.
+**Static site (React/Vue/Angular):** Create app → connect Git repo → build: `npm run build` → output: `dist` → domain → deploy.
 
-**Node.js:** Create app → connect Git repo → start command: `npm start` → set env vars → port (usually 3000) → configure domain → deploy.
+**Node.js:** Create app → connect Git repo → start: `npm start` → env vars → port (3000) → domain → deploy.
 
-**Database:** Databases → create (PostgreSQL/MySQL/MongoDB/Redis) → configure credentials → connect via env vars.
-
-## Helper Commands
-
-```bash
-# Server management
-./.agents/scripts/coolify-helper.sh list
-./.agents/scripts/coolify-helper.sh connect coolify-main
-./.agents/scripts/coolify-helper.sh open coolify-main
-./.agents/scripts/coolify-helper.sh status coolify-main
-
-# Application and SSH
-./.agents/scripts/coolify-helper.sh apps main_server
-./.agents/scripts/coolify-helper.sh exec coolify-main 'docker ps'
-./.agents/scripts/coolify-helper.sh generate-ssh-configs
-ssh coolify-main  # after generate-ssh-configs
-```
-
-## Monitoring & Maintenance
-
-```bash
-# Health checks
-./.agents/scripts/coolify-helper.sh exec coolify-main 'systemctl status coolify'
-./.agents/scripts/coolify-helper.sh exec coolify-main 'docker ps'
-./.agents/scripts/coolify-helper.sh exec coolify-main 'df -h'
-./.agents/scripts/coolify-helper.sh exec coolify-main 'free -h'
-
-# Logs
-./.agents/scripts/coolify-helper.sh exec coolify-main 'docker logs coolify'
-./.agents/scripts/coolify-helper.sh exec coolify-main 'journalctl -u coolify -f'
-# Application logs: Coolify dashboard → Application → Logs tab
-```
-
-**Backups:** Configure automatic DB backups in Coolify; app code lives in Git; take regular VPS snapshots.
-
-## Security
-
-- SSH keys over passwords; restrict SSH to specific IPs
-- Firewall: only ports 22/80/443/8000
-- Enable automatic security updates
-- Use env vars for secrets; HTTPS is automatic
-- Strong DB passwords; rotate API tokens regularly
-
-## Troubleshooting
-
-| Symptom | Check |
-|---------|-------|
-| Deployment fails | Build logs in dashboard; env vars; disk/memory |
-| SSL issues | DNS points to server; ports 80/443 open; Let's Encrypt rate limits |
-| App not accessible | App logs; port config; health check endpoint; `docker ps` |
-| DB connection fails | DB running; connection string/credentials; container networking; DB logs |
+**Database:** Databases → create (PostgreSQL/MySQL/MongoDB/Redis) → credentials → connect via env vars.
 
 ## Resources
 
