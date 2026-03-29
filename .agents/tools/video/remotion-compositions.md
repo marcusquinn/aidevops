@@ -9,21 +9,20 @@ metadata:
 `<Composition>` defines component, dimensions, fps and duration for a renderable video. Place in `src/Root.tsx`.
 
 ```tsx
+// src/Root.tsx
 import { Composition } from "remotion";
 import { MyComposition } from "./MyComposition";
 
-export const RemotionRoot = () => {
-  return (
-    <Composition
-      id="MyComposition"
-      component={MyComposition}
-      durationInFrames={100}
-      fps={30}
-      width={1080}
-      height={1080}
-    />
-  );
-};
+export const RemotionRoot = () => (
+  <Composition
+    id="MyComposition"
+    component={MyComposition}
+    durationInFrames={100}
+    fps={30}
+    width={1080}
+    height={1080}
+  />
+);
 ```
 
 ## Default Props
@@ -31,25 +30,18 @@ export const RemotionRoot = () => {
 `defaultProps` provides initial values. Must be JSON-serializable (`Date`, `Map`, `Set`, `staticFile()` supported). Use `type` (not `interface`) for props to ensure type safety with `satisfies`.
 
 ```tsx
-import { Composition } from "remotion";
-import { MyComposition, MyCompositionProps } from "./MyComposition";
-
-export const RemotionRoot = () => {
-  return (
-    <Composition
-      id="MyComposition"
-      component={MyComposition}
-      durationInFrames={100}
-      fps={30}
-      width={1080}
-      height={1080}
-      defaultProps={{
-        title: "Hello World",
-        color: "#ff0000",
-      } satisfies MyCompositionProps}
-    />
-  );
-};
+<Composition
+  id="MyComposition"
+  component={MyComposition}
+  durationInFrames={100}
+  fps={30}
+  width={1080}
+  height={1080}
+  defaultProps={{
+    title: "Hello World",
+    color: "#ff0000",
+  } satisfies MyCompositionProps}
+/>
 ```
 
 ## Folders
@@ -59,22 +51,18 @@ export const RemotionRoot = () => {
 ```tsx
 import { Composition, Folder } from "remotion";
 
-export const RemotionRoot = () => {
-  return (
-    <>
-      <Folder name="Marketing">
-        <Composition id="Promo" /* ... */ />
-        <Composition id="Ad" /* ... */ />
-      </Folder>
-      <Folder name="Social">
-        <Folder name="Instagram">
-          <Composition id="Story" /* ... */ />
-          <Composition id="Reel" /* ... */ />
-        </Folder>
-      </Folder>
-    </>
-  );
-};
+<>
+  <Folder name="Marketing">
+    <Composition id="Promo" /* ... */ />
+    <Composition id="Ad" /* ... */ />
+  </Folder>
+  <Folder name="Social">
+    <Folder name="Instagram">
+      <Composition id="Story" /* ... */ />
+      <Composition id="Reel" /* ... */ />
+    </Folder>
+  </Folder>
+</>
 ```
 
 ## Stills
@@ -83,18 +71,8 @@ export const RemotionRoot = () => {
 
 ```tsx
 import { Still } from "remotion";
-import { Thumbnail } from "./Thumbnail";
 
-export const RemotionRoot = () => {
-  return (
-    <Still
-      id="Thumbnail"
-      component={Thumbnail}
-      width={1280}
-      height={720}
-    />
-  );
-};
+<Still id="Thumbnail" component={Thumbnail} width={1280} height={720} />
 ```
 
 ## Calculate Metadata
@@ -115,25 +93,20 @@ const calculateMetadata: CalculateMetadataFunction<MyCompositionProps> = async (
 
   return {
     durationInFrames: Math.ceil(data.duration * 30),
-    props: {
-      ...props,
-      videoUrl: data.url,
-    },
+    props: { ...props, videoUrl: data.url },
   };
 };
 
-export const RemotionRoot = () => {
-  return (
-    <Composition
-      id="MyComposition"
-      component={MyComposition}
-      durationInFrames={100} // Placeholder, will be overridden
-      fps={30}
-      width={1080}
-      height={1080}
-      defaultProps={{ videoId: "abc123" }}
-      calculateMetadata={calculateMetadata}
-    />
-  );
-};
+export const RemotionRoot = () => (
+  <Composition
+    id="MyComposition"
+    component={MyComposition}
+    durationInFrames={100} // Placeholder, will be overridden
+    fps={30}
+    width={1080}
+    height={1080}
+    defaultProps={{ videoId: "abc123" }}
+    calculateMetadata={calculateMetadata}
+  />
+);
 ```
