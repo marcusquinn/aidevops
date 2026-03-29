@@ -1097,9 +1097,9 @@
       "pr": 11825
     },
     ".agents/tools/credentials/api-key-setup.md": {
-      "hash": "ee10d602e9a5a6b081507cf9ff52a2d8fc4eed86",
-      "at": "2026-03-28T14:16:13Z",
-      "pr": 11908
+      "hash": "3fe770105e7b4c6edbff6f572b5189e5c2a7ba17",
+      "at": "2026-03-29T20:53:50Z",
+      "pr": 13279
     },
     ".agents/marketing-sales/ad-creative.md": {
       "hash": "0fd2f3ed67a352a6b59ca35f1cb1be0ca62f691f",
@@ -1577,9 +1577,9 @@
       "pr": 12326
     },
     ".agents/seo/debug-favicon.md": {
-      "hash": "f9e871983fc1d52343dd069d7652c33e7268ae92",
-      "at": "2026-03-28T23:06:01Z",
-      "pr": 12327
+      "hash": "67a57794e5e50a12e30de9641e2fb470e57f51a2",
+      "at": "2026-03-29T20:53:48Z",
+      "pr": 13302
     },
     ".agents/tools/code-review/code-simplifier.md": {
       "hash": "3c2a1ec63a1f86656f6b810735512aa40ceb5cbd",
@@ -2382,8 +2382,8 @@
       "pr": 13113
     },
     ".agents/workflows/sql-migrations.md": {
-      "hash": "9ee4c8b11a2908d9e863071187f07a86bbdc6cd1",
-      "at": "2026-03-29T19:05:53Z",
+      "hash": "096b81f4a8f6513b7a2a1166ffae83f71f206913",
+      "at": "2026-03-29T20:54:14Z",
       "pr": 13167
     },
     ".agents/tools/voice/qwen3-tts.md": {
@@ -2392,14 +2392,89 @@
       "pr": 13190
     },
     ".agents/marketing-sales/ad-creative-chapter-11.md": {
-      "hash": "d1ab934388110ed38c41c414ad164ff2b78414a3",
-      "at": "2026-03-29T19:49:56Z",
+      "hash": "2fbaad774769229326c549e278ffe31d26906d66",
+      "at": "2026-03-29T20:54:11Z",
       "pr": 13222
     },
     ".agents/tools/vision/image-generation.md": {
       "hash": "68fb24cbb02218008d86f1fb1381347f5ac1e533",
       "at": "2026-03-29T19:51:31Z",
       "pr": 13249
+    },
+    ".agents/tools/context/dspy.md": {
+      "hash": "a452d6023063a0eebf04141ae94d61a0867830da",
+      "at": "2026-03-29T20:53:49Z",
+      "pr": 13289
+    },
+    ".agents/tools/voice/ios-shortcut.md": {
+      "hash": "bf8f2ead853742819aa8ea972f3f39d7e38c58be",
+      "at": "2026-03-29T20:53:52Z",
+      "pr": 13286
+    },
+    ".agents/services/email/email-design-test.md": {
+      "hash": "a977dcc2a7b9ac1ae04172c353228a5011ab9094",
+      "at": "2026-03-29T20:53:53Z",
+      "pr": 13292
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/workers-for-platforms-gotchas.md": {
+      "hash": "eb3c145850e0125035e13fd4bd424405fa4efb97",
+      "at": "2026-03-29T20:53:54Z",
+      "pr": 13291
+    },
+    ".agents/tools/mobile/ios-simulator-mcp.md": {
+      "hash": "c671f21c21913d5bc3199aaaf1ad5ea389fa67e7",
+      "at": "2026-03-29T20:53:56Z",
+      "pr": 13299
+    },
+    ".agents/tools/security/cdn-origin-ip.md": {
+      "hash": "0ffd8a94c87de9f75a5515cd4ad4e87ab4b1552b",
+      "at": "2026-03-29T20:53:57Z",
+      "pr": 13290
+    },
+    ".agents/scripts/commands/show-plan.md": {
+      "hash": "a50ab6b6bab142d6f388d385dfa6a525b458cac9",
+      "at": "2026-03-29T20:53:58Z",
+      "pr": 13285
+    },
+    ".agents/services/communications/bitchat.md": {
+      "hash": "38ac38ee1cb82fb462fc13746fbf560042e6e9a7",
+      "at": "2026-03-29T20:53:59Z",
+      "pr": 13287
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/d1-patterns.md": {
+      "hash": "9161576c073174af3b4edfd2cb27b3e7d665d6bf",
+      "at": "2026-03-29T20:54:02Z",
+      "pr": 13296
+    },
+    ".agents/tools/context/context-builder.md": {
+      "hash": "27fb0c83ee803a7eebb4ace6202875b0a844786b",
+      "at": "2026-03-29T20:54:03Z",
+      "pr": 13297
+    },
+    ".agents/tools/diagrams/mermaid-diagrams-skill/cheatsheet.md": {
+      "hash": "d21ccba43b9c70f76a2c3d2a1e7fd29a8217d0dd",
+      "at": "2026-03-29T20:54:05Z",
+      "pr": 13300
+    },
+    ".agents/tools/git/opencode-gitlab.md": {
+      "hash": "dbbdec9a030f52229eab4d047431f4ed5b0de5ca",
+      "at": "2026-03-29T20:54:06Z",
+      "pr": 13295
+    },
+    ".agents/marketing-sales/cro-chapter-01.md": {
+      "hash": "5dad243a2a5744924aeb5b2e39fe94aad887af5e",
+      "at": "2026-03-29T20:54:07Z",
+      "pr": 13294
+    },
+    ".agents/seo/programmatic-seo.md": {
+      "hash": "d88edb7fe13f23a1c4ce84da7b8eb62964d54908",
+      "at": "2026-03-29T20:54:08Z",
+      "pr": 13301
+    },
+    ".agents/tools/mobile/app-dev-backend.md": {
+      "hash": "1521ed7526fbc0fb399a1f5edf01adb4129a08f6",
+      "at": "2026-03-29T20:54:10Z",
+      "pr": 13293
     }
   }
 }
