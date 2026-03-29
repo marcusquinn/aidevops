@@ -1,278 +1,103 @@
 # Email Sequence Templates
 
-## Shared Conventions (omit from each email)
+Copy-paste templates for common sequences. Strategy/planning: [Email Sequences Framework](direct-response-copy-frameworks-email-sequences.md).
 
-- Greeting: `Hey [First Name],` or `[First Name],`
-- Sign-off: `[Your Name]` (solo) or `— [Your Name/Team]` (SaaS/company)
-- Every email ends with a reply invitation ("Just reply", "Hit reply", etc.)
-- Guarantee: `"You're protected by our [X]-day guarantee. Zero risk."`
+## Shared Conventions
+
+**Defaults** (don't repeat per email): Greeting `Hey [First Name],` / Sign-off `[Your Name]` / Reply invitation at end / Guarantee: `"Protected by our [X]-day guarantee. Zero risk."`
 
 ## Reusable Patterns
 
-### Social Proof
+Referenced by name across sequences — customize inline.
 
-```text
-I want to introduce you to [Customer Name].
-Before: [Their situation before]
-Challenge: [What was holding them back]
-Then they [took specific action with your help].
-After: [Specific results — use numbers]
-"[Testimonial quote]"
-The key insight? [What made the difference]
-[CTA — soft or hard depending on sequence stage]
-```
+**Social Proof**: `I want to introduce you to [Customer]. Before: [situation] → Challenge: [blocker] → Then they [action]. After: [results with numbers]. "[Testimonial]" The key insight? [Differentiator] [CTA]`
 
-### Objection Handling
+**Objection Handling (Q&A)**: `"Worth the price?" → [Value statement] · "Work for me?" → [Use cases] · "What if I don't like it?" → [Guarantee] · [Product-specific Qs] [CTA]`
 
-```text
-Here are the questions most people have:
-"Is it really worth the price?" → [Brief value statement]
-"Will it work for my situation?" → [Address common use cases]
-"What if I don't like it?" → [Guarantee reminder]
-[Additional product-specific Qs as needed]
-[CTA]
-```
-
-### Urgency
-
-```text
-[What's ending] disappear in [timeframe].
-After [deadline]:
-❌ [Loss 1]  ❌ [Loss 2]  ❌ [Price increase]
-If you've been on the fence, now's the time.
-[CTA]
-```
+**Urgency / Final Push**: `[What's ending] disappear in [timeframe]. After [deadline]: ❌ [Loss 1] ❌ [Loss 2] ❌ [Price increase]. If you've been on the fence, now's the time. [CTA]`
 
 ---
 
 ## Welcome Sequence (5 Emails)
 
-### Email 1: Welcome + Delivery (Day 0)
+**E1 — Welcome + Delivery (Day 0)** · Subject: `Welcome to [Brand] + Your [Resource] Is Here`
+Body: Welcome intro → deliver [Resource] via [Download Link] → "I created this because [their problem]" → preview next 3 emails → `P.S. The [section] is my favorite—start there.`
 
-**Subject:** Welcome to [Brand] + Your [Resource] Is Here
+**E2 — Quick Win (Day 1)** · Subject: `Try this [timeframe] trick for [quick result]`
+Body: Reference yesterday's resource → [Actionable tip, 3-5 sentences] → why it works → preview next email.
 
-```text
-Welcome! I'm [Your Name], and I'm glad you're here.
-As promised, here's your [Resource Name]: [Download Link]
-I created [Resource] because [connect to their problem].
-Over the next few days, I'll share:
-• [Email 2 topic]  • [Email 3 topic]  • [Email 4 topic]
-Grab your [resource] and let me know if you have questions.
-P.S. The [specific section/page] is my favorite part—start there.
-```
+**E3 — Story + Lesson (Day 3)** · Subject: `The [mistake/discovery] that changed everything`
+Body: "[Timeframe] ago, I was [their situation]" → tried [failures] → [discovery moment] → lesson + specific action step.
 
-### Email 2: Quick Win (Day 1)
+**E4 — Social Proof (Day 5)** · Subject: `How [Customer] [achieved result]` · Uses **Social Proof**. Soft CTA: preview tomorrow's offer.
 
-**Subject:** Try this [timeframe] trick for [quick result]
-
-```text
-Yesterday I sent you [Resource]. Did you grab it?
-Here's a quick win you can use right now:
-[Actionable tip in 3-5 sentences]
-Why it works: [Brief explanation]
-Try it today. Tomorrow, I'll share [preview of next email].
-```
-
-### Email 3: Story + Lesson (Day 3)
-
-**Subject:** The [mistake/discovery] that changed everything
-
-```text
-[Timeframe] ago, I was [in their situation].
-I tried [what didn't work]. Spent [money/time] on [failed solutions]. Was about to [give up].
-Then [discovery moment]. [What changed]
-The lesson? [Key takeaway they can apply]
-If you're in a similar spot: [Specific action step]
-```
-
-### Email 4: Social Proof (Day 5)
-
-**Subject:** How [Customer Name] [achieved specific result] — Uses **Social Proof pattern**, soft CTA previewing tomorrow's offer.
-
-### Email 5: Offer (Day 7)
-
-**Subject:** Ready to [achieve their desired outcome]?
-
-```text
-Over the past week, I've shared: • [Value 1] • [Value 2] • [Value 3]
-Now I have something for you: [Product Name] — [one-sentence description].
-What you get: • [Benefit 1] • [Benefit 2] • [Benefit 3]
-Plus bonuses: • [Bonus 1] • [Bonus 2]
-[CTA Button: Get [Product Name] →]
-P.S. [Urgency element—deadline, limited spots, etc.]
-```
+**E5 — Offer (Day 7)** · Subject: `Ready to [desired outcome]?`
+Body: Recap week's value (3 bullets) → introduce [Product] → benefits (3 bullets) → bonuses → CTA button → `P.S. [Urgency]`
 
 ---
 
-## Cart Abandonment Sequence (3 Emails)
+## Cart Abandonment (3 Emails)
 
-### Email 1: Reminder (1 Hour)
+**E1 — Reminder (1h)** · Subject: `Did something go wrong?`
+Body: "Noticed you didn't finish checkout. Your cart is saved: [Cart Link]. Hit reply if you need help."
 
-**Subject:** Did something go wrong?
+**E2 — Objections (24h)** · Subject: `Quick question about your [Product] order` · Uses **Objection Handling**. Include cart link after Q&A.
 
-```text
-I noticed you started checking out but didn't finish.
-No worries—your cart is still saved: [Link to Cart]
-If you ran into any issues, just hit reply.
-```
-
-### Email 2: Objection Handling (24 Hours)
-
-**Subject:** Quick question about your [Product] order — Uses **Objection Handling pattern** with cart link after Q&A block.
-
-### Email 3: Final Push + Incentive (48 Hours)
-
-**Subject:** [First Name], one more thing before you go
-
-```text
-One more check-in about [Product].
-Use code [CODE] at checkout for [discount/bonus].
-[Link to Cart] — This code expires in 24 hours.
-P.S. [Guarantee reminder]
-```
+**E3 — Final + Incentive (48h)** · Subject: `[First Name], one more thing before you go`
+Body: "Use code [CODE] for [discount]. [Cart Link] — expires in 24 hours. P.S. [Guarantee]"
 
 ---
 
-## SaaS Trial Sequence (7 Emails)
+## SaaS Trial (7 Emails)
 
-### Email 1: Welcome + Quick Start (Day 0)
+**E1 — Welcome + Quick Start (Day 0)** · Subject: `Welcome to [Product]! Here's how to start`
+Body: 3-step setup (each: action → benefit → direct link) → "Most users finish in [X] min" → `P.S. Trial lasts [X] days.`
 
-**Subject:** Welcome to [Product]! Here's how to start
+**E2 — Feature Highlight (Day 2)** · Subject: `Have you tried [Key Feature] yet?`
+Body: "[Feature] is what hooked most users" → 2-3 sentences on benefit → screenshot/GIF → feature link + tutorial link.
 
-```text
-You're in! Fastest way to get value from [Product]:
-1. [First action] — [benefit] [Link]
-2. [Second action] — [benefit] [Link]
-3. [Third action — the "aha moment"] — [benefit] [Link]
-⏱️ Most users finish setup in under [X] minutes.
-[Log in to [Product] →]
-P.S. Your trial lasts [X] days. Let's make them count!
-```
+**E3 — Social Proof (Day 4)** · Subject: `"[Result]" — How [Customer] uses [Product]` · Uses **Social Proof** + "They did it by [product action]." Hard CTA.
 
-### Emails 2 & 5: Feature Highlight (Day 2, Day 10)
+**E4 — Check-in (Day 7)** · Subject: `How's [Product] working for you?`
+Body: "Halfway through—how's it going?" → ask about key action → 3 undiscovered features/tips → login CTA.
 
-**Subject:** Have you tried [Key Feature] yet? / The [Feature] trick most users miss — Send twice: core hook feature (Day 2), power-user feature (Day 10).
+**E5 — Feature #2 (Day 10)** · Subject: `The [Feature] trick most users miss` · Same as E2 structure. Power-user feature + 3-4 step how-to.
 
-```text
-Most [Product] users say [Feature Name] is what hooked them.
-[2-3 sentences: feature + benefit]
-[Screenshot or GIF]
-Try it now: [Link directly to feature]
-Not sure how? 2-minute tutorial: [Video link]
-```
+**E6 — Trial Ending (Day 12)** · Subject: `Your trial ends in 2 days` · Uses **Urgency** (losses = features + data). CTA: `[Upgrade →]`. "Need more time? Reply."
 
-Email 5 variant: add step-by-step (3-4 steps) + screenshot.
-
-### Email 3: Social Proof (Day 4)
-
-**Subject:** "[Result achieved]" — How [Customer] uses [Product] — Uses **Social Proof pattern** + "They did it by [specific action in the product]." Hard CTA to feature link.
-
-### Email 4: Check-in (Day 7)
-
-**Subject:** How's [Product] working for you?
-
-```text
-You're halfway through your trial—how's it going?
-- Have you [completed key action]?  - Need help with anything?
-Things you might not have discovered yet:
-• [Missed feature]  • [Underutilized feature]  • [Pro tip]
-[Log in to [Product] →]
-```
-
-### Email 6: Trial Ending Soon (Day 12)
-
-**Subject:** Your trial ends in 2 days — Uses **Urgency pattern** (trial context). Losses: feature access, data/work created. CTA: `[Upgrade Now →]`. Offer extension: "If you need more time, just reply."
-
-### Email 7: Last Day (Day 14)
-
-**Subject:** Your trial expires today
-
-```text
-Your [Product] trial ends at midnight tonight.
-Upgrade now to keep: ✓ [Feature 1] ✓ [Feature 2] ✓ [Work/data created]
-[Upgrade Now →]
-As a thank you, use code [CODE] for [discount] off your first [month/year].
-```
+**E7 — Last Day (Day 14)** · Subject: `Your trial expires today`
+Body: "Ends at midnight" → keep list (✓ features, ✓ data) → upgrade CTA → discount code [CODE].
 
 ---
 
 ## Launch Sequence (7 Emails)
 
-### Email 1: Announcement/Teaser (Day -3)
+**E1 — Teaser (Day -3)** · Subject: `Something new is coming...`
+Body: "Working on this for [timeframe]. On [Date], ready to share." → 1-2 sentence teaser → "For [who] who want [outcome]" → mark calendar. `P.S. [Waitlist CTA]`
 
-**Subject:** Something new is coming...
+**E2 — Problem Agitation (Day -1)** · Subject: `The real reason [problem] happens`
+Body: "Tomorrow's the day. First, let's talk about [problem]." → detail problem → failed approaches (2 bullets) → key insight → "Tomorrow, a different approach."
 
-```text
-I've been working on something for [timeframe].
-On [Date], I'm ready to share it.
-[1-2 sentence teaser—what it is without full details]
-Designed for [who] who want to [outcome].
-Mark your calendar: [Date]
-P.S. [Optional: early access or waitlist CTA]
-```
+**E3 — Launch Day (Day 0)** · Subject: `It's here: [Product Name] is LIVE`
+Body: Introduce + sales page link → "[Product] helps [outcome] without [objection]" → benefits (3) → launch-week bonuses with values → price (launch vs regular) → CTA. `P.S. [Scarcity]`
 
-### Email 2: Problem Agitation (Day -1)
+**E4 — Case Study (Day 2)** · Subject: `"I can't believe this worked" — [Customer]` · Uses **Social Proof**. Frame as launch momentum. Hard CTA.
 
-**Subject:** The real reason [problem] happens
+**E5 — FAQ (Day 4)** · Subject: `Your [Product] questions, answered` · Uses **Objection Handling** + "How long for results?" + "What's included?"
 
-```text
-Tomorrow is the big day. But first, let's talk about [the problem].
-[Describe the problem in detail]
-Most people try:
-• [Approach 1] — but [why it fails]
-• [Approach 2] — but [why it fails]
-The real issue? [Key insight about why the problem persists]
-Tomorrow, I'll show you a different approach.
-```
+**E6 — Urgency (Day 6)** · Subject: `48 hours left for [bonus/price]` · Uses **Urgency**. Losses = bonuses + price increase.
 
-### Email 3: Launch Day (Day 0)
-
-**Subject:** It's here: [Product Name] is LIVE
-
-```text
-Introducing [Product Name]: [Link to Sales Page]
-[Product Name] helps you [outcome] without [objection].
-What you get: • [Benefit 1] • [Benefit 2] • [Benefit 3]
-Launch week only:
-• [Bonus 1] ($[X] value)  • [Bonus 2] ($[X] value)
-[Launch Price: $X (Regular: $Y)]
-[Get [Product Name] Now →]
-P.S. [Scarcity/urgency element]
-```
-
-### Email 4: Story/Case Study (Day 2)
-
-**Subject:** "I can't believe this actually worked" — [Customer Name] — Uses **Social Proof pattern**, open with: "The response to [Product Name] has been incredible." Hard CTA.
-
-### Email 5: FAQ/Objections (Day 4)
-
-**Subject:** Your [Product] questions, answered — Uses **Objection Handling pattern** + product-specific Qs: "How long to see results?" → [Answer]; "What's included exactly?" → [Brief summary].
-
-### Email 6: Urgency (Day 6)
-
-**Subject:** 48 hours left for [bonus/price] — Uses **Urgency pattern**. Losses: launch bonuses + price increase.
-
-### Email 7: Final Hours (Day 7)
-
-**Subject:** [FINAL] Last chance for [Product Name]
-
-```text
-This is it. At midnight tonight:
-• [Bonus/price change 1]  • [Bonus/price change 2]
-[Get [Product Name] Before Midnight →]
-What you'll get: [Quick summary of offer]
-[Get [Product Name] Now →]
-P.S. Last-minute question? Reply now—I'll get back to you before midnight.
-```
+**E7 — Final Hours (Day 7)** · Subject: `[FINAL] Last chance for [Product Name]`
+Body: "At midnight: [changes]" → CTA → offer summary → `P.S. Question? Reply now—I'll answer before midnight.`
 
 ---
 
-## Quick Subject Line Templates
+## Subject Line Quick Reference
 
 | Category | Templates |
 |----------|-----------|
-| **Value** | "[Number] [things] to [achieve result] this week" · "The [adjective] way to [desired outcome]" · "How I [achieved result] (finally)" |
+| **Value** | "[Number] [things] to [result] this week" · "The [adj] way to [outcome]" · "How I [result] (finally)" |
 | **Curiosity** | "I need to tell you something..." · "The [topic] lesson I learned the hard way" · "What nobody tells you about [topic]" |
 | **Urgency** | "[X] hours left" · "Last chance: [offer]" · "Before midnight tonight..." |
-| **Personal** | "Quick question, [First Name]" · "[First Name], saw this and thought of you" · "Can I be honest with you?" |
-| **Story** | "How [Name] went from [before] to [after]" · "I almost [negative thing] until this happened" · "The email I didn't want to send" |
+| **Personal** | "Quick question, [First Name]" · "[First Name], saw this and thought of you" · "Can I be honest?" |
+| **Story** | "How [Name] went from [before] to [after]" · "I almost [negative] until this happened" · "The email I didn't want to send" |
