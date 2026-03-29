@@ -757,9 +757,9 @@
       "pr": 11713
     },
     ".agents/tools/build-agent/build-agent.md": {
-      "hash": "35a0cfc6fa169fd38551c62efcb2fba11445b10e",
-      "at": "2026-03-29T00:03:35Z",
-      "pr": 12360
+      "hash": "08556ac8d5cae4bca810e73ed3b113a6cbd349d0",
+      "at": "2026-03-29T11:20:52Z",
+      "pr": 12897
     },
     ".agents/content/distribution-youtube-topic-research.md": {
       "hash": "d8d475231eff5b53cf27de5ab31aeedaec403e2f",
@@ -1532,9 +1532,9 @@
       "pr": 12310
     },
     ".agents/tools/opencode/opencode.md": {
-      "hash": "164720431feec359fd8203bc5c7de9f95d0747cb",
-      "at": "2026-03-29T08:10:47Z",
-      "pr": 12744
+      "hash": "b338bd4964d10e7780deddb27fc48d772a07be3b",
+      "at": "2026-03-29T11:20:16Z",
+      "pr": 12843
     },
     ".agents/tools/browser/browser-profiles.md": {
       "hash": "2a2c771f4ff870ad450a92a0f9ad950f3f16e3cb",
@@ -1787,9 +1787,9 @@
       "pr": 12761
     },
     ".agents/tools/ai-orchestration/openprose.md": {
-      "hash": "1262d9fdef730a3b203da07297aa7159eb271b8f",
-      "at": "2026-03-29T10:47:26Z",
-      "pr": 12868
+      "hash": "3b5d5da91bbe795953a209f0d5608a17b5a2adf7",
+      "at": "2026-03-29T11:19:57Z",
+      "pr": 12887
     },
     ".agents/content/heygen-skill/rules-avatars.md": {
       "hash": "e600865474071a7973fe0ed89b4fd361065e080a",
@@ -2035,6 +2035,46 @@
       "hash": "edf4d222e440959f1b6f8008c5f8c431204d28a4",
       "at": "2026-03-29T10:48:09Z",
       "pr": 12823
+    },
+    ".agents/tools/ai-assistants/capsolver.md": {
+      "hash": "8394d92195a60933f28ef60d69c0b60837020d94",
+      "at": "2026-03-29T11:19:52Z",
+      "pr": 12885
+    },
+    ".agents/workflows/session-review.md": {
+      "hash": "0209719f0b5eb68905b4edbdc6bffe1fa8d8a54d",
+      "at": "2026-03-29T11:19:53Z",
+      "pr": 12889
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/durable-objects-gotchas.md": {
+      "hash": "befbfbdf1c28bab3d56f52fb86b4a85a7a988da5",
+      "at": "2026-03-29T11:19:55Z",
+      "pr": 12890
+    },
+    ".agents/tools/credentials/vaultwarden.md": {
+      "hash": "af8f3116bacb5f63ec2648c294a2ae9a2fb4670a",
+      "at": "2026-03-29T11:19:56Z",
+      "pr": 12882
+    },
+    ".agents/services/payments/superwall.md": {
+      "hash": "e945006ef69924d2b938a2fdde4484f298864cb3",
+      "at": "2026-03-29T11:20:05Z",
+      "pr": 12883
+    },
+    ".agents/tools/browser/extension-dev/publishing.md": {
+      "hash": "7fe8e877846c0dc155d639a1b5dd214e47c7e499",
+      "at": "2026-03-29T11:20:06Z",
+      "pr": 12884
+    },
+    ".agents/tools/infrastructure/cloudflare-ai.md": {
+      "hash": "6a2f0e88c7495938c3d3683fbbfaf61cdeff1670",
+      "at": "2026-03-29T11:20:08Z",
+      "pr": 12886
+    },
+    ".agents/content/heygen-skill/rules-scripts.md": {
+      "hash": "757e5c37cb9ef410e1551d8bec0d6edcbcc0206c",
+      "at": "2026-03-29T11:20:09Z",
+      "pr": 12888
     }
   }
 }
