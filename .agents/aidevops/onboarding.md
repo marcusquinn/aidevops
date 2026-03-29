@@ -15,16 +15,14 @@ subagents: [setup, troubleshooting, api-key-setup, list-keys, mcp-integrations, 
 - **Script**: `~/.aidevops/agents/scripts/onboarding-helper.sh`
 - **Settings**: `~/.config/aidevops/settings.json` — `settings-helper.sh list|set|reset`
 
-**OpenCode Setup**: NEVER manually write `opencode.json`. Run `~/.aidevops/agents/scripts/generate-opencode-agents.sh`. If OpenCode won't start: `mv ~/.config/opencode/opencode.json ~/.config/opencode/opencode.json.broken` then re-run the generator.
-
-OpenCode JSON errors: `expected record, received array` for tools → use `"tools": {}` not `[]` | `Invalid input mcp.*` → add `"type": "local"` or `"type": "remote"` | `expected boolean, received object` for tools → use `"tool_name": true` not `{...}`. Verify: `jq . ~/.config/opencode/opencode.json > /dev/null`
+**OpenCode Setup**: NEVER manually write `opencode.json`. Run `generate-opencode-agents.sh`. Won't start? `mv ~/.config/opencode/opencode.json{,.broken}` then re-run. JSON fixes: `"tools": {}` not `[]` | add `"type": "local"` or `"type": "remote"` | `"tool_name": true` not `{...}`. Verify: `jq . ~/.config/opencode/opencode.json > /dev/null`
 
 <!-- AI-CONTEXT-END -->
 
 ## Welcome Flow
 
-1. **Introduction** — ask new users if they want an explanation. Capabilities: Autonomous Orchestration, Infrastructure (Hetzner, Hostinger, Cloudron, Coolify), Domains/DNS (Cloudflare, Spaceship, 101domains), Git (GitHub, GitLab, Gitea), Code Quality (SonarCloud, Codacy, CodeRabbit, Snyk), WordPress (LocalWP, MainWP), SEO (DataForSEO, Serper, GSC), Browser Automation (Playwright, Stagehand), Context (Augment, Context7, Repomix)
-2. **Concept familiarity** — ask which they know (Git, Terminal, API keys, Hosting, SEO, AI assistants). Offer brief explanations. Save: `onboarding-helper.sh save-concepts 'git,terminal'`
+1. **Introduction** — ask new users if they want an explanation of capabilities: Orchestration, Infrastructure (Hetzner, Hostinger, Cloudron, Coolify), Domains/DNS (Cloudflare, Spaceship, 101domains), Git (GitHub, GitLab, Gitea), Code Quality (SonarCloud, Codacy, CodeRabbit, Snyk), WordPress (LocalWP, MainWP), SEO (DataForSEO, Serper, GSC), Browser (Playwright, Stagehand), Context (Augment, Context7, Repomix)
+2. **Concept familiarity** — ask which they know (Git, Terminal, API keys, Hosting, SEO, AI assistants). Save: `onboarding-helper.sh save-concepts 'git,terminal'`
 3. **Work type** — ask what they do (web dev, DevOps, SEO, WordPress, other). Save: `onboarding-helper.sh save-work-type devops`
 4. **Current status** — `onboarding-helper.sh status` — show configured vs needs-setup
 5. **Guide setup** — for each service: explain purpose, link to credentials, setup command, verification
@@ -38,7 +36,7 @@ OpenCode JSON errors: `expected record, received array` for tools → use `"tool
 | OpenAI | `OPENAI_API_KEY` | https://platform.openai.com/api-keys |
 | Anthropic | `ANTHROPIC_API_KEY` | https://console.anthropic.com/settings/keys |
 
-Set keys: `~/.aidevops/agents/scripts/setup-local-api-keys.sh set OPENAI_API_KEY "sk-..."`
+Set keys: `setup-local-api-keys.sh set OPENAI_API_KEY "sk-..."`
 
 ### Git Platforms
 
@@ -137,7 +135,6 @@ Set: `setup-local-api-keys.sh set NAME "value"` | List (names only): `list-keys-
 | SEO Professional | DataForSEO → Serper → Google Search Console → Outscraper |
 | WordPress Developer | LocalWP → MainWP → GitHub CLI → Hostinger |
 | Full Stack | All Git CLIs → OpenAI/Anthropic → Augment → Hetzner/Cloudflare → Tailscale → OrbStack → Code quality → Supervisor pulse → DataForSEO → OpenClaw |
-| Mobile-First | OpenClaw → OpenAI/Anthropic → Tailscale → WhatsApp/Telegram channel → `openclaw security audit --fix` |
 
 ## Troubleshooting
 
@@ -172,17 +169,12 @@ jq --argjson dirs '["~/Git", "~/Projects"]' '. + {git_parent_dirs: $dirs}' \
   ~/.config/aidevops/repos.json > /tmp/repos.json && mv /tmp/repos.json ~/.config/aidevops/repos.json
 aidevops repo-sync enable
 
-# Settings
-~/.aidevops/agents/scripts/settings-helper.sh set orchestration.enabled true
-
 # Enable autonomous orchestration
 ~/.aidevops/agents/scripts/onboarding-helper.sh save-orchestration true
 # See scripts/commands/runners.md for launchd (macOS) and cron (Linux) setup
 ```
 
-Settings sections: `user`, `orchestration`, `repo_sync`, `quality`, `model_routing`, `notifications`, `ui`.
-
-Cost note: subscription plans (Claude Max/Pro, OpenAI Pro/Plus) are cheaper than API for sustained use. Reserve API keys for testing.
+Settings: `settings-helper.sh list` to see all sections. Cost note: subscription plans (Claude Max/Pro, OpenAI Pro/Plus) are cheaper than API for sustained use.
 
 ## Next Steps After Setup
 
