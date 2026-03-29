@@ -7,7 +7,7 @@ metadata:
 
 # Writing Scripts for HeyGen Videos
 
-Scripts for AI avatar videos differ from human presenter scripts. This guide covers best practices for natural-sounding, well-paced output.
+AI avatar scripts differ from human presenter scripts — pacing, pauses, and pronunciation must be explicit.
 
 ## Speech Rate and Duration
 
@@ -30,7 +30,7 @@ function estimateDuration(script: string, speed = 1.0): number {
 
 ## Sentence Structure
 
-Keep sentences 10-20 words. AI voices handle shorter sentences more naturally. Split run-ons at natural pause points.
+10-20 words per sentence. AI voices handle shorter sentences more naturally. Split run-ons at natural pause points.
 
 ## Punctuation Effects
 
@@ -78,7 +78,7 @@ Every action is just one click away.
 
 ### Product Demo (~150 words, 60s)
 
-```
+```text
 Hi, I'm [Name], and I'm excited to show you [Product]. <break time="1s"/>
 [Product] helps you [main benefit] in just [timeframe]. <break time="0.5s"/>
 Here's how it works. <break time="1s"/>
@@ -89,7 +89,7 @@ Ready to get started? <break time="0.5s"/> Visit [website] today.
 
 ### Tutorial Intro (~225 words, 90s)
 
-```
+```text
 Welcome to this tutorial on [topic]. <break time="0.5s"/>
 I'm [Name], and I'll guide you through everything you need to know. <break time="1s"/>
 By the end, you'll be able to [outcome 1], [outcome 2], and [outcome 3]. <break time="1s"/>
@@ -105,7 +105,7 @@ If you have questions, leave a comment below. <break time="0.5s"/> Thanks for wa
 
 ### Announcement (~75 words, 30s)
 
-```
+```text
 Big news! <break time="0.5s"/>
 We're thrilled to announce [announcement]. <break time="1s"/>
 This means [benefit 1] and [benefit 2] for all our users. <break time="0.5s"/>
@@ -123,7 +123,7 @@ Head to [location] to learn more. <break time="0.5s"/> We can't wait to hear wha
 
 ## Multi-Scene Scripts
 
-Split scripts across scenes for different backgrounds or avatars. End each scene with a complete thought; start new scenes with brief context. Use pauses at scene starts to let visuals register.
+Split scripts across scenes for different backgrounds or avatars. End each scene on a complete thought; open new scenes with brief context. Pause at scene starts to let visuals register.
 
 ```typescript
 const multiSceneVideo = {
