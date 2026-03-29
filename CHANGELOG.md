@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.274] - 2026-03-29
+
+### Changed
+
+- Maintenance: release v3.5.273
+- Documentation: tighten code-simplifier.md agent doc (200→198 lines) (#13033)
+
+### Fixed
+
+- Linux compat — remove PPID gate, broaden session detection, robust version (GH#13012) (#13021)
+
 ## [3.5.270] - 2026-03-29
 
 ### Changed
