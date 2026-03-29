@@ -1,12 +1,12 @@
 # AI Writing Detection
 
-Words, phrases, and punctuation patterns commonly associated with AI-generated text. Avoid these to ensure writing sounds natural and human.
+Words, phrases, and punctuation patterns associated with AI-generated text. Avoid these.
 
 Sources: Grammarly (2025), Microsoft 365 Life Hacks (2025), GPTHuman (2025), Walter Writes (2025), Textero (2025), Plagiarism Today (2025), Rolling Stone (2025), MDPI Blog (2025)
 
 ## Em Dashes: The Primary AI Tell
 
-The em dash (—) is one of the most reliable markers of AI-generated content. AI models drastically overuse it as a shortcut for sentence variety. Use commas for most parenthetical information, colons to introduce lists, parentheses for supplementary information. Reserve em dashes for rare, deliberate emphasis only — more than one per page → revise.
+AI models drastically overuse em dashes (—) as a shortcut for sentence variety. Use commas for parenthetical information, colons for lists, parentheses for supplementary content. More than one per page → revise.
 
 | Instead of | Use |
 |------------|-----|
