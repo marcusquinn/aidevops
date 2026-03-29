@@ -42,17 +42,15 @@ uvx --from paddleocr-mcp paddleocr_mcp       # Zero-install via uvx
 
 ## Models
 
-| Model | Best For | Size | Speed | GPU | Bbox |
-|-------|----------|------|-------|-----|------|
-| **PP-OCRv5** | Screenshots, scene text, batch OCR | ~100MB | Fast | No | Yes |
-| **PaddleOCR-VL-1.5** | Document understanding, cross-page | ~2GB | Medium | Yes | Yes |
-| **PP-StructureV3** | Tables, layout → HTML/markdown | ~200MB | Medium | No | Yes |
-| **GLM-OCR** (Ollama) | Quick local OCR, zero setup | ~2GB | Fast | No | No |
-| **GPT-4o / Claude** | Complex reasoning + vision | Cloud | Fast | No | No |
+| Model | Best For | Size | GPU | Bbox |
+|-------|----------|------|-----|------|
+| **PP-OCRv5** | Screenshots, scene text, batch OCR | ~100MB | No | Yes |
+| **PaddleOCR-VL-1.5** | Document understanding, cross-page | ~2GB | Yes | Yes |
+| **PP-StructureV3** | Tables, layout → HTML/markdown | ~200MB | No | Yes |
 
-**PP-OCRv5**: 13% accuracy improvement over v4, 100+ languages, 2M-param multilingual models, improved handwriting, polygon bounding boxes.
+**PP-OCRv5**: 13% accuracy over v4, 100+ languages, 2M-param multilingual models, improved handwriting, polygon bounding boxes.
 
-**PaddleOCR-VL-1.5**: NaViT + ERNIE-4.5-0.3B, 94.5% OmniDocBench v1.5 (SOTA <4B), handles skew/warping/cross-page tables. HuggingFace: `PaddlePaddle/PaddleOCR-VL-1.5`. Needs GPU.
+**PaddleOCR-VL-1.5**: NaViT + ERNIE-4.5-0.3B, 94.5% OmniDocBench v1.5 (SOTA <4B), handles skew/warping/cross-page tables. HuggingFace: `PaddlePaddle/PaddleOCR-VL-1.5`. Requires GPU (4GB+ VRAM).
 
 **Limitations**: PaddlePaddle dependency (~500MB), not for PDF→markdown (use MinerU), no built-in structured extraction (pair with ExtractThinker).
 
@@ -80,7 +78,7 @@ vlm = PaddleOCRVL(model_name="PaddleOCR-VL-1.5")
 result = vlm.predict("complex_document.png")
 ```
 
-**3.4.0 API changes** (breaking):
+**3.4.0 breaking changes**:
 
 | Old | New | Notes |
 |-----|-----|-------|
@@ -92,7 +90,7 @@ result = vlm.predict("complex_document.png")
 
 Four modes via `--ppocr_source`: `local` (offline), `aistudio` (Baidu cloud), `qianfan` (Baidu AI Cloud), `self_hosted`.
 
-**Claude Desktop config (local mode)**:
+**Claude Desktop config** (`PADDLEOCR_MCP_PIPELINE`: `OCR`, `PP-StructureV3`, `PaddleOCR-VL`, `PaddleOCR-VL-1.5`):
 
 ```json
 {
@@ -100,20 +98,15 @@ Four modes via `--ppocr_source`: `local` (offline), `aistudio` (Baidu cloud), `q
     "paddleocr": {
       "command": "paddleocr_mcp",
       "args": [],
-      "env": {
-        "PADDLEOCR_MCP_PIPELINE": "OCR",
-        "PADDLEOCR_MCP_PPOCR_SOURCE": "local"
-      }
+      "env": { "PADDLEOCR_MCP_PIPELINE": "OCR", "PADDLEOCR_MCP_PPOCR_SOURCE": "local" }
     }
   }
 }
 ```
 
-`PADDLEOCR_MCP_PIPELINE` options: `OCR`, `PP-StructureV3`, `PaddleOCR-VL`, `PaddleOCR-VL-1.5`.
-
 ```bash
 paddleocr_mcp --pipeline OCR --ppocr_source local              # stdio (default)
-paddleocr_mcp --pipeline PaddleOCR-VL-1.5 --ppocr_source local
+paddleocr_mcp --pipeline PaddleOCR-VL-1.5 --ppocr_source local # VL model
 paddleocr_mcp --pipeline OCR --ppocr_source local --http       # HTTP transport
 paddleocr_mcp --pipeline OCR --ppocr_source self_hosted --server_url http://127.0.0.1:8080
 ```
@@ -138,29 +131,11 @@ for img in sorted(glob.glob('images/*.png')):
 
 ## Language Support
 
-| Group | Examples | Codes |
-|-------|----------|-------|
-| Chinese | Simplified, Traditional | `ch`, `chinese_cht` |
-| Latin | English, French, German, Spanish | `en`, `fr`, `german`, `es` |
-| Cyrillic | Russian, Ukrainian, Serbian | `ru`, `uk`, `rs_cyrillic` |
-| Arabic | Arabic, Farsi, Urdu | `ar`, `fa`, `ur` |
-| Devanagari | Hindi, Marathi, Nepali | `hi`, `mr`, `ne` |
-| CJK | Japanese, Korean | `japan`, `korean` |
-| SE Asian | Thai, Vietnamese, Tamil | `th`, `vi`, `ta` |
+Common codes: `ch` (Chinese simplified), `chinese_cht` (traditional), `en`, `fr`, `german`, `es`, `ru`, `uk`, `ar`, `fa`, `hi`, `japan`, `korean`, `th`, `vi`. Full list (100+ languages): <https://github.com/PaddlePaddle/PaddleOCR/blob/main/docs/version3.x/model_list/multi_languages.en.md>
 
-Full list: <https://github.com/PaddlePaddle/PaddleOCR/blob/main/docs/version3.x/model_list/multi_languages.en.md>
+## Hardware & Troubleshooting
 
-## Hardware Requirements
-
-| | PP-OCRv5 CPU | PP-OCRv5 GPU | PaddleOCR-VL-1.5 |
-|-|-------------|-------------|------------------|
-| RAM | 4GB+ | 4GB+ | 8GB+ |
-| VRAM | — | 2GB+ | 4GB+ |
-| Disk | ~500MB | ~1.5GB | ~2GB |
-
-Accelerators: NVIDIA (incl. RTX 50, CUDA 12), Apple Silicon (MPS), Kunlunxin XPU, Huawei Ascend NPU, Hygon DCU.
-
-## Troubleshooting
+**Requirements**: PP-OCRv5 CPU: 4GB RAM, ~500MB disk. PP-OCRv5 GPU: 2GB+ VRAM, ~1.5GB disk. PaddleOCR-VL-1.5: 8GB+ RAM, 4GB+ VRAM, ~2GB disk. Accelerators: NVIDIA (incl. RTX 50, CUDA 12), Apple Silicon (MPS), Kunlunxin XPU, Huawei Ascend NPU, Hygon DCU.
 
 **OneDNN crash on Linux CPU** (`NotImplementedError: ConvertPirAttribute2RuntimeAttribute`): set `FLAGS_use_mkldnn=False` and `enable_mkldnn=False` (see Python API above). `paddleocr-helper.sh` applies this automatically.
 
@@ -168,16 +143,11 @@ Accelerators: NVIDIA (incl. RTX 50, CUDA 12), Apple Silicon (MPS), Kunlunxin XPU
 
 **Slow CPU**: resize to max 1920px; reuse `PaddleOCR()` instance; use mobile models. `enable_mkldnn=True` improves speed but crashes on PaddlePaddle 3.3.0.
 
-**MCP not responding**:
-
-```bash
-paddleocr_mcp --help
-echo '{"jsonrpc":"2.0","method":"initialize","params":{},"id":1}' | paddleocr_mcp --pipeline OCR --ppocr_source local
-```
+**MCP not responding**: `paddleocr_mcp --help` or test with `echo '{"jsonrpc":"2.0","method":"initialize","params":{},"id":1}' | paddleocr_mcp --pipeline OCR --ppocr_source local`.
 
 ## Integration
 
-```
+```text
 Image/Screenshot --> PaddleOCR --> Raw text + bounding boxes
 PDF document     --> MinerU    --> Markdown/JSON (layout-aware)
 ```
@@ -186,11 +156,9 @@ For structured JSON extraction (invoices, receipts): pass `ocr.predict()` output
 
 ## Platform Notes
 
-| Platform | Status | Notes |
-|----------|--------|-------|
-| Linux x86_64 | Verified 2026-03-01 (3.4.0 + PP 3.3.0 CPU) | OneDNN fix required; 42 regions from 800×600, >95% confidence |
-| macOS Apple Silicon | Unverified | CPU backend expected; MPS via PaddlePaddle 3.0+ |
-| Linux NVIDIA GPU | Unverified | Install `paddlepaddle-gpu`; OneDNN workaround not needed |
+- **Linux x86_64**: Verified 2026-03-01 (3.4.0 + PP 3.3.0 CPU). OneDNN fix required; 42 regions from 800×600, >95% confidence.
+- **macOS Apple Silicon**: Unverified. CPU backend expected; MPS via PaddlePaddle 3.0+.
+- **Linux NVIDIA GPU**: Unverified. Install `paddlepaddle-gpu`; OneDNN workaround not needed.
 
 ## Resources
 
