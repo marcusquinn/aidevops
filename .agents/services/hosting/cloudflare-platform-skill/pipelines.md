@@ -26,6 +26,7 @@ npx wrangler pipelines create my-pipeline \
 {
   "fields": [
     { "name": "user_id", "type": "string", "required": true },
+    { "name": "event_type", "type": "string", "required": false },
     { "name": "amount", "type": "float64", "required": false },
     { "name": "tags", "type": "list", "required": false, "items": { "type": "string" } },
     { "name": "metadata", "type": "struct", "required": false,
