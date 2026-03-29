@@ -1,15 +1,7 @@
 ---
 description: Google Chat bot integration — HTTP webhook, service account auth, DM/space messaging, Cards, access control, runner dispatch
 mode: subagent
-tools:
-  read: true
-  write: false
-  edit: false
-  bash: true
-  glob: false
-  grep: false
-  webfetch: false
-  task: false
+tools: { read: true, bash: true }
 ---
 
 # Google Chat Bot Integration
@@ -159,7 +151,17 @@ google-chat-helper.sh test-auth                                  # verify token
 
 **Gemini warning**: Verify Gemini AI settings (Admin Console > Additional Google services > Gemini) and Workspace DPA before deploying with sensitive data. For sensitive comms, prefer Matrix or SimpleX — see `tools/security/opsec.md`.
 
-**Bot security rules**: `verifyGoogleTokens: true` always (prevents forged requests) | SA key: 600 perms, never commit | `allowedUsers`: restrict to specific users | Scan inbound with `prompt-guard-helper.sh`, outbound for credential patterns | Reverse proxy (Caddy/Cloudflare) for TLS | Log all events, redact sensitive content | FCM note: Google FCM infrastructure knows when users receive Chat push notifications.
+**Bot security rules**:
+
+| Rule | Detail |
+|------|--------|
+| `verifyGoogleTokens: true` | Always — prevents forged requests |
+| SA key permissions | 600 perms, never commit |
+| `allowedUsers` | Restrict to specific users in production |
+| Inbound scanning | `prompt-guard-helper.sh`; outbound: scan for credential patterns |
+| TLS | Reverse proxy (Caddy/Cloudflare) required |
+| Logging | Log all events, redact sensitive content |
+| FCM note | Google FCM infrastructure knows when users receive Chat push notifications |
 
 ## Limitations
 
