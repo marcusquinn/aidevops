@@ -2452,8 +2452,8 @@ _create_simplification_issues() {
 	local total_open
 	total_open=$(gh api graphql -f query="query { repository(owner:\"${repo_slug%%/*}\", name:\"${repo_slug##*/}\") { issues(labels:[\"simplification-debt\"], states:OPEN) { totalCount } } }" \
 		--jq '.data.repository.issues.totalCount' 2>/dev/null) || total_open="0"
-	if [[ "${total_open:-0}" -ge 100 ]]; then
-		echo "[stats] Simplification issues: skipping — ${total_open} open (cap: 100)" >>"$LOGFILE"
+	if [[ "${total_open:-0}" -ge 200 ]]; then
+		echo "[stats] Simplification issues: skipping — ${total_open} open (cap: 200)" >>"$LOGFILE"
 		return 0
 	fi
 

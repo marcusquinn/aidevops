@@ -3363,7 +3363,7 @@ ISSUE_BODY_EOF
 # Exit codes: 0 = under cap (safe to create), 1 = at/over cap (skip)
 _complexity_scan_check_open_cap() {
 	local aidevops_slug="$1"
-	local cap="${2:-100}"
+	local cap="${2:-200}"
 	local log_prefix="${3:-Complexity scan}"
 
 	local total_open
@@ -3644,7 +3644,7 @@ This is an automated scan. The function lengths are factual, but the best decomp
 # deep reasoning to distinguish noise from institutional knowledge.
 #
 # Runs at most once per COMPLEXITY_SCAN_INTERVAL (default 15 min — each
-# pulse cycle). Creates up to 5 issues per run; the open cap (100) is
+# pulse cycle). Creates up to 5 issues per run; the open cap (200) is
 # the safety valve against backlog flooding.
 #
 # Returns: 0 always (best-effort, never breaks the pulse)
