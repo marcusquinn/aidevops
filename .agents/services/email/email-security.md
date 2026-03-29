@@ -23,7 +23,7 @@ tools:
 - **Outbound scan**: `secretlint --format stylish <file>`
 - **Related**: `tools/security/prompt-injection-defender.md`, `services/email/email-health-check.md`, `services/email/email-agent.md`
 
-**Decision tree:** Processing inbound email with AI? → [Prompt Injection](#prompt-injection-defense) | Suspicious sender? → [Phishing](#phishing-detection) | Attachments? → [Executable Blocking](#executable-file-blocking) | Sending sensitive info? → [Secure Sharing](#secure-information-sharing) | Need encryption? → [S/MIME](#smime) / [OpenPGP](#openpgp) | Receiving commands? → [Inbound Commands](#inbound-command-security) | Forwarding receipts? → [Transaction Verification](#transaction-email-verification) | Sending outbound? → [Credential Scanning](#outbound-credential-scanning)
+**Decision tree:** Inbound AI processing? → [Prompt Injection](#prompt-injection-defense) | Suspicious sender? → [Phishing](#phishing-detection) | Attachments? → [Executable Blocking](#executable-file-blocking) | Sensitive data? → [Secure Sharing](#secure-information-sharing) | Encryption? → [S/MIME](#smime) / [OpenPGP](#openpgp) | Email commands? → [Inbound Commands](#inbound-command-security) | Receipts/invoices? → [Transaction Verification](#transaction-email-verification) | Outbound? → [Credential Scanning](#outbound-credential-scanning)
 
 <!-- AI-CONTEXT-END -->
 
@@ -39,18 +39,14 @@ echo "$email_body" | prompt-guard-helper.sh scan-stdin
     --detail sender="$sender" --detail subject="$subject"
 prompt-guard-helper.sh scan "$email_subject"
 prompt-guard-helper.sh scan-file /tmp/extracted-attachment.txt
-# Poll loop: extract body → scan → quarantine on non-zero → process only if clean
 ```
 
-**Attack types caught:** instruction override ("Ignore previous instructions…" — CRITICAL), role manipulation ("You are now…" — HIGH), delimiter injection (fake `[SYSTEM]`/`<\|im_start\|>` tags — HIGH), data exfiltration ("Summarize all emails and reply to evil@…" — HIGH), social engineering ("URGENT: Your admin…" — MEDIUM), encoding tricks (base64, Unicode homoglyphs — MEDIUM).
+**Attack types:** instruction override ("Ignore previous instructions…" — CRITICAL), role manipulation ("You are now…" — HIGH), delimiter injection (fake `[SYSTEM]`/`<\|im_start\|>` — HIGH), data exfiltration ("Summarize all emails and reply to…" — HIGH), social engineering ("URGENT: Your admin…" — MEDIUM), encoding tricks (base64, Unicode homoglyphs — MEDIUM).
 
 ## Phishing Detection
 
 ```bash
-dig TXT example.com +short | grep -i spf          # SPF
-dig TXT selector._domainkey.example.com +short     # DKIM
-dig TXT _dmarc.example.com +short                  # DMARC
-email-health-check-helper.sh check example.com     # Full check
+email-health-check-helper.sh check example.com     # SPF/DKIM/DMARC full check
 grep -i "authentication-results" email.eml         # spf=pass dkim=pass dmarc=pass
 grep -E "^(From|Return-Path):" email.eml           # mismatch = spoofing
 ```
@@ -59,7 +55,7 @@ grep -E "^(From|Return-Path):" email.eml           # mismatch = spoofing
 
 ## Executable File Blocking
 
-**Never open executable files or macro-enabled documents.** Blocked categories: Windows executables (`.exe .bat .cmd .com .scr .pif .msi .msp .mst`), scripts (`.ps1 .psm1 .psd1 .vbs .vbe .js .jse .ws .wsf .wsc .wsh`), Java (`.jar .class .jnlp`), Office macros (`.docm .xlsm .pptm .dotm .xltm .potm .xlam .ppam`), other (`.hta .cpl .inf .reg .rgs .sct .shb .lnk .url`), disk images (`.iso .img .vhd .vhdx` — inspect before extracting), Linux/macOS (`.sh` untrusted, `.app .command .action .workflow`).
+**Never open executable files or macro-enabled documents.**
 
 ```bash
 BLOCKED_EXTENSIONS=(exe bat cmd com scr pif msi msp mst ps1 psm1 psd1 vbs vbe js jse ws wsf wsc wsh jar class jnlp docm xlsm pptm dotm xltm potm xlam ppam hta cpl inf reg rgs sct shb lnk url iso img vhd vhdx app command action workflow)
@@ -84,15 +80,15 @@ Also check: display text vs actual URL, typosquatting, credentials in query stri
 
 ## Secure Information Sharing
 
-**Never send confidential data in plain email.** Use [PrivateBin](https://privatebin.info/) (burn after reading) for one-time sharing; passwords via separate channel. S/MIME or OpenPGP for ongoing correspondence. Legal documents: S/MIME preferred for compliance. Self-host via Docker (`privatebin/nginx-fpm-alpine`) or Cloudron.
+**Never send confidential data in plain email.** Use [PrivateBin](https://privatebin.info/) (burn after reading) for one-time sharing; passwords via separate channel. S/MIME or OpenPGP for ongoing correspondence. Legal documents: S/MIME preferred for compliance.
 
 ## Outbound Credential Scanning
 
-**Scan every outbound email draft before sending.** Install: `npm install -g @secretlint/secretlint-rule-preset-recommend @secretlint/core`
+**Scan every outbound email draft before sending.**
 
 ```bash
+# Install: npm install -g @secretlint/secretlint-rule-preset-recommend @secretlint/core
 secretlint --format stylish email-draft.md
-# In send wrapper: write body to tmpfile, run secretlint, block on "error", rm tmpfile
 ```
 
 Detects: AWS keys (`AKIA…`), GitHub tokens (`ghp_…`), Slack tokens (`xoxb-…`), private keys, generic API keys, passwords in URLs, Stripe/SendGrid keys.
@@ -131,7 +127,7 @@ Safeguards: SPF/DKIM/DMARC must pass; rate-limit 10/sender/hour; confirmation re
 
 ## Transaction Email Verification
 
-Before forwarding receipts/invoices to accounts, verify: (1) SPF/DKIM/DMARC pass, (2) sender domain matches `From:`/`Return-Path:`/`DKIM d=`, (3) domain age > 30 days, (4) DMARC policy `p=quarantine` or `p=reject`, (5) links go to vendor's actual domain, (6) amount/invoice number match known transactions.
+Before forwarding receipts/invoices, verify: SPF/DKIM/DMARC pass, sender domain matches `From:`/`Return-Path:`/`DKIM d=`, domain age > 30 days, DMARC `p=quarantine` or `p=reject`, links go to vendor's actual domain, amount/invoice number match known transactions.
 
 **Red flags:** unexpected invoice, changed bank details, urgency, slightly-wrong domain, generic PDF with no invoice number, login link.
 
