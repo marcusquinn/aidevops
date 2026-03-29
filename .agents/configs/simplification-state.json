@@ -1412,9 +1412,9 @@
       "pr": 13021
     },
     ".agents/tools/wordpress/wp-dev.md": {
-      "hash": "aeead744dd3a6ab5c8a9e6cf300adf03cbebceb9",
-      "at": "2026-03-28T20:55:30Z",
-      "pr": 12191
+      "hash": "c88f6e0f70e046ce19bf119077cef234636b2f4d",
+      "at": "2026-03-29T22:09:16Z",
+      "pr": 13341
     },
     ".agents/content/distribution-short-form.md": {
       "hash": "8350ba659dc7fbcbecd70b55d52b65d296ce5401",
@@ -1577,9 +1577,9 @@
       "pr": 12326
     },
     ".agents/seo/debug-favicon.md": {
-      "hash": "67a57794e5e50a12e30de9641e2fb470e57f51a2",
-      "at": "2026-03-29T20:53:48Z",
-      "pr": 13302
+      "hash": "045e2c9b649ddcdfcd71fd207f187edc86071587",
+      "at": "2026-03-29T22:09:18Z",
+      "pr": 13323
     },
     ".agents/tools/code-review/code-simplifier.md": {
       "hash": "3c2a1ec63a1f86656f6b810735512aa40ceb5cbd",
@@ -2412,9 +2412,9 @@
       "pr": 13286
     },
     ".agents/services/email/email-design-test.md": {
-      "hash": "a977dcc2a7b9ac1ae04172c353228a5011ab9094",
-      "at": "2026-03-29T20:53:53Z",
-      "pr": 13292
+      "hash": "216d3927030caa28089c7500c2f6b81c62897d17",
+      "at": "2026-03-29T22:09:19Z",
+      "pr": 13324
     },
     ".agents/services/hosting/cloudflare-platform-skill/workers-for-platforms-gotchas.md": {
       "hash": "eb3c145850e0125035e13fd4bd424405fa4efb97",
@@ -2555,6 +2555,61 @@
       "hash": "0f739f46e676ff9df4c13d0a2d10ab6f7ea6b877",
       "at": "2026-03-29T21:43:24Z",
       "pr": 13344
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/kv-patterns.md": {
+      "hash": "7637914de409bb05cee56b57db714972a922dbbb",
+      "at": "2026-03-29T22:09:11Z",
+      "pr": 13321
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/pulumi-patterns.md": {
+      "hash": "98b6e10081c4b00014ad525bb96a33a62b6f90a0",
+      "at": "2026-03-29T22:09:12Z",
+      "pr": 13329
+    },
+    ".agents/tools/video/remotion-gifs.md": {
+      "hash": "c87be7656e27afb4f5f23e41571f8428b21345c4",
+      "at": "2026-03-29T22:09:13Z",
+      "pr": 13322
+    },
+    ".agents/seo/seo-regex.md": {
+      "hash": "b38e6b1002b80227940c036badb462c8add23514",
+      "at": "2026-03-29T22:09:17Z",
+      "pr": 13325
+    },
+    ".agents/tools/code-review/codacy.md": {
+      "hash": "3f41e7f2f15e10bf934568ea6ff485cd64ce88c3",
+      "at": "2026-03-29T22:09:31Z",
+      "pr": 13314
+    },
+    ".agents/marketing-sales/direct-response-copy-swipe-file-emails-03-sales.md": {
+      "hash": "0a96775e8682e8b03590b673f9c8180c5cc99908",
+      "at": "2026-03-29T22:09:33Z",
+      "pr": 13317
+    },
+    ".agents/tools/browser/extension-dev.md": {
+      "hash": "5d6ac2671414bfdce4481294fce9019711d28c01",
+      "at": "2026-03-29T22:09:34Z",
+      "pr": 13330
+    },
+    ".agents/tools/browser/sweet-cookie.md": {
+      "hash": "763a36ee928e5c54bafe10a5659c75c4c73f42df",
+      "at": "2026-03-29T22:09:35Z",
+      "pr": 13328
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/cache-reserve-gotchas.md": {
+      "hash": "d41799c696aa6515cb523c0b17316ed13d17d2ee",
+      "at": "2026-03-29T22:09:42Z",
+      "pr": 13253
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/stream-gotchas.md": {
+      "hash": "1e5cf033ce0af2ba18bc9e38ca48bd69cf3455bc",
+      "at": "2026-03-29T22:09:43Z",
+      "pr": 13254
+    },
+    ".agents/tools/context/model-routing.md": {
+      "hash": "43703f91e6cc11180bbf13a86e6d92333b1ca9db",
+      "at": "2026-03-29T22:09:44Z",
+      "pr": 13255
     }
   }
 }
