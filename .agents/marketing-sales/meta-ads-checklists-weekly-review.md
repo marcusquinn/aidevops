@@ -1,16 +1,8 @@
 # Weekly Review Checklist
 
-> Every week, run through this checklist to keep campaigns healthy.
-
----
-
-## Time Required: 30-60 minutes
-
----
+> Every week (Monday), run through this checklist to keep campaigns healthy. ~30-60 min.
 
 ## Step 1: Performance Overview (10 min)
-
-### Pull These Numbers
 
 | Metric | This Week | Last Week | Trend |
 |--------|-----------|-----------|-------|
@@ -21,148 +13,61 @@
 | CTR | % | % | ↑↓ |
 | CPM | $ | $ | ↑↓ |
 
-### Questions to Answer
-- [ ] Did we hit our targets this week?
-- [ ] Is CPA trending up or down?
-- [ ] Any dramatic changes from last week?
-- [ ] What drove the changes?
-
----
+- [ ] Hit targets this week?
+- [ ] CPA trending up or down?
+- [ ] Dramatic changes from last week — what drove them?
 
 ## Step 2: Campaign Health Check (10 min)
 
-### For Each Active Campaign
+**Testing (ABO):** winning ad sets? kill candidates? ready to graduate to scale? enough new creative?
 
-**Testing Campaign (ABO):**
-- [ ] Which ad sets are winning?
-- [ ] Which ad sets should be killed?
-- [ ] Any ads ready to graduate to scale?
-- [ ] Are we testing enough new creative?
+**Scale (CBO):** CPA at/below target? room to increase budget? ad sets not getting spend? creative fatigue?
 
-**Scale Campaign (CBO):**
-- [ ] Is CPA at or below target?
-- [ ] Is there room to increase budget?
-- [ ] Any ad sets not getting spend?
-- [ ] Creative fatigue signs?
-
-**Retargeting Campaign:**
-- [ ] Frequency under control (<5)?
-- [ ] CPA reasonable?
-- [ ] Audiences being refreshed?
-
----
+**Retargeting:** frequency <5? CPA reasonable? audiences being refreshed?
 
 ## Step 3: Creative Analysis (10 min)
 
-### Top Performers
-- [ ] What creative is winning?
-- [ ] Why is it working? (hook, format, message)
-- [ ] Can we create iterations of winners?
+**Top performers:** what's winning and why (hook/format/message)? iterations possible?
 
-### Underperformers
-- [ ] What should be paused?
-- [ ] Why did it fail? (lesson learned)
+**Underperformers:** what to pause? lesson learned?
 
-### Fatigue Check
-- [ ] Any creative with frequency >3?
-- [ ] Any creative with declining CTR?
-- [ ] How long have top ads been running?
+**Fatigue:** frequency >3? declining CTR? how long have top ads been running?
 
-### Creative Pipeline
-- [ ] Do we have new creative in production?
-- [ ] What angles should we test next week?
-- [ ] When will new creative be ready?
-
----
+**Pipeline:** new creative in production? angles to test next week? ETA?
 
 ## Step 4: Audience Analysis (5 min)
 
-### Audience Performance
-- [ ] Which audiences performing best?
-- [ ] Which audiences underperforming?
-- [ ] Should we expand or narrow targeting?
-
-### Overlap Check
-- [ ] Any audiences competing with each other?
-- [ ] Exclusions still appropriate?
-
-### Retargeting Pool
-- [ ] Is retargeting pool growing?
-- [ ] Any audience sizes shrinking?
-
----
+- [ ] Best/worst performing audiences — expand or narrow?
+- [ ] Audiences competing with each other? Exclusions still appropriate?
+- [ ] Retargeting pool growing or shrinking?
 
 ## Step 5: Budget Decisions (5 min)
 
-### This Week's Budget Actions
-
-**Increase Budget:**
-| Campaign/Ad Set | Current | New | Reason |
-|-----------------|---------|-----|--------|
-| | $ | $ | |
-
-**Decrease Budget:**
-| Campaign/Ad Set | Current | New | Reason |
-|-----------------|---------|-----|--------|
-| | $ | $ | |
-
-**Pause:**
-| Campaign/Ad Set | Reason |
-|-----------------|--------|
-| | |
-
----
+| Action | Campaign/Ad Set | Current | New | Reason |
+|--------|-----------------|---------|-----|--------|
+| Increase | | $ | $ | |
+| Decrease | | $ | $ | |
+| Pause | | — | — | |
 
 ## Step 6: Action Items (5 min)
 
-### Must Do This Week
-- [ ] _________________________________
-- [ ] _________________________________
-- [ ] _________________________________
+**Must do:** _________________________________ / _________________________________ / _________________________________
 
-### Should Do This Week
-- [ ] _________________________________
-- [ ] _________________________________
+**Should do:** _________________________________ / _________________________________
 
-### Ideas to Test
-- [ ] _________________________________
-- [ ] _________________________________
-
----
+**Test ideas:** _________________________________ / _________________________________
 
 ## Step 7: Documentation (5 min)
 
-### Record in Tracking Sheet
-- [ ] This week's metrics logged
-- [ ] Budget changes documented
-- [ ] Creative winners/losers noted
-- [ ] Key learnings captured
+- [ ] Metrics logged, budget changes documented, creative winners/losers noted, key learnings captured
 
 ---
 
-## Quick Reference: Decision Triggers
+## Decision Triggers
 
-### Kill Ad/Ad Set When:
-- CPA >1.5x target after 50+ conversions
-- CTR <0.5% after 2,000+ impressions
-- No conversions after 2x target CPA spend
-- Frequency >4 with declining performance
-
-### Scale When:
-- CPA <target for 5+ consecutive days
-- Creative not fatigued
-- Business can handle volume
-
-### Pause Campaign When:
-- CPA >2x target sustained
-- External factors (inventory, capacity)
-- Seasonal pause needed
-
-### Create New Creative When:
-- Top creative running 3+ weeks
-- Frequency >3 on prospecting
-- CTR declining 20%+ week-over-week
-
----
-
-*Complete this checklist every Monday (or your start of week).*
+| Trigger | Condition |
+|---------|-----------|
+| **Kill** ad/ad set | CPA >1.5x target after 50+ conversions; CTR <0.5% after 2k impressions; no conversions after 2x CPA spend; frequency >4 with declining performance |
+| **Scale** | CPA <target 5+ consecutive days; creative not fatigued; business can handle volume |
+| **Pause campaign** | CPA >2x target sustained; external factors (inventory/capacity); seasonal pause |
+| **New creative** | Top creative running 3+ weeks; frequency >3 on prospecting; CTR declining 20%+ WoW |
