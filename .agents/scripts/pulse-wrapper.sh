@@ -1604,13 +1604,13 @@ list_active_worker_processes() {
 	#   bash sandbox-exec-helper.sh run ... -- opencode run ...  (top-level launcher)
 	#   node /opt/homebrew/bin/opencode run ...                  (node child)
 	#   /path/to/.opencode run ...                               (binary grandchild)
-	# All three contain /full-loop and opencode in their command line.
+	# All three contain /full-loop (or /review-issue-pr) and opencode in their command line.
 	#
 	# GH#12361: Workers dispatched via headless-runtime-helper.sh without
 	# sandbox-exec-helper.sh run as /bin/.opencode processes directly.
 	# The old approach blanket-excluded /bin/.opencode and node child
 	# processes, which missed standalone workers. New approach:
-	#   1. Match all processes with /full-loop + opencode (any binary path)
+	#   1. Match all processes with /full-loop or /review-issue-pr + opencode (any binary path)
 	#   2. Deduplicate by issue+dir key: when multiple processes share the
 	#      same issue AND --dir path (sandbox chain), prefer the sandbox
 	#      launcher; if no launcher exists, keep the first match (the
@@ -1624,7 +1624,7 @@ list_active_worker_processes() {
 	# used for filtering only; output format remains pid,etime,command for
 	# backward compatibility with all consumers.
 	ps axo pid,stat,etime,command | awk '
-		/\/full-loop/ &&
+		($0 ~ /\/full-loop/ || $0 ~ /\/review-issue-pr/) &&
 		$0 !~ /(^|[[:space:]])\/pulse([[:space:]]|$)/ &&
 		$0 !~ /Supervisor Pulse/ &&
 		$0 ~ /(^|[[:space:]\/])\.?opencode([[:space:]]|$)/ {
@@ -5022,7 +5022,7 @@ main() {
 #
 # Criteria (ALL must be true):
 #   - No TTY (headless — not a user's terminal tab)
-#   - Not a current worker (/full-loop not in command)
+#   - Not a current worker (/full-loop or /review-issue-pr not in command)
 #   - Not the supervisor pulse (Supervisor Pulse not in command)
 #   - Not a strategic review (Strategic Review not in command)
 #   - Older than ORPHAN_MAX_AGE seconds
@@ -5049,7 +5049,7 @@ cleanup_orphans() {
 		# Use case instead of [[ =~ ]] with | alternation — zsh parses the |
 		# as a pipe operator inside [[ ]], causing a parse error. See GH#4904.
 		case "$cmd" in
-		*"/full-loop"* | *"Supervisor Pulse"* | *"Strategic Review"* | *"language-server"* | *"eslintServer"*)
+		*"/full-loop"* | *"/review-issue-pr"* | *"Supervisor Pulse"* | *"Strategic Review"* | *"language-server"* | *"eslintServer"*)
 			continue
 			;;
 		esac
@@ -5077,7 +5077,7 @@ cleanup_orphans() {
 		[[ "$tty" != "?" && "$tty" != "??" ]] && continue
 		# Use case instead of [[ =~ ]] with | alternation — zsh parse error. See GH#4904.
 		case "$cmd" in
-		*"/full-loop"* | *"Supervisor Pulse"* | *"Strategic Review"* | *"language-server"* | *"eslintServer"*)
+		*"/full-loop"* | *"/review-issue-pr"* | *"Supervisor Pulse"* | *"Strategic Review"* | *"language-server"* | *"eslintServer"*)
 			continue
 			;;
 		esac

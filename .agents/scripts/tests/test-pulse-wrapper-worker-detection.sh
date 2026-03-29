@@ -348,6 +348,25 @@ test_deduplicates_chain_but_keeps_standalone_opencode_binary() {
 	return 0
 }
 
+test_counts_review_issue_pr_workers() {
+	# GH#12374: Workers running /review-issue-pr must be counted by
+	# count_active_workers, not just /full-loop workers.
+	set_ps_fixture "800 S 00:10 opencode run --dir /tmp/aidevops --title Issue #9001 \"/review-issue-pr Review issue #9001\"
+801 S 00:20 /opt/homebrew/lib/node_modules/opencode-ai/bin/.opencode run \"/full-loop Implement issue #9002\" --dir /tmp/aidevops --session-key issue-9002 --title Issue #9002
+802 S 00:15 opencode run --dir /tmp/aidevops --title Issue #9003 \"/review-issue-pr Review issue #9003\""
+
+	local count
+	count=$(count_active_workers)
+	# 2 review-issue-pr + 1 full-loop = 3 workers
+	if [[ "$count" != "3" ]]; then
+		print_result "count_active_workers counts /review-issue-pr workers (GH#12374)" 1 "Expected 3, got ${count}"
+		return 0
+	fi
+
+	print_result "count_active_workers counts /review-issue-pr workers (GH#12374)" 0
+	return 0
+}
+
 test_check_dispatch_dedup_treats_merged_pr_as_duplicate() {
 	local original_script_dir="$SCRIPT_DIR"
 	SCRIPT_DIR="$TEST_ROOT"
@@ -380,6 +399,7 @@ main() {
 	test_has_worker_for_repo_issue_session_key_fallback
 	test_counts_standalone_opencode_binary_workers
 	test_deduplicates_chain_but_keeps_standalone_opencode_binary
+	test_counts_review_issue_pr_workers
 	test_check_dispatch_dedup_treats_merged_pr_as_duplicate
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
