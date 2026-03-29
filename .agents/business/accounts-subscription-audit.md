@@ -18,11 +18,10 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Discover all active subscriptions, calculate total spend, identify savings
 - **Command**: `/subscription-audit` or `@subscription-audit`
-- **Data Sources**: Email receipts, bank statements (CSV), manual inventory
-
-**Quick start**: Use the `/subscription-audit` command to start an interactive audit. The agent guides you through discovery, analysis, and optimization phases.
+- **Purpose**: Discover active subscriptions, calculate total spend, identify savings
+- **Data sources**: Email receipts, bank statements (CSV), manual inventory
+- **Phases**: Discovery → Analysis → Optimization
 
 <!-- AI-CONTEXT-END -->
 
@@ -30,11 +29,7 @@ tools:
 
 ### Phase 1: Discovery
 
-Identify all recurring charges from multiple sources:
-
 #### Email Receipt Scanning
-
-Search email for common subscription receipt patterns:
 
 ```bash
 # Gmail search queries (via IMAP or Gmail API)
@@ -50,11 +45,9 @@ from:(noreply@github.com OR billing@stripe.com OR receipts@paddle.com)
 
 #### Bank Statement Import
 
-Import CSV bank statements (auto-detects format for Chase, Amex, Barclays, Monzo, Revolut, generic CSV). The agent identifies recurring patterns (same merchant, similar amount, regular interval).
+CSV import with auto-detection (Chase, Amex, Barclays, Monzo, Revolut, generic). Identifies recurring patterns: same merchant, similar amount, regular interval.
 
 #### Manual Inventory
-
-Common categories to check:
 
 | Category | Examples |
 |----------|----------|
@@ -71,13 +64,12 @@ Common categories to check:
 
 ### Phase 2: Analysis
 
-The analysis phase generates a report that includes:
-- **Monthly total**: Sum of all recurring charges
-- **Annual projection**: Monthly * 12 + annual-only subscriptions
+Report includes:
+- **Monthly total** / **Annual projection** (monthly * 12 + annual-only)
 - **Category breakdown**: Spend per category
-- **Unused detection**: Subscriptions with no recent login/API activity
+- **Unused detection**: No recent login/API activity
 - **Duplicate detection**: Multiple tools serving same purpose
-- **Price increase alerts**: Charges that increased vs. last period
+- **Price increase alerts**: Charges increased vs. last period
 
 ### Phase 3: Optimization
 
@@ -92,8 +84,8 @@ The analysis phase generates a report that includes:
 
 ### Open-Source Alternatives
 
-| Paid Tool | Free Alternative |
-|-----------|------------------|
+| Paid | Free Alternative |
+|------|------------------|
 | GitHub Copilot | Claude Code (free tier), Cody |
 | Notion | Obsidian, Logseq |
 | Slack | Mattermost, Zulip |
@@ -103,7 +95,7 @@ The analysis phase generates a report that includes:
 | Vercel | Coolify (self-hosted) |
 | Linear | Plane (self-hosted) |
 
-## Report Format
+## Example Report
 
 ```text
 Subscription Audit Report
@@ -134,14 +126,11 @@ Potential Monthly Savings: $141.00 (16.6%)
 
 ## Data Storage
 
-Subscription data stored in SQLite at `~/.aidevops/.agent-workspace/work/subscriptions/subscriptions.db`.
+SQLite: `~/.aidevops/.agent-workspace/work/subscriptions/subscriptions.db`
 
-Schema:
-- `subscriptions` - Active subscriptions (name, category, amount, interval, provider)
-- `audit_history` - Past audit snapshots for trend tracking
-- `recommendations` - Generated recommendations with status (applied/dismissed)
+Tables: `subscriptions` (name, category, amount, interval, provider) | `audit_history` (snapshots for trend tracking) | `recommendations` (status: applied/dismissed)
 
 ## Related
 
-- `business.md` - Financial operations agent
-- `tools/credentials/api-key-setup.md` - API key management (related spend)
+- `business.md` — Financial operations agent
+- `tools/credentials/api-key-setup.md` — API key management (related spend)
