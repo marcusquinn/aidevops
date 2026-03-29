@@ -20,14 +20,16 @@ tools:
 
 - **Install**: `brew install tddworks/tap/asccli` (NOT `brew install asc` — different package)
 - **Auth**: `asc auth login --key-id KEY --issuer-id ISSUER --private-key-path ~/.asc/AuthKey.p8`
+- **API key**: Create at https://appstoreconnect.apple.com/access/integrations/api
 - **Project pin**: `asc init --app-id <id>` (saves `.asc/project.json`, auto-used by all commands)
 - **Verify**: `asc auth check` | **Multi-account**: `asc auth use <name>`
+- **Context resolution**: explicit `--app-id` > `.asc/project.json` > prompt user to `asc init` (CI must use `--app-id` or pre-run `asc init`)
 - **GitHub**: https://github.com/tddworks/asc-cli (MIT, Swift, 130+ commands)
 - **Website**: https://asccli.app | **Web apps**: [Command Center](https://asccli.app/command-center), [Console](https://asccli.app/console), [Screenshot Studio](https://asccli.app/editor)
 - **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (27 skills) | [Community](https://github.com/rudrankriyam/app-store-connect-cli-skills) (22 workflow skills)
 - **Requirements**: macOS 13+, App Store Connect API key, `jq` (workflow scripts use `jq -r`)
 
-**Dependency check**: Before any `asc` command: `command -v asc >/dev/null || brew install tddworks/tap/asccli && command -v jq >/dev/null || brew install jq`
+**Dependency check**: `command -v asc >/dev/null || brew install tddworks/tap/asccli && command -v jq >/dev/null || brew install jq`
 
 **Credential security**: `asc auth login` stores the private key PEM in `~/.asc/credentials.json`. Never commit this file. Use `--private-key-path` — never pass key content as an argument.
 
@@ -35,44 +37,25 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Setup
-
-```bash
-brew install tddworks/tap/asccli
-# Create API key at https://appstoreconnect.apple.com/access/integrations/api
-asc auth login --key-id YOUR_KEY_ID --issuer-id YOUR_ISSUER_ID \
-  --private-key-path ~/.asc/AuthKey_XXXXXX.p8 --name personal
-asc auth check && asc apps list    # verify, then find app ID
-asc init --app-id <id>             # pin app for future commands
-```
-
-**Context resolution**: explicit `--app-id` > `.asc/project.json` > prompt user to `asc init` (interactive — CI must use `--app-id` or pre-run `asc init`).
-
 ## Command Groups
 
 | Group | Commands | Purpose |
 |-------|----------|---------|
-| **apps** | `list` | List apps |
 | **versions** | `list`, `create`, `set-build`, `check-readiness`, `submit` | Versions and submission |
 | **builds** | `list`, `archive`, `upload`, `add-beta-group`, `update-beta-notes` | Build management |
 | **testflight** | `groups list`, `testers add/remove/import/export` | Beta distribution |
 | **version-localizations** | `list`, `create`, `update` | What's New, description, keywords per locale |
 | **app-infos** / **app-info-localizations** | `list`, `update`, `create`, `delete` | App name, subtitle, categories, per-locale metadata |
-| **screenshot-sets** / **screenshots** | `list`, `create`, `upload` | Screenshot management and upload |
-| **app-preview-sets** / **app-previews** | `list`, `create`, `upload` | Video previews (.mp4, .mov, .m4v) |
+| **screenshot-sets** / **screenshots** / **app-preview-sets** / **app-previews** | `list`, `create`, `upload` | Screenshots and video previews |
 | **app-shots** | `config`, `generate`, `translate` | AI screenshot generation (Gemini) |
 | **iap** | `list`, `create`, `submit`, `price-points`, `prices` | In-app purchases |
 | **subscriptions** / **subscription-groups** / **subscription-offers** | `list`, `create`, `submit` | Auto-renewable subscriptions, groups, offers |
 | **bundle-ids** / **certificates** / **profiles** / **devices** | `list`, `create`, `delete`, `register`, `revoke` | Code signing and provisioning |
 | **reviews** / **review-responses** | `list`, `get`, `create`, `delete` | Customer reviews and responses |
-| **game-center** | `detail`, `achievements`, `leaderboards` | Game Center |
-| **perf-metrics** / **diagnostics** | `list` | Performance and diagnostic data |
 | **reports** | `sales-reports`, `finance-reports`, `analytics-reports` | Sales, financial, analytics |
 | **users** / **user-invitations** | `list`, `update`, `remove`, `invite`, `cancel` | Team management |
 | **xcode-cloud** | `products`, `workflows`, `builds` | Xcode Cloud CI/CD |
-| **iris** | `status`, `apps list/create` | Private API (browser cookie auth) |
-| **plugins** | `list`, `install`, `run` | Custom event handlers |
-| **tui** | (interactive) | Terminal UI browser |
+| **Other** | `apps list`, `game-center`, `perf-metrics`, `diagnostics`, `iris`, `plugins`, `tui` | Apps, Game Center, performance, private API, plugins, TUI |
 
 **Discover**: `asc --help`, `asc <cmd> --help` | **Output**: `--output json` (default), `--output table`, `--output markdown`, `--pretty`
 
@@ -110,13 +93,10 @@ asc builds update-beta-notes --build-id BUILD_ID --locale en-US --notes "What's 
 asc bundle-ids create --name "My App" --identifier com.example.app --platform ios
 asc certificates create --type IOS_DISTRIBUTION --csr-content "$(cat MyApp.certSigningRequest)"
 asc profiles create --name "App Store Profile" --type IOS_APP_STORE --bundle-id-id BID --certificate-ids CERT_ID
-# Metadata — app info and version localizations
+# Metadata and AI screenshots
 asc app-info-localizations update --localization-id LOC_ID --name "My App" --subtitle "Do things faster"
-asc version-localizations update --localization-id LOC_ID --whats-new "Bug fixes" --description "Full description"
-# AI screenshots — config once, generate, translate
 asc app-shots config --gemini-api-key KEY && asc app-shots generate
-asc app-shots generate --device-type APP_IPHONE_67    # specific device
-asc app-shots translate --to zh --to ja               # localise all screens
+asc app-shots translate --to zh --to ja
 ```
 
 ## Web Apps and Local API Bridge
@@ -140,8 +120,6 @@ Install on-demand (not pre-loaded): **Official** `asc skills install --all` (per
 | **ios-simulator-mcp** | Simulator UI testing, screenshots, accessibility |
 | **Maestro** | Repeatable E2E test flows |
 | **RevenueCat** | Server-side subscription tracking, analytics |
-
-**Lifecycle**: Build (xcodebuild-mcp) → Test (maestro + ios-simulator) → Upload (`asc builds archive --upload`) → TestFlight (`asc testflight`) → Metadata (`asc version-localizations`) → Screenshots (`asc app-shots generate` + `asc screenshots upload`) → Submit (`asc versions check-readiness` + `asc versions submit`) → Monitor (`asc reviews list`, `asc perf-metrics list`)
 
 ## Related
 
