@@ -1,7 +1,5 @@
 # Performance Optimization
 
-PostgreSQL and Drizzle ORM performance reference.
-
 ## Indexing
 
 ### B-Tree (Default)
