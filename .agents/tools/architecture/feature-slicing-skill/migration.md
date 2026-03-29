@@ -31,8 +31,6 @@ mkdir -p src/{app,pages,widgets,features,entities,shared}/{ui,api,model,lib}
 
 ## Phase 2: Migrate Shared Utilities
 
-**Before → After:**
-
 ```text
 src/utils/api.ts          → src/shared/api/client.ts
 src/utils/dates.ts        → src/shared/lib/dates.ts
@@ -57,7 +55,7 @@ for component in src/components/*.tsx; do
 done
 ```
 
-**Update imports:**
+Update imports:
 
 ```typescript
 // Before
@@ -71,8 +69,6 @@ import { Button } from '@/shared/ui';
 ## Phase 3: Extract Entities
 
 Entities = business domain objects (types, CRUD API calls, reusable domain UI).
-
-**Before → After:**
 
 ```text
 src/types/user.ts          → src/entities/user/model/types.ts
@@ -95,8 +91,6 @@ export { useUserStore } from './model/store';
 
 Features = user interactions with business value (login, add-to-cart, search, form submit).
 
-**Before → After:**
-
 ```text
 src/components/LoginForm.tsx  → src/features/auth/ui/LoginForm.tsx
 src/components/LogoutButton   → src/features/auth/ui/LogoutButton.tsx
@@ -105,8 +99,6 @@ src/store/authSlice.ts        → src/features/auth/model/store.ts
 ```
 
 ## Phase 5: Migrate Pages
-
-**Before → After:**
 
 ```text
 src/pages/Home.tsx          → src/pages/home/ui/HomePage.tsx + index.ts
