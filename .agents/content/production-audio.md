@@ -57,7 +57,6 @@ AI Video Output → CapCut AI Voice Cleanup → ElevenLabs Transformation → Fi
 **Voice consistency checklist:**
 
 - [ ] Same voice model across all channel content
-- [ ] NEVER use pre-made voices for realism content
 - [ ] Consistent speaking pace (words per minute)
 - [ ] Matching emotional tone for content type
 - [ ] Standardized pronunciation for brand terms
@@ -92,8 +91,6 @@ Scripts from `content/production-writing.md` should include emotional block mark
 | **3: SFX** | -10 to -20 | Categories: Whooshes, Impacts, UI Sounds, Foley, Risers/Drops. Land 1-2 frames BEFORE visual event. Layer for bigger impacts; reverb to match dialogue space |
 | **4: Music** | -18 to -20 | Ducking: sidechain dialogue → music. Threshold -20dB, ratio 4:1, attack 10ms, release 200ms. Sources: Epidemic Sound, Artlist, Uppbeat, Suno, Udio |
 
-**Ambient by content type:**
-
 | Content Type | Ambient | Music Style | Ducking |
 |--------------|---------|-------------|---------|
 | UGC/Vlog | Diegetic only (room tone) | None | N/A |
@@ -124,12 +121,12 @@ ffmpeg -i input.mp4 -af loudnorm=print_format=json -f null -
 ## Voice Tools
 
 ```bash
-voice-helper.sh talk                          # Start voice conversation (defaults)
-voice-helper.sh talk whisper-mlx edge-tts     # Explicit engines
-voice-helper.sh talk whisper-mlx macos-say    # Offline mode
-voice-helper.sh devices                       # List audio devices
-voice-helper.sh voices                        # List available TTS voices
-voice-helper.sh benchmark                     # Test component speeds
+voice-helper.sh talk                       # Start voice conversation (defaults)
+voice-helper.sh talk whisper-mlx edge-tts  # Explicit engines
+voice-helper.sh talk whisper-mlx macos-say # Offline mode
+voice-helper.sh devices                    # List audio devices
+voice-helper.sh voices                     # List available TTS voices
+voice-helper.sh benchmark                  # Test component speeds
 ```
 
 **Architecture**: `Mic → Silero VAD → Whisper MLX (1.4s) → Claude Code run --attach (~4-6s) → Edge TTS (0.4s) → Speaker`. Round-trip: ~6-8s conversational, longer for tool execution.
