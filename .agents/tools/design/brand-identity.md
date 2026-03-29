@@ -14,7 +14,7 @@ model: sonnet
 - **Template**: `context/brand-identity.toon` in each project repo
 - **8 dimensions**: Visual style, voice & tone, copywriting, imagery, iconography, buttons & forms, media & motion, brand positioning
 - **Create**: From scratch or existing site via `tools/design/ui-ux-inspiration.md`
-- **Related**: `content/guidelines.md`, `content/platform-personas.md`, `content/production-image.md`, `workflows/ui-verification.md`
+- **Related**: `content/guidelines.md`, `content/platform-personas.md`, `content/production-image.md`, `content/production-characters.md`, `content/humanise.md`, `workflows/ui-verification.md`, `tools/design/ui-ux-catalogue.toon`
 - **When to use**: Before any design or content work. If `context/brand-identity.toon` is missing, create one first.
 
 <!-- AI-CONTEXT-END -->
@@ -115,10 +115,6 @@ Every agent producing design or content output MUST check `context/brand-identit
 4. Refine — what stays/changes/is missing
 5. Merge kept elements with new directions, flag breaking changes
 
-## Relationship Map
-
-`context/brand-identity.toon` readers: `tools/design/ui-ux-inspiration.md` (writes it), `content/guidelines.md` (structural rules), `content/platform-personas.md` (voice shifts), `content/production-image.md` (image gen params), `content/production-characters.md` (character personality), `content/humanise.md` (preserve personality), `workflows/ui-verification.md` (adds constraints), `tools/design/ui-ux-catalogue.toon` (records choices).
-
 ## Example: Launchpad (developer deploy tool)
 
 ```toon
@@ -151,13 +147,3 @@ competitive_differentiator = "Zero-config deploys that actually work. No YAML, n
 target_audience = "Independent developers and small teams shipping side projects, MVPs, and internal tools"
 audience_sophistication = "intermediate"  industry = "developer_tools"  brand_archetype = "creator"
 ```
-
-## File Locations
-
-| File | Purpose |
-|------|---------|
-| `.agents/tools/design/brand-identity.md` | This template |
-| `context/brand-identity.toon` | Per-project identity |
-| `context/inspiration/*.toon` | Per-project inspiration |
-| `.agents/tools/design/ui-ux-catalogue.toon` | Style catalogue |
-| `.agents/tools/design/ui-ux-inspiration.md` | Interview workflow |
