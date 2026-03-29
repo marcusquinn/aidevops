@@ -4,13 +4,9 @@ Words, phrases, and punctuation patterns commonly associated with AI-generated t
 
 Sources: Grammarly (2025), Microsoft 365 Life Hacks (2025), GPTHuman (2025), Walter Writes (2025), Textero (2025), Plagiarism Today (2025), Rolling Stone (2025), MDPI Blog (2025)
 
----
-
 ## Em Dashes: The Primary AI Tell
 
-The em dash (—) is one of the most reliable markers of AI-generated content. AI models drastically overuse it as a shortcut for sentence variety.
-
-### Replacements
+The em dash (—) is one of the most reliable markers of AI-generated content. AI models drastically overuse it as a shortcut for sentence variety. Use commas for most parenthetical information, colons to introduce lists, parentheses for supplementary information. Reserve em dashes for rare, deliberate emphasis only — more than one per page → revise.
 
 | Instead of | Use |
 |------------|-----|
@@ -18,16 +14,6 @@ The em dash (—) is one of the most reliable markers of AI-generated content. A
 | This approach—unlike traditional methods—allows... | This approach, unlike traditional methods, allows... |
 | The study found—as expected—that... | The study found, as expected, that... |
 | Communication skills—both written and verbal—are essential | Communication skills (both written and verbal) are essential |
-
-### Guidelines
-
-- Use commas for most parenthetical information
-- Use colons to introduce explanations or lists
-- Use parentheses for supplementary information
-- Reserve em dashes for rare, deliberate emphasis only
-- More than one em dash per page → revise
-
----
 
 ## Overused Verbs
 
@@ -49,8 +35,6 @@ The em dash (—) is one of the most reliable markers of AI-generated content. A
 | ascertain | find out, determine, establish |
 | elucidate | explain, clarify, make clear |
 
----
-
 ## Overused Adjectives
 
 | Avoid | Use Instead |
@@ -70,8 +54,6 @@ The em dash (—) is one of the most reliable markers of AI-generated content. A
 | multifaceted | complex, varied, diverse |
 | holistic | complete, whole, comprehensive |
 
----
-
 ## Overused Transitions and Connectors
 
 | Avoid | Use Instead |
@@ -87,77 +69,39 @@ The em dash (—) is one of the most reliable markers of AI-generated content. A
 | in the landscape of | in, within |
 | in today's [anything] | currently, now, today |
 
----
-
 ## Phrases That Signal AI Writing
 
-### Opening
-
-- "In today's fast-paced world..."
-- "In today's digital age..."
-- "In an era of..."
-- "In the ever-evolving landscape of..."
-- "In the realm of..."
-- "It's important to note that..."
-- "Let's delve into..."
-- "Imagine a world where..."
-
-### Transitional
-
-- "That being said..."
-- "With that in mind..."
-- "It's worth mentioning that..."
-- "At its core..."
-- "To put it simply..."
-- "In essence..."
-- "This begs the question..."
-
-### Concluding
-
-- "In conclusion..."
-- "To sum up..."
-- "By [doing X], you can [achieve Y]..."
-- "In the final analysis..."
-- "All things considered..."
-- "At the end of the day..."
-
-### Structural Patterns
-
-- "Whether you're a [X], [Y], or [Z]..." (listing three examples after "whether")
-- "It's not just [X], it's also [Y]..."
-- "Think of [X] as [elaborate metaphor]..."
-- Starting sentences with "By" followed by a gerund: "By understanding X, you can Y..."
-
----
+| Position | Phrase |
+|----------|--------|
+| Opening | "In today's fast-paced world..." |
+| Opening | "In today's digital age..." |
+| Opening | "In an era of..." |
+| Opening | "In the ever-evolving landscape of..." |
+| Opening | "In the realm of..." |
+| Opening | "It's important to note that..." |
+| Opening | "Let's delve into..." |
+| Opening | "Imagine a world where..." |
+| Transitional | "That being said..." |
+| Transitional | "With that in mind..." |
+| Transitional | "It's worth mentioning that..." |
+| Transitional | "At its core..." |
+| Transitional | "To put it simply..." |
+| Transitional | "In essence..." |
+| Transitional | "This begs the question..." |
+| Concluding | "In conclusion..." |
+| Concluding | "To sum up..." |
+| Concluding | "By [doing X], you can [achieve Y]..." |
+| Concluding | "In the final analysis..." |
+| Concluding | "All things considered..." |
+| Concluding | "At the end of the day..." |
+| Structural | "Whether you're a [X], [Y], or [Z]..." (listing three examples after "whether") |
+| Structural | "It's not just [X], it's also [Y]..." |
+| Structural | "Think of [X] as [elaborate metaphor]..." |
+| Structural | Starting sentences with "By" followed by a gerund: "By understanding X, you can Y..." |
 
 ## Filler Words and Empty Intensifiers
 
-Remove or replace with specific alternatives:
-
-- absolutely
-- actually
-- basically
-- certainly
-- clearly
-- definitely
-- essentially
-- extremely
-- fundamentally
-- incredibly
-- interestingly
-- naturally
-- obviously
-- quite
-- really
-- significantly
-- simply
-- surely
-- truly
-- ultimately
-- undoubtedly
-- very
-
----
+Remove or replace with specific alternatives: absolutely, actually, basically, certainly, clearly, definitely, essentially, extremely, fundamentally, incredibly, interestingly, naturally, obviously, quite, really, significantly, simply, surely, truly, ultimately, undoubtedly, very.
 
 ## Academic-Specific AI Tells
 
@@ -175,8 +119,6 @@ Remove or replace with specific alternatives:
 | with respect to | about, regarding, for |
 | in terms of | regarding, for, about |
 | the fact that | that (or rewrite sentence) |
-
----
 
 ## Self-Check
 
