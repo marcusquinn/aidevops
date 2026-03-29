@@ -18,12 +18,9 @@ tools:
 
 ### 1. Create Branch
 
-Always start from latest main:
-
 ```bash
 git checkout main && git pull origin main
-git checkout -b fix/bug-description
-# Include issue number when available: fix/123-plugin-activation-error
+git checkout -b fix/123-bug-description  # Include issue number
 ```
 
 ### 2. Understand the Bug
@@ -44,40 +41,20 @@ git checkout -b fix/bug-description
 
 ### 4. Update Documentation
 
-```markdown
-## [Unreleased]
-### Fixed
-- Fixed issue where X caused Y (#123)
-```
-
-Update README/docs if fix affects user-facing functionality.
+Update CHANGELOG (`## [Unreleased] → ### Fixed`) and README/docs if fix affects user-facing functionality.
 
 ### 5. Testing
 
-- [ ] Bug is fixed
-- [ ] No regression in related functionality
+- [ ] Bug is fixed, no regression in related functionality
 - [ ] Latest and minimum supported versions tested
-- [ ] Automated test suite passes
-- [ ] Quality checks pass
+- [ ] Automated test suite and quality checks pass
 
 ```bash
 npm test && composer test
 bash ~/Git/aidevops/.agents/scripts/linters-local.sh
 ```
 
-#### Frontend Bug Verification (CRITICAL)
-
-HTTP status codes do NOT verify frontend fixes. Server returns 200 even when React crashes client-side (error boundaries render successfully; crash happens during hydration which curl never executes).
-
-```bash
-# BAD: returns 200 even when React crashes
-curl -s https://myapp.local -o /dev/null -w "%{http_code}"
-
-# GOOD: use browser screenshot
-bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start
-```
-
-See `tools/ui/frontend-debugging.md` for browser verification workflow.
+**Frontend bugs (CRITICAL):** HTTP 200 does NOT verify frontend fixes — server returns 200 even when React crashes client-side. Use browser screenshot via `dev-browser-helper.sh start`. See `tools/ui/frontend-debugging.md`.
 
 ### 6. Commit
 
@@ -86,17 +63,16 @@ git add .
 git commit -m "Fix #123: Brief description
 
 - What was wrong
-- How this fixes it
-- Side effects or considerations"
+- How this fixes it"
 ```
 
 ### 7. Version Increment
 
-| Increment | When | Example |
-|-----------|------|---------|
-| **PATCH** | Most bug fixes (no functionality change) | 1.6.0 → 1.6.1 |
-| **MINOR** | Bug fix with new features or significant changes | 1.6.0 → 1.7.0 |
-| **MAJOR** | Bug fix with breaking changes | 1.6.0 → 2.0.0 |
+| Increment | When |
+|-----------|------|
+| **PATCH** | Most bug fixes (no functionality change) |
+| **MINOR** | Bug fix with new features or significant changes |
+| **MAJOR** | Bug fix with breaking changes |
 
 Don't update version numbers during development — only when fix is confirmed working.
 
@@ -105,38 +81,32 @@ Don't update version numbers during development — only when fix is confirmed w
 ```bash
 git checkout -b v{MAJOR}.{MINOR}.{PATCH}
 git merge fix/bug-description --no-ff
-# Update version numbers in all required files
-git add . && git commit -m "Version {VERSION} - Bug fix release"
+# Update version numbers, commit: "Version {VERSION} - Bug fix release"
 ```
 
 ---
 
 ## Hotfix Process
 
-For critical bugs requiring immediate release.
+For critical bugs requiring immediate release:
 
 ```bash
-# 1. Branch from tag
+# 1. Branch from latest tag
 git tag -l "v*" --sort=-v:refname | head -5
 git checkout v{MAJOR}.{MINOR}.{PATCH}
 git checkout -b hotfix/v{MAJOR}.{MINOR}.{PATCH+1}
 
-# 2. Apply minimal fix, then update PATCH version in:
-#    - Main application file, CHANGELOG.md, README.md
-#    - package.json / composer.json, localization files
+# 2. Apply minimal fix, update PATCH version in:
+#    main app file, CHANGELOG, README, package.json/composer.json, localization
 
-# 3. Commit and tag
+# 3. Commit, tag, push
 git add . && git commit -m "Hotfix: Critical bug description"
 git tag -a v{MAJOR}.{MINOR}.{PATCH+1} -m "Hotfix release"
-
-# 4. Push
 git push origin hotfix/v{MAJOR}.{MINOR}.{PATCH+1}
 git push origin v{MAJOR}.{MINOR}.{PATCH+1}
 
-# 5. Merge to main
-git checkout main
-git merge hotfix/v{MAJOR}.{MINOR}.{PATCH+1} --no-ff
-git push origin main
+# 4. Merge to main
+git checkout main && git merge hotfix/v{MAJOR}.{MINOR}.{PATCH+1} --no-ff && git push origin main
 ```
 
 ---
@@ -153,20 +123,15 @@ git push origin main
 
 ---
 
-## Testing Previous Versions
+## Version Testing & Rollback
 
 ```bash
+# Test previous version
 git checkout v{MAJOR}.{MINOR}.{PATCH}
-# Or: git checkout v{MAJOR}.{MINOR}.{PATCH} -b test/some-issue
-```
 
-## Rollback Procedure
-
-```bash
+# Rollback: find stable tag, branch, apply corrected fix
 git tag -l "*-stable" --sort=-v:refname | head -5
-git checkout v{VERSION}-stable
-git checkout -b fix/rollback-based-fix
-# Apply corrected fix, test thoroughly, create new version when confirmed
+git checkout v{VERSION}-stable -b fix/rollback-based-fix
 ```
 
 ---
@@ -174,11 +139,7 @@ git checkout -b fix/rollback-based-fix
 ## Completion Checklist
 
 - [ ] Root cause identified and documented
-- [ ] Fix is minimal and focused
-- [ ] No new features introduced
-- [ ] Regression tests added
-- [ ] All existing tests pass
-- [ ] Quality checks pass
-- [ ] Documentation updated
-- [ ] Changelog updated
-- [ ] Ready for code review
+- [ ] Fix is minimal, focused, no new features
+- [ ] Regression tests added, all tests pass
+- [ ] Quality checks pass, documentation updated
+- [ ] Changelog updated, ready for code review
