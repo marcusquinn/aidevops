@@ -8,13 +8,13 @@ mode: subagent
 ## Quick Reference
 
 - **Purpose**: Version-controlled database schema changes with rollback support
-- **Declarative**: `schemas/` — define desired state, generate migrations automatically
-- **Migrations**: `migrations/` — versioned, timestamped migration files
+- **Declarative**: `schemas/` — desired state, generate migrations automatically
+- **Migrations**: `migrations/` — versioned, timestamped files
 - **Naming**: `{YYYYMMDDHHMMSS}_{action}_{target}.sql`
 
 **Critical Rules**:
 
-- NEVER modify migrations that have been pushed/deployed — create a NEW migration to fix issues
+- NEVER modify pushed/deployed migrations — create a NEW migration instead
 - ALWAYS generate migrations via diff (don't write manually)
 - ALWAYS review generated migrations before committing
 - ALWAYS backup before running migrations in production
@@ -28,7 +28,7 @@ mode: subagent
 
 ```text
 project/
-├── schemas/          # Declarative schema files (source of truth; prefix for order: 00, 01, 10, 20…)
+├── schemas/          # Declarative schema files (source of truth; prefix: 00, 01, 10, 20…)
 ├── migrations/       # Generated migration files
 ├── seeds/            # Initial/test data
 └── scripts/
@@ -36,7 +36,7 @@ project/
     └── rollback.sh   # Rollback last migration
 ```
 
-## Generating, Applying, and Rolling Back
+## Tool Commands
 
 | Tool | Generate | Apply | Rollback |
 |------|----------|-------|----------|
@@ -49,11 +49,9 @@ project/
 | **Laravel** | `php artisan make:migration` | `php artisan migrate` | `php artisan migrate:rollback --step=1` |
 | **Rails** | `rails g migration` | `rails db:migrate` | `rails db:rollback STEP=1` |
 
-Review before committing: verify only expected changes, no unintended destructive ops, correct types/constraints. Data migrations may need manual adjustment.
+**Dev-only commands:** `drizzle-kit push`/`pull`, `prisma migrate reset`, `php artisan migrate:fresh --seed`.
 
-Dev-only commands: `drizzle-kit push`/`pull`, `prisma migrate reset`, `php artisan migrate:fresh --seed`.
-
-Flyway naming: `V1__create_users.sql`, `V2__add_email.sql`, `R__refresh_views.sql` (repeatable), `U2__undo_add_email.sql` (undo).
+**Flyway naming:** `V1__create_users.sql`, `V2__add_email.sql`, `R__refresh_views.sql` (repeatable), `U2__undo_add_email.sql` (undo).
 
 **Known limitations (require manual migrations):** DML statements, RLS policies, view ownership/grants, materialized views, table partitions, comments, some `ALTER POLICY`.
 
@@ -69,7 +67,7 @@ Example: `20240502100843_create_users_table.sql`. Avoid: `migration_1.sql`, `fix
 
 ## Migration File Structure
 
-### Up/Down Pattern (Required)
+**Up/Down pattern (required):**
 
 ```sql
 -- migrations/20240502100843_create_users_table.sql
@@ -88,9 +86,7 @@ DROP INDEX IF EXISTS idx_users_email;
 DROP TABLE IF EXISTS users;
 ```
 
-### Idempotent Column Addition (PostgreSQL)
-
-PostgreSQL lacks `IF NOT EXISTS` for `ALTER TABLE ADD COLUMN` — use a DO block:
+**Idempotent column addition (PostgreSQL)** — lacks `IF NOT EXISTS` for `ALTER TABLE ADD COLUMN`:
 
 ```sql
 DO $$
@@ -104,7 +100,7 @@ BEGIN
 END $$;
 ```
 
-### Schema vs Data Migrations (keep separate)
+**Schema vs data migrations (keep separate):**
 
 ```sql
 -- V6__add_status_column.sql (Schema — fast, reversible)
@@ -117,8 +113,6 @@ UPDATE orders SET status = 'pending' WHERE shipped_at IS NULL;
 
 ## Rollback and Safety
 
-### Reversible vs Irreversible Operations
-
 | Operation | Rollback | Notes |
 |-----------|----------|-------|
 | `CREATE TABLE/INDEX/CONSTRAINT` | `DROP` equivalent | Safe |
@@ -127,11 +121,11 @@ UPDATE orders SET status = 'pending' WHERE shipped_at IS NULL;
 | `TRUNCATE` | **Irreversible** | Never use in migrations |
 | Data `UPDATE` | **Irreversible** | Store originals in backup table |
 
-For irreversible migrations, mark the DOWN section: `-- IRREVERSIBLE: restore from backup if needed.`
+Mark irreversible DOWN sections: `-- IRREVERSIBLE: restore from backup if needed.`
 
 Point-in-time recovery: `pg_dump`/`pg_restore` (PostgreSQL), `mysqldump` (MySQL).
 
-### Production Safety
+## Production Safety
 
 | Operation | Safe? | Strategy |
 |-----------|-------|----------|
@@ -139,16 +133,16 @@ Point-in-time recovery: `pg_dump`/`pg_restore` (PostgreSQL), `mysqldump` (MySQL)
 | Add NOT NULL column | Caution | Add nullable → backfill → add constraint |
 | Drop column | Caution | Remove from code first → wait → drop |
 | Rename column | Caution | Expand-contract pattern |
-| Add index | Caution | `CREATE INDEX CONCURRENTLY` (PostgreSQL, non-blocking) |
+| Add index | Caution | `CREATE INDEX CONCURRENTLY` (PostgreSQL) |
 | Change column type | Caution | New column → migrate data → drop old |
 
-**Expand-contract pattern:** (1) EXPAND — add new column, copy data, deploy code writing to both columns reading from new. (2) CONTRACT — drop old column, rename new.
+**Expand-contract:** (1) EXPAND — add new column, copy data, deploy code writing both/reading new. (2) CONTRACT — drop old column, rename new.
 
-## Git and CI/CD Integration
+## Git and CI/CD
 
-**Pre-push checklist:** (1) Migration has UP and DOWN sections, (2) DOWN reverses UP, (3) tested locally (up → down → up), (4) no modifications to pushed migrations, (5) timestamp is current (regenerate if rebasing).
+**Pre-push checklist:** (1) UP and DOWN sections present, (2) DOWN reverses UP, (3) tested locally (up → down → up), (4) no modifications to pushed migrations, (5) timestamp is current (regenerate on rebase). Review: verify only expected changes, no unintended destructive ops, correct types/constraints.
 
-**Team rules:** Pull before creating migrations. Use timestamps not sequential numbers. One migration per PR. Rebase carefully — regenerate timestamps for conflicts.
+**Team rules:** Pull before creating migrations. Timestamps not sequential numbers. One migration per PR. Rebase carefully — regenerate timestamps for conflicts.
 
 **Commit messages:** `feat(db): add user_preferences table`, `fix(db): correct FK on orders`, `chore(db): backfill user status`.
 
@@ -172,4 +166,4 @@ jobs:
       - run: psql $DATABASE_URL -c "SELECT 1"
 ```
 
-Most tools create a tracking table automatically (e.g., `flyway_schema_history`). Framework-agnostic runner: `for f in migrations/*.sql; do psql $DATABASE_URL -f "$f"; done`.
+Most tools auto-create a tracking table (e.g., `flyway_schema_history`). Framework-agnostic runner: `for f in migrations/*.sql; do psql $DATABASE_URL -f "$f"; done`.
