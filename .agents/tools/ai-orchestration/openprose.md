@@ -6,12 +6,7 @@ tools: [read, write, edit, bash, glob, grep, task]
 
 # OpenProse - Multi-Agent Orchestration DSL
 
-Multi-agent orchestration DSL. Use for repeatable workflows, parallel session spawning, and AI-evaluated conditions. Use aidevops scripts for single-agent DevOps tasks and deterministic logic.
-
-- **Repo**: <https://github.com/openprose/prose>
-- **Telemetry**: Disabled by default. Override: `"OPENPROSE_TELEMETRY": "disabled"` in `.prose/state.json` or `--no-telemetry`
-
-**Install:**
+Use for repeatable workflows, parallel session spawning, and AI-evaluated conditions. Use aidevops scripts for single-agent DevOps tasks and deterministic logic. **Repo**: <https://github.com/openprose/prose> · **Telemetry**: disabled by default (`"OPENPROSE_TELEMETRY": "disabled"` in `.prose/state.json` or `--no-telemetry`)
 
 ```bash
 # Claude Code
