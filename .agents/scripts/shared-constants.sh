@@ -330,23 +330,26 @@ print_shared_error() {
 }
 
 # Print success message with consistent formatting
+# Writes to stderr so ANSI codes are not captured in $() subshells
 print_shared_success() {
 	local msg="$1"
-	echo -e "${COLOR_GREEN}[SUCCESS]${COLOR_RESET} $msg"
+	echo -e "${COLOR_GREEN}[SUCCESS]${COLOR_RESET} $msg" >&2
 	return 0
 }
 
 # Print warning message with consistent formatting
+# Writes to stderr so ANSI codes are not captured in $() subshells
 print_shared_warning() {
 	local msg="$1"
-	echo -e "${COLOR_YELLOW}[WARNING]${COLOR_RESET} $msg"
+	echo -e "${COLOR_YELLOW}[WARNING]${COLOR_RESET} $msg" >&2
 	return 0
 }
 
 # Print info message with consistent formatting
+# Writes to stderr so ANSI codes are not captured in $() subshells
 print_shared_info() {
 	local msg="$1"
-	echo -e "${COLOR_BLUE}[INFO]${COLOR_RESET} $msg"
+	echo -e "${COLOR_BLUE}[INFO]${COLOR_RESET} $msg" >&2
 	return 0
 }
 
