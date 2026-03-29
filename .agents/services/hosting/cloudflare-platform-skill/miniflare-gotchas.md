@@ -1,23 +1,23 @@
 # Gotchas & Debugging
 
-## Compatibility Issues
+## Compatibility
 
-### Not Supported in Miniflare
+### Not Supported
 
-- Cloudflare Analytics Engine, Images
-- Live production data / true global distribution
+- Analytics Engine, Images
+- Live production data / global distribution
 - Some advanced Workers features
 
-### Behavior Differences from Production
+### Behavior Differences
 
-- **No actual edge:** Runs in workerd locally, not Cloudflare's global network
+- **No edge:** Runs in workerd locally, not Cloudflare's global network
 - **Persistence:** Local filesystem/in-memory, not distributed
-- **Request.cf:** Fetched from cached endpoint or mocked, not real edge metadata
-- **Performance/Caching:** Local ≠ edge
+- **Request.cf:** Cached endpoint or mocked, not real edge metadata
+- **Caching:** Local ≠ edge performance
 
 ## Common Issues
 
-### Module Resolution (`Cannot find module`)
+### `Cannot find module`
 
 ```js
 new Miniflare({
@@ -27,7 +27,7 @@ new Miniflare({
 });
 ```
 
-### Persistence Not Working (data lost between runs)
+### Data Lost Between Runs
 
 Persist paths must be directories, not files:
 
@@ -39,29 +39,29 @@ new Miniflare({
 });
 ```
 
-### TypeScript Workers (cannot run `.ts` directly)
+### TypeScript Workers
 
-Build first; see [patterns.md](./patterns.md) "Build Before Tests".
+Cannot run `.ts` directly — build first. See [patterns.md](./patterns.md) "Build Before Tests".
 
-### Request.cf Undefined
+### `Request.cf` Undefined
 
 ```js
 new Miniflare({
-  cf: true,       // fetch from Cloudflare
-  // cf: "./cf.json"  // or provide custom
+  cf: true,            // fetch from Cloudflare
+  // cf: "./cf.json"   // or provide custom
 });
 ```
 
-### Port Already in Use (`EADDRINUSE`)
+### `EADDRINUSE`
 
-Don't specify a port for testing — use `dispatchFetch` instead:
+Use `dispatchFetch` instead of specifying a port:
 
 ```js
 const mf = new Miniflare({ scriptPath: "worker.js" });
 const res = await mf.dispatchFetch("http://localhost/");
 ```
 
-### Durable Object Not Found (`ReferenceError: Counter is not defined`)
+### `ReferenceError: Counter is not defined`
 
 DO class must be exported and name must match binding:
 
@@ -72,33 +72,33 @@ new Miniflare({
     export class Counter { /* ... */ }
     export default { /* ... */ }
   `,
-  durableObjects: { COUNTER: "Counter" }, // matches export name
+  durableObjects: { COUNTER: "Counter" },
 });
 ```
 
-## Debugging Tips
+## Debugging
 
 ```js
-// Enable debug logging
+// Debug logging
 import { Log, LogLevel } from "miniflare";
 new Miniflare({ log: new Log(LogLevel.DEBUG) });
 
-// Check binding names
+// Inspect bindings
 const bindings = await mf.getBindings();
 console.log(Object.keys(bindings));
 
-// Verify KV storage directly
+// Verify KV contents
 const ns = await mf.getKVNamespace("TEST");
 console.log(await ns.list());
 ```
 
-Use `dispatchFetch` for tests, not the HTTP server — avoids port conflicts.
+Prefer `dispatchFetch` over HTTP server in tests — avoids port conflicts.
 
-## Migration Notes
+## Migration
 
 ### Wrangler Dev → Miniflare
 
-Miniflare doesn't read `wrangler.toml` — configure everything via API:
+Miniflare ignores `wrangler.toml` — configure via API:
 
 ```js
 new Miniflare({
