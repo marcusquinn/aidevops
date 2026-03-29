@@ -27,53 +27,36 @@ tools:
 
 ## Analytics Stack
 
-### Open-Source Preferred
+Open-source preferred. All self-hostable on Coolify — see `tools/deployment/coolify.md`.
 
-| Tool | Purpose | Self-Hosted | Cloud |
-|------|---------|-------------|-------|
-| **PostHog** | Product analytics, feature flags, session replay | Yes (Coolify) | Free tier |
-| **Sentry** | Crash reporting, error tracking, performance | Yes (Coolify) | Free tier |
-| **Plausible** | Privacy-friendly web analytics | Yes (Coolify) | Paid |
-| **Umami** | Simple web analytics | Yes (Coolify) | Free |
-
-### Platform-Specific
-
-| Tool | Purpose | Platform |
-|------|---------|----------|
+| Tool | Purpose | Notes |
+|------|---------|-------|
+| **PostHog** | Product analytics, feature flags, session replay | Self-hosted or free cloud tier |
+| **Sentry** | Crash reporting, error tracking, performance | Self-hosted or free cloud tier |
+| **Plausible** | Privacy-friendly web analytics | Self-hosted or paid cloud |
+| **Umami** | Simple web analytics | Self-hosted or free cloud |
 | **RevenueCat** | Subscription analytics, cohort analysis | Mobile (iOS + Android) |
-| **App Store Connect Analytics** | Downloads, impressions, conversion | iOS |
-| **Google Play Console** | Install stats, ratings, crashes | Android |
-| **Chrome Web Store Dashboard** | Installs, uninstalls, ratings | Chrome extensions |
-| **Firefox Add-on Statistics** | Downloads, daily users | Firefox extensions |
-| **Expo Analytics** | OTA update adoption, crash rates | Expo apps |
 | **Firebase Analytics** | Event tracking, user properties | Mobile + web |
+| **Expo Analytics** | OTA update adoption, crash rates | Expo apps |
 
-### Self-Hosting on Coolify
-
-```text
-PostHog -> Coolify one-click deploy -> your-analytics.yourdomain.com
-Sentry  -> Coolify one-click deploy -> your-sentry.yourdomain.com
-```
-
-See `tools/deployment/coolify.md` for deployment guidance.
+Platform dashboards: App Store Connect (iOS), Google Play Console (Android), Chrome Web Store, Firefox Add-on Statistics.
 
 ## Key Metrics
 
-### Retention (Most Important)
+### Retention (most important)
 
-| Metric | Target | Action if Below |
+| Metric | Target | Action if below |
 |--------|--------|-----------------|
-| Day 1 retention | > 40% | Fix onboarding |
-| Day 7 retention | > 20% | Improve core loop |
-| Day 30 retention | > 10% | Add engagement features |
+| Day 1 | > 40% | Fix onboarding |
+| Day 7 | > 20% | Improve core loop |
+| Day 30 | > 10% | Add engagement features |
 
 ### Engagement
 
 | Metric | Signal |
 |--------|--------|
-| DAU/MAU ratio | Stickiness (> 20% is good) |
-| Session length | Time spent |
-| Sessions per day | Return frequency |
+| DAU/MAU ratio | Stickiness (> 20% good) |
+| Session length / sessions per day | Time spent, return frequency |
 | Core action completion | Users doing the main thing |
 
 ### Revenue (if monetised)
@@ -81,10 +64,8 @@ See `tools/deployment/coolify.md` for deployment guidance.
 | Metric | Signal |
 |--------|--------|
 | Trial-to-paid conversion | Paywall effectiveness |
-| MRR | Business health |
-| ARPU | Monetisation efficiency |
-| Churn rate | Subscriber loss rate |
-| LTV | Long-term user value |
+| MRR / ARPU | Business health, monetisation efficiency |
+| Churn rate / LTV | Subscriber loss, long-term value |
 
 RevenueCat provides most revenue metrics out of the box for mobile. For web/desktop, use Stripe dashboard or custom analytics.
 
@@ -99,18 +80,9 @@ RevenueCat provides most revenue metrics out of the box for mobile. For web/desk
 
 ## User Feedback Loops
 
-### In-Product
+**In-product**: Rating prompt after positive experience (not randomly). Low-friction feedback form in settings. Feature request upvote system. Bug reports with automatic context (device, OS, screen).
 
-- **Rating prompt**: After positive experience (completed streak, achieved goal) — not randomly
-- **Feedback form**: Low-friction, accessible from settings
-- **Feature requests**: Upvote system or feedback board
-- **Bug reports**: Easy reporting with automatic context (device, OS, screen)
-
-### Store Reviews
-
-- Monitor daily (automate with store APIs where available)
-- Respond to negative reviews with solutions
-- Track common themes to prioritise features
+**Store reviews**: Monitor daily (automate with store APIs). Respond to negative reviews with solutions. Track common themes to prioritise features.
 
 ### Analytics-Driven Iteration
 
@@ -124,20 +96,9 @@ RevenueCat provides most revenue metrics out of the box for mobile. For web/desk
 
 ## Implementation
 
-### Event Tracking
+**Event tracking**: Track actions, not screens (what users DO, not where they GO). Naming: `verb_noun` (e.g., `complete_onboarding`, `start_workout`, `purchase_premium`). Include relevant properties (duration, count, category). Don't over-track — focus on events that inform decisions.
 
-- Track actions, not screens (what users DO, not where they GO)
-- Naming: `verb_noun` (e.g., `complete_onboarding`, `start_workout`, `purchase_premium`)
-- Include relevant properties (duration, count, category)
-- Don't over-track — focus on events that inform decisions
-
-### Privacy Compliance
-
-- Respect App Tracking Transparency (iOS)
-- Provide analytics opt-out
-- Avoid PII collection unless necessary
-- GDPR/CCPA compliance when applicable
-- Prefer privacy-friendly tools (PostHog, Plausible)
+**Privacy compliance**: Respect App Tracking Transparency (iOS). Provide analytics opt-out. Avoid PII unless necessary. GDPR/CCPA compliance when applicable. Prefer privacy-friendly tools (PostHog, Plausible).
 
 ## Related
 
