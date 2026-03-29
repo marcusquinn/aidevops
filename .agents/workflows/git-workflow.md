@@ -32,8 +32,7 @@ If on `main`: STOP. Present branch options before proceeding.
 **First Actions** (before any code changes):
 
 ```bash
-git fetch origin                   # Parallel session safety
-git status --short                 # Check for uncommitted work
+git fetch origin && git status --short
 git log --oneline HEAD..origin/$(git branch --show-current) 2>/dev/null
 ```
 
@@ -48,7 +47,7 @@ ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/m
 # Creates: ~/Git/{repo}-feature-my-feature/
 ```
 
-Non-git artifacts (`.venv/`, `node_modules/`, `dist/`, `.env`) don't transfer between worktrees — recreate in each. See `workflows/worktree.md`, `tools/code-review/code-standards.md` for Python packaging rules.
+Non-git artifacts (`.venv/`, `node_modules/`, `dist/`, `.env`) don't transfer between worktrees — recreate in each. See `workflows/worktree.md`.
 
 **Session-Branch Tracking**: After creating a branch, call `session-rename_sync_branch` to sync session name.
 
@@ -70,10 +69,12 @@ Non-git artifacts (`.venv/`, `node_modules/`, `dist/`, `.env`) don't transfer be
 
 Record timestamps in TODO.md or PLANS.md. **Worker restriction**: Headless workers must NOT edit TODO.md — supervisor handles updates. See `workflows/plans.md`.
 
-| Event | Field | Event | Field |
-|-------|-------|-------|-------|
-| Branch created | `started:` | PR merged | `completed:` |
-| Work session ends | `logged:` (cumulative) | Release published | `actual:` |
+| Event | Field |
+|-------|-------|
+| Branch created | `started:` |
+| Work session ends | `logged:` (cumulative) |
+| PR merged | `completed:` |
+| Release published | `actual:` |
 
 ## Branch Naming from Planning Files
 
@@ -96,7 +97,7 @@ git checkout main && git pull origin main
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add {type}/{issue_number}-{slug-from-title}
 ```
 
-Supported: `github.com/{owner}/{repo}/issues/{num}`, `gitlab.com/{owner}/{repo}/-/issues/{num}`, `{domain}/{owner}/{repo}/issues/{num}` (Gitea).
+Supported: `github.com`, `gitlab.com`, and Gitea (`{domain}/{owner}/{repo}/issues/{num}`).
 
 **Repository ownership**: If `git remote get-url origin` owner differs from `gh api user --jq '.login'`, use fork workflow — see `workflows/pr.md`.
 
@@ -108,7 +109,7 @@ Claude Code PreToolUse hooks block destructive git/filesystem commands before ex
 
 **Safe (allowlisted)**: `git checkout -b`, `git restore --staged`, `git clean -n`/`--dry-run`, `rm -rf /tmp/...`, `git push --force-with-lease`.
 
-Management: `${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/install-hooks-helper.sh [status|install|test|uninstall]`. Files: `~/.aidevops/hooks/git_safety_guard.py` (guard), `~/.claude/settings.json` (config). Installed by `setup.sh`. Requires Python 3 + Claude Code restart.
+Management: `install-hooks-helper.sh [status|install|test|uninstall]`. Files: `~/.aidevops/hooks/git_safety_guard.py`, `~/.claude/settings.json`. Installed by `setup.sh`. Requires Python 3 + Claude Code restart.
 
 **Limitations**: Regex-based; obfuscated commands may bypass. Safety net for honest mistakes, not a security boundary.
 
@@ -116,7 +117,7 @@ Management: `${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/install-hooks-helpe
 
 After file changes: run preflight automatically. Pass → auto-commit with suggested message (confirm or override). Fail → show issues, offer fixes. After commit → auto-push, offer: create PR, continue working, or done.
 
-**PR Title (MANDATORY)**: `{task-id}: {description}`. Task ID is `tNNN` (from TODO.md) or `GH#NNN` (GitHub issue number, for quality-debt/simplification-debt/issue-only work). Examples: `t318: Update PR workflow documentation`, `GH#12455: tighten hashline-edit-format.md`. NEVER use `qd-`, bare numbers, or invented prefixes. For unplanned work: create TODO entry first. Every code change must be traceable to a task.
+**PR Title (MANDATORY)**: `{task-id}: {description}`. Task ID is `tNNN` (from TODO.md) or `GH#NNN` (GitHub issue number, for quality-debt/simplification-debt/issue-only work). Examples: `t318: Update PR workflow documentation`, `GH#12455: tighten hashline-edit-format.md`. NEVER use `qd-`, bare numbers, or invented prefixes. For unplanned work: create TODO entry first.
 
 **If changes include `.agents/` files**: Offer to run `./setup.sh` to deploy to `~/.aidevops/agents/`.
 
@@ -137,7 +138,7 @@ When user wants to work directly on main, acknowledge and proceed — never bloc
 
 ## Database Schema Changes
 
-See `workflows/sql-migrations.md` for the full migration workflow. **Critical rules**: Never modify pushed/deployed migrations — create new ones. Always commit schema + migration together. Always review generated migrations before committing. Branch naming: `feature/add-{table}-table`, `bugfix/fix-{description}`, `chore/backfill-{description}`.
+See `workflows/sql-migrations.md`. **Critical rules**: Never modify pushed/deployed migrations — create new ones. Always commit schema + migration together. Always review generated migrations before committing. Branch naming: `feature/add-{table}-table`, `bugfix/fix-{description}`, `chore/backfill-{description}`.
 
 ## Related Workflows
 
