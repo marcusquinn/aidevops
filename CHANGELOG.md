@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.270] - 2026-03-29
+
+### Changed
+
+- Documentation: tighten compare-models.md (189→172 lines, GH#12852) (#13017)
+- Documentation: GH#12688: tighten ad-creative-chapter-09.md (#13015)
+
 ## [3.5.147] - 2026-03-29
 
 ### Changed
