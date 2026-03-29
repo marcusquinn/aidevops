@@ -96,10 +96,8 @@ else:
   session "Approve"
 
 choice **the best approach**:
-  option "Quick fix":
-    session "Apply quick fix"
-  option "Full refactor":
-    session "Refactor completely"
+  option "Quick fix"
+  option "Full refactor"
 ```
 
 ### Blocks & Pipelines
@@ -145,7 +143,6 @@ session "Synthesize all reviews"
 ```prose
 agent developer:
   model: opus
-  prompt: "You are a senior developer"
 
 loop until **task is complete** (max: 50):
   session: developer
