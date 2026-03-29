@@ -153,6 +153,8 @@ GH_FAILURE_PREFETCH_HOURS="${GH_FAILURE_PREFETCH_HOURS:-24}"                    
 GH_FAILURE_PREFETCH_LIMIT="${GH_FAILURE_PREFETCH_LIMIT:-100}"                                           # Notification page size for failed-notification mining
 GH_FAILURE_SYSTEMIC_THRESHOLD="${GH_FAILURE_SYSTEMIC_THRESHOLD:-3}"                                     # Cluster threshold for systemic-failure flag
 GH_FAILURE_MAX_RUN_LOGS="${GH_FAILURE_MAX_RUN_LOGS:-6}"                                                 # Max failed workflow runs to sample for signatures per pulse
+FOSS_SCAN_TIMEOUT="${FOSS_SCAN_TIMEOUT:-30}"                                                            # Timeout for FOSS contribution scan prefetch (t1702)
+FOSS_MAX_DISPATCH_PER_CYCLE="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"                                         # Max FOSS contribution workers per pulse cycle (t1702)
 
 # Process guard limits (t1398)
 CHILD_RSS_LIMIT_KB="${CHILD_RSS_LIMIT_KB:-2097152}"           # 2 GB default — kill child if RSS exceeds this
@@ -195,6 +197,8 @@ GH_FAILURE_PREFETCH_HOURS=$(_validate_int GH_FAILURE_PREFETCH_HOURS "$GH_FAILURE
 GH_FAILURE_PREFETCH_LIMIT=$(_validate_int GH_FAILURE_PREFETCH_LIMIT "$GH_FAILURE_PREFETCH_LIMIT" 100 1)
 GH_FAILURE_SYSTEMIC_THRESHOLD=$(_validate_int GH_FAILURE_SYSTEMIC_THRESHOLD "$GH_FAILURE_SYSTEMIC_THRESHOLD" 3 1)
 GH_FAILURE_MAX_RUN_LOGS=$(_validate_int GH_FAILURE_MAX_RUN_LOGS "$GH_FAILURE_MAX_RUN_LOGS" 6 0)
+FOSS_SCAN_TIMEOUT=$(_validate_int FOSS_SCAN_TIMEOUT "$FOSS_SCAN_TIMEOUT" 30 5)
+FOSS_MAX_DISPATCH_PER_CYCLE=$(_validate_int FOSS_MAX_DISPATCH_PER_CYCLE "$FOSS_MAX_DISPATCH_PER_CYCLE" 2 0)
 CHILD_RSS_LIMIT_KB=$(_validate_int CHILD_RSS_LIMIT_KB "$CHILD_RSS_LIMIT_KB" 2097152 1)
 CHILD_RUNTIME_LIMIT=$(_validate_int CHILD_RUNTIME_LIMIT "$CHILD_RUNTIME_LIMIT" 1800 1)
 SHELLCHECK_RSS_LIMIT_KB=$(_validate_int SHELLCHECK_RSS_LIMIT_KB "$SHELLCHECK_RSS_LIMIT_KB" 1048576 1)
@@ -828,6 +832,15 @@ _append_prefetch_sub_helpers() {
 	}
 	cat "$needs_info_tmp" >>"$STATE_FILE"
 	rm -f "$needs_info_tmp"
+
+	# Append FOSS contribution scan results (t1702)
+	local foss_tmp
+	foss_tmp=$(mktemp)
+	run_cmd_with_timeout "$FOSS_SCAN_TIMEOUT" prefetch_foss_scan >"$foss_tmp" 2>/dev/null || {
+		echo "[pulse-wrapper] prefetch_foss_scan timed out after ${FOSS_SCAN_TIMEOUT}s (non-fatal)" >>"$LOGFILE"
+	}
+	cat "$foss_tmp" >>"$STATE_FILE"
+	rm -f "$foss_tmp"
 
 	return 0
 }
@@ -2775,6 +2788,113 @@ prefetch_contribution_watch() {
 		echo "[pulse-wrapper] Contribution watch: ${cw_count} items need attention" >>"$LOGFILE"
 	fi
 
+	return 0
+}
+
+#######################################
+# Pre-fetch FOSS contribution scan results (t1702)
+#
+# Runs foss-contribution-helper.sh scan --dry-run and appends a compact
+# summary to STATE_FILE. This gives the pulse agent visibility into
+# eligible FOSS repos so it can dispatch contribution workers when idle
+# capacity exists.
+#
+# The scan checks: foss.enabled globally, per-repo foss:true, blocklist,
+# daily token budget, and weekly PR rate limits. Only repos passing all
+# gates appear as eligible.
+#
+# Output: FOSS scan summary to stdout (appended to STATE_FILE by caller)
+# Returns: 0 always (best-effort, never breaks the pulse)
+#######################################
+prefetch_foss_scan() {
+	local helper="${SCRIPT_DIR}/foss-contribution-helper.sh"
+	if [[ ! -x "$helper" ]]; then
+		return 0
+	fi
+
+	# Quick check: is FOSS globally enabled? Skip the scan entirely if not.
+	local foss_enabled="false"
+	local config_jsonc="${HOME}/.config/aidevops/config.jsonc"
+	if [[ -f "$config_jsonc" ]] && command -v jq &>/dev/null; then
+		foss_enabled=$(sed 's|//.*||g; s|/\*.*\*/||g' "$config_jsonc" 2>/dev/null |
+			jq -r '.foss.enabled // "false"' 2>/dev/null) || foss_enabled="false"
+	fi
+	if [[ "$foss_enabled" != "true" ]]; then
+		return 0
+	fi
+
+	# Check if any foss:true repos exist in repos.json
+	local foss_repo_count=0
+	if [[ -f "$REPOS_JSON" ]] && command -v jq &>/dev/null; then
+		foss_repo_count=$(jq '[.initialized_repos[] | select(.foss == true)] | length' "$REPOS_JSON" 2>/dev/null) || foss_repo_count=0
+	fi
+	if [[ "${foss_repo_count:-0}" -eq 0 ]]; then
+		return 0
+	fi
+
+	local scan_output
+	scan_output=$(bash "$helper" scan --dry-run 2>/dev/null) || scan_output=""
+
+	if [[ -z "$scan_output" ]]; then
+		return 0
+	fi
+
+	# Extract eligible and skipped counts from the summary line
+	local eligible_count=0
+	local skipped_count=0
+	if [[ "$scan_output" =~ ([0-9]+)\ eligible ]]; then
+		eligible_count="${BASH_REMATCH[1]}"
+	fi
+	if [[ "$scan_output" =~ ([0-9]+)\ skipped ]]; then
+		skipped_count="${BASH_REMATCH[1]}"
+	fi
+
+	# Get budget info
+	local budget_output
+	budget_output=$(bash "$helper" budget 2>/dev/null) || budget_output=""
+	local daily_used=0
+	local daily_max=200000
+	local daily_remaining=0
+	if [[ "$budget_output" =~ Used\ today:\ +([0-9]+) ]]; then
+		daily_used="${BASH_REMATCH[1]}"
+	fi
+	if [[ "$budget_output" =~ Max\ daily\ tokens:\ +([0-9]+) ]]; then
+		daily_max="${BASH_REMATCH[1]}"
+	fi
+	daily_remaining=$((daily_max - daily_used))
+	if [[ "$daily_remaining" -lt 0 ]]; then
+		daily_remaining=0
+	fi
+
+	# Extract per-repo eligible details (lines matching ELIGIBLE)
+	local eligible_details
+	eligible_details=$(echo "$scan_output" | grep -i 'ELIGIBLE' | sed 's/\x1b\[[0-9;]*m//g' | sed 's/^[[:space:]]*/  - /' || true)
+
+	{
+		echo ""
+		echo "# FOSS Contribution Scan (t1702)"
+		echo ""
+		echo "FOSS contributions are **enabled**. Scan results from \`foss-contribution-helper.sh scan --dry-run\`."
+		echo ""
+		echo "- Eligible repos: **${eligible_count}**"
+		echo "- Skipped repos: ${skipped_count} (blocklisted, budget exceeded, or rate limited)"
+		echo "- Daily token budget: ${daily_used}/${daily_max} used (${daily_remaining} remaining)"
+		echo "- Max FOSS dispatches per cycle: ${FOSS_MAX_DISPATCH_PER_CYCLE}"
+		echo ""
+		if [[ -n "$eligible_details" && "$eligible_count" -gt 0 ]]; then
+			echo "### Eligible FOSS Repos"
+			echo ""
+			echo "$eligible_details"
+			echo ""
+		fi
+		echo "**Dispatch rule:** When idle worker capacity exists (all managed repo issues dispatched"
+		echo "and worker slots remain), dispatch contribution workers for eligible FOSS repos."
+		echo "Max ${FOSS_MAX_DISPATCH_PER_CYCLE} FOSS dispatches per pulse cycle. Use \`foss-contribution-helper.sh check <slug>\`"
+		echo "before each dispatch. Record token usage after completion with \`foss-contribution-helper.sh record <slug> <tokens>\`."
+		echo ""
+	}
+
+	echo "[pulse-wrapper] FOSS scan: ${eligible_count} eligible, ${skipped_count} skipped, budget ${daily_used}/${daily_max}" >>"$LOGFILE"
 	return 0
 }
 
