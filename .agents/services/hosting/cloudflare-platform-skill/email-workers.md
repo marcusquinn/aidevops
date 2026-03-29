@@ -12,16 +12,10 @@ interface ForwardableEmailMessage {
   readonly raw: ReadableStream; // Raw message stream
   readonly rawSize: number;     // Message size in bytes
   setReject(reason: string): void;
-  forward(rcptTo: string, headers?: Headers): Promise<void>;
+  forward(rcptTo: string, headers?: Headers): Promise<void>; // only X-* headers allowed
   reply(message: EmailMessage): Promise<void>;
 }
 ```
-
-| Method | Behaviour |
-|--------|-----------|
-| `setReject(reason)` | Reject with permanent SMTP error |
-| `forward(rcptTo, headers?)` | Forward to verified destination (only `X-*` headers allowed) |
-| `reply(message)` | Reply to sender with new EmailMessage |
 
 ```typescript
 import { EmailMessage } from "cloudflare:email";
@@ -164,15 +158,7 @@ Wrangler writes sent emails to local `.eml` files.
 - Parse headers safely: `message.headers.get('Subject') || '(no subject)'`
 - Add type safety: `async email(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext)`
 - CPU limit errors (`EXCEEDED_CPU` in `npx wrangler tail`): upgrade to Paid plan or offload via `ctx.waitUntil()`
-
-## Dependencies
-
-| Package | Type | Version |
-|---------|------|---------|
-| `postal-mime` | runtime | `^2.3.3` |
-| `mimetext` | runtime | `^4.0.0` |
-| `@cloudflare/workers-types` | dev | `^4.0.0` |
-| `wrangler` | dev | `^3.0.0` |
+- Dependencies: `postal-mime` (parse), `mimetext` (compose), `@cloudflare/workers-types` (dev)
 
 ## Troubleshooting
 
@@ -185,6 +171,4 @@ Wrangler writes sent emails to local `.eml` files.
 ## Related Documentation
 
 - [Email Routing Setup](https://developers.cloudflare.com/email-routing/get-started/enable-email-routing/)
-- [Workers Platform](https://developers.cloudflare.com/workers/)
-- [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/)
 - [Workers Limits](https://developers.cloudflare.com/workers/platform/limits/)
