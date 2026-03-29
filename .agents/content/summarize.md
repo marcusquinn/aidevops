@@ -22,6 +22,7 @@ tools:
 - **Repo**: https://github.com/steipete/summarize
 - **Docs**: https://github.com/steipete/summarize/tree/main/docs
 - **Env Vars**: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY`, `OPENROUTER_API_KEY`
+- **Requires**: Node.js 22+. Optional: `yt-dlp` (YouTube audio), `whisper.cpp` (local transcription), `uvx markitdown` (enhanced preprocessing)
 
 ```bash
 summarize "https://example.com"                                          # web page
@@ -36,27 +37,17 @@ npx -y @steipete/summarize "https://example.com"                         # one-s
 
 <!-- AI-CONTEXT-END -->
 
-## Requirements
-
-- Node.js 22+
-- Optional: `yt-dlp` (YouTube audio), `whisper.cpp` (local transcription), `uvx markitdown` (enhanced preprocessing)
-
 ## Usage
 
 ```bash
-# Basic
+# Model selection
 summarize "https://example.com" --model openai/gpt-5-mini
 
-# YouTube (youtube.com and youtu.be both work)
-summarize "https://youtu.be/dQw4w9WgXcQ" --youtube auto
-
-# Podcasts
-summarize "https://feeds.npr.org/500005/podcast.xml"                     # RSS (latest episode)
+# Podcasts (Apple, Spotify best-effort)
 summarize "https://podcasts.apple.com/us/podcast/2424-jelly-roll/id360084272?i=1000740717432"
-summarize "https://open.spotify.com/episode/5auotqWAXhhKyb9ymCuBJY"     # best-effort
+summarize "https://open.spotify.com/episode/5auotqWAXhhKyb9ymCuBJY"
 
 # Local files
-summarize "/path/to/document.pdf" --model google/gemini-3-flash-preview  # PDF
 summarize "/path/to/image.png"
 summarize "/path/to/video.mp4" --video-mode transcript
 
@@ -64,17 +55,12 @@ summarize "/path/to/video.mp4" --video-mode transcript
 summarize "https://example.com" --length long          # presets: short, medium, long, xl, xxl
 summarize "https://example.com" --length 20k           # character target
 summarize "https://example.com" --max-output-tokens 2000
-summarize "https://example.com" --language en
 summarize "https://example.com" --lang auto            # match source language
-
-# Extraction (no summary)
-summarize "https://example.com" --extract --format md
-summarize "https://example.com" --extract --format text
 
 # Output format
 summarize "https://example.com" --json                 # machine-readable with diagnostics
 summarize "https://example.com" --plain                # no ANSI/colors
-summarize "https://example.com" --stream off
+summarize "https://example.com" --extract --format text
 ```
 
 ## Model Configuration
@@ -88,32 +74,9 @@ summarize "https://example.com" --stream off
 | Z.AI (Zhipu) | `zai/glm-4.7` | `Z_AI_API_KEY` |
 | OpenRouter | `openrouter/openai/gpt-5-mini` | `OPENROUTER_API_KEY` |
 
-**Free models via OpenRouter:**
+**Free models**: `OPENROUTER_API_KEY=sk-or-... summarize refresh-free --set-default`, then `--model free`.
 
-```bash
-OPENROUTER_API_KEY=sk-or-... summarize refresh-free --set-default
-summarize "https://example.com" --model free
-```
-
-**Config file** (`~/.summarize/config.json`):
-
-```json
-{ "model": "openai/gpt-5-mini" }
-```
-
-## Chrome Extension
-
-Side Panel extension for one-click summarization.
-
-1. Install CLI: `npm i -g @steipete/summarize`
-2. Build: `pnpm -C apps/chrome-extension build`
-3. Load in Chrome: `chrome://extensions` → Developer mode → Load unpacked → `apps/chrome-extension/.output/chrome-mv3`
-4. Open Side Panel → copy install command → run: `summarize daemon install --token <TOKEN>`
-
-```bash
-summarize daemon status
-summarize daemon restart
-```
+**Config file** (`~/.summarize/config.json`): `{ "model": "openai/gpt-5-mini" }`
 
 ## Advanced Features
 
@@ -156,31 +119,6 @@ export SUMMARIZE_DISABLE_LOCAL_WHISPER_CPP=1         # force remote
 | `--youtube auto` | YouTube transcript method |
 | `--firecrawl auto\|always\|off` | Firecrawl fallback mode |
 
-## Example Workflow
-
-```bash
-# Research a topic
-summarize "https://docs.example.com/api" --length long --json > api-summary.json
-
-# Summarize multiple sources
-urls=("https://example.com/page1" "https://example.com/page2")
-for url in "${urls[@]}"; do
-  summarize "$url" --length medium >> research-notes.md
-done
-
-# Extract and process
-summarize "https://example.com" --extract --format md | process-content.sh
-```
-
 ## Troubleshooting
 
-| Issue | Fix |
-|-------|-----|
-| Model not responding | Check API key is set |
-| YouTube transcript unavailable | Install `yt-dlp` |
-| PDF extraction failing | Use `--model google/gemini-3-flash-preview` |
-| Rate limiting | Add `--timeout` and `--retries` |
-
-```bash
-summarize "https://example.com" --verbose   # debug mode
-```
+Debug: `summarize "https://example.com" --verbose`. Common fixes: check API key is set, install `yt-dlp` for YouTube, use `--model google/gemini-3-flash-preview` for PDFs, add `--timeout`/`--retries` for rate limiting.
