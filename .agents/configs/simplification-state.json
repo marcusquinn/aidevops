@@ -757,8 +757,8 @@
       "pr": 11713
     },
     ".agents/tools/build-agent/build-agent.md": {
-      "hash": "1a8143907ffc913652d31b2051cef64e60465686",
-      "at": "2026-03-29T12:36:30Z",
+      "hash": "59fa5cde2d2c1b113be43ecdb1a6d8978d3d4f69",
+      "at": "2026-03-29T14:29:12Z",
       "pr": 12957
     },
     ".agents/content/distribution-youtube-topic-research.md": {
@@ -1027,9 +1027,9 @@
       "pr": 12728
     },
     ".agents/workflows/pr.md": {
-      "hash": "4a3037a4141b69625fe2949f51e1a21a63bfa8ce",
-      "at": "2026-03-28T15:30:43Z",
-      "pr": 11878
+      "hash": "8f6584d97315d02aa4914a1f26165c57ff873479",
+      "at": "2026-03-29T14:29:47Z",
+      "pr": 13014
     },
     ".agents/tools/git/conflict-resolution.md": {
       "hash": "f5933df58340b4ee0c5b329808c991807ed8a047",
@@ -1312,9 +1312,9 @@
       "pr": 12056
     },
     ".agents/scripts/commands/define.md": {
-      "hash": "7426c88c3d9ef90d25299174e2595c2adf764976",
-      "at": "2026-03-28T17:11:09Z",
-      "pr": 12054
+      "hash": "50c4ecd13bb210a44c421edfed6cc4e00dc0fabf",
+      "at": "2026-03-29T14:29:13Z",
+      "pr": 13006
     },
     ".agents/tools/browser/skyvern.md": {
       "hash": "1f2933d4cdf35fd9696301a5743ae2e550a31eb0",
@@ -1582,9 +1582,9 @@
       "pr": 12327
     },
     ".agents/tools/code-review/code-simplifier.md": {
-      "hash": "301f002b5a6dbe5ce8c90735604e21f1e84a3770",
-      "at": "2026-03-29T13:19:54Z",
-      "pr": 12971
+      "hash": "db81a753db386c80d4b8ac2c1bee0d5e9cade513",
+      "at": "2026-03-29T14:29:01Z",
+      "pr": 13004
     },
     ".agents/tools/build-agent/add-skill.md": {
       "hash": "36065ac3559aa2e929cbb858c8220961454f9dd9",
@@ -1787,9 +1787,9 @@
       "pr": 12821
     },
     ".agents/tools/ai-orchestration/openprose.md": {
-      "hash": "ba19a1257768526c285139ea83bbd0e96cb0674f",
-      "at": "2026-03-29T12:36:28Z",
-      "pr": 12949
+      "hash": "7d17737b91f8878839b3430a51676211744becce",
+      "at": "2026-03-29T14:29:04Z",
+      "pr": 13007
     },
     ".agents/content/heygen-skill/rules-avatars.md": {
       "hash": "e600865474071a7973fe0ed89b4fd361065e080a",
@@ -1807,9 +1807,9 @@
       "pr": 12641
     },
     ".agents/services/database/postgres-drizzle-skill/performance.md": {
-      "hash": "48dbec46f41cf5e63754fb7ed84e48bee09e5f4a",
-      "at": "2026-03-29T10:18:22Z",
-      "pr": 12845
+      "hash": "3747b8c1380bf08ff9519b3f6edcfee3025ea325",
+      "at": "2026-03-29T14:29:44Z",
+      "pr": 13013
     },
     ".agents/services/accounting/quickfile.md": {
       "hash": "db7040cc4f46334177d39ff45c6d4fd3be9698ee",
@@ -2027,14 +2027,14 @@
       "pr": 12870
     },
     ".agents/services/hosting/cloudflare-platform-skill/miniflare-patterns.md": {
-      "hash": "9eb1003c5b23acae97465e7e74521cb94bb88f48",
-      "at": "2026-03-29T10:47:28Z",
-      "pr": 12871
+      "hash": "304f6cf07b8e1ce2ccf0991e5a1c7a048d898f2b",
+      "at": "2026-03-29T14:29:37Z",
+      "pr": 13020
     },
     ".agents/tools/browser/proxy-integration.md": {
-      "hash": "edf4d222e440959f1b6f8008c5f8c431204d28a4",
-      "at": "2026-03-29T10:48:09Z",
-      "pr": 12823
+      "hash": "e941cce9065d6978c621d2ffa31825830232bc91",
+      "at": "2026-03-29T14:29:35Z",
+      "pr": 13019
     },
     ".agents/tools/ai-assistants/capsolver.md": {
       "hash": "934e330cfc0b1a30efe5bf139296ae882f868709",
@@ -2082,9 +2082,9 @@
       "pr": 12920
     },
     ".agents/tools/voice/speech-to-speech.md": {
-      "hash": "e7d0ed38a67b19ea3ef05112081fff1a453ce21e",
-      "at": "2026-03-29T12:36:29Z",
-      "pr": 12956
+      "hash": "54c12a6e35c2fd9bdbc1476b98053f3fd40c5580",
+      "at": "2026-03-29T14:29:05Z",
+      "pr": 13005
     },
     ".agents/tools/diagrams/mermaid-diagrams-skill/advanced.md": {
       "hash": "66bd6cabafb5379b9b183e5c0721e35852080713",
@@ -2175,6 +2175,11 @@
       "hash": "e7acafaec5e56e608968ecc99a7005352995560c",
       "at": "2026-03-29T12:37:24Z",
       "pr": 12791
+    },
+    ".agents/tools/ai-assistants/compare-models.md": {
+      "hash": "4ee54c0d4a2a76b5646c8d5bd3403a6bc744f649",
+      "at": "2026-03-29T14:29:46Z",
+      "pr": 13017
     }
   }
 }
