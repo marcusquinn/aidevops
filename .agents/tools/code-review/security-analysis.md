@@ -56,21 +56,21 @@ mcp:
 ./.agents/scripts/security-helper.sh report [--format=sarif]
 ```
 
+**Development workflow**: Pre-commit (`analyze staged`) → PR review (`analyze branch`) → weekly (`analyze full`) → post-dep-change (`scan-deps`).
+
 ## Two-Pass Investigation Model
 
-**Pass 1 — Reconnaissance**: Fast scan identifying all potential sources of untrusted input. Build a checklist: `SAST Recon on src/auth/handler.ts → Investigate data flow from userId:15, userInput:42`.
+**Pass 1 — Reconnaissance**: Fast scan; identify all untrusted input sources. Build checklist: `SAST Recon on src/auth/handler.ts → Investigate data flow from userId:15, userInput:42`.
 
-**Pass 2 — Investigation**: Trace each source to its sink. (1) Identify source (req.body, req.query). (2) Trace variable through calls and transforms. (3) Find sink (SQL query, HTML output, shell command). (4) Verify sanitization/escaping exists.
+**Pass 2 — Investigation**: For each source: (1) identify source (req.body, req.query), (2) trace through calls/transforms, (3) find sink (SQL query, HTML output, shell command), (4) verify sanitization exists.
 
 ## Integrations
 
-**Dependency scanning**: OSV-Scanner. Supported: npm/Yarn/pnpm, pip, Go, Cargo, Composer, Maven/Gradle.
+**OSV-Scanner** (deps): npm/Yarn/pnpm, pip, Go, Cargo, Composer, Maven/Gradle.
 
-**VirusTotal**: Advisory threat intelligence — SHA256 hash lookup against 70+ AV engines, domain/URL scanning. Rate-limited (16s between requests, max 8 per skill scan). Verdicts: SAFE, MALICIOUS, SUSPICIOUS, UNKNOWN. Does not block imports (Cisco Skill Scanner is the security gate).
+**VirusTotal**: SHA256 hash lookup against 70+ AV engines, domain/URL scanning. Rate-limited (16s between requests, max 8 per skill scan). Verdicts: SAFE, MALICIOUS, SUSPICIOUS, UNKNOWN. Does not block imports (Cisco Skill Scanner is the security gate). API key: `aidevops secret set VIRUSTOTAL_MARCUSQUINN` (gopass) or `~/.config/aidevops/credentials.sh`.
 
-API key setup: `aidevops secret set VIRUSTOTAL_MARCUSQUINN` (gopass) or add to `~/.config/aidevops/credentials.sh`.
-
-**Ferret** (AI CLI config scanning): Detects prompt injection, jailbreaks, credential leaks, and backdoors in Claude Code, Cursor, Windsurf, Continue, Aider, Cline configs. 65+ rules across 9 threat categories.
+**Ferret** (AI CLI configs): Detects prompt injection, jailbreaks, credential leaks, backdoors in Claude Code, Cursor, Windsurf, Continue, Aider, Cline. 65+ rules across 9 threat categories.
 
 ```bash
 npm install -g ferret-scan   # or: npx ferret-scan
@@ -78,9 +78,7 @@ npm install -g ferret-scan   # or: npx ferret-scan
 # Custom rules: .ferretrc.json | Exclude known issues: ferret baseline create
 ```
 
-## Output and Reporting
-
-Reports saved to `.security-analysis/`:
+## Output
 
 ```text
 .security-analysis/
@@ -89,7 +87,7 @@ Reports saved to `.security-analysis/`:
 └── security-report.sarif       # SARIF format for CI/CD
 ```
 
-Each finding includes: severity, file, lines, CWE, description, vulnerable code, and remediation with corrected code.
+Each finding includes: severity, file, lines, CWE, description, vulnerable code, remediation.
 
 ## Allowlisting and Exceptions
 
@@ -111,6 +109,8 @@ const query = buildQuery(validatedInput);
 // Block of code with known safe HTML handling
 /* security-ignore-end */
 ```
+
+Always verify before allowlisting. Include reason. Prefer code fixes over suppressions.
 
 ## CI/CD Integration
 
@@ -146,11 +146,7 @@ const query = buildQuery(validatedInput);
 
 Tools: `find_line_numbers` (exact line numbers), `get_audit_scope` (git diff scope), `run_poc` (proof-of-concept exploits).
 
-## Best Practices
-
-**Development workflow**: Pre-commit (`analyze staged`) → PR review (`analyze branch`) → weekly full scans (`analyze full`) → post-dependency-change (`scan-deps`).
-
-**Remediation SLAs**:
+## Remediation SLAs
 
 | Severity | SLA | Action |
 |----------|-----|--------|
@@ -158,8 +154,6 @@ Tools: `find_line_numbers` (exact line numbers), `get_audit_scope` (git diff sco
 | High | 7d | Prioritize in current sprint |
 | Medium | 30d | Schedule for next sprint |
 | Low | 90d | Address in maintenance cycle |
-
-**False positive management**: Always verify before allowlisting. Include reason in allowlist entry. Prefer code fixes over suppressions.
 
 ## Tool Comparison
 
@@ -181,13 +175,10 @@ Tools: `find_line_numbers` (exact line numbers), `get_audit_scope` (git diff sco
 
 ## Troubleshooting
 
-**"No files in scope"**: Check `git status` and `git diff --stat` — ensure changes exist to analyze.
-
-**"OSV-Scanner not found"**: `go install github.com/google/osv-scanner/cmd/osv-scanner@latest` or `brew install osv-scanner`.
-
-**"Analysis timeout"**: Target specific paths or use `analyze branch` instead of `analyze full`.
-
-**"Too many false positives"**: Use `vuln_allowlist.txt` or `ferret baseline create` for AI config scans.
+- **"No files in scope"**: Check `git status` and `git diff --stat`.
+- **"OSV-Scanner not found"**: `go install github.com/google/osv-scanner/cmd/osv-scanner@latest` or `brew install osv-scanner`.
+- **"Analysis timeout"**: Target specific paths or use `analyze branch` instead of `analyze full`.
+- **"Too many false positives"**: Use `vuln_allowlist.txt` or `ferret baseline create`.
 
 ## Resources
 
