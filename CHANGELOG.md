@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.297] - 2026-03-29
+
+### Changed
+
+- Documentation: tighten architecture.md prose without knowledge loss (#13116)
+
+### Fixed
+
+- show elapsed time and 0 tokens for pulse bash routine (GH#13099) (#13117)
+
 ## [3.5.281] - 2026-03-29
 
 ### Changed
