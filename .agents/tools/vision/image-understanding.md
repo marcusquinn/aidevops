@@ -36,8 +36,6 @@ tools:
 | **Qwen-VL** | Alibaba | 32K | Free | Yes | Multilingual, ~8GB |
 | **InternVL 2.5** | Shanghai AI Lab | 8K | Free | Yes | Strong reasoning, ~8GB |
 
-Pure text extraction → `tools/ocr/glm-ocr.md` | Screen capture + analysis → `tools/browser/peekaboo.md`
-
 ## Cloud APIs
 
 ### OpenAI (GPT-4o Vision)
@@ -55,7 +53,7 @@ base64 -i screenshot.png | \
   curl -s https://api.openai.com/v1/chat/completions -H "Authorization: Bearer $OPENAI_API_KEY" -H "Content-Type: application/json" -d @-
 ```
 
-**Token costs**: 1024×1024 ≈ 765 tokens. Use `detail: "low"` (~85 tokens) for classification. See [OpenAI vision docs](https://platform.openai.com/docs/guides/vision) for per-model limits.
+**Tokens**: 1024x1024 ~765 tokens. `detail: "low"` ~85 tokens for classification. [OpenAI vision docs](https://platform.openai.com/docs/guides/vision).
 
 ### Anthropic (Claude Vision)
 
@@ -67,11 +65,11 @@ curl https://api.anthropic.com/v1/messages \
   -d '{"model":"claude-sonnet-4-6","max_tokens":1024,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"<base64-data>"}},{"type":"text","text":"Describe this"}]}]}'
 ```
 
-**Limits**: JPEG, PNG, GIF, WebP. Max 5MB (API) / 10MB (Claude.ai). Hard limit: 8000×8000 px. Long edge >1568 px is auto-downscaled — resize first for optimal latency:
+**Limits**: JPEG/PNG/GIF/WebP. Max 5MB (API), 10MB (Claude.ai). Hard limit 8000x8000 px. Long edge >1568 px auto-downscaled — resize first:
 
 ```bash
-sips --resampleHeightWidthMax 1568 input.png --out output.png   # macOS built-in
-magick input.png -resize '1568x1568>' output.png                # ImageMagick ('>' = only shrink)
+sips --resampleHeightWidthMax 1568 input.png --out output.png   # macOS
+magick input.png -resize '1568x1568>' output.png                # ImageMagick (> = only shrink)
 ```
 
 `browser-qa-helper.sh` applies this resize automatically.
@@ -79,7 +77,7 @@ magick input.png -resize '1568x1568>' output.png                # ImageMagick ('
 ### Google (Gemini Vision)
 
 ```bash
-# 1M context — best for very large images or multiple images per request
+# 1M context — best for very large or multiple images per request
 curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$GOOGLE_AI_KEY" \
   -H "Content-Type: application/json" \
   -d '{"contents":[{"parts":[{"text":"Analyse this chart"},{"inline_data":{"mime_type":"image/png","data":"<base64-data>"}}]}]}'
@@ -88,7 +86,7 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:g
 ## Local Models (Ollama)
 
 ```bash
-# Setup
+# Install and pull models
 brew install ollama
 ollama pull llava        # General vision (~4GB)
 ollama pull minicpm-v    # Efficient local (~4GB)
@@ -121,15 +119,13 @@ for img in dir/*.{jpg,png,webp}; do
   [ -f "$img" ] || continue
   echo "=== $(basename "$img") ===" && ollama run llava "Describe in one sentence" --images "$img"
 done
-
-# Screen capture + analysis (Peekaboo)
-peekaboo image --mode screen --analyze "What is shown?" --model ollama/llava
-peekaboo image --mode window --app Safari --analyze "Summarise page content" --model openai/gpt-4o
 ```
+
+Screen capture + analysis: `tools/browser/peekaboo.md` (`peekaboo image --mode screen --analyze`).
 
 ## Token Cost Reference
 
-| Provider | Low detail | 1024×1024 | 2048×2048 |
+| Provider | Low detail | 1024x1024 | 2048x2048 |
 |----------|-----------|-----------|-----------|
 | OpenAI | ~85 | ~765 | ~1,105 |
 | Anthropic | ~1,000 | ~1,600 | ~3,200 |
@@ -141,6 +137,4 @@ peekaboo image --mode window --app Safari --analyze "Summarise page content" --m
 - `overview.md` — Vision AI category overview
 - `image-generation.md` — Create images from text
 - `image-editing.md` — Modify existing images
-- `tools/ocr/glm-ocr.md` — Dedicated OCR
-- `tools/browser/peekaboo.md` — Screen capture + vision
 - `tools/infrastructure/cloud-gpu.md` — GPU deployment for local models
