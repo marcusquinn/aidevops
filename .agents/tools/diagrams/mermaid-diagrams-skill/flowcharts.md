@@ -1,7 +1,5 @@
 # Flowchart Diagrams
 
-Flowcharts visualize processes, algorithms, and decision flows using nodes and edges.
-
 ## Basic Syntax
 
 ```mermaid
@@ -87,7 +85,7 @@ flowchart TB
     UI --> WS
 ```
 
-**Nested subgraphs** supported. **Per-subgraph direction** — add `direction TB` inside to override locally.
+Nested subgraphs supported. Add `direction TB` inside a subgraph to override direction locally.
 
 ## Multi-Target Edges
 
@@ -136,9 +134,7 @@ flowchart LR
     linkStyle default stroke:gray,stroke-width:1px
 ```
 
-## Layout Engine
-
-ELK for complex diagrams (v9.4+):
+## Layout Engine (ELK, v9.4+)
 
 ```mermaid
 %%{init: {"flowchart": {"defaultRenderer": "elk"}} }%%
