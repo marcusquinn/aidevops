@@ -91,14 +91,17 @@ result=$("$HELPER" generate --cli "OpenCode" --model "anthropic/claude-opus-4-6"
 assert_not_contains "zero tokens omitted" "tokens" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Test 4: generate with no model (should omit model)
+# Test 4: generate with no --model flag (auto-detects from session DB if available)
+# GH#12965: model is now auto-detected from the OpenCode session DB, so the
+# output may contain a model even without --model. We only verify the CLI
+# override works and aidevops branding is present.
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "Test 4: no model"
+echo "Test 4: no explicit model (auto-detect from DB)"
 result=$("$HELPER" generate --cli "Cursor" --tokens 0)
 assert_contains "contains Cursor link" "plugin for [Cursor](https://cursor.com)" "$result"
 assert_contains "contains aidevops" "aidevops.sh" "$result"
-assert_not_contains "no model field" "with claude" "$result"
+# Model may or may not be present depending on whether a session DB is available
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 5: footer command includes --- separator

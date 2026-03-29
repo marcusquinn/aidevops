@@ -168,7 +168,7 @@ _detect_cli() {
 _find_session_id() {
 	local db_path="$1"
 
-	local cwd repo_root canonical_dir
+	local cwd repo_root canonical_dir main_worktree
 	cwd=$(pwd 2>/dev/null || echo "")
 	if [[ -z "$cwd" ]]; then
 		echo ""
@@ -177,6 +177,11 @@ _find_session_id() {
 
 	repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "$cwd")
 	canonical_dir="${repo_root%%.*}"
+
+	# Resolve the main worktree path (first entry in git worktree list).
+	# In linked worktrees, cwd/repo_root differ from the canonical repo path
+	# where sessions are typically stored (GH#12965).
+	main_worktree=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //' || echo "")
 
 	local session_id=""
 
@@ -214,7 +219,7 @@ _find_session_id() {
 			local pid_start_ms=$((pid_start_epoch * 1000))
 			session_id=$(sqlite3 "$db_path" "
 				SELECT id FROM session
-				WHERE directory IN ('${cwd}', '${repo_root}', '${canonical_dir}')
+				WHERE directory IN ('${cwd}', '${repo_root}', '${canonical_dir}', '${main_worktree}')
 				ORDER BY ABS(time_created - ${pid_start_ms}) ASC LIMIT 1
 			" 2>/dev/null || echo "")
 		fi
@@ -225,7 +230,7 @@ _find_session_id() {
 	if [[ -z "$session_id" ]]; then
 		session_id=$(sqlite3 "$db_path" "
 			SELECT id FROM session
-			WHERE directory IN ('${cwd}', '${repo_root}', '${canonical_dir}')
+			WHERE directory IN ('${cwd}', '${repo_root}', '${canonical_dir}', '${main_worktree}')
 			ORDER BY time_created DESC LIMIT 1
 		" 2>/dev/null || echo "")
 	fi
@@ -273,6 +278,57 @@ _detect_session_tokens() {
 
 	if [[ -n "$total_tokens" ]] && [[ "$total_tokens" -gt 0 ]] 2>/dev/null; then
 		echo "$total_tokens"
+	else
+		echo ""
+	fi
+	return 0
+}
+
+# =============================================================================
+# Detect model from runtime DB
+# =============================================================================
+# Queries the OpenCode session DB for the model used in the current session.
+# Returns "provider/model" (e.g., "anthropic/claude-sonnet-4-6") or empty.
+# This eliminates the need for callers to pass --model explicitly (GH#12965).
+
+_detect_session_model() {
+	local db_path="${HOME}/.local/share/opencode/opencode.db"
+
+	if [[ ! -r "$db_path" ]] || ! command -v sqlite3 &>/dev/null; then
+		echo ""
+		return 0
+	fi
+
+	local session_id
+	session_id=$(_find_session_id "$db_path")
+
+	if [[ -z "$session_id" ]]; then
+		echo ""
+		return 0
+	fi
+
+	# Extract provider/model from the first message that has model data
+	local provider model_id
+	provider=$(sqlite3 "$db_path" "
+		SELECT json_extract(data, '\$.model.providerID')
+		FROM message
+		WHERE session_id='${session_id}'
+		  AND json_extract(data, '\$.model.modelID') IS NOT NULL
+		LIMIT 1
+	" 2>/dev/null || echo "")
+
+	model_id=$(sqlite3 "$db_path" "
+		SELECT json_extract(data, '\$.model.modelID')
+		FROM message
+		WHERE session_id='${session_id}'
+		  AND json_extract(data, '\$.model.modelID') IS NOT NULL
+		LIMIT 1
+	" 2>/dev/null || echo "")
+
+	if [[ -n "$provider" ]] && [[ -n "$model_id" ]]; then
+		echo "${provider}/${model_id}"
+	elif [[ -n "$model_id" ]]; then
+		echo "$model_id"
 	else
 		echo ""
 	fi
@@ -755,6 +811,11 @@ cmd_generate() {
 	cli_resolved=$(_resolve_cli_inputs "$cli_name" "$cli_version")
 	cli_name="${cli_resolved%%|*}"
 	cli_version="${cli_resolved##*|}"
+
+	# Auto-detect model from session DB if not provided (GH#12965)
+	if [[ -z "$model" ]]; then
+		model=$(_detect_session_model)
+	fi
 
 	# Auto-detect tokens from session DB if not provided
 	if [[ -z "$tokens" ]]; then
