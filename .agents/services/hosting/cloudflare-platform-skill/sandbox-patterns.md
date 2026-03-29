@@ -1,6 +1,6 @@
 # Common Patterns
 
-All patterns use the Worker boilerplate from `sandbox.md` Quick Start. First example shows the full Worker; subsequent examples show only the handler body.
+All patterns use the Worker boilerplate from `sandbox.md` Quick Start. Subsequent examples show only the handler body.
 
 ## AI Code Execution Agent
 
@@ -106,9 +106,8 @@ return Response.json({ success: result.success, notebook: JSON.parse(output.cont
 
 ```typescript
 await sandbox.exec('git clone https://github.com/user/repo.git /workspace/repo');
-await sandbox.exec('git clone -b main --single-branch https://github.com/user/repo.git /workspace/repo');
-const token = env.GITHUB_TOKEN; // Authenticated clone
-await sandbox.exec(`git clone https://${token}@github.com/user/private-repo.git`);
+await sandbox.exec('git clone -b main --single-branch https://github.com/user/repo.git /workspace/repo'); // shallow
+await sandbox.exec(`git clone https://${env.GITHUB_TOKEN}@github.com/user/private-repo.git`); // authenticated
 await sandbox.exec('git pull', { cwd: '/workspace/repo' });
 await sandbox.exec('git checkout -b feature', { cwd: '/workspace/repo' });
 ```
