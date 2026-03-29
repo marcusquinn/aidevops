@@ -28,7 +28,7 @@ tools:
 google-chat-helper.sh setup  # Interactive wizard
 ```
 
-**Privacy warning**: No E2E encryption. Google retains all messages; Workspace admins have full read access. Gemini AI may use workspace data for training unless your admin configures DPAs and opts out. See [Privacy and Security Assessment](#privacy-and-security-assessment).
+**Privacy warning**: No E2E encryption. Google retains all messages; Workspace admins have full read access. Gemini AI may use workspace data for training unless your admin configures DPAs and opts out. See [Privacy and Security](#privacy-and-security).
 
 <!-- AI-CONTEXT-END -->
 
@@ -178,11 +178,11 @@ google-chat-helper.sh test-auth                                  # verify token
 
 **Health**: `GET /health` → `{"status":"ok","uptime":3600,"spaces":3,"lastEvent":"..."}`
 
-**Runners**: `runner-helper.sh create <name> --description "..."` | `runner-helper.sh edit <name>`
-
 **Dispatch flow**: `MESSAGE` event → space mapping → `runner-helper.sh dispatch <runner> "<prompt>"` → headless AI session → Card v2 or text → sync (≤30s) or async via Chat API.
 
-## Privacy and Security Assessment
+**Runners**: `runner-helper.sh create <name> --description "..."` | `runner-helper.sh edit <name>`
+
+## Privacy and Security
 
 | Aspect | Status | Notes |
 |--------|--------|-------|
@@ -191,11 +191,9 @@ google-chat-helper.sh test-auth                                  # verify token
 | Data/retention | Google-controlled | Per Workspace settings; configurable via Google Vault |
 | Gemini AI training | Risk | Workspace data may train Google AI unless DPA configured |
 
-**Gemini warning**: Review your org's Workspace DPA and verify Gemini AI settings (Google Admin Console > Apps > Additional Google services > Gemini) before deploying a bot handling sensitive data.
+**Gemini warning**: Review your org's Workspace DPA and verify Gemini AI settings (Google Admin Console > Apps > Additional Google services > Gemini) before deploying a bot handling sensitive data. For sensitive communications, prefer Matrix (self-hosted) or SimpleX — see `tools/security/opsec.md`.
 
-For sensitive communications, prefer Matrix (self-hosted) or SimpleX — see `tools/security/opsec.md` for platform comparison.
-
-### Bot-Specific Security
+**Bot security rules**:
 
 - `verifyGoogleTokens: true` always — prevents forged requests
 - Service account key: 600 permissions, never commit to git
