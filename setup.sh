@@ -10,7 +10,11 @@ shopt -s inherit_errexit 2>/dev/null || true
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.5.324
+<<<<<<< Updated upstream
+# Version: <<<<<<< Updated upstream..2
+=======
+# Version: <<<<<<< Updated upstream..2
+>>>>>>> Stashed changes
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
