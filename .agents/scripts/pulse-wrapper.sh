@@ -83,6 +83,9 @@ if [[ "$PULSE_JITTER_MAX" =~ ^[0-9]+$ && "$PULSE_JITTER_MAX" -gt 0 ]]; then
 	fi
 fi
 
+# Track pulse start time for signature footer elapsed time (GH#13099)
+PULSE_START_EPOCH=$(date +%s)
+
 # Use ${BASH_SOURCE[0]:-$0} for shell portability — BASH_SOURCE is undefined
 # in zsh, which is the MCP shell environment. This fallback ensures SCRIPT_DIR
 # resolves correctly whether the script is executed directly (bash) or sourced
@@ -3727,10 +3730,13 @@ This file was previously simplified (PR #${prev_pr}) but has since been modified
 	fi
 
 	# Append signature footer. The pulse-wrapper runs as standalone bash via
-	# launchd (not inside OpenCode), so --no-session skips session DB lookups
-	# that would return misleading data from unrelated sessions (GH#13046).
-	local sig_footer=""
-	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$issue_body" --cli "OpenCode" --no-session 2>/dev/null || true)
+	# launchd (not inside OpenCode), so --no-session skips session DB lookups.
+	# Pass elapsed time and 0 tokens to show honest stats (GH#13099).
+	local sig_footer="" _pulse_elapsed=""
+	_pulse_elapsed=$(($(date +%s) - PULSE_START_EPOCH))
+	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer \
+		--body "$issue_body" --cli "OpenCode" --no-session \
+		--tokens 0 --time "$_pulse_elapsed" --session-type routine 2>/dev/null || true)
 	issue_body="${issue_body}${sig_footer}"
 
 	local create_ok=false
@@ -3890,9 +3896,12 @@ This is an automated scan. The function lengths are factual, but the best decomp
 **To approve or decline**, comment on this issue:
 - \`approved\` — removes the review gate and queues for automated dispatch
 - \`declined: <reason>\` — closes this issue (include your reason after the colon)"
-		# Append signature footer (--no-session: pulse is standalone bash, not OpenCode session)
-		local sig_footer2=""
-		sig_footer2=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$issue_body" --cli "OpenCode" --no-session 2>/dev/null || true)
+		# Append signature footer (--no-session + elapsed time, GH#13099)
+		local sig_footer2="" _pulse_elapsed2=""
+		_pulse_elapsed2=$(($(date +%s) - PULSE_START_EPOCH))
+		sig_footer2=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer \
+			--body "$issue_body" --cli "OpenCode" --no-session \
+			--tokens 0 --time "$_pulse_elapsed2" --session-type routine 2>/dev/null || true)
 		issue_body="${issue_body}${sig_footer2}"
 
 		local issue_key="$file_path"

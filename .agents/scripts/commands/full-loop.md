@@ -107,7 +107,7 @@ Changelog: `feat:` → Added, `fix:` → Fixed, `docs:`/`perf:`/`refactor:` → 
 
 **4.6 Auto-Release (aidevops only)** — `version-manager.sh bump patch`, tag, push, `gh release create`, `setup.sh --non-interactive`.
 
-**4.7 Issue Closing Comment (MANDATORY)** — structured comment: What done, Testing Evidence (level required), Key decisions, Files changed, Blockers, Follow-up, Released in. Every section ≥1 bullet. Gate — no `FULL_LOOP_COMPLETE` until posted.
+**4.7 Closing Comments (MANDATORY)** — post the same structured closing comment on **both** the issue AND the PR: What done, Testing Evidence (level required), Key decisions, Files changed, Blockers, Follow-up, Released in. Every section ≥1 bullet. The PR comment cross-references the issue ("Closes #NNN") and the issue comment cross-references the PR ("PR #NNN"). Gate — no `FULL_LOOP_COMPLETE` until both are posted.
 
 **4.8 Postflight + Deploy** — verify release health; `setup.sh --non-interactive`. Emit: `<promise>FULL_LOOP_COMPLETE</promise>`
 
