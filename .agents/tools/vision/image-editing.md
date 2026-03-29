@@ -18,24 +18,12 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Modify existing images using AI - inpainting, outpainting, upscaling, style transfer, background removal
+- **Purpose**: Modify existing images — inpainting, outpainting, upscaling, style transfer, background removal
 - **Cloud**: DALL-E 2 edit API, Google Imagen edit, Adobe Firefly
 - **Local**: Stable Diffusion inpaint, FLUX fill, Real-ESRGAN (upscaling), ControlNet
 - **Workflow tool**: ComfyUI (node-based pipelines for complex edits)
 
-**When to use**: Removing objects from images, extending image boundaries, changing styles, upscaling low-resolution images, removing backgrounds, or applying consistent edits across batches.
-
-**Quick start** (cloud):
-
-```bash
-# DALL-E 2 image edit (inpainting)
-curl https://api.openai.com/v1/images/edits \
-  -H "Authorization: Bearer $OPENAI_API_KEY" \
-  -F image="@original.png" \
-  -F mask="@mask.png" \
-  -F prompt="A sunlit garden with flowers" \
-  -F size="1024x1024"
-```
+**When to use**: Removing objects, extending boundaries, changing styles, upscaling, removing backgrounds, or batch edits.
 
 <!-- AI-CONTEXT-END -->
 
@@ -43,7 +31,7 @@ curl https://api.openai.com/v1/images/edits \
 
 | Capability | Description | Best Tool |
 |------------|-------------|-----------|
-| **Inpainting** | Replace selected region with AI-generated content | SD inpaint, DALL-E 2 edit |
+| **Inpainting** | Replace selected region with AI content | SD inpaint, DALL-E 2 edit |
 | **Outpainting** | Extend image beyond original boundaries | SD outpaint, FLUX fill |
 | **Upscaling** | Increase resolution with AI enhancement | Real-ESRGAN, Topaz |
 | **Background removal** | Remove or replace backgrounds | rembg, Segment Anything |
@@ -55,44 +43,27 @@ curl https://api.openai.com/v1/images/edits \
 
 ### DALL-E 2 Edit (OpenAI)
 
-The edit endpoint uses DALL-E 2 (not DALL-E 3). Requires a source image and a mask indicating the area to edit.
+Uses DALL-E 2 (not DALL-E 3). Requires source image + mask (transparent areas = edit region). Both must be square PNGs, same dimensions, under 4MB.
 
 ```bash
 # Inpainting: replace masked area
 curl https://api.openai.com/v1/images/edits \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
-  -F image="@photo.png" \
-  -F mask="@mask.png" \
-  -F prompt="A red sports car" \
-  -F size="1024x1024" \
-  -F n=1
+  -F image="@photo.png" -F mask="@mask.png" \
+  -F prompt="A red sports car" -F size="1024x1024" -F n=1
 
 # Variation: generate similar images
 curl https://api.openai.com/v1/images/variations \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
-  -F image="@photo.png" \
-  -F size="1024x1024" \
-  -F n=3
+  -F image="@photo.png" -F size="1024x1024" -F n=3
 ```
-
-**Requirements**: Image and mask must be square PNG files, same dimensions, under 4MB. Mask transparent areas indicate where to edit.
 
 ### Google Imagen Edit (Vertex AI)
 
 ```bash
-# Inpainting via Vertex AI
-curl -X POST \
-  "https://us-central1-aiplatform.googleapis.com/v1/projects/$PROJECT_ID/locations/us-central1/publishers/google/models/imagen-3.0-capability-001:predict" \
-  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "instances": [{
-      "prompt": "Replace with a modern office",
-      "image": {"bytesBase64Encoded": "<base64-image>"},
-      "mask": {"image": {"bytesBase64Encoded": "<base64-mask>"}}
-    }],
-    "parameters": {"sampleCount": 1}
-  }'
+curl -X POST "https://us-central1-aiplatform.googleapis.com/v1/projects/$PROJECT_ID/locations/us-central1/publishers/google/models/imagen-3.0-capability-001:predict" \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" -H "Content-Type: application/json" \
+  -d '{"instances": [{"prompt": "Replace with a modern office", "image": {"bytesBase64Encoded": "<base64>"}, "mask": {"image": {"bytesBase64Encoded": "<base64>"}}}], "parameters": {"sampleCount": 1}}'
 ```
 
 ## Local Tools
@@ -100,70 +71,37 @@ curl -X POST \
 ### Stable Diffusion Inpainting (ComfyUI)
 
 ```bash
-# Install ComfyUI (if not already)
-git clone https://github.com/comfyanonymous/ComfyUI.git
-cd ComfyUI && pip install -r requirements.txt
-
-# Download inpainting model
-# Place SD XL inpaint model in ComfyUI/models/checkpoints/
-# Available from https://huggingface.co/diffusers/stable-diffusion-xl-1.0-inpainting-0.1
-
-# Start ComfyUI
-python main.py --listen 0.0.0.0 --port 8188
+git clone https://github.com/comfyanonymous/ComfyUI.git && cd ComfyUI && pip install -r requirements.txt
+# Place SD XL inpaint model in models/checkpoints/ (https://huggingface.co/diffusers/stable-diffusion-xl-1.0-inpainting-0.1)
+python main.py --listen 0.0.0.0 --port 8188  # web UI has mask painting tools
 ```
-
-Use the ComfyUI web interface to build inpainting workflows with mask painting tools.
 
 ### Real-ESRGAN (Upscaling)
 
 ```bash
-# Install
 pip install realesrgan
-
-# Upscale 4x
-python -m realesrgan -i input.jpg -o output.jpg -s 4
-
-# Upscale with face enhancement
-python -m realesrgan -i input.jpg -o output.jpg -s 4 --face_enhance
+python -m realesrgan -i input.jpg -o output.jpg -s 4              # 4x upscale
+python -m realesrgan -i input.jpg -o output.jpg -s 4 --face_enhance  # with face enhancement
 ```
 
-| Scale | Use Case | Notes |
-|-------|----------|-------|
-| 2x | Moderate enhancement | Fast, subtle |
-| 4x | Standard upscaling | Good balance |
-| 8x | Maximum enlargement | Slower, may introduce artifacts |
+Scales: **2x** (fast, subtle) · **4x** (standard, good balance) · **8x** (max enlargement, may artifact)
 
 ### rembg (Background Removal)
 
 ```bash
-# Install
-pip install rembg[gpu]  # GPU accelerated
-# or
-pip install rembg        # CPU only
-
-# Remove background
-rembg i input.jpg output.png
-
-# Batch process
-rembg p input_dir/ output_dir/
-
-# With alpha matting (better edges)
-rembg i -a input.jpg output.png
+pip install rembg[gpu]   # GPU accelerated (or `rembg` for CPU only)
+rembg i input.jpg output.png           # single image
+rembg p input_dir/ output_dir/         # batch process
+rembg i -a input.jpg output.png        # alpha matting (better edges)
 ```
 
 ### GFPGAN (Face Restoration)
 
-```bash
-# Install
-pip install gfpgan
-
-# Restore faces
-python -m gfpgan.inference -i input.jpg -o output/ -v 1.4 -s 2
-```
+`pip install gfpgan && python -m gfpgan.inference -i input.jpg -o output/ -v 1.4 -s 2`
 
 ### ControlNet (Guided Generation)
 
-ControlNet allows precise control over image generation using structural guides:
+Precise control over generation using structural guides. Used within ComfyUI or Automatic1111.
 
 | Control Type | Input | Use Case |
 |-------------|-------|----------|
@@ -174,53 +112,24 @@ ControlNet allows precise control over image generation using structural guides:
 | **Segmentation** | Semantic map | Control scene composition |
 | **Tile** | Low-res image | Upscale with detail generation |
 
-ControlNet models are used within ComfyUI or Automatic1111 workflows.
-
 ## Common Workflows
 
 ### Product Photo Enhancement
 
-```text
-1. Remove background (rembg)
-2. Upscale if needed (Real-ESRGAN 2x)
-3. Generate new background (SD inpaint or DALL-E)
-4. Colour correct and adjust (ImageMagick or Pillow)
-```
+1. Remove background (`rembg`) → 2. Upscale if needed (Real-ESRGAN 2x) → 3. Generate new background (SD inpaint / DALL-E) → 4. Colour correct (ImageMagick / Pillow)
 
 ### Batch Background Removal
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-local input_dir="$1"
-local output_dir="$2"
-
-mkdir -p "$output_dir"
-
-for img in "$input_dir"/*.{jpg,png,webp}; do
-  [ -f "$img" ] || continue
-  local basename
-  basename="$(basename "${img%.*}")"
-  echo "Processing: $basename"
-  rembg i "$img" "$output_dir/${basename}.png"
-done
-
-echo "Done. Output in: $output_dir"
+mkdir -p out && for img in input/*.{jpg,png,webp}; do [ -f "$img" ] && rembg i "$img" "out/$(basename "${img%.*}").png"; done
 ```
 
-### Image Resize and Optimise
+### Image Resize and Optimise (ImageMagick)
 
 ```bash
-# Using ImageMagick (non-AI but commonly needed alongside AI editing)
-# Resize to max 1920px width, maintain aspect ratio
-magick input.jpg -resize 1920x\> -quality 85 output.jpg
-
-# Convert to WebP for web
-magick input.jpg -resize 1920x\> -quality 80 output.webp
-
-# Batch convert directory
-magick mogrify -resize 1920x\> -quality 85 -path output/ input/*.jpg
+magick input.jpg -resize 1920x\> -quality 85 output.jpg                # resize, keep aspect
+magick input.jpg -resize 1920x\> -quality 80 output.webp               # to WebP
+magick mogrify -resize 1920x\> -quality 85 -path output/ input/*.jpg   # batch
 ```
 
 ## VRAM Requirements
@@ -234,12 +143,4 @@ magick mogrify -resize 1920x\> -quality 85 -path output/ input/*.jpg
 | rembg (GPU) | 2GB | 4GB+ | Fast with GPU |
 | GFPGAN | 2GB | 4GB+ | Face-specific |
 
-For cloud GPU deployment of these tools, see `tools/infrastructure/cloud-gpu.md`.
-
-## See Also
-
-- `overview.md` - Vision AI category overview
-- `image-generation.md` - Create new images from text
-- `image-understanding.md` - Analyse existing images
-- `tools/infrastructure/cloud-gpu.md` - GPU deployment for local models
-- `tools/video/` - Image-to-video pipelines
+**See also**: `overview.md` · `image-generation.md` · `image-understanding.md` · `tools/infrastructure/cloud-gpu.md` (cloud GPU deployment) · `tools/video/`
