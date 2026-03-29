@@ -36,36 +36,15 @@ Both tools run in a **sandboxed V8 isolate** (no filesystem, no env var leakage,
 Searches the Cloudflare OpenAPI spec. The `spec` object has all `$refs` pre-resolved. Write JavaScript to filter endpoints — the full spec never enters model context, only filtered results.
 
 ```javascript
-// Find endpoints matching a path pattern
-async () => {
-  const results = [];
-  for (const [path, methods] of Object.entries(spec.paths)) {
-    if (path.includes('/zones/') &&
-        (path.includes('firewall/waf') || path.includes('rulesets'))) {
-      for (const [method, op] of Object.entries(methods)) {
-        results.push({ method: method.toUpperCase(), path, summary: op.summary });
-      }
-    }
-  }
-  return results;
-}
+// Find WAF/ruleset endpoints in zones
+async () => Object.entries(spec.paths)
+  .filter(([p]) => p.includes('/zones/') && (p.includes('firewall/waf') || p.includes('rulesets')))
+  .flatMap(([p, ms]) => Object.entries(ms).map(([m, op]) => ({ method: m.toUpperCase(), path: p, summary: op.summary })))
 ```
 
 ### `execute(code)`
 
-Executes JavaScript against the Cloudflare API via `cloudflare.request()`. Zone-level endpoints use `/zones/{zone_id}/...`, account-level use `/accounts/{account_id}/...`.
-
-```javascript
-// Simple GET — list DNS records
-async () => {
-  const zoneId = "<YOUR_ZONE_ID>";
-  const res = await cloudflare.request({
-    method: "GET",
-    path: `/zones/${zoneId}/dns_records`
-  });
-  return res.result;
-}
-```
+Executes JavaScript against the Cloudflare API via `cloudflare.request()`. Zone-level: `/zones/{zone_id}/...`, account-level: `/accounts/{account_id}/...`. Chain multiple calls in one invocation to batch operations.
 
 ```javascript
 // PUT with body — enable managed WAF ruleset
@@ -75,17 +54,12 @@ async () => {
     method: "PUT",
     path: `/zones/${zoneId}/rulesets/phases/http_request_firewall_managed/entrypoint`,
     body: {
-      rules: [{
-        action: "execute",
-        expression: "true",
-        action_parameters: { id: "efb7b8c949ac4650a09736fc376e9aee" }
-      }]
+      rules: [{ action: "execute", expression: "true",
+        action_parameters: { id: "efb7b8c949ac4650a09736fc376e9aee" } }]
     }
   });
 }
 ```
-
-Chain multiple `cloudflare.request()` calls in a single `execute` invocation to batch related operations (e.g., fetching DDoS + WAF rulesets together).
 
 ## References
 
