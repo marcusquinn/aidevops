@@ -13,7 +13,7 @@ model: sonnet
 
 - **Input**: Research brief (`content/research.md`) or topic + audience
 - **Output**: Story package — hook variants, narrative arc, transformation framework, angle selection
-- **Principle**: One story, many outputs — design once, adapt everywhere
+- **Principle**: One story, many outputs — design the narrative once, adapt everywhere
 - **Hook-first always** — every output starts with the hook, regardless of platform
 - **6-12 word constraint** on hooks — forces clarity and punch
 - **Proven first, original second** — 97% proven structure, 3% unique twist
