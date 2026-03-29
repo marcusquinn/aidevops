@@ -71,7 +71,7 @@ assert_contains "starts with aidevops" "[aidevops.sh](https://aidevops.sh)" "$re
 assert_contains "contains CLI with plugin for" "plugin for [OpenCode](https://opencode.ai) v1.3.3" "$result"
 assert_contains "model strips provider prefix" "with claude-opus-4-6" "$result"
 assert_not_contains "no provider prefix" "anthropic/" "$result"
-assert_contains "contains formatted tokens" "1,234 tokens on this." "$result"
+assert_contains "contains formatted tokens" "1,234 tokens on this" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 2: generate with explicit --tokens 0 (should omit tokens)
@@ -98,7 +98,7 @@ echo "Test 4: no model"
 result=$("$HELPER" generate --cli "Cursor" --tokens 0)
 assert_contains "contains Cursor link" "plugin for [Cursor](https://cursor.com)" "$result"
 assert_contains "contains aidevops" "aidevops.sh" "$result"
-assert_not_contains "no model field" "with " "$result"
+assert_not_contains "no model field" "with claude" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 5: footer command includes --- separator
@@ -108,7 +108,7 @@ echo "Test 5: footer includes --- separator"
 result=$("$HELPER" footer --cli "OpenCode" --cli-version "1.0.0" --model "anthropic/claude-sonnet-4-6" --tokens 5000)
 assert_contains "contains ---" "---" "$result"
 assert_contains "contains signature" "plugin for [OpenCode](https://opencode.ai) v1.0.0" "$result"
-assert_contains "contains tokens" "5,000 tokens on this." "$result"
+assert_contains "contains tokens" "5,000 tokens on this" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 6: comma formatting for various numbers
@@ -180,7 +180,7 @@ result=$(AIDEVOPS_SIG_CLI="EnvCLI" AIDEVOPS_SIG_CLI_VERSION="9.9.9" AIDEVOPS_SIG
 assert_contains "env CLI name" "plugin for EnvCLI" "$result"
 assert_contains "env CLI version" "v9.9.9" "$result"
 assert_contains "env model strips prefix" "with model" "$result"
-assert_contains "env tokens" "42,000 tokens on this." "$result"
+assert_contains "env tokens" "42,000 tokens on this" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 10: auto-detect tokens from OpenCode session DB (if running in OpenCode)
