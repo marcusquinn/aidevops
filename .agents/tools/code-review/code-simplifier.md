@@ -65,7 +65,7 @@ Low-confidence findings: flag as "worth discussing" not "should change." Create 
 ### Safe (high confidence)
 
 - Decorative emojis conveying no information beyond surrounding text
-- Comments restating what the next line does (`# increment counter` above `counter += 1`)
+- Comments restating what the next line does
 - Duplicated structure where one instance can reference the other
 - Dead/unreachable code with no explanatory value
 - Redundant formatting (excessive bold, unnecessary headers for single-line content)
@@ -108,7 +108,7 @@ Knowledge bases (skill docs, domain reference) whose size comes from breadth, no
 3. **Apply project standards** — but standards themselves are not simplification targets.
 4. **Enhance clarity without losing depth.** Reduce nesting, improve naming, remove "what" comments (not "why").
 5. **Maintain balance.** Avoid over-simplification that removes helpful abstractions or loses edge-case handling.
-6. **No arbitrary line targets.** Never set a target line count — resulting size is whatever remains after removing genuine noise. Invented targets create pressure to cut content for a number, conflicting with principle 1. For large files, subdivide per `build-agent.md` (~300-line threshold) instead of compressing.
+6. **No arbitrary line targets.** Never set a target line count — resulting size is whatever remains after removing genuine noise. For large files, subdivide per `build-agent.md` (~300-line threshold) instead of compressing.
 
 ## Usage
 
@@ -118,7 +118,7 @@ Knowledge bases (skill docs, domain reference) whose size comes from breadth, no
 /code-simplifier --all        # Analyse entire codebase (use sparingly)
 ```
 
-Scope detection (no target): `git diff --name-only HEAD~1` and `git diff --name-only --staged`. Workflow: analyse → human reviews → approved items become issues → worker implements in worktree + PR.
+Scope detection: `git diff --name-only HEAD~1` and `git diff --name-only --staged`. Workflow: analyse → human reviews → approved items become issues → worker implements in worktree + PR.
 
 ## Example: NOT a simplification target
 
