@@ -28,10 +28,6 @@ Distribute Cloudron apps independently using a `CloudronVersions.json` version c
 
 <!-- AI-CONTEXT-END -->
 
-## Prerequisites
-
-The app must be built and pushed to a registry with `cloudron build`. On-server builds (`cloudron install` without `--image`) do not produce registry-hosted images and cannot be published.
-
 ## Workflow
 
 ```bash
@@ -47,7 +43,7 @@ cloudron versions add        # add version to catalog
 cloudron versions init
 ```
 
-Creates `CloudronVersions.json` in the package directory. Also adds missing publishing fields to `CloudronManifest.json` with placeholder values and creates stub files:
+Creates `CloudronVersions.json` and adds missing publishing fields to `CloudronManifest.json` with placeholder values. Also creates stub files:
 
 - `DESCRIPTION.md` -- detailed app description
 - `CHANGELOG` -- version changelog
@@ -56,8 +52,6 @@ Creates `CloudronVersions.json` in the package directory. Also adds missing publ
 Edit all placeholders and stubs before adding a version.
 
 ### Required Manifest Fields for Publishing
-
-Beyond what `cloudron init` provides, publishing requires:
 
 | Field | Example |
 |-------|---------|
@@ -78,13 +72,7 @@ Beyond what `cloudron init` provides, publishing requires:
 | `postInstallMessage` | `file://POSTINSTALL.md` |
 | `minBoxVersion` | `9.1.0` |
 
-`cloudron versions init` scaffolds all of these with defaults.
-
 ## Build Commands
-
-### cloudron build
-
-Builds the Docker image. Behavior depends on whether a build service is configured:
 
 ```bash
 cloudron build                          # build (local or remote)
@@ -95,8 +83,6 @@ cloudron build --build-arg KEY=VALUE    # pass Docker build args
 ```
 
 On first run, prompts for the Docker repository (e.g. `registry/username/myapp`). Remembers it for subsequent runs.
-
-### Other Build Subcommands
 
 | Command | Purpose |
 |---------|---------|
@@ -134,7 +120,7 @@ Updates an existing version entry. Primarily used to change the publish state.
 cloudron versions update --version 1.0.0 --state published
 ```
 
-Avoid changing the manifest or image of a published version -- users may have already installed it. To ship changes, revoke the existing version and add a new one.
+Avoid changing the manifest or image of a published version -- users may have already installed it. To ship changes, revoke and add a new version.
 
 ### cloudron versions revoke
 
@@ -154,20 +140,6 @@ Users install in two ways:
 
 - **Dashboard** -- Add the URL under Community apps in the dashboard settings. Updates appear automatically.
 - **CLI** -- `cloudron install --versions-url <url>`
-
-## Typical Release Cycle
-
-```bash
-# 1. Edit code, bump version in CloudronManifest.json
-# 2. Build and push
-cloudron build
-
-# 3. Add to catalog
-cloudron versions add
-
-# 4. Commit and push CloudronVersions.json to hosting
-git add CloudronVersions.json && git commit -m "release 1.1.0" && git push
-```
 
 ## Community Packages (9.1+)
 
