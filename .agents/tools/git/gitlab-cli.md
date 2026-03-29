@@ -12,68 +12,24 @@ tools:
   task: true
 ---
 
-# GitLab CLI Helper Documentation
+# GitLab CLI Helper
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
-- **CLI Tool**: `glab` (GitLab CLI)
-- **Install**: `brew install glab` (macOS) | `apt install glab` (Ubuntu)
+- **CLI**: `glab` — install: `brew install glab` (macOS) | `apt install glab` (Ubuntu)
 - **Auth**: `glab auth login` (GitLab.com) | `glab auth login --hostname gitlab.company.com` (self-hosted)
-- **Config**: `configs/gitlab-cli-config.json`
-- **Script**: `.agents/scripts/gitlab-cli-helper.sh`
-- **Requires**: `jq` for JSON parsing
+- **Config**: `configs/gitlab-cli-config.json` (copy from `configs/gitlab-cli-config.json.txt`)
+- **Script**: `.agents/scripts/gitlab-cli-helper.sh` — requires `jq`
+- **Usage**: `./providers/gitlab-cli-helper.sh [command] [account] [args]`
+- **Multi-instance**: GitLab.com + self-hosted via `instance_url` in config
 
-**Commands**: `list-projects|create-project|delete-project|list-issues|create-issue|close-issue|list-mrs|create-mr|merge-mr|list-branches|create-branch`
-
-**Usage**: `./providers/gitlab-cli-helper.sh [command] [account] [args]`
-
-**Multi-Instance**: Supports GitLab.com + self-hosted via instance_url in config
 <!-- AI-CONTEXT-END -->
-
-## Overview
-
-The GitLab CLI Helper provides a comprehensive interface for managing GitLab projects, issues, merge requests, and branches directly from the command line. It leverages the `glab` CLI tool to offer a seamless experience for developers working with GitLab.com and self-hosted instances.
-
-## Prerequisites
-
-1. **GitLab CLI (`glab`)**: Must be installed.
-    - **macOS**: `brew install glab`
-    - **Ubuntu/Debian**: `sudo apt install glab`
-    - **Other**: See [GitLab CLI Installation](https://glab.readthedocs.io/en/latest/installation/)
-2. **`jq`**: JSON processor (required for configuration parsing).
-3. **Authentication**: You must authenticate `glab` with your GitLab instance(s).
 
 ## Configuration
 
-The helper uses a JSON configuration file located at `configs/gitlab-cli-config.json`.
-
-### Setup
-
-1. Copy the template:
-
-    ```bash
-    cp configs/gitlab-cli-config.json.txt configs/gitlab-cli-config.json
-    ```
-
-2. Edit `configs/gitlab-cli-config.json` with your account details.
-
-### Multi-Account/Instance Support
-
-The configuration supports multiple accounts and instances (e.g., `primary` for GitLab.com, `work` for self-hosted).
-
-**1. Authenticate `glab`:**
-
-```bash
-# For GitLab.com
-glab auth login
-
-# For Self-Hosted
-glab auth login --hostname gitlab.company.com
-```
-
-**2. Update `configs/gitlab-cli-config.json`:**
+Multi-account config (`configs/gitlab-cli-config.json`):
 
 ```json
 {
@@ -92,99 +48,26 @@ glab auth login --hostname gitlab.company.com
 }
 ```
 
-## Usage
+Authenticate each instance: `glab auth login [--hostname gitlab.company.com]`
 
-Run the helper script:
+## Commands
 
-```bash
-./providers/gitlab-cli-helper.sh [command] [account] [arguments]
-```
-
-### Project Management
-
-- **List Projects**:
-
-    ```bash
-    ./providers/gitlab-cli-helper.sh list-projects primary
-    ```
-
-- **Create Project**:
-
-    ```bash
-    # Usage: create-project <account> <name> [desc] [visibility] [init]
-    ./providers/gitlab-cli-helper.sh create-project primary my-new-project "Description" private true
-    ```
-
-- **Get Project Details**:
-
-    ```bash
-    ./providers/gitlab-cli-helper.sh get-project primary my-new-project
-    ```
-
-- **Delete Project**:
-
-    ```bash
-    ./providers/gitlab-cli-helper.sh delete-project primary my-new-project
-    ```
-
-### Issue Management
-
-- **List Issues**:
-
-    ```bash
-    ./providers/gitlab-cli-helper.sh list-issues primary my-project opened
-    ```
-
-- **Create Issue**:
-
-    ```bash
-    ./providers/gitlab-cli-helper.sh create-issue primary my-project "Bug Title" "Issue description"
-    ```
-
-- **Close Issue**:
-
-    ```bash
-    ./providers/gitlab-cli-helper.sh close-issue primary my-project 1
-    ```
-
-### Merge Request Management
-
-- **List Merge Requests**:
-
-    ```bash
-    ./providers/gitlab-cli-helper.sh list-mrs primary my-project opened
-    ```
-
-- **Create Merge Request**:
-
-    ```bash
-    # Usage: create-mr <account> <project> <title> <source> [target] [desc]
-    ./providers/gitlab-cli-helper.sh create-mr primary my-project "Feature X" feature-branch main "Description"
-    ```
-
-- **Merge Merge Request**:
-
-    ```bash
-    # Usage: merge-mr <account> <project> <mr_number> [method]
-    ./providers/gitlab-cli-helper.sh merge-mr primary my-project 1 squash
-    ```
-
-### Branch Management
-
-- **List Branches**:
-
-    ```bash
-    ./providers/gitlab-cli-helper.sh list-branches primary my-project
-    ```
-
-- **Create Branch**:
-
-    ```bash
-    # Usage: create-branch <account> <project> <new_branch> [source_branch]
-    ./providers/gitlab-cli-helper.sh create-branch primary my-project feature-branch main
-    ```
+| Command | Example |
+|---------|---------|
+| `list-projects <account>` | `./providers/gitlab-cli-helper.sh list-projects primary` |
+| `create-project <account> <name> [desc] [visibility] [init]` | `... create-project primary my-project "Desc" private true` |
+| `get-project <account> <project>` | `... get-project primary my-project` |
+| `delete-project <account> <project>` | `... delete-project primary my-project` |
+| `list-issues <account> <project> [state]` | `... list-issues primary my-project opened` |
+| `create-issue <account> <project> <title> <desc>` | `... create-issue primary my-project "Bug" "Details"` |
+| `close-issue <account> <project> <number>` | `... close-issue primary my-project 1` |
+| `list-mrs <account> <project> [state]` | `... list-mrs primary my-project opened` |
+| `create-mr <account> <project> <title> <source> [target] [desc]` | `... create-mr primary my-project "Feature X" feature-branch main "Desc"` |
+| `merge-mr <account> <project> <mr_number> [method]` | `... merge-mr primary my-project 1 squash` |
+| `list-branches <account> <project>` | `... list-branches primary my-project` |
+| `create-branch <account> <project> <new_branch> [source]` | `... create-branch primary my-project feature-branch main` |
 
 ## Troubleshooting
 
-- **"GitLab CLI is not authenticated"**: Run `glab auth status` to check your login status for the configured hostname.
-- **"Instance URL not configured"**: Check `configs/gitlab-cli-config.json` and ensure the `instance_url` is correct for the account you are using.
+- **"GitLab CLI is not authenticated"**: Run `glab auth status` to check login status for the configured hostname.
+- **"Instance URL not configured"**: Verify `instance_url` in `configs/gitlab-cli-config.json` for the account.
