@@ -91,8 +91,6 @@ test("scheduled cron handler", async () => {
 
 ## Isolated Test Data
 
-Fresh Miniflare instance per test — no shared state between tests.
-
 ```js
 import test, { beforeEach, afterEach } from "node:test";
 import { Miniflare } from "miniflare";
