@@ -18,15 +18,21 @@ model: sonnet
 
 ## Article Types
 
-### Pillar Content (2,000–3,000 words)
+| Type | Length | Target |
+|------|--------|--------|
+| **Pillar** | 2,000–3,000 words | High-volume keywords, link hubs |
+| **Supporting** | 800–1,500 words | Long-tail keywords, link to pillar |
+| **Listicle** | 1,000–2,000 words | "best", "top", "how to" keywords |
 
-Comprehensive guides targeting high-volume keywords; serve as link hubs.
+**Pillar structure**: Title (keyword-front, <60 chars) → Meta (150–160 chars) → Intro (100–150w) → TOC → H2/H3 body → Key takeaways → CTA → FAQ
 
-Structure: Title (keyword-front, <60 chars) → Meta description (150–160 chars) → Introduction (100–150 words) → Table of contents → H2/H3 body sections → Key takeaways → CTA → FAQ
+**Supporting structure**: Title → Intro (50–100w) → 3–5 H2 sections → Internal link to pillar → CTA
+
+**Listicle structure**: Number + keyword + year title → Selection criteria → Numbered H2 items → Comparison table → Verdict
+
+**Example** (pillar from story "Why 95% of AI influencers fail"):
 
 ```text
-Story: "Why 95% of AI influencers fail"
-
 Title: Why 95% of AI Influencers Fail (And How to Be in the 5%)
 H2: The AI Content Gold Rush
 H2: 5 Mistakes That Kill AI Influencer Careers
@@ -39,18 +45,6 @@ H2: What the Top 5% Do Differently
 H2: Building Your AI Content System
 H2: Key Takeaways / FAQ
 ```
-
-### Supporting Posts (800–1,500 words)
-
-Long-tail keyword targets that link back to pillar content.
-
-Structure: Title → Introduction (50–100 words) → 3–5 H2 sections → Internal link to pillar → CTA
-
-### Listicles (1,000–2,000 words)
-
-Target "best", "top", "how to" keywords.
-
-Structure: Number + keyword + year title → Introduction (selection criteria) → Numbered H2 items (description, pros/cons, use case) → Comparison table → Verdict
 
 ## SEO Workflow
 
@@ -72,9 +66,7 @@ keyword-research-helper.sh difficulty "AI video generation tools"
 ### 2. Content Brief
 
 - Primary keyword + 3–5 secondary keywords
-- Search intent (informational, commercial, transactional)
-- Target word count from SERP analysis
-- Top 5 competitor articles — structure and gaps
+- Search intent, target word count from SERP analysis, competitor gaps
 - Unique angle; internal link targets
 
 ### 3. Writing Pipeline
@@ -107,11 +99,11 @@ python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py quality article.md
 
 ## Content from Pipeline Assets
 
-| Source | Key steps |
-|--------|-----------|
-| YouTube video | Extract transcript (`youtube-helper.sh transcript VIDEO_ID`), restructure for reading, add SEO elements, expand with research, add visuals |
-| Research phase | Use brief as foundation, structure around findings, add original analysis, include data, link sources |
-| Short-form content | Expand high-performing short, add depth/context/methodology, target related long-tail keywords, embed original video |
+**From YouTube**: Extract transcript (`youtube-helper.sh transcript VIDEO_ID`) → restructure for reading → add SEO elements → expand with research → add visuals.
+
+**From Research**: Use brief as foundation → structure around findings → add original analysis → include data (stats, charts) → link sources.
+
+**From Short-Form**: Expand high-performing short → add depth (context, examples, methodology) → target related long-tail keywords → embed original video.
 
 ## Publishing Workflow
 
@@ -126,23 +118,12 @@ python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py quality article.md
 - [ ] Internal link from 2–3 existing articles
 - [ ] Monitor target keyword rankings weekly for first month
 
-## Related Agents and Tools
+## Related
 
-| Agent | Purpose |
-|-------|---------|
-| `content/research.md` | Audience research and niche validation |
-| `content/story.md` | Hook formulas and narrative design |
-| `content/guidelines.md` | Content standards and style guide |
-| `content/optimization.md` | A/B testing and analytics loops |
-| `seo.md` | SEO orchestrator |
-| `seo/keyword-research.md` | Keyword volume and difficulty |
-| `seo/dataforseo.md` | SERP data and competitor analysis |
-| `seo/google-search-console.md` | Performance monitoring |
-| `seo/content-analyzer.md` | Content quality scoring |
-| `content/distribution-youtube/` | Long-form YouTube content |
-| `content/distribution-short-form.md` | TikTok, Reels, Shorts |
-| `content/distribution-social.md` | X, LinkedIn, Reddit |
-| `content/distribution-email.md` | Newsletters and sequences |
-| `content/distribution-podcast.md` | Audio-first distribution |
-| `tools/wordpress/wp-dev.md` | WordPress development and API |
-| `tools/wordpress/mainwp.md` | Multi-site management |
+**Content pipeline**: `content/research.md` · `content/story.md` · `content/guidelines.md` · `content/optimization.md`
+
+**SEO**: `seo.md` · `seo/keyword-research.md` · `seo/dataforseo.md` · `seo/google-search-console.md` · `seo/content-analyzer.md`
+
+**Distribution**: `content/distribution-youtube.md` · `content/distribution-short-form.md` · `content/distribution-social.md` · `content/distribution-email.md` · `content/distribution-podcast.md`
+
+**WordPress**: `tools/wordpress/wp-dev.md` · `tools/wordpress/mainwp.md`
