@@ -24,15 +24,17 @@ tools:
 
 ## Workflow
 
-### 1. Capture Baseline
+### 1. Capture Before/After Screenshots
 
 > **Screenshot size limit**: NEVER use `fullPage: true` for AI vision review — exceeds 8000px, hard-crashes the session. Viewport-sized only. See `prompts/build.txt` "Screenshot Size Limits".
+
+Capture baseline (`before-`) before changes, re-run with `after-` prefix after. **Edge cases (responsive-critical):** also test `mobile-sm` 320x568, `mobile-landscape` 844x390, `tablet-landscape` 1194x834.
 
 ```typescript
 import { chromium, devices } from 'playwright';
 const standardDevices = [
-  { name: 'mobile',     config: devices['iPhone 14'] },
-  { name: 'tablet',     config: devices['iPad Pro 11'] },
+  { name: 'mobile',     config: devices['iPhone 14'] },           // 390x844
+  { name: 'tablet',     config: devices['iPad Pro 11'] },         // 834x1194
   { name: 'desktop',    config: { viewport: { width: 1280, height: 800 } } },
   { name: 'desktop-lg', config: { viewport: { width: 1920, height: 1080 } } },
 ];
@@ -48,26 +50,9 @@ for (const { name, config } of standardDevices) {
 await browser.close();
 ```
 
-### 2. Make Changes
+### 2. Browser Error Check
 
-Implement UI/layout changes as normal.
-
-### 3. Multi-Device Screenshots
-
-Capture after-state using the same device list (replace `before-` with `after-`).
-
-**Standard breakpoints:**
-
-| Name | Width | Height | Device |
-|------|-------|--------|--------|
-| `mobile` | 390 | 844 | iPhone 14 |
-| `tablet` | 834 | 1194 | iPad Pro 11 |
-| `desktop` | 1280 | 800 | Standard laptop |
-| `desktop-lg` | 1920 | 1080 | Full HD monitor |
-
-**Edge cases (responsive-critical work):** `mobile-sm` 320×568 (iPhone SE), `mobile-landscape` 844×390, `tablet-landscape` 1194×834.
-
-### 4. Browser Error Check
+Collect console errors and failed requests per device:
 
 ```typescript
 for (const { name, config } of standardDevices) {
@@ -88,7 +73,7 @@ for (const { name, config } of standardDevices) {
 
 **Check for**: JS errors, failed requests (404s, CORS), CSS warnings, mixed content, deprecation warnings, layout shift (CLS).
 
-### 5. Accessibility Verification
+### 3. Accessibility Verification
 
 Not optional for UI changes.
 
@@ -109,11 +94,9 @@ Not optional for UI changes.
 
 **Dark mode / reduced motion:** Test `colorScheme: 'light'` and `'dark'` (screenshot each); test `reducedMotion: 'reduce'` (verify animations disabled).
 
-### 6. Compare and Report
+### 4. Compare and Report
 
-Report format:
-
-```
+```markdown
 ## UI Verification Report
 ### Screenshots — mobile/tablet/desktop/desktop-lg: [before] [after] -- <what changed>
 ### Browser Errors — <none or list>
@@ -125,7 +108,7 @@ Report format:
 
 ## Design Principles Checklist
 
-Quality gates — not suggestions. Check applicable principles during step 5; report violations as `[S1/S2/S3] <principle> — <description>`.
+Quality gates — not suggestions. Check during step 3; report violations as `[S1/S2/S3] <principle> -- <description>`.
 
 ### Severity
 
@@ -137,37 +120,31 @@ Quality gates — not suggestions. Check applicable principles during step 5; re
 
 ### Typography
 
-| Rule | How to verify |
-|------|---------------|
-| Paragraph width ≤740px (~75 chars/line) | Inspect `max-width`; screenshot at desktop-lg |
-| Body text ≥16px; supplementary (captions, footnotes) ≥14px; nothing smaller | Playwright `evaluate()` computed `font-size` on all text elements |
-| Max 3 font families: headings, body/buttons/forms, code/monospace | Inspect computed `font-family`; flag 4th family |
-| Distinct font weights for hierarchy (e.g., 700 headings, 400 body, 600 labels) | Verify headings visually heavier than body in screenshots |
-| Line height ≥1.4 body, ≥1.2 headings | Inspect computed `line-height`; verify no text collision |
-| No character overlap from letter spacing; verify custom fonts at small sizes/bold | Visual check in screenshots |
-| No single words on final line; use `text-wrap: balance`/`pretty` | Visual check at multiple widths |
+- Paragraph width <=740px (~75 chars/line) — inspect `max-width`; screenshot at desktop-lg
+- Body text >=16px; supplementary >=14px; nothing smaller — Playwright `evaluate()` computed `font-size`
+- Max 3 font families (headings, body/buttons/forms, code/monospace) — inspect computed `font-family`; flag 4th
+- Distinct font weights for hierarchy (700 headings, 400 body, 600 labels) — verify in screenshots
+- Line height >=1.4 body, >=1.2 headings — inspect computed `line-height`
+- No character overlap from letter spacing; verify custom fonts at small sizes/bold — visual check
+- No single words on final line; use `text-wrap: balance`/`pretty` — visual check at multiple widths
 
 ### Layout and Spacing
 
-| Rule | How to verify |
-|------|---------------|
-| Spacing scale (4/8/12/16/24/32/48px); consistent between similar elements | Inspect padding; flag inconsistent sibling spacing |
-| Text never touches container edges | Screenshot; verify breathing room in cards/sections |
-| Elements within a section share alignment; no arbitrary mixing | Visual check; verify form labels/headings/body align |
-| Similar elements (cards, buttons, icons) same size | Visual check; verify repeated elements are uniform |
-| Brand logos have adequate clear space | Screenshot; verify logo has breathing room in header/nav |
-| Smooth adaptation across breakpoints; works for varying content lengths | Test with short/long content at each breakpoint; verify no overflow/truncation |
+- Spacing scale (4/8/12/16/24/32/48px); consistent between similar elements — inspect padding
+- Text never touches container edges — screenshot; verify breathing room
+- Elements within a section share alignment — verify labels/headings/body align
+- Similar elements (cards, buttons, icons) same size — verify repeated elements uniform
+- Brand logos have adequate clear space — screenshot; verify breathing room
+- Smooth adaptation across breakpoints; works for varying content lengths — test short/long content
 
 ### Interaction and Accessibility
 
-| Rule | How to verify |
-|------|---------------|
-| Touch targets min 44×44px (aim); never below 24×24px; adequate spacing between targets | Playwright `evaluate()` bounding boxes on mobile emulation |
-| All clickable elements have visible hover change (colour, underline, shadow, scale) | Playwright `hover()` + screenshot comparison |
-| Links in paragraphs: bold, underlined, distinct colour (not colour-only) | Inspect computed styles on `<a>` within `<p>` |
-| Descriptive `alt` on informational images; `alt=""` on decorative; `aria-label`/`aria-labelledby` on interactive elements (preferred over `title`) | Playwright `evaluate()` audit all `<img>`; flag empty/generic values |
-| Icons reinforce meaning; understandable without label or paired with text | Visual check |
-| Scroll wheel works on all scrollable areas; no scroll trapping/hijacking | Playwright `mouse.wheel()` on page body and custom scroll containers |
+- Touch targets min 44x44px (aim); never below 24x24px; adequate spacing — Playwright `evaluate()` bounding boxes on mobile
+- All clickable elements have visible hover change — Playwright `hover()` + screenshot comparison
+- Links in paragraphs: bold, underlined, distinct colour (not colour-only) — inspect styles on `<a>` within `<p>`
+- Descriptive `alt` on images; `alt=""` on decorative; `aria-label`/`aria-labelledby` on interactive (preferred over `title`) — Playwright `evaluate()` audit `<img>`
+- Icons reinforce meaning; understandable without label or paired with text — visual check
+- Scroll wheel works on all scrollable areas; no scroll trapping — Playwright `mouse.wheel()` on body and scroll containers
 
 ### Colour and Theming
 
@@ -188,11 +165,11 @@ Evaluate against `seo/mom-test-ux.md` after technical checks: Clarity (goal clea
 
 ## Quick Verification (Minimal)
 
-For small CSS tweaks: screenshot at 3 sizes → console errors → contrast check → spot-check paragraph width/text size/touch targets. Full workflow for significant layout changes, new components, or responsive redesigns.
+For small CSS tweaks: screenshot at 3 sizes, console errors, contrast check, spot-check paragraph width/text size/touch targets. Full workflow for significant layout changes, new components, or responsive redesigns.
 
 ## Integration with Build Workflow
 
-- **Step 8 (Testing)**: Run UI Verification steps 1–5 alongside unit/integration tests; check applicable design principles.
+- **Step 8 (Testing)**: Run UI Verification steps 1-3 alongside unit/integration tests; check applicable design principles.
 - **Step 9 (Validate)**: Include UI verification report as evidence. "Browser (UI)" means *actual browser screenshots*, not self-assessment.
 
 ## When to Skip
