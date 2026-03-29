@@ -27,6 +27,7 @@ tools:
 | API key vars | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` |
 
 **Core primitives:**
+
 - `page.act("natural language action")` — click, fill, scroll
 - `page.extract("instruction", schema=PydanticModel)` — structured data
 - `page.observe()` — discover available actions
@@ -71,8 +72,6 @@ async def main():
 asyncio.run(main())
 ```
 
-## Core Primitives
-
 ### Act / Observe
 
 ```python
@@ -99,7 +98,7 @@ products = await page.extract("extract all product details", schema=List[Product
 ```python
 agent = stagehand.agent(
     provider="openai", model="computer-use-preview",
-    integrations=[], system_prompt="You are a helpful browser automation agent."
+    system_prompt="You are a helpful browser automation agent."
 )
 await agent.execute("complete the checkout process for 2 items")
 ```
@@ -127,15 +126,6 @@ BROWSERBASE_PROJECT_ID=your_browserbase_project_id_here
 ```bash
 bash .agents/scripts/setup-mcp-integrations.sh stagehand-python  # pass via integrations=[] in agent()
 ```
-
-## Use Cases
-
-| Domain | Examples |
-|--------|---------|
-| E-commerce | Price comparison, purchase workflows, inventory monitoring |
-| Data collection | Web scraping, competitive analysis, content aggregation |
-| Testing & QA | User journey testing, form validation, accessibility reporting |
-| Business automation | Lead generation, CRM data entry, report generation |
 
 ## Resources
 
