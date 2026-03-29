@@ -43,7 +43,7 @@ export MULLVAD_SOCKS_HOST="socks5://10.0.0.1:1080"
 
 ## Provider Formats
 
-### DataImpulse (~$1/GB residential)
+### DataImpulse (~$1/GB residential, rotating or sticky)
 
 ```bash
 # Rotating (new IP each request)
@@ -85,39 +85,27 @@ http://user-zone-residential-session-abc:pass@brd.superproxy.io:22225
 http://user-zone-residential-country-us:pass@brd.superproxy.io:22225
 ```
 
-### SOCKS5 VPN (IVPN/Mullvad)
+### SOCKS5 VPN (IVPN/Mullvad — requires active subscription + WireGuard)
 
 ```bash
-# IVPN (requires active subscription + WireGuard)
+# Provider local SOCKS5 (same format for IVPN and Mullvad)
 socks5://10.0.0.1:1080
 
-# Mullvad (requires active subscription + WireGuard)
-socks5://10.0.0.1:1080
-
-# Generic SOCKS5
+# Generic SOCKS5 with auth
 socks5://user:pass@host:1080
 ```
 
 ## Per-Profile Proxy Assignment
 
 ```bash
-# Assign proxy to profile
-anti-detect-helper.sh profile update "my-account" \
-  --proxy "http://user:pass_session-fixed123@gw.dataimpulse.com:823"
-
-# Assign with geo-targeting
+# Assign proxy with sticky session + geo-targeting
 anti-detect-helper.sh profile update "my-account" \
   --proxy "http://user:pass_country-us_city-newyork@gw.dataimpulse.com:823"
 
-# Use rotating proxy (new IP each launch)
+# Rotating proxy (new IP each launch) — use for scrapers
 anti-detect-helper.sh profile update "scraper" \
   --proxy "http://user:pass@gw.dataimpulse.com:823" \
   --proxy-mode rotating
-
-# Use sticky session (same IP for session duration)
-anti-detect-helper.sh profile update "my-account" \
-  --proxy "http://user:pass@gw.dataimpulse.com:823" \
-  --proxy-mode sticky
 ```
 
 ## Proxy Health Checking
@@ -144,20 +132,7 @@ DNS leak prevention: Playwright handles automatically; Camoufox uses `network.pr
 | **Geo-targeted** | Match profile's target region |
 | **Failover** | Switch on error/block |
 
-### Rotation Configuration
-
-```json
-{
-  "strategy": "sticky",
-  "provider": "dataimpulse",
-  "session_duration": "30m",
-  "country": "us",
-  "city": "new-york",
-  "fallback_provider": "webshare",
-  "max_retries": 3,
-  "health_check_interval": "5m"
-}
-```
+Pass `--proxy-mode [rotating|sticky|round-robin|failover]` to `anti-detect-helper.sh profile update`. Sticky sessions default to 30m; override with `--session-duration`.
 
 ## Browser Engine Integration
 
