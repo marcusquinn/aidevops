@@ -162,18 +162,9 @@ Accelerators: NVIDIA (incl. RTX 50, CUDA 12), Apple Silicon (MPS), Kunlunxin XPU
 
 ## Troubleshooting
 
-**OneDNN crash on Linux CPU** (`NotImplementedError: ConvertPirAttribute2RuntimeAttribute`):
+**OneDNN crash on Linux CPU** (`NotImplementedError: ConvertPirAttribute2RuntimeAttribute`): set `FLAGS_use_mkldnn=False` and `enable_mkldnn=False` (see Python API above). `paddleocr-helper.sh` applies this automatically.
 
-```python
-import paddle
-paddle.set_flags({"FLAGS_use_mkldnn": False})
-from paddleocr import PaddleOCR
-ocr = PaddleOCR(lang="en", enable_mkldnn=False)
-```
-
-`paddleocr-helper.sh` applies this automatically.
-
-**Model cache**: 3.4.0 stores models in `~/.paddlex/official_models/` (~100MB for PP-OCRv5). Set `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True` to skip connectivity check (~5s savings).
+**Model cache**: `~/.paddlex/official_models/` (~100MB PP-OCRv5). Set `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True` to skip connectivity check (~5s savings).
 
 **Slow CPU**: resize to max 1920px; reuse `PaddleOCR()` instance; use mobile models. `enable_mkldnn=True` improves speed but crashes on PaddlePaddle 3.3.0.
 
@@ -186,26 +177,20 @@ echo '{"jsonrpc":"2.0","method":"initialize","params":{},"id":1}' | paddleocr_mc
 
 ## Integration
 
-```python
-# PaddleOCR → ExtractThinker (structured JSON)
-from paddleocr import PaddleOCR
-ocr = PaddleOCR(use_angle_cls=True, lang='en')
-raw_text = "\n".join(line[1][0] for line in ocr.ocr('receipt.png')[0])
-# Pass to ExtractThinker — see tools/document/document-extraction.md
-```
-
 ```
 Image/Screenshot --> PaddleOCR --> Raw text + bounding boxes
 PDF document     --> MinerU    --> Markdown/JSON (layout-aware)
 ```
 
+For structured JSON extraction (invoices, receipts): pass `ocr.predict()` output to ExtractThinker — see `tools/document/document-extraction.md`.
+
 ## Platform Notes
 
-**Linux x86_64** (verified 2026-03-01, PaddleOCR 3.4.0 + PaddlePaddle 3.3.0 CPU): OneDNN fix required (see Troubleshooting). `paddleocr-helper.sh install` clean. 42 regions from 800×600 screenshot, >95% confidence.
-
-**macOS Apple Silicon**: unverified. CPU backend expected to work; MPS via PaddlePaddle 3.0+.
-
-**Linux NVIDIA GPU**: unverified. Install `paddlepaddle-gpu`; OneDNN workaround not needed on GPU.
+| Platform | Status | Notes |
+|----------|--------|-------|
+| Linux x86_64 | Verified 2026-03-01 (3.4.0 + PP 3.3.0 CPU) | OneDNN fix required; 42 regions from 800×600, >95% confidence |
+| macOS Apple Silicon | Unverified | CPU backend expected; MPS via PaddlePaddle 3.0+ |
+| Linux NVIDIA GPU | Unverified | Install `paddlepaddle-gpu`; OneDNN workaround not needed |
 
 ## Resources
 
