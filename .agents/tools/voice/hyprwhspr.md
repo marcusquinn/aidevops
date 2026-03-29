@@ -18,10 +18,11 @@ tools:
 - **Purpose**: System-wide speech-to-text dictation on Linux (Wayland)
 - **Source**: [goodroot/hyprwhspr](https://github.com/goodroot/hyprwhspr) (MIT, 790+ stars)
 - **Platform**: Linux only (Arch, Debian, Ubuntu, Fedora, openSUSE) with Wayland (Hyprland, GNOME, KDE, Sway)
-- **Backends**: Parakeet TDT V3, Whisper (pywhispercpp), onnx-asr, ElevenLabs REST API, Realtime WebSocket
+- **Backends**: Parakeet TDT V3 (recommended), onnx-asr (CPU), pywhispercpp, ElevenLabs REST, Realtime WebSocket
 - **Default hotkey**: `Super+Alt+D` (toggle dictation)
+- **Config**: `~/.config/hyprwhspr/config.toml` — [CONFIGURATION.md](https://github.com/goodroot/hyprwhspr/blob/main/docs/CONFIGURATION.md)
 
-**When to use**: Setting up voice dictation on Linux desktops, especially Arch/Omarchy with Hyprland. For macOS voice input, use the built-in Dictation or `voice-helper.sh talk` instead.
+**When to use**: Setting up voice dictation on Linux desktops, especially Arch/Omarchy with Hyprland. For macOS, use built-in Dictation or `voice-helper.sh talk` instead.
 
 <!-- AI-CONTEXT-END -->
 
@@ -30,60 +31,37 @@ tools:
 ### Arch Linux (AUR)
 
 ```bash
-# Stable
-yay -S hyprwhspr
-
-# Bleeding edge
-yay -S hyprwhspr-git
-
-# Interactive setup (configures backend, models, services)
-hyprwhspr setup
+yay -S hyprwhspr        # stable
+yay -S hyprwhspr-git    # bleeding edge
+hyprwhspr setup         # interactive setup (backend, models, services)
 ```
 
-### Debian / Ubuntu
+### Debian / Ubuntu / Fedora / openSUSE
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/goodroot/hyprwhspr/main/scripts/install-deps.sh | bash
 git clone https://github.com/goodroot/hyprwhspr.git ~/hyprwhspr
 cd ~/hyprwhspr && ./bin/hyprwhspr setup
 ```
-
-### Fedora / openSUSE
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/goodroot/hyprwhspr/main/scripts/install-deps.sh | bash
-git clone https://github.com/goodroot/hyprwhspr.git ~/hyprwhspr
-cd ~/hyprwhspr && ./bin/hyprwhspr setup
-```
-
-### Post-Install
 
 Log out and back in for group permissions, then verify:
 
 ```bash
-hyprwhspr status
-hyprwhspr validate
+hyprwhspr status && hyprwhspr validate
 ```
 
 ## Usage
 
-1. Press `Super+Alt+D` to start dictation (beep)
-2. Speak naturally
-3. Press `Super+Alt+D` again to stop (boop)
-4. Text is auto-pasted into the active buffer
+Press `Super+Alt+D` to start (beep), speak, press again to stop (boop) — text auto-pastes into the active buffer.
 
-### Recording Modes
-
-- **Toggle** (default): Press to start, press to stop
-- **Push-to-talk**: Hold key to record, release to stop
-- **Long-form**: Pause, resume, pause, then submit
+**Recording modes**: Toggle (default) · Push-to-talk (hold key) · Long-form (pause/resume/submit)
 
 ## CLI Commands
 
 | Command | Purpose |
 |---------|---------|
 | `hyprwhspr setup` | Interactive initial setup |
-| `hyprwhspr setup auto` | Automated setup (flags: `--backend`, `--model`, `--no-waybar`) |
+| `hyprwhspr setup auto` | Automated setup (`--backend`, `--model`, `--no-waybar`) |
 | `hyprwhspr config` | Manage configuration (init/show/edit) |
 | `hyprwhspr status` | Overall status check |
 | `hyprwhspr validate` | Validate installation |
@@ -98,61 +76,35 @@ hyprwhspr validate
 
 ## Transcription Backends
 
-| Backend | GPU Required | Speed | Quality | Notes |
-|---------|-------------|-------|---------|-------|
-| **Parakeet TDT V3** | Optional | Fast | High | NVIDIA NeMo, recommended |
-| **onnx-asr** | No | Fast | Good | Optimized for CPU, no GPU needed |
-| **pywhispercpp** | Optional | Medium | High | Whisper models (tiny to large-v3) |
+| Backend | GPU | Speed | Quality | Notes |
+|---------|-----|-------|---------|-------|
+| **Parakeet TDT V3** | Optional (CUDA/Vulkan) | Fast | High | NVIDIA NeMo, recommended |
+| **onnx-asr** | No | Fast | Good | CPU-optimised, best for no-GPU |
+| **pywhispercpp** | Optional | Medium | High | Whisper tiny–large-v3 |
 | **REST API** | No | Varies | High | ElevenLabs, custom endpoints |
 | **Realtime WebSocket** | No | Fast | High | Streaming transcription |
 
-### GPU Acceleration
-
-- **NVIDIA**: CUDA acceleration (auto-detected by setup)
-- **AMD/Intel**: Vulkan acceleration
-- **CPU-only**: onnx-asr backend recommended
-
-## Configuration
-
-Config file: `~/.config/hyprwhspr/config.toml` (created by `hyprwhspr setup`)
-
-Key settings:
-
-- **Backend selection**: Parakeet, Whisper, REST API, WebSocket
-- **Hotkey customization**: Custom key bindings, secondary shortcuts
-- **Word overrides**: Correct common transcription errors
-- **Audio ducking**: Reduce system volume during recording
-- **Auto-submit**: Optionally press Enter after paste
-- **Waybar integration**: Status bar indicator
-
-Full configuration docs: [CONFIGURATION.md](https://github.com/goodroot/hyprwhspr/blob/main/docs/CONFIGURATION.md)
+GPU: NVIDIA → CUDA (auto-detected), AMD/Intel → Vulkan, CPU-only → use onnx-asr.
 
 ## Troubleshooting
 
 | Issue | Solution |
 |-------|---------|
-| No audio input | Check `hyprwhspr test --mic-only`, verify mic in audio settings |
+| No audio input | `hyprwhspr test --mic-only`, verify mic in audio settings |
 | Permission denied | Log out/in after setup for group permissions |
 | ydotool not working | Ensure ydotool 1.0+ (`ydotool --version`), check systemd service |
 | Text not pasting | Verify `wl-clipboard` installed, check Wayland session |
 | High latency | Switch to onnx-asr or Parakeet backend |
 
 ```bash
-# Check logs
-journalctl --user -u hyprwhspr.service
+journalctl --user -u hyprwhspr.service   # check logs
 journalctl --user -u ydotool.service
-
-# Test end-to-end
-hyprwhspr test --live
+hyprwhspr test --live                    # end-to-end test
 ```
 
 ## Requirements
 
-- Linux with systemd
-- Wayland session (GNOME, KDE Plasma Wayland, Sway, Hyprland)
-- `wl-clipboard`, `ydotool` 1.0+, `pipewire`
-- Python 3.10+
-- Optional: `gtk4` + `gtk4-layer-shell` (visualizer), Waybar (status bar)
+Linux + systemd, Wayland (GNOME/KDE/Sway/Hyprland), `wl-clipboard` + `ydotool` 1.0+ + `pipewire`, Python 3.10+. Optional: `gtk4` + `gtk4-layer-shell` (visualizer), Waybar.
 
 ## Related
 
