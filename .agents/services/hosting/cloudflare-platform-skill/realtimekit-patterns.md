@@ -50,7 +50,8 @@ function VideoGrid({ meeting }) {
 function VideoTile({ participant }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   useEffect(() => {
-    if (videoRef.current && participant.videoTrack) videoRef.current.srcObject = new MediaStream([participant.videoTrack]);
+    if (videoRef.current && participant.videoTrack)
+      videoRef.current.srcObject = new MediaStream([participant.videoTrack]);
   }, [participant.videoTrack]);
   return <div><video ref={videoRef} autoPlay playsInline muted /><div>{participant.name}</div></div>;
 }
@@ -64,9 +65,12 @@ const devices = await meeting.self.getAllDevices();
 const audioInputs = devices.filter(d => d.kind === 'audioinput');
 const videoInputs = devices.filter(d => d.kind === 'videoinput');
 meeting.self.on('deviceListUpdate', ({ added, removed }) => console.log('Devices:', { added, removed }));
-const switchCamera = (deviceId: string) => { const d = devices.find(x => x.deviceId === deviceId); if (d) await meeting.self.setDevice(d); };
+const switchCamera = async (deviceId: string) => {
+  const d = devices.find(x => x.deviceId === deviceId);
+  if (d) await meeting.self.setDevice(d);
+};
 
-// Chat component
+// Chat
 function ChatComponent({ meeting }) {
   const [messages, setMessages] = useState(meeting.chat.messages);
   const [input, setInput] = useState('');
@@ -76,7 +80,11 @@ function ChatComponent({ meeting }) {
     return () => meeting.chat.off('chatUpdate', handleUpdate);
   }, [meeting]);
   const send = async () => { if (input.trim()) { await meeting.chat.sendTextMessage(input); setInput(''); } };
-  return <div><div>{messages.map((msg, i) => <div key={i}><strong>{msg.senderName}:</strong> {msg.text}</div>)}</div><input value={input} onChange={e => setInput(e.target.value)} onKeyPress={e => e.key === 'Enter' && send()} /><button onClick={send}>Send</button></div>;
+  return <div>
+    <div>{messages.map((msg, i) => <div key={i}><strong>{msg.senderName}:</strong> {msg.text}</div>)}</div>
+    <input value={input} onChange={e => setInput(e.target.value)} onKeyPress={e => e.key === 'Enter' && send()} />
+    <button onClick={send}>Send</button>
+  </div>;
 }
 
 // Custom hook
@@ -158,5 +166,5 @@ export default {
 
 ## In This Reference
 
-- [README.md](./README.md) - Overview, core concepts, quick start
-- [gotchas.md](./gotchas.md) - Common issues, troubleshooting, limits
+- [realtimekit.md](./realtimekit.md) - Overview, core concepts, quick start
+- [realtimekit-gotchas.md](./realtimekit-gotchas.md) - Common issues, troubleshooting, limits
