@@ -32,40 +32,22 @@ export FLUENTCRM_API_USERNAME="your_username"
 export FLUENTCRM_API_PASSWORD="your_application_password"
 ```
 
-**MCP Tools Available**:
-
-| Category | Tools |
-|----------|-------|
-| **Contacts** | `fluentcrm_list_contacts`, `fluentcrm_get_contact`, `fluentcrm_find_contact_by_email`, `fluentcrm_create_contact`, `fluentcrm_update_contact`, `fluentcrm_delete_contact` |
-| **Tags** | `fluentcrm_list_tags`, `fluentcrm_create_tag`, `fluentcrm_delete_tag`, `fluentcrm_attach_tag_to_contact`, `fluentcrm_detach_tag_from_contact` |
-| **Lists** | `fluentcrm_list_lists`, `fluentcrm_create_list`, `fluentcrm_delete_list`, `fluentcrm_attach_contact_to_list`, `fluentcrm_detach_contact_from_list` |
-| **Campaigns** | `fluentcrm_list_campaigns`, `fluentcrm_create_campaign`, `fluentcrm_pause_campaign`, `fluentcrm_resume_campaign`, `fluentcrm_delete_campaign` |
-| **Templates** | `fluentcrm_list_email_templates`, `fluentcrm_create_email_template` |
-| **Automations** | `fluentcrm_list_automations`, `fluentcrm_create_automation` |
-| **Webhooks** | `fluentcrm_list_webhooks`, `fluentcrm_create_webhook` |
-| **Smart Links** | `fluentcrm_list_smart_links`, `fluentcrm_create_smart_link`, `fluentcrm_generate_smart_link_shortcode` |
-| **Reports** | `fluentcrm_dashboard_stats`, `fluentcrm_custom_fields` |
+**MCP Tools** (prefix `fluentcrm_`): contacts (list/get/find_by_email/create/update/delete), tags (list/create/delete/attach/detach), lists (list/create/delete/attach/detach), campaigns (list/create/pause/resume/delete), email_templates (list/create), automations (list/create), webhooks (list/create), smart_links (list/create/generate_shortcode), dashboard_stats, custom_fields.
 
 <!-- AI-CONTEXT-END -->
 
 ## Installation
 
-### MCP Server Setup
-
-The FluentCRM MCP server is not published to npm — clone and build locally:
+Not published to npm — clone and build locally:
 
 ```bash
-mkdir -p ~/.local/share/mcp-servers
-cd ~/.local/share/mcp-servers
+mkdir -p ~/.local/share/mcp-servers && cd ~/.local/share/mcp-servers
 git clone https://github.com/netflyapp/fluentcrm-mcp-server.git
-cd fluentcrm-mcp-server
-npm install && npm run build
+cd fluentcrm-mcp-server && npm install && npm run build
 ls dist/fluentcrm-mcp-server.js  # verify build
 ```
 
-### Runtime Configuration
-
-**OpenCode** — add to `~/.config/opencode/opencode.json` (disabled globally for token efficiency):
+**OpenCode** (`~/.config/opencode/opencode.json`, disabled globally for token efficiency):
 
 ```json
 {
@@ -79,36 +61,13 @@ ls dist/fluentcrm-mcp-server.js  # verify build
 }
 ```
 
-**Claude Desktop** — add to MCP settings:
-
-```json
-{
-  "mcpServers": {
-    "fluentcrm": {
-      "command": "node",
-      "args": ["~/.local/share/mcp-servers/fluentcrm-mcp-server/dist/fluentcrm-mcp-server.js"],
-      "env": {
-        "FLUENTCRM_API_URL": "https://your-domain.com/wp-json/fluent-crm/v2",
-        "FLUENTCRM_API_USERNAME": "your_username",
-        "FLUENTCRM_API_PASSWORD": "your_application_password"
-      }
-    }
-  }
-}
-```
+**Claude Desktop** (MCP settings): `command: node`, `args: [".../dist/fluentcrm-mcp-server.js"]`, `env: {FLUENTCRM_API_URL, FLUENTCRM_API_USERNAME, FLUENTCRM_API_PASSWORD}` (same values as above).
 
 **Per-Agent Enablement**: FluentCRM tools are enabled via `fluentcrm_*: true` in this subagent's `tools:` section. Main agents (`marketing-sales.md`, `marketing-sales.md`) reference this subagent for CRM operations, ensuring the MCP is only loaded when needed.
 
-### WordPress Setup
-
-1. Install FluentCRM plugin
-2. Create Application Password: Users > Your Profile > Application Passwords
-3. Ensure REST API is enabled (default) and permalinks are not "Plain"
-4. Configure CORS if accessing from a different domain
+**WordPress Setup**: Install FluentCRM plugin → create Application Password (Users > Profile > Application Passwords) → ensure REST API enabled and permalinks not "Plain" → configure CORS if cross-domain.
 
 ## Usage Patterns
-
-All tools accept parameters described in their MCP schemas. Key patterns below.
 
 ### Contact Management
 
@@ -131,7 +90,7 @@ All tools accept parameters described in their MCP schemas. Key patterns below.
 
 1. Create email template (`fluentcrm_create_email_template`: `title`, `subject`, `body` as HTML)
 2. Create campaign (`fluentcrm_create_campaign`: `title`, `subject`, `template_id`, `recipient_list` as array of list IDs)
-3. Monitor delivery and engagement (`fluentcrm_dashboard_stats`)
+3. Monitor delivery (`fluentcrm_dashboard_stats`)
 4. Pause/resume as needed (`fluentcrm_pause_campaign` / `fluentcrm_resume_campaign`)
 
 ### Automation Triggers
@@ -148,21 +107,13 @@ Create automations with `fluentcrm_create_automation` (`title`, `description`, `
 
 ### Smart Links
 
-Trackable URLs that apply tags/lists on click. Create with `fluentcrm_create_smart_link`:
-
-- `target_url` — destination URL
-- `apply_tags` / `remove_tags` — tag IDs to add/remove on click
-- `apply_lists` / `remove_lists` — list IDs to add/remove on click
-- `auto_login` — auto-login user on click
-- Generate shortcode: `fluentcrm_generate_smart_link_shortcode` with `slug` and optional `linkText`
+Trackable URLs that apply tags/lists on click. `fluentcrm_create_smart_link` params: `target_url`, `apply_tags`/`remove_tags`, `apply_lists`/`remove_lists`, `auto_login`. Generate shortcode: `fluentcrm_generate_smart_link_shortcode` with `slug` and optional `linkText`.
 
 **Note**: Smart Links API may not be available in all FluentCRM versions. Use the admin panel if API returns 404.
 
 ### Webhooks
 
-Create with `fluentcrm_create_webhook`: `name`, `url`, `status` (`pending`/`subscribed`), `tags`, `lists`.
-
-Events: contact created/updated, tag added/removed, list subscription changes, email events (sent/opened/clicked), form submissions.
+`fluentcrm_create_webhook`: `name`, `url`, `status` (`pending`/`subscribed`), `tags`, `lists`. Events: contact created/updated, tag added/removed, list subscription changes, email events (sent/opened/clicked), form submissions.
 
 ### Lead Processing Example
 
@@ -175,23 +126,18 @@ Events: contact created/updated, tag added/removed, list subscription changes, e
 
 ## Best Practices
 
-- **Data quality**: Validate email before creating contacts; use consistent tag naming; regularly clean inactive contacts; merge duplicates
+- **Data quality**: Validate email before creating contacts; consistent tag naming; clean inactive contacts; merge duplicates
 - **Deliverability**: Warm up new sending domains; monitor bounce rates; honor unsubscribes immediately; use double opt-in
 - **Automation**: Keep automations simple and focused; test with test contacts first; monitor performance; document logic
 - **GDPR**: Obtain explicit consent; provide easy unsubscribe; honor deletion requests; document consent sources
 
 ## Troubleshooting
 
-**Auth errors** — verify credentials:
-
-```bash
-curl -u "username:app_password" \
-  "https://your-domain.com/wp-json/fluent-crm/v2/subscribers"
-```
+**Auth errors** — verify: `curl -u "username:app_password" "https://your-domain.com/wp-json/fluent-crm/v2/subscribers"`
 
 **API not available**: Ensure FluentCRM plugin is active, REST API enabled, permalinks not "Plain", no security plugins blocking API.
 
-**Rate limiting**: Use pagination for large datasets, add delays between requests, use batch operations where available.
+**Rate limiting**: Use pagination for large datasets; add delays between requests; use batch operations where available.
 
 ## Related
 
