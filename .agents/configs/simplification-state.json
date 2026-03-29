@@ -1407,8 +1407,8 @@
       "pr": 12162
     },
     ".agents/scripts/gh-signature-helper.sh": {
-      "hash": "f855039892c8c5474b80fb623ce7c5c977834e94",
-      "at": "2026-03-29T15:50:50Z",
+      "hash": "e735571da002f6ed47f0b43dceaa313e6118204c",
+      "at": "2026-03-29T16:34:26Z",
       "pr": 13021
     },
     ".agents/tools/wordpress/wp-dev.md": {
@@ -1582,9 +1582,9 @@
       "pr": 12327
     },
     ".agents/tools/code-review/code-simplifier.md": {
-      "hash": "a115aa10f36d0cadaa60a306edba7bb56c874799",
-      "at": "2026-03-29T15:50:39Z",
-      "pr": 13074
+      "hash": "333d52bc8c0237a8e992d03e63b27caefea7bb27",
+      "at": "2026-03-29T16:34:23Z",
+      "pr": 13033
     },
     ".agents/tools/build-agent/add-skill.md": {
       "hash": "36065ac3559aa2e929cbb858c8220961454f9dd9",
@@ -2280,6 +2280,11 @@
       "hash": "9e0e2c55d608f6cc55ceec5f45e845bbbc841b0c",
       "at": "2026-03-29T15:51:03Z",
       "pr": 13048
+    },
+    ".agents/marketing-sales/ad-creative-chapter-09.md": {
+      "hash": "2bdf7194dc300dd779d03b44a37d35015e9f282d",
+      "at": "2026-03-29T16:34:21Z",
+      "pr": 13110
     }
   }
 }
