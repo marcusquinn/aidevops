@@ -25,13 +25,9 @@ tools:
 
 **Key principle**: AI composes, human reviews. No email is sent without explicit confirmation. Draft-and-hold is the default for all non-template emails.
 
-**Quick commands:**
-
 ```bash
 email-compose-helper.sh draft --to client@example.com \
   --subject "Project Update" --context "phase 2 complete" --importance high
-email-compose-helper.sh draft --to test@example.com \
-  --subject "Test" --context "test" --dry-run
 ```
 
 <!-- AI-CONTEXT-END -->
@@ -57,7 +53,7 @@ email-compose-helper.sh draft --to test@example.com \
 | `normal` | sonnet | Routine correspondence, vendor communication, team updates |
 | `low` | haiku | Acknowledgements, brief notifications, holding-pattern responses |
 
-Opus-tier for important emails is cost-justified — a poorly worded client email costs more than the model difference.
+Opus for important emails is cost-justified — a poorly worded client email costs more than the model difference.
 
 ## Tone Calibration
 
@@ -72,29 +68,24 @@ Domain-level overrides: set `tone_overrides` in `email-compose-config.json`.
 
 ## Composition Rules
 
-1. **One sentence per paragraph** — improves mobile readability and threading
-2. **Clear subject line** — describes the email's purpose, not just the topic
+1. **One sentence per paragraph** — mobile readability and threading
+2. **Clear subject line** — the email's purpose, not just the topic
 3. **Numbered lists** for multiple questions or action items
-4. **Explicit CTA** if a response is needed ("Please confirm by Friday")
-5. **No urgency flags** unless the context explicitly requires it
-6. **Overused phrase avoidance** — see list below
+4. **Explicit CTA** when response needed ("Please confirm by Friday")
+5. **No urgency flags** unless context explicitly requires it
+6. **Overused phrase avoidance** — see table below
 7. **Legal awareness** — distinguish agreed vs advised vs informational
 
 ## Overused Phrases (Auto-Flagged)
 
-| Phrase | Better alternative |
-|--------|-------------------|
-| "quick question" | Just ask the question directly |
-| "just following up" | "I wanted to check on..." or state the specific ask |
-| "just checking in" | State what you're checking on specifically |
-| "hope this finds you well" | Skip the pleasantry, start with the purpose |
-| "as per my last email" | Reference the specific point directly |
-| "circle back" / "touch base" | "revisit" / "connect" or "discuss" |
-| "reach out" | "contact" or "email" |
-| "synergy" / "leverage" | Describe the actual benefit / use "use" |
-| "paradigm shift" / "move the needle" | Describe the actual change / specific metric |
-| "low-hanging fruit" / "bandwidth" | "quick wins" / "time" or "capacity" |
-| "deep dive" / "at the end of the day" | "detailed review" / state the actual conclusion |
+| Avoid | Instead |
+|-------|---------|
+| "quick question" / "just following up" / "just checking in" | State the specific ask directly |
+| "hope this finds you well" | Skip — start with purpose |
+| "as per my last email" | Reference the specific point |
+| "circle back" / "touch base" / "reach out" | "revisit" / "discuss" / "contact" |
+| "synergy" / "leverage" / "paradigm shift" / "move the needle" | Describe the actual benefit, change, or metric |
+| "low-hanging fruit" / "bandwidth" / "deep dive" / "at the end of the day" | "quick wins" / "capacity" / "detailed review" / state the conclusion |
 
 ## Legal Liability Awareness
 
@@ -104,9 +95,9 @@ Email creates a written record. Distinguish clearly:
 - **Advised** — professional recommendation, not a guarantee: *"I would advise proceeding with Option A. This is my recommendation, not a guarantee of outcome."*
 - **Informational** — sharing without commitment: *"The current market rate is approximately £X. This is not a quote."*
 
-**Avoid:** admitting liability without legal review; commitments outside your authority; speculating about outcomes; forwarding confidential information without checking permissions.
+**Avoid:** admitting liability without legal review; commitments outside authority; speculating about outcomes; forwarding confidential info without permission.
 
-**When in doubt:** use "I understand" not "I agree"; "I'll look into this" not "We'll fix this"; add "subject to contract" for commercial commitments; consult legal before sending anything that could be used in a dispute.
+**Hedging language:** "I understand" not "I agree"; "I'll look into this" not "We'll fix this"; "subject to contract" for commercial commitments. Consult legal before anything usable in a dispute.
 
 ## CC/BCC Patterns
 
@@ -126,9 +117,9 @@ Email creates a written record. Distinguish clearly:
 | 25–30MB | Warning — consider file-share link |
 | >30MB | Blocked — must use file-share link |
 
-**File-share alternatives:** Google Drive / Dropbox / OneDrive for general files; [PrivateBin](https://privatebin.net) (self-destruct, password-protected, share password via separate channel) for confidential; WeTransfer for large media.
+**File-share alternatives:** Google Drive / Dropbox / OneDrive (general); [PrivateBin](https://privatebin.net) (confidential, self-destruct, password via separate channel); WeTransfer (large media).
 
-**Screenshots:** Crop to relevant content only; remove credentials/personal data; annotate with arrows or highlights; prefer one annotated image over multiple raw ones.
+**Screenshots:** Crop to relevant content; remove credentials/personal data; annotate; prefer one annotated image over multiple raw ones.
 
 ## Signature Injection
 
@@ -154,20 +145,17 @@ Use `--signature formal` to select a named signature.
 4. **CONFIRM SEND** — shows To: and Subject:, `[y/N]` prompt
 5. **SEND** via `email-agent-helper.sh → SES` — draft archived to `sent/`
 
-**Never auto-send**: `--no-review` skips the editor but still requires explicit confirmation. Bypassing confirmation entirely (`--no-review` + piping `y` to stdin) is for tested automation scripts only.
+**Never auto-send**: `--no-review` skips the editor but still requires confirmation. Full bypass (`--no-review` + piping `y`) is for tested automation scripts only.
 
-## Support and Customer Service Communication
+## Support and Customer Service
 
-Reference ticket numbers in every message. State what you've already tried. Tone: formal and factual — specific errors, timestamps, steps to reproduce. Follow up on schedule, not impulsively.
+Reference ticket numbers in every message. State what you've tried. Tone: formal, factual — specific errors, timestamps, repro steps. Follow up on schedule, not impulsively.
 
-**Escalation templates:**
-
-- *Tier 1 → Tier 2:* "I've been working with your support team on [ticket #X] for [N days]. The issue requires technical investigation beyond standard troubleshooting. Please escalate to your technical team."
-- *Tier 2 → Management:* "This issue has been open for [N days] and is impacting [specific business function]. I'd like to speak with a manager or account manager to resolve this."
+**Escalation:** *Tier 1→2:* "Working with support on [ticket #X] for [N days]. Requires technical investigation beyond standard troubleshooting — please escalate." *Tier 2→Mgmt:* "Open [N days], impacting [business function]. I'd like to speak with a manager to resolve this."
 
 ## Configuration
 
-Copy `configs/email-compose-config.json.txt` to `configs/email-compose-config.json`. Key settings: `default_from_email`, `signatures` (see Signature Injection above), `tone_overrides`, `default_importance`.
+Copy `configs/email-compose-config.json.txt` → `configs/email-compose-config.json`. Key settings: `default_from_email`, `signatures`, `tone_overrides`, `default_importance`.
 
 ## Related
 
