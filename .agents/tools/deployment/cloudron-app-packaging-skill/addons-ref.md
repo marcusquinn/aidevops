@@ -1,6 +1,6 @@
 # Addons Reference
 
-Env var and option reference for Cloudron addons. Declare in `CloudronManifest.json` under `addons`. Read env vars at runtime on every start — values can change across restarts.
+Declare in `CloudronManifest.json` under `addons`. Read env vars at runtime — values can change across restarts.
 
 ## localstorage
 
@@ -11,7 +11,7 @@ Writable `/app/data` directory. Backed up. Empty on first install (Docker image 
 
 ## mysql
 
-MySQL. Database is pre-created. Default charset: `utf8mb4` / `utf8mb4_unicode_ci`.
+Database pre-created. Default charset: `utf8mb4` / `utf8mb4_unicode_ci`.
 
 ```text
 CLOUDRON_MYSQL_URL
@@ -22,13 +22,11 @@ CLOUDRON_MYSQL_PORT
 CLOUDRON_MYSQL_DATABASE
 ```
 
-- `multipleDatabases: true` — Provides `CLOUDRON_MYSQL_DATABASE_PREFIX` instead of `CLOUDRON_MYSQL_DATABASE`. Create databases with that prefix.
+- `multipleDatabases: true` — Provides `CLOUDRON_MYSQL_DATABASE_PREFIX` instead of `CLOUDRON_MYSQL_DATABASE`.
 
-Debug: `cloudron exec` then `MYSQL_PWD=$CLOUDRON_MYSQL_PASSWORD mysql --user=$CLOUDRON_MYSQL_USERNAME --host=$CLOUDRON_MYSQL_HOST $CLOUDRON_MYSQL_DATABASE`
+Debug: `MYSQL_PWD=$CLOUDRON_MYSQL_PASSWORD mysql --user=$CLOUDRON_MYSQL_USERNAME --host=$CLOUDRON_MYSQL_HOST $CLOUDRON_MYSQL_DATABASE`
 
 ## postgresql
-
-PostgreSQL.
 
 ```text
 CLOUDRON_POSTGRESQL_URL
@@ -47,8 +45,6 @@ Debug: `PGPASSWORD=$CLOUDRON_POSTGRESQL_PASSWORD psql -h $CLOUDRON_POSTGRESQL_HO
 
 ## mongodb
 
-MongoDB.
-
 ```text
 CLOUDRON_MONGODB_URL
 CLOUDRON_MONGODB_USERNAME
@@ -56,14 +52,14 @@ CLOUDRON_MONGODB_PASSWORD
 CLOUDRON_MONGODB_HOST
 CLOUDRON_MONGODB_PORT
 CLOUDRON_MONGODB_DATABASE
-CLOUDRON_MONGODB_OPLOG_URL      # only when oplog enabled
+CLOUDRON_MONGODB_OPLOG_URL      # only when oplog: true
 ```
 
 - `oplog: true` — Enable oplog access.
 
 ## redis
 
-Redis. Data is persistent.
+Persistent. `noPassword: true` skips auth (safe: internal Docker network only).
 
 ```text
 CLOUDRON_REDIS_URL
@@ -72,11 +68,9 @@ CLOUDRON_REDIS_PORT
 CLOUDRON_REDIS_PASSWORD
 ```
 
-- `noPassword: true` — Skip password auth (safe: Redis is only reachable on internal Docker network).
-
 ## ldap
 
-LDAP v3 authentication.
+LDAP v3 authentication. Cannot be added to an existing app — reinstall required.
 
 ```text
 CLOUDRON_LDAP_SERVER
@@ -89,13 +83,11 @@ CLOUDRON_LDAP_BIND_DN
 CLOUDRON_LDAP_BIND_PASSWORD
 ```
 
-Suggested filter: `(&(objectclass=user)(|(username=%uid)(mail=%uid)))`
+Filter: `(&(objectclass=user)(|(username=%uid)(mail=%uid)))`
 
-User attributes: `uid`, `cn`, `mail`, `displayName`, `givenName`, `sn`, `username`, `samaccountname`, `memberof`
+User attrs: `uid`, `cn`, `mail`, `displayName`, `givenName`, `sn`, `username`, `samaccountname`, `memberof`
 
-Group attributes: `cn`, `gidnumber`, `memberuid`
-
-Cannot be added to an existing app — reinstall required.
+Group attrs: `cn`, `gidnumber`, `memberuid`
 
 ## oidc
 
@@ -113,7 +105,7 @@ CLOUDRON_OIDC_CLIENT_ID
 CLOUDRON_OIDC_CLIENT_SECRET
 ```
 
-- `loginRedirectUri` — Callback path (e.g. `/auth/openid/callback`). Multiple paths: comma-separated.
+- `loginRedirectUri` — Callback path (e.g. `/auth/openid/callback`). Multiple: comma-separated.
 - `logoutRedirectUri` — Post-logout path.
 - `tokenSignatureAlgorithm` — `RS256` (default) or `EdDSA`.
 
@@ -138,7 +130,7 @@ CLOUDRON_MAIL_DOMAIN
 
 ## recvmail
 
-Incoming email (IMAP/POP3). May be disabled if the server is not receiving email for the domain — handle absent env vars.
+Incoming email (IMAP/POP3). May be disabled — handle absent env vars.
 
 ```text
 CLOUDRON_MAIL_IMAP_SERVER
@@ -154,7 +146,7 @@ CLOUDRON_MAIL_TO_DOMAIN
 
 ## email
 
-Full email (SMTP + IMAP + ManageSieve). For webmail apps. Accept self-signed certificates for internal IMAP/Sieve connections.
+Full email (SMTP + IMAP + ManageSieve). For webmail apps. Accept self-signed certs for internal IMAP/Sieve connections.
 
 ```text
 CLOUDRON_EMAIL_SMTP_SERVER
@@ -173,17 +165,15 @@ CLOUDRON_EMAIL_SERVER_HOST
 
 ## proxyauth
 
-Authentication wall in front of the app. Reserves `/login` and `/logout` routes.
+Authentication wall. Reserves `/login` and `/logout` routes. Cannot be added to an existing app — reinstall required.
 
-- `path` — Restrict to a path (e.g. `/admin`). Prefix with `!` to exclude (e.g. `!/webhooks`).
+- `path` — Restrict to a path (e.g. `/admin`). Prefix `!` to exclude (e.g. `!/webhooks`).
 - `basicAuth` — HTTP Basic auth (bypasses 2FA).
 - `supportsBearerAuth` — Forward `Bearer` tokens to the app.
 
-Cannot be added to an existing app — reinstall required.
-
 ## scheduler
 
-Cron-like periodic tasks.
+Cron-like periodic tasks. Commands run in the app's environment (same env vars, `/tmp`, `/run`). 30-minute grace period.
 
 ```json
 "scheduler": {
@@ -194,11 +184,9 @@ Cron-like periodic tasks.
 }
 ```
 
-Commands run in the app's environment (same env vars, access to `/tmp` and `/run`). 30-minute grace period per task.
-
 ## tls
 
-Certificate access for non-HTTP protocols. Files: `/etc/certs/tls_cert.pem`, `/etc/certs/tls_key.pem` (read-only). App restarts on certificate renewal.
+Certificate access for non-HTTP protocols. Files: `/etc/certs/tls_cert.pem`, `/etc/certs/tls_key.pem` (read-only). App restarts on renewal.
 
 ## turn
 
@@ -219,4 +207,4 @@ Create Docker containers (restricted). Only superadmins can install/exec apps wi
 CLOUDRON_DOCKER_HOST              # tcp://<IP>:<port>
 ```
 
-Restrictions: bind mounts under `/app/data` only, created containers join `cloudron` network, containers removed on app uninstall.
+Restrictions: bind mounts under `/app/data` only, containers join `cloudron` network, removed on app uninstall.
