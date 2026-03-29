@@ -3,109 +3,67 @@
 Maximise your output per token. Follow these practices to avoid wasted work:
 
 **1. Decompose with TodoWrite (MANDATORY)**
-At the START of your session, use the TodoWrite tool to break your task into 3-7 subtasks.
-Your LAST subtask must ALWAYS be: 'Push branch and create PR via gh pr create'.
-Example for 'add retry logic to API client':
-- Research: read existing API client code and error handling patterns
-- Implement: add retry with exponential backoff to the HTTP client
-- Test: write unit tests for retry behaviour (success, max retries, backoff timing)
-- Integrate: update callers if the API surface changed
-- Verify: run linters, shellcheck, and existing tests
-- Deliver: push branch and create PR via gh pr create
-
-Mark each subtask in_progress when you start it and completed when done.
-Only have ONE subtask in_progress at a time.
+At the START of your session, break your task into 3-7 subtasks. Last subtask MUST be: 'Mark PR ready via gh pr ready'. Mark each `in_progress` when started, `completed` when done. ONE `in_progress` at a time.
 
 **2. Commit early, commit often (CRITICAL - prevents lost work)**
-After EACH implementation subtask, immediately:
+After EACH implementation subtask, immediately commit. Uncommitted work is LOST if your session ends.
 
 ```bash
 git add -A && git commit -m 'feat: <what you just did> (<task-id>)'
 ```
 
-Do NOT wait until all subtasks are done. If your session ends unexpectedly (context
-exhaustion, crash, timeout), uncommitted work is LOST. Committed work survives.
-
-After your FIRST commit, push and create a draft PR immediately:
+After your FIRST commit, push and create a draft PR:
 
 ```bash
 git push -u origin HEAD
-# t288: Include GitHub issue reference in PR body when task has ref:GH# in TODO.md
-# Look up: grep -oE 'ref:GH#[0-9]+' TODO.md for your task ID, extract the number
-# If found, add 'Ref #NNN' to the PR body so GitHub cross-links the issue
 gh_issue=$(grep -E '^\s*- \[.\] <task-id> ' TODO.md 2>/dev/null | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || true)
 pr_body='WIP - incremental commits'
 [[ -n "$gh_issue" ]] && pr_body="${pr_body}
 
 Ref #${gh_issue}"
-# Append signature footer (auto-detects CLI, aidevops version)
 SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL" 2>/dev/null || echo "")
 pr_body="${pr_body}${SIG_FOOTER}"
 gh pr create --draft --title '<task-id>: <description>' --body "$pr_body"
 ```
 
-Subsequent commits just need `git push`. The PR already exists.
-This ensures the supervisor can detect your PR even if you run out of context.
-The `Ref #NNN` line cross-links the PR to its GitHub issue for auditability.
-
-When ALL implementation is done, mark the PR as ready for review:
-
-```bash
-gh pr ready
-```
-
-If you run out of context before this step, the supervisor will auto-promote
-your draft PR after detecting your session has ended.
+Subsequent commits just need `git push`. When done: `gh pr ready`.
 
 **3. ShellCheck gate before push (MANDATORY for .sh files - t234)**
-Before EVERY `git push`, check if your commits include `.sh` files:
 
 ```bash
-sh_files=$(git diff --name-only origin/HEAD..HEAD 2>/dev/null | grep '\.sh$' || true)
-if [[ -n "$sh_files" ]]; then
-  echo "Running ShellCheck on modified .sh files..."
-  sc_failed=0
+if command -v shellcheck &>/dev/null; then
+  sc_errors=0
   while IFS= read -r f; do
-    [[ -f "$f" ]] || continue
-    if ! shellcheck -x -S warning "$f"; then
-      sc_failed=1
+    [[ -z "$f" ]] && continue
+    if ! shellcheck -x -S warning -- "$f"; then
+      sc_errors=$((sc_errors + 1))
     fi
-  done <<< "$sh_files"
-  if [[ "$sc_failed" -eq 1 ]]; then
-    echo "ShellCheck violations found - fix before pushing."
-    # Fix the violations, then git add -A && git commit --amend --no-edit
-  fi
+  done < <(git diff --name-only origin/HEAD..HEAD 2>/dev/null | grep '\.sh$' || true)
+  [[ "$sc_errors" -gt 0 ]] && echo "ShellCheck: $sc_errors file(s) failed — fix before pushing" && exit 1
+else
+  echo "shellcheck not installed — skipping (note in PR body)"
 fi
 ```
 
-This catches CI failures 5-10 min earlier. Do NOT push .sh files with ShellCheck violations.
-If `shellcheck` is not installed, skip this gate and note it in the PR body.
+Do NOT push `.sh` files with violations. If `shellcheck` not installed, skip and note in PR body.
 
 **3b. PR title MUST contain task ID (MANDATORY - t318.2)**
-When creating a PR, the title MUST start with the task ID: `<task-id>: <description>`.
-The task ID is one of:
+Title: `<task-id>: <description>`. Task ID is one of:
 - `tNNN` — TODO.md task ID (e.g., `t318.2: Verify supervisor worker PRs include task ID`)
-- `GH#NNN` — GitHub issue number, for quality-debt/simplification-debt/issue-only work (e.g., `GH#12455: tighten hashline-edit-format.md`)
+- `GH#NNN` — GitHub issue number for quality-debt/simplification-debt work (e.g., `GH#12455: tighten hashline-edit-format.md`)
 
-NEVER use `qd-`, bare numbers, `t` followed by a GitHub issue number (e.g., `t12345`), or other invented prefixes. The `qd-` prefix is for branch names only (set by the pulse dispatcher), not PR titles.
-
-The CI pipeline and supervisor both validate this. PRs without task IDs fail the check.
-If you used `gh pr create --draft --title '<task-id>: <description>'` as instructed above,
-this is already handled. This note reinforces: NEVER omit the task ID from the PR title.
+NEVER use `qd-`, bare numbers, or `t` followed by a GitHub issue number. `qd-` is for branch names only. CI and supervisor both validate this.
 
 **4. Offload research to ai_research tool (saves context for implementation)**
-Reading large files (500+ lines) consumes your context budget fast. Instead of reading
-entire files yourself, call the `ai_research` MCP tool with a focused question:
+For files >200 lines you do not plan to edit, use `ai_research` instead of reading directly (~100 tokens vs ~5000):
 
 ```text
 ai_research(prompt: "Find all functions that dispatch workers in supervisor-helper.sh. Return: function name, line number, key variables.", domain: "orchestration")
 ```
 
-The tool spawns a sub-worker via the Anthropic API with its own context window.
-You get a concise answer that costs ~100 tokens instead of ~5000 from reading directly.
-Rate limit: 10 calls per session. Default model: haiku (cheapest).
+Rate limit: 10/session. Default model: haiku. Do NOT offload when you need to edit the file.
 
-**Domain shorthand** - auto-resolves to relevant agent files:
+**Domain shorthand** — auto-resolves to relevant agent files:
 
 | Domain | Agents loaded |
 |--------|--------------|
@@ -134,83 +92,31 @@ Rate limit: 10 calls per session. Default model: haiku (cheapest).
 | containers | orbstack |
 | vision | overview, image-generation |
 
-**Parameters** (for `ai_research`): `prompt` (required), `domain` (shorthand above), `agents` (comma-separated paths relative to ~/.aidevops/agents/), `files` (paths with optional line ranges e.g. "src/foo.ts:10-50"), `model` (haiku|sonnet|opus), `max_tokens` (default 500, max 4096).
-
-**When to offload**: Any time you would read >200 lines of a file you do not plan to edit,
-or when you need to understand a codebase pattern across multiple files.
-
-**When NOT to offload**: When you need to edit the file (you must read it yourself for
-the Edit tool to work), or when the answer is a simple grep/rg query.
+**Parameters**: `prompt` (required), `domain`, `agents` (paths relative to `~/.aidevops/agents/`), `files` (with optional line ranges e.g. `src/foo.ts:10-50`), `model` (haiku|sonnet|opus), `max_tokens` (default 500, max 4096).
 
 **5. Parallel sub-work (MANDATORY when applicable)**
-After creating your TodoWrite subtasks, check whether multiple subtasks are independent.
-If yes, launch them as parallel **Task tool calls in a single message** instead of sequential
-Task calls across multiple messages. Your TodoWrite still tracks ONE `in_progress` subtask
-at a time (Section 1) — parallel Task calls are how you *delegate* independent work to
-sub-agents concurrently, not how you track your own focus.
-
-**Required pattern**: For independent subtasks (for example, creating unrelated files,
-running separate searches, or collecting read-only context from different modules), issue
-multiple Task tool calls at once so sub-agents run concurrently.
-
-**Decision heuristic**: If your TodoWrite has 3+ subtasks and any two do not touch the same
-files and do not depend on each other's outputs, those subtasks should run in parallel.
-Common parallelisable patterns:
-- Create or update independent files in separate Task sub-agents
-- Run independent searches across different directories/modules
-- Delegate `ai_research` calls to gather context while a Task sub-agent implements
-
-**Do NOT parallelise when**: subtasks modify the same file, or subtask B depends on
-subtask A's output (e.g., B imports a function A creates). When in doubt, run sequentially.
+If two or more subtasks are independent (different files, no output dependency), launch them as parallel Task tool calls in a single message. TodoWrite still tracks ONE `in_progress` — parallel Tasks delegate concurrent work to sub-agents. Do NOT parallelise when subtasks modify the same file or B depends on A's output.
 
 **6. Fail fast, not late**
-Before writing any code, verify your assumptions:
-- Read the files you plan to modify (stale assumptions waste entire sessions)
-- Check that dependencies/imports you plan to use actually exist in the project
-- If the task seems already done, EXIT immediately with explanation - do not redo work
+Before writing any code: read files you plan to modify, verify imports/dependencies exist, exit immediately if the task is already done.
 
 **7. Minimise token waste**
-- Do not read entire large files - use line ranges from search results
-- Do not output verbose explanations in commit messages - be concise
-- If an approach fails, try ONE fundamentally different strategy before exiting BLOCKED
+Use line ranges from search results, not full-file reads. Keep commit messages concise. If an approach fails, try ONE fundamentally different strategy before exiting BLOCKED.
 
 **8. Replan when stuck, do not patch**
-If your first approach is not working, step back and consider a fundamentally different
-strategy instead of incrementally patching the broken approach. A fresh approach often
-succeeds where incremental fixes fail. Only exit with BLOCKED after trying at least one
-alternative strategy.
+Step back and try a different strategy rather than incrementally patching a broken approach. Only exit BLOCKED after trying at least one alternative.
 
 ## Completion Self-Check (MANDATORY before FULL_LOOP_COMPLETE)
 
 Before emitting FULL_LOOP_COMPLETE or marking task complete, you MUST:
 
-1. **Requirements checklist**: List every requirement from the task description as a
-   numbered checklist. Mark each [DONE] or [TODO]. If ANY are [TODO], do NOT mark
-   complete - keep working.
+1. **Requirements checklist**: List every requirement. Mark each [DONE] or [TODO]. If ANY are [TODO], keep working.
+2. **Verification run**: Run tests, shellcheck on modified `.sh` files, lint/typecheck if configured. Confirm output files exist.
+3. **Generalization check**: Fix hardcoded values that should be parameterized.
+4. **Minimal state changes**: Only create or modify files explicitly required. No extra files or unrequested side effects.
+5. **Commit+PR gate (GH#5317 — MANDATORY)**: Before emitting ANY completion signal:
+   - `git status --porcelain` returns empty. If not, commit first.
+   - PR exists: `gh pr list --head "$(git rev-parse --abbrev-ref HEAD)"`. If not, create one.
+   This is the #1 failure mode: workers exit without committing or creating a PR.
 
-2. **Verification run**: Execute available verification:
-   - Run tests if the project has them
-   - Run shellcheck on any .sh files you modified
-   - Run lint/typecheck if configured
-   - Confirm output files exist and have expected content
-
-3. **Generalization check**: Would your solution still work if input values, file
-   contents, or dimensions changed? If you hardcoded something that should be
-   parameterized, fix it before completing.
-
-4. **Minimal state changes**: Only create or modify files explicitly required by the
-   task. Do not leave behind extra files, modified configs, or side effects that were
-   not requested.
-
-5. **Commit+PR gate (GH#5317 — MANDATORY)**: Before emitting ANY completion signal
-   (`TASK_COMPLETE` or `FULL_LOOP_COMPLETE`), verify:
-   - `git status --porcelain` returns empty (no uncommitted changes). If not, commit first.
-   - A PR exists for the current branch: `gh pr list --head "$(git rev-parse --abbrev-ref HEAD)"`.
-     If no PR exists, create one before completing.
-   This is the #1 failure mode: workers print "Implementation complete" and exit
-   without committing or creating a PR, leaving files uncommitted in the worktree.
-   The supervisor cannot detect or recover work that was never committed.
-
-FULL_LOOP_COMPLETE is IRREVERSIBLE and FINAL. You have unlimited iterations but only
-one submission. Extra verification costs nothing; a wrong completion wastes an entire
-retry cycle.
+FULL_LOOP_COMPLETE is IRREVERSIBLE and FINAL. Extra verification costs nothing; a wrong completion wastes an entire retry cycle.
