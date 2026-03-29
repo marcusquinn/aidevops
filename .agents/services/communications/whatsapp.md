@@ -1,5 +1,5 @@
 ---
-description: WhatsApp bot integration via Baileys (TypeScript, unofficial WhatsApp Web API) — QR linking, multi-device, messaging features, access control, privacy/security assessment, aidevops runner dispatch, Matterbridge bridging
+description: WhatsApp bot integration via Baileys — QR linking, multi-device, messaging, access control, runner dispatch, Matterbridge bridging
 mode: subagent
 tools:
   read: true
@@ -18,34 +18,29 @@ tools:
 
 ## Quick Reference
 
-- **Type**: WhatsApp Web API client — unofficial, reverse-engineered protocol
-- **Library**: [Baileys](https://github.com/WhiskeySockets/Baileys) (TypeScript, MIT, 10K+ stars)
+- **Library**: [Baileys](https://github.com/WhiskeySockets/Baileys) (TypeScript, MIT) — unofficial reverse-engineered WhatsApp Web API
 - **Runtime**: Node.js 20+ or Bun
-- **Protocol**: Multi-device (linked device, no phone required after pairing; up to 4 linked devices per account)
-- **Encryption**: Signal Protocol E2E for message content (WhatsApp-implemented, not Baileys)
-- **Auth**: QR code scan or pairing code from WhatsApp mobile app; sessions invalidated after ~14 days inactivity
-- **Session store**: File-based (`useMultiFileAuthState`); SQLite/Redis/PostgreSQL require custom `AuthenticationState`
-- **Docs**: https://github.com/WhiskeySockets/Baileys | https://whiskeysockets.github.io/Baileys/
-- **npm**: `baileys` (formerly `@whiskeysockets/baileys`)
-- **Limitations**: No voice/video calls; one account per bot; up to 1024 group members; any WA protocol change can break Baileys without warning (maintainers typically update within days)
+- **Protocol**: Multi-device (linked device, no phone after pairing; max 4 linked devices)
+- **Encryption**: Signal Protocol E2E (WhatsApp-implemented, not Baileys)
+- **Auth**: QR scan or pairing code; sessions expire after ~14 days inactivity
+- **Session store**: `useMultiFileAuthState` (file-based); custom `AuthenticationState` for SQLite/Redis/PostgreSQL
+- **npm**: `baileys` | **Docs**: https://whiskeysockets.github.io/Baileys/
+- **Limits**: No voice/video calls; 1 account per bot; max 1024 group members; WA protocol changes can break Baileys without warning
 
-**When to use Baileys vs alternatives**:
-
-| Criterion | WhatsApp (Baileys) | WhatsApp Business API | SimpleX | Matrix |
-|-----------|--------------------|-----------------------|---------|--------|
-| Official API | No (reverse-engineered) | Yes (Meta-approved) | N/A | N/A |
-| Cost | Free | Per-conversation pricing | Free | Free |
-| Account ban risk | Yes (ToS violation) | No | No | No |
-| Metadata privacy | Poor (Meta harvests) | Poor | Excellent | Moderate |
-| Best for | Existing WA users, rapid prototyping | Production business messaging | Maximum privacy | Team collaboration |
+| Criterion | Baileys | WA Business API | SimpleX | Matrix |
+|-----------|---------|-----------------|---------|--------|
+| Official | No (reverse-engineered) | Yes (Meta) | N/A | N/A |
+| Cost | Free | Per-conversation | Free | Free |
+| Ban risk | Yes (ToS violation) | No | No | No |
+| Metadata privacy | Poor (Meta) | Poor | Excellent | Moderate |
+| Best for | Existing WA users, prototyping | Production business | Max privacy | Team collab |
 
 <!-- AI-CONTEXT-END -->
 
 ## Installation
 
 ```bash
-npm install baileys          # or: bun add baileys
-npm install @bufbuild/protobuf  # Optional: better protobuf performance
+npm install baileys @bufbuild/protobuf  # or: bun add baileys
 # Optional: qrcode-terminal, pino, link-preview-js, sharp, fluent-ffmpeg
 ```
 
@@ -63,8 +58,7 @@ async function startBot(): Promise<void> {
   sock.ev.on("connection.update", ({ connection, lastDisconnect }) => {
     if (connection === "close") {
       const code = (lastDisconnect?.error as Boom)?.output?.statusCode
-      // Reconnect delays: restartRequired→1s, connectionClosed/Lost/timedOut→5s, default→15s
-      // loggedOut: delete auth_info/, restart for new QR
+      // loggedOut: delete auth_info/, restart for new QR. Otherwise auto-reconnect.
       if (code !== DisconnectReason.loggedOut) setTimeout(() => startBot(), 3000)
     }
   })
@@ -80,7 +74,7 @@ async function startBot(): Promise<void> {
 startBot()
 ```
 
-**QR / Pairing**: `printQRInTerminal: true` for QR. Pairing code: `sock.requestPairingCode("1234567890")` → enter in WhatsApp > Linked Devices.
+**Pairing**: `printQRInTerminal: true` for QR. Pairing code: `sock.requestPairingCode("1234567890")` → enter in WhatsApp > Linked Devices.
 
 ## JID Format
 
@@ -95,16 +89,16 @@ Phone number: country code + number, no `+`, no spaces/dashes.
 ## Messaging Features
 
 ```typescript
-// Text / mentions / quoted reply
+// Text, mentions, quoted reply
 await sock.sendMessage(jid, { text: "Hello!" })
 await sock.sendMessage(groupJid, { text: "@user check this", mentions: ["user@s.whatsapp.net"] })
 await sock.sendMessage(jid, { text: "Reply" }, { quoted: originalMsg })
-// Media: image | video | audio (ptt) | document | sticker | location
+// Media: image, video, audio (ptt), document, sticker, location
 await sock.sendMessage(jid, { image: readFileSync("./photo.jpg"), caption: "Caption", mimetype: "image/jpeg" })
 await sock.sendMessage(jid, { image: { url: "https://example.com/photo.jpg" }, caption: "From URL" })
 await sock.sendMessage(jid, { audio: readFileSync("./voice.ogg"), mimetype: "audio/ogg; codecs=opus", ptt: true })
 await sock.sendMessage(jid, { document: readFileSync("./report.pdf"), mimetype: "application/pdf", fileName: "report.pdf" })
-// Reaction / Poll / Presence / Download
+// Reaction, poll, presence, media download
 await sock.sendMessage(jid, { react: { text: "👍", key: originalMsg.key } })
 await sock.sendMessage(jid, { poll: { name: "What next?", values: ["A", "B", "C"], selectableCount: 1 } })
 await sock.sendPresenceUpdate("composing", jid)
@@ -149,16 +143,14 @@ function isRateLimited(sender: string): boolean {
 
 **E2E protected** (Signal Protocol): message text, media, calls, group messages, status broadcasts.
 
-**NOT protected — Meta metadata harvesting**: contact graph (who/when/frequency), group membership, usage patterns, device info, IP address, message timestamps. Meta uses this for ad targeting across Facebook/Instagram/WhatsApp. Backups may use Meta-held keys. Meta AI processes message content when invoked.
+**NOT protected** (Meta metadata): contact graph, group membership, usage patterns, device info, IP, timestamps. Used for cross-platform ad targeting. Backups may use Meta-held keys. Meta AI processes content when invoked.
 
-**ToS Risk (Baileys)**:
-
-| Risk | Likelihood | Mitigation |
-|------|-----------|------------|
-| Account ban | Medium-High | Dedicated number (prepaid SIM), not personal |
+| ToS Risk | Likelihood | Mitigation |
+|----------|-----------|------------|
+| Account ban | Medium-High | Dedicated prepaid SIM, not personal |
 | IP ban | Low-Medium | Residential proxy or VPN |
 | API changes | High | Pin Baileys version, monitor releases |
-| Rate limiting | Medium | Human-like delays (2-5 seconds) |
+| Rate limiting | Medium | Human-like delays (2-5s) |
 
 ## aidevops Runner Dispatch
 
@@ -190,16 +182,16 @@ commands.set("/run", async (ctx) => {
 // Message router: extract text, check isAuthorized + isRateLimited, dispatch to commands map
 ```
 
-**Security**: Scan inbound messages with `prompt-guard-helper.sh scan "$message"` before dispatch. Validate runner names against an allowlist. See `tools/security/prompt-injection-defender.md`, `tools/credentials/gopass.md`.
+**Security**: Scan inbound with `prompt-guard-helper.sh scan "$message"` before dispatch. Validate runner names against allowlist. See `tools/security/prompt-injection-defender.md`.
 
 ## Matterbridge Integration
 
-Matterbridge natively supports WhatsApp via [whatsmeow](https://github.com/tulir/whatsmeow) (Go). Bridges WhatsApp to 20+ platforms without custom bot code. Build with `-tags whatsappmulti` (excluded from default binary due to GPL3): `go install -tags whatsappmulti github.com/42wim/matterbridge@latest`
+Native WhatsApp support via [whatsmeow](https://github.com/tulir/whatsmeow) (Go) — bridges to 20+ platforms. Build: `go install -tags whatsappmulti github.com/42wim/matterbridge@latest` (`-tags whatsappmulti` required, excluded from default binary due to GPL3).
 
 ```toml
 [whatsapp]
   [whatsapp.mywa]
-  # No token — QR code pairing on first run
+  # No token — QR pairing on first run
 
 [[gateway]]
 name="wa-matrix-bridge"
@@ -212,15 +204,15 @@ enable=true
   channel="#bridged:example.com"
 ```
 
-**Note**: E2E encryption is broken at the bridge — the bridge host has plaintext access. See `tools/security/opsec.md`.
+E2E broken at bridge — bridge host has plaintext access. See `tools/security/opsec.md`.
 
 ## Related
 
-- `services/communications/simplex.md` — SimpleX (maximum privacy, no identifiers)
-- `services/communications/matrix-bot.md` — Matrix bot for aidevops runner dispatch
-- `services/communications/matterbridge.md` — Multi-platform chat bridge (native WhatsApp support)
-- `services/communications/xmtp.md` — XMTP (Web3 messaging, wallet identity)
-- `tools/security/opsec.md` — Platform trust matrix, metadata warnings
-- `tools/security/prompt-injection-defender.md` — Prompt injection defense for bot inputs
-- WhatsApp Security Whitepaper: https://www.whatsapp.com/security/WhatsApp-Security-Whitepaper.pdf
-- Matterbridge: https://github.com/42wim/matterbridge
+- `services/communications/simplex.md` — SimpleX (max privacy, no identifiers)
+- `services/communications/matrix-bot.md` — Matrix bot runner dispatch
+- `services/communications/matterbridge.md` — Multi-platform chat bridge
+- `services/communications/xmtp.md` — XMTP (Web3 messaging)
+- `tools/security/opsec.md` — Platform trust matrix
+- `tools/security/prompt-injection-defender.md` — Prompt injection defense
+- https://www.whatsapp.com/security/WhatsApp-Security-Whitepaper.pdf
+- https://github.com/42wim/matterbridge
