@@ -1542,9 +1542,9 @@
       "pr": 12237
     },
     ".agents/services/networking/netbird.md": {
-      "hash": "5ac693ab471712bc41cdcc387ade1f84485052c1",
-      "at": "2026-03-28T21:59:20Z",
-      "pr": 12242
+      "hash": "824fc7ee7cdc7e08351310bdb9f99dcf91a3848e",
+      "at": "2026-03-29T01:33:20Z",
+      "pr": 12453
     },
     ".agents/content/heygen-skill/rules-templates.md": {
       "hash": "9bb00be8a5060b8b66412adc859335c7d193546d",
@@ -1620,6 +1620,11 @@
       "hash": "9f081ab08dc7468a6124fa9fba1539f0f0bbdb03",
       "at": "2026-03-29T01:33:04Z",
       "pr": 12375
+    },
+    ".agents/marketing-sales/ad-creative-chapter-07.md": {
+      "hash": "c79c8baa955bb48f1ce2ded8036ded7940948031",
+      "at": "2026-03-29T01:33:56Z",
+      "pr": 12442
     }
   }
 }
