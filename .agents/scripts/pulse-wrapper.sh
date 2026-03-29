@@ -4424,9 +4424,9 @@ dispatch_with_dedup() {
 		return 1
 	fi
 
-	# Assign issue and label as queued
+	# Assign issue and label as queued + origin:worker (dispatched by pulse)
 	gh issue edit "$issue_number" --repo "$repo_slug" \
-		--add-assignee "$self_login" --add-label "status:queued" 2>/dev/null || true
+		--add-assignee "$self_login" --add-label "status:queued" --add-label "origin:worker" 2>/dev/null || true
 
 	# Launch worker
 	"$HEADLESS_RUNTIME_HELPER" run \

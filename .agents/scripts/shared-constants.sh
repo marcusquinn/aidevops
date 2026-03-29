@@ -713,6 +713,64 @@ files_include_workflow_changes() {
 }
 
 # =============================================================================
+# Session Origin Detection
+# =============================================================================
+# Detects whether the current session is a headless worker or interactive user.
+# Used to tag issues, TODOs, and PRs with origin:worker or origin:interactive.
+#
+# Detection signals (checked in priority order):
+#   1. FULL_LOOP_HEADLESS=true — set by supervisor dispatch
+#   2. AIDEVOPS_HEADLESS=true — set by headless-runtime-helper.sh
+#   3. OPENCODE_HEADLESS=true — set by OpenCode headless mode
+#   4. GITHUB_ACTIONS=true — CI environment
+#   5. No TTY (! -t 0 && ! -t 1) — non-interactive shell
+#   6. Default: interactive
+#
+# Usage:
+#   local origin; origin=$(detect_session_origin)
+#   # Returns: "worker" or "interactive"
+#
+#   local label; label=$(session_origin_label)
+#   # Returns: "origin:worker" or "origin:interactive"
+
+detect_session_origin() {
+	# Explicit headless env vars (set by dispatch infrastructure)
+	if [[ "${FULL_LOOP_HEADLESS:-}" == "true" ]]; then
+		echo "worker"
+		return 0
+	fi
+	if [[ "${AIDEVOPS_HEADLESS:-}" == "true" ]]; then
+		echo "worker"
+		return 0
+	fi
+	if [[ "${OPENCODE_HEADLESS:-}" == "true" ]]; then
+		echo "worker"
+		return 0
+	fi
+	# CI environments are always workers
+	if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+		echo "worker"
+		return 0
+	fi
+	# No TTY = non-interactive (headless dispatch, cron, pipe)
+	if [[ ! -t 0 ]] && [[ ! -t 1 ]]; then
+		echo "worker"
+		return 0
+	fi
+	echo "interactive"
+	return 0
+}
+
+# Returns the GitHub label string for the current session origin.
+# Usage: local label; label=$(session_origin_label)
+session_origin_label() {
+	local origin
+	origin=$(detect_session_origin)
+	echo "origin:${origin}"
+	return 0
+}
+
+# =============================================================================
 # TODO.md Serialized Commit+Push
 # =============================================================================
 # Provides atomic locking and pull-rebase-retry for TODO.md operations.

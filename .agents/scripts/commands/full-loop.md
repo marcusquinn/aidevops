@@ -44,6 +44,8 @@ Skip if `--no-decompose` or already has subtasks. Run `task-decompose-helper.sh 
 
 **Step 0.7 — Label dispatch model:** Detect from `$ANTHROPIC_MODEL`/`$CLAUDE_MODEL` or system prompt. Map: `*opus*`→`dispatched:opus`, `*sonnet*`→`dispatched:sonnet`, `*haiku*`→`dispatched:haiku`. Remove stale labels first.
 
+**Step 0.8 — Label session origin:** Detect via `session_origin_label` (from `shared-constants.sh`). Adds `origin:worker` (headless/pulse dispatch) or `origin:interactive` (user session). Applied automatically by `claim-task-id.sh`, `issue-sync-helper.sh`, and `pulse-wrapper.sh`. TODO.md tags `#worker`/`#interactive` also map to these labels.
+
 **Step 1.7 — Lineage context (t1408.3):** If dispatch prompt contains `TASK LINEAGE:` block: (1) only implement `<-- THIS TASK`, (2) stub sibling dependencies, (3) no sibling work, (4) include lineage in PR body, (5) hard dependency not stub-able → exit `BLOCKED`.
 
 ---

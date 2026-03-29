@@ -691,8 +691,13 @@ create_github_issue() {
 		gh_args+=(--body "Task created via claim-task-id.sh")
 	fi
 
+	# Append session origin label (origin:worker or origin:interactive)
+	local origin_label
+	origin_label=$(session_origin_label)
 	if [[ -n "$labels" ]]; then
-		gh_args+=(--label "$labels")
+		gh_args+=(--label "${labels},${origin_label}")
+	else
+		gh_args+=(--label "$origin_label")
 	fi
 
 	local issue_url
