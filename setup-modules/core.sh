@@ -170,7 +170,10 @@ bootstrap_repo() {
 			echo "  1) Install on this Mac (recommended)"
 			echo "  2) Install in a Linux VM (via OrbStack)"
 			echo ""
-			read -r -p "Choose [1/2] (default: 1): " install_target
+			# Cannot use setup_prompt here — _common.sh not yet sourced during bootstrap.
+			# The _bootstrap_non_interactive guard above prevents reaching this line.
+			local install_target=""
+			read -r -p "Choose [1/2] (default: 1): " install_target || install_target="1"
 
 			if [[ "$install_target" == "2" ]]; then
 				print_info "Setting up OrbStack VM installation..."

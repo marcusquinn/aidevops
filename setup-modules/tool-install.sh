@@ -1132,9 +1132,11 @@ setup_ssh_key() {
 			return 0
 		fi
 
+		local generate_key
 		setup_prompt generate_key "Generate new Ed25519 SSH key? [Y/n]: " "Y"
 
 		if [[ "$generate_key" =~ ^[Yy]?$ ]]; then
+			local email
 			setup_prompt email "Enter your email address: " ""
 			if [[ -z "$email" ]]; then
 				print_warning "No email provided — skipping SSH key generation"
