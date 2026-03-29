@@ -18,12 +18,10 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Modify existing images — inpainting, outpainting, upscaling, style transfer, background removal
+- **Purpose**: Modify existing images — inpainting, outpainting, upscaling, style transfer, background removal, batch edits
 - **Cloud**: DALL-E 2 edit API, Google Imagen edit, Adobe Firefly
 - **Local**: Stable Diffusion inpaint, FLUX fill, Real-ESRGAN (upscaling), ControlNet
 - **Workflow tool**: ComfyUI (node-based pipelines for complex edits)
-
-**When to use**: Removing objects, extending boundaries, changing styles, upscaling, removing backgrounds, or batch edits.
 
 <!-- AI-CONTEXT-END -->
 
@@ -43,7 +41,7 @@ tools:
 
 ### DALL-E 2 Edit (OpenAI)
 
-Uses DALL-E 2 (not DALL-E 3). Requires source image + mask (transparent areas = edit region). Both must be square PNGs, same dimensions, under 4MB.
+DALL-E 2 only (not 3). Source + mask: square PNGs, same dimensions, <4MB. Transparent mask areas = edit region.
 
 ```bash
 # Inpainting: replace masked area
@@ -72,27 +70,27 @@ curl -X POST "https://us-central1-aiplatform.googleapis.com/v1/projects/$PROJECT
 
 ```bash
 git clone https://github.com/comfyanonymous/ComfyUI.git && cd ComfyUI && pip install -r requirements.txt
-# Place SD XL inpaint model in models/checkpoints/ (https://huggingface.co/diffusers/stable-diffusion-xl-1.0-inpainting-0.1)
-python main.py --listen 0.0.0.0 --port 8188  # web UI has mask painting tools
+# SD XL inpaint model → models/checkpoints/ (https://huggingface.co/diffusers/stable-diffusion-xl-1.0-inpainting-0.1)
+python main.py --listen 0.0.0.0 --port 8188  # web UI includes mask painting
 ```
 
 ### Real-ESRGAN (Upscaling)
 
 ```bash
 pip install realesrgan
-python -m realesrgan -i input.jpg -o output.jpg -s 4              # 4x upscale
-python -m realesrgan -i input.jpg -o output.jpg -s 4 --face_enhance  # with face enhancement
+python -m realesrgan -i input.jpg -o output.jpg -s 4                 # 4x upscale
+python -m realesrgan -i input.jpg -o output.jpg -s 4 --face_enhance  # + face enhancement
 ```
 
-Scales: **2x** (fast, subtle) · **4x** (standard, good balance) · **8x** (max enlargement, may artifact)
+Scales: **2x** (fast) · **4x** (standard) · **8x** (max, may artifact)
 
 ### rembg (Background Removal)
 
 ```bash
-pip install rembg[gpu]   # GPU accelerated (or `rembg` for CPU only)
-rembg i input.jpg output.png           # single image
-rembg p input_dir/ output_dir/         # batch process
-rembg i -a input.jpg output.png        # alpha matting (better edges)
+pip install rembg[gpu]  # or `rembg` for CPU-only
+rembg i input.jpg output.png      # single image
+rembg p input_dir/ output_dir/    # batch
+rembg i -a input.jpg output.png   # alpha matting (better edges)
 ```
 
 ### GFPGAN (Face Restoration)
@@ -101,7 +99,7 @@ rembg i -a input.jpg output.png        # alpha matting (better edges)
 
 ### ControlNet (Guided Generation)
 
-Precise control over generation using structural guides. Used within ComfyUI or Automatic1111.
+Structural guides for precise control. Used within ComfyUI or Automatic1111.
 
 | Control Type | Input | Use Case |
 |-------------|-------|----------|
@@ -116,7 +114,7 @@ Precise control over generation using structural guides. Used within ComfyUI or 
 
 ### Product Photo Enhancement
 
-1. Remove background (`rembg`) → 2. Upscale if needed (Real-ESRGAN 2x) → 3. Generate new background (SD inpaint / DALL-E) → 4. Colour correct (ImageMagick / Pillow)
+`rembg` → Real-ESRGAN 2x (if needed) → SD inpaint / DALL-E (new background) → ImageMagick / Pillow (colour correct)
 
 ### Batch Background Removal
 
@@ -127,9 +125,9 @@ mkdir -p out && for img in input/*.{jpg,png,webp}; do [ -f "$img" ] && rembg i "
 ### Image Resize and Optimise (ImageMagick)
 
 ```bash
-magick input.jpg -resize 1920x\> -quality 85 output.jpg                # resize, keep aspect
-magick input.jpg -resize 1920x\> -quality 80 output.webp               # to WebP
-magick mogrify -resize 1920x\> -quality 85 -path output/ input/*.jpg   # batch
+magick input.jpg -resize 1920x\> -quality 85 output.jpg               # resize, keep aspect
+magick input.jpg -resize 1920x\> -quality 80 output.webp              # to WebP
+magick mogrify -resize 1920x\> -quality 85 -path output/ input/*.jpg  # batch
 ```
 
 ## VRAM Requirements
