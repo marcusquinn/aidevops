@@ -2,6 +2,22 @@
 
 > Sources: [CQRS](https://martinfowler.com/bliki/CQRS.html) — Fowler | [Event Sourcing](https://martinfowler.com/eaaDev/EventSourcing.html) — Fowler | [CQRS Pattern](https://learn.microsoft.com/en-us/azure/architecture/patterns/cqrs) — Microsoft | [Transactional Outbox](https://microservices.io/patterns/data/transactional-outbox.html) — microservices.io | [Domain Events – Salvation](https://udidahan.com/2009/06/14/domain-events-salvation/) — Dahan | [Domain Events: Design and Implementation](https://learn.microsoft.com/en-us/dotnet/architecture/microservices/microservice-ddd-cqrs-patterns/domain-events-design-implementation) — Microsoft
 
+## When to Use
+
+> **Warning:** "You should be very cautious about using CQRS... the majority of cases I've run into have not been so good." — Martin Fowler
+
+**CQRS — use when:** Read/write workloads have dramatically different scaling requirements; complex queries don't map to the domain model; event sourcing is used; simpler approaches are proven insufficient. **Skip when:** Simple CRUD; similar read/write patterns; small team or simple domain. Applies to specific bounded contexts, never entire systems.
+
+**Event Sourcing — use when:** Complete audit trail is a business requirement; need to reconstruct state at any point in time; domain is inherently event-driven (financial transactions, workflows). **Avoid when:** Simple CRUD; team unfamiliar with event-driven patterns; adding retroactively.
+
+> **Warning:** "Extremely difficult to add Event Sourcing to systems not originally designed for it." — Martin Fowler
+
+**Event Sourcing requirements:**
+1. **Events store deltas** — what changed, not final state (enables reversal)
+2. **Snapshots for performance** — rebuild from snapshots, not from event 0
+3. **External system handling** — disable notifications during replays; cache external query results with timestamps
+4. **Schema evolution strategy** — events are forever; plan for versioning
+
 ## CQRS Overview
 
 **Command Query Responsibility Segregation** — separate read and write models.
@@ -31,9 +47,7 @@ flowchart TB
     style EventHandler fill:#f59e0b,stroke:#d97706,color:white
 ```
 
-## Commands vs Queries
-
-**Commands** mutate state; **queries** retrieve data without side effects.
+**Commands** mutate state; **queries** retrieve data without side effects. Read model is denormalized and query-optimized. Start with the same DB and separate query paths; split databases only when proven necessary.
 
 ```typescript
 // Command handler — write side (mutates state, publishes events)
@@ -54,8 +68,6 @@ export class GetOrderHandler {
   }
 }
 ```
-
-Read model is denormalized and query-optimized. Start with the same DB and separate query paths; split databases only when proven necessary.
 
 ## Domain Events
 
@@ -112,7 +124,7 @@ export class PublishOrderConfirmedIntegrationEvent {
 }
 ```
 
-## Event Dispatcher Pattern
+## Event Dispatcher
 
 Routes events to registered handlers; supports multiple handlers per event type (fan-out).
 
@@ -156,30 +168,6 @@ class OutboxProcessor:
             db.outbox.where(id: message.id).update({processedAt: now()})
 ```
 
-## When to Use CQRS
-
-> **Warning:** "You should be very cautious about using CQRS... the majority of cases I've run into have not been so good." — Martin Fowler
-
-**Use when:** Read/write workloads have dramatically different scaling requirements; complex queries don't map well to the domain model; event sourcing is used; simpler approaches are proven insufficient.
-
-**Skip when:** Simple CRUD; similar read/write patterns; small team or simple domain; adding "just in case".
-
-**CQRS applies to specific bounded contexts, never entire systems.**
-
-## Event Sourcing: Critical Considerations
-
-> **Warning:** "Extremely difficult to add Event Sourcing to systems not originally designed for it." — Martin Fowler
-
-**Use when:** Complete audit trail is a business requirement; need to reconstruct state at any point in time; domain is inherently event-driven (financial transactions, workflows).
-
-**Avoid when:** Simple CRUD with no audit requirements; team unfamiliar with event-driven patterns; adding retroactively; no clear business need for temporal queries.
-
-**Requirements:**
-1. **Events must store deltas** — not final state, but what changed (enables reversal)
-2. **Snapshots for performance** — rebuild from snapshots, not from event 0
-3. **External system handling** — disable notifications during replays; cache external query results with timestamps
-4. **Schema evolution strategy** — events are forever; plan for versioning
-
 ## Saga Pattern (Cross-Aggregate Workflows)
 
 Use sagas for workflows spanning multiple aggregates — not raw domain event coordination.
@@ -195,7 +183,7 @@ Saga: PlaceOrderSaga
 - **Choreography:** Each service listens/publishes events (simpler, harder to trace)
 - **Orchestration:** Central coordinator manages steps (explicit, easier to debug)
 
-## Idempotent Consumer Pattern
+## Idempotent Consumer
 
 **Required for reliable event processing** — messages may be delivered more than once.
 
