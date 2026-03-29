@@ -60,7 +60,7 @@ const config :Workerd.Config = (
 
 ## Dev vs Prod Configs
 
-Use separate named configs per environment; override bindings via `fromEnvironment`:
+Separate named configs per environment; override bindings via `fromEnvironment`:
 
 ```capnp
 const devWorker :Workerd.Worker = (
@@ -98,15 +98,6 @@ const config :Workerd.Config = (
 | Wrangler | `export MINIFLARE_WORKERD_PATH="/path/to/workerd" && wrangler dev` |
 | Direct | `workerd serve config.capnp --verbose` |
 | With env vars | `API_URL=https://api.example.com workerd serve config.capnp` |
-
-### Environment Variables
-
-```capnp
-bindings = [
-  (name = "DATABASE_URL", fromEnvironment = "DATABASE_URL"),
-  (name = "API_KEY", fromEnvironment = "API_KEY"),
-]
-```
 
 ## Testing
 
