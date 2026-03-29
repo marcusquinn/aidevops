@@ -6,6 +6,26 @@ ETL streaming: ingest events → SQL transforms → R2 as Apache Iceberg or Parq
 
 **Status:** Open beta, Workers Paid plan required, no charge beyond R2 storage/operations.
 
+## Limits (Open Beta)
+
+| Resource | Limit |
+|----------|-------|
+| Streams / Sinks / Pipelines per account | 20 each |
+| Payload size per request | 1 MB |
+| Ingest rate per stream | 5 MB/s |
+
+Request increases: [Limit Increase Form](https://forms.gle/ukpeZVLWLnKeixDu7)
+
+## Auth & Permissions
+
+| Token type | Permission | Used for |
+|-----------|-----------|---------|
+| R2 Data Catalog | R2 Admin Read & Write | Sink creation, R2 SQL queries |
+| R2 Storage | Object Read & Write | R2 storage sink |
+| HTTP Ingest | Workers Pipeline Send | Authenticated HTTP ingestion |
+
+Create catalog token: R2 > Manage API tokens > Create Account API Token > Admin Read & Write.
+
 ## Setup
 
 ```bash
@@ -20,7 +40,7 @@ npx wrangler pipelines create my-pipeline \
   --sql "INSERT INTO my_sink SELECT * FROM my_stream"
 ```
 
-**Schema (structured streams):**
+**Schema (structured streams):** Define fields in JSON with `name`, `type`, `required`, and optional `items` (for `list`) or `fields` (for `struct`).
 
 ```json
 {
@@ -108,32 +128,12 @@ npx wrangler pipelines streams create my-stream --schema-file schema.json
 npx wrangler pipelines sinks create my-sink --type r2-data-catalog --bucket B --namespace N --table T --catalog-token TOKEN
 ```
 
-## Auth & Permissions
-
-| Token type | Permission | Used for |
-|-----------|-----------|---------|
-| R2 Data Catalog | R2 Admin Read & Write | Sink creation, R2 SQL queries |
-| R2 Storage | Object Read & Write | R2 storage sink |
-| HTTP Ingest | Workers Pipeline Send | Authenticated HTTP ingestion |
-
-Create catalog token: R2 > Manage API tokens > Create Account API Token > Admin Read & Write.
-
 ## Best Practices
 
-- **Schema:** Structured streams with `required: true` on critical fields. Use native `timestamp` type for temporal columns; use `int64` only for epoch-style representations (e.g., seconds or milliseconds since epoch). `float64` for decimals. Recreate to change schemas. Avoid deep nesting.
+- **Schema:** Structured streams with `required: true` on critical fields. Native `timestamp` for temporal columns; `int64` only for epoch representations. `float64` for decimals. Recreate to change schemas. Avoid deep nesting.
 - **Performance:** Low latency: `--roll-interval 10`. Query perf: `--roll-interval 300 --roll-size 100`. `zstd` for ratio, `snappy` for speed. Filter early with `WHERE`.
 - **Workers:** Bindings (no token management). Batch: `send([e1, e2, ...])`. `ctx.waitUntil()` for fire-and-forget.
 - **HTTP:** Auth in production. CORS for browsers. Arrays for batch efficiency. Retry on 4xx/5xx.
-
-## Limits (Open Beta)
-
-| Resource | Limit |
-|----------|-------|
-| Streams / Sinks / Pipelines per account | 20 each |
-| Payload size per request | 1 MB |
-| Ingest rate per stream | 5 MB/s |
-
-Request increases: [Limit Increase Form](https://forms.gle/ukpeZVLWLnKeixDu7)
 
 ## Troubleshooting
 
