@@ -24,15 +24,7 @@ tools:
 - **Setup guide**: `aidevops/mcp-integrations.md` → Cloudflare Code Mode MCP section
 - **Platform docs**: `services/hosting/cloudflare-platform-skill.md` (60 products, API refs)
 
-**Capabilities**:
-- Workers: deploy, update, list, tail logs
-- D1: execute SQL, inspect schema, list databases
-- KV: get/put/delete/list keys across namespaces
-- R2: list buckets, get/put/delete objects
-- Pages: list projects, trigger deployments
-- AI Gateway: view logs and analytics
-- DNS: read/manage records
-- Analytics: zone traffic and performance data
+**Capabilities**: Workers (deploy/update/list/tail), D1 (SQL/schema), KV (get/put/delete/list), R2 (buckets/objects), Pages (list/deploy), AI Gateway (logs/analytics), DNS (read/manage), Analytics (zone traffic)
 
 <!-- AI-CONTEXT-END -->
 
@@ -40,31 +32,16 @@ tools:
 
 OAuth 2.0 — no API tokens to manage. On first tool call, a browser window opens to `dash.cloudflare.com`; authorize once and the client stores the token.
 
-### Config
-
-**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
-{
-  "mcpServers": {
-    "cloudflare-api": {
-      "url": "https://mcp.cloudflare.com/mcp"
-    }
-  }
-}
+{ "mcpServers": { "cloudflare-api": { "url": "https://mcp.cloudflare.com/mcp" } } }
 ```
 
 **OpenCode** (`~/.config/opencode/config.json`):
 
 ```json
-{
-  "mcp": {
-    "cloudflare-api": {
-      "type": "remote",
-      "url": "https://mcp.cloudflare.com/mcp"
-    }
-  }
-}
+{ "mcp": { "cloudflare-api": { "type": "remote", "url": "https://mcp.cloudflare.com/mcp" } } }
 ```
 
 **Claude Code CLI**:
@@ -73,110 +50,40 @@ OAuth 2.0 — no API tokens to manage. On first tool call, a browser window open
 claude mcp add cloudflare-api --transport http https://mcp.cloudflare.com/mcp
 ```
 
-> **Note**: `--transport http` selects the MCP transport type (streamable HTTP), not the URL scheme. The value `http` is correct even though the endpoint URL uses HTTPS.
+> `--transport http` selects the MCP transport type (streamable HTTP), not the URL scheme — `http` is correct even though the endpoint uses HTTPS.
 
 ## Security Model
 
 - **OAuth scopes**: Access matches your Cloudflare dashboard permissions
-- **No secrets in config**: OAuth tokens are stored by the MCP client in its secure token store
+- **No secrets in config**: OAuth tokens stored by the MCP client in its secure token store
 - **Revocation**: `dash.cloudflare.com` > My Profile > API Tokens > OAuth Apps
 - **Least privilege**: For restricted scope, use a sub-account or scoped API token (see `services/hosting/cloudflare.md`)
 - **Audit trail**: All MCP actions appear in Cloudflare's audit log under your account
 
-## Search Patterns
+## Usage Patterns
 
-### Workers
+| Service | Example prompts |
+|---------|----------------|
+| **Workers** | `List all Workers` · `Show code for Worker "api-gateway"` · `Deploy ./src/worker.ts as "my-worker"` · `Tail logs for "my-worker"` |
+| **D1** | `List D1 databases` · `Run SQL: SELECT * FROM users LIMIT 10 on "prod-db"` · `Show schema for "prod-db"` |
+| **KV** | `List KV namespaces` · `Get key "config:feature-flags" from "APP_CONFIG"` · `List keys with prefix "user:" in "APP_DATA"` |
+| **R2** | `List R2 buckets` · `List objects in "assets" with prefix "images/"` · `Upload ./dist/app.js to "releases" as "v1.2.3/app.js"` |
+| **Pages** | `List Pages projects` · `Show deployments for "my-site"` · `Trigger deployment for "my-site"` |
+| **AI Gateway** | `List AI Gateways` · `Show logs for "production"` · `Get analytics for last 24h` |
+| **DNS** | `List DNS records for "example.com"` · `Add A record: api.example.com → 1.2.3.4 TTL 300` |
 
-```text
-List all Workers in my account
-Show the code for Worker named "api-gateway"
-Deploy the Worker script at ./src/worker.ts to "my-worker"
-Tail logs for Worker "my-worker"
-```
-
-### D1 (SQLite)
-
-```text
-List all D1 databases
-Run SQL: SELECT * FROM users LIMIT 10 on database "prod-db"
-Show the schema for D1 database "prod-db"
-Create a table in D1: CREATE TABLE events (id INTEGER PRIMARY KEY, name TEXT)
-```
-
-### KV (Key-Value)
+### Multi-step examples
 
 ```text
-List all KV namespaces
-Get the value of key "config:feature-flags" from namespace "APP_CONFIG"
-Put key "session:abc123" with value "..." in namespace "SESSIONS"
-List all keys with prefix "user:" in namespace "APP_DATA"
-Delete key "cache:stale" from namespace "CACHE"
-```
+# Deploy Worker with bindings
+Read ./src/worker.ts and deploy as "my-api". Bind to KV namespace "APP_DATA" and D1 "prod-db".
 
-### R2 (Object Storage)
+# Query D1
+On "analytics" D1: SELECT date, count(*) as visits FROM page_views
+WHERE date >= date('now', '-7 days') GROUP BY date ORDER BY date DESC
 
-```text
-List all R2 buckets
-List objects in bucket "assets" with prefix "images/"
-Get object "images/logo.png" from bucket "assets"
-Upload file ./dist/app.js to bucket "releases" as "v1.2.3/app.js"
-Delete object "tmp/old-file.txt" from bucket "assets"
-```
-
-### Pages
-
-```text
-List all Pages projects
-Show deployments for Pages project "my-site"
-Trigger a new deployment for Pages project "my-site"
-```
-
-### AI Gateway
-
-```text
-List all AI Gateways
-Show recent logs for AI Gateway "production"
-Get analytics for AI Gateway "production" for the last 24 hours
-```
-
-### DNS
-
-```text
-List DNS records for zone "example.com"
-Add A record: api.example.com → 1.2.3.4 with TTL 300
-Delete CNAME record "www" from zone "example.com"
-```
-
-## Execute Patterns
-
-### Deploy a Worker
-
-```text
-Read ./src/worker.ts and deploy it as a Cloudflare Worker named "my-api".
-Bind it to the KV namespace "APP_DATA" and D1 database "prod-db".
-```
-
-### Query D1 and return results
-
-```text
-On D1 database "analytics", run:
-SELECT date, count(*) as visits FROM page_views
-WHERE date >= date('now', '-7 days')
-GROUP BY date ORDER BY date DESC
-```
-
-### Sync local files to R2
-
-```text
-Upload all files in ./dist/ to R2 bucket "static-assets" under prefix "v2.1.0/".
-List the uploaded objects to confirm.
-```
-
-### Inspect KV namespace
-
-```text
-List all keys in KV namespace "FEATURE_FLAGS".
-For each key, get its value and show me the full config.
+# Sync to R2
+Upload all files in ./dist/ to R2 "static-assets" under prefix "v2.1.0/". List to confirm.
 ```
 
 ## Per-Agent Enablement
