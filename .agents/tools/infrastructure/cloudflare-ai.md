@@ -30,9 +30,6 @@ tools:
 
 Serverless AI inference on Cloudflare's global GPU network. Models run at the edge, close to users. Part of the Cloudflare developer platform (Workers, Pages, KV, D1, R2, Vectorize, AI Gateway).
 
-**Best for**: edge inference with low latency, Cloudflare-native apps (Workers/Pages), small-to-medium models, free experimentation (10K neurons/day), integrated AI Gateway (caching, rate limiting, fallback).
-**Not for**: fine-tuning, custom model uploads (requires custom form), large model hosting (no DeepSeek V3, no GLM-5), dedicated GPUs, batch inference, self-hosted.
-
 ## Pricing (March 2026)
 
 Billed in Neurons ($0.011 per 1,000 Neurons). Free allocation: 10,000 Neurons/day on both Free and Paid Workers plans.
@@ -108,49 +105,22 @@ curl https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/ai/run
 
 Cloudflare provides an OpenAI-compatible endpoint for supported models. See [OpenAI compat docs](https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/) for supported models and limitations.
 
-## Capabilities and Limitations
+## Capabilities
 
-### Available
+**Available**: ~30 LLM models (Llama, Qwen, Mistral, DeepSeek distills, GPT-OSS, Gemma), image generation (FLUX, Stable Diffusion), STT (Whisper, Deepgram Nova), TTS (MeloTTS, Deepgram Aura), embeddings (BGE, Qwen3), reranking, classification, translation, object detection, AI Gateway (caching, rate limiting, retries, fallback, analytics), Vectorize (RAG), streaming.
 
-- ~30 LLM models (Llama, Qwen, Mistral, DeepSeek distills, GPT-OSS, Gemma)
-- Image generation (FLUX, Leonardo, Stable Diffusion)
-- Speech-to-text (Whisper, Deepgram Nova)
-- Text-to-speech (MeloTTS, Deepgram Aura)
-- Embeddings (BGE family, Qwen3)
-- Reranking (BGE Reranker)
-- Classification, translation, object detection
-- AI Gateway (caching, rate limiting, retries, model fallback, analytics)
-- Vectorize (vector database for RAG)
-- Streaming responses
+**Not available**: fine-tuning (use Fireworks/Together), custom model uploads ([form required](https://forms.gle/axnnpGDb6xrmR31T6)), dedicated GPUs, batch inference, large frontier models (DeepSeek V3 full, GLM-5 — distills only), self-hosted, Anthropic SDK (use CF API or OpenAI-compat).
 
-### Not available
+**Platform integration**: Workers AI compounds with AI Gateway (caching/rate limiting/fallback), Vectorize (RAG), Workers (pre/post-processing), KV/D1/R2 (storage), Pages (frontend).
 
-- Fine-tuning -- use Fireworks or Together
-- Custom model uploads -- requires [custom requirements form](https://forms.gle/axnnpGDb6xrmR31T6)
-- Dedicated GPUs -- serverless only
-- Batch inference -- no batch API
-- Large frontier models (DeepSeek V3 full, GLM-5) -- only distilled versions
-- Self-hosted option -- Cloudflare network only
-- Anthropic SDK compatibility -- Cloudflare API or OpenAI-compat only
-
-### Cloudflare Platform Integration
-
-Workers AI is most valuable when combined with the Cloudflare platform:
-
-- **AI Gateway**: Caching (reduce costs), rate limiting, request retries, model fallback, observability
-- **Vectorize**: Vector database for RAG pipelines
-- **Workers**: Serverless compute for pre/post-processing
-- **KV/D1/R2**: Storage for context, conversation history, assets
-- **Pages**: Frontend hosting for AI apps
-
-## When to Use Cloudflare Workers AI
+## When to Use
 
 | Scenario | Recommendation |
 |----------|---------------|
-| Cloudflare-native app needing AI | Strong fit -- native integration |
-| Edge inference, low latency globally | Strong fit -- runs on CF network |
-| Small model inference (<16B) | Good value -- competitive pricing |
-| Free experimentation | Good fit -- 10K neurons/day free |
+| Cloudflare-native app needing AI | Strong fit — native binding (`env.AI`) |
+| Edge inference, low latency globally | Strong fit — runs on CF network |
+| Small model inference (<16B) | Good value — competitive pricing |
+| Free experimentation | Good fit — 10K neurons/day free |
 | Large model production inference | Use Fireworks or Together instead |
 | Fine-tuning or custom models | Use Fireworks or Together instead |
 | Batch processing at scale | Use Fireworks or Together instead |
