@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.318] - 2026-03-29
+
+### Fixed
+
+- add signature footer gate to plugin quality hooks (GH#12805) (#13303)
+
 ## [3.5.314] - 2026-03-29
 
 ### Changed
