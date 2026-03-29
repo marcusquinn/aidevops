@@ -19,7 +19,7 @@ tools:
 
 - **Primary Agent**: `aidevops` — full framework access
 - **Subagents**: hostinger, hetzner, wordpress, seo, code-quality, browser-automation, etc.
-- **Setup**: `cd ~/Git/aidevops && .agents/scripts/generate-opencode-agents.sh` — creates `~/.config/opencode/agent/` and updates `opencode.json`
+- **Setup**: `cd ~/Git/aidevops && .agents/scripts/generate-opencode-agents.sh`
 - **MCPs disabled globally** — enabled per-agent to save context tokens
 
 | Purpose | Path |
@@ -31,7 +31,7 @@ tools:
 | Credentials | `~/.config/aidevops/credentials.sh` |
 
 ```bash
-opencode auth login   # Authenticate — see tools/opencode/opencode-anthropic-auth.md
+opencode auth login   # See tools/opencode/opencode-anthropic-auth.md
 # Tab = switch primary agents | @agent-name = invoke subagent
 ```
 
@@ -40,14 +40,6 @@ opencode auth login   # Authenticate — see tools/opencode/opencode-anthropic-a
 ## Authentication
 
 See `tools/opencode/opencode-anthropic-auth.md` for full auth setup (OAuth pool, API key, version-specific notes).
-
-**Quick setup:**
-
-```bash
-opencode auth login
-# v1.2.30+: Select "Anthropic Pool" (aidevops OAuth pool — recommended)
-# v1.1.36–v1.2.29: Select Anthropic → Claude Pro/Max
-```
 
 > Do NOT add `opencode-anthropic-auth` to `opencode.json` plugins — double-loading causes a TypeError.
 
@@ -68,7 +60,7 @@ opencode auth login
 
 ## Configuration
 
-**Design pattern:** MCPs defined with `enabled: false` globally; tools disabled with `"mcp_*": false`. Each subagent enables its specific tools — saves context tokens.
+MCPs defined with `enabled: false` globally; tools disabled with `"mcp_*": false`. Each subagent enables its specific tools.
 
 ```json
 {
@@ -117,13 +109,13 @@ tools:
 
 ## CLI Testing
 
-TUI requires restart for config changes. Use CLI for quick testing:
+TUI requires restart for config changes. Use CLI for quick iteration:
 
 ```bash
 opencode run "List your available tools" --agent SEO
 opencode run "Quick test" --agent Build+ --model anthropic/claude-sonnet-4-6
 
-# Persistent server (keeps MCPs warm — faster iteration)
+# Persistent server (keeps MCPs warm)
 opencode serve --port 4096                                             # Terminal 1
 opencode run --attach http://localhost:4096 "Test query" --agent SEO  # Terminal 2
 
@@ -132,12 +124,6 @@ opencode run --attach http://localhost:4096 "Test query" --agent SEO  # Terminal
 ~/.aidevops/agents/scripts/opencode-test-helper.sh list-tools Build+
 ~/.aidevops/agents/scripts/opencode-test-helper.sh serve 4096
 ```
-
-| Scenario | Command |
-|----------|---------|
-| New MCP added | `opencode run "List tools from [mcp]_*" --agent [agent]` |
-| MCP auth issues | `opencode run "Call [mcp]_[tool]" --agent [agent] 2>&1` |
-| Agent permissions | `opencode run "Try to write a file" --agent Build+` |
 
 **Adding a new MCP:** Edit `opencode.json` → test with CLI → fix errors → restart TUI → update `generate-opencode-agents.sh`.
 
@@ -149,12 +135,6 @@ Credentials in `~/.config/aidevops/credentials.sh`:
 export HOSTINGER_API_TOKEN="your-token"
 export HCLOUD_TOKEN_AWARDSAPP="your-token"   # Hetzner per-account
 # GSC: service account JSON at ~/.config/aidevops/gsc-credentials.json
-```
-
-```bash
-npm install -g hostinger-api-mcp
-brew install mcp-hetzner mcp-local-wp
-# Chrome DevTools MCP: auto-installed via npx
 ```
 
 **MCP env var limitation:** OpenCode `environment` blocks do NOT expand `${VAR}` — use bash wrapper:
@@ -176,7 +156,7 @@ brew install mcp-hetzner mcp-local-wp
 
 ## Permission Model
 
-**Subagents do NOT inherit parent permission restrictions.** Parent `write: false` does not apply to spawned subagents.
+Subagents do NOT inherit parent permission restrictions. Parent `write: false` does not apply to spawned subagents.
 
 | Configuration | Actually Read-Only? |
 |---------------|---------------------|
