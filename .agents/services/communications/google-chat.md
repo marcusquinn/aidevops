@@ -32,13 +32,7 @@ google-chat-helper.sh setup  # Interactive wizard
 
 <!-- AI-CONTEXT-END -->
 
-## Architecture
-
-```text
-Google Chat → HTTPS URL (Tailscale/Caddy/Cloudflare) → Bot (:8443) → runner-helper.sh → AI session
-                                                         verify token → parse event → check perms
-                                                         → dispatch runner → return card/text
-```
+**Flow**: `Google Chat → HTTPS URL → Bot (:8443)` → verify token → parse event → check perms → `runner-helper.sh dispatch` → AI session → Card v2 or text response
 
 ## Setup
 
@@ -57,7 +51,7 @@ chmod 600 ~/.config/aidevops/google-chat-sa-key.json
 
 ### Step 2: Configure Chat App
 
-[Google Cloud Console > APIs & Services > Google Chat API > Configuration](https://console.cloud.google.com/apis/api/chat.googleapis.com/hangouts-chat): set HTTP endpoint URL, enable "Receive 1:1 messages" and "Join spaces and group conversations", set Authentication Audience to HTTP endpoint URL.
+Google Cloud Console > APIs & Services > Google Chat API > Configuration: set HTTP endpoint URL, enable "Receive 1:1 messages" and "Join spaces and group conversations", set Authentication Audience to HTTP endpoint URL.
 
 ### Step 3: Public URL
 
@@ -136,17 +130,7 @@ curl -X POST "https://chat.googleapis.com/v1/spaces/SPACE_ID/messages" \
 
 ### Card v2 (Adaptive Cards)
 
-```json
-{ "cardsV2": [{ "cardId": "review-result", "card": {
-  "header": { "title": "Code Review: auth.ts", "subtitle": "2 issues found" },
-  "sections": [
-    { "header": "Critical", "widgets": [{ "decoratedText": { "topLabel": "Line 42", "text": "SQL injection vulnerability" } }] },
-    { "widgets": [{ "buttonList": { "buttons": [
-      { "text": "View Full Report", "onClick": { "openLink": { "url": "https://github.com/org/repo/pull/123" } } }
-    ] } }] }
-  ]
-} }] }
-```
+Structure: `cardsV2[].card` with `header` (`title`, `subtitle`) and `sections[].widgets`. See [Card v2 reference](https://developers.google.com/workspace/chat/api/reference/rest/v1/cards).
 
 **Card limits**: 1 card/message, 100 sections, 100 widgets/section, 4096 chars/widget, 40 chars/button. Image URLs must be public HTTPS. Test across web, Gmail sidebar, and mobile.
 
@@ -177,8 +161,6 @@ google-chat-helper.sh test-auth                                  # verify token
 ```
 
 **Health**: `GET /health` → `{"status":"ok","uptime":3600,"spaces":3,"lastEvent":"..."}`
-
-**Dispatch flow**: `MESSAGE` event → space mapping → `runner-helper.sh dispatch <runner> "<prompt>"` → headless AI session → Card v2 or text → sync (≤30s) or async via Chat API.
 
 **Runners**: `runner-helper.sh create <name> --description "..."` | `runner-helper.sh edit <name>`
 
