@@ -194,24 +194,35 @@ psql "$DB_URL" -c "
     applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );"
 
+# Guard: exit cleanly when no migration files exist
+compgen -G "migrations/*.sql" > /dev/null || { echo "No migration files found."; exit 0; }
+
 for f in migrations/*.sql; do
   name="$(basename "$f")"
-  applied=$(psql "$DB_URL" -tAc \
-    "SELECT COUNT(*) FROM schema_migrations WHERE filename = '$name'")
-  if [ "$applied" -eq 0 ]; then
-    echo "Applying $name..."
-    psql "$DB_URL" -f "$f"
-    psql "$DB_URL" -c \
-      "INSERT INTO schema_migrations (filename) VALUES ('$name');"
-    echo "  Done."
-  else
-    echo "Skipping $name (already applied)."
-  fi
+  # psql -v binds the filename as a safe literal (:'name') — no shell interpolation into SQL.
+  # \i runs the migration file; the INSERT records it — both inside one transaction.
+  # pg_advisory_xact_lock serialises concurrent runners on the same DB.
+  psql "$DB_URL" -v "name=$name" <<SQL
+SELECT pg_advisory_xact_lock(hashtext('schema_migrations'));
+BEGIN;
+\i $f
+INSERT INTO schema_migrations (filename)
+  SELECT :'name'
+  WHERE NOT EXISTS (
+    SELECT 1 FROM schema_migrations WHERE filename = :'name'
+  );
+COMMIT;
+SQL
+  echo "Applied (or skipped): $name"
 done
 ```
 
+> **Note:** `\i` inside a transaction applies the migration file and the `INSERT` records it atomically in one psql session. For production use, prefer a dedicated migration tool (Flyway, Atlas, Prisma Migrate) which handles locking, ordering, and checksums natively.
+
 Key properties of this pattern:
-- **Idempotent**: re-running the script skips already-applied files.
+- **Idempotent**: the `WHERE NOT EXISTS` guard prevents double-application.
 - **Ordered**: glob expansion is lexicographic — use timestamp-prefixed filenames (`YYYYMMDDHHMMSS_name.sql`) to guarantee order.
 - **Auditable**: `schema_migrations` records what ran and when.
-- **Atomic per file**: each migration is applied then recorded; a failure leaves the tracking table consistent with what actually ran.
+- **Safe filenames**: `psql -v "name=$name"` with `:'name'` avoids SQL injection from filenames containing quotes.
+- **Concurrent-safe**: `pg_advisory_xact_lock` serialises concurrent runner instances.
+- **Empty-directory safe**: `compgen -G` guard exits cleanly when no `.sql` files exist.
