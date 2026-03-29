@@ -170,7 +170,7 @@ Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
 **Traceability (MANDATORY):**
 - PR title MUST have task ID (`{task-id}: {description}`). No exceptions.
 - PR body MUST include `Closes #NNN` — only mechanism creating GitHub PR-issue link.
-- Every dispatched task MUST have a GitHub issue. Issue number in TODO.md as `ref=GH#NNN`.
+- Every dispatched task MUST have a GitHub issue. Issue number in TODO.md as `ref:GH#NNN`.
 
 # 8. Signature footer hallucination (observed: model composes inline, gets runtime/version wrong)
 - NEVER compose signature footers inline. ALWAYS call `gh-signature-helper.sh footer --model <model-id>`.
