@@ -757,9 +757,9 @@
       "pr": 11713
     },
     ".agents/tools/build-agent/build-agent.md": {
-      "hash": "4c52d5b08eba50130bce788693dd955886e1753d",
-      "at": "2026-03-28T09:48:51Z",
-      "pr": 11723
+      "hash": "35a0cfc6fa169fd38551c62efcb2fba11445b10e",
+      "at": "2026-03-29T00:03:35Z",
+      "pr": 12360
     },
     ".agents/content/distribution-youtube-topic-research.md": {
       "hash": "d8d475231eff5b53cf27de5ab31aeedaec403e2f",
@@ -1580,6 +1580,11 @@
       "hash": "f9e871983fc1d52343dd069d7652c33e7268ae92",
       "at": "2026-03-28T23:06:01Z",
       "pr": 12327
+    },
+    ".agents/tools/code-review/code-simplifier.md": {
+      "hash": "16060410cb16b5b3d10cb77e44a10fb4a0051c32",
+      "at": "2026-03-29T00:03:35Z",
+      "pr": 12360
     }
   }
 }
