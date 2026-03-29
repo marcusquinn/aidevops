@@ -2,21 +2,9 @@
 
 State diagrams model state machines and lifecycles. User journey diagrams map user experiences across tasks.
 
----
+## State Diagrams
 
-# State Diagrams
-
-## Basic Syntax
-
-```mermaid
-stateDiagram-v2
-    [*] --> Idle
-    Idle --> Processing : start
-    Processing --> Complete : finish
-    Complete --> [*]
-```
-
-## States & Transitions
+### States & Transitions
 
 ```mermaid
 stateDiagram-v2
@@ -32,7 +20,7 @@ Transition formats: `A --> B`, `B --> C : event`, `C --> D : event [guard]`, `D 
 
 Self-transition: `Processing --> Processing : retry`
 
-## Composite States
+### Composite States
 
 ```mermaid
 stateDiagram-v2
@@ -49,7 +37,7 @@ stateDiagram-v2
     Active --> [*] : terminate
 ```
 
-## Choice, Fork/Join, Concurrent
+### Choice, Fork/Join, Concurrent
 
 ```mermaid
 stateDiagram-v2
@@ -83,7 +71,7 @@ stateDiagram-v2
     }
 ```
 
-## Notes, Direction, Styling
+### Notes, Direction, Styling
 
 ```mermaid
 stateDiagram-v2
@@ -101,7 +89,7 @@ stateDiagram-v2
 
 Direction options: `TB` (default), `BT`, `LR`, `RL`
 
-## Example: Authentication Flow
+### Example: Authentication Flow
 
 ```mermaid
 stateDiagram-v2
@@ -135,9 +123,9 @@ stateDiagram-v2
 
 ---
 
-# User Journey Diagrams
+## User Journey Diagrams
 
-## Basic Syntax
+### Basic Syntax
 
 ```mermaid
 journey
@@ -157,7 +145,7 @@ journey
 
 Task format: `Task name: score: actor1, actor2, ...` — Score 1–5 (1 = negative, 5 = positive).
 
-## Example: SaaS Onboarding
+### Example: SaaS Onboarding
 
 ```mermaid
 journey
@@ -181,7 +169,7 @@ journey
         Upgrade complete: 5: Customer
 ```
 
-## Use Cases & Tips
+### Use Cases & Tips
 
 **When to use:** UX research, identifying pain points, stakeholder communication, service design.
 
