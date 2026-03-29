@@ -13,8 +13,6 @@ tools:
   task: true
 ---
 
-# Speech-to-Speech Pipeline
-
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
@@ -31,13 +29,7 @@ tools:
 
 ## Components
 
-```text
-Microphone/Socket -> [VAD] -> [STT] -> [LLM] -> [TTS] -> Speaker/Socket
-```
-
-### VAD — Silero VAD v5
-
-Key params: `--thresh` (sensitivity), `--min_speech_ms`, `--min_silence_ms`
+VAD (Silero VAD v5) key params: `--thresh` (sensitivity), `--min_speech_ms`, `--min_silence_ms`
 
 ### STT
 
@@ -131,7 +123,6 @@ Full reference: `python s2s_pipeline.py -h` or [arguments_classes/](https://gith
 - **Transcription**: Standalone — use Whisper directly (`tools/voice/transcription.md`). S2S-based — use `--llm open_api` with a transcription-only system prompt.
 - **Phone (Twilio)**: WebSocket audio stream → S2S → TTS response. See `services/communications/twilio.md`.
 - **Video narration**: LLM script → TTS audio → Remotion composite. See `tools/video/remotion.md`.
-- **Voice-driven DevOps**: STT → LLM (system prompt) → TTS confirm. Integration pattern, not a built-in command.
 
 ## Troubleshooting
 
@@ -165,6 +156,4 @@ voice-helper.sh devices | voices | benchmark
 - `tools/voice/pipecat-opencode.md` — Pipecat real-time voice pipeline
 - `tools/voice/qwen3-tts.md` — Qwen3-TTS setup, voice cloning, multi-language
 - `tools/infrastructure/cloud-gpu.md` — Cloud GPU deployment (provider comparison, setup, cost optimization)
-- `services/communications/twilio.md` — Phone integration
-- `tools/video/remotion.md` — Video narration
 - `content/heygen-skill/rules-voices.md` — AI voice cloning
