@@ -1,7 +1,5 @@
 # Automated Rules
 
-Rules that automatically take action based on conditions you define (turn ads on/off, adjust budgets, send notifications).
-
 **Access:** Ads Manager → Rules → Create Rule
 
 ---
@@ -10,7 +8,7 @@ Rules that automatically take action based on conditions you define (turn ads on
 
 ### Rule 1: Kill High-CPA Ads
 
-```
+```text
 Apply to: All active ads | Action: Turn off
 Condition: Cost per result > 2x target CPA AND Impressions > 1000
 Time: Last 7 days | Schedule: Continuously
@@ -18,7 +16,7 @@ Time: Last 7 days | Schedule: Continuously
 
 ### Rule 2: Kill Zero-Conversion Spenders
 
-```
+```text
 Apply to: All active ads | Action: Turn off
 Condition: Results < 1 AND Amount spent > 2x target CPA
 Time: Last 3 days | Schedule: Daily 8 AM
@@ -26,7 +24,7 @@ Time: Last 3 days | Schedule: Daily 8 AM
 
 ### Rule 3: Scale Winners
 
-```
+```text
 Apply to: All active ad sets | Action: Increase daily budget 20%
 Condition: Cost per result < 80% of target CPA AND Results > 10
 Time: Last 3 days | Schedule: Daily 12 AM | Cap: your max budget
@@ -34,7 +32,7 @@ Time: Last 3 days | Schedule: Daily 12 AM | Cap: your max budget
 
 ### Rule 4: Pause Fatigued Creatives
 
-```
+```text
 Apply to: All active ads | Action: Turn off
 Condition: Frequency > 3.5 AND CTR (link) < 0.8%
 Time: Last 7 days | Schedule: Continuously
@@ -42,7 +40,7 @@ Time: Last 7 days | Schedule: Continuously
 
 ### Rule 5: Decrease Budget for Rising CPA
 
-```
+```text
 Apply to: All active ad sets | Action: Decrease daily budget 25%
 Condition: Cost per result > 1.5x target CPA AND Results > 5
 Time: Last 3 days | Schedule: Daily 12 AM | Floor: $20/day
@@ -50,7 +48,7 @@ Time: Last 3 days | Schedule: Daily 12 AM | Floor: $20/day
 
 ### Rule 6: Notify on Low Performance
 
-```
+```text
 Apply to: All active campaigns | Action: Send notification
 Condition: Cost per result > target CPA AND Results > 20
 Time: Last 3 days | Schedule: Daily 9 AM
@@ -62,14 +60,14 @@ Time: Last 3 days | Schedule: Daily 9 AM
 
 ### Testing Campaigns (ABO)
 
-```
+```text
 Kill losers: Turn off ads where CPA > 1.5x target AND Impressions > 2000 (last 3 days)
 Identify winners: Notify when CPA < target AND Results > 10 (last 3 days)
 ```
 
 ### Scaling Campaigns (CBO)
 
-```
+```text
 Auto-scale: Increase budget 15% when CPA < 80% of target AND ROAS > target AND Results > 20
             (last 7 days, cap $1000/day)
 Protect:    Decrease budget 20% when CPA > 1.3x target AND Results > 10 (last 3 days, floor $100/day)
@@ -77,7 +75,7 @@ Protect:    Decrease budget 20% when CPA > 1.3x target AND Results > 10 (last 3 
 
 ### Retargeting Campaigns
 
-```
+```text
 Frequency control: Turn off ad sets where Frequency > 5 AND CTR declining >20% (last 7 days)
 Keep performers:   Notify when ROAS > 3x AND Results > 15 (last 7 days)
 ```
@@ -98,14 +96,15 @@ Keep performers:   Notify when ROAS > 3x AND Results > 15 (last 7 days)
 
 ### Dayparting
 
-```
+```text
 Turn off: Daily at 11 PM | Turn on: Daily at 6 AM
 ```
+
 Only useful if data confirms specific hours underperform.
 
 ### Weekly Reset
 
-```
+```text
 Turn off ads where CTR < 0.5% AND Impressions > 5000 (last 14 days)
 Schedule: Every Sunday 11 PM
 ```
@@ -135,6 +134,7 @@ Schedule: Every Sunday 11 PM
 **Time ranges:** Today, Yesterday, Last 3/7/14/30 days, Lifetime
 
 **Actions by level:**
+
 - Ad: Turn on/off, Send notification
 - Ad set: Turn on/off, Increase/decrease daily or lifetime budget, Send notification
 - Campaign: Turn on/off, Increase/decrease daily budget, Send notification
@@ -143,7 +143,7 @@ Schedule: Every Sunday 11 PM
 
 ## Starter Set for New Advertisers
 
-Begin with notifications only — understand patterns before automating actions:
+Start with notifications only — learn patterns before automating actions:
 
 1. **Kill zero converters** — Turn off ads: 0 results AND $50+ spend (last 3 days)
 2. **Alert high CPA** — Notify: CPA > target AND results > 5 (last 3 days)
