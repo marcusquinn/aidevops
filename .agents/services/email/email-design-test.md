@@ -35,7 +35,7 @@ email-design-test-helper.sh eoa-results <test_id>
 email-design-test-helper.sh eoa-clients
 ```
 
-**Workflow:** Iterate locally with Playwright -> run `email-testing.md` validation -> submit to Email on Acid for final real-client verification.
+**Workflow:** Playwright locally → `email-testing.md` validation → Email on Acid for real-client verification.
 
 <!-- AI-CONTEXT-END -->
 
@@ -60,7 +60,7 @@ Full test suite (all viewports + dark mode + image blocking): `email-design-test
 
 ## Email on Acid API Integration
 
-Base URL: `https://api.emailonacid.com/v5` -- HTTP Basic Auth (`EOA_API_KEY:EOA_API_PASSWORD`). Sandbox (free, no credits): credentials `sandbox:sandbox`.
+Base URL: `https://api.emailonacid.com/v5` — HTTP Basic Auth (`EOA_API_KEY:EOA_API_PASSWORD`). Sandbox (free, no credits): `sandbox:sandbox`.
 
 ### Key Endpoints
 
@@ -78,12 +78,13 @@ Base URL: `https://api.emailonacid.com/v5` -- HTTP Basic Auth (`EOA_API_KEY:EOA_
 
 ```bash
 AUTH="$EOA_API_KEY:$EOA_API_PASSWORD"
+# Create test
 curl -s -u "$AUTH" -H "Content-Type: application/json" \
   -X POST https://api.emailonacid.com/v5/email/tests \
   -d '{"subject":"Newsletter","html":"'"$(cat newsletter.html | jq -Rs .)"'","clients":["outlook16","gmail_chr26_win","iphone6p_9","appmail14"],"image_blocking":true}'
-# Poll status (~30-120s, every 5s until processing array empty)
+# Poll (~30-120s, every 5s until processing array empty)
 curl -s -u "$AUTH" https://api.emailonacid.com/v5/email/tests/<test_id>
-# Get screenshots (valid 90 days Basic Auth, 24h presigned)
+# Get screenshots (Basic Auth: 90d; presigned: 24h)
 curl -s -u "$AUTH" https://api.emailonacid.com/v5/email/tests/<test_id>/results
 ```
 
@@ -101,7 +102,7 @@ curl -s -u "$AUTH" https://api.emailonacid.com/v5/email/tests/<test_id>/results
 
 ## CI/CD Integration
 
-Playwright rendering gate for PRs touching email templates (`emails/**`, `templates/**`):
+Playwright rendering gate — triggers on `emails/**`, `templates/**`:
 
 ```yaml
 # .github/workflows/email-test.yml
