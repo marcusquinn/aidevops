@@ -3,13 +3,7 @@ description: WhatsApp bot integration via Baileys — QR linking, multi-device, 
 mode: subagent
 tools:
   read: true
-  write: false
-  edit: false
   bash: true
-  glob: false
-  grep: false
-  webfetch: false
-  task: false
 ---
 
 # WhatsApp Bot Integration (Baileys)
@@ -50,7 +44,6 @@ npm install baileys @bufbuild/protobuf  # or: bun add baileys
 import makeWASocket, { DisconnectReason, useMultiFileAuthState, WASocket } from "baileys"
 import { Boom } from "@hapi/boom"
 import pino from "pino"
-
 async function startBot(): Promise<void> {
   const { state, saveCreds } = await useMultiFileAuthState("./auth_info")
   const sock: WASocket = makeWASocket({ auth: state, logger: pino({ level: "warn" }), printQRInTerminal: true, browser: ["aidevops Bot", "Chrome", "1.0.0"] })
@@ -158,7 +151,6 @@ function isRateLimited(sender: string): boolean {
 import { execFileSync } from "child_process"
 import { WASocket, proto } from "baileys"
 interface CommandContext { sock: WASocket; msg: proto.IWebMessageInfo; sender: string; jid: string; args: string; isAdmin: boolean; isGroup: boolean }
-
 // ALWAYS execFileSync with arg arrays — never execSync with string interpolation (shell injection)
 async function dispatchToRunner(runner: string, prompt: string, sender: string): Promise<string> {
   try {
@@ -192,7 +184,6 @@ Native WhatsApp support via [whatsmeow](https://github.com/tulir/whatsmeow) (Go)
 [whatsapp]
   [whatsapp.mywa]
   # No token — QR pairing on first run
-
 [[gateway]]
 name="wa-matrix-bridge"
 enable=true
@@ -214,5 +205,4 @@ E2E broken at bridge — bridge host has plaintext access. See `tools/security/o
 - `services/communications/xmtp.md` — XMTP (Web3 messaging)
 - `tools/security/opsec.md` — Platform trust matrix
 - `tools/security/prompt-injection-defender.md` — Prompt injection defense
-- https://www.whatsapp.com/security/WhatsApp-Security-Whitepaper.pdf
-- https://github.com/42wim/matterbridge
+- [WA Security Whitepaper](https://www.whatsapp.com/security/WhatsApp-Security-Whitepaper.pdf) | [Matterbridge](https://github.com/42wim/matterbridge)
