@@ -34,14 +34,12 @@ Key integrations: agents via `generate-opencode-agents.sh`, 41 slash commands, c
 
 ### OpenCode Native Tools (`.opencode/tool/`)
 
-Files in `.opencode/tool/` are **OpenCode plugin tools** — TypeScript modules loaded by the Bun runtime, NOT shell-script wrappers.
+Files in `.opencode/tool/` are **OpenCode plugin tools** — TypeScript modules loaded by the Bun runtime, NOT shell-script wrappers. Before deleting any `.ts` file, check for unique logic (DB access, API calls, state management) — only thin wrappers are redundant.
 
-**Classification rule:** Before deleting any `.opencode/tool/*.ts` file, check whether it contains unique logic (DB access, API calls, state management) or is a thin wrapper. Only wrappers are redundant; tools with native logic (like `bun:sqlite` access) have no shell equivalent.
-
-| File | Type | Purpose |
-|------|------|---------|
-| `ai-research.ts` | Native logic | Spawns research queries via Anthropic API |
-| `session-rename.ts` | Native logic | Renames sessions via direct SQLite write — no HTTP API exists |
+| File | Purpose |
+|------|---------|
+| `ai-research.ts` | Spawns research queries via Anthropic API |
+| `session-rename.ts` | Renames sessions via direct SQLite write — no HTTP API exists |
 
 ## Intelligence Over Scripts (Core Principle)
 
@@ -49,7 +47,7 @@ Files in `.opencode/tool/` are **OpenCode plugin tools** — TypeScript modules 
 
 aidevops replaced a 37,000-line deterministic bash supervisor with a simple pattern: an AI agent reads guidance docs, fetches live state from GitHub, reasons, and acts. When the agent errs, fix the guidance — not a new script.
 
-**When you encounter a supervisor/orchestration bug:** Improve the relevant agent doc. Add the missing knowledge. Never create a bash script to enforce what the agent should reason about. Never add state files, databases, or tracking layers.
+**When you encounter a supervisor/orchestration bug:** Improve the relevant agent doc. Never create a bash script to enforce what the agent should reason about. Never add state files, databases, or tracking layers.
 
 **The test:** Fix adds a `.sh` file or state mechanism → wrong direction. Fix adds a paragraph of clear guidance → right track.
 
@@ -98,41 +96,19 @@ Tier 2 pattern: MCP process runs but tools hidden from all agents except those t
 
 **Migrate MCP → curl subagent when:** simple REST with Bearer/Basic auth, <10 endpoints, no complex state, all patterns fit one markdown file. Saves ~2K context tokens permanently.
 
-### References
-
-- [Lance Martin's "Effective Agent Design" (Jan 2025)](https://x.com/RLanceMartin/status/2009683038272401719)
-- [Anthropic's Claude Code architecture](https://www.anthropic.com/research/claude-code)
-- [Manus agent design](https://manus.im/)
-- [CodeAct paper on code execution](https://arxiv.org/abs/2402.01030)
-
 ## Extension Guide
 
-Full extension guide: `.agents/aidevops/extension.md`
+Full guide: `.agents/aidevops/extension.md`. Naming conventions: `tools/build-agent/build-agent.md`.
 
 **Summary:** Helper scripts at `.agents/scripts/[service-name]-helper.sh`, config templates at `configs/[service-name]-config.json.txt`, docs at `.agents/[SERVICE-NAME].md`. Required functions: `check_dependencies`, `load_config`, `get_account_config`, `api_request`, `list_accounts`, `show_help`, `main`. Update `.gitignore`, `README.md`, `setup-wizard-helper.sh` after adding.
 
-### Naming Conventions
-
-| Artifact | Convention |
-|----------|-----------|
-| Scripts | `[service-name]-helper.sh` (lowercase, hyphenated) |
-| Config template | `[service-name]-config.json.txt` |
-| Config working | `[service-name]-config.json` (gitignored) |
-| Docs | `[SERVICE-NAME].md` (uppercase, hyphenated) |
-| Functions | `action_description` (lowercase, underscored) |
-| Variables | `CONSTANT_NAME` (uppercase, underscored) |
-
-### Security Standards
-
-All services must implement: API token validation, rate limiting awareness, secure credential storage, input validation, error message sanitization, audit logging, confirmation prompts for destructive operations.
+**Security standards** (all services): API token validation, rate limiting awareness, secure credential storage, input validation, error message sanitization, audit logging, confirmation prompts for destructive operations.
 
 ## Knowledge Organization Model
 
 The `.agents/` directory organizes knowledge along two axes: **strategy** (what to do) and **execution** (how to do it). Full conventions in `tools/build-agent/build-agent.md` "Folder Organization".
 
 **Main agents** at root (e.g., `marketing-sales.md`, `seo.md`) own domain strategy. Their matching directories contain extended strategy knowledge loaded on demand.
-
-### Execution: Cross-Domain Directories
 
 | Directory | Contains | Used by |
 |-----------|----------|---------|
@@ -141,17 +117,8 @@ The `.agents/` directory organizes knowledge along two axes: **strategy** (what 
 | `workflows/` | Processes — git flow, release, PR review | Any agent |
 | `reference/` | Operating rules — planning, sessions, security | Any agent |
 
-### Scripts: Flat and Cross-Domain
+**Scripts:** All scripts live flat in `scripts/` — shared utilities callable by any agent. Prefix naming (`email-*`, `seo-*`, `browser-*`) provides grouping. `*-helper.sh` = agent-callable; other `.sh` = framework infra.
 
-All scripts live flat in `scripts/` — not grouped into domain folders. Scripts are shared utilities callable by any agent. Prefix naming (`email-*`, `seo-*`, `browser-*`) provides grouping via filesystem sort and glob patterns without imposing ownership.
+**Flat files over nested folders:** Prefer prefix-based names over subdirectories. Max depth from `.agents/`: 2 levels. See `tools/build-agent/build-agent.md`.
 
-- `*-helper.sh` suffix = agent-callable utilities (distinguishes from framework infrastructure scripts)
-- Discovery: `ls scripts/email-*`, `rg --files -g "scripts/seo-*"`
-
-### Flat Files Over Nested Folders
-
-Prefer flat files with descriptive prefix-based names over nested subdirectories. `ls {dir}/` should show everything at a glance. Max depth from `.agents/`: 2 levels. See `tools/build-agent/build-agent.md` for examples.
-
-### Ingested Skills
-
-External skills retain the `-skill` suffix as a provenance marker enabling automated upstream update checks. On ingestion, upstream structure is transposed to match our flat `{name}-skill.md` + `{name}-skill/` convention. See `tools/build-agent/add-skill.md`.
+**Ingested skills** retain the `-skill` suffix as a provenance marker for automated upstream update checks. On ingestion, upstream structure is transposed to `{name}-skill.md` + `{name}-skill/`. See `tools/build-agent/add-skill.md`.
