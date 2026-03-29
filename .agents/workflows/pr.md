@@ -18,10 +18,6 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Comprehensive PR review orchestrating all quality checks
-- **Prerequisite**: Branch created per `workflows/branch.md`
-- **Post-merge**: Tag releases per `workflows/release.md`
-
 **Orchestration Flow**:
 
 ```text
@@ -49,8 +45,6 @@ tools:
 /pr create [--draft]                                # Create after checks
 ```
 
-**Full workflow**: `git push -u origin HEAD` -> `/pr review` -> `/pr create --fill` -> `gh pr merge --squash --delete-branch`
-
 ## Creating Pull Requests
 
 ```bash
@@ -60,9 +54,7 @@ gh pr create --fill                                    # Auto-fill from commits
 gh pr create --title "feat: ..." --body "Closes #123"  # Custom title/body
 gh pr create --fill --draft                            # Draft PR
 gh pr create --fill --reviewer @username,@team         # With reviewers
-
-# GitLab: git push -u origin HEAD && glab mr create --fill
-# Gitea:  git push -u origin HEAD && tea pulls create --title "feat: ..."
+# GitLab: glab mr create --fill  |  Gitea: tea pulls create --title "feat: ..."
 ```
 
 ## Merging Pull Requests
@@ -112,20 +104,13 @@ Report structure: `## PR Review: #NNN - Title` with sections: **Quality Checks**
 
 **Timeout recovery**: `gh pr view --json state,reviewDecision,statusCheckRollup`, then `/pr review` (single cycle) or `/pr-loop` (restart loop).
 
-## Task Status Updates
-
-Flow: `Ready/Backlog` -> `In Progress` (branch) -> `In Review` (PR) -> `Done` (merge/release).
-
-- **PR creation**: Add `pr:NNN` to task line, move to `## In Review`
-- **PR merge**: Mark `[x]`, add `completed:` timestamp, move to `## Done`
-- **Sync**: `~/.aidevops/agents/scripts/beads-sync-helper.sh push`
-
 ## Post-Merge Actions
 
-1. Move task to `## Done` with `completed:` and `actual:` timestamps; sync Beads
-2. Delete branch: `git branch -d feature/xyz && git push origin --delete feature/xyz`
-3. Update local main: `git checkout main && git pull origin main`
-4. Create release if applicable: see `workflows/release.md`
+1. Add `pr:NNN` to task line, move to `## In Review`; on merge mark `[x]`, add `completed:` timestamp, move to `## Done`
+2. Sync: `~/.aidevops/agents/scripts/beads-sync-helper.sh push`
+3. Delete branch: `git branch -d feature/xyz && git push origin --delete feature/xyz`
+4. Update local main: `git checkout main && git pull origin main`
+5. Create release if applicable: see `workflows/release.md`
 
 ## Fork Workflow (Non-Owner Repositories)
 
@@ -153,8 +138,6 @@ git checkout {branch-name} && git rebase main && git push fork {branch-name} --f
 | Issue | Solution |
 |-------|----------|
 | Merge conflicts | `git merge main`, resolve, `git add && git commit && git push`. See `tools/git/conflict-resolution.md` |
-| Checks failing | Fix issues, push new commits |
-| Reviews pending | Request review or wait |
 | Branch protection | Ensure all requirements met |
 
 ## Handling Contradictory AI Feedback
@@ -164,7 +147,6 @@ When reviewers suggest opposite changes or contradict documented standards: (1) 
 ## Related Workflows
 
 - **Branch creation**: `workflows/branch.md`
-- **Local linting**: `scripts/linters-local.sh`
 - **Remote auditing**: `workflows/code-audit-remote.md`
 - **Standards reference**: `tools/code-review/code-standards.md`
 - **Releases**: `workflows/release.md`
