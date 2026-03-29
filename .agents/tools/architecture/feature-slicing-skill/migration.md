@@ -4,11 +4,7 @@
 
 ## When to Migrate
 
-Migrate if: project too large/interconnected, new features slow, onboarding hard, circular deps common, code ownership unclear.
-
-**Don't migrate** if the current architecture works well for your team.
-
----
+Migrate if: project too large/interconnected, new features slow, onboarding hard, circular deps common, code ownership unclear. Skip if current architecture works.
 
 ## Migration Phases (Incremental)
 
@@ -21,8 +17,6 @@ Migrate if: project too large/interconnected, new features slow, onboarding hard
 | 5 | Migrate pages |
 | 6 | Clean up and enforce rules |
 
----
-
 ## Phase 1: Setup
 
 ```bash
@@ -30,16 +24,16 @@ mkdir -p src/{app,pages,widgets,features,entities,shared}/{ui,api,model,lib}
 ```
 
 **Path aliases** (`tsconfig.json`):
+
 ```json
 { "compilerOptions": { "baseUrl": ".", "paths": { "@/*": ["./src/*"], "@components/*": ["src/components/*"], "@hooks/*": ["src/hooks/*"] } } }
 ```
 
----
-
 ## Phase 2: Migrate Shared Utilities
 
 **Before → After:**
-```
+
+```text
 src/utils/api.ts          → src/shared/api/client.ts
 src/utils/dates.ts        → src/shared/lib/dates.ts
 src/utils/validation.ts   → src/shared/lib/validation.ts
@@ -64,6 +58,7 @@ done
 ```
 
 **Update imports:**
+
 ```typescript
 // Before
 import { formatDate } from '@/utils/dates';
@@ -73,14 +68,13 @@ import { formatDate } from '@/shared/lib';
 import { Button } from '@/shared/ui';
 ```
 
----
-
 ## Phase 3: Extract Entities
 
 Entities = business domain objects (types, CRUD API calls, reusable domain UI).
 
 **Before → After:**
-```
+
+```text
 src/types/user.ts          → src/entities/user/model/types.ts
 src/api/userApi.ts         → src/entities/user/api/userApi.ts
 src/components/UserAvatar  → src/entities/user/ui/UserAvatar.tsx
@@ -88,6 +82,7 @@ src/store/userSlice.ts     → src/entities/user/model/store.ts
 ```
 
 **Public API** (`entities/user/index.ts`):
+
 ```typescript
 export { UserAvatar } from './ui/UserAvatar';
 export { UserCard } from './ui/UserCard';
@@ -96,26 +91,24 @@ export type { User, UserRole } from './model/types';
 export { useUserStore } from './model/store';
 ```
 
----
-
 ## Phase 4: Extract Features
 
 Features = user interactions with business value (login, add-to-cart, search, form submit).
 
 **Before → After:**
-```
+
+```text
 src/components/LoginForm.tsx  → src/features/auth/ui/LoginForm.tsx
 src/components/LogoutButton   → src/features/auth/ui/LogoutButton.tsx
 src/api/authApi.ts            → src/features/auth/api/authApi.ts
 src/store/authSlice.ts        → src/features/auth/model/store.ts
 ```
 
----
-
 ## Phase 5: Migrate Pages
 
 **Before → After:**
-```
+
+```text
 src/pages/Home.tsx          → src/pages/home/ui/HomePage.tsx + index.ts
 src/pages/ProductList.tsx   → src/pages/products/ui/ProductsPage.tsx + index.ts
 src/pages/ProductDetail.tsx → src/pages/product-detail/ui/ProductDetailPage.tsx + api/loader.ts + index.ts
@@ -132,12 +125,12 @@ import { AddToCart } from '@/features/add-to-cart';
 import { ProductReviews } from '@/widgets/product-reviews';
 ```
 
----
-
 ## Common Patterns
 
 ### Circular Dependencies
+
 Extract shared dep to a lower layer; compose at page/widget level.
+
 ```typescript
 // Before: UserCard ↔ useAuth circular
 // After:
@@ -147,7 +140,9 @@ Extract shared dep to a lower layer; compose at page/widget level.
 ```
 
 ### Global State
+
 Split monolithic store by domain into entity/feature models.
+
 ```typescript
 // Before
 export const store = configureStore({ reducer: { user, products, cart, auth } });
@@ -157,7 +152,9 @@ export const store = configureStore({ reducer: { user, products, cart, auth } })
 ```
 
 ### Mixed Business Logic in Components
+
 Separate display (entity UI) from interaction (feature UI); compose in page/widget.
+
 ```typescript
 // entities/product/ui/ProductCard.tsx — display only
 export function ProductCard({ product, actions }) {
@@ -172,8 +169,6 @@ export function AddToCartButton({ product }) {
 <ProductCard product={product} actions={<AddToCartButton product={product} />} />
 ```
 
----
-
 ## Migration Checklist
 
 - [ ] Create FSD directory structure
@@ -186,8 +181,6 @@ export function AddToCartButton({ product }) {
 - [ ] Setup `app/` layer with providers
 - [ ] Remove old directory structure
 - [ ] Update documentation
-
----
 
 ## Rollback Strategy
 
@@ -202,8 +195,6 @@ import { UserCard as LegacyUserCard } from '@components/UserCard';
 import { UserCard as FSDUserCard } from '@/entities/user';
 export const UserCard = process.env.USE_FSD ? FSDUserCard : LegacyUserCard;
 ```
-
----
 
 ## Resources
 
