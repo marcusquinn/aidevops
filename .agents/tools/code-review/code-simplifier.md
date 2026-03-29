@@ -32,7 +32,7 @@ tools:
 - `AGENTS.md` (both `~/Git/aidevops/AGENTS.md` and `.agents/AGENTS.md`) — framework operating model
 - `.agents/scripts/commands/pulse.md` — supervisor pulse instructions
 
-Workers MUST skip these files and comment on the issue explaining why.
+Workers MUST skip these files and note why on the issue.
 
 ## Output Format
 
@@ -84,7 +84,7 @@ Low-confidence findings: create issues with `simplification-debt` + `needs-maint
 
 ### Reference corpora — restructure, do not compress (GH#6432)
 
-**Action:** Split into chapter files with slim index (~100-200 lines). Verify: `wc -l` total of chapters >= original minus index overhead. Issue title: "restructure" not "tighten".
+Split into chapter files with slim index (~100-200 lines). Verify: `wc -l` total of chapters >= original minus index overhead. Issue title: "restructure" not "tighten".
 
 ### Almost never simplify
 
@@ -94,14 +94,6 @@ Low-confidence findings: create issues with `simplification-debt` + `needs-maint
 - Shell script quality standards (`local var="$1"`, explicit `return 0`)
 - Intentional repetition across agent docs serving different audiences
 - Error-prevention rules with supporting data
-
-Example of a non-target:
-
-```bash
-# DISABLED: qlty fmt introduces invalid shell syntax (adds "|| exit" after
-# "then" clauses). Auto-formatting removed from both monitor and fix paths.
-# See: https://github.com/marcusquinn/aidevops/issues/333
-```
 
 ## Core Principles
 
