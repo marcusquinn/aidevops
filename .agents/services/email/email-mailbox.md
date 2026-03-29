@@ -36,14 +36,11 @@ Top-down; first match wins.
 | **Transactions** | Receipt, invoice, shipping, financial statement | `Transactions/Receipts/` or `Transactions/Invoices/` |
 | **Primary** | Known sender, requires reply or personal/business conversation | `INBOX/` |
 
-Other folders: `Archive/` · `Drafts/` · `Sent/` · `Trash/`
-
-- **Gmail**: labels only — category tabs inaccessible via IMAP; use Gmail API or JMAP.
-- **POP3**: no folder concept; prefer IMAP/JMAP.
+Other folders: `Archive/` · `Drafts/` · `Sent/` · `Trash/`. Gmail: labels only — category tabs inaccessible via IMAP; use Gmail API or JMAP. POP3: no folder concept; prefer IMAP/JMAP.
 
 ## Flagging
 
-Orthogonal to categories; multiple flags allowed. If `PERMANENTFLAGS` lacks custom keywords, use `\Flagged` + helper SQLite store. JMAP: `Email/set` with `"keywords": {"$task": true}`.
+Orthogonal to categories; multiple flags allowed. If `PERMANENTFLAGS` lacks custom keywords, fall back to `\Flagged` + helper SQLite store. JMAP: `Email/set` with `"keywords": {"$task": true}`.
 
 | Flag | Assign when | Clear when | IMAP keyword |
 |------|-------------|------------|--------------|
@@ -58,11 +55,7 @@ Orthogonal to categories; multiple flags allowed. If `PERMANENTFLAGS` lacks cust
 
 Triage pattern: **CLAIM** → **ACT** → **RESOLVE** → **REVIEW** (sweep unclaimed; alert on SLA breach).
 
-| Address | SLA | Address | SLA |
-|---------|-----|---------|-----|
-| `support@` | 4h | `billing@` | 24h |
-| `info@` | 24h | `security@` | 1h |
-| `sales@` | 2h | `accounts@` | 48h |
+SLAs: `security@` 1h · `sales@` 2h · `support@` 4h · `info@`/`billing@` 24h · `accounts@` 48h
 
 ```bash
 email-agent-helper.sh triage --mailbox support@ --strategy round-robin --assignees alice,bob,carol
@@ -101,7 +94,7 @@ Archive when ALL true: replies sent, task complete, no follow-up within 7 days. 
 
 ## Smart Mailboxes and Threading
 
-**Threading** — Reply in thread: same topic, <30 days, same recipients. New thread: topic changed, >30 days, recipients changed, >20 messages, or new decision. IMAP: `In-Reply-To`/`References` + RFC 5256 `THREAD`. JMAP: native `Thread` objects.
+**Threading**: reply in-thread when same topic, <30 days, same recipients. Start new thread when topic changed, >30 days, recipients changed, >20 messages, or new decision needed. IMAP: `In-Reply-To`/`References` + RFC 5256 `THREAD`. JMAP: native `Thread` objects.
 
 | Smart Mailbox | Criteria |
 |---------------|----------|
@@ -151,11 +144,7 @@ if envelope :localpart :is "to" "security" { addflag "$urgent"; fileinto "Assign
 fileinto "Unassigned";
 ```
 
-```bash
-sieve-connect --server mail.example.com --user admin --upload script.sieve --activate script.sieve
-# Fastmail: Settings > Filters > Edit custom Sieve
-# Proton Mail: Settings > Filters > Add Sieve filter  |  Dovecot: ~/.dovecot.sieve or ManageSieve
-```
+Upload/activate: `sieve-connect --server mail.example.com --user admin --upload script.sieve --activate script.sieve`. Fastmail: Settings > Filters > Edit custom Sieve. Proton Mail: Settings > Filters > Add Sieve filter. Dovecot: `~/.dovecot.sieve` or ManageSieve.
 
 ## IMAP vs JMAP
 

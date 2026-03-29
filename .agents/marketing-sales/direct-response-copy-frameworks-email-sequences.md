@@ -37,21 +37,12 @@ Email converts at 2-5x the rate of social media, you own the list, and it delive
 
 ```text
 Subject: [Problem-focused subject line]
-
 [Name],
-
 You know that feeling when [relatable problem scenario]?
-
-[Agitate the problem - make them feel the pain]
-
-The worst part? [Add another layer of frustration]
-
-But here's the thing...
-
-[Introduce the solution + brief explanation + social proof]
-
+[Agitate — make them feel the pain]
+The worst part? [Another layer of frustration]
+But here's the thing... [Solution + brief explanation + social proof]
 [CTA]
-
 [P.S. - Urgency or bonus reminder]
 ```
 
@@ -142,18 +133,8 @@ But here's the thing...
 
 ## Subject Line Testing Checklist
 
-- [ ] Would I open this in my inbox?
-- [ ] Is it under 50 characters?
-- [ ] Does the preview text complement it?
-- [ ] Is there curiosity, urgency, or clear benefit?
-- [ ] Does it match the email content?
-- [ ] Is it free of spam triggers?
-- [ ] Have I tested it on mobile?
+Would I open this? · Under 50 chars? · Preview text complements it? · Curiosity, urgency, or clear benefit? · Matches email content? · Free of spam triggers? · Tested on mobile?
 
 ---
 
-## Further Reading
-
-- See [Headline Formulas](headline-formulas.md) for subject line inspiration
-- See [Objection Handling](objection-handling.md) for FAQ email content
-- See [Templates](direct-response-copy-templates-email-sequences.md) for copy-paste templates
+**Further reading**: [Headline Formulas](headline-formulas.md) · [Objection Handling](objection-handling.md) · [Templates](direct-response-copy-templates-email-sequences.md)

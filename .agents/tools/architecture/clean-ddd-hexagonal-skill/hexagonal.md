@@ -45,10 +45,10 @@ flowchart TB
 
 ## Ports
 
-| Type | Also called | Direction | Defined by | Purpose |
-|------|-------------|-----------|------------|---------|
-| **Driver** | Primary / Inbound | → App | Application | How the world uses your app (use cases) |
-| **Driven** | Secondary / Outbound | App → | Application | What your app needs from external systems |
+| Type | Direction | Defined by | Purpose | Asymmetry |
+|------|-----------|------------|---------|-----------|
+| **Driver** (Primary / Inbound) | → App | Application | How the world uses your app (use cases) | Adapter *calls* port — app defines what it **offers** |
+| **Driven** (Secondary / Outbound) | App → | Application | What your app needs from external systems | Adapter *implements* port — app defines what it **needs** |
 
 **Driver ports** — called by adapters, represent use cases:
 
@@ -92,12 +92,7 @@ export interface IPaymentGatewayPort {
 
 ## Adapters
 
-| Type | Also called | Role |
-|------|-------------|------|
-| **Driver** | Primary / Inbound | Converts external input → port call |
-| **Driven** | Secondary / Outbound | Implements port interface using specific technology |
-
-**Driver adapter examples** (REST, gRPC, CLI, message):
+**Driver adapter** — converts external input → port call:
 
 ```typescript
 // infrastructure/adapters/driver/rest/order_controller.ts
@@ -117,24 +112,9 @@ export class OrderController {
     res.status(201).json({ id: orderId.value });
   }
 }
-
-// infrastructure/adapters/driver/cli/place_order_command.ts
-export function createPlaceOrderCommand(placeOrder: IPlaceOrderPort): Command {
-  return new Command('place-order')
-    .requiredOption('-c, --customer <id>', 'Customer ID')
-    .requiredOption('-p, --product <id>', 'Product ID')
-    .requiredOption('-q, --quantity <number>', 'Quantity', parseInt)
-    .action(async (options) => {
-      const orderId = await placeOrder.execute({
-        customerId: options.customer,
-        items: [{ productId: options.product, quantity: options.quantity }],
-      });
-      console.log(`Order created: ${orderId.value}`);
-    });
-}
 ```
 
-**Driven adapter examples** (Postgres, in-memory, Stripe, RabbitMQ):
+**Driven adapters** — implement port interface using specific technology:
 
 ```
 class PostgresOrderRepository implements IOrderRepositoryPort:
@@ -193,14 +173,7 @@ src/
 
 ---
 
-## Key Asymmetry
-
-- **Driver side:** adapter *calls* port — app defines what it **offers**
-- **Driven side:** adapter *implements* port — app defines what it **needs**
-
----
-
-## Configurability (Swap Adapters Without Changing Core)
+## Swap Adapters Without Changing Core
 
 ```typescript
 // infrastructure/config/container.ts
@@ -233,15 +206,3 @@ interface IOrderRepository {
   save(order: Order): Promise<void>;
 }
 ```
-
----
-
-## Benefits
-
-| Benefit | What it enables |
-|---------|----------------|
-| Testability | Swap real adapters for test doubles (in-memory, mocks, spies) |
-| Flexibility | Change technologies without touching the core |
-| Independence | Develop and test core without external systems running |
-| Clear boundaries | Explicit interfaces between layers |
-| Parallel development | Teams work on different adapters simultaneously |

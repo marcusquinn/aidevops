@@ -28,10 +28,7 @@ export default {
 
 ## Resource Isolation
 
-**Complete isolation:** Create unique resources per customer
-- KV namespace per customer
-- D1 database per customer
-- R2 bucket per customer
+Create unique resources per customer (KV namespace, D1 database, R2 bucket):
 
 ```typescript
 const bindings = [{
@@ -45,20 +42,9 @@ const bindings = [{
 
 ### Wildcard Route (Recommended)
 
-Configure `*/*` route on SaaS domain → dispatch Worker
+Configure `*/*` route on SaaS domain → dispatch Worker. Supports subdomains + custom vanity domains, no route limits, works regardless of DNS proxy settings.
 
-**Benefits:**
-- Supports subdomains + custom vanity domains
-- No route limits
-- Programmatic control
-- Works with any DNS proxy settings
-
-**Setup:**
-1. Cloudflare for SaaS custom hostnames
-2. Fallback origin (dummy `A 192.0.2.0` if Worker is origin)
-3. DNS CNAME to SaaS domain
-4. `*/*` route → dispatch Worker
-5. Routing logic in dispatch Worker
+**Setup:** Cloudflare for SaaS custom hostnames → fallback origin (dummy `A 192.0.2.0` if Worker is origin) → DNS CNAME to SaaS domain → `*/*` route → dispatch Worker with routing logic:
 
 ```typescript
 export default {
@@ -78,35 +64,26 @@ export default {
 
 ### Subdomain-Only
 
-1. Wildcard DNS: `*.saas.com` → origin
-2. Route: `*.saas.com/*` → dispatch Worker
-3. Extract subdomain for routing
+Wildcard DNS `*.saas.com` → origin, route `*.saas.com/*` → dispatch Worker, extract subdomain for routing.
 
 **Orange-to-Orange:** When customers use Cloudflare and CNAME to your domain, use `*/*` wildcard for consistent behavior.
 
 ## Observability
 
-### Logpush
+**Logpush:** Enable on dispatch Worker → captures all user Worker logs. Filter by `Outcome` or `Script Name`.
 
-- Enable on dispatch Worker → captures all user Worker logs
-- Filter by `Outcome` or `Script Name`
+**Tail Workers:** Real-time logs with custom formatting — receives HTTP status, `console.log()`, exceptions, diagnostics.
 
-### Tail Workers
-
-- Real-time logs with custom formatting
-- Receives HTTP status, `console.log()`, exceptions, diagnostics
-
-### Analytics Engine
+**Analytics Engine** — track violations:
 
 ```typescript
-// Track violations
 env.ANALYTICS.writeDataPoint({
   indexes: [customerName],
   blobs: ["cpu_limit_exceeded"],
 });
 ```
 
-### GraphQL
+**GraphQL** — aggregate metrics:
 
 ```graphql
 query {
@@ -147,36 +124,4 @@ const workerName = `${customerId}-${functionName}`;
 const userWorker = env.DISPATCHER.get(workerName);
 ```
 
-### Website Builder
-
-- Deploy static assets + Worker code
-- Salt hashes for asset isolation
-
-## Best Practices
-
-### Architecture
-
-- One namespace per environment (production, staging)
-- Platform logic in dispatch Worker (auth, rate limiting, validation)
-- Isolation automatic (no shared cache, untrusted mode)
-
-### Routing
-
-- Use `*/*` wildcard routes
-- Store mappings in KV
-- Handle missing Workers gracefully
-
-### Limits & Security
-
-- Set custom limits by plan
-- Track violations with Analytics Engine
-- Use outbound Workers for egress control
-- Sanitize responses
-
-### Tags
-
-- Tag all Workers: customer ID, plan, environment
-- Enable bulk operations
-- Filter efficiently
-
-See [README.md](./README.md), [gotchas.md](./gotchas.md)
+See [workers-for-platforms.md](./workers-for-platforms.md), [gotchas.md](./workers-for-platforms-gotchas.md)

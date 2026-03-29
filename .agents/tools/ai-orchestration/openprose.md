@@ -15,9 +15,8 @@ tools:
 
 **Use OpenProse for**: multi-agent orchestration, repeatable workflows, parallel session spawning, AI-evaluated conditions. Use aidevops scripts for single-agent DevOps tasks and deterministic logic.
 
-- **Philosophy**: "The AI session IS the VM" — simulation with sufficient fidelity is implementation
-- **Repo**: https://github.com/openprose/prose
-- **Telemetry**: Disabled by default in aidevops. To disable upstream: add `"OPENPROSE_TELEMETRY": "disabled"` to `.prose/state.json` or pass `--no-telemetry`
+- **Repo**: <https://github.com/openprose/prose>
+- **Telemetry**: Disabled by default in aidevops. Override: `"OPENPROSE_TELEMETRY": "disabled"` in `.prose/state.json` or `--no-telemetry`
 
 **Install:**
 
@@ -59,13 +58,13 @@ session "Use both"
 ### Parallel Execution
 
 ```prose
-parallel:
+parallel:                                 # Default: wait for all
   a = session "Task A"
   b = session "Task B"
 
 parallel ("first"):                       # Race - first wins
 parallel ("any"):                         # First success
-parallel ("all"):                         # Wait for all (default)
+parallel ("all"):                         # Wait for all (explicit)
 parallel (on-fail: "continue"):           # Let all complete
 parallel (on-fail: "ignore"):             # Treat failures as success
 ```
@@ -147,7 +146,7 @@ TOON       →  token-efficient serialization (40-70% fewer tokens; encode large
 
 ## Patterns
 
-### Parallel Code Review (for `/ralph-loop`)
+### Parallel Code Review
 
 ```prose
 parallel:
@@ -158,7 +157,7 @@ session "Synthesize all reviews"
   context: { security, perf, style }
 ```
 
-### Full Loop with Explicit Phases (for `/full-loop`)
+### Development Loop with Quality Gates
 
 ```prose
 agent developer:
@@ -189,33 +188,7 @@ loop until **PR is merged** (max: 20):
     session "Fix CI issues and push"
   if **changes requested**:
     session "Address review feedback and push"
-
-session "Verify release health"
 ```
-
-### Postflight Monitoring
-
-```prose
-loop until **release is healthy** (max: 10):
-  parallel:
-    ci = session "Check GitHub Actions status"
-    tag = session "Verify release tag exists"
-    version = session "Check VERSION file matches"
-  if **any check failed**:
-    session "Report issues and wait 30 seconds"
-```
-
-## Narration Protocol
-
-| Emoji | Category | Usage |
-|-------|----------|-------|
-| `📋` | Program | Start, end, definition collection |
-| `📍` | Position | Current statement being executed |
-| `📦` | Binding | Variable assignment or update |
-| `✅` | Success | Session or block completion |
-| `⚠️` | Error | Failures and exceptions |
-| `🔀` | Parallel | Entering, branch status, joining |
-| `🔄` | Loop | Iteration, condition evaluation |
 
 ## Related
 

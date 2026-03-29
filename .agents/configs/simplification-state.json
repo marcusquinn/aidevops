@@ -297,9 +297,9 @@
       "pr": 11411
     },
     ".agents/tools/voice/transcription.md": {
-      "hash": "7f06963e2a070b0664cb304d8bb425cd4681407d",
-      "at": "2026-03-29T06:41:19Z",
-      "pr": 12638
+      "hash": "00b7657112dc4b31c6064057fcd47e8d4651f7ee",
+      "at": "2026-03-28T05:10:01Z",
+      "pr": 11419
     },
     ".agents/tools/diagrams/mermaid-diagrams-skill/sequence.md": {
       "hash": "162ba5164f7ffedc3b1d3497beabd56c6d58aaba",
@@ -977,9 +977,9 @@
       "pr": 11889
     },
     ".agents/tools/mobile/app-store-connect.md": {
-      "hash": "55340aa49411b8c5faf342ecbd1284bd9b126390",
-      "at": "2026-03-29T06:41:11Z",
-      "pr": 12625
+      "hash": "8023c5d46c6d784bbc762f59d4c57d549e15903e",
+      "at": "2026-03-28T13:37:17Z",
+      "pr": 11893
     },
     ".agents/tools/browser/stagehand-examples.md": {
       "hash": "3204f26c9d748fd843fe6db79a36a18581e78b49",
@@ -1022,9 +1022,9 @@
       "pr": 11944
     },
     ".agents/scripts/commands/full-loop.md": {
-      "hash": "e7215685051b1bc82caf69196f5968a3138084fa",
-      "at": "2026-03-29T06:06:01Z",
-      "pr": 12551
+      "hash": "2eeeca1b29f37da006c4497e49fcb041fbfbe0b8",
+      "at": "2026-03-28T23:06:40Z",
+      "pr": 12164
     },
     ".agents/workflows/pr.md": {
       "hash": "4a3037a4141b69625fe2949f51e1a21a63bfa8ce",
@@ -1407,9 +1407,9 @@
       "pr": 12162
     },
     ".agents/scripts/gh-signature-helper.sh": {
-      "hash": "28ac60bb1bf31ed872a1fe1df90a71f073c0e705",
-      "at": "2026-03-29T06:41:26Z",
-      "pr": 12559
+      "hash": "92e4d9adc4f2017480a171fd61c14f6876e6f585",
+      "at": "2026-03-29T03:15:20Z",
+      "pr": 12396
     },
     ".agents/tools/wordpress/wp-dev.md": {
       "hash": "aeead744dd3a6ab5c8a9e6cf300adf03cbebceb9",
@@ -1447,9 +1447,9 @@
       "pr": 12171
     },
     ".agents/tools/mobile/app-dev-swift.md": {
-      "hash": "15ec4fad109dcdce50f6ed4a70d117caff12f906",
-      "at": "2026-03-29T06:06:18Z",
-      "pr": 12506
+      "hash": "d27215290fea61b4f036405bedc16867db3935bc",
+      "at": "2026-03-29T01:52:34Z",
+      "pr": 12450
     },
     ".agents/tools/context/context7.md": {
       "hash": "1d98876794a7dc00b2cd2126492a54302f051af8",
@@ -1517,9 +1517,9 @@
       "pr": 12309
     },
     ".agents/tools/animation/animejs.md": {
-      "hash": "53e06dd42cc6475801976461219b510fd4a94139",
-      "at": "2026-03-29T06:05:53Z",
-      "pr": 12549
+      "hash": "b02bc5edb4ce4fa2927b29c286f32d1a2f94b8ae",
+      "at": "2026-03-29T03:15:04Z",
+      "pr": 12500
     },
     ".agents/tools/build-mcp/deployment.md": {
       "hash": "0229a7490f42dcf4f3b8c0958fefd7ff53f3b8a2",
@@ -1537,9 +1537,9 @@
       "pr": 12240
     },
     ".agents/tools/browser/browser-profiles.md": {
-      "hash": "2a2c771f4ff870ad450a92a0f9ad950f3f16e3cb",
-      "at": "2026-03-29T06:06:21Z",
-      "pr": 12501
+      "hash": "d719a6a108c1d6f84089ca53d09bc82579c5aa85",
+      "at": "2026-03-29T01:52:18Z",
+      "pr": 12449
     },
     ".agents/services/networking/netbird.md": {
       "hash": "824fc7ee7cdc7e08351310bdb9f99dcf91a3848e",
@@ -1662,9 +1662,9 @@
       "pr": 12504
     },
     ".agents/content/heygen-skill/rules-voices.md": {
-      "hash": "d3dbb1550c826e13f7c5288b74f72fcff3518efd",
-      "at": "2026-03-29T06:05:50Z",
-      "pr": 12577
+      "hash": "a85f36f5c5e028f989dbc0e75caf3c9e337c12e9",
+      "at": "2026-03-29T03:31:40Z",
+      "pr": 12508
     },
     ".agents/marketing-sales/ad-creative-chapter-12.md": {
       "hash": "eca290e31ece1e36762bbf607353ddbdb27aaf52",
@@ -1697,19 +1697,19 @@
       "pr": 12513
     },
     ".agents/content/heygen-skill/rules-quota.md": {
-      "hash": "defa81f8873250c50ab8a9481e5d6f2b0958946c",
-      "at": "2026-03-29T06:05:52Z",
-      "pr": 12592
+      "hash": "4ea886afaf8162b1a347d8d9029d7ee954cbde5d",
+      "at": "2026-03-29T03:31:50Z",
+      "pr": 12515
     },
     ".agents/tools/ui/tailwind-css.md": {
-      "hash": "1f3b2d4e3add5cecfe530b8db9addf411a9069fe",
-      "at": "2026-03-29T06:05:57Z",
-      "pr": 12576
+      "hash": "b1f20000e9d06e416e26406b8ade81bcdd4fa0e1",
+      "at": "2026-03-29T03:15:21Z",
+      "pr": 12519
     },
     ".agents/content/video-director.md": {
-      "hash": "124d70f806e945989866af7a92d37fb450c4e61f",
-      "at": "2026-03-29T06:05:59Z",
-      "pr": 12587
+      "hash": "f66f3694f39cc5dc718626bb84fae396a53a9ada",
+      "at": "2026-03-29T03:15:23Z",
+      "pr": 12520
     },
     ".agents/marketing-sales/meta-ads-audiences-retargeting-setup.md": {
       "hash": "dedfee9605d04b5a7cf9f5563c0e772f06e44062",
@@ -1717,14 +1717,14 @@
       "pr": 12514
     },
     ".agents/services/hosting/cloudflare-platform-skill/miniflare-gotchas.md": {
-      "hash": "c2a8232a749da0976495eabf4ea541b52bae82f8",
-      "at": "2026-03-29T06:06:00Z",
-      "pr": 12586
+      "hash": "0b7782bd4669fcfdc3c7a756285a8a517c904337",
+      "at": "2026-03-29T03:15:25Z",
+      "pr": 12518
     },
     ".agents/tools/api/hono.md": {
-      "hash": "70d6430179de8b0edccf9fc431d2f0a55fba88f4",
-      "at": "2026-03-29T06:05:51Z",
-      "pr": 12580
+      "hash": "69110ca53d6bc749fff762095d7c0cb0c6804b28",
+      "at": "2026-03-29T03:15:26Z",
+      "pr": 12530
     },
     ".agents/tools/opencode/opencode-anthropic-auth.md": {
       "hash": "f05464c433b2b8e301af49ac5693cba5662ca6f7",
@@ -1737,144 +1737,19 @@
       "pr": 12526
     },
     ".agents/tools/ui/shadcn.md": {
-      "hash": "b65c32526cb52d71c76cead493b7c71147417a78",
-      "at": "2026-03-29T06:05:55Z",
-      "pr": 12590
+      "hash": "8e0d8de098a34d9c367a88cf73867e574be7be11",
+      "at": "2026-03-29T03:32:00Z",
+      "pr": 12523
     },
     ".agents/scripts/foss-handlers/generic.sh": {
       "hash": "45cc10462795e6230b70b2f068bb95b4e53612f2",
       "at": "2026-03-29T03:15:47Z",
       "pr": 12346
     },
-    ".agents/tools/deployment/hosting-comparison.md": {
-      "hash": "d29068fa3678e9cf3c2d6709305d5d71e5488dcb",
-      "at": "2026-03-29T06:05:35Z",
-      "pr": 12661
-    },
-    ".agents/marketing-sales/ad-creative-chapter-04.md": {
-      "hash": "35b67bea4f7521d18b9a3a75deb4b2508810e83d",
-      "at": "2026-03-29T06:05:37Z",
-      "pr": 12662
-    },
-    ".agents/tools/deployment/cloudron-app-packaging-skill/addons-ref.md": {
-      "hash": "eabf574fee83d669be51a57a8cec9d8fb37d2a6c",
-      "at": "2026-03-29T06:05:38Z",
-      "pr": 12663
-    },
-    ".agents/marketing-sales/cro-chapter-04.md": {
-      "hash": "f893022ded62f04d6ca13b86f839211e4fe8190a",
-      "at": "2026-03-29T06:05:39Z",
-      "pr": 12665
-    },
-    ".agents/services/communications/whatsapp.md": {
-      "hash": "80fa5606703e7951465e092194a0a2c03f1f8472",
-      "at": "2026-03-29T06:05:40Z",
-      "pr": 12666
-    },
-    ".agents/services/database/postgres-drizzle-skill/performance.md": {
-      "hash": "b29ed6ea5505ea24fc3c3a94bf60b64ee51d9993",
-      "at": "2026-03-29T06:05:42Z",
-      "pr": 12668
-    },
-    ".agents/services/outreach/manyreach.md": {
-      "hash": "94a3e08bcf4edafcd9654e8252a1a8851b004217",
-      "at": "2026-03-29T06:05:43Z",
-      "pr": 12581
-    },
-    ".agents/tools/programming/modern-javascript-skill/upcoming.md": {
-      "hash": "a2b88a20fedbcbbf37624126551caf4b6a101400",
-      "at": "2026-03-29T06:05:44Z",
-      "pr": 12584
-    },
-    ".agents/content/summarize.md": {
-      "hash": "937ce7f1f86adf1ef8f54d08458ca3421209fd10",
-      "at": "2026-03-29T06:05:45Z",
-      "pr": 12578
-    },
-    ".agents/tools/code-review/coderabbit.md": {
-      "hash": "3e37a12db3473bf11b36f10e75ede64bb2494e1b",
-      "at": "2026-03-29T06:05:46Z",
-      "pr": 12589
-    },
-    ".agents/services/email/thunderbird.md": {
-      "hash": "97b29677f0dc7c7542e4fb7c2e3dc10bc5445489",
-      "at": "2026-03-29T06:05:48Z",
-      "pr": 12582
-    },
-    ".agents/tools/research/tech-stack-lookup.md": {
-      "hash": "bb8bdd9ccd46c7cc0742a5ba1849bb47746c2110",
-      "at": "2026-03-29T06:05:56Z",
-      "pr": 12579
-    },
-    ".agents/scripts/commands/neuronwriter.md": {
-      "hash": "233c0b9d671275ad8b68ef45c8afaff33acbec34",
-      "at": "2026-03-29T06:06:08Z",
-      "pr": 12588
-    },
-    ".agents/services/email/email-mailbox.md": {
-      "hash": "57290a14231be3c44485af255af1a9c3cd302315",
-      "at": "2026-03-29T06:06:09Z",
-      "pr": 12583
-    },
-    ".agents/content/distribution-podcast.md": {
-      "hash": "0a2c98014bbe0588383437327d0b71e81a574af5",
-      "at": "2026-03-29T06:06:11Z",
-      "pr": 12557
-    },
-    ".agents/tools/git/gitea-cli.md": {
-      "hash": "9452ee8a8cf48269d5848e1d31384a3df0462ec5",
-      "at": "2026-03-29T06:06:13Z",
-      "pr": 12618
-    },
-    ".agents/tools/ui/react-email.md": {
-      "hash": "44be6e93a23aa087b4b70af9dc49a1c566c47e8c",
-      "at": "2026-03-29T06:06:14Z",
-      "pr": 12619
-    },
-    ".agents/content/heygen-skill/rules-photo-avatars.md": {
-      "hash": "d9a524f977f14c54b44991976651334aafa2e6e4",
-      "at": "2026-03-29T06:06:15Z",
-      "pr": 12620
-    },
-    ".agents/tools/browser/browser-use.md": {
-      "hash": "96d5278ed393a25379da0c21d04db2269219cbf9",
-      "at": "2026-03-29T06:06:17Z",
-      "pr": 12616
-    },
-    ".agents/content/context-templates.md": {
-      "hash": "eae4b7fde641ab4a7c37b51e6f082b64cd476136",
-      "at": "2026-03-29T06:06:24Z",
-      "pr": 12617
-    },
-    ".agents/services/hosting/cloudflare-platform-skill/workers-for-platforms-patterns.md": {
-      "hash": "719ab7d7d4f4e161e8f5a1d42dcc206065456353",
-      "at": "2026-03-29T06:41:00Z",
-      "pr": 12686
-    },
-    ".agents/services/hosting/hetzner.md": {
-      "hash": "85598d6108beb4aa0700c92c9c2d9b0d154fc415",
-      "at": "2026-03-29T06:41:01Z",
-      "pr": 12687
-    },
-    ".agents/tools/ai-orchestration/openprose.md": {
-      "hash": "d5e05edaaf13b564d131ae382571d600aa9001e7",
-      "at": "2026-03-29T06:41:08Z",
-      "pr": 12657
-    },
-    ".agents/content/heygen-skill/rules-avatars.md": {
-      "hash": "4871ad4f1650b1bd44dcd7c53785c47a3f84e8fc",
-      "at": "2026-03-29T06:41:09Z",
-      "pr": 12654
-    },
-    ".agents/aidevops/onboarding.md": {
-      "hash": "33602a4d7beba12e4278f27128d263e5ac42d05e",
-      "at": "2026-03-29T06:41:14Z",
-      "pr": 12641
-    },
-    ".agents/scripts/tests/test-gh-signature-helper.sh": {
-      "hash": "fb79d924aa342c18f0c5d9f39d90bdc26152a2a2",
-      "at": "2026-03-29T06:41:26Z",
-      "pr": 12559
+    ".agents/reference/foss-contributions.md": {
+      "hash": "7a70a570a9191eedf42aa4c3c21dfcd875a6e983",
+      "at": "2026-03-29T03:52:33Z",
+      "pr": 12538
     }
   }
 }

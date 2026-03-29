@@ -101,7 +101,7 @@ _omz_offer_shell_change() {
 	fi
 
 	echo ""
-	read -r -p "Change default shell to zsh? [y/N]: " change_shell
+	setup_prompt change_shell "Change default shell to zsh? [y/N]: " "n"
 	if [[ "$change_shell" =~ ^[Yy]$ ]]; then
 		if chsh -s "$(command -v zsh)"; then
 			print_success "Default shell changed to zsh"
@@ -165,7 +165,7 @@ setup_oh_my_zsh() {
 	echo "  This is optional - plain zsh works fine without it."
 	echo ""
 
-	read -r -p "Install Oh My Zsh? [y/N]: " install_omz
+	setup_prompt install_omz "Install Oh My Zsh? [y/N]: " "n"
 
 	if [[ "$install_omz" =~ ^[Yy]$ ]]; then
 		_omz_run_install "$default_shell"
@@ -435,10 +435,8 @@ _shell_compat_prompt_user() {
 	print_info "both bash and zsh, so your customizations work in either shell."
 	echo ""
 
-	local setup_compat="Y"
-	if [[ "$NON_INTERACTIVE" != "true" ]]; then
-		read -r -p "Create shared shell profile for cross-shell compatibility? [Y/n]: " setup_compat
-	fi
+	local setup_compat
+	setup_prompt setup_compat "Create shared shell profile for cross-shell compatibility? [Y/n]: " "Y"
 
 	if [[ ! "$setup_compat" =~ ^[Yy]?$ ]]; then
 		print_info "Skipped cross-shell compatibility setup"
@@ -538,7 +536,7 @@ check_optional_deps() {
 		pkg_manager=$(detect_package_manager)
 
 		if [[ "$pkg_manager" != "unknown" ]]; then
-			read -r -p "Install optional dependencies using $pkg_manager? [Y/n]: " install_optional
+			setup_prompt install_optional "Install optional dependencies using $pkg_manager? [Y/n]: " "Y"
 
 			if [[ "$install_optional" =~ ^[Yy]?$ ]]; then
 				print_info "Installing ${missing_optional[*]}..."
@@ -1097,7 +1095,7 @@ setup_aliases() {
 	fi
 
 	print_info "Detected default shell: $default_shell"
-	read -r -p "Add shell aliases? [Y/n]: " add_aliases
+	setup_prompt add_aliases "Add shell aliases? [Y/n]: " "Y"
 
 	if [[ "$add_aliases" =~ ^[Yy]?$ ]]; then
 		local added_to
@@ -1162,7 +1160,7 @@ _terminal_title_prompt_and_install() {
 	local setup_script="$1"
 
 	echo ""
-	read -r -p "Install terminal title integration? [Y/n]: " install_title
+	setup_prompt install_title "Install terminal title integration? [Y/n]: " "Y"
 
 	if [[ "$install_title" =~ ^[Yy]?$ ]]; then
 		if bash "$setup_script" install; then

@@ -69,32 +69,9 @@ Actions: [timestamped to 0.5s]  Dialogue: [with delivery — e.g., "[excited] Ch
 Background Sound: [ambient, music style, SFX]
 ```
 
-**Shot types**:
+**Shot types**: ECU (eyes/product detail) · CU (face fills frame) · MCU (head+shoulders) · MS (waist up) · MWS (knees up) · WS (full body+environment) · EWS (establishing/landscape)
 
-| Code | Full name | Use |
-|------|-----------|-----|
-| ECU | Extreme Close-Up | Eyes, lips, product detail |
-| CU | Close-Up | Face fills frame |
-| MCU | Medium Close-Up | Head and shoulders |
-| MS | Medium Shot | Waist up |
-| MWS | Medium Wide Shot | Knees up |
-| WS | Wide Shot | Full body with environment |
-| EWS | Extreme Wide Shot | Establishing, landscape |
-
-**Camera movements**:
-
-| Movement | Use |
-|----------|-----|
-| Static | Locked tripod, professional |
-| Handheld | Authentic UGC, micro-movements |
-| Push-in | Building tension/focus |
-| Pull-out | Reveal, establishing context |
-| Pan | Horizontal sweep, following action |
-| Tilt | Vertical sweep, revealing height |
-| Dolly | Smooth forward/backward on track |
-| Tracking | Following subject laterally |
-| Overhead | Top-down, product flat-lay |
-| Arc | Orbiting around subject |
+**Camera movements**: Static (tripod) · Handheld (UGC micro-movements) · Push-in (tension) · Pull-out (reveal) · Pan (horizontal sweep) · Tilt (vertical sweep) · Dolly (smooth track) · Tracking (follow subject) · Overhead (top-down) · Arc (orbit)
 
 ### Step 4: Prompt Generation
 
@@ -131,16 +108,6 @@ Background Sound: [ambient, music style, SFX]
       "prompt": "Close-up of young woman with warm brown skin and dark curly hair, looking directly at camera with excited expression, holding [product] in right hand, soft studio lighting from camera-left, shallow depth of field, shot on ARRI Alexa LF 85mm f/1.8, warm color grading",
       "duration": 5,
       "dialogue": "[Excited] You need to see this!"
-    },
-    {
-      "prompt": "Medium shot of same woman in modern kitchen, natural window light, demonstrating [product] on marble countertop, genuine smile, iPhone 15 Pro handheld feel, warm tones",
-      "duration": 5,
-      "dialogue": "[Genuine] I've been using it every day for a month."
-    },
-    {
-      "prompt": "Close-up of [product] on marble surface, soft directional lighting, shallow DOF with bokeh background, product photography style, Canon EOS R5 100mm macro",
-      "duration": 3,
-      "dialogue": null
     },
     {
       "prompt": "Medium close-up of woman nodding with confident smile, looking at camera, soft backlight creating hair rim light, ARRI Alexa LF, cinematic color grading",
