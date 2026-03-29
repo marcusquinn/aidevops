@@ -17,8 +17,6 @@ Topic: $ARGUMENTS
 
 ### Step 1: Classify Task Type
 
-Parse `$ARGUMENTS` to classify:
-
 | Type | Signal Words | Default Assumptions |
 |------|-------------|---------------------|
 | **feature** | add, create, build, implement, new | Minimal footprint, no new deps without discussion |
@@ -27,15 +25,13 @@ Parse `$ARGUMENTS` to classify:
 | **docs** | document, readme, guide, explain, describe | Accurate, concise, follows existing doc patterns |
 | **research** | investigate, explore, evaluate, compare, spike | Time-boxed, deliverable is a written recommendation |
 
-Also classify **agent domain** and **model tier** using `reference/task-taxonomy.md`. Include domain tag (e.g., `#seo`, `#content`) in TODO.md entry and as GitHub label. Omit for code tasks (Build+ and coding tier are defaults).
+Also classify **agent domain** and **model tier** using `reference/task-taxonomy.md`. Include domain tag (e.g., `#seo`) in TODO.md entry and as GitHub label. Omit for code tasks.
 
-If ambiguous, ask with numbered options (1-5 matching table above), recommend based on description.
+If ambiguous, ask with numbered options (1–5 matching table above), recommend based on description.
 
-Store classification for probe selection in Step 3.
+### Step 2: Structured Interview (3–5 questions)
 
-### Step 2: Structured Interview (3-5 questions)
-
-Ask sequentially. Each question: 2-4 concrete options, one recommended. Adapt to task type.
+Ask sequentially. Each question: 2–4 concrete options, one recommended. Adapt to task type.
 
 **Core questions (all types):**
 
@@ -43,7 +39,7 @@ Ask sequentially. Each question: 2-4 concrete options, one recommended. Adapt to
 - **Q2 Scope boundary**: "What is explicitly NOT in scope?" — offer inferred exclusion, "nothing", or custom
 - **Q3 Success criteria**: "How will you know this is done?" — automated tests (recommended for feature/bugfix), manual verification, code review, or custom
 
-**Type-specific questions:** Load from `reference/define-probes/${task_type}.md` and ask 1-2 additional questions.
+**Type-specific questions:** Load from `reference/define-probes/${task_type}.md` and ask 1–2 additional questions.
 
 ### Step 3: Latent Criteria Probing
 
@@ -101,45 +97,8 @@ When `--headless` or `$ARGUMENTS` contains ` -- ` (supervisor dispatch), skip in
 2. Apply default assumptions for that type
 3. Generate brief with `Created by: ai-supervisor` in Origin
 4. Write to `todo/tasks/{task_id}-brief.md`
-5. Add `#worker` tag to TODO.md entry (headless sessions are always workers)
+5. Add `#worker` tag to TODO.md entry
 6. No confirmation — save immediately
-
-## Example
-
-```text
-User: /define Add a dark mode toggle to settings
-
-AI: Classifying: **feature** (adding new capability)
-
-Q1: In one sentence, what must this task produce?
-  1. A toggle in settings that switches between light and dark themes (recommended)
-  2. Let me describe it differently
-
-User: 1
-
-[... Q2 scope, Q3 success criteria follow same pattern ...]
-
-[Pre-mortem] Imagine this ships and a user reports a bug. What's most likely?
-  1. Some components don't respect the theme (CSS specificity) (recommended)
-  2. Theme resets on navigation
-
-User: 1
-
-[Domain grounding] Dark mode typically needs a CSS variable system or theme provider. Does this project already have one?
-  1. Yes — extend existing
-  2. No — create minimal one
-
-User: 2
-
-Brief generated for: feature — "Dark mode toggle in settings"
-[Shows complete brief]
-
-Next steps:
-1. Save brief and create task (/new-task) (recommended)
-2. Edit brief before saving
-3. Save brief only
-4. Start over
-```
 
 ## Related
 
