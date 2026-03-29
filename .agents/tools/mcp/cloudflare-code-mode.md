@@ -19,40 +19,24 @@ mcp_servers:
 
 ## Setup
 
-### Interactive (OAuth 2.1)
+**Interactive (OAuth 2.1):** Add to MCP config — on first connection, Cloudflare prompts for authorization with downscoped permissions:
 
 ```json
-{
-  "mcpServers": {
-    "cloudflare-api": {
-      "url": "https://mcp.cloudflare.com/mcp"
-    }
-  }
-}
+{ "mcpServers": { "cloudflare-api": { "url": "https://mcp.cloudflare.com/mcp" } } }
 ```
 
-On first connection, you are redirected to Cloudflare to authorize and select permissions. The token is downscoped to only the capabilities you grant.
-
-### CI/CD (API Token)
-
-Create a Cloudflare API token with required permissions, then pass as bearer token:
-
-```text
-Authorization: Bearer <your-cloudflare-api-token>
-```
-
-See `services/hosting/cloudflare.md` for token creation guidance.
+**CI/CD:** Create a Cloudflare API token (see `services/hosting/cloudflare.md`), pass as `Authorization: Bearer <token>`.
 
 ## Tools
 
-Both tools run in a **sandboxed V8 isolate** (no filesystem, no env var leakage, external fetches disabled by default). OAuth 2.1 downscopes the token to user-approved permissions only.
+Both tools run in a **sandboxed V8 isolate** (no filesystem, no env var leakage, external fetches disabled). OAuth 2.1 downscopes the token to user-approved permissions only.
 
 ### `search(code)`
 
-Searches the Cloudflare OpenAPI spec. The `spec` object contains the full spec with all `$refs` pre-resolved. Write JavaScript to filter endpoints. The full spec never enters the model context; only filtered results do.
+Searches the Cloudflare OpenAPI spec. The `spec` object has all `$refs` pre-resolved. Write JavaScript to filter endpoints — the full spec never enters model context, only filtered results.
 
 ```javascript
-// Find WAF and ruleset endpoints for a zone
+// Find endpoints matching a path pattern
 async () => {
   const results = [];
   for (const [path, methods] of Object.entries(spec.paths)) {
@@ -67,22 +51,12 @@ async () => {
 }
 ```
 
-```javascript
-// Inspect a specific endpoint's schema
-async () => {
-  const op = spec.paths['/zones/{zone_id}/rulesets']?.get;
-  const items = op?.responses?.['200']?.content?.['application/json']?.schema;
-  const props = items?.allOf?.[1]?.properties?.result?.items?.allOf?.[1]?.properties;
-  return { phases: props?.phase?.enum };
-}
-```
-
 ### `execute(code)`
 
-Executes JavaScript against the Cloudflare API. The sandbox provides a `cloudflare.request()` client for authenticated API calls.
+Executes JavaScript against the Cloudflare API via `cloudflare.request()`. Zone-level endpoints use `/zones/{zone_id}/...`, account-level use `/accounts/{account_id}/...`.
 
 ```javascript
-// List DNS records (simple GET)
+// Simple GET — list DNS records
 async () => {
   const zoneId = "<YOUR_ZONE_ID>";
   const res = await cloudflare.request({
@@ -94,7 +68,7 @@ async () => {
 ```
 
 ```javascript
-// Enable managed WAF ruleset (PUT with body)
+// PUT with body — enable managed WAF ruleset
 async () => {
   const zoneId = "<YOUR_ZONE_ID>";
   return await cloudflare.request({
@@ -111,33 +85,7 @@ async () => {
 }
 ```
 
-```javascript
-// Chain multiple API calls in one execution
-async () => {
-  const zoneId = "<YOUR_ZONE_ID>";
-  const ddos = await cloudflare.request({
-    method: "GET",
-    path: `/zones/${zoneId}/rulesets/phases/ddos_l7/entrypoint`
-  });
-  const waf = await cloudflare.request({
-    method: "GET",
-    path: `/zones/${zoneId}/rulesets/phases/http_request_firewall_managed/entrypoint`
-  });
-  return { ddos: ddos.result, waf: waf.result };
-}
-```
-
-```javascript
-// List R2 buckets (account-level endpoint)
-async () => {
-  const accountId = "<YOUR_ACCOUNT_ID>";
-  const res = await cloudflare.request({
-    method: "GET",
-    path: `/accounts/${accountId}/r2/buckets`
-  });
-  return res.result;
-}
-```
+Chain multiple `cloudflare.request()` calls in a single `execute` invocation to batch related operations (e.g., fetching DDoS + WAF rulesets together).
 
 ## References
 
