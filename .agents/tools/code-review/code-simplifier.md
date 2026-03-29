@@ -47,7 +47,7 @@ Workers MUST skip these files and comment on the issue explaining why.
 **Confidence**: high/medium/low
 ```
 
-Low-confidence findings: flag as "worth discussing." Create issues with `simplification-debt` + `needs-maintainer-review` labels, grouped by file.
+Low-confidence findings: create issues with `simplification-debt` + `needs-maintainer-review` labels, grouped by file.
 
 ## Regression Verification
 
@@ -72,8 +72,6 @@ Low-confidence findings: flag as "worth discussing." Create issues with `simplif
 
 ### Prose tightening for agent docs (high confidence)
 
-Remove filler and narrative that doesn't change agent behaviour.
-
 **Preservation rules**: KEEP task IDs (`tNNN`), issue refs (`GH#NNN`), incident identifiers, rules/constraints (compress wording not the rule), file paths, command examples, code blocks, safety-critical detail.
 
 **Evidence (t1679):** `build.txt` 63% reduction (45k→17k), `AGENTS.md` 48% (22k→12k) — zero rule loss, 25 critical patterns verified.
@@ -86,8 +84,6 @@ Remove filler and narrative that doesn't change agent behaviour.
 
 ### Reference corpora — restructure, do not compress (GH#6432)
 
-Knowledge bases whose size comes from breadth, not verbosity. Reads like a textbook chapter, not agent instructions.
-
 **Action:** Split into chapter files with slim index (~100-200 lines). Verify: `wc -l` total of chapters >= original minus index overhead. Issue title: "restructure" not "tighten".
 
 ### Almost never simplify
@@ -99,12 +95,20 @@ Knowledge bases whose size comes from breadth, not verbosity. Reads like a textb
 - Intentional repetition across agent docs serving different audiences
 - Error-prevention rules with supporting data
 
+Example of a non-target:
+
+```bash
+# DISABLED: qlty fmt introduces invalid shell syntax (adds "|| exit" after
+# "then" clauses). Auto-formatting removed from both monitor and fix paths.
+# See: https://github.com/marcusquinn/aidevops/issues/333
+```
+
 ## Core Principles
 
 1. **Preserve everything with purpose.** Uncertain → it stays.
 2. **Remove decorative noise.** Emojis/formatting adding no information. Exception: genuine UI/UX purpose.
 3. **Apply project standards** — standards themselves are not simplification targets.
-4. **Enhance clarity without losing depth.** Reduce nesting, improve naming, remove "what" comments (not "why"). Avoid over-simplification that removes helpful abstractions or edge-case handling.
+4. **Enhance clarity without losing depth.** Reduce nesting, improve naming, remove "what" comments (not "why").
 5. **No arbitrary line targets.** Size is whatever remains after removing genuine noise. Large files: subdivide per `build-agent.md` (~300-line threshold) instead of compressing.
 
 ## Usage
@@ -115,22 +119,14 @@ Knowledge bases whose size comes from breadth, not verbosity. Reads like a textb
 /code-simplifier --all        # Analyse entire codebase (use sparingly)
 ```
 
-Scope detection: `git diff --name-only HEAD~1` + `git diff --name-only --staged`. Workflow: analyse → human review → approved items become issues → worker implements via worktree + PR.
-
-## Example: NOT a simplification target
-
-```bash
-# DISABLED: qlty fmt introduces invalid shell syntax (adds "|| exit" after
-# "then" clauses). Auto-formatting removed from both monitor and fix paths.
-# See: https://github.com/marcusquinn/aidevops/issues/333
-```
+Scope detection: `git diff --name-only HEAD~1` + `git diff --name-only --staged`.
 
 ## Human Gate Workflow
 
 ### Issue creation
 
 1. **Dedup check FIRST (GH#10783)** — search for existing open issues targeting the same file.
-2. Add labels `simplification-debt` + `needs-maintainer-review`, assign to repo maintainer (`repos.json` `maintainer` field, fall back to slug owner).
+2. Add labels `simplification-debt` + `needs-maintainer-review`, assign to repo maintainer.
 
 ```bash
 MAINTAINER=$(jq -r '.initialized_repos[] | select(.slug == "<slug>") | .maintainer // empty' ~/.config/aidevops/repos.json)
@@ -160,7 +156,7 @@ fi
 
 ### Maintainer review
 
-`gh issue list --label simplification-debt --label needs-maintainer-review`
+List pending: `gh issue list --label simplification-debt --label needs-maintainer-review`
 
 - **Approve**: comment `approved` → pulse removes gate, adds `auto-dispatch` → dispatched → PR → merged → `status:done`
 - **Decline**: comment `declined: <reason>` → pulse closes issue
