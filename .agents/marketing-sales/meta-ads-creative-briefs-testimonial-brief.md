@@ -2,17 +2,13 @@
 
 > For filming testimonials with actual customers.
 
----
-
-## About This Testimonial
-
 **Customer:** [Name] · [Company] · [Title] · [Duration using product]
 
 ---
 
 ## Pre-Interview Checklist
 
-- [ ] Release form signed
+- [ ] Release form signed (video/image release, name/company usage, ad placement consent, usage duration)
 - [ ] Customer comfortable on camera
 - [ ] Quiet space with good lighting
 - [ ] Product available for b-roll
@@ -37,17 +33,17 @@
 
 ## Ideal Quotes to Capture
 
-**Problem:** "Before [PRODUCT], I was [specific struggle]..."  
-**Result:** "Since using [PRODUCT], I've [specific improvement/number]..."  
-**Recommendation:** "If you're [target audience], you need [PRODUCT] because..."  
-**Emotional:** "I finally feel [positive emotion] about [area]..."
+- **Problem:** "Before [PRODUCT], I was [specific struggle]..."
+- **Result:** "Since using [PRODUCT], I've [specific improvement/number]..."
+- **Recommendation:** "If you're [target audience], you need [PRODUCT] because..."
+- **Emotional:** "I finally feel [positive emotion] about [area]..."
 
 ---
 
 ## Technical Requirements
 
-**Video:** 1080p min (4K preferred) · Horizontal 16:9 · Medium shot (head and shoulders) · Clean, professional background  
-**Audio:** External mic (lav or shotgun) · Quiet, no echo  
+**Video:** 1080p min (4K preferred) · Horizontal 16:9 · Medium shot (head and shoulders) · Clean background
+**Audio:** External mic (lav or shotgun) · Quiet, no echo
 **Lighting:** Soft, flattering · No harsh shadows · 3-point setup preferred
 
 ---
@@ -62,19 +58,11 @@
 
 ---
 
-## B-Roll to Capture
+## B-Roll Shot List
 
-- [ ] Customer using product
-- [ ] Customer at their workspace
-- [ ] Product close-ups
-- [ ] Customer's logo/signage
+- [ ] Customer using product · Customer at workspace
+- [ ] Product close-ups · Customer's logo/signage
 - [ ] Team interaction (if applicable)
-
----
-
-## Release Form
-
-Must be signed before filming: video/image release · name/company usage rights · ad placement consent · duration of usage rights
 
 ---
 
