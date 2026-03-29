@@ -125,6 +125,31 @@ Skip triage reviews when:
 - The issue was created less than 5 minutes ago (give the author time to add context)
 - The maintainer has already commented on the issue (they're already engaged)
 
+### 4.6. Scan status:needs-info issues for contributor replies
+
+Check the pre-fetched "Needs Info — Contributor Reply Status" section. For each issue marked **replied** (contributor commented after the label was applied), relabel to `needs-maintainer-review` so it re-enters the triage pipeline for re-evaluation.
+
+```bash
+# For each replied issue from the pre-fetched needs-info status:
+REPO=$(echo "$SLUG" | cut -d/ -f1-2)
+MAINTAINER=$(jq -r --arg slug "$SLUG" \
+  '.[] | select(.slug == $slug) | .maintainer // empty' "$REPOS_JSON")
+
+gh issue edit <number> --repo "$SLUG" \
+  --remove-label "status:needs-info" \
+  --add-label "needs-maintainer-review"
+gh issue comment <number> --repo "$SLUG" \
+  --body "Contributor replied to the information request. Relabeled to \`needs-maintainer-review\` for re-evaluation."
+```
+
+This is a lightweight label transition — no worker dispatch, no slots consumed. The issue will be picked up by the triage review pipeline (step 4.5) on the next cycle.
+
+**Skip when:**
+
+- No issues have `status:needs-info` label
+- The contributor has not commented since the label was applied (pre-fetched status shows **waiting**)
+- The only new comments are from bots or the maintainer (not the original issue author)
+
 ### 5. Record initial dispatch success
 
 ```bash
@@ -167,7 +192,8 @@ After the initial dispatch, enter a monitoring loop. Each cycle:
 
 4. **If slots are open**: check for mergeable PRs (free), then dispatch workers for the
    highest-priority open issues, then dispatch triage reviews for unreviewed
-   `needs-maintainer-review` issues (same rules as Step 4.5). Use the same dedup guards
+   `needs-maintainer-review` issues (same rules as Step 4.5), then scan `status:needs-info`
+   issues for contributor replies (same rules as Step 4.6). Use the same dedup guards
    and dispatch commands as the initial dispatch. Re-fetch issue state with targeted `gh`
    calls only for repos where you need to dispatch (not a full re-fetch of all repos).
 
@@ -280,6 +306,7 @@ When closing any issue, ALWAYS comment first explaining why and linking to the P
 - **Too large for one worker** → classify with `task-decompose-helper.sh classify`. If composite, decompose into subtask issues, label parent `status:blocked`. Child tasks enter the normal dispatch queue.
 - **`status:queued` or `status:in-progress`** → check `updatedAt`. If updated within 3 hours, skip. If 3+ hours with no PR and no worker, relabel `status:available`, unassign, comment the recovery. Note: issues claimed at creation via `/new-task` option 2 (t1687) will have `status:in-progress` + assignee set immediately, so the pulse correctly skips them during the interactive work window.
 - **`needs-maintainer-review`** → Do NOT dispatch an implementation worker. Instead, dispatch a **triage review worker** if no agent review comment exists yet (see "Automated triage review" below).
+- **`status:needs-info`** → Do NOT dispatch. Check the pre-fetched "Needs Info — Contributor Reply Status" section. If the contributor has replied since the label was applied, relabel to `needs-maintainer-review` so the triage pipeline re-evaluates (see "Contributor reply scan for status:needs-info" below).
 - **`status:available` or no status (without `needs-maintainer-review`)** → dispatch a worker.
 
 ### External issues and PRs — maintainer review gate (t1545)
@@ -616,6 +643,31 @@ fi
 - Only check the maintainer's **most recent** comment — earlier comments may have been superseded.
 - This is additive — direct label manipulation still works. If the maintainer has already removed `needs-maintainer-review` via labels, the item won't appear in this scan.
 - Keep this lightweight — one API call per `needs-maintainer-review` item per cycle. These items are low-volume by design.
+
+### Contributor reply scan for status:needs-info
+
+Issues labeled `status:needs-info` are waiting for the contributor to provide additional information. Each cycle, check the pre-fetched "Needs Info — Contributor Reply Status" section for issues where the contributor has replied.
+
+**Detection logic** (handled by `prefetch_needs_info_replies()` in `pulse-wrapper.sh`): For each `status:needs-info` issue, compare the label's `updatedAt` timestamp against the most recent comment from the issue author. If the author commented after the label was applied, the issue is marked **replied**.
+
+**When a contributor has replied:**
+
+```bash
+gh issue edit <number> --repo <slug> \
+  --remove-label "status:needs-info" \
+  --add-label "needs-maintainer-review"
+gh issue comment <number> --repo <slug> \
+  --body "Contributor replied to the information request. Relabeled to \`needs-maintainer-review\` for re-evaluation."
+```
+
+The issue re-enters the triage pipeline. On the next cycle, `prefetch_triage_review_status()` will mark it **needs-review** (since the previous review predates the new information), and step 4.5 will dispatch a follow-up triage review worker.
+
+**Guard rails:**
+
+- Only count comments from the **original issue author** — not bots, maintainer, or other contributors.
+- This is a label transition only — no worker dispatch, no slots consumed.
+- If the maintainer has already relabeled the issue manually, it won't appear in this scan.
+- One API call per `status:needs-info` issue per cycle. These are low-volume by design.
 
 ### Kill stuck workers
 
