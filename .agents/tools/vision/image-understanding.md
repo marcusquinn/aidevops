@@ -24,28 +24,19 @@ tools:
 
 ## Model Selection
 
-| Model | Provider | Context | Cost (in/out per 1M) | Local | Best For |
+| Model | Provider | Context | Cost (in/out per 1M) | Local | Use When |
 |-------|----------|---------|----------------------|-------|----------|
-| **GPT-4o** | OpenAI | 128K | $2.50/$10 | No | General analysis, reasoning |
+| **GPT-4o** | OpenAI | 128K | $2.50/$10 | No | Best accuracy, general analysis |
 | **Claude Sonnet** | Anthropic | 200K | $3/$15 | No | Nuanced descriptions, code review |
 | **Claude Opus** | Anthropic | 200K | $15/$75 | No | Complex reasoning |
-| **Gemini 2.5 Pro** | Google | 1M | $1.25/$10 | No | Large images, long documents |
-| **Gemini 2.5 Flash** | Google | 1M | $0.15/$0.60 | No | Fast, cost-effective |
+| **Gemini 2.5 Pro** | Google | 1M | $1.25/$10 | No | Large images/documents (1M context) |
+| **Gemini 2.5 Flash** | Google | 1M | $0.15/$0.60 | No | Cost-effective cloud |
 | **LLaVA** | Open source | 4K | Free | Yes | General vision, ~4GB VRAM |
 | **MiniCPM-o** | OpenBMB | 8K | Free | Yes | Efficient local, ~4GB |
 | **Qwen-VL** | Alibaba | 32K | Free | Yes | Multilingual, ~8GB |
 | **InternVL 2.5** | Shanghai AI Lab | 8K | Free | Yes | Strong reasoning, ~8GB |
 
-| Need | Use |
-|------|-----|
-| Best accuracy | GPT-4o or Claude Opus |
-| Cost-effective cloud | Gemini 2.5 Flash |
-| Large image/document | Gemini 2.5 Pro (1M context) |
-| Nuanced text descriptions | Claude Sonnet |
-| Fully local/private | LLaVA or MiniCPM-o (Ollama) |
-| Multilingual | Qwen-VL |
-| Pure text extraction | `tools/ocr/glm-ocr.md` |
-| Screen capture + analysis | `tools/browser/peekaboo.md` |
+Pure text extraction → `tools/ocr/glm-ocr.md` | Screen capture + analysis → `tools/browser/peekaboo.md`
 
 ## Cloud APIs
 
@@ -88,12 +79,11 @@ magick input.png -resize '1568x1568>' output.png                # ImageMagick ('
 ### Google (Gemini Vision)
 
 ```bash
+# 1M context — best for very large images or multiple images per request
 curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$GOOGLE_AI_KEY" \
   -H "Content-Type: application/json" \
   -d '{"contents":[{"parts":[{"text":"Analyse this chart"},{"inline_data":{"mime_type":"image/png","data":"<base64-data>"}}]}]}'
 ```
-
-**Advantage**: 1M token context for very large images or multiple images per request.
 
 ## Local Models (Ollama)
 
