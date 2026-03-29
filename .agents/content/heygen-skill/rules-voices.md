@@ -37,18 +37,6 @@ async function listVoices(): Promise<Voice[]> {
 }
 ```
 
-```python
-import requests, os
-
-def list_voices() -> list:
-    data = requests.get(
-        "https://api.heygen.com/v2/voices",
-        headers={"X-Api-Key": os.environ["HEYGEN_API_KEY"]}
-    ).json()
-    if data.get("error"): raise Exception(data["error"])
-    return data["data"]["voices"]
-```
-
 ## Response Format
 
 ```json
@@ -113,6 +101,8 @@ HeyGen supports SSML-style `<break>` tags. Format: `<break time="Xs"/>` where X 
 - Use seconds with "s" suffix: `<break time="1.5s"/>`
 - Must have space before and after tag: `word <break time="1s"/> word`
 - Self-closing tag only
+- Multiple consecutive breaks are automatically combined (e.g., `1s` + `0.5s` = `1.5s`)
+- Typical range: 0.5s–2s; longer feels unnatural
 
 ```typescript
 const script = `Welcome to our product demo. <break time="1s"/>
@@ -121,32 +111,16 @@ First, let's look at the dashboard. <break time="1.5s"/>
 As you can see, it's incredibly intuitive.`;
 ```
 
-Multiple consecutive breaks are automatically combined (e.g., `1s` + `0.5s` = `1.5s`).
-
-**Best practices:** 0.5s–2s is typical; longer feels unnatural. Add pauses where a human would breathe.
-
 ## Filtering Voices
 
 ```typescript
-// Combined filter helper
-async function findVoice(criteria: {
-  language?: string;
-  gender?: "male" | "female";
-  supportPause?: boolean;
-  emotionSupport?: boolean;
-}): Promise<Voice | null> {
-  const voices = await listVoices();
-  return voices.find((v) => {
-    if (criteria.language && !v.language.toLowerCase().includes(criteria.language.toLowerCase())) return false;
-    if (criteria.gender && v.gender !== criteria.gender) return false;
-    if (criteria.supportPause !== undefined && v.support_pause !== criteria.supportPause) return false;
-    if (criteria.emotionSupport !== undefined && v.emotion_support !== criteria.emotionSupport) return false;
-    return true;
-  }) || null;
-}
-
-// Usage
-const voice = await findVoice({ language: "english", gender: "female", emotionSupport: true });
+const voices = await listVoices();
+const voice = voices.find(
+  (v) =>
+    v.language.toLowerCase().includes("english") &&
+    v.gender === "female" &&
+    v.emotion_support === true
+);
 ```
 
 ## Matching Voice to Avatar
@@ -154,11 +128,10 @@ const voice = await findVoice({ language: "english", gender: "female", emotionSu
 **Recommended:** Use the avatar's `default_voice_id` — it's pre-matched.
 
 ```typescript
-const response = await fetch(
+const { data } = await fetch(
   "https://api.heygen.com/v3/avatar_group.list?include_public=true",
   { headers: { "X-Api-Key": process.env.HEYGEN_API_KEY! } }
-);
-const { data } = await response.json();
+).then((r) => r.json());
 const avatar = data.avatar_group_list.find((a: any) => a.default_voice_id);
 // Use avatar.default_voice_id in voice config
 ```
@@ -168,14 +141,14 @@ See [avatars.md](avatars.md) for complete examples.
 **Fallback:** If no default voice, match gender manually:
 
 ```typescript
-async function findMatchingAvatarAndVoice(preferredGender?: "male" | "female") {
-  const [avatars, voices] = await Promise.all([listAvatars(), listVoices()]);
-  const gender = preferredGender || "male";
-  const avatar = avatars.find((a) => a.gender === gender);
-  const voice = voices.find((v) => v.gender === gender && v.language.toLowerCase().includes("english"));
-  if (!avatar || !voice) throw new Error(`No ${gender} avatar/voice available`);
-  return { avatarId: avatar.avatar_id, voiceId: voice.voice_id, gender };
-}
+const [avatars, voices] = await Promise.all([listAvatars(), listVoices()]);
+const gender = preferredGender || "male";
+const avatar = avatars.find((a) => a.gender === gender);
+const voice = voices.find(
+  (v) => v.gender === gender && v.language.toLowerCase().includes("english")
+);
+if (!avatar || !voice) throw new Error(`No ${gender} avatar/voice available`);
+return { avatarId: avatar.avatar_id, voiceId: voice.voice_id };
 ```
 
 ## Multi-Language Videos
