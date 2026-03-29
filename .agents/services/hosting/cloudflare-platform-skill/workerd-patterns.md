@@ -1,5 +1,18 @@
 # Workerd Patterns
 
+## Best Practices
+
+| Rule | Detail |
+|------|--------|
+| ES modules | Prefer over service worker syntax |
+| Explicit bindings | No global namespace assumptions |
+| Type safety | Define `Env` interfaces |
+| Service isolation | Split concerns across services |
+| Pin compat date | Set in production after testing |
+| Background tasks | Use `ctx.waitUntil()` |
+| Error handling | Wrap handlers in try/catch |
+| Secrets | Use `fromEnvironment`, never hardcode |
+
 ## Multi-Service Architecture
 
 ```capnp
@@ -47,24 +60,20 @@ const config :Workerd.Config = (
 
 ## Dev vs Prod Configs
 
+Use separate named configs per environment; override bindings via `fromEnvironment`:
+
 ```capnp
 const devWorker :Workerd.Worker = (
   modules = [(name = "index.js", esModule = embed "src/index.js")],
   compatibilityDate = "2024-01-15",
   bindings = [
-    (name = "API_URL", text = "http://localhost:3000"),
-    (name = "DEBUG", text = "true"),
-  ]
-);
-
-const prodWorker :Workerd.Worker = (
-  inherit = "dev-service",
-  bindings = [
-    (name = "API_URL", text = "https://api.prod.com"),
-    (name = "DEBUG", text = "false"),
+    (name = "API_URL", fromEnvironment = "API_URL"),
+    (name = "DEBUG", fromEnvironment = "DEBUG"),
   ]
 );
 ```
+
+Run with: `API_URL=http://localhost:3000 DEBUG=true workerd serve dev.capnp`
 
 ## HTTP Reverse Proxy
 
@@ -87,8 +96,8 @@ const config :Workerd.Config = (
 | Method | Command |
 |--------|---------|
 | Wrangler | `export MINIFLARE_WORKERD_PATH="/path/to/workerd" && wrangler dev` |
-| Direct | `workerd serve config.capnp --socket-addr http=*:3000 --verbose` |
-| With env vars | `export DATABASE_URL="postgres://..." && workerd serve config.capnp` |
+| Direct | `workerd serve config.capnp --verbose` |
+| With env vars | `API_URL=https://api.example.com workerd serve config.capnp` |
 
 ### Environment Variables
 
@@ -164,36 +173,6 @@ CMD ["workerd", "serve", "/etc/workerd/config.capnp"]
 ```bash
 workerd compile config.capnp myConfig -o production-server
 ./production-server
-```
-
-## Best Practices
-
-| Rule | Detail |
-|------|--------|
-| ES modules | Prefer over service worker syntax |
-| Explicit bindings | No global namespace assumptions |
-| Type safety | Define `Env` interfaces |
-| Service isolation | Split concerns across services |
-| Pin compat date | Set in production after testing |
-| Background tasks | Use `ctx.waitUntil()` |
-| Error handling | Wrap handlers in try/catch |
-| Resource limits | Configure limits on caches/storage |
-
-## Fetch Handler
-
-```javascript
-export default {
-  async fetch(request, env, ctx) {
-    console.log("Request", {method: request.method, url: request.url});
-    ctx.waitUntil(logToAnalytics(request, env));
-    try {
-      return await handleRequest(request, env);
-    } catch (error) {
-      console.error("Request failed", error);
-      return new Response("Internal Error", {status: 500});
-    }
-  }
-};
 ```
 
 See [gotchas.md](./gotchas.md) for common errors.
