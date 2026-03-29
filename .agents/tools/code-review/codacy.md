@@ -18,55 +18,40 @@ tools:
 
 ## Quick Reference
 
-- Auto-fix command: `bash .agents/scripts/codacy-cli.sh analyze --fix`
-- Via manager: `bash .agents/scripts/quality-cli-manager.sh analyze codacy-fix`
-- Fix types: Code style, best practices, security, performance, maintainability
-- Safety: Non-breaking, reversible, conservative (skips ambiguous)
-- Metrics: 70-90% time savings, 99%+ accuracy, 60-80% violation coverage
-- Cannot fix: Complex logic, architecture, context-dependent, breaking changes
-- Best practices: Always review, test after, incremental batches, clean git state
-- Workflow: quality-check -> analyze --fix -> quality-check -> commit with metrics
+- **Auto-fix:** `bash .agents/scripts/codacy-cli.sh analyze --fix`
+- **Via manager:** `bash .agents/scripts/quality-cli-manager.sh analyze codacy-fix`
+- **Fix types:** Code style, best practices, security, performance, maintainability
+- **Safety:** Non-breaking, reversible, conservative (skips ambiguous)
+- **Metrics:** 70-90% time savings, 99%+ accuracy, 60-80% violation coverage
+- **Cannot fix:** Complex logic, architecture, context-dependent, breaking changes
+- **Workflow:** quality-check → analyze --fix → quality-check → commit with metrics
 
 ## Quality Gate Settings
 
 **Current gate (PR and commits):** max 10 new issues, minimum severity Warning.
 
-**Rationale (GH#4910, t1489):** The gate was originally set to 0 max new issues. This
-tripped 4x during extract-function refactoring sessions — new helper functions count as
-added complexity, and subprocess calls in new functions count as new Bandit warnings.
-The project grade stays A throughout; these are not real regressions. Threshold raised
-to 10 Warning+ to absorb refactoring noise while still blocking genuine security/error issues.
+**Rationale (GH#4910, t1489):** Originally 0 max new issues. Tripped 4x during extract-function refactoring — new helper functions add complexity counts, subprocess calls trigger Bandit warnings. Project grade stays A; these aren't real regressions. Raised to 10 Warning+ to absorb refactoring noise while blocking genuine issues.
 
-**Do not revert to 0.** A threshold of 0 makes extract-function refactoring impossible
-without manual Codacy dashboard intervention on every PR. The project grade (A) is the
-meaningful quality signal, not the per-PR new-issue count.
+**Do not revert to 0.** Threshold 0 makes extract-function refactoring impossible without manual Codacy dashboard intervention per PR. The project grade (A) is the meaningful quality signal, not per-PR new-issue count.
 
 ## Local Pre-Push Checks (GH#4939)
 
-`linters-local.sh` now includes three checks aligned with Codacy's complexity engine,
-catching the same issues locally before code reaches Codacy:
+`linters-local.sh` includes checks aligned with Codacy's complexity engine, catching issues locally before push:
 
 | Check | Codacy equivalent | Warning | Blocking | Gate |
 |-------|-------------------|---------|----------|------|
 | `function-complexity` | Function length | >50 lines | >100 lines | `function-complexity` |
 | `nesting-depth` | Cyclomatic complexity | >5 levels | >8 levels | `nesting-depth` |
 | `file-size` | File length | >800 lines | >1500 lines | `file-size` |
+| `python-complexity` | Lizard CCN | >8 (advisory) | — | `python-complexity` |
 
-Additionally, `python-complexity` runs Lizard (same tool Codacy uses) and Pyflakes locally:
+`python-complexity` runs Lizard (same tool Codacy uses) and Pyflakes locally.
 
-| Check | Codacy tool | Threshold | Gate |
-|-------|-------------|-----------|------|
-| `python-complexity` | Lizard CCN | >8 (advisory) | `python-complexity` |
+Gates are set above current baseline to catch regressions. Reduce thresholds as existing debt is paid down (via code-simplifier issues). Also covers Python files in `.agents/scripts/` for file-size checks.
 
-These gates are set above the current baseline to catch regressions. As existing debt
-is paid down (via code-simplifier issues), reduce the thresholds. The gates also cover
-Python files in `.agents/scripts/` for file-size checks.
+CI enforcement: `.github/workflows/code-quality.yml` runs the same checks on every PR via the `complexity-check` job, blocking merges that exceed thresholds.
 
-CI enforcement: `.github/workflows/code-quality.yml` runs the same checks on every PR
-via the `complexity-check` job, blocking merges that exceed thresholds.
-
-Skip via bundle config: add `"function-complexity"`, `"nesting-depth"`, `"file-size"`,
-or `"python-complexity"` to `skip_gates` in the project bundle.
+Skip via bundle config: add gate names to `skip_gates` in the project bundle.
 
 ## Codacy API Patterns (verified working)
 
