@@ -62,7 +62,7 @@ Low-confidence findings: flag as "worth discussing" not "should change." Create 
 
 ## Classification
 
-### Safe to simplify (high confidence)
+### Safe (high confidence)
 
 - Decorative emojis conveying no information beyond surrounding text
 - Comments restating what the next line does (`# increment counter` above `counter += 1`)
@@ -80,7 +80,7 @@ Tighten by removing filler, redundant explanations, and narrative context that d
 
 **Evidence (t1679):** `build.txt` 63% byte reduction (45k→17k), zero rule loss. `AGENTS.md` 48% (22k→12k). All 25 critical patterns verified present.
 
-### Requires careful judgment (medium confidence)
+### Requires judgment (medium confidence)
 
 - Verbose code that could be shorter without losing readability
 - Abstractions adding indirection without clear benefit
@@ -92,7 +92,7 @@ Knowledge bases (skill docs, domain reference) whose size comes from breadth, no
 
 **Action:** Split into chapter files with a slim index (~100-200 lines). Verify zero content loss: `wc -l` total of chapters >= original minus index overhead. Issue title: "restructure" not "tighten".
 
-### Almost never simplify (flag but do not recommend)
+### Almost never simplify
 
 - Comments with task IDs, incident numbers, or error pattern data (`t1345`, `GH#2928`, `46.8% failure rate`)
 - Comments explaining *why* something is disabled, with bug/PR references (`DISABLED:` blocks)
@@ -103,12 +103,12 @@ Knowledge bases (skill docs, domain reference) whose size comes from breadth, no
 
 ## Core Principles
 
-1. **Preserve everything with purpose.** If uncertain whether removing loses needed information, it stays.
+1. **Preserve everything with purpose.** Uncertain whether removing loses needed information → it stays.
 2. **Remove decorative noise.** Emojis/formatting that add no information. Exception: genuine UI/UX purpose.
 3. **Apply project standards** — but standards themselves are not simplification targets.
 4. **Enhance clarity without losing depth.** Reduce nesting, improve naming, remove "what" comments (not "why").
 5. **Maintain balance.** Avoid over-simplification that removes helpful abstractions or loses edge-case handling.
-6. **No arbitrary line targets.** Never set a target line count — the resulting size is whatever remains after removing genuine noise. Invented targets create pressure to cut content for a number, conflicting with principle 1. For large files, subdivide per `build-agent.md` (~300-line threshold) instead of compressing.
+6. **No arbitrary line targets.** Never set a target line count — resulting size is whatever remains after removing genuine noise. Invented targets create pressure to cut content for a number, conflicting with principle 1. For large files, subdivide per `build-agent.md` (~300-line threshold) instead of compressing.
 
 ## Usage
 
@@ -146,9 +146,7 @@ EXISTING=$(gh issue list --repo <slug> \
 if [[ "$EXISTING" -gt 0 ]]; then
   echo "Skipping <file_path> — existing open simplification-debt issue found"
 else
-  # Generate signature footer (auto-detects model, tokens, time from session DB)
   SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer 2>/dev/null || echo "")
-
   gh issue create --repo <slug> \
     --title "simplification: <brief description>" \
     --label "simplification-debt" --label "needs-maintainer-review" \
