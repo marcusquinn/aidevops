@@ -45,16 +45,17 @@ tools:
 
 ### Step 2: Character Bible
 
-For recurring characters, create a CHARACTER CONTEXT PROFILE and prepend it to every scene prompt.
+Create a CHARACTER CONTEXT PROFILE for recurring characters; prepend to every scene prompt.
 
-**Facial Engineering Process** (critical for consistency):
-1. Generate or select a base character image
-2. Upload to a vision model; request extreme-detail facial analysis (measurements, eye shape, nose bridge width, lip fullness, skin undertone)
-3. Save as CHARACTER CONTEXT PROFILE — prepend to every scene prompt
+**Facial engineering** (critical for consistency):
+
+1. Generate or select base character image
+2. Upload to vision model; request extreme-detail facial analysis (measurements, eye shape, nose bridge width, lip fullness, skin undertone)
+3. Save as CHARACTER CONTEXT PROFILE
 
 **Profile fields**: face shape, eye shape/color, nose structure, lip shape, skin tone (hex), hair color/style/length, distinguishing features, age range, speaking style, energy level, wardrobe + color palette (hex), accessories.
 
-**Consistency rules**: include facial details in every prompt; same lighting temperature across scenes; maintain wardrobe continuity unless scene requires change.
+**Consistency**: include facial details in every prompt; same lighting temperature across scenes; maintain wardrobe continuity unless scene requires change.
 
 ### Step 3: Shot List
 
@@ -70,22 +71,22 @@ Background Sound: [ambient, music style, SFX]
 
 **Shot types**:
 
-| Code | Use |
-|------|-----|
-| ECU (Extreme Close-Up) | Eyes, lips, product detail |
-| CU (Close-Up) | Face fills frame |
-| MCU (Medium Close-Up) | Head and shoulders |
-| MS (Medium Shot) | Waist up |
-| MWS (Medium Wide Shot) | Knees up |
-| WS (Wide Shot) | Full body with environment |
-| EWS (Extreme Wide Shot) | Establishing, landscape |
+| Code | Full name | Use |
+|------|-----------|-----|
+| ECU | Extreme Close-Up | Eyes, lips, product detail |
+| CU | Close-Up | Face fills frame |
+| MCU | Medium Close-Up | Head and shoulders |
+| MS | Medium Shot | Waist up |
+| MWS | Medium Wide Shot | Knees up |
+| WS | Wide Shot | Full body with environment |
+| EWS | Extreme Wide Shot | Establishing, landscape |
 
 **Camera movements**:
 
 | Movement | Use |
 |----------|-----|
-| Static | Locked tripod, professional feel |
-| Handheld | Authentic UGC feel, micro-movements |
+| Static | Locked tripod, professional |
+| Handheld | Authentic UGC, micro-movements |
 | Push-in | Building tension/focus |
 | Pull-out | Reveal, establishing context |
 | Pan | Horizontal sweep, following action |
@@ -161,7 +162,7 @@ Background Sound: [ambient, music style, SFX]
 | UGC/TikTok | 9:16, 10-30s | Hook (3s) → Problem (5s) → Solution (10s) → CTA (3s) | iPhone 15 Pro, handheld | 2-3s/shot | Direct-to-camera, trending sounds |
 | Commercial | 16:9, 15-60s | Attention (3s) → Story (20s) → Product (10s) → CTA (5s) | RED Komodo 6K or ARRI Alexa LF | 3-5s/shot | Voiceover, ambient, subtle music |
 | Slideshow | 9:16, 15-30s | Hook → 3-5 content slides → CTA | Static, clean product shots (NanoBanana Pro) | 3-5s/slide | Trending sound, text overlays |
-| AI Influencer | 9:16, 20-25s | Hook (2s) → Value (15-20s) → Soft CTA (3s) | Mix CU/MS, slight handheld | — | Text-to-video > image-to-video; film grain (CapCut), 1.25-1.75x upscale (Topaz) |
+| AI Influencer | 9:16, 20-25s | Hook (2s) → Value (15-20s) → Soft CTA (3s) | Mix CU/MS, slight handheld | -- | Text-to-video > image-to-video; film grain (CapCut), 1.25-1.75x upscale (Topaz) |
 
 ## Unlimited Model Strategy (Higgsfield)
 
@@ -173,11 +174,9 @@ Background Sound: [ambient, music style, SFX]
 | Lipsync | Wan 2.5 Speak | 9 credits |
 | Face swap | Higgsfield Face Swap | 0 (unlimited) |
 
-**Budget rule**: Only lipsync costs credits. Everything else should be unlimited.
+**Budget rule**: Only lipsync costs credits. Everything else unlimited.
 
 ## Prompt Quality Checklist
-
-Before sending any prompt to generation:
 
 1. Real camera model specified?
 2. Lighting direction and quality included?
