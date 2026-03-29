@@ -25,18 +25,17 @@ tools:
 - **Helper**: `speech-to-speech-helper.sh [setup|start|stop|status|client|config|benchmark] [options]`
 - **Install dir**: `~/.aidevops/.agent-workspace/work/speech-to-speech/`
 - **Languages**: English, French, Spanish, Chinese, Japanese, Korean (auto-detect or fixed)
-
-**When to Use**: Voice interfaces, transcription pipelines, voice-driven DevOps, phone-based AI assistants (pairs with Twilio).
+- **Use for**: Voice interfaces, transcription pipelines, voice-driven DevOps, phone-based AI assistants (pairs with Twilio)
 
 <!-- AI-CONTEXT-END -->
 
 ## Architecture
 
-Four-stage cascaded pipeline via thread-safe queues. Each stage runs in its own thread; audio streams via socket or local device.
-
 ```text
 Microphone/Socket -> [VAD] -> [STT] -> [LLM] -> [TTS] -> Speaker/Socket
 ```
+
+Four-stage cascaded pipeline via thread-safe queues; each stage runs in its own thread.
 
 ## Components
 
@@ -68,7 +67,7 @@ Model: `--stt_model_name <model>` (any Whisper checkpoint on HF Hub)
 
 Model: `--lm_model_name <model>` or `--mlx_lm_model_name <model>`
 
-> **Security:** Store `OPENAI_API_KEY` with `aidevops secret set OPENAI_API_KEY` (gopass preferred) or `~/.config/aidevops/credentials.sh` (600 perms). Never hardcode keys; treat any committed/logged key as compromised and rotate immediately. See `tools/credentials/api-key-setup.md`.
+> **Security:** Store `OPENAI_API_KEY` via `aidevops secret set OPENAI_API_KEY`. Never hardcode keys. See `tools/credentials/api-key-setup.md`.
 
 ### TTS
 
@@ -100,7 +99,7 @@ speech-to-speech-helper.sh start --docker      # Docker (pytorch 2.4.0-cuda12.1,
 
 ```bash
 speech-to-speech-helper.sh setup
-# Or manually:
+# Manual:
 git clone https://github.com/huggingface/speech-to-speech.git && cd speech-to-speech
 uv pip install -r requirements.txt          # CUDA/Linux
 uv pip install -r requirements_mac.txt      # macOS
@@ -114,7 +113,7 @@ speech-to-speech-helper.sh start --local-mac --language auto   # auto-detect per
 speech-to-speech-helper.sh start --local-mac --language zh     # fixed language
 ```
 
-Requires multilingual STT model (e.g., `--stt_model_name large-v3`) and multilingual TTS (MeloTTS or ChatTTS — Parler-TTS is English-only).
+Requires multilingual STT (e.g., `--stt_model_name large-v3`) and multilingual TTS (MeloTTS or ChatTTS; Parler-TTS is English-only).
 
 ## CLI Parameters
 
@@ -133,10 +132,10 @@ Full reference: `python s2s_pipeline.py -h` or [arguments_classes/](https://gith
 
 ## Integrations
 
-- **Transcription**: Use Whisper directly for standalone transcription. See `tools/voice/transcription.md`. For S2S-based transcription, use `--llm open_api` with a transcription-only system prompt.
-- **Phone (Twilio)**: Twilio streams audio via WebSocket → S2S processes in real-time → TTS response streamed back. See `services/communications/twilio.md`.
-- **Video narration**: LLM generates script → TTS produces audio → Remotion composites. See `tools/video/remotion.md`.
-- **Voice-driven DevOps**: STT captures command → LLM interprets via system prompt → TTS confirms. Integration pattern, not a built-in command.
+- **Transcription**: Standalone — use Whisper directly (`tools/voice/transcription.md`). S2S-based — use `--llm open_api` with a transcription-only system prompt.
+- **Phone (Twilio)**: WebSocket audio stream → S2S → TTS response. See `services/communications/twilio.md`.
+- **Video narration**: LLM script → TTS audio → Remotion composite. See `tools/video/remotion.md`.
+- **Voice-driven DevOps**: STT → LLM (system prompt) → TTS confirm. Integration pattern, not a built-in command.
 
 ## Troubleshooting
 
@@ -162,8 +161,6 @@ voice-helper.sh devices | voices | benchmark
 **Architecture:** `Mic -> Silero VAD -> Whisper MLX (1.4s) -> OpenCode run --attach (~4-6s) -> Edge TTS (0.4s) -> Speaker`
 
 **Round-trip:** ~6–8s conversational, longer for tool execution. Supports swappable STT/TTS engines, voice exit phrases, STT sanity checking, session handback, Esc interrupt, and graceful TUI degradation.
-
-The full S2S pipeline is for advanced use cases: custom LLMs, server/client deployment, multi-language, phone integration.
 
 ## See Also
 
