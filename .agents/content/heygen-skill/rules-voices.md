@@ -7,9 +7,7 @@ metadata:
 
 # HeyGen Voices
 
-HeyGen provides AI voices for different languages, accents, and styles.
-
-## Listing Available Voices
+## Listing Voices
 
 ```bash
 curl -X GET "https://api.heygen.com/v2/voices" \
@@ -37,26 +35,9 @@ async function listVoices(): Promise<Voice[]> {
 }
 ```
 
-## Response Format
+Response: `{ error: null, data: { voices: Voice[] } }`. Each voice includes `voice_id`, `name`, `language`, `gender`, `preview_audio`, `support_pause`, `emotion_support`.
 
-```json
-{
-  "error": null,
-  "data": {
-    "voices": [
-      {
-        "voice_id": "1bd001e7e50f421d891986aad5158bc8",
-        "name": "Sara",
-        "language": "English",
-        "gender": "female",
-        "preview_audio": "https://files.heygen.ai/...",
-        "support_pause": true,
-        "emotion_support": true
-      }
-    ]
-  }
-}
-```
+Filter example: `voices.find(v => v.language.toLowerCase().includes("english") && v.gender === "female" && v.emotion_support)`
 
 ## Supported Languages
 
@@ -70,21 +51,18 @@ async function listVoices(): Promise<Voice[]> {
 | German | de-DE | Arabic | ar-SA |
 | Portuguese | pt-BR | Chinese (Mandarin) | zh-CN |
 
-## Using Voices in Video Generation
+## Voice Configuration
 
 ```typescript
-// Basic usage
+// Basic TTS
 voice: {
   type: "text",
   input_text: "Hello! Welcome to our presentation.",
   voice_id: "1bd001e7e50f421d891986aad5158bc8",
 }
 
-// With speed adjustment (range: 0.5–2.0, default 1.0)
-voice: { ...above, speed: 1.2 }
-
-// With pitch adjustment (range: -20 to 20)
-voice: { ...above, pitch: 10 }
+// Speed: 0.5-2.0 (default 1.0), Pitch: -20 to 20
+voice: { ...above, speed: 1.2, pitch: 10 }
 
 // Custom audio instead of TTS
 voice: {
@@ -93,16 +71,15 @@ voice: {
 }
 ```
 
-## Adding Pauses with Break Tags
+## SSML Break Tags
 
-HeyGen supports SSML-style `<break>` tags. Format: `<break time="Xs"/>` where X is seconds.
+Format: `<break time="Xs"/>` (X in seconds). Rules:
 
-**Rules:**
-- Use seconds with "s" suffix: `<break time="1.5s"/>`
-- Must have space before and after tag: `word <break time="1s"/> word`
-- Self-closing tag only
-- Multiple consecutive breaks are automatically combined (e.g., `1s` + `0.5s` = `1.5s`)
-- Typical range: 0.5s–2s; longer feels unnatural
+- Seconds with "s" suffix: `<break time="1.5s"/>`
+- Space required before and after tag
+- Self-closing only
+- Consecutive breaks auto-combine (e.g., `1s` + `0.5s` = `1.5s`)
+- Typical range: 0.5s-2s
 
 ```typescript
 const script = `Welcome to our product demo. <break time="1s"/>
@@ -111,21 +88,9 @@ First, let's look at the dashboard. <break time="1.5s"/>
 As you can see, it's incredibly intuitive.`;
 ```
 
-## Filtering Voices
-
-```typescript
-const voices = await listVoices();
-const voice = voices.find(
-  (v) =>
-    v.language.toLowerCase().includes("english") &&
-    v.gender === "female" &&
-    v.emotion_support === true
-);
-```
-
 ## Matching Voice to Avatar
 
-**Recommended:** Use the avatar's `default_voice_id` — it's pre-matched.
+**Preferred:** Use the avatar's `default_voice_id` (pre-matched).
 
 ```typescript
 const { data } = await fetch(
@@ -138,7 +103,7 @@ const avatar = data.avatar_group_list.find((a: any) => a.default_voice_id);
 
 See [avatars.md](avatars.md) for complete examples.
 
-**Fallback:** If no default voice, match gender manually:
+**Fallback** — match gender manually:
 
 ```typescript
 const [avatars, voices] = await Promise.all([listAvatars(), listVoices()]);
@@ -151,10 +116,6 @@ if (!avatar || !voice) throw new Error(`No ${gender} avatar/voice available`);
 return { avatarId: avatar.avatar_id, voiceId: voice.voice_id };
 ```
 
-## Multi-Language Videos
-
-Assign different `voice_id` values per scene in `video_inputs` — each scene can use a different language voice.
-
 ## Best Practices
 
 | Rule | Detail |
@@ -163,6 +124,7 @@ Assign different `voice_id` values per scene in `video_inputs` — each scene ca
 | Use default_voice_id | Pre-matched to avatar when available |
 | Test previews | Listen to `preview_audio` before selecting |
 | Match locale to audience | Consider accent and regional variant |
-| Natural pacing | Adjust speed 0.9–1.1x for clarity |
+| Natural pacing | Adjust speed 0.9-1.1x for clarity |
 | Add pauses | Use SSML breaks for natural speech flow |
 | Validate availability | Verify voice_id exists before using |
+| Multi-language | Assign different `voice_id` per scene in `video_inputs` |
