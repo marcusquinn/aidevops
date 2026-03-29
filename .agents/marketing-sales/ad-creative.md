@@ -1,10 +1,8 @@
-# Ad Creative Mastery: The Complete Guide to High-Converting Advertising Creative
+# Ad Creative Mastery
 
-**Reading path:** New → Core Principles below, then `platform-meta.md` and `copywriting.md` | Experienced → `testing-optimization.md`, `ai-tools-reference.md` | Team leads → `campaign-management.md`, CHAPTER-08 (Creative Operations). See CHAPTERS.md for the deep-dive chapter index.
+**Reading path:** New → Core Principles below, then `platform-meta.md` and `copywriting.md` | Experienced → `testing-optimization.md`, `ai-tools-reference.md` | Team leads → `campaign-management.md`, CHAPTER-08. See [CHAPTERS.md](CHAPTERS.md) for deep-dive chapter index.
 
-## Document Map
-
-This skill is split into focused sub-documents for progressive loading. Read what you need:
+## Sub-documents
 
 | Sub-document | Sections | Lines |
 |---|---|---|
@@ -39,19 +37,15 @@ This skill is split into focused sub-documents for progressive loading. Read wha
 
 ## Core Principles
 
-Ad creative is the single most important factor in advertising performance. Perfect targeting and bidding fail if your creative doesn't stop the scroll, capture attention, and drive action.
+Creative is the single most important factor in ad performance — targeting and bidding fail without a scroll-stopping hook.
 
-### Creative Performance Hierarchy
+### Performance Hierarchy
 
 1. **Hook (First 3s of video / First line of copy)** — 40% of performance
 2. **Visual Thumb-Stop** — 25%
 3. **Offer/Value Proposition** — 20%
 4. **Social Proof** — 10%
 5. **Call to Action** — 5%
-
-### The 80/20 Rule
-
-20% of your creative drives 80% of results. Identify and scale the 20% that works.
 
 ### Eight Principles
 
@@ -62,7 +56,7 @@ Ad creative is the single most important factor in advertising performance. Perf
 5. **Emotional First, Logical Second** — buy on emotion, justify with logic
 6. **Native to Platform** — look like content, not an ad
 7. **Mobile-First** — 80%+ of social ad views are on mobile
-8. **Test Everything** — data over opinions
+8. **Test Everything** — 20% of creative drives 80% of results; identify and scale the 20% that works
 
 ### Creative Funnel Framework
 
@@ -76,7 +70,9 @@ Ad creative is the single most important factor in advertising performance. Perf
 
 ---
 
-## Quick Reference: Specs
+## Quick Reference
+
+### Specs
 
 ```
 FACEBOOK:
@@ -98,7 +94,7 @@ TIKTOK:
 Video: 1080x1920 (9:16), 15-60s
 ```
 
-## Quick Reference: Hook Formulas
+### Hook Formulas
 
 ```
 QUESTIONS:
@@ -116,7 +112,7 @@ STATEMENTS:
 - "This is why [problem occurs]"
 ```
 
-## Quick Reference: Ad Copy Structure
+### Ad Copy Structure
 
 ```
 FACEBOOK/INSTAGRAM AD:
@@ -134,7 +130,7 @@ GOOGLE SEARCH AD:
 - Description 2: Social proof + guarantee
 ```
 
-## Quick Reference: Video Structure
+### Video Structure
 
 ```
 0-3s: HOOK (pattern interrupt)
@@ -148,7 +144,7 @@ Shorter versions:
 30s: Hook -> Problem -> Solution -> CTA
 ```
 
-## Quick Reference: Testing Priority
+### Testing Priority
 
 ```
 TEST FIRST:
@@ -169,7 +165,7 @@ TEST THIRD:
 11. Style elements
 ```
 
-## Quick Reference: Fatigue Indicators
+### Fatigue Indicators
 
 ```
 IMMEDIATE ACTION NEEDED:
@@ -189,7 +185,7 @@ MONITOR:
 - Frequency 4-5
 ```
 
-## Quick Reference: Performance Benchmarks
+### Performance Benchmarks
 
 ```
 FACEBOOK/INSTAGRAM:
