@@ -23,7 +23,7 @@ tools:
 - **Drafts**: `~/.aidevops/.agent-workspace/email-compose/drafts/`
 - **Sent**: `~/.aidevops/.agent-workspace/email-compose/sent/`
 
-**Key principle**: AI composes, human reviews. No email is sent without explicit confirmation. Draft-and-hold is the default for all non-template emails.
+**Key principle**: AI composes, human reviews. No email sent without explicit confirmation. Draft-and-hold is the default for all non-template emails.
 
 ```bash
 email-compose-helper.sh draft --to client@example.com \
@@ -31,6 +31,28 @@ email-compose-helper.sh draft --to client@example.com \
 ```
 
 <!-- AI-CONTEXT-END -->
+
+## Draft-Review-Send Workflow
+
+1. **AI COMPOSE** — tone detection, model selection, overused phrase check, signature injection
+2. **DRAFT SAVED** → `~/.aidevops/.agent-workspace/email-compose/drafts/draft-YYYYMMDD-HHMMSS-xxxx.md`
+3. **HUMAN REVIEW** — editor opens; edit freely; delete all content to abort
+4. **CONFIRM SEND** — shows To: and Subject:, `[y/N]` prompt
+5. **SEND** via `email-agent-helper.sh → SES` — draft archived to `sent/`
+
+**Never auto-send**: `--no-review` skips editor but still requires confirmation. Full bypass (`--no-review` + piping `y`) is for tested automation scripts only.
+
+## Legal Liability Awareness
+
+Email creates a written record. Distinguish clearly:
+
+- **Agreed** — contractually/verbally committed: *"As agreed in our contract, delivery is scheduled for 15 March."*
+- **Advised** — professional recommendation, not a guarantee: *"I would advise proceeding with Option A. This is my recommendation, not a guarantee of outcome."*
+- **Informational** — sharing without commitment: *"The current market rate is approximately £X. This is not a quote."*
+
+**Avoid:** admitting liability without legal review; commitments outside authority; speculating about outcomes; forwarding confidential info without permission.
+
+**Hedging:** "I understand" not "I agree"; "I'll look into this" not "We'll fix this"; "subject to contract" for commercial commitments. Consult legal before anything usable in a dispute.
 
 ## Commands
 
@@ -55,17 +77,6 @@ email-compose-helper.sh draft --to client@example.com \
 
 Opus for important emails is cost-justified — a poorly worded client email costs more than the model difference.
 
-## Tone Calibration
-
-Auto-detected from recipient domain; override with `--tone formal` or `--tone casual`.
-
-| Tone | Domains | Salutation | Closing | Style |
-|------|---------|------------|---------|-------|
-| `casual` | gmail, hotmail, yahoo, icloud, me.com | "Hi [Name]," | "Thanks," / "Cheers," | Contractions OK, direct |
-| `formal` | All other domains | "Dear [Name]," | "Kind regards," / "Best regards," | No contractions, explicit CTAs |
-
-Domain-level overrides: set `tone_overrides` in `email-compose-config.json`.
-
 ## Composition Rules
 
 1. **One sentence per paragraph** — mobile readability and threading
@@ -87,17 +98,16 @@ Domain-level overrides: set `tone_overrides` in `email-compose-config.json`.
 | "synergy" / "leverage" / "paradigm shift" / "move the needle" | Describe the actual benefit, change, or metric |
 | "low-hanging fruit" / "bandwidth" / "deep dive" / "at the end of the day" | "quick wins" / "capacity" / "detailed review" / state the conclusion |
 
-## Legal Liability Awareness
+## Tone Calibration
 
-Email creates a written record. Distinguish clearly:
+Auto-detected from recipient domain; override with `--tone formal` or `--tone casual`.
 
-- **Agreed** — contractually or verbally committed: *"As agreed in our contract, delivery is scheduled for 15 March."*
-- **Advised** — professional recommendation, not a guarantee: *"I would advise proceeding with Option A. This is my recommendation, not a guarantee of outcome."*
-- **Informational** — sharing without commitment: *"The current market rate is approximately £X. This is not a quote."*
+| Tone | Domains | Salutation | Closing | Style |
+|------|---------|------------|---------|-------|
+| `casual` | gmail, hotmail, yahoo, icloud, me.com | "Hi [Name]," | "Thanks," / "Cheers," | Contractions OK, direct |
+| `formal` | All other domains | "Dear [Name]," | "Kind regards," / "Best regards," | No contractions, explicit CTAs |
 
-**Avoid:** admitting liability without legal review; commitments outside authority; speculating about outcomes; forwarding confidential info without permission.
-
-**Hedging language:** "I understand" not "I agree"; "I'll look into this" not "We'll fix this"; "subject to contract" for commercial commitments. Consult legal before anything usable in a dispute.
+Domain-level overrides: set `tone_overrides` in `email-compose-config.json`.
 
 ## CC/BCC Patterns
 
@@ -117,9 +127,7 @@ Email creates a written record. Distinguish clearly:
 | 25–30MB | Warning — consider file-share link |
 | >30MB | Blocked — must use file-share link |
 
-**File-share alternatives:** Google Drive / Dropbox / OneDrive (general); [PrivateBin](https://privatebin.net) (confidential, self-destruct, password via separate channel); WeTransfer (large media).
-
-**Screenshots:** Crop to relevant content; remove credentials/personal data; annotate; prefer one annotated image over multiple raw ones.
+**File-share alternatives:** Google Drive / Dropbox / OneDrive (general); [PrivateBin](https://privatebin.net) (confidential, self-destruct, password via separate channel); WeTransfer (large media). Screenshots: crop to relevant content, remove credentials/personal data, annotate, prefer one annotated image over multiple raw ones.
 
 ## Signature Injection
 
@@ -136,16 +144,6 @@ Injected automatically from (in order): config file → signature file → Apple
 ```
 
 Use `--signature formal` to select a named signature.
-
-## Draft-Review-Send Workflow
-
-1. **AI COMPOSE** — tone detection, model selection, overused phrase check, signature injection
-2. **DRAFT SAVED** → `~/.aidevops/.agent-workspace/email-compose/drafts/draft-YYYYMMDD-HHMMSS-xxxx.md`
-3. **HUMAN REVIEW** — editor opens; edit freely; delete all content to abort
-4. **CONFIRM SEND** — shows To: and Subject:, `[y/N]` prompt
-5. **SEND** via `email-agent-helper.sh → SES` — draft archived to `sent/`
-
-**Never auto-send**: `--no-review` skips the editor but still requires confirmation. Full bypass (`--no-review` + piping `y`) is for tested automation scripts only.
 
 ## Support and Customer Service
 
