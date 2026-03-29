@@ -19,27 +19,27 @@ tools:
 - **Protocols**: IMAP4rev1 (RFC 9051), JMAP (RFC 8621), ManageSieve (RFC 5804)
 - **Helper**: `scripts/email-mailbox-helper.sh` (auto-detects protocol)
 - **Adapters**: `scripts/email_imap_adapter.py`, `scripts/email_jmap_adapter.py`
-- **Related**: `email-agent.md` (mission comms), `ses.md` (sending)
+- **Related**: `email-agent.md` (mission comms), `ses.md` (sending), `email-mailbox-search.md`, `email-testing.md`, `email-health-check.md`
 - **Flag taxonomy**: Reminders | Tasks | Review | Filing | Ideas | Add-to-Contacts
 
 <!-- AI-CONTEXT-END -->
 
 ## Category Assignment
 
-Evaluate top-down; first match wins.
+Top-down; first match wins.
 
 | Category | Assign when | IMAP folder |
 |----------|-------------|-------------|
-| **Junk** | Unsolicited / unknown sender with commercial intent | `Junk/` |
+| **Junk** | Unsolicited / unknown sender, commercial intent | `Junk/` |
 | **Promotions** | Unknown sender, bulk/marketing | `Promotions/` |
-| **Updates** | Unknown sender, automated notification; status alerts | `Updates/` |
+| **Updates** | Unknown sender, automated notification/status alert | `Updates/` |
 | **Transactions** | Receipt, invoice, shipping, financial statement | `Transactions/Receipts/` or `Transactions/Invoices/` |
 | **Primary** | Known sender, requires reply or personal/business conversation | `INBOX/` |
 
-Other IMAP folders: `Archive/` · `Drafts/` · `Sent/` · `Trash/`
+Other folders: `Archive/` · `Drafts/` · `Sent/` · `Trash/`
 
-- **Gmail**: labels only — category tabs not accessible via IMAP; use Gmail API or JMAP.
-- **POP3**: no folder concept; prefer IMAP/JMAP for shared or multi-device access.
+- **Gmail**: labels only — category tabs inaccessible via IMAP; use Gmail API or JMAP.
+- **POP3**: no folder concept; prefer IMAP/JMAP.
 
 ## Flagging
 
@@ -69,9 +69,25 @@ email-agent-helper.sh triage --mailbox support@ --strategy round-robin --assigne
 email-agent-helper.sh triage --mailbox support@ --strategy priority --vip-domains "bigclient.com" --vip-assignee alice
 ```
 
+## Transaction Detection and Forwarding
+
+Detection order: (1) sender domain — `receipts@`, `billing@`, `invoices@`, `noreply@`; (2) subject — "Receipt for", "Invoice #", "Order confirmation"; (3) body — currency amounts, "Total:", PDF `*invoice*`/`*receipt*`; (4) structured data — `schema.org/Invoice` or `schema.org/Order`.
+
+**Phishing check before forwarding to accounts@** — ALL must pass:
+
+1. `spf=pass` AND `dkim=pass` in `Authentication-Results`
+2. Sender domain matches expected vendor exactly (watch typosquatting)
+3. All URLs point to expected vendor domain (watch redirects)
+4. Attachment filenames match expected patterns (watch double extensions)
+5. Amount within expected range for this vendor
+
+```bash
+email-agent-helper.sh forward-receipt --from inbox --to accounts@ --verify-phishing --attach-original
+```
+
 ## Archiving
 
-Archive when ALL true: all replies sent, task complete, no follow-up within 7 days. Structure: `Archive/2026/` · `Archive/Projects/acme/` · `Archive/Clients/bigcorp/` · `Archive/Legal/` · `Archive/Financial/`
+Archive when ALL true: replies sent, task complete, no follow-up within 7 days. Structure: `Archive/{year}/` · `Archive/Projects/{name}/` · `Archive/Clients/{name}/` · `Archive/Legal/` · `Archive/Financial/`
 
 | Category | Retention |
 |----------|-----------|
@@ -83,9 +99,9 @@ Archive when ALL true: all replies sent, task complete, no follow-up within 7 da
 | Promotions | 30 days |
 | Junk | 0 days (auto-delete) |
 
-## Smart Mailboxes
+## Smart Mailboxes and Threading
 
-**Threading** — Reply in thread: same topic, <30 days, same recipients. New thread: topic changed, >30 days, recipients changed, >20 messages, or new decision. IMAP: `In-Reply-To`/`References` + RFC 5256 `THREAD`. JMAP: native `Thread` objects (`Thread/get`, `Email/query` with `inThread`).
+**Threading** — Reply in thread: same topic, <30 days, same recipients. New thread: topic changed, >30 days, recipients changed, >20 messages, or new decision. IMAP: `In-Reply-To`/`References` + RFC 5256 `THREAD`. JMAP: native `Thread` objects.
 
 | Smart Mailbox | Criteria |
 |---------------|----------|
@@ -103,22 +119,6 @@ SEARCH TEXT "project proposal" SINCE 01-Jan-2026 BEFORE 01-Apr-2026
 # JMAP FilterCondition
 { "operator": "AND", "conditions": [{ "inMailbox": "inbox-id" },
   { "operator": "OR", "conditions": [{ "hasKeyword": "$task" }, { "hasKeyword": "$reminder" }]}]}
-```
-
-## Transaction Detection and Forwarding
-
-Detection order: (1) sender domain — `receipts@`, `billing@`, `invoices@`, `noreply@`; (2) subject — "Receipt for", "Invoice #", "Order confirmation"; (3) body — currency amounts, "Total:", PDF `*invoice*`/`*receipt*`; (4) structured data — `schema.org/Invoice` or `schema.org/Order`.
-
-**Phishing check before forwarding to accounts@** — ALL must pass:
-
-1. `spf=pass` AND `dkim=pass` in `Authentication-Results`
-2. Sender domain matches expected vendor exactly (watch typosquatting)
-3. All URLs point to expected vendor domain (watch redirects)
-4. Attachment filenames match expected patterns (watch double extensions)
-5. Amount within expected range for this vendor
-
-```bash
-email-agent-helper.sh forward-receipt --from inbox --to accounts@ --verify-phishing --attach-original
 ```
 
 ## Sieve Rules
@@ -174,7 +174,6 @@ openssl s_client -connect mail.example.com:993 -quiet <<< "a1 CAPABILITY"  # IMA
 curl -s https://mail.example.com/.well-known/jmap | jq '.capabilities'      # JMAP caps
 email-mailbox-helper.sh accounts --test
 email-mailbox-helper.sh push fastmail --timeout 300 --types mail,contacts,calendars
-aidevops secret set email-jmap-fastmail
 ```
 
 ## Troubleshooting
@@ -185,7 +184,3 @@ aidevops secret set email-jmap-fastmail
 | **Flags not persisting** | Check `PERMANENTFLAGS` in IMAP SELECT; if custom keywords absent, use `\Flagged` + local DB; JMAP keywords always persist |
 | **Shared mailbox access** | Verify ACL (`GETACL`), check namespace (`NAMESPACE`), ensure `lrswipcda` rights; JMAP: check `accountCapabilities` |
 | **Search returns nothing** | Verify full-text indexing, check scope, try `UID SEARCH` for IMAP; verify `accountId` and `inMailbox` for JMAP |
-
-## Related
-
-`email-agent.md` · `email-mailbox-search.md` · `ses.md` · `email-testing.md` · `email-health-check.md` · `email-agent-helper.sh` · `mailbox-search-helper.sh` · `email-to-markdown.py` · `email-thread-reconstruction.py`
