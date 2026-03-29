@@ -256,16 +256,27 @@ _detect_session_tokens() {
 		return 0
 	fi
 
-	# Sum input + output tokens only. Cache tokens (cache.read, cache.write)
-	# represent the same context re-loaded each turn — counting them
-	# cumulatively inflates the number by ~100x (175K context × N turns).
-	# Input + output reflects actual new content processed per session.
+	# Sum non-cached input + output tokens only.
+	# OpenCode >= v1.3.5 stores tokens.input as total input (including
+	# cache.read + cache.write). Earlier versions stored only non-cached input.
+	# Detect which format per-message: if input > cache.read, input includes
+	# cache — subtract cache.read + cache.write. Otherwise use input as-is.
+	# Clamp to 0 to avoid negatives from rounding.
 	local total_tokens
 	total_tokens=$(sqlite3 "$db_path" "
-		SELECT COALESCE(
-			SUM(json_extract(data, '$.tokens.input')) +
-			SUM(json_extract(data, '$.tokens.output')), 0
-		)
+		SELECT COALESCE(SUM(
+			CASE
+				WHEN json_extract(data, '$.tokens.input') >
+				     COALESCE(json_extract(data, '$.tokens.cache.read'), 0)
+				THEN MAX(
+					json_extract(data, '$.tokens.input')
+					- COALESCE(json_extract(data, '$.tokens.cache.read'), 0)
+					- COALESCE(json_extract(data, '$.tokens.cache.write'), 0),
+					0)
+				ELSE json_extract(data, '$.tokens.input')
+			END
+			+ json_extract(data, '$.tokens.output')
+		), 0)
 		FROM message
 		WHERE session_id='${session_id}'
 		  AND json_extract(data, '$.tokens.input') > 0
