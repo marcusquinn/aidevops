@@ -26,48 +26,17 @@ tools:
 - **Baselines**: `~/.aidevops/.agent-workspace/agent-tests/baselines/`
 - **CLI**: Auto-detects `opencode` (override with `AGENT_TEST_CLI`)
 
-**When to use**:
-
-- Validating agent changes before merging
-- Regression testing after modifying AGENTS.md or subagents
-- Comparing agent behavior across models
-- Smoke testing after framework updates
+**When to use**: Validating agent changes before merging, regression testing after AGENTS.md/subagent edits, comparing behavior across models, smoke testing after framework updates.
 
 <!-- AI-CONTEXT-END -->
 
 ## Architecture
 
-```text
-                    ┌──────────────────────────────┐
-                    │     agent-test-helper.sh      │
-                    ├──────────────────────────────┤
-                    │  Test Suite (JSON)            │
-                    │  ├── Prompt definitions       │
-                    │  ├── Expected patterns        │
-                    │  └── Pass/fail criteria       │
-                    └──────────┬───────────────────┘
-                               │
-               ┌───────────────┼───────────────┐
-               │                               │
-        OpenCode CLI                    OpenCode Server
-        (opencode run --format json)    (HTTP API)
-               │                               │
-               └───────────────┼───────────────┘
-                               │
-                    ┌──────────┴───────────────┐
-                    │  Validation Engine        │
-                    │  ├── expect_contains      │
-                    │  ├── expect_not_contains  │
-                    │  ├── expect_regex         │
-                    │  ├── expect_not_regex     │
-                    │  ├── min/max_length       │
-                    │  └── Pass/Fail verdict    │
-                    └──────────────────────────┘
-```
+`agent-test-helper.sh` loads test suites (JSON), sends prompts via OpenCode CLI (`opencode run --format json`) or OpenCode Server HTTP API (`opencode serve`), then validates responses through the validation engine (`expect_contains`, `expect_not_contains`, `expect_regex`, `expect_not_regex`, `min/max_length`).
+
+Server mode: creates isolated session via `POST /session`, sends prompt via `POST /session/:id/message`, extracts text, deletes session. Override with `OPENCODE_HOST`/`OPENCODE_PORT`.
 
 ## Test Suite Format
-
-Test suites are JSON files defining prompts and expected response patterns:
 
 ```json
 {
@@ -85,15 +54,20 @@ Test suites are JSON files defining prompts and expected response patterns:
       "min_length": 50
     },
     {
-      "id": "progressive-disclosure",
-      "prompt": "Explain the progressive disclosure pattern for agents",
-      "expect_contains": ["subagent", "on-demand"],
+      "id": "slow-deep-analysis",
+      "prompt": "Generate a comprehensive analysis...",
+      "agent": "Plan+",
+      "model": "anthropic/claude-opus-4-20250514",
+      "timeout": 300,
+      "expect_contains": ["analysis"],
       "expect_regex": "read.*when.*needed",
       "min_length": 100
     }
   ]
 }
 ```
+
+Per-test fields (`agent`, `model`, `timeout`) override suite-level defaults.
 
 ### Validation Options
 
@@ -107,110 +81,42 @@ Test suites are JSON files defining prompts and expected response patterns:
 | `max_length` | `number` | Maximum response length in characters |
 | `skip` | `boolean` | Skip this test (useful for temporarily disabling) |
 
-### Per-Test Overrides
-
-Each test can override suite-level defaults:
-
-```json
-{
-  "id": "slow-test",
-  "prompt": "Generate a comprehensive analysis...",
-  "agent": "Plan+",
-  "model": "anthropic/claude-opus-4-20250514",
-  "timeout": 300,
-  "expect_contains": ["analysis"]
-}
-```
-
 ## Commands
 
 ### Run a Test Suite
 
 ```bash
-# By file path
-agent-test-helper.sh run path/to/suite.json
-
-# By name (searches suites/ dir and repo-shipped .agents/tests/)
-agent-test-helper.sh run smoke-test
-
-# Run shipped suite directly
-agent-test-helper.sh run agents-md-knowledge
+agent-test-helper.sh run path/to/suite.json    # By file path
+agent-test-helper.sh run smoke-test             # By name (searches suites/ and .agents/tests/)
+agent-test-helper.sh run agents-md-knowledge    # Shipped suite
 ```
 
 ### Quick Single-Prompt Test
 
 ```bash
-# Basic test
 agent-test-helper.sh run-one "What is your primary purpose?"
-
-# With expected pattern
 agent-test-helper.sh run-one "List your tools" --expect "bash"
-
-# With specific agent and model
-agent-test-helper.sh run-one "Explain git workflow" \
-  --agent "Build+" \
-  --model "anthropic/claude-sonnet-4-6" \
-  --timeout 60
+agent-test-helper.sh run-one "Explain git workflow" --agent "Build+" --model "anthropic/claude-sonnet-4-6" --timeout 60
 ```
 
 ### Before/After Comparison
 
-The comparison workflow validates that agent changes don't cause regressions:
-
 ```bash
-# 1. Save current behavior as baseline
-agent-test-helper.sh baseline smoke-test
-
+agent-test-helper.sh baseline smoke-test   # 1. Save current behavior
 # 2. Make agent changes (edit AGENTS.md, subagents, etc.)
-
-# 3. Compare against baseline
-agent-test-helper.sh compare smoke-test
+agent-test-helper.sh compare smoke-test    # 3. Compare — reports regressions (non-zero exit on failure)
 ```
-
-The comparison reports:
-
-- Per-test status changes (pass -> fail = regression, fail -> pass = fix)
-- Overall pass/fail count changes
-- Non-zero exit code if regressions detected
 
 ### Manage Test Suites
 
 ```bash
-# Create a template in user suites directory
-agent-test-helper.sh create my-new-tests
-
-# List all available suites (user + shipped)
-agent-test-helper.sh list
-
-# View recent results
-agent-test-helper.sh results
-agent-test-helper.sh results smoke-test  # Filter by name
+agent-test-helper.sh create my-new-tests   # Create template in user suites dir
+agent-test-helper.sh list                   # List all available suites (user + shipped)
+agent-test-helper.sh results                # View recent results
+agent-test-helper.sh results smoke-test     # Filter by name
 ```
-
-## CLI and Output Parsing
-
-The framework uses `opencode run --format json` for reliable response extraction. The JSON event stream format outputs one JSON object per line:
-
-```json
-{"type":"text","timestamp":...,"part":{"type":"text","text":"response content"}}
-```
-
-Text is extracted from events where `type == "text"` via `jq`. This avoids parsing ANSI escape codes from the default formatted output.
-
-### Server Mode
-
-When an OpenCode server is running (`opencode serve`), the framework uses the HTTP API instead:
-
-1. Creates an isolated session via `POST /session`
-2. Sends the prompt via `POST /session/:id/message` (sync)
-3. Extracts text from response parts
-4. Deletes the session for cleanup
-
-Override server location with `OPENCODE_HOST` and `OPENCODE_PORT`.
 
 ## Shipped Test Suites
-
-The repo includes ready-to-use test suites in `.agents/tests/`:
 
 | Suite | Tests | Purpose |
 |-------|-------|---------|
@@ -218,27 +124,13 @@ The repo includes ready-to-use test suites in `.agents/tests/`:
 | `agents-md-knowledge` | 5 | Core AGENTS.md instruction absorption |
 | `git-workflow` | 4 | Git workflow knowledge validation |
 
-Run them directly:
+## CI/CD Integration
 
 ```bash
-agent-test-helper.sh run smoke-test
-agent-test-helper.sh run agents-md-knowledge
-agent-test-helper.sh run git-workflow
+agent-test-helper.sh run agents-md-knowledge || { echo "Agent tests failed"; exit 1; }
 ```
 
-## Integration with CI/CD
-
-Run agent tests in CI pipelines:
-
-```bash
-# In GitHub Actions or similar
-agent-test-helper.sh run agents-md-knowledge || {
-  echo "Agent tests failed - check for regressions"
-  exit 1
-}
-```
-
-Requires `opencode` CLI available in the CI environment with appropriate API credentials.
+Requires `opencode` CLI in CI with appropriate API credentials.
 
 ## Environment Variables
 
