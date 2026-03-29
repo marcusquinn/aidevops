@@ -18,8 +18,6 @@ tools:
 - **Workflow**: Gap analysis -> topic clustering -> calendar planning -> cadence tracking -> lifecycle management
 - **Related**: `content/optimization.md`, `content/distribution-*.md`, `seo/keyword-research.md`, `seo/google-search-console.md`
 
-**Key Commands**:
-
 ```bash
 content-calendar-helper.sh add "Topic Title" --pillar DevOps --cluster "CI/CD" --intent commercial --author marcus
 content-calendar-helper.sh schedule 1 2026-02-15 blog --time 10:00
@@ -34,9 +32,7 @@ content-calendar-helper.sh export --format [json|csv]
 
 <!-- AI-CONTEXT-END -->
 
-## Cadence Engine
-
-### Cadence Targets (posts/week)
+## Cadence Targets (posts/week)
 
 | Platform | Min | Max | Optimal | Rationale |
 |----------|-----|-----|---------|-----------|
@@ -50,7 +46,7 @@ content-calendar-helper.sh export --format [json|csv]
 | Podcast | 0.5 | 1 | 1 | Weekly or bi-weekly |
 | Instagram | 3 | 5 | 3 | Consistent visual presence |
 
-### Optimal Posting Windows (UTC)
+## Optimal Posting Windows (UTC)
 
 | Platform | Best Days | Times (UTC) |
 |----------|-----------|-------------|
@@ -70,7 +66,6 @@ content-calendar-helper.sh export --format [json|csv]
 **Automated**: `content-calendar-helper.sh gaps --days 30`
 
 **SEO-driven**:
-
 1. Export GSC data: `gsc-helper.sh query-report --min-impressions 500 --max-ctr 0.02 --days 90` (high-impression, low-CTR = gap)
 2. Cluster keywords by parent topic (`seo/keyword-research.md` SERP similarity)
 3. Map published URLs to clusters; flag uncovered clusters
@@ -94,6 +89,8 @@ content-calendar-helper.sh export --format [json|csv]
 | Transactional | Landing page, pricing | Purchase, sign up |
 | Navigational | Documentation, FAQ | Product link, support |
 
+**Pillars strategy**: Define 3-5 pillars mapping to business goals. Every cluster links to its pillar. Cross-link related clusters (3-5 internal links per post). Update pillar pages quarterly. View distribution: `content-calendar-helper.sh stats`
+
 ## Calendar Structure
 
 **Monthly overview** (rotate pillar focus monthly; maintain 2:1 cluster-to-pillar ratio):
@@ -106,6 +103,16 @@ content-calendar-helper.sh export --format [json|csv]
 | 4 | Community | Publish 1 | 3 posts | 1 long | Monthly recap |
 
 **Weekly task format**: `- [ ] MON: Draft "Topic A" (cluster: CI/CD) @author #blog ~3h`
+
+**Multi-channel fan-out**: One story → multiple platforms over 5-7 days (diamond pipeline from `content.md`). Schedule with `content-calendar-helper.sh schedule <id> <date> <platform> [--time HH:MM]` following the stagger rule.
+
+## Seasonality
+
+| Quarter | Focus |
+|---------|-------|
+| Q4 (Oct-Dec) | Monetization content — reviews, comparisons, "best of" lists (highest buying intent) |
+| Q1 (Jan-Mar) | Educational content — getting started guides, tutorials (New Year motivation) |
+| Q2-Q3 (Apr-Sep) | Maintenance — test new formats, build Q4 backlog |
 
 ## Content Lifecycle
 
@@ -121,22 +128,6 @@ content-calendar-helper.sh export --format [json|csv]
 | `analyze` | 14-30 days | GSC impressions/clicks, engagement metrics |
 
 Advancing to `publish` auto-updates schedule entries to `published` and logs to cadence tracker.
-
-## Content Pillars Strategy
-
-Define 3-5 pillars mapping to business goals. Every cluster links to its pillar. Cross-link related clusters (3-5 internal links per post). Update pillar pages quarterly. View distribution: `content-calendar-helper.sh stats`
-
-## Multi-Channel Fan-Out
-
-One story → multiple platforms over 5-7 days (diamond pipeline from `content.md`). Schedule with `content-calendar-helper.sh schedule <id> <date> <platform> [--time HH:MM]` following the stagger rule.
-
-## Seasonality
-
-| Quarter | Focus |
-|---------|-------|
-| Q4 (Oct-Dec) | Monetization content — reviews, comparisons, "best of" lists (highest buying intent) |
-| Q1 (Jan-Mar) | Educational content — getting started guides, tutorials (New Year motivation) |
-| Q2-Q3 (Apr-Sep) | Maintenance — test new formats, build Q4 backlog |
 
 ## Integration Points
 
@@ -154,7 +145,6 @@ One story → multiple platforms over 5-7 days (diamond pipeline from `content.m
 Publish → cadence analysis → gap analysis → update calendar → repeat.
 
 ```bash
-# Weekly review
 content-calendar-helper.sh cadence --weeks 1   # last week performance
 content-calendar-helper.sh gaps --days 7       # missing next week
 content-calendar-helper.sh due --days 7        # upcoming items
