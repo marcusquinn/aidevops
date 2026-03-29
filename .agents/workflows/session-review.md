@@ -15,23 +15,11 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
-## Quick Reference
-
-- **Purpose**: Review current session for completeness, workflow adherence, and knowledge capture
-- **Trigger**: `/session-review` command, end of significant work, before ending session
-- **Output**: Structured assessment with actionable next steps
-
-**Review categories**: (1) Objective completion, (2) Workflow adherence, (3) Conversation value extraction + knowledge capture, (4) Session health.
-
-**Key outputs**: Completion score (0-100%), outstanding items, value extraction report, knowledge capture recommendations, session continuation advice.
+**Purpose**: Review current session for completeness, workflow adherence, and knowledge capture.
+**Trigger**: `/session-review [focus]` — focus: `objectives | workflow | knowledge | all` (default). Run at end of significant work, before ending session, or after Ralph loop completion.
+**Output**: Completion score (0-100%), outstanding items, value extraction report, knowledge capture recommendations, session continuation advice.
 
 <!-- AI-CONTEXT-END -->
-
-## Command Usage
-
-```bash
-/session-review [focus]    # focus: objectives | workflow | knowledge | all (default)
-```
 
 ## Review Process
 
@@ -42,13 +30,11 @@ git branch --show-current && git log --oneline -10
 grep -A 20 "## In Progress" TODO.md 2>/dev/null || echo "No TODO.md"
 git status --short
 test -f .agents/loop-state/ralph-loop.local.md && head -10 .agents/loop-state/ralph-loop.local.md || \
-test -f .claude/ralph-loop.local.md && head -10 .claude/ralph-loop.local.md
+  test -f .claude/ralph-loop.local.md && head -10 .claude/ralph-loop.local.md
 gh pr list --state open --limit 5 2>/dev/null || echo "No open PRs"
 ```
 
 ### Step 2: Objective Completion Assessment
-
-Score by comparing initial request to current state:
 
 | Check | Method | Weight |
 |-------|--------|--------|
@@ -58,7 +44,7 @@ Score by comparing initial request to current state:
 | Tests passing | Run test suite | 10% |
 | No blocking errors | Check for unresolved issues | 10% |
 
-Output: score, completed items `[x]`, outstanding items `[ ]` with blockers, scope changes.
+Output: score, completed `[x]` / outstanding `[ ]` items with blockers, scope changes.
 
 ### Step 3: Workflow Adherence Check
 
@@ -104,13 +90,7 @@ Analyses commits for patterns (fixes, features, refactors), extracts learnings (
 | Tool discoveries | Unexpected tool behaviour | Relevant subagent |
 | Temporary workarounds | Hacks that need proper fixes | TODO.md, code comments |
 
-**Process:**
-
-1. Scan conversation chronologically for each signal type
-2. For each finding: already captured in commit, PR, memory, TODO, or doc?
-3. Not captured → capture now (memory, docs, TODO, or issue)
-4. Partially captured → verify completeness
-5. User corrections reveal framework gaps — prioritize these
+**Process**: Scan conversation chronologically. For each finding: already captured in commit, PR, memory, TODO, or doc? If not → capture now. If partial → verify completeness. User corrections reveal framework gaps — prioritize these.
 
 **The goal is zero knowledge loss.** Every insight traceable to at least one artifact.
 
@@ -131,13 +111,13 @@ Output: status (Continue/End Recommended/End Required), reason, final actions if
 
 ## Integration Points
 
-- **Before PR creation**: Run to ensure all changes committed, no outstanding items, docs complete.
+- **Before PR creation**: Ensure all changes committed, no outstanding items, docs complete.
 - **Before ending session**: Capture learnings, update TODO.md, check issue-sync drift (`issue-sync-helper.sh status`, t179.4), ensure clean handoff.
 - **After Ralph loop completion**: Verify completion promise met, identify cleanup, suggest next steps.
 
 ### Security Summary (t1428.5)
 
-Run `/session-review security` or `session-review-helper.sh security` for a unified post-session security summary aggregating all security subsystems.
+Run `/session-review security` or `session-review-helper.sh security` for a unified post-session security summary.
 
 ```bash
 session-review-helper.sh security              # Full summary
@@ -157,7 +137,7 @@ session-review-helper.sh gather --security     # Include in standard gather
 | Session context | Composite security score (when t1428.3 available) | `session-security-helper.sh` |
 | Quarantine | Pending review items (when t1428.4 available) | `quarantine-helper.sh` |
 
-**Security posture levels:** CLEAN (no events) → LOW (flagged domains/warned injections) → MEDIUM (blocked injections) → HIGH (denied Tier 5 domains) → CRITICAL (audit chain integrity broken).
+**Security posture levels:** CLEAN → LOW (flagged domains/warned injections) → MEDIUM (blocked injections) → HIGH (denied Tier 5 domains) → CRITICAL (audit chain integrity broken).
 
 ## Related
 
