@@ -26,7 +26,7 @@ COMMANDS:
     launch              Launch browser with anti-detect profile
     profile             Manage browser profiles (create/list/show/delete/clone)
     cookies             Manage profile cookies (export/import/clear)
-    proxy               Proxy operations (check/check-all/dns-check)
+    proxy               Proxy operations (check/check-all)
     test                Test detection status against bot-detection sites
     warmup              Warm up a profile with browsing history
     status              Show installation status of all tools
