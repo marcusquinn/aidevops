@@ -38,23 +38,11 @@ tools:
 
 ## Auth Setup
 
-Cloudflare Code Mode MCP uses OAuth 2.0 — no API tokens to manage manually.
-
-### First-Time Connection
-
-1. Add the server config (see below)
-2. Start your MCP client (Claude Desktop, OpenCode, etc.)
-3. On first tool call, a browser window opens to `dash.cloudflare.com`
-4. Authorize the OAuth app for your account
-5. The client stores the token — subsequent connections are seamless
+OAuth 2.0 — no API tokens to manage. On first tool call, a browser window opens to `dash.cloudflare.com`; authorize once and the client stores the token.
 
 ### Config
 
-**Claude Desktop** — config file location by OS:
-
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-- **Linux**: `~/.config/Claude/claude_desktop_config.json`
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 
 ```json
 {
@@ -85,19 +73,17 @@ Cloudflare Code Mode MCP uses OAuth 2.0 — no API tokens to manage manually.
 claude mcp add cloudflare-api --transport http https://mcp.cloudflare.com/mcp
 ```
 
-> **Note**: `--transport http` refers to the MCP transport type (streamable HTTP), not the URL scheme. The value `http` is correct even though the endpoint URL uses HTTPS — the flag selects the protocol framing, not the TLS layer.
+> **Note**: `--transport http` selects the MCP transport type (streamable HTTP), not the URL scheme. The value `http` is correct even though the endpoint URL uses HTTPS.
 
 ## Security Model
 
-- **OAuth scopes**: Tied to your Cloudflare account — access matches your dashboard permissions
-- **No secrets in config**: The URL contains no credentials; OAuth tokens are stored by the MCP client in its secure token store
-- **Revocation**: Revoke access at `dash.cloudflare.com` > My Profile > API Tokens > OAuth Apps
-- **Least privilege**: If you need to restrict scope, use a sub-account or create a scoped API token instead (see `services/hosting/cloudflare.md`)
+- **OAuth scopes**: Access matches your Cloudflare dashboard permissions
+- **No secrets in config**: OAuth tokens are stored by the MCP client in its secure token store
+- **Revocation**: `dash.cloudflare.com` > My Profile > API Tokens > OAuth Apps
+- **Least privilege**: For restricted scope, use a sub-account or scoped API token (see `services/hosting/cloudflare.md`)
 - **Audit trail**: All MCP actions appear in Cloudflare's audit log under your account
 
 ## Search Patterns
-
-Use these patterns when asking the AI to interact with Cloudflare resources:
 
 ### Workers
 
@@ -163,8 +149,6 @@ Delete CNAME record "www" from zone "example.com"
 
 ## Execute Patterns
 
-Common end-to-end workflows:
-
 ### Deploy a Worker
 
 ```text
@@ -197,9 +181,7 @@ For each key, get its value and show me the full config.
 
 ## Per-Agent Enablement
 
-This subagent has `cloudflare-api_*: true` in its tools frontmatter. The MCP tools are disabled globally and enabled only when this subagent is active.
-
-To invoke this subagent: reference `tools/api/cloudflare-mcp.md` in your agent's tools section, or ask the AI to use Cloudflare MCP tools directly when this subagent is loaded.
+`cloudflare-api_*: true` in this subagent's frontmatter enables the MCP tools (disabled globally, enabled per-agent).
 
 ## Related Docs
 
