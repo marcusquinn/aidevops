@@ -46,32 +46,17 @@ App needs real-time features?           -> Yes (WebSocket/realtime)
 
 ## Supabase (Recommended)
 
-Open-source Firebase alternative with Postgres, auth, storage, and realtime.
+Open-source Firebase alternative with Postgres, auth, storage, and realtime. Features: SQL database, built-in auth (email/OAuth/magic link), row-level security (RLS), realtime subscriptions, storage, Edge Functions, generous free tier, self-hostable on Coolify.
 
-### Why Supabase
-
-- Open-source (can self-host on Coolify)
-- Postgres database (SQL, not NoSQL)
-- Built-in auth (email, OAuth, magic link)
-- Row-level security (RLS) for data access control
-- Realtime subscriptions
-- Storage for files and images
-- Edge Functions for server-side logic
-- Generous free tier
-
-### Setup with Expo
+**Setup with Expo:**
 
 ```bash
 npx expo install @supabase/supabase-js @react-native-async-storage/async-storage
 ```
 
-### Setup with Swift
+**Setup with Swift:** Add via Swift Package Manager: `https://github.com/supabase/supabase-swift.git`
 
-Add via Swift Package Manager: `https://github.com/supabase/supabase-swift.git`
-
-### Self-Hosting on Coolify
-
-Deploy Supabase on Coolify for full control and no usage limits:
+**Self-hosting on Coolify** (full control, no usage limits):
 
 ```text
 Coolify Dashboard -> New Service -> Supabase -> Deploy
@@ -81,16 +66,7 @@ See `tools/deployment/coolify.md` for detailed setup.
 
 ## Firebase
 
-Google's app development platform. Good for rapid prototyping.
-
-### When to Use Firebase Over Supabase
-
-- Need Firebase-specific features (ML Kit, Remote Config, A/B Testing)
-- Team already has Firebase expertise
-- Need Firestore's document model (vs Postgres relational)
-- Google Cloud ecosystem integration
-
-### Key Services
+Google's app development platform. Prefer over Supabase when: team has Firebase expertise, need Firestore's document model (vs Postgres relational), need Firebase-specific features (ML Kit, Remote Config, A/B Testing), or using Google Cloud ecosystem.
 
 | Service | Purpose |
 |---------|---------|
@@ -105,29 +81,21 @@ Google's app development platform. Good for rapid prototyping.
 
 ## API Design
 
-### REST API Patterns
+**REST patterns** (custom backends):
 
-For custom backends, follow these patterns:
+- URL structure: `/api/v1/resources`
+- Appropriate HTTP status codes; paginate list endpoints
+- JSON request/response bodies; rate limiting; version from day one
 
-- Use consistent URL structure: `/api/v1/resources`
-- Return appropriate HTTP status codes
-- Paginate list endpoints
-- Use JSON for request/response bodies
-- Implement rate limiting
-- Version your API from day one
+**Authentication:**
 
-### Authentication
-
-- JWT tokens for stateless auth
-- Refresh token rotation for security
+- JWT tokens for stateless auth; refresh token rotation
 - Secure token storage (`expo-secure-store` or Keychain)
 - Token expiry: 15 minutes access, 7 days refresh
 
 ## Notifications Backend
 
-See `tools/mobile/app-dev/notifications.md` for push notification setup.
-
-Options:
+Options (see `tools/mobile/app-dev/notifications.md` for setup):
 
 - **Expo Push Notifications**: Free, works with Expo apps
 - **Firebase Cloud Messaging (FCM)**: Free, works with any app
