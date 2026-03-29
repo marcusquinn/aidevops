@@ -18,8 +18,8 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Plan and script AI video productions shot-by-shot, generate optimized prompts for Higgsfield/Sora/VEO models
-- **Input**: A brief (product, audience, style, duration, platform)
+- **Purpose**: Plan and script AI video productions shot-by-shot; generate optimised prompts for Higgsfield/Sora/VEO
+- **Input**: Brief (product, audience, style, duration, platform)
 - **Output**: Shot list with prompts, character bible, pipeline brief JSON
 - **Automation**: `higgsfield-helper.sh pipeline --brief <output.json>`
 
@@ -38,14 +38,10 @@ tools:
 
 ### Step 1: Research Brief
 
-- **Product/Subject**: What are we showcasing?
-- **Target Audience**: Age, interests, pain points
+- **Product/Subject**, **Target Audience** (age, interests, pain points), **CTA**, **Tone** (Casual | Professional | Dramatic | Humorous), **References**
 - **Platform**: TikTok (9:16, 10-30s) | Instagram Reels (9:16, 15-60s) | YouTube Shorts (9:16, <60s) | YouTube (16:9, 30s+)
 - **Style**: UGC/authentic | Cinematic/polished | Educational | Storytelling
 - **Duration**: 10s | 15s | 30s | 60s
-- **CTA**: What should the viewer do?
-- **Tone**: Casual | Professional | Dramatic | Humorous
-- **References**: Any existing videos/images to match?
 
 ### Step 2: Character Bible
 
@@ -53,7 +49,7 @@ For recurring characters, create a CHARACTER CONTEXT PROFILE and prepend it to e
 
 **Facial Engineering Process** (critical for consistency):
 1. Generate or select a base character image
-2. Upload to a vision model (Claude, GPT-4V); request extreme-detail facial analysis (measurements, eye shape, nose bridge width, lip fullness, skin undertone)
+2. Upload to a vision model; request extreme-detail facial analysis (measurements, eye shape, nose bridge width, lip fullness, skin undertone)
 3. Save as CHARACTER CONTEXT PROFILE — prepend to every scene prompt
 
 **Profile fields**: face shape, eye shape/color, nose structure, lip shape, skin tone (hex), hair color/style/length, distinguishing features, age range, speaking style, energy level, wardrobe + color palette (hex), accessories.
@@ -74,15 +70,15 @@ Background Sound: [ambient, music style, SFX]
 
 **Shot types**:
 
-| Code | Name | Use |
-|------|------|-----|
-| ECU | Extreme Close-Up | Eyes, lips, product detail |
-| CU | Close-Up | Face fills frame |
-| MCU | Medium Close-Up | Head and shoulders |
-| MS | Medium Shot | Waist up |
-| MWS | Medium Wide Shot | Knees up |
-| WS | Wide Shot | Full body with environment |
-| EWS | Extreme Wide Shot | Establishing, landscape |
+| Code | Use |
+|------|-----|
+| ECU (Extreme Close-Up) | Eyes, lips, product detail |
+| CU (Close-Up) | Face fills frame |
+| MCU (Medium Close-Up) | Head and shoulders |
+| MS (Medium Shot) | Waist up |
+| MWS (Medium Wide Shot) | Knees up |
+| WS (Wide Shot) | Full body with environment |
+| EWS (Extreme Wide Shot) | Establishing, landscape |
 
 **Camera movements**:
 
