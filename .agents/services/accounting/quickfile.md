@@ -1,5 +1,5 @@
 ---
-description: QuickFile accounting API integration via MCP server
+description: QuickFile UK accounting API — invoices, clients, purchases, banking, reports via MCP
 mode: subagent
 tools:
   read: true
@@ -18,8 +18,7 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: QuickFile UK accounting operations - invoices, clients, purchases, banking, reports
-- **Tool Prefix**: `quickfile_*`
+- **Tool Prefix**: `quickfile_*` (37 tools)
 - **MCP Server**: [quickfile-mcp](https://github.com/marcusquinn/quickfile-mcp) (TypeScript, stdio)
 - **Credentials**: `~/.config/.quickfile-mcp/credentials.json`
 - **API Docs**: https://api.quickfile.co.uk/
@@ -37,17 +36,9 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Description
-
-QuickFile is a free UK cloud accounting platform (HMRC MTD, VAT filing, Open Banking). This agent
-exposes it via [quickfile-mcp](https://github.com/marcusquinn/quickfile-mcp).
-
-Use for: client management, invoicing, estimates, credit notes, purchases, supplier CRUD, banking,
-P&L / Balance Sheet / VAT / Ageing reports, system notes and event log.
-
 ## Purchase/Expense Recording Workflow
 
-The OCR extraction pipeline (t012.3) feeds into QuickFile via `quickfile-helper.sh` (t012.4):
+OCR extraction pipeline (t012.3) feeds into QuickFile via `quickfile-helper.sh` (t012.4):
 
 ```text
 Receipt/Invoice → [ocr-receipt-helper.sh extract] → [ocr-receipt-helper.sh quickfile]
@@ -73,8 +64,8 @@ quickfile-helper.sh batch-record ~/.aidevops/.agent-workspace/work/ocr-receipts/
 ### Supplier Resolution
 
 1. `quickfile_supplier_search` with extracted vendor name
-2. If found: use returned SupplierId
-3. If not found (with `--auto-supplier`): `quickfile_supplier_create`
+2. Found → use SupplierId
+3. Not found + `--auto-supplier` → `quickfile_supplier_create`
 
 ### Nominal Code Auto-Categorisation
 
@@ -88,7 +79,7 @@ quickfile-helper.sh batch-record ~/.aidevops/.agent-workspace/work/ocr-receipts/
 | Adobe, Microsoft, SaaS | 7404 | Computer Software |
 | *Default* | 5000 | General Purchases |
 
-Override with `--nominal <code>`. Full list: `quickfile_report_chart_of_accounts`.
+Override: `--nominal <code>`. Full list: `quickfile_report_chart_of_accounts`.
 
 | Script | Purpose |
 |--------|---------|
@@ -99,7 +90,7 @@ Override with `--nominal <code>`. Full list: `quickfile_report_chart_of_accounts
 
 ## Installation
 
-**Prerequisites**: Node.js 18+, QuickFile account (free at https://www.quickfile.co.uk/), API credentials.
+Requires Node.js 18+, QuickFile account (free at https://www.quickfile.co.uk/), API credentials.
 
 ```bash
 # Option A: setup.sh (recommended)
@@ -110,7 +101,7 @@ cd ~/Git && git clone https://github.com/marcusquinn/quickfile-mcp.git
 cd quickfile-mcp && npm install && npm run build
 ```
 
-## Credential Setup
+### Credential Setup
 
 ```bash
 mkdir -p ~/.config/.quickfile-mcp && chmod 700 ~/.config/.quickfile-mcp
@@ -125,19 +116,13 @@ chmod 600 ~/.config/.quickfile-mcp/credentials.json
 | API Key | Account Settings > 3rd Party Integrations > API Key |
 | Application ID | Account Settings > Create a QuickFile App > Application ID |
 
-## AI Assistant Configuration
+### AI Assistant Configuration
 
-All configs use the same pattern — `command: node`, `args: ["/path/to/quickfile-mcp/dist/index.js"]`.
-See `configs/mcp-templates/quickfile.json` for ready-to-use snippets for Claude Code, Claude Desktop,
-Cursor, OpenCode, Gemini CLI, GitHub Copilot, Zed, Kilo Code, Kiro, and Droid.
+All configs: `command: node`, `args: ["/path/to/quickfile-mcp/dist/index.js"]`. See `configs/mcp-templates/quickfile.json` for ready-to-use snippets (Claude Code, Claude Desktop, Cursor, OpenCode, Gemini CLI, GitHub Copilot, Zed, Kilo Code, Kiro, Droid).
 
-**Claude Code quick-add:**
+Claude Code quick-add: `claude mcp add quickfile node ~/Git/quickfile-mcp/dist/index.js`
 
-```bash
-claude mcp add quickfile node ~/Git/quickfile-mcp/dist/index.js
-```
-
-## Available Tools (37 tools)
+## Available Tools (37)
 
 **System (3):** `quickfile_system_get_account`, `quickfile_system_search_events`, `quickfile_system_create_note`
 
@@ -153,20 +138,10 @@ claude mcp add quickfile node ~/Git/quickfile-mcp/dist/index.js
 
 **Reports (6):** `quickfile_report_profit_loss`, `quickfile_report_balance_sheet`, `quickfile_report_vat_obligations`, `quickfile_report_ageing`, `quickfile_report_chart_of_accounts`, `quickfile_report_subscriptions`
 
-## Example Prompts
-
-- "Show my QuickFile account details and this year's financial summary"
-- "Find all unpaid invoices from the last 30 days"
-- "Create an invoice for client 12345 for 8 hours consulting at GBP 100/hour"
-- "Send invoice 67890 to the client" / "Get the PDF for invoice 67890"
-- "Generate a P&L report for Q1 2024" / "Show the balance sheet as of today"
-- "Record a purchase invoice from Amazon for GBP 50 office supplies"
-- "Search for clients in London" / "List all open VAT returns"
-
 ## Security & Rate Limits
 
 - Credentials: `~/.config/.quickfile-mcp/credentials.json` (600 perms, never commit)
-- Auth: MD5 hash (AccountNumber + APIKey + SubmissionNumber) with unique submission number per request (no replay attacks)
+- Auth: MD5 hash (AccountNumber + APIKey + SubmissionNumber) — unique per request (no replay)
 - Debug: `QUICKFILE_DEBUG=1` redacts credentials in output
 - Rate limit: 1000 API calls/day per account, resets ~midnight. Contact support to increase.
 
@@ -182,4 +157,4 @@ claude mcp add quickfile node ~/Git/quickfile-mcp/dist/index.js
 
 Verify setup: prompt `"Show me my QuickFile account details"` — expect company name, VAT status, year end.
 
-**Resources**: [MCP Repo](https://github.com/marcusquinn/quickfile-mcp) · [Support](https://support.quickfile.co.uk/) · [Community](https://community.quickfile.co.uk/) · [API Docs](https://api.quickfile.co.uk/) · [Context7](https://context7.com/websites/api_quickfile_co_uk)
+**Resources**: [MCP Repo](https://github.com/marcusquinn/quickfile-mcp) | [Support](https://support.quickfile.co.uk/) | [Community](https://community.quickfile.co.uk/) | [API Docs](https://api.quickfile.co.uk/) | [Context7](https://context7.com/websites/api_quickfile_co_uk)
