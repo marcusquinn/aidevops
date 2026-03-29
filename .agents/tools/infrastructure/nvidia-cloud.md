@@ -23,26 +23,14 @@ tools:
 - **Creds**: `NVIDIA_API_KEY` env var | `Authorization: Bearer <key>` header
 - **Self-host**: NIM containers via `docker pull nvcr.io/nim/<model>` (requires NGC API key)
 - **Docs**: [docs.api.nvidia.com](https://docs.api.nvidia.com/) | [NIM docs](https://docs.nvidia.com/nim/) | [build.nvidia.com](https://build.nvidia.com/explore/discover)
-- **Licensing**: Cloud API free (credit-based). NIM self-host free with AI Enterprise license or DGX.
+- **Pricing**: Cloud API free (1000 credits, replenishable). NIM self-host free with AI Enterprise license or DGX. No published per-token serverless pricing.
 
 <!-- AI-CONTEXT-END -->
 
-NVIDIA's AI inference platform with two modes: (1) free cloud API for prototyping at build.nvidia.com, (2) self-hosted NIM containers for production on your own GPUs. OpenAI SDK compatible.
+NVIDIA's AI inference platform: (1) free cloud API for prototyping at build.nvidia.com, (2) self-hosted NIM containers for production on your own GPUs. OpenAI SDK compatible. DGX Cloud available for GPU rental (contact sales).
 
 **Best for**: prototyping with free credits, self-hosted production inference (NIM containers are highly optimized), NVIDIA GPU owners (DGX, HGX), healthcare/biology/simulation models, enterprise with AI Enterprise licenses.
-**Not for**: pay-per-token production serverless (no published pricing), fine-tuning via API (use NeMo separately), budget-conscious serverless (use Fireworks/Together), edge inference (use Cloudflare).
-
-## Pricing Model
-
-NVIDIA Cloud has a fundamentally different pricing model from Fireworks/Together/Cloudflare:
-
-| Mode | Cost | Use case |
-|------|------|----------|
-| **Cloud API** (build.nvidia.com) | Free (1000 API credits, replenishable) | Prototyping, evaluation, development |
-| **Self-hosted NIM** | Free with AI Enterprise license or DGX purchase | Production inference on your GPUs |
-| **DGX Cloud** | GPU rental (contact sales) | Production without owning hardware |
-
-No published per-token serverless pricing. The cloud API is explicitly for prototyping -- production workloads run on self-hosted NIM or DGX Cloud.
+**Not for**: pay-per-token production serverless (no published pricing), fine-tuning via API (use NeMo separately), budget-conscious serverless (use Fireworks/Together), edge inference (use Cloudflare), privacy-critical with TEE (use NEAR AI).
 
 ## Models (100+)
 
@@ -98,67 +86,20 @@ curl http://localhost:8000/v1/chat/completions \
   -d '{"model": "meta/llama-3.3-70b-instruct", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
-NIM containers include NVIDIA's inference optimizations (TensorRT-LLM, quantization, batching). Generally faster than vLLM/TGI for NVIDIA GPUs.
+NIM containers include NVIDIA's inference optimizations (TensorRT-LLM, quantization, batching). Generally faster than vLLM/TGI for NVIDIA GPUs. NIM has no built-in auth — run behind a reverse proxy.
 
-## Cloud API vs Self-Hosted NIM
+## Limitations (cloud API)
 
-| Dimension | Cloud API | Self-hosted NIM |
-|-----------|-----------|-----------------|
-| Cost | Free (credit-based) | GPU cost only (NIM license free with AI Enterprise) |
-| Rate limits | Credit-based, limited | Unlimited (your hardware) |
-| Latency | Variable (shared infra) | Predictable (dedicated) |
-| Models | 100+ | Any NIM-packaged model |
-| Custom models | No | Yes (custom NIM containers) |
-| Data privacy | NVIDIA sees requests | Full control |
-| Setup | API key only | Docker + NVIDIA GPU + NGC key |
-| Use case | Prototyping, evaluation | Production |
-
-## Capabilities and Limitations
-
-### Available
-
-- 100+ models across LLM, vision, retrieval, healthcare, simulation
-- OpenAI-compatible chat completions API
-- Streaming responses
-- Embeddings and reranking
-- Image generation (FLUX, Stable Diffusion)
-- Specialized models (healthcare, weather, safety) not available elsewhere
-- Self-hosted NIM with TensorRT-LLM optimizations
-- Attestation API (for NIM container verification)
-
-### Not available (via cloud API)
-
-- Fine-tuning -- use NeMo (separate product) or Fireworks/Together
-- Batch inference API -- use Fireworks/Together
-- Dedicated cloud deployments with autoscaling -- use Fireworks/Together or DGX Cloud
-- Published per-token pricing -- credit-based only
-- CLI tool -- REST API and Docker only
-- Audio/speech models -- limited (use Fireworks/Together/Cloudflare)
-
-## When to Use NVIDIA Cloud
-
-| Scenario | Recommendation |
-|----------|---------------|
-| Prototyping with many models | Strong fit -- free credits, 100+ models |
-| Production on own NVIDIA GPUs | Strong fit -- NIM containers are fastest |
-| Healthcare/biology models | Unique -- AlphaFold, ESMFold, molecular docking |
-| Enterprise with AI Enterprise license | Strong fit -- NIM is free |
-| Pay-per-token serverless production | Use Fireworks or Together instead |
-| Fine-tuning via API | Use Fireworks or Together instead |
-| Edge/global inference | Use Cloudflare instead |
-| Privacy-critical with TEE | Use NEAR AI instead |
-| Budget-conscious, no NVIDIA GPUs | Use Fireworks or Together instead |
+- No fine-tuning — use NeMo (separate product) or Fireworks/Together
+- No batch inference API — use Fireworks/Together
+- No dedicated cloud deployments with autoscaling — use Fireworks/Together or DGX Cloud
+- No CLI tool — REST API and Docker only
+- No audio/speech models — use Fireworks/Together/Cloudflare
+- No Attestation/TEE guarantees — NVIDIA processes requests; use NEAR AI for TEE
 
 ## NeMo (Training)
 
-NVIDIA NeMo is a separate product for model training and customization:
-
-- **NeMo Customizer**: Fine-tuning (SFT, PEFT, DPO)
-- **NeMo Evaluator**: Model evaluation
-- **NeMo Data Designer**: Synthetic dataset generation
-- **NeMo Guardrails**: Safety and alignment
-
-NeMo is self-hosted or available via DGX Cloud. Not accessible through the build.nvidia.com API.
+Separate product for training and customization: NeMo Customizer (SFT, PEFT, DPO), Evaluator, Data Designer (synthetic datasets), Guardrails (safety/alignment). Self-hosted or via DGX Cloud. Not accessible through the build.nvidia.com API.
 
 ## Security
 
