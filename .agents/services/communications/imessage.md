@@ -30,13 +30,13 @@ tools:
 
 `iPhone/iPad/Mac → iMessage (E2E) → Apple Servers → Messages.app + BlueBubbles Server → REST API/Webhooks → Bot → aidevops dispatch`
 
-Inbound: Messages.app decrypts to local SQLite → BlueBubbles detects via filesystem events → fires webhook → bot responds via REST API. imsg: fire-and-forget send only via AppleScript.
+Inbound: Messages.app decrypts to local SQLite → BlueBubbles detects via filesystem events → fires webhook → bot responds via REST API. imsg: send-only via AppleScript.
 
 ## BlueBubbles (Recommended)
 
 **Requirements**: macOS 11+, Messages.app signed in, Full Disk Access + Accessibility, persistent GUI session.
 
-**Install**: Download DMG from [GitHub Releases](https://github.com/BlueBubblesApp/bluebubbles-server/releases) (Homebrew cask deprecated 2026-09-01). Drag to `/Applications`, right-click Open (Gatekeeper), grant Full Disk Access + Accessibility, set server password, configure Cloudflare tunnel.
+**Install**: Download DMG from [GitHub Releases](https://github.com/BlueBubblesApp/bluebubbles-server/releases) (Homebrew cask deprecated 2026-09-01). Right-click Open (Gatekeeper), grant Full Disk Access + Accessibility, set password, configure Cloudflare tunnel.
 
 **Server config**: Port `1234` · Password (header only — query params are logged) · Proxy: Cloudflare · Poll: `1000ms`
 
@@ -65,7 +65,7 @@ curl -X POST "$BB/server/webhook" -H "Content-Type: application/json" \
   -d '{"url":"http://localhost:8080/webhook","password":"YOUR_PASSWORD"}'
 ```
 
-**Other**: `GET /api/v1/chat/:guid/message` · `GET /api/v1/contact` · `GET /api/v1/server/info`
+**Other endpoints**: `GET /api/v1/chat/:guid/message` · `GET /api/v1/contact` · `GET /api/v1/server/info`
 
 **Chat GUID**: `iMessage;-;+14155551234` (phone) · `iMessage;-;user@example.com` (email) · `iMessage;+;chat123456789` (group) · `SMS;-;+14155551234` (SMS)
 
