@@ -922,9 +922,9 @@
       "pr": 11813
     },
     ".agents/workflows/git-workflow.md": {
-      "hash": "7b3fa2141daa4cec0c3c33e73997f3519a9534d4",
-      "at": "2026-03-29T07:32:12Z",
-      "pr": 12550
+      "hash": "1ea0b652ceda9126a403a89555e29a02b1c7e3bd",
+      "at": "2026-03-29T08:49:32Z",
+      "pr": 12777
     },
     ".agents/marketing-sales/ad-creative-copywriting.md": {
       "hash": "84d60fe17b4cc01ac5bec4ce3363428510a2ece6",
@@ -1787,9 +1787,9 @@
       "pr": 12761
     },
     ".agents/tools/ai-orchestration/openprose.md": {
-      "hash": "352f5da544f3c05517e1012dc060b516aa995506",
-      "at": "2026-03-29T07:31:39Z",
-      "pr": 12707
+      "hash": "d35c952a903000f6a3d0f148565fbbde449a49c9",
+      "at": "2026-03-29T08:49:31Z",
+      "pr": 12778
     },
     ".agents/content/heygen-skill/rules-avatars.md": {
       "hash": "e600865474071a7973fe0ed89b4fd361065e080a",
@@ -1965,6 +1965,41 @@
       "hash": "5b8ce6f4b5d555eeef5ee8e3cc8f7a933b405529",
       "at": "2026-03-29T08:11:31Z",
       "pr": 12760
+    },
+    ".agents/tools/mobile/agent-device.md": {
+      "hash": "29bde4b26353446f6b35c132fcc1c01a80b71d4c",
+      "at": "2026-03-29T08:49:16Z",
+      "pr": 12788
+    },
+    ".agents/content/context-templates.md": {
+      "hash": "9380bd7b196b5d8f0ccfc5ad3bf024e6cc0496fd",
+      "at": "2026-03-29T08:49:18Z",
+      "pr": 12789
+    },
+    ".agents/content/video-enhancor.md": {
+      "hash": "c92832f61d3cd78705b2913a0662b1ecee089aae",
+      "at": "2026-03-29T08:49:19Z",
+      "pr": 12796
+    },
+    ".agents/tools/infrastructure/nvidia-cloud.md": {
+      "hash": "3dfae170793fb08c63d93733cd5ad81760d651ee",
+      "at": "2026-03-29T08:49:20Z",
+      "pr": 12776
+    },
+    ".agents/reference/planning-detail.md": {
+      "hash": "c5c616d56a09198023878a228bbf7311f9bd0212",
+      "at": "2026-03-29T08:49:21Z",
+      "pr": 12780
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/cache-reserve-patterns.md": {
+      "hash": "dd2e25d9b8dbb4578e676187c9463404feaa3fec",
+      "at": "2026-03-29T08:49:23Z",
+      "pr": 12779
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/turn.md": {
+      "hash": "10963e4e50c30efb3918e434ec90cafa0ac2f51a",
+      "at": "2026-03-29T08:50:09Z",
+      "pr": 12801
     }
   }
 }
