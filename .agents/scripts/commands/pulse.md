@@ -776,10 +776,10 @@ Every comment the supervisor posts on an issue or PR must be **sufficient for a 
 
 When dispatching a worker, comment on the issue with:
 
-Generate the signature footer: `SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "<full model ID>")`.
+Generate the signature footer: `SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "<full model ID>" --issue "<slug>#<number>")`.
 
 ```bash
-SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "<full model ID, e.g., anthropic/claude-sonnet-4-6>")
+SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "<full model ID, e.g., anthropic/claude-sonnet-4-6>" --issue "<slug>#<number>")
 gh issue comment <number> --repo <slug> --body "Dispatching worker.
 - **Branch**: <branch name, e.g., fix/t748-ai-migration>
 - **Scope**: <1-line description of what the worker should do>
@@ -795,7 +795,7 @@ ${SIG_FOOTER}"
 When killing a worker or closing a failed PR, comment with:
 
 ```bash
-SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "<tier used>")
+SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "<tier used>" --issue "<slug>#<number>")
 gh issue comment <number> --repo <slug> --body "Worker killed after <duration> with <N> commits (struggle_ratio: <ratio>).
 - **Branch**: <branch name>
 - **Reason**: <why it was killed — thrashing, timeout, CI loop, etc.>
@@ -814,7 +814,7 @@ ${SIG_FOOTER}"
 When merging a PR or closing an issue as done:
 
 ```bash
-SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "<tier that succeeded>")
+SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "<tier that succeeded>" --issue "<slug>#<number>" --solved)
 gh issue comment <number> --repo <slug> --body "Completed via PR #<N>.
 - **Attempts**: <total attempts including failures>
 - **Duration**: <wall-clock from first dispatch to merge>
