@@ -11,7 +11,7 @@
 - Prominent Add to Cart button
 - Stock availability indicator
 
-**Social Proof Section:**
+**Social Proof:**
 - Customer reviews with photos
 - Star ratings distribution
 - "X people bought this today"
@@ -25,182 +25,83 @@
 
 ### Image Optimization
 
-**Best Practices:**
-- Minimum 4 images per product
-- Lifestyle context shots
-- Detail/texture close-ups
-- Scale reference photos
-
-**Technical Requirements:**
-- Lazy loading for performance
-- WebP format with fallbacks
+- Minimum 4 images per product: lifestyle, detail/texture, scale reference
+- Lazy loading, WebP with fallbacks
 - Alt text for accessibility
 - Zoom functionality
 
 ## 22.2 Cart and Checkout Optimization
 
-### Cart Page Best Practices
+### Cart Page
 
-**Cart Summary:**
-- Clear item images and descriptions
-- Quantity adjusters
-- Remove item option
-- Price breakdown (subtotal, tax, shipping)
-- Promo code field
-
-**Urgency Elements:**
-- Stock levels: "Only 3 left"
-- Time-limited offers
-- Free shipping thresholds
+- Clear item images, descriptions, quantity adjusters, remove option
+- Price breakdown (subtotal, tax, shipping) + promo code field
+- Urgency: stock levels ("Only 3 left"), time-limited offers, free shipping thresholds
 - Recently viewed items
 
-### Checkout Flow Design
+### Checkout Flow
 
-**Single-Page vs Multi-Step:**
+**Single-page** — see entire process, faster for simple purchases, lower perceived effort.
+**Multi-step** — progress indicators reduce anxiety, easier error correction, better on mobile.
 
-**Single-Page Benefits:**
-- See entire process upfront
-- Faster for simple purchases
-- Lower perceived effort
-
-**Multi-Step Benefits:**
-- Progress indicators reduce anxiety
-- Easier error correction
-- Better mobile experience
-
-**Optimization Tactics:**
+**Key tactics:**
 1. Guest checkout option
 2. Address autocomplete
 3. Saved payment methods
 4. Clear error messaging
 5. Order summary sidebar
 
-## 22.3 Mobile Commerce Optimization
+## 22.3 Mobile Commerce
 
-### Mobile-Specific Considerations
+### Mobile UX
 
-**Touch Targets:**
-- Minimum 44px × 44px
-- Adequate spacing between elements
-- Thumb-friendly navigation
+- Touch targets: minimum 44px x 44px, adequate spacing, thumb-friendly navigation
+- Performance: page load < 3s, optimized images, minimal JS, AMP for key pages
+- Auto-fill, simplified forms, one-click reordering
 
-**Performance:**
-- Page load < 3 seconds
-- Optimized images
-- Minimal JavaScript
-- AMP for key pages
+### Mobile Payment
 
-**Simplified Flow:**
-- Auto-fill where possible
-- Digital wallets (Apple Pay, Google Pay)
-- One-click reordering
-- Simplified forms
+**Express checkout:** Apple Pay, Google Pay, PayPal One Touch, Shop Pay, Amazon Pay
 
-### Mobile Payment Optimization
+**Friction reduction:** No account required, minimal data entry, clear security indicators, quick confirmation
 
-**Express Checkout:**
-- Apple Pay / Google Pay prominence
-- PayPal One Touch
-- Shop Pay
-- Amazon Pay
-
-**Reducing Friction:**
-- No account required
-- Minimal data entry
-- Clear security indicators
-- Quick confirmation
-
-## 22.4 Personalization for E-commerce
+## 22.4 Personalization
 
 ### Product Recommendations
 
-**Recommendation Types:**
+| Type | Example |
+|------|---------|
+| Collaborative filtering | "Customers who bought X also bought Y" |
+| Content-based | "More products in [Category]" |
+| Behavioral | "Based on your browsing history" |
+| Popular | "Trending now" / "Best sellers" |
 
-**Collaborative Filtering:**
-"Customers who bought X also bought Y"
+### Dynamic Pricing
 
-**Content-Based:**
-"More products in [Category]"
+- First-time buyer offers, loyalty tiers, abandoned cart incentives, win-back campaigns
+- Countdown timers, limited quantity messaging, member-exclusive pricing, flash deals
 
-**Behavioral:**
-"Based on your browsing history"
+## 22.5 Category and Search
 
-**Popular:**
-"Trending now"
-"Best sellers"
+### Category Page
 
-### Dynamic Pricing Strategies
+- Filters: multiple options, price range sliders, color/size selectors, clear all
+- Product grid: quick view, wishlist buttons, comparison, infinite scroll vs pagination
 
-**Personalized Discounts:**
-- First-time buyer offers
-- Loyalty program tiers
-- Abandoned cart incentives
-- Win-back campaigns
+### Search
 
-**Urgency Tactics:**
-- Countdown timers for sales
-- Limited quantity messaging
-- Member-exclusive pricing
-- Flash deals
+- Autocomplete, spell correction, visual search, voice search
+- Results: relevance ranking, faceted navigation, results count, related searches
 
-## 22.5 Category and Search Optimization
-
-### Category Page CRO
-
-**Filtering and Sorting:**
-- Multiple filter options
-- Price range sliders
-- Color/size selectors
-- Clear all filters
-
-**Product Grid:**
-- Quick view options
-- Wishlist buttons
-- Comparison features
-- Infinite scroll vs pagination
-
-### Search Optimization
-
-**Search Features:**
-- Autocomplete suggestions
-- Spell correction
-- Visual search
-- Voice search
-
-**Results Page:**
-- Relevance ranking
-- Faceted navigation
-- Results count
-- Related searches
-
-## 22.6 Post-Purchase Optimization
+## 22.6 Post-Purchase
 
 ### Order Confirmation
 
-**Confirmation Page:**
-- Clear thank you message
-- Order details summary
-- Delivery timeline
-- What happens next
-
-**Email Sequence:**
-1. Order confirmation (immediate)
-2. Shipping notification with tracking
-3. Delivery confirmation
-4. Review request (post-delivery)
-5. Replenishment reminder (if applicable)
+- Confirmation page: thank you, order details, delivery timeline, next steps
+- Email sequence: (1) order confirmation, (2) shipping + tracking, (3) delivery confirmation, (4) review request, (5) replenishment reminder
 
 ### Reducing Returns
 
-**Pre-Purchase:**
-- Detailed sizing information
-- Customer photos
-- Video demonstrations
-- Virtual try-on
+**Pre-purchase:** Detailed sizing, customer photos, video demos, virtual try-on
 
-**Post-Purchase:**
-- Clear care instructions
-- Usage tips
-- Customer support access
-
-This e-commerce deep dive provides tactical optimization strategies for online retail conversion.
+**Post-purchase:** Care instructions, usage tips, customer support access
