@@ -28,18 +28,12 @@ const config = {
     {
       expression: "not http.request.uri.path matches \"^/api/\"",
       action: "execute",
-      action_parameters: {
-        id: managedRulesetId,
-        overrides: { sensitivity_level: "default", action: "block" },
-      },
+      action_parameters: { id: managedRulesetId, overrides: { sensitivity_level: "default", action: "block" } },
     },
     {
       expression: "http.request.uri.path matches \"^/api/\"",
       action: "execute",
-      action_parameters: {
-        id: managedRulesetId,
-        overrides: { sensitivity_level: "low", action: "managed_challenge" },
-      },
+      action_parameters: { id: managedRulesetId, overrides: { sensitivity_level: "low", action: "managed_challenge" } },
     },
   ],
 };
@@ -52,28 +46,27 @@ Gradual rollout: MONITORING (week 1) → LOW (week 2) → MEDIUM (week 3) → HI
 ```typescript
 enum ProtectionLevel { MONITORING = "monitoring", LOW = "low", MEDIUM = "medium", HIGH = "high" }
 
+const levelConfig: Record<ProtectionLevel, { action: string; sensitivity: string }> = {
+  [ProtectionLevel.MONITORING]: { action: "log", sensitivity: "eoff" },
+  [ProtectionLevel.LOW]:        { action: "managed_challenge", sensitivity: "low" },
+  [ProtectionLevel.MEDIUM]:     { action: "managed_challenge", sensitivity: "medium" },
+  [ProtectionLevel.HIGH]:       { action: "block", sensitivity: "default" },
+};
+
 async function setProtectionLevel(zoneId: string, level: ProtectionLevel, managedRulesetId: string, apiToken: string) {
-  const levelConfig = {
-    [ProtectionLevel.MONITORING]: { action: "log", sensitivity: "eoff" },
-    [ProtectionLevel.LOW]: { action: "managed_challenge", sensitivity: "low" },
-    [ProtectionLevel.MEDIUM]: { action: "managed_challenge", sensitivity: "medium" },
-    [ProtectionLevel.HIGH]: { action: "block", sensitivity: "default" },
-  } as const;
-
-  const settings = levelConfig[level];
-  const config = {
-    description: `DDoS protection level: ${level}`,
-    rules: [{
-      expression: "true",
-      action: "execute",
-      action_parameters: {
-        id: managedRulesetId,
-        overrides: { action: settings.action, sensitivity_level: settings.sensitivity },
-      },
-    }],
-  };
-
-  return fetch(/* ... */);
+  const { action, sensitivity } = levelConfig[level];
+  return fetch(/* PUT zones/${zoneId}/rulesets/phases/ddos_l7/entrypoint */, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${apiToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      description: `DDoS protection level: ${level}`,
+      rules: [{
+        expression: "true",
+        action: "execute",
+        action_parameters: { id: managedRulesetId, overrides: { action, sensitivity_level: sensitivity } },
+      }],
+    }),
+  });
 }
 ```
 
@@ -87,8 +80,7 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.url.includes("/attack-detected")) {
       await env.KV_NAMESPACE.put(`attack:${Date.now()}`, await request.text(), { expirationTtl: 86400 });
-      const recentAttacks = await getRecentAttacks(env.KV_NAMESPACE);
-      if (recentAttacks.length > 5) {
+      if ((await getRecentAttacks(env.KV_NAMESPACE)).length > 5) {
         await increaseProtection(env.ZONE_ID, "managed-ruleset-id", env.CLOUDFLARE_API_TOKEN);
         return new Response("Protection increased", { status: 200 });
       }
@@ -115,26 +107,17 @@ const config = {
     { // Unknown traffic — strictest
       expression: "not ip.src in $known_ips and not cf.bot_management.score gt 30",
       action: "execute",
-      action_parameters: {
-        id: managedRulesetId,
-        overrides: { sensitivity_level: "default", action: "block" },
-      },
+      action_parameters: { id: managedRulesetId, overrides: { sensitivity_level: "default", action: "block" } },
     },
     { // Verified bots — medium
       expression: "cf.bot_management.verified_bot",
       action: "execute",
-      action_parameters: {
-        id: managedRulesetId,
-        overrides: { sensitivity_level: "medium", action: "managed_challenge" },
-      },
+      action_parameters: { id: managedRulesetId, overrides: { sensitivity_level: "medium", action: "managed_challenge" } },
     },
     { // Trusted IPs — low
       expression: "ip.src in $trusted_ips",
       action: "execute",
-      action_parameters: {
-        id: managedRulesetId,
-        overrides: { sensitivity_level: "low" },
-      },
+      action_parameters: { id: managedRulesetId, overrides: { sensitivity_level: "low" } },
     },
   ],
 };
