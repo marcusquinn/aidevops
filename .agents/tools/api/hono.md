@@ -17,7 +17,7 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
-**Purpose**: Fast, lightweight API framework for Next.js API routes, edge functions, serverless. TypeScript-first, full type inference, Edge/Node.js/Bun/Deno/Cloudflare Workers, built-in middleware (CORS, auth, validation), RPC client with type safety.
+**Purpose**: TypeScript-first lightweight API framework. Runs on Edge/Node.js/Bun/Deno/Cloudflare Workers. Full type inference, built-in middleware (CORS, auth, validation), type-safe RPC client.
 **Docs**: Context7 MCP for current documentation.
 
 **Basic routes**:
@@ -44,10 +44,10 @@ app.post(
 );
 ```
 
-**RPC client** (type-safe):
+**RPC client** (end-to-end type safety):
 
 ```tsx
-// server.ts
+// server.ts — chain routes for type export
 const routes = app
   .get("/api/users", (c) => c.json({ users: [] }))
   .post("/api/users", zValidator("json", createUserSchema), (c) =>
@@ -75,9 +75,7 @@ export const POST = handle(app);
 
 <!-- AI-CONTEXT-END -->
 
-## Patterns
-
-### Middleware
+## Middleware
 
 ```tsx
 import { cors } from "hono/cors";
@@ -90,22 +88,18 @@ app.use("/api/*", cors());
 // Auth — validate token, not just header presence
 app.use("/api/admin/*", async (c, next) => {
   const authHeader = c.req.header("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
+  if (!authHeader?.startsWith("Bearer "))
     return c.json({ error: "Missing or malformed Authorization header" }, 401);
-  }
   let user;
-  try {
-    user = await verifyToken(authHeader.slice(7));
-  } catch {
-    return c.json({ error: "Invalid or expired token" }, 401);
-  }
+  try { user = await verifyToken(authHeader.slice(7)); }
+  catch { return c.json({ error: "Invalid or expired token" }, 401); }
   if (!user) return c.json({ error: "Invalid or expired token" }, 401);
   c.set("user", user);
   await next();
 });
 ```
 
-### Error Handling
+## Error Handling
 
 ```tsx
 import { HTTPException } from "hono/http-exception";
@@ -113,9 +107,7 @@ import { HTTPException } from "hono/http-exception";
 app.onError((err, c) => {
   if (err instanceof HTTPException) return err.getResponse();
   console.error("[API Error]", {
-    message: err.message,
-    path: c.req.path,
-    method: c.req.method,
+    message: err.message, path: c.req.path, method: c.req.method,
     ...(process.env.NODE_ENV !== "production" && { stack: err.stack }),
   });
   return c.json({ error: "Internal Server Error" }, 500);
@@ -128,7 +120,7 @@ app.get("/api/users/:id", async (c) => {
 });
 ```
 
-### Grouped Routes
+## Grouped Routes
 
 ```tsx
 const users = new Hono()
@@ -138,7 +130,7 @@ const users = new Hono()
 app.route("/api/users", users);
 ```
 
-### Context Variables
+## Context Variables
 
 ```tsx
 app.use("*", async (c, next) => {
@@ -148,7 +140,7 @@ app.use("*", async (c, next) => {
 app.get("/api/profile", (c) => c.json(c.get("user")));
 ```
 
-### Streaming
+## Streaming
 
 ```tsx
 import { streamText } from "hono/streaming";
@@ -162,7 +154,7 @@ app.get("/api/stream", (c) =>
 );
 ```
 
-### File Uploads
+## File Uploads
 
 ```tsx
 app.post("/api/upload", async (c) => {
