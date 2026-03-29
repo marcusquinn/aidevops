@@ -32,39 +32,6 @@ tools:
 | User gratitude | "thanks", "done", "that's all", "finished" | Medium |
 | Topic shift | New unrelated task requested | Medium |
 
-```bash
-check_session_status() {
-    local incomplete
-    local pr_state
-
-    incomplete=$(grep -c '^\s*- \[ \]' TODO.md 2>/dev/null || echo "0")
-    pr_state=$(gh pr view --json state --jq '.state' 2>/dev/null || echo "none")
-
-    echo "Incomplete tasks: ${incomplete} | PR state: ${pr_state}"
-
-    if [[ "${incomplete}" == "0" && "${pr_state}" == "MERGED" ]]; then
-        echo "Session complete. Consider: 1) @agent-review  2) New session"
-    fi
-
-    return 0
-}
-```
-
-## Suggestion Templates
-
-Use these templates at session boundaries. Replace `{placeholders}` with actual values.
-
-```text
----
-Session status: {completed items summary}
-
-Suggestions:
-1. Run @agent-review to capture learnings
-2. Start new session for next task (clean context)
-3. Spawn parallel session: worktree-helper.sh add feature/{next-feature}
----
-```
-
 **Trigger-specific prefixes:**
 
 | Trigger | Prefix line |
@@ -143,7 +110,7 @@ Loop agents (`/preflight-loop`, `/pr-loop`, `/postflight-loop`) should detect co
 
 ## Compaction Resilience (Long Autonomous Sessions)
 
-During 1h+ sessions, context compaction can lose task state. Use checkpoints to persist state to disk.
+Context compaction in 1h+ sessions can lose task state. Use checkpoints to persist state to disk.
 
 ### Checkpoint Workflow
 
@@ -174,16 +141,6 @@ session-checkpoint-helper.sh status
 | Before large operation | `save` as recovery point |
 | After context compaction | `load` to re-orient |
 
-### Self-Prompting Loop (Interactive Only)
-
-For autonomous multi-hour sessions (NOT headless workers):
-
-1. Mark task complete in TODO.md
-2. Save checkpoint to disk
-3. Re-read checkpoint (forces re-orientation after compaction)
-4. Read TODO.md for next task
-5. Start next task
-
 ### Continuation Prompt
 
 ```bash
@@ -192,10 +149,6 @@ session-checkpoint-helper.sh continuation
 
 # Auto-save with state detection
 session-checkpoint-helper.sh auto-save --task "t135.9" --note "Completed X"
-
-# Include in session distillation
-session-distill-helper.sh auto        # Includes checkpoint step
-session-distill-helper.sh checkpoint  # Just operational state
 ```
 
 Gathers state from: git (branch, uncommitted changes, commits, worktrees), GitHub (open PRs), supervisor (batch state), TODO.md (in-progress tasks), checkpoint file, and memory. This is the single highest-impact factor for session continuity — AGENTS.md provides the "how", the continuation prompt provides the "where we are".
