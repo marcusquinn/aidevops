@@ -35,7 +35,7 @@ youtube-helper.sh quota                    # Check quota before heavy ops
 youtube-helper.sh channel @handle json
 ```
 
-Extract: subscriber count, total views, video count, creation date, description, upload frequency (total videos / channel age).
+Extract: subscriber count, total views, video count, creation date, upload frequency (total videos / channel age).
 
 ### Step 2: Video Enumeration
 
@@ -43,7 +43,7 @@ Extract: subscriber count, total views, video count, creation date, description,
 youtube-helper.sh videos @handle 200 json
 ```
 
-Calculate: average views/video, median views (more robust than average), upload frequency, view trend (recent vs historical), duration distribution.
+Calculate: avg views/video, median views, upload frequency, view trend (recent vs historical), duration distribution.
 
 ### Step 3: Outlier Detection
 
@@ -55,21 +55,13 @@ process.stdin.on('data', d => {
     const videos = JSON.parse(d);
     const views = videos.map(v => Number(v.statistics?.viewCount || 0)).sort((a,b) => a-b);
     const median = views[Math.floor(views.length / 2)];
-    const threshold = median * 3;
-
-    console.log('Median views:', median.toLocaleString());
-    console.log('Outlier threshold (3x):', threshold.toLocaleString());
-    console.log('');
-
     const outliers = videos
-        .filter(v => Number(v.statistics?.viewCount || 0) > threshold)
+        .filter(v => Number(v.statistics?.viewCount || 0) > median * 3)
         .sort((a,b) => Number(b.statistics?.viewCount || 0) - Number(a.statistics?.viewCount || 0));
-
-    console.log('Outlier videos (' + outliers.length + '):');
+    console.log('Median:', median.toLocaleString(), '| Threshold (3x):', (median*3).toLocaleString());
     outliers.forEach(v => {
-        const views = Number(v.statistics?.viewCount || 0);
-        const multiplier = (views / median).toFixed(1);
-        console.log('  ' + multiplier + 'x | ' + views.toLocaleString() + ' views | ' + v.snippet?.title);
+        const vv = Number(v.statistics?.viewCount || 0);
+        console.log((vv/median).toFixed(1)+'x |', vv.toLocaleString(), 'views |', v.snippet?.title);
     });
 });
 "
@@ -77,42 +69,26 @@ process.stdin.on('data', d => {
 
 ### Step 4: Content DNA Extraction
 
-Analyze outlier videos for: topic clusters, title patterns (numbers/questions/how-to/brackets), duration sweet spot, thumbnail style (use `image-understanding.md`), hook patterns (transcripts of top 5, first 30 seconds).
+Analyze outlier videos for: topic clusters, title patterns (numbers/questions/how-to/brackets), duration sweet spot, thumbnail style (use `image-understanding.md`), hook patterns (first 30s of top 5 transcripts).
 
 ```bash
-for vid in VIDEO_ID_1 VIDEO_ID_2 VIDEO_ID_3; do
-    echo "=== $vid ==="
-    youtube-helper.sh transcript "$vid" | head -20
-    echo ""
-done
+for vid in VIDEO_ID_1 VIDEO_ID_2 VIDEO_ID_3; do echo "=== $vid ===" && youtube-helper.sh transcript "$vid" | head -20; done
 ```
 
 ### Step 5: Store Findings in Memory
 
 ```bash
 memory-helper.sh store --type WORKING_SOLUTION --namespace youtube \
-  "Channel profile @handle: [subs] subs, [views/vid] avg views, uploads [freq]. \
-   Content DNA: [topics], [formats]. Outlier pattern: [description]. \
-   Weakness: [gap identified]."
+  "Channel @handle: [subs] subs, [views/vid] avg views, [freq] uploads. DNA: [topics], [formats]. Outlier: [description]. Gap: [weakness]."
 ```
 
-## Competitor Comparison Matrix
-
-| Metric | Your Channel | Competitor 1 | Competitor 2 | Competitor 3 |
-|--------|-------------|-------------|-------------|-------------|
-| Subscribers | | | | |
-| Total views | | | | |
-| Video count | | | | |
-| Avg views/video | | | | |
-| Views/subscriber | | | | |
-| Upload frequency | | | | |
-| Avg duration | | | | |
-| Top topic | | | | |
-| Outlier count (3x) | | | | |
+## Competitor Comparison
 
 ```bash
 youtube-helper.sh competitors @you @comp1 @comp2 @comp3
 ```
+
+Metrics to compare: subscribers, total views, video count, avg views/video, views/subscriber, upload frequency, avg duration, top topic, outlier count (3x).
 
 ## Engagement Metrics
 
@@ -126,13 +102,12 @@ youtube-helper.sh competitors @you @comp1 @comp2 @comp3
 
 ## Quota Budget
 
-| Operation | Cost | Typical Usage |
-|-----------|------|---------------|
-| Channel lookup (per channel) | 1 unit | 5 channels = 5 units |
-| Video enumeration (per 50 videos) | 1 unit | 200 videos = 4 units |
-| Video details (per 50 videos) | 1 unit | 200 videos = 4 units |
-| Transcripts (via yt-dlp) | 0 units | Unlimited |
-| **Full competitor analysis (5 channels)** | | **~50 units** |
+| Operation | Cost |
+|-----------|------|
+| Channel lookup (per channel) | 1 unit |
+| Video enumeration or details (per 50 videos) | 1 unit |
+| Transcripts (via yt-dlp) | 0 units |
+| **Full competitor analysis (5 channels, 200 videos each)** | **~50 units** |
 
 Daily limit: 10,000 units.
 
@@ -141,8 +116,7 @@ Daily limit: 10,000 units.
 ```markdown
 ## Channel Profile: [Name] (@handle)
 
-**Overview**: [subscribers] subscribers, [total_views] total views, [video_count] videos
-**Created**: [date] | **Upload frequency**: [X videos/week]
+**Overview**: [subscribers] subs · [total_views] views · [video_count] videos · created [date] · [X videos/week]
 **Niche**: [primary topic]
 
 ### Performance Metrics
@@ -158,9 +132,8 @@ Daily limit: 10,000 units.
 - **Title patterns**: [patterns observed]
 
 ### Outlier Videos ([count] found, threshold: [X] views)
-1. [Title] - [views] views ([multiplier]x median)
-2. [Title] - [views] views ([multiplier]x median)
-3. [Title] - [views] views ([multiplier]x median)
+1. [Title] — [views] views ([multiplier]x median)
+<!-- repeat for each outlier -->
 
 ### Strategic Insights
 - **Strength**: [what they do well]
