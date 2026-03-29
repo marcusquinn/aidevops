@@ -19,7 +19,7 @@ tools:
 - **Upstream skill**: [git.cloudron.io/docs/skills](https://git.cloudron.io/docs/skills) (`cloudron-server-ops`)
 - **Install**: `sudo npm install -g cloudron` (on your PC/Mac, NOT the server)
 - **Login**: `cloudron login my.example.com` (browser-based; 9.1+ uses OIDC/passkey)
-- **CI/CD**: `--server <domain> --token <api-token>` (get token from `https://my.example.com/#/profile`); example: `cloudron update --server my.example.com --token <token> --app blog.example.com --image user/image:tag`
+- **CI/CD**: `--server <domain> --token <api-token> --no-wait` (token from `https://my.example.com/#/profile`); example: `cloudron update --server my.example.com --token <token> --app blog.example.com --image user/image:tag`
 - **Token stored**: `~/.cloudron.json`; self-signed TLS: add `--allow-selfsigned`
 - **Also see**: `cloudron-helper.sh` for multi-server management via API
 
@@ -27,7 +27,7 @@ tools:
 
 ## App Targeting
 
-Most commands require `--app` (FQDN, subdomain, or app ID). Auto-detected when run from a directory with `CloudronManifest.json` and a previously installed app.
+`--app` accepts FQDN, subdomain, or app ID. Auto-detected from `CloudronManifest.json` in the current directory.
 
 ```bash
 cloudron logs --app blog.example.com   # by FQDN
@@ -156,7 +156,6 @@ cloudron completion             # shell completion
 | Option | Purpose |
 |--------|---------|
 | `--server <domain>` | Target Cloudron server |
-| `--token <token>` | API token (for CI/CD) |
-| `--allow-selfsigned` | Accept self-signed TLS certificates |
-| `--no-wait` | Do not wait for the operation to complete |
-
+| `--token <token>` | API token (CI/CD) |
+| `--allow-selfsigned` | Accept self-signed TLS |
+| `--no-wait` | Don't wait for operation to complete |
