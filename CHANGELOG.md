@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.335] - 2026-03-30
+
+### Changed
+
+- Documentation: tighten image-seo.md — collapse duplicate batch workflow (151→133 lines) (#13424)
+- Documentation: tighten cloudron-app-publishing-skill.md (150→111 lines, 26% reduction) (#13426)
+- Maintenance: tighten content/optimization.md agent doc (148→135 lines) (#13425)
+- Documentation: GH#13128: tighten session-manager.md (156→135 lines) (#13412)
+- Documentation: tighten autogen.md — remove redundant prose, trim verbose comments (#13417)
+- Maintenance: tighten agent-testing.md (151→138 lines) (#13416)
+
 ## [3.5.332] - 2026-03-30
 
 ### Changed
