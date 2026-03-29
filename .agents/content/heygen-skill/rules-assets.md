@@ -7,20 +7,11 @@ metadata:
 
 # Asset Upload and Management
 
-Upload custom assets (images, videos, audio) for backgrounds, talking photos, and custom audio.
+Two-step flow: (1) get a presigned upload URL, (2) PUT the file to that URL.
 
-## Upload Flow
+## Get Upload URL
 
-1. Get a presigned upload URL from HeyGen
-2. Upload the file to the presigned URL
-
-## Getting an Upload URL
-
-**Endpoint:** `POST https://api.heygen.com/v1/asset`
-
-| Field | Type | Req | Description |
-|-------|------|:---:|-------------|
-| `content_type` | string | ✓ | MIME type of file to upload |
+`POST https://api.heygen.com/v1/asset` with `content_type` (MIME type, required).
 
 ```bash
 curl -X POST "https://api.heygen.com/v1/asset" \
@@ -29,21 +20,21 @@ curl -X POST "https://api.heygen.com/v1/asset" \
   -d '{"content_type": "image/jpeg"}'
 ```
 
-**Response:** `{ "data": { "url": "<presigned-url>", "asset_id": "<id>" } }`
+Response: `{ "data": { "url": "<presigned-url>", "asset_id": "<id>" } }`
 
 ## Supported Content Types
 
-| Type | Content-Type | Use Case |
-|------|--------------|----------|
-| JPEG | `image/jpeg` | Backgrounds, talking photos |
-| PNG | `image/png` | Backgrounds, overlays |
-| MP4 | `video/mp4` | Video backgrounds |
-| MP3 | `audio/mpeg` | Custom audio input |
-| WAV | `audio/wav` | Custom audio input |
+| Content-Type | Use Case |
+|--------------|----------|
+| `image/jpeg` | Backgrounds, talking photos |
+| `image/png` | Backgrounds, overlays |
+| `video/mp4` | Video backgrounds |
+| `audio/mpeg` | Custom audio input |
+| `audio/wav` | Custom audio input |
 
-## Uploading Files
+## Upload Files
 
-Upload to the presigned URL with `PUT`:
+PUT to the presigned URL. `duplex: "half"` required for streaming uploads.
 
 ```typescript
 import fs from "fs";
@@ -74,12 +65,11 @@ async function uploadFile(filePath: string, contentType: string): Promise<string
     method: "PUT",
     headers: { "Content-Type": contentType, "Content-Length": fileStats.size.toString() },
     body: fileStream as any,
-    duplex: "half", // Required for streaming
+    duplex: "half",
   });
   return asset_id;
 }
 
-// Upload from URL (streaming)
 async function uploadFromUrl(sourceUrl: string, contentType: string): Promise<string> {
   const { url, asset_id } = await getUploadUrl(contentType);
   const sourceResponse = await fetch(sourceUrl);
@@ -119,13 +109,13 @@ const config = {
 };
 ```
 
-## Limitations and Best Practices
+## Constraints and Best Practices
 
 | Constraint | Details |
 |------------|---------|
-| File size | 10-100MB max (varies by type) |
-| Image dimensions | Match video dimensions |
+| File size | 10-100 MB max (varies by type) |
+| Image dimensions | Match target video dimensions |
 | Audio duration | Match expected video length |
 | Retention | Assets may be deleted after inactivity |
 
-**Best practices:** Optimize images to video dimensions before upload. Use JPEG for photos, PNG for transparency. Validate file type/size locally. Implement retry logic. Cache asset IDs for reuse.
+Optimize images to video dimensions before upload. JPEG for photos, PNG for transparency. Validate type/size locally. Implement retry logic. Cache asset IDs for reuse.
