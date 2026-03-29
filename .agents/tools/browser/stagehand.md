@@ -40,7 +40,7 @@ Slowest tool due to AI model overhead. Without API key, works as a Playwright wr
 
 **Parallel**: Multiple Stagehand instances (each launches own browser). Full isolation but slow due to AI overhead per instance. For parallel speed, use Playwright direct.
 
-**Custom browsers**: Supports Brave, Edge, and Chrome via `executablePath` in `browserOptions`. Brave provides built-in ad/tracker blocking via Shields without needing extensions. See "Custom Browser Engine" section below.
+**Custom browsers**: Supports Brave, Edge, and Chrome via `executablePath` in `browserOptions`. Brave provides built-in ad/tracker blocking via Shields without needing extensions. See [`stagehand-examples.md`](stagehand-examples.md) for config examples.
 
 **Extensions**: Possible via Playwright's `launchPersistentContext` (Stagehand uses Playwright underneath), but untested. Use Playwright instead for extension access. uBlock Origin can be loaded via `--load-extension` in `browserOptions.args`.
 
@@ -51,128 +51,21 @@ Slowest tool due to AI model overhead. Without API key, works as a Playwright wr
 **Headless**: Set `headless: true` in config (default for benchmarks).
 <!-- AI-CONTEXT-END -->
 
-## Core Primitives
-
-### Act — Natural Language Actions
-
-```javascript
-await stagehand.act("click the submit button");
-await stagehand.act("fill in the email field with user@example.com");
-await stagehand.act("select 'Premium' from the subscription dropdown");
-```
-
-### Extract — Structured Data
-
-```javascript
-const productInfo = await stagehand.extract(
-    "extract product details",
-    z.object({
-        name: z.string().describe("Product name"),
-        price: z.number().describe("Price in USD"),
-        rating: z.number().describe("Star rating out of 5"),
-        reviews: z.array(z.string()).describe("Customer review texts"),
-        inStock: z.boolean().describe("Whether item is in stock")
-    })
-);
-```
-
-### Observe — Discover Available Actions
-
-```javascript
-const actions = await stagehand.observe();
-const buttons = await stagehand.observe("find all clickable buttons");
-const forms = await stagehand.observe("find all form fields");
-```
-
-### Agent — Autonomous Workflows
-
-```javascript
-const agent = stagehand.agent({
-    cua: true, // Enable Computer Use Agent
-    model: "google/gemini-2.5-computer-use-preview-10-2025"
-});
-await agent.execute("complete the checkout process");
-await agent.execute("research competitor pricing and create a report");
-```
-
 ## Configuration
-
-### Environment Variables
 
 `~/.aidevops/stagehand/.env`:
 
 ```bash
-# AI Provider (choose one)
-OPENAI_API_KEY=your_openai_api_key_here
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
-
-# Browser
-STAGEHAND_ENV=LOCAL          # LOCAL or BROWSERBASE
-STAGEHAND_HEADLESS=false     # Show browser window
-STAGEHAND_VERBOSE=1          # Logging level
-STAGEHAND_DEBUG_DOM=true     # Debug DOM interactions
-
-# Optional: Browserbase (cloud browsers)
-BROWSERBASE_API_KEY=your_browserbase_api_key_here
-BROWSERBASE_PROJECT_ID=your_browserbase_project_id_here
+OPENAI_API_KEY=your_openai_api_key_here      # or ANTHROPIC_API_KEY
+STAGEHAND_ENV=LOCAL                           # LOCAL or BROWSERBASE
+STAGEHAND_HEADLESS=false                      # show browser window
+STAGEHAND_VERBOSE=1                           # logging level
+STAGEHAND_DEBUG_DOM=true                      # debug DOM interactions
+BROWSERBASE_API_KEY=your_key_here             # optional cloud browsers
+BROWSERBASE_PROJECT_ID=your_project_id_here
 ```
 
-### Advanced Configuration
-
-```javascript
-const stagehand = new Stagehand({
-    env: "LOCAL",
-    verbose: 1,
-    debugDom: true,
-    headless: false,
-    browserOptions: {
-        args: ["--disable-web-security", "--disable-features=VizDisplayCompositor"]
-    },
-    modelName: "gpt-4o", // or "claude-sonnet-4-6"
-    modelClientOptions: { apiKey: process.env.OPENAI_API_KEY }
-});
-```
-
-### Custom Browser Engine (Brave, Edge, Chrome)
-
-Pass `executablePath` via `browserOptions`. Extensions may require headed mode; `--headless=new` supports extensions in newer Chromium.
-
-```javascript
-const stagehand = new Stagehand({
-    env: "LOCAL",
-    headless: false,
-    browserOptions: {
-        executablePath: '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
-        args: [
-            '--load-extension=/path/to/ublock-origin-unpacked',
-            '--disable-extensions-except=/path/to/ublock-origin-unpacked',
-        ],
-    },
-    modelName: "gpt-4o",
-    modelClientOptions: { apiKey: process.env.OPENAI_API_KEY }
-});
-```
-
-See [`browser-automation.md`](browser-automation.md#custom-browser-engine-support) for browser executable paths (macOS, Linux, Windows) and additional browser examples.
-
-## Basic Usage Example
-
-```javascript
-import { Stagehand } from "@browserbasehq/stagehand";
-import { z } from "zod";
-
-const stagehand = new Stagehand({ env: "LOCAL", verbose: 1 });
-await stagehand.init();
-await stagehand.page.goto("https://example.com");
-await stagehand.act("click the login button");
-
-const data = await stagehand.extract(
-    "get the price and title",
-    z.object({ price: z.number(), title: z.string() })
-);
-
-await stagehand.close();
-```
+Advanced JS config (`modelName`, `browserOptions`, `executablePath` for custom browsers): see [`stagehand-examples.md`](stagehand-examples.md). Browser executable paths (macOS/Linux/Windows): [`browser-automation.md`](browser-automation.md#custom-browser-engine-support).
 
 ## Helper Commands
 
@@ -188,9 +81,9 @@ bash .agents/scripts/stagehand-helper.sh clean            # Clean cache and logs
 
 ## Resources
 
-- **Docs**: https://docs.stagehand.dev
-- **GitHub**: https://github.com/browserbase/stagehand
-- **Quickstart**: https://docs.stagehand.dev/v3/first-steps/quickstart
+- **Examples (JS)**: `.agents/tools/browser/stagehand-examples.md`
+- **Python SDK**: `.agents/tools/browser/stagehand-python.md`
 - **Browser Automation**: `.agents/tools/browser/browser-automation.md`
 - **MCP Integrations**: `.agents/aidevops/mcp-integrations.md`
-- **Quality Standards**: `.agents/tools/code-review/code-standards.md`
+- **Docs**: https://docs.stagehand.dev
+- **GitHub**: https://github.com/browserbase/stagehand
