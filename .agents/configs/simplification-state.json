@@ -1772,9 +1772,9 @@
       "pr": 12662
     },
     ".agents/tools/deployment/cloudron-app-packaging-skill/addons-ref.md": {
-      "hash": "3ed45faf75fd7ede9acd3a13f38a8b0738b9d88c",
-      "at": "2026-03-29T08:10:55Z",
-      "pr": 12759
+      "hash": "0afd51341e71da8060a8a9e2759bf6629a430093",
+      "at": "2026-03-29T10:18:21Z",
+      "pr": 12844
     },
     ".agents/marketing-sales/cro-chapter-04.md": {
       "hash": "f893022ded62f04d6ca13b86f839211e4fe8190a",
@@ -1787,9 +1787,9 @@
       "pr": 12761
     },
     ".agents/tools/ai-orchestration/openprose.md": {
-      "hash": "d35c952a903000f6a3d0f148565fbbde449a49c9",
-      "at": "2026-03-29T08:49:31Z",
-      "pr": 12778
+      "hash": "90a017cd9eba517666cfdad7bdbd6b8b75220d0d",
+      "at": "2026-03-29T10:18:15Z",
+      "pr": 12842
     },
     ".agents/content/heygen-skill/rules-avatars.md": {
       "hash": "e600865474071a7973fe0ed89b4fd361065e080a",
@@ -1807,9 +1807,9 @@
       "pr": 12641
     },
     ".agents/services/database/postgres-drizzle-skill/performance.md": {
-      "hash": "f90d7e762b69fe79dd6e25ae0df041f7ca1e271b",
-      "at": "2026-03-29T08:10:58Z",
-      "pr": 12757
+      "hash": "48dbec46f41cf5e63754fb7ed84e48bee09e5f4a",
+      "at": "2026-03-29T10:18:22Z",
+      "pr": 12845
     },
     ".agents/services/accounting/quickfile.md": {
       "hash": "db7040cc4f46334177d39ff45c6d4fd3be9698ee",
@@ -2005,6 +2005,11 @@
       "hash": "f42ad2e963039fd53ee52d1443827cbe4f6158c0",
       "at": "2026-03-29T09:39:21Z",
       "pr": 12830
+    },
+    ".agents/tools/verification/parallel-verify.md": {
+      "hash": "0abbe9f5d2f2082016fd851080ea1f9a84a03fe9",
+      "at": "2026-03-29T10:19:07Z",
+      "pr": 12849
     }
   }
 }
