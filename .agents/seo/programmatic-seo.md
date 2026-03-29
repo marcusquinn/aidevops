@@ -19,7 +19,7 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Build SEO-optimized pages at scale using templates, keyword clustering, and automated generation
-- **Related**: `keyword-research.md` (keyword data), `site-crawler.md` (auditing), `eeat-score.md` (quality), `schema-markup` (structured data)
+- **Related**: `keyword-research.md`, `site-crawler.md`, `eeat-score.md`, `schema-markup`, `ranking-opportunities.md`, `google-search-console.md`
 - **Input**: Keyword lists, data sources, page templates
 - **Output**: Template definitions, page content, internal linking maps, sitemap entries
 
@@ -41,28 +41,9 @@ tools:
 
 ### 1. Keyword Research and Clustering
 
-Start with keyword data to identify scalable patterns:
-
-```bash
-# Discover keyword clusters
-/keyword-research-extended "seed keyword"
-
-# Look for repeating modifiers (city names, "vs", "alternative to", etc.)
-# Group keywords by intent pattern
-```
-
-**Cluster identification signals**:
-
-- Same head term + varying modifier (location, brand, feature)
-- Consistent search volume across variations
-- Similar SERP intent (informational, commercial, transactional)
-- Low keyword difficulty across the cluster
+Run `/keyword-research-extended "seed keyword"`. Look for repeating modifiers (city names, "vs", "alternative to"). Cluster signals: same head term + varying modifier, consistent volume across variations, similar SERP intent, low keyword difficulty.
 
 ### 2. Template Design
-
-Define a page template with variable slots and static content sections:
-
-**Template structure**:
 
 ```text
 URL pattern:    /{head-term}-{modifier}
@@ -80,16 +61,11 @@ Sections:
 ```
 
 **Quality requirements** (avoid thin content penalties):
-
-- Each page MUST have unique, substantive content (not just variable substitution)
-- Include real data points specific to each variation
-- Minimum 300 words of unique content per page
+- Each page MUST have unique, substantive content — not just variable substitution
+- Minimum 300 words of unique content per page; include real data points per variation
 - Add genuine value beyond what a single parent page could provide
-- Include user-generated content, reviews, or real data where possible
 
 ### 3. Data Collection
-
-Gather the data that populates each page variation:
 
 | Source Type | Examples | Method |
 |-------------|----------|--------|
@@ -101,8 +77,6 @@ Gather the data that populates each page variation:
 
 ### 4. Page Generation
 
-Generate pages from template + data:
-
 ```text
 For each {modifier} in data_source:
   1. Populate template variables
@@ -113,8 +87,6 @@ For each {modifier} in data_source:
   6. Validate: word count, uniqueness, E-E-A-T signals
 ```
 
-**Implementation approaches by platform**:
-
 | Platform | Method |
 |----------|--------|
 | WordPress | Custom post type + ACF/SCF fields + template |
@@ -124,52 +96,36 @@ For each {modifier} in data_source:
 
 ### 5. Internal Linking
 
-Programmatic pages need strong internal linking to avoid orphan pages:
-
-**Linking strategies**:
-
 - **Hub and spoke**: Parent category page links to all variations
 - **Cross-linking**: Related variations link to each other (same region, same category)
 - **Breadcrumbs**: Clear hierarchy (Home > Category > Variation)
-- **Footer/sidebar**: "Related {type}" blocks with 5-10 contextual links
+- **Footer/sidebar**: "Related {type}" blocks with 5–10 contextual links
 - **Sitemap**: Dedicated XML sitemap for the programmatic section
-
-**Link volume guidelines**:
-
-- Each page should have 3-10 internal links to other pages in the cluster
-- Hub page should link to all child pages (paginated if >50)
-- Avoid linking to every page from every page (dilutes link equity)
+- Each page: 3–10 internal links to cluster pages; hub links all children (paginated if >50); avoid all-to-all linking (dilutes link equity)
 
 ### 6. Quality Assurance
 
-Before launching, validate the generated pages:
-
-**Technical checks**:
-
+**Technical**:
 - [ ] All URLs resolve (no 404s)
 - [ ] Canonical tags point to self
 - [ ] No duplicate title tags or meta descriptions
-- [ ] Structured data validates (use `rich-results.md`)
-- [ ] Pages are in XML sitemap
-- [ ] Robots.txt allows crawling
-- [ ] Page load time <3s (use `pagespeed.md`)
+- [ ] Structured data validates (`rich-results.md`)
+- [ ] Pages in XML sitemap; robots.txt allows crawling
+- [ ] Page load time <3s (`pagespeed.md`)
 
-**Content checks**:
-
+**Content**:
 - [ ] Each page has >300 words of unique content
-- [ ] No duplicate content across variations (check with site-crawler)
-- [ ] Data is accurate and current
-- [ ] Grammar and readability pass
-- [ ] E-E-A-T signals present (use `eeat-score.md`)
+- [ ] No duplicate content across variations (`site-crawler`)
+- [ ] Data is accurate and current; grammar and readability pass
+- [ ] E-E-A-T signals present (`eeat-score.md`)
 
-**SEO checks**:
-
+**SEO**:
 - [ ] Target keyword in title, H1, and first paragraph
 - [ ] Internal links use descriptive anchor text
 - [ ] Images have alt text with relevant keywords
 - [ ] Schema markup matches page type
 
-## Anti-Patterns to Avoid
+## Anti-Patterns
 
 | Anti-Pattern | Why It Fails | Better Approach |
 |--------------|-------------|-----------------|
@@ -180,34 +136,10 @@ Before launching, validate the generated pages:
 | Stale data | Inaccurate pages lose trust | Schedule data refresh cycles |
 | Over-optimization | Keyword stuffing penalties | Write for users, optimize for search |
 
-## Scaling Considerations
+## When to Use pSEO
 
-**When to use pSEO**:
+**Use**: 50+ keyword variations with consistent intent, unique data per variation, clear user value per page.
 
-- 50+ keyword variations with consistent intent
-- Unique data available for each variation
-- Clear user value per page (not just SEO play)
+**Don't use**: <20 variations (write individual pages), no unique data per variation (consolidate), variations have no search volume.
 
-**When NOT to use pSEO**:
-
-- <20 variations (write individual pages instead)
-- No unique data per variation (consolidate into one page)
-- Variations don't have search volume (no demand)
-
-**Monitoring after launch**:
-
-- Track indexation rate via GSC (use `google-search-console.md`)
-- Monitor for soft 404s and crawl errors
-- Check ranking progress per cluster
-- Watch for cannibalization between variations (use `ranking-opportunities.md`)
-- Review engagement metrics (bounce rate, time on page)
-
-## Related Subagents
-
-- **keyword-research**: Discover and cluster keywords for pSEO campaigns
-- **site-crawler**: Audit generated pages for technical issues
-- **eeat-score**: Validate content quality across generated pages
-- **schema-markup**: Implement structured data for page types
-- **ranking-opportunities**: Monitor ranking progress and cannibalization
-- **google-search-console**: Track indexation and search performance
-- **page-cro**: Optimize generated pages for conversion
+**Post-launch monitoring**: Track indexation via GSC (`google-search-console.md`), monitor soft 404s and crawl errors, check ranking progress per cluster, watch for cannibalization (`ranking-opportunities.md`), review engagement metrics.
