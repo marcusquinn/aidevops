@@ -8,18 +8,9 @@ Sources: Grammarly (2025), Microsoft 365 Life Hacks (2025), GPTHuman (2025), Wal
 
 ## Em Dashes: The Primary AI Tell
 
-**The em dash (—) has become one of the most reliable markers of AI-generated content.**
+The em dash (—) is one of the most reliable markers of AI-generated content. AI models drastically overuse it as a shortcut for sentence variety.
 
-Em dashes are longer than hyphens (-) and are used for emphasis, interruptions, or parenthetical information. While they have legitimate uses in writing, AI models drastically overuse them.
-
-### Why Em Dashes Signal AI Writing
-
-- AI models were trained on edited books, academic papers, and style guides where em dashes appear frequently
-- AI uses em dashes as a shortcut for sentence variety instead of commas, colons, or parentheses
-- Most human writers rarely use em dashes because they don't exist as a standard keyboard key
-- The overuse is so consistent that it has become the unofficial signature of ChatGPT writing
-
-### What To Do Instead
+### Replacements
 
 | Instead of | Use |
 |------------|-----|
@@ -34,7 +25,7 @@ Em dashes are longer than hyphens (-) and are used for emphasis, interruptions, 
 - Use colons to introduce explanations or lists
 - Use parentheses for supplementary information
 - Reserve em dashes for rare, deliberate emphasis only
-- If you find yourself using more than one em dash per page, revise
+- More than one em dash per page → revise
 
 ---
 
@@ -100,7 +91,7 @@ Em dashes are longer than hyphens (-) and are used for emphasis, interruptions, 
 
 ## Phrases That Signal AI Writing
 
-### Opening Phrases to Avoid
+### Opening
 
 - "In today's fast-paced world..."
 - "In today's digital age..."
@@ -111,7 +102,7 @@ Em dashes are longer than hyphens (-) and are used for emphasis, interruptions, 
 - "Let's delve into..."
 - "Imagine a world where..."
 
-### Transitional Phrases to Avoid
+### Transitional
 
 - "That being said..."
 - "With that in mind..."
@@ -121,7 +112,7 @@ Em dashes are longer than hyphens (-) and are used for emphasis, interruptions, 
 - "In essence..."
 - "This begs the question..."
 
-### Concluding Phrases to Avoid
+### Concluding
 
 - "In conclusion..."
 - "To sum up..."
@@ -130,7 +121,7 @@ Em dashes are longer than hyphens (-) and are used for emphasis, interruptions, 
 - "All things considered..."
 - "At the end of the day..."
 
-### Structural Patterns to Avoid
+### Structural Patterns
 
 - "Whether you're a [X], [Y], or [Z]..." (listing three examples after "whether")
 - "It's not just [X], it's also [Y]..."
@@ -141,7 +132,7 @@ Em dashes are longer than hyphens (-) and are used for emphasis, interruptions, 
 
 ## Filler Words and Empty Intensifiers
 
-These words often add nothing to meaning. Remove them or find specific alternatives:
+Remove or replace with specific alternatives:
 
 - absolutely
 - actually
@@ -187,11 +178,11 @@ These words often add nothing to meaning. Remove them or find specific alternati
 
 ---
 
-## How to Self-Check
+## Self-Check
 
-1. Read your text aloud. If phrases sound unnatural in speech, revise them
-2. Ask: "Would I say this in a conversation with a colleague?"
+1. Read aloud — unnatural phrases → revise
+2. Ask: "Would I say this to a colleague?"
 3. Check for repetitive sentence structures
 4. Look for clusters of the words listed above
-5. Ensure varied sentence lengths (not all similar length)
+5. Vary sentence lengths
 6. Verify each intensifier adds genuine meaning
