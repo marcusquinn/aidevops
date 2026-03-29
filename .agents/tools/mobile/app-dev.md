@@ -6,8 +6,9 @@
 
 - **Purpose**: Guide users from idea to published, revenue-generating mobile app
 - **Platforms**: Expo (React Native) for iOS + Android, Swift for iOS-only
-- **Lifecycle**: Idea validation -> Planning -> Design -> Development -> Testing -> Publishing -> Monetisation -> Growth -> Iteration
+- **Lifecycle**: Idea validation → Planning → Design → Development → Testing → Publishing → Monetisation → Growth → Iteration
 - **Philosophy**: Open-source first, beautiful by default, user-value driven, self-improving
+- **Key commands**: `/new-app` (start guided flow), `/app-research` (market research), `/app-preview` (simulator preview)
 
 **Platform decision** (ask user early):
 
@@ -15,8 +16,6 @@
 |--------|------|-----------|
 | **Expo (default)** | Cross-platform iOS + Android, faster iteration, broader reach | React Native + Expo Router |
 | **Swift** | iOS-only, maximum native performance, Apple ecosystem deep integration | SwiftUI + Xcode |
-
-**Key commands**: `/new-app` (start guided flow), `/app-research` (market research), `/app-preview` (simulator preview)
 
 **Subagents** — shared product concerns (`product/`):
 
@@ -57,123 +56,55 @@
 - `tools/accessibility/accessibility-audit.md` - Accessibility compliance
 - `tools/browser/extension-dev.md` - Shares product/ subagents for cross-platform concerns
 
-**Mobile tool stack**:
-
-```text
-Validation    -> product/validation.md (market research, idea validation)
-Design        -> product/ui-design.md (aesthetics, animations, icons)
-Onboarding    -> product/onboarding.md (first-run experience, paywall placement)
-Development   -> tools/mobile/app-dev/expo.md OR tools/mobile/app-dev/swift.md
-Testing       -> agent-device (AI-driven) + maestro (E2E) + xcodebuild-mcp (build)
-Preview       -> ios-simulator-mcp + playwright-emulation (web) + agent-device
-Publishing    -> tools/mobile/app-dev/publishing.md (checklists) + app-store-connect.md (asc CLI)
-Monetisation  -> product/monetisation.md (RevenueCat, ads, freemium)
-Growth        -> product/growth.md (UGC, influencers, content, paid ads)
-Analytics     -> product/analytics.md (retention, engagement, revenue)
-Assets        -> tools/vision/ (icons, graphics) + Remotion (preview videos)
-Backend       -> tools/mobile/app-dev/backend.md (Supabase, Firebase, Coolify)
-```
-
 <!-- AI-CONTEXT-END -->
 
 ## Guided Development Flow
 
-When a user wants to build a mobile app, follow this sequence. Ask focused questions at each stage before proceeding. Do not skip stages or jump ahead.
+Follow this sequence when a user wants to build a mobile app. Ask focused questions at each stage before proceeding. Do not skip stages or jump ahead.
 
-### Stage 1: Idea Validation
+### Stage 1: Idea Validation (`product/validation.md`)
 
-Read `product/validation.md` for detailed guidance.
+Ask: (1) What problem does this solve? (genuine pain point, not "nice to have") (2) Who experiences it? (3) How often? (daily = stronger retention) (4) What do they currently do? (existing solutions = market validation) (5) Would they pay?
 
-**Ask the user**:
-
-1. What problem does this app solve? (Must be a genuine pain point, not a "nice to have")
-2. Who experiences this problem? (Target audience)
-3. How often do they experience it? (Daily problems = stronger retention)
-4. What do they currently do about it? (Existing solutions = market validation)
-5. Would they pay to solve it? (Monetisation signal)
-
-**Research existing apps**: Use browser tools to search App Store/Play Store for similar apps. Gather pain points from reviews to identify gaps the new app can fill.
+Search App Store/Play Store for similar apps. Gather review pain points to identify gaps.
 
 ### Stage 2: Platform Decision
 
-**Ask the user**:
+| Signal | Recommendation |
+|--------|---------------|
+| iOS + Android | Expo (React Native) |
+| iOS only + deep native needs (HealthKit, HomeKit, Siri, widgets) | Swift |
+| iOS only + speed priority | Expo (can port to Swift later) |
+| Unsure | Expo — covers both platforms |
 
-1. iOS only, or iOS + Android?
-2. Do you need deep Apple ecosystem integration (HealthKit, HomeKit, Siri, widgets)?
-3. What's your timeline? (Expo is faster for cross-platform)
-4. Do you have an Apple Developer account ($99/year)?
-5. Do you have a Google Play Developer account ($25 one-time)?
+Ask: (1) iOS only or iOS + Android? (2) Deep Apple ecosystem integration needed? (3) Timeline? (4) Apple Developer account ($99/year)? (5) Google Play account ($25 one-time)?
 
-**Recommendation logic**:
+### Stage 3: Design and Planning (`product/ui-design.md`)
 
-- iOS + Android -> Expo (React Native)
-- iOS only + deep native needs -> Swift
-- iOS only + speed priority -> Expo (can always port to Swift later)
-- Unsure -> Start with Expo, it covers both platforms
+Before writing any code: (1) Define the core daily action (the one thing users repeat) (2) Map onboarding flow (3-5 screens max — `product/onboarding.md`) (3) Design main dashboard/home screen (4) Plan navigation structure (tab bar, stack, drawer) (5) Choose colour palette and typography (6) Design app icon (must stand out among competitors)
 
-### Stage 3: Design and Planning
-
-Read `product/ui-design.md` for aesthetics standards.
-
-**Before writing any code**:
-
-1. Define the core daily action (the one thing users repeat)
-2. Map the onboarding flow (3-5 screens max) — see `product/onboarding.md`
-3. Design the main dashboard/home screen
-4. Plan navigation structure (tab bar, stack, drawer)
-5. Choose colour palette and typography
-6. Design the app icon (must stand out among competitors)
-
-**Gather visual inspiration**: Search for UI patterns, competitor screenshots, design systems. Use browser tools to capture reference designs.
+Search for UI patterns, competitor screenshots, design systems using browser tools.
 
 ### Stage 4: Development
-
-Read the appropriate subagent:
 
 - Expo: `tools/mobile/app-dev/expo.md`
 - Swift: `tools/mobile/app-dev/swift.md`
 
-**MVP discipline**: Build the minimum viable product first. One core function, one clean onboarding, one monetisation path. Resist feature creep.
+**MVP discipline**: One core function, one clean onboarding, one monetisation path. Resist feature creep.
 
-### Stage 5: Testing
+### Stage 5: Testing (`tools/mobile/app-dev/testing.md`)
 
-Read `tools/mobile/app-dev/testing.md`.
+Full testing stack: `agent-device` (AI-driven interaction) + `maestro` (repeatable E2E) + `xcodebuild-mcp` (build verification) + `ios-simulator-mcp` (simulator QA) + `playwright-emulation` (web-based mobile preview) + physical device via TestFlight (iOS) or internal testing (Android).
 
-Use the full testing stack:
+### Stage 6: Publishing (`tools/mobile/app-dev/publishing.md`)
 
-- `agent-device` for AI-driven interaction testing
-- `maestro` for repeatable E2E flows
-- `xcodebuild-mcp` for build verification
-- `ios-simulator-mcp` for simulator QA
-- `playwright-emulation` for web-based mobile preview
-- Physical device testing via TestFlight (iOS) or internal testing (Android)
-
-### Stage 6: Publishing
-
-Read `tools/mobile/app-dev/publishing.md`.
-
-Covers App Store and Play Store submission, compliance requirements, screenshot generation, metadata optimisation, and common rejection reasons.
+App Store and Play Store submission, compliance, screenshot generation, metadata optimisation, common rejection reasons.
 
 ### Stage 7: Monetisation and Growth
 
-Read `product/monetisation.md` for revenue models and paywall design.
+- Revenue models and paywall design: `product/monetisation.md`
+- User acquisition (UGC creators, influencers, faceless content, founder-led content, paid ads): `product/growth.md`
 
-Read `product/growth.md` for user acquisition across 5 channels: UGC creators, influencers, faceless content, founder-led content, and paid ads.
+### Stage 8: Iteration (`product/analytics.md`)
 
-### Stage 8: Iteration
-
-Read `product/analytics.md`.
-
-Use analytics and user feedback to iterate. Track retention, engagement, crash rates, and feature usage. Prioritise improvements based on data.
-
-## Self-Improvement
-
-This agent suite improves based on:
-
-- Development outcomes (what worked, what failed)
-- App Store review feedback (common rejections)
-- User testing results (UX issues discovered)
-- New tool capabilities (framework updates, new APIs)
-- Pattern tracking via cross-session memory (`/remember`, `/recall`)
-
-Use `/remember` to capture learnings across sessions.
+Track retention, engagement, crash rates, and feature usage. Prioritise improvements based on data. Use `/remember` to capture learnings across sessions.
