@@ -4,196 +4,113 @@
 
 ### Not Supported in Miniflare
 
-- Cloudflare Analytics Engine
-- Cloudflare Images
-- Live production data
-- True global distribution
+- Cloudflare Analytics Engine, Images
+- Live production data / true global distribution
 - Some advanced Workers features
 
 ### Behavior Differences from Production
 
-1. **No actual edge:** Runs in workerd locally, not Cloudflare's global network
-2. **Persistence:** Local filesystem/in-memory, not distributed
-3. **Request.cf:** Fetched from cached endpoint or mocked, not real edge metadata
-4. **Performance:** Local performance ≠ edge performance
-5. **Caching:** May differ slightly from production
+- **No actual edge:** Runs in workerd locally, not Cloudflare's global network
+- **Persistence:** Local filesystem/in-memory, not distributed
+- **Request.cf:** Fetched from cached endpoint or mocked, not real edge metadata
+- **Performance/Caching:** Local ≠ edge
 
 ## Common Issues
 
-### Module Resolution Errors
-
-**Problem:** `Cannot find module`
-
-**Fix:**
+### Module Resolution (`Cannot find module`)
 
 ```js
-// Use absolute paths or modulesRules
 new Miniflare({
   scriptPath: "./src/index.js",
   modules: true,
-  modulesRules: [
-    { type: "ESModule", include: ["**/*.js"], fallthrough: true },
-  ],
+  modulesRules: [{ type: "ESModule", include: ["**/*.js"], fallthrough: true }],
 });
 ```
 
-### Persistence Not Working
+### Persistence Not Working (data lost between runs)
 
-**Problem:** Data not persisting between runs
-
-**Fix:**
+Persist paths must be directories, not files:
 
 ```js
-// Ensure persist paths are directories, not files
 new Miniflare({
-  kvPersist: "./data/kv",           // Directory
+  kvPersist: "./data/kv",
   r2Persist: "./data/r2",
   durableObjectsPersist: "./data/do",
 });
 ```
 
-### TypeScript Workers
+### TypeScript Workers (cannot run `.ts` directly)
 
-**Problem:** Cannot directly run TypeScript
-
-**Fix:**
-
-```js
-// Build before running
-import { spawnSync } from "node:child_process";
-
-before(() => {
-  const result = spawnSync("npm run build", { shell: true });
-  if (result.error) throw result.error;
-});
-
-new Miniflare({ scriptPath: "dist/worker.js" });
-```
+Build first; see [patterns.md](./patterns.md) "Build Before Tests".
 
 ### Request.cf Undefined
 
-**Problem:** `request.cf` is undefined in worker
-
-**Fix:**
-
 ```js
 new Miniflare({
-  cf: true, // Fetch from Cloudflare
-  // Or provide custom
-  cf: "./cf.json",
+  cf: true,       // fetch from Cloudflare
+  // cf: "./cf.json"  // or provide custom
 });
 ```
 
-### Port Already in Use
+### Port Already in Use (`EADDRINUSE`)
 
-**Problem:** `EADDRINUSE` error
-
-**Fix:**
+Don't specify a port for testing — use `dispatchFetch` instead:
 
 ```js
-// Don't specify port for testing - use dispatchFetch
-new Miniflare({
-  scriptPath: "worker.js",
-  // No port/host
-});
-
+const mf = new Miniflare({ scriptPath: "worker.js" });
 const res = await mf.dispatchFetch("http://localhost/");
 ```
 
-### Durable Object Not Found
+### Durable Object Not Found (`ReferenceError: Counter is not defined`)
 
-**Problem:** `ReferenceError: Counter is not defined`
-
-**Fix:**
+DO class must be exported and name must match binding:
 
 ```js
-// Ensure DO class is exported
 new Miniflare({
-  modules: true, // Required for DOs
+  modules: true,
   script: `
-    export class Counter { /* ... */ } // Must export
+    export class Counter { /* ... */ }
     export default { /* ... */ }
   `,
-  durableObjects: {
-    COUNTER: "Counter", // Must match export name
-  },
+  durableObjects: { COUNTER: "Counter" }, // matches export name
 });
 ```
 
 ## Debugging Tips
 
-**Enable debug logging:**
-
 ```js
+// Enable debug logging
 import { Log, LogLevel } from "miniflare";
 new Miniflare({ log: new Log(LogLevel.DEBUG) });
-```
 
-**Check binding names match:**
-
-```js
+// Check binding names
 const bindings = await mf.getBindings();
 console.log(Object.keys(bindings));
-```
 
-**Verify storage directly:**
-
-```js
+// Verify KV storage directly
 const ns = await mf.getKVNamespace("TEST");
-const keys = await ns.list();
-console.log(keys);
+console.log(await ns.list());
 ```
 
-**Test HTTP server separately:**
-
-```js
-// Use dispatchFetch for tests, not HTTP server
-const res = await mf.dispatchFetch("http://localhost/");
-```
+Use `dispatchFetch` for tests, not the HTTP server — avoids port conflicts.
 
 ## Migration Notes
 
-### From Wrangler Dev to Miniflare
+### Wrangler Dev → Miniflare
 
-**Wrangler:**
-
-```bash
-wrangler dev
-```
-
-**Miniflare:**
+Miniflare doesn't read `wrangler.toml` — configure everything via API:
 
 ```js
 new Miniflare({
   scriptPath: "dist/worker.js",
-  // Manually configure bindings (doesn't read wrangler.toml)
   kvNamespaces: ["KV"],
   bindings: { API_KEY: "..." },
 });
 ```
 
-**Note:** Miniflare doesn't read `wrangler.toml` - configure everything via API.
+### Miniflare 2 → 3
 
-### From Miniflare 2 to 3
-
-Major changes:
-- Different API surface
-- Better workerd integration
-- Changed persistence options
-- See [official migration guide](https://developers.cloudflare.com/workers/testing/vitest-integration/migration-guides/migrate-from-miniflare-2/)
-
-## When to Use
-
-**Use Miniflare when:**
-- Writing integration tests for Workers
-- Testing Worker bindings/storage locally
-- Testing multiple Workers with service bindings
-- Need direct access to bindings in tests
-- Dispatch events without HTTP
-
-**Use Wrangler instead for:**
-- Standard development workflow
-- Quick local dev server
-- Production deployments
+Different API surface, better workerd integration, changed persistence options.
+See [official migration guide](https://developers.cloudflare.com/workers/testing/vitest-integration/migration-guides/migrate-from-miniflare-2/).
 
 See [patterns.md](./patterns.md) for testing examples.
