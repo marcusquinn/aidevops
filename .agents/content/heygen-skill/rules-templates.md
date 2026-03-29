@@ -86,14 +86,20 @@ curl -X POST "https://api.heygen.com/v2/template/{template_id}/generate" \
 ```
 
 ```typescript
-const res = await fetch(`https://api.heygen.com/v2/template/${templateId}/generate`, {
-  method: "POST",
-  headers: { "X-Api-Key": process.env.HEYGEN_API_KEY!, "Content-Type": "application/json" },
-  body: JSON.stringify({ test, variables }),
-});
-const { error, data } = await res.json();
-if (error) throw new Error(error);
-return data.video_id; // string
+async function generateFromTemplate(
+  templateId: string,
+  variables: Record<string, string>,
+  test = false
+): Promise<string> {
+  const res = await fetch(`https://api.heygen.com/v2/template/${templateId}/generate`, {
+    method: "POST",
+    headers: { "X-Api-Key": process.env.HEYGEN_API_KEY!, "Content-Type": "application/json" },
+    body: JSON.stringify({ test, variables }),
+  });
+  const { error, data } = await res.json();
+  if (error) throw new Error(error);
+  return data.video_id;
+}
 ```
 
 ## Variable Types
@@ -129,6 +135,7 @@ function validateTemplateVariables(
 Loop with 1s delay between requests to avoid rate limits:
 
 ```typescript
+const videoIds: string[] = [];
 for (const r of recipients) {
   const videoId = await generateFromTemplate(templateId, {
     recipient_name: r.name,
@@ -148,7 +155,7 @@ for (const r of recipients) {
 - Define `max_length` on text variables in the template to prevent truncation
 - Use `callback_url` for large batches instead of polling
 
-Full workflow: `listTemplates` → `validateTemplateVariables` → `generateFromTemplate` → `waitForVideo` (see `rules-video-status.md`)
+Full workflow: list templates (GET `/v2/templates`) → `validateTemplateVariables` → `generateFromTemplate` → `waitForVideo` (see `rules-video-status.md`)
 
 ## Use Cases
 
