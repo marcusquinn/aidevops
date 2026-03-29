@@ -6,41 +6,28 @@
 
 | Window | Best For |
 |--------|----------|
-| 1-day click | Conservative measurement |
-| 7-day click | Standard ecommerce |
+| 1-day click | Conservative / impulse purchases |
+| 7-day click | Standard ecommerce (2026 default) |
+| 7-day click, 1-day view | Most campaigns — 1-7 day consideration |
+| 28-day click (API only) | B2B / enterprise / long sales cycles |
 | 1-day view | Brand awareness |
-| 7-day click, 1-day view | Most campaigns (2026 default) |
-| 28-day click (API only) | B2B / high-consideration |
 
-**How to choose:**
-- **7-day click, 1-day view** — most ecommerce, 1-7 day consideration cycles
-- **7-day click only** — conservative measurement, B2B, comparing to other platforms
-- **1-day click only** — direct response, impulse purchases
-- **28-day click** — enterprise, long sales cycles
-
-Changing the attribution window affects reporting only — not delivery.
-
-**Set in Ads Manager:** Campaign → Edit → Attribution setting.
+**Set in Ads Manager:** Campaign → Edit → Attribution setting. Changing the window affects reporting only — not delivery.
 
 ## Click-Through vs View-Through
 
-**Click-through:** User clicked your ad then converted. Clear intent, direct path. Misses brand lift and multi-touch.
+**Click-through:** User clicked your ad then converted. Clear intent, direct path.
 
-**View-through:** User saw your ad (no click), then converted later. Captures brand awareness. Can feel inflated; iOS users largely excluded (2024+).
+**View-through:** User saw your ad (no click), then converted later. Captures brand awareness but can feel inflated. Post-iOS 14, ~80%+ of iOS users opt out — view-through increasingly represents Android/web only; iOS conversion data is modeled, not directly tracked.
 
-**Post-iOS 14:** ~80%+ of iOS users opt out of tracking. View-through increasingly represents Android/web only. iOS conversion data is modeled, not directly tracked.
-
-**Typical multi-touch journey:** Ad view → ad view → external research → brand search → direct/organic conversion. Did the ads cause this, or would they have bought anyway?
+**Multi-touch reality:** Ad view → ad view → external research → brand search → direct conversion. Attribution can't confirm causality.
 
 ## What Meta Reports vs Reality
 
 Meta's attribution is designed to show Meta ads in the best light.
 
-**Meta over-reports:** Multiple platforms claim the same conversion; view-through may not be causal; post-iOS modeling can over-estimate.
-
-**Meta under-reports:** iOS users not tracked; ad blocker users not tracked; cross-device journeys missed; long purchase cycles exceed window.
-
-**Multi-touch problem:** 1 purchase, 3 platforms (Meta + Google + TikTok) each claiming full credit.
+- **Over-reports:** Multiple platforms claim the same conversion; view-through may not be causal; post-iOS modeling can over-estimate.
+- **Under-reports:** iOS users, ad blocker users, cross-device journeys, long purchase cycles exceeding the window.
 
 | What Meta Reports | What Likely Happened |
 |-------------------|---------------------|
@@ -63,8 +50,6 @@ Incrementality = (Test Group Conversions - Control Group Conversions) / Test Gro
 - **Audience holdout:** 90% test / 10% control. Track conversions in both groups.
 - **Platform pause:** Pause all Meta ads for 2 weeks. Revenue drop = Meta's incremental contribution.
 
-**Benchmarks:**
-
 | Campaign Type | Typical Incrementality |
 |---------------|----------------------|
 | Retargeting (hot) | 20-40% |
@@ -72,9 +57,7 @@ Incrementality = (Test Group Conversions - Control Group Conversions) / Test Gro
 | Prospecting (lookalike) | 60-80% |
 | Prospecting (broad) | 70-90% |
 
-Retargeting has the lowest incrementality — many of those users would have purchased anyway. Prospecting drives more true net-new revenue.
-
-**When to run:** Before major budget increases, quarterly, when stakeholders question ROI, after strategy changes.
+Retargeting has the lowest incrementality — many of those users would have purchased anyway. **When to run:** Before major budget increases, quarterly, when stakeholders question ROI, after strategy changes.
 
 ## Lift Studies (Meta's Official Method)
 
@@ -82,12 +65,12 @@ Retargeting has the lowest incrementality — many of those users would have pur
 
 **Brand Lift:** Survey-based. Measures awareness, consideration, recall. Best for brand campaigns.
 
-**Key metrics:** Lift %, Incremental Conversions, Incremental ROAS, Cost Per Incremental Conversion.
-
 ```
 Test Group: 1,000 conversions | Control: 400 | Lift: 150%
 Incremental: 600 | Spend: $30K | Cost Per Incremental: $50
 ```
+
+**Key metrics:** Lift %, Incremental Conversions, Incremental ROAS, Cost Per Incremental Conversion.
 
 **Limitations:** Expensive, time-consuming, snapshot only, Meta-conducted (potential bias).
 
@@ -111,11 +94,11 @@ Statistical regression analysis of how all channels contribute to revenue. No pi
 
 **Must-haves:** First-party tracking (bypasses iOS/cookie issues), CRM integration, survey integration.
 
-**Post-purchase surveys** — simplest attribution: ask "How did you hear about us?" Zero-party data, works despite tracking limits, captures word-of-mouth. Limitation: memory bias, first-touch bias.
+**Post-purchase surveys** — ask "How did you hear about us?" Zero-party data, works despite tracking limits, captures word-of-mouth. Limitation: memory and first-touch bias.
 
 ## How to Actually Measure Meta Impact
 
-**Use multiple methods — no single source is perfect:**
+Use multiple methods — no single source is perfect:
 
 1. Platform Reporting (directional, inflated, but detailed)
 2. Third-Party Attribution (more accurate, still imperfect)
@@ -129,9 +112,7 @@ Statistical regression analysis of how all channels contribute to revenue. No pi
 MER = Total Revenue / Total Marketing Spend
 ```
 
-Tracks business-wide efficiency instead of platform-specific ROAS. Reduces attribution arguments, focuses on outcomes.
-
-**Track all three ROAS tiers:**
+Tracks business-wide efficiency instead of platform ROAS. Reduces attribution arguments, focuses on outcomes.
 
 | Metric | What It Tells You |
 |--------|-------------------|
@@ -139,13 +120,9 @@ Tracks business-wide efficiency instead of platform-specific ROAS. Reduces attri
 | Blended ROAS | All marketing combined (realistic) |
 | True ROAS | After incrementality adjustment |
 
-**Monthly attribution review:** Compare Meta-reported vs third-party vs survey vs CRM conversions. Calculate discrepancy. Use conservative number for planning; platform data for optimization. Track whether discrepancies are growing.
+**Monthly:** Compare Meta-reported vs third-party vs survey vs CRM conversions. Use conservative number for planning; platform data for optimization.
 
-**Quarterly reality check:**
-1. If I turned off Meta ads, what would happen? (run holdout test)
-2. Are new customers actually coming from Meta? (survey + CRM)
-3. Is business growing proportionally to spend?
-4. What do best customers say about how they found you?
+**Quarterly reality check:** (1) If I turned off Meta ads, what would happen? (2) Are new customers actually coming from Meta? (3) Is business growing proportionally to spend? (4) What do best customers say about how they found you?
 
 ## Settings Cheat Sheet
 
