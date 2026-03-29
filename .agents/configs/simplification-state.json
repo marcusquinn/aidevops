@@ -1407,8 +1407,8 @@
       "pr": 12162
     },
     ".agents/scripts/gh-signature-helper.sh": {
-      "hash": "427a746e3003bd92232d2640913c7ac6bf1a464a",
-      "at": "2026-03-29T15:08:47Z",
+      "hash": "f855039892c8c5474b80fb623ce7c5c977834e94",
+      "at": "2026-03-29T15:50:50Z",
       "pr": 13021
     },
     ".agents/tools/wordpress/wp-dev.md": {
@@ -1582,9 +1582,9 @@
       "pr": 12327
     },
     ".agents/tools/code-review/code-simplifier.md": {
-      "hash": "d912176677d1cd3a7d1c9c81dbae62a49a25f2fe",
-      "at": "2026-03-29T15:08:43Z",
-      "pr": 13033
+      "hash": "a115aa10f36d0cadaa60a306edba7bb56c874799",
+      "at": "2026-03-29T15:50:39Z",
+      "pr": 13074
     },
     ".agents/tools/build-agent/add-skill.md": {
       "hash": "36065ac3559aa2e929cbb858c8220961454f9dd9",
@@ -2217,24 +2217,69 @@
       "pr": 13034
     },
     ".agents/content/content-calendar.md": {
-      "hash": "09a9789e65bc51d5066f59a5d2b18b401816695d",
-      "at": "2026-03-29T15:08:48Z",
-      "pr": 13040
+      "hash": "5bb7dca9397875d571887657d6e92d551536e6cd",
+      "at": "2026-03-29T15:50:25Z",
+      "pr": 13052
     },
     ".agents/content/story.md": {
-      "hash": "b0ef8d828f94ad5e42216ff6cc484ad1202fe77a",
-      "at": "2026-03-29T15:08:55Z",
-      "pr": 13041
+      "hash": "c3dbff0b3eebb124a413e785c57dfca89c48b586",
+      "at": "2026-03-29T15:50:27Z",
+      "pr": 13073
     },
     ".agents/build-plus.md": {
-      "hash": "a967c18ec29892f82cd57b01e298e50ed26f2914",
-      "at": "2026-03-29T15:09:11Z",
-      "pr": 12958
+      "hash": "3a6fe7551c2a56c351737587c0d95c4b674ca64a",
+      "at": "2026-03-29T15:50:29Z",
+      "pr": 13071
     },
     ".agents/services/communications/google-chat.md": {
-      "hash": "37dcfb08e314a2476498d80c54bcf18b88087726",
-      "at": "2026-03-29T15:09:45Z",
-      "pr": 13018
+      "hash": "fe9be5516ebbffc47d15b147679238743bb3ae21",
+      "at": "2026-03-29T15:50:31Z",
+      "pr": 13070
+    },
+    ".agents/tools/deployment/fly-io.md": {
+      "hash": "a253a5662c26417905411ed3cc1b2848de5df412",
+      "at": "2026-03-29T15:50:23Z",
+      "pr": 13053
+    },
+    ".agents/tools/design/brand-identity.md": {
+      "hash": "4d0b710f86d8e3ccdfc4f4ba56a0688fef9f94a1",
+      "at": "2026-03-29T15:50:32Z",
+      "pr": 13066
+    },
+    ".agents/marketing-sales/meta-ads-creative-briefs-testimonial-brief.md": {
+      "hash": "a641f8d02e933160986b8c49c4f6a5245d325014",
+      "at": "2026-03-29T15:50:34Z",
+      "pr": 13064
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/ddos-patterns.md": {
+      "hash": "886239a140acbf14057a97f7f6eb895115bfa254",
+      "at": "2026-03-29T15:50:36Z",
+      "pr": 13069
+    },
+    ".agents/tools/ai-assistants/response-scoring.md": {
+      "hash": "6eadf895b9b3ea1caaf55456d25937d9152c15eb",
+      "at": "2026-03-29T15:50:37Z",
+      "pr": 13072
+    },
+    ".agents/tools/deployment/coolify-setup.md": {
+      "hash": "5041a915d0c96f4651205ed6ca0799a2d190757c",
+      "at": "2026-03-29T15:50:41Z",
+      "pr": 13067
+    },
+    ".agents/tools/vision/image-understanding.md": {
+      "hash": "cef43a10dac68290c4b0642d77f3ce716c378e53",
+      "at": "2026-03-29T15:50:43Z",
+      "pr": 13068
+    },
+    ".agents/marketing-sales/meta-ads-optimization-automation-rules.md": {
+      "hash": "4e78284e12f62b421b7458d171f79117bc4610e9",
+      "at": "2026-03-29T15:50:44Z",
+      "pr": 13078
+    },
+    ".agents/services/crm/fluentcrm.md": {
+      "hash": "9e0e2c55d608f6cc55ceec5f45e845bbbc841b0c",
+      "at": "2026-03-29T15:51:03Z",
+      "pr": 13048
     }
   }
 }
