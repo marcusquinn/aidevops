@@ -31,7 +31,7 @@ json_set_nested() {
 	fi
 
 	python3 - "$file" "$outer_key" "$inner_key" "$value_json" <<'PYEOF'
-import json, sys
+import json, sys, os, tempfile
 
 file_path = sys.argv[1]
 outer_key = sys.argv[2]
@@ -49,9 +49,13 @@ if outer_key not in config or not isinstance(config[outer_key], dict):
 
 existed = inner_key in config[outer_key]
 config[outer_key][inner_key] = json.loads(value_json)
-with open(file_path, 'w') as f:
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(file_path) or '.', suffix='.tmp')
+with os.fdopen(fd, 'w') as f:
     json.dump(config, f, indent=2)
     f.write('\n')
+    f.flush()
+    os.fsync(f.fileno())
+os.rename(tmp, file_path)
 if existed:
     print(f"Updated {inner_key} in {file_path}")
 else:
@@ -81,7 +85,7 @@ json_append_to_array() {
 	fi
 
 	python3 - "$file" "$array_key" "$value_json" "$match_key" "$match_val" <<'PYEOF'
-import json, sys
+import json, sys, os, tempfile
 
 file_path = sys.argv[1]
 array_key = sys.argv[2]
@@ -105,9 +109,13 @@ for item in config[array_key]:
         sys.exit(0)
 
 config[array_key].append(json.loads(value_json))
-with open(file_path, 'w') as f:
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(file_path) or '.', suffix='.tmp')
+with os.fdopen(fd, 'w') as f:
     json.dump(config, f, indent=2)
     f.write('\n')
+    f.flush()
+    os.fsync(f.fileno())
+os.rename(tmp, file_path)
 print(f"Added {match_val} to {array_key} array in {file_path}")
 PYEOF
 	return 0

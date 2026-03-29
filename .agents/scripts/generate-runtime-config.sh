@@ -112,6 +112,26 @@ import json
 import os
 import glob
 import sys
+import tempfile
+
+def atomic_json_write(path, data, indent=2, trailing_newline=False):
+    """Write JSON atomically: tmp file + fsync + rename. Prevents truncation on crash."""
+    dir_name = os.path.dirname(path) or '.'
+    fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp', prefix='.atomic-')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=indent)
+            if trailing_newline:
+                f.write('\n')
+            f.flush()
+            os.fsync(f.fileno())
+        os.rename(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 runtime_id = sys.argv[1]
 output_format = sys.argv[2]
@@ -510,8 +530,7 @@ if output_format == "opencode-json":
         if config['tools'].get(tool_pattern) is not False:
             config['tools'][tool_pattern] = False
 
-    with open(config_path, 'w', encoding='utf-8') as f:
-        json.dump(config, f, indent=2)
+    atomic_json_write(config_path, config)
 
     print(f"  Updated {len(primary_agents)} primary agents in opencode.json")
     if subagent_filtered_count > 0:
@@ -649,9 +668,7 @@ elif output_format == "claude-settings":
 
     if changed:
         os.makedirs(os.path.dirname(settings_path), exist_ok=True)
-        with open(settings_path, 'w') as f:
-            json.dump(settings, f, indent=2)
-            f.write('\n')
+        atomic_json_write(settings_path, settings, trailing_newline=True)
         print(f"  Updated {settings_path}")
     else:
         print(f"  {settings_path} (no changes needed)")
