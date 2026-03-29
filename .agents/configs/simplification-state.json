@@ -297,9 +297,9 @@
       "pr": 11411
     },
     ".agents/tools/voice/transcription.md": {
-      "hash": "00b7657112dc4b31c6064057fcd47e8d4651f7ee",
-      "at": "2026-03-28T05:10:01Z",
-      "pr": 11419
+      "hash": "7f06963e2a070b0664cb304d8bb425cd4681407d",
+      "at": "2026-03-29T06:41:19Z",
+      "pr": 12638
     },
     ".agents/tools/diagrams/mermaid-diagrams-skill/sequence.md": {
       "hash": "162ba5164f7ffedc3b1d3497beabd56c6d58aaba",
@@ -977,9 +977,9 @@
       "pr": 11889
     },
     ".agents/tools/mobile/app-store-connect.md": {
-      "hash": "8023c5d46c6d784bbc762f59d4c57d549e15903e",
-      "at": "2026-03-28T13:37:17Z",
-      "pr": 11893
+      "hash": "55340aa49411b8c5faf342ecbd1284bd9b126390",
+      "at": "2026-03-29T06:41:11Z",
+      "pr": 12625
     },
     ".agents/tools/browser/stagehand-examples.md": {
       "hash": "3204f26c9d748fd843fe6db79a36a18581e78b49",
@@ -1407,9 +1407,9 @@
       "pr": 12162
     },
     ".agents/scripts/gh-signature-helper.sh": {
-      "hash": "92e4d9adc4f2017480a171fd61c14f6876e6f585",
-      "at": "2026-03-29T03:15:20Z",
-      "pr": 12396
+      "hash": "28ac60bb1bf31ed872a1fe1df90a71f073c0e705",
+      "at": "2026-03-29T06:41:26Z",
+      "pr": 12559
     },
     ".agents/tools/wordpress/wp-dev.md": {
       "hash": "aeead744dd3a6ab5c8a9e6cf300adf03cbebceb9",
@@ -1845,6 +1845,36 @@
       "hash": "eae4b7fde641ab4a7c37b51e6f082b64cd476136",
       "at": "2026-03-29T06:06:24Z",
       "pr": 12617
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/workers-for-platforms-patterns.md": {
+      "hash": "719ab7d7d4f4e161e8f5a1d42dcc206065456353",
+      "at": "2026-03-29T06:41:00Z",
+      "pr": 12686
+    },
+    ".agents/services/hosting/hetzner.md": {
+      "hash": "85598d6108beb4aa0700c92c9c2d9b0d154fc415",
+      "at": "2026-03-29T06:41:01Z",
+      "pr": 12687
+    },
+    ".agents/tools/ai-orchestration/openprose.md": {
+      "hash": "d5e05edaaf13b564d131ae382571d600aa9001e7",
+      "at": "2026-03-29T06:41:08Z",
+      "pr": 12657
+    },
+    ".agents/content/heygen-skill/rules-avatars.md": {
+      "hash": "4871ad4f1650b1bd44dcd7c53785c47a3f84e8fc",
+      "at": "2026-03-29T06:41:09Z",
+      "pr": 12654
+    },
+    ".agents/aidevops/onboarding.md": {
+      "hash": "33602a4d7beba12e4278f27128d263e5ac42d05e",
+      "at": "2026-03-29T06:41:14Z",
+      "pr": 12641
+    },
+    ".agents/scripts/tests/test-gh-signature-helper.sh": {
+      "hash": "fb79d924aa342c18f0c5d9f39d90bdc26152a2a2",
+      "at": "2026-03-29T06:41:26Z",
+      "pr": 12559
     }
   }
 }
