@@ -10,18 +10,16 @@ metadata:
 
 ## Prerequisites
 
-Install @remotion/layout-utils if it is not already installed:
+Install `@remotion/layout-utils`:
 
 ```bash
-npx remotion add @remotion/layout-utils # If project uses npm
-bunx remotion add @remotion/layout-utils # If project uses bun
-yarn remotion add @remotion/layout-utils # If project uses yarn
-pnpm exec remotion add @remotion/layout-utils # If project uses pnpm
+npx remotion add @remotion/layout-utils # npm
+bunx remotion add @remotion/layout-utils # bun
+yarn remotion add @remotion/layout-utils # yarn
+pnpm exec remotion add @remotion/layout-utils # pnpm
 ```
 
-## Measuring text dimensions
-
-Use `measureText()` to calculate the width and height of text:
+## measureText() — get text dimensions
 
 ```tsx
 import { measureText } from "@remotion/layout-utils";
@@ -34,11 +32,9 @@ const { width, height } = measureText({
 });
 ```
 
-Results are cached - duplicate calls return the cached result.
+Results are cached — duplicate calls return instantly.
 
-## Fitting text to a width
-
-Use `fitText()` to find the optimal font size for a container:
+## fitText() — optimal font size for a container
 
 ```tsx
 import { fitText } from "@remotion/layout-utils";
@@ -63,9 +59,7 @@ return (
 );
 ```
 
-## Checking text overflow
-
-Use `fillTextBox()` to check if text exceeds a box:
+## fillTextBox() — detect overflow
 
 ```tsx
 import { fillTextBox } from "@remotion/layout-utils";
@@ -88,7 +82,7 @@ for (const word of words) {
 
 ## Best practices
 
-**Load fonts first:** Only call measurement functions after fonts are loaded.
+**Load fonts before measuring.** Measurement is inaccurate if the font hasn't loaded yet.
 
 ```tsx
 import { loadFont } from "@remotion/google-fonts/Inter";
@@ -99,7 +93,6 @@ const { fontFamily, waitUntilDone } = loadFont("normal", {
 });
 
 waitUntilDone().then(() => {
-  // Now safe to measure
   const { width } = measureText({
     text: "Hello",
     fontFamily,
@@ -108,7 +101,7 @@ waitUntilDone().then(() => {
 })
 ```
 
-**Use validateFontIsLoaded:** Catch font loading issues early:
+**Use `validateFontIsLoaded` to catch missing fonts early:**
 
 ```tsx
 measureText({
@@ -119,7 +112,7 @@ measureText({
 });
 ```
 
-**Match font properties:** Use the same properties for measurement and rendering:
+**Match font properties between measurement and rendering:**
 
 ```tsx
 const fontStyle = {
@@ -137,7 +130,7 @@ const { width } = measureText({
 return <div style={fontStyle}>Hello</div>;
 ```
 
-**Avoid padding and border:** Use `outline` instead of `border` to prevent layout differences:
+**Use `outline` instead of `border`** to prevent layout differences from padding/border:
 
 ```tsx
 <div style={{ outline: "2px solid red" }}>Text</div>
