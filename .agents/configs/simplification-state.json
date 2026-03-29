@@ -1102,9 +1102,9 @@
       "pr": 11908
     },
     ".agents/marketing-sales/ad-creative.md": {
-      "hash": "ade2327052c36bd3ece5c67577aad6f3f9bbd37a",
-      "at": "2026-03-28T15:30:28Z",
-      "pr": 11938
+      "hash": "5f15bf5c531e8ca2d4c6cde4ce7595f07fddfa65",
+      "at": "2026-03-29T01:52:03Z",
+      "pr": 12451
     },
     ".agents/tools/mcp-toolkit/mcporter.md": {
       "hash": "9a7f856e52fb6226b2661e21b00fee79fd906561",
@@ -1447,9 +1447,9 @@
       "pr": 12171
     },
     ".agents/tools/mobile/app-dev-swift.md": {
-      "hash": "6e91c84b3a04746c00e777f19d2aaadce0ffd3e5",
-      "at": "2026-03-28T20:55:52Z",
-      "pr": 12197
+      "hash": "d27215290fea61b4f036405bedc16867db3935bc",
+      "at": "2026-03-29T01:52:34Z",
+      "pr": 12450
     },
     ".agents/tools/context/context7.md": {
       "hash": "1d98876794a7dc00b2cd2126492a54302f051af8",
@@ -1537,9 +1537,9 @@
       "pr": 12240
     },
     ".agents/tools/browser/browser-profiles.md": {
-      "hash": "a1117a7773814bfc1344b03dbcf154081a47a061",
-      "at": "2026-03-28T21:59:14Z",
-      "pr": 12237
+      "hash": "d719a6a108c1d6f84089ca53d09bc82579c5aa85",
+      "at": "2026-03-29T01:52:18Z",
+      "pr": 12449
     },
     ".agents/services/networking/netbird.md": {
       "hash": "824fc7ee7cdc7e08351310bdb9f99dcf91a3848e",
@@ -1625,6 +1625,11 @@
       "hash": "c79c8baa955bb48f1ce2ded8036ded7940948031",
       "at": "2026-03-29T01:33:56Z",
       "pr": 12442
+    },
+    ".agents/tools/browser/playwriter.md": {
+      "hash": "d299ead621010f02fdad0bcfb17ae1a82b312151",
+      "at": "2026-03-29T01:52:53Z",
+      "pr": 12434
     }
   }
 }

@@ -150,6 +150,71 @@ This is a lightweight label transition — no worker dispatch, no slots consumed
 - The contributor has not commented since the label was applied (pre-fetched status shows **waiting**)
 - The only new comments are from bots or the maintainer (not the original issue author)
 
+### 4.7. Dispatch FOSS contribution workers when idle capacity exists (t1702)
+
+After filling all managed-repo worker slots (implementation, triage reviews, needs-info relabeling), check the pre-fetched "FOSS Contribution Scan" section. If eligible FOSS repos exist and worker slots remain, dispatch contribution workers.
+
+**When to dispatch FOSS contributions:**
+
+- All managed-repo issues have been dispatched or are at capacity
+- Worker slots are still available (`AVAILABLE > 0`)
+- The pre-fetched FOSS scan shows eligible repos (`eligible_count > 0`)
+- Daily token budget has headroom (check the budget line in the scan section)
+
+**FOSS contributions are the lowest priority work** — below merges, CI fixes, implementation dispatches, triage reviews, quality-debt, and simplification-debt. Only dispatch when genuinely idle.
+
+**Dispatch flow:**
+
+```bash
+# Max FOSS dispatches per cycle (from pre-fetched state)
+FOSS_DISPATCH_COUNT=0
+FOSS_DISPATCH_MAX=2  # Read from pre-fetched "Max FOSS dispatches per cycle" line
+
+# For each eligible FOSS repo from the pre-fetched scan:
+if [[ "$AVAILABLE" -gt 0 && "$FOSS_DISPATCH_COUNT" -lt "$FOSS_DISPATCH_MAX" ]]; then
+  # Pre-dispatch eligibility check (budget + rate limit may have changed)
+  if ~/.aidevops/agents/scripts/foss-contribution-helper.sh check <slug> >/dev/null 2>&1; then
+    # Scan for a suitable issue in the FOSS repo
+    LABELS_FILTER=$(jq -r --arg slug "<slug>" \
+      '.initialized_repos[] | select(.slug == $slug) | .foss_config.labels_filter // ["help wanted", "good first issue", "bug"] | join(",")' \
+      ~/.config/aidevops/repos.json)
+    FOSS_ISSUE=$(gh issue list --repo <slug> --state open \
+      --label "${LABELS_FILTER%%,*}" --limit 1 \
+      --json number,title --jq '.[0] | "\(.number)|\(.title)"' 2>/dev/null) || FOSS_ISSUE=""
+
+    if [[ -n "$FOSS_ISSUE" ]]; then
+      FOSS_ISSUE_NUM="${FOSS_ISSUE%%|*}"
+      FOSS_ISSUE_TITLE="${FOSS_ISSUE#*|}"
+      FOSS_REPO_PATH=$(jq -r --arg slug "<slug>" \
+        '.initialized_repos[] | select(.slug == $slug) | .path' \
+        ~/.config/aidevops/repos.json)
+
+      ~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
+        --role worker \
+        --session-key "foss-<slug>-${FOSS_ISSUE_NUM}" \
+        --dir "$FOSS_REPO_PATH" \
+        --title "FOSS: <slug> #${FOSS_ISSUE_NUM}: ${FOSS_ISSUE_TITLE}" \
+        --prompt "/full-loop Implement issue #${FOSS_ISSUE_NUM} (https://github.com/<slug>/issues/${FOSS_ISSUE_NUM}) -- ${FOSS_ISSUE_TITLE}. This is a FOSS contribution. Include AI disclosure note in the PR if disclosure:true in repos.json foss_config. After completion, run: foss-contribution-helper.sh record <slug> <tokens_used>" &
+      sleep 2
+
+      FOSS_DISPATCH_COUNT=$((FOSS_DISPATCH_COUNT + 1))
+      AVAILABLE=$((AVAILABLE - 1))
+    fi
+  fi
+fi
+```
+
+**Concurrency cap:** Max `FOSS_MAX_DISPATCH_PER_CYCLE` (default 2) FOSS workers per pulse cycle. FOSS repos are external — keep the footprint small and respectful.
+
+**Skip FOSS dispatch when:**
+
+- All worker slots are occupied with managed-repo work (FOSS never preempts)
+- Daily token budget is exhausted (the pre-fetched scan shows 0 remaining)
+- No eligible FOSS repos in the scan (all blocklisted, rate-limited, or budget-exceeded)
+- The FOSS repo has no open issues matching the configured `labels_filter`
+
+**FOSS response dispatch:** When the pre-fetched "External Contributions" section shows items needing reply on `foss: true` repos, prioritize responding to maintainer feedback on our existing PRs before opening new contributions. Use `contribution-watch-helper.sh status` to identify which repos need attention.
+
 ### 5. Record initial dispatch success
 
 ```bash
@@ -193,7 +258,8 @@ After the initial dispatch, enter a monitoring loop. Each cycle:
 4. **If slots are open**: check for mergeable PRs (free), then dispatch workers for the
    highest-priority open issues, then dispatch triage reviews for unreviewed
    `needs-maintainer-review` issues (same rules as Step 4.5), then scan `status:needs-info`
-   issues for contributor replies (same rules as Step 4.6). Use the same dedup guards
+   issues for contributor replies (same rules as Step 4.6), then dispatch FOSS contribution
+   workers if idle capacity remains (same rules as Step 4.7). Use the same dedup guards
    and dispatch commands as the initial dispatch. Re-fetch issue state with targeted `gh`
    calls only for repos where you need to dispatch (not a full re-fetch of all repos).
 
@@ -244,6 +310,7 @@ Read adaptive queue mode from pre-fetched state (PULSE_QUEUE_MODE). In `pr-heavy
 7. `quality-debt` issues (unactioned review feedback from merged PRs)
 8. `simplification-debt` issues (approved simplification opportunities)
 9. Oldest issues
+10. FOSS contributions (t1702) — only when all managed-repo work is dispatched and idle capacity exists
 
 ## PRs — Merge, Fix, or Flag
 
@@ -1157,6 +1224,7 @@ batch-strategy-helper.sh validate --tasks "$TASKS_JSON"
 7. `quality-debt` issues (unactioned review feedback from merged PRs) — **use worktree dispatch** (see "Quality-debt worktree dispatch" below)
 8. `simplification-debt` issues (human-approved simplification opportunities)
 9. Oldest issues
+10. FOSS contributions (t1702) — only when all managed-repo work is dispatched and idle capacity exists. See Step 4.7.
 
 ### Quality-debt concurrency cap (configurable, default 30%)
 
