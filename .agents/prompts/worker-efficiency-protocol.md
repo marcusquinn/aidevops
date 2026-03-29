@@ -3,7 +3,7 @@
 Maximise your output per token. Follow these practices to avoid wasted work:
 
 **1. Decompose with TodoWrite (MANDATORY)**
-At the START of your session, break your task into 3-7 subtasks. Last subtask MUST be: 'Push branch and create PR via gh pr create'. Mark each `in_progress` when started, `completed` when done. ONE `in_progress` at a time.
+At the START of your session, break your task into 3-7 subtasks. Last subtask MUST be: 'Mark PR ready via gh pr ready'. Mark each `in_progress` when started, `completed` when done. ONE `in_progress` at a time.
 
 **2. Commit early, commit often (CRITICAL - prevents lost work)**
 After EACH implementation subtask, immediately commit. Uncommitted work is LOST if your session ends.
@@ -35,7 +35,7 @@ if command -v shellcheck &>/dev/null; then
   sc_errors=0
   while IFS= read -r f; do
     [[ -z "$f" ]] && continue
-    if ! shellcheck -x -S warning "$f"; then
+    if ! shellcheck -x -S warning -- "$f"; then
       sc_errors=$((sc_errors + 1))
     fi
   done < <(git diff --name-only origin/HEAD..HEAD 2>/dev/null | grep '\.sh$' || true)
