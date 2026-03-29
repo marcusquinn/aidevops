@@ -1517,9 +1517,9 @@
       "pr": 12309
     },
     ".agents/tools/animation/animejs.md": {
-      "hash": "2cc7e8f8fff0b22547936f54457f003ad77b7784",
-      "at": "2026-03-28T21:59:08Z",
-      "pr": 12241
+      "hash": "fb0605a7aff7c11d1195483651a7a91499de6dbc",
+      "at": "2026-03-29T02:36:25Z",
+      "pr": 12459
     },
     ".agents/tools/build-mcp/deployment.md": {
       "hash": "0229a7490f42dcf4f3b8c0958fefd7ff53f3b8a2",
@@ -1617,9 +1617,9 @@
       "pr": 12398
     },
     ".agents/marketing-sales/cro-chapter-07.md": {
-      "hash": "9f081ab08dc7468a6124fa9fba1539f0f0bbdb03",
-      "at": "2026-03-29T01:33:04Z",
-      "pr": 12375
+      "hash": "faba8a64f3996ee2e5722dd4b7c822d49f79c1b6",
+      "at": "2026-03-29T02:36:03Z",
+      "pr": 12463
     },
     ".agents/marketing-sales/ad-creative-chapter-07.md": {
       "hash": "c79c8baa955bb48f1ce2ded8036ded7940948031",
@@ -1627,9 +1627,14 @@
       "pr": 12442
     },
     ".agents/tools/browser/playwriter.md": {
-      "hash": "d299ead621010f02fdad0bcfb17ae1a82b312151",
-      "at": "2026-03-29T01:52:53Z",
+      "hash": "f651e0a3987dd6247f155c855562a0e53356ede0",
+      "at": "2026-03-29T02:37:06Z",
       "pr": 12434
+    },
+    ".agents/services/networking/tailscale.md": {
+      "hash": "e930b52dfd40905e93923b036c57b9ffc2bfa011",
+      "at": "2026-03-29T02:36:04Z",
+      "pr": 12461
     }
   }
 }
