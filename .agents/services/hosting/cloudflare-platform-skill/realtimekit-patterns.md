@@ -19,17 +19,6 @@ export class AppComponent { authToken = '<token>'; onLeave(event: unknown) {} }
 
 ## Core SDK Patterns
 
-### Basic Setup
-
-```typescript
-import RealtimeKitClient from '@cloudflare/realtimekit';
-
-const meeting = new RealtimeKitClient({ authToken, video: true, audio: true });
-meeting.self.on('roomJoined', () => console.log('Joined:', meeting.meta.meetingTitle));
-meeting.participants.joined.on('participantJoined', (p) => console.log(`${p.name} joined`));
-await meeting.join();
-```
-
 ### Video Grid (React)
 
 ```typescript
@@ -57,10 +46,9 @@ function VideoTile({ participant }) {
 }
 ```
 
-### Device Selection & Chat
+### Device Selection
 
 ```typescript
-// Device selection
 const devices = await meeting.self.getAllDevices();
 const audioInputs = devices.filter(d => d.kind === 'audioinput');
 const videoInputs = devices.filter(d => d.kind === 'videoinput');
@@ -69,8 +57,11 @@ const switchCamera = async (deviceId: string) => {
   const d = devices.find(x => x.deviceId === deviceId);
   if (d) await meeting.self.setDevice(d);
 };
+```
 
-// Chat
+### Chat Component (React)
+
+```typescript
 function ChatComponent({ meeting }) {
   const [messages, setMessages] = useState(meeting.chat.messages);
   const [input, setInput] = useState('');
@@ -86,8 +77,11 @@ function ChatComponent({ meeting }) {
     <button onClick={send}>Send</button>
   </div>;
 }
+```
 
-// Custom hook
+### Custom Hook
+
+```typescript
 export function useMeeting(authToken: string) {
   const [meeting, setMeeting] = useState<RealtimeKitClient | null>(null);
   const [joined, setJoined] = useState(false);
@@ -146,23 +140,11 @@ export default {
 
 ## Best Practices
 
-### Security
+**Security**: Never expose API tokens client-side — generate participant tokens server-side only. Fresh token per session (use refresh endpoint if expired). Use `custom_participant_id` to map to your user system.
 
-1. **Never expose API tokens client-side** - Generate participant tokens server-side only
-2. **Don't reuse participant tokens** - Generate fresh token per session, use refresh endpoint if expired
-3. **Use custom participant IDs** - Map to your user system for cross-session tracking
+**Performance**: Event-driven updates — listen to events, don't poll. Use `toArray()` only when needed. Set appropriate resolution/bitrate limits via `mediaConfiguration`. Enable `autoSwitchAudioDevice`.
 
-### Performance
-
-1. **Event-driven updates** - Listen to events, don't poll. Use `toArray()` only when needed
-2. **Media quality constraints** - Set appropriate resolution/bitrate limits based on network conditions
-3. **Device management** - Enable `autoSwitchAudioDevice` for better UX, handle device list updates
-
-### Architecture
-
-1. **Separate Apps for environments** - staging vs production to prevent data mixing
-2. **Preset strategy** - Create presets at App level, reuse across meetings
-3. **Token management** - Backend generates tokens, frontend receives via authenticated endpoint
+**Architecture**: Separate Apps for staging vs production. Create presets at App level, reuse across meetings. Backend generates tokens, frontend receives via authenticated endpoint.
 
 ## In This Reference
 
