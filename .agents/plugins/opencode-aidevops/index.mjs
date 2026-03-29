@@ -360,6 +360,29 @@ async function configHook(config) {
     agentsInjected++;
   }
 
+  // --- Zero-agent guard: ensure at least one agent is enabled ---
+  // If all agents are disabled, OpenCode crashes on agents()[0].name.
+  // Re-enable the built-in 'build' agent as a safety fallback.
+  const enabledAgents = Object.entries(config.agent).filter(
+    ([, v]) => !v.disable,
+  );
+  if (enabledAgents.length === 0) {
+    if (config.agent.build) {
+      delete config.agent.build.disable;
+    } else {
+      config.agent.build = { description: "Default coding agent" };
+    }
+    const logPath = join(WORKSPACE_DIR, "tmp", "plugin-warnings.log");
+    try {
+      appendFileSync(
+        logPath,
+        `[${new Date().toISOString()}] WARN: All agents disabled — re-enabled 'build' as fallback to prevent crash\n`,
+      );
+    } catch {
+      // best-effort logging
+    }
+  }
+
   // --- MCP registration ---
   const mcpsRegistered = registerMcpServers(config);
   const agentToolsUpdated = applyAgentMcpTools(config);
