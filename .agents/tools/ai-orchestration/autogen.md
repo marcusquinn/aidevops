@@ -52,9 +52,8 @@ AUTOGEN_STUDIO_PORT=8081
 
 ## Usage
 
-Common imports (add per-example extras as shown):
-
 ```python
+# Common imports — add per-example extras as shown below
 import asyncio
 from autogen_agentchat.agents import AssistantAgent
 from autogen_ext.models.openai import OpenAIChatCompletionClient
@@ -88,8 +87,6 @@ asyncio.run(main())
 ```
 
 ### Multi-Agent with AgentTool
-
-Compose specialist agents under an orchestrator:
 
 ```python
 from autogen_agentchat.tools import AgentTool
