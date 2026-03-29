@@ -20,12 +20,10 @@ tools:
 - **Services**: 25+ integrated (hosting, DNS, Git, code quality, email, etc.)
 - **Pattern**: `./.agents/scripts/[service]-helper.sh [command] [account] [target] [options]`
 - **Config**: `configs/[service]-config.json.txt` (template) → `configs/[service]-config.json` (gitignored)
+- **Categories**: Infrastructure (4), Deployment (1), Git (4), DNS (5), Code Quality (4), Security (1), Email (1)
+- **MCP Ports**: 3001 (LocalWP), 3002 (Vaultwarden), 3003+ (code audit, git platforms)
+- **Extension**: See `.agents/aidevops/extension.md`
 
-**Categories**: Infrastructure (4), Deployment (1), Git (4), DNS (5), Code Quality (4), Security (1), Email (1)
-
-**MCP Ports**: 3001 (LocalWP), 3002 (Vaultwarden), 3003+ (code audit, git platforms)
-
-**Extension**: See `.agents/aidevops/extension.md`
 <!-- AI-CONTEXT-END -->
 
 ## Preferred Tool
@@ -51,12 +49,7 @@ Files in `.opencode/tool/` are **OpenCode plugin tools** — TypeScript modules 
 
 aidevops replaced a 37,000-line deterministic bash supervisor with a simple pattern: an AI agent reads guidance docs, fetches live state from GitHub, reasons, and acts. When the agent errs, fix the guidance — not a new script.
 
-**When you encounter a supervisor/orchestration bug:**
-
-1. Improve guidance in the relevant agent doc (e.g., `scripts/commands/pulse.md`)
-2. Add the missing knowledge the agent needed
-3. Never create a bash script to enforce what the agent should reason about
-4. Never add state files, databases, or tracking layers
+**When you encounter a supervisor/orchestration bug:** Improve the relevant agent doc. Add the missing knowledge. Never create a bash script to enforce what the agent should reason about. Never add state files, databases, or tracking layers.
 
 **The test:** Fix adds a `.sh` file or state mechanism → wrong direction. Fix adds a paragraph of clear guidance → right track.
 
@@ -150,14 +143,14 @@ The `.agents/` directory organizes knowledge along two axes: **strategy** (what 
 
 ### Scripts: Flat and Cross-Domain
 
-All scripts live flat in `scripts/` — intentionally not grouped into domain folders. Scripts are shared utilities callable by any agent. The prefix naming convention (`email-*`, `seo-*`, `browser-*`) provides grouping via filesystem sort and glob patterns without imposing ownership.
+All scripts live flat in `scripts/` — not grouped into domain folders. Scripts are shared utilities callable by any agent. Prefix naming (`email-*`, `seo-*`, `browser-*`) provides grouping via filesystem sort and glob patterns without imposing ownership.
 
 - `*-helper.sh` suffix = agent-callable utilities (distinguishes from framework infrastructure scripts)
 - Discovery: `ls scripts/email-*`, `rg --files -g "scripts/seo-*"`
 
 ### Flat Files Over Nested Folders
 
-Inside any directory, prefer flat files with descriptive prefix-based names over nested subdirectories. `ls {dir}/` should show everything at a glance. Max depth from `.agents/` should be 2 levels for agent knowledge. See `tools/build-agent/build-agent.md` for examples.
+Prefer flat files with descriptive prefix-based names over nested subdirectories. `ls {dir}/` should show everything at a glance. Max depth from `.agents/`: 2 levels. See `tools/build-agent/build-agent.md` for examples.
 
 ### Ingested Skills
 
