@@ -19,19 +19,13 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Zero-config mesh VPN connecting devices securely without port forwarding
-- **Install**: `brew install tailscale` (macOS) or `curl -fsSL https://tailscale.com/install.sh | sh` (Linux)
+- **Install**: `brew install tailscale` (macOS) | `curl -fsSL https://tailscale.com/install.sh | sh` (Linux)
 - **CLI**: `tailscale` (control) + `tailscaled` (daemon)
 - **Admin**: https://login.tailscale.com/admin
 - **Docs**: https://tailscale.com/kb
-- **Free tier**: Up to 100 devices, 3 users
+- **Free tier**: 100 devices, 3 users
 
-**Key Concepts**:
-
-- **Tailnet**: Your private mesh network (all your devices)
-- **MagicDNS**: Automatic DNS names for devices (e.g., `my-vps.tail1234.ts.net`)
-- **Serve**: Expose a local port to your tailnet via HTTPS
-- **Funnel**: Expose a local port to the public internet via HTTPS
-- **ACLs**: Access control lists defining who can reach what
+**Key Concepts**: **Tailnet** = your private mesh network. **MagicDNS** = auto DNS (e.g., `my-vps.tail1234.ts.net`). **Serve** = expose local port to tailnet via HTTPS. **Funnel** = expose to public internet via HTTPS. **ACLs** = access control lists.
 
 <!-- AI-CONTEXT-END -->
 
@@ -40,57 +34,77 @@ tools:
 ### macOS
 
 ```bash
-# Via Homebrew (open-source variant, required for Funnel)
-brew install tailscale
-
-# Start daemon
-sudo tailscaled &
-
-# Authenticate
-tailscale up
+brew install tailscale          # Open-source variant (required for Funnel)
+sudo tailscaled &               # Start daemon
+tailscale up                    # Authenticate
 ```
 
-Or install the App Store version (GUI, but Funnel requires the open-source variant).
+App Store version available (GUI only, no Funnel support).
 
-### Linux (VPS)
+### Linux
 
 ```bash
-# One-line install
 curl -fsSL https://tailscale.com/install.sh | sh
-
-# Enable and start
 sudo systemctl enable --now tailscaled
-
-# Authenticate
 sudo tailscale up
-
-# Verify
-tailscale status
+tailscale status                # Verify
 ```
 
-### Verify Connection
+### Status Commands
 
 ```bash
-# Show all devices on your tailnet
-tailscale status
-
-# Check your Tailscale IP
-tailscale ip -4
-
-# Ping another device
-tailscale ping <device-name>
+tailscale status                # All devices on tailnet
+tailscale ip -4                 # Your Tailscale IP
+tailscale ping <device-name>    # Ping another device
 ```
 
-## Common Use Cases with aidevops
+## Tailscale Serve
 
-### 1. Secure OpenClaw Gateway Access
-
-Run OpenClaw on a VPS, access it securely from any device:
+Expose a local service to your tailnet with automatic HTTPS:
 
 ```bash
-# On VPS: Configure OpenClaw with Tailscale Serve
-# In ~/.openclaw/openclaw.json:
+tailscale serve https / http://127.0.0.1:18789
+tailscale serve status          # Verify
+tailscale serve reset           # Remove
 ```
+
+HTTPS must be enabled for your tailnet. Serve injects `tailscale-user-login` headers for user identification without separate auth.
+
+## Tailscale Funnel
+
+Expose a local service to the **public internet**:
+
+```bash
+tailscale funnel https / http://127.0.0.1:18789
+tailscale funnel status
+```
+
+**Requirements**: v1.38.3+, MagicDNS enabled, HTTPS enabled, funnel node attribute. Ports: 443, 8443, 10000 (TLS only). macOS requires Homebrew variant (not App Store).
+
+**Security**: Funnel exposes to the entire internet — always use strong auth (password/token).
+
+## ACLs (Access Control)
+
+Configure at https://login.tailscale.com/admin/acls:
+
+```json
+{
+  "acls": [
+    { "action": "accept", "src": ["autogroup:member"], "dst": ["*:*"] }
+  ],
+  "tagOwners": {
+    "tag:server": ["autogroup:admin"]
+  }
+}
+```
+
+Restrict to specific ports by replacing `"dst": ["*:*"]` with e.g. `["tag:server:18789"]` (OpenClaw gateway only).
+
+## Common Use Cases
+
+### Secure OpenClaw Gateway
+
+Run OpenClaw on a VPS, access via tailnet. In `~/.openclaw/openclaw.json`:
 
 ```json5
 {
@@ -102,146 +116,43 @@ Run OpenClaw on a VPS, access it securely from any device:
 }
 ```
 
-```bash
-# Access from any tailnet device:
-# https://<vps-magicdns>/
-```
+Access from any tailnet device: `https://<vps-magicdns>/`
 
-### 2. SSH to VPS Without Port Forwarding
+### SSH Without Port Forwarding
 
 ```bash
-# On VPS: Tailscale is already running
-# From laptop:
-ssh user@<vps-tailscale-hostname>
-
-# No need to open port 22 to the internet
+ssh user@<vps-tailscale-hostname>   # No port 22 exposed to internet
 ```
 
-### 3. Access Self-Hosted Services
+### Self-Hosted Dashboards
 
-Connect to Coolify, Cloudron, or other self-hosted dashboards without exposing them publicly:
+Access Coolify, Cloudron, etc. without public exposure: `https://<vps-magicdns>:8000`
 
-```bash
-# Access Coolify dashboard on VPS via tailnet
-# https://<vps-magicdns>:8000
-```
+## Integration with aidevops
 
-## Tailscale Serve
+### VPS Provisioning
 
-Expose a local service to your tailnet with automatic HTTPS:
+1. Provision server via `@hetzner` or `@hostinger`
+2. Install Tailscale, tag node (`tag:server`)
+3. Install services, configure Tailscale Serve for HTTPS
 
-```bash
-# Expose local port 18789 (OpenClaw gateway)
-tailscale serve https / http://127.0.0.1:18789
+### Tailscale + Cloudflare (Custom Domains)
 
-# Verify
-tailscale serve status
-
-# Remove
-tailscale serve reset
-```
-
-**Requirements**: HTTPS must be enabled for your tailnet (the CLI prompts if missing).
-
-**Identity headers**: Serve injects `tailscale-user-login` headers, allowing services to identify the connecting user without separate auth.
-
-## Tailscale Funnel
-
-Expose a local service to the public internet:
-
-```bash
-# Expose to public internet
-tailscale funnel https / http://127.0.0.1:18789
-
-# Verify
-tailscale funnel status
-```
-
-**Requirements**: Tailscale v1.38.3+, MagicDNS enabled, HTTPS enabled, funnel node attribute. Only ports 443, 8443, 10000 over TLS. macOS requires the open-source Tailscale variant (Homebrew, not App Store).
-
-**Security**: Funnel exposes to the entire internet. Always use strong auth (password/token) when using Funnel.
-
-## ACLs (Access Control)
-
-Configure who can access what in your tailnet at https://login.tailscale.com/admin/acls:
-
-```json
-{
-  "acls": [
-    {
-      "action": "accept",
-      "src": ["autogroup:member"],
-      "dst": ["*:*"]
-    }
-  ],
-  "tagOwners": {
-    "tag:server": ["autogroup:admin"]
-  }
-}
-```
-
-### Recommended ACL for OpenClaw VPS
-
-```json
-{
-  "acls": [
-    {
-      "action": "accept",
-      "src": ["autogroup:member"],
-      "dst": ["tag:server:18789"]
-    }
-  ]
-}
-```
-
-This restricts access to only the OpenClaw gateway port on tagged servers.
-
-## Integration with aidevops Infrastructure
-
-### Provisioning a VPS with Tailscale
-
-When using `@hetzner` or `@hostinger` to provision a VPS:
-
-1. Provision the server via the hosting agent
-2. SSH in and install Tailscale
-3. Tag the node (e.g., `tag:server`)
-4. Install OpenClaw or other services
-5. Configure Tailscale Serve for HTTPS access
-
-### Tailscale + Cloudflare
-
-For custom domains pointing to Tailscale Funnel:
-
-1. Set up Funnel on the target machine
-2. Create a CNAME record in Cloudflare pointing to your Funnel hostname
-3. Disable Cloudflare proxy (grey cloud) since Tailscale handles TLS
+1. Set up Funnel on target machine
+2. CNAME in Cloudflare → Funnel hostname
+3. Disable Cloudflare proxy (grey cloud) — Tailscale handles TLS
 
 ## Troubleshooting
 
 ```bash
-# Check connection status
-tailscale status
-
-# Check if daemon is running
-tailscale debug daemon-status
-
-# View logs (macOS)
-log show --predicate 'process == "tailscaled"' --last 5m
-
-# View logs (Linux)
-journalctl -u tailscaled -f
-
-# Re-authenticate
-tailscale up --reset
-
-# Check network connectivity
-tailscale netcheck
+tailscale status                # Connection status
+tailscale debug daemon-status   # Daemon health
+tailscale netcheck              # Network connectivity
+tailscale up --reset            # Re-authenticate
 ```
+
+**Logs**: macOS: `log show --predicate 'process == "tailscaled"' --last 5m` | Linux: `journalctl -u tailscaled -f`
 
 ## Resources
 
-- **Docs**: https://tailscale.com/kb
-- **Serve**: https://tailscale.com/kb/1312/serve
-- **Funnel**: https://tailscale.com/kb/1223/tailscale-funnel
-- **ACLs**: https://tailscale.com/kb/1018/acls
-- **Pricing**: https://tailscale.com/pricing (free tier: 100 devices, 3 users)
+- [Docs](https://tailscale.com/kb) · [Serve](https://tailscale.com/kb/1312/serve) · [Funnel](https://tailscale.com/kb/1223/tailscale-funnel) · [ACLs](https://tailscale.com/kb/1018/acls) · [Pricing](https://tailscale.com/pricing)
