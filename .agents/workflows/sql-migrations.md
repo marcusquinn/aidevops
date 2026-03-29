@@ -3,26 +3,15 @@ mode: subagent
 ---
 # SQL Migrations Workflow
 
-<!-- AI-CONTEXT-START -->
-
 ## Quick Reference
 
 - **Purpose**: Version-controlled database schema changes with rollback support
 - **Declarative**: `schemas/` — desired state, generate migrations automatically
 - **Migrations**: `migrations/` — versioned, timestamped files
 - **Naming**: `{YYYYMMDDHHMMSS}_{action}_{target}.sql`
+- **Workflow**: Edit `schemas/` → generate migration via diff → review → apply locally → commit both
 
-**Critical Rules**:
-
-- NEVER modify pushed/deployed migrations — create a NEW migration instead
-- ALWAYS generate migrations via diff (don't write manually)
-- ALWAYS review generated migrations before committing
-- ALWAYS backup before running migrations in production
-- ONE logical change per migration file
-
-**Workflow**: Edit `schemas/` → generate migration via diff → review → apply locally → commit both schema and migration files
-
-<!-- AI-CONTEXT-END -->
+**Critical Rules**: NEVER modify pushed/deployed migrations (create a NEW one instead). ALWAYS generate via diff, review before committing, backup before production. ONE logical change per file.
 
 ## Directory Structure
 
@@ -49,7 +38,7 @@ project/
 | **Laravel** | `php artisan make:migration` | `php artisan migrate` | `php artisan migrate:rollback --step=1` |
 | **Rails** | `rails g migration` | `rails db:migrate` | `rails db:rollback STEP=1` |
 
-**Dev-only commands:** `drizzle-kit push`/`pull`, `prisma migrate reset`, `php artisan migrate:fresh --seed`.
+**Dev-only:** `drizzle-kit push`/`pull`, `prisma migrate reset`, `php artisan migrate:fresh --seed`.
 
 **Flyway naming:** `V1__create_users.sql`, `V2__add_email.sql`, `R__refresh_views.sql` (repeatable), `U2__undo_add_email.sql` (undo).
 
@@ -86,7 +75,7 @@ DROP INDEX IF EXISTS idx_users_email;
 DROP TABLE IF EXISTS users;
 ```
 
-**Idempotent column addition (PostgreSQL)** — lacks `IF NOT EXISTS` for `ALTER TABLE ADD COLUMN`:
+**Idempotent column addition (PostgreSQL — no `IF NOT EXISTS` for `ALTER TABLE ADD COLUMN`):**
 
 ```sql
 DO $$
@@ -174,14 +163,6 @@ Most tools auto-create a tracking table (e.g., `flyway_schema_history`). **Prefe
 
 If running SQL directly without a migration tool, gate execution on a tracking table -- never replay all files on every invocation.
 
-```sql
--- Bootstrap: create the tracking table once
-CREATE TABLE IF NOT EXISTS schema_migrations (
-    filename   TEXT PRIMARY KEY,
-    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
-
 ```bash
 #!/usr/bin/env bash
 # scripts/migrate.sh -- apply only unapplied migrations in order
@@ -219,6 +200,6 @@ SQL
 done
 ```
 
-Key properties: idempotent (`WHERE NOT EXISTS` guard), ordered (lexicographic glob with timestamp-prefixed filenames), auditable (`schema_migrations` records what ran and when), safe filenames (`psql -v "name=$name"` with `:'name'` avoids SQL injection), concurrent-safe (`pg_advisory_xact_lock`), empty-directory safe (`compgen -G` guard).
+Key properties: idempotent (`WHERE NOT EXISTS`), ordered (lexicographic glob with timestamp-prefixed filenames), auditable (`schema_migrations` records what ran and when), safe filenames (`psql -v` with `:'name'` avoids SQL injection), concurrent-safe (`pg_advisory_xact_lock`), empty-directory safe (`compgen -G`).
 
 > **Note:** `\i` inside a transaction applies the migration file and the `INSERT` records it atomically in one psql session. For production, prefer a dedicated migration tool (Flyway, Atlas, Prisma Migrate) which handles locking, ordering, and checksums natively.
