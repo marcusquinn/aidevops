@@ -6,7 +6,6 @@ tools:
   write: true
   edit: true
   bash: true
-  glob: true
   grep: true
   webfetch: true
   task: true
@@ -14,8 +13,6 @@ tools:
 ---
 
 # Hono - Lightweight Web Framework
-
-<!-- AI-CONTEXT-START -->
 
 **Purpose**: TypeScript-first lightweight API framework. Runs on Edge/Node.js/Bun/Deno/Cloudflare Workers. Full type inference, built-in middleware (CORS, auth, validation), type-safe RPC client.
 **Docs**: Context7 MCP for current documentation.
@@ -73,8 +70,6 @@ export const GET = handle(app);
 export const POST = handle(app);
 ```
 
-<!-- AI-CONTEXT-END -->
-
 ## Middleware
 
 ```tsx
@@ -128,16 +123,6 @@ const users = new Hono()
   .get("/:id", (c) => c.json({ id: c.req.param("id") }))
   .post("/", (c) => c.json({ created: true }));
 app.route("/api/users", users);
-```
-
-## Context Variables
-
-```tsx
-app.use("*", async (c, next) => {
-  c.set("user", await getAuthUser(c.req.header("Authorization")));
-  await next();
-});
-app.get("/api/profile", (c) => c.json(c.get("user")));
 ```
 
 ## Streaming
