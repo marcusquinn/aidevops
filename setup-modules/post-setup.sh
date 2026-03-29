@@ -39,7 +39,7 @@ setup_auto_update() {
 			echo "Auto-update keeps aidevops current by checking every 10 minutes."
 			echo "Safe to run while AI sessions are active."
 			echo ""
-			read -r -p "Enable auto-update? [Y/n]: " enable_auto
+			setup_prompt enable_auto "Enable auto-update? [Y/n]: " "Y"
 			if [[ "$enable_auto" =~ ^[Yy]?$ ]]; then
 				bash "$auto_update_script" enable
 			else
@@ -179,7 +179,7 @@ setup_tabby() {
 	echo ""
 	bash "$tabby_helper" status || true
 	echo ""
-	read -r -p "Sync Tabby profiles from repos.json? [Y/n]: " sync_tabby
+	setup_prompt sync_tabby "Sync Tabby profiles from repos.json? [Y/n]: " "Y"
 	if [[ "$sync_tabby" =~ ^[Yy]?$ ]]; then
 		bash "$tabby_helper" sync
 	else
@@ -227,7 +227,7 @@ setup_onboarding_prompt() {
 	echo "  - Get personalized recommendations based on your work"
 	echo "  - Set up API keys and credentials interactively"
 	echo ""
-	read -r -p "Launch ${_onb_name} with /onboarding now? [Y/n]: " launch_onboarding
+	setup_prompt launch_onboarding "Launch ${_onb_name} with /onboarding now? [Y/n]: " "Y"
 	if [[ "$launch_onboarding" =~ ^[Yy]?$ ]]; then
 		echo ""
 		echo "Starting ${_onb_name} with onboarding wizard..."

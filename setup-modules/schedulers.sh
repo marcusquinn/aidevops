@@ -76,7 +76,7 @@ _determine_pulse_install() {
 			echo "  - 4-hourly strategic review (opus-tier) for queue health" >&2
 			echo "  - Circuit breaker pauses dispatch on consecutive failures" >&2
 			echo "" >&2
-			read -r -p "Enable supervisor pulse? [y/N]: " enable_pulse
+			setup_prompt enable_pulse "Enable supervisor pulse? [y/N]: " "n"
 			if [[ "$enable_pulse" =~ ^[Yy]$ ]]; then
 				_do_install=true
 				# Record explicit consent
@@ -1263,7 +1263,7 @@ setup_repo_sync() {
 			echo "Repo sync keeps your local git repos up to date by running"
 			echo "git pull --ff-only daily on clean repos on their default branch."
 			echo ""
-			read -r -p "Enable daily repo sync? [Y/n]: " enable_repo_sync
+			setup_prompt enable_repo_sync "Enable daily repo sync? [Y/n]: " "Y"
 			if [[ "$enable_repo_sync" =~ ^[Yy]?$ || -z "$enable_repo_sync" ]]; then
 				bash "$repo_sync_script" enable
 			else

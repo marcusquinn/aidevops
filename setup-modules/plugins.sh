@@ -614,7 +614,7 @@ setup_multi_tenant_credentials() {
 		print_info "Everything continues to work as before - this is non-breaking."
 		echo ""
 
-		read -r -p "Enable multi-tenant credential storage? [Y/n]: " enable_mt
+		setup_prompt enable_mt "Enable multi-tenant credential storage? [Y/n]: " "Y"
 		enable_mt=$(echo "$enable_mt" | tr '[:upper:]' '[:lower:]')
 
 		if [[ "$enable_mt" =~ ^[Yy]?$ || "$enable_mt" == "yes" ]]; then
@@ -681,7 +681,7 @@ check_tool_updates() {
 	bash "$tool_check_script" --quiet
 	echo ""
 
-	read -r -p "Update all outdated tools now? [Y/n]: " do_update
+	setup_prompt do_update "Update all outdated tools now? [Y/n]: " "Y"
 
 	if [[ "$do_update" =~ ^[Yy]?$ || "$do_update" == "Y" ]]; then
 		print_info "Updating tools..."

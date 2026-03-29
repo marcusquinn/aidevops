@@ -261,7 +261,7 @@ setup_localwp_mcp() {
 	fi
 
 	print_info "LocalWP MCP server enables AI assistants to query WordPress databases"
-	read -r -p "Install LocalWP MCP server (@verygoodplugins/mcp-local-wp)? [Y/n]: " install_mcp
+	setup_prompt install_mcp "Install LocalWP MCP server (@verygoodplugins/mcp-local-wp)? [Y/n]: " "Y"
 
 	if [[ "$install_mcp" =~ ^[Yy]?$ ]]; then
 		if run_with_spinner "Installing LocalWP MCP server" npm_global_install "@verygoodplugins/mcp-local-wp"; then
@@ -402,7 +402,7 @@ _setup_browser_tools_playwright() {
 	fi
 
 	local install_playwright
-	read -r -p "Install Playwright MCP with browsers (chromium, firefox, webkit)? [Y/n]: " install_playwright
+	setup_prompt install_playwright "Install Playwright MCP with browsers (chromium, firefox, webkit)? [Y/n]: " "Y"
 
 	if [[ "$install_playwright" =~ ^[Yy]?$ ]]; then
 		print_info "Installing Playwright browsers..."
@@ -875,7 +875,7 @@ _setup_quickfile_mcp_clone_and_build() {
 
 	print_info "QuickFile MCP provides AI access to UK accounting (invoices, clients, reports)"
 	local install_qf
-	read -r -p "Clone and build QuickFile MCP server? [Y/n]: " install_qf
+	setup_prompt install_qf "Clone and build QuickFile MCP server? [Y/n]: " "Y"
 
 	if [[ ! "$install_qf" =~ ^[Yy]?$ ]]; then
 		print_info "Skipped QuickFile MCP installation"

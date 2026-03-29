@@ -151,14 +151,29 @@ bootstrap_repo() {
 		print_info "Remote install detected - bootstrapping repository..."
 
 		# On macOS, offer choice: install locally or in an OrbStack VM
-		if [[ "$(uname)" == "Darwin" ]]; then
+		# Skip prompt in non-interactive mode (parse_args hasn't run yet,
+		# so check $@ directly for --non-interactive/-n flags)
+		local _bootstrap_non_interactive=false
+		local _arg
+		for _arg in "$@"; do
+			case "$_arg" in
+			--non-interactive | -n) _bootstrap_non_interactive=true ;;
+			esac
+		done
+		[[ "${AIDEVOPS_NON_INTERACTIVE:-false}" == "true" ]] && _bootstrap_non_interactive=true
+		[[ ! -t 0 ]] && _bootstrap_non_interactive=true
+
+		if [[ "$(uname)" == "Darwin" && "$_bootstrap_non_interactive" == "false" ]]; then
 			echo ""
 			echo "Where would you like to install aidevops?"
 			echo ""
 			echo "  1) Install on this Mac (recommended)"
 			echo "  2) Install in a Linux VM (via OrbStack)"
 			echo ""
-			read -r -p "Choose [1/2] (default: 1): " install_target
+			# Cannot use setup_prompt here — _common.sh not yet sourced during bootstrap.
+			# The _bootstrap_non_interactive guard above prevents reaching this line.
+			local install_target=""
+			read -r -p "Choose [1/2] (default: 1): " install_target || install_target="1"
 
 			if [[ "$install_target" == "2" ]]; then
 				print_info "Setting up OrbStack VM installation..."
@@ -301,7 +316,7 @@ ensure_homebrew() {
 	print_info "Homebrew (Linuxbrew) is not installed."
 	print_info "Several optional tools (Beads CLI, Worktrunk, bv) install via Homebrew taps."
 	echo ""
-	read -r -p "Install Homebrew for Linux? [Y/n]: " install_brew
+	setup_prompt install_brew "Install Homebrew for Linux? [Y/n]: " "Y"
 
 	if [[ ! "$install_brew" =~ ^[Yy]?$ ]]; then
 		print_info "Skipped Homebrew installation"
@@ -497,7 +512,7 @@ check_requirements() {
 		fi
 
 		echo ""
-		read -r -p "Install missing dependencies using $pkg_manager? [Y/n]: " install_deps
+		setup_prompt install_deps "Install missing dependencies using $pkg_manager? [Y/n]: " "Y"
 
 		if [[ "$install_deps" =~ ^[Yy]?$ ]]; then
 			print_info "Installing ${missing_packages[*]}..."
@@ -567,7 +582,7 @@ check_quality_tools() {
 	fi
 
 	echo ""
-	read -r -p "Install quality tools using $pkg_manager? [Y/n]: " install_quality
+	setup_prompt install_quality "Install quality tools using $pkg_manager? [Y/n]: " "Y"
 
 	if [[ "$install_quality" =~ ^[Yy]?$ ]]; then
 		print_info "Installing ${missing_tools[*]}..."
