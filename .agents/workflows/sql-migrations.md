@@ -36,7 +36,7 @@ project/
     └── rollback.sh   # Rollback last migration
 ```
 
-## Generating, Applying, and Rolling Back Migrations
+## Generating, Applying, and Rolling Back
 
 | Tool | Generate | Apply | Rollback |
 |------|----------|-------|----------|
@@ -49,15 +49,13 @@ project/
 | **Laravel** | `php artisan make:migration` | `php artisan migrate` | `php artisan migrate:rollback --step=1` |
 | **Rails** | `rails g migration` | `rails db:migrate` | `rails db:rollback STEP=1` |
 
-**Review before committing:** Check only expected changes, no unintended destructive operations, correct types/constraints. Data migrations may need manual adjustment.
+Review before committing: verify only expected changes, no unintended destructive ops, correct types/constraints. Data migrations may need manual adjustment.
 
-Dev-only commands: `npx drizzle-kit push` (push without migration file), `npx drizzle-kit pull` (pull DB schema to TS), `npx prisma migrate reset`, `php artisan migrate:fresh --seed`.
+Dev-only commands: `drizzle-kit push`/`pull`, `prisma migrate reset`, `php artisan migrate:fresh --seed`.
 
-Flyway file naming: `V1__create_users.sql`, `V2__add_email.sql`, `R__refresh_views.sql` (repeatable), `U2__undo_add_email.sql` (undo).
+Flyway naming: `V1__create_users.sql`, `V2__add_email.sql`, `R__refresh_views.sql` (repeatable), `U2__undo_add_email.sql` (undo).
 
-### Known Limitations (require manual migrations)
-
-DML statements (`INSERT`/`UPDATE`/`DELETE`), RLS policy modifications, view ownership/grants, materialized views, table partitions, comments, some `ALTER POLICY` statements.
+**Known limitations (require manual migrations):** DML statements, RLS policies, view ownership/grants, materialized views, table partitions, comments, some `ALTER POLICY`.
 
 ## Naming Convention
 
@@ -92,7 +90,7 @@ DROP TABLE IF EXISTS users;
 
 ### Idempotent Column Addition (PostgreSQL)
 
-PostgreSQL has no `IF NOT EXISTS` for `ALTER TABLE ADD COLUMN` — use a check:
+PostgreSQL lacks `IF NOT EXISTS` for `ALTER TABLE ADD COLUMN` — use a DO block:
 
 ```sql
 DO $$
@@ -106,8 +104,6 @@ BEGIN
 END $$;
 ```
 
-Note: MySQL doesn't support `IF NOT EXISTS` for indexes — use stored procedures.
-
 ### Schema vs Data Migrations (keep separate)
 
 ```sql
@@ -119,7 +115,7 @@ UPDATE orders SET status = 'completed' WHERE shipped_at IS NOT NULL;
 UPDATE orders SET status = 'pending' WHERE shipped_at IS NULL;
 ```
 
-## Rollback, Safety, and Production Operations
+## Rollback and Safety
 
 ### Reversible vs Irreversible Operations
 
@@ -131,42 +127,24 @@ UPDATE orders SET status = 'pending' WHERE shipped_at IS NULL;
 | `TRUNCATE` | **Irreversible** | Never use in migrations |
 | Data `UPDATE` | **Irreversible** | Store originals in backup table |
 
-For irreversible migrations, mark the DOWN section:
-
-```sql
--- ====== DOWN ======
--- IRREVERSIBLE: restore from backup if needed.
-SELECT 'This migration is irreversible' AS warning;
-```
+For irreversible migrations, mark the DOWN section: `-- IRREVERSIBLE: restore from backup if needed.`
 
 Point-in-time recovery: `pg_dump`/`pg_restore` (PostgreSQL), `mysqldump` (MySQL).
 
-### Production Safety Checklist
+### Production Safety
 
 | Operation | Safe? | Strategy |
 |-----------|-------|----------|
 | Add nullable column | Yes | Direct |
 | Add NOT NULL column | Caution | Add nullable → backfill → add constraint |
 | Drop column | Caution | Remove from code first → wait → drop |
-| Rename column | Caution | Expand-contract pattern (below) |
-| Add index | Caution | `CREATE INDEX CONCURRENTLY` (PostgreSQL) |
+| Rename column | Caution | Expand-contract pattern |
+| Add index | Caution | `CREATE INDEX CONCURRENTLY` (PostgreSQL, non-blocking) |
 | Change column type | Caution | New column → migrate data → drop old |
 
-### Expand-Contract Pattern
+**Expand-contract pattern:** (1) EXPAND — add new column, copy data, deploy code writing to both columns reading from new. (2) CONTRACT — drop old column, rename new.
 
-```sql
--- Phase 1: EXPAND — add new column, keep old
-ALTER TABLE users ADD COLUMN email_new VARCHAR(255);
-UPDATE users SET email_new = email;
--- Phase 2: Deploy code writing to BOTH columns, reading from new
--- Phase 3: CONTRACT — remove old column
-ALTER TABLE users DROP COLUMN email;
-ALTER TABLE users RENAME COLUMN email_new TO email;
-```
-
-Concurrent index creation (PostgreSQL): `CREATE INDEX CONCURRENTLY idx_name ON table(col);` — non-blocking, production-safe. Without `CONCURRENTLY`, blocks writes on large tables.
-
-## Git Workflow Integration
+## Git and CI/CD Integration
 
 **Pre-push checklist:** (1) Migration has UP and DOWN sections, (2) DOWN reverses UP, (3) tested locally (up → down → up), (4) no modifications to pushed migrations, (5) timestamp is current (regenerate if rebasing).
 
@@ -174,9 +152,7 @@ Concurrent index creation (PostgreSQL): `CREATE INDEX CONCURRENTLY idx_name ON t
 
 **Commit messages:** `feat(db): add user_preferences table`, `fix(db): correct FK on orders`, `chore(db): backfill user status`.
 
-## CI/CD Integration
-
-Trigger on `push` to `main` with `paths: ['migrations/**']`. Steps: backup → migrate → verify.
+**CI/CD:** Trigger on `push` to `main` with `paths: ['migrations/**']`. Steps: backup → migrate → verify.
 
 ```yaml
 name: Database Migration
