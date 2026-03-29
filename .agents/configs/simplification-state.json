@@ -1022,9 +1022,9 @@
       "pr": 11944
     },
     ".agents/scripts/commands/full-loop.md": {
-      "hash": "e7215685051b1bc82caf69196f5968a3138084fa",
-      "at": "2026-03-29T07:02:47Z",
-      "pr": 12551
+      "hash": "fc4ba2d61f5702b51778aa7bcd589adbfae8c569",
+      "at": "2026-03-29T08:10:44Z",
+      "pr": 12728
     },
     ".agents/workflows/pr.md": {
       "hash": "4a3037a4141b69625fe2949f51e1a21a63bfa8ce",
@@ -1517,9 +1517,9 @@
       "pr": 12309
     },
     ".agents/tools/animation/animejs.md": {
-      "hash": "53e06dd42cc6475801976461219b510fd4a94139",
-      "at": "2026-03-29T07:02:39Z",
-      "pr": 12549
+      "hash": "3d011c9aa6ae720f1ed6de08663bf78f589237ec",
+      "at": "2026-03-29T08:11:02Z",
+      "pr": 12745
     },
     ".agents/tools/build-mcp/deployment.md": {
       "hash": "0229a7490f42dcf4f3b8c0958fefd7ff53f3b8a2",
@@ -1532,9 +1532,9 @@
       "pr": 12310
     },
     ".agents/tools/opencode/opencode.md": {
-      "hash": "c1946355da50dc0ba2001b5582c2699600faff95",
-      "at": "2026-03-28T21:59:13Z",
-      "pr": 12240
+      "hash": "164720431feec359fd8203bc5c7de9f95d0747cb",
+      "at": "2026-03-29T08:10:47Z",
+      "pr": 12744
     },
     ".agents/tools/browser/browser-profiles.md": {
       "hash": "2a2c771f4ff870ad450a92a0f9ad950f3f16e3cb",
@@ -1547,9 +1547,9 @@
       "pr": 12453
     },
     ".agents/content/heygen-skill/rules-templates.md": {
-      "hash": "9bb00be8a5060b8b66412adc859335c7d193546d",
-      "at": "2026-03-28T21:59:23Z",
-      "pr": 12247
+      "hash": "5d9c85b6e42715ec4914982ce21790312207dacf",
+      "at": "2026-03-29T08:10:46Z",
+      "pr": 12738
     },
     ".agents/marketing-sales/ad-creative-chapter-01.md": {
       "hash": "e832ef8eb425956cec38a250eede0227342a4d79",
@@ -1772,9 +1772,9 @@
       "pr": 12662
     },
     ".agents/tools/deployment/cloudron-app-packaging-skill/addons-ref.md": {
-      "hash": "eabf574fee83d669be51a57a8cec9d8fb37d2a6c",
-      "at": "2026-03-29T07:02:11Z",
-      "pr": 12663
+      "hash": "3ed45faf75fd7ede9acd3a13f38a8b0738b9d88c",
+      "at": "2026-03-29T08:10:55Z",
+      "pr": 12759
     },
     ".agents/marketing-sales/cro-chapter-04.md": {
       "hash": "f893022ded62f04d6ca13b86f839211e4fe8190a",
@@ -1782,9 +1782,9 @@
       "pr": 12665
     },
     ".agents/services/communications/whatsapp.md": {
-      "hash": "80fa5606703e7951465e092194a0a2c03f1f8472",
-      "at": "2026-03-29T07:02:13Z",
-      "pr": 12666
+      "hash": "7b16feba44a1a61b10b7e4175a28840a4996ea25",
+      "at": "2026-03-29T08:10:56Z",
+      "pr": 12761
     },
     ".agents/tools/ai-orchestration/openprose.md": {
       "hash": "352f5da544f3c05517e1012dc060b516aa995506",
@@ -1807,9 +1807,9 @@
       "pr": 12641
     },
     ".agents/services/database/postgres-drizzle-skill/performance.md": {
-      "hash": "b29ed6ea5505ea24fc3c3a94bf60b64ee51d9993",
-      "at": "2026-03-29T07:02:23Z",
-      "pr": 12668
+      "hash": "f90d7e762b69fe79dd6e25ae0df041f7ca1e271b",
+      "at": "2026-03-29T08:10:58Z",
+      "pr": 12757
     },
     ".agents/services/accounting/quickfile.md": {
       "hash": "db7040cc4f46334177d39ff45c6d4fd3be9698ee",
@@ -1900,6 +1900,71 @@
       "hash": "c1fcd168d83da66b8a48ff30f23197361d174aa5",
       "at": "2026-03-29T07:31:42Z",
       "pr": 12709
+    },
+    ".agents/scripts/commands/skills.md": {
+      "hash": "b5d46b5e38620ec36852251ec0e4ab4178d9d217",
+      "at": "2026-03-29T08:10:30Z",
+      "pr": 12747
+    },
+    ".agents/scripts/commands/youtube-research.md": {
+      "hash": "340b914ca94d03a0c78878b9ec28534fc761f352",
+      "at": "2026-03-29T08:10:31Z",
+      "pr": 12750
+    },
+    ".agents/tools/ai-assistants/agno.md": {
+      "hash": "0e8f56a7ce9681124205e8492ed4878f1a9c73c3",
+      "at": "2026-03-29T08:10:32Z",
+      "pr": 12746
+    },
+    ".agents/tools/deployment/coolify.md": {
+      "hash": "c69569ccf737f434c5d2c4c031ab9fb87e3f6125",
+      "at": "2026-03-29T08:10:34Z",
+      "pr": 12748
+    },
+    ".agents/tools/mobile/app-dev.md": {
+      "hash": "5fa80cfb5528478d449196a550ffb263ac4380e0",
+      "at": "2026-03-29T08:10:35Z",
+      "pr": 12752
+    },
+    ".agents/marketing-sales/cro.md": {
+      "hash": "9a8a0b49c40c42072e982a4dd40761c19c0055ed",
+      "at": "2026-03-29T08:10:36Z",
+      "pr": 12753
+    },
+    ".agents/scripts/commands/strategic-review.md": {
+      "hash": "321755ff5b42109fb2ed065075b903ecfed76407",
+      "at": "2026-03-29T08:10:38Z",
+      "pr": 12756
+    },
+    ".agents/tools/context/prompt-optimization.md": {
+      "hash": "94abbde385ccf494358e17a79a32fdc72d4adb58",
+      "at": "2026-03-29T08:10:39Z",
+      "pr": 12749
+    },
+    ".agents/tools/credentials/environment-variables.md": {
+      "hash": "4a7ee0834fefdbf424af90c68648ad35716559c7",
+      "at": "2026-03-29T08:10:40Z",
+      "pr": 12751
+    },
+    ".agents/tools/design/design-inspiration.md": {
+      "hash": "c45174a87827d85931f259a2e60da60b030b9fef",
+      "at": "2026-03-29T08:10:43Z",
+      "pr": 12754
+    },
+    ".agents/tools/diagrams/mermaid-diagrams-skill/state-journey.md": {
+      "hash": "2fda89c67e49f210c5079578f56272001edd02d9",
+      "at": "2026-03-29T08:11:29Z",
+      "pr": 12755
+    },
+    ".agents/tools/local-models/local-models.md": {
+      "hash": "9809ec0871562ca709e8ef42cf6c3b67d24b69ce",
+      "at": "2026-03-29T08:11:30Z",
+      "pr": 12758
+    },
+    ".agents/tools/mobile/app-dev-publishing.md": {
+      "hash": "5b8ce6f4b5d555eeef5ee8e3cc8f7a933b405529",
+      "at": "2026-03-29T08:11:31Z",
+      "pr": 12760
     }
   }
 }
