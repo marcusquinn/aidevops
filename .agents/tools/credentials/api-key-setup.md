@@ -36,7 +36,7 @@ tools:
 | `~/.config/aidevops/tenants/{tenant}/credentials.sh` | Per-tenant keys (see `multi-tenant.md`) | 600 |
 | `~/.config/aidevops/` | Secrets directory | 700 |
 
-**Principle**: API keys are stored ONLY in `~/.config/aidevops/credentials.sh` (default), `~/.config/aidevops/tenants/{tenant}/credentials.sh` (multi-tenant), or in gopass — NEVER in repository files. Both credential file locations are under `~/.config/aidevops/` and are the single source of truth. The active credentials file is sourced by your shell on startup.
+Keys stored ONLY here or in gopass — NEVER in repository files. Sourced by shell on startup.
 
 ## Setup
 
@@ -66,24 +66,17 @@ bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh add 'export VERCEL_T
 ### 3. Common Services
 
 ```bash
-# Codacy - https://app.codacy.com/account/api-tokens
-bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh set codacy-project-token YOUR_TOKEN
-
-# SonarCloud - https://sonarcloud.io/account/security
-bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh set sonar-token YOUR_TOKEN
-
-# CodeRabbit - https://app.coderabbit.ai/settings
-bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh set coderabbit-api-key YOUR_KEY
-
-# Hetzner Cloud - https://console.hetzner.cloud/projects/*/security/tokens
-bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh set hcloud-token-projectname YOUR_TOKEN
-
-# OpenAI - https://platform.openai.com/api-keys
-bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh set openai-api-key YOUR_KEY
-
-# Daytona - https://app.daytona.io/settings/api-keys
-bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh set daytona-api-key YOUR_KEY
+bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh set <service-name> YOUR_TOKEN
 ```
+
+| Service | Key name | Token URL |
+|---------|----------|-----------|
+| Codacy | `codacy-project-token` | https://app.codacy.com/account/api-tokens |
+| SonarCloud | `sonar-token` | https://sonarcloud.io/account/security |
+| CodeRabbit | `coderabbit-api-key` | https://app.coderabbit.ai/settings |
+| Hetzner Cloud | `hcloud-token-<project>` | https://console.hetzner.cloud/projects/*/security/tokens |
+| OpenAI | `openai-api-key` | https://platform.openai.com/api-keys |
+| Daytona | `daytona-api-key` | https://app.daytona.io/settings/api-keys |
 
 ### 4. Verify
 
