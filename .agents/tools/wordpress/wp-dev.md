@@ -44,13 +44,13 @@ Prefer [WP Composer](https://wp-composer.com/) over WPackagist (acquired by WP E
 
 Requires WordPress Abilities API plugin. Repo: `~/git/wordpress/mcp-adapter`.
 
-**STDIO** (local): `composer require wordpress/mcp-adapter && wp plugin activate mcp-adapter` then `wp mcp-adapter serve --server=mcp-adapter-default-server --user=admin`
+**STDIO** (local): `composer require wordpress/mcp-adapter && wp plugin activate mcp-adapter` → `wp mcp-adapter serve --server=mcp-adapter-default-server --user=admin`
 
-**HTTP** (remote): `npx @automattic/mcp-wordpress-remote` — set `WP_API_URL`, `WP_API_USERNAME`, `WP_API_PASSWORD`. Application Passwords: WP Admin > Users > Profile > "Application Passwords" > name `mcp-adapter-dev` > store via `setup-local-api-keys.sh set wp-app-password-sitename "xxxx xxxx xxxx xxxx"`
+**HTTP** (remote): `npx @automattic/mcp-wordpress-remote` — set `WP_API_URL`, `WP_API_USERNAME`, `WP_API_PASSWORD`. Application Passwords: WP Admin > Users > Profile > "Application Passwords" → name `mcp-adapter-dev` → store via `setup-local-api-keys.sh set wp-app-password-sitename "xxxx xxxx xxxx xxxx"`
 
 ## Testing Environments
 
-**Playground** (instant, no Docker, no persistence): `npx @wp-playground/cli server --port=8888 --blueprint=blueprint.json`. Blueprint schema: `https://playground.wordpress.net/blueprint-schema.json`. Key steps: `defineWpConfigConsts`, `installPlugin`, `enableMultisite`. [Docs](https://wordpress.github.io/wordpress-playground/blueprints). *May be flaky in CI.*
+**Playground** (instant, no Docker, ephemeral): `npx @wp-playground/cli server --port=8888 --blueprint=blueprint.json`. Blueprint steps: `defineWpConfigConsts`, `installPlugin`, `enableMultisite`. [Docs](https://wordpress.github.io/wordpress-playground/blueprints). *Flaky in CI.*
 
 **LocalWP** (5-10 min, full persistence, no Docker): Sites at `~/Local Sites/`. WP-CLI: `/Applications/Local.app/Contents/Resources/extraResources/bin/wp-cli.phar`
 
@@ -74,9 +74,7 @@ Multisite: add `WP_ALLOW_MULTISITE`, `MULTISITE`, `SUBDOMAIN_INSTALL`, `DOMAIN_C
 
 ## Plugin Development
 
-**Header** required: `Plugin Name`, `Description`, `Version`, `Author`, `License: GPL-2.0+`, `Text Domain`, `Requires at least: 6.0`, `Requires PHP: 7.4`.
-
-**Hooks & Filters**: `add_action('init', 'fn')`, `add_action('wp_enqueue_scripts', 'fn')`, `add_action('save_post', 'fn', 10, 3)`, `add_filter('the_content', 'fn')`, `do_action('my_plugin_before_output')`, `$val = apply_filters('my_plugin_value', $default)`.
+**Header** required: `Plugin Name`, `Description`, `Version`, `Author`, `License: GPL-2.0+`, `Text Domain`, `Requires at least: 6.0`, `Requires PHP: 7.4`. Hooks/filters API → use Context7 for current reference.
 
 ## Plugin & Theme Analysis Workflow
 
@@ -112,28 +110,14 @@ function my_fixed_filter($value) { return $modified_value; }
 
 **Query Monitor**: `wp plugin install query-monitor --activate` — DB queries, PHP errors, HTTP requests, hooks, template hierarchy, memory.
 
-**OpenCode PHP LSP (Intelephense)**: If WP symbols unresolved, configure `~/.config/opencode/config.json` with `lsp.intelephense`, `extensions: ["php"]`, `intelephense.stubs` including `"wordpress"`. Clear/rebuild cache if diagnostics persist. Do not suggest Claude-specific commands in OpenCode sessions.
-
 **Error diagnosis flow**: Enable `WP_DEBUG` → check `debug.log` → Query Monitor → `@localwp` for DB → `wp hook list` → `wp profile` or Code Profiler Pro.
 
-## WP-CLI Commands
+## WP-CLI Quick Reference
 
-**Scaffold**: `wp scaffold theme name --theme_name="Name" --activate`, `wp scaffold child-theme name --parent_theme=parent --activate`, `wp scaffold plugin name`, `wp scaffold post-type cpt --plugin=name`, `wp scaffold block name --plugin=name`
-
-**Database**: `wp db export backup.sql`, `wp db import backup.sql`, `wp search-replace 'old.domain.com' 'new.domain.com' --dry-run`, `wp db optimize && wp db check`
-
-**Development**: `wp shell`, `wp eval 'echo get_option("siteurl");'`, `wp post generate --count=10`, `wp user generate --count=5`, `wp cache flush && wp transient delete --all`
+**Scaffold**: `wp scaffold {theme|child-theme|plugin|post-type|block} name [--activate]`. **DB**: `wp db {export|import} backup.sql`, `wp search-replace 'old' 'new' --dry-run`, `wp db optimize && wp db check`. **Dev**: `wp shell`, `wp eval '...'`, `wp {post|user} generate --count=N`, `wp cache flush && wp transient delete --all`.
 
 ## Testing
 
 **PHPUnit**: `wp-env run tests-cli phpunit` or `composer require --dev phpunit/phpunit wp-phpunit/wp-phpunit && vendor/bin/phpunit`. **E2E**: `npx playwright test` or `npx cypress run`. **Security**: `./.agents/scripts/secretlint-helper.sh scan`
 
-**Release checklist**: tested single + multisite, min/latest PHP/WP versions, PHPUnit + E2E passing, no PHP errors/warnings in debug log, no JS console errors, activation/deactivation/uninstall tested, security scan passed, code quality checks passed.
-
-## Resources
-
-- [WordPress Playground](https://wordpress.github.io/wordpress-playground/) + [Blueprints](https://wordpress.github.io/wordpress-playground/blueprints)
-- [LocalWP Docs](https://localwp.com/help-docs/) | [@wordpress/env Docs](https://developer.wordpress.org/block-editor/reference-guides/packages/packages-env/)
-- [PHPUnit for WordPress](https://make.wordpress.org/core/handbook/testing/automated-testing/phpunit/)
-- [WordPress MCP Adapter](https://github.com/WordPress/mcp-adapter) | [WP-CLI Commands](https://developer.wordpress.org/cli/commands/)
-- [WP Composer](https://wp-composer.com/) | [Bedrock](https://roots.io/bedrock/)
+**Release checklist**: single + multisite, min/latest PHP/WP, PHPUnit + E2E passing, no PHP errors/warnings in debug log, no JS console errors, activation/deactivation/uninstall tested, security + code quality passed.
