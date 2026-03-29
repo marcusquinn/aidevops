@@ -2,6 +2,8 @@
 
 ## Component Resources
 
+Encapsulate related resources (Worker + KV + domain) as a reusable unit with automatic parent-child relationships.
+
 ```typescript
 class WorkerApp extends pulumi.ComponentResource {
     constructor(name: string, args: WorkerAppArgs, opts?) {
@@ -22,6 +24,8 @@ class WorkerApp extends pulumi.ComponentResource {
 
 ## Full-Stack Worker App
 
+Provision a Worker with KV, D1, and R2 bindings. Set `compatibilityDate` and `compatibilityFlags` to lock runtime behaviour.
+
 ```typescript
 const kv = new cloudflare.WorkersKvNamespace("cache", {accountId, title: "api-cache"});
 const db = new cloudflare.D1Database("db", {accountId, name: "app-database"});
@@ -29,13 +33,16 @@ const bucket = new cloudflare.R2Bucket("assets", {accountId, name: "app-assets"}
 
 const apiWorker = new cloudflare.WorkerScript("api", {
     accountId, name: "api-worker", content: fs.readFileSync("./dist/api.js", "utf8"),
-    module: true, kvNamespaceBindings: [{name: "CACHE", namespaceId: kv.id}],
+    module: true, compatibilityDate: "2024-01-01", compatibilityFlags: ["nodejs_compat"],
+    kvNamespaceBindings: [{name: "CACHE", namespaceId: kv.id}],
     d1DatabaseBindings: [{name: "DB", databaseId: db.id}],
     r2BucketBindings: [{name: "ASSETS", bucketName: bucket.name}],
 });
 ```
 
 ## Multi-Environment Setup
+
+Use `pulumi.getStack()` to namespace resources per environment. Inject the stack name as a binding for runtime access.
 
 ```typescript
 const stack = pulumi.getStack();
@@ -47,24 +54,35 @@ const worker = new cloudflare.WorkerScript(`worker-${stack}`, {
 
 ## Queue-Based Processing
 
+Producer/consumer pattern — one Worker enqueues, another processes asynchronously. For fan-out, use `.map()` to create multiple producers or consumers from a single queue.
+
 ```typescript
 const queue = new cloudflare.Queue("processing-queue", {accountId, name: "image-processing"});
 
-// Producer: API receives requests
 const apiWorker = new cloudflare.WorkerScript("api", {
     accountId, name: "api-worker", content: apiCode,
     queueBindings: [{name: "PROCESSING_QUEUE", queue: queue.id}],
 });
 
-// Consumer: Process async
 const processorWorker = new cloudflare.WorkerScript("processor", {
     accountId, name: "processor-worker", content: processorCode,
     queueConsumers: [{queue: queue.name, maxBatchSize: 10, maxRetries: 3, maxWaitTimeMs: 5000}],
     r2BucketBindings: [{name: "OUTPUT_BUCKET", bucketName: outputBucket.name}],
 });
+
+// Fan-out: multiple consumers from one event bus
+const eventQueue = new cloudflare.Queue("events", {accountId, name: "event-bus"});
+const consumers = ["email", "analytics"].map(name =>
+    new cloudflare.WorkerScript(`${name}-consumer`, {
+        accountId, name: `${name}-consumer`, content: consumerCode,
+        queueConsumers: [{queue: eventQueue.name, maxBatchSize: 10}],
+    })
+);
 ```
 
 ## Microservices with Service Bindings
+
+Zero-latency RPC between Workers via service bindings — no network hop.
 
 ```typescript
 const authWorker = new cloudflare.WorkerScript("auth", {accountId, name: "auth-service", content: authCode});
@@ -75,25 +93,9 @@ const apiWorker = new cloudflare.WorkerScript("api", {
 // In worker: await env.AUTH.fetch("/verify", {...});
 ```
 
-## Event-Driven Architecture
-
-```typescript
-const eventQueue = new cloudflare.Queue("events", {accountId, name: "event-bus"});
-const producers = ["api", "webhook"].map(name =>
-    new cloudflare.WorkerScript(`${name}-producer`, {
-        accountId, name: `${name}-producer`, content: producerCode,
-        queueBindings: [{name: "EVENTS", queue: eventQueue.id}],
-    })
-);
-const consumers = ["email", "analytics"].map(name =>
-    new cloudflare.WorkerScript(`${name}-consumer`, {
-        accountId, name: `${name}-consumer`, content: consumerCode,
-        queueConsumers: [{queue: eventQueue.name, maxBatchSize: 10}],
-    })
-);
-```
-
 ## CDN with Dynamic Content
+
+R2 for static assets + Worker for dynamic routing via `WorkerRoute`.
 
 ```typescript
 const staticBucket = new cloudflare.R2Bucket("static", {accountId, name: "static-assets"});
@@ -104,18 +106,9 @@ const appWorker = new cloudflare.WorkerScript("app", {
 const route = new cloudflare.WorkerRoute("route", {zoneId, pattern: `${domain}/*`, scriptName: appWorker.name});
 ```
 
-## Wrangler Integration
-
-```typescript
-// Match wrangler.toml bindings in Pulumi
-const worker = new cloudflare.WorkerScript("worker", {
-    accountId, name: "my-worker", content: code,
-    compatibilityDate: "2024-01-01", compatibilityFlags: ["nodejs_compat"],
-    kvNamespaceBindings: [{name: "MY_KV", namespaceId: kv.id}], // Must match wrangler.toml
-});
-```
-
 ## Dynamic Worker Content
+
+Build Worker code as a Pulumi dependency so `pulumi up` triggers the build step first.
 
 ```typescript
 import * as command from "@pulumi/command";
@@ -125,6 +118,8 @@ const worker = new cloudflare.WorkerScript("worker", {accountId, name: "my-worke
 ```
 
 ## Conditional Resources
+
+Provision resources only in specific environments. Pass empty binding arrays when the resource is absent.
 
 ```typescript
 const isProd = pulumi.getStack() === "prod";
@@ -136,4 +131,4 @@ const worker = new cloudflare.WorkerScript("worker", {
 ```
 
 ---
-See: [README.md](./README.md), [gotchas.md](./gotchas.md)
+See: [pulumi.md](./pulumi.md), [pulumi-gotchas.md](./pulumi-gotchas.md)

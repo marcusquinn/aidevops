@@ -24,120 +24,52 @@ tools:
 - **Requirements**: Xcode (iOS) and/or Android Studio (Android)
 - **Website**: https://www.minisim.app/
 - **GitHub**: https://github.com/okwasniewski/MiniSim
+- **Why MiniSim**: Native Swift/AppKit — lightweight, fast, no Electron overhead
 
-**Key Features**:
-- Launch iOS simulators and Android emulators from menu bar
-- Copy device UDID/ADB ID
-- Cold boot Android emulators
-- Run Android emulators without audio (saves Bluetooth headphone battery)
-- Toggle accessibility on Android emulators
-- Focus running devices via accessibility API
-- Set default launch flags
+**Menu bar actions** (right-click device name):
 
-**Why MiniSim**: Native Swift/AppKit app - lightweight, fast, no Electron overhead
+| Platform | Actions |
+|----------|---------|
+| iOS | Launch, Copy UDID, Copy Name, Delete Simulator |
+| Android | Launch, Cold Boot, No Audio, Toggle A11y, Copy ADB ID, Copy Name |
+
+**Default launch flags**: Configure in MiniSim preferences (`-no-audio`, `-no-boot-anim` for Android).
 
 <!-- AI-CONTEXT-END -->
 
-## Installation
+## CLI Commands
 
 ```bash
-# Install via Homebrew (recommended)
-brew install --cask minisim
+# iOS simulators
+xcrun simctl list devices          # List
+xcrun simctl boot "iPhone 15 Pro"  # Boot
 
-# Or download from GitHub releases
-# https://github.com/okwasniewski/MiniSim/releases
+# Android emulators
+emulator -list-avds                       # List
+emulator -avd Pixel_7_API_34             # Launch
+emulator -avd Pixel_7_API_34 -no-audio   # Launch without audio (saves Bluetooth battery)
 ```
 
-## Requirements
+MiniSim uses `xcrun` and Android SDK's `emulator` command to discover devices.
 
-MiniSim uses `xcrun` and Android SDK's `emulator` command to discover devices:
+## Raycast Integration
 
-- **iOS Simulators**: Requires Xcode with iOS Simulator installed
-- **Android Emulators**: Requires Android Studio with emulator configured
-
-## Usage
-
-### Global Shortcut
-
-Press **Option + Shift + E** to open the MiniSim menu from anywhere.
-
-### iOS Simulator Features
-
-| Action | Description |
-|--------|-------------|
-| Launch | Click simulator name to boot |
-| Copy UDID | Right-click > Copy UDID |
-| Copy Name | Right-click > Copy Name |
-| Delete | Right-click > Delete Simulator |
-
-### Android Emulator Features
-
-| Action | Description |
-|--------|-------------|
-| Launch | Click emulator name to boot |
-| Cold Boot | Right-click > Cold Boot |
-| No Audio | Right-click > Launch without audio |
-| Toggle A11y | Right-click > Toggle Accessibility |
-| Copy ADB ID | Right-click > Copy ADB ID |
-| Copy Name | Right-click > Copy Name |
-
-### Default Launch Flags
-
-Configure default flags in MiniSim preferences:
-
-- **Android**: Add flags like `-no-audio`, `-no-boot-anim`
-- **iOS**: Configure simulator options
-
-## Integration with AI Workflows
-
-### Launching Simulators from Scripts
-
-```bash
-# List iOS simulators
-xcrun simctl list devices
-
-# Boot specific iOS simulator
-xcrun simctl boot "iPhone 15 Pro"
-
-# List Android emulators
-emulator -list-avds
-
-# Launch Android emulator
-emulator -avd Pixel_7_API_34
-
-# Launch without audio (saves Bluetooth battery)
-emulator -avd Pixel_7_API_34 -no-audio
-```
-
-### Raycast Extension
-
-MiniSim has a Raycast extension for keyboard-driven workflows:
-
-1. Install Raycast: https://www.raycast.com
-2. Install MiniSim extension from Raycast Store
-3. Use Raycast to search and launch emulators
+Install the MiniSim extension from the Raycast Store for keyboard-driven emulator launching.
 
 ## Troubleshooting
 
-### Simulators Not Showing
+**iOS simulators not showing:**
 
-1. Verify Xcode is installed: `xcode-select -p`
-2. Check simulators exist: `xcrun simctl list devices`
+1. Verify Xcode: `xcode-select -p`
+2. Check simulators: `xcrun simctl list devices`
 3. Restart MiniSim after installing new simulators
 
-### Android Emulators Not Showing
+**Android emulators not showing:**
 
-1. Verify Android SDK path is configured
-2. Check emulators exist: `emulator -list-avds`
-3. Ensure `ANDROID_HOME` or `ANDROID_SDK_ROOT` is set
+1. Verify SDK path and `ANDROID_HOME` / `ANDROID_SDK_ROOT` is set
+2. Check emulators: `emulator -list-avds`
 
-### Permission Issues
-
-MiniSim may need accessibility permissions to focus devices:
-
-1. Open System Preferences > Security & Privacy > Privacy
-2. Select Accessibility
-3. Add MiniSim to the list
+**Accessibility permissions** (needed to focus devices): System Preferences > Security & Privacy > Privacy > Accessibility > add MiniSim.
 
 ## Related Tools
 

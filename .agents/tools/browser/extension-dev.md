@@ -4,139 +4,76 @@
 
 ## Quick Reference
 
-- **Purpose**: Guide users from idea to published browser extension (Chromium + Firefox)
+- **Purpose**: Idea to published browser extension (Chromium + Firefox)
 - **Platforms**: Chrome, Edge, Brave, Opera (Chromium-based) + Firefox
 - **Framework**: WXT (recommended), Plasmo, or vanilla Manifest V3
-- **Lifecycle**: Idea validation -> Planning -> Design -> Development -> Testing -> Publishing -> Monetisation -> Growth -> Iteration
-- **Philosophy**: Open-source first, cross-browser by default, user-value driven
+- **Lifecycle**: Validation > Architecture > Design > Development > Testing > Publishing > Monetisation > Growth > Iteration
 
 **Framework decision**:
 
 | Choice | When | Notes |
 |--------|------|-------|
-| **WXT** (recommended) | Cross-browser, React/Vue/Svelte support, HMR, auto-imports | TurboStarter uses WXT |
+| **WXT** (recommended) | Cross-browser, React/Vue/Svelte, HMR, auto-imports | TurboStarter uses WXT |
 | **Plasmo** | React-focused, simpler API, built-in messaging | Good for React teams |
-| **Vanilla MV3** | Maximum control, no framework overhead | For simple extensions |
+| **Vanilla MV3** | Maximum control, no framework overhead | Simple extensions |
 
-**Subagents** — shared product concerns (`product/`):
+**Subagents** -- shared product concerns (`product/`):
 
 | Subagent | When to Read |
 |----------|--------------|
-| `product/validation.md` | Idea validation, market research, competitive analysis, feature scoping |
-| `product/onboarding.md` | User onboarding flows, first-run experience, paywall placement |
+| `product/validation.md` | Idea validation, market research, competitive analysis |
+| `product/onboarding.md` | User onboarding, first-run experience, paywall placement |
 | `product/monetisation.md` | Revenue models, paywalls, subscriptions, freemium |
-| `product/growth.md` | User acquisition — UGC, influencers, content, paid ads |
-| `product/ui-design.md` | UI/UX design standards, aesthetics, animations, icons, branding |
-| `product/analytics.md` | Usage analytics, feedback loops, crash reporting, iteration signals |
+| `product/growth.md` | User acquisition -- UGC, influencers, content, paid ads |
+| `product/ui-design.md` | UI/UX design, aesthetics, animations, icons, branding |
+| `product/analytics.md` | Usage analytics, feedback loops, crash reporting |
 
-**Subagents** — extension-specific (`tools/browser/extension-dev/`):
+**Subagents** -- extension-specific (`tools/browser/extension-dev/`):
 
 | Subagent | When to Read |
 |----------|--------------|
-| `development.md` | Extension project setup, architecture, APIs, cross-browser patterns |
-| `testing.md` | Extension testing, debugging, cross-browser verification |
+| `development.md` | Project setup, architecture, APIs, cross-browser patterns |
+| `testing.md` | Testing, debugging, cross-browser verification |
 | `publishing.md` | Chrome Web Store, Firefox Add-ons, Edge Add-ons submission |
 
-**Related agents**:
-
-- `tools/browser/chrome-webstore-release.md` - Chrome Web Store release automation
-- `tools/browser/playwright.md` - Extension testing with Playwright
-- `tools/browser/browser-automation.md` - Browser tool selection
-- `tools/vision/overview.md` - Icon and asset generation
-- `tools/mobile/app-dev.md` - Shares product/ subagents for cross-platform concerns
-
-**Extension tool stack**:
-
-```text
-Validation    -> product/validation.md (market research, idea validation)
-Design        -> product/ui-design.md (aesthetics, animations, icons)
-Onboarding    -> product/onboarding.md (first-run experience, paywall placement)
-Development   -> tools/browser/extension-dev/development.md (WXT, Plasmo, MV3)
-Testing       -> tools/browser/extension-dev/testing.md + Playwright
-Publishing    -> chrome-webstore-release.md (Chrome) + tools/browser/extension-dev/publishing.md
-Monetisation  -> product/monetisation.md (Stripe, freemium, subscriptions)
-Growth        -> product/growth.md (UGC, influencers, content, paid ads)
-Analytics     -> product/analytics.md (PostHog, Plausible)
-Assets        -> tools/vision/ (icons) + product/ui-design.md (design)
-```
+**Related**: `chrome-webstore-release.md` (Chrome CI/CD), `playwright.md` (E2E), `browser-automation.md` (tool selection), `tools/vision/overview.md` (icons), `tools/mobile/app-dev.md` (shares product/ subagents)
 
 <!-- AI-CONTEXT-END -->
 
-## Guided Development Flow
+## Extension Scoping Questions
 
-### Stage 1: Idea Validation
+Before development, determine scope. Read `product/validation.md` for the universal validation framework, then ask:
 
-Read `product/validation.md` for the universal validation framework.
+1. Which browsers? (Chrome-only vs cross-browser)
+2. What UI surfaces? (Popup, sidebar, options page, new tab, content overlay)
+3. Modify page content? (Content scripts)
+4. Background processing? (Service worker)
+5. Data persistence? (Local storage, sync storage, backend API)
 
-**Extension-specific questions**:
+## Extension Design Constraints
 
-1. Does this need to modify web pages? (Content script)
-2. Does this need a persistent UI? (Popup, sidebar, new tab)
-3. Does this need to run in the background? (Service worker)
-4. Does this need cross-browser support? (Chromium + Firefox)
-5. Does this need to communicate with a backend? (API integration)
+Read `product/ui-design.md` for universal design principles. Extension-specific:
 
-### Stage 2: Architecture Decision
+| Surface | Constraint |
+|---------|-----------|
+| Popup | 300-400px wide, 500-600px tall max (browser-enforced) |
+| Sidebar | Full height, 300-400px wide |
+| Content overlay | Must not break host page layout |
+| Options page | Full page, can be more complex |
+| Dark mode | Match browser theme |
 
-**Ask the user**:
+## Extension Monetisation
 
-1. Which browsers must be supported? (Chrome-only vs cross-browser)
-2. What UI surfaces are needed? (Popup, sidebar, options page, new tab, content overlay)
-3. Does it need to modify page content? (Content scripts)
-4. Does it need background processing? (Service worker)
-5. What data needs to persist? (Local storage, sync storage, backend)
-
-### Stage 3: Design
-
-Read `product/ui-design.md` for universal design principles.
-
-**Extension-specific design considerations**:
-
-- Popup width: 300-400px max (browser constraint)
-- Popup height: 500-600px max
-- Dark mode: Match browser theme
-- Sidebar: Full height, 300-400px width
-- Content overlays: Must not break host page layout
-- Options page: Full page, can be more complex
-
-### Stage 4: Development
-
-Read `tools/browser/extension-dev/development.md`.
-
-### Stage 5: Testing
-
-Read `tools/browser/extension-dev/testing.md`.
-
-### Stage 6: Publishing
-
-Read `tools/browser/extension-dev/publishing.md` and `tools/browser/chrome-webstore-release.md`.
-
-### Stage 7: Monetisation and Growth
-
-Read `product/monetisation.md` for revenue models.
-
-**Extension-specific monetisation**:
+Read `product/monetisation.md` for universal revenue models. Extension-specific:
 
 | Model | Implementation | Notes |
 |-------|---------------|-------|
 | Freemium | Feature gating via `chrome.storage.sync` | Most common |
 | One-time purchase | Stripe + license key validation | Recommended |
-| Subscription | Stripe + license key validation | For premium features |
-| Donations | Ko-fi, Buy Me a Coffee, GitHub Sponsors | For open-source |
+| Subscription | Stripe + license key validation | Premium features |
+| Donations | Ko-fi, Buy Me a Coffee, GitHub Sponsors | Open-source |
 | Affiliate | Links in extension UI or recommendations | Must be transparent |
-
-Read `product/growth.md` for user acquisition across 5 channels.
-
-### Stage 8: Iteration
-
-Read `product/analytics.md` for metrics and iteration approach.
 
 ## Self-Improvement
 
-This agent improves based on:
-
-- Store review feedback (Chrome Web Store, Firefox Add-ons)
-- Cross-browser compatibility issues discovered
-- Manifest V3 API changes and deprecations
-- New framework features (WXT, Plasmo updates)
-- Pattern tracking via cross-session memory (`/remember`, `/recall`)
+Tracks: store review feedback, cross-browser compat issues, MV3 API changes, framework updates (WXT, Plasmo). Uses cross-session memory (`/remember`, `/recall`).

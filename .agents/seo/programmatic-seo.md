@@ -27,13 +27,13 @@ tools:
 
 | Type | Example | Data Source |
 |------|---------|-------------|
-| Location pages | `/plumber-in-{city}` | City/region database |
-| Comparison pages | `/{tool-a}-vs-{tool-b}` | Product/tool database |
-| Glossary/definition | `/what-is-{term}` | Industry terms list |
-| Integration pages | `/{product}-{integration}` | Integration catalog |
-| Stats/data pages | `/{topic}-statistics-{year}` | Public datasets |
-| Use case pages | `/{product}-for-{use-case}` | Use case taxonomy |
-| Alternative pages | `/{competitor}-alternatives` | Competitor list |
+| Location | `/plumber-in-{city}` | City/region database |
+| Comparison | `/{tool-a}-vs-{tool-b}` | Product/tool database |
+| Glossary | `/what-is-{term}` | Industry terms list |
+| Integration | `/{product}-{integration}` | Integration catalog |
+| Stats/data | `/{topic}-statistics-{year}` | Public datasets |
+| Use case | `/{product}-for-{use-case}` | Use case taxonomy |
+| Alternative | `/{competitor}-alternatives` | Competitor list |
 
 <!-- AI-CONTEXT-END -->
 
@@ -41,7 +41,7 @@ tools:
 
 ### 1. Keyword Research and Clustering
 
-Run `/keyword-research-extended "seed keyword"`. Cluster signals: same head term + varying modifier, consistent volume across variations, similar SERP intent, low keyword difficulty.
+Run `/keyword-research-extended "seed keyword"`. Cluster signals: same head term + varying modifier, consistent volume, similar SERP intent, low difficulty.
 
 ### 2. Template Design
 
@@ -60,10 +60,7 @@ Sections:
   6. CTA                (static or segment-specific)
 ```
 
-**Quality requirements** (avoid thin content penalties):
-- Each page MUST have unique, substantive content — not just variable substitution
-- Minimum 300 words of unique content per page; include real data points per variation
-- Add genuine value beyond what a single parent page could provide
+**Quality gates** — each page MUST have unique, substantive content (not just variable substitution). Minimum 300 words unique content with real data points per variation. Must add value beyond a single parent page.
 
 ### 3. Data Collection
 
@@ -96,34 +93,20 @@ For each {modifier} in data_source:
 
 ### 5. Internal Linking
 
-- **Hub and spoke**: Parent category page links to all variations; hub links all children (paginated if >50)
-- **Cross-linking**: Related variations link to each other (same region, same category)
-- **Breadcrumbs**: Clear hierarchy (Home > Category > Variation)
-- **Footer/sidebar**: "Related {type}" blocks with 5–10 contextual links
-- **Sitemap**: Dedicated XML sitemap for the programmatic section
-- Each page: 3–10 internal links to cluster pages; avoid all-to-all linking (dilutes link equity)
+- **Hub-and-spoke**: Parent category → all variations (paginated if >50)
+- **Cross-linking**: Related variations link to each other (same region/category)
+- **Breadcrumbs**: Home > Category > Variation
+- **Footer/sidebar**: "Related {type}" blocks, 5-10 contextual links
+- **Sitemap**: Dedicated XML sitemap for programmatic section
+- Per page: 3-10 internal links to cluster pages; avoid all-to-all (dilutes equity)
 
 ### 6. Quality Assurance
 
-**Technical**:
-- [ ] All URLs resolve (no 404s)
-- [ ] Canonical tags point to self
-- [ ] No duplicate title tags or meta descriptions
-- [ ] Structured data validates (`rich-results.md`)
-- [ ] Pages in XML sitemap; robots.txt allows crawling
-- [ ] Page load time <3s (`pagespeed.md`)
+**Technical**: All URLs resolve (no 404s) · Self-referencing canonicals · No duplicate titles/meta descriptions · Structured data validates (`rich-results.md`) · Pages in XML sitemap, robots.txt allows crawling · Load time <3s (`pagespeed.md`)
 
-**Content**:
-- [ ] Each page has >300 words of unique content
-- [ ] No duplicate content across variations (`site-crawler`)
-- [ ] Data is accurate and current; grammar and readability pass
-- [ ] E-E-A-T signals present (`eeat-score.md`)
+**Content**: >300 words unique per page · No duplicate content across variations (`site-crawler`) · Accurate, current data · Grammar/readability pass · E-E-A-T signals present (`eeat-score.md`)
 
-**SEO**:
-- [ ] Target keyword in title, H1, and first paragraph
-- [ ] Internal links use descriptive anchor text
-- [ ] Images have alt text with relevant keywords
-- [ ] Schema markup matches page type
+**SEO**: Target keyword in title, H1, first paragraph · Descriptive anchor text on internal links · Image alt text with relevant keywords · Schema markup matches page type
 
 ## Anti-Patterns
 
@@ -142,4 +125,4 @@ For each {modifier} in data_source:
 
 **Don't use**: <20 variations (write individual pages), no unique data per variation (consolidate), variations have no search volume.
 
-**Post-launch monitoring**: Track indexation via GSC (`google-search-console.md`); monitor soft 404s and crawl errors; check ranking progress per cluster; watch for cannibalization (`ranking-opportunities.md`); review engagement metrics.
+**Post-launch**: Track indexation via GSC (`google-search-console.md`); monitor soft 404s/crawl errors; ranking progress per cluster; watch for cannibalization (`ranking-opportunities.md`); review engagement metrics.
