@@ -698,6 +698,22 @@ async function toolExecuteBefore(input, output) {
     }
   }
 
+  // Signature footer gate (GH#12805): warn when gh pr create / gh issue create
+  // / gh issue comment is called without the aidevops.sh signature footer.
+  // This is the systemic enforcement — prompt instructions alone are insufficient.
+  if (isBashTool(input.tool)) {
+    const cmd = output.args?.command || "";
+    if (/gh\s+(pr\s+create|issue\s+(create|comment))/.test(cmd)) {
+      if (!cmd.includes("aidevops.sh") && !cmd.includes("gh-signature-helper")) {
+        console.error(
+          "[aidevops] SIGNATURE GATE: gh pr/issue command missing aidevops.sh signature footer. " +
+          "Generate with: gh-signature-helper.sh footer --model <model-id>",
+        );
+        qualityLog("WARN", `Signature footer missing in: ${cmd.substring(0, 120)}`);
+      }
+    }
+  }
+
   if (!isWriteOrEditTool(input.tool)) return;
 
   const filePath = output.args?.filePath || output.args?.file_path || "";
