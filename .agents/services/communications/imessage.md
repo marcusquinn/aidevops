@@ -1,5 +1,5 @@
 ---
-description: iMessage/BlueBubbles bot integration — BlueBubbles REST API (recommended), imsg CLI (send-only), macOS requirements, messaging features, access control, privacy/security assessment, and aidevops runner dispatch
+description: iMessage/BlueBubbles bot integration — REST API, imsg CLI, macOS setup, access control, security, and aidevops runner dispatch
 mode: subagent
 tools:
   read: true
@@ -30,11 +30,13 @@ tools:
 
 `iPhone/iPad/Mac → iMessage (E2E) → Apple Servers → Messages.app + BlueBubbles Server → REST API/Webhooks → Bot → aidevops dispatch`
 
-Inbound: Messages.app decrypts to local SQLite → BlueBubbles detects via filesystem events → fires webhook → bot responds via REST API. imsg: send-only via AppleScript.
+Messages.app decrypts to local SQLite → BlueBubbles detects via filesystem events → fires webhook → bot responds via REST API. imsg: send-only via AppleScript.
 
 ## BlueBubbles (Recommended)
 
-**Requirements**: macOS 11+, Messages.app signed in, Full Disk Access + Accessibility, persistent GUI session. **Install**: Download DMG from [GitHub Releases](https://github.com/BlueBubblesApp/bluebubbles-server/releases) (Homebrew cask deprecated 2026-09-01). Right-click Open (Gatekeeper), grant Full Disk Access + Accessibility, set password, configure Cloudflare tunnel.
+**Requirements**: macOS 11+, Messages.app signed in, Full Disk Access + Accessibility, persistent GUI session.
+
+**Install**: Download DMG from [GitHub Releases](https://github.com/BlueBubblesApp/bluebubbles-server/releases) (Homebrew cask deprecated 2026-09-01). Right-click Open (Gatekeeper), grant Full Disk Access + Accessibility, set password, configure Cloudflare tunnel.
 
 **Server config**: Port `1234` · Password (header only — query params are logged) · Proxy: Cloudflare · Poll: `1000ms` · **Headless**: `caffeinate -d` to prevent sleep; complete iCloud 2FA interactively first.
 
@@ -111,7 +113,9 @@ check_and_restart "Messages"; check_and_restart "BlueBubbles"
 
 ## Access Control
 
-**API**: Bind to `127.0.0.1`; Cloudflare tunnel for remote; block port 1234 externally. Store password: `aidevops secret set BLUEBUBBLES_PASSWORD`. **Bot-level** (in bot process, not BlueBubbles): allowlist by phone/email · allowlist by group · command-level permissions · rate limiting · `prompt-guard-helper.sh` before passing to AI.
+- **API**: Bind to `127.0.0.1`; Cloudflare tunnel for remote; block port 1234 externally
+- **Secret**: `aidevops secret set BLUEBUBBLES_PASSWORD`
+- **Bot-level** (in bot process, not BlueBubbles): allowlist by phone/email · allowlist by group · command-level permissions · rate limiting · `prompt-guard-helper.sh` before passing to AI
 
 ## Privacy and Security
 
@@ -133,7 +137,11 @@ check_and_restart "Messages"; check_and_restart "BlueBubbles"
 
 ## Limitations
 
-macOS only · Apple ID required · no official Apple API · Messages.app crashes need monitoring · macOS updates may break BlueBubbles · heavy automation may trigger Apple ID lockouts · no @mentions/bot profile/command menus · AppleScript + direct DB reads not Apple-sanctioned (use dedicated Apple ID; no spam)
+- macOS only; Apple ID required; no official Apple API
+- Messages.app crashes need monitoring; macOS updates may break BlueBubbles
+- Heavy automation may trigger Apple ID lockouts
+- No @mentions, bot profile, or command menus
+- AppleScript + direct DB reads not Apple-sanctioned — use dedicated Apple ID; no spam
 
 ## Troubleshooting
 
