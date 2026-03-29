@@ -31,27 +31,15 @@ Distribute Cloudron apps independently using a `CloudronVersions.json` version c
 ## Workflow
 
 ```bash
-cloudron versions init       # create CloudronVersions.json, scaffold manifest
+cloudron versions init       # create CloudronVersions.json, scaffold manifest + stub files
 cloudron build               # build and push image
 cloudron versions add        # add version to catalog
 # host CloudronVersions.json at a public URL
 ```
 
-## Initialize
+`cloudron versions init` also creates: `DESCRIPTION.md`, `CHANGELOG`, `POSTINSTALL.md`. Edit all placeholders and stubs before adding a version.
 
-```bash
-cloudron versions init
-```
-
-Creates `CloudronVersions.json` and adds missing publishing fields to `CloudronManifest.json` with placeholder values. Also creates stub files:
-
-- `DESCRIPTION.md` -- detailed app description
-- `CHANGELOG` -- version changelog
-- `POSTINSTALL.md` -- post-install message shown to users
-
-Edit all placeholders and stubs before adding a version.
-
-### Required Manifest Fields for Publishing
+## Required Manifest Fields
 
 | Field | Example |
 |-------|---------|
@@ -96,49 +84,22 @@ On first run, prompts for the Docker repository (e.g. `registry/username/myapp`)
 
 ## Versions Commands
 
-### cloudron versions add
+| Command | Purpose |
+|---------|---------|
+| `cloudron versions add` | Add current version (reads from manifest + last built image) |
+| `cloudron versions list` | List all versions with date, image, and publish state |
+| `cloudron versions update --version 1.0.0 --state published` | Change publish state of a version |
+| `cloudron versions revoke` | Mark latest published version as revoked |
 
-Adds the current version to `CloudronVersions.json`. Reads the version from `CloudronManifest.json` and the last built Docker image.
-
-```bash
-cloudron versions add
-```
-
-### cloudron versions list
-
-```bash
-cloudron versions list
-```
-
-Shows all versions with their creation date, image, and publish state.
-
-### cloudron versions update
-
-Updates an existing version entry. Primarily used to change the publish state.
-
-```bash
-cloudron versions update --version 1.0.0 --state published
-```
-
-Avoid changing the manifest or image of a published version -- users may have already installed it. To ship changes, revoke and add a new version.
-
-### cloudron versions revoke
-
-Marks the latest published version as revoked. Users who have not yet updated will not receive it.
-
-```bash
-cloudron versions revoke
-```
-
-To ship a fix: bump the version in `CloudronManifest.json`, rebuild, run `cloudron versions add`.
+**Rules:**
+- Do not change the manifest or image of a published version -- users may have already installed it.
+- To ship changes: revoke, bump version in `CloudronManifest.json`, rebuild, `cloudron versions add`.
 
 ## Distribution
 
 Host `CloudronVersions.json` at any publicly accessible URL (static file host, git repo, web server).
 
-Users install in two ways:
-
-- **Dashboard** -- Add the URL under Community apps in the dashboard settings. Updates appear automatically.
+- **Dashboard** -- Add URL under Community apps in dashboard settings. Updates appear automatically.
 - **CLI** -- `cloudron install --versions-url <url>`
 
 ## Community Packages (9.1+)
