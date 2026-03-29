@@ -171,3 +171,42 @@ cloudron update \
   --app blog.example.com \
   --image username/image:tag
 ```
+
+## Common Workflows
+
+### Check and Restart a Misbehaving App
+
+```bash
+cloudron status --app <app>
+cloudron logs --app <app> -l 100
+cloudron restart --app <app>
+```
+
+### Debug a Crashing App
+
+```bash
+cloudron debug --app <app>
+cloudron exec --app <app>       # inspect filesystem, check logs, test manually
+cloudron debug --app <app> --disable
+```
+
+### Backup and Restore
+
+```bash
+cloudron backup create --app <app>
+cloudron backup list --app <app>   # note the backup ID
+cloudron restore --app <app> --backup <id>
+```
+
+### Install a Community Package (9.1+)
+
+```bash
+cloudron install --versions-url https://example.com/CloudronVersions.json --location myapp
+```
+
+### Set Env Vars
+
+```bash
+cloudron env set --app <app> FEATURE_FLAG=true DEBUG=1
+cloudron logs --app <app> -f    # app restarts automatically; follow logs
+```
