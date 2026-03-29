@@ -48,13 +48,6 @@ Multi-server config (`configs/coolify-config.json`):
       "ip": "your-server-ip",
       "coolify_url": "https://coolify.yourdomain.com",
       "ssh_key": "~/.ssh/id_ed25519"
-    },
-    "coolify-staging": {
-      "name": "Staging Coolify Server",
-      "host": "staging-coolify.yourdomain.com",
-      "ip": "staging-server-ip",
-      "coolify_url": "https://staging-coolify.yourdomain.com",
-      "ssh_key": "~/.ssh/id_ed25519"
     }
   },
   "api_configuration": {
@@ -65,6 +58,8 @@ Multi-server config (`configs/coolify-config.json`):
   }
 }
 ```
+
+Add additional entries under `servers` for staging/prod environments.
 
 ## Usage
 
@@ -77,91 +72,61 @@ Multi-server config (`configs/coolify-config.json`):
 ./.agents/scripts/coolify-helper.sh status coolify-main
 ```
 
-### Application Management
+### Application & Container Management
 
 ```bash
+# App listing and SSH setup
 ./.agents/scripts/coolify-helper.sh apps main_server
-./.agents/scripts/coolify-helper.sh exec coolify-main 'docker ps'
-./.agents/scripts/coolify-helper.sh exec coolify-main 'docker logs container-name'
-./.agents/scripts/coolify-helper.sh exec coolify-main 'df -h'
-```
+./.agents/scripts/coolify-helper.sh generate-ssh-configs && ssh coolify-main
 
-### SSH Configuration
+# Container operations
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker ps -a'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker logs -f container-name'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker exec -it container-name bash'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker stats'
 
-```bash
-./.agents/scripts/coolify-helper.sh generate-ssh-configs
-ssh coolify-main
+# Image/volume cleanup
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker image prune -a'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker volume prune'
 ```
 
 ## Security
 
-### Firewall
-
-```bash
-./.agents/scripts/coolify-helper.sh exec coolify-main 'ufw allow 22/tcp'
-./.agents/scripts/coolify-helper.sh exec coolify-main 'ufw allow 80/tcp'
-./.agents/scripts/coolify-helper.sh exec coolify-main 'ufw allow 443/tcp'
-./.agents/scripts/coolify-helper.sh exec coolify-main 'ufw allow 8000/tcp'
-./.agents/scripts/coolify-helper.sh exec coolify-main 'ufw enable'
-```
-
-### SSH Keys
-
 - Use Ed25519 keys; rotate regularly; restrict SSH access to specific IPs
 - Store backup access credentials securely
 
-## Troubleshooting
-
-### Deployment Failures
-
 ```bash
-./.agents/scripts/coolify-helper.sh exec coolify-main 'docker logs build-container'
-./.agents/scripts/coolify-helper.sh exec coolify-main 'df -h'
-./.agents/scripts/coolify-helper.sh exec coolify-main 'free -h'
+# Firewall setup (run once on new server)
+./.agents/scripts/coolify-helper.sh exec coolify-main 'ufw allow 22/tcp && ufw allow 80/tcp && ufw allow 443/tcp && ufw allow 8000/tcp && ufw enable'
 ```
 
-### SSL Certificate Issues
+## Troubleshooting
 
 ```bash
+# Deployment failures — check logs, disk, memory
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker logs build-container'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'df -h && free -h'
+
+# SSL issues — verify DNS, check Coolify logs, renew cert
 nslookup yourdomain.com
 ./.agents/scripts/coolify-helper.sh exec coolify-main 'docker logs coolify'
 ./.agents/scripts/coolify-helper.sh exec coolify-main 'certbot renew'
-```
 
-### Application Not Accessible
-
-```bash
-./.agents/scripts/coolify-helper.sh exec coolify-main 'docker ps'
+# App not accessible — check containers and ports
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker ps && netstat -tlnp'
 ./.agents/scripts/coolify-helper.sh exec coolify-main 'docker logs app-container'
-./.agents/scripts/coolify-helper.sh exec coolify-main 'netstat -tlnp'
 ```
 
-## Performance
+## Performance & Monitoring
 
 ```bash
-./.agents/scripts/coolify-helper.sh exec coolify-main 'docker stats'
-./.agents/scripts/coolify-helper.sh exec coolify-main 'htop'
+./.agents/scripts/coolify-helper.sh exec coolify-main 'docker stats && htop'
 ./.agents/scripts/coolify-helper.sh exec coolify-main 'iostat -x 1'
 ./.agents/scripts/coolify-helper.sh exec coolify-main 'docker exec postgres-container pg_stat_activity'
 ./.agents/scripts/coolify-helper.sh exec coolify-main 'docker exec postgres-container pg_dump dbname > backup.sql'
 ```
 
 - Set CPU/memory limits per container; configure health checks; use Redis caching; CDN for static assets
-
-## Docker & Container Management
-
-```bash
-# Container operations
-./.agents/scripts/coolify-helper.sh exec coolify-main 'docker ps -a'
-./.agents/scripts/coolify-helper.sh exec coolify-main 'docker logs -f container-name'
-./.agents/scripts/coolify-helper.sh exec coolify-main 'docker exec -it container-name bash'
-./.agents/scripts/coolify-helper.sh exec coolify-main 'docker stats container-name'
-
-# Image cleanup
-./.agents/scripts/coolify-helper.sh exec coolify-main 'docker images'
-./.agents/scripts/coolify-helper.sh exec coolify-main 'docker image prune -a'
-./.agents/scripts/coolify-helper.sh exec coolify-main 'docker volume prune'
-```
 
 ## Backup & Recovery
 
