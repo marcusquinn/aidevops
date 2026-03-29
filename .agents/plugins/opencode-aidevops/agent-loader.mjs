@@ -177,7 +177,30 @@ export function loadAgentIndex(agentsDir, readIfExists) {
   );
   if (!subagentMatch) return loadAgentsFallback(agentsDir);
 
-  return parseToonSubagentBlock(subagentMatch[1]);
+  const agents = parseToonSubagentBlock(subagentMatch[1]);
+
+  // Also parse top-level agents block (Build+, Automate, etc.)
+  // Format: name,file,purpose,model_tier — one per line
+  const topLevelMatch = content.match(
+    /<!--TOON:agents\[\d+\]\{[^}]+\}:\n([\s\S]*?)-->/,
+  );
+  if (topLevelMatch) {
+    const seen = new Set(agents.map((a) => a.name));
+    for (const line of topLevelMatch[1].split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const parts = trimmed.split(",");
+      if (parts.length < 3) continue;
+      const name = parts[0].trim();
+      const purpose = parts[2].trim();
+      if (name && !seen.has(name)) {
+        seen.add(name);
+        agents.push({ name, description: purpose });
+      }
+    }
+  }
+
+  return agents;
 }
 
 /**
