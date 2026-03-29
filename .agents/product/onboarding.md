@@ -75,7 +75,7 @@ Force a payment decision immediately after onboarding, before any product usage.
 6. Hard paywall (unskippable — pay or start free trial)
 ```
 
-**When to use**: B2C products where competitors successfully use hard paywalls. Validate by checking top-grossing competitors. Works best when onboarding builds enough perceived value that users feel invested before hitting the paywall.
+**When to use**: B2C products where competitors successfully use hard paywalls. Validate by checking top-grossing competitors.
 
 **Trade-offs**:
 
@@ -87,9 +87,7 @@ Force a payment decision immediately after onboarding, before any product usage.
 | App Store ratings | Risk of negative reviews | Generally better |
 | Best for | Proven niches with validated demand | New/unvalidated products |
 
-**Key principle**: Onboarding before the paywall must remind users why they came, make them feel the problem, and position the product as the solution. Weak onboarding + hard paywall drives users away; strong onboarding + hard paywall maximises revenue from motivated users.
-
-**Pricing**: Mirror competitor pricing (e.g., if top 3 charge $4.99/week with 3-day trial, start there). A/B test once you have traffic.
+**Key principle**: Weak onboarding + hard paywall drives users away; strong onboarding + hard paywall maximises revenue from motivated users. Pricing: mirror top competitors, A/B test once you have traffic.
 
 ## Design Principles
 
