@@ -1,211 +1,136 @@
-# CRO Skill - Chapter Breakdown
+# CRO Skill - Chapter Index
 
-## Part I: Foundations (Chapters 1-3)
+25 chapters across 7 parts. Each links to its chapter file.
 
-### Chapter 1: Introduction to Conversion Rate Optimization
+## Part I: Foundations
 
-- What CRO is and why it matters
-- Business impact and ROI examples
-- The CRO mindset and process overview
-- Key terminology and common misconceptions
-- CRO and the customer journey
+### [Chapter 1: Introduction to CRO](cro-chapter-01.md)
+- What CRO is, business impact, ROI examples
+- CRO mindset, process overview, key terminology
+- Customer journey and common misconceptions
 
-### Chapter 2: CRO Fundamentals and Core Concepts
-
+### [Chapter 2: Core Concepts](cro-chapter-02.md)
 - Calculating and segmenting conversion rates
-- Benchmark data by industry and device
-- Psychology of conversion (cognitive biases, emotional vs. rational)
-- The conversion funnel and micro/macro conversions
-- Attribution models and multi-touch paths
-- Website elements that impact conversions
+- Industry/device benchmarks
+- Psychology of conversion (cognitive biases, emotional vs rational)
+- Conversion funnel, micro/macro conversions, attribution models
 - Value-to-friction ratio
 - Data foundation (quantitative and qualitative sources)
 
-### Chapter 3: CRO Frameworks and Prioritization
+### [Chapter 3: Frameworks and Prioritization](cro-chapter-03.md)
+- PIE, ICE, RICE, PXL, TIR frameworks
+- Value vs Complexity matrix
+- CRO roadmap, prioritization meetings, test ROI calculation
 
-- PIE framework (Potential, Importance, Ease)
-- ICE framework (Impact, Confidence, Ease)
-- RICE framework (Reach, Impact, Confidence, Effort)
-- PXL framework (binary yes/no approach)
-- TIR framework and Value vs. Complexity matrix
-- Building a CRO roadmap and prioritization meetings
-- Calculating ROI of CRO tests
+## Part II: Page-Level Optimization
 
-## Part II: Page-Level Optimization (Chapters 4-8)
+### [Chapter 4: Landing Pages](cro-chapter-04.md)
+- High-converting landing page anatomy
+- Above-the-fold, layout patterns, visual hierarchy
+- Industry-specific strategies, templates, wireframes
 
-### Chapter 4: Landing Page Optimization
-
-- Anatomy of a high-converting landing page
-- Above-the-fold optimization
-- Layout patterns and visual hierarchy
-- Industry-specific landing page strategies
-- Landing page templates and wireframes
-
-### Chapter 5: Value Proposition and Messaging
-
-- Crafting compelling value propositions
-- Messaging frameworks and hierarchies
+### [Chapter 5: Value Proposition and Messaging](cro-chapter-05.md)
+- Crafting value propositions, messaging frameworks
 - Headline formulas and testing
-- Benefit-driven vs. feature-driven copy
-- Voice of customer research for messaging
+- Benefit-driven vs feature-driven copy, VoC research
 
-### Chapter 6: Social Proof and Trust Signals
+### [Chapter 6: Social Proof and Trust](cro-chapter-06.md)
+- Testimonials, reviews, case studies
+- Trust badges, security seals, certifications
+- UGC strategies, authority signals, media mentions
 
-- Types of social proof (testimonials, reviews, case studies)
-- Trust badge placement and effectiveness
-- Security seals and certifications
-- User-generated content strategies
-- Authority signals and media mentions
+### [Chapter 7: CTA Optimization](cro-chapter-07.md)
+- Design principles (color, size, placement)
+- Copy formulas, primary vs secondary CTAs
+- Contextual/dynamic CTAs, placement by page type
 
-### Chapter 7: Call-to-Action (CTA) Optimization
-
-- CTA design principles (color, size, placement)
-- CTA copy formulas and testing
-- Primary vs. secondary CTAs
-- Contextual and dynamic CTAs
-- CTA placement strategies by page type
-
-### Chapter 8: Form Optimization and Field Reduction
-
-- Form length and field optimization
-- Multi-step form design
-- Smart defaults and auto-fill
-- Error handling and validation
+### [Chapter 8: Form Optimization](cro-chapter-08.md)
+- Field reduction, multi-step forms
+- Smart defaults, auto-fill, error handling
 - Form analytics and drop-off analysis
 
-## Part III: Conversion Flow Optimization (Chapters 9-12)
+## Part III: Conversion Flows
 
-### Chapter 9: Pricing Page Psychology
+### [Chapter 9: Pricing Page Psychology](cro-chapter-09.md)
+- Layout, plan architecture, feature comparison
+- Anchoring, decoy effect, framing
+- Free trial vs freemium, enterprise/custom pricing
 
-- Pricing page layout and plan architecture
-- Anchoring, decoy effect, and framing
-- Feature comparison tables
-- Free trial vs. freemium strategies
-- Enterprise pricing and custom quotes
-
-### Chapter 10: Checkout Flow Optimization
-
-- Checkout page design and flow
-- Guest checkout vs. account creation
-- Payment method optimization
-- Shipping and delivery options
+### [Chapter 10: Checkout Flow](cro-chapter-10.md)
+- Checkout design, guest vs account creation
+- Payment methods, shipping options
 - Order summary and confirmation
 
-### Chapter 11: Mobile CRO
+### [Chapter 11: Mobile CRO](cro-chapter-11.md)
+- Mobile-first design, thumb zone optimization
+- Mobile forms and checkout
+- Responsive vs adaptive approaches
 
-- Mobile-first design principles
-- Thumb zone optimization
-- Mobile form design
-- Mobile checkout optimization
-- Responsive vs. adaptive approaches
-
-### Chapter 12: Copy Testing Frameworks
-
-- A/B testing copy elements
-- Headline testing methodology
-- Long-form vs. short-form copy
-- Emotional vs. rational copy testing
+### [Chapter 12: Copy Testing](cro-chapter-12.md)
+- A/B testing copy elements, headline methodology
+- Long-form vs short-form, emotional vs rational
 - Copy testing tools and workflows
 
-## Part IV: Research and Analysis (Chapters 13-15)
+## Part IV: Research and Analysis
 
-### Chapter 13: Heatmap and Session Recording Analysis
-
-- Types of heatmaps (click, scroll, move)
-- Reading and interpreting heatmaps
+### [Chapter 13: Heatmaps and Session Recordings](cro-chapter-13.md)
+- Click, scroll, move heatmaps — reading and interpretation
 - Session recording methodology
-- Combining heatmaps with analytics
-- Heatmap tools comparison
+- Combining heatmaps with analytics, tool comparison
 
-### Chapter 14: Landing Page Teardowns
-
-- 25 detailed landing page analyses
-- SaaS, e-commerce, lead gen, local business examples
-- Info product and course page teardowns
+### [Chapter 14: Landing Page Teardowns](cro-chapter-14.md)
+- 25 detailed analyses (SaaS, e-commerce, lead gen, local, info products)
 - Common patterns and anti-patterns
 
-### Chapter 15: Personalization and Dynamic Content
+### [Chapter 15: Personalization](cro-chapter-15.md)
+- Behavioral, demographic, contextual personalization
+- Tools, implementation, dynamic content strategies
+- Case studies and future trends
 
-- Types of personalization (behavioral, demographic, contextual)
-- Personalization tools and implementation
-- Dynamic content strategies
-- Personalization case studies
-- Future of personalization
+## Part V: Advanced Analytics
 
-## Part V: Advanced Analytics (Chapters 16-17)
-
-### Chapter 16: Advanced CRO Analytics and Attribution
-
-- Multi-touch attribution models
-- Incrementality testing
-- Marketing mix modeling (MMM)
-- Advanced segmentation for CRO
-- Predictive analytics and statistical methods
+### [Chapter 16: Analytics and Attribution](cro-chapter-16.md)
+- Multi-touch attribution, incrementality testing, MMM
+- Advanced segmentation, predictive analytics
 - Dashboards and reporting
 
-### Chapter 17: B2B Lead Generation, ABM, and Lead Scoring
+### [Chapter 17: B2B Lead Gen, ABM, and Scoring](cro-chapter-17.md)
+- B2B funnel optimization, lead magnets, demo requests
+- ABM CRO, lead scoring/routing
+- Sales-marketing alignment
 
-- B2B conversion funnel optimization
-- Lead magnet and demo request optimization
-- Account-based marketing (ABM) CRO
-- Lead scoring and routing
-- Sales and marketing alignment
+## Part VI: Specialized CRO
 
-## Part VI: Specialized CRO (Chapters 18-23)
+### [Chapter 18: Case Studies and Playbook](cro-chapter-18.md)
+- E-commerce, SaaS, B2B case studies
+- Implementation timelines, success metrics, pitfalls
 
-### Chapter 18: CRO Case Studies and Implementation Playbook
-
-- E-commerce, SaaS, and B2B case studies
-- Implementation playbook and timelines
-- Success metrics and common pitfalls
-
-### Chapter 19: Advanced CRO Tactics
-
+### [Chapter 19: Advanced Tactics](cro-chapter-19.md)
 - Behavioral economics in CRO
-- Advanced personalization techniques
-- Mobile CRO deep dive
+- Advanced personalization, mobile deep dive
 
-### Chapter 20: Enterprise CRO Implementation
+### [Chapter 20: Enterprise CRO](cro-chapter-20.md)
+- Building a CRO program, testing at scale
+- Advanced experimentation, maturity model
 
-- Building a CRO program
-- Enterprise testing at scale
-- Advanced experimentation
-- CRO maturity model
+### [Chapter 21: Testing Masterclass](cro-chapter-21.md)
+- Hypothesis development, advanced test design
+- Statistical rigor, test analysis deep dive
 
-### Chapter 21: CRO Testing Masterclass
+### [Chapter 22: E-commerce Deep Dive](cro-chapter-22.md)
+- Product page, cart, checkout, mobile commerce
+- Category/search optimization, post-purchase
 
-- Hypothesis development framework
-- Advanced test design
-- Statistical rigor
-- Test analysis deep dive
+### [Chapter 23: SaaS CRO](cro-chapter-23.md)
+- Trial-to-paid conversion, pricing optimization
+- Product-led growth CRO, B2B SaaS specifics
 
-### Chapter 22: E-commerce CRO Deep Dive
+## Part VII: Mastery
 
-- Product page optimization
-- Cart and checkout optimization
-- Mobile commerce optimization
-- Category and search optimization
-- Post-purchase optimization
+### [Chapter 24: Mastery and Future Trends](cro-chapter-24.md)
+- Building a CRO culture, advanced analytics
+- Emerging technologies, career development
 
-### Chapter 23: SaaS CRO Optimization
-
-- Trial-to-paid conversion
-- Pricing page optimization
-- Product-led growth CRO
-- B2B SaaS specifics
-
-## Part VII: Mastery (Chapters 24-25)
-
-### Chapter 24: CRO Mastery and Future Trends
-
-- Building a CRO culture
-- Advanced analytics techniques
-- Emerging technologies
-- CRO career development
-
-### Chapter 25: Advanced Revenue Optimization
-
-- Pricing page optimization deep dive
-- Bundling and packaging strategies
-- Monetization CRO techniques
-- ARPU optimization
+### [Chapter 25: Revenue Optimization](cro-chapter-25.md)
+- Pricing deep dive, bundling/packaging strategies
+- Monetization techniques, ARPU optimization
