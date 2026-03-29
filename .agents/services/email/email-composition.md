@@ -30,12 +30,6 @@ tools:
 ```bash
 email-compose-helper.sh draft --to client@example.com \
   --subject "Project Update" --context "phase 2 complete" --importance high
-email-compose-helper.sh acknowledge --to support@vendor.com \
-  --subject "Re: Your inquiry" --context "will respond within 24h"
-email-compose-helper.sh follow-up --to partner@example.com \
-  --subject "Re: Proposal" --days-since 5
-email-compose-helper.sh remind --to contractor@example.com \
-  --subject "Invoice #1234" --original-date "2026-03-01"
 email-compose-helper.sh draft --to test@example.com \
   --subject "Test" --context "test" --dry-run
 ```
@@ -78,8 +72,6 @@ Domain-level overrides: set `tone_overrides` in `email-compose-config.json`.
 
 ## Composition Rules
 
-Injected into every AI composition prompt:
-
 1. **One sentence per paragraph** — improves mobile readability and threading
 2. **Clear subject line** — describes the email's purpose, not just the topic
 3. **Numbered lists** for multiple questions or action items
@@ -117,10 +109,6 @@ Email creates a written record. Distinguish clearly:
 **When in doubt:** use "I understand" not "I agree"; "I'll look into this" not "We'll fix this"; add "subject to contract" for commercial commitments; consult legal before sending anything that could be used in a dispute.
 
 ## CC/BCC Patterns
-
-**CC** — when others need visibility but no action is required; escalation, handoff, compliance.
-
-**BCC** — when recipients shouldn't see each other (newsletters); audit trail; sensitive escalation.
 
 | Situation | Action |
 |-----------|--------|
@@ -160,37 +148,17 @@ Use `--signature formal` to select a named signature.
 
 ## Draft-Review-Send Workflow
 
-```text
-email-compose-helper.sh draft --to ... --subject ... --context ...
-    │
-    ▼
-1. AI COMPOSE
-    ├── Tone detection (recipient domain or --tone)
-    ├── Model selection (--importance)
-    ├── Overused phrase check
-    └── Signature injection
-    │
-    ▼
-2. DRAFT SAVED → ~/.aidevops/.agent-workspace/email-compose/drafts/draft-YYYYMMDD-HHMMSS-xxxx.md
-    │
-    ▼
-3. HUMAN REVIEW (editor opens) — edit freely; delete all content to abort
-    │
-    ▼
-4. CONFIRM SEND — shows To: and Subject:, [y/N] prompt
-    │
-    ▼
-5. SEND (via email-agent-helper.sh → SES) — draft archived to sent/
-```
+1. **AI COMPOSE** — tone detection, model selection, overused phrase check, signature injection
+2. **DRAFT SAVED** → `~/.aidevops/.agent-workspace/email-compose/drafts/draft-YYYYMMDD-HHMMSS-xxxx.md`
+3. **HUMAN REVIEW** — editor opens; edit freely; delete all content to abort
+4. **CONFIRM SEND** — shows To: and Subject:, `[y/N]` prompt
+5. **SEND** via `email-agent-helper.sh → SES` — draft archived to `sent/`
 
 **Never auto-send**: `--no-review` skips the editor but still requires explicit confirmation. Bypassing confirmation entirely (`--no-review` + piping `y` to stdin) is for tested automation scripts only.
 
 ## Support and Customer Service Communication
 
-- Reference ticket/case numbers in every message
-- State what you've already tried (avoids redundant tier-1 troubleshooting)
-- Ask for escalation explicitly: *"I'd like to escalate this to your technical team"*
-- Tone: formal and factual — emotions don't help, facts do; be specific (exact errors, timestamps, steps to reproduce); follow up on schedule, not impulsively
+Reference ticket numbers in every message. State what you've already tried. Tone: formal and factual — specific errors, timestamps, steps to reproduce. Follow up on schedule, not impulsively.
 
 **Escalation templates:**
 
