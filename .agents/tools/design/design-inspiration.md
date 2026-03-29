@@ -3,11 +3,7 @@ description: Design inspiration resources - 60+ curated tools for mobile, web, a
 mode: subagent
 tools:
   read: true
-  write: false
-  edit: false
   bash: true
-  glob: false
-  grep: false
   webfetch: true
   task: true
 ---
@@ -40,8 +36,6 @@ tools:
 
 ## Mobile App Screenshot Libraries
 
-Direct Mobbin competitors — real app screenshots organised by pattern, flow, or component.
-
 | Resource | URL | Description | Pricing | Platform |
 |----------|-----|-------------|---------|----------|
 | **Mobbin** | https://mobbin.com | Largest searchable library of mobile and web app screenshots with flow context | Freemium ($14/mo) | Both |
@@ -64,8 +58,6 @@ Direct Mobbin competitors — real app screenshots organised by pattern, flow, o
 | **PaywallPro** | https://paywallpro.app | 46,000+ iOS paywall screenshots and monetisation patterns | Paid ($47/mo) | Mobile |
 
 ## Web Design Galleries
-
-Award-winning and curated website design showcases.
 
 | Resource | URL | Description | Pricing |
 |----------|-----|-------------|---------|
@@ -103,8 +95,6 @@ Award-winning and curated website design showcases.
 
 ## General Design Platforms
 
-Broad design communities and visual discovery tools.
-
 | Resource | URL | Description | Pricing | Platform |
 |----------|-----|-------------|---------|----------|
 | **Dribbble** | https://dribbble.com | Global designer community for UI/UX shots and hiring | Freemium ($5/mo) | Both |
@@ -120,8 +110,6 @@ Broad design communities and visual discovery tools.
 
 ## UX Education and Pattern Libraries
 
-Learn design principles and proven UX patterns.
-
 | Resource | URL | Description | Pricing |
 |----------|-----|-------------|---------|
 | **Growth.Design** | https://growth.design | UX case study teardowns in interactive comic-book format | Freemium ($39/mo) |
@@ -133,8 +121,6 @@ Learn design principles and proven UX patterns.
 | **Toools.design** | https://toools.design | Directory of 1,500+ design tools and resources | Free |
 
 ## Design Resource Tools
-
-Component libraries, UI kits, and design file communities.
 
 | Resource | URL | Description | Pricing |
 |----------|-----|-------------|---------|
