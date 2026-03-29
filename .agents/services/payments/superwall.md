@@ -25,7 +25,7 @@ tools:
 - **SDKs**: `SuperwallKit` (Swift), `@superwall/react-native-superwall` (React Native)
 - **Best for**: Apps with >$100K MRR looking to optimise conversion
 
-**When to use Superwall vs RevenueCat Paywalls**:
+**Superwall vs RevenueCat Paywalls**:
 
 | Feature | Superwall | RevenueCat Paywalls |
 |---------|-----------|-------------------|
@@ -41,61 +41,37 @@ tools:
 
 ## Core Concepts
 
-### Paywalls
-
-Paywalls are configured remotely in the Superwall dashboard:
-
-- Design paywall UI without code changes
-- Set which products to display
-- Configure free trial offers
-- Add/remove features from comparison tables
-- Change copy, images, and layout
-
-### Placements
-
-Placements define where paywalls can appear in your app:
+- **Paywalls**: Configured remotely in the dashboard — design, products, trials, copy, and layout without app updates.
+- **Placements**: Code hooks where paywalls can appear. The callback runs when the user has access (purchased or in holdout).
+- **Campaigns**: Connect placements to paywalls with targeting rules, A/B variants, and holdout groups.
 
 ```swift
-// Swift
+// Swift — register a placement
 Superwall.shared.register(placement: "feature_gate") {
-  // This runs if user has access (purchased or in holdout)
-  unlockFeature()
+  unlockFeature() // runs if user has access
 }
 ```
 
 ```typescript
-// React Native
+// React Native — register a placement
 Superwall.shared.register('feature_gate', () => {
-  // User has access
   unlockFeature();
 });
 ```
 
-### Campaigns
-
-Campaigns connect placements to paywalls with rules:
-
-- Which paywall to show at which placement
-- A/B test variants (show different paywalls to different users)
-- Holdout groups (show no paywall to measure impact)
-- Targeting rules (new users, returning users, specific segments)
-
 ## Setup
 
-### 1. Create Superwall Account
+### 1. Create Account
 
 Sign up at https://superwall.com and create an app.
 
 ### 2. Install SDK
 
-**Swift**:
-
-Add via SPM: `https://github.com/superwall/Superwall-iOS.git`
+**Swift** — add via SPM: `https://github.com/superwall/Superwall-iOS.git`
 
 ```swift
 import SuperwallKit
 
-// Configure on app launch
 Superwall.configure(apiKey: "your_api_key")
 ```
 
@@ -113,10 +89,7 @@ Superwall.configure('your_api_key');
 
 ### 3. Configure with RevenueCat
 
-Superwall integrates with RevenueCat for purchase handling:
-
 ```swift
-// Swift
 import SuperwallKit
 import RevenueCat
 
@@ -129,8 +102,6 @@ Superwall.configure(
 
 ### 4. Register Placements
 
-Add placements in your code where paywalls might appear:
-
 ```swift
 Superwall.shared.register(placement: "onboarding_complete")
 Superwall.shared.register(placement: "premium_feature_tap")
@@ -141,21 +112,14 @@ Superwall.shared.register(placement: "settings_upgrade")
 
 1. Create paywalls in the visual editor
 2. Create campaigns linking placements to paywalls
-3. Set up A/B test variants
-4. Configure targeting rules
-5. Launch experiment
+3. Set up A/B test variants and targeting rules
+4. Launch experiment
 
 ## Experimentation
 
-### A/B Testing
+Test paywall designs, pricing emphasis, trial lengths, and feature comparisons. Use holdout groups to measure paywall impact on retention.
 
-- Test different paywall designs (layout, copy, images)
-- Test different pricing (monthly vs annual emphasis)
-- Test different trial lengths
-- Test different feature comparisons
-- Use holdout groups to measure paywall impact on retention
-
-### Metrics
+### Key Metrics
 
 | Metric | What It Tells You |
 |--------|-------------------|
