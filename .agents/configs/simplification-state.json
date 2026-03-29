@@ -1577,14 +1577,14 @@
       "pr": 12326
     },
     ".agents/seo/debug-favicon.md": {
-      "hash": "67a57794e5e50a12e30de9641e2fb470e57f51a2",
-      "at": "2026-03-29T20:53:48Z",
-      "pr": 13302
+      "hash": "045e2c9b649ddcdfcd71fd207f187edc86071587",
+      "at": "2026-03-29T21:21:44Z",
+      "pr": 13323
     },
     ".agents/tools/code-review/code-simplifier.md": {
-      "hash": "3c2a1ec63a1f86656f6b810735512aa40ceb5cbd",
-      "at": "2026-03-29T17:14:32Z",
-      "pr": 13132
+      "hash": "abcb9a9bb00645a64462aa287649455cf8b1791a",
+      "at": "2026-03-29T21:22:28Z",
+      "pr": 13183
     },
     ".agents/tools/build-agent/add-skill.md": {
       "hash": "36065ac3559aa2e929cbb858c8220961454f9dd9",
@@ -2222,9 +2222,9 @@
       "pr": 13052
     },
     ".agents/content/story.md": {
-      "hash": "e883144cdfcdb85b2c73df49d30c9323769ef4f7",
-      "at": "2026-03-29T17:14:35Z",
-      "pr": 13123
+      "hash": "a409ce0207003c4d63d2e06a3c779719987df1c0",
+      "at": "2026-03-29T21:22:27Z",
+      "pr": 13188
     },
     ".agents/build-plus.md": {
       "hash": "9a8681dd42ae12e35c79f2f2479a29dfc90794f9",
@@ -2232,9 +2232,9 @@
       "pr": 13101
     },
     ".agents/services/communications/google-chat.md": {
-      "hash": "7a72d459affb7ceae803fee8dda46fafe6cba061",
-      "at": "2026-03-29T17:14:38Z",
-      "pr": 13109
+      "hash": "15c366fae56953d113e42b2ddaa39ccd631bdf71",
+      "at": "2026-03-29T21:22:33Z",
+      "pr": 13156
     },
     ".agents/tools/deployment/fly-io.md": {
       "hash": "a253a5662c26417905411ed3cc1b2848de5df412",
@@ -2307,9 +2307,9 @@
       "pr": 13105
     },
     ".agents/services/hosting/cloudflare-platform-skill/realtimekit-patterns.md": {
-      "hash": "5c4ef31eed87a7f0c732b1aa94c4cbec4b9494d6",
-      "at": "2026-03-29T16:34:30Z",
-      "pr": 13107
+      "hash": "a49c4408a4c658654477e70f1266389e64638d01",
+      "at": "2026-03-29T21:22:35Z",
+      "pr": 13165
     },
     ".agents/tools/document/docstrange.md": {
       "hash": "3982c1885258882161976446bb94216d4e7df262",
@@ -2372,9 +2372,9 @@
       "pr": 13054
     },
     ".agents/product/onboarding.md": {
-      "hash": "d6a191ab7d40fdcd185664c0e86d64c76ad6a01d",
-      "at": "2026-03-29T17:15:24Z",
-      "pr": 13113
+      "hash": "e8b867c0c74c72a77c7195b662c4436e00bf87a5",
+      "at": "2026-03-29T21:22:30Z",
+      "pr": 13155
     },
     ".agents/tools/infrastructure/together.md": {
       "hash": "cb2b6cf6c54db6f97c2bde70675f3c29b30b88fa",
@@ -2475,6 +2475,116 @@
       "hash": "1521ed7526fbc0fb399a1f5edf01adb4129a08f6",
       "at": "2026-03-29T20:54:10Z",
       "pr": 13293
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/kv-patterns.md": {
+      "hash": "8641ebb967033854e72c6df53a175e67d500a69b",
+      "at": "2026-03-29T21:21:40Z",
+      "pr": 13321
+    },
+    ".agents/tools/video/remotion-gifs.md": {
+      "hash": "c87be7656e27afb4f5f23e41571f8428b21345c4",
+      "at": "2026-03-29T21:21:41Z",
+      "pr": 13322
+    },
+    ".agents/seo/seo-regex.md": {
+      "hash": "5ec59e76e20bd9f89c67c0c9439c62a450b027f3",
+      "at": "2026-03-29T21:21:43Z",
+      "pr": 13325
+    },
+    ".agents/tools/browser/sweet-cookie.md": {
+      "hash": "62787655e020732caad2c8679bbd45e343ac19c3",
+      "at": "2026-03-29T21:21:53Z",
+      "pr": 13328
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/cache-reserve-gotchas.md": {
+      "hash": "d41799c696aa6515cb523c0b17316ed13d17d2ee",
+      "at": "2026-03-29T21:21:59Z",
+      "pr": 13253
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/stream-gotchas.md": {
+      "hash": "1e5cf033ce0af2ba18bc9e38ca48bd69cf3455bc",
+      "at": "2026-03-29T21:22:00Z",
+      "pr": 13254
+    },
+    ".agents/tools/context/model-routing.md": {
+      "hash": "43703f91e6cc11180bbf13a86e6d92333b1ca9db",
+      "at": "2026-03-29T21:22:01Z",
+      "pr": 13255
+    },
+    ".agents/marketing-sales/meta-ads-campaigns-scaling-cbo.md": {
+      "hash": "6fb79b1689e522f77f09f4398f80430c8c727116",
+      "at": "2026-03-29T21:22:03Z",
+      "pr": 13263
+    },
+    ".agents/tools/video/remotion-measuring-text.md": {
+      "hash": "619d768e114ab99f64b37c93d1628ae5cb7d54a4",
+      "at": "2026-03-29T21:22:09Z",
+      "pr": 13315
+    },
+    ".agents/tools/security/tamper-evident-audit.md": {
+      "hash": "ef75d5914e0ae15e449ccd4480b0add3eda84c71",
+      "at": "2026-03-29T21:22:13Z",
+      "pr": 13316
+    },
+    ".agents/tools/vision/image-editing.md": {
+      "hash": "1b91142d29e8ff6515be5a6208386de1fcaf383d",
+      "at": "2026-03-29T21:22:15Z",
+      "pr": 13236
+    },
+    ".agents/business/accounts-subscription-audit.md": {
+      "hash": "ef31fbb7ef1c8e43fc6f5e6ff3f7bed9b5b0e3a0",
+      "at": "2026-03-29T21:22:16Z",
+      "pr": 13235
+    },
+    ".agents/content/optimization.md": {
+      "hash": "586ceb4ec6b4238acf2a0ff5df2820bd6dc5a9cd",
+      "at": "2026-03-29T21:22:17Z",
+      "pr": 13216
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/zaraz.md": {
+      "hash": "2f22583fb8dbcd01b61cbfd125c0770079ed1533",
+      "at": "2026-03-29T21:22:19Z",
+      "pr": 13242
+    },
+    ".agents/product/analytics.md": {
+      "hash": "703fbf6fe97ae4586c421d39b0640921735b2471",
+      "at": "2026-03-29T21:22:21Z",
+      "pr": 13196
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/stream-patterns.md": {
+      "hash": "28660770be2bbdb9218992b8742f98b8bc763d54",
+      "at": "2026-03-29T21:22:23Z",
+      "pr": 13197
+    },
+    ".agents/services/monitoring/sentry.md": {
+      "hash": "235353b1e55f682d7ce213a19b59a7ea311b0d1a",
+      "at": "2026-03-29T21:22:24Z",
+      "pr": 13198
+    },
+    ".agents/tools/browser/crawl4ai-integration.md": {
+      "hash": "73f62e9121f5adac6daa44958cab3c39db290783",
+      "at": "2026-03-29T21:22:25Z",
+      "pr": 13200
+    },
+    ".agents/tools/credentials/api-key-management.md": {
+      "hash": "3e773055715503628024b96e23787c8a00486a16",
+      "at": "2026-03-29T21:22:26Z",
+      "pr": 13199
+    },
+    ".agents/tools/ocr/paddleocr.md": {
+      "hash": "6ba90e7ccabcca916d0e2ade9075972d7ce2ea6d",
+      "at": "2026-03-29T21:22:31Z",
+      "pr": 13157
+    },
+    ".agents/tools/programming/modern-javascript-skill/concurrency.md": {
+      "hash": "74a244091f488d9e071c2d6e70d897fb1ca0a0d3",
+      "at": "2026-03-29T21:22:32Z",
+      "pr": 13162
+    },
+    ".agents/services/email/email-composition.md": {
+      "hash": "017910ed6b6518e2c65e7303ea0e41db42384dd8",
+      "at": "2026-03-29T21:22:34Z",
+      "pr": 13164
     }
   }
 }
