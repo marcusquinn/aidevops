@@ -25,6 +25,42 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
+## Design Principles
+
+**Every screen must earn its place** — only add if the user needs it now, it can't be deferred, and it increases retention.
+
+**Skip always visible** (except hard paywall): "Skip" button, progress indicator, back navigation.
+
+**Permissions**: Request in context, not upfront. Exception: core-function permissions (e.g., camera app) — request during onboarding with explanation.
+
+| Permission | When to Ask |
+|------------|-------------|
+| Notifications | After first action |
+| Location | When user opens map/location feature |
+| Camera | When user taps camera button |
+| Health data | When user enables health tracking |
+| Browser permissions | When user triggers the feature needing it |
+
+**Account creation** — defer unless required for core functionality:
+
+| Level | When |
+|-------|------|
+| No account | Local-only products, utilities, tools |
+| Optional | Sync across devices, social features |
+| Required | Multi-user, cloud-based, subscription products |
+
+When required: Sign in with Apple (mandatory on iOS if any third-party sign-in exists) → Google → Email + password.
+
+**Paywall placement** — see `product/monetisation.md`. Mirror competitors if hard paywalls work in the niche; otherwise show after first core action.
+
+| Position | Pros | Cons |
+|----------|------|------|
+| After onboarding, before product (hard) | High visibility, max revenue/install | User hasn't experienced value |
+| After first core action (soft) | User has experienced value | Lower visibility |
+| After 3 days of use (delayed) | Highest conversion | Delayed revenue |
+
+**Animation**: Invest in smooth transitions, subtle animations (Lottie, Remotion), haptic feedback (mobile), intentional loading states. See `product/ui-design.md`.
+
 ## Onboarding Patterns
 
 ### Pattern 1: Value-First (Recommended)
@@ -67,65 +103,25 @@ tools:
 6. Hard paywall (unskippable — pay or start free trial)
 ```
 
-Use when B2C competitors use hard paywalls. Validate against top-grossing competitors.
+Use when B2C competitors use hard paywalls. Validate against top-grossing competitors. Weak onboarding + hard paywall = churn. Strong onboarding + hard paywall = max revenue. A/B test once you have traffic.
 
 | Aspect | Hard Paywall | Soft Paywall (feature-gated) |
 |--------|-------------|------------------------------|
 | Revenue per install | Higher | Lower |
 | Conversion rate | Lower (many bounce) | Higher (more try first) |
-| User quality | Higher (committed users) | Mixed |
+| User quality | Higher (committed) | Mixed |
 | App Store ratings | Risk of negative reviews | Generally better |
-| Best for | Proven niches with validated demand | New/unvalidated products |
+| Best for | Proven niches, validated demand | New/unvalidated products |
 
-Weak onboarding + hard paywall = users leave. Strong onboarding + hard paywall = max revenue. Mirror top competitor pricing; A/B test once you have traffic.
+## Metrics
 
-## Design Principles
-
-Add a screen only if the user needs the info now, it can't be deferred, and it increases retention.
-
-**Skip always visible** (except hard paywall): skip button, progress indicator, back navigation.
-
-### Permission Requests
-
-Request in context, not upfront. Exception: core-function permissions (e.g., camera app) — request during onboarding with clear explanation.
-
-| Permission | When to Ask |
-|------------|-------------|
-| Notifications | After first action |
-| Location | When user opens map/location feature |
-| Camera | When user taps camera button |
-| Health data | When user enables health tracking |
-| Browser permissions | When user triggers the feature needing it |
-
-### Account Creation
-
-Defer unless required for core functionality:
-
-- **No account**: Local-only products, utilities, tools
-- **Optional**: Sync across devices, social features
-- **Required**: Multi-user, cloud-based, subscription products
-
-When required: Sign in with Apple (mandatory on iOS if any third-party sign-in exists) → Google → Email + password.
-
-### Paywall Placement
-
-See `product/monetisation.md` for detailed strategy. If competitors use hard paywalls successfully, follow their lead; otherwise show paywall after first core action.
-
-| Position | Pros | Cons |
-|----------|------|------|
-| After onboarding, before product (hard) | High visibility, max revenue per install | User hasn't experienced value |
-| After first core action (soft) | User has experienced value | Lower visibility |
-| After 3 days of use (delayed) | Highest conversion | Delayed revenue |
-
-## Onboarding Metrics
-
-| Metric | Target | Meaning |
-|--------|--------|---------|
-| Completion rate | > 80% | Users finish onboarding |
-| Time to complete | < 60 seconds | Not too long |
-| Day 1 retention | > 40% | Users come back |
-| Day 7 retention | > 20% | Users form habit |
-| Permission grant rate | > 60% | Users trust the product |
+| Metric | Target |
+|--------|--------|
+| Completion rate | > 80% |
+| Time to complete | < 60s |
+| Day 1 retention | > 40% |
+| Day 7 retention | > 20% |
+| Permission grant rate | > 60% |
 
 ## Platform Notes
 
@@ -134,16 +130,12 @@ See `product/monetisation.md` for detailed strategy. If competitors use hard pay
 | Mobile | Full-screen swipeable; haptic feedback; show onboarding in App Store screenshots |
 | Browser extension | 1-3 screens on new tab after install; show extension on a real webpage |
 | Desktop | First-run wizard; offer "quick start" vs "full setup" |
-| Web app | Part of signup flow; progressive profiling; empty states ARE onboarding — guide action |
-
-## Animation and Polish
-
-First impression — invest in smooth transitions, subtle animations (Lottie, Remotion), haptic feedback (mobile), intentional loading states. See `product/ui-design.md`.
+| Web app | Part of signup flow; progressive profiling; empty states ARE onboarding |
 
 ## Related
 
-- `product/ui-design.md` - Design standards and animation
-- `product/monetisation.md` - Paywall placement and pricing
-- `product/analytics.md` - Onboarding funnel tracking
-- `product/validation.md` - Competitor onboarding research
-- `product/growth.md` - User acquisition channels
+- `product/ui-design.md` — design standards, animation
+- `product/monetisation.md` — paywall placement, pricing
+- `product/analytics.md` — onboarding funnel tracking
+- `product/validation.md` — competitor onboarding research
+- `product/growth.md` — user acquisition channels
