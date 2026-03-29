@@ -18,10 +18,10 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Track usage, gather feedback, monitor crashes, and drive iteration
+- **Purpose**: Track usage, gather feedback, monitor crashes, drive iteration
 - **Tools**: PostHog (open-source), Sentry (crashes), RevenueCat (mobile revenue), Plausible (web)
-- **Principle**: Measure what matters for retention and revenue, not vanity metrics
-- **Applies to**: Mobile apps, browser extensions, desktop apps, web apps
+- **Principle**: Measure retention and revenue, not vanity metrics
+- **Applies to**: Mobile, browser extensions, desktop, web apps
 
 <!-- AI-CONTEXT-END -->
 
@@ -50,8 +50,6 @@ tools:
 
 ### Self-Hosting on Coolify
 
-For privacy and cost control, self-host analytics on Coolify:
-
 ```text
 PostHog -> Coolify one-click deploy -> your-analytics.yourdomain.com
 Sentry  -> Coolify one-click deploy -> your-sentry.yourdomain.com
@@ -71,49 +69,48 @@ See `tools/deployment/coolify.md` for deployment guidance.
 
 ### Engagement
 
-| Metric | What It Tells You |
-|--------|-------------------|
-| DAU/MAU ratio | How "sticky" the product is (> 20% is good) |
-| Session length | How much time users spend |
-| Sessions per day | How often users return |
-| Core action completion | Whether users do the main thing |
+| Metric | Signal |
+|--------|--------|
+| DAU/MAU ratio | Stickiness (> 20% is good) |
+| Session length | Time spent |
+| Sessions per day | Return frequency |
+| Core action completion | Users doing the main thing |
 
 ### Revenue (if monetised)
 
-| Metric | What It Tells You |
-|--------|-------------------|
+| Metric | Signal |
+|--------|--------|
 | Trial-to-paid conversion | Paywall effectiveness |
-| Monthly recurring revenue (MRR) | Business health |
-| Average revenue per user (ARPU) | Monetisation efficiency |
-| Churn rate | How fast you lose subscribers |
-| Lifetime value (LTV) | Long-term user value |
+| MRR | Business health |
+| ARPU | Monetisation efficiency |
+| Churn rate | Subscriber loss rate |
+| LTV | Long-term user value |
 
-RevenueCat provides most revenue metrics out of the box for mobile. For web/desktop, use Stripe's dashboard or build custom analytics.
+RevenueCat provides most revenue metrics out of the box for mobile. For web/desktop, use Stripe dashboard or custom analytics.
 
 ### Quality
 
 | Metric | Target | Tool |
 |--------|--------|------|
 | Crash-free rate | > 99.5% | Sentry |
-| Launch/load time | < 2 seconds | Performance monitoring |
+| Launch/load time | < 2s | Performance monitoring |
 | API error rate | < 1% | Sentry / custom |
 | Store rating | > 4.5 stars | Store dashboards |
 
 ## User Feedback Loops
 
-### In-Product Feedback
+### In-Product
 
-- **Rating prompt**: After positive experience (completed streak, achieved goal), not randomly
-- **Feedback form**: Accessible from settings, low friction
-- **Feature requests**: Simple upvote system or feedback board
-- **Bug reports**: Easy reporting with automatic context (device, OS, screen/page)
+- **Rating prompt**: After positive experience (completed streak, achieved goal) — not randomly
+- **Feedback form**: Low-friction, accessible from settings
+- **Feature requests**: Upvote system or feedback board
+- **Bug reports**: Easy reporting with automatic context (device, OS, screen)
 
 ### Store Reviews
 
-- Monitor reviews daily (automate with store APIs where available)
+- Monitor daily (automate with store APIs where available)
 - Respond to negative reviews with solutions
-- Track common themes in feedback
-- Use review insights to prioritise features
+- Track common themes to prioritise features
 
 ### Analytics-Driven Iteration
 
@@ -127,20 +124,20 @@ RevenueCat provides most revenue metrics out of the box for mobile. For web/desk
 
 ## Implementation
 
-### Event Tracking Best Practices
+### Event Tracking
 
 - Track actions, not screens (what users DO, not where they GO)
-- Use consistent naming: `verb_noun` (e.g., `complete_onboarding`, `start_workout`, `purchase_premium`)
+- Naming: `verb_noun` (e.g., `complete_onboarding`, `start_workout`, `purchase_premium`)
 - Include relevant properties (duration, count, category)
 - Don't over-track — focus on events that inform decisions
 
 ### Privacy Compliance
 
 - Respect App Tracking Transparency (iOS)
-- Provide opt-out for analytics
-- Don't collect PII unless necessary
-- Comply with GDPR/CCPA if applicable
-- Use privacy-friendly tools (PostHog, Plausible) when possible
+- Provide analytics opt-out
+- Avoid PII collection unless necessary
+- GDPR/CCPA compliance when applicable
+- Prefer privacy-friendly tools (PostHog, Plausible)
 
 ## Related
 
