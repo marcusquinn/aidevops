@@ -130,7 +130,7 @@ if (!auth?.startsWith('Bearer ')) return new Response('Unauthorized', { status: 
 
 ## Rate Limiting
 
-See [Durable Objects patterns](./durable-objects-patterns.md) for stateful rate limiting patterns.
+See [Durable Objects patterns](./durable-objects-patterns.md) for stateful rate-limiting patterns.
 
 ## Gradual Rollouts
 
