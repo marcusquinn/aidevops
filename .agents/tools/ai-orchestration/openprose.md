@@ -49,8 +49,10 @@ agent researcher:
 let result = session "Get result"         # mutable
 const config = session "Get config"       # immutable
 session "Use both"
-  context: [result, config]               # array
-  context: { result, config }             # object
+  context: [result, config]               # array form
+# or:
+session "Use both"
+  context: { result, config }             # object form
 ```
 
 ### Parallel Execution
@@ -62,8 +64,7 @@ parallel:                                 # Default: wait for all
 
 parallel ("first"):                       # race - first wins
 parallel ("any"):                         # first success
-parallel ("all"):                         # wait for all (explicit)
-parallel (on-fail: "continue"):           # let all complete
+parallel (on-fail: "continue"):           # don't abort on failure
 parallel (on-fail: "ignore"):             # treat failures as success
 ```
 
@@ -138,7 +139,7 @@ let results = items
 | Tool | Role |
 |------|------|
 | DSPy | Prompt optimization — optimized prompts work in agent definitions |
-| Context7 | Library docs; Augment → code search; LLM-TLDR → summarize |
+| Context7 | Inject library docs into session context |
 | TOON | Token-efficient serialization (40-70% fewer tokens) — encode large context before passing between sessions |
 
 ## Patterns
