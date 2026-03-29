@@ -21,20 +21,29 @@ tools:
 - **DSPy**: Programmatic prompt optimization framework
 - **DSPyGround**: Visual playground for interactive prompt refinement
 - **Workflow**: Bootstrap → Refine → Collect Samples → Optimize → Deploy
-- **Optimizers**: BootstrapFewShot, MIPRO, ChainOfThought
-- **Metrics**: Technical accuracy, security awareness, actionability, completeness
-- **Process**: Week 1 Foundation → Week 2 Refinement → Week 3 Specialization → Ongoing Maintenance
-- **Integration**: Export optimized prompts to provider scripts, quality workflows
+- **Optimizers**: BootstrapFewShot (start here) → MIPRO (complex cases)
+- **Metrics**: Technical accuracy (1.0), security awareness (0.9), actionability (0.8), completeness (0.7)
+- **Schedule**: Week 1 Foundation → Week 2 Refinement → Week 3 Specialization → Quarterly re-optimization
+- **Integration**: Export optimized prompts to provider scripts, quality workflows; CI/CD for automated re-optimization
 
 <!-- AI-CONTEXT-END -->
 
-## Optimization Workflow
+## Workflow
 
 | Phase | Steps |
 |-------|-------|
-| **1. DSPyGround** | Bootstrap basic prompt → interactive refinement → collect samples (50+, positive + negative) |
+| **1. DSPyGround** | Bootstrap basic prompt → interactive refinement → collect 50+ samples (positive + negative) |
 | **2. DSPy** | Export samples → convert to training format → apply optimizers → compare metrics → deploy |
 | **3. Iterate** | Monitor → collect edge cases → re-optimize → A/B test → measure impact |
+
+**Schedule:**
+
+| Phase | Actions |
+|-------|---------|
+| **Week 1** | Create basic prompts, collect 50+ samples, run initial GEPA optimization, deploy |
+| **Week 2** | Monitor real-world performance, collect failures, add negative examples, re-optimize |
+| **Week 3** | Create domain-specific variants, A/B test, measure business impact |
+| **Ongoing** | Quarterly re-optimization, adapt to new requirements, integrate user feedback |
 
 ## Practical Example: DevOps Assistant
 
@@ -99,7 +108,9 @@ optimized_assistant = teleprompter.compile(DevOpsModule(), trainset=trainset)
 # teleprompter = MIPRO(metric=metric, num_candidates=20, init_temperature=1.0)
 ```
 
-## DSPyGround Configuration
+## Configuration & Metrics
+
+**DSPyGround config:**
 
 ```typescript
 export default {
@@ -121,7 +132,7 @@ export default {
 }
 ```
 
-## Metrics
+**Metric functions:**
 
 ```python
 def devops_accuracy_metric(example, pred, trace=None):
@@ -156,25 +167,10 @@ metricsPrompt: {
 }
 ```
 
-## Iterative Improvement Schedule
-
-| Phase | Actions |
-|-------|---------|
-| **Week 1** | Create basic prompts, collect 50+ samples, run initial GEPA optimization, deploy |
-| **Week 2** | Monitor real-world performance, collect failures, add negative examples, re-optimize |
-| **Week 3** | Create domain-specific variants, A/B test, measure business impact |
-| **Ongoing** | Quarterly re-optimization, adapt to new requirements, integrate user feedback |
-
 ## Best Practices
 
 **Samples:** Diverse scenarios, real-world quality, balanced positive/negative, preserve context.
 
 **Optimization:** Start with BootstrapFewShot → MIPRO for complex cases. Measure multiple metrics. Validate on held-out sets.
 
-**Deployment:** Gradual rollout → monitor closely → maintain rollback versions → collect feedback for next iteration.
-
-## Integration
-
-- Export optimized prompts to provider scripts and quality workflows
-- CI/CD pipeline integration for automated re-optimization
-- Monitoring/alerting for performance regression detection
+**Deployment:** Gradual rollout → monitor closely → maintain rollback versions → collect feedback for next iteration. Monitor/alert for performance regression.
