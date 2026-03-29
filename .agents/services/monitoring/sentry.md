@@ -24,13 +24,7 @@ mcp:
 - **MCP**: Local stdio mode with `@sentry/mcp-server`
 - **Auth**: Personal Auth Token (created after org exists)
 - **Credentials**: `~/.config/aidevops/credentials.sh` → `SENTRY_YOURNAME`
-
-**When to use**:
-
-- Debugging production errors
-- Analyzing error trends and patterns
-- Investigating specific issues or stack traces
-- Checking release health and performance
+- **When to use**: Production error debugging, error trend analysis, stack trace investigation, release health checks
 
 <!-- AI-CONTEXT-END -->
 
@@ -39,32 +33,25 @@ mcp:
 ### 1. Create Sentry Account & Organization
 
 1. Sign up at [sentry.io](https://sentry.io)
-2. **Create an organization first** (Settings → Organizations → Create)
+2. Create an organization first (Settings → Organizations → Create)
 3. Create a project within the organization
 
 ### 2. Generate Personal Auth Token
 
-**Important**: Create the token AFTER creating the organization. Tokens created before the org don't inherit access.
+Create the token **after** creating the organization — tokens created before the org don't inherit access.
 
-1. Go to Settings → Account → Personal Tokens
-2. Click "Create New Token"
-3. Select permissions:
-   - `alerts:read`, `alerts:write`
-   - `event:admin`, `event:read`, `event:write`
-   - `member:read`, `org:read`
-   - `project:read`, `project:releases`
-   - `team:read`
-
-4. Save token:
+1. Settings → Account → Personal Tokens → Create New Token
+2. Required permissions: `alerts:read`, `alerts:write`, `event:admin`, `event:read`, `event:write`, `member:read`, `org:read`, `project:read`, `project:releases`, `team:read`
+3. Save token:
 
 ```bash
 echo 'export SENTRY_YOURNAME="sntryu_..."' >> ~/.config/aidevops/credentials.sh
 chmod 600 ~/.config/aidevops/credentials.sh
 ```
 
-### 3. Configure OpenCode MCP
+### 3. Configure MCP
 
-`~/.config/opencode/opencode.json` should contain an `mcpServers` object similar to:
+Add to your MCP config (`~/.config/opencode/opencode.json` or equivalent):
 
 ```json
 {
@@ -78,6 +65,8 @@ chmod 600 ~/.config/aidevops/credentials.sh
 }
 ```
 
+Or programmatically:
+
 ```bash
 source ~/.config/aidevops/credentials.sh
 tmp_json="$(mktemp)"
@@ -85,8 +74,6 @@ jq --arg token "$SENTRY_YOURNAME" \
   '.mcpServers.sentry = {"command": "npx", "args": ["@sentry/mcp-server@latest", "--access-token", $token], "enabled": true}' \
   ~/.config/opencode/opencode.json > "$tmp_json" && mv "$tmp_json" ~/.config/opencode/opencode.json
 ```
-
-`~/.config/opencode/opencode.json` is local machine config and should never be committed.
 
 ### 4. Test Connection
 
@@ -117,34 +104,24 @@ curl -s -H "Authorization: Bearer $SENTRY_YOURNAME" "https://sentry.io/api/0/org
 
 ## SDK Integration
 
-For integrating Sentry into your app, use the wizard:
-
 ```bash
 npx @sentry/wizard@latest -i nextjs  # Next.js
 npx @sentry/wizard@latest -i node    # Node.js
 npx @sentry/wizard@latest -i react   # React
 ```
 
-The wizard creates all required config files. See [Sentry Docs](https://docs.sentry.io/) for platform-specific guides.
-
-If you manually configure SDK options, keep `sendDefaultPii` disabled unless you explicitly need user/IP metadata and have privacy coverage for it.
+The wizard creates all required config files. See [Sentry Docs](https://docs.sentry.io/) for platform-specific guides. Keep `sendDefaultPii` disabled unless you need user/IP metadata and have privacy coverage.
 
 ## Troubleshooting
 
-### Token returns empty organizations
+**Token returns empty organizations**: Create a new token **after** the organization exists.
 
-Create a new Personal Auth Token **after** the organization exists. Tokens created before the org don't inherit access.
-
-### "Not authenticated"
-
+**"Not authenticated"**:
 1. Verify key exists: `source ~/.config/aidevops/credentials.sh && printenv | cut -d= -f1 | grep '^SENTRY_YOURNAME$'`
 2. Test API: `curl -H "Authorization: Bearer $SENTRY_YOURNAME" https://sentry.io/api/0/`
-3. Restart OpenCode after config changes
+3. Restart your runtime after config changes
 
-### Org token vs Personal token
-
-- **Org tokens** (`org:ci` scope) - Limited, for CI/CD only
-- **Personal tokens** - Full access, use these for MCP
+**Org token vs Personal token**: Org tokens (`org:ci` scope) are CI/CD-only. Use personal tokens for MCP.
 
 ## Related
 
