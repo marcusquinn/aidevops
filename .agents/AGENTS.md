@@ -170,6 +170,22 @@ Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `m
 
 Full workflow: `workflows/git-workflow.md`, `reference/session.md`
 
+## GitHub Comment Signature Footer
+
+Every `gh issue comment`, `gh issue create`, and `gh pr create` call MUST include a generated signature footer. Two steps, every time:
+
+1. **Generate:** `SIG=$(gh-signature-helper.sh footer --model <model-id> [--issue OWNER/REPO#NUM] [--solved])`
+2. **Append:** Add `$SIG` as the last line of the body.
+
+NEVER hardcode the footer. NEVER skip it. The helper auto-detects CLI, version, tokens (input+output, excluding cache), and session time from the runtime DB.
+
+**Flags:**
+- `--issue OWNER/REPO#NUM` — on comments to existing issues (adds "Overall, Xm since this issue was created.")
+- `--solved` — on closing comments (adds "Solved in Xm.")
+- Omit `--issue` when creating new issues (the issue doesn't exist yet).
+
+See `scripts/commands/pulse.md` for dispatch/kill/merge comment templates.
+
 ## Slash Command Resolution
 
 When a user invokes a slash command (`/runners`, `/full-loop`, `/routine`, etc.) or provides input that clearly maps to one, resolve the command doc in this order:

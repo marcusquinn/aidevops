@@ -185,12 +185,7 @@ Git is the audit trail. Chain: TODO → issue → worktree → PR → merge. Gap
 3. Add TODO entry WITH `ref:GH#NNN` in same commit. Split commits → duplicate issues.
 4. Code changes still need worktree + PR.
 
-**GitHub comment signature footer:** Every issue, PR, and comment created by aidevops agents MUST include a signature footer. Use `gh-signature-helper.sh footer --model <model-id> [--issue OWNER/REPO#NUM] [--solved]` to generate it. Example output:
-```
----
-[aidevops.sh](https://aidevops.sh) v3.5.100 plugin for [OpenCode](https://opencode.ai) v1.3.3 with claude-opus-4-6 spent 42m and 118,502 tokens on this. Solved in 3d 4h.
-```
-The helper auto-detects CLI, version, tokens (input+output, excluding cache), and session time from the runtime DB. Pass `--issue` on comments to existing issues for "Overall, Xm since this issue was created." phrasing. Pass `--solved` on closing comments for "Solved in Xm." phrasing. Do NOT pass `--issue` when creating new issues (the issue doesn't exist yet). Append the footer as the last line of every `gh issue comment`, `gh issue create`, and `gh pr create` body. See `scripts/commands/pulse.md` for dispatch/kill/merge comment templates.
+**GitHub comment signature footer:** See AGENTS.md "GitHub Comment Signature Footer" for the full procedure. Every `gh issue comment`, `gh issue create`, and `gh pr create` MUST include a generated footer.
 
 **Self-improvement routing (t1541):** Framework-level tasks → `framework-routing-helper.sh log-framework-issue`. Project tasks → current repo. Framework tasks in project repos are invisible to maintainers.
 
