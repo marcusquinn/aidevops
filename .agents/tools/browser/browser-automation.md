@@ -96,9 +96,7 @@ Reproduce: `browser-benchmark.md`.
 
 ## Extensions and Password Managers
 
-**Unlock order**: Playwriter (already unlocked) > dev-browser (unlock once) > Playwright persistent (`bw unlock`).
-
-**Ad blocking**: Brave Shields (built-in), or uBlock Origin in Playwright/dev-browser:
+**Ad blocking** — uBlock Origin in Playwright/dev-browser:
 
 ```javascript
 const context = await chromium.launchPersistentContext('/tmp/browser-profile', {
@@ -119,25 +117,7 @@ npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222  # dev-browser
 npx chrome-devtools-mcp@latest --headless                           # own Chrome
 ```
 
-**Pair with**: dev-browser (profile + inspection), Playwright (speed + debugging), Playwriter (your browser). **Setup**: `watercrawl-helper.sh setup` | `anti-detect-helper.sh setup`
-
-<!-- AI-CONTEXT-END -->
-
-## Usage by Tool
-
-Per-tool docs with full examples: `playwright.md` · `playwright-cli.md` · `dev-browser.md` · `agent-browser.md` · `crawl4ai.md` · `playwriter.md` · `stagehand.md`
-
-> **Screenshot limit**: Never `fullPage: true` for AI vision — can exceed 8000px (hard-rejected). Resize: `magick screenshot.png -resize "1568x1568>" out.png`. See `prompts/build.txt`.
-
-## Session Persistence
-
-| Need | Tool | Method |
-|------|------|--------|
-| Stay logged in | dev-browser | Automatic (profile directory) |
-| Save/restore auth | agent-browser | `state save/load` |
-| Reuse existing login | Playwriter | Uses your browser directly |
-| Persistent cookies + proxy | Playwright, Crawl4AI | `storageState`/`user_data_dir` + proxy |
-| Fresh session | Playwright, agent-browser | Default behaviour |
+Setup: `watercrawl-helper.sh setup` | `anti-detect-helper.sh setup`
 
 ## Visual Debugging
 
@@ -147,6 +127,14 @@ agent-browser screenshot /tmp/debug.png && agent-browser errors && agent-browser
 
 **NEVER use curl to verify frontend fixes** — server returns 200 even when React crashes client-side. Diagnosis flow: screenshot → errors/console → snapshot/URL → analyze → retry → ask user if stuck.
 
+> **Screenshot limit**: Never `fullPage: true` for AI vision — can exceed 8000px (hard-rejected). Resize: `magick screenshot.png -resize "1568x1568>" out.png`. See `prompts/build.txt`.
+
 ## Ethical Guidelines
 
 Respect ToS, rate limit (2-5s delays), no spam, legitimate use only, no personal data without consent.
+
+<!-- AI-CONTEXT-END -->
+
+## Usage by Tool
+
+Per-tool docs with full examples: `playwright.md` · `playwright-cli.md` · `dev-browser.md` · `agent-browser.md` · `crawl4ai.md` · `playwriter.md` · `stagehand.md`
