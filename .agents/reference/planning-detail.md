@@ -19,15 +19,15 @@ Dependencies: `blocked-by:t001`, `blocks:t002`, `t001.1` (subtask).
 
 ## Auto-Dispatch
 
-Add `#auto-dispatch` to tasks that can run autonomously (clear spec, bounded scope, no user input needed). Default to including it — only omit when a specific exclusion applies. See `workflows/plans.md` "Auto-Dispatch Tagging" for full criteria. The supervisor's Phase 0 picks these up automatically every 2 minutes and auto-creates batches (`auto-YYYYMMDD-HHMMSS`, concurrency = cores/2, min 2) when no active batch exists.
+Add `#auto-dispatch` to tasks that can run autonomously (clear spec, bounded scope, no user input needed). Default to including it — only omit when a specific exclusion applies. See `workflows/plans.md` "Auto-Dispatch Tagging". Phase 0 picks these up every 2 minutes and auto-creates batches (`auto-YYYYMMDD-HHMMSS`, concurrency = cores/2, min 2) when no active batch exists.
 
-**Interactive claim guard** (t1062): When working interactively on a task tagged `#auto-dispatch`, immediately add `assignee:` or `started:` in the TODO entry before pushing — the supervisor skips tasks with these fields to prevent race conditions.
+**Interactive claim guard** (t1062): When working interactively on a `#auto-dispatch` task, add `assignee:` or `started:` before pushing — the supervisor skips tasks with these fields to prevent race conditions.
 
 ## Lifecycle Status Tags
 
-The supervisor updates a `status:` tag on each task's TODO.md line at every decision point. This gives users real-time visibility into what the supervisor is doing with each task. Tags are updated by the AI lifecycle engine (`ai-lifecycle.sh`) and batch-committed once per pulse.
+The supervisor updates `status:` on each TODO.md line at every decision point. Updated by `ai-lifecycle.sh`, batch-committed once per pulse.
 
-**Lifecycle states** (progressive — task moves through these):
+**Lifecycle states** (progressive):
 
 | Tag | Meaning |
 |-----|---------|
@@ -43,7 +43,7 @@ The supervisor updates a `status:` tag on each task's TODO.md line at every deci
 | `status:deployed` | Live on main, awaiting verification |
 | `status:verified` | Post-merge verification passed |
 
-**Action states** (transient — what the supervisor is doing right now):
+**Action states** (transient):
 
 | Tag | Meaning |
 |-----|---------|
@@ -52,7 +52,7 @@ The supervisor updates a `status:` tag on each task's TODO.md line at every deci
 | `status:resolving-conflicts` | AI resolving merge conflicts |
 | `status:reviewing-threads` | Triaging PR review comments |
 
-**Problem states** (visible to user — needs attention or patience):
+**Problem states** (needs attention or patience):
 
 | Tag | Meaning |
 |-----|---------|
@@ -62,22 +62,17 @@ The supervisor updates a `status:` tag on each task's TODO.md line at every deci
 | `status:changes-requested` | Human reviewer requested changes |
 | `status:blocked:<reason>` | Cannot proceed, reason given |
 
-The AI lifecycle engine (`SUPERVISOR_AI_LIFECYCLE=true`, default) replaces hardcoded bash heuristics with intelligence-first decision-making. For each active task, it gathers real-world state (DB, GitHub PR, CI, git), decides the next action, executes it, and updates the status tag. Set `SUPERVISOR_AI_LIFECYCLE=false` to fall back to the legacy `cmd_pr_lifecycle` bash heuristics.
+`SUPERVISOR_AI_LIFECYCLE=true` (default): intelligence-first decision-making — gathers real-world state (DB, GitHub PR, CI, git), decides next action, executes, updates status. Set `false` to fall back to legacy `cmd_pr_lifecycle` bash heuristics.
 
 ## Blocker Statuses
 
-Add these tags to tasks that need human action before they can proceed. The supervisor's eligibility assessment detects them and skips dispatch: `account-needed`, `hosting-needed`, `login-needed`, `api-key-needed`, `clarification-needed`, `resources-needed`, `payment-needed`, `approval-needed`, `decision-needed`, `design-needed`, `content-needed`, `dns-needed`, `domain-needed`, `testing-needed`.
+Add these tags to tasks needing human action before proceeding. The supervisor's eligibility assessment detects them and skips dispatch: `account-needed`, `hosting-needed`, `login-needed`, `api-key-needed`, `clarification-needed`, `resources-needed`, `payment-needed`, `approval-needed`, `decision-needed`, `design-needed`, `content-needed`, `dns-needed`, `domain-needed`, `testing-needed`.
 
 ## Estimation Calibration
 
-Estimates represent **AI-assisted execution time** — the wall-clock time from branch creation to PR-ready, including implementation, testing, and verification. They are NOT human-developer estimates.
+Estimates = **AI-assisted wall-clock time** (branch creation to PR-ready). NOT human-developer estimates.
 
-**Calibrated from 340 completed tasks** (git-measured actual vs estimated):
-- Median estimate/actual ratio was 2.2x (estimates were 2.2x too high)
-- 53% of tasks had estimates > 2x actual duration
-- Root cause: estimates were written as if a human developer were doing the work
-
-**Use these calibrated tiers:**
+**Calibrated from 340 completed tasks**: median estimate/actual ratio was 2.2x (estimates were 2.2x too high); 53% of tasks had estimates >2x actual. Root cause: estimates written as if a human were doing the work.
 
 | Tier | Estimate | Scope | Examples |
 |------|----------|-------|---------|
@@ -87,25 +82,21 @@ Estimates represent **AI-assisted execution time** — the wall-clock time from 
 | Large | `~2h` | 5+ files, new subsystem, cross-cutting | New feature with tests, refactor module |
 | Major | `~4h` | Cross-cutting orchestration, new system | New orchestration layer, major redesign |
 
-**Rules:**
-- Default to `~30m` for most tasks (the median actual completion time)
-- Only use `~4h` for genuinely complex multi-system work
-- `~2h` is the threshold for auto-subtasking — tasks above this get decomposed
-- When in doubt, estimate lower — over-estimation wastes dispatch capacity by reserving worker slots longer than needed
+**Rules:** Default to `~30m` (median actual). Only use `~4h` for genuinely complex multi-system work. `~2h` triggers auto-subtasking. When in doubt, estimate lower — over-estimation wastes dispatch capacity.
 
-**Note on `actual:` field:** The `actual:` field on completed tasks is recorded by `session-time-helper.sh` as active session time, which may differ from wall-clock branch-to-PR time. Both are useful — session time measures AI execution cost, wall-clock measures delivery speed. The calibration above is based on git-measured wall-clock time (branch creation to last commit before PR).
+**Note on `actual:` field:** Recorded by `session-time-helper.sh` as active session time (AI execution cost), not wall-clock time (delivery speed). Calibration above uses git-measured wall-clock (branch creation to last commit before PR).
 
 ## Auto-Subtasking
 
-(t1188.2): Tasks with estimates >2h that have no existing subtasks are flagged as `needs-subtasking` in the eligibility assessment. The AI reasoner uses `create_subtasks` to break them into dispatchable units (~15m-2h each) before attempting dispatch. Tasks that already have subtasks are flagged as `has-subtasks` — the supervisor dispatches the subtasks instead.
+(t1188.2): Tasks with estimates >2h and no existing subtasks are flagged `needs-subtasking`. The AI reasoner uses `create_subtasks` to break them into dispatchable units (~15m-2h each). Tasks with subtasks are flagged `has-subtasks` — the supervisor dispatches the subtasks instead.
 
 ## Cross-Repo Concurrency Fairness
 
-(t1188.2): When multiple repos have queued tasks, each repo gets at least 1 dispatch slot, then remaining slots are distributed proportionally by queued task count. This prevents one repo's large backlog from starving other repos.
+(t1188.2): Each repo gets at least 1 dispatch slot; remaining slots distributed proportionally by queued task count. Prevents one repo's large backlog from starving others.
 
 ## Stale-Claim Auto-Recovery
 
-(t1263): When interactive sessions claim tasks (assignee: + started:) but die or move on without completing them, the tasks become permanently stuck. The pulse cycle detects stale claims: tasks with assignee:/started: that have (1) no active worker process, (2) no active worktree, and (3) claim age >24h. It auto-unclaims by stripping assignee: and started: fields so auto-pickup can re-dispatch. Respects t1017 assignee ownership: only unclaims tasks assigned to the local user. Configure threshold: `SUPERVISOR_STALE_CLAIM_SECONDS` (default: 86400 = 24h).
+(t1263): Tasks with `assignee:`/`started:` from dead sessions become permanently stuck. The pulse detects stale claims — tasks with these fields where (1) no active worker process, (2) no active worktree, (3) claim age >24h — and auto-unclaims by stripping those fields. Respects t1017 assignee ownership: only unclaims tasks assigned to the local user. Configure: `SUPERVISOR_STALE_CLAIM_SECONDS` (default: 86400).
 
 ## Task Completion Rules
 
@@ -113,16 +104,16 @@ CRITICAL — prevents false completion cascade:
 
 ### PR Lookup Fallback (t1343)
 
-When verifying whether a merged PR exists for a task, NEVER rely on a single data source. Workers and supervisors may run in different sessions with different local state. Use this fallback chain:
+NEVER rely on a single data source when verifying a merged PR. Use this fallback chain:
 
 1. **Local DB/memory** — check your own session's record of the PR URL
-2. **GitHub search** — if local lookup fails, search GitHub directly:
+2. **GitHub search** — if local lookup fails:
 
    ```bash
    gh pr list --repo <owner/repo> --state merged --search "<task_id>" --json number,title,mergedAt --limit 5
    ```
 
-3. **Issue cross-reference** — check the linked issue timeline for cross-referenced PRs, then verify merge state:
+3. **Issue cross-reference** — check the linked issue timeline, then verify merge state:
 
    ```bash
    # Extract PR numbers from cross-referenced timeline events
@@ -134,44 +125,40 @@ When verifying whether a merged PR exists for a task, NEVER rely on a single dat
      MERGED=$(gh pr view "$pr" --repo <owner/repo> --json mergedAt -q '.mergedAt // empty' 2>/dev/null)
      if [[ -n "$MERGED" ]]; then
        echo "Confirmed merged PR #$pr (merged at $MERGED)"
-       # Accept as evidence — no need to check further
        break
      fi
    done
    ```
 
-   IMPORTANT: Cross-referenced timeline events only establish a link — they do NOT confirm merge state. Always verify `mergedAt` via the pulls API before accepting a cross-referenced PR as completion evidence.
+   IMPORTANT: Cross-referenced events only establish a link — they do NOT confirm merge state. Always verify `mergedAt` via the pulls API.
 
 If ANY source confirms a merged PR (with verified `mergedAt`), treat the task as having PR evidence. The race condition in Issue #2250 occurred because a worker only checked its own DB (source 1), missed the PR created by a different session, and incorrectly flagged the issue as `needs-review`.
 
-- NEVER mark a task `[x]` unless a merged PR exists with real deliverables for that task
-- Use `task-complete-helper.sh <task-id> --pr <number>` or `task-complete-helper.sh <task-id> --verified` to mark tasks complete in interactive sessions
-- The helper enforces proof-log requirements: every completion MUST have `pr:#NNN` or `verified:YYYY-MM-DD`
-- The supervisor `update_todo_on_complete()` enforces the same requirement for autonomous workers
-- The pre-commit hook rejects TODO.md commits where `[ ] -> [x]` without proof-log
-- Checking that a file exists is NOT sufficient - verify the PR was merged and contains substantive changes
-- If a worker completes with `no_pr` or `task_only`, the task stays `[ ]` until a human or the supervisor verifies the deliverable
-- The `issue-sync` GitHub Action auto-closes issues when tasks are marked `[x]` - false completions cascade into closed issues
-- NEVER close GitHub issues manually with `gh issue close` — let the issue-sync pipeline verify deliverables (`pr:` or `verified:` field) before closing. Manual closure bypasses the proof-log safety check
-- **Pre-commit enforcement**: The pre-commit hook checks TODO.md for newly completed tasks (`[ ]` → `[x]`) and warns if no `verified:` field or merged PR evidence exists. This is a warning only (commit proceeds) but serves as a reminder to add completion evidence.
+- NEVER mark `[x]` unless a merged PR exists with real deliverables for that task
+- Use `task-complete-helper.sh <task-id> --pr <number>` or `--verified` to mark tasks complete
+- Every completion MUST have `pr:#NNN` or `verified:YYYY-MM-DD` (enforced by helper and `update_todo_on_complete()`)
+- The pre-commit hook rejects TODO.md commits where `[ ] → [x]` without proof-log
+- File existence is NOT sufficient — verify the PR was merged and contains substantive changes
+- `no_pr` or `task_only` worker exits: task stays `[ ]` until human or supervisor verifies the deliverable
+- The `issue-sync` GitHub Action auto-closes issues when tasks are marked `[x]` — false completions cascade into closed issues
+- NEVER close GitHub issues manually with `gh issue close` — let issue-sync verify deliverables before closing. Manual closure bypasses the proof-log safety check
+- **Pre-commit enforcement**: warns on `[ ]` → `[x]` without `verified:` or merged PR evidence (warning only — commit proceeds)
 
 ## Planning File Workflow
 
 **After ANY TODO/planning edit** (interactive sessions only, NOT workers): Commit and push immediately. Planning-only files (TODO.md, todo/) go directly to main — no branch, no PR. Mixed changes (planning + non-exception files) use a worktree. NEVER `git checkout -b` in the main repo.
 
-**PR required for ALL non-planning changes** (MANDATORY): Every change to scripts, agents, configs, workflows, or any file outside `TODO.md` and `todo/` MUST go through a worktree + PR + CI pipeline — no matter how small. "It's just one line" is not a valid reason to skip CI. The pre-edit-check script enforces this; never bypass it by editing directly on main.
+**PR required for ALL non-planning changes** (MANDATORY): Every change to scripts, agents, configs, workflows, or any file outside `TODO.md` and `todo/` MUST go through a worktree + PR + CI pipeline — no matter how small. The pre-edit-check script enforces this; never bypass it.
 
 ## Task ID Allocation
 
-MANDATORY: Use `/new-task` or `claim-task-id.sh` to allocate task IDs. NEVER manually scan TODO.md with grep to determine the next ID — this causes collisions in parallel sessions. The allocation flow:
+MANDATORY: Use `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for the next ID — causes collisions in parallel sessions.
 
-1. `/new-task "Task title"` — interactive slash command (preferred in sessions)
+1. `/new-task "Task title"` — interactive slash command (preferred)
 2. `planning-commit-helper.sh next-id --title "Task title"` — wrapper function
 3. `claim-task-id.sh --title "Task title" --repo-path "$(pwd)"` — direct script
 
-**Atomic counter** (t1047): Task IDs are allocated from `.task-counter` — a single file in the repo root containing the next available integer. The allocation uses a CAS (compare-and-swap) loop: fetch counter from `origin/main`, increment, commit, push. If push fails (another session grabbed an ID), retry from fetch. This guarantees no two sessions can claim the same ID. Batch allocation: `--count N` claims N consecutive IDs in one atomic push. GitHub/GitLab issue creation happens after the ID is secured (optional, non-blocking). Offline fallback reads local `.task-counter` + 100 offset (reconcile when back online). Output format: `task_id=tNNN ref=GH#NNN` (offline: `ref=offline reconcile=true`; batch: adds `task_id_last=tNNN task_count=N`).
-
-**Task ID collision prevention**: The `.task-counter` CAS loop handles this automatically. If push fails, the script retries (up to 10 attempts with backoff). No manual intervention needed.
+**Atomic counter** (t1047): IDs allocated from `.task-counter` via CAS loop — fetch from `origin/main`, increment, commit, push. Push failure (another session grabbed the ID) → retry from fetch. Guarantees no collisions. Batch: `--count N` claims N consecutive IDs atomically. GitHub/GitLab issue creation happens after ID is secured (optional, non-blocking). Offline fallback: local `.task-counter` + 100 offset (reconcile when back online). Output: `task_id=tNNN ref=GH#NNN` (offline: `ref=offline reconcile=true`; batch: adds `task_id_last=tNNN task_count=N`). Retries up to 10 attempts with backoff — no manual intervention needed.
 
 ## Worker TODO.md Restriction
 
