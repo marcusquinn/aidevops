@@ -18,18 +18,11 @@ tools:
 
 ## Quick Reference
 
-- CapSolver: Automated CAPTCHA solving service (99.9% accuracy, <10s)
 - Setup: `./.agents/scripts/crawl4ai-helper.sh capsolver-setup`
 - API key: `export CAPSOLVER_API_KEY="CAP-xxxxx"` from dashboard.capsolver.com
-- Crawl command: `./.agents/scripts/crawl4ai-helper.sh captcha-crawl URL captcha_type site_key`
-- CAPTCHA types:
-  - reCAPTCHA v2/v3: $0.5/1000 req, <9s/<3s
-  - reCAPTCHA Enterprise: $1-3/1000 req
-  - Cloudflare Turnstile: $3/1000 req, <3s
-  - AWS WAF, GeeTest: Contact/0.5 per 1000
-  - Image OCR: $0.4/1000 req, <1s
+- Crawl: `./.agents/scripts/crawl4ai-helper.sh captcha-crawl URL captcha_type site_key`
+- CAPTCHA types and pricing: see table below
 - Python: `import capsolver; capsolver.api_key = "KEY"; solution = capsolver.solve({...})`
-- Best practices: Respect rate limits, use delays, monitor balance
 - Config: `configs/capsolver-config.json`, `configs/capsolver-example.py`
 
 <!-- AI-CONTEXT-END -->
@@ -51,27 +44,29 @@ tools:
 ## Setup
 
 ```bash
-# Install and configure
 ./.agents/scripts/crawl4ai-helper.sh install
 ./.agents/scripts/crawl4ai-helper.sh docker-setup
 ./.agents/scripts/crawl4ai-helper.sh capsolver-setup
 
-# Set API key (get from https://dashboard.capsolver.com/dashboard/overview)
+# API key from https://dashboard.capsolver.com/dashboard/overview
 export CAPSOLVER_API_KEY="CAP-xxxxxxxxxxxxxxxxxxxxx"
 ```
 
-**Browser extension alternative**: Install [CapSolver Chrome Extension](https://chrome.google.com/webstore/detail/capsolver/pgojnojmmhpofjgdmaebadhbocahppod), configure API key, enable auto-solving, run Crawl4AI with extension-enabled browser profile.
+**Browser extension alternative**: Install [CapSolver Chrome Extension](https://chrome.google.com/webstore/detail/capsolver/pgojnojmmhpofjgdmaebadhbocahppod), configure API key, enable auto-solving. For automatic CAPTCHA detection, run Crawl4AI with a persistent browser profile that has the extension installed:
+
+```python
+browser_config = BrowserConfig(
+    use_persistent_context=True,
+    user_data_dir="/path/to/profile/with/extension"
+)
+```
 
 ## Usage
 
 ```bash
-# reCAPTCHA v2
+# CLI shortcuts
 ./.agents/scripts/crawl4ai-helper.sh captcha-crawl https://recaptcha-demo.appspot.com/recaptcha-v2-checkbox.php recaptcha_v2 6LfW6wATAAAAAHLqO2pb8bDBahxlMxNdo9g947u9
-
-# Cloudflare Turnstile
 ./.agents/scripts/crawl4ai-helper.sh captcha-crawl https://clifford.io/demo/cloudflare-turnstile turnstile 0x4AAAAAAAGlwMzq_9z6S9Mh
-
-# AWS WAF
 ./.agents/scripts/crawl4ai-helper.sh captcha-crawl https://nft.porsche.com/onboarding@6 aws_waf
 ```
 
@@ -125,15 +120,6 @@ solution = capsolver.solve({
 })
 ```
 
-### Automatic detection (browser extension profile)
-
-```python
-browser_config = BrowserConfig(
-    use_persistent_context=True,
-    user_data_dir="/path/to/profile/with/extension"
-)
-```
-
 ## Best Practices
 
 - **Error handling**: Check `solution.get("errorId") == 0`; log `solution.get("errorDescription")` on failure
@@ -152,7 +138,6 @@ browser_config = BrowserConfig(
 | Token Injection Timing | Adjust wait conditions for dynamic content |
 
 ```bash
-# Status and diagnostics
 ./.agents/scripts/crawl4ai-helper.sh status
 curl -X POST https://api.capsolver.com/getBalance \
   -H "Content-Type: application/json" \
