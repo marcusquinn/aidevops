@@ -64,6 +64,72 @@ _cli_url() {
 }
 
 # =============================================================================
+# OpenCode version detection (cross-platform)
+# =============================================================================
+# Tries multiple methods to find the OpenCode version. Install paths vary
+# across macOS (Homebrew, npm -g, bun) and Linux (npm -g, bun, nix).
+# Returns version string (e.g., "1.3.5") or empty.
+
+_detect_opencode_version() {
+	local ver=""
+
+	# Method 1: opencode --version (if in PATH)
+	ver=$(opencode --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+	if [[ -n "$ver" ]]; then
+		echo "$ver"
+		return 0
+	fi
+
+	# Method 2: npm global (works on both macOS and Linux)
+	ver=$(npm list -g opencode-ai --json 2>/dev/null | jq -r '.dependencies["opencode-ai"].version // empty' 2>/dev/null || echo "")
+	if [[ -n "$ver" ]]; then
+		echo "$ver"
+		return 0
+	fi
+
+	# Method 3: bun global — check multiple known paths
+	local bun_paths=(
+		"${HOME}/.bun/install/global/node_modules/opencode-ai/package.json"
+		"${HOME}/.bun/install/global/node_modules/.cache/opencode-ai/package.json"
+	)
+	local bp
+	for bp in "${bun_paths[@]}"; do
+		ver=$(jq -r '.version // empty' "$bp" 2>/dev/null || echo "")
+		if [[ -n "$ver" ]]; then
+			echo "$ver"
+			return 0
+		fi
+	done
+
+	# Method 4: resolve the binary path and find package.json nearby
+	local bin_path
+	bin_path=$(command -v opencode 2>/dev/null || echo "")
+	if [[ -n "$bin_path" ]]; then
+		# Follow symlinks to the real path
+		local real_path
+		real_path=$(readlink -f "$bin_path" 2>/dev/null || readlink "$bin_path" 2>/dev/null || echo "$bin_path")
+		# Walk up to find package.json (typically ../package.json or ../../package.json)
+		local dir
+		dir=$(dirname "$real_path" 2>/dev/null || echo "")
+		local depth=0
+		while [[ -n "$dir" ]] && [[ "$dir" != "/" ]] && [[ $depth -lt 4 ]]; do
+			if [[ -f "${dir}/package.json" ]]; then
+				ver=$(jq -r '.version // empty' "${dir}/package.json" 2>/dev/null || echo "")
+				if [[ -n "$ver" ]]; then
+					echo "$ver"
+					return 0
+				fi
+			fi
+			dir=$(dirname "$dir" 2>/dev/null || echo "")
+			depth=$((depth + 1))
+		done
+	fi
+
+	echo ""
+	return 0
+}
+
+# =============================================================================
 # CLI detection (reuses aidevops-update-check.sh logic)
 # =============================================================================
 
@@ -84,14 +150,7 @@ _detect_cli() {
 
 	if [[ "${OPENCODE:-}" == "1" ]]; then
 		app_name="OpenCode"
-		# Try multiple version detection methods (install path varies: bun, npm, homebrew)
-		app_version=$(opencode --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
-		if [[ -z "$app_version" ]]; then
-			app_version=$(npm list -g opencode-ai --json 2>/dev/null | jq -r '.dependencies["opencode-ai"].version // empty' 2>/dev/null || echo "")
-		fi
-		if [[ -z "$app_version" ]]; then
-			app_version=$(jq -r '.version // empty' ~/.bun/install/global/node_modules/opencode-ai/package.json 2>/dev/null || echo "")
-		fi
+		app_version=$(_detect_opencode_version)
 	elif [[ -n "${CLAUDE_CODE:-}" ]] || [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
 		app_name="Claude Code"
 		app_version=$(claude --version 2>/dev/null | head -1 | sed 's/ (Claude Code)//' || echo "")
@@ -117,17 +176,18 @@ _detect_cli() {
 	elif [[ -n "${WARP_SESSION:-}" ]]; then
 		app_name="Warp"
 	else
-		# Fallback: check parent process name
-		local parent parent_lower
+		# Fallback: check parent process name.
+		# Use both comm (short) and args (full command line) because on Linux
+		# ps -o comm= truncates to 15 chars — "node" instead of "opencode"
+		# when run via Node.js (GH#13012).
+		local parent parent_args parent_lower
 		parent=$(ps -o comm= -p "${PPID:-0}" 2>/dev/null || echo "")
-		parent_lower=$(printf '%s' "$parent" | tr '[:upper:]' '[:lower:]')
+		parent_args=$(ps -o args= -p "${PPID:-0}" 2>/dev/null || echo "")
+		parent_lower=$(printf '%s %s' "$parent" "$parent_args" | tr '[:upper:]' '[:lower:]')
 		case "$parent_lower" in
 		*opencode*)
 			app_name="OpenCode"
-			app_version=$(opencode --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
-			if [[ -z "$app_version" ]]; then
-				app_version=$(npm list -g opencode-ai --json 2>/dev/null | jq -r '.dependencies["opencode-ai"].version // empty' 2>/dev/null || echo "")
-			fi
+			app_version=$(_detect_opencode_version)
 			;;
 		*claude*)
 			app_name="Claude Code"
@@ -188,15 +248,18 @@ _find_session_id() {
 	# Strategy 1: OPENCODE_PID (set in interactive TUI sessions)
 	local target_pid="${OPENCODE_PID:-}"
 
-	# Strategy 2: walk PPID chain to find opencode process
+	# Strategy 2: walk PPID chain to find opencode process.
+	# Check both comm (short name) and args (full command line) because
+	# on Linux ps -o comm= truncates to 15 chars and may show "node"
+	# instead of "opencode" when run via Node.js (GH#13012).
 	if [[ -z "$target_pid" ]]; then
 		local walk_pid="${PPID:-0}"
 		local walk_depth=0
 		while [[ "$walk_pid" -gt 1 ]] && [[ "$walk_depth" -lt 10 ]] 2>/dev/null; do
-			local walk_comm
+			local walk_comm walk_args walk_lower
 			walk_comm=$(ps -o comm= -p "$walk_pid" 2>/dev/null || echo "")
-			local walk_lower
-			walk_lower=$(printf '%s' "$walk_comm" | tr '[:upper:]' '[:lower:]')
+			walk_args=$(ps -o args= -p "$walk_pid" 2>/dev/null || echo "")
+			walk_lower=$(printf '%s %s' "$walk_comm" "$walk_args" | tr '[:upper:]' '[:lower:]')
 			if [[ "$walk_lower" == *opencode* ]]; then
 				target_pid="$walk_pid"
 				break
@@ -225,12 +288,24 @@ _find_session_id() {
 		fi
 	fi
 
-	# Strategy 3: most recently created session (not updated — avoids picking
-	# long-running supervisor sessions that get updated frequently)
+	# Strategy 3: most recently created session matching directory
+	# (not updated — avoids picking long-running supervisor sessions)
 	if [[ -z "$session_id" ]]; then
 		session_id=$(sqlite3 "$db_path" "
 			SELECT id FROM session
 			WHERE directory IN ('${cwd}', '${repo_root}', '${canonical_dir}', '${main_worktree}')
+			ORDER BY time_created DESC LIMIT 1
+		" 2>/dev/null || echo "")
+	fi
+
+	# Strategy 4: most recently created session globally (within 1 hour).
+	# On Linux, the worker may run from a worktree path that doesn't match
+	# any stored session directory. A 1-hour window limits false matches
+	# to concurrent sessions on the same machine (GH#13012).
+	if [[ -z "$session_id" ]]; then
+		session_id=$(sqlite3 "$db_path" "
+			SELECT id FROM session
+			WHERE time_created > (strftime('%s','now') - 3600) * 1000
 			ORDER BY time_created DESC LIMIT 1
 		" 2>/dev/null || echo "")
 	fi
@@ -242,12 +317,9 @@ _find_session_id() {
 _detect_session_tokens() {
 	local db_path="${HOME}/.local/share/opencode/opencode.db"
 
-	# Only attempt for OpenCode (other runtimes can be added later)
-	if [[ "${OPENCODE:-}" != "1" ]] && ! ps -o comm= -p "${PPID:-0}" 2>/dev/null | tr '[:upper:]' '[:lower:]' | grep -q opencode; then
-		echo ""
-		return 0
-	fi
-
+	# If the OpenCode DB exists, try it — don't gate on process detection.
+	# The old PPID-only check failed on Linux where the immediate parent is
+	# "node" or "bun" rather than "opencode" (GH#13012).
 	if [[ ! -r "$db_path" ]] || ! command -v sqlite3 &>/dev/null; then
 		echo ""
 		return 0
@@ -389,11 +461,9 @@ _detect_session_type() {
 _detect_session_time() {
 	local db_path="${HOME}/.local/share/opencode/opencode.db"
 
-	if [[ "${OPENCODE:-}" != "1" ]] && ! ps -o comm= -p "${PPID:-0}" 2>/dev/null | tr '[:upper:]' '[:lower:]' | grep -q opencode; then
-		echo ""
-		return 0
-	fi
-
+	# If the OpenCode DB exists, try it — don't gate on process detection.
+	# The old PPID-only check failed on Linux where the immediate parent is
+	# "node" or "bun" rather than "opencode" (GH#13012).
 	if [[ ! -r "$db_path" ]] || ! command -v sqlite3 &>/dev/null; then
 		echo ""
 		return 0
