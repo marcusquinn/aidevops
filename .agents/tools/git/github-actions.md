@@ -27,181 +27,58 @@ tools:
 - **Codacy Dashboard**: https://app.codacy.com/gh/marcusquinn/aidevops
 - **Actions URL**: https://github.com/marcusquinn/aidevops/actions
 - **Add Secrets**: Repository Settings → Secrets and variables → Actions
+
 <!-- AI-CONTEXT-END -->
 
-## Automated Code Quality Analysis
+## Required Secrets
 
-### Current GitHub Actions Status
+| Secret | Status | Source |
+|--------|--------|--------|
+| `SONAR_TOKEN` | Configured | https://sonarcloud.io/account/security |
+| `CODACY_API_TOKEN` | Needs setup | https://app.codacy.com/account/api-tokens |
+| `GITHUB_TOKEN` | Auto-provided | GitHub |
 
-#### ✅ Configured and Working:
+## Add CODACY_API_TOKEN
 
-- **SonarCloud Analysis**: ✅ Runs on every push and PR
-- **Framework Validation**: ✅ Validates repository structure
-- **Security Scanning**: ✅ Checks for hardcoded API keys
-
-#### Requires Setup:
-
-- **Codacy Analysis**: Requires `CODACY_API_TOKEN` secret
-
-## Required GitHub Repository Secrets
-
-### **1. SONAR_TOKEN (Already Configured)**
-
-- **Status**: ✅ **CONFIGURED**
-- **Purpose**: SonarCloud analysis in GitHub Actions
-- **Value**: Your SonarCloud API token
-- **Source**: https://sonarcloud.io/account/security
-
-### **2. CODACY_API_TOKEN (Needs Setup)**
-
-- **Status**: ❌ **NEEDS CONFIGURATION**
-- **Purpose**: Codacy analysis in GitHub Actions
-- **Value**: Your Codacy API token
-- **Source**: https://app.codacy.com/account/api-tokens
-
-## Setup Instructions
-
-### **Add Missing GitHub Secret:**
-
-1. **Go to Repository Settings**:
-
-   ```text
-   https://github.com/marcusquinn/aidevops/settings/secrets/actions
-   ```
-
-2. **Click "New repository secret"**
-
-3. **Add Codacy Secret**:
-   - **Name**: `CODACY_API_TOKEN`
-   - **Value**: Your Codacy API token (get from secure local storage)
+1. Go to https://github.com/marcusquinn/aidevops/settings/secrets/actions
+2. Click "New repository secret"
+3. Name: `CODACY_API_TOKEN` — Value: token from secure local storage
 
 ## Workflow Triggers
 
-### **Automatic Execution:**
+- Push to main or develop → full analysis
+- Pull Request to main → full analysis
+- Jobs: Framework Validation, SonarCloud Analysis, Codacy Analysis (conditional on token)
 
-- **Push to main**: ✅ Triggers full analysis
-- **Push to develop**: ✅ Triggers full analysis
-- **Pull Request to main**: ✅ Triggers full analysis
+## Concurrent Push Patterns
 
-### **Analysis Jobs:**
+When workflows commit and push, concurrent runs cause race conditions. Use:
 
-1. **Framework Validation**: Repository structure and security checks
-2. **SonarCloud Analysis**: Code quality, security, and maintainability
-3. **Codacy Analysis**: Code quality and complexity analysis
-
-## Viewing Results
-
-### **SonarCloud Dashboard:**
-
-```text
-https://sonarcloud.io/project/overview?id=marcusquinn_aidevops
-```
-
-### **Codacy Dashboard:**
-
-```text
-https://app.codacy.com/gh/marcusquinn/aidevops
-```
-
-### **GitHub Actions:**
-
-```text
-https://github.com/marcusquinn/aidevops/actions
-```
-
-## Workflow Configuration
-
-### **File**: `.github/workflows/code-quality.yml`
-
-#### **Key Features:**
-
-- **Multi-job workflow** with framework validation and code analysis
-- **Security scanning** to prevent API key exposure
-- **Conditional Codacy analysis** (runs only if token is configured)
-- **Comprehensive reporting** with links to analysis dashboards
-- **Fail-fast security** checks to prevent credential exposure
-
-#### **Environment Variables Used:**
-
-- `GITHUB_TOKEN`: Automatic (provided by GitHub)
-- `SONAR_TOKEN`: From repository secrets
-- `CODACY_API_TOKEN`: From repository secrets (optional)
-
-## Security Features
-
-### **Automated Security Checks:**
-
-- **API Key Detection**: Scans for hardcoded credentials
-- **Repository Structure**: Validates framework integrity
-- **Secret Management**: Uses GitHub Secrets for sensitive data
-
-### **Security Best Practices:**
-
-- **No secrets in code**: All API keys use GitHub Secrets
-- **Conditional execution**: Graceful handling of missing secrets
-- **Fail-fast security**: Stops workflow if security issues detected
-
-## Workflow Patterns
-
-### Handling Concurrent Push Failures
-
-When GitHub Actions workflows push to repositories, concurrent runs can cause push failures due to race conditions. Use these patterns for workflows that commit and push:
-
-#### Full Retry Pattern (Recommended for External Repos)
+### Full Retry (external repos, wiki sync)
 
 ```yaml
-# Retry loop to handle concurrent pushes (up to 3 attempts)
 for i in 1 2 3; do
-  echo "Push attempt $i..."
   git pull --rebase origin main || true
-  if git push; then
-    echo "Push succeeded on attempt $i"
-    exit 0
-  fi
-  echo "Push failed, waiting before retry..."
-  sleep $((i * 5))  # Exponential backoff: 5s, 10s, 15s
+  if git push; then exit 0; fi
+  sleep $((i * 5))  # exponential backoff: 5s, 10s, 15s
 done
-
-echo "All push attempts failed"
 exit 1
 ```
 
-#### Simple Pattern (For Same-Repo Auto-Fixes)
+### Simple (same-repo auto-fixes, release workflows)
 
 ```yaml
-# Pull with rebase to handle concurrent pushes, then push
 git pull --rebase origin main || true
 git push
 ```
 
-#### When to Use Each Pattern
+| Scenario | Pattern |
+|----------|---------|
+| Pushing to external repo | Full retry |
+| Auto-fix commits to same repo | Simple |
+| Wiki sync | Full retry |
+| Release workflows | Simple |
 
-| Scenario | Pattern | Rationale |
-|----------|---------|-----------|
-| Pushing to external repo | Full retry | Higher chance of conflicts |
-| Auto-fix commits to same repo | Simple | Usually succeeds |
-| Wiki sync | Full retry | Wiki can have manual edits |
-| Release workflows | Simple | Should be serialized anyway |
-
-#### Key Points
-
-- Always `git pull --rebase` before pushing to incorporate remote changes
-- Use `|| true` after pull to continue even if pull fails (empty repo, etc.)
-- Exponential backoff (`sleep $((i * 5))`) reduces collision probability
+- Always `git pull --rebase` before pushing
+- Use `|| true` after pull to continue if pull fails (empty repo, etc.)
 - Exit with error after all retries fail to surface the issue
-
-## Next Steps
-
-1. **Add CODACY_API_TOKEN** to GitHub repository secrets
-2. **Push a commit** to trigger the workflow
-3. **Verify analysis results** in SonarCloud and Codacy dashboards
-4. **Monitor workflow runs** in GitHub Actions
-
-## Benefits
-
-- **Automated Quality Gates**: Every commit analyzed for quality
-- **Security Monitoring**: Prevents credential exposure
-- **Multi-Platform Analysis**: SonarCloud + Codacy coverage
-- **Professional Standards**: Industry-grade CI/CD pipeline
-
-**Your repository now has comprehensive automated code quality analysis running on every commit!**
