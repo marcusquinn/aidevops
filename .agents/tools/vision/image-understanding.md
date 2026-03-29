@@ -16,7 +16,7 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
-**Purpose**: Analyse, describe, and extract information from images using vision-capable AI models.
+**Purpose**: Analyse and extract information from images using vision-capable AI models.
 **When to use**: Screenshots, alt text, visual Q&A, diagram interpretation, UI review, accessibility audits.
 **Dedicated OCR**: `tools/ocr/glm-ocr.md` | **Screen capture**: `tools/browser/peekaboo.md`
 
@@ -24,17 +24,17 @@ tools:
 
 ## Model Selection
 
-| Model | Provider | Context | Cost (in/out per 1M) | Local | Use When |
-|-------|----------|---------|----------------------|-------|----------|
-| **GPT-4o** | OpenAI | 128K | $2.50/$10 | No | Best accuracy, general analysis |
-| **Claude Sonnet** | Anthropic | 200K | $3/$15 | No | Nuanced descriptions, code review |
-| **Claude Opus** | Anthropic | 200K | $15/$75 | No | Complex reasoning |
-| **Gemini 2.5 Pro** | Google | 1M | $1.25/$10 | No | Large images/documents (1M context) |
-| **Gemini 2.5 Flash** | Google | 1M | $0.15/$0.60 | No | Cost-effective cloud |
-| **LLaVA** | Open source | 4K | Free | Yes | General vision, ~4GB VRAM |
-| **MiniCPM-o** | OpenBMB | 8K | Free | Yes | Efficient local, ~4GB |
-| **Qwen-VL** | Alibaba | 32K | Free | Yes | Multilingual, ~8GB |
-| **InternVL 2.5** | Shanghai AI Lab | 8K | Free | Yes | Strong reasoning, ~8GB |
+| Model | Provider | Context | Cost (in/out per 1M) | Use When |
+|-------|----------|---------|----------------------|----------|
+| **GPT-4o** | OpenAI | 128K | $2.50/$10 | Best accuracy, general analysis |
+| **Claude Sonnet** | Anthropic | 200K | $3/$15 | Nuanced descriptions, code review |
+| **Claude Opus** | Anthropic | 200K | $15/$75 | Complex reasoning |
+| **Gemini 2.5 Pro** | Google | 1M | $1.25/$10 | Large images/documents (1M context) |
+| **Gemini 2.5 Flash** | Google | 1M | $0.15/$0.60 | Cost-effective cloud |
+| **LLaVA** | Open source | 4K | Free | General vision, ~4GB VRAM |
+| **MiniCPM-o** | OpenBMB | 8K | Free | Efficient local, ~4GB |
+| **Qwen-VL** | Alibaba | 32K | Free | Multilingual, ~8GB |
+| **InternVL 2.5** | Shanghai AI Lab | 8K | Free | Strong reasoning, ~8GB |
 
 ## Cloud APIs
 
@@ -53,7 +53,7 @@ base64 -i screenshot.png | \
   curl -s https://api.openai.com/v1/chat/completions -H "Authorization: Bearer $OPENAI_API_KEY" -H "Content-Type: application/json" -d @-
 ```
 
-**Tokens**: 1024x1024 ~765 tokens. `detail: "low"` ~85 tokens for classification. [OpenAI vision docs](https://platform.openai.com/docs/guides/vision).
+`detail: "low"` ~85 tokens (classification). Token costs: see table below. [OpenAI vision docs](https://platform.openai.com/docs/guides/vision).
 
 ### Anthropic (Claude Vision)
 
@@ -70,14 +70,12 @@ curl https://api.anthropic.com/v1/messages \
 ```bash
 sips --resampleHeightWidthMax 1568 input.png --out output.png   # macOS
 magick input.png -resize '1568x1568>' output.png                # ImageMagick (> = only shrink)
+# browser-qa-helper.sh applies this resize automatically
 ```
-
-`browser-qa-helper.sh` applies this resize automatically.
 
 ### Google (Gemini Vision)
 
 ```bash
-# 1M context — best for very large or multiple images per request
 curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$GOOGLE_AI_KEY" \
   -H "Content-Type: application/json" \
   -d '{"contents":[{"parts":[{"text":"Analyse this chart"},{"inline_data":{"mime_type":"image/png","data":"<base64-data>"}}]}]}'
@@ -86,7 +84,6 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:g
 ## Local Models (Ollama)
 
 ```bash
-# Install and pull models
 brew install ollama
 ollama pull llava        # General vision (~4GB)
 ollama pull minicpm-v    # Efficient local (~4GB)
@@ -120,8 +117,6 @@ for img in dir/*.{jpg,png,webp}; do
   echo "=== $(basename "$img") ===" && ollama run llava "Describe in one sentence" --images "$img"
 done
 ```
-
-Screen capture + analysis: `tools/browser/peekaboo.md` (`peekaboo image --mode screen --analyze`).
 
 ## Token Cost Reference
 
