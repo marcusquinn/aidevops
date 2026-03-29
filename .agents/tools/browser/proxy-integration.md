@@ -129,10 +129,9 @@ anti-detect-helper.sh proxy check "http://user:pass@host:port"
 # Check all profile proxies
 anti-detect-helper.sh proxy check-all
 # Output: IP, country, city, ISP, speed, anonymity level
-
-# Verify no DNS leaks through proxy
-anti-detect-helper.sh proxy dns-check "profile-name"
 ```
+
+DNS leak prevention: Playwright handles automatically; Camoufox uses `network.proxy.socks_remote_dns = true` (default).
 
 ## Rotation Strategies
 
