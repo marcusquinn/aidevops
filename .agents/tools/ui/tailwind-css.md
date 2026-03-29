@@ -19,8 +19,7 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Utility-first CSS framework for rapid UI development
-- **Docs**: Use Context7 MCP for current documentation (`"Tailwind CSS flexbox utilities"`, `"Tailwind CSS positioning"`, `"Tailwind CSS responsive design"`)
+- **Docs**: Use Context7 MCP (`"Tailwind CSS flexbox utilities"`, `"Tailwind CSS positioning"`, `"Tailwind CSS responsive design"`)
 - **Config**: `tailwind.config.ts` or `tailwind.config.js`
 
 **Common Hazards** (from real sessions):
@@ -37,14 +36,7 @@ tools:
 | `min-w-0` missing on flex children | Text won't truncate — flex children don't shrink below content width | Add `min-w-0` to allow truncation |
 | `h-screen` on mobile | Doesn't account for browser chrome | Use `h-dvh` (dynamic viewport height) |
 
-**Positioning Mental Model**:
-
-```text
-fixed    → relative to viewport (stays put when scrolling/resizing)
-absolute → relative to nearest positioned ancestor
-relative → normal flow, enables absolute children
-sticky   → hybrid (normal until scroll threshold)
-```
+**Positioning**: `fixed` → viewport; `absolute` → nearest positioned ancestor; `relative` → normal flow + enables absolute children; `sticky` → hybrid.
 
 **Layout Patterns**:
 
@@ -84,16 +76,7 @@ const sanitizedWidth = Number.isFinite(width) && width > 0 ? width : 384;
 <aside className="w-[var(--sidebar-width)]">
 ```
 
-**Responsive Breakpoints**:
-
-| Prefix | Min Width | Use Case |
-|--------|-----------|----------|
-| (none) | 0px | Mobile-first base |
-| `sm:` | 640px | Large phones |
-| `md:` | 768px | Tablets |
-| `lg:` | 1024px | Laptops |
-| `xl:` | 1280px | Desktops |
-| `2xl:` | 1536px | Large screens |
+**Responsive Breakpoints**: `sm:` 640px · `md:` 768px · `lg:` 1024px · `xl:` 1280px · `2xl:` 1536px (mobile-first, no prefix = 0px base).
 
 **Glow Effects** (theme-colored):
 
@@ -111,16 +94,11 @@ className={cn(
 
 <!-- AI-CONTEXT-END -->
 
-## Detailed Patterns
+## Patterns
 
 ### Resizable Elements
 
-Implementing drag-to-resize with Tailwind:
-
 ```tsx
-const [width, setWidth] = useState(384);
-const [isResizing, setIsResizing] = useState(false);
-
 // Disable transition while dragging for smooth resize
 <aside className={cn(
   "w-[var(--sidebar-width)]",
@@ -140,16 +118,13 @@ const [isResizing, setIsResizing] = useState(false);
 
 ### Bottom-Aligned Content
 
-For chat interfaces where content should align to bottom:
-
 ```tsx
-// Container with flex-col and justify-end
+// flex-col + justify-end for chat interfaces
 <div className="flex flex-1 flex-col justify-end gap-4 p-4">
   {messages.map(msg => <Message key={msg.id} {...msg} />)}
 </div>
 
-// Or with min-height for scroll behavior
-{/* ScrollArea from shadcn/ui (radix-ui based) */}
+// With ScrollArea (shadcn/ui, radix-ui based)
 <ScrollArea className="flex-1">
   <div className="flex min-h-full flex-col justify-end gap-4">
     {messages.map(msg => <Message key={msg.id} {...msg} />)}
@@ -159,32 +134,28 @@ For chat interfaces where content should align to bottom:
 
 ### Scroll Behavior & overscroll-behavior
 
-**Critical**: Global `* { overscroll-behavior: none; }` prevents scroll chaining. When a user hovers over a sidebar or panel with `overflow-auto`, wheel events get trapped even if content doesn't overflow.
+**Critical**: Global `* { overscroll-behavior: none; }` traps wheel events on `overflow-auto` containers even when content doesn't overflow.
 
-**Debugging order** (CSS first, not JS):
+**Debug order** (CSS first, not JS):
 
 1. Check global styles for `overscroll-behavior: none` on `*` or `html`/`body`
 2. Check if the scroll container actually has overflowing content
 3. Only then consider JS wheel event handlers
 
 ```tsx
-// RIGHT: Override the global overscroll-behavior on the container
+// Override global overscroll-behavior on container AND descendants
 <div className="overflow-auto overscroll-auto [&_*]:overscroll-auto">
   {/* Sidebar content */}
 </div>
 ```
 
-**Why `[&_*]:overscroll-auto` is needed**: The global `* { overscroll-behavior: none }` applies to every descendant including links and buttons. When the cursor hovers a link, the wheel event target is the link (which has `overscroll-behavior: none`), blocking scroll chaining even if the parent allows it.
+**Why `[&_*]:overscroll-auto`**: The global `* { overscroll-behavior: none }` applies to every descendant. When the cursor hovers a link, the wheel event target is the link (with `overscroll-behavior: none`), blocking scroll chaining even if the parent allows it.
 
-**When to keep `overscroll-behavior: none`**:
-- Chat/messaging areas with independent scroll
-- Modal/dialog content that shouldn't scroll the page behind
-- Infinite scroll lists where boundary scroll would be confusing
+**Keep `overscroll-behavior: none` for**: chat/messaging areas, modal content, infinite scroll lists.
 
 ### Dark Mode
 
 ```tsx
-// Using next-themes or similar
 <div className="bg-background text-foreground">
   <p className="text-muted-foreground">Secondary text</p>
   <div className="bg-muted">Muted background</div>
