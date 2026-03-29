@@ -21,43 +21,22 @@ tools:
 - **Type**: Self-hosted password manager (Bitwarden API compatible)
 - **CLI**: `npm install -g @bitwarden/cli` then `bw`
 - **Auth**: `bw login email` → `export BW_SESSION=$(bw unlock --raw)`
-- **Config**: `configs/vaultwarden-config.json`
+- **Config**: `configs/vaultwarden-config.json` (copy from `configs/vaultwarden-config.json.txt`)
 - **Commands**: `vaultwarden-helper.sh [instances|status|login|unlock|list|search|get|get-password|create|audit|start-mcp] [instance] [args]`
 - **Session**: `BW_SESSION` env var required after unlock; `unset BW_SESSION && bw lock` when done
+- **Server**: `vault.bitwarden.com` = cloud; any other domain = self-hosted (`bw config server <url>`)
 - **MCP**: Port 3002 for AI assistant credential access
 - **Backup**: `bw export --format json` (encrypt with GPG)
 
 <!-- AI-CONTEXT-END -->
 
-## Service Detection
-
-| Server URL | Service |
-|------------|---------|
-| `vault.bitwarden.com` (default) | Bitwarden Cloud |
-| Any other domain | Vaultwarden self-hosted |
-
-```bash
-bw config server                                    # check current server
-bw config server https://vault.yourdomain.com       # set self-hosted
-```
-
 ## Configuration
-
-```bash
-cp configs/vaultwarden-config.json.txt configs/vaultwarden-config.json
-```
 
 ```json
 {
   "instances": {
-    "production": {
-      "server_url": "https://vault.yourdomain.com",
-      "description": "Production Vaultwarden instance"
-    },
-    "development": {
-      "server_url": "https://dev-vault.yourdomain.com",
-      "description": "Development Vaultwarden instance"
-    }
+    "production": { "server_url": "https://vault.yourdomain.com" },
+    "development": { "server_url": "https://dev-vault.yourdomain.com" }
   }
 }
 ```
@@ -98,16 +77,12 @@ vaultwarden-helper.sh test-mcp 3002
 
 ## MCP Integration
 
-Add to AI assistant MCP servers config:
-
 ```json
 {
   "bitwarden": {
     "command": "bitwarden-mcp-server",
     "args": ["--port", "3002"],
-    "env": {
-      "BW_SERVER": "https://vault.yourdomain.com"
-    }
+    "env": { "BW_SERVER": "https://vault.yourdomain.com" }
   }
 }
 ```
@@ -120,7 +95,7 @@ vaultwarden-helper.sh export production json vault-backup-$(date +%Y%m%d).json
 chmod 600 vault-backup-*.json
 ```
 
-Automated backup script:
+Automated backup (GPG-encrypted, 30-day retention):
 
 ```bash
 #!/bin/bash
@@ -139,15 +114,9 @@ find "$BACKUP_DIR" -name "vault-*.json.gpg" -mtime +30 -delete
 ## Troubleshooting
 
 ```bash
-# Connection
-curl -I https://vault.yourdomain.com
-bw config server https://vault.yourdomain.com
-
-# Auth
-bw status
-bw logout && bw login user@example.com
-bw unlock
-
-# Sync
-bw sync --force
+curl -I https://vault.yourdomain.com          # connection check
+bw config server https://vault.yourdomain.com  # set server
+bw status                                      # auth state
+bw logout && bw login user@example.com         # re-auth
+bw sync --force                                # force sync
 ```
