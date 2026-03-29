@@ -140,7 +140,9 @@ Point-in-time recovery: `pg_dump`/`pg_restore` (PostgreSQL), `mysqldump` (MySQL)
 
 ## Git and CI/CD
 
-**Pre-push checklist:** (1) UP and DOWN sections present, (2) DOWN reverses UP, (3) tested locally (up → down → up), (4) no modifications to pushed migrations, (5) timestamp is current (regenerate on rebase). Review: verify only expected changes, no unintended destructive ops, correct types/constraints.
+**Pre-push checklist:** (1) UP and DOWN sections present, (2) DOWN reverses UP, (3) tested locally (up → down → up), (4) no modifications to pushed migrations, (5) timestamp is current (regenerate on rebase).
+
+**Review:** Verify only expected changes, no unintended destructive ops, correct types/constraints.
 
 **Team rules:** Pull before creating migrations. Timestamps not sequential numbers. One migration per PR. Rebase carefully — regenerate timestamps for conflicts.
 
