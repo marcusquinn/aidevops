@@ -1215,7 +1215,7 @@ _push_and_create_pr() {
 
 	# Append signature footer
 	local sig_footer=""
-	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer 2>/dev/null || true)
+	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$pr_body" 2>/dev/null || true)
 	pr_body="${pr_body}${sig_footer}"
 
 	local pr_create_output
@@ -1648,7 +1648,7 @@ ${failed_note}
 
 	# Append signature footer
 	local batch_sig=""
-	batch_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer 2>/dev/null || true)
+	batch_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$pr_body" 2>/dev/null || true)
 	pr_body="${pr_body}${batch_sig}"
 
 	local repo_name_with_owner

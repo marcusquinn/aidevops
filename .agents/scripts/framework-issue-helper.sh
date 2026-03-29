@@ -376,7 +376,7 @@ _append_signature_footer() {
 
 	if [[ -x "$sig_helper" ]]; then
 		local sig_footer
-		sig_footer=$("$sig_helper" footer 2>/dev/null || echo "")
+		sig_footer=$("$sig_helper" footer --body "$body" 2>/dev/null || echo "")
 		if [[ -n "$sig_footer" ]]; then
 			body="${body}${sig_footer}"
 		fi

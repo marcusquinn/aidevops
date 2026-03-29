@@ -1057,7 +1057,7 @@ create_fix_tasks() {
 
 				# Append signature footer
 				local mv_sig=""
-				mv_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer 2>/dev/null || true)
+				mv_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$issue_body" 2>/dev/null || true)
 				issue_body="${issue_body}${mv_sig}"
 
 				local issue_url

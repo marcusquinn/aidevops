@@ -3446,7 +3446,7 @@ This file was previously simplified (PR #${prev_pr}) but has since been modified
 
 	# Append signature footer
 	local sig_footer=""
-	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer 2>/dev/null || true)
+	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$issue_body" 2>/dev/null || true)
 	issue_body="${issue_body}${sig_footer}"
 
 	local create_ok=false
@@ -3608,7 +3608,7 @@ This is an automated scan. The function lengths are factual, but the best decomp
 - \`declined: <reason>\` — closes this issue (include your reason after the colon)"
 		# Append signature footer
 		local sig_footer2=""
-		sig_footer2=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer 2>/dev/null || true)
+		sig_footer2=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$issue_body" 2>/dev/null || true)
 		issue_body="${issue_body}${sig_footer2}"
 
 		local issue_key="$file_path"

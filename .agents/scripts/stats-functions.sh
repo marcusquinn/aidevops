@@ -270,7 +270,7 @@ _create_health_issue() {
 
 	local health_body="Live ${runner_role} status for **${runner_user}**. Updated each pulse. Pin this issue for at-a-glance monitoring."
 	local sig_footer=""
-	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer 2>/dev/null || true)
+	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$health_body" 2>/dev/null || true)
 	health_body="${health_body}${sig_footer}"
 
 	local health_issue_number
@@ -1490,7 +1490,7 @@ _ensure_quality_issue() {
 
 		local qa_body="Persistent dashboard for automated code quality and simplification routines (ShellCheck, Qlty, SonarCloud, Codacy, CodeRabbit). The supervisor posts findings here and creates actionable issues from them. **Do not close this issue.**"
 		local qa_sig=""
-		qa_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer 2>/dev/null || true)
+		qa_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$qa_body" 2>/dev/null || true)
 		qa_body="${qa_body}${qa_sig}"
 
 		issue_number=$(gh issue create --repo "$repo_slug" \
@@ -2488,7 +2488,7 @@ _create_simplification_issues() {
 
 		# Append signature footer
 		local qlty_sig=""
-		qlty_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer 2>/dev/null || true)
+		qlty_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$issue_body" 2>/dev/null || true)
 		issue_body="${issue_body}${qlty_sig}"
 
 		if gh issue create --repo "$repo_slug" \
