@@ -16,22 +16,7 @@
 | [campaign-management.md](campaign-management.md) | Creative briefs, competitor analysis, seasonal creative, retargeting, ad fatigue, thumbnails | 241 |
 | [ai-tools-reference.md](ai-tools-reference.md) | AI creative tools, implementation roadmap, quick-reference appendix | 253 |
 
-**Deep-dive chapters** (supplementary — see [CHAPTERS.md](CHAPTERS.md)):
-
-| Chapter | Topic |
-|---|---|
-| CHAPTER-01 | Video Ad Creative Mastery |
-| CHAPTER-02 | AI-Powered Creative Production |
-| CHAPTER-03 | Platform-Specific Creative Strategies |
-| CHAPTER-04 | Creative Testing and Iteration Frameworks |
-| CHAPTER-05 | Emotional Triggers and Persuasion Psychology |
-| CHAPTER-06 | Direct Response Creative for E-Commerce |
-| CHAPTER-07 | Brand Building Through Performance Creative |
-| CHAPTER-08 | Creative Operations and Team Management |
-| CHAPTER-09 | Advanced Performance Creative Strategies |
-| CHAPTER-10 | Creative Analytics and Optimization |
-| CHAPTER-11 | Platform-Specific Creative Excellence |
-| CHAPTER-12 | Creative Testing and Experimentation Framework |
+**Deep-dive chapters** (CHAPTER-01 through CHAPTER-12): see [CHAPTERS.md](CHAPTERS.md) for full index.
 
 ---
 
@@ -41,7 +26,7 @@ Creative is the single most important factor in ad performance — targeting and
 
 ### Performance Hierarchy
 
-1. **Hook (First 3s of video / First line of copy)** — 40% of performance
+1. **Hook (First 3s / First line)** — 40%
 2. **Visual Thumb-Stop** — 25%
 3. **Offer/Value Proposition** — 20%
 4. **Social Proof** — 10%
@@ -56,7 +41,7 @@ Creative is the single most important factor in ad performance — targeting and
 5. **Emotional First, Logical Second** — buy on emotion, justify with logic
 6. **Native to Platform** — look like content, not an ad
 7. **Mobile-First** — 80%+ of social ad views are on mobile
-8. **Test Everything** — 20% of creative drives 80% of results; identify and scale the 20% that works
+8. **Test Everything** — 20% of creative drives 80% of results; scale the 20%
 
 ### Creative Funnel Framework
 
@@ -72,132 +57,65 @@ Creative is the single most important factor in ad performance — targeting and
 
 ## Quick Reference
 
-### Specs
+### Platform Specs
 
-```
-FACEBOOK:
-Image: 1080x1080 (1:1), 30MB max
-Video: 1080x1920 (9:16), 4GB max, 1-240min
-Carousel: 1080x1080 (1:1), 2-10 cards
+| Platform | Format | Spec |
+|---|---|---|
+| Facebook | Image | 1080x1080 (1:1), 30MB |
+| Facebook | Video | 1080x1920 (9:16), 4GB, 1-240min |
+| Facebook | Carousel | 1080x1080 (1:1), 2-10 cards |
+| Instagram | Feed | 1080x1080 (1:1) or 1080x1350 (4:5) |
+| Instagram | Stories/Reels | 1080x1920 (9:16), Reels 15-90s |
+| Google | RSA | 15 headlines (30 char), 4 desc (90 char) |
+| Google | Display | 1200x628, 300x250, 160x600 |
+| Google | YouTube | 16:9, 1080p min |
+| TikTok | Video | 1080x1920 (9:16), 15-60s |
 
-INSTAGRAM:
-Feed: 1080x1080 (1:1) or 1080x1350 (4:5)
-Stories: 1080x1920 (9:16)
-Reels: 1080x1920 (9:16), 15-90s
-
-GOOGLE:
-RSA: 15 headlines (30 char), 4 descriptions (90 char)
-Display: 1200x628 (landscape), 300x250, 160x600
-YouTube: 16:9 (horizontal), 1080p min
-
-TIKTOK:
-Video: 1080x1920 (9:16), 15-60s
-```
+Full specs: `platform-meta.md`, `platform-google.md`
 
 ### Hook Formulas
 
-```
-QUESTIONS:
-- "Still [doing pain point]?"
-- "Want to [desired outcome]?"
-- "What if [hypothetical]?"
-- "Why [surprising fact]?"
-- "Are you [problem identifier]?"
+Questions: "Still [pain point]?" | "Want to [outcome]?" | "What if [hypothetical]?" | "Why [surprising fact]?" | "Are you [problem identifier]?"
 
-STATEMENTS:
-- "[Result] in [timeframe]"
-- "Stop [bad thing]"
-- "I [achieved result]. Here's how."
-- "[Surprising stat]"
-- "This is why [problem occurs]"
-```
+Statements: "[Result] in [timeframe]" | "Stop [bad thing]" | "I [achieved result]. Here's how." | "[Surprising stat]" | "This is why [problem occurs]"
+
+Full formulas: `copywriting.md`
 
 ### Ad Copy Structure
 
-```
-FACEBOOK/INSTAGRAM AD:
-- Hook (first line) - 15 words max
-- Amplify (2-3 sentences)
-- Proof (social proof, stat)
-- Offer (what they get)
-- CTA (clear next step)
+**Social (FB/IG):** Hook (15 words max) → Amplify (2-3 sentences) → Proof → Offer → CTA
 
-GOOGLE SEARCH AD:
-- Headline 1: Keyword + differentiator
-- Headline 2: Primary benefit
-- Headline 3: Offer/CTA
-- Description 1: Value prop + benefits
-- Description 2: Social proof + guarantee
-```
+**Google Search:** H1: Keyword + differentiator | H2: Primary benefit | H3: Offer/CTA | D1: Value prop + benefits | D2: Social proof + guarantee
 
 ### Video Structure
 
-```
-0-3s: HOOK (pattern interrupt)
-3-10s: PROBLEM (pain/desire)
-10-30s: SOLUTION (product/service)
-30-45s: PROOF (testimonial/results)
-45-60s: CTA (clear next step)
+0-3s: HOOK (pattern interrupt) → 3-10s: PROBLEM → 10-30s: SOLUTION → 30-45s: PROOF → 45-60s: CTA
 
-Shorter versions:
-15s: Hook -> Solution -> CTA
-30s: Hook -> Problem -> Solution -> CTA
-```
+Short versions — 15s: Hook→Solution→CTA | 30s: Hook→Problem→Solution→CTA
+
+Full video guidance: `video-ugc.md`
 
 ### Testing Priority
 
-```
-TEST FIRST:
-1. Hook (video ads)
-2. Core message/value prop
-3. Offer
-4. Creative format
+1. Hook, 2. Core message/value prop, 3. Offer, 4. Creative format, 5. Headlines, 6. Images/visuals, 7. CTA, 8. Social proof, 9. Body copy, 10. Length, 11. Style
 
-TEST SECOND:
-5. Headlines
-6. Images/visuals
-7. CTA
-8. Social proof
-
-TEST THIRD:
-9. Body copy variations
-10. Length
-11. Style elements
-```
+Full methodology: `testing-optimization.md`
 
 ### Fatigue Indicators
 
-```
-IMMEDIATE ACTION NEEDED:
-- CTR down 30%+
-- CPA up 25%+
-- Frequency over 7
+| Severity | CTR Drop | CPA Rise | Frequency |
+|---|---|---|---|
+| Action needed | 30%+ | 25%+ | >7 |
+| Warning | 20% | 15% | 5-7 |
+| Monitor | 10-15% | 10% | 4-5 |
 
-WARNING SIGNS:
-- CTR down 20%
-- CPA up 15%
-- Frequency 5-7
-- Negative comments increasing
-
-MONITOR:
-- CTR down 10-15%
-- CPA up 10%
-- Frequency 4-5
-```
+Full fatigue management: `campaign-management.md`
 
 ### Performance Benchmarks
 
-```
-FACEBOOK/INSTAGRAM:
-CTR: 1.5-3% (feed), 0.8-2% (stories)
-CVR: 2-5% (e-commerce), 5-15% (lead gen)
-Frequency: Keep under 4-5
-
-GOOGLE SEARCH:
-CTR: 3-8%+
-CVR: 5-15%
-
-YOUTUBE:
-CTR: 0.5-2%
-View Rate: 30-40%
-```
+| Platform | CTR | CVR | Notes |
+|---|---|---|---|
+| FB/IG Feed | 1.5-3% | 2-5% (ecom), 5-15% (lead gen) | Frequency <4-5 |
+| FB/IG Stories | 0.8-2% | — | — |
+| Google Search | 3-8%+ | 5-15% | — |
+| YouTube | 0.5-2% | — | View rate 30-40% |
