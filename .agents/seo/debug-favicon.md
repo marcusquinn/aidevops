@@ -41,12 +41,10 @@ curl -sI "https://example.com/favicon.ico" | head -1 | cut -d' ' -f2
 | `favicon-16x16.png` | 16x16 | PNG | Browser tabs |
 | `favicon-32x32.png` | 32x32 | PNG | Browser tabs (Retina) |
 | `apple-touch-icon.png` | 180x180 | PNG | iOS home screen (default) |
-| `apple-touch-icon-152x152.png` | 152x152 | PNG | iPad (non-Retina) |
-| `apple-touch-icon-167x167.png` | 167x167 | PNG | iPad Pro |
 | manifest icon | 192x192 | PNG | **Required** — PWA install |
 | manifest icon | 512x512 | PNG | **Required** — PWA splash |
-| manifest icon | 48/72/96/144 | PNG | Android (optional) |
-| `mstile-150x150.png` | 150x150 | PNG | Windows tiles (`browserconfig.xml`) |
+
+Optional: `apple-touch-icon-152x152.png` (iPad), `apple-touch-icon-167x167.png` (iPad Pro), manifest 48/72/96/144 (Android), `mstile-150x150.png` (Windows `browserconfig.xml`).
 
 ## HTML Implementation
 
@@ -65,8 +63,6 @@ Complete setup adds: sized PNG icons per table above, `<meta name="theme-color">
 
 ```json
 {
-  "name": "My App",
-  "short_name": "App",
   "icons": [
     { "src": "/icons/icon-192x192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
     { "src": "/icons/icon-512x512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
@@ -98,17 +94,12 @@ html=$(curl -sL "$url")
 echo "=== Favicon Audit: $url ==="
 status=$(curl -sI "$base_url/favicon.ico" 2>/dev/null | head -1 | cut -d' ' -f2)
 echo "favicon.ico: ${status:-unreachable}"
-# Standard icon links
-echo "$html" | grep -oE '<link[^>]+rel="[^"]*icon[^"]*"[^>]*>' | while read -r line; do
+# All icon links (standard + apple-touch)
+echo "$html" | grep -oE '<link[^>]+rel="[^"]*\(icon\|apple-touch-icon\)[^"]*"[^>]*>' | while read -r line; do
   href=$(echo "$line" | grep -oE 'href="[^"]*"' | cut -d'"' -f2)
   sizes=$(echo "$line" | grep -oE 'sizes="[^"]*"' | cut -d'"' -f2)
-  echo "  ${sizes:-n/a} $href"
-done
-# Apple touch icons
-echo "$html" | grep -oE '<link[^>]+rel="apple-touch-icon[^"]*"[^>]*>' | while read -r line; do
-  href=$(echo "$line" | grep -oE 'href="[^"]*"' | cut -d'"' -f2)
-  sizes=$(echo "$line" | grep -oE 'sizes="[^"]*"' | cut -d'"' -f2)
-  echo "  apple ${sizes:-180x180} $href"
+  rel=$(echo "$line" | grep -oE 'rel="[^"]*"' | cut -d'"' -f2)
+  echo "  ${rel} ${sizes:-n/a} $href"
 done
 # PWA manifest
 manifest_href=$(echo "$html" | grep -oE '<link[^>]+rel="manifest"[^>]+href="[^"]*"' | grep -oE 'href="[^"]*"' | cut -d'"' -f2)
