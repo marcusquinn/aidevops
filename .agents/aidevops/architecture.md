@@ -30,7 +30,7 @@ tools:
 
 ## Preferred Tool
 
-**[Claude Code](https://Claude.ai/)** is the primary-tested AI coding agent. All features, agents, workflows, and MCP integrations are designed for Claude Code first. Other AI assistants are supported but may have less integration depth.
+**[Claude Code](https://Claude.ai/)** is the primary-tested AI coding agent. All features, agents, workflows, and MCP integrations are designed for Claude Code first.
 
 Key integrations: agents via `generate-opencode-agents.sh`, 41 slash commands, compaction plugin at `.agents/plugins/opencode-aidevops/`, system prompt at `.agents/prompts/build.txt`, native tools at `.opencode/tool/*.ts`.
 
@@ -49,7 +49,7 @@ Files in `.opencode/tool/` are **OpenCode plugin tools** — TypeScript modules 
 
 **Guide intelligence with agent docs. Do not replace it with deterministic bash logic.**
 
-aidevops replaced a 37,000-line deterministic bash supervisor (SQLite state DB, phase pipelines, grace periods, heartbeat windows) with a simple pattern: an AI agent reads guidance docs, fetches live state from GitHub, reasons, and acts. When the agent errs, fix the guidance — not a new script.
+aidevops replaced a 37,000-line deterministic bash supervisor with a simple pattern: an AI agent reads guidance docs, fetches live state from GitHub, reasons, and acts. When the agent errs, fix the guidance — not a new script.
 
 **When you encounter a supervisor/orchestration bug:**
 
@@ -64,7 +64,7 @@ Helper scripts are for **deterministic utilities** (version bumping, file discov
 
 ## Agent Architecture
 
-**Build+** is the unified coding agent for planning and implementation (consolidates former Plan+ and AI-DevOps agents):
+**Build+** is the unified coding agent for planning and implementation:
 
 - **Intent detection**: Auto-detects deliberation vs execution mode
 - **Planning**: Parallel explore agents, investigation phases, synthesis
@@ -87,8 +87,6 @@ Implements proven patterns from Lance Martin (LangChain), validated across Claud
 | **Evolve Context** | `/remember`, `/recall` with SQLite FTS5, `memory-helper.sh` |
 
 ### MCP Lifecycle Pattern
-
-**When to use MCP vs curl subagent:**
 
 | Factor | MCP | curl subagent |
 |--------|-----|---------------|
@@ -122,11 +120,14 @@ Full extension guide: `.agents/aidevops/extension.md`
 
 ### Naming Conventions
 
-- Scripts: `[service-name]-helper.sh` (lowercase, hyphenated)
-- Config: `[service-name]-config.json.txt` (template); `[service-name]-config.json` (gitignored)
-- Docs: `[SERVICE-NAME].md` (uppercase, hyphenated)
-- Functions: `action_description` (lowercase, underscored)
-- Variables: `CONSTANT_NAME` (uppercase, underscored)
+| Artifact | Convention |
+|----------|-----------|
+| Scripts | `[service-name]-helper.sh` (lowercase, hyphenated) |
+| Config template | `[service-name]-config.json.txt` |
+| Config working | `[service-name]-config.json` (gitignored) |
+| Docs | `[SERVICE-NAME].md` (uppercase, hyphenated) |
+| Functions | `action_description` (lowercase, underscored) |
+| Variables | `CONSTANT_NAME` (uppercase, underscored) |
 
 ### Security Standards
 
@@ -136,9 +137,7 @@ All services must implement: API token validation, rate limiting awareness, secu
 
 The `.agents/` directory organizes knowledge along two axes: **strategy** (what to do) and **execution** (how to do it). Full conventions in `tools/build-agent/build-agent.md` "Folder Organization".
 
-### Strategy: Main Agent Directories
-
-Main agents at root (e.g., `marketing-sales.md`, `seo.md`) own domain strategy — methodology, audience knowledge, campaign planning. Their matching directories (`marketing-sales/`, `seo/`) contain extended strategy knowledge loaded on demand.
+**Main agents** at root (e.g., `marketing-sales.md`, `seo.md`) own domain strategy. Their matching directories contain extended strategy knowledge loaded on demand.
 
 ### Execution: Cross-Domain Directories
 
@@ -158,8 +157,8 @@ All scripts live flat in `scripts/` — intentionally not grouped into domain fo
 
 ### Flat Files Over Nested Folders
 
-Inside any directory, prefer flat files with descriptive prefix-based names over nested subdirectories. File names provide sorting, grouping, and keyword discoverability. `ls {dir}/` should show everything at a glance. Max depth from `.agents/` should be 2 levels for agent knowledge. See `tools/build-agent/build-agent.md` for examples.
+Inside any directory, prefer flat files with descriptive prefix-based names over nested subdirectories. `ls {dir}/` should show everything at a glance. Max depth from `.agents/` should be 2 levels for agent knowledge. See `tools/build-agent/build-agent.md` for examples.
 
 ### Ingested Skills
 
-External skills retain the `-skill` suffix as a provenance marker enabling automated upstream update checks. On ingestion, upstream structure (nested `references/`, `rules/`, `SKILL.md` entry points) is transposed to match our flat `{name}-skill.md` + `{name}-skill/` convention. See `tools/build-agent/add-skill.md`.
+External skills retain the `-skill` suffix as a provenance marker enabling automated upstream update checks. On ingestion, upstream structure is transposed to match our flat `{name}-skill.md` + `{name}-skill/` convention. See `tools/build-agent/add-skill.md`.
