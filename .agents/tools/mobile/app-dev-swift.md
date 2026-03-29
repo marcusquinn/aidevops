@@ -33,12 +33,11 @@ tools:
 MyApp/
 ├── MyApp.swift              # @main entry point
 ├── ContentView.swift        # Root view
-├── Info.plist
-├── Assets.xcassets/
-├── Models/                  # Data models (User, AppState)
-├── Views/                   # SwiftUI views (HomeView, OnboardingView, Components/)
+├── Info.plist, Assets.xcassets/
+├── Models/                  # Data models
+├── Views/                   # SwiftUI views + Components/
 ├── Services/                # API clients, auth, notifications
-├── Stores/                  # State management (AppStore)
+├── Stores/                  # State management (@Observable)
 ├── Extensions/              # Color+Theme, View+Modifiers
 ├── Resources/               # Fonts, Localizable.xcstrings
 └── Tests/                   # UnitTests/, UITests/
@@ -48,38 +47,28 @@ MyApp/
 
 ### SwiftUI Patterns
 
-**MVVM with `@Observable`** — keep views <100 lines per file:
+**MVVM with `@Observable`** — keep views <100 lines. ViewModel pattern:
 
 ```swift
-@Observable
-final class HomeViewModel {
+@Observable final class HomeViewModel {
     var items: [Item] = []
     var isLoading = false
     var errorMessage: String?
-
     func loadItems() async {
-        isLoading = true
-        defer { isLoading = false }
-        do {
-            items = try await APIService.shared.fetchItems()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        isLoading = true; defer { isLoading = false }
+        do { items = try await APIService.shared.fetchItems() }
+        catch { errorMessage = error.localizedDescription }
     }
 }
 ```
 
 ### Design System
 
-Define semantic color/font tokens in `Extensions/Color+Theme.swift` and `Extensions/Font+Theme.swift` using `Color("Primary")` asset catalog names. Use `Font.system(.title, design: .rounded, weight: .bold)` patterns.
+Semantic color/font tokens in `Extensions/Color+Theme.swift` and `Font+Theme.swift`. Use `Color("Primary")` asset catalog names, `Font.system(.title, design: .rounded, weight: .bold)`.
 
 ### Animations
 
-- `withAnimation(.spring())` — natural transitions
-- `.matchedGeometryEffect` — shared element transitions
-- `.transition()` — view enter/exit
-- `TimelineView` — continuous animations
-- `sensoryFeedback()` — haptics paired with animations
+`withAnimation(.spring())` | `.matchedGeometryEffect` | `.transition()` | `TimelineView` | `sensoryFeedback()` (haptics)
 
 ### Native Capabilities
 
@@ -102,97 +91,63 @@ Define semantic color/font tokens in `Extensions/Color+Theme.swift` and `Extensi
 
 ### Swift Concurrency
 
-- `async/await` — all async operations
-- `Task` groups — parallel work
-- `@MainActor` — UI updates
-- `AsyncStream` — continuous data (sensors, location)
-- `Sendable` — thread safety conformance
+`async/await` | `Task` groups (parallel) | `@MainActor` (UI) | `AsyncStream` (sensors, location) | `Sendable` (thread safety)
 
 ### Data Persistence
 
-| Approach | Use Case |
-|----------|----------|
-| `@AppStorage` | Simple user preferences |
-| SwiftData | Structured local data (replaces Core Data) |
-| Keychain | Secure credentials and tokens |
-| FileManager | Documents, cached files |
-| CloudKit | iCloud sync across devices |
+`@AppStorage` (prefs) | SwiftData (structured, replaces Core Data) | Keychain (secure creds) | FileManager (docs/cache) | CloudKit (iCloud sync)
 
 ## Hybrid Content (WebKit for SwiftUI)
 
-> iOS 26+ / macOS 26+ / visionOS 26+. Requires `import WebKit`. Source: WWDC 2025 Session 231.
+> iOS 26+ / macOS 26+ / visionOS 26+. `import WebKit`. Source: WWDC 2025 Session 231. Guard with `#available` for earlier targets.
 
-Replaces `WKWebView` UIKit/AppKit bridge. Guard with `#available` for earlier targets.
-
-**`WebPage`** is `@Observable`: `url`, `title`, `isLoading`, `estimatedProgress`, `themeColor`, `isAtTop`, `isAtBottom`.
+`WebPage` (`@Observable`): `url`, `title`, `isLoading`, `estimatedProgress`, `themeColor`, `isAtTop`, `isAtBottom`.
 
 ```swift
-struct ArticleView: View {
-    @State private var page = WebPage()
-    var body: some View {
-        WebView(page)
-            .onAppear { page.url = URL(string: "https://example.com/article") }
-            .navigationTitle(page.title ?? "Loading...")
-    }
-}
-```
+// Basic usage
+@State private var page = WebPage()
+WebView(page)
+    .onAppear { page.url = URL(string: "https://example.com") }
+    .navigationTitle(page.title ?? "Loading...")
 
-**JavaScript bridge** — typed args/results automatically bridged between Swift and JS:
-
-```swift
+// JS bridge — typed args/results auto-bridged
 let count: Int = try await page.callJavaScript("addItems",
     arguments: ["items": ["apple", "banana"], "startIndex": 0])
-```
 
-**Custom URL schemes** — serve bundled HTML/CSS/JS via `URLSchemeHandler` (no network requests):
-
-```swift
-WebView(page)
-    .urlScheme("app-resource") { request in
-        guard let path = request.url?.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
-              let fileURL = Bundle.main.resourceURL?.appendingPathComponent(path) else {
-            return .init(statusCode: 404, headerFields: [:], data: Data())
-        }
-        return (try? .init(statusCode: 200, headerFields: [:], data: Data(contentsOf: fileURL)))
-            ?? .init(statusCode: 404, headerFields: [:], data: Data())
+// Custom URL schemes — serve bundled assets (no network)
+WebView(page).urlScheme("app-resource") { request in
+    guard let path = request.url?.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
+          let url = Bundle.main.resourceURL?.appendingPathComponent(path),
+          let data = try? Data(contentsOf: url) else {
+        return .init(statusCode: 404, headerFields: [:], data: Data())
     }
-```
+    return .init(statusCode: 200, headerFields: [:], data: data)
+}
 
-**Navigation policy** — control via `WebPage.NavigationDeciding`:
-
-```swift
+// Navigation policy
 page.navigationDeciding = .handler { action in
     action.request.url?.host == "example.com" ? .allow : .cancel
 }
 ```
 
-**WebView modifiers**: `webViewScrollPosition(_:)`, `onScrollGeometryChange`, `findNavigator(isPresented:)`, `webViewScrollInputBehavior(_:for:)`
+**Modifiers**: `webViewScrollPosition(_:)`, `onScrollGeometryChange`, `findNavigator(isPresented:)`, `webViewScrollInputBehavior(_:for:)`
 
-## Build and Test
+## Build, Test & Distribution
 
 ```text
 # XcodeBuildMCP
-discover_projs                   # Discover project
-build_sim --scheme MyApp         # Build for simulator
-test_sim --scheme MyApp          # Run tests
-build_run_sim --scheme MyApp     # Build and run
-screenshot                       # Screenshot current state
+discover_projs | build_sim --scheme MyApp | test_sim --scheme MyApp
+build_run_sim --scheme MyApp | screenshot
 ```
 
 ```bash
 # Local Xcode
 xcodebuild -scheme MyApp -destination 'platform=iOS Simulator,name=iPhone 16 Pro'
 xcodebuild test -scheme MyApp -destination 'platform=iOS Simulator,name=iPhone 16 Pro'
-xcodebuild archive -scheme MyApp -archivePath MyApp.xcarchive  # Distribution
+xcodebuild archive -scheme MyApp -archivePath MyApp.xcarchive
 ```
 
-## TestFlight
-
-1. Configure signing (Automatically manage signing in Xcode)
-2. Archive (`Product > Archive`) and upload via Xcode Organizer
-3. Add internal testers in App Store Connect (external requires App Review)
-
-Use `xcodebuild-mcp` device tools for direct device deployment during development.
+**TestFlight**: Configure auto-signing → Archive (`Product > Archive`) → upload via Organizer → add testers in App Store Connect (external requires App Review). Use `xcodebuild-mcp` for direct device deployment.
 
 ## Related
 
