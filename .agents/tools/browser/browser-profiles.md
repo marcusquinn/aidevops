@@ -45,7 +45,8 @@ anti-detect-helper.sh launch --disposable [--proxy "socks5://proxy:1080"]
 anti-detect-helper.sh warmup "name" --duration 30m               # Visits popular sites, scrolls, builds history
 
 # CRUD + Bulk
-anti-detect-helper.sh profile list|show|delete|clone "name" [--format json] [--keep-cookies]
+anti-detect-helper.sh profile list [--format json]
+anti-detect-helper.sh profile show|delete|clone "name" [--keep-cookies]
 anti-detect-helper.sh profile update "name" --proxy "new-proxy:8080" [--notes "text"]
 anti-detect-helper.sh profile bulk-create --count 10 --prefix "worker" --type clean
 anti-detect-helper.sh profile bulk-delete --type clean
