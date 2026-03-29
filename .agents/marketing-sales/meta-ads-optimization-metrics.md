@@ -71,7 +71,7 @@
 
 ### CPM Factors
 
-Audience size (smaller = higher), competition (more = higher), ad quality (lower = higher), seasonality (Q4 = higher), placement (Feed > Audience Network).
+Higher CPM: smaller audience, more competition, lower ad quality, Q4 seasonality, premium placements (Feed > Audience Network).
 
 | Industry | Average CPM |
 |----------|------------|
@@ -82,18 +82,14 @@ Audience size (smaller = higher), competition (more = higher), ad quality (lower
 
 ### CPC & CPA
 
+```text
+CPC = Spend ÷ Clicks = CPM ÷ (CTR × 10)    ← lower via: higher CTR, lower CPM, better relevance
+CPA = Spend ÷ Actions = CPC ÷ Conversion Rate ← lower via: lower CPC, higher CVR, better LP/offer
 ```
-CPC = Spend ÷ Clicks = CPM ÷ (CTR × 10)
-CPA = Spend ÷ Actions = CPC ÷ Conversion Rate
-```
-
-**Lower CPC:** higher CTR, lower CPM, better ad relevance. **Lower CPA:** lower CPC, higher CVR, better LP/offer.
 
 ## Quality Metrics
 
-### Ad Relevance Diagnostics
-
-Meta rates ads on **Quality Ranking**, **Engagement Rate Ranking**, and **Conversion Rate Ranking** vs competitors:
+### Ad Relevance Diagnostics (Quality / Engagement Rate / Conversion Rate Rankings)
 
 | Ranking | Meaning |
 |---------|---------|
@@ -105,7 +101,7 @@ Meta rates ads on **Quality Ranking**, **Engagement Rate Ranking**, and **Conver
 
 ### Frequency
 
-```
+```text
 Frequency = Impressions ÷ Reach
 ```
 
@@ -115,15 +111,11 @@ Frequency = Impressions ÷ Reach
 | Retargeting | 4.0+ | 6.0+ |
 | Brand Awareness | 3.0+ | 5.0+ |
 
-**High frequency signs:** CTR declining, CPA increasing, negative feedback increasing.
+High frequency signals: declining CTR, rising CPA, increasing negative feedback.
 
 ## Conversion & Revenue Metrics
 
 ### Conversion Rate
-
-```
-CVR = Conversions ÷ Landing Page Views × 100
-```
 
 | Industry | Good CVR | Great CVR |
 |----------|----------|-----------|
@@ -131,46 +123,29 @@ CVR = Conversions ÷ Landing Page Views × 100
 | Lead Gen | 10-15% | 20%+ |
 | SaaS Trial | 5-10% | 15%+ |
 
-### ROAS & Break-Even
+### Revenue Formulas
 
-```
-ROAS = Revenue ÷ Ad Spend
-Breakeven ROAS = 1 ÷ Profit Margin   (e.g. 30% margin → 3.33x)
-Breakeven CPA  = AOV × Gross Margin % (e.g. $80 AOV × 60% → $48)
-```
-
-### MER (Marketing Efficiency Ratio)
-
-```
-MER = Total Revenue ÷ Total Marketing Spend
-```
-
-Advantages over ROAS: accounts for all channels, reduces attribution arguments, provides business-level view.
-
-### Contribution Margin
-
-```
-Contribution Margin = Revenue - COGS - Ad Spend - Variable Costs
-CM% = Contribution Margin / Revenue × 100
+```text
+CVR             = Conversions ÷ Landing Page Views × 100
+ROAS            = Revenue ÷ Ad Spend
+Breakeven ROAS  = 1 ÷ Profit Margin                      (e.g. 30% margin → 3.33x)
+Breakeven CPA   = AOV × Gross Margin %                    (e.g. $80 AOV × 60% → $48)
+MER             = Total Revenue ÷ Total Marketing Spend   (cross-channel; better than ROAS for attribution)
+CM              = Revenue - COGS - Ad Spend - Variable Costs
+CM%             = CM / Revenue × 100
+Incremental ROAS = Raw ROAS × Incrementality %            (e.g. 3.0x × 60% lift = 1.8x true value)
 ```
 
-### Incrementality-Adjusted Metrics
-
-```
-Incremental ROAS = Raw ROAS × Incrementality %
-Example: 3.0x × 60% lift = 1.8x true value
-```
-
-Use for budget allocation, channel comparison, and true ROI reporting.
+Use MER for cross-channel budget allocation. Use Incremental ROAS for true ROI reporting.
 
 ## Custom Metrics to Create
 
-| Metric | Formula | Where | Purpose |
-|--------|---------|-------|---------|
-| Click to LPV Ratio | Landing Page Views ÷ Link Clicks × 100 | Ads Manager | Identify page load issues |
-| Cost Per LPV | Amount Spent ÷ Landing Page Views | Ads Manager | Landing page cost efficiency |
-| True CPA | Ad Spend ÷ Qualified Conversions | Spreadsheet | Real cost of quality conversions |
-| Blended ROAS | Total Revenue ÷ Total Ad Spend (all platforms) | Spreadsheet | True return across channels |
+| Metric | Formula | Purpose |
+|--------|---------|---------|
+| Click to LPV Ratio | Landing Page Views ÷ Link Clicks × 100 | Page load issues |
+| Cost Per LPV | Amount Spent ÷ Landing Page Views | LP cost efficiency |
+| True CPA | Ad Spend ÷ Qualified Conversions | Quality conversion cost |
+| Blended ROAS | Total Revenue ÷ Total Ad Spend (all platforms) | Cross-channel return |
 
 ## Diagnostic Patterns
 
@@ -188,7 +163,9 @@ Use for budget allocation, channel comparison, and true ROI reporting.
 - **Weekly:** CTR trend, frequency, creative performance, audience performance
 - **Monthly:** Overall ROAS/CPA vs target, attribution review, creative refresh needs, budget allocation
 
-## Recommended Custom Columns (Ads Manager → Columns → Customize Columns)
+## Recommended Custom Columns
+
+Set via Ads Manager → Columns → Customize Columns.
 
 - **Ecommerce:** ROAS, Cost Per Purchase, Purchase Conversion Value, Website Purchases, CTR (Link Click), CPM, Frequency, Reach
 - **Lead Gen:** Cost Per Lead, Leads, Lead Conversion Rate, CTR (Link Click), Landing Page Views, CPM, Frequency, Quality Ranking
@@ -196,4 +173,4 @@ Use for budget allocation, channel comparison, and true ROI reporting.
 
 ---
 
-*Next: [Scaling Playbook](scaling.md)*
+*Next: [Scaling Playbook](meta-ads-optimization-scaling.md)*
