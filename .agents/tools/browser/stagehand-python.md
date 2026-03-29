@@ -73,10 +73,12 @@ asyncio.run(main())
 
 ## Core Primitives
 
-### Act
+### Act / Observe
 
 ```python
 await page.act("click the submit button")
+actions = await page.observe()                    # all available actions
+buttons = await page.observe("find all buttons")  # filtered
 ```
 
 ### Extract
@@ -92,21 +94,12 @@ class Product(BaseModel):
 products = await page.extract("extract all product details", schema=List[Product])
 ```
 
-### Observe
-
-```python
-actions = await page.observe()
-buttons = await page.observe("find all clickable buttons")
-```
-
 ### Agent (autonomous)
 
 ```python
 agent = stagehand.agent(
-    provider="openai",
-    model="computer-use-preview",
-    integrations=[],
-    system_prompt="You are a helpful browser automation agent."
+    provider="openai", model="computer-use-preview",
+    integrations=[], system_prompt="You are a helpful browser automation agent."
 )
 await agent.execute("complete the checkout process for 2 items")
 ```
@@ -119,27 +112,21 @@ await agent.execute("complete the checkout process for 2 items")
 OPENAI_API_KEY=your_openai_api_key_here
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
 GOOGLE_API_KEY=your_google_api_key_here
-
-STAGEHAND_ENV=LOCAL          # LOCAL or BROWSERBASE
+STAGEHAND_ENV=LOCAL                               # LOCAL or BROWSERBASE
 STAGEHAND_HEADLESS=false
 STAGEHAND_VERBOSE=1
 STAGEHAND_DEBUG_DOM=true
-
 MODEL_NAME=google/gemini-2.5-flash-preview-05-20
 MODEL_API_KEY=${GOOGLE_API_KEY}
-
-# Optional cloud browsers
-BROWSERBASE_API_KEY=your_browserbase_api_key_here
+BROWSERBASE_API_KEY=your_browserbase_api_key_here  # optional cloud browsers
 BROWSERBASE_PROJECT_ID=your_browserbase_project_id_here
 ```
 
 ## MCP Integration
 
 ```bash
-bash .agents/scripts/setup-mcp-integrations.sh stagehand-python
+bash .agents/scripts/setup-mcp-integrations.sh stagehand-python  # pass via integrations=[] in agent()
 ```
-
-Pass MCP integrations via the `integrations` array in `stagehand.agent()`.
 
 ## Use Cases
 
