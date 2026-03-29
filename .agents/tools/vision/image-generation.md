@@ -28,13 +28,13 @@ tools:
 | **SD 3.5** | Stability AI | High | Medium | Free (local) | Yes | Latest Stability model |
 
 ```text
-Need text rendered in images?  → DALL-E 3 or Ideogram
-Need photorealistic quality?   → Midjourney or Imagen 3
-Need full local control?       → FLUX.1 [dev] or SD XL
-Need fast iteration (local)?   → FLUX.1 [schnell]
-Need ControlNet / img2img?     → SD XL (most mature ecosystem)
-Need API integration?          → DALL-E 3 (simplest API)
-Budget-conscious?              → FLUX or SD locally (GPU cost only)
+Text in images?       → DALL-E 3 or Ideogram
+Photorealistic?       → Midjourney or Imagen 3
+Full local control?   → FLUX.1 [dev] or SD XL
+Fast local iteration? → FLUX.1 [schnell]
+ControlNet / img2img? → SD XL (most mature ecosystem)
+Simplest API?         → DALL-E 3
+Budget-conscious?     → FLUX or SD locally (GPU cost only)
 ```
 
 ## Cloud APIs
@@ -53,15 +53,15 @@ curl https://api.openai.com/v1/images/generations \
 | Parameter | Options | Notes |
 |-----------|---------|-------|
 | `size` | 1024x1024, 1024x1792, 1792x1024 | Square, portrait, landscape |
-| `quality` | standard, hd | HD costs 2x; standard $0.04, HD $0.08 per image |
+| `quality` | standard, hd | Standard $0.04, HD $0.08/image |
 | `style` | natural, vivid | Natural = photorealistic, vivid = artistic |
-| `n` | 1 | Only 1 image per request; no inpainting (use v2 API for edits) |
+| `n` | 1 | DALL-E 3 supports 1/request; use v2 API for edits |
 
 ### Midjourney
 
-No REST API — use Discord `/imagine` or web UI at [midjourney.com](https://www.midjourney.com/).
+No REST API — use Discord `/imagine` or [midjourney.com](https://www.midjourney.com/).
 
-Prompt flags: `--ar 16:9` (aspect ratio) · `--v 6` (latest model) · `--style raw` (less stylised) · `--no text, watermark` (negatives)
+Flags: `--ar 16:9` (aspect) · `--v 6` (model) · `--style raw` (less stylised) · `--no text, watermark` (negatives)
 
 ### Google Imagen 3
 
@@ -75,8 +75,6 @@ curl -X POST \
 
 ## Local Generation (ComfyUI)
 
-Node-based workflow tool supporting FLUX, SD XL, ControlNet, and custom pipelines.
-
 ```bash
 git clone https://github.com/comfyanonymous/ComfyUI.git
 cd ComfyUI && pip install -r requirements.txt
@@ -85,8 +83,6 @@ cd ComfyUI && pip install -r requirements.txt
 python main.py --listen 0.0.0.0 --port 8188
 ```
 
-**VRAM requirements**:
-
 | Model | Min VRAM | Recommended |
 |-------|----------|-------------|
 | FLUX.1 [schnell] | 8GB | 12GB+ |
@@ -94,7 +90,7 @@ python main.py --listen 0.0.0.0 --port 8188
 | SD XL | 6GB | 8GB+ |
 | SD 3.5 | 8GB | 12GB+ |
 
-**ComfyUI API (headless)**:
+**Headless API**:
 
 ```bash
 curl -X POST http://localhost:8188/prompt -H "Content-Type: application/json" -d '{"prompt": <workflow-json>}'
@@ -104,7 +100,7 @@ curl "http://localhost:8188/view?filename=<output-filename>"
 
 ## Prompt Engineering
 
-Effective prompts: subject + style + lighting + composition + mood.
+Structure: subject + style + lighting + composition + mood.
 
 Example: `"A golden retriever puppy on red velvet, oil painting, soft natural light, close-up, warm and inviting"`
 
@@ -120,18 +116,24 @@ text, signature, oversaturated, underexposed, overexposed
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-local prompt="$1"
-local count="${2:-4}"
-local output_dir="${3:-.}"
 
-for i in $(seq 1 "$count"); do
-  curl -s https://api.openai.com/v1/images/generations \
-    -H "Authorization: Bearer $OPENAI_API_KEY" \
-    -H "Content-Type: application/json" \
-    -d "{\"model\": \"dall-e-3\", \"prompt\": \"$prompt\", \"size\": \"1024x1024\", \"quality\": \"hd\"}" \
-    | python3 -c "import json,sys,urllib.request; url=json.load(sys.stdin)['data'][0]['url']; urllib.request.urlretrieve(url, '$output_dir/gen_$i.png')"
-  echo "Saved: $output_dir/gen_$i.png"
-done
+generate_batch() {
+  local prompt="$1"
+  local count="${2:-4}"
+  local output_dir="${3:-.}"
+
+  for i in $(seq 1 "$count"); do
+    curl -s https://api.openai.com/v1/images/generations \
+      -H "Authorization: Bearer $OPENAI_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d "{\"model\": \"dall-e-3\", \"prompt\": \"$prompt\", \"size\": \"1024x1024\", \"quality\": \"hd\"}" \
+      | python3 -c "import json,sys,urllib.request; url=json.load(sys.stdin)['data'][0]['url']; urllib.request.urlretrieve(url, '$output_dir/gen_$i.png')"
+    echo "Saved: $output_dir/gen_$i.png"
+  done
+  return 0
+}
+
+generate_batch "$@"
 ```
 
 ## See Also
