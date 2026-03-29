@@ -235,7 +235,11 @@ create_task_for_finding() {
 	local today=""
 	today="$(date +%Y-%m-%d)"
 
-	local todo_line="- [ ] ${task_id} ${title} ${tags}"
+	# Add session origin tag (#worker or #interactive)
+	local origin_tag=""
+	origin_tag="#$(detect_session_origin)"
+
+	local todo_line="- [ ] ${task_id} ${title} ${tags} ${origin_tag}"
 	if [[ -n "$issue_ref" && "$issue_ref" != "offline" ]]; then
 		todo_line+=" ref:${issue_ref}"
 	fi

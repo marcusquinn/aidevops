@@ -101,8 +101,10 @@ Run `task-decompose-helper.sh classify "{title}"` if available. Skip with `--no-
 ### Step 6: Add to TODO.md
 
 ```markdown
-- [ ] {task_id} {title} #{tag} ~{estimate} ref:{task_ref} logged:{YYYY-MM-DD}
+- [ ] {task_id} {title} #{tag} #{origin} ~{estimate} ref:{task_ref} logged:{YYYY-MM-DD}
 ```
+
+Where `#{origin}` is `#interactive` (user session) or `#worker` (headless/pulse dispatch). Detect via `detect_session_origin` from `shared-constants.sh`, or infer: if the user is present, use `#interactive`; if running headless (`$FULL_LOOP_HEADLESS`, `$AIDEVOPS_HEADLESS`, or no TTY), use `#worker`. These map to `origin:interactive` / `origin:worker` GitHub labels on issue sync.
 
 **Auto-dispatch:** Only add `#auto-dispatch` if the brief has: (1) 2+ acceptance criteria beyond "tests pass"/"lint clean", (2) non-empty "How" with file references, (3) clear deliverable in "What".
 
@@ -134,8 +136,8 @@ AI:   Allocated: t325 (ref:GH#1260)
 
 User: 2
 AI:   Added and claimed:
-      - TODO.md: - [ ] t325 Add CSV export button #feature #auto-dispatch ~1h ref:GH#1260
-      - Issue #1260: assigned + status:in-progress
+      - TODO.md: - [ ] t325 Add CSV export button #feature #interactive #auto-dispatch ~1h ref:GH#1260
+      - Issue #1260: assigned + status:in-progress + origin:interactive
       Pulse workers will skip until you release or 3h stale recovery kicks in.
 ```
 
