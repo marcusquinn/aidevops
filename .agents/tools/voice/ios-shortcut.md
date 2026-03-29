@@ -19,7 +19,7 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Dictate voice commands on iPhone, dispatch to OpenCode server, hear response
-- **Flow**: Dictate (iOS STT) -> HTTP POST to OpenCode -> Wait -> Speak (iOS TTS)
+- **Flow**: Dictate (iOS STT) → HTTP POST to OpenCode → Wait → Speak (iOS TTS)
 - **Network**: Requires OpenCode server reachable from iPhone (Tailscale, local Wi-Fi, or port forward)
 - **Related**: `tools/voice/speech-to-speech.md`, `tools/ai-assistants/opencode-server.md`
 
@@ -81,25 +81,18 @@ Create a new Shortcut in iOS Shortcuts app with these actions in order:
 
 - URL: `ServerURL/session/SessionID/message`
 - Method: `POST`
-- Headers: `Content-Type: application/json`, `Authorization: Basic base64(user:password)` (if auth enabled)
+- Headers: `Content-Type: application/json`; if auth enabled: `Authorization: Basic <base64(user:password)>` — default username `user` (override with `OPENCODE_SERVER_USERNAME`). Encode: `echo -n "user:password" | base64`.
 - Request Body (JSON):
 
   ```json
   {
-    "parts": [
-      {
-        "type": "text",
-        "text": "Dictated Text"
-      }
-    ]
+    "parts": [{ "type": "text", "text": "Dictated Text" }]
   }
   ```
 
   Use the `Dictated Text` variable from step 1 as the `text` value.
 
 ### Optional Enhancements
-
-**Authentication** (if `OPENCODE_SERVER_PASSWORD` is set): Add header `Authorization: Basic <base64(user:password)>` in step 4. Default username is `user` unless `OPENCODE_SERVER_USERNAME` is set. Encode: `echo -n "user:password" | base64`.
 
 **Error handling**: After step 4, add `If` action checking `Contents of URL` is not empty. Failure branch: `Show Alert` with "Could not reach OpenCode server".
 
