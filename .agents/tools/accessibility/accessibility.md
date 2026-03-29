@@ -55,106 +55,61 @@ export WAVE_API_KEY="your-key"     # or environment variable
 
 ## Usage
 
-### Full Audit
-
-Runs Lighthouse + pa11y on desktop and mobile:
+### accessibility-helper.sh
 
 ```bash
+# Full audit — Lighthouse + pa11y, desktop and mobile
 .agents/scripts/accessibility-helper.sh audit https://example.com
-```
 
-### Lighthouse
-
-```bash
+# Lighthouse — score (0-100%), failed audits (contrast, ARIA, labels), ARIA validation
 .agents/scripts/accessibility-helper.sh lighthouse https://example.com         # desktop
 .agents/scripts/accessibility-helper.sh lighthouse https://example.com mobile  # mobile
-```
 
-Reports: accessibility score (0-100%), failed audits (contrast, ARIA, labels), ARIA validation.
-
-### pa11y WCAG Testing
-
-```bash
+# pa11y — errors (must fix), warnings (should fix), notices (advisory)
 .agents/scripts/accessibility-helper.sh pa11y https://example.com           # AA (default)
 .agents/scripts/accessibility-helper.sh pa11y https://example.com WCAG2AAA  # AAA
 .agents/scripts/accessibility-helper.sh pa11y https://example.com WCAG2A    # A
-```
 
-Issues categorised as errors (must fix), warnings (should fix), notices (advisory).
-
-### WAVE API
-
-Evaluates pages after CSS/JS rendering. Requires `WAVE_API_KEY`.
-
-```bash
-.agents/scripts/accessibility-helper.sh wave https://example.com    # type 2 (default, 2 credits)
-.agents/scripts/accessibility-helper.sh wave https://example.com 3  # + XPath locations (3 credits)
-.agents/scripts/accessibility-helper.sh wave https://example.com 4  # + CSS selectors (3 credits)
+# WAVE API (requires WAVE_API_KEY) — evaluates after CSS/JS rendering
+# Types: 1=counts (1 credit), 2=+details (2 credits), 3/4=+locations+contrast (3 credits)
+# Categories: errors, contrast errors, alerts, features, structural elements, ARIA
+.agents/scripts/accessibility-helper.sh wave https://example.com    # type 2 (default)
+.agents/scripts/accessibility-helper.sh wave https://example.com 3  # + XPath locations
+.agents/scripts/accessibility-helper.sh wave https://example.com 4  # + CSS selectors
 .agents/scripts/accessibility-helper.sh wave-mobile https://example.com  # 375px viewport
 .agents/scripts/accessibility-helper.sh wave-docs alt_missing            # look up WAVE item
 .agents/scripts/accessibility-helper.sh wave-credits                     # check remaining credits
-```
 
-Report types: 1 = counts only (1 credit), 2 = counts + item details (2 credits), 3/4 = + locations + contrast data (3 credits).
-
-WAVE categories: errors (must fix), contrast errors, alerts (should review), features (positive), structural elements, ARIA usage.
-
-### Contrast Ratio Calculator
-
-```bash
+# Contrast ratio — pass/fail for AA normal (4.5:1), AA large (3:1), AAA normal (7:1), AAA large (4.5:1)
 .agents/scripts/accessibility-helper.sh contrast '#333333' '#ffffff'
-```
 
-Output: pass/fail for AA normal (4.5:1), AA large (3:1), AAA normal (7:1), AAA large (4.5:1).
-
-### Playwright Contrast Extraction
-
-Renders page headlessly, traverses DOM extracting computed foreground/background colors (resolving transparent backgrounds), font sizes, and weights. Calculates WCAG ratios per element. Per-element output: CSS selector, computed colors, contrast ratio `(L1+0.05)/(L2+0.05)`, AA/AAA pass/fail (SC 1.4.3/1.4.6), large text detection (≥18pt or ≥14pt bold), gradient/image background flags for manual review. Exit codes: 0 = all pass, 1 = failures found, 2 = script error.
-
-```bash
+# Playwright contrast — headless DOM traversal; computed fg/bg colors, font size/weight,
+# WCAG ratio per element (L1+0.05)/(L2+0.05), SC 1.4.3/1.4.6, large text (≥18pt or ≥14pt bold),
+# gradient/image background flags. Exit: 0=pass, 1=failures, 2=script error.
 .agents/scripts/accessibility-helper.sh playwright-contrast https://example.com           # summary
 .agents/scripts/accessibility-helper.sh playwright-contrast https://example.com json      # JSON
 .agents/scripts/accessibility-helper.sh playwright-contrast https://example.com markdown AAA
-
-# Direct script (more options)
 node .agents/scripts/accessibility/playwright-contrast.mjs https://example.com --format json --fail-only
 node .agents/scripts/accessibility/playwright-contrast.mjs https://example.com --limit 20
-```
 
-### Email HTML Accessibility
-
-Checks: `alt` on images (1.1.1), `lang` on `<html>` (3.1.1), `role="presentation"` on layout tables (1.3.1), font size <12px (1.4.4), generic link text (2.4.4), heading structure (1.3.1), color-only indicators (1.4.1).
-
-```bash
+# Email HTML — checks: alt (1.1.1), lang (3.1.1), role="presentation" on layout tables (1.3.1),
+# font <12px (1.4.4), generic link text (2.4.4), heading structure (1.3.1), color-only (1.4.1)
+# Key: email clients strip CSS/JS — use alt text, role="presentation", lang, ≥14px font, descriptive links
 .agents/scripts/accessibility-helper.sh email ./newsletter.html
+
+# Bulk audit — one URL per line, # for comments
+.agents/scripts/accessibility-helper.sh bulk sites.txt
 ```
 
-Email clients strip most CSS/JS. Key rules: `alt` text on all images; `role="presentation"` on layout tables; `lang` on `<html>`; minimum 14px font size; avoid colour-only indicators; descriptive link text; logical reading order; preheader text for screen readers.
-
-### Bulk Audit
+### accessibility-audit-helper.sh
 
 ```bash
-.agents/scripts/accessibility-helper.sh bulk sites.txt  # one URL per line, # for comments
-```
-
-### Audit Helper Commands
-
-```bash
-# axe-core (default tags: wcag2a, wcag2aa, best-practice)
-.agents/scripts/accessibility-audit-helper.sh axe https://example.com
+.agents/scripts/accessibility-audit-helper.sh axe https://example.com                    # default: wcag2a, wcag2aa, best-practice
 .agents/scripts/accessibility-audit-helper.sh axe https://example.com wcag2aa,wcag21aa
-
-# WAVE API (requires WAVE_API_KEY)
-.agents/scripts/accessibility-audit-helper.sh wave https://example.com
-
-# WebAIM contrast (no key required)
-.agents/scripts/accessibility-audit-helper.sh contrast '#333333' '#ffffff'
-
-# Multi-engine comparison
-.agents/scripts/accessibility-audit-helper.sh compare https://example.com
-
-# Check installed engines
-.agents/scripts/accessibility-audit-helper.sh status
+.agents/scripts/accessibility-audit-helper.sh wave https://example.com                   # requires WAVE_API_KEY
+.agents/scripts/accessibility-audit-helper.sh contrast '#333333' '#ffffff'               # WebAIM, no key required
+.agents/scripts/accessibility-audit-helper.sh compare https://example.com               # multi-engine comparison
+.agents/scripts/accessibility-audit-helper.sh status                                     # check installed engines
 ```
 
 ## WCAG 2.1 Quick Reference
