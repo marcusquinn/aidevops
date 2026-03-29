@@ -39,17 +39,17 @@ tools:
 
 ## Platform Support
 
-| Platform | GPU Acceleration | Binary size |
-|----------|-----------------|-------------|
+| Platform | GPU Acceleration | Binary |
+|----------|-----------------|--------|
 | macOS ARM64 | Metal (native) | ~29 MB |
 | macOS x86_64 | Metal | ~82 MB |
 | Linux x64 CPU | None | ~23 MB |
 | Linux x64 Vulkan | NVIDIA/AMD/Intel | ~40 MB |
 | Linux ROCm | AMD (ROCm runtime required) | ~130 MB |
 
-**NVIDIA/CUDA on Linux**: Use the Vulkan binary — performance is comparable to CUDA for inference. For CUDA-specific features, compile from source with `-DGGML_CUDA=ON`.
+**NVIDIA/CUDA**: Use Vulkan binary — comparable inference performance. CUDA-specific features: compile from source with `-DGGML_CUDA=ON`.
 
-**Linux ARM64**: No prebuilt binary. Compile from source:
+**Linux ARM64**: No prebuilt binary — compile from source:
 
 ```bash
 git clone https://github.com/ggml-org/llama.cpp.git
@@ -63,16 +63,7 @@ cp build/bin/llama-server ~/.aidevops/local-models/bin/
 local-model-helper.sh setup   # detects platform, downloads binary, installs huggingface-cli, initialises SQLite DB
 ```
 
-Directory structure:
-
-```text
-~/.aidevops/local-models/
-├── bin/llama-server
-├── models/          # GGUF files
-└── config.json      # port, context, threads defaults
-
-~/.aidevops/.agent-workspace/memory/local-models.db   # model_usage + model_inventory
-```
+Directory layout: `~/.aidevops/local-models/{bin/llama-server,models/,config.json}` · DB: `~/.aidevops/.agent-workspace/memory/local-models.db`
 
 ## Hardware & Model Selection
 
@@ -90,7 +81,7 @@ local-model-helper.sh recommend   # detects RAM/GPU, suggests models with size a
 | 64 GB | ~45 GB | Q6_K or Q8_0 |
 | 96+ GB | ~70 GB | Q8_0 or FP16 |
 
-**Quantization** (Q4_K_M is the default — best size/quality balance):
+**Quantization** (Q4_K_M default — best size/quality balance):
 
 | Quant | Size vs FP16 | Quality Loss |
 |-------|-------------|-------------|
@@ -144,7 +135,7 @@ compare-models-helper.sh compare local sonnet haiku
 response-scoring-helper.sh prompt "Explain X" --models local,haiku,sonnet
 ```
 
-> Integration requires helper scripts updated to recognise `local` tier (tracked in t1338).
+> Helper scripts must recognise `local` tier (tracked in t1338).
 
 ## Usage Tracking & Cleanup
 
@@ -157,11 +148,6 @@ local-model-helper.sh cleanup --remove <model.gguf>   # remove specific model
 local-model-helper.sh cleanup --threshold 60          # change stale threshold (days)
 local-model-helper.sh benchmark --model <file>        # tok/s, time-to-first-token
 ```
-
-**DB schema** (`local-models.db`):
-
-- `model_usage`: id, model, session_id, timestamp, tokens_in, tokens_out, duration_ms, tok_per_sec
-- `model_inventory`: model (PK), file_path, repo_source, size_bytes, quantization, first_seen, last_used, total_requests
 
 ## Troubleshooting
 
