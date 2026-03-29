@@ -20,11 +20,10 @@ tools:
 
 - **Type**: Self-hosted password manager (Bitwarden API compatible)
 - **CLI**: `npm install -g @bitwarden/cli` then `bw`
-- **Auth**: `bw login email` then `export BW_SESSION=$(bw unlock --raw)`
+- **Auth**: `bw login email` → `export BW_SESSION=$(bw unlock --raw)`
 - **Config**: `configs/vaultwarden-config.json`
 - **Commands**: `vaultwarden-helper.sh [instances|status|login|unlock|list|search|get|get-password|create|audit|start-mcp] [instance] [args]`
-- **Session**: `BW_SESSION` env var required after unlock
-- **Lock**: `bw lock` and `unset BW_SESSION` when done
+- **Session**: `BW_SESSION` env var required after unlock; `unset BW_SESSION && bw lock` when done
 - **MCP**: Port 3002 for AI assistant credential access
 - **Backup**: `bw export --format json` (encrypt with GPG)
 
@@ -32,16 +31,14 @@ tools:
 
 ## Service Detection
 
-The same `bw` CLI works for both Bitwarden cloud and Vaultwarden self-hosted.
-
 | Server URL | Service |
 |------------|---------|
 | `vault.bitwarden.com` (default) | Bitwarden Cloud |
 | Any other domain | Vaultwarden self-hosted |
 
 ```bash
-bw config server                          # check current server
-bw config server https://vault.yourdomain.com  # set self-hosted
+bw config server                                    # check current server
+bw config server https://vault.yourdomain.com       # set self-hosted
 ```
 
 ## Configuration
@@ -99,22 +96,9 @@ vaultwarden-helper.sh start-mcp production 3002
 vaultwarden-helper.sh test-mcp 3002
 ```
 
-## Session Management
-
-```bash
-export BW_SESSION=$(bw unlock --raw)
-# ... use vault ...
-unset BW_SESSION && bw lock
-```
-
 ## MCP Integration
 
-```bash
-vaultwarden-helper.sh start-mcp production 3002
-vaultwarden-helper.sh test-mcp 3002
-```
-
-MCP server config (add to AI assistant MCP servers):
+Add to AI assistant MCP servers config:
 
 ```json
 {
@@ -166,5 +150,4 @@ bw unlock
 
 # Sync
 bw sync --force
-bw status
 ```
