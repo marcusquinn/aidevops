@@ -15,8 +15,6 @@ tools:
 
 # Content Optimization
 
-Data-driven content improvement through systematic testing, variant generation, and analytics feedback loops.
-
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
@@ -100,14 +98,9 @@ thumbnail-helper.sh analyze VIDEO_ID
 | Email | Open rate | <15% | 15-25% | >25% | Test subject lines → good → replicate |
 | Email | Click rate | <2% | 2-5% | >5% | CTA failed → decent → offer works |
 
-### Retention Analysis
+**Retention analysis**: YouTube Studio → Analytics → Retention → Export CSV. Identify >10% drops in <5s. Categorize: Hook failure (0:00-0:10), Pacing issue (gradual), Scene failure (sharp), Natural exit (gradual at end). Hypothesize → test fixes → compare.
 
-1. Export: YouTube Studio → Analytics → Retention → Export CSV
-2. Identify >10% drops in <5s
-3. Categorize: Hook failure (0:00-0:10), Pacing issue (gradual), Scene failure (sharp), Natural exit (gradual at end)
-4. Hypothesize → test fixes → compare retention
-
-### Content Calendar
+**Content calendar**:
 
 ```bash
 content-calendar-helper.sh cadence --weeks 1    # last week performance
@@ -120,28 +113,22 @@ content-calendar-helper.sh stats                # overall health
 
 **Seasonality**: Q4 (Oct-Dec) highest buying intent → reviews, comparisons, affiliate. Q1 educational/how-to. Q2-Q3 experiment + build backlog.
 
-### Feedback Loop
-
-Publish → Collect analytics → Analyze → Extract patterns → Store (`/remember "Pattern: ..."`) → Feed research cycle → Inform next plan → repeat.
+**Feedback loop**: Publish → collect analytics → analyze → extract patterns → store (`/remember "Pattern: ..."`) → feed research cycle → repeat.
 
 ## Proven First, Original Second
 
 1. Find proven content: top YouTube videos, viral TikToks, high-traffic posts (Ahrefs/SEMrush)
 2. Replicate structure (same hook type, different topic) — copy format, not content
 3. Add 3% twist: different personality, visual style, examples, or contrarian take
-4. Test 10 variants with different twists → scale winner
+4. Test 10 variants → scale winner. Example: "I spent $10K testing every AI video tool" (1M views) → twist: "free ones that beat paid" / "why I refunded 90%"
 
-Example: "I spent $10K testing every AI video tool" (1M views) → twist: "free ones that beat paid" / "why I refunded 90%"
-
-## Tools & Automation
+## Tools & Integration
 
 **Analytics**: YouTube Studio, TikTok Analytics, Google Analytics, Google Search Console (`seo/google-search-console.md`), DataForSEO (`seo/dataforseo.md`)
 
 **A/B testing**: YouTube Studio (thumbnails), Google Optimize (website), VWO, Optimizely
 
 **Scripts**: `content-calendar-helper.sh` (calendar/cadence/gaps, t208) | `analytics-helper.sh` (cross-platform reports) | `variant-generator-helper.sh` (10 variants) | `seed-bracket-helper.sh` (AI video seed testing) | `thumbnail-factory-helper.sh` (thumbnail variants, t207)
-
-## Integration
 
 **Feeds into**: `content/research.md` (next research), `content/production-*.md` (next batch). **Uses from**: `content/distribution-*.md` (analytics), `content/production-*.md` (variants). **Related**: `tools/task-management/beads.md`, `reference/memory.md`.
 
