@@ -52,136 +52,59 @@ tools:
 | VirusTotal | Free tier | ~16s/req | `VIRUSTOTAL_MARCUSQUINN` or `VIRUSTOTAL_API_KEY` (gopass) |
 | Cisco AI Defense | Enterprise | ~1s | `AI_DEFENSE_API_KEY` |
 
-## aidevops Integration Points
+## aidevops Integration
 
-### Import-time scanning (automatic)
-
-When `skill-scanner` is installed, `add-skill-helper.sh` automatically scans
-skills during import. CRITICAL/HIGH findings block import unless `--force`.
-
-### Batch scanning
-
-```bash
-# Scan all imported skills
-aidevops skill scan
-
-# Scan specific skill
-aidevops skill scan cloudflare-platform-skill
-
-# Via security-helper directly
-security-helper.sh skill-scan all
-security-helper.sh skill-scan cloudflare-platform-skill
-```
-
-### Setup-time scanning
-
-`setup.sh` runs a security scan on all imported skills during `aidevops update`.
-Non-blocking: findings are reported but don't halt setup.
-
-### Update-time scanning
-
-`skill-update-helper.sh update` re-imports via `add-skill-helper.sh --force`,
-which triggers the security scan on the updated content.
-
-### Results log
-
-Scan results are appended to `.agents/configs/configs/SKILL-SCAN-RESULTS.md` automatically by
-`security-helper.sh skill-scan` (batch) and `add-skill-helper.sh` (per-import).
-The file contains the latest full scan summary and a history table for audit trail.
+- **Import-time** (automatic): `add-skill-helper.sh` scans on import; CRITICAL/HIGH blocks unless `--force`
+- **Batch**: `aidevops skill scan` / `security-helper.sh skill-scan all`
+- **Setup-time**: `setup.sh` scans all skills on `aidevops update` (non-blocking)
+- **Update-time**: `skill-update-helper.sh update` re-imports via `add-skill-helper.sh --force`
+- **Results log**: `.agents/configs/configs/SKILL-SCAN-RESULTS.md` (latest summary + audit history)
 
 ## CLI Usage
 
 ```bash
-# Static-only scan (fast, no API key)
-skill-scanner scan /path/to/skill
-
-# With behavioral analysis
-skill-scanner scan /path/to/skill --use-behavioral
-
-# Full scan with LLM
-skill-scanner scan /path/to/skill --use-behavioral --use-llm
-
-# With false-positive filtering
-skill-scanner scan /path/to/skill --use-llm --enable-meta
-
-# Batch scan
-skill-scanner scan-all /path/to/skills --recursive
-
-# CI/CD mode
-skill-scanner scan-all ./skills --fail-on-findings --format sarif --output results.sarif
-
-# Custom YARA rules
-skill-scanner scan /path/to/skill --custom-rules /path/to/rules/
-
-# Disable noisy rules
-skill-scanner scan /path/to/skill --disable-rule YARA_script_injection
-
-# Permissive mode (fewer findings)
-skill-scanner scan /path/to/skill --yara-mode permissive
+skill-scanner scan /path/to/skill                                          # static only (fast)
+skill-scanner scan /path/to/skill --use-behavioral                        # + AST dataflow
+skill-scanner scan /path/to/skill --use-behavioral --use-llm              # full scan
+skill-scanner scan /path/to/skill --use-llm --enable-meta                 # + FP filtering
+skill-scanner scan-all /path/to/skills --recursive                        # batch
+skill-scanner scan-all ./skills --fail-on-findings --format sarif --output results.sarif  # CI/CD
+skill-scanner scan /path/to/skill --custom-rules /path/to/rules/          # custom YARA
+skill-scanner scan /path/to/skill --disable-rule YARA_script_injection    # suppress rule
+skill-scanner scan /path/to/skill --yara-mode permissive                  # fewer findings
 ```
 
 ## VirusTotal Integration
 
-VirusTotal provides an advisory second layer of security scanning alongside the
-Cisco Skill Scanner. It checks file hashes against 70+ AV engines and scans
-domains/URLs referenced in skill content.
+Advisory second layer alongside Cisco scanner. Checks file hashes (SHA256) against 70+ AV engines and scans domains/URLs in skill content. **VT is advisory only** — Cisco scanner remains the import gate.
 
-**Key design**: VT scans are **advisory only** -- the Cisco Skill Scanner remains
-the security gate for imports. VT adds value by detecting known malware hashes
-and flagging malicious domains that static analysis cannot catch.
-
-### How it works
-
-1. **File hash lookup**: SHA256 of each skill file is checked against VT's database
-2. **Domain reputation**: URLs extracted from skill content are checked for threats
-3. **Rate limiting**: 16s between requests (free tier: 4 req/min, 500 req/day)
-4. **Max 8 requests per skill scan** to avoid exhausting daily quota
-
-### Usage
+- Rate limit: 16s between requests (free tier: 4 req/min, 500 req/day); max 8 requests per skill scan
 
 ```bash
-# Standalone VT scan
 virustotal-helper.sh scan-skill /path/to/skill/
 virustotal-helper.sh scan-file /path/to/file.md
 virustotal-helper.sh scan-domain example.com
 virustotal-helper.sh scan-url https://example.com/payload
 virustotal-helper.sh status
 
-# Via security-helper
-security-helper.sh vt-scan skill /path/to/skill/
+security-helper.sh vt-scan skill /path/to/skill/   # via security-helper
 security-helper.sh vt-scan file /path/to/file.md
 security-helper.sh vt-scan status
-
-# Automatic: VT runs as advisory after Cisco scanner in:
-# - security-helper.sh skill-scan all
-# - add-skill-helper.sh (GitHub and ClawdHub imports)
+# Runs automatically (advisory) after Cisco scanner in: security-helper.sh skill-scan all, add-skill-helper.sh
 ```
 
-### API key setup
-
-```bash
-# Recommended: gopass encrypted storage
-aidevops secret set VIRUSTOTAL_MARCUSQUINN
-
-# Alternative: credentials.sh
-echo 'export VIRUSTOTAL_API_KEY="your_key"' >> ~/.config/aidevops/credentials.sh
-```
+**API key**: `aidevops secret set VIRUSTOTAL_MARCUSQUINN` (gopass preferred) or add to `~/.config/aidevops/credentials.sh`.
 
 ## Environment Variables
 
 ```bash
-# LLM analyzer (optional)
-export SKILL_SCANNER_LLM_API_KEY="your_api_key"
+export SKILL_SCANNER_LLM_API_KEY="your_api_key"   # LLM analyzer (optional)
 export SKILL_SCANNER_LLM_MODEL="claude-sonnet-4-6"
-
-# VirusTotal (optional - prefer gopass: aidevops secret set VIRUSTOTAL_MARCUSQUINN)
-export VIRUSTOTAL_API_KEY="your_key"
-
-# Cisco AI Defense (optional)
-export AI_DEFENSE_API_KEY="your_key"
+export VIRUSTOTAL_API_KEY="your_key"               # prefer gopass: aidevops secret set VIRUSTOTAL_MARCUSQUINN
+export AI_DEFENSE_API_KEY="your_key"               # Cisco AI Defense (optional)
 ```
 
-Store keys in `~/.config/aidevops/credentials.sh` (600 permissions).
+Store in `~/.config/aidevops/credentials.sh` (600 permissions).
 
 ## Response Guidelines
 
