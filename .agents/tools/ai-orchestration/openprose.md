@@ -1,14 +1,7 @@
 ---
 description: OpenProse DSL for multi-agent orchestration - structured English for AI session control flow
 mode: subagent
-tools:
-  read: true
-  write: true
-  edit: true
-  bash: true
-  glob: true
-  grep: true
-  task: true
+tools: [read, write, edit, bash, glob, grep, task]
 ---
 
 # OpenProse - Multi-Agent Orchestration DSL
@@ -157,7 +150,7 @@ session "Synthesize all reviews"
 
 ### Development Loop with Quality Gates
 
-See `scripts/commands/full-loop.md` for the canonical full-loop workflow. OpenProse equivalent:
+See `scripts/commands/full-loop.md` for the canonical workflow. OpenProse equivalent:
 
 ```prose
 agent developer:
