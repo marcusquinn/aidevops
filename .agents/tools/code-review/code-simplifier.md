@@ -168,7 +168,7 @@ fi
 
 ## Quality Workflow and Pulse Integration
 
-**Daily scan (GH#5628):** `pulse-wrapper.sh` creates `simplification-debt` issues for files exceeding violation threshold (default: 1+ functions >100 lines). Deduped by file path. No file size gate (t1679) — classification determines action. Config: `COMPLEXITY_SCAN_INTERVAL` (1 day), `COMPLEXITY_FILE_VIOLATION_THRESHOLD` (1), `COMPLEXITY_MD_MIN_LINES` (50).
+**Daily scan (GH#5628):** `pulse-wrapper.sh` creates `simplification-debt` issues for files exceeding violation threshold (default: 1+ functions >100 lines). Deduped by file path. No file size gate in daily scan (t1679) — classification determines action. Config: `COMPLEXITY_SCAN_INTERVAL` (1 day), `COMPLEXITY_FILE_VIOLATION_THRESHOLD` (1), `COMPLEXITY_MD_MIN_LINES` (50).
 
 **CI ratchet (GH#5628):** `.agents/configs/complexity-thresholds.conf` (`FUNCTION_COMPLEXITY_THRESHOLD`, `NESTING_DEPTH_THRESHOLD`, `FILE_SIZE_THRESHOLD`). Lower after simplification PRs merge.
 
