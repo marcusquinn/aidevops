@@ -8,9 +8,7 @@ Run a comprehensive SEO audit for the specified URL or domain.
 
 URL/Target: $ARGUMENTS
 
-## Workflow
-
-### Step 1: Parse Arguments
+## Arguments
 
 ```text
 Default: Full audit (technical + on-page + content)
@@ -22,163 +20,95 @@ Options:
   --output=report.md                      Save report to file
 ```
 
-### Step 2: Read SEO Audit Subagent
+## Workflow
 
-Read `~/.aidevops/agents/seo/seo-audit-skill.md` for:
-- Complete audit framework and priority order
-- Technical SEO checklist (crawlability, indexation, Core Web Vitals)
-- On-page optimization checklist (titles, meta, headings, content)
+### 1. Load Audit Framework
+
+Read `~/.aidevops/agents/seo/seo-audit-skill.md` for the complete audit framework:
+- Priority order (crawlability → technical → on-page → content → authority)
+- Technical SEO checklist (Core Web Vitals thresholds, indexation checks)
+- On-page optimization checklist
 - Content quality assessment (E-E-A-T signals)
-- Common issues by site type
 
 Also read reference files:
 - `~/.aidevops/agents/seo/seo-audit-skill/ai-writing-detection.md`
 - `~/.aidevops/agents/seo/seo-audit-skill/aeo-geo-patterns.md`
 
-### Step 3: Gather Data
+### 2. Gather Data
 
-**Technical checks** (using browser automation or curl):
+**Technical checks:**
 
 ```bash
-# Check robots.txt
+# robots.txt and sitemap
 curl -s "https://$DOMAIN/robots.txt"
-
-# Check sitemap
 curl -s "https://$DOMAIN/sitemap.xml" | head -50
 
-# Check meta tags on homepage
+# Meta tags on homepage
 curl -s "https://$DOMAIN" | grep -E '<(title|meta)' | head -20
 ```
 
-**If --gsc flag provided**, use Google Search Console data:
+**With --gsc flag:**
 
 ```bash
-# Export GSC data for the domain
 ~/.aidevops/agents/scripts/seo-export-gsc.sh "$DOMAIN"
 ```
 
-**For deeper analysis**, use browser automation to:
-- Check Core Web Vitals via PageSpeed Insights
-- Validate structured data via Rich Results Test
-- Check mobile-friendliness
-- Analyze internal linking
+**For deeper analysis** (browser automation):
+- Core Web Vitals via PageSpeed Insights
+- Structured data via Rich Results Test
+- Mobile-friendliness
+- Internal linking analysis
 
-### Step 4: Run Audit
+### 3. Run Audit
 
-Follow the priority order from seo-audit-skill.md:
+Follow the priority order from seo-audit-skill.md. For each category, check status and note issues.
 
-1. **Crawlability & Indexation**
-   - robots.txt analysis
-   - Sitemap validation
-   - Index status (site:domain.com)
-   - Canonical tag check
+### 4. Generate Report
 
-2. **Technical Foundations**
-   - HTTPS check
-   - Core Web Vitals (via /performance or PageSpeed)
-   - Mobile-friendliness
-   - URL structure
-
-3. **On-Page Optimization**
-   - Title tags (unique, 50-60 chars, keyword placement)
-   - Meta descriptions (unique, 150-160 chars, compelling)
-   - Heading structure (single H1, logical hierarchy)
-   - Image optimization (alt text, file sizes)
-
-4. **Content Quality**
-   - E-E-A-T signals (experience, expertise, authority, trust)
-   - Content depth and uniqueness
-   - AI writing patterns to avoid (from references)
-
-5. **Authority & Links**
-   - Internal linking structure
-   - External link profile (if Ahrefs/DataForSEO available)
-
-### Step 5: Generate Report
-
-Output in actionable format:
+Output format:
 
 ```markdown
 ## SEO Audit Report: [DOMAIN]
-
-**Audit Date:** YYYY-MM-DD
-**Scope:** Full / Technical / On-Page / Content
+**Date:** YYYY-MM-DD | **Scope:** [scope]
 
 ### Executive Summary
-
 - **Overall Health:** Good / Needs Work / Critical Issues
-- **Top 3 Priority Issues:**
-  1. [Issue] - [Impact: High/Medium/Low]
-  2. [Issue] - [Impact: High/Medium/Low]
-  3. [Issue] - [Impact: High/Medium/Low]
+- **Top 3 Priority Issues:** [with impact level]
 
 ### Technical SEO
-
 | Check | Status | Notes |
 |-------|--------|-------|
-| HTTPS | PASS/FAIL | |
-| robots.txt | PASS/FAIL | |
-| Sitemap | PASS/FAIL | |
-| Core Web Vitals | PASS/FAIL | LCP: Xs, CLS: X.XX |
-| Mobile-Friendly | PASS/FAIL | |
+| HTTPS / robots.txt / Sitemap / Core Web Vitals / Mobile |
 
 ### On-Page SEO
-
 | Element | Status | Recommendation |
 |---------|--------|----------------|
-| Title Tag | PASS/FAIL | |
-| Meta Description | PASS/FAIL | |
-| H1 Tag | PASS/FAIL | |
-| Image Alt Text | PASS/FAIL | |
+| Title / Meta Description / H1 / Image Alt Text |
 
 ### Content Quality
-
-- **E-E-A-T Score:** X/10
-- **Content Depth:** Adequate / Thin / Comprehensive
-- **AI Writing Patterns:** None detected / [Issues found]
+- E-E-A-T Score, Content Depth, AI Writing Patterns
 
 ### Prioritized Action Plan
-
-**Critical (Fix Immediately):**
-1. [Issue] - [Specific fix]
-
-**High Priority (This Week):**
-1. [Issue] - [Specific fix]
-
-**Quick Wins (Easy, Immediate Benefit):**
-1. [Issue] - [Specific fix]
-
-**Long-Term Recommendations:**
-1. [Recommendation]
+- **Critical** (fix immediately)
+- **High Priority** (this week)
+- **Quick Wins** (easy, immediate benefit)
+- **Long-Term** recommendations
 ```
 
 ## Examples
 
 ```bash
-# Full audit of a domain
-/seo-audit example.com
-
-# Technical-only audit
-/seo-audit example.com --scope=technical
-
-# Include Search Console data
-/seo-audit example.com --gsc
-
-# Compare against competitor
-/seo-audit example.com --compare=competitor.com
-
-# Audit specific page
-/seo-audit https://example.com/blog/article
-
-# Save report to file
-/seo-audit example.com --output=seo-report.md
+/seo-audit example.com                          # Full audit
+/seo-audit example.com --scope=technical        # Technical only
+/seo-audit example.com --gsc                    # Include Search Console
+/seo-audit example.com --compare=competitor.com # Competitor comparison
+/seo-audit https://example.com/blog/article     # Specific page
+/seo-audit example.com --output=seo-report.md   # Save to file
 ```
 
 ## Related
 
-- `seo/seo-audit-skill.md` - Full SEO audit subagent (imported skill)
-- `seo/google-search-console.md` - GSC integration
-- `seo/dataforseo.md` - DataForSEO API
-- `seo/ahrefs.md` - Ahrefs API
-- `tools/performance/pagespeed.md` - PageSpeed Insights
-- `commands/performance.md` - Performance audit command
+- `seo/seo-audit-skill.md` — Full audit framework (imported skill)
+- `seo/google-search-console.md` — GSC integration
+- `seo/dataforseo.md` — DataForSEO API
+- `commands/performance.md` — Performance audit command
