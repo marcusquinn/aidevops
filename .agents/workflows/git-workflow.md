@@ -129,7 +129,7 @@ Files: `~/.aidevops/hooks/git_safety_guard.py` (guard), `~/.claude/settings.json
 
 After file changes: run preflight automatically. Pass → auto-commit with suggested message (confirm or override). Fail → show issues, offer fixes. After commit → auto-push, offer: create PR, continue working, or done.
 
-**PR Title (MANDATORY)**: `{task-id}: {description}` (e.g., `t318: Update PR workflow documentation`). For unplanned work: create TODO entry first. Every code change must be traceable to a task.
+**PR Title (MANDATORY)**: `{task-id}: {description}`. Task ID is `tNNN` (from TODO.md) or `GH#NNN` (GitHub issue number, for quality-debt/simplification-debt/issue-only work). Examples: `t318: Update PR workflow documentation`, `GH#12455: tighten hashline-edit-format.md`. NEVER use `qd-`, bare numbers, or invented prefixes like `t12345` (that conflates GitHub issue numbers with the `t` task-ID system). For unplanned work: create TODO entry first. Every code change must be traceable to a task.
 
 **If changes include `.agents/` files**: Offer to run `./setup.sh` to deploy to `~/.aidevops/agents/`.
 
