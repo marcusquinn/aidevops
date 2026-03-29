@@ -15,8 +15,6 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
-## Quick Reference
-
 - **Status**: Implemented (t008.1 PR #1138, t008.2 PR #1149, t008.3 PR #1150)
 - **Purpose**: Native OpenCode plugin wrapper for aidevops
 - **Approach**: Single-file ESM plugin using hooks-based SDK pattern
@@ -49,26 +47,26 @@ Plugin only injects agents and MCPs not already configured by `generate-opencode
 type Plugin = (input: PluginInput) => Promise<Hooks>;
 
 type PluginInput = {
-  client: OpencodeClient;   // API client
-  project: Project;         // Project metadata
+  client: OpencodeClient;
+  project: Project;
   directory: string;        // Current working directory
   worktree: string;         // Git worktree root
-  serverUrl: URL;           // OpenCode server URL
-  $: BunShell;              // Bun shell for running commands
+  serverUrl: URL;
+  $: BunShell;
 };
 
 interface Hooks {
-  config?: (input: Config) => Promise<void>;                   // Mutate OpenCode config
-  tool?: { [key: string]: ToolDefinition };                    // Register custom tools
-  event?: (input: { event: Event }) => Promise<void>;          // Event listener
-  auth?: AuthHook;                                             // Auth provider
-  "chat.message"?: (input, output) => Promise<void>;           // Message interception
-  "chat.params"?: (input, output) => Promise<void>;            // LLM parameter modification
-  "permission.ask"?: (input, output) => Promise<void>;         // Permission handling
-  "tool.execute.before"?: (input, output) => Promise<void>;    // Pre-tool hook
-  "tool.execute.after"?: (input, output) => Promise<void>;     // Post-tool hook
-  "shell.env"?: (input, output) => Promise<void>;              // Shell environment
-  "experimental.session.compacting"?: (input, output) => Promise<void>;  // Compaction
+  config?: (input: Config) => Promise<void>;
+  tool?: { [key: string]: ToolDefinition };
+  event?: (input: { event: Event }) => Promise<void>;
+  auth?: AuthHook;
+  "chat.message"?: (input, output) => Promise<void>;
+  "chat.params"?: (input, output) => Promise<void>;
+  "permission.ask"?: (input, output) => Promise<void>;
+  "tool.execute.before"?: (input, output) => Promise<void>;
+  "tool.execute.after"?: (input, output) => Promise<void>;
+  "shell.env"?: (input, output) => Promise<void>;
+  "experimental.session.compacting"?: (input, output) => Promise<void>;
 }
 ```
 
@@ -86,17 +84,14 @@ interface Hooks {
 
 ```javascript
 async function configHook(config) {
-  // Phase 1: Agent registration
   const agents = loadAgentDefinitions();
   for (const agent of agents) {
     if (config.agent[agent.name]) continue;
     if (agent.mode !== "subagent") continue;
     config.agent[agent.name] = { description: agent.description, mode: "subagent" };
   }
-
-  // Phase 2: MCP registration
-  registerMcpServers(config);     // Register servers + global tool perms
-  applyAgentMcpTools(config);     // Per-agent MCP tool enablement
+  registerMcpServers(config);
+  applyAgentMcpTools(config);
 }
 ```
 
@@ -122,7 +117,7 @@ MCP registry fields: `name`, `type` (`"local"`/`"remote"`), `command`/`url`, `ea
 | sentry | remote | no |
 | socket | remote | no |
 
-All MCPs lazy-loaded. Per-agent tool permissions applied via `AGENT_MCP_TOOLS` mapping (e.g. `@dataforseo` → `dataforseo_*`).
+All MCPs lazy-loaded (saves ~7K+ tokens on startup). Per-agent tool permissions applied via `AGENT_MCP_TOOLS` mapping (e.g. `@dataforseo` → `dataforseo_*`).
 
 ### 2. Custom Tools
 
@@ -132,8 +127,6 @@ All MCPs lazy-loaded. Per-agent tool permissions applied via `AGENT_MCP_TOOLS` m
 | `aidevops_memory` | Recall or store cross-session memories (action: "recall"\|"store") |
 | `aidevops_pre_edit_check` | Run pre-edit git safety check |
 | `model-accounts-pool` | OAuth account pool management (provider credential rotation) |
-
-Removed tools: `aidevops_quality_check` (redundant — quality runs automatically via `tool.execute.before`); `aidevops_install_hooks` (one-time setup — use `install-hooks-helper.sh install` or `aidevops security posture`).
 
 ### 3. Quality Hooks (t008.3)
 
