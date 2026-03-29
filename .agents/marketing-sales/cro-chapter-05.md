@@ -22,19 +22,35 @@ It's NOT a tagline, positioning statement, feature list, or generic marketing sp
 
 ### Value Proposition Formulas
 
-**Formula 1: Headline + Subheadline + Bullets** — Headline: end-benefit; Subheadline: what/for whom/why; Bullets: 3-5 benefits. Example (Slack): "Where work happens" / "Slack is your digital HQ" / Bring your team together; Stay in sync; Connect your tools
+**Formula 1: Headline + Subheadline + Bullets**
+- Headline: single sentence stating end-benefit
+- Subheadline: 2-3 sentences (what, for whom, why useful)
+- Bullets: 3-5 key benefits
 
-**Formula 2: Problem + Solution + Benefit** — "Tired of complex PM software requiring weeks of training? Our platform gets your team running in minutes—so you focus on delivering projects, not learning software."
+Example (Slack):
+- **Headline**: "Where work happens"
+- **Subheadline**: "Slack is your digital HQ—a place where work flows between your people, systems, partners and customers"
+- **Bullets**: Bring your team together; Stay in sync, wherever you are; Connect your tools and services
 
-**Formula 3: For [Customer] who [Need], [Product] is [Category] that [Key Benefit]** — "For marketing teams who struggle with scattered data, CustomerHub is a unified platform that gives you a single source of truth."
+**Formula 2: Problem + Solution + Benefit**
+"Tired of complex PM software requiring weeks of training? Our platform gets your team running in minutes—so you focus on delivering projects, not learning software."
 
-**Formula 4: [Specific Result] + [Time Period] + [Objection Handler]** — "Increase conversions by 27% in 60 days, or your money back."
+**Formula 3: For [Customer] who [Need], [Product] is [Category] that [Key Benefit]**
+"For marketing teams who struggle with scattered data, CustomerHub is a unified platform that gives you a single source of truth."
 
-**Formula 5: Unlike [Alternative], [Product] [Differentiator]** — "Unlike traditional website builders that require coding, Webflow combines design freedom with no-code convenience."
+**Formula 4: [Specific Result] + [Time Period] + [Objection Handler]**
+"Increase conversions by 27% in 60 days, or your money back."
+
+**Formula 5: Unlike [Alternative], [Product] [Differentiator]**
+"Unlike traditional website builders that require coding, Webflow combines design freedom with no-code convenience."
 
 ### Crafting Your Value Proposition
 
-**Step 1: Research** — Customer interviews ("Why did you choose us?"), reviews, support tickets, sales calls. Competitive: what are they claiming, what gaps exist?
+**Step 1: Research**
+- Customer interviews: "Why did you choose us?" / "What problem were you solving?"
+- Analyze reviews, support tickets, sales calls for recurring themes
+- Competitive: what are they claiming, what gaps exist, what can you claim they can't?
+- Market: industry trends, customer language, top pain points
 
 **Step 2: Identify Differentiators**
 
@@ -46,7 +62,8 @@ It's NOT a tagline, positioning statement, feature list, or generic marketing sp
 | Experience | Faster implementation, better onboarding, simpler to use |
 | Trust | Longer track record, more customers, better reviews, guarantees |
 
-**Step 3: Match Benefits to Customer Needs** — Focus on what customers value, not what you think is important.
+**Step 3: Match Benefits to Customer Needs**
+Focus on what customers value, not what you think is important.
 - Wrong: "Our software has 50+ features"
 - Right: "Automate your invoicing in 5 minutes, so you can get back to what you love"
 
@@ -57,7 +74,10 @@ It's NOT a tagline, positioning statement, feature list, or generic marketing sp
 - Problem-focused: "Never miss another deadline"
 - Differentiation-focused: "PM that actually helps you get work done—no bloat"
 
-**Step 5: Test and Refine** — Internal: clarity check with colleagues; external: user surveys, landing page A/B tests. Iterate: combine best elements, refine continuously.
+**Step 5: Test and Refine**
+- Internal: clarity check with colleagues and customer-facing teams; executive alignment
+- External: user surveys, landing page A/B tests, customer interviews
+- Iterate: combine best elements, refine, test variations continuously
 
 ### Messaging Hierarchy
 
@@ -70,21 +90,25 @@ It's NOT a tagline, positioning statement, feature list, or generic marketing sp
 
 ### Message Testing
 
-**Clarity (5-Second Test):** Show value prop for 5 seconds → ask "What does this company do?" and "What's the main benefit?" Clear messaging = accurate answers. Remove jargon, write at 8th-grade level.
+**Clarity (5-Second Test):** Show value prop for 5 seconds → ask "What does this company do?" and "What's the main benefit?" Clear messaging = accurate answers. Remove jargon, write at 8th-grade level. Read it to someone unfamiliar with your business—if they can't explain it back, simplify.
 
-**Relevance:** Share with customers, ask "Does this reflect why you chose us?" Present multiple versions in surveys.
+**Relevance:** Share with customers, ask "Does this reflect why you chose us?" Present multiple versions in surveys—track which drives highest interest.
 
 **A/B Testing dimensions:**
 - Headline: benefit vs. outcome, specific vs. general, question vs. statement, short vs. long
 - Messaging: feature vs. benefit, problem vs. solution, emotional vs. rational, you-focused vs. we-focused
 
 Example test:
-- Control: "Project Management Software for Teams"
-- Variant A: "Deliver Projects On Time, Every Time"
-- Variant B: "Never Miss Another Deadline"
-- Variant C: "Get 30% More Done in the Same Time"
+- **Control**: "Project Management Software for Teams"
+- **Variant A**: "Deliver Projects On Time, Every Time"
+- **Variant B**: "Never Miss Another Deadline"
+- **Variant C**: "Get 30% More Done in the Same Time"
+
+Run for statistical significance, implement winner, generate new test ideas.
 
 ### Voice and Tone
+
+Match brand voice to audience:
 
 | Dimension | Formal/Serious | Casual/Playful |
 |-----------|---------------|----------------|
@@ -103,7 +127,10 @@ Example test:
 | B2C Young Adults | Casual, relatable | Lifestyle benefits, social elements, fun |
 | B2C Older Adults | Clear, straightforward | Reliability, simplicity, value |
 
-**Emotional vs. Rational balance:** High-emotion products (fashion, luxury): lead emotional, support rational. High-rational products (enterprise software, finance): lead rational, add emotional reassurance. Most products: mix throughout.
+**Emotional vs. Rational balance:**
+- High-emotion products (fashion, luxury): lead emotional ("Feel confident every time you walk in"), support rational ("Crafted from premium Italian leather")
+- High-rational products (enterprise software, finance): lead rational ("Reduce costs by 45%"), add emotional reassurance ("Sleep better knowing your systems are secure")
+- Most products: mix throughout
 
 ### Headline Formulas
 
@@ -135,6 +162,8 @@ Example test:
 
 ### Message Mapping
 
+Connect your value proposition to all touchpoints:
+
 | Touchpoint | Message Focus |
 |-----------|--------------|
 | Homepage | Core value proposition prominently displayed |
@@ -147,3 +176,5 @@ Example test:
 | Ads | Headline test variations |
 | Sales Materials | Detailed value prop with proof points |
 | Support | Reinforce benefits while solving problems |
+
+Consistency across touchpoints reinforces your message and builds brand recognition.
