@@ -4,7 +4,7 @@
 
 ## CQRS Overview
 
-**Command Query Responsibility Segregation** separates read and write operations into different models.
+**Command Query Responsibility Segregation** — separate read and write models.
 
 ```mermaid
 flowchart TB
@@ -55,11 +55,11 @@ export class GetOrderHandler {
 }
 ```
 
-**Read model** is optimized for queries — denormalized, separate from the write database (optional; start with same DB, different query paths).
+Read model is denormalized and query-optimized. Start with the same DB and separate query paths; split databases only when proven necessary.
 
 ## Domain Events
 
-Notifications that something happened. Used for updating read models, cross-aggregate communication, and integration with other bounded contexts.
+Notifications that something happened — used for read model updates, cross-aggregate communication, and bounded context integration.
 
 ```typescript
 export abstract class DomainEvent {
@@ -78,8 +78,6 @@ export class OrderConfirmed extends DomainEvent {
 }
 ```
 
-Event handlers update read models or trigger side effects:
-
 ```
 class OrderConfirmedHandler:
     handle(event: OrderConfirmed):
@@ -95,7 +93,7 @@ class OrderConfirmedHandler:
 | Transport | In-process | Message broker |
 | Schema | Internal | Versioned |
 
-Publishing integration events from domain events — a domain event handler fetches the aggregate and publishes a versioned, coarser-grained integration event to the message broker:
+A domain event handler fetches the aggregate and publishes a versioned integration event to the message broker:
 
 ```typescript
 export class PublishOrderConfirmedIntegrationEvent {
@@ -116,7 +114,7 @@ export class PublishOrderConfirmedIntegrationEvent {
 
 ## Event Dispatcher Pattern
 
-Routes events to registered handlers. Multiple handlers per event type are supported (fan-out).
+Routes events to registered handlers; supports multiple handlers per event type (fan-out).
 
 ```typescript
 export class EventDispatcher {
@@ -139,7 +137,7 @@ dispatcher.register('order.confirmed', new PublishOrderConfirmedIntegrationEvent
 
 ## Outbox Pattern
 
-Ensures reliable event publishing (exactly-once semantics): write events to an outbox table in the **same transaction** as the aggregate, then publish asynchronously.
+Guarantees reliable event publishing: write events to an outbox table in the **same transaction** as the aggregate, then publish asynchronously.
 
 ```
 // In command handler — single transaction
@@ -166,7 +164,7 @@ class OutboxProcessor:
 
 **Skip when:** Simple CRUD; similar read/write patterns; small team or simple domain; adding "just in case".
 
-**CQRS applies to specific bounded contexts, never entire systems.** Start with the same database and separate query paths; evolve to separate databases only when proven necessary.
+**CQRS applies to specific bounded contexts, never entire systems.**
 
 ## Event Sourcing: Critical Considerations
 
@@ -184,7 +182,7 @@ class OutboxProcessor:
 
 ## Saga Pattern (Cross-Aggregate Workflows)
 
-For workflows spanning multiple aggregates, use sagas instead of coordinating via raw domain events.
+Use sagas for workflows spanning multiple aggregates — not raw domain event coordination.
 
 ```
 Saga: PlaceOrderSaga
@@ -199,7 +197,7 @@ Saga: PlaceOrderSaga
 
 ## Idempotent Consumer Pattern
 
-**Required for reliable event processing.** Messages may be delivered more than once.
+**Required for reliable event processing** — messages may be delivered more than once.
 
 ```
 class OrderConfirmedHandler:
