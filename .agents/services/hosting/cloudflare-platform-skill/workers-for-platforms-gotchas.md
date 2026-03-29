@@ -6,23 +6,11 @@
 - **Upload session JWT valid 1 hour**
 - **Completion token valid 1 hour**
 - **No limits on Workers per namespace** (unlike regular Workers)
-- **User Workers run in untrusted mode** (no `request.cf` access)
-- **Outbound Workers don't intercept DO/mTLS fetch**
+- **User Workers run in untrusted mode** — no `request.cf` access, isolated from other customers, never share cache
+- **Outbound Workers don't intercept DO/mTLS fetch** — plan accordingly for complete egress control
+- **One namespace per environment** — not one per customer; namespace is the isolation boundary for an environment (prod/staging)
 
 ## Security
-
-### User Worker Restrictions
-
-- Run in untrusted mode
-- No access to `request.cf` object
-- Automatic isolation from other customers
-- Never share cache
-
-### Outbound Worker Gaps
-
-- Doesn't intercept Durable Object fetch
-- Doesn't intercept mTLS binding fetch
-- Plan accordingly for complete egress control
 
 ### Asset Isolation
 
@@ -69,16 +57,13 @@ try {
 
 ## Troubleshooting
 
-### Hostname Routing Issues
+### Hostname Routing
 
-- Use `*/*` wildcard route to avoid DNS proxy issues
-- Orange-to-orange: Customer proxied through CF → your CF domain
-- Wildcard works regardless of proxy settings
+- Use `*/*` wildcard route — avoids DNS proxy issues regardless of orange-to-orange proxy settings
 
 ### Binding Preservation
 
-- Use `keep_bindings` to avoid losing existing bindings on update
-- Document which resources bound to which Workers
+- Use `keep_bindings` on update — existing bindings are lost without it
 
 ### Tag Filtering
 
@@ -126,16 +111,5 @@ interface Fetcher {
   fetch(request: Request): Promise<Response>;
 }
 ```
-
-## Common Mistakes
-
-1. **Creating namespace per customer** → Use one namespace per environment
-2. **Not handling Worker not found** → Always catch and handle gracefully
-3. **Forgetting `keep_bindings`** → Existing bindings lost on update
-4. **Not tagging Workers** → Can't bulk delete/filter
-5. **Exposing upload JWTs** → Keep server-side only
-6. **No limit tracking** → Use Analytics Engine for violations
-7. **Not using wildcard routes** → Hit route limits, DNS issues
-8. **Assuming DO/mTLS interception** → Outbound Worker doesn't catch these
 
 See [README.md](./README.md), [patterns.md](./patterns.md)
