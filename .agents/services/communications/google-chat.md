@@ -24,7 +24,7 @@ google-chat-helper.sh setup  # Interactive wizard
 
 <!-- AI-CONTEXT-END -->
 
-**Flow**: `Google Chat → HTTPS URL → Bot (:8443)` → verify token → parse event → check perms → `runner-helper.sh dispatch` → AI session → Card v2 or text response
+**Flow**: `Google Chat → HTTPS → Bot (:8443)` → verify token → parse event → check perms → `runner-helper.sh dispatch` → AI session → Card v2 or text response
 
 ## Setup
 
@@ -112,7 +112,7 @@ Payload: `message.argumentText` (prompt, mention stripped), `user.email` (ACL), 
 
 ### Card v2 (Adaptive Cards)
 
-Structure: `cardsV2[].card` with `header` (`title`, `subtitle`) and `sections[].widgets`. Limits: 1 card/message, 100 sections, 100 widgets/section, 4096 chars/widget, 40 chars/button. Public HTTPS image URLs only. Test across web, Gmail sidebar, mobile. See [Card v2 reference](https://developers.google.com/workspace/chat/api/reference/rest/v1/cards).
+Structure: `cardsV2[].card` with `header` (`title`, `subtitle`) and `sections[].widgets`. Limits: 1 card/message, 100 sections, 100 widgets/section, 4096 chars/widget, 40 chars/button. Public HTTPS image URLs only. See [Card v2 reference](https://developers.google.com/workspace/chat/api/reference/rest/v1/cards).
 
 ## Space-to-Runner Mapping and Access Control
 
@@ -149,19 +149,9 @@ google-chat-helper.sh test-auth                                  # verify token
 | Data/retention | Google-controlled; configurable via Google Vault |
 | Gemini AI training | Risk — workspace data may train AI unless DPA configured |
 
-**Gemini warning**: Verify Gemini AI settings (Admin Console > Additional Google services > Gemini) and Workspace DPA before deploying with sensitive data. For sensitive comms, prefer Matrix or SimpleX — see `tools/security/opsec.md`.
+**Gemini warning**: Verify Gemini AI settings (Admin Console > Additional Google services > Gemini) and Workspace DPA before deploying with sensitive data.
 
-**Bot security rules**:
-
-| Rule | Detail |
-|------|--------|
-| `verifyGoogleTokens: true` | Always — prevents forged requests |
-| SA key permissions | 600 perms, never commit |
-| `allowedUsers` | Restrict to specific users in production |
-| Inbound scanning | `prompt-guard-helper.sh`; outbound: scan for credential patterns |
-| TLS | Reverse proxy (Caddy/Cloudflare) required |
-| Logging | Log all events, redact sensitive content |
-| FCM note | Google FCM infrastructure knows when users receive Chat push notifications |
+**Bot security rules**: SA key: 600 perms, never commit | `allowedUsers`: restrict to specific users in production | Scan inbound with `prompt-guard-helper.sh`, outbound for credential patterns | Reverse proxy (Caddy/Cloudflare) for TLS | Log all events, redact sensitive content | FCM: Google FCM infrastructure knows when users receive Chat push notifications.
 
 ## Limitations
 
