@@ -27,6 +27,7 @@ test("fetch returns hello", async () => {
 test("kv operations", async () => {
   const kv = await mf.getKVNamespace("TEST_KV");
   await kv.put("key", "value");
+  
   const res = await mf.dispatchFetch("http://localhost/kv");
   assert.strictEqual(await res.text(), "value");
 });
@@ -103,33 +104,25 @@ test("scheduled cron handler", async () => {
 
 ## Isolated Test Data
 
-Fresh Miniflare instance per test — no shared state between tests.
-
 ```js
-import test, { beforeEach, afterEach } from "node:test";
-import { Miniflare } from "miniflare";
-
-let mf;
-
-beforeEach(async () => {
-  mf = new Miniflare({
-    scriptPath: "worker.js",
-    kvNamespaces: ["USERS"],
-    // In-memory: no persist option = fresh state each run
+describe("user tests", () => {
+  let mf;
+  
+  beforeEach(async () => {
+    mf = new Miniflare({
+      scriptPath: "worker.js",
+      kvNamespaces: ["USERS"],
+      // In-memory: no persist
+    });
   });
-  await mf.ready;
-});
-
-afterEach(async () => {
-  await mf.dispose();
-});
-
-test("create user", async () => {
-  const res = await mf.dispatchFetch("http://localhost/users", {
-    method: "POST",
-    body: JSON.stringify({ name: "Alice" }),
+  
+  afterEach(async () => {
+    await mf.dispose();
   });
-  assert.strictEqual(res.status, 201);
+  
+  test("create user", async () => {
+    // Fresh KV per test
+  });
 });
 ```
 
