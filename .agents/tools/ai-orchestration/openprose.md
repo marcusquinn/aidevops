@@ -6,7 +6,7 @@ tools: [read, write, edit, bash, glob, grep, task]
 
 # OpenProse - Multi-Agent Orchestration DSL
 
-Use for multi-agent orchestration, repeatable workflows, parallel session spawning, and AI-evaluated conditions. Use aidevops scripts for single-agent DevOps tasks and deterministic logic.
+Multi-agent orchestration DSL. Use for repeatable workflows, parallel session spawning, and AI-evaluated conditions. Use aidevops scripts for single-agent DevOps tasks and deterministic logic.
 
 - **Repo**: <https://github.com/openprose/prose>
 - **Telemetry**: Disabled by default. Override: `"OPENPROSE_TELEMETRY": "disabled"` in `.prose/state.json` or `--no-telemetry`
@@ -42,10 +42,7 @@ agent researcher:
 let result = session "Get result"         # mutable
 const config = session "Get config"       # immutable
 session "Use both"
-  context: [result, config]               # array form
-# or:
-session "Use both"
-  context: { result, config }             # object form
+  context: [result, config]               # array form (or object: { result, config })
 ```
 
 ### Parallel Execution
@@ -127,7 +124,7 @@ let results = items
       session "Combine" context: [acc, item]
 ```
 
-## Integration with aidevops
+## Integrations
 
 | Tool | Role |
 |------|------|
