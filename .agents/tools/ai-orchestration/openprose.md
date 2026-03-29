@@ -13,16 +13,7 @@ tools:
 
 # OpenProse - Multi-Agent Orchestration DSL
 
-<!-- AI-CONTEXT-START -->
-
-## Quick Reference
-
-| Use OpenProse | Use aidevops Scripts |
-|---------------|---------------------|
-| Multi-agent orchestration | Single-agent DevOps tasks |
-| Repeatable workflows | Ad-hoc operations |
-| Parallel session spawning | Sequential execution |
-| AI-evaluated conditions | Deterministic logic |
+**Use OpenProse for**: multi-agent orchestration, repeatable workflows, parallel session spawning, AI-evaluated conditions. Use aidevops scripts for single-agent DevOps tasks and deterministic logic.
 
 - **Philosophy**: "The AI session IS the VM" — simulation with sufficient fidelity is implementation
 - **Repo**: https://github.com/openprose/prose
@@ -39,15 +30,7 @@ claude plugin install open-prose@prose
 git clone https://github.com/openprose/prose.git ~/.config/opencode/skill/open-prose
 ```
 
-<!-- AI-CONTEXT-END -->
-
-## Core Concepts
-
-- **Session as VM**: Reading `prose.md` makes the AI the OpenProse VM — spawning real subagents via Task tool, producing real artifacts, maintaining real state
-- **Discretion markers** (`**...**`): Natural language conditions evaluated by AI judgment (e.g., `loop until **the code is production ready**`)
-- **Explicit control flow**: `parallel:`, `loop until`, `try/catch` — unlike natural language prompts where control flow is implicit
-
-## Syntax Quick Reference
+## Syntax
 
 ### Sessions & Agents
 
@@ -157,12 +140,10 @@ let results = items
 
 ```text
 OpenProse  →  workflow orchestration ("run these agents in parallel, loop until done")
-DSPy       →  prompt optimization
+DSPy       →  prompt optimization (optimized prompts work in agent definitions)
 Context7   →  library docs  |  Augment → code search  |  LLM-TLDR → summarize
-TOON       →  token-efficient serialization (40-70% fewer tokens)
+TOON       →  token-efficient serialization (40-70% fewer tokens; encode large context before passing between sessions)
 ```
-
-DSPy-optimized prompts work in agent definitions. TOON-encode large context before passing between sessions. Context7/Augment sessions can be parallelized with `parallel:` blocks.
 
 ## Patterns
 
@@ -226,8 +207,6 @@ loop until **release is healthy** (max: 10):
 
 ## Narration Protocol
 
-Use emoji markers when executing OpenProse programs:
-
 | Emoji | Category | Usage |
 |-------|----------|-------|
 | `📋` | Program | Start, end, definition collection |
@@ -240,12 +219,6 @@ Use emoji markers when executing OpenProse programs:
 
 ## Related
 
-| Document | Purpose |
-|----------|---------|
-| `overview.md` | AI orchestration framework comparison |
-| `workflows/ralph-loop.md` | Ralph loop technique |
-| `scripts/commands/full-loop.md` | Full development loop |
-| `tools/context/dspy.md` | Prompt optimization |
-| `tools/context/toon.md` | Token-efficient serialization |
+`overview.md` · `workflows/ralph-loop.md` · `scripts/commands/full-loop.md` · `tools/context/dspy.md` · `tools/context/toon.md`
 
 **Resources**: [Repo](https://github.com/openprose/prose) · [Language Spec](https://github.com/openprose/prose/blob/main/skills/open-prose/docs.md) · [VM Semantics](https://github.com/openprose/prose/blob/main/skills/open-prose/prose.md) · [Examples](https://github.com/openprose/prose/tree/main/examples)
