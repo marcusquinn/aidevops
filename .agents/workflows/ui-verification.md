@@ -24,11 +24,11 @@ tools:
 
 ## Workflow
 
-### 1. Capture Before/After Screenshots
+### 1. Screenshots + Error Check
 
-> **Screenshot size limit**: NEVER use `fullPage: true` for AI vision review — exceeds 8000px, hard-crashes the session. Viewport-sized only. See `prompts/build.txt` "Screenshot Size Limits".
+> **NEVER `fullPage: true`** for AI vision review — exceeds 8000px, hard-crashes session. Viewport-sized only. See `prompts/build.txt` "Screenshot Size Limits".
 
-Capture baseline (`before-`) before changes, re-run with `after-` prefix after. **Edge cases (responsive-critical):** also test `mobile-sm` 320x568, `mobile-landscape` 844x390, `tablet-landscape` 1194x834.
+Capture `before-` baseline before changes, `after-` after. **Responsive-critical edge cases:** also test `mobile-sm` 320x568, `mobile-landscape` 844x390, `tablet-landscape` 1194x834.
 
 ```typescript
 import { chromium, devices } from 'playwright';
@@ -42,38 +42,24 @@ const browser = await chromium.launch();
 for (const { name, config } of standardDevices) {
   const ctx = await browser.newContext({ ...config });
   const page = await ctx.newPage();
-  await page.goto(targetUrl);
-  await page.waitForLoadState('networkidle');
-  await page.screenshot({ path: `/tmp/ui-verify/before-${name}.png` });
-  await ctx.close();
-}
-await browser.close();
-```
-
-### 2. Browser Error Check
-
-Collect console errors and failed requests per device:
-
-```typescript
-for (const { name, config } of standardDevices) {
-  const ctx = await browser.newContext({ ...config });
-  const page = await ctx.newPage();
   const errors = [], failed = [];
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
   page.on('requestfailed', r => failed.push({ url: r.url(), err: r.failure()?.errorText }));
   await page.goto(targetUrl);
   await page.waitForLoadState('networkidle');
+  await page.screenshot({ path: `/tmp/ui-verify/before-${name}.png` });
   if (errors.length) console.error(`[${name}] errors:`, errors);
   if (failed.length) console.error(`[${name}] failed:`, failed);
   await ctx.close();
 }
+await browser.close();
 ```
 
 **With Chrome DevTools MCP:** `captureConsole({logLevel:'error'})`, `analyzeCSSCoverage({reportUnused:true})`, `monitorNetwork({filters:[...]})`.
 
 **Check for**: JS errors, failed requests (404s, CORS), CSS warnings, mixed content, deprecation warnings, layout shift (CLS).
 
-### 3. Accessibility Verification
+### 2. Accessibility Verification
 
 Not optional for UI changes.
 
@@ -94,7 +80,7 @@ Not optional for UI changes.
 
 **Dark mode / reduced motion:** Test `colorScheme: 'light'` and `'dark'` (screenshot each); test `reducedMotion: 'reduce'` (verify animations disabled).
 
-### 4. Compare and Report
+### 3. Report
 
 ```markdown
 ## UI Verification Report
@@ -120,42 +106,47 @@ Quality gates — not suggestions. Check during step 3; report violations as `[S
 
 ### Typography
 
-- Paragraph width <=740px (~75 chars/line) — inspect `max-width`; screenshot at desktop-lg
-- Body text >=16px; supplementary >=14px; nothing smaller — Playwright `evaluate()` computed `font-size`
-- Max 3 font families (headings, body/buttons/forms, code/monospace) — inspect computed `font-family`; flag 4th
-- Distinct font weights for hierarchy (700 headings, 400 body, 600 labels) — verify in screenshots
-- Line height >=1.4 body, >=1.2 headings — inspect computed `line-height`
-- No character overlap from letter spacing; verify custom fonts at small sizes/bold — visual check
-- No single words on final line; use `text-wrap: balance`/`pretty` — visual check at multiple widths
+| Rule | Verification |
+|------|-------------|
+| Paragraph width <=740px (~75 chars/line) | Inspect `max-width`; screenshot at desktop-lg |
+| Body text >=16px; supplementary >=14px | Playwright `evaluate()` computed `font-size` |
+| Max 3 font families (headings, body, code) | Inspect computed `font-family`; flag 4th |
+| Distinct font weights (700 headings, 400 body, 600 labels) | Verify in screenshots |
+| Line height >=1.4 body, >=1.2 headings | Inspect computed `line-height` |
+| No character overlap from letter spacing; verify custom fonts at small sizes/bold | Visual check |
+| No single words on final line; use `text-wrap: balance`/`pretty` | Visual check at multiple widths |
 
 ### Layout and Spacing
 
-- Spacing scale (4/8/12/16/24/32/48px); consistent between similar elements — inspect padding
-- Text never touches container edges — screenshot; verify breathing room
-- Elements within a section share alignment — verify labels/headings/body align
-- Similar elements (cards, buttons, icons) same size — verify repeated elements uniform
-- Brand logos have adequate clear space — screenshot; verify breathing room
-- Smooth adaptation across breakpoints; works for varying content lengths — test short/long content
+| Rule | Verification |
+|------|-------------|
+| Spacing scale (4/8/12/16/24/32/48px); consistent between similar elements | Inspect padding |
+| Text never touches container edges | Screenshot; verify breathing room |
+| Elements within a section share alignment | Verify labels/headings/body align |
+| Similar elements (cards, buttons, icons) same size | Verify repeated elements uniform |
+| Brand logos have adequate clear space | Screenshot; verify breathing room |
+| Smooth adaptation across breakpoints; works for varying content lengths | Test short/long content |
 
 ### Interaction and Accessibility
 
-- Touch targets min 44x44px (aim); never below 24x24px; adequate spacing — Playwright `evaluate()` bounding boxes on mobile
-- All clickable elements have visible hover change — Playwright `hover()` + screenshot comparison
-- Links in paragraphs: bold, underlined, distinct colour (not colour-only) — inspect styles on `<a>` within `<p>`
-- Descriptive `alt` on images; `alt=""` on decorative; `aria-label`/`aria-labelledby` on interactive (preferred over `title`) — Playwright `evaluate()` audit `<img>`
-- Icons reinforce meaning; understandable without label or paired with text — visual check
-- Scroll wheel works on all scrollable areas; no scroll trapping — Playwright `mouse.wheel()` on body and scroll containers
+| Rule | Verification |
+|------|-------------|
+| Touch targets min 44x44px (aim); never below 24x24px; adequate spacing | Playwright `evaluate()` bounding boxes on mobile |
+| All clickable elements have visible hover change | Playwright `hover()` + screenshot comparison |
+| Links in paragraphs: bold, underlined, distinct colour (not colour-only) | Inspect styles on `<a>` within `<p>` |
+| Descriptive `alt` on images; `alt=""` on decorative; `aria-label`/`aria-labelledby` on interactive (preferred over `title`) | Playwright `evaluate()` audit `<img>` |
+| Icons reinforce meaning; understandable without label or paired with text | Visual check |
+| Scroll wheel works on all scrollable areas; no scroll trapping | Playwright `mouse.wheel()` on body and scroll containers |
 
-### Colour and Theming
+### Colour, Theming, and Information Architecture
 
-- Conventional colour associations: red=error, amber=warning, green=success, blue=info — visual check
-- Text highlighting adequate contrast in both light/dark modes — test both `colorScheme` values
-- Brand logo in nav links to `/` or site root — Playwright `evaluate()` logo `<a>` href
-
-### Information Architecture
-
-- Visual hierarchy via layout, size, weight, whitespace — not colour alone; primary CTA most prominent — screenshot check
-- CSS classes, component names, design tokens follow consistent convention (BEM, utility-first, or token-based) — code review
+| Rule | Verification |
+|------|-------------|
+| Conventional colour associations: red=error, amber=warning, green=success, blue=info | Visual check |
+| Text highlighting adequate contrast in both light/dark modes | Test both `colorScheme` values |
+| Brand logo in nav links to `/` or site root | Playwright `evaluate()` logo `<a>` href |
+| Visual hierarchy via layout, size, weight, whitespace — not colour alone; primary CTA most prominent | Screenshot check |
+| CSS classes, component names, design tokens follow consistent convention (BEM, utility-first, or token-based) | Code review |
 
 ### Usability (Mom Test)
 
@@ -167,14 +158,12 @@ Evaluate against `seo/mom-test-ux.md` after technical checks: Clarity (goal clea
 
 For small CSS tweaks: screenshot at 3 sizes, console errors, contrast check, spot-check paragraph width/text size/touch targets. Full workflow for significant layout changes, new components, or responsive redesigns.
 
-## Integration with Build Workflow
+## Build Workflow Integration
 
-- **Step 8 (Testing)**: Run UI Verification steps 1-3 alongside unit/integration tests; check applicable design principles.
-- **Step 9 (Validate)**: Include UI verification report as evidence. "Browser (UI)" means *actual browser screenshots*, not self-assessment.
+- **Step 8 (Testing)**: Run steps 1-3 alongside unit/integration tests; check applicable design principles.
+- **Step 9 (Validate)**: Include report as evidence. "Browser (UI)" = *actual browser screenshots*, not self-assessment.
 
-## When to Skip
-
-Backend-only, docs-only, CI/CD config, DB migrations (unless affecting displayed data), API-only (unless affecting rendered content). When in doubt, run quick verification — under 30 seconds.
+**Skip when**: Backend-only, docs-only, CI/CD config, DB migrations (unless affecting displayed data), API-only (unless affecting rendered content). When in doubt, run quick verification — under 30 seconds.
 
 ## Related
 
