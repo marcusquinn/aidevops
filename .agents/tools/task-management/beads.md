@@ -8,17 +8,13 @@ mode: subagent
 
 Task dependency tracking and graph visualization for TODO.md and PLANS.md.
 
+**Key principle**: aidevops markdown files are the source of truth. Beads syncs from them.
+
 ## Architecture
 
 ```text
-TODO.md / PLANS.md (source of truth)
-         ↓ push
-    .beads/beads.db (SQLite + JSONL)
-         ↓
-    Graph visualization (bd CLI, TUIs)
+TODO.md / PLANS.md → .beads/beads.db (SQLite + JSONL) → Graph visualization (bd CLI, TUIs)
 ```
-
-**Key principle**: aidevops markdown files are the source of truth. Beads syncs from them.
 
 ## Task ID Format
 
@@ -69,9 +65,7 @@ bd mcp                                           # MCP server (for AI tools)
 ~/.aidevops/agents/scripts/todo-ready.sh --count                          # Count only
 ```
 
-**Conflict resolution**: When both TODO.md and Beads have changes, run `status` first to review both sources.
-Then use `sync --force` to resolve — the helper treats TODO.md as the winner.
-Note: `pull` exports Beads data but does not auto-update TODO.md; manual merge is required.
+**Conflict resolution**: Run `status` first; use `sync --force` to resolve (TODO.md wins). `pull` exports Beads data but does not auto-update TODO.md — manual merge required.
 
 ## Viewers
 
@@ -84,8 +78,6 @@ Note: `pull` exports Beads data but does not auto-update TODO.md; manual merge i
 | `perles` | TUI | BQL query language | `cargo install perles` |
 
 Repos: [bv](https://github.com/Dicklesworthstone/beads_viewer) · [beads-ui](https://github.com/mantoni/beads-ui) · [bdui](https://github.com/assimelha/bdui) · [perles](https://github.com/zjrosen/perles)
-
-### Running Viewers
 
 ```bash
 bv                        # Interactive mode
@@ -101,29 +93,13 @@ perles "SELECT * FROM issues WHERE status = 'open'"
 ## Installation
 
 ```bash
-# Via aidevops setup (installs bd automatically)
-./setup.sh
-
-# Manual
-brew install steveyegge/beads/bd
+./setup.sh                                      # Via aidevops setup (installs bd automatically)
+brew install steveyegge/beads/bd                # Manual
 go install github.com/steveyegge/beads/cmd/bd@latest
-```
-
-## Project Initialization
-
-```bash
-aidevops init beads
-# Creates .beads/, runs bd init, syncs existing TODO.md/PLANS.md, adds .beads to .gitignore
+aidevops init beads                             # Init project: creates .beads/, syncs TODO.md/PLANS.md, adds .beads to .gitignore
 ```
 
 ## Integration with Workflows
-
-### Task Lifecycle
-
-```text
-Ready/Backlog → In Progress → In Review → Done
-   (branch)       (develop)      (PR)     (merge/release)
-```
 
 | Workflow | Status Change | TODO.md Section | Attributes Added |
 |----------|--------------|-----------------|-----------------|
@@ -134,8 +110,6 @@ Ready/Backlog → In Progress → In Review → Done
 
 All workflow commands run `beads-sync-helper.sh push` after updating TODO.md.
 
-### Slash Commands
-
 | Command | Action |
 |---------|--------|
 | `/ready` | Show tasks with no blockers |
@@ -144,11 +118,7 @@ All workflow commands run `beads-sync-helper.sh push` after updating TODO.md.
 | `/pr` | Create PR, move task to In Review |
 | `/release` | Release version, move tasks to Done |
 
-### Planning Workflow
-
-1. Add tasks to TODO.md with `blocked-by:`/`blocks:` dependencies
-2. Run `/sync-beads` to update graph
-3. Use `bd graph` to visualize; `bd ready` or `todo-ready.sh` to see unblocked tasks
+**Planning**: Add tasks to TODO.md with `blocked-by:`/`blocks:` → `/sync-beads` → `bd graph` to visualize; `bd ready` or `todo-ready.sh` for unblocked tasks.
 
 ## TOON Blocks
 
