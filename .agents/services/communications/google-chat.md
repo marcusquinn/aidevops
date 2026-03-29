@@ -60,17 +60,13 @@ chmod 600 ~/.config/aidevops/google-chat-sa-key.json
 
 [Google Cloud Console > APIs & Services > Google Chat API > Configuration](https://console.cloud.google.com/apis/api/chat.googleapis.com/hangouts-chat): set HTTP endpoint URL, enable "Receive 1:1 messages" and "Join spaces and group conversations", set Authentication Audience to HTTP endpoint URL.
 
-### Step 3: Public URL + Bot Configuration
+### Step 3: Public URL
 
 | Option | Command |
 |--------|---------|
 | Tailscale Funnel | `tailscale funnel 8443` |
 | Caddy | `caddy reverse-proxy --from chat-bot.example.com --to localhost:8443` |
 | Cloudflare Tunnel | `cloudflared tunnel --url http://localhost:8443 run chat-bot` |
-
-```bash
-google-chat-helper.sh setup  # Interactive wizard
-```
 
 ## Configuration
 
@@ -218,8 +214,7 @@ For sensitive communications, prefer Matrix (self-hosted) or SimpleX.
 - Scan inbound with `prompt-guard-helper.sh`; scan outbound for credential patterns
 - Use reverse proxy (Caddy/Cloudflare) for TLS — don't expose bot directly
 - Log all events; redact sensitive content
-
-**FCM note**: Google uses Firebase Cloud Messaging for mobile push — FCM infrastructure knows when users receive Chat notifications.
+- FCM note: Google uses Firebase Cloud Messaging for mobile push — FCM infrastructure knows when users receive Chat notifications
 
 ## Limitations
 
