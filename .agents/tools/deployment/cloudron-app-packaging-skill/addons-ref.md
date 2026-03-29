@@ -4,10 +4,7 @@ Declare in `CloudronManifest.json` under `addons`. Read env vars at runtime — 
 
 ## localstorage
 
-Writable `/app/data` directory. Backed up. Empty on first install (Docker image files not present). Restore permissions in `start.sh`.
-
-- `ftp` — FTP access: `{ "ftp": { "uid": 33, "uname": "www-data" } }`
-- `sqlite` — Consistent backup: `{ "sqlite": { "paths": ["/app/data/db.sqlite"] } }`
+Writable `/app/data`. Backed up. Empty on first install (Docker image files not present). Restore permissions in `start.sh`. Sub-addons: `ftp` (`{ "ftp": { "uid": 33, "uname": "www-data" } }`), `sqlite` (`{ "sqlite": { "paths": ["/app/data/db.sqlite"] } }`).
 
 ## mysql
 
@@ -23,10 +20,11 @@ CLOUDRON_MYSQL_DATABASE
 ```
 
 - `multipleDatabases: true` — Provides `CLOUDRON_MYSQL_DATABASE_PREFIX` instead of `CLOUDRON_MYSQL_DATABASE`.
-
 Debug: `MYSQL_PWD=$CLOUDRON_MYSQL_PASSWORD mysql --user=$CLOUDRON_MYSQL_USERNAME --host=$CLOUDRON_MYSQL_HOST $CLOUDRON_MYSQL_DATABASE`
 
 ## postgresql
+
+Database pre-created. Extensions: `btree_gist`, `btree_gin`, `citext`, `hstore`, `pgcrypto`, `pg_trgm`, `postgis`, `uuid-ossp`, `unaccent`, `vector`, `vectors`, and more.
 
 ```text
 CLOUDRON_POSTGRESQL_URL
@@ -38,9 +36,6 @@ CLOUDRON_POSTGRESQL_DATABASE
 ```
 
 - `locale` — Set `LC_LOCALE` and `LC_CTYPE` at database creation.
-
-Extensions: `btree_gist`, `btree_gin`, `citext`, `hstore`, `pgcrypto`, `pg_trgm`, `postgis`, `uuid-ossp`, `unaccent`, `vector`, `vectors`, and more.
-
 Debug: `PGPASSWORD=$CLOUDRON_POSTGRESQL_PASSWORD psql -h $CLOUDRON_POSTGRESQL_HOST -p $CLOUDRON_POSTGRESQL_PORT -U $CLOUDRON_POSTGRESQL_USERNAME -d $CLOUDRON_POSTGRESQL_DATABASE`
 
 ## mongodb
@@ -84,9 +79,7 @@ CLOUDRON_LDAP_BIND_PASSWORD
 ```
 
 Filter: `(&(objectclass=user)(|(username=%uid)(mail=%uid)))`
-
 User attrs: `uid`, `cn`, `mail`, `displayName`, `givenName`, `sn`, `username`, `samaccountname`, `memberof`
-
 Group attrs: `cn`, `gidnumber`, `memberuid`
 
 ## oidc
