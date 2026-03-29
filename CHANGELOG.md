@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.332] - 2026-03-30
+
+### Changed
+
+- Documentation: tighten architecture.md prose (164→157 lines, zero knowledge loss) (#13407)
+
 ## [3.5.319] - 2026-03-29
 
 ### Changed
