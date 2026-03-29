@@ -2380,6 +2380,11 @@
       "hash": "cb2b6cf6c54db6f97c2bde70675f3c29b30b88fa",
       "at": "2026-03-29T17:15:24Z",
       "pr": 13113
+    },
+    ".agents/workflows/sql-migrations.md": {
+      "hash": "ccdc19bd0184b33b1302b6caeaad0e15cdada19c",
+      "at": "2026-03-29T18:43:30Z",
+      "pr": 13167
     }
   }
 }
