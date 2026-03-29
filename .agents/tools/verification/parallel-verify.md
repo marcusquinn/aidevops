@@ -18,89 +18,33 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
-## Purpose
+Verify high-stakes operations by obtaining an independent judgment from a different AI provider. Different providers have different failure modes — cross-provider verification catches single-model hallucinations that same-provider checks miss. Cost: ~$0.001/call. Only verify operations where an error causes irreversible damage.
 
-Verify high-stakes operations by obtaining an independent judgment from a different AI provider before execution. Different providers have different failure modes, so cross-provider verification catches single-model hallucinations that same-provider checks would miss.
+## Risk Tiers
 
-**Design principle:** Targeted verification only. Not every operation needs a second opinion -- only those where an error would cause irreversible damage. The cost of a haiku-tier verification call (~$0.001) is negligible compared to the cost of a destructive mistake.
+| Tier | Policy | Examples |
+|------|--------|---------|
+| **Critical** | Always verify | `git push --force`, `git reset --hard` (unpushed), DB schema migrations (DROP/ALTER/TRUNCATE), production deploys/rollbacks, secret rotation, DNS changes, firewall rules, permission escalation, deleting cloud resources |
+| **High** | Verify unless skipped | PRs >10 files or >500 lines, bulk file ops, major version upgrades, CI/CD config changes, IaC changes (Terraform/Pulumi), API endpoint removal |
+| **Standard** | Verify on request | Complex refactoring, security-sensitive changes (auth/crypto/input validation), performance-critical paths, cross-service integrations |
 
-## When to Verify
+## Provider Selection
 
-The verification agent is invoked when an operation matches the high-stakes taxonomy. Operations are classified by **risk tier**:
+Use a **different provider** from the primary model to avoid correlated failures.
 
-### Risk Tier: Critical (always verify)
+1. Identify primary provider: `claude-*`/`anthropic/*` → Anthropic; `gemini-*`/`google/*` → Google; `gpt-*`/`o1-*`/`o3-*`/`openai/*` → OpenAI
+2. Select verifier (preference order):
+   - Anthropic primary → Google (flash), then OpenAI
+   - Google primary → Anthropic (haiku), then OpenAI
+   - OpenAI primary → Anthropic (haiku), then Google
+3. Fallback: same-provider different-model (e.g., sonnet → haiku). Log warning: reduced effectiveness.
+4. Check availability: `model-availability-helper.sh check <provider>`. Try next in chain if unavailable.
 
-Operations where a mistake causes data loss, security breach, or service outage:
-
-- `git push --force` to any shared branch
-- `git reset --hard` on branches with unpushed commits
-- Database schema migrations (DROP, ALTER, TRUNCATE)
-- Production deployments and rollbacks
-- Secret rotation or credential changes
-- DNS record modifications
-- Firewall rule changes
-- User permission escalation (granting admin/owner roles)
-- Deleting cloud resources (VMs, databases, storage buckets)
-
-### Risk Tier: High (verify unless explicitly skipped)
-
-Operations where a mistake is costly but recoverable:
-
-- Merging PRs that touch >10 files or >500 lines
-- Bulk file operations (delete, move, rename across directories)
-- Package major version upgrades
-- CI/CD pipeline configuration changes
-- Infrastructure-as-code changes (Terraform, Pulumi)
-- API endpoint removal or breaking changes
-
-### Risk Tier: Standard (verify on request)
-
-Operations where verification adds value but isn't mandatory:
-
-- Complex refactoring across multiple modules
-- Security-sensitive code changes (auth, crypto, input validation)
-- Performance-critical path modifications
-- Cross-service integration changes
-
-## Cross-Provider Selection Logic
-
-The verifier must use a **different provider** from the primary model to avoid correlated failures.
-
-### Selection Rules
-
-1. **Identify the primary provider** from the model that proposed the operation:
-   - `claude-*` or `anthropic/*` -> primary is Anthropic
-   - `gemini-*` or `google/*` -> primary is Google
-   - `gpt-*` or `openai/*` -> primary is OpenAI
-   - `o1-*` or `o3-*` -> primary is OpenAI
-
-2. **Select the verifier provider** (preference order):
-   - If primary is Anthropic -> Google (haiku -> flash), then OpenAI
-   - If primary is Google -> Anthropic (flash -> haiku), then OpenAI
-   - If primary is OpenAI -> Anthropic (haiku), then Google
-
-3. **Fallback to same-provider different-model** if no cross-provider key is available:
-   - Anthropic sonnet -> Anthropic haiku (less effective but better than nothing)
-   - Log a warning: same-provider verification has reduced effectiveness
-
-4. **Provider availability check** before verification:
-
-   ```bash
-   # Check if the selected verifier provider is available
-   model-availability-helper.sh check <provider>
-   ```
-
-   If the preferred verifier is unavailable, try the next provider in the preference chain.
-
-### Cost Constraints
-
-- Verification calls use the **cheapest tier** of the verifier provider (haiku/flash/gpt-4.1-mini)
-- Maximum verification prompt: 2000 tokens input, 500 tokens output
-- If the operation context exceeds 2000 tokens, summarize before sending to verifier
+**Cost constraints:** Use cheapest tier (haiku/flash/gpt-4.1-mini). Max 2000 tokens input, 500 output. Summarize if context exceeds 2000 tokens.
 
 ## Verification Prompt Template
 
-The verifier receives a structured prompt describing the operation. It does NOT see the primary model's reasoning -- only the operation itself and its context.
+The verifier receives only the operation and context — NOT the primary model's reasoning.
 
 ```text
 You are a safety verification agent. An AI assistant is about to perform the
@@ -138,62 +82,31 @@ Rules:
 - Focus on: data loss risk, security implications, reversibility, blast radius
 ```
 
-## Disagreement Handling
+## Response Handling
 
-When the verifier's recommendation differs from the primary model's intent:
+| Result | Action |
+|--------|--------|
+| `proceed` (confidence ≥ 0.8) | Execute |
+| `proceed` (confidence < 0.8) | Execute, log low confidence |
+| `warn` | Show concerns; interactive → ask user; headless → pause, create GitHub issue |
+| `block` | Stop. Present concerns to user. User decides whether to override. |
 
-### Protocol
+**Repeated blocks (3+ in session):** Escalate to opus-tier tiebreaker with full operation context and verifier concerns.
 
-| Verifier Says | Action |
-|---------------|--------|
-| `proceed` (confidence >= 0.8) | Execute the operation |
-| `proceed` (confidence < 0.8) | Execute but log the low confidence for review |
-| `warn` | Show concerns to the user, ask for confirmation |
-| `block` | Do NOT execute. Show concerns and reasoning to the user |
+**Verifier unavailable:** Log skip, proceed with warning. Never block solely because verification infrastructure is down — that makes the safety system a reliability liability.
 
-### Escalation Path
-
-1. **Verifier says `block`**: Stop execution immediately. Present the verifier's concerns to the user with the full context. The user decides whether to override.
-
-2. **Verifier says `warn`**: Present concerns inline. If running autonomously (headless dispatch), pause and create a GitHub issue describing the concern. If interactive, ask the user.
-
-3. **Repeated disagreements** (3+ blocks in a session): Escalate to opus-tier for a tiebreaker assessment. The opus call receives both the operation context and the verifier's concerns, and makes the final recommendation.
-
-4. **Verifier unavailable** (all providers down or no API keys): Log the verification skip, proceed with a warning. Never block operations solely because verification infrastructure is unavailable -- that would make the safety system a reliability liability.
-
-### Override Mechanism
-
-Users can bypass verification with explicit flags:
+**Override:**
 
 ```bash
-# Skip verification for a specific operation
-verify-operation-helper.sh verify --skip "reason for skipping"
-
-# Disable verification for the session (not recommended)
-export AIDEVOPS_SKIP_VERIFY=1
+verify-operation-helper.sh verify --skip "reason"  # skip one operation
+export AIDEVOPS_SKIP_VERIFY=1                        # disable for session (not recommended)
 ```
 
-All skips are logged to the observability DB with the reason.
+All skips logged to observability DB.
 
 ## Observability
 
-Every verification decision is logged via `observability-helper.sh record` with these fields:
-
-| Field | Description |
-|-------|-------------|
-| `provider` | Verifier provider (e.g., "google") |
-| `model` | Verifier model ID |
-| `project` | Repository/project name |
-| `stop_reason` | Verification result: "proceed", "warn", "block" |
-| `session_id` | Session that triggered verification |
-
-Additional verification-specific fields are logged to a dedicated JSONL file:
-
-```text
-~/.aidevops/.agent-workspace/observability/verifications.jsonl
-```
-
-Each entry contains:
+Logged via `observability-helper.sh record` and to `~/.aidevops/.agent-workspace/observability/verifications.jsonl`:
 
 ```json
 {
@@ -214,14 +127,6 @@ Each entry contains:
 }
 ```
 
-## Integration Points
-
-The verification agent is called by `verify-operation-helper.sh` which provides the CLI interface. Pipeline integration (t1364.3) will wire this into:
-
-1. **Pre-commit hooks**: For critical-tier git operations
-2. **Dispatch pipeline**: Before executing destructive operations in headless mode
-3. **PR merge flow**: For large or security-sensitive PRs
-
 ## CLI Reference
 
 ```bash
@@ -241,13 +146,15 @@ verify-operation-helper.sh check \
 verify-operation-helper.sh config [--show|--set KEY=VALUE]
 ```
 
+Integration (t1364.3): pre-commit hooks (critical-tier git ops), dispatch pipeline (destructive headless ops), PR merge flow (large/security-sensitive PRs). CLI: `scripts/verify-operation-helper.sh`.
+
 <!-- AI-CONTEXT-END -->
 
 ## Related
 
-- `reference/high-stakes-operations.md` -- Operation taxonomy (t1364.1)
-- `tools/context/model-routing.md` -- Model tier definitions and provider discovery
-- `tools/ai-assistants/models-gemini-reviewer.md` -- Cross-provider review pattern
-- `scripts/verify-operation-helper.sh` -- CLI implementation
-- `scripts/observability-helper.sh` -- Metrics logging
-- `scripts/model-availability-helper.sh` -- Provider health checks
+- `reference/high-stakes-operations.md` — Operation taxonomy (t1364.1)
+- `tools/context/model-routing.md` — Model tier definitions and provider discovery
+- `tools/ai-assistants/models-gemini-reviewer.md` — Cross-provider review pattern
+- `scripts/verify-operation-helper.sh` — CLI implementation
+- `scripts/observability-helper.sh` — Metrics logging
+- `scripts/model-availability-helper.sh` — Provider health checks
