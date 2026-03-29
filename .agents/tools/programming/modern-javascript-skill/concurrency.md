@@ -1,6 +1,18 @@
 # Concurrency Patterns
 
-Sequential, parallel, batched execution, concurrency pools, retry with exponential backoff, timeout wrappers, async debounce, async throttle, for-await-of, async generators, stream chunking, AbortController cancellation, semaphore pattern.
+| Need | Pattern | Key API |
+|------|---------|---------|
+| One at a time | Sequential | `for...of` + `await` / `Array.fromAsync` |
+| All at once | Parallel | `Promise.all` |
+| Fixed chunks | Batched | `Promise.all` in loop |
+| N simultaneous | Pool | `Promise.race` + `Set` |
+| Retry on failure | Retry | Exponential backoff |
+| Time limit | Timeout | `Promise.withResolvers` + `Promise.race` |
+| Delay rapid calls | Debounce | `clearTimeout` + `Promise.withResolvers` |
+| Rate limit calls | Throttle | Elapsed time check |
+| Paginated/streaming | Async iteration | `async function*` + `for await` |
+| Cancel in-flight | Cancellation | `AbortController` |
+| Limit concurrent access | Semaphore | Permit queue |
 
 ## Sequential Execution
 
@@ -122,7 +134,7 @@ function throttleAsync(fn, ms) {
 ## Async Iteration
 
 ```javascript
-// Async generator with for-await-of
+// Paginated fetch with async generator
 async function* fetchPages(url) {
   let page = 1;
   while (true) {
@@ -138,7 +150,7 @@ for await (const page of fetchPages('/api/items')) {
   processPage(page);
 }
 
-// Chunk a stream
+// Stream chunking
 async function* chunkStream(stream, chunkSize) {
   let buffer = [];
   for await (const item of stream) {
