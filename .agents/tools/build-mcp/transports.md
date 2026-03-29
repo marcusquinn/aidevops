@@ -27,15 +27,12 @@ tools:
 
 ## Stdio Transport
 
-Best for local development and AI assistants that spawn the MCP server as a subprocess.
-
 ```typescript
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
 const server = new McpServer({ name: 'my-mcp', version: '1.0.0' });
-
 server.tool(
   'hello',
   { name: z.string() },
@@ -48,23 +45,12 @@ await server.connect(transport);
 
 **Logging:** stdout is reserved for MCP protocol — use `console.error(...)` for debug output.
 
-### Client Configuration
+### Client Config
 
-**OpenCode:**
-
-```json
-{ "mcp": { "my-mcp": { "type": "local", "command": ["bun", "run", "/path/to/my-mcp/src/index.ts"], "enabled": true } } }
-```
-
-**Claude Code:**
-
-```bash
-claude mcp add my-mcp bun run /path/to/my-mcp/src/index.ts
-```
+- **Claude Code:** `claude mcp add my-mcp bun run /path/to/my-mcp/src/index.ts`
+- **OpenCode:** `{ "mcp": { "my-mcp": { "type": "local", "command": ["bun", "run", "/path/to/my-mcp/src/index.ts"], "enabled": true } } }`
 
 ## Streamable HTTP Transport
-
-Best for production deployments and web-accessible MCP servers.
 
 ### With Express
 
@@ -76,7 +62,6 @@ import { randomUUID } from 'crypto';
 
 const server = new McpServer({ name: 'my-mcp', version: '1.0.0' });
 // Register tools...
-
 const app = express();
 app.use(express.json());
 
@@ -93,40 +78,32 @@ app.post('/mcp', async (req, res) => {
 app.listen(3000);
 ```
 
-`transport.sessionId` exposes the UUID for the current session.
-
-**DNS rebinding protection** is auto-enabled when binding to `127.0.0.1`; disabled for `0.0.0.0`:
-
-```typescript
-import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
-const app = createMcpExpressApp({ host: '127.0.0.1' }); // protected
-```
+`transport.sessionId` exposes the UUID for the current session. DNS rebinding protection is auto-enabled on `127.0.0.1` (via `createMcpExpressApp`), disabled for `0.0.0.0`.
 
 ### With ElysiaJS (Recommended)
 
 ```typescript
 import { Elysia } from 'elysia';
 import { mcp } from 'elysia-mcp';
-import { z } from 'zod';
 
 const app = new Elysia()
   .use(mcp({
     serverInfo: { name: 'my-mcp', version: '1.0.0' },
     capabilities: { tools: {} },
     setupServer: async (server) => {
-      server.tool(
-        'hello',
-        { name: z.string() },
-        async (args) => ({ content: [{ type: 'text', text: `Hello, ${args.name}!` }] })
-      );
+      server.tool('hello', { name: z.string() }, async (args) =>
+        ({ content: [{ type: 'text', text: `Hello, ${args.name}!` }] }));
     },
   }))
   .listen(3000);
 ```
 
-## SSE Transport (Legacy)
+### Client Config
 
-For backwards compatibility with clients using protocol version 2024-11-05.
+- **OpenCode:** `{ "mcp": { "my-mcp": { "type": "remote", "url": "https://my-mcp.example.com/mcp", "enabled": true } } }`
+- **Claude Desktop (via proxy):** `{ "mcpServers": { "my-mcp": { "command": "npx", "args": ["-y", "mcp-remote-client", "https://my-mcp.example.com/mcp"] } } }`
+
+## SSE Transport (Legacy — protocol 2024-11-05)
 
 ```typescript
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -136,14 +113,12 @@ import express from 'express';
 const server = new McpServer({ name: 'my-mcp', version: '1.0.0' });
 const app = express();
 const transports = new Map<string, SSEServerTransport>();
-
 app.get('/sse', (req, res) => {
   const transport = new SSEServerTransport('/messages', res);
   transports.set(transport.sessionId, transport);
   res.on('close', () => { transports.delete(transport.sessionId); transport.close(); });
   server.connect(transport);
 });
-
 app.post('/messages', express.json(), (req, res) => {
   const transport = transports.get(req.query.sessionId as string);
   if (!transport) { res.status(404).json({ error: 'Session not found' }); return; }
@@ -153,68 +128,7 @@ app.post('/messages', express.json(), (req, res) => {
 app.listen(3000);
 ```
 
-## Backwards Compatible Server
-
-Support both Streamable HTTP and SSE on the same Express app:
-
-```typescript
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
-import express from 'express';
-import { randomUUID } from 'crypto';
-
-const server = new McpServer({ name: 'my-mcp', version: '1.0.0' });
-const app = express();
-app.use(express.json());
-const sseTransports = new Map<string, SSEServerTransport>();
-
-// Streamable HTTP (2025-03-26)
-app.post('/mcp', async (req, res) => {
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => randomUUID() });
-  res.on('close', () => transport.close());
-  await server.connect(transport);
-  await transport.handleRequest(req, res, req.body);
-});
-
-// SSE (2024-11-05 legacy)
-app.get('/sse', (req, res) => {
-  const transport = new SSEServerTransport('/messages', res);
-  sseTransports.set(transport.sessionId, transport);
-  res.on('close', () => { sseTransports.delete(transport.sessionId); transport.close(); });
-  server.connect(transport);
-});
-
-app.post('/messages', (req, res) => {
-  const transport = sseTransports.get(req.query.sessionId as string);
-  transport ? transport.handlePostMessage(req, res, req.body) : res.status(404).json({ error: 'Session not found' });
-});
-
-app.listen(3000);
-```
-
-## Remote HTTP Configuration
-
-**OpenCode:**
-
-```json
-{ "mcp": { "my-mcp": { "type": "remote", "url": "https://my-mcp.example.com/mcp", "enabled": true } } }
-```
-
-**Claude Desktop (via proxy):**
-
-```json
-{ "mcpServers": { "my-mcp": { "command": "npx", "args": ["-y", "mcp-remote-client", "https://my-mcp.example.com/mcp"] } } }
-```
-
-## Transport Selection
-
-| Scenario | Transport |
-|----------|-----------|
-| Local dev / AI spawns process | stdio |
-| Web deployment / multiple clients | StreamableHTTP |
-| Legacy clients | SSE |
-| New + old clients | Both (backwards compatible) |
+**Backwards compatible server:** To support both Streamable HTTP and SSE on the same Express app, combine the `/mcp` POST handler from the Express example above with the `/sse` GET and `/messages` POST handlers from this section.
 
 ## Testing
 
