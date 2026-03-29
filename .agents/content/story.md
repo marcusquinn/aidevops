@@ -26,12 +26,12 @@ model: sonnet
 
 <!-- AI-CONTEXT-END -->
 
-## Pre-flight Questions
+## Pre-flight Checklist
 
-1. What is the theme — the universal truth this content explores?
-2. What is the single takeaway — what should the audience think, feel, or do differently?
-3. Does this tell a story — is there tension, transformation, and resolution?
-4. Who is the protagonist — the audience, a character, or the brand — and is that the right choice?
+1. **Theme** — universal truth this content explores?
+2. **Takeaway** — what should the audience think, feel, or do differently?
+3. **Story** — tension, transformation, and resolution present?
+4. **Protagonist** — audience, character, or brand — right choice?
 
 ## 7 Hook Formulas
 
@@ -45,7 +45,7 @@ model: sonnet
 | 6 | **Problem-Agitate** | "You're wasting 4 hours/day on content that nobody sees" | Email, LinkedIn, blog |
 | 7 | **Curiosity Gap** | "The one AI trick that changed everything (it's not what you think)" | Short-form, X, email |
 
-**Hook generation process**: Write 10 variants → score each on specificity/emotion/curiosity (1-5 each) → pick top 3 for A/B testing → archive the rest for repurposing.
+**Hook process**: Write 10 variants → score specificity/emotion/curiosity (1-5 each) → pick top 3 for A/B → archive rest for repurposing.
 
 ## 4-Part Script Framework
 
@@ -98,7 +98,7 @@ model: sonnet
 
 ## UGC Brief Storyboard
 
-Generates a complete multi-shot storyboard from a business description. Combines the 4-Part Script Framework with the 7-component video prompt format (`tools/video/video-prompt-design.md`).
+Multi-shot storyboard from a business description. Uses 4-Part Script Framework + 7-component video prompt format (`tools/video/video-prompt-design.md`).
 
 ### Input Brief
 
