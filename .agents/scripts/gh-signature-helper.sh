@@ -216,18 +216,14 @@ _detect_cli() {
 # working directory, or empty string if unavailable.
 
 # =============================================================================
-# _find_session_id — shared session identification for all detectors
+# _build_session_dir_list — resolve project directories for session matching
 # =============================================================================
-# Finds the current OpenCode session ID using multiple heuristics:
-# 1. OPENCODE_PID → match session by process start time
-# 2. Walk PPID chain to find opencode process → use its start time
-# 3. Fallback: most recently created session in this directory
-#
-# Cross-platform: uses date -d (Linux) with date -j (macOS) fallback.
+# Builds a SQL-safe comma-separated list of quoted directory paths for use in
+# SQLite IN() clauses. Excludes root and temp paths that would match stale
+# sessions from unrelated contexts (GH#13046 — pulse runs from / via launchd).
+# Output: SQL fragment like "'path1', 'path2'" or empty string.
 
-_find_session_id() {
-	local db_path="$1"
-
+_build_session_dir_list() {
 	local cwd repo_root canonical_dir main_worktree
 	cwd=$(pwd 2>/dev/null || echo "")
 	if [[ -z "$cwd" ]]; then
@@ -243,13 +239,8 @@ _find_session_id() {
 	# where sessions are typically stored (GH#12965).
 	main_worktree=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //' || echo "")
 
-	# Build a deduplicated list of meaningful directories for session matching.
-	# Exclude non-project paths (/, /tmp, /private/tmp) that would match stale
-	# sessions from unrelated contexts (GH#13046 — pulse runs from / via launchd).
-	local dir_list=""
-	local d
+	local dir_list="" d
 	for d in "$cwd" "$repo_root" "$canonical_dir" "$main_worktree"; do
-		# Skip empty, root, and temp directories
 		case "$d" in
 		"" | "/" | "/tmp" | "/private/tmp" | "/var/tmp") continue ;;
 		esac
@@ -260,43 +251,92 @@ _find_session_id() {
 		fi
 	done
 
-	local session_id=""
+	echo "$dir_list"
+	return 0
+}
 
-	# Strategy 1: OPENCODE_PID (set in interactive TUI sessions)
-	local target_pid="${OPENCODE_PID:-}"
+# =============================================================================
+# _find_opencode_pid — locate the OpenCode process PID
+# =============================================================================
+# Returns the PID of the running OpenCode process, or empty string.
+# Strategy 1: OPENCODE_PID env var (set in interactive TUI sessions).
+# Strategy 2: Walk PPID chain up to 10 levels, matching "opencode" in comm or
+#   args. Checks both because on Linux ps -o comm= truncates to 15 chars and
+#   may show "node" instead of "opencode" when run via Node.js (GH#13012).
 
-	# Strategy 2: walk PPID chain to find opencode process.
-	# Check both comm (short name) and args (full command line) because
-	# on Linux ps -o comm= truncates to 15 chars and may show "node"
-	# instead of "opencode" when run via Node.js (GH#13012).
-	if [[ -z "$target_pid" ]]; then
-		local walk_pid="${PPID:-0}"
-		local walk_depth=0
-		while [[ "$walk_pid" -gt 1 ]] && [[ "$walk_depth" -lt 10 ]] 2>/dev/null; do
-			local walk_comm walk_args walk_lower
-			walk_comm=$(ps -o comm= -p "$walk_pid" 2>/dev/null || echo "")
-			walk_args=$(ps -o args= -p "$walk_pid" 2>/dev/null || echo "")
-			walk_lower=$(printf '%s %s' "$walk_comm" "$walk_args" | tr '[:upper:]' '[:lower:]')
-			if [[ "$walk_lower" == *opencode* ]]; then
-				target_pid="$walk_pid"
-				break
-			fi
-			walk_pid=$(ps -o ppid= -p "$walk_pid" 2>/dev/null | tr -d ' ' || echo "0")
-			walk_depth=$((walk_depth + 1))
-		done
+_find_opencode_pid() {
+	if [[ -n "${OPENCODE_PID:-}" ]]; then
+		echo "$OPENCODE_PID"
+		return 0
 	fi
 
-	# Convert PID start time to epoch for session matching
-	if [[ -n "$target_pid" ]] && [[ -n "$dir_list" ]]; then
-		local pid_start_epoch lstart
-		lstart=$(ps -o lstart= -p "$target_pid" 2>/dev/null || echo "")
-		if [[ -n "$lstart" ]]; then
-			# Try GNU date first (Linux), then BSD date (macOS)
-			pid_start_epoch=$(date -d "$lstart" "+%s" 2>/dev/null ||
-				date -j -f "%a %b %d %H:%M:%S %Y" "$lstart" "+%s" 2>/dev/null || echo "")
+	local walk_pid="${PPID:-0}"
+	local walk_depth=0
+	while [[ "$walk_pid" -gt 1 ]] && [[ "$walk_depth" -lt 10 ]] 2>/dev/null; do
+		local walk_comm walk_args walk_lower
+		walk_comm=$(ps -o comm= -p "$walk_pid" 2>/dev/null || echo "")
+		walk_args=$(ps -o args= -p "$walk_pid" 2>/dev/null || echo "")
+		walk_lower=$(printf '%s %s' "$walk_comm" "$walk_args" | tr '[:upper:]' '[:lower:]')
+		if [[ "$walk_lower" == *opencode* ]]; then
+			echo "$walk_pid"
+			return 0
 		fi
-		if [[ -n "$pid_start_epoch" ]]; then
-			local pid_start_ms=$((pid_start_epoch * 1000))
+		walk_pid=$(ps -o ppid= -p "$walk_pid" 2>/dev/null | tr -d ' ' || echo "0")
+		walk_depth=$((walk_depth + 1))
+	done
+
+	echo ""
+	return 0
+}
+
+# =============================================================================
+# _pid_start_epoch — convert a PID's start time to Unix epoch seconds
+# =============================================================================
+# Uses GNU date -d (Linux) with BSD date -j fallback (macOS).
+# Returns epoch integer, or empty string if conversion fails.
+
+_pid_start_epoch() {
+	local pid="$1"
+	local lstart
+	lstart=$(ps -o lstart= -p "$pid" 2>/dev/null || echo "")
+	if [[ -z "$lstart" ]]; then
+		echo ""
+		return 0
+	fi
+	# Try GNU date first (Linux), then BSD date (macOS)
+	date -d "$lstart" "+%s" 2>/dev/null ||
+		date -j -f "%a %b %d %H:%M:%S %Y" "$lstart" "+%s" 2>/dev/null ||
+		echo ""
+	return 0
+}
+
+# =============================================================================
+# _find_session_id — shared session identification for all detectors
+# =============================================================================
+# Finds the current OpenCode session ID using multiple heuristics:
+# 1. OPENCODE_PID / PPID chain → match session by process start time
+# 2. Most recently created session in this directory
+# 3. Most recently created session globally (within 10 minutes)
+#
+# Delegates directory resolution to _build_session_dir_list,
+# PID detection to _find_opencode_pid, and epoch conversion to _pid_start_epoch.
+
+_find_session_id() {
+	local db_path="$1"
+
+	local dir_list
+	dir_list=$(_build_session_dir_list)
+
+	local session_id=""
+
+	# Strategy 1: match by process start time (most precise)
+	local target_pid
+	target_pid=$(_find_opencode_pid)
+	if [[ -n "$target_pid" ]] && [[ -n "$dir_list" ]]; then
+		local epoch
+		epoch=$(_pid_start_epoch "$target_pid")
+		if [[ -n "$epoch" ]]; then
+			local pid_start_ms=$((epoch * 1000))
 			session_id=$(sqlite3 "$db_path" "
 				SELECT id FROM session
 				WHERE directory IN (${dir_list})
@@ -305,7 +345,7 @@ _find_session_id() {
 		fi
 	fi
 
-	# Strategy 3: most recently created session matching directory
+	# Strategy 2: most recently created session matching directory
 	# (not updated — avoids picking long-running supervisor sessions)
 	if [[ -z "$session_id" ]] && [[ -n "$dir_list" ]]; then
 		session_id=$(sqlite3 "$db_path" "
@@ -315,7 +355,7 @@ _find_session_id() {
 		" 2>/dev/null || echo "")
 	fi
 
-	# Strategy 4: most recently created session globally (within 10 minutes).
+	# Strategy 3: most recently created session globally (within 10 minutes).
 	# Fallback when directory matching fails — e.g., workers in worktrees
 	# not yet in the DB, or scripts running from non-project directories.
 	# 10-minute window (tightened from 1h) limits false matches to concurrent
