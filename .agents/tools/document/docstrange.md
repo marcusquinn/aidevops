@@ -23,8 +23,9 @@ mcp:
 |---|---|
 | **Install** | `pip install docstrange` |
 | **Formats** | PDF, DOCX, PPTX, XLSX, PNG/JPG/TIFF/BMP, HTML, URLs |
-| **Modes** | Cloud (free, 10k/month) or local GPU (CUDA, 100% private) |
-| **MCP** | Built-in server — clone repo (not in PyPI) |
+| **Cloud** | Free 10k/month (anonymous or authenticated); sends docs to NanoNets |
+| **Local GPU** | CUDA required, 100% private, unlimited; ~4GB model download on first run |
+| **MCP** | Clone repo (not in PyPI): `git clone https://github.com/nanonets/docstrange.git` |
 | **GitHub** | https://github.com/NanoNets/docstrange |
 | **Docs** | https://docstrange.nanonets.com/ |
 
@@ -33,15 +34,6 @@ mcp:
 **On-demand loading**: MCP disabled globally; enabled per-agent when document extraction is needed.
 
 <!-- AI-CONTEXT-END -->
-
-## Processing Modes
-
-| Mode | Privacy | Setup | Limit |
-|------|---------|-------|-------|
-| Cloud (anonymous) | Low | None | Rate-limited |
-| Cloud (authenticated) | Low | `docstrange login` | 10k docs/month |
-| Cloud (API key) | Low | API key | 10k docs/month |
-| Local GPU | Full | CUDA required | Unlimited |
 
 ## Installation
 
@@ -57,24 +49,14 @@ pip install "docstrange[web]"          # + local web UI
 from docstrange import DocumentExtractor
 extractor = DocumentExtractor()
 
-# Markdown
 result = extractor.extract("document.pdf")
-print(result.extract_markdown())
+result.extract_markdown()                                          # Markdown
+result.extract_data()                                             # JSON
+result.extract_data(specified_fields=["invoice_number", "total_amount"])  # targeted
+result.extract_data(json_schema={"contract_number": "string"})   # schema
+result.extract_html() / extract_csv() / extract_text()           # other formats
 
-# Structured JSON
-json_data = result.extract_data()
-
-# Specific fields
-fields = result.extract_data(specified_fields=[
-    "invoice_number", "total_amount", "vendor_name", "due_date"
-])
-
-# JSON schema
-schema = {"contract_number": "string", "parties": ["string"], "total_value": "number"}
-structured = result.extract_data(json_schema=schema)
-
-# Local GPU (private)
-extractor = DocumentExtractor(gpu=True)
+DocumentExtractor(gpu=True).extract("document.pdf")              # local GPU (private)
 ```
 
 ## CLI
@@ -89,21 +71,8 @@ docstrange document.pdf --output-file result.md
 docstrange login                                                           # auth (10k/month)
 docstrange document.pdf --api-key YOUR_API_KEY
 docstrange --logout
-docstrange web                                                             # UI at :8000
-docstrange web --port 8080
+docstrange web [--port 8080]                                               # UI at :8000
 ```
-
-## Output Methods
-
-| Method | Output | Use Case |
-|--------|--------|----------|
-| `extract_markdown()` | Markdown | LLM/RAG pipelines |
-| `extract_data()` | JSON | General extraction |
-| `extract_data(specified_fields=[...])` | Targeted JSON | Known fields |
-| `extract_data(json_schema={...})` | Schema JSON | Structured pipelines |
-| `extract_html()` | HTML | Web display |
-| `extract_csv()` | CSV | Tables/spreadsheets |
-| `extract_text()` | Plain text | Simple extraction |
 
 ## MCP Server (Claude Desktop)
 
@@ -151,7 +120,6 @@ MCP features: smart token counting, hierarchical navigation, intelligent chunkin
 - No built-in PII detection/redaction (use Presidio separately)
 - Cloud mode sends documents to NanoNets servers
 - MCP server not in PyPI — must clone repo
-- 7B model downloads on first local run (~4GB)
 
 ## Related
 
