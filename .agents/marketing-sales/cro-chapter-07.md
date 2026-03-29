@@ -4,7 +4,9 @@ The CTA is where browsing becomes conversion. Small CTA improvements yield outsi
 
 ## Psychology of Action
 
-`Action Likelihood = (Motivation x Ability) - Friction`
+```text
+Action Likelihood = (Motivation x Ability) - Friction
+```
 
 - **Reduce friction** -- make it easy, break into steps, remove obstacles
 - **Increase perceived benefit** -- emphasize value, show immediate benefit, reduce risk, create urgency
