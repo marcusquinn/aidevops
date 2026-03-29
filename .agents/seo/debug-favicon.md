@@ -14,7 +14,7 @@ tools:
 
 ## Quick Reference
 
-- **Method**: HTML parsing via curl + grep, manifest.json validation
+- **Method**: curl + grep HTML parsing, manifest.json validation
 - **Reference**: https://opengraphdebug.com/favicon
 - **Essential**: `favicon.ico`, `apple-touch-icon.png`, manifest icons (192x192 + 512x512 PNG)
 
@@ -23,7 +23,7 @@ tools:
 ## Quick Checks
 
 ```bash
-# Extract all favicon/icon links
+# Extract favicon/icon links
 curl -sL "https://example.com" \
   | grep -ioE "<link[^>]*rel=['\"](icon|shortcut icon|apple-touch-icon|manifest)['\"][^>]*>" \
   | head -20
@@ -50,7 +50,7 @@ curl -sI "https://example.com/favicon.ico" | head -1 | cut -d' ' -f2
 
 ## HTML Implementation
 
-Minimal `<head>` setup:
+Minimal `<head>`:
 
 ```html
 <link rel="icon" href="/favicon.ico" sizes="48x48">
@@ -59,9 +59,9 @@ Minimal `<head>` setup:
 <link rel="manifest" href="/manifest.json">
 ```
 
-For complete setup: add sized PNG icons from the table above, `<meta name="theme-color">`, and `<meta name="msapplication-config" content="/browserconfig.xml">`.
+Complete setup adds: sized PNG icons per table above, `<meta name="theme-color">`, `<meta name="msapplication-config" content="/browserconfig.xml">`.
 
-### manifest.json Example
+### manifest.json
 
 ```json
 {
@@ -84,9 +84,9 @@ For complete setup: add sized PNG icons from the table above, `<meta name="theme
 | 1 | Missing `favicon.ico` | Always serve `/favicon.ico` — browsers request it automatically |
 | 2 | Wrong Content-Type | ICO: `image/x-icon`, PNG: `image/png`, SVG: `image/svg+xml` |
 | 3 | Missing Apple Touch Icon | Add `<link rel="apple-touch-icon" href="/apple-touch-icon.png">` |
-| 4 | PWA install fails | Ensure manifest has 192x192 and 512x512 icons |
+| 4 | PWA install fails | Manifest needs 192x192 and 512x512 icons |
 | 5 | Manifest URL resolution | Use absolute paths (`/icons/icon-192.png`); relative resolves from manifest location |
-| 6 | Cache issues | Add version query string: `href="/favicon.ico?v=2"` |
+| 6 | Cache issues | Version query string: `href="/favicon.ico?v=2"` |
 
 ## Audit Script
 
@@ -98,12 +98,13 @@ html=$(curl -sL "$url")
 echo "=== Favicon Audit: $url ==="
 status=$(curl -sI "$base_url/favicon.ico" 2>/dev/null | head -1 | cut -d' ' -f2)
 echo "favicon.ico: ${status:-unreachable}"
-# All icon links (standard + apple-touch)
+# Standard icon links
 echo "$html" | grep -oE '<link[^>]+rel="[^"]*icon[^"]*"[^>]*>' | while read -r line; do
   href=$(echo "$line" | grep -oE 'href="[^"]*"' | cut -d'"' -f2)
   sizes=$(echo "$line" | grep -oE 'sizes="[^"]*"' | cut -d'"' -f2)
   echo "  ${sizes:-n/a} $href"
 done
+# Apple touch icons
 echo "$html" | grep -oE '<link[^>]+rel="apple-touch-icon[^"]*"[^>]*>' | while read -r line; do
   href=$(echo "$line" | grep -oE 'href="[^"]*"' | cut -d'"' -f2)
   sizes=$(echo "$line" | grep -oE 'sizes="[^"]*"' | cut -d'"' -f2)
@@ -136,5 +137,5 @@ echo "theme-color: ${theme:-[NOT SET]}"
 ## Related
 
 - `seo/debug-opengraph.md` — Open Graph meta tag validation
-- `tools/browser/playwright.md` — For JS-rendered pages
+- `tools/browser/playwright.md` — JS-rendered pages
 - `seo/site-crawler.md` — Bulk favicon auditing
