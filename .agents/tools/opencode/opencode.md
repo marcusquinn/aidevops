@@ -51,20 +51,7 @@ See `tools/opencode/opencode-anthropic-auth.md` for full auth setup (OAuth pool,
 
 ## Configuration
 
-MCPs defined with `enabled: false` globally; tools disabled with `"mcp_*": false`. Each subagent enables its specific tools.
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": { "hostinger-api": { "type": "local", "command": ["..."], "enabled": false } },
-  "tools": { "hostinger-api_*": false },
-  "agent": {
-    "hostinger": { "description": "...", "mode": "subagent", "tools": { "hostinger-api_*": true } }
-  }
-}
-```
-
-Agent markdown format (`~/.config/opencode/agent/*.md`):
+MCPs defined `enabled: false` globally; each subagent enables its own tools. Agent markdown format (`~/.config/opencode/agent/*.md`):
 
 ```markdown
 ---
@@ -77,10 +64,11 @@ tools:
 ---
 ```
 
+`opencode.json` pattern: `"mcp": { "name": { ..., "enabled": false } }` + `"agent": { "name": { "tools": { "name_*": true } } }`
+
 ## Usage
 
-- **Tab**: Cycle through primary agents
-- **@agent-name**: Invoke a subagent (one `@mention` per message)
+**Tab**: cycle agents. **@agent-name**: invoke subagent (one per message).
 
 ### Workflow Order
 
@@ -166,6 +154,8 @@ For true read-only: set both `bash: false` AND `task: false`.
 
 ## Parallel Sessions
 
+See `workflows/session-manager.md` for session lifecycle, terminal tab spawning, and worktree integration.
+
 ```bash
 opencode run "Task description" --agent Build+ --title "Task Name" &
 opencode serve --port 4097
@@ -173,9 +163,4 @@ opencode run --attach http://localhost:4097 "Task" --agent Build+
 ~/.aidevops/agents/scripts/worktree-helper.sh add feature/parallel-task
 ```
 
-See `workflows/session-manager.md` for session lifecycle, terminal tab spawning, and worktree integration.
-
-## References
-
-- [OpenCode Agents Documentation](https://opencode.ai/docs/agents)
-- [OpenCode MCP Servers](https://opencode.ai/docs/mcp-servers/)
+**Docs**: [Agents](https://opencode.ai/docs/agents) · [MCP Servers](https://opencode.ai/docs/mcp-servers/)
