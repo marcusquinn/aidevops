@@ -20,18 +20,8 @@ tools:
 
 - **Purpose**: Extract browser cookies for automation, session reuse, and authenticated scraping
 - **Two Libraries**: `@steipete/sweet-cookie` (TypeScript, cross-platform) and `SweetCookieKit` (Swift, macOS)
-
-**When to use**:
-- Reusing existing browser sessions (already logged in)
-- Authenticated API calls without re-login
-- Bypassing automation detection with real cookies
-- CI/CD pipelines needing browser auth state
-
-**When NOT to use**:
-- Fresh browser automation → use agent-browser, stagehand
-- Simple scraping without auth → use crawl4ai
-
-**Decision**:
+- **Use when**: Reusing existing browser sessions, authenticated API calls, bypassing automation detection, CI/CD auth state
+- **Don't use when**: Fresh browser automation (use agent-browser/stagehand) or unauthenticated scraping (use crawl4ai)
 
 ```text
 Need cookies from existing browser session?
@@ -44,13 +34,10 @@ Need cookies from existing browser session?
 
 ## @steipete/sweet-cookie (TypeScript)
 
-Cross-platform cookie extraction for Node.js and Bun. **Requirements**: Node.js >= 22 (`node:sqlite`) or Bun (`bun:sqlite`).
-
-### Installation
+Cross-platform cookie extraction for Node.js and Bun. Requires Node.js >= 22 (`node:sqlite`) or Bun (`bun:sqlite`).
 
 ```bash
 npm install @steipete/sweet-cookie
-# or: pnpm add / bun add
 ```
 
 ### Basic Usage
@@ -93,7 +80,7 @@ await getCookies({ url: 'https://example.com/', browsers: ['edge'], edgeProfile:
 
 ### Inline Cookies (CI/CD)
 
-For environments where browser DB access isn't possible:
+For environments without browser DB access:
 
 ```typescript
 await getCookies({ url: 'https://example.com/', browsers: ['chrome'], inlineCookiesFile: '/path/to/cookies.json' });
@@ -132,9 +119,7 @@ For Chrome 127+ with app-bound encryption:
 
 ## SweetCookieKit (Swift)
 
-Native macOS cookie extraction. **Requirements**: macOS 13+, Swift 6.
-
-### Installation
+Native macOS cookie extraction. Requires macOS 13+, Swift 6.
 
 ```swift
 // Package.swift
@@ -176,14 +161,14 @@ swift run SweetCookieCLI stores
 swift run SweetCookieCLI export --domain example.com --format json
 ```
 
-## Security Notes
+## Security
 
 - **Keychain prompts**: Chrome/Edge may trigger Keychain access prompts on macOS
 - **Full Disk Access**: Safari requires Full Disk Access permission
 - **Browser must be closed**: Some browsers lock their cookie DB while running
 - **Encrypted cookies**: Chromium cookies are encrypted; sweet-cookie handles decryption via OS keychain
 
-### Keychain Prompt Handler (Swift)
+Keychain prompt handler (Swift):
 
 ```swift
 BrowserCookieKeychainPromptHandler.shared.handler = { context in
@@ -193,16 +178,14 @@ BrowserCookieKeychainPromptHandler.shared.handler = { context in
 
 ## Integration
 
-### With Bird (X/Twitter CLI)
-
-Bird auto-extracts X/Twitter cookies via sweet-cookie:
+With Bird (X/Twitter CLI) — auto-extracts cookies via sweet-cookie:
 
 ```bash
 bird whoami
 bird tweet "Hello from CLI"
 ```
 
-### With Crawl4AI
+With Crawl4AI:
 
 ```bash
 crawl4ai https://app.example.com --cookies /path/to/cookies.json
