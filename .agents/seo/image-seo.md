@@ -20,50 +20,33 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Workflow: Single Image
+## Workflow
 
 ```bash
-# Alt text
+# Single image — set IMAGE_URL or IMAGE_DATA (base64: "data:image/jpeg;base64,$B64")
 CAPTION=$(curl -s -X POST https://api.moondream.ai/v1/caption \
   -H 'Content-Type: application/json' \
   -H "X-Moondream-Auth: $MOONDREAM_API_KEY" \
-  -d "{\"image_url\": \"$IMAGE_URL\", \"length\": \"normal\"}" \
-  | jq -r '.caption')
+  -d "{\"image_url\": \"$IMAGE_URL\", \"length\": \"normal\"}" | jq -r '.caption')
 
-# SEO filename
 FILENAME=$(curl -s -X POST https://api.moondream.ai/v1/query \
   -H 'Content-Type: application/json' \
   -H "X-Moondream-Auth: $MOONDREAM_API_KEY" \
-  -d "{\"image_url\": \"$IMAGE_URL\",
-    \"question\": \"Suggest a descriptive SEO-friendly filename using lowercase hyphenated words. No extension. Example: golden-retriever-wooden-deck\"
-  }" | jq -r '.answer')
+  -d "{\"image_url\": \"$IMAGE_URL\", \"question\": \"Suggest a descriptive SEO-friendly filename using lowercase hyphenated words. No extension. Example: golden-retriever-wooden-deck\"}" \
+  | jq -r '.answer')
 
-# Keyword tags
 TAGS=$(curl -s -X POST https://api.moondream.ai/v1/query \
   -H 'Content-Type: application/json' \
   -H "X-Moondream-Auth: $MOONDREAM_API_KEY" \
-  -d "{\"image_url\": \"$IMAGE_URL\",
-    \"question\": \"List 5-10 relevant SEO keywords for this image, comma-separated. Include subject, setting, colors, mood.\"
-  }" | jq -r '.answer')
-```
+  -d "{\"image_url\": \"$IMAGE_URL\", \"question\": \"List 5-10 relevant SEO keywords for this image, comma-separated. Include subject, setting, colors, mood.\"}" \
+  | jq -r '.answer')
 
-## Workflow: Batch
-
-```bash
+# Batch — wrap the above in a loop, substituting IMAGE_URL with base64 IMAGE_DATA per file
 for img in /path/to/images/*.{jpg,png,webp}; do
   B64=$(base64 -i "$img" | tr -d '\n')
-  IMAGE_DATA="data:image/jpeg;base64,$B64"
-  ALT=$(curl -s -X POST https://api.moondream.ai/v1/caption \
-    -H 'Content-Type: application/json' \
-    -H "X-Moondream-Auth: $MOONDREAM_API_KEY" \
-    -d "{\"image_url\": \"$IMAGE_DATA\", \"length\": \"normal\"}" | jq -r '.caption')
-  NAME=$(curl -s -X POST https://api.moondream.ai/v1/query \
-    -H 'Content-Type: application/json' \
-    -H "X-Moondream-Auth: $MOONDREAM_API_KEY" \
-    -d "{\"image_url\": \"$IMAGE_DATA\",
-      \"question\": \"Suggest a descriptive SEO-friendly filename using lowercase hyphenated words. No extension.\"
-    }" | jq -r '.answer')
-  echo "$img -> $NAME.${img##*.} | Alt: $ALT"
+  IMAGE_URL="data:image/jpeg;base64,$B64"
+  # ... run CAPTION / FILENAME / TAGS calls above ...
+  echo "$img -> $FILENAME.${img##*.} | Alt: $CAPTION"
 done
 ```
 
@@ -71,12 +54,12 @@ done
 
 ```bash
 # WP-CLI
-wp media update $ATTACHMENT_ID --alt="$ALT_TEXT" --title="$SEO_TITLE"
+wp media update $ATTACHMENT_ID --alt="$CAPTION" --title="$FILENAME"
 
 # REST API
 curl -X POST "https://example.com/wp-json/wp/v2/media/$ATTACHMENT_ID" \
   -H "Authorization: Bearer $WP_TOKEN" -H 'Content-Type: application/json' \
-  -d "{\"alt_text\": \"$ALT_TEXT\", \"title\": {\"raw\": \"$SEO_TITLE\"}, \"caption\": {\"raw\": \"$CAPTION\"}}"
+  -d "{\"alt_text\": \"$CAPTION\", \"title\": {\"raw\": \"$FILENAME\"}, \"caption\": {\"raw\": \"$CAPTION\"}}"
 ```
 
 ## Alt Text Rules (WCAG 2.1)
@@ -96,12 +79,11 @@ curl -X POST "https://example.com/wp-json/wp/v2/media/$ATTACHMENT_ID" \
 
 | Rule | Example |
 |------|---------|
-| Lowercase | `golden-retriever.jpg` |
-| Hyphens not underscores | `red-running-shoes.jpg` |
+| Lowercase, hyphens | `red-running-shoes.jpg` (not underscores) |
 | Descriptive | `nike-air-max-90-white.jpg` not `IMG_4521.jpg` |
-| Primary keyword included | `organic-coffee-beans-bag.jpg` |
-| No special characters | No spaces, accents, symbols |
+| Primary keyword first | `organic-coffee-beans-bag.jpg` |
 | 3–6 words, under 60 chars | `golden-retriever-wooden-deck` |
+| No special characters | No spaces, accents, symbols |
 
 **Prompt**: *SEO-friendly filename, lowercase hyphenated, no extension. Main subject + one detail. 3–6 words. Example: golden-retriever-wooden-deck*
 
