@@ -7,8 +7,6 @@ model: sonnet
 
 # Brand Identity Bridge
 
-Per-project brand identity bridging design and content agents. A designer picks "Glassmorphism + Trust Blue" — this ensures the copywriter knows it means "confident, technical, concise."
-
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
@@ -103,9 +101,19 @@ Every agent producing design or content output MUST check `context/brand-identit
 
 ## Workflow
 
-**From scratch**: (1) Visual interview via `tools/design/ui-ux-inspiration.md` → UI style, palette, typography; (2) Verbal interview → voice, tone spectrums, CTAs, words to avoid; (3) Imagery & motion → image style, icon library, animation level; (4) Brand positioning → walk each spectrum; (5) Synthesise into `context/brand-identity.toon`, flag contradictions, iterate.
+**From scratch** — via `tools/design/ui-ux-inspiration.md`:
+1. Visual interview → UI style, palette, typography
+2. Verbal interview → voice, tone spectrums, CTAs, words to avoid
+3. Imagery & motion → image style, icon library, animation level
+4. Brand positioning → walk each spectrum
+5. Synthesise into `context/brand-identity.toon`, flag contradictions, iterate
 
-**From existing site**: (1) URL study via `tools/design/ui-ux-inspiration.md` → extract colours, typography, UI patterns; (2) Read 5-10 pages → identify voice, CTAs, error messages; (3) Present as filled template; (4) Refine — what stays/changes/is missing; (5) Merge kept elements with new directions, flag breaking changes.
+**From existing site** — via `tools/design/ui-ux-inspiration.md`:
+1. URL study → extract colours, typography, UI patterns
+2. Read 5-10 pages → identify voice, CTAs, error messages
+3. Present as filled template
+4. Refine — what stays/changes/is missing
+5. Merge kept elements with new directions, flag breaking changes
 
 ## Relationship Map
 
