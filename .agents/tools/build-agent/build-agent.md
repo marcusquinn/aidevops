@@ -31,8 +31,6 @@ mode: subagent
 | **Location** | Root of `.agents/` | `tools/`, `services/`, `workflows/` |
 | **MCP tools** | NEVER enable directly | Enable per-agent |
 
-Call existing agents before duplicating.
-
 ## Subagent YAML Frontmatter (Required — omitting defaults to read-only)
 
 ```yaml
@@ -80,15 +78,6 @@ tools:
 └── draft/              # R&D experimental (survives updates)
 ```
 
-### Strategy vs Execution Split
-
-| Location | Contains | Nature |
-|----------|----------|--------|
-| `{agent}.md` + `{agent}/` | Domain strategy, methodology, audience knowledge | **What** to do |
-| `tools/` | Browser, git, database, code review, deployment tools | **How** to do it |
-| `services/` | Hosting, payments, communications, email providers | **How** to connect |
-| `workflows/` | Git flow, release, PR review, pre-edit checks | **How** to process |
-
 **Placement test:** "Would another agent use this independently?" Yes → `tools/`/`services/`/`workflows/`/`reference/`. No → `{agent}/`.
 
 ### The `{name}.md` + `{name}/` Convention
@@ -115,13 +104,13 @@ External skills retain `-skill` suffix (provenance marker for `skill-update-help
 
 ## Model Tier Selection
 
+Record outcomes: `/remember "SUCCESS/FAILURE: agent with model — reason"`. Frontmatter: `model: sonnet  # 87% success, 14 samples`. Full docs: `tools/context/model-routing.md`.
+
 | Situation | Action |
 |-----------|--------|
 | >75% success, 3+ samples | Use pattern data (overrides static rule) |
 | Insufficient data | Use routing rules, record outcomes |
 | Contradicts routing rules | Note conflict in agent docs |
-
-Record: `/remember "SUCCESS/FAILURE: agent with model — reason"`. Frontmatter: `model: sonnet  # 87% success, 14 samples`. Full docs: `tools/context/model-routing.md`.
 
 ## Quality Checking
 
@@ -135,7 +124,7 @@ Linter order: (1) deterministic (ShellCheck, ESLint, Ruff/Pylint), (2) static an
 4. **Code example?** Authoritative? Will it drift? Security: placeholders only
 5. **Instruction count?** Combine related, remove redundant
 6. **Duplicates?** `rg "pattern" .agents/` before adding
-7. **Existing agent?** Call and improve vs duplicate?
+7. **Existing agent?** Call and improve vs duplicate — never create a copy
 8. **Sources verified?** Primary, cross-referenced
 9. **Markdown linting?** MD025/MD022/MD031/MD012. Run `bunx markdownlint-cli2 "path/to/file.md"`
 10. **Terse pass done?** See below
@@ -144,9 +133,7 @@ Linter order: (1) deterministic (ShellCheck, ESLint, Ruff/Pylint), (2) static an
 
 Every token costs on every load. Compress before committing.
 
-**Compress:** verbose phrasing → direct rule; narrative → keep task ID, drop story; redundant examples → keep one; multi-sentence rule → single sentence.
-
-**Preserve:** task IDs (`tNNN`), issue refs (`GH#NNN`), all rules/constraints, file paths, command examples, code blocks, safety-critical detail.
+**Compress:** verbose phrasing → direct rule; narrative → keep task ID, drop story; redundant examples → keep one; multi-sentence rule → single sentence. **Preserve:** task IDs (`tNNN`), issue refs (`GH#NNN`), all rules/constraints, file paths, command examples, code blocks, safety-critical detail.
 
 Target: reference cards, not tutorials. Evidence: 63% byte reduction on `build.txt` with zero rule loss. See `tools/code-review/code-simplifier.md` "Prose tightening".
 
@@ -156,9 +143,7 @@ Target: reference cards, not tutorials. Evidence: 63% byte reduction on `build.t
 
 ## Self-Assessment Protocol
 
-**Triggers**: Observable failure, user correction, contradiction with Context7/codebase, staleness.
-
-**Process**: (1) Complete current task. (2) Identify root cause. (3) `rg "pattern" .agents/` — list ALL files needing coordinated updates. (4) Propose fix with evidence, ask user to confirm before applying.
+**Triggers**: Observable failure, user correction, contradiction with Context7/codebase, staleness. **Process**: (1) Complete current task. (2) Identify root cause. (3) `rg "pattern" .agents/` — list ALL files needing coordinated updates. (4) Propose fix with evidence, ask user to confirm before applying.
 
 ## Tool Selection
 
