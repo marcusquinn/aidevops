@@ -243,6 +243,23 @@ _find_session_id() {
 	# where sessions are typically stored (GH#12965).
 	main_worktree=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //' || echo "")
 
+	# Build a deduplicated list of meaningful directories for session matching.
+	# Exclude non-project paths (/, /tmp, /private/tmp) that would match stale
+	# sessions from unrelated contexts (GH#13046 — pulse runs from / via launchd).
+	local dir_list=""
+	local d
+	for d in "$cwd" "$repo_root" "$canonical_dir" "$main_worktree"; do
+		# Skip empty, root, and temp directories
+		case "$d" in
+		"" | "/" | "/tmp" | "/private/tmp" | "/var/tmp") continue ;;
+		esac
+		if [[ -n "$dir_list" ]]; then
+			dir_list="${dir_list}, '${d}'"
+		else
+			dir_list="'${d}'"
+		fi
+	done
+
 	local session_id=""
 
 	# Strategy 1: OPENCODE_PID (set in interactive TUI sessions)
@@ -270,7 +287,7 @@ _find_session_id() {
 	fi
 
 	# Convert PID start time to epoch for session matching
-	if [[ -n "$target_pid" ]]; then
+	if [[ -n "$target_pid" ]] && [[ -n "$dir_list" ]]; then
 		local pid_start_epoch lstart
 		lstart=$(ps -o lstart= -p "$target_pid" 2>/dev/null || echo "")
 		if [[ -n "$lstart" ]]; then
@@ -282,7 +299,7 @@ _find_session_id() {
 			local pid_start_ms=$((pid_start_epoch * 1000))
 			session_id=$(sqlite3 "$db_path" "
 				SELECT id FROM session
-				WHERE directory IN ('${cwd}', '${repo_root}', '${canonical_dir}', '${main_worktree}')
+				WHERE directory IN (${dir_list})
 				ORDER BY ABS(time_created - ${pid_start_ms}) ASC LIMIT 1
 			" 2>/dev/null || echo "")
 		fi
@@ -290,22 +307,23 @@ _find_session_id() {
 
 	# Strategy 3: most recently created session matching directory
 	# (not updated — avoids picking long-running supervisor sessions)
-	if [[ -z "$session_id" ]]; then
+	if [[ -z "$session_id" ]] && [[ -n "$dir_list" ]]; then
 		session_id=$(sqlite3 "$db_path" "
 			SELECT id FROM session
-			WHERE directory IN ('${cwd}', '${repo_root}', '${canonical_dir}', '${main_worktree}')
+			WHERE directory IN (${dir_list})
 			ORDER BY time_created DESC LIMIT 1
 		" 2>/dev/null || echo "")
 	fi
 
-	# Strategy 4: most recently created session globally (within 1 hour).
-	# On Linux, the worker may run from a worktree path that doesn't match
-	# any stored session directory. A 1-hour window limits false matches
-	# to concurrent sessions on the same machine (GH#13012).
+	# Strategy 4: most recently created session globally (within 10 minutes).
+	# Fallback when directory matching fails — e.g., workers in worktrees
+	# not yet in the DB, or scripts running from non-project directories.
+	# 10-minute window (tightened from 1h) limits false matches to concurrent
+	# sessions on the same machine (GH#13012, GH#13046).
 	if [[ -z "$session_id" ]]; then
 		session_id=$(sqlite3 "$db_path" "
 			SELECT id FROM session
-			WHERE time_created > (strftime('%s','now') - 3600) * 1000
+			WHERE time_created > (strftime('%s','now') - 600) * 1000
 			ORDER BY time_created DESC LIMIT 1
 		" 2>/dev/null || echo "")
 	fi
@@ -666,14 +684,14 @@ _format_number() {
 # =============================================================================
 # _parse_generate_args — parse CLI args for cmd_generate
 # =============================================================================
-# Outputs pipe-separated: model|tokens|cli_name|cli_version|issue_ref|issue_created|solved
+# Outputs pipe-separated: model|tokens|cli_name|cli_version|issue_ref|issue_created|solved|no_session
 
 _parse_generate_args() {
 	local model="${AIDEVOPS_SIG_MODEL:-}"
 	local tokens="${AIDEVOPS_SIG_TOKENS:-}"
 	local cli_name="${AIDEVOPS_SIG_CLI:-}"
 	local cli_version="${AIDEVOPS_SIG_CLI_VERSION:-}"
-	local issue_ref="" issue_created="" solved="false"
+	local issue_ref="" issue_created="" solved="false" no_session="false"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -705,13 +723,17 @@ _parse_generate_args() {
 			solved="true"
 			shift
 			;;
+		--no-session)
+			no_session="true"
+			shift
+			;;
 		*) shift ;;
 		esac
 	done
 
-	printf '%s|%s|%s|%s|%s|%s|%s\n' \
+	printf '%s|%s|%s|%s|%s|%s|%s|%s\n' \
 		"$model" "$tokens" "$cli_name" "$cli_version" \
-		"$issue_ref" "$issue_created" "$solved"
+		"$issue_ref" "$issue_created" "$solved" "$no_session"
 	return 0
 }
 
@@ -884,8 +906,8 @@ cmd_generate() {
 	# Parse arguments
 	local parsed
 	parsed=$(_parse_generate_args "$@")
-	local model tokens cli_name cli_version issue_ref issue_created solved
-	IFS='|' read -r model tokens cli_name cli_version issue_ref issue_created solved <<<"$parsed"
+	local model tokens cli_name cli_version issue_ref issue_created solved no_session
+	IFS='|' read -r model tokens cli_name cli_version issue_ref issue_created solved no_session <<<"$parsed"
 
 	# Auto-detect CLI name/version
 	local cli_resolved
@@ -893,40 +915,44 @@ cmd_generate() {
 	cli_name="${cli_resolved%%|*}"
 	cli_version="${cli_resolved##*|}"
 
-	# Auto-detect model from session DB if not provided (GH#12965)
-	if [[ -z "$model" ]]; then
-		model=$(_detect_session_model)
-	fi
+	# Skip session DB detection when --no-session is set (GH#13046).
+	# Used by callers running outside OpenCode (e.g., pulse-wrapper via launchd)
+	# where session DB lookups would return misleading data from unrelated sessions.
+	local session_time_str="" total_time_str="" issue_total_tokens="" session_type=""
 
-	# Auto-detect tokens from session DB if not provided
-	if [[ -z "$tokens" ]]; then
-		tokens=$(_detect_session_tokens)
-	fi
-
-	# Collect time metrics
-	local time_metrics
-	time_metrics=$(_collect_time_metrics "$issue_ref" "$issue_created")
-	local session_time_str total_time_str
-	IFS='|' read -r session_time_str total_time_str <<<"$time_metrics"
-
-	# Sum issue total tokens (prior comments + current session) when --issue is set.
-	# Only show when there are prior comments with tokens — otherwise the total
-	# equals the current session's count, which is redundant.
-	local issue_total_tokens=""
-	if [[ -n "$issue_ref" ]]; then
-		local prior_tokens
-		prior_tokens=$(_sum_issue_tokens "$issue_ref")
-		if [[ -n "$prior_tokens" ]] && [[ "$prior_tokens" -gt 0 ]] 2>/dev/null; then
-			local current_tokens="${tokens:-0}"
-			current_tokens=$(printf '%s' "$current_tokens" | tr -cd '0-9')
-			current_tokens="${current_tokens:-0}"
-			issue_total_tokens=$((prior_tokens + current_tokens))
+	if [[ "$no_session" != "true" ]]; then
+		# Auto-detect model from session DB if not provided (GH#12965)
+		if [[ -z "$model" ]]; then
+			model=$(_detect_session_model)
 		fi
-	fi
 
-	# Detect session type (interactive vs worker)
-	local session_type
-	session_type=$(_detect_session_type)
+		# Auto-detect tokens from session DB if not provided
+		if [[ -z "$tokens" ]]; then
+			tokens=$(_detect_session_tokens)
+		fi
+
+		# Collect time metrics
+		local time_metrics
+		time_metrics=$(_collect_time_metrics "$issue_ref" "$issue_created")
+		IFS='|' read -r session_time_str total_time_str <<<"$time_metrics"
+
+		# Sum issue total tokens (prior comments + current session) when --issue is set.
+		# Only show when there are prior comments with tokens — otherwise the total
+		# equals the current session's count, which is redundant.
+		if [[ -n "$issue_ref" ]]; then
+			local prior_tokens
+			prior_tokens=$(_sum_issue_tokens "$issue_ref")
+			if [[ -n "$prior_tokens" ]] && [[ "$prior_tokens" -gt 0 ]] 2>/dev/null; then
+				local current_tokens="${tokens:-0}"
+				current_tokens=$(printf '%s' "$current_tokens" | tr -cd '0-9')
+				current_tokens="${current_tokens:-0}"
+				issue_total_tokens=$((prior_tokens + current_tokens))
+			fi
+		fi
+
+		# Detect session type (interactive vs worker)
+		session_type=$(_detect_session_type)
+	fi
 
 	# Build and emit the signature
 	_build_signature \
