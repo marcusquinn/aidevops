@@ -1,7 +1,5 @@
 # Stream Patterns
 
-Common workflows, full-stack flows, and best practices.
-
 ## Full-Stack Upload Flow
 
 **Backend API (Next.js route)**
@@ -130,23 +128,20 @@ export default {
 
 ## Best Practices
 
-1. **Use Direct Creator Uploads** - Avoid proxying video through servers
-2. **Enable requireSignedURLs** - Control access to private content
-3. **Use signing keys for high volume** - Self-sign tokens instead of API calls
-4. **Set allowedOrigins** - Prevent hotlinking
-5. **Use webhooks over polling** - Efficient status updates
-6. **Cache video metadata** - Reduce API calls
-7. **Set maxDurationSeconds** - Prevent abuse on direct uploads
-8. **Use creator metadata** - Enable per-user filtering/analytics
-9. **Enable recordings for live** - Automatic VOD after stream ends
-10. **Monitor with GraphQL analytics** - Track views, watch time, geo
+1. **Direct Creator Uploads** — avoid proxying video through servers
+2. **requireSignedURLs** — control access to private content
+3. **Signing keys for high volume** — self-sign tokens instead of API calls
+4. **allowedOrigins** — prevent hotlinking
+5. **Webhooks over polling** — efficient status updates
+6. **Cache video metadata** — reduce API calls
+7. **maxDurationSeconds** — prevent abuse on direct uploads
+8. **Creator metadata** — enable per-user filtering/analytics
+9. **Enable recordings for live** — automatic VOD after stream ends
+10. **GraphQL analytics** — track views, watch time, geo
 
-## In This Reference
+## Related
 
-- [README.md](./README.md) - Overview and quick start
-- [gotchas.md](./gotchas.md) - Error codes, troubleshooting
-
-## See Also
-
-- [workers](../workers/) - Deploy Stream APIs in Workers
-- [pages](../pages/) - Integrate Stream with Pages
+- [README.md](./README.md) — overview and quick start
+- [gotchas.md](./gotchas.md) — error codes, troubleshooting
+- [workers](../workers/) — deploy Stream APIs in Workers
+- [pages](../pages/) — integrate Stream with Pages
