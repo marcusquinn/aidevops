@@ -1,70 +1,27 @@
 # Stream Gotchas
 
-Common issues, troubleshooting, and limits.
+Common errors, troubleshooting, limits, and security.
 
 ## Common Errors
 
-### ERR_NON_VIDEO
-
-**Cause**: Uploaded file is not a valid video format
-
-**Solution**: Ensure file is in supported format (MP4, MKV, MOV, AVI, FLV, MPEG-2 TS/PS, MXF, LXF, GXF, 3GP, WebM, MPG, QuickTime)
-
-### ERR_DURATION_EXCEED_CONSTRAINT
-
-**Cause**: Video duration exceeds `maxDurationSeconds` constraint
-
-**Solution**: Increase `maxDurationSeconds` in direct upload config or trim video before upload
-
-### ERR_FETCH_ORIGIN_ERROR
-
-**Cause**: Failed to download video from URL (upload from URL)
-
-**Solution**: Ensure URL is publicly accessible, uses HTTPS, and video file is available
-
-### ERR_MALFORMED_VIDEO
-
-**Cause**: Video file is corrupted or improperly encoded
-
-**Solution**: Re-encode video using FFmpeg or check source file integrity
-
-### ERR_DURATION_TOO_SHORT
-
-**Cause**: Video must be at least 0.1 seconds long
-
-**Solution**: Ensure video has valid duration (not a single frame)
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `ERR_NON_VIDEO` | Not a valid video format | Use MP4, MKV, MOV, AVI, FLV, MPEG-2 TS/PS, MXF, LXF, GXF, 3GP, WebM, MPG, or QuickTime |
+| `ERR_DURATION_EXCEED_CONSTRAINT` | Exceeds `maxDurationSeconds` | Increase `maxDurationSeconds` or trim video |
+| `ERR_FETCH_ORIGIN_ERROR` | Cannot download from URL | Ensure URL is publicly accessible and uses HTTPS |
+| `ERR_MALFORMED_VIDEO` | Corrupted or improperly encoded | Re-encode with FFmpeg; check source file integrity |
+| `ERR_DURATION_TOO_SHORT` | Under 0.1 seconds | Ensure video has valid duration |
 
 ## Troubleshooting
 
-### Video stuck in "inprogress" state
-
-- **Cause**: Processing large/complex video
-- **Solution**: Wait up to 5 minutes for processing; use webhooks instead of polling
-
-### Signed URL returns 403
-
-- **Cause**: Token expired or invalid signature
-- **Solution**: Check expiration timestamp, verify JWK is correct, ensure clock sync
-
-### Live stream not connecting
-
-- **Cause**: Invalid RTMPS URL or stream key
-- **Solution**: Use exact URL/key from API, ensure firewall allows outbound 443
-
-### Webhook signature verification fails
-
-- **Cause**: Incorrect secret or timestamp window
-- **Solution**: Use exact secret from webhook setup, allow 5-minute timestamp drift
-
-### Video uploads but isn't visible
-
-- **Cause**: `requireSignedURLs` enabled without providing token
-- **Solution**: Generate signed token or set `requireSignedURLs: false` for public videos
-
-### Player shows infinite loading
-
-- **Cause**: CORS issue with allowedOrigins
-- **Solution**: Add your domain to `allowedOrigins` array
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Stuck in "inprogress" | Processing large/complex video | Wait up to 5 min; use webhooks instead of polling |
+| Signed URL returns 403 | Token expired or invalid signature | Check expiration, verify JWK, ensure clock sync |
+| Live stream won't connect | Invalid RTMPS URL or stream key | Use exact URL/key from API; allow outbound port 443 |
+| Webhook signature fails | Wrong secret or timestamp window | Use exact secret from setup; allow 5-min timestamp drift |
+| Uploaded but not visible | `requireSignedURLs` enabled without token | Generate signed token or set `requireSignedURLs: false` |
+| Player infinite loading | CORS / `allowedOrigins` mismatch | Add your domain to `allowedOrigins` |
 
 ## Limits
 
@@ -72,32 +29,23 @@ Common issues, troubleshooting, and limits.
 |----------|-------|
 | Max file size | 30 GB |
 | Max frame rate | 60 fps (recommended) |
-| Max duration per direct upload | Configurable via `maxDurationSeconds` |
-| Token generation (API endpoint) | 1,000/day recommended (use signing keys for higher) |
+| Max duration (direct upload) | Configurable via `maxDurationSeconds` |
+| Token generation (API) | 1,000/day recommended (signing keys for higher) |
 | Live input outputs (simulcast) | 5 per live input |
-| Webhook retry attempts | 5 (exponential backoff) |
+| Webhook retries | 5 (exponential backoff) |
 | Webhook timeout | 30 seconds |
 | Caption file size | 5 MB |
 | Watermark image size | 2 MB |
 | Metadata keys per video | Unlimited |
 | Search results per page | Max 1,000 |
 
-## Performance Issues
+## Performance
 
-### Upload is slow
-
-- **Cause**: Large file size or network constraints
-- **Solution**: Use TUS resumable upload, compress video before upload, check bandwidth
-
-### Playback buffering
-
-- **Cause**: Network congestion or low bandwidth
-- **Solution**: Use ABR (adaptive bitrate) with HLS/DASH, reduce max bitrate
-
-### High processing time
-
-- **Cause**: Complex video codec, high resolution
-- **Solution**: Pre-encode with H.264 (most efficient), reduce resolution
+| Issue | Fix |
+|-------|-----|
+| Slow upload | Use TUS resumable upload; compress video; check bandwidth |
+| Playback buffering | Use ABR (HLS/DASH); reduce max bitrate |
+| High processing time | Pre-encode with H.264; reduce resolution |
 
 ## Type Safety
 
@@ -117,7 +65,7 @@ async function uploadWithErrorHandling(url: string, file: File) {
   formData.append('file', file);
   const response = await fetch(url, { method: 'POST', body: formData });
   const result = await response.json();
-  
+
   if (!result.success) {
     throw new Error(result.errors[0]?.message || 'Upload failed');
   }
@@ -127,17 +75,17 @@ async function uploadWithErrorHandling(url: string, file: File) {
 
 ## Security Gotchas
 
-1. **Never expose API token in frontend** - Use direct creator uploads
-2. **Always verify webhook signatures** - Prevent spoofed notifications
-3. **Set appropriate token expiration** - Short-lived for security
-4. **Use requireSignedURLs for private content** - Prevent unauthorized access
-5. **Whitelist allowedOrigins** - Prevent hotlinking/embedding on unauthorized sites
+1. **Never expose API token in frontend** — use direct creator uploads
+2. **Always verify webhook signatures** — prevent spoofed notifications
+3. **Set short token expiration** — minimize exposure window
+4. **Use `requireSignedURLs` for private content** — prevent unauthorized access
+5. **Whitelist `allowedOrigins`** — prevent hotlinking on unauthorized sites
 
 ## In This Reference
 
-- [README.md](./README.md) - Overview and quick start
-- [patterns.md](./patterns.md) - Full-stack flows, best practices
+- [README.md](./README.md) — Overview and quick start
+- [patterns.md](./patterns.md) — Full-stack flows, best practices
 
 ## See Also
 
-- [workers](../workers/) - Deploy Stream APIs securely
+- [workers](../workers/) — Deploy Stream APIs securely
