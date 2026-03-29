@@ -90,7 +90,7 @@ const config :Workerd.Config = (
 | Direct | `workerd serve config.capnp --socket-addr http=*:3000 --verbose` |
 | With env vars | `export DATABASE_URL="postgres://..." && workerd serve config.capnp` |
 
-**Environment variable bindings:**
+### Environment Variables
 
 ```capnp
 bindings = [
@@ -118,7 +118,9 @@ workerd test config.capnp --test-only=test.js
 
 ## Production Deployment
 
-**Systemd** (`/etc/systemd/system/workerd.service` + `workerd.socket`):
+### Systemd
+
+`/etc/systemd/system/workerd.service` + `workerd.socket`:
 
 ```ini
 [Unit]
@@ -145,7 +147,7 @@ ListenStream=0.0.0.0:80
 WantedBy=sockets.target
 ```
 
-**Docker:**
+### Docker
 
 ```dockerfile
 FROM debian:bookworm-slim
@@ -157,7 +159,7 @@ EXPOSE 8080
 CMD ["workerd", "serve", "/etc/workerd/config.capnp"]
 ```
 
-**Compiled binary:**
+### Compiled Binary
 
 ```bash
 workerd compile config.capnp myConfig -o production-server
@@ -177,7 +179,7 @@ workerd compile config.capnp myConfig -o production-server
 | Error handling | Wrap handlers in try/catch |
 | Resource limits | Configure limits on caches/storage |
 
-## Worker Patterns
+## Fetch Handler
 
 ```javascript
 export default {
