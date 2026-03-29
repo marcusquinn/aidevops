@@ -6,9 +6,7 @@ metadata:
   tags: composition, still, folder, props, metadata
 ---
 
-A `<Composition>` defines the component, width, height, fps and duration of a renderable video.
-
-It normally is placed in the `src/Root.tsx` file.
+`<Composition>` defines component, dimensions, fps and duration for a renderable video. Place in `src/Root.tsx`.
 
 ```tsx
 import { Composition } from "remotion";
@@ -30,8 +28,7 @@ export const RemotionRoot = () => {
 
 ## Default Props
 
-Pass `defaultProps` to provide initial values for your component.  
-Values must be JSON-serializable (`Date`, `Map`, `Set`, and `staticFile()` are supported).
+`defaultProps` provides initial values. Must be JSON-serializable (`Date`, `Map`, `Set`, `staticFile()` supported). Use `type` (not `interface`) for props to ensure type safety with `satisfies`.
 
 ```tsx
 import { Composition } from "remotion";
@@ -55,12 +52,9 @@ export const RemotionRoot = () => {
 };
 ```
 
-Use `type` declarations for props rather than `interface` to ensure `defaultProps` type safety.
-
 ## Folders
 
-Use `<Folder>` to organize compositions in the sidebar.  
-Folder names can only contain letters, numbers, and hyphens.
+`<Folder>` organizes compositions in the sidebar. Names: letters, numbers, hyphens only. Supports nesting.
 
 ```tsx
 import { Composition, Folder } from "remotion";
@@ -85,7 +79,7 @@ export const RemotionRoot = () => {
 
 ## Stills
 
-Use `<Still>` for single-frame images. It does not require `durationInFrames` or `fps`.
+`<Still>` renders single-frame images. No `durationInFrames` or `fps` required.
 
 ```tsx
 import { Still } from "remotion";
@@ -105,7 +99,7 @@ export const RemotionRoot = () => {
 
 ## Calculate Metadata
 
-Use `calculateMetadata` to make dimensions, duration, or props dynamic based on data.
+`calculateMetadata` makes dimensions, duration, or props dynamic. Runs once before rendering. Can return `props`, `durationInFrames`, `width`, `height`, `fps`, and codec defaults.
 
 ```tsx
 import { Composition, CalculateMetadataFunction } from "remotion";
@@ -143,5 +137,3 @@ export const RemotionRoot = () => {
   );
 };
 ```
-
-The function can return `props`, `durationInFrames`, `width`, `height`, `fps`, and codec-related defaults. It runs once before rendering begins.

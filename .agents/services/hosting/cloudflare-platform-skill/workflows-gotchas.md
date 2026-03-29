@@ -1,21 +1,13 @@
 # Gotchas & Debugging
 
-## Timeout Issues
+## Timeouts
 
-### Step Timeout
-
-- **Default**: 10 min/attempt
-- **CPU Limit**: 30s default, max 5min (wrangler.toml `limits.cpu_ms = 300_000`)
+- **Step**: 10 min/attempt default. CPU: 30s default, 5min max (`limits.cpu_ms = 300_000` in wrangler.toml)
+- **waitForEvent**: 24h default, 365d max. **Throws on timeout** — always wrap in try-catch
 
 ```typescript
-await step.do('long operation', {timeout: '30 minutes'}, async () => { /* ... */ });
-```
+await step.do('long op', {timeout: '30 minutes'}, async () => { /* ... */ });
 
-### waitForEvent Timeout
-
-- **Default**: 24h, **Max**: 365d, **Throws on timeout**
-
-```typescript
 try {
   const event = await step.waitForEvent('wait', { type: 'approval', timeout: '1h' });
 } catch (e) { /* Timeout - proceed with default */ }
@@ -33,81 +25,75 @@ try {
 | Concurrent instances | 25 | 10k |
 | State retention | 3d | 30d |
 
-Note: `step.sleep()` doesn't count toward step limit
+`step.sleep()` doesn't count toward step limit.
 
 ## Debugging
 
-### Logs
-
 ```typescript
+// Logs: inside steps = logged once; outside steps = may duplicate on restart
 await step.do('process', async () => {
-  console.log('Logged once per successful step'); // ✅
+  console.log('Logged once per successful step');
   return result;
 });
-console.log('Outside step'); // ⚠️ May duplicate on restart
 ```
 
-### Instance Status
-
 ```bash
+# Instance status via CLI
 npx wrangler workflows instances describe my-workflow instance-id
 ```
 
 ```typescript
-const instance = await env.MY_WORKFLOW.get('instance-id');
-const status = await instance.status();
-// status: queued | running | paused | errored | terminated | complete | waiting | waitingForPause | unknown
+// Instance status via API
+const status = await (await env.MY_WORKFLOW.get('instance-id')).status();
+// queued | running | paused | errored | terminated | complete | waiting | waitingForPause | unknown
 ```
 
 ## Common Pitfalls
 
-### Non-Deterministic Step Names
+**Non-deterministic names/conditionals** — step names are cache keys; non-deterministic values break replay:
 
 ```typescript
-// ❌ BAD: await step.do(`step-${Date.now()}`, ...)
-// ✅ GOOD: await step.do(`step-${event.instanceId}`, ...)
+// ❌ await step.do(`step-${Date.now()}`, ...)
+// ✅ await step.do(`step-${event.instanceId}`, ...)
+
+// ❌ if (Date.now() > deadline) { await step.do(...) }
+// ✅ const isLate = await step.do('check', async () => Date.now() > deadline);
+//    if (isLate) { await step.do(...) }
 ```
 
-### State in Variables
+**State in variables** — local vars lost on hibernation; persist via step returns:
 
 ```typescript
-// ❌ BAD: let total = 0; await step.do('step 1', async () => { total += 10; }); // Lost on hibernation
-// ✅ GOOD: const total = await step.do('step 1', async () => 10); // Persisted
+// ❌ let total = 0; await step.do('s1', async () => { total += 10; });
+// ✅ const total = await step.do('s1', async () => 10);
 ```
 
-### Non-Deterministic Conditionals
+**Large step returns** — step state capped at 1 MiB; store in R2/KV, return refs:
 
 ```typescript
-// ❌ BAD: if (Date.now() > deadline) { await step.do(...) }
-// ✅ GOOD: const isLate = await step.do('check', async () => Date.now() > deadline); if (isLate) { await step.do(...) }
+// ❌ return await fetchHugeDataset(); // 5 MiB
+// ✅ Store in R2, return { key }
 ```
 
-### Large Step Returns
+**Idempotency ignored** — steps retry on failure; side effects must be idempotent:
 
 ```typescript
-// ❌ BAD: return await fetchHugeDataset(); // 5 MiB
-// ✅ GOOD: Store in R2, return { key }
+// ❌ await step.do('charge', async () => await chargeCustomer(...));
+// ✅ Check if already charged first; use NonRetryableError for permanent failures
 ```
 
-### Idempotency Ignored
+**Instance ID collision** — IDs must be unique within retention window:
 
 ```typescript
-// ❌ BAD: await step.do('charge', async () => await chargeCustomer(...)); // Charges on retry
-// ✅ GOOD: Check if already charged first
+// ❌ await env.MY_WORKFLOW.create({ id: userId, params: {} });
+// ✅ await env.MY_WORKFLOW.create({ id: `${userId}-${Date.now()}`, params: {} });
 ```
 
-### Instance ID Collision
+**Missing await** — unawaited steps are fire-and-forget:
 
 ```typescript
-// ❌ BAD: await env.MY_WORKFLOW.create({ id: userId, params: {} }); // Reuses IDs
-// ✅ GOOD: await env.MY_WORKFLOW.create({ id: `${userId}-${Date.now()}`, params: {} });
-```
-
-### Missing await
-
-```typescript
-// ❌ BAD: step.do('task', ...); // Fire-and-forget
-// ✅ GOOD: await step.do('task', ...);
+// ❌ step.do('task', ...);
+// ✅ await step.do('task', ...);
 ```
 
 ## Pricing
@@ -118,30 +104,10 @@ const status = await instance.status();
 | CPU time | 10ms/invoke | 30M CPU-ms/mo + $0.02/M CPU-ms |
 | Storage | 1 GB | 1 GB/mo + $0.20/GB-mo |
 
-Storage: Includes all instances (running/errored/sleeping/completed). Retention: 3d (Free), 30d (Paid)
-
-## TypeScript Types
-
-```typescript
-import { WorkflowEntrypoint, WorkflowStep, WorkflowEvent, NonRetryableError } from 'cloudflare:workers';
-
-interface Env { MY_WORKFLOW: Workflow<MyParams>; KV: KVNamespace; DB: D1Database; }
-
-export class MyWorkflow extends WorkflowEntrypoint<Env, MyParams> {
-  async run(event: WorkflowEvent<MyParams>, step: WorkflowStep) {
-    const user = await step.do('fetch', async () => await this.env.KV.get<User>(`user:${event.payload.userId}`, { type: 'json' }));
-  }
-}
-```
+Storage includes all instances (running/errored/sleeping/completed). Retention: 3d (Free), 30d (Paid).
 
 ## References
 
-- [Official Docs](https://developers.cloudflare.com/workflows/)
-- [Get Started Guide](https://developers.cloudflare.com/workflows/get-started/guide/)
-- [Workers API](https://developers.cloudflare.com/workflows/build/workers-api/)
-- [REST API](https://developers.cloudflare.com/api/resources/workflows/)
-- [Examples](https://developers.cloudflare.com/workflows/examples/)
-- [Limits](https://developers.cloudflare.com/workflows/reference/limits/)
-- [Pricing](https://developers.cloudflare.com/workflows/reference/pricing/)
+[Docs](https://developers.cloudflare.com/workflows/) | [Guide](https://developers.cloudflare.com/workflows/get-started/guide/) | [Workers API](https://developers.cloudflare.com/workflows/build/workers-api/) | [REST API](https://developers.cloudflare.com/api/resources/workflows/) | [Examples](https://developers.cloudflare.com/workflows/examples/) | [Limits](https://developers.cloudflare.com/workflows/reference/limits/) | [Pricing](https://developers.cloudflare.com/workflows/reference/pricing/)
 
-See: [README.md](./README.md), [patterns.md](./patterns.md)
+See: [workflows.md](./workflows.md), [workflows-patterns.md](./workflows-patterns.md)

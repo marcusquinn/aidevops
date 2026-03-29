@@ -54,7 +54,7 @@ export class MyWorkflow extends WorkflowEntrypoint<Env, Params> {
 
 ## Further Reading
 
-- [patterns.md](./patterns.md) - Common workflows, orchestration
-- [gotchas.md](./gotchas.md) - Timeouts, limits, debugging
+- [workflows-patterns.md](./workflows-patterns.md) - Common workflows, orchestration
+- [workflows-gotchas.md](./workflows-gotchas.md) - Timeouts, limits, debugging
 
 [Official Docs](https://developers.cloudflare.com/workflows/)
