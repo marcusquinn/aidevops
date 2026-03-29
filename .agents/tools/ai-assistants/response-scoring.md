@@ -52,16 +52,10 @@ Distinct from `compare-models` (model specs) — this evaluates **actual respons
 ```bash
 response-scoring-helper.sh prompt add \
   --title "FizzBuzz in Python" \
-  --text "Write a Python function that prints FizzBuzz for numbers 1-100" \
+  --text "Write a Python function..." \
   --category "coding" \
   --difficulty "easy"
-
-# From file
-response-scoring-helper.sh prompt add \
-  --title "REST API Design" \
-  --file prompts/rest-api.txt \
-  --category "architecture" \
-  --difficulty "hard"
+# Or from file: --file prompts/rest-api.txt
 ```
 
 ### 2. Record Model Responses
@@ -70,18 +64,9 @@ response-scoring-helper.sh prompt add \
 response-scoring-helper.sh record \
   --prompt 1 \
   --model claude-sonnet-4-6 \
-  --text "def fizzbuzz():\n    for i in range(1, 101):\n        ..." \
-  --time 2.3 \
-  --tokens 150 \
-  --cost 0.0005
-
-response-scoring-helper.sh record \
-  --prompt 1 \
-  --model gpt-4o \
-  --file responses/gpt4o-fizzbuzz.txt \
-  --time 1.8 \
-  --tokens 180 \
-  --cost 0.0006
+  --text "def fizzbuzz():..." \
+  --time 2.3 --tokens 150 --cost 0.0005
+# Or from file: --file responses/gpt4o-output.txt
 ```
 
 ### 3. Score Each Response
@@ -89,27 +74,14 @@ response-scoring-helper.sh record \
 ```bash
 response-scoring-helper.sh score \
   --response 1 \
-  --correctness 5 \
-  --completeness 4 \
-  --code-quality 5 \
-  --clarity 4
-
-response-scoring-helper.sh score \
-  --response 2 \
-  --correctness 4 \
-  --completeness 5 \
-  --code-quality 3 \
-  --clarity 4
+  --correctness 5 --completeness 4 --code-quality 5 --clarity 4
 ```
 
 ### 4. Compare and Rank
 
 ```bash
-response-scoring-helper.sh compare --prompt 1
-response-scoring-helper.sh compare --prompt 1 --json
-
-response-scoring-helper.sh leaderboard
-response-scoring-helper.sh leaderboard --category coding
+response-scoring-helper.sh compare --prompt 1        # or --json
+response-scoring-helper.sh leaderboard               # or --category coding
 response-scoring-helper.sh export --csv > scores.csv
 ```
 
@@ -117,20 +89,14 @@ response-scoring-helper.sh export --csv > scores.csv
 
 | Tool | Purpose |
 |------|---------|
-| `compare-models-helper.sh` | Compare model specs (pricing, context, capabilities) |
-| `model-availability-helper.sh` | Check which models are available |
-| `model-registry-helper.sh` | Track model versions and deprecations |
-| **`response-scoring-helper.sh`** | **Evaluate actual model response quality** |
-
-**Typical workflow:**
-1. `compare-models-helper.sh recommend "task"` — identify candidate models
-2. `model-availability-helper.sh check <model>` — verify availability
-3. `response-scoring-helper.sh` — evaluate actual outputs
-4. Use leaderboard data to inform `model-routing.md` tier assignments
+| `compare-models-helper.sh recommend "task"` | Identify candidate models by spec |
+| `model-availability-helper.sh check <model>` | Verify model is available |
+| `response-scoring-helper.sh` | **Evaluate actual response quality** |
+| `model-routing.md` | Use leaderboard data to inform tier assignments |
 
 ## Pattern Tracker Integration (t1099)
 
-Scores feed into the shared pattern tracker database, closing the loop between evaluation and routing:
+Scores feed into the shared pattern tracker database:
 
 - **On score**: Recorded as `SUCCESS_PATTERN` (weighted avg >= 3.5/5.0) or `FAILURE_PATTERN` (< 3.5/5.0), tagged with model tier and task category
 - **On compare**: Winner recorded as `SUCCESS_PATTERN` with comparison metadata
