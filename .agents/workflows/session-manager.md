@@ -19,6 +19,7 @@ tools:
 - **Purpose**: Detect session completion, suggest new sessions, spawn parallel work
 - **Triggers**: PR merge, release, topic shift, context limits
 - **Actions**: Suggest @agent-review, new session, worktree + spawn
+- **Loop agents**: `/preflight-loop`, `/pr-loop`, `/postflight-loop` — detect completion, suggest @agent-review or new session, offer spawning
 
 <!-- AI-CONTEXT-END -->
 
@@ -32,7 +33,7 @@ tools:
 | User gratitude | "thanks", "done", "that's all", "finished" | Medium |
 | Topic shift | New unrelated task requested | Medium |
 
-**Trigger-specific prefixes:**
+**Trigger prefixes:**
 
 | Trigger | Prefix line |
 |---------|-------------|
@@ -45,7 +46,6 @@ tools:
 ### Worktree + New Session (Recommended)
 
 ```bash
-# Create worktree and spawn session
 ~/.aidevops/agents/scripts/worktree-helper.sh add feature/parallel-task
 # Output: ~/Git/<project>-feature-parallel-task/
 
@@ -76,8 +76,6 @@ kitty @ launch --type=tab --cwd=~/Git/<project> opencode
 
 ## Session Handoff
 
-Export context for continuation sessions:
-
 ```bash
 cat > .session-handoff.md << EOF
 # Session Handoff
@@ -97,22 +95,20 @@ opencode run "Read .session-handoff.md and continue the work" --agent Build+
 
 ## When to Suggest @agent-review
 
-1. **After PR merge** — document what worked
-2. **After release** — document release learnings
-3. **After fixing multiple issues** — pattern recognition opportunity
-4. **After user correction** — immediate improvement opportunity
-5. **Before unrelated work** — clean context boundary
-6. **After long session** — document accumulated learnings
-
-## Loop Agent Integration
-
-Loop agents (`/preflight-loop`, `/pr-loop`, `/postflight-loop`) should detect completion, suggest @agent-review or new session, and offer spawning for the next task.
+| Trigger | Reason |
+|---------|--------|
+| After PR merge | Document what worked |
+| After release | Capture release learnings |
+| After fixing multiple issues | Pattern recognition opportunity |
+| After user correction | Immediate improvement opportunity |
+| Before unrelated work | Clean context boundary |
+| After long session | Document accumulated learnings |
 
 ## Compaction Resilience (Long Autonomous Sessions)
 
-Context compaction in 1h+ sessions can lose task state. Use checkpoints to persist state to disk.
+Context compaction in 1h+ sessions can lose task state. Checkpoint to disk after each task.
 
-### Checkpoint Workflow
+### Checkpoint Commands
 
 ```bash
 # Save after completing each task
@@ -129,6 +125,12 @@ session-checkpoint-helper.sh load
 
 # Check staleness
 session-checkpoint-helper.sh status
+
+# Generate continuation prompt for new session
+session-checkpoint-helper.sh continuation
+
+# Auto-save with state detection
+session-checkpoint-helper.sh auto-save --task "t135.9" --note "Completed X"
 ```
 
 ### When to Checkpoint
@@ -141,17 +143,7 @@ session-checkpoint-helper.sh status
 | Before large operation | `save` as recovery point |
 | After context compaction | `load` to re-orient |
 
-### Continuation Prompt
-
-```bash
-# Generate continuation prompt for pasting into new session
-session-checkpoint-helper.sh continuation
-
-# Auto-save with state detection
-session-checkpoint-helper.sh auto-save --task "t135.9" --note "Completed X"
-```
-
-Gathers state from: git (branch, uncommitted changes, commits, worktrees), GitHub (open PRs), supervisor (batch state), TODO.md (in-progress tasks), checkpoint file, and memory. This is the single highest-impact factor for session continuity — AGENTS.md provides the "how", the continuation prompt provides the "where we are".
+State gathered from: git (branch, uncommitted changes, commits, worktrees), GitHub (open PRs), supervisor (batch state), TODO.md (in-progress tasks), checkpoint file, and memory. The continuation prompt is the single highest-impact factor for session continuity — AGENTS.md provides the "how", the continuation prompt provides the "where we are".
 
 ## Related
 
