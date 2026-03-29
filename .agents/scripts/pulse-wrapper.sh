@@ -3606,9 +3606,9 @@ _complexity_scan_process_single_md_file() {
 This file was previously simplified (PR #${prev_pr}) but has since been modified. The content hash no longer matches the post-simplification state. Please re-evaluate."
 	fi
 
-	# Append signature footer
+	# Append signature footer (pass --cli since pulse runs inside OpenCode headless)
 	local sig_footer=""
-	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$issue_body" 2>/dev/null || true)
+	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$issue_body" --cli "OpenCode" 2>/dev/null || true)
 	issue_body="${issue_body}${sig_footer}"
 
 	local create_ok=false
@@ -3770,7 +3770,7 @@ This is an automated scan. The function lengths are factual, but the best decomp
 - \`declined: <reason>\` — closes this issue (include your reason after the colon)"
 		# Append signature footer
 		local sig_footer2=""
-		sig_footer2=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$issue_body" 2>/dev/null || true)
+		sig_footer2=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$issue_body" --cli "OpenCode" 2>/dev/null || true)
 		issue_body="${issue_body}${sig_footer2}"
 
 		local issue_key="$file_path"

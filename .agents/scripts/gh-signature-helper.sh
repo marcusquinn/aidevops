@@ -618,28 +618,30 @@ _build_signature() {
 		sig="${sig} with ${display_model}"
 	fi
 
-	# "used N tokens"
-	if [[ -n "$tokens" ]] && [[ "$tokens" != "0" ]]; then
-		local formatted
-		formatted=$(_format_number "$tokens")
-		sig="${sig} spent ${formatted} tokens"
+	# "spent Xm and N tokens on this." — time first, tokens second
+	local has_time="" has_tokens=""
+	if [[ -n "$session_time_str" ]]; then has_time="true"; fi
+	if [[ -n "$tokens" ]] && [[ "$tokens" != "0" ]]; then has_tokens="true"; fi
+
+	if [[ -n "$has_time" ]] || [[ -n "$has_tokens" ]]; then
+		sig="${sig} spent"
+		if [[ -n "$has_time" ]]; then
+			sig="${sig} ${session_time_str}"
+		fi
+		if [[ -n "$has_time" ]] && [[ -n "$has_tokens" ]]; then
+			sig="${sig} and"
+		fi
+		if [[ -n "$has_tokens" ]]; then
+			local formatted
+			formatted=$(_format_number "$tokens")
+			sig="${sig} ${formatted} tokens"
+		fi
+		sig="${sig} on this."
 	fi
 
-	# "in Xm on this." (session time)
-	if [[ -n "$session_time_str" ]]; then
-		sig="${sig} in ${session_time_str} on this."
-	fi
-
-	# Total time or trailing period (only if no session time already added period)
 	local has_stats=""
-	if { [[ -n "$tokens" ]] && [[ "$tokens" != "0" ]]; } ||
-		[[ -n "$session_time_str" ]] || [[ -n "$total_time_str" ]]; then
+	if [[ -n "$has_time" ]] || [[ -n "$has_tokens" ]] || [[ -n "$total_time_str" ]]; then
 		has_stats="true"
-	fi
-
-	# Trailing period if we had stats but no session time (which already ends with period)
-	if [[ -n "$has_stats" ]] && [[ -z "$session_time_str" ]]; then
-		sig="${sig}."
 	fi
 
 	# Total time as a separate sentence
