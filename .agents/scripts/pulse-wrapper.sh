@@ -5070,6 +5070,7 @@ _run_preflight_stages() {
 	echo "SETUP:$$" >"$PIDFILE"
 
 	run_stage_with_timeout "cleanup_orphans" "$PRE_RUN_STAGE_TIMEOUT" cleanup_orphans || true
+	run_stage_with_timeout "cleanup_stale_opencode" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stale_opencode || true
 	run_stage_with_timeout "cleanup_worktrees" "$PRE_RUN_STAGE_TIMEOUT" cleanup_worktrees || true
 	run_stage_with_timeout "cleanup_stashes" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stashes || true
 
@@ -5400,6 +5401,101 @@ cleanup_orphans() {
 
 	if [[ "$killed" -gt 0 ]]; then
 		echo "[pulse-wrapper] Cleaned up $killed orphaned opencode processes (freed ~${total_mb}MB)" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
+# Kill stale opencode processes (TTY-attached)
+#
+# cleanup_orphans only handles headless (no-TTY) processes. Workers
+# dispatched via terminal tabs retain a TTY, so they survive the orphan
+# reaper. When OpenCode completes a task it enters an idle file-watcher
+# state (0% CPU) and never exits — consuming memory and TTY slots.
+#
+# Criteria (ALL must be true):
+#   - Is a .opencode binary process
+#   - Older than STALE_OPENCODE_MAX_AGE seconds (default: 4 hours)
+#   - CPU usage below PULSE_IDLE_CPU_THRESHOLD (default: 5%)
+#   - Not the current interactive session (skip our own PID tree)
+#
+# Also kills the parent node launcher and grandparent zsh for each
+# stale .opencode process to fully reclaim the terminal tab.
+#######################################
+STALE_OPENCODE_MAX_AGE="${STALE_OPENCODE_MAX_AGE:-14400}" # 4 hours
+
+cleanup_stale_opencode() {
+	local killed=0
+	local total_mb=0
+
+	# Get our own PID tree to avoid killing the current session
+	local my_pid="$$"
+	local my_ppid
+	my_ppid=$(ps -p "$my_pid" -o ppid= 2>/dev/null | tr -d ' ') || my_ppid=""
+
+	while IFS= read -r line; do
+		local pid cpu rss
+		read -r pid cpu rss <<<"$line"
+
+		# Skip our own process tree
+		if [[ "$pid" == "$my_pid" || "$pid" == "$my_ppid" ]]; then
+			continue
+		fi
+
+		# Skip young processes
+		local age_seconds
+		age_seconds=$(_get_process_age "$pid")
+		if [[ "$age_seconds" -lt "$STALE_OPENCODE_MAX_AGE" ]]; then
+			continue
+		fi
+
+		# Skip processes with significant CPU usage (actively working)
+		# cpu is a float like "0.0" or "40.3" — compare integer part
+		local cpu_int
+		cpu_int="${cpu%%.*}"
+		[[ "$cpu_int" =~ ^[0-9]+$ ]] || cpu_int=0
+		if [[ "$cpu_int" -ge "$PULSE_IDLE_CPU_THRESHOLD" ]]; then
+			continue
+		fi
+
+		# This is a stale opencode process — kill it and its parent chain
+		[[ "$rss" =~ ^[0-9]+$ ]] || rss=0
+		local mb=$((rss / 1024))
+
+		# Kill parent (node launcher) and grandparent (zsh tab) first
+		local ppid
+		ppid=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ') || ppid=""
+		if [[ -n "$ppid" && "$ppid" != "1" ]]; then
+			local gppid
+			gppid=$(ps -p "$ppid" -o ppid= 2>/dev/null | tr -d ' ') || gppid=""
+			# Kill grandparent zsh (the terminal tab shell)
+			if [[ -n "$gppid" && "$gppid" != "1" ]]; then
+				local gp_cmd
+				gp_cmd=$(ps -p "$gppid" -o command= 2>/dev/null) || gp_cmd=""
+				# Only kill if it's a shell that launched opencode
+				case "$gp_cmd" in
+				*zsh* | *bash* | *sh*)
+					kill "$gppid" 2>/dev/null || true
+					;;
+				esac
+			fi
+			# Kill parent node launcher
+			kill "$ppid" 2>/dev/null || true
+		fi
+
+		# Kill the .opencode process — SIGTERM first, SIGKILL fallback.
+		# OpenCode's file watcher may ignore SIGTERM.
+		kill "$pid" 2>/dev/null || true
+		sleep 1
+		if kill -0 "$pid" 2>/dev/null; then
+			kill -9 "$pid" 2>/dev/null || true
+		fi
+		killed=$((killed + 1))
+		total_mb=$((total_mb + mb))
+	done < <(ps axo pid,%cpu,rss,command | awk '$0 ~ /[.]opencode/ && $0 !~ /bash-language-server/ { print $1, $2, $3 }')
+
+	if [[ "$killed" -gt 0 ]]; then
+		echo "[pulse-wrapper] Cleaned up $killed stale TTY-attached opencode processes (freed ~${total_mb}MB)" >>"$LOGFILE"
 	fi
 	return 0
 }
