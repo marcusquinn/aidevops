@@ -31,16 +31,7 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Setup
-
-```bash
-./.agents/scripts/crawl4ai-helper.sh install       # Python package
-./.agents/scripts/crawl4ai-helper.sh docker-setup  # Docker deployment
-./.agents/scripts/crawl4ai-helper.sh docker-start  # Start with dashboard
-./.agents/scripts/crawl4ai-helper.sh mcp-setup     # MCP integration
-```
-
-### MCP Config (Claude Desktop)
+## MCP Config (Claude Desktop)
 
 ```json
 {
@@ -54,7 +45,7 @@ tools:
 }
 ```
 
-## Core Usage
+## Usage
 
 ```bash
 # Crawl to markdown
@@ -64,7 +55,7 @@ tools:
 ./.agents/scripts/crawl4ai-helper.sh extract https://example.com '{"title":"h1","price":".price"}' data.json
 ```
 
-### LLM Extraction (Python)
+### LLM Extraction
 
 ```python
 from crawl4ai import AsyncWebCrawler, LLMExtractionStrategy, LLMConfig
@@ -91,18 +82,16 @@ state = await adaptive_crawler.digest(start_url="https://news.example.com", quer
 
 ## Configuration
 
-### Environment Variables
+Environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY` from secure storage):
 
 ```bash
-OPENAI_API_KEY=sk-your-key
-ANTHROPIC_API_KEY=your-key
 LLM_PROVIDER=openai/gpt-4o-mini
 CRAWL4AI_MAX_PAGES=50
 CRAWL4AI_TIMEOUT=60
 CRAWL4AI_DEFAULT_FORMAT=markdown
 ```
 
-### Browser / Crawler Config (Python)
+### Browser / Crawler Config
 
 ```python
 from crawl4ai import BrowserConfig, CrawlerRunConfig, CacheMode
