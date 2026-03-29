@@ -7,21 +7,15 @@ imported_from: external
 
 # SEO Audit
 
-You are an expert in search engine optimization. Your goal is to identify SEO issues and provide actionable recommendations to improve organic search performance.
-
-## Initial Assessment
-
-**Check for product marketing context first:** If `.claude/product-marketing-context.md` exists, read it before asking questions.
-
-Clarify before auditing: site type (SaaS, e-commerce, blog), primary SEO goal, priority keywords, known issues, organic traffic baseline, recent changes/migrations, audit scope (full site vs. specific pages), and Search Console access.
+**Before auditing:** Read `.claude/product-marketing-context.md` if it exists. Clarify: site type (SaaS, e-commerce, blog), primary goal, priority keywords, known issues, traffic baseline, recent changes/migrations, scope (full site vs. specific pages), Search Console access.
 
 ## Audit Priority Order
 
 1. **Crawlability & Indexation** — can Google find and index it?
-2. **Technical Foundations** — is the site fast and functional?
-3. **On-Page Optimization** — is content optimized?
-4. **Content Quality** — does it deserve to rank?
-5. **Authority & Links** — does it have credibility?
+2. **Technical Foundations** — fast and functional?
+3. **On-Page Optimization** — content optimized?
+4. **Content Quality** — deserves to rank?
+5. **Authority & Links** — credible?
 
 ## Technical SEO Audit
 
@@ -29,19 +23,19 @@ Clarify before auditing: site type (SaaS, e-commerce, blog), primary SEO goal, p
 
 **Robots.txt:** No unintentional blocks; important pages allowed; sitemap referenced.
 
-**XML Sitemap:** Exists, accessible, submitted to Search Console; contains only canonical indexable URLs; updated regularly.
+**XML Sitemap:** Exists, accessible, submitted to Search Console; canonical indexable URLs only; updated regularly.
 
-**Site Architecture:** Important pages within 3 clicks of homepage; logical hierarchy; no orphan pages; internal linking structure intact.
+**Site Architecture:** Important pages ≤3 clicks from homepage; logical hierarchy; no orphan pages; internal linking intact.
 
-**Crawl Budget** (large sites): Parameterized URLs controlled; faceted navigation handled; no session IDs in URLs; infinite scroll has pagination fallback.
+**Crawl Budget** (large sites): Parameterized URLs controlled; faceted nav handled; no session IDs in URLs; infinite scroll has pagination fallback.
 
 ### Indexation
 
-**Index Status:** Run `site:domain.com`; check Search Console coverage report; compare indexed vs. expected count.
+**Index Status:** Run `site:domain.com`; check Search Console coverage; compare indexed vs. expected count.
 
-**Indexation Issues:** Noindex on important pages; canonicals pointing wrong direction; redirect chains/loops; soft 404s; duplicate content without canonicals.
+**Indexation Issues:** Noindex on important pages; canonicals pointing wrong; redirect chains/loops; soft 404s; duplicate content without canonicals.
 
-**Canonicalization:** All pages have canonical tags; self-referencing on unique pages; HTTP→HTTPS; www vs. non-www consistent; trailing slash consistent.
+**Canonicalization:** All pages have canonical tags; self-referencing on unique pages; HTTP→HTTPS; www/non-www consistent; trailing slash consistent.
 
 ### Site Speed & Core Web Vitals
 
@@ -51,52 +45,52 @@ Clarify before auditing: site type (SaaS, e-commerce, blog), primary SEO goal, p
 | INP (Interaction to Next Paint) | < 200ms |
 | CLS (Cumulative Layout Shift) | < 0.1 |
 
-Speed factors: TTFB, image optimization, JS execution, CSS delivery, caching, CDN, font loading.
+Speed factors: TTFB, image optimization, JS/CSS delivery, caching, CDN, font loading.
 
 Tools: PageSpeed Insights (`tools/browser/pagespeed.md`), Search Console Core Web Vitals report.
 
 ### Mobile, Security & URLs
 
-**Mobile:** Responsive design; viewport configured; tap targets sized; same content as desktop (mobile-first indexing).
+**Mobile:** Responsive; viewport configured; tap targets sized; same content as desktop (mobile-first indexing).
 
 **HTTPS:** Valid SSL; no mixed content; HTTP→HTTPS redirects; HSTS header (bonus).
 
-**URLs:** Readable and descriptive; keywords where natural; lowercase, hyphen-separated; no unnecessary parameters; consistent structure.
+**URLs:** Readable; keywords where natural; lowercase, hyphen-separated; no unnecessary parameters; consistent structure.
 
 ## On-Page SEO Audit
 
 ### Title Tags
 
-- Unique per page; primary keyword near beginning; 50–60 characters; compelling and click-worthy; brand at end
+- Unique; primary keyword near start; 50–60 chars; compelling; brand at end
 - Issues: duplicates, truncation, keyword stuffing, missing
 
 ### Meta Descriptions
 
-- Unique per page; 150–160 characters; primary keyword included; clear value proposition with CTA
+- Unique; 150–160 chars; primary keyword; clear value prop with CTA
 - Issues: duplicates, auto-generated, no reason to click
 
 ### Heading Structure
 
-- One H1 per page containing primary keyword; logical hierarchy (H1→H2→H3); headings describe content, not just style
+- One H1 with primary keyword; logical hierarchy (H1→H2→H3); headings describe content
 - Issues: multiple H1s, skipped levels, decorative-only headings
 
 ### Content Optimization
 
-- Keyword in first 100 words; related keywords used naturally; sufficient depth for topic; satisfies search intent; better than competitors
-- Thin content: tag/category pages with no value, doorway pages, near-duplicate content
+- Keyword in first 100 words; related keywords natural; sufficient depth; satisfies search intent; better than competitors
+- Thin content: tag/category pages with no value, doorway pages, near-duplicates
 
 ### Image Optimization
 
-- Descriptive file names; alt text on all images describing the image; compressed; WebP format; lazy loading; responsive images
+- Descriptive file names; alt text on all images; compressed; WebP; lazy loading; responsive
 
 ### Internal Linking
 
-- Important pages well-linked with descriptive anchor text; no broken links; no orphan pages; avoid excessive footer/sidebar links; no over-optimized anchors
+- Important pages well-linked with descriptive anchors; no broken links; no orphans; avoid excessive footer/sidebar links; no over-optimized anchors
 
 ### Keyword Targeting
 
-- Per page: clear primary target; title, H1, URL aligned; satisfies search intent; no cannibalization with other pages
-- Site-wide: keyword mapping document; no gaps; logical topical clusters
+- Per page: clear primary target; title, H1, URL aligned; satisfies intent; no cannibalization
+- Site-wide: keyword mapping; no gaps; logical topical clusters
 
 ## Content Quality Assessment
 
@@ -111,7 +105,7 @@ Tools: PageSpeed Insights (`tools/browser/pagespeed.md`), Search Console Core We
 
 ### Content Depth & Engagement
 
-- Comprehensive topic coverage; answers follow-up questions; better than top competitors; updated and current
+- Comprehensive coverage; answers follow-up questions; better than top competitors; current
 - Monitor: time on page, bounce rate in context, pages per session, return visits
 
 ## Common Issues by Site Type
@@ -125,11 +119,9 @@ Tools: PageSpeed Insights (`tools/browser/pagespeed.md`), Search Console Core We
 
 ## Output Format
 
-### Audit Report Structure
+**Executive Summary:** Overall health; top 3–5 priority issues; quick wins.
 
-**Executive Summary:** Overall health assessment; top 3–5 priority issues; quick wins.
-
-**Findings** (Technical SEO / On-Page / Content — same format for each):
+**Findings** (Technical SEO / On-Page / Content — same format):
 
 | Field | Content |
 |-------|---------|
@@ -156,13 +148,13 @@ Tools: PageSpeed Insights (`tools/browser/pagespeed.md`), Search Console Core We
 
 **Paid (if available):** Screaming Frog, Ahrefs / Semrush, Sitebulb, ContentKing
 
-## Task-Specific Questions
+## Clarifying Questions
 
 1. What pages/keywords matter most?
-2. Do you have Search Console access?
-3. Any recent changes or migrations?
-4. Who are your top organic competitors?
-5. What's your current organic traffic baseline?
+2. Search Console access?
+3. Recent changes or migrations?
+4. Top organic competitors?
+5. Current organic traffic baseline?
 
 ## Related Skills
 
