@@ -95,6 +95,26 @@ import os
 import glob
 import re
 import sys
+import tempfile
+
+def atomic_json_write(path, data, indent=2, trailing_newline=False):
+    """Write JSON atomically: tmp file + fsync + rename. Prevents truncation on crash."""
+    dir_name = os.path.dirname(path) or '.'
+    fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp', prefix='.atomic-')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=indent)
+            if trailing_newline:
+                f.write('\n')
+            f.flush()
+            os.fsync(f.fileno())
+        os.rename(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 config_path = os.path.expanduser("~/.config/opencode/opencode.json")
 agents_dir = os.path.expanduser("~/.aidevops/agents")
@@ -809,8 +829,7 @@ for tool_pattern in omo_tool_patterns:
         print(f"  Disabled {tool_pattern} tools globally (use matching subagent/CLI workflow)")
 
 if config_loaded:
-    with open(config_path, 'w', encoding='utf-8') as f:
-        json.dump(config, f, indent=2)
+    atomic_json_write(config_path, config)
     print(f"  Updated {len(primary_agents)} primary agents in opencode.json")
 else:
     print("Error: config was not loaded successfully, skipping write", file=sys.stderr)
