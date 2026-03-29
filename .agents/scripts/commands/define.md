@@ -9,13 +9,9 @@ tools:
   bash: true
 ---
 
-Interview the user to define a task with full context, then generate a complete brief from `templates/brief-template.md`.
+Interview the user to define a task with full context, then generate a complete brief from `templates/brief-template.md`. Surface implicit requirements before code is written — most task failures come from unstated assumptions, not implementation bugs.
 
 Topic: $ARGUMENTS
-
-## Purpose
-
-Surface implicit requirements before code is written. Most task failures come from unstated assumptions, not implementation bugs. Inspired by [manifest-dev](https://github.com/doodledood/manifest-dev) but lighter — single brief output.
 
 ## Workflow
 
@@ -121,32 +117,17 @@ Q1: In one sentence, what must this task produce?
 
 User: 1
 
-Q2: What is explicitly NOT in scope?
-  1. Per-component theming — just a global light/dark switch (recommended)
-  2. Nothing — keep scope open
-  3. Let me specify exclusions
-
-User: 1
-
-Q3: How will you know this is done?
-  1. Toggle works, theme persists across reloads, no visual regressions (recommended)
-  2. Manual verification only
-  3. Let me define custom criteria
-
-User: 1
+[... Q2 scope, Q3 success criteria follow same pattern ...]
 
 [Pre-mortem] Imagine this ships and a user reports a bug. What's most likely?
   1. Some components don't respect the theme (CSS specificity) (recommended)
   2. Theme resets on navigation
-  3. Performance issues from re-rendering
 
 User: 1
 
-[Domain grounding] Dark mode typically needs a CSS variable system or theme
-   provider. Does this project already have one?
+[Domain grounding] Dark mode typically needs a CSS variable system or theme provider. Does this project already have one?
   1. Yes — extend existing
   2. No — create minimal one
-  3. Not sure — I'll check
 
 User: 2
 
