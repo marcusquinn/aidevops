@@ -26,15 +26,13 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Protected Files
-
-Excluded from automated simplification — interactive maintainer sessions only:
+## Protected Files (interactive maintainer sessions only)
 
 - `prompts/build.txt` — root system prompt
 - `AGENTS.md` (both `~/Git/aidevops/AGENTS.md` and `.agents/AGENTS.md`) — framework operating model
 - `.agents/scripts/commands/pulse.md` — supervisor pulse instructions
 
-Workers MUST NOT modify these files — skip and comment on the issue explaining why.
+Workers MUST skip these files and comment on the issue explaining why.
 
 ## Output Format
 
@@ -49,7 +47,7 @@ Workers MUST NOT modify these files — skip and comment on the issue explaining
 **Confidence**: high/medium/low
 ```
 
-Low-confidence findings: flag as "worth discussing" not "should change." Create GitHub issues with `simplification-debt` + `needs-maintainer-review` labels, grouped by file.
+Low-confidence findings: flag as "worth discussing." Create issues with `simplification-debt` + `needs-maintainer-review` labels, grouped by file.
 
 ## Regression Verification
 
@@ -74,11 +72,11 @@ Low-confidence findings: flag as "worth discussing" not "should change." Create 
 
 ### Prose tightening for agent docs (high confidence)
 
-Tighten by removing filler, redundant explanations, and narrative context that doesn't change agent behaviour.
+Remove filler and narrative that doesn't change agent behaviour.
 
-**Preservation rules**: KEEP all task IDs (`tNNN`), issue refs (`GH#NNN`), incident identifiers, rules/constraints (compress wording not the rule), file paths, command examples, code blocks, safety-critical detail.
+**Preservation rules**: KEEP task IDs (`tNNN`), issue refs (`GH#NNN`), incident identifiers, rules/constraints (compress wording not the rule), file paths, command examples, code blocks, safety-critical detail.
 
-**Evidence (t1679):** `build.txt` 63% byte reduction (45k→17k), zero rule loss. `AGENTS.md` 48% (22k→12k). All 25 critical patterns verified present.
+**Evidence (t1679):** `build.txt` 63% reduction (45k→17k), `AGENTS.md` 48% (22k→12k) — zero rule loss, 25 critical patterns verified.
 
 ### Requires judgment (medium confidence)
 
@@ -88,9 +86,9 @@ Tighten by removing filler, redundant explanations, and narrative context that d
 
 ### Reference corpora — restructure, do not compress (GH#6432)
 
-Knowledge bases (skill docs, domain reference) whose size comes from breadth, not verbosity. **How to identify:** reads like a textbook chapter, not agent instructions.
+Knowledge bases whose size comes from breadth, not verbosity. Reads like a textbook chapter, not agent instructions.
 
-**Action:** Split into chapter files with a slim index (~100-200 lines). Verify zero content loss: `wc -l` total of chapters >= original minus index overhead. Issue title: "restructure" not "tighten".
+**Action:** Split into chapter files with slim index (~100-200 lines). Verify: `wc -l` total of chapters >= original minus index overhead. Issue title: "restructure" not "tighten".
 
 ### Almost never simplify
 
@@ -103,12 +101,11 @@ Knowledge bases (skill docs, domain reference) whose size comes from breadth, no
 
 ## Core Principles
 
-1. **Preserve everything with purpose.** Uncertain whether removing loses needed information → it stays.
-2. **Remove decorative noise.** Emojis/formatting that add no information. Exception: genuine UI/UX purpose.
-3. **Apply project standards** — but standards themselves are not simplification targets.
-4. **Enhance clarity without losing depth.** Reduce nesting, improve naming, remove "what" comments (not "why").
-5. **Maintain balance.** Avoid over-simplification that removes helpful abstractions or loses edge-case handling.
-6. **No arbitrary line targets.** Never set a target line count — resulting size is whatever remains after removing genuine noise. For large files, subdivide per `build-agent.md` (~300-line threshold) instead of compressing.
+1. **Preserve everything with purpose.** Uncertain → it stays.
+2. **Remove decorative noise.** Emojis/formatting adding no information. Exception: genuine UI/UX purpose.
+3. **Apply project standards** — standards themselves are not simplification targets.
+4. **Enhance clarity without losing depth.** Reduce nesting, improve naming, remove "what" comments (not "why"). Avoid over-simplification that removes helpful abstractions or edge-case handling.
+5. **No arbitrary line targets.** Size is whatever remains after removing genuine noise. Large files: subdivide per `build-agent.md` (~300-line threshold) instead of compressing.
 
 ## Usage
 
@@ -118,7 +115,7 @@ Knowledge bases (skill docs, domain reference) whose size comes from breadth, no
 /code-simplifier --all        # Analyse entire codebase (use sparingly)
 ```
 
-Scope detection: `git diff --name-only HEAD~1` and `git diff --name-only --staged`. Workflow: analyse → human reviews → approved items become issues → worker implements in worktree + PR.
+Scope detection: `git diff --name-only HEAD~1` + `git diff --name-only --staged`. Workflow: analyse → human review → approved items become issues → worker implements via worktree + PR.
 
 ## Example: NOT a simplification target
 
@@ -165,28 +162,19 @@ fi
 
 `gh issue list --label simplification-debt --label needs-maintainer-review`
 
-- **Approve**: comment `approved` → pulse removes `needs-maintainer-review`, adds `auto-dispatch`.
-- **Decline**: comment `declined: <reason>` → pulse closes the issue.
-- **Defer**: no comment — stays gated.
-
-### Label lifecycle
-
-```text
-Issue created [simplification-debt + needs-maintainer-review] + assigned
-  ├─ "approved" → pulse removes gate, adds [auto-dispatch] → dispatched → PR → merged → [status:done]
-  ├─ "declined: reason" → pulse closes issue
-  └─ deferred (no comment) → no change
-```
+- **Approve**: comment `approved` → pulse removes gate, adds `auto-dispatch` → dispatched → PR → merged → `status:done`
+- **Decline**: comment `declined: <reason>` → pulse closes issue
+- **Defer**: no comment — stays gated
 
 ## Quality Workflow and Pulse Integration
 
-**Automated daily scan (GH#5628):** `pulse-wrapper.sh` creates `simplification-debt` issues for files exceeding per-file violation threshold (default: 1+ functions >100 lines). Deduplicated by repo-relative file path. No file size gate (t1679) — classification determines action. Config: `COMPLEXITY_SCAN_INTERVAL` (default 1 day), `COMPLEXITY_FILE_VIOLATION_THRESHOLD` (default 1), `COMPLEXITY_MD_MIN_LINES` (default 50).
+**Daily scan (GH#5628):** `pulse-wrapper.sh` creates `simplification-debt` issues for files exceeding violation threshold (default: 1+ functions >100 lines). Deduped by file path. No file size gate (t1679) — classification determines action. Config: `COMPLEXITY_SCAN_INTERVAL` (1 day), `COMPLEXITY_FILE_VIOLATION_THRESHOLD` (1), `COMPLEXITY_MD_MIN_LINES` (50).
 
-**CI threshold ratchet (GH#5628):** Thresholds in `.agents/configs/complexity-thresholds.conf` (`FUNCTION_COMPLEXITY_THRESHOLD`, `NESTING_DEPTH_THRESHOLD`, `FILE_SIZE_THRESHOLD`). Lower after simplification PRs merge.
+**CI ratchet (GH#5628):** `.agents/configs/complexity-thresholds.conf` (`FUNCTION_COMPLEXITY_THRESHOLD`, `NESTING_DEPTH_THRESHOLD`, `FILE_SIZE_THRESHOLD`). Lower after simplification PRs merge.
 
-**Dispatch priority:** Approved issues enter at **priority 8** (below quality-debt, above oldest-issues). Concurrency cap: 10% of worker slots, 30% combined cap with quality-debt. See `scripts/commands/pulse.md`.
+**Dispatch:** Priority 8 (below quality-debt, above oldest-issues). Cap: 10% of worker slots, 30% combined with quality-debt. See `scripts/commands/pulse.md`.
 
-**Codacy signal (GH#5628):** Grade B or below → temporary priority boost to 7. Workers fix issues → grade recovers → priority returns to normal.
+**Codacy signal (GH#5628):** Grade B or below → temporary boost to priority 7 until grade recovers.
 
 ## Related Agents
 
