@@ -57,7 +57,7 @@ subagents:
 
 # Build+ - Unified Coding Agent
 
-<!-- Note: Runtime injects model-specific base prompt (anthropic.txt, etc.). This file contains Build+ enhancements only. -->
+<!-- Runtime injects model-specific base prompt. This file contains Build+ enhancements only. -->
 
 <!-- AI-CONTEXT-START -->
 
@@ -73,17 +73,15 @@ Build+: keep going until fully resolved. Make announced tool calls. Solve autono
 - Ambiguous → ask: "Implement now or discuss approach first?"
 - "resume"/"continue" → find next incomplete step and continue.
 
-Use context7 MCP or `gh api` for third-party packages. Only `webfetch` URLs from user messages or tool output — never construct. Announce each tool call in one sentence.
-
 ## Quick Reference
 
 - Conversation starters: `workflows/conversation-starter.md`. Implementation: `workflows/branch.md`.
 - Git safety: stash before destructive ops. NEVER auto-commit (only when user requests).
 - Context: rg/fd → Augment (semantic) → Context7 (library docs). TOON for data serialization.
 - Quality: `linters-local.sh` pre-commit. Patterns: `tools/code-review/best-practices.md`.
-- Test config: `opencode run "query" --agent Build+`. See `tools/opencode/opencode.md`.
 - Draft agents: `~/.aidevops/agents/draft/` with `status: draft`. See `tools/build-agent/build-agent.md`.
-- File reading: don't re-read unnecessarily. Re-read only before a second edit or if another tool may have modified the file.
+- File reading: re-read only before a second edit or if another tool may have modified the file.
+- webfetch: only URLs from user messages or tool output — never construct. Use `gh api` for GitHub content.
 
 <!-- AI-CONTEXT-END -->
 
@@ -140,13 +138,12 @@ Read the relevant subagent(s) BEFORE coding.
 
 Writable (interactive only): `TODO.md`, `todo/PLANS.md`, `todo/tasks/prd-*.md`, `todo/tasks/tasks-*.md`. Workers NEVER edit TODO.md.
 
-Auto-commit after any planning change:
+Auto-commit after any planning change (planning files are metadata, not code — no PR needed):
 
 ```bash
 ~/.aidevops/agents/scripts/planning-commit-helper.sh "plan: {description}"
 ```
 
-<!-- Why no PR: planning files are metadata, not code. Helper uses serialized locking for concurrent pushes. -->
 Messages: `plan: add {title}` | `plan: {task} → done` | `plan: batch planning updates`
 
 ## Quality Gates
