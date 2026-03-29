@@ -12,8 +12,6 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
-## Overview
-
 Network identity layer for anti-detect browser profiles. Supports residential, datacenter, SOCKS5, and VPN proxies with per-profile assignment, rotation, and health checking.
 
 ## Proxy Types
@@ -28,7 +26,7 @@ Network identity layer for anti-detect browser profiles. Supports residential, d
 
 ## Provider Configuration
 
-Proxy credentials stored in `~/.config/aidevops/credentials.sh`:
+Credentials stored in `~/.config/aidevops/credentials.sh` (600 perms):
 
 ```bash
 # Residential providers
@@ -37,10 +35,6 @@ export DATAIMPULSE_PASS="pass"
 export WEBSHARE_API_KEY="key"
 export BRIGHTDATA_ZONE="zone"
 export BRIGHTDATA_PASS="pass"
-export OXYLABS_USER="user"
-export OXYLABS_PASS="pass"
-export SMARTPROXY_USER="user"
-export SMARTPROXY_PASS="pass"
 
 # VPN SOCKS5
 export IVPN_SOCKS_HOST="socks5://10.0.0.1:1080"
@@ -134,39 +128,22 @@ anti-detect-helper.sh proxy check "http://user:pass@host:port"
 
 # Check all profile proxies
 anti-detect-helper.sh proxy check-all
-
 # Output: IP, country, city, ISP, speed, anonymity level
+
+# Verify no DNS leaks through proxy
+anti-detect-helper.sh proxy dns-check "profile-name"
 ```
 
-### Health Check Script
+## Rotation Strategies
 
-```bash
-check_proxy() {
-    local proxy="$1"
-    local result
-    result=$(curl -s --proxy "$proxy" --max-time 10 "https://httpbin.org/ip" 2>/dev/null)
-    if [ $? -eq 0 ]; then
-        local ip
-        ip=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin)['origin'])" 2>/dev/null)
-        echo "OK: $ip"
-        return 0
-    else
-        echo "FAIL: Connection timeout"
-        return 1
-    fi
-}
-```
-
-## Proxy Rotation Strategies
-
-| Strategy | Description | Use Case |
-|----------|-------------|----------|
-| **Fixed** | Same proxy always | Persistent accounts |
-| **Rotating** | New IP each request | Scraping |
-| **Sticky session** | Same IP for N minutes | Login flows |
-| **Round-robin** | Cycle through proxy list | Load distribution |
-| **Geo-targeted** | Match profile's target region | Regional accounts |
-| **Failover** | Switch on error/block | Reliability |
+| Strategy | Use Case |
+|----------|----------|
+| **Fixed** | Persistent accounts |
+| **Rotating** | Scraping (new IP each request) |
+| **Sticky session** | Login flows (same IP for N minutes) |
+| **Round-robin** | Load distribution across proxy list |
+| **Geo-targeted** | Match profile's target region |
+| **Failover** | Switch on error/block |
 
 ### Rotation Configuration
 
@@ -183,7 +160,7 @@ check_proxy() {
 }
 ```
 
-## Integration with Browser Engines
+## Browser Engine Integration
 
 ### Playwright (Chromium)
 
@@ -224,36 +201,11 @@ browser_config = BrowserConfig(
 )
 ```
 
-## DNS Leak Prevention
+## Security
 
-```bash
-# Verify no DNS leaks through proxy
-anti-detect-helper.sh proxy dns-check "profile-name"
-
-# Forces DNS through proxy (not system resolver)
-# Playwright: handled automatically with proxy config
-# Camoufox: network.proxy.socks_remote_dns = true (default)
-```
-
-## Future Providers (Roadmap)
-
-Services to be added as subagents when needed:
-
-| Provider | Type | Pricing | Notes |
-|----------|------|---------|-------|
-| Oxylabs | Residential | ~$8/GB | Enterprise, large pools |
-| SmartProxy | Residential | ~$7/GB | Good geo coverage |
-| PacketStream | Residential | ~$1/GB | Budget option |
-| NordVPN | SOCKS5 | $4/mo | 5000+ servers |
-| ExpressVPN | SOCKS5 | $8/mo | Fast, many locations |
-| IPRoyal | Residential | ~$1.75/GB | Static residential available |
-
-## Security Notes
-
-- Never commit proxy credentials (stored in `credentials.sh` with 600 permissions)
+- Never commit proxy credentials — use `credentials.sh` (600 perms)
 - Use sticky sessions for login flows (avoid IP changes mid-session)
 - Match proxy geo to profile fingerprint (timezone, locale, geolocation)
-- Monitor proxy usage/costs via provider dashboards
-- Rotate proxies if blocked (don't retry same IP)
+- Rotate proxies if blocked — don't retry same IP
 
 <!-- AI-CONTEXT-END -->
