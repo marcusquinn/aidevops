@@ -224,6 +224,69 @@ _detect_session_tokens() {
 }
 
 # =============================================================================
+# Detect session type: "interactive" (>1 user messages) or "worker" (0-1)
+# =============================================================================
+
+_detect_session_type() {
+	local db_path="${HOME}/.local/share/opencode/opencode.db"
+
+	if [[ ! -r "$db_path" ]] || ! command -v sqlite3 &>/dev/null; then
+		echo ""
+		return 0
+	fi
+
+	local cwd repo_root canonical_dir
+	cwd=$(pwd 2>/dev/null || echo "")
+	repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "$cwd")
+	canonical_dir="${repo_root%%.*}"
+
+	local session_id=""
+	if [[ -n "${OPENCODE_PID:-}" ]]; then
+		local pid_start_epoch lstart
+		lstart=$(ps -o lstart= -p "$OPENCODE_PID" 2>/dev/null || echo "")
+		if [[ -n "$lstart" ]]; then
+			pid_start_epoch=$(date -j -f "%a %b %d %H:%M:%S %Y" "$lstart" "+%s" 2>/dev/null ||
+				date -d "$lstart" "+%s" 2>/dev/null || echo "")
+		fi
+		if [[ -n "$pid_start_epoch" ]]; then
+			local pid_start_ms=$((pid_start_epoch * 1000))
+			session_id=$(sqlite3 "$db_path" "
+				SELECT id FROM session
+				WHERE directory IN ('${cwd}', '${repo_root}', '${canonical_dir}')
+				ORDER BY ABS(time_created - ${pid_start_ms}) ASC LIMIT 1
+			" 2>/dev/null || echo "")
+		fi
+	fi
+
+	if [[ -z "$session_id" ]]; then
+		session_id=$(sqlite3 "$db_path" "
+			SELECT id FROM session
+			WHERE directory IN ('${cwd}', '${repo_root}', '${canonical_dir}')
+			ORDER BY time_updated DESC LIMIT 1
+		" 2>/dev/null || echo "")
+	fi
+
+	if [[ -z "$session_id" ]]; then
+		echo ""
+		return 0
+	fi
+
+	local user_msg_count
+	user_msg_count=$(sqlite3 "$db_path" "
+		SELECT COUNT(*) FROM message
+		WHERE session_id='${session_id}'
+		  AND json_extract(data, '$.role') = 'user'
+	" 2>/dev/null || echo "0")
+
+	if [[ "$user_msg_count" -gt 1 ]] 2>/dev/null; then
+		echo "interactive"
+	else
+		echo "worker"
+	fi
+	return 0
+}
+
+# =============================================================================
 # Detect session time from runtime DB
 # =============================================================================
 # Returns session duration in seconds (now - session.time_created), or empty.
@@ -575,7 +638,7 @@ _collect_time_metrics() {
 # =============================================================================
 # _build_signature — assemble the natural-language signature string
 # =============================================================================
-# Args: model cli_name cli_version tokens session_time_str total_time_str solved issue_total_tokens
+# Args: model cli_name cli_version tokens session_time_str total_time_str solved issue_total_tokens session_type
 
 _build_signature() {
 	local model="$1"
@@ -586,6 +649,7 @@ _build_signature() {
 	local total_time_str="$6"
 	local solved="$7"
 	local issue_total_tokens="${8:-}"
+	local session_type="${9:-}"
 
 	local aidevops_version
 	aidevops_version=$(aidevops_find_version)
@@ -636,7 +700,13 @@ _build_signature() {
 			formatted=$(_format_number "$tokens")
 			sig="${sig} ${formatted} tokens"
 		fi
-		sig="${sig} on this."
+		if [[ "$session_type" == "interactive" ]]; then
+			sig="${sig} on this with the user in an interactive session."
+		elif [[ "$session_type" == "worker" ]]; then
+			sig="${sig} on this as a headless worker."
+		else
+			sig="${sig} on this."
+		fi
 	fi
 
 	local has_stats=""
@@ -713,10 +783,14 @@ cmd_generate() {
 		fi
 	fi
 
+	# Detect session type (interactive vs worker)
+	local session_type
+	session_type=$(_detect_session_type)
+
 	# Build and emit the signature
 	_build_signature \
 		"$model" "$cli_name" "$cli_version" "$tokens" \
-		"$session_time_str" "$total_time_str" "$solved" "$issue_total_tokens"
+		"$session_time_str" "$total_time_str" "$solved" "$issue_total_tokens" "$session_type"
 	return 0
 }
 
