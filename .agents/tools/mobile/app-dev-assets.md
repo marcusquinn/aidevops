@@ -18,19 +18,12 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Generate and manage app icons, splash screens, screenshots, and preview videos
-- **Icon generation**: Vision AI models, Gemini Pro for SVG, model contests for best results
-- **Preview videos**: Remotion (React-based video creation)
-- **Screenshots**: Automated via Playwright emulation or simulator tools
-
-**Asset generation stack**:
-
 | Asset | Tool | Notes |
 |-------|------|-------|
-| App icon | Vision AI + Gemini Pro (SVG) | Test multiple models via contests |
+| App icon | Vision AI + Gemini Pro (SVG) | Model contests for best results |
 | Splash screen | Vision AI | Match app colour palette |
 | Screenshots | ios-simulator-mcp / agent-device | Automated capture across devices |
-| Preview video | Remotion | Up to 30s for App Store |
+| Preview video | Remotion | Up to 30s (App Store / Play Store) |
 | Marketing graphics | Vision AI | Social media, website |
 | In-app illustrations | Vision AI / Gemini SVG | Consistent style |
 | Animations | Lottie / Remotion | Onboarding, transitions |
@@ -54,109 +47,63 @@ tools:
 - **No text**: Illegible at small sizes, doesn't localise
 - **Simple silhouette**: Identifiable shape even as a shadow
 - **Distinctive colour**: Stand out among competitors in search results
-- **Consistent with brand**: Match app's colour palette and mood
 
 ### Generation Workflow
 
-1. **Describe the concept**: "A minimalist icon for a meditation app, using a lotus flower silhouette in soft purple gradient on a dark background"
-2. **Generate with multiple models**: Use model contests to compare outputs from different vision AI models
-3. **Gemini Pro for SVG**: Particularly strong at clean vector icon design
-4. **Nano Banana for editing**: Refine generated icons with AI image editing
-5. **Test at multiple sizes**: Verify readability at 29pt, 60pt, and 1024pt
-6. **Test against competitors**: Place icon alongside competitor icons to verify it stands out
+1. Describe the concept (e.g. "minimalist lotus silhouette, soft purple gradient, dark background")
+2. Generate with multiple models via model contests
+3. Use Gemini Pro for clean SVG vector output
+4. Refine with Nano Banana AI image editing
+5. Test at 29pt, 60pt, and 1024pt; verify against competitor icons
 
-See `tools/vision/overview.md` for the full vision AI tool decision tree.
+See `tools/vision/overview.md` for the full vision AI decision tree.
 
 ## Splash Screen
 
-- Match app's primary colour or gradient
-- Include app icon or logo (centred)
-- Keep it simple — users see it for < 2 seconds
-- Support both light and dark mode
-- Expo: Configure in `app.json` under `splash`
-- Swift: Configure in `Assets.xcassets` or via LaunchScreen storyboard
+- Match app's primary colour or gradient; include icon/logo centred
+- Keep simple — visible for < 2 seconds; support light and dark mode
+- Expo: `app.json` → `splash`; Swift: `Assets.xcassets` or LaunchScreen storyboard
 
 ## App Store Screenshots
 
-### Automated Capture
-
-Use simulator tools to capture screenshots across devices:
-
 ```bash
-# Using agent-device
+# agent-device
 agent-device open "My App" --platform ios --device "iPhone 16 Pro Max"
 agent-device screenshot ./screenshots/home-6.9.png
 
-# Using ios-simulator-mcp
-# screenshot tool saves to specified path
+# ios-simulator-mcp: screenshot tool saves to specified path
 ```
 
-### Screenshot Design
+- Show app in use (not empty states); first screenshot shown in search results
+- Add short benefit-focused captions; consistent style; localise for target markets
+- Show light and dark mode if supported
 
-- **Show the app in use** (not empty states)
-- **Add captions** above or below the screenshot (short, benefit-focused)
-- **Consistent style** across all screenshots
-- **First screenshot is critical** (shown in search results)
-- **Show both light and dark mode** if the app supports it
-- **Localise** for target markets
-
-### Required Sizes
-
-See `tools/mobile/app-dev/publishing.md` for full screenshot size requirements.
+See `tools/mobile/app-dev/publishing.md` for required sizes.
 
 ## App Store Preview Videos
 
-Use Remotion to create animated preview videos:
+- Duration: up to 30s (App Store and Play Store)
+- Content: core value in action; screen recording + animated captions + transitions
+- Audio: optional background music (no voiceover required)
 
-- **Duration**: Up to 30 seconds (App Store), 30 seconds (Play Store)
-- **Content**: Show the app's core value in action
-- **Style**: Screen recording with animated captions and transitions
-- **Audio**: Optional background music (no voiceover required)
+Remotion workflow: capture simulator recordings → compose with captions → add transitions → render → upload to App Store Connect / Play Store Console.
 
 See `tools/browser/remotion-best-practices-skill.md` for Remotion patterns.
 
-### Remotion Workflow
-
-1. Capture screen recordings from simulator
-2. Create Remotion composition with recordings + captions
-3. Add transitions between scenes
-4. Render at required resolution
-5. Upload to App Store Connect / Play Store Console
-
 ## In-App Graphics
 
-### Onboarding Illustrations
-
-- Consistent style throughout onboarding
-- Simple, clear, related to the screen's message
-- Consider Lottie animations for movement
-- Generate with vision AI, refine with image editing tools
-
-### Empty States
-
-- Friendly illustration when no data exists
-- Clear call to action ("Add your first item")
-- Don't leave screens blank
-
-### Error States
-
-- Empathetic illustration (not just an error code)
-- Clear explanation of what went wrong
-- Actionable next step
-
-## Video Assets
-
-For apps that include video content or need promotional videos:
-
-- `content/video-wavespeed.md` - 200+ video generation models
-- `content/video-real-video-enhancer.md` - Upscale and enhance video
-- `tools/video/remotion.md` - Programmatic video creation
-- Seedance 3.0 via `content/video-higgsfield.md` - AI video generation
+- **Onboarding**: consistent style, simple illustrations tied to screen message; consider Lottie for movement
+- **Empty states**: friendly illustration + clear CTA ("Add your first item"); never leave blank
+- **Error states**: empathetic illustration, plain-language explanation, actionable next step
 
 ## Related
 
 - `product/ui-design.md` - Design standards
-- `tools/mobile/app-dev/publishing.md` - Screenshot requirements
+- `tools/mobile/app-dev/publishing.md` - Screenshot size requirements
 - `tools/vision/overview.md` - Image generation tools
-- `tools/browser/remotion-best-practices-skill.md` - Video creation
+- `tools/browser/remotion-best-practices-skill.md` - Remotion best practices
+- `tools/video/remotion.md` - Programmatic video creation
 - `tools/video/` - Video generation and enhancement
+- `content/video-wavespeed.md` - 200+ video generation models
+- `content/video-real-video-enhancer.md` - Upscale and enhance video
+- `content/video-higgsfield.md` - Seedance 3.0 AI video generation
