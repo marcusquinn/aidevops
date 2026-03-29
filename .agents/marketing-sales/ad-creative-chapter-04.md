@@ -2,18 +2,15 @@
 
 ## Section 1: Foundations of Creative Testing
 
-### Core Testing Principles
+**Testing cycle:** `HYPOTHESIS → DESIGN → EXECUTE → ANALYZE → IMPLEMENT → ITERATE`
 
-1. **Hypothesis-driven:** Specific, testable prediction before every test.
-   - Poor: "Let's test different images"
-   - Strong: "Real customer images will generate 25% higher CTR than stock because they create authenticity"
+**Core principles:**
+1. **Hypothesis-driven:** Specific, testable prediction before every test. ("Real customer images will generate 25% higher CTR than stock because they create authenticity" — not "Let's test different images")
 2. **Variable isolation:** One variable at a time (A/B) or statistical isolation (MVT)
 3. **Statistical rigor:** Reach significance before drawing conclusions — early decisions cause false positives
 4. **Documentation:** Every test produces learnings for future creative
 
-**Testing cycle:** `HYPOTHESIS → DESIGN → EXECUTE → ANALYZE → IMPLEMENT → ITERATE`
-
-### Types of Creative Tests
+### Test Types
 
 | Type | When to use | Key caution |
 |------|-------------|-------------|
@@ -32,11 +29,7 @@
 
 **Practical significance:** Statistical significance ≠ business importance. Weigh implementation cost vs. improvement magnitude.
 
-### Test Design
-
-- **Duration:** 7-day minimum (full business cycle); run until significance
-- **Traffic:** 50/50 standard; 90/10 for untested creative; multi-armed bandit for exploration/exploitation
-- **Validity threats:** selection bias, history effects, instrumentation changes, seasonal maturation
+**Test design:** 7-day minimum duration (full business cycle); 50/50 standard split; 90/10 for untested creative; multi-armed bandit for exploration/exploitation. Validity threats: selection bias, history effects, instrumentation changes, seasonal maturation.
 
 ---
 
@@ -45,8 +38,6 @@
 **Full factorial:** 3 headlines × 3 images × 2 CTAs = 18 variations. Captures all interactions; traffic-intensive.
 
 **Fractional factorial:** Taguchi orthogonal arrays — half the combinations, detects main effects, some interactions confounded.
-
-### MVT Implementation
 
 **Variable selection:** expected impact, execution quality, strategic importance, measurable outcomes, independence
 
@@ -70,26 +61,13 @@ Step 4: Execute → main effects → interaction effects → identify winner
 
 **Fatigue curve:** Introduction → Growth → Peak → Decline → Fatigue
 
-### Fatigue Indicators
+**Fatigue indicators (primary):** CTR decline, conversion rate decrease, CPA increase, engagement drop
 
-**Primary:** CTR decline, conversion rate decrease, CPA increase, engagement drop
+**Platform signals:** Meta: frequency >3/week, CTR decline >20% | TikTok: completion rate decline, negative engagement | Google: Quality Score decrease, CPC inflation | YouTube: skip rate increase, view-through decline
 
-**Platform signals:**
-- Meta: frequency >3/week, CTR decline >20%
-- TikTok: completion rate decline, negative engagement
-- Google: Quality Score decrease, CPC inflation
-- YouTube: skip rate increase, view-through decline
+**Automated alerts:** CTR drops >15% from baseline | Frequency >3/week | CPA increases >20% | Engagement drops >25%
 
-### Detection
-
-**Manual:** Daily dashboard review; weekly week-over-week + frequency distribution; monthly fatigue rate + cost impact
-
-**Automated alerts:**
-```
-CTR drops >15% from baseline | Frequency >3/week | CPA increases >20% | Engagement drops >25%
-```
-
-**Predictive modeling inputs:** historical patterns, audience size, creative uniqueness scores, impression velocity, engagement decay rates
+**Detection cadence:** Daily dashboard; weekly WoW + frequency distribution; monthly fatigue rate + cost impact
 
 ### Prevention and Recovery
 
@@ -115,8 +93,6 @@ CTR drops >15% from baseline | Frequency >3/week | CPA increases >20% | Engageme
 
 **Validation:** test winner against control in new test; verify across audiences and conditions
 
-### Scaling
-
 **Budget ramp:**
 ```
 Week 1: $1K/day (testing) → Week 2: $3K/day (validation) → Week 3: $10K/day (scaling) → Week 4+: $30K+/day
@@ -125,16 +101,11 @@ Increase 20–30% daily; pause if efficiency degrades
 
 **Expansion sequence:** core audience → adjacent segments → lookalike → broader demographics → other platforms/placements
 
-**Scaling challenges:**
-- Efficiency degradation: refresh velocity, audience expansion, bidding optimization
-- Auction dynamics: higher CPMs, competitive pressure → dayparting, audience segmentation
-- Operational complexity: automation rules, dashboard tools, team scaling
+**Scaling challenges:** efficiency degradation (refresh velocity, audience expansion, bidding optimization); auction dynamics (higher CPMs → dayparting, audience segmentation); operational complexity (automation rules, dashboard tools, team scaling)
 
 ---
 
 ## Section 5: Modular Creative Systems
-
-### Component Architecture
 
 **Visual:** Background (colors, gradients, textures, photos) | Subject (product, lifestyle, people) | Overlay (logos, badges, text)
 
@@ -142,16 +113,11 @@ Increase 20–30% daily; pause if efficiency degrades
 
 **Structural:** Layouts (hero+text, split screen, grid, full-bleed, minimalist) | Color schemes (brand, seasonal, campaign, audience-targeted)
 
-### Production Workflow
-
 **Assembly modes:** manual (designer-led) → semi-automated (template + batch + human review) → fully automated (DCO, AI selection, automated QA)
 
 **Component-level testing:** same visual + different headlines (isolate messaging); same headline + different visuals (isolate visual); pairing tests (interaction effects)
 
-**Template testing:** layout variations (position, size, hierarchy), format variations (single vs. carousel, static vs. video)
-
-### Asset Management
-
+**Asset structure:**
 ```
 /Brand Assets: Logos | Colors | Fonts | Templates
 /Campaign Assets/[Name]: Backgrounds | Products | People | Messaging | Final_Exports
@@ -170,10 +136,7 @@ Increase 20–30% daily; pause if efficiency degrades
 
 **Platform velocity:** TikTok (weekly) > Meta (bi-weekly) > YouTube/LinkedIn (monthly)
 
-**Agile sprint:**
-```
-Mon: planning/brief → Tue–Wed: production → Thu: review/refinement → Fri: launch/monitoring
-```
+**Agile sprint:** Mon: planning/brief → Tue–Wed: production → Thu: review/refinement → Fri: launch/monitoring
 
 ### Production Model Comparison
 
@@ -188,8 +151,6 @@ Mon: planning/brief → Tue–Wed: production → Thu: review/refinement → Fri
 ---
 
 ## Section 7: Performance Benchmarks and KPIs
-
-### Platform Benchmarks
 
 **Meta:** Video 3s views 30–50%, ThruPlay 15–30%, completion 10–20%; CTR 0.5–1.5%; CPM $5–15, CPC $0.50–3.00
 **TikTok:** 2s view 35–50%, completion 15–25%; engagement 5–15%; CTR 1–3%; CPM $3–10
@@ -212,13 +173,7 @@ Mon: planning/brief → Tue–Wed: production → Thu: review/refinement → Fri
 
 ## Section 8: Attribution and Creative Impact Measurement
 
-### Attribution Models
-
-**Single-touch:** First-touch (awareness) | Last-touch (direct response)
-
-**Multi-touch:** Linear (equal credit) | Time-decay (recency weighted) | Position-based/U-shaped (40% first, 40% last, 20% distributed) | Data-driven (algorithmic, most accurate, requires volume)
-
-### Creative-Specific Attribution
+**Attribution models:** First-touch (awareness) | Last-touch (direct response) | Linear (equal credit) | Time-decay (recency weighted) | Position-based/U-shaped (40% first, 40% last, 20% distributed) | Data-driven (algorithmic, most accurate, requires volume)
 
 **UTM strategy:** `utm_campaign=spring_sale | utm_content=video_variant_A | utm_placement=instagram_stories`
 
