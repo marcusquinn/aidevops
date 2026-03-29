@@ -48,7 +48,7 @@ ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/m
 # Creates: ~/Git/{repo}-feature-my-feature/
 ```
 
-Non-git artifacts (`.venv/`, `node_modules/`, `dist/`, `.env`) don't transfer between worktrees — recreate in each. See `workflows/worktree.md` for full worktree workflow, `tools/code-review/code-standards.md` for Python packaging rules.
+Non-git artifacts (`.venv/`, `node_modules/`, `dist/`, `.env`) don't transfer between worktrees — recreate in each. See `workflows/worktree.md`, `tools/code-review/code-standards.md` for Python packaging rules.
 
 **Session-Branch Tracking**: After creating a branch, call `session-rename_sync_branch` to sync session name.
 
@@ -64,33 +64,27 @@ Non-git artifacts (`.venv/`, `node_modules/`, `dist/`, `.env`) don't transfer be
 | On feature/bugfix branch | Continue, follow `branch.md` lifecycle |
 | Issue URL pasted | Parse and create appropriate branch (see Issue URL Handling) |
 | Non-owner repo | Fork workflow — see `pr.md` |
-| New empty repo | `git init && git checkout -b main`; suggest `release/0.1.0` (new), `release/1.0.0` (MVP), or `release/X.Y.Z` (existing adopting aidevops) |
+| New empty repo | `git init && git checkout -b main`; suggest `release/0.1.0` (new), `release/1.0.0` (MVP), or `release/X.Y.Z` (existing) |
 
-## Time Tracking Integration
+## Time Tracking
 
 Record timestamps in TODO.md or PLANS.md. **Worker restriction**: Headless workers must NOT edit TODO.md — supervisor handles updates. See `workflows/plans.md`.
 
-| Event | Field |
-|-------|-------|
-| Branch created | `started:` |
-| Work session ends | `logged:` (cumulative) |
-| PR merged | `completed:` |
-| Release published | `actual:` |
+| Event | Field | Event | Field |
+|-------|-------|-------|-------|
+| Branch created | `started:` | PR merged | `completed:` |
+| Work session ends | `logged:` (cumulative) | Release published | `actual:` |
 
 ## Branch Naming from Planning Files
 
-```bash
-grep -i "{keyword}" TODO.md todo/PLANS.md
-ls todo/tasks/*{keyword}* 2>/dev/null
-```
+Lookup: `grep -i "{keyword}" TODO.md todo/PLANS.md` and `ls todo/tasks/*{keyword}* 2>/dev/null`.
 
 | Source | Pattern | Example |
 |--------|---------|---------|
 | TODO.md task | `{type}/{slugified-description}` | `feature/add-ahrefs-mcp-server` |
-| PLANS.md entry | `{type}/{plan-slug}` | `feature/user-authentication-overhaul` |
-| PRD file | `{type}/{prd-feature-name}` | `feature/export-csv` |
+| PLANS.md / PRD | `{type}/{plan-or-feature-slug}` | `feature/user-authentication-overhaul` |
 
-Slugification: lowercase, hyphens for spaces, remove special chars, truncate to ~50 chars. Branch type selection: see `branch.md`.
+Slugification: lowercase, hyphens for spaces, remove special chars, truncate ~50 chars. Branch type selection: see `branch.md`.
 
 ## Issue URL Handling
 
@@ -114,14 +108,7 @@ Claude Code PreToolUse hooks block destructive git/filesystem commands before ex
 
 **Safe (allowlisted)**: `git checkout -b`, `git restore --staged`, `git clean -n`/`--dry-run`, `rm -rf /tmp/...`, `git push --force-with-lease`.
 
-```bash
-install-hooks-helper.sh status    # Check status
-install-hooks-helper.sh install   # Reinstall
-install-hooks-helper.sh test      # Run self-test (20 test cases)
-install-hooks-helper.sh uninstall # Remove
-```
-
-Files: `~/.aidevops/hooks/git_safety_guard.py` (guard), `~/.claude/settings.json` (config). Installed by `setup.sh`. Requires Python 3 + Claude Code restart.
+Management: `install-hooks-helper.sh [status|install|test|uninstall]`. Files: `~/.aidevops/hooks/git_safety_guard.py` (guard), `~/.claude/settings.json` (config). Installed by `setup.sh`. Requires Python 3 + Claude Code restart.
 
 **Limitations**: Regex-based; obfuscated commands may bypass. Safety net for honest mistakes, not a security boundary.
 
@@ -129,21 +116,20 @@ Files: `~/.aidevops/hooks/git_safety_guard.py` (guard), `~/.claude/settings.json
 
 After file changes: run preflight automatically. Pass → auto-commit with suggested message (confirm or override). Fail → show issues, offer fixes. After commit → auto-push, offer: create PR, continue working, or done.
 
-**PR Title (MANDATORY)**: `{task-id}: {description}`. Task ID is `tNNN` (from TODO.md) or `GH#NNN` (GitHub issue number, for quality-debt/simplification-debt/issue-only work). Examples: `t318: Update PR workflow documentation`, `GH#12455: tighten hashline-edit-format.md`. NEVER use `qd-`, bare numbers, or invented prefixes like `t12345` (that conflates GitHub issue numbers with the `t` task-ID system). For unplanned work: create TODO entry first. Every code change must be traceable to a task.
+**PR Title (MANDATORY)**: `{task-id}: {description}`. Task ID is `tNNN` (from TODO.md) or `GH#NNN` (GitHub issue number, for quality-debt/simplification-debt/issue-only work). Examples: `t318: Update PR workflow documentation`, `GH#12455: tighten hashline-edit-format.md`. NEVER use `qd-`, bare numbers, or invented prefixes. For unplanned work: create TODO entry first. Every code change must be traceable to a task.
 
 **If changes include `.agents/` files**: Offer to run `./setup.sh` to deploy to `~/.aidevops/agents/`.
 
 ## Branch Cleanup
 
+After postflight, delete merged branches. Keep unmerged unless stale (>30 days) — ask user.
+
 ```bash
 git checkout main && git pull origin main
-git branch --merged main | grep -vE "^\*|main|develop"
-git branch -d {branch-name}            # Local
-git push origin --delete {branch-name} # Remote
+git branch --merged main | grep -vE "^\*|main|develop" | xargs -r git branch -d
+git push origin --delete {branch-name}  # Remote
 git remote prune origin
 ```
-
-Delete merged branches after postflight. Keep unmerged unless stale (>30 days) — ask user.
 
 ## Override Handling
 
@@ -151,25 +137,7 @@ When user wants to work directly on main, acknowledge and proceed — never bloc
 
 ## Database Schema Changes
 
-See `workflows/sql-migrations.md` for the full migration workflow.
-
-**Critical rules**: Never modify pushed/deployed migrations — create new ones. Always commit schema + migration together. Always review generated migrations before committing.
-
-Branch naming: `feature/add-{table}-table`, `bugfix/fix-{description}`, `chore/backfill-{description}`.
-
-## Workflow Lifecycle
-
-```text
-1. CONVERSATION START → detect git context, check branch, suggest/create branch
-2. DEVELOPMENT → work on branch, conventional commits, keep updated with main
-3. PREFLIGHT → linters-local.sh, code quality, secret check
-4. PUSH & PR → push branch, create PR/MR, run code-audit-remote
-5. REVIEW & MERGE → address feedback, squash merge, delete feature branch
-6. RELEASE PREPARATION → release/X.Y.Z branch, version files, changelog
-7. RELEASE → merge to main, tag, GitHub release, delete release branch
-8. POSTFLIGHT → verify CI/CD, quality gates, cleanup offer
-9. CLEANUP → delete merged branches, prune stale refs, update local main
-```
+See `workflows/sql-migrations.md` for the full migration workflow. **Critical rules**: Never modify pushed/deployed migrations — create new ones. Always commit schema + migration together. Always review generated migrations before committing. Branch naming: `feature/add-{table}-table`, `bugfix/fix-{description}`, `chore/backfill-{description}`.
 
 ## Related Workflows
 
@@ -186,12 +154,4 @@ Branch naming: `feature/add-{table}-table`, `bugfix/fix-{description}`, `chore/b
 | `tools/git/lumen.md` | AI-powered diffs, commit messages |
 | `tools/security/opsec.md` | CI/CD AI agent security |
 
-## Platform CLI Reference
-
-| Platform | CLI | PR | Release |
-|----------|-----|----|---------|
-| GitHub | `gh` | `gh pr create` | `gh release create` |
-| GitLab | `glab` | `glab mr create` | `glab release create` |
-| Gitea | `tea` | `tea pulls create` | `tea releases create` |
-
-See `tools/git.md` for detailed CLI usage.
+**Platform CLIs**: GitHub (`gh`), GitLab (`glab`), Gitea (`tea`). See `tools/git.md` for detailed usage.
