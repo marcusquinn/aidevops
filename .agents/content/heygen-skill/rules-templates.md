@@ -24,30 +24,6 @@ curl -X GET "https://api.heygen.com/v2/templates" \
   -H "X-Api-Key: $HEYGEN_API_KEY"
 ```
 
-```typescript
-interface TemplateVariable {
-  name: string;
-  type: "text" | "image" | "audio";
-  properties?: { max_length?: number; default_value?: string };
-}
-
-interface Template {
-  template_id: string;
-  name: string;
-  thumbnail_url: string;
-  variables: TemplateVariable[];
-}
-
-async function listTemplates(): Promise<Template[]> {
-  const res = await fetch("https://api.heygen.com/v2/templates", {
-    headers: { "X-Api-Key": process.env.HEYGEN_API_KEY! },
-  });
-  const json = await res.json();
-  if (json.error) throw new Error(json.error);
-  return json.data.templates;
-}
-```
-
 **Response shape:**
 
 ```json
@@ -65,6 +41,21 @@ async function listTemplates(): Promise<Template[]> {
       ]
     }]
   }
+}
+```
+
+```typescript
+interface TemplateVariable {
+  name: string;
+  type: "text" | "image" | "audio";
+  properties?: { max_length?: number; default_value?: string };
+}
+
+interface Template {
+  template_id: string;
+  name: string;
+  thumbnail_url: string;
+  variables: TemplateVariable[];
 }
 ```
 
@@ -95,26 +86,14 @@ curl -X POST "https://api.heygen.com/v2/template/{template_id}/generate" \
 ```
 
 ```typescript
-async function generateFromTemplate(
-  templateId: string,
-  variables: Record<string, string>,
-  test = false
-): Promise<string> {
-  const res = await fetch(
-    `https://api.heygen.com/v2/template/${templateId}/generate`,
-    {
-      method: "POST",
-      headers: {
-        "X-Api-Key": process.env.HEYGEN_API_KEY!,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ test, variables }),
-    }
-  );
-  const json = await res.json();
-  if (json.error) throw new Error(json.error);
-  return json.data.video_id;
-}
+const res = await fetch(`https://api.heygen.com/v2/template/${templateId}/generate`, {
+  method: "POST",
+  headers: { "X-Api-Key": process.env.HEYGEN_API_KEY!, "Content-Type": "application/json" },
+  body: JSON.stringify({ test, variables }),
+});
+const { error, data } = await res.json();
+if (error) throw new Error(error);
+return data.video_id; // string
 ```
 
 ## Variable Types
@@ -147,36 +126,29 @@ function validateTemplateVariables(
 
 ## Batch Generation
 
-Loop over recipients with a 1s delay between requests to avoid rate limits:
+Loop with 1s delay between requests to avoid rate limits:
 
 ```typescript
-async function batchGenerateVideos(
-  templateId: string,
-  recipients: Array<{ name: string; company: string; customMessage: string }>
-): Promise<string[]> {
-  const videoIds: string[] = [];
-  for (const r of recipients) {
-    const id = await generateFromTemplate(templateId, {
-      recipient_name: r.name,
-      company_name: r.company,
-      personalized_message: r.customMessage,
-    });
-    videoIds.push(id);
-    await new Promise((res) => setTimeout(res, 1000));
-  }
-  return videoIds;
+for (const r of recipients) {
+  const videoId = await generateFromTemplate(templateId, {
+    recipient_name: r.name,
+    company_name: r.company,
+    personalized_message: r.customMessage,
+  });
+  videoIds.push(videoId);
+  await new Promise((res) => setTimeout(res, 1000));
 }
 ```
 
 ## Best Practices
 
 - Use `test: true` to verify layout before production runs
-- Cache template details -- avoid repeated GET calls per batch item
+- Cache template details — avoid repeated GET calls per batch item
 - Validate all variables (presence + length + URL format) before generating
 - Define `max_length` on text variables in the template to prevent truncation
 - Use `callback_url` for large batches instead of polling
 
-Full workflow: `listTemplates` -> `validateTemplateVariables` -> `generateFromTemplate` -> `waitForVideo` (see `rules-video-status.md`)
+Full workflow: `listTemplates` → `validateTemplateVariables` → `generateFromTemplate` → `waitForVideo` (see `rules-video-status.md`)
 
 ## Use Cases
 
