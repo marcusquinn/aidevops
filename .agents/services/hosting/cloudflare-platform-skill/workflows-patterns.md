@@ -133,4 +133,4 @@ export class DailyWorkflow extends WorkflowEntrypoint<Env, Params> {
 }
 ```
 
-See: [gotchas.md](./gotchas.md)
+See: [workflows-gotchas.md](./workflows-gotchas.md)

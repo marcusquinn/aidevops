@@ -2,6 +2,25 @@
 
 Common patterns for Cloudflare D1 (SQLite-compatible serverless database). All queries use parameterised bindings — never string-interpolate user input.
 
+## Query Optimization
+
+```typescript
+// Use indexes in WHERE clauses
+const users = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).all();
+
+// Limit result sets
+const recentPosts = await env.DB.prepare('SELECT * FROM posts ORDER BY created_at DESC LIMIT 100').all();
+
+// Use batch() for multiple independent queries (single round trip)
+const [user, posts, comments] = await env.DB.batch([
+  env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(userId),
+  env.DB.prepare('SELECT * FROM posts WHERE user_id = ?').bind(userId),
+  env.DB.prepare('SELECT * FROM comments WHERE user_id = ?').bind(userId)
+]);
+```
+
+N+1 queries and JOIN alternatives: see `d1-gotchas.md`.
+
 ## Pagination
 
 ```typescript
@@ -12,6 +31,16 @@ async function getUsers({ page, pageSize }: { page: number; pageSize: number }, 
     env.DB.prepare('SELECT * FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?').bind(pageSize, offset)
   ]);
   return { data: dataResult.results, total: countResult.results[0].total, page, pageSize, totalPages: Math.ceil(countResult.results[0].total / pageSize) };
+}
+```
+
+## Bulk Insert
+
+```typescript
+async function bulkInsertUsers(users: Array<{ name: string; email: string }>, env: Env) {
+  const stmt = env.DB.prepare('INSERT INTO users (name, email) VALUES (?, ?)');
+  const batch = users.map(user => stmt.bind(user.name, user.email));
+  return await env.DB.batch(batch);
 }
 ```
 
@@ -28,16 +57,6 @@ async function searchUsers(filters: { name?: string; email?: string; active?: bo
 }
 ```
 
-## Bulk Insert
-
-```typescript
-async function bulkInsertUsers(users: Array<{ name: string; email: string }>, env: Env) {
-  const stmt = env.DB.prepare('INSERT INTO users (name, email) VALUES (?, ?)');
-  const batch = users.map(user => stmt.bind(user.name, user.email));
-  return await env.DB.batch(batch);
-}
-```
-
 ## Caching with KV
 
 ```typescript
@@ -49,35 +68,6 @@ async function getCachedUser(userId: number, env: { DB: D1Database; CACHE: KVNam
   if (user) await env.CACHE?.put(cacheKey, JSON.stringify(user), { expirationTtl: 300 });
   return user;
 }
-```
-
-## Query Optimization
-
-```typescript
-// ✅ Use indexes in WHERE clauses
-const users = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).all();
-
-// ✅ Limit result sets
-const recentPosts = await env.DB.prepare('SELECT * FROM posts ORDER BY created_at DESC LIMIT 100').all();
-
-// ✅ Use batch() for multiple independent queries
-const [user, posts, comments] = await env.DB.batch([
-  env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(userId),
-  env.DB.prepare('SELECT * FROM posts WHERE user_id = ?').bind(userId),
-  env.DB.prepare('SELECT * FROM comments WHERE user_id = ?').bind(userId)
-]);
-
-// ❌ Avoid N+1 queries
-for (const post of posts) {
-  const author = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(post.user_id).first(); // N+1: one round trip per post
-}
-
-// ✅ Use JOINs instead
-const postsWithAuthors = await env.DB.prepare(`
-  SELECT posts.*, users.name as author_name
-  FROM posts
-  JOIN users ON posts.user_id = users.id
-`).all();
 ```
 
 ## Multi-Tenant SaaS
