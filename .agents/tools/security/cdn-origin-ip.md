@@ -27,8 +27,6 @@ tools:
 
 ### 1. DNS History Lookup
 
-Historical DNS records often reveal the origin IP before CDN was configured.
-
 ```bash
 # SecurityTrails API (requires key)
 curl -s "https://api.securitytrails.com/v1/history/$DOMAIN/dns/a" \
@@ -42,8 +40,6 @@ curl -s "https://api.securitytrails.com/v1/history/$DOMAIN/dns/a" \
 
 ### 2. SSL Certificate Search
 
-Origin servers often share the same SSL cert, searchable via CT logs.
-
 ```bash
 # Censys (requires API key)
 curl -s "https://search.censys.io/api/v2/hosts/search" \
@@ -56,8 +52,6 @@ curl -s "https://crt.sh/?q=%25.example.com&output=json" | jq '.[].common_name' |
 ```
 
 ### 3. Shodan Favicon Hash
-
-Match the site's favicon hash against Shodan to find servers hosting the same icon.
 
 ```bash
 # Calculate favicon hash (mmh3)
@@ -74,8 +68,6 @@ shodan search "http.favicon.hash:HASH_VALUE"
 
 ### 4. Email Header Analysis
 
-Outbound emails from the domain may contain the origin IP in headers.
-
 ```bash
 # Sign up for newsletter or trigger password reset
 # Check Received: headers for internal IPs
@@ -84,7 +76,7 @@ Outbound emails from the domain may contain the origin IP in headers.
 
 ### 5. Subdomain Enumeration
 
-Non-proxied subdomains (mail, ftp, cpanel, direct) often point to the origin.
+Non-proxied subdomains (`mail`, `ftp`, `cpanel`, `direct`) often resolve to the origin.
 
 ```bash
 # Check common subdomains
@@ -102,8 +94,6 @@ done
 
 ## Verification
 
-After finding a candidate IP, verify it serves the target site:
-
 ```bash
 # Direct request with Host header
 curl -sk "https://CANDIDATE_IP" -H "Host: example.com" | head -20
@@ -114,8 +104,6 @@ diff <(curl -sk "https://CANDIDATE_IP" -H "Host: example.com" | md5) \
 ```
 
 ## Remediation
-
-If origin IP is exposed:
 
 1. **Firewall**: Only allow CDN IP ranges (e.g., [Cloudflare IPs](https://www.cloudflare.com/ips/))
 2. **Change IP**: Migrate to a new origin IP, update CDN config
