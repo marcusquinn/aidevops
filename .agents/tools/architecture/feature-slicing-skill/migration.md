@@ -58,12 +58,9 @@ done
 Update imports:
 
 ```typescript
-// Before
-import { formatDate } from '@/utils/dates';
-import { Button } from '@/components/Button';
-// After
-import { formatDate } from '@/shared/lib';
-import { Button } from '@/shared/ui';
+// before → after
+import { formatDate } from '@/utils/dates';   // → '@/shared/lib'
+import { Button } from '@/components/Button'; // → '@/shared/ui'
 ```
 
 ## Phase 3: Extract Entities
@@ -107,11 +104,10 @@ src/pages/ProductDetail.tsx → src/pages/product-detail/ui/ProductDetailPage.ts
 ```
 
 ```typescript
-// Before: direct API call in page
+// before: direct API call in page
 import { fetchProduct } from '@/api/products';
 import { AddToCartButton } from '@/components/AddToCartButton';
-
-// After: compose from layers
+// after: compose from layers
 import { useProduct } from '@/entities/product';
 import { AddToCart } from '@/features/add-to-cart';
 import { ProductReviews } from '@/widgets/product-reviews';
@@ -124,8 +120,7 @@ import { ProductReviews } from '@/widgets/product-reviews';
 Extract shared dep to a lower layer; compose at page/widget level.
 
 ```typescript
-// Before: UserCard ↔ useAuth circular
-// After:
+// UserCard ↔ useAuth circular → break by layer:
 // entities/user/ui/UserCard.tsx — no auth dep
 // features/auth/model/store.ts — no UserCard dep
 // pages/profile/ui/ProfilePage.tsx — composes both
@@ -136,9 +131,8 @@ Extract shared dep to a lower layer; compose at page/widget level.
 Split monolithic store by domain into entity/feature models.
 
 ```typescript
-// Before
-export const store = configureStore({ reducer: { user, products, cart, auth } });
-// After (Zustand)
+// before: configureStore({ reducer: { user, products, cart, auth } })
+// after (Zustand per-slice):
 // entities/user/model/store.ts | entities/product/model/store.ts
 // features/cart/model/store.ts | features/auth/model/store.ts
 ```
@@ -157,7 +151,7 @@ export function AddToCartButton({ product }) {
   const addToCart = useCartStore((s) => s.addItem);
   return <button onClick={() => addToCart(product)}>Add to Cart</button>;
 }
-// Composed in page/widget:
+// page/widget composes both:
 <ProductCard product={product} actions={<AddToCartButton product={product} />} />
 ```
 
