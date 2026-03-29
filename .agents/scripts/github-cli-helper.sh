@@ -313,7 +313,7 @@ create_issue() {
 
 	# Append signature footer
 	local sig_footer=""
-	sig_footer=$("${SCRIPT_DIR}/gh-signature-helper.sh" footer 2>/dev/null || true)
+	sig_footer=$("${SCRIPT_DIR}/gh-signature-helper.sh" footer --body "$body" 2>/dev/null || true)
 	body="${body}${sig_footer}"
 
 	print_info "Creating issue in $owner/$repo_name"
@@ -412,7 +412,7 @@ create_pr() {
 
 	# Append signature footer to PR body
 	local sig_footer=""
-	sig_footer=$("${SCRIPT_DIR}/gh-signature-helper.sh" footer 2>/dev/null || true)
+	sig_footer=$("${SCRIPT_DIR}/gh-signature-helper.sh" footer --body "$body" 2>/dev/null || true)
 	body="${body}${sig_footer}"
 
 	print_info "Creating pull request in $owner/$repo_name"

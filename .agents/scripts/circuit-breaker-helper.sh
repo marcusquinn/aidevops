@@ -598,7 +598,7 @@ _cb_create_new_issue() {
 
 	# Append signature footer
 	local sig_footer=""
-	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer 2>/dev/null || true)
+	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$body" 2>/dev/null || true)
 	body="${body}${sig_footer}"
 
 	gh label create "circuit-breaker" \

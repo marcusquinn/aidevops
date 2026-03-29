@@ -725,8 +725,28 @@ cmd_generate() {
 # =============================================================================
 
 cmd_footer() {
+	# Check for --body flag to enable dedup (skip if body already has signature)
+	local args=() body_to_check=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--body)
+			body_to_check="$2"
+			shift 2
+			;;
+		*)
+			args+=("$1")
+			shift
+			;;
+		esac
+	done
+
+	# Dedup: if the body already contains an aidevops signature, skip
+	if [[ -n "$body_to_check" ]] && [[ "$body_to_check" == *"aidevops.sh"* ]]; then
+		return 0
+	fi
+
 	local sig
-	sig=$(cmd_generate "$@")
+	sig=$(cmd_generate "${args[@]}")
 	printf '\n---\n%s\n' "$sig"
 	return 0
 }
