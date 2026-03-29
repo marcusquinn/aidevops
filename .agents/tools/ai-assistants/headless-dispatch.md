@@ -44,177 +44,94 @@ tools:
 
 ## Dispatch Methods
 
-### CLI (`opencode run`)
-
 ```bash
-opencode run "Review src/auth.ts for security issues"
-opencode run -m anthropic/claude-sonnet-4-6 "Generate unit tests for src/utils/"
-opencode run --agent plan "Analyze the database schema"
-opencode run --format json "List all exported functions in src/"
-opencode run -f ./schema.sql -f ./migration.ts "Generate types from this schema"
-opencode run -c "Continue where we left off"          # resume last session
-opencode run -s ses_abc123 "Add error handling"        # resume by ID
+opencode run "Review src/auth.ts for security issues"       # one-shot
+opencode run -m anthropic/claude-sonnet-4-6 "Task"          # model override
+opencode run --agent plan "Analyze the database schema"     # agent override
+opencode run -f ./schema.sql "Generate types"               # file context
+opencode run -c "Continue" | -s ses_abc123 "Add handling"   # resume session
 ```
 
-### Warm Server (`opencode serve` + `--attach`)
+**Warm server**: `opencode serve --port 4096` once, then `opencode run --attach http://localhost:4096 "Task"` (avoids MCP cold boot).
 
-Avoids MCP cold boot per dispatch. Start once, dispatch many:
+**SDK**: `import { createOpencode } from "@opencode-ai/sdk"` → `createOpencode({ port: 4096 })`. Connect: `createOpencodeClient({ baseUrl: "http://localhost:4096" })`.
 
-```bash
-opencode serve --port 4096                                          # Terminal 1
-opencode run --attach http://localhost:4096 "Task 1"                # Terminal 2+
-```
+**HTTP API**: `tools/ai-assistants/opencode-server.md`. Key: `POST /session` → `POST /session/$ID/message`. Async: `POST .../prompt_async` (204). SSE: `GET /event`. Fork: `POST /session/$ID/fork`. No-reply: `noReply:true`.
 
-### SDK (TypeScript)
+## Parallel Execution (t1419)
 
-```typescript
-import { createOpencode, createOpencodeClient } from "@opencode-ai/sdk"
-const { client, server } = await createOpencode({
-  port: 4096, config: { model: "anthropic/claude-sonnet-4-6" },
-})
-// Or connect to existing: createOpencodeClient({ baseUrl: "http://localhost:4096" })
-```
-
-### HTTP API
-
-See `tools/ai-assistants/opencode-server.md` for full API reference. Key endpoints:
+**Stagger manual launches by 30-60s** to avoid thundering herd (RAM exhaustion, API rate limiting, MCP cold boot storms). Pulse supervisor handles staggering automatically (`RAM_PER_WORKER_MB`, `RAM_RESERVE_MB`, `MAX_WORKERS_CAP`).
 
 ```bash
-SERVER="http://localhost:4096"
-SESSION_ID=$(curl -sf -X POST "$SERVER/session" \
-  -H "Content-Type: application/json" -d '{"title": "task"}' | jq -r '.id')
-curl -sf -X POST "$SERVER/session/$SESSION_ID/message" \
-  -H "Content-Type: application/json" \
-  -d '{"model":{"providerID":"anthropic","modelID":"claude-sonnet-4-6"},"parts":[{"type":"text","text":"prompt"}]}'
-# Async: POST .../prompt_async (returns 204) | SSE: GET /event
-# Fork: POST /session/$SESSION_ID/fork -d '{"messageID":"msg-123"}'
-# No-reply context injection: set noReply:true in prompt body
-```
-
-## Parallel Execution
-
-### Stagger Protection (t1419)
-
-**Stagger manual launches by 30-60s** to avoid thundering herd (RAM exhaustion, API rate limiting, MCP cold boot storms).
-
-```bash
-AGENTS_DIR="$(aidevops config get paths.agents_dir)"
-HELPER="${AGENTS_DIR/#\~/$HOME}/scripts/headless-runtime-helper.sh"
-
-for issue in 42 43 44 45; do
-  $HELPER run --role worker --session-key "issue-${issue}" \
-    --dir ~/Git/myproject --title "Issue #${issue}" \
-    --prompt "/full-loop Implement issue #${issue}" &
-  sleep 30  # stagger — without this, all 4 cold-boot simultaneously
+HELPER="$(aidevops config get paths.agents_dir | sed "s|^~|$HOME|")/scripts/headless-runtime-helper.sh"
+for issue in 42 43 44; do
+  $HELPER run --role worker --session-key "issue-${issue}" --dir ~/Git/myproject \
+    --title "Issue #${issue}" --prompt "/full-loop Implement issue #${issue}" &
+  sleep 30
 done
 ```
 
-Pulse supervisor handles staggering automatically (`RAM_PER_WORKER_MB`, `RAM_RESERVE_MB`, `MAX_WORKERS_CAP`).
+**Monitoring**: `worker-watchdog.sh --status` (active) | `--install` (launchd hung/idle detection with transcript-tail inspection). **SDK**: `Promise.all` for concurrent sessions, SSE via `client.event.subscribe()`.
 
-**Worker monitoring**: `worker-watchdog.sh --status` (active workers) | `--install` (launchd auto-detection of hung/idle workers with transcript-tail inspection before kill).
+## Runners and Custom Agents
 
-### Parallel vs Sequential
+**Runners**: Named, persistent agent instances at `~/.aidevops/.agent-workspace/runners/<name>/` with `AGENTS.md`, `config.json`, optional `memory.db`. CLI: `runner-helper.sh create|run|status|list|destroy`. Memory: `memory-helper.sh store/recall --namespace "runner-name"`. Inter-runner: `mail-helper.sh send --to/--from`. Templates: `tools/ai-assistants/runners/` ([README](runners-README.md)).
 
-| Scenario | Pattern |
-|----------|---------|
-| PR review (security + quality + style) | Parallel — independent read-only |
-| Bug fix + tests | Sequential — tests depend on fix |
-| Multi-page SEO audit | Parallel — each page independent |
-| Refactor + update docs | Sequential — docs depend on refactored code |
-| Tests for 5 modules | Parallel — each module independent |
-| Plan → implement → verify | Sequential — each step depends on previous |
-| Decomposed subtasks | Batch (`batch-strategy-helper.sh`) |
+**Custom agents**: Define via `.opencode/agents/<name>.md` or `opencode.json` with frontmatter controlling `tools`, `permission`, `model`, `temperature`. Example: restrict to read-only git commands with `permission: { bash: { "git diff*": allow, "*": deny } }`. Usage: `opencode run --agent <name> "prompt"`.
 
-**Batch strategies (t1408.4)**: `depth-first` (default) or `breadth-first` (one subtask per branch per batch). `batch-strategy-helper.sh next-batch --strategy depth-first --tasks "$JSON" --concurrency "$SLOTS"` — respects `blocked_by:` dependencies.
+## Model Providers
 
-**SDK parallel**: Use `Promise.all` for concurrent sessions. Monitor via SSE (`client.event.subscribe()`).
+`opencode auth login` for setup. Override: `opencode run -m openrouter/anthropic/claude-sonnet-4-6 "Task"`.
 
-### OAuth-Aware Dispatch Routing (t1163)
+**OAuth-aware routing (t1163)**: `SUPERVISOR_PREFER_OAUTH=true` (default) routes Anthropic requests through Claude CLI if OAuth available (zero marginal cost). Non-Anthropic → `opencode`. Override: `SUPERVISOR_CLI=opencode`. Detection: `~/.claude/` credentials, cached 5 min. Budget: `budget-tracker-helper.sh configure claude-oauth --billing-type subscription`.
 
-When `SUPERVISOR_PREFER_OAUTH=true` (default), Anthropic model requests route through Claude CLI if OAuth available (zero marginal cost). Non-Anthropic models always use `opencode` CLI. Override: `export SUPERVISOR_CLI=opencode`. Detection: checks `~/.claude/` credentials, cached 5 min.
+## Worker Uncertainty Framework
 
-Budget tracking: `budget-tracker-helper.sh configure claude-oauth --billing-type subscription`
+**Proceed autonomously** (document in commit): inferable from context/conventions, only affects own task scope, multiple valid approaches (pick simplest), style ambiguity (follow conventions), equivalent patterns (match precedent), minor adjacent issues (note in PR body).
 
-## Runners
+**Exit BLOCKED**: contradicts codebase, breaks public API, task done/obsolete, missing deps/credentials, architectural decisions affecting other tasks, create-vs-modify with data loss risk, multiple interpretations with very different outcomes. Example: `BLOCKED: 'update the auth endpoint' but 3 exist (JWT, OAuth, API key). Need clarification.`
 
-Named, persistent agent instances with own identity, instructions, and optionally isolated memory.
+**Supervisor**: Proceed → normal PR review. BLOCKED → clarifies/retries or creates prerequisite. Unclear error → diagnostic worker (`-diag-N`).
+
+## Subtask Lineage and Decomposition (t1408)
+
+**Lineage context (t1408)**: When dispatching subtasks (dot-notation IDs like `t1408.3`), include a lineage block to prevent scope drift. Include when task ID has a dot AND siblings may run in parallel. Workers: focus only on `<-- THIS TASK`, stub sibling deps, exit BLOCKED on hard dependencies.
 
 ```text
-~/.aidevops/.agent-workspace/runners/<name>/
-├── AGENTS.md      # Runner personality/instructions
-├── config.json    # Configuration
-└── memory.db      # Runner-specific memories (optional)
+TASK LINEAGE:
+  0. [parent] Build a CRM (t1408)
+    1. Contact management (t1408.1)
+    2. Deal pipeline (t1408.2)  <-- THIS TASK
+    3. Email integration (t1408.3)
+LINEAGE RULES: Focus ONLY on "<-- THIS TASK". Stub sibling deps. Exit BLOCKED if hard dependency.
 ```
 
-```bash
-runner-helper.sh create code-reviewer \
-  --description "Reviews code for security and quality" --model anthropic/claude-sonnet-4-6
-runner-helper.sh run code-reviewer "Review src/auth/ for vulnerabilities"
-runner-helper.sh run code-reviewer "Review src/auth/" --attach http://localhost:4096
-runner-helper.sh status code-reviewer | runner-helper.sh list | runner-helper.sh destroy code-reviewer
-```
+**Assembly**: `PARENT_ID="${TASK_ID%.*}"`, grep TODO.md for siblings. `task-decompose-helper.sh format-lineage` does not yet support task-id lookup (t1408.1). Dispatch: append `${LINEAGE_BLOCK}` to `--prompt` via `headless-runtime-helper.sh run`.
 
-Each runner has its own `AGENTS.md` (personality, rules, output format), namespaced memory (`memory-helper.sh store/recall --namespace "runner-name"`), and mailbox (`mail-helper.sh send --to/--from`).
+**Decomposition (t1408.2)**: Tasks classified as **atomic** (dispatch directly) or **composite** (split into 2-5 subtasks with dependency edges). Interactive: show tree, ask Y/n/edit. Pulse: auto-proceed (depth limit: 3). Integration: `/full-loop` (Step 0.45), `/pulse` (Step 3), `/new-task` (Step 5.5), `/mission`. CLI: `task-decompose-helper.sh classify|decompose|format-lineage|has-subtasks`. Config: `DECOMPOSE_MAX_DEPTH=3`, `DECOMPOSE_MODEL=haiku`, `DECOMPOSE_ENABLED=true`. Principle: "When in doubt, atomic."
 
-Templates: [code-reviewer](runners-code-reviewer.md), [seo-analyst](runners-seo-analyst.md). See [runners-README.md](runners-README.md).
+**Batch strategies (t1408.4)**: `batch-strategy-helper.sh next-batch --strategy depth-first|breadth-first --tasks "$JSON" --concurrency "$SLOTS"`. Depth-first (default): finish one branch before next. Breadth-first: one subtask per branch per batch. Hybrid: parallel analysis → sequential implementation.
 
-## Custom Agents
+## Worker Efficiency Protocol
 
-OpenCode supports custom agents via markdown (`.opencode/agents/<name>.md`) or JSON (`opencode.json`). Agents define tool access, permissions, and model overrides:
+Injected via supervisor dispatch (~300-500 token overhead, 20-100x ROI):
 
-```markdown
----
-description: Security-focused code reviewer
-mode: subagent
-model: anthropic/claude-sonnet-4-6
-temperature: 0.1
-tools: { write: false, edit: false, bash: false }
-permission:
-  bash: { "git diff*": allow, "git log*": allow, "grep *": allow, "*": deny }
----
-You are a security expert. Identify OWASP Top 10 issues, verify input validation and output encoding.
-```
+1. **TodoWrite** — 3-7 subtasks at start. Last: "Push and create PR". Survives compaction.
+2. **Commit early** — per subtask. After first: `git push -u origin HEAD && gh pr create --draft`.
+3. **ShellCheck gate (t234)** — Before push, if `.sh` changed: `shellcheck -x -S warning`.
+4. **Parallel sub-work (MANDATORY)** — Task tool for independent ops. Sequential for: same-file writes, dependent steps, git ops.
+5. **Research offloading** — Task sub-agents for 500+ line files. **Checkpoint**: `session-checkpoint-helper.sh save` per subtask.
+6. **Fail fast** — Verify assumptions before coding. Exit BLOCKED after one retry. **Token min**: read ranges, concise commits.
 
-Usage: `opencode run --agent security-reviewer "Audit the auth module"`
+**Parallel vs sequential**: Independent read-only ops (reviews, audits, multi-module tests) → parallel. Dependent chains (fix→test, refactor→docs, plan→implement→verify) → sequential.
 
 ## CI/CD Integration
 
 ```yaml
-name: AI Code Review
-on: { pull_request: { types: [opened, synchronize] } }
-jobs:
-  ai-review:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: curl -fsSL https://opencode.ai/install | bash
-      - run: opencode run --format json "Review PR changes for security and quality" > review.md
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          OPENCODE_PERMISSION: '{"*":"allow"}'
+- run: opencode run --format json "Review PR changes for security and quality" > review.md
+  env: { ANTHROPIC_API_KEY: "${{ secrets.ANTHROPIC_API_KEY }}", OPENCODE_PERMISSION: '{"*":"allow"}' }
 ```
-
-## Worker Behaviour (Cross-References)
-
-These topics are documented in their canonical locations — loaded on demand, not duplicated here:
-
-- **Worker Uncertainty Framework** (t158/t174/t176): `scripts/commands/full-loop.md` "Headless Dispatch Rules" — when to proceed vs exit BLOCKED
-- **Worker Efficiency Protocol**: `prompts/worker-efficiency-protocol.md` — TodoWrite decomposition, commit-early, ShellCheck gate, parallel sub-work
-- **Lineage Context for Subtasks** (t1408/t1408.3): `scripts/commands/full-loop.md` Step 1.7 — scope isolation for dot-notation task IDs
-- **Task Decomposition** (t1408.2): `reference/orchestration.md` "Task Decomposition" — atomic vs composite classification, `task-decompose-helper.sh`
 
 ## Related
 
-- `tools/ai-assistants/opencode-server.md` — full server API reference
-- `tools/ai-assistants/overview.md` — AI assistant comparison
-- `tools/ai-assistants/runners-README.md` — runner templates index
-- `scripts/runner-helper.sh` — runner management CLI
-- `scripts/cron-dispatch.sh`, `scripts/cron-helper.sh` — cron-triggered dispatch
-- `scripts/matrix-dispatch-helper.sh`, `services/communications/matrix-bot.md` — Matrix chat dispatch
-- `scripts/commands/pulse.md` — pulse supervisor (multi-agent coordination)
-- `scripts/mail-helper.sh` — inter-agent mailbox
-- `scripts/worker-token-helper.sh` — scoped GitHub tokens (t1412.2)
-- `scripts/network-tier-helper.sh`, `scripts/sandbox-exec-helper.sh` — network tiering + sandbox
-- `configs/network-tiers.conf` — domain classification database
-- `tools/security/prompt-injection-defender.md` — prompt injection defense
-- `reference/memory.md` — memory system (supports namespaces)
+`tools/ai-assistants/opencode-server.md` (server API) | `tools/ai-assistants/overview.md` (assistant comparison) | `tools/ai-assistants/runners-README.md` (templates) | `scripts/runner-helper.sh` | `scripts/cron-dispatch.sh`, `scripts/cron-helper.sh` (cron) | `scripts/matrix-dispatch-helper.sh`, `services/communications/matrix-bot.md` (Matrix) | `scripts/commands/pulse.md` (supervisor) | `scripts/mail-helper.sh` (mailbox) | `scripts/worker-token-helper.sh` (t1412.2) | `scripts/network-tier-helper.sh`, `scripts/sandbox-exec-helper.sh` (network+sandbox) | `configs/network-tiers.conf` | `tools/security/prompt-injection-defender.md` | `reference/memory.md` (memory system)
