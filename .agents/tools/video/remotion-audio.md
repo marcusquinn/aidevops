@@ -10,19 +10,16 @@ metadata:
 
 ## Prerequisites
 
-First, the @remotion/media package needs to be installed.
-If it is not installed, use the following command:
+Install `@remotion/media`:
 
 ```bash
-npx remotion add @remotion/media # If project uses npm
-bunx remotion add @remotion/media # If project uses bun
-yarn remotion add @remotion/media # If project uses yarn
-pnpm exec remotion add @remotion/media # If project uses pnpm
+npx remotion add @remotion/media  # npm
+bunx remotion add @remotion/media  # bun
+yarn remotion add @remotion/media  # yarn
+pnpm exec remotion add @remotion/media  # pnpm
 ```
 
 ## Importing Audio
-
-Use `<Audio>` from `@remotion/media` to add audio to your composition.
 
 ```tsx
 import { Audio } from "@remotion/media";
@@ -33,18 +30,13 @@ export const MyComposition = () => {
 };
 ```
 
-Remote URLs are also supported:
+Remote URLs are also supported: `<Audio src="https://remotion.media/audio.mp3" />`
 
-```tsx
-<Audio src="https://remotion.media/audio.mp3" />
-```
-
-By default, audio plays from the start, at full volume and full length.
-Multiple audio tracks can be layered by adding multiple `<Audio>` components.
+Defaults: plays from start, full volume, full length. Layer multiple tracks with multiple `<Audio>` components.
 
 ## Trimming
 
-Use `trimBefore` and `trimAfter` to remove portions of the audio. Values are in frames.
+`trimBefore` and `trimAfter` take frame values. The trimmed portion plays from the composition start.
 
 ```tsx
 const { fps } = useVideoConfig();
@@ -52,17 +44,15 @@ const { fps } = useVideoConfig();
 return (
   <Audio
     src={staticFile("audio.mp3")}
-    trimBefore={2 * fps} // Skip the first 2 seconds
-    trimAfter={10 * fps} // End at the 10 second mark
+    trimBefore={2 * fps}  // Skip first 2s
+    trimAfter={10 * fps}  // End at 10s mark
   />
 );
 ```
 
-The audio still starts playing at the beginning of the composition - only the specified portion is played.
-
 ## Delaying
 
-Wrap the audio in a `<Sequence>` to delay when it starts:
+Wrap in `<Sequence>` to delay playback:
 
 ```tsx
 import { Sequence, staticFile } from "remotion";
@@ -77,17 +67,15 @@ return (
 );
 ```
 
-The audio will start playing after 1 second.
-
 ## Volume
 
-Set a static volume (0 to 1):
+Static (0–1):
 
 ```tsx
 <Audio src={staticFile("audio.mp3")} volume={0.5} />
 ```
 
-Or use a callback for dynamic volume based on the current frame:
+Dynamic via callback — `f` starts at 0 when audio begins, not at the composition frame:
 
 ```tsx
 import { interpolate } from "remotion";
@@ -104,11 +92,9 @@ return (
 );
 ```
 
-The value of `f` starts at 0 when the audio begins to play, not the composition frame.
-
 ## Muting
 
-Use `muted` to silence the audio. It can be set dynamically:
+`muted` can be set dynamically:
 
 ```tsx
 const frame = useCurrentFrame();
@@ -117,57 +103,45 @@ const { fps } = useVideoConfig();
 return (
   <Audio
     src={staticFile("audio.mp3")}
-    muted={frame >= 2 * fps && frame <= 4 * fps} // Mute between 2s and 4s
+    muted={frame >= 2 * fps && frame <= 4 * fps}  // Mute 2s–4s
   />
 );
 ```
 
 ## Speed
 
-Use `playbackRate` to change the playback speed:
-
 ```tsx
-<Audio src={staticFile("audio.mp3")} playbackRate={2} /> {/* 2x speed */}
-<Audio src={staticFile("audio.mp3")} playbackRate={0.5} /> {/* Half speed */}
+<Audio src={staticFile("audio.mp3")} playbackRate={2} />    // 2x
+<Audio src={staticFile("audio.mp3")} playbackRate={0.5} />  // 0.5x
 ```
 
 Reverse playback is not supported.
 
 ## Looping
 
-Use `loop` to loop the audio indefinitely:
-
 ```tsx
 <Audio src={staticFile("audio.mp3")} loop />
 ```
 
-Use `loopVolumeCurveBehavior` to control how the frame count behaves when looping:
+`loopVolumeCurveBehavior` controls frame count on loop:
 
-- `"repeat"`: Frame count resets to 0 each loop (default)
-- `"extend"`: Frame count continues incrementing
+- `"repeat"` (default): resets to 0 each loop
+- `"extend"`: continues incrementing
 
 ```tsx
 <Audio
   src={staticFile("audio.mp3")}
   loop
   loopVolumeCurveBehavior="extend"
-  volume={(f) => interpolate(f, [0, 300], [1, 0])} // Fade out over multiple loops
+  volume={(f) => interpolate(f, [0, 300], [1, 0])}  // Fade out over multiple loops
 />
 ```
 
 ## Pitch
 
-Use `toneFrequency` to adjust the pitch without affecting speed. Values range from 0.01 to 2:
+`toneFrequency` adjusts pitch without affecting speed (range: 0.01–2). Only works during server-side rendering — not in Remotion Studio preview or `<Player />`.
 
 ```tsx
-<Audio
-  src={staticFile("audio.mp3")}
-  toneFrequency={1.5} // Higher pitch
-/>
-<Audio
-  src={staticFile("audio.mp3")}
-  toneFrequency={0.8} // Lower pitch
-/>
+<Audio src={staticFile("audio.mp3")} toneFrequency={1.5} />  // Higher pitch
+<Audio src={staticFile("audio.mp3")} toneFrequency={0.8} />  // Lower pitch
 ```
-
-Pitch shifting only works during server-side rendering, not in the Remotion Studio preview or in the `<Player />`.
