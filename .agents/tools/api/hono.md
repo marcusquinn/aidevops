@@ -17,10 +17,8 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
-**Purpose**: Fast, lightweight API framework. Use for Next.js API routes, edge functions, serverless.
+**Purpose**: Fast, lightweight API framework for Next.js API routes, edge functions, serverless. TypeScript-first, full type inference, Edge/Node.js/Bun/Deno/Cloudflare Workers, built-in middleware (CORS, auth, validation), RPC client with type safety.
 **Docs**: Context7 MCP for current documentation.
-
-**Features**: TypeScript-first, full type inference, Edge/Node.js/Bun/Deno/Cloudflare Workers, built-in middleware (CORS, auth, validation), RPC client with type safety.
 
 **Basic routes**:
 
@@ -178,7 +176,6 @@ app.post("/api/upload", async (c) => {
   const safeName = `${crypto.randomUUID()}-${
     file.name.replace(/[/\\]/g, "").replace(/[^a-zA-Z0-9._-]/g, "_").replace(/^\.+/, "_") || "upload"
   }`;
-  const buffer = await file.arrayBuffer();
   return c.json({ filename: safeName, size: file.size });
 });
 ```
