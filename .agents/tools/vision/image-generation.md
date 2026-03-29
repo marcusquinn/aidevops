@@ -121,14 +121,17 @@ generate_batch() {
   local prompt="$1"
   local count="${2:-4}"
   local output_dir="${3:-.}"
+  mkdir -p "$output_dir"
 
   for i in $(seq 1 "$count"); do
-    curl -s https://api.openai.com/v1/images/generations \
+    local target="$output_dir/gen_$i.png"
+    curl -sf https://api.openai.com/v1/images/generations \
       -H "Authorization: Bearer $OPENAI_API_KEY" \
       -H "Content-Type: application/json" \
-      -d "{\"model\": \"dall-e-3\", \"prompt\": \"$prompt\", \"size\": \"1024x1024\", \"quality\": \"hd\"}" \
-      | python3 -c "import json,sys,urllib.request; url=json.load(sys.stdin)['data'][0]['url']; urllib.request.urlretrieve(url, '$output_dir/gen_$i.png')"
-    echo "Saved: $output_dir/gen_$i.png"
+      -d "$(jq -n --arg p "$prompt" '{model: "dall-e-3", prompt: $p, size: "1024x1024", quality: "hd"}')" \
+      | python3 -c "import json,sys,urllib.request; url=json.load(sys.stdin)['data'][0]['url']; urllib.request.urlretrieve(url, sys.argv[1])" "$target" \
+      || { echo "Error generating image $i" >&2; return 1; }
+    echo "Saved: $target"
   done
   return 0
 }
