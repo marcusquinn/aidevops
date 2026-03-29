@@ -1582,9 +1582,9 @@
       "pr": 13323
     },
     ".agents/tools/code-review/code-simplifier.md": {
-      "hash": "da40ecdfa40a85309c85cc17bb98b78569cd723e",
-      "at": "2026-03-29T22:50:13Z",
-      "pr": 13347
+      "hash": "9c62ffdb97ac1d0d44c1bed6c15abc856ee53a9b",
+      "at": "2026-03-30T00:00:00Z",
+      "pr": null
     },
     ".agents/tools/build-agent/add-skill.md": {
       "hash": "36065ac3559aa2e929cbb858c8220961454f9dd9",
