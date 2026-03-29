@@ -9,11 +9,7 @@ model: haiku
 
 Project-level context files for SEO content creation. Adapted from [TheCraigHewitt/seomachine](https://github.com/TheCraigHewitt/seomachine) (MIT License).
 
-Create a `context/` directory and populate from templates below. Subagents (`seo-writer.md`, `editor.md`, `internal-linker.md`) check for these files automatically.
-
-```bash
-mkdir -p context
-```
+Run `mkdir -p context` then populate from templates below. Subagents (`seo-writer.md`, `editor.md`, `internal-linker.md`) check for these files automatically.
 
 ### context/brand-voice.md
 
@@ -21,7 +17,7 @@ mkdir -p context
 # Brand Voice Guide
 
 ## Voice Pillars
-- **[Pillar 1]**: [Description of this voice quality]
+- **[Pillar 1]**: [Description]
 - **[Pillar 2]**: [Description]
 - **[Pillar 3]**: [Description]
 
@@ -98,7 +94,7 @@ mkdir -p context
 - **Search intent**: [informational/commercial/transactional]
 
 ### [Topic Cluster 2]
-...
+[repeat above structure]
 
 ## Current Rankings
 | Keyword | Position | URL | Opportunity |
@@ -147,7 +143,6 @@ mkdir -p context
 | [topic] | [our coverage] | [their coverage] | [their coverage] | [opportunity] |
 
 ## Keyword Gaps
-Keywords competitors rank for that we don't:
 - [keyword] - [competitor] ranks #[X], we don't rank
 ```
 
@@ -174,4 +169,3 @@ Keywords competitors rank for that we don't:
 - Image alt text: descriptive, include keyword variation
 - Schema markup: Article, FAQ, HowTo as appropriate
 ```
-
