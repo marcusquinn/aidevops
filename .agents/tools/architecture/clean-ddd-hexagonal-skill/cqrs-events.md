@@ -6,9 +6,9 @@
 
 > **Warning:** "You should be very cautious about using CQRS... the majority of cases I've run into have not been so good." — Martin Fowler
 
-**CQRS — use when:** Read/write workloads have dramatically different scaling requirements; complex queries don't map to the domain model; event sourcing is used; simpler approaches are proven insufficient. **Skip when:** Simple CRUD; similar read/write patterns; small team or simple domain. Applies to specific bounded contexts, never entire systems.
+**CQRS — use when:** Read/write workloads scale differently; complex queries don't map to the domain model; event sourcing is used; simpler approaches are proven insufficient. **Skip when:** Simple CRUD; similar read/write patterns; small team or simple domain. Applies to specific bounded contexts, never entire systems.
 
-**Event Sourcing — use when:** Complete audit trail is a business requirement; need to reconstruct state at any point in time; domain is inherently event-driven (financial transactions, workflows). **Avoid when:** Simple CRUD; team unfamiliar with event-driven patterns; adding retroactively.
+**Event Sourcing — use when:** Complete audit trail required; need to reconstruct state at any point in time; domain is inherently event-driven (financial transactions, workflows). **Avoid when:** Simple CRUD; team unfamiliar with event-driven patterns; adding retroactively.
 
 > **Warning:** "Extremely difficult to add Event Sourcing to systems not originally designed for it." — Martin Fowler
 
@@ -20,7 +20,7 @@
 
 ## CQRS Overview
 
-**Command Query Responsibility Segregation** — separate read and write models.
+Separate read and write models. **Commands** mutate state; **queries** retrieve data without side effects. Read model is denormalized and query-optimized. Start with the same DB and separate query paths; split databases only when proven necessary.
 
 ```mermaid
 flowchart TB
@@ -47,10 +47,8 @@ flowchart TB
     style EventHandler fill:#f59e0b,stroke:#d97706,color:white
 ```
 
-**Commands** mutate state; **queries** retrieve data without side effects. Read model is denormalized and query-optimized. Start with the same DB and separate query paths; split databases only when proven necessary.
-
 ```typescript
-// Command handler — write side (mutates state, publishes events)
+// Write side — mutates state, publishes events
 export class PlaceOrderHandler {
   async handle(cmd: PlaceOrderCommand): Promise<OrderId> {
     const order = Order.create(CustomerId.from(cmd.customerId));
@@ -61,7 +59,7 @@ export class PlaceOrderHandler {
   }
 }
 
-// Query handler — read side (never mutates state)
+// Read side — never mutates state
 export class GetOrderHandler {
   async handle(query: { orderId: string }): Promise<OrderDTO | null> {
     return this.readDb.findById(query.orderId);
@@ -82,7 +80,7 @@ export abstract class DomainEvent {
   abstract toPayload(): Record<string, unknown>;
 }
 
-// Concrete event — carries only what changed
+// Carries only what changed
 export class OrderConfirmed extends DomainEvent {
   readonly eventType = 'order.confirmed';
   constructor(readonly orderId: OrderId, readonly total: Money, readonly items: ReadonlyArray<{ productId: string; quantity: number }>) { super(orderId.value); }
@@ -142,7 +140,7 @@ export class EventDispatcher {
   }
 }
 
-// One event type can have multiple handlers (fan-out)
+// Fan-out: one event type, multiple handlers
 dispatcher.register('order.confirmed', new OrderConfirmedHandler(readDb));
 dispatcher.register('order.confirmed', new PublishOrderConfirmedIntegrationEvent(broker, orderRepo));
 ```
@@ -152,7 +150,7 @@ dispatcher.register('order.confirmed', new PublishOrderConfirmedIntegrationEvent
 Guarantees reliable event publishing: write events to an outbox table in the **same transaction** as the aggregate, then publish asynchronously.
 
 ```
-// In command handler — single transaction
+// Single transaction in command handler
 db.transaction((tx) => {
     orderRepo.save(order, tx)
     for event in order.domainEvents:
