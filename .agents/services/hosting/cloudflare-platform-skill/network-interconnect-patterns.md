@@ -4,17 +4,9 @@ See [README.md](./README.md) for overview.
 
 ## High Availability
 
-**Critical:** Design for resilience from day one.
+Design for resilience from day one. Requirements: device-level diversity, backup Internet (no SLA on CNI), network-resilient locations, regular failover testing.
 
-**Requirements:**
-- Device-level diversity (separate hardware)
-- Backup Internet connectivity (no SLA on CNI)
-- Network-resilient locations preferred
-- Regular failover testing
-
-**Architecture:**
-
-```
+```text
 Your Network A ──10G CNI v2──> CF CCR Device 1
                                      │
 Your Network B ──10G CNI v2──> CF CCR Device 2
@@ -22,14 +14,11 @@ Your Network B ──10G CNI v2──> CF CCR Device 2
                             CF Global Network (AS13335)
 ```
 
-**Capacity Planning:**
-- Plan across all links
-- Account for failover scenarios
-- Your responsibility
+Capacity planning: plan across all links, account for failover scenarios.
 
 ## Pattern: Magic Transit + CNI v2
 
-**Use Case:** DDoS protection, private connectivity, no GRE overhead.
+DDoS protection + private connectivity without GRE overhead.
 
 ```typescript
 // 1. Create interconnect
@@ -51,7 +40,7 @@ const status = await pollUntilActive(id, ic.id);
 
 ## Pattern: Multi-Cloud Hybrid
 
-**Use Case:** AWS/GCP workloads with Cloudflare.
+AWS/GCP workloads with Cloudflare.
 
 **AWS Direct Connect:**
 
@@ -86,7 +75,7 @@ const ic = await client.networkInterconnects.interconnects.create({
 
 ## Pattern: Multi-Location HA
 
-**Use Case:** 99.99%+ uptime.
+99.99%+ uptime via geographic diversity.
 
 ```typescript
 // Primary (NY)
@@ -125,33 +114,13 @@ const tertiary = await client.networkInterconnects.interconnects.create({
 
 ## Pattern: Partner Interconnect (Equinix)
 
-**Use Case:** Quick deployment, no colocation.
-
-**Setup:**
-1. Order virtual circuit in Equinix Fabric Portal
-2. Select Cloudflare as destination
-3. Choose facility
-4. Send details to CF account team
-5. CF accepts in portal
-6. Configure BGP
-
-**No API automation** – partner portals managed separately.
+Quick deployment without colocation. Setup: order virtual circuit in Equinix Fabric Portal → select Cloudflare → choose facility → send details to CF account team → CF accepts → configure BGP. No API automation (partner portals managed separately).
 
 ## Failover & Security
 
-**Failover Best Practices:**
-- Use BGP local preferences for priority
-- Configure BFD for fast detection (v1)
-- Test regularly with traffic shift
-- Document runbooks
+**Failover:** BGP local preferences for priority, BFD for fast detection (v1), regular traffic-shift testing, documented runbooks.
 
-**Security:**
-- BGP password authentication
-- BGP route filtering
-- Monitor unexpected routes
-- Magic Firewall for DDoS/threats
-- Minimum API token permissions
-- Rotate credentials periodically
+**Security:** BGP password auth + route filtering, monitor unexpected routes, Magic Firewall for DDoS/threats, minimum API token permissions, rotate credentials.
 
 ## Decision Matrix
 
@@ -169,6 +138,4 @@ const tertiary = await client.networkInterconnects.interconnects.create({
 
 ## Resources
 
-- [Magic Transit Docs](https://developers.cloudflare.com/magic-transit/)
-- [Magic WAN Docs](https://developers.cloudflare.com/magic-wan/)
-- [Argo Smart Routing](https://developers.cloudflare.com/argo/)
+[Magic Transit](https://developers.cloudflare.com/magic-transit/) · [Magic WAN](https://developers.cloudflare.com/magic-wan/) · [Argo Smart Routing](https://developers.cloudflare.com/argo/)
