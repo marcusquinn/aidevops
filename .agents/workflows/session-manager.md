@@ -18,8 +18,7 @@ tools:
 
 - **Purpose**: Detect session completion, suggest new sessions, spawn parallel work
 - **Triggers**: PR merge, release, topic shift, context limits
-- **Actions**: Suggest @agent-review, new session, worktree + spawn
-- **Loop agents**: `/preflight-loop`, `/pr-loop`, `/postflight-loop` — detect completion, suggest @agent-review or new session, offer spawning
+- **Actions**: Suggest @agent-review, new session, worktree + spawn. Loop agents (`/preflight-loop`, `/pr-loop`, `/postflight-loop`) detect completion and offer spawning.
 
 <!-- AI-CONTEXT-END -->
 
@@ -33,13 +32,7 @@ tools:
 | User gratitude | "thanks", "done", "that's all", "finished" | Medium |
 | Topic shift | New unrelated task requested | Medium |
 
-**Trigger prefixes:**
-
-| Trigger | Prefix line |
-|---------|-------------|
-| PR merge + release | `[x] {PR title} (PR #{number} merged), v{version} released` |
-| Topic shift | `Topic shift: {new topic} differs from {current focus} — new session recommended` |
-| Context window | `Long session with significant context — risk of degradation` |
+**Trigger prefixes:** PR merge+release: `[x] {PR title} (PR #{number} merged), v{version} released`. Topic shift: `Topic shift: {new topic} differs from {current focus} — new session recommended`. Context window: `Long session with significant context — risk of degradation`.
 
 ## Spawning New Sessions
 
@@ -48,23 +41,18 @@ tools:
 ```bash
 ~/.aidevops/agents/scripts/worktree-helper.sh add feature/parallel-task
 # Output: ~/Git/<project>-feature-parallel-task/
-
-# macOS Terminal.app
-osascript -e 'tell application "Terminal" to do script "cd ~/Git/<project>-feature-parallel-task && opencode"'
-# iTerm
-osascript -e 'tell application "iTerm" to tell current window to create tab with default profile command "cd ~/Git/<project>-feature-parallel-task && opencode"'
-# Linux (gnome-terminal / konsole / kitty)
-gnome-terminal --tab -- bash -c "cd ~/Git/<project> && opencode; exec bash"
-konsole --new-tab -e bash -c "cd ~/Git/<project> && opencode"
-kitty @ launch --type=tab --cwd=~/Git/<project> opencode
+# macOS: osascript -e 'tell application "Terminal" to do script "cd ~/Git/<project>-feature-parallel-task && opencode"'
+# macOS iTerm: osascript -e 'tell application "iTerm" to tell current window to create tab with default profile command "cd ... && opencode"'
+# Linux: gnome-terminal --tab -- bash -c "cd ~/Git/<project> && opencode; exec bash"
+# Linux: konsole --new-tab -e bash -c "cd ~/Git/<project> && opencode"
+# Linux: kitty @ launch --type=tab --cwd=~/Git/<project> opencode
 ```
 
 ### Background / Headless
 
 ```bash
 opencode run "Continue with task X" --agent Build+ &
-# Persistent server
-opencode serve --port 4097 &
+opencode serve --port 4097 &  # Persistent server
 opencode run --attach http://localhost:4097 "Task description" --agent Build+
 ```
 
@@ -73,8 +61,7 @@ opencode run --attach http://localhost:4097 "Task description" --agent Build+
 ```bash
 cat > .session-handoff.md << EOF
 # Session Handoff
-**Branch**: $(git branch --show-current)
-**Last commit**: $(git log -1 --oneline)
+**Branch**: $(git branch --show-current) | **Last commit**: $(git log -1 --oneline)
 ## Completed
 - {list completed items}
 ## Continue With
@@ -85,44 +72,27 @@ opencode run "Read .session-handoff.md and continue the work" --agent Build+
 
 ## When to Suggest @agent-review
 
-| Trigger | Reason |
-|---------|--------|
-| After PR merge | Document what worked |
-| After release | Capture release learnings |
-| After fixing multiple issues | Pattern recognition opportunity |
-| After user correction | Immediate improvement opportunity |
-| Before unrelated work | Clean context boundary |
-| After long session | Document accumulated learnings |
+After: PR merge (document what worked), release (capture learnings), fixing multiple issues (pattern recognition), user correction (immediate improvement), before unrelated work (clean context boundary), long session (document accumulated learnings).
 
 ## Compaction Resilience (Long Autonomous Sessions)
 
 Context compaction in 1h+ sessions can lose task state. Checkpoint to disk after each task.
 
 ```bash
-# Save after each task
 session-checkpoint-helper.sh save \
   --task "t135.9" --next "t135.11,t014,t025" \
   --worktree "/path/to/worktree" --batch "batch2-quality" \
   --note "Completed trap cleanup for 29 scripts" \
   --elapsed "90" --target "240"
-
 session-checkpoint-helper.sh load        # Reload before any new task (esp. after compaction)
 session-checkpoint-helper.sh status      # Check staleness
 session-checkpoint-helper.sh continuation # Generate continuation prompt
 session-checkpoint-helper.sh auto-save --task "t135.9" --note "Completed X"
 ```
 
-**When to checkpoint:**
+**When to checkpoint:** Task completed → `save` with updated --task/--next. PR created/merged → `save` with --note. Batch committed → `save` with --note. Before large operation → `save` as recovery point. After context compaction → `load` to re-orient.
 
-| Event | Action |
-|-------|--------|
-| Task completed | `save` with updated --task and --next |
-| PR created/merged | `save` with --note describing PR state |
-| Batch committed | `save` with --note listing changes |
-| Before large operation | `save` as recovery point |
-| After context compaction | `load` to re-orient |
-
-State gathered from: git (branch, uncommitted changes, commits, worktrees), GitHub (open PRs), supervisor (batch state), TODO.md (in-progress tasks), checkpoint file, and memory. The continuation prompt is the single highest-impact factor for session continuity — AGENTS.md provides the "how", the continuation prompt provides the "where we are".
+State sources: git (branch, uncommitted changes, commits, worktrees), GitHub (open PRs), supervisor (batch state), TODO.md (in-progress tasks), checkpoint file, memory. The continuation prompt is the highest-impact factor for session continuity — AGENTS.md provides the "how", the continuation prompt provides the "where we are".
 
 ## Related
 
