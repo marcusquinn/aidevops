@@ -34,15 +34,13 @@ Pricing figures are approximate — verify before committing: [Fly.io](https://f
 
 ---
 
-## Feature Comparison Matrix
+## Feature Comparison
 
 | Dimension | Fly.io | Daytona | Coolify | Cloudron | Vercel |
 |-----------|--------|---------|---------|----------|--------|
-| **Deployment type** | Managed PaaS | Cloud sandbox | Self-hosted PaaS | Self-hosted app platform | Serverless/Edge PaaS |
 | **Compute model** | Firecracker micro-VMs | gVisor sandboxes | Docker containers | Docker containers | Serverless functions |
-| **Always-on support** | Yes | Yes (stop/start) | Yes | Yes | No |
 | **Auto-stop/start** | Yes (built-in) | Yes (manual stop) | No | No | N/A |
-| **Cold start latency** | ~200–500 ms | ~90 ms | None | None | ~0–500 ms (Edge/Serverless) |
+| **Cold start latency** | ~200–500 ms | ~90 ms | None | None | ~0–500 ms |
 | **Global distribution** | Yes (30+ regions, anycast) | No | No (your server) | No (your server) | Yes (100+ PoPs) |
 | **Persistent volumes** | Yes (NVMe, region-specific) | Yes (snapshots) | Yes (Docker volumes) | Yes (/app/data) | No (external only) |
 | **Managed databases** | Fly Postgres, Upstash Redis | No | PostgreSQL, MySQL, MongoDB, Redis | MySQL, PostgreSQL, Redis | No (external only) |
@@ -52,34 +50,30 @@ Pricing figures are approximate — verify before committing: [Fly.io](https://f
 | **Stateful snapshots** | No | Yes | No | No | No |
 | **SDK/API lifecycle** | Yes (Machines API) | Yes (Python/TS SDK) | No | No | No |
 | **Max execution time** | Unlimited | Unlimited | Unlimited | Unlimited | 5–15 min |
-| **Self-hosted option** | No | No | Yes | Yes | No |
 | **Data sovereignty** | No | No | Yes | Yes | No |
 | **App marketplace** | No | No | No | Yes (200+ apps) | No |
 | **SSO/LDAP** | No | No | No | Yes (built-in) | No |
 | **Automatic SSL** | Yes | N/A | Yes (Let's Encrypt) | Yes (Let's Encrypt) | Yes |
-| **Billing model** | Per-second compute + storage | Per-second, per-resource | Server cost only | Server cost + optional sub | Invocations + bandwidth |
 | **Free tier** | Yes (3 VMs) | Yes (credits) | Yes (software free) | Yes (2 apps) | Yes (generous) |
 
 ---
 
-## Pricing Analysis
+## Pricing
 
 ### Fly.io (shared CPU, approximate)
 
-| Machine | vCPU | RAM | Always-on/mo | Per-hour |
-|---------|------|-----|-------------|---------|
-| shared-cpu-1x | 1 shared | 256 MB | ~$1.94 | ~$0.0027 |
-| shared-cpu-2x | 2 shared | 512 MB | ~$3.88 | ~$0.0054 |
-| shared-cpu-4x | 4 shared | 1 GB | ~$7.76 | ~$0.0108 |
-| performance-1x | 1 dedicated | 2 GB | ~$31.00 | ~$0.0430 |
-| performance-2x | 2 dedicated | 4 GB | ~$62.00 | ~$0.0860 |
-| performance-4x | 4 dedicated | 8 GB | ~$124.00 | ~$0.1720 |
+| Machine | vCPU | RAM | Always-on/mo |
+|---------|------|-----|-------------|
+| shared-cpu-1x | 1 shared | 256 MB | ~$1.94 |
+| shared-cpu-4x | 4 shared | 1 GB | ~$7.76 |
+| performance-1x | 1 dedicated | 2 GB | ~$31.00 |
+| performance-4x | 4 dedicated | 8 GB | ~$124.00 |
 
 Storage: ~$0.15/GB/month. Bandwidth: ~$0.02/GB after 160 GB free.
 
 ### Daytona (per-second, per-resource)
 
-Billed per-second for active vCPU + RAM + disk; stopped sandboxes pay disk only. For reference (March 2026): ~$48–50/month for always-on 1 vCPU/1 GB vs Fly.io's ~$5.92/month — significantly more expensive for always-on, competitive for bursty/ephemeral use. Check https://www.daytona.io/pricing for current rates.
+Billed per-second for active vCPU + RAM + disk; stopped sandboxes pay disk only. ~$48–50/month for always-on 1 vCPU/1 GB vs Fly.io's ~$5.92/month — expensive for always-on, competitive for bursty/ephemeral use.
 
 ### Coolify (self-hosted — server cost only)
 
@@ -102,88 +96,27 @@ Same server costs as Coolify. Subscription: free for ≤2 apps; ~$15/month for u
 |------|---------|-----------|---------------------|
 | Hobby | Free | 100 GB | 100K/day |
 | Pro | $20/user | 1 TB | 1M/day |
-| Enterprise | Custom | Custom | Custom |
 
 Edge Functions: ~$0.60/million invocations. Serverless Functions: ~$0.18/GB-hour compute.
 
 ---
 
-## Worked Cost Examples
-
-### Profile 1: Always-On Web App (1 vCPU / 1 GB RAM, 24/7)
-
-| Platform | Monthly cost | Notes |
-|----------|-------------|-------|
-| **Fly.io** | ~$5.92 | shared-cpu-4x + min_machines_running=1 |
-| **Daytona** | ~$48–50 | Per-second billing; expensive for always-on |
-| **Coolify** | ~€4–8 | Hetzner CX22/CX32; best value for always-on |
-| **Cloudron** | ~€4–8 + $15 sub | Same server + subscription for >2 apps |
-| **Vercel** | Not suitable | Serverless only |
-
-**Winner**: Coolify on Hetzner (~€4–8/mo) for self-managed. Fly.io (~$5.92/mo) for managed with no ops overhead.
-
-### Profile 2: Bursty AI Agent Sandbox (~4 hours/day active)
-
-| Platform | Monthly cost | Notes |
-|----------|-------------|-------|
-| **Fly.io** | ~$0.65–1.30 | Auto-stop; ~120h × $0.0108/hr; Sprites isolation |
-| **Daytona** | ~$6–8 | Per-second; gVisor isolation; GPU available |
-| **Coolify** | Not suitable | No per-second billing |
-| **Cloudron** | Not suitable | Not designed for ephemeral sandboxes |
-| **Vercel** | Not suitable | 5–15 min function limits |
-
-**Winner**: Fly.io (cheapest, auto-stop, Sprites). Daytona if gVisor isolation, GPU, or stateful snapshots needed.
-
-### Profile 3: Production SaaS (4 vCPU / 8 GB + DB + CDN)
-
-| Platform | Monthly cost | Notes |
-|----------|-------------|-------|
-| **Fly.io** | ~$130–160 | performance-4x (~$124) + Fly Postgres (~$15–30) + bandwidth |
-| **Daytona** | Not suitable | Not designed for production app hosting |
-| **Coolify** | ~€20–40 | Hetzner AX41 (~€35); Coolify manages Postgres |
-| **Cloudron** | ~€20–40 + $15 sub | Same server + subscription; adds SSO, app marketplace |
-| **Vercel** | ~$20–50+ | Pro ($20) + external DB (~$10–30); no persistent compute |
-
-**Winner**: Coolify on Hetzner (~€35/mo all-in). Fly.io (~$130–160/mo) for managed + global distribution.
-
----
-
 ## Decision Guide
 
-### Use Fly.io when
-- **Global low-latency** — anycast routing puts compute near users automatically
-- **Managed infrastructure** without running your own servers
-- **Auto-stop/start** for bursty traffic and cost savings
-- **AI agent sandboxes** (Sprites) with per-second billing
-- Budget: ~$2–130/mo
+| Use case | Recommended | Why |
+|----------|-------------|-----|
+| Global low-latency app | Fly.io | Anycast routing, 30+ regions, auto-stop/start |
+| Always-on, single region, cost-sensitive | Coolify on Hetzner | ~€4–8/mo all-in, full control |
+| AI agent code execution | Fly.io (Sprites) | Per-second, auto-stop, Firecracker isolation |
+| AI agent with GPU / gVisor isolation | Daytona | A100/H100/L40S, stateful snapshots |
+| Ephemeral CI/CD runners | Daytona | Per-second billing, gVisor, SDK lifecycle |
+| Next.js / JAMstack frontend | Vercel | Native Next.js support, preview deployments per PR |
+| Off-the-shelf apps (WordPress, Nextcloud) | Cloudron | One-click installs, auto-updates, SSO/LDAP |
+| Production SaaS, cost-sensitive | Coolify on Hetzner | ~€35/mo all-in, manages Postgres too |
+| Production SaaS, global | Fly.io | Managed + global distribution (~$130–160/mo) |
+| Data sovereignty required | Coolify or Cloudron | Data never leaves your server |
 
-### Use Daytona when
-- **AI agent code execution** with strong isolation (gVisor, stronger than Docker)
-- **GPU sandboxes** (A100, H100, L40S) for ML workloads
-- **Ephemeral workloads** — create, run, destroy; per-second billing
-- **Stateful snapshots** — stop and resume with full state
-- Budget: competitive for ephemeral; expensive for always-on
-
-### Use Coolify when
-- **Full control** over infrastructure and data
-- **Cost-sensitive** — Hetzner + Coolify is cheapest for always-on
-- **Data sovereignty** — data never leaves your server
-- Comfortable managing a Linux server
-- Budget: ~€4–40/mo (server cost only)
-
-### Use Cloudron when
-- **Off-the-shelf apps** (WordPress, Nextcloud, Gitea) with one-click installs
-- **Automatic updates, backups, and SSO** managed for you
-- **Non-technical teams** — simpler UI than Coolify
-- **LDAP/SSO** integration across all hosted apps
-- Budget: ~€4–40/mo (server) + $15/mo (subscription for >2 apps)
-
-### Use Vercel when
-- **Next.js, React, or JAMstack** frontend
-- **Serverless functions** with global edge distribution
-- **Stateless backend** — no persistent compute needed
-- **Preview deployments** per PR automatically
-- Budget: Free (Hobby) to $20/mo (Pro) + external DB
+**Self-hosted vs managed rule of thumb**: Coolify/Cloudron wins on cost and control for single-region, always-on workloads. Fly.io/Vercel wins on global distribution, auto-scaling, and zero-ops.
 
 ---
 
@@ -203,13 +136,11 @@ Edge Functions: ~$0.60/million invocations. Serverless Functions: ~$0.18/GB-hour
 | Dev environments / previews | Daytona | Vercel (frontend) | Coolify, Cloudron |
 | Data sovereignty required | Coolify | Cloudron | Fly.io, Daytona, Vercel |
 
-**Self-hosted vs managed rule of thumb**: Coolify/Cloudron wins on cost and control for single-region, always-on workloads. Fly.io/Vercel wins on global distribution, auto-scaling, and zero-ops.
-
 ---
 
 ## AI Model Inference Hosting
 
-For AI model inference, fine-tuning, and custom model hosting, see the dedicated infrastructure agents. Managed platforms (Fireworks, Together AI, Cloudflare Workers AI, NEAR AI Cloud) expose OpenAI-compatible APIs -- change `base_url` only. Cloud GPU (raw providers) depends on the inference server you deploy: vLLM and TGI expose OpenAI-compatible APIs; other stacks may not -- verify your runtime's API compatibility and auth behaviour before integrating.
+Managed platforms (Fireworks, Together AI, Cloudflare Workers AI, NEAR AI Cloud) expose OpenAI-compatible APIs — change `base_url` only. Cloud GPU (raw providers) depends on the inference server deployed: vLLM and TGI expose OpenAI-compatible APIs; other stacks may not — verify runtime API compatibility and auth behaviour before integrating.
 
 ### Platform Comparison
 
@@ -222,7 +153,7 @@ For AI model inference, fine-tuning, and custom model hosting, see the dedicated
 | **NEAR AI Cloud** | TEE-backed private inference | ~10 (open + closed proxy) | No | No | No | REST API only | `tools/infrastructure/nearai.md` |
 | **Cloud GPU** | Raw GPU providers | Any (self-managed) | Any (self-managed) | N/A | RunPod/Vast.ai/Lambda | Provider CLIs | `tools/infrastructure/cloud-gpu.md` |
 
-### Pricing Comparison (common models, $/M tokens, March 2026)
+### Pricing ($/M tokens, March 2026)
 
 | Model | Fireworks | Together AI | Cloudflare | NEAR AI | Notes |
 |-------|-----------|-------------|------------|---------|-------|
@@ -250,6 +181,8 @@ NVIDIA Cloud (build.nvidia.com): Free cloud endpoints for prototyping (1000 API 
 | Batch processing at scale | Fireworks or Together AI (50% off) | Cloud GPU |
 | GPU clusters for training | Together AI (GPU Clusters) | Cloud GPU providers |
 | Cheapest experimentation | Cloudflare (10K free neurons/day) | NVIDIA Cloud (free credits) |
+
+---
 
 ## Related
 
