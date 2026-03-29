@@ -24,6 +24,7 @@ tools:
 - **Strengths**: Real-time code analysis of bundled/minified JS (not static signatures)
 - **Prerequisite**: Node.js 16+, Playwright Chromium (`npx playwright install chromium`)
 - **Helper**: `tech-stack-helper.sh unbuilt <url> [--json]`
+- **Install**: `npm install -g @unbuilt/cli && npx playwright install chromium`
 
 ## What It Detects
 
@@ -46,33 +47,15 @@ tools:
 | Monitoring | Sentry, Datadog, Rollbar, New Relic, OpenTelemetry, Vercel Speed Insights |
 | Platforms | Wix, Weebly, Webflow, Squarespace, Shopify |
 
-## CLI Installation
-
-```bash
-npm install -g @unbuilt/cli
-npx playwright install chromium
-```
-
 ## CLI Usage
 
 ```bash
-# Basic analysis (human-readable output)
-unbuilt https://example.com
-
-# JSON output (machine-readable, for integration)
-unbuilt https://example.com --json
-
-# Remote analysis (uses unbuilt.app server, no local Playwright needed)
-unbuilt https://example.com --remote --json
-
-# With authenticated session (uses local Chrome profile)
-unbuilt https://example.com --session
-
-# Custom timeout (default 120s)
-unbuilt https://example.com --timeout 60
-
-# Batch analysis from CSV
-unbuilt batch urls.csv --concurrent 4 --json --output results.json
+unbuilt https://example.com                                          # human-readable
+unbuilt https://example.com --json                                   # machine-readable
+unbuilt https://example.com --remote --json                          # no local Playwright
+unbuilt https://example.com --session                                # local Chrome profile
+unbuilt https://example.com --timeout 60                             # custom timeout (default 120s)
+unbuilt batch urls.csv --concurrent 4 --json --output results.json  # batch from CSV
 ```
 
 ## CLI Options
@@ -86,27 +69,11 @@ unbuilt batch urls.csv --concurrent 4 --json --output results.json
 | `-t, --timeout <s>` | Max wait time in seconds (default: 120) |
 | `--session` | Use local Chrome profile for authenticated analysis |
 
-## Integration Pattern
+## Helper Integration
 
-The `tech-stack-helper.sh` script wraps the CLI for the aidevops framework:
-
-```bash
-# Analyze a single URL
-tech-stack-helper.sh unbuilt https://example.com
-
-# JSON output for programmatic use
-tech-stack-helper.sh unbuilt https://example.com --json
-
-# Auto-install CLI if missing
-tech-stack-helper.sh install unbuilt
-```
+`tech-stack-helper.sh` wraps the CLI: `tech-stack-helper.sh unbuilt <url> [--json]`. Auto-installs CLI if missing: `tech-stack-helper.sh install unbuilt`.
 
 ## Output Schema (JSON mode)
-
-The `--json` flag returns structured results grouped by detection category.
-Each detected technology includes the technology name, category, and evidence.
-
-Example structure:
 
 ```json
 {
@@ -124,8 +91,6 @@ Example structure:
 ```
 
 ## Common Schema Mapping
-
-The helper normalises Unbuilt output into a common tech-stack schema:
 
 | Common Field | Unbuilt Category |
 |-------------|-----------------|
