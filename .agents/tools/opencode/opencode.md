@@ -13,8 +13,6 @@ tools:
 
 # OpenCode Integration
 
-<!-- AI-CONTEXT-START -->
-
 ## Quick Reference
 
 - **Primary Agent**: `aidevops` — full framework access
@@ -29,13 +27,6 @@ tools:
 | Alternative config | `~/.opencode/` (some installations) |
 | aidevops agents | `~/.aidevops/agents/` (after setup.sh) |
 | Credentials | `~/.config/aidevops/credentials.sh` |
-
-```bash
-opencode auth login   # See tools/opencode/opencode-anthropic-auth.md
-# Tab = switch primary agents | @agent-name = invoke subagent
-```
-
-<!-- AI-CONTEXT-END -->
 
 ## Authentication
 
@@ -188,4 +179,3 @@ See `workflows/session-manager.md` for session lifecycle, terminal tab spawning,
 
 - [OpenCode Agents Documentation](https://opencode.ai/docs/agents)
 - [OpenCode MCP Servers](https://opencode.ai/docs/mcp-servers/)
-- [aidevops Framework](https://github.com/marcusquinn/aidevops)
