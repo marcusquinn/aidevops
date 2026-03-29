@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.281] - 2026-03-29
+
+### Changed
+
+- Documentation: tighten image-understanding.md — merge redundant model tables, fold Gemini note into comment (#13068)
+
 ## [3.5.277] - 2026-03-29
 
 ### Fixed
