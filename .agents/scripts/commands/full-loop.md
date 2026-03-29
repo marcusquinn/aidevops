@@ -20,7 +20,8 @@ Fatal modes: **GH#5317** (exits without PR), **GH#5096** (exits after PR). Do NO
 | 3 | Merge — `gh pr merge --squash` (no `--delete-branch` in worktrees) | |
 | 4 | Auto-release — bump patch + GitHub release (aidevops repo only) | |
 | 5 | Issue closing comment — structured comment on every linked issue | |
-| 6 | Worktree cleanup — return to main, pull, prune | `FULL_LOOP_COMPLETE` |
+| 6 | Postflight + deploy — verify release health, run setup.sh | `FULL_LOOP_COMPLETE` |
+| 7 | Worktree cleanup — return to main, pull, prune | |
 
 ---
 
@@ -157,7 +158,9 @@ fi
 
 **4.7 Issue Closing Comment (MANDATORY):** Post structured comment on every linked issue: **What was done**, **Testing Evidence** (level: `runtime-verified`/`self-assessed`/`untested`, smoke checks), **Key decisions**, **Files changed** (path — what/why), **Blockers**, **Follow-up needs**, **Released in** (aidevops only). Every section ≥1 bullet ("None"/"N/A" if empty). Append a signature footer: `gh-signature-helper.sh footer --model <model> --issue <slug>#<number> --solved`. Gate — no `FULL_LOOP_COMPLETE` until posted.
 
-### 4.8 Worktree Cleanup (GH#6740 — MANDATORY)
+**4.8 Postflight + Deploy:** Verify release health. Deploy: `setup.sh --non-interactive` (aidevops repos only). Emit: `<promise>FULL_LOOP_COMPLETE</promise>`
+
+### 4.9 Worktree Cleanup (GH#6740 — MANDATORY)
 
 ```bash
 WORKTREE_PATH="$(pwd)"
@@ -181,8 +184,6 @@ git branch -D "$BRANCH_NAME" 2>/dev/null || true
 ```
 
 Never `--delete-branch` from inside a worktree. Always `cd` out first. Failures are non-fatal. See [`worktree-cleanup.md`](worktree-cleanup.md).
-
-**4.9 Postflight + Deploy:** Verify release health. Deploy: `setup.sh --non-interactive` (aidevops repos only). Emit: `<promise>FULL_LOOP_COMPLETE</promise>`
 
 ---
 
