@@ -98,48 +98,22 @@ tools:
 - **Single-file**: `{name}.md` — no directory needed
 - **Multi-file**: `{name}.md` (entry point, always loaded) + `{name}/` (extended knowledge, on demand)
 
-Prefer flat files with prefix-based naming (sorting, grouping, keyword discoverability):
-
-```text
-legal.md                                  # Single-file agent
-marketing-sales.md                        # Entry point — strategy, capabilities
-marketing-sales/                          # Extended knowledge — flat, prefix-grouped
-├── meta-ads.md
-├── meta-ads-audiences.md
-├── meta-ads-campaigns.md
-├── direct-response-copy.md
-└── direct-response-copy-swipe-emails.md
-```
-
-- `ls marketing-sales/meta-ads*` groups all Meta Ads knowledge; `*swipe*` finds swipe files
-- Max depth: 2 levels from `.agents/` — never 5+
-- Subdirectory only when a prefix group exceeds ~20 files. One level max.
-- Subdivision threshold: see Quick Reference above.
+Prefer flat files with prefix-based naming (`marketing-sales/meta-ads*.md` groups related files). Max depth: 2 levels from `.agents/`. Subdirectory only when a prefix group exceeds ~20 files.
 
 ### Scripts: Flat by Design
 
-Scripts live flat in `scripts/` — cross-domain, any agent can call any script. Prefix naming (`email-*`, `seo-*`) provides grouping. `*-helper.sh` = agent-callable utilities; other `.sh` = framework infrastructure. `scripts/commands/` = slash command documentation.
+Scripts flat in `scripts/` — cross-domain, any agent can call any script. Prefix naming (`email-*`, `seo-*`) for grouping. `*-helper.sh` = agent-callable; other `.sh` = framework infra. `scripts/commands/` = slash commands.
 
 ### Ingested Skills
 
-External skills retain `-skill` suffix as provenance marker (`skill-update-helper.sh` uses it for upstream checks). Structure is flattened on ingestion:
-
-| Upstream format | aidevops format |
-|-----------------|-----------------|
-| `SKILL.md` (entry point) | `{name}-skill.md` (named entry point) |
-| `{name}-skill/references/*.md` | `{name}-skill/{topic}.md` (flat) |
-| `{name}-skill/rules/*.md` | `{name}-skill/rules-{topic}.md` (flat) |
-| Nested `references/CHEATSHEET/*.md` | `{name}-skill/cheatsheet-{topic}.md` (flat) |
-
-See `add-skill.md` for full ingestion workflow.
+External skills retain `-skill` suffix (provenance marker for `skill-update-helper.sh`). Structure flattened on ingestion: `SKILL.md` → `{name}-skill.md`; `{name}-skill/references/*.md` → `{name}-skill/{topic}.md`; nested `CHEATSHEET/*.md` → `{name}-skill/cheatsheet-{topic}.md`. See `add-skill.md`.
 
 ### Naming Conventions
 
-- **Files**: lowercase with hyphens (`kebab-case`). ALLCAPS only for entry points (`AGENTS.md`).
-- **Scripts**: `[domain]-[function]-helper.sh` for agent-callable, plain `[name].sh` for framework infra.
-- **Python scripts**: `snake_case` (Python convention) — exception to kebab-case rule.
-- **Subagent discovery**: Tooling uses `find -mindepth 2` to discover subagents (skips root-level main agents).
-- **File structure** — main agents: `# Name` → `<!-- AI-CONTEXT-START -->` Quick Reference `<!-- AI-CONTEXT-END -->` → Detailed docs. Subagents: YAML frontmatter + content.
+- **Files**: lowercase-hyphens (`kebab-case`). ALLCAPS for entry points only. Python: `snake_case`.
+- **Scripts**: `[domain]-[function]-helper.sh` (agent-callable), `[name].sh` (framework infra).
+- **Subagent discovery**: `find -mindepth 2` skips root-level main agents.
+- **File structure** — main agents: `# Name` → AI-CONTEXT Quick Reference → docs. Subagents: YAML frontmatter + content.
 - **Slash commands**: NEVER define inline in main agents. Generic → `scripts/commands/{command}.md`. Domain-specific → `{domain}/{subagent}.md`.
 
 ## Model Tier Selection
@@ -156,7 +130,7 @@ Record: `/remember "SUCCESS/FAILURE: agent with model — reason"`. Frontmatter:
 
 Linter order: (1) deterministic (ShellCheck, ESLint, Ruff/Pylint), (2) static analysis (SonarCloud, Secretlint), (3) LLM review (CodeRabbit — architectural only). Prefer `bun`/`bunx` over `npm`/`npx`. Never send an LLM to do a linter's job.
 
-**Information sources**: Prefer official docs, RFCs, source code, first-party data. Watch for outdated tutorials, vendor claims, jurisdiction differences, and commercial bias across all domains.
+**Sources:** Prefer official docs, RFCs, source code, first-party data. Watch for outdated tutorials, vendor claims, jurisdiction differences, commercial bias.
 
 ## Agent Design Checklist
 
@@ -183,9 +157,7 @@ Target: reference cards, not tutorials. Evidence: 63% byte reduction on `build.t
 
 ## Code Examples: When to Include
 
-**Include**: authoritative reference with no implementation elsewhere; security-critical template; command syntax IS the documentation.
-
-**Avoid**: code exists in codebase (use search pattern); external library (use Context7 MCP); will become outdated (point to source).
+**Include:** authoritative with no implementation elsewhere; security-critical template; command syntax IS the doc. **Avoid:** exists in codebase (use search pattern); external library (Context7 MCP); will drift (point to source).
 
 ## Self-Assessment Protocol
 
@@ -215,19 +187,11 @@ Self-checks: "Faster CLI alternative?" and "Could this return >50K tokens?" See 
 | **Sourced** | `~/.aidevops/agents/custom/<source>/` | Yes | In private repo | Synced from private Git repos |
 | **Shared** | `.agents/` in repo | Yes (deployed) | Yes | Open-source, submitted via PR |
 
-When creating an agent, ask the user which tier: Draft (experimental), Custom (private), Sourced (private Git repo), or Shared (PR to `.agents/`).
-
-- **Draft**: `status: draft` + `created` date. Promote to `custom/` or `.agents/` via PR, or discard.
-- **Custom**: Never shared, never overwritten (`custom/mycompany/`, `custom/clients/`).
-- **Shared**: Feature branch + PR. No proprietary info.
-- **Orchestration agents**: Draft reusable patterns. Log TODO, reference in Task calls.
+Ask user which tier: Draft (experimental), Custom (private), Sourced (private Git repo), or Shared (PR to `.agents/`). Draft: `status: draft` + `created` date, promote via PR or discard. Custom: never shared/overwritten. Shared: feature branch + PR, no proprietary info. Orchestration agents: draft reusable patterns, log TODO, reference in Task calls.
 
 ## Cache-Aware Prompt Patterns
 
-- **Stable prefix**: Variable content at end; dynamic content at start breaks cache
-- **Instruction ordering**: Critical rules → frequent operations → edge cases (primacy effect)
-- **AI-CONTEXT blocks**: Essential stable content first, detailed docs after
-- **MCP tool definitions**: Minimize tool churn — changing tools between sessions causes cache misses
+Stable prefix (variable content at end), critical rules first (primacy effect), AI-CONTEXT blocks for essential stable content, minimize MCP tool churn between sessions.
 
 ## Reviewing Existing Agents
 
