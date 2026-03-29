@@ -1,5 +1,5 @@
 ---
-description: Simplifies and refines code for clarity, consistency, and maintainability while preserving all functionality and knowledge
+description: Simplify code for clarity and maintainability while preserving all functionality and knowledge
 mode: subagent
 model: opus
 tools:
@@ -22,7 +22,7 @@ tools:
 - **Mode**: Analysis-only — suggestions only, never applies changes directly
 - **Model**: `opus` minimum (NEVER sonnet/haiku/flash — knowledge-loss risk; if unavailable, wait)
 - **Trigger**: `/code-simplifier`
-- **Rule**: Never lose functionality, knowledge, capability, or decision rationale. Human approves every suggestion before work begins.
+- **Rules**: Never lose functionality, knowledge, capability, or decision rationale. Human approves every suggestion.
 
 <!-- AI-CONTEXT-END -->
 
@@ -47,7 +47,7 @@ Workers MUST skip these files and note why on the issue.
 **Confidence**: high/medium/low
 ```
 
-Low-confidence findings: create issues with `simplification-debt` + `needs-maintainer-review` labels, grouped by file.
+**Low-confidence findings**: create issues with `simplification-debt` + `needs-maintainer-review` labels, grouped by file.
 
 ## Regression Verification
 
@@ -98,10 +98,10 @@ Split into chapter files with slim index (~100-200 lines). Verify: `wc -l` total
 ## Core Principles
 
 1. **Preserve everything with purpose.** Uncertain → it stays.
-2. **Remove decorative noise.** Emojis/formatting adding no information. Exception: genuine UI/UX purpose.
+2. **Remove decorative noise.** Emojis/formatting that add no information. Exception: genuine UI/UX purpose.
 3. **Apply project standards** — standards themselves are not simplification targets.
 4. **Enhance clarity without losing depth.** Reduce nesting, improve naming, remove "what" comments (not "why").
-5. **No arbitrary line targets.** Size is whatever remains after removing genuine noise. Large files: subdivide per `build-agent.md` (~300-line threshold) instead of compressing.
+5. **No arbitrary line targets.** Size is whatever remains after removing genuine noise. For large files, subdivide per `build-agent.md` (~300-line threshold) instead of compressing.
 
 ## Usage
 
@@ -117,7 +117,7 @@ Scope detection: `git diff --name-only HEAD~1` + `git diff --name-only --staged`
 
 ### Issue creation
 
-1. **Dedup check FIRST (GH#10783)** — search for existing open issues targeting the same file.
+1. **Dedup check FIRST (GH#10783)** — search for open issues targeting the same file.
 2. Add labels `simplification-debt` + `needs-maintainer-review`, assign to repo maintainer.
 
 ```bash
