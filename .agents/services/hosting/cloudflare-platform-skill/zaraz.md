@@ -22,10 +22,8 @@ match_rule = "Pageview"
 ## Web API
 
 ```javascript
-// Track events
 zaraz.track('button_click');
 zaraz.track('purchase', { value: 99.99, currency: 'USD', item_id: '12345' });
-// Set user properties
 zaraz.set('userId', 'user_12345');
 zaraz.set({ email: '[email protected]', country: 'US' });
 ```
@@ -124,19 +122,18 @@ zaraz.track('ab_test_view', { variant });
 
 ## Privacy & Limits
 
-Privacy: IP anonymization (automatic), consent-based cookie control, GDPR/CCPA compliance — see Consent Management above. Limits: tools and events unlimited; request size 100 KB; data retention per tool's policy.
+IP anonymization (automatic), consent-based cookie control, GDPR/CCPA compliance. Tools and events unlimited; request size 100 KB; data retention per tool's policy.
 
 ## Debugging & Troubleshooting
 
-Enable debug mode in dashboard, then:
+Enable debug mode in dashboard or set `zaraz.debug = true`:
 
 ```javascript
-zaraz.debug = true;
 zaraz.track('test_event', { debug: true });
-console.log(zaraz.tools); // Check loaded tools
+console.log(zaraz.tools);
 ```
 
-**Events not firing:** check trigger conditions, verify tool is enabled, enable debug mode, check browser console.
+**Events not firing:** check trigger conditions, verify tool is enabled, check browser console.
 
 **Consent issues:** verify modal config, check `zaraz.consent.getAll()` status, ensure tools respect consent settings.
 
