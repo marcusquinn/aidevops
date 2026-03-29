@@ -47,7 +47,7 @@ Workers MUST skip these files and comment on the issue explaining why.
 **Confidence**: high/medium/low
 ```
 
-Low-confidence findings: flag as "worth discussing." Create issues with `simplification-debt` + `needs-maintainer-review` labels, grouped by file.
+Low-confidence findings: create issues with `simplification-debt` + `needs-maintainer-review` labels, grouped by file.
 
 ## Regression Verification
 
@@ -84,8 +84,6 @@ Low-confidence findings: flag as "worth discussing." Create issues with `simplif
 
 ### Reference corpora — restructure, do not compress (GH#6432)
 
-Knowledge bases whose size comes from breadth, not verbosity. Reads like a textbook chapter, not agent instructions.
-
 **Action:** Split into chapter files with slim index (~100-200 lines). Verify: `wc -l` total of chapters >= original minus index overhead. Issue title: "restructure" not "tighten".
 
 ### Almost never simplify
@@ -110,7 +108,7 @@ Example of a non-target:
 1. **Preserve everything with purpose.** Uncertain → it stays.
 2. **Remove decorative noise.** Emojis/formatting adding no information. Exception: genuine UI/UX purpose.
 3. **Apply project standards** — standards themselves are not simplification targets.
-4. **Enhance clarity without losing depth.** Reduce nesting, improve naming, remove "what" comments (not "why"). Don't remove helpful abstractions or edge-case handling.
+4. **Enhance clarity without losing depth.** Reduce nesting, improve naming, remove "what" comments (not "why").
 5. **No arbitrary line targets.** Size is whatever remains after removing genuine noise. Large files: subdivide per `build-agent.md` (~300-line threshold) instead of compressing.
 
 ## Usage
@@ -121,14 +119,14 @@ Example of a non-target:
 /code-simplifier --all        # Analyse entire codebase (use sparingly)
 ```
 
-Scope detection: `git diff --name-only HEAD~1` + `git diff --name-only --staged`. Workflow: analyse → human review → approved items become issues → worker implements via worktree + PR.
+Scope detection: `git diff --name-only HEAD~1` + `git diff --name-only --staged`.
 
 ## Human Gate Workflow
 
 ### Issue creation
 
 1. **Dedup check FIRST (GH#10783)** — search for existing open issues targeting the same file.
-2. Add labels `simplification-debt` + `needs-maintainer-review`, assign to repo maintainer (`repos.json` `maintainer` field, fall back to slug owner).
+2. Add labels `simplification-debt` + `needs-maintainer-review`, assign to repo maintainer.
 
 ```bash
 MAINTAINER=$(jq -r '.initialized_repos[] | select(.slug == "<slug>") | .maintainer // empty' ~/.config/aidevops/repos.json)
