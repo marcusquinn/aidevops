@@ -52,37 +52,18 @@ tools:
 
 ## Configuration
 
-### Claude Code
+**Claude Code**: `claude mcp add ios-simulator npx ios-simulator-mcp`
 
-```bash
-claude mcp add ios-simulator npx ios-simulator-mcp
-```
-
-### OpenCode
-
-Managed by `generate-opencode-agents.sh` (macOS only, lazy-loaded):
+**OpenCode** (managed by `generate-opencode-agents.sh`, macOS only, lazy-loaded):
 
 ```json
-{
-  "ios-simulator": {
-    "type": "local",
-    "command": ["npx", "-y", "ios-simulator-mcp"],
-    "enabled": false
-  }
-}
+{ "ios-simulator": { "type": "local", "command": ["npx", "-y", "ios-simulator-mcp"], "enabled": false } }
 ```
 
-### Cursor / Windsurf / Claude Desktop
+**Cursor / Windsurf / Claude Desktop**:
 
 ```json
-{
-  "mcpServers": {
-    "ios-simulator": {
-      "command": "npx",
-      "args": ["-y", "ios-simulator-mcp"]
-    }
-  }
-}
+{ "mcpServers": { "ios-simulator": { "command": "npx", "args": ["-y", "ios-simulator-mcp"] } } }
 ```
 
 ### Environment Variables
@@ -95,7 +76,7 @@ Managed by `generate-opencode-agents.sh` (macOS only, lazy-loaded):
 
 ## AI-Assisted QA Patterns
 
-Use these prompts after implementing a feature to validate behaviour:
+Post-implementation validation prompts:
 
 - **Verify UI elements**: "Describe all accessibility elements on the current screen"
 - **Confirm text input**: "Enter 'Hello World' into the text field and confirm the input"
@@ -113,8 +94,6 @@ Use these prompts after implementing a feature to validate behaviour:
 | **MiniSim** | Simulator launcher | MiniSim manages simulator lifecycle; this MCP interacts with running sims |
 
 ## Comparison: ios-simulator-mcp vs AXe CLI
-
-Both enable simulator interaction but take different approaches:
 
 | Aspect | ios-simulator-mcp | AXe CLI |
 |--------|-------------------|---------|
