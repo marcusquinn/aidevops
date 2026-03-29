@@ -3,8 +3,6 @@ description: Debug and validate favicon setup across platforms and PWA manifests
 mode: subagent
 tools:
   read: true
-  write: false
-  edit: false
   bash: true
   grep: true
   webfetch: true
@@ -16,13 +14,9 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Validate favicon setup, check all icon sizes, verify PWA manifest
 - **Method**: HTML parsing via curl + grep, manifest.json validation
-- **No API key required** — parses HTML directly
 - **Reference**: https://opengraphdebug.com/favicon
-
-**Essential Icons**: `favicon.ico`, `apple-touch-icon.png`, `manifest.json` icons
-**PWA Requirements**: 192x192 and 512x512 PNG icons in manifest
+- **Essential**: `favicon.ico`, `apple-touch-icon.png`, manifest icons (192x192 + 512x512 PNG)
 
 <!-- AI-CONTEXT-END -->
 
@@ -52,13 +46,11 @@ curl -sI "https://example.com/favicon.ico" | head -1 | cut -d' ' -f2
 | manifest icon | 192x192 | PNG | **Required** — PWA install |
 | manifest icon | 512x512 | PNG | **Required** — PWA splash |
 | manifest icon | 48/72/96/144 | PNG | Android (optional) |
-| `mstile-150x150.png` | 150x150 | PNG | Windows tiles |
-
-Windows also uses `browserconfig.xml` for tile configuration.
+| `mstile-150x150.png` | 150x150 | PNG | Windows tiles (`browserconfig.xml`) |
 
 ## HTML Implementation
 
-### Minimal Setup
+Minimal `<head>` setup:
 
 ```html
 <link rel="icon" href="/favicon.ico" sizes="48x48">
@@ -67,7 +59,7 @@ Windows also uses `browserconfig.xml` for tile configuration.
 <link rel="manifest" href="/manifest.json">
 ```
 
-For complete setup, add sized PNG icons from the platform table, plus `<meta name="theme-color">` and `<meta name="msapplication-config" content="/browserconfig.xml">`.
+For complete setup: add sized PNG icons from the table above, `<meta name="theme-color">`, and `<meta name="msapplication-config" content="/browserconfig.xml">`.
 
 ### manifest.json Example
 
