@@ -23,7 +23,7 @@ subagents:
 
 **Modes**: Single-site lookup (detect full tech stack of a URL) · Reverse lookup (find sites using specific tech)
 
-**Providers** (parallel execution, read subagent on demand for details):
+**Providers** (parallel execution, read subagent on demand):
 
 | Provider | Subagent | Strengths |
 |----------|----------|-----------|
@@ -38,29 +38,17 @@ subagents:
 
 ```bash
 tech-stack-helper.sh lookup https://example.com
-tech-stack-helper.sh lookup https://example.com --format json
 tech-stack-helper.sh lookup https://example.com --provider unbuilt  # fastest, frontend-only
-tech-stack-helper.sh lookup https://example.com --skip openexplorer
+cat urls.txt | xargs -P 4 -I {} tech-stack-helper.sh lookup {} --format json >> results.jsonl
 ```
+
+Options: `--format json|markdown`, `--provider <name>`, `--skip <provider>`, `--timeout <secs>`, `--refresh` (bypass cache), `--ttl <secs>`.
 
 **Detection categories**: Frontend frameworks, backend, bundlers, state management, CMS, analytics, CDN, hosting, monitoring, performance.
 
 **Workflow**: Check cache → dispatch all providers in parallel (30s timeout each) → merge + deduplicate → cache → return.
 
-**Merge rules**: same tech from multiple providers → keep highest confidence; version conflicts → keep most specific (`18.2.0` over `18.x`); 2+ providers agreeing → high confidence.
-
-## Caching
-
-```bash
-tech-stack-helper.sh cache status
-tech-stack-helper.sh cache clear https://example.com  # or --all
-tech-stack-helper.sh lookup https://example.com --ttl 86400   # 1 day
-tech-stack-helper.sh lookup https://example.com --refresh     # bypass cache
-```
-
-Cache hit behavior: fresh → return immediately; expired → refresh in background, return stale; miss → fetch all providers.
-
-Reverse lookup cache: 30-day TTL (HTTP Archive updates monthly). `cache reverse-status` / `cache clear-reverse`.
+**Merge rules**: Same tech from multiple providers → keep highest confidence. Version conflicts → keep most specific (`18.2.0` over `18.x`). 2+ providers agreeing → high confidence.
 
 ## Reverse Lookup
 
@@ -70,27 +58,22 @@ Find websites using specific technologies (replicates BuiltWith "Technology Usag
 tech-stack-helper.sh reverse React
 tech-stack-helper.sh reverse "Next.js" --region US --industry ecommerce --limit 100
 tech-stack-helper.sh reverse "React,Tailwind CSS" --operator and
-tech-stack-helper.sh reverse "Vue,Angular,Svelte" --operator or
 ```
 
-**Filters**: `--region`, `--industry`, `--keywords`, `--traffic [low|medium|high|very-high]`, `--limit` (default 50)
+**Filters**: `--region`, `--industry`, `--keywords`, `--traffic [low|medium|high|very-high]`, `--limit` (default 50), `--operator [and|or]`
 
-**Data sources** (priority): HTTP Archive/BigQuery (primary, millions of sites) → Wappalyzer Public Datasets → BuiltWith Trends (50 req/day free) → Chrome UX Report (CrUX)
+**Data sources** (priority): HTTP Archive/BigQuery (primary) → Wappalyzer Public Datasets → BuiltWith Trends (50 req/day free) → Chrome UX Report (CrUX).
 
 **Rate limits**: BigQuery free tier 1TB/month; Wappalyzer API 100 req/day; BuiltWith Trends 50 req/day.
 
-## Common Workflows
+## Caching
 
 ```bash
-# Quick frontend check (fastest)
-tech-stack-helper.sh lookup https://example.com --provider unbuilt
-
-# Competitive analysis
-tech-stack-helper.sh reverse "Next.js,Vercel,Tailwind CSS" --operator and --limit 200
-
-# Batch lookup
-cat urls.txt | xargs -P 4 -I {} tech-stack-helper.sh lookup {} --format json >> results.jsonl
+tech-stack-helper.sh cache status          # view cache state
+tech-stack-helper.sh cache clear <url>     # or --all
 ```
+
+Cache hit: fresh → return immediately; expired → refresh in background, return stale; miss → fetch all providers. Reverse lookup cache: 30-day TTL (HTTP Archive updates monthly). `cache reverse-status` / `cache clear-reverse`.
 
 ## Troubleshooting
 
@@ -100,14 +83,6 @@ cat urls.txt | xargs -P 4 -I {} tech-stack-helper.sh lookup {} --format json >> 
 | Cache stale | `--refresh` or `cache clear <url>` |
 | Missing tech | Check `--format json` for `detected_by`; try `--provider unbuilt` for frontend |
 | Reverse no results | Try `--region all --traffic all`; check `cache reverse-status` |
-
-## Performance
-
-| Operation | Cache hit | Cache miss |
-|-----------|-----------|------------|
-| Single-site (all providers) | <100ms | 5–15s |
-| Single-site (one provider) | <100ms | 2–5s |
-| Reverse lookup | <100ms | 2–10s |
 
 ## Related
 
