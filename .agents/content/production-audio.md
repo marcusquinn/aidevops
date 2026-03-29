@@ -40,12 +40,9 @@ AI Video Output → CapCut AI Voice Cleanup → ElevenLabs Transformation → Fi
 | 1 (FIRST) | CapCut AI Voice Cleanup | Normalize accents/artifacts, remove robotic patterns, clean noise, standardize volume |
 | 2 (SECOND) | ElevenLabs Transformation | Voice cloning, emotional delivery, character consistency |
 
-### Voice Cloning
+**Alternative**: MiniMax TTS — talking-head content where ElevenLabs is overkill. $5/month for 120 min; 10-second clip for voice clone. See `tools/voice/voice-models.md`.
 
-```bash
-voice-helper.sh talk              # Start voice conversation
-voice-helper.sh voices            # List available TTS voices
-```
+### Voice Cloning
 
 **NEVER use pre-made ElevenLabs voices for realistic content** — widely recognised, signals "AI-generated".
 
@@ -57,9 +54,8 @@ voice-helper.sh voices            # List available TTS voices
 
 **Source quality**: Single speaker, quiet environment, clear pronunciation. Cloning from existing content → run CapCut cleanup first.
 
-**Alternative**: MiniMax TTS — talking-head content where ElevenLabs is overkill. $5/month for 120 min; 10-second clip for voice clone. See `tools/voice/voice-models.md`.
-
 **Voice consistency checklist:**
+
 - [ ] Same voice model across all channel content
 - [ ] NEVER use pre-made voices for realism content
 - [ ] Consistent speaking pace (words per minute)
@@ -125,7 +121,7 @@ ffmpeg -i input.mp4 -af loudnorm=print_format=json -f null -
 
 **Normalization workflow**: Mix layers → measure integrated LUFS → apply normalization → limiter (true peak -1dB).
 
-## Voice Tools Reference
+## Voice Tools
 
 ```bash
 voice-helper.sh talk                          # Start voice conversation (defaults)
@@ -136,7 +132,7 @@ voice-helper.sh voices                        # List available TTS voices
 voice-helper.sh benchmark                     # Test component speeds
 ```
 
-**Architecture**: `Mic → Silero VAD → Whisper MLX (1.4s) → OpenCode run --attach (~4-6s) → Edge TTS (0.4s) → Speaker`. Round-trip: ~6-8s conversational, longer for tool execution.
+**Architecture**: `Mic → Silero VAD → Whisper MLX (1.4s) → Claude Code run --attach (~4-6s) → Edge TTS (0.4s) → Speaker`. Round-trip: ~6-8s conversational, longer for tool execution.
 
 | Service | Details | CLI |
 |---------|---------|-----|
