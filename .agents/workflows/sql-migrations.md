@@ -168,4 +168,50 @@ jobs:
       - run: psql $DATABASE_URL -c "SELECT 1"
 ```
 
-Most tools auto-create a tracking table (e.g., `flyway_schema_history`). If you must run SQL directly, execute only unapplied files tracked in a migrations table (do not replay all files each run).
+Most tools auto-create a tracking table (e.g., `flyway_schema_history`). **Prefer a managed tool** — it handles ordering, locking, and state tracking automatically.
+
+**Framework-agnostic runner (stateful):** If you must run SQL directly without a migration tool, gate execution on a tracking table — never replay all files on every invocation.
+
+```sql
+-- Bootstrap: create the tracking table once
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    filename   TEXT PRIMARY KEY,
+    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+```bash
+#!/usr/bin/env bash
+# scripts/migrate.sh — apply only unapplied migrations in order
+set -euo pipefail
+
+DB_URL="${DATABASE_URL:?DATABASE_URL is required}"
+
+# Bootstrap tracking table
+psql "$DB_URL" -c "
+  CREATE TABLE IF NOT EXISTS schema_migrations (
+    filename   TEXT PRIMARY KEY,
+    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );"
+
+for f in migrations/*.sql; do
+  name="$(basename "$f")"
+  applied=$(psql "$DB_URL" -tAc \
+    "SELECT COUNT(*) FROM schema_migrations WHERE filename = '$name'")
+  if [ "$applied" -eq 0 ]; then
+    echo "Applying $name..."
+    psql "$DB_URL" -f "$f"
+    psql "$DB_URL" -c \
+      "INSERT INTO schema_migrations (filename) VALUES ('$name');"
+    echo "  Done."
+  else
+    echo "Skipping $name (already applied)."
+  fi
+done
+```
+
+Key properties of this pattern:
+- **Idempotent**: re-running the script skips already-applied files.
+- **Ordered**: glob expansion is lexicographic — use timestamp-prefixed filenames (`YYYYMMDDHHMMSS_name.sql`) to guarantee order.
+- **Auditable**: `schema_migrations` records what ran and when.
+- **Atomic per file**: each migration is applied then recorded; a failure leaves the tracking table consistent with what actually ran.
