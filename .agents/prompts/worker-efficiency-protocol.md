@@ -83,7 +83,12 @@ If `shellcheck` is not installed, skip this gate and note it in the PR body.
 
 **3b. PR title MUST contain task ID (MANDATORY - t318.2)**
 When creating a PR, the title MUST start with the task ID: `<task-id>: <description>`.
-Example: `t318.2: Verify supervisor worker PRs include task ID`
+The task ID is one of:
+- `tNNN` — TODO.md task ID (e.g., `t318.2: Verify supervisor worker PRs include task ID`)
+- `GH#NNN` — GitHub issue number, for quality-debt/simplification-debt/issue-only work (e.g., `GH#12455: tighten hashline-edit-format.md`)
+
+NEVER use `qd-`, bare numbers, `t` followed by a GitHub issue number (e.g., `t12345`), or other invented prefixes. The `qd-` prefix is for branch names only (set by the pulse dispatcher), not PR titles.
+
 The CI pipeline and supervisor both validate this. PRs without task IDs fail the check.
 If you used `gh pr create --draft --title '<task-id>: <description>'` as instructed above,
 this is already handled. This note reinforces: NEVER omit the task ID from the PR title.

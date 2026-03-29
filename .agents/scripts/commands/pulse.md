@@ -1297,6 +1297,8 @@ fi
 sleep 2
 ```
 
+**PR title for debt issues (MANDATORY):** Workers dispatched for quality-debt or simplification-debt issues use `GH#<number>: <description>` as the PR title (e.g., `GH#12455: tighten hashline-edit-format.md`). The `GH#` prefix distinguishes GitHub issue numbers from `t`-prefixed TODO.md task IDs. NEVER use `qd-`, bare numbers, or `t` followed by a GitHub issue number in PR titles — `qd-` is a branch-naming convention only.
+
 **Why worktrees, not canonical dir:** When the pulse dispatches N quality-debt workers all pointing to the same canonical repo path, each worker's `full-loop.md` Step 1 tries to create a branch in that directory. The first worker succeeds; subsequent workers find the repo already on a non-main branch and either fail or compound the problem. Worktrees give each worker an isolated directory with its own branch, so they never interfere with each other or with the canonical repo.
 
 **`git -C <path>` for worktree creation:** The pulse runs from its own working directory (not the target repo). Use `git -C <path>` to create worktrees in the correct repo without changing the pulse's cwd. Do NOT call `worktree-helper.sh` for this — it uses `get_repo_root()` which depends on cwd and would target the wrong repo.

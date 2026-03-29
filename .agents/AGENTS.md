@@ -162,7 +162,7 @@ Full rules: `reference/planning-detail.md`
 
 Worktree naming prefixes: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
 
-PR title: `{task-id}: {description}`. Create TODO entry first for unplanned work.
+PR title: `{task-id}: {description}`. Task ID is `tNNN` (from TODO.md) or `GH#NNN` (GitHub issue number, for debt/issue-only work). Examples: `t1702: integrate FOSS scanning`, `GH#12455: tighten hashline-edit-format.md`. NEVER use `qd-`, bare numbers, or invented prefixes. Create TODO entry first for unplanned work.
 
 Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `main`, and treat the Git ref as an internal detail inside the linked worktree. User-facing guidance should talk about the worktree path, not "using a branch". Re-read files at worktree path before editing. NEVER remove others' worktrees.
 
