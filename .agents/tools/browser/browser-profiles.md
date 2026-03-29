@@ -60,8 +60,6 @@ anti-detect-helper.sh warmup "name" --duration 30m
 
 ## Profile Operations
 
-### CRUD
-
 ```bash
 anti-detect-helper.sh profile list [--format json]
 anti-detect-helper.sh profile show "name"
@@ -90,11 +88,12 @@ anti-detect-helper.sh cookies clear "profile" [--domain example.com]
 
 ## Python API
 
-### Profile Helpers
-
 ```python
 from pathlib import Path
-import json
+from camoufox.sync_api import Camoufox
+from camoufox.async_api import AsyncCamoufox
+from playwright.sync_api import sync_playwright
+import asyncio, json, random
 
 PROFILES_DIR = Path.home() / ".aidevops/.agent-workspace/browser-profiles"
 
@@ -114,10 +113,6 @@ def save_profile_state(name: str, context):
 ### Launch with Profile (Camoufox)
 
 ```python
-from camoufox.sync_api import Camoufox
-import json
-from pathlib import Path
-
 def launch_with_profile(profile_name: str, headless: bool = True):
     profile = load_profile(profile_name)
     kwargs = {"headless": headless, "config": profile["fingerprint"]}
@@ -141,8 +136,6 @@ def launch_with_profile(profile_name: str, headless: bool = True):
 ### Launch with Profile (Playwright + rebrowser-patches)
 
 ```python
-from playwright.sync_api import sync_playwright
-
 def launch_chromium_stealth(profile_name: str, headless: bool = True):
     profile = load_profile(profile_name)
     profile_dir = PROFILES_DIR / "persistent" / profile_name / "user-data"
@@ -165,9 +158,6 @@ def launch_chromium_stealth(profile_name: str, headless: bool = True):
 ## Profile Warming
 
 ```python
-import asyncio, random
-from camoufox.async_api import AsyncCamoufox
-
 WARMUP_SITES = [
     "https://www.google.com", "https://www.youtube.com", "https://www.wikipedia.org",
     "https://www.reddit.com", "https://www.amazon.com", "https://news.ycombinator.com",
@@ -199,21 +189,11 @@ async def warmup_profile(profile_name: str, duration_minutes: int = 30):
         save_profile_state(profile_name, browser.contexts[0])
 ```
 
-## Comparison with Commercial Tools
+## vs Commercial Tools (AdsPower / GoLogin / OctoBrowser)
 
-| Feature | This System | AdsPower | GoLogin | OctoBrowser |
-|---------|-------------|----------|---------|-------------|
-| **Profile storage** | Local (JSON/dirs) | Cloud | Cloud | Cloud |
-| **Fingerprint gen** | BrowserForge | Proprietary | Proprietary | Proprietary |
-| **Proxy per profile** | Yes | Yes | Yes | Yes |
-| **Cookie management** | Yes | Yes | Yes | Yes |
-| **Profile warming** | Script-based | Manual | Manual | Manual |
-| **Team sharing** | Git/export | Cloud sync | Cloud sync | Cloud sync |
-| **Bulk operations** | CLI | GUI | GUI | GUI |
-| **API access** | Python/Bash | REST API | REST API | REST API |
-| **Cost** | Free | $9-299/mo | $24-199/mo | $21-329/mo |
-| **Browser engine** | Firefox (Camoufox) | Chromium | Chromium | Chromium |
-| **Open source** | Yes | No | No | No |
+**This system advantages:** free, open-source, local storage (JSON/dirs), Firefox/Camoufox engine, BrowserForge fingerprints, Git-based team sharing, CLI bulk ops, Python/Bash API, script-based warming.
+
+**Commercial tools:** cloud storage, proprietary fingerprints, GUI-only bulk ops, REST API, manual warming; $9–329/mo depending on tier.
 
 ## Integration Points
 
