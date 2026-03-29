@@ -26,7 +26,7 @@ export const users = pgTable('users', {
 
 ### Partial Indexes
 
-Index only rows matching a condition — smaller, faster updates, more efficient queries.
+Index only rows matching a condition — smaller, faster.
 
 ```sql
 CREATE INDEX active_users_email_idx ON users(email) WHERE deleted_at IS NULL;
@@ -40,8 +40,7 @@ index('active_users_idx').on(table.email).where(sql`deleted_at IS NULL`)
 ### Covering Indexes (INCLUDE)
 
 ```sql
-CREATE INDEX orders_user_idx ON orders(user_id) INCLUDE (status, total);
--- SELECT status, total FROM orders WHERE user_id = 123;  -- index-only scan
+CREATE INDEX orders_user_idx ON orders(user_id) INCLUDE (status, total);  -- enables index-only scan
 ```
 
 ### GIN Indexes for JSONB
@@ -61,10 +60,10 @@ CREATE INDEX data_gin_path_idx ON events USING gin(data jsonb_path_ops);  -- sma
 Query must match expression exactly.
 
 ```sql
-CREATE INDEX users_email_lower_idx ON users(lower(email));          -- case-insensitive
+CREATE INDEX users_email_lower_idx ON users(lower(email));
 CREATE INDEX orders_month_idx ON orders(date_trunc('month', created_at));
-CREATE INDEX events_type_idx ON events((data->>'type'));             -- JSONB field
--- SELECT * FROM users WHERE lower(email) = '...' uses index; WHERE email = 'UPPER@...' does NOT
+CREATE INDEX events_type_idx ON events((data->>'type'));
+-- lower(email) = '...' uses index; email = 'UPPER@...' does NOT
 ```
 
 ## Query Optimization
@@ -80,11 +79,6 @@ SELECT * FROM orders WHERE user_id = '123' AND status = 'pending';
 
 **Problem indicators:** Large estimated/actual row discrepancy; high `shared read`; Seq Scan on large tables; Nested Loop with high loop count.
 
-```sql
--- Before index: Seq Scan, Rows Removed by Filter: 999000, Buffers: shared read=40000
--- After index:  Index Scan using orders_user_status_idx, Buffers: shared hit=10
-```
-
 ## Drizzle Query Optimization
 
 ### Prepared Statements
@@ -93,7 +87,7 @@ SELECT * FROM orders WHERE user_id = '123' AND status = 'pending';
 const getUserById = db.select().from(users)
   .where(eq(users.id, sql.placeholder('id')))
   .prepare('get_user_by_id');
-const user = await getUserById.execute({ id: 'uuid-1' });  // reuses plan
+const user = await getUserById.execute({ id: 'uuid-1' });
 ```
 
 ### Avoid N+1 Queries
@@ -116,15 +110,27 @@ const users = await db.select({ id: users.id, email: users.email }).from(users);
 const users = await db.query.users.findMany({ columns: { id: true, email: true } });
 ```
 
-### Batch Operations
+### Batch and Bulk Operations
 
 ```typescript
-await db.insert(usersTable).values(users);  // batch insert
-// chunk very large batches
+// Batch insert
+await db.insert(usersTable).values(users);
+// Chunk large batches
 const BATCH_SIZE = 1000;
 for (let i = 0; i < users.length; i += BATCH_SIZE) {
   await db.insert(usersTable).values(users.slice(i, i + BATCH_SIZE));
 }
+// Bulk CASE update
+await db.execute(sql`
+  UPDATE products SET price = CASE id
+    ${sql.join(updates.map(u => sql`WHEN ${u.id} THEN ${u.price}`), sql` `)}
+  END WHERE id IN ${sql`(${sql.join(updates.map(u => u.id), sql`, `)})`}
+`);
+// Upsert
+await db.insert(products).values(products).onConflictDoUpdate({
+  target: products.sku,
+  set: { price: sql`excluded.price`, updatedAt: new Date() },
+});
 ```
 
 ### Transactions
@@ -165,9 +171,11 @@ default_pool_size = 20
 ### Drizzle
 
 ```typescript
-const client = postgres(process.env.DATABASE_URL!, { max: 20, idle_timeout: 30, connect_timeout: 10 });
+// pg driver
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 20, idleTimeoutMillis: 30000 });
-const db = drizzle(pool, { schema });
+// postgres.js driver
+const client = postgres(process.env.DATABASE_URL!, { max: 20, idle_timeout: 30, connect_timeout: 10 });
+const db = drizzle(pool, { schema });  // or drizzle(client, { schema })
 ```
 
 ## Caching
@@ -205,26 +213,11 @@ db.select().from(posts)
   .orderBy(desc(posts.createdAt), desc(posts.id)).limit(limit)
 ```
 
-## Bulk Operations
-
-```typescript
-await db.insert(events).values(items.map(item => ({ type: item.type, data: item.data, createdAt: new Date() })));
-await db.execute(sql`
-  UPDATE products SET price = CASE id
-    ${sql.join(updates.map(u => sql`WHEN ${u.id} THEN ${u.price}`), sql` `)}
-  END WHERE id IN ${sql`(${sql.join(updates.map(u => u.id), sql`, `)})`}
-`);
-await db.insert(products).values(products).onConflictDoUpdate({
-  target: products.sku,
-  set: { price: sql`excluded.price`, updatedAt: new Date() },
-});
-```
-
 ## Performance Checklist
 
 | Area | Key Actions |
 |------|-------------|
-| **PostgreSQL config** | `shared_buffers`=25% RAM; `effective_cache_size`=50-75% RAM; `work_mem` 4-16MB (OLTP) / 64-256MB (OLAP); `io_method=worker` + `io_workers`~¼ CPU cores (PG18) |
+| **PostgreSQL config** | `shared_buffers`=25% RAM; `effective_cache_size`=50-75% RAM; `work_mem` 4-16MB (OLTP) / 64-256MB (OLAP); `io_method=worker` + `io_workers`~1/4 CPU cores (PG18) |
 | **Indexing** | Index foreign keys; partial indexes for filtered subsets; covering indexes for hot queries; GIN `jsonb_path_ops` for containment; remove unused indexes |
 | **Queries** | `EXPLAIN (ANALYZE, BUFFERS)` to diagnose; prepared statements for repeated queries; relational API to avoid N+1; select only needed columns; cursor pagination for large datasets |
 | **Application** | Connection pooling; batch insert/update; cache frequently read data; use transactions appropriately |
