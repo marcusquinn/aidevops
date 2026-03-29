@@ -3,7 +3,7 @@
 ## Allowlist Trusted IPs
 
 ```typescript
-// Account-level override with custom expression
+// PUT accounts/${accountId}/rulesets/phases/ddos_l7/entrypoint
 const config = {
   description: "Allowlist trusted IPs",
   rules: [{
@@ -15,11 +15,6 @@ const config = {
     },
   }],
 };
-
-await fetch(
-  `https://api.cloudflare.com/client/v4/accounts/${accountId}/rulesets/phases/ddos_l7/entrypoint`,
-  { method: "PUT", headers: { Authorization: `Bearer ${apiToken}`, "Content-Type": "application/json" }, body: JSON.stringify(config) }
-);
 ```
 
 ## Route-specific Sensitivity
@@ -83,20 +78,14 @@ async function setProtectionLevel(zoneId: string, level: ProtectionLevel, manage
 
 ## Dynamic Response to Attacks
 
-```typescript
-// Worker adjusts settings based on attack patterns
-interface Env {
-  CLOUDFLARE_API_TOKEN: string;
-  ZONE_ID: string;
-  KV_NAMESPACE: KVNamespace;
-}
+Worker that auto-escalates on attack detection and de-escalates on cron when quiet.
 
+```typescript
+// Env: CLOUDFLARE_API_TOKEN, ZONE_ID, KV_NAMESPACE (KVNamespace)
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.url.includes("/attack-detected")) {
-      const attackData = await request.json();
-      await env.KV_NAMESPACE.put(`attack:${Date.now()}`, JSON.stringify(attackData), { expirationTtl: 86400 });
-
+      await env.KV_NAMESPACE.put(`attack:${Date.now()}`, await request.text(), { expirationTtl: 86400 });
       const recentAttacks = await getRecentAttacks(env.KV_NAMESPACE);
       if (recentAttacks.length > 5) {
         await increaseProtection(env.ZONE_ID, "managed-ruleset-id", env.CLOUDFLARE_API_TOKEN);
@@ -106,10 +95,8 @@ export default {
     return new Response("OK");
   },
 
-  // Cron: auto-decrease after quiet period
-  async scheduled(event: ScheduledEvent, env: Env): Promise<void> {
-    const recentAttacks = await getRecentAttacks(env.KV_NAMESPACE);
-    if (recentAttacks.length === 0) {
+  async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
+    if ((await getRecentAttacks(env.KV_NAMESPACE)).length === 0) {
       await normalizeProtection(env.ZONE_ID, "managed-ruleset-id", env.CLOUDFLARE_API_TOKEN);
     }
   },
