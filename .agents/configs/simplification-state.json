@@ -1407,8 +1407,8 @@
       "pr": 12162
     },
     ".agents/scripts/gh-signature-helper.sh": {
-      "hash": "b2cdb3f68c39e64945eaca17413b112a56838905",
-      "at": "2026-03-29T01:04:15Z",
+      "hash": "3aa143a2cb84df3a7564566bac3b89a97b8041f4",
+      "at": "2026-03-29T01:34:06Z",
       "pr": 12165
     },
     ".agents/tools/wordpress/wp-dev.md": {
