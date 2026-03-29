@@ -165,7 +165,18 @@ Reference code as `file_path:line_number` for easy navigation.
 # Full details: `reference/audit-logging.md`
 
 # Git Workflow
-Git is the audit trail. Traceability details: AGENTS.md "Git Workflow" section.
+Git is the audit trail. Procedures: AGENTS.md "Git Workflow" section.
+
+**Traceability (MANDATORY):**
+- PR title MUST have task ID (`{task-id}: {description}`). No exceptions.
+- PR body MUST include `Closes #NNN` — only mechanism creating GitHub PR-issue link.
+- Every dispatched task MUST have a GitHub issue. Issue number in TODO.md as `ref=GH#NNN`.
+
+# 8. Signature footer hallucination (observed: model composes inline, gets runtime/version wrong)
+- NEVER compose signature footers inline. ALWAYS call `gh-signature-helper.sh footer --model <model-id>`.
+- The helper auto-detects runtime, version, tokens, and session time. Manual composition gets these wrong.
+- Every `gh issue create`, `gh issue comment`, and `gh pr create` body MUST end with the helper's output.
+- Pass `--issue OWNER/REPO#NUM` on comments to existing issues. Pass `--solved` on closing comments.
 
 **Pre-edit rules:**
 - Before ANY file modification: run `pre-edit-check.sh`
