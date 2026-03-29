@@ -22,10 +22,7 @@ tools:
 - **Install**: `npm install -g agent-device` or `npx agent-device`
 - **Requirements**: Node 22+, Xcode (iOS simulators), Android SDK (Android emulators/devices)
 - **GitHub**: https://github.com/callstackincubator/agent-device (489 stars, MIT)
-- **Author**: Michal Pierzchala (@thymikee), Callstack
 - **Docs**: https://incubator.callstack.com/agent-device
-
-**Core Workflow** (optimal for AI):
 
 ```bash
 agent-device open Contacts --platform ios   # Start session on iOS Simulator
@@ -36,13 +33,7 @@ agent-device screenshot contact.png          # Capture screen
 agent-device close                           # End session
 ```
 
-**Key Advantages**:
-
-- **Ref-based selection**: Deterministic element targeting from accessibility snapshots
-- **Token-efficient**: Designed for AI agents — minimal output, structured data
-- **Cross-platform**: iOS simulators + Android emulators/devices in one CLI
-- **Minimal dependencies**: Single npm dependency (`@clack/prompts`)
-- **No MCP required**: Pure CLI — works with any AI agent via Bash
+Use `--json` flag for structured output. Use `--session <name>` for multi-device workflows.
 
 **When to use agent-device vs other mobile tools**:
 
@@ -118,33 +109,6 @@ agent-device close                           # End session
 | `trace stop ./trace.log` | Stop and save trace |
 | `screenshot <file>` | Save screenshot to file |
 
-## AI Agent Workflow
-
-Typical AI agent loop for mobile testing:
-
-```bash
-# 1. Open app
-agent-device open "My App" --platform ios --json
-
-# 2. Observe state
-agent-device snapshot --json
-
-# 3. Interact based on snapshot refs
-agent-device click @e3
-agent-device fill @e7 "test@example.com"
-
-# 4. Verify result
-agent-device snapshot --json
-
-# 5. Screenshot for evidence
-agent-device screenshot ./evidence.png
-
-# 6. Clean up
-agent-device close
-```
-
-Use `--json` flag for structured output suitable for machine parsing.
-
 ## iOS Backends
 
 | Backend | Speed | Accuracy | Requirements |
@@ -163,14 +127,10 @@ Select with `--backend ax|xctest` on snapshot commands.
 
 ## Skills Integration
 
-agent-device ships with a SKILL.md for Claude Code / agent-skills compatible tools:
-
 ```bash
+# Claude Code / agent-skills
 npx skills add https://github.com/callstackincubator/agent-device --skill agent-device
-```
 
-Or for aidevops:
-
-```bash
+# aidevops
 aidevops skill add https://github.com/callstackincubator/agent-device
 ```
