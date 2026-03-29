@@ -31,11 +31,9 @@ mode: subagent
 | **Location** | Root of `.agents/` | `tools/`, `services/`, `workflows/` |
 | **MCP tools** | NEVER enable directly | Enable per-agent |
 
-Broad/strategic → main agent. Independent, no cross-domain knowledge → subagent. Call existing agents before duplicating.
+Call existing agents before duplicating.
 
-## Subagent YAML Frontmatter (Required)
-
-Without frontmatter, agents default to read-only.
+## Subagent YAML Frontmatter (Required — omitting defaults to read-only)
 
 ```yaml
 ---
@@ -97,8 +95,7 @@ tools:
 
 - **Single-file**: `{name}.md` — no directory needed
 - **Multi-file**: `{name}.md` (entry point, always loaded) + `{name}/` (extended knowledge, on demand)
-
-Prefer flat files with prefix-based naming (`marketing-sales/meta-ads*.md` groups related files). Max depth: 2 levels from `.agents/`. Subdirectory only when a prefix group exceeds ~20 files.
+- Prefer flat files with prefix-based naming (`marketing-sales/meta-ads*.md`). Max depth: 2 levels. Subdirectory only when a prefix group exceeds ~20 files.
 
 ### Scripts: Flat by Design
 
@@ -185,7 +182,7 @@ Self-checks: "Faster CLI alternative?" and "Could this return >50K tokens?" See 
 | **Sourced** | `~/.aidevops/agents/custom/<source>/` | Yes | In private repo | Synced from private Git repos |
 | **Shared** | `.agents/` in repo | Yes (deployed) | Yes | Open-source, submitted via PR |
 
-Ask user which tier: Draft (experimental), Custom (private), Sourced (private Git repo), or Shared (PR to `.agents/`). Draft: `status: draft` + `created` date, promote via PR or discard. Custom: never shared/overwritten. Shared: feature branch + PR, no proprietary info. Orchestration agents: draft reusable patterns, log TODO, reference in Task calls.
+Ask user which tier. Draft: `status: draft` + `created` date, promote via PR or discard. Custom: never shared/overwritten. Shared: feature branch + PR, no proprietary info. Orchestration agents: draft reusable patterns, log TODO, reference in Task calls.
 
 ## Cache-Aware Prompt Patterns
 
