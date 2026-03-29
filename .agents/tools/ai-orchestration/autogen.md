@@ -28,7 +28,7 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Installation (Manual)
+## Installation
 
 ```bash
 mkdir -p ~/.aidevops/autogen && cd ~/.aidevops/autogen
@@ -52,7 +52,7 @@ AUTOGEN_STUDIO_PORT=8081
 
 ## Usage
 
-All examples assume these common imports (add per-example extras as shown):
+Common imports (add per-example extras as shown):
 
 ```python
 import asyncio
@@ -89,7 +89,7 @@ asyncio.run(main())
 
 ### Multi-Agent with AgentTool
 
-Use `AgentTool` to compose specialist agents under an orchestrator (e.g., code reviewer + deployer for aidevops pipelines):
+Compose specialist agents under an orchestrator:
 
 ```python
 from autogen_agentchat.tools import AgentTool
@@ -135,7 +135,7 @@ RUN pip install autogen-agentchat autogen-ext[openai]
 CMD ["python", "main.py"]
 ```
 
-For **FastAPI** or other web frameworks, wrap any agent pattern above in a route handler. Always call `await client.close()` after each request.
+For web frameworks (FastAPI etc.), wrap agent patterns in route handlers. Always call `await client.close()` after each request.
 
 ## Troubleshooting
 
