@@ -46,10 +46,7 @@ export GOOGLE_PROJECT_ID="your-gcp-project-id"
 
 **Prerequisites:** pipx, Google Cloud Project with Analytics APIs enabled, GA4 property access.
 
-**Enable APIs** (Google Cloud Console > APIs & Services > Library):
-
-- Google Analytics Admin API
-- Google Analytics Data API
+**Enable APIs** (Google Cloud Console > APIs & Services > Library): Google Analytics Admin API + Google Analytics Data API.
 
 **Configure ADC:**
 
@@ -65,42 +62,21 @@ gcloud auth application-default login \
   --scopes=https://www.googleapis.com/auth/analytics.readonly,https://www.googleapis.com/auth/cloud-platform
 ```
 
-**Claude Code config** (`~/.config/opencode/opencode.json`):
+**MCP config** — server key `google-analytics-mcp`, command `["pipx", "run", "analytics-mcp"]`:
+
+| Runtime | Config file | Key |
+|---------|-------------|-----|
+| Claude Code | `~/.config/opencode/opencode.json` | `mcp` → `type: "local"`, `enabled: false` |
+| Gemini CLI | `~/.gemini/settings.json` | `mcpServers` → `command`/`args` split |
 
 ```json
 {
-  "mcp": {
-    "google-analytics-mcp": {
-      "type": "local",
-      "command": ["pipx", "run", "analytics-mcp"],
-      "env": {
-        "GOOGLE_APPLICATION_CREDENTIALS": "/path/to/credentials.json",
-        "GOOGLE_PROJECT_ID": "your-project-id"
-      },
-      "enabled": false
-    }
-  }
+  "GOOGLE_APPLICATION_CREDENTIALS": "/path/to/credentials.json",
+  "GOOGLE_PROJECT_ID": "your-project-id"
 }
 ```
 
-**Gemini CLI config** (`~/.gemini/settings.json`):
-
-```json
-{
-  "mcpServers": {
-    "google-analytics-mcp": {
-      "command": "pipx",
-      "args": ["run", "analytics-mcp"],
-      "env": {
-        "GOOGLE_APPLICATION_CREDENTIALS": "/path/to/credentials.json",
-        "GOOGLE_PROJECT_ID": "your-project-id"
-      }
-    }
-  }
-}
-```
-
-**Per-agent enablement:** Enabled via `google_analytics_mcp_*: true` in this subagent's `tools:` section. Main agents (`seo.md`, `marketing-sales.md`, `marketing-sales.md`) reference this subagent — MCP only loads when needed.
+Both runtimes use the same `env` block above. Claude Code wraps command as array (`"command": ["pipx", "run", "analytics-mcp"]`); Gemini CLI splits it (`"command": "pipx", "args": ["run", "analytics-mcp"]`).
 
 ## Account & Property Management
 
@@ -161,7 +137,7 @@ gcloud auth application-default login \
 
 ## Related
 
-- `seo.md`, `marketing-sales.md`, `marketing-sales.md` — domain agents that invoke this subagent
+- `seo.md`, `marketing-sales.md` — domain agents that invoke this subagent
 - `seo/google-search-console.md` — GSC integration for search data
 - [Google Analytics MCP](https://github.com/googleanalytics/google-analytics-mcp)
 - [GA4 Data API](https://developers.google.com/analytics/devguides/reporting/data/v1)
