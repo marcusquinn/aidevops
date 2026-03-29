@@ -731,6 +731,8 @@ gh issue comment <number> --repo <slug> --body "Dispatching worker.
 ${SIG_FOOTER}"
 ```
 
+**No arbitrary line targets in Scope/Direction.** For simplification issues, do not invent target line counts (e.g., "from 206 to ≤120 lines"). The worker reads `code-simplifier.md` which says the resulting size is whatever remains after removing genuine noise. For large files, the worker will subdivide per `build-agent.md` (~300-line threshold). Inventing a number creates pressure to cut content to hit a target.
+
 **Required fields in kill/failure comments:**
 
 When killing a worker or closing a failed PR, comment with:
