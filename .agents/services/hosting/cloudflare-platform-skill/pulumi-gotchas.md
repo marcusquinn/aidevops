@@ -21,7 +21,7 @@ pulumi state delete <urn>       # use with caution
 
 ## Best Practices
 
-### Stack Configuration
+**Stack configuration:**
 
 ```yaml
 # Pulumi.<stack>.yaml
@@ -33,38 +33,36 @@ config:
   app:zoneId: "xyz789"
 ```
 
-### Explicit Provider Configuration
+**Explicit provider configuration** (multi-account):
 
 ```typescript
 const devProvider = new cloudflare.Provider("dev", {apiToken: devToken});
 const prodProvider = new cloudflare.Provider("prod", {apiToken: prodToken});
-
 const devWorker = new cloudflare.WorkerScript("dev-worker", {
     accountId: devAccountId, name: "worker", content: code,
 }, {provider: devProvider});
 ```
 
-### Resource Naming
+**Resource naming** — prefix with stack name:
 
 ```typescript
 const stack = pulumi.getStack();
 const kv = new cloudflare.WorkersKvNamespace(`${stack}-kv`, {accountId, title: `${stack}-my-kv`});
 ```
 
-### Protect Production Resources
+**Protect production resources:**
 
 ```typescript
 const prodDb = new cloudflare.D1Database("prod-db", {accountId, name: "production-database"},
     {protect: true});
 ```
 
-### Dependency Ordering
+**Dependency ordering:**
 
 ```typescript
 const migration = new command.local.Command("migration", {
     create: pulumi.interpolate`wrangler d1 execute ${db.name} --file ./schema.sql`,
 }, {dependsOn: [db]});
-
 const worker = new cloudflare.WorkerScript("worker", {
     accountId, name: "worker", content: code,
     d1DatabaseBindings: [{name: "DB", databaseId: db.id}],
@@ -73,12 +71,11 @@ const worker = new cloudflare.WorkerScript("worker", {
 
 ## Security
 
-### Secrets Management
+**Secrets management:**
 
 ```typescript
 const config = new pulumi.Config();
 const apiKey = config.requireSecret("apiKey");
-
 const worker = new cloudflare.WorkerScript("worker", {
     accountId, name: "my-worker", content: code,
     secretTextBindings: [{name: "API_KEY", text: apiKey}],
@@ -90,20 +87,9 @@ pulumi config set --secret apiKey "secret-value"
 export CLOUDFLARE_API_TOKEN="..."
 ```
 
-### API Token Scopes (minimal permissions)
+**API token scopes** (minimal permissions): Workers — `Workers Routes:Edit`, `Workers Scripts:Edit` | KV — `Workers KV Storage:Edit` | R2 — `R2:Edit` | D1 — `D1:Edit` | DNS — `Zone:Edit`, `DNS:Edit` | Pages — `Pages:Edit`
 
-- Workers: `Workers Routes:Edit`, `Workers Scripts:Edit`
-- KV: `Workers KV Storage:Edit`
-- R2: `R2:Edit`
-- D1: `D1:Edit`
-- DNS: `Zone:Edit`, `DNS:Edit`
-- Pages: `Pages:Edit`
-
-### State Security
-
-- Use Pulumi Cloud or S3 backend with encryption
-- Never commit state files to VCS
-- Use RBAC to control stack access
+**State security:** Use Pulumi Cloud or S3 backend with encryption. Never commit state files to VCS. Use RBAC to control stack access.
 
 ## Performance
 
@@ -113,7 +99,7 @@ export CLOUDFLARE_API_TOKEN="..."
 
 ## Migration
 
-### Import Existing Resources
+**Import existing resources:**
 
 ```bash
 pulumi import cloudflare:index/workerScript:WorkerScript my-worker <account_id>/<worker_name>
@@ -121,9 +107,7 @@ pulumi import cloudflare:index/workersKvNamespace:WorkersKvNamespace my-kv <name
 pulumi import cloudflare:index/r2Bucket:R2Bucket my-bucket <account_id>/<bucket_name>
 ```
 
-### From Terraform / Wrangler
-
-Use `pulumi import` and rewrite configs in Pulumi DSL. For wrangler.toml: create matching Pulumi resources, import, verify with `pulumi preview`, then switch deployments.
+**From Terraform/Wrangler:** Use `pulumi import` and rewrite configs in Pulumi DSL. For wrangler.toml: create matching Pulumi resources, import, verify with `pulumi preview`, then switch deployments.
 
 ## CI/CD
 
@@ -154,15 +138,11 @@ deploy:
   script:
     - pulumi stack select prod
     - pulumi up --yes
-  only:
-    - main
+  only: [main]
   variables:
     CLOUDFLARE_API_TOKEN: $CLOUDFLARE_API_TOKEN
 ```
 
 ## Resources
 
-- [Pulumi Registry](https://www.pulumi.com/registry/packages/cloudflare/)
-- [API Docs](https://www.pulumi.com/registry/packages/cloudflare/api-docs/)
-- [GitHub](https://github.com/pulumi/pulumi-cloudflare)
-- [Cloudflare Workers Docs](https://developers.cloudflare.com/workers/)
+[Pulumi Registry](https://www.pulumi.com/registry/packages/cloudflare/) · [API Docs](https://www.pulumi.com/registry/packages/cloudflare/api-docs/) · [GitHub](https://github.com/pulumi/pulumi-cloudflare) · [Cloudflare Workers Docs](https://developers.cloudflare.com/workers/)
