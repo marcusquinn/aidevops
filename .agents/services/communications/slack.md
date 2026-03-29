@@ -23,6 +23,7 @@ tools:
 - **Script**: `slack-dispatch-helper.sh [setup|start|stop|status|map|unmap|mappings|test|logs]`
 - **Config**: `~/.config/aidevops/slack-bot.json` (600 perms)
 - **Docs**: https://api.slack.com/docs | https://slack.dev/bolt-js/ | https://api.slack.com/apps
+- **Flow**: Slack → Socket Mode → Bolt App → `runner-helper.sh` → AI session → `memory.db`. Per-message: access control → channel-runner lookup → entity resolution → Layer 0 log → dispatch → thread reply → reaction (eyes → ✓/✗).
 
 ```bash
 slack-dispatch-helper.sh setup && slack-dispatch-helper.sh map C04ABCDEF general-assistant && slack-dispatch-helper.sh start --daemon
@@ -30,36 +31,22 @@ slack-dispatch-helper.sh setup && slack-dispatch-helper.sh map C04ABCDEF general
 
 <!-- AI-CONTEXT-END -->
 
-**Flow**: Slack → Socket Mode → Bolt App → `runner-helper.sh` → AI session → response + `memory.db`. Per-message: access control → channel-runner lookup → entity resolution → Layer 0 log → dispatch → thread reply → reaction (eyes → ✓/✗).
-
 ## Installation
 
-### 1. Create App
-
-https://api.slack.com/apps → **Create New App** → **From an app manifest**. Bot scopes: `app_mentions:read channels:history channels:read chat:write commands files:read files:write groups:history groups:read im:history im:read im:write reactions:read reactions:write users:read`. Enable Socket Mode, interactivity, `/ai` slash command.
-
-### 2. Tokens + SDK
-
-- **Bot Token** (`xoxb-...`): OAuth & Permissions > Install to Workspace
-- **App-Level Token** (`xapp-...`): Basic Information > App-Level Tokens > `connections:write`
-- **Signing Secret**: Basic Information > App Credentials (Events API only)
+https://api.slack.com/apps → **Create New App** → **From an app manifest**. Bot scopes: `app_mentions:read channels:history channels:read chat:write commands files:read files:write groups:history groups:read im:history im:read im:write reactions:read reactions:write users:read`. Enable Socket Mode, interactivity, `/ai` slash command. **Socket Mode** (recommended): no public URL, `xapp-` token, firewall-friendly. **Events API**: public URL + signing secret, for public apps at scale. Tokens: **Bot** (`xoxb-...`) OAuth & Permissions > Install to Workspace. **App-Level** (`xapp-...`) Basic Information > App-Level Tokens > `connections:write`. **Signing Secret** Basic Information > App Credentials (Events API only).
 
 ```bash
 gopass insert aidevops/slack/bot-token && gopass insert aidevops/slack/app-token && gopass insert aidevops/slack/signing-secret
 bun add @slack/bolt   # or: npm install @slack/bolt
 ```
 
-**Socket Mode** (recommended): no public URL, `xapp-` token, firewall-friendly. **Events API**: public URL + signing secret, for public apps at scale.
-
 ## Bot API
-
-### Bolt App (mentions + DMs)
 
 ```typescript
 import { App } from "@slack/bolt";
 const app = new App({ token: process.env.SLACK_BOT_TOKEN, appToken: process.env.SLACK_APP_TOKEN, socketMode: true });
-  const react = (ch: string, ts: string, n: string) => app.client.reactions.add({ channel: ch, timestamp: ts, name: n });
-
+const react = (ch: string, ts: string, n: string) => app.client.reactions.add({ channel: ch, timestamp: ts, name: n });
+// Mentions
 app.event("app_mention", async ({ event, say }) => {
   const prompt = event.text.replace(/<@[A-Z0-9]+>/g, "").trim();
   if (!prompt) { await say({ text: "Send me a prompt!", thread_ts: event.ts }); return; }
@@ -70,50 +57,27 @@ app.event("app_mention", async ({ event, say }) => {
     react(event.channel, event.ts, "white_check_mark");
   } catch (e) { await say({ text: `Error: ${e.message}`, thread_ts: event.ts }); react(event.channel, event.ts, "x"); }
 });
-
 // DMs: channel_type === "im" && !event.subtype → dispatchToRunner(event.text, ...)
+// Slash — ack within 3s
+app.command("/ai", async ({ command, ack, respond }) => { await ack();
+  await respond({ response_type: "ephemeral", text: "Processing..." });
+  await respond({ response_type: "in_channel", text: await dispatchToRunner(command.text, command.user_id, command.channel_id) }); });
+// Buttons: chat.postMessage with blocks[type:actions, elements:[{type:button, action_id, value}]]; app.action(id, async({ack,respond})=>{await ack();...})
+// Thread: chat.postMessage({thread_ts:parentTs}); broadcast: add reply_broadcast:true; file: files.uploadV2({channel_id, filename, content, title})
 (async () => { await app.start(); })();
 ```
 
-### Slash Commands, Buttons, Threads, Files
-
-```typescript
-// Slash — ack within 3s
-app.command("/ai", async ({ command, ack, respond }) => {
-  await ack();
-  await respond({ response_type: "ephemeral", text: "Processing..." });
-  await respond({ response_type: "in_channel", text: await dispatchToRunner(command.text, command.user_id, command.channel_id) });
-});
-
-// Buttons: post blocks, handle action_id
-await app.client.chat.postMessage({ channel, text: "Choose:", blocks: [{ type: "actions", elements: [
-  { type: "button", text: { type: "plain_text", text: "Run Tests" }, action_id: "run_tests", value: "test_suite_all" },
-  { type: "button", text: { type: "plain_text", text: "Deploy" }, action_id: "deploy", style: "primary", value: "deploy_staging" },
-]}]});
-app.action("run_tests", async ({ ack, respond }) => { await ack(); await respond({ text: "Running...", replace_original: false }); });
-
-// Thread / broadcast / file
-await app.client.chat.postMessage({ channel, thread_ts: parentTs, text: "..." });
-await app.client.chat.postMessage({ channel, thread_ts: parentTs, reply_broadcast: true, text: "..." });
-await app.client.files.uploadV2({ channel_id: channel, filename: "report.md", content, title: "Report" });
-```
-
-**Agents API (beta)** — requires `assistant` scope. Events: `assistant_thread_started`, `assistant_thread_context_changed`. Docs: https://api.slack.com/docs/apps/ai
-
-**Access control**: Use `Set<string>` for `ALLOWED_CHANNELS` / `ALLOWED_USERS` (empty = allow all). Gate handlers: `(!ALLOWED_CHANNELS.size || ALLOWED_CHANNELS.has(ch)) && (!ALLOWED_USERS.size || ALLOWED_USERS.has(u))`.
+**Agents API (beta)** — requires `assistant` scope. Events: `assistant_thread_started`, `assistant_thread_context_changed`. Docs: https://api.slack.com/docs/apps/ai. **Access control**: Use `Set<string>` for `ALLOWED_CHANNELS` / `ALLOWED_USERS` (empty = allow all). Gate: `(!ALLOWED_CHANNELS.size || ALLOWED_CHANNELS.has(ch)) && (!ALLOWED_USERS.size || ALLOWED_USERS.has(u))`.
 
 ## Security
 
 **CRITICAL: Slack is among the least private mainstream messaging platforms.**
-
 - **No E2E encryption**: Salesforce has full access to all content — channels, DMs, files, edits, deleted messages.
 - **AI training** (Sep 2023): customer data trains ML models unless admin opts out. **Assume all messages may train AI models.**
-- **Push notifications**: Google FCM / Apple APNs — default previews visible to Google/Apple in transit.
-- **Jurisdiction**: Salesforce, Inc., San Francisco CA — CLOUD Act, FISA §702, NSLs. EU Data Residency (Enterprise Grid) controls storage, not Salesforce personnel access.
+- **Push notifications**: Google FCM / Apple APNs — default previews visible to Google/Apple in transit. **Jurisdiction**: Salesforce, Inc., San Francisco CA — CLOUD Act, FISA §702, NSLs. EU Data Residency (Enterprise Grid) controls storage, not Salesforce personnel access.
 - **Admin export**: Free/Pro = public channels only. Business+ = ALL messages, no notification. Enterprise Grid = full exports + DLP, audit logs, eDiscovery, legal holds.
 - **Token security**: `xoxb-` accesses all bot channels; `xapp-` has workspace-wide scope. Enable rotation for production; verify `X-Slack-Signature` on Events API requests.
-
-### Platform Comparison
+- **Use where corporate oversight is expected. Never for sensitive personal, legal, or confidential matters.**
 
 | | Slack | Matrix | SimpleX | Signal |
 |--|-------|--------|---------|--------|
@@ -124,8 +88,6 @@ await app.client.files.uploadV2({ channel_id: channel, filename: "report.md", co
 | Self-hostable | No | Yes | Yes | No |
 | Jurisdiction | USA (Salesforce) | Self | Self | USA |
 
-**Use Slack where corporate oversight is expected. Never for sensitive personal, legal, or confidential matters.**
-
 ## aidevops Integration
 
 ```bash
@@ -135,11 +97,7 @@ slack-dispatch-helper.sh start --daemon | stop | status | logs [--follow]
 slack-dispatch-helper.sh test code-reviewer "Review src/auth.ts"
 ```
 
-**Runner dispatch**: `runner-helper.sh` handles headless sessions, memory isolation, entity-aware context, run logging. Entity resolution: Slack user ID → `entity_channels` → entity profile. New users via `entity-helper.sh create`; enriched via `users.info`.
-
-### Config: `~/.config/aidevops/slack-bot.json` (600 perms) — store tokens in gopass
-
-`botPrefix` empty = `@mention`/slash commands only; set (e.g., `!ai`) for prefix triggering.
+**Runner dispatch**: `runner-helper.sh` handles headless sessions, memory isolation, entity-aware context, run logging. Entity resolution: Slack user ID → `entity_channels` → entity profile. New users via `entity-helper.sh create`; enriched via `users.info`. **Config** `~/.config/aidevops/slack-bot.json` (600 perms) — store tokens in gopass. `botPrefix` empty = `@mention`/slash commands only; set (e.g., `!ai`) for prefix triggering.
 
 ```json
 {
@@ -150,26 +108,9 @@ slack-dispatch-helper.sh test code-reviewer "Review src/auth.ts"
 }
 ```
 
-## Matterbridge
+## Matterbridge + Limits
 
-```toml
-[slack.myworkspace]
-Token = "xoxb-your-bot-token"
-ShowJoinPart = false
-[[gateway]]
-name = "dev-bridge"
-enable = true
-[[gateway.inout]]
-account = "slack.myworkspace"
-channel = "dev-general"
-[[gateway.inout]]
-account = "matrix.myserver"
-channel = "#dev:matrix.example.com"
-```
-
-**Warning**: Bridging to E2E-encrypted platforms stores messages unencrypted on Slack's servers. Inform users. See `services/communications/matterbridge.md`.
-
-## Limits
+Slack stanza for `matterbridge.toml`: `[slack.myworkspace]` with `Token = "xoxb-..."` and `ShowJoinPart = false`. Wire to a `[[gateway.inout]]` block. Full config: `services/communications/matterbridge.md`. **Warning**: Bridging to E2E-encrypted platforms stores messages unencrypted on Slack's servers. Inform users.
 
 | Constraint | Value |
 |-----------|-------|
@@ -177,8 +118,7 @@ channel = "#dev:matrix.example.com"
 | Socket Mode events / connections | 30,000/hour / 10 concurrent per app |
 | Files API | 20/min |
 | Free: history / integrations / storage | 90 days / 10 apps / 5 GB |
-
-Bolt handles retries. No self-hosting — SaaS only (Salesforce/AWS). For data sovereignty: Mattermost, Matrix, Rocket.Chat.
+| Self-hosting | Not available (SaaS only). Bolt handles retries. Alternatives: Mattermost, Matrix, Rocket.Chat |
 
 ## Related
 
