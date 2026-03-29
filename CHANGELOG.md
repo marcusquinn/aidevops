@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.314] - 2026-03-29
+
+### Changed
+
+- Documentation: GH#13238 tighten app-dev-backend.md prose (145→113 lines) (#13293)
+- Documentation: tighten ios-simulator-mcp.md prose (142→121 lines, GH#13264) (#13299)
+- Documentation: GH#13246 tighten d1-patterns.md prose (#13296)
+- Documentation: GH#13245: tighten context-builder.md prose (144→130 lines) (#13297)
+- Documentation: tighten workers-for-platforms-gotchas.md prose (141→115 lines) (#13291)
+- Documentation: tighten email-design-test.md prose (GH#13272) (#13292)
+
+### Fixed
+
+- preserve aidevops plugin registration in opencode.json (#13298)
+
 ## [3.5.312] - 2026-03-29
 
 ### Changed
