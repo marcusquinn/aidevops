@@ -20,28 +20,15 @@ mcp:
 
 ## Quick Reference
 
-- **Purpose**: Browser automation via Chrome extension with full Playwright API
+- **Purpose**: Browser automation via Chrome extension — full Playwright API
 - **Extension**: [Chrome Web Store](https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe) (Chrome, Brave, Edge)
-- **MCP**: `npx playwriter@latest`
-- **Single Tool**: `execute` — runs Playwright code snippets
-- **Icon States**: Gray/Black = disconnected · Green = ready · Orange = connecting · Red = error
+- **MCP**: `npx playwriter@latest` — single `execute` tool runs Playwright code snippets
+- **Icon**: Gray/Black = disconnected · Green = ready · Orange = connecting · Red = error
 - **Performance**: Navigate 2.95s, form fill 2.24s, reliability 1.96s avg. Always headed.
 
-**Why Playwriter over alternatives:**
+**Why Playwriter**: 1 tool (vs 10-17), minimal context bloat, uses your existing browser with extensions/sessions/cookies, bypasses detection (disconnect → manual action → reconnect).
 
-| Feature | Playwriter | BrowserMCP | Playwright MCP | Stagehand |
-|---------|------------|------------|----------------|-----------|
-| Tools | 1 (`execute`) | 17+ | 10+ | 4 primitives |
-| Context bloat | Minimal | High | Medium | Low |
-| API | Full Playwright | Limited | Full Playwright | Natural language |
-| Browser | Your existing | New instance | New instance | New instance |
-| Extensions | Yes | No | No | No |
-| Sessions/cookies | Yes | No | No | No |
-| Detection bypass | Yes (disconnect) | No | No | No |
-
-**When to use**: Existing logged-in sessions, browser extensions (password managers, ad blockers), collaborating with AI past captchas, resource efficiency.
-
-**When to use alternatives**: **Stagehand** for natural language automation / self-healing selectors. **Playwright MCP** for isolated automation without extension. **Crawl4AI** for scraping. **playwright-cli** for headless (no MCP needed).
+**When to use alternatives**: **Stagehand** for natural language / self-healing selectors. **Playwright MCP** for isolated automation. **Crawl4AI** for scraping. **playwright-cli** for headless.
 
 **Parallel tabs**: Click extension on each tab. Shared session — not isolated. For isolated parallel work, use Playwright direct.
 
@@ -68,7 +55,7 @@ mcp:
 }
 ```
 
-**OpenCode** (`~/.config/opencode/opencode.json`) — use full path to `npx` (e.g., `/opt/homebrew/bin/npx`) if the app runs with a restricted PATH:
+**OpenCode** (`~/.config/opencode/opencode.json`) — use full path to `npx` if the app runs with a restricted PATH:
 
 ```json
 {
@@ -97,7 +84,7 @@ mcp:
 
 ### The `execute` Tool
 
-Runs any Playwright code against connected tabs:
+Runs Playwright code against connected tabs:
 
 ```javascript
 await page.goto('https://example.com')
@@ -108,11 +95,10 @@ const title = await page.textContent('h1')
 await page.waitForSelector('.loaded')
 ```
 
-### Multi-Tab
+Multi-tab:
 
 ```javascript
 const pages = context.pages()
-const page1 = pages[0]
 const newPage = await context.newPage()
 await newPage.goto('https://example.com')
 ```
@@ -134,7 +120,7 @@ server.close()
 
 ### Screenshots and PDF
 
-> **Screenshot size limit**: Do NOT use `fullPage: true` for AI vision review. Full-page captures can exceed 8000px, crashing the session (Anthropic hard-rejects >8000px). Use viewport-sized screenshots. For human-only full-page: `magick full.png -resize "1568x1568>" full-resized.png`. See `prompts/build.txt` "Screenshot Size Limits".
+> **Screenshot size limit**: Do NOT use `fullPage: true` for AI vision review. Full-page captures can exceed 8000px, crashing the session. Use viewport-sized screenshots. For human-only full-page: `magick full.png -resize "1568x1568>" full-resized.png`. See `prompts/build.txt` "Screenshot Size Limits".
 
 ```javascript
 // Viewport screenshot (safe for AI review)
