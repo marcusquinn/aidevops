@@ -16,10 +16,8 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Regex patterns for GSC query filtering, URL analysis, and SEO data processing
-- **Context**: Google Search Console supports RE2 regex in Performance reports
+- **GSC syntax**: RE2 — no lookaheads/lookbehinds/backreferences. Apply via Performance > Filter > Query/Page > Matches regex.
 - **Helpers**: `scripts/seo-analysis-helper.sh`, `scripts/keyword-research-helper.sh`
-
-**GSC regex syntax**: RE2 (no lookaheads/lookbehinds, no backreferences). Use in Performance > Filter > Query/Page > Matches regex.
 
 <!-- AI-CONTEXT-END -->
 
@@ -31,9 +29,8 @@ tools:
 # Brand queries (replace with your brand)
 (brand|brandname|brand\.com)
 
-# Non-brand (negate in GSC UI, or use custom regex)
+# Non-brand: GSC doesn't support lookaheads — use "Does not match" filter instead
 ^(?!.*(brand|brandname)).*$
-# Note: GSC doesn't support lookaheads. Use "Does not match" filter instead.
 ```
 
 ### Question Queries
