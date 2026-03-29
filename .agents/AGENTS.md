@@ -35,15 +35,6 @@ New to aidevops? Type `/onboarding`.
 
 **Specialist subagents**: `@aidevops`, `@seo`, `@wordpress`, etc.
 
-## Errored MCP Server Guard (t1682)
-
-MCP servers that fail to start (e.g., "MCP error -32000: Connection closed", "spawn ENOENT", "ECONNREFUSED") may still have their tool schemas present in the tool list. Calling these tools wastes tokens and always fails.
-
-- When a tool call returns "MCP error -32000", "Connection closed", "spawn ENOENT", or similar startup errors, mark that MCP server as unavailable for the rest of the session. Do NOT retry tools from that server.
-- If you see tools in the tool list from a server that has previously errored, skip them entirely — do not attempt to call them.
-- To identify and fix errored MCP servers: `~/.aidevops/agents/scripts/mcp-diagnose.sh check-all`. This scans all enabled MCP servers and reports which ones are unavailable, with remediation steps.
-- To disable a persistently errored server: set `"enabled": false` in your runtime's MCP config for that server entry. This removes its tool schemas from context entirely. Claude Code CLI: `~/.config/Claude/Claude.json`; Claude Desktop (macOS): `~/Library/Application Support/Claude/claude_desktop_config.json`.
-
 ## Pre-Edit Git Check
 
 > **Skip this section if you don't have Edit/Write/Bash tools** (e.g., Plan+ agent). Instead, proceed directly to responding to the user.
@@ -168,7 +159,43 @@ PR title: `{task-id}: {description}`. Task ID is `tNNN` (from TODO.md) or `GH#NN
 
 Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `main`, and treat the Git ref as an internal detail inside the linked worktree. User-facing guidance should talk about the worktree path, not "using a branch". Re-read files at worktree path before editing. NEVER remove others' worktrees.
 
+**Traceability:**
+- PR title MUST have task ID (`{task-id}: {description}`). No exceptions.
+- PR body MUST include `Closes #NNN` — only mechanism creating GitHub PR-issue link.
+- Every dispatched task MUST have a GitHub issue. Issue number in TODO.md as `ref=GH#NNN`.
+- Link both sides when closing (issue→PR, PR→issue).
+
+**GitHub comment signature footer:** Every issue, PR, and comment created by aidevops agents MUST include a signature footer. Use `gh-signature-helper.sh footer --model <model-id> [--issue OWNER/REPO#NUM] [--solved]` to generate it. The helper auto-detects CLI, version, tokens (input+output, excluding cache), and session time from the runtime DB. Pass `--issue` on comments to existing issues. Pass `--solved` on closing comments. Do NOT pass `--issue` when creating new issues. Append the footer as the last line of every `gh issue comment`, `gh issue create`, and `gh pr create` body. See `scripts/commands/pulse.md` for dispatch/kill/merge comment templates.
+
+**Self-improvement routing (t1541):** Framework-level tasks → `framework-routing-helper.sh log-framework-issue`. Project tasks → current repo. Framework tasks in project repos are invisible to maintainers.
+
+**Pulse scope (t1405):** `PULSE_SCOPE_REPOS` limits code changes. Issues allowed anywhere. Empty/unset = no restriction.
+
+**External Repo Issue/PR Submission (t1407):** Check templates and CONTRIBUTING.md first. Bots auto-close non-conforming submissions. Full guide: `reference/external-repo-submissions.md`.
+
+**Git-readiness:** Non-git project with ongoing development? Flag: "No git tracking. Consider `git init` + `aidevops init`."
+
+**Review Bot Gate (t1382):** Before merging: `review-bot-gate-helper.sh check <PR_NUMBER>`. Read bot reviews before merging. Full workflow: `reference/review-bot-gate.md`.
+
 Full workflow: `workflows/git-workflow.md`, `reference/session.md`
+
+## Token-Optimized CLI Output (t1430)
+
+When `rtk` installed, prefer `rtk` prefix for: `git status/log/diff`, `gh pr list/view`. Do NOT use rtk for: file reading (use Read), content search (use Grep), machine-readable output (--json, --porcelain, jq pipelines), test assertions, piped commands, verbatim diffs. rtk optional — if not installed, use commands normally.
+
+## Agent Framework
+
+- Agents in `~/.aidevops/agents/`. Subagents on-demand, not upfront.
+- YAML frontmatter: tools, model tier, MCP dependencies.
+- Progressive disclosure: pointers to subagents, not inline content.
+
+## Conversational Memory Lookup
+
+User references past work ("remember when...")? Search progressively: memory recall → TODO.md → git log → transcripts → GitHub API. Full guide: `reference/memory-lookup.md`.
+
+## Context Compaction Survival
+
+Preserve on compaction: (1) task IDs+states, (2) batch/concurrency, (3) worktree+branch, (4) PR numbers, (5) next 3 actions, (6) blockers, (7) key paths. Checkpoint: `~/.aidevops/.agent-workspace/tmp/session-checkpoint.md`.
 
 ## Slash Command Resolution
 
