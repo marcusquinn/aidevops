@@ -1,16 +1,7 @@
 ---
 description: Turborepo monorepo build system - workspaces, caching, pipelines
 mode: subagent
-tools:
-  read: true
-  write: true
-  edit: true
-  bash: true
-  glob: true
-  grep: true
-  webfetch: true
-  task: true
-  context7_*: true
+tools: [read, write, edit, bash, glob, grep, webfetch, task, context7_*]
 ---
 
 # Turborepo - Monorepo Build System
@@ -19,34 +10,18 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: High-performance build system for JavaScript/TypeScript monorepos
+- **Purpose**: High-performance build system for JS/TS monorepos
 - **Package Manager**: pnpm (recommended), npm, yarn
-- **Docs**: Use Context7 MCP for current documentation
-- **Features**: Incremental builds with caching · Parallel task execution · Remote caching (Vercel) · Dependency-aware task ordering
+- **Docs**: [turbo.build/repo/docs](https://turbo.build/repo/docs) (via Context7 MCP) · **Features**: Incremental caching · Parallel execution · Remote caching (Vercel)
 
-**Common Commands**:
+**Commands**: `pnpm dev` (all) · `pnpm build` (all) · `pnpm --filter web dev` (single) · `pnpm --filter @workspace/ui build` (full name) · `pnpm --filter web... build` (+ deps)
 
-```bash
-pnpm dev                              # all packages
-pnpm build                            # all packages
-pnpm --filter web dev                 # single package
-pnpm --filter @workspace/ui build     # by full name
-pnpm --filter web... build            # package + dependencies
-```
-
-**Workspace Structure**:
+**Structure**:
 
 ```text
-/
-├── apps/
-│   ├── web/        # Next.js app
-│   ├── mobile/     # React Native app
-│   └── extension/  # Browser extension
-├── packages/
-│   ├── ui/{web,mobile,shared}/
-│   ├── api/  db/  auth/  i18n/  shared/
-└── tooling/
-    ├── eslint/  typescript/  prettier/
+apps/     (web, mobile, extension)
+packages/ (ui, api, db, auth, i18n, shared)
+tooling/  (eslint, typescript, prettier)
 ```
 
 **Package Naming**:
