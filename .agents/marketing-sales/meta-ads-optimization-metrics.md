@@ -53,7 +53,7 @@
 | Metric | Definition | Good | Great |
 |--------|------------|------|-------|
 | **Hook Rate** | 3s Views ÷ Impressions | 30%+ | 45%+ |
-| **Hold Rate** | 15s Views ÷ 3s Views | 30%+ | 50%+ |
+| **Hold Rate** | ThruPlays ÷ 3s Views | 30%+ | 50%+ |
 | **ThruPlay Rate** | ThruPlays ÷ Impressions | 10%+ | 20%+ |
 | **Avg Watch Time** | Total Watch Time ÷ Views | 5s+ | 10s+ |
 | **CPV (ThruPlay)** | Spend ÷ ThruPlays | <$0.05 | <$0.02 |
@@ -67,12 +67,11 @@
 | **Bounce Rate** | Single page visits | <70% | <50% |
 | **Conversion Rate** | Conversions ÷ LPV | 5%+ | 15%+ |
 
-## Cost Metrics Deep Dive
+## Cost Metrics
 
 ### CPM Factors
 
-- Audience size (smaller = higher), competition (more = higher), ad quality (lower = higher)
-- Seasonality (Q4 = higher), placement (Feed > Audience Network)
+Audience size (smaller = higher), competition (more = higher), ad quality (lower = higher), seasonality (Q4 = higher), placement (Feed > Audience Network).
 
 | Industry | Average CPM |
 |----------|------------|
@@ -81,21 +80,20 @@
 | Finance | $20-30 |
 | Gaming | $8-12 |
 
-### CPC & CPA Formulas
+### CPC & CPA
 
 ```
 CPC = Spend ÷ Clicks = CPM ÷ (CTR × 10)
 CPA = Spend ÷ Actions = CPC ÷ Conversion Rate
 ```
 
-**Lower CPC through:** higher CTR, lower CPM, better ad relevance.
-**Lower CPA through:** lower CPC, higher conversion rate, better landing page/offer.
+**Lower CPC:** higher CTR, lower CPM, better ad relevance. **Lower CPA:** lower CPC, higher CVR, better LP/offer.
 
 ## Quality Metrics
 
 ### Ad Relevance Diagnostics
 
-Meta rates ads on three dimensions — **Quality Ranking**, **Engagement Rate Ranking**, **Conversion Rate Ranking** — each compared to competitors:
+Meta rates ads on **Quality Ranking**, **Engagement Rate Ranking**, and **Conversion Rate Ranking** vs competitors:
 
 | Ranking | Meaning |
 |---------|---------|
@@ -117,7 +115,7 @@ Frequency = Impressions ÷ Reach
 | Retargeting | 4.0+ | 6.0+ |
 | Brand Awareness | 3.0+ | 5.0+ |
 
-**High frequency signs:** CTR declining, CPA increasing, negative feedback increasing, same audience seeing ad repeatedly.
+**High frequency signs:** CTR declining, CPA increasing, negative feedback increasing.
 
 ## Conversion & Revenue Metrics
 
@@ -140,8 +138,6 @@ ROAS = Revenue ÷ Ad Spend
 Breakeven ROAS = 1 ÷ Profit Margin   (e.g. 30% margin → 3.33x)
 Breakeven CPA  = AOV × Gross Margin % (e.g. $80 AOV × 60% → $48)
 ```
-
-**Example:** $1,000 spend, $4,000 revenue → ROAS 4x (400%).
 
 ### MER (Marketing Efficiency Ratio)
 
@@ -169,39 +165,22 @@ Use for budget allocation, channel comparison, and true ROI reporting.
 
 ## Custom Metrics to Create
 
-### In Ads Manager
+| Metric | Formula | Where | Purpose |
+|--------|---------|-------|---------|
+| Click to LPV Ratio | Landing Page Views ÷ Link Clicks × 100 | Ads Manager | Identify page load issues |
+| Cost Per LPV | Amount Spent ÷ Landing Page Views | Ads Manager | Landing page cost efficiency |
+| True CPA | Ad Spend ÷ Qualified Conversions | Spreadsheet | Real cost of quality conversions |
+| Blended ROAS | Total Revenue ÷ Total Ad Spend (all platforms) | Spreadsheet | True return across channels |
 
-| Metric | Formula | Purpose |
-|--------|---------|---------|
-| Click to LPV Ratio | Landing Page Views ÷ Link Clicks × 100 | Identify page load issues |
-| Hook Rate | 3-Second Video Views ÷ Impressions × 100 | Measure hook effectiveness |
-| Hold Rate | ThruPlays ÷ 3-Second Video Views × 100 | Measure content engagement |
-| Cost Per LPV | Amount Spent ÷ Landing Page Views | Landing page cost efficiency |
-
-### In Spreadsheet
-
-| Metric | Formula | Purpose |
-|--------|---------|---------|
-| True CPA | Ad Spend ÷ Qualified Conversions | Real cost of quality conversions |
-| Blended ROAS | Total Revenue ÷ Total Ad Spend (all platforms) | True return across channels |
-
-## Diagnostic Combos
-
-| High | Low | Likely Issue |
-|------|-----|--------------|
-| CPM | CTR | Creative not compelling |
-| CTR | CVR | Landing page problem |
-| CPM | — | Competition or quality |
-| Frequency | CTR | Ad fatigue |
-| LPV Gap | — | Page load issues |
-
-### Performance Patterns
+## Diagnostic Patterns
 
 | Pattern | CPM | CTR | Frequency | CPA | Action |
 |---------|-----|-----|-----------|-----|--------|
 | **Healthy** | Stable | 1%+ | <3 | At/below target | Maintain |
-| **Fatiguing** | Rising/stable | Declining | Rising (>3) | Rising | Refresh creative |
-| **Quality issue** | High/rising | Low | — | — | Improve creative/targeting |
+| **Fatiguing** | Rising | Declining | >3 | Rising | Refresh creative |
+| **Quality issue** | High | Low | — | — | Improve creative/targeting |
+| **LP problem** | Normal | Good | — | High | Fix landing page |
+| **Audience exhausted** | Rising | Declining | High | Rising | Expand audience |
 
 ## Metric Review Cadence
 
@@ -209,19 +188,7 @@ Use for budget allocation, channel comparison, and true ROI reporting.
 - **Weekly:** CTR trend, frequency, creative performance, audience performance
 - **Monthly:** Overall ROAS/CPA vs target, attribution review, creative refresh needs, budget allocation
 
-## Cohort Analysis
-
-Track acquisition cohort performance over time:
-
-| Cohort | Month 1 Revenue | Month 3 Revenue | LTV at 6 Months |
-|--------|-----------------|-----------------|-----------------|
-| Jan Acquired | $100 | $180 | $320 |
-| Feb Acquired | $95 | $165 | $290 |
-| Mar Acquired | $110 | $195 | $350 |
-
-## Recommended Custom Columns
-
-Create in Ads Manager → Columns → Customize Columns:
+## Recommended Custom Columns (Ads Manager → Columns → Customize Columns)
 
 - **Ecommerce:** ROAS, Cost Per Purchase, Purchase Conversion Value, Website Purchases, CTR (Link Click), CPM, Frequency, Reach
 - **Lead Gen:** Cost Per Lead, Leads, Lead Conversion Rate, CTR (Link Click), Landing Page Views, CPM, Frequency, Quality Ranking
