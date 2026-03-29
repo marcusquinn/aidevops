@@ -757,9 +757,9 @@
       "pr": 11713
     },
     ".agents/tools/build-agent/build-agent.md": {
-      "hash": "08556ac8d5cae4bca810e73ed3b113a6cbd349d0",
-      "at": "2026-03-29T11:20:52Z",
-      "pr": 12897
+      "hash": "7c5ee462156bc31066db55062103a1746b4c0d9c",
+      "at": "2026-03-29T11:51:52Z",
+      "pr": 12918
     },
     ".agents/content/distribution-youtube-topic-research.md": {
       "hash": "d8d475231eff5b53cf27de5ab31aeedaec403e2f",
@@ -1787,9 +1787,9 @@
       "pr": 12761
     },
     ".agents/tools/ai-orchestration/openprose.md": {
-      "hash": "3b5d5da91bbe795953a209f0d5608a17b5a2adf7",
-      "at": "2026-03-29T11:19:57Z",
-      "pr": 12887
+      "hash": "b742fec6a8830c2e17ea9b115bff5ce8aafe7bca",
+      "at": "2026-03-29T11:51:47Z",
+      "pr": 12919
     },
     ".agents/content/heygen-skill/rules-avatars.md": {
       "hash": "e600865474071a7973fe0ed89b4fd361065e080a",
@@ -2075,6 +2075,21 @@
       "hash": "757e5c37cb9ef410e1551d8bec0d6edcbcc0206c",
       "at": "2026-03-29T11:20:09Z",
       "pr": 12888
+    },
+    ".agents/marketing-sales/meta-ads-foundations-attribution.md": {
+      "hash": "7bd8755456129fcd79c106e7e829c6233ae16c42",
+      "at": "2026-03-29T11:51:45Z",
+      "pr": 12920
+    },
+    ".agents/tools/voice/speech-to-speech.md": {
+      "hash": "ffc53a77a8f5f13c1db11ffc9956a4606a010374",
+      "at": "2026-03-29T11:51:50Z",
+      "pr": 12921
+    },
+    ".agents/tools/diagrams/mermaid-diagrams-skill/advanced.md": {
+      "hash": "66bd6cabafb5379b9b183e5c0721e35852080713",
+      "at": "2026-03-29T11:51:51Z",
+      "pr": 12922
     }
   }
 }
