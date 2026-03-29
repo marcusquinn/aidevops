@@ -1,47 +1,23 @@
 # CNI Gotchas & Troubleshooting
 
-See [README.md](./README.md) for overview.
+See [network-interconnect.md](./network-interconnect.md) for overview.
 
 ## Limitations
 
-**General:**
-- No formal SLA (free service)
-- No dashboard config visibility
-- Recovery may take days
-- 10km max optical distance
-- Backup Internet required
+**General:** No formal SLA (free service) · No dashboard config visibility · Recovery may take days · 10km max optical distance · Backup Internet required
 
-**v1:**
-- Asymmetric MTU (1500↓/1476↑)
-- GRE overhead for Magic Transit/WAN
-- 1 Gbps/GRE tunnel limit
+**v1:** Asymmetric MTU (1500↓/1476↑) · GRE overhead for Magic Transit/WAN · 1 Gbps/GRE tunnel limit
 
-**v2:**
-- No VLAN (yet)
-- No BFD (yet)
-- No LACP (use ECMP)
-- No peering support
-- Beta status
+**v2:** No VLAN (yet) · No BFD (yet) · No LACP (use ECMP) · No peering support · Beta status
 
-**Cloud:**
-- AWS Hosted Direct Connect unsupported
-- Magic WAN only
-- GCP BGP routes ignored
-- AWS requires manual coordination
+**Cloud:** AWS Hosted Direct Connect unsupported (Magic WAN only) · GCP BGP routes ignored · AWS requires manual coordination
 
 ## Troubleshooting
 
 ### Status: Pending
 
-**Symptoms:** Stuck in pending.
+Stuck in pending. Causes: cross-connect not installed, RX/TX fibers reversed, wrong fiber type, low light levels.
 
-**Causes:**
-- Cross-connect not installed
-- RX/TX fibers reversed
-- Wrong fiber type
-- Low light levels
-
-**Fix:**
 1. Verify cross-connect installed
 2. Check fiber at patch panel
 3. Swap RX/TX
@@ -50,15 +26,8 @@ See [README.md](./README.md) for overview.
 
 ### Status: Unhealthy
 
-**Symptoms:** Shows unhealthy.
+Shows unhealthy. Causes: physical issue, light <-20 dBm, optic mismatch, dirty connectors.
 
-**Causes:**
-- Physical issue
-- Light <-20 dBm
-- Optic mismatch
-- Dirty connectors
-
-**Fix:**
 1. Check physical connections
 2. Clean fiber connectors
 3. Verify optic types (10GBASE-LR/100GBASE-LR4)
@@ -68,15 +37,8 @@ See [README.md](./README.md) for overview.
 
 ### BGP Session Down
 
-**Symptoms:** Link up, BGP down.
+Link up, BGP down. Causes: wrong IP addressing, wrong ASN, password mismatch, firewall blocking TCP/179.
 
-**Causes:**
-- Wrong IP addressing
-- Wrong ASN
-- Password mismatch
-- Firewall blocking TCP/179
-
-**Fix:**
 1. Verify IPs match CNI object
 2. Confirm ASN correct
 3. Check BGP password
@@ -86,15 +48,8 @@ See [README.md](./README.md) for overview.
 
 ### Low Throughput
 
-**Symptoms:** Traffic flows, below expected.
+Traffic flows, below expected. Causes: MTU mismatch, fragmentation, single GRE tunnel (v1), routing inefficiency.
 
-**Causes:**
-- MTU mismatch
-- Fragmentation
-- Single GRE tunnel (v1)
-- Routing inefficiency
-
-**Fix:**
 1. Check MTU (1500↓/1476↑ for v1, 1500 both for v2)
 2. Test various packet sizes
 3. Add more GRE tunnels (v1)
@@ -104,39 +59,17 @@ See [README.md](./README.md) for overview.
 
 ## Common Mistakes
 
-**Ordering:**
-- ❌ Wrong facility code on LOA
-- ❌ Multi-mode fiber (need single-mode)
-- ❌ Wrong optic type
-- ❌ Forgetting to track cross-connect order
+**Ordering:** ❌ Wrong facility code on LOA · ❌ Multi-mode fiber (need single-mode) · ❌ Wrong optic type · ❌ Forgetting to track cross-connect order
 
-**Configuration:**
-- ❌ Not using /31 subnets
-- ❌ Skipping BGP passwords
-- ❌ Wrong ASN
-- ❌ Firewall blocking BGP (TCP/179)
+**Configuration:** ❌ Not using /31 subnets · ❌ Skipping BGP passwords · ❌ Wrong ASN · ❌ Firewall blocking BGP (TCP/179)
 
-**Production:**
-- ❌ No maintenance notifications
-- ❌ Not testing backup connectivity
-- ❌ Missing runbooks
-- ❌ No failover testing
-- ❌ Ignoring capacity planning
+**Production:** ❌ No maintenance notifications · ❌ Not testing backup connectivity · ❌ Missing runbooks · ❌ No failover testing · ❌ Ignoring capacity planning
 
 ## Quick Reference
 
-**Status Guide:**
-- **Active**: Working normally → Monitor
-- **Unhealthy**: Down → Check physical
-- **Pending**: In progress → Complete cross-connect
+**Status:** Active → Monitor · Unhealthy → Check physical · Pending → Complete cross-connect
 
-**Contact Account Team For:**
-- CNI eligibility
-- Config assistance
-- LOA generation
-- Unhealthy interconnects
-- Location availability
-- Device diversity options
+**Contact Account Team For:** CNI eligibility · Config assistance · LOA generation · Unhealthy interconnects · Location availability · Device diversity options
 
 **Key Commands:**
 
@@ -151,8 +84,7 @@ curl "https://api.cloudflare.com/client/v4/accounts/${ID}/cni/interconnects/${IC
 
 # Download LOA
 curl "https://api.cloudflare.com/client/v4/accounts/${ID}/cni/interconnects/${ICON}/loa" \
-  -H "Authorization: Bearer ${TOKEN}" \
-  --output loa.pdf
+  -H "Authorization: Bearer ${TOKEN}" --output loa.pdf
 
 # List CNI objects
 curl "https://api.cloudflare.com/client/v4/accounts/${ID}/cni/cnis" \
