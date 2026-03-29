@@ -1312,9 +1312,9 @@
       "pr": 12056
     },
     ".agents/scripts/commands/define.md": {
-      "hash": "50c4ecd13bb210a44c421edfed6cc4e00dc0fabf",
-      "at": "2026-03-29T14:29:13Z",
-      "pr": 13006
+      "hash": "228f38c6d509423d7158cef517bbd601a691923d",
+      "at": "2026-03-29T17:15:13Z",
+      "pr": 13131
     },
     ".agents/tools/browser/skyvern.md": {
       "hash": "1f2933d4cdf35fd9696301a5743ae2e550a31eb0",
@@ -1582,9 +1582,9 @@
       "pr": 12327
     },
     ".agents/tools/code-review/code-simplifier.md": {
-      "hash": "333d52bc8c0237a8e992d03e63b27caefea7bb27",
-      "at": "2026-03-29T16:34:23Z",
-      "pr": 13033
+      "hash": "3c2a1ec63a1f86656f6b810735512aa40ceb5cbd",
+      "at": "2026-03-29T17:14:32Z",
+      "pr": 13132
     },
     ".agents/tools/build-agent/add-skill.md": {
       "hash": "36065ac3559aa2e929cbb858c8220961454f9dd9",
@@ -1897,9 +1897,9 @@
       "pr": 12708
     },
     ".agents/tools/deployment/cloudron-server-ops-skill.md": {
-      "hash": "c1fcd168d83da66b8a48ff30f23197361d174aa5",
-      "at": "2026-03-29T07:31:42Z",
-      "pr": 12709
+      "hash": "c39e9aa841ebac1ce56cdecff120313027a7a52f",
+      "at": "2026-03-29T17:14:46Z",
+      "pr": 13130
     },
     ".agents/scripts/commands/skills.md": {
       "hash": "b5d46b5e38620ec36852251ec0e4ab4178d9d217",
@@ -2222,9 +2222,9 @@
       "pr": 13052
     },
     ".agents/content/story.md": {
-      "hash": "a8b8bdc544cd3d647ac28dd1aee490a81f20d408",
-      "at": "2026-03-29T16:10:34Z",
-      "pr": 13041
+      "hash": "e883144cdfcdb85b2c73df49d30c9323769ef4f7",
+      "at": "2026-03-29T17:14:35Z",
+      "pr": 13123
     },
     ".agents/build-plus.md": {
       "hash": "d07c7bc99bf5d53237efbc6a35315e89305203f2",
@@ -2232,9 +2232,9 @@
       "pr": 12958
     },
     ".agents/services/communications/google-chat.md": {
-      "hash": "49b02cd8b7abcd09ebf4f14d1e2067a3bf917d25",
-      "at": "2026-03-29T16:31:35Z",
-      "pr": 13092
+      "hash": "7a72d459affb7ceae803fee8dda46fafe6cba061",
+      "at": "2026-03-29T17:14:38Z",
+      "pr": 13109
     },
     ".agents/tools/deployment/fly-io.md": {
       "hash": "a253a5662c26417905411ed3cc1b2848de5df412",
@@ -2370,6 +2370,16 @@
       "hash": "eed9c26fe6697296ac16fa54421ac1d4f9d6f2fc",
       "at": "2026-03-29T16:34:55Z",
       "pr": 13054
+    },
+    ".agents/product/onboarding.md": {
+      "hash": "d6a191ab7d40fdcd185664c0e86d64c76ad6a01d",
+      "at": "2026-03-29T17:15:24Z",
+      "pr": 13113
+    },
+    ".agents/tools/infrastructure/together.md": {
+      "hash": "cb2b6cf6c54db6f97c2bde70675f3c29b30b88fa",
+      "at": "2026-03-29T17:15:24Z",
+      "pr": 13113
     }
   }
 }
