@@ -305,7 +305,79 @@ else
 fi
 
 # ============================================================
-# SECTION 8: JSON output
+# SECTION 8: OpenCode Model ID Validation (GH#12470)
+# ============================================================
+section "OpenCode Model ID Validation (GH#12470)"
+
+# Verify the pro tier no longer uses the stale gemini-3-pro model ID
+if command -v opencode &>/dev/null && [[ -f "$HOME/.cache/opencode/models.json" ]]; then
+	# Source the helper to access get_tier_models directly
+	pro_tier_output=$(bash -c '
+		source "'"$HELPER"'" 2>/dev/null
+		get_tier_models "pro" 2>/dev/null
+	' 2>/dev/null) || pro_tier_output=""
+
+	if [[ -z "$pro_tier_output" ]]; then
+		# Fallback: grep the source for the pro tier line in the opencode-available branch
+		pro_tier_output=$(grep -A1 '_is_opencode_available' "$HELPER" | head -1 || true)
+		# Just check the source directly
+		if grep -q 'opencode/gemini-3-pro' "$HELPER"; then
+			fail "pro tier still uses stale opencode/gemini-3-pro (GH#12470)"
+		else
+			pass "pro tier no longer uses stale opencode/gemini-3-pro (GH#12470)"
+		fi
+	else
+		if echo "$pro_tier_output" | grep -q 'opencode/gemini-3-pro'; then
+			fail "pro tier returns stale opencode/gemini-3-pro (GH#12470)" \
+				"Got: $pro_tier_output"
+		elif echo "$pro_tier_output" | grep -q 'opencode/gemini-3.1-pro'; then
+			pass "pro tier uses correct opencode/gemini-3.1-pro (GH#12470)"
+		else
+			pass "pro tier uses non-opencode fallback (GH#12470): $pro_tier_output"
+		fi
+	fi
+
+	# Verify all opencode/ model IDs in tier mappings exist in the models cache
+	stale_models=""
+	for tier in haiku flash sonnet pro opus health eval coding; do
+		tier_line=$(grep "^[[:space:]]*${tier})" "$HELPER" | head -1 || true)
+		# Extract opencode/ model IDs from the tier line
+		oc_model=$(echo "$tier_line" | grep -oE 'opencode/[a-zA-Z0-9._-]+' || true)
+		if [[ -n "$oc_model" ]]; then
+			oc_model_id="${oc_model#opencode/}"
+			if ! jq -e --arg m "$oc_model_id" '.opencode.models[$m] // empty' \
+				"$HOME/.cache/opencode/models.json" >/dev/null 2>&1; then
+				stale_models="${stale_models}${oc_model} (tier: ${tier}), "
+			fi
+		fi
+	done
+
+	if [[ -z "$stale_models" ]]; then
+		pass "all opencode/ model IDs in tier mappings exist in models cache"
+	else
+		fail "stale opencode/ model IDs found in tier mappings" \
+			"${stale_models%, }"
+	fi
+
+	# Verify _validate_opencode_model_id function exists
+	if grep -q '_validate_opencode_model_id' "$HELPER"; then
+		pass "_validate_opencode_model_id function exists"
+	else
+		fail "_validate_opencode_model_id function missing (GH#12470)"
+	fi
+
+	# Verify resolve_tier calls validation
+	if grep -q '_validate_opencode_model_id.*primary\|_validate_opencode_model_id.*fallback' "$HELPER"; then
+		pass "resolve_tier validates opencode model IDs before dispatch"
+	else
+		fail "resolve_tier does not validate opencode model IDs (GH#12470)"
+	fi
+else
+	skip "opencode model ID validation (opencode CLI not installed)"
+fi
+
+# ============================================================
+# SECTION 9: JSON output
 # ============================================================
 section "JSON Output"
 
