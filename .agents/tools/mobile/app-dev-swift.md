@@ -36,11 +36,7 @@ MyApp/
 ├── Info.plist
 ├── Assets.xcassets/
 ├── Models/                  # Data models (User, AppState)
-├── Views/                   # SwiftUI views
-│   ├── Home/                # HomeView + HomeViewModel
-│   ├── Onboarding/          # OnboardingView + OnboardingStep
-│   ├── Settings/
-│   └── Components/          # Reusable UI (PrimaryButton, CardView)
+├── Views/                   # SwiftUI views (HomeView, OnboardingView, Components/)
 ├── Services/                # API clients, auth, notifications
 ├── Stores/                  # State management (AppStore)
 ├── Extensions/              # Color+Theme, View+Modifiers
@@ -75,21 +71,7 @@ final class HomeViewModel {
 
 ### Design System
 
-```swift
-extension Color {
-    static let appPrimary = Color("Primary")
-    static let appBackground = Color("Background")
-    static let appSurface = Color("Surface")
-    static let appText = Color("Text")
-    static let appTextSecondary = Color("TextSecondary")
-}
-
-extension Font {
-    static let appTitle = Font.system(.title, design: .rounded, weight: .bold)
-    static let appBody = Font.system(.body, design: .default)
-    static let appCaption = Font.system(.caption, design: .default)
-}
-```
+Define semantic color/font tokens in `Extensions/Color+Theme.swift` and `Extensions/Font+Theme.swift` using `Color("Primary")` asset catalog names. Use `Font.system(.title, design: .rounded, weight: .bold)` patterns.
 
 ### Animations
 
@@ -140,98 +122,56 @@ extension Font {
 
 > iOS 26+ / macOS 26+ / visionOS 26+. Requires `import WebKit`. Source: WWDC 2025 Session 231.
 
-Replaces `WKWebView` UIKit/AppKit bridge. Guard with `#available` for earlier targets:
+Replaces `WKWebView` UIKit/AppKit bridge. Guard with `#available` for earlier targets.
+
+**`WebPage`** is `@Observable`: `url`, `title`, `isLoading`, `estimatedProgress`, `themeColor`, `isAtTop`, `isAtBottom`.
 
 ```swift
-var body: some View {
-    if #available(iOS 26.0, *) {
-        WebView(url: url)
-    } else {
-        LegacyWKWebView(url: url) // UIViewRepresentable wrapper around WKWebView
-    }
-}
-```
-
-### WebView and WebPage
-
-```swift
-import WebKit
-
 struct ArticleView: View {
     @State private var page = WebPage()
-
     var body: some View {
         WebView(page)
-            .onAppear {
-                guard let url = URL(string: "https://example.com/article") else { return }
-                page.url = url
-            }
+            .onAppear { page.url = URL(string: "https://example.com/article") }
             .navigationTitle(page.title ?? "Loading...")
     }
 }
 ```
 
-`WebPage` is `@Observable`: `url`, `title`, `isLoading`, `estimatedProgress`, `themeColor`, `isAtTop`, `isAtBottom`.
-
-### JavaScript Bridge
-
-Typed args, typed results — automatically bridged between Swift and JS:
+**JavaScript bridge** — typed args/results automatically bridged between Swift and JS:
 
 ```swift
-let count: Int = try await page.callJavaScript(
-    "addItems",
-    arguments: ["items": ["apple", "banana"], "startIndex": 0]
-)
+let count: Int = try await page.callJavaScript("addItems",
+    arguments: ["items": ["apple", "banana"], "startIndex": 0])
 ```
 
-### Custom URL Schemes
-
-Serve bundled HTML/CSS/JS via `URLSchemeHandler` — load with `app-resource:///index.html`, no network requests:
+**Custom URL schemes** — serve bundled HTML/CSS/JS via `URLSchemeHandler` (no network requests):
 
 ```swift
 WebView(page)
     .urlScheme("app-resource") { request in
-        guard let url = request.url, !url.path.isEmpty else {
-            return .init(statusCode: 400, headerFields: [:], data: Data())
-        }
-        let relativePath = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let fileURL = Bundle.main.resourceURL?.appendingPathComponent(relativePath) else {
+        guard let path = request.url?.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
+              let fileURL = Bundle.main.resourceURL?.appendingPathComponent(path) else {
             return .init(statusCode: 404, headerFields: [:], data: Data())
         }
-        do {
-            let data = try Data(contentsOf: fileURL)
-            return .init(statusCode: 200, headerFields: [:], data: data)
-        } catch {
-            return .init(statusCode: 404, headerFields: [:], data: Data())
-        }
+        return (try? .init(statusCode: 200, headerFields: [:], data: Data(contentsOf: fileURL)))
+            ?? .init(statusCode: 404, headerFields: [:], data: Data())
     }
 ```
 
-### Navigation Policy
-
-Control navigations via `WebPage.NavigationDeciding`:
+**Navigation policy** — control via `WebPage.NavigationDeciding`:
 
 ```swift
 page.navigationDeciding = .handler { action in
-    if action.request.url?.host == "example.com" { return .allow }
-    return .cancel
+    action.request.url?.host == "example.com" ? .allow : .cancel
 }
 ```
 
-### WebView Modifiers
-
-| Modifier | Purpose |
-|----------|---------|
-| `webViewScrollPosition(_:)` | Bind scroll position |
-| `onScrollGeometryChange` | React to scroll geometry changes |
-| `findNavigator(isPresented:)` | In-page find (Cmd+F) |
-| `webViewScrollInputBehavior(_:for:)` | Control scroll input handling |
+**WebView modifiers**: `webViewScrollPosition(_:)`, `onScrollGeometryChange`, `findNavigator(isPresented:)`, `webViewScrollInputBehavior(_:for:)`
 
 ## Build and Test
 
-### XcodeBuildMCP
-
 ```text
+# XcodeBuildMCP
 discover_projs                   # Discover project
 build_sim --scheme MyApp         # Build for simulator
 test_sim --scheme MyApp          # Run tests
@@ -239,9 +179,8 @@ build_run_sim --scheme MyApp     # Build and run
 screenshot                       # Screenshot current state
 ```
 
-### Local Xcode Commands
-
 ```bash
+# Local Xcode
 xcodebuild -scheme MyApp -destination 'platform=iOS Simulator,name=iPhone 16 Pro'
 xcodebuild test -scheme MyApp -destination 'platform=iOS Simulator,name=iPhone 16 Pro'
 xcodebuild archive -scheme MyApp -archivePath MyApp.xcarchive  # Distribution
