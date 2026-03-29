@@ -114,7 +114,7 @@ marketing-sales/                          # Extended knowledge — flat, prefix-
 - `ls marketing-sales/meta-ads*` groups all Meta Ads knowledge; `*swipe*` finds swipe files
 - Max depth: 2 levels from `.agents/` — never 5+
 - Subdirectory only when a prefix group exceeds ~20 files. One level max.
-- **Subdivision threshold (~300 lines):** Split into entry point + sub-docs for progressive disclosure (smaller always-loaded context, detail on demand) — not content reduction. Resulting size = whatever remains after removing genuine noise.
+- Subdivision threshold: see Quick Reference above.
 
 ### Scripts: Flat by Design
 
