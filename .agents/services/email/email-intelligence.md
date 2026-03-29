@@ -1,15 +1,7 @@
 ---
 description: Email intelligence patterns for triage, voice mining, model routing, and response quality control
 mode: subagent
-tools:
-  read: true
-  write: false
-  edit: false
-  bash: false
-  glob: false
-  grep: false
-  webfetch: false
-  task: false
+tools: { read: true, write: false, edit: false, bash: false, glob: false, grep: false, webfetch: false, task: false }
 model: haiku
 ---
 
@@ -19,157 +11,126 @@ model: haiku
 
 ## Quick Reference
 
-- **Purpose**: Turn inbox traffic into structured, cost-aware AI workflows that preserve user voice
-- **Primary outputs**: triage labels, draft quality, confidence checks, emotion tags, reusable FAQ templates
-- **Default model policy**: route to the cheapest tier that can still meet quality requirements
-- **Core loop**: classify -> retrieve context -> draft -> fact-check -> tone check -> queue/send
+- **Purpose**: Structured, cost-aware AI workflows that preserve user voice
+- **Outputs**: triage labels, drafts, confidence checks, emotion tags, FAQ templates
+- **Model policy**: cheapest tier meeting quality requirements
+- **Core loop**: classify → retrieve context → draft → fact-check → tone check → queue/send
 
-## Model Tier Routing (Operation -> Tier -> Rationale)
+## Model Tier Routing
 
-| Operation | Tier | Why this tier |
+| Operation | Tier | Rationale |
 |---|---|---|
-| Inbox priority triage (spam, low, normal, urgent) | `haiku` | Fast classification with low reasoning depth |
-| Intent classification (support, sales, legal, billing, personal) | `haiku` | Deterministic labeling and taxonomy mapping |
-| Sentiment/emotion tagging for inbound mail | `haiku` | Structured extraction and short-context tagging |
-| Duplicate-thread detection | `haiku` | Lightweight similarity + metadata checks |
-| FAQ template retrieval candidate ranking | `haiku` | Cheap retrieval scoring over known template set |
-| Newsletter corpus summarization | `flash` | Efficient processing of large context batches |
-| Mailbox pattern extraction (phrase frequency, openings, closings) | `flash` | Bulk transformation across many threads |
-| Routine reply drafting from known patterns | `sonnet` | Better style control and instruction following |
-| Ambiguous multi-question responses | `sonnet` | Stronger reasoning across mixed intents |
-| Fact-checking assertions against provided sources | `sonnet` | Verification logic and contradiction handling |
-| High-stakes external communication (executive, legal-adjacent) | `opus` | Maximum reliability for nuanced stakes |
-| Escalation recommendation with trade-off explanation | `opus` | Multi-variable judgment and risk framing |
+| Priority triage (spam/low/normal/urgent) | `haiku` | Fast classification |
+| Intent classification (support/sales/legal/billing) | `haiku` | Deterministic labeling |
+| Sentiment/emotion tagging | `haiku` | Short-context extraction |
+| Duplicate-thread detection | `haiku` | Lightweight similarity |
+| FAQ template ranking | `haiku` | Cheap retrieval scoring |
+| Newsletter summarization | `flash` | Large context batches |
+| Mailbox pattern extraction | `flash` | Bulk transformation |
+| Routine reply drafting | `sonnet` | Style control |
+| Multi-question responses | `sonnet` | Mixed-intent reasoning |
+| Fact-checking against sources | `sonnet` | Contradiction handling |
+| High-stakes communication (exec/legal) | `opus` | Maximum reliability |
+| Escalation with trade-off explanation | `opus` | Multi-variable judgment |
 
-**Escalation rule**: Start at the listed tier. Escalate one tier up when confidence is below threshold, source coverage is incomplete, or consequence of error is high.
+**Escalation**: Move up one tier when confidence is low, source coverage incomplete, or error consequence high.
 
-## Voice Mining Methodology
+## Voice Mining
 
-### 1) Build a representative training slice
+### 1) Build training slice
 
-- Sample sent emails across contexts: short replies, long explanations, follow-ups, corrections, and declines
-- Exclude threads with known atypical voice (delegated responses, legal templates, copied boilerplate)
-- Keep chronology so style drift over time is measurable
+- Sample sent emails across contexts (replies, explanations, follow-ups, corrections, declines)
+- Exclude atypical voice (delegated, legal templates, boilerplate)
+- Keep chronology to measure style drift
 
 ### 2) Extract style features
 
-- **Structure**: typical length, paragraph rhythm, bullet preference, question density
-- **Openings/closings**: greeting forms, sign-off variants, CTA framing
-- **Lexicon**: recurring phrases, preferred verbs, taboo phrasing, hedging patterns
-- **Tone profile**: directness, warmth, firmness, certainty language
-- **Decision style**: how trade-offs and constraints are explained
+- **Structure**: length, paragraph rhythm, bullet preference, question density
+- **Openings/closings**: greeting forms, sign-offs, CTA framing
+- **Lexicon**: recurring phrases, preferred verbs, taboo phrasing, hedging
+- **Tone**: directness, warmth, firmness, certainty language
+- **Decision style**: how trade-offs are explained
 
-### 3) Distill to a compact voice spec
+### 3) Distill to voice spec
 
-- Write a short voice card with: do, avoid, preferred transitions, and sample rewrites
-- Store reusable snippets as patterns rather than full-message copies
-- Update monthly or after major role/context changes
+- Voice card: do, avoid, preferred transitions, sample rewrites
+- Store snippets as patterns, not full messages; update monthly
 
-### 4) Apply at generation time
+### 4) Apply at generation
 
-- Attach voice card + 2-3 nearest exemplar snippets to each drafting prompt
-- Require style self-check before final draft ("what differs from target voice")
-- Fall back to neutral style if confidence in voice match is low
+- Attach voice card + 2-3 exemplar snippets to drafting prompts
+- Require style self-check before final draft
+- Fall back to neutral if voice-match confidence is low
 
-## Newsletter-as-Training-Material Extraction
+## Newsletter Extraction
 
-Use high-quality newsletters as domain and style priors, not as copy sources.
+Use newsletters as domain/style priors, not copy sources.
 
-### Extraction workflow
+1. Ingest archive → split into issue-level records
+2. Tag sections: hook, explainer, evidence, CTA, closing
+3. Extract patterns: headline templates, transitions, evidence framing
+4. Capture facts separately from rhetoric
+5. Store indexed for retrieval
 
-1. Ingest newsletter archive and split into issue-level records
-2. Tag each section by function: hook, explainer, evidence, CTA, closing
-3. Extract reusable patterns: headline templates, transition devices, evidence framing
-4. Capture factual claims separately from rhetoric
-5. Store in an indexed library for retrieval during drafting
+**Guardrails**: Keep attribution (source, date, topic); prefer paraphrase over reuse; filter stale claims.
 
-### Guardrails
+## Fact-Checking
 
-- Keep attribution metadata (source, date, topic)
-- Prefer paraphrased pattern transfer over direct text reuse
-- Filter stale or unverifiable claims before adding to retrieval store
+**Contract**: Separate claims into factual, interpretive, action-request. Factual claims require source coverage; missing coverage → rewrite with uncertainty or request confirmation.
 
-## Fact-Checking Before Send
-
-### Verification contract
-
-- Separate claims into: factual, interpretive, and action-request
-- Factual claims require source coverage before send
-- When coverage is missing, rewrite with uncertainty language or request confirmation
-
-### Practical checks
-
-- Verify names, dates, numbers, prices, and policy statements
-- Detect internal contradictions within the draft
-- Confirm links and referenced documents match the claim
-
-### Output schema (recommended)
+**Checks**: Verify names, dates, numbers, prices, policy statements; detect contradictions; confirm links match claims.
 
 | Field | Description |
 |---|---|
-| `claim` | The exact statement in the draft |
-| `status` | `verified`, `uncertain`, `contradicted`, `missing-source` |
-| `source_refs` | Source IDs or links used to evaluate the claim |
-| `action` | Keep, rewrite, remove, or escalate |
+| `claim` | Statement in draft |
+| `status` | `verified` / `uncertain` / `contradicted` / `missing-source` |
+| `source_refs` | Sources used |
+| `action` | Keep / rewrite / remove / escalate |
 
-## Emotion Tagging for Response Calibration
+## Emotion Tagging
 
-Tag inbound messages with one primary and optional secondary emotions:
+**Primary**: `neutral`, `curious`, `confused`, `frustrated`, `angry`, `anxious`, `excited`, `appreciative`
+**Secondary**: `urgent`, `defensive`, `skeptical`, `collaborative`
 
-- Primary set: `neutral`, `curious`, `confused`, `frustrated`, `angry`, `anxious`, `excited`, `appreciative`
-- Secondary modifiers: `urgent`, `defensive`, `skeptical`, `collaborative`
+**Response calibration**:
+- Frustration/anger → shorten latency, increase acknowledgment, reduce jargon
+- Anxiety/confusion → more structure, explicit next steps, reassurance
+- Appreciative/excited → maintain momentum, clear CTA, timebox
 
-Use tags to adjust response policy:
+## Token Efficiency
 
-- Higher frustration/anger -> shorten latency, increase acknowledgment, reduce jargon
-- Anxiety/confusion -> increase structure, explicit next steps, reassurance
-- Appreciative/excited -> maintain momentum with clear CTA and timebox
+- AI for high-volume filtering; humans for irreversible/high-cost decisions
+- Compact prompts: voice card + thread summary + minimal context
+- Cache thread summaries; don't replay full history
+- Cheap prefilters (`haiku`) before expensive composition (`sonnet`/`opus`)
+- Batch classification; avoid per-message high-tier calls
 
-## Token Efficiency Principles
+## FAQ Templates
 
-- **AI bandwidth > human bandwidth**: use AI for high-volume filtering; reserve human attention for irreversible or high-cost decisions
-- Keep prompts compact: voice card, current thread summary, and minimal needed context only
-- Reuse cached summaries for long threads instead of replaying full history each time
-- Run cheap prefilters (`haiku`) before expensive composition (`sonnet`/`opus`)
-- Batch similar classification tasks; do not invoke high-tier models per message by default
+**Design**: Intent-based entries with question pattern, required variables, canonical answer, confidence gates. Separate facts from phrasing.
 
-## FAQ Template System
-
-### Design
-
-- Store templates as intent-based entries: question pattern, required variables, canonical answer, confidence gates
-- Separate stable facts from phrasing so facts update without rewriting style examples
-
-### Lifecycle
-
-1. Mine frequent resolved questions from mailbox history
-2. Draft canonical answer with source references
-3. Add variation examples in target voice
-4. Track usage, edits, and failure reasons
-5. Retire templates with persistent low confidence or stale facts
-
-### Minimum template shape
+**Lifecycle**: Mine frequent questions → draft canonical answer → add voice variants → track usage/failures → retire stale templates.
 
 | Field | Purpose |
 |---|---|
-| `intent` | What user is asking |
-| `slots` | Variables needed to answer |
-| `answer_core` | Source-backed factual answer |
-| `voice_variants` | Optional style variants |
-| `escalate_if` | Conditions requiring human review |
+| `intent` | What user asks |
+| `slots` | Variables needed |
+| `answer_core` | Source-backed answer |
+| `voice_variants` | Style variants |
+| `escalate_if` | Human review conditions |
 | `last_verified_at` | Freshness timestamp |
 
-## Mailbox Training and Continuous Improvement
+## Continuous Improvement
 
-- Weekly: sample recent sent and received threads for new patterns
-- Monthly: refresh voice card and FAQ confidence metrics
-- Quarterly: recalibrate model routing with observed quality/cost outcomes
-- Always record false positives (bad triage/emotion labels) for retraining prompts
+- **Weekly**: Sample threads for new patterns
+- **Monthly**: Refresh voice card and FAQ metrics
+- **Quarterly**: Recalibrate model routing with quality/cost data
+- **Always**: Record false positives for retraining
 
 ## Related
 
-- `services/email/email-agent.md` - mission email execution and thread handling
-- `services/email/mission-email.md` - orchestrator-focused mission communication patterns
-- `tools/context/model-routing.md` - global model tier guidance and fallback rules
+- `services/email/email-agent.md` — mission email execution
+- `services/email/mission-email.md` — orchestrator communication patterns
+- `tools/context/model-routing.md` — global tier guidance
 
 <!-- AI-CONTEXT-END -->
