@@ -922,9 +922,9 @@
       "pr": 11813
     },
     ".agents/workflows/git-workflow.md": {
-      "hash": "549fdf7138a059f5338b5cc825a3280fb4ee9a48",
-      "at": "2026-03-28T11:52:27Z",
-      "pr": 11814
+      "hash": "7b3fa2141daa4cec0c3c33e73997f3519a9534d4",
+      "at": "2026-03-29T07:32:12Z",
+      "pr": 12550
     },
     ".agents/marketing-sales/ad-creative-copywriting.md": {
       "hash": "84d60fe17b4cc01ac5bec4ce3363428510a2ece6",
@@ -1787,9 +1787,9 @@
       "pr": 12666
     },
     ".agents/tools/ai-orchestration/openprose.md": {
-      "hash": "60f188b3ffd45f7943dec1cb45902fe7d3a22318",
-      "at": "2026-03-29T07:02:14Z",
-      "pr": 12657
+      "hash": "352f5da544f3c05517e1012dc060b516aa995506",
+      "at": "2026-03-29T07:31:39Z",
+      "pr": 12707
     },
     ".agents/content/heygen-skill/rules-avatars.md": {
       "hash": "e600865474071a7973fe0ed89b4fd361065e080a",
@@ -1880,6 +1880,26 @@
       "hash": "96d5278ed393a25379da0c21d04db2269219cbf9",
       "at": "2026-03-29T07:03:02Z",
       "pr": 12616
+    },
+    ".agents/workflows/ui-verification.md": {
+      "hash": "c59b154d588638a381fc14e85f435772cb88e31a",
+      "at": "2026-03-29T07:31:37Z",
+      "pr": 12705
+    },
+    ".agents/content/heygen-skill/rules-video-agent.md": {
+      "hash": "1d039d6d91c08e661a96696b19d43edbefe54b0e",
+      "at": "2026-03-29T07:31:38Z",
+      "pr": 12706
+    },
+    ".agents/tools/architecture/clean-ddd-hexagonal-skill/hexagonal.md": {
+      "hash": "29cb61e27a1b31b1f2d08b21b38d276774f9353d",
+      "at": "2026-03-29T07:31:41Z",
+      "pr": 12708
+    },
+    ".agents/tools/deployment/cloudron-server-ops-skill.md": {
+      "hash": "c1fcd168d83da66b8a48ff30f23197361d174aa5",
+      "at": "2026-03-29T07:31:42Z",
+      "pr": 12709
     }
   }
 }
