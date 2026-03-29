@@ -12,21 +12,10 @@ Avatars are AI-generated presenters. Use public HeyGen avatars or custom avatars
 ## Workflow: Preview → Select → Generate
 
 1. List avatars — get names, genders, preview URLs
-2. Open preview in browser — `open <preview_image_url>` (macOS) / `xdg-open` (Linux)
+2. Open preview in browser — `open <preview_image_url>` (macOS) / `xdg-open` (Linux) — no auth needed
 3. User selects avatar by name or ID
 4. Get avatar details for `default_voice_id`
 5. Generate video with `avatar_id` + `default_voice_id`
-
-**Preview URLs are publicly accessible — no auth needed. Pass the URL directly to `open`; it opens in the browser without downloading.**
-
-```bash
-# macOS: open URL in browser (no download)
-open "https://files.heygen.ai/avatar/preview/josh.jpg"
-open "https://files.heygen.ai/avatar/preview/josh.mp4"
-
-# Linux
-xdg-open "https://files.heygen.ai/avatar/preview/josh.jpg"
-```
 
 ## Listing Avatars
 
@@ -55,12 +44,6 @@ async function listAvatars(): Promise<Avatar[]> {
   if (json.error) throw new Error(json.error);
   return json.data.avatars;
 }
-
-// Filter helpers
-const byGender = (avatars: Avatar[], g: "male" | "female") =>
-  avatars.filter((a) => a.gender === g);
-const byName = (avatars: Avatar[], q: string) =>
-  avatars.filter((a) => a.avatar_name.toLowerCase().includes(q.toLowerCase()));
 ```
 
 **Response shape:**
@@ -124,25 +107,6 @@ interface AvatarGroupItem {
   train_status: string;
   default_voice_id: string | null;
 }
-
-async function listAvatarGroups(
-  page = 1, pageSize = 20, includePublic = true, query?: string
-): Promise<{ avatar_group_list: AvatarGroupItem[]; total_count: number }> {
-  const params = new URLSearchParams({
-    page: page.toString(),
-    page_size: pageSize.toString(),
-    include_public: includePublic.toString(),
-    ...(query ? { query } : {}),
-  });
-  const response = await fetch(
-    `https://api.heygen.com/v3/avatar_group.list?${params}`,
-    { headers: { "X-Api-Key": process.env.HEYGEN_API_KEY! } }
-  );
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const json = await response.json();
-  if (json.error) throw new Error(json.error);
-  return json.data;
-}
 ```
 
 ## Avatar Styles
@@ -193,30 +157,6 @@ interface AvatarDetails {
   default_voice_id: string | null;
   tags: string[];
 }
-
-async function getAvatarDetails(avatarId: string): Promise<AvatarDetails> {
-  const response = await fetch(
-    `https://api.heygen.com/v2/avatar/${avatarId}/details`,
-    { headers: { "X-Api-Key": process.env.HEYGEN_API_KEY! } }
-  );
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const json = await response.json();
-  if (json.error) throw new Error(json.error);
-  return json.data;
-}
-
-async function generateWithDefaultVoice(avatarId: string, script: string): Promise<string> {
-  const avatar = await getAvatarDetails(avatarId);
-  if (!avatar.default_voice_id) throw new Error(`${avatar.name} has no default voice`);
-
-  return generateVideo({
-    video_inputs: [{
-      character: { type: "avatar", avatar_id: avatar.id, avatar_style: "normal" },
-      voice: { type: "text", input_text: script, voice_id: avatar.default_voice_id },
-    }],
-    dimension: { width: 1920, height: 1080 },
-  });
-}
 ```
 
 ## Selecting the Right Avatar
@@ -233,12 +173,6 @@ async function generateWithDefaultVoice(avatarId: string, script: string): Promi
 - Not previewing before generation — always `open <preview_image_url>`
 - Mismatched voice gender — use `default_voice_id` or match genders manually
 - Wrong style — `circle` doesn't work for full-screen presentations
-
-**Pre-generation checklist:**
-- [ ] Previewed avatar image/video in browser
-- [ ] Appearance matches content tone
-- [ ] Style fits video format
-- [ ] Using `default_voice_id` when available
 
 ## Common Avatar IDs
 
