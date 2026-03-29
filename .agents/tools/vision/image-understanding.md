@@ -47,13 +47,13 @@ curl https://api.openai.com/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4o","messages":[{"role":"user","content":[{"type":"text","text":"Describe this image"},{"type":"image_url","image_url":{"url":"https://example.com/image.jpg"}}]}],"max_tokens":1000}'
 
-# Local image (base64)
+# Local image (base64) — detail:"low" ~85 tokens (classification)
 base64 -i screenshot.png | \
   jq -Rs '{model:"gpt-4o",messages:[{role:"user",content:[{type:"text",text:"Describe this"},{type:"image_url",image_url:{url:("data:image/png;base64,"+.)}}]}]}' | \
   curl -s https://api.openai.com/v1/chat/completions -H "Authorization: Bearer $OPENAI_API_KEY" -H "Content-Type: application/json" -d @-
 ```
 
-`detail: "low"` ~85 tokens (classification). Token costs: see table below. [OpenAI vision docs](https://platform.openai.com/docs/guides/vision).
+[OpenAI vision docs](https://platform.openai.com/docs/guides/vision)
 
 ### Anthropic (Claude Vision)
 
@@ -85,16 +85,13 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:g
 
 ```bash
 brew install ollama
-ollama pull llava        # General vision (~4GB)
-ollama pull minicpm-v    # Efficient local (~4GB)
-ollama pull qwen2-vl     # Multilingual (~8GB)
+ollama pull llava && ollama pull minicpm-v && ollama pull qwen2-vl
 
-# CLI usage
 ollama run llava "Describe this image" --images photo.jpg
 ollama run minicpm-v "List UI elements and positions" --images screenshot.png
 ollama run qwen2-vl "Explain this architecture diagram" --images diagram.png
 
-# REST API
+# REST
 curl http://localhost:11434/api/generate \
   -d '{"model":"llava","prompt":"Describe this image","images":["<base64>"]}'
 ```
@@ -102,7 +99,7 @@ curl http://localhost:11434/api/generate \
 ## Common Use Cases
 
 ```bash
-# Alt text for accessibility
+# Alt text
 ollama run llava "Write concise alt text for screen readers. Focus on key visual content and purpose." --images hero.jpg
 
 # UI/UX review
@@ -111,7 +108,7 @@ ollama run minicpm-v "Review this UI: 1) Alignment 2) Contrast 3) Missing elemen
 # Wireframe to layout spec
 ollama run qwen2-vl "Describe as HTML/CSS layout spec: components, positions, dimensions." --images wireframe.png
 
-# Batch analysis
+# Batch
 for img in dir/*.{jpg,png,webp}; do
   [ -f "$img" ] || continue
   echo "=== $(basename "$img") ===" && ollama run llava "Describe in one sentence" --images "$img"
