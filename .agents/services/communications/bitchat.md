@@ -42,15 +42,15 @@ tools:
 
 ## Architecture
 
-Devices form ad-hoc BLE mesh networks with four layers: Application (`BitchatMessage`) → Session (`BitchatPacket`, compact binary) → Encryption (Noise XX) → Transport (BLE). Each device acts as both endpoint and relay — messages hop through intermediaries (TTL-decremented) to extend range. No central coordinator; the network forms and dissolves as devices move.
+Four-layer stack: Application (`BitchatMessage`) → Session (`BitchatPacket`, compact binary) → Encryption (Noise XX) → Transport (BLE). Each device is both endpoint and relay; messages hop through intermediaries (TTL-decremented). No central coordinator.
 
-**Message flow**: Sender serializes a `BitchatPacket` → Noise XX handshake (if needed) → encrypt with ChaCha20-Poly1305 → pad to block size (256/512/1024/2048 bytes, resists traffic analysis) → transmit over BLE → relay peers decrement TTL and forward → recipient decrypts → delivery ACK returns through mesh.
+**Message flow**: `BitchatPacket` serialized → Noise XX handshake (if needed) → ChaCha20-Poly1305 encrypt → pad to block size (256/512/1024/2048 bytes, resists traffic analysis) → BLE transmit → relay peers decrement TTL and forward → recipient decrypts → delivery ACK returns through mesh.
 
 ## Protocol
 
 ### Identity and Keys
 
-Each device generates two persistent key pairs on first launch (stored in the device's secure keystore — Apple Keychain on iOS/macOS; Android Keystore on Android):
+Two persistent key pairs generated on first launch (Apple Keychain on iOS/macOS; Android Keystore on Android):
 
 | Key | Algorithm | Purpose |
 |-----|-----------|---------|
@@ -118,13 +118,9 @@ No desktop Linux/Windows client. No CLI or bot API (native app only).
 
 ## Integration with aidevops
 
-**Status**: No programmatic API — native app only. Direct integration with aidevops runners is not currently possible.
+**Status**: No programmatic API — native app only. Direct runner integration not currently possible.
 
-**Future possibilities**:
-
-- **Native bridge**: macOS app bridging Bitchat to a local WebSocket (similar to SimpleX CLI bot API)
-- **Matterbridge adapter**: If Bitchat adds CLI/API, bridge to Matrix/SimpleX/etc.
-- **Offline dispatch**: Relay task results between devices when internet is unavailable
+**Future paths**: native macOS WebSocket bridge (like SimpleX CLI bot API); Matterbridge adapter if CLI/API added; offline task-result relay between devices.
 
 | Scenario | Value |
 |----------|-------|
