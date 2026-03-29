@@ -2442,8 +2442,8 @@
       "pr": 13287
     },
     ".agents/services/hosting/cloudflare-platform-skill/d1-patterns.md": {
-      "hash": "9161576c073174af3b4edfd2cb27b3e7d665d6bf",
-      "at": "2026-03-29T20:54:02Z",
+      "hash": "8e6341f6f72cefdc4c09224910c1c4efe62de068",
+      "at": "2026-03-29T21:43:01Z",
       "pr": 13296
     },
     ".agents/tools/context/context-builder.md": {
@@ -2452,8 +2452,8 @@
       "pr": 13297
     },
     ".agents/tools/diagrams/mermaid-diagrams-skill/cheatsheet.md": {
-      "hash": "d21ccba43b9c70f76a2c3d2a1e7fd29a8217d0dd",
-      "at": "2026-03-29T20:54:05Z",
+      "hash": "79456bef17217d0052079264a0c95b59456d5385",
+      "at": "2026-03-29T21:43:04Z",
       "pr": 13300
     },
     ".agents/tools/git/opencode-gitlab.md": {
@@ -2467,14 +2467,94 @@
       "pr": 13294
     },
     ".agents/seo/programmatic-seo.md": {
-      "hash": "d88edb7fe13f23a1c4ce84da7b8eb62964d54908",
-      "at": "2026-03-29T20:54:08Z",
+      "hash": "246454e374da68bf1dcec5b59e732fac3841e7dd",
+      "at": "2026-03-29T21:43:09Z",
       "pr": 13301
     },
     ".agents/tools/mobile/app-dev-backend.md": {
       "hash": "1521ed7526fbc0fb399a1f5edf01adb4129a08f6",
       "at": "2026-03-29T20:54:10Z",
       "pr": 13293
+    },
+    ".agents/marketing-sales/meta-ads-campaigns-scaling-cbo.md": {
+      "hash": "6fb79b1689e522f77f09f4398f80430c8c727116",
+      "at": "2026-03-29T21:42:59Z",
+      "pr": 13263
+    },
+    ".agents/marketing-sales/meta-ads-foundations-account-structure.md": {
+      "hash": "d8a1a11c970efd832edd47784162978ad05783f0",
+      "at": "2026-03-29T21:43:00Z",
+      "pr": 13333
+    },
+    ".agents/tools/video/remotion-measuring-text.md": {
+      "hash": "619d768e114ab99f64b37c93d1628ae5cb7d54a4",
+      "at": "2026-03-29T21:43:06Z",
+      "pr": 13315
+    },
+    ".agents/marketing-sales/cro-chapter-17.md": {
+      "hash": "55117c563ab956b0653eca2c335a7e8c14e15708",
+      "at": "2026-03-29T21:43:12Z",
+      "pr": 13339
+    },
+    ".agents/scripts/commands/dashboard.md": {
+      "hash": "c72021fe5b7c20c340b5a5a1e1b66cf6b3d247f9",
+      "at": "2026-03-29T21:43:13Z",
+      "pr": 13338
+    },
+    ".agents/services/email/email-security.md": {
+      "hash": "933383c81c9e820f3d3b80f5dbd3db61d496e0cb",
+      "at": "2026-03-29T21:43:14Z",
+      "pr": 13343
+    },
+    ".agents/tools/mobile/minisim.md": {
+      "hash": "4e237b094b421f7ff8557426808fd3d6380b4ef1",
+      "at": "2026-03-29T21:43:16Z",
+      "pr": 13340
+    },
+    ".agents/tools/security/tamper-evident-audit.md": {
+      "hash": "ef75d5914e0ae15e449ccd4480b0add3eda84c71",
+      "at": "2026-03-29T21:43:17Z",
+      "pr": 13316
+    },
+    ".agents/tools/vision/image-editing.md": {
+      "hash": "1b91142d29e8ff6515be5a6208386de1fcaf383d",
+      "at": "2026-03-29T21:43:18Z",
+      "pr": 13236
+    },
+    ".agents/business/accounts-subscription-audit.md": {
+      "hash": "ef31fbb7ef1c8e43fc6f5e6ff3f7bed9b5b0e3a0",
+      "at": "2026-03-29T21:43:19Z",
+      "pr": 13235
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/workflows-gotchas.md": {
+      "hash": "f9b10b21adc0e823054085098ba86a6e8432ade1",
+      "at": "2026-03-29T21:43:20Z",
+      "pr": 13342
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/workflows-patterns.md": {
+      "hash": "7b01531e7d09b10fc7ab3a1706498fd011b6bb1b",
+      "at": "2026-03-29T21:43:21Z",
+      "pr": 13342
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/workflows.md": {
+      "hash": "5faeef07292125f8b45b6b29bc0b24d06d24c1f1",
+      "at": "2026-03-29T21:43:21Z",
+      "pr": 13342
+    },
+    ".agents/tools/infrastructure/cloud-gpu.md": {
+      "hash": "f2b2d82030ffec23c21ca82c2833ba2cbac2dcc9",
+      "at": "2026-03-29T21:43:22Z",
+      "pr": 13346
+    },
+    ".agents/tools/mcp/cloudflare-code-mode.md": {
+      "hash": "21372448d102edee363ae7f1b8dccac5762ef159",
+      "at": "2026-03-29T21:43:23Z",
+      "pr": 13345
+    },
+    ".agents/tools/video/remotion-compositions.md": {
+      "hash": "0f739f46e676ff9df4c13d0a2d10ab6f7ea6b877",
+      "at": "2026-03-29T21:43:24Z",
+      "pr": 13344
     }
   }
 }
