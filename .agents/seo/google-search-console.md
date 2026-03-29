@@ -16,7 +16,7 @@ tools:
 
 ## Quick Reference
 
-- **Primary access**: MCP tools (`gsc_*`) - enabled for SEO agent
+- **Primary access**: MCP tools (`gsc_*`) — enabled for SEO agent
 - **Fallback**: curl with OAuth2 token from service account
 - **API**: REST at `https://searchconsole.googleapis.com/v1/`
 - **Auth**: Service account JSON at `~/.config/aidevops/gsc-credentials.json`
@@ -26,31 +26,15 @@ tools:
 
 ## Setup
 
-### 1. Google Cloud Project
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com) → create or select a project
-2. Enable the **Google Search Console API**
-3. **Credentials** → **Create Credentials** → **Service Account** → name it (e.g., `aidevops`)
-4. **Keys** tab → **Add Key** → **Create new key** → **JSON** → save to `~/.config/aidevops/gsc-credentials.json` and `chmod 600` it
-
-### 2. Add Service Account to GSC Properties
-
-**Manual**: GSC → Property → Settings → Users and permissions → Add user (service account email, e.g., `aidevops@project-id.iam.gserviceaccount.com`)
-
-**Automated**: Use the Playwright script below to bulk-add to all properties.
-
-### 3. Verify Access
-
-```bash
-python3 -c "import json; d=json.load(open('$HOME/.config/aidevops/gsc-credentials.json')); print(f'Service account: {d[\"client_email\"]}')"
-```
+1. Google Cloud Console → enable **Google Search Console API** → Credentials → Service Account → JSON key → save to `~/.config/aidevops/gsc-credentials.json` and `chmod 600` it
+2. GSC → Property → Settings → Users and permissions → Add user (service account email). For bulk-add across all properties, use the Playwright script below.
+3. Verify: `python3 -c "import json; d=json.load(open('$HOME/.config/aidevops/gsc-credentials.json')); print(d['client_email'])"`
 
 ## Direct API Access (curl fallback)
 
 **Requirements**: `pip install PyJWT requests`
 
 ```bash
-# Get OAuth2 access token from service account
 ACCESS_TOKEN=$(python3 -c "
 import json, time, jwt, requests
 creds = json.load(open('$HOME/.config/aidevops/gsc-credentials.json'))
@@ -63,24 +47,16 @@ print(r.json()['access_token'])
 ")
 
 # List sites
-curl -s "https://searchconsole.googleapis.com/v1/sites" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+curl -s "https://searchconsole.googleapis.com/v1/sites" -H "Authorization: Bearer $ACCESS_TOKEN"
 
 # Search analytics query
 curl -s -X POST "https://searchconsole.googleapis.com/v1/sites/https%3A%2F%2Fexample.com/searchAnalytics/query" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "startDate": "2025-01-01",
-    "endDate": "2025-01-20",
-    "dimensions": ["query", "page"],
-    "rowLimit": 25
-  }'
+  -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"startDate": "2025-01-01", "endDate": "2025-01-20", "dimensions": ["query", "page"], "rowLimit": 25}'
 
-# Inspect URL indexing status (checks status only — to submit for indexing use indexing.googleapis.com/v3/urlNotifications:publish)
+# Inspect URL indexing status (to submit for indexing use indexing.googleapis.com/v3/urlNotifications:publish)
 curl -s -X POST "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
   -d '{"inspectionUrl": "https://example.com/page", "siteUrl": "https://example.com"}'
 ```
 
@@ -104,64 +80,44 @@ curl -s -X POST "https://searchconsole.googleapis.com/v1/urlInspection/index:ins
 - Geographic: `dimensions: ["country"]`
 - CTR opportunities: filter `impressions > 100` and `ctr < 0.05`
 
-## Automated Bulk Setup with Playwright
+## Bulk Setup with Playwright
+
+Save as `gsc-add-service-account.js`, run with `node gsc-add-service-account.js`. Requires `npm install playwright`, Chrome logged into Google, Owner access to GSC properties.
 
 ```javascript
-// Save as gsc-add-service-account.js
 import { chromium } from 'playwright';
-
 const SERVICE_ACCOUNT = "your-service-account@project.iam.gserviceaccount.com";
+// Chrome profile: macOS ~/Library/Application Support/Google/Chrome/Default
+//                 Linux ~/.config/google-chrome/Default
 
 async function main() {
     const browser = await chromium.launchPersistentContext(
         '/Users/USERNAME/Library/Application Support/Google/Chrome/Default',
         { headless: false, channel: 'chrome' }
     );
-
     const page = await browser.newPage();
     await page.goto("https://search.google.com/search-console", { waitUntil: 'networkidle' });
     await page.waitForTimeout(2000);
-
-    const html = await page.content();
-    const domainRegex = /sc-domain:([a-z0-9.-]+)/g;
-    const domains = [...new Set([...html.matchAll(domainRegex)].map(m => m[1]))];
+    const domains = [...new Set([...((await page.content()).matchAll(/sc-domain:([a-z0-9.-]+)/g))].map(m => m[1]))];
     console.log(`Found ${domains.length} properties`);
-
     for (const domain of domains) {
-        console.log(`Processing ${domain}...`);
         try {
-            await page.goto(`https://search.google.com/search-console/users?resource_id=sc-domain:${domain}`,
-                { waitUntil: 'networkidle' });
+            await page.goto(`https://search.google.com/search-console/users?resource_id=sc-domain:${domain}`, { waitUntil: 'networkidle' });
             await page.waitForTimeout(400);
-
             const content = await page.content();
-            if (content.includes("don't have access")) { console.log(`  No access`); continue; }
-            if (content.includes(SERVICE_ACCOUNT)) { console.log(`  Already added`); continue; }
-
+            if (content.includes("don't have access") || content.includes(SERVICE_ACCOUNT)) continue;
             await page.click('text=ADD USER');
             await page.waitForTimeout(400);
             await page.keyboard.type(SERVICE_ACCOUNT, { delay: 5 });
             await page.keyboard.press('Enter');
             await page.waitForTimeout(1000);
-            console.log(`  Added`);
-        } catch (error) {
-            console.error(`  Error: ${error.message}`);
-        }
+            console.log(`  Added ${domain}`);
+        } catch (e) { console.error(`  Error ${domain}: ${e.message}`); }
     }
     await browser.close();
 }
-
 main().catch(console.error);
 ```
-
-Run with: `node gsc-add-service-account.js`
-
-**Requirements**: `npm install playwright` · Chrome with logged-in Google session · Owner access to GSC properties
-
-**Chrome profile paths**:
-- macOS: `/Users/USERNAME/Library/Application Support/Google/Chrome/Default`
-- Linux: `~/.config/google-chrome/Default`
-- Windows: `%LOCALAPPDATA%\Google\Chrome\User Data\Default`
 
 ## Troubleshooting
 
@@ -169,12 +125,7 @@ Run with: `node gsc-add-service-account.js`
 
 **"No access to property"**: Service account email must be added as a user (Full or Owner permission). Domain must be verified in GSC first.
 
-**Connection issues**:
-
-```bash
-ls -la ~/.config/aidevops/gsc-credentials.json
-opencode mcp list
-```
+**Connection issues**: `ls -la ~/.config/aidevops/gsc-credentials.json` · `opencode mcp list`
 
 ## MCP Configuration
 
