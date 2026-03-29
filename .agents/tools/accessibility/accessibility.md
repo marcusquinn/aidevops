@@ -45,6 +45,7 @@ tools:
 ## Setup
 
 ```bash
+# Install all dependencies
 .agents/scripts/accessibility-helper.sh install-deps
 .agents/scripts/accessibility-audit-helper.sh install-deps
 
@@ -55,7 +56,7 @@ export WAVE_API_KEY="your-key"     # or environment variable
 
 ## Usage
 
-### Full Audit
+### Full Audit (Recommended)
 
 Runs Lighthouse + pa11y on desktop and mobile:
 
@@ -109,7 +110,7 @@ Output: pass/fail for AA normal (4.5:1), AA large (3:1), AAA normal (7:1), AAA l
 
 ### Playwright Contrast Extraction
 
-Renders page headlessly, traverses DOM extracting computed foreground/background colors (resolving transparent backgrounds), font sizes, and weights. Calculates WCAG ratios per element. Per-element output: CSS selector, computed colors, contrast ratio `(L1+0.05)/(L2+0.05)`, AA/AAA pass/fail (SC 1.4.3/1.4.6), large text detection (≥18pt or ≥14pt bold), gradient/image background flags for manual review. Exit codes: 0 = all pass, 1 = failures found, 2 = script error.
+Renders page headlessly, traverses DOM extracting computed foreground/background colors (resolving transparent backgrounds), font sizes, and weights. Calculates WCAG ratios per element.
 
 ```bash
 .agents/scripts/accessibility-helper.sh playwright-contrast https://example.com           # summary
@@ -121,15 +122,17 @@ node .agents/scripts/accessibility/playwright-contrast.mjs https://example.com -
 node .agents/scripts/accessibility/playwright-contrast.mjs https://example.com --limit 20
 ```
 
-### Email HTML Accessibility
+Per-element output: CSS selector, computed colors, contrast ratio `(L1+0.05)/(L2+0.05)`, AA/AAA pass/fail (SC 1.4.3/1.4.6), large text detection (≥18pt or ≥14pt bold), gradient/image background flags for manual review.
 
-Checks: `alt` on images (1.1.1), `lang` on `<html>` (3.1.1), `role="presentation"` on layout tables (1.3.1), font size <12px (1.4.4), generic link text (2.4.4), heading structure (1.3.1), color-only indicators (1.4.1).
+Exit codes: 0 = all pass, 1 = failures found, 2 = script error.
+
+### Email HTML Accessibility
 
 ```bash
 .agents/scripts/accessibility-helper.sh email ./newsletter.html
 ```
 
-Email clients strip most CSS/JS. Key rules: `alt` text on all images; `role="presentation"` on layout tables; `lang` on `<html>`; minimum 14px font size; avoid colour-only indicators; descriptive link text; logical reading order; preheader text for screen readers.
+Checks: `alt` on images (1.1.1), `lang` on `<html>` (3.1.1), `role="presentation"` on layout tables (1.3.1), font size <12px (1.4.4), generic link text (2.4.4), heading structure (1.3.1), color-only indicators (1.4.1).
 
 ### Bulk Audit
 
@@ -178,6 +181,24 @@ Email clients strip most CSS/JS. Key rules: `alt` text on all images; `role="pre
 | **AAA** | 1.4.8 | Visual presentation is configurable |
 | **AAA** | 2.4.9 | Link purpose is clear from link text alone |
 | **AAA** | 2.4.10 | Section headings organise content |
+
+## Email-Specific Rules
+
+HTML email clients strip most CSS and JavaScript. Key rules:
+
+1. **`alt` text on all images** — many clients block images by default
+2. **`role="presentation"` on layout tables** — screen readers interpret tables as data
+3. **`lang` attribute on `<html>`** — screen readers need language context
+4. **Minimum 14px font size** — email clients render inconsistently at smaller sizes
+5. **Avoid colour-only indicators** — use text labels alongside colour cues
+6. **Descriptive link text** — "View your order" not "Click here"
+7. **Logical reading order** — table-based layouts must linearise correctly
+8. **Preheader text** — provide meaningful preview text for screen readers
+
+## Reports
+
+- `accessibility-helper.sh` → `~/.aidevops/reports/accessibility/` — `lighthouse_a11y_*.json`, `pa11y_*.json`, `playwright_contrast_*.{json,md,txt}`, `wave_*.json`, `email_a11y_*.txt`
+- `accessibility-audit-helper.sh` → `~/.aidevops/reports/accessibility-audit/` — `axe_*.json`, `wave_*.json`, `webaim_contrast_*.json`, `lighthouse_a11y_*.json`, `comparison_*.txt`
 
 ## Related
 
