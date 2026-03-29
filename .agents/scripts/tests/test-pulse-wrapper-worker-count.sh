@@ -196,6 +196,22 @@ test_has_worker_exact_dir_match_accepts_correct_path() {
 	return 0
 }
 
+test_counts_review_issue_pr_workers() {
+	# GH#12374: /review-issue-pr workers must be counted alongside /full-loop workers.
+	local output
+	output=$(run_count "/usr/local/bin/.opencode run --dir /repo-a --title \"Issue #300\" \"/review-issue-pr Review issue #300\"
+/usr/local/bin/.opencode run --dir /repo-b --title \"Issue #301\" \"/full-loop Implement issue #301\"
+/usr/local/bin/.opencode run --dir /repo-c --title \"Issue #302\" \"/review-issue-pr Review issue #302\"")
+
+	if [[ "$output" == "3" ]]; then
+		print_result "counts /review-issue-pr workers alongside /full-loop (GH#12374)" 0
+		return 0
+	fi
+
+	print_result "counts /review-issue-pr workers alongside /full-loop (GH#12374)" 1 "Expected 3 active workers, got '${output}'"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -207,6 +223,7 @@ main() {
 	test_prefetch_active_workers_consistent_with_count
 	test_has_worker_exact_dir_match_no_sibling_false_positive
 	test_has_worker_exact_dir_match_accepts_correct_path
+	test_counts_review_issue_pr_workers
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then

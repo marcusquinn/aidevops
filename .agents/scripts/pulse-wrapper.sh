@@ -1613,13 +1613,18 @@ list_active_worker_processes() {
 	#   bash sandbox-exec-helper.sh run ... -- opencode run ...  (top-level launcher)
 	#   node /opt/homebrew/bin/opencode run ...                  (node child)
 	#   /path/to/.opencode run ...                               (binary grandchild)
-	# All three contain /full-loop and opencode in their command line.
-	# Fix: match only the top-level launcher process per logical worker:
-	#   1. Lines containing sandbox-exec-helper.sh (normal production path)
-	#   2. Direct opencode run invocations that are NOT node/binary children
-	#      (sandbox-disabled path and test fixtures)
-	# Exclude: lines starting with "node " (node child) or whose command
-	# starts with a path ending in "/.opencode " (binary grandchild).
+	# All three contain /full-loop (or /review-issue-pr) and opencode in their command line.
+	#
+	# GH#12361: Workers dispatched via headless-runtime-helper.sh without
+	# sandbox-exec-helper.sh run as /bin/.opencode processes directly.
+	# The old approach blanket-excluded /bin/.opencode and node child
+	# processes, which missed standalone workers. New approach:
+	#   1. Match all processes with /full-loop or /review-issue-pr + opencode (any binary path)
+	#   2. Deduplicate by issue+dir key: when multiple processes share the
+	#      same issue AND --dir path (sandbox chain), prefer the sandbox
+	#      launcher; if no launcher exists, keep the first match (the
+	#      standalone worker). Different --dir paths = different logical
+	#      workers even with the same issue number.
 	#
 	# GH#6413: Process state filtering — exclude zombie (Z) and stopped (T)
 	# processes. These are dead/stuck processes that hold no useful work but
@@ -1628,20 +1633,65 @@ list_active_worker_processes() {
 	# used for filtering only; output format remains pid,etime,command for
 	# backward compatibility with all consumers.
 	ps axo pid,stat,etime,command | awk '
-		/\/full-loop/ &&
+		($0 ~ /\/full-loop/ || $0 ~ /\/review-issue-pr/) &&
 		$0 !~ /(^|[[:space:]])\/pulse([[:space:]]|$)/ &&
 		$0 !~ /Supervisor Pulse/ &&
-		$0 ~ /(^|[[:space:]\/])\.?opencode([[:space:]]|$)/ &&
-		$0 !~ /[[:space:]]node[[:space:]].*\/opencode/ &&
-		$0 !~ /\/bin\/\.opencode[[:space:]]/ {
+		$0 ~ /(^|[[:space:]\/])\.?opencode([[:space:]]|$)/ {
 			# $2 is the stat column (e.g., S, SN, Ss, Z, Zs, T, TN)
 			stat = $2
 			# Exclude zombies (Z*) and stopped processes (T*)
 			if (stat ~ /^[ZT]/) next
-			# Print pid, etime, command (skip stat to preserve output format)
-			printf "%s %s", $1, $3
-			for (i = 4; i <= NF; i++) printf " %s", $i
-			printf "\n"
+			# Build output line: pid, etime, command (skip stat)
+			line = $1 " " $3
+			for (i = 4; i <= NF; i++) line = line " " $i
+			# Extract issue number for dedup (matches "Issue #NNN" or "issue-NNN")
+			issue = ""
+			if (match($0, /[Ii]ssue[[:space:]]*#([0-9]+)/) || match($0, /issue-([0-9]+)/)) {
+				rest = substr($0, RSTART, RLENGTH)
+				gsub(/[^0-9]/, "", rest)
+				issue = rest
+			}
+			# Fallback: extract from --session-key issue-NNN when no Issue #/issue- marker
+			if (issue == "" && match($0, /--session-key[[:space:]]+issue-([0-9]+)/)) {
+				rest = substr($0, RSTART, RLENGTH)
+				gsub(/[^0-9]/, "", rest)
+				issue = rest
+			}
+			# Extract --dir path for dedup key (same issue in different repos
+			# = different logical workers)
+			dir = ""
+			if (match($0, /--dir[[:space:]]+[^[:space:]]+/)) {
+				dir = substr($0, RSTART, RLENGTH)
+				sub(/--dir[[:space:]]+/, "", dir)
+			}
+			dedup_key = issue "|" dir
+			# Prefer sandbox launcher over node/binary children for same issue+dir
+			is_launcher = ($0 ~ /sandbox-exec-helper\.sh/)
+			if (issue != "" && dedup_key in seen) {
+				# Already have a line for this issue+dir
+				if (is_launcher && !seen_launcher[dedup_key]) {
+					# Replace child with launcher
+					seen_lines[dedup_key] = line
+					seen_launcher[dedup_key] = 1
+				}
+				# Otherwise skip (child of existing launcher, or duplicate)
+			} else if (issue != "") {
+				seen[dedup_key] = 1
+				seen_lines[dedup_key] = line
+				seen_launcher[dedup_key] = is_launcher ? 1 : 0
+				key_order[++key_count] = dedup_key
+			} else {
+				# No issue number found — print directly (edge case)
+				no_issue_lines[++no_issue_count] = line
+			}
+		}
+		END {
+			for (i = 1; i <= key_count; i++) {
+				print seen_lines[key_order[i]]
+			}
+			for (i = 1; i <= no_issue_count; i++) {
+				print no_issue_lines[i]
+			}
 		}
 	'
 	return 0
@@ -5090,7 +5140,7 @@ main() {
 #
 # Criteria (ALL must be true):
 #   - No TTY (headless — not a user's terminal tab)
-#   - Not a current worker (/full-loop not in command)
+#   - Not a current worker (/full-loop or /review-issue-pr not in command)
 #   - Not the supervisor pulse (Supervisor Pulse not in command)
 #   - Not a strategic review (Strategic Review not in command)
 #   - Older than ORPHAN_MAX_AGE seconds
@@ -5117,7 +5167,7 @@ cleanup_orphans() {
 		# Use case instead of [[ =~ ]] with | alternation — zsh parses the |
 		# as a pipe operator inside [[ ]], causing a parse error. See GH#4904.
 		case "$cmd" in
-		*"/full-loop"* | *"Supervisor Pulse"* | *"Strategic Review"* | *"language-server"* | *"eslintServer"*)
+		*"/full-loop"* | *"/review-issue-pr"* | *"Supervisor Pulse"* | *"Strategic Review"* | *"language-server"* | *"eslintServer"*)
 			continue
 			;;
 		esac
@@ -5145,7 +5195,7 @@ cleanup_orphans() {
 		[[ "$tty" != "?" && "$tty" != "??" ]] && continue
 		# Use case instead of [[ =~ ]] with | alternation — zsh parse error. See GH#4904.
 		case "$cmd" in
-		*"/full-loop"* | *"Supervisor Pulse"* | *"Strategic Review"* | *"language-server"* | *"eslintServer"*)
+		*"/full-loop"* | *"/review-issue-pr"* | *"Supervisor Pulse"* | *"Strategic Review"* | *"language-server"* | *"eslintServer"*)
 			continue
 			;;
 		esac
