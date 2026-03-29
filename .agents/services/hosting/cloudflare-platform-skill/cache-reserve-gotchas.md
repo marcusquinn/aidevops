@@ -1,14 +1,27 @@
 # Cache Reserve Gotchas
 
+## Eligibility Requirements
+
+All must hold for an asset to enter Cache Reserve:
+
+- Paid Cache Reserve plan active
+- Tiered Cache enabled (strongly recommended)
+- Asset cacheable per standard rules
+- TTL >= 10 hours (36000s) — `Cache-Control: public, max-age=36000`
+- `Content-Length` header present
+- No `Set-Cookie` header (or `private` directive)
+- No `Vary: *` (use `Vary: Accept-Encoding` instead)
+- Not an image transformation variant
+
 ## Assets Not Being Cached
 
 **Diagnostics:**
 
 - Check `cf-cache-status` header: `curl -I https://example.com/asset.jpg`
-- Verify TTL >= 10 hours, `Content-Length` present, no `Set-Cookie` or `Vary: *`
+- Verify eligibility requirements above
 - Review Cloudflare Trace output and Logpush `CacheReserveUsed` field
 
-**Solutions:**
+**Fixes:**
 
 ```typescript
 // Ensure minimum TTL (10+ hours)
@@ -33,23 +46,21 @@ response.headers.set('Vary', 'Accept-Encoding'); // Not *
 
 **Cause**: Frequent cache misses, short TTLs, or frequent revalidation.
 
-**Solutions:**
-
 ```typescript
-// Increase TTL for stable content (must be >= 36000s to be eligible)
+// Increase TTL for stable content
 response.headers.set('Cache-Control', 'public, max-age=86400, stale-while-revalidate=86400');
 
 // Enable Tiered Cache — reduces direct Cache Reserve misses
 ```
 
-## Purge Not Working as Expected
+## Purge Behaviour
 
 | Method | Cache Reserve | Edge Cache | Cost |
 |--------|--------------|------------|------|
 | By URL | Immediately removed | Immediately removed | Free |
 | By Tag | Revalidation triggered (NOT removed) | Immediately removed | Storage costs continue until TTL |
 
-**Solution**: Use purge by URL for immediate removal, or disable + clear for complete removal:
+Use purge by URL for immediate removal. For complete removal, disable + clear:
 
 ```typescript
 await purgeByURL(['https://example.com/asset.jpg']);
@@ -59,7 +70,7 @@ await disableCacheReserve(zoneId, token);
 await clearAllCacheReserve(zoneId, token);
 ```
 
-## Cache Reserve Disabled But Can't Clear
+## Clearing Cache Reserve
 
 **Error**: `"Cache Reserve must be OFF before clearing data"`
 
@@ -92,25 +103,12 @@ curl -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/cache/cache_res
 curl -I https://example.com/asset.jpg | grep -i cache
 ```
 
-**Header patterns:**
+**Header indicators:**
 
 - Eligible: `cf-cache-status: HIT`, `max-age >= 36000`, `content-length` present
-- Not eligible: TTL < 10hrs | missing `content-length` | has `set-cookie` | `vary: *`
+- Not eligible: fails any requirement in Eligibility Requirements above
 
 ## Limits
-
-**Eligibility checklist:**
-
-- [ ] Paid Cache Reserve plan active
-- [ ] Tiered Cache enabled (strongly recommended)
-- [ ] Assets cacheable per standard rules
-- [ ] TTL >= 10 hours (36000 seconds)
-- [ ] `Content-Length` header present
-- [ ] No `Set-Cookie` header (or using `private` directive)
-- [ ] No `Vary: *` header
-- [ ] Not an image transformation variant
-
-**Key limits:**
 
 | Setting | Value |
 |---------|-------|
