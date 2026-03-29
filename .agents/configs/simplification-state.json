@@ -1022,9 +1022,9 @@
       "pr": 11944
     },
     ".agents/scripts/commands/full-loop.md": {
-      "hash": "fc4ba2d61f5702b51778aa7bcd589adbfae8c569",
-      "at": "2026-03-29T08:10:44Z",
-      "pr": 12728
+      "hash": "a73ba41c00adcbbc2ff5633d07d4fc6c480b6907",
+      "at": "2026-03-29T16:31:29Z",
+      "pr": 13117
     },
     ".agents/workflows/pr.md": {
       "hash": "8f6584d97315d02aa4914a1f26165c57ff873479",
@@ -1377,9 +1377,9 @@
       "pr": 12145
     },
     ".agents/scripts/pulse-wrapper.sh": {
-      "hash": "e2b24a88b8432039016fb2efd47a4b6322f267ae",
-      "at": "2026-03-28T21:59:51Z",
-      "pr": 12146
+      "hash": "3fceee99ce88bbc7e2a79dd591483b383ea98805",
+      "at": "2026-03-29T16:31:29Z",
+      "pr": 13117
     },
     ".agents/tools/browser/stagehand-python.md": {
       "hash": "b08490af463189a93ec652b087e8ac7238a018d0",
@@ -2232,9 +2232,9 @@
       "pr": 12958
     },
     ".agents/services/communications/google-chat.md": {
-      "hash": "fe9be5516ebbffc47d15b147679238743bb3ae21",
-      "at": "2026-03-29T15:50:31Z",
-      "pr": 13070
+      "hash": "49b02cd8b7abcd09ebf4f14d1e2067a3bf917d25",
+      "at": "2026-03-29T16:31:35Z",
+      "pr": 13092
     },
     ".agents/tools/deployment/fly-io.md": {
       "hash": "a253a5662c26417905411ed3cc1b2848de5df412",
@@ -2242,9 +2242,9 @@
       "pr": 13053
     },
     ".agents/tools/design/brand-identity.md": {
-      "hash": "4d0b710f86d8e3ccdfc4f4ba56a0688fef9f94a1",
-      "at": "2026-03-29T15:50:32Z",
-      "pr": 13066
+      "hash": "38405b39bf138bc9063395546f92ff1634cb96ec",
+      "at": "2026-03-29T16:31:32Z",
+      "pr": 13093
     },
     ".agents/marketing-sales/meta-ads-creative-briefs-testimonial-brief.md": {
       "hash": "a641f8d02e933160986b8c49c4f6a5245d325014",
@@ -2281,79 +2281,156 @@
       "at": "2026-03-29T15:51:03Z",
       "pr": 13048
     },
+<<<<<<< HEAD
     ".agents/marketing-sales/ad-creative-chapter-09.md": {
       "hash": "2bdf7194dc300dd779d03b44a37d35015e9f282d",
       "at": "2026-03-29T16:34:21Z",
+=======
+    ".agents/scripts/commands/pulse.md": {
+      "hash": "17825f98cccc6a5b38ed9877d2c1f493287e7a61",
+      "at": "2026-03-29T16:31:29Z",
+      "pr": 13117
+    },
+    ".agents/workflows/feature-development.md": {
+      "hash": "6b9311970a27d48d12002b62e59c9a6ac2087cc8",
+      "at": "2026-03-29T16:31:49Z",
+      "pr": 13065
+    },
+    ".agents/aidevops.md": {
+      "hash": "cf74c159d129be3c0c891b416bd45c0c11a5613b",
+      "at": "2026-03-29T16:31:51Z",
+      "pr": 13063
+    },
+    ".agents/marketing-sales/ad-creative-chapter-09.md": {
+      "hash": "2bdf7194dc300dd779d03b44a37d35015e9f282d",
+      "at": "2026-03-29T16:31:54Z",
+>>>>>>> 1b4acb8d7 (chore: update simplification state registry)
       "pr": 13110
     },
     ".agents/marketing-sales/cro-chapter-20.md": {
       "hash": "07aa1e83fefdc10d56b044961da2976b1e693895",
+<<<<<<< HEAD
       "at": "2026-03-29T16:34:29Z",
+=======
+      "at": "2026-03-29T16:32:00Z",
+>>>>>>> 1b4acb8d7 (chore: update simplification state registry)
       "pr": 13105
     },
     ".agents/services/hosting/cloudflare-platform-skill/realtimekit-patterns.md": {
       "hash": "5c4ef31eed87a7f0c732b1aa94c4cbec4b9494d6",
+<<<<<<< HEAD
       "at": "2026-03-29T16:34:30Z",
+=======
+      "at": "2026-03-29T16:32:01Z",
+>>>>>>> 1b4acb8d7 (chore: update simplification state registry)
       "pr": 13107
     },
     ".agents/tools/document/docstrange.md": {
       "hash": "3982c1885258882161976446bb94216d4e7df262",
+<<<<<<< HEAD
       "at": "2026-03-29T16:34:31Z",
+=======
+      "at": "2026-03-29T16:32:02Z",
+>>>>>>> 1b4acb8d7 (chore: update simplification state registry)
       "pr": 13102
     },
     ".agents/tools/mobile/app-dev-assets.md": {
       "hash": "7c4254ecd409ec8aa9947d5ac9bb1043f89ee75c",
+<<<<<<< HEAD
       "at": "2026-03-29T16:34:32Z",
+=======
+      "at": "2026-03-29T16:32:03Z",
+>>>>>>> 1b4acb8d7 (chore: update simplification state registry)
       "pr": 13108
     },
     ".agents/services/communications/imessage.md": {
       "hash": "3c3e43cfea5a463637f0804c1738788157e0ec26",
+<<<<<<< HEAD
       "at": "2026-03-29T16:34:34Z",
+=======
+      "at": "2026-03-29T16:32:04Z",
+>>>>>>> 1b4acb8d7 (chore: update simplification state registry)
       "pr": 13112
     },
     ".agents/tools/context/github-search.md": {
       "hash": "526e968501aef58e8e7676ede7ab1396404a32c5",
+<<<<<<< HEAD
       "at": "2026-03-29T16:34:35Z",
+=======
+      "at": "2026-03-29T16:32:05Z",
+>>>>>>> 1b4acb8d7 (chore: update simplification state registry)
       "pr": 13106
     },
     ".agents/tools/voice/hyprwhspr.md": {
       "hash": "cd50b6d85cbb4fe055191de5b27fd60418def072",
+<<<<<<< HEAD
       "at": "2026-03-29T16:34:36Z",
+=======
+      "at": "2026-03-29T16:32:06Z",
+>>>>>>> 1b4acb8d7 (chore: update simplification state registry)
       "pr": 13103
     },
     ".agents/tools/mobile/app-dev-notifications.md": {
       "hash": "c414024f2e98e68e7f70531095cc1abe49cceccd",
+<<<<<<< HEAD
       "at": "2026-03-29T16:34:38Z",
+=======
+      "at": "2026-03-29T16:32:08Z",
+>>>>>>> 1b4acb8d7 (chore: update simplification state registry)
       "pr": 13111
     },
     ".agents/workflows/session-manager.md": {
       "hash": "4ac5464dea6fb32ab8452eeb37f9fac67821a3b1",
+<<<<<<< HEAD
       "at": "2026-03-29T16:34:41Z",
+=======
+      "at": "2026-03-29T16:32:10Z",
+>>>>>>> 1b4acb8d7 (chore: update simplification state registry)
       "pr": 13104
     },
     ".agents/aidevops/architecture.md": {
       "hash": "4d03fe2dc863f5a7ca6af47946a809a10ccf3b4f",
+<<<<<<< HEAD
       "at": "2026-03-29T16:34:43Z",
+=======
+      "at": "2026-03-29T16:32:11Z",
+>>>>>>> 1b4acb8d7 (chore: update simplification state registry)
       "pr": 13116
     },
     ".agents/content/production-audio.md": {
       "hash": "46fd948f89aeb36ae8c5dad0b629741cdbca2947",
+<<<<<<< HEAD
       "at": "2026-03-29T16:34:44Z",
+=======
+      "at": "2026-03-29T16:32:12Z",
+>>>>>>> 1b4acb8d7 (chore: update simplification state registry)
       "pr": 13115
     },
     ".agents/workflows/bug-fixing.md": {
       "hash": "40fa82a3220595ff946fdc60ec4a03b193032f58",
+<<<<<<< HEAD
       "at": "2026-03-29T16:34:52Z",
+=======
+      "at": "2026-03-29T16:32:19Z",
+>>>>>>> 1b4acb8d7 (chore: update simplification state registry)
       "pr": 13056
     },
     ".agents/business.md": {
       "hash": "359aefa91dc7dcd75049c36dbf54965be0fc9e2c",
+<<<<<<< HEAD
       "at": "2026-03-29T16:34:54Z",
+=======
+      "at": "2026-03-29T16:32:20Z",
+>>>>>>> 1b4acb8d7 (chore: update simplification state registry)
       "pr": 13055
     },
     ".agents/content/heygen-skill/rules-assets.md": {
       "hash": "eed9c26fe6697296ac16fa54421ac1d4f9d6f2fc",
+<<<<<<< HEAD
       "at": "2026-03-29T16:34:55Z",
+=======
+      "at": "2026-03-29T16:32:21Z",
+>>>>>>> 1b4acb8d7 (chore: update simplification state registry)
       "pr": 13054
     }
   }
