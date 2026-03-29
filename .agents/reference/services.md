@@ -11,27 +11,21 @@ Cross-session SQLite FTS5 memory. Commands: `/remember {content}`, `/recall {que
 
 **Session distillation**: `session-distill-helper.sh auto` (extract learnings at session end)
 
-**Auto-capture log**: `/memory-log` or `memory-helper.sh log` (review auto-captured memories)
+**Auto-capture log**: `/memory-log` or `memory-helper.sh log`
 
-**Graduation**: `/graduate-memories` or `memory-graduate-helper.sh` — promote validated memories into shared docs so all users benefit. Memories qualify at high confidence or 3+ accesses.
+**Graduation**: `/graduate-memories` or `memory-graduate-helper.sh` — promote validated memories (high confidence or 3+ accesses) into shared docs.
 
-**Semantic search** (opt-in): `memory-embeddings-helper.sh setup --provider local` enables vector similarity search. Use `--semantic` or `--hybrid` flags with recall for meaning-based search beyond keywords.
+**Semantic search** (opt-in): `memory-embeddings-helper.sh setup --provider local`. Use `--semantic` or `--hybrid` flags with recall for meaning-based search.
 
-**Memory audit**: `memory-audit-pulse.sh run` — periodic hygiene (dedup, prune, graduate, scan for improvement opportunities). Runs automatically as Phase 9 of the supervisor pulse cycle.
+**Memory audit**: `memory-audit-pulse.sh run` — periodic hygiene (dedup, prune, graduate). Runs as Phase 9 of supervisor pulse.
 
-**Namespaces**: Runners can have isolated memory via `--namespace <name>`. Use `--shared` to also search global memory. List with `memory-helper.sh namespaces`.
+**Namespaces**: `--namespace <name>` for runner isolation, `--shared` to also search global. List: `memory-helper.sh namespaces`.
 
-**Auto-recall**: Memories are automatically recalled at key entry points:
-- **Interactive session start**: Recent memories (last 5) surface via conversation-starter.md
-- **Session resume**: After loading checkpoint, recent memories provide context
-- **Runner dispatch**: Before task execution, runners recall recent + task-specific memories
-- **Objective runner**: On first step, recalls recent + objective-specific + failure pattern memories
+**Auto-recall**: Memories surface automatically at: interactive session start (last 5), session resume (after checkpoint), runner dispatch (task-specific), objective runner (objective + failure patterns). Silent when no memories found; uses namespace isolation for runners.
 
-Auto-recall is silent (no output if no memories found) and uses namespace isolation for runners.
+**Proactive memory**: Suggest `/remember {description}` when detecting solutions, preferences, workarounds, failed approaches, or decisions. Use `memory-helper.sh store --auto` for auto-captured. Privacy: `<private>` blocks stripped, secrets rejected.
 
 **Full docs**: `reference/memory.md`
-
-**Proactive memory**: When you detect solutions, preferences, workarounds, failed approaches, or decisions — proactively suggest `/remember {description}`. Use `memory-helper.sh store --auto` for auto-captured memories. Privacy: `<private>` blocks stripped, secrets rejected.
 
 ## Inter-Agent Mailbox
 
@@ -41,11 +35,9 @@ SQLite-backed async communication between parallel agent sessions.
 
 **Message types**: task_dispatch, status_report, discovery, request, broadcast
 
-**Lifecycle**: send → check → read → archive (history preserved, prune is manual)
+**Lifecycle**: send → check → read → archive. History preserved; `mail-helper.sh prune` for cleanup (`--force` to delete old archived).
 
-**Runner integration**: Runners automatically check inbox before work and send status reports after. Unread messages are prepended as context to the runner's prompt.
-
-**Storage**: `mail-helper.sh prune` shows storage report. Use `--force` to delete old archived messages. Migration from TOON files runs automatically on `aidevops update`.
+**Runner integration**: Runners auto-check inbox before work and send status reports after. Unread messages prepended as context. Migration from TOON files runs on `aidevops update`.
 
 ## MCP On-Demand Loading
 
@@ -59,23 +51,20 @@ MCPs disabled globally, enabled per-agent via YAML frontmatter.
 
 Import community skills: `aidevops skill add <source>` (→ `*-skill.md` suffix)
 
-**Discover skills**: `aidevops skills` or `/skills` in chat. Search, browse by category, get detailed descriptions, and get task-based recommendations.
+**Discover**: `aidevops skills` or `/skills`. Commands: `search <query>`, `browse <category>`, `describe <name>`, `categories`, `recommend "<task>"`, `list [--imported]`
 
-**Commands**: `aidevops skills search <query>`, `aidevops skills browse <category>`, `aidevops skills describe <name>`, `aidevops skills categories`, `aidevops skills recommend "<task>"`, `aidevops skills list [--imported]`
-
-**Online registry search**: Search the public [skills.sh](https://skills.sh/) registry for community skills:
+**Online registry** ([skills.sh](https://skills.sh/)):
 
 ```bash
 aidevops skills search --registry "browser automation"
-aidevops skills search --online "seo"
 aidevops skills install vercel-labs/agent-browser@agent-browser
 ```
 
-When local search returns no results, the `/skills` command suggests searching the public registry automatically.
+When local search returns no results, `/skills` suggests the public registry automatically.
 
 **Cross-tool**: Claude marketplace plugin, Agent Skills (SKILL.md), Claude Code agents, manual AGENTS.md reference.
 
-**Skill persistence**: Imported skills are stored in `~/.aidevops/agents/` and tracked in `configs/skill-sources.json`. The daily auto-update skill refresh (see Auto-Update below) keeps them current from upstream. Note: `aidevops update` overwrites shared agent files — only `custom/` and `draft/` survive. Re-import skills after an update, or place them in `custom/` for persistence.
+**Persistence**: Imported skills stored in `~/.aidevops/agents/`, tracked in `configs/skill-sources.json`. Daily auto-update keeps them current. Only `custom/` and `draft/` survive `aidevops update` — re-import or place in `custom/` for persistence.
 
 **Full docs**: `scripts/commands/add-skill.md`, `scripts/commands/skills.md`
 
@@ -85,9 +74,7 @@ When local search returns no results, the `/skills` command suggests searching t
 
 ## User Settings
 
-Persistent user preferences are stored in `~/.config/aidevops/settings.json`. This file is optional — all keys default to sensible values. Environment variables always take priority over settings.json.
-
-**Supported keys:**
+Persistent preferences in `~/.config/aidevops/settings.json` (optional — all keys default to `true`). Environment variables always take priority.
 
 | Key | Default | Description |
 |-----|---------|-------------|
@@ -95,111 +82,74 @@ Persistent user preferences are stored in `~/.config/aidevops/settings.json`. Th
 | `supervisor_pulse` | `true` | Enable/disable the supervisor pulse scheduler |
 | `repo_sync` | `true` | Enable/disable the daily repo sync job |
 
-**Example** — disable auto-update and supervisor pulse:
-
-```json
-{
-  "auto_update": false,
-  "supervisor_pulse": false
-}
-```
-
-**Priority**: environment variable > settings.json > default (`true`).
-
-**Shell access**: Scripts that source `shared-constants.sh` can read settings via `get_setting "key" "default"`.
+**Shell access**: Scripts sourcing `shared-constants.sh` use `get_setting "key" "default"`.
 
 ## Contribution Watch
 
-Monitors external issues/PRs for new activity needing reply, using the GitHub Notifications API. Managed repos (`pulse: true` in repos.json) are excluded to suppress internal automation noise.
+Monitors external issues/PRs for new activity needing reply via GitHub Notifications API. Managed repos (`pulse: true`) excluded.
 
 **CLI**: `contribution-watch-helper.sh seed|scan|status|install|uninstall`
 
-- `seed` — seed tracked threads from existing contributed repos
-- `scan` — check for new activity on tracked threads (optional `--backfill` for low-frequency safety-net sweeps)
-- `install` / `uninstall` — install/remove the scheduled scanner
+- `seed` — seed tracked threads from contributed repos
+- `scan` — check for new activity (`--backfill` for low-frequency safety-net sweeps)
+- `install` / `uninstall` — manage scheduled scanner
 
-**Security**: Automated scans are deterministic metadata checks (no LLM). Comment bodies are only shown in interactive sessions after `prompt-guard-helper.sh scan`.
+**Security**: Scans are deterministic metadata checks (no LLM). Comment bodies shown only in interactive sessions after `prompt-guard-helper.sh scan`.
 
 ## FOSS Contributions
 
-Manages FOSS contribution targets with per-repo etiquette controls and a global daily token budget. Enforces rate limits and blocklists before dispatching contribution workers.
+Per-repo etiquette controls and global daily token budget for FOSS contribution targets. Enforces rate limits and blocklists before dispatching.
 
 **CLI**: `foss-contribution-helper.sh scan|check|budget|record|reset|status`
 
 - `scan [--dry-run]` — list eligible FOSS repos (respects `labels_filter`, skips `blocklist: true`)
-- `check <slug> [tokens]` — gate check before contributing (budget + rate limit + blocklist)
-- `budget` — show daily token usage vs ceiling
-- `record <slug> <tokens>` — record token usage after a contribution attempt
-- `status` — show all FOSS repos and their config
+- `check <slug> [tokens]` — gate check (budget + rate limit + blocklist)
+- `budget` — daily token usage vs ceiling
+- `record <slug> <tokens>` — record usage after contribution
+- `status` — all FOSS repos and config
 
 **Config**: `config.jsonc` `foss` section — `enabled`, `max_daily_tokens`, `max_concurrent_contributions`.
 
 **repos.json fields**: `foss: true`, `app_type`, `foss_config` (see `reference/foss-contributions.md`).
 
-**Full docs**: `reference/foss-contributions.md`
-
 ## Auto-Update
 
-Automatic polling for new releases. Checks GitHub every 10 minutes and runs `aidevops update` when a new version is available. Safe to run while AI sessions are active.
+Polls GitHub every 10 minutes; runs `aidevops update` when new version available. Safe during active AI sessions.
 
 **CLI**: `aidevops auto-update [enable|disable|status|check|logs]`
 
-**Enable**: `aidevops auto-update enable` (also offered during `setup.sh`)
+**Scheduler**: macOS launchd (`~/Library/LaunchAgents/com.aidevops.auto-update.plist`); Linux cron. Auto-migrates existing cron on macOS.
 
-**Disable**: `aidevops auto-update disable`
-
-**Scheduler**: macOS uses launchd (`~/Library/LaunchAgents/com.aidevops.auto-update.plist`); Linux uses cron. Auto-migrates existing cron entries on macOS when `enable` is run.
-
-**Config file**: `~/.config/aidevops/settings.json` — set `"auto_update": false` to persistently disable auto-update. This is the recommended way to opt out (survives shell restarts, no env var needed). The file is optional; all keys default to `true`.
-
-**Env override**: `AIDEVOPS_AUTO_UPDATE=false` disables even if scheduler is installed. Env vars take priority over settings.json.
+**Disable**: `aidevops auto-update disable`, or set `"auto_update": false` in settings.json, or `AIDEVOPS_AUTO_UPDATE=false` env var. Priority: env > settings.json > default (`true`).
 
 **Logs**: `~/.aidevops/logs/auto-update.log`
 
-**Daily skill refresh**: Each auto-update check also runs a 24h-gated skill freshness check. If >24h have passed since the last check, `skill-update-helper.sh --auto-update --quiet` pulls upstream changes for all imported skills. State is tracked in `~/.aidevops/cache/auto-update-state.json` (`last_skill_check`, `skill_updates_applied`). Disable with `AIDEVOPS_SKILL_AUTO_UPDATE=false`; adjust frequency with `AIDEVOPS_SKILL_FRESHNESS_HOURS=<hours>` (default: 24). View skill check status with `aidevops auto-update status`.
+**Daily skill refresh**: 24h-gated via `skill-update-helper.sh --auto-update --quiet`. State: `~/.aidevops/cache/auto-update-state.json` (`last_skill_check`, `skill_updates_applied`). Disable: `AIDEVOPS_SKILL_AUTO_UPDATE=false`. Frequency: `AIDEVOPS_SKILL_FRESHNESS_HOURS=<hours>` (default: 24). View: `aidevops auto-update status`.
 
-**Upstream watch**: Alongside skill refresh, `upstream-watch-helper.sh check` monitors external repos we've borrowed ideas/code from for new releases. Unlike skill imports (code we pulled in) or contribution watch (repos we filed issues on), this tracks "inspiration repos" — repos we want to passively monitor for improvements relevant to our implementation. Config: `.agents/configs/upstream-watch.json`. State: `~/.aidevops/cache/upstream-watch-state.json`. Run `upstream-watch-helper.sh status` to see watched repos, `upstream-watch-helper.sh check` to check for updates, `upstream-watch-helper.sh ack <slug>` after reviewing.
+**Upstream watch**: `upstream-watch-helper.sh check` monitors external repos we've borrowed from for new releases (distinct from skill imports and contribution watch). Config: `.agents/configs/upstream-watch.json`. State: `~/.aidevops/cache/upstream-watch-state.json`. Commands: `status`, `check`, `ack <slug>`.
 
-**Repo version wins on update**: When `aidevops update` runs, shared agents in `~/.aidevops/agents/` are overwritten by the repo version. Only `custom/` and `draft/` directories are preserved. Imported skills stored outside these directories will be overwritten. To keep a skill across updates, either re-import it after each update or move it to `custom/`.
+**Update behavior**: Shared agents in `~/.aidevops/agents/` overwritten on update. Only `custom/` and `draft/` preserved.
 
 ## Repo Sync
 
-Automatic daily `git pull` for all git repos in configured parent directories. Keeps local clones up to date without manual intervention. Safe by design: only fast-forward pulls on clean, default-branch checkouts.
+Daily `git pull --ff-only` for all repos in configured parent directories. Only fast-forwards clean, default-branch checkouts. Skips dirty trees, non-default branches, no-remote repos, and worktrees.
 
 **CLI**: `aidevops repo-sync [enable|disable|status|check|dirs|config|logs]`
 
-**Enable**: `aidevops repo-sync enable` (also offered during `/onboarding`)
+**One-shot**: `aidevops repo-sync check` (immediate, no scheduler)
 
-**Disable**: `aidevops repo-sync disable`
+**Scheduler**: macOS launchd (`~/Library/LaunchAgents/com.aidevops.aidevops-repo-sync.plist`); Linux cron (daily 3am).
 
-**One-shot sync**: `aidevops repo-sync check` (runs immediately, no scheduler needed)
+**Disable**: `aidevops repo-sync disable`, or `"repo_sync": false` in settings.json, or `AIDEVOPS_REPO_SYNC=false`. Interval: `AIDEVOPS_REPO_SYNC_INTERVAL=1440` (minutes, default daily).
 
-**Scheduler**: macOS uses launchd (`~/Library/LaunchAgents/com.aidevops.aidevops-repo-sync.plist`); Linux uses cron (daily at 3am).
-
-**Config file**: `~/.config/aidevops/settings.json` — set `"repo_sync": false` to persistently disable. Env vars take priority.
-
-**Env overrides**:
-
-- `AIDEVOPS_REPO_SYNC=false` — disable even if scheduler is installed (overrides settings.json)
-- `AIDEVOPS_REPO_SYNC_INTERVAL=1440` — minutes between syncs (default: 1440 = daily)
-
-**Configuration** (`~/.config/aidevops/repos.json`):
-
-```json
-{"git_parent_dirs": ["~/Git", "~/Projects"]}
-```
-
-Default: `~/Git`. Manage with:
+**Parent dirs** (`~/.config/aidevops/repos.json`, default `~/Git`):
 
 ```bash
 aidevops repo-sync dirs list           # Show configured directories
 aidevops repo-sync dirs add ~/Projects # Add a parent directory
 aidevops repo-sync dirs remove ~/Old   # Remove a parent directory
-aidevops repo-sync config              # Show current config
 ```
 
-**Safety**: Only runs `git pull --ff-only`. Skips repos with dirty working trees, repos not on their default branch, repos with no remote, and git worktrees (only main checkouts are synced).
+**Logs**: `~/.aidevops/logs/repo-sync.log` — `aidevops repo-sync logs [--tail N|--follow]`
 
-**Logs**: `~/.aidevops/logs/repo-sync.log` — view with `aidevops repo-sync logs [--tail N]` or `aidevops repo-sync logs --follow`.
-
-**Status**: `aidevops repo-sync status` — shows scheduler state, configured directories, and last sync results (pulled/skipped/failed counts).
+**Status**: `aidevops repo-sync status` — scheduler state, directories, last sync results.
