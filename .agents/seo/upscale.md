@@ -13,53 +13,28 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
-## Quick Reference
+**Decision tree**: Local CLI for bulk/privacy → Replicate for quality/convenience → Cloudflare for CDN-integrated
 
-- **Purpose**: Upscale low-resolution images for web publishing and social sharing
-- **When to use**: Images below 1200px wide, blurry product photos, legacy content migration
-- **Providers**: Replicate (Real-ESRGAN), Cloudflare Images, local (Real-ESRGAN CLI)
-- **Minimum targets**: 1200px wide (social sharing), 800px (blog content), 2x for retina
-
-**Decision tree**: Local CLI for bulk/privacy -> Replicate for quality/convenience -> Cloudflare for CDN-integrated
+**Minimum targets**: 1200px wide (social sharing), 800px (blog content), 2x for retina
 
 <!-- AI-CONTEXT-END -->
 
-## Upscaling Providers
+## Providers
 
-### 1. Real-ESRGAN (Local - Recommended for Bulk)
-
-Free, open-source, runs locally. Best for batch processing and privacy-sensitive images.
-
-**Install:**
+### 1. Real-ESRGAN (Local — Bulk/Privacy)
 
 ```bash
-# macOS (Homebrew)
-brew install real-esrgan
+brew install real-esrgan  # macOS; or pip install realesrgan
 
-# Or download binary from GitHub
-# https://github.com/xinntao/Real-ESRGAN/releases
-
-# Python (pip)
-pip install realesrgan
-```
-
-**Usage:**
-
-```bash
-# Upscale single image (4x default)
+# Single image (4x default)
 realesrgan-ncnn-vulkan -i input.jpg -o output.jpg
-
-# Upscale with specific scale factor
+# Specific scale
 realesrgan-ncnn-vulkan -i input.jpg -o output.jpg -s 2
-
-# Batch upscale directory
+# Batch directory
 realesrgan-ncnn-vulkan -i /path/to/images/ -o /path/to/output/
-
-# Specify model (anime vs photo)
+# Specify model
 realesrgan-ncnn-vulkan -i input.jpg -o output.jpg -n realesrgan-x4plus
 ```
-
-**Models:**
 
 | Model | Best for | Scale |
 |-------|----------|-------|
@@ -67,42 +42,23 @@ realesrgan-ncnn-vulkan -i input.jpg -o output.jpg -n realesrgan-x4plus
 | `realesrgan-x4plus-anime` | Illustrations, anime | 4x |
 | `realesr-animevideov3` | Video frames | 4x |
 
-### 2. Replicate API (Cloud - Best Quality)
-
-Pay-per-use cloud API. Multiple model options, no local GPU needed.
-
-**Setup:**
+### 2. Replicate API (Cloud — Best Quality)
 
 ```bash
 aidevops secret set REPLICATE_API_TOKEN
-# Or: export REPLICATE_API_TOKEN="r8_..."
-```
 
-**Real-ESRGAN via Replicate:**
-
-```bash
 curl -s -X POST https://api.replicate.com/v1/predictions \
   -H "Authorization: Bearer $REPLICATE_API_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{
     "version": "42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b",
-    "input": {
-      "image": "https://example.com/low-res-image.jpg",
-      "scale": 4,
-      "face_enhance": true
-    }
+    "input": {"image": "https://example.com/low-res-image.jpg", "scale": 4, "face_enhance": true}
   }'
-```
 
-**Check prediction status:**
-
-```bash
+# Poll result
 curl -s "https://api.replicate.com/v1/predictions/$PREDICTION_ID" \
-  -H "Authorization: Bearer $REPLICATE_API_TOKEN" \
-  | jq '.output'
+  -H "Authorization: Bearer $REPLICATE_API_TOKEN" | jq '.output'
 ```
-
-**Alternative models on Replicate:**
 
 | Model | Strengths | Cost |
 |-------|-----------|------|
@@ -113,43 +69,29 @@ curl -s "https://api.replicate.com/v1/predictions/$PREDICTION_ID" \
 
 ### 3. Cloudflare Images (CDN-Integrated)
 
-Resize and optimize on-the-fly via Cloudflare. No upscaling per se, but handles format conversion and responsive variants.
+Resize/optimize on-the-fly (requires Cloudflare Pro+). Not AI upscaling — handles format conversion and responsive variants.
 
 ```bash
-# Cloudflare Image Resizing (requires Cloudflare Pro+)
-# Original: https://example.com/image.jpg
-# Resized:  https://example.com/cdn-cgi/image/width=1200,format=webp/image.jpg
+# URL-based resizing
+# https://example.com/cdn-cgi/image/width=1200,format=webp/image.jpg
 
-# Variants via Cloudflare Images API
+# Upload via API
 curl -X POST "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/images/v1" \
   -H "Authorization: Bearer $CF_API_TOKEN" \
-  -F "file=@image.jpg" \
-  -F "metadata={\"key\":\"value\"}"
+  -F "file=@image.jpg"
 ```
 
-### 4. Sharp (Node.js - Format Conversion)
+### 4. Sharp (Node.js — Format Conversion)
 
-Not upscaling, but essential for format optimization (WebP/AVIF conversion, compression).
-
-```bash
-npm install sharp
-```
+Not upscaling. Use for WebP/AVIF conversion and responsive variants.
 
 ```javascript
-import sharp from 'sharp';
+import sharp from 'sharp';  // npm install sharp
 
-// Convert to WebP with quality optimization
-await sharp('input.jpg')
-  .resize(1200, null, { withoutEnlargement: true })
-  .webp({ quality: 80 })
-  .toFile('output.webp');
+await sharp('input.jpg').resize(1200, null, { withoutEnlargement: true }).webp({ quality: 80 }).toFile('output.webp');
 
-// Generate responsive variants
 for (const width of [400, 800, 1200, 1600]) {
-  await sharp('input.jpg')
-    .resize(width)
-    .webp({ quality: 80 })
-    .toFile(`output-${width}w.webp`);
+  await sharp('input.jpg').resize(width).webp({ quality: 80 }).toFile(`output-${width}w.webp`);
 }
 ```
 
@@ -164,9 +106,7 @@ for (const width of [400, 800, 1200, 1600]) {
 | Retina display support | Generate 2x variant | Sharp resize |
 | Wrong format (BMP, TIFF) | Convert to WebP | Sharp |
 
-## Image Optimization Pipeline
-
-Complete pipeline from raw image to web-ready:
+## Pipeline
 
 ```text
 1. Analyze (Moondream) -> Get content description
