@@ -1,7 +1,5 @@
 # Advanced Configuration & Styling
 
-Configuration, theming, custom styling, troubleshooting, and export for Mermaid diagrams.
-
 ## Init Directive
 
 ```mermaid
@@ -10,7 +8,7 @@ flowchart LR
     A --> B
 ```
 
-Multi-line with theme variables:
+With `themeVariables`:
 
 ```mermaid
 %%{init: {
@@ -49,8 +47,6 @@ config:
 
 Themes: `default`, `dark`, `forest`, `neutral`, `base` — see cheatsheet `## Styling`.
 
-**Core variables:**
-
 | Variable | Description |
 |----------|-------------|
 | `primaryColor` | Main node color |
@@ -64,8 +60,6 @@ Themes: `default`, `dark`, `forest`, `neutral`, `base` — see cheatsheet `## St
 | `fontSize` | Base font size |
 | `fontFamily` | Font family |
 
-**Diagram-specific variables:**
-
 - **Flowchart:** `nodeBorder`, `nodeTextColor`, `clusterBkg`, `clusterBorder`, `edgeLabelBackground`
 - **Sequence:** `actorBorder`, `actorBkg`, `actorTextColor`, `activationBorderColor`, `activationBkgColor`, `signalColor`, `signalTextColor`, `noteBkgColor`, `noteBorderColor`, `noteTextColor`
 - **State:** `labelColor`, `altBackground`
@@ -76,8 +70,6 @@ Themes: `default`, `dark`, `forest`, `neutral`, `base` — see cheatsheet `## St
 ```mermaid
 flowchart LR
     A[Start]:::success --> B[Process]:::info --> C[End]:::warning
-    class A,D success
-    class B,C info
 
     classDef success fill:#10b981,stroke:#059669,color:white
     classDef info fill:#3b82f6,stroke:#2563eb,color:white
@@ -113,9 +105,9 @@ flowchart TB
     B & C & D --> E
 ```
 
-**Common init options:**
+All diagram types:
 
-```javascript
+```
 %%{init: {
   'theme': 'default',
   'flowchart': { 'defaultRenderer': 'elk', 'curve': 'basis', 'padding': 15 },
@@ -167,17 +159,15 @@ flowchart LR
 | Diagram | Sync | Async | Dotted |
 |---------|------|-------|--------|
 | Flowchart | `-->` | N/A | `-.->` |
-| Sequence | `->>` | `-->>` | `-->>` |
+| Sequence | `->>` | `-->>` | `--->` |
 | Class | `-->` | N/A | `..>` |
 | State | `-->` | N/A | N/A |
 
-**Debugging:** Verify diagram type declaration; check unclosed brackets/quotes; match arrow syntax to type. Start minimal, add elements one at a time to isolate breaking change. Live editor: https://mermaid.live — export PNG/SVG for guaranteed rendering across platforms.
+**Debugging:** Verify diagram type declaration; check unclosed brackets/quotes; match arrow syntax to type. Start minimal, add elements one at a time to isolate the breaking change. Live editor: https://mermaid.live — export PNG/SVG for guaranteed rendering across platforms.
 
 ## Accessibility & Performance
 
-**Accessibility:** Provide context text before diagrams for screen readers. HTML: `<div class="mermaid" role="img" aria-label="...">`.
-
-**Performance:** Split large diagrams. Use ELK for complex layouts. Prefer class-based styling over inline. Cache renders; lazy load in documentation.
+Provide context text before diagrams for screen readers: `<div class="mermaid" role="img" aria-label="...">`. Split large diagrams; prefer class-based styling over inline; cache renders and lazy load in documentation.
 
 ## Export
 
