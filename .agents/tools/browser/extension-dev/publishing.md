@@ -87,7 +87,7 @@ Full CI/CD: `tools/browser/chrome-webstore-release.md`
 
 ### Submission
 
-1. Build: `npm run build` → `.output/firefox-mv2/` or `firefox-mv3/`
+1. Build: `npm run build` → `.output/firefox-mv2/` or `.output/firefox-mv3/`
 2. Zip build output; upload source code zip separately for reviewer
 3. Upload to https://addons.mozilla.org/developers/, fill listing details, submit
 
