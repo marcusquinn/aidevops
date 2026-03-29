@@ -22,159 +22,63 @@ tools:
 - **OpenAI**: `OPENAI_API_KEY` (sk-...), `OPENAI_BASE_URL`
 - **Anthropic**: `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`
 - **Others**: `AI_GATEWAY_API_KEY`, `GOOGLE_API_KEY`, `AZURE_OPENAI_API_KEY`
-- **DSPy test**: `./.agents/scripts/dspy-helper.sh test`
 - **Check keys**: `env | grep -E "(OPENAI|ANTHROPIC|CLAUDE)_API_KEY"`
 - **Test OpenAI**: `curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models | head -20`
-- **Benefits**: Secure (no keys in files), convenient (works immediately), flexible (override per-project)
+
 <!-- AI-CONTEXT-END -->
 
-## Automatic API Key Detection
+## Supported Variables
 
-Both DSPy and DSPyGround are configured to **automatically use your terminal session's API keys**. No additional configuration needed!
+| Provider | Variable | Notes |
+|----------|----------|-------|
+| OpenAI | `OPENAI_API_KEY` | Format: `sk-...` |
+| OpenAI | `OPENAI_BASE_URL` | Custom endpoint (optional) |
+| Anthropic | `ANTHROPIC_API_KEY` | For Claude models |
+| Anthropic | `ANTHROPIC_BASE_URL` | Custom endpoint (optional) |
+| DSPyGround | `AI_GATEWAY_API_KEY` | AI Gateway integration |
+| Google | `GOOGLE_API_KEY` | Gemini models |
+| Azure | `AZURE_OPENAI_API_KEY` | Azure OpenAI |
 
-### **Current Environment**
+## Configuration Priority
 
-Your terminal session has these API keys available:
+1. Environment variables (terminal session) — highest priority
+2. `.env` files (project-specific override)
+3. Configuration files (fallback)
+4. Default values (last resort)
 
-- ✅ `OPENAI_API_KEY` - Detected and ready to use
+## How It Works
 
-### **How It Works**
+Tools read environment variables automatically — no additional configuration needed.
 
-#### **DSPy Integration**
-
-DSPy uses this priority order:
-
-1. **Environment variables** (your terminal session) - **HIGHEST PRIORITY**
-2. Configuration file values - fallback only
+**DSPy** checks environment first:
 
 ```python
-# DSPy automatically checks environment first
 api_key = os.getenv("OPENAI_API_KEY", config_fallback)
 lm = dspy.LM(model="openai/gpt-3.5-turbo", api_key=api_key)
 ```
 
-#### **DSPyGround Integration**
-
-DSPyGround uses `.env` files that reference your environment:
+**`.env` files** reference your session variables:
 
 ```bash
-# .env file automatically uses your terminal session variables
-OPENAI_API_KEY=${OPENAI_API_KEY}  # References your existing key
+OPENAI_API_KEY=${OPENAI_API_KEY}
 ```
 
-## 🚀 **Quick Test**
-
-### **Test DSPy with Your API Key**
+## Troubleshooting
 
 ```bash
-cd data/dspy/test-project
-source ../../../python-env/dspy-env/bin/activate
-python3 main.py
-```
-
-### **Test DSPyGround with Your API Key**
-
-```bash
-cd data/dspyground/test-agent
-# Your OPENAI_API_KEY is automatically available
-node -e "console.log('API Key:', process.env.OPENAI_API_KEY?.slice(0,10) + '...')"
-```
-
-## 🔧 **Supported Environment Variables**
-
-### **OpenAI**
-
-- `OPENAI_API_KEY` - ✅ **Currently set in your environment**
-- `OPENAI_BASE_URL` - Custom endpoint (optional)
-
-### **Anthropic**
-
-- `ANTHROPIC_API_KEY` - For Claude models
-- `ANTHROPIC_BASE_URL` - Custom endpoint (optional)
-
-### **Other Providers**
-
-- `AI_GATEWAY_API_KEY` - For DSPyGround AI Gateway
-- `GOOGLE_API_KEY` - For Gemini models
-- `AZURE_OPENAI_API_KEY` - For Azure OpenAI
-
-## 📋 **Configuration Priority**
-
-Both tools follow this priority order:
-
-1. **Environment Variables** (your terminal session)
-2. `.env` files (project-specific)
-3. Configuration files (fallback)
-4. Default values (last resort)
-
-## ✨ **Benefits**
-
-### **Security**
-
-- API keys stay in your secure environment
-- No need to store keys in config files
-- Consistent across all projects
-
-### **Convenience**
-
-- Works immediately with your existing setup
-- No additional configuration required
-- Same keys work for all AI tools
-
-### **Flexibility**
-
-- Override per-project with `.env` files
-- Fallback to config files if needed
-- Easy switching between different keys
-
-## 🎯 **Quick Start Commands**
-
-Since your `OPENAI_API_KEY` is already set, you can immediately:
-
-```bash
-# Test DSPy
-./.agents/scripts/dspy-helper.sh test
-
-# Create and run DSPy project
-./.agents/scripts/dspy-helper.sh init my-bot
-cd data/dspy/my-bot
-source ../../../python-env/dspy-env/bin/activate
-python3 main.py
-
-# Create DSPyGround project
-./.agents/scripts/dspyground-helper.sh init my-agent
-cd data/dspyground/my-agent
-# Add AI_GATEWAY_API_KEY to .env if using AI Gateway
-# Otherwise, your OPENAI_API_KEY works directly
-```
-
-## 🔍 **Troubleshooting**
-
-### **Check Your Environment**
-
-```bash
-# Verify API keys are set
+# Verify keys are set
 env | grep -E "(OPENAI|ANTHROPIC|CLAUDE)_API_KEY"
 
-# Test API key format
+# Check OpenAI key format (must start with sk-)
 echo $OPENAI_API_KEY | grep -E "^sk-"
+
+# Test API connectivity
+curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models | head -20
 ```
 
-### **Test API Connectivity**
+**Common issues:**
 
-```bash
-# Test OpenAI API
-curl -H "Authorization: Bearer $OPENAI_API_KEY" \
-     https://api.openai.com/v1/models | head -20
-```
-
-### **Common Issues**
-
-1. **API Key Not Found**: Check `echo $OPENAI_API_KEY`
-2. **Wrong Format**: OpenAI keys start with `sk-`
-3. **Permissions**: Ensure key has required permissions
-4. **Rate Limits**: Check API usage limits
-
-## 🎉 **Ready to Use!**
-
-Your environment is already configured! Both DSPy and DSPyGround will automatically use your existing `OPENAI_API_KEY` without any additional setup.
+1. Key not found — `echo $OPENAI_API_KEY` to verify it's exported
+2. Wrong format — OpenAI keys start with `sk-`
+3. Permissions — ensure key has required scopes
+4. Rate limits — check API usage dashboard
