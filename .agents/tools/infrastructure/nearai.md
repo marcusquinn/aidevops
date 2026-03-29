@@ -47,7 +47,7 @@ TEE-backed private inference platform. All requests execute inside hardware-enfo
 | GLM 5 | 203K | $0.85 | $3.30 |
 | FLUX.2-klein-4B (image) | 128K | $1.00 | $1.00 |
 
-\* Marked "anonymized, not TEE-protected" — proxied to original providers with anonymization layer, not full TEE isolation. Open-source models (DeepSeek, GPT-OSS, Qwen, GLM) run in actual TEEs.
+\* Anonymized proxy to original providers — not full TEE isolation. Open-source models (DeepSeek, GPT-OSS, Qwen, GLM) run in actual TEEs.
 
 ### Price comparison vs Fireworks (same open-source models)
 
@@ -58,17 +58,13 @@ TEE-backed private inference platform. All requests execute inside hardware-enfo
 | Qwen3 30B A3B | $0.15 / $0.60 | $0.15 / $0.55 | ~same |
 | GLM-5 | $1.00 / $3.20 | $0.85 / $3.30 | ~same |
 
-NEAR AI's premium on some models reflects the TEE overhead. For non-privacy-sensitive workloads, Fireworks is cheaper and has more features.
+For non-privacy-sensitive workloads, Fireworks is cheaper and has more features.
 
-### Unique value: closed-model access
-
-NEAR AI offers Claude, GPT-5.2, and Gemini via anonymized proxy — useful when you need frontier model quality with an anonymization layer between your app and the provider. Not available on Fireworks (open-source only).
+NEAR AI also offers Claude, GPT-5.2, and Gemini via anonymized proxy — frontier model quality with identity stripped, not available on Fireworks.
 
 ## Usage
 
 ### Gateway (recommended)
-
-Routes to the appropriate model TEE automatically.
 
 ```bash
 curl https://cloud-api.near.ai/v1/chat/completions \
@@ -89,7 +85,7 @@ response = client.chat.completions.create(
 
 ### Direct completions (TLS terminates inside TEE)
 
-Each model has its own subdomain — no gateway hop, TLS terminates directly in the model enclave.
+No gateway hop — TLS terminates directly in the model enclave.
 
 ```bash
 curl https://qwen35-122b.completions.near.ai/v1/chat/completions \
@@ -106,40 +102,11 @@ Use HuggingFace-style IDs: `deepseek-ai/DeepSeek-V3.1`, `openai/gpt-oss-120b`, `
 
 ## Privacy Architecture
 
-- **TEE isolation**: Open-source models run inside hardware-enforced Trusted Execution Environments (Intel TDX / AMD SEV-SNP)
-- **Cryptographic attestation**: Every inference generates verifiable proof that code and data were not tampered with
-- **No data access (TEE-protected open-source models only)**: For open-source models running in TEEs, model providers, cloud providers, and NEAR AI cannot access prompts or responses. Closed-model proxy requests (Claude, GPT-5.2, Gemini) are anonymized but still forwarded to the upstream provider -- the upstream provider processes the request content and the "no data access" guarantee does not apply (see below).
+- **TEE isolation**: Open-source models run inside Intel TDX / AMD SEV-SNP enclaves — model providers, cloud providers, and NEAR AI cannot access prompts or responses
+- **Cryptographic attestation**: Every inference generates verifiable proof of integrity. Clients can verify: [verification docs](https://docs.near.ai/cloud/verification)
 - **TLS in enclave**: Direct completions endpoints terminate TLS inside the TEE — no intermediate can intercept
-- **E2EE chat**: End-to-end encrypted chat completions available (see [guide](https://docs.near.ai/cloud/guides/e2ee-chat-completions))
-- **Verification**: Clients can verify attestation reports. See [verification docs](https://docs.near.ai/cloud/verification)
-
-### Anonymized vs TEE-protected
-
-- **TEE-protected** (open-source models): Full hardware isolation, cryptographic attestation, no data access by anyone
-- **Anonymized** (Claude, GPT-5.2, Gemini): Requests proxied through NEAR AI with identifying information stripped. The upstream provider sees the full request content but not your identity. This is a weaker guarantee than TEE -- the provider can read prompts and responses, only your identity is hidden.
-
-## Capabilities and Limitations
-
-### Available
-
-- Chat completions (OpenAI-compatible)
-- Streaming responses
-- Direct completions (TLS-in-TEE)
-- E2EE chat completions
-- Cryptographic verification/attestation
-- Files API and Conversations API (via OpenAI compatibility)
-
-### Not available
-
-- Fine-tuning (SFT, DPO, RFT) — use Fireworks
-- Custom model uploads — use Fireworks
-- Dedicated GPU deployments — use Fireworks
-- Batch inference — use Fireworks
-- Embeddings — use Fireworks
-- Speech-to-text — use Fireworks
-- CLI tool — API only
-- Function calling — not documented
-- Structured outputs — not documented
+- **E2EE chat**: End-to-end encrypted chat completions available: [guide](https://docs.near.ai/cloud/guides/e2ee-chat-completions)
+- **Anonymized models** (Claude, GPT-5.2, Gemini): Identity stripped, but upstream provider still processes full request content — weaker guarantee than TEE
 
 ## When to Use NEAR AI vs Fireworks
 
@@ -159,7 +126,6 @@ Use HuggingFace-style IDs: `deepseek-ai/DeepSeek-V3.1`, `openai/gpt-oss-120b`, `
 ## Security
 
 - Store API key: `aidevops secret set NEARAI_API_KEY`
-- Never expose keys in logs or output
 - For maximum privacy, use direct completions endpoints (TLS terminates in TEE)
 - Verify attestation reports for high-security workloads
 - Credits are prepaid — purchase at [cloud.near.ai](https://cloud.near.ai) dashboard
