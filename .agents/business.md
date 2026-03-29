@@ -13,8 +13,7 @@ subagents:
   - company-runners
   - accounts-receipt-ocr
   - accounts-subscription-audit
-  - sales
-  - marketing
+  - marketing-sales
   - legal
 ---
 
@@ -32,22 +31,14 @@ subagents:
 
 <!-- AI-CONTEXT-END -->
 
-## Company Agent Pattern
-
-Maps company departments to named runners with:
-- Persistent identity/memory (`runner-helper.sh`)
-- Mailbox communication (`mail-helper.sh`)
-- Stateless pulse coordination (GitHub is state DB)
-- Safety guardrails (`/full-loop` iteration limits)
-
-### Architecture
+## Architecture
 
 ```text
-Pulse supervisor (every 2 min)
+Pulse supervisor (every 2 min, stateless)
 ├── Fetches GitHub state (issues, PRs)
 ├── Observes outcomes (stale PRs, failures)
 ├── Dispatches to available worker slots
-└── Exits (stateless)
+└── Exits
 
 Named Runners:
 ├── hiring-coordinator   — Recruitment pipeline
@@ -57,14 +48,24 @@ Named Runners:
 └── support-triage       — Customer issue classification
 ```
 
-### Communication Flow
+**Flow**: Task arrives (issue/TODO/mailbox) → pulse dispatches to runner → worker executes → pulse observes outcomes → files improvement issues if patterns emerge.
 
-Task arrives (issue/TODO/mailbox) → pulse picks up → dispatches to runner → worker executes → pulse observes outcomes → files improvement issues if patterns emerge.
+## Guardrails
+
+Inherited from `/full-loop` and worktree isolation:
+
+- **Scope**: Path/tool whitelists per runner via AGENTS.md
+- **Audit**: Git commits and PR history
+- **Rollback**: Worktree isolation — each runner works in its own worktree
+- **Judgment**: `/full-loop` decides stop/retry/escalate
+
+Finance and legal runners require dedicated worktrees + PR review gates.
 
 ## Setting Up Runners
 
+Create via `runner-helper.sh`. Each runner gets a personality file at `~/.aidevops/.agent-workspace/runners/<name>/AGENTS.md`. Full templates and bootstrap script: `business/company-runners.md`.
+
 ```bash
-# Create runners
 runner-helper.sh create hiring-coordinator \
   --description "Recruitment - job posts, screening, scheduling" --model sonnet
 runner-helper.sh create finance-reviewer \
@@ -72,19 +73,11 @@ runner-helper.sh create finance-reviewer \
 runner-helper.sh create ops-monitor \
   --description "Infrastructure - uptime, deploys, incidents" --model haiku
 
-# Manage
-runner-helper.sh list
-runner-helper.sh run hiring-coordinator "Review latest 3 applications"
+runner-helper.sh list                                          # Show all runners
+runner-helper.sh run hiring-coordinator "Review latest 3 applications"  # Manual dispatch
 ```
 
-### Manual Dispatch
-
-Pulse handles dispatch automatically. For manual:
-
-```bash
-opencode run --dir ~/Git/<repo> --agent Business --title "Review Q1 expenses" \
-  "/full-loop Review Q1 expense reports for anomalies" &
-```
+Pulse handles dispatch automatically. For manual one-off tasks, use `/full-loop` directly.
 
 ## Cross-Function Workflows
 
@@ -95,22 +88,9 @@ Multi-department tasks use chained GitHub issues. Pulse routes by label:
 gh issue create --repo <owner/repo> --title "Onboard: Confirm offer" --label "hiring"
 gh issue create --repo <owner/repo> --title "Onboard: Setup payroll" --label "finance"
 gh issue create --repo <owner/repo> --title "Onboard: Provision accounts" --label "ops"
-
-# Monthly close (single department, sequenced)
-for step in "Reconcile transactions" "Review expenses" "Generate P&L" "Send summary"; do
-  gh issue create --repo <owner/repo> --title "Monthly close: $step" --label "finance"
-done
 ```
 
-## Guardrails
-
-Inherited from `/full-loop` and worktree isolation:
-- **Scope**: Path/tool whitelists per runner via AGENTS.md
-- **Audit**: Git commits and PR history
-- **Rollback**: Worktree isolation
-- **Judgment**: `/full-loop` decides stop/retry/escalate
-
-Finance and legal runners require dedicated worktrees + PR review gates.
+Sequenced single-department work (e.g., monthly close) uses multiple issues with the same label — pulse processes in order.
 
 ## Pre-flight Questions
 
