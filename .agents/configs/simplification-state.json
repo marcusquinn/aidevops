@@ -1628,7 +1628,11 @@
     },
     ".agents/tools/browser/playwriter.md": {
       "hash": "98bfa1b0dde9a405a0f3a07aa1ae3eaadc42801a",
+<<<<<<< HEAD
       "at": "2026-03-29T03:42:40Z",
+=======
+      "at": "2026-03-29T03:31:38Z",
+>>>>>>> dc8598fbb (chore: update simplification state registry)
       "pr": 12516
     },
     ".agents/services/networking/tailscale.md": {
@@ -1663,7 +1667,11 @@
     },
     ".agents/content/heygen-skill/rules-voices.md": {
       "hash": "a85f36f5c5e028f989dbc0e75caf3c9e337c12e9",
+<<<<<<< HEAD
       "at": "2026-03-29T03:42:42Z",
+=======
+      "at": "2026-03-29T03:31:40Z",
+>>>>>>> dc8598fbb (chore: update simplification state registry)
       "pr": 12508
     },
     ".agents/marketing-sales/ad-creative-chapter-12.md": {
@@ -1698,7 +1706,11 @@
     },
     ".agents/content/heygen-skill/rules-quota.md": {
       "hash": "4ea886afaf8162b1a347d8d9029d7ee954cbde5d",
+<<<<<<< HEAD
       "at": "2026-03-29T03:42:53Z",
+=======
+      "at": "2026-03-29T03:31:50Z",
+>>>>>>> dc8598fbb (chore: update simplification state registry)
       "pr": 12515
     },
     ".agents/tools/ui/tailwind-css.md": {
@@ -1738,7 +1750,11 @@
     },
     ".agents/tools/ui/shadcn.md": {
       "hash": "8e0d8de098a34d9c367a88cf73867e574be7be11",
+<<<<<<< HEAD
       "at": "2026-03-29T03:43:05Z",
+=======
+      "at": "2026-03-29T03:32:00Z",
+>>>>>>> dc8598fbb (chore: update simplification state registry)
       "pr": 12523
     },
     ".agents/scripts/foss-handlers/generic.sh": {
