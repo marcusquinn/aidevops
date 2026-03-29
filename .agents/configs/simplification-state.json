@@ -1372,8 +1372,8 @@
       "pr": 12113
     },
     ".agents/scripts/framework-issue-helper.sh": {
-      "hash": "c3cb1cdfac421583426ce742035684d5fee491f9",
-      "at": "2026-03-28T19:41:53Z",
+      "hash": "a53fde8f11aabd50fbda03386f967721d987e07a",
+      "at": "2026-03-29T00:24:21Z",
       "pr": 12145
     },
     ".agents/scripts/pulse-wrapper.sh": {
@@ -1407,8 +1407,8 @@
       "pr": 12162
     },
     ".agents/scripts/gh-signature-helper.sh": {
-      "hash": "0a63dcc8645e45de532d149119ec5f83a9449936",
-      "at": "2026-03-28T23:31:15Z",
+      "hash": "c1fc31cc418452ddfb321df133b3b629c2e25b33",
+      "at": "2026-03-29T00:24:15Z",
       "pr": 12165
     },
     ".agents/tools/wordpress/wp-dev.md": {
