@@ -41,7 +41,7 @@ tools:
 
 ### 1. Keyword Research and Clustering
 
-Run `/keyword-research-extended "seed keyword"`. Look for repeating modifiers (city names, "vs", "alternative to"). Cluster signals: same head term + varying modifier, consistent volume across variations, similar SERP intent, low keyword difficulty.
+Run `/keyword-research-extended "seed keyword"`. Cluster signals: same head term + varying modifier, consistent volume across variations, similar SERP intent, low keyword difficulty.
 
 ### 2. Template Design
 
@@ -96,12 +96,12 @@ For each {modifier} in data_source:
 
 ### 5. Internal Linking
 
-- **Hub and spoke**: Parent category page links to all variations
+- **Hub and spoke**: Parent category page links to all variations; hub links all children (paginated if >50)
 - **Cross-linking**: Related variations link to each other (same region, same category)
 - **Breadcrumbs**: Clear hierarchy (Home > Category > Variation)
 - **Footer/sidebar**: "Related {type}" blocks with 5–10 contextual links
 - **Sitemap**: Dedicated XML sitemap for the programmatic section
-- Each page: 3–10 internal links to cluster pages; hub links all children (paginated if >50); avoid all-to-all linking (dilutes link equity)
+- Each page: 3–10 internal links to cluster pages; avoid all-to-all linking (dilutes link equity)
 
 ### 6. Quality Assurance
 
@@ -142,4 +142,4 @@ For each {modifier} in data_source:
 
 **Don't use**: <20 variations (write individual pages), no unique data per variation (consolidate), variations have no search volume.
 
-**Post-launch monitoring**: Track indexation via GSC (`google-search-console.md`), monitor soft 404s and crawl errors, check ranking progress per cluster, watch for cannibalization (`ranking-opportunities.md`), review engagement metrics.
+**Post-launch monitoring**: Track indexation via GSC (`google-search-console.md`); monitor soft 404s and crawl errors; check ranking progress per cluster; watch for cannibalization (`ranking-opportunities.md`); review engagement metrics.
