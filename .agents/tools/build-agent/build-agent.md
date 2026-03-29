@@ -31,7 +31,7 @@ mode: subagent
 | **Location** | Root of `.agents/` | `tools/`, `services/`, `workflows/` |
 | **MCP tools** | NEVER enable directly | Enable per-agent |
 
-Broad/strategic → main agent. Independent, no cross-domain knowledge → subagent. Prefer calling existing agents over duplicating.
+Broad/strategic → main agent. Independent, no cross-domain knowledge → subagent. Call existing agents before duplicating.
 
 ## Subagent YAML Frontmatter (Required)
 
@@ -128,9 +128,7 @@ Record: `/remember "SUCCESS/FAILURE: agent with model — reason"`. Frontmatter:
 
 ## Quality Checking
 
-Linter order: (1) deterministic (ShellCheck, ESLint, Ruff/Pylint), (2) static analysis (SonarCloud, Secretlint), (3) LLM review (CodeRabbit — architectural only). Prefer `bun`/`bunx` over `npm`/`npx`. Never send an LLM to do a linter's job.
-
-**Sources:** Prefer official docs, RFCs, source code, first-party data. Watch for outdated tutorials, vendor claims, jurisdiction differences, commercial bias.
+Linter order: (1) deterministic (ShellCheck, ESLint, Ruff/Pylint), (2) static analysis (SonarCloud, Secretlint), (3) LLM review (CodeRabbit — architectural only). Prefer `bun`/`bunx` over `npm`/`npx`. Never send an LLM to do a linter's job. Prefer official docs, RFCs, source code, first-party data over outdated tutorials or vendor claims.
 
 ## Agent Design Checklist
 
