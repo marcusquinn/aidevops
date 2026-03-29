@@ -30,8 +30,6 @@ Verify high-stakes operations by obtaining an independent judgment from a differ
 
 ## Provider Selection
 
-Use a **different provider** from the primary model to avoid correlated failures.
-
 1. Identify primary provider: `claude-*`/`anthropic/*` → Anthropic; `gemini-*`/`google/*` → Google; `gpt-*`/`o1-*`/`o3-*`/`openai/*` → OpenAI
 2. Select verifier (preference order):
    - Anthropic primary → Google (flash), then OpenAI
@@ -95,18 +93,11 @@ Rules:
 
 **Verifier unavailable:** Log skip, proceed with warning. Never block solely because verification infrastructure is down — that makes the safety system a reliability liability.
 
-**Override:**
-
-```bash
-verify-operation-helper.sh verify --skip "reason"  # skip one operation
-export AIDEVOPS_SKIP_VERIFY=1                        # disable for session (not recommended)
-```
-
-All skips logged to observability DB.
+**Override:** `verify-operation-helper.sh verify --skip "reason"` (one op) or `export AIDEVOPS_SKIP_VERIFY=1` (session; not recommended). All skips logged to observability DB.
 
 ## Observability
 
-Logged via `observability-helper.sh record` and to `~/.aidevops/.agent-workspace/observability/verifications.jsonl`:
+`observability-helper.sh record` → `~/.aidevops/.agent-workspace/observability/verifications.jsonl`:
 
 ```json
 {
@@ -130,7 +121,6 @@ Logged via `observability-helper.sh record` and to `~/.aidevops/.agent-workspace
 ## CLI Reference
 
 ```bash
-# Verify an operation before execution
 verify-operation-helper.sh verify \
   --operation "git push --force origin main" \
   --type "git_force_push" \
@@ -138,15 +128,12 @@ verify-operation-helper.sh verify \
   --repo "owner/repo" \
   --branch "main"
 
-# Check if an operation needs verification
-verify-operation-helper.sh check \
-  --operation "git push origin feature/foo"
+verify-operation-helper.sh check --operation "git push origin feature/foo"
 
-# View/update verification configuration
 verify-operation-helper.sh config [--show|--set KEY=VALUE]
 ```
 
-Integration (t1364.3): pre-commit hooks (critical-tier git ops), dispatch pipeline (destructive headless ops), PR merge flow (large/security-sensitive PRs). CLI: `scripts/verify-operation-helper.sh`.
+Integration (t1364.3): pre-commit hooks (critical-tier git ops), dispatch pipeline (destructive headless ops), PR merge flow (large/security-sensitive PRs).
 
 <!-- AI-CONTEXT-END -->
 
