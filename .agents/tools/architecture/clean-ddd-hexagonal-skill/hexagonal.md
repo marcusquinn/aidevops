@@ -41,8 +41,6 @@ flowchart TB
     style Domain fill:#059669,stroke:#047857,color:white
 ```
 
----
-
 ## Ports
 
 | Type | Direction | Defined by | Purpose | Asymmetry |
@@ -87,8 +85,6 @@ export interface IPaymentGatewayPort {
   refund(paymentId: PaymentId, amount: Money): Promise<RefundResult>;
 }
 ```
-
----
 
 ## Adapters
 
@@ -141,8 +137,6 @@ class RabbitMQEventPublisher implements IEventPublisherPort:
     publishAll(events): for event in events: publish(event)
 ```
 
----
-
 ## Naming Conventions
 
 | Pattern | Port | Adapter |
@@ -151,8 +145,6 @@ class RabbitMQEventPublisher implements IEventPublisherPort:
 | Interface/Impl | `IOrderRepository` | `PostgresOrderRepository` |
 | Port suffix | `OrderRepositoryPort` | `PostgresOrderAdapter` |
 | Using prefix | `IOrderStorage` | `OrderStorageUsingPostgres` |
-
----
 
 ## Project Structure
 
@@ -171,9 +163,7 @@ src/
 └── domain/
 ```
 
----
-
-## Swap Adapters Without Changing Core
+## Configurability
 
 ```typescript
 // infrastructure/config/container.ts
@@ -188,8 +178,6 @@ function configureProduction(container: Container): void {
   container.bind<IPaymentGatewayPort>('IPaymentGatewayPort').to(StripePaymentGateway);
 }
 ```
-
----
 
 ## Strong vs Weak Ports
 
