@@ -26,8 +26,6 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-Firecracker micro-VMs across 30+ regions with anycast routing.
-
 **Best for**: low-latency global apps, AI sandboxes, Elixir/Phoenix, multi-region DBs (LiteFS/Fly Postgres), GPU inference.
 **Not for**: serverless functions (CF Workers), static-only sites (CF Pages), Kubernetes-native, Windows containers.
 
@@ -112,25 +110,27 @@ fly volumes destroy <vol-id> --app my-app             # IRREVERSIBLE
 
 ## Storage and Databases
 
-**Tigris** — S3-compatible global storage. `fly storage create` auto-sets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `BUCKET_NAME`. Any S3 SDK works.
+**Tigris** (S3-compatible): `fly storage create` auto-sets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `BUCKET_NAME`. Any S3 SDK works.
 
 ```bash
 fly storage create | list | dashboard
-fly postgres create --name my-db --region lhr      # Managed (you handle upgrades)
-fly postgres attach my-db --app my-app             # Sets DATABASE_URL
-fly redis create --name my-redis --region lhr      # Upstash (serverless, pay per request)
-fly redis attach my-redis --app my-app             # Sets REDIS_URL
+fly postgres create --name my-db --region lhr  # Managed (you handle upgrades)
+fly postgres attach my-db --app my-app         # Sets DATABASE_URL
+fly redis create --name my-redis --region lhr  # Upstash (serverless, pay per request)
+fly redis attach my-redis --app my-app         # Sets REDIS_URL
 ```
 
 ## Networking and Multi-Region
 
-**Private**: All apps in same org share WireGuard mesh (6PN) — `<app>.internal` (IPv6).
-**Flycast** (private LB): `fly ips allocate-v6 --private` → `<app>.flycast`. Not internet-exposed.
-`fly regions add|remove|list iad --app my-app`. Fly Postgres routes read replicas automatically. Set `PRIMARY_REGION` for write routing. Production: 2+ Machines, `min_machines_running = 1`.
+- **Private mesh (6PN)**: WireGuard across all org apps — `<app>.internal` (IPv6)
+- **Flycast** (private LB): `fly ips allocate-v6 --private` → `<app>.flycast` (not internet-exposed)
+- `fly regions add|remove|list iad --app my-app`
+- Fly Postgres auto-routes read replicas; set `PRIMARY_REGION` for writes
+- Production: 2+ Machines, `min_machines_running = 1`
 
 ## Sprites (AI Agent Sandboxes)
 
-Isolated ephemeral Machines for untrusted AI agent code.
+Isolated ephemeral Machines for untrusted AI agent code:
 
 ```bash
 fly machines run my-image --app my-sprites-app --region lhr \
