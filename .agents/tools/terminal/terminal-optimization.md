@@ -44,23 +44,15 @@ Target: <200ms for interactive shell.
 ```bash
 # Profile zsh startup
 zsh -xvs 2>&1 | ts -i '%.s' | head -50
-
 # Profile bash startup
 bash --norc --noprofile -c 'time bash -i -c exit'
-
-# Common slow culprits:
-# - nvm (Node Version Manager) - lazy-load instead
-# - conda init - lazy-load instead
-# - rbenv/pyenv init - lazy-load instead
-# - oh-my-zsh plugins - reduce to essentials
-# - compinit (zsh completion) - cache with zcompdump
 ```
 
-### Lazy-Loading Pattern
+Common slow culprits: nvm, conda init, rbenv/pyenv init, oh-my-zsh plugins, compinit (cache with zcompdump).
+
+**Lazy-load pattern** (apply to nvm, conda, rbenv, pyenv):
 
 ```bash
-# Instead of: eval "$(nvm init)"
-# Use lazy-load:
 nvm() {
     unset -f nvm node npm npx
     export NVM_DIR="$HOME/.nvm"
@@ -88,8 +80,8 @@ done | tr '\n' ':' | sed 's/:$//')
 | Classic | Modern | Speedup | Install |
 |---------|--------|---------|---------|
 | `find` | `fd` | 5-10x | `brew install fd` |
-| `grep` | `ripgrep (rg)` | 5-20x | `brew install ripgrep` |
-| `grep` in PDFs/docs | `ripgrep-all (rga)` | N/A (new capability) | `brew install ripgrep-all` |
+| `grep` | `rg` (ripgrep) | 5-20x | `brew install ripgrep` |
+| `grep` (PDFs/docs) | `rga` (ripgrep-all) | new capability | `brew install ripgrep-all` |
 | `cat` | `bat` | Syntax highlighting | `brew install bat` |
 | `ls` | `eza` | Better output | `brew install eza` |
 | `du` | `dust` | Visual tree | `brew install dust` |
@@ -99,21 +91,7 @@ done | tr '\n' ':' | sed 's/:$//')
 | `curl` | `xh` | Colorized HTTP | `brew install xh` |
 | `man` | `tldr` | Quick examples | `brew install tldr` |
 
-### Search Tool Hierarchy
-
-`fd`, `rg`, and `rga` are complementary — same ecosystem, same `.gitignore` awareness:
-
-| Tool | Purpose | Use when |
-|------|---------|----------|
-| `fd` | Find files by **name, type, size, date** | "Find all `.ts` files modified today" |
-| `rg` | Search **text file contents** by pattern | "Find where `handleAuth` is called" |
-| `rga` | Search **inside non-text files** (PDF, DOCX, SQLite, zip, tar) | "Find 'invoice' in downloaded PDFs" |
-
-- `fd` replaces `find` — file discovery by metadata
-- `rg` replaces `grep` — content search in source/text files
-- `rga` extends `rg` — same syntax, but reaches inside binary/document formats
-
-`rga` supported formats: PDF, DOCX/XLSX/PPTX, ODT, SQLite, compressed archives (zip, tar, gz), and more via adapters.
+`fd`/`rg`/`rga` share the same ecosystem and `.gitignore` awareness: `fd` = files by metadata, `rg` = text content, `rga` = inside non-text files (PDF, DOCX/XLSX/PPTX, ODT, SQLite, zip/tar/gz).
 
 ### 4. Shell Aliases
 
@@ -157,11 +135,9 @@ setopt HIST_IGNORE_SPACE
 
 ### 6. Terminal Multiplexer
 
-```bash
-# tmux essentials
-brew install tmux
+Install: `brew install tmux`. Minimal `~/.tmux.conf`:
 
-# Minimal .tmux.conf
+```bash
 set -g mouse on
 set -g history-limit 50000
 set -g default-terminal "screen-256color"
@@ -169,9 +145,7 @@ bind | split-window -h -c "#{pane_current_path}"
 bind - split-window -v -c "#{pane_current_path}"
 ```
 
-## Audit Report Format
-
-When running `/terminal-optimize`, output:
+## Audit Report Format (`/terminal-optimize`)
 
 ```text
 Terminal Optimization Report
