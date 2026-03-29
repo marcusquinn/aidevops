@@ -25,11 +25,10 @@ tools:
 - **Requires**: Google Workspace account, Google Cloud project, public HTTPS URL, Node.js >= 18, jq
 
 ```bash
-google-chat-helper.sh setup          # Interactive wizard
-google-chat-helper.sh start --daemon # Start bot
+google-chat-helper.sh setup  # Interactive wizard
 ```
 
-**Privacy warning**: Google Chat stores all messages server-side. Workspace admins have full read access. Gemini AI is integrated — workspace data may be used for AI improvement unless your admin configures DPAs and opts out. No E2E encryption. See [Privacy and Security Assessment](#privacy-and-security-assessment).
+**Privacy warning**: No E2E encryption. Google retains all messages; Workspace admins have full read access. Gemini AI may use workspace data for training unless your admin configures DPAs and opts out. See [Privacy and Security Assessment](#privacy-and-security-assessment).
 
 <!-- AI-CONTEXT-END -->
 
@@ -194,17 +193,7 @@ google-chat-helper.sh test-auth                                  # verify token
 
 **Gemini warning**: Review your org's Workspace DPA and verify Gemini AI settings (Google Admin Console > Apps > Additional Google services > Gemini) before deploying a bot handling sensitive data.
 
-**Platform comparison**:
-
-| Aspect | Google Chat | Matrix (self-hosted) | SimpleX |
-|--------|-------------|---------------------|---------|
-| E2E encryption | No | Yes (Megolm) | Yes (Double ratchet) |
-| Server-side storage | Google-controlled | Self-controlled | None |
-| Admin surveillance | Full access | Self-hosted = you control | Not possible |
-| AI training risk | Yes (Gemini) | No | No |
-| Open source | No | Yes | Yes (AGPL-3.0) |
-
-For sensitive communications, prefer Matrix (self-hosted) or SimpleX.
+For sensitive communications, prefer Matrix (self-hosted) or SimpleX — see `tools/security/opsec.md` for platform comparison.
 
 ### Bot-Specific Security
 
