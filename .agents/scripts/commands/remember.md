@@ -17,120 +17,45 @@ Content to remember: $ARGUMENTS
 | `CODEBASE_PATTERN` | Project conventions | "All API routes use /api/v1 prefix" |
 | `USER_PREFERENCE` | Developer preferences | "Prefers tabs over spaces" |
 | `TOOL_CONFIG` | Tool setup notes | "SonarCloud needs SONAR_TOKEN in CI" |
-| `DECISION` | Project-level process, workflow, or policy choices (naming conventions, release cadence, branching strategy) | "Adopted conventional commits for all repos" |
+| `DECISION` | Project-level process/policy choices | "Adopted conventional commits for all repos" |
 | `CONTEXT` | Background info | "Legacy API deprecated in Q3" |
-| `ARCHITECTURAL_DECISION` | System-level architecture choices and trade-offs (service boundaries, data flow, tech stack selection) | "Chose SQLite over Postgres for single-node simplicity" |
+| `ARCHITECTURAL_DECISION` | System-level architecture choices and trade-offs | "Chose SQLite over Postgres for single-node simplicity" |
 | `ERROR_FIX` | Bug fixes and patches | "Patched null pointer in auth middleware" |
 | `OPEN_THREAD` | Unresolved questions or follow-ups | "Investigate race condition in job scheduler" |
 
 ## Workflow
 
-### Step 1: Analyze Content
+1. **Analyze** — extract: content (concise, actionable), type, tags (comma-separated), project (optional)
+2. **Confirm** — present to user:
 
-From the conversation or $ARGUMENTS, extract:
-- **Content**: What to remember (concise, actionable)
-- **Type**: Best matching type from above
-- **Tags**: Relevant keywords (comma-separated)
-- **Project**: Current project name (optional)
+   ```text
+   Storing memory:
+   Type: {type}  Content: "{content}"  Tags: {tags}  Project: {project or "global"}
+   1. Confirm  2. Change type  3. Edit content  4. Cancel
+   ```
 
-### Step 2: Confirm with User
+3. **Store** — after confirmation:
 
-```text
-Storing memory:
+   ```bash
+   ~/.aidevops/agents/scripts/memory-helper.sh store --type "{type}" --content "{content}" --tags "{tags}" --project "{project}"
+   ```
 
-Type: {type}
-Content: "{content}"
-Tags: {tags}
-Project: {project or "global"}
-
-1. Confirm
-2. Change type
-3. Edit content
-4. Cancel
-```
-
-### Step 3: Store Memory
-
-After confirmation, run:
-
-```bash
-~/.aidevops/agents/scripts/memory-helper.sh store --type "{type}" --content "{content}" --tags "{tags}" --project "{project}"
-```
-
-### Step 4: Confirm Storage
-
-```text
-Remembered: "{content}" ({type})
-Tags: {tags}
-
-Recall anytime with: /recall {keyword}
-```
-
-## Examples
-
-**Storing a working solution:**
-
-```text
-User: /remember The CORS fix was adding Access-Control-Allow-Origin to nginx.conf
-AI: Storing memory:
-    Type: WORKING_SOLUTION
-    Content: "Fixed CORS by adding Access-Control-Allow-Origin header to nginx.conf location block"
-    Tags: cors,nginx,headers
-    Project: api-gateway
-
-    1. Confirm  2. Change type  3. Edit  4. Cancel
-User: 1
-AI: Remembered: "Fixed CORS by adding..." (WORKING_SOLUTION)
-    Recall anytime with: /recall cors
-```
-
-**Storing a failed approach:**
-
-```text
-User: /remember Don't use moment.js - it's huge and deprecated
-AI: Storing memory:
-    Type: FAILED_APPROACH
-    Content: "Avoid moment.js - large bundle size (300KB+) and deprecated. Use date-fns or dayjs instead"
-    Tags: javascript,dates,bundle-size
-    Project: global
-
-    1. Confirm  2. Change type  3. Edit  4. Cancel
-User: 1
-AI: Remembered: "Avoid moment.js..." (FAILED_APPROACH)
-```
-
-**Storing a user preference:**
-
-```text
-User: /remember I prefer conventional commits
-AI: Storing memory:
-    Type: USER_PREFERENCE
-    Content: "Use conventional commit format: type(scope): description"
-    Tags: git,commits,style
-    Project: global
-
-    1. Confirm  2. Change type  3. Edit  4. Cancel
-```
+4. **Confirm** — `Remembered: "{content}" ({type}) — Recall with: /recall {keyword}`
 
 ## Auto-Remember Triggers (MANDATORY)
 
-AI assistants **MUST** proactively suggest `/remember` when detecting these patterns:
+Proactively suggest `/remember` when detecting these patterns — do NOT wait for the user to ask:
 
-### Conversation Pattern Detection
+| User Says | Memory Type |
+|-----------|-------------|
+| "that fixed it", "it works now", "solved", "the trick is", "workaround" | `WORKING_SOLUTION` |
+| "I prefer", "I like", "always use", "never use" | `USER_PREFERENCE` |
+| "don't do X", "X doesn't work", "avoid X" | `FAILED_APPROACH` |
+| "let's go with", "decided to", "we'll use" | `DECISION` |
+| "architecture", "service boundary", "tech stack", "data flow" | `ARCHITECTURAL_DECISION` |
+| "configure X as", "set X to", "X needs Y" | `TOOL_CONFIG` |
 
-| User Says | Trigger Type | Memory Type |
-|-----------|--------------|-------------|
-| "that fixed it", "it works now", "solved" | Solution found | `WORKING_SOLUTION` |
-| "I prefer", "I like", "always use", "never use" | Preference stated | `USER_PREFERENCE` |
-| "don't do X", "X doesn't work", "avoid X" | Failed approach | `FAILED_APPROACH` |
-| "let's go with", "decided to", "we'll use" | Process/policy decision | `DECISION` |
-| "architecture", "service boundary", "tech stack", "data flow" | Architecture decision | `ARCHITECTURAL_DECISION` |
-| "the trick is", "workaround", "hack" | Workaround found | `WORKING_SOLUTION` |
-| "configure X as", "set X to", "X needs Y" | Tool config | `TOOL_CONFIG` |
-
-### Required Response Format
-
-When a trigger is detected, immediately offer:
+**Response format** — offer immediately on trigger detection:
 
 ```text
 That worked! Want me to remember this for future sessions?
@@ -140,51 +65,10 @@ That worked! Want me to remember this for future sessions?
 (Reply 'y' to confirm, or edit the description)
 ```
 
-### Examples
+Rules: suggest immediately; don't skip minor learnings; keep suggestions concise and actionable.
 
-**After fixing a bug:**
+## Storage
 
-```text
-User: Adding --legacy-peer-deps fixed the npm install
-AI: That worked! Want me to remember this for future sessions?
+`~/.aidevops/.agent-workspace/memory/memory.db` (SQLite FTS5)
 
-    /remember Use --legacy-peer-deps flag when npm install fails with peer dependency conflicts
-
-    (Reply 'y' to confirm, or edit the description)
-```
-
-**When user states preference:**
-
-```text
-User: I always use pnpm instead of npm
-AI: Got it! Want me to remember this preference?
-
-    /remember User prefers pnpm over npm for package management
-
-    (Reply 'y' to confirm)
-```
-
-**After failed approach:**
-
-```text
-User: That approach with setTimeout didn't work at all
-AI: Noted. Want me to remember to avoid this approach?
-
-    /remember Avoid using setTimeout for async coordination - use proper async/await or Promises instead
-
-    (Reply 'y' to confirm)
-```
-
-### Do NOT Wait
-
-- Do NOT wait for user to explicitly ask to remember
-- Do NOT skip the suggestion if the learning seems minor
-- DO suggest immediately when pattern is detected
-- DO make the suggestion concise and actionable
-
-## Storage Location
-
-Memories are stored in SQLite with FTS5 for fast search:
-`~/.aidevops/.agent-workspace/memory/memory.db`
-
-View stats: `~/.aidevops/agents/scripts/memory-helper.sh stats`
+Stats: `~/.aidevops/agents/scripts/memory-helper.sh stats`
