@@ -11,7 +11,7 @@ tools:
   webfetch: true
 ---
 
-Scope, plan, and launch a mission — an autonomous multi-day project from idea to delivery. Reuses `/define` probe techniques at project scope. Bridges "I have an idea" → tasks dispatched and executing.
+Scope, plan, and launch a mission — autonomous multi-day project from idea to delivery. Reuses `/define` probe techniques at project scope.
 
 Topic: $ARGUMENTS
 
@@ -29,6 +29,8 @@ fi
 ```
 
 If `$MISSION_DESC` empty and not headless: ask "What's the mission? Describe the end goal in one sentence."
+
+**Headless defaults** (`--headless` or ` -- ` in args): auto-classify; Full mode unless "poc"/"prototype"/"spike"/"research" in desc; Time 1 week; Cost moderate; Infra existing/local; Deps none. Run decomposition with opus. Output: `MISSION_ID={id} MISSION_DIR={path} MISSION_MODE={poc|full} MISSION_MILESTONES={n} MISSION_FEATURES={n} MISSION_STATUS=planning`
 
 ## Step 1: Mission Classification
 
@@ -51,7 +53,7 @@ If ambiguous, present numbered options and ask.
 
 ## Step 3: Budget and Constraints Interview
 
-Ask sequentially with numbered options (one recommended):
+Ask sequentially, one recommended option each:
 
 | Q | Options |
 |---|---------|
@@ -71,11 +73,11 @@ Ask sequentially with numbered options (one recommended):
 
 ## Step 5: Milestone Decomposition
 
-**Rules:** Sequential milestones (each builds on previous). Features within a milestone are parallelisable. Each has a validation criterion. First = smallest viable increment. Last = "polish, docs, and deploy". Each feature = one `/full-loop` dispatch.
+Sequential milestones; features within a milestone are parallelisable. Each has a validation criterion. First = smallest viable increment. Last = "polish, docs, and deploy". Each feature = one `/full-loop` dispatch.
 
-Present decomposition header: `Mission: "{mission_desc}" | Mode: {poc|full} | Budget: {time_budget}/{cost_budget} | Type: {classification}`. List milestones with features annotated `[parallel-group:a]` or `[depends:N]`. Final options: `1. Approve (rec) 2. Adjust milestones 3. Adjust features 4. Change mode 5. Start over`.
+Present: `Mission: "{mission_desc}" | Mode: {poc|full} | Budget: {time_budget}/{cost_budget} | Type: {classification}`. Annotate features `[parallel-group:a]` or `[depends:N]`. Options: `1. Approve (rec) 2. Adjust milestones 3. Adjust features 4. Change mode 5. Start over`.
 
-Budget feasibility (run before presenting):
+Run budget feasibility before presenting:
 
 ```bash
 ~/.aidevops/agents/scripts/budget-analysis-helper.sh recommend --goal "{mission_desc}" --json
@@ -98,9 +100,9 @@ MISSION_DIR="$MISSION_HOME/$MISSION_ID"
 mkdir -p "$MISSION_DIR"/{research,agents,scripts,assets}
 ```
 
-Mission state file structure: see `templates/mission-template.md` (t1357.1). Sections: State, Goal, Constraints, Milestones (feature checklists with `[parallel-group:a]`/`[depends:F1]`), Budget Tracking, Decisions Log, Notes.
+State file structure: `templates/mission-template.md` (t1357.1). Sections: State, Goal, Constraints, Milestones (feature checklists with `[parallel-group:a]`/`[depends:F1]`), Budget Tracking, Decisions Log, Notes.
 
-**Step 7: Optional Repo Creation** — if homeless (no git repo) and greenfield, offer: `1. Create + init (rec) — git init + aidevops init  2. Use existing repo  3. Keep homeless`. If option 1:
+**Optional repo creation** (homeless + greenfield): `1. Create + init (rec) — git init + aidevops init  2. Use existing repo  3. Keep homeless`. If option 1:
 
 ```bash
 REPO_DIR="$HOME/Git/$REPO_NAME"; mkdir -p "$REPO_DIR"; git -C "$REPO_DIR" init -q
@@ -108,7 +110,7 @@ mkdir -p "$REPO_DIR/todo/missions" || { echo "ERROR: mkdir failed" >&2; exit 1; 
 mv "$MISSION_DIR" "$REPO_DIR/todo/missions/$MISSION_ID" || { echo "ERROR: mv failed" >&2; exit 1; }
 ```
 
-## Step 8: Feature-to-Task Mapping (Full Mode Only)
+## Step 7: Feature-to-Task Mapping (Full Mode Only)
 
 ```bash
 repo_path=$(git rev-parse --show-toplevel)
@@ -122,19 +124,11 @@ done < <(awk '/^- \[ \] F[0-9]+:/{sub(/^- \[ \] F[0-9]+: /,""); print}' "$MISSIO
 
 POC mode: skip task creation — orchestrator dispatches features directly from mission state file.
 
-## Step 9: Launch Confirmation
+## Step 8: Launch Confirmation
 
 Print: `Mission created: {mission_id} | {mission_dir}/mission.md | Mode: {poc|full} | Milestones: {n} | Features: {n}`
 
-Options: `1. Start now (rec) 2. Review file first 3. Queue for pulse 4. Edit before starting`
-
-Option 1: POC → single `/full-loop` sequentially; Full → parallel features via pulse supervisor.
-
-## Headless Mode
-
-When `--headless` or ` -- ` in arguments: auto-classify, skip interview, apply defaults (Full mode unless "poc"/"prototype"/"spike"/"research" in desc; Time 1 week; Cost moderate; Infra existing/local; Deps none). Run decomposition with opus. Create mission state file + TODO.md entries (Full) or mission file only (POC).
-
-Output: `MISSION_ID={id} MISSION_DIR={path} MISSION_MODE={poc|full} MISSION_MILESTONES={n} MISSION_FEATURES={n} MISSION_STATUS=planning`
+Options: `1. Start now (rec) 2. Review file first 3. Queue for pulse 4. Edit before starting`. Option 1: POC → single `/full-loop` sequentially; Full → parallel features via pulse supervisor.
 
 ## Model Routing
 
@@ -148,8 +142,6 @@ Output: `MISSION_ID={id} MISSION_DIR={path} MISSION_MODE={poc|full} MISSION_MILE
 ## Mission Lifecycle
 
 `planning → active → paused → completed` / `active → blocked → active` / `→ cancelled`
-
-## Self-Organisation
 
 Mission dirs: `research/` (comparisons, API evals), `agents/` (temp agents, draft tier), `scripts/` (automation), `assets/` (screenshots, PDFs). Promote generally-useful agents/scripts to `~/.aidevops/agents/draft/` and log in decisions log.
 
