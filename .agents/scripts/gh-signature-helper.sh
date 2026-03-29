@@ -155,6 +155,85 @@ _detect_cli() {
 # Returns total input+output tokens for the most recent session in the current
 # working directory, or empty string if unavailable.
 
+# =============================================================================
+# _find_session_id — shared session identification for all detectors
+# =============================================================================
+# Finds the current OpenCode session ID using multiple heuristics:
+# 1. OPENCODE_PID → match session by process start time
+# 2. Walk PPID chain to find opencode process → use its start time
+# 3. Fallback: most recently created session in this directory
+#
+# Cross-platform: uses date -d (Linux) with date -j (macOS) fallback.
+
+_find_session_id() {
+	local db_path="$1"
+
+	local cwd repo_root canonical_dir
+	cwd=$(pwd 2>/dev/null || echo "")
+	if [[ -z "$cwd" ]]; then
+		echo ""
+		return 0
+	fi
+
+	repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "$cwd")
+	canonical_dir="${repo_root%%.*}"
+
+	local session_id=""
+
+	# Strategy 1: OPENCODE_PID (set in interactive TUI sessions)
+	local target_pid="${OPENCODE_PID:-}"
+
+	# Strategy 2: walk PPID chain to find opencode process
+	if [[ -z "$target_pid" ]]; then
+		local walk_pid="${PPID:-0}"
+		local walk_depth=0
+		while [[ "$walk_pid" -gt 1 ]] && [[ "$walk_depth" -lt 10 ]] 2>/dev/null; do
+			local walk_comm
+			walk_comm=$(ps -o comm= -p "$walk_pid" 2>/dev/null || echo "")
+			local walk_lower
+			walk_lower=$(printf '%s' "$walk_comm" | tr '[:upper:]' '[:lower:]')
+			if [[ "$walk_lower" == *opencode* ]]; then
+				target_pid="$walk_pid"
+				break
+			fi
+			walk_pid=$(ps -o ppid= -p "$walk_pid" 2>/dev/null | tr -d ' ' || echo "0")
+			walk_depth=$((walk_depth + 1))
+		done
+	fi
+
+	# Convert PID start time to epoch for session matching
+	if [[ -n "$target_pid" ]]; then
+		local pid_start_epoch lstart
+		lstart=$(ps -o lstart= -p "$target_pid" 2>/dev/null || echo "")
+		if [[ -n "$lstart" ]]; then
+			# Try GNU date first (Linux), then BSD date (macOS)
+			pid_start_epoch=$(date -d "$lstart" "+%s" 2>/dev/null ||
+				date -j -f "%a %b %d %H:%M:%S %Y" "$lstart" "+%s" 2>/dev/null || echo "")
+		fi
+		if [[ -n "$pid_start_epoch" ]]; then
+			local pid_start_ms=$((pid_start_epoch * 1000))
+			session_id=$(sqlite3 "$db_path" "
+				SELECT id FROM session
+				WHERE directory IN ('${cwd}', '${repo_root}', '${canonical_dir}')
+				ORDER BY ABS(time_created - ${pid_start_ms}) ASC LIMIT 1
+			" 2>/dev/null || echo "")
+		fi
+	fi
+
+	# Strategy 3: most recently created session (not updated — avoids picking
+	# long-running supervisor sessions that get updated frequently)
+	if [[ -z "$session_id" ]]; then
+		session_id=$(sqlite3 "$db_path" "
+			SELECT id FROM session
+			WHERE directory IN ('${cwd}', '${repo_root}', '${canonical_dir}')
+			ORDER BY time_created DESC LIMIT 1
+		" 2>/dev/null || echo "")
+	fi
+
+	echo "$session_id"
+	return 0
+}
+
 _detect_session_tokens() {
 	local db_path="${HOME}/.local/share/opencode/opencode.db"
 
@@ -164,36 +243,13 @@ _detect_session_tokens() {
 		return 0
 	fi
 
-	if [[ ! -r "$db_path" ]]; then
+	if [[ ! -r "$db_path" ]] || ! command -v sqlite3 &>/dev/null; then
 		echo ""
 		return 0
 	fi
-
-	if ! command -v sqlite3 &>/dev/null; then
-		echo ""
-		return 0
-	fi
-
-	# Find the most recently updated session matching the current directory
-	local cwd
-	cwd=$(pwd 2>/dev/null || echo "")
-	if [[ -z "$cwd" ]]; then
-		echo ""
-		return 0
-	fi
-
-	# Also check the canonical repo root and worktree's linked repo
-	local repo_root canonical_dir
-	repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "$cwd")
-	# Worktree paths like ~/Git/repo.branch-name → canonical is ~/Git/repo
-	canonical_dir="${repo_root%%.*}"
 
 	local session_id
-	session_id=$(sqlite3 "$db_path" "
-		SELECT id FROM session
-		WHERE directory IN ('${cwd}', '${repo_root}', '${canonical_dir}')
-		ORDER BY time_updated DESC LIMIT 1
-	" 2>/dev/null || echo "")
+	session_id=$(_find_session_id "$db_path")
 
 	if [[ -z "$session_id" ]]; then
 		echo ""
@@ -235,36 +291,8 @@ _detect_session_type() {
 		return 0
 	fi
 
-	local cwd repo_root canonical_dir
-	cwd=$(pwd 2>/dev/null || echo "")
-	repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "$cwd")
-	canonical_dir="${repo_root%%.*}"
-
-	local session_id=""
-	if [[ -n "${OPENCODE_PID:-}" ]]; then
-		local pid_start_epoch lstart
-		lstart=$(ps -o lstart= -p "$OPENCODE_PID" 2>/dev/null || echo "")
-		if [[ -n "$lstart" ]]; then
-			pid_start_epoch=$(date -j -f "%a %b %d %H:%M:%S %Y" "$lstart" "+%s" 2>/dev/null ||
-				date -d "$lstart" "+%s" 2>/dev/null || echo "")
-		fi
-		if [[ -n "$pid_start_epoch" ]]; then
-			local pid_start_ms=$((pid_start_epoch * 1000))
-			session_id=$(sqlite3 "$db_path" "
-				SELECT id FROM session
-				WHERE directory IN ('${cwd}', '${repo_root}', '${canonical_dir}')
-				ORDER BY ABS(time_created - ${pid_start_ms}) ASC LIMIT 1
-			" 2>/dev/null || echo "")
-		fi
-	fi
-
-	if [[ -z "$session_id" ]]; then
-		session_id=$(sqlite3 "$db_path" "
-			SELECT id FROM session
-			WHERE directory IN ('${cwd}', '${repo_root}', '${canonical_dir}')
-			ORDER BY time_updated DESC LIMIT 1
-		" 2>/dev/null || echo "")
-	fi
+	local session_id
+	session_id=$(_find_session_id "$db_path")
 
 	if [[ -z "$session_id" ]]; then
 		echo ""
@@ -304,37 +332,8 @@ _detect_session_time() {
 		return 0
 	fi
 
-	local cwd repo_root canonical_dir
-	cwd=$(pwd 2>/dev/null || echo "")
-	repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "$cwd")
-	canonical_dir="${repo_root%%.*}"
-
-	# Find session using PID-matching strategy (same as _detect_session_tokens)
-	local session_id=""
-	if [[ -n "${OPENCODE_PID:-}" ]]; then
-		local pid_start_epoch lstart
-		lstart=$(ps -o lstart= -p "$OPENCODE_PID" 2>/dev/null || echo "")
-		if [[ -n "$lstart" ]]; then
-			pid_start_epoch=$(date -j -f "%a %b %d %H:%M:%S %Y" "$lstart" "+%s" 2>/dev/null ||
-				date -d "$lstart" "+%s" 2>/dev/null || echo "")
-		fi
-		if [[ -n "$pid_start_epoch" ]]; then
-			local pid_start_ms=$((pid_start_epoch * 1000))
-			session_id=$(sqlite3 "$db_path" "
-				SELECT id FROM session
-				WHERE directory IN ('${cwd}', '${repo_root}', '${canonical_dir}')
-				ORDER BY ABS(time_created - ${pid_start_ms}) ASC LIMIT 1
-			" 2>/dev/null || echo "")
-		fi
-	fi
-
-	if [[ -z "$session_id" ]]; then
-		session_id=$(sqlite3 "$db_path" "
-			SELECT id FROM session
-			WHERE directory IN ('${cwd}', '${repo_root}', '${canonical_dir}')
-			ORDER BY time_updated DESC LIMIT 1
-		" 2>/dev/null || echo "")
-	fi
+	local session_id
+	session_id=$(_find_session_id "$db_path")
 
 	if [[ -z "$session_id" ]]; then
 		echo ""
