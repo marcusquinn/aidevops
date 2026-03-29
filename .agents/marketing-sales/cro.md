@@ -1,65 +1,14 @@
 # Conversion Rate Optimization (CRO) - AI Agent Skill
 
-**Reading path:** New to CRO → Chapters 1-3 (foundations), then Chapter 4 (landing pages) | Experienced → Chapter 9 (pricing psychology), Chapter 16 (analytics) | Team leads → Chapter 20 (enterprise), Chapter 21 (testing masterclass). See CHAPTERS.md for the full chapter index.
+**Reading path:** New to CRO → Chapters 1-3 (foundations), then Chapter 4 (landing pages) | Experienced → Chapter 9 (pricing psychology), Chapter 16 (analytics) | Team leads → Chapter 20 (enterprise), Chapter 21 (testing masterclass).
 
-## Table of Contents
-
-### Part I: Foundations
-
-1. [Introduction to CRO](CHAPTER-01.md) - What CRO is, why it matters, business impact, the CRO mindset
-2. [CRO Fundamentals](CHAPTER-02.md) - Conversion rates, psychology, funnels, attribution, data foundation
-3. [Frameworks and Prioritization](CHAPTER-03.md) - PIE, ICE, RICE, PXL frameworks; roadmap building
-
-### Part II: Page-Level Optimization
-
-4. [Landing Page Optimization](CHAPTER-04.md) - Anatomy, above-the-fold, layout patterns, industry strategies
-5. [Value Proposition and Messaging](CHAPTER-05.md) - Crafting propositions, messaging frameworks, headline formulas
-6. [Social Proof and Trust Signals](CHAPTER-06.md) - Testimonials, reviews, trust badges, authority signals
-7. [CTA Optimization](CHAPTER-07.md) - Design, copy, placement, contextual and dynamic CTAs
-8. [Form Optimization](CHAPTER-08.md) - Field reduction, multi-step forms, error handling, analytics
-
-### Part III: Conversion Flow Optimization
-
-9. [Pricing Page Psychology](CHAPTER-09.md) - Plan architecture, anchoring, decoy effect, feature tables
-10. [Checkout Flow Optimization](CHAPTER-10.md) - Checkout design, guest checkout, payment, shipping
-11. [Mobile CRO](CHAPTER-11.md) - Thumb zones, mobile forms, mobile checkout, responsive design
-12. [Copy Testing Frameworks](CHAPTER-12.md) - A/B testing copy, headline testing, long vs. short form
-
-### Part IV: Research and Analysis
-
-13. [Heatmap and Session Recording](CHAPTER-13.md) - Heatmap types, interpretation, session recording methodology
-14. [Landing Page Teardowns](CHAPTER-14.md) - 25 detailed analyses across SaaS, e-commerce, lead gen
-15. [Personalization](CHAPTER-15.md) - Behavioral, demographic, contextual personalization strategies
-
-### Part V: Advanced Analytics
-
-16. [CRO Analytics and Attribution](CHAPTER-16.md) - Multi-touch attribution, incrementality, MMM, predictive analytics
-17. [B2B Lead Generation and ABM](CHAPTER-17.md) - B2B funnels, lead magnets, ABM, lead scoring
-
-### Part VI: Specialized CRO
-
-18. [Case Studies and Playbook](CHAPTER-18.md) - Real-world implementations, playbook, success metrics
-19. [Advanced CRO Tactics](CHAPTER-19.md) - Behavioral economics, advanced personalization
-20. [Enterprise CRO](CHAPTER-20.md) - Program building, testing at scale, maturity model
-21. [Testing Masterclass](CHAPTER-21.md) - Hypothesis development, test design, statistical rigor
-22. [E-commerce CRO Deep Dive](CHAPTER-22.md) - Product pages, cart, mobile commerce, post-purchase
-23. [SaaS CRO](CHAPTER-23.md) - Trial-to-paid, pricing pages, product-led growth
-
-### Part VII: Mastery
-
-24. [CRO Mastery and Future Trends](CHAPTER-24.md) - CRO culture, emerging tech, career development
-25. [Revenue Optimization](CHAPTER-25.md) - Pricing, bundling, monetization CRO, ARPU optimization
+**Full chapter index:** [cro-chapters.md](cro-chapters.md) — 25 chapters across 7 parts.
 
 ---
 
 ## Core CRO Principles
 
 **What CRO is:** The systematic, data-driven process of increasing the percentage of visitors who take a desired action. Combines psychology, design, copywriting, analytics, and UX research.
-
-**Why it matters:**
-- Cost-effective: more value from existing traffic without increasing spend
-- Compounding: a 1% improvement delivers value indefinitely
-- Scalable: revenue grows without proportional traffic increase
 
 **The CRO process:**
 1. **Research** - Quantitative (analytics, heatmaps) + qualitative (surveys, recordings) to identify barriers
@@ -89,35 +38,11 @@ Conversion Likelihood = Perceived Value / Perceived Friction
 | Commitment/Consistency | Start with micro-conversions, build to macro |
 | Decoy Effect | Third option makes target option more attractive |
 
-### Prioritization Frameworks (Quick Reference)
+Prioritization frameworks (PIE, ICE, RICE, RICE, Expected Value): [cro-chapter-03.md](cro-chapter-03.md). Industry benchmarks by segment: [cro-chapter-02.md](cro-chapter-02.md).
 
-**PIE** = (Potential + Importance + Ease) / 3
-- Best when: page importance and traffic vary significantly
+---
 
-**ICE** = Impact + Confidence + Ease
-- Best when: you have strong research supporting hypotheses
-
-**RICE** = (Reach x Impact x Confidence) / Effort
-- Best when: you need to factor in audience reach and team capacity
-
-**Expected Value** = (P(success) x Expected Lift x Revenue) - Implementation Cost
-
-### Industry Benchmarks
-
-| Segment | Typical Rate | Top Performers |
-|---------|-------------|----------------|
-| E-commerce overall | 2.5-3% | 5-10%+ |
-| Fashion/Apparel | 1-2% | 3-5% |
-| Health & Beauty | 2-3% | 5-8% |
-| Food & Beverage | 3-5% | 8-12% |
-| B2B Lead gen | 1-3% | 5-8% |
-| SaaS free trial | 2-5% | 8-15% |
-| Email newsletter | 1-5% | 8-15% |
-| Content download | 2-7% | 10-20% |
-
-Mobile conversion rates are typically 40-70% of desktop rates.
-
-### CRO Audit Quick Checklist
+## CRO Audit Quick Checklist
 
 **Landing Page:**
 - [ ] Clear value proposition above the fold
@@ -174,7 +99,3 @@ Mobile conversion rates are typically 40-70% of desktop rates.
 - **Testing:** Optimizely, VWO, Google Optimize, AB Tasty
 - **Surveys:** Qualaroo, SurveyMonkey, Typeform
 - **User Testing:** UserTesting.com, UsabilityHub, Maze
-
----
-
-*Full content: 25 chapters across CHAPTER-01.md through CHAPTER-25.md. See CHAPTERS.md for detailed breakdown.*
