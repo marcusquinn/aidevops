@@ -42,7 +42,7 @@ This atomically: checks uncommitted changes → bumps version in all 6 files (VE
 
 **DO NOT** run separate bump/tag/push commands.
 
-**Prerequisites**: All changes committed (script refuses otherwise), tests passing, CHANGELOG.md has unreleased content (or use `--force`).
+**Prerequisites**: GitHub auth configured (`gh auth login` or `export GITHUB_TOKEN=...` with `repo` scope), all changes committed (script refuses otherwise), tests passing, CHANGELOG.md has unreleased content (or use `--force`).
 
 ## Manual Release Steps (Non-aidevops Repos)
 
@@ -78,8 +78,6 @@ git push origin main && git push origin --tags
 
 **Follow-up**: Verify artifacts/download links, update docs site, notify stakeholders, update dependent projects, close milestone.
 
-**GitHub auth** (prerequisite): `gh auth login` (preferred) or `export GITHUB_TOKEN=...` (fallback, needs `repo` scope).
-
 ## Rollback
 
 ```bash
@@ -90,7 +88,7 @@ git diff v{PREVIOUS} v{CURRENT}
 # Hotfix or revert
 git checkout -b hotfix/v{NEW_PATCH}
 git commit -m "fix: resolve critical issue"
-# or: git revert <commit-hash> && git commit -m "revert: rollback v{CURRENT}"
+# or: git revert --no-commit <commit-hash> && git commit -m "revert: rollback v{CURRENT}"
 ```
 
 ## Troubleshooting
