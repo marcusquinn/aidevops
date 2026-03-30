@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.443] - 2026-03-30
+
+### Changed
+
+- Maintenance: update marketplace.json for v3.5.442
+- Maintenance: release v3.5.442
+- Maintenance: bump version to 3.5.442
+- Documentation: tighten pages-functions-patterns.md (182→178 lines) (#13929)
+
 ## [3.5.438] - 2026-03-30
 
 ### Changed
