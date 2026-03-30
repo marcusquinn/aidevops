@@ -228,15 +228,18 @@ _collect_all_configs() {
 # Scan a single config file and report MCP server health.
 # Arguments:
 #   $1 - config file path
-# Outputs results to stdout. Sets global ok_count/error_count/skip_count/errored_names.
+#   $2 - name of array variable to append errored server names to (passed by name)
+# Outputs results to stdout. Increments global ok_count/error_count/skip_count.
+# Parse failures are non-fatal: logs an error and returns 0 so the caller continues.
 _scan_config_file() {
 	local config_file="$1"
+	local errored_var="$2"
 
 	local server_list
-	server_list=$(_extract_server_list "$config_file") || {
-		echo -e "  ${RED}✗ Failed to parse config file${NC}"
-		return 1
-	}
+	if ! server_list=$(_extract_server_list "$config_file" 2>/dev/null); then
+		echo -e "  ${RED}✗ Failed to parse config file — skipping${NC}"
+		return 0
+	fi
 
 	if [[ -z "$server_list" ]]; then
 		echo -e "  ${YELLOW}(no enabled MCP servers)${NC}"
@@ -268,7 +271,8 @@ _scan_config_file() {
 			((++ok_count))
 		else
 			echo -e "  ${RED}[error]${NC}  $name — command not found: ${cmd_path:-<none>}"
-			errored_names+=("$name")
+			# Append to the caller-provided array variable by name
+			eval "${errored_var}+=(\"$name\")"
 			((++error_count))
 		fi
 	done <<<"$server_list"
@@ -299,21 +303,24 @@ _check_all_mcps() {
 	local ok_count=0
 	local error_count=0
 	local skip_count=0
-	local errored_names=()
-	local last_config_file=""
+	local any_errors=false
 
 	local config_file
 	for config_file in "${all_configs[@]}"; do
 		echo "Config: $config_file"
-		_scan_config_file "$config_file"
+		# Per-config errored names array — remediation points to the correct config
+		local _cfg_errored=()
+		_scan_config_file "$config_file" "_cfg_errored"
 		echo ""
-		last_config_file="$config_file"
+		if [[ ${#_cfg_errored[@]} -gt 0 ]]; then
+			_print_remediation "$config_file" "${_cfg_errored[@]}"
+			any_errors=true
+		fi
 	done
 
 	echo "Summary: ${ok_count} ok, ${error_count} errored, ${skip_count} skipped (remote)"
 
-	if [[ ${#errored_names[@]} -gt 0 ]]; then
-		_print_remediation "$last_config_file" "${errored_names[@]}"
+	if [[ "$any_errors" == "true" ]]; then
 		return 1
 	fi
 
@@ -333,13 +340,43 @@ fi
 echo -e "${BLUE}=== MCP Diagnosis: $MCP_NAME ===${NC}"
 echo ""
 
-# 0. Detect if this is a remote/SSE MCP (no local command to check)
+# 0. Detect if this is a remote/SSE MCP by reading its type from config files.
+# Config-driven: reads the 'type' field from the MCP entry rather than hardcoding names.
 MCP_IS_REMOTE=false
-case "$MCP_NAME" in
-cloudflare-api | openapi-search | context7)
+MCP_CONFIGURED_TYPE=""
+_detect_mcp_type() {
+	local mcp_name="$1"
+	local config_file="$2"
+	python3 - "$config_file" "$mcp_name" <<'PYEOF'
+import json, sys
+config_file, mcp_name = sys.argv[1], sys.argv[2]
+try:
+    with open(config_file) as f:
+        cfg = json.load(f)
+    mcp_section = cfg.get('mcp', cfg.get('mcpServers', {}))
+    entry = mcp_section.get(mcp_name, {})
+    print(entry.get('type', ''))
+except Exception:
+    print('')
+PYEOF
+}
+
+# Check all config files for this MCP's type.
+# Prefer 'remote' or 'sse' if found in any config (an enabled remote entry
+# takes precedence over a disabled local entry in another config).
+while IFS= read -r _diag_cfg; do
+	_mcp_type=$(_detect_mcp_type "$MCP_NAME" "$_diag_cfg" 2>/dev/null)
+	if [[ "$_mcp_type" == "remote" || "$_mcp_type" == "sse" ]]; then
+		MCP_CONFIGURED_TYPE="$_mcp_type"
+		break
+	elif [[ -n "$_mcp_type" && -z "$MCP_CONFIGURED_TYPE" ]]; then
+		MCP_CONFIGURED_TYPE="$_mcp_type"
+	fi
+done < <(_collect_all_configs)
+
+if [[ "$MCP_CONFIGURED_TYPE" == "remote" || "$MCP_CONFIGURED_TYPE" == "sse" ]]; then
 	MCP_IS_REMOTE=true
-	;;
-esac
+fi
 
 # 1. Check if command exists
 echo "1. Checking command availability..."
@@ -360,7 +397,7 @@ context7)
 esac
 
 if [[ "$MCP_IS_REMOTE" == "true" ]]; then
-	echo -e "   ${CYAN}[remote]${NC} $MCP_NAME is a remote/SSE MCP — no local command required."
+	echo -e "   ${CYAN}[remote]${NC} $MCP_NAME is a remote/SSE MCP (type: ${MCP_CONFIGURED_TYPE}) — no local command required."
 	echo "   Remote MCPs connect over the network and cannot be diagnosed locally."
 	echo ""
 	echo "4. Known issues for $MCP_NAME..."
@@ -380,6 +417,10 @@ if [[ "$MCP_IS_REMOTE" == "true" ]]; then
 	context7)
 		echo "   - Remote MCP, no local command needed"
 		echo "   - Use: \"type\": \"remote\", \"url\": \"https://mcp.context7.com/mcp\""
+		;;
+	*)
+		echo "   - Remote/SSE MCP (type: ${MCP_CONFIGURED_TYPE}) — no local command required"
+		echo "   - To disable: set \"enabled\": false in your MCP config"
 		;;
 	esac
 	exit 0
