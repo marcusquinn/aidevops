@@ -14,9 +14,7 @@
 | Brand building | Origin Story | Storytelling |
 | Trust-building | Testimonial / Case Study | Proof |
 
-## PAS (Problem-Agitate-Solution)
-
-Static:
+## PAS (Problem-Agitate-Solution) — static
 
 ```text
 PRIMARY TEXT:
@@ -34,7 +32,7 @@ HEADLINE: Automate Data Entry in 5 Minutes
 CTA: Try Free
 ```
 
-Video 25s:
+PAS — video 25s:
 
 ```text
 [0-3s]   "If you're still manually entering data, I need to talk to you."
@@ -87,7 +85,7 @@ NEW WAY: "With [PRODUCT]: ✅ [Benefit 1] ✅ [Benefit 2] ✅ [Benefit 3]"
 "Same outcome, zero hassle. Try [PRODUCT] free →"
 ```
 
-## Mini-Story Arc (30-60s video)
+## Mini-Story Arc — video 30-60s
 
 Setup (5-10s) → Conflict (5-10s) → Climax (5-10s) → Resolution (5-10s) → CTA (5s)
 
@@ -99,7 +97,7 @@ Setup (5-10s) → Conflict (5-10s) → Climax (5-10s) → Resolution (5-10s) →
 [CTA]        "Ready to transform your workflow? Start free at [WEBSITE]."
 ```
 
-Transformation variant (identity framing):
+Identity framing variant:
 
 ```text
 "I used to be the person who was always behind. [chaos]
@@ -165,4 +163,4 @@ Social proof: `[logos]` "Trusted by 500+ companies" · `[stars]` "4.9/5 from 2,0
 | 30s video | `[HOOK 3s] + [PROBLEM 7s] + [SOLUTION 10s] + [PROOF 5s] + [CTA 5s]` |
 | 60s video | `[HOOK 5s] + [PROBLEM 10s] + [AGITATE 10s] + [SOLUTION 15s] + [PROOF 10s] + [CTA 10s]` |
 
-*Next: [Production Workflow](production.md)*
+*Next: [Production Workflow](meta-ads-creative-production.md)*
