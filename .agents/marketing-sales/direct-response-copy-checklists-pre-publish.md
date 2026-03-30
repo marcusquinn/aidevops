@@ -1,139 +1,98 @@
 # Pre-Publish Checklist
 
-Use this checklist before publishing direct response copy.
+## Research
 
----
-
-## Research ✓
-
-- [ ] Know your specific audience
-- [ ] Understand their top 3 pain points
+- [ ] Specific audience defined with top 3 pain points
 - [ ] Know what they've tried that didn't work
-- [ ] Understand their desired outcome
-- [ ] Know their objections and have addressed them
-- [ ] Determined their awareness level
-- [ ] Have proof points ready (testimonials, stats, case studies)
+- [ ] Desired outcome clear
+- [ ] Objections identified and addressed
+- [ ] Awareness level determined
+- [ ] Proof points ready (testimonials, stats, case studies)
 
----
+## Headline
 
-## Headline ✓
-
-- [ ] Promises a clear benefit
-- [ ] Is specific (numbers, outcomes, timeframes)
+- [ ] Promises a clear, specific benefit (numbers, outcomes, timeframes)
 - [ ] Speaks to target audience
 - [ ] Creates curiosity or urgency
 - [ ] Passes the "would I click this?" test
 - [ ] Written at least 10 variations
 - [ ] Subheadline supports headline (doesn't repeat it)
 
----
-
-## Opening/Lead ✓
+## Opening/Lead
 
 - [ ] First sentence hooks the reader
-- [ ] Connects to their current pain or desire
+- [ ] Connects to current pain or desire
 - [ ] Acknowledges what they've tried before
 - [ ] Reader sees themselves in the opening
 - [ ] Transition to solution feels natural
 
----
+## Body Copy
 
-## Body Copy ✓
+- [ ] Benefits outnumber features (3:1 minimum)
+- [ ] Each feature tied to an outcome
+- [ ] Second person (you/your), active voice
+- [ ] Short sentences (<20 words) and paragraphs (2-3 sentences)
+- [ ] No jargon; skimmable (subheads, bullets, bold)
 
-- [ ] Benefits outnumber features (3:1 ratio minimum)
-- [ ] Each feature tied to an outcome (so what?)
-- [ ] Written in second person (you/your)
-- [ ] Sentences short (under 20 words)
-- [ ] Paragraphs short (2-3 sentences)
-- [ ] No jargon or unclear language
-- [ ] Active voice, not passive
-- [ ] Skimmable (subheads, bullets, bold)
+## Social Proof
 
----
-
-## Social Proof ✓
-
-- [ ] Testimonials include specific results (numbers)
-- [ ] Testimonials from named people (with photos if possible)
+- [ ] Testimonials: specific results, named people, photos where possible
 - [ ] Testimonials address objections
 - [ ] Case studies show before/after transformation
-- [ ] Third-party validation included (G2, press, certifications)
-- [ ] Social proof placed strategically throughout
+- [ ] Third-party validation (G2, press, certifications)
+- [ ] Placed strategically throughout copy
 
----
-
-## Offer ✓
+## Offer
 
 - [ ] Core offer clearly defined
 - [ ] Value established before price revealed
-- [ ] Value stack totals more than price (5-10x)
-- [ ] Bonuses relevant to main offer
-- [ ] Bonuses have specific deliverables (not vague promises)
+- [ ] Value stack 5-10x price
+- [ ] Bonuses relevant with specific deliverables
 - [ ] Price justified (anchoring, comparison)
 - [ ] Payment options reduce friction (plans for $200+ offers)
 
----
+## Guarantee
 
-## Guarantee ✓
-
-- [ ] Guarantee strong and clear
+- [ ] Strong, clear, and prominently displayed
 - [ ] Terms reasonable and fair
-- [ ] Guarantee prominently displayed
 - [ ] Addresses fear of wrong decision
 
----
+## Urgency/Scarcity
 
-## Urgency/Scarcity ✓
-
-- [ ] Urgency is real (not fake)
+- [ ] Real and legitimate (not manufactured)
 - [ ] Deadline or scarcity clearly stated
 - [ ] Consequences of waiting spelled out
-- [ ] Urgency feels legitimate (not manipulative)
 
----
+## Call to Action
 
-## Call to Action ✓
+- [ ] One clear action (no competing CTAs)
+- [ ] Button text action-oriented; stands out visually
+- [ ] Appears multiple times on long pages
+- [ ] Friction minimized; next step obvious
 
-- [ ] One clear action (not multiple competing CTAs)
-- [ ] CTA button text action-oriented
-- [ ] CTA appears multiple times (especially long pages)
-- [ ] CTA stands out visually (contrast, size)
-- [ ] Friction minimized (easy next step)
-- [ ] What happens after clicking is clear
+## Technical
 
----
-
-## Technical ✓
-
-- [ ] Page mobile-optimized (60%+ traffic)
-- [ ] Load time fast (under 3 seconds)
-- [ ] All links work
-- [ ] Form submits correctly
+- [ ] Mobile-optimized (60%+ traffic is mobile)
+- [ ] Load time under 3 seconds
+- [ ] All links work; form submits correctly
 - [ ] Tracking set up (pixels, analytics)
 - [ ] Checkout process smooth
 
----
+## Final Read
 
-## Final Read ✓
+- [ ] Read aloud (catches awkward phrasing)
+- [ ] Spelling, grammar, consistent tone
+- [ ] Redundant words removed
+- [ ] Would you buy based on this page?
+- [ ] Fresh eyes review (someone else)
 
-- [ ] Read copy aloud (catches awkward phrasing)
-- [ ] Check spelling and grammar
-- [ ] Remove redundant words and sentences
-- [ ] Ensure consistent tone throughout
-- [ ] Would you buy this based on this page?
-- [ ] Get fresh eyes review (someone else)
+## Quick Pre-Flight
 
----
+Before publishing, verify all six:
 
-## Pre-Publish Checklist
-
-Before publishing, verify:
-
-1. **Clear?** Can someone understand the value in 5 seconds?
-2. **Specific?** Concrete numbers, timeframes, results?
-3. **Believable?** Doesn't feel too good to be true?
-4. **Proof?** Evidence this works?
-5. **Risk reversal?** What if they're not satisfied?
-6. **One action?** Do they know what to do next?
-
-If yes to all six, you're ready to ship.
+1. **Clear?** Value understood in 5 seconds
+2. **Specific?** Concrete numbers, timeframes, results
+3. **Believable?** Doesn't feel too good to be true
+4. **Proof?** Evidence this works
+5. **Risk reversal?** Satisfaction guarantee clear
+6. **One action?** Reader knows what to do next
