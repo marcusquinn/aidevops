@@ -316,6 +316,7 @@ ensure_homebrew() {
 	print_info "Homebrew (Linuxbrew) is not installed."
 	print_info "Several optional tools (Beads CLI, Worktrunk, bv) install via Homebrew taps."
 	echo ""
+	local install_brew="Y"
 	setup_prompt install_brew "Install Homebrew for Linux? [Y/n]: " "Y"
 
 	if [[ ! "$install_brew" =~ ^[Yy]?$ ]]; then
@@ -512,6 +513,7 @@ check_requirements() {
 		fi
 
 		echo ""
+		local install_deps="Y"
 		setup_prompt install_deps "Install missing dependencies using $pkg_manager? [Y/n]: " "Y"
 
 		if [[ "$install_deps" =~ ^[Yy]?$ ]]; then
@@ -532,12 +534,13 @@ check_requirements() {
 	return 0
 }
 
-# Check for quality/linting tools (shellcheck, shfmt)
+# Check for quality/linting tools (shellcheck, shfmt, markdownlint)
 # These are optional but recommended for development
 check_quality_tools() {
 	print_info "Checking quality tools..."
 
 	local missing_tools=()
+	local missing_npm_tools=()
 
 	# Check for shellcheck
 	if command -v shellcheck >/dev/null 2>&1; then
@@ -553,19 +556,42 @@ check_quality_tools() {
 		missing_tools+=("shfmt")
 	fi
 
+	# Check for markdownlint (accept either CLI variant)
+	if command -v markdownlint >/dev/null 2>&1; then
+		print_success "markdownlint: $(markdownlint --version 2>/dev/null | head -1)"
+	elif command -v markdownlint-cli2 >/dev/null 2>&1; then
+		print_success "markdownlint-cli2: $(markdownlint-cli2 --version 2>/dev/null | head -1)"
+	else
+		missing_npm_tools+=("markdownlint-cli2")
+	fi
+
 	# If all tools present, return early
-	if [[ ${#missing_tools[@]} -eq 0 ]]; then
+	if [[ ${#missing_tools[@]} -eq 0 && ${#missing_npm_tools[@]} -eq 0 ]]; then
 		print_success "All quality tools installed"
 		return 0
 	fi
 
 	# Show missing tools
-	print_warning "Missing quality tools: ${missing_tools[*]}"
+	if [[ ${#missing_tools[@]} -gt 0 ]]; then
+		print_warning "Missing quality tools: ${missing_tools[*]}"
+	fi
+	if [[ ${#missing_npm_tools[@]} -gt 0 ]]; then
+		print_warning "Missing npm quality tools: ${missing_npm_tools[*]}"
+	fi
 	print_info "These tools are used by linters-local.sh for code quality checks"
 
 	# In non-interactive mode, just warn and continue
 	if [[ "$NON_INTERACTIVE" == "true" ]]; then
-		print_info "Install later: brew install ${missing_tools[*]}"
+		if [[ ${#missing_tools[@]} -gt 0 ]]; then
+			print_info "Install later: brew install ${missing_tools[*]}"
+		fi
+		if [[ ${#missing_npm_tools[@]} -gt 0 ]]; then
+			if command -v npm >/dev/null 2>&1; then
+				print_info "Install later: npm install -g ${missing_npm_tools[*]}"
+			else
+				print_info "Install later: install npm, then run npm install -g ${missing_npm_tools[*]}"
+			fi
+		fi
 		return 0
 	fi
 
@@ -573,27 +599,49 @@ check_quality_tools() {
 	local pkg_manager
 	pkg_manager=$(detect_package_manager)
 
-	if [[ "$pkg_manager" == "unknown" ]]; then
+	if [[ "$pkg_manager" == "unknown" && ${#missing_tools[@]} -gt 0 ]]; then
 		print_info "Install manually:"
 		echo "  macOS: brew install ${missing_tools[*]}"
 		echo "  Ubuntu/Debian: sudo apt-get install ${missing_tools[*]}"
 		echo "  Fedora: sudo dnf install ${missing_tools[*]}"
-		return 0
+	elif [[ ${#missing_tools[@]} -gt 0 ]]; then
+		local install_quality="Y"
+		echo ""
+		setup_prompt install_quality "Install quality tools using $pkg_manager? [Y/n]: " "Y"
+
+		if [[ "$install_quality" =~ ^[Yy]?$ ]]; then
+			print_info "Installing ${missing_tools[*]}..."
+			if install_packages "$pkg_manager" "${missing_tools[@]}"; then
+				print_success "Quality tools installed successfully"
+			else
+				print_warning "Failed to install some quality tools - continuing anyway"
+			fi
+		else
+			print_info "Skipped quality tools installation"
+			print_info "Install later: $pkg_manager install ${missing_tools[*]}"
+		fi
 	fi
 
-	echo ""
-	setup_prompt install_quality "Install quality tools using $pkg_manager? [Y/n]: " "Y"
-
-	if [[ "$install_quality" =~ ^[Yy]?$ ]]; then
-		print_info "Installing ${missing_tools[*]}..."
-		if install_packages "$pkg_manager" "${missing_tools[@]}"; then
-			print_success "Quality tools installed successfully"
+	if [[ ${#missing_npm_tools[@]} -gt 0 ]]; then
+		if ! command -v npm >/dev/null 2>&1; then
+			print_warning "npm not found; cannot auto-install ${missing_npm_tools[*]}"
+			print_info "Install Node.js/npm, then run: npm install -g ${missing_npm_tools[*]}"
 		else
-			print_warning "Failed to install some quality tools - continuing anyway"
+			local install_npm_quality="Y"
+			echo ""
+			setup_prompt install_npm_quality "Install npm quality tools (npm install -g ${missing_npm_tools[*]})? [Y/n]: " "Y"
+			if [[ "$install_npm_quality" =~ ^[Yy]?$ ]]; then
+				print_info "Installing npm quality tools: ${missing_npm_tools[*]}..."
+				if npm install -g "${missing_npm_tools[@]}" >/dev/null 2>&1; then
+					print_success "npm quality tools installed successfully"
+				else
+					print_warning "Failed to install npm quality tools - continuing anyway"
+				fi
+			else
+				print_info "Skipped npm quality tools installation"
+				print_info "Install later: npm install -g ${missing_npm_tools[*]}"
+			fi
 		fi
-	else
-		print_info "Skipped quality tools installation"
-		print_info "Install later: $pkg_manager install ${missing_tools[*]}"
 	fi
 
 	return 0

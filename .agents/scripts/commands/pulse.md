@@ -22,6 +22,30 @@ their slots refilled immediately, not after a 3-minute restart penalty.
 needs coding, dispatch a worker. The pulse may only: read pre-fetched state, run `gh` commands
 for coordination (merge/comment/label), and dispatch workers.
 
+## Non-Interactive Continuation Contract (MANDATORY)
+
+This session is unattended. There is no human to ask for confirmation.
+
+- Never ask for permission, confirmation, or input (for example: "If you want, I can...").
+- Never stop after a single dispatch pass unless an exit condition is met.
+- After each cycle, immediately continue to the next cycle.
+
+If you output user-directed language by mistake, self-correct in the next line and continue the loop.
+
+Only exit when one of these is true:
+
+1. Elapsed runtime is at least 55 minutes
+2. Circuit breaker or stop flag is active
+3. No dispatchable work remains after re-check and all worker slots are full
+
+If `AVAILABLE > 0` and `WORKER_COUNT == 0`, you MUST attempt dispatch before sleeping:
+
+1. Managed-repo issue dispatch from pre-fetched state
+2. Targeted refresh for candidate repos if needed
+3. FOSS fallback dispatch
+
+If no worker launches, log `NO_DISPATCHABLE_EVIDENCE` with counts/reasons, sleep 60s, and continue.
+
 ## Initial Dispatch (DO THIS FIRST)
 
 Read this section, then execute it. Everything below this section is refinement.
@@ -252,6 +276,9 @@ After the initial dispatch, enter a monitoring loop. Each cycle:
    workers if idle capacity remains (same rules as Step 4.7). Use the same dedup guards
    and dispatch commands as the initial dispatch. Re-fetch issue state with targeted `gh`
    calls only for repos where you need to dispatch (not a full re-fetch of all repos).
+
+   If `AVAILABLE > 0` and `WORKER_COUNT == 0` after this step, do not exit and do not ask
+   for input. Log `NO_DISPATCHABLE_EVIDENCE`, sleep 60s, and continue the loop.
 
 5. **If fully staffed**: log it, mark the cycle todo complete, continue to next cycle.
 

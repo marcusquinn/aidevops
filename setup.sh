@@ -740,6 +740,8 @@ _setup_run_non_interactive() {
 	print_info "Non-interactive mode: deploying agents and running safe migrations only"
 	verify_location
 	check_requirements
+	# Run quality tool detection in non-interactive mode too (warn-only path).
+	check_quality_tools
 	check_python_upgrade_available
 	set_permissions
 	migrate_old_backups

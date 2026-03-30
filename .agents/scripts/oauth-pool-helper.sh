@@ -2043,6 +2043,182 @@ json.dump({'cleared': cleared, 'pool': pool}, sys.stdout, indent=2)
 }
 
 # ---------------------------------------------------------------------------
+# Mark current account failure state (for headless auto-rotation)
+# ---------------------------------------------------------------------------
+
+cmd_mark_failure() {
+	local provider="${1:-}"
+	local reason="${2:-rate_limit}"
+	local retry_seconds="${3:-900}"
+
+	case "$provider" in
+	anthropic | openai | cursor | google) ;;
+	*)
+		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, google)"
+		return 1
+		;;
+	esac
+
+	case "$reason" in
+	rate_limit | auth_error | provider_error) ;;
+	*)
+		print_error "Invalid reason: $reason (valid: rate_limit, auth_error, provider_error)"
+		return 1
+		;;
+	esac
+
+	if [[ ! "$retry_seconds" =~ ^[0-9]+$ ]]; then
+		print_error "retry_seconds must be an integer"
+		return 1
+	fi
+
+	if [[ ! -f "$POOL_FILE" || ! -f "$OPENCODE_AUTH_FILE" ]]; then
+		print_warning "Pool/auth file missing; skipping account failure mark"
+		return 0
+	fi
+
+	local mark_result
+	mark_result=$(POOL_FILE_PATH="$POOL_FILE" AUTH_FILE_PATH="$OPENCODE_AUTH_FILE" \
+		PROVIDER="$provider" REASON="$reason" RETRY_SECONDS="$retry_seconds" python3 -c "
+import json, os, sys, tempfile, time
+from datetime import datetime, timezone
+
+pool_path = os.environ['POOL_FILE_PATH']
+auth_path = os.environ['AUTH_FILE_PATH']
+provider = os.environ['PROVIDER']
+reason = os.environ['REASON']
+retry_seconds = int(os.environ['RETRY_SECONDS'])
+
+def _acquire_lock(lock_fd):
+    if sys.platform == 'win32':
+        import msvcrt
+        deadline = time.time() + 30
+        while True:
+            try:
+                lock_fd.seek(0)
+                msvcrt.locking(lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
+                return
+            except OSError:
+                if time.time() >= deadline:
+                    raise
+                time.sleep(0.1)
+    else:
+        import fcntl
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+def _release_lock(lock_fd):
+    if sys.platform == 'win32':
+        import msvcrt
+        try:
+            lock_fd.seek(0)
+            msvcrt.locking(lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+    else:
+        import fcntl
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+
+def _atomic_write_json(path, data):
+    d = os.path.dirname(path)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix='.tmp-', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w') as f:
+            json.dump(data, f, indent=2)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+status_map = {
+    'rate_limit': 'rate-limited',
+    'auth_error': 'auth-error',
+    'provider_error': 'rate-limited',
+}
+target_status = status_map.get(reason, 'rate-limited')
+
+lock_path = pool_path + '.lock'
+lock_fd = open(lock_path, 'w')
+try:
+    _acquire_lock(lock_fd)
+    with open(pool_path) as f:
+        pool = json.load(f)
+    with open(auth_path) as f:
+        auth = json.load(f)
+
+    accounts = pool.get(provider, [])
+    if not accounts:
+        print('SKIP:no_accounts')
+        sys.exit(0)
+
+    current_auth = auth.get(provider, {}) if isinstance(auth, dict) else {}
+    current_access = current_auth.get('access', '')
+    current_account_id = current_auth.get('accountId', '')
+
+    idx = -1
+    if current_access:
+        for i, acct in enumerate(accounts):
+            if acct.get('access', '') == current_access:
+                idx = i
+                break
+
+    if idx < 0 and provider == 'openai' and current_account_id:
+        for i, acct in enumerate(accounts):
+            if acct.get('accountId', '') == current_account_id:
+                idx = i
+                break
+
+    if idx < 0:
+        best_i = 0
+        best_last = ''
+        for i, acct in enumerate(accounts):
+            last = acct.get('lastUsed', '')
+            if last >= best_last:
+                best_last = last
+                best_i = i
+        idx = best_i
+
+    now_ms = int(time.time() * 1000)
+    cooldown_until = now_ms + retry_seconds * 1000
+    now_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    target = accounts[idx]
+    target['status'] = target_status
+    target['cooldownUntil'] = cooldown_until
+    target['lastUsed'] = now_iso
+    pool[provider] = accounts
+
+    _atomic_write_json(pool_path, pool)
+    email = target.get('email', 'unknown')
+    print(f'OK:{email}:{target_status}:{cooldown_until}')
+finally:
+    _release_lock(lock_fd)
+    lock_fd.close()
+" 2>/dev/null) || {
+		print_warning "Failed to mark account failure state for ${provider}"
+		return 1
+	}
+
+	case "$mark_result" in
+	OK:*)
+		print_info "Marked current ${provider} account as ${reason}"
+		return 0
+		;;
+	SKIP:*)
+		print_warning "No ${provider} accounts available to mark"
+		return 0
+		;;
+	*)
+		print_warning "Unexpected mark-failure result: ${mark_result}"
+		return 1
+		;;
+	esac
+}
+
+# ---------------------------------------------------------------------------
 # Status — pool aggregate stats per provider (distinct from list)
 # ---------------------------------------------------------------------------
 
@@ -2330,6 +2506,7 @@ Commands:
   status [anthropic|openai|cursor|google|all]     Pool aggregate stats (counts, availability)
   refresh [anthropic|openai|google] [email|all]   Refresh expired tokens without re-auth (uses refresh_token)
   rotate [anthropic|openai|cursor|google]         Switch to next available account NOW (auto-refreshes expired tokens)
+  mark-failure <provider> <reason> [retry_secs]   Mark current account cooldown/status from runtime failures
   reset-cooldowns [provider|all]                  Clear rate-limit cooldowns so all accounts retry
   assign-pending <provider> [email]               Assign a stranded pending token to an account
   remove <provider> <email>                       Remove an account from the pool
@@ -2388,6 +2565,7 @@ main() {
 	check | test) cmd_check "$@" ;;
 	import) cmd_import "$@" ;;
 	list) cmd_list "$@" ;;
+	mark-failure | mark_failure) cmd_mark_failure "$@" ;;
 	refresh) cmd_refresh "$@" ;;
 	rotate) cmd_rotate "$@" ;;
 	reset-cooldowns | reset_cooldowns | reset) cmd_reset_cooldowns "$@" ;;
