@@ -1,30 +1,14 @@
 # Wrangler Development Patterns
 
-## New Worker / Local Dev
+Multi-step workflows. For individual commands see [wrangler.md](./wrangler.md); for pitfalls see [wrangler-gotchas.md](./wrangler-gotchas.md).
+
+## New Worker
 
 ```bash
 wrangler init my-worker && cd my-worker
 wrangler dev              # Local (fast, limited accuracy)
 wrangler dev --remote     # Remote (slower, production-accurate)
-wrangler dev --env staging
-wrangler dev --port 8787
 wrangler deploy
-```
-
-## Secrets
-
-**Never commit secrets.** Use `wrangler secret put` for production, `.dev.vars` for local.
-
-```bash
-echo "secret-value" | wrangler secret put SECRET_KEY
-wrangler secret list
-wrangler secret delete SECRET_KEY
-```
-
-`.dev.vars` (gitignored):
-
-```
-SECRET_KEY=local-dev-key
 ```
 
 ## Adding KV
@@ -53,16 +37,16 @@ wrangler d1 migrations apply my-db --remote
 
 ## Multi-Environment
 
+```jsonc
+{ "env": { "staging": { "vars": { "ENV": "staging" } } } }
+```
+
 ```bash
 wrangler deploy --env staging
 wrangler deploy --env production
 ```
 
-```jsonc
-{ "env": { "staging": { "vars": { "ENV": "staging" } } } }
-```
-
-## Testing
+## Integration Testing
 
 ```typescript
 import { unstable_startWorker } from "wrangler";
@@ -72,24 +56,7 @@ const response = await worker.fetch("/api/users");
 await worker.dispose();
 ```
 
-## Monitoring
-
-```bash
-wrangler tail                 # Real-time logs
-wrangler tail --status error
-wrangler tail --env production
-wrangler whoami
-```
-
-## Version Control
-
-```bash
-wrangler versions list
-wrangler deployments list
-wrangler rollback [id]
-```
-
-## TypeScript
+## TypeScript Worker Scaffold
 
 ```bash
 wrangler types  # Generate types from config
@@ -137,8 +104,3 @@ return new Response(data, {
   headers: { "Cache-Control": "public, max-age=3600" }
 });
 ```
-
-## See Also
-
-- [wrangler.md](./wrangler.md) - Commands
-- [wrangler-gotchas.md](./wrangler-gotchas.md) - Issues
