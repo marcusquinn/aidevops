@@ -1,7 +1,5 @@
 # Patterns
 
-See [README.md](./README.md)
-
 ## High-Traffic Read-Heavy
 
 ```typescript
@@ -13,8 +11,6 @@ const posts = await sql`SELECT * FROM posts WHERE published = true ORDER BY view
 // Cacheable: user profiles
 const [user] = await sql`SELECT id, username, bio FROM users WHERE id = ${userId}`;
 ```
-
-**Benefits:** Trending/profiles cached (60s), connection pooling handles spikes.
 
 ## Mixed Read/Write
 
@@ -58,8 +54,6 @@ const topProducts = await client.query(`
 `);
 ```
 
-**Benefits:** Expensive aggregations cached, dashboard instant, reduced DB load.
-
 ## Multi-Tenant
 
 ```typescript
@@ -74,8 +68,6 @@ const docs = await sql`
 `;
 ```
 
-**Benefits:** Per-tenant caching, shared connection pool, protects DB from multi-tenant load.
-
 ## Geographically Distributed
 
 ```typescript
@@ -89,8 +81,6 @@ return Response.json({
   serverRegion: req.cf?.colo,  // Edge location
 });
 ```
-
-**Benefits:** Edge setup + DB pooling = global → single-region DB without replication.
 
 ## Connection Pooling
 
