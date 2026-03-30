@@ -15,10 +15,7 @@ tools: { read: true, bash: true }
 - **Data**: `~/.aidevops/.agent-workspace/google-chat-bot/`
 - **Auth**: Service account JWT (outbound); Google-signed bearer token (inbound)
 - **Requires**: Google Workspace, GCP project, public HTTPS URL, Node.js >= 18, jq
-
-```bash
-google-chat-helper.sh setup  # Interactive wizard
-```
+- **Setup**: `google-chat-helper.sh setup` (interactive wizard)
 
 **Privacy**: No E2E encryption. Google retains all messages; admins have full read access. Gemini AI may train on workspace data unless DPA configured. See [Privacy and Security](#privacy-and-security).
 
@@ -104,7 +101,7 @@ await (await auth.getClient()).request({ url: "https://chat.googleapis.com/v1/sp
 
 Payload: `message.argumentText` (prompt, mention stripped), `user.email` (ACL), `space.name` (runner mapping), `message.thread.name` (threading).
 
-**Sync (< 30s)**: Return `{ "text": "..." }` in HTTP response body. **Async (> 30s)**: Return `cardsV2` ack immediately, then POST full response via `https://chat.googleapis.com/v1/spaces/SPACE_ID/messages` with `Authorization: Bearer <token>`, `thread.name`, `threadReply: true`.
+**Sync (< 30s)**: Return `{ "text": "..." }` in HTTP response body. **Async (> 30s)**: Return `cardsV2` ack immediately, then POST via `spaces/SPACE_ID/messages` with `thread.name` and `threadReply: true`.
 
 **Card v2**: `cardsV2[].card` with `header`/`sections[].widgets`. Limits: 1 card/msg, 100 sections, 100 widgets/section, 4096 chars/widget, 40 chars/button. Public HTTPS image URLs only. [Reference](https://developers.google.com/workspace/chat/api/reference/rest/v1/cards).
 
@@ -125,9 +122,9 @@ google-chat-helper.sh start --daemon  # background
 google-chat-helper.sh start           # foreground (debug)
 google-chat-helper.sh stop && google-chat-helper.sh status
 google-chat-helper.sh logs [--follow] [--tail 200]
-google-chat-helper.sh test code-reviewer "Review src/auth.ts"    # test dispatch
-google-chat-helper.sh test-event message "Test message from CLI" # test event
-google-chat-helper.sh test-auth                                  # verify token
+google-chat-helper.sh test code-reviewer "Review src/auth.ts"
+google-chat-helper.sh test-event message "Test message from CLI"
+google-chat-helper.sh test-auth
 ```
 
 **Health**: `GET /health` → `{"status":"ok","uptime":...,"spaces":N}`. **Runners**: `runner-helper.sh create|edit <name>`
