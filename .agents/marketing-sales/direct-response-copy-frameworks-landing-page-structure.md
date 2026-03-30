@@ -18,21 +18,9 @@ The less they know, the more you educate. Cold traffic needs longer pages.
 
 ### 1. Hero (Above the Fold)
 
-```
-+---------------------------------------------------------+
-|  [Logo]                              [Nav: minimal]     |
-+---------------------------------------------------------+
-|  HEADLINE (clear value proposition)                     |
-|  Subheadline (who it's for + key benefit)               |
-|  [PRIMARY CTA BUTTON]                                   |
-|  "Trusted by 5,000+ companies" + [Logo bar]             |
-|  [Hero Image/Video/Demo]                                |
-+---------------------------------------------------------+
-```
+Layout: Logo + minimal nav | Headline | Subheadline | Primary CTA | Trust bar ("Trusted by 5,000+ companies" + logos) | Hero image/video/demo.
 
-**Headline formula:** `[End Result] + [Time Period] + [Address Objection]`
-- "Get More Qualified Leads in 30 Days -- Without Paid Ads"
-- "Build Landing Pages That Convert in Minutes, Not Days"
+**Headline formula:** `[End Result] + [Time Period] + [Address Objection]` — e.g. "Get More Qualified Leads in 30 Days -- Without Paid Ads"
 
 **Subheadline formula:** `[Audience] use [Product] to [Benefit] so they can [Outcome]`
 
@@ -44,32 +32,15 @@ The less they know, the more you educate. Cold traffic needs longer pages.
 
 ### 3. Problem Agitation
 
-```
-You've tried [solution 1], but [why it fails].
-You've tried [solution 2], but [why it fails].
-You've tried [solution 3], but [why it fails].
-
-Meanwhile, [negative consequence]. Every day this continues is [cost].
-
-Sound familiar?
-```
+Formula: List 2-3 failed solutions ("You've tried [X], but [why it fails]"), then escalate consequence ("Meanwhile, [negative consequence]. Every day this continues is [cost].").
 
 ### 4. Solution Introduction
 
-```
-Introducing [Product]: The [category] that [key differentiator].
-
-Unlike [competitors], [Product] uses [unique mechanism]
-to [achieve result] in [timeframe].
-```
+Formula: "Introducing [Product]: The [category] that [key differentiator]. Unlike [competitors], [Product] uses [unique mechanism] to [achieve result] in [timeframe]."
 
 ### 5. How It Works (3 steps, never more than 5)
 
-```
-1. [Action] -> [Immediate result]
-2. [Action] -> [Immediate result]
-3. [Action] -> [Immediate result]
-```
+Format: `1. [Action] -> [Immediate result]` for each step. Keep it visual and scannable.
 
 ### 6. Features -> Benefits -> Outcomes
 
@@ -94,46 +65,19 @@ Present 3-6 key features, each connecting:
 
 ### 9. Pricing
 
-```
-+---------------+---------------+---------------+
-|   STARTER     |  PROFESSIONAL |   ENTERPRISE  |
-|   $29/mo      |   $79/mo      |   Custom      |
-|               |  MOST POPULAR |               |
-+---------------+---------------+---------------+
-| + Feature 1   | + All Starter | + All Pro +   |
-| + Feature 2   | + Feature 3   | + Dedicated   |
-|               | + Feature 4   |   support     |
-+---------------+---------------+---------------+
-| [Start Trial] | [Start Trial] | [Contact Us]  |
-+---------------+---------------+---------------+
-```
+Layout: 3-tier table (Starter / Professional / Enterprise). Mark one "Most Popular". Each tier lists features (higher tiers inherit lower). CTA button per tier.
 
 Anchor with higher price first. Highlight most profitable tier. Include annual discount.
 
 ### 10. Risk Reversal (Guarantee)
 
-```
-Try [Product] Risk-Free
-
-We're so confident [Product] will [deliver result] that we offer
-a [timeframe] money-back guarantee.
-
-If you don't [see specific result], just email us and we'll
-refund every penny. No questions asked.
-```
+Formula: "Try [Product] Risk-Free. We're so confident [Product] will [deliver result] that we offer a [timeframe] money-back guarantee. If you don't [see specific result], we'll refund every penny."
 
 Types: money-back, results guarantee, free trial, performance guarantee.
 
 ### 11. Final CTA
 
-```
-+---------------------------------------------------------+
-|  Ready to [Desired Outcome]?                            |
-|  Join [number] [customers] who [achieved result].       |
-|  [     PRIMARY CTA BUTTON     ]                         |
-|  "Start your free trial today -- no credit card required"|
-+---------------------------------------------------------+
-```
+Layout: Outcome-focused headline ("Ready to [Desired Outcome]?") + social proof count ("Join [number] [customers] who [achieved result]") + Primary CTA button + friction reducer ("no credit card required").
 
 ## Best Practices
 
