@@ -14,54 +14,27 @@ tools:
 
 # DSPyGround Integration Guide
 
-<!-- AI-CONTEXT-START -->
-
-## Quick Reference
-
 - DSPyGround: Visual prompt optimization playground with GEPA optimizer
-- Requires: Node.js 18+, AI Gateway API key
+- Requires: Node.js 18+, `AI_GATEWAY_API_KEY`; `OPENAI_API_KEY` optional (voice)
 - Helper: `./.agents/scripts/dspyground-helper.sh install|init|dev [project]`
-- Config: `configs/dspyground-config.json`, project: `dspyground.config.ts`
-- Projects: `data/dspyground/[project-name]/`
+- Config: `configs/dspyground-config.json`; project: `dspyground.config.ts`
+- Projects: `data/dspyground/[project-name]/` (`.env`, `.dspyground/`)
 - Web UI: `http://localhost:3000` (run with `dspyground dev`)
-- Features: Real-time optimization, voice feedback, structured output with Zod
 - Metrics: accuracy, tone, efficiency, tool_accuracy, guardrails (customizable)
 - Workflow: Chat + Sample → Organize → Optimize → Export prompt
-- API keys: `AI_GATEWAY_API_KEY` required, `OPENAI_API_KEY` optional for voice
 
-<!-- AI-CONTEXT-END -->
-
-DSPyGround is a visual prompt optimization playground powered by the GEPA (Genetic-Pareto Evolutionary Algorithm) optimizer. Optional tool installed separately — install via `npm install -g dspyground` when needed.
+Optional tool — install via `npm install -g dspyground` when needed.
 
 ## Setup
 
-**Prerequisites:** Node.js 18+, npm, `AI_GATEWAY_API_KEY`, `OPENAI_API_KEY` (optional, voice feedback)
-
 ```bash
-# Install and verify
 ./.agents/scripts/dspyground-helper.sh install
 dspyground --version
-
-# Copy config template
 cp configs/dspyground-config.json.txt configs/dspyground-config.json
 ```
 
-### Project Structure
-
-```text
-aidevops/
-├── .agents/scripts/dspyground-helper.sh    # Management script
-├── configs/dspyground-config.json          # Configuration
-└── data/dspyground/[project]/
-    ├── dspyground.config.ts                # Project config
-    ├── .env                                # API keys
-    └── .dspyground/                        # Local data storage
-```
-
-## Usage
-
 ```bash
-# Create project and start dev server (opens http://localhost:3000)
+# Create project and start dev server
 ./.agents/scripts/dspyground-helper.sh init my-agent
 ./.agents/scripts/dspyground-helper.sh dev my-agent
 # or from project dir: dspyground dev
@@ -90,13 +63,23 @@ export default {
       parameters: z.object({ serverId: z.string() }),
       execute: async ({ serverId }) => `Server ${serverId} is running normally`,
     }),
+    deployApp: tool({
+      description: 'Deploy application to server',
+      parameters: z.object({
+        appName: z.string(),
+        environment: z.enum(['dev', 'staging', 'prod']),
+      }),
+      execute: async ({ appName, environment }) => `Deployed ${appName} to ${environment}`,
+    }),
   },
 
   // Optional: enforce structured output shape
   schema: z.object({
-    response: z.string(),
-    confidence: z.number().min(0).max(1),
-    category: z.enum(['deployment', 'monitoring', 'security', 'general'])
+    task_type: z.enum(['deployment', 'monitoring', 'troubleshooting']),
+    priority: z.enum(['low', 'medium', 'high', 'critical']),
+    steps: z.array(z.string()),
+    estimated_time: z.string(),
+    risks: z.array(z.string())
   }),
 
   preferences: {
@@ -115,6 +98,9 @@ export default {
       accuracy:   { name: 'Technical Accuracy',  description: 'Is the advice technically correct?',         weight: 1.0 },
       tone:       { name: 'Professional Tone',    description: 'Is the communication professional?',         weight: 0.8 },
       efficiency: { name: 'Solution Efficiency',  description: 'Does the solution optimize for efficiency?', weight: 0.9 },
+      // Custom example:
+      devops_expertise: { name: 'DevOps Expertise', description: 'Deep DevOps knowledge?',   weight: 1.0 },
+      actionability:    { name: 'Actionability',    description: 'Can user act immediately?', weight: 0.9 },
     }
   }
 }
@@ -129,51 +115,7 @@ export default {
 | 3. Optimize | Click "Optimize" — GEPA runs, shows real-time metrics and candidate prompts |
 | 4. Export | Copy best prompt from history; update `dspyground.config.ts`; deploy |
 
-## Metrics
-
-**Built-in:** accuracy, tone, efficiency, tool_accuracy, guardrails
-
-**Custom metrics example:**
-
-```typescript
-dimensions: {
-  devops_expertise: { name: 'DevOps Expertise', description: 'Deep DevOps knowledge?',   weight: 1.0 },
-  actionability:    { name: 'Actionability',    description: 'Can user act immediately?', weight: 0.9 },
-}
-```
-
-## Advanced Features
-
-### Structured Output
-
-```typescript
-schema: z.object({
-  task_type: z.enum(['deployment', 'monitoring', 'troubleshooting']),
-  priority: z.enum(['low', 'medium', 'high', 'critical']),
-  steps: z.array(z.string()),
-  estimated_time: z.string(),
-  risks: z.array(z.string())
-})
-```
-
-### Tool Integration
-
-```typescript
-tools: {
-  deployApp: tool({
-    description: 'Deploy application to server',
-    parameters: z.object({
-      appName: z.string(),
-      environment: z.enum(['dev', 'staging', 'prod']),
-    }),
-    execute: async ({ appName, environment }) => `Deployed ${appName} to ${environment}`,
-  }),
-}
-```
-
-### Voice Feedback
-
-Press and hold spacebar in feedback dialogs to record voice feedback. Automatically transcribed and analysed.
+Voice feedback: hold spacebar in feedback dialogs to record; auto-transcribed and analysed.
 
 ## Troubleshooting
 
