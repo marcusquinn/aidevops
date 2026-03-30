@@ -14,7 +14,7 @@ Graduated by `memory-graduate-helper.sh`. Usage: `memory-helper.sh graduate [can
 ### Anti-Patterns
 
 - PostgreSQL for memory adds deployment complexity — SQLite FTS5 is simpler *(high, 9x)*
-- Haiku missed edge cases refactoring complex shell scripts with many conditionals *(high, 3x)*
+- [task:refactor] Haiku missed edge cases refactoring complex shell scripts with many conditionals [model:haiku] *(high, 3x)*
 
 ### Architecture Decisions
 
@@ -28,8 +28,8 @@ Graduated by `memory-graduate-helper.sh`. Usage: `memory-helper.sh graduate [can
 
 ### Patterns & Best Practices
 
-- Breaking task into 4 phases with separate commits worked well for feature adoption *(high, 3x)*
-- Opus identified root cause of race condition by reasoning through concurrent execution paths *(high, 2x)*
+- [task:feature] Breaking task into 4 phases with separate commits worked well for Claude-Flow feature adoption [model:sonnet] *(high, 3x)*
+- [task:bugfix] Opus identified root cause of race condition by reasoning through concurrent execution paths [model:opus] *(high, 2x)*
 - Memory daemon should auto-extract learnings from thinking blocks when sessions end *(medium, 5x)*
 
 ## Graduated: 2026-02-11
@@ -55,7 +55,7 @@ Graduated by `memory-graduate-helper.sh`. Usage: `memory-helper.sh graduate [can
 - OpenCode: `prompt` field in `opencode.json` replaces (not appends) `anthropic_default`. All active agents must have `build.txt` set or fall back to upstream `anthropic.txt`, losing aidevops overrides *(high, 1x)*
 - Task ID collision: t264 assigned by two sessions simultaneously (PR #1040 vs version-manager fix). Prevention: `git pull` and re-read TODO.md before assigning IDs *(high, 1x)*
 - Stale TODO.md: completed tasks (t231 PR #955, t247 subtasks, t259 PR #1020) remain open because `update_todo_on_complete()` only runs post-PR. Fix: run `supervisor-helper.sh reconcile-todo` periodically; workers check if work is done and report `task_obsolete` *(high, 0x)*
-- t136.5: Scaffold aidevops-pro/anon repos | PR #792 *(medium, 51x)*
+- [task:feature] t136.5: Scaffold aidevops-pro/anon repos | PR #792 | [model:opus] [duration:1206s] *(medium, 51x)*
 
 ### Solutions & Fixes
 
