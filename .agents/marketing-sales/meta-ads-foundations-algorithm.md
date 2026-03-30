@@ -11,6 +11,7 @@ Total Value = Bid × Estimated Action Rate × Ad Quality
 **Bid strategies:** Lowest Cost (default), Cost Cap, Bid Cap, ROAS Target.
 
 **Estimated Action Rate (EAR)** — Meta's ML prediction of conversion probability. Inputs:
+
 - **User data**: demographics, interests, purchase history, device patterns, social connections
 - **Ad data**: account history, creative content analysis, landing page quality, CAPI/Pixel data
 - **Contextual data**: time of day, seasonality, competitive landscape
