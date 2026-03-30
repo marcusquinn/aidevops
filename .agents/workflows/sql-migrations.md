@@ -12,15 +12,7 @@ mode: subagent
 
 ## Directory Structure
 
-```text
-project/
-├── schemas/          # Declarative schema (source of truth; prefix: 00, 01, 10, 20...)
-├── migrations/       # Generated migration files
-├── seeds/            # Initial/test data
-└── scripts/
-    ├── migrate.sh    # Run pending migrations
-    └── rollback.sh   # Rollback last migration
-```
+`schemas/` (source of truth, prefix: 00, 01, 10, 20...) | `migrations/` (generated) | `seeds/` (initial/test data) | `scripts/migrate.sh`, `scripts/rollback.sh`
 
 ## Tool Commands
 
@@ -116,25 +108,11 @@ Mark irreversible DOWN sections: `-- IRREVERSIBLE: restore from backup if needed
 
 **Team rules:** Pull before creating. Timestamps not sequential numbers. One migration per PR. Rebase carefully — regenerate timestamps for conflicts. Commit style: `feat(db): add user_preferences table`, `fix(db): correct FK on orders`, `chore(db): backfill user status`.
 
-**CI/CD:** Trigger on `push` to `main` with `paths: ['migrations/**']`. Steps: backup → migrate → verify. Most tools auto-create a tracking table (e.g., `flyway_schema_history`). Prefer managed tools — they handle ordering, locking, and state tracking.
-
-```yaml
-on: { push: { branches: [main], paths: ['migrations/**'] } }
-jobs:
-  migrate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: pg_dump $DATABASE_URL > backup_$(date +%Y%m%d_%H%M%S).sql
-        env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
-      - run: flyway migrate
-        env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
-      - run: psql $DATABASE_URL -c "SELECT 1"
-```
+**CI/CD:** Trigger on `push` to `main` with `paths: ['migrations/**']`. Steps: backup → migrate → verify. Most tools auto-create a tracking table (e.g., `flyway_schema_history`). Prefer managed tools — they handle ordering, locking, and state tracking. Example workflow: `on: push(main, migrations/**) → pg_dump → flyway migrate → psql SELECT 1`.
 
 ## Framework-Agnostic Runner
 
-When running SQL directly without a migration tool, gate execution on a tracking table. Properties: idempotent (`WHERE NOT EXISTS`), ordered (lexicographic glob), auditable (`schema_migrations`), injection-safe (`psql -v` + `:'name'`), concurrent-safe (`pg_advisory_xact_lock`), empty-dir safe (`compgen -G`), `-- no-tx` convention for `CREATE INDEX CONCURRENTLY`.
+When no migration tool is available, gate execution on a tracking table. Properties: idempotent (`WHERE NOT EXISTS`), ordered (lexicographic glob), auditable (`schema_migrations`), injection-safe (`psql -v` + `:'name'`), concurrent-safe (`pg_advisory_xact_lock`), empty-dir safe (`compgen -G`), `-- no-tx` convention for `CREATE INDEX CONCURRENTLY`.
 
 ```bash
 #!/usr/bin/env bash
