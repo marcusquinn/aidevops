@@ -35,32 +35,7 @@ tools:
 cp configs/ses-config.json.txt configs/ses-config.json
 ```
 
-Multi-account config (`configs/ses-config.json`):
-
-```json
-{
-  "accounts": {
-    "production": {
-      "aws_access_key_id": "YOUR_KEY",
-      "aws_secret_access_key": "YOUR_SECRET",
-      "region": "us-east-1",
-      "description": "Production SES account",
-      "verified_domains": ["yourdomain.com"],
-      "verified_emails": ["noreply@yourdomain.com"]
-    },
-    "staging": {
-      "aws_access_key_id": "YOUR_KEY",
-      "aws_secret_access_key": "YOUR_SECRET",
-      "region": "us-east-1",
-      "description": "Staging SES account",
-      "verified_domains": ["staging.yourdomain.com"],
-      "verified_emails": ["test@yourdomain.com"]
-    }
-  }
-}
-```
-
-Credentials managed per account — no `aws configure` needed. Prerequisite: `awscli` installed.
+Multi-account config — see `configs/ses-config.json.txt` for schema. Credentials managed per account — no `aws configure` needed. Prerequisite: `awscli` installed.
 
 ## Commands
 
@@ -95,35 +70,9 @@ ses-helper.sh debug production problematic@example.com
 ses-helper.sh audit production
 ```
 
-## IAM Policy
+## IAM
 
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "ses:GetSendQuota",
-        "ses:GetSendStatistics",
-        "ses:ListIdentities",
-        "ses:ListVerifiedEmailAddresses",
-        "ses:GetIdentityVerificationAttributes",
-        "ses:GetIdentityDkimAttributes",
-        "ses:GetIdentityNotificationAttributes",
-        "ses:SendEmail",
-        "ses:SendRawEmail",
-        "sesv2:GetSuppressedDestination",
-        "sesv2:ListSuppressedDestinations",
-        "sesv2:DeleteSuppressedDestination"
-      ],
-      "Resource": "*"
-    }
-  ]
-}
-```
-
-Dedicated IAM users per environment. Rotate access keys regularly. Separate AWS accounts for prod/staging.
+Dedicated IAM users per environment. Rotate access keys regularly. Separate AWS accounts for prod/staging. Required permissions listed in Quick Reference.
 
 ## Troubleshooting
 
@@ -134,12 +83,10 @@ Dedicated IAM users per environment. Rotate access keys regularly. Separate AWS 
 | Delivery issues | `ses-helper.sh reputation production`, `ses-helper.sh suppressed production`, `ses-helper.sh debug production user@example.com` |
 | Verification | `ses-helper.sh verify-identity production yourdomain.com`, `dig TXT _amazonses.yourdomain.com` |
 
-## Compliance & Backup
+## Backup
 
 ```bash
 ses-helper.sh audit production > ses-config-backup-$(date +%Y%m%d).txt
 ses-helper.sh verified-emails production > verified-emails-backup.txt
 ses-helper.sh verified-domains production > verified-domains-backup.txt
 ```
-
-Configure SPF, DKIM, DMARC for all sending domains. Process bounces and complaints promptly; maintain suppression list. Provide unsubscribe mechanisms; follow GDPR/CAN-SPAM. Warm up new sending IPs gradually; clean lists regularly.
