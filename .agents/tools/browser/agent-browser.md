@@ -43,25 +43,25 @@ agent-browser screenshot page.png && agent-browser close
 ## Installation
 
 ```bash
-npm install -g agent-browser && agent-browser install   # standard
-agent-browser install --with-deps                       # Linux: system deps
-# From source: git clone https://github.com/vercel-labs/agent-browser && cd agent-browser && pnpm install && pnpm build && agent-browser install
-# iOS Simulator: npm install -g appium && appium driver install xcuitest
+npm install -g agent-browser && agent-browser install        # standard
+agent-browser install --with-deps                            # Linux: system deps
+# Source: git clone https://github.com/vercel-labs/agent-browser && cd agent-browser && pnpm install && pnpm build && agent-browser install
+# iOS:    npm install -g appium && appium driver install xcuitest
 ```
 
 ## Core Commands
 
 ```bash
-# Navigation
+# Navigate
 agent-browser open <url> | back | forward | reload
 
-# Interaction
-agent-browser click <sel>             # Click element
-agent-browser fill <sel> <text>       # Clear and fill
-agent-browser type <sel> <text>       # Type (no clear)
+# Interact
+agent-browser click <sel>
+agent-browser fill <sel> <text>       # clear+fill
+agent-browser type <sel> <text>       # type without clear
 agent-browser press <key>             # Enter, Tab, Control+a, etc.
-agent-browser select <sel> <val>      # Dropdown
-agent-browser check/uncheck <sel>     # Checkbox
+agent-browser select <sel> <val>      # dropdown
+agent-browser check/uncheck <sel>
 agent-browser scroll <dir> [px]       # up/down/left/right
 agent-browser drag <src> <tgt> | upload <sel> <files> | hover <sel>
 
@@ -88,7 +88,7 @@ agent-browser find first ".item" click | find nth 2 "a" text
 
 ## Sessions
 
-Each session has isolated browser instance, cookies, storage, history, and auth state. Parallel: `--session s1/s2/s3` (3 parallel tested in 2.0s).
+Isolated per session: browser instance, cookies, storage, history, auth state. Parallel: `--session s1/s2/s3` (3 parallel tested in 2.0s).
 
 ```bash
 agent-browser --session agent1 open site-a.com
@@ -175,7 +175,6 @@ agent-browser --session s1 open https://site-a.com && agent-browser --session s1
 agent-browser --session s2 open https://site-b.com && agent-browser --session s2 state load auth-b.json
 ```
 
-## Resources
+## License
 
-- **GitHub**: https://github.com/vercel-labs/agent-browser
-- **License**: Apache-2.0 | **Languages**: TypeScript (74%), Rust (22%)
+Apache-2.0 | TypeScript (74%), Rust (22%)
