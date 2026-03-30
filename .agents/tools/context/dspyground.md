@@ -31,43 +31,27 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-DSPyGround is a visual prompt optimization playground powered by the GEPA (Genetic-Pareto Evolutionary Algorithm) optimizer. Optional tool installed separately — install via `npm install -g dspyground` when needed.
-
 ## Setup
 
 **Prerequisites:** Node.js 18+, npm, `AI_GATEWAY_API_KEY`, `OPENAI_API_KEY` (optional, voice feedback)
 
 ```bash
-# Install and verify
 ./.agents/scripts/dspyground-helper.sh install
 dspyground --version
-
-# Copy config template
 cp configs/dspyground-config.json.txt configs/dspyground-config.json
 ```
 
-### Project Structure
-
-```text
-aidevops/
-├── .agents/scripts/dspyground-helper.sh    # Management script
-├── configs/dspyground-config.json          # Configuration
-└── data/dspyground/[project]/
-    ├── dspyground.config.ts                # Project config
-    ├── .env                                # API keys
-    └── .dspyground/                        # Local data storage
-```
+**Project layout:** `.agents/scripts/dspyground-helper.sh` (management), `configs/dspyground-config.json` (config), `data/dspyground/[project]/` (project dir with `dspyground.config.ts`, `.env`, `.dspyground/`)
 
 ## Usage
 
 ```bash
-# Create project and start dev server (opens http://localhost:3000)
-./.agents/scripts/dspyground-helper.sh init my-agent
-./.agents/scripts/dspyground-helper.sh dev my-agent
+./.agents/scripts/dspyground-helper.sh init my-agent   # create project
+./.agents/scripts/dspyground-helper.sh dev my-agent    # start dev server (http://localhost:3000)
 # or from project dir: dspyground dev
 ```
 
-### Environment (`.env`)
+**`.env`:**
 
 ```bash
 AI_GATEWAY_API_KEY=your_key_here
@@ -171,9 +155,7 @@ tools: {
 }
 ```
 
-### Voice Feedback
-
-Press and hold spacebar in feedback dialogs to record voice feedback. Automatically transcribed and analysed.
+**Voice Feedback:** Press and hold spacebar in feedback dialogs to record voice feedback. Automatically transcribed and analysed.
 
 ## Troubleshooting
 
