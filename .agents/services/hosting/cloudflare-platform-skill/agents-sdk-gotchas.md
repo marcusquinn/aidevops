@@ -7,8 +7,9 @@
 
 ```ts
 async onConnect(conn: Connection, ctx: ConnectionContext) {
-  const token = ctx.request.headers.get("Authorization");
-  if (!await this.validateToken(token)) { conn.close(4001, "Unauthorized"); return; }
+  const auth = ctx.request.headers.get("Authorization") ?? "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
+  if (!token || !await this.validateToken(token)) { conn.close(4001, "Unauthorized"); return; }
   conn.accept();
 }
 ```
@@ -37,16 +38,16 @@ async onConnect(conn: Connection, ctx: ConnectionContext) {
 - DON'T: Assume persistence or keep sensitive data in connection state.
 
 ```ts
-async onConnect(conn: Connection, ctx: ConnectionContext) { conn.accept(); conn.setState({userId: "123"}); }
+async onConnect(conn: Connection, ctx: ConnectionContext) { conn.accept(); conn.setState({sessionRef: "sess_abc123"}); }
 ```
 
 ## Scheduling constraints
 
-- Limits: max 1000 schedules/agent, minimum interval 1 minute, schedules persist.
+- Limits: 1 alarm at a time per DO (new `setAlarm()` overwrites prior); retries use exponential backoff (up to 6 attempts); alarm handler wall-clock limit 15 min.
 - Practice: clean stale schedules, use descriptive names, handle failures.
 
 ```ts
-async checkSchedules() { if ((await this.getSchedules()).length > 800) console.warn("Near limit!"); }
+async checkSchedules() { const schedules = await this.getSchedules(); if (schedules.length > 0) console.log("Active schedule:", schedules[0]); }
 ```
 
 ## AI reliability and performance
@@ -62,10 +63,10 @@ try { return await this.env.AI.run(model, {prompt}); } catch (e) { return {error
 
 ## Limits, debugging, migration
 
-- Runtime limits: CPU 30s/request, memory 128MB/instance, SQL shares DO quota, schedules 1000/agent; WS connections have no hard cap but are memory-bound.
+- Runtime limits: CPU 30s/request (configurable to 5 min via `limits.cpu_ms`), memory 128MB/instance, SQL shares DO quota, 1 alarm/DO, max 32,768 WS connections/DO (practical limit lower due to CPU/memory).
 - Debug: `npx wrangler dev` (local), `npx wrangler tail` (remote).
 - Common failures: "Agent not found" (DO binding), state not syncing (`setState()`), connect timeout (`conn.accept()`), startup SQL errors (`onStart()` init).
-- Migration: use `new_sqlite_classes`, test in staging, and avoid downgrades after SQL migration.
+- Migration: SQLite backend must be enabled at class creation (`new_sqlite_classes`); cannot be added to an existing deployed class. Test in staging; delete migrations are destructive and permanent.
 
 ```toml
 [[migrations]]
