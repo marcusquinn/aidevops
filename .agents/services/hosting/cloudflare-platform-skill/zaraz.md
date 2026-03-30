@@ -1,4 +1,4 @@
-# Cloudflare Zaraz Skill
+# Cloudflare Zaraz
 
 Server-side tag manager: offloads third-party scripts (analytics, ads, chat) to Cloudflare's edge. Zero client-side JS overhead; single HTTP request for all tools; privacy-first data control.
 
@@ -29,6 +29,8 @@ zaraz.set({ email: '[email protected]', country: 'US' });
 ```
 
 Tool-specific event names follow each platform's conventions (e.g. GA4: `sign_up`; Facebook Pixel: `Purchase`; Google Ads: `conversion` with `send_to`).
+
+Data layer: `window.zaraz.dataLayer = { user_id: '12345', page_type: 'product' }`. Access in triggers: `{{client.__zarazTrack.page_type}}`.
 
 ### E-commerce
 
@@ -81,30 +83,6 @@ export default class CustomAnalytics {
 }
 ```
 
-## Data Layer
-
-```javascript
-window.zaraz.dataLayer = { user_id: '12345', page_type: 'product', category: 'electronics' };
-// Access in triggers: {{client.__zarazTrack.page_type}}
-```
-
-## Workers Integration
-
-```typescript
-export default {
-  async fetch(req: Request): Promise<Response> {
-    const url = new URL(req.url);
-    if (url.pathname === '/checkout') {
-      const response = await fetch(req);
-      const html = await response.text();
-      const tracking = `<script>zaraz.track('checkout_started', { cart_value: 99.99 });</script>`;
-      return new Response(html.replace('</body>', tracking + '</body>'), response);
-    }
-    return fetch(req);
-  }
-};
-```
-
 ## Common Patterns
 
 ```javascript
@@ -112,35 +90,21 @@ export default {
 router.afterEach((to) => zaraz.track('pageview', { page_path: to.path, page_title: to.meta.title }));
 // User identification on login
 zaraz.set('user_id', user.id);
-zaraz.set('user_email', user.email);
 zaraz.track('login', { method: 'password' });
-// A/B testing
-const variant = Math.random() < 0.5 ? 'A' : 'B';
-zaraz.set('ab_test_variant', variant);
-zaraz.track('ab_test_view', { variant });
 ```
+
+For Workers integration patterns, see `cloudflare-workers` skill.
 
 ## Privacy & Limits
 
 IP anonymization (automatic), consent-based cookie control, GDPR/CCPA compliance. Tools and events unlimited; request size 100 KB; data retention per tool's policy.
 
-## Debugging & Troubleshooting
+## Debugging
 
-Enable debug mode in dashboard or set `zaraz.debug = true`:
-
-```javascript
-zaraz.track('test_event', { debug: true });
-console.log(zaraz.tools);
-```
-
-**Events not firing:** check trigger conditions, verify tool is enabled, check browser console.
-
-**Consent issues:** verify modal config, check `zaraz.consent.getAll()` status, ensure tools respect consent settings.
+Enable debug mode in dashboard or `zaraz.debug = true`. Check: trigger conditions, tool enabled status, browser console, `zaraz.consent.getAll()` for consent issues.
 
 ## Reference
 
 - [Zaraz Docs](https://developers.cloudflare.com/zaraz/)
 - [Web API](https://developers.cloudflare.com/zaraz/web-api/)
 - [Managed Components](https://developers.cloudflare.com/zaraz/advanced/load-custom-managed-component/)
-
-For Workers development, see `cloudflare-workers` skill.
