@@ -59,10 +59,12 @@ jobs:
 
           # Also check PR title for task ID and find matching issue
           TASK_ID=$(echo "$PR_TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*' || true)
+          TITLE_LOOKUP_FAILED=false
           if [[ -n "$TASK_ID" && -z "$LINKED_ISSUES" ]]; then
             ISSUE_SEARCH_OUTPUT=$(gh issue list --repo "$REPO" --state all --search "${TASK_ID}:" --json number,title --limit 5 2>&1) || {
               echo "::warning::Title-based issue lookup failed for task ID '$TASK_ID': $ISSUE_SEARCH_OUTPUT"
               ISSUE_SEARCH_OUTPUT=""
+              TITLE_LOOKUP_FAILED=true
             }
             if [[ -n "$ISSUE_SEARCH_OUTPUT" ]]; then
               FOUND=$(echo "$ISSUE_SEARCH_OUTPUT" \
@@ -78,7 +80,7 @@ jobs:
           fi
 
           # If title-based lookup was attempted but failed, block — don't pass the gate on API errors
-          if [[ -z "$LINKED_ISSUES" && "${TITLE_LOOKUP_FAILED:-false}" == "true" ]]; then
+          if [[ -z "$LINKED_ISSUES" && "$TITLE_LOOKUP_FAILED" == "true" ]]; then
             echo "::error::Title-based issue lookup failed — cannot verify linked issues. Blocking to be safe."
             echo "blocked=true" >> "$GITHUB_OUTPUT"
             printf 'Title-based issue lookup for task ID %s failed — cannot verify linked issues.\n' "$TASK_ID" > /tmp/gate-reasons.txt
@@ -366,11 +368,31 @@ jobs:
         run: |
           echo "Issue #$ISSUE_NUMBER updated (labels/assignee) — checking for linked PRs"
 
-          # Find open PRs that reference this issue
-          OPEN_PRS=$(gh pr list --repo "$REPO" --state open --json number,body --limit 50 \
+          # Find open PRs that reference this issue via body closing keywords
+          # OR via title task-ID pattern (e.g. "t1234: description" where issue
+          # title starts with the same task ID). Both linking methods are used
+          # by check-pr, so retrigger must discover both. (GH#14413)
+          OPEN_PRS=$(gh pr list --repo "$REPO" --state open --json number,body,title --limit 50 \
             | jq -r --arg num "$ISSUE_NUMBER" \
-              '.[] | select(.body | test("(closes?|fixes?|resolves?)\\s*#" + $num + "\\b"; "i")) | .number' \
+              '[.[] | select(
+                (.body // "" | test("(closes?|fixes?|resolves?)\\s*#" + $num + "\\b"; "i"))
+                or (.title // "" | test("^(GH)?#?" + $num + "[.:\\s]"))
+              )] | .[].number' \
             2>/dev/null || true)
+
+          # If body/title match missed, also try task-ID reverse lookup:
+          # find the issue's task ID from its title, then find PRs whose title
+          # starts with that task ID.
+          if [[ -z "$OPEN_PRS" ]]; then
+            ISSUE_TITLE=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" --jq '.title' 2>/dev/null || true)
+            ISSUE_TASK_ID=$(echo "$ISSUE_TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*' || true)
+            if [[ -n "$ISSUE_TASK_ID" ]]; then
+              OPEN_PRS=$(gh pr list --repo "$REPO" --state open --json number,title --limit 50 \
+                | jq -r --arg tid "$ISSUE_TASK_ID" \
+                  '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[].number' \
+                2>/dev/null || true)
+            fi
+          fi
 
           if [[ -z "$OPEN_PRS" ]]; then
             echo "No open PRs reference issue #$ISSUE_NUMBER"
@@ -381,6 +403,9 @@ jobs:
 
           for PR_NUM in $OPEN_PRS; do
             echo "=== Evaluating gate for PR #$PR_NUM ==="
+
+            # Reset per-PR state so failures don't leak across iterations (GH#14413)
+            TITLE_LOOKUP_FAILED=false
 
             HEAD_SHA=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid --jq '.headRefOid' 2>/dev/null || true)
             if [[ -z "$HEAD_SHA" ]]; then
@@ -393,7 +418,7 @@ jobs:
               --method POST \
               -f state=pending \
               -f context="maintainer-gate" \
-              -f description="Re-evaluating after issue #${ISSUE_NUMBER} label change" \
+              -f description="Re-evaluating after issue #${ISSUE_NUMBER} update" \
               2>/dev/null || true
 
             # Get PR body to find ALL linked issues (not just the triggering one)
@@ -411,6 +436,7 @@ jobs:
               ISSUE_SEARCH_OUTPUT=$(gh issue list --repo "$REPO" --state all --search "${TASK_ID}:" --json number,title --limit 5 2>&1) || {
                 echo "::warning::Title-based issue lookup failed for task ID '$TASK_ID': $ISSUE_SEARCH_OUTPUT"
                 ISSUE_SEARCH_OUTPUT=""
+                TITLE_LOOKUP_FAILED=true
               }
               if [[ -n "$ISSUE_SEARCH_OUTPUT" ]]; then
                 FOUND=$(echo "$ISSUE_SEARCH_OUTPUT" \
@@ -426,7 +452,7 @@ jobs:
             fi
 
             # If title-based lookup was attempted but failed, block — don't pass the gate on API errors
-            if [[ -z "$LINKED_ISSUES" && "${TITLE_LOOKUP_FAILED:-false}" == "true" ]]; then
+            if [[ -z "$LINKED_ISSUES" && "$TITLE_LOOKUP_FAILED" == "true" ]]; then
               echo "::error::Title-based issue lookup failed for PR #$PR_NUM — blocking to be safe"
               gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
                 --method POST \
