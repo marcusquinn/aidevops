@@ -55,9 +55,9 @@ const elements = await page.evaluate(() =>
 );
 ```
 
-## Benchmarks (2026-01-24, macOS ARM64, headless, warm daemon)
+## Benchmarks (2026-01-24, macOS ARM64, headless, warm daemon — reproduce: `browser-benchmark.md`)
 
-Reproduce: `browser-benchmark.md`. Overhead: dev-browser +0.1-0.4s | agent-browser +0.5-1.5s (cold) | Stagehand +1-5s (AI) | Playwriter +1-2s (CDP).
+Overhead: dev-browser +0.1-0.4s | agent-browser +0.5-1.5s (cold) | Stagehand +1-5s (AI) | Playwriter +1-2s (CDP).
 
 | Test | Playwright | dev-browser | agent-browser | Crawl4AI | Playwriter | Stagehand |
 |------|-----------|-------------|---------------|----------|------------|-----------|
@@ -86,9 +86,7 @@ Reproduce: `browser-benchmark.md`. Overhead: dev-browser +0.1-0.4s | agent-brows
 | Crawl4AI | `arun_many(urls)` | 5 pages: 3.0s (1.7x) | Shared or isolated |
 | dev-browser | `client.page("name")` | Fast | Shared profile |
 
-## Extensions
-
-uBlock Origin in Playwright/dev-browser:
+## Extensions (uBlock Origin example — Playwright/dev-browser)
 
 ```javascript
 const context = await chromium.launchPersistentContext('/tmp/browser-profile', {
@@ -105,11 +103,10 @@ Brave/Edge/Chrome/Mullvad: Playwright, Playwriter, Crawl4AI, Stagehand. Bundled 
 ## Debugging
 
 ```bash
-# Chrome DevTools MCP
-npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222  # dev-browser
-npx chrome-devtools-mcp@latest --headless                           # own Chrome
+# Chrome DevTools MCP (dev-browser :9222 or headless)
+npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222
+npx chrome-devtools-mcp@latest --headless
 
-# Visual debugging
 agent-browser screenshot /tmp/debug.png && agent-browser errors && agent-browser snapshot -i
 ```
 
