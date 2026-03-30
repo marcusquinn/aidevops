@@ -36,35 +36,34 @@ email-compose-helper.sh draft --to client@example.com \
 
 1. **AI COMPOSE** — tone detection, model selection, overused phrase check, signature injection
 2. **DRAFT SAVED** → `~/.aidevops/.agent-workspace/email-compose/drafts/draft-YYYYMMDD-HHMMSS-xxxx.md`
-3. **HUMAN REVIEW** — editor opens; edit freely; delete all content to abort
-4. **CONFIRM SEND** — shows To: and Subject:, `[y/N]` prompt
+3. **HUMAN REVIEW** — editor opens; delete all content to abort
+4. **CONFIRM SEND** — `[y/N]` prompt (shows To: and Subject:)
 5. **SEND** via `email-agent-helper.sh → SES` — draft archived to `sent/`
 
-**Never auto-send**: `--no-review` skips editor but still requires confirmation. Full bypass (`--no-review` + piping `y`) is for tested automation scripts only.
+**Never auto-send**: `--no-review` skips editor but requires confirmation. Full bypass (`--no-review` + piping `y`) for tested automation only.
 
 ## Commands and Model Routing
 
-| Command | Purpose | Importance | Model |
-|---------|---------|------------|-------|
-| `draft` | Compose new email — AI drafts, human reviews | high | opus |
-| `reply` | Compose reply (auto-detect reply vs reply-all) | high | opus |
-| `draft` / `reply` | Routine correspondence, vendor communication | normal | sonnet |
-| `forward` | Forward with optional commentary | normal | sonnet |
-| `follow-up` | Follow up when replying is delayed | normal | sonnet |
-| `remind` | Reminder for outstanding requests | normal | sonnet |
-| `notify` | Project update notification | normal | sonnet |
-| `acknowledge` | Brief holding-pattern response | low | haiku |
-| `list` | Show saved drafts (`--sent` for archive) | — | — |
+| Command | Purpose | Model |
+|---------|---------|-------|
+| `draft` | Compose new email — AI drafts, human reviews | opus |
+| `reply` | Compose reply (auto-detect reply vs reply-all) | opus |
+| `forward` | Forward with optional commentary | sonnet |
+| `follow-up` | Follow up when replying is delayed | sonnet |
+| `remind` | Reminder for outstanding requests | sonnet |
+| `notify` | Project update notification | sonnet |
+| `acknowledge` | Brief holding-pattern response | haiku |
+| `list` | Show saved drafts (`--sent` for archive) | — |
 
-`--importance high` routes to opus (client-facing, legal, negotiations, sensitive topics). Opus is cost-justified — a poorly worded client email costs more than the model difference.
+Use `--importance high` for client-facing, legal, negotiations, sensitive topics (routes to opus; cost-justified vs. poorly worded client email).
 
 ## Composition Rules
 
 1. **One sentence per paragraph** — mobile readability and threading
-2. **Clear subject line** — the email's purpose, not just the topic
+2. **Clear subject line** — state the email's purpose, not just the topic
 3. **Numbered lists** for multiple questions or action items
-4. **Explicit CTA** when response needed ("Please confirm by Friday")
-5. **No urgency flags** unless context explicitly requires it
+4. **Explicit CTA** when response needed (e.g., "Please confirm by Friday")
+5. **No urgency flags** unless context requires it
 6. **Avoid overused phrases** (auto-flagged — see table below)
 7. **Legal awareness** — distinguish agreed vs advised vs informational
 
@@ -76,8 +75,8 @@ email-compose-helper.sh draft --to client@example.com \
 | "hope this finds you well" | Skip — start with purpose |
 | "as per my last email" | Reference the specific point |
 | "circle back" / "touch base" / "reach out" | "revisit" / "discuss" / "contact" |
-| "synergy" / "leverage" / "paradigm shift" / "move the needle" | Describe the actual benefit, change, or metric |
-| "low-hanging fruit" / "bandwidth" / "deep dive" / "at the end of the day" | "quick wins" / "capacity" / "detailed review" / state the conclusion |
+| "synergy" / "leverage" / "paradigm shift" / "move the needle" | Describe the actual benefit or metric |
+| "low-hanging fruit" / "bandwidth" / "deep dive" / "at the end of the day" | "quick wins" / "capacity" / "detailed review" / state conclusion |
 
 ## Tone Calibration
 
@@ -88,7 +87,7 @@ Auto-detected from recipient domain; override with `--tone formal` or `--tone ca
 | `casual` | gmail, hotmail, yahoo, icloud, me.com | "Hi [Name]," | "Thanks," / "Cheers," | Contractions OK, direct |
 | `formal` | All other domains | "Dear [Name]," | "Kind regards," / "Best regards," | No contractions, explicit CTAs |
 
-Domain-level overrides: set `tone_overrides` in `email-compose-config.json`.
+Override per-domain: set `tone_overrides` in `email-compose-config.json`.
 
 ## CC/BCC Patterns
 
@@ -106,9 +105,9 @@ Domain-level overrides: set `tone_overrides` in `email-compose-config.json`.
 |------|--------|
 | <25MB | Attach normally |
 | 25–30MB | Warning — consider file-share link |
-| >30MB | Blocked — must use file-share link |
+| >30MB | Blocked — use file-share link |
 
-**File-share alternatives:** Google Drive / Dropbox / OneDrive (general); [PrivateBin](https://privatebin.net) (confidential, self-destruct, password via separate channel); WeTransfer (large media). Screenshots: crop to relevant content, remove credentials/personal data, annotate, prefer one annotated image over multiple raw ones.
+**File-share alternatives:** Google Drive / Dropbox / OneDrive (general); [PrivateBin](https://privatebin.net) (confidential, self-destruct, password via separate channel); WeTransfer (large media). For screenshots: crop to relevant content, remove credentials/personal data, annotate; prefer one annotated image over multiple raw ones.
 
 ## Signature Injection
 
@@ -136,11 +135,11 @@ Email creates a written record. Distinguish clearly:
 
 **Avoid:** admitting liability without legal review; commitments outside authority; speculating about outcomes; forwarding confidential info without permission.
 
-**Hedging:** "I understand" not "I agree"; "I'll look into this" not "We'll fix this"; "subject to contract" for commercial commitments. Consult legal before anything usable in a dispute.
+**Hedging language:** "I understand" not "I agree"; "I'll look into this" not "We'll fix this"; "subject to contract" for commercial commitments. Consult legal before anything usable in a dispute.
 
 ## Support and Customer Service
 
-Reference ticket numbers in every message. State what you've tried. Tone: formal, factual — specific errors, timestamps, repro steps. Follow up on schedule, not impulsively.
+Reference ticket numbers in every message. State what you've tried. Use formal, factual tone with specific errors, timestamps, repro steps. Follow up on schedule, not impulsively.
 
 **Escalation:** *Tier 1→2:* "Working with support on [ticket #X] for [N days]. Requires technical investigation beyond standard troubleshooting — please escalate." *Tier 2→Mgmt:* "Open [N days], impacting [business function]. I'd like to speak with a manager to resolve this."
 
@@ -148,11 +147,11 @@ Reference ticket numbers in every message. State what you've tried. Tone: formal
 
 Copy `configs/email-compose-config.json.txt` → `configs/email-compose-config.json`. Key settings: `default_from_email`, `signatures`, `tone_overrides`, `default_importance`.
 
+See `scripts/email-compose-helper.sh` for CLI usage.
+
 ## Related
 
-- `scripts/email-compose-helper.sh` — CLI for composition workflow
 - `services/email/email-agent.md` — Autonomous mission email (send/poll/extract)
 - `services/email/email-mailbox.md` — Mailbox management and triage
 - `content/distribution-email.md` — Subject line formulas, content strategy
 - `marketing-sales/direct-response-copy-frameworks-email-sequences.md` — Copywriting frameworks
-- `scripts/email-signature-parser-helper.sh` — Apple Mail signature extraction
