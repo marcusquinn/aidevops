@@ -48,8 +48,6 @@ Every element is evaluated against these principles:
 
 ### Step 1: Capture the Page
 
-Use browser automation to get the page state:
-
 ```bash
 # ARIA snapshot (preferred - fast, structured, no vision tokens)
 playwright screenshot --aria-snapshot https://example.com/pricing
@@ -58,11 +56,9 @@ playwright screenshot --aria-snapshot https://example.com/pricing
 playwright screenshot https://example.com/pricing --full-page
 ```
 
-Or use Stagehand/Playwright programmatically. For manual review, the user provides the URL and you fetch with `webfetch`.
+For manual review: user provides URL → fetch with `webfetch`.
 
 ### Step 2: Screen-by-Screen Analysis
-
-For each screen/page, generate the findings table:
 
 | Confusing Element | Mom's Reaction | Principle | Severity | Fix |
 |-------------------|----------------|-----------|----------|-----|
@@ -84,11 +80,7 @@ Prioritise fixes by effort vs. impact:
 | Redesign pricing table | High | 1-2 days | **Plan** |
 | Adjust spacing/polish | Low | 30 min | **Batch later** |
 
-Priority rules: High impact + Low effort = Do first. High impact + High effort = Plan. Low impact = Batch later.
-
 ### Step 4: CRO Recommendations
-
-Apply proven UX patterns that directly improve conversion:
 
 | Pattern | Why It Works | Implementation |
 |---------|-------------|----------------|
@@ -100,9 +92,7 @@ Apply proven UX patterns that directly improve conversion:
 
 ## Browser Automation Integration
 
-### Automated UX Scan
-
-Use Playwright to programmatically check for common Mom Test failures:
+Playwright checks for common Mom Test failures:
 
 1. **ARIA snapshot** - Parse `page.accessibility.snapshot()` for structure issues
 2. **Hidden CTAs** - Query `button, a[href]` and flag any with `offsetParent === null`
@@ -113,8 +103,6 @@ Use Playwright to programmatically check for common Mom Test failures:
 Each finding maps to a severity (S1-S4) and principle (Clarity/Simplicity/etc).
 
 ## Output Format
-
-The final report follows this structure:
 
 1. **One-line verdict**: Pass / Needs Work / Fail (with overall severity)
 2. **Findings table**: Every issue with Severity, Principle, Mom's Reaction, Fix
