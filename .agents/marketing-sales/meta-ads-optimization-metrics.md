@@ -1,7 +1,5 @@
 # Metrics Explained
 
-> Every metric in Ads Manager — definitions, formulas, and benchmarks.
-
 ## Primary Metrics by Objective
 
 ### Purchase/Sales
