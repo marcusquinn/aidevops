@@ -19,7 +19,7 @@ tools:
 - **Upstream skill**: [git.cloudron.io/docs/skills](https://git.cloudron.io/docs/skills) (`cloudron-server-ops`)
 - **Install**: `sudo npm install -g cloudron` (on your PC/Mac, NOT the server)
 - **Login**: `cloudron login my.example.com` (browser-based; 9.1+ uses OIDC/passkey)
-- **CI/CD**: `--server <domain> --token <api-token> --no-wait` (token from `https://my.example.com/#/profile`)
+- **CI/CD**: `--server <domain> --token <api-token> --no-wait` (token from `https://my.example.com/#/profile`); e.g. `cloudron update --server my.example.com --token <token> --app blog.example.com --image user/image:tag`
 - **Token stored**: `~/.cloudron.json`; self-signed TLS: add `--allow-selfsigned`
 - **App targeting**: `--app` accepts FQDN, subdomain, or app ID; auto-detected from `CloudronManifest.json`
 - **Global flags**: `--server <domain>`, `--token <token>`, `--allow-selfsigned`, `--no-wait`
@@ -51,7 +51,12 @@ cloudron clone --app <app> --location new-location
 
 Key flags for `install`/`update`: `--image <repo:tag>`, `--no-backup`, `-l <subdomain>`, `-s <secondary-domains>`, `-p <port-bindings>`, `-m <memory-bytes>`, `--versions-url <url>`
 
-**On-server build (9.1+)** — from a directory with `CloudronManifest.json` + `Dockerfile`, `cloudron install --location myapp` uploads source, builds on server, and installs. `cloudron update --app myapp` rebuilds and updates.
+**On-server build (9.1+)** — from a directory with `CloudronManifest.json` + `Dockerfile`:
+
+```bash
+cloudron install --location myapp   # upload source, build on server, install
+cloudron update --app myapp         # upload source, rebuild, update
+```
 
 ### Run State
 
