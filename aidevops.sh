@@ -166,6 +166,91 @@ get_repo_slug() {
 	return 1
 }
 
+# Check whether a repo name follows mission-control naming.
+# Usage: _is_mission_control_repo_name <repo-name>
+_is_mission_control_repo_name() {
+	local repo_name="$1"
+	case "$repo_name" in
+	mission-control | *-mission-control | mission-control-*)
+		return 0
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
+# Resolve mission-control scope from slug and current actor.
+# Usage: _resolve_mission_control_scope <owner/repo> <current-login>
+# Prints: personal | org (or empty if not mission-control)
+_resolve_mission_control_scope() {
+	local slug="$1"
+	local current_login="$2"
+
+	if [[ -z "$slug" ]] || [[ "$slug" != */* ]]; then
+		echo ""
+		return 1
+	fi
+
+	local owner repo
+	owner="${slug%%/*}"
+	repo="${slug##*/}"
+
+	if ! _is_mission_control_repo_name "$repo"; then
+		echo ""
+		return 1
+	fi
+
+	if [[ -n "$current_login" && "$owner" == "$current_login" ]]; then
+		echo "personal"
+		return 0
+	fi
+
+	echo "org"
+	return 0
+}
+
+# Compute default repos.json registration values.
+# Usage: _compute_repo_registration_defaults <path> <slug> <local_only> <maintainer>
+# Prints eval-safe key=value lines: DEFAULT_PULSE, DEFAULT_PRIORITY
+_compute_repo_registration_defaults() {
+	local repo_path="$1"
+	local slug="$2"
+	local is_local_only="$3"
+	local maintainer="$4"
+
+	local default_pulse=false
+	local default_priority=""
+
+	if [[ "$is_local_only" == "true" ]]; then
+		default_pulse=false
+	else
+		default_pulse=true
+	fi
+
+	if [[ "$slug" == */* ]]; then
+		local owner repo
+		owner="${slug%%/*}"
+		repo="${slug##*/}"
+
+		if [[ "$repo" == "$owner" ]] && [[ "$repo_path" == "$HOME/Git/$owner" ]]; then
+			default_pulse=false
+			default_priority="profile"
+		elif _is_mission_control_repo_name "$repo"; then
+			default_pulse=true
+			if [[ "$owner" == "$maintainer" ]]; then
+				default_priority="product"
+			else
+				default_priority="tooling"
+			fi
+		fi
+	fi
+
+	printf 'DEFAULT_PULSE=%q\n' "$default_pulse"
+	printf 'DEFAULT_PRIORITY=%q\n' "$default_priority"
+	return 0
+}
+
 # Register a repo in repos.json
 # Usage: register_repo <path> <version> <features>
 register_repo() {
@@ -204,34 +289,46 @@ register_repo() {
 		maintainer=$(gh api user --jq '.login' 2>/dev/null) || maintainer=""
 	fi
 
+	local DEFAULT_PULSE="false"
+	local DEFAULT_PRIORITY=""
+	eval "$(_compute_repo_registration_defaults "$repo_path" "$slug" "$is_local_only" "$maintainer")"
+
 	# Check if repo already registered
 	if jq -e --arg path "$repo_path" '.initialized_repos[] | select(.path == $path)' "$REPOS_FILE" &>/dev/null; then
 		# Update existing entry, preserving pulse/priority/local_only/maintainer if already set
 		local temp_file="${REPOS_FILE}.tmp"
 		jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
 			--arg slug "$slug" --argjson local_only "$is_local_only" --arg maintainer "$maintainer" \
+			--argjson pulse_default "$DEFAULT_PULSE" --arg priority_default "$DEFAULT_PRIORITY" \
 			'(.initialized_repos[] | select(.path == $path)) |= (
 				. + {path: $path, version: $version, features: ($features | split(",")), updated: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}
 				| if $slug != "" then .slug = $slug else . end
 				| if $local_only then .local_only = true else . end
+				| if .pulse == null then .pulse = (if $local_only then false else $pulse_default end) else . end
+				| if (.priority == null or .priority == "") and $priority_default != "" then .priority = $priority_default else . end
 				| if (.maintainer == null or .maintainer == "") and $maintainer != "" then .maintainer = $maintainer else . end
 			)' \
 			"$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
 	else
-		# Add new entry with slug and maintainer
+		# Add new entry with slug, defaults, and maintainer
 		local temp_file="${REPOS_FILE}.tmp"
-		local new_entry
-		# shellcheck disable=SC2016  # jq expressions use $var syntax, not shell expansion
-		if [[ -n "$slug" ]]; then
-			new_entry='{path: $path, slug: $slug, maintainer: $maintainer, version: $version, features: ($features | split(",")), initialized: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}'
-		elif [[ "$is_local_only" == "true" ]]; then
-			new_entry='{path: $path, local_only: true, maintainer: $maintainer, version: $version, features: ($features | split(",")), initialized: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}'
-		else
-			new_entry='{path: $path, maintainer: $maintainer, version: $version, features: ($features | split(",")), initialized: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}'
-		fi
 		jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
 			--arg slug "$slug" --arg maintainer "$maintainer" \
-			".initialized_repos += [$new_entry]" \
+			--argjson local_only "$is_local_only" --argjson pulse_default "$DEFAULT_PULSE" \
+			--arg priority_default "$DEFAULT_PRIORITY" \
+			'.initialized_repos += [(
+				{
+					path: $path,
+					maintainer: $maintainer,
+					version: $version,
+					features: ($features | split(",")),
+					pulse: $pulse_default,
+					initialized: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))
+				}
+				| if $slug != "" then . + {slug: $slug} else . end
+				| if $local_only then . + {local_only: true, pulse: false} else . end
+				| if $priority_default != "" then . + {priority: $priority_default} else . end
+			)]' \
 			"$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
 	fi
 	return 0
@@ -1269,6 +1366,67 @@ _init_parse_features() {
 	return 0
 }
 
+# Seed mission-control onboarding template when initializing a mission-control repo.
+# Usage: _seed_mission_control_template <project_root> <personal|org>
+_seed_mission_control_template() {
+	local project_root="$1"
+	local scope="$2"
+	local seed_file="$project_root/todo/mission-control-seed.md"
+
+	if [[ -z "$scope" ]]; then
+		return 0
+	fi
+
+	if [[ -f "$seed_file" ]]; then
+		return 0
+	fi
+
+	mkdir -p "$project_root/todo"
+
+	if [[ "$scope" == "personal" ]]; then
+		cat >"$seed_file" <<'EOF'
+# Mission Control Seed (Personal)
+
+Starter checklist for a personal mission-control repo initialized with aidevops.
+
+## First-Day Setup
+
+- [ ] Confirm `~/.config/aidevops/repos.json` has all active repos registered with correct `slug` and `path`
+- [ ] Set `pulse: true` only for repos you want actively supervised
+- [ ] Add `pulse_hours` windows to avoid dispatch during daytime manual development
+- [ ] Verify profile and archive repos are `pulse: false` and `priority: "profile"` where applicable
+
+## Operating Rhythm
+
+- [ ] Define weekly review cadence for `aidevops pulse` health and backlog aging
+- [ ] Add hygiene tasks for stale branches, stale worktrees, and stale queued issues
+- [ ] Track cross-repo blockers in TODO with clear `blocked-by:` links
+EOF
+	else
+		cat >"$seed_file" <<'EOF'
+# Mission Control Seed (Organization)
+
+Starter checklist for an organization mission-control repo initialized with aidevops.
+
+## First-Day Setup
+
+- [ ] Register all managed org repos in `~/.config/aidevops/repos.json` with `slug`, `path`, `priority`, and `maintainer`
+- [ ] Set `pulse: true` only for repos approved for autonomous dispatch
+- [ ] Configure `pulse_hours` and optional `pulse_expires` windows for sprint-based focus
+- [ ] Keep sensitive/internal-only repos `pulse: false` until policy checks are complete
+
+## Governance
+
+- [ ] Define maintainer response SLA for `needs-maintainer-review` triage
+- [ ] Document worker guardrails (release, merge, and security boundaries)
+- [ ] Add a weekly audit task for repo registration drift and label hygiene
+EOF
+	fi
+
+	print_success "Seeded mission-control template: todo/mission-control-seed.md (${scope})"
+	return 0
+}
+
 # Init command - initialize aidevops in a project
 cmd_init() {
 	local features="${1:-all}"
@@ -1373,6 +1531,10 @@ EOF
 	local repo_name
 	local remote_url
 	remote_url=$(git -C "$project_root" remote get-url origin 2>/dev/null || true)
+	local repo_slug=""
+	if [[ -n "$remote_url" ]]; then
+		repo_slug=$(echo "$remote_url" | sed 's|.*github\.com[:/]||;s|\.git$||')
+	fi
 	if [[ -n "$remote_url" ]]; then
 		repo_name=$(basename "$remote_url" .git)
 	else
@@ -1525,6 +1687,15 @@ EOF
 
 		# Create .gitkeep in tasks
 		touch "$project_root/todo/tasks/.gitkeep"
+
+		# Seed mission-control starter template for personal/org control repos
+		local init_actor=""
+		if command -v gh &>/dev/null; then
+			init_actor=$(gh api user --jq '.login' 2>/dev/null || echo "")
+		fi
+		local mission_scope=""
+		mission_scope=$(_resolve_mission_control_scope "$repo_slug" "$init_actor" 2>/dev/null || echo "")
+		_seed_mission_control_template "$project_root" "$mission_scope"
 	fi
 
 	# Create database directories if enabled
