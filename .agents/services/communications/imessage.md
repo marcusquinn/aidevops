@@ -36,7 +36,7 @@ Messages.app decrypts to local SQLite (`~/Library/Messages/chat.db`) → BlueBub
 
 **Requirements**: macOS 11+, Messages.app signed in, Full Disk Access + Accessibility, persistent GUI session.
 
-**Install**: Download DMG from [GitHub Releases](https://github.com/BlueBubblesApp/bluebubbles-server/releases) (Homebrew cask deprecated 2026-09-01). Right-click Open (Gatekeeper), grant Full Disk Access + Accessibility, set password, configure Cloudflare tunnel.
+**Install**: Download DMG from [GitHub Releases](https://github.com/BlueBubblesApp/bluebubbles-server/releases) (Homebrew cask deprecated 2026-09-01). Drag to `/Applications`, right-click Open (Gatekeeper), grant Full Disk Access + Accessibility, set password, configure Cloudflare tunnel.
 
 **Server config**: Port `1234` · Password (header only — query params are logged) · Proxy: Cloudflare · Poll: `1000ms` · **Headless**: `caffeinate -d` to prevent sleep; complete iCloud 2FA interactively first.
 
@@ -116,7 +116,7 @@ check_and_restart "Messages"; check_and_restart "BlueBubbles"
 
 ## Privacy and Security
 
-**iMessage encryption**: E2E via RSA-OAEP/ECIES P-256 (iOS 13+)/PQ3 AES-256-CTR (iOS 17.4+); ECDSA P-256 signing; CKV key verification (iOS 17.2+, optional). Apple sees metadata (who, when, IP, contact graph) but not content (with ADP enabled).
+**iMessage encryption**: Classic: RSA-OAEP + AES-128-CTR · iOS 13+: ECIES P-256 + AES-128-CTR · PQ3 (iOS 17.4+): post-quantum + AES-256-CTR · Signing: ECDSA P-256 · Key verification: CKV (iOS 17.2+, optional). Apple sees metadata (who, when, IP, contact graph) but not content (with ADP enabled).
 
 **BlueBubbles risk**: Mac compromise = full message access. Server compromise = attacker reads/sends as bot's Apple ID.
 
