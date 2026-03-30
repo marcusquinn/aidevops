@@ -1,7 +1,5 @@
 # Terraform Patterns & Use Cases
 
-Architecture patterns, multi-environment setups, and real-world use cases.
-
 ## Multi-Environment Setup
 
 ```hcl
@@ -43,7 +41,6 @@ resource "cloudflare_worker_script" "app" {
 ### CI/CD Pattern
 
 ```hcl
-# Terraform creates infrastructure
 resource "cloudflare_workers_kv_namespace" "app" { account_id = var.account_id; title = "app-kv" }
 resource "cloudflare_d1_database" "app" { account_id = var.account_id; name = "app-db" }
 output "kv_namespace_id" { value = cloudflare_workers_kv_namespace.app.id }
