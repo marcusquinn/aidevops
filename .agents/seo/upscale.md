@@ -11,13 +11,9 @@ tools:
 
 # Image Upscaling
 
-<!-- AI-CONTEXT-START -->
-
 **Decision tree**: Local CLI for bulk/privacy → Replicate for quality/convenience → Cloudflare for CDN-integrated
 
 **Minimum targets**: 1200px wide (social sharing), 800px (blog content), 2x for retina
-
-<!-- AI-CONTEXT-END -->
 
 ## Providers
 
@@ -72,13 +68,11 @@ curl -s "https://api.replicate.com/v1/predictions/$PREDICTION_ID" \
 Resize/optimize on-the-fly (requires Cloudflare Pro+). Not AI upscaling — handles format conversion and responsive variants.
 
 ```bash
-# URL-based resizing
-# https://example.com/cdn-cgi/image/width=1200,format=webp/image.jpg
-
 # Upload via API
 curl -X POST "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/images/v1" \
   -H "Authorization: Bearer $CF_API_TOKEN" \
   -F "file=@image.jpg"
+# URL-based resizing: /cdn-cgi/image/width=1200,format=webp/image.jpg
 ```
 
 ### 4. Sharp (Node.js — Format Conversion)
@@ -86,7 +80,7 @@ curl -X POST "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/image
 Not upscaling. Use for WebP/AVIF conversion and responsive variants.
 
 ```javascript
-import sharp from 'sharp';  // npm install sharp
+import sharp from 'sharp';
 
 await sharp('input.jpg').resize(1200, null, { withoutEnlargement: true }).webp({ quality: 80 }).toFile('output.webp');
 
