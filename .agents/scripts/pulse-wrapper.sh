@@ -3583,6 +3583,65 @@ _complexity_scan_has_existing_issue() {
 	return 1
 }
 
+# Close open duplicate simplification-debt issues for an exact title.
+#
+# This is a post-create race repair for cross-machine TOCTOU collisions:
+# two runners can both pass pre-create dedup checks, then both create the
+# same issue title seconds apart. This helper converges to a single open
+# issue by keeping the newest and closing older duplicates immediately.
+#
+# Arguments:
+#   $1 - repo_slug (owner/repo)
+#   $2 - issue_title (exact title match)
+# Returns:
+#   0 always (best-effort)
+_complexity_scan_close_duplicate_issues_by_title() {
+	local repo_slug="$1"
+	local issue_title="$2"
+
+	local issue_numbers=""
+	# shellcheck disable=SC2016 # jq expression expands $t, not shell
+	issue_numbers=$(gh issue list --repo "$repo_slug" \
+		--label "simplification-debt" --state open \
+		--search "in:title \"${issue_title}\"" \
+		--limit 100 --json number,title \
+		--jq --arg t "$issue_title" '[.[] | select(.title == $t) | .number] | sort | .[]' 2>/dev/null) || issue_numbers=""
+
+	[[ -z "$issue_numbers" ]] && return 0
+
+	local issue_count=0
+	local keep_number=""
+	local issue_number
+	while IFS= read -r issue_number; do
+		[[ -n "$issue_number" ]] || continue
+		issue_count=$((issue_count + 1))
+		# Keep the newest issue (largest number) for consistency with
+		# run_simplification_dedup_cleanup.
+		keep_number="$issue_number"
+	done <<<"$issue_numbers"
+
+	if [[ "$issue_count" -le 1 || -z "$keep_number" ]]; then
+		return 0
+	fi
+
+	local closed_count=0
+	while IFS= read -r issue_number; do
+		[[ -n "$issue_number" ]] || continue
+		[[ "$issue_number" == "$keep_number" ]] && continue
+		if gh issue close "$issue_number" --repo "$repo_slug" --reason "not planned" \
+			--comment "Auto-closing duplicate from concurrent simplification scan run. Keeping newest issue #${keep_number}." \
+			>/dev/null 2>&1; then
+			closed_count=$((closed_count + 1))
+		fi
+	done <<<"$issue_numbers"
+
+	if [[ "$closed_count" -gt 0 ]]; then
+		echo "[pulse-wrapper] Complexity scan: closed ${closed_count} duplicate simplification-debt issue(s) for title: ${issue_title}" >>"$LOGFILE"
+	fi
+
+	return 0
+}
+
 # Build the GitHub issue body for an agent doc flagged for simplification review.
 # Arguments:
 #   $1 - file_path (repo-relative)
@@ -3756,6 +3815,7 @@ This file was previously simplified (PR #${prev_pr}) but has since been modified
 	fi
 
 	if [[ "$create_ok" == true ]]; then
+		_complexity_scan_close_duplicate_issues_by_title "$aidevops_slug" "$issue_title"
 		local log_suffix=""
 		if [[ "$needs_recheck" == true ]]; then log_suffix=" [RECHECK]"; fi
 		echo "[pulse-wrapper] Complexity scan (.md): created issue for ${file_path} (${line_count} lines)${log_suffix}" >>"$LOGFILE"
@@ -3906,11 +3966,13 @@ This is an automated scan. The function lengths are factual, but the best decomp
 		issue_body="${issue_body}${sig_footer2}"
 
 		local issue_key="$file_path"
+		local issue_title="simplification: reduce function complexity in ${issue_key} (${violation_count} functions >${COMPLEXITY_FUNC_LINE_THRESHOLD} lines)"
 		if gh issue create --repo "$aidevops_slug" \
-			--title "simplification: reduce function complexity in ${issue_key} (${violation_count} functions >${COMPLEXITY_FUNC_LINE_THRESHOLD} lines)" \
+			--title "$issue_title" \
 			--label "simplification-debt" --label "needs-maintainer-review" \
 			--assignee "$maintainer" \
 			--body "$issue_body" >/dev/null 2>&1; then
+			_complexity_scan_close_duplicate_issues_by_title "$aidevops_slug" "$issue_title"
 			issues_created=$((issues_created + 1))
 			echo "[pulse-wrapper] Complexity scan: created issue for ${file_path} (${violation_count} violations)" >>"$LOGFILE"
 		else
