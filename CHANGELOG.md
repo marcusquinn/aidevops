@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.373] - 2026-03-30
+
+### Changed
+
+- Maintenance: bump version to 3.5.372
+- Documentation: GH#13581: tighten pages-patterns.md, remove redundant prose (#13595)
+
 ## [3.5.369] - 2026-03-30
 
 ### Changed
