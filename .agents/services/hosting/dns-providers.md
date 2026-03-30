@@ -29,7 +29,7 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Configuration
+## Config schemas
 
 **Cloudflare** (`configs/cloudflare-dns-config.json`):
 
@@ -90,39 +90,21 @@ tools:
 ./.agents/scripts/dns-helper.sh health-check route53 production example.com https://example.com/health
 ./.agents/scripts/dns-helper.sh weighted-routing route53 production example.com www A 192.168.1.100 50
 ./.agents/scripts/dns-helper.sh geo-routing route53 production example.com www A 192.168.1.100 US
-```
 
-## Security
-
-```bash
-# DNSSEC
+# Security: DNSSEC + CAA + auth checks
 ./.agents/scripts/dns-helper.sh enable-dnssec cloudflare personal example.com
-
-# CAA record (restrict certificate issuance)
 ./.agents/scripts/dns-helper.sh add cloudflare personal example.com @ CAA "0 issue letsencrypt.org"
-
-# Auth test / permission check
 ./.agents/scripts/dns-helper.sh test-auth cloudflare personal
 ./.agents/scripts/dns-helper.sh check-permissions cloudflare personal
-```
 
-## Troubleshooting
-
-```bash
-# Propagation
+# Troubleshooting: propagation + validation
 dig @8.8.8.8 example.com
 ./.agents/scripts/dns-helper.sh propagation-check example.com
 ./.agents/scripts/dns-helper.sh ttl-check example.com
-
-# Conflicts / validation
 ./.agents/scripts/dns-helper.sh conflict-check cloudflare personal example.com
 ./.agents/scripts/dns-helper.sh validate cloudflare personal example.com
 ./.agents/scripts/dns-helper.sh compare example.com cloudflare:personal namecheap:personal
-```
 
-## Operations
-
-```bash
 # Monitoring / reporting
 ./.agents/scripts/dns-helper.sh monitor-resolution example.com
 ./.agents/scripts/dns-helper.sh performance-check example.com
