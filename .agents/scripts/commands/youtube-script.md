@@ -18,7 +18,7 @@ Load context:
 
 ```bash
 memory-helper.sh recall --namespace youtube-topics "$TOPIC"
-memory-helper.sh recall --namespace youtube "channel"
+memory-helper.sh recall --namespace youtube "channel voice"
 ```
 
 ### Step 2: Select Mode and Generate
