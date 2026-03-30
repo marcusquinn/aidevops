@@ -24,7 +24,7 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   name: text("name"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(), // only sets on INSERT; use .$onUpdate() or DB trigger for UPDATE
+  updatedAt: timestamp("updated_at").defaultNow().notNull(), // INSERT only; use .$onUpdate() or DB trigger for UPDATE
 });
 
 // CRUD
@@ -41,7 +41,6 @@ await db.delete(users).where(eq(users.id, userId));
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 export const insertUserSchema = createInsertSchema(users);
 export const selectUserSchema = createSelectSchema(users);
-// Use in API validation (e.g. Hono + zValidator)
 app.post("/users", zValidator("json", insertUserSchema), async (c) =>
   c.json((await db.insert(users).values(c.req.valid("json")).returning())[0])
 );
@@ -54,6 +53,15 @@ pnpm db:migrate    # apply migrations
 pnpm db:push       # push schema directly (dev only)
 pnpm db:studio     # open Drizzle Studio
 ```
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Missing `.returning()` | Insert/update don't return data by default — add `.returning()` |
+| Skipping transactions | Related inserts must be in a transaction to prevent partial failures |
+| Schema drift | Always run `db:generate` after schema changes; review SQL before applying |
+| Missing indexes | Add `.index()` in schema for frequently queried columns |
 
 ## Relations
 
@@ -68,10 +76,8 @@ export const usersRelations = relations(users, ({ many }) => ({ posts: many(post
 export const postsRelations = relations(posts, ({ one }) => ({
   author: one(users, { fields: [posts.authorId], references: [users.id] }),
 }));
-
 // Query with relations — use query API (not .select())
 const usersWithPosts = await db.query.users.findMany({ with: { posts: true } });
-const deep = await db.query.users.findMany({ with: { posts: { with: { comments: true } } } });
 ```
 
 ## Complex Queries
@@ -99,31 +105,15 @@ import * as schema from "./schema";
 export const db = drizzle(postgres(process.env.DATABASE_URL!), { schema });
 ```
 
-## Seeding (`packages/db/src/scripts/seed.ts`)
+## Seeding
 
 ```tsx
-async function seed() {
-  // Production guard — always include this
-  if (process.env.NODE_ENV === "production" && process.env.ALLOW_DB_WIPE !== "true")
-    throw new Error("Seeding disabled in production. Set ALLOW_DB_WIPE=true to override.");
-  await db.transaction(async (tx) => {
-    await tx.delete(posts); // delete children before parents
-    await tx.delete(users);
-    const [user] = await tx.insert(users).values({ email: "admin@example.com", name: "Admin" }).returning();
-    await tx.insert(posts).values([{ title: "First Post", authorId: user.id }]);
-  });
-}
+// packages/db/src/scripts/seed.ts — key patterns:
+// 1. Guard production: throw if NODE_ENV=production && !ALLOW_DB_WIPE
+// 2. Transaction: delete children before parents, then insert
+// 3. Use .returning() to chain parent→child inserts
 seed().catch((err) => { console.error(err); process.exit(1); });
 ```
-
-## Common Mistakes
-
-| Mistake | Fix |
-|---------|-----|
-| Missing `.returning()` | Insert/update don't return data by default — add `.returning()` |
-| Skipping transactions | Related inserts must be in a transaction to prevent partial failures |
-| Schema drift | Always run `db:generate` after schema changes; review SQL before applying |
-| Missing indexes | Add `.index()` in schema for frequently queried columns |
 
 ## Related
 
