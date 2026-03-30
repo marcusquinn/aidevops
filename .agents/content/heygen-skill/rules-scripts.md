@@ -94,11 +94,11 @@ Head to [location] to learn more. <break time="0.5s"/> We can't wait to hear wha
 
 ## Writing Tips
 
-**Do:** Write conversationally. Use contractions. Spell out abbreviations ("A-P-I"). End sections clearly.
+**Do:** Write conversationally, use contractions, spell out abbreviations ("A-P-I"), end sections clearly.
 
-**Avoid:** Jargon without context. Long parentheticals. Ambiguous pronunciations. Excessive `!`. Run-on sentences. Dense information without pauses.
+**Avoid:** Jargon without context, long parentheticals, ambiguous pronunciations, excessive `!`, run-ons, dense info without pauses.
 
-**Pronunciation hints:** Spell phonetically inline — `"Our API (A-P-I)"`, `"HeyGen (hey-jen)"`, `"I read (red) the docs"`.
+**Pronunciation:** Spell phonetically inline — `"Our API (A-P-I)"`, `"HeyGen (hey-jen)"`, `"I read (red) the docs"`.
 
 ## Multi-Scene Scripts
 
@@ -109,30 +109,24 @@ const multiSceneVideo = {
   video_inputs: [
     {
       character: { type: "avatar", avatar_id: "josh_lite3_20230714", avatar_style: "normal" },
-      voice: {
-        type: "text",
-        input_text: "Welcome to our quarterly update. <break time=\"1s\"/> I'm Josh, and I'll walk you through the highlights.",
-        voice_id: "voice_id_here",
-      },
+      voice: { type: "text", input_text: "Welcome to our quarterly update. <break time=\"1s\"/> I'm Josh, and I'll walk you through the highlights.", voice_id: "voice_id_here" },
       background: { type: "color", value: "#1a1a2e" },
     },
-    // Additional scenes follow the same structure with different input_text and background
+    // Repeat with different input_text and background
   ],
 };
 ```
 
 ## Testing Your Script
 
-1. Read aloud — time yourself, check for awkward phrasing
-2. Count words — verify expected duration
-3. Check break tags — proper spacing and syntax
-4. Preview with short clip — generate a 10-second test for pronunciation uncertainty
+1. Read aloud — time yourself, check phrasing
+2. Count words — verify duration
+3. Check break tags — spacing and syntax
+4. Preview short clip — test pronunciation uncertainty
 
 ## Voice Speed
 
-```typescript
-voice: { type: "text", input_text: script, voice_id: "voice_id", speed: 1.1 }
-```
+Set via `speed` parameter: `voice: { type: "text", input_text: script, voice_id: "voice_id", speed: 1.1 }`
 
 | Speed | Use Case |
 |-------|----------|
