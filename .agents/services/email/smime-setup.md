@@ -37,7 +37,7 @@ tools:
 
 ## Certificate Acquisition
 
-**Actalis (free):** Go to https://www.actalis.com/s-mime.aspx → "Get a free email certificate" → verify email → download `.p12` → store password in gopass immediately.
+**Actalis (free):** https://www.actalis.com/s-mime.aspx → "Get a free email certificate" → verify email → download `.p12` → store password in gopass immediately.
 
 **Self-signed (testing only):**
 
@@ -58,7 +58,6 @@ openssl pkcs12 -export -in smime-cert.pem -inkey smime-key.pem \
 ### Apple Mail
 
 ```bash
-# Import into Keychain
 security import smime-cert.p12 -k ~/Library/Keychains/login.keychain-db
 # Mail detects it automatically — lock/checkmark icons appear in compose toolbar
 ```
@@ -67,11 +66,10 @@ security import smime-cert.p12 -k ~/Library/Keychains/login.keychain-db
 
 ### Thunderbird
 
-Settings → Account Settings → [account] → End-to-End Encryption → Manage S/MIME Certificates → Your Certificates → Import → select `.p12` → assign to account under "Personal certificate for digital signing".
+Settings → Account Settings → [account] → End-to-End Encryption → Manage S/MIME Certificates → Your Certificates → Import → select `.p12` → assign under "Personal certificate for digital signing".
 
 ```bash
-# Verify import
-certutil -L -d ~/.thunderbird/*.default-release/
+certutil -L -d ~/.thunderbird/*.default-release/  # verify import
 ```
 
 ### Outlook
@@ -84,11 +82,11 @@ Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.EnhancedKeyUsageList -mat
 
 ### Gmail / OWA
 
-Gmail S/MIME requires Google Workspace Enterprise Standard+. OWA S/MIME requires Microsoft 365 E3/E5 and only works in legacy Edge/IE. **Recommendation:** use desktop clients for S/MIME.
+Gmail S/MIME requires Google Workspace Enterprise Standard+. OWA requires Microsoft 365 E3/E5 and only works in legacy Edge/IE. **Use desktop clients for S/MIME.**
 
 ## Key Backup and Recovery
 
-**Critical:** losing your private key makes encrypted emails permanently unreadable.
+**Critical:** losing your private key makes encrypted emails permanently unreadable. Do NOT delete expired certs — needed to decrypt historical emails.
 
 ```bash
 # Export from macOS Keychain
@@ -97,9 +95,8 @@ security export -k ~/Library/Keychains/login.keychain-db -t identities -f pkcs12
 # Verify backup
 openssl pkcs12 -in smime-backup.p12 -noout -info
 
-# Store in gopass
+# Store password in gopass
 gopass insert email/smime-cert-password
-# gopass binary justfiles smime-backup.p12
 
 # Restore to macOS
 security import smime-backup.p12 -k ~/Library/Keychains/login.keychain-db
@@ -109,7 +106,6 @@ pk12util -i smime-backup.p12 -d ~/.thunderbird/*.default-release/
 ```
 
 **Check expiry:** `openssl x509 -in cert.pem -enddate -noout`
-**Do NOT delete expired certs** — needed to decrypt historical emails.
 
 ## Agent-Assisted Signing and Encryption
 
@@ -124,11 +120,8 @@ openssl smime -encrypt -in message.txt -out encrypted.eml -aes256 recipient-cert
 # Decrypt
 openssl smime -decrypt -in encrypted.eml -recip cert.pem -inkey private-key.pem -out decrypted.txt
 
-# Verify + extract signer cert
+# Verify signature and extract signer cert (use their-signed.eml to extract a contact's cert)
 openssl smime -verify -in signed.eml -noverify -signer signer-cert.pem -out /dev/null 2>/dev/null
-
-# Extract cert from a signed email they sent you
-openssl smime -verify -in their-signed.eml -noverify -signer recipient-cert.pem -out /dev/null 2>/dev/null
 ```
 
 **Secret-safe usage:**
@@ -142,11 +135,7 @@ SMIME_P12_PASS=$(gopass show -o email/smime-p12-password) \
 
 ## Cross-Client Compatibility
 
-| Sender \ Recipient | Apple Mail | Thunderbird | Outlook | Gmail (Workspace) |
-|-------------------|-----------|-------------|---------|-------------------|
-| Apple Mail | Full | Full | Full | Full (Enterprise) |
-| Thunderbird | Full | Full | Full | Full (Enterprise) |
-| Outlook | Full | Full | Full | Full (Enterprise) |
+Apple Mail, Thunderbird, and Outlook interoperate fully. Gmail S/MIME is Enterprise-only and limited to within Google Workspace.
 
 **Known issues:**
 - Outlook may wrap signed messages in `winmail.dat` (TNEF) — fix: set message format to "Internet Format (HTML)"
