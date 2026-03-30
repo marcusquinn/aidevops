@@ -14,41 +14,40 @@ tools:
 ## Quick Reference
 
 - **Budget**: Reserve 100K tokens for conversation; never use >100K on context
-- **Rule**: README first → check size → targeted patterns → full pack (last resort)
-- **Self-check**: "Could this return >50K tokens? Have I checked size first?"
+- **Escalate gradually**: README → specific files → targeted patterns → full pack (last resort)
+- **Pre-flight**: Always check repo size before packing; if grep/search returns >500 lines, don't load it all
 
-**Size Thresholds**:
+**Size Thresholds** — `gh api repos/{u}/{r} --jq .size` returns KB; KB × 100 ≈ full-pack tokens:
 
 | Repo Size (KB) | Est. Tokens | Action |
 |----------------|-------------|--------|
 | < 500 | < 50K | Safe for compressed pack |
-| 500-2000 | 50-200K | `--include` patterns only |
-| > 2000 | > 200K | **NEVER full pack** - targeted files only |
+| 500-2000 | 50-200K | Use `--include` patterns only |
+| > 2000 | > 200K | **NEVER full pack** — targeted files only |
 
 **Tool risk**:
 
 | Tool | Typical Output | Risk |
 |------|----------------|------|
-| `npx repomix --remote` | 100K-5M+ tokens | **EXTREME** |
-| `mcp_grep` on large output | 10K-500K tokens | **HIGH** |
-| `webfetch` on docs site | 5K-50K tokens | Medium |
-| `mcp_read` single file | 1K-20K tokens | Low |
+| `npx repomix --remote` | 100K–5M+ tokens | **EXTREME** |
+| `mcp_grep` on large output | 10K–500K tokens | **HIGH** |
+| `webfetch` on docs site | 5K–50K tokens | Medium |
+| `mcp_read` single file | 1K–20K tokens | Low |
+
+**Self-check before context-heavy operations**:
+> "Could this operation return >50K tokens? Have I checked the size first?"
 
 <!-- AI-CONTEXT-END -->
 
-## Remote Repository Research Workflow
+## Tool-Specific Guardrails
 
-Check size before packing. `gh api repos/{u}/{r} --jq .size` returns KB.
-
-| Size | Action |
-|------|--------|
-| < 500 KB | `npx repomix@latest --remote ... --compress` |
-| 500 KB-2 MB | Add `--include "README.md,src/**/*.ts,docs/**"` |
-| > 2 MB | Targeted files only - no full pack |
-
-**Token estimate**: Repo KB x 100 = approximate full-pack tokens. Compressed mode reduces ~70-80%; targeted patterns reduce 90-99%.
+### npx repomix --remote
 
 ```bash
+# BAD - no size check, no patterns
+npx repomix@latest --remote https://github.com/large/repo
+
+# GOOD - check size first, then compress
 gh api repos/owner/repo --jq '.size'
 
 # < 500 KB:
@@ -61,8 +60,6 @@ npx repomix@latest --remote https://github.com/large/repo \
 # Or use the helper (auto-compresses):
 ~/.aidevops/agents/scripts/context-builder-helper.sh remote large/repo main
 ```
-
-## Tool-Specific Guardrails
 
 ### webfetch on documentation sites
 
@@ -91,10 +88,10 @@ sed -n '100,200p' context.xml
 
 If you hit "prompt is too long":
 
-1. **Start a new conversation** - context cannot be reduced mid-session
-2. **Focus on the actual need** - ask what specific question the user has
-3. **Use targeted approach** - get only needed context
-4. **Document the failure** for future sessions:
+1. **Start a new conversation** — context cannot be reduced mid-session
+2. **Ask user what specific question they have** — focus on the actual need
+3. **Use targeted approach** — get only needed context
+4. **Document the failure** — use `/remember` for future sessions:
 
    ```text
    /remember FAILED_APPROACH: Attempted to pack {repo} without size check.
@@ -103,26 +100,22 @@ If you hit "prompt is too long":
 
 ## File Discovery Guardrails
 
-Prefer CLI tools over `mcp_glob` - 10x faster on large codebases.
-
 | Use Case | Preferred | Fallback |
 |----------|-----------|----------|
 | Git-tracked files | `git ls-files '<pattern>'` | `mcp_glob` |
 | Untracked files | `fd -e <ext>` or `fd -g '<pattern>'` | `mcp_glob` |
 | System-wide search | `fd -g '<pattern>' <dir>` | `mcp_glob` |
-| Text file contents | `rg 'pattern'` | `mcp_grep` |
-| PDFs/DOCX/zips | `rga 'pattern'` | None |
+| Search text file contents | `rg 'pattern'` | `mcp_grep` |
+| Search inside PDFs/DOCX/zips | `rga 'pattern'` | None (unique capability) |
 
-`fd` = files by name/metadata. `rg` = text contents. `rga` (ripgrep-all) = non-text files (PDF, DOCX, SQLite, archives).
+`mcp_glob` is CPU-intensive on large codebases; CLI tools are 10× faster. `fd` finds files by name/metadata, `rg` searches text contents, `rga` searches inside non-text files (PDF, DOCX, SQLite, archives) — same syntax as `rg`.
 
 ## Agent Capability Check
 
-Before edits: confirm you have Edit/Write/Bash tools. If not (e.g., read-only subagent), suggest switching to Build+ agent, then proceed with the pre-edit git check.
+Before attempting edits: "Do I have Edit/Write/Bash tools for this task?" If not (e.g., read-only mode), suggest switching to Build+ agent. If yes, proceed with pre-edit git check.
 
 ## Related
 
-- `tools/context/context-builder.md` - repomix wrapper for context generation
-- `tools/context/context7.md` - external library documentation
-- `tools/build-agent/build-agent.md` - agent design principles
-- **Pre-Edit Git Check** (AGENTS.md) - branch safety before edits
-- **File Discovery** (AGENTS.md) - tool selection for file operations
+- `tools/context/context-builder.md` — repomix wrapper for context generation
+- `tools/context/context7.md` — external library documentation
+- `tools/build-agent/build-agent.md` — agent design principles
