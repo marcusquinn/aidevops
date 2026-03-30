@@ -19,10 +19,13 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Self-hosted PaaS for Docker deployment
-- **Install**: `curl -fsSL https://raw.githubusercontent.com/coollabsio/coolify-cli/main/scripts/install.sh | bash`
-- **Config**: `configs/coolify-cli-config.json`
+- **Install**: `curl -fsSL https://raw.githubusercontent.com/coollabsio/coolify-cli/main/scripts/install.sh | bash` (or `go install github.com/coollabsio/coolify-cli/coolify@latest`)
+- **Config**: `configs/coolify-cli-config.json` (copy from `.json.txt` template)
 - **Script**: `.agents/scripts/coolify-cli-helper.sh`
-- **Local Dev First**: Works without Coolify setup
+- **Deps**: `jq` (required), `docker` (optional), `node` (optional)
+- **Debug**: `export DEBUG=1` before any command
+- **API docs**: https://coolify.io/docs/api
+- **Related**: `coolify-setup.md` (server install), `coolify.md` (provider guide, monitoring)
 
 **Commands**: `add-context|list-contexts|list-apps|deploy|get-app|list-servers|add-server|list-databases|create-db|dev|build`
 
@@ -32,23 +35,12 @@ tools:
 **Frameworks**: Node.js, PHP, Python, Docker, static sites
 
 **Local Dev** (no Coolify): `./.agents/scripts/coolify-cli-helper.sh dev local ./app 3000`
+
 <!-- AI-CONTEXT-END -->
-
-## Prerequisites
-
-Install Coolify CLI:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/coollabsio/coolify-cli/main/scripts/install.sh | bash
-# or: go install github.com/coollabsio/coolify-cli/coolify@latest
-```
-
-Dependencies: `jq` (required), `docker` (optional), `node` (optional).
 
 ## Configuration
 
 ```bash
-# Copy template and edit
 cp configs/coolify-cli-config.json.txt configs/coolify-cli-config.json
 
 # Add contexts
@@ -57,7 +49,7 @@ cp configs/coolify-cli-config.json.txt configs/coolify-cli-config.json
 ./.agents/scripts/coolify-cli-helper.sh list-contexts
 ```
 
-Multi-context config (`configs/coolify-cli-config.json`):
+Multi-context config structure (`configs/coolify-cli-config.json`):
 
 ```json
 {
@@ -117,6 +109,14 @@ Auto-detects project type (Node.js `package.json`, Dockerfile/docker-compose, st
 ./.agents/scripts/coolify-cli-helper.sh create-db production mongodb     server-uuid project-uuid main mongo-db true
 ```
 
+### Monitoring
+
+```bash
+coolify app logs app-uuid
+coolify deploy list
+coolify server get server-uuid --resources
+```
+
 ## CI/CD Integration
 
 ```yaml
@@ -134,25 +134,13 @@ jobs:
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
 ```
 
-## Monitoring
-
-```bash
-coolify app logs app-uuid
-coolify deploy list
-coolify server get server-uuid --resources
-```
-
-API docs: https://coolify.io/docs/api
-
 ## Troubleshooting
 
 | Issue | Fix |
 |-------|-----|
-| CLI not found | Re-run install script above |
+| CLI not found | Re-run install script (see Quick Reference) |
 | Context issues | `list-contexts` then `add-context` |
 | Local dev fails | Check Node.js/Docker installed; verify `package.json`/`Dockerfile` present; check port availability |
 | Deployment fails | Verify server connectivity; check app logs; validate env vars |
-
-Debug mode: `export DEBUG=1` before any command.
 
 **Security**: Store tokens in env vars or `aidevops secret`. Use context-specific tokens per environment.
