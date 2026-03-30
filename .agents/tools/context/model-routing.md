@@ -22,6 +22,7 @@ model: haiku
 - **Default**: `sonnet` (best cost/capability balance)
 - **Cost spectrum**: local (free) → composer2 → flash → haiku → sonnet → pro → opus
 - **Rule**: smallest model that produces acceptable quality
+- **Frontmatter**: set `model: haiku` (or any tier) in YAML. Absent → `sonnet`. `local` requires `local-model-helper.sh`; falls back to `composer2`.
 
 ## Model Tiers
 
@@ -38,8 +39,6 @@ model: haiku
 **Model IDs**: Always fully-qualified (e.g., `claude-sonnet-4-6`, not `claude-sonnet-4`). Short-form causes `ProviderModelNotFoundError`. CLI prefix: `anthropic/`, `google/`.
 
 **`local` fallback**: Privacy → FAIL (require `--allow-cloud`). Cost → fall back to `composer2`.
-
-**Billing**: Subscription plans for regular use. API keys for testing/burst.
 
 ## Decision Flowchart
 
@@ -66,15 +65,10 @@ Privacy/on-device? → YES → local running? → YES: local | NO: FAIL
 
 Supervisor resolves fallbacks automatically. Interactive: `compare-models-helper.sh discover`.
 
-## Subagent Frontmatter
-
-Set `model: haiku` (or any tier) in YAML frontmatter. Absent → `sonnet`. `local` requires `local-model-helper.sh`; falls back to `composer2`.
-
 ## Headless Dispatch
 
-- **Pulse supervisor**: Anthropic sonnet only — OpenAI models exit without activity (proven). Pin: `PULSE_MODEL=anthropic/claude-sonnet-4-6`.
+- **Pulse**: Anthropic sonnet only — OpenAI models exit without activity (proven). Pin: `PULSE_MODEL=anthropic/claude-sonnet-4-6`.
 - **Workers**: Any provider. `AIDEVOPS_HEADLESS_MODELS` is rotation with backoff, not escalation. Tier escalation: use `tier:thinking` labels.
-- **Default**: `anthropic/claude-sonnet-4-6`.
 
 ```bash
 export PULSE_MODEL="anthropic/claude-sonnet-4-6"
@@ -95,8 +89,6 @@ compare-models-helper.sh list|capabilities|compare|recommend "task"
 Interactive: `/compare-models`, `/compare-models-free`, `/route <task>`
 
 ## Bundle Presets (t1364.6)
-
-Bundles pre-configure `model_defaults` per project type:
 
 ```json
 { "model_defaults": { "implementation": "sonnet", "review": "sonnet", "triage": "haiku",
