@@ -14,8 +14,6 @@ tools:
 
 # Matrix Bot Integration
 
-<!-- AI-CONTEXT-START -->
-
 ## Quick Reference
 
 - **Purpose**: Bridge Matrix rooms to aidevops runners via OpenCode with entity-aware context
@@ -25,8 +23,6 @@ tools:
 - **Session DB**: `~/.aidevops/.agent-workspace/memory/memory.db` (shared entity tables, SQLite WAL)
 - **Entity helper**: `entity-helper.sh` (identity resolution, Layer 0/1 interaction logging)
 - **SDK**: `matrix-bot-sdk`, `better-sqlite3` (npm); Node.js >= 18, jq, OpenCode server, Matrix homeserver
-
-<!-- AI-CONTEXT-END -->
 
 ## Architecture
 
@@ -43,7 +39,7 @@ Matrix Room --> Matrix Bot --> OpenCode / runner-helper.sh --> AI session
 
 **Message flow**: `!ai <prompt>` -> sync -> permission check -> room-to-runner lookup -> entity resolution -> L0 log -> load entity profile + conversation summary + recent interactions -> privacy filter -> dispatch -> log response -> post to room + reaction.
 
-**Session lifecycle**: First message creates session -> all messages logged to L0 (immutable) -> after `sessionIdleTimeout` idle, AI summarises -> stored in L1 (**L0 never deleted**) -> next message primed with entity profile + summary -> SIGINT/SIGTERM compacts all sessions before exit.
+**Session lifecycle**: First message creates session -> messages logged to L0 (immutable) -> after `sessionIdleTimeout` idle, AI summarises -> stored in L1 (**L0 never deleted**) -> next message primed with entity profile + summary -> SIGINT/SIGTERM compacts all sessions before exit.
 
 ## Setup
 
@@ -61,8 +57,7 @@ curl -s -X POST "http://localhost:8008/_matrix/client/v3/login" \
   -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"aibot"},"password":"YOUR_PASSWORD"}' \
   | python3 -m json.tool   # copy access_token
 # 4. homeserver.yaml: enable_registration: false, remove 'federation' from resources. Restart.
-# 5. Create unencrypted rooms via Element (NOT FluffyChat -- forces encryption with no toggle)
-#    Or API: curl -X POST ".../createRoom" -d '{"preset":"private_chat","initial_state":[]}'
+# 5. Create unencrypted rooms via Element (NOT FluffyChat -- forces encryption)
 # 6. Configure + map + start:
 matrix-dispatch-helper.sh setup
 runner-helper.sh create code-reviewer --workdir ~/Git/myproject
