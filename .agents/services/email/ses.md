@@ -26,16 +26,11 @@ tools:
 - **Test addresses**: success@simulator.amazonses.com, bounce@simulator.amazonses.com
 - **DKIM**: Enable for all domains
 - **IAM permissions**: ses:GetSendQuota, ses:SendEmail, sesv2:ListSuppressedDestinations
+- **Prerequisite**: `awscli` installed; credentials managed per account (no `aws configure` needed)
 
 <!-- AI-CONTEXT-END -->
 
-## Configuration
-
-```bash
-cp configs/ses-config.json.txt configs/ses-config.json
-```
-
-Multi-account config (`configs/ses-config.json`):
+## Configuration — `cp configs/ses-config.json.txt configs/ses-config.json`
 
 ```json
 {
@@ -59,8 +54,6 @@ Multi-account config (`configs/ses-config.json`):
   }
 }
 ```
-
-Credentials managed per account — no `aws configure` needed. Prerequisite: `awscli` installed.
 
 ## Commands
 
@@ -97,6 +90,8 @@ ses-helper.sh audit production
 
 ## IAM Policy
 
+Dedicated IAM users per environment. Rotate access keys regularly. Separate AWS accounts for prod/staging.
+
 ```json
 {
   "Version": "2012-10-17",
@@ -123,8 +118,6 @@ ses-helper.sh audit production
 }
 ```
 
-Dedicated IAM users per environment. Rotate access keys regularly. Separate AWS accounts for prod/staging.
-
 ## Troubleshooting
 
 | Problem | Commands |
@@ -136,10 +129,10 @@ Dedicated IAM users per environment. Rotate access keys regularly. Separate AWS 
 
 ## Compliance & Backup
 
+Configure SPF, DKIM, DMARC for all sending domains. Process bounces and complaints promptly; maintain suppression list. Provide unsubscribe mechanisms; follow GDPR/CAN-SPAM. Warm up new sending IPs gradually; clean lists regularly.
+
 ```bash
 ses-helper.sh audit production > ses-config-backup-$(date +%Y%m%d).txt
 ses-helper.sh verified-emails production > verified-emails-backup.txt
 ses-helper.sh verified-domains production > verified-domains-backup.txt
 ```
-
-Configure SPF, DKIM, DMARC for all sending domains. Process bounces and complaints promptly; maintain suppression list. Provide unsubscribe mechanisms; follow GDPR/CAN-SPAM. Warm up new sending IPs gradually; clean lists regularly.
