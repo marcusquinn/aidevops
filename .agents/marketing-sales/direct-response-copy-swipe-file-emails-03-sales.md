@@ -1,6 +1,6 @@
 # Sales Emails
 
-High-converting sales email swipe file with pattern analysis.
+High-converting sales email examples with analysis.
 
 ---
 
@@ -32,8 +32,7 @@ Plus these bonuses (only for this launch):
 
 [JOIN ZERO TO LAUNCH →]
 
-This isn't for everyone. If you're not ready to
-put in the work, this isn't for you.
+This isn't for everyone. If you're not ready to put in the work, this isn't for you.
 
 But if you're ready to finally [achieve outcome],
 I'll see you inside.
@@ -43,7 +42,7 @@ I'll see you inside.
 P.S. Doors close Friday at 11:59pm. No extensions.
 ```
 
-**Patterns:** Social proof via student story → before/after transformation → scarcity (5 days, small group) → exclusivity filter → hard deadline in P.S.
+**Why it works:** Social proof via student story, before/after transformation, scarcity (5 days, small group), exclusivity filter, and a hard deadline in the P.S.
 
 ---
 
@@ -61,8 +60,7 @@ In 24 hours, you'll lose access to:
 • The [key feature] you set up
 • [Other thing they created]
 
-The good news? It takes 30 seconds to upgrade
-and keep everything intact.
+The good news? It takes 30 seconds to upgrade and keep everything intact.
 
 [KEEP MY ACCOUNT →]
 
@@ -73,7 +71,7 @@ We're here to help.
 — [Name/Team]
 ```
 
-**Patterns:** Specific deadline → loss aversion (itemised losses) → low-friction solution (30 seconds) → reply escape valve.
+**Why it works:** Specific deadline, loss aversion (itemized losses), low-friction solution (30 seconds), and a reply escape valve.
 
 ---
 
@@ -104,7 +102,7 @@ P.S. If you decided it's not right for you, that's
 totally fine too. Just let me know and I'll stop bugging you.
 ```
 
-**Patterns:** Personal (not automated) tone → surfaces objections as questions → open dialogue → P.S. pressure release.
+**Why it works:** Personal (not automated) tone, objections surfaced as questions, open dialogue, and pressure release in the P.S.
 
 ---
 
@@ -132,11 +130,10 @@ Plus, I'll answer your questions live.
 
 [SAVE YOUR SEAT →]
 
-Even if you can't make it live, register anyway
-and I'll send you the recording.
+Even if you can't make it live, register anyway and I'll send you the recording.
 
 See you there,
 [Name]
 ```
 
-**Patterns:** Outcome-first subject → specific time/date → bullet takeaways → replay removes attendance friction.
+**Why it works:** Outcome-first subject, specific date/time, bullet takeaways, and replay availability to remove attendance friction.
