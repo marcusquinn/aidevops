@@ -111,18 +111,12 @@ const debouncedSearch = debounceAsync(searchAPI, 300);
 ```javascript
 function throttleAsync(fn, ms) {
   let lastCall = 0, pending = null;
-  return async (...args) => {
+  return (...args) => {
     const elapsed = Date.now() - lastCall;
     if (elapsed >= ms) { lastCall = Date.now(); return fn(...args); }
-    if (!pending) {
-      pending = new Promise(resolve => {
-        setTimeout(async () => {
-          lastCall = Date.now(); pending = null;
-          resolve(await fn(...args));
-        }, ms - elapsed);
-      });
-    }
-    return pending;
+    return pending ??= new Promise(resolve => setTimeout(async () => {
+      lastCall = Date.now(); pending = null; resolve(await fn(...args));
+    }, ms - elapsed));
   };
 }
 ```
@@ -132,90 +126,44 @@ function throttleAsync(fn, ms) {
 ```javascript
 // Paginated fetch with async generator
 async function* fetchPages(url) {
-  let page = 1;
-  while (true) {
-    const response = await fetch(`${url}?page=${page}`);
-    const data = await response.json();
+  for (let page = 1; ; page++) {
+    const data = await fetch(`${url}?page=${page}`).then(r => r.json());
     if (data.length === 0) break;
     yield data;
-    page++;
   }
 }
-
-for await (const page of fetchPages('/api/items')) {
-  processPage(page);
-}
-
-// Stream chunking
-async function* chunkStream(stream, chunkSize) {
-  let buffer = [];
-  for await (const item of stream) {
-    buffer.push(item);
-    if (buffer.length >= chunkSize) { yield buffer; buffer = []; }
-  }
-  if (buffer.length > 0) yield buffer;
-}
-
-for await (const chunk of chunkStream(dataStream, 100)) {
-  await processBatch(chunk);
-}
+for await (const page of fetchPages('/api/items')) processPage(page);
 ```
 
-## Cancellation Patterns
+## Cancellation
 
 ```javascript
-// AbortController: pass signal, catch AbortError
-const controller = new AbortController();
-setTimeout(() => controller.abort(), 5000);
-try {
-  const response = await fetch('/api/data', { signal: controller.signal });
-  const data = await response.json();
-} catch (error) {
-  if (error.name === 'AbortError') console.log('Request was cancelled');
-}
-
-// Cancellable operation factory
-function createCancellableOperation(fn) {
+// Cancellable operation factory — pass signal to fetch/streams, catch AbortError
+function createCancellable(fn) {
   const controller = new AbortController();
   const promise = (async () => {
     try { return await fn(controller.signal); }
-    catch (e) {
-      if (e.name === 'AbortError') return { cancelled: true };
-      throw e;
-    }
+    catch (e) { if (e.name === 'AbortError') return { cancelled: true }; throw e; }
   })();
   return { promise, cancel: () => controller.abort() };
 }
+// Usage: const { promise, cancel } = createCancellable(signal => fetch(url, { signal }));
 ```
 
-## Semaphore Pattern
+## Semaphore
 
 ```javascript
 class Semaphore {
-  #permits;
-  #queue = [];
-
+  #permits; #queue = [];
   constructor(permits) { this.#permits = permits; }
-
   async acquire() {
     if (this.#permits > 0) { this.#permits--; return; }
     const { promise, resolve } = Promise.withResolvers();
     this.#queue.push(resolve);
     return promise;
   }
-
-  release() {
-    if (this.#queue.length > 0) this.#queue.shift()();
-    else this.#permits++;
-  }
-
-  async withPermit(fn) {
-    await this.acquire();
-    try { return await fn(); }
-    finally { this.release(); }
-  }
+  release() { this.#queue.length ? this.#queue.shift()() : this.#permits++; }
+  async withPermit(fn) { await this.acquire(); try { return await fn(); } finally { this.release(); } }
 }
-
-const semaphore = new Semaphore(3);
-await Promise.all(items.map(item => semaphore.withPermit(() => processItem(item))));
+// Usage: const sem = new Semaphore(3); await Promise.all(items.map(i => sem.withPermit(() => process(i))));
 ```
