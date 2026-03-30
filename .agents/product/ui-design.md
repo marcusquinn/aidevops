@@ -18,7 +18,6 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Ensure every product is simple, clean, stylish, and beautiful
 - **Principle**: Aesthetics drive downloads; usability drives retention
 - **Standards**: Apple HIG, Material Design 3, WCAG 2.1 AA accessibility
 - **Tools**: Vision AI for asset generation, Remotion for animated previews, Gemini for SVG design
@@ -130,5 +129,4 @@ See `tools/accessibility/accessibility-audit.md` for comprehensive auditing.
 - `tools/browser/remotion-best-practices-skill.md` — Animated previews
 - `tools/ui/tailwind-css.md` — Tailwind CSS
 - `tools/ui/shadcn.md` — shadcn/ui component library
-- `tools/design/design-inspiration.md` — 60+ design resources
-- `tools/accessibility/accessibility-audit.md` — Accessibility auditing
+
