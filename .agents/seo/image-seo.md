@@ -12,13 +12,7 @@ tools:
 
 # Image SEO Enhancement
 
-<!-- AI-CONTEXT-START -->
-
-**Purpose**: Optimize images for search engines via AI vision analysis.
-**Coordinates**: `seo/moondream.md` (vision) + `seo/upscale.md` (quality)
-**Input**: Image URL, local path, or base64 | **Output**: filename, alt text, tags, optional upscale
-
-<!-- AI-CONTEXT-END -->
+Coordinates `seo/moondream.md` (vision) + `seo/upscale.md` (quality). Input: image URL, local path, or base64. Output: filename, alt text, tags, optional upscale.
 
 ## Workflow
 
@@ -89,9 +83,9 @@ curl -X POST "https://example.com/wp-json/wp/v2/media/$ATTACHMENT_ID" \
 
 ## Tag Extraction
 
-Tags feed: WordPress tags/categories, `schema.org ImageObject keywords`, Open Graph, internal CMS search, IPTC/XMP fields.
+Feeds: WordPress tags/categories, `schema.org ImageObject keywords`, Open Graph, CMS search, IPTC/XMP.
 
-**Prompt**: *List 5–10 keywords, comma-separated. Include: subject, setting, dominant colors, mood, notable objects. Most to least relevant.*
+**Prompt**: *List 5–10 keywords, comma-separated. Subject, setting, dominant colors, mood, notable objects. Most to least relevant.*
 
 ## Quality Checks
 
