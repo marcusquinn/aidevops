@@ -1,10 +1,8 @@
 # Chapter 2: CRO Fundamentals and Core Concepts
 
-### Understanding Your Baseline
+## Conversion Rate Formulas
 
-#### Calculating Conversion Rates
-
-**Standard** (actions that can repeat per visitor):
+**Standard** (repeatable actions per visitor):
 
 ```text
 Conversion Rate = (Total Conversions / Total Sessions) × 100
@@ -16,17 +14,17 @@ Conversion Rate = (Total Conversions / Total Sessions) × 100
 Conversion Rate = (Total Conversions / Total Unique Visitors) × 100
 ```
 
-#### Segmenting Conversion Rates
+### Segmentation
 
-Overall rates mask important variations. Always segment by:
+Overall rates mask variation. Segment by:
 
 - **Traffic source**: organic, paid, social, email, direct, referral
-- **Device**: desktop, mobile (typically 40-60% of desktop rate), tablet
+- **Device**: desktop, mobile (typically 40–60% of desktop rate), tablet
 - **Demographics**: age, geography, income
 - **Behavior**: new vs. returning, pages viewed, engaged vs. bounced
 - **Product/service**: category, price point, tier
 
-#### Benchmark Data
+### Benchmarks
 
 | Segment | Range |
 |---------|-------|
@@ -38,13 +36,13 @@ Overall rates mask important variations. Always segment by:
 | Content download | 2–7% |
 | Mobile vs. desktop | 40–70% of desktop |
 
-Benchmarks are reference points only. Your own trend matters more.
+Benchmarks are reference points. Your own trend matters more.
 
 ---
 
-### The Psychology of Conversion
+## Psychology of Conversion
 
-#### Cognitive Biases
+### Cognitive Biases
 
 **1. Social Proof** — People follow others under uncertainty. Use customer counts, recent purchases, bestseller badges, reviews.
 
@@ -66,7 +64,7 @@ Benchmarks are reference points only. Your own trend matters more.
 
 **10. Decoy Effect** — A third option can make one of two others more attractive. A slightly-worse premium tier makes the mid-tier look like the smart choice.
 
-#### Emotional vs. Rational Decision Making
+### Emotional vs. Rational
 
 Emotions drive the desire to convert; rational elements provide justification. Address both:
 
@@ -75,9 +73,9 @@ Emotions drive the desire to convert; rational elements provide justification. A
 
 ---
 
-### The Conversion Funnel
+## The Conversion Funnel
 
-#### Standard E-Commerce Funnel
+### Standard E-Commerce Funnel
 
 | Stage | Typical Remaining |
 |-------|------------------|
@@ -88,21 +86,21 @@ Emotions drive the desire to convert; rational elements provide justification. A
 | Checkout | 2–8% |
 | Purchase Confirmation | 1.5–6% |
 
-At each drop-off point, ask: Why are users leaving? What friction exists? What information is missing?
+At each drop-off: why are users leaving, what friction exists, what information is missing?
 
 **Funnel analysis tools**: Google Analytics Goals, Mixpanel, Amplitude, Heap, FullStory.
 
-#### Micro vs. Macro Conversions
+### Micro vs. Macro Conversions
 
 **Macro** (primary goals): purchases, lead forms, trial signups, bookings, subscriptions.
 
 **Micro** (steps toward macro): email signups, add-to-cart, account creation, content downloads, video views.
 
-Optimizing micro conversions doesn't always improve macro conversions — easier email signup may capture less-qualified leads.
+Optimizing micro conversions doesn't always improve macro — easier email signup may capture less-qualified leads.
 
 ---
 
-### Attribution and Multi-Touch Paths
+## Attribution Models
 
 | Model | Credit Distribution | Limitation |
 |-------|--------------------|-----------| 
@@ -113,11 +111,11 @@ Optimizing micro conversions doesn't always improve macro conversions — easier
 | Position-Based (U-Shaped) | More to first and last | Ignores middle touchpoints |
 | Data-Driven | ML-determined distribution | Requires high data volume |
 
-Analyze paths to understand which channels work together, how many touchpoints are needed, and how to allocate budget.
+Analyze paths to understand channel interplay, touchpoint count, and budget allocation.
 
 ---
 
-### Website Elements That Impact Conversions
+## Website Elements That Impact Conversions
 
 **High-impact**: value proposition, headlines, CTAs, forms, product images, social proof, pricing display, navigation, page speed, mobile experience.
 
@@ -129,7 +127,7 @@ Relative importance varies by industry and audience — test to determine what m
 
 ---
 
-### The Cost of Conversion Friction
+## Conversion Friction
 
 Friction is anything that prevents, slows, or irritates users on the path to conversion.
 
@@ -141,7 +139,7 @@ Friction is anything that prevents, slows, or irritates users on the path to con
 Conversion Likelihood ∝ Perceived Value / Perceived Friction
 ```
 
-Users tolerate more friction for higher-value offerings. Implications:
+Users tolerate more friction for higher-value offerings:
 
 1. Increase perceived value through better communication, demos, social proof
 2. Reduce friction by simplifying processes and removing unnecessary steps
@@ -150,9 +148,9 @@ Users tolerate more friction for higher-value offerings. Implications:
 
 ---
 
-### The Data Foundation
+## Data Foundation
 
-#### Quantitative Sources
+### Quantitative Sources
 
 | Tool Type | Examples | What It Provides |
 |-----------|----------|-----------------|
@@ -161,7 +159,7 @@ Users tolerate more friction for higher-value offerings. Implications:
 | A/B testing | Optimizely, VWO, GA4 Experiments | Variant performance, statistical significance |
 | Business intelligence | Internal BI tools | Revenue, LTV, churn, returns, support volume |
 
-#### Qualitative Sources
+### Qualitative Sources
 
 | Method | Tools | What It Provides |
 |--------|-------|-----------------|
@@ -171,11 +169,9 @@ Users tolerate more friction for higher-value offerings. Implications:
 | Customer support data | Help desk, CRM | Common questions, objections, complaints |
 | User testing | UserTesting.com, UsabilityHub | Task completion, usability issues |
 
-#### Combining Data Types
+### Combining Data Types
 
 - **Quantitative** tells you *what* is happening (45% abandon on payment page)
 - **Qualitative** tells you *why* (users are concerned about security; mobile form fields are hard to use)
 
 Combine both to form targeted hypotheses before running tests.
-
----
