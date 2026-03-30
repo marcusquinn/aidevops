@@ -14,16 +14,9 @@
 
 **Effective traits:** Specific (metrics, not vague praise), Credible (full name, photo, title, company, logo, timestamp), Relevant (segmented by industry/use case), Outcome-focused (Problem → Solution → Result), Emotional, Objection-busting ("Too expensive" → "Paid for itself in month 1").
 
-**Collection timing:** After successful outcome, positive support interaction, milestone, referral, or renewal.
+**Collect after:** successful outcome, positive support interaction, milestone, referral, or renewal.
 
-**6 questions for strong testimonials:**
-
-1. What was your biggest challenge before?
-2. How did the product solve it?
-3. What specific results have you seen? (quantify)
-4. What surprised you most?
-5. What would you tell someone considering it?
-6. What nearly prevented purchase, and what changed your mind?
+**6 questions:** (1) Biggest challenge before? (2) How did the product solve it? (3) Specific results? (quantify) (4) What surprised you most? (5) What would you tell someone considering it? (6) What nearly prevented purchase, and what changed your mind?
 
 ```text
 [Photo]  "Specific result with metrics and emotional impact."
@@ -34,13 +27,13 @@ Short-form: `★★★★★ "Specific outcome" — First Name L., Industry`
 
 Video: 60-90s, name/company → results → captions. Carousel: 5-7s auto-rotate, pause on hover, 3-5 max.
 
-**Placement:** Homepage: 2-3 strong + logo bar. Product: 3-5 near description, ratings at top. Pricing: ROI-focused near hesitation points. Checkout: brief, trust badges, minimal. Landing: multiple throughout, strongest near CTA, video above fold.
+**Placement:** Homepage: 2-3 strong + logo bar. Product: 3-5 near description, ratings at top. Pricing: ROI-focused near hesitation points. Checkout: brief + trust badges. Landing: multiple throughout, strongest near CTA, video above fold.
 
 ## Reviews and Ratings
 
 **Platforms:** E-commerce: Yotpo, Bazaarvoice, Trustpilot, Judge.me. SaaS: G2, Capterra, TrustRadius. General: Google, Yelp, Facebook, BBB.
 
-**Implementation:** Display above fold with aggregate rating + distribution bar; enable filtering (rating/verified/date/helpfulness); add `✓ Verified Purchase` badges; respond to all reviews; encourage photo/video; request 7-14 days post-delivery (physical) or after outcome (digital).
+**Implementation:** Aggregate rating + distribution bar above fold; filtering (rating/verified/date/helpfulness); `✓ Verified Purchase` badges; respond to all; encourage photo/video; request 7-14 days post-delivery (physical) or after outcome (digital).
 
 ```text
 [Product Name]  ★★★★☆ 4.6 (2,847 reviews)     ← Top of page
@@ -53,21 +46,20 @@ Video: 60-90s, name/company → results → captions. Carousel: 5-7s auto-rotate
 1★:  2%  ░░░░░░░░░░░░░░░░░░░░░░░░░
 ```
 
-**Negative reviews:** Thank → Apologize → Explain → Fix → Offer resolution → Take offline. Don't: get defensive, argue, delete (unless fraudulent), give generic responses.
+**Negative reviews:** Thank → Apologize → Explain → Fix → Offer resolution → Take offline. Never: get defensive, argue, delete (unless fraudulent), give generic responses.
 
-**Ethical incentives:** Same incentive regardless of rating, always disclose. Illegal: paying for positive-only reviews, undisclosed incentives, fake reviews.
+**Ethical incentives:** Same incentive regardless of rating, always disclose. Illegal: paying for positive-only, undisclosed incentives, fake reviews.
 
 ## Case Studies
 
 Best for B2B, high-consideration purchases, complex solutions, enterprise sales.
 
-**Format 1 — PSR:** Customer Background → Challenge → Solution → Results (quantified) → Looking Forward.
-
+**Format 1 — PSR:** Background → Challenge → Solution → Results (quantified) → Looking Forward.
 **Format 2 — Story Arc:** Hook (lead with best result) → Situation → Turning Point → Journey → Success → Lesson.
 
-**Best practices:** Always quantify ("Reduced processing from 4h to 45min, enabling 3x more orders"). Include before/after, direct quotes, charts/screenshots/logos, industry-specific details. Repurpose into: PDF, web page, one-pager, video, slide deck, blog, social, email nurture.
+**Best practices:** Always quantify ("Reduced processing from 4h to 45min, enabling 3x more orders"). Include before/after, direct quotes, charts/screenshots/logos, industry-specific details. Repurpose: PDF, web page, one-pager, video, slide deck, blog, social, email nurture.
 
-**Video structure** (2-4 min): Result hook (5-10s) → Background (20-30s) → Challenge (30-45s) → Solution (30-45s) → Results with metrics (45-60s) → Recommendation (10-15s) → CTA (5s).
+**Video** (2-4 min): Result hook (5-10s) → Background (20-30s) → Challenge (30-45s) → Solution (30-45s) → Results with metrics (45-60s) → Recommendation (10-15s) → CTA (5s).
 
 **Distribution:** Website with industry/use-case/size filters; sales battle cards mapped to objections; email nurture, retargeting ads, proposals; SEO-optimized content.
 
@@ -85,7 +77,7 @@ Countries      Uptime          Support
 
 Make numbers relatable: comparisons, breakdowns ("100 new customers/hour"), animated count-up (CountUp.js), growth charts.
 
-**Performance stats:** Conversion ("27% increase"), satisfaction ("NPS 72"), usage ("4.3 logins/day"), business impact ("45% larger deal size"). Always cite source, methodology (sample size, date range), and context vs. industry average.
+**Performance stats:** Conversion ("27% increase"), satisfaction ("NPS 72"), usage ("4.3 logins/day"), business impact ("45% larger deal size"). Always cite source, methodology (sample size, date range), context vs. industry average.
 
 ## Trust Badges and Security Seals
 
@@ -97,7 +89,7 @@ Make numbers relatable: comparisons, breakdowns ("100 new customers/hour"), anim
 | Associations | Industry memberships, Chamber of Commerce |
 | Awards/Media | "Best of" accolades, "As Seen In" logos, G2/Capterra badges |
 
-**Placement:** Checkout (most critical) → Homepage footer/CTA → Product pages near "Add to Cart" → Form pages near submit → About page. Rules: 3-5 max per page, keep current, make clickable, mobile-optimize.
+**Placement:** Checkout (most critical) → Homepage footer/CTA → Product pages near "Add to Cart" → Form pages near submit → About page. 3-5 max per page, keep current, make clickable, mobile-optimize.
 
 ## Logos: Media and Customer
 
@@ -105,7 +97,7 @@ Make numbers relatable: comparisons, breakdowns ("100 new customers/hour"), anim
 
 **Customer (B2B):** Prioritize recognizable brands (Fortune 500, industry leaders, competitors of prospects for FOMO), relevant (same industry/size/geography), diverse mix. Display: grid, auto-scrolling ticker, or case study integration (logo + metrics + link).
 
-Specs: high-res 2x retina, consistent sizing, transparent background, grayscale often cleaner. Get written permission. Dynamic display: show different logos based on visitor industry, company size, location, or referral source.
+**Specs:** High-res 2x retina, consistent sizing, transparent background, grayscale often cleaner. Get written permission. Dynamic: show different logos by visitor industry, company size, location, or referral source.
 
 ## User-Generated Content (UGC)
 
@@ -124,7 +116,7 @@ Also: Instagram feed integration, dedicated gallery, email newsletters, social p
 
 ## Implementation Roadmap
 
-Audit: inventory existing assets → quality-check (specificity, prominence, metrics) → gap analysis (pages lacking proof, unaddressed objections, unrepresented segments).
+**Audit:** Inventory existing assets → quality-check (specificity, prominence, metrics) → gap analysis (pages lacking proof, unaddressed objections, unrepresented segments).
 
 | Timeframe | Actions |
 |-----------|---------|
@@ -142,8 +134,6 @@ Audit: inventory existing assets → quality-check (specificity, prominence, met
 
 **Personalization:** Match social proof to visitor attributes (industry, company size, use case, geography) via IP geo-targeting, URL parameters, cookie/session data, CRM integration.
 
-**Aggregate display:**
-
 ```text
 Trusted by 50,000+ Businesses Worldwide
 ★★★★★ 4.8/5 (2,847 reviews on G2)
@@ -157,7 +147,7 @@ Featured in: [TechCrunch] [Forbes] [WSJ]
 
 - **Bystander effect:** Too much social proof reduces urgency. Mitigate with exclusivity, urgency, personalization.
 - **Negative social proof:** Don't normalize undesired behavior. Bad: "70% abandon checkout." Better: "Join the 30% who complete their purchase."
-- **Similarity principle:** Proof is strongest when prospects identify with the source — same industry, size, role, pain points.
+- **Similarity principle:** Proof strongest when prospects identify with the source — same industry, size, role, pain points.
 
 ## Measurement
 
