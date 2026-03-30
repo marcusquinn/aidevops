@@ -5,59 +5,46 @@ mode: subagent
 model: haiku
 ---
 
-Analyse the budget or goal and provide tiered recommendations.
-
 Input: $ARGUMENTS
 
-## Instructions
+## Modes
 
-This command provides budget analysis for the `/mission` scoping phase and general cost planning. It has four modes depending on what the user provides:
-
-### 1. Budget Analysis (user provides a dollar/time budget)
-
-Run the analysis engine to show what the budget buys at each model tier:
+### Budget Analysis (user provides dollar/time budget)
 
 ```bash
 ~/.aidevops/agents/scripts/budget-analysis-helper.sh analyse --budget <USD> [--hours <H>] --json
 ```
 
-Present the JSON output as a readable comparison table showing tokens, tasks, and messages achievable at haiku/sonnet/opus tiers.
+Present as comparison table: tokens, tasks, and messages at haiku/sonnet/opus tiers.
 
-### 2. Goal Recommendations (user provides a goal description)
-
-Generate tiered outcome recommendations:
+### Goal Recommendations (user provides goal description)
 
 ```bash
 ~/.aidevops/agents/scripts/budget-analysis-helper.sh recommend --goal "<description>" --json
 ```
 
-Present the three tiers (MVP, Production-Ready, Polished) with costs, time estimates, and what's included/excluded at each level. Help the user choose the right tier for their needs.
+Present three tiers (MVP, Production-Ready, Polished) with costs, time estimates, inclusions/exclusions. Help user choose.
 
-### 3. Task Estimation (user provides a specific task)
-
-Estimate cost for a single task:
+### Task Estimation (user provides specific task)
 
 ```bash
 ~/.aidevops/agents/scripts/budget-analysis-helper.sh estimate --task "<description>" [--tier <tier>] --json
 ```
 
-Show the estimate with range (0.5x-2x) and alternative tier costs. If the user hasn't specified a tier, recommend one based on the task complexity.
+Show estimate with range (0.5x-2x) and alternative tier costs. Recommend tier based on complexity if unspecified.
 
-### 4. Spend Forecast (user wants to project future costs)
-
-Forecast based on historical burn rate:
+### Spend Forecast (user wants to project future costs)
 
 ```bash
 ~/.aidevops/agents/scripts/budget-analysis-helper.sh forecast --days <N> --json
 ```
 
-Present the forecast with confidence interval. Note data quality (warn if <7 days of history).
+Present forecast with confidence interval. Warn if <7 days of history.
 
 ## Presentation Guidelines
 
-- Always show costs in USD with 2 decimal places
-- Show token counts with thousand separators for readability
-- When recommending, be direct: "I recommend Tier 2 (Production-Ready) because..."
-- If historical data exists, calibrate estimates against actual spend patterns
-- For `/mission` integration: run `recommend` first, then `analyse` with the chosen budget
-- Flag when estimates have high uncertainty (novel task types, no historical data)
+- Costs in USD, 2 decimal places; token counts with thousand separators
+- Be direct: "I recommend Tier 2 (Production-Ready) because..."
+- Calibrate estimates against actual spend patterns when historical data exists
+- Flag high uncertainty (novel task types, no historical data)
+- `/mission` integration: run `recommend` first, then `analyse` with chosen budget
