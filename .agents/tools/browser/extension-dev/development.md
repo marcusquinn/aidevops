@@ -31,6 +31,15 @@ npm run build      # Production build
 
 <!-- AI-CONTEXT-END -->
 
+## Security & Performance
+
+- Never store secrets in extension code — use backend API
+- Validate all inter-context messages; sanitise injected HTML
+- Enforce CSP; prefer `activeTab` over broad host permissions
+- Service worker unloads when idle (MV3) — keep lightweight
+- `chrome.alarms` over `setInterval`; `chrome.storage` listeners over polling
+- Lazy-load heavy deps; minimise content script `matches` scope
+
 ## Project Structure (WXT)
 
 ```text
@@ -61,11 +70,9 @@ my-extension/
 ```typescript
 // Content script -> Background
 chrome.runtime.sendMessage({ type: 'getData', url: window.location.href });
-
 // Background -> Content script
 chrome.tabs.sendMessage(tabId, { type: 'updateUI', data: result });
-
-// Background handler — return true to keep channel open for async
+// Background handler — return true for async response
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'getData') {
     fetchData(message.url).then(sendResponse);
@@ -95,9 +102,7 @@ Request only what you need. Prefer optional permissions (requested at runtime):
 }
 ```
 
-```typescript
-const granted = await chrome.permissions.request({ permissions: ['tabs'], origins: ['https://*.example.com/*'] });
-```
+Runtime request: `await chrome.permissions.request({ permissions: ['tabs'], origins: ['https://*.example.com/*'] });`
 
 ## Cross-Browser Compatibility
 
@@ -109,34 +114,14 @@ const granted = await chrome.permissions.request({ permissions: ['tabs'], origin
 | Side panel | Chrome 114+ | Not supported |
 | CSP | `content_security_policy.extension_pages` | `content_security_policy` (string) |
 
-WXT handles most differences automatically. For manual compat: `import browser from 'webextension-polyfill'`.
+WXT handles most differences automatically. Manual compat: `import browser from 'webextension-polyfill'`.
 
 ## Development Standards
 
 - **TypeScript** always — type messages, storage schemas, API responses
 - **UI**: React (recommended), Vue (WXT first-class), Svelte (smallest bundle), or vanilla
 - **Styling**: Tailwind CSS (recommended), CSS Modules, or Shadow DOM for content scripts
-
-Content script UI isolation — Shadow DOM prevents host page style conflicts:
-
-```typescript
-const host = document.createElement('div');
-const shadow = host.attachShadow({ mode: 'closed' });
-shadow.innerHTML = `
-  <style>/* Isolated styles */</style>
-  <div id="app"><!-- Your UI --></div>
-`;
-document.body.appendChild(host);
-```
-
-## Performance & Security
-
-- Service worker is unloaded when idle (MV3) — keep lightweight
-- `chrome.alarms` over `setInterval`; `chrome.storage` listeners over polling
-- Lazy-load heavy deps; minimise content script `matches` scope
-- Never store secrets in extension code — use backend API
-- Validate all inter-context messages; sanitise injected HTML
-- Enforce CSP; prefer `activeTab` over broad host permissions
+- **Content script isolation**: Use Shadow DOM (`host.attachShadow({ mode: 'closed' })`) to prevent host page style conflicts
 
 ## Related
 
