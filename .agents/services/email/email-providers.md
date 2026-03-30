@@ -117,7 +117,7 @@ POP does not sync folders, flags, or read-state across devices.
 - **Zoho Mail**: Group mailboxes in paid plans.
 - **Cloudron**: Separate mailbox accounts or aliases via admin panel / CLI.
 - **Proton Mail**: Business plans support multi-user access and catch-all.
-- **Others**: Most free/personal providers have no shared mailbox support.
+- **Others**: No shared mailbox support.
 
 ## Cloudron Mail Management
 
@@ -146,7 +146,5 @@ cloudron mail catch-all yourdomain.com target@yourdomain.com
 - `services/email/email-agent.md` — Autonomous email agent
 - `services/email/email-testing.md` — Deliverability testing
 - `configs/email-providers.json.txt` — Provider configuration template
-
----
 
 *Settings verified 2026-03. Privacy ratings from privacytools.io / tosdr.org. Verify against provider docs for production use.*
