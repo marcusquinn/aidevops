@@ -33,9 +33,11 @@ Short-form: `★★★★★ "Specific outcome" — First Name L., Industry` Vid
 
 ```text
 [Product Name]  ★★★★☆ 4.6 (2,847 reviews)
-5★: 68%  ████████████████████░░░░░   2★:  2%  ░░░░░░░░░░░░░░░░░░░░░░░░░
-4★: 22%  ████████░░░░░░░░░░░░░░░░░   1★:  2%  ░░░░░░░░░░░░░░░░░░░░░░░░░
+5★: 68%  ████████████████████░░░░░
+4★: 22%  ████████░░░░░░░░░░░░░░░░░
 3★:  6%  ██░░░░░░░░░░░░░░░░░░░░░░░
+2★:  2%  ░░░░░░░░░░░░░░░░░░░░░░░░░
+1★:  2%  ░░░░░░░░░░░░░░░░░░░░░░░░░
 ```
 
 **Negative reviews:** Thank → Apologize → Explain → Fix → Offer resolution → Take offline. Don't: get defensive, argue, delete (unless fraudulent), give generic responses.
