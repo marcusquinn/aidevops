@@ -33,23 +33,6 @@ config:
   app:zoneId: "xyz789"
 ```
 
-**Explicit provider configuration** (multi-account):
-
-```typescript
-const devProvider = new cloudflare.Provider("dev", {apiToken: devToken});
-const prodProvider = new cloudflare.Provider("prod", {apiToken: prodToken});
-const devWorker = new cloudflare.WorkerScript("dev-worker", {
-    accountId: devAccountId, name: "worker", content: code,
-}, {provider: devProvider});
-```
-
-**Resource naming** — prefix with stack name:
-
-```typescript
-const stack = pulumi.getStack();
-const kv = new cloudflare.WorkersKvNamespace(`${stack}-kv`, {accountId, title: `${stack}-my-kv`});
-```
-
 **Protect production resources:**
 
 ```typescript
@@ -69,6 +52,8 @@ const worker = new cloudflare.WorkerScript("worker", {
 }, {dependsOn: [migration]});
 ```
 
+For multi-account providers, resource naming, and environment patterns, see [pulumi-patterns.md](./pulumi-patterns.md).
+
 ## Security
 
 **Secrets management:**
@@ -80,11 +65,8 @@ const worker = new cloudflare.WorkerScript("worker", {
     accountId, name: "my-worker", content: code,
     secretTextBindings: [{name: "API_KEY", text: apiKey}],
 });
-```
-
-```bash
-pulumi config set --secret apiKey "secret-value"
-export CLOUDFLARE_API_TOKEN="..."
+// CLI: pulumi config set --secret apiKey "secret-value"
+// Env: export CLOUDFLARE_API_TOKEN="..."
 ```
 
 **API token scopes** (minimal permissions): Workers — `Workers Routes:Edit`, `Workers Scripts:Edit` | KV — `Workers KV Storage:Edit` | R2 — `R2:Edit` | D1 — `D1:Edit` | DNS — `Zone:Edit`, `DNS:Edit` | Pages — `Pages:Edit`
@@ -111,37 +93,7 @@ pulumi import cloudflare:index/r2Bucket:R2Bucket my-bucket <account_id>/<bucket_
 
 ## CI/CD
 
-**GitHub Actions:**
-
-```yaml
-name: Deploy
-on: [push]
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: pulumi/actions@v4
-        with:
-          command: up
-          stack-name: prod
-        env:
-          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-```
-
-**GitLab CI:**
-
-```yaml
-deploy:
-  image: pulumi/pulumi:latest
-  script:
-    - pulumi stack select prod
-    - pulumi up --yes
-  only: [main]
-  variables:
-    CLOUDFLARE_API_TOKEN: $CLOUDFLARE_API_TOKEN
-```
+Use [`pulumi/actions@v4`](https://github.com/pulumi/actions) (GitHub Actions) or `pulumi/pulumi:latest` image (GitLab CI). Set `PULUMI_ACCESS_TOKEN` and `CLOUDFLARE_API_TOKEN` as secrets. Run `pulumi up --yes` with `--stack prod`.
 
 ## Resources
 
