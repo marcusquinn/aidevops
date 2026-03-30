@@ -69,7 +69,7 @@ DROP INDEX IF EXISTS idx_users_email;
 DROP TABLE IF EXISTS users;
 ```
 
-**Idempotent column addition (PostgreSQL — no `IF NOT EXISTS` for `ALTER TABLE ADD COLUMN`):**
+**Idempotent column addition (PostgreSQL)** — no `IF NOT EXISTS` for `ADD COLUMN`:
 
 ```sql
 DO $$
@@ -83,7 +83,7 @@ BEGIN
 END $$;
 ```
 
-**Keep schema and data migrations separate:**
+**Separate schema and data migrations:**
 
 ```sql
 -- V6__add_status_column.sql (Schema -- fast, reversible)
@@ -117,18 +117,17 @@ Mark irreversible DOWN sections: `-- IRREVERSIBLE: restore from backup if needed
 | Add index | Caution | `CREATE INDEX CONCURRENTLY` (PostgreSQL) |
 | Change column type | Caution | New column -> migrate data -> drop old |
 
-**Expand-contract:** (1) EXPAND -- add new column, copy data, deploy code writing both/reading new. (2) CONTRACT -- drop old column, rename new.
+**Expand-contract:** EXPAND — add new column, copy data, deploy code writing both/reading new. CONTRACT — drop old column, rename new.
 
 ## Git and CI/CD
 
-**Pre-push checklist:** UP and DOWN sections present; DOWN reverses UP; tested locally (up -> down -> up); no modifications to pushed migrations; timestamp is current (regenerate on rebase). Review: verify only expected changes, no unintended destructive ops, correct types/constraints.
+**Pre-push:** UP and DOWN present; DOWN reverses UP; tested locally (up -> down -> up); no modifications to pushed migrations; timestamp current (regenerate on rebase). Review: only expected changes, no unintended destructive ops, correct types/constraints.
 
-**Team rules:** Pull before creating migrations. Timestamps not sequential numbers. One migration per PR. Rebase carefully -- regenerate timestamps for conflicts. Commit messages: `feat(db): add user_preferences table`, `fix(db): correct FK on orders`, `chore(db): backfill user status`.
+**Team rules:** Pull before creating. Timestamps not sequential numbers. One migration per PR. Rebase carefully — regenerate timestamps for conflicts. Commit style: `feat(db): add user_preferences table`, `fix(db): correct FK on orders`, `chore(db): backfill user status`.
 
-**CI/CD:** Trigger on `push` to `main` with `paths: ['migrations/**']`. Steps: backup -> migrate -> verify.
+**CI/CD:** Trigger on `push` to `main` with `paths: ['migrations/**']`. Steps: backup -> migrate -> verify:
 
 ```yaml
-name: Database Migration
 on:
   push:
     branches: [main]
@@ -145,9 +144,12 @@ jobs:
       - run: psql $DATABASE_URL -c "SELECT 1"
 ```
 
-Most tools auto-create a tracking table (e.g., `flyway_schema_history`). **Prefer a managed tool** -- it handles ordering, locking, and state tracking automatically. If running SQL directly, gate execution on a tracking table -- never replay all files on every invocation.
+Most tools auto-create a tracking table (e.g., `flyway_schema_history`). Prefer managed tools — they handle ordering, locking, and state tracking.
 
 ## Framework-Agnostic Runner
+
+When running SQL directly without a migration tool, gate execution on a tracking table:
+
 
 ```bash
 #!/usr/bin/env bash
