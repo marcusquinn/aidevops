@@ -3,13 +3,7 @@ description: AI-assisted email composition — draft-review-send workflow, tone 
 mode: subagent
 tools:
   read: true
-  write: false
-  edit: false
   bash: true
-  glob: false
-  grep: false
-  webfetch: false
-  task: false
 ---
 
 # Email Composition
@@ -35,12 +29,12 @@ email-compose-helper.sh draft --to client@example.com \
 ## Draft-Review-Send Workflow
 
 1. **AI COMPOSE** — tone detection, model selection, overused phrase check, signature injection
-2. **DRAFT SAVED** → `~/.aidevops/.agent-workspace/email-compose/drafts/draft-YYYYMMDD-HHMMSS-xxxx.md`
+2. **DRAFT SAVED** → `drafts/draft-YYYYMMDD-HHMMSS-xxxx.md`
 3. **HUMAN REVIEW** — editor opens; delete all content to abort
 4. **CONFIRM SEND** — `[y/N]` prompt (shows To: and Subject:)
 5. **SEND** via `email-agent-helper.sh → SES` — draft archived to `sent/`
 
-**Never auto-send**: `--no-review` skips editor but requires confirmation. Full bypass (`--no-review` + piping `y`) for tested automation only.
+`--no-review` skips editor but still requires confirmation. Full bypass (`--no-review` + piping `y`) for tested automation only.
 
 ## Commands and Model Routing
 
@@ -49,18 +43,18 @@ email-compose-helper.sh draft --to client@example.com \
 | `draft` | Compose new email — AI drafts, human reviews | opus |
 | `reply` | Compose reply (auto-detect reply vs reply-all) | opus |
 | `forward` | Forward with optional commentary | sonnet |
-| `follow-up` | Follow up when replying is delayed | sonnet |
+| `follow-up` | Follow up on delayed reply | sonnet |
 | `remind` | Reminder for outstanding requests | sonnet |
 | `notify` | Project update notification | sonnet |
 | `acknowledge` | Brief holding-pattern response | haiku |
 | `list` | Show saved drafts (`--sent` for archive) | — |
 
-Use `--importance high` for client-facing, legal, negotiations, sensitive topics (routes to opus; cost-justified vs. poorly worded client email).
+`--importance high` for client-facing, legal, negotiations, sensitive topics (routes to opus).
 
 ## Composition Rules
 
 1. **One sentence per paragraph** — mobile readability and threading
-2. **Clear subject line** — state the email's purpose, not just the topic
+2. **Clear subject line** — state purpose, not just topic
 3. **Numbered lists** for multiple questions or action items
 4. **Explicit CTA** when response needed (e.g., "Please confirm by Friday")
 5. **No urgency flags** unless context requires it
@@ -71,7 +65,7 @@ Use `--importance high` for client-facing, legal, negotiations, sensitive topics
 
 | Avoid | Instead |
 |-------|---------|
-| "quick question" / "just following up" / "just checking in" | State the specific ask directly |
+| "quick question" / "just following up" / "just checking in" | State the specific ask |
 | "hope this finds you well" | Skip — start with purpose |
 | "as per my last email" | Reference the specific point |
 | "circle back" / "touch base" / "reach out" | "revisit" / "discuss" / "contact" |
@@ -80,14 +74,12 @@ Use `--importance high` for client-facing, legal, negotiations, sensitive topics
 
 ## Tone Calibration
 
-Auto-detected from recipient domain; override with `--tone formal` or `--tone casual`.
+Auto-detected from recipient domain; override with `--tone formal` or `--tone casual`. Per-domain overrides: `tone_overrides` in config.
 
 | Tone | Domains | Salutation | Closing | Style |
 |------|---------|------------|---------|-------|
 | `casual` | gmail, hotmail, yahoo, icloud, me.com | "Hi [Name]," | "Thanks," / "Cheers," | Contractions OK, direct |
 | `formal` | All other domains | "Dear [Name]," | "Kind regards," / "Best regards," | No contractions, explicit CTAs |
-
-Override per-domain: set `tone_overrides` in `email-compose-config.json`.
 
 ## CC/BCC Patterns
 
@@ -107,11 +99,11 @@ Override per-domain: set `tone_overrides` in `email-compose-config.json`.
 | 25–30MB | Warning — consider file-share link |
 | >30MB | Blocked — use file-share link |
 
-**File-share alternatives:** Google Drive / Dropbox / OneDrive (general); [PrivateBin](https://privatebin.net) (confidential, self-destruct, password via separate channel); WeTransfer (large media). For screenshots: crop to relevant content, remove credentials/personal data, annotate; prefer one annotated image over multiple raw ones.
+**File-share alternatives:** Google Drive / Dropbox / OneDrive (general); [PrivateBin](https://privatebin.net) (confidential, self-destruct, password via separate channel); WeTransfer (large media). Screenshots: crop to relevant content, remove credentials/personal data, annotate; prefer one annotated image over multiple raw ones.
 
 ## Signature Injection
 
-Injected automatically from (in order): config file → signature file → Apple Mail parser.
+Injected automatically from (in order): config file → signature file → Apple Mail parser. Select with `--signature formal`.
 
 ```json
 {
@@ -122,8 +114,6 @@ Injected automatically from (in order): config file → signature file → Apple
   }
 }
 ```
-
-Use `--signature formal` to select a named signature.
 
 ## Legal Liability Awareness
 
@@ -139,15 +129,13 @@ Email creates a written record. Distinguish clearly:
 
 ## Support and Customer Service
 
-Reference ticket numbers in every message. State what you've tried. Use formal, factual tone with specific errors, timestamps, repro steps. Follow up on schedule, not impulsively.
+Reference ticket numbers in every message. State what you've tried. Formal, factual tone with specific errors, timestamps, repro steps. Follow up on schedule, not impulsively.
 
-**Escalation:** *Tier 1→2:* "Working with support on [ticket #X] for [N days]. Requires technical investigation beyond standard troubleshooting — please escalate." *Tier 2→Mgmt:* "Open [N days], impacting [business function]. I'd like to speak with a manager to resolve this."
+**Escalation:** *Tier 1→2:* "Working with support on [ticket #X] for [N days]. Requires technical investigation — please escalate." *Tier 2→Mgmt:* "Open [N days], impacting [business function]. I'd like to speak with a manager to resolve this."
 
 ## Configuration
 
-Copy `configs/email-compose-config.json.txt` → `configs/email-compose-config.json`. Key settings: `default_from_email`, `signatures`, `tone_overrides`, `default_importance`.
-
-See `scripts/email-compose-helper.sh` for CLI usage.
+Copy `configs/email-compose-config.json.txt` → `configs/email-compose-config.json`. Key settings: `default_from_email`, `signatures`, `tone_overrides`, `default_importance`. See `scripts/email-compose-helper.sh` for CLI usage.
 
 ## Related
 
