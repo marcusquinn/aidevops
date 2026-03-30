@@ -16,7 +16,7 @@ tools: { read: true, bash: true }
 - **Auth**: Service account JWT (outbound); Google-signed bearer (inbound)
 - **Requires**: Google Workspace, GCP project, public HTTPS URL, Node.js >= 18, jq
 - **Setup**: `google-chat-helper.sh setup` (interactive wizard)
-- **Privacy**: No E2E encryption; Google retains all messages; Gemini may train on data unless DPA configured. See [Privacy and Security](#privacy-and-security).
+- **Privacy**: No E2E encryption; Google retains messages; Gemini may train on data unless DPA configured. See [Privacy and Security](#privacy-and-security).
 
 <!-- AI-CONTEXT-END -->
 
@@ -24,30 +24,21 @@ tools: { read: true, bash: true }
 
 ## Setup
 
-### Step 1: GCP Project
+**1. GCP Project:**
 
 ```bash
 gcloud projects create aidevops-chat-bot --name="aidevops Chat Bot"
 gcloud config set project aidevops-chat-bot
 gcloud services enable chat.googleapis.com
 gcloud iam service-accounts create chat-bot --display-name="Chat Bot Service Account"
-gcloud iam service-accounts keys create \
-  ~/.config/aidevops/google-chat-sa-key.json \
+gcloud iam service-accounts keys create ~/.config/aidevops/google-chat-sa-key.json \
   --iam-account=chat-bot@aidevops-chat-bot.iam.gserviceaccount.com
 chmod 600 ~/.config/aidevops/google-chat-sa-key.json
 ```
 
-### Step 2: Chat App Config
+**2. Chat App Config:** Cloud Console > APIs & Services > Google Chat API > Configuration: set HTTP endpoint URL, enable "Receive 1:1 messages" + "Join spaces and group conversations", set auth audience to endpoint URL.
 
-Cloud Console > APIs & Services > Google Chat API > Configuration: set HTTP endpoint URL, enable "Receive 1:1 messages" + "Join spaces and group conversations", set auth audience to endpoint URL.
-
-### Step 3: Public URL
-
-| Option | Command |
-|--------|---------|
-| Tailscale Funnel | `tailscale funnel 8443` |
-| Caddy | `caddy reverse-proxy --from chat-bot.example.com --to localhost:8443` |
-| Cloudflare Tunnel | `cloudflared tunnel --url http://localhost:8443 run chat-bot` |
+**3. Public URL:** `tailscale funnel 8443` · `caddy reverse-proxy --from chat-bot.example.com --to localhost:8443` · `cloudflared tunnel --url http://localhost:8443 run chat-bot`
 
 ## Configuration
 
@@ -68,12 +59,11 @@ Cloud Console > APIs & Services > Google Chat API > Configuration: set HTTP endp
 
 ## Authentication
 
-**Inbound (Google → Bot)** — verify Google's bearer token on every request; without this, anyone can forge events:
+**Inbound (Google → Bot)** — verify bearer token on every request (without this, anyone can forge events):
 
 ```typescript
 import { createRemoteJWKSet, jwtVerify } from "jose";
 const JWKS = createRemoteJWKSet(new URL("https://www.googleapis.com/service_accounts/v1/jwk/chat@system.gserviceaccount.com"));
-// Validate: iss = chat@system.gserviceaccount.com, aud = project number or endpoint URL
 async function verifyGoogleChatToken(token: string, audience: string): Promise<boolean> {
   await jwtVerify(token, JWKS, { issuer: "chat@system.gserviceaccount.com", audience });
   return true;
@@ -90,40 +80,35 @@ await (await auth.getClient()).request({ url: "https://chat.googleapis.com/v1/sp
 
 ## Events and Messaging
 
-| Event Type | Trigger | Action |
-|------------|---------|--------|
+| Event | Trigger | Action |
+|-------|---------|--------|
 | `ADDED_TO_SPACE` | Bot added to space/DM | Send welcome message |
 | `REMOVED_FROM_SPACE` | Bot removed | Clean up, log |
 | `MESSAGE` | User mentions bot or DMs | Parse prompt, dispatch runner |
 | `CARD_CLICKED` | Card button click | Handle card action |
 
-Payload fields: `message.argumentText` (prompt, mention stripped), `user.email` (ACL), `space.name` (runner mapping), `message.thread.name` (threading).
+Payload: `message.argumentText` (prompt), `user.email` (ACL), `space.name` (runner mapping), `message.thread.name` (threading).
 
-**Sync (< 30s)**: Return `{ "text": "..." }` in HTTP response. **Async (> 30s)**: Return `cardsV2` ack, then POST full response to `spaces/SPACE_ID/messages` with `Authorization: Bearer <token>`, `thread.name`, `threadReply: true`.
+**Sync (< 30s)**: Return `{ "text": "..." }` in HTTP response. **Async (> 30s)**: Return `cardsV2` ack, then POST to `spaces/SPACE_ID/messages` with `Authorization: Bearer <token>`, `thread.name`, `threadReply: true`.
 
 **Card v2**: `cardsV2[].card` with `header`/`sections[].widgets`. Limits: 1 card/msg, 100 sections, 100 widgets/section, 4096 chars/widget, 40 chars/button. Public HTTPS image URLs only. [Reference](https://developers.google.com/workspace/chat/api/reference/rest/v1/cards).
-
-## Space-to-Runner Mapping
-
-```bash
-google-chat-helper.sh map 'spaces/AAAA1234' code-reviewer
-google-chat-helper.sh mappings   # list all
-google-chat-helper.sh unmap 'spaces/AAAA1234'
-```
-
-DMs use `defaultRunner`; unconfigured = help message. **ACL order**: token verification → domain → allowlist → space mapping. Domain control: Admin Console > Apps > Google Workspace > Google Chat > Chat apps settings.
 
 ## Operations
 
 ```bash
-google-chat-helper.sh start --daemon   # background
-google-chat-helper.sh start            # foreground (debug)
+google-chat-helper.sh map 'spaces/AAAA1234' code-reviewer   # space→runner mapping
+google-chat-helper.sh mappings                               # list mappings
+google-chat-helper.sh unmap 'spaces/AAAA1234'
+google-chat-helper.sh start --daemon                         # background
+google-chat-helper.sh start                                  # foreground (debug)
 google-chat-helper.sh stop && google-chat-helper.sh status
 google-chat-helper.sh logs [--follow] [--tail 200]
-google-chat-helper.sh test code-reviewer "Review src/auth.ts"     # dispatch test
-google-chat-helper.sh test-event message "Test message from CLI"  # event test
-google-chat-helper.sh test-auth                                   # token verify
+google-chat-helper.sh test code-reviewer "Review src/auth.ts"
+google-chat-helper.sh test-event message "Test message from CLI"
+google-chat-helper.sh test-auth                              # token verify
 ```
+
+DMs use `defaultRunner`; unconfigured = help message. **ACL order**: token verification → domain → allowlist → space mapping. Domain control: Admin Console > Apps > Google Workspace > Google Chat > Chat apps settings.
 
 **Health**: `GET /health` → `{"status":"ok","uptime":...,"spaces":N}` · **Runners**: `runner-helper.sh create|edit <name>`
 
@@ -133,23 +118,18 @@ No E2E encryption (TLS in transit only). Google retains all messages; admins hav
 
 **Bot security**: SA key 600 perms, never commit · `allowedUsers` allowlist in production · Scan inbound (`prompt-guard-helper.sh`) and outbound (credential patterns) · Reverse proxy for TLS · Log events, redact sensitive content · FCM: Google sees push notification metadata.
 
-## Limitations
+## Limitations and Troubleshooting
 
-| Limitation | Detail |
-|------------|--------|
+| Issue | Detail |
+|-------|--------|
 | 30s response window | Return ack card immediately; full response async |
 | No Matterbridge | Requires custom API bridge or relay bot |
 | Workspace required | Free Gmail accounts unsupported |
 | Card rendering varies | Test across web, Gmail sidebar, mobile |
 | Rate limits | 60 msg/min per space; 50,000 spaces max |
 | Thread limits | Space-scoped; bot cannot create threads proactively |
-
-## Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
 | Not receiving events | Verify public URL reachable; check Chat API config |
-| 401 / token verification | SA key valid? `chat.bot` scope? `verifyGoogleTokens: true`? Clock sync (JWT expiry)? |
+| 401 / token verification | SA key valid? `chat.bot` scope? `verifyGoogleTokens: true`? Clock sync? |
 | Bot not visible | Check Chat app visibility in Cloud Console |
 | Async messages fail | Verify `chat.bot` scope; check space name format |
 | Cards not rendering | Validate Card v2 JSON; check widget types |
