@@ -19,7 +19,6 @@ flowchart TB
     subgraph Hexagon["THE HEXAGON"]
         subgraph AppCore["APPLICATION CORE"]
             subgraph Domain["DOMAIN\n(Business Logic)"]
-                BL[" "]
             end
         end
     end
@@ -47,8 +46,6 @@ flowchart TB
 |------|-----------|------------|---------|-----------|
 | **Driver** (Primary / Inbound) | → App | Application | How the world uses your app (use cases) | Adapter *calls* port — app defines what it **offers** |
 | **Driven** (Secondary / Outbound) | App → | Application | What your app needs from external systems | Adapter *implements* port — app defines what it **needs** |
-
-**Driver ports** (called by adapters, represent use cases) · **Driven ports** (implemented by adapters, called by the application):
 
 ```typescript
 // application/ports/driver/place_order_port.ts
