@@ -14,7 +14,7 @@ tools:
 
 # Higgsfield UI Automator
 
-Browser-based automation for Higgsfield AI via Playwright. Uses **subscription credits** (UI-only, not API). Covers: image (10 models), video, lipsync (11 models), cinema studio, motion control, edit/inpaint (5 models), upscale, apps (38+), asset library, mixed media (32 presets), motion/VFX (150+ presets), vibe motion, storyboard, AI influencer, character profiles, pipeline + Remotion, seed bracketing. **27 CLI commands.**
+Browser-based Higgsfield AI automation via Playwright. Uses **subscription credits** (UI-only, no API). Capabilities: image (10 models), video (5 models), lipsync (11 models), cinema studio, motion control, edit/inpaint (5 models), upscale, apps (38+), asset library, mixed media (32 presets), motion/VFX (150+ presets), vibe motion, storyboard, AI influencer, character profiles, pipeline + Remotion, seed bracketing. **27 CLI commands.**
 
 Use instead of `higgsfield.md` when: subscription credits apply, UI-exclusive features needed, or API has no credits.
 
@@ -69,13 +69,11 @@ higgsfield-helper.sh pipeline --brief brief.json
 
 **Vibe sub-types:** infographics, text-animation, posters, presentation, from-scratch. Styles: Minimal, Corporate, Fashion, Marketing. 8-60cr. Influencer: 30 free gens.
 
-**Seed ranges:** people 1000-1999 | action 2000-2999 | landscape 3000-3999 | product 4000-4999
-
-**Pipeline:** parallel submit — 5 scenes ~4min vs ~20min sequential.
+**Seed ranges:** people 1000-1999 | action 2000-2999 | landscape 3000-3999 | product 4000-4999. **Pipeline:** parallel submit — 5 scenes ~4min vs ~20min sequential.
 
 ## Models
 
-### Image (10 models)
+### Image (10)
 
 | Model | Slug | Cost | Unlimited |
 |-------|------|------|-----------|
@@ -92,7 +90,7 @@ higgsfield-helper.sh pipeline --brief brief.json
 
 Quality ranking (product shots): GPT → Seedream 4.5 → FLUX → Kontext → ... `--prefer-unlimited` (default) auto-selects best unlimited model via dedicated routes (e.g., `/nano-banana-pro`) — standard `/image/` routes cost credits even for subscribed models. Soul presets: All, New, TikTok Core, Instagram Aesthetics, Camera Presets, Beauty, Mood, Surreal, Graphic Art.
 
-### Video (5 models)
+### Video (5)
 
 | Model | Resolution | Duration | Cost | Unlimited |
 |-------|-----------|----------|------|-----------|
@@ -104,7 +102,7 @@ Quality ranking (product shots): GPT → Seedream 4.5 → FLUX → Kontext → .
 
 Unlimited ranking: Kling 2.6 → Kling O1 Video → Kling 2.5 Turbo. Also unlimited: Kling O1 Video Edit, Motion Control, Face Swap.
 
-### Lipsync (11 models)
+### Lipsync (11)
 
 Wan 2.5 Fast, Kling 2.6 Lipsync, Google Veo 3, Veo 3 Fast, Wan 2.5 Speak (9cr), Wan 2.5 Speak Fast, Kling Avatars 2.0 (up to 5min), Higgsfield Speak 2.0, Infinite Talk, Kling Lipsync, Sync Lipsync 2 Pro (4K).
 
@@ -123,32 +121,29 @@ Wan 2.5 Fast, Kling 2.6 Lipsync, Google Veo 3, Veo 3 Fast, Wan 2.5 Speak (9cr), 
 ```json
 {
   "title": "Product Demo Short",
-  "character": { "description": "Young woman, brown hair", "image": "/path/to/face.png" },
+  "character": { "description": "Young woman, brown hair", "image": "face.png" },
   "scenes": [{ "prompt": "Close-up holding product", "duration": 5, "dialogue": "Check this out!" }],
   "imagePrompts": ["Photorealistic product shot, 9:16"],
-  "imageModel": "nano-banana-pro",
-  "videoModel": "kling-2.6",
-  "aspect": "9:16",
+  "imageModel": "nano-banana-pro", "videoModel": "kling-2.6", "aspect": "9:16",
   "captions": [{ "text": "Check this out!", "startFrame": 0, "endFrame": 60 }],
-  "transitionStyle": "fade",
-  "transitionDuration": 15,
+  "transitionStyle": "fade", "transitionDuration": 15,
   "music": "/path/to/background.mp3"
 }
 ```
 
-`imagePrompts[]` = start-frame image prompts. `captions[]` = Remotion overlay (styles: bold-white, minimal, impact, typewriter, highlight). Remotion: `cd .agents/scripts/higgsfield/remotion && npm install` — animated captions, transitions (fade/slide/wipe), title cards, 1080×1920.
+`imagePrompts[]` = start-frame images. `captions[]` = Remotion overlay (styles: bold-white, minimal, impact, typewriter, highlight). Remotion setup: `cd .agents/scripts/higgsfield/remotion && npm install` — animated captions, transitions (fade/slide/wipe), title cards, 1080x1920.
 
 ## Output
 
 `--headed` → `~/Downloads/higgsfield/` | headless → `~/.aidevops/.agent-workspace/work/higgsfield/output/` | override: `--output` | subdirs: `--project` | `--no-sidecar` `--no-dedup`
 
-## Key CLI Options
+## CLI Options
 
-| Flag | Values |
-|------|--------|
+| Flag | Description |
+|------|-------------|
 | `--model/-m` | Model slug |
-| `--aspect/-a` | `16:9` \| `9:16` \| `1:1` \| `3:4` \| `4:3` \| `2:3` \| `3:2` |
-| `--quality/-q` | `1K` \| `1.5K` \| `2K` \| `4K` |
+| `--aspect/-a` | `16:9` `9:16` `1:1` `3:4` `4:3` `2:3` `3:2` |
+| `--quality/-q` | `1K` `1.5K` `2K` `4K` |
 | `--output/-o` | Output directory |
 | `--headed/--headless` | Browser mode (headless default) |
 | `--duration/-d` | Video seconds: 5, 10, 15 |
@@ -160,23 +155,21 @@ Wan 2.5 Fast, Kling 2.6 Lipsync, Google Veo 3, Veo 3 Fast, Wan 2.5 Speak (9cr), 
 | `--seed` | Seed number |
 | `--seed-range` | `1000-1010` or `"4000,4003,4008"` |
 | `--brief` | Pipeline brief JSON path |
-| `--tab` | `image` \| `video` |
-| `--filter` | `image` \| `video` \| `lipsync` \| `upscaled` \| `liked` |
-| `--asset-action` | `list` \| `download` \| `download-latest` \| `download-all` |
+| `--tab` | `image` `video` |
+| `--filter` | `image` `video` `lipsync` `upscaled` `liked` |
+| `--asset-action` | `list` `download` `download-latest` `download-all` |
 | `--asset-index` | 0-based asset index |
-| `--chain-action` | `animate` \| `inpaint` \| `upscale` \| `relight` \| `angles` \| `shots` \| `ai-stylist` \| `skin-enhancer` \| `multishot` |
-| `--feature` | `fashion-factory` \| `ugc-factory` \| `photodump-studio` \| `camera-controls` \| `effects` |
-| `--subtype` | Vibe Motion: `infographics` \| `text-animation` \| `posters` \| `presentation` \| `from-scratch` |
+| `--chain-action` | `animate` `inpaint` `upscale` `relight` `angles` `shots` `ai-stylist` `skin-enhancer` `multishot` |
+| `--feature` | `fashion-factory` `ugc-factory` `photodump-studio` `camera-controls` `effects` |
+| `--subtype` | Vibe: `infographics` `text-animation` `posters` `presentation` `from-scratch` |
 | `--project` | Organized output subdirs |
 | `--prefer-unlimited` | Auto-select best unlimited model (default on) |
 
 ## Prompt Tips
 
-**Images** (camera + lighting + lens): `"Golden retriever, golden hour, shallow DOF, Canon EOS R5, 85mm, bokeh"`
-
-**Videos** (camera movement first): `"Smooth cinematic pan left to right, golden hour, 24fps film grain"`
-
-**Modifiers:** photorealistic → `"8k, highly detailed"` | cinematic → `"anamorphic, film grain, color graded"` | portrait → `"studio lighting, bokeh, 85mm"`
+- **Images** (camera + lighting + lens): `"Golden retriever, golden hour, shallow DOF, Canon EOS R5, 85mm, bokeh"`
+- **Videos** (camera movement first): `"Smooth cinematic pan left to right, golden hour, 24fps film grain"`
+- **Modifiers**: photorealistic → `"8k, highly detailed"` | cinematic → `"anamorphic, film grain, color graded"` | portrait → `"studio lighting, bokeh, 85mm"`
 
 ## Troubleshooting
 
