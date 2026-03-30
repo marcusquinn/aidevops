@@ -19,13 +19,7 @@ tools:
 - **State**: 3 split React Contexts with cookie/localStorage persistence
 - **Streaming**: SSE from Elysia backend
 - **Source**: `.opencode/ui/chat-sidebar/`
-
-| Task | Scope | Depends on |
-|------|-------|------------|
-| t005.1 | Architecture & types (this doc) | — |
-| t005.2 | Collapsible panel, resize, toggle | t005.1 |
-| t005.3 | Chat message UI, streaming, markdown | t005.1, t005.2 |
-| t005.4 | AI backend integration, context, API routing | t005.1 |
+- **Tasks**: t005.1 (this) → t005.2 (panel/resize) → t005.3 (chat UI/streaming) → t005.4 (AI backend)
 
 <!-- AI-CONTEXT-END -->
 
@@ -33,10 +27,12 @@ tools:
 
 Layout: Main Content Area (left) + AI Chat Sidebar (right, fixed-position panel). Toggle button floats bottom-right when closed.
 
-- React scoped to sidebar only — existing dashboard uses vanilla JS; chat needs complex interactive state
-- React Context (3 split) — app is small; avoids extra deps; split prevents cross-concern re-renders
-- SSE not WebSocket — unidirectional streaming; simpler, proxy-friendly, auto-reconnects
-- Elysia `/api/chat/*` — keeps backend unified with existing API gateway
+| Decision | Rationale |
+|----------|-----------|
+| React scoped to sidebar only | Existing dashboard uses vanilla JS; chat needs complex interactive state |
+| 3 split React Contexts | App is small; avoids extra deps; split prevents cross-concern re-renders |
+| SSE not WebSocket | Unidirectional streaming; simpler, proxy-friendly, auto-reconnects |
+| Elysia `/api/chat/*` | Keeps backend unified with existing API gateway |
 
 ## File Structure
 
@@ -112,7 +108,7 @@ GET  /api/chat/models        — Available models + status
 POST /api/chat/context       — Resolve context sources
 ```
 
-**SSE format:**
+SSE format:
 
 ```text
 event: start  data: {"conversationId":"abc","model":"claude-sonnet-4-20250514"}
@@ -121,7 +117,7 @@ event: done   data: {"tokenCount":150,"model":"claude-sonnet-4-20250514"}
 event: error  data: {"message":"Rate limit exceeded","code":"rate_limited"}
 ```
 
-**Context injection** (prepended as system message):
+Context injection (prepended as system message):
 
 | Source | Resolution |
 |--------|-----------|
@@ -145,12 +141,10 @@ event: error  data: {"message":"Rate limit exceeded","code":"rate_limited"}
 
 ## Accessibility & Performance
 
-| Concern | Rule |
-|---------|------|
-| Interactive elements | `aria-label` or visible label; Tab/Escape keyboard nav; `aria-live="polite"` for new messages |
-| Motion | `prefers-reduced-motion`: instant show/hide; `h-dvh` (not `h-screen`) |
-| Re-renders | 3 split contexts; `useCallback`/`useMemo` throughout |
-| Streaming | SSE chunks update `streamingContent` string (not full array); lazy-load markdown; no `will-change` unless animating |
+- All interactive elements: `aria-label` or visible label; Tab/Escape keyboard nav; `aria-live="polite"` for new messages
+- `prefers-reduced-motion`: instant show/hide; `h-dvh` (not `h-screen`)
+- 3 split contexts prevent cross-concern re-renders; `useCallback`/`useMemo` throughout
+- SSE chunks update `streamingContent` string (not full array); lazy-load markdown; no `will-change` unless animating
 
 ## Dependencies
 
@@ -178,11 +172,3 @@ const memories = await execCommand('memory-helper.sh', ['recall', query, '--limi
 | Hooks | Bun test | State transitions, streaming lifecycle |
 | API | Bun test + Elysia test client | Routes, SSE format, errors |
 | E2E | Playwright | Full sidebar flow |
-
-## Migration Path
-
-| Task | Deliverable |
-|------|-------------|
-| t005.2 | Panel works (SidebarContext + ChatSidebar + ResizeHandle + ToggleButton), no chat |
-| t005.3 | Chat works with mock data (ChatContext + message components + ChatInput) |
-| t005.4 | Real AI responses (SettingsContext + chat-api.ts + api-client.ts) |
