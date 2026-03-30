@@ -16,64 +16,52 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Automate iOS Simulators using Apple's Accessibility APIs and HID
 - **Install**: `brew install cameroncooke/axe/axe`
-- **Architecture**: Single binary CLI, no server or daemon required
 - **Requirements**: macOS with Xcode and iOS Simulator
 - **GitHub**: https://github.com/cameroncooke/AXe (1.2k stars, MIT, by XcodeBuildMCP author)
-- **vs idb**: Single binary (no client/server), complete HID coverage, gesture presets, timing controls
+- **vs idb**: Single binary (no client/server/daemon), complete HID coverage, gesture presets, timing controls
 
 ## Core Commands
 
-All commands require `--udid SIMULATOR_UDID`. Get UDIDs with `axe list-simulators`.
+All commands require `--udid SIMULATOR_UDID`. Get UDIDs: `axe list-simulators`.
 
 ### Touch, Gestures, and Input
 
 ```bash
-# Tap by coordinates, accessibility ID, or label
-axe tap -x 100 -y 200 --udid $UDID
-axe tap --id "Safari" --udid $UDID
-axe tap --label "Submit" --udid $UDID
-# Swipe with configurable duration and delta
+axe tap -x 100 -y 200 --udid $UDID                # coordinates
+axe tap --id "Safari" --udid $UDID                  # accessibility ID
+axe tap --label "Submit" --udid $UDID               # label
 axe swipe --start-x 100 --start-y 300 --end-x 300 --end-y 100 --udid $UDID
-# Gesture presets: scroll-up/down/left/right, swipe-from-{left,right,top,bottom}-edge
+# Presets: scroll-up/down/left/right, swipe-from-{left,right,top,bottom}-edge
 axe gesture scroll-down --udid $UDID
-axe gesture swipe-from-left-edge --udid $UDID
-# Text input (direct, stdin, or file)
-axe type 'Hello World!' --udid $UDID
-echo "text" | axe type --stdin --udid $UDID
+axe type 'Hello World!' --udid $UDID                # direct text input
+echo "text" | axe type --stdin --udid $UDID         # stdin
+# Timing: --pre-delay / --post-delay (seconds) on any touch/gesture
+axe tap -x 100 -y 200 --pre-delay 1.0 --post-delay 0.5 --udid $UDID
 ```
 
-### Keyboard Control
+### Keyboard and Buttons
 
 ```bash
-# Individual key press by HID keycode (40=Enter, 42=Backspace)
+# Key press by HID keycode (40=Enter, 42=Backspace)
 axe key 40 --udid $UDID
 axe key 42 --duration 1.0 --udid $UDID
 # Key sequences (type "hello" by keycodes)
 axe key-sequence --keycodes 11,8,15,15,18 --udid $UDID
-# Key combos: modifier + key (227=Cmd, 225=Shift)
+# Combos: modifier + key (227=Cmd, 225=Shift)
 axe key-combo --modifiers 227 --key 4 --udid $UDID          # Cmd+A
 axe key-combo --modifiers 227,225 --key 4 --udid $UDID      # Cmd+Shift+A
-```
-
-### Hardware Buttons and Timing
-
-```bash
-# Buttons: home, lock, side-button, siri, apple-pay
+# Hardware buttons: home, lock, side-button, siri, apple-pay
 axe button home --udid $UDID
 axe button lock --duration 2.0 --udid $UDID
-# Pre/post delays on any touch/gesture command (seconds)
-axe tap -x 100 -y 200 --pre-delay 1.0 --post-delay 0.5 --udid $UDID
 ```
 
 ### Screenshots, Video, and Accessibility
 
 ```bash
-axe screenshot --output ~/Desktop/capture.png --udid $UDID    # path printed to stdout
-# Video recording (H.264 MP4, Ctrl+C to stop and finalise)
+axe screenshot --output ~/Desktop/capture.png --udid $UDID
+# Video recording (H.264 MP4, Ctrl+C to stop); flags: --fps, --quality, --scale
 axe record-video --udid $UDID --fps 15 --output recording.mp4
-axe record-video --udid $UDID --fps 10 --quality 60 --scale 0.5 --output low-bw.mp4
 # Stream formats: mjpeg, ffmpeg, raw, bgra
 axe stream-video --udid $UDID --fps 30 --format ffmpeg | \
   ffmpeg -f image2pipe -framerate 30 -i - -c:v libx264 output.mp4
@@ -91,7 +79,7 @@ axe describe-ui --point 100,200 --udid $UDID
 | Tap targeting | Coordinates, ID, label | Coordinates only |
 | Gesture presets | 8 built-in | Manual swipe params |
 | Video | H.264 recording, 4 stream formats | `record_video` / `stop_recording` |
-| Accessibility | `describe-ui` (full tree or point) | `ui_describe_all`, `ui_describe_point` |
+| Accessibility | `describe-ui` (full/point) | `ui_describe_all`, `ui_describe_point` |
 | App management | Not available | `install_app`, `launch_app` |
 | Best for | Scripts, CI, pipelines | Direct AI tool calling |
 
