@@ -7,46 +7,28 @@
 **Validation:** If you can run the entire application from test fixtures (FIT-style), your hexagonal boundaries are correct.
 
 ```mermaid
-flowchart TB
-    subgraph DriverSide["DRIVER SIDE (Primary / Inbound / Left)"]
-        REST["REST API Adapter"]
-        CLI["CLI Adapter"]
-        DriverPorts["DRIVER PORTS\n(Use Case Interfaces)"]
-        REST --> DriverPorts
-        CLI --> DriverPorts
+flowchart LR
+    subgraph Driver["DRIVER (Primary / Left)"]
+        REST["REST"] & CLI["CLI"] --> DP["Driver Ports"]
     end
-
-    subgraph Hexagon["THE HEXAGON"]
-        subgraph AppCore["APPLICATION CORE"]
-            subgraph Domain["DOMAIN\n(Business Logic)"]
-                BL[" "]
-            end
-        end
+    subgraph Hex["HEXAGON"]
+        Domain["Domain Logic"]
     end
-
-    subgraph DrivenSide["DRIVEN SIDE (Secondary / Outbound / Right)"]
-        DrivenPorts["DRIVEN PORTS\n(Repository Interfaces)"]
-        Postgres["Postgres Adapter"]
-        RabbitMQ["RabbitMQ Adapter"]
-        DrivenPorts --> Postgres
-        DrivenPorts --> RabbitMQ
+    subgraph Driven["DRIVEN (Secondary / Right)"]
+        DnP["Driven Ports"] --> PG["Postgres"] & MQ["RabbitMQ"]
     end
-
-    DriverPorts --> AppCore
-    AppCore --> DrivenPorts
-
-    style DriverSide fill:#3b82f6,stroke:#2563eb,color:white
-    style Hexagon fill:#10b981,stroke:#059669,color:white
-    style DrivenSide fill:#f59e0b,stroke:#d97706,color:white
-    style Domain fill:#059669,stroke:#047857,color:white
+    DP --> Hex --> DnP
+    style Driver fill:#3b82f6,stroke:#2563eb,color:white
+    style Hex fill:#10b981,stroke:#059669,color:white
+    style Driven fill:#f59e0b,stroke:#d97706,color:white
 ```
 
 ## Ports
 
-| Type | Direction | Defined by | Purpose | Asymmetry |
-|------|-----------|------------|---------|-----------|
-| **Driver** (Primary / Inbound) | → App | Application | How the world uses your app (use cases) | Adapter *calls* port — app defines what it **offers** |
-| **Driven** (Secondary / Outbound) | App → | Application | What your app needs from external systems | Adapter *implements* port — app defines what it **needs** |
+| Type | Direction | Purpose | Asymmetry |
+|------|-----------|---------|-----------|
+| **Driver** (Primary) | → App | How the world uses your app (use cases) | Adapter *calls* port — app defines what it **offers** |
+| **Driven** (Secondary) | App → | What your app needs from external systems | Adapter *implements* port — app defines what it **needs** |
 
 **Driver ports** (called by adapters, represent use cases) · **Driven ports** (implemented by adapters, called by the application):
 
@@ -83,17 +65,12 @@ export interface IPaymentGatewayPort {
 ```typescript
 // infrastructure/adapters/driver/rest/order_controller.ts
 export class OrderController {
-  constructor(
-    private readonly placeOrder: IPlaceOrderPort,
-    private readonly getOrder: IGetOrderPort,
-  ) {}
+  constructor(private readonly placeOrder: IPlaceOrderPort, private readonly getOrder: IGetOrderPort) {}
 
   async create(req: Request, res: Response): Promise<void> {
     const orderId = await this.placeOrder.execute({
       customerId: req.user.id,
-      items: req.body.items.map((item: any) => ({
-        productId: item.product_id, quantity: item.quantity,
-      })),
+      items: req.body.items.map((i: any) => ({ productId: i.product_id, quantity: i.quantity })),
     });
     res.status(201).json({ id: orderId.value });
   }
@@ -102,7 +79,7 @@ export class OrderController {
 
 **Driven adapters** (implement port interface using specific technology):
 
-```
+```text
 class PostgresOrderRepository implements IOrderRepositoryPort:
     findById(id) -> Order | null:
         row = db.orders.where(id: id.value).first()
@@ -138,7 +115,7 @@ class RabbitMQEventPublisher implements IEventPublisherPort:
 
 ## Project Structure
 
-```
+```text
 src/
 ├── application/
 │   ├── ports/
@@ -156,16 +133,16 @@ src/
 ## Configurability
 
 ```typescript
-// infrastructure/config/container.ts
-function configureDevelopment(container: Container): void {
-  container.bind<IOrderRepositoryPort>('IOrderRepositoryPort').to(InMemoryOrderRepository);
-  container.bind<IEventPublisherPort>('IEventPublisherPort').to(InMemoryEventPublisher);
-  container.bind<IPaymentGatewayPort>('IPaymentGatewayPort').to(FakePaymentGateway);
+// infrastructure/config/container.ts — swap adapters per environment
+function configureDevelopment(c: Container): void {
+  c.bind<IOrderRepositoryPort>('IOrderRepositoryPort').to(InMemoryOrderRepository);
+  c.bind<IEventPublisherPort>('IEventPublisherPort').to(InMemoryEventPublisher);
+  c.bind<IPaymentGatewayPort>('IPaymentGatewayPort').to(FakePaymentGateway);
 }
-function configureProduction(container: Container): void {
-  container.bind<IOrderRepositoryPort>('IOrderRepositoryPort').to(PostgresOrderRepository);
-  container.bind<IEventPublisherPort>('IEventPublisherPort').to(RabbitMQEventPublisher);
-  container.bind<IPaymentGatewayPort>('IPaymentGatewayPort').to(StripePaymentGateway);
+function configureProduction(c: Container): void {
+  c.bind<IOrderRepositoryPort>('IOrderRepositoryPort').to(PostgresOrderRepository);
+  c.bind<IEventPublisherPort>('IEventPublisherPort').to(RabbitMQEventPublisher);
+  c.bind<IPaymentGatewayPort>('IPaymentGatewayPort').to(StripePaymentGateway);
 }
 ```
 
@@ -173,9 +150,7 @@ function configureProduction(container: Container): void {
 
 ```typescript
 // ❌ Weak: leaks SQL concepts into the port
-interface IOrderRepository {
-  findByQuery(sql: string, params: any[]): Promise<Order[]>;
-}
+interface IOrderRepository { findByQuery(sql: string, params: any[]): Promise<Order[]>; }
 
 // ✅ Strong: pure domain concepts only
 interface IOrderRepository {
