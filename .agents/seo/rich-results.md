@@ -20,6 +20,7 @@ tools:
 - **URL**: `https://search.google.com/test/rich-results`
 - **API Status**: **Deprecated** (standalone API removed) -- browser automation required
 - **Alternative**: Schema.org Validator (`https://validator.schema.org/`) -- faster, no CAPTCHA, no Google-specific eligibility
+- **Rich result types**: [Google's structured data gallery](https://developers.google.com/search/docs/appearance/structured-data/search-gallery)
 
 ## Browser Automation (Playwright)
 
@@ -44,7 +45,6 @@ async function main() {
 
   await page.goto('https://search.google.com/test/rich-results');
 
-  // Wait for input field and enter URL
   const input = await page.waitForSelector(
     'input[type="url"], input[type="text"]',
     { timeout: 10000 }
@@ -68,7 +68,7 @@ async function main() {
     await page.screenshot({ path: 'rich-results-timeout.png', fullPage: true });
   }
 
-  // Keep open for manual inspection
+  // Keep browser open for manual inspection
   // await browser.close();
 }
 
@@ -78,7 +78,6 @@ main().catch(console.error);
 ### Batch Testing
 
 ```bash
-# Test multiple URLs
 for url in https://example.com https://example.com/article https://example.com/product; do
   echo "--- Testing: $url ---"
   node rich-results-test.js "$url"
@@ -89,37 +88,11 @@ done
 ## JSON-LD Extraction
 
 ```bash
-# Extract JSON-LD from a page
 curl -sL "https://example.com" \
   | grep -oE '<script type="application/ld\+json">[^<]+</script>' \
   | sed 's/<[^>]*>//g' \
   | jq . 2>/dev/null || echo "No valid JSON-LD found"
 ```
-
-## Manual Testing
-
-1. Open [Rich Results Test](https://search.google.com/test/rich-results)
-2. Enter URL or paste code snippet, select user agent (Smartphone/Desktop)
-3. Click "Test URL" / "Test Code", review errors and rich snippet preview
-
-## Common Rich Result Types
-
-Full list: [Google's structured data gallery](https://developers.google.com/search/docs/appearance/structured-data/search-gallery).
-
-| Type | Schema | Common Use |
-|------|--------|------------|
-| Article | `Article`, `NewsArticle` | Blog posts, news |
-| Product | `Product` | E-commerce listings |
-| FAQ | `FAQPage` | Question/answer pages |
-| HowTo | `HowTo` | Step-by-step guides |
-| Recipe | `Recipe` | Cooking instructions |
-| Review | `Review` | Product/service reviews |
-| Event | `Event` | Upcoming events |
-| LocalBusiness | `LocalBusiness` | Business listings |
-| BreadcrumbList | `BreadcrumbList` | Navigation breadcrumbs |
-| VideoObject | `VideoObject` | Video content |
-| JobPosting | `JobPosting` | Job listings |
-| Course | `Course` | Educational content |
 
 <!-- AI-CONTEXT-END -->
 
