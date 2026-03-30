@@ -1,10 +1,10 @@
 # Cloudflare Pipelines
 
-ETL streaming: ingest events → SQL transforms → R2 as Apache Iceberg or Parquet/JSON.
+ETL streaming: ingest events → SQL transforms → R2 (Iceberg or Parquet/JSON).
 
-**Components:** Streams (durable buffered queues) → Pipelines (SQL transforms, immutable — delete/recreate to modify) → Sinks (R2 Data Catalog with Iceberg/ACID, or R2 Storage as Parquet/JSON; exactly-once delivery).
+**Components:** Streams (durable queues) → Pipelines (SQL transforms, immutable) → Sinks (R2 Data Catalog/Iceberg or R2 Storage/Parquet/JSON, exactly-once).
 
-**Status:** Open beta, Workers Paid plan required, no charge beyond R2 storage/operations.
+**Status:** Open beta, Workers Paid plan, no charge beyond R2 storage/operations.
 
 ## Limits (Open Beta)
 
@@ -24,7 +24,7 @@ Request increases: [Limit Increase Form](https://forms.gle/ukpeZVLWLnKeixDu7)
 | R2 Storage | Object Read & Write | R2 storage sink |
 | HTTP Ingest | Workers Pipeline Send | Authenticated HTTP ingestion |
 
-Create catalog token: R2 > Manage API tokens > Create Account API Token > Admin Read & Write.
+Create catalog token: R2 > Manage API tokens > Create Account API Token > Admin Read & Write
 
 ## Setup
 
@@ -40,7 +40,7 @@ npx wrangler pipelines create my-pipeline \
   --sql "INSERT INTO my_sink SELECT * FROM my_stream"
 ```
 
-**Schema (structured streams):** Define fields in JSON with `name`, `type`, `required`, and optional `items` (for `list`) or `fields` (for `struct`).
+**Schema (structured streams):** JSON with `name`, `type`, `required`, optional `items` (list) or `fields` (struct).
 
 ```json
 {
@@ -55,11 +55,11 @@ npx wrangler pipelines create my-pipeline \
 }
 ```
 
-**Types:** `string`, `int32`, `int64`, `float32`, `float64`, `bool`, `timestamp`, `json`, `binary`, `list`, `struct`. Unstructured streams (no validation, single `value` column): omit `--schema-file`.
+**Types:** `string`, `int32`, `int64`, `float32`, `float64`, `bool`, `timestamp`, `json`, `binary`, `list`, `struct`. Unstructured (no validation): omit `--schema-file`.
 
 ## Writing Data
 
-**Worker Binding (recommended):** `wrangler.toml`: `[[pipelines]]` with `pipeline = "<STREAM_ID>"`, `binding = "STREAM"`. Or `wrangler.jsonc`: `{ "pipelines": [{ "pipeline": "<STREAM_ID>", "binding": "STREAM" }] }`.
+**Worker Binding (recommended):** `wrangler.toml`: `[[pipelines]]` with `pipeline = "<STREAM_ID>"`, `binding = "STREAM"`.
 
 ```typescript
 export default {
@@ -77,7 +77,7 @@ export default {
 curl -X POST https://{stream-id}.ingest.cloudflare.com \
   -H "Content-Type: application/json" \
   -d '[{"user_id": "user_12345", "event_type": "purchase", "amount": 29.99}]'
-# Production: add -H "Authorization: Bearer YOUR_API_TOKEN" (requires "Workers Pipeline Send" permission)
+# Production: add -H "Authorization: Bearer YOUR_API_TOKEN"
 ```
 
 ## SQL Transformations
@@ -101,9 +101,9 @@ npx wrangler pipelines sinks create my-sink \
   --compression zstd --roll-interval 60 --roll-size 100
 ```
 
-**Compression:** `zstd` (default), `snappy`, `gzip`, `lz4`, `uncompressed`. **Roll:** `--roll-interval` seconds between writes (default 300), `--roll-size` max MB.
+**Compression:** `zstd` (default), `snappy`, `gzip`, `lz4`, `uncompressed`. **Roll:** `--roll-interval` seconds (default 300), `--roll-size` MB.
 
-Query: `npx wrangler r2 sql query "warehouse_name" "SELECT user_id, COUNT(*) FROM default.my_table GROUP BY user_id LIMIT 100"` (set `WRANGLER_R2_SQL_AUTH_TOKEN`).
+Query: `npx wrangler r2 sql query "warehouse_name" "SELECT ..."` (set `WRANGLER_R2_SQL_AUTH_TOKEN`).
 
 **R2 Storage (Raw Parquet/JSON):**
 
@@ -119,7 +119,7 @@ Output path: `bucket/analytics/events/year=2025/month=01/day=11/uuid.parquet`
 
 ## Wrangler Commands
 
-All subcommands support `[list|get <ID>|delete <ID>]`. Deleting a stream also deletes dependent pipelines and buffered events.
+All subcommands support `[list|get <ID>|delete <ID>]`. Deleting a stream deletes dependent pipelines and buffered events.
 
 ```bash
 npx wrangler pipelines setup [list|get <ID>|delete <ID>]
@@ -130,18 +130,18 @@ npx wrangler pipelines sinks create my-sink --type r2-data-catalog --bucket B --
 
 ## Best Practices
 
-- **Schema:** Structured streams with `required: true` on critical fields. Native `timestamp` for temporal columns; `int64` only for epoch representations. `float64` for decimals. Recreate to change schemas. Avoid deep nesting.
-- **Performance:** Low latency: `--roll-interval 10`. Query perf: `--roll-interval 300 --roll-size 100`. `zstd` for ratio, `snappy` for speed. Filter early with `WHERE`.
+- **Schema:** `required: true` on critical fields. `timestamp` for temporal, `int64` for epoch, `float64` for decimals. Recreate to change. Avoid deep nesting.
+- **Performance:** Low latency: `--roll-interval 10`. Query perf: `--roll-interval 300 --roll-size 100`. `zstd` for ratio, `snappy` for speed. Filter early.
 - **Workers:** Bindings (no token management). Batch: `send([e1, e2, ...])`. `ctx.waitUntil()` for fire-and-forget.
-- **HTTP:** Auth in production. CORS for browsers. Arrays for batch efficiency. Retry on 4xx/5xx.
+- **HTTP:** Auth in production. CORS for browsers. Batch arrays. Retry on 4xx/5xx.
 
 ## Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
-| Events not in R2 | Wait 10-300s (depends on `--roll-interval`); check pipeline status; verify sink credentials |
-| Schema validation failures | Events accepted but dropped if invalid; verify required fields and types match schema |
-| Worker binding not found | Verify config has correct `pipeline` ID; redeploy Worker |
-| SQL errors | Recreate pipeline (immutable); verify stream/sink names in SQL |
+| Events not in R2 | Wait 10-300s; check pipeline status; verify sink credentials |
+| Schema validation failures | Verify required fields and types match schema |
+| Worker binding not found | Verify config `pipeline` ID; redeploy |
+| SQL errors | Recreate pipeline; verify stream/sink names |
 
 **Resources:** [Pipelines Docs](https://developers.cloudflare.com/pipelines/) · [SQL Reference](https://developers.cloudflare.com/pipelines/sql-reference/) · [R2 Data Catalog](https://developers.cloudflare.com/r2/data-catalog/) · [Wrangler Commands](https://developers.cloudflare.com/workers/wrangler/commands/#pipelines) · [Apache Iceberg](https://iceberg.apache.org/)
