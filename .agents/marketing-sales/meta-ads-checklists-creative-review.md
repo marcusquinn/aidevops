@@ -1,10 +1,8 @@
 # Creative Review Checklist
 
-> Use this before launching any creative and when analyzing performance.
+> Use before launching any creative and when analysing performance.
 
----
-
-## Pre-Launch QA Checklist
+## Pre-Launch QA
 
 ### Technical Requirements
 
@@ -31,83 +29,75 @@
 - [ ] Each card adds value
 - [ ] Final card has CTA
 
----
-
 ### Content Quality
 
 **Hook (First 3 Seconds/Line):**
-- [ ] Stops the scroll?
-- [ ] Creates curiosity or addresses pain?
-- [ ] Works without sound (if video)?
-- [ ] Clear who this is for?
+- [ ] Stops the scroll
+- [ ] Creates curiosity or addresses pain
+- [ ] Works without sound (if video)
+- [ ] Clear who this is for
 
-**Body Content:**
-- [ ] Value proposition clear?
-- [ ] Benefits over features?
-- [ ] Social proof included?
-- [ ] Message easy to understand?
-- [ ] No confusing jargon?
+**Body:**
+- [ ] Value proposition clear
+- [ ] Benefits over features
+- [ ] Social proof included
+- [ ] Message easy to understand
+- [ ] No confusing jargon
 
 **Call to Action:**
-- [ ] CTA is clear and specific?
-- [ ] Action matches objective?
-- [ ] No friction in the ask?
-
----
+- [ ] CTA clear and specific
+- [ ] Action matches objective
+- [ ] No friction in the ask
 
 ### Brand & Compliance
 
 **Brand Standards:**
-- [ ] Logo used correctly (if applicable)?
-- [ ] Brand colors accurate?
-- [ ] Tone matches brand voice?
-- [ ] Consistent with other creative?
+- [ ] Logo used correctly (if applicable)
+- [ ] Brand colours accurate
+- [ ] Tone matches brand voice
+- [ ] Consistent with other creative
 
 **Policy Compliance:**
-- [ ] No prohibited content?
-- [ ] No personal attributes claims?
-- [ ] No misleading claims?
-- [ ] Testimonials are real?
-- [ ] Proper disclosures if needed?
-
----
+- [ ] No prohibited content
+- [ ] No personal attributes claims
+- [ ] No misleading claims
+- [ ] Testimonials are real
+- [ ] Proper disclosures if needed
 
 ### Copy Review
 
 **Primary Text:**
-- [ ] Hook in first sentence?
-- [ ] Scannable format (bullets, emojis)?
-- [ ] Spelling/grammar checked?
-- [ ] CTA included?
-- [ ] Not too long for mobile?
+- [ ] Hook in first sentence
+- [ ] Scannable format (bullets, emojis)
+- [ ] Spelling/grammar checked
+- [ ] CTA included
+- [ ] Not too long for mobile
 
 **Headline:**
-- [ ] Under 40 characters (ideal)?
-- [ ] Benefit or offer clear?
-- [ ] Matches primary text?
+- [ ] Under 40 characters (ideal)
+- [ ] Benefit or offer clear
+- [ ] Matches primary text
 
 **Description:**
-- [ ] Supports headline?
-- [ ] Additional info or CTA?
-
----
+- [ ] Supports headline
+- [ ] Additional info or CTA
 
 ### Mobile Test
 
-**The Phone Test:**
-- [ ] Watched on actual phone screen?
-- [ ] Text readable at a glance?
-- [ ] Hook works in feed context?
-- [ ] Would YOU stop scrolling?
-- [ ] Shown to non-marketer for gut check?
+- [ ] Watched on actual phone screen
+- [ ] Text readable at a glance
+- [ ] Hook works in feed context
+- [ ] Would YOU stop scrolling
+- [ ] Shown to non-marketer for gut check
 
 ---
 
-## Performance Analysis Checklist
+## Performance Analysis
 
-### When Reviewing Live Creative
+### Live Creative Review
 
-**For Each Ad:**
+**Per-Ad Metrics:**
+
 | Metric | Value | vs Benchmark | Status |
 |--------|-------|--------------|--------|
 | Impressions | | | |
@@ -117,11 +107,11 @@
 | CPA | | ≤Target? | |
 | Frequency | | <3? | |
 
-**Questions to Ask:**
-- [ ] Is this creative scaling or plateauing?
-- [ ] Signs of fatigue (declining CTR, rising frequency)?
+**Diagnostic Questions:**
+- [ ] Scaling or plateauing?
+- [ ] Fatigue signs (declining CTR, rising frequency)?
 - [ ] What's working that we can iterate on?
-- [ ] What's not working that we should avoid?
+- [ ] What's not working to avoid?
 
 ---
 
@@ -139,29 +129,21 @@ Rate each element 1-5:
 | Brand Consistency | /5 | |
 | **Total** | /30 | |
 
-**Score Guide:**
-- 25-30: Ready to launch
-- 20-24: Minor improvements needed
-- 15-19: Significant revision needed
-- <15: Back to drawing board
+**Score Guide:** 25-30 launch-ready | 20-24 minor fixes | 15-19 significant revision | <15 back to drawing board
 
 ---
 
-## Post-Mortem Questions
+## Post-Mortem
 
-### For Winning Creative
-- What hook did we use?
-- What emotion did we trigger?
-- What format worked?
-- What proof was included?
-- How can we iterate on this?
+**Winning Creative:**
+- [ ] What hook was used?
+- [ ] What emotion was triggered?
+- [ ] What format worked?
+- [ ] What proof was included?
+- [ ] How can we iterate?
 
-### For Losing Creative
-- Where did people drop off?
-- Was the hook strong enough?
-- Did the message match the audience?
-- What would we do differently?
-
----
-
-*Use this checklist before every creative launch and during weekly reviews.*
+**Losing Creative:**
+- [ ] Where did people drop off?
+- [ ] Was the hook strong enough?
+- [ ] Did the message match the audience?
+- [ ] What would we do differently?
