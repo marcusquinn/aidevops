@@ -1,6 +1,6 @@
 ## Video Ad Hooks: The Critical First 3 Seconds
 
-Users scroll 400+ posts/hour. Hook decision in <1 second. Every hook needs: visual pattern interrupt, immediate relevance, curiosity gap, emotional trigger, clear value promise. **Target:** 3-second view rate >50%.
+Hook decision in <1 second. Every hook needs: visual pattern interrupt, immediate relevance, curiosity gap, emotional trigger, clear value promise. **Target:** 3-second view rate >50%.
 
 ### Question Hooks (1-20)
 
@@ -89,20 +89,13 @@ Users scroll 400+ posts/hour. Hook decision in <1 second. Every hook needs: visu
 
 ### Hook Testing
 
-**Variables:** Hook type (question/statement/visual), specificity, emotion (fear/desire/curiosity), length (1s vs 3s), visual (with/without person). **Winners:** Immediately signals relevance, creates open loop, stands out visually, speaks to avatar, promises specific value.
+**Test variables:** Hook type (question/statement/visual), specificity, emotion (fear/desire/curiosity), length (1s vs 3s), visual (with/without person).
 
 ---
 
 ## UGC-Style Ad Creation
 
-Content that looks customer-created — smartphone-shot, casual setting, authentic delivery. Works because: native to platform, higher trust, lower cost, better engagement, algorithm-favored.
-
-| Traditional | UGC-Style |
-|-------------|-----------|
-| Professional/studio | Smartphone/casual |
-| Scripted, polished | Conversational, natural |
-| Product-focused | Person-focused with product |
-| High cost, slow iteration | Low cost, fast testing |
+Smartphone-shot, casual, authentic — native to platform, higher trust, lower cost, faster iteration than studio production.
 
 ### Creation Process
 
