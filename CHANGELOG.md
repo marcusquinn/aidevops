@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.461] - 2026-03-30
+
+### Fixed
+
+- guard legacy overwrite helper usage (#14236)
+
 ## [3.5.460] - 2026-03-30
 
 ### Changed
