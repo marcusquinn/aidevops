@@ -1693,6 +1693,9 @@ cmd_rotate() {
 		;;
 	esac
 
+	# Auto-clear expired cooldowns so rotate sees all available accounts
+	auto_clear_expired_cooldowns
+
 	local pool
 	pool=$(load_pool)
 
