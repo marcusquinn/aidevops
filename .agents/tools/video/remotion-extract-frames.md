@@ -90,6 +90,8 @@ await extractFrames({
 
 ## Filmstrip (dynamic timestamps via callback)
 
+Pass a callback to `timestampsInSeconds` to compute timestamps from video metadata:
+
 ```tsx
 const canvasWidth = 500;
 const canvasHeight = 80;
@@ -98,7 +100,7 @@ const toSeconds = 10;
 
 await extractFrames({
   src: "https://remotion.media/video.mp4",
-  timestampsInSeconds: async ({ track, durationInSeconds }) => {
+  timestampsInSeconds: async ({ track }) => {
     const aspectRatio = track.width / track.height;
     const amountOfFramesFit = Math.ceil(canvasWidth / (canvasHeight * aspectRatio));
     const segmentDuration = toSeconds - fromSeconds;
@@ -109,43 +111,15 @@ await extractFrames({
     return timestamps;
   },
   onVideoSample: (sample) => {
-    console.log(`Frame at ${sample.timestamp}s`);
-    const canvas = document.createElement("canvas");
-    canvas.width = sample.displayWidth;
-    canvas.height = sample.displayHeight;
-    const ctx = canvas.getContext("2d");
-    sample.draw(ctx!, 0, 0);
+    // Render to canvas (see Basic usage above)
+    sample.draw(document.createElement("canvas").getContext("2d")!, 0, 0);
   },
 });
 ```
 
-## Cancellation with AbortSignal
+## Cancellation and timeout
 
-```tsx
-const controller = new AbortController();
-setTimeout(() => controller.abort(), 5000);
-
-try {
-  await extractFrames({
-    src: "https://remotion.media/video.mp4",
-    timestampsInSeconds: [0, 1, 2, 3, 4],
-    onVideoSample: (sample) => {
-      using frame = sample;
-      const canvas = document.createElement("canvas");
-      canvas.width = frame.displayWidth;
-      canvas.height = frame.displayHeight;
-      const ctx = canvas.getContext("2d");
-      frame.draw(ctx!, 0, 0);
-    },
-    signal: controller.signal,
-  });
-  console.log("Frame extraction complete!");
-} catch (error) {
-  console.error("Frame extraction was aborted or failed:", error);
-}
-```
-
-## Timeout with Promise.race
+Pass `signal` for cancellation. For simple timeout: `setTimeout(() => controller.abort(), ms)`. For racing with a cleanup-safe timeout:
 
 ```tsx
 const controller = new AbortController();
@@ -164,18 +138,12 @@ try {
       src: "https://remotion.media/video.mp4",
       timestampsInSeconds: [0, 1, 2, 3, 4],
       onVideoSample: (sample) => {
-        using frame = sample;
-        const canvas = document.createElement("canvas");
-        canvas.width = frame.displayWidth;
-        canvas.height = frame.displayHeight;
-        const ctx = canvas.getContext("2d");
-        frame.draw(ctx!, 0, 0);
+        sample.draw(document.createElement("canvas").getContext("2d")!, 0, 0);
       },
       signal: controller.signal,
     }),
     timeoutPromise,
   ]);
-  console.log("Frame extraction complete!");
 } catch (error) {
   console.error("Frame extraction was aborted or failed:", error);
 }
