@@ -18,19 +18,47 @@ tools:
 
 - **Primary access**: MCP tools (`gsc_*`) — enabled for SEO agent
 - **Fallback**: curl with OAuth2 token from service account
-- **API**: REST at `https://searchconsole.googleapis.com/v1/`
-- **Auth**: Service account JSON at `~/.config/aidevops/gsc-credentials.json`
-- **Capabilities**: Search analytics, URL inspection, indexing requests, sitemap management
+- **API**: `https://searchconsole.googleapis.com/v1/`
+- **Auth**: `~/.config/aidevops/gsc-credentials.json` (service account JSON, `chmod 600`)
 - **Metrics**: clicks, impressions, ctr, position
 - **Dimensions**: query, page, country, device, searchAppearance
 
 ## Setup
 
-1. Google Cloud Console → enable **Google Search Console API** → Credentials → Service Account → JSON key → save to `~/.config/aidevops/gsc-credentials.json` and `chmod 600` it
-2. GSC → Property → Settings → Users and permissions → Add user (service account email). For bulk-add across all properties, use the Playwright script below.
+1. Google Cloud Console → enable **Google Search Console API** → Credentials → Service Account → JSON key → save to `~/.config/aidevops/gsc-credentials.json` (`chmod 600`)
+2. GSC → Property → Settings → Users and permissions → Add service account email. For bulk-add, use the Playwright script below.
 3. Verify: `python3 -c "import json; d=json.load(open('$HOME/.config/aidevops/gsc-credentials.json')); print(d['client_email'])"`
 
-## Direct API Access (curl fallback)
+## MCP Tool Reference (`gsc_*`)
+
+| Tool | Purpose | Key params |
+|------|---------|------------|
+| `gsc_list_sites` | List all verified properties | — |
+| `gsc_search_analytics` | Query search performance | `siteUrl`, `startDate`, `endDate`, `dimensions[]`, `rowLimit` |
+| `gsc_url_inspection` | Inspect URL indexing status | `inspectionUrl`, `siteUrl` |
+| `gsc_submit_sitemap` | Submit sitemap | `siteUrl`, `feedpath` |
+| `gsc_delete_sitemap` | Remove sitemap | `siteUrl`, `feedpath` |
+| `gsc_list_sitemaps` | List submitted sitemaps | `siteUrl` |
+
+**Common patterns**: top queries (`dimensions: ["query"]`, `orderBy: impressions`), page performance (`dimensions: ["page"]`, `orderBy: clicks`), CTR opportunities (filter `impressions > 100` and `ctr < 0.05`), device/geo breakdown.
+
+## MCP Configuration
+
+> `@anthropic/google-search-console-mcp` is internal/unreleased. If unavailable via npm, use the curl fallback or check with your aidevops maintainer.
+
+```json
+{
+  "mcpServers": {
+    "google-search-console": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/google-search-console-mcp"],
+      "env": { "GOOGLE_APPLICATION_CREDENTIALS": "~/.config/aidevops/gsc-credentials.json" }
+    }
+  }
+}
+```
+
+## curl Fallback
 
 **Requirements**: `pip install PyJWT requests`
 
@@ -49,40 +77,20 @@ print(r.json()['access_token'])
 # List sites
 curl -s "https://searchconsole.googleapis.com/v1/sites" -H "Authorization: Bearer $ACCESS_TOKEN"
 
-# Search analytics query
+# Search analytics
 curl -s -X POST "https://searchconsole.googleapis.com/v1/sites/https%3A%2F%2Fexample.com/searchAnalytics/query" \
   -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
   -d '{"startDate": "2025-01-01", "endDate": "2025-01-20", "dimensions": ["query", "page"], "rowLimit": 25}'
 
-# Inspect URL indexing status (to submit for indexing use indexing.googleapis.com/v3/urlNotifications:publish)
+# Inspect URL (submit for indexing: indexing.googleapis.com/v3/urlNotifications:publish)
 curl -s -X POST "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect" \
   -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
   -d '{"inspectionUrl": "https://example.com/page", "siteUrl": "https://example.com"}'
 ```
 
-<!-- AI-CONTEXT-END -->
+## Bulk Property Setup (Playwright)
 
-## MCP Tool Reference (`gsc_*`)
-
-| Tool | Purpose | Key params |
-|------|---------|------------|
-| `gsc_list_sites` | List all verified properties | — |
-| `gsc_search_analytics` | Query search performance | `siteUrl`, `startDate`, `endDate`, `dimensions[]`, `rowLimit` |
-| `gsc_url_inspection` | Inspect URL indexing status | `inspectionUrl`, `siteUrl` |
-| `gsc_submit_sitemap` | Submit sitemap | `siteUrl`, `feedpath` |
-| `gsc_delete_sitemap` | Remove sitemap | `siteUrl`, `feedpath` |
-| `gsc_list_sitemaps` | List submitted sitemaps | `siteUrl` |
-
-**Common analysis patterns**:
-- Top queries by impressions: `dimensions: ["query"]`, `orderBy: impressions`
-- Page performance: `dimensions: ["page"]`, `orderBy: clicks`
-- Device breakdown: `dimensions: ["device"]`
-- Geographic: `dimensions: ["country"]`
-- CTR opportunities: filter `impressions > 100` and `ctr < 0.05`
-
-## Bulk Setup with Playwright
-
-Save as `gsc-add-service-account.js`, run with `node gsc-add-service-account.js`. Requires `npm install playwright`, Chrome logged into Google, Owner access to GSC properties.
+Save as `gsc-add-service-account.js`, run with `node gsc-add-service-account.js`. Requires `npm install playwright`, Chrome logged into Google, Owner access.
 
 ```javascript
 import { chromium } from 'playwright';
@@ -121,26 +129,8 @@ main().catch(console.error);
 
 ## Troubleshooting
 
-**Empty results `{}`**: Service account not added to any GSC properties — use the Playwright script above.
+- **Empty results `{}`**: Service account not added to any GSC properties — use the Playwright script above.
+- **"No access to property"**: Service account must be added as Full or Owner user; domain must be verified in GSC.
+- **Connection issues**: `ls -la ~/.config/aidevops/gsc-credentials.json` · `opencode mcp list`
 
-**"No access to property"**: Service account email must be added as a user (Full or Owner permission). Domain must be verified in GSC first.
-
-**Connection issues**: `ls -la ~/.config/aidevops/gsc-credentials.json` · `opencode mcp list`
-
-## MCP Configuration
-
-> **Note**: `@anthropic/google-search-console-mcp` is an internal/unreleased package. If unavailable via npm, use the curl fallback above or check with your aidevops maintainer for the current install path.
-
-```json
-{
-  "mcpServers": {
-    "google-search-console": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/google-search-console-mcp"],
-      "env": {
-        "GOOGLE_APPLICATION_CREDENTIALS": "~/.config/aidevops/gsc-credentials.json"
-      }
-    }
-  }
-}
-```
+<!-- AI-CONTEXT-END -->
