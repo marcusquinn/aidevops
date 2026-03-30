@@ -14,8 +14,6 @@ tools:
 
 # Error Checking and Feedback Loops
 
-Processes for error checking, debugging, and feedback loops for autonomous CI/CD operation.
-
 ## GitHub Actions Workflow Monitoring
 
 ```bash
@@ -23,11 +21,6 @@ gh run list --limit 10                          # recent runs
 gh run list --status failure --limit 5          # failed runs only
 gh run view {run_id} --log-failed               # failure logs
 gh run watch {run_id}                           # watch live
-```
-
-Via API:
-
-```bash
 gh api repos/{owner}/{repo}/actions/runs --jq '.workflow_runs[:5] | .[] | "\(.name): \(.conclusion // .status)"'
 gh api repos/{owner}/{repo}/actions/runs/{run_id}/jobs
 ```
@@ -76,12 +69,8 @@ bash ~/Git/aidevops/.agents/scripts/linters-local.sh   # universal quality check
 shellcheck script.sh                                    # bash scripts
 npx eslint . --format json                              # JavaScript
 pylint module/ --output-format=json                     # Python
-```
 
-**Auto-fix:**
-
-```bash
-bash ~/Git/aidevops/.agents/scripts/qlty-cli.sh fmt --all
+bash ~/Git/aidevops/.agents/scripts/qlty-cli.sh fmt --all  # auto-fix all
 npx eslint . --fix
 composer phpcbf
 ```
@@ -102,21 +91,12 @@ gh api repos/{owner}/{repo}/commits/$(git rev-parse HEAD)/check-runs \
 # Line-level annotations from a check run
 gh api repos/{owner}/{repo}/check-runs/{check_run_id}/annotations \
   --jq '.[] | {path: .path, line: .start_line, level: .annotation_level, message: .message}'
-```
 
-**Quick status script:**
-
-```bash
-#!/bin/bash
+# Quick status summary
 REPO="${GITHUB_REPOSITORY:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
-COMMIT=$(git rev-parse HEAD)
-gh api "repos/$REPO/commits/$COMMIT/check-runs" \
+gh api "repos/$REPO/commits/$(git rev-parse HEAD)/check-runs" \
   --jq '.check_runs[] | "\(.conclusion // .status | ascii_upcase)\t\(.name)"' | sort
-```
 
-**Tool-specific:**
-
-```bash
 # Codacy
 gh api repos/{owner}/{repo}/commits/{sha}/check-runs \
   --jq '.check_runs[] | select(.app.slug == "codacy-production") | {conclusion: .conclusion, summary: .output.summary}'
@@ -139,18 +119,11 @@ gh api repos/{owner}/{repo}/commits/{sha}/check-runs \
 ## Automated Error Resolution
 
 ```bash
-# 1. Get failed workflow
-gh run list --status failure --limit 1
-# 2. Get failure details
-gh run view {run_id} --log-failed
-# 3. Apply fix, then push and monitor
+gh run list --status failure --limit 1          # get failed workflow
+gh run view {run_id} --log-failed               # get failure details
 git add . && git commit -m "fix: CI error description"
-git push origin {branch} && gh run watch
-```
+git push origin {branch} && gh run watch        # push fix and monitor
 
-### Common Fix Patterns
-
-```bash
 # Dependency issues
 npm ci && npm test
 composer install
@@ -173,7 +146,7 @@ npm run lint:fix
 | Deployment approvals | Deployment plan |
 | Ambiguous requirements | Questions and assumptions |
 
-**Effective consultation format:** Issue summary → context (goal + what happened) → error details → attempted solutions with results → specific questions → recommendations with pros/cons.
+Format: issue summary → context (goal + what happened) → error details → attempted solutions → specific questions → recommendations with pros/cons.
 
 ## Contributing Fixes Upstream
 
