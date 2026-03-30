@@ -17,8 +17,15 @@ All must hold for an asset to enter Cache Reserve:
 
 **Diagnostics:**
 
-- Check `cf-cache-status` header: `curl -I https://example.com/asset.jpg`
-- Verify eligibility requirements above
+```bash
+# Check Cache Reserve status and asset eligibility
+curl -I https://example.com/asset.jpg | grep -i cache
+curl -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/cache/cache_reserve" \
+  -H "Authorization: Bearer $API_TOKEN" | jq
+```
+
+**Verify eligibility** — see Eligibility Requirements above. Common failures:
+- `cf-cache-status: MISS` — check TTL (must be ≥36000s), `Content-Length` header, and blocking headers
 - Review Cloudflare Trace output and Logpush `CacheReserveUsed` field
 
 **Fixes:**
@@ -44,13 +51,10 @@ response.headers.set('Vary', 'Accept-Encoding'); // Not *
 
 ## High Class A Operations Costs
 
-**Cause**: Frequent cache misses, short TTLs, or frequent revalidation.
+Frequent cache misses, short TTLs, or frequent revalidation trigger Class A charges. Increase TTL for stable content and enable Tiered Cache to reduce direct Cache Reserve misses:
 
 ```typescript
-// Increase TTL for stable content
 response.headers.set('Cache-Control', 'public, max-age=86400, stale-while-revalidate=86400');
-
-// Enable Tiered Cache — reduces direct Cache Reserve misses
 ```
 
 ## Purge Behaviour
@@ -60,7 +64,7 @@ response.headers.set('Cache-Control', 'public, max-age=86400, stale-while-revali
 | By URL | Immediately removed | Immediately removed | Free |
 | By Tag | Revalidation triggered (NOT removed) | Immediately removed | Storage costs continue until TTL |
 
-Use purge by URL for immediate removal. For complete removal, disable + clear:
+For immediate removal, use purge by URL. For complete removal, disable + clear:
 
 ```typescript
 await purgeByURL(['https://example.com/asset.jpg']);
@@ -91,22 +95,6 @@ const clearProcess = async (zoneId: string, token: string) => {
   } while (clearStatus.result.state === 'In-progress');
 };
 ```
-
-## Troubleshooting
-
-```bash
-# Check Cache Reserve status
-curl -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/cache/cache_reserve" \
-  -H "Authorization: Bearer $API_TOKEN" | jq
-
-# Check asset cache status
-curl -I https://example.com/asset.jpg | grep -i cache
-```
-
-**Header indicators:**
-
-- Eligible: `cf-cache-status: HIT`, `max-age >= 36000`, `content-length` present
-- Not eligible: fails any requirement in Eligibility Requirements above
 
 ## Limits
 
