@@ -33,21 +33,21 @@ tools:
 | NVIDIA Magpie TTS | ~200ms | Great | Yes (zero-shot) | 17+ | NIM API (free tier) |
 | Google Cloud TTS | ~200ms | Good | No (custom) | 50+ | $4-16/1M chars |
 
-**Pick**: ElevenLabs for quality/cloning, Cartesia Sonic 3 for lowest latency, NVIDIA Magpie for enterprise/self-hosted, Google for language breadth.
+Pick: ElevenLabs → quality/cloning. Cartesia → lowest latency. NVIDIA Magpie → enterprise/self-hosted. Google → language breadth.
 
 ### Local
 
-| Model | Params | License | Languages | Voice Clone | GPU VRAM |
-|-------|--------|---------|-----------|-------------|----------|
+| Model | Params | License | Languages | Voice Clone | VRAM |
+|-------|--------|---------|-----------|-------------|------|
 | Qwen3-TTS 0.6B | 0.6B | Apache-2.0 | 10 | Yes (5s ref) | 2GB |
 | Qwen3-TTS 1.7B | 1.7B | Apache-2.0 | 10 | Yes (5s ref) | 4GB |
 | Bark (Suno) | 1.0B | MIT | 13+ | Yes (prompt) | 6GB (stale) |
 | Coqui TTS | varies | MPL-2.0 | 20+ | Yes | 2-6GB |
 | Piper | <100M | MIT | 30+ | No | CPU only |
 
-**Pick**: Qwen3-TTS for quality + cloning, Piper for CPU-only/embedded, Bark for expressiveness (laughter, music).
+Pick: Qwen3-TTS → quality + cloning. Piper → CPU-only/embedded. Bark → expressiveness (laughter, music).
 
-Also in voice bridge: **EdgeTTS** (free, 300+ voices), **macOS Say** (zero deps), **FacebookMMS** (1100+ languages). See `voice-models.md`.
+Also available: EdgeTTS (free, 300+ voices), macOS Say (zero deps), FacebookMMS (1100+ languages). See `voice-models.md`.
 
 ## STT (Speech-to-Text)
 
@@ -61,12 +61,12 @@ Also in voice bridge: **EdgeTTS** (free, 300+ voices), **macOS Say** (zero deps)
 | Deepgram | Nova-2 / Nova-3 | 9.5-9.6 | Yes | Per minute |
 | Soniox | stt-async-v3 | 9.6 | Yes | Per minute |
 
-**Pick**: Groq for free/fast batch, ElevenLabs Scribe for accuracy, NVIDIA Parakeet for enterprise/self-hosted, Deepgram for real-time streaming.
+Pick: Groq → free/fast batch. ElevenLabs Scribe → accuracy. NVIDIA Parakeet → enterprise/self-hosted. Deepgram → real-time streaming.
 
 ### Local
 
-| Model | Size | Accuracy | Speed | GPU VRAM |
-|-------|------|----------|-------|----------|
+| Model | Size | Accuracy | Speed | VRAM |
+|-------|------|----------|-------|------|
 | Whisper Tiny | 75MB | 6.0 | Fastest | 1GB |
 | Whisper Base | 142MB | 7.3 | Fast | 1GB |
 | Whisper Small | 461MB | 8.5 | Medium | 2GB |
@@ -76,7 +76,7 @@ Also in voice bridge: **EdgeTTS** (free, 300+ voices), **macOS Say** (zero deps)
 | NVIDIA Parakeet V3 | 0.6B | 9.6 | Fastest | 2GB |
 | Apple Speech | Built-in | 9.0 | Fast | On-device |
 
-**Pick**: Large v3 Turbo as default (best balance), Parakeet V3 for multilingual speed (25 languages), Parakeet V2 for English-only, Apple Speech for zero-setup macOS 26+.
+Pick: Large v3 Turbo → best balance. Parakeet V3 → multilingual speed (25 langs). Parakeet V2 → English-only. Apple Speech → zero-setup macOS 26+.
 
 Backends: `faster-whisper` (4x speed, recommended), `whisper.cpp` (C++ native, Apple Silicon optimized). See `transcription.md`.
 
@@ -86,9 +86,9 @@ Backends: `faster-whisper` (4x speed, recommended), `whisper.cpp` (C++ native, A
 
 | Model | Type | Latency | Availability | Notes |
 |-------|------|---------|--------------|-------|
-| GPT-4o Realtime | Cloud API | ~300ms | OpenAI API (GA) | Voice mode, emotion-aware, function calling, SIP telephony |
+| GPT-4o Realtime | Cloud API | ~300ms | OpenAI API (GA) | Emotion-aware, function calling, SIP telephony |
 | Gemini 2.0 Live | Cloud API | ~350ms | Google API | Multimodal, streaming |
-| MiniCPM-o 2.6 | Open weights | ~500ms | Local (8GB+) | 8B params, Apache-2.0, vision+speech+streaming |
+| MiniCPM-o 2.6 | Open weights | ~500ms | Local (8GB+) | 8B, Apache-2.0, vision+speech+streaming |
 | AWS Nova Sonic | Cloud API | ~600ms | AWS API | AWS ecosystem, 7 languages |
 | Ultravox | Open weights | ~400ms | Local (6GB+) | Audio-text multimodal |
 
@@ -106,32 +106,32 @@ Backends: `faster-whisper` (4x speed, recommended), `whisper.cpp` (C++ native, A
 
 Compose as: `Audio -> [Parakeet ASR] -> [Any LLM] -> [Magpie TTS] -> Audio`. See `cloud-voice-agents.md`.
 
-**Pick**: GPT-4o Realtime for production cloud (lowest latency, GA), MiniCPM-o 2.6 for self-hosted/private (Apache-2.0, multimodal), NVIDIA Riva for enterprise on-prem (composable, 25+ languages). Cascaded S2S (VAD+STT+LLM+TTS): see `speech-to-speech.md`.
+Pick: GPT-4o Realtime → production cloud (lowest latency, GA). MiniCPM-o 2.6 → self-hosted/private (Apache-2.0, multimodal). NVIDIA Riva → enterprise on-prem (composable, 25+ languages). Cascaded S2S (VAD+STT+LLM+TTS): see `speech-to-speech.md`.
 
 ## Selection by Priority
 
 | Priority | TTS | STT | S2S |
 |----------|-----|-----|-----|
-| **Quality** | ElevenLabs / Qwen3-TTS 1.7B | ElevenLabs Scribe / Large v3 | GPT-4o Realtime |
-| **Speed** | Cartesia Sonic 3 / EdgeTTS | Groq / Parakeet V3 | GPT-4o Realtime / Cascaded |
-| **Cost** | EdgeTTS (free) / Piper | Local Whisper ($0) / Groq free | MiniCPM-o 2.6 (local) |
-| **Privacy** | Piper / Qwen3-TTS | faster-whisper / whisper.cpp | MiniCPM-o 2.6 |
-| **Enterprise** | NVIDIA Magpie / ElevenLabs | NVIDIA Parakeet / Scribe | NVIDIA Riva pipeline |
-| **Voice clone** | ElevenLabs / Qwen3-TTS | N/A | MiniCPM-o 2.6 |
+| Quality | ElevenLabs / Qwen3-TTS 1.7B | ElevenLabs Scribe / Large v3 | GPT-4o Realtime |
+| Speed | Cartesia Sonic 3 / EdgeTTS | Groq / Parakeet V3 | GPT-4o Realtime / Cascaded |
+| Cost | EdgeTTS (free) / Piper | Local Whisper ($0) / Groq free | MiniCPM-o 2.6 (local) |
+| Privacy | Piper / Qwen3-TTS | faster-whisper / whisper.cpp | MiniCPM-o 2.6 |
+| Enterprise | NVIDIA Magpie / ElevenLabs | NVIDIA Parakeet / Scribe | NVIDIA Riva pipeline |
+| Voice clone | ElevenLabs / Qwen3-TTS | N/A | MiniCPM-o 2.6 |
 
 ### Decision Flow
 
 ```text
 Need voice AI?
 ├── Generate speech (TTS)
-│   ├── Need voice cloning? → Qwen3-TTS (local) or ElevenLabs (cloud)
-│   ├── Need lowest latency? → Cartesia Sonic 3 (cloud) or EdgeTTS (free)
-│   ├── Need offline? → Piper (CPU) or Qwen3-TTS (GPU)
+│   ├── Voice cloning? → Qwen3-TTS (local) or ElevenLabs (cloud)
+│   ├── Lowest latency? → Cartesia Sonic 3 (cloud) or EdgeTTS (free)
+│   ├── Offline? → Piper (CPU) or Qwen3-TTS (GPU)
 │   └── Default → EdgeTTS (free, good quality)
 ├── Transcribe speech (STT)
-│   ├── Need real-time? → Deepgram Nova (cloud) or faster-whisper (local)
-│   ├── Need best accuracy? → ElevenLabs Scribe (cloud) or Large v3 (local)
-│   ├── Need free? → Groq free tier (cloud) or any local model
+│   ├── Real-time? → Deepgram Nova (cloud) or faster-whisper (local)
+│   ├── Best accuracy? → ElevenLabs Scribe (cloud) or Large v3 (local)
+│   ├── Free? → Groq free tier (cloud) or any local model
 │   └── Default → Whisper Large v3 Turbo (local)
 └── Conversational (S2S)
     ├── Cloud OK? → GPT-4o Realtime (see cloud-voice-agents.md)
@@ -140,15 +140,8 @@ Need voice AI?
     └── Default → speech-to-speech.md cascaded pipeline
 ```
 
-## GPU Requirements
+## GPU Planning
 
-| Use Case | Min VRAM | Recommended |
-|----------|----------|-------------|
-| STT only (Whisper Turbo) | 5GB | 8GB |
-| TTS only (Qwen3-TTS 0.6B) | 2GB | 4GB |
-| TTS only (Bark) | 6GB | 8GB |
-| S2S (MiniCPM-o 2.6) | 8GB | 16GB |
-| Full cascaded pipeline | 4GB | 12GB |
-| CPU-only (Piper + whisper.cpp) | 0 | 8GB RAM |
+Min/recommended VRAM: STT (Whisper Turbo) 5/8GB, TTS (Qwen3 0.6B) 2/4GB, S2S (MiniCPM-o) 8/16GB, full cascaded pipeline 4/12GB, CPU-only (Piper + whisper.cpp) 0/8GB RAM.
 
-Apple Silicon: MPS acceleration for most PyTorch models. Use `whisper-mlx` or `mlx-audio-whisper` for optimized macOS inference.
+Apple Silicon: MPS for PyTorch models; `whisper-mlx` or `mlx-audio-whisper` for optimized macOS inference.
