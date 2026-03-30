@@ -106,7 +106,7 @@ fly volumes destroy <vol-id> --app my-app             # IRREVERSIBLE
 
 ## Storage and Databases
 
-**Tigris** (S3-compatible, any S3 SDK): `fly storage create` auto-sets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `BUCKET_NAME`.
+**Tigris** (S3-compatible): `fly storage create` auto-sets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `BUCKET_NAME`.
 
 ```bash
 fly storage create | list | dashboard
@@ -126,26 +126,15 @@ fly redis attach my-redis --app my-app         # Sets REDIS_URL
 
 ## Sprites (AI Agent Sandboxes)
 
-Isolated ephemeral Machines for untrusted AI agent code.
+Isolated ephemeral Machines for untrusted AI agent code. TypeScript SDK: `@fly/sprites` ([Sprites SDK](https://github.com/superfly/sprites-js)).
 
 ```bash
 fly machines run my-image --app my-sprites-app --region lhr \
   --vm-size shared-cpu-1x --env AGENT_ID=agent-123 --restart no
 ```
 
-**TypeScript SDK** (`@fly/sprites`):
-
-```typescript
-import { SpritesClient } from '@fly/sprites';
-const sprite = new SpritesClient(process.env.SPRITES_TOKEN!).sprite('my-sprite');
-const { stdout, exitCode } = await sprite.exec('echo hi');
-await sprite.updateNetworkPolicy({
-  rules: [{ include: 'defaults' }, { domain: 'api.github.com', action: 'allow' }],
-});
-```
-
 ## Related
 
 - `tools/deployment/hosting-comparison.md` — Fly.io vs alternatives
 - `.agents/scripts/fly-io-helper.sh` — helper script source
-- [Docs](https://fly.io/docs/) | [Regions](https://fly.io/docs/reference/regions/) | [Machines API](https://fly.io/docs/machines/api/) | [Sprites SDK](https://github.com/superfly/sprites-js) | [Tigris](https://fly.io/docs/tigris/) | [LiteFS](https://fly.io/docs/litefs/) | [Blueprints](https://fly.io/docs/blueprints/) | [Community](https://community.fly.io/)
+- [Docs](https://fly.io/docs/) | [Regions](https://fly.io/docs/reference/regions/) | [Machines API](https://fly.io/docs/machines/api/) | [Tigris](https://fly.io/docs/tigris/) | [LiteFS](https://fly.io/docs/litefs/) | [Blueprints](https://fly.io/docs/blueprints/) | [Community](https://community.fly.io/)
