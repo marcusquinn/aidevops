@@ -25,13 +25,11 @@ tools:
 - **Route 53**: AWS IAM credentials, health checks, geo/weighted routing
 - **Record types**: A, AAAA, CNAME, MX, TXT, CAA, NS
 - **Operations**: `propagation-check`, `export`, `import`, `backup`, `compare`
-- **Security**: DNSSEC, CAA records, audit logging
+- **Security**: API tokens minimal-permission, rotate 6-12 months; MFA on all accounts; DNSSEC; CAA records; audit logging
 
 <!-- AI-CONTEXT-END -->
 
 ## Configuration
-
-Copy the relevant template and populate credentials:
 
 **Cloudflare** (`configs/cloudflare-dns-config.json`):
 
@@ -76,43 +74,25 @@ Copy the relevant template and populate credentials:
 
 ## Usage
 
-### Core operations
-
 ```bash
-# List records
+# CRUD — [provider] [account] [domain] [name] [type] [value]
 ./.agents/scripts/dns-helper.sh records cloudflare personal example.com
-
-# Add record: [provider] [account] [domain] [name] [type] [value]
 ./.agents/scripts/dns-helper.sh add cloudflare personal example.com www A 192.168.1.100
-
-# Update record
 ./.agents/scripts/dns-helper.sh update cloudflare personal example.com record-id www A 192.168.1.200
-
-# Delete record
 ./.agents/scripts/dns-helper.sh delete cloudflare personal example.com record-id
-```
 
-### Cloudflare-specific
-
-```bash
+# Cloudflare-specific
 ./.agents/scripts/dns-helper.sh proxy-enable cloudflare personal example.com record-id
 ./.agents/scripts/dns-helper.sh page-rule cloudflare personal example.com "*.example.com/*" cache-everything
 ./.agents/scripts/dns-helper.sh analytics cloudflare personal example.com
-```
 
-### Route 53-specific
-
-```bash
+# Route 53-specific
 ./.agents/scripts/dns-helper.sh health-check route53 production example.com https://example.com/health
 ./.agents/scripts/dns-helper.sh weighted-routing route53 production example.com www A 192.168.1.100 50
 ./.agents/scripts/dns-helper.sh geo-routing route53 production example.com www A 192.168.1.100 US
 ```
 
 ## Security
-
-- Use API tokens with minimal required permissions; rotate every 6-12 months
-- Enable MFA on all DNS provider accounts
-- Enable audit logging for all DNS changes
 
 ```bash
 # DNSSEC
@@ -121,7 +101,7 @@ Copy the relevant template and populate credentials:
 # CAA record (restrict certificate issuance)
 ./.agents/scripts/dns-helper.sh add cloudflare personal example.com @ CAA "0 issue letsencrypt.org"
 
-# Auth test
+# Auth test / permission check
 ./.agents/scripts/dns-helper.sh test-auth cloudflare personal
 ./.agents/scripts/dns-helper.sh check-permissions cloudflare personal
 ```
@@ -140,19 +120,16 @@ dig @8.8.8.8 example.com
 ./.agents/scripts/dns-helper.sh compare example.com cloudflare:personal namecheap:personal
 ```
 
-## Monitoring & Reporting
+## Operations
 
 ```bash
+# Monitoring / reporting
 ./.agents/scripts/dns-helper.sh monitor-resolution example.com
 ./.agents/scripts/dns-helper.sh performance-check example.com
 ./.agents/scripts/dns-helper.sh change-log cloudflare personal example.com
 ./.agents/scripts/dns-helper.sh report cloudflare personal example.com
-```
 
-## Migration & Backup
-
-```bash
-# Export → import (migration)
+# Migration: export → import
 ./.agents/scripts/dns-helper.sh export namecheap personal example.com > source-dns.json
 ./.agents/scripts/dns-helper.sh import cloudflare personal example.com source-dns.json
 ./.agents/scripts/dns-helper.sh compare example.com namecheap:personal cloudflare:personal
