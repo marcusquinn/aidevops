@@ -1898,7 +1898,7 @@
     },
     ".agents/tools/deployment/cloudron-server-ops-skill.md": {
       "hash": "ef42b29c1fcb28a5de1fb8be65f21496d5ef10cf",
-      "at": "2026-03-30T03:33:44Z",
+      "at": "2026-03-30T03:33:52Z",
       "pr": 13678
     },
     ".agents/scripts/commands/skills.md": {
@@ -2233,7 +2233,7 @@
     },
     ".agents/services/communications/google-chat.md": {
       "hash": "af2981e3fd22fa349f051dda8a12615f9fd5d65d",
-      "at": "2026-03-30T03:33:40Z",
+      "at": "2026-03-30T03:33:48Z",
       "pr": 13658
     },
     ".agents/tools/deployment/fly-io.md": {
@@ -2308,7 +2308,7 @@
     },
     ".agents/services/hosting/cloudflare-platform-skill/realtimekit-patterns.md": {
       "hash": "dca9ceb5efbdd602847f9c0030471e543684e1a6",
-      "at": "2026-03-30T03:33:37Z",
+      "at": "2026-03-30T03:33:46Z",
       "pr": 13654
     },
     ".agents/tools/document/docstrange.md": {
@@ -2688,137 +2688,137 @@
     },
     ".agents/services/hosting/dns-providers.md": {
       "hash": "979b0b76e50549adb87fc58efdd0b8d4d7cfed49",
-      "at": "2026-03-30T03:33:36Z",
+      "at": "2026-03-30T03:33:45Z",
       "pr": 13668
     },
     ".agents/services/hosting/cloudflare-platform-skill/queues-patterns.md": {
       "hash": "203fe3ca92670a5016c568fe173dfbbfd9ac2c35",
-      "at": "2026-03-30T03:33:38Z",
+      "at": "2026-03-30T03:33:47Z",
       "pr": 13655
     },
     ".agents/seo/moondream.md": {
       "hash": "e6e0bef21020b260c31561b4da9fc0ef1e900be5",
-      "at": "2026-03-30T03:33:35Z",
+      "at": "2026-03-30T03:33:44Z",
       "pr": 13663
     },
     ".agents/marketing-sales/meta-ads-foundations-glossary.md": {
       "hash": "f0b0b3b259d7597309af03f39a2f267137dafffe",
-      "at": "2026-03-30T03:33:41Z",
+      "at": "2026-03-30T03:33:50Z",
       "pr": 13691
     },
     ".agents/services/email/email-providers.md": {
       "hash": "d1b3b7cd76f3062cb0367e55aacd396f27498f52",
-      "at": "2026-03-30T03:33:42Z",
+      "at": "2026-03-30T03:33:51Z",
       "pr": 13653
     },
     ".agents/services/hosting/cloudflare-platform-skill/pages-gotchas.md": {
       "hash": "70e97040812ad2c593e7b451a917560531eb5903",
-      "at": "2026-03-30T03:33:45Z",
+      "at": "2026-03-30T03:33:53Z",
       "pr": 13667
     },
     ".agents/marketing-sales/meta-ads-checklists-creative-review.md": {
       "hash": "d3207ef474ba73d95bb9c13864b282ac0b78169e",
-      "at": "2026-03-30T03:33:46Z",
+      "at": "2026-03-30T03:33:54Z",
       "pr": 13666
     },
     ".agents/marketing-sales.md": {
       "hash": "5bf152068c5bc32bd1f6d8efd643f6bfeadef1f1",
-      "at": "2026-03-30T03:33:57Z",
+      "at": "2026-03-30T03:34:04Z",
       "pr": 13689
     },
     ".agents/services/email/smime-setup.md": {
       "hash": "a2b9962d72b764f625094f32848e200c89668f2f",
-      "at": "2026-03-30T03:33:58Z",
+      "at": "2026-03-30T03:34:05Z",
       "pr": 13665
     },
     ".agents/tools/browser/browser-automation.md": {
       "hash": "b3b85c7823e18a668f5620c7a18c278de99ddc40",
-      "at": "2026-03-30T03:34:00Z",
+      "at": "2026-03-30T03:34:06Z",
       "pr": 13608
     },
     ".agents/tools/browser/extension-dev/testing.md": {
       "hash": "a3ab1a592abea11cc24a441c8720abe8a3983091",
-      "at": "2026-03-30T03:34:02Z",
+      "at": "2026-03-30T03:34:09Z",
       "pr": 13607
     },
     ".agents/reference/settings.md": {
       "hash": "2b2cbc9b8329f0fd0504413c4805a235d0f16962",
-      "at": "2026-03-30T03:34:06Z",
+      "at": "2026-03-30T03:34:12Z",
       "pr": 13637
     },
     ".agents/services/hosting/cloudflare-platform-skill/workerd-gotchas.md": {
       "hash": "2cbb9c1c836f4b8fce6dbe5b982d8760a75922ce",
-      "at": "2026-03-30T03:34:07Z",
+      "at": "2026-03-30T03:34:13Z",
       "pr": 13636
     },
     ".agents/tools/mobile/app-dev-expo.md": {
       "hash": "e0094f52acaa98cc6a2c7aa9aeae6321a204cb27",
-      "at": "2026-03-30T03:34:08Z",
+      "at": "2026-03-30T03:34:14Z",
       "pr": 13609
     },
     ".agents/tools/video/remotion-images.md": {
       "hash": "789b0f83404d30882f5f6b24317d4319f95dd107",
-      "at": "2026-03-30T03:34:10Z",
+      "at": "2026-03-30T03:34:15Z",
       "pr": 13527
     },
     ".agents/seo.md": {
       "hash": "1dcd30f4590e4b2b7792e538d0a70e7d4979aa8e",
-      "at": "2026-03-30T03:34:11Z",
+      "at": "2026-03-30T03:34:16Z",
       "pr": 13526
     },
     ".agents/seo/mom-test-ux.md": {
       "hash": "29c796f48c4b581197f9ea36ed95bbe98bb4ae51",
-      "at": "2026-03-30T03:34:12Z",
+      "at": "2026-03-30T03:34:17Z",
       "pr": 13524
     },
     ".agents/seo/tech-stack.md": {
       "hash": "8b3aa2ab4498e38424d9bd911680bf2e6d45d856",
-      "at": "2026-03-30T03:34:13Z",
+      "at": "2026-03-30T03:34:18Z",
       "pr": 13531
     },
     ".agents/tools/mobile/maestro.md": {
       "hash": "9cfba2015ca5bd40086f5d15c690910a0a3c6bfd",
-      "at": "2026-03-30T03:34:15Z",
+      "at": "2026-03-30T03:34:20Z",
       "pr": 13525
     },
     ".agents/content/video-real-video-enhancer.md": {
       "hash": "3a1c798089a1fa50288b76e5fd372fe57d4307d5",
-      "at": "2026-03-30T03:34:16Z",
+      "at": "2026-03-30T03:34:21Z",
       "pr": 13533
     },
     ".agents/seo/image-seo.md": {
       "hash": "91991eb82fa32f9ed717213566d5bb49604dfdc4",
-      "at": "2026-03-30T03:34:18Z",
+      "at": "2026-03-30T03:34:23Z",
       "pr": 13530
     },
     ".agents/services/hosting/cloudflare-platform-skill/terraform-patterns.md": {
       "hash": "463f5c3efbf7a6b11c29193e5f6dcbefd1974fc2",
-      "at": "2026-03-30T03:34:20Z",
+      "at": "2026-03-30T03:34:24Z",
       "pr": 13534
     },
     ".agents/services/communications/slack.md": {
       "hash": "4894b60910b9fe85ce8dcfb7feb5441fca48be44",
-      "at": "2026-03-30T03:34:22Z",
+      "at": "2026-03-30T03:34:27Z",
       "pr": 13545
     },
     ".agents/tools/research/providers/crft-lookup.md": {
       "hash": "70a64dd60d9a32431e5c36f75d0ad6aed1865c46",
-      "at": "2026-03-30T03:34:23Z",
+      "at": "2026-03-30T03:34:28Z",
       "pr": 13542
     },
     ".agents/product/ui-design.md": {
       "hash": "3a8d0daebe80ebc2f64efe31009dbcba324fe142",
-      "at": "2026-03-30T03:34:25Z",
+      "at": "2026-03-30T03:34:29Z",
       "pr": 13539
     },
     ".agents/content/VERIFICATION.md": {
       "hash": "f0090056bf6625c2ce2c676d4cf9ba25a901198e",
-      "at": "2026-03-30T03:34:26Z",
+      "at": "2026-03-30T03:34:30Z",
       "pr": 13540
     },
     ".agents/scripts/commands/yt-dlp.md": {
       "hash": "56c400042f899284be4b65c6480fcac4de404248",
-      "at": "2026-03-30T03:34:27Z",
+      "at": "2026-03-30T03:34:31Z",
       "pr": 13544
     }
   }
