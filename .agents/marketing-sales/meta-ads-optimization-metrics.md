@@ -85,7 +85,7 @@ CPA = Spend ÷ Actions = CPC ÷ Conversion Rate ← lower via: lower CPC, higher
 
 ### Ad Relevance Diagnostics
 
-Quality / Engagement Rate / Conversion Rate Rankings:
+Applies to Quality, Engagement Rate, and Conversion Rate rankings:
 
 | Ranking | Meaning |
 |---------|---------|
@@ -159,9 +159,11 @@ Use MER for cross-channel budget allocation. Use Incremental ROAS for true ROI r
 
 Set via Ads Manager → Columns → Customize Columns.
 
-- **Ecommerce:** ROAS, Cost Per Purchase, Purchase Conversion Value, Website Purchases, CTR (Link Click), CPM, Frequency, Reach
-- **Lead Gen:** Cost Per Lead, Leads, Lead Conversion Rate, CTR (Link Click), Landing Page Views, CPM, Frequency, Quality Ranking
-- **Video:** ThruPlay Cost, ThruPlays, 3-Second Video Views, Video Average Watch Time, CTR (All), CPM, Reach, Frequency
+| Objective | Columns |
+|-----------|---------|
+| **Ecommerce** | ROAS, Cost Per Purchase, Purchase Conversion Value, Website Purchases, CTR (Link Click), CPM, Frequency, Reach |
+| **Lead Gen** | Cost Per Lead, Leads, Lead Conversion Rate, CTR (Link Click), Landing Page Views, CPM, Frequency, Quality Ranking |
+| **Video** | ThruPlay Cost, ThruPlays, 3-Second Video Views, Video Average Watch Time, CTR (All), CPM, Reach, Frequency |
 
 ---
 
