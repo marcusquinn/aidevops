@@ -76,7 +76,7 @@ gh api repos/{owner}/{repo}/commits/{sha}/check-runs \
   --jq '.check_runs[] | select(.name | contains("SonarCloud")) | {conclusion: .conclusion, url: .details_url}'
 ```
 
-**Processing feedback:** Collect (`gh pr view {number} --comments --json comments` + `gh api repos/{owner}/{repo}/pulls/{number}/reviews`). Prioritize: Critical (security, breaking) → High (quality) → Medium (style) → Low (docs). Fix critical first; group related.
+**Processing feedback:** Collect (`gh pr view {pr_number} --comments --json comments` + `gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews`). Prioritize: Critical (security, breaking) → High (quality) → Medium (style) → Low (docs). Fix critical first; group related.
 
 ## CI Error Resolution Loop
 
@@ -85,7 +85,7 @@ gh run list --status failure --limit 1          # identify failure
 gh run view {run_id} --log-failed               # diagnose
 # fix locally, then:
 git add . && git commit -m "fix: CI error description"
-git push origin {branch} && gh run watch        # push and monitor
+git push origin {branch} && gh run watch {run_id} # push and monitor latest run
 ```
 
 ## Escalation to Humans
