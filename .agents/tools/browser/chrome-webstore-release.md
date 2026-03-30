@@ -25,8 +25,6 @@ chrome-webstore-helper.sh upload-secrets  # Upload to GitHub via gh CLI
 
 ## Credential Setup
 
-Collect before starting: manifest path, build command, zip command, output path, CI platform, release policy.
-
 **1. Enable API:** `https://console.cloud.google.com/apis/library/chromewebstore.googleapis.com` → Enable
 
 **2. OAuth Consent Screen:** `https://console.cloud.google.com/apis/credentials/consent` → External → fill app name + emails → add test user if in Testing mode. Move to Production for stable refresh tokens.
@@ -42,23 +40,20 @@ All five required: `CWS_CLIENT_ID`, `CWS_CLIENT_SECRET`, `CWS_REFRESH_TOKEN`, `C
 ## Secret Storage
 
 ```bash
-# aidevops encrypted storage (preferred)
 aidevops secret set CWS_CLIENT_ID
 aidevops secret set CWS_CLIENT_SECRET
 aidevops secret set CWS_REFRESH_TOKEN
 aidevops secret set CWS_PUBLISHER_ID
 aidevops secret set CWS_EXTENSION_ID
 
-# Upload to GitHub Actions (reads local env, validates, uploads via gh secret set)
-chrome-webstore-helper.sh upload-secrets
+chrome-webstore-helper.sh upload-secrets  # push to GitHub Actions secrets
 ```
 
-## Release Workflow (Version-Triggered)
+## Release Workflow
 
 1. Read local version from `manifest.json`
-2. Exchange refresh token: `POST https://oauth2.googleapis.com/token`
-3. Fetch CWS status: `GET .../v2/publishers/<publisherId>/items/<extensionId>:fetchStatus`
-4. Compare: local == published → skip; version changed → build zip → upload → publish
+2. Exchange refresh token → fetch CWS status → compare versions
+3. local == published → skip; version changed → build zip → upload → publish
 
 Success states: `PENDING_REVIEW`, `PUBLISHED`, `PUBLISHED_TO_TESTERS`, `STAGED`
 
@@ -93,10 +88,10 @@ jobs:
 
 ```bash
 chrome-webstore-helper.sh status --manifest src/manifest.json
-chrome-webstore-helper.sh status --json  # machine-readable
+chrome-webstore-helper.sh status --json  # machine-readable: itemId, localVersion, publishedVersion, publishedState, upToDate
 ```
 
-Outputs: `itemId`, `localVersion`, `publishedVersion`, `publishedState`, `upToDate`. Exits non-zero on auth/API errors.
+Exits non-zero on auth/API errors.
 
 ## API Reference (curl)
 
@@ -138,5 +133,5 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 
 ## Links
 
-- API overview: `https://developer.chrome.com/docs/webstore/using-api`
-- OAuth Playground: `https://developers.google.com/oauthplayground/`
+- [Chrome Web Store API](https://developer.chrome.com/docs/webstore/using-api)
+- [OAuth Playground](https://developers.google.com/oauthplayground/)
