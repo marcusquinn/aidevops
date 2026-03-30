@@ -96,17 +96,15 @@ kill PID  # Then comment on issue: model, branch, reason, diagnosis, next action
 
 ## Scheduling & Config
 
-**launchd (macOS):**
-- Labels: `sh.aidevops.<name>` — plists at `~/Library/LaunchAgents/sh.aidevops.<name>.plist`
-- Start: `launchctl kickstart gui/$(id -u)/sh.aidevops.<name>`
-- Full restart (env var changes): `launchctl bootout gui/$(id -u)/sh.aidevops.<name> && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/sh.aidevops.<name>.plist`
+**launchd (macOS):** Labels `sh.aidevops.<name>`, plists at `~/Library/LaunchAgents/sh.aidevops.<name>.plist`.
 
-**Environment variables:**
-- `launchctl setenv` persists across launchd processes, overrides `${VAR:-default}` patterns
-- `launchctl unsetenv` requires `bootout/bootstrap` to take effect (not just `kickstart`)
-- Prefer `config.jsonc` over env vars — env vars are invisible and hard to audit
+- Start: `launchctl kickstart gui/$(id -u)/sh.aidevops.<name>`
+- Full restart (required for env var changes): `launchctl bootout gui/$(id -u)/sh.aidevops.<name> && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/sh.aidevops.<name>.plist`
+- `launchctl setenv` persists across processes; `unsetenv` requires bootout/bootstrap (not just kickstart).
+- Prefer `config.jsonc` over env vars — env vars are invisible and hard to audit.
 
 **Config system:**
+
 - `~/.config/aidevops/config.jsonc` — authoritative, read by `config_get()` via `_get_merged_config()`
 - `~/.aidevops/agents/configs/aidevops.defaults.jsonc` — defaults, merged under user config
 - `~/.config/aidevops/settings.json` — legacy/UI-facing, NOT read by `config_get()`
@@ -114,23 +112,25 @@ kill PID  # Then comment on issue: model, branch, reason, diagnosis, next action
 
 ## Provider Management
 
-**Round-robin:** Helper alternates providers in `AIDEVOPS_HEADLESS_MODELS`. Recommended config:
+**Round-robin:** Helper alternates providers in `AIDEVOPS_HEADLESS_MODELS`.
 
 ```bash
 export PULSE_MODEL="anthropic/claude-sonnet-4-6"           # Pulse pinned to Anthropic
 export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.3-codex"  # Workers rotated
 ```
 
-> Pulse requires Anthropic (sonnet). OpenAI models exit immediately without activity, wasting every other cycle. Pin pulse with `PULSE_MODEL`; workers can use any provider.
+Pulse requires Anthropic (sonnet) — OpenAI models exit without activity, wasting every other cycle. Pin pulse with `PULSE_MODEL`; workers can use any provider.
 
-**Backoff:** `headless-runtime-helper.sh backoff status` / `backoff clear PROVIDER`. Exit code 75 = all providers backed off.
+**Backoff:** `headless-runtime-helper.sh backoff status|clear PROVIDER`. Exit code 75 = all providers backed off.
 
-**Escalation:** After 2+ failed attempts on same issue, use `--model anthropic/claude-opus-4-6`. One opus dispatch (~3x cost) is cheaper than 5+ failed sonnet dispatches.
+**Escalation:** After 2+ failures on the same issue, use `--model anthropic/claude-opus-4-6`. One opus dispatch (~3x cost) beats 5+ failed sonnet dispatches.
 
 ## Audit Trail
 
-Every action must leave a trace in issue/PR comments. Version from `~/.aidevops/agents/VERSION` or `$AIDEVOPS_VERSION`. All templates include `**[aidevops.sh](https://github.com/marcusquinn/aidevops)**: vX.X.X` + `**Model**` + `**Branch**`.
+Every action must leave a trace in issue/PR comments. Version from `~/.aidevops/agents/VERSION` or `$AIDEVOPS_VERSION`.
 
-**Dispatch:** `Dispatching worker.` + Scope, Attempt (N of M), Direction.
-**Kill/failure:** `Worker killed after Xh Ym with N commits (struggle_ratio: NN).` + Reason, Diagnosis, Next action (escalate/reassign/decompose).
-**Completion:** `Completed via PR #NNN.` + Attempts, Duration.
+- **Dispatch:** `Dispatching worker.` + Scope, Attempt (N of M), Direction.
+- **Kill/failure:** `Worker killed after Xh Ym with N commits (struggle_ratio: NN).` + Reason, Diagnosis, Next action (escalate/reassign/decompose).
+- **Completion:** `Completed via PR #NNN.` + Attempts, Duration.
+
+All templates include `**[aidevops.sh](https://github.com/marcusquinn/aidevops)**: vX.X.X` + `**Model**` + `**Branch**`.
