@@ -14,7 +14,16 @@
 | Brand building | Origin Story | Storytelling |
 | Trust-building | Testimonial / Case Study | Proof |
 
-## PAS (Problem-Agitate-Solution) — static
+## Ad Formulas by Length
+
+| Length | Formula |
+|--------|---------|
+| 5s static | `[HOOK] + [BENEFIT] + [PROOF] + [CTA]` |
+| 15s video | `[HOOK 3s] + [DEMO 7s] + [CTA 5s]` |
+| 30s video | `[HOOK 3s] + [PROBLEM 7s] + [SOLUTION 10s] + [PROOF 5s] + [CTA 5s]` |
+| 60s video | `[HOOK 5s] + [PROBLEM 10s] + [AGITATE 10s] + [SOLUTION 15s] + [PROOF 10s] + [CTA 10s]` |
+
+## PAS — static
 
 ```text
 PRIMARY TEXT:
@@ -43,7 +52,7 @@ CTA: Try Free
 [18-25s] "Join 5,000+ companies who've reclaimed their time. Try it free at [WEBSITE]."
 ```
 
-## AIDA (Attention-Interest-Desire-Action) — video 30s
+## AIDA — video 30s
 
 ```text
 [0-3s]   ATTENTION: "This changed how I run my business." [Pattern interrupt visual]
@@ -52,7 +61,7 @@ CTA: Try Free
 [20-30s] ACTION:    "Get started free at [WEBSITE]. Join [number] others who've made the switch."
 ```
 
-## BAB (Before-After-Bridge) — carousel
+## BAB — carousel
 
 ```text
 CARD 1 (BEFORE):  [Messy desk/chaos] "Drowning in tasks. Missing deadlines. Constant stress."
@@ -62,7 +71,7 @@ CARD 4 (PROOF):   "10,000+ professionals made the switch." [Testimonial quote]
 CARD 5 (CTA):     "Start your transformation →"
 ```
 
-## FAB (Feature-Advantage-Benefit) — B2B/SaaS/technical
+## FAB — B2B/SaaS/technical
 
 ```text
 FEATURE:    "Real-time sync across all devices"
@@ -97,7 +106,7 @@ Setup (5-10s) → Conflict (5-10s) → Climax (5-10s) → Resolution (5-10s) →
 [CTA]        "Ready to transform your workflow? Start free at [WEBSITE]."
 ```
 
-## Mini-Story Arc — identity framing variant
+### Identity framing variant
 
 ```text
 "I used to be the person who was always behind. [chaos]
@@ -132,7 +141,9 @@ Frustration → Decision → Journey → Achievement → Connection
 [CONNECTION]  "If you've ever felt that same frustration, I built [PRODUCT] for you. Try it free at [WEBSITE]."
 ```
 
-## Proof Frameworks — testimonial structures
+## Proof Frameworks
+
+### Testimonial structures
 
 ```text
 Result-focused: "[Specific result] in [timeframe]." — [Name], [Title] at [Company]
@@ -141,7 +152,7 @@ Comparison:     "I've tried [alternatives]. [PRODUCT] is the only one that [spec
 Emotional:      "I finally feel [positive emotion] about [area]. [PRODUCT] gave me [intangible benefit]."
 ```
 
-## Proof Frameworks — case study (Challenge → Solution → Results → Quote)
+### Case study (Challenge → Solution → Results → Quote)
 
 ```text
 CHALLENGE: "[Company] was losing 20 hours/week to manual invoice processing."
@@ -150,15 +161,8 @@ RESULTS:   📈 80% reduction in processing time  💰 $45,000 saved annually  �
 "[PRODUCT] paid for itself in the first month." — [Name], CFO
 ```
 
-Social proof: `[logos]` "Trusted by 500+ companies" · `[stars]` "4.9/5 from 2,000+ reviews" · `[media]` "Featured in Forbes, TechCrunch, Inc."
+### Social proof formats
 
-## Ad Formulas by Length
-
-| Length | Formula |
-|--------|---------|
-| 5s static | `[HOOK] + [BENEFIT] + [PROOF] + [CTA]` |
-| 15s video | `[HOOK 3s] + [DEMO 7s] + [CTA 5s]` |
-| 30s video | `[HOOK 3s] + [PROBLEM 7s] + [SOLUTION 10s] + [PROOF 5s] + [CTA 5s]` |
-| 60s video | `[HOOK 5s] + [PROBLEM 10s] + [AGITATE 10s] + [SOLUTION 15s] + [PROOF 10s] + [CTA 10s]` |
+`[logos]` "Trusted by 500+ companies" · `[stars]` "4.9/5 from 2,000+ reviews" · `[media]` "Featured in Forbes, TechCrunch, Inc."
 
 *Next: [Production Workflow](meta-ads-creative-production.md)*
