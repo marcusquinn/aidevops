@@ -17,7 +17,6 @@
 **Collection timing:** After successful outcome, positive support interaction, milestone, referral, or renewal.
 
 **6 questions for strong testimonials:**
-
 1. What was your biggest challenge before?
 2. How did the product solve it?
 3. What specific results have you seen? (quantify)
@@ -44,7 +43,6 @@ Video: 60-90s, name/company → results → captions. Carousel: 5-7s auto-rotate
 
 ```text
 [Product Name]  ★★★★☆ 4.6 (2,847 reviews)     ← Top of page
-
 ★★★★☆ 4.6 out of 5 — Based on 2,847 reviews
 5★: 68%  ████████████████████░░░░░
 4★: 22%  ████████░░░░░░░░░░░░░░░░░
@@ -59,7 +57,7 @@ Video: 60-90s, name/company → results → captions. Carousel: 5-7s auto-rotate
 
 ## Case Studies
 
-Best for B2B, high-consideration purchases, complex solutions, enterprise sales.
+**Best for:** B2B, high-consideration purchases, complex solutions, enterprise sales.
 
 **Format 1 — PSR:** Customer Background → Challenge → Solution → Results (quantified) → Looking Forward.
 
@@ -83,7 +81,7 @@ Active Users   Companies       Revenue Powered
 Countries      Uptime          Support
 ```
 
-Make numbers relatable: comparisons, breakdowns ("100 new customers/hour"), animated count-up (CountUp.js), growth charts.
+**Make numbers relatable:** comparisons, breakdowns ("100 new customers/hour"), animated count-up (CountUp.js), growth charts.
 
 **Performance stats:** Conversion ("27% increase"), satisfaction ("NPS 72"), usage ("4.3 logins/day"), business impact ("45% larger deal size"). Always cite source, methodology (sample size, date range), and context vs. industry average.
 
@@ -103,15 +101,13 @@ Make numbers relatable: comparisons, breakdowns ("100 new customers/hour"), anim
 
 **Media:** 5-8 recognizable publications, link to actual articles. "As Featured In" / "In the News."
 
-**Customer (B2B):** Prioritize recognizable brands (Fortune 500, industry leaders, competitors of prospects for FOMO), relevant (same industry/size/geography), diverse mix. Display: grid, auto-scrolling ticker, or case study integration (logo + metrics + link).
-
-Specs: high-res 2x retina, consistent sizing, transparent background, grayscale often cleaner. Get written permission. Dynamic display: show different logos based on visitor industry, company size, location, or referral source.
+**Customer (B2B):** Prioritize recognizable brands (Fortune 500, industry leaders, competitors of prospects for FOMO), relevant (same industry/size/geography), diverse mix. Display: grid, auto-scrolling ticker, or case study integration (logo + metrics + link). Specs: high-res 2x retina, consistent sizing, transparent background, grayscale often cleaner. Get written permission. Dynamic display: show different logos based on visitor industry, company size, location, or referral source.
 
 ## User-Generated Content (UGC)
 
 **Types:** Customer photos, social posts (Instagram, TikTok, Twitter), community content (Reddit, forums), video reviews/tutorials.
 
-**Sourcing:** Branded hashtag campaigns, photo reviews with loyalty incentives, social listening + permission requests, "Share Your Story" page, contests.
+**Sourcing:** Branded hashtag campaigns, photo reviews with loyalty incentives, social listening + permission requests, "Share Your Story" page, contests. Also: Instagram feed integration, dedicated gallery, email newsletters, social proof popups ("[Name] from [City] just purchased [Product]").
 
 ```text
 Real Customers, Real Results
@@ -120,11 +116,9 @@ Real Customers, Real Results
 "Brief quote"  "Brief quote"  "Brief quote"
 ```
 
-Also: Instagram feed integration, dedicated gallery, email newsletters, social proof popups ("[Name] from [City] just purchased [Product]").
-
 ## Implementation Roadmap
 
-Audit: inventory existing assets → quality-check (specificity, prominence, metrics) → gap analysis (pages lacking proof, unaddressed objections, unrepresented segments).
+**Audit:** inventory existing assets → quality-check (specificity, prominence, metrics) → gap analysis (pages lacking proof, unaddressed objections, unrepresented segments).
 
 | Timeframe | Actions |
 |-----------|---------|
