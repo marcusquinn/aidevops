@@ -128,6 +128,7 @@ for (const bp of breakpoints) {
 ### Multi-Device Parallel Testing
 
 ```typescript
+// testDevices: [{ name, device }] where device = devices['iPhone 13'] | devices['Pixel 7'] | { viewport: {...} }
 for (const { name, device } of testDevices) {
   test.describe(name, () => {
     test.use({ ...device });
@@ -137,7 +138,6 @@ for (const { name, device } of testDevices) {
     });
   });
 }
-// testDevices: [{ name, device }] where device = devices['iPhone 13'] | devices['Pixel 7'] | { viewport: {...} }
 ```
 
 ### Touch, Network, Dark Mode
@@ -167,7 +167,7 @@ for (const scheme of ['light', 'dark'] as const) {
 }
 ```
 
-## Integration with aidevops Tools
+## Integration
 
 - **Chrome DevTools MCP**: navigate in mobile emulation → `npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222` for Lighthouse mobile audit.
 - **Stagehand**: `new Stagehand({ env: 'LOCAL', browserOptions: { ...devices['iPhone 13'] } })` → `stagehand.act('tap the hamburger menu')`.
@@ -179,5 +179,5 @@ for (const scheme of ['light', 'dark'] as const) {
 - `browser-automation.md` — tool selection decision tree
 - `browser-benchmark.md` — performance benchmarks
 - `pagespeed.md` — PageSpeed Insights integration
-- Maestro (t096) — native mobile E2E testing
+- Maestro (t096) — native mobile E2E
 - iOS Simulator MCP (t097) — iOS simulator interaction
