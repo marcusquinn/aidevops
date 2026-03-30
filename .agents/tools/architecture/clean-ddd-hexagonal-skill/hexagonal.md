@@ -15,14 +15,13 @@ flowchart TB
         REST --> DriverPorts
         CLI --> DriverPorts
     end
-
     subgraph Hexagon["THE HEXAGON"]
         subgraph AppCore["APPLICATION CORE"]
             subgraph Domain["DOMAIN\n(Business Logic)"]
+                BL[" "]
             end
         end
     end
-
     subgraph DrivenSide["DRIVEN SIDE (Secondary / Outbound / Right)"]
         DrivenPorts["DRIVEN PORTS\n(Repository Interfaces)"]
         Postgres["Postgres Adapter"]
@@ -30,10 +29,8 @@ flowchart TB
         DrivenPorts --> Postgres
         DrivenPorts --> RabbitMQ
     end
-
     DriverPorts --> AppCore
     AppCore --> DrivenPorts
-
     style DriverSide fill:#3b82f6,stroke:#2563eb,color:white
     style Hexagon fill:#10b981,stroke:#059669,color:white
     style DrivenSide fill:#f59e0b,stroke:#d97706,color:white
@@ -48,25 +45,21 @@ flowchart TB
 | **Driven** (Secondary / Outbound) | App → | Application | What your app needs from external systems | Adapter *implements* port — app defines what it **needs** |
 
 ```typescript
-// application/ports/driver/place_order_port.ts
+// Driver ports — one per use case
 export interface IPlaceOrderPort { execute(command: PlaceOrderCommand): Promise<OrderId>; }
-// application/ports/driver/get_order_port.ts
 export interface IGetOrderPort { execute(query: GetOrderQuery): Promise<OrderDTO | null>; }
-// application/ports/driver/cancel_order_port.ts
 export interface ICancelOrderPort { execute(command: CancelOrderCommand): Promise<void>; }
 
-// application/ports/driven/order_repository_port.ts
+// Driven ports — technology-agnostic interfaces
 export interface IOrderRepositoryPort {
   findById(id: OrderId): Promise<Order | null>;
   save(order: Order): Promise<void>;
   delete(order: Order): Promise<void>;
 }
-// application/ports/driven/event_publisher_port.ts
 export interface IEventPublisherPort {
   publish(event: DomainEvent): Promise<void>;
   publishAll(events: DomainEvent[]): Promise<void>;
 }
-// application/ports/driven/payment_gateway_port.ts
 export interface IPaymentGatewayPort {
   charge(amount: Money, paymentMethod: PaymentMethod): Promise<PaymentResult>;
   refund(paymentId: PaymentId, amount: Money): Promise<RefundResult>;
