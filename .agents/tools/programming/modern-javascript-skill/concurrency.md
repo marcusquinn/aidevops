@@ -48,13 +48,11 @@ async function pool(items, concurrency, fn) {
   const results = [], executing = new Set();
   for (const item of items) {
     const p = fn(item).then(r => { executing.delete(p); return r; });
-    results.push(p);
-    executing.add(p);
+    results.push(p); executing.add(p);
     if (executing.size >= concurrency) await Promise.race(executing);
   }
   return Promise.all(results);
 }
-
 await pool(items, 5, processItem);
 ```
 
@@ -84,7 +82,6 @@ function withTimeout(promise, ms, message = 'Timeout') {
   const id = setTimeout(() => reject(new Error(message)), ms);
   return Promise.race([promise, timeout]).finally(() => clearTimeout(id));
 }
-
 const data = await withTimeout(fetchData(), 5000);
 ```
 
@@ -106,7 +103,6 @@ function debounceAsync(fn, ms) {
     return promise;
   };
 }
-
 const debouncedSearch = debounceAsync(searchAPI, 300);
 ```
 
@@ -219,7 +215,6 @@ class Semaphore {
     finally { this.release(); }
   }
 }
-
 const semaphore = new Semaphore(3);
 await Promise.all(items.map(item => semaphore.withPermit(() => processItem(item))));
 ```
