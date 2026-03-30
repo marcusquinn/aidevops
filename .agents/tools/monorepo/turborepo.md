@@ -6,13 +6,9 @@ tools: [read, write, edit, bash, glob, grep, webfetch, task, context7_*]
 
 # Turborepo - Monorepo Build System
 
-<!-- AI-CONTEXT-START -->
-
 ## Quick Reference
 
 **High-performance build system for JS/TS monorepos.** Package managers: pnpm (recommended), npm, yarn. Docs: [turbo.build/repo/docs](https://turbo.build/repo/docs) (Context7 MCP).
-
-**Core commands**: `pnpm dev` · `pnpm build` · `pnpm --filter web dev` (see Filtering for full syntax)
 
 **Directory structure**:
 ```text
@@ -41,11 +37,7 @@ tooling/  (eslint, typescript, prettier)
 }
 ```
 
-<!-- AI-CONTEXT-END -->
-
-## Patterns
-
-### Filtering
+## Filtering
 
 ```bash
 pnpm dev                               # all packages
@@ -59,7 +51,7 @@ pnpm --filter "./packages/*" build     # by directory
 pnpm --filter "!web" build             # exclude
 ```
 
-### Package.json Exports
+## Package.json Exports
 
 ```json
 // packages/ui/web/package.json
@@ -72,19 +64,19 @@ import { cn } from "@workspace/ui-web";
 import "@workspace/ui-web/globals.css";
 ```
 
-### Workspace Dependencies
+## Workspace Dependencies
 
 Use `"workspace:*"` protocol (not `"*"`): `{ "dependencies": { "@workspace/ui-web": "workspace:*" } }`
 
-### Environment Variables
+## Environment Variables
 
-Use `dotenv-cli` to load `.env` before turbo: `pnpm with-env turbo build`
+Use `dotenv-cli` to load `.env` before turbo:
 
 ```json
 { "scripts": { "build": "pnpm with-env turbo build", "dev": "pnpm with-env turbo dev" } }
 ```
 
-### Shared TypeScript Config
+## Shared TypeScript Config
 
 ```json
 // tooling/typescript/base.json
@@ -99,7 +91,7 @@ Use `dotenv-cli` to load `.env` before turbo: `pnpm with-env turbo build`
 { "extends": "@workspace/tsconfig/base.json", "compilerOptions": { "outDir": "dist" }, "include": ["src"] }
 ```
 
-### Shared ESLint Config
+## Shared ESLint Config
 
 ```js
 // tooling/eslint/base.js
@@ -109,7 +101,7 @@ import baseConfig from "@workspace/eslint-config/base";
 export default [...baseConfig];
 ```
 
-### Database Package
+## Database Package
 
 ```tsx
 // packages/db/src/index.ts — public API
