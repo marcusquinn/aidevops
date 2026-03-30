@@ -3,7 +3,7 @@
 ## Async Task Processing
 
 ```typescript
-// Producer: Accept request, queue work
+// Producer
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const { userId, reportType } = await request.json();
@@ -12,7 +12,7 @@ export default {
   }
 };
 
-// Consumer: Process reports
+// Consumer
 export default {
   async queue(batch: MessageBatch, env: Env): Promise<void> {
     for (const msg of batch.messages) {
@@ -28,14 +28,14 @@ export default {
 ## Buffering API Calls
 
 ```typescript
-// Producer: Queue log entries
+// Producer — queue log entries via waitUntil
 ctx.waitUntil(env.LOGS_QUEUE.send({
   method: request.method,
   url: request.url,
   timestamp: Date.now()
 }));
 
-// Consumer: Batch write to external API
+// Consumer — batch write to external API
 async queue(batch: MessageBatch, env: Env): Promise<void> {
   const logs = batch.messages.map(m => m.body);
   await fetch(env.LOG_ENDPOINT, { method: 'POST', body: JSON.stringify({ logs }) });
@@ -53,8 +53,7 @@ async queue(batch: MessageBatch, env: Env): Promise<void> {
       msg.ack();
     } catch (error) {
       if (error.status === 429) {
-        const retryAfter = parseInt(error.headers.get('Retry-After') || '60');
-        msg.retry({ delaySeconds: retryAfter });
+        msg.retry({ delaySeconds: parseInt(error.headers.get('Retry-After') || '60') });
       } else throw error;
     }
   }
@@ -69,11 +68,8 @@ export default {
   async queue(batch: MessageBatch, env: Env): Promise<void> {
     for (const msg of batch.messages) {
       const event = msg.body;
-      if (event.action === 'PutObject') {
-        await processNewFile(event.object.key, env);
-      } else if (event.action === 'DeleteObject') {
-        await cleanupReferences(event.object.key, env);
-      }
+      if (event.action === 'PutObject') await processNewFile(event.object.key, env);
+      else if (event.action === 'DeleteObject') await cleanupReferences(event.object.key, env);
       msg.ack();
     }
   }
@@ -83,7 +79,7 @@ export default {
 ## Dead Letter Queue Pattern
 
 ```typescript
-// Main queue: After max_retries, goes to DLQ automatically
+// Main queue — after max_retries, messages go to DLQ automatically
 export default {
   async queue(batch: MessageBatch, env: Env): Promise<void> {
     for (const msg of batch.messages) {
@@ -97,7 +93,7 @@ export default {
   }
 };
 
-// DLQ consumer: Log and store failed messages
+// DLQ consumer — persist failed messages
 export default {
   async queue(batch: MessageBatch, env: Env): Promise<void> {
     for (const msg of batch.messages) {
@@ -123,14 +119,11 @@ await env.EMAIL_QUEUE.send({ to, template, userId }, { delaySeconds: 3600 });
 ```typescript
 async fetch(request: Request, env: Env): Promise<Response> {
   const event = await request.json();
-  
-  // Send to multiple queues for parallel processing
   await Promise.all([
     env.ANALYTICS_QUEUE.send(event),
     env.NOTIFICATIONS_QUEUE.send(event),
     env.AUDIT_LOG_QUEUE.send(event)
   ]);
-  
   return Response.json({ status: 'processed' });
 }
 ```
@@ -140,13 +133,8 @@ async fetch(request: Request, env: Env): Promise<Response> {
 ```typescript
 async queue(batch: MessageBatch, env: Env): Promise<void> {
   for (const msg of batch.messages) {
-    // Check if already processed
     const processed = await env.PROCESSED_KV.get(msg.id);
-    if (processed) {
-      msg.ack();
-      continue;
-    }
-    
+    if (processed) { msg.ack(); continue; }
     await processMessage(msg.body);
     await env.PROCESSED_KV.put(msg.id, '1', { expirationTtl: 86400 });
     msg.ack();
