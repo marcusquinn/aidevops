@@ -37,7 +37,7 @@ You dispatch workers, merge PRs, coordinate scheduled tasks, and monitor backgro
 
 ## Dispatch Protocol
 
-Always use the headless runtime helper. Never use raw `opencode run` or `claude` CLI.
+Never use raw `opencode run` or `claude` CLI — always use the headless runtime helper:
 
 ```bash
 ~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
@@ -54,8 +54,7 @@ sleep 2  # between dispatches
 
 ## Agent Routing
 
-Omit `--agent` for code tasks (defaults to Build+). Pass `--agent NAME` for domain tasks.
-Check bundle routing: `bundle-helper.sh get agent_routing REPO_PATH`.
+Omit `--agent` for code tasks (defaults to Build+). Pass `--agent NAME` for domain tasks. Check bundle routing: `bundle-helper.sh get agent_routing REPO_PATH`.
 
 | Domain | Agent | Examples |
 |--------|-------|---------|
@@ -96,35 +95,24 @@ kill PID  # Then comment on issue: model, branch, reason, diagnosis, next action
 
 ## Scheduling & Config
 
-**launchd (macOS):**
-- Labels: `sh.aidevops.<name>` — plists at `~/Library/LaunchAgents/sh.aidevops.<name>.plist`
+**launchd (macOS):** Labels `sh.aidevops.<name>` — plists at `~/Library/LaunchAgents/sh.aidevops.<name>.plist`
 - Start: `launchctl kickstart gui/$(id -u)/sh.aidevops.<name>`
 - Full restart (env var changes): `launchctl bootout gui/$(id -u)/sh.aidevops.<name> && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/sh.aidevops.<name>.plist`
 
-**Environment variables:**
-- `launchctl setenv` persists across launchd processes, overrides `${VAR:-default}` patterns
-- `launchctl unsetenv` requires `bootout/bootstrap` to take effect (not just `kickstart`)
-- Prefer `config.jsonc` over env vars — env vars are invisible and hard to audit
+**Env vars:** `launchctl setenv` persists across launchd, overrides `${VAR:-default}`. `launchctl unsetenv` requires `bootout/bootstrap` (not just `kickstart`). Prefer `config.jsonc` — env vars are invisible and hard to audit.
 
-**Config system:**
-- `~/.config/aidevops/config.jsonc` — authoritative, read by `config_get()` via `_get_merged_config()`
-- `~/.aidevops/agents/configs/aidevops.defaults.jsonc` — defaults, merged under user config
-- `~/.config/aidevops/settings.json` — legacy/UI-facing, NOT read by `config_get()`
-- Key: `orchestration.max_workers_cap` (config.jsonc), NOT `max_concurrent_workers` (settings.json)
+**Config:** `~/.config/aidevops/config.jsonc` authoritative via `config_get()` / `_get_merged_config()`. Defaults: `~/.aidevops/agents/configs/aidevops.defaults.jsonc`. `settings.json` is legacy/UI-facing — NOT read by `config_get()`. Key: `orchestration.max_workers_cap` (config.jsonc), NOT `max_concurrent_workers` (settings.json).
 
 ## Provider Management
 
-**Round-robin:** Helper alternates providers in `AIDEVOPS_HEADLESS_MODELS`. Recommended config:
+**Round-robin:** Helper alternates providers in `AIDEVOPS_HEADLESS_MODELS`. Pulse requires Anthropic (sonnet) — OpenAI models exit immediately without activity, wasting every other cycle. Pin pulse with `PULSE_MODEL`; workers can use any provider.
 
 ```bash
 export PULSE_MODEL="anthropic/claude-sonnet-4-6"           # Pulse pinned to Anthropic
 export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.3-codex"  # Workers rotated
 ```
 
-> Pulse requires Anthropic (sonnet). OpenAI models exit immediately without activity, wasting every other cycle. Pin pulse with `PULSE_MODEL`; workers can use any provider.
-
 **Backoff:** `headless-runtime-helper.sh backoff status` / `backoff clear PROVIDER`. Exit code 75 = all providers backed off.
-
 **Escalation:** After 2+ failed attempts on same issue, use `--model anthropic/claude-opus-4-6`. One opus dispatch (~3x cost) is cheaper than 5+ failed sonnet dispatches.
 
 ## Audit Trail
