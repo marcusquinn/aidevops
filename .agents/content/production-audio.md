@@ -29,16 +29,12 @@ tools:
 
 ## Voice Production Pipeline
 
-**NEVER feed raw AI video audio directly to ElevenLabs** — it amplifies artifacts.
-
-```text
-AI Video Output → CapCut AI Voice Cleanup → ElevenLabs Transformation → Final Audio
-```
+**NEVER feed raw AI video audio directly to ElevenLabs** — it amplifies artifacts. Always clean first:
 
 | Step | Tool | Purpose |
 |------|------|---------|
-| 1 (FIRST) | CapCut AI Voice Cleanup | Normalize accents/artifacts, remove robotic patterns, clean noise, standardize volume |
-| 2 (SECOND) | ElevenLabs Transformation | Voice cloning, emotional delivery, character consistency |
+| 1 | CapCut AI Voice Cleanup | Normalize accents/artifacts, remove robotic patterns, clean noise, standardize volume |
+| 2 | ElevenLabs Transformation | Voice cloning, emotional delivery, character consistency |
 
 **Alternative**: MiniMax TTS — talking-head content where ElevenLabs is overkill. $5/month for 120 min; 10-second clip for voice clone. See `tools/voice/voice-models.md`.
 
@@ -54,18 +50,11 @@ AI Video Output → CapCut AI Voice Cleanup → ElevenLabs Transformation → Fi
 
 **Source quality**: Single speaker, quiet environment, clear pronunciation. Cloning from existing content → run CapCut cleanup first.
 
-**Voice consistency checklist:**
-
-- [ ] Same voice model across all channel content
-- [ ] NEVER use pre-made voices for realism content
-- [ ] Consistent speaking pace (words per minute)
-- [ ] Matching emotional tone for content type
-- [ ] Standardized pronunciation for brand terms
-- [ ] Voice sample updated quarterly
+**Voice consistency**: Same voice model across all channel content. Consistent pace, emotional tone, and brand term pronunciation. Update voice samples quarterly.
 
 ### Emotional Block Cues
 
-Per-word emotion tagging for natural AI speech. TTS engines with emotion support (ElevenLabs, ChatTTS) parse these directly.
+Emotion tags for TTS engines with emotion support (ElevenLabs, ChatTTS):
 
 ```text
 [neutral]Welcome to the channel.[/neutral] [excited]Today we're covering something amazing![/excited] [serious]But first, let's understand the problem.[/serious]
@@ -91,8 +80,6 @@ Scripts from `content/production-writing.md` should include emotional block mark
 | **2: Ambient** | -25 | Stereo width for immersion; low-pass to avoid competing with dialogue. Sources: Freesound.org (CC0), Epidemic Sound, AudioCraft, Stable Audio |
 | **3: SFX** | -10 to -20 | Categories: Whooshes, Impacts, UI Sounds, Foley, Risers/Drops. Land 1-2 frames BEFORE visual event. Layer for bigger impacts; reverb to match dialogue space |
 | **4: Music** | -18 to -20 | Ducking: sidechain dialogue → music. Threshold -20dB, ratio 4:1, attack 10ms, release 200ms. Sources: Epidemic Sound, Artlist, Uppbeat, Suno, Udio |
-
-**Ambient by content type:**
 
 | Content Type | Ambient | Music Style | Ducking |
 |--------------|---------|-------------|---------|
@@ -136,11 +123,9 @@ voice-helper.sh benchmark                     # Test component speeds
 
 | Service | Details | CLI |
 |---------|---------|-----|
-| ElevenLabs | Voice cloning from 3-5 min, 29 languages, 100+ voices, emotional control | `voice-pipeline-helper.sh [transform\|tts\|voices\|clone]` |
-| CapCut-equivalent (local ffmpeg) | Noise reduction, high-pass, de-essing, loudness normalization | `voice-pipeline-helper.sh cleanup <audio> [output] [target-lufs]` |
-| Edge TTS (Microsoft, free) | 400+ voices, 100+ languages, no API key | Used by `voice-helper.sh` |
-
-For advanced use cases (custom LLMs, server/client deployment, phone integration), see `tools/voice/speech-to-speech.md`.
+| ElevenLabs | Voice cloning (3-5 min sample), 29 languages, emotional control | `voice-pipeline-helper.sh [transform\|tts\|voices\|clone]` |
+| Local ffmpeg | Noise reduction, high-pass, de-essing, loudness normalization | `voice-pipeline-helper.sh cleanup <audio> [output] [target-lufs]` |
+| Edge TTS (free) | 400+ voices, 100+ languages, no API key | Used by `voice-helper.sh` |
 
 ## See Also
 
