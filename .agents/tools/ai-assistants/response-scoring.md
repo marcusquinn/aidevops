@@ -29,12 +29,7 @@ model: sonnet
 
 ## When to Use
 
-- Evaluating which model performs best for a specific task type
-- Building evidence-based model selection for your workflow
-- Comparing model outputs before/after prompt engineering changes
-- Creating reproducible benchmarks for your use cases
-
-Distinct from `compare-models` (model specs) — this evaluates **actual responses**.
+Evaluate **actual responses** (distinct from `compare-models` which compares specs): model selection for task types, before/after prompt engineering, reproducible benchmarks.
 
 ## Scoring Criteria (1–5 scale, weighted average)
 
@@ -47,29 +42,26 @@ Distinct from `compare-models` (model specs) — this evaluates **actual respons
 
 ## Workflow
 
-### 1. Create an Evaluation Prompt
+**1. Create prompt:**
 
 ```bash
 response-scoring-helper.sh prompt add \
-  --title "FizzBuzz in Python" \
-  --text "Write a Python function..." \
-  --category "coding" \
-  --difficulty "easy"
-# Or from file: --file prompts/rest-api.txt
+  --title "FizzBuzz in Python" --text "Write a Python function..." \
+  --category "coding" --difficulty "easy"
+# Or: --file prompts/rest-api.txt
 ```
 
-### 2. Record Model Responses
+**2. Record responses:**
 
 ```bash
 response-scoring-helper.sh record \
-  --prompt 1 \
-  --model claude-sonnet-4-6 \
+  --prompt 1 --model claude-sonnet-4-6 \
   --text "def fizzbuzz():..." \
   --time 2.3 --tokens 150 --cost 0.0005
-# Or from file: --file responses/gpt4o-output.txt
+# Or: --file responses/gpt4o-output.txt
 ```
 
-### 3. Score Each Response
+**3. Score:**
 
 ```bash
 response-scoring-helper.sh score \
@@ -77,7 +69,7 @@ response-scoring-helper.sh score \
   --correctness 5 --completeness 4 --code-quality 5 --clarity 4
 ```
 
-### 4. Compare and Rank
+**4. Compare and rank:**
 
 ```bash
 response-scoring-helper.sh compare --prompt 1        # or --json
@@ -85,26 +77,25 @@ response-scoring-helper.sh leaderboard               # or --category coding
 response-scoring-helper.sh export --csv > scores.csv
 ```
 
-## Integration with compare-models
+## Integration
 
 | Tool | Purpose |
 |------|---------|
-| `compare-models-helper.sh recommend "task"` | Identify candidate models by spec |
-| `model-availability-helper.sh check <model>` | Verify model is available |
-| `response-scoring-helper.sh` | **Evaluate actual response quality** |
-| `model-routing.md` | Use leaderboard data to inform tier assignments |
+| `compare-models-helper.sh recommend "task"` | Candidate models by spec |
+| `model-availability-helper.sh check <model>` | Verify availability |
+| `response-scoring-helper.sh` | **Actual response quality** |
+| `model-routing.md` | Leaderboard → tier assignments |
 
 ## Pattern Tracker Integration (t1099)
 
-Scores feed into the shared pattern tracker database:
+Scores feed into the shared pattern tracker:
 
-- **On score**: Recorded as `SUCCESS_PATTERN` (weighted avg >= 3.5/5.0) or `FAILURE_PATTERN` (< 3.5/5.0), tagged with model tier and task category
-- **On compare**: Winner recorded as `SUCCESS_PATTERN` with comparison metadata
-- **Bulk sync**: `response-scoring-helper.sh sync` (use `--dry-run` to preview)
-- **Disable sync**: `SCORING_NO_PATTERN_SYNC=1`
-- **Model tier mapping**: Full names (e.g., `claude-sonnet-4-6`) auto-mapped to routing tiers (`sonnet`)
+- **On score**: `SUCCESS_PATTERN` (weighted avg >= 3.5) or `FAILURE_PATTERN` (< 3.5), tagged with model tier + category
+- **On compare**: Winner → `SUCCESS_PATTERN` with comparison metadata
+- **Bulk sync**: `response-scoring-helper.sh sync` (`--dry-run` to preview). Disable: `SCORING_NO_PATTERN_SYNC=1`
+- **Tier mapping**: Full model names (e.g., `claude-sonnet-4-6`) auto-mapped to routing tiers (`sonnet`)
 
-Enables `/route <task>` and `/patterns recommend --task-type <type>` to use real A/B data.
+Feeds `/route <task>` and `/patterns recommend --task-type <type>` with real A/B data.
 
 ## Database Schema
 
@@ -117,8 +108,8 @@ comparisons -- Comparison records with winner tracking
 
 ## Related
 
-- `tools/ai-assistants/compare-models.md` - Model spec comparison
-- `tools/context/model-routing.md` - Cost-aware model routing
-- Cross-session memory system - Pattern tracking and model recommendations (replaces archived `pattern-tracker-helper.sh`)
-- `scripts/model-availability-helper.sh` - Provider health checks
-- `scripts/model-registry-helper.sh` - Model version tracking
+- `tools/ai-assistants/compare-models.md` — model spec comparison
+- `tools/context/model-routing.md` — cost-aware routing
+- Cross-session memory — pattern tracking, model recommendations (replaces archived `pattern-tracker-helper.sh`)
+- `scripts/model-availability-helper.sh` — provider health checks
+- `scripts/model-registry-helper.sh` — model version tracking
