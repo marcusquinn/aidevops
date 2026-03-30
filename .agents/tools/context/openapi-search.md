@@ -73,21 +73,6 @@ All clients connect to `https://openapi-mcp.openapisearch.com/mcp`. aidevops con
 claude mcp add --scope user openapi-search --transport http https://openapi-mcp.openapisearch.com/mcp
 ```
 
-**npx alternative** (any client supporting `command`/`args`):
-
-```json
-{
-  "mcpServers": {
-    "openapi-search": {
-      "command": "npx",
-      "args": ["-y", "@openapi-search/mcp-server"]
-    }
-  }
-}
-```
-
-Use `bunx --bun` instead of `npx` for faster startup.
-
 ## Usage
 
 ### Full discovery workflow
@@ -112,13 +97,6 @@ getOperationDetails(apiId: "exchangerate-api", operationId: "GET /latest/{base}"
 
 **Don't use**: you already have the docs (use Context7 or direct docs); testing live calls (read-only); internal/private APIs (indexes public specs only).
 
-## Agent Enablement
-
-| Agent | Enabled |
-|-------|---------|
-| `@openapi-search` | Yes — dedicated subagent |
-| Build+, Research, all others | No — use `@openapi-search` when needed |
-
 ## Troubleshooting
 
 **MCP not responding** — check connectivity:
@@ -131,8 +109,3 @@ curl -sf --max-time 10 https://openapi-mcp.openapisearch.com/mcp | head -5
 
 **Spec too large** — some large APIs (e.g., AWS) exceed the 250K character limit. Use a more specific sub-spec URL.
 
-## Updates
-
-- **GitHub**: <https://github.com/janwilmake/openapi-mcp-server>
-- **Directory**: <https://openapisearch.com>
-- **Remote URL**: `https://openapi-mcp.openapisearch.com/mcp` (always latest)
