@@ -57,8 +57,6 @@ Add to the worker block inside a config (see Multi-Service Architecture for full
 
 ## Dev vs Prod Configs
 
-Override bindings per environment via `fromEnvironment`:
-
 ```capnp
 const devWorker :Workerd.Worker = (
   modules = [(name = "index.js", esModule = embed "src/index.js")],
@@ -115,7 +113,7 @@ workerd test config.capnp --test-only=test.js
 
 ### Systemd
 
-`/etc/systemd/system/workerd.service` + `workerd.socket`:
+`/etc/systemd/system/workerd.service` and `workerd.socket`:
 
 ```ini
 # workerd.service
