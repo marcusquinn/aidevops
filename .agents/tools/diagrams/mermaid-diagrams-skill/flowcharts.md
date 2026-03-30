@@ -9,40 +9,36 @@ flowchart LR
     B -->|No| D[End]
 ```
 
-Direction: `TB`/`TD` (top-bottom), `BT`, `LR`, `RL`
+**Direction:** `TB`/`TD` (top-bottom), `BT`, `LR`, `RL`
 
 ## Node Shapes
 
-### Standard
-
+**Standard syntax:**
 ```
-A[Rectangle]         B(Rounded)           C([Stadium])
-D[[Subroutine]]      E[(Database)]        F((Circle))
-G{Diamond}           H{{Hexagon}}         I[/Parallelogram/]
-J[\Parallelogram\]   K[/Trapezoid\]       L[\Trapezoid/]
+A[Rectangle]    B(Rounded)      C([Stadium])    D[[Subroutine]]
+E[(Database)]   F((Circle))     G{Diamond}      H{{Hexagon}}
+I[/Parallelogram/]  J[\Parallelogram\]  K[/Trapezoid\]  L[\Trapezoid/]
 M(((Double Circle)))
 ```
 
-### Extended (v11.3+)
-
-Syntax: `node@{ shape: name, label: "Text" }`
+**Extended syntax (v11.3+):** `node@{ shape: name, label: "Text" }`
 
 | Shape | Description | Shape | Description |
 |-------|-------------|-------|-------------|
 | `rect` | Rectangle | `rounded` | Rounded rectangle |
 | `stadium` | Pill | `subroutine` | Subroutine box |
-| `cyl` | Cylinder (DB) | `circle` | Circle |
+| `cyl` | Cylinder | `circle` | Circle |
 | `dbl-circ` | Double circle | `diamond` | Diamond |
-| `hex` | Hexagon | `lean-r` / `lean-l` | Parallelogram |
-| `trap-b` / `trap-t` | Trapezoid | `doc` | Document |
+| `hex` | Hexagon | `lean-r`/`lean-l` | Parallelogram |
+| `trap-b`/`trap-t` | Trapezoid | `doc` | Document |
 | `bolt` | Lightning bolt | `tri` | Triangle |
 | `fork` | Fork | `hourglass` | Hourglass |
 | `flag` | Flag | `comment` | Comment |
 | `f-circ` | Filled circle | `lin-cyl` | Lined cylinder |
-| `brace` / `brace-r` / `braces` | Curly brace(s) | `win-pane` | Window pane |
+| `brace`/`brace-r`/`braces` | Curly brace(s) | `win-pane` | Window pane |
 | `notch-rect` | Notched rect | `bow-rect` | Bow tie rect |
 | `div-rect` | Divided rect | `odd` | Odd shape |
-| `lin-doc` | Lined document | `tag-doc` / `tag-rect` | Tagged shapes |
+| `lin-doc` | Lined document | `tag-doc`/`tag-rect` | Tagged shapes |
 | `half-rounded-rect` | Half rounded | `curv-trap` | Curved trapezoid |
 
 ## Edge Types
@@ -56,7 +52,7 @@ A o--o B      Circle both ends   A x--x B      Cross both ends
 A <--> B      Bidirectional
 ```
 
-**Length** — extra dashes extend: `-->` (normal), `--->` (longer), `---->` (longest)
+**Length:** Extra dashes extend: `-->` (normal), `--->` (longer), `---->` (longest)
 
 **Labels:** `A -->|text| B` or `A -- text --> B` or `A -->|"multi word"| B`
 
@@ -77,7 +73,7 @@ flowchart TB
     UI --> WS
 ```
 
-Nested subgraphs supported. Add `direction TB` inside a subgraph to override direction locally.
+Nested subgraphs supported. Override direction locally with `direction TB` inside a subgraph.
 
 ## Multi-Target Edges
 
@@ -85,7 +81,7 @@ Nested subgraphs supported. Add `direction TB` inside a subgraph to override dir
 
 ## Markdown in Labels
 
-Wrap label in backtick-quotes: `A["`**Bold** and *italic*`"]` — supports bold, italic, multi-line.
+Wrap in backtick-quotes: `A["`**Bold** and *italic*`"]` — supports bold, italic, multi-line.
 
 ## Icons
 
