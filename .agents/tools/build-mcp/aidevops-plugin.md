@@ -18,84 +18,29 @@ tools:
 - **Status**: Implemented (t008.1 PR #1138, t008.2 PR #1149, t008.3 PR #1150)
 - **Purpose**: Native OpenCode plugin wrapper for aidevops
 - **Approach**: Single-file ESM plugin using hooks-based SDK pattern
-- **Location**: `.agents/plugins/opencode-aidevops/index.mjs`
-- **SDK**: `@opencode-ai/plugin` v1.1.56+
-- **Key Decision**: Plugin complements `generate-opencode-agents.sh` — shell script handles primary agent config, plugin adds runtime hooks and tools.
+- **Location**: `.agents/plugins/opencode-aidevops/index.mjs` + `package.json`
+- **SDK**: `@opencode-ai/plugin` v1.1.56+ — full API: `index.d.ts` on npm
+- **Key Decision**: Plugin complements `generate-opencode-agents.sh` — shell script handles primary agent config, plugin adds runtime hooks and tools. Shell script always takes precedence.
 
 <!-- AI-CONTEXT-END -->
 
 ## Integration Layers
 
-| Layer | Mechanism | Managed By |
-|-------|-----------|------------|
-| Primary agents | `opencode.json` agent section | `generate-opencode-agents.sh` |
-| Subagent stubs | `~/.config/opencode/agent/*.md` | `generate-opencode-agents.sh` |
-| MCP configs | `opencode.json` mcp section | `generate-opencode-agents.sh` + **This plugin** |
-| Slash commands | `~/.config/opencode/commands/` | `setup.sh` |
-| Runtime hooks | Plugin hooks API | **This plugin** |
-| Custom tools | Plugin tool registration | **This plugin** |
-| Dynamic agents | Plugin config hook | **This plugin** |
-| MCP registration | Plugin config hook (t008.2) | **This plugin** |
-| Shell environment | Plugin shell.env hook | **This plugin** |
-| Compaction context | Plugin compacting hook | **This plugin** |
+Static config (agents, subagent stubs, MCP configs, slash commands) is managed by `generate-opencode-agents.sh` and `setup.sh`. This plugin owns the runtime layer:
 
-Plugin only injects agents and MCPs not already configured by `generate-opencode-agents.sh` — shell script always takes precedence.
-
-## SDK API (v1.1.56)
-
-```typescript
-type Plugin = (input: PluginInput) => Promise<Hooks>;
-
-type PluginInput = {
-  client: OpencodeClient;
-  project: Project;
-  directory: string;        // Current working directory
-  worktree: string;         // Git worktree root
-  serverUrl: URL;
-  $: BunShell;
-};
-
-interface Hooks {
-  config?: (input: Config) => Promise<void>;
-  tool?: { [key: string]: ToolDefinition };
-  event?: (input: { event: Event }) => Promise<void>;
-  auth?: AuthHook;
-  "chat.message"?: (input, output) => Promise<void>;
-  "chat.params"?: (input, output) => Promise<void>;
-  "permission.ask"?: (input, output) => Promise<void>;
-  "tool.execute.before"?: (input, output) => Promise<void>;
-  "tool.execute.after"?: (input, output) => Promise<void>;
-  "shell.env"?: (input, output) => Promise<void>;
-  "experimental.session.compacting"?: (input, output) => Promise<void>;
-}
-```
-
-## Plugin Structure
-
-```text
-.agents/plugins/opencode-aidevops/
-├── index.mjs          # Single-file plugin (all hooks and tools)
-└── package.json       # Metadata + peer dependency
-```
+| Layer | Hook/Mechanism |
+|-------|---------------|
+| Agent loading + MCP registration | `config` hook |
+| Custom tools | `tool` registration |
+| Quality checks (pre/post) | `tool.execute.before` / `tool.execute.after` |
+| Shell environment | `shell.env` hook |
+| Compaction context | `experimental.session.compacting` hook |
 
 ## Hooks Implemented
 
 ### 1. Config Hook — Agent Loading + MCP Registration
 
-```javascript
-async function configHook(config) {
-  const agents = loadAgentDefinitions();
-  for (const agent of agents) {
-    if (config.agent[agent.name]) continue;
-    if (agent.mode !== "subagent") continue;
-    config.agent[agent.name] = { description: agent.description, mode: "subagent" };
-  }
-  registerMcpServers(config);
-  applyAgentMcpTools(config);
-}
-```
-
-**Agent Loading** (t008.1): Reads markdown files from `~/.aidevops/agents/`, parses YAML frontmatter, injects subagent definitions. Skips agents already configured.
+**Agent Loading** (t008.1): Reads `~/.aidevops/agents/`, parses YAML frontmatter, injects subagent definitions into `config.agent`. Skips agents already configured (shell script takes precedence).
 
 **MCP Registration** (t008.2): Data-driven registry of 12 MCP servers. Ensures MCPs are registered without re-running `generate-opencode-agents.sh`.
 
@@ -160,6 +105,5 @@ Preserves across context resets: active agent state, loop guardrails, session ch
 ## References
 
 - [OpenCode Plugin SDK](https://opencode.ai/docs/plugins) — `@opencode-ai/plugin` npm package
-- [Plugin types](https://www.npmjs.com/package/@opencode-ai/plugin) — `index.d.ts` for full API
 - Implementation: `.agents/plugins/opencode-aidevops/index.mjs`
 - Plan: `todo/PLANS.md` section "aidevops-opencode Plugin" (p001)
