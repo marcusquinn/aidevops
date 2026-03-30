@@ -2,9 +2,7 @@
 
 ## Common Issues
 
-### Container Not Ready
-
-`CONTAINER_NOT_READY` — container still provisioning (first request or after sleep). Retry after 2-3s:
+**Container Not Ready** — `CONTAINER_NOT_READY` on first request or after sleep. Retry after 2-3s:
 
 ```typescript
 async function execWithRetry(sandbox, cmd) {
@@ -22,28 +20,21 @@ async function execWithRetry(sandbox, cmd) {
 }
 ```
 
-### Port Exposure Fails in Dev
+**Port Exposure Fails in Dev** — "Connection refused: container port not found" means missing `EXPOSE` in Dockerfile. Add `EXPOSE <port>` (only needed for `wrangler dev`; production auto-exposes).
 
-"Connection refused: container port not found" — missing `EXPOSE` directive in Dockerfile. Add `EXPOSE <port>` (only needed for `wrangler dev`; production auto-exposes).
-
-### Preview URLs Not Working
-
+**Preview URLs Not Working** — check in order:
 1. Custom domain configured? (not `.workers.dev`)
 2. Wildcard DNS set up? (`*.domain.com → worker.domain.com`)
 3. `normalizeId: true` in getSandbox?
 4. `proxyToSandbox()` called first in fetch?
 
-### Slow First Request
+**Slow First Request** — cold start from container provisioning. Mitigations: `sleepAfter` instead of new sandboxes, pre-warm with cron triggers, `keepAlive: true` for critical sandboxes.
 
-Cold start from container provisioning. Mitigations: `sleepAfter` instead of new sandboxes, pre-warm with cron triggers, `keepAlive: true` for critical sandboxes.
+**File Not Persisting** — `/tmp` and ephemeral paths don't survive. Use `/workspace` for persistent files.
 
-### File Not Persisting
+## Performance
 
-Files in `/tmp` or ephemeral paths don't survive. Use `/workspace` for persistent files.
-
-## Performance Optimization
-
-### Sandbox ID Strategy
+**Sandbox ID Strategy** — reuse IDs per user/task; never use `Date.now()` as ID:
 
 ```typescript
 // ❌ BAD: Creates new sandbox every time (slow, expensive)
@@ -56,7 +47,7 @@ const sandbox = getSandbox(env.Sandbox, `user-${userId}`);
 const sandbox = getSandbox(env.Sandbox, 'shared-runner');
 ```
 
-### Sleep Configuration
+**Sleep Configuration:**
 
 ```typescript
 // Cost-optimized: Sleep after 30min inactivity
@@ -71,7 +62,7 @@ const sandbox = getSandbox(env.Sandbox, 'id', {
 });
 ```
 
-### Increase max_instances for High Traffic
+**High Traffic** — increase `max_instances` in wrangler config:
 
 ```jsonc
 {
@@ -82,13 +73,11 @@ const sandbox = getSandbox(env.Sandbox, 'id', {
 }
 ```
 
-## Security Best Practices
+## Security
 
-### Sandbox Isolation
+**Isolation** — each sandbox is an isolated container (filesystem, network, processes). Use unique IDs per tenant; sandboxes cannot communicate directly.
 
-Each sandbox = isolated container (filesystem, network, processes). Use unique sandbox IDs per tenant for multi-tenant apps. Sandboxes cannot communicate directly.
-
-### Input Validation
+**Input Validation** — never interpolate user code into exec strings:
 
 ```typescript
 // ❌ DANGEROUS: Command injection
@@ -99,16 +88,15 @@ await sandbox.writeFile('/workspace/user_code.py', userCode);
 const result = await sandbox.exec('python3 /workspace/user_code.py');
 ```
 
-### Resource Limits
+**Resource Limits** — always set timeouts on exec:
 
 ```typescript
-// Timeout long-running commands
 const result = await sandbox.exec('python3 script.py', {
   timeout: 30000  // 30 seconds
 });
 ```
 
-### Secrets Management
+**Secrets** — never hardcode; pass via env:
 
 ```typescript
 // ❌ NEVER hardcode secrets
@@ -123,24 +111,21 @@ const result = await sandbox.exec('git clone ...', {
 });
 ```
 
-### Preview URL Security
-
-Preview URLs include auto-generated tokens (e.g., `https://8080-sandbox-abc123def456.yourdomain.com`) that rotate on each expose operation, reducing the risk of unauthorized access. Note: tokens can be leaked prior to rotation.
+**Preview URL Tokens** — auto-generated tokens rotate on each expose operation, reducing unauthorized access risk. Tokens can be leaked prior to rotation.
 
 ## Limits
 
-- **Instance types**: lite (256MB), standard (512MB), heavy (1GB)
-- **Default timeout**: 120s for exec operations
-- **First deploy**: 2-3 min for container provisioning
-- **Cold start**: 2-3s when waking from sleep
-
-## Production Guide
-
-See: https://developers.cloudflare.com/sandbox/guides/production-deployment/
+| | |
+|---|---|
+| Instance types | lite (256MB), standard (512MB), heavy (1GB) |
+| Default exec timeout | 120s |
+| First deploy | 2-3 min (container provisioning) |
+| Cold start | 2-3s (waking from sleep) |
 
 ## Resources
 
 - [Official Docs](https://developers.cloudflare.com/sandbox/)
+- [Production Guide](https://developers.cloudflare.com/sandbox/guides/production-deployment/)
 - [API Reference](https://developers.cloudflare.com/sandbox/api/)
 - [Examples](https://github.com/cloudflare/sandbox-sdk/tree/main/examples)
 - [npm Package](https://www.npmjs.com/package/@cloudflare/sandbox)
