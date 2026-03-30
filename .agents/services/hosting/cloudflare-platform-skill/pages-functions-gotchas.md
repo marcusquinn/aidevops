@@ -68,13 +68,15 @@ npx wrangler pages deployment tail --status error
 
 ## Limits
 
+As of 2026-03-20 — [Cloudflare Pages Functions limits](https://developers.cloudflare.com/pages/functions/pricing/)
+
 | Resource | Free | Paid |
 |----------|------|------|
-| CPU | 10ms | 50ms |
+| CPU | 10ms/invocation | 30s/invocation |
 | Memory | 128 MB | 128 MB |
-| Script size | 10 MB compressed | 10 MB compressed |
-| Env vars | 5 KB/var, 64 max | 5 KB/var, 64 max |
-| Requests | 100k/day | $0.50/million |
+| Script size | 3 MB compressed | 10 MB compressed |
+| Env vars | 5 KB/var, 64 max | 5 KB/var, 128 max |
+| Requests | 100k/day | $0.30/million |
 
 ## Best Practices
 
