@@ -32,24 +32,7 @@ tools:
 
 ## Architecture
 
-```text
-Local Supervisor                    Remote Host
-┌──────────────────┐               ┌──────────────────────┐
-│  pulse.sh        │  SSH/Tailscale│  /tmp/aidevops-worker │
-│  ├── dispatch.sh │──────────────>│  ├── t123/            │
-│  │   └── remote- │  credentials │  │   ├── dispatch.sh   │
-│  │      dispatch │  forwarding  │  │   ├── wrapper.sh    │
-│  │      -helper  │               │  │   ├── worker.log   │
-│  │               │<──────────────│  │   └── repo/         │
-│  │   (log collect│  log stream  │  │       └── (git clone)│
-│  │    on eval)   │               │  └── ...               │
-│  └── evaluate.sh │               │                        │
-│      (reads local│               │  Container (optional)  │
-│       log copy)  │               │  ┌──────────────────┐  │
-└──────────────────┘               │  │ docker exec ...   │  │
-                                   │  └──────────────────┘  │
-                                   └──────────────────────┘
-```
+`pulse.sh` → `dispatch.sh` → `remote-dispatch-helper.sh` — uploads a dispatch script via SSH stdin, clones the repo, and runs the worker in `/tmp/aidevops-worker/<task-id>/` on the remote host (optionally inside a Docker container via `docker exec`). Pulse Phase 1 detects worker exit (PID gone), collects logs back to the local supervisor, then runs normal evaluation.
 
 ## Host Management
 
@@ -86,27 +69,14 @@ remote-dispatch-helper.sh dispatch t123 gpu-server \
 | `OPENROUTER_API_KEY` | Env var | For model routing |
 | `GOOGLE_API_KEY` | Env var | For Google AI models |
 
-**Security**:
-- SSH agent forwarding passes the socket, not keys
-- API keys embedded in shell script uploaded via SSH stdin — no `AcceptEnv`/`SendEnv` dependency
-- Keys exist only in the generated dispatch script, never as standalone files on disk
-- Linux: env vars readable via `/proc/<pid>/environ` by same user + root while worker runs
-- Sensitive deployments: restrict remote host access or use short-lived/scoped tokens
-- Remote workspace cleaned up after task completion
+**Security**: SSH agent forwarding passes the socket, not keys. API keys are embedded in the dispatch script uploaded via SSH stdin (no `AcceptEnv`/`SendEnv` dependency) and never written as standalone files on disk. On Linux, env vars are readable via `/proc/<pid>/environ` by the same user and root while the worker runs — use short-lived/scoped tokens for sensitive deployments. Remote workspace is cleaned up after task completion.
 
-## Log Collection
+## Monitoring and Cleanup
 
 ```bash
 remote-dispatch-helper.sh logs t123 gpu-server           # download full log
 remote-dispatch-helper.sh logs t123 gpu-server --follow  # stream in real-time
 remote-dispatch-helper.sh logs t123 gpu-server --tail 100
-```
-
-**Auto-collection**: Pulse Phase 1 detects worker exit (PID gone) → calls `logs` → updates `log_file` in DB to local copy → normal evaluation.
-
-## Status and Cleanup
-
-```bash
 remote-dispatch-helper.sh status t123 gpu-server    # host, transport, container, PID, state, log size
 remote-dispatch-helper.sh cleanup t123 gpu-server   # collect logs then clean workspace
 remote-dispatch-helper.sh cleanup t123 gpu-server --keep-logs
@@ -126,26 +96,7 @@ Tailscale auto-detected for `*.ts.net` and `100.x.x.x` addresses.
 
 ## Configuration (`~/.config/aidevops/remote-hosts.json`)
 
-```json
-{
-  "hosts": {
-    "gpu-server": {
-      "address": "192.168.1.100",
-      "transport": "ssh",
-      "container": "auto",
-      "user": "",
-      "added": "2026-02-21T10:00:00Z"
-    },
-    "build-node": {
-      "address": "build-node.tailnet.ts.net",
-      "transport": "tailscale",
-      "container": "worker-1",
-      "user": "deploy",
-      "added": "2026-02-21T10:00:00Z"
-    }
-  }
-}
-```
+Fields per host: `address`, `transport` (`ssh`|`tailscale`), `container` (`auto` or name), `user`, `added` (ISO timestamp). See `add` command examples above for typical values.
 
 ## Environment Variables
 
