@@ -238,10 +238,63 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Test 14: help command exits cleanly
+# Test 14: issue-created scopes token detection to issue window
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "Test 14: help command"
+echo "Test 14: issue-created token scoping"
+tmp_home=$(mktemp -d 2>/dev/null || mktemp -d -t sighelper)
+mkdir -p "${tmp_home}/.local/share/opencode"
+db_path="${tmp_home}/.local/share/opencode/opencode.db"
+
+now_epoch=$(date +%s)
+session_created_ms=$(((now_epoch - 3600) * 1000))
+pre_msg_ms=$(((now_epoch - 1200) * 1000))
+issue_created_epoch=$((now_epoch - 600))
+post_msg_ms=$(((now_epoch - 300) * 1000))
+
+issue_created_iso=$(date -u -r "$issue_created_epoch" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null ||
+	date -u -d "@${issue_created_epoch}" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
+
+cwd_sql=$(pwd)
+cwd_sql=${cwd_sql//\'/\'\'}
+
+sqlite3 "$db_path" "
+CREATE TABLE session (
+  id TEXT PRIMARY KEY,
+  title TEXT,
+  directory TEXT NOT NULL,
+  time_created INTEGER NOT NULL
+);
+CREATE TABLE message (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  time_created INTEGER NOT NULL,
+  time_updated INTEGER NOT NULL,
+  data TEXT NOT NULL
+);
+INSERT INTO session (id,title,directory,time_created)
+VALUES ('ses_test_scope','sig-test','${cwd_sql}',${session_created_ms});
+INSERT INTO message (id,session_id,time_created,time_updated,data)
+VALUES
+  ('msg_pre','ses_test_scope',${pre_msg_ms},${pre_msg_ms},'{\"tokens\":{\"input\":100,\"output\":10,\"cache\":{\"read\":0,\"write\":0}},\"role\":\"assistant\"}'),
+  ('msg_post','ses_test_scope',${post_msg_ms},${post_msg_ms},'{\"tokens\":{\"input\":200,\"output\":20,\"cache\":{\"read\":0,\"write\":0}},\"role\":\"assistant\"}');
+"
+
+if [[ -n "$issue_created_iso" ]]; then
+	result=$(HOME="$tmp_home" "$HELPER" generate --cli "OpenCode" --model "m" --issue-created "$issue_created_iso")
+	assert_contains "issue window uses scoped tokens" "220 tokens on this" "$result"
+	assert_not_contains "issue window excludes pre-issue tokens" "330 tokens on this" "$result"
+else
+	echo "  SKIP: could not construct issue-created timestamp"
+fi
+
+rm -rf "$tmp_home"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 15: help command exits cleanly
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 15: help command"
 result=$("$HELPER" help 2>&1)
 assert_contains "help shows usage" "Usage:" "$result"
 assert_contains "help shows examples" "Examples:" "$result"
