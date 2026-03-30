@@ -14,7 +14,7 @@ tools: [read, write, edit, bash, glob, grep, webfetch, task, context7_*]
 - **Package Manager**: pnpm (recommended), npm, yarn
 - **Docs**: [turbo.build/repo/docs](https://turbo.build/repo/docs) (via Context7 MCP) · **Features**: Incremental caching · Parallel execution · Remote caching (Vercel)
 
-**Commands**: `pnpm dev` (all) · `pnpm build` (all) · `pnpm --filter web dev` (single) · `pnpm --filter @workspace/ui build` (full name) · `pnpm --filter web... build` (+ deps)
+**Commands**: `pnpm dev` · `pnpm build` · `pnpm --filter web dev` · see Filtering section for full syntax
 
 **Structure**:
 
@@ -68,14 +68,7 @@ pnpm --filter "!web" build             # exclude
 
 ```json
 // packages/ui/web/package.json
-{
-  "name": "@workspace/ui-web",
-  "exports": {
-    ".": "./src/index.ts",
-    "./globals.css": "./src/styles/globals.css",
-    "./*": "./src/components/*.tsx"
-  }
-}
+{ "name": "@workspace/ui-web", "exports": { ".": "./src/index.ts", "./globals.css": "./src/styles/globals.css", "./*": "./src/components/*.tsx" } }
 ```
 
 ```tsx
@@ -86,19 +79,11 @@ import "@workspace/ui-web/globals.css";
 
 ### Workspace Dependencies
 
-Use `"workspace:*"` protocol (not `"*"`):
-
-```json
-{ "dependencies": { "@workspace/ui-web": "workspace:*", "@workspace/api": "workspace:*" } }
-```
+Use `"workspace:*"` protocol (not `"*"`): `{ "dependencies": { "@workspace/ui-web": "workspace:*" } }`
 
 ### Environment Variables
 
-Use `dotenv-cli` to load `.env` before turbo:
-
-```bash
-pnpm with-env turbo build
-```
+Use `dotenv-cli` to load `.env` before turbo: `pnpm with-env turbo build`
 
 ```json
 { "scripts": { "build": "pnpm with-env turbo build", "dev": "pnpm with-env turbo dev" } }
