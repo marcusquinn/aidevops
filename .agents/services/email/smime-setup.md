@@ -27,7 +27,7 @@ tools:
 | **Check expiry** | `openssl x509 -in cert.pem -enddate -noout` |
 | **Related** | `services/email/email-security.md`, `tools/credentials/encryption-stack.md` |
 
-**Decision:** Free/personal → Actalis; enterprise/compliance → DigiCert or GlobalSign. Then: [Apple Mail](#apple-mail) · [Thunderbird](#thunderbird) · [Outlook](#outlook) · [Key Backup](#key-backup-and-recovery) · [Agent Commands](#agent-assisted-signing-and-encryption)
+**Decision:** Free/personal → Actalis; enterprise/compliance → DigiCert or GlobalSign.
 
 <!-- AI-CONTEXT-END -->
 
@@ -44,7 +44,6 @@ openssl req -x509 -newkey rsa:4096 -keyout smime-key.pem -out smime-cert.pem \
     -addext "subjectAltName=email:you@example.com" \
     -addext "keyUsage=digitalSignature,keyEncipherment" \
     -addext "extendedKeyUsage=emailProtection"
-
 openssl pkcs12 -export -in smime-cert.pem -inkey smime-key.pem \
     -out smime-self-signed.p12 -name "Your Name (self-signed)" -passout pass:changeme
 ```
@@ -85,20 +84,13 @@ Gmail S/MIME requires Google Workspace Enterprise Standard+. OWA requires Micros
 **Critical:** losing your private key makes encrypted emails permanently unreadable. Do NOT delete expired certs — needed to decrypt historical emails.
 
 ```bash
-# Export from macOS Keychain
+# Export
 security export -k ~/Library/Keychains/login.keychain-db -t identities -f pkcs12 -o smime-backup.p12
-
-# Verify backup
-openssl pkcs12 -in smime-backup.p12 -noout -info
-
-# Store password in gopass
+openssl pkcs12 -in smime-backup.p12 -noout -info  # verify
 gopass insert email/smime-cert-password
-
-# Restore to macOS
-security import smime-backup.p12 -k ~/Library/Keychains/login.keychain-db
-
-# Restore to Thunderbird
-pk12util -i smime-backup.p12 -d ~/.thunderbird/*.default-release/
+# Restore
+security import smime-backup.p12 -k ~/Library/Keychains/login.keychain-db  # macOS
+pk12util -i smime-backup.p12 -d ~/.thunderbird/*.default-release/           # Thunderbird
 ```
 
 ## Agent-Assisted Signing and Encryption
@@ -107,13 +99,10 @@ pk12util -i smime-backup.p12 -d ~/.thunderbird/*.default-release/
 # Sign
 openssl smime -sign -in message.txt -signer cert.pem -inkey private-key.pem \
     -out signed.eml -text -md sha256
-
 # Encrypt to recipient (requires their public cert)
 openssl smime -encrypt -in message.txt -out encrypted.eml -aes256 recipient-cert.pem
-
 # Decrypt
 openssl smime -decrypt -in encrypted.eml -recip cert.pem -inkey private-key.pem -out decrypted.txt
-
 # Verify signature and extract signer cert (use their-signed.eml to extract a contact's cert)
 openssl smime -verify -in signed.eml -noverify -signer signer-cert.pem -out /dev/null 2>/dev/null
 ```
@@ -129,9 +118,7 @@ SMIME_P12_PASS=$(gopass show -o email/smime-p12-password) \
 
 ## Cross-Client Compatibility
 
-Apple Mail, Thunderbird, and Outlook interoperate fully.
-
-**Known issues:**
+Apple Mail, Thunderbird, and Outlook interoperate fully. Known issues:
 - Outlook may wrap signed messages in `winmail.dat` (TNEF) — fix: set message format to "Internet Format (HTML)"
 - Thunderbird 78+ rejects SHA-1 certs — use SHA-256+
 - Actalis root CA trusted in macOS 12+; older systems need manual trust in Keychain Access
