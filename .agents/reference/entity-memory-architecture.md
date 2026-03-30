@@ -18,20 +18,20 @@ tools:
 
 ## Purpose
 
-Give multi-channel agents (Matrix, SimpleX, email, CLI) relationship continuity with individuals across channels, and self-evolve capabilities from observed interaction patterns.
+Cross-channel relationship continuity for multi-channel agents (Matrix, SimpleX, email, CLI) with self-evolving capabilities from observed interaction patterns.
 
-**Differentiator:** interaction patterns → gap detection → auto TODO → system upgrade → better service. Everyone does conversation memory. Nobody does "the system upgrades itself based on what users actually need."
+**Differentiator:** interaction patterns → gap detection → auto TODO → system upgrade. The system upgrades itself based on what users actually need.
 
 ## Design Decisions
 
 | Decision | Rationale |
 |----------|-----------|
-| Same `memory.db`, new tables | Cross-queries between entity and project memories without cross-DB joins |
-| Three layers, not two | Layer 0 (immutable raw log) is primary — summaries/profiles are derived |
-| Versioned profiles via `supersedes_id` | Never update in place — mirrors existing `learning_relations` pattern |
-| Identity resolution requires confirmation | Never auto-link across channels. Suggest, don't assume |
+| Same `memory.db`, new tables | Cross-queries without cross-DB joins |
+| Three layers, not two | Layer 0 (immutable raw log) is primary — summaries/profiles derived |
+| Versioned profiles via `supersedes_id` | Never update in place — mirrors `learning_relations` pattern |
+| Identity resolution requires confirmation | Never auto-link across channels — suggest, don't assume |
 | AI judgment for thresholds | Haiku-tier (~$0.001/call) handles outliers fixed thresholds can't |
-| Structured summaries over flat dumps | ~2k tokens recovers 80% of continuity at 10% of cost; raw data in Layer 0 |
+| Structured summaries over flat dumps | ~2k tokens recovers 80% continuity at 10% cost; raw data in Layer 0 |
 
 ## Three-Layer Architecture
 
@@ -42,7 +42,7 @@ Give multi-channel agents (Matrix, SimpleX, email, CLI) relationship continuity 
 | **1: Conversation context** (tactical) | Active threads, immutable summaries, tone profile, pending actions | conversations, conversation_summaries | `conversation-helper.sh` |
 | **0: Raw interaction log** (immutable) | Source of truth — all layers derived from this; FTS5 indexed; privacy-filtered on write | interactions, interactions_fts | `entity-helper.sh log-interaction` |
 
-**Immutability:** Layer 0 is INSERT-only (no UPDATE/DELETE except privacy deletion). Layers 1–2 use `supersedes_id` chains — new rows supersede old, never edit in place. Current record = row whose `id` appears in no other row's `supersedes_id`. Guarantees full audit trail, no data loss, conflict-free concurrent writes.
+**Immutability:** Layer 0 is INSERT-only (no UPDATE/DELETE except privacy deletion). Layers 1–2 use `supersedes_id` chains — new rows supersede old, never edit in place. Current record = row whose `id` appears in no other row's `supersedes_id`. Full audit trail, conflict-free concurrent writes.
 
 ## Database Schema
 
@@ -93,26 +93,15 @@ FTS5 virtual table `interactions_fts` mirrors content with porter unicode61 toke
 
 ## Identity Resolution
 
-1. **Suggest, don't assume.** `entity-helper.sh suggest` proposes matches; never auto-links.
+1. **Suggest, don't assume.** `entity-helper.sh suggest` proposes matches; never auto-links. Separate entities until human confirms via `entity-helper.sh link` or `verify`.
 2. **Confidence levels:** `confirmed` (user verified) | `suggested` (name/pattern match) | `inferred` (display name match)
 3. **Primary key on `(channel, channel_id)`** — each channel identity maps to exactly one entity.
-4. **No auto-merge** — separate entities until human confirms via `entity-helper.sh link` or `verify`.
 
 ## Self-Evolution Loop
 
-```text
-Layer 0 interactions
-  → AI pattern detection (haiku, ~$0.001/call)
-  → Gap identification (dedup, frequency tracking)
-  → TODO creation with evidence trail (interaction IDs)
-  → Normal task lifecycle: dispatch → PR → merge
-  → Updated entity model (Layer 2)
-  → Cycle continues
-```
+Layer 0 interactions → AI pattern detection (haiku, ~$0.001/call) → gap identification (dedup, frequency tracking) → TODO creation with evidence trail (interaction IDs) → normal task lifecycle (dispatch → PR → merge) → updated entity model (Layer 2) → cycle continues.
 
-**Gap lifecycle:** `detected` → `todo_created` → `resolved` | `wont_fix`
-
-**Auto-TODO threshold:** frequency ≥ 3 (configurable) triggers `claim-task-id.sh` with full evidence trail.
+**Gap lifecycle:** `detected` → `todo_created` → `resolved` | `wont_fix`. Auto-TODO at frequency ≥ 3 (configurable) via `claim-task-id.sh` with full evidence trail.
 
 ## Intelligent Threshold Replacement
 
@@ -125,23 +114,16 @@ Layer 0 interactions
 
 ## Integration
 
-### Memory system cross-queries
-
 ```bash
+# Memory system cross-queries
 memory-helper.sh store --content "Prefers concise responses" --entity ent_xxx --type USER_PREFERENCE
 memory-helper.sh recall --query "deployment" --entity ent_xxx --project ~/Git/myproject
-```
 
-### Channel bots (Matrix, SimpleX)
-
-```bash
+# Channel bots (Matrix, SimpleX)
 conversation-helper.sh context conv_xxx --recent-messages 10
 entity-helper.sh log-interaction ent_xxx --channel matrix --content "msg" --conversation-id conv_xxx
-```
 
-### Supervisor pulse (Step 3.5)
-
-```bash
+# Supervisor pulse (Step 3.5)
 self-evolution-helper.sh pulse-scan --auto-todo-threshold 3 --repo-path ~/Git/aidevops
 ```
 
