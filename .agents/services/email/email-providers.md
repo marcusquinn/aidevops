@@ -23,8 +23,7 @@ tools:
 - **Privacy tiers**: A+ (Proton, Tuta, Cloudron) > A (Fastmail, mailbox.org, StartMail, Disroot, ChatMail) > B (Zoho, IONOS, Namecheap, iCloud) > C (Google Workspace, Microsoft 365, GMX, mail.com) > D (Gmail, Outlook, Yahoo)
 - **JMAP**: Fastmail only (RFC 8620/8621). Prefer over IMAP for new Fastmail integrations.
 - **No standard protocols**: Tuta — proprietary client only
-
-**POP vs IMAP**: Use IMAP (default). POP only for shared mailboxes where all users must read the same emails.
+- **Default protocol**: IMAP. POP only for shared mailboxes where all users must read the same emails.
 
 <!-- AI-CONTEXT-END -->
 
@@ -32,8 +31,7 @@ tools:
 
 ```bash
 cp configs/email-providers.json.txt configs/email-providers.json
-# Customise provider settings (e.g., Cloudron hostname)
-# No credentials in this file — auth is handled per-connection
+# Customise provider settings (e.g., Cloudron hostname). No credentials here — auth is per-connection.
 ```
 
 ## Provider Selection
@@ -82,7 +80,7 @@ Need email access?
 └── Default                            → IMAP
 ```
 
-**POP wrong for**: mobile, multi-device, folder organisation (no folder/flag/read-state sync).
+POP does not sync folders, flags, or read-state across devices.
 
 ## Folder Name Mapping
 
@@ -95,7 +93,7 @@ Need email access?
 | Spam/Junk | `[Gmail]/Spam` | `Junk` / `Junk Email` | `Bulk Mail` | `Junk` | `Junk` or `Spam` |
 | Archive | `[Gmail]/All Mail` | `Archive` | `Archive` | `Archive` | `Archive` |
 
-- **Gmail**: uses labels, not folders — a message can appear in multiple IMAP "folders". Deleting from a label removes the label only; true deletion requires moving to Trash.
+- **Gmail**: labels, not folders — deleting from a label removes the label only; move to Trash for true deletion.
 - **Outlook/365**: free Outlook.com uses `Sent`/`Deleted`; Microsoft 365 business uses `Sent Items`/`Deleted Items`.
 
 ## Shared Mailbox Patterns
@@ -124,14 +122,6 @@ Need email access?
 | `postmaster@` | Mail server issues (RFC 2142) | IMAP |
 | `security@` | Security reports | IMAP (restricted) |
 
-**Provider shared mailbox support:**
-- **Microsoft 365**: Best-in-class — dedicated shared mailbox, no extra license, auto-mapping, send-as/on-behalf.
-- **Google Workspace**: Collaborative inboxes via Google Groups; delegated access for individual mailboxes.
-- **Zoho Mail**: Group mailboxes in paid plans; shared folders and delegated access.
-- **Cloudron**: Separate mailbox accounts or aliases via admin panel / CLI.
-- **Proton Mail**: Business plans support multi-user access and catch-all.
-- **Others**: Most free/personal providers have no shared mailbox support.
-
 ## Cloudron Mail Management
 
 ```bash
@@ -148,10 +138,12 @@ cloudron mail catch-all yourdomain.com target@yourdomain.com
 | Provider | Key Notes |
 |----------|-----------|
 | **Gmail / Google Workspace** | Enable IMAP in Settings > Forwarding and POP/IMAP. OAuth2 required since May 2022 (app passwords with 2FA). Labels map to `[Gmail]/` IMAP folders. Limits: 500/day (Gmail), 2000/day (Workspace). |
-| **Microsoft 365** | Basic auth deprecated Oct 2022. OAuth2 via Microsoft Entra ID. Graph API recommended for programmatic access. Shared mailboxes free (no license). |
-| **Proton Mail** | Requires Proton Bridge running locally (local IMAP 1143, SMTP 1025). Use Bridge-generated password, not account password. Not suitable for headless/server without Bridge CLI. |
+| **Microsoft 365** | Basic auth deprecated Oct 2022. OAuth2 via Microsoft Entra ID. Graph API recommended for programmatic access. Shared mailboxes free (no license); best-in-class — auto-mapping, send-as/on-behalf. |
+| **Proton Mail** | Requires Proton Bridge running locally (local IMAP 1143, SMTP 1025). Use Bridge-generated password, not account password. Not suitable for headless/server without Bridge CLI. Business plans support multi-user access and catch-all. |
 | **Tuta** | No IMAP/SMTP/POP3. Tuta apps only (web, desktop, mobile). Deliberate security decision for encryption architecture. |
-| **Zoho Mail** | Enable IMAP in settings. Regional domains affect hostnames (zoho.com, zoho.eu, zoho.in, zoho.com.au, zoho.jp). Free tier: 5 users, 5 GB each. |
+| **Zoho Mail** | Enable IMAP in settings. Regional domains affect hostnames (zoho.com, zoho.eu, zoho.in, zoho.com.au, zoho.jp). Free tier: 5 users, 5 GB each. Group mailboxes in paid plans. |
+| **Google Workspace** | Collaborative inboxes via Google Groups; delegated access for individual mailboxes. |
+| **Cloudron** | Separate mailbox accounts or aliases via admin panel / CLI. |
 
 ## Related
 
