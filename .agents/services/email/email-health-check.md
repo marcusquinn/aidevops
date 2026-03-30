@@ -81,16 +81,12 @@ email-health-check-helper.sh accessibility newsletter.html
 
 ## Best Practices
 
-**Minimum**: valid SPF, one DKIM key, DMARC policy set, one reachable MX.
-
-**Recommended**: SPF ends `~all` or `-all`; DKIM 2048-bit keys rotated annually; DMARC `p=quarantine`/`p=reject` with reporting.
-
-| Check | Frequency |
-|-------|-----------|
-| Full health check | Weekly |
-| Blacklist status | Daily (automated) |
-| DMARC reports | Weekly review |
-| DKIM key rotation | Annually |
+| Check | Frequency | Notes |
+|-------|-----------|-------|
+| Full health check | Weekly | Minimum: valid SPF, DKIM, DMARC `p=quarantine`+, one reachable MX |
+| Blacklist status | Daily (automated) | |
+| DMARC reports | Weekly review | Recommended: SPF `~all`/`-all`; DKIM 2048-bit rotated annually |
+| DKIM key rotation | Annually | |
 
 ## Enhanced Checks (v2)
 
@@ -108,7 +104,7 @@ email-health-check-helper.sh accessibility newsletter.html
 |-------|-------------|-------|
 | **Subject Line** | Length (under 50 chars), ALL CAPS, excessive punctuation, spam trigger words | 2 pts |
 | **Preheader Text** | Presence, length (40-130 chars), not duplicating subject line | 1 pt |
-| **Accessibility** | Alt text on images, lang attribute, semantic structure, color contrast, role attributes. Delegates to `accessibility-helper.sh email` (WCAG 2.1 AA: 1.1.1, 3.1.1, 1.3.1, 1.4.4, 2.4.4, 1.4.1). Contrast: `accessibility-helper.sh contrast '#fg' '#bg'` | 2 pts |
+| **Accessibility** | Alt text, lang attribute, semantic structure, color contrast, role attributes. Delegates to `accessibility-helper.sh email` (WCAG 2.1 AA). Contrast: `accessibility-helper.sh contrast '#fg' '#bg'` | 2 pts |
 | **Link Validation** | Broken links, missing href, unsubscribe link present (CAN-SPAM), excessive links (>20) | 2 pts |
 | **Image Validation** | Oversized files (>200KB), missing dimensions, total weight (>800KB), image-to-text ratio (>60%) | 2 pts |
 | **Spam Word Scan** | High-risk subject words (`free`, `act now`, `click here`, `guarantee`, etc.); medium-risk body words | 1 pt |
