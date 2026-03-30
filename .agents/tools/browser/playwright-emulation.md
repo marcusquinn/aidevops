@@ -98,7 +98,7 @@ test.use({ javaScriptEnabled: false, userAgent: 'Custom Bot/1.0' });
 
 **Permission values**: `geolocation`, `midi`, `midi-sysex`, `notifications`, `camera`, `microphone`, `background-sync`, `ambient-light-sensor`, `accelerometer`, `gyroscope`, `magnetometer`, `accessibility-events`, `clipboard-read`, `clipboard-write`, `payment-handler`
 
-### Common Locale/Timezone Combinations
+**Common locale/timezone combinations:**
 
 | Market | Locale | Timezone |
 |--------|--------|----------|
@@ -140,7 +140,7 @@ for (const { name, device } of testDevices) {
 // testDevices: [{ name, device }] where device = devices['iPhone 13'] | devices['Pixel 7'] | { viewport: {...} }
 ```
 
-### Touch / Network / Dark Mode
+### Touch, Network, Dark Mode
 
 ```typescript
 // Touch gestures
