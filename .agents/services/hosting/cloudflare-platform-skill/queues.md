@@ -1,15 +1,6 @@
 # Cloudflare Queues
 
-Flexible message queuing for async task processing with guaranteed at-least-once delivery and configurable batching.
-
-## Overview
-
-Queues provide:
-- At-least-once delivery guarantee
-- Push-based (Worker) and pull-based (HTTP) consumers
-- Configurable batching and retries
-- Dead Letter Queues (DLQ)
-- Delays up to 12 hours
+Flexible message queuing for async task processing. At-least-once delivery, push-based (Worker) and pull-based (HTTP) consumers, configurable batching/retries, Dead Letter Queues (DLQ), delays up to 12 hours.
 
 **Use cases:** Async processing, API buffering, rate limiting, event workflows, deferred jobs
 
@@ -45,23 +36,10 @@ export default {
 | `message.retry(options?)` | Retry with delay | - |
 | `batch.ackAll()` | Ack entire batch | - |
 
-## Architecture
-
-```
-[Producer Worker] → [Queue] → [Consumer Worker/HTTP] → [Processing]
-```
-
-- Max 10,000 queues per account
-- 5,000 msgs/second per queue
-- 4-14 day retention (configurable)
-
-## In This Reference
-
-- [patterns.md](./patterns.md) - Async tasks, buffering, rate limiting, event workflows
-- [gotchas.md](./gotchas.md) - Idempotency, retry limits, content types, cost optimization
-
 ## See Also
 
-- [workers](../workers/) - Worker runtime for producers/consumers
-- [r2](../r2/) - Process R2 event notifications via queues
-- [d1](../d1/) - Batch write to D1 from queue consumers
+- [queues-patterns.md](./queues-patterns.md) — async tasks, buffering, rate limiting, fan-out, event workflows, DLQ
+- [queues-gotchas.md](./queues-gotchas.md) — idempotency, retry limits, content types, cost optimization, limits
+- [workers](../workers/) — Worker runtime for producers/consumers
+- [r2](../r2/) — process R2 event notifications via queues
+- [d1](../d1/) — batch write to D1 from queue consumers
