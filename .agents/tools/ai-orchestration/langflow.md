@@ -15,54 +15,46 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Visual drag-and-drop builder for AI-powered agents and workflows (MIT, commercial OK)
-- **Setup**: `bash .agents/scripts/langflow-helper.sh setup`
-- **Start/Stop/Status**: `~/.aidevops/scripts/start-langflow.sh` / `stop-langflow.sh` / `langflow-status.sh`
-- **URL**: http://localhost:7860 | **API**: http://localhost:7860/docs | **Health**: http://localhost:7860/health
+- **Purpose**: Visual drag-and-drop builder for AI agents and workflows (MIT, commercial OK)
+- **Setup**: `bash .agents/scripts/langflow-helper.sh setup` → edit `~/.aidevops/langflow/.env` → `~/.aidevops/scripts/start-langflow.sh`
+- **Lifecycle**: `start-langflow.sh` / `stop-langflow.sh` / `langflow-status.sh` (all in `~/.aidevops/scripts/`)
+- **Endpoints**: localhost:7860 (UI) | `/docs` (API) | `/health` (health check)
 - **Config**: `~/.aidevops/langflow/.env` | **venv**: `~/.aidevops/langflow/venv/`
 - **Privacy**: Flows stored locally, optional cloud sync
-- **Features**: Flow builder, Python export, MCP server, LangChain, local LLM (Ollama)
-- **Docs**: https://docs.langflow.org | **GitHub**: https://github.com/langflow-ai/langflow
+- **Docs**: <https://docs.langflow.org> | **GitHub**: <https://github.com/langflow-ai/langflow>
 - **Community**: [Discord](https://discord.gg/EqksyE2EX9) | [Templates](https://www.langflow.org/templates)
 
 ## Installation
 
-Automated (recommended):
+Automated (recommended) — runs setup, prompts for `.env` config, starts server:
 
 ```bash
 bash .agents/scripts/langflow-helper.sh setup
-nano ~/.aidevops/langflow/.env
-~/.aidevops/scripts/start-langflow.sh
 ```
 
-Manual:
-
-```bash
-mkdir -p ~/.aidevops/langflow && cd ~/.aidevops/langflow
-python3 -m venv venv && source venv/bin/activate
-pip install langflow && langflow run
-```
+Manual: `mkdir -p ~/.aidevops/langflow && cd ~/.aidevops/langflow && python3 -m venv venv && source venv/bin/activate && pip install langflow && langflow run`
 
 Docker:
 
 ```bash
 docker run -p 7860:7860 langflowai/langflow:latest
-docker run -p 7860:7860 -v langflow_data:/app/langflow langflowai/langflow:latest  # persistent
+# Persistent storage:
+docker run -p 7860:7860 -v langflow_data:/app/langflow langflowai/langflow:latest
 ```
 
-Desktop app: https://www.langflow.org/desktop (Windows/macOS)
+Desktop app: <https://www.langflow.org/desktop> (Windows/macOS)
 
 ## Configuration
 
-`~/.aidevops/langflow/.env`:
+`~/.aidevops/langflow/.env` — set API keys via `aidevops secret` or edit directly:
 
 ```bash
-OPENAI_API_KEY=your_openai_api_key_here
-ANTHROPIC_API_KEY=your_anthropic_key_here   # optional
 LANGFLOW_HOST=0.0.0.0
 LANGFLOW_PORT=7860
 LANGFLOW_WORKERS=1
 LANGFLOW_DATABASE_URL=sqlite:///./langflow.db
+OPENAI_API_KEY=<your-key>
+ANTHROPIC_API_KEY=<your-key>       # optional
 OLLAMA_BASE_URL=http://localhost:11434
 ```
 
@@ -81,7 +73,7 @@ class MyCustomComponent(CustomComponent):
 
 ## Usage
 
-http://localhost:7860 → New Flow → drag components, connect edges, configure → Run.
+localhost:7860 → New Flow → drag components, connect edges, configure → Run.
 
 RAG pipeline:
 
@@ -99,9 +91,9 @@ Multi-agent chat:
                              → [Aggregator] → [Output]
 ```
 
-**CrewAI**: Import CrewAI in a custom component to define agents/tasks, connect to Langflow flow components.
+CrewAI: import in a custom component to define agents/tasks, connect to Langflow flow components.
 
-## API Integration
+## API & MCP Integration
 
 ```python
 import requests
@@ -109,10 +101,9 @@ response = requests.post(
     "http://localhost:7860/api/v1/run/<flow-id>",
     json={"input_value": "Hello, world!", "output_type": "chat", "input_type": "chat"}
 )
-print(response.json())
 ```
 
-MCP server (`langflow run --mcp` or `LANGFLOW_MCP_ENABLED=true` in `.env`). Claude Code config:
+MCP server: `langflow run --mcp` or `LANGFLOW_MCP_ENABLED=true` in `.env`. Claude Code config:
 
 ```json
 { "mcpServers": { "langflow": { "command": "langflow", "args": ["run", "--mcp"] } } }
@@ -121,10 +112,10 @@ MCP server (`langflow run --mcp` or `LANGFLOW_MCP_ENABLED=true` in `.env`). Clau
 ## Git Integration
 
 ```bash
-langflow export --flow-id <flow-id> --output flows/my-flow.json
-langflow export --all --output flows/
-langflow import --file flows/my-flow.json
-langflow import --directory flows/
+langflow export --flow-id <flow-id> --output flows/my-flow.json  # single
+langflow export --all --output flows/                             # all
+langflow import --file flows/my-flow.json                         # restore
+langflow import --directory flows/                                # bulk
 # .gitignore: langflow.db, *.log, __pycache__/, .env
 # Track: flows/*.json, components/*.py
 ```
@@ -132,7 +123,7 @@ langflow import --directory flows/
 ## Local LLM Support
 
 - **Ollama**: `curl -fsSL https://ollama.com/install.sh | sh && ollama pull llama3.2` — add Ollama component, set base URL `http://localhost:11434`
-- **LM Studio**: https://lmstudio.ai — start local server, use OpenAI-compatible endpoint `http://localhost:1234/v1`
+- **LM Studio**: <https://lmstudio.ai> — start local server, use OpenAI-compatible endpoint `http://localhost:1234/v1`
 
 ## Deployment
 
