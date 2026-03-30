@@ -110,22 +110,12 @@ ffmpeg -i input.mp4 -af loudnorm=print_format=json -f null -
 
 ## Voice Tools
 
-```bash
-voice-helper.sh talk                       # Start voice conversation (defaults)
-voice-helper.sh talk whisper-mlx edge-tts  # Explicit engines
-voice-helper.sh talk whisper-mlx macos-say # Offline mode
-voice-helper.sh devices                    # List audio devices
-voice-helper.sh voices                     # List available TTS voices
-voice-helper.sh benchmark                  # Test component speeds
-```
-
-**Architecture**: `Mic → Silero VAD → Whisper MLX (1.4s) → Claude Code run --attach (~4-6s) → Edge TTS (0.4s) → Speaker`. Round-trip: ~6-8s conversational, longer for tool execution.
-
-| Service | Details | CLI |
-|---------|---------|-----|
-| ElevenLabs | Voice cloning (3-5 min sample), 29 languages, emotional control | `voice-pipeline-helper.sh [transform\|tts\|voices\|clone]` |
-| Local ffmpeg | Noise reduction, high-pass, de-essing, loudness normalization | `voice-pipeline-helper.sh cleanup <audio> [output] [target-lufs]` |
-| Edge TTS (free) | 400+ voices, 100+ languages, no API key | Used by `voice-helper.sh` |
+| Service | CLI | Notes |
+|---------|-----|-------|
+| `voice-helper.sh` | `talk [stt tts]`, `devices`, `voices`, `benchmark` | Mic→VAD→Whisper MLX→LLM→Edge TTS; ~6-8s round-trip |
+| ElevenLabs | `voice-pipeline-helper.sh [transform\|tts\|voices\|clone]` | Voice cloning (3-5 min sample), 29 languages, emotional control |
+| Local ffmpeg | `voice-pipeline-helper.sh cleanup <audio> [output] [target-lufs]` | Noise reduction, high-pass, de-essing, loudness normalization |
+| Edge TTS (free) | Used by `voice-helper.sh` | 400+ voices, 100+ languages, no API key |
 
 ## See Also
 
