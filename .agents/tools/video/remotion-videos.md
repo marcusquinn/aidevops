@@ -10,17 +10,16 @@ metadata:
 
 ## Prerequisites
 
-First, the @remotion/media package needs to be installed.  
-If it is not, use the following command:
+Install `@remotion/media` if not already present:
 
 ```bash
-npx remotion add @remotion/media # If project uses npm
-bunx remotion add @remotion/media # If project uses bun
-yarn remotion add @remotion/media # If project uses yarn
-pnpm exec remotion add @remotion/media # If project uses pnpm
+npx remotion add @remotion/media # npm
+bunx remotion add @remotion/media # bun
+yarn remotion add @remotion/media # yarn
+pnpm exec remotion add @remotion/media # pnpm
 ```
 
-Use `<Video>` from `@remotion/media` to embed videos into your composition.
+`<Video>` from `@remotion/media` embeds videos into compositions:
 
 ```tsx
 import { Video } from "@remotion/media";
@@ -31,15 +30,11 @@ export const MyComposition = () => {
 };
 ```
 
-Remote URLs are also supported:
-
-```tsx
-<Video src="https://remotion.media/video.mp4" />
-```
+Remote URLs are supported: `<Video src="https://remotion.media/video.mp4" />`
 
 ## Trimming
 
-Use `trimBefore` and `trimAfter` to remove portions of the video. Values are in seconds.
+`trimBefore` / `trimAfter` remove portions of the video (values in seconds):
 
 ```tsx
 const { fps } = useVideoConfig();
@@ -55,7 +50,7 @@ return (
 
 ## Delaying
 
-Wrap the video in a `<Sequence>` to delay when it appears:
+Wrap in `<Sequence>` to delay appearance:
 
 ```tsx
 import { Sequence, staticFile } from "remotion";
@@ -70,11 +65,9 @@ return (
 );
 ```
 
-The video will appear after 1 second.
-
 ## Sizing and Position
 
-Use the `style` prop to control size and position:
+Use the `style` prop:
 
 ```tsx
 <Video
@@ -92,13 +85,13 @@ Use the `style` prop to control size and position:
 
 ## Volume
 
-Set a static volume (0 to 1):
+Static volume (0 to 1):
 
 ```tsx
 <Video src={staticFile("video.mp4")} volume={0.5} />
 ```
 
-Or use a callback for dynamic volume based on the current frame:
+Dynamic volume via callback (receives current frame):
 
 ```tsx
 import { interpolate } from "remotion";
@@ -115,15 +108,11 @@ return (
 );
 ```
 
-Use `muted` to silence the video entirely:
-
-```tsx
-<Video src={staticFile("video.mp4")} muted />
-```
+Mute entirely: `<Video src={staticFile("video.mp4")} muted />`
 
 ## Speed
 
-Use `playbackRate` to change the playback speed:
+`playbackRate` controls playback speed:
 
 ```tsx
 <Video src={staticFile("video.mp4")} playbackRate={2} /> {/* 2x speed */}
@@ -134,13 +123,13 @@ Reverse playback is not supported.
 
 ## Looping
 
-Use `loop` to loop the video indefinitely:
+`loop` loops the video indefinitely:
 
 ```tsx
 <Video src={staticFile("video.mp4")} loop />
 ```
 
-Use `loopVolumeCurveBehavior` to control how the frame count behaves when looping:
+`loopVolumeCurveBehavior` controls frame count behaviour when looping:
 
 - `"repeat"`: Frame count resets to 0 each loop (for `volume` callback)
 - `"extend"`: Frame count continues incrementing
@@ -156,7 +145,7 @@ Use `loopVolumeCurveBehavior` to control how the frame count behaves when loopin
 
 ## Pitch
 
-Use `toneFrequency` to adjust the pitch without affecting speed. Values range from 0.01 to 2:
+`toneFrequency` adjusts pitch without affecting speed (range: 0.01–2):
 
 ```tsx
 <Video
