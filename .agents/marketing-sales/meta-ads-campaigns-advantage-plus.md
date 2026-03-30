@@ -1,12 +1,6 @@
 # Advantage+ Campaigns
 
-> Meta's AI-powered automation is the future. Understanding when to use it — and when not to — separates good advertisers from great ones.
-
----
-
 ## Advantage+ Overview
-
-A suite of AI-powered features that automate various aspects of Meta advertising:
 
 | Feature | What It Automates |
 |---------|-------------------|
@@ -19,11 +13,9 @@ A suite of AI-powered features that automate various aspects of Meta advertising
 
 **Manual may win when:** very niche B2B, specific job title targeting, compliance restrictions, testing specific hypotheses, low conversion volume.
 
----
-
 ## Advantage+ Shopping Campaigns (ASC)
 
-Designed for ecommerce. Automates audience targeting (prospecting + retargeting combined), creative testing, placement optimization, and budget allocation.
+Ecommerce-focused. Automates audience targeting (prospecting + retargeting combined), creative testing, placement optimization, and budget allocation.
 
 **You provide:** creative assets (5–150 ads), product catalog, budget, country, existing customer budget cap, optional age/gender minimums.
 **Meta handles:** full audience, prospecting/retargeting split, creative rotation, placement distribution, bid optimization.
@@ -75,21 +67,15 @@ Start at 10–20%. Adjust based on performance.
 
 **Review cadence:** check at ad level weekly, not daily. Give 7 days before major changes.
 
----
-
 ## Advantage+ Audience
 
-AI-powered audience expansion beyond your targeting suggestions.
-
-You provide optional interest/lookalike/custom audience suggestions → Meta uses them as a starting point and expands to find additional converters.
+Provide optional interest/lookalike/custom audience suggestions → Meta uses them as a starting point and expands to find additional converters.
 
 **Always use (default):** prospecting campaigns, scaling campaigns, when you have conversion data.
 
 **Maybe skip:** very niche B2B, strict compliance requirements, testing specific audience hypothesis.
 
 **Note:** Advantage+ Audience with no suggestions ≈ broad targeting. The difference is Advantage+ may use engagement and pixel signals more aggressively.
-
----
 
 ## Advantage+ Placements
 
@@ -112,8 +98,6 @@ Meta distributes ads across all available placements (Facebook Feed/Stories/Reel
 
 Upload same creative in multiple ratios, or let Meta auto-crop (less optimal).
 
----
-
 ## Advantage+ Creative
 
 AI automatically tests variations of your creative: crops, brightness/contrast, 3D animation, music (video), text variations, image templates.
@@ -125,8 +109,6 @@ AI automatically tests variations of your creative: crops, brightness/contrast, 
 **Skip when:** strict brand guidelines, specific creative vision required, need to understand exactly what's working.
 
 **vs Dynamic Creative:** Dynamic Creative = you upload multiple assets, Meta tests combinations, you see what works. Advantage+ Creative = you upload finished ads, Meta creates variations, less visibility into winners. Use Advantage+ Creative for optimization; use Dynamic Creative when you need learning.
-
----
 
 ## When Automation Wins vs Manual
 
@@ -157,7 +139,5 @@ Retargeting:      Manual for sequences, Auto for simplicity (depends on volume)
 ### The Future of Meta Ads
 
 Meta is pushing all advertisers toward full automation. Manual controls are being deprecated; Advantage+ will become the only option for some features. **Your competitive advantage = creative, not targeting.** Master creative production, build robust testing systems, trust automation for delivery, focus on inputs not micro-optimization.
-
----
 
 *Next: [Decision Trees](decision-trees.md)*
