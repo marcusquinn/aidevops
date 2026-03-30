@@ -11,21 +11,15 @@ tools:
   grep: true
   webfetch: true
 subagents:
-  # CRM
   - fluentcrm
-  # Content
   - guidelines
   - summarize
-  # SEO
   - keyword-research
   - serper
   - dataforseo
-  # Social
   - bird
-  # Analytics
   - google-search-console
   - google-analytics
-  # Built-in
   - general
   - explore
 ---
@@ -40,8 +34,8 @@ Marketing agent: strategy, campaigns, paid ads (Meta/Google), email, landing pag
 
 ## Quick Reference
 
-- **CRM**: FluentCRM MCP — `services/crm/fluentcrm.md` (requires plugin, app password, SMTP/SES). Credentials: `~/.config/aidevops/credentials.sh` (600 perms).
-- **Analytics**: GA4 — `services/analytics/google-analytics.md`
+- **CRM**: FluentCRM MCP — `services/crm/fluentcrm.md` (requires plugin, app password, SMTP/SES). Credentials: `~/.config/aidevops/credentials.sh` (600 perms). Tools: `fluentcrm_*` (campaigns, templates, automations, lists, tags, smart links, reports).
+- **Analytics**: GA4 — `services/analytics/google-analytics.md` (loaded with `google-analytics` subagent)
 - **Content/copy**: `content.md` | **SEO**: `seo.md` | **Sales**: `sales.md`
 
 **Paid Advertising & CRO** ([Indexsy Skills](https://github.com/Indexsy-Skills/skills)):
@@ -53,25 +47,9 @@ Marketing agent: strategy, campaigns, paid ads (Meta/Google), email, landing pag
 | **Direct Response Copy** | `marketing-sales/direct-response-copy.md` | PAS/AIDA/PASTOR, headlines, swipes |
 | **CRO** | `marketing-sales/cro.md` | Landing pages, A/B testing, checkout |
 
-**FluentCRM Tools**:
-
-| Category | Key Tools |
-|----------|-----------|
-| **Campaigns** | `fluentcrm_list_campaigns`, `fluentcrm_create_campaign`, `fluentcrm_pause_campaign`, `fluentcrm_resume_campaign` |
-| **Templates** | `fluentcrm_list_email_templates`, `fluentcrm_create_email_template` |
-| **Automations** | `fluentcrm_list_automations`, `fluentcrm_create_automation` |
-| **Lists** | `fluentcrm_list_lists`, `fluentcrm_create_list`, `fluentcrm_attach_contact_to_list` |
-| **Tags** | `fluentcrm_list_tags`, `fluentcrm_create_tag`, `fluentcrm_attach_tag_to_contact` |
-| **Smart Links** | `fluentcrm_create_smart_link`, `fluentcrm_generate_smart_link_shortcode` (track clicks, tag actions, lead scoring) |
-| **Reports** | `fluentcrm_dashboard_stats` |
-
-**Google Analytics Tools**: see `services/analytics/google-analytics.md` (loaded with `google-analytics` subagent).
-
 <!-- AI-CONTEXT-END -->
 
 ## Pre-flight Validation
-
-Before generating strategy or campaigns, validate:
 
 1. Real, painful problem? Unique vs. alternatives?
 2. Benefits before features? Pricing vs. alternatives (including doing nothing)?
@@ -131,7 +109,7 @@ Before generating strategy or campaigns, validate:
 | Unsubscribe | <0.5% | Targeting, frequency |
 | List Growth | 5-10%/mo | Lead magnets, promo |
 
-**Workflow**: Use `fluentcrm_dashboard_stats` → review rates by segment → identify top content → document learnings.
+**Workflow**: `fluentcrm_dashboard_stats` → review rates by segment → identify top content → document learnings.
 
 **A/B testing**: Variations (subject, send time, from name, CTA, length) → 10-20% test split → 24-48h → send winner to remainder.
 
@@ -143,12 +121,8 @@ Before generating strategy or campaigns, validate:
 
 ## Troubleshooting
 
-| Issue | Solution |
+| Issue | Resource |
 |-------|----------|
-| Low open rates | Test subjects, check deliverability |
-| High unsubscribes | Review frequency, improve targeting |
-| Bounces | Clean list, validate emails |
-| Spam complaints | Better consent, relevant content |
 | Template rendering | `services/email/email-design-test.md` |
 | Delivery issues | `services/email/email-delivery-test.md` |
 | Pre-send validation | `email-test-suite-helper.sh test-design <file>` + `check-placement <domain>` |
