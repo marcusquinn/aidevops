@@ -19,21 +19,21 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Share state across component tree without prop drilling
-- **Use Case**: Theme, auth, sidebar state, user preferences
-- **Docs**: Use Context7 MCP for current React documentation
+- **Use cases**: Theme, auth, sidebar state, user preferences
+- **Docs**: Context7 MCP for current React docs
 
 **Hazards** (from real sessions):
 
 | Hazard | Solution |
 |--------|----------|
-| Adding state — forgot to update interface/provider/hook | Update ALL: interface, default value, provider state, hook return |
-| Context outside provider — hook returns undefined | Add fallback in hook or ensure provider wraps usage |
-| Stale closures / missing dependency arrays | Use `useCallback` with ALL dependencies |
+| Added state but forgot interface/provider/hook | Update ALL: interface, default, provider state, hook return |
+| Hook returns undefined outside provider | Fallback in hook or ensure provider wraps usage |
+| Stale closures / missing deps | `useCallback` with ALL dependencies |
 | Re-renders on any context change | Split contexts by update frequency; memoize setters |
-| Forgetting `"use client"` | Context requires client-side React — add at top of file |
-| Mutating state directly | Always use setter functions — React won't detect direct mutation |
+| Missing `"use client"` | Context requires client-side React — add at top of file |
+| Direct state mutation | Always use setters — React won't detect direct mutation |
 
-**Adding New State Checklist**: interface -> hook defaults -> `useState` in provider -> `useCallback` setter -> provider value object -> CSS variables if needed.
+**New state checklist**: interface -> hook defaults -> `useState` in provider -> `useCallback` setter -> provider value -> CSS variables if needed.
 
 <!-- AI-CONTEXT-END -->
 
@@ -49,6 +49,7 @@ const WIDTH_COOKIE_NAME = "sidebar_width";
 export const DEFAULT_WIDTH = 384;
 export const MIN_WIDTH = 320;
 export const MAX_WIDTH = 640;
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
 
 interface SidebarContextProps {
   open: boolean;
@@ -60,8 +61,7 @@ interface SidebarContextProps {
 
 const SidebarContext = createContext<SidebarContextProps | null>(null);
 
-// Hook with safe defaults when used outside provider
-export function useSidebar() {
+export function useSidebar() { // Safe defaults when outside provider
   const context = useContext(SidebarContext);
   if (!context) {
     return { open: false, setOpen: () => {}, toggleSidebar: () => {}, width: DEFAULT_WIDTH, setWidth: () => {} };
@@ -69,21 +69,15 @@ export function useSidebar() {
   return context;
 }
 
-// Optional hook — returns null (use for conditional rendering)
-export function useSidebarOptional() {
+export function useSidebarOptional() { // Returns null — use for conditional rendering
   return useContext(SidebarContext);
 }
 
-interface SidebarProviderProps {
-  readonly children: ReactNode;
-  readonly defaultOpen?: boolean;
-  readonly defaultWidth?: number;
-}
-
-export function SidebarProvider({ children, defaultOpen = false, defaultWidth = DEFAULT_WIDTH }: SidebarProviderProps) {
+export function SidebarProvider({
+  children, defaultOpen = false, defaultWidth = DEFAULT_WIDTH,
+}: { readonly children: ReactNode; readonly defaultOpen?: boolean; readonly defaultWidth?: number }) {
   const [open, setOpenState] = useState(defaultOpen);
   const [width, setWidthState] = useState(defaultWidth);
-  const COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
 
   const setOpen = useCallback((value: boolean) => {
     setOpenState(value);
@@ -115,7 +109,7 @@ export function SidebarProvider({ children, defaultOpen = false, defaultWidth = 
 
 ## Usage Patterns
 
-**Conditional rendering** — `useSidebarOptional()` skips rendering when no provider:
+**Conditional rendering** — `useSidebarOptional()` returns null outside provider:
 
 ```tsx
 const AISidebarToggle = () => {
@@ -136,7 +130,7 @@ export default async function Layout({ children }) {
 }
 ```
 
-**Split contexts by update frequency** to avoid unnecessary re-renders:
+**Split contexts by update frequency** — avoid unnecessary re-renders:
 
 ```tsx
 // BAD: one context — any change re-renders all consumers
@@ -151,5 +145,5 @@ const NotificationContext = createContext([]); // Changes frequently
 
 ## Related
 
-- `tools/ui/nextjs-layouts.md` - Layout patterns with providers
-- `tools/ui/tailwind-css.md` - Styling with context-driven CSS variables
+- `tools/ui/nextjs-layouts.md` — Layout patterns with providers
+- `tools/ui/tailwind-css.md` — Styling with context-driven CSS variables
