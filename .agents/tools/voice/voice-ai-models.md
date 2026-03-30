@@ -3,7 +3,6 @@ description: Voice AI model landscape - TTS, STT, and S2S model selection refere
 mode: subagent
 tools:
   read: true
-  bash: true
 ---
 
 # Voice AI Models
@@ -12,20 +11,19 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Comprehensive reference for voice AI model selection across TTS, STT, and S2S
 - **TTS details**: `tools/voice/voice-models.md` (implemented engines, integration)
 - **STT details**: `tools/voice/transcription.md` (transcription workflows, cloud APIs)
-- **S2S pipeline**: `tools/voice/speech-to-speech.md` (full voice pipeline setup)
+- **S2S pipeline**: `tools/voice/speech-to-speech.md` (full voice pipeline)
 - **Cloud voice agents**: `tools/voice/cloud-voice-agents.md` (GPT-4o Realtime, MiniCPM-o, Nemotron)
+- **Pipecat**: `tools/voice/pipecat-opencode.md` (real-time voice pipeline)
 - **Offline tool**: `tools/voice/buzz.md` (Buzz GUI/CLI for Whisper)
-
-**When to use**: Choosing between voice AI models for a project. For implementation details, follow the cross-references above.
+- **CLI**: `voice-helper.sh`
 
 <!-- AI-CONTEXT-END -->
 
 ## TTS (Text-to-Speech)
 
-### Cloud Services
+### Cloud
 
 | Provider | Latency | Quality | Voice Clone | Languages | Pricing |
 |----------|---------|---------|-------------|-----------|---------|
@@ -37,7 +35,7 @@ tools:
 
 **Pick**: ElevenLabs for quality/cloning, Cartesia Sonic 3 for lowest latency, NVIDIA Magpie for enterprise/self-hosted, Google for language breadth.
 
-### Local Models
+### Local
 
 | Model | Params | License | Languages | Voice Clone | GPU VRAM |
 |-------|--------|---------|-----------|-------------|----------|
@@ -49,11 +47,11 @@ tools:
 
 **Pick**: Qwen3-TTS for quality + cloning, Piper for CPU-only/embedded, Bark for expressiveness (laughter, music).
 
-Also implemented in the voice bridge: **EdgeTTS** (free, 300+ voices), **macOS Say** (zero deps), **FacebookMMS** (1100+ languages). See `voice-models.md` for details.
+Also in voice bridge: **EdgeTTS** (free, 300+ voices), **macOS Say** (zero deps), **FacebookMMS** (1100+ languages). See `voice-models.md`.
 
 ## STT (Speech-to-Text)
 
-### Cloud APIs
+### Cloud
 
 | Provider | Model | Accuracy | Real-time | Cost |
 |----------|-------|----------|-----------|------|
@@ -65,7 +63,7 @@ Also implemented in the voice bridge: **EdgeTTS** (free, 300+ voices), **macOS S
 
 **Pick**: Groq for free/fast batch, ElevenLabs Scribe for accuracy, NVIDIA Parakeet for enterprise/self-hosted, Deepgram for real-time streaming.
 
-### Local Models
+### Local
 
 | Model | Size | Accuracy | Speed | GPU VRAM |
 |-------|------|----------|-------|----------|
@@ -84,9 +82,7 @@ Backends: `faster-whisper` (4x speed, recommended), `whisper.cpp` (C++ native, A
 
 ## S2S (Speech-to-Speech)
 
-### Native S2S Models
-
-End-to-end models that process speech directly without text intermediary:
+### Native Models
 
 | Model | Type | Latency | Availability | Notes |
 |-------|------|---------|--------------|-------|
@@ -96,9 +92,7 @@ End-to-end models that process speech directly without text intermediary:
 | AWS Nova Sonic | Cloud API | ~600ms | AWS API | AWS ecosystem, 7 languages |
 | Ultravox | Open weights | ~400ms | Local (6GB+) | Audio-text multimodal |
 
-### Composable S2S Pipelines (NVIDIA Nemotron Speech)
-
-Enterprise-grade cascaded pipelines using NVIDIA Riva NIM microservices:
+### NVIDIA Riva Composable Pipelines
 
 | Component | Model | Role | Languages | NIM Available |
 |-----------|-------|------|-----------|---------------|
@@ -110,13 +104,11 @@ Enterprise-grade cascaded pipelines using NVIDIA Riva NIM microservices:
 | Enhancement | StudioVoice | Noise removal | Any | Yes |
 | Translation | Riva Translate | NMT | 36 languages | Yes |
 
-Compose as: `Audio -> [Parakeet ASR] -> [Any LLM] -> [Magpie TTS] -> Audio`. See `cloud-voice-agents.md` for deployment patterns.
+Compose as: `Audio -> [Parakeet ASR] -> [Any LLM] -> [Magpie TTS] -> Audio`. See `cloud-voice-agents.md`.
 
-**Pick**: GPT-4o Realtime for production cloud (lowest latency, GA), MiniCPM-o 2.6 for self-hosted/private (Apache-2.0, multimodal), NVIDIA Riva for enterprise on-prem (composable, 25+ languages). For cascaded S2S (VAD+STT+LLM+TTS), see `speech-to-speech.md`.
+**Pick**: GPT-4o Realtime for production cloud (lowest latency, GA), MiniCPM-o 2.6 for self-hosted/private (Apache-2.0, multimodal), NVIDIA Riva for enterprise on-prem (composable, 25+ languages). Cascaded S2S (VAD+STT+LLM+TTS): see `speech-to-speech.md`.
 
-## Model Selection Guide
-
-### By Priority
+## Selection by Priority
 
 | Priority | TTS | STT | S2S |
 |----------|-----|-----|-----|
@@ -148,7 +140,7 @@ Need voice AI?
     └── Default → speech-to-speech.md cascaded pipeline
 ```
 
-## GPU Requirements Summary
+## GPU Requirements
 
 | Use Case | Min VRAM | Recommended |
 |----------|----------|-------------|
@@ -159,14 +151,4 @@ Need voice AI?
 | Full cascaded pipeline | 4GB | 12GB |
 | CPU-only (Piper + whisper.cpp) | 0 | 8GB RAM |
 
-Apple Silicon: MPS acceleration works for most PyTorch models. Use `whisper-mlx` or `mlx-audio-whisper` for optimized macOS inference.
-
-## Related
-
-- `tools/voice/cloud-voice-agents.md` - Cloud voice agent deployment (GPT-4o Realtime, MiniCPM-o, Nemotron)
-- `tools/voice/voice-models.md` - TTS engines implemented in voice bridge
-- `tools/voice/transcription.md` - STT workflows, cloud API examples
-- `tools/voice/speech-to-speech.md` - Full cascaded voice pipeline
-- `tools/voice/pipecat-opencode.md` - Pipecat real-time voice pipeline
-- `tools/voice/buzz.md` - Buzz offline transcription tool
-- `voice-helper.sh` - CLI for voice operations
+Apple Silicon: MPS acceleration for most PyTorch models. Use `whisper-mlx` or `mlx-audio-whisper` for optimized macOS inference.
