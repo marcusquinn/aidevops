@@ -108,7 +108,9 @@ ffmpeg -i input.mp4 -af loudnorm=print_format=json -f null -
 voice-helper.sh talk                       # Start voice conversation (defaults)
 voice-helper.sh talk whisper-mlx edge-tts  # Explicit engines
 voice-helper.sh talk whisper-mlx macos-say # Offline mode
-voice-helper.sh devices && voice-helper.sh voices && voice-helper.sh benchmark
+voice-helper.sh devices                    # List audio devices
+voice-helper.sh voices                     # List available TTS voices
+voice-helper.sh benchmark                  # Test component speeds
 ```
 
 **Architecture**: `Mic → Silero VAD → Whisper MLX (1.4s) → Claude Code run --attach (~4-6s) → Edge TTS (0.4s) → Speaker`. Round-trip: ~6-8s conversational, longer for tool execution.
