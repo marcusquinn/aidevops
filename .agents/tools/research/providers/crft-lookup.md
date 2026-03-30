@@ -46,51 +46,18 @@ tech-stack-helper.sh lookup example.com --provider crft --json
 tech-stack-helper.sh report example.com --provider crft
 ```
 
-**Complementary Tools**:
-
-| Tool | Strength | Use Together |
-|------|----------|-------------|
-| PageSpeed Insights | Detailed performance metrics | CRFT for overview, PSI for deep dive |
-| Wappalyzer | Browser extension, real-time | CRFT for batch/CLI analysis |
-| BuiltWith | Historical data, market share | CRFT for current snapshot |
-
 <!-- AI-CONTEXT-END -->
-
-## How It Works
-
-Submits URL → headless Chromium → analyzes HTML/JS/headers against 2500+ fingerprints → runs Lighthouse → extracts meta tags + sitemap → generates shareable report (~20s per scan).
-
-## Detection Categories
-
-**Technology Stack**: JS frameworks (React, Vue, Next.js, Astro…), CMS (WordPress, Contentful, Ghost…), analytics (GA, Plausible, PostHog…), CDN/hosting (Cloudflare, Vercel, Netlify…), e-commerce (Shopify, WooCommerce…), marketing automation (HubSpot, Intercom…).
-
-**Lighthouse** (0-100, desktop + mobile — for dedicated analysis use `pagespeed-helper.sh`):
-
-| Category | What It Measures |
-|----------|-----------------|
-| Performance | Loading speed, interactivity, visual stability |
-| Accessibility | WCAG compliance, screen reader support |
-| Best Practices | Security, modern APIs, console errors |
-| SEO | Meta tags, crawlability, mobile-friendliness |
-
-**Meta Tags**: title, description, Open Graph (image/title/description), Twitter Cards, favicon.
 
 ## Usage
 
 ```bash
-# Basic lookup
-tech-stack-helper.sh lookup example.com --provider crft
-
-# JSON output (schema below)
+# JSON output with schema
 tech-stack-helper.sh lookup example.com --provider crft --json
 # {
 #   "url": "https://example.com", "domain": "example.com",
 #   "technologies": [{"name": "React", "category": "ui-libs", "version": "18.2", "confidence": 1.0}],
 #   "categories": [{"category": "ui-libs", "count": 1, "technologies": ["React"]}]
 # }
-
-# Markdown report
-tech-stack-helper.sh report example.com --provider crft
 
 # SEO integration
 tech-stack-helper.sh lookup client-site.com --provider crft --json | jq '.technologies'
@@ -124,6 +91,7 @@ done
 | API | No (web only) | Yes (paid) | Yes (paid) | Yes (free) |
 | Price | Free | Freemium | Paid | Free |
 | CLI | Via helper | Browser ext | No | Via npm |
+| Use with CRFT | Overview → PSI deep dive | Batch/CLI vs real-time | Current snapshot vs history | — |
 
 ## Related
 
