@@ -28,22 +28,13 @@ tools:
 
 ## API Reference
 
-Base: `https://api.moondream.ai/v1/`. All endpoints accept POST with JSON body.
+All endpoints: POST to `https://api.moondream.ai/v1/<endpoint>` with headers `Content-Type: application/json` and `X-Moondream-Auth: $MOONDREAM_API_KEY`.
 
-**Common headers** (all requests):
+**Image input**: URL (`"image_url": "https://..."`), Base64 (`"image_url": "data:image/jpeg;base64,..."`), local file (SDK only: `Image.open("path")`).
 
-```text
-Content-Type: application/json
-X-Moondream-Auth: $MOONDREAM_API_KEY
-```
+### `/caption` — Generate image descriptions
 
-**Image input formats**: URL (`"image_url": "https://..."`), Base64 (`"image_url": "data:image/jpeg;base64,..."`), local file (SDK only: `Image.open("path")`).
-
-### Endpoints
-
-#### `/caption` — Generate image descriptions
-
-Primary endpoint for SEO alt text. Lengths: `"short"`, `"normal"`, `"long"`.
+Lengths: `"short"`, `"normal"`, `"long"`. Primary endpoint for SEO alt text.
 
 ```bash
 curl -X POST https://api.moondream.ai/v1/caption \
@@ -52,19 +43,11 @@ curl -X POST https://api.moondream.ai/v1/caption \
   -d '{"image_url": "https://example.com/image.jpg", "length": "normal", "stream": false}'
 ```
 
-Response:
+Response: `{"caption": "A golden retriever sitting on a wooden deck...", "metrics": {...}, "finish_reason": "stop"}`
 
-```json
-{
-  "caption": "A golden retriever sitting on a wooden deck...",
-  "metrics": {"input_tokens": 735, "output_tokens": 45, "prefill_time_ms": 43.5, "decode_time_ms": 415.3},
-  "finish_reason": "stop"
-}
-```
+### `/query` — Visual question answering
 
-#### `/query` — Visual question answering
-
-Ask specific questions about images. Use for SEO keyword extraction, filename suggestions, tag generation.
+Use for SEO keyword extraction, filename suggestions, tag generation (see SEO Prompt Templates below).
 
 ```bash
 curl -X POST https://api.moondream.ai/v1/query \
@@ -75,28 +58,19 @@ curl -X POST https://api.moondream.ai/v1/query \
 
 Response: `{"request_id": "...", "answer": "..."}`
 
-#### `/detect` — Object detection (bounding boxes)
+### `/detect`, `/point`, `/segment`
 
-```bash
-curl -X POST https://api.moondream.ai/v1/detect \
-  -H 'Content-Type: application/json' \
-  -H "X-Moondream-Auth: $MOONDREAM_API_KEY" \
-  -d '{"image_url": "https://example.com/image.jpg", "object": "dog"}'
-```
+All share the same request format: `{"image_url": "...", "object": "dog"}`.
 
-Response: `{"objects": [{"x_min": 0.2, "y_min": 0.3, "x_max": 0.6, "y_max": 0.8}]}`
-
-#### `/point` — Object center coordinates
-
-Same request format as `/detect`. Returns center point coordinates for each matched object.
-
-#### `/segment` — SVG path masks
-
-Same request format as `/detect`. Returns SVG path masks. Useful for background removal before publishing.
+| Endpoint | Returns |
+|----------|---------|
+| `/detect` | Bounding boxes: `{"objects": [{"x_min": 0.2, "y_min": 0.3, "x_max": 0.6, "y_max": 0.8}]}` |
+| `/point` | Center coordinates for each matched object |
+| `/segment` | SVG path masks (useful for background removal before publishing) |
 
 ## SEO Prompt Templates
 
-All use the `/query` endpoint. Replace the `question` field:
+All use `/query`. Replace the `question` field:
 
 | Use case | Question prompt |
 |----------|----------------|
