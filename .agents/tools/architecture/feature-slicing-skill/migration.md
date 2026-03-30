@@ -6,13 +6,13 @@
 
 Migrate if: project too large/interconnected, new features slow, onboarding hard, circular deps common, code ownership unclear. Skip if current architecture works.
 
-## Phase 1: Setup (Incremental — migrate alongside existing code)
+## Phase 1: Setup (Incremental)
 
 ```bash
 mkdir -p src/{app,pages,widgets,features,entities,shared}/{ui,api,model,lib}
 ```
 
-**Path aliases** (`tsconfig.json`):
+Path aliases (`tsconfig.json`):
 
 ```json
 { "compilerOptions": { "baseUrl": ".", "paths": { "@/*": ["./src/*"], "@components/*": ["src/components/*"], "@hooks/*": ["src/hooks/*"] } } }
@@ -26,7 +26,6 @@ mv src/utils/dates.ts src/shared/lib/dates.ts
 mv src/utils/validation.ts src/shared/lib/validation.ts
 mv src/utils/constants.ts src/shared/config/constants.ts
 mv src/hooks/*.ts src/shared/lib/
-
 for component in src/components/*.tsx; do
   name=$(basename "$component" .tsx)
   mkdir -p "src/shared/ui/$name"
@@ -35,17 +34,11 @@ for component in src/components/*.tsx; do
 done
 ```
 
-Update imports:
-
-```typescript
-// before → after
-import { formatDate } from '@/utils/dates';   // → '@/shared/lib'
-import { Button } from '@/components/Button'; // → '@/shared/ui'
-```
+Import updates: `@/utils/dates` → `@/shared/lib`, `@/components/Button` → `@/shared/ui`.
 
 ## Phase 3: Extract Entities
 
-Entities = business domain objects (types, CRUD API calls, reusable domain UI).
+Entities = business domain objects (types, CRUD API, reusable domain UI).
 
 ```text
 src/types/user.ts          → src/entities/user/model/types.ts
@@ -54,7 +47,7 @@ src/components/UserAvatar  → src/entities/user/ui/UserAvatar.tsx
 src/store/userSlice.ts     → src/entities/user/model/store.ts
 ```
 
-**Public API** (`entities/user/index.ts`):
+Public API (`entities/user/index.ts`):
 
 ```typescript
 export { UserAvatar } from './ui/UserAvatar';
@@ -97,7 +90,7 @@ import { ProductReviews } from '@/widgets/product-reviews';
 
 ### Circular Dependencies
 
-Extract shared dep to a lower layer; compose at page/widget level.
+Extract shared dep to lower layer; compose at page/widget level.
 
 ```typescript
 // UserCard ↔ useAuth circular → break by layer:
@@ -117,7 +110,7 @@ Split monolithic store by domain into entity/feature models.
 // features/cart/model/store.ts | features/auth/model/store.ts
 ```
 
-### Mixed Business Logic in Components
+### Mixed Business Logic
 
 Separate display (entity UI) from interaction (feature UI); compose in page/widget.
 
@@ -137,20 +130,16 @@ export function AddToCartButton({ product }) {
 
 ## Migration Checklist
 
-- [ ] Create FSD directory structure
-- [ ] Configure path aliases
+- [ ] Create FSD directory structure + configure path aliases
 - [ ] Migrate utilities → `shared/lib/`, `shared/api/`, `shared/ui/`
-- [ ] Extract entities with public APIs
-- [ ] Extract features with public APIs
-- [ ] Migrate pages to page slices
-- [ ] Extract reusable widgets
+- [ ] Extract entities and features with public APIs
+- [ ] Migrate pages to page slices; extract reusable widgets
 - [ ] Setup `app/` layer with providers
-- [ ] Remove old directory structure
-- [ ] Update documentation
+- [ ] Remove old directory structure; update documentation
 
 ## Rollback Strategy
 
-Keep old path aliases (from Phase 1) active during migration; use feature flags to switch gradually.
+Keep old path aliases active during migration; use feature flags to switch gradually.
 
 ```typescript
 import { UserCard as LegacyUserCard } from '@components/UserCard';
