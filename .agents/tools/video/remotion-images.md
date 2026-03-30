@@ -10,7 +10,7 @@ metadata:
 
 ## The `<Img>` component
 
-Always use the `<Img>` component from `remotion` to display images:
+Always use `<Img>` from `remotion` — not native `<img>`, Next.js `<Image>`, or CSS `background-image`. It ensures images are fully loaded before rendering, preventing blank frames.
 
 ```tsx
 import { Img, staticFile } from "remotion";
@@ -20,19 +20,9 @@ export const MyComposition = () => {
 };
 ```
 
-## Important restrictions
-
-**You MUST use the `<Img>` component from `remotion`.** Do not use:
-
-- Native HTML `<img>` elements
-- Next.js `<Image>` component
-- CSS `background-image`
-
-The `<Img>` component ensures images are fully loaded before rendering, preventing flickering and blank frames during video export.
-
 ## Local images with staticFile()
 
-Place images in the `public/` folder and use `staticFile()` to reference them:
+Place images in `public/` and reference with `staticFile()`:
 
 ```text
 my-video/
@@ -40,31 +30,21 @@ my-video/
 │  ├─ logo.png
 │  ├─ avatar.jpg
 │  └─ icon.svg
-├─ src/
-├─ package.json
 ```
 
 ```tsx
-import { Img, staticFile } from "remotion";
-
 <Img src={staticFile("logo.png")} />
 ```
 
 ## Remote images
 
-Remote URLs can be used directly without `staticFile()`:
-
 ```tsx
 <Img src="https://example.com/image.png" />
 ```
 
-Ensure remote images have CORS enabled.
-
-For animated GIFs, use the `<Gif>` component from `@remotion/gif` instead.
+Ensure remote images have CORS enabled. For animated GIFs, use `<Gif>` from `@remotion/gif` instead.
 
 ## Sizing and positioning
-
-Use the `style` prop to control size and position:
 
 ```tsx
 <Img
@@ -99,33 +79,13 @@ const frame = useCurrentFrame();
 <Img src={staticFile(`icons/${isActive ? "active" : "inactive"}.svg`)} />
 ```
 
-This pattern is useful for:
-
-- Image sequences (frame-by-frame animations)
-- User-specific avatars or profile images
-- Theme-based icons
-- State-dependent graphics
-
 ## Getting image dimensions
-
-Use `getImageDimensions()` to get the dimensions of an image:
-
-```tsx
-import { getImageDimensions, staticFile } from "remotion";
-
-const { width, height } = await getImageDimensions(staticFile("photo.png"));
-```
-
-This is useful for calculating aspect ratios or sizing compositions:
 
 ```tsx
 import { getImageDimensions, staticFile, CalculateMetadataFunction } from "remotion";
 
 const calculateMetadata: CalculateMetadataFunction = async () => {
   const { width, height } = await getImageDimensions(staticFile("photo.png"));
-  return {
-    width,
-    height,
-  };
+  return { width, height };
 };
 ```
