@@ -16,7 +16,7 @@ Apply these unless the user overrides during interview:
 - Compare at least 2 options (never recommend without alternatives)
 - Include cost/effort estimates for each option
 
-## Structured Questions
+## Required Questions
 
 ### Time Box
 
@@ -103,11 +103,4 @@ After this research is done, what's the next concrete action?
 
 ## Sufficiency Test
 
-Before generating the brief, verify you can answer:
-
-- What's the time box?
-- What format is the deliverable?
-- What are the decision criteria, ranked?
-- Who makes the final decision?
-
-If any answer is "I don't know" — ask one more targeted question.
+Before generating the brief, verify: time box, deliverable format, ranked decision criteria, and who decides. If any is unknown, ask one more targeted question.
