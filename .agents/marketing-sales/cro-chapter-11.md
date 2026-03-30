@@ -1,10 +1,8 @@
 # Chapter 11: Mobile CRO
 
-60%+ of web traffic is mobile, yet mobile converts 1-3% vs desktop 3-5%. Improving mobile from 1.5% to 2.5% on 60% mobile traffic increases overall conversions ~60%.
+60%+ of web traffic is mobile, yet mobile converts 1-3% vs desktop 3-5%.
 
 ## Thumb Zone Design
-
-Place elements by thumb reachability:
 
 - **Bottom third (natural rest):** Primary CTAs — Buy Now, Add to Cart, Submit
 - **Middle third (easy reach):** Navigation, filters, secondary actions
@@ -55,13 +53,11 @@ Limit top-level items to 5-7. Search prominent with autocomplete. Sticky header.
 
 ## Click-to-Call and App Banners
 
-**Click-to-call** — high-impact for high-ticket, complex, local, or urgent needs:
+**Click-to-call** — high-impact for high-ticket, complex, local, or urgent needs. Place in sticky header, FAB (bottom-right), or inline on product pages. Test vs form — calls = higher intent/faster close; forms = scalable/trackable.
 
 ```html
 <a href="tel:+18005551234">📞 Call Now: 1-800-555-1234</a>
 ```
-
-Place in sticky header, FAB (bottom-right), or inline on product pages. Test vs form — calls = higher intent/faster close; forms = scalable/trackable.
 
 **iOS Smart Banner:** `<meta name="apple-itunes-app" content="app-id=123456789">`
 
@@ -90,7 +86,7 @@ Near-instant loads (<1s) but Google has reduced ranking advantage; SSR/edge rend
 
 ## Mobile Checkout
 
-Highest drop-off rate:
+Highest mobile drop-off point — optimize aggressively:
 
 1. **Guest checkout default** — forced account creation kills conversions
 2. **Digital wallets front and center** — Apple Pay / Google Pay reduce checkout to ~10s
@@ -135,5 +131,3 @@ Test mobile separately from desktop — behaviour differs too much for combined 
 **Usability:** No hover-only elements | Adequate tap spacing | No content-blocking popups | Landscape supported
 
 **Testing:** iOS Safari + Android Chrome | Multiple screen sizes | 3G throttled | Touch gestures verified
-
----
