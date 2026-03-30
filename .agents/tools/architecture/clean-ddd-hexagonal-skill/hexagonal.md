@@ -48,7 +48,7 @@ flowchart TB
 | **Driver** (Primary / Inbound) | → App | Application | How the world uses your app (use cases) | Adapter *calls* port — app defines what it **offers** |
 | **Driven** (Secondary / Outbound) | App → | Application | What your app needs from external systems | Adapter *implements* port — app defines what it **needs** |
 
-**Driver ports** — called by adapters, represent use cases:
+**Driver ports** (called by adapters, represent use cases):
 
 ```typescript
 // application/ports/driver/place_order_port.ts
@@ -65,7 +65,7 @@ export interface ICancelOrderPort {
 }
 ```
 
-**Driven ports** — implemented by adapters, called by the application:
+**Driven ports** (implemented by adapters, called by the application):
 
 ```typescript
 // application/ports/driven/order_repository_port.ts
@@ -88,7 +88,7 @@ export interface IPaymentGatewayPort {
 
 ## Adapters
 
-**Driver adapter** — converts external input → port call:
+**Driver adapter** (converts external input to port call):
 
 ```typescript
 // infrastructure/adapters/driver/rest/order_controller.ts
@@ -110,7 +110,7 @@ export class OrderController {
 }
 ```
 
-**Driven adapters** — implement port interface using specific technology:
+**Driven adapters** (implement port interface using specific technology):
 
 ```
 class PostgresOrderRepository implements IOrderRepositoryPort:
