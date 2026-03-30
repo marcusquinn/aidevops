@@ -8,14 +8,13 @@ mode: subagent
 - **Declarative**: `schemas/` — desired state, generate migrations automatically
 - **Migrations**: `migrations/` — versioned, timestamped `{YYYYMMDDHHMMSS}_{action}_{target}.sql` files
 - **Workflow**: Edit `schemas/` → generate migration via diff → review → apply locally → commit both
-
-**Critical Rules**: NEVER modify pushed/deployed migrations (create a NEW one). ALWAYS generate via diff, review before committing, backup before production. ONE logical change per file.
+- **Critical Rules**: NEVER modify pushed/deployed migrations (create NEW). ALWAYS generate via diff, review before committing, backup before production. ONE logical change per file.
 
 ## Directory Structure
 
 ```text
 project/
-├── schemas/          # Declarative schema files (source of truth; prefix: 00, 01, 10, 20...)
+├── schemas/          # Declarative schema (source of truth; prefix: 00, 01, 10, 20...)
 ├── migrations/       # Generated migration files
 ├── seeds/            # Initial/test data
 └── scripts/
@@ -27,16 +26,16 @@ project/
 
 | Tool | Generate | Apply | Rollback |
 |------|----------|-------|----------|
-| **Supabase** | `supabase db diff -f name` | `supabase migration up` | -- |
-| **Drizzle** | `npx drizzle-kit generate` | `npx drizzle-kit migrate` | -- |
-| **Prisma** | `npx prisma migrate dev --name name` | `npx prisma migrate deploy` | `npx prisma migrate resolve --rolled-back <name>` |
-| **Atlas** | `atlas migrate diff name --dir file://migrations --to file://schema.sql --dev-url docker://postgres/15` | `atlas migrate apply -u "postgres://..."` | -- |
-| **migra** | `migra $DB schemas/` | `psql $DB -f file.sql` | -- |
-| **Flyway** | N/A (imperative) | `flyway migrate` | `flyway undo` |
-| **Laravel** | `php artisan make:migration` | `php artisan migrate` | `php artisan migrate:rollback --step=1` |
-| **Rails** | `rails g migration` | `rails db:migrate` | `rails db:rollback STEP=1` |
+| Supabase | `supabase db diff -f name` | `supabase migration up` | -- |
+| Drizzle | `npx drizzle-kit generate` | `npx drizzle-kit migrate` | -- |
+| Prisma | `npx prisma migrate dev --name name` | `npx prisma migrate deploy` | `npx prisma migrate resolve --rolled-back <name>` |
+| Atlas | `atlas migrate diff name --dir file://migrations --to file://schema.sql --dev-url docker://postgres/15` | `atlas migrate apply -u "postgres://..."` | -- |
+| migra | `migra $DB schemas/` | `psql $DB -f file.sql` | -- |
+| Flyway | N/A (imperative) | `flyway migrate` | `flyway undo` |
+| Laravel | `php artisan make:migration` | `php artisan migrate` | `php artisan migrate:rollback --step=1` |
+| Rails | `rails g migration` | `rails db:migrate` | `rails db:rollback STEP=1` |
 
-**Dev-only:** `drizzle-kit push`/`pull`, `prisma migrate reset`, `php artisan migrate:fresh --seed`. **Flyway naming:** `V1__create_users.sql`, `V2__add_email.sql`, `R__refresh_views.sql` (repeatable), `U2__undo_add_email.sql` (undo). **Manual migrations required for:** DML, RLS policies, view ownership/grants, materialized views, table partitions, comments, some `ALTER POLICY`.
+**Dev-only:** `drizzle-kit push`/`pull`, `prisma migrate reset`, `php artisan migrate:fresh --seed`. **Flyway naming:** `V1__create_users.sql`, `V2__add_email.sql`, `R__refresh_views.sql` (repeatable), `U2__undo_add_email.sql` (undo). **Manual migrations:** DML, RLS policies, view ownership/grants, materialized views, table partitions, comments, some `ALTER POLICY`.
 
 ## Naming Convention
 
@@ -58,7 +57,6 @@ Example: `20240502100843_create_users_table.sql`. Avoid: `migration_1.sql`, `fix
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     email VARCHAR(255) NOT NULL UNIQUE,
-    name VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_users_email ON users(email);
@@ -67,7 +65,7 @@ DROP INDEX IF EXISTS idx_users_email;
 DROP TABLE IF EXISTS users;
 ```
 
-**Idempotent column addition (PostgreSQL)** — no `IF NOT EXISTS` for `ADD COLUMN`:
+**Idempotent column addition (PostgreSQL):**
 
 ```sql
 DO $$ BEGIN
@@ -114,7 +112,7 @@ Mark irreversible DOWN sections: `-- IRREVERSIBLE: restore from backup if needed
 
 ## Git and CI/CD
 
-**Pre-push:** UP and DOWN present; DOWN reverses UP; tested locally (up → down → up); no modifications to pushed migrations; timestamp current (regenerate on rebase). Review: only expected changes, no unintended destructive ops, correct types/constraints.
+**Pre-push:** UP and DOWN present; DOWN reverses UP; tested locally (up → down → up); no modifications to pushed migrations; timestamp current (regenerate on rebase). Review: only expected changes, no destructive ops, correct types/constraints.
 
 **Team rules:** Pull before creating. Timestamps not sequential numbers. One migration per PR. Rebase carefully — regenerate timestamps for conflicts. Commit style: `feat(db): add user_preferences table`, `fix(db): correct FK on orders`, `chore(db): backfill user status`.
 
@@ -129,7 +127,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: pg_dump $DATABASE_URL > backup_$(date +%Y%m%d_%H%M%S).sql
         env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
-      - run: flyway migrate  # or: npx prisma migrate deploy / rails db:migrate
+      - run: flyway migrate
         env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
       - run: psql $DATABASE_URL -c "SELECT 1"
 ```
@@ -152,7 +150,7 @@ for f in migrations/*.sql; do
     psql "$DB_URL" -f "$f"
     psql "$DB_URL" -v "name=$name" -c "INSERT INTO schema_migrations (filename) SELECT :'name' WHERE NOT EXISTS (SELECT 1 FROM schema_migrations WHERE filename = :'name');"
     psql "$DB_URL" -c "SELECT pg_advisory_unlock(hashtext('schema_migrations'));"
-    echo "Applied no-tx (or skipped): $name"; continue
+    echo "Applied (or skipped): $name"; continue
   fi
   psql "$DB_URL" -v "name=$name" <<SQL
 SELECT pg_advisory_xact_lock(hashtext('schema_migrations'));
