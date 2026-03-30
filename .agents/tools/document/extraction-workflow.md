@@ -26,57 +26,32 @@ tools:
 
 | Need | Tool | Command |
 |------|------|---------|
-| Structured extraction + validation | Docling+ExtractThinker+Pipeline | `document-extraction-helper.sh extract file --schema purchase-invoice --privacy local` |
+| Structured extraction (± PII) | Docling+ExtractThinker+Pipeline | `document-extraction-helper.sh extract file --schema invoice --privacy local` |
 | Classify document type | Classification pipeline | `document-extraction-helper.sh classify file.pdf` |
 | Validate extracted JSON | Validation pipeline | `document-extraction-helper.sh validate file.json` |
-| Structured extraction + PII redaction | Docling+ExtractThinker+Presidio | `document-extraction-helper.sh extract file --schema invoice --privacy local` |
-| Quick extraction, good OCR, no PII | DocStrange | `docstrange file.pdf --output json` |
-| Enterprise ETL, visual schema builder | Unstract | `unstract-helper.sh` |
-| PDF to markdown (layout-aware) | MinerU | `mineru -p file.pdf -o output/` |
-| Simple format conversion | Pandoc | `pandoc-helper.sh convert file.docx` |
+| Quick extraction, good OCR | DocStrange | `docstrange file.pdf --output json` |
+| Enterprise ETL | Unstract | `unstract-helper.sh` |
+| PDF → markdown (layout-aware) | MinerU | `mineru -p file.pdf -o output/` |
+| Format conversion | Pandoc | `pandoc-helper.sh convert file.docx` |
 | Local OCR only | GLM-OCR | `ollama run glm-ocr "Extract text" --images file.png` |
-| Receipt/invoice OCR → QuickFile | OCR Receipt Pipeline | `ocr-receipt-helper.sh extract invoice.pdf` |
+| Receipt/invoice → QuickFile | OCR Receipt Pipeline | `ocr-receipt-helper.sh extract invoice.pdf` |
 | Auto-categorise nominal code | Pipeline utility | `python3 extraction_pipeline.py categorise "Amazon" "office supplies"` |
+| Layout-aware conversion | Docling | `document-extraction-helper.sh convert report.pdf --output markdown` |
 
 <!-- AI-CONTEXT-END -->
 
 ## Structured Extraction
 
 ```bash
-# Check available tools and schemas
-document-extraction-helper.sh status
-document-extraction-helper.sh schemas
-
-# Single document
-document-extraction-helper.sh extract invoice.pdf --schema invoice --privacy local
-
-# Batch (output: ~/.aidevops/.agent-workspace/work/document-extraction/)
-document-extraction-helper.sh batch ./invoices/ --schema invoice --privacy local
-
-# Auto-detect (markdown, no schema)
-document-extraction-helper.sh extract document.pdf
-
-# PII scan/redact (optional)
-document-extraction-helper.sh pii-scan extracted-text.txt
-document-extraction-helper.sh pii-redact extracted-text.txt --output redacted.txt
+document-extraction-helper.sh status                                          # available tools/schemas
+document-extraction-helper.sh extract invoice.pdf --schema invoice --privacy local  # single doc
+document-extraction-helper.sh batch ./invoices/ --schema invoice --privacy local    # batch → ~/.aidevops/.agent-workspace/work/document-extraction/
+document-extraction-helper.sh extract document.pdf                            # auto-detect, markdown
+document-extraction-helper.sh pii-scan extracted-text.txt                     # PII scan (optional)
+document-extraction-helper.sh pii-redact extracted-text.txt --output redacted.txt   # PII redact
 ```
 
-**Privacy modes:**
-
-| Mode | When |
-|------|------|
-| `local` | Sensitive (PII, financial, medical) — requires Ollama |
-| `edge` | Moderate sensitivity — Cloudflare Workers AI |
-| `cloud` | Non-sensitive — best quality via OpenAI/Anthropic |
-| `none` | Auto-select best available backend |
-
-## Simple Conversion
-
-```bash
-document-extraction-helper.sh convert report.pdf --output markdown  # Docling, layout-aware
-pandoc-helper.sh convert report.docx                                 # Pandoc, broader formats
-mineru -p paper.pdf -o ./output                                      # MinerU, complex PDF layouts
-```
+**Privacy modes:** `local` (sensitive — Ollama) · `edge` (moderate — CF Workers AI) · `cloud` (non-sensitive — OpenAI/Anthropic) · `none` (auto-select)
 
 ## Pipeline Architecture
 
@@ -105,20 +80,11 @@ Input (PDF/DOCX/Image/HTML)
 - Line items VAT sum must match total VAT (±5p)
 - Valid UK rates: 0, 5, 20, exempt, oos, servrc, cisrc, postgoods
 
-**Confidence scoring (per field, 0.0–1.0):**
-- Base 0.7: field present and non-empty
-- +0.2: matches expected format (valid date, positive amount)
-- +0.1: required field present
-- <0.5: flagged for manual review
+**Confidence scoring (per field, 0.0–1.0):** Base 0.7 (present+non-empty) + 0.2 (format match) + 0.1 (required). <0.5 → manual review.
 
 ```bash
-# Nominal code auto-categorisation
-python3 extraction_pipeline.py categorise "Shell" "diesel fuel"
-# → {"nominal_code": "7401", "category": "Motor Expenses - Fuel"}
-
-# Standalone validation
-document-extraction-helper.sh validate extracted.json --type purchase_invoice
-python3 extraction_pipeline.py validate extracted.json --type expense_receipt
+python3 extraction_pipeline.py categorise "Shell" "diesel fuel"               # → {"nominal_code": "7401", "category": "Motor Expenses - Fuel"}
+document-extraction-helper.sh validate extracted.json --type purchase_invoice  # standalone validation
 ```
 
 ## Custom Schemas
@@ -149,8 +115,6 @@ result = extractor.extract("record.pdf", MedicalRecord)
 | Local processing | Ollama (CPU/GPU) | GPU (CUDA only) | Docker | GPU/CPU | CPU |
 | OCR | Tesseract/EasyOCR | 7B model | LLM-based | 109 languages | pdftotext |
 | Formats | PDF/DOCX/PPTX/XLSX/HTML/images | PDF/DOCX/PPTX/XLSX/images/URLs | PDF/DOCX/images | PDF only | 20+ formats |
-| Setup | 3 pip installs | 1 pip install | Docker | 1 pip install | brew install |
-| Best for | Custom pipelines, PII | Quick extraction | Enterprise ETL | PDF→markdown | Format conversion |
 
 ## Troubleshooting
 
