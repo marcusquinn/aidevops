@@ -227,3 +227,4 @@ __pycache__/
 
 # Accidentally committed binaries
 bv
+.agents
