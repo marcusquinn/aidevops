@@ -5,7 +5,6 @@ tools:
   read: true
   write: true
   edit: true
-  bash: false
   glob: true
   grep: true
   webfetch: true
@@ -39,8 +38,6 @@ tools:
 <!-- AI-CONTEXT-END -->
 
 ## Full Provider Example
-
-Authoritative reference — interface, context, hooks (fallback + optional), cookie persistence, CSS variables, clamped setters.
 
 ```tsx
 "use client";
