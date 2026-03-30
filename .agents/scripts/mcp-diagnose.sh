@@ -67,6 +67,7 @@ _resolve_mcp_config() {
 	# Fallback: platform-aware candidate paths in priority order
 	if [[ -z "$config_file" || ! -f "$config_file" ]]; then
 		local _candidates=(
+			"$HOME/.claude.json"
 			"$HOME/.config/Claude/Claude.json"
 			"$HOME/Library/Application Support/Claude/claude_desktop_config.json"
 			"$HOME/.config/opencode/opencode.json"
@@ -82,6 +83,7 @@ _resolve_mcp_config() {
 
 	if [[ -z "$config_file" || ! -f "$config_file" ]]; then
 		echo -e "${RED}✗ No MCP config file found. Checked:${NC}" >&2
+		echo -e "${RED}  ~/.claude.json${NC}" >&2
 		echo -e "${RED}  ~/.config/Claude/Claude.json${NC}" >&2
 		echo -e "${RED}  ~/Library/Application Support/Claude/claude_desktop_config.json${NC}" >&2
 		echo -e "${RED}  ~/.config/opencode/opencode.json${NC}" >&2
@@ -114,9 +116,9 @@ for name, server in mcp_section.items():
     enabled = server.get('enabled', True)
     if not enabled:
         continue
-    server_type = server.get('type', 'local')
-    if server_type == 'remote':
-        # Remote MCPs: just print name with remote marker
+    server_type = server.get('type', 'stdio')
+    # 'remote' and 'sse' are network-based MCPs — skip connectivity check
+    if server_type in ('remote', 'sse'):
         print(f"{name}\tremote\t")
         continue
     cmd = server.get('command', [])
@@ -169,35 +171,77 @@ _print_remediation() {
 	return 0
 }
 
-# Orchestrator: scan all enabled MCP servers and report health.
-_check_all_mcps() {
-	echo -e "${BLUE}=== MCP Server Health Check (t1682) ===${NC}"
-	echo ""
-	echo "Scanning all enabled MCP servers for connection errors..."
-	echo "Errored servers inject dead tool schemas into context, wasting tokens."
-	echo ""
+# Collect all unique MCP config files across all detected runtimes.
+# Outputs one config file path per line (no duplicates).
+_collect_all_configs() {
+	local seen=()
+	local config_file=""
 
-	local config_file
-	config_file=$(_resolve_mcp_config) || return 1
+	# Registry-driven: iterate all detected runtimes
+	if type rt_detect_configured &>/dev/null; then
+		local _rt_id
+		while IFS= read -r _rt_id; do
+			local _cfg
+			_cfg=$(rt_config_path "$_rt_id" 2>/dev/null) || continue
+			if [[ -n "$_cfg" && -f "$_cfg" ]]; then
+				# Deduplicate: check if already in seen array
+				local _dup=false
+				if [[ ${#seen[@]} -gt 0 ]]; then
+					local _s
+					for _s in "${seen[@]}"; do
+						[[ "$_s" == "$_cfg" ]] && _dup=true && break
+					done
+				fi
+				if [[ "$_dup" == "false" ]]; then
+					seen+=("$_cfg")
+					echo "$_cfg"
+				fi
+			fi
+		done < <(rt_detect_configured 2>/dev/null)
+	fi
 
-	echo "Config: $config_file"
-	echo ""
+	# Fallback candidates not covered by registry
+	local _fallback_candidates=(
+		"$HOME/.claude.json"
+		"$HOME/.config/Claude/Claude.json"
+		"$HOME/Library/Application Support/Claude/claude_desktop_config.json"
+		"$HOME/.config/opencode/opencode.json"
+	)
+	local _c
+	for _c in "${_fallback_candidates[@]}"; do
+		[[ -f "$_c" ]] || continue
+		local _dup=false
+		if [[ ${#seen[@]} -gt 0 ]]; then
+			local _s
+			for _s in "${seen[@]}"; do
+				[[ "$_s" == "$_c" ]] && _dup=true && break
+			done
+		fi
+		if [[ "$_dup" == "false" ]]; then
+			seen+=("$_c")
+			echo "$_c"
+		fi
+	done
+	return 0
+}
+
+# Scan a single config file and report MCP server health.
+# Arguments:
+#   $1 - config file path
+# Outputs results to stdout. Sets global ok_count/error_count/skip_count/errored_names.
+_scan_config_file() {
+	local config_file="$1"
 
 	local server_list
 	server_list=$(_extract_server_list "$config_file") || {
-		echo -e "${RED}✗ Failed to parse config file${NC}"
+		echo -e "  ${RED}✗ Failed to parse config file${NC}"
 		return 1
 	}
 
 	if [[ -z "$server_list" ]]; then
-		echo -e "${YELLOW}No enabled MCP servers found in config.${NC}"
+		echo -e "  ${YELLOW}(no enabled MCP servers)${NC}"
 		return 0
 	fi
-
-	local ok_count=0
-	local error_count=0
-	local skip_count=0
-	local errored_names=()
 
 	while IFS=$'\t' read -r name server_type cmd_path; do
 		[[ -z "$name" ]] && continue
@@ -228,12 +272,48 @@ _check_all_mcps() {
 			((++error_count))
 		fi
 	done <<<"$server_list"
+	return 0
+}
 
+# Orchestrator: scan all enabled MCP servers across all runtime configs.
+_check_all_mcps() {
+	echo -e "${BLUE}=== MCP Server Health Check (t1682) ===${NC}"
 	echo ""
+	echo "Scanning all enabled MCP servers for connection errors..."
+	echo "Errored servers inject dead tool schemas into context, wasting tokens."
+	echo ""
+
+	local all_configs=()
+	while IFS= read -r _cfg; do
+		all_configs+=("$_cfg")
+	done < <(_collect_all_configs)
+
+	if [[ ${#all_configs[@]} -eq 0 ]]; then
+		echo -e "${RED}✗ No MCP config files found.${NC}"
+		echo "  Checked: ~/.claude.json, ~/.config/Claude/Claude.json,"
+		echo "           ~/Library/Application Support/Claude/claude_desktop_config.json,"
+		echo "           ~/.config/opencode/opencode.json"
+		return 1
+	fi
+
+	local ok_count=0
+	local error_count=0
+	local skip_count=0
+	local errored_names=()
+	local last_config_file=""
+
+	local config_file
+	for config_file in "${all_configs[@]}"; do
+		echo "Config: $config_file"
+		_scan_config_file "$config_file"
+		echo ""
+		last_config_file="$config_file"
+	done
+
 	echo "Summary: ${ok_count} ok, ${error_count} errored, ${skip_count} skipped (remote)"
 
 	if [[ ${#errored_names[@]} -gt 0 ]]; then
-		_print_remediation "$config_file" "${errored_names[@]}"
+		_print_remediation "$last_config_file" "${errored_names[@]}"
 		return 1
 	fi
 
@@ -253,6 +333,14 @@ fi
 echo -e "${BLUE}=== MCP Diagnosis: $MCP_NAME ===${NC}"
 echo ""
 
+# 0. Detect if this is a remote/SSE MCP (no local command to check)
+MCP_IS_REMOTE=false
+case "$MCP_NAME" in
+cloudflare-api | openapi-search | context7)
+	MCP_IS_REMOTE=true
+	;;
+esac
+
 # 1. Check if command exists
 echo "1. Checking command availability..."
 # Map MCP names to their CLI commands
@@ -270,6 +358,32 @@ context7)
 	NPM_PKG="$MCP_NAME"
 	;;
 esac
+
+if [[ "$MCP_IS_REMOTE" == "true" ]]; then
+	echo -e "   ${CYAN}[remote]${NC} $MCP_NAME is a remote/SSE MCP — no local command required."
+	echo "   Remote MCPs connect over the network and cannot be diagnosed locally."
+	echo ""
+	echo "4. Known issues for $MCP_NAME..."
+	case "$MCP_NAME" in
+	cloudflare-api)
+		echo "   - SSE-based remote MCP (type: sse)"
+		echo "   - Requires Cloudflare account and OAuth; errors if unauthenticated"
+		echo "   - Use: \"type\": \"sse\", \"url\": \"https://mcp.cloudflare.com/mcp\""
+		echo "   - To disable: set \"enabled\": false in your MCP config"
+		;;
+	openapi-search)
+		echo "   - SSE-based remote MCP (type: sse)"
+		echo "   - Requires network access to openapi-mcp.openapisearch.com"
+		echo "   - Use: \"type\": \"sse\", \"url\": \"https://openapi-mcp.openapisearch.com/mcp\""
+		echo "   - To disable: set \"enabled\": false in your MCP config"
+		;;
+	context7)
+		echo "   - Remote MCP, no local command needed"
+		echo "   - Use: \"type\": \"remote\", \"url\": \"https://mcp.context7.com/mcp\""
+		;;
+	esac
+	exit 0
+fi
 
 if command -v "$CLI_CMD" &>/dev/null; then
 	echo -e "   ${GREEN}✓ Command found: $(which "$CLI_CMD")${NC}"
@@ -308,6 +422,7 @@ fi
 if [[ ${#_MCP_DIAG_CONFIGS[@]} -eq 0 ]]; then
 	declare -a _fallback_candidates
 	_fallback_candidates=(
+		"claude-code:$HOME/.claude.json"
 		"claude-code:$HOME/.config/Claude/Claude.json"
 		"claude-code:$HOME/Library/Application Support/Claude/claude_desktop_config.json"
 		"opencode:$HOME/.config/opencode/opencode.json"
@@ -371,6 +486,24 @@ augment-context-engine | augment)
 context7)
 	echo "   - Remote MCP, no local command needed"
 	echo "   - Use: \"type\": \"remote\", \"url\": \"https://mcp.context7.com/mcp\""
+	;;
+cloudflare-api)
+	echo "   - SSE-based remote MCP (type: sse)"
+	echo "   - Requires Cloudflare account and OAuth; errors if unauthenticated"
+	echo "   - Use: \"type\": \"sse\", \"url\": \"https://mcp.cloudflare.com/mcp\""
+	echo "   - To disable: set \"enabled\": false in your MCP config"
+	;;
+openapi-search)
+	echo "   - SSE-based remote MCP (type: sse)"
+	echo "   - Requires network access to openapi-mcp.openapisearch.com"
+	echo "   - Use: \"type\": \"sse\", \"url\": \"https://openapi-mcp.openapisearch.com/mcp\""
+	echo "   - To disable: set \"enabled\": false in your MCP config"
+	;;
+playwright)
+	echo "   - Requires @anthropic-ai/mcp-server-playwright (npx -y)"
+	echo "   - Needs Playwright browsers installed: npx playwright install"
+	echo "   - May fail if browsers not installed or npx cache is stale"
+	echo "   - To reinstall: npx -y @anthropic-ai/mcp-server-playwright@latest"
 	;;
 *)
 	echo "   No known issues documented for this MCP"
