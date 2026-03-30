@@ -18,9 +18,10 @@ tools:
 
 ## Quick Reference
 
-- **Install**: `npm install -g agent-browser && agent-browser install`
-- **Architecture**: Rust CLI + Node.js fallback, Playwright daemon (auto-starts, persists)
+- **Install**: `npm install -g agent-browser && agent-browser install` (Linux: `--with-deps`; iOS: `npm install -g appium && appium driver install xcuitest`)
+- **Source**: `git clone https://github.com/vercel-labs/agent-browser && pnpm install && pnpm build && agent-browser install`
 - **GitHub**: https://github.com/vercel-labs/agent-browser
+- **Architecture**: Rust CLI + Node.js fallback, Playwright daemon (auto-starts, persists)
 - **Limitations**: No proxy, no extensions, no Chrome DevTools MCP pairing
 - **Performance** (warm): navigate+screenshot 1.9s, form fill 1.4s, reliability 0.6s. Cold-start ~3-5s.
 - **iOS** (macOS only): `-p ios --device "iPhone 16 Pro"` — Mobile Safari via Appium
@@ -39,15 +40,6 @@ agent-browser screenshot page.png && agent-browser close
 **Snapshot flags**: `-i` interactive-only, `-c` compact, `-d <n>` depth limit, `-s <sel>` scope to selector
 
 <!-- AI-CONTEXT-END -->
-
-## Installation
-
-```bash
-npm install -g agent-browser && agent-browser install        # standard
-agent-browser install --with-deps                            # Linux: system deps
-# Source: git clone https://github.com/vercel-labs/agent-browser && cd agent-browser && pnpm install && pnpm build && agent-browser install
-# iOS:    npm install -g appium && appium driver install xcuitest
-```
 
 ## Core Commands
 
@@ -88,7 +80,7 @@ agent-browser find first ".item" click | find nth 2 "a" text
 
 ## Sessions
 
-Isolated per session: browser instance, cookies, storage, history, auth state. Parallel: `--session s1/s2/s3` (3 parallel tested in 2.0s).
+Each session has isolated browser instance, cookies, storage, history, and auth state. Parallel sessions supported (`--session s1/s2/s3`; 3 parallel tested in 2.0s).
 
 ```bash
 agent-browser --session agent1 open site-a.com
@@ -175,6 +167,4 @@ agent-browser --session s1 open https://site-a.com && agent-browser --session s1
 agent-browser --session s2 open https://site-b.com && agent-browser --session s2 state load auth-b.json
 ```
 
-## License
-
-Apache-2.0 | TypeScript (74%), Rust (22%)
+**License**: Apache-2.0 | TypeScript (74%), Rust (22%)
