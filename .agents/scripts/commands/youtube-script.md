@@ -4,7 +4,7 @@ agent: Build+
 mode: subagent
 ---
 
-Generate YouTube video scripts optimized for audience retention, with hooks, pattern interrupts, and storytelling frameworks.
+Generate YouTube video scripts optimized for audience retention. Delegates to `content/distribution-youtube-script-writer.md` for hook formulas, storytelling frameworks, retention checklist, output format, and memory integration.
 
 Topic: $ARGUMENTS
 
@@ -12,63 +12,30 @@ Topic: $ARGUMENTS
 
 ### Step 1: Parse Input and Load Context
 
-1. **Parse $ARGUMENTS:**
-   - Topic/title (e.g., "AI coding tools comparison")
-   - Optional flags: `--remix VIDEO_ID`, `--hook-only`, `--outline-only`, `--length [short|medium|long]`
+Parse `$ARGUMENTS` for topic/title and optional flags: `--remix VIDEO_ID`, `--hook-only`, `--outline-only`, `--length [short|medium|long]`.
 
-2. **Load research context from memory:**
+Load context:
 
 ```bash
-~/.aidevops/agents/scripts/memory-helper.sh recall --namespace youtube-topics "$TOPIC"
+memory-helper.sh recall --namespace youtube-topics "$TOPIC"
+memory-helper.sh recall --namespace youtube "channel"
 ```
 
-3. **Load channel configuration:**
+### Step 2: Select Mode and Generate
+
+| Mode | Flag | Output |
+|------|------|--------|
+| **Full Script** | *(default)* | Hook → Intro → Body (with pattern interrupts) → Climax → CTA |
+| **Hook Only** | `--hook-only` | 5-10 hook variants (Bold Claim, Question, Story, Contrarian, Result, List, Problem) |
+| **Outline Only** | `--outline-only` | Hook concept, intro roadmap, body sections (3-7), interrupt placements, CTA strategy |
+| **Remix** | `--remix VIDEO_ID` | Fetch transcript via `youtube-helper.sh transcript VIDEO_ID`, analyze structure, generate unique version with different angle/examples |
+
+Read `content/distribution-youtube-script-writer.md` for hook formulas, pattern interrupt types, retention curve optimization, storytelling frameworks, B-roll markers, pacing (120-150 wpm), and output format.
+
+### Step 3: Store and Offer Follow-up
 
 ```bash
-~/.aidevops/agents/scripts/memory-helper.sh recall --namespace youtube "channel"
-```
-
-### Step 2: Determine Script Mode
-
-**Mode A: Full Script (default)** — Hook (0-30s) → Intro (30-60s) → Body (sections with pattern interrupts) → Climax → CTA
-
-**Mode B: Hook Only (`--hook-only`)** — Generate 5-10 variants: Bold Claim, Question, Story, Contrarian, Result, List, Problem
-
-**Mode C: Outline Only (`--outline-only`)** — Hook concept, intro roadmap, body sections (3-7 points), pattern interrupt placements, CTA strategy
-
-**Mode D: Remix (`--remix VIDEO_ID`)** — Transform competitor video into unique script:
-
-```bash
-~/.aidevops/agents/scripts/youtube-helper.sh transcript VIDEO_ID
-```
-
-Analyze structure (hook, intro, body, CTA), then generate unique version: same topic, different angle, new examples, your voice.
-
-### Step 3: Generate Script
-
-Read `content/distribution-youtube-script-writer.md` for full guidance on hook formulas, pattern interrupt types, retention curve optimization, storytelling frameworks (AIDA, Hero's Journey, Problem-Solution-Result), B-roll markers, and pacing (120-150 words/minute).
-
-Script sections: `[HOOK - 0:00-0:30]` → `[INTRO - 0:30-1:00]` → `[SECTION N - start:end]` (with `[B-roll: ...]` and `[Pattern interrupt: type]`) → `[CLIMAX]` → `[CTA]`
-
-Output includes: title, target length, audience, hook formula, production notes (word count, duration, pattern interrupt count, B-roll shots), retention optimization scores.
-
-### Step 4: Optimize for Retention
-
-- **Hook**: creates curiosity + promises value + establishes credibility
-- **Pattern interrupts**: every 2-3 minutes, before drop-off points, after dense sections
-- **Pacing**: 120-150 words/minute, vary sentence length, use pauses
-- **B-roll**: visual change every 5-10 seconds, illustrate abstract concepts
-
-### Step 5: Present Script
-
-Format as production-ready with header (title, length, audience, hook formula), timestamped sections, and production notes. See `content/distribution-youtube-script-writer.md` for full output format.
-
-### Step 6: Store and Offer Follow-up
-
-```bash
-~/.aidevops/agents/scripts/memory-helper.sh store \
-  --type WORKING_SOLUTION \
-  --namespace youtube-scripts \
+memory-helper.sh store --type WORKING_SOLUTION --namespace youtube-scripts \
   "Script: {title}. Hook: {formula}. Length: {duration}. Generated: {date}"
 ```
 
@@ -88,9 +55,9 @@ Offer: hook variants, thumbnail brief, title/tags/description optimization, B-ro
 
 ## Related
 
-- `content/distribution-youtube.md` - Main YouTube agent
-- `content/distribution-youtube-script-writer.md` - Full script writing guide (hook formulas, output format, worked examples)
-- `content/story.md` - Storytelling frameworks and hook formulas
-- `/youtube research` - Research topics before scripting
-- `/youtube setup` - Configure channel and niche
-- `youtube-helper.sh` - Get competitor transcripts for remix mode
+- `content/distribution-youtube.md` — Main YouTube agent
+- `content/distribution-youtube-script-writer.md` — Full script writing guide (hook formulas, output format, worked examples)
+- `content/story.md` — Storytelling frameworks and hook formulas
+- `/youtube research` — Research topics before scripting
+- `/youtube setup` — Configure channel and niche
+- `youtube-helper.sh` — Get competitor transcripts for remix mode
