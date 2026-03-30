@@ -95,7 +95,12 @@ Duration:   [15s | 30s | 60s]
 CTA:        [Viewer action]
 ```
 
-### 5-Shot Storyboard Structure
+### Duration-Based Storyboard Structure (3/5/7-8 shots)
+
+The table below is a base template — adapt shot count to duration. Suggested variations derived from this template:
+- **15s** → 3 shots (merge Hook+Before, Transformation, CTA)
+- **30s** → 5 shots (standard — use all rows as-is)
+- **60s** → 7-8 shots (split Transformation into 2-3 demo + testimonial)
 
 | Shot | Role | Duration | Purpose |
 |------|------|----------|---------|
@@ -104,8 +109,6 @@ CTA:        [Viewer action]
 | 3 | **Transformation** | 5-8s | Product hero — demonstrate solution |
 | 4 | **After State** | 3-5s | Result proof — show outcome |
 | 5 | **Soft Sell + CTA** | 2-3s | Direct CTA, presenter to camera |
-
-**Shot count**: 15s → 3 shots (merge Hook+Before, Transformation, CTA) · 30s → 5 shots (standard) · 60s → 7-8 shots (split Transformation into 2-3 demo + testimonial)
 
 ### Per-Shot Format (7 components — `video-prompt-design.md`)
 
