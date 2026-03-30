@@ -22,39 +22,31 @@ A Cloudron app is a Docker image with a `CloudronManifest.json`. Readonly filesy
 
 - **Upstream**: [git.cloudron.io/docs/skills](https://git.cloudron.io/docs/skills) (`cloudron-app-packaging`) | [docs.cloudron.io/packaging](https://docs.cloudron.io/packaging/)
 - **Reference files**: `cloudron-app-packaging-skill/manifest-ref.md`, `cloudron-app-packaging-skill/addons-ref.md`
-- **Also see**: `cloudron-app-packaging.md` (native aidevops guide with helper scripts and local dev workflow)
+- **Also see**: `cloudron-app-packaging.md` (native aidevops guide — helper scripts, local dev workflow, detailed Dockerfile/start.sh patterns, pre-packaging assessment)
 
 <!-- AI-CONTEXT-END -->
 
-## Quick Start
-
-```bash
-npm install -g cloudron
-cloudron login my.example.com
-cloudron init       # creates CloudronManifest.json + Dockerfile
-cloudron install    # uploads source, builds on server, installs
-cloudron update     # re-uploads, rebuilds, updates running app
-```
-
 ## Key Constraints
 
-- Filesystem **readonly** at runtime. Writable: `/tmp` (ephemeral), `/run` (ephemeral), `/app/data` (persisted+backed up, requires `localstorage` addon).
-- Databases, caching, email, auth are **addons** — env vars injected at runtime. Re-read on every start; run DB migrations each start.
-- `CloudronManifest.json` declares metadata, ports, addon requirements.
-- App listens on HTTP (not HTTPS) — platform handles TLS.
-- Default memory: 256 MB (RAM + swap). Set `memoryLimit` in manifest.
+| Constraint | Detail |
+|------------|--------|
+| Filesystem readonly | Writable: `/tmp`, `/run` (ephemeral), `/app/data` (persisted, requires `localstorage` addon) |
+| Addons for services | Databases, caching, email, auth via addons — env vars injected at runtime, re-read every start |
+| Manifest declares all | `CloudronManifest.json`: metadata, ports, addon requirements |
+| HTTP only | App listens HTTP — platform handles TLS |
+| Memory default | 256 MB (RAM + swap). Set `memoryLimit` in manifest |
 
 ## Build Methods (9.1+)
 
-**On-Server (default):** `cloudron install` / `cloudron update` — uploads source, builds on server. No local Docker. Source backed up; rebuilds on restore.
-
-**Local Docker:** `docker login` → `cloudron build` → `cloudron install` / `cloudron build && cloudron update`.
-
-**Build Service:** `cloudron build login` → `cloudron build` (source sent to remote builder).
+| Method | Command | Notes |
+|--------|---------|-------|
+| On-Server (default) | `cloudron install` / `cloudron update` | Uploads source, builds on server. No local Docker. Source backed up; rebuilds on restore |
+| Local Docker | `cloudron build` → `cloudron install`/`update` | Requires `docker login` |
+| Build Service | `cloudron build login` → `cloudron build` | Source sent to remote builder |
 
 ## Dockerfile Patterns
 
-Name: `Dockerfile`, `Dockerfile.cloudron`, or `cloudron/Dockerfile`.
+Name: `Dockerfile`, `Dockerfile.cloudron`, or `cloudron/Dockerfile`. See `cloudron-app-packaging.md` "Dockerfile Patterns" for runtime-specific patterns (PHP, Node, Python, nginx, Apache).
 
 ```dockerfile
 FROM cloudron/base:5.0.0@sha256:...
@@ -68,40 +60,12 @@ CMD [ "/app/code/start.sh" ]
 
 ### start.sh Conventions
 
-- Runs as root. Drop privileges: `gosu cloudron:cloudron <cmd>`
+- Runs as root — drop privileges: `exec gosu cloudron:cloudron <cmd>`
 - Fix ownership every start (backups reset it): `chown -R cloudron:cloudron /app/data`
 - Forward SIGTERM with `exec`: `exec gosu cloudron:cloudron node /app/code/server.js`
 - First-run marker: `if [[ ! -f /app/data/.initialized ]]; then ...; touch /app/data/.initialized; fi`
-
-### Logging
-
-Log to stdout/stderr (platform rotates). Fallback: `/run/<subdir>/*.log` (two levels deep, autorotated).
-
-### Multiple Processes
-
-Use `supervisor` or `pm2`. Supervisor stdout config:
-
-```ini
-[program:app]
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
-```
-
-### Memory-Aware Worker Count
-
-```bash
-if [[ -f /sys/fs/cgroup/cgroup.controllers ]]; then
-    memory_limit=$(cat /sys/fs/cgroup/memory.max)
-    [[ "${memory_limit}" == "max" ]] && memory_limit=$((2 * 1024 * 1024 * 1024))
-else
-    memory_limit=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)
-fi
-worker_count=$((memory_limit / 1024 / 1024 / 150))
-worker_count=$((worker_count > 8 ? 8 : worker_count))
-worker_count=$((worker_count < 1 ? 1 : worker_count))
-```
+- Log to stdout/stderr (platform rotates). Fallback: `/run/<subdir>/*.log` (two levels deep, autorotated)
+- Multi-process: use `supervisor` or `pm2`. See `cloudron-app-packaging.md` "start.sh Architecture" for supervisord config and memory-aware worker count
 
 ## Manifest Essentials
 
