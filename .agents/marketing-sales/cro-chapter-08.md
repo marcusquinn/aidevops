@@ -1,6 +1,6 @@
 # Chapter 8: Form Optimization and Field Reduction
 
-Forms are the highest-friction conversion points. Every field added reduces conversion ~4-7%.
+Every field added reduces conversion ~4-7%.
 
 ## Field Cost Reference
 
@@ -28,8 +28,6 @@ Forms are the highest-friction conversion points. Every field added reduces conv
 
 ## Progressive Profiling
 
-Collect across interactions rather than upfront.
-
 | Step | Form | New Fields | Rate |
 |------|------|-----------|------|
 | Newsletter | Email | 1 | 12% of visitors |
@@ -37,9 +35,9 @@ Collect across interactions rather than upfront.
 | Webinar | Email + name (pre-filled) + company | 1 | 25% |
 | Free trial | All pre-filled + phone | 1 | 15% |
 
-**Result**: Email from 12% of visitors; complete profile for 2.1% — far higher than asking everything upfront.
+Email from 12% of visitors; complete profile for 2.1% — far higher than asking everything upfront.
 
-**Requirements**: Marketing automation (HubSpot, Marketo, Pardot) + cookie tracking. Logic: known visitor → load existing data, show only missing fields (max 2-3 new).
+**Requirements**: Marketing automation (HubSpot, Marketo, Pardot) + cookie tracking. Known visitor → load existing data, show only missing fields (max 2-3 new).
 
 ```javascript
 hbspt.forms.create({ portalId: "ID", formId: "ID", enableProgressiveFields: true });
@@ -47,15 +45,13 @@ hbspt.forms.create({ portalId: "ID", formId: "ID", enableProgressiveFields: true
 
 ## Multi-Step Forms
 
-### When to Use
-
 | Use | Avoid |
 |-----|-------|
 | 6+ fields | ≤3 fields |
 | Mix of easy/complex fields | Single-purpose (newsletter) |
 | Lead gen, registration, complex config | Speed-critical (checkout payment) |
 
-### Step Sequencing
+**Step sequencing**:
 
 | Step | Content | Psychology |
 |------|---------|-----------|
@@ -72,22 +68,13 @@ hbspt.forms.create({ portalId: "ID", formId: "ID", enableProgressiveFields: true
 
 ## Field Optimization Reference
 
-### Labels and Input Types
-
 - Labels above fields (always visible, accessible, mobile-friendly). Placeholders for format hints only.
 - Use correct HTML input types: `type="email"`, `type="tel"`, `type="url"`, `type="date"`, `type="number"`.
 - Add `autocomplete` attributes — up to 30% conversion improvement.
 
 Key `autocomplete` values: `name`, `email`, `tel`, `organization`, `street-address`, `address-level2` (city), `address-level1` (state), `postal-code`, `country-name`, `cc-name`, `cc-number`, `cc-exp`, `cc-csc`.
 
-### Smart Defaults
-
-- Country: detect from IP, pre-select
-- Quantity: default to 1
-- Time zone: `Intl.DateTimeFormat().resolvedOptions().timeZone`
-- Newsletter opt-in: unchecked (explicit consent required)
-
-### Field-Specific Rules
+**Smart defaults**: Country from IP · Quantity = 1 · Time zone: `Intl.DateTimeFormat().resolvedOptions().timeZone` · Newsletter opt-in: unchecked (explicit consent required)
 
 | Field | Rule |
 |-------|------|
@@ -102,9 +89,7 @@ Key `autocomplete` values: `name`, `email`, `tel`, `organization`, `street-addre
 
 ## Validation and Error Handling
 
-Validate on field blur (not every keystroke): focus → type → blur → validate → show result.
-
-**Error messages** — specific and actionable:
+Validate on field blur: focus → type → blur → validate → show result.
 
 | Bad | Good |
 |-----|------|
@@ -145,7 +130,7 @@ Social proof near form: testimonials, subscriber count ("Join 50,000+"), trust b
 
 **Field-level**: interaction rate, completion rate, correction rate, time per field, error rate, abandonment points.
 
-**Key technique**: field abandonment analysis — if phone shows 96% interaction but 75% completion (21% drop), test making it optional or removing it.
+Field abandonment analysis: if phone shows 96% interaction but 75% completion (21% drop), test making it optional or removing it.
 
 **Tools**: Google Analytics Enhanced Form Tracking, Hotjar Form Analytics, Zuko Analytics.
 
@@ -168,5 +153,3 @@ Social proof near form: testimonials, subscriber count ("Join 50,000+"), trust b
 | B2B lead: 12 fields → 4 (email, company, open-ended challenge, optional phone) | 3.2% CVR | 9.7% CVR | +203% |
 | SaaS trial: single-page 8 fields → 3-step (email+pw / name+company / goal+size) | 12% CVR | 17.5% CVR | +46% |
 | Field reorder: engaging question first, phone optional | 38% abandonment | 22% abandonment | -42% |
-
-**Key insight across all three**: starting with an engaging question and making sensitive fields optional reduces early abandonment and improves both quantity and quality of leads.
