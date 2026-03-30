@@ -42,19 +42,7 @@ email-compose-helper.sh draft --to client@example.com \
 
 **Never auto-send**: `--no-review` skips editor but still requires confirmation. Full bypass (`--no-review` + piping `y`) is for tested automation scripts only.
 
-## Legal Liability Awareness
-
-Email creates a written record. Distinguish clearly:
-
-- **Agreed** — contractually/verbally committed: *"As agreed in our contract, delivery is scheduled for 15 March."*
-- **Advised** — professional recommendation, not a guarantee: *"I would advise proceeding with Option A. This is my recommendation, not a guarantee of outcome."*
-- **Informational** — sharing without commitment: *"The current market rate is approximately £X. This is not a quote."*
-
-**Avoid:** admitting liability without legal review; commitments outside authority; speculating about outcomes; forwarding confidential info without permission.
-
-**Hedging:** "I understand" not "I agree"; "I'll look into this" not "We'll fix this"; "subject to contract" for commercial commitments. Consult legal before anything usable in a dispute.
-
-## Commands
+## Commands and Model Routing
 
 | Command | Purpose | Model |
 |---------|---------|-------|
@@ -67,15 +55,7 @@ Email creates a written record. Distinguish clearly:
 | `notify` | Project update notification | sonnet |
 | `list` | Show saved drafts (`--sent` for archive) | — |
 
-## Model Routing
-
-| Importance | Model | Use for |
-|------------|-------|---------|
-| `high` | opus | Client-facing, legal, negotiations, sensitive topics |
-| `normal` | sonnet | Routine correspondence, vendor communication, team updates |
-| `low` | haiku | Acknowledgements, brief notifications, holding-pattern responses |
-
-Opus for important emails is cost-justified — a poorly worded client email costs more than the model difference.
+Model selection via `--importance`: `high` → opus (client-facing, legal, negotiations); `normal` → sonnet (routine, vendor, team); `low` → haiku (acknowledgements, notifications). Opus for important emails is cost-justified — a poorly worded client email costs more than the model difference.
 
 ## Composition Rules
 
@@ -84,10 +64,9 @@ Opus for important emails is cost-justified — a poorly worded client email cos
 3. **Numbered lists** for multiple questions or action items
 4. **Explicit CTA** when response needed ("Please confirm by Friday")
 5. **No urgency flags** unless context explicitly requires it
-6. **Overused phrase avoidance** — see table below
-7. **Legal awareness** — distinguish agreed vs advised vs informational
+6. **Legal awareness** — distinguish agreed vs advised vs informational (see Legal section)
 
-## Overused Phrases (Auto-Flagged)
+**Overused phrases (auto-flagged):**
 
 | Avoid | Instead |
 |-------|---------|
@@ -145,11 +124,25 @@ Injected automatically from (in order): config file → signature file → Apple
 
 Use `--signature formal` to select a named signature.
 
+## Legal Liability Awareness
+
+Email creates a written record. Distinguish clearly:
+
+- **Agreed** — contractually/verbally committed: *"As agreed in our contract, delivery is scheduled for 15 March."*
+- **Advised** — professional recommendation, not a guarantee: *"I would advise proceeding with Option A. This is my recommendation, not a guarantee of outcome."*
+- **Informational** — sharing without commitment: *"The current market rate is approximately £X. This is not a quote."*
+
+**Avoid:** admitting liability without legal review; commitments outside authority; speculating about outcomes; forwarding confidential info without permission.
+
+**Hedging:** "I understand" not "I agree"; "I'll look into this" not "We'll fix this"; "subject to contract" for commercial commitments. Consult legal before anything usable in a dispute.
+
 ## Support and Customer Service
 
 Reference ticket numbers in every message. State what you've tried. Tone: formal, factual — specific errors, timestamps, repro steps. Follow up on schedule, not impulsively.
 
-**Escalation:** *Tier 1→2:* "Working with support on [ticket #X] for [N days]. Requires technical investigation beyond standard troubleshooting — please escalate." *Tier 2→Mgmt:* "Open [N days], impacting [business function]. I'd like to speak with a manager to resolve this."
+**Escalation templates:**
+- *Tier 1→2:* "Working with support on [ticket #X] for [N days]. Requires technical investigation beyond standard troubleshooting — please escalate."
+- *Tier 2→Mgmt:* "Open [N days], impacting [business function]. I'd like to speak with a manager to resolve this."
 
 ## Configuration
 
