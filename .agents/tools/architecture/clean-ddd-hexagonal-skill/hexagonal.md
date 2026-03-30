@@ -48,26 +48,16 @@ flowchart TB
 | **Driver** (Primary / Inbound) | → App | Application | How the world uses your app (use cases) | Adapter *calls* port — app defines what it **offers** |
 | **Driven** (Secondary / Outbound) | App → | Application | What your app needs from external systems | Adapter *implements* port — app defines what it **needs** |
 
-**Driver ports** (called by adapters, represent use cases):
+**Driver ports** (called by adapters, represent use cases) · **Driven ports** (implemented by adapters, called by the application):
 
 ```typescript
 // application/ports/driver/place_order_port.ts
-export interface IPlaceOrderPort {
-  execute(command: PlaceOrderCommand): Promise<OrderId>;
-}
+export interface IPlaceOrderPort { execute(command: PlaceOrderCommand): Promise<OrderId>; }
 // application/ports/driver/get_order_port.ts
-export interface IGetOrderPort {
-  execute(query: GetOrderQuery): Promise<OrderDTO | null>;
-}
+export interface IGetOrderPort { execute(query: GetOrderQuery): Promise<OrderDTO | null>; }
 // application/ports/driver/cancel_order_port.ts
-export interface ICancelOrderPort {
-  execute(command: CancelOrderCommand): Promise<void>;
-}
-```
+export interface ICancelOrderPort { execute(command: CancelOrderCommand): Promise<void>; }
 
-**Driven ports** (implemented by adapters, called by the application):
-
-```typescript
 // application/ports/driven/order_repository_port.ts
 export interface IOrderRepositoryPort {
   findById(id: OrderId): Promise<Order | null>;
