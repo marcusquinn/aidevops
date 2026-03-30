@@ -19,8 +19,7 @@ export default {
   async queue(batch: MessageBatch, env: Env): Promise<void> {
     for (const msg of batch.messages) {
       const { userId, reportType } = msg.body;
-      const report = await generateReport(userId, reportType, env);
-      await env.REPORTS_BUCKET.put(`${userId}/${reportType}.pdf`, report);
+      await env.REPORTS_BUCKET.put(`${userId}/${reportType}.pdf`, await generateReport(userId, reportType, env));
       msg.ack();
     }
   }
@@ -32,17 +31,12 @@ export default {
 Collect entries via `waitUntil`, batch-write to external API.
 
 ```typescript
-// Producer — non-blocking via waitUntil
-ctx.waitUntil(env.LOGS_QUEUE.send({
-  method: request.method,
-  url: request.url,
-  timestamp: Date.now()
-}));
+// Producer — non-blocking
+ctx.waitUntil(env.LOGS_QUEUE.send({ method: request.method, url: request.url, timestamp: Date.now() }));
 
 // Consumer — batch write
 async queue(batch: MessageBatch, env: Env): Promise<void> {
-  const logs = batch.messages.map(m => m.body);
-  await fetch(env.LOG_ENDPOINT, { method: 'POST', body: JSON.stringify({ logs }) });
+  await fetch(env.LOG_ENDPOINT, { method: 'POST', body: JSON.stringify({ logs: batch.messages.map(m => m.body) }) });
   batch.ackAll();
 }
 ```
@@ -74,9 +68,8 @@ async queue(batch: MessageBatch, env: Env): Promise<void> {
       await callRateLimitedAPI(msg.body);
       msg.ack();
     } catch (error) {
-      if (error.status === 429) {
-        msg.retry({ delaySeconds: parseInt(error.headers.get('Retry-After') || '60') });
-      } else throw error;
+      if (error.status === 429) msg.retry({ delaySeconds: parseInt(error.headers.get('Retry-After') || '60') });
+      else throw error;
     }
   }
 }
@@ -108,12 +101,8 @@ After `max_retries`, messages route to DLQ automatically. Persist for investigat
 export default {
   async queue(batch: MessageBatch, env: Env): Promise<void> {
     for (const msg of batch.messages) {
-      try {
-        await riskyOperation(msg.body);
-        msg.ack();
-      } catch (error) {
-        console.error(`Failed after ${msg.attempts} attempts:`, error);
-      }
+      try { await riskyOperation(msg.body); msg.ack(); }
+      catch (error) { console.error(`Failed after ${msg.attempts} attempts:`, error); }
     }
   }
 };
