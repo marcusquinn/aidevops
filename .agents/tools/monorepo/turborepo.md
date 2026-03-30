@@ -6,25 +6,26 @@ tools: [read, write, edit, bash, glob, grep, webfetch, task, context7_*]
 
 # Turborepo - Monorepo Build System
 
-## Quick Reference
+High-performance build system for JS/TS monorepos. Package managers: pnpm (recommended), npm, yarn. Docs: [turbo.build/repo/docs](https://turbo.build/repo/docs) (Context7 MCP).
 
-**High-performance build system for JS/TS monorepos.** Package managers: pnpm (recommended), npm, yarn. Docs: [turbo.build/repo/docs](https://turbo.build/repo/docs) (Context7 MCP).
+## Structure & Naming
 
-**Directory structure**:
 ```text
 apps/     (web, mobile, extension)
 packages/ (ui, api, db, auth, i18n, shared)
 tooling/  (eslint, typescript, prettier)
 ```
 
-**Package naming** (`@workspace/` prefix):
+`@workspace/` prefix for all packages:
+
 | Location | Name | Import |
 |----------|------|--------|
 | `packages/ui/web` | `@workspace/ui-web` | `@workspace/ui-web/button` |
 | `packages/db` | `@workspace/db` | `@workspace/db/schema` |
 | `tooling/eslint` | `@workspace/eslint-config` | `@workspace/eslint-config` |
 
-**turbo.json** (task definitions):
+## turbo.json
+
 ```json
 {
   "$schema": "https://turbo.build/schema.json",
@@ -40,8 +41,6 @@ tooling/  (eslint, typescript, prettier)
 ## Filtering
 
 ```bash
-pnpm dev                               # all packages
-pnpm build                             # all packages
 pnpm --filter web dev                  # single package
 pnpm --filter @workspace/ui build      # by full name
 pnpm --filter web... build             # package + dependencies
@@ -51,7 +50,7 @@ pnpm --filter "./packages/*" build     # by directory
 pnpm --filter "!web" build             # exclude
 ```
 
-## Package.json Exports
+## Package Exports & Dependencies
 
 ```json
 // packages/ui/web/package.json
@@ -64,8 +63,6 @@ import { cn } from "@workspace/ui-web";
 import "@workspace/ui-web/globals.css";
 ```
 
-## Workspace Dependencies
-
 Use `"workspace:*"` protocol (not `"*"`): `{ "dependencies": { "@workspace/ui-web": "workspace:*" } }`
 
 ## Environment Variables
@@ -76,10 +73,11 @@ Use `dotenv-cli` to load `.env` before turbo:
 { "scripts": { "build": "pnpm with-env turbo build", "dev": "pnpm with-env turbo dev" } }
 ```
 
-## Shared TypeScript Config
+## Shared Configs
+
+**TypeScript** (`tooling/typescript/base.json`):
 
 ```json
-// tooling/typescript/base.json
 {
   "$schema": "https://json.schemastore.org/tsconfig",
   "compilerOptions": {
@@ -87,32 +85,19 @@ Use `dotenv-cli` to load `.env` before turbo:
     "target": "ES2022", "lib": ["ES2022"], "skipLibCheck": true, "esModuleInterop": true
   }
 }
-
-// packages/api/tsconfig.json — extends shared config
-{ "extends": "@workspace/tsconfig/base.json", "compilerOptions": { "outDir": "dist" }, "include": ["src"] }
 ```
 
-## Shared ESLint Config
+Extend: `{ "extends": "@workspace/tsconfig/base.json", "compilerOptions": { "outDir": "dist" }, "include": ["src"] }`
+
+**ESLint** (`tooling/eslint/base.js`):
 
 ```js
-// tooling/eslint/base.js
 module.exports = { extends: ["eslint:recommended", "prettier"], rules: {} };
-
-// apps/web/eslint.config.js — consuming the shared config
-import baseConfig from "@workspace/eslint-config/base";
-export default [...baseConfig];
 ```
+
+Consume: `import baseConfig from "@workspace/eslint-config/base"; export default [...baseConfig];`
 
 ## Database Package
-
-```tsx
-// packages/db/src/index.ts — public API
-export * from "./schema";
-export type { InferSelectModel, InferInsertModel } from "drizzle-orm";
-
-// packages/db/src/server.ts — server-only
-export { db } from "./client";
-```
 
 ```bash
 pnpm --filter @workspace/db db:generate  # generate migrations
