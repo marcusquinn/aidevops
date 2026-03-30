@@ -14,14 +14,6 @@ tools:
 
 # Extension Testing - Cross-Browser QA
 
-<!-- AI-CONTEXT-START -->
-
-## Quick Reference
-
-- **Purpose**: Test browser extensions across Chromium browsers and Firefox
-- **Tools**: Playwright (E2E), Chrome DevTools, browser-specific debugging
-- **Levels**: Unit → Integration → E2E → Cross-browser → Performance
-
 **Testing tool decision tree**:
 
 ```text
@@ -31,7 +23,7 @@ Debug content scripts?       → DevTools → Sources → Content scripts
 Cross-browser verification?  → Chrome + Firefox + Edge (manual or CI)
 ```
 
-<!-- AI-CONTEXT-END -->
+**Test levels**: Unit → Integration → E2E → Cross-browser → Performance
 
 ## Unit Tests
 
@@ -79,25 +71,19 @@ test('extension popup works', async () => {
 
 ## Manual Testing Checklist
 
-**Chrome/Chromium** (load from `.output/chrome-mv3/`):
+| Check | Chrome (`.output/chrome-mv3/`) | Firefox (`.output/firefox-mv2/`) | Edge (`.output/chrome-mv3/`) |
+|-------|-------------------------------|----------------------------------|------------------------------|
+| Popup opens and functions | ☐ | ☐ | ☐ |
+| Content scripts inject | ☐ | ☐ | ☐ |
+| Service worker handles events | ☐ | — | — |
+| Storage persists across sessions | ☐ | ☐ | ☐ |
+| Options page saves preferences | ☐ | ☐ | ☐ |
+| Side panel works (if applicable) | ☐ | — | ☐ |
+| Permissions requested correctly | ☐ | ☐ | ☐ |
+| Firefox-specific APIs handled | — | ☐ | — |
+| No console errors | ☐ | ☐ | ☐ |
 
-- [ ] Popup opens and functions correctly
-- [ ] Content scripts inject on target pages
-- [ ] Service worker handles events
-- [ ] Storage persists across sessions
-- [ ] Options page saves preferences
-- [ ] Side panel works (if applicable)
-- [ ] Permissions requested correctly
-
-**Firefox** (load temporary add-on from `.output/firefox-mv2/` or MV3):
-
-- [ ] All features work as in Chrome
-- [ ] Firefox-specific APIs handled
-- [ ] No console errors
-
-**Edge** (load from `.output/chrome-mv3/` — same build):
-
-- [ ] Edge-specific features work (if any)
+Firefox: load temporary add-on from `.output/firefox-mv2/` (or MV3). Edge: same build as Chrome.
 
 ## Debugging
 
