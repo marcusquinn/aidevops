@@ -12,6 +12,8 @@ readonly TEST_RESET='\033[0m'
 TESTS_RUN=0
 TESTS_FAILED=0
 PS_MOCK_OUTPUT=""
+GH_ISSUE_LIST_JSON="[]"
+GH_PR_LIST_JSON="[]"
 TEST_ROOT=""
 ORIGINAL_HOME="${HOME}"
 
@@ -54,6 +56,21 @@ teardown_test_env() {
 ps() {
 	printf '%s\n' "$PS_MOCK_OUTPUT"
 	return 0
+}
+
+gh() {
+	if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
+		printf '%s\n' "$GH_ISSUE_LIST_JSON"
+		return 0
+	fi
+
+	if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
+		printf '%s\n' "$GH_PR_LIST_JSON"
+		return 0
+	fi
+
+	printf 'unsupported gh invocation in test stub\n' >&2
+	return 1
 }
 
 run_count() {
@@ -212,6 +229,64 @@ test_counts_review_issue_pr_workers() {
 	return 0
 }
 
+test_list_dispatchable_candidates_include_passive_assignees() {
+	local repos_json_path="${HOME}/.config/aidevops/repos.json"
+	mkdir -p "$(dirname "$repos_json_path")"
+	printf '{"initialized_repos":[{"slug":"owner/repo","path":"/tmp/repo","pulse":true,"maintainer":"maintainer-bot"}]}\n' >"$repos_json_path"
+	REPOS_JSON="$repos_json_path"
+
+	GH_ISSUE_LIST_JSON='[
+	  {"number":1,"title":"unassigned","updatedAt":"2026-03-31T00:00:00Z","assignees":[],"labels":[{"name":"priority:high"}]},
+	  {"number":2,"title":"owner assigned","updatedAt":"2026-03-31T00:01:00Z","assignees":[{"login":"owner"}],"labels":[{"name":"quality-debt"}]},
+	  {"number":3,"title":"maintainer assigned","updatedAt":"2026-03-31T00:02:00Z","assignees":[{"login":"maintainer-bot"}],"labels":[{"name":"simplification-debt"}]},
+	  {"number":4,"title":"runner assigned","updatedAt":"2026-03-31T00:03:00Z","assignees":[{"login":"other-runner"}],"labels":[{"name":"priority:high"}]},
+	  {"number":5,"title":"owner queued","updatedAt":"2026-03-31T00:04:00Z","assignees":[{"login":"owner"}],"labels":[{"name":"status:queued"}]},
+	  {"number":6,"title":"needs review","updatedAt":"2026-03-31T00:05:00Z","assignees":[],"labels":[{"name":"needs-maintainer-review"}]},
+	  {"number":7,"title":"supervisor telemetry","updatedAt":"2026-03-31T00:06:00Z","assignees":[],"labels":[{"name":"supervisor"}]}
+	]'
+	GH_PR_LIST_JSON='[]'
+
+	local output
+	output=$(list_dispatchable_issue_candidates "owner/repo" 100)
+
+	if [[ "$output" == *$'1|unassigned'* && "$output" == *$'2|owner assigned'* && "$output" == *$'3|maintainer assigned'* && "$output" != *$'4|runner assigned'* && "$output" != *$'5|owner queued'* && "$output" != *$'6|needs review'* && "$output" != *$'7|supervisor telemetry'* ]]; then
+		print_result "list_dispatchable_issue_candidates includes passive assignees only" 0
+		return 0
+	fi
+
+	print_result "list_dispatchable_issue_candidates includes passive assignees only" 1 "Unexpected candidate set: ${output}"
+	return 0
+}
+
+test_count_runnable_candidates_counts_passive_assignee_backlog() {
+	local repos_json_path="${HOME}/.config/aidevops/repos.json"
+	mkdir -p "$(dirname "$repos_json_path")"
+	printf '{"initialized_repos":[{"slug":"owner/repo","path":"/tmp/repo","pulse":true,"maintainer":"maintainer-bot"}]}\n' >"$repos_json_path"
+	REPOS_JSON="$repos_json_path"
+
+	GH_ISSUE_LIST_JSON='[
+	  {"number":1,"title":"unassigned","updatedAt":"2026-03-31T00:00:00Z","assignees":[],"labels":[]},
+	  {"number":2,"title":"owner assigned","updatedAt":"2026-03-31T00:01:00Z","assignees":[{"login":"owner"}],"labels":[]},
+	  {"number":3,"title":"maintainer assigned","updatedAt":"2026-03-31T00:02:00Z","assignees":[{"login":"maintainer-bot"}],"labels":[]},
+	  {"number":4,"title":"runner assigned","updatedAt":"2026-03-31T00:03:00Z","assignees":[{"login":"other-runner"}],"labels":[]}
+	]'
+	GH_PR_LIST_JSON='[
+	  {"reviewDecision":"CHANGES_REQUESTED","statusCheckRollup":[]},
+	  {"reviewDecision":"APPROVED","statusCheckRollup":[{"conclusion":"FAILURE"}]}
+	]'
+
+	local count
+	count=$(count_runnable_candidates)
+
+	if [[ "$count" == "5" ]]; then
+		print_result "count_runnable_candidates counts passive assignee backlog" 0
+		return 0
+	fi
+
+	print_result "count_runnable_candidates counts passive assignee backlog" 1 "Expected 5 runnable items, got '${count}'"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -224,6 +299,8 @@ main() {
 	test_has_worker_exact_dir_match_no_sibling_false_positive
 	test_has_worker_exact_dir_match_accepts_correct_path
 	test_counts_review_issue_pr_workers
+	test_list_dispatchable_candidates_include_passive_assignees
+	test_count_runnable_candidates_counts_passive_assignee_backlog
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then
