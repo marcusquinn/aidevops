@@ -2,8 +2,6 @@
 
 > Don't launch until every box is checked.
 
----
-
 ## Pre-Launch: Tracking & Technical
 
 ### Pixel Setup
@@ -25,8 +23,6 @@
 - [ ] Domain verified in Business Settings
 - [ ] Events Manager → Data Sources → Domain verification complete
 
----
-
 ## Pre-Launch: Business Manager
 
 ### Account Health
@@ -39,8 +35,6 @@
 - [ ] Proper access levels assigned
 - [ ] Two-factor authentication enabled
 - [ ] Business Manager ownership clear
-
----
 
 ## Pre-Launch: Landing Page
 
@@ -64,8 +58,6 @@
 - [ ] Minimal form fields
 - [ ] Privacy policy linked
 
----
-
 ## Pre-Launch: Audiences
 
 ### Custom Audiences Created
@@ -82,8 +74,6 @@
 - [ ] Exclude recent purchasers/converters
 - [ ] Exclude employees if significant
 - [ ] Higher-intent audiences excluded from lower-intent ad sets
-
----
 
 ## Pre-Launch: Creative
 
@@ -103,8 +93,6 @@
 - [ ] Headline under character limit
 - [ ] CTA appropriate for objective
 - [ ] UTM parameters in URLs
-
----
 
 ## Pre-Launch: Campaign Settings
 
@@ -129,8 +117,6 @@
 - [ ] UTM parameters working
 - [ ] Preview checked on mobile
 
----
-
 ## Launch Day
 
 ### Final Checks
@@ -143,8 +129,6 @@
 - [ ] Campaign set to active
 - [ ] Confirm ads move to "In Review" or "Active"
 - [ ] Note any immediate disapprovals
-
----
 
 ## Post-Launch (First 24-48 Hours)
 
@@ -159,8 +143,6 @@
 - [ ] Note any adjustments made
 - [ ] Set up automated rules if using
 
----
-
 ## Red Flags to Watch
 
 **Stop and Investigate If:**
@@ -169,7 +151,3 @@
 - CPM dramatically higher than expected (>2x)
 - CTR below 0.3% after 1,000+ impressions
 - No conversions after significant spend
-
----
-
-*Complete this checklist before every campaign launch.*
