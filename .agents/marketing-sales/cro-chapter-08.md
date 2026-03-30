@@ -1,6 +1,6 @@
 # Chapter 8: Form Optimization and Field Reduction
 
-Forms are the highest-friction conversion points. Every field added reduces conversion ~4-7%.
+Every field added reduces conversion ~4-7%.
 
 ## Field Cost Reference
 
@@ -27,8 +27,6 @@ Forms are the highest-friction conversion points. Every field added reduces conv
 **"Can We Get This Later?" test** — remove or make optional if: (1) collectable post-conversion, (2) inferable/enrichable, (3) no immediate user value, (4) not required to serve the user.
 
 ## Progressive Profiling
-
-Collect across interactions rather than upfront.
 
 | Step | Form | New Fields | Rate |
 |------|------|-----------|------|
@@ -104,7 +102,7 @@ Key `autocomplete` values: `name`, `email`, `tel`, `organization`, `street-addre
 
 Validate on field blur (not every keystroke): focus → type → blur → validate → show result.
 
-**Error messages** — specific and actionable:
+**Error messages** — specific, not accusatory:
 
 | Bad | Good |
 |-----|------|
@@ -168,5 +166,3 @@ Social proof near form: testimonials, subscriber count ("Join 50,000+"), trust b
 | B2B lead: 12 fields → 4 (email, company, open-ended challenge, optional phone) | 3.2% CVR | 9.7% CVR | +203% |
 | SaaS trial: single-page 8 fields → 3-step (email+pw / name+company / goal+size) | 12% CVR | 17.5% CVR | +46% |
 | Field reorder: engaging question first, phone optional | 38% abandonment | 22% abandonment | -42% |
-
-**Key insight across all three**: starting with an engaging question and making sensitive fields optional reduces early abandonment and improves both quantity and quality of leads.
