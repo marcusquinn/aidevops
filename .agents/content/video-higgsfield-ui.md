@@ -14,7 +14,7 @@ tools:
 
 # Higgsfield UI Automator
 
-Browser-based automation for Higgsfield AI via Playwright. Uses **subscription credits** (UI-only, not API). Covers: image (10 models), video (4 workflows), lipsync (11 models), cinema studio, motion control, edit/inpaint (5 models), upscale, apps (38+), asset library, mixed media (32 presets), motion/VFX (150+ presets), vibe motion, storyboard, AI influencer, character profiles, pipeline + Remotion, seed bracketing. **27 CLI commands.**
+Browser-based automation for Higgsfield AI via Playwright. Uses **subscription credits** (UI-only, not API). Covers: image (10 models), video, lipsync (11 models), cinema studio, motion control, edit/inpaint (5 models), upscale, apps (38+), asset library, mixed media (32 presets), motion/VFX (150+ presets), vibe motion, storyboard, AI influencer, character profiles, pipeline + Remotion, seed bracketing. **27 CLI commands.**
 
 Use instead of `higgsfield.md` when: subscription credits apply, UI-exclusive features needed, or API has no credits.
 
@@ -90,7 +90,7 @@ higgsfield-helper.sh pipeline --brief brief.json
 | Nano Banana | `nano_banana` | 1cr | Yes |
 | WAN 2.2 | `wan2` | 1cr | No |
 
-Quality ranking (product shots): GPT → Seedream 4.5 → FLUX → Kontext → ... `--prefer-unlimited` (default) auto-selects best unlimited model. Unlimited models use dedicated routes (e.g., `/nano-banana-pro`) — standard `/image/` routes cost credits even for subscribed models. Soul presets: All, New, TikTok Core, Instagram Aesthetics, Camera Presets, Beauty, Mood, Surreal, Graphic Art.
+Quality ranking (product shots): GPT → Seedream 4.5 → FLUX → Kontext → ... `--prefer-unlimited` (default) auto-selects best unlimited model via dedicated routes (e.g., `/nano-banana-pro`) — standard `/image/` routes cost credits even for subscribed models. Soul presets: All, New, TikTok Core, Instagram Aesthetics, Camera Presets, Beauty, Mood, Surreal, Graphic Art.
 
 ### Video (5 models)
 
