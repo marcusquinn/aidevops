@@ -17,7 +17,7 @@ export PVE_TOKEN="user@pam!tokenid=secret-uuid"
 AUTH="Authorization: PVEAPIToken=$PVE_TOKEN"
 ```
 
-API tokens skip CSRF (unlike cookie auth). Use `-k` for self-signed certs. Replace `{node}`, `{vmid}`, `{snapname}`, `{upid}` with actual values throughout. All create/clone ops return a task UPID for tracking.
+API tokens skip CSRF (unlike cookie auth). Use `-k` for self-signed certs. Replace `{node}`, `{vmid}`, `{snapname}`, `{upid}` with actual values. Create/clone ops return a task UPID for tracking.
 
 ## Cluster & Nodes
 
@@ -27,29 +27,22 @@ curl -sk -H "$AUTH" "$PVE_URL/api2/json/nodes" | jq '.data[] | {node, status, cp
 curl -sk -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/status" | jq
 ```
 
-## List VMs & Containers
+## VMs & Containers
 
 ```bash
+# List per-node
 curl -sk -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/qemu" | jq '.data[] | {vmid, name, status}'
 curl -sk -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/lxc" | jq '.data[] | {vmid, name, status}'
 # Cluster-wide
 curl -sk -H "$AUTH" "$PVE_URL/api2/json/cluster/resources?type=vm" | jq '.data[] | {vmid, name, node, status, type}'
-```
-
-## VM/Container Control
-
-Actions: `start`, `stop` (immediate), `shutdown` (graceful ACPI), `reboot`. Replace `qemu` with `lxc` for containers.
-
-```bash
+# Control: start, stop (immediate), shutdown (graceful ACPI), reboot — replace qemu with lxc for containers
 curl -sk -X POST -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/qemu/{vmid}/status/{action}"
 ```
 
 ## Create VM
 
 ```bash
-# Next available VMID
-curl -sk -H "$AUTH" "$PVE_URL/api2/json/cluster/nextid" | jq '.data'
-# Create
+curl -sk -H "$AUTH" "$PVE_URL/api2/json/cluster/nextid" | jq '.data'  # next available VMID
 curl -sk -X POST -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/qemu" \
   -d "vmid=100" -d "name=myvm" -d "memory=4096" \
   -d "cores=4" -d "sockets=1" -d "cpu=host" \
@@ -74,12 +67,9 @@ curl -sk -X POST -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/lxc" \
 ## Clone & Template
 
 ```bash
-# Full clone
 curl -sk -X POST -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/qemu/{vmid}/clone" \
-  -d "newid=101" -d "name=clone-vm" -d "full=1"
-# Linked clone (faster, shares base) — use full=0
-# Convert to template
-curl -sk -X POST -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/qemu/{vmid}/template"
+  -d "newid=101" -d "name=clone-vm" -d "full=1"   # full=0 for linked clone (faster, shares base)
+curl -sk -X POST -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/qemu/{vmid}/template"  # convert to template
 ```
 
 ## Snapshots
@@ -98,30 +88,23 @@ curl -sk -X DELETE -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/qemu/{vmid}/snaps
 ## Backups
 
 ```bash
-# Start backup
 curl -sk -X POST -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/vzdump" \
-  -d "vmid={vmid}" -d "storage=local" -d "mode=snapshot" -d "compress=zstd"
-# List backups
-curl -sk -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/storage/local/content?content=backup" | jq
-# Restore (qemu — use lxc endpoint for containers)
+  -d "vmid={vmid}" -d "storage=local" -d "mode=snapshot" -d "compress=zstd"  # start backup
+curl -sk -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/storage/local/content?content=backup" | jq  # list
+# Restore (use lxc endpoint for containers)
 curl -sk -X POST -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/qemu" \
   -d "vmid=100" -d "archive=local:backup/vzdump-qemu-100-2026_01_15.vma.zst" -d "storage=local-lvm"
 ```
 
-## Storage & Templates
+## Storage, Templates & Tasks
 
 ```bash
 curl -sk -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/storage" | jq '.data[] | {storage, type, active, content}'
-curl -sk -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/storage/local/content?content=vztmpl" | jq
-curl -sk -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/storage/local/content?content=iso" | jq
-# Download template
+curl -sk -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/storage/local/content?content=vztmpl" | jq  # templates
+curl -sk -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/storage/local/content?content=iso" | jq     # ISOs
 curl -sk -X POST -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/aplinfo" \
-  -d "storage=local" -d "template=debian-12-standard_12.2-1_amd64.tar.zst"
-```
-
-## Tasks
-
-```bash
+  -d "storage=local" -d "template=debian-12-standard_12.2-1_amd64.tar.zst"  # download template
+# Task tracking
 curl -sk -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/tasks?limit=10" | jq
 curl -sk -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/tasks/{upid}/status" | jq
 curl -sk -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/tasks/{upid}/log" | jq
@@ -131,6 +114,5 @@ curl -sk -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/tasks/{upid}/log" | jq
 
 ```bash
 curl -sk -X DELETE -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/qemu/{vmid}"
-# Force purge (removes all related data)
-curl -sk -X DELETE -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/qemu/{vmid}?purge=1&destroy-unreferenced-disks=1"
+curl -sk -X DELETE -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/qemu/{vmid}?purge=1&destroy-unreferenced-disks=1"  # force purge
 ```
