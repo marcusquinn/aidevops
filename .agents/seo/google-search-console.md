@@ -16,35 +16,36 @@ tools:
 
 ## Quick Reference
 
-- **Primary access**: MCP tools (`gsc_*`) — enabled for SEO agent
-- **Fallback**: curl with OAuth2 token from service account
-- **API**: `https://searchconsole.googleapis.com/v1/`
-- **Auth**: `~/.config/aidevops/gsc-credentials.json` (service account JSON, `chmod 600`)
-- **Metrics**: clicks, impressions, ctr, position
-- **Dimensions**: query, page, country, device, searchAppearance
+| | |
+|---|---|
+| **Access** | MCP `gsc_*` tools (primary), curl + OAuth2 (fallback) |
+| **API** | `https://searchconsole.googleapis.com/v1/` |
+| **Auth** | `~/.config/aidevops/gsc-credentials.json` (service account, `chmod 600`) |
+| **Metrics** | clicks, impressions, ctr, position |
+| **Dimensions** | query, page, country, device, searchAppearance |
 
 ## Setup
 
-1. Google Cloud Console → enable **Google Search Console API** → Credentials → Service Account → JSON key → save to `~/.config/aidevops/gsc-credentials.json` (`chmod 600`)
-2. GSC → Property → Settings → Users and permissions → Add service account email. For bulk-add, use the Playwright script below.
+1. Google Cloud Console → enable **Search Console API** → Service Account → JSON key → `~/.config/aidevops/gsc-credentials.json` (`chmod 600`)
+2. GSC → Property → Settings → Users → add service account email (or bulk-add via Playwright script below)
 3. Verify: `python3 -c "import json; d=json.load(open('$HOME/.config/aidevops/gsc-credentials.json')); print(d['client_email'])"`
 
-## MCP Tool Reference (`gsc_*`)
+## MCP Tools (`gsc_*`)
 
 | Tool | Purpose | Key params |
 |------|---------|------------|
-| `gsc_list_sites` | List all verified properties | — |
-| `gsc_search_analytics` | Query search performance | `siteUrl`, `startDate`, `endDate`, `dimensions[]`, `rowLimit` |
-| `gsc_url_inspection` | Inspect URL indexing status | `inspectionUrl`, `siteUrl` |
+| `gsc_list_sites` | List verified properties | — |
+| `gsc_search_analytics` | Search performance | `siteUrl`, `startDate`, `endDate`, `dimensions[]`, `rowLimit` |
+| `gsc_url_inspection` | URL indexing status | `inspectionUrl`, `siteUrl` |
 | `gsc_submit_sitemap` | Submit sitemap | `siteUrl`, `feedpath` |
 | `gsc_delete_sitemap` | Remove sitemap | `siteUrl`, `feedpath` |
-| `gsc_list_sitemaps` | List submitted sitemaps | `siteUrl` |
+| `gsc_list_sitemaps` | List sitemaps | `siteUrl` |
 
-**Common patterns**: top queries (`dimensions: ["query"]`, `orderBy: impressions`), page performance (`dimensions: ["page"]`, `orderBy: clicks`), CTR opportunities (filter `impressions > 100` and `ctr < 0.05`), device/geo breakdown.
+**Common patterns**: top queries (`dimensions: ["query"]`, `orderBy: impressions`), page performance (`dimensions: ["page"]`, `orderBy: clicks`), CTR opportunities (`impressions > 100`, `ctr < 0.05`), device/geo breakdown.
 
 ## MCP Configuration
 
-> `@anthropic/google-search-console-mcp` is internal/unreleased. If unavailable via npm, use the curl fallback or check with your aidevops maintainer.
+> `@anthropic/google-search-console-mcp` is internal/unreleased. If unavailable via npm, use curl fallback or check with aidevops maintainer.
 
 ```json
 {
@@ -60,7 +61,7 @@ tools:
 
 ## curl Fallback
 
-**Requirements**: `pip install PyJWT requests`
+Requires `pip install PyJWT requests`.
 
 ```bash
 ACCESS_TOKEN=$(python3 -c "
@@ -88,9 +89,9 @@ curl -s -X POST "https://searchconsole.googleapis.com/v1/urlInspection/index:ins
   -d '{"inspectionUrl": "https://example.com/page", "siteUrl": "https://example.com"}'
 ```
 
-## Bulk Property Setup (Playwright)
+## Bulk Property Setup
 
-Save as `gsc-add-service-account.js`, run with `node gsc-add-service-account.js`. Requires `npm install playwright`, Chrome logged into Google, Owner access.
+Adds service account to all GSC properties via Playwright. Requires `npm install playwright`, Chrome logged into Google, Owner access.
 
 ```javascript
 import { chromium } from 'playwright';
@@ -129,8 +130,8 @@ main().catch(console.error);
 
 ## Troubleshooting
 
-- **Empty results `{}`**: Service account not added to any GSC properties — use the Playwright script above.
-- **"No access to property"**: Service account must be added as Full or Owner user; domain must be verified in GSC.
+- **Empty results `{}`**: Service account not added to any GSC properties — use Playwright script above
+- **"No access to property"**: Service account needs Full or Owner role; domain must be verified in GSC
 - **Connection issues**: `ls -la ~/.config/aidevops/gsc-credentials.json` · `opencode mcp list`
 
 <!-- AI-CONTEXT-END -->
