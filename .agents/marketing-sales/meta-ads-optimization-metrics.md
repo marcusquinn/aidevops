@@ -4,37 +4,20 @@ Definitions, formulas, and benchmarks for Meta Ads Manager.
 
 ## Primary Metrics by Objective
 
-### Purchase/Sales
-
-| Metric | Definition | Good | Great |
-|--------|------------|------|-------|
-| **ROAS** | Revenue ÷ Spend | 2-3x | 4x+ |
-| **CPA** | Spend ÷ Purchases | Industry avg | Below avg |
-| **Purchase Value** | Total revenue | Growing | Target met |
-| **AOV** | Revenue ÷ Orders | Stable+ | Increasing |
-
-### Lead Generation
-
-| Metric | Definition | Good | Great |
-|--------|------------|------|-------|
-| **CPL** | Spend ÷ Leads | <$50 | <$25 |
-| **Cost per Demo** | Spend ÷ Demos | <$150 | <$80 |
-| **Lead-to-SQL %** | SQLs ÷ Leads × 100 | 20%+ | 35%+ |
-
-### App Installs
-
-| Metric | Definition | Good | Great |
-|--------|------------|------|-------|
-| **CPI** | Spend ÷ Installs | Category avg | Below avg |
-| **Install Rate** | Installs ÷ Clicks | 5%+ | 10%+ |
-
-### Awareness
-
-| Metric | Definition | Good | Great |
-|--------|------------|------|-------|
-| **Reach** | Unique people | Target met | Exceeded |
-| **CPM** | Cost per 1000 impressions | <$15 | <$8 |
-| **Ad Recall Lift** | Estimated memory | Growing | Target met |
+| Objective | Metric | Definition | Good | Great |
+|-----------|--------|------------|------|-------|
+| **Purchase** | ROAS | Revenue ÷ Spend | 2-3x | 4x+ |
+| **Purchase** | CPA | Spend ÷ Purchases | Industry avg | Below avg |
+| **Purchase** | Purchase Value | Total revenue | Growing | Target met |
+| **Purchase** | AOV | Revenue ÷ Orders | Stable+ | Increasing |
+| **Lead Gen** | CPL | Spend ÷ Leads | <$50 | <$25 |
+| **Lead Gen** | Cost per Demo | Spend ÷ Demos | <$150 | <$80 |
+| **Lead Gen** | Lead-to-SQL % | SQLs ÷ Leads × 100 | 20%+ | 35%+ |
+| **App Installs** | CPI | Spend ÷ Installs | Category avg | Below avg |
+| **App Installs** | Install Rate | Installs ÷ Clicks | 5%+ | 10%+ |
+| **Awareness** | Reach | Unique people | Target met | Exceeded |
+| **Awareness** | CPM | Cost per 1000 impressions | <$15 | <$8 |
+| **Awareness** | Ad Recall Lift | Estimated memory | Growing | Target met |
 
 ## Click Metrics
 
@@ -83,9 +66,7 @@ CPA = Spend ÷ Actions = CPC ÷ Conversion Rate ← lower via: lower CPC, higher
 
 ## Quality Metrics
 
-### Ad Relevance Diagnostics
-
-Applies to Quality, Engagement Rate, and Conversion Rate rankings.
+### Ad Relevance Diagnostics (Quality, Engagement Rate, Conversion Rate rankings)
 
 | Ranking | Meaning |
 |---------|---------|
@@ -95,11 +76,7 @@ Applies to Quality, Engagement Rate, and Conversion Rate rankings.
 | Below Average (Bottom 20%) | Fix immediately |
 | Below Average (Bottom 10%) | Serious issue |
 
-### Frequency
-
-```text
-Frequency = Impressions ÷ Reach
-```
+### Frequency (`Impressions ÷ Reach`)
 
 | Campaign Type | Warning | Action Needed |
 |---------------|---------|---------------|
@@ -155,16 +132,12 @@ Incremental ROAS = Raw ROAS × Incrementality %            (e.g. 3.0x × 60% lif
 - **Weekly:** CTR trend, frequency, creative performance, audience performance
 - **Monthly:** Overall ROAS/CPA vs target, attribution review, creative refresh needs, budget allocation
 
-## Recommended Custom Columns
-
-Via Ads Manager → Columns → Customize Columns.
+## Recommended Custom Columns (Ads Manager → Columns → Customize Columns)
 
 | Objective | Columns |
 |-----------|---------|
 | **Ecommerce** | ROAS, Cost Per Purchase, Purchase Conversion Value, Website Purchases, CTR (Link Click), CPM, Frequency, Reach |
 | **Lead Gen** | Cost Per Lead, Leads, Lead Conversion Rate, CTR (Link Click), Landing Page Views, CPM, Frequency, Quality Ranking |
 | **Video** | ThruPlay Cost, ThruPlays, 3-Second Video Views, Video Average Watch Time, CTR (All), CPM, Reach, Frequency |
-
----
 
 *Next: [Scaling Playbook](meta-ads-optimization-scaling.md)*
