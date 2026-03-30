@@ -67,10 +67,6 @@ Local search with no results → `/skills` suggests the public registry automati
 
 **Full docs**: `scripts/commands/add-skill.md`, `scripts/commands/skills.md`
 
-## Getting Started
-
-**CLI**: `aidevops [init|update|auto-update|status|repos|skill|skills|detect|features|uninstall]`. See `/onboarding` for setup wizard.
-
 ## User Settings
 
 Persistent preferences in `~/.config/aidevops/settings.json` (optional; all keys default `true`). Env vars take priority.
@@ -123,9 +119,9 @@ Polls GitHub every 10 minutes; runs `aidevops update` on new version. Safe durin
 
 **Logs**: `~/.aidevops/logs/auto-update.log`
 
-**Daily skill refresh**: 24h-gated via `skill-update-helper.sh --auto-update --quiet`. State: `~/.aidevops/cache/auto-update-state.json` (`last_skill_check`, `skill_updates_applied`). Disable: `AIDEVOPS_SKILL_AUTO_UPDATE=false`. Frequency: `AIDEVOPS_SKILL_FRESHNESS_HOURS=<hours>` (default: 24). View: `aidevops auto-update status`.
+**Daily skill refresh**: 24h-gated via `skill-update-helper.sh --auto-update --quiet`. State: `~/.aidevops/cache/auto-update-state.json`. Disable: `AIDEVOPS_SKILL_AUTO_UPDATE=false`. Frequency: `AIDEVOPS_SKILL_FRESHNESS_HOURS=<hours>` (default: 24). View: `aidevops auto-update status`.
 
-**Upstream watch**: `upstream-watch-helper.sh check` monitors external repos for new releases (distinct from skill imports and contribution watch). Config: `.agents/configs/upstream-watch.json`. State: `~/.aidevops/cache/upstream-watch-state.json`. Commands: `status`, `check`, `ack <slug>`.
+**Upstream watch**: `upstream-watch-helper.sh check` — monitors external repos for new releases. Config: `.agents/configs/upstream-watch.json`. State: `~/.aidevops/cache/upstream-watch-state.json`. Commands: `status`, `check`, `ack <slug>`.
 
 **Update behavior**: Shared agents in `~/.aidevops/agents/` overwritten on update. Only `custom/` and `draft/` preserved.
 
