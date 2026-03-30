@@ -606,7 +606,7 @@ _migrate_mcp_npx_to_binary() {
 		local bin_name="${mcp_bins[$i]}"
 		# Find MCP key using npx/bunx/pipx for this package (single query)
 		local mcp_key
-		mcp_key=$(jq -r --arg pkg "$pkg" '.mcp | to_entries[] | select(.value.command != null) | select(.value.command | join(" ") | test("npx.*" + $pkg + "|bunx.*" + $pkg + "|pipx.*run.*" + $pkg)) | .key' "$tmp_config" 2>/dev/null | head -1)
+		mcp_key=$(jq -r --arg pkg "$pkg" '(.mcp // {}) | to_entries[]? | select(.value.command != null) | select(.value.command | join(" ") | test("npx.*" + $pkg + "|bunx.*" + $pkg + "|pipx.*run.*" + $pkg)) | .key' "$tmp_config" 2>/dev/null | head -1)
 
 		if [[ -n "$mcp_key" ]]; then
 			# Resolve full path for the binary
