@@ -18,15 +18,10 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Human-readable YAML-based E2E testing for Android, iOS, and web
 - **Install**: `curl -fsSL "https://get.maestro.mobile.dev" | bash`
 - **Requirements**: Java 17+ (`java -version` to verify)
 - **Docs**: https://docs.maestro.dev
-- **GitHub**: https://github.com/mobile-dev-inc/maestro (10.6k stars, Apache-2.0)
-
-**Why Maestro**: Built on learnings from Appium, Espresso, XCTest, and Selenium.
-Interpreted YAML flows (no compilation), built-in flakiness tolerance, automatic
-waiting. Write your first test in under five minutes.
+- **GitHub**: https://github.com/mobile-dev-inc/maestro
 
 <!-- AI-CONTEXT-END -->
 
@@ -82,12 +77,10 @@ waiting. Write your first test in under five minutes.
 
 ## Maestro Studio and Cloud
 
-**Studio** (`maestro studio` or standalone desktop app) -- visual IDE for test building:
-live device mirror, element inspector, click-to-select YAML generation, AI assistance.
-Download: https://maestro.dev/#maestro-studio
-
-**Cloud** -- parallel execution on dedicated infrastructure, up to 90% faster,
-deterministic environments. Free trial: https://maestro.dev/cloud
+| | Description | URL |
+|--|-------------|-----|
+| **Studio** | Visual IDE: device mirror, element inspector, YAML generation, AI assist | https://maestro.dev/#maestro-studio |
+| **Cloud** | Parallel execution, deterministic environments, free trial | https://maestro.dev/cloud |
 
 ## Common Patterns
 
@@ -124,7 +117,7 @@ appId: com.example.app
 | XcodeBuildMCP | Build iOS `.app`, install on simulator, then test |
 | iOS Simulator MCP | Manage simulator state alongside Maestro flows |
 
-Typical workflow: boot simulator (`xcrun simctl boot`), build app (`xcodebuild`), run `maestro test flows/`.
+Workflow: `xcrun simctl boot` → `xcodebuild` → `maestro test flows/`
 
 ## Related Tools
 
