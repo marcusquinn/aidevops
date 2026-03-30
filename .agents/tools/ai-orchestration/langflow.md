@@ -15,14 +15,15 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Visual drag-and-drop builder for AI-powered agents and workflows (MIT, commercial use permitted)
+- **Purpose**: Visual drag-and-drop builder for AI-powered agents and workflows (MIT, commercial OK)
 - **Setup**: `bash .agents/scripts/langflow-helper.sh setup`
 - **Start/Stop/Status**: `~/.aidevops/scripts/start-langflow.sh` / `stop-langflow.sh` / `langflow-status.sh`
-- **URL**: http://localhost:7860 | **API Docs**: http://localhost:7860/docs | **Health**: http://localhost:7860/health
+- **URL**: http://localhost:7860 | **API**: http://localhost:7860/docs | **Health**: http://localhost:7860/health
 - **Config**: `~/.aidevops/langflow/.env` | **venv**: `~/.aidevops/langflow/venv/`
 - **Privacy**: Flows stored locally, optional cloud sync
+- **Features**: Flow builder, Python export, MCP server, LangChain, local LLM (Ollama)
 - **Docs**: https://docs.langflow.org | **GitHub**: https://github.com/langflow-ai/langflow
-- **Templates**: https://www.langflow.org/templates | **Discord**: https://discord.gg/EqksyE2EX9
+- **Community**: [Discord](https://discord.gg/EqksyE2EX9) | [Templates](https://www.langflow.org/templates)
 
 ## Installation
 
@@ -65,7 +66,7 @@ LANGFLOW_DATABASE_URL=sqlite:///./langflow.db
 OLLAMA_BASE_URL=http://localhost:11434
 ```
 
-Custom components (`~/.aidevops/langflow/components/my_component.py`):
+Custom components in `~/.aidevops/langflow/components/` — load with `langflow run --components-path ~/.aidevops/langflow/components/`:
 
 ```python
 from langflow.custom import CustomComponent
@@ -78,13 +79,11 @@ class MyCustomComponent(CustomComponent):
         return Data(text=input_text.upper())
 ```
 
-Load: `langflow run --components-path ~/.aidevops/langflow/components/`
-
 ## Usage
 
-Open http://localhost:7860 → "New Flow" or template → drag components from sidebar, connect edges, configure parameters → "Run".
+http://localhost:7860 → New Flow → drag components, connect edges, configure → Run.
 
-RAG Pipeline:
+RAG pipeline:
 
 ```text
 [Document Loader] → [Text Splitter] → [Embeddings] → [Vector Store]
@@ -92,7 +91,7 @@ RAG Pipeline:
 [User Input] → [Retriever] → [LLM] → [Output]
 ```
 
-Multi-Agent Chat:
+Multi-agent chat:
 
 ```text
 [User Input] → [Router Agent] → [Specialist Agent 1]
@@ -100,14 +99,9 @@ Multi-Agent Chat:
                              → [Aggregator] → [Output]
 ```
 
-Integrations:
-
-- **CrewAI**: Custom component importing CrewAI, define agents/tasks, connect to Langflow components
-- **aidevops workflows**: `langflow export --flow-id <id> --output flows/devops-automation.json` then commit to git
+**CrewAI**: Import CrewAI in a custom component to define agents/tasks, connect to Langflow flow components.
 
 ## API Integration
-
-REST API:
 
 ```python
 import requests
@@ -118,14 +112,7 @@ response = requests.post(
 print(response.json())
 ```
 
-MCP Server — enable and connect from any MCP-compatible assistant:
-
-```bash
-langflow run --mcp
-# Or in .env: LANGFLOW_MCP_ENABLED=true
-```
-
-Claude Code config:
+MCP server (`langflow run --mcp` or `LANGFLOW_MCP_ENABLED=true` in `.env`). Claude Code config:
 
 ```json
 { "mcpServers": { "langflow": { "command": "langflow", "args": ["run", "--mcp"] } } }
@@ -141,8 +128,6 @@ langflow import --directory flows/
 # .gitignore: langflow.db, *.log, __pycache__/, .env
 # Track: flows/*.json, components/*.py
 ```
-
-Bi-directional sync: use `watchdog` file watcher to auto-import on `.json` changes.
 
 ## Local LLM Support
 
@@ -165,7 +150,7 @@ volumes:
   langflow_data:
 ```
 
-Production: PostgreSQL (not SQLite), enable auth for multi-user, reverse proxy (nginx/traefik) for HTTPS.
+Production: PostgreSQL, auth for multi-user, reverse proxy for HTTPS.
 
 ## Troubleshooting
 
