@@ -582,6 +582,11 @@ _migrate_mcp_npx_to_binary() {
 	local tmp_config="$1"
 	_cleanup_count=0
 
+	# Early return if config has no .mcp key — nothing to migrate (GH#14220)
+	if ! jq -e '.mcp' "$tmp_config" >/dev/null 2>&1; then
+		return 0
+	fi
+
 	# Parallel arrays avoid bash associative array issues with @ in package names
 	local -a mcp_pkgs=(
 		"chrome-devtools-mcp"
@@ -605,6 +610,7 @@ _migrate_mcp_npx_to_binary() {
 		local pkg="${mcp_pkgs[$i]}"
 		local bin_name="${mcp_bins[$i]}"
 		# Find MCP key using npx/bunx/pipx for this package (single query)
+		# Use (.mcp // {}) for null-safety — .mcp may not exist in minimal configs (GH#14220)
 		local mcp_key
 		mcp_key=$(jq -r --arg pkg "$pkg" '(.mcp // {}) | to_entries[]? | select(.value.command != null) | select(.value.command | join(" ") | test("npx.*" + $pkg + "|bunx.*" + $pkg + "|pipx.*run.*" + $pkg)) | .key' "$tmp_config" 2>/dev/null | head -1)
 
