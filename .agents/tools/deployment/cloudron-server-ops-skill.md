@@ -57,9 +57,9 @@ cloudron repair --app <app>    # reconfigure without changing image
 cloudron clone --app <app> --location new-location
 ```
 
-`install` and `update` key flags: `--image <repo:tag>`, `--no-backup`, `-l <subdomain>`, `-s <secondary-domains>`, `-p <port-bindings>`, `-m <memory-bytes>`, `--versions-url <url>`
+Key flags for `install`/`update`: `--image <repo:tag>`, `--no-backup`, `-l <subdomain>`, `-s <secondary-domains>`, `-p <port-bindings>`, `-m <memory-bytes>`, `--versions-url <url>`
 
-**On-server build (9.1+):** From a directory with `CloudronManifest.json` + `Dockerfile`:
+**On-server build (9.1+)** — from a directory with `CloudronManifest.json` + `Dockerfile`:
 
 ```bash
 cloudron install --location myapp   # upload source, build on server, install
@@ -85,7 +85,7 @@ cloudron logs --system                 # platform system logs
 cloudron logs --system mail            # specific system service
 ```
 
-### Shell and Exec
+### Shell, Exec, and Debug
 
 ```bash
 cloudron exec --app <app>                              # interactive shell
@@ -93,9 +93,7 @@ cloudron exec --app <app> -- ls -la /app/data          # run a command
 cloudron exec --app <app> -- bash -c 'echo $CLOUDRON_MYSQL_URL'
 ```
 
-### Debug Mode
-
-When an app keeps crashing, `exec` may disconnect. Debug mode pauses the app (skips CMD) and makes the filesystem read-write:
+Debug mode pauses the app (skips CMD), makes filesystem read-write — useful when a crashing app disconnects `exec`:
 
 ```bash
 cloudron debug --app <app>             # enter debug mode
