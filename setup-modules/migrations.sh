@@ -71,7 +71,7 @@ cleanup_deprecated_paths() {
 	# See: ~/.config/aidevops/settings.json { "preserve_oh_my_opencode": true }
 	local omo_config="$HOME/.config/opencode/oh-my-opencode.json"
 	if [[ -f "$omo_config" ]]; then
-		if should_overwrite_user_file "preserve_oh_my_opencode" "oh-my-opencode config ($omo_config)"; then
+		if should_cleanup_oh_my_opencode_artifacts "oh-my-opencode config ($omo_config)"; then
 			rm -f "$omo_config"
 			print_info "Removed oh-my-opencode config"
 		fi
@@ -91,7 +91,7 @@ cleanup_deprecated_paths() {
 	opencode_config=$(find_opencode_config 2>/dev/null) || true
 	if [[ -n "$opencode_config" ]] && [[ -f "$opencode_config" ]] && command -v jq &>/dev/null; then
 		if jq -e '.plugin | index("oh-my-opencode")' "$opencode_config" >/dev/null 2>&1; then
-			if should_overwrite_user_file "preserve_oh_my_opencode" "oh-my-opencode plugin entry in OpenCode config"; then
+			if should_cleanup_oh_my_opencode_artifacts "oh-my-opencode plugin entry in OpenCode config"; then
 				local tmp_file
 				tmp_file=$(mktemp)
 				trap 'rm -f "${tmp_file:-}"' RETURN
@@ -102,6 +102,20 @@ cleanup_deprecated_paths() {
 	fi
 
 	return 0
+}
+
+# Backward-compatibility guard for oh-my-opencode cleanup migration.
+# setup.sh no longer defines should_overwrite_user_file() in current runtime.
+# Preserve user files by default when the legacy helper is unavailable.
+should_cleanup_oh_my_opencode_artifacts() {
+	local description="$1"
+
+	if type should_overwrite_user_file &>/dev/null; then
+		should_overwrite_user_file "preserve_oh_my_opencode" "$description"
+		return $?
+	fi
+
+	return 1
 }
 
 # Remove osgrep completely — one-time cleanup for all aidevops users
