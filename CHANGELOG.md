@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.369] - 2026-03-30
+
+### Changed
+
+- Documentation: tighten pdf/overview.md (149→74 lines, remove redundant prose/examples) (#13510)
+- Maintenance: bump version to 3.5.368
+- Documentation: tighten email-providers.md (165→157 lines) (#13570)
+- Documentation: tighten fly-io.md agent doc (GH#13579, 140→135 lines) (#13596)
+
 ## [3.5.366] - 2026-03-30
 
 ### Changed
