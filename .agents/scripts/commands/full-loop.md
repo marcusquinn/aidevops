@@ -97,7 +97,13 @@ Changelog: `feat:` → Added, `fix:` → Fixed, `docs:`/`perf:`/`refactor:` → 
 
 **4.1 Preflight** — quality checks, auto-fixes.
 
-**4.2 PR Create** — rebase onto `origin/main`, push, create PR. Body MUST include `Closes #NNN` (MANDATORY). Add `origin:worker` or `origin:interactive` label. **Signature footer (GH#12805 — MANDATORY):** `SIG_FOOTER=$(gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL")` — append to body, verify with `gh pr view --json body -q .body | grep -q 'aidevops.sh'`; edit to add if missing.
+**4.2 PR Create** — rebase onto `origin/main`, push, create PR. Body MUST include `Closes #NNN` (MANDATORY). Add `origin:worker` or `origin:interactive` label. **Signature footer (GH#12805 — MANDATORY):** append `gh-signature-helper.sh footer` output with explicit mode and issue context so provenance remains audit-grade in both interactive and headless runs.
+
+- Interactive `/full-loop` (default): `SIG_FOOTER=$(gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL" --issue "$REPO#$ISSUE_NUM" --session-type interactive)`
+- Headless `/full-loop` (`FULL_LOOP_HEADLESS=true`): `SIG_FOOTER=$(gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL" --issue "$REPO#$ISSUE_NUM" --no-session --session-type worker --time "$WORKER_ELAPSED_SECS")`
+- If token telemetry is available, pass `--tokens "$WORKER_TOKENS"`; if unavailable, omit token override (do not fabricate).
+
+Append footer to PR body, then verify the final body includes `aidevops.sh` **and** either `spent` or `Overall,` (time provenance present): `gh pr view --json body -q .body | grep -q 'aidevops.sh' && gh pr view --json body -q .body | grep -Eq 'spent|Overall,'`.
 
 **4.3 Label `status:in-review` (t1343)** — check issue is `OPEN` first. `status:done` set by `sync-on-pr-merge` — workers don't set it.
 
