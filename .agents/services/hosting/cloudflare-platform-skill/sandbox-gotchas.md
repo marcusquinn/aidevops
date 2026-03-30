@@ -3,7 +3,6 @@
 ## Common Issues
 
 ### Container Not Ready
-
 `CONTAINER_NOT_READY` — container provisioning (first request or after sleep). Retry after 2-3s:
 
 ```typescript
@@ -23,43 +22,37 @@ async function execWithRetry(sandbox, cmd) {
 ```
 
 ### Port Exposure Fails in Dev
-
 Missing `EXPOSE <port>` in Dockerfile (only needed for `wrangler dev`; production auto-exposes).
 
 ### Preview URLs Not Working
-
 - Custom domain configured? (not `.workers.dev`)
 - Wildcard DNS set up? (`*.domain.com → worker.domain.com`)
 - `normalizeId: true` in getSandbox?
 - `proxyToSandbox()` called first in fetch?
 
 ### Slow First Request
-
 Cold start from provisioning. Use `sleepAfter` instead of new sandboxes, pre-warm with cron triggers, or `keepAlive: true` for critical sandboxes.
 
 ### File Not Persisting
-
 Use `/workspace` for persistent files; `/tmp` and ephemeral paths don't survive.
 
-## Performance Optimization
+## Performance
 
 ### Sandbox ID Strategy
-
 ```typescript
-// ❌ BAD: Creates new sandbox every time (slow, expensive)
+// ❌ New sandbox every time (slow, expensive)
 const sandbox = getSandbox(env.Sandbox, `user-${Date.now()}`);
 
-// ✅ GOOD: Reuse sandbox per user
+// ✅ Reuse per user
 const sandbox = getSandbox(env.Sandbox, `user-${userId}`);
 
-// ✅ GOOD: Reuse for temporary tasks
+// ✅ Reuse for temporary tasks
 const sandbox = getSandbox(env.Sandbox, 'shared-runner');
 ```
 
 ### Sleep Configuration
-
 ```typescript
-// Cost-optimized: Sleep after 30min inactivity
+// Cost-optimized: sleep after 30min inactivity
 const sandbox = getSandbox(env.Sandbox, 'id', {
   sleepAfter: '30m',
   keepAlive: false
@@ -72,7 +65,6 @@ const sandbox = getSandbox(env.Sandbox, 'id', {
 ```
 
 ### Max Instances for High Traffic
-
 ```jsonc
 {
   "containers": [{
@@ -82,25 +74,22 @@ const sandbox = getSandbox(env.Sandbox, 'id', {
 }
 ```
 
-## Security Best Practices
+## Security
 
 ### Sandbox Isolation
-
-Each sandbox = isolated container (filesystem, network, processes). Use unique sandbox IDs per tenant. Sandboxes cannot communicate directly.
+Each sandbox = isolated container (filesystem, network, processes). Use unique IDs per tenant. Sandboxes cannot communicate directly.
 
 ### Input Validation
-
 ```typescript
-// ❌ DANGEROUS: Command injection
+// ❌ Command injection
 const result = await sandbox.exec(`python3 -c "${userCode}"`);
 
-// ✅ SAFE: Write to file, execute file
+// ✅ Write to file, execute file
 await sandbox.writeFile('/workspace/user_code.py', userCode);
 const result = await sandbox.exec('python3 /workspace/user_code.py');
 ```
 
 ### Resource Limits
-
 ```typescript
 // Timeout long-running commands
 const result = await sandbox.exec('python3 script.py', {
@@ -109,9 +98,8 @@ const result = await sandbox.exec('python3 script.py', {
 ```
 
 ### Secrets Management
-
 ```typescript
-// ❌ NEVER hardcode secrets
+// ❌ Never hardcode secrets
 const token = 'ghp_abc123';
 
 // ✅ Use environment secrets
@@ -124,7 +112,6 @@ const result = await sandbox.exec('git clone ...', {
 ```
 
 ### Preview URL Security
-
 Preview URLs include auto-generated tokens (e.g., `https://8080-sandbox-abc123def456.yourdomain.com`) that rotate on each expose operation. Note: tokens can be leaked prior to rotation.
 
 ## Limits & Resources
