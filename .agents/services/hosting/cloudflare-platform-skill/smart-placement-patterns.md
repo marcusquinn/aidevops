@@ -3,7 +3,6 @@
 ## Backend Worker with Database Access
 
 ```typescript
-// Smart Placement runs close to database - multiple round trips benefit
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const user = await env.DATABASE.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first();
@@ -19,11 +18,10 @@ name = "backend-api"; [placement]; mode = "smart"; [[d1_databases]]; binding = "
 
 ## Frontend + Backend Split
 
-**Frontend (no Smart Placement):** Runs at edge for fast user response
-**Backend (Smart Placement):** Runs close to database
+**Frontend (no Smart Placement):** edge — fast user response. **Backend (Smart Placement):** close to database.
 
 ```typescript
-// Frontend - forwards API requests to backend
+// Frontend
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (new URL(request.url).pathname.startsWith('/api/')) return env.BACKEND.fetch(request);
@@ -31,7 +29,7 @@ export default {
   }
 };
 
-// Backend - database operations
+// Backend
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     return Response.json(await env.DATABASE.prepare('SELECT * FROM table').all());
@@ -42,7 +40,6 @@ export default {
 ## External API Integration
 
 ```typescript
-// Smart Placement runs closer to external API - multiple calls benefit
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const apiUrl = 'https://api.partner.com';
@@ -57,13 +54,12 @@ export default {
 ```
 
 ```toml
-[placement]; mode = "smart"; hint = "enam"  # If API in East North America
+[placement]; mode = "smart"; hint = "enam"  # hint if API region is known (e.g. East North America)
 ```
 
 ## Multi-Service Aggregation
 
 ```typescript
-// Aggregates data from multiple services in same region
 export default {
   async fetch(request: Request, env: Env) {
     const [orders, inventory, shipping] = await Promise.all([
@@ -77,7 +73,7 @@ export default {
 ## SSR with Backend Data
 
 ```typescript
-// Frontend SSR (edge) - render close to user
+// Frontend (edge)
 export default {
   async fetch(request: Request, env: Env) {
     const data = await env.BACKEND.fetch('/api/page-data');
@@ -85,7 +81,7 @@ export default {
   }
 };
 
-// Backend (Smart Placement) - fetch data close to database
+// Backend (Smart Placement)
 export default {
   async fetch(request: Request, env: Env) {
     return Response.json(await env.DATABASE.prepare('SELECT * FROM pages WHERE id = ?').bind(pageId).first());
@@ -96,7 +92,7 @@ export default {
 ## API Gateway
 
 ```typescript
-// Gateway at edge - quick auth, forward to backend
+// Gateway (edge)
 export default {
   async fetch(request: Request, env: Env) {
     if (!request.headers.get('Authorization')) return new Response('Unauthorized', { status: 401 });
@@ -104,7 +100,7 @@ export default {
   }
 };
 
-// Backend with Smart Placement - heavy DB operations
+// Backend (Smart Placement)
 export default {
   async fetch(request: Request, env: Env) {
     return Response.json(await performDatabaseOperations(env.DATABASE));
@@ -114,22 +110,17 @@ export default {
 
 ## Best Practices
 
-1. **Split Full-Stack Apps:** Frontend at edge, backend with Smart Placement
-2. **Use Service Bindings:** Connect frontend/backend Workers efficiently
-3. **Monitor Request Duration:** Compare before/after metrics
-4. **Enable for Backend Logic:** APIs, data aggregation, server-side processing
-5. **Don't Enable for Pure Edge:** Auth, redirects, static content
-6. **Test Before Production:** Deploy to staging, verify metrics
-7. **Consider Placement Hints:** Guide Smart Placement if you know backend location
-8. **Wait for Analysis:** 15+ minutes after enabling
-9. **Check Placement Status:** Verify `SUCCESS` via API
-10. **Combine with Caching:** Cache frequently accessed data
+1. **Split full-stack apps:** frontend at edge, backend with Smart Placement
+2. **Use Service Bindings** to connect frontend/backend Workers
+3. **Enable for backend logic:** APIs, data aggregation, server-side processing
+4. **Don't enable for pure edge work:** auth checks, redirects, static content
+5. **Use placement hints** if you know the backend/API region
+6. **Wait 15+ min** after enabling before reading placement metrics
+7. **Verify `SUCCESS` status** via API after deploy
+8. **Monitor request duration** before/after; combine with caching
 
 ## Anti-Patterns
 
-❌ **Enabling on static content Workers**
-❌ **Monolithic full-stack Worker with Smart Placement** (hurts frontend performance)
-❌ **Not monitoring placement status** after deploy
-
-✅ **Split architecture:** Frontend (edge) + Backend (Smart Placement)
-✅ **Verify status** via API and metrics
+❌ Smart Placement on static content Workers  
+❌ Monolithic full-stack Worker with Smart Placement (degrades frontend latency)  
+❌ Not verifying placement status after deploy
