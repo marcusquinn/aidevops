@@ -17,7 +17,8 @@ subagents: [setup, troubleshooting, api-key-setup, list-keys, mcp-integrations, 
 - **Credentials**: `~/.config/aidevops/credentials.sh` (600 perms) | `configs/*-config.json` (600, gitignored) | `~/.config/coderabbit/api_key` (600)
 - **Set keys**: `setup-local-api-keys.sh set NAME "value"` | **List**: `list-keys-helper.sh`
 
-**OpenCode setup**: NEVER manually write `opencode.json` — run `generate-opencode-agents.sh`. Broken? `mv ~/.config/opencode/opencode.json{,.broken}` and re-run. Hand-fix: `"tools": {}` (not `[]`), `"type": "local"|"remote"`, `"tool_name": true` (not objects). Verify: `jq . ~/.config/opencode/opencode.json > /dev/null`.
+**OpenCode setup**: NEVER manually write `opencode.json` — run `generate-opencode-agents.sh`. Broken? `mv ~/.config/opencode/opencode.json{,.broken}` and re-run.
+Hand-fix: `"tools": {}` (not `[]`), `"type": "local"|"remote"`, `"tool_name": true` (not objects). Verify: `jq . ~/.config/opencode/opencode.json > /dev/null`.
 
 <!-- AI-CONTEXT-END -->
 
@@ -113,7 +114,7 @@ chmod 600 ~/.config/aidevops/credentials.sh && chmod 700 ~/.config/aidevops
 jq --argjson dirs '["~/Git", "~/Projects"]' '. + {git_parent_dirs: $dirs}' \
   ~/.config/aidevops/repos.json > /tmp/repos.json && mv /tmp/repos.json ~/.config/aidevops/repos.json
 aidevops repo-sync enable
-~/.aidevops/agents/scripts/onboarding-helper.sh save-orchestration true  # Enable autonomous orchestration
+aidevops config set orchestration.supervisor_pulse true && ./setup.sh  # Enable autonomous orchestration
 # Runners: see scripts/commands/runners.md (launchd/cron)
 ```
 
