@@ -432,6 +432,38 @@ test_dispatch_with_dedup_blocks_when_duplicate() {
 	return 0
 }
 
+test_dispatch_with_dedup_fails_closed_when_issue_metadata_missing() {
+	local original_script_dir="$SCRIPT_DIR"
+	SCRIPT_DIR="$TEST_ROOT"
+
+	set_ps_fixture ""
+
+	# Stub gh issue view to fail so metadata cannot be loaded.
+	gh() {
+		if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
+			return 1
+		fi
+		return 0
+	}
+	export -f gh
+
+	local dispatch_rc=0
+	dispatch_with_dedup "7777" "marcusquinn/aidevops" "Issue #7777: fail-closed" "t7777: fail-closed" \
+		"testuser" "/tmp/aidevops" "/full-loop test" || dispatch_rc=$?
+
+	SCRIPT_DIR="$original_script_dir"
+	unset -f gh
+
+	if [[ "$dispatch_rc" -eq 1 ]]; then
+		print_result "dispatch_with_dedup fails closed when issue metadata lookup fails (GH#14409)" 0
+		return 0
+	fi
+
+	print_result "dispatch_with_dedup fails closed when issue metadata lookup fails (GH#14409)" 1 \
+		"Expected exit 1 (blocked), got ${dispatch_rc}"
+	return 0
+}
+
 test_dispatch_with_dedup_proceeds_when_no_duplicate() {
 	local original_script_dir="$SCRIPT_DIR"
 	SCRIPT_DIR="$TEST_ROOT"
@@ -524,6 +556,7 @@ main() {
 	test_review_issue_pr_session_key_fallback_dedup
 	test_check_dispatch_dedup_treats_merged_pr_as_duplicate
 	test_dispatch_with_dedup_blocks_when_duplicate
+	test_dispatch_with_dedup_fails_closed_when_issue_metadata_missing
 	test_dispatch_with_dedup_proceeds_when_no_duplicate
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
