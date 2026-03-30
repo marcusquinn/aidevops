@@ -1,19 +1,17 @@
 # Chapter 8: Form Optimization and Field Reduction
 
-Every field added reduces conversion ~4-7%.
-
-## Field Cost Reference
+Each field added costs ~4-7% conversion rate.
 
 | Metric | Finding |
 |--------|---------|
-| Per-field impact | ~4-7% conversion rate reduction |
-| 3 vs 9 fields | 25-40% higher conversion with fewer fields |
+| Per-field impact | ~4-7% CVR reduction |
+| 3 vs 9 fields | 25-40% higher CVR with fewer |
 | 11→4 fields | +120% conversions (HubSpot) |
-| Multi-step vs single | +10-30% conversion rate |
-| Autofill enabled | Up to +30% conversion |
+| Multi-step vs single | +10-30% CVR |
+| Autofill enabled | Up to +30% CVR |
 | Single vs multi-column | 15-20% better single-column |
 
-**Example**: 10K visitors, 12-field form at 5% = 500 conversions. 4 fields at 8% = 800 (+60%).
+**Example**: 10K visitors, 12 fields at 5% = 500 conversions. 4 fields at 8% = 800 (+60%).
 
 ## Essential Fields by Form Type
 
@@ -24,7 +22,7 @@ Every field added reduces conversion ~4-7%.
 | Newsletter | Email only | First name (optional personalization) |
 | SaaS trial | Email, password, company (B2B) | Phone, title, employee count |
 
-**"Can We Get This Later?" test** — remove or make optional if: (1) collectable post-conversion, (2) inferable/enrichable, (3) no immediate user value, (4) not required to serve the user.
+**"Can We Get This Later?" test** — remove/make optional if: (1) collectable post-conversion, (2) inferable/enrichable, (3) no immediate user value, (4) not required to serve the user.
 
 ## Progressive Profiling
 
@@ -35,17 +33,15 @@ Every field added reduces conversion ~4-7%.
 | Webinar | Email + name (pre-filled) + company | 1 | 25% |
 | Free trial | All pre-filled + phone | 1 | 15% |
 
-**Result**: Email from 12% of visitors; complete profile for 2.1% — far higher than asking everything upfront.
+**Result**: Email from 12% of visitors; complete profile for 2.1% — far higher than asking all upfront.
 
-**Requirements**: Marketing automation (HubSpot, Marketo, Pardot) + cookie tracking. Logic: known visitor → load existing data, show only missing fields (max 2-3 new).
+**Requirements**: Marketing automation (HubSpot, Marketo, Pardot) + cookie tracking. Known visitor → load existing data, show only missing fields (max 2-3 new).
 
 ```javascript
 hbspt.forms.create({ portalId: "ID", formId: "ID", enableProgressiveFields: true });
 ```
 
 ## Multi-Step Forms
-
-### When to Use
 
 | Use | Avoid |
 |-----|-------|
@@ -62,21 +58,15 @@ hbspt.forms.create({ portalId: "ID", formId: "ID", enableProgressiveFields: true
 | 3 | Detailed/sensitive (phone, role, size) | Sunk cost drives completion |
 | 4 | Final low-friction items | Finish line in sight |
 
-**Progress indicator**: `[■■■■■■□□□□] 60% Complete — Step 2 of 3`
-
-**Navigation**: Back always allowed (preserve data). Forward disabled until required fields complete. Skip link for optional steps.
+**Progress**: `[■■■■■■□□□□] 60% Complete — Step 2 of 3`. Back always allowed (preserve data). Forward disabled until required fields complete. Skip link for optional steps.
 
 **Mobile**: One field per screen, large touch targets (min 44px), auto-focus next field.
 
-## Field Optimization Reference
+## Field Optimization
 
-### Labels and Input Types
-
-- Labels above fields (always visible, accessible, mobile-friendly). Placeholders for format hints only.
-- Use correct HTML input types: `type="email"`, `type="tel"`, `type="url"`, `type="date"`, `type="number"`.
-- Add `autocomplete` attributes — up to 30% conversion improvement.
-
-Key `autocomplete` values: `name`, `email`, `tel`, `organization`, `street-address`, `address-level2` (city), `address-level1` (state), `postal-code`, `country-name`, `cc-name`, `cc-number`, `cc-exp`, `cc-csc`.
+- Labels above fields (visible, accessible, mobile-friendly). Placeholders for format hints only.
+- Correct HTML input types: `type="email"`, `type="tel"`, `type="url"`, `type="date"`, `type="number"`.
+- `autocomplete` attributes — up to 30% CVR improvement. Key values: `name`, `email`, `tel`, `organization`, `street-address`, `address-level2` (city), `address-level1` (state), `postal-code`, `country-name`, `cc-name`, `cc-number`, `cc-exp`, `cc-csc`.
 
 ### Smart Defaults
 
@@ -100,7 +90,7 @@ Key `autocomplete` values: `name`, `email`, `tel`, `organization`, `street-addre
 
 ## Validation and Error Handling
 
-Validate on field blur (not every keystroke): focus → type → blur → validate → show result.
+Validate on blur (not keystroke): focus → type → blur → validate → show result.
 
 **Error messages** — specific, not accusatory:
 
@@ -110,7 +100,7 @@ Validate on field blur (not every keystroke): focus → type → blur → valida
 | "You failed to enter your email" | "Please enter your email address" |
 | "Wrong format" | "Please use format: (555) 555-5555" |
 
-Multiple errors: linked summary at top + field-specific errors inline. Preserve all data on error.
+Multiple errors: linked summary at top + inline per-field. Preserve all data on error.
 
 ## Trust and Anxiety Reduction
 
@@ -120,14 +110,14 @@ Card:  [____ ____ ____]  🔒 Encrypted  [SSL] [Norton]
 Phone: [___________]  We'll only call to schedule delivery
 ```
 
-Social proof near form: testimonials, subscriber count ("Join 50,000+"), trust badges near submit.
+Social proof near form: testimonials, subscriber count ("Join 50,000+"), trust badges near submit button.
 
 ## Advanced Techniques
 
-- **Conditional logic**: show/hide fields based on prior answers — shorter perceived length, personalized experience.
+- **Conditional logic**: show/hide fields based on prior answers — shorter perceived length, personalized.
 - **Save and continue**: auto-save to `localStorage` every 30s for long forms; offer "email me a link."
 - **Dynamic button text**: "Get Started" → "Continue" → "Submit Application" → "Processing..." → "✓ Submitted!"
-- **Conversational forms**: one question at a time (Typeform, Tally) — higher completion, better mobile, but slower for scan-first users.
+- **Conversational forms**: one question at a time (Typeform, Tally) — higher completion, better mobile, slower for scan-first users.
 
 ## Testing Priority
 
@@ -139,25 +129,21 @@ Social proof near form: testimonials, subscriber count ("Join 50,000+"), trust b
 
 ## Form Analytics
 
-**Form-level**: views, starts, submissions, conversion rate, completion rate, time to complete, abandonment rate.
+**Form-level**: views, starts, submissions, CVR, completion rate, time to complete, abandonment rate.
 
 **Field-level**: interaction rate, completion rate, correction rate, time per field, error rate, abandonment points.
 
-**Key technique**: field abandonment analysis — if phone shows 96% interaction but 75% completion (21% drop), test making it optional or removing it.
+**Key technique**: field abandonment analysis — phone shows 96% interaction but 75% completion (21% drop) → test making it optional or removing it.
 
-**Tools**: Google Analytics Enhanced Form Tracking, Hotjar Form Analytics, Zuko Analytics.
+**Tools**: GA Enhanced Form Tracking, Hotjar Form Analytics, Zuko Analytics.
 
 ## Launch Checklist
 
-**Design**: single-column layout · labels above fields · 44px min field height · clear visual hierarchy · mobile-optimized
-
-**Fields**: only essential fields · correct input types · autocomplete attributes · smart defaults · no confirmation fields
-
-**Validation**: inline on blur · specific positive-language errors · success states · summary for multiple errors · data preserved on error
-
-**UX**: privacy assurances near sensitive fields · loading state on submit · no double-submission · progress indicator + back nav (multi-step)
-
-**Technical**: form analytics (form + field level) · cross-browser + mobile tested · keyboard navigable + ARIA labels · spam protection (CAPTCHA or honeypot)
+- **Design**: single-column · labels above fields · 44px min height · clear hierarchy · mobile-optimized
+- **Fields**: essential only · correct input types · autocomplete attrs · smart defaults · no confirmation fields
+- **Validation**: inline on blur · specific positive-language errors · success states · error summary · data preserved
+- **UX**: privacy assurances near sensitive fields · loading state on submit · no double-submit · progress + back nav (multi-step)
+- **Technical**: form + field analytics · cross-browser + mobile tested · keyboard nav + ARIA labels · spam protection (CAPTCHA/honeypot)
 
 ## Case Studies
 
