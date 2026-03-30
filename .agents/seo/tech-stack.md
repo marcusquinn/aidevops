@@ -71,15 +71,15 @@ tech-stack-helper.sh cache clear
 
 ## Traffic Tiers
 
-The `--traffic` flag maps to CrUX popularity rank from HTTP Archive:
+`--traffic` maps to CrUX popularity rank (lower = more popular):
 
-| Tier | Rank Range | Description |
-|------|-----------|-------------|
-| `top1k` | 1-1,000 | Top 1K most popular origins |
-| `top10k` | 1-10,000 | Top 10K |
-| `top100k` | 1-100,000 | Top 100K |
-| `top1m` | 1-1,000,000 | Top 1M |
-| `<number>` | 1-N | Custom rank threshold |
+| Tier | Rank Range |
+|------|-----------|
+| `top1k` | 1–1,000 |
+| `top10k` | 1–10,000 |
+| `top100k` | 1–100,000 |
+| `top1m` | 1–1,000,000 |
+| `<number>` | 1–N (custom) |
 
 ## Prerequisites
 
@@ -90,33 +90,27 @@ The `--traffic` flag maps to CrUX popularity rank from HTTP Archive:
 
 ## Data Architecture
 
-The primary data source is HTTP Archive's `crawl.pages` table in BigQuery:
+**`httparchive.crawl.pages`** (primary):
+- Partitioned by date, clustered by client/rank/page
+- Technologies: REPEATED RECORD with `technology`, `categories[]`, `info[]`
+- Rank: CrUX popularity rank (lower = more popular); crawl frequency: monthly
 
-- **Table**: `httparchive.crawl.pages` (partitioned by date, clustered by client/rank/page)
-- **Technologies field**: REPEATED RECORD with `technology`, `categories[]`, `info[]`
-- **Rank field**: CrUX popularity rank (lower = more popular)
-- **Crawl frequency**: Monthly
-- **Coverage**: Millions of URLs with Wappalyzer-detected technologies
-
-Supplementary data from `httparchive.wappalyzer`:
-
-- **tech_detections**: Aggregated adoption/deprecation counts per technology per month
-- **technologies**: Technology metadata (categories, website, description, SaaS/OSS flags)
-- **categories**: Category names and descriptions
+**`httparchive.wappalyzer`** (supplementary):
+- `tech_detections`: adoption/deprecation counts per technology per month
+- `technologies`: metadata (categories, website, description, SaaS/OSS flags)
+- `categories`: category names and descriptions
 
 ## Caching
 
-Results are cached in `~/.aidevops/.agent-workspace/work/tech-stack/cache/`:
+Cache path: `~/.aidevops/.agent-workspace/work/tech-stack/cache/`
 
-- Default TTL: 30 days (HTTP Archive data changes monthly)
-- Crawl date cache: 7 days
-- Trending data cache: 7 days
-- Use `--no-cache` to force fresh queries
-- Use `cache clear` to purge all cached data
+| Data | TTL |
+|------|-----|
+| Results | 30 days |
+| Crawl date | 7 days |
+| Trending | 7 days |
 
 ## Region Mapping
-
-The `--region` flag maps country codes/names to TLDs for URL filtering:
 
 | Region | TLD | Region | TLD |
 |--------|-----|--------|-----|
