@@ -97,7 +97,7 @@ Marketing agent: strategy, campaigns, paid ads (Meta/Google), email, landing pag
 
 **Lead magnet**: Create → landing page + form → `fluentcrm_create_list` → delivery automation → nurture. Forms: Fluent Forms, WPForms, Gravity Forms, Contact Form 7, custom API.
 
-**Lead handoff**: Tag `lead-mql` → automation notifies sales → sales accepts → tag `lead-sql` → remove from marketing.
+**Lead handoff**: Apply `lead-mql` tag → automation notifies sales → sales qualifies/accepts lead → apply `lead-sql` tag → remove from marketing sequences.
 
 ## Analytics & Testing
 
