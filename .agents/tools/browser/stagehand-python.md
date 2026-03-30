@@ -35,18 +35,13 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Setup
-
-```bash
-bash .agents/scripts/stagehand-python-helper.sh setup
-```
-
 ## Usage
 
 ```python
 import asyncio
 from stagehand import StagehandConfig, Stagehand
 from pydantic import BaseModel, Field
+from typing import List
 
 class PageData(BaseModel):
     title: str = Field(..., description="Page title")
@@ -83,9 +78,6 @@ buttons = await page.observe("find all buttons")  # filtered
 ### Extract
 
 ```python
-from pydantic import BaseModel, Field
-from typing import List
-
 class Product(BaseModel):
     name: str = Field(..., description="Product name")
     price: float = Field(..., description="Price in USD")
@@ -124,7 +116,7 @@ BROWSERBASE_PROJECT_ID=your_browserbase_project_id_here
 ## MCP Integration
 
 ```bash
-bash .agents/scripts/setup-mcp-integrations.sh stagehand-python  # pass via integrations=[] in agent()
+bash .agents/scripts/setup-mcp-integrations.sh stagehand-python
 ```
 
 ## Resources
