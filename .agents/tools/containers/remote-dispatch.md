@@ -14,21 +14,17 @@ tools:
 
 # Remote Container Dispatch
 
-<!-- AI-CONTEXT-START -->
-
 ## Quick Reference
 
 | Item | Value |
 |------|-------|
 | Script | `~/.aidevops/agents/scripts/remote-dispatch-helper.sh` |
-| Config | `~/.config/aidevops/remote-hosts.json` |
+| Config | `~/.config/aidevops/remote-hosts.json` (fields: `address`, `transport`, `container`, `user`, `added`) |
 | Logs | `~/.aidevops/.agent-workspace/supervisor/logs/remote/` |
 | Task | t1165.3 |
 
 **Use when**: GPU tasks, multi-machine distribution, isolated containers, Tailscale mesh dispatch.
 **Don't use when**: Local tasks, local filesystem access needed, interactive development.
-
-<!-- AI-CONTEXT-END -->
 
 ## Architecture
 
@@ -37,16 +33,11 @@ tools:
 ## Host Management
 
 ```bash
-# Add
 remote-dispatch-helper.sh add gpu-server 192.168.1.100
 remote-dispatch-helper.sh add build-node build-node.tailnet.ts.net --transport tailscale
 remote-dispatch-helper.sh add docker-host 10.0.0.5 --user deploy --container worker-1
 remote-dispatch-helper.sh add staging ssh://deploy@staging.example.com:2222
-
-# List / remove / check
-remote-dispatch-helper.sh hosts
-remote-dispatch-helper.sh remove gpu-server
-remote-dispatch-helper.sh check gpu-server   # verifies SSH, Docker, AI CLI, agent forwarding, disk
+remote-dispatch-helper.sh hosts | remove <name> | check <name>  # check: SSH, Docker, AI CLI, disk
 ```
 
 ## Dispatching Tasks
@@ -69,17 +60,14 @@ remote-dispatch-helper.sh dispatch t123 gpu-server \
 | `OPENROUTER_API_KEY` | Env var | For model routing |
 | `GOOGLE_API_KEY` | Env var | For Google AI models |
 
-**Security**: SSH agent forwarding passes the socket, not keys. API keys are embedded in the dispatch script uploaded via SSH stdin (no `AcceptEnv`/`SendEnv` dependency) and never written as standalone files on disk. On Linux, env vars are readable via `/proc/<pid>/environ` by the same user and root while the worker runs — use short-lived/scoped tokens for sensitive deployments. Remote workspace is cleaned up after task completion.
+**Security**: SSH agent forwarding passes the socket, not keys. API keys are embedded in the dispatch script (uploaded via SSH stdin, no `AcceptEnv`/`SendEnv` dependency), never written as standalone files. On Linux, env vars are readable via `/proc/<pid>/environ` by same user/root while the worker runs — use short-lived tokens for sensitive deployments. Workspace cleaned up after completion.
 
 ## Monitoring and Cleanup
 
 ```bash
-remote-dispatch-helper.sh logs t123 gpu-server           # download full log
-remote-dispatch-helper.sh logs t123 gpu-server --follow  # stream in real-time
-remote-dispatch-helper.sh logs t123 gpu-server --tail 100
-remote-dispatch-helper.sh status t123 gpu-server    # host, transport, container, PID, state, log size
-remote-dispatch-helper.sh cleanup t123 gpu-server   # collect logs then clean workspace
-remote-dispatch-helper.sh cleanup t123 gpu-server --keep-logs
+remote-dispatch-helper.sh logs t123 gpu-server [--follow|--tail 100]
+remote-dispatch-helper.sh status t123 gpu-server   # host, transport, container, PID, state, log size
+remote-dispatch-helper.sh cleanup t123 gpu-server [--keep-logs]
 ```
 
 ## Transport: SSH vs Tailscale
@@ -93,10 +81,6 @@ remote-dispatch-helper.sh cleanup t123 gpu-server --keep-logs
 | Command | `ssh` | `tailscale ssh` (falls back to `ssh`) |
 
 Tailscale auto-detected for `*.ts.net` and `100.x.x.x` addresses.
-
-## Configuration (`~/.config/aidevops/remote-hosts.json`)
-
-Fields per host: `address`, `transport` (`ssh`|`tailscale`), `container` (`auto` or name), `user`, `added` (ISO timestamp). See `add` command examples above for typical values.
 
 ## Environment Variables
 
