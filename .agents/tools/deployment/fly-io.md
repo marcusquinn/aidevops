@@ -14,8 +14,6 @@ tools:
 
 # Fly.io Deployment Agent
 
-<!-- AI-CONTEXT-START -->
-
 ## Quick Reference
 
 - **CLI**: `flyctl` (alias: `fly`) — `curl -L https://fly.io/install.sh | sh` or `brew install flyctl`
@@ -23,8 +21,6 @@ tools:
 - **Helper**: `.agents/scripts/fly-io-helper.sh <cmd> <app> [args]` — `deploy`, `scale <N>`, `status`, `secrets`, `volumes`, `logs`, `machines list`, `ssh`, `postgres <db> status`, `apps`
 - **Config**: `fly.toml` (per-app, repo root) | [Dashboard](https://fly.io/dashboard) | [Docs](https://fly.io/docs/) | [Pricing](https://fly.io/docs/about/pricing/)
 - **Concepts**: Fly Machines (Firecracker micro-VMs), anycast routing, auto-stop/start, Sprites (AI sandboxes), Tigris (S3-compatible storage)
-
-<!-- AI-CONTEXT-END -->
 
 **Best for**: low-latency global apps, AI sandboxes, Elixir/Phoenix, multi-region DBs (LiteFS/Fly Postgres), GPU inference.
 **Not for**: serverless functions (CF Workers), static-only sites (CF Pages), Kubernetes-native, Windows containers.
@@ -88,9 +84,9 @@ curl "${FLY_API_HOSTNAME}/v1/apps/{app}/machines[/{id}[/{action}]]" \
 | `performance-2x` | 2 dedicated | 4 GB | $62 |
 | `performance-8x` | 8 dedicated | 16 GB | $248 |
 
-**GPU**: `a100-40gb` (~$2.50/h), `a100-80gb` (~$3.50/h), `l40s` (~$2.00/h). `fly platform vm-sizes` for full list. Auto-stop to avoid idle costs.
+**GPU**: `a100-40gb` (~$2.50/h), `a100-80gb` (~$3.50/h), `l40s` (~$2.00/h) — `fly platform vm-sizes` for full list; auto-stop to avoid idle costs.
 **Storage**: Volumes ~$0.15/GB/mo, snapshots ~$0.03/GB/mo, Tigris ~$0.02/GB/mo (free egress to Fly), outbound ~$0.02/GB (160 GB free).
-**Free tier** (Hobby): 3 shared-cpu-1x (256 MB), 3 GB volumes, 160 GB transfer, shared IPv4 (dedicated: $2/mo).
+**Free tier** (Hobby): 3 shared-cpu-1x 256 MB, 3 GB volumes, 160 GB transfer, shared IPv4 (dedicated: $2/mo).
 
 ## Scaling, Secrets, Volumes
 
@@ -110,7 +106,7 @@ fly volumes destroy <vol-id> --app my-app             # IRREVERSIBLE
 
 ## Storage and Databases
 
-**Tigris** (S3-compatible): `fly storage create` auto-sets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `BUCKET_NAME`. Any S3 SDK works.
+**Tigris** (S3-compatible, any S3 SDK): `fly storage create` auto-sets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `BUCKET_NAME`.
 
 ```bash
 fly storage create | list | dashboard
@@ -130,7 +126,7 @@ fly redis attach my-redis --app my-app         # Sets REDIS_URL
 
 ## Sprites (AI Agent Sandboxes)
 
-Isolated ephemeral Machines for untrusted AI agent code:
+Isolated ephemeral Machines for untrusted AI agent code.
 
 ```bash
 fly machines run my-image --app my-sprites-app --region lhr \
