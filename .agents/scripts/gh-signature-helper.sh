@@ -438,7 +438,7 @@ _detect_session_tokens_with_since() {
 	local total_tokens
 	total_tokens=$(_sum_session_tokens_for_session "$db_path" "$session_id" "$since_ms")
 
-	if [[ -n "$total_tokens" ]] && [[ "$total_tokens" -gt 0 ]] 2>/dev/null; then
+	if [[ -n "$total_tokens" ]] && [[ "$total_tokens" =~ ^[0-9]+$ ]]; then
 		echo "$total_tokens"
 	else
 		echo ""
@@ -459,12 +459,17 @@ _resolve_issue_created_epoch() {
 	local issue_created="$2"
 
 	if [[ -n "$issue_created" ]]; then
+		local parsed_epoch=""
 		if date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$issue_created" "+%s" &>/dev/null 2>&1; then
-			date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$issue_created" "+%s" 2>/dev/null || echo ""
+			parsed_epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$issue_created" "+%s" 2>/dev/null || echo "")
+		elif date -d "$issue_created" "+%s" &>/dev/null 2>&1; then
+			parsed_epoch=$(date -d "$issue_created" "+%s" 2>/dev/null || echo "")
+		fi
+
+		if [[ -n "$parsed_epoch" ]]; then
+			echo "$parsed_epoch"
 			return 0
 		fi
-		date -d "$issue_created" "+%s" 2>/dev/null || echo ""
-		return 0
 	fi
 
 	if [[ -n "$issue_ref" ]] && command -v gh &>/dev/null; then

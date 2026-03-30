@@ -258,7 +258,8 @@ issue_created_iso=$(date -u -r "$issue_created_epoch" "+%Y-%m-%dT%H:%M:%SZ" 2>/d
 cwd_sql=$(pwd)
 cwd_sql=${cwd_sql//\'/\'\'}
 
-sqlite3 "$db_path" "
+if command -v sqlite3 &>/dev/null; then
+	sqlite3 "$db_path" "
 CREATE TABLE session (
   id TEXT PRIMARY KEY,
   title TEXT,
@@ -280,12 +281,26 @@ VALUES
   ('msg_post','ses_test_scope',${post_msg_ms},${post_msg_ms},'{\"tokens\":{\"input\":200,\"output\":20,\"cache\":{\"read\":0,\"write\":0}},\"role\":\"assistant\"}');
 "
 
-if [[ -n "$issue_created_iso" ]]; then
-	result=$(HOME="$tmp_home" "$HELPER" generate --cli "OpenCode" --model "m" --issue-created "$issue_created_iso")
-	assert_contains "issue window uses scoped tokens" "220 tokens on this" "$result"
-	assert_not_contains "issue window excludes pre-issue tokens" "330 tokens on this" "$result"
+	if [[ -n "$issue_created_iso" ]]; then
+		result=$(HOME="$tmp_home" "$HELPER" generate --cli "OpenCode" --model "m" --issue-created "$issue_created_iso")
+		assert_contains "issue window uses scoped tokens" "220 tokens on this" "$result"
+		assert_not_contains "issue window excludes pre-issue tokens" "330 tokens on this" "$result"
+
+		issue_after_epoch=$((now_epoch - 60))
+		issue_after_iso=$(date -u -r "$issue_after_epoch" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null ||
+			date -u -d "@${issue_after_epoch}" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
+		if [[ -n "$issue_after_iso" ]]; then
+			result=$(HOME="$tmp_home" "$HELPER" generate --cli "OpenCode" --model "m" --issue-created "$issue_after_iso")
+			assert_not_contains "post-window excludes pre-issue fallback" "330 tokens on this" "$result"
+			assert_not_contains "post-window omits scoped zero token phrase" "0 tokens on this" "$result"
+		else
+			echo "  SKIP: could not construct post-window issue-created timestamp"
+		fi
+	else
+		echo "  SKIP: could not construct issue-created timestamp"
+	fi
 else
-	echo "  SKIP: could not construct issue-created timestamp"
+	echo "  SKIP: sqlite3 not available"
 fi
 
 rm -rf "$tmp_home"
