@@ -13,7 +13,7 @@ tools: { read: true, bash: true }
 - **Mode**: HTTP endpoint (Google POSTs events) — not WebSocket/polling
 - **Config**: `~/.config/aidevops/google-chat-bot.json` (600 perms)
 - **Data**: `~/.aidevops/.agent-workspace/google-chat-bot/`
-- **Auth**: SA JWT (outbound); Google-signed bearer (inbound)
+- **Auth**: Service account JWT (outbound); Google-signed bearer (inbound)
 - **Requires**: Google Workspace, GCP project, public HTTPS URL, Node.js >= 18, jq
 - **Setup**: `google-chat-helper.sh setup` (interactive wizard)
 - **Privacy**: No E2E encryption; Google retains all messages; Gemini may train on data unless DPA configured. See [Privacy and Security](#privacy-and-security).
@@ -101,7 +101,7 @@ await (await auth.getClient()).request({ url: "https://chat.googleapis.com/v1/sp
 
 Payload fields: `message.argumentText` (prompt, mention stripped), `user.email` (ACL), `space.name` (runner mapping), `message.thread.name` (threading).
 
-**Sync (< 30s)**: Return `{ "text": "..." }` in HTTP response. **Async (> 30s)**: Return `cardsV2` ack, then POST full response to `spaces/SPACE_ID/messages` with bearer token, `thread.name`, `threadReply: true`.
+**Sync (< 30s)**: Return `{ "text": "..." }` in HTTP response. **Async (> 30s)**: Return `cardsV2` ack, then POST full response to `spaces/SPACE_ID/messages` with `Authorization: Bearer <token>`, `thread.name`, `threadReply: true`.
 
 **Card v2**: `cardsV2[].card` with `header`/`sections[].widgets`. Limits: 1 card/msg, 100 sections, 100 widgets/section, 4096 chars/widget, 40 chars/button. Public HTTPS image URLs only. [Reference](https://developers.google.com/workspace/chat/api/reference/rest/v1/cards).
 
