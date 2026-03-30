@@ -1,24 +1,22 @@
 # CQRS & Domain Events
 
-> Sources: [CQRS](https://martinfowler.com/bliki/CQRS.html) — Fowler | [Event Sourcing](https://martinfowler.com/eaaDev/EventSourcing.html) — Fowler | [CQRS Pattern](https://learn.microsoft.com/en-us/azure/architecture/patterns/cqrs) — Microsoft | [Transactional Outbox](https://microservices.io/patterns/data/transactional-outbox.html) — microservices.io | [Domain Events – Salvation](https://udidahan.com/2009/06/14/domain-events-salvation/) — Dahan | [Domain Events: Design and Implementation](https://learn.microsoft.com/en-us/dotnet/architecture/microservices/microservice-ddd-cqrs-patterns/domain-events-design-implementation) — Microsoft
+> [CQRS](https://martinfowler.com/bliki/CQRS.html) · [Event Sourcing](https://martinfowler.com/eaaDev/EventSourcing.html) · [Transactional Outbox](https://microservices.io/patterns/data/transactional-outbox.html) · [Domain Events](https://udidahan.com/2009/06/14/domain-events-salvation/)
 
 ## When to Use
 
-> "You should be very cautious about using CQRS... the majority of cases I've run into have not been so good." — Martin Fowler
+**CQRS:** Read/write workloads scale differently; complex queries don't map domain model; event sourcing used; simpler approaches insufficient. **Skip:** Simple CRUD, similar read/write patterns, small team/domain. Applies to bounded contexts, not entire systems.
 
-**CQRS — use when:** Read/write workloads scale differently; complex queries don't map to the domain model; event sourcing is used; simpler approaches are proven insufficient. **Skip when:** Simple CRUD; similar read/write patterns; small team or simple domain. Applies to specific bounded contexts, never entire systems.
-
-**Event Sourcing — use when:** Complete audit trail required; need to reconstruct state at any point in time; domain is inherently event-driven (financial transactions, workflows). **Avoid when:** Simple CRUD; team unfamiliar with event-driven patterns; adding retroactively. "Extremely difficult to add Event Sourcing to systems not originally designed for it." — Fowler
+**Event Sourcing:** Complete audit trail; reconstruct state at any point; inherently event-driven domain (financial, workflows). **Avoid:** Simple CRUD, unfamiliar team, retroactive addition. "Extremely difficult to add to systems not originally designed for it." — Fowler
 
 **Event Sourcing requirements:**
-1. **Events store deltas** — what changed, not final state (enables reversal)
-2. **Snapshots for performance** — rebuild from snapshots, not from event 0
-3. **External system handling** — disable notifications during replays; cache external query results with timestamps
-4. **Schema evolution strategy** — events are forever; plan for versioning
+1. Events store deltas (what changed, not final state)
+2. Snapshots for performance (rebuild from snapshots, not event 0)
+3. External system handling (disable notifications during replays; cache with timestamps)
+4. Schema evolution strategy (events are forever; plan versioning)
 
 ## CQRS Overview
 
-Separate read and write models. **Commands** mutate state; **queries** retrieve data without side effects. Read model is denormalized and query-optimized. Start with the same DB and separate query paths; split databases only when proven necessary.
+Separate read and write models: **Commands** mutate state; **Queries** retrieve data (no side effects). Read model is denormalized and query-optimized. Start with same DB and separate query paths; split databases only when proven necessary.
 
 ```mermaid
 flowchart TB
@@ -67,7 +65,7 @@ export class GetOrderHandler {
 
 ## Domain Events
 
-Notifications that something happened — used for read model updates, cross-aggregate communication, and bounded context integration.
+Notifications of state changes — used for read model updates, cross-aggregate communication, and bounded context integration.
 
 ```typescript
 export abstract class DomainEvent {
@@ -97,11 +95,11 @@ class OrderConfirmedHandler:
 | | Domain Events | Integration Events |
 |--|--------------|-------------------|
 | Scope | Within bounded context | Cross bounded context |
-| Granularity | Fine-grained, low-level | Coarser-grained |
+| Granularity | Fine-grained | Coarse-grained |
 | Transport | In-process | Message broker |
 | Schema | Internal | Versioned |
 
-A domain event handler fetches the aggregate and publishes a versioned integration event to the message broker:
+Domain event handler fetches aggregate and publishes versioned integration event to message broker:
 
 ```typescript
 export class PublishOrderConfirmedIntegrationEvent {
@@ -122,7 +120,7 @@ export class PublishOrderConfirmedIntegrationEvent {
 
 ## Event Dispatcher
 
-Routes events to registered handlers; supports multiple handlers per event type (fan-out).
+Routes events to registered handlers; supports multiple handlers per event type (fan-out pattern).
 
 ```typescript
 export class EventDispatcher {
@@ -145,7 +143,7 @@ dispatcher.register('order.confirmed', new PublishOrderConfirmedIntegrationEvent
 
 ## Outbox Pattern
 
-Guarantees reliable event publishing: write events to an outbox table in the **same transaction** as the aggregate, then publish asynchronously.
+Guarantees reliable event publishing: write events to outbox table in **same transaction** as aggregate, then publish asynchronously.
 
 ```
 // Single transaction in command handler
@@ -166,7 +164,7 @@ class OutboxProcessor:
 
 ## Saga Pattern (Cross-Aggregate Workflows)
 
-Use sagas for workflows spanning multiple aggregates — not raw domain event coordination. **Choreography:** each service listens/publishes events (simpler, harder to trace). **Orchestration:** central coordinator manages steps (explicit, easier to debug).
+Use sagas for workflows spanning multiple aggregates, not raw domain event coordination. **Choreography:** each service listens/publishes events (simpler, harder to trace). **Orchestration:** central coordinator manages steps (explicit, easier to debug).
 
 ```
 Saga: PlaceOrderSaga
@@ -178,7 +176,7 @@ Saga: PlaceOrderSaga
 
 ## Idempotent Consumer
 
-**Required for reliable event processing** — messages may be delivered more than once. Options: store processed IDs in DB; use broker deduplication; design handlers to be naturally idempotent.
+**Required for reliable event processing** — messages may be delivered multiple times. Options: store processed IDs in DB; use broker deduplication; design handlers to be naturally idempotent.
 
 ```
 class OrderConfirmedHandler:
