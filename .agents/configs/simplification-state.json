@@ -1897,9 +1897,9 @@
       "pr": 12708
     },
     ".agents/tools/deployment/cloudron-server-ops-skill.md": {
-      "hash": "ef42b29c1fcb28a5de1fb8be65f21496d5ef10cf",
-      "at": "2026-03-30T03:33:52Z",
-      "pr": 13678
+      "hash": "254ad33e9ddc52578f62584070efe94ef28a6860",
+      "at": "2026-03-30T04:00:00Z",
+      "pr": 13704
     },
     ".agents/scripts/commands/skills.md": {
       "hash": "b5d46b5e38620ec36852251ec0e4ab4178d9d217",

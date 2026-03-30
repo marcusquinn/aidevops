@@ -15,14 +15,13 @@ tools:
 
 ## Quick Reference
 
-- **Docs**: [docs.cloudron.io/packaging/cli](https://docs.cloudron.io/packaging/cli)
-- **Upstream skill**: [git.cloudron.io/docs/skills](https://git.cloudron.io/docs/skills) (`cloudron-server-ops`)
+- **Docs**: [docs.cloudron.io/packaging/cli](https://docs.cloudron.io/packaging/cli) | **Upstream skill**: [git.cloudron.io/docs/skills](https://git.cloudron.io/docs/skills)
 - **Install**: `sudo npm install -g cloudron` (on your PC/Mac, NOT the server)
 - **Login**: `cloudron login my.example.com` (browser-based; 9.1+ uses OIDC/passkey)
-- **CI/CD**: `--server <domain> --token <api-token> --no-wait` (token from `https://my.example.com/#/profile`); e.g. `cloudron update --server my.example.com --token <token> --app blog.example.com --image user/image:tag`
-- **Token stored**: `~/.cloudron.json`; self-signed TLS: add `--allow-selfsigned`
+- **CI/CD**: `--server <domain> --token <api-token> --no-wait` (token from `https://my.<domain>/#/profile`); e.g. `cloudron update --server my.example.com --token <token> --app blog.example.com --image user/image:tag`
+- **Token**: `~/.cloudron.json` | **Self-signed TLS**: `--allow-selfsigned`
 - **App targeting**: `--app` accepts FQDN, subdomain, or app ID; auto-detected from `CloudronManifest.json`
-- **Global flags**: `--server <domain>`, `--token <token>`, `--allow-selfsigned`, `--no-wait`
+- **Global flags**: `--server`, `--token`, `--allow-selfsigned`, `--no-wait`
 - **Also see**: `cloudron-helper.sh` for multi-server management via API
 
 <!-- AI-CONTEXT-END -->
@@ -32,9 +31,7 @@ tools:
 ### Listing and Inspection
 
 ```bash
-cloudron list                  # all installed apps
-cloudron list -q               # quiet (IDs only)
-cloudron list --tag web        # filter by tag
+cloudron list                  # all installed apps (-q for IDs only, --tag <tag> to filter)
 cloudron status --app <app>    # app details (status, domain, memory, image)
 cloudron inspect               # raw JSON of the Cloudron server
 ```
@@ -49,32 +46,24 @@ cloudron repair --app <app>    # reconfigure without changing image
 cloudron clone --app <app> --location new-location
 ```
 
-Key flags for `install`/`update`: `--image <repo:tag>`, `--no-backup`, `-l <subdomain>`, `-s <secondary-domains>`, `-p <port-bindings>`, `-m <memory-bytes>`, `--versions-url <url>`
+Flags for `install`/`update`: `--image <repo:tag>`, `--no-backup`, `-l <subdomain>`, `-s <secondary-domains>`, `-p <port-bindings>`, `-m <memory-bytes>`, `--versions-url <url>`
 
-**On-server build (9.1+)** — from a directory with `CloudronManifest.json` + `Dockerfile`:
+**On-server build (9.1+)** — directory with `CloudronManifest.json` + `Dockerfile`:
 
 ```bash
 cloudron install --location myapp   # upload source, build on server, install
 cloudron update --app myapp         # upload source, rebuild, update
 ```
 
-### Run State
+### Run State and Logs
 
 ```bash
 cloudron start --app <app>
 cloudron stop --app <app>
 cloudron restart --app <app>
-cloudron cancel --app <app>     # cancel pending task
-```
-
-### Logs
-
-```bash
-cloudron logs --app <app>              # recent logs
-cloudron logs --app <app> -f           # follow (tail)
-cloudron logs --app <app> -l 200       # last N lines
-cloudron logs --system                 # platform system logs
-cloudron logs --system mail            # specific system service
+cloudron cancel --app <app>            # cancel pending task
+cloudron logs --app <app>              # recent logs (-f follow, -l N last N lines)
+cloudron logs --system                 # platform logs (--system mail for specific service)
 ```
 
 ### Shell, Exec, and Debug
@@ -83,12 +72,7 @@ cloudron logs --system mail            # specific system service
 cloudron exec --app <app>                              # interactive shell
 cloudron exec --app <app> -- ls -la /app/data          # run a command
 cloudron exec --app <app> -- bash -c 'echo $CLOUDRON_MYSQL_URL'
-```
-
-Debug mode pauses the app (skips CMD), makes filesystem read-write — useful when a crashing app disconnects `exec`:
-
-```bash
-cloudron debug --app <app>             # enter debug mode
+cloudron debug --app <app>             # debug mode: pauses app, r/w filesystem
 cloudron debug --app <app> --disable   # exit debug mode
 ```
 
@@ -101,19 +85,14 @@ cloudron pull --app <app> /app/data/file.txt .
 cloudron pull --app <app> /app/data/ ./backup/
 ```
 
-### Environment Variables
+### Environment Variables and Configuration
 
 ```bash
 cloudron env list --app <app>
 cloudron env get --app <app> MY_VAR
 cloudron env set --app <app> MY_VAR=value OTHER=val2    # restarts app
 cloudron env unset --app <app> MY_VAR                   # restarts app
-```
-
-### Configuration
-
-```bash
-cloudron set-location --app <app> -l new-subdomain
+cloudron set-location --app <app> -l new-subdomain      # change subdomain
 cloudron set-location --app <app> -s "api.example.com"  # secondary domain
 cloudron set-location --app <app> -p "SSH_PORT=2222"    # port binding
 ```
@@ -126,11 +105,9 @@ cloudron backup list --app <app>
 cloudron restore --app <app> --backup <backup-id>
 cloudron export --app <app>
 cloudron import --app <app> --backup-path /path
-
-# Encryption utilities (local, offline):
-cloudron backup decrypt <infile> <outfile> --password <pw>
-cloudron backup decrypt-dir <indir> <outdir> --password <pw>
-cloudron backup encrypt <infile> <outfile> --password <pw>
+cloudron backup decrypt <infile> <outfile> --password <pw>     # local offline
+cloudron backup decrypt-dir <indir> <outdir> --password <pw>   # local offline
+cloudron backup encrypt <infile> <outfile> --password <pw>     # local offline
 ```
 
 ### Utilities
@@ -138,5 +115,4 @@ cloudron backup encrypt <infile> <outfile> --password <pw>
 ```bash
 cloudron open --app <app>       # open app in browser
 cloudron init                   # create CloudronManifest.json + Dockerfile
-cloudron completion             # shell completion
 ```
