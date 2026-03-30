@@ -9,9 +9,8 @@
 | Advantage+ Placements | Placement selection |
 | Advantage+ Creative | Creative variations |
 
-**Works best when:** high conversion volume (50+/week), diverse creative library, broad appeal products, you want to scale.
-
-**Manual may win when:** very niche B2B, specific job title targeting, compliance restrictions, testing specific hypotheses, low conversion volume.
+**Use when:** 50+/week conversions, diverse creative library, broad appeal, want to scale.
+**Manual wins when:** niche B2B, specific job title targeting, compliance restrictions, testing hypotheses, <50 conversions/week.
 
 ## Advantage+ Shopping Campaigns (ASC)
 
@@ -50,12 +49,6 @@ Start at 10–20%. Adjust based on performance.
 
 **Case study — Holded (B2B SaaS):** 86% lower CPA, 26% increase in reach vs manual.
 
-### When to Use ASC
-
-**Use:** ecommerce with catalog, 100+ purchases/week, 10+ creative variations, want hands-off scaling, manual isn't hitting targets.
-
-**Skip:** non-ecommerce (lead gen, B2B), <50 purchases/week, need specific audience control, <5 ads, testing new creative (use manual).
-
 ### ASC Optimization Levers
 
 **Adjustable:** creative (add/remove ads), existing customer cap, budget, country.
@@ -71,23 +64,22 @@ Start at 10–20%. Adjust based on performance.
 
 Provide optional interest/lookalike/custom audience suggestions → Meta uses them as a starting point and expands to find additional converters.
 
-**Always use (default):** prospecting campaigns, scaling campaigns, when you have conversion data.
+**Use (default):** prospecting, scaling, when you have conversion data.
+**Maybe skip:** very niche B2B, strict compliance, testing specific audience hypothesis.
 
-**Maybe skip:** very niche B2B, strict compliance requirements, testing specific audience hypothesis.
-
-**Note:** Advantage+ Audience with no suggestions ≈ broad targeting. The difference is Advantage+ may use engagement and pixel signals more aggressively.
+Note: Advantage+ Audience with no suggestions ≈ broad targeting. The difference is Advantage+ may use engagement and pixel signals more aggressively.
 
 ## Advantage+ Placements
 
 Meta distributes ads across all available placements (Facebook Feed/Stories/Reels/Marketplace/Search, Instagram Feed/Stories/Reels/Explore, Audience Network, Messenger) to maximize results.
 
-**Why it works:** more inventory = lower CPMs. Restricting to Feed means competing for limited inventory at higher cost. Allowing all placements gives the algorithm access to cheaper inventory.
+More inventory = lower CPMs. Restricting to Feed means competing for limited inventory at higher cost.
 
 **Typical CPM:** Feed (high) > Stories/Reels (medium) > Audience Network (low). Feed often has higher conversion rates; Reels/Stories drive volume.
 
-**Always use (default).** Use manual placement selection only when: creative only works on a specific placement (9:16 Reels-only video), testing placement-specific performance, or you have data showing specific placements don't work.
+**Use (default).** Manual placement only when: creative only works on a specific placement, testing placement-specific performance, or data shows specific placements don't work.
 
-**Creative requirements for all placements:**
+**Creative requirements:**
 
 | Aspect Ratio | Used For |
 |--------------|----------|
@@ -100,15 +92,14 @@ Upload same creative in multiple ratios, or let Meta auto-crop (less optimal).
 
 ## Advantage+ Creative
 
-AI automatically tests variations of your creative: crops, brightness/contrast, 3D animation, music (video), text variations, image templates.
+AI automatically tests variations: crops, brightness/contrast, 3D animation, music (video), text variations, image templates.
 
-**Enable:** Ad Setup → Advantage+ Creative → ON. Toggle specific enhancements (visual touch-ups, image animation, music) on/off.
+**Enable:** Ad Setup → Advantage+ Creative → ON. Toggle specific enhancements on/off.
 
-**Use when:** high volume campaigns, want more testing without more work, performance-focused (not brand-focused).
-
+**Use when:** high volume campaigns, want more testing without more work, performance-focused.
 **Skip when:** strict brand guidelines, specific creative vision required, need to understand exactly what's working.
 
-**vs Dynamic Creative:** Dynamic Creative = you upload multiple assets, Meta tests combinations, you see what works. Advantage+ Creative = you upload finished ads, Meta creates variations, less visibility into winners. Use Advantage+ Creative for optimization; use Dynamic Creative when you need learning.
+**vs Dynamic Creative:** Dynamic Creative = you upload multiple assets, Meta tests combinations, you see what works. Advantage+ Creative = you upload finished ads, Meta creates variations, less visibility into winners. Use Advantage+ Creative for optimization; Dynamic Creative when you need learning.
 
 ## When Automation Wins vs Manual
 
@@ -130,7 +121,7 @@ AI automatically tests variations of your creative: crops, brightness/contrast, 
 
 ### Hybrid Approach (Recommended)
 
-```
+```text
 Creative Testing: Manual ABO  → full control, learn what works, variable isolation
 Scaling:          Advantage+ (CBO or ASC) → proven winners only, AI optimizes
 Retargeting:      Manual for sequences, Auto for simplicity (depends on volume)
