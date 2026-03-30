@@ -945,13 +945,102 @@ _todo_commit_push_inner() {
 #
 # Available to all scripts that source shared-constants.sh.
 
-WORKTREE_REGISTRY_DIR="${HOME}/.aidevops/.agent-workspace"
-WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DIR}/worktree-registry.db"
+WORKTREE_REGISTRY_DIR="${WORKTREE_REGISTRY_DIR:-${HOME}/.aidevops/.agent-workspace}"
+WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-${WORKTREE_REGISTRY_DIR}/worktree-registry.db}"
+
+# Resolve the long-lived process ID that should own a worktree lock.
+# Priority:
+#   1) Explicit override (first argument)
+#   2) OpenCode interactive PID (OPENCODE_PID)
+#   3) Parent process PID (PPID)
+#   4) Current shell PID ($$)
+# Returns: PID string on stdout
+_resolve_worktree_owner_pid() {
+	local explicit_pid="${1:-}"
+	if [[ -n "$explicit_pid" ]]; then
+		printf '%s' "$explicit_pid"
+		return 0
+	fi
+
+	if [[ -n "${OPENCODE_PID:-}" ]]; then
+		printf '%s' "$OPENCODE_PID"
+		return 0
+	fi
+
+	if [[ -n "${PPID:-}" ]]; then
+		printf '%s' "$PPID"
+		return 0
+	fi
+
+	printf '%s' "$$"
+	return 0
+}
 
 # SQL-escape a value for SQLite (double single quotes)
 _wt_sql_escape() {
 	local val="$1"
 	echo "${val//\'/\'\'}"
+}
+
+# Normalize a filesystem path to a stable absolute form.
+# This prevents duplicate registry rows for equivalent paths
+# such as /var/... vs /private/var/... on macOS.
+_wt_normalize_path() {
+	local raw_path="$1"
+	if [[ -z "$raw_path" ]]; then
+		printf '%s' ""
+		return 0
+	fi
+
+	local normalized=""
+	if command -v python3 >/dev/null 2>&1; then
+		normalized=$(
+			python3 - "$raw_path" <<'PY' 2>/dev/null || true
+import os, sys
+print(os.path.realpath(sys.argv[1]))
+PY
+		)
+	fi
+
+	if [[ -z "$normalized" ]]; then
+		if [[ -d "$raw_path" ]]; then
+			normalized=$(cd "$raw_path" 2>/dev/null && pwd -P) || normalized="$raw_path"
+		else
+			normalized="$raw_path"
+		fi
+	fi
+
+	printf '%s' "$normalized"
+	return 0
+}
+
+# Resolve the registry key for a worktree path.
+# If a legacy non-normalized row already exists for an equivalent path,
+# return that stored key so ownership checks remain backward compatible.
+# Otherwise return the normalized path.
+_wt_registry_lookup_path() {
+	local requested_path="$1"
+	local normalized
+	normalized=$(_wt_normalize_path "$requested_path")
+
+	[[ ! -f "$WORKTREE_REGISTRY_DB" ]] && {
+		printf '%s' "$normalized"
+		return 0
+	}
+
+	local stored_path=""
+	while IFS= read -r stored_path; do
+		[[ -z "$stored_path" ]] && continue
+		local stored_normalized
+		stored_normalized=$(_wt_normalize_path "$stored_path")
+		if [[ "$stored_normalized" == "$normalized" ]]; then
+			printf '%s' "$stored_path"
+			return 0
+		fi
+	done < <(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT worktree_path FROM worktree_owners;" 2>/dev/null || true)
+
+	printf '%s' "$normalized"
+	return 0
 }
 
 # Initialize the registry database
@@ -981,7 +1070,7 @@ register_worktree() {
 	local branch="$2"
 	shift 2
 
-	local task_id="" batch_id="" session_id=""
+	local task_id="" batch_id="" session_id="" owner_pid_override=""
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--task)
@@ -996,24 +1085,127 @@ register_worktree() {
 			session_id="${2:-}"
 			shift 2
 			;;
+		--owner-pid)
+			owner_pid_override="${2:-}"
+			shift 2
+			;;
 		*) shift ;;
 		esac
 	done
 
+	if [[ -z "$session_id" ]]; then
+		session_id="${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}"
+	fi
+
+	local owner_pid
+	owner_pid=$(_resolve_worktree_owner_pid "$owner_pid_override")
+
 	_init_registry_db
+	wt_path=$(_wt_registry_lookup_path "$wt_path")
 
 	sqlite3 "$WORKTREE_REGISTRY_DB" "
         INSERT OR REPLACE INTO worktree_owners
             (worktree_path, branch, owner_pid, owner_session, owner_batch, task_id)
         VALUES
+			 ('$(_wt_sql_escape "$wt_path")',
+			  '$(_wt_sql_escape "$branch")',
+			  ${owner_pid},
+			  '$(_wt_sql_escape "$session_id")',
+			  '$(_wt_sql_escape "$batch_id")',
+			  '$(_wt_sql_escape "$task_id")');
+    " 2>/dev/null || true
+	return 0
+}
+
+# Claim ownership of a worktree without overwriting another live owner.
+# Arguments:
+#   $1 - worktree path (required)
+#   $2 - branch name (required)
+#   Flags: --task <id>, --batch <id>, --session <id>, --owner-pid <pid>
+# Returns:
+#   0 - ownership acquired or already held by this owner_pid
+#   1 - another live owner currently holds the worktree
+claim_worktree_ownership() {
+	local wt_path="$1"
+	local branch="$2"
+	shift 2
+
+	local task_id="" batch_id="" session_id="" owner_pid_override=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--task)
+			task_id="${2:-}"
+			shift 2
+			;;
+		--batch)
+			batch_id="${2:-}"
+			shift 2
+			;;
+		--session)
+			session_id="${2:-}"
+			shift 2
+			;;
+		--owner-pid)
+			owner_pid_override="${2:-}"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+
+	if [[ -z "$session_id" ]]; then
+		session_id="${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}"
+	fi
+
+	local owner_pid
+	owner_pid=$(_resolve_worktree_owner_pid "$owner_pid_override")
+
+	_init_registry_db
+	wt_path=$(_wt_registry_lookup_path "$wt_path")
+
+	local existing_owner_pid
+	existing_owner_pid=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
+        SELECT owner_pid FROM worktree_owners
+        WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
+    " 2>/dev/null || echo "")
+
+	if [[ -n "$existing_owner_pid" ]] && [[ "$existing_owner_pid" != "$owner_pid" ]]; then
+		if ! kill -0 "$existing_owner_pid" 2>/dev/null; then
+			unregister_worktree "$wt_path"
+		fi
+	fi
+
+	sqlite3 "$WORKTREE_REGISTRY_DB" "
+        INSERT OR IGNORE INTO worktree_owners
+            (worktree_path, branch, owner_pid, owner_session, owner_batch, task_id)
+        VALUES
             ('$(_wt_sql_escape "$wt_path")',
              '$(_wt_sql_escape "$branch")',
-             $$,
+             ${owner_pid},
              '$(_wt_sql_escape "$session_id")',
              '$(_wt_sql_escape "$batch_id")',
              '$(_wt_sql_escape "$task_id")');
     " 2>/dev/null || true
-	return 0
+
+	local final_owner_pid
+	final_owner_pid=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
+        SELECT owner_pid FROM worktree_owners
+        WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
+    " 2>/dev/null || echo "")
+
+	if [[ "$final_owner_pid" == "$owner_pid" ]]; then
+		sqlite3 "$WORKTREE_REGISTRY_DB" "
+            UPDATE worktree_owners
+            SET branch = '$(_wt_sql_escape "$branch")',
+                owner_session = '$(_wt_sql_escape "$session_id")',
+                owner_batch = '$(_wt_sql_escape "$batch_id")',
+                task_id = '$(_wt_sql_escape "$task_id")'
+            WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
+        " 2>/dev/null || true
+		return 0
+	fi
+
+	return 1
 }
 
 # Unregister ownership of a worktree
@@ -1023,6 +1215,7 @@ unregister_worktree() {
 	local wt_path="$1"
 
 	[[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 0
+	wt_path=$(_wt_registry_lookup_path "$wt_path")
 
 	sqlite3 "$WORKTREE_REGISTRY_DB" "
         DELETE FROM worktree_owners
@@ -1040,6 +1233,7 @@ check_worktree_owner() {
 	local wt_path="$1"
 
 	[[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 1
+	wt_path=$(_wt_registry_lookup_path "$wt_path")
 
 	local owner_info
 	owner_info=$(sqlite3 -separator '|' "$WORKTREE_REGISTRY_DB" "
@@ -1063,6 +1257,7 @@ is_worktree_owned_by_others() {
 	local wt_path="$1"
 
 	[[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 1
+	wt_path=$(_wt_registry_lookup_path "$wt_path")
 
 	local owner_pid
 	owner_pid=$(sqlite3 "$WORKTREE_REGISTRY_DB" "

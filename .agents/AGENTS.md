@@ -161,6 +161,8 @@ PR title: `{task-id}: {description}`. Task ID is `tNNN` (from TODO.md) or `GH#NN
 
 Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `main`, and treat the Git ref as an internal detail inside the linked worktree. User-facing guidance should talk about the worktree path, not "using a branch". Re-read files at worktree path before editing. NEVER remove others' worktrees.
 
+**Worktree/session isolation (MANDATORY):** exactly one active session may own a writable worktree path at a time. Never reuse a live worktree across sessions (interactive or headless). If ownership conflict is detected, create a fresh worktree for the current task/session instead of continuing in the contested path.
+
 **Traceability and signature footer:** Hard rules in `prompts/build.txt` (sections "Traceability" and "#8 Signature footer"). Link both sides when closing (issue→PR, PR→issue). Do NOT pass `--issue` when creating new issues (the issue doesn't exist yet). See `scripts/commands/pulse.md` for dispatch/kill/merge comment templates.
 
 **Self-improvement routing (t1541):** Framework-level tasks → `framework-routing-helper.sh log-framework-issue`. Project tasks → current repo. Framework tasks in project repos are invisible to maintainers.

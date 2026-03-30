@@ -370,6 +370,60 @@ else
 		"$SCRIPT_DIR/session-rename-helper.sh" sync-branch >/dev/null 2>&1 || true
 	fi
 
+	# Linked worktree ownership gate (GH#14413 hardening):
+	# exactly one active session/process may hold a writable worktree at a time.
+	worktree_path=""
+	worktree_path=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+	worktree_owner_pid="${OPENCODE_PID:-${PRE_EDIT_OWNER_PID:-${PPID:-$$}}}"
+	worktree_owner_session="${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}"
+
+	if declare -f claim_worktree_ownership >/dev/null 2>&1; then
+		if ! claim_worktree_ownership "$worktree_path" "$current_branch" --owner-pid "$worktree_owner_pid" --session "$worktree_owner_session"; then
+			owner_info=""
+			owner_info=$(check_worktree_owner "$worktree_path" 2>/dev/null || true)
+			owner_pid="unknown"
+			owner_session=""
+			owner_created=""
+			if [[ -n "$owner_info" ]]; then
+				IFS='|' read -r owner_pid owner_session _ _ owner_created <<<"$owner_info"
+			fi
+
+			if [[ ! -t 0 ]] || [[ "${FULL_LOOP_HEADLESS:-false}" == "true" ]] || [[ "$LOOP_MODE" == "true" ]]; then
+				echo -e "${RED}BLOCKED${NC}: linked worktree is owned by another active session/process"
+				echo "WORKTREE_OWNERSHIP_CONFLICT=true"
+				echo "ACTION_REQUIRED=create_worktree"
+				echo "WORKTREE_PATH=$worktree_path"
+				echo "WORKTREE_OWNER_PID=$owner_pid"
+				if [[ -n "$owner_session" ]]; then
+					echo "WORKTREE_OWNER_SESSION=$owner_session"
+				fi
+				if [[ -n "$owner_created" ]]; then
+					echo "WORKTREE_OWNER_SINCE=$owner_created"
+				fi
+				echo "HINT: create a dedicated worktree for this session/task and retry"
+				exit 2
+			fi
+
+			echo ""
+			echo -e "${RED}${BOLD}======================================================${NC}"
+			echo -e "${RED}${BOLD}  STOP - WORKTREE OWNED BY ANOTHER ACTIVE SESSION${NC}"
+			echo -e "${RED}${BOLD}======================================================${NC}"
+			echo ""
+			echo "Worktree: $worktree_path"
+			echo "Owner PID: $owner_pid"
+			if [[ -n "$owner_session" ]]; then
+				echo "Owner session: $owner_session"
+			fi
+			if [[ -n "$owner_created" ]]; then
+				echo "Owned since: $owner_created"
+			fi
+			echo ""
+			echo -e "${YELLOW}Use a dedicated linked worktree for this session/task to avoid cross-session edits.${NC}"
+			echo ""
+			exit 1
+		fi
+	fi
+
 	if [[ "$is_main_worktree" == "true" ]]; then
 		# Loop mode: auto-decide for canonical repo directory off main
 		if [[ "$LOOP_MODE" == "true" ]]; then
