@@ -21,9 +21,12 @@ readonly STATE_DB="${STATE_DIR}/state.db"
 readonly OPENCODE_BIN_DEFAULT="${OPENCODE_BIN:-opencode}"
 readonly SANDBOX_EXEC_HELPER="${SCRIPT_DIR}/sandbox-exec-helper.sh"
 readonly DISPATCH_LEDGER_HELPER="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
+readonly OAUTH_POOL_HELPER="${SCRIPT_DIR}/oauth-pool-helper.sh"
 readonly HEADLESS_SANDBOX_TIMEOUT_DEFAULT="${AIDEVOPS_HEADLESS_SANDBOX_TIMEOUT:-3600}"
 readonly OPENCODE_AUTH_FILE="${HOME}/.local/share/opencode/auth.json"
 readonly LOCK_DIR="${STATE_DIR}/locks"
+readonly METRICS_DIR="${HOME}/.aidevops/logs"
+readonly METRICS_FILE="${METRICS_DIR}/headless-runtime-metrics.jsonl"
 
 # _register_dispatch_ledger: register this dispatch in the in-flight ledger (GH#6696).
 # Extracts issue number from session_key (pattern: "issue-NNN") and registers
@@ -428,6 +431,82 @@ if numeric:
 print(0)
 PY
 	return 0
+}
+
+append_runtime_metric() {
+	local role="$1"
+	local session_key="$2"
+	local model="$3"
+	local provider="$4"
+	local result="$5"
+	local exit_code="$6"
+	local failure_reason="$7"
+	local activity="$8"
+	local duration_ms="$9"
+	mkdir -p "$METRICS_DIR" 2>/dev/null || true
+	ROLE="$role" SESSION_KEY="$session_key" MODEL="$model" PROVIDER="$provider" \
+		RESULT="$result" EXIT_CODE="$exit_code" FAILURE_REASON="$failure_reason" \
+		ACTIVITY="$activity" DURATION_MS="$duration_ms" METRICS_PATH="$METRICS_FILE" python3 - <<'PY' >/dev/null 2>&1 || true
+import json
+import os
+import time
+
+record = {
+    "ts": int(time.time()),
+    "role": os.environ.get("ROLE", ""),
+    "session_key": os.environ.get("SESSION_KEY", ""),
+    "model": os.environ.get("MODEL", ""),
+    "provider": os.environ.get("PROVIDER", ""),
+    "result": os.environ.get("RESULT", "unknown"),
+    "exit_code": int(os.environ.get("EXIT_CODE", "1") or 1),
+    "failure_reason": os.environ.get("FAILURE_REASON", ""),
+    "activity": os.environ.get("ACTIVITY", "0") == "1",
+    "duration_ms": int(os.environ.get("DURATION_MS", "0") or 0),
+}
+with open(os.environ["METRICS_PATH"], "a") as f:
+    f.write(json.dumps(record, separators=(",", ":")) + "\n")
+PY
+	return 0
+}
+
+attempt_pool_recovery() {
+	local provider="$1"
+	local reason="$2"
+	local details_file="$3"
+
+	case "$provider" in
+	anthropic | openai | cursor | google) ;;
+	*)
+		return 1
+		;;
+	esac
+
+	case "$reason" in
+	rate_limit | auth_error) ;;
+	*)
+		return 1
+		;;
+	esac
+
+	[[ -x "$OAUTH_POOL_HELPER" ]] || return 1
+
+	local retry_seconds
+	retry_seconds=$(parse_retry_after_seconds "$details_file")
+	if [[ "$retry_seconds" -le 0 ]]; then
+		case "$reason" in
+		rate_limit) retry_seconds=900 ;;
+		auth_error) retry_seconds=3600 ;;
+		*) retry_seconds=300 ;;
+		esac
+	fi
+
+	"$OAUTH_POOL_HELPER" mark-failure "$provider" "$reason" "$retry_seconds" >/dev/null 2>&1 || true
+	if "$OAUTH_POOL_HELPER" rotate "$provider" >/dev/null 2>&1; then
+		print_warning "${provider} ${reason} detected; cooled down active account and rotated to alternate"
+		return 0
+	fi
+
+	return 1
 }
 
 record_provider_backoff() {
@@ -971,6 +1050,54 @@ _validate_run_args() {
 	return 0
 }
 
+# append_worker_headless_contract: append unattended continuation rules to
+# worker /full-loop prompts without changing interactive /full-loop behavior.
+#
+# This contract is injected at dispatch time by the headless runtime wrapper,
+# so full-loop.md can remain dual-purpose (interactive + headless).
+#
+# Args: $1 = prompt text
+# Output: prompt text (possibly appended)
+# Env:
+#   AIDEVOPS_HEADLESS_APPEND_CONTRACT=0 disables prompt augmentation.
+append_worker_headless_contract() {
+	local prompt_text="$1"
+	local append_enabled="${AIDEVOPS_HEADLESS_APPEND_CONTRACT:-1}"
+
+	if [[ "$append_enabled" == "0" ]]; then
+		printf '%s' "$prompt_text"
+		return 0
+	fi
+
+	if [[ "$prompt_text" != *"/full-loop"* ]]; then
+		printf '%s' "$prompt_text"
+		return 0
+	fi
+
+	if [[ "$prompt_text" == *"HEADLESS_CONTINUATION_CONTRACT_V1"* ]]; then
+		printf '%s' "$prompt_text"
+		return 0
+	fi
+
+	local contract
+	contract=$(
+		cat <<'EOF'
+[HEADLESS_CONTINUATION_CONTRACT_V1]
+This worker run is unattended.
+
+Mandatory behavior:
+1. Never ask for user confirmation or next steps.
+2. Do not stop at "PR opened" or "in review" states.
+3. Continue through review polling, merge readiness checks, merge, and required closing comments.
+4. If merge/close cannot complete, exit only with a clear BLOCKED outcome and evidence (failing check, missing permission, unresolved conflict, or explicit policy gate).
+5. Do not emit user-directed language like "If you want, I can...".
+EOF
+	)
+
+	printf '%s\n\n%s' "$prompt_text" "$contract"
+	return 0
+}
+
 # _build_run_cmd: build the opencode command array for a run attempt.
 # Args: selected_model work_dir prompt title agent_name persisted_session
 #       extra_args (remaining positional args)
@@ -1055,14 +1182,18 @@ _handle_run_result() {
 	local discovered_session activity_detected
 	discovered_session=$(extract_session_id_from_output "$output_file")
 	activity_detected=$(output_has_activity "$output_file")
+	_run_activity_detected="$activity_detected"
+	_run_result_label="failed"
 
 	if [[ "$exit_code" -eq 0 ]]; then
 		if [[ "$activity_detected" != "1" ]]; then
+			_run_result_label="no_activity"
 			record_provider_backoff "$provider" "provider_error" "$output_file" "$selected_model"
 			rm -f "$output_file"
 			print_warning "$selected_model returned exit 0 without any model activity; backing off model"
 			return 75
 		fi
+		_run_result_label="success"
 		if [[ "$role" != "pulse" && -n "$discovered_session" ]]; then
 			store_session_id "$provider" "$session_key" "$discovered_session" "$selected_model"
 		fi
@@ -1072,9 +1203,19 @@ _handle_run_result() {
 
 	local failure_reason
 	failure_reason=$(classify_failure_reason "$output_file")
+	_run_result_label="$failure_reason"
+
+	if attempt_pool_recovery "$provider" "$failure_reason" "$output_file"; then
+		_run_should_retry=1
+		rm -f "$output_file"
+		_run_failure_reason="$failure_reason"
+		return 76
+	fi
+
 	record_provider_backoff "$provider" "$failure_reason" "$output_file" "$selected_model"
 	rm -f "$output_file"
 	_run_failure_reason="$failure_reason"
+	_run_should_retry=0
 	return "$exit_code"
 }
 
@@ -1115,6 +1256,8 @@ _execute_run_attempt() {
 		"$agent_name" "$persisted_session" "${extra_args[@]+"${extra_args[@]}"}")
 
 	local output_file exit_code_file exit_code
+	local start_ms end_ms duration_ms
+	start_ms=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || printf '%s' "0")
 	output_file=$(mktemp)
 	exit_code_file=$(mktemp)
 	exit_code=0
@@ -1123,8 +1266,116 @@ _execute_run_attempt() {
 	exit_code=$(cat "$exit_code_file" 2>/dev/null) || exit_code=1
 	rm -f "$exit_code_file"
 
-	_handle_run_result "$exit_code" "$output_file" "$role" "$provider" "$session_key" "$selected_model"
-	return $?
+	local handle_exit=0
+	if _handle_run_result "$exit_code" "$output_file" "$role" "$provider" "$session_key" "$selected_model"; then
+		handle_exit=0
+	else
+		handle_exit=$?
+	fi
+	end_ms=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || printf '%s' "0")
+	if [[ "$end_ms" =~ ^[0-9]+$ && "$start_ms" =~ ^[0-9]+$ && "$end_ms" -ge "$start_ms" ]]; then
+		duration_ms=$((end_ms - start_ms))
+	else
+		duration_ms=0
+	fi
+	append_runtime_metric "$role" "$session_key" "$selected_model" "$provider" "${_run_result_label:-failed}" "$handle_exit" "${_run_failure_reason:-}" "${_run_activity_detected:-0}" "$duration_ms"
+	return "$handle_exit"
+}
+
+cmd_metrics() {
+	local role_filter="pulse"
+	local hours="24"
+	local model_filter=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--role)
+			role_filter="${2:-pulse}"
+			shift 2
+			;;
+		--hours)
+			hours="${2:-24}"
+			shift 2
+			;;
+		--model)
+			model_filter="${2:-}"
+			shift 2
+			;;
+		*)
+			print_error "Unknown option for metrics: $1"
+			return 1
+			;;
+		esac
+	done
+
+	if [[ ! "$hours" =~ ^[0-9]+$ ]]; then
+		print_error "--hours must be an integer"
+		return 1
+	fi
+
+	if [[ ! -f "$METRICS_FILE" ]]; then
+		print_info "No runtime metrics recorded yet: $METRICS_FILE"
+		return 0
+	fi
+
+	ROLE_FILTER="$role_filter" HOURS="$hours" MODEL_FILTER="$model_filter" METRICS_PATH="$METRICS_FILE" python3 - <<'PY'
+import json
+import os
+import time
+from collections import defaultdict
+
+metrics_path = os.environ["METRICS_PATH"]
+role_filter = os.environ.get("ROLE_FILTER", "pulse")
+hours = int(os.environ.get("HOURS", "24"))
+model_filter = os.environ.get("MODEL_FILTER", "")
+cutoff = int(time.time()) - (hours * 3600)
+
+rows = []
+with open(metrics_path) as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+        if int(row.get("ts", 0)) < cutoff:
+            continue
+        if role_filter and row.get("role") != role_filter:
+            continue
+        model = row.get("model", "")
+        if model_filter and model_filter not in model:
+            continue
+        rows.append(row)
+
+if not rows:
+    print("No matching runtime metrics in selected window")
+    raise SystemExit(0)
+
+agg = defaultdict(lambda: {"runs": 0, "success": 0, "productive": 0, "retry_recovered": 0, "sum_duration": 0})
+for row in rows:
+    model = row.get("model", "unknown")
+    item = agg[model]
+    item["runs"] += 1
+    if row.get("result") == "success":
+        item["success"] += 1
+    if row.get("result") == "success" and bool(row.get("activity", False)):
+        item["productive"] += 1
+    if int(row.get("exit_code", 1)) == 76:
+        item["retry_recovered"] += 1
+    item["sum_duration"] += int(row.get("duration_ms", 0) or 0)
+
+print(f"Headless runtime metrics (window={hours}h, role={role_filter})")
+for model in sorted(agg.keys()):
+    item = agg[model]
+    runs = item["runs"]
+    success_pct = (item["success"] / runs) * 100 if runs else 0
+    productive_pct = (item["productive"] / runs) * 100 if runs else 0
+    avg_sec = (item["sum_duration"] / runs) / 1000 if runs else 0
+    print(f"- {model}: runs={runs}, success={item['success']} ({success_pct:.1f}%), productive={item['productive']} ({productive_pct:.1f}%), pool-recovered={item['retry_recovered']}, avg_duration={avg_sec:.1f}s")
+PY
+	return 0
 }
 
 cmd_run() {
@@ -1140,6 +1391,10 @@ cmd_run() {
 
 	_parse_run_args "$@" || return 1
 	_validate_run_args || return 1
+
+	if [[ "$role" == "worker" ]]; then
+		prompt=$(append_worker_headless_contract "$prompt")
+	fi
 
 	# GH#6538: Acquire a session-key lock to prevent duplicate workers.
 	# The pulse (or any caller) may dispatch the same session-key twice in
@@ -1167,11 +1422,16 @@ cmd_run() {
 	}
 
 	local attempt=1
-	local max_attempts=2
+	local max_attempts=3
 	local _run_failure_reason=""
-	local run_exit=1
+	local _run_should_retry=0
+	local _run_result_label="failed"
+	local _run_activity_detected="0"
 	while [[ "$attempt" -le "$max_attempts" ]]; do
 		_run_failure_reason=""
+		_run_should_retry=0
+		_run_result_label="failed"
+		_run_activity_detected="0"
 		_execute_run_attempt \
 			"$role" "$session_key" "$work_dir" "$title" "$prompt" \
 			"$selected_model" "$agent_name" "$model_override" \
@@ -1185,9 +1445,21 @@ cmd_run() {
 			return 0
 		fi
 
-		# Only retry on auth errors when no explicit model was requested
-		# and we have attempts remaining.
-		if [[ -n "$model_override" || "$_run_failure_reason" != "auth_error" || "$attempt" -ge "$max_attempts" ]]; then
+		# Retry only in auto-selection mode and only when attempts remain.
+		if [[ -n "$model_override" || "$attempt" -ge "$max_attempts" ]]; then
+			_update_dispatch_ledger "$session_key" "fail"
+			_release_session_lock "$session_key"
+			trap - EXIT
+			return "$attempt_exit"
+		fi
+
+		if [[ "$_run_should_retry" == "1" ]]; then
+			print_warning "Retrying ${selected_model} once after pool account rotation"
+			attempt=$((attempt + 1))
+			continue
+		fi
+
+		if [[ "$_run_failure_reason" != "auth_error" && "$_run_failure_reason" != "rate_limit" ]]; then
 			_update_dispatch_ledger "$session_key" "fail"
 			_release_session_lock "$session_key"
 			trap - EXIT
@@ -1202,12 +1474,12 @@ cmd_run() {
 			trap - EXIT
 			return "$attempt_exit"
 		}
-		print_warning "$provider auth failure detected at startup; retrying once with alternate provider model $next_model"
+		print_warning "$provider $_run_failure_reason detected; retrying with alternate provider model $next_model"
 		selected_model="$next_model"
 		attempt=$((attempt + 1))
 	done
 
-	# Unreachable: loop always executes (attempt starts at 1, max_attempts=2)
+	# Unreachable: loop always executes (attempt starts at 1, max_attempts=3)
 	# and every path inside returns explicitly. Kept as defensive fallback.
 	_update_dispatch_ledger "$session_key" "fail"
 	_release_session_lock "$session_key"
@@ -1224,6 +1496,7 @@ Usage:
   headless-runtime-helper.sh run --role pulse|worker --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model] [--agent NAME] [--opencode-arg ARG]
   headless-runtime-helper.sh backoff [status|set MODEL-OR-PROVIDER REASON [SECONDS]|clear MODEL-OR-PROVIDER]
   headless-runtime-helper.sh session [status|clear PROVIDER SESSION_KEY]
+  headless-runtime-helper.sh metrics [--role pulse|worker] [--hours N] [--model SUBSTRING]
   headless-runtime-helper.sh help
 
 Backoff granularity:
@@ -1240,6 +1513,7 @@ Dedup guard (GH#6538):
 Defaults:
   AIDEVOPS_HEADLESS_MODELS defaults to anthropic/claude-sonnet-4-6,openai/gpt-4o
   AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST can restrict selection to providers like: openai
+  AIDEVOPS_HEADLESS_APPEND_CONTRACT=0 disables worker /full-loop contract injection
   Gateway models (opencode/*) are supported when explicitly configured.
 EOF
 	return 0
@@ -1264,6 +1538,10 @@ main() {
 		;;
 	session)
 		cmd_session "$@"
+		return $?
+		;;
+	metrics)
+		cmd_metrics "$@"
 		return $?
 		;;
 	passthrough-csv)

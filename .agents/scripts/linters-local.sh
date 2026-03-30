@@ -559,8 +559,12 @@ check_secrets() {
 _find_markdownlint_cmd() {
 	if command -v markdownlint &>/dev/null; then
 		echo "markdownlint"
+	elif command -v markdownlint-cli2 &>/dev/null; then
+		echo "markdownlint-cli2"
 	elif [[ -f "node_modules/.bin/markdownlint" ]]; then
 		echo "node_modules/.bin/markdownlint"
+	elif [[ -f "node_modules/.bin/markdownlint-cli2" ]]; then
+		echo "node_modules/.bin/markdownlint-cli2"
 	fi
 	return 0
 }
@@ -617,7 +621,7 @@ _report_markdown_result() {
 			if [[ $violations -gt 10 ]]; then
 				echo "... and $((violations - 10)) more"
 			fi
-			print_info "Run: markdownlint --fix <file> to auto-fix"
+			print_info "Run: markdownlint --fix <file> (or markdownlint-cli2 --fix <glob>)"
 			if [[ "$check_mode" == "changed" ]]; then
 				print_error "Markdown: $violations style issues in changed files (BLOCKING)"
 				return 1
@@ -670,7 +674,7 @@ check_markdown_lint() {
 	# NOTE: Without markdownlint, we can't reliably detect MD031/MD040 violations
 	# because we can't distinguish opening fences (need language) from closing fences (always bare)
 	print_warning "Markdown: markdownlint not installed - cannot perform full lint checks"
-	print_info "Install: npm install -g markdownlint-cli"
+	print_info "Install: npm install -g markdownlint-cli2 (or markdownlint-cli)"
 	print_info "Then re-run to get blocking checks for changed files"
 	return 0
 }
