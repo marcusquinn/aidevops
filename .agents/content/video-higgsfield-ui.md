@@ -42,11 +42,9 @@ higgsfield-helper.sh image "prompt" [--model soul] [--aspect 16:9] [--quality 2k
 higgsfield-helper.sh video "Camera pans" --image-file photo.jpg [--model kling-2.6] [--duration 5] [--timeout 600000]
 higgsfield-helper.sh lipsync "Hello world!" --image-file face.jpg [--model "Wan 2.5 Speak"]
 higgsfield-helper.sh app face-swap --image-file photo.jpg
-# Apps: face-swap, 3d-render, comic-book, transitions, recast, skin-enhancer, angles, relight, shots, zooms, poster, sketch-to-real, renaissance, mugshot, character-swap, outfit-swap, link-to-video-ad, plushies, sticker-matchcut, surrounded-by-animals
 higgsfield-helper.sh cinema-studio "Epic landscape" --tab image --camera "Dolly Zoom" [--lens "Anamorphic"] [--quality 4K]
 higgsfield-helper.sh motion-control --video-file dance.mp4 --image-file character.jpg [-p "prompt"]
 higgsfield-helper.sh edit "Replace background with beach" --image-file photo.jpg [-m soul_inpaint]
-# Edit models: soul_inpaint (default), nano_banana_pro_inpaint, banana_placement, canvas, multi
 higgsfield-helper.sh edit "Combine styles" --image-file base.jpg --image-file2 ref.jpg -m multi
 higgsfield-helper.sh upscale --image-file low-res.jpg
 higgsfield-helper.sh manage-assets --asset-action list|download-latest|download-all [--filter image|video|lipsync|upscaled|liked] [--limit 20]
@@ -56,16 +54,24 @@ higgsfield-helper.sh motion-preset [--preset dolly_zoom --image-file photo.jpg] 
 higgsfield-helper.sh video-edit --video-file clip.mp4 --image-file character.jpg -p "prompt"
 higgsfield-helper.sh storyboard -p "A hero's journey" --scenes 6 [--preset "Cinematic"]
 higgsfield-helper.sh vibe-motion -p "Product launch" --tab posters --preset Corporate
-# Vibe sub-types: infographics, text-animation, posters, presentation, from-scratch. Styles: Minimal, Corporate, Fashion, Marketing. 8-60cr.
-higgsfield-helper.sh influencer --preset Human -p "Fashion influencer, warm smile"  # 30 free gens
+higgsfield-helper.sh influencer --preset Human -p "Fashion influencer, warm smile"
 higgsfield-helper.sh character --image-file face.jpg -p "Sarah"
 higgsfield-helper.sh feature --feature fashion-factory|ugc-factory|photodump-studio|camera-controls|effects --image-file photo.jpg
 higgsfield-helper.sh credits
 higgsfield-helper.sh download [--model video]
 higgsfield-helper.sh seed-bracket "prompt" --seed-range 1000-1010 [--model nano_banana_pro]
-# Seed ranges: people 1000-1999 | action 2000-2999 | landscape 3000-3999 | product 4000-4999
-higgsfield-helper.sh pipeline --brief brief.json   # parallel submit: 5 scenes ~4min vs ~20min sequential
+higgsfield-helper.sh pipeline --brief brief.json
 ```
+
+**App slugs:** face-swap, 3d-render, comic-book, transitions, recast, skin-enhancer, angles, relight, shots, zooms, poster, sketch-to-real, renaissance, mugshot, character-swap, outfit-swap, link-to-video-ad, plushies, sticker-matchcut, surrounded-by-animals
+
+**Edit models:** soul_inpaint (default), nano_banana_pro_inpaint, banana_placement, canvas, multi
+
+**Vibe sub-types:** infographics, text-animation, posters, presentation, from-scratch. Styles: Minimal, Corporate, Fashion, Marketing. 8-60cr. Influencer: 30 free gens.
+
+**Seed ranges:** people 1000-1999 | action 2000-2999 | landscape 3000-3999 | product 4000-4999
+
+**Pipeline:** parallel submit — 5 scenes ~4min vs ~20min sequential.
 
 ## Models
 
@@ -130,9 +136,7 @@ Wan 2.5 Fast, Kling 2.6 Lipsync, Google Veo 3, Veo 3 Fast, Wan 2.5 Speak (9cr), 
 }
 ```
 
-`imagePrompts[]` = start-frame image prompts. `captions[]` = Remotion overlay (styles: bold-white, minimal, impact, typewriter, highlight).
-
-Remotion: `cd .agents/scripts/higgsfield/remotion && npm install` — animated captions, transitions (fade/slide/wipe), title cards, 1080×1920.
+`imagePrompts[]` = start-frame image prompts. `captions[]` = Remotion overlay (styles: bold-white, minimal, impact, typewriter, highlight). Remotion: `cd .agents/scripts/higgsfield/remotion && npm install` — animated captions, transitions (fade/slide/wipe), title cards, 1080×1920.
 
 ## Output
 
@@ -140,37 +144,39 @@ Remotion: `cd .agents/scripts/higgsfield/remotion && npm install` — animated c
 
 ## Key CLI Options
 
-```text
---model/-m          Model slug
---aspect/-a         16:9 | 9:16 | 1:1 | 3:4 | 4:3 | 2:3 | 3:2
---quality/-q        1K | 1.5K | 2K | 4K
---output/-o         Output directory
---headed/--headless Browser mode (headless default)
---duration/-d       Video seconds (5, 10, 15)
---image-file        Input image path
---image-file2       Second image (multi-reference edit)
---video-file/--motion-ref  Motion reference video
---batch/-b          Images 1-4
---preset/-s         Style preset name
---seed              Seed number
---seed-range        1000-1010 or "4000,4003,4008"
---brief             Pipeline brief JSON path
---tab               image | video
---filter            image | video | lipsync | upscaled | liked
---asset-action      list | download | download-latest | download-all
---asset-index       0-based asset index
---chain-action      animate | inpaint | upscale | relight | angles | shots | ai-stylist | skin-enhancer | multishot
---feature           fashion-factory | ugc-factory | photodump-studio | camera-controls | effects
---subtype           Vibe Motion: infographics | text-animation | posters | presentation | from-scratch
---project           Organized output subdirs
---prefer-unlimited  Auto-select best unlimited model (default on)
-```
+| Flag | Values |
+|------|--------|
+| `--model/-m` | Model slug |
+| `--aspect/-a` | `16:9` \| `9:16` \| `1:1` \| `3:4` \| `4:3` \| `2:3` \| `3:2` |
+| `--quality/-q` | `1K` \| `1.5K` \| `2K` \| `4K` |
+| `--output/-o` | Output directory |
+| `--headed/--headless` | Browser mode (headless default) |
+| `--duration/-d` | Video seconds: 5, 10, 15 |
+| `--image-file` | Input image path |
+| `--image-file2` | Second image (multi-reference edit) |
+| `--video-file/--motion-ref` | Motion reference video |
+| `--batch/-b` | Images 1-4 |
+| `--preset/-s` | Style preset name |
+| `--seed` | Seed number |
+| `--seed-range` | `1000-1010` or `"4000,4003,4008"` |
+| `--brief` | Pipeline brief JSON path |
+| `--tab` | `image` \| `video` |
+| `--filter` | `image` \| `video` \| `lipsync` \| `upscaled` \| `liked` |
+| `--asset-action` | `list` \| `download` \| `download-latest` \| `download-all` |
+| `--asset-index` | 0-based asset index |
+| `--chain-action` | `animate` \| `inpaint` \| `upscale` \| `relight` \| `angles` \| `shots` \| `ai-stylist` \| `skin-enhancer` \| `multishot` |
+| `--feature` | `fashion-factory` \| `ugc-factory` \| `photodump-studio` \| `camera-controls` \| `effects` |
+| `--subtype` | Vibe Motion: `infographics` \| `text-animation` \| `posters` \| `presentation` \| `from-scratch` |
+| `--project` | Organized output subdirs |
+| `--prefer-unlimited` | Auto-select best unlimited model (default on) |
 
 ## Prompt Tips
 
 **Images** (camera + lighting + lens): `"Golden retriever, golden hour, shallow DOF, Canon EOS R5, 85mm, bokeh"`
+
 **Videos** (camera movement first): `"Smooth cinematic pan left to right, golden hour, 24fps film grain"`
-**Modifiers**: photorealistic → `"8k, highly detailed"` | cinematic → `"anamorphic, film grain, color graded"` | portrait → `"studio lighting, bokeh, 85mm"`
+
+**Modifiers:** photorealistic → `"8k, highly detailed"` | cinematic → `"anamorphic, film grain, color graded"` | portrait → `"studio lighting, bokeh, 85mm"`
 
 ## Troubleshooting
 
