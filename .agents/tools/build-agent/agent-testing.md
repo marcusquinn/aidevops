@@ -24,16 +24,13 @@ tools:
 - **User suites**: `~/.aidevops/.agent-workspace/agent-tests/suites/`
 - **Results/Baselines**: `~/.aidevops/.agent-workspace/agent-tests/{results,baselines}/`
 - **CLI**: Auto-detects `opencode` (override with `AGENT_TEST_CLI`)
-
-**When to use**: Validate agent changes before merging, regression-test after AGENTS.md/subagent edits, compare behavior across models, smoke-test after framework updates.
+- **When to use**: Validate agent changes before merging, regression-test after AGENTS.md/subagent edits, compare behavior across models, smoke-test after framework updates.
 
 <!-- AI-CONTEXT-END -->
 
 ## Architecture
 
-Loads test suites (JSON) → sends prompts via OpenCode CLI (`opencode run --format json`) or Server HTTP API (`opencode serve`) → validates responses (`expect_contains`, `expect_not_contains`, `expect_regex`, `expect_not_regex`, `min/max_length`).
-
-Server mode: `POST /session` (create) → `POST /session/:id/message` (send) → extract text → delete session. Override with `OPENCODE_HOST`/`OPENCODE_PORT`.
+Loads test suites (JSON) → sends prompts via OpenCode CLI (`opencode run --format json`) or Server HTTP API (`opencode serve`) → validates responses. Server mode: `POST /session` (create) → `POST /session/:id/message` (send) → extract text → delete session. Override with `OPENCODE_HOST`/`OPENCODE_PORT`.
 
 ## Test Suite Format
 
@@ -83,21 +80,13 @@ Per-test fields (`agent`, `model`, `timeout`) override suite-level defaults.
 ## Commands
 
 ```bash
-# Run suites
 agent-test-helper.sh run path/to/suite.json
 agent-test-helper.sh run smoke-test              # by name (searches suites/ and .agents/tests/)
-
-# Quick single-prompt test
 agent-test-helper.sh run-one "What is your primary purpose?"
 agent-test-helper.sh run-one "List your tools" --expect "bash"
 agent-test-helper.sh run-one "Explain git workflow" --agent "Build+" --model "anthropic/claude-sonnet-4-6" --timeout 60
-
-# Before/after comparison
-agent-test-helper.sh baseline smoke-test         # 1. save current behavior
-# 2. make agent changes
-agent-test-helper.sh compare smoke-test          # 3. compare — non-zero exit on regression
-
-# Manage suites
+agent-test-helper.sh baseline smoke-test         # save current behavior before changes
+agent-test-helper.sh compare smoke-test          # compare after changes — non-zero exit on regression
 agent-test-helper.sh create my-new-tests         # create template in user suites dir
 agent-test-helper.sh list                        # list all suites (user + shipped)
 agent-test-helper.sh results [suite-name]        # view recent results
