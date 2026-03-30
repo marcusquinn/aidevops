@@ -59,22 +59,18 @@ uvx --from paddleocr-mcp paddleocr_mcp       # Zero-install via uvx
 ```python
 import paddle
 paddle.set_flags({"FLAGS_use_mkldnn": False})  # Required on Linux CPU (PaddlePaddle 3.3.0)
-from paddleocr import PaddleOCR
+from paddleocr import PaddleOCR, PPStructureV3, PaddleOCRVL
 
 # Basic OCR — use .predict() not .ocr() (3.4.0+), enable_mkldnn=False on Linux CPU
 ocr = PaddleOCR(lang='en', enable_mkldnn=False)
 for result in ocr.predict('screenshot.png'):
     for text, score in zip(result['rec_texts'], result['rec_scores']):
         print(f"{text} ({score:.2f})")
-```
 
-```python
-from paddleocr import PPStructureV3   # Table / layout
-engine = PPStructureV3()
+engine = PPStructureV3()                              # Table / layout
 result = engine.predict("document.png")
 
-from paddleocr import PaddleOCRVL    # Document understanding
-vlm = PaddleOCRVL(model_name="PaddleOCR-VL-1.5")
+vlm = PaddleOCRVL(model_name="PaddleOCR-VL-1.5")    # Document understanding
 result = vlm.predict("complex_document.png")
 ```
 
@@ -106,7 +102,7 @@ Four modes via `--ppocr_source`: `local` (offline), `aistudio` (Baidu cloud), `q
 
 ```bash
 paddleocr_mcp --pipeline OCR --ppocr_source local              # stdio (default)
-paddleocr_mcp --pipeline PaddleOCR-VL-1.5 --ppocr_source local # VL model
+paddleocr_mcp --pipeline PaddleOCR-VL-1.5 --ppocr_source local
 paddleocr_mcp --pipeline OCR --ppocr_source local --http       # HTTP transport
 paddleocr_mcp --pipeline OCR --ppocr_source self_hosted --server_url http://127.0.0.1:8080
 ```
@@ -131,7 +127,7 @@ for img in sorted(glob.glob('images/*.png')):
 
 ## Language Support
 
-Common codes: `ch` (Chinese simplified), `chinese_cht` (traditional), `en`, `fr`, `german`, `es`, `ru`, `uk`, `ar`, `fa`, `hi`, `japan`, `korean`, `th`, `vi`. Full list (100+ languages): <https://github.com/PaddlePaddle/PaddleOCR/blob/main/docs/version3.x/model_list/multi_languages.en.md>
+Common codes: `ch` (Chinese simplified), `chinese_cht` (traditional), `en`, `fr`, `german`, `es`, `ru`, `uk`, `ar`, `fa`, `hi`, `japan`, `korean`, `th`, `vi`. Full list: <https://github.com/PaddlePaddle/PaddleOCR/blob/main/docs/version3.x/model_list/multi_languages.en.md>
 
 ## Hardware & Troubleshooting
 
@@ -145,6 +141,8 @@ Common codes: `ch` (Chinese simplified), `chinese_cht` (traditional), `en`, `fr`
 
 **MCP not responding**: `paddleocr_mcp --help` or test with `echo '{"jsonrpc":"2.0","method":"initialize","params":{},"id":1}' | paddleocr_mcp --pipeline OCR --ppocr_source local`.
 
+**Platform verification**: Linux x86_64 verified 2026-03-01 (3.4.0 + PP 3.3.0 CPU) — OneDNN fix required; 42 regions from 800×600, >95% confidence. macOS Apple Silicon: CPU backend expected; MPS via PaddlePaddle 3.0+ (unverified). Linux NVIDIA GPU: install `paddlepaddle-gpu`; OneDNN workaround not needed (unverified).
+
 ## Integration
 
 ```text
@@ -153,12 +151,6 @@ PDF document     --> MinerU    --> Markdown/JSON (layout-aware)
 ```
 
 For structured JSON extraction (invoices, receipts): pass `ocr.predict()` output to ExtractThinker — see `tools/document/document-extraction.md`.
-
-## Platform Notes
-
-- **Linux x86_64**: Verified 2026-03-01 (3.4.0 + PP 3.3.0 CPU). OneDNN fix required; 42 regions from 800×600, >95% confidence.
-- **macOS Apple Silicon**: Unverified. CPU backend expected; MPS via PaddlePaddle 3.0+.
-- **Linux NVIDIA GPU**: Unverified. Install `paddlepaddle-gpu`; OneDNN workaround not needed.
 
 ## Resources
 
