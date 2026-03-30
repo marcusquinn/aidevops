@@ -13,19 +13,14 @@ tools:
   context7_*: true
 ---
 
-# Drizzle ORM - Type-Safe Database
-
-<!-- AI-CONTEXT-START -->
-
 ## Quick Reference
 
 - **Packages**: `drizzle-orm`, `drizzle-kit`, `drizzle-zod`
 - **Docs**: Context7 MCP for current documentation
 - **Key traits**: Full TS inference, SQL-like builder, zero runtime deps, auto-migrations
 
-**Schema** (`packages/db/src/schema/users.ts`):
-
 ```tsx
+// Schema — packages/db/src/schema/users.ts
 import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -36,9 +31,8 @@ export const users = pgTable("users", {
 });
 ```
 
-**CRUD**:
-
 ```tsx
+// CRUD
 import { db } from "@workspace/db";
 import { users } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
@@ -49,18 +43,16 @@ await db.update(users).set({ name: "Updated Name" }).where(eq(users.id, userId))
 await db.delete(users).where(eq(users.id, userId));
 ```
 
-**Migrations**:
-
 ```bash
+# Migrations
 pnpm db:generate   # generate migration from schema changes
 pnpm db:migrate    # apply migrations
 pnpm db:push       # push schema directly (dev only)
 pnpm db:studio     # open Drizzle Studio
 ```
 
-**Zod integration**:
-
 ```tsx
+// Zod integration
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 export const insertUserSchema = createInsertSchema(users);
 export const selectUserSchema = createSelectSchema(users);
@@ -69,8 +61,6 @@ app.post("/users", zValidator("json", insertUserSchema), async (c) =>
   c.json((await db.insert(users).values(c.req.valid("json")).returning())[0])
 );
 ```
-
-<!-- AI-CONTEXT-END -->
 
 ## Relations
 
@@ -104,13 +94,12 @@ const count = await db.select({ count: sql<number>`count(*)` }).from(users);
 ## Transactions & Connection
 
 ```tsx
-// Transaction
 await db.transaction(async (tx) => {
   const [user] = await tx.insert(users).values({ email: "test@example.com" }).returning();
   await tx.insert(posts).values({ title: "First Post", authorId: user.id });
 });
 
-// Connection (packages/db/src/server.ts)
+// Connection — packages/db/src/server.ts
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema";
