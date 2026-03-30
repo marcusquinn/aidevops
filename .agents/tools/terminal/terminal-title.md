@@ -20,7 +20,7 @@ tools:
 - **Purpose**: Sync terminal tab titles with git repo/branch via OSC escape sequences
 - **Script**: `~/.aidevops/agents/scripts/terminal-title-helper.sh`
 - **Auto-sync**: Runs automatically via `pre-edit-check.sh` when on a feature branch in a git repo
-- **Session sync**: OpenCode session names sync via `session-rename_sync_branch` tool; tab titles via the helper script
+- **Session sync**: OpenCode session titles auto-sync in `pre-edit-check.sh` (best effort by current directory) and can be forced via `session-rename_sync_branch`
 
 **Commands**:
 

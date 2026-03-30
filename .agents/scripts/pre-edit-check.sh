@@ -364,6 +364,12 @@ else
 		"$SCRIPT_DIR/terminal-title-helper.sh" sync 2>/dev/null || true
 	fi
 
+	# Sync OpenCode session title with current branch (silent, non-blocking).
+	# Only runs inside OpenCode sessions; helper resolves target session by cwd.
+	if [[ "${OPENCODE:-}" == "1" ]] && [[ -x "$SCRIPT_DIR/session-rename-helper.sh" ]]; then
+		"$SCRIPT_DIR/session-rename-helper.sh" sync-branch >/dev/null 2>&1 || true
+	fi
+
 	if [[ "$is_main_worktree" == "true" ]]; then
 		# Loop mode: auto-decide for canonical repo directory off main
 		if [[ "$LOOP_MODE" == "true" ]]; then
