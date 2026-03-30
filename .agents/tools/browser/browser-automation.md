@@ -18,9 +18,7 @@ tools:
 
 ## Tool Selection: Decision Tree
 
-Most tools run **headless by default**. Playwriter always headed (attaches to your browser).
-
-**Preferences**: fastest tool that meets requirements → ARIA snapshots over screenshots (50-200 tokens vs ~1K) → headless over headed → CLI tools for AI agents.
+Prefer: fastest tool → ARIA snapshots over screenshots (50-200 tokens vs ~1K) → headless over headed → CLI for AI agents. Playwriter is always headed (attaches to your browser).
 
 ```text
 EXTRACT?
@@ -96,7 +94,7 @@ Reproduce: `browser-benchmark.md`.
 
 ## Extensions and Password Managers
 
-**Ad blocking** — uBlock Origin in Playwright/dev-browser:
+uBlock Origin in Playwright/dev-browser:
 
 ```javascript
 const context = await chromium.launchPersistentContext('/tmp/browser-profile', {
@@ -117,15 +115,13 @@ npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222  # dev-browser
 npx chrome-devtools-mcp@latest --headless                           # own Chrome
 ```
 
-Setup: `watercrawl-helper.sh setup` | `anti-detect-helper.sh setup`
-
 ## Visual Debugging
 
 ```bash
 agent-browser screenshot /tmp/debug.png && agent-browser errors && agent-browser snapshot -i
 ```
 
-**NEVER use curl to verify frontend fixes** — server returns 200 even when React crashes client-side. Diagnosis flow: screenshot → errors/console → snapshot/URL → analyze → retry → ask user if stuck.
+**NEVER use curl to verify frontend fixes** — server returns 200 even when React crashes client-side. Diagnose: screenshot → errors/console → snapshot/URL → analyze → retry → ask user if stuck.
 
 > **Screenshot limit**: Never `fullPage: true` for AI vision — can exceed 8000px (hard-rejected). Resize: `magick screenshot.png -resize "1568x1568>" out.png`. See `prompts/build.txt`.
 
