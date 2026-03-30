@@ -3,13 +3,10 @@ description: Drizzle ORM - type-safe database queries, migrations, schema
 mode: subagent
 tools:
   read: true
-  write: true
   edit: true
-  bash: true
   glob: true
   grep: true
   webfetch: true
-  task: true
   context7_*: true
 ---
 
@@ -20,7 +17,7 @@ tools:
 - **Key traits**: Full TS inference, SQL-like builder, zero runtime deps, auto-migrations
 
 ```tsx
-// Schema — packages/db/src/schema/users.ts
+// Schema (packages/db/src/schema/users.ts)
 import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -29,9 +26,7 @@ export const users = pgTable("users", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(), // only sets on INSERT; use .$onUpdate() or DB trigger for UPDATE
 });
-```
 
-```tsx
 // CRUD
 import { db } from "@workspace/db";
 import { users } from "@workspace/db/schema";
@@ -41,17 +36,7 @@ const user = await db.select().from(users).where(eq(users.email, "test@example.c
 const newUser = await db.insert(users).values({ email: "new@example.com", name: "New User" }).returning();
 await db.update(users).set({ name: "Updated Name" }).where(eq(users.id, userId));
 await db.delete(users).where(eq(users.id, userId));
-```
 
-```bash
-# Migrations
-pnpm db:generate   # generate migration from schema changes
-pnpm db:migrate    # apply migrations
-pnpm db:push       # push schema directly (dev only)
-pnpm db:studio     # open Drizzle Studio
-```
-
-```tsx
 // Zod integration
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 export const insertUserSchema = createInsertSchema(users);
@@ -60,6 +45,14 @@ export const selectUserSchema = createSelectSchema(users);
 app.post("/users", zValidator("json", insertUserSchema), async (c) =>
   c.json((await db.insert(users).values(c.req.valid("json")).returning())[0])
 );
+```
+
+```bash
+# Migrations
+pnpm db:generate   # generate migration from schema changes
+pnpm db:migrate    # apply migrations
+pnpm db:push       # push schema directly (dev only)
+pnpm db:studio     # open Drizzle Studio
 ```
 
 ## Relations
@@ -110,13 +103,14 @@ export const db = drizzle(postgres(process.env.DATABASE_URL!), { schema });
 
 ```tsx
 async function seed() {
+  // Production guard — always include this
   if (process.env.NODE_ENV === "production" && process.env.ALLOW_DB_WIPE !== "true")
     throw new Error("Seeding disabled in production. Set ALLOW_DB_WIPE=true to override.");
   await db.transaction(async (tx) => {
-    await tx.delete(posts); // children before parents
+    await tx.delete(posts); // delete children before parents
     await tx.delete(users);
     const [user] = await tx.insert(users).values({ email: "admin@example.com", name: "Admin" }).returning();
-    await tx.insert(posts).values([{ title: "First Post", authorId: user.id }, { title: "Second Post", authorId: user.id }]);
+    await tx.insert(posts).values([{ title: "First Post", authorId: user.id }]);
   });
 }
 seed().catch((err) => { console.error(err); process.exit(1); });
