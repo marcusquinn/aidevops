@@ -3,13 +3,8 @@ description: Crawl4AI MCP server integration setup
 mode: subagent
 tools:
   read: true
-  write: true
-  edit: true
   bash: true
-  glob: true
-  grep: true
   webfetch: true
-  task: true
 ---
 
 # Crawl4AI Integration Guide
@@ -19,19 +14,19 @@ tools:
 ## Quick Reference
 
 - Install: `./.agents/scripts/crawl4ai-helper.sh install`
-- Docker setup/start: `./.agents/scripts/crawl4ai-helper.sh docker-setup && docker-start`
+- Docker: `./.agents/scripts/crawl4ai-helper.sh docker-setup && docker-start`
 - MCP setup: `./.agents/scripts/crawl4ai-helper.sh mcp-setup`
 - Crawl: `./.agents/scripts/crawl4ai-helper.sh crawl URL markdown output.json`
 - Extract: `./.agents/scripts/crawl4ai-helper.sh extract URL '{"title":"h1"}' data.json`
-- Debug: `./.agents/scripts/crawl4ai-helper.sh status` | `docker logs crawl4ai`
-- URLs: Dashboard http://localhost:11235/dashboard | Playground /playground | API :11235
+- Status: `./.agents/scripts/crawl4ai-helper.sh status` | `docker logs crawl4ai`
 - MCP tools: `crawl_url`, `crawl_multiple`, `extract_structured`, `take_screenshot`, `generate_pdf`, `execute_javascript`
 - Config: `configs/crawl4ai-config.json.txt`, `configs/mcp-templates/crawl4ai-mcp-config.json`
+- Endpoints: Dashboard http://localhost:11235/dashboard | Health `/health` | Metrics `/metrics`
 - Docs: https://docs.crawl4ai.com/ | https://github.com/unclecode/crawl4ai
 
 <!-- AI-CONTEXT-END -->
 
-## MCP Config (Claude Desktop)
+## MCP Config
 
 ```json
 {
@@ -45,41 +40,6 @@ tools:
 }
 ```
 
-## Usage
-
-```bash
-# Crawl to markdown
-./.agents/scripts/crawl4ai-helper.sh crawl https://example.com markdown output.json
-
-# CSS extraction
-./.agents/scripts/crawl4ai-helper.sh extract https://example.com '{"title":"h1","price":".price"}' data.json
-```
-
-### LLM Extraction
-
-```python
-from crawl4ai import AsyncWebCrawler, LLMExtractionStrategy, LLMConfig
-
-async with AsyncWebCrawler() as crawler:
-    result = await crawler.arun(
-        url="https://example.com",
-        extraction_strategy=LLMExtractionStrategy(
-            llm_config=LLMConfig(provider="openai/gpt-4o"),
-            instruction="Extract key information and summarize"
-        )
-    )
-```
-
-### Adaptive Crawling
-
-```python
-from crawl4ai import AdaptiveCrawler, AdaptiveConfig
-
-config = AdaptiveConfig(confidence_threshold=0.7, max_depth=5, max_pages=20, strategy="statistical")
-adaptive_crawler = AdaptiveCrawler(crawler, config)
-state = await adaptive_crawler.digest(start_url="https://news.example.com", query="latest tech news")
-```
-
 ## Configuration
 
 Environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY` from secure storage):
@@ -91,35 +51,14 @@ CRAWL4AI_TIMEOUT=60
 CRAWL4AI_DEFAULT_FORMAT=markdown
 ```
 
-### Browser / Crawler Config
+## Features
 
-```python
-from crawl4ai import BrowserConfig, CrawlerRunConfig, CacheMode
-
-browser_config = BrowserConfig(
-    headless=True,
-    viewport={"width": 1920, "height": 1080},
-    extra_args=["--disable-blink-features=AutomationControlled"]
-)
-
-crawler_config = CrawlerRunConfig(
-    cache_mode=CacheMode.ENABLED,
-    max_depth=3,
-    delay_between_requests=1.0,
-    respect_robots_txt=True
-)
-```
-
-## Monitoring
-
-- Dashboard: http://localhost:11235/dashboard (metrics, browser pool, request analytics)
-- Health: `curl http://localhost:11235/health`
-- Prometheus: `curl http://localhost:11235/metrics`
-
-## Advanced Features
-
-| Feature | Key param |
-|---------|-----------|
+| Feature | API |
+|---------|-----|
+| LLM extraction | `LLMExtractionStrategy(llm_config=LLMConfig(provider="openai/gpt-4o"), instruction="...")` |
+| Adaptive crawl | `AdaptiveCrawler(crawler, AdaptiveConfig(confidence_threshold=0.7, max_depth=5, max_pages=20))` |
+| Browser config | `BrowserConfig(headless=True, viewport={...}, extra_args=[...])` |
+| Crawler config | `CrawlerRunConfig(cache_mode=CacheMode.ENABLED, max_depth=3, delay_between_requests=1.0, respect_robots_txt=True)` |
 | Virtual scroll | `VirtualScrollConfig(container_selector, scroll_count, scroll_by)` |
 | Persistent sessions | `BrowserConfig(use_persistent_context=True, user_data_dir="/path")` |
 | Proxy | `BrowserConfig(proxy={"server": "...", "username": "...", "password": "..."})` |
