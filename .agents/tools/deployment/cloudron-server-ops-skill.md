@@ -19,21 +19,13 @@ tools:
 - **Upstream skill**: [git.cloudron.io/docs/skills](https://git.cloudron.io/docs/skills) (`cloudron-server-ops`)
 - **Install**: `sudo npm install -g cloudron` (on your PC/Mac, NOT the server)
 - **Login**: `cloudron login my.example.com` (browser-based; 9.1+ uses OIDC/passkey)
-- **CI/CD**: `--server <domain> --token <api-token> --no-wait` (token from `https://my.example.com/#/profile`); example: `cloudron update --server my.example.com --token <token> --app blog.example.com --image user/image:tag`
+- **CI/CD**: `--server <domain> --token <api-token> --no-wait` (token from `https://my.example.com/#/profile`); e.g. `cloudron update --server my.example.com --token <token> --app blog.example.com --image user/image:tag`
 - **Token stored**: `~/.cloudron.json`; self-signed TLS: add `--allow-selfsigned`
+- **App targeting**: `--app` accepts FQDN, subdomain, or app ID; auto-detected from `CloudronManifest.json`
+- **Global flags**: `--server <domain>`, `--token <token>`, `--allow-selfsigned`, `--no-wait`
 - **Also see**: `cloudron-helper.sh` for multi-server management via API
 
 <!-- AI-CONTEXT-END -->
-
-## App Targeting
-
-`--app` accepts FQDN, subdomain, or app ID. Auto-detected from `CloudronManifest.json` in the current directory.
-
-```bash
-cloudron logs --app blog.example.com   # by FQDN
-cloudron logs --app blog               # by subdomain
-cloudron logs --app 52aae895-...       # by app ID
-```
 
 ## Commands
 
@@ -148,12 +140,3 @@ cloudron open --app <app>       # open app in browser
 cloudron init                   # create CloudronManifest.json + Dockerfile
 cloudron completion             # shell completion
 ```
-
-## Global Options
-
-| Option | Purpose |
-|--------|---------|
-| `--server <domain>` | Target Cloudron server |
-| `--token <token>` | API token (CI/CD) |
-| `--allow-selfsigned` | Accept self-signed TLS |
-| `--no-wait` | Don't wait for operation to complete |
