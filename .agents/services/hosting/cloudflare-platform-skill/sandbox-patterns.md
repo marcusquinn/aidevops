@@ -1,21 +1,15 @@
 # Common Patterns
 
-All patterns use the Worker boilerplate from `sandbox.md` Quick Start. Subsequent examples show only the handler body.
+Handler-body-only examples — all use the Worker boilerplate from `sandbox.md` Quick Start.
 
-## AI Code Execution Agent
+## AI Code Execution
 
 ```typescript
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    const { code } = await request.json();
-    const sandbox = getSandbox(env.Sandbox, 'ai-agent');
-    await sandbox.writeFile('/workspace/user_code.py', code);
-    const result = await sandbox.exec('python3 /workspace/user_code.py');
-    return Response.json({
-      output: result.stdout, error: result.stderr, success: result.success
-    });
-  }
-};
+const { code } = await request.json();
+const sandbox = getSandbox(env.Sandbox, 'ai-agent');
+await sandbox.writeFile('/workspace/user_code.py', code);
+const result = await sandbox.exec('python3 /workspace/user_code.py');
+return Response.json({ output: result.stdout, error: result.stderr, success: result.success });
 ```
 
 ## Interactive Dev Environment
@@ -60,7 +54,7 @@ const result = await sandbox.exec(`${config.cmd} ${filename}`);
 return Response.json({ output: result.stdout, error: result.stderr, exitCode: result.exitCode });
 ```
 
-## Multi-Tenant Pattern
+## Multi-Tenant
 
 ```typescript
 const userId = request.headers.get('X-User-ID');
@@ -79,7 +73,7 @@ return Response.json({ output: result.stdout });
 
 **Dockerfile**: `FROM docker.io/cloudflare/sandbox:latest` + `RUN pip3 install --no-cache-dir jupyter-server ipykernel matplotlib pandas` + `EXPOSE 8888`
 
-**Worker** (interactive notebook):
+**Interactive notebook**:
 
 ```typescript
 await sandbox.startProcess('jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser', {
