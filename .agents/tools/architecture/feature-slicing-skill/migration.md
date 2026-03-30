@@ -1,23 +1,12 @@
 # Migrating to Feature-Sliced Design
 
-> **Source:** [Migration from Custom Architecture](https://feature-sliced.design/docs/guides/migration/from-custom) | [Migration from v2.0 to v2.1](https://feature-sliced.design/docs/guides/migration/from-v2-0)
+> **Source:** [Migration from Custom Architecture](https://feature-sliced.design/docs/guides/migration/from-custom) | [Migration from v2.0 to v2.1](https://feature-sliced.design/docs/guides/migration/from-v2-0) | [Community: Migrating a Legacy React Project](https://medium.com/@O5-25/migrating-a-legacy-react-project-to-feature-sliced-design-benefits-challenges-and-considerations-0aeecbc8b866)
 
 ## When to Migrate
 
 Migrate if: project too large/interconnected, new features slow, onboarding hard, circular deps common, code ownership unclear. Skip if current architecture works.
 
-## Migration Phases (Incremental)
-
-| Phase | Action |
-|-------|--------|
-| 1 | Setup FSD structure alongside existing code |
-| 2 | Migrate shared utilities |
-| 3 | Extract entities |
-| 4 | Extract features |
-| 5 | Migrate pages |
-| 6 | Clean up and enforce rules |
-
-## Phase 1: Setup
+## Phase 1: Setup (Incremental — migrate alongside existing code)
 
 ```bash
 mkdir -p src/{app,pages,widgets,features,entities,shared}/{ui,api,model,lib}
@@ -30,15 +19,6 @@ mkdir -p src/{app,pages,widgets,features,entities,shared}/{ui,api,model,lib}
 ```
 
 ## Phase 2: Migrate Shared Utilities
-
-```text
-src/utils/api.ts          → src/shared/api/client.ts
-src/utils/dates.ts        → src/shared/lib/dates.ts
-src/utils/validation.ts   → src/shared/lib/validation.ts
-src/utils/constants.ts    → src/shared/config/constants.ts
-src/hooks/*.ts            → src/shared/lib/
-src/components/*.tsx      → src/shared/ui/<Name>/<Name>.tsx
-```
 
 ```bash
 mv src/utils/api.ts src/shared/api/client.ts
@@ -176,22 +156,10 @@ export function AddToCartButton({ product }) {
 
 ## Rollback Strategy
 
-Keep old aliases active during migration; use feature flags to switch gradually.
-
-```json
-{ "paths": { "@/*": ["./src/*"], "@components/*": ["src/components/*"], "@hooks/*": ["src/hooks/*"] } }
-```
+Keep old path aliases (from Phase 1) active during migration; use feature flags to switch gradually.
 
 ```typescript
 import { UserCard as LegacyUserCard } from '@components/UserCard';
 import { UserCard as FSDUserCard } from '@/entities/user';
 export const UserCard = process.env.USE_FSD ? FSDUserCard : LegacyUserCard;
 ```
-
-## Resources
-
-| Resource | Link |
-|----------|------|
-| Migration Guide | [feature-sliced.design/docs/guides/migration](https://feature-sliced.design/docs/guides/migration/from-custom) |
-| v2.1 Changes | [Pages Come First](https://github.com/feature-sliced/documentation/releases/tag/v2.1) |
-| Community Article | [Migrating a Legacy React Project](https://medium.com/@O5-25/migrating-a-legacy-react-project-to-feature-sliced-design-benefits-challenges-and-considerations-0aeecbc8b866) |
