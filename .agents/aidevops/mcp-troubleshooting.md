@@ -12,85 +12,45 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
-## Quick Reference
-
-- **Purpose**: Diagnose and fix MCP connection failures
-- **Scripts**: `mcp-diagnose.sh`, `tool-version-check.sh`
+- **Scripts**: `mcp-diagnose.sh check-all`, `tool-version-check.sh`
 - **Common cause**: Version mismatch (outdated tool with changed MCP command)
+- **Config**: `~/.config/opencode/opencode.json`
 
 ## Common Errors
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| "Config file is invalid" | Unrecognized key in config | Remove unsupported keys (see below) |
+| "Config file is invalid" | Unsupported key (`workdir`, `cwd`, `env`) | Remove key; use `environment` instead of `env`; wrap `cwd` as `["/bin/bash", "-c", "cd /path && cmd"]` |
 | "Connection closed" | Wrong command or outdated version | Update tool, check command syntax |
 | "Command not found" | Tool not installed | `npm install -g {package}` |
 | "Permission denied" | Missing credentials | Check `~/.config/aidevops/credentials.sh` |
-| "Timeout" | Server not starting | Check Node.js version, run manually |
-| "unauthorized" | HTTP server instead of MCP | Use correct MCP command (not serve) |
-
-### Config Validation Errors
-
-If you see `Unrecognized key: "xxx"`, OpenCode doesn't support that config key.
-
-**Common unsupported keys**:
-
-- `workdir` - Not supported in OpenCode MCP config
-- `cwd` - Use shell wrapper instead: `["/bin/bash", "-c", "cd /path && command"]`
-- `env` - Use `environment` instead
-
-**Fix**: Edit `~/.config/opencode/opencode.json` and remove the unsupported key.
+| "Timeout" | Server not starting | Check Node.js version, run command manually |
+| "unauthorized" | HTTP server instead of MCP | Use correct MCP command (not `serve`) |
 
 ## Errored Servers — Dead Tool Schemas (t1682)
 
-When an MCP server fails to start, its tool schemas may still appear in the tool
-list. The agent sees the tools but every call returns "MCP error -32000: Connection
-closed". This wastes context tokens on tools that can never execute.
-
-**Detect errored servers:**
+When an MCP server fails to start, its tool schemas remain in the tool list. Every call returns "MCP error -32000: Connection closed", wasting context tokens.
 
 ```bash
+# Detect errored servers
 ~/.aidevops/agents/scripts/mcp-diagnose.sh check-all
+
+# Disable persistently errored server (removes schemas from context)
+# In ~/.config/opencode/opencode.json:
+{ "playwright": { "enabled": false } }
+# Restart runtime to reload tool list.
 ```
 
-This scans all enabled MCP servers, reports which commands are unreachable, and
-prints remediation steps (fix, disable, or remove).
-
-**Disable a persistently errored server** (removes its schemas from context):
-
-```json
-{
-  "playwright": {
-    "enabled": false
-  }
-}
-```
-
-Edit `~/.config/opencode/opencode.json` and set `"enabled": false` for the server.
-Restart your AI runtime to reload the tool list.
-
-**Agent behaviour with errored servers:** When a tool call returns
-"MCP error -32000" or "Connection closed", treat that server as unavailable for
-the rest of the session. Do not retry tools from that server. See `prompts/build.txt`
-"Errored MCP Server Guard" for the full rule.
+**Agent rule:** On "MCP error -32000" or "Connection closed", mark that server unavailable for the session — do not retry. See `prompts/build.txt` "Errored MCP Server Guard".
 
 ## Diagnostic Commands
 
 ```bash
-# Scan all enabled MCP servers for connection errors (t1682)
-~/.aidevops/agents/scripts/mcp-diagnose.sh check-all
-
-# Full diagnosis for specific MCP
-~/.aidevops/agents/scripts/mcp-diagnose.sh <mcp-name>
-
-# Check all tool versions
-~/.aidevops/agents/scripts/tool-version-check.sh
-
-# Update outdated tools
-~/.aidevops/agents/scripts/tool-version-check.sh --update
-
-# Verify MCP status in OpenCode
-opencode mcp list
+~/.aidevops/agents/scripts/mcp-diagnose.sh check-all   # scan all servers (t1682)
+~/.aidevops/agents/scripts/mcp-diagnose.sh <mcp-name>  # diagnose specific MCP
+~/.aidevops/agents/scripts/tool-version-check.sh        # check versions
+~/.aidevops/agents/scripts/tool-version-check.sh --update  # update outdated tools
+opencode mcp list                                        # verify MCP status
 ```
 
 <!-- AI-CONTEXT-END -->
@@ -108,74 +68,23 @@ opencode mcp list
 
 ### context7
 
-Context7 is a remote MCP - no local installation needed.
-
-**Correct config**:
+Remote MCP — no local installation needed.
 
 ```json
-{
-  "context7": {
-    "type": "remote",
-    "url": "https://mcp.context7.com/mcp",
-    "enabled": true
-  }
-}
+{ "context7": { "type": "remote", "url": "https://mcp.context7.com/mcp", "enabled": true } }
 ```
-
-## Diagnostic Workflow
-
-1. **Check MCP status**:
-
-   ```bash
-   opencode mcp list
-   ```
-
-2. **If "failed" or "Connection closed"**:
-
-   ```bash
-   ~/.aidevops/agents/scripts/mcp-diagnose.sh <mcp-name>
-   ```
-
-3. **Check for updates**:
-
-   ```bash
-   ~/.aidevops/agents/scripts/tool-version-check.sh
-   ```
-
-4. **Update if needed**:
-
-   ```bash
-   npm update -g <package>
-   ```
-
-5. **Re-verify**:
-
-   ```bash
-   opencode mcp list
-   ```
-
-## OpenCode Config Location
-
-- **Config file**: `~/.config/opencode/opencode.json`
-- **Tool shims**: `~/.config/opencode/tool/`
-- **Agent configs**: `~/.config/opencode/agent/`
 
 ## Manual MCP Testing
 
-Test MCP command directly (should output JSON-RPC):
+Run the MCP command directly — it should output JSON-RPC, not HTTP server info:
 
 ```bash
-# augment
-auggie --mcp
-
-# Most MCPs
-<tool> serve
+auggie --mcp   # augment
+<tool> serve   # most MCPs
 ```
 
-If it outputs HTTP server info instead of JSON-RPC, you're using the wrong command.
+## Related
 
-## Related Documentation
-
-- [add-new-mcp-to-aidevops.md](add-new-mcp-to-aidevops.md) - MCP setup workflow
-- [tools/opencode/opencode.md](../tools/opencode/opencode.md) - OpenCode configuration
-- [troubleshooting.md](troubleshooting.md) - General troubleshooting
+- [add-new-mcp-to-aidevops.md](add-new-mcp-to-aidevops.md) — MCP setup workflow
+- [tools/opencode/opencode.md](../tools/opencode/opencode.md) — OpenCode configuration
+- [troubleshooting.md](troubleshooting.md) — General troubleshooting
