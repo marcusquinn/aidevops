@@ -63,7 +63,7 @@ Iterate until emitting `<promise>TASK_COMPLETE</promise>`.
 3. Conventional commits; headless rules observed; every deferred finding has tracked task+issue (`findings-to-tasks-helper.sh create`)
 4. **Runtime testing gate (t1660.7)** — risk-appropriate verification (see below)
 5. **Commit+PR gate (GH#5317 — MANDATORY):** Commit all changes, push, ensure PR exists. Do NOT emit `TASK_COMPLETE` with uncommitted changes or no PR.
-6. **Signature footer gate (GH#12805 — MANDATORY):** PR body and issue closing comment MUST contain the `aidevops.sh` signature footer. Verify: `echo "$PR_BODY" | grep -q 'aidevops.sh'`. Missing signature = incomplete PR.
+6. **Signature footer gate (GH#12805 — MANDATORY):** PR body and issue closing comment MUST contain the `aidevops.sh` signature footer **with mode-aware provenance**. Verify signature and elapsed-time sentence are present. Missing signature or provenance text = incomplete PR.
 
 ### Runtime Testing Gate (t1660.7 — MANDATORY)
 
@@ -97,7 +97,20 @@ Changelog: `feat:` → Added, `fix:` → Fixed, `docs:`/`perf:`/`refactor:` → 
 
 **4.1 Preflight** — quality checks, auto-fixes.
 
-**4.2 PR Create** — rebase onto `origin/main`, push, create PR. Body MUST include `Closes #NNN` (MANDATORY). Add `origin:worker` or `origin:interactive` label. **Signature footer (GH#12805 — MANDATORY):** `SIG_FOOTER=$(gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL")` — append to body, verify with `gh pr view --json body -q .body | grep -q 'aidevops.sh'`; edit to add if missing.
+**4.2 PR Create** — rebase onto `origin/main`, push, create PR. Body MUST include `Closes #NNN` (MANDATORY). Add `origin:worker` or `origin:interactive` label.
+
+**Signature footer (GH#12805 — MANDATORY, mode-aware provenance):**
+- **Interactive session (human-in-the-loop):**
+  - `SIG_FOOTER=$(gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL" --issue "$REPO#$ISSUE_NUM" --session-type interactive)`
+- **Headless worker session:**
+  - `SIG_FOOTER=$(gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL" --no-session --session-type worker --elapsed "$ELAPSED")`
+- **Token handling rule:** Include token metrics only when telemetry is actually available; never fabricate token counts.
+
+Append `SIG_FOOTER` to PR body, then verify both conditions:
+- `gh pr view --json body -q .body | grep -q 'aidevops.sh'`
+- `gh pr view --json body -q .body | grep -Eq 'spent .+ (minute|minutes|hour|hours)'`
+
+If either check fails, edit PR body before continuing.
 
 **4.3 Label `status:in-review` (t1343)** — check issue is `OPEN` first. `status:done` set by `sync-on-pr-merge` — workers don't set it.
 
