@@ -12,15 +12,7 @@ mode: subagent
 
 ## Directory Structure
 
-```text
-project/
-├── schemas/          # Declarative schema (source of truth; prefix: 00, 01, 10, 20...)
-├── migrations/       # Generated migration files
-├── seeds/            # Initial/test data
-└── scripts/
-    ├── migrate.sh    # Run pending migrations
-    └── rollback.sh   # Rollback last migration
-```
+`schemas/` (source of truth, prefix: 00, 01, 10, 20…) · `migrations/` (generated) · `seeds/` (initial/test data) · `scripts/migrate.sh` + `rollback.sh`
 
 ## Tool Commands
 
