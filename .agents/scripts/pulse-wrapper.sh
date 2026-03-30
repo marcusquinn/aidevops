@@ -3600,12 +3600,14 @@ _complexity_scan_close_duplicate_issues_by_title() {
 	local issue_title="$2"
 
 	local issue_numbers=""
-	# shellcheck disable=SC2016 # jq expression expands $t, not shell
-	issue_numbers=$(gh issue list --repo "$repo_slug" \
+	if ! issue_numbers=$(T="$issue_title" gh issue list --repo "$repo_slug" \
 		--label "simplification-debt" --state open \
 		--search "in:title \"${issue_title}\"" \
 		--limit 100 --json number,title \
-		--jq --arg t "$issue_title" '[.[] | select(.title == $t) | .number] | sort | .[]' 2>/dev/null) || issue_numbers=""
+		--jq 'map(select(.title == env.T) | .number) | sort | .[]'); then
+		echo "[pulse-wrapper] Complexity scan: failed to query duplicates for title: ${issue_title}" >>"$LOGFILE"
+		return 0
+	fi
 
 	[[ -z "$issue_numbers" ]] && return 0
 
