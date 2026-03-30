@@ -13,11 +13,9 @@ model: sonnet
 
 - **Input**: Research brief (`content/research.md`) or topic + audience
 - **Output**: Story package — hook variants, narrative arc, transformation framework, angle selection
-- **Hook-first always** — every output starts with the hook, regardless of platform
-- **6-12 word constraint** on hooks — forces clarity and punch
+- **Hook-first always** — 6-12 words, forces clarity and punch
 - **Proven first, original second** — 97% proven structure, 3% unique twist
-- **One transformation per story** — before state → struggle → after state
-- **Test 5-10 hook variants** before committing to any single angle
+- **One transformation per story** — before → struggle → after
 
 <!-- AI-CONTEXT-END -->
 
@@ -27,6 +25,11 @@ model: sonnet
 2. **Takeaway** — audience thinks, feels, or does what differently?
 3. **Story** — tension, transformation, resolution present?
 4. **Protagonist** — audience, character, or brand?
+5. **Offer clarity** — value in one sentence?
+6. **Urgency** — real reason to act now?
+7. **Pain angle** — specific pain addressed?
+8. **Hook + visual alignment** — hook matches thumbnail/preview?
+9. **Test readiness** — 3+ variants for A/B?
 
 ## 7 Hook Formulas
 
@@ -41,6 +44,8 @@ model: sonnet
 | 7 | **Curiosity Gap** | "The one AI trick that changed everything" | Short-form, X, email |
 
 **Hook process**: Write 10 variants → score specificity/emotion/curiosity (1-5 each) → top 3 for A/B → archive rest.
+
+**Pattern interrupts**: Contrast ("$0 tool that beats $500/month software") · Extremes ("I analyzed 10,000 AI videos — found this") · Unexpected combos ("What chess taught me about AI prompting")
 
 ## 4-Part Script Framework
 
@@ -63,22 +68,6 @@ model: sonnet
 | **Educational** | Audience needs a skill | Blog, YouTube, podcast |
 | **Hot take** | Trending conversation | X, short-form, Reddit |
 | **Behind the scenes** | Audience wants authenticity | YouTube, podcast, social |
-
-## Campaign Audit (7-step)
-
-1. **Offer clarity** — value in one sentence?
-2. **Urgency** — real reason to act now?
-3. **Pain angle** — specific pain addressed?
-4. **Cosmetic vs life-changing** — must-have or nice-to-have?
-5. **Hook + visual alignment** — hook matches thumbnail/preview?
-6. **4 elements present** — hook, story, soft sell, visual cues?
-7. **Test readiness** — 3+ variants for A/B?
-
-## Pattern Interrupt Techniques
-
-1. **Contrast** — juxtapose unexpected elements ("$0 tool that beats $500/month software")
-2. **Extremes** — specific surprising numbers ("I analyzed 10,000 AI videos — found this")
-3. **Unexpected combos** — pair unrelated concepts ("What chess taught me about AI prompting")
 
 ## Story Package Output
 
@@ -106,7 +95,12 @@ Duration:   [15s | 30s | 60s]
 CTA:        [Viewer action]
 ```
 
-### 5-Shot Storyboard Structure
+### Duration-Based Storyboard Structure (3/5/7-8 shots)
+
+The table below is a base template — adapt shot count to duration. Suggested variations derived from this template:
+- **15s** → 3 shots (merge Hook+Before, Transformation, CTA)
+- **30s** → 5 shots (standard — use all rows as-is)
+- **60s** → 7-8 shots (split Transformation into 2-3 demo + testimonial)
 
 | Shot | Role | Duration | Purpose |
 |------|------|----------|---------|
@@ -129,17 +123,9 @@ Sounds:    [Diegetic only — no score, no stock music]
 Technical: [Negatives: subtitles, watermark, text overlays, amateur quality]
 ```
 
-### Shot Count by Duration
-
-| Duration | Shots | Adjustment |
-|----------|-------|------------|
-| 15s | 3 | Merge Hook + Before State, Transformation, CTA |
-| 30s | 5 | Standard 5-shot |
-| 60s | 7-8 | Split Transformation into 2-3 demo shots + testimonial |
-
 ### Generation Process
 
-1. Fill brief → select hook formula → generate 5 shots
+1. Fill brief → select hook formula → generate shots per duration
 2. Score 5+ hook variants (Shot 1) on specificity/emotion/curiosity
 3. Image keyframes → `content/production-image.md`; video → Sora 2 Pro (UGC) or Veo 3.1 (cinematic)
 4. Assemble; add text overlays in post (not in generation)
