@@ -14,8 +14,6 @@ tools:
 
 # Crawl4AI Usage Guide for AI Assistants
 
-<!-- AI-CONTEXT-START -->
-
 ## Quick Reference
 
 - **Helper**: `.agents/scripts/crawl4ai-helper.sh`
@@ -24,41 +22,32 @@ tools:
 - **Crawl**: `./crawl4ai-helper.sh crawl URL markdown output.json`
 - **Extract**: `./crawl4ai-helper.sh extract URL '{"title":"h1"}' data.json`
 - **MCP Tools**: `crawl_url | crawl_multiple | extract_structured | take_screenshot | generate_pdf`
-- **Dashboard**: `http://localhost:11235/dashboard`
-- **Playground**: `http://localhost:11235/playground`
 - **Output**: JSON with markdown, html, extracted_content, links, media, metadata
-- **Process results**: `jq -r '.results[0].markdown' output.json`
-
-<!-- AI-CONTEXT-END -->
+- **Config template**: `configs/crawl4ai-config.json.txt`
+- **MCP template**: `configs/mcp-templates/crawl4ai-mcp-config.json`
+- **Integration guide**: `.agents/tools/browser/crawl4ai-integration.md`
+- **Official docs**: https://docs.crawl4ai.com/
 
 ## Setup
 
-```bash
+\`\`\`bash
 ./.agents/scripts/crawl4ai-helper.sh install
 ./.agents/scripts/crawl4ai-helper.sh docker-setup
 ./.agents/scripts/crawl4ai-helper.sh docker-start
 ./.agents/scripts/crawl4ai-helper.sh mcp-setup   # MCP server for AI assistants
-```
+\`\`\`
 
 ## Core Operations
 
-### Web Crawling
-
-```bash
-# Markdown (default)
+\`\`\`bash
+# Crawl (markdown or html)
 ./.agents/scripts/crawl4ai-helper.sh crawl https://example.com markdown output.json
-
-# HTML format
 ./.agents/scripts/crawl4ai-helper.sh crawl https://example.com html output.json
-```
 
-### Structured Data Extraction
-
-```bash
-# Simple CSS selectors
+# Extract with CSS selectors
 ./.agents/scripts/crawl4ai-helper.sh extract https://example.com '{"title":"h1","content":".article"}' data.json
 
-# Nested schema
+# Extract nested schema
 ./.agents/scripts/crawl4ai-helper.sh extract https://shop.com '{
   "products": {
     "selector": ".product",
@@ -69,22 +58,19 @@ tools:
     ]
   }
 }' products.json
-```
 
-### Batch Processing
-
-```bash
+# Batch with rate limiting
 for url in "${urls[@]}"; do
     ./.agents/scripts/crawl4ai-helper.sh crawl "$url" markdown "output-$(date +%s).json"
-    sleep 2  # rate limiting
+    sleep 2
 done
-```
+\`\`\`
 
 ## AI Assistant Integration
 
 ### MCP (Claude Desktop)
 
-```json
+\`\`\`json
 {
   "mcpServers": {
     "crawl4ai": {
@@ -93,13 +79,11 @@ done
     }
   }
 }
-```
-
-MCP tools: `crawl_url`, `crawl_multiple`, `extract_structured`, `take_screenshot`, `generate_pdf`
+\`\`\`
 
 ### REST API (other assistants)
 
-```python
+\`\`\`python
 import requests
 response = requests.post("http://localhost:11235/crawl", json={
     "urls": ["https://example.com"],
@@ -108,13 +92,11 @@ response = requests.post("http://localhost:11235/crawl", json={
         "params": {"cache_mode": "bypass"}
     }
 })
-```
+\`\`\`
 
 ## Output Processing
 
-Response structure:
-
-```json
+\`\`\`json
 {
   "success": true,
   "results": [{
@@ -127,17 +109,17 @@ Response structure:
     "metadata": {}
   }]
 }
-```
+\`\`\`
 
-```bash
+\`\`\`bash
 jq -r '.results[0].markdown' output.json > content.md
 jq '.results[0].extracted_content' output.json > data.json
 jq -r '.results[0].links.internal[]' output.json
-```
+\`\`\`
 
 ## Configuration
 
-```bash
+\`\`\`bash
 # Performance (high-volume)
 export CRAWL4AI_CONCURRENT_REQUESTS=5
 export CRAWL4AI_BROWSER_POOL_SIZE=3
@@ -147,7 +129,7 @@ export CRAWL4AI_MEMORY_THRESHOLD=90
 export LLM_PROVIDER=openai/gpt-4o-mini
 export CRAWL4AI_MAX_PAGES=50
 export CRAWL4AI_TIMEOUT=60
-```
+\`\`\`
 
 ## Security
 
@@ -159,13 +141,11 @@ export CRAWL4AI_TIMEOUT=60
 
 ## Monitoring & Debugging
 
-```bash
-# Status
+\`\`\`bash
 ./.agents/scripts/crawl4ai-helper.sh status
 docker ps | grep crawl4ai
 curl -s http://localhost:11235/health | jq '.'
 
-# Logs / restart
 docker logs crawl4ai --tail 50
 ./.agents/scripts/crawl4ai-helper.sh docker-stop && ./.agents/scripts/crawl4ai-helper.sh docker-start
 
@@ -173,22 +153,14 @@ docker logs crawl4ai --tail 50
 curl -X POST http://localhost:11235/crawl \
   -H "Content-Type: application/json" \
   -d '{"urls": ["https://httpbin.org/html"]}'
-```
+\`\`\`
 
 Endpoints: `/dashboard` | `/playground` | `/schema` | `/metrics`
 
 ## Integration
 
-```bash
+\`\`\`bash
 # Crawl → PDF via pandoc
 ./.agents/scripts/crawl4ai-helper.sh crawl https://docs.com markdown docs.json
 jq -r '.results[0].markdown' docs.json | ./.agents/scripts/pandoc-helper.sh convert - pdf docs.pdf
-```
-
-## Resources
-
-- **Helper**: `.agents/scripts/crawl4ai-helper.sh`
-- **Config template**: `configs/crawl4ai-config.json.txt`
-- **MCP template**: `configs/mcp-templates/crawl4ai-mcp-config.json`
-- **Integration guide**: `.agents/tools/browser/crawl4ai-integration.md`
-- **Official docs**: https://docs.crawl4ai.com/
+\`\`\`
