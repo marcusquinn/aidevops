@@ -1,7 +1,7 @@
 ---
 name: humanise
 version: 1.0.0
-description: Remove signs of AI-generated writing. Detects and fixes inflated symbolism, promotional language, superficial -ing analyses, vague attributions, em dash overuse, rule of three, AI vocabulary, negative parallelisms, and excessive conjunctive phrases.
+description: Rewrite AI-generated text to remove the 24 common patterns that signal machine authorship.
 upstream: https://github.com/blader/humanizer
 upstream_version: 2.1.1
 mode: subagent
@@ -18,9 +18,7 @@ tools:
 
 # Humanise: Remove AI Writing Patterns
 
-Editor that removes AI-generated text patterns. Based on Wikipedia's "Signs of AI writing" (WikiProject AI Cleanup).
-
-**Task:** Identify patterns below → rewrite with natural alternatives → preserve meaning and tone → add voice.
+Scan for the patterns below, rewrite with natural alternatives, preserve meaning and tone, add voice. Based on Wikipedia's "Signs of AI writing" (WikiProject AI Cleanup).
 
 ## Personality and Soul
 
@@ -128,10 +126,10 @@ Vague upbeat endings. Replace with a specific next fact: what happens next, when
 ## Process
 
 1. Scan for all patterns above
-2. Rewrite each problematic section — specific details over vague claims, simple constructions (is/are/has), natural sentence variation
+2. Rewrite: specific details over vague claims, simple constructions (is/are/has), varied sentence rhythm
 3. Present the humanised version with an optional brief summary of changes
 
-## Full Example
+## Example
 
 **Before:**
 > The new software update serves as a testament to the company's commitment to innovation. Moreover, it provides a seamless, intuitive, and powerful user experience — ensuring that users can accomplish their goals efficiently. It's not just an update, it's a revolution in how we think about productivity. Industry experts believe this will have a lasting impact on the entire sector, highlighting the company's pivotal role in the evolving technological landscape.
