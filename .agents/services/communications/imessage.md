@@ -1,5 +1,5 @@
 ---
-description: iMessage/BlueBubbles bot integration — REST API, imsg CLI, macOS setup, access control, security, and aidevops runner dispatch
+description: iMessage/BlueBubbles bot integration — REST API, imsg CLI, macOS setup, access control, privacy, aidevops dispatch
 mode: subagent
 tools:
   read: true
@@ -30,7 +30,7 @@ tools:
 
 `iPhone/iPad/Mac → iMessage (E2E) → Apple Servers → Messages.app + BlueBubbles Server → REST API/Webhooks → Bot → aidevops dispatch`
 
-Messages.app decrypts to local SQLite → BlueBubbles detects via filesystem events → fires webhook → bot responds via REST API. imsg: send-only via AppleScript.
+Messages.app decrypts to local SQLite (`~/Library/Messages/chat.db`) → BlueBubbles detects via filesystem events → fires webhook → bot responds via REST API. imsg: send-only via AppleScript.
 
 ## BlueBubbles (Recommended)
 
@@ -69,15 +69,13 @@ curl -X POST "$BB/server/webhook" -H "Content-Type: application/json" \
 
 **Reactions**: `love` `like` `dislike` `laugh` `emphasize` `question`
 
-**Webhook events**: `new-message` · `updated-message` · `typing-indicator` · `read-receipt` · `group-name-change` · `participant-added/removed/left` · `chat-read-status-changed`
+**Webhook events**: `new-message` · `updated-message` · `typing-indicator` · `read-receipt` · `group-name-change` · `participant-added/removed/left` · `chat-read-status-changed`. Key `new-message` fields: `data.guid` · `data.text` · `data.chatGuid` · `data.handle.address` · `data.isFromMe` · `data.hasAttachments`
 
-**`new-message` fields**: `data.guid` · `data.text` · `data.chatGuid` · `data.handle.address` · `data.isFromMe` · `data.hasAttachments`
-
-**Supported**: text · attachments · tapbacks (6 types) · reply threading · edit/unsend detection · typing indicators (inbound) · read receipts · SMS fallback · group read (add/remove via AppleScript). **Not supported**: @mentions · stickers
+**Supported**: text · attachments · tapbacks (6 types) · reply threading · edit/unsend detection · typing indicators (inbound) · read receipts · SMS fallback · group management (add/remove via AppleScript). **Not supported**: @mentions · stickers
 
 ## imsg CLI (Send-Only)
 
-macOS 12+, Messages.app signed in, Accessibility permission. Use for notifications/alerts; BlueBubbles for interactive bots.
+macOS 12+, Messages.app signed in, Accessibility permission. Notifications/alerts only; use BlueBubbles for interactive bots.
 
 ```bash
 brew install steipete/tap/imsg
@@ -93,11 +91,10 @@ imsg check "+14155551234"   # Check if recipient has iMessage
 
 ```bash
 caffeinate -d &; sudo pmset -a sleep 0   # Prevent sleep
-# Auto-start Messages.app on login:
 osascript -e 'tell application "System Events" to make login item at end with properties {path:"/System/Applications/Messages.app", hidden:true}'
 ```
 
-**Keepalive** (`sh.aidevops.imessage-keepalive`):
+**Keepalive** (`sh.aidevops.imessage-keepalive`): restart Messages.app and BlueBubbles if not running.
 
 ```bash
 #!/bin/bash
@@ -119,11 +116,9 @@ check_and_restart "Messages"; check_and_restart "BlueBubbles"
 
 ## Privacy and Security
 
-**iMessage encryption**: E2E via RSA-OAEP/ECIES P-256 (iOS 13+)/PQ3 AES-256-CTR (iOS 17.4+); ECDSA P-256 signing; CKV key verification (iOS 17.2+, optional).
+**iMessage encryption**: E2E via RSA-OAEP/ECIES P-256 (iOS 13+)/PQ3 AES-256-CTR (iOS 17.4+); ECDSA P-256 signing; CKV key verification (iOS 17.2+, optional). Apple sees metadata (who, when, IP, contact graph) but not content (with ADP enabled).
 
-**Apple can see**: Metadata (who, when, IP), contact graph. **Cannot see**: Content; backups with ADP enabled.
-
-**BlueBubbles**: Reads `~/Library/Messages/chat.db`. Mac compromise = full message access. Server compromise = attacker reads/sends as bot's Apple ID.
+**BlueBubbles risk**: Mac compromise = full message access. Server compromise = attacker reads/sends as bot's Apple ID.
 
 **Recommendations**: Enable ADP · Dedicated Apple ID · Bind to localhost + Cloudflare · Rotate password · Monitor host (FileVault, firewall) · Don't store sensitive data in iMessage.
 
@@ -131,9 +126,7 @@ check_and_restart "Messages"; check_and_restart "BlueBubbles"
 
 `iMessage User → Bot (webhook handler) → aidevops Runner → AI session → response`
 
-**Bot pattern**: Listener on port 8080 → on `new-message`: verify allowlist, extract `text`+`chatGuid` → `runner-helper.sh` → reply via REST API.
-
-**Matterbridge**: Not natively supported. Bridge via BlueBubbles API → custom adapter, or via Matrix. See `matterbridge.md`.
+**Bot pattern**: Listener on port 8080 → on `new-message`: verify allowlist, extract `text`+`chatGuid` → `runner-helper.sh` → reply via REST API. **Matterbridge**: not natively supported; bridge via BlueBubbles API → custom adapter, or via Matrix (`matterbridge.md`).
 
 ## Limitations
 
