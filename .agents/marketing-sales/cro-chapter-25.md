@@ -2,7 +2,7 @@
 
 ## 25.1 Pricing Page Optimization
 
-Highest-leverage conversion point. Treat as a living experiment. Use 3-tier structure with emphasized "recommended" plan (center-stage effect + anchoring).
+Use 3-tier structure with emphasized "recommended" plan (center-stage effect + anchoring).
 
 | Variable | Options | Note |
 |----------|---------|------|
@@ -13,11 +13,9 @@ Highest-leverage conversion point. Treat as a living experiment. Use 3-tier stru
 | Price display | Remove currency symbols (Cornell: less pain); charm ($49) SMB / round ($50) enterprise | Per-user price + cost calculator; slash-through for discounts |
 | Feature tables | Show only differentiators; group by use case (Analytics/Collaboration/Security) | Progressive disclosure 5–8 + "See all" → −12–18% bounce; replace checkmarks with specifics; tooltips for SSO/RBAC |
 
----
-
 ## 25.2 Bundling and Cross-Sell
 
-Bundles increase AOV 15–35%. Psychology: one payment event, perceived value asymmetry, choice reduction.
+Bundles increase AOV 15–35% (one payment event, perceived value asymmetry, choice reduction).
 
 | Bundle type | When to use | Risk |
 |-------------|-------------|------|
@@ -32,8 +30,6 @@ Bundles increase AOV 15–35%. Psychology: one payment event, perceived value as
 | In-cart | Cart/checkout | Price <25% of cart total |
 | Post-purchase | Order confirmation | One-click add; buyer receptive (cognitive dissonance) |
 | Post-delivery | Email follow-up | Trigger on usage signals (limit hits, gated feature attempts) |
-
----
 
 ## 25.3 Retention and Expansion Revenue
 
@@ -54,8 +50,6 @@ Bundles increase AOV 15–35%. Psychology: one payment event, perceived value as
 
 **Expansion triggers:** Upgrade prompts at 80% limit (test 70/80/90%), frame as growth not restriction · Gate scale-valuable features (analytics, automation, team); test tier placement · Annual conversion at 3 months active, milestones, renewal — annual churn ~half of monthly
 
----
-
 ## 25.4 Monetization Experimentation
 
 Optimize for **RPV**, not CR alone: `LRPV = CR × Avg Transaction × (1 + Expansion Rate) × Avg Lifetime`
@@ -67,8 +61,6 @@ Optimize for **RPV**, not CR alone: `LRPV = CR × Avg Transaction × (1 + Expans
 - Ethics: never show different prices simultaneously; test sequentially or across clearly different configs
 
 **Report every test:** 30-day revenue impact · Projected 12-mo LTV · CAC impact · Qualitative signals (tickets, NPS)
-
----
 
 ## 25.5 Case Studies
 
@@ -98,8 +90,6 @@ $25/mo flat (CAC $35, 40% GM, 45% 6-mo retention) → Explorer $29 / **Enthusias
 Recovery sequence: 1h pre-filled cart → 24h FAQ+testimonials → 72h 10% discount → 7d personal outreach (>$400)
 
 **Results (90 days):** Completion 26→47% · Mobile 19→44% · High-value 18→39% · Recovery $127K/mo · AOV +19% · BNPL 23% high-ticket · B2B invoice $45K/mo · **+$312K/mo (+47%)**
-
----
 
 ## 25.6 Monetization CRO Checklist
 
