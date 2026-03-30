@@ -34,7 +34,7 @@ npx jest       # Jest alternative
 
 ## E2E Testing (Playwright)
 
-Playwright loads unpacked extensions in Chromium only (headed mode required, not Firefox):
+Playwright loads unpacked extensions in Chromium only (`headless: false` required; Firefox not supported):
 
 ```typescript
 import { test, chromium } from '@playwright/test';
@@ -44,20 +44,12 @@ test('extension popup works', async () => {
   const pathToExtension = path.resolve('.output/chrome-mv3');
   const context = await chromium.launchPersistentContext('', {
     headless: false,
-    args: [
-      `--disable-extensions-except=${pathToExtension}`,
-      `--load-extension=${pathToExtension}`,
-    ],
+    args: [`--disable-extensions-except=${pathToExtension}`, `--load-extension=${pathToExtension}`],
   });
 
-  let extensionId: string;
-  const serviceWorkers = context.serviceWorkers();
-  if (serviceWorkers.length > 0) {
-    extensionId = serviceWorkers[0].url().split('/')[2];
-  } else {
-    const sw = await context.waitForEvent('serviceworker');
-    extensionId = sw.url().split('/')[2];
-  }
+  // Extract extension ID from service worker URL
+  const sw = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker');
+  const extensionId = sw.url().split('/')[2];
 
   const popup = await context.newPage();
   await popup.goto(`chrome-extension://${extensionId}/popup.html`);
@@ -109,12 +101,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - run: npm ci
-      - run: npm run build
-      - run: npx playwright install chromium
-      - run: npm run test:e2e
+        with: { node-version: '20' }
+      - run: npm ci && npm run build
+      - run: npx playwright install chromium && npm run test:e2e
 ```
 
 ## Pre-Submission Checklist
