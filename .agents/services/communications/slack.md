@@ -33,7 +33,11 @@ slack-dispatch-helper.sh setup && slack-dispatch-helper.sh map C04ABCDEF general
 
 ## Installation
 
-https://api.slack.com/apps → **Create New App** → **From an app manifest**. Bot scopes: `app_mentions:read channels:history channels:read chat:write commands files:read files:write groups:history groups:read im:history im:read im:write reactions:read reactions:write users:read`. Enable Socket Mode, interactivity, `/ai` slash command. **Socket Mode** (recommended): no public URL, `xapp-` token, firewall-friendly. **Events API**: public URL + signing secret, for public apps at scale. Tokens: **Bot** (`xoxb-...`) OAuth & Permissions > Install to Workspace. **App-Level** (`xapp-...`) Basic Information > App-Level Tokens > `connections:write`. **Signing Secret** Basic Information > App Credentials (Events API only).
+https://api.slack.com/apps → **Create New App** → **From an app manifest**. Bot scopes: `app_mentions:read channels:history channels:read chat:write commands files:read files:write groups:history groups:read im:history im:read im:write reactions:read reactions:write users:read`. Enable Socket Mode, interactivity, `/ai` slash command.
+
+- **Socket Mode** (recommended): no public URL, `xapp-` token, firewall-friendly. App-Level Tokens > `connections:write`
+- **Events API**: public URL + signing secret, for public apps at scale. App Credentials > Signing Secret
+- **Bot token** (`xoxb-...`): OAuth & Permissions > Install to Workspace
 
 ```bash
 gopass insert aidevops/slack/bot-token && gopass insert aidevops/slack/app-token && gopass insert aidevops/slack/signing-secret
@@ -67,17 +71,16 @@ app.command("/ai", async ({ command, ack, respond }) => { await ack();
 (async () => { await app.start(); })();
 ```
 
-**Agents API (beta)** — requires `assistant` scope. Events: `assistant_thread_started`, `assistant_thread_context_changed`. Docs: https://api.slack.com/docs/apps/ai. **Access control**: Use `Set<string>` for `ALLOWED_CHANNELS` / `ALLOWED_USERS` (empty = allow all). Gate: `(!ALLOWED_CHANNELS.size || ALLOWED_CHANNELS.has(ch)) && (!ALLOWED_USERS.size || ALLOWED_USERS.has(u))`.
+**Agents API (beta)** — requires `assistant` scope. Events: `assistant_thread_started`, `assistant_thread_context_changed`. Docs: https://api.slack.com/docs/apps/ai. **Access control**: `Set<string>` for `ALLOWED_CHANNELS` / `ALLOWED_USERS` (empty = allow all); gate: `(!ALLOWED_CHANNELS.size || ALLOWED_CHANNELS.has(ch)) && (!ALLOWED_USERS.size || ALLOWED_USERS.has(u))`.
 
 ## Security
 
-**CRITICAL: Slack is among the least private mainstream messaging platforms.**
+**CRITICAL: Slack is among the least private mainstream messaging platforms. Use only where corporate oversight is expected.**
 - **No E2E encryption**: Salesforce has full access to all content — channels, DMs, files, edits, deleted messages.
-- **AI training** (Sep 2023): customer data trains ML models unless admin opts out. **Assume all messages may train AI models.**
-- **Push notifications**: Google FCM / Apple APNs — default previews visible to Google/Apple in transit. **Jurisdiction**: Salesforce, Inc., San Francisco CA — CLOUD Act, FISA §702, NSLs. EU Data Residency (Enterprise Grid) controls storage, not Salesforce personnel access.
+- **AI training** (Sep 2023): customer data trains ML models unless admin opts out. Assume all messages may train AI models.
+- **Jurisdiction**: Salesforce, Inc., San Francisco CA — CLOUD Act, FISA §702, NSLs. EU Data Residency (Enterprise Grid) controls storage, not Salesforce personnel access.
 - **Admin export**: Free/Pro = public channels only. Business+ = ALL messages, no notification. Enterprise Grid = full exports + DLP, audit logs, eDiscovery, legal holds.
-- **Token security**: `xoxb-` accesses all bot channels; `xapp-` has workspace-wide scope. Enable rotation for production; verify `X-Slack-Signature` on Events API requests.
-- **Use where corporate oversight is expected. Never for sensitive personal, legal, or confidential matters.**
+- **Token security**: `xoxb-` accesses all bot channels; `xapp-` has workspace-wide scope. Enable rotation; verify `X-Slack-Signature` on Events API requests.
 
 | | Slack | Matrix | SimpleX | Signal |
 |--|-------|--------|---------|--------|
@@ -97,7 +100,7 @@ slack-dispatch-helper.sh start --daemon | stop | status | logs [--follow]
 slack-dispatch-helper.sh test code-reviewer "Review src/auth.ts"
 ```
 
-**Runner dispatch**: `runner-helper.sh` handles headless sessions, memory isolation, entity-aware context, run logging. Entity resolution: Slack user ID → `entity_channels` → entity profile. New users via `entity-helper.sh create`; enriched via `users.info`. **Config** `~/.config/aidevops/slack-bot.json` (600 perms) — store tokens in gopass. `botPrefix` empty = `@mention`/slash commands only; set (e.g., `!ai`) for prefix triggering.
+**Runner dispatch**: `runner-helper.sh` handles headless sessions, memory isolation, entity-aware context, run logging. Entity resolution: Slack user ID → `entity_channels` → entity profile; new users via `entity-helper.sh create`. **Config** `~/.config/aidevops/slack-bot.json` (600 perms) — store tokens in gopass. `botPrefix` empty = `@mention`/slash commands only; set (e.g., `!ai`) for prefix triggering.
 
 ```json
 {
@@ -110,7 +113,7 @@ slack-dispatch-helper.sh test code-reviewer "Review src/auth.ts"
 
 ## Matterbridge + Limits
 
-Slack stanza for `matterbridge.toml`: `[slack.myworkspace]` with `Token = "xoxb-..."` and `ShowJoinPart = false`. Wire to a `[[gateway.inout]]` block. Full config: `services/communications/matterbridge.md`. **Warning**: Bridging to E2E-encrypted platforms stores messages unencrypted on Slack's servers. Inform users.
+Slack stanza for `matterbridge.toml`: `[slack.myworkspace]` with `Token = "xoxb-..."`, `ShowJoinPart = false`, wired to a `[[gateway.inout]]` block. Full config: `services/communications/matterbridge.md`. **Warning**: bridging to E2E-encrypted platforms stores messages unencrypted on Slack's servers.
 
 | Constraint | Value |
 |-----------|-------|
@@ -124,5 +127,4 @@ Slack stanza for `matterbridge.toml`: `[slack.myworkspace]` with `Token = "xoxb-
 
 - `services/communications/matrix-bot.md` | `simplex.md` | `matterbridge.md`
 - `scripts/entity-helper.sh` | `scripts/runner-helper.sh` | `tools/security/opsec.md`
-- Slack Bolt SDK: https://slack.dev/bolt-js/ | API: https://api.slack.com/ | Agents API: https://api.slack.com/docs/apps/ai
 - Privacy Policy: https://slack.com/trust/privacy/privacy-policy
