@@ -28,11 +28,11 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Pricing (March 2026)
+## Pricing
 
-Billed in Neurons ($0.011 per 1,000 Neurons). Free allocation: 10,000 Neurons/day on both Free and Paid Workers plans.
+Billed in Neurons ($0.011/1K Neurons). Free: 10K Neurons/day (Free + Paid plans).
 
-### LLM Pricing (selected models)
+### LLM Pricing
 
 | Model | $/M input | $/M output |
 |-------|-----------|------------|
@@ -64,8 +64,6 @@ Billed in Neurons ($0.011 per 1,000 Neurons). Free allocation: 10,000 Neurons/da
 
 ### Price Comparison vs Fireworks/Together
 
-Cloudflare is generally **more expensive for large models** but **competitive or cheaper for small models**:
-
 | Model | Cloudflare | Fireworks | Together |
 |-------|------------|-----------|---------|
 | GPT-OSS 120B (in/out) | $0.35/$0.75 | $0.15/$0.60 | $0.15/$0.60 |
@@ -73,19 +71,19 @@ Cloudflare is generally **more expensive for large models** but **competitive or
 | Qwen3 30B A3B (in/out) | $0.05/$0.34 | $0.15/$0.60 | $0.15/$1.50 |
 | Mistral 7B (in/out) | $0.11/$0.19 | $0.20/$0.20 | $0.20/$0.20 |
 
-Pattern: CF has cheap input but expensive output for large models. Best value for small models (<16B).
+Cheap input, expensive output for large models. Best value: small models (<16B).
 
 ## Usage
 
-### From Workers (recommended)
+### Workers Binding (recommended)
 
 ```javascript
 export default {
   async fetch(request, env) {
-    const response = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
+    const res = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
       messages: [{ role: "user", content: "Hello" }]
     });
-    return Response.json(response);
+    return Response.json(res);
   }
 };
 ```
@@ -100,40 +98,37 @@ curl https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/ai/run
 
 ### OpenAI-Compatible Endpoint
 
-See [OpenAI compat docs](https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/) for supported models and limitations.
+[Docs](https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/) — supported models and limitations.
 
 ## Capabilities
 
-**Available**: ~30 LLM models (Llama, Qwen, Mistral, DeepSeek distills, GPT-OSS, Gemma), image generation (FLUX, Stable Diffusion), STT (Whisper, Deepgram Nova), TTS (MeloTTS, Deepgram Aura), embeddings (BGE, Qwen3), reranking, classification, translation, object detection, AI Gateway (caching, rate limiting, retries, fallback, analytics), Vectorize (RAG), streaming.
+**Available**: ~30 LLMs (Llama, Qwen, Mistral, DeepSeek distills, GPT-OSS, Gemma), image gen (FLUX, SD), STT (Whisper, Deepgram Nova), TTS (MeloTTS, Deepgram Aura), embeddings (BGE, Qwen3), reranking, classification, translation, object detection, AI Gateway (caching/rate limiting/retries/fallback/analytics), Vectorize (RAG), streaming.
 
-**Not available**: fine-tuning (use Fireworks/Together), custom model uploads ([form required](https://forms.gle/axnnpGDb6xrmR31T6)), dedicated GPUs, batch inference, large frontier models (DeepSeek V3 full, GLM-5 — distills only), self-hosted, Anthropic SDK (use CF API or OpenAI-compat).
+**Not available**: fine-tuning, custom model uploads ([form](https://forms.gle/axnnpGDb6xrmR31T6)), dedicated GPUs, batch inference, large frontier models (distills only), Anthropic SDK (use CF API or OpenAI-compat).
 
-**Platform integration**: Workers AI compounds with AI Gateway (caching/rate limiting/fallback), Vectorize (RAG), Workers (pre/post-processing), KV/D1/R2 (storage), Pages (frontend).
+**Platform integration**: AI Gateway + Vectorize (RAG) + Workers (processing) + KV/D1/R2 (storage) + Pages (frontend).
 
 ## When to Use
 
 | Scenario | Recommendation |
 |----------|---------------|
-| Cloudflare-native app needing AI | Strong fit — native binding (`env.AI`) |
-| Edge inference, low latency globally | Strong fit — runs on CF network |
-| Small model inference (<16B) | Good value — competitive pricing |
-| Free experimentation | Good fit — 10K neurons/day free |
-| Large model production inference | Use Fireworks or Together instead |
-| Fine-tuning or custom models | Use Fireworks or Together instead |
-| Batch processing at scale | Use Fireworks or Together instead |
-| Privacy-critical workloads | Use NEAR AI instead |
+| CF-native app needing AI | Strong fit — native `env.AI` binding |
+| Edge inference, global low latency | Strong fit — CF network |
+| Small models (<16B) | Good value — competitive pricing |
+| Free experimentation | 10K neurons/day free |
+| Large models / fine-tuning / batch | Fireworks or Together instead |
+| Privacy-critical | NEAR AI instead |
 
 ## Security
 
-- Store credentials: `aidevops secret set CLOUDFLARE_API_TOKEN` and `aidevops secret set CLOUDFLARE_ACCOUNT_ID`
-- Never expose tokens in logs or output
-- Use Workers bindings (`env.AI`) instead of raw API calls when possible
-- AI Gateway provides rate limiting and abuse protection
+- Credentials: `aidevops secret set CLOUDFLARE_API_TOKEN` / `aidevops secret set CLOUDFLARE_ACCOUNT_ID`
+- Prefer Workers bindings (`env.AI`) over raw API calls
+- AI Gateway for rate limiting and abuse protection
 
 ## See Also
 
-- `tools/infrastructure/fireworks.md` -- managed inference + fine-tuning (more models, cheaper for large)
-- `tools/infrastructure/together.md` -- managed inference + GPU clusters
+- `tools/infrastructure/fireworks.md` -- inference + fine-tuning (cheaper for large models)
+- `tools/infrastructure/together.md` -- inference + GPU clusters
 - `tools/infrastructure/nearai.md` -- TEE-backed private inference
-- `tools/deployment/hosting-comparison.md` -- full platform comparison
-- Cloudflare platform skill: load with `/skill cloudflare-platform-skill`
+- `tools/deployment/hosting-comparison.md` -- platform comparison
+- Cloudflare platform skill: `/skill cloudflare-platform-skill`
