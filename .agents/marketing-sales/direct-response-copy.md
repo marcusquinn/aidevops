@@ -1,12 +1,10 @@
 # Direct Response Copywriting Skill
 
-Copy that drives **immediate, measurable action**: landing pages, email sequences, ad copy, sales pages/VSLs, cold outreach, pricing pages, trial/demo flows, onboarding sequences.
-
-**NOT for:** Brand awareness, content marketing, PR, or general visibility goals.
+Copy that drives **immediate, measurable action**: landing pages, email sequences, ad copy, sales pages/VSLs, cold outreach, pricing pages, trial/demo flows, onboarding sequences. **Not for:** brand awareness, content marketing, PR, or general visibility goals.
 
 ---
 
-## Mental Models (The Legends)
+## Mental Models
 
 | Legend | Core Insight |
 |--------|-------------|
@@ -41,15 +39,15 @@ Copy that drives **immediate, measurable action**: landing pages, email sequence
 
 ## Core Frameworks
 
-**AIDA** (Attention → Interest → Desire → Action): Stop the scroll (headline) → Connect to their world → Build want (after picture, value stack, social proof, objection handling) → One clear CTA with urgency and low friction.
+**AIDA** (Attention → Interest → Desire → Action): Stop the scroll → Connect to their world → Build want (after picture, value stack, social proof, objection handling) → One clear CTA with urgency and low friction.
 
-**PAS** (Problem → Agitate → Solve): Best for short-form (ads, emails, social). State problem → amplify pain → present solution.
+**PAS** (Problem → Agitate → Solve): Best for short-form (ads, emails, social).
 
 **PASTOR** (Problem, Amplify, Story, Transformation, Offer, Response): Best for longer sales pages and VSLs.
 
 **4 U's** (Headlines): **Useful** (benefit?) · **Ultra-specific** ("7 ways" > "several") · **Urgent** (why now?) · **Unique** (what's different?)
 
-**Star-Chain-Hook** (Emails): Attention-grabbing opening → Connected facts/benefits/reasons → Call to action.
+**Star-Chain-Hook** (Emails): Attention-grabbing opening → Connected facts/benefits/reasons → CTA.
 
 ---
 
@@ -57,7 +55,7 @@ Copy that drives **immediate, measurable action**: landing pages, email sequence
 
 **1. Research (50% of your time)** — Know audience: demographics + psychographics (fears, desires, beliefs, objections), what they've tried, language they use. Sources: customer interviews (gold), competitor reviews, Reddit/forums, Amazon reviews, support tickets, surveys. Document: audience profile (who, #1 problem, failed solutions, dream outcome, objections, language) + product analysis (core promise, features→benefits→outcomes, unique mechanism, proof points, competitor weaknesses).
 
-**2. Determine awareness level** — use the traffic source table above to set copy length and lead type.
+**2. Determine awareness level** — match traffic source to copy length:
 
 | Traffic Source | Likely Awareness | Copy Length |
 |----------------|------------------|-------------|
