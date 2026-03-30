@@ -1,14 +1,13 @@
 # Stream Patterns
 
-## Full-Stack Upload Flow
+## Direct Upload (Backend + Frontend)
 
-**Backend API (Next.js route)**
+**Backend API** — request signed upload URL:
 
 ```typescript
 // app/api/upload-url/route.ts
 export async function POST(req: Request) {
   const { userId, videoName } = await req.json();
-  
   const response = await fetch(
     `https://api.cloudflare.com/client/v4/accounts/${process.env.CF_ACCOUNT_ID}/stream/direct_upload`,
     {
@@ -29,7 +28,7 @@ export async function POST(req: Request) {
 }
 ```
 
-**Frontend component**
+**Frontend** — upload with progress tracking:
 
 ```tsx
 'use client';
@@ -73,7 +72,9 @@ export function VideoUploader() {
 }
 ```
 
-## Video State Management
+## Video Status Polling
+
+Poll for processing completion (max 60 attempts, 5s intervals):
 
 ```typescript
 interface VideoState {
@@ -101,6 +102,8 @@ async function waitForVideoReady(
 
 ## Webhook Handler (Workers)
 
+Receive status updates via signed webhook:
+
 ```typescript
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -120,24 +123,24 @@ export default {
 // Full verifySignature impl in gotchas.md
 ```
 
-## Live Streaming Setup
+## Live Streaming
 
-**OBS**: Server `rtmps://live.cloudflare.com:443/live/`, Stream Key from API
+**OBS**: `rtmps://live.cloudflare.com:443/live/` + Stream Key from API
 
 **FFmpeg**: `ffmpeg -re -i input.mp4 -c:v libx264 -preset veryfast -b:v 3000k -c:a aac -f flv rtmps://live.cloudflare.com:443/live/<KEY>`
 
 ## Best Practices
 
-1. **Direct Creator Uploads** — avoid proxying video through servers
-2. **requireSignedURLs** — control access to private content
-3. **Signing keys for high volume** — self-sign tokens instead of API calls
-4. **allowedOrigins** — prevent hotlinking
-5. **Webhooks over polling** — efficient status updates
-6. **Cache video metadata** — reduce API calls
-7. **maxDurationSeconds** — prevent abuse on direct uploads
-8. **Creator metadata** — enable per-user filtering/analytics
-9. **Enable recordings for live** — automatic VOD after stream ends
-10. **GraphQL analytics** — track views, watch time, geo
+- **Direct Creator Uploads** — avoid proxying video through servers
+- **requireSignedURLs** — control access to private content
+- **Signing keys for high volume** — self-sign tokens instead of API calls
+- **allowedOrigins** — prevent hotlinking
+- **Webhooks over polling** — efficient status updates
+- **Cache video metadata** — reduce API calls
+- **maxDurationSeconds** — prevent abuse on direct uploads
+- **Creator metadata** — enable per-user filtering/analytics
+- **Enable recordings for live** — automatic VOD after stream ends
+- **GraphQL analytics** — track views, watch time, geo
 
 ## Related
 
