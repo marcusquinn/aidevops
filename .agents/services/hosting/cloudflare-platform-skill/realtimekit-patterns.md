@@ -59,25 +59,9 @@ const switchCamera = async (deviceId: string) => {
 };
 ```
 
-### Chat & Custom Hook (React)
+### Custom Hook (React)
 
 ```typescript
-function ChatComponent({ meeting }) {
-  const [messages, setMessages] = useState(meeting.chat.messages);
-  const [input, setInput] = useState('');
-  useEffect(() => {
-    const handleUpdate = ({ messages }) => setMessages(messages);
-    meeting.chat.on('chatUpdate', handleUpdate);
-    return () => meeting.chat.off('chatUpdate', handleUpdate);
-  }, [meeting]);
-  const send = async () => { if (input.trim()) { await meeting.chat.sendTextMessage(input); setInput(''); } };
-  return <div>
-    <div>{messages.map((msg, i) => <div key={i}><strong>{msg.senderName}:</strong> {msg.text}</div>)}</div>
-    <input value={input} onChange={e => setInput(e.target.value)} onKeyPress={e => e.key === 'Enter' && send()} />
-    <button onClick={send}>Send</button>
-  </div>;
-}
-
 export function useMeeting(authToken: string) {
   const [meeting, setMeeting] = useState<RealtimeKitClient | null>(null);
   const [joined, setJoined] = useState(false);
@@ -93,41 +77,38 @@ export function useMeeting(authToken: string) {
   }, [authToken]);
   return { meeting, joined, participants, join: async () => meeting?.join(), leave: async () => meeting?.leave() };
 }
+
+// Chat: subscribe to updates
+meeting.chat.on('chatUpdate', ({ messages }) => setMessages(messages));
+await meeting.chat.sendTextMessage(input);
 ```
 
 ## Backend Integration
 
 ```typescript
-// Express — token generation
+// Express — token generation (server-side only, never expose token client-side)
 app.post('/api/join-meeting', async (req, res) => {
   const { meetingId, userName, presetName } = req.body;
   const response = await fetch(
     `https://api.cloudflare.com/client/v4/accounts/${process.env.ACCOUNT_ID}/realtime/kit/${process.env.APP_ID}/meetings/${meetingId}/participants`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.CLOUDFLARE_API_TOKEN}` },
-      body: JSON.stringify({ name: userName, preset_name: presetName, custom_participant_id: req.user.id })
-    }
+    { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.CLOUDFLARE_API_TOKEN}` },
+      body: JSON.stringify({ name: userName, preset_name: presetName, custom_participant_id: req.user.id }) }
   );
-  const data = await response.json();
-  res.json({ authToken: data.result.authToken });
+  res.json({ authToken: (await response.json()).result.authToken });
 });
 
 // Workers — meeting creation
-export interface Env { CLOUDFLARE_API_TOKEN: string; CLOUDFLARE_ACCOUNT_ID: string; REALTIMEKIT_APP_ID: string; }
-
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (new URL(request.url).pathname === '/api/create-meeting') {
-      return fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/realtime/kit/${env.REALTIMEKIT_APP_ID}/meetings`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${env.CLOUDFLARE_API_TOKEN}` },
-        body: JSON.stringify({ title: 'Team Meeting' })
-      });
+      return fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/realtime/kit/${env.REALTIMEKIT_APP_ID}/meetings`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${env.CLOUDFLARE_API_TOKEN}` },
+          body: JSON.stringify({ title: 'Team Meeting' }) });
     }
     return new Response('Not found', { status: 404 });
   }
 };
+// Env: { CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, REALTIMEKIT_APP_ID }
 ```
 
 ## Best Practices
