@@ -18,7 +18,7 @@ npx drizzle-kit studio     # Open database browser
 
 ### "How do I model this relationship?"
 
-```
+```text
 Relationship type?
 ├─ One-to-many (user has posts)     → FK on "many" side + relations()
 ├─ Many-to-many (posts have tags)   → Junction table + relations()
@@ -28,7 +28,7 @@ Relationship type?
 
 ### "Why is my query slow?"
 
-```
+```text
 Slow query?
 ├─ Missing index on WHERE/JOIN columns  → Add index
 ├─ N+1 queries in loop                  → Use relational queries API
@@ -39,7 +39,7 @@ Slow query?
 
 ## Directory Structure
 
-```
+```text
 src/db/
 ├── schema/
 │   ├── index.ts          # Re-export all tables
@@ -52,104 +52,32 @@ drizzle/
 drizzle.config.ts         # drizzle-kit config
 ```
 
-## Schema Patterns
+## Anti-Patterns and Performance
 
-### Basic Table with Timestamps
+| Priority | Issue | Impact | Fix |
+|----------|-------|--------|-----|
+| CRITICAL | No FK index | Full table scans on JOINs | Add index on every FK column |
+| CRITICAL | N+1 in loops | Query per row | Use `with:` relational queries |
+| HIGH | No pooling | Connection per request | Use `@neondatabase/serverless` or similar |
+| HIGH | Unanalysed slow queries | Unknown bottleneck | `EXPLAIN ANALYZE` to find missing indexes |
+| HIGH | `push` in prod | Data loss risk | Always use `generate` + `migrate` |
+| MEDIUM | Storing JSON as text | No validation, bad queries | Use `jsonb()` column type |
+| MEDIUM | No partial indexes | Oversized indexes | Partial indexes for filtered subsets |
+| MEDIUM | Random UUIDs for PKs | Poor index locality | UUIDv7 (PG18+) |
 
-```typescript
-export const users = pgTable('users', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  email: varchar('email', { length: 255 }).notNull().unique(),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-  updatedAt: timestamp('updated_at').defaultNow().notNull(),
-});
-```
-
-### Foreign Key with Index
-
-```typescript
-export const posts = pgTable('posts', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  userId: uuid('user_id').notNull().references(() => users.id),
-  title: varchar('title', { length: 255 }).notNull(),
-}, (table) => [
-  index('posts_user_id_idx').on(table.userId), // ALWAYS index FKs
-]);
-```
-
-### Relations
-
-```typescript
-export const usersRelations = relations(users, ({ many }) => ({
-  posts: many(posts),
-}));
-
-export const postsRelations = relations(posts, ({ one }) => ({
-  author: one(users, { fields: [posts.userId], references: [users.id] }),
-}));
-```
-
-## Query Patterns
-
-### Relational Query (Avoid N+1)
-
-```typescript
-// ✓ Single query with nested data
-const usersWithPosts = await db.query.users.findMany({
-  with: { posts: true },
-});
-```
-
-### Filtered Query
-
-```typescript
-const activeUsers = await db
-  .select()
-  .from(users)
-  .where(eq(users.status, 'active'));
-```
-
-### Transaction
-
-```typescript
-await db.transaction(async (tx) => {
-  const [user] = await tx.insert(users).values({ email }).returning();
-  await tx.insert(profiles).values({ userId: user.id });
-});
-```
-
-## Performance Checklist
-
-| Priority | Check | Impact |
-|----------|-------|--------|
-| CRITICAL | Index all foreign keys | Prevents full table scans on JOINs |
-| CRITICAL | Use relational queries for nested data | Avoids N+1 |
-| HIGH | Connection pooling in production | Reduces connection overhead |
-| HIGH | `EXPLAIN ANALYZE` slow queries | Identifies missing indexes |
-| MEDIUM | Partial indexes for filtered subsets | Smaller, faster indexes |
-| MEDIUM | UUIDv7 for PKs (PG18+) | Better index locality |
-
-## Anti-Patterns (CRITICAL)
-
-| Anti-Pattern | Problem | Fix |
-|--------------|---------|-----|
-| **No FK index** | Slow JOINs, full scans | Add index on every FK column |
-| **N+1 in loops** | Query per row | Use `with:` relational queries |
-| **No pooling** | Connection per request | Use `@neondatabase/serverless` or similar |
-| **`push` in prod** | Data loss risk | Always use `generate` + `migrate` |
-| **Storing JSON as text** | No validation, bad queries | Use `jsonb()` column type |
+For schema, query, and relation patterns see the chapter files below — the index file stays slim.
 
 ## Reference Documentation
 
 | File | Purpose |
 |------|---------|
-| [postgres-drizzle-skill/schema.md](postgres-drizzle-skill/schema.md) | Column types, constraints |
-| [postgres-drizzle-skill/queries.md](postgres-drizzle-skill/queries.md) | Operators, joins, aggregations |
-| [postgres-drizzle-skill/relations.md](postgres-drizzle-skill/relations.md) | One-to-many, many-to-many |
-| [postgres-drizzle-skill/migrations.md](postgres-drizzle-skill/migrations.md) | drizzle-kit workflows |
-| [postgres-drizzle-skill/postgres.md](postgres-drizzle-skill/postgres.md) | PG18 features, RLS, partitioning |
-| [postgres-drizzle-skill/performance.md](postgres-drizzle-skill/performance.md) | Indexing, optimization |
-| [postgres-drizzle-skill/cheatsheet.md](postgres-drizzle-skill/cheatsheet.md) | Quick reference |
+| [schema.md](postgres-drizzle-skill/schema.md) | Column types, constraints, table definitions |
+| [queries.md](postgres-drizzle-skill/queries.md) | Operators, joins, aggregations, transactions |
+| [relations.md](postgres-drizzle-skill/relations.md) | One-to-many, many-to-many, self-referential |
+| [migrations.md](postgres-drizzle-skill/migrations.md) | drizzle-kit workflows |
+| [postgres.md](postgres-drizzle-skill/postgres.md) | PG18 features, RLS, partitioning |
+| [performance.md](postgres-drizzle-skill/performance.md) | Indexing, pooling, caching, monitoring |
+| [cheatsheet.md](postgres-drizzle-skill/cheatsheet.md) | Quick reference |
 
 ## Resources
 
