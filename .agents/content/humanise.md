@@ -28,78 +28,76 @@ Avoiding AI patterns is half the job. Sterile, voiceless writing is as obvious a
 
 ## Pattern Reference
 
-Each entry: **trigger words** | problem | fix direction.
-
 **1. Undue Significance**
 *stands/serves as, testament, vital/crucial/pivotal, underscores importance, reflects broader, evolving landscape, key turning point*
-Puffs up importance by claiming things represent broader trends. Replace with what the thing actually does or is.
+Claims things represent broader trends. Say what the thing actually does.
 
 **2. Undue Notability**
 *independent coverage, local/national media outlets, written by a leading expert*
-Notability claims without context. Replace with a specific citation and what was actually said.
+Notability claims without context. Name the source, date, and what was said.
 
 **3. Superficial -ing Analyses**
 *highlighting/underscoring/emphasising..., ensuring..., reflecting/symbolising..., contributing to..., fostering..., showcasing...*
-Present participle phrases tacked on to add fake depth. Cut the phrase; state the fact directly.
+Participle phrases tacked on for fake depth. Cut; state the fact directly.
 
 **4. Promotional Language**
 *boasts a, vibrant, rich (figurative), profound, nestled, in the heart of, groundbreaking, renowned, breathtaking, stunning*
-Neutral tone failure. Replace with factual description: what it is, where it is, what it's known for.
+Replace with factual description: what it is, where it is, what it's known for.
 
 **5. Vague Attributions**
 *Industry reports, Observers have cited, Experts argue, Some critics argue, several sources*
-Attributes opinions to vague authorities. Name the source, date, and what they actually said.
+Name the source, date, and what they actually said.
 
 **6. Formulaic "Challenges" Sections**
 *Despite its... faces several challenges..., Despite these challenges, Future Outlook*
-Formulaic structure signals AI. Replace with specific facts: what changed, when, what was done about it.
+Replace with specifics: what changed, when, what was done about it.
 
 **7. AI Vocabulary**
 *Additionally, align with, crucial, delve, emphasising, enduring, enhance, fostering, garner, highlight (verb), interplay, intricate, key (adj), landscape (abstract), pivotal, showcase, tapestry (abstract), testament, underscore (verb), valuable, vibrant*
-Post-2023 high-frequency words that co-occur. Cut or replace with plain alternatives.
+Post-2023 high-frequency co-occurring words. Cut or use plain alternatives.
 
 **8. Copula Avoidance**
 *serves as/stands as/marks/represents [a], boasts/features/offers [a]*
-Elaborate constructions substituted for simple "is/are/has". Use the simple form.
+Elaborate substitutes for "is/are/has". Use the simple form.
 
 **9. Negative Parallelisms**
 *Not only...but..., It's not just about..., it's..., It's not merely...*
 Overused rhetorical structure. Collapse into a direct statement.
 
 **10. Rule of Three**
-Ideas forced into groups of three to appear comprehensive. Use as many items as actually exist.
+Ideas forced into groups of three. Use as many items as actually exist.
 
 **11. Elegant Variation**
-Repetition-penalty causes excessive synonym substitution (protagonist → main character → central figure → hero). Pick one term and use it consistently.
+Repetition-penalty causes excessive synonym substitution (protagonist → main character → central figure → hero). Pick one term; use it consistently.
 
 **12. False Ranges**
-"From X to Y" where X and Y aren't on a meaningful scale. List the actual items instead.
+"From X to Y" where X and Y aren't on a meaningful scale. List the actual items.
 
 **13. Em Dash Overuse**
-LLMs use em dashes more than humans. Replace with commas, parentheses, or full stops.
+LLMs use em dashes more than humans. Use commas, parentheses, or full stops.
 
 **14. Overuse of Boldface**
-Phrases emphasised mechanically. Remove bold from inline terms; reserve for genuinely critical warnings.
+Mechanical emphasis. Reserve bold for genuinely critical warnings.
 
 **15. Inline-Header Lists**
-Lists where items start with **Bolded Header:** text. Rewrite as prose or plain list items.
+Items starting with **Bolded Header:** text. Rewrite as prose or plain list items.
 
 **16. Title Case in Headings**
-All main words capitalised. Use sentence case: only first word and proper nouns.
+Use sentence case: only first word and proper nouns.
 
 **17. Emojis**
-Headings or bullet points decorated with emojis. Remove unless the context is explicitly casual/social.
+Remove from headings and bullets unless the context is explicitly casual/social.
 
 **18. Curly Quotation Marks**
-ChatGPT uses curly quotes ("example") instead of straight quotes ("example"). Normalise to straight.
+ChatGPT uses curly quotes ("example") instead of straight ("example"). Normalise to straight.
 
 **19. Collaborative Artifacts**
 *I hope this helps, Of course!, Certainly!, You're absolutely right!, Would you like..., let me know, here is a...*
-Chatbot correspondence pasted as content. Strip the framing; start with the actual information.
+Chatbot framing pasted as content. Strip; start with the actual information.
 
 **20. Knowledge-Cutoff Disclaimers**
 *as of [date], Up to my last training update, While specific details are limited..., based on available information...*
-Strip the disclaimer; state what is actually known with a source.
+Strip. State what is known with a source.
 
 **21. Sycophantic Tone**
 *Great question!, You're absolutely right!, That's an excellent point*
@@ -109,13 +107,11 @@ Remove entirely. Start with the substantive response.
 - "In order to achieve this goal" → "To achieve this"
 - "Due to the fact that it was raining" → "Because it was raining"
 - "At this point in time" → "Now"
-- "In the event that you need help" → "If you need help"
 - "The system has the ability to process" → "The system can process"
-- "It is important to note that the data shows" → "The data shows"
 
 **23. Excessive Hedging**
 *could potentially possibly be argued, might have some effect*
-Over-qualifying statements. Use the weakest hedge that's accurate: "may", "likely", "suggests".
+Over-qualifying. Use the weakest accurate hedge: "may", "likely", "suggests".
 
 **24. Generic Positive Conclusions**
 *The future looks bright, Exciting times lie ahead, continue their journey toward excellence*
