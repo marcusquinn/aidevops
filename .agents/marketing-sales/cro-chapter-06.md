@@ -14,24 +14,14 @@
 
 **Effective traits:** Specific (metrics, not vague praise), Credible (full name, photo, title, company, logo, timestamp), Relevant (segmented by industry/use case), Outcome-focused (Problem → Solution → Result), Emotional, Objection-busting ("Too expensive" → "Paid for itself in month 1").
 
-**Collection timing:** After successful outcome, positive support interaction, milestone, referral, or renewal.
-
-**6 questions for strong testimonials:**
-1. What was your biggest challenge before?
-2. How did the product solve it?
-3. What specific results have you seen? (quantify)
-4. What surprised you most?
-5. What would you tell someone considering it?
-6. What nearly prevented purchase, and what changed your mind?
+**Collection timing:** After successful outcome, positive support interaction, milestone, referral, or renewal. **6 questions:** (1) Biggest challenge before? (2) How did product solve it? (3) Specific results? (quantify) (4) What surprised you? (5) What would you tell someone considering it? (6) What nearly prevented purchase, and what changed your mind?
 
 ```text
 [Photo]  "Specific result with metrics and emotional impact."
           — Full Name, Title at Company  [Logo]
 ```
 
-Short-form: `★★★★★ "Specific outcome" — First Name L., Industry`
-
-Video: 60-90s, name/company → results → captions. Carousel: 5-7s auto-rotate, pause on hover, 3-5 max.
+Short-form: `★★★★★ "Specific outcome" — First Name L., Industry` Video: 60-90s, name/company → results → captions. Carousel: 5-7s auto-rotate, pause on hover, 3-5 max.
 
 **Placement:** Homepage: 2-3 strong + logo bar. Product: 3-5 near description, ratings at top. Pricing: ROI-focused near hesitation points. Checkout: brief, trust badges, minimal. Landing: multiple throughout, strongest near CTA, video above fold.
 
@@ -42,13 +32,10 @@ Video: 60-90s, name/company → results → captions. Carousel: 5-7s auto-rotate
 **Implementation:** Display above fold with aggregate rating + distribution bar; enable filtering (rating/verified/date/helpfulness); add `✓ Verified Purchase` badges; respond to all reviews; encourage photo/video; request 7-14 days post-delivery (physical) or after outcome (digital).
 
 ```text
-[Product Name]  ★★★★☆ 4.6 (2,847 reviews)     ← Top of page
-★★★★☆ 4.6 out of 5 — Based on 2,847 reviews
-5★: 68%  ████████████████████░░░░░
-4★: 22%  ████████░░░░░░░░░░░░░░░░░
+[Product Name]  ★★★★☆ 4.6 (2,847 reviews)
+5★: 68%  ████████████████████░░░░░   2★:  2%  ░░░░░░░░░░░░░░░░░░░░░░░░░
+4★: 22%  ████████░░░░░░░░░░░░░░░░░   1★:  2%  ░░░░░░░░░░░░░░░░░░░░░░░░░
 3★:  6%  ██░░░░░░░░░░░░░░░░░░░░░░░
-2★:  2%  ░░░░░░░░░░░░░░░░░░░░░░░░░
-1★:  2%  ░░░░░░░░░░░░░░░░░░░░░░░░░
 ```
 
 **Negative reviews:** Thank → Apologize → Explain → Fix → Offer resolution → Take offline. Don't: get defensive, argue, delete (unless fraudulent), give generic responses.
@@ -59,9 +46,7 @@ Video: 60-90s, name/company → results → captions. Carousel: 5-7s auto-rotate
 
 **Best for:** B2B, high-consideration purchases, complex solutions, enterprise sales.
 
-**Format 1 — PSR:** Customer Background → Challenge → Solution → Results (quantified) → Looking Forward.
-
-**Format 2 — Story Arc:** Hook (lead with best result) → Situation → Turning Point → Journey → Success → Lesson.
+**Format 1 — PSR:** Customer Background → Challenge → Solution → Results (quantified) → Looking Forward. **Format 2 — Story Arc:** Hook (lead with best result) → Situation → Turning Point → Journey → Success → Lesson.
 
 **Best practices:** Always quantify ("Reduced processing from 4h to 45min, enabling 3x more orders"). Include before/after, direct quotes, charts/screenshots/logos, industry-specific details. Repurpose into: PDF, web page, one-pager, video, slide deck, blog, social, email nurture.
 
@@ -71,17 +56,12 @@ Video: 60-90s, name/company → results → captions. Carousel: 5-7s auto-rotate
 
 ## Numbers and Statistics
 
-**Customer counts:** Active users, companies served, geographic reach, tenure ("Trusted 20+ years"), growth rate, category ranking.
+**Customer counts:** Active users, companies served, geographic reach, tenure ("Trusted 20+ years"), growth rate, category ranking. Make relatable: comparisons, breakdowns ("100 new customers/hour"), animated count-up (CountUp.js), growth charts.
 
 ```text
-2M+            500K+           $1B+
-Active Users   Companies       Revenue Powered
-
-150+           99.99%          24/7
-Countries      Uptime          Support
+2M+            500K+           $1B+          150+       99.99%    24/7
+Active Users   Companies       Revenue       Countries  Uptime    Support
 ```
-
-**Make numbers relatable:** comparisons, breakdowns ("100 new customers/hour"), animated count-up (CountUp.js), growth charts.
 
 **Performance stats:** Conversion ("27% increase"), satisfaction ("NPS 72"), usage ("4.3 logins/day"), business impact ("45% larger deal size"). Always cite source, methodology (sample size, date range), and context vs. industry average.
 
@@ -99,21 +79,15 @@ Countries      Uptime          Support
 
 ## Logos: Media and Customer
 
-**Media:** 5-8 recognizable publications, link to actual articles. "As Featured In" / "In the News."
-
-**Customer (B2B):** Prioritize recognizable brands (Fortune 500, industry leaders, competitors of prospects for FOMO), relevant (same industry/size/geography), diverse mix. Display: grid, auto-scrolling ticker, or case study integration (logo + metrics + link). Specs: high-res 2x retina, consistent sizing, transparent background, grayscale often cleaner. Get written permission. Dynamic display: show different logos based on visitor industry, company size, location, or referral source.
+**Media:** 5-8 recognizable publications, link to actual articles. "As Featured In" / "In the News." **Customer (B2B):** Prioritize recognizable brands (Fortune 500, industry leaders, competitors of prospects for FOMO), relevant (same industry/size/geography), diverse mix. Display: grid, auto-scrolling ticker, or case study integration (logo + metrics + link). Specs: high-res 2x retina, consistent sizing, transparent background, grayscale often cleaner. Get written permission. Dynamic display: show different logos based on visitor industry, company size, location, or referral source.
 
 ## User-Generated Content (UGC)
 
-**Types:** Customer photos, social posts (Instagram, TikTok, Twitter), community content (Reddit, forums), video reviews/tutorials.
-
-**Sourcing:** Branded hashtag campaigns, photo reviews with loyalty incentives, social listening + permission requests, "Share Your Story" page, contests. Also: Instagram feed integration, dedicated gallery, email newsletters, social proof popups ("[Name] from [City] just purchased [Product]").
+**Types:** Customer photos, social posts (Instagram, TikTok, Twitter), community content (Reddit, forums), video reviews/tutorials. **Sourcing:** Branded hashtag campaigns, photo reviews with loyalty incentives, social listening + permission requests, "Share Your Story" page, contests. Also: Instagram feed integration, dedicated gallery, email newsletters, social proof popups ("[Name] from [City] just purchased [Product]").
 
 ```text
 Real Customers, Real Results
-[Photo 1]     [Photo 2]     [Photo 3]
-@username      @username      @username
-"Brief quote"  "Brief quote"  "Brief quote"
+[Photo 1] @username "Brief quote"   [Photo 2] @username "Brief quote"   [Photo 3] @username "Brief quote"
 ```
 
 ## Implementation Roadmap
@@ -126,15 +100,11 @@ Real Customers, Real Results
 | 1-3 months | 2-3 case studies, customer logos (with permission), UGC collection |
 | 3-6 months | Video testimonials, industry-specific case studies, success metrics |
 
-**A/B test:** Presence (none vs. added), type (testimonials vs. logos vs. stats), quantity (1 vs. 3 vs. 5+), placement (above/below fold), format (text vs. video vs. combined).
-
-**Maintenance:** Refresh testimonials quarterly, customer count monthly, verify badge validity, remove outdated content, check broken links.
+**A/B test:** Presence (none vs. added), type (testimonials vs. logos vs. stats), quantity (1 vs. 3 vs. 5+), placement (above/below fold), format (text vs. video vs. combined). **Maintenance:** Refresh testimonials quarterly, customer count monthly, verify badge validity, remove outdated content, check broken links.
 
 ## Advanced Tactics
 
-**Real-time notifications:** "[Name] from [City] just purchased [Product]" / "[X] people viewing now" / "Only [X] left." Tools: Proof Pulse, FOMO, TrustPulse, UseProof. Rules: real data only, limit frequency, dismissible, A/B test.
-
-**Personalization:** Match social proof to visitor attributes (industry, company size, use case, geography) via IP geo-targeting, URL parameters, cookie/session data, CRM integration.
+**Real-time notifications:** "[Name] from [City] just purchased [Product]" / "[X] people viewing now" / "Only [X] left." Tools: Proof Pulse, FOMO, TrustPulse, UseProof. Rules: real data only, limit frequency, dismissible, A/B test. **Personalization:** Match social proof to visitor attributes (industry, company size, use case, geography) via IP geo-targeting, URL parameters, cookie/session data, CRM integration.
 
 **Aggregate display:**
 
@@ -143,8 +113,7 @@ Trusted by 50,000+ Businesses Worldwide
 ★★★★★ 4.8/5 (2,847 reviews on G2)
 Featured in: [TechCrunch] [Forbes] [WSJ]
 [Customer Logo Grid]
-"This platform increased our revenue by $2.3M in 6 months"
-— CEO, Enterprise Customer  [Full Case Study →]
+"This platform increased our revenue by $2.3M in 6 months" — CEO, Enterprise Customer  [Full Case Study →]
 ```
 
 ## Psychology
@@ -155,23 +124,15 @@ Featured in: [TechCrunch] [Forbes] [WSJ]
 
 ## Measurement
 
-**Engagement:** Time on page, scroll depth, case study click-through, video play/completion rate.
+**Engagement:** Time on page, scroll depth, case study click-through, video play/completion rate. **Conversion:** Rate with/without social proof, by type, revenue per visitor, add-to-cart rate, form completion.
 
-**Conversion:** Rate with/without social proof, by type, revenue per visitor, add-to-cart rate, form completion.
-
-**Segment:** New vs. returning, paid vs. organic, device, geography. Cold traffic responds strongly; warm less so. High-ticket → detailed case studies; low-ticket → simple star ratings.
-
-**Qualitative:** User testing, post-purchase surveys ("What convinced you?"), session recordings.
+**Segment:** New vs. returning, paid vs. organic, device, geography. Cold traffic responds strongly; warm less so. High-ticket → detailed case studies; low-ticket → simple star ratings. **Qualitative:** User testing, post-purchase surveys ("What convinced you?"), session recordings.
 
 ## Legal and Ethics
 
-**Never fake:** No fabricated testimonials, manipulated statistics, stock photos as customers, inflated numbers. Consequences: FTC enforcement, legal liability, platform penalties, reputation damage.
+**Never fake:** No fabricated testimonials, manipulated statistics, stock photos as customers, inflated numbers. Consequences: FTC enforcement, legal liability, platform penalties, reputation damage. **Permissions:** Written consent for testimonials/logos; disclose compensation; follow platform ToS; credit UGC creators.
 
-**Permissions:** Written consent for testimonials/logos; disclose compensation; follow platform ToS; credit UGC creators.
-
-**FTC (U.S.):** Disclose connections and incentives; substantiate claims. Example: "[Customer] received a discount in exchange for this review."
-
-**GDPR (EU):** Consent required, honor removal requests, anonymize where possible.
+**FTC (U.S.):** Disclose connections and incentives; substantiate claims. Example: "[Customer] received a discount in exchange for this review." **GDPR (EU):** Consent required, honor removal requests, anonymize where possible.
 
 ## Troubleshooting
 
