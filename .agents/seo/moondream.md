@@ -28,56 +28,23 @@ tools:
 
 ## API Reference
 
-Base: `https://api.moondream.ai/v1/`. All endpoints POST JSON.
+All endpoints: POST JSON to `https://api.moondream.ai/v1/{endpoint}`. Headers: `Content-Type: application/json`, `X-Moondream-Auth: $MOONDREAM_API_KEY`. Image input: URL (`"image_url": "https://..."`), Base64 (`"image_url": "data:image/jpeg;base64,..."`), local file (SDK only).
 
-**Headers**: `Content-Type: application/json`, `X-Moondream-Auth: $MOONDREAM_API_KEY`
-
-**Image input**: URL (`"image_url": "https://..."`), Base64 (`"image_url": "data:image/jpeg;base64,..."`), local file (SDK only: `Image.open("path")`).
-
-### Endpoints
-
-#### `/caption` — Image descriptions (SEO alt text)
-
-Lengths: `"short"`, `"normal"`, `"long"`.
+| Endpoint | Purpose | Key params | Response |
+|----------|---------|------------|----------|
+| `/caption` | Image descriptions (SEO alt text) | `length`: `"short"`, `"normal"`, `"long"` | `{"caption": "...", "metrics": {...}}` |
+| `/query` | Visual QA (keywords, filenames, tags) | `question`: free-text | `{"answer": "..."}` |
+| `/detect` | Object detection (bounding boxes) | `object`: target label | `{"objects": [{"x_min", "y_min", "x_max", "y_max"}]}` |
+| `/point` | Object center coordinates | `object`: target label | Center point per matched object |
+| `/segment` | SVG path masks (background removal) | `object`: target label | SVG path masks |
 
 ```bash
+# Example: caption endpoint (other endpoints follow same pattern)
 curl -X POST https://api.moondream.ai/v1/caption \
   -H 'Content-Type: application/json' \
   -H "X-Moondream-Auth: $MOONDREAM_API_KEY" \
   -d '{"image_url": "https://example.com/image.jpg", "length": "normal", "stream": false}'
 ```
-
-Response: `{"caption": "...", "metrics": {"input_tokens": 735, "output_tokens": 45, "prefill_time_ms": 43.5, "decode_time_ms": 415.3}, "finish_reason": "stop"}`
-
-#### `/query` — Visual question answering (keyword extraction, filename suggestions, tags)
-
-```bash
-curl -X POST https://api.moondream.ai/v1/query \
-  -H 'Content-Type: application/json' \
-  -H "X-Moondream-Auth: $MOONDREAM_API_KEY" \
-  -d '{"image_url": "https://example.com/image.jpg", "question": "What objects, colors, and activities are shown?"}'
-```
-
-Response: `{"request_id": "...", "answer": "..."}`
-
-#### `/detect` — Object detection (bounding boxes)
-
-```bash
-curl -X POST https://api.moondream.ai/v1/detect \
-  -H 'Content-Type: application/json' \
-  -H "X-Moondream-Auth: $MOONDREAM_API_KEY" \
-  -d '{"image_url": "https://example.com/image.jpg", "object": "dog"}'
-```
-
-Response: `{"objects": [{"x_min": 0.2, "y_min": 0.3, "x_max": 0.6, "y_max": 0.8}]}`
-
-#### `/point` — Object center coordinates
-
-Same format as `/detect`. Returns center point per matched object.
-
-#### `/segment` — SVG path masks
-
-Same format as `/detect`. Returns SVG path masks (useful for background removal).
 
 ## SEO Prompt Templates (`/query` endpoint)
 
@@ -95,7 +62,7 @@ Same format as `/detect`. Returns SVG path masks (useful for background removal)
 import moondream as md
 from PIL import Image
 
-model = md.vl(api_key="YOUR_API_KEY")
+model = md.vl(api_key="YOUR_API_KEY")  # Local: md.vl(api_url="http://localhost:2020")
 image = Image.open("product.jpg")
 
 caption = model.caption(image, length="normal")["caption"]
@@ -116,13 +83,7 @@ const caption = (await model.caption({ image, length: 'normal' })).caption;
 const answer = (await model.query({ image, question: 'List 5-10 SEO tags, comma-separated' })).answer;
 ```
 
-### Local inference (no API key)
-
-```python
-model = md.vl(api_url="http://localhost:2020")  # Moondream Station
-```
-
-## Rate Limits & Benchmarks (Moondream 3 Preview)
+## Rate Limits & Benchmarks
 
 **Rate limits**: Free 2 RPS ($5/mo free credits), Paid 10+ RPS (pay-as-you-go).
 
