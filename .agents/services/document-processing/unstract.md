@@ -22,33 +22,28 @@ mcp:
 
 - **Purpose**: Extract structured data from unstructured documents (PDFs, images, DOCX, etc.)
 - **MCP Server**: `unstract/mcp-server` (Docker) or `@unstract/mcp-server` (npx)
-- **Tool**: `unstract_tool` - submits files to Unstract API, polls for completion, returns structured JSON
+- **Tool**: `unstract_tool` — submit file to Unstract API, poll for completion, return structured JSON
 - **Credentials**: `UNSTRACT_API_KEY` + `API_BASE_URL` in `~/.config/aidevops/credentials.sh` (chmod 600)
 - **Docs**: https://docs.unstract.com/unstract/unstract_platform/mcp/unstract_platform_mcp_server/
 - **GitHub**: https://github.com/Zipstack/unstract
-- **On-demand loading**: MCP disabled globally; enabled per-agent when document extraction is needed
+- **Loading**: MCP disabled globally; enabled per-agent when document extraction needed
 - **Trigger keywords**: document, extract, parse, invoice, statement, PDF, OCR, unstructured
 
 <!-- AI-CONTEXT-END -->
 
 ## Supported File Types
 
-| Category | Formats |
-|----------|---------|
-| Documents | PDF, DOCX, DOC, ODT, TXT, CSV, JSON |
-| Spreadsheets | XLSX, XLS, ODS |
-| Presentations | PPTX, PPT, ODP |
-| Images | PNG, JPG, JPEG, TIFF, BMP, GIF, WEBP |
+- **Documents**: PDF, DOCX, DOC, ODT, TXT, CSV, JSON
+- **Spreadsheets**: XLSX, XLS, ODS
+- **Presentations**: PPTX, PPT, ODP
+- **Images**: PNG, JPG, JPEG, TIFF, BMP, GIF, WEBP
 
-## MCP Tool
-
-### `unstract_tool`
-
-Submits a file to the Unstract API, polls for completion, and returns structured extraction results.
+## MCP Tool: `unstract_tool`
 
 **Parameters**:
-- `file_path` (required): Path to the document to process
-- `include_metadata` (optional): Include extraction metadata in response
+
+- `file_path` (required): Path to document
+- `include_metadata` (optional): Include extraction metadata
 - `include_metrics` (optional): Include processing metrics (tokens, cost)
 
 **Example prompt**: "Process the document /tmp/invoice.pdf"
@@ -58,15 +53,15 @@ Submits a file to the Unstract API, polls for completion, and returns structured
 ### Option A: Cloud (Quick Start)
 
 1. Sign up at https://unstract.com/start-for-free/ (14-day free trial)
-2. Create a Prompt Studio project, define extraction schema, deploy as API endpoint
-3. Store credentials (preferred: `~/.aidevops/agents/scripts/setup-local-api-keys.sh`; or manually in `~/.config/aidevops/credentials.sh` chmod 600):
+2. Create Prompt Studio project, define extraction schema, deploy as API endpoint
+3. Store credentials (preferred: `setup-local-api-keys.sh`; or manually in `credentials.sh`):
 
 ```bash
 export UNSTRACT_API_KEY="your_api_key_here"
 export API_BASE_URL="https://us-central.unstract.com/deployment/api/your-deployment-id/"
 ```
 
-### Option B: Self-Hosted (Local) - Recommended
+### Option B: Self-Hosted (Recommended)
 
 Requires Docker, 8GB RAM. Full data privacy — no documents leave your machine.
 
@@ -75,7 +70,7 @@ Requires Docker, 8GB RAM. Full data privacy — no documents leave your machine.
 # Or: ~/.aidevops/agents/scripts/setup-mcp-integrations.sh unstract
 ```
 
-Clones to `~/.aidevops/unstract/`, disables analytics, starts Docker Compose. Visit http://frontend.unstract.localhost (login: unstract/unstract)
+Clones to `~/.aidevops/unstract/`, disables analytics, starts Docker Compose. Visit http://frontend.unstract.localhost (login: unstract/unstract).
 
 **Management:**
 
@@ -83,18 +78,18 @@ Clones to `~/.aidevops/unstract/`, disables analytics, starts Docker Compose. Vi
 ~/.aidevops/agents/scripts/unstract-helper.sh start|stop|status|logs|configure-llm|uninstall
 ```
 
-Set credentials pointing at local instance (preferred: `~/.aidevops/agents/scripts/setup-local-api-keys.sh`; or manually):
+Set credentials for local instance (preferred: `setup-local-api-keys.sh`; or manually):
 
 ```bash
 export UNSTRACT_API_KEY="your_api_key_here"
 export API_BASE_URL="http://backend.unstract.localhost/deployment/api/your-id/"
 ```
 
-**Note**: The MCP expects `API_BASE_URL` (not prefixed). This matches the official Unstract spec.
+MCP expects `API_BASE_URL` (not prefixed) — matches official Unstract spec.
 
 ### LLM Adapters (Self-Hosted)
 
-Add existing API keys as adapters in Unstract UI (Settings > Adapters). Run `~/.aidevops/agents/scripts/unstract-helper.sh configure-llm` to see configured keys.
+Add API keys as adapters in Unstract UI (Settings > Adapters). Run `unstract-helper.sh configure-llm` to see configured keys.
 
 | Your Key | Unstract Adapter |
 |----------|-----------------|
@@ -107,9 +102,9 @@ Add existing API keys as adapters in Unstract UI (Settings > Adapters). Run `~/.
 
 For fully local/offline operation, use **Ollama** — no cloud API keys needed.
 
-### OpenCode / Claude Desktop Configuration
+### Runtime Configuration
 
-- **OpenCode**: See `configs/mcp-templates/unstract.json` (on-demand, disabled globally)
+- **Claude Code / OpenCode**: See `configs/mcp-templates/unstract.json` (on-demand, disabled globally)
 - **Claude Desktop** (Docker):
 
 ```json
@@ -137,12 +132,12 @@ For fully local/offline operation, use **Ollama** — no cloud API keys needed.
 - **KYC/onboarding**: Parse identity documents and application forms
 - **Contract analysis**: Extract key terms, dates, parties from legal documents
 
-## Analytics / Telemetry
+## Telemetry
 
-The `unstract/mcp-server` Docker image has no telemetry. For self-hosted, disable frontend analytics: set `REACT_APP_ENABLE_POSTHOG=false` in `frontend/.env`. The cloud API may collect server-side usage metrics — use self-hosted if this is a concern.
+`unstract/mcp-server` Docker image: no telemetry. Self-hosted: set `REACT_APP_ENABLE_POSTHOG=false` in `frontend/.env`. Cloud API may collect server-side metrics — use self-hosted if concerned.
 
 ## Related
 
-- `tools/context/mcp-discovery.md` - On-demand MCP loading pattern
-- `.agents/aidevops/mcp-integrations.md` - All MCP integrations
-- `configs/mcp-templates/unstract.json` - OpenCode config template
+- `tools/context/mcp-discovery.md` — on-demand MCP loading pattern
+- `.agents/aidevops/mcp-integrations.md` — all MCP integrations
+- `configs/mcp-templates/unstract.json` — config template
