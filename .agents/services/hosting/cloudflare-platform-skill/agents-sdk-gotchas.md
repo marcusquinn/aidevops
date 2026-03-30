@@ -1,57 +1,9 @@
 # Gotchas & Best Practices
 
-## State
+## Security first
 
-DO: `setState()` (auto-syncs), serializable, limit size | DON'T: Mutate directly, large objects (SQL), functions/circular
-
-```ts
-// ❌ this.state.count++ | ✅ this.setState({...this.state, count: this.state.count + 1})
-```
-
-## SQL
-
-DO: Parameterized, create in `onStart()`, types | DON'T: Direct interpolation, assume exists
-
-```ts
-// ❌ this.sql`...WHERE id = '${userId}'` | ✅ this.sql`...WHERE id = ${userId}`
-```
-
-## WebSocket
-
-DO: `conn.accept()`, errors, cleanup | DON'T: Forget accept (timeout), assume persist, sensitive in state
-
-```ts
-async onConnect(conn: Connection, ctx: ConnectionContext) { conn.accept(); conn.setState({userId: "123"}); }
-```
-
-## Scheduling
-
-1000 tasks/agent, 1min min, persist. Clean old, descriptive names, handle failures
-
-```ts
-async checkSchedules() { if ((await this.getSchedules()).length > 800) console.warn("Near limit!"); }
-```
-
-## AI
-
-Optimize: AI Gateway cache, rate limit, stream | Error: try/catch, fallback, quota/timeout
-
-```ts
-try { return await this.env.AI.run(model, {prompt}); } catch (e) { return {error: "Unavailable"}; }
-```
-
-## Perf
-
-State: Batch `setState()`, low-freq, SQL for large | Conns: Limit broadcast, selective, backpressure
-
-## Debug
-
-`npx wrangler dev` (local), `npx wrangler tail` (remote)
-Issues: "Agent not found" (DO binding), State not sync (`setState()`), Timeout (`conn.accept()`), SQL (create in `onStart()`)
-
-## Security
-
-DO: Validate, sanitize, auth WS, env secrets | DON'T: Trust headers, expose sensitive, unauth
+- DO: Validate/sanitize input, require WS auth, keep secrets in env bindings.
+- DON'T: Trust headers blindly, expose sensitive data, or store secrets in state.
 
 ```ts
 async onConnect(conn: Connection, ctx: ConnectionContext) {
@@ -61,13 +13,59 @@ async onConnect(conn: Connection, ctx: ConnectionContext) {
 }
 ```
 
-## Limits
+## State
 
-CPU: 30s/req, Mem: 128MB/inst, Storage: SQL shares DO quota, Conns: no limit (watch mem), Schedules: 1000/agent
+- DO: Use `setState()` (auto-sync), keep state serializable/small, move large data to SQL.
+- DON'T: Mutate `this.state` directly or store functions/circular objects.
 
-## Migration
+```ts
+// ❌ this.state.count++ | ✅ this.setState({...this.state, count: this.state.count + 1})
+```
 
-`new_sqlite_classes`, test staging, no downgrade w/SQL, careful state
+## SQL
+
+- DO: Parameterize queries, initialize schema in `onStart()`, use explicit types when possible.
+- DON'T: Interpolate input directly or assume tables already exist.
+
+```ts
+// ❌ this.sql`...WHERE id = '${userId}'` | ✅ this.sql`...WHERE id = ${userId}`
+```
+
+## WebSocket lifecycle
+
+- DO: Call `conn.accept()` promptly, handle errors, clean up on disconnect.
+- DON'T: Assume persistence or keep sensitive data in connection state.
+
+```ts
+async onConnect(conn: Connection, ctx: ConnectionContext) { conn.accept(); conn.setState({userId: "123"}); }
+```
+
+## Scheduling constraints
+
+- Limits: max 1000 schedules/agent, minimum interval 1 minute, schedules persist.
+- Practice: clean stale schedules, use descriptive names, handle failures.
+
+```ts
+async checkSchedules() { if ((await this.getSchedules()).length > 800) console.warn("Near limit!"); }
+```
+
+## AI reliability and performance
+
+- Optimize with AI Gateway cache, streaming, and rate limiting.
+- Use `try/catch` + fallback for quota/timeout/provider errors.
+- Batch `setState()` writes; reduce write frequency.
+- Limit broadcast fan-out, prefer selective sends, apply backpressure.
+
+```ts
+try { return await this.env.AI.run(model, {prompt}); } catch (e) { return {error: "Unavailable"}; }
+```
+
+## Limits, debugging, migration
+
+- Runtime limits: CPU 30s/request, memory 128MB/instance, SQL shares DO quota, schedules 1000/agent; WS connections have no hard cap but are memory-bound.
+- Debug: `npx wrangler dev` (local), `npx wrangler tail` (remote).
+- Common failures: "Agent not found" (DO binding), state not syncing (`setState()`), connect timeout (`conn.accept()`), startup SQL errors (`onStart()` init).
+- Migration: use `new_sqlite_classes`, test in staging, and avoid downgrades after SQL migration.
 
 ```toml
 [[migrations]]
