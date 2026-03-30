@@ -3376,14 +3376,14 @@ _complexity_scan_extract_md_topic_label() {
 #
 # - "hash" is the git blob SHA of the file at simplification time
 # - When scan sees a file in state with matching hash → skip (already done)
-# - When hash differs → file changed since simplification → create regression issue
+# - When hash differs → file changed since simplification → create recheck issue
 # - State is committed to main and pushed, so all users share it
 #######################################
 
 # Check if a file has already been simplified and is unchanged.
 # Arguments: $1 - repo_path, $2 - file_path (repo-relative), $3 - state_file path
 # Returns: 0 = already simplified (unchanged), 1 = not simplified or changed
-# Outputs to stdout: "unchanged" | "regressed" | "new"
+# Outputs to stdout: "unchanged" | "recheck" | "new"
 _simplification_state_check() {
 	local repo_path="$1"
 	local file_path="$2"
@@ -3416,7 +3416,7 @@ _simplification_state_check() {
 		return 0
 	fi
 
-	echo "regressed"
+	echo "recheck"
 	return 1
 }
 
@@ -3455,7 +3455,7 @@ _simplification_state_record() {
 
 # Prune stale entries from simplification state (files that no longer exist).
 # This handles file moves/renames/deletions — entries for non-existent files
-# are removed so they don't cause false "regressed" status or accumulate.
+# are removed so they don't cause false "recheck" status or accumulate.
 # Arguments: $1 - repo_path, $2 - state_file path
 # Returns: 0 = pruned (or nothing to prune), 1 = error
 # Outputs to stdout: number of entries pruned
@@ -3662,7 +3662,8 @@ _complexity_scan_check_open_cap() {
 }
 
 # Process a single agent doc file for simplification issue creation (GH#5627).
-# Checks simplification state, dedup, regression, builds title/body, creates issue.
+# Checks simplification state, dedup, changed-since-simplification status,
+# builds title/body, and creates issue.
 #
 # Arguments:
 #   $1 - file_path (repo-relative)
@@ -3689,7 +3690,7 @@ _complexity_scan_process_single_md_file() {
 			echo "skipped"
 			return 0
 		fi
-		# "regressed" files fall through — they get a new issue with regression label
+		# "recheck" files fall through — they get a new issue with recheck label
 	fi
 
 	if _complexity_scan_has_existing_issue "$aidevops_slug" "$file_path"; then
@@ -3703,28 +3704,28 @@ _complexity_scan_process_single_md_file() {
 		topic_label=$(_complexity_scan_extract_md_topic_label "$aidevops_path" "$file_path" 2>/dev/null || true)
 	fi
 
-	# Determine if this is a regression (file changed after simplification)
-	local is_regression=false
-	if [[ "$file_status" == "regressed" ]]; then
-		is_regression=true
+	# Determine whether this file needs simplification recheck
+	local needs_recheck=false
+	if [[ "$file_status" == "recheck" ]]; then
+		needs_recheck=true
 	fi
 
 	local issue_title="simplification: tighten agent doc ${file_path} (${line_count} lines)"
 	if [[ -n "$topic_label" ]]; then
 		issue_title="simplification: tighten agent doc ${topic_label} (${file_path}, ${line_count} lines)"
 	fi
-	if [[ "$is_regression" == true ]]; then
-		issue_title="regression: ${issue_title}"
+	if [[ "$needs_recheck" == true ]]; then
+		issue_title="recheck: ${issue_title}"
 	fi
 
 	local issue_body
 	issue_body=$(_complexity_scan_build_md_issue_body "$file_path" "$line_count" "$topic_label")
-	if [[ "$is_regression" == true ]]; then
+	if [[ "$needs_recheck" == true ]]; then
 		local prev_pr
 		prev_pr=$(jq -r --arg fp "$file_path" '.files[$fp].pr // 0' "$state_file" 2>/dev/null) || prev_pr="0"
 		issue_body="${issue_body}
 
-### Regression note
+### Recheck note
 
 This file was previously simplified (PR #${prev_pr}) but has since been modified. The content hash no longer matches the post-simplification state. Please re-evaluate."
 	fi
@@ -3740,10 +3741,10 @@ This file was previously simplified (PR #${prev_pr}) but has since been modified
 	issue_body="${issue_body}${sig_footer}"
 
 	local create_ok=false
-	if [[ "$is_regression" == true ]]; then
+	if [[ "$needs_recheck" == true ]]; then
 		gh issue create --repo "$aidevops_slug" \
 			--title "$issue_title" \
-			--label "simplification-debt" --label "needs-maintainer-review" --label "tier:thinking" --label "regression" \
+			--label "simplification-debt" --label "needs-maintainer-review" --label "tier:thinking" --label "recheck-simplicity" \
 			--assignee "$maintainer" \
 			--body "$issue_body" >/dev/null 2>&1 && create_ok=true
 	else
@@ -3756,7 +3757,7 @@ This file was previously simplified (PR #${prev_pr}) but has since been modified
 
 	if [[ "$create_ok" == true ]]; then
 		local log_suffix=""
-		if [[ "$is_regression" == true ]]; then log_suffix=" [REGRESSION]"; fi
+		if [[ "$needs_recheck" == true ]]; then log_suffix=" [RECHECK]"; fi
 		echo "[pulse-wrapper] Complexity scan (.md): created issue for ${file_path} (${line_count} lines)${log_suffix}" >>"$LOGFILE"
 		echo "created"
 	else
@@ -4041,9 +4042,9 @@ run_weekly_complexity_scan() {
 
 	echo "[pulse-wrapper] Running daily complexity scan (GH#5628)..." >>"$LOGFILE"
 
-	# Ensure regression label exists (used when a simplified file changes)
-	gh label create "regression" --repo "$aidevops_slug" --color "D93F0B" \
-		--description "File was simplified but has since been modified" --force 2>/dev/null || true
+	# Ensure recheck label exists (used when a simplified file changes)
+	gh label create "recheck-simplicity" --repo "$aidevops_slug" --color "D4C5F9" \
+		--description "File changed since last simplification and needs recheck" --force 2>/dev/null || true
 
 	local aidevops_path
 	aidevops_path=$(_complexity_scan_find_repo "$repos_json" "$aidevops_slug" "$now_epoch") || return 0
