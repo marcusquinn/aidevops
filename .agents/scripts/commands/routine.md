@@ -8,28 +8,24 @@ Create a recurring operational routine (reports, audits, monitoring, outreach) w
 
 Arguments: $ARGUMENTS
 
-## Goal
-
-Build a reliable routine from three independent dimensions:
-
-1. **SOP** - what to do
-2. **Targets** - who/what to apply it to
-3. **Schedule** - when to run
-
-Keep these separate so each can evolve independently.
-
 ## Decision Rule
 
-- If the routine needs repo code changes and PR traceability, use `/full-loop`
-- If the routine is operational execution, run direct commands with `opencode run`
+- Needs repo code changes + PR traceability → `/full-loop`
+- Operational execution → direct commands with `opencode run`
+
+## Goal
+
+Build routines from three independent dimensions — each evolves separately:
+
+1. **SOP** — what to do
+2. **Targets** — who/what to apply it to
+3. **Schedule** — when to run
 
 ## Workflow
 
 ### Step 1: Define the SOP command
 
-Create or select the command that performs one run for one target.
-
-Examples:
+Select or create a command that performs one run for one target. Prefer deterministic helper/script commands over free-form prompts.
 
 ```bash
 /seo-export --account client-a --format summary
@@ -37,9 +33,7 @@ Examples:
 /email-health-check --tenant client-a
 ```
 
-Prefer deterministic helper/script commands over free-form prompts.
-
-### Step 2: Validate quality and safety manually
+### Step 2: Validate quality and safety
 
 Run ad-hoc before scheduling:
 
@@ -50,27 +44,18 @@ opencode run --dir ~/Git/<repo> --agent SEO --title "Routine dry run" \
 
 Required checks before rollout:
 
-- Output format is stable and client-safe
+- Output format stable and client-safe
 - No cross-client data leakage
-- Retry and timeout behavior are acceptable
+- Retry/timeout behavior acceptable
 - Human review exists for outbound communication
 
 ### Step 3: Pilot rollout
 
-Roll out in this order:
+Roll out in order: (1) internal/self → (2) single client → (3) small cohort → (4) full target set. Do not skip stages for outbound client-facing routines.
 
-1. Internal/self target
-2. Single client
-3. Small client cohort
-4. Full target set
+### Step 4: Schedule
 
-Do not skip stages for outbound client-facing routines.
-
-### Step 4: Schedule the command
-
-Use launchd/cron to run the proven command on a fixed cadence.
-
-Use helper script (recommended):
+Use launchd/cron via `routine-helper.sh` (recommended):
 
 ```bash
 ~/.aidevops/agents/scripts/routine-helper.sh plan \
@@ -82,59 +67,36 @@ Use helper script (recommended):
   --prompt "/seo-export --account client-a --format summary"
 ```
 
+Raw launchd/cron wrapper style:
+
 ```bash
-# macOS launchd/cron wrapper style
 # aidevops: weekly client rankings
 opencode run --dir ~/Git/<repo> --agent SEO --title "Weekly rankings" \
   "/seo-export --account client-a --format summary"
 ```
 
-For queue-driven development work, use `/pulse`. For fixed-time routines, use scheduler entries.
+Queue-driven dev work → `/pulse`. Fixed-time routines → scheduler entries.
 
-## Example: Mine Failed GitHub Notifications
+## Example: GH Failure Miner Routine
 
-When your notification inbox accumulates `ci_activity` failures, schedule a routine that clusters failure signatures and surfaces systemic fixes.
-
-By default this mines both PR and push notification sources. Add `--pr-only` if you want PR-only analysis.
+Cluster CI failure signatures from GitHub notifications and surface systemic fixes. Mines both PR and push sources by default (`--pr-only` for PR-only).
 
 ```bash
-~/.aidevops/agents/scripts/gh-failure-miner-helper.sh report \
-  --since-hours 24 \
-  --pulse-repos
-```
+# Ad-hoc report
+~/.aidevops/agents/scripts/gh-failure-miner-helper.sh report --since-hours 24 --pulse-repos
 
-To generate an issue-ready root-cause draft from the top cluster:
+# Issue-ready root-cause draft
+~/.aidevops/agents/scripts/gh-failure-miner-helper.sh issue-body --since-hours 24 --pulse-repos
 
-```bash
-~/.aidevops/agents/scripts/gh-failure-miner-helper.sh issue-body \
-  --since-hours 24 \
-  --pulse-repos
-```
-
-To auto-file deduplicated systemic-fix issues in affected repos:
-
-```bash
+# Auto-file deduplicated systemic-fix issues
 ~/.aidevops/agents/scripts/gh-failure-miner-helper.sh create-issues \
-  --since-hours 24 \
-  --pulse-repos \
-  --systemic-threshold 3 \
-  --max-issues 3 \
-  --label auto-dispatch
-```
+  --since-hours 24 --pulse-repos --systemic-threshold 3 --max-issues 3 --label auto-dispatch
 
-One-shot launchd installer (recommended):
-
-```bash
+# One-shot launchd installer (--dry-run to preview)
 ~/.aidevops/agents/scripts/gh-failure-miner-helper.sh install-launchd-routine
 ```
 
-Preview without installing:
-
-```bash
-~/.aidevops/agents/scripts/gh-failure-miner-helper.sh install-launchd-routine --dry-run
-```
-
-Schedule it as a routine:
+Schedule via `routine-helper.sh`:
 
 ```bash
 ~/.aidevops/agents/scripts/routine-helper.sh install-cron \
@@ -145,11 +107,11 @@ Schedule it as a routine:
   --prompt "Run ~/.aidevops/agents/scripts/gh-failure-miner-helper.sh create-issues --since-hours 6 --pulse-repos --systemic-threshold 3 --max-issues 3 --label auto-dispatch and then print ~/.aidevops/agents/scripts/gh-failure-miner-helper.sh report --since-hours 6 --pulse-repos."
 ```
 
-This routine is operational (triage + issue filing), so it should not use `/full-loop`.
+This routine is operational (triage + issue filing) — do not use `/full-loop`.
 
 ## Routine Spec Template
 
-Store routine definitions in your repo (for example `routines/seo-weekly.yaml`):
+Store definitions in your repo (e.g., `routines/seo-weekly.yaml`):
 
 ```yaml
 name: weekly-seo-rankings
@@ -160,9 +122,7 @@ targets_cmd: "wp-helper --list-category client --jsonl"
 run_template: "/seo-export --account {{target.account}} --format summary"
 ```
 
-`targets_cmd` should emit one JSON object per line so a scheduler can iterate targets.
-
-Note: this template is architectural guidance. `routine-helper.sh` currently schedules a literal `--prompt` command and does not parse `targets_cmd` or `run_template` directly.
+`targets_cmd` emits one JSON object per line for target iteration. Note: `routine-helper.sh` currently schedules a literal `--prompt` and does not parse `targets_cmd`/`run_template` directly.
 
 ## Anti-Patterns
 
