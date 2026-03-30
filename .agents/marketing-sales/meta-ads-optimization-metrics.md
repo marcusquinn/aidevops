@@ -1,6 +1,6 @@
 # Metrics Explained
 
-> Every metric in Ads Manager — definitions, formulas, and benchmarks.
+Definitions, formulas, and benchmarks for Meta Ads Manager.
 
 ## Primary Metrics by Objective
 
@@ -67,7 +67,7 @@
 
 ## Cost Metrics
 
-**CPM factors:** smaller audience, more competition, lower ad quality, Q4 seasonality, premium placements (Feed > Audience Network).
+**CPM drivers:** audience size, competition, ad quality, seasonality (Q4), placement tier (Feed > Audience Network).
 
 | Industry | Average CPM |
 |----------|------------|
@@ -85,7 +85,7 @@ CPA = Spend ÷ Actions = CPC ÷ Conversion Rate ← lower via: lower CPC, higher
 
 ### Ad Relevance Diagnostics
 
-Applies to Quality, Engagement Rate, and Conversion Rate rankings:
+Applies to Quality, Engagement Rate, and Conversion Rate rankings.
 
 | Ranking | Meaning |
 |---------|---------|
@@ -107,7 +107,7 @@ Frequency = Impressions ÷ Reach
 | Retargeting | 4.0+ | 6.0+ |
 | Brand Awareness | 3.0+ | 5.0+ |
 
-High frequency signals: declining CTR, rising CPA, increasing negative feedback.
+**Warning signals:** declining CTR, rising CPA, increasing negative feedback.
 
 ## Conversion & Revenue Metrics
 
@@ -128,7 +128,7 @@ CM%             = CM / Revenue × 100
 Incremental ROAS = Raw ROAS × Incrementality %            (e.g. 3.0x × 60% lift = 1.8x true value)
 ```
 
-Use MER for cross-channel budget allocation. Use Incremental ROAS for true ROI reporting.
+**Key guidance:** Use MER for cross-channel budget allocation. Use Incremental ROAS for true ROI reporting.
 
 ## Custom Metrics to Create
 
@@ -157,7 +157,7 @@ Use MER for cross-channel budget allocation. Use Incremental ROAS for true ROI r
 
 ## Recommended Custom Columns
 
-Set via Ads Manager → Columns → Customize Columns.
+Via Ads Manager → Columns → Customize Columns.
 
 | Objective | Columns |
 |-----------|---------|
