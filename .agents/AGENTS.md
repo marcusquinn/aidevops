@@ -122,6 +122,8 @@ Completion: NEVER mark `[x]` without merged PR (`pr:#NNN`) or `verified:YYYY-MM-
 
 Planning files go direct to main. Code changes need worktree + PR. Workers NEVER edit TODO.md.
 
+**Simplification state policy:** Keep all changes to `.agents/configs/simplification-state.json`. It is the shared hash registry used by the simplification routine to detect unchanged vs changed files and decide when recheck/re-processing is needed.
+
 **Cross-repo awareness**: The supervisor manages tasks across all repos in `~/.config/aidevops/repos.json` where `pulse: true`. Each repo entry has a `slug` field (`owner/repo`) — ALWAYS use this for `gh` commands, never guess org names. Use `gh issue list --repo <slug>` and `gh pr list --repo <slug>` for each pulse-enabled repo to get the full picture. Repos with `"local_only": true` have no GitHub remote — skip `gh` operations on them. Repo paths may be nested (e.g., `~/Git/cloudron/netbird-app`), not just `~/Git/<name>`.
 
 **Repo registration**: When you create or clone a new repo (via `gh repo create`, `git clone`, `git init`, etc.), add it to `~/.config/aidevops/repos.json` immediately. Every repo the user works with should be registered — unregistered repos are invisible to cross-repo tools (pulse, health dashboard, session time, contributor stats). Set fields based on the repo's purpose:
