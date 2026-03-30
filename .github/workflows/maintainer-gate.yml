@@ -14,7 +14,7 @@ on:
   pull_request_target:
     types: [opened, synchronize, reopened, edited]
   issues:
-    types: [unlabeled, labeled, assigned]
+    types: [unlabeled, labeled, assigned, unassigned]
 
 jobs:
   # =========================================================================
@@ -84,12 +84,21 @@ jobs:
             printf 'Title-based issue lookup for task ID %s failed — cannot verify linked issues.\n' "$TASK_ID" > /tmp/gate-reasons.txt
             echo "has_reasons=true" >> "$GITHUB_OUTPUT"
             # Post failure commit status so branch protection sees the result
+            # Fail-closed: if status post fails after retry, fail the job to avoid
+            # leaving the PR without a maintainer-gate status (GH#14277)
             gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
               --method POST \
               -f state=failure \
               -f context="maintainer-gate" \
               -f description="Title-based issue lookup failed — cannot verify linked issues" \
-              2>/dev/null || echo "::warning::Could not post commit status"
+              2>/dev/null || { sleep 5 && gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=failure \
+              -f context="maintainer-gate" \
+              -f description="Title-based issue lookup failed — cannot verify linked issues"; } || {
+              echo "::error::Failed to post maintainer-gate commit status after retry"
+              exit 1
+            }
             exit 0
           fi
 
@@ -98,12 +107,20 @@ jobs:
             echo "blocked=false" >> "$GITHUB_OUTPUT"
             echo "reason=" >> "$GITHUB_OUTPUT"
             # Post success commit status so branch protection sees the result
+            # Fail-closed: if status post fails after retry, fail the job (GH#14277)
             gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
               --method POST \
               -f state=success \
               -f context="maintainer-gate" \
               -f description="No linked issues to check" \
-              2>/dev/null || echo "::warning::Could not post commit status"
+              2>/dev/null || { sleep 5 && gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=success \
+              -f context="maintainer-gate" \
+              -f description="No linked issues to check"; } || {
+              echo "::error::Failed to post maintainer-gate commit status after retry"
+              exit 1
+            }
             exit 0
           fi
 
@@ -184,6 +201,7 @@ jobs:
           # Branch protection may require the "maintainer-gate" commit status,
           # which was previously only posted by the retrigger-pr-checks job on
           # issue label changes — not on PR open/sync events.
+          # Fail-closed: if status post fails after retry, fail the job (GH#14277)
           if [[ "$BLOCKED" == "true" ]]; then
             DESCRIPTION=$(head -c 140 /tmp/gate-reasons.txt | tr '\n' ' ')
             gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
@@ -191,14 +209,28 @@ jobs:
               -f state=failure \
               -f context="maintainer-gate" \
               -f description="${DESCRIPTION}" \
-              2>/dev/null || echo "::warning::Could not post commit status"
+              2>/dev/null || { sleep 5 && gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=failure \
+              -f context="maintainer-gate" \
+              -f description="${DESCRIPTION}"; } || {
+              echo "::error::Failed to post maintainer-gate commit status after retry"
+              exit 1
+            }
           else
             gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
               --method POST \
               -f state=success \
               -f context="maintainer-gate" \
               -f description="All linked issues pass gate checks" \
-              2>/dev/null || echo "::warning::Could not post commit status"
+              2>/dev/null || { sleep 5 && gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=success \
+              -f context="maintainer-gate" \
+              -f description="All linked issues pass gate checks"; } || {
+              echo "::error::Failed to post maintainer-gate commit status after retry"
+              exit 1
+            }
           fi
 
       - name: Post or update gate comment
@@ -315,7 +347,7 @@ jobs:
     name: Re-evaluate PR Gate on Issue Change
     if: >-
       github.event_name == 'issues' &&
-      (github.event.action == 'labeled' || github.event.action == 'unlabeled' || github.event.action == 'assigned')
+      (github.event.action == 'labeled' || github.event.action == 'unlabeled' || github.event.action == 'assigned' || github.event.action == 'unassigned')
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
