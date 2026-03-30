@@ -35,15 +35,9 @@ Bundles increase AOV 15–35%. Psychology: one payment event, perceived value as
 
 ---
 
-## 25.3 Checkout Flow
+## 25.3 Retention and Expansion Revenue
 
-See Chapter 18 §18.3 for comprehensive checkout optimization.
-
----
-
-## 25.4 Retention and Expansion Revenue
-
-+5% retention = +25–95% profit (Bain). Expansion 3–5× cheaper than acquisition.
++5% retention = +25–95% profit (Bain). Expansion 3–5× cheaper than acquisition. Checkout optimization: see Chapter 18 §18.3.
 
 **Cancellation flow:** Required reason → friction + product data · Match save offer to reason ("Too expensive" → discount/downgrade; "Not using" → tips; "Missing feature" → roadmap) · Pause option (1–3 months) saves 15–25% of churners · Downgrade path: $10/mo >> $0
 
@@ -62,7 +56,7 @@ See Chapter 18 §18.3 for comprehensive checkout optimization.
 
 ---
 
-## 25.5 Monetization Experimentation
+## 25.4 Monetization Experimentation
 
 Optimize for **RPV**, not CR alone: `LRPV = CR × Avg Transaction × (1 + Expansion Rate) × Avg Lifetime`
 
@@ -76,7 +70,7 @@ Optimize for **RPV**, not CR alone: `LRPV = CR × Avg Transaction × (1 + Expans
 
 ---
 
-## 25.6 Case Studies
+## 25.5 Case Studies
 
 ### B2B SaaS: Usage-Based Pricing ($5M ARR)
 
@@ -84,15 +78,11 @@ Flat $99/mo → tiered by contact list (Starter $49/≤1K · Growth $99/≤10K �
 
 **Results (6 mo):** ARPU +28% ($99→$127) · LTV +34% · Churn 4.5→3.2% · Expansion 0→23% of new MRR · NRR 102→118% — customer growth drives natural upgrades.
 
----
-
 ### Subscription Box: Strategic Bundling (Coffee)
 
 $25/mo flat (CAC $35, 40% GM, 45% 6-mo retention) → Explorer $29 / **Enthusiast $49** *(flagship: micro-lot, virtual cupping, 15% add-on discount)* / Connoisseur $79 *(equipment, private Slack)*.
 
 **Results (9 mo):** Mix 15/62/23% · ARPU +116% ($25→$54) · GM 40→52% · LTV +200% ($67→$201) · CAC payback 3.5→0.7 mo · Retention 45→68% — equipment inclusion created switching costs.
-
----
 
 ### Online Course Platform: Checkout Optimization
 
@@ -111,7 +101,7 @@ Recovery sequence: 1h pre-filled cart → 24h FAQ+testimonials → 72h 10% disco
 
 ---
 
-## 25.7 Monetization CRO Checklist
+## 25.6 Monetization CRO Checklist
 
 **Pre-launch:** Define primary metric (RPV/ARPU/LTV) + guardrails (CR, churn, NPS) · Calculate MDE + sample size · Document full journey impact · Set up cohort-level revenue tracking · Confirm legal compliance in all markets · Brief support · Establish rollback criteria
 
@@ -131,7 +121,5 @@ Recovery sequence: 1h pre-filled cart → 24h FAQ+testimonials → 72h 10% disco
 | 4 | Predictive | ML-driven dynamic pricing, bundle optimization, real-time cross-sell | ≥$10M ARR + data science |
 
 Most companies at Level 1–2. Level 3 requires executive sponsorship + cross-functional alignment.
-
-**Key principles across all case studies:** Price structure drives behavior (usage-based → natural upgrades; tiered bundles → optimal value perception) · Payment flexibility expands market (BNPL, wallets, invoice) · Value communication beats price reduction (ROI calculators, usage alerts, equipment inclusion) · Optimize for RPV not CR · Grandfather when changing pricing · Cohort analysis is mandatory · Qualitative validates quantitative
 
 **Highest-impact action at any level**: measure RPV as north star + run ≥1 experiment per quarter → 5–10% quarterly improvements compound to 20–45% annual revenue growth without additional traffic.
