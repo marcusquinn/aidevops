@@ -1,9 +1,5 @@
 # Landing Page Swipe File
 
-Annotated breakdowns of high-converting landing pages.
-
----
-
 ## 1. Slack — "Where Work Happens"
 
 **Hero:**
@@ -20,9 +16,7 @@ Connect your tools. Automate your tasks. Build the workflows that move your comp
 
 **Features:** Benefit-led header → 3 features each with outcome. "Already use" reduces friction.
 
-**Converts because:** Extreme clarity in 5 seconds, low-barrier CTA, features tied to outcomes.
-
----
+**Why it converts:** Extreme clarity in 5 seconds, low-barrier CTA, features tied to outcomes.
 
 ## 2. Notion — "Your Wiki, Docs, & Projects. Together."
 
@@ -39,9 +33,7 @@ Notion is the connected workspace where better, faster work happens.
 
 **Use Cases:** Wiki / Docs / Projects each with one-line benefit. "Your way" = flexibility.
 
-**Converts because:** Multi-use-case without confusion, strong visual demo, free tier removes friction.
-
----
+**Why it converts:** Multi-use-case without confusion, strong visual demo, free tier removes friction.
 
 ## 3. Basecamp — "The All-In-One Toolkit for Working Remotely"
 
@@ -59,12 +51,9 @@ Before: Constant meetings | Lost files | Scattered apps | Anxiety
 After:  One place | Real progress | Everyone in the loop | Calmer teams
 ```
 
-**Pricing:** `$299/month flat. Unlimited users, unlimited projects. No per-user pricing games.`
-- Simple one-tier; anti-competitor positioning
+**Pricing:** `$299/month flat. Unlimited users, unlimited projects. No per-user pricing games.` — simple one-tier; anti-competitor positioning.
 
-**Converts because:** Strong POV, before/after transformation, flat pricing, long-form testimonials.
-
----
+**Why it converts:** Strong POV, before/after transformation, flat pricing, long-form testimonials.
 
 ## 4. Mailchimp — "Turn Emails into Revenue"
 
@@ -80,9 +69,7 @@ Grow your business with email marketing and automations that convert.
 
 **Stat:** `Generate up to 25x more orders with automations* (*Mailchimp data, 2023)` — specific, sourced, believable.
 
-**Converts because:** Clear value prop (emails → revenue), free trial + no CC, specific sourced stats.
-
----
+**Why it converts:** Clear value prop (emails → revenue), free trial + no CC, specific sourced stats.
 
 ## 5. Copyhackers — "Copy School" (Course Sales Page)
 
@@ -105,9 +92,7 @@ Why: Free stuff teaches WHAT. Not HOW. Not how to THINK like a copywriter.
 
 **Testimonial:** `"I went from charging $500 to $5,000 for a landing page — and getting it."` — specific 10x number, named person with photo.
 
-**Converts because:** Long-form for unaware audience, extensive social proof, clear curriculum, real urgency.
-
----
+**Why it converts:** Long-form for unaware audience, extensive social proof, clear curriculum, real urgency.
 
 ## Hero Section Templates
 
@@ -132,8 +117,6 @@ From [Current State] to [Desired State]
 [CTA]
 ```
 
----
-
 ## Social Proof Bar Templates
 
 ```
@@ -146,16 +129,12 @@ Trusted by [X]+ [customers/companies/users]
 "97% report faster results" | "4.9/5 on G2" | "10,000+ users"
 ```
 
----
-
 ## CTA Button Text
 
 - Start Free Trial / Get Started Free / Try [Product] Free
 - Start My [X]-Day Trial / Get Instant Access
 - Yes, I Want [Outcome] / Show Me How
 - Book My Demo / Claim My [Thing] / Start [Action]ing Now
-
----
 
 ## Guarantee Templates
 
@@ -168,8 +147,6 @@ Try [Product] for [X] days. If you don't [achieve outcome], we'll refund every p
 The "[Product] Promise"
 If [Product] doesn't [specific result] within [timeframe], show us you implemented it and we'll give you a full refund.
 ```
-
----
 
 ## Design Principles
 
