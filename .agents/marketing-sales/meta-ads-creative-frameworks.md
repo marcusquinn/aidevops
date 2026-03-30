@@ -1,11 +1,9 @@
 # Creative Frameworks
 
-> Proven structures for creating persuasive ad content.
+## Framework Selection
 
-## Framework Selection Guide
-
-| Situation | Best Framework | Type |
-|-----------|----------------|------|
+| Situation | Framework | Type |
+|-----------|-----------|------|
 | Clear pain point | PAS | Direct response |
 | Cold audience | AIDA | Direct response |
 | Transformation focus | BAB | Direct response |
@@ -18,9 +16,9 @@
 
 ## PAS (Problem-Agitate-Solution)
 
-Static ad:
+Static:
 
-```
+```text
 PRIMARY TEXT:
 Spending hours on manual data entry? 😫
 
@@ -36,9 +34,9 @@ HEADLINE: Automate Data Entry in 5 Minutes
 CTA: Try Free
 ```
 
-Video (25s):
+Video 25s:
 
-```
+```text
 [0-3s]   "If you're still manually entering data, I need to talk to you."
 [3-8s]   "Every hour you spend on this is an hour you're not spending on strategy,
           sales, or your actual job. And let's be honest — it's soul-crushing work."
@@ -47,9 +45,9 @@ Video (25s):
 [18-25s] "Join 5,000+ companies who've reclaimed their time. Try it free at [WEBSITE]."
 ```
 
-## AIDA (Attention-Interest-Desire-Action) — video (30s)
+## AIDA (Attention-Interest-Desire-Action) — video 30s
 
-```
+```text
 [0-3s]   ATTENTION: "This changed how I run my business." [Pattern interrupt visual]
 [3-10s]  INTEREST:  "I used to [common situation]. Then I discovered [PRODUCT] does [interesting thing]."
 [10-20s] DESIRE:    "Now I can [benefit 1] and [benefit 2]. In [time], I've [specific result]. [Testimonials]"
@@ -58,7 +56,7 @@ Video (25s):
 
 ## BAB (Before-After-Bridge) — carousel
 
-```
+```text
 CARD 1 (BEFORE):  [Messy desk/chaos] "Drowning in tasks. Missing deadlines. Constant stress."
 CARD 2 (AFTER):   [Calm, organized]  "Organized workflow. Ahead of schedule. Peace of mind."
 CARD 3 (BRIDGE):  [Product image]    "[PRODUCT]: The bridge from chaos to calm."
@@ -68,7 +66,7 @@ CARD 5 (CTA):     "Start your transformation →"
 
 ## FAB (Feature-Advantage-Benefit) — B2B/SaaS/technical
 
-```
+```text
 FEATURE:    "Real-time sync across all devices"
 ADVANTAGE:  "Unlike [competitors] that sync hourly, your changes appear instantly everywhere"
 BENEFIT:    "So you never lose work or waste time waiting for updates — work seamlessly
@@ -83,7 +81,7 @@ Try [PRODUCT] free →
 
 ## Us vs Them
 
-```
+```text
 OLD WAY: "With traditional [category], you have to: ❌ [Pain 1] ❌ [Pain 2] ❌ [Pain 3]"
 NEW WAY: "With [PRODUCT]: ✅ [Benefit 1] ✅ [Benefit 2] ✅ [Benefit 3]"
 "Same outcome, zero hassle. Try [PRODUCT] free →"
@@ -93,7 +91,7 @@ NEW WAY: "With [PRODUCT]: ✅ [Benefit 1] ✅ [Benefit 2] ✅ [Benefit 3]"
 
 Setup (5-10s) → Conflict (5-10s) → Climax (5-10s) → Resolution (5-10s) → CTA (5s)
 
-```
+```text
 [SETUP]      "Meet Sarah. She runs a marketing agency and was working 70-hour weeks."
 [CONFLICT]   "Client requests were piling up, deadlines were slipping, she was burning out."
 [CLIMAX]     "Then she found [PRODUCT]."
@@ -101,13 +99,21 @@ Setup (5-10s) → Conflict (5-10s) → Climax (5-10s) → Resolution (5-10s) →
 [CTA]        "Ready to transform your workflow? Start free at [WEBSITE]."
 ```
 
-*Transformation variant (identity framing):* `"I used to be the person who was always behind. [chaos] Every project felt like an emergency. [stress] When I started using [PRODUCT], something shifted. [product] Now? I'm the one who's always ahead. [calm] Same me. Different tools. Different results. [CTA]"`
+Transformation variant (identity framing):
+
+```text
+"I used to be the person who was always behind. [chaos]
+Every project felt like an emergency. [stress]
+When I started using [PRODUCT], something shifted. [product]
+Now? I'm the one who's always ahead. [calm]
+Same me. Different tools. Different results. [CTA]"
+```
 
 ## Customer Journey Story
 
 Before → Trigger → Search → Discovery → Experience → After
 
-```
+```text
 [BEFORE]     "A year ago, I was struggling to get leads for my coaching business."
 [TRIGGER]    "I'd post on social media for hours with nothing to show for it."
 [SEARCH]     "I tried [alternative], [alternative], even hired a marketing agency. Thousands of dollars, no results."
@@ -120,7 +126,7 @@ Before → Trigger → Search → Discovery → Experience → After
 
 Frustration → Decision → Journey → Achievement → Connection
 
-```
+```text
 [FRUSTRATION] "When I worked at [company], I spent 4 hours a day on [painful task]. Every. Single. Day."
 [DECISION]    "One day I thought: there has to be a better way. That night, I started building."
 [JOURNEY]     "It took 18 months, countless failures, and way too much coffee..."
@@ -132,7 +138,7 @@ Frustration → Decision → Journey → Achievement → Connection
 
 Testimonial structures:
 
-```
+```text
 Result-focused: "[Specific result] in [timeframe]." — [Name], [Title] at [Company]
 Journey:        "Before [PRODUCT], I [struggled with X]. Now I [achieve Y]. The difference is [improvement]."
 Comparison:     "I've tried [alternatives]. [PRODUCT] is the only one that [specific advantage]."
@@ -141,20 +147,16 @@ Emotional:      "I finally feel [positive emotion] about [area]. [PRODUCT] gave 
 
 Case study — Challenge → Solution → Results → Quote:
 
-```
+```text
 CHALLENGE: "[Company] was losing 20 hours/week to manual invoice processing."
 SOLUTION:  "They implemented [PRODUCT] to automate their entire AP workflow."
 RESULTS:   📈 80% reduction in processing time  💰 $45,000 saved annually  ⏱️ Same-day approvals
 "[PRODUCT] paid for itself in the first month." — [Name], CFO
 ```
 
-Social proof:
+Social proof: `[logos]` "Trusted by 500+ companies" · `[stars]` "4.9/5 from 2,000+ reviews" · `[media]` "Featured in Forbes, TechCrunch, Inc."
 
-- `[logos]` "Trusted by 500+ companies"
-- `[stars]` "4.9/5 from 2,000+ reviews"
-- `[media]` "Featured in Forbes, TechCrunch, Inc."
-
-## Quick Ad Formulas by Length
+## Ad Formulas by Length
 
 | Length | Formula |
 |--------|---------|
