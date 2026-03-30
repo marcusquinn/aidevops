@@ -6,14 +6,12 @@ tools:
   write: true
   edit: true
   bash: true
-  glob: true
-  grep: true
   webfetch: true
   task: true
   context7_*: true
 ---
 
-# RevenueCat - In-App Subscriptions Made Easy
+# RevenueCat
 
 <!-- AI-CONTEXT-START -->
 
@@ -73,8 +71,6 @@ Purchases.configure(withAPIKey: "appl_your_ios_api_key")
 
 ## Common Operations
 
-### Check Status / Display Offerings / Purchase / Restore
-
 ```typescript
 // Check subscription status
 const customerInfo = await Purchases.getCustomerInfo();
@@ -111,9 +107,9 @@ await Purchases.logIn(userId);   // After login
 await Purchases.logOut();        // After logout
 ```
 
-## RevenueCat Paywalls (Optional)
+## Paywalls
 
-Server-configurable paywalls — update design without app releases:
+Server-configurable — update without app releases:
 
 ```typescript
 import RevenueCatUI from 'react-native-purchases-ui';
@@ -141,8 +137,6 @@ Configure in dashboard to sync events with your backend:
 **Sandbox**: iOS — sandbox Apple ID in App Store Connect. Android — license testing in Play Console. Dashboard shows sandbox vs production.
 
 **Debug**: `Purchases.setLogLevel(LOG_LEVEL.DEBUG)` → inspect `getCustomerInfo()`.
-
-**Rules**:
 
 - Never cache entitlements locally — always call `getCustomerInfo()`
 - Handle offline gracefully — SDK caches last known state
