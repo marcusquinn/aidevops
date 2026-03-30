@@ -1,6 +1,6 @@
 # AI Search KPI Scorecard Template
 
-Use this template to capture baseline and follow-up measurements for AI-search optimization work.
+Capture baseline vs current measurements for each AI-search optimization cycle.
 
 ## Metadata
 
@@ -11,7 +11,7 @@ Use this template to capture baseline and follow-up measurements for AI-search o
 - Intent cluster(s):
 - Competitor set:
 
-## Snapshot
+## KPI Snapshot
 
 | KPI | Baseline | Current | Delta | Target | Notes |
 |-----|----------|---------|-------|--------|-------|
@@ -25,46 +25,41 @@ Use this template to capture baseline and follow-up measurements for AI-search o
 | Citation confidence (avg) | | | | | |
 | Citation stability (variance) | | | | | |
 
-## Diagnostic Notes
+## Diagnostics
 
-### Grounding Eligibility
-
+### Grounding eligibility
 - Queries tested:
 - Queries predicted to ground:
 - Queries confirmed grounded:
 - Key blockers:
 
-### Fan-Out and Criteria Gaps
-
+### Fan-out and criteria gaps
 - Missing high-priority branches:
 - Partial branches:
 - Missing decision criteria:
 
-### SRO and Snippet Findings
-
+### SRO and snippet findings
 - Low-survival sections:
 - High-survival sections:
 - Proposed sentence-level edits:
 
-### Integrity and Hallucination Risk
-
+### Integrity and hallucination risk
 - Conflicting facts:
 - Unsupported claims:
 - Canonical source gaps:
 
-### Agent Discoverability
-
+### Agent discoverability
 - Task set used:
 - Completion failures:
 - Navigation/comprehension blockers:
 
-## Prioritized Backlog
+## Prioritized backlog
 
 1. [ ]
 2. [ ]
 3. [ ]
 
-## Re-Test Plan
+## Re-test plan
 
 - Next run date:
 - Intents to re-test:
