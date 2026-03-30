@@ -59,7 +59,7 @@ const switchCamera = async (deviceId: string) => {
 };
 ```
 
-### Chat Component (React)
+### Chat & Custom Hook (React)
 
 ```typescript
 function ChatComponent({ meeting }) {
@@ -77,11 +77,7 @@ function ChatComponent({ meeting }) {
     <button onClick={send}>Send</button>
   </div>;
 }
-```
 
-### Custom Hook
-
-```typescript
 export function useMeeting(authToken: string) {
   const [meeting, setMeeting] = useState<RealtimeKitClient | null>(null);
   const [joined, setJoined] = useState(false);
@@ -101,9 +97,8 @@ export function useMeeting(authToken: string) {
 
 ## Backend Integration
 
-### Token Generation (Express)
-
 ```typescript
+// Express — token generation
 app.post('/api/join-meeting', async (req, res) => {
   const { meetingId, userName, presetName } = req.body;
   const response = await fetch(
@@ -117,11 +112,8 @@ app.post('/api/join-meeting', async (req, res) => {
   const data = await response.json();
   res.json({ authToken: data.result.authToken });
 });
-```
 
-### Workers Integration
-
-```typescript
+// Workers — meeting creation
 export interface Env { CLOUDFLARE_API_TOKEN: string; CLOUDFLARE_ACCOUNT_ID: string; REALTIMEKIT_APP_ID: string; }
 
 export default {
@@ -140,11 +132,11 @@ export default {
 
 ## Best Practices
 
-**Security**: Never expose API tokens client-side — generate participant tokens server-side only. Fresh token per session (use refresh endpoint if expired). Use `custom_participant_id` to map to your user system.
-
-**Performance**: Event-driven updates — listen to events, don't poll. Use `toArray()` only when needed. Set appropriate resolution/bitrate limits via `mediaConfiguration`. Enable `autoSwitchAudioDevice`.
-
-**Architecture**: Separate Apps for staging vs production. Create presets at App level, reuse across meetings. Backend generates tokens, frontend receives via authenticated endpoint.
+| Area | Guidance |
+|------|----------|
+| Security | Never expose API tokens client-side — server-side token generation only. Fresh token per session (refresh endpoint if expired). `custom_participant_id` maps to your user system |
+| Performance | Event-driven updates, don't poll. `toArray()` only when needed. Set resolution/bitrate via `mediaConfiguration`. Enable `autoSwitchAudioDevice` |
+| Architecture | Separate Apps for staging vs production. Presets at App level, reuse across meetings. Backend generates tokens, frontend receives via authenticated endpoint |
 
 ## In This Reference
 
