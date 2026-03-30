@@ -21,8 +21,6 @@ tools:
 - **Providers**: 19 — Cloudron, Gmail, Google Workspace, Outlook, Microsoft 365, Proton Mail, Fastmail, mailbox.org, Tuta, Yahoo, Zoho, GMX, IONOS, Namecheap, mail.com, StartMail, Disroot, ChatMail, iCloud
 - **Protocols**: IMAP (993/TLS), SMTP (465/TLS or 587/STARTTLS), POP3 (995/TLS), JMAP (Fastmail only)
 - **Privacy tiers**: A+ (Proton, Tuta, Cloudron) > A (Fastmail, mailbox.org, StartMail, Disroot, ChatMail) > B (Zoho, IONOS, Namecheap, iCloud) > C (Google Workspace, Microsoft 365, GMX, mail.com) > D (Gmail, Outlook, Yahoo)
-- **JMAP**: Fastmail only (RFC 8620/8621). Prefer over IMAP for new Fastmail integrations.
-- **No standard protocols**: Tuta — proprietary client only
 - **Default protocol**: IMAP. POP only for shared mailboxes where all users must read the same emails.
 
 <!-- AI-CONTEXT-END -->
@@ -48,24 +46,26 @@ cp configs/email-providers.json.txt configs/email-providers.json
 
 ### By Protocol Support
 
-| Protocol | Providers |
-|----------|-----------|
-| IMAP + SMTP | All except Tuta |
-| JMAP | Fastmail only |
-| POP3 | Gmail, Google Workspace, Outlook, Microsoft 365, Yahoo, Zoho, GMX, IONOS, Namecheap, mail.com, Fastmail, mailbox.org, Disroot, Cloudron |
-| Graph API | Outlook, Microsoft 365 |
-| Bridge required | Proton Mail (local IMAP/SMTP via Proton Bridge) |
-| No standard protocols | Tuta (proprietary client only) |
+| Protocol | Providers | Notes |
+|----------|-----------|-------|
+| IMAP + SMTP | All except Tuta | Gmail: enable in Settings > Forwarding and POP/IMAP. Zoho: enable in settings; regional hostnames (zoho.com/eu/in/com.au/jp) |
+| JMAP | Fastmail only | RFC 8620/8621. Prefer over IMAP for new Fastmail integrations |
+| POP3 | Gmail, Google Workspace, Outlook, Microsoft 365, Yahoo, Zoho, GMX, IONOS, Namecheap, mail.com, Fastmail, mailbox.org, Disroot, Cloudron | |
+| Graph API | Outlook, Microsoft 365 | Recommended for programmatic access |
+| Bridge required | Proton Mail | Local IMAP 1143, SMTP 1025 via Proton Bridge. Use Bridge-generated password, not account password. Not suitable for headless/server without Bridge CLI |
+| No standard protocols | Tuta | Proprietary client only (web, desktop, mobile). Deliberate security decision for encryption architecture |
 
 ### By Auth Method
 
-| Method | Providers |
-|--------|-----------|
-| OAuth2 | Gmail, Google Workspace, Outlook, Microsoft 365, Zoho |
-| App passwords | Gmail, Fastmail, Yahoo, StartMail, iCloud |
-| Regular password | Cloudron, mailbox.org, GMX, IONOS, Namecheap, mail.com, Disroot, ChatMail, Zoho |
-| Bridge password | Proton Mail |
-| Service account | Google Workspace, Microsoft 365 |
+| Method | Providers | Notes |
+|--------|-----------|-------|
+| OAuth2 | Gmail, Google Workspace, Outlook, Microsoft 365, Zoho | Gmail/Workspace: OAuth2 required since May 2022 (app passwords with 2FA). Microsoft 365: basic auth deprecated Oct 2022, OAuth2 via Microsoft Entra ID |
+| App passwords | Gmail, Fastmail, Yahoo, StartMail, iCloud | |
+| Regular password | Cloudron, mailbox.org, GMX, IONOS, Namecheap, mail.com, Disroot, ChatMail, Zoho | |
+| Bridge password | Proton Mail | |
+| Service account | Google Workspace, Microsoft 365 | |
+
+**Send limits:** Gmail 500/day, Google Workspace 2000/day. Zoho free tier: 5 users, 5 GB each.
 
 ## POP vs IMAP Decision Tree
 
@@ -98,21 +98,16 @@ POP does not sync folders, flags, or read-state across devices.
 
 ## Shared Mailbox Patterns
 
-| Address | Purpose | Typical Protocol |
-|---------|---------|-----------------|
-| `info@` / `hello@` / `contact@` / `enquiries@` | General enquiries | POP or IMAP shared |
-| `support@` | Customer support | IMAP + helpdesk tool |
-| `sales@` | Sales enquiries | IMAP + CRM |
-| `marketing@` | Marketing team | IMAP shared |
-| `noreply@` | Outbound only | SMTP only |
-| `accounts@` / `billing@` | Financial / billing | IMAP (restricted) |
-| `admin@` / `dataprotection@` / `legal@` / `security@` | Admin / compliance | IMAP (restricted) |
-| `hr@` / `careers@` | HR / recruitment | IMAP |
-| `press@` / `webmaster@` / `buyers@` | Media / ops | IMAP |
-| `abuse@` / `postmaster@` | RFC 2142 required | IMAP |
+| Category | Addresses | Protocol |
+|----------|-----------|----------|
+| General enquiries | `info@`, `hello@`, `contact@`, `enquiries@` | POP or IMAP shared |
+| Customer-facing teams | `support@` (+ helpdesk), `sales@` (+ CRM), `marketing@`, `hr@`, `careers@` | IMAP |
+| Restricted / compliance | `accounts@`, `billing@`, `admin@`, `dataprotection@`, `legal@`, `security@` | IMAP (restricted) |
+| Outbound only | `noreply@` | SMTP only |
+| RFC 2142 / ops | `abuse@`, `postmaster@`, `press@`, `webmaster@`, `buyers@` | IMAP |
 
 **Shared mailbox support by provider:**
-- **Microsoft 365**: Best-in-class — dedicated shared mailbox, no extra license, auto-mapping, send-as/on-behalf.
+- **Microsoft 365**: Dedicated shared mailbox, no extra license, auto-mapping, send-as/on-behalf.
 - **Google Workspace**: Collaborative inboxes via Google Groups; delegated access for individual mailboxes.
 - **Zoho Mail**: Group mailboxes in paid plans.
 - **Cloudron**: Separate mailbox accounts or aliases via admin panel / CLI.
@@ -122,23 +117,11 @@ POP does not sync folders, flags, or read-state across devices.
 ## Cloudron Mail Management
 
 ```bash
-cloudron mail list
-cloudron mail add user@yourdomain.com
-cloudron mail remove user@yourdomain.com
+cloudron mail {list|add|remove} [user@yourdomain.com]
 cloudron mail aliases
 cloudron mail alias-add alias@yourdomain.com target@yourdomain.com
 cloudron mail catch-all yourdomain.com target@yourdomain.com
 ```
-
-## Provider-Specific Notes
-
-| Provider | Key Notes |
-|----------|-----------|
-| **Gmail / Google Workspace** | Enable IMAP in Settings > Forwarding and POP/IMAP. OAuth2 required since May 2022 (app passwords with 2FA). Labels map to `[Gmail]/` IMAP folders. Limits: 500/day (Gmail), 2000/day (Workspace). |
-| **Microsoft 365** | Basic auth deprecated Oct 2022. OAuth2 via Microsoft Entra ID. Graph API recommended for programmatic access. Shared mailboxes free (no license). |
-| **Proton Mail** | Requires Proton Bridge running locally (local IMAP 1143, SMTP 1025). Use Bridge-generated password, not account password. Not suitable for headless/server without Bridge CLI. |
-| **Tuta** | No IMAP/SMTP/POP3. Tuta apps only (web, desktop, mobile). Deliberate security decision for encryption architecture. |
-| **Zoho Mail** | Enable IMAP in settings. Regional domains affect hostnames (zoho.com, zoho.eu, zoho.in, zoho.com.au, zoho.jp). Free tier: 5 users, 5 GB each. |
 
 ## Related
 
