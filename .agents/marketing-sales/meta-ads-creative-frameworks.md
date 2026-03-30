@@ -14,9 +14,7 @@
 | Brand building | Origin Story | Storytelling |
 | Trust-building | Testimonial / Case Study | Proof |
 
-## PAS (Problem-Agitate-Solution)
-
-Static:
+## PAS (Problem-Agitate-Solution) — static
 
 ```text
 PRIMARY TEXT:
@@ -34,7 +32,7 @@ HEADLINE: Automate Data Entry in 5 Minutes
 CTA: Try Free
 ```
 
-Video 25s:
+**Video 25s:**
 
 ```text
 [0-3s]   "If you're still manually entering data, I need to talk to you."
@@ -99,7 +97,7 @@ Setup (5-10s) → Conflict (5-10s) → Climax (5-10s) → Resolution (5-10s) →
 [CTA]        "Ready to transform your workflow? Start free at [WEBSITE]."
 ```
 
-Transformation variant (identity framing):
+**Transformation variant (identity framing):**
 
 ```text
 "I used to be the person who was always behind. [chaos]
@@ -136,7 +134,7 @@ Frustration → Decision → Journey → Achievement → Connection
 
 ## Proof Frameworks
 
-Testimonial structures:
+**Testimonials:**
 
 ```text
 Result-focused: "[Specific result] in [timeframe]." — [Name], [Title] at [Company]
@@ -145,7 +143,7 @@ Comparison:     "I've tried [alternatives]. [PRODUCT] is the only one that [spec
 Emotional:      "I finally feel [positive emotion] about [area]. [PRODUCT] gave me [intangible benefit]."
 ```
 
-Case study — Challenge → Solution → Results → Quote:
+**Case study** — Challenge → Solution → Results → Quote:
 
 ```text
 CHALLENGE: "[Company] was losing 20 hours/week to manual invoice processing."
