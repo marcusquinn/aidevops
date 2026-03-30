@@ -2,9 +2,9 @@
 
 ## Middleware
 
-`functions/_middleware.js` (global) or `functions/users/_middleware.js` (scoped to `/users/*`).
-
 ```javascript
+// functions/_middleware.js (global) or functions/users/_middleware.js (scoped to /users/*)
+
 // Single
 export async function onRequest(context) {
   try {
@@ -139,11 +139,14 @@ export async function onRequest(context) {
 }
 ```
 
-## Advanced Mode (_worker.js)
+## Advanced Mode (`_worker.js`)
 
 Replace `/functions` with `_worker.js` for full routing control (complex Workers, framework-generated output: Next.js, SvelteKit).
 
 ```typescript
+// Module Worker syntax required; /functions ignored when _worker.js present
+// Manually call env.ASSETS.fetch() for static files; passThroughOnException() unavailable
+
 interface Env {
   ASSETS: Fetcher;
   KV: KVNamespace;
@@ -161,11 +164,6 @@ export default {
   }
 } satisfies ExportedHandler<Env>;
 ```
-
-- Module Worker syntax required
-- `/functions` ignored when `_worker.js` present
-- Manually call `env.ASSETS.fetch()` for static files
-- `passThroughOnException()` unavailable
 
 ## See Also
 
