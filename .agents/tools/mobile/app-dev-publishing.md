@@ -33,8 +33,6 @@ asc auth login --key-id KEY --issuer-id ISSUER --private-key-path ~/.asc/AuthKey
 asc apps list
 ```
 
-The checklists below cover compliance requirements. The `asc` CLI automates execution.
-
 ## Apple App Store
 
 ### Pre-Submission Checklist
@@ -94,8 +92,6 @@ The checklists below cover compliance requirements. The `asc` CLI automates exec
 | iPhone 6.5" | 1284 x 2778 | Yes |
 | iPad Pro 13" | 2064 x 2752 | If iPad supported |
 | iPad Pro 12.9" | 2048 x 2732 | If iPad supported |
-
-**Screenshot tips**:
 
 - Show the app in use, not empty states; highlight key features with captions
 - Use consistent style; first screenshot is most important (shown in search results)
