@@ -28,22 +28,17 @@ tools:
 
 ## API Reference
 
-Base: `https://api.moondream.ai/v1/`. All endpoints accept POST with JSON body.
+Base: `https://api.moondream.ai/v1/`. All endpoints POST JSON.
 
-**Common headers** (all requests):
+**Headers**: `Content-Type: application/json`, `X-Moondream-Auth: $MOONDREAM_API_KEY`
 
-```text
-Content-Type: application/json
-X-Moondream-Auth: $MOONDREAM_API_KEY
-```
-
-**Image input formats**: URL (`"image_url": "https://..."`), Base64 (`"image_url": "data:image/jpeg;base64,..."`), local file (SDK only: `Image.open("path")`).
+**Image input**: URL (`"image_url": "https://..."`), Base64 (`"image_url": "data:image/jpeg;base64,..."`), local file (SDK only: `Image.open("path")`).
 
 ### Endpoints
 
-#### `/caption` — Generate image descriptions
+#### `/caption` — Image descriptions (SEO alt text)
 
-Primary endpoint for SEO alt text. Lengths: `"short"`, `"normal"`, `"long"`.
+Lengths: `"short"`, `"normal"`, `"long"`.
 
 ```bash
 curl -X POST https://api.moondream.ai/v1/caption \
@@ -52,19 +47,9 @@ curl -X POST https://api.moondream.ai/v1/caption \
   -d '{"image_url": "https://example.com/image.jpg", "length": "normal", "stream": false}'
 ```
 
-Response:
+Response: `{"caption": "...", "metrics": {"input_tokens": 735, "output_tokens": 45, "prefill_time_ms": 43.5, "decode_time_ms": 415.3}, "finish_reason": "stop"}`
 
-```json
-{
-  "caption": "A golden retriever sitting on a wooden deck...",
-  "metrics": {"input_tokens": 735, "output_tokens": 45, "prefill_time_ms": 43.5, "decode_time_ms": 415.3},
-  "finish_reason": "stop"
-}
-```
-
-#### `/query` — Visual question answering
-
-Ask specific questions about images. Use for SEO keyword extraction, filename suggestions, tag generation.
+#### `/query` — Visual question answering (keyword extraction, filename suggestions, tags)
 
 ```bash
 curl -X POST https://api.moondream.ai/v1/query \
@@ -88,15 +73,13 @@ Response: `{"objects": [{"x_min": 0.2, "y_min": 0.3, "x_max": 0.6, "y_max": 0.8}
 
 #### `/point` — Object center coordinates
 
-Same request format as `/detect`. Returns center point coordinates for each matched object.
+Same format as `/detect`. Returns center point per matched object.
 
 #### `/segment` — SVG path masks
 
-Same request format as `/detect`. Returns SVG path masks. Useful for background removal before publishing.
+Same format as `/detect`. Returns SVG path masks (useful for background removal).
 
-## SEO Prompt Templates
-
-All use the `/query` endpoint. Replace the `question` field:
+## SEO Prompt Templates (`/query` endpoint)
 
 | Use case | Question prompt |
 |----------|----------------|
@@ -136,19 +119,12 @@ const answer = (await model.query({ image, question: 'List 5-10 SEO tags, comma-
 ### Local inference (no API key)
 
 ```python
-model = md.vl(api_url="http://localhost:2020")
+model = md.vl(api_url="http://localhost:2020")  # Moondream Station
 ```
 
-Download Moondream Station from [moondream.ai/station](https://moondream.ai/station) (macOS/Linux, CPU/GPU).
+## Rate Limits & Benchmarks (Moondream 3 Preview)
 
-## Rate Limits
-
-| Tier | Requests/sec | Notes |
-|------|-------------|-------|
-| Free | 2 RPS | $5/mo free credits |
-| Paid | 10+ RPS | Pay-as-you-go |
-
-## Benchmarks (Moondream 3 Preview)
+**Rate limits**: Free 2 RPS ($5/mo free credits), Paid 10+ RPS (pay-as-you-go).
 
 | Task | Moondream 3 | GPT 5 | Gemini 2.5 Flash | Claude 4 Sonnet |
 |------|-------------|-------|-------------------|-----------------|
