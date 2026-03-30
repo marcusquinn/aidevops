@@ -2,23 +2,17 @@
 
 ## 21.1 Hypothesis Development
 
-### The Hypothesis Framework
+### Hypothesis Framework
 
-Every test should start with a clear hypothesis following this structure:
+Structure: **IF** [change], **THEN** [expected result], **BECAUSE** [reasoning]
 
-**IF** [change], **THEN** [expected result], **BECAUSE** [reasoning]
+Example: "IF we simplify checkout from 12 to 6 fields, THEN checkout completion increases 15%, BECAUSE reducing friction removes purchase barriers"
 
-**Example:**
-"IF we simplify the checkout form from 12 fields to 6 fields, THEN we will see a 15% increase in checkout completion, BECAUSE reducing friction removes barriers to purchase"
-
-### Research-Driven Hypotheses
-
-**Data Sources for Hypotheses:**
-- Analytics data showing drop-off points
-- Heatmap clicks and scrolls
-- Session recording analysis
-- User survey feedback
-- Support ticket themes
+**Data Sources:**
+- Analytics drop-off points
+- Heatmap clicks/scrolls
+- Session recordings
+- User surveys and support tickets
 - Competitor benchmarking
 
 **Prioritization Matrix:**
@@ -35,79 +29,48 @@ Every test should start with a clear hypothesis following this structure:
 
 ### Factorial Experiments
 
-Test multiple variables simultaneously to understand interactions.
+Test multiple variables simultaneously to detect interaction effects.
 
-**Example: Landing Page Test**
-Variables:
-- Headline: A vs B
-- Image: X vs Y
-- CTA: Red vs Blue
+Example (2×2×2 = 8 variations): Headline A/B × Image X/Y × CTA Red/Blue
 
-Full factorial: 2 × 2 × 2 = 8 variations
-
-**Benefits:**
-- Detect interaction effects between variables
-- Can be more sample-efficient than running many separate tests when interactions matter
-- Comprehensive understanding of variable combinations
-
-**Challenges:**
-- Complex analysis
-- More traffic required
-- Implementation complexity
+| | Benefits | Challenges |
+|-|----------|------------|
+| Factorial | Interaction effects, sample-efficient when interactions matter | Complex analysis, more traffic, implementation complexity |
 
 ### Bandit Algorithms
 
-Dynamic allocation of traffic to winning variations during the test.
+Dynamic traffic allocation to winning variations during the test.
 
-**Epsilon-Greedy Algorithm:**
-- 90% of traffic to current best
-- 10% explores other options
-- Adapts in real-time
+**Epsilon-Greedy:** 90% traffic to current best, 10% exploration, adapts in real-time
 
-**Use Cases:**
-- Continuous optimization
-- Long-running campaigns
-- Seasonal adjustments
+**Use cases:** Continuous optimization, long-running campaigns, seasonal adjustments
 
 ## 21.3 Statistical Rigor
 
-### Type I and Type II Errors
+### Error Types
 
-**Type I Error (False Positive):**
-- Declaring a winner when there is no real difference
-- Controlled by significance level (α = 0.05)
-
-**Type II Error (False Negative):**
-- Missing a real improvement
-- Controlled by power (1-β = 0.8)
+| Error | Definition | Control |
+|-------|-----------|---------|
+| Type I (False Positive) | Declaring winner when no real difference | Significance level α = 0.05 |
+| Type II (False Negative) | Missing a real improvement | Power 1-β = 0.8 |
 
 ### Sequential Testing
 
-Stop tests early when significance is reached, but **only when using pre-specified stopping rules**. Ad-hoc stopping without proper error-control methods inflates false positive rates.
+Stop tests early **only with pre-specified stopping rules** — ad-hoc stopping inflates false positive rates.
 
-**Benefits:**
-- Faster decisions when using valid stopping boundaries
-- Lower opportunity cost
-- Reduced sample size while maintaining statistical validity
-
-**Methods (required for valid early stopping):**
+**Valid early-stopping methods:**
 - O'Brien-Fleming boundaries (conservative early, lenient late)
 - Pocock boundaries (equal spending at each interim look)
 - Always Valid P-values (anytime-valid inference)
 - Alpha-spending functions (flexible interim analysis scheduling)
 
+**Benefits:** Faster decisions, lower opportunity cost, reduced sample size while maintaining validity
+
 ## 21.4 Test Analysis Deep Dive
 
 ### Segment-Level Analysis
 
-**Dimensions to Analyze:**
-- Device type (mobile vs desktop)
-- Traffic source
-- New vs returning
-- Geographic location
-- Browser type
-
-**Implementation:**
+**Dimensions:** Device type, traffic source, new vs returning, geography, browser
 
 ```sql
 SELECT 
@@ -123,16 +86,8 @@ GROUP BY device_type, variation
 
 ### Cohort Analysis
 
-Understand how test effects change over time.
+Track how test effects change over time.
 
-**Cohort Dimensions:**
-- Day of week
-- Week of test
-- Acquisition cohort
+**Dimensions:** Day of week, week of test, acquisition cohort
 
-**Interpretation:**
-- Novelty effects (initial excitement)
-- Seasonality impacts
-- Sustained vs temporary lift
-
-This masterclass provides the advanced testing knowledge needed for enterprise CRO programs.
+**Interpret for:** Novelty effects (initial excitement), seasonality impacts, sustained vs temporary lift
