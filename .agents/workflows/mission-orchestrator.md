@@ -23,15 +23,13 @@ tools:
 
 **Lifecycle**: `/mission` creates state file → orchestrator drives execution → milestone validation → completion or re-plan.
 
-**Pulse**: lightweight (re-dispatch dead workers, record completions, budget tracking). Orchestrator: heavyweight (re-planning, validation, research). Features tagged `mission:{id}` in TODO.
-
-**Self-organisation**: Create artifacts only when you have content. Draft tier unless promoted.
+**Division of labour**: Pulse = lightweight (re-dispatch dead workers, record completions, budget tracking). Orchestrator = heavyweight (re-planning, validation, research). Features tagged `mission:{id}` in TODO. Create artifacts only when you have content; draft tier unless promoted.
 
 <!-- AI-CONTEXT-END -->
 
 ## How to Think
 
-Read the mission state file, understand the current phase, take the next correct action. Not a script executor.
+Read the mission state file, understand the current phase, take the next correct action — not a script executor.
 
 - **One orchestrator layer.** Decompose large features via `task-decompose-helper.sh`; workers don't spawn sub-orchestrators.
 - **Serial milestones, parallel features.** Each milestone must pass validation before the next. Features within a milestone run in parallel (up to `max_parallel_workers`).
@@ -73,9 +71,7 @@ Update → `dispatched`, record `worker_pid`. Respect `max_parallel_workers`.
 
 ### Phase 3: Monitor
 
-**Full**: merged PR = complete. **POC**: commit with `Completes-feature: {id}` = complete. Update status, record cost.
-
-Stuck (2+ hours, `worker_pid` dead, no PR/commits) → `failed`, re-dispatch.
+**Full**: merged PR = complete. **POC**: commit with `Completes-feature: {id}` = complete. Update status, record cost. Stuck (2+ hours, `worker_pid` dead, no PR/commits) → `failed`, re-dispatch.
 
 ### Phase 4: Milestone Validation
 
@@ -101,19 +97,13 @@ All milestones `passed`: final smoke test → `status: completed` → retrospect
 
 Dirs: `mission.md` (always) · `research/` · `agents/` · `scripts/` · `assets/` — create only when you have content.
 
-**Temporary agents**: create when 2+ features need the same specialised knowledge or a worker fails from missing context. Keep under 100 lines; frontmatter: `mode: subagent, status: draft, source: mission/{id}`. Pass path in worker prompts: `Read {mission-dir}/agents/{name}.md before starting.`
+**Temporary agents**: create when 2+ features need the same specialised knowledge or a worker fails from missing context. Keep under 100 lines; frontmatter: `mode: subagent, status: draft, source: mission/{id}`. Pass path in worker prompts: `Read {mission-dir}/agents/{name}.md before starting.` After completion: move useful agents to `~/.aidevops/agents/draft/`; delete one-off agents.
 
-After completion: move useful agents to `~/.aidevops/agents/draft/`; delete one-off agents.
-
-## Improvement Feedback
-
-At completion: `gh issue create --repo {aidevops_slug} --title "Mission feedback: {desc}" --body "{details}"`. Don't modify aidevops files during a mission or duplicate existing capabilities.
+**Improvement feedback**: at completion, `gh issue create --repo {aidevops_slug} --title "Mission feedback: {desc}" --body "{details}"`. Don't modify aidevops files during a mission or duplicate existing capabilities.
 
 ## Research
 
-**Sources**: context7 MCP → Augment Context Engine → `gh api` (README) → `ai-research` MCP (haiku) → `webfetch` (URLs from README only). Capture in `research/{topic}.md` (decision, options, recommendation). 1-2 pages.
-
-**When**: well-known → skip; unfamiliar → 30-60 min time-box; POC → popular defaults; Full → 2-3 options.
+**Sources**: context7 MCP → Augment Context Engine → `gh api` (README) → `ai-research` MCP (haiku) → `webfetch` (URLs from README only). Capture in `research/{topic}.md` (decision, options, recommendation). 1-2 pages. Skip well-known topics; time-box unfamiliar to 30-60 min; POC → popular defaults; Full → 2-3 options.
 
 ## Budget
 
@@ -146,17 +136,13 @@ Pre-execution: `budget-analysis-helper.sh recommend --goal "{goal}" --json`. Per
 
 ## Session Resilience
 
-Always recover from cold start by reading current state — never assume a previous step completed.
-
-**Recovery** (every invocation): read `status` → check milestones → `ps` for workers → `gh pr list` → git log (POC) → resume without re-dispatching completed features.
+**Recovery** (every invocation): read `status` → check milestones → `ps` for workers → `gh pr list` → git log (POC) → resume without re-dispatching completed features. Never assume a previous step completed.
 
 **Compaction**: checkpoint to `~/.aidevops/.agent-workspace/tmp/mission-{id}-checkpoint.md` (ID, state path, milestone, feature statuses, budget, next action).
 
 ## Pulse Integration
 
 Scans `{repo_root}/todo/missions/*/mission.md` and `~/.aidevops/missions/*/mission.md` for `status: active`.
-
-**Pulse**: re-dispatch dead workers, record completions, pause on budget. **Orchestrator**: re-planning, validation, research.
 
 Pulse transitions: `dispatched`→`completed` (merged PR) · `dispatched`→`failed` (dead worker, no PR) · `active`→`paused` (budget) · re-dispatch (transient).
 
