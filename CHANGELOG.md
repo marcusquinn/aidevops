@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.464] - 2026-03-30
+
+### Changed
+
+- Documentation: tighten SKILL-SCAN-RESULTS.md — collapse duplicate scan rows, compress prose (68→37 lines) (#14417)
+
+### Fixed
+
+- address PR #14352 review feedback on agents-sdk-gotchas (#14461)
+
 ## [3.5.463] - 2026-03-30
 
 ### Changed
