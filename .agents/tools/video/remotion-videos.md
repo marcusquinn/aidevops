@@ -14,7 +14,7 @@ Install `@remotion/media`:
 
 ```bash
 npx remotion add @remotion/media    # npm
-bunx remotion add @remotion/media   # bun / yarn / pnpm equivalent
+bunx remotion add @remotion/media   # bun (use yarn dlx / pnpm dlx for others)
 ```
 
 `<Video>` from `@remotion/media` embeds videos into compositions:
@@ -83,7 +83,7 @@ Use the `style` prop:
 
 ## Volume
 
-Static: `<Video src={staticFile("video.mp4")} volume={0.5} />` (0 to 1). Mute: add `muted` prop.
+Static: `<Video src={staticFile("video.mp4")} volume={0.5} />` (0 to 1). Mute: `<Video src={staticFile("video.mp4")} muted />`.
 
 Dynamic volume via callback (receives current frame):
 
