@@ -10,30 +10,25 @@ tools: [read, write, edit, bash, glob, grep, webfetch, task, context7_*]
 
 ## Quick Reference
 
-- **Purpose**: High-performance build system for JS/TS monorepos
-- **Package Manager**: pnpm (recommended), npm, yarn
-- **Docs**: [turbo.build/repo/docs](https://turbo.build/repo/docs) (via Context7 MCP) · **Features**: Incremental caching · Parallel execution · Remote caching (Vercel)
+**High-performance build system for JS/TS monorepos.** Package managers: pnpm (recommended), npm, yarn. Docs: [turbo.build/repo/docs](https://turbo.build/repo/docs) (Context7 MCP).
 
-**Commands**: `pnpm dev` · `pnpm build` · `pnpm --filter web dev` · see Filtering section for full syntax
+**Core commands**: `pnpm dev` · `pnpm build` · `pnpm --filter web dev` (see Filtering for full syntax)
 
-**Structure**:
-
+**Directory structure**:
 ```text
 apps/     (web, mobile, extension)
 packages/ (ui, api, db, auth, i18n, shared)
 tooling/  (eslint, typescript, prettier)
 ```
 
-**Package Naming**:
-
-| Location | Name Pattern | Import |
-|----------|--------------|--------|
+**Package naming** (`@workspace/` prefix):
+| Location | Name | Import |
+|----------|------|--------|
 | `packages/ui/web` | `@workspace/ui-web` | `@workspace/ui-web/button` |
 | `packages/db` | `@workspace/db` | `@workspace/db/schema` |
 | `tooling/eslint` | `@workspace/eslint-config` | `@workspace/eslint-config` |
 
-**turbo.json**:
-
+**turbo.json** (task definitions):
 ```json
 {
   "$schema": "https://turbo.build/schema.json",
