@@ -36,28 +36,23 @@ Messages.app decrypts to local SQLite (`~/Library/Messages/chat.db`) → BlueBub
 
 **Requirements**: macOS 11+, Messages.app signed in, Full Disk Access + Accessibility, persistent GUI session.
 
-**Install**: Download DMG from [GitHub Releases](https://github.com/BlueBubblesApp/bluebubbles-server/releases) (Homebrew cask deprecated 2026-09-01). Right-click Open (Gatekeeper), grant Full Disk Access + Accessibility, set password, configure Cloudflare tunnel.
+**Install**: Download DMG from [GitHub Releases](https://github.com/BlueBubblesApp/bluebubbles-server/releases) (Homebrew cask deprecated 2026-09-01). Drag to /Applications, right-click Open (Gatekeeper), grant Full Disk Access + Accessibility, set password, configure Cloudflare tunnel.
 
 **Server config**: Port `1234` · Password (header only — query params are logged) · Proxy: Cloudflare · Poll: `1000ms` · **Headless**: `caffeinate -d` to prevent sleep; complete iCloud 2FA interactively first.
 
 ### REST API
 
 ```bash
-BB="http://localhost:1234/api/v1"
-AUTH='-H "Authorization: Bearer YOUR_PASSWORD"'
-
+BB="http://localhost:1234/api/v1"; AUTH='-H "Authorization: Bearer YOUR_PASSWORD"'
 # Send text (use iMessage;+;chat123 for groups)
 curl -X POST "$BB/message/text" -H "Content-Type: application/json" $AUTH \
   -d '{"chatGuid":"iMessage;-;+1234567890","message":"Hello!","method":"apple-script"}'
-
 # Send attachment
 curl -X POST "$BB/message/attachment" $AUTH \
   -F "chatGuid=iMessage;-;+1234567890" -F "attachment=@/path/to/file.png"
-
 # Tapback
 curl -X POST "$BB/message/react" -H "Content-Type: application/json" $AUTH \
   -d '{"chatGuid":"iMessage;-;+1234567890","selectedMessageGuid":"p:0/MSG-GUID","reaction":"love"}'
-
 # Register webhook
 curl -X POST "$BB/server/webhook" -H "Content-Type: application/json" \
   -d '{"url":"http://localhost:8080/webhook","password":"YOUR_PASSWORD"}'
@@ -79,20 +74,17 @@ macOS 12+, Messages.app signed in, Accessibility permission. Notifications/alert
 
 ```bash
 brew install steipete/tap/imsg
-imsg send "+14155551234" "Hello!"
-imsg send "user@example.com" "Hello via email"
-imsg send --group "Family" "Hello family!"
-imsg check "+14155551234"   # Check if recipient has iMessage
+imsg send "+14155551234" "Hello!"          # by phone
+imsg send "user@example.com" "Hello!"     # by email
+imsg send --group "Family" "Hello!"       # group
+imsg check "+14155551234"                 # verify iMessage capable
 ```
 
 ## macOS Host
 
 **Options**: Mac mini (~$600+, recommended) · macOS VM on Apple Silicon (UTM/Parallels) · Cloud Mac (MacStadium/AWS EC2, $50–200/month)
 
-```bash
-caffeinate -d &; sudo pmset -a sleep 0   # Prevent sleep
-osascript -e 'tell application "System Events" to make login item at end with properties {path:"/System/Applications/Messages.app", hidden:true}'
-```
+**Prevent sleep**: `caffeinate -d &` or `sudo pmset -a sleep 0`
 
 **Keepalive** (`sh.aidevops.imessage-keepalive`): restart Messages.app and BlueBubbles if not running.
 
@@ -116,7 +108,7 @@ check_and_restart "Messages"; check_and_restart "BlueBubbles"
 
 ## Privacy and Security
 
-**iMessage encryption**: E2E via RSA-OAEP/ECIES P-256 (iOS 13+)/PQ3 AES-256-CTR (iOS 17.4+); ECDSA P-256 signing; CKV key verification (iOS 17.2+, optional). Apple sees metadata (who, when, IP, contact graph) but not content (with ADP enabled).
+**iMessage encryption**: E2E — Classic: RSA-OAEP; iOS 13+: ECIES P-256; iOS 17.4+ (PQ3): AES-256-CTR + ML-KEM-1024. ECDSA P-256 signing; CKV key verification (iOS 17.2+, optional). Apple sees metadata (who, when, IP, contact graph) but not content (with ADP enabled).
 
 **BlueBubbles risk**: Mac compromise = full message access. Server compromise = attacker reads/sends as bot's Apple ID.
 
