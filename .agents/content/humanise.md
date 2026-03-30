@@ -1,13 +1,7 @@
 ---
 name: humanise
 version: 1.0.0
-description: |
-  Remove signs of AI-generated writing from text. Use when editing or reviewing
-  text to make it sound more natural and human-written. Based on Wikipedia's
-  comprehensive "Signs of AI writing" guide. Detects and fixes patterns including:
-  inflated symbolism, promotional language, superficial -ing analyses, vague
-  attributions, em dash overuse, rule of three, AI vocabulary words, negative
-  parallelisms, and excessive conjunctive phrases.
+description: Remove signs of AI-generated writing. Detects and fixes inflated symbolism, promotional language, superficial -ing analyses, vague attributions, em dash overuse, rule of three, AI vocabulary, negative parallelisms, and excessive conjunctive phrases.
 upstream: https://github.com/blader/humanizer
 upstream_version: 2.1.1
 mode: subagent
@@ -35,9 +29,6 @@ Avoiding AI patterns is half the job. Sterile, voiceless writing is as obvious a
 **Soulless signs:** uniform sentence length, no opinions, no uncertainty, no first-person, no humour, reads like a press release.
 
 **Add voice:** Have opinions. Vary rhythm. Acknowledge mixed feelings. Use "I" when it fits. Be specific. Let some mess in.
-
-**Before:** The experiment produced interesting results. The agents generated 3 million lines of code. Some developers were impressed while others were sceptical. The implications remain unclear.
-**After:** I genuinely don't know how to feel about this one. 3 million lines of code, generated while the humans presumably slept. Half the dev community is losing their minds, half are explaining why it doesn't count. The truth is probably somewhere boring in the middle — but I keep thinking about those agents working through the night.
 
 ## Pattern Reference
 
