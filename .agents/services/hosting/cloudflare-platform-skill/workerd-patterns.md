@@ -57,6 +57,8 @@ Add to the worker block inside a config (see Multi-Service Architecture for full
 
 ## Dev vs Prod Configs
 
+Separate named configs per environment; override bindings via `fromEnvironment`:
+
 ```capnp
 const devWorker :Workerd.Worker = (
   modules = [(name = "index.js", esModule = embed "src/index.js")],
@@ -159,4 +161,4 @@ workerd compile config.capnp myConfig -o production-server
 ./production-server
 ```
 
-See [gotchas.md](./gotchas.md) for common errors.
+See [workerd-gotchas.md](./workerd-gotchas.md) for common errors.
