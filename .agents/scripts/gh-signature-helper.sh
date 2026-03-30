@@ -372,7 +372,46 @@ _find_session_id() {
 	return 0
 }
 
-_detect_session_tokens() {
+# Sum non-cached input + output tokens for a session.
+# Args:
+#   $1 - sqlite db path
+#   $2 - session ID
+#   $3 - since milliseconds epoch (optional; include messages >= this time)
+# Output: integer token count (may be 0)
+_sum_session_tokens_for_session() {
+	local db_path="$1"
+	local session_id="$2"
+	local since_ms="${3:-}"
+
+	local since_filter=""
+	if [[ -n "$since_ms" ]] && [[ "$since_ms" =~ ^[0-9]+$ ]] && [[ "$since_ms" -gt 0 ]]; then
+		since_filter="AND time_created >= ${since_ms}"
+	fi
+
+	sqlite3 "$db_path" "
+		SELECT COALESCE(SUM(
+			CASE
+				WHEN json_extract(data, '$.tokens.input') >
+				     COALESCE(json_extract(data, '$.tokens.cache.read'), 0)
+				THEN MAX(
+					json_extract(data, '$.tokens.input')
+					- COALESCE(json_extract(data, '$.tokens.cache.read'), 0)
+					- COALESCE(json_extract(data, '$.tokens.cache.write'), 0),
+					0)
+				ELSE json_extract(data, '$.tokens.input')
+			END
+			+ json_extract(data, '$.tokens.output')
+		), 0)
+		FROM message
+		WHERE session_id='${session_id}'
+		  AND json_extract(data, '$.tokens.input') > 0
+		  ${since_filter}
+	" 2>/dev/null || echo ""
+	return 0
+}
+
+_detect_session_tokens_with_since() {
+	local since_epoch="${1:-}"
 	local db_path="${HOME}/.local/share/opencode/opencode.db"
 
 	# If the OpenCode DB exists, try it — don't gate on process detection.
@@ -391,37 +430,80 @@ _detect_session_tokens() {
 		return 0
 	fi
 
-	# Sum non-cached input + output tokens only.
-	# OpenCode >= v1.3.5 stores tokens.input as total input (including
-	# cache.read + cache.write). Earlier versions stored only non-cached input.
-	# Detect which format per-message: if input > cache.read, input includes
-	# cache — subtract cache.read + cache.write. Otherwise use input as-is.
-	# Clamp to 0 to avoid negatives from rounding.
-	local total_tokens
-	total_tokens=$(sqlite3 "$db_path" "
-		SELECT COALESCE(SUM(
-			CASE
-				WHEN json_extract(data, '$.tokens.input') >
-				     COALESCE(json_extract(data, '$.tokens.cache.read'), 0)
-				THEN MAX(
-					json_extract(data, '$.tokens.input')
-					- COALESCE(json_extract(data, '$.tokens.cache.read'), 0)
-					- COALESCE(json_extract(data, '$.tokens.cache.write'), 0),
-					0)
-				ELSE json_extract(data, '$.tokens.input')
-			END
-			+ json_extract(data, '$.tokens.output')
-		), 0)
-		FROM message
-		WHERE session_id='${session_id}'
-		  AND json_extract(data, '$.tokens.input') > 0
-	" 2>/dev/null || echo "")
+	local since_ms=""
+	if [[ -n "$since_epoch" ]] && [[ "$since_epoch" =~ ^[0-9]+$ ]] && [[ "$since_epoch" -gt 0 ]]; then
+		since_ms=$((since_epoch * 1000))
+	fi
 
-	if [[ -n "$total_tokens" ]] && [[ "$total_tokens" -gt 0 ]] 2>/dev/null; then
+	local total_tokens
+	total_tokens=$(_sum_session_tokens_for_session "$db_path" "$session_id" "$since_ms")
+
+	if [[ -n "$total_tokens" ]] && [[ "$total_tokens" =~ ^[0-9]+$ ]]; then
 		echo "$total_tokens"
 	else
 		echo ""
 	fi
+	return 0
+}
+
+_detect_session_tokens() {
+	_detect_session_tokens_with_since ""
+	return 0
+}
+
+# Resolve issue creation time to epoch seconds.
+# Args: issue_ref (OWNER/REPO#NUM), issue_created ISO timestamp
+# Output: epoch seconds, or empty string if unavailable
+_resolve_issue_created_epoch() {
+	local issue_ref="$1"
+	local issue_created="$2"
+
+	if [[ -n "$issue_created" ]]; then
+		local parsed_epoch=""
+		if date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$issue_created" "+%s" &>/dev/null 2>&1; then
+			parsed_epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$issue_created" "+%s" 2>/dev/null || echo "")
+		elif date -d "$issue_created" "+%s" &>/dev/null 2>&1; then
+			parsed_epoch=$(date -d "$issue_created" "+%s" 2>/dev/null || echo "")
+		fi
+
+		if [[ -n "$parsed_epoch" ]]; then
+			echo "$parsed_epoch"
+			return 0
+		fi
+	fi
+
+	if [[ -n "$issue_ref" ]] && command -v gh &>/dev/null; then
+		local repo_slug issue_number created_at
+		repo_slug="${issue_ref%%#*}"
+		issue_number="${issue_ref##*#}"
+		if [[ -n "$repo_slug" ]] && [[ -n "$issue_number" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
+			created_at=$(gh api "repos/${repo_slug}/issues/${issue_number}" --jq '.created_at' 2>/dev/null || echo "")
+			if [[ -n "$created_at" ]]; then
+				_resolve_issue_created_epoch "" "$created_at"
+				return 0
+			fi
+		fi
+	fi
+
+	echo ""
+	return 0
+}
+
+# Detect session tokens scoped to issue creation time when issue context is known.
+# Args: issue_ref (OWNER/REPO#NUM), issue_created ISO timestamp
+# Output: scoped token count, or empty when issue timestamp/session unavailable.
+_detect_issue_scoped_tokens() {
+	local issue_ref="$1"
+	local issue_created="$2"
+
+	local issue_created_epoch
+	issue_created_epoch=$(_resolve_issue_created_epoch "$issue_ref" "$issue_created")
+	if [[ -z "$issue_created_epoch" ]] || ! [[ "$issue_created_epoch" =~ ^[0-9]+$ ]] || [[ "$issue_created_epoch" -le 0 ]]; then
+		echo ""
+		return 0
+	fi
+
+	_detect_session_tokens_with_since "$issue_created_epoch"
 	return 0
 }
 
@@ -627,8 +709,8 @@ _detect_total_time() {
 
 	if [[ -n "$issue_created" ]]; then
 		local created_epoch now_epoch
-		if date -j -f "%Y-%m-%dT%H:%M:%SZ" "$issue_created" "+%s" &>/dev/null 2>&1; then
-			created_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$issue_created" "+%s" 2>/dev/null || echo "")
+		if date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$issue_created" "+%s" &>/dev/null 2>&1; then
+			created_epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$issue_created" "+%s" 2>/dev/null || echo "")
 		else
 			created_epoch=$(date -d "$issue_created" "+%s" 2>/dev/null || echo "")
 		fi
@@ -980,9 +1062,16 @@ cmd_generate() {
 			model=$(_detect_session_model)
 		fi
 
-		# Auto-detect tokens from session DB if not provided
+		# Auto-detect tokens from session DB if not provided.
+		# When issue context is provided, scope tokens to issue lifetime first
+		# (prevents unrelated early-session work inflating issue/PR signatures).
 		if [[ -z "$tokens" ]]; then
-			tokens=$(_detect_session_tokens)
+			if [[ -n "$issue_ref" ]] || [[ -n "$issue_created" ]]; then
+				tokens=$(_detect_issue_scoped_tokens "$issue_ref" "$issue_created")
+			fi
+			if [[ -z "$tokens" ]]; then
+				tokens=$(_detect_session_tokens)
+			fi
 		fi
 
 		# Collect time metrics
