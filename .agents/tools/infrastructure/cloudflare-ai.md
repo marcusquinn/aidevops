@@ -28,8 +28,6 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-Serverless AI inference on Cloudflare's global GPU network. Models run at the edge, close to users. Part of the Cloudflare developer platform (Workers, Pages, KV, D1, R2, Vectorize, AI Gateway).
-
 ## Pricing (March 2026)
 
 Billed in Neurons ($0.011 per 1,000 Neurons). Free allocation: 10,000 Neurons/day on both Free and Paid Workers plans.
@@ -66,7 +64,7 @@ Billed in Neurons ($0.011 per 1,000 Neurons). Free allocation: 10,000 Neurons/da
 
 ### Price Comparison vs Fireworks/Together
 
-Cloudflare is generally **more expensive for large models** but **competitive or cheaper for small models**:
+CF: cheap input, expensive output for large models. Best value for small models (<16B).
 
 | Model | Cloudflare | Fireworks | Together |
 |-------|------------|-----------|---------|
@@ -75,14 +73,11 @@ Cloudflare is generally **more expensive for large models** but **competitive or
 | Qwen3 30B A3B (in/out) | $0.05/$0.34 | $0.15/$0.60 | $0.15/$1.50 |
 | Mistral 7B (in/out) | $0.11/$0.19 | $0.20/$0.20 | $0.20/$0.20 |
 
-Pattern: CF has cheap input but expensive output for large models. Best value for small models (<16B).
-
 ## Usage
 
 ### From Workers (recommended)
 
 ```javascript
-// In a Cloudflare Worker
 export default {
   async fetch(request, env) {
     const response = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
@@ -103,7 +98,7 @@ curl https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/ai/run
 
 ### OpenAI-Compatible Endpoint
 
-Cloudflare provides an OpenAI-compatible endpoint for supported models. See [OpenAI compat docs](https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/) for supported models and limitations.
+See [OpenAI compat docs](https://developers.cloudflare.com/workers-ai/configuration/open-ai-compatibility/) for supported models and limitations.
 
 ## Capabilities
 
