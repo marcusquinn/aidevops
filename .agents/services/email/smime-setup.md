@@ -18,20 +18,16 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: End-to-end email encryption and digital signatures using X.509 certificates
-- **Standard**: S/MIME v3.2 (RFC 5751)
-- **Key format**: PKCS#12 (`.p12`/`.pfx`) for import; PEM for inspection
-- **Free CA**: Actalis (1-year, no cost) — https://www.actalis.com/s-mime.aspx
-- **Paid CAs**: Sectigo (~$12/yr), DigiCert (~$25/yr), GlobalSign (~$59/yr)
-- **Verify cert**: `openssl x509 -in cert.pem -text -noout`
-- **Related**: `services/email/email-security.md`, `tools/credentials/encryption-stack.md`
+| | |
+|---|---|
+| **Standard** | S/MIME v3.2 (RFC 5751); PKCS#12 (`.p12`/`.pfx`) for import, PEM for inspection |
+| **Free CA** | Actalis (1-year) — https://www.actalis.com/s-mime.aspx |
+| **Paid CAs** | Sectigo (~$12/yr), DigiCert (~$25/yr), GlobalSign (~$59/yr) |
+| **Verify cert** | `openssl x509 -in cert.pem -text -noout` |
+| **Check expiry** | `openssl x509 -in cert.pem -enddate -noout` |
+| **Related** | `services/email/email-security.md`, `tools/credentials/encryption-stack.md` |
 
-**Decision tree:**
-1. Free cert? → Actalis (email-only validation, 1-year)
-2. Enterprise/compliance? → DigiCert or GlobalSign
-3. Installing? → [Apple Mail](#apple-mail) | [Thunderbird](#thunderbird) | [Outlook](#outlook)
-4. Back up keys? → [Key Backup](#key-backup-and-recovery)
-5. Automate sign/encrypt? → [Agent Commands](#agent-assisted-signing-and-encryption)
+**Decision:** Free/personal → Actalis; enterprise/compliance → DigiCert or GlobalSign. Then: [Apple Mail](#apple-mail) · [Thunderbird](#thunderbird) · [Outlook](#outlook) · [Key Backup](#key-backup-and-recovery) · [Agent Commands](#agent-assisted-signing-and-encryption)
 
 <!-- AI-CONTEXT-END -->
 
@@ -105,8 +101,6 @@ security import smime-backup.p12 -k ~/Library/Keychains/login.keychain-db
 pk12util -i smime-backup.p12 -d ~/.thunderbird/*.default-release/
 ```
 
-**Check expiry:** `openssl x509 -in cert.pem -enddate -noout`
-
 ## Agent-Assisted Signing and Encryption
 
 ```bash
@@ -135,7 +129,7 @@ SMIME_P12_PASS=$(gopass show -o email/smime-p12-password) \
 
 ## Cross-Client Compatibility
 
-Apple Mail, Thunderbird, and Outlook interoperate fully. Gmail S/MIME is Enterprise-only and limited to within Google Workspace.
+Apple Mail, Thunderbird, and Outlook interoperate fully.
 
 **Known issues:**
 - Outlook may wrap signed messages in `winmail.dat` (TNEF) — fix: set message format to "Internet Format (HTML)"
