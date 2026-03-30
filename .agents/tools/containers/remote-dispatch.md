@@ -32,24 +32,7 @@ tools:
 
 ## Architecture
 
-```text
-Local Supervisor                    Remote Host
-┌──────────────────┐               ┌──────────────────────┐
-│  pulse.sh        │  SSH/Tailscale│  /tmp/aidevops-worker │
-│  ├── dispatch.sh │──────────────>│  ├── t123/            │
-│  │   └── remote- │  credentials │  │   ├── dispatch.sh   │
-│  │      dispatch │  forwarding  │  │   ├── wrapper.sh    │
-│  │      -helper  │               │  │   ├── worker.log   │
-│  │               │<──────────────│  │   └── repo/         │
-│  │   (log collect│  log stream  │  │       └── (git clone)│
-│  │    on eval)   │               │  └── ...               │
-│  └── evaluate.sh │               │                        │
-│      (reads local│               │  Container (optional)  │
-│       log copy)  │               │  ┌──────────────────┐  │
-└──────────────────┘               │  │ docker exec ...   │  │
-                                   │  └──────────────────┘  │
-                                   └──────────────────────┘
-```
+Local supervisor (`pulse.sh` → `dispatch.sh` → `remote-dispatch-helper.sh`) connects via SSH/Tailscale to a remote host, uploads a dispatch script with forwarded credentials, clones the repo into `/tmp/aidevops-worker/{task-id}/`, and runs the worker inside an optional Docker container. Logs stream back on demand; pulse auto-collects them when the worker PID exits.
 
 ## Host Management
 
@@ -76,6 +59,19 @@ remote-dispatch-helper.sh dispatch t123 gpu-server \
 
 **Routing**: `target:hostname` label on GitHub issues or TODO.md tag. GitHub is the state DB (`supervisor.db` dispatch_target is deprecated).
 
+## Monitoring and Cleanup
+
+```bash
+remote-dispatch-helper.sh logs t123 gpu-server           # download full log
+remote-dispatch-helper.sh logs t123 gpu-server --follow  # stream in real-time
+remote-dispatch-helper.sh logs t123 gpu-server --tail 100
+remote-dispatch-helper.sh status t123 gpu-server         # host, transport, container, PID, state, log size
+remote-dispatch-helper.sh cleanup t123 gpu-server        # collect logs then clean workspace
+remote-dispatch-helper.sh cleanup t123 gpu-server --keep-logs
+```
+
+**Auto-collection**: Pulse Phase 1 detects worker exit (PID gone) → calls `logs` → updates `log_file` in DB to local copy → normal evaluation.
+
 ## Credential Forwarding
 
 | Credential | Method | Notes |
@@ -86,31 +82,7 @@ remote-dispatch-helper.sh dispatch t123 gpu-server \
 | `OPENROUTER_API_KEY` | Env var | For model routing |
 | `GOOGLE_API_KEY` | Env var | For Google AI models |
 
-**Security**:
-- SSH agent forwarding passes the socket, not keys
-- API keys embedded in shell script uploaded via SSH stdin — no `AcceptEnv`/`SendEnv` dependency
-- Keys exist only in the generated dispatch script, never as standalone files on disk
-- Linux: env vars readable via `/proc/<pid>/environ` by same user + root while worker runs
-- Sensitive deployments: restrict remote host access or use short-lived/scoped tokens
-- Remote workspace cleaned up after task completion
-
-## Log Collection
-
-```bash
-remote-dispatch-helper.sh logs t123 gpu-server           # download full log
-remote-dispatch-helper.sh logs t123 gpu-server --follow  # stream in real-time
-remote-dispatch-helper.sh logs t123 gpu-server --tail 100
-```
-
-**Auto-collection**: Pulse Phase 1 detects worker exit (PID gone) → calls `logs` → updates `log_file` in DB to local copy → normal evaluation.
-
-## Status and Cleanup
-
-```bash
-remote-dispatch-helper.sh status t123 gpu-server    # host, transport, container, PID, state, log size
-remote-dispatch-helper.sh cleanup t123 gpu-server   # collect logs then clean workspace
-remote-dispatch-helper.sh cleanup t123 gpu-server --keep-logs
-```
+**Security**: API keys are embedded in the dispatch script uploaded via SSH stdin (no `AcceptEnv`/`SendEnv`). Keys never written as standalone files. SSH agent forwarding passes the socket, not keys. Linux: env vars readable via `/proc/<pid>/environ` by same user + root while worker runs — use short-lived/scoped tokens for sensitive deployments. Remote workspace cleaned up after task completion.
 
 ## Transport: SSH vs Tailscale
 
@@ -124,28 +96,9 @@ remote-dispatch-helper.sh cleanup t123 gpu-server --keep-logs
 
 Tailscale auto-detected for `*.ts.net` and `100.x.x.x` addresses.
 
-## Configuration (`~/.config/aidevops/remote-hosts.json`)
+## Configuration
 
-```json
-{
-  "hosts": {
-    "gpu-server": {
-      "address": "192.168.1.100",
-      "transport": "ssh",
-      "container": "auto",
-      "user": "",
-      "added": "2026-02-21T10:00:00Z"
-    },
-    "build-node": {
-      "address": "build-node.tailnet.ts.net",
-      "transport": "tailscale",
-      "container": "worker-1",
-      "user": "deploy",
-      "added": "2026-02-21T10:00:00Z"
-    }
-  }
-}
-```
+`~/.config/aidevops/remote-hosts.json` — written by `remote-dispatch-helper.sh add`. Fields: `address`, `transport` (`ssh`|`tailscale`), `container` (`auto` or name), `user`, `added`.
 
 ## Environment Variables
 
