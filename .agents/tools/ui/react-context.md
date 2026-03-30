@@ -34,13 +34,13 @@ tools:
 | Forgetting `"use client"` | Context requires client-side React — add at top of file |
 | Mutating state directly | Always use setter functions — React won't detect direct mutation |
 
-**Adding New State Checklist**: Update interface -> Update hook defaults -> Add `useState` in provider -> Add `useCallback` setter -> Add to provider value object -> Update CSS variables if needed.
+**Adding New State Checklist**: interface -> hook defaults -> `useState` in provider -> `useCallback` setter -> provider value object -> CSS variables if needed.
 
 <!-- AI-CONTEXT-END -->
 
 ## Full Provider Example
 
-Authoritative reference — interface, context, hooks (with fallback + optional), cookie persistence, CSS variables, clamped setters.
+Authoritative reference — interface, context, hooks (fallback + optional), cookie persistence, CSS variables, clamped setters.
 
 ```tsx
 "use client";
@@ -118,7 +118,7 @@ export function SidebarProvider({ children, defaultOpen = false, defaultWidth = 
 
 ## Usage Patterns
 
-**Conditional rendering** — use `useSidebarOptional()` to skip rendering when no provider exists:
+**Conditional rendering** — `useSidebarOptional()` skips rendering when no provider:
 
 ```tsx
 const AISidebarToggle = () => {
@@ -128,7 +128,7 @@ const AISidebarToggle = () => {
 };
 ```
 
-**Server-side cookie hydration** — read initial state in a server component:
+**Server-side cookie hydration** — read initial state in server component:
 
 ```tsx
 import { cookies } from "next/headers";
