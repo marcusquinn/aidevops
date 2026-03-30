@@ -4,9 +4,7 @@
 
 ### Container Not Ready
 
-**Error**: `CONTAINER_NOT_READY`  
-**Cause**: Container still provisioning (first request or after sleep)  
-**Fix**: Retry after 2-3s
+`CONTAINER_NOT_READY` — container still provisioning (first request or after sleep). Retry after 2-3s:
 
 ```typescript
 async function execWithRetry(sandbox, cmd) {
@@ -26,13 +24,10 @@ async function execWithRetry(sandbox, cmd) {
 
 ### Port Exposure Fails in Dev
 
-**Error**: "Connection refused: container port not found"  
-**Cause**: Missing `EXPOSE` directive in Dockerfile  
-**Fix**: Add `EXPOSE <port>` to Dockerfile (only needed for `wrangler dev`, production auto-exposes)
+"Connection refused: container port not found" — missing `EXPOSE` directive in Dockerfile. Add `EXPOSE <port>` (only needed for `wrangler dev`; production auto-exposes).
 
 ### Preview URLs Not Working
 
-**Checklist**:
 1. Custom domain configured? (not `.workers.dev`)
 2. Wildcard DNS set up? (`*.domain.com → worker.domain.com`)
 3. `normalizeId: true` in getSandbox?
@@ -40,16 +35,11 @@ async function execWithRetry(sandbox, cmd) {
 
 ### Slow First Request
 
-**Cause**: Cold start (container provisioning)  
-**Solutions**:
-- Use `sleepAfter` instead of creating new sandboxes
-- Pre-warm with cron triggers
-- Set `keepAlive: true` for critical sandboxes
+Cold start from container provisioning. Mitigations: `sleepAfter` instead of new sandboxes, pre-warm with cron triggers, `keepAlive: true` for critical sandboxes.
 
 ### File Not Persisting
 
-**Cause**: Files in `/tmp` or other ephemeral paths  
-**Fix**: Use `/workspace` for persistent files
+Files in `/tmp` or ephemeral paths don't survive. Use `/workspace` for persistent files.
 
 ## Performance Optimization
 
@@ -96,9 +86,7 @@ const sandbox = getSandbox(env.Sandbox, 'id', {
 
 ### Sandbox Isolation
 
-- Each sandbox = isolated container (filesystem, network, processes)
-- Use unique sandbox IDs per tenant for multi-tenant apps
-- Sandboxes cannot communicate directly
+Each sandbox = isolated container (filesystem, network, processes). Use unique sandbox IDs per tenant for multi-tenant apps. Sandboxes cannot communicate directly.
 
 ### Input Validation
 
@@ -137,13 +125,7 @@ const result = await sandbox.exec('git clone ...', {
 
 ### Preview URL Security
 
-Preview URLs include auto-generated tokens:
-
-```
-https://8080-sandbox-abc123def456.yourdomain.com
-```
-
-Token changes on each expose operation, preventing unauthorized access.
+Preview URLs include auto-generated tokens (e.g., `https://8080-sandbox-abc123def456.yourdomain.com`) that rotate on each expose operation, reducing the risk of unauthorized access. Note: tokens can be leaked prior to rotation.
 
 ## Limits
 
