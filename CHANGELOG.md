@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.410] - 2026-03-30
+
+### Changed
+
+- Maintenance: bump version to 3.5.407
+- Documentation: tighten mission-orchestrator.md — merge duplicate dispatch blocks, normalize unicode, compress prose (#13841)
+- Documentation: tighten email-composition.md — remove structural noise and redundancy (158 → 144 lines) (#13837)
+
 ## [3.5.373] - 2026-03-30
 
 ### Changed
