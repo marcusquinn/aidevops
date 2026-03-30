@@ -13,7 +13,6 @@ tools:
   grep: false
   webfetch: true
   task: false
-  openapi-search_*: true
 mcp:
   - openapi-search
 ---
@@ -31,12 +30,7 @@ mcp:
 - **Workflow**: `searchAPIs` → `getAPIOverview` → `getOperationDetails`
 - **Enabled for**: `@openapi-search` subagent only (lazy-loaded — zero install overhead)
 - **Docs**: <https://github.com/janwilmake/openapi-mcp-server> | **Directory**: <https://openapisearch.com/search>
-
-**Verification**:
-
-```text
-Use the openapi-search MCP to get an overview of the Stripe API, then show me the endpoint for creating a payment intent.
-```
+- **Verification**: _"Use openapi-search to get an overview of the Stripe API, then show the endpoint for creating a payment intent."_
 
 <!-- AI-CONTEXT-END -->
 
@@ -50,9 +44,11 @@ Use the openapi-search MCP to get an overview of the Stripe API, then show me th
 
 ## Configuration
 
-All clients connect to `https://openapi-mcp.openapisearch.com/mcp`. aidevops configures this automatically via `setup.sh` / `generate-opencode-agents.sh`.
+aidevops configures all clients automatically via `setup.sh` / `generate-opencode-agents.sh`. Manual setup:
 
-### Client config field names
+```bash
+claude mcp add --scope user openapi-search --transport http https://openapi-mcp.openapisearch.com/mcp
+```
 
 | Client | Config file | Key field |
 |--------|-------------|-----------|
@@ -67,30 +63,7 @@ All clients connect to `https://openapi-mcp.openapisearch.com/mcp`. aidevops con
 | Kilo Code / Kiro | global MCP config | `mcpServers.openapi-search.url` (unverified — no official docs) |
 | Zed | `~/.config/zed/settings.json` | `context_servers.openapi-search.url` |
 
-**Claude Code CLI**:
-
-```bash
-claude mcp add --scope user openapi-search --transport http https://openapi-mcp.openapisearch.com/mcp
-```
-
-**npx alternative** (any client supporting `command`/`args`):
-
-```json
-{
-  "mcpServers": {
-    "openapi-search": {
-      "command": "npx",
-      "args": ["-y", "@openapi-search/mcp-server"]
-    }
-  }
-}
-```
-
-Use `bunx --bun` instead of `npx` for faster startup.
-
 ## Usage
-
-### Full discovery workflow
 
 ```text
 # 1. Find APIs for a use case
@@ -106,18 +79,9 @@ getOperationDetails(apiId: "exchangerate-api", operationId: "GET /latest/{base}"
 # → parameters, response schema, example responses
 ```
 
-### When to use
-
 **Use**: unknown API for a task; exploring endpoints before writing integration code; request/response schemas for code generation; comparing APIs.
 
 **Don't use**: you already have the docs (use Context7 or direct docs); testing live calls (read-only); internal/private APIs (indexes public specs only).
-
-## Agent Enablement
-
-| Agent | Enabled |
-|-------|---------|
-| `@openapi-search` | Yes — dedicated subagent |
-| Build+, Research, all others | No — use `@openapi-search` when needed |
 
 ## Troubleshooting
 
@@ -130,9 +94,3 @@ curl -sf --max-time 10 https://openapi-mcp.openapisearch.com/mcp | head -5
 **API identifier not found** — browse <https://openapisearch.com/search> or pass a direct URL to a raw OpenAPI file.
 
 **Spec too large** — some large APIs (e.g., AWS) exceed the 250K character limit. Use a more specific sub-spec URL.
-
-## Updates
-
-- **GitHub**: <https://github.com/janwilmake/openapi-mcp-server>
-- **Directory**: <https://openapisearch.com>
-- **Remote URL**: `https://openapi-mcp.openapisearch.com/mcp` (always latest)
