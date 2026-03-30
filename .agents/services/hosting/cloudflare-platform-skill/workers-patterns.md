@@ -53,7 +53,6 @@ return handler ? handler(request, env) : new Response('Not Found', { status: 404
 // ❌ Sequential
 const user = await fetch('/api/user/1');
 const posts = await fetch('/api/posts?user=1');
-
 // ✅ Parallel
 const [user, posts] = await Promise.all([fetch('/api/user/1'), fetch('/api/posts?user=1')]);
 ```
@@ -116,14 +115,14 @@ ctx.waitUntil(env.ANALYTICS.writeDataPoint({
 ## Security
 
 ```typescript
-// Headers
+// Security headers
 const security = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
   'Content-Security-Policy': "default-src 'self'",
 };
 
-// Auth
+// Bearer auth
 const auth = request.headers.get('Authorization');
 if (!auth?.startsWith('Bearer ')) return new Response('Unauthorized', { status: 401 });
 ```
