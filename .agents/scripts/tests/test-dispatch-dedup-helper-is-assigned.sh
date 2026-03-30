@@ -78,17 +78,36 @@ teardown_test_env() {
 	return 0
 }
 
-# Create a gh stub that returns specific assignees for a given issue
+# Create a gh stub that returns specific issue metadata for a given issue.
 create_gh_stub() {
 	local assignees_csv="$1"
+	local labels_csv="${2:-}"
+	local state="${3:-OPEN}"
+	local assignees_json labels_json
+
+	assignees_json=$(
+		ASSIGNEES_CSV="$assignees_csv" python3 - <<'PY'
+import json
+import os
+items=[item for item in os.environ.get('ASSIGNEES_CSV','').split(',') if item]
+print(json.dumps([{"login": item} for item in items]))
+PY
+	)
+	labels_json=$(
+		LABELS_CSV="$labels_csv" python3 - <<'PY'
+import json
+import os
+items=[item for item in os.environ.get('LABELS_CSV','').split(',') if item]
+print(json.dumps([{"name": item} for item in items]))
+PY
+	)
 
 	cat >"${TEST_ROOT}/bin/gh" <<GHEOF
 #!/usr/bin/env bash
 set -euo pipefail
 
 if [[ "\${1:-}" == "issue" && "\${2:-}" == "view" ]]; then
-	# Return the configured assignees
-	printf '%s\n' "${assignees_csv}"
+	printf '%s\n' '{"state":"${state}","assignees":${assignees_json},"labels":${labels_json}}'
 	exit 0
 fi
 
@@ -233,6 +252,46 @@ test_no_self_login_owner_assigned() {
 	return 0
 }
 
+# Test: owner assignment becomes blocking when active claim state exists
+test_owner_assigned_with_active_status_blocks() {
+	create_gh_stub "marcusquinn" "status:queued"
+
+	local output=""
+	if output=$("$HELPER_SCRIPT" is-assigned 100 marcusquinn/aidevops runner1 2>/dev/null); then
+		case "$output" in
+		*'ASSIGNED:'*'marcusquinn'*)
+			print_result "owner + status:queued blocks dispatch (GH#11141)" 0
+			return 0
+			;;
+		esac
+		print_result "owner + status:queued blocks dispatch (GH#11141)" 1 "Unexpected output: ${output}"
+		return 0
+	fi
+
+	print_result "owner + status:queued blocks dispatch (GH#11141)" 1 "Expected exit 0 (blocked) but got exit 1 (safe)"
+	return 0
+}
+
+# Test: maintainer assignment becomes blocking when active claim state exists
+test_maintainer_assigned_with_active_status_blocks() {
+	create_gh_stub "marcusquinn-bot" "status:in-progress"
+
+	local output=""
+	if output=$("$HELPER_SCRIPT" is-assigned 100 marcusquinn/aidevops runner1 2>/dev/null); then
+		case "$output" in
+		*'ASSIGNED:'*'marcusquinn-bot'*)
+			print_result "maintainer + status:in-progress blocks dispatch (GH#11141)" 0
+			return 0
+			;;
+		esac
+		print_result "maintainer + status:in-progress blocks dispatch (GH#11141)" 1 "Unexpected output: ${output}"
+		return 0
+	fi
+
+	print_result "maintainer + status:in-progress blocks dispatch (GH#11141)" 1 "Expected exit 0 (blocked) but got exit 1 (safe)"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -246,6 +305,8 @@ main() {
 	test_mixed_assignees_maintainer_and_self
 	test_different_repo_maintainer
 	test_no_self_login_owner_assigned
+	test_owner_assigned_with_active_status_blocks
+	test_maintainer_assigned_with_active_status_blocks
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

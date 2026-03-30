@@ -361,6 +361,22 @@ is_duplicate() {
 }
 
 #######################################
+# Get the repo owner from the slug.
+# Args: $1 = repo slug (owner/repo)
+# Returns: owner login on stdout (empty if invalid)
+#######################################
+_get_repo_owner() {
+	local repo_slug="$1"
+
+	if [[ -z "$repo_slug" || "$repo_slug" != */* ]]; then
+		return 0
+	fi
+
+	printf '%s' "${repo_slug%%/*}"
+	return 0
+}
+
+#######################################
 # Look up the repo maintainer from repos.json.
 # The maintainer is the repo owner/admin — not a runner account.
 # Args: $1 = repo slug (owner/repo)
@@ -391,12 +407,25 @@ _get_repo_maintainer() {
 # they miss workers running on other machines. The GitHub assignee is
 # the single source of truth visible to all runners.
 #
-# GH#11141: Only self_login is excluded from the dedup check. The repo
-# owner and maintainer are NOT excluded — they may also be runners, and
-# excluding them caused double-dispatch when the owner's pulse assigned
-# an issue and another runner's pulse ignored the assignment (the
-# GH#10521 exclusion). The pulse already handles owner-assigned-but-
-# not-dispatched issues via status labels and staleness checks.
+# Owner/maintainer assignment carries two different meanings:
+#   1. passive backlog ownership / maintainer review bookkeeping
+#   2. active worker claim (when paired with status:queued/in-progress)
+#
+# Treating all owner/maintainer assignees as active claims created a queue
+# starvation bug: the pulse discovers unassigned issues by default, while
+# several tooling pipelines auto-assigned newly created debt issues to the
+# maintainer. The result was hundreds of open issues that looked "claimed"
+# to the deterministic guard but had no worker, no queued state, and no PR.
+#
+# Systemic rule:
+# - self_login never blocks
+# - owner/maintainer assignees are passive unless the issue has an active
+#   claim status label (status:queued or status:in-progress)
+# - any other assignee blocks dispatch
+#
+# This preserves GH#10521 (maintainer assignment alone must not starve the
+# queue) while still protecting GH#11141 (owner-assigned queued work must
+# block other runners once a real claim is active).
 #
 # Args:
 #   $1 = issue number
@@ -422,43 +451,61 @@ is_assigned() {
 		return 1
 	fi
 
+	local issue_meta_json
+	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json state,assignees,labels 2>/dev/null) || issue_meta_json=""
+
+	if [[ -z "$issue_meta_json" ]]; then
+		return 1
+	fi
+
 	# Query GitHub for current assignees
 	local assignees
-	assignees=$(gh issue view "$issue_number" --repo "$repo_slug" \
-		--json assignees --jq '[.assignees[].login] | join(",")' 2>/dev/null) || assignees=""
+	assignees=$(printf '%s' "$issue_meta_json" | jq -r '[.assignees[].login] | join(",")' 2>/dev/null) || assignees=""
 
 	if [[ -z "$assignees" ]]; then
 		# No assignees — safe to dispatch
 		return 1
 	fi
 
-	# Only exclude self_login. Any other assignee — including repo owner
-	# and maintainer — means the issue is claimed. This prevents double-
-	# dispatch when the owner is also a runner (GH#11141).
+	local repo_owner repo_maintainer has_active_status
+	repo_owner=$(_get_repo_owner "$repo_slug")
+	repo_maintainer=$(_get_repo_maintainer "$repo_slug")
+	has_active_status=$(printf '%s' "$issue_meta_json" | jq -r '([.labels[].name] | (index("status:queued") != null or index("status:in-progress") != null))' 2>/dev/null)
+	[[ "$has_active_status" == "true" || "$has_active_status" == "false" ]] || has_active_status="false"
+
 	local -a assignee_array=()
 	local saved_ifs="${IFS:-}"
 	IFS=',' read -ra assignee_array <<<"$assignees"
 	IFS="$saved_ifs"
 
-	local other_assignees=""
+	local blocking_assignees=""
 	local assignee
 	for assignee in "${assignee_array[@]}"; do
 		if [[ -n "$self_login" && "$assignee" == "$self_login" ]]; then
 			continue
 		fi
-		if [[ -n "$other_assignees" ]]; then
-			other_assignees="${other_assignees},${assignee}"
+
+		if [[ "$assignee" == "$repo_owner" || (-n "$repo_maintainer" && "$assignee" == "$repo_maintainer") ]]; then
+			if [[ "$has_active_status" != "true" ]]; then
+				continue
+			fi
+		fi
+
+		if [[ -n "$blocking_assignees" ]]; then
+			blocking_assignees="${blocking_assignees},${assignee}"
 		else
-			other_assignees="$assignee"
+			blocking_assignees="$assignee"
 		fi
 	done
 
-	if [[ -z "$other_assignees" ]]; then
-		# Only assignee is self (or no assignees) — safe to dispatch
+	if [[ -z "$blocking_assignees" ]]; then
+		# Only passive assignees remain (self and/or owner/maintainer without
+		# active claim state) — safe to dispatch.
 		return 1
 	fi
 
-	printf 'ASSIGNED: issue #%s in %s is assigned to %s\n' "$issue_number" "$repo_slug" "$other_assignees"
+	printf 'ASSIGNED: issue #%s in %s is assigned to %s\n' "$issue_number" "$repo_slug" "$blocking_assignees"
 	return 0
 }
 

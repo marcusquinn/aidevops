@@ -88,12 +88,19 @@ Check external contributor gate before ANY approve/merge (see Pre-merge checks b
 
 ### 4. Dispatch workers for open issues
 
-For each unassigned, non-blocked issue with no open PR, no active worker, and **no `needs-maintainer-review` label**:
+For each inactive backlog issue with no open PR, no active worker, and **no `needs-maintainer-review` label**:
+
+- unassigned issues are eligible
+- issues assigned only to the repo owner/maintainer are also eligible **when they are not in `status:queued` or `status:in-progress`**
+- issues assigned to any other runner are not eligible
 
 ```bash
 # Atomic dispatch (GH#12436 — dedup+assign+launch in single call, cannot be skipped)
 source ~/.aidevops/agents/scripts/pulse-wrapper.sh
 RUNNER_USER=$(gh api user --jq '.login' 2>/dev/null || whoami)
+
+# Candidate prefilter: number|title|labels|updatedAt
+list_dispatchable_issue_candidates SLUG 100
 
 # dispatch_with_dedup runs all 7 dedup layers, assigns the issue, launches the
 # worker, and records in the dispatch ledger — atomically. The LLM cannot skip
@@ -496,7 +503,7 @@ Default `MAX_WORKERS_PER_REPO=5`. If a repo already has this many active workers
 
 ### Candidate discovery
 
-Do NOT treat `auto-dispatch` or `status:available` as hard gates. Build candidates from unassigned, non-blocked issues. Prioritize `priority:critical`, `priority:high`, and `bug` labels. Include `quality-debt` when it's the highest-value available work.
+Do NOT treat `auto-dispatch` or `status:available` as hard gates. Build candidates from inactive backlog issues: unassigned issues, plus issues assigned only to the repo owner/maintainer when they are not in an active claim state. Prioritize `priority:critical`, `priority:high`, and `bug` labels. Include `quality-debt` when it's the highest-value available work.
 
 ### Agent routing from labels
 
@@ -1002,7 +1009,7 @@ if check_dispatch_dedup <number> <slug> "Issue #<number>: <title>" "<task-id>: <
 fi
 ```
 
-`check_dispatch_dedup` runs all seven checks in sequence: (1) in-flight dispatch ledger, (2) exact repo+issue process overlap, (3) title variants via dispatch-dedup-helper (e.g., `issue-3502` vs `Issue #3502: description`), (4) merged-PR evidence via close keywords and task-ID fallback, (5) cross-machine dispatch comment check (GH#11141) — detects "Dispatching worker" comments posted by other runners, the persistent cross-machine signal that survives beyond the claim lock's 8-second window, (6) cross-machine assignee guard — blocks if assigned to any login other than self (GH#11141 fix: repo owner/maintainer are no longer excluded since they may also be runners), and (7) cross-machine optimistic claim lock (GH#11086) — posts a plain-text claim comment, sleeps the consensus window, and checks who was first. Claim comments are short-lived arbitration signals (`DISPATCH_CLAIM_MAX_AGE`, default 120s) and include `max_age_s=` in the comment body; only active claims are considered when deciding the winner.
+`check_dispatch_dedup` runs all seven checks in sequence: (1) in-flight dispatch ledger, (2) exact repo+issue process overlap, (3) title variants via dispatch-dedup-helper (e.g., `issue-3502` vs `Issue #3502: description`), (4) merged-PR evidence via close keywords and task-ID fallback, (5) cross-machine dispatch comment check (GH#11141) — detects "Dispatching worker" comments posted by other runners, the persistent cross-machine signal that survives beyond the claim lock's 8-second window, (6) cross-machine assignee guard — blocks non-self runner assignees, and also blocks owner/maintainer assignees only when the issue is actively claimed (`status:queued` / `status:in-progress`), and (7) cross-machine optimistic claim lock (GH#11086) — posts a plain-text claim comment, sleeps the consensus window, and checks who was first. Claim comments are short-lived arbitration signals (`DISPATCH_CLAIM_MAX_AGE`, default 120s) and include `max_age_s=` in the comment body; only active claims are considered when deciding the winner.
 
 The deterministic guard is the safety net, not the primary layer. Over time, as the intelligence scan catches more duplicates earlier, the deterministic guard should fire less often. See "Dedup health monitoring" below for how to track this.
 
@@ -1038,8 +1045,8 @@ fi
 
 2. Skip if an open PR already exists for it, or merged-PR evidence already exists (check PR list / `has_merged_pr_for_issue`)
 3. Treat labels as hints, not gates. `status:queued`, `status:in-progress`, and `status:in-review` suggest active work, but verify with evidence (active worker, recent PR updates, recent commits) before skipping.
-4. Treat unassigned + non-blocked issues as available by default. `status:available` is optional metadata, not a requirement.
-5. If an issue is assigned and recently updated (<3h), usually skip it. If assigned but stale (3+h, no active PR/worker evidence), treat it as abandoned: unassign and comment the recovery; make it dispatchable this cycle.
+4. Treat inactive backlog issues as available by default. `status:available` is optional metadata, not a requirement. "Inactive backlog" means either unassigned, or assigned only to the repo owner/maintainer without `status:queued` / `status:in-progress`.
+5. If an issue is assigned to a non-passive runner and recently updated (<3h), usually skip it. If assigned but stale (3+h, no active PR/worker evidence), treat it as abandoned: unassign and comment the recovery; make it dispatchable this cycle.
 6. Read the issue body briefly — if it has `blocked-by:` references, check if those are resolved (merged PR exists). If not, skip it.
 6.5. **Classify and decompose (t1408.2):** Run the task decomposition check described in "Task decomposition before dispatch" above. If the task is composite, create child tasks and skip direct dispatch. If atomic (or classification unavailable), proceed to dispatch.
 7. Prioritize by value density and flow efficiency, not label perfection: unblock merge-ready PRs first, then critical/high issues, then best-next backlog items that keep worker slots full.
@@ -1097,24 +1104,23 @@ If validation fails, re-dispatch immediately via `headless-runtime-helper.sh run
 
 Do NOT treat `auto-dispatch` or `status:available` as hard gates. They are hints only.
 
-In every pulse cycle, build candidates from unassigned, non-blocked issues first, then apply judgment and safeguards.
+In every pulse cycle, build candidates from inactive backlog issues first, then apply judgment and safeguards.
 
 1. Search for open issues in scoped repos that are not blocked and have no active PR/worker evidence.
 2. Prioritize `priority:critical`, `priority:high`, and `bug` labels first.
 3. Include `quality-debt` candidates when they are the highest-value available work, even without `auto-dispatch`/`status:available` labels.
 4. Respect existing caps and safeguards (quality-debt concurrency cap, blast-radius guidance, stale-label recovery).
 
-Example discovery query:
+Example discovery helper:
 
 ```bash
-gh issue list --repo <slug> --state open \
-  --search "(label:priority:critical OR label:priority:high OR label:bug OR label:quality-debt) -label:status:blocked no:assignee" \
-  --limit 100
+source ~/.aidevops/agents/scripts/pulse-wrapper.sh
+list_dispatchable_issue_candidates <slug> 100
 ```
 
-If you dispatch an unassigned issue without `auto-dispatch`/`status:available`, add a short issue comment such as:
+If you dispatch an inactive backlog issue without `auto-dispatch`/`status:available`, add a short issue comment such as:
 
-"Dispatching via intelligence-first backlog selection (t1448): issue is unassigned, non-blocked, and highest-value available work this cycle."
+"Dispatching via intelligence-first backlog selection (t1448): issue is inactive backlog (unassigned or passively assigned to the maintainer), non-blocked, and highest-value available work this cycle."
 
 **Dispatch rules:**
 - ALWAYS use `~/.aidevops/agents/scripts/headless-runtime-helper.sh run` for headless dispatches — NEVER `claude`, `claude -p`, or raw `opencode run`

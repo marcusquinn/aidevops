@@ -4260,6 +4260,98 @@ get_repo_path_by_slug() {
 }
 
 #######################################
+# Resolve repo owner login from slug
+# Arguments:
+#   $1 - repo slug (owner/repo)
+# Returns: owner login via stdout (empty if invalid)
+#######################################
+get_repo_owner_by_slug() {
+	local repo_slug="$1"
+	if [[ -z "$repo_slug" ]] || [[ "$repo_slug" != */* ]]; then
+		echo ""
+		return 0
+	fi
+
+	echo "${repo_slug%%/*}"
+	return 0
+}
+
+#######################################
+# Resolve repo maintainer login from repos.json
+# Arguments:
+#   $1 - repo slug (owner/repo)
+# Returns: maintainer login via stdout (empty if missing)
+#######################################
+get_repo_maintainer_by_slug() {
+	local repo_slug="$1"
+	if [[ -z "$repo_slug" ]] || [[ ! -f "$REPOS_JSON" ]]; then
+		echo ""
+		return 0
+	fi
+
+	local maintainer
+	maintainer=$(jq -r --arg slug "$repo_slug" '.initialized_repos[] | select(.slug == $slug) | .maintainer // empty' "$REPOS_JSON" 2>/dev/null) || maintainer=""
+	if [[ "$maintainer" == "null" ]]; then
+		maintainer=""
+	fi
+	printf '%s\n' "$maintainer"
+	return 0
+}
+
+#######################################
+# List inactive backlog issues that are eligible for dispatch evaluation
+# in a single repo.
+#
+# Candidate rules:
+# - open and not blocked / needs-info / needs-maintainer-review
+# - not already in queued/in-progress/in-review state
+# - not supervisor/persistent telemetry issues
+# - unassigned OR assigned only to passive backlog holders
+#   (repo owner and/or repo maintainer)
+#
+# Active PR/worker overlap is handled later by deterministic dedup guards.
+# This helper only answers: "should the pulse look at this issue at all?"
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - max issues to fetch (optional, default 100)
+# Returns: pipe-delimited rows number|title|labels|updatedAt
+#######################################
+list_dispatchable_issue_candidates() {
+	local repo_slug="$1"
+	local limit="${2:-100}"
+
+	if [[ -z "$repo_slug" ]]; then
+		return 0
+	fi
+	[[ "$limit" =~ ^[0-9]+$ ]] || limit=100
+
+	local repo_owner repo_maintainer passive_assignees_json issue_json
+	repo_owner=$(get_repo_owner_by_slug "$repo_slug")
+	repo_maintainer=$(get_repo_maintainer_by_slug "$repo_slug")
+	passive_assignees_json=$(printf '%s\n%s\n' "$repo_owner" "$repo_maintainer" | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null) || passive_assignees_json='[]'
+
+	issue_json=$(gh issue list --repo "$repo_slug" --state open --json number,title,assignees,labels,updatedAt --limit "$limit" 2>/dev/null) || issue_json="[]"
+
+	printf '%s' "$issue_json" | jq -r --argjson passive "$passive_assignees_json" '
+		.[] |
+		(.labels | map(.name)) as $labels |
+		(.assignees | map(.login)) as $assignees |
+		select(($labels | index("status:blocked")) == null) |
+		select(($labels | index("status:needs-info")) == null) |
+		select(($labels | index("needs-maintainer-review")) == null) |
+		select(($labels | index("status:queued")) == null) |
+		select(($labels | index("status:in-progress")) == null) |
+		select(($labels | index("status:in-review")) == null) |
+		select(($labels | index("supervisor")) == null) |
+		select(($labels | index("persistent")) == null) |
+		select(($assignees | length) == 0 or ($assignees | all(.[]; . as $a | $passive | index($a) != null))) |
+		"\(.number)|\(.title)|\($labels | join(","))|\(.updatedAt // "")"
+	' 2>/dev/null || true
+	return 0
+}
+
+#######################################
 # Check if a worker exists for a specific repo+issue pair
 # Arguments:
 #   $1 - issue number
@@ -4932,7 +5024,8 @@ get_max_workers_target() {
 #######################################
 # Count runnable backlog candidates across pulse scope
 # Heuristic for t1453 utilization loop:
-# - open unassigned, non-blocked issues
+# - open inactive backlog issues (unassigned or only passively assigned to
+#   repo owner/maintainer)
 # - open PRs with failing checks or changes requested
 # Returns: count via stdout
 #######################################
@@ -4947,10 +5040,8 @@ count_runnable_candidates() {
 	while IFS='|' read -r slug _path; do
 		[[ -n "$slug" ]] || continue
 
-		local issue_json
-		issue_json=$(gh issue list --repo "$slug" --state open --json assignees,labels --limit "$PULSE_RUNNABLE_ISSUE_LIMIT" 2>/dev/null) || issue_json="[]"
 		local issue_count
-		issue_count=$(echo "$issue_json" | jq '[.[] | select((.assignees | length) == 0 and (.labels | map(.name) | index("status:blocked") | not))] | length' 2>/dev/null) || issue_count=0
+		issue_count=$(list_dispatchable_issue_candidates "$slug" "$PULSE_RUNNABLE_ISSUE_LIMIT" | wc -l | tr -d ' ') || issue_count=0
 		[[ "$issue_count" =~ ^[0-9]+$ ]] || issue_count=0
 
 		local pr_json
