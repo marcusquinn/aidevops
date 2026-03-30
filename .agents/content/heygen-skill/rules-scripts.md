@@ -116,15 +116,7 @@ const multiSceneVideo = {
       },
       background: { type: "color", value: "#1a1a2e" },
     },
-    {
-      character: { type: "avatar", avatar_id: "josh_lite3_20230714", avatar_style: "normal" },
-      voice: {
-        type: "text",
-        input_text: "Let's start with revenue. <break time=\"0.5s\"/> We grew 25 percent quarter over quarter. <break time=\"1s\"/> Here's what drove that growth.",
-        voice_id: "voice_id_here",
-      },
-      background: { type: "image", url: "https://..." },
-    },
+    // Additional scenes follow the same structure with different input_text and background
   ],
 };
 ```
