@@ -29,7 +29,7 @@ jobs:
     timeout-minutes: 3
     concurrency:
       group: maintainer-gate-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     permissions:
       pull-requests: write
       issues: read
