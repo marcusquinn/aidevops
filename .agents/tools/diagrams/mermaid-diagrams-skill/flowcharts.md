@@ -45,14 +45,6 @@ Syntax: `node@{ shape: name, label: "Text" }`
 | `lin-doc` | Lined document | `tag-doc` / `tag-rect` | Tagged shapes |
 | `half-rounded-rect` | Half rounded | `curv-trap` | Curved trapezoid |
 
-```mermaid
-flowchart LR
-    doc@{ shape: doc, label: "Document" }
-    db@{ shape: cyl, label: "Database" }
-    proc@{ shape: rect, label: "Process" }
-    dec@{ shape: diamond, label: "Decision" }
-```
-
 ## Edge Types
 
 ```
@@ -89,38 +81,19 @@ Nested subgraphs supported. Add `direction TB` inside a subgraph to override dir
 
 ## Multi-Target Edges
 
-```mermaid
-flowchart LR
-    A --> B & C --> D
-    E & F --> G
-```
+`A --> B & C --> D` — fan-out; `E & F --> G` — fan-in
 
 ## Markdown in Labels
 
-```mermaid
-flowchart LR
-    A["`**Bold** and *italic*`"]
-    B["`Multi
-    line
-    text`"]
-    A --> B
-```
+Wrap label in backtick-quotes: `A["`**Bold** and *italic*`"]` — supports bold, italic, multi-line.
 
 ## Icons
 
-```mermaid
-flowchart LR
-    A[fa:fa-user User] --> B[fa:fa-database Database]
-```
+`A[fa:fa-user User]` — FontAwesome prefix `fa:fa-name`
 
 ## Click Events
 
-```mermaid
-flowchart LR
-    A[GitHub] --> B[Docs]
-    click A href "https://github.com" _blank
-    click B call callback()
-```
+`click A href "https://url" _blank` — open URL; `click B call callback()` — JS callback
 
 ## Styling
 
