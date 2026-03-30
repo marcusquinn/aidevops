@@ -19,10 +19,6 @@ export async function onRequest(context) {
 export const onRequest = [errorHandling, authentication, logging];
 ```
 
-- First middleware = error handler (wraps others)
-- Use `context.next()` to pass control
-- Share state via `context.data`
-
 ## Authentication
 
 ```typescript
@@ -148,7 +144,7 @@ export async function onRequest(context) {
 
 ## Advanced Mode (_worker.js)
 
-For complex routing, replace `/functions` with `_worker.js`. Use when: existing Worker too complex for file-based routing; need full routing control; framework-generated Workers (Next.js, SvelteKit).
+Replace `/functions` with `_worker.js` for full routing control (complex Workers, framework-generated output: Next.js, SvelteKit).
 
 ```typescript
 interface Env {
