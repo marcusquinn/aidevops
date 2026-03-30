@@ -58,11 +58,11 @@ mcp:
 
 **Workflow**: Pre-commit (`analyze staged`) → PR review (`analyze branch`) → weekly (`analyze full`) → post-dep-change (`scan-deps`).
 
-## Two-Pass Investigation Model
+## Two-Pass Investigation
 
-**Pass 1 — Reconnaissance**: Fast scan; identify all untrusted input sources. Build checklist: `SAST Recon on src/auth/handler.ts → Investigate data flow from userId:15, userInput:42`.
+**Pass 1 — Recon**: Fast scan; identify all untrusted input sources. Build checklist: `SAST Recon on src/auth/handler.ts → Investigate data flow from userId:15, userInput:42`.
 
-**Pass 2 — Investigation**: For each source: (1) identify source (req.body, req.query), (2) trace through calls/transforms, (3) find sink (SQL query, HTML output, shell command), (4) verify sanitization exists.
+**Pass 2 — Trace**: For each source: (1) identify origin (req.body, req.query), (2) trace through calls/transforms, (3) find sink (SQL query, HTML output, shell command), (4) verify sanitization.
 
 ## Integrations
 
@@ -70,7 +70,7 @@ mcp:
 
 **VirusTotal**: SHA256 hash lookup against 70+ AV engines, domain/URL scanning. Rate-limited (16s between requests, max 8 per skill scan). Verdicts: SAFE, MALICIOUS, SUSPICIOUS, UNKNOWN. Does not block imports (Cisco Skill Scanner is the security gate). API key: `aidevops secret set VIRUSTOTAL_MARCUSQUINN` (gopass) or `~/.config/aidevops/credentials.sh`. [API v3](https://docs.virustotal.com/reference/overview)
 
-**Ferret** (AI CLI configs): Detects prompt injection, jailbreaks, credential leaks, backdoors in Claude Code, Cursor, Windsurf, Continue, Aider, Cline. 65+ rules across 9 threat categories. [Docs](https://github.com/fubak/ferret-scan)
+**Ferret** (AI CLI configs): Detects prompt injection, jailbreaks, credential leaks, backdoors in Claude Code, Cursor, Windsurf, Continue, Aider, Cline. 65+ rules, 9 threat categories. [Docs](https://github.com/fubak/ferret-scan)
 
 ```bash
 npm install -g ferret-scan   # or: npx ferret-scan
@@ -79,7 +79,9 @@ npm install -g ferret-scan   # or: npx ferret-scan
 
 **Shannon** (pentesting): Taint analysis (Pro), exploit validation. **Snyk Code** / **SonarCloud** / **CodeQL**: dependency scanning, taint analysis, CI/CD integration. [CWE DB](https://cwe.mitre.org/) | [OWASP Top 10](https://owasp.org/Top10/)
 
-## Allowlisting and Exceptions
+**Gemini CLI Security MCP**: `find_line_numbers`, `get_audit_scope`, `run_poc`. Config: `"gemini-cli-security": { "command": "npx", "args": ["-y", "gemini-cli-security-mcp-server"] }`, `"osv-scanner": { "command": "osv-scanner", "args": ["mcp"] }`.
+
+## Allowlisting
 
 **Vulnerability allowlist** — `.security-analysis/vuln_allowlist.txt`:
 
@@ -121,17 +123,6 @@ Always verify before allowlisting. Include reason. Prefer code fixes over suppre
 
 ```bash
 ./.agents/scripts/security-helper.sh analyze staged --severity-threshold=high || exit 1
-```
-
-## MCP Integration
-
-```json
-{
-  "mcpServers": {
-    "gemini-cli-security": { "command": "npx", "args": ["-y", "gemini-cli-security-mcp-server"] },
-    "osv-scanner": { "command": "osv-scanner", "args": ["mcp"] }
-  }
-}
 ```
 
 ## Remediation SLAs
