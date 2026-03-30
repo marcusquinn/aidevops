@@ -42,7 +42,7 @@ You are the Marketing agent. Domain: marketing strategy, campaign execution, pai
 
 - **CRM**: FluentCRM MCP — `services/crm/fluentcrm.md`. Prerequisites: FluentCRM plugin on WordPress, application password, MCP server configured, SMTP/SES sending. Credentials in `~/.config/aidevops/credentials.sh` (600 perms) — never commit.
 - **Analytics**: GA4 — `services/analytics/google-analytics.md`
-- **Content/copy**: `content.md` | **SEO**: `seo.md` | **Sales handoff**: `marketing-sales.md`
+- **Content/copy**: `content.md` | **SEO**: `seo.md` | **Sales**: `sales.md`
 
 **Paid Advertising & CRO** (from [Indexsy Skills](https://github.com/Indexsy-Skills/skills)):
 
@@ -65,7 +65,7 @@ You are the Marketing agent. Domain: marketing strategy, campaign execution, pai
 | **Smart Links** | `fluentcrm_create_smart_link`, `fluentcrm_generate_smart_link_shortcode` — track clicks, trigger tag actions, lead scoring |
 | **Reports** | `fluentcrm_dashboard_stats` |
 
-**Google Analytics MCP Tools** (when `google-analytics` subagent loaded): `get_account_summaries`, `get_property_details`, `list_google_ads_links`, `run_report`, `get_custom_dimensions_and_metrics`, `run_realtime_report`
+**Google Analytics MCP Tools** (when `google-analytics` subagent loaded): see `services/analytics/google-analytics.md` for tool list.
 
 <!-- AI-CONTEXT-END -->
 
@@ -101,8 +101,6 @@ Before generating marketing strategy or campaign output, validate:
 | **Welcome** | `list_added` (Newsletter) | Day 0: welcome → Day 2: value → Day 5: product intro → Day 7: social proof → Day 10: soft CTA |
 | **Lead Nurture** | `tag_added` (lead-mql) | Day 0: education → Day 3: case study → Day 7: comparison → Day 10: demo invite → Day 14: follow-up |
 | **Re-engagement** | `tag_added` (inactive-90-days) | Day 0: "we miss you" → Day 3: best content → Day 7: offer → Day 14: last chance + unsub |
-
-Create with `fluentcrm_create_automation` (title, description, trigger), then configure steps/delays/conditions in FluentCRM admin.
 
 ## Segmentation
 
