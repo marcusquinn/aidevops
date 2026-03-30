@@ -6,9 +6,8 @@ imported_from: clawdhub
 clawdhub_slug: "proxmox-full"
 clawdhub_version: "1.0.0"
 ---
-# Proxmox VE - Full Management
 
-Complete control over Proxmox VE hypervisor via REST API.
+# Proxmox VE - Full Management
 
 ## Setup
 
@@ -18,7 +17,7 @@ export PVE_TOKEN="user@pam!tokenid=secret-uuid"
 AUTH="Authorization: PVEAPIToken=$PVE_TOKEN"
 ```
 
-API tokens don't need CSRF tokens (unlike cookie auth). Use `-k` for self-signed certs.
+API tokens skip CSRF (unlike cookie auth). Use `-k` for self-signed certs. Replace `{node}`, `{vmid}`, `{snapname}`, `{upid}` with actual values throughout. All create/clone ops return a task UPID for tracking.
 
 ## Cluster & Nodes
 
@@ -45,6 +44,21 @@ Actions: `start`, `stop` (immediate), `shutdown` (graceful ACPI), `reboot`. Repl
 curl -sk -X POST -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/qemu/{vmid}/status/{action}"
 ```
 
+## Create VM
+
+```bash
+# Next available VMID
+curl -sk -H "$AUTH" "$PVE_URL/api2/json/cluster/nextid" | jq '.data'
+# Create
+curl -sk -X POST -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/qemu" \
+  -d "vmid=100" -d "name=myvm" -d "memory=4096" \
+  -d "cores=4" -d "sockets=1" -d "cpu=host" \
+  -d "net0=virtio,bridge=vmbr0" \
+  -d "scsi0=local-lvm:32" -d "scsihw=virtio-scsi-single" \
+  -d "ide2=local:iso/debian-12.iso,media=cdrom" \
+  -d "boot=order=scsi0;ide2" -d "ostype=l26"
+```
+
 ## Create LXC Container
 
 ```bash
@@ -55,18 +69,6 @@ curl -sk -X POST -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/lxc" \
   -d "memory=2048" -d "swap=512" -d "cores=2" \
   -d "net0=name=eth0,bridge=vmbr0,ip=dhcp" \
   -d "password=$LXC_PASSWORD" -d "start=1" -d "unprivileged=1"
-```
-
-## Create VM
-
-```bash
-curl -sk -X POST -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/qemu" \
-  -d "vmid=100" -d "name=myvm" -d "memory=4096" \
-  -d "cores=4" -d "sockets=1" -d "cpu=host" \
-  -d "net0=virtio,bridge=vmbr0" \
-  -d "scsi0=local-lvm:32" -d "scsihw=virtio-scsi-single" \
-  -d "ide2=local:iso/debian-12.iso,media=cdrom" \
-  -d "boot=order=scsi0;ide2" -d "ostype=l26"
 ```
 
 ## Clone & Template
@@ -132,9 +134,3 @@ curl -sk -X DELETE -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/qemu/{vmid}"
 # Force purge (removes all related data)
 curl -sk -X DELETE -H "$AUTH" "$PVE_URL/api2/json/nodes/{node}/qemu/{vmid}?purge=1&destroy-unreferenced-disks=1"
 ```
-
-## Notes
-
-- Replace `{node}`, `{vmid}`, `{snapname}`, `{upid}` with actual values
-- All create/clone operations return a task UPID for tracking
-- Next available VMID: `curl -sk -H "$AUTH" "$PVE_URL/api2/json/cluster/nextid" | jq '.data'`
