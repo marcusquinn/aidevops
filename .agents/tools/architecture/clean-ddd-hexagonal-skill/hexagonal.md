@@ -48,14 +48,12 @@ flowchart TB
 | **Driven** (Secondary / Outbound) | App → | Application | What your app needs from external systems | Adapter *implements* port — app defines what it **needs** |
 
 ```typescript
-// application/ports/driver/place_order_port.ts
+// Driver ports — called by adapters, represent use cases
 export interface IPlaceOrderPort { execute(command: PlaceOrderCommand): Promise<OrderId>; }
-// application/ports/driver/get_order_port.ts
 export interface IGetOrderPort { execute(query: GetOrderQuery): Promise<OrderDTO | null>; }
-// application/ports/driver/cancel_order_port.ts
 export interface ICancelOrderPort { execute(command: CancelOrderCommand): Promise<void>; }
 
-// application/ports/driven/order_repository_port.ts
+// Driven ports — implemented by adapters, called by the application
 export interface IOrderRepositoryPort {
   findById(id: OrderId): Promise<Order | null>;
   save(order: Order): Promise<void>;
@@ -75,7 +73,7 @@ export interface IPaymentGatewayPort {
 
 ## Adapters
 
-**Driver adapter** (converts external input to port call):
+**Driver adapter** — converts external input → port call:
 
 ```typescript
 // infrastructure/adapters/driver/rest/order_controller.ts
@@ -97,7 +95,7 @@ export class OrderController {
 }
 ```
 
-**Driven adapters** (implement port interface using specific technology):
+**Driven adapters** — implement port interface using specific technology:
 
 ```
 class PostgresOrderRepository implements IOrderRepositoryPort:
