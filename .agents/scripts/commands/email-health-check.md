@@ -10,16 +10,14 @@ Arguments: $ARGUMENTS
 
 ## Workflow
 
-### Step 1: Determine Check Type
+### Step 1: Parse Arguments
 
-Parse `$ARGUMENTS` to determine which check to run:
+- **Domain only** (e.g., `example.com`): Infrastructure health check
+- **HTML file only** (e.g., `newsletter.html`): Content precheck
+- **Domain + file** (e.g., `example.com newsletter.html`): Full precheck (both)
+- **Specific check** (e.g., `example.com spf` or `newsletter.html check-links`): Individual check
 
-- **Domain only** (e.g., `example.com`): Run infrastructure health check
-- **HTML file only** (e.g., `newsletter.html`): Run content precheck
-- **Domain + file** (e.g., `example.com newsletter.html`): Run full precheck (both)
-- **Specific check** (e.g., `example.com spf` or `newsletter.html check-links`): Run individual check
-
-### Step 2: Run Appropriate Check
+### Step 2: Run Check
 
 ```bash
 # Infrastructure check (domain)
@@ -34,47 +32,7 @@ Parse `$ARGUMENTS` to determine which check to run:
 
 ### Step 3: Present Results
 
-Format the output as a clear report:
-
-```text
-Email Health Check: {domain}
-
-Infrastructure (15 pts):
-  SPF:       {status} - {details}
-  DKIM:      {status} - {selectors found}
-  DMARC:     {status} - {policy}
-  MX:        {status} - {record count}
-  Blacklist: {status} - {listed/clean}
-
-Content (10 pts):
-  Subject:       {status} - {length, issues}
-  Preheader:     {status} - {length, issues}
-  Accessibility: {status} - {issues found}
-  Links:         {status} - {count, issues}
-  Images:        {status} - {count, issues}
-  Spam Words:    {status} - {count found}
-
-Combined Score: {score}/25 ({pct}%) - Grade: {grade}
-
-Issues Found:
-- {issue 1}
-- {issue 2}
-
-Recommendations:
-1. {recommendation 1}
-2. {recommendation 2}
-```
-
-### Step 4: Offer Follow-up Actions
-
-```text
-Actions:
-1. Check specific DKIM selector
-2. View detailed blacklist report
-3. Run content precheck on HTML file
-4. Get mail-tester.com instructions
-5. Show DNS records to add/fix
-```
+Present the helper output as a formatted report. Scoring: Infrastructure /15 pts (SPF, DKIM, DMARC, MX, Blacklist), Content /10 pts (Subject, Preheader, Accessibility, Links, Images, Spam Words), Combined /25 pts with letter grade. Include issues found and actionable recommendations.
 
 ## Options
 
@@ -89,82 +47,25 @@ Actions:
 | `/email-health-check newsletter.html check-subject` | Subject line check only |
 | `/email-health-check accessibility newsletter.html` | Email accessibility audit |
 
-## Examples
-
-**Infrastructure check:**
+## Example
 
 ```text
 User: /email-health-check example.com
 AI: Running email health check for example.com...
 
     Email Health Check: example.com
-    
+
     SPF:       OK - v=spf1 include:_spf.google.com ~all
     DKIM:      OK - Found: google, selector1
     DMARC:     WARN - p=none (monitoring only)
     MX:        OK - 2 records (redundant)
     Blacklist: OK - Not listed
-    
+
     Score: 12/15 (80%) - Grade: B
-    
+
     Recommendations:
     1. Upgrade DMARC policy from p=none to p=quarantine
     2. Consider adding rua= for DMARC reports
-```
-
-**Content precheck:**
-
-```text
-User: /email-health-check newsletter.html
-AI: Running content precheck for newsletter.html...
-
-    Content Precheck: newsletter.html
-    
-    Subject:       OK - "5 AI tools that save 10 hours/week" (42 chars)
-    Preheader:     OK - 85 chars, good length
-    Accessibility: WARN - 2 images missing alt text
-    Links:         OK - 12 links, unsubscribe present
-    Images:        WARN - 1 image missing dimensions
-    Spam Words:    OK - No triggers found
-    
-    Score: 8/10 (80%) - Grade: B
-    
-    Recommendations:
-    1. Add alt text to all images
-    2. Add width/height to images to prevent layout shift
-```
-
-**Combined precheck:**
-
-```text
-User: /email-health-check example.com newsletter.html
-AI: Running full precheck...
-
-    Infrastructure: 12/15 (80%)
-    Content:        8/10 (80%)
-    Combined:      20/25 (80%) - Grade: B
-```
-
-**Email accessibility check:**
-
-```text
-User: /email-health-check accessibility newsletter.html
-AI: Running email accessibility audit on newsletter.html...
-
-    Email Accessibility Report
-    Standard: WCAG 2.1 AA (email-applicable subset)
-
-    PASS: All images have alt attributes (5 images)
-    FAIL: Missing lang attribute on <html> tag
-    WARN: 3 table(s) without role attribute
-    PASS: No excessively small font sizes detected
-    PASS: No generic link text detected
-
-    Summary: 1 error(s), 1 warning(s)
-
-    Recommendations:
-    1. Add lang="en" to the <html> tag
-    2. Add role="presentation" to layout tables
 ```
 
 ## Related
