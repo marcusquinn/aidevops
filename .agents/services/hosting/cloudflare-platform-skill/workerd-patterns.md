@@ -60,8 +60,6 @@ const config :Workerd.Config = (
 
 ## Dev vs Prod Configs
 
-Separate named configs per environment; override bindings via `fromEnvironment`:
-
 ```capnp
 const devWorker :Workerd.Worker = (
   modules = [(name = "index.js", esModule = embed "src/index.js")],
@@ -120,7 +118,7 @@ workerd test config.capnp --test-only=test.js
 
 ### Systemd
 
-`/etc/systemd/system/workerd.service` + `workerd.socket`:
+`/etc/systemd/system/workerd.service` and `workerd.socket`:
 
 ```ini
 [Unit]
