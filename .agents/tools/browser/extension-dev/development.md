@@ -92,7 +92,7 @@ const { preferences } = await chrome.storage.sync.get('preferences');
 
 ## Permissions
 
-Request only what you need. Prefer optional permissions (requested at runtime):
+Request only what you need. Prefer optional permissions (requested at runtime via `chrome.permissions.request`):
 
 ```json
 {
@@ -101,8 +101,6 @@ Request only what you need. Prefer optional permissions (requested at runtime):
   "host_permissions": ["https://api.example.com/*"]
 }
 ```
-
-Runtime request: `await chrome.permissions.request({ permissions: ['tabs'], origins: ['https://*.example.com/*'] });`
 
 ## Cross-Browser Compatibility
 
@@ -121,7 +119,7 @@ WXT handles most differences automatically. Manual compat: `import browser from 
 - **TypeScript** always — type messages, storage schemas, API responses
 - **UI**: React (recommended), Vue (WXT first-class), Svelte (smallest bundle), or vanilla
 - **Styling**: Tailwind CSS (recommended), CSS Modules, or Shadow DOM for content scripts
-- **Content script isolation**: Use Shadow DOM (`host.attachShadow({ mode: 'closed' })`) to prevent host page style conflicts
+- **Content script isolation**: Shadow DOM (`host.attachShadow({ mode: 'closed' })`) prevents host page style conflicts
 
 ## Related
 
