@@ -112,7 +112,7 @@ POP does not sync folders, flags, or read-state across devices.
 - **Zoho Mail**: Group mailboxes in paid plans.
 - **Cloudron**: Separate mailbox accounts or aliases via admin panel / CLI.
 - **Proton Mail**: Business plans support multi-user access and catch-all.
-- **Others**: No shared mailbox support.
+- **Others**: Most free/personal providers do not support shared mailboxes; several (Fastmail, mailbox.org, Tuta, IONOS, Namecheap, Yahoo) offer shared or delegated access on paid/business tiers — check provider docs.
 
 ## Cloudron Mail Management
 
