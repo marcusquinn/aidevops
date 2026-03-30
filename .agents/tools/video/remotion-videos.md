@@ -10,13 +10,11 @@ metadata:
 
 ## Prerequisites
 
-Install `@remotion/media` if not already present:
+Install `@remotion/media`:
 
 ```bash
-npx remotion add @remotion/media # npm
-bunx remotion add @remotion/media # bun
-yarn remotion add @remotion/media # yarn
-pnpm exec remotion add @remotion/media # pnpm
+npx remotion add @remotion/media    # npm
+bunx remotion add @remotion/media   # bun / yarn / pnpm equivalent
 ```
 
 `<Video>` from `@remotion/media` embeds videos into compositions:
@@ -85,11 +83,7 @@ Use the `style` prop:
 
 ## Volume
 
-Static volume (0 to 1):
-
-```tsx
-<Video src={staticFile("video.mp4")} volume={0.5} />
-```
+Static: `<Video src={staticFile("video.mp4")} volume={0.5} />` (0 to 1). Mute: add `muted` prop.
 
 Dynamic volume via callback (receives current frame):
 
@@ -108,14 +102,12 @@ return (
 );
 ```
 
-Mute entirely: `<Video src={staticFile("video.mp4")} muted />`
-
 ## Speed
 
 `playbackRate` controls playback speed:
 
 ```tsx
-<Video src={staticFile("video.mp4")} playbackRate={2} /> {/* 2x speed */}
+<Video src={staticFile("video.mp4")} playbackRate={2} />   {/* 2x speed */}
 <Video src={staticFile("video.mp4")} playbackRate={0.5} /> {/* Half speed */}
 ```
 
@@ -148,14 +140,8 @@ Reverse playback is not supported.
 `toneFrequency` adjusts pitch without affecting speed (range: 0.01–2):
 
 ```tsx
-<Video
-  src={staticFile("video.mp4")}
-  toneFrequency={1.5} // Higher pitch
-/>
-<Video
-  src={staticFile("video.mp4")}
-  toneFrequency={0.8} // Lower pitch
-/>
+<Video src={staticFile("video.mp4")} toneFrequency={1.5} /> {/* Higher pitch */}
+<Video src={staticFile("video.mp4")} toneFrequency={0.8} /> {/* Lower pitch */}
 ```
 
 Pitch shifting only works during server-side rendering, not in the Remotion Studio preview or in the `<Player />`.
