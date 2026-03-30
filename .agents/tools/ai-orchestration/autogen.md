@@ -19,16 +19,13 @@ tools:
 
 - **Purpose**: Microsoft multi-agent AI framework — autonomous or human-in-the-loop
 - **License**: MIT (code) / CC-BY-4.0 (docs)
-- **Setup**: `bash .agents/scripts/autogen-helper.sh setup` → edit `~/.aidevops/autogen/.env` → `~/.aidevops/scripts/start-autogen-studio.sh`
-- **Stop/Status**: `~/.aidevops/scripts/stop-autogen-studio.sh`, `autogen-status.sh`
-- **Studio**: http://localhost:8081 | `autogenstudio ui --port 8081 --appdir ./my-app`
-- **Install**: `pip install autogen-agentchat autogen-ext[openai]`
+- **Install**: `pip install autogen-agentchat autogen-ext[openai] autogenstudio`
 - **Architecture**: Core API (message passing, event-driven, distributed) → AgentChat API (rapid prototyping) → Extensions API. Python + .NET.
 - **.NET**: `Microsoft.AutoGen.Contracts` + `Microsoft.AutoGen.Core` — same `AssistantAgent` pattern.
 
 <!-- AI-CONTEXT-END -->
 
-## Installation (Manual)
+## Setup
 
 ```bash
 mkdir -p ~/.aidevops/autogen && cd ~/.aidevops/autogen
@@ -37,7 +34,9 @@ pip install autogen-agentchat autogen-ext[openai] autogenstudio
 autogenstudio ui --port 8081
 ```
 
-## Configuration
+Helper scripts: `autogen-helper.sh setup` → edit `~/.aidevops/autogen/.env` → `start-autogen-studio.sh` | `stop-autogen-studio.sh` | `autogen-status.sh`
+
+Studio UI: http://localhost:8081 | `autogenstudio ui --port 8081 --appdir ./my-app`
 
 `~/.aidevops/autogen/.env`:
 
@@ -52,13 +51,7 @@ AUTOGEN_STUDIO_PORT=8081
 
 ## Usage
 
-All examples assume these common imports (add per-example extras as shown):
-
-```python
-import asyncio
-from autogen_agentchat.agents import AssistantAgent
-from autogen_ext.models.openai import OpenAIChatCompletionClient
-```
+All examples use: `import asyncio`, `from autogen_agentchat.agents import AssistantAgent`, `from autogen_ext.models.openai import OpenAIChatCompletionClient`.
 
 ### Basic Agent
 
@@ -89,8 +82,6 @@ asyncio.run(main())
 
 ### Multi-Agent with AgentTool
 
-Use `AgentTool` to compose specialist agents under an orchestrator (e.g., code reviewer + deployer for aidevops pipelines):
-
 ```python
 from autogen_agentchat.tools import AgentTool
 from autogen_agentchat.ui import Console
@@ -109,7 +100,7 @@ async def main():
 asyncio.run(main())
 ```
 
-## Alternative Model Clients
+### Alternative Model Clients
 
 ```python
 # Ollama (local)
@@ -125,8 +116,6 @@ client = AzureOpenAIChatCompletionClient(
 
 ## Deployment
 
-**Docker:**
-
 ```dockerfile
 FROM python:3.11-slim
 WORKDIR /app
@@ -135,7 +124,7 @@ RUN pip install autogen-agentchat autogen-ext[openai]
 CMD ["python", "main.py"]
 ```
 
-For **FastAPI** or other web frameworks, wrap any agent pattern above in a route handler. Always call `await client.close()` after each request.
+For web frameworks (FastAPI etc.), wrap agent patterns in route handlers. Always call `await client.close()` after each request.
 
 ## Troubleshooting
 
