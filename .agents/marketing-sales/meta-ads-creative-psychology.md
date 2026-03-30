@@ -4,8 +4,6 @@
 
 **Eye-tracking:** Average content time: 1.7s. Engagement decision: 0.5–1s. 80%+ scroll without sound. Thumb ~90% of scrolling. F/Z-pattern eye movement.
 
-**Three-second window:**
-
 | Second | User question | Brain activity |
 |--------|---------------|----------------|
 | 0–1 | "What is this?" | Visual registers; categorises (ad/content/friend) |
@@ -28,13 +26,11 @@
 | Complex visuals, industry jargon | Clean visuals, plain language |
 | Many choices | One clear CTA |
 
-**Mere exposure effect:** People prefer familiar things. Consistent brand visuals build familiarity; retargeting works partly through exposure.
+**Mere exposure effect:** Consistent brand visuals build familiarity; retargeting works partly through exposure.
 
 **Novelty vs familiarity:** Too familiar = ignored. Too novel = confusing. Sweet spot = familiar enough to understand, novel enough to notice.
 
 ## Pattern Interrupts
-
-Breaks the expected visual pattern of a feed, forcing attention.
 
 | Type | Examples |
 |------|---------|
@@ -44,14 +40,12 @@ Breaks the expected visual pattern of a feed, forcing attention.
 | Format | Portrait in landscape-dominant feed; minimalist in busy feed |
 | Emotional | Strong facial expression; surprising image |
 
-**Hook examples:**
-
 - `[HAND SLAPS TABLE] "Stop scrolling. This is important."` — motion + direct address
 - `[CLOSE-UP SHOCKED FACE] "I can't believe this worked"` — emotion + curiosity
 - `[BOLD TEXT ON BLACK] "EVERYTHING YOU KNOW ABOUT [TOPIC] IS WRONG"` — contrast + controversy
 - `[PRODUCT FLYING IN] "This little thing changed my life"` — motion + intrigue
 
-Pattern interrupt ≠ clickbait. Interrupt gets attention; content must deliver on the promise. Bait-and-switch = user feels tricked.
+Pattern interrupt ≠ clickbait. Interrupt gets attention; content must deliver. Bait-and-switch = user feels tricked.
 
 ## Visual Hierarchy
 
@@ -59,13 +53,9 @@ Priority order: largest/boldest → supporting visual → body text → CTA.
 
 **Tools:** Size (bigger = more important), colour (contrast draws eyes), position (top-left reads first in LTR), space (isolation creates importance).
 
-**Mobile zones:**
-
 - Top third: hook text or key visual (must stop scroll)
 - Middle third: supporting info, social proof
 - Bottom third: CTA, price/offer
-
-**Common mistakes:**
 
 | Mistake | Fix |
 |---------|-----|
@@ -95,11 +85,9 @@ Priority order: largest/boldest → supporting visual → body text → CTA.
 | "Get more leads" | "Stop missing leads" |
 | "Improve your health" | "Don't let your health decline" |
 
-**Endowment effect:** People value things more once they "own" them. Apply via free trials, "Your free [thing] is waiting", personalisation ("Your custom plan").
+**Endowment effect:** People value things more once they "own" them — free trials, "Your free [thing] is waiting", personalisation ("Your custom plan").
 
 ## Emotional Triggers
-
-**By motivational strength:**
 
 | Strength | Emotions |
 |----------|---------|
@@ -107,15 +95,11 @@ Priority order: largest/boldest → supporting visual → body text → CTA.
 | Medium | Anger (injustice/frustration), Surprise (novelty), Joy (humour) |
 | Weaker | Trust (reliability/safety), Anticipation (future reward) |
 
-**Hook templates by emotion:**
-
 - **Fear:** "Are you making this expensive mistake?" / "You're leaving $X on the table every month"
 - **Desire:** "What would you do with 10 extra hours per week?" / "Imagine waking up to [outcome]"
 - **Curiosity:** "I discovered this by accident…" / "The one thing [experts] won't tell you"
 - **Anger:** "Tired of [frustration]?" / "We built this because we were fed up with [status quo]"
 - **Humour:** "POV: You just discovered [product]" / "The face you make when [relatable situation]"
-
-**Emotion → funnel stage:**
 
 | Stage | Best emotions |
 |-------|--------------|
