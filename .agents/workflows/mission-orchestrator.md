@@ -23,9 +23,7 @@ tools:
 
 **Lifecycle**: `/mission` creates state file → orchestrator drives execution → milestone validation → completion or re-plan.
 
-**Pulse**: lightweight (re-dispatch dead workers, record completions, budget tracking). Orchestrator: heavyweight (re-planning, validation, research). Features tagged `mission:{id}` in TODO.
-
-**Self-organisation**: Create artifacts only when you have content. Draft tier unless promoted.
+**Division of labour**: Pulse = lightweight (re-dispatch dead workers, record completions, budget tracking). Orchestrator = heavyweight (re-planning, validation, research). Features tagged `mission:{id}` in TODO. Create artifacts only when you have content; draft tier unless promoted.
 
 <!-- AI-CONTEXT-END -->
 
@@ -101,13 +99,9 @@ All milestones `passed`: final smoke test → `status: completed` → retrospect
 
 Dirs: `mission.md` (always) · `research/` · `agents/` · `scripts/` · `assets/` — create only when you have content.
 
-**Temporary agents**: create when 2+ features need the same specialised knowledge or a worker fails from missing context. Keep under 100 lines; frontmatter: `mode: subagent, status: draft, source: mission/{id}`. Pass path in worker prompts: `Read {mission-dir}/agents/{name}.md before starting.`
+**Temporary agents**: create when 2+ features need the same specialised knowledge or a worker fails from missing context. Keep under 100 lines; frontmatter: `mode: subagent, status: draft, source: mission/{id}`. Pass path in worker prompts: `Read {mission-dir}/agents/{name}.md before starting.` After completion: move useful agents to `~/.aidevops/agents/draft/`; delete one-off agents.
 
-After completion: move useful agents to `~/.aidevops/agents/draft/`; delete one-off agents.
-
-## Improvement Feedback
-
-At completion: `gh issue create --repo {aidevops_slug} --title "Mission feedback: {desc}" --body "{details}"`. Don't modify aidevops files during a mission or duplicate existing capabilities.
+**Improvement feedback**: at completion, `gh issue create --repo {aidevops_slug} --title "Mission feedback: {desc}" --body "{details}"`. Don't modify aidevops files during a mission or duplicate existing capabilities.
 
 ## Research
 
@@ -155,8 +149,6 @@ Always recover from cold start by reading current state — never assume a previ
 ## Pulse Integration
 
 Scans `{repo_root}/todo/missions/*/mission.md` and `~/.aidevops/missions/*/mission.md` for `status: active`.
-
-**Pulse**: re-dispatch dead workers, record completions, pause on budget. **Orchestrator**: re-planning, validation, research.
 
 Pulse transitions: `dispatched`→`completed` (merged PR) · `dispatched`→`failed` (dead worker, no PR) · `active`→`paused` (budget) · re-dispatch (transient).
 
