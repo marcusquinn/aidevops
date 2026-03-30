@@ -478,7 +478,13 @@ STUB
 	chmod +x "${TEST_ROOT}/dispatch-ledger-helper.sh"
 
 	# Stub gh to avoid real API calls
-	gh() { return 0; }
+	gh() {
+		if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
+			printf '{"state":"OPEN","title":"t8888: test pass","labels":[]}\n'
+			return 0
+		fi
+		return 0
+	}
 	export -f gh
 
 	local dispatch_rc=0

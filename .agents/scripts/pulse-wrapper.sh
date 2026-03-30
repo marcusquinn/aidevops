@@ -4436,25 +4436,28 @@ dispatch_with_dedup() {
 	local issue_meta_json
 	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
 		--json number,title,state,labels 2>/dev/null) || issue_meta_json=""
-	if [[ -n "$issue_meta_json" ]]; then
-		local target_state target_title
-		target_state=$(echo "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null)
-		target_title=$(echo "$issue_meta_json" | jq -r '.title // ""' 2>/dev/null)
+	if [[ -z "$issue_meta_json" ]]; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to load issue metadata" >>"$LOGFILE"
+		return 1
+	fi
 
-		if [[ "$target_state" != "OPEN" ]]; then
-			echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: issue state is ${target_state:-unknown}" >>"$LOGFILE"
-			return 1
-		fi
+	local target_state target_title
+	target_state=$(echo "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null)
+	target_title=$(echo "$issue_meta_json" | jq -r '.title // ""' 2>/dev/null)
 
-		if echo "$issue_meta_json" | jq -e '.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review"))' >/dev/null 2>&1; then
-			echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: non-dispatchable management label present" >>"$LOGFILE"
-			return 1
-		fi
+	if [[ "$target_state" != "OPEN" ]]; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: issue state is ${target_state:-unknown}" >>"$LOGFILE"
+		return 1
+	fi
 
-		if [[ "$target_title" == \[Supervisor:* ]]; then
-			echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: supervisor telemetry title" >>"$LOGFILE"
-			return 1
-		fi
+	if echo "$issue_meta_json" | jq -e '.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review"))' >/dev/null 2>&1; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: non-dispatchable management label present" >>"$LOGFILE"
+		return 1
+	fi
+
+	if [[ "$target_title" == \[Supervisor:* ]]; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: supervisor telemetry title" >>"$LOGFILE"
+		return 1
 	fi
 
 	# All 7 dedup layers — cannot be skipped
@@ -4979,6 +4982,27 @@ recover_failed_launch_state() {
 		return 0
 	fi
 
+	# Mark in-flight ledger entry as failed even if GitHub claim edits never stuck.
+	local ledger_helper
+	ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
+	if [[ -x "$ledger_helper" ]]; then
+		local ledger_entry session_key
+		ledger_entry=$("$ledger_helper" check-issue --issue "$issue_number" --repo "$repo_slug" 2>/dev/null || true)
+		session_key=$(printf '%s' "$ledger_entry" | jq -r '.session_key // ""' 2>/dev/null)
+		if [[ -n "$session_key" ]]; then
+			"$ledger_helper" fail --session-key "$session_key" >/dev/null 2>&1 || true
+		fi
+	fi
+
+	# For no-worker failures, skip cleanup if a late-started worker appears.
+	# For cli_usage_output failures, always continue to clear stale claim state.
+	if [[ "$failure_reason" != "cli_usage_output" ]]; then
+		if has_worker_for_repo_issue "$issue_number" "$repo_slug"; then
+			echo "[pulse-wrapper] Launch recovery skipped for #${issue_number} (${repo_slug}): worker appeared after validation failure" >>"$LOGFILE"
+			return 0
+		fi
+	fi
+
 	local self_login
 	self_login=$(gh api user --jq '.login' 2>/dev/null || echo "")
 	if [[ -z "$self_login" ]]; then
@@ -5004,24 +5028,6 @@ recover_failed_launch_state() {
 
 	if [[ "$issue_state" != "OPEN" ]] || [[ "$assigned_to_self" != "true" ]] || [[ "$has_queued" != "true" ]]; then
 		return 0
-	fi
-
-	# Re-check once for late-started workers before mutating labels/assignees.
-	if has_worker_for_repo_issue "$issue_number" "$repo_slug"; then
-		echo "[pulse-wrapper] Launch recovery skipped for #${issue_number} (${repo_slug}): worker appeared after validation failure" >>"$LOGFILE"
-		return 0
-	fi
-
-	# Mark in-flight ledger entry as failed for this issue.
-	local ledger_helper
-	ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
-	if [[ -x "$ledger_helper" ]]; then
-		local ledger_entry session_key
-		ledger_entry=$("$ledger_helper" check-issue --issue "$issue_number" --repo "$repo_slug" 2>/dev/null || true)
-		session_key=$(printf '%s' "$ledger_entry" | jq -r '.session_key // ""' 2>/dev/null)
-		if [[ -n "$session_key" ]]; then
-			"$ledger_helper" fail --session-key "$session_key" >/dev/null 2>&1 || true
-		fi
 	fi
 
 	if [[ "$is_blocked" == "true" ]]; then
