@@ -59,7 +59,7 @@
 # Uncomment to bridge SimpleX <-> Slack
 # [slack]
 #   [slack.workspace]
-#   Token="xoxb-YOUR-BOT-TOKEN"
+#   Token="YOUR_SLACK_BOT_TOKEN"
 #   PrefixMessagesWithNick=true
 
 # ── General settings ─────────────────────────────────────────────────────────
