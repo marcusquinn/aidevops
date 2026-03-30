@@ -103,35 +103,29 @@ Payload fields: `message.argumentText` (prompt, mention stripped), `user.email` 
 
 **Card v2**: `cardsV2[].card` with `header`/`sections[].widgets`. Limits: 1 card/msg, 100 sections, 100 widgets/section, 4096 chars/widget, 40 chars/button. Public HTTPS image URLs only. [Reference](https://developers.google.com/workspace/chat/api/reference/rest/v1/cards).
 
-## Space-to-Runner Mapping
-
-```bash
-google-chat-helper.sh map 'spaces/AAAA1234' code-reviewer
-google-chat-helper.sh mappings   # list all
-google-chat-helper.sh unmap 'spaces/AAAA1234'
-```
-
-DMs use `defaultRunner`; unconfigured = help message. **ACL order**: token verification → domain → allowlist → space mapping. Domain control: Admin Console > Apps > Google Workspace > Google Chat > Chat apps settings.
-
 ## Operations
 
 ```bash
-google-chat-helper.sh start --daemon   # background
-google-chat-helper.sh start            # foreground (debug)
+google-chat-helper.sh start --daemon          # background
+google-chat-helper.sh start                   # foreground (debug)
 google-chat-helper.sh stop && google-chat-helper.sh status
 google-chat-helper.sh logs [--follow] [--tail 200]
-google-chat-helper.sh test code-reviewer "Review src/auth.ts"     # dispatch test
-google-chat-helper.sh test-event message "Test message from CLI"  # event test
-google-chat-helper.sh test-auth                                   # token verify
+google-chat-helper.sh map 'spaces/AAAA1234' code-reviewer
+google-chat-helper.sh mappings && google-chat-helper.sh unmap 'spaces/AAAA1234'
+google-chat-helper.sh test code-reviewer "Review src/auth.ts"
+google-chat-helper.sh test-event message "Test message from CLI"
+google-chat-helper.sh test-auth
 ```
 
 **Health**: `GET /health` → `{"status":"ok","uptime":...,"spaces":N}` · **Runners**: `runner-helper.sh create|edit <name>`
 
+**Space mapping**: DMs use `defaultRunner`; unconfigured = help message. **ACL order**: token verification → domain → allowlist → space mapping. Domain control: Admin Console > Apps > Google Workspace > Google Chat > Chat apps settings.
+
 ## Privacy and Security
 
-No E2E encryption (TLS in transit only). Google retains all messages; admins have full read access. Retention: Google Vault. **Gemini AI**: workspace data may train AI unless DPA configured — verify Admin Console > Additional Google services > Gemini and [Workspace DPA](https://workspace.google.com/terms/dpa_terms.html) before deploying with sensitive data.
+No E2E encryption (TLS in transit only). Google retains all messages; admins have full read access (Google Vault). **Gemini AI**: workspace data may train AI unless DPA configured — verify Admin Console > Additional Google services > Gemini and [Workspace DPA](https://workspace.google.com/terms/dpa_terms.html) before deploying with sensitive data.
 
-**Bot security**: SA key 600 perms, never commit · `allowedUsers` allowlist in production · Scan inbound (`prompt-guard-helper.sh`) and outbound (credential patterns) · Reverse proxy for TLS · Log events, redact sensitive content · FCM: Google sees push notification metadata.
+**Bot security**: SA key 600 perms, never commit · `allowedUsers` allowlist in production · Scan inbound (`prompt-guard-helper.sh`) and outbound (credential patterns) · Reverse proxy for TLS · Log events, redact sensitive content.
 
 ## Limitations
 
