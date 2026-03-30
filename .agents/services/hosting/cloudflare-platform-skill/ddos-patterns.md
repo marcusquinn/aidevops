@@ -25,16 +25,10 @@ Bursty API endpoints need lower sensitivity than static pages.
 const config = {
   description: "Route-specific protection",
   rules: [
-    {
-      expression: "not http.request.uri.path matches \"^/api/\"",
-      action: "execute",
-      action_parameters: { id: managedRulesetId, overrides: { sensitivity_level: "default", action: "block" } },
-    },
-    {
-      expression: "http.request.uri.path matches \"^/api/\"",
-      action: "execute",
-      action_parameters: { id: managedRulesetId, overrides: { sensitivity_level: "low", action: "managed_challenge" } },
-    },
+    { expression: "not http.request.uri.path matches \"^/api/\"",
+      action: "execute", action_parameters: { id: managedRulesetId, overrides: { sensitivity_level: "default", action: "block" } } },
+    { expression: "http.request.uri.path matches \"^/api/\"",
+      action: "execute", action_parameters: { id: managedRulesetId, overrides: { sensitivity_level: "low", action: "managed_challenge" } } },
   ],
 };
 ```
@@ -44,25 +38,24 @@ const config = {
 Gradual rollout: MONITORING (week 1) → LOW (week 2) → MEDIUM (week 3) → HIGH (week 4).
 
 ```typescript
-enum ProtectionLevel { MONITORING = "monitoring", LOW = "low", MEDIUM = "medium", HIGH = "high" }
+type ProtectionLevel = "monitoring" | "low" | "medium" | "high";
 
 const levelConfig: Record<ProtectionLevel, { action: string; sensitivity: string }> = {
-  [ProtectionLevel.MONITORING]: { action: "log", sensitivity: "eoff" },
-  [ProtectionLevel.LOW]:        { action: "managed_challenge", sensitivity: "low" },
-  [ProtectionLevel.MEDIUM]:     { action: "managed_challenge", sensitivity: "medium" },
-  [ProtectionLevel.HIGH]:       { action: "block", sensitivity: "default" },
+  monitoring: { action: "log", sensitivity: "eoff" },
+  low:        { action: "managed_challenge", sensitivity: "low" },
+  medium:     { action: "managed_challenge", sensitivity: "medium" },
+  high:       { action: "block", sensitivity: "default" },
 };
 
 async function setProtectionLevel(zoneId: string, level: ProtectionLevel, managedRulesetId: string, apiToken: string) {
   const { action, sensitivity } = levelConfig[level];
-  return fetch(/* PUT zones/${zoneId}/rulesets/phases/ddos_l7/entrypoint */, {
+  // PUT zones/${zoneId}/rulesets/phases/ddos_l7/entrypoint
+  return fetch(`https://api.cloudflare.com/client/v4/zones/${zoneId}/rulesets/phases/ddos_l7/entrypoint`, {
     method: "PUT",
     headers: { Authorization: `Bearer ${apiToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      description: `DDoS protection level: ${level}`,
       rules: [{
-        expression: "true",
-        action: "execute",
+        expression: "true", action: "execute",
         action_parameters: { id: managedRulesetId, overrides: { action, sensitivity_level: sensitivity } },
       }],
     }),
@@ -72,26 +65,24 @@ async function setProtectionLevel(zoneId: string, level: ProtectionLevel, manage
 
 ## Dynamic Response
 
-Worker that auto-escalates on attack detection, de-escalates via cron when quiet.
+Worker that auto-escalates on attack detection, de-escalates via scheduled cron when quiet.
 
 ```typescript
-// Env: CLOUDFLARE_API_TOKEN, ZONE_ID, KV_NAMESPACE (KVNamespace)
+// Bindings: CLOUDFLARE_API_TOKEN, ZONE_ID, KV_NAMESPACE (KVNamespace)
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    if (request.url.includes("/attack-detected")) {
-      await env.KV_NAMESPACE.put(`attack:${Date.now()}`, await request.text(), { expirationTtl: 86400 });
-      if ((await getRecentAttacks(env.KV_NAMESPACE)).length > 5) {
-        await increaseProtection(env.ZONE_ID, "managed-ruleset-id", env.CLOUDFLARE_API_TOKEN);
-        return new Response("Protection increased", { status: 200 });
-      }
+  async fetch(req: Request, env: Env): Promise<Response> {
+    if (!req.url.includes("/attack-detected")) return new Response("OK");
+    await env.KV_NAMESPACE.put(`attack:${Date.now()}`, await req.text(), { expirationTtl: 86400 });
+    if ((await getRecentAttacks(env.KV_NAMESPACE)).length > 5) {
+      await increaseProtection(env.ZONE_ID, "managed-ruleset-id", env.CLOUDFLARE_API_TOKEN);
+      return new Response("Protection increased", { status: 200 });
     }
     return new Response("OK");
   },
 
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
-    if ((await getRecentAttacks(env.KV_NAMESPACE)).length === 0) {
+    if ((await getRecentAttacks(env.KV_NAMESPACE)).length === 0)
       await normalizeProtection(env.ZONE_ID, "managed-ruleset-id", env.CLOUDFLARE_API_TOKEN);
-    }
   },
 };
 ```
@@ -104,21 +95,12 @@ Up to 10 rules with different conditions per zone.
 const config = {
   description: "Multi-tier DDoS protection",
   rules: [
-    { // Unknown traffic — strictest
-      expression: "not ip.src in $known_ips and not cf.bot_management.score gt 30",
-      action: "execute",
-      action_parameters: { id: managedRulesetId, overrides: { sensitivity_level: "default", action: "block" } },
-    },
-    { // Verified bots — medium
-      expression: "cf.bot_management.verified_bot",
-      action: "execute",
-      action_parameters: { id: managedRulesetId, overrides: { sensitivity_level: "medium", action: "managed_challenge" } },
-    },
-    { // Trusted IPs — low
-      expression: "ip.src in $trusted_ips",
-      action: "execute",
-      action_parameters: { id: managedRulesetId, overrides: { sensitivity_level: "low" } },
-    },
+    { expression: "not ip.src in $known_ips and not cf.bot_management.score gt 30", // unknown — strictest
+      action: "execute", action_parameters: { id: managedRulesetId, overrides: { sensitivity_level: "default", action: "block" } } },
+    { expression: "cf.bot_management.verified_bot", // verified bots — medium
+      action: "execute", action_parameters: { id: managedRulesetId, overrides: { sensitivity_level: "medium", action: "managed_challenge" } } },
+    { expression: "ip.src in $trusted_ips", // trusted — low
+      action: "execute", action_parameters: { id: managedRulesetId, overrides: { sensitivity_level: "low" } } },
   ],
 };
 ```
