@@ -40,6 +40,6 @@ export default {
 
 - [queues-patterns.md](./queues-patterns.md) — async tasks, buffering, rate limiting, fan-out, event workflows, DLQ
 - [queues-gotchas.md](./queues-gotchas.md) — idempotency, retry limits, content types, cost optimization, limits
-- [workers](../workers/) — Worker runtime for producers/consumers
-- [r2](../r2/) — process R2 event notifications via queues
-- [d1](../d1/) — batch write to D1 from queue consumers
+- [workers.md](./workers.md) — Worker runtime for producers/consumers
+- [r2.md](./r2.md) — process R2 event notifications via queues
+- [d1.md](./d1.md) — batch write to D1 from queue consumers
