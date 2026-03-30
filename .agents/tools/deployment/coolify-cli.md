@@ -24,6 +24,7 @@ tools:
 - **Script**: `.agents/scripts/coolify-cli-helper.sh`
 - **Deps**: `jq` (required), `docker` (optional), `node` (optional)
 - **Debug**: `export DEBUG=1` before any command
+- **Security**: Store tokens in env vars or `aidevops secret`. Use context-specific tokens per environment.
 - **API docs**: https://coolify.io/docs/api
 - **Related**: `coolify-setup.md` (server install), `coolify.md` (provider guide, monitoring)
 
@@ -43,13 +44,12 @@ tools:
 ```bash
 cp configs/coolify-cli-config.json.txt configs/coolify-cli-config.json
 
-# Add contexts
 ./.agents/scripts/coolify-cli-helper.sh add-context production https://coolify.example.com your-api-token true
 ./.agents/scripts/coolify-cli-helper.sh add-context staging https://staging.coolify.example.com staging-token
 ./.agents/scripts/coolify-cli-helper.sh list-contexts
 ```
 
-Multi-context config structure (`configs/coolify-cli-config.json`):
+Config structure (`configs/coolify-cli-config.json`):
 
 ```json
 {
@@ -59,14 +59,7 @@ Multi-context config structure (`configs/coolify-cli-config.json`):
     "production": { "url": "https://coolify.example.com" }
   },
   "projects": {
-    "web-app": {
-      "context": "production",
-      "type": "nodejs",
-      "git_repository": "https://github.com/user/web-app.git",
-      "build_command": "npm run build",
-      "start_command": "npm start",
-      "domains": ["app.example.com"]
-    }
+    "web-app": { "context": "production", "type": "nodejs", "domains": ["app.example.com"] }
   }
 }
 ```
@@ -75,7 +68,7 @@ Multi-context config structure (`configs/coolify-cli-config.json`):
 
 ### Local Development (no Coolify required)
 
-Auto-detects project type (Node.js `package.json`, Dockerfile/docker-compose, static HTML):
+Auto-detects project type (`package.json`, `Dockerfile`/`docker-compose`, static HTML):
 
 ```bash
 ./.agents/scripts/coolify-cli-helper.sh dev local ./my-app 3000
@@ -89,6 +82,11 @@ Auto-detects project type (Node.js `package.json`, Dockerfile/docker-compose, st
 ./.agents/scripts/coolify-cli-helper.sh deploy production my-app          # deploy
 ./.agents/scripts/coolify-cli-helper.sh deploy production my-app true     # force deploy
 ./.agents/scripts/coolify-cli-helper.sh get-app production app-uuid-here
+
+# Monitoring (native coolify CLI)
+coolify app logs app-uuid
+coolify deploy list
+coolify server get server-uuid --resources
 ```
 
 ### Server Management
@@ -109,29 +107,12 @@ Auto-detects project type (Node.js `package.json`, Dockerfile/docker-compose, st
 ./.agents/scripts/coolify-cli-helper.sh create-db production mongodb     server-uuid project-uuid main mongo-db true
 ```
 
-### Monitoring
-
-```bash
-coolify app logs app-uuid
-coolify deploy list
-coolify server get server-uuid --resources
-```
-
 ## CI/CD Integration
 
 ```yaml
-name: Deploy to Coolify
-on:
-  push:
-    branches: [main]
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: ./.agents/scripts/coolify-cli-helper.sh deploy production my-app true
-        env:
-          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+- run: ./.agents/scripts/coolify-cli-helper.sh deploy production my-app true
+  env:
+    COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
 ```
 
 ## Troubleshooting
@@ -142,5 +123,3 @@ jobs:
 | Context issues | `list-contexts` then `add-context` |
 | Local dev fails | Check Node.js/Docker installed; verify `package.json`/`Dockerfile` present; check port availability |
 | Deployment fails | Verify server connectivity; check app logs; validate env vars |
-
-**Security**: Store tokens in env vars or `aidevops secret`. Use context-specific tokens per environment.
