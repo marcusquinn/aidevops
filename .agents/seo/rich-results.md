@@ -18,23 +18,12 @@ tools:
 
 - **Purpose**: Validate structured data and preview rich snippets
 - **URL**: `https://search.google.com/test/rich-results`
-- **API Status**: **Deprecated** (standalone API no longer available)
-- **Method**: Browser automation (Playwright) or manual testing
-- **Alternatives**: Schema.org Validator (`https://validator.schema.org/`)
-
-## Manual Testing
-
-1. Go to [Google Rich Results Test](https://search.google.com/test/rich-results)
-2. Enter the URL to test or paste the code snippet
-3. Select "Smartphone" or "Desktop" user agent
-4. Click "Test URL" or "Test Code"
-5. Review critical errors, non-critical issues, and preview the result
+- **API Status**: **Deprecated** (standalone API removed) -- browser automation required
+- **Alternative**: Schema.org Validator (`https://validator.schema.org/`) -- faster, no CAPTCHA, no Google-specific eligibility
 
 ## Browser Automation (Playwright)
 
-Since the API is deprecated, use Playwright to automate the testing process.
-
-### Test a URL
+Primary method. Run `node rich-results-test.js <url>`:
 
 ```javascript
 // rich-results-test.js
@@ -86,12 +75,6 @@ async function main() {
 main().catch(console.error);
 ```
 
-Run with:
-
-```bash
-node rich-results-test.js https://example.com
-```
-
 ### Batch Testing
 
 ```bash
@@ -103,17 +86,7 @@ for url in https://example.com https://example.com/article https://example.com/p
 done
 ```
 
-<!-- AI-CONTEXT-END -->
-
-## Schema Validation (Alternative)
-
-For pure syntax validation without Google's rendering context, use the Schema.org Validator.
-
-- **URL**: `https://validator.schema.org/`
-- **Advantage**: Faster, no CAPTCHA, API-friendly
-- **Disadvantage**: Does not show Google-specific eligibility (e.g., Merchant Center requirements)
-
-### Quick JSON-LD Extraction
+## JSON-LD Extraction
 
 ```bash
 # Extract JSON-LD from a page
@@ -123,9 +96,15 @@ curl -sL "https://example.com" \
   | jq . 2>/dev/null || echo "No valid JSON-LD found"
 ```
 
-## Rich Result Types
+## Manual Testing
 
-Google supports rich results for these structured data types:
+1. Open [Rich Results Test](https://search.google.com/test/rich-results)
+2. Enter URL or paste code snippet, select user agent (Smartphone/Desktop)
+3. Click "Test URL" / "Test Code", review errors and rich snippet preview
+
+## Common Rich Result Types
+
+Full list: [Google's structured data gallery](https://developers.google.com/search/docs/appearance/structured-data/search-gallery).
 
 | Type | Schema | Common Use |
 |------|--------|------------|
@@ -141,6 +120,8 @@ Google supports rich results for these structured data types:
 | VideoObject | `VideoObject` | Video content |
 | JobPosting | `JobPosting` | Job listings |
 | Course | `Course` | Educational content |
+
+<!-- AI-CONTEXT-END -->
 
 ## Related
 
