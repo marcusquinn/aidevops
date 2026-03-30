@@ -1,6 +1,6 @@
 # Flowchart Diagrams
 
-## Basic Syntax
+**Direction:** `TB`/`TD` (top-bottom), `BT`, `LR`, `RL`
 
 ```mermaid
 flowchart LR
@@ -9,23 +9,18 @@ flowchart LR
     B -->|No| D[End]
 ```
 
-Direction: `TB`/`TD` (top-bottom), `BT`, `LR`, `RL`
-
 ## Node Shapes
 
-### Standard
+**Standard syntax:**
 
 ```
-A[Rectangle]         B(Rounded)           C([Stadium])
-D[[Subroutine]]      E[(Database)]        F((Circle))
-G{Diamond}           H{{Hexagon}}         I[/Parallelogram/]
-J[\Parallelogram\]   K[/Trapezoid\]       L[\Trapezoid/]
+A[Rectangle]    B(Rounded)      C([Stadium])     D[[Subroutine]]
+E[(Database)]   F((Circle))     G{Diamond}       H{{Hexagon}}
+I[/Parallelogram/]  J[\Parallelogram\]  K[/Trapezoid\]  L[\Trapezoid/]
 M(((Double Circle)))
 ```
 
-### Extended (v11.3+)
-
-Syntax: `node@{ shape: name, label: "Text" }`
+**Extended (v11.3+):** `node@{ shape: name, label: "Text" }`
 
 | Shape | Description | Shape | Description |
 |-------|-------------|-------|-------------|
@@ -45,20 +40,22 @@ Syntax: `node@{ shape: name, label: "Text" }`
 | `lin-doc` | Lined document | `tag-doc` / `tag-rect` | Tagged shapes |
 | `half-rounded-rect` | Half rounded | `curv-trap` | Curved trapezoid |
 
-## Edge Types
+## Edges
 
 ```
-A --> B       Solid arrow        A --- B       Solid line
-A -.-> B      Dotted arrow       A -.- B       Dotted line
-A ==> B       Thick arrow        A === B       Thick line
-A --o B       Circle end         A --x B       Cross end
-A o--o B      Circle both ends   A x--x B      Cross both ends
-A <--> B      Bidirectional
+A --> B    Solid arrow     A --- B    Solid line
+A -.-> B   Dotted arrow    A -.- B    Dotted line
+A ==> B    Thick arrow     A === B    Thick line
+A --o B    Circle end      A --x B    Cross end
+A o--o B   Circle both     A x--x B   Cross both
+A <--> B   Bidirectional
 ```
 
-**Length** — extra dashes extend: `-->` (normal), `--->` (longer), `---->` (longest)
+**Length:** extra dashes extend — `-->` (normal), `--->` (longer), `---->` (longest)
 
 **Labels:** `A -->|text| B` or `A -- text --> B` or `A -->|"multi word"| B`
+
+**Multi-target:** `A --> B & C --> D` (fan-out); `E & F --> G` (fan-in)
 
 **Animation (v11+):** `A e1@--> B` then `e1@{ animate: true, animation-duration: "0.5s" }`
 
@@ -79,22 +76,6 @@ flowchart TB
 
 Nested subgraphs supported. Add `direction TB` inside a subgraph to override direction locally.
 
-## Multi-Target Edges
-
-`A --> B & C --> D` — fan-out; `E & F --> G` — fan-in
-
-## Markdown in Labels
-
-Wrap label in backtick-quotes: `A["`**Bold** and *italic*`"]` — supports bold, italic, multi-line.
-
-## Icons
-
-`A[fa:fa-user User]` — FontAwesome prefix `fa:fa-name`
-
-## Click Events
-
-`click A href "https://url" _blank` — open URL; `click B call callback()` — JS callback
-
 ## Styling
 
 ```mermaid
@@ -107,7 +88,15 @@ flowchart LR
     linkStyle default stroke:gray,stroke-width:1px
 ```
 
-## Layout Engine (ELK, v9.4+)
+## Misc
+
+**Markdown labels:** `A["`**Bold** and *italic*`"]` — backtick-quoted, supports bold, italic, multi-line.
+
+**Icons:** `A[fa:fa-user User]` — FontAwesome prefix `fa:fa-name`
+
+**Click events:** `click A href "https://url" _blank` (URL) or `click B call callback()` (JS)
+
+**ELK layout engine (v9.4+):**
 
 ```mermaid
 %%{init: {"flowchart": {"defaultRenderer": "elk"}} }%%
