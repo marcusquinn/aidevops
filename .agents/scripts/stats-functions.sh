@@ -561,8 +561,10 @@ _gather_health_stats() {
 		prs_md="_No open PRs_"
 	fi
 
-	# Output all stats as newline-delimited fields
-	printf '%s\n' \
+	# Output all stats as NUL-delimited fields.
+	# This preserves multiline markdown blobs (prs_md/workers_md)
+	# when consumed by _assemble_health_issue_body.
+	printf '%s\0' \
 		"$pr_count" \
 		"$prs_md" \
 		"$assigned_issue_count" \
@@ -859,24 +861,28 @@ _assemble_health_issue_body() {
 	local workers_md worker_count sys_load_ratio sys_cpu_cores
 	local sys_load_1m sys_load_5m sys_memory sys_procs
 	local wt_count max_workers session_count session_warning
-	{
-		IFS= read -r pr_count
-		IFS= read -r prs_md
-		IFS= read -r assigned_issue_count
-		IFS= read -r total_issue_count
-		IFS= read -r workers_md
-		IFS= read -r worker_count
-		IFS= read -r sys_load_ratio
-		IFS= read -r sys_cpu_cores
-		IFS= read -r sys_load_1m
-		IFS= read -r sys_load_5m
-		IFS= read -r sys_memory
-		IFS= read -r sys_procs
-		IFS= read -r wt_count
-		IFS= read -r max_workers
-		IFS= read -r session_count
-		IFS= read -r session_warning
-	} <"$stats_tmp"
+	local stats_field
+	local -a stats_fields=()
+	while IFS= read -r -d '' stats_field; do
+		stats_fields+=("$stats_field")
+	done <"$stats_tmp"
+
+	pr_count="${stats_fields[0]:-0}"
+	prs_md="${stats_fields[1]:-_No open PRs_}"
+	assigned_issue_count="${stats_fields[2]:-0}"
+	total_issue_count="${stats_fields[3]:-0}"
+	workers_md="${stats_fields[4]:-_No active workers_}"
+	worker_count="${stats_fields[5]:-0}"
+	sys_load_ratio="${stats_fields[6]:-0}"
+	sys_cpu_cores="${stats_fields[7]:-0}"
+	sys_load_1m="${stats_fields[8]:-0.00}"
+	sys_load_5m="${stats_fields[9]:-0.00}"
+	sys_memory="${stats_fields[10]:-unknown}"
+	sys_procs="${stats_fields[11]:-0}"
+	wt_count="${stats_fields[12]:-0}"
+	max_workers="${stats_fields[13]:-?}"
+	session_count="${stats_fields[14]:-0}"
+	session_warning="${stats_fields[15]:-}"
 	rm -f "$stats_tmp"
 
 	local activity_md session_time_md person_stats_md
