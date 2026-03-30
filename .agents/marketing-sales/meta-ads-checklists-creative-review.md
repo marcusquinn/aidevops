@@ -8,8 +8,7 @@
 
 **Video:**
 - [ ] Correct aspect ratio (9:16, 4:5, 1:1)
-- [ ] Resolution minimum 1080p
-- [ ] File under 4GB
+- [ ] Resolution ≥1080p, file <4GB
 - [ ] Audio clear and balanced
 - [ ] Captions added and timed correctly
 - [ ] No watermarks or tool logos
@@ -17,77 +16,56 @@
 
 **Static Image:**
 - [ ] Correct dimensions for placement
-- [ ] Resolution high enough (no pixelation)
-- [ ] Text <20% of image area (guideline)
+- [ ] No pixelation; file <30MB
+- [ ] Text <20% of image area
 - [ ] No small/unreadable text on mobile
-- [ ] File under 30MB
 
 **Carousel:**
 - [ ] All cards same size/ratio
-- [ ] Swipe direction logical
-- [ ] First card strong enough standalone
-- [ ] Each card adds value
-- [ ] Final card has CTA
+- [ ] First card strong standalone; final card has CTA
+- [ ] Each card adds value; swipe direction logical
 
 ### Content Quality
 
 **Hook (First 3 Seconds/Line):**
-- [ ] Stops the scroll
-- [ ] Creates curiosity or addresses pain
-- [ ] Works without sound (if video)
-- [ ] Clear who this is for
+- [ ] Stops the scroll; creates curiosity or addresses pain
+- [ ] Works without sound (video); clear who this is for
 
 **Body:**
-- [ ] Value proposition clear
-- [ ] Benefits over features
+- [ ] Value proposition and benefits clear (not features)
 - [ ] Social proof included
-- [ ] Message easy to understand
-- [ ] No confusing jargon
+- [ ] Message easy to understand without jargon
 
 **Call to Action:**
-- [ ] CTA clear and specific
-- [ ] Action matches objective
+- [ ] CTA clear, specific, and matches objective
 - [ ] No friction in the ask
 
 ### Brand & Compliance
 
 **Brand Standards:**
-- [ ] Logo used correctly (if applicable)
-- [ ] Brand colours accurate
-- [ ] Tone matches brand voice
-- [ ] Consistent with other creative
+- [ ] Logo, colours, and tone match brand guidelines
+- [ ] Consistent with other active creative
 
 **Policy Compliance:**
-- [ ] No prohibited content
-- [ ] No personal attributes claims
-- [ ] No misleading claims
-- [ ] Testimonials are real
+- [ ] No prohibited content or personal attribute claims
+- [ ] No misleading claims; testimonials are real
 - [ ] Proper disclosures if needed
 
 ### Copy Review
 
 **Primary Text:**
-- [ ] Hook in first sentence
-- [ ] Scannable format (bullets, emojis)
-- [ ] Spelling/grammar checked
-- [ ] CTA included
-- [ ] Not too long for mobile
+- [ ] Hook in first sentence; scannable format (bullets/emojis)
+- [ ] CTA included; length appropriate for mobile
 
-**Headline:**
-- [ ] Under 40 characters (ideal)
-- [ ] Benefit or offer clear
-- [ ] Matches primary text
+**Headline:** Under 40 chars; benefit or offer clear; matches primary text
 
-**Description:**
-- [ ] Supports headline
-- [ ] Additional info or CTA
+**Description:** Supports headline; adds info or secondary CTA
 
 ### Mobile Test
 
 - [ ] Watched on actual phone screen
-- [ ] Text readable at a glance
-- [ ] Hook works in feed context
-- [ ] Would YOU stop scrolling
+- [ ] Text readable at a glance; hook works in feed context
+- [ ] Would YOU stop scrolling?
 - [ ] Shown to non-marketer for gut check
 
 ---
@@ -110,14 +88,13 @@
 **Diagnostic Questions:**
 - [ ] Scaling or plateauing?
 - [ ] Fatigue signs (declining CTR, rising frequency)?
-- [ ] What's working that we can iterate on?
-- [ ] What's not working to avoid?
+- [ ] What's working to iterate on? What's not working to avoid?
 
 ---
 
 ## Creative Scorecard
 
-Rate each element 1-5:
+Rate each element 1–5:
 
 | Element | Score | Notes |
 |---------|-------|-------|
@@ -129,17 +106,15 @@ Rate each element 1-5:
 | Brand Consistency | /5 | |
 | **Total** | /30 | |
 
-**Score Guide:** 25-30 launch-ready | 20-24 minor fixes | 15-19 significant revision | <15 back to drawing board
+**Score Guide:** 25–30 launch-ready · 20–24 minor fixes · 15–19 significant revision · <15 back to drawing board
 
 ---
 
 ## Post-Mortem
 
 **Winning Creative:**
-- [ ] What hook was used?
-- [ ] What emotion was triggered?
-- [ ] What format worked?
-- [ ] What proof was included?
+- [ ] What hook and emotion worked?
+- [ ] What format and proof was used?
 - [ ] How can we iterate?
 
 **Losing Creative:**
