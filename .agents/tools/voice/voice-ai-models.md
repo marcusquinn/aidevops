@@ -87,9 +87,9 @@ Also available: EdgeTTS (free, 300+ voices), macOS Say (zero deps), FacebookMMS 
 | Whisper Small | 461MB | 8.5 | Medium | 2GB |
 | Whisper Large v3 | 2.9GB | 9.8 | Slow | 10GB |
 | Whisper Large v3 Turbo | 1.5GB | 9.7 | Fast | 5GB |
-| NVIDIA Parakeet V2 | 0.6B | 9.4 | Fastest | 2GB |
-| NVIDIA Parakeet V3 | 0.6B | 9.6 | Fastest | 2GB |
-| Apple Speech | Built-in | 9.0 | Fast | On-device |
+| NVIDIA Parakeet V2 | 0.6B | 9.4 | Fastest | 2GB (English-only) |
+| NVIDIA Parakeet V3 | 0.6B | 9.6 | Fastest | 2GB (25 langs) |
+| Apple Speech | Built-in | 9.0 | Fast | On-device (macOS 26+) |
 
 Backends: `faster-whisper` (4x speed, recommended), `whisper.cpp` (C++ native, Apple Silicon optimized). See `transcription.md`.
 
