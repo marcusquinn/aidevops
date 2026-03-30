@@ -14,8 +14,6 @@ tools:
 
 # AXe - iOS Simulator Automation CLI
 
-<!-- AI-CONTEXT-START -->
-
 ## Quick Reference
 
 - **Purpose**: Automate iOS Simulators using Apple's Accessibility APIs and HID
@@ -23,12 +21,7 @@ tools:
 - **Architecture**: Single binary CLI, no server or daemon required
 - **Requirements**: macOS with Xcode and iOS Simulator
 - **GitHub**: https://github.com/cameroncooke/AXe (1.2k stars, MIT, by XcodeBuildMCP author)
-- **Version**: v1.3.0 (2026-01-28)
-
-**Why AXe over idb**: Single binary (no client/server), focused on UI automation,
-no external dependencies, complete HID coverage plus gesture presets and timing controls.
-
-<!-- AI-CONTEXT-END -->
+- **vs idb**: Single binary (no client/server), complete HID coverage, gesture presets, timing controls
 
 ## Core Commands
 
@@ -43,8 +36,7 @@ axe tap --id "Safari" --udid $UDID
 axe tap --label "Submit" --udid $UDID
 # Swipe with configurable duration and delta
 axe swipe --start-x 100 --start-y 300 --end-x 300 --end-y 100 --udid $UDID
-# Gesture presets: scroll-up/down/left/right,
-#   swipe-from-{left,right,top,bottom}-edge
+# Gesture presets: scroll-up/down/left/right, swipe-from-{left,right,top,bottom}-edge
 axe gesture scroll-down --udid $UDID
 axe gesture swipe-from-left-edge --udid $UDID
 # Text input (direct, stdin, or file)
@@ -102,14 +94,6 @@ axe describe-ui --point 100,200 --udid $UDID
 | Accessibility | `describe-ui` (full tree or point) | `ui_describe_all`, `ui_describe_point` |
 | App management | Not available | `install_app`, `launch_app` |
 | Best for | Scripts, CI, pipelines | Direct AI tool calling |
-
-## Integration with XcodeBuildMCP
-
-AXe pairs with XcodeBuildMCP for build-then-test workflows:
-
-1. **Build** with XcodeBuildMCP (compile, install to simulator)
-2. **Automate** with AXe (tap, type, swipe, verify)
-3. **Inspect** with `describe-ui` and **capture** with `screenshot`/`record-video`
 
 ## Common Patterns
 
