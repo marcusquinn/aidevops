@@ -5,23 +5,9 @@ mode: subagent
 
 ## Quick Reference
 
-- **Declarative**: `schemas/` — desired state, generate migrations automatically
-- **Migrations**: `migrations/` — versioned, timestamped `{YYYYMMDDHHMMSS}_{action}_{target}.sql` files
-- **Workflow**: Edit `schemas/` → generate migration via diff → review → apply locally → commit both
-
-**Critical Rules**: NEVER modify pushed/deployed migrations (create a NEW one). ALWAYS generate via diff, review before committing, backup before production. ONE logical change per file.
-
-## Directory Structure
-
-```text
-project/
-├── schemas/          # Declarative schema files (source of truth; prefix: 00, 01, 10, 20...)
-├── migrations/       # Generated migration files
-├── seeds/            # Initial/test data
-└── scripts/
-    ├── migrate.sh    # Run pending migrations
-    └── rollback.sh   # Rollback last migration
-```
+- **Declarative**: `schemas/` — desired state; `migrations/` — versioned `{YYYYMMDDHHMMSS}_{action}_{target}.sql`
+- **Workflow**: Edit `schemas/` → generate via diff → review → apply locally → commit both
+- **Critical**: NEVER modify pushed/deployed migrations (create a NEW one). ONE logical change per file.
 
 ## Tool Commands
 
@@ -36,7 +22,11 @@ project/
 | **Laravel** | `php artisan make:migration` | `php artisan migrate` | `php artisan migrate:rollback --step=1` |
 | **Rails** | `rails g migration` | `rails db:migrate` | `rails db:rollback STEP=1` |
 
-**Dev-only:** `drizzle-kit push`/`pull`, `prisma migrate reset`, `php artisan migrate:fresh --seed`. **Flyway naming:** `V1__create_users.sql`, `V2__add_email.sql`, `R__refresh_views.sql` (repeatable), `U2__undo_add_email.sql` (undo). **Manual migrations required for:** DML, RLS policies, view ownership/grants, materialized views, table partitions, comments, some `ALTER POLICY`.
+**Dev-only:** `drizzle-kit push`/`pull`, `prisma migrate reset`, `php artisan migrate:fresh --seed`.
+
+**Flyway naming:** `V1__create_users.sql`, `R__refresh_views.sql` (repeatable), `U2__undo_add_email.sql` (undo).
+
+**Manual migrations required for:** DML, RLS policies, view ownership/grants, materialized views, table partitions, comments, some `ALTER POLICY`.
 
 ## Naming Convention
 
@@ -54,44 +44,36 @@ Example: `20240502100843_create_users_table.sql`. Avoid: `migration_1.sql`, `fix
 
 ```sql
 -- migrations/20240502100843_create_users_table.sql
-
 -- ====== UP ======
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     email VARCHAR(255) NOT NULL UNIQUE,
-    name VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_users_email ON users(email);
-
 -- ====== DOWN ======
 DROP INDEX IF EXISTS idx_users_email;
 DROP TABLE IF EXISTS users;
 ```
 
-**Idempotent column addition (PostgreSQL)** — no `IF NOT EXISTS` for `ADD COLUMN`:
+**Idempotent column addition (PostgreSQL)** — `ADD COLUMN` has no `IF NOT EXISTS`:
 
 ```sql
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'users' AND column_name = 'phone'
-    ) THEN
-        ALTER TABLE users ADD COLUMN phone VARCHAR(20);
-    END IF;
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'phone')
+    THEN ALTER TABLE users ADD COLUMN phone VARCHAR(20); END IF;
 END $$;
 ```
 
-**Separate schema and data migrations:**
+**Separate schema and data migrations** — schema is fast/reversible; data may be irreversible:
 
 ```sql
--- V6__add_status_column.sql (Schema -- fast, reversible)
+-- V6__add_status_column.sql (schema)
 ALTER TABLE orders ADD COLUMN status VARCHAR(20) DEFAULT 'pending';
-
--- V7__backfill_order_status.sql (Data -- slow, may be irreversible)
+-- V7__backfill_order_status.sql (data)
 UPDATE orders SET status = 'completed' WHERE shipped_at IS NOT NULL;
-UPDATE orders SET status = 'pending' WHERE shipped_at IS NULL;
+UPDATE orders SET status = 'pending'   WHERE shipped_at IS NULL;
 ```
 
 ## Rollback and Safety
@@ -104,52 +86,36 @@ UPDATE orders SET status = 'pending' WHERE shipped_at IS NULL;
 | `TRUNCATE` | **Irreversible** | Never use in migrations |
 | Data `UPDATE` | **Irreversible** | Store originals in backup table |
 
-Mark irreversible DOWN sections: `-- IRREVERSIBLE: restore from backup if needed.` Recovery: `pg_dump`/`pg_restore` (PostgreSQL), `mysqldump` (MySQL).
+Mark irreversible DOWN sections: `-- IRREVERSIBLE: restore from backup if needed.`
+
+Recovery: `pg_dump`/`pg_restore` (PostgreSQL), `mysqldump` (MySQL).
 
 ## Production Safety
 
 | Operation | Safe? | Strategy |
 |-----------|-------|----------|
 | Add nullable column | Yes | Direct |
-| Add NOT NULL column | Caution | Add nullable -> backfill -> add constraint |
-| Drop column | Caution | Remove from code first -> wait -> drop |
+| Add NOT NULL column | Caution | Add nullable → backfill → add constraint |
+| Drop column | Caution | Remove from code first → wait → drop |
 | Rename column | Caution | Expand-contract pattern |
 | Add index | Caution | `CREATE INDEX CONCURRENTLY` (PostgreSQL) |
-| Change column type | Caution | New column -> migrate data -> drop old |
+| Change column type | Caution | New column → migrate data → drop old |
 
 **Expand-contract:** EXPAND — add new column, copy data, deploy code writing both/reading new. CONTRACT — drop old column, rename new.
 
 ## Git and CI/CD
 
-**Pre-push:** UP and DOWN present; DOWN reverses UP; tested locally (up -> down -> up); no modifications to pushed migrations; timestamp current (regenerate on rebase). Review: only expected changes, no unintended destructive ops, correct types/constraints.
+**Pre-push checklist:** UP and DOWN present; DOWN reverses UP; tested locally (up → down → up); no modifications to pushed migrations; timestamp current (regenerate on rebase). Review for unintended destructive ops and correct types/constraints.
 
-**Team rules:** Pull before creating. Timestamps not sequential numbers. One migration per PR. Rebase carefully — regenerate timestamps for conflicts. Commit style: `feat(db): add user_preferences table`, `fix(db): correct FK on orders`, `chore(db): backfill user status`.
+**Team rules:** Pull before creating. Timestamps not sequential numbers. One migration per PR. Rebase carefully — regenerate timestamps for conflicts.
 
-**CI/CD:** Trigger on `push` to `main` with `paths: ['migrations/**']`. Steps: backup -> migrate -> verify:
+Commit style: `feat(db): add user_preferences table`, `fix(db): correct FK on orders`, `chore(db): backfill user status`.
 
-```yaml
-on:
-  push:
-    branches: [main]
-    paths: ['migrations/**']
-jobs:
-  migrate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: pg_dump $DATABASE_URL > backup_$(date +%Y%m%d_%H%M%S).sql
-        env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
-      - run: flyway migrate   # or: npx prisma migrate deploy / rails db:migrate
-        env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
-      - run: psql $DATABASE_URL -c "SELECT 1"
-```
-
-Most tools auto-create a tracking table (e.g., `flyway_schema_history`). Prefer managed tools — they handle ordering, locking, and state tracking.
+**CI/CD:** Trigger on `push` to `main` with `paths: ['migrations/**']`. Steps: backup → migrate → verify. Most tools auto-create a tracking table (e.g., `flyway_schema_history`). Prefer managed tools — they handle ordering, locking, and state tracking.
 
 ## Framework-Agnostic Runner
 
 When running SQL directly without a migration tool, gate execution on a tracking table:
-
 
 ```bash
 #!/usr/bin/env bash
