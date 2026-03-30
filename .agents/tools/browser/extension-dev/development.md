@@ -21,12 +21,12 @@ tools:
 
 - **Framework**: WXT (recommended), Plasmo, or vanilla Manifest V3
 - **Docs**: Use Context7 MCP for latest WXT, Plasmo, and WebExtension API docs
-- **Reference**: TurboStarter extension structure at `~/Git/turbostarter/core/apps/extension/`
+- **Reference**: TurboStarter extension at `~/Git/turbostarter/core/apps/extension/`
 
 ```bash
 npx wxt@latest init my-extension && cd my-extension
-npm run dev        # Dev mode with HMR
-npm run build      # Production build
+npm run dev    # Dev mode with HMR
+npm run build  # Production build
 ```
 
 <!-- AI-CONTEXT-END -->
@@ -35,51 +35,47 @@ npm run build      # Production build
 
 ```text
 my-extension/
-├── wxt.config.ts                    # WXT configuration
+├── wxt.config.ts
 ├── src/
-│   ├── entrypoints/                 # background.ts, content.ts, popup/, options/, sidepanel/, newtab/
-│   ├── components/ hooks/           # Shared UI + React hooks
-│   ├── lib/                         # storage.ts, messaging.ts, api.ts
-│   └── assets/                      # Icons (128x128 min), images
-└── .output/                         # chrome-mv3/, firefox-mv2/
+│   ├── entrypoints/   # background.ts, content.ts, popup/, options/, sidepanel/, newtab/
+│   ├── components/    # Shared UI + React hooks
+│   ├── lib/           # storage.ts, messaging.ts, api.ts
+│   └── assets/        # Icons (128x128 min), images
+└── .output/           # chrome-mv3/, firefox-mv2/
 ```
 
 ## Entry Points
 
-| Entry Point | Purpose | Manifest Key |
-|-------------|---------|-------------|
-| **Background** (Service Worker) | Event handling, API calls, state | `background.service_worker` |
-| **Content Script** | Modify web pages, inject UI | `content_scripts` |
-| **Popup** | Quick actions (click icon) | `action.default_popup` |
-| **Options** | Settings page | `options_ui` |
-| **Side Panel** | Persistent sidebar (Chrome 114+) | `side_panel` |
-| **New Tab** | Override new tab | `chrome_url_overrides.newtab` |
-| **DevTools** | Developer tools panel | `devtools_page` |
+- **Background** (Service Worker) — event handling, API calls, state
+- **Content Script** — modify web pages, inject UI
+- **Popup** — quick actions (click icon)
+- **Options** — settings page
+- **Side Panel** — persistent sidebar (Chrome 114+)
+- **New Tab** — override new tab
+- **DevTools** — developer tools panel
 
 ## Message Passing
 
 ```typescript
-// Content script -> Background
+// Content → Background
 chrome.runtime.sendMessage({ type: 'getData', url: window.location.href });
 
-// Background -> Content script
+// Background → Content
 chrome.tabs.sendMessage(tabId, { type: 'updateUI', data: result });
 
-// Background handler — return true to keep channel open for async
+// Background handler — return true to keep channel open for async responses
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'getData') {
-    fetchData(message.url).then(sendResponse);
-    return true;
-  }
+  if (message.type === 'getData') { fetchData(message.url).then(sendResponse); return true; }
 });
 ```
 
 ## Storage
 
 ```typescript
-await chrome.storage.sync.set({ preferences: { theme: 'dark' } });   // Syncs across devices, 100KB limit
-await chrome.storage.local.set({ cache: largeData });                 // Device-only, 5MB limit
-await chrome.storage.session.set({ tempToken: 'abc' });               // Cleared on restart, MV3 only
+// sync: across devices, 100KB limit | local: device-only, 5MB | session: cleared on restart (MV3)
+await chrome.storage.sync.set({ preferences: { theme: 'dark' } });
+await chrome.storage.local.set({ cache: largeData });
+await chrome.storage.session.set({ tempToken: 'abc' });
 const { preferences } = await chrome.storage.sync.get('preferences');
 ```
 
@@ -88,11 +84,7 @@ const { preferences } = await chrome.storage.sync.get('preferences');
 Request only what you need. Prefer optional permissions (requested at runtime):
 
 ```json
-{
-  "permissions": ["storage", "activeTab"],
-  "optional_permissions": ["tabs", "bookmarks", "history"],
-  "host_permissions": ["https://api.example.com/*"]
-}
+{ "permissions": ["storage", "activeTab"], "optional_permissions": ["tabs", "bookmarks", "history"], "host_permissions": ["https://api.example.com/*"] }
 ```
 
 ```typescript
@@ -117,21 +109,18 @@ WXT handles most differences automatically. For manual compat: `import browser f
 - **UI**: React (recommended), Vue (WXT first-class), Svelte (smallest bundle), or vanilla
 - **Styling**: Tailwind CSS (recommended), CSS Modules, or Shadow DOM for content scripts
 
-Content script UI isolation — Shadow DOM prevents host page style conflicts:
+Content script UI isolation (Shadow DOM prevents host page style conflicts):
 
 ```typescript
 const host = document.createElement('div');
 const shadow = host.attachShadow({ mode: 'closed' });
-shadow.innerHTML = `
-  <style>/* Isolated styles */</style>
-  <div id="app"><!-- Your UI --></div>
-`;
+shadow.innerHTML = `<style>/* scoped styles */</style><div id="app"></div>`;
 document.body.appendChild(host);
 ```
 
 ## Performance & Security
 
-- Service worker is unloaded when idle (MV3) — keep lightweight
+- Service worker unloads when idle (MV3) — keep lightweight
 - `chrome.alarms` over `setInterval`; `chrome.storage` listeners over polling
 - Lazy-load heavy deps; minimise content script `matches` scope
 - Never store secrets in extension code — use backend API
