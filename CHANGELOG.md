@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.463] - 2026-03-30
+
+### Changed
+
+- Documentation: tighten mac.md — merge sections, remove structural noise (93→50 lines) (#14375)
+- Documentation: tighten score-responses.md command doc (#14364)
+- Documentation: tighten infraforge outreach agent guidance (#14353)
+- Documentation: tighten Agent SDK gotchas guidance (#14352)
+- Documentation: tighten sandbox.md — merge architecture into header, fix broken links (GH#14293) (#14299)
+- Documentation: tighten workerd-patterns.md — add context line, fix broken link (#13991)
+- Documentation: tighten meta-ads-creative-frameworks.md headings and structure (GH#13965) (#13997)
+- Documentation: tighten CQRS & Domain Events agent doc (191→183 lines) (#14000)
+- Documentation: tighten campaign launch checklist (175→144 lines) (#14004)
+
+### Fixed
+
+- clear expired cooldowns during pool reads (#14341)
+- preserve multiline health dashboard sections (#11001) (#14328)
+- reduce secret scan and npm audit noise (#14255)
+- add null-safety for missing .mcp key in migrations.sh (GH#14220) (#14237)
+
 ## [3.5.462] - 2026-03-30
 
 ### Fixed
