@@ -4,15 +4,11 @@ agent: Build+
 mode: subagent
 ---
 
-Create or update a comprehensive README.md file for the current project.
+Create or update README.md for the current project.
 
-**Arguments**: Optional flags like `--sections "installation,usage"` for partial updates. Without arguments, generates/updates the full README.
+**Arguments**: Optional `--sections "installation,usage"` for partial updates. Without arguments, generates/updates the full README.
 
-## Workflow
-
-### Step 1: Parse Arguments
-
-Check for `--sections` flag:
+## Usage
 
 ```bash
 # Full README (default)
@@ -23,58 +19,17 @@ Check for `--sections` flag:
 /readme --sections "troubleshooting"
 ```
 
-**When to use `--sections`**:
-- After adding a feature → `--sections "usage"`
-- After changing install process → `--sections "installation"`
-- After discovering common issue → `--sections "troubleshooting"`
-- When full regeneration would lose custom content
+**Use `--sections` when**: Adding a feature, changing install process, discovering common issue, or updating would lose custom content.
 
-**When to use full `/readme`**:
-- New project without README
-- README is significantly outdated
-- Major restructuring needed
-- User explicitly requests full regeneration
+**Use full `/readme` when**: New project, significantly outdated, major restructuring, or explicit user request.
 
-### Step 2: Load Workflow
+## Workflow
 
-Read the full workflow guidance:
-
-```text
-Read: workflows/readme-create-update.md
-```
-
-### Step 3: Explore Codebase
-
-Before writing anything:
-
-1. **Detect project type** (package.json, Cargo.toml, go.mod, etc.)
-2. **Detect deployment platform** (Dockerfile, fly.toml, vercel.json, etc.)
-3. **Read existing README** (if updating)
-4. **Gather key info** (scripts, entry points, config files)
-
-### Step 4: Generate/Update README
-
-**For new README**: Follow recommended section order from workflow.
-
-**For updates with `--sections`**:
-1. Read entire existing README
-2. Preserve structure and custom content
-3. Update only specified sections
-4. Maintain consistent style
-
-### Step 5: Confirm
-
-Present the changes and ask for confirmation before writing:
-
-```text
-README changes:
-- [Section]: [Brief description of change]
-- [Section]: [Brief description of change]
-
-1. Apply changes
-2. Show full diff first
-3. Modify before applying
-```
+1. **Parse arguments** — check for `--sections` flag
+2. **Load guidance** — read `workflows/readme-create-update.md`
+3. **Explore codebase** — detect project type, deployment platform, existing README, key info
+4. **Generate/update** — follow workflow section order; preserve structure for partial updates
+5. **Confirm changes** — present diff and ask before writing
 
 ## Section Mapping
 
@@ -94,39 +49,17 @@ Multiple sections: `--sections "installation,usage,config"`
 ## Examples
 
 ```bash
-# New project - create full README
-/readme
-
-# Added new CLI commands
-/readme --sections "usage"
-
-# Changed environment variables
-/readme --sections "config"
-
-# Added Docker support
-/readme --sections "installation,deployment"
-
-# Fixed common user issue
-/readme --sections "troubleshooting"
-
-# Major update needed
-/readme --sections "all"
+/readme                                          # Full README
+/readme --sections "usage"                       # Added CLI commands
+/readme --sections "config"                      # Changed env vars
+/readme --sections "installation,deployment"    # Added Docker support
+/readme --sections "troubleshooting"             # Fixed common issue
+/readme --sections "all"                         # Major update
 ```
 
 ## Dynamic Counts (aidevops repo)
 
-When working in the aidevops repository, use the helper script to manage counts:
-
-```bash
-# Check if README counts are stale
-~/.aidevops/agents/scripts/readme-helper.sh check
-
-# Preview count updates
-~/.aidevops/agents/scripts/readme-helper.sh update
-
-# Apply count updates
-~/.aidevops/agents/scripts/readme-helper.sh update --apply
-```
+Use `~/.aidevops/agents/scripts/readme-helper.sh check|update|update --apply` to manage stale counts.
 
 ## Related
 
