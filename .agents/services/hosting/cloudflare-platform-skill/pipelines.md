@@ -20,13 +20,13 @@ Request increases: [Limit Increase Form](https://forms.gle/ukpeZVLWLnKeixDu7)
 
 | Token type | Permission | Used for |
 |-----------|-----------|---------|
-| R2 Data Catalog | R2 Admin Read & Write | Sink creation, R2 SQL queries |
+| R2 Data Catalog | R2 Admin Read & Write | Sink creation, R2 SQL queries — create via R2 > Manage API tokens |
 | R2 Storage | Object Read & Write | R2 storage sink |
 | HTTP Ingest | Workers Pipeline Send | Authenticated HTTP ingestion |
 
-Create catalog token: R2 > Manage API tokens > Create Account API Token > Admin Read & Write.
-
 ## Setup
+
+All subcommands support `[list|get <ID>|delete <ID>]`. Deleting a stream also deletes dependent pipelines and buffered events.
 
 ```bash
 npx wrangler pipelines setup                          # Interactive (recommended)
@@ -37,7 +37,7 @@ npx wrangler pipelines streams create my-stream --schema-file schema.json
 npx wrangler pipelines sinks create my-sink --type r2-data-catalog \
   --bucket my-bucket --namespace default --table my_table --catalog-token YOUR_TOKEN
 npx wrangler pipelines create my-pipeline \
-  --sql "INSERT INTO my_sink SELECT * FROM my_stream"
+  --sql "INSERT INTO my_sink SELECT * FROM my_stream"  # or: --sql-file transform.sql
 ```
 
 **Schema (structured streams):** Define fields in JSON with `name`, `type`, `required`, and optional `items` (for `list`) or `fields` (for `struct`).
@@ -59,7 +59,14 @@ npx wrangler pipelines create my-pipeline \
 
 ## Writing Data
 
-**Worker Binding (recommended):** `wrangler.toml`: `[[pipelines]]` with `pipeline = "<STREAM_ID>"`, `binding = "STREAM"`. Or `wrangler.jsonc`: `{ "pipelines": [{ "pipeline": "<STREAM_ID>", "binding": "STREAM" }] }`.
+**Worker Binding (recommended):**
+
+```toml
+# wrangler.toml
+[[pipelines]]
+pipeline = "<STREAM_ID>"
+binding = "STREAM"
+```
 
 ```typescript
 export default {
@@ -116,17 +123,6 @@ npx wrangler pipelines sinks create my-sink \
 ```
 
 Output path: `bucket/analytics/events/year=2025/month=01/day=11/uuid.parquet`
-
-## Wrangler Commands
-
-All subcommands support `[list|get <ID>|delete <ID>]`. Deleting a stream also deletes dependent pipelines and buffered events.
-
-```bash
-npx wrangler pipelines setup [list|get <ID>|delete <ID>]
-npx wrangler pipelines create my-pipeline --sql "..."          # or: --sql-file transform.sql
-npx wrangler pipelines streams create my-stream --schema-file schema.json
-npx wrangler pipelines sinks create my-sink --type r2-data-catalog --bucket B --namespace N --table T --catalog-token TOKEN
-```
 
 ## Best Practices
 
