@@ -44,16 +44,12 @@ Messages.app decrypts to local SQLite (`~/Library/Messages/chat.db`) → BlueBub
 
 ```bash
 BB="http://localhost:1234/api/v1"; AUTH='-H "Authorization: Bearer YOUR_PASSWORD"'
-# Send text (use iMessage;+;chat123 for groups)
 curl -X POST "$BB/message/text" -H "Content-Type: application/json" $AUTH \
   -d '{"chatGuid":"iMessage;-;+1234567890","message":"Hello!","method":"apple-script"}'
-# Send attachment
 curl -X POST "$BB/message/attachment" $AUTH \
   -F "chatGuid=iMessage;-;+1234567890" -F "attachment=@/path/to/file.png"
-# Tapback
 curl -X POST "$BB/message/react" -H "Content-Type: application/json" $AUTH \
   -d '{"chatGuid":"iMessage;-;+1234567890","selectedMessageGuid":"p:0/MSG-GUID","reaction":"love"}'
-# Register webhook
 curl -X POST "$BB/server/webhook" -H "Content-Type: application/json" \
   -d '{"url":"http://localhost:8080/webhook","password":"YOUR_PASSWORD"}'
 ```
@@ -74,10 +70,10 @@ macOS 12+, Messages.app signed in, Accessibility permission. Notifications/alert
 
 ```bash
 brew install steipete/tap/imsg
-imsg send "+14155551234" "Hello!"          # by phone
-imsg send "user@example.com" "Hello!"     # by email
-imsg send --group "Family" "Hello!"       # group
-imsg check "+14155551234"                 # verify iMessage capable
+imsg send "+14155551234" "Hello!"
+imsg send "user@example.com" "Hello!"
+imsg send --group "Family" "Hello!"
+imsg check "+14155551234"
 ```
 
 ## macOS Host
@@ -89,13 +85,10 @@ imsg check "+14155551234"                 # verify iMessage capable
 **Keepalive** (`sh.aidevops.imessage-keepalive`): restart Messages.app and BlueBubbles if not running.
 
 ```bash
-#!/bin/bash
 check_and_restart() {
-  local app_name="$1"
-  pgrep -x "$app_name" > /dev/null && return 0
-  open -a "$app_name"; sleep 5
-  pgrep -x "$app_name" > /dev/null || { echo "ERROR: Failed to restart $app_name"; return 1; }
-  return 0
+  pgrep -x "$1" > /dev/null && return 0
+  open -a "$1"; sleep 5
+  pgrep -x "$1" > /dev/null || { echo "ERROR: Failed to restart $1"; return 1; }
 }
 check_and_restart "Messages"; check_and_restart "BlueBubbles"
 ```
@@ -142,6 +135,7 @@ check_and_restart "Messages"; check_and_restart "BlueBubbles"
 | SMS instead of iMessage | `imsg check <number>` |
 | Apple ID locked | Wait 24h or contact Apple |
 | macOS update broke BlueBubbles | Check GitHub releases for compatible version |
+
 
 ## Related
 
