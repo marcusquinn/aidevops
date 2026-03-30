@@ -35,7 +35,11 @@ wrangler kv namespace create MY_KV --preview
 wrangler deploy
 ```
 
-Add to `wrangler.jsonc`: `{ "binding": "MY_KV", "id": "abc123" }`
+Add to `wrangler.jsonc`:
+
+```jsonc
+{ "binding": "MY_KV", "id": "abc123", "preview_id": "def456" }
+```
 
 ## Adding D1
 
