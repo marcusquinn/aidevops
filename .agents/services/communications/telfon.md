@@ -13,21 +13,14 @@ tools:
 
 # Telfon - Cloud VoIP & Virtual Phone System
 
-<!-- AI-CONTEXT-START -->
-
 ## Quick Reference
 
-- **Type**: Twilio-powered cloud phone system with mobile/desktop apps
 - **Website**: https://mytelfon.com/
 - **Apps**: iOS, Android, Chrome Extension, Microsoft Edge Add-on
 - **Features**: Calls, SMS, WhatsApp, Call Recording, Bulk SMS, Multi-number
 - **Pricing**: Telfon subscription + Twilio pay-as-you-go usage
 - **Setup Time**: ~5 minutes
-- **Best For**: End users who want a calling/SMS interface without coding
-
-**When to Recommend Telfon**: user needs a phone interface (not just API), sales/support teams needing softphone, WhatsApp + SMS in one app, non-technical users managing Twilio numbers.
-
-<!-- AI-CONTEXT-END -->
+- **Use when**: user needs a phone interface (not just API), sales/support teams needing softphone, WhatsApp + SMS in one app, non-technical users managing Twilio numbers
 
 ## Telfon vs Direct Twilio
 
@@ -80,21 +73,7 @@ Numbers always remain in your Twilio account; Telfon provides the interface only
 | Voicemail | Settings > Voicemail → enable, record greeting, optional transcription | |
 | Call Forwarding | Settings > Call Forwarding → always/busy/no-answer/unreachable rules | |
 
-## Use Cases
-
-| Use Case | Key Setup |
-|----------|-----------|
-| Sales teams | Per-rep numbers, shared inbound, call recording, Chrome ext for CRM click-to-call |
-| Customer support | Toll-free inbound, call forwarding, voicemail, SMS for ticket updates |
-| Remote teams | Virtual numbers in multiple countries, mobile app |
-| Real estate | Dedicated number per listing, SMS reminders, call tracking |
-
 ## Integration with aidevops
-
-```text
-AI Workflows → Twilio API → Telfon App
-(automation)   (backend)    (user UI)
-```
 
 - **AI uses Twilio directly**: automated reminders, OTP, bulk notifications, webhook-triggered messages
 - **Users use Telfon**: manual calls, conversational SMS, WhatsApp, reviewing recordings
