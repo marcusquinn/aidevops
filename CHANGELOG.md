@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.366] - 2026-03-30
+
+### Changed
+
+- Maintenance: release v3.5.365
+- Maintenance: update simplification state registry
+- Maintenance: release v3.5.364
+- Documentation: tighten fly-io.md agent doc (GH#13556, 151→140 lines) (#13563)
+- Documentation: tighten services.md prose — compress verbose phrasing, preserve all content (#13529)
+- Documentation: tighten sql-migrations.md (205 → 197 lines, add no-tx convention) (#13485)
+- Documentation: tighten production-audio.md (151→139 lines, remove redundant pipeline block/checklist) (#13490)
+- Maintenance: tighten humanise.md - compress YAML description and remove redundant inline example (#13522)
+- Documentation: tighten management.md Quality Management Specification (GH#13060) (#13528)
+- Maintenance: GH#12987 tighten bing-webmaster-tools.md (163→108 lines) (#13537)
+- Maintenance: release v3.5.363
+- Maintenance: update simplification state registry
+- Documentation: tighten aidevops-opencode plugin architecture doc (165→109 lines) (#13553)
+- Maintenance: update simplification state registry
+- Maintenance: bump version to 3.5.361
+- Maintenance: release v3.5.360
+- Maintenance: GH#12978 tighten dns-providers.md agent doc (164→141 lines) (#13548)
+- Maintenance: GH#12981 tighten wiki-update workflow doc (#13541)
+- Documentation: tighten smime-setup.md agent doc (GH#12979) (#13546)
+- Documentation: GH#12989: tighten Advantage+ Campaigns agent doc (#13535)
+- Maintenance: release v3.5.356
+- Maintenance: release v3.5.355
+- Maintenance: release v3.5.354
+- Documentation: tighten email-health-check.md (149→133 lines) (#13487)
+- Documentation: tighten browser-automation.md — merge intro lines, remove misplaced setup ref (140→136 lines) (#13488)
+- Documentation: tighten email-testing.md (149→128 lines) — merge CSS/engine tables, drop redundant tool comparison (#13491)
+- Documentation: tighten pages-patterns.md (149→132 lines, flatten Best Practices subsections) (#13492)
+- Maintenance: release v3.5.353
+- Documentation: tighten autogen.md (148→140 lines) (#13493)
+- Maintenance: release v3.5.352
+- Documentation: tighten production-audio.md (151→139 lines, remove redundant pipeline block/checklist) (#13478)
+- Documentation: tighten security-analysis.md — merge MCP section into Integrations (151→142 lines) (#13467)
+- Documentation: tighten imessage.md (155→148 lines) (#13468)
+- Documentation: tighten migration.md (197→165 lines, remove redundant phase table/mapping dupes) (#13466)
+- Maintenance: update simplification state registry
+- Maintenance: tighten cro-chapters.md index (GH#13398) (#13457)
+
 ## [3.5.362] - 2026-03-30
 
 ### Changed
