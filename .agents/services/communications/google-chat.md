@@ -24,7 +24,7 @@ tools: { read: true, bash: true }
 
 ## Setup
 
-### Step 1: Google Cloud Project
+### Step 1: GCP Project
 
 ```bash
 gcloud projects create aidevops-chat-bot --name="aidevops Chat Bot"
@@ -37,7 +37,7 @@ gcloud iam service-accounts keys create \
 chmod 600 ~/.config/aidevops/google-chat-sa-key.json
 ```
 
-### Step 2: Configure Chat App
+### Step 2: Chat App Config
 
 Cloud Console > APIs & Services > Google Chat API > Configuration: set HTTP endpoint URL, enable "Receive 1:1 messages" + "Join spaces and group conversations", set auth audience to endpoint URL.
 
@@ -68,9 +68,7 @@ Cloud Console > APIs & Services > Google Chat API > Configuration: set HTTP endp
 
 ## Authentication
 
-### Inbound (Google → Bot)
-
-> **CRITICAL**: Verify Google's bearer token on every request — without this, anyone can send forged events.
+**Inbound (Google → Bot)** — verify Google's bearer token on every request; without this, anyone can forge events:
 
 ```typescript
 import { createRemoteJWKSet, jwtVerify } from "jose";
@@ -82,7 +80,7 @@ async function verifyGoogleChatToken(token: string, audience: string): Promise<b
 }
 ```
 
-### Outbound (Bot → Google)
+**Outbound (Bot → Google)** — service account JWT with `chat.bot` scope:
 
 ```typescript
 import { GoogleAuth } from "google-auth-library";
