@@ -64,7 +64,7 @@ subagents: [setup, troubleshooting, api-key-setup, list-keys, mcp-integrations, 
 | Domains | 101domains | `configs/101domains-config.json` | — |
 | Secrets | Vaultwarden | `configs/vaultwarden-config.json` | — |
 
-CodeRabbit key: `mkdir -p ~/.config/coderabbit && chmod 700 ~/.config/coderabbit`, write key to `api_key`, `chmod 600 ~/.config/coderabbit/api_key`.
+CodeRabbit key: `mkdir -p ~/.config/coderabbit && chmod 700 ~/.config/coderabbit`, write key to `~/.config/coderabbit/api_key`, `chmod 600 ~/.config/coderabbit/api_key`.
 
 SEO: `/keyword-research`, `/autocomplete-research`, `/keyword-research-extended`, `/webmaster-keywords`
 
@@ -85,7 +85,7 @@ hcloud server list
 curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/user/tokens/verify" | jq .success
 curl -s -u "$DATAFORSEO_USERNAME:$DATAFORSEO_PASSWORD" "https://api.dataforseo.com/v3/appendix/user_data" | jq .status_message
 auggie token print && openclaw doctor && tailscale status && orb status
-list-keys-helper.sh
+~/.aidevops/agents/scripts/list-keys-helper.sh
 ```
 
 ## Troubleshooting
@@ -94,7 +94,7 @@ list-keys-helper.sh
 # Key not loading
 grep "credentials.sh" ~/.zshrc ~/.bashrc && source ~/.config/aidevops/credentials.sh
 # MCP not connecting
-opencode mcp list && mcp-diagnose.sh <name>
+opencode mcp list && ~/.aidevops/agents/scripts/mcp-diagnose.sh <name>
 # Permission denied
 chmod 600 ~/.config/aidevops/credentials.sh && chmod 700 ~/.config/aidevops
 ```
@@ -113,7 +113,7 @@ chmod 600 ~/.config/aidevops/credentials.sh && chmod 700 ~/.config/aidevops
 jq --argjson dirs '["~/Git", "~/Projects"]' '. + {git_parent_dirs: $dirs}' \
   ~/.config/aidevops/repos.json > /tmp/repos.json && mv /tmp/repos.json ~/.config/aidevops/repos.json
 aidevops repo-sync enable
-onboarding-helper.sh save-orchestration true  # Enable autonomous orchestration
+~/.aidevops/agents/scripts/onboarding-helper.sh save-orchestration true  # Enable autonomous orchestration
 # Runners: see scripts/commands/runners.md (launchd/cron)
 ```
 
