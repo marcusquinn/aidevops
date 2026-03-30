@@ -28,26 +28,21 @@ tools:
 
 ## Device Presets
 
-100+ built-in descriptors (`viewport`, `userAgent`, `deviceScaleFactor`, `isMobile`, `hasTouch`). Landscape: `devices['iPhone 13 landscape']`.
+100+ built-in descriptors (`viewport`, `userAgent`, `deviceScaleFactor`, `isMobile`, `hasTouch`). Landscape variant: append `landscape` (e.g., `devices['iPhone 13 landscape']`).
 
-```bash
-node -e "const { devices } = require('playwright'); console.log(Object.keys(devices).join('\n'))"
-```
+List all: `node -e "const { devices } = require('playwright'); console.log(Object.keys(devices).join('\n'))"`
 
-| Device | Viewport | Scale | Mobile |
-|--------|----------|-------|--------|
-| Desktop Chrome/Firefox/Safari/Edge | 1280x720 | 1 | No |
-| iPhone 13/14/15 | 390x844 | 3 | Yes |
-| iPhone 13/14/15 Pro Max | 428-430x926-932 | 3 | Yes |
-| iPad gen7 / Mini / Pro 11 | 810x1080 / 768x1024 / 834x1194 | 2 | Yes |
-| Pixel 5 / Pixel 7 | 393x851 / 412x915 | 2.75 / 2.625 | Yes |
-| Galaxy S8 / S9+ / Tab S4 | 360x740 / 320x658 / 712x1138 | 3 / 4.5 / 2.25 | Yes |
+| Category | Examples | Viewport | Scale | Mobile |
+|----------|----------|----------|-------|--------|
+| Desktop | Chrome, Firefox, Safari, Edge | 1280×720 | 1 | No |
+| iPhone | 13/14/15, Pro Max | 390×844, 428–430×926–932 | 3 | Yes |
+| iPad | gen7, Mini, Pro 11 | 810×1080, 768×1024, 834×1194 | 2 | Yes |
+| Android | Pixel 5/7, Galaxy S8/S9+/Tab S4 | 360–412×740–915 | 2.25–4.5 | Yes |
 
 ## Configuration
 
-Test runner (`playwright.config.ts`):
-
 ```typescript
+// playwright.config.ts — test runner
 import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   projects: [
@@ -57,11 +52,8 @@ export default defineConfig({
     { name: 'Tablet',         use: { ...devices['iPad Pro 11'] } },
   ],
 });
-```
 
-Library API:
-
-```javascript
+// Library API
 const { chromium, devices } = require('playwright');
 const ctx = await (await chromium.launch()).newContext({ ...devices['iPhone 13'] });
 await (await ctx.newPage()).goto('https://example.com');
@@ -70,10 +62,10 @@ await (await ctx.newPage()).goto('https://example.com');
 ## Emulation Options
 
 ```typescript
-// Viewport
+// Viewport / HiDPI
 test.use({ viewport: { width: 1600, height: 1200 } });
 await page.setViewportSize({ width: 375, height: 667 });
-await browser.newContext({ viewport: { width: 2560, height: 1440 }, deviceScaleFactor: 2 }); // HiDPI
+await browser.newContext({ viewport: { width: 2560, height: 1440 }, deviceScaleFactor: 2 });
 
 // Geolocation
 use: { geolocation: { longitude: -122.4194, latitude: 37.7749 }, permissions: ['geolocation'] }
@@ -83,27 +75,31 @@ await context.setGeolocation({ longitude: 48.8584, latitude: 2.2945 });
 use: { locale: 'en-GB', timezoneId: 'Europe/London' }
 
 // Color scheme / media
-await page.emulateMedia({ colorScheme: 'dark' | 'light', reducedMotion: 'reduce', forcedColors: 'active', media: 'print' });
+await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce', forcedColors: 'active', media: 'print' });
 
 // Permissions
-use: { permissions: ['notifications'] }
 await context.grantPermissions(['geolocation'], { origin: 'https://example.com' });
 await context.clearPermissions();
 
 // Offline / JS / User Agent
 await context.setOffline(true);
 test.use({ javaScriptEnabled: false, userAgent: 'Custom Bot/1.0' });
+
+// Touch
+const ctx = await browser.newContext({ ...devices['iPhone 13'], hasTouch: true });
+await page.tap('.button');
+await page.touchscreen.tap(200, 300);
 ```
 
-**Permission values**: `geolocation`, `midi`, `midi-sysex`, `notifications`, `camera`, `microphone`, `background-sync`, `ambient-light-sensor`, `accelerometer`, `gyroscope`, `magnetometer`, `accessibility-events`, `clipboard-read`, `clipboard-write`, `payment-handler`
+**Permissions**: `geolocation`, `midi`, `midi-sysex`, `notifications`, `camera`, `microphone`, `background-sync`, `ambient-light-sensor`, `accelerometer`, `gyroscope`, `magnetometer`, `accessibility-events`, `clipboard-read`, `clipboard-write`, `payment-handler`
 
-**Common locale/timezone pairs**: US `en-US` / `America/Los_Angeles` | `America/New_York`, UK `en-GB` / `Europe/London`, DE `de-DE` / `Europe/Berlin`, FR `fr-FR` / `Europe/Paris`, JP `ja-JP` / `Asia/Tokyo`, CN `zh-CN` / `Asia/Shanghai`, IN `hi-IN` / `Asia/Kolkata`, BR `pt-BR` / `America/Sao_Paulo`, AU `en-AU` / `Australia/Sydney`
+**Locale/timezone pairs**: `en-US`/`America/Los_Angeles`, `en-US`/`America/New_York`, `en-GB`/`Europe/London`, `de-DE`/`Europe/Berlin`, `fr-FR`/`Europe/Paris`, `ja-JP`/`Asia/Tokyo`, `zh-CN`/`Asia/Shanghai`, `hi-IN`/`Asia/Kolkata`, `pt-BR`/`America/Sao_Paulo`, `en-AU`/`Australia/Sydney`
 
 ## Recipes
 
 ### Responsive Breakpoint Testing
 
-Breakpoints: `mobile-sm` 320x568, `mobile-md` 375x667, `tablet` 768x1024, `laptop` 1024x768, `desktop` 1280x800, `desktop-lg` 1920x1080.
+Breakpoints: `mobile-sm` 320×568, `mobile-md` 375×667, `tablet` 768×1024, `laptop` 1024×768, `desktop` 1280×800, `desktop-lg` 1920×1080.
 
 ```typescript
 for (const bp of breakpoints) {
@@ -117,37 +113,19 @@ for (const bp of breakpoints) {
 }
 ```
 
-### Multi-Device Parallel Testing
+### Network Throttling (Chromium/CDP only)
 
 ```typescript
-// testDevices: [{ name, device }] where device = devices['iPhone 13'] | devices['Pixel 7'] | { viewport: {...} }
-for (const { name, device } of testDevices) {
-  test.describe(name, () => {
-    test.use({ ...device });
-    test('homepage loads', async ({ page }) => {
-      await page.goto('https://example.com');
-      await page.waitForLoadState('networkidle');
-    });
-  });
-}
-```
-
-### Touch, Network, Dark Mode
-
-```typescript
-// Touch gestures
-const ctx = await browser.newContext({ ...devices['iPhone 13'], hasTouch: true });
-await (await ctx.newPage()).tap('.button');
-await page.touchscreen.tap(200, 300);
-
-// Network throttling (Chromium/CDP only — Slow 3G)
 const cdp = await page.context().newCDPSession(page);
 await cdp.send('Network.emulateNetworkConditions', {
   offline: false, downloadThroughput: (500 * 1024) / 8,
-  uploadThroughput: (500 * 1024) / 8, latency: 400,
+  uploadThroughput: (500 * 1024) / 8, latency: 400, // Slow 3G
 });
+```
 
-// Dark mode visual regression
+### Dark Mode Visual Regression
+
+```typescript
 for (const scheme of ['light', 'dark'] as const) {
   test(`visual regression (${scheme})`, async ({ browser }) => {
     const ctx = await browser.newContext({ colorScheme: scheme, viewport: { width: 1280, height: 720 } });
