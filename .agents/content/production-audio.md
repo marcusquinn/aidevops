@@ -112,7 +112,7 @@ ffmpeg -i input.mp4 -af loudnorm=print_format=json -f null -
 
 | Service | CLI | Notes |
 |---------|-----|-------|
-| `voice-helper.sh` | `talk [stt tts]`, `devices`, `voices`, `benchmark` | Mic→VAD→Whisper MLX→LLM→Edge TTS; ~6-8s round-trip |
+| `voice-helper.sh` | `talk [stt] [tts] [voice] [model]`, `devices`, `voices`, `benchmark` | Mic→VAD→Whisper MLX→LLM→Edge TTS; defaults: `whisper-mlx` + `edge-tts`; ~6-8s round-trip |
 | ElevenLabs | `voice-pipeline-helper.sh [transform\|tts\|voices\|clone]` | Voice cloning (3-5 min sample), 29 languages, emotional control |
 | Local ffmpeg | `voice-pipeline-helper.sh cleanup <audio> [output] [target-lufs]` | Noise reduction, high-pass, de-essing, loudness normalization |
 | Edge TTS (free) | Used by `voice-helper.sh` | 400+ voices, 100+ languages, no API key |
