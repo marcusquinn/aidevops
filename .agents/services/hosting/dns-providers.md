@@ -18,106 +18,61 @@ tools:
 ## Quick Reference
 
 - **Providers**: Cloudflare, Namecheap, Route 53
-- **Unified command**: `dns-helper.sh [records|add|update|delete] [provider] [account] [domain] [args]`
-- **Configs**: `cloudflare-dns-config.json`, `namecheap-dns-config.json`, `route53-dns-config.json`
-- **Cloudflare**: API token auth, proxy support, analytics
-- **Namecheap**: API user + key + whitelisted IP
-- **Route 53**: AWS IAM credentials, health checks, geo/weighted routing
+- **Unified command**: `dns-helper.sh [command] [provider] [account] [domain] [args]`
+- **Configs**: `configs/{cloudflare,namecheap,route53}-dns-config.json` (copy from `.json.txt` templates)
 - **Record types**: A, AAAA, CNAME, MX, TXT, CAA, NS
-- **Operations**: `propagation-check`, `export`, `import`, `backup`, `compare`
-- **Security**: API tokens minimal-permission, rotate 6-12 months; MFA on all accounts; DNSSEC; CAA records; audit logging
+- **Security**: API tokens minimal-permission, rotate 6-12 months; MFA; DNSSEC; CAA records
 
 <!-- AI-CONTEXT-END -->
 
-## Config schemas
+## Config
 
-**Cloudflare** (`configs/cloudflare-dns-config.json`):
+Each provider has a `.json.txt` template in `configs/`. Copy and customize:
 
-```json
-{
-  "accounts": {
-    "personal": {
-      "api_token": "YOUR_CLOUDFLARE_API_TOKEN_HERE",
-      "email": "your-email@domain.com"
-    }
-  }
-}
+```bash
+cp configs/cloudflare-dns-config.json.txt configs/cloudflare-dns-config.json
+# Edit with your credentials — see template for required fields:
+#   Cloudflare: api_token, email
+#   Namecheap:  api_user, api_key, client_ip
+#   Route 53:   aws_access_key_id, aws_secret_access_key, region
 ```
 
-**Namecheap** (`configs/namecheap-dns-config.json`):
+## Commands
 
-```json
-{
-  "accounts": {
-    "personal": {
-      "api_user": "your-namecheap-username",
-      "api_key": "YOUR_NAMECHEAP_API_KEY_HERE",
-      "client_ip": "YOUR_WHITELISTED_IP_HERE"
-    }
-  }
-}
-```
-
-**Route 53** (`configs/route53-dns-config.json`):
-
-```json
-{
-  "accounts": {
-    "production": {
-      "aws_access_key_id": "YOUR_AWS_ACCESS_KEY_ID_HERE",
-      "aws_secret_access_key": "YOUR_AWS_SECRET_ACCESS_KEY_HERE",
-      "region": "us-east-1"
-    }
-  }
-}
-```
+| Category | Commands |
+|----------|----------|
+| CRUD | `records`, `add`, `update`, `delete` |
+| Cloudflare | `proxy-enable`, `page-rule`, `analytics` |
+| Route 53 | `health-check`, `weighted-routing`, `geo-routing` |
+| Security | `enable-dnssec`, `test-auth`, `check-permissions` |
+| Diagnostics | `propagation-check`, `ttl-check`, `conflict-check`, `validate`, `compare` |
+| Monitoring | `monitor-resolution`, `performance-check`, `change-log`, `report` |
+| Migration | `export`, `import`, `compare` |
+| Backup | `backup`, `restore`, `schedule-backup` |
 
 ## Usage
 
 ```bash
-# CRUD — [provider] [account] [domain] [name] [type] [value]
-./.agents/scripts/dns-helper.sh records cloudflare personal example.com
-./.agents/scripts/dns-helper.sh add cloudflare personal example.com www A 192.168.1.100
-./.agents/scripts/dns-helper.sh update cloudflare personal example.com record-id www A 192.168.1.200
-./.agents/scripts/dns-helper.sh delete cloudflare personal example.com record-id
+# CRUD — dns-helper.sh [command] [provider] [account] [domain] [name] [type] [value]
+dns-helper.sh records cloudflare personal example.com
+dns-helper.sh add cloudflare personal example.com www A 192.168.1.100
+dns-helper.sh update cloudflare personal example.com record-id www A 192.168.1.200
+dns-helper.sh delete cloudflare personal example.com record-id
 
-# Cloudflare-specific
-./.agents/scripts/dns-helper.sh proxy-enable cloudflare personal example.com record-id
-./.agents/scripts/dns-helper.sh page-rule cloudflare personal example.com "*.example.com/*" cache-everything
-./.agents/scripts/dns-helper.sh analytics cloudflare personal example.com
+# Provider-specific
+dns-helper.sh health-check route53 production example.com https://example.com/health
+dns-helper.sh proxy-enable cloudflare personal example.com record-id
 
-# Route 53-specific
-./.agents/scripts/dns-helper.sh health-check route53 production example.com https://example.com/health
-./.agents/scripts/dns-helper.sh weighted-routing route53 production example.com www A 192.168.1.100 50
-./.agents/scripts/dns-helper.sh geo-routing route53 production example.com www A 192.168.1.100 US
+# Security
+dns-helper.sh enable-dnssec cloudflare personal example.com
+dns-helper.sh add cloudflare personal example.com @ CAA "0 issue letsencrypt.org"
 
-# Security: DNSSEC + CAA + auth checks
-./.agents/scripts/dns-helper.sh enable-dnssec cloudflare personal example.com
-./.agents/scripts/dns-helper.sh add cloudflare personal example.com @ CAA "0 issue letsencrypt.org"
-./.agents/scripts/dns-helper.sh test-auth cloudflare personal
-./.agents/scripts/dns-helper.sh check-permissions cloudflare personal
+# Migration: export → import → verify
+dns-helper.sh export namecheap personal example.com > source-dns.json
+dns-helper.sh import cloudflare personal example.com source-dns.json
+dns-helper.sh compare example.com namecheap:personal cloudflare:personal
 
-# Troubleshooting: propagation + validation
-dig @8.8.8.8 example.com
-./.agents/scripts/dns-helper.sh propagation-check example.com
-./.agents/scripts/dns-helper.sh ttl-check example.com
-./.agents/scripts/dns-helper.sh conflict-check cloudflare personal example.com
-./.agents/scripts/dns-helper.sh validate cloudflare personal example.com
-./.agents/scripts/dns-helper.sh compare example.com cloudflare:personal namecheap:personal
-
-# Monitoring / reporting
-./.agents/scripts/dns-helper.sh monitor-resolution example.com
-./.agents/scripts/dns-helper.sh performance-check example.com
-./.agents/scripts/dns-helper.sh change-log cloudflare personal example.com
-./.agents/scripts/dns-helper.sh report cloudflare personal example.com
-
-# Migration: export → import
-./.agents/scripts/dns-helper.sh export namecheap personal example.com > source-dns.json
-./.agents/scripts/dns-helper.sh import cloudflare personal example.com source-dns.json
-./.agents/scripts/dns-helper.sh compare example.com namecheap:personal cloudflare:personal
-
-# Backup / restore
-./.agents/scripts/dns-helper.sh backup cloudflare personal example.com
-./.agents/scripts/dns-helper.sh restore cloudflare personal example.com backup-file.json
-./.agents/scripts/dns-helper.sh schedule-backup cloudflare personal daily
+# Troubleshooting
+dns-helper.sh propagation-check example.com
+dns-helper.sh validate cloudflare personal example.com
 ```
