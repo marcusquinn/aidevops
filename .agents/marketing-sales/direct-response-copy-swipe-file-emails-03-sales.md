@@ -8,7 +8,7 @@ High-converting sales email swipe file with pattern analysis.
 
 **Subject:** Zero to Launch is NOW OPEN (spots limited)
 
-```text
+```
 I want to tell you about a student named [Name].
 
 [Story about student's transformation]
@@ -51,7 +51,7 @@ P.S. Doors close Friday at 11:59pm. No extensions.
 
 **Subject:** Your trial ends tomorrow
 
-```text
+```
 Hey [Name],
 
 Quick heads up: your [Product] trial expires tomorrow.
@@ -81,7 +81,7 @@ We're here to help.
 
 **Subject:** Did something go wrong?
 
-```text
+```
 Hey [Name],
 
 I noticed you started checking out but didn't finish.
@@ -112,7 +112,7 @@ totally fine too. Just let me know and I'll stop bugging you.
 
 **Subject:** Free training: [Specific Outcome] in [Timeframe]
 
-```text
+```
 [Name],
 
 What if you could [achieve desired outcome] in the next [timeframe]?
