@@ -20,7 +20,7 @@ tools:
 
 | Platform | Token Location | Required Scopes |
 |----------|---------------|-----------------|
-| GitHub | Settings → Developer settings → Personal access tokens | `repo`, `admin:repo_hook`, `user` |
+| GitHub | Settings → Developer settings → Personal access tokens | `repo`, `workflow`, `admin:repo_hook`, `user` |
 | GitLab | User Settings → Access Tokens | `api`, `read_repository`, `write_repository` |
 | Gitea | Settings → Applications | Full access |
 
@@ -35,7 +35,7 @@ tools:
 3. Store:
 
 ```bash
-gh auth login -s workflow          # recommended — includes workflow scope
+gh auth login -s workflow,admin:repo_hook,user  # recommended — grants all required scopes
 # or
 echo "GITHUB_TOKEN=ghp_xxxx" >> ~/.config/aidevops/credentials.sh
 chmod 600 ~/.config/aidevops/credentials.sh
