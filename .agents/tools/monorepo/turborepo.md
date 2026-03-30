@@ -14,8 +14,6 @@ tools: [read, write, edit, bash, glob, grep, webfetch, task, context7_*]
 - **Package Manager**: pnpm (recommended), npm, yarn
 - **Docs**: [turbo.build/repo/docs](https://turbo.build/repo/docs) (via Context7 MCP) · **Features**: Incremental caching · Parallel execution · Remote caching (Vercel)
 
-**Commands**: `pnpm dev` · `pnpm build` · `pnpm --filter web dev` · see Filtering section for full syntax
-
 **Structure**:
 
 ```text
@@ -48,9 +46,7 @@ tooling/  (eslint, typescript, prettier)
 
 <!-- AI-CONTEXT-END -->
 
-## Patterns
-
-### Filtering
+## Filtering
 
 ```bash
 pnpm dev                               # all packages
@@ -64,7 +60,7 @@ pnpm --filter "./packages/*" build     # by directory
 pnpm --filter "!web" build             # exclude
 ```
 
-### Package.json Exports
+## Package.json Exports
 
 ```json
 // packages/ui/web/package.json
@@ -77,19 +73,19 @@ import { cn } from "@workspace/ui-web";
 import "@workspace/ui-web/globals.css";
 ```
 
-### Workspace Dependencies
+## Workspace Dependencies
 
 Use `"workspace:*"` protocol (not `"*"`): `{ "dependencies": { "@workspace/ui-web": "workspace:*" } }`
 
-### Environment Variables
+## Environment Variables
 
-Use `dotenv-cli` to load `.env` before turbo: `pnpm with-env turbo build`
+Use `dotenv-cli` to load `.env` before turbo:
 
 ```json
 { "scripts": { "build": "pnpm with-env turbo build", "dev": "pnpm with-env turbo dev" } }
 ```
 
-### Shared TypeScript Config
+## Shared TypeScript Config
 
 ```json
 // tooling/typescript/base.json
@@ -100,26 +96,29 @@ Use `dotenv-cli` to load `.env` before turbo: `pnpm with-env turbo build`
     "target": "ES2022", "lib": ["ES2022"], "skipLibCheck": true, "esModuleInterop": true
   }
 }
-// packages/api/tsconfig.json
+
+// packages/api/tsconfig.json — extends shared config
 { "extends": "@workspace/tsconfig/base.json", "compilerOptions": { "outDir": "dist" }, "include": ["src"] }
 ```
 
-### Shared ESLint Config
+## Shared ESLint Config
 
 ```js
 // tooling/eslint/base.js
 module.exports = { extends: ["eslint:recommended", "prettier"], rules: {} };
-// apps/web/eslint.config.js
+
+// apps/web/eslint.config.js — consuming the shared config
 import baseConfig from "@workspace/eslint-config/base";
 export default [...baseConfig];
 ```
 
-### Database Package
+## Database Package
 
 ```tsx
 // packages/db/src/index.ts — public API
 export * from "./schema";
 export type { InferSelectModel, InferInsertModel } from "drizzle-orm";
+
 // packages/db/src/server.ts — server-only
 export { db } from "./client";
 ```
