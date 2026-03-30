@@ -31,12 +31,10 @@ tools:
 
 **NEVER feed raw AI video audio directly to ElevenLabs** — it amplifies artifacts. Always clean first:
 
-| Step | Tool | Purpose |
-|------|------|---------|
-| 1 | CapCut AI Voice Cleanup | Normalize accents/artifacts, remove robotic patterns, clean noise, standardize volume |
-| 2 | ElevenLabs Transformation | Voice cloning, emotional delivery, character consistency |
+1. **CapCut AI Voice Cleanup** — normalize accents/artifacts, remove robotic patterns, clean noise, standardize volume
+2. **ElevenLabs Transformation** — voice cloning, emotional delivery, character consistency
 
-**Alternative**: MiniMax TTS — talking-head content where ElevenLabs is overkill. $5/month for 120 min; 10-second clip for voice clone. See `tools/voice/voice-models.md`.
+**Alternative**: MiniMax TTS for talking-head content where ElevenLabs is overkill. $5/month for 120 min; 10-second clip for voice clone. See `tools/voice/voice-models.md`.
 
 ### Voice Cloning
 
@@ -48,16 +46,14 @@ tools:
 | Instant Clone | 10-30 second clean clip | Quick personas |
 | Professional Clone | 3-5 minutes | AI influencer personas (highest fidelity) |
 
-**Source quality**: Single speaker, quiet environment, clear pronunciation. Cloning from existing content → run CapCut cleanup first.
-
-**Voice consistency**: Same voice model across all channel content. Consistent pace, emotional tone, and brand term pronunciation. Update voice samples quarterly.
+**Source quality**: Single speaker, quiet environment, clear pronunciation. Cloning from existing content → run CapCut cleanup first. Use same voice model across all channel content; update samples quarterly.
 
 ### Emotional Block Cues
 
-Emotion tags for TTS engines with emotion support (ElevenLabs, ChatTTS):
+Emotion tags for TTS engines with emotion support (ElevenLabs, ChatTTS). Scripts from `content/production-writing.md` should include this markup.
 
 ```text
-[neutral]Welcome to the channel.[/neutral] [excited]Today we're covering something amazing![/excited] [serious]But first, let's understand the problem.[/serious]
+[neutral]Welcome.[/neutral] [excited]Today we're covering something amazing![/excited] [serious]But first, the problem.[/serious]
 ```
 
 | Tag | Use Case | Pacing Position |
@@ -69,8 +65,6 @@ Emotion tags for TTS engines with emotion support (ElevenLabs, ChatTTS):
 | `[confident]` | Authority, expertise | Solution (10s+) |
 | `[urgent]` | CTAs, time-sensitive | CTA (final 5s) |
 | `[neutral]` | Default, informational | Any |
-
-Scripts from `content/production-writing.md` should include emotional block markup.
 
 ## 4-Layer Audio Design
 
@@ -114,9 +108,7 @@ ffmpeg -i input.mp4 -af loudnorm=print_format=json -f null -
 voice-helper.sh talk                       # Start voice conversation (defaults)
 voice-helper.sh talk whisper-mlx edge-tts  # Explicit engines
 voice-helper.sh talk whisper-mlx macos-say # Offline mode
-voice-helper.sh devices                    # List audio devices
-voice-helper.sh voices                     # List available TTS voices
-voice-helper.sh benchmark                  # Test component speeds
+voice-helper.sh devices && voice-helper.sh voices && voice-helper.sh benchmark
 ```
 
 **Architecture**: `Mic → Silero VAD → Whisper MLX (1.4s) → Claude Code run --attach (~4-6s) → Edge TTS (0.4s) → Speaker`. Round-trip: ~6-8s conversational, longer for tool execution.
