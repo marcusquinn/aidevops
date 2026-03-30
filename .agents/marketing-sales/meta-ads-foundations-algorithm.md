@@ -1,7 +1,5 @@
 # How Meta's Algorithm Actually Works
 
-> Understanding the algorithm is the difference between throwing money at ads and running profitable campaigns.
-
 ## The Auction System
 
 Every ad impression triggers an auction. Winner = highest **Total Value**:
@@ -12,28 +10,26 @@ Total Value = Bid × Estimated Action Rate × Ad Quality
 
 **Bid strategies:** Lowest Cost (default), Cost Cap, Bid Cap, ROAS Target.
 
-**Estimated Action Rate** — Meta's ML prediction that this specific user will convert on your specific ad. Inputs: your campaign history, user behavior, ad creative, landing page, time/device/placement, and hundreds more signals. This is why creative matters so much.
+**Estimated Action Rate (EAR)** — Meta's ML prediction that this user will convert on this ad. Inputs: campaign history, user behavior, creative, landing page, time/device/placement, and hundreds more signals. This is why creative matters so much.
+
+ML prediction draws on three data categories:
+- **User data**: demographics, interests, purchase history, device patterns, social connections
+- **Ad data**: account history, creative content analysis, landing page quality, CAPI/Pixel data
+- **Contextual data**: time of day, seasonality, competitive landscape
 
 **Ad Quality** — engagement minus negative feedback. Positive: likes, shares, watch time, CTR. Negative: "hide ad", reports, misleading claims, policy violations, high bounce rate.
 
 **Auction example:**
+
 ```
 Ad A: $3 bid × 2% EAR × 0.8 quality = 0.048
 Ad B: $2 bid × 3% EAR × 1.0 quality = 0.060  ← wins despite lowest bid
 Ad C: $5 bid × 1% EAR × 0.7 quality = 0.035
 ```
 
-**Implications:** Better creative lowers your effective cost. Poor ads cost MORE to deliver. Relevance beats budget.
+**Implications:** Better creative lowers effective cost. Poor ads cost MORE to deliver. Relevance beats budget.
 
-## Meta's ML Prediction Models
-
-Meta predicts who will click, convert, and when — using:
-
-- **User data**: demographics, interests, purchase history, device patterns, social connections
-- **Ad data**: your account history, creative content analysis, landing page quality, CAPI/Pixel data
-- **Contextual data**: time of day, seasonality, competitive landscape
-
-**How to help the algorithm:**
+**Help the algorithm learn:**
 - Give it clear conversion signals (Pixel + CAPI)
 - Use consistent creative so it learns what works
 - Feed quality data (good customers, not just leads)
@@ -42,7 +38,7 @@ Meta predicts who will click, convert, and when — using:
 
 ## The Learning Phase
 
-When you launch or make significant changes, Meta enters a Learning Phase to build a prediction model for your ad.
+On launch or significant changes, Meta enters a Learning Phase to build a prediction model for your ad.
 
 **Exit criteria:** 50 optimization events in 7 days, OR 7 days elapsed. Expect 20–50% higher CPAs and inconsistent performance during learning.
 
@@ -95,7 +91,7 @@ Every Pixel fire teaches Meta what converts, what doesn't, content preferences, 
 | 7 | PageView | Basic tracking |
 | 8 | (Custom) | — |
 
-**Healthy pixel signs:** Events firing consistently, match rates >80%, no duplicates, proper value/currency passing.
+**Healthy pixel:** Events firing consistently, match rates >80%, no duplicates, proper value/currency passing.
 
 **Common issues:** Duplicate events, missing parameters, delayed firing after redirect, cross-domain pixel conflicts.
 
@@ -110,6 +106,7 @@ Apple's iOS 14+ forced Meta to AEM: 8 events max per domain, 72-hour delayed rep
 CAPI sends conversion data server-to-server, bypassing ad blockers (20–30% of users), iOS ATT (80%+ opt-out), and browser privacy features.
 
 **Use Pixel + CAPI together** — Meta deduplicates via `event_id`:
+
 ```
 User converts → Pixel fires (client) + CAPI fires (server) → Meta deduplicates → 1 conversion recorded
 ```
@@ -147,14 +144,6 @@ Check CAPI quality in Events Manager → Data Sources → Select Pixel → Overv
 | Advantage+ Shopping | Full auto ecom | Ecom with 50+ purchases/week |
 
 Manual targeting still wins for: very niche B2B, creative testing requiring control, specific placement requirements, limited conversion data.
-
-## Key Takeaways
-
-1. **Auction rewards relevance** — better creative + engagement = lower costs; poor ads cost MORE
-2. **Learning phase needs 50 conversions/week** — don't make major changes during learning; consolidate if not hitting threshold
-3. **Account history matters** — new accounts need seasoning; build trust through consistent quality
-4. **Pixel + CAPI together** — Pixel alone misses 30–50% of conversions; CAPI is mandatory in 2026
-5. **Let AI do its job** — broad targeting + great creative beats micro-targeting; focus on inputs (creative, data)
 
 ---
 
