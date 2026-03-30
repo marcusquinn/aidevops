@@ -83,38 +83,26 @@ Use `"workspace:*"` protocol (not `"*"`): `{ "dependencies": { "@workspace/ui-we
 
 ### Environment Variables
 
-Use `dotenv-cli` to load `.env` before turbo: `pnpm with-env turbo build`
+Load `.env` before turbo with `dotenv-cli`: `pnpm with-env turbo build`
 
-```json
-{ "scripts": { "build": "pnpm with-env turbo build", "dev": "pnpm with-env turbo dev" } }
-```
+Root package.json scripts: `"build": "pnpm with-env turbo build"`, `"dev": "pnpm with-env turbo dev"`
 
-### Shared TypeScript Config
+### Shared Configs
 
-```json
-// tooling/typescript/base.json
-{
-  "$schema": "https://json.schemastore.org/tsconfig",
-  "compilerOptions": {
-    "strict": true, "moduleResolution": "bundler", "module": "ESNext",
-    "target": "ES2022", "lib": ["ES2022"], "skipLibCheck": true, "esModuleInterop": true
-  }
-}
-// packages/api/tsconfig.json
-{ "extends": "@workspace/tsconfig/base.json", "compilerOptions": { "outDir": "dist" }, "include": ["src"] }
-```
+**TypeScript** — extend from `@workspace/tsconfig/base.json`. Key settings: `strict: true`, `moduleResolution: "bundler"`, `module: "ESNext"`, `target: "ES2022"`, `skipLibCheck: true`.
 
-### Shared ESLint Config
+Per-package: `{ "extends": "@workspace/tsconfig/base.json", "compilerOptions": { "outDir": "dist" }, "include": ["src"] }`
+
+**ESLint** — base config at `tooling/eslint/base.js`, extend per-app:
 
 ```js
-// tooling/eslint/base.js
-module.exports = { extends: ["eslint:recommended", "prettier"], rules: {} };
-// apps/web/eslint.config.js
 import baseConfig from "@workspace/eslint-config/base";
 export default [...baseConfig];
 ```
 
 ### Database Package
+
+Separate public API from server-only exports:
 
 ```tsx
 // packages/db/src/index.ts — public API
