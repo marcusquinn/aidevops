@@ -54,7 +54,6 @@ Example: `20240502100843_create_users_table.sql`. Avoid: `migration_1.sql`, `fix
 
 ```sql
 -- migrations/20240502100843_create_users_table.sql
-
 -- ====== UP ======
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
@@ -63,7 +62,6 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_users_email ON users(email);
-
 -- ====== DOWN ======
 DROP INDEX IF EXISTS idx_users_email;
 DROP TABLE IF EXISTS users;
@@ -72,26 +70,21 @@ DROP TABLE IF EXISTS users;
 **Idempotent column addition (PostgreSQL)** — no `IF NOT EXISTS` for `ADD COLUMN`:
 
 ```sql
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'users' AND column_name = 'phone'
-    ) THEN
-        ALTER TABLE users ADD COLUMN phone VARCHAR(20);
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+        WHERE table_name='users' AND column_name='phone')
+    THEN ALTER TABLE users ADD COLUMN phone VARCHAR(20);
     END IF;
 END $$;
 ```
 
-**Separate schema and data migrations:**
+**Separate schema and data migrations** — schema is fast/reversible, data may be slow/irreversible:
 
 ```sql
--- V6__add_status_column.sql (Schema -- fast, reversible)
+-- V6__add_status_column.sql (Schema)
 ALTER TABLE orders ADD COLUMN status VARCHAR(20) DEFAULT 'pending';
-
--- V7__backfill_order_status.sql (Data -- slow, may be irreversible)
-UPDATE orders SET status = 'completed' WHERE shipped_at IS NOT NULL;
-UPDATE orders SET status = 'pending' WHERE shipped_at IS NULL;
+-- V7__backfill_order_status.sql (Data)
+UPDATE orders SET status = CASE WHEN shipped_at IS NOT NULL THEN 'completed' ELSE 'pending' END;
 ```
 
 ## Rollback and Safety
@@ -111,27 +104,24 @@ Mark irreversible DOWN sections: `-- IRREVERSIBLE: restore from backup if needed
 | Operation | Safe? | Strategy |
 |-----------|-------|----------|
 | Add nullable column | Yes | Direct |
-| Add NOT NULL column | Caution | Add nullable -> backfill -> add constraint |
-| Drop column | Caution | Remove from code first -> wait -> drop |
+| Add NOT NULL column | Caution | Add nullable → backfill → add constraint |
+| Drop column | Caution | Remove from code first → wait → drop |
 | Rename column | Caution | Expand-contract pattern |
 | Add index | Caution | `CREATE INDEX CONCURRENTLY` (PostgreSQL) |
-| Change column type | Caution | New column -> migrate data -> drop old |
+| Change column type | Caution | New column → migrate data → drop old |
 
 **Expand-contract:** EXPAND — add new column, copy data, deploy code writing both/reading new. CONTRACT — drop old column, rename new.
 
 ## Git and CI/CD
 
-**Pre-push:** UP and DOWN present; DOWN reverses UP; tested locally (up -> down -> up); no modifications to pushed migrations; timestamp current (regenerate on rebase). Review: only expected changes, no unintended destructive ops, correct types/constraints.
+**Pre-push:** UP and DOWN present; DOWN reverses UP; tested locally (up → down → up); no modifications to pushed migrations; timestamp current (regenerate on rebase). Review: only expected changes, no unintended destructive ops, correct types/constraints.
 
 **Team rules:** Pull before creating. Timestamps not sequential numbers. One migration per PR. Rebase carefully — regenerate timestamps for conflicts. Commit style: `feat(db): add user_preferences table`, `fix(db): correct FK on orders`, `chore(db): backfill user status`.
 
-**CI/CD:** Trigger on `push` to `main` with `paths: ['migrations/**']`. Steps: backup -> migrate -> verify:
+**CI/CD:** Trigger on `push` to `main` with `paths: ['migrations/**']`. Steps: backup → migrate → verify. Most tools auto-create a tracking table (e.g., `flyway_schema_history`). Prefer managed tools — they handle ordering, locking, and state tracking.
 
 ```yaml
-on:
-  push:
-    branches: [main]
-    paths: ['migrations/**']
+on: { push: { branches: [main], paths: ['migrations/**'] } }
 jobs:
   migrate:
     runs-on: ubuntu-latest
@@ -139,41 +129,24 @@ jobs:
       - uses: actions/checkout@v4
       - run: pg_dump $DATABASE_URL > backup_$(date +%Y%m%d_%H%M%S).sql
         env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
-      - run: flyway migrate   # or: npx prisma migrate deploy / rails db:migrate
+      - run: flyway migrate  # or: npx prisma migrate deploy / rails db:migrate
         env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
       - run: psql $DATABASE_URL -c "SELECT 1"
 ```
 
-Most tools auto-create a tracking table (e.g., `flyway_schema_history`). Prefer managed tools — they handle ordering, locking, and state tracking.
-
 ## Framework-Agnostic Runner
 
-When running SQL directly without a migration tool, gate execution on a tracking table:
-
+When running SQL directly without a migration tool, gate execution on a tracking table. Properties: idempotent (`WHERE NOT EXISTS`), ordered (lexicographic glob), auditable (`schema_migrations`), injection-safe (`psql -v` + `:'name'`), concurrent-safe (`pg_advisory_xact_lock`), empty-dir safe (`compgen -G`), `-- no-tx` convention for `CREATE INDEX CONCURRENTLY`.
 
 ```bash
 #!/usr/bin/env bash
-# scripts/migrate.sh -- apply only unapplied migrations in order
 set -euo pipefail
-
 DB_URL="${DATABASE_URL:?DATABASE_URL is required}"
-
-# Bootstrap tracking table
-psql "$DB_URL" -c "
-  CREATE TABLE IF NOT EXISTS schema_migrations (
-    filename   TEXT PRIMARY KEY,
-    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  );"
-
-# Guard: exit cleanly when no migration files exist
+psql "$DB_URL" -c "CREATE TABLE IF NOT EXISTS schema_migrations (
+    filename TEXT PRIMARY KEY, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"
 compgen -G "migrations/*.sql" > /dev/null || { echo "No migration files found."; exit 0; }
-
 for f in migrations/*.sql; do
   name="$(basename "$f")"
-  # psql -v binds the filename as a safe literal (:'name') -- no shell interpolation into SQL.
-  # \i runs the migration file; the INSERT records it -- both inside one transaction.
-  # pg_advisory_xact_lock serialises concurrent runners on the same DB.
-  # Convention: add `-- no-tx` comment in files using CREATE INDEX CONCURRENTLY (cannot run in a transaction).
   if grep -qiE '^\s*--\s*no-tx\b' "$f"; then
     psql "$DB_URL" -v "name=$name" -c "SELECT pg_advisory_lock(hashtext('schema_migrations'));"
     psql "$DB_URL" -f "$f"
@@ -186,14 +159,9 @@ SELECT pg_advisory_xact_lock(hashtext('schema_migrations'));
 BEGIN;
 \i $f
 INSERT INTO schema_migrations (filename)
-  SELECT :'name'
-  WHERE NOT EXISTS (
-    SELECT 1 FROM schema_migrations WHERE filename = :'name'
-  );
+  SELECT :'name' WHERE NOT EXISTS (SELECT 1 FROM schema_migrations WHERE filename = :'name');
 COMMIT;
 SQL
   echo "Applied (or skipped): $name"
 done
 ```
-
-**Properties:** idempotent (`WHERE NOT EXISTS`), ordered (lexicographic glob), auditable (`schema_migrations`), injection-safe (`psql -v` + `:'name'`), concurrent-safe (`pg_advisory_xact_lock`), empty-dir safe (`compgen -G`), `-- no-tx` convention for `CREATE INDEX CONCURRENTLY`.
