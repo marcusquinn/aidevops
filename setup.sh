@@ -11,9 +11,9 @@ shopt -s inherit_errexit 2>/dev/null || true
 # Helps developers set up the framework for their infrastructure
 #
 <<<<<<< Updated upstream
-# Version: 3.5.415
+# Version: 3.5.416
 =======
-# Version: 3.5.415
+# Version: 3.5.416
 >>>>>>> Stashed changes
 #
 # Quick Install:
