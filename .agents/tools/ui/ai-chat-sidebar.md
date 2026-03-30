@@ -20,8 +20,6 @@ tools:
 - **Streaming**: SSE from Elysia backend
 - **Source**: `.opencode/ui/chat-sidebar/`
 
-**Sibling tasks**:
-
 | Task | Scope | Depends on |
 |------|-------|------------|
 | t005.1 | Architecture & types (this doc) | — |
@@ -35,7 +33,6 @@ tools:
 
 Layout: Main Content Area (left) + AI Chat Sidebar (right, fixed-position panel). Toggle button floats bottom-right when closed.
 
-**Design decisions:**
 - React scoped to sidebar only — existing dashboard uses vanilla JS; chat needs complex interactive state
 - React Context (3 split) — app is small; avoids extra deps; split prevents cross-concern re-renders
 - SSE not WebSocket — unidirectional streaming; simpler, proxy-friendly, auto-reconnects
@@ -148,10 +145,12 @@ event: error  data: {"message":"Rate limit exceeded","code":"rate_limited"}
 
 ## Accessibility & Performance
 
-- All interactive elements: `aria-label` or visible label; Tab/Escape keyboard nav; `aria-live="polite"` for new messages
-- `prefers-reduced-motion`: instant show/hide; `h-dvh` (not `h-screen`)
-- 3 split contexts prevent cross-concern re-renders; `useCallback`/`useMemo` throughout
-- SSE chunks update `streamingContent` string (not full array); lazy-load markdown; no `will-change` unless animating
+| Concern | Rule |
+|---------|------|
+| Interactive elements | `aria-label` or visible label; Tab/Escape keyboard nav; `aria-live="polite"` for new messages |
+| Motion | `prefers-reduced-motion`: instant show/hide; `h-dvh` (not `h-screen`) |
+| Re-renders | 3 split contexts; `useCallback`/`useMemo` throughout |
+| Streaming | SSE chunks update `streamingContent` string (not full array); lazy-load markdown; no `will-change` unless animating |
 
 ## Dependencies
 
@@ -162,13 +161,11 @@ event: error  data: {"message":"Rate limit exceeded","code":"rate_limited"}
 | `marked`/`markdown-it` *(optional)* | Markdown rendering |
 | `highlight.js`/`shiki` *(optional)* | Syntax highlighting |
 
-No state management libraries needed.
-
 ## Integration
 
 ```typescript
-const apiKey = await getCredential('ANTHROPIC_API_KEY')      // gopass → credentials.sh → env
-const model = await resolveModel(settings.defaultModel)       // 'sonnet' → concrete model ID
+const apiKey = await getCredential('ANTHROPIC_API_KEY')  // gopass → credentials.sh → env
+const model = await resolveModel(settings.defaultModel)  // 'sonnet' → concrete model ID
 const memories = await execCommand('memory-helper.sh', ['recall', query, '--limit', '5'])
 ```
 
