@@ -26,10 +26,9 @@ function VideoGrid({ meeting }) {
   const [participants, setParticipants] = useState([]);
   useEffect(() => {
     const update = () => setParticipants(meeting.participants.joined.toArray());
-    meeting.participants.joined.on('participantJoined', update);
-    meeting.participants.joined.on('participantLeft', update);
+    ['participantJoined', 'participantLeft'].forEach(e => meeting.participants.joined.on(e, update));
     update();
-    return () => { meeting.participants.joined.off('participantJoined', update); meeting.participants.joined.off('participantLeft', update); };
+    return () => ['participantJoined', 'participantLeft'].forEach(e => meeting.participants.joined.off(e, update));
   }, [meeting]);
   return <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
     {participants.map(p => <VideoTile key={p.id} participant={p} />)}
@@ -53,10 +52,7 @@ const devices = await meeting.self.getAllDevices();
 const audioInputs = devices.filter(d => d.kind === 'audioinput');
 const videoInputs = devices.filter(d => d.kind === 'videoinput');
 meeting.self.on('deviceListUpdate', ({ added, removed }) => console.log('Devices:', { added, removed }));
-const switchCamera = async (deviceId: string) => {
-  const d = devices.find(x => x.deviceId === deviceId);
-  if (d) await meeting.self.setDevice(d);
-};
+const switchCamera = async (id: string) => { const d = devices.find(x => x.deviceId === id); if (d) await meeting.self.setDevice(d); };
 ```
 
 ### Chat & Custom Hook (React)
@@ -66,9 +62,9 @@ function ChatComponent({ meeting }) {
   const [messages, setMessages] = useState(meeting.chat.messages);
   const [input, setInput] = useState('');
   useEffect(() => {
-    const handleUpdate = ({ messages }) => setMessages(messages);
-    meeting.chat.on('chatUpdate', handleUpdate);
-    return () => meeting.chat.off('chatUpdate', handleUpdate);
+    const handler = ({ messages }) => setMessages(messages);
+    meeting.chat.on('chatUpdate', handler);
+    return () => meeting.chat.off('chatUpdate', handler);
   }, [meeting]);
   const send = async () => { if (input.trim()) { await meeting.chat.sendTextMessage(input); setInput(''); } };
   return <div>
@@ -86,8 +82,7 @@ export function useMeeting(authToken: string) {
     const client = new RealtimeKitClient({ authToken });
     client.self.on('roomJoined', () => setJoined(true));
     const update = () => setParticipants(client.participants.joined.toArray());
-    client.participants.joined.on('participantJoined', update);
-    client.participants.joined.on('participantLeft', update);
+    ['participantJoined', 'participantLeft'].forEach(e => client.participants.joined.on(e, update));
     setMeeting(client);
     return () => { client.leave(); };
   }, [authToken]);
@@ -101,27 +96,24 @@ export function useMeeting(authToken: string) {
 // Express — token generation
 app.post('/api/join-meeting', async (req, res) => {
   const { meetingId, userName, presetName } = req.body;
-  const response = await fetch(
-    `https://api.cloudflare.com/client/v4/accounts/${process.env.ACCOUNT_ID}/realtime/kit/${process.env.APP_ID}/meetings/${meetingId}/participants`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.CLOUDFLARE_API_TOKEN}` },
-      body: JSON.stringify({ name: userName, preset_name: presetName, custom_participant_id: req.user.id })
-    }
-  );
-  const data = await response.json();
-  res.json({ authToken: data.result.authToken });
+  const url = `https://api.cloudflare.com/client/v4/accounts/${process.env.ACCOUNT_ID}/realtime/kit/${process.env.APP_ID}/meetings/${meetingId}/participants`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}` },
+    body: JSON.stringify({ name: userName, preset_name: presetName, custom_participant_id: req.user.id })
+  });
+  res.json({ authToken: (await response.json()).result.authToken });
 });
 
 // Workers — meeting creation
 export interface Env { CLOUDFLARE_API_TOKEN: string; CLOUDFLARE_ACCOUNT_ID: string; REALTIMEKIT_APP_ID: string; }
-
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (new URL(request.url).pathname === '/api/create-meeting') {
-      return fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/realtime/kit/${env.REALTIMEKIT_APP_ID}/meetings`, {
+      const url = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/realtime/kit/${env.REALTIMEKIT_APP_ID}/meetings`;
+      return fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${env.CLOUDFLARE_API_TOKEN}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}` },
         body: JSON.stringify({ title: 'Team Meeting' })
       });
     }
