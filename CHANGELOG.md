@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.457] - 2026-03-30
+
+### Changed
+
+- Documentation: tighten onboarding wizard guide for GH#13999 (#14141)
+
 ## [3.5.456] - 2026-03-30
 
 ### Added
