@@ -53,17 +53,11 @@ Copy that drives **immediate, measurable action**: landing pages, email sequence
 
 ---
 
-## Step-by-Step Process
+## Process
 
-### 1. Research (50% of Your Time)
+**1. Research (50% of your time)** — Know audience: demographics + psychographics (fears, desires, beliefs, objections), what they've tried, language they use. Sources: customer interviews (gold), competitor reviews, Reddit/forums, Amazon reviews, support tickets, surveys. Document: audience profile (who, #1 problem, failed solutions, dream outcome, objections, language) + product analysis (core promise, features→benefits→outcomes, unique mechanism, proof points, competitor weaknesses).
 
-**Know your audience:** Demographics + psychographics (fears, desires, beliefs, objections). What they've tried before. Language they use to describe their problem.
-
-**Sources:** Customer interviews (gold), competitor reviews (mine complaints), Reddit/forums, Amazon reviews of related books, support tickets, surveys.
-
-**Document:** Target audience profile (who, #1 problem, failed solutions, dream outcome, objections, language) + Product analysis (core promise, features→benefits→outcomes, unique mechanism, proof points, competitor weaknesses).
-
-### 2. Determine Awareness Level
+**2. Determine awareness level** — use the traffic source table above to set copy length and lead type.
 
 | Traffic Source | Likely Awareness | Copy Length |
 |----------------|------------------|-------------|
@@ -72,35 +66,19 @@ Copy that drives **immediate, measurable action**: landing pages, email sequence
 | Paid ads (interest/lookalike) | Problem/Solution Aware | Long |
 | Cold outreach | Unaware/Problem Aware | Longest |
 
-### 3. Write the Headline (First, Revise Last)
+**3. Write the headline (first, revise last)** — 80% of your ad. Write 25+ variations: "How to [Outcome]" · "[Number] Ways to [Benefit]" · "Why [Common Belief] is Wrong" · "[Do This] Without [Objection]" · "[Specific Result] in [Specific Time]" · "Are You Making These [Topic] Mistakes?"
 
-The headline is 80% of your ad. Write 25+ variations using templates: "How to [Outcome]" · "[Number] Ways to [Benefit]" · "Why [Common Belief] is Wrong" · "[Do This] Without [Objection]" · "[Specific Result] in [Specific Time]" · "Are You Making These [Topic] Mistakes?"
+**4. Write the lead** — first 200-300 words determine if they keep reading. Types: Story, Problem, Curiosity, Offer (Most Aware), Social Proof.
 
-### 4. Write the Lead
+**5. Build the body** — Landing page structure: Headline + subheadline → Hero (problem + value prop) → Social proof bar → Problem (agitate) → Solution (unique approach) → Features→Benefits→Outcomes → Case study/testimonials → How it works (3 steps) → FAQ (objection handling) → Risk reversal (guarantee) → Final CTA. Tips: short paragraphs (2-3 sentences), subheads for skimming, bullets for features/benefits, bold key phrases, "you/your" tone.
 
-First 200-300 words determine if they keep reading. Types: Story, Problem, Curiosity, Offer (Most Aware), Social Proof.
+**6. Craft the offer** — Stack value: Core Product ($X) + Bonus 1 ($Y) + Bonus 2 ($Z) = Total Value ($BIG) → Your Price ($MUCH SMALLER).
 
-### 5. Build the Body
+**7. Write the CTA** — One clear action, repeated multiple times: "Start Your Free Trial" / "Get [Benefit] Now" / "Yes, I Want [Outcome]"
 
-**Landing page structure:** Headline + subheadline → Hero (problem + value prop) → Social proof bar → Problem (agitate) → Solution (unique approach) → Features→Benefits→Outcomes → Case study/testimonials → How it works (3 steps) → FAQ (objection handling) → Risk reversal (guarantee) → Final CTA.
+**8. Add urgency (ethically)** — Legitimate only: real deadlines, true limited quantity, actual rising price, seasonal relevance. **Never fake urgency.**
 
-**Tips:** Short paragraphs (2-3 sentences), subheads for skimming, bullets for features/benefits, bold key phrases, "you/your" tone.
-
-### 6. Craft the Offer
-
-Stack value: Core Product ($X) + Bonus 1 ($Y) + Bonus 2 ($Z) = Total Value ($BIG) → Your Price ($MUCH SMALLER).
-
-### 7. Write the CTA
-
-One clear action, repeated multiple times: "Start Your Free Trial" / "Get [Benefit] Now" / "Yes, I Want [Outcome]"
-
-### 8. Add Urgency (Ethically)
-
-Legitimate only: real deadlines, true limited quantity, actual rising price, seasonal relevance. **Never fake urgency.**
-
-### 9. Edit Ruthlessly
-
-Read aloud. Cut anything that doesn't build desire, handle objections, or push toward action. Fix: passive→active, jargon→plain, "we"→"you", vague→specific, long→short.
+**9. Edit ruthlessly** — Read aloud. Cut anything that doesn't build desire, handle objections, or push toward action. Fix: passive→active, jargon→plain, "we"→"you", vague→specific, long→short.
 
 ---
 
