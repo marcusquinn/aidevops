@@ -28,7 +28,7 @@ tools:
 
 ## Device Presets
 
-100+ built-in descriptors. Each includes `viewport`, `userAgent`, `deviceScaleFactor`, `isMobile`, `hasTouch`. Landscape variants: `devices['iPhone 13 landscape']`.
+100+ built-in descriptors (`viewport`, `userAgent`, `deviceScaleFactor`, `isMobile`, `hasTouch`). Landscape: `devices['iPhone 13 landscape']`.
 
 ```bash
 node -e "const { devices } = require('playwright'); console.log(Object.keys(devices).join('\n'))"
@@ -36,16 +36,16 @@ node -e "const { devices } = require('playwright'); console.log(Object.keys(devi
 
 | Device | Viewport | Scale | Mobile |
 |--------|----------|-------|--------|
-| Desktop Chrome/Firefox/Safari/Edge | 1280×720 | 1 | No |
-| iPhone 13/14/15 | 390×844 | 3 | Yes |
-| iPhone 13/14/15 Pro Max | 428–430×926–932 | 3 | Yes |
-| iPad gen7 / Mini / Pro 11 | 810×1080 / 768×1024 / 834×1194 | 2 | Yes |
-| Pixel 5 / Pixel 7 | 393×851 / 412×915 | 2.75 / 2.625 | Yes |
-| Galaxy S8 / S9+ / Tab S4 | 360×740 / 320×658 / 712×1138 | 3 / 4.5 / 2.25 | Yes |
+| Desktop Chrome/Firefox/Safari/Edge | 1280x720 | 1 | No |
+| iPhone 13/14/15 | 390x844 | 3 | Yes |
+| iPhone 13/14/15 Pro Max | 428-430x926-932 | 3 | Yes |
+| iPad gen7 / Mini / Pro 11 | 810x1080 / 768x1024 / 834x1194 | 2 | Yes |
+| Pixel 5 / Pixel 7 | 393x851 / 412x915 | 2.75 / 2.625 | Yes |
+| Galaxy S8 / S9+ / Tab S4 | 360x740 / 320x658 / 712x1138 | 3 / 4.5 / 2.25 | Yes |
 
 ## Configuration
 
-### Test Runner (`playwright.config.ts`)
+Test runner (`playwright.config.ts`):
 
 ```typescript
 import { defineConfig, devices } from '@playwright/test';
@@ -59,7 +59,7 @@ export default defineConfig({
 });
 ```
 
-### Library API
+Library API:
 
 ```javascript
 const { chromium, devices } = require('playwright');
@@ -88,7 +88,6 @@ await page.emulateMedia({ colorScheme: 'dark' | 'light', reducedMotion: 'reduce'
 // Permissions
 use: { permissions: ['notifications'] }
 await context.grantPermissions(['geolocation'], { origin: 'https://example.com' });
-await context.grantPermissions(['notifications', 'camera', 'microphone']);
 await context.clearPermissions();
 
 // Offline / JS / User Agent
@@ -98,20 +97,13 @@ test.use({ javaScriptEnabled: false, userAgent: 'Custom Bot/1.0' });
 
 **Permission values**: `geolocation`, `midi`, `midi-sysex`, `notifications`, `camera`, `microphone`, `background-sync`, `ambient-light-sensor`, `accelerometer`, `gyroscope`, `magnetometer`, `accessibility-events`, `clipboard-read`, `clipboard-write`, `payment-handler`
 
-**Common locale/timezone combinations:**
-
-| Market | Locale | Timezone |
-|--------|--------|----------|
-| US West / East | `en-US` | `America/Los_Angeles` / `America/New_York` |
-| UK / Germany / France | `en-GB` / `de-DE` / `fr-FR` | `Europe/London` / `Europe/Berlin` / `Europe/Paris` |
-| Japan / China / India | `ja-JP` / `zh-CN` / `hi-IN` | `Asia/Tokyo` / `Asia/Shanghai` / `Asia/Kolkata` |
-| Brazil / Australia | `pt-BR` / `en-AU` | `America/Sao_Paulo` / `Australia/Sydney` |
+**Common locale/timezone pairs**: US `en-US` / `America/Los_Angeles` | `America/New_York`, UK `en-GB` / `Europe/London`, DE `de-DE` / `Europe/Berlin`, FR `fr-FR` / `Europe/Paris`, JP `ja-JP` / `Asia/Tokyo`, CN `zh-CN` / `Asia/Shanghai`, IN `hi-IN` / `Asia/Kolkata`, BR `pt-BR` / `America/Sao_Paulo`, AU `en-AU` / `Australia/Sydney`
 
 ## Recipes
 
 ### Responsive Breakpoint Testing
 
-Standard breakpoints: `mobile-sm` 320×568, `mobile-md` 375×667, `tablet` 768×1024, `laptop` 1024×768, `desktop` 1280×800, `desktop-lg` 1920×1080.
+Breakpoints: `mobile-sm` 320x568, `mobile-md` 375x667, `tablet` 768x1024, `laptop` 1024x768, `desktop` 1280x800, `desktop-lg` 1920x1080.
 
 ```typescript
 for (const bp of breakpoints) {
@@ -179,5 +171,5 @@ for (const scheme of ['light', 'dark'] as const) {
 - `browser-automation.md` — tool selection decision tree
 - `browser-benchmark.md` — performance benchmarks
 - `pagespeed.md` — PageSpeed Insights integration
-- Maestro (t096) — native mobile E2E
+- Maestro (t096) — native mobile E2E testing
 - iOS Simulator MCP (t097) — iOS simulator interaction
