@@ -33,18 +33,15 @@ mcp:
 
 ## Supported File Types
 
-- **Documents**: PDF, DOCX, DOC, ODT, TXT, CSV, JSON
-- **Spreadsheets**: XLSX, XLS, ODS
-- **Presentations**: PPTX, PPT, ODP
-- **Images**: PNG, JPG, JPEG, TIFF, BMP, GIF, WEBP
+PDF, DOCX, DOC, ODT, TXT, CSV, JSON, XLSX, XLS, ODS, PPTX, PPT, ODP, PNG, JPG, JPEG, TIFF, BMP, GIF, WEBP
 
 ## MCP Tool: `unstract_tool`
 
-**Parameters**:
-
-- `file_path` (required): Path to document
-- `include_metadata` (optional): Include extraction metadata
-- `include_metrics` (optional): Include processing metrics (tokens, cost)
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `file_path` | yes | Path to document |
+| `include_metadata` | no | Include extraction metadata |
+| `include_metrics` | no | Include processing metrics (tokens, cost) |
 
 **Example prompt**: "Process the document /tmp/invoice.pdf"
 
@@ -72,11 +69,7 @@ Requires Docker, 8GB RAM. Full data privacy — no documents leave your machine.
 
 Clones to `~/.aidevops/unstract/`, disables analytics, starts Docker Compose. Visit http://frontend.unstract.localhost (login: unstract/unstract).
 
-**Management:**
-
-```bash
-~/.aidevops/agents/scripts/unstract-helper.sh start|stop|status|logs|configure-llm|uninstall
-```
+**Management:** `unstract-helper.sh start|stop|status|logs|configure-llm|uninstall`
 
 Set credentials for local instance (preferred: `setup-local-api-keys.sh`; or manually):
 
@@ -126,10 +119,8 @@ For fully local/offline operation, use **Ollama** — no cloud API keys needed.
 
 ## Use Cases
 
-- **Invoice processing**: Extract line items, totals, vendor info
-- **Bank statement parsing**: Structure transaction data from varied formats
-- **Insurance claims**: Extract claim details from forms and supporting documents
-- **KYC/onboarding**: Parse identity documents and application forms
+- **Invoice/statement processing**: Extract line items, totals, vendor/transaction data
+- **KYC/onboarding**: Parse identity documents, application forms, insurance claims
 - **Contract analysis**: Extract key terms, dates, parties from legal documents
 
 ## Telemetry
