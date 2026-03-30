@@ -11,10 +11,10 @@
 # runners can both read "unassigned" before either writes their assignment.
 #
 # Protocol:
-#   1. Post claim: DISPATCH_CLAIM nonce=UUID runner=LOGIN ts=ISO
+#   1. Post claim: DISPATCH_CLAIM nonce=UUID runner=LOGIN ts=ISO max_age_s=SECONDS
 #   2. Sleep consensus window (DISPATCH_CLAIM_WINDOW, default 8s)
 #   3. Re-read comments, find all DISPATCH_CLAIM within the window
-#   4. Oldest claim wins — others back off and delete their claim
+#   4. Oldest active claim wins — others back off and delete their claim
 #
 # Usage:
 #   dispatch-claim-helper.sh claim <issue-number> <repo-slug> [runner-login]
@@ -38,7 +38,7 @@ set -euo pipefail
 DISPATCH_CLAIM_WINDOW="${DISPATCH_CLAIM_WINDOW:-8}"
 
 # Maximum age (seconds) of a claim comment to consider it active.
-# Claims older than this are stale and ignored.
+# Claims older than this are stale and ignored by the lock check.
 DISPATCH_CLAIM_MAX_AGE="${DISPATCH_CLAIM_MAX_AGE:-120}"
 
 # Claim comment marker — used as both the posting format and the search pattern.
@@ -127,7 +127,7 @@ _post_claim() {
 	local ts="$5"
 
 	local body
-	body="${CLAIM_MARKER} nonce=${nonce} runner=${runner} ts=${ts}"
+	body="${CLAIM_MARKER} nonce=${nonce} runner=${runner} ts=${ts} max_age_s=${DISPATCH_CLAIM_MAX_AGE}"
 
 	local comment_id
 	comment_id=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
@@ -206,9 +206,12 @@ _fetch_claims() {
 				nonce: $fields.nonce,
 				runner: $fields.runner,
 				ts: $fields.ts,
-				created_at: .created_at
+				created_at: .created_at,
+				created_epoch: (.created_at | fromdateiso8601? // 0)
 			}
 		] |
+		map(. + {age_seconds: ($now - .created_epoch)}) |
+		map(select(.age_seconds >= 0 and .age_seconds <= $max_age)) |
 		# Sort by created_at (GitHub timestamp) — chronological order
 		sort_by(.created_at)
 	' 2>/dev/null) || {
@@ -388,9 +391,11 @@ Environment:
 
 Protocol:
   1. Runner posts plain-text claim comment with unique nonce
+     and max_age_s (active claim window in seconds)
   2. Waits DISPATCH_CLAIM_WINDOW seconds for other runners
   3. Fetches all claim comments on the issue
-  4. Oldest claim wins — others back off and delete their claims
+  4. Oldest active claim wins (claims older than DISPATCH_CLAIM_MAX_AGE are ignored)
+     — others back off and delete their claims
   5. Winner proceeds with dispatch; claim comment persists as audit trail
 
 Examples:
