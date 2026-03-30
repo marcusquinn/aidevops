@@ -47,26 +47,14 @@ email-test-suite-helper.sh test-tls smtp.example.com 587
 
 <!-- AI-CONTEXT-END -->
 
-## Email Client Rendering Engines
+## Client Compatibility
 
-| Engine | Clients | Key Limitations |
-|--------|---------|-----------------|
-| **WebKit** | Apple Mail, iOS Mail, Outlook macOS | Best CSS support |
-| **Blink** | Gmail Web, Gmail Android | Strips `<style>` blocks, limited media queries |
-| **Word** | Outlook 2016+, Outlook 365 | No flexbox/grid, limited CSS, VML for backgrounds |
-| **Custom** | Yahoo, AOL, Thunderbird | Partial media query support |
-
-## CSS Compatibility
-
-| CSS Property | Apple Mail | Gmail | Outlook | Yahoo |
-|-------------|-----------|-------|---------|-------|
-| Flexbox | Yes | Yes | **No** | Yes |
-| Grid | Yes | Yes | **No** | Partial |
-| border-radius | Yes | Yes | **No** (images) | Yes |
-| background-image | Yes | Yes | **VML only** | Yes |
-| Media queries | Yes | **Partial** | **No** | **Partial** |
-| Custom fonts | Yes | **No** | **No** | **No** |
-| Animations | Yes | **No** | **No** | **No** |
+| Engine | Clients | Flexbox/Grid | Media Queries | Custom Fonts | Notes |
+|--------|---------|-------------|---------------|-------------|-------|
+| **WebKit** | Apple Mail, iOS Mail, Outlook macOS | Yes | Yes | Yes | Best CSS support |
+| **Blink** | Gmail Web, Gmail Android | Yes | **Partial** | **No** | Strips `<style>` blocks |
+| **Word** | Outlook 2016+, Outlook 365 | **No** | **No** | **No** | VML for backgrounds; no border-radius on images |
+| **Custom** | Yahoo, AOL, Thunderbird | Yes/Partial | **Partial** | **No** | Partial media query support |
 
 ## Dark Mode
 
@@ -76,8 +64,6 @@ email-test-suite-helper.sh test-tls smtp.example.com 587
 | Gmail (iOS) | Partial inversion, respects `color-scheme` meta |
 | Outlook (iOS/Android) | Full inversion, ignores `prefers-color-scheme` |
 | Yahoo | No dark mode support |
-
-**Best practices:**
 
 1. Add `<meta name="color-scheme" content="light dark">`
 2. Add `@media (prefers-color-scheme: dark)` styles
@@ -109,14 +95,7 @@ email-test-suite-helper.sh test-tls smtp.example.com 587
 | 4–5 | Fair — some emails may go to spam |
 | 0–3 | Poor — significant deliverability issues |
 
-## Integration with Health Check
-
-| Tool | Focus |
-|------|-------|
-| `email-health-check-helper.sh` | DNS authentication (SPF, DKIM, DMARC) with graded scoring |
-| `email-test-suite-helper.sh` | Design rendering + delivery infrastructure |
-
-**Recommended workflow:**
+## Recommended Workflow
 
 ```bash
 email-health-check-helper.sh check example.com             # 1. DNS auth
