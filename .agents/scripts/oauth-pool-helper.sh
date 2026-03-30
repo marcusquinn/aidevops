@@ -154,6 +154,52 @@ load_pool() {
 	return 0
 }
 
+# Auto-clear expired cooldowns in the pool JSON.
+# Accounts with status "rate-limited" whose cooldownUntil has passed
+# are reset to "idle" with cooldownUntil cleared.
+# Saves the pool file only if changes were made.
+auto_clear_expired_cooldowns() {
+	if [[ ! -f "$POOL_FILE" ]]; then
+		return 0
+	fi
+	local pool now_ms
+	pool=$(load_pool)
+	now_ms=$(get_now_ms)
+	local result
+	result=$(printf '%s' "$pool" | NOW_MS="$now_ms" python3 -c "
+import sys, json, os
+pool = json.load(sys.stdin)
+now = int(os.environ['NOW_MS'])
+changed = False
+for provider in list(pool.keys()):
+    if provider.startswith('_'):
+        continue
+    accounts = pool.get(provider, [])
+    if not isinstance(accounts, list):
+        continue
+    for acct in accounts:
+        cd = acct.get('cooldownUntil')
+        if cd and isinstance(cd, (int, float)) and cd > 0 and cd <= now:
+            if acct.get('status') == 'rate-limited':
+                acct['status'] = 'idle'
+            acct['cooldownUntil'] = 0
+            changed = True
+if changed:
+    print('CHANGED')
+    json.dump(pool, sys.stdout, indent=2)
+else:
+    print('UNCHANGED')
+" 2>/dev/null)
+	local first_line
+	first_line=$(printf '%s\n' "$result" | head -1)
+	if [[ "$first_line" == "CHANGED" ]]; then
+		local new_pool
+		new_pool=$(printf '%s\n' "$result" | tail -n +2)
+		save_pool "$new_pool"
+	fi
+	return 0
+}
+
 # Save pool JSON (atomic write, 600 perms)
 save_pool() {
 	local json="$1"
@@ -1202,6 +1248,9 @@ cmd_check() {
 		;;
 	esac
 
+	# Auto-clear expired cooldowns before reporting
+	auto_clear_expired_cooldowns
+
 	local pool
 	pool=$(load_pool)
 
@@ -1264,6 +1313,9 @@ cmd_list() {
 		return 1
 		;;
 	esac
+
+	# Auto-clear expired cooldowns before reporting
+	auto_clear_expired_cooldowns
 
 	local pool
 	pool=$(load_pool)
@@ -1882,6 +1934,9 @@ cmd_status() {
 		;;
 	esac
 
+	# Auto-clear expired cooldowns before reporting
+	auto_clear_expired_cooldowns
+
 	local pool
 	pool=$(load_pool)
 
@@ -2292,6 +2347,9 @@ cmd_status() {
 		return 1
 		;;
 	esac
+
+	# Auto-clear expired cooldowns before reporting
+	auto_clear_expired_cooldowns
 
 	local pool
 	pool=$(load_pool)
