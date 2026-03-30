@@ -41,10 +41,6 @@ DISPATCH_CLAIM_WINDOW="${DISPATCH_CLAIM_WINDOW:-8}"
 # Claims older than this are stale and ignored by the lock check.
 DISPATCH_CLAIM_MAX_AGE="${DISPATCH_CLAIM_MAX_AGE:-120}"
 
-# When the oldest active claim belongs to this same runner and is older than
-# this threshold, reclaim the lock by deleting only the fresh duplicate claim.
-DISPATCH_CLAIM_SELF_RECLAIM_AGE="${DISPATCH_CLAIM_SELF_RECLAIM_AGE:-30}"
-
 # Claim comment marker — used as both the posting format and the search pattern.
 # Plain text format: visible in rendered GitHub issue view.
 CLAIM_MARKER="DISPATCH_CLAIM"
@@ -297,10 +293,8 @@ cmd_claim() {
 	fi
 
 	# Step 4: Check if our claim is the oldest
-	local oldest_nonce oldest_runner oldest_age_seconds
+	local oldest_nonce
 	oldest_nonce=$(printf '%s' "$claims" | jq -r '.[0].nonce // ""' 2>/dev/null) || oldest_nonce=""
-	oldest_runner=$(printf '%s' "$claims" | jq -r '.[0].runner // "unknown"' 2>/dev/null) || oldest_runner="unknown"
-	oldest_age_seconds=$(printf '%s' "$claims" | jq -r '.[0].age_seconds // 0' 2>/dev/null) || oldest_age_seconds=0
 
 	if [[ "$oldest_nonce" == "$nonce" ]]; then
 		# We won — our claim is the oldest
@@ -309,16 +303,12 @@ cmd_claim() {
 		return 0
 	fi
 
-	if [[ "$oldest_runner" == "$runner" && "$oldest_age_seconds" -ge "$DISPATCH_CLAIM_SELF_RECLAIM_AGE" ]]; then
-		printf 'CLAIM_RECLAIMED: runner=%s reclaimed stale claim nonce=%s on issue #%s (stale_nonce=%s stale_age_s=%s)\n' \
-			"$runner" "$nonce" "$issue_number" "$oldest_nonce" "$oldest_age_seconds"
-		_delete_comment "$repo_slug" "$comment_id" 2>/dev/null || true
-		return 0
-	fi
-
 	# Step 5: We lost — another runner's claim is older
+	local winner_runner
+	winner_runner=$(printf '%s' "$claims" | jq -r '.[0].runner // "unknown"' 2>/dev/null) || winner_runner="unknown"
+
 	printf 'CLAIM_LOST: runner=%s lost to %s on issue #%s — backing off\n' \
-		"$runner" "$oldest_runner" "$issue_number"
+		"$runner" "$winner_runner" "$issue_number"
 
 	# Clean up our losing claim
 	_delete_comment "$repo_slug" "$comment_id" 2>/dev/null || true
@@ -398,9 +388,6 @@ Usage:
 Environment:
   DISPATCH_CLAIM_WINDOW    Consensus window in seconds (default: 8)
   DISPATCH_CLAIM_MAX_AGE   Max age of claim comments in seconds (default: 120)
-  DISPATCH_CLAIM_SELF_RECLAIM_AGE
-                           Same-runner stale-claim reclaim threshold in
-                           seconds (default: 30)
 
 Protocol:
   1. Runner posts plain-text claim comment with unique nonce

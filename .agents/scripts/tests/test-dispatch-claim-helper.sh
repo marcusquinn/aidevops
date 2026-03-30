@@ -37,116 +37,6 @@ run_helper() {
 	return 0
 }
 
-#######################################
-# Generate an ISO 8601 UTC timestamp N seconds ago.
-# Args: $1 = seconds ago
-# Returns: timestamp via stdout
-#######################################
-iso_seconds_ago() {
-	local seconds_ago="$1"
-	python3 - "$seconds_ago" <<'PY'
-import datetime
-import sys
-
-seconds = int(sys.argv[1])
-ts = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=seconds)
-print(ts.strftime("%Y-%m-%dT%H:%M:%SZ"))
-PY
-	return 0
-}
-
-#######################################
-# Build a mock gh executable for claim protocol tests.
-# Uses env vars:
-#   MOCK_GH_STATE_DIR, MOCK_OLD_CLAIM_CREATED_AT, MOCK_NEW_CLAIM_CREATED_AT,
-#   MOCK_OLD_CLAIM_RUNNER
-# Returns: path to mock gh directory via stdout
-#######################################
-create_mock_gh() {
-	local state_dir="$1"
-	local mock_bin_dir
-	mock_bin_dir="${state_dir}/bin"
-	mkdir -p "$mock_bin_dir"
-
-	cat >"${mock_bin_dir}/gh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-local_state_dir="${MOCK_GH_STATE_DIR:?}"
-post_body_file="${local_state_dir}/post_body.txt"
-delete_log_file="${local_state_dir}/delete_ids.log"
-
-if [[ "${1:-}" != "api" ]]; then
-	exit 1
-fi
-shift
-
-endpoint="${1:-}"
-shift || true
-
-if [[ "$endpoint" == "user" ]]; then
-	printf 'mockrunner\n'
-	exit 0
-fi
-
-if [[ "$endpoint" == repos/*/issues/*/comments ]]; then
-	method="GET"
-	body=""
-	while [[ "$#" -gt 0 ]]; do
-		case "$1" in
-		--method)
-			method="$2"
-			shift 2
-			;;
-		--field)
-			if [[ "$2" == body=* ]]; then
-				body="${2#body=}"
-			fi
-			shift 2
-			;;
-		--jq)
-			shift 2
-			;;
-		*)
-			shift
-			;;
-		esac
-	done
-
-	if [[ "$method" == "POST" ]]; then
-		printf '%s' "$body" >"$post_body_file"
-		printf '999\n'
-		exit 0
-	fi
-
-	if [[ -f "$post_body_file" ]]; then
-		new_body=$(<"$post_body_file")
-	else
-		new_body=""
-	fi
-
-	printf '[{"id":1,"body":"DISPATCH_CLAIM nonce=old-nonce runner=%s ts=%s max_age_s=120","created_at":"%s"},{"id":999,"body":"%s","created_at":"%s"}]\n' \
-		"${MOCK_OLD_CLAIM_RUNNER:?}" \
-		"${MOCK_OLD_CLAIM_CREATED_AT:?}" \
-		"${MOCK_OLD_CLAIM_CREATED_AT:?}" \
-		"$new_body" \
-		"${MOCK_NEW_CLAIM_CREATED_AT:?}"
-	exit 0
-fi
-
-if [[ "$endpoint" == repos/*/issues/comments/* ]]; then
-	comment_id="${endpoint##*/}"
-	printf '%s\n' "$comment_id" >>"$delete_log_file"
-	exit 0
-fi
-
-exit 1
-EOF
-	chmod +x "${mock_bin_dir}/gh"
-	printf '%s' "$mock_bin_dir"
-	return 0
-}
-
 print_result() {
 	local test_name="$1"
 	local passed="$2"
@@ -261,8 +151,8 @@ test_dedup_claim_routing() {
 test_env_var_defaults() {
 	# Source the helper to check defaults (without executing main)
 	local output
-	output=$(DISPATCH_CLAIM_WINDOW=15 DISPATCH_CLAIM_MAX_AGE=300 DISPATCH_CLAIM_SELF_RECLAIM_AGE=45 \
-		bash -c 'source "'"$CLAIM_HELPER"'" 2>/dev/null; echo "window=$DISPATCH_CLAIM_WINDOW max_age=$DISPATCH_CLAIM_MAX_AGE self_reclaim=$DISPATCH_CLAIM_SELF_RECLAIM_AGE"' 2>/dev/null || true)
+	output=$(DISPATCH_CLAIM_WINDOW=15 DISPATCH_CLAIM_MAX_AGE=300 \
+		bash -c 'source "'"$CLAIM_HELPER"'" 2>/dev/null; echo "window=$DISPATCH_CLAIM_WINDOW max_age=$DISPATCH_CLAIM_MAX_AGE"' 2>/dev/null || true)
 
 	if printf '%s' "$output" | grep -q "window=15"; then
 		print_result "DISPATCH_CLAIM_WINDOW env var respected" 0
@@ -274,104 +164,6 @@ test_env_var_defaults() {
 		print_result "DISPATCH_CLAIM_MAX_AGE env var respected" 0
 	else
 		print_result "DISPATCH_CLAIM_MAX_AGE env var respected" 1 "got: $output"
-	fi
-
-	if printf '%s' "$output" | grep -q "self_reclaim=45"; then
-		print_result "DISPATCH_CLAIM_SELF_RECLAIM_AGE env var respected" 0
-	else
-		print_result "DISPATCH_CLAIM_SELF_RECLAIM_AGE env var respected" 1 "got: $output"
-	fi
-	return 0
-}
-
-#######################################
-# Test: stale same-runner oldest claim is reclaimed successfully
-#######################################
-test_claim_reclaims_stale_same_runner_claim() {
-	local tmp_dir
-	tmp_dir="$(mktemp -d)"
-	local mock_path
-	mock_path="$(create_mock_gh "$tmp_dir")"
-
-	local old_created_at new_created_at output exit_code
-	old_created_at="$(iso_seconds_ago 45)"
-	new_created_at="$(iso_seconds_ago 1)"
-
-	set +e
-	output=$(PATH="${mock_path}:$PATH" \
-		MOCK_GH_STATE_DIR="$tmp_dir" \
-		MOCK_OLD_CLAIM_CREATED_AT="$old_created_at" \
-		MOCK_NEW_CLAIM_CREATED_AT="$new_created_at" \
-		MOCK_OLD_CLAIM_RUNNER="marcusquinn" \
-		DISPATCH_CLAIM_WINDOW=0 \
-		DISPATCH_CLAIM_SELF_RECLAIM_AGE=30 \
-		"$CLAIM_HELPER" claim 42 owner/repo marcusquinn 2>&1)
-	exit_code=$?
-	set -e
-
-	if [[ "$exit_code" -eq 0 ]]; then
-		print_result "stale same-runner claim exits 0" 0
-	else
-		print_result "stale same-runner claim exits 0" 1 "got exit $exit_code output: $output"
-	fi
-
-	if printf '%s' "$output" | grep -q "CLAIM_RECLAIMED:"; then
-		print_result "stale same-runner claim emits CLAIM_RECLAIMED" 0
-	else
-		print_result "stale same-runner claim emits CLAIM_RECLAIMED" 1 "output: $output"
-	fi
-
-	if [[ -f "${tmp_dir}/delete_ids.log" ]] && grep -q '^999$' "${tmp_dir}/delete_ids.log"; then
-		print_result "stale reclaim deletes only fresh duplicate claim" 0
-	else
-		print_result "stale reclaim deletes only fresh duplicate claim" 1 "missing delete id 999"
-	fi
-
-	rm -rf "$tmp_dir"
-	return 0
-}
-
-#######################################
-# Test: fresh same-runner oldest claim still loses
-#######################################
-test_claim_loses_on_fresh_same_runner_claim() {
-	local tmp_dir
-	tmp_dir="$(mktemp -d)"
-	local mock_path
-	mock_path="$(create_mock_gh "$tmp_dir")"
-
-	local old_created_at new_created_at output exit_code
-	old_created_at="$(iso_seconds_ago 10)"
-	new_created_at="$(iso_seconds_ago 1)"
-
-	set +e
-	output=$(PATH="${mock_path}:$PATH" \
-		MOCK_GH_STATE_DIR="$tmp_dir" \
-		MOCK_OLD_CLAIM_CREATED_AT="$old_created_at" \
-		MOCK_NEW_CLAIM_CREATED_AT="$new_created_at" \
-		MOCK_OLD_CLAIM_RUNNER="marcusquinn" \
-		DISPATCH_CLAIM_WINDOW=0 \
-		DISPATCH_CLAIM_SELF_RECLAIM_AGE=30 \
-		"$CLAIM_HELPER" claim 42 owner/repo marcusquinn 2>&1)
-	exit_code=$?
-	set -e
-
-	if [[ "$exit_code" -eq 1 ]]; then
-		print_result "fresh same-runner claim exits 1" 0
-	else
-		print_result "fresh same-runner claim exits 1" 1 "got exit $exit_code output: $output"
-	fi
-
-	if printf '%s' "$output" | grep -q "CLAIM_LOST: runner=marcusquinn lost to marcusquinn"; then
-		print_result "fresh same-runner claim emits CLAIM_LOST" 0
-	else
-		print_result "fresh same-runner claim emits CLAIM_LOST" 1 "output: $output"
-	fi
-
-	if [[ -f "${tmp_dir}/delete_ids.log" ]] && grep -q '^999$' "${tmp_dir}/delete_ids.log"; then
-		print_result "fresh same-runner loss deletes fresh claim" 0
-	else
-		print_result "fresh same-runner loss deletes fresh claim" 1 "missing delete id 999"
 	fi
 	return 0
 }
@@ -390,8 +182,6 @@ main() {
 	test_unknown_command
 	test_dedup_claim_routing
 	test_env_var_defaults
-	test_claim_reclaims_stale_same_runner_claim
-	test_claim_loses_on_fresh_same_runner_claim
 
 	echo ""
 	echo "Results: ${TESTS_RUN} tests, ${TESTS_FAILED} failed"
