@@ -4,15 +4,13 @@
 
 Every ad impression triggers an auction. Winner = highest **Total Value**:
 
-```
+```text
 Total Value = Bid × Estimated Action Rate × Ad Quality
 ```
 
 **Bid strategies:** Lowest Cost (default), Cost Cap, Bid Cap, ROAS Target.
 
-**Estimated Action Rate (EAR)** — Meta's ML prediction that this user will convert on this ad. Inputs: campaign history, user behavior, creative, landing page, time/device/placement, and hundreds more signals. This is why creative matters so much.
-
-ML prediction draws on three data categories:
+**Estimated Action Rate (EAR)** — Meta's ML prediction of conversion probability. Inputs:
 - **User data**: demographics, interests, purchase history, device patterns, social connections
 - **Ad data**: account history, creative content analysis, landing page quality, CAPI/Pixel data
 - **Contextual data**: time of day, seasonality, competitive landscape
@@ -21,26 +19,19 @@ ML prediction draws on three data categories:
 
 **Auction example:**
 
-```
+```text
 Ad A: $3 bid × 2% EAR × 0.8 quality = 0.048
 Ad B: $2 bid × 3% EAR × 1.0 quality = 0.060  ← wins despite lowest bid
 Ad C: $5 bid × 1% EAR × 0.7 quality = 0.035
 ```
 
-**Implications:** Better creative lowers effective cost. Poor ads cost MORE to deliver. Relevance beats budget.
+**Implications:** Better creative lowers effective cost. Poor ads cost MORE. Relevance beats budget.
 
-**Help the algorithm learn:**
-- Give it clear conversion signals (Pixel + CAPI)
-- Use consistent creative so it learns what works
-- Feed quality data (good customers, not just leads)
-- Let campaigns run long enough to learn
-- Don't fragment budgets; don't fight it with overly narrow targeting
+**Help the algorithm:** Clear conversion signals (Pixel + CAPI); consistent creative; quality data (customers, not just leads); sufficient run time; don't fragment budgets or over-narrow targeting.
 
 ## The Learning Phase
 
-On launch or significant changes, Meta enters a Learning Phase to build a prediction model for your ad.
-
-**Exit criteria:** 50 optimization events in 7 days, OR 7 days elapsed. Expect 20–50% higher CPAs and inconsistent performance during learning.
+On launch or significant changes, Meta builds a new prediction model. **Exit:** 50 optimization events in 7 days OR 7 days elapsed. Expect 20–50% higher CPAs and inconsistent delivery during learning.
 
 **Learning Limited** — not enough optimization events. Causes and fixes:
 
@@ -68,15 +59,15 @@ On launch or significant changes, Meta enters a Learning Phase to build a predic
 
 ## Account History & Trust
 
-Established accounts get faster learning, better predictions, delivery priority, lower CPMs, and feature access. New accounts face longer learning, higher initial CPAs, and more scrutiny.
+Established accounts: faster learning, better predictions, delivery priority, lower CPMs, feature access. New accounts: longer learning, higher initial CPAs, more scrutiny.
 
-**Build trust:** Consistent spend, low refund/chargeback rates, policy compliance, positive engagement, successful payment history.
+**Build trust:** Consistent spend, low refund/chargeback rates, policy compliance, positive engagement, clean payment history.
 
-**Seasoning new accounts:** Start at $50–100/day, run 2–4 weeks before aggressive scaling, focus on quality conversions, avoid policy-edge content initially.
+**Season new accounts:** $50–100/day for 2–4 weeks; quality conversions; avoid policy-edge content.
 
 ## Pixel Data & Its Impact
 
-Every Pixel fire teaches Meta what converts, what doesn't, content preferences, timing patterns, and device/placement signals.
+Each Pixel fire trains Meta on conversions, content preferences, timing, and device/placement signals.
 
 **Essential events (in priority order for AEM):**
 
@@ -99,15 +90,15 @@ Every Pixel fire teaches Meta what converts, what doesn't, content preferences, 
 
 Apple's iOS 14+ forced Meta to AEM: 8 events max per domain, 72-hour delayed reporting, ~20–30% modeled conversions, no user-level data.
 
-**Working within AEM:** Verify your domain in Business Settings. Rank your 8 events by business importance — if a user completes multiple events, only the highest priority counts. Compare trends, not absolute numbers (~70–80% directly tracked, ~20–30% statistically modeled).
+**Working within AEM:** Verify domain in Business Settings. Rank 8 events by importance — only highest priority counts per user. Compare trends, not absolutes (~70–80% directly tracked, ~20–30% modeled).
 
 ## Conversion API (CAPI)
 
-CAPI sends conversion data server-to-server, bypassing ad blockers (20–30% of users), iOS ATT (80%+ opt-out), and browser privacy features.
+CAPI sends conversion data server-to-server, bypassing ad blockers (20–30% of users), iOS ATT (80%+ opt-out), and browser privacy restrictions.
 
 **Use Pixel + CAPI together** — Meta deduplicates via `event_id`:
 
-```
+```text
 User converts → Pixel fires (client) + CAPI fires (server) → Meta deduplicates → 1 conversion recorded
 ```
 
@@ -120,19 +111,13 @@ User converts → Pixel fires (client) + CAPI fires (server) → Meta deduplicat
 | Custom server integration | Hard | Dev time | Best |
 | Third-party (Segment, etc.) | Medium | $200+/mo | Great |
 
-**Required CAPI parameters:** `event_name`, `event_time`, `action_source`, `event_source_url`, `user_data` (hashed: `em`, `ph`, `fn`, `ln`; cookies: `fbp`, `fbc`). Higher match rate = better optimization.
-
-Check CAPI quality in Events Manager → Data Sources → Select Pixel → Overview.
+**Required CAPI parameters:** `event_name`, `event_time`, `action_source`, `event_source_url`, `user_data` (hashed: `em`, `ph`, `fn`, `ln`; cookies: `fbp`, `fbc`). Higher match rate = better optimization. Check quality: Events Manager → Data Sources → Pixel → Overview.
 
 ## The 2026 Algorithm Reality
 
 **The shift:** Manual interest/behavior targeting → broad targeting with AI finding buyers. Creative IS targeting now.
 
-**What this means:**
-1. Broad audiences often beat detailed targeting — let the algorithm learn from conversion data
-2. Creative quality drives 70–80% of performance — algorithm optimizes delivery, you control the message
-3. CAPI is mandatory — first-party data is gold, conversion quality > quantity
-4. Think systems: Testing → Scaling → Retargeting as a continuous loop
+**What this means:** Broad audiences often beat detailed targeting. Creative drives 70–80% of performance. CAPI is mandatory — conversion quality > quantity. Think systems: Testing → Scaling → Retargeting.
 
 **Advantage+ features:**
 
@@ -143,7 +128,7 @@ Check CAPI quality in Events Manager → Data Sources → Select Pixel → Overv
 | Advantage+ Creative | AI tests variations | When you have volume |
 | Advantage+ Shopping | Full auto ecom | Ecom with 50+ purchases/week |
 
-Manual targeting still wins for: very niche B2B, creative testing requiring control, specific placement requirements, limited conversion data.
+Manual targeting wins for: niche B2B, controlled creative testing, specific placement requirements, limited conversion data.
 
 ---
 
