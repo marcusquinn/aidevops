@@ -3,12 +3,8 @@ description: Browser automation tool selection and usage guide
 mode: subagent
 tools:
   read: true
-  write: false
-  edit: false
   bash: true
-  glob: true
   grep: true
-  webfetch: true
   task: true
 ---
 
@@ -16,7 +12,7 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
-## Tool Selection: Decision Tree
+## Decision Tree
 
 Prefer: fastest tool → ARIA snapshots over screenshots (50-200 tokens vs ~1K) → headless over headed → CLI for AI agents. Playwriter is always headed (attaches to your browser).
 
@@ -59,28 +55,26 @@ const elements = await page.evaluate(() =>
 );
 ```
 
-## Performance Benchmarks (2026-01-24, macOS ARM64, headless, warm daemon)
+## Benchmarks (2026-01-24, macOS ARM64, headless, warm daemon)
 
-Reproduce: `browser-benchmark.md`.
+Reproduce: `browser-benchmark.md`. Overhead: dev-browser +0.1-0.4s | agent-browser +0.5-1.5s (cold) | Stagehand +1-5s (AI) | Playwriter +1-2s (CDP).
 
 | Test | Playwright | dev-browser | agent-browser | Crawl4AI | Playwriter | Stagehand |
 |------|-----------|-------------|---------------|----------|------------|-----------|
 | Navigate + Screenshot | **1.43s** | 1.39s | 1.90s | 2.78s | 2.95s | 7.72s |
 | Form Fill (4 fields) | **0.90s** | 1.34s | 1.37s | N/A | 2.24s | 2.58s |
-| Data Extraction (5 items) | 1.33s | **1.08s** | 1.53s | 2.53s | 2.68s | 3.48s |
-| Multi-step (click + nav) | **1.49s** | 1.49s | 3.06s | N/A | 4.37s | 4.48s |
-
-**Overhead**: dev-browser +0.1-0.4s | agent-browser +0.5-1.5s (cold-start) | Stagehand +1-5s (AI) | Playwriter +1-2s (CDP)
+| Data Extract (5 items) | 1.33s | **1.08s** | 1.53s | 2.53s | 2.68s | 3.48s |
+| Multi-step (click+nav) | **1.49s** | 1.49s | 3.06s | N/A | 4.37s | 4.48s |
 
 ## Feature Matrix
 
 | Feature | Playwright | playwright-cli | dev-browser | agent-browser | Crawl4AI | Playwriter | Stagehand |
 |---------|-----------|----------------|-------------|---------------|----------|------------|-----------|
 | Headless | Yes | Yes | Yes | Yes | Yes | No | Yes |
-| Session persistence | storageState | Profile dir | Profile dir | state save/load | user_data_dir | Your browser | Per-instance |
+| Session persist | storageState | Profile dir | Profile dir | state save/load | user_data_dir | Your browser | Per-instance |
 | Proxy | Full | No | Via args | No | Full | Your browser | Via args |
 | Extensions | Yes | No | Yes | No | No | Yes | Possible |
-| Self-healing / NL | No | No | No | No | LLM only | No | Yes |
+| Self-healing/NL | No | No | No | No | LLM only | No | Yes |
 | Setup | npm install | npm install -g | Server running | npm install | pip/Docker | Extension click | npm + API key |
 
 ## Parallel Sessions
@@ -92,7 +86,7 @@ Reproduce: `browser-benchmark.md`.
 | Crawl4AI | `arun_many(urls)` | 5 pages: 3.0s (1.7x) | Shared or isolated |
 | dev-browser | `client.page("name")` | Fast | Shared profile |
 
-## Extensions and Password Managers
+## Extensions
 
 uBlock Origin in Playwright/dev-browser:
 
@@ -104,20 +98,18 @@ const context = await chromium.launchPersistentContext('/tmp/browser-profile', {
 });
 ```
 
-## Custom Browser Engines
+## Custom Browsers
 
-Playwright, Playwriter, Crawl4AI, Stagehand support Brave/Edge/Chrome/Mullvad. playwright-cli, agent-browser, WaterCrawl: bundled Chromium only. macOS paths: `/Applications/{Brave Browser,Microsoft Edge,Google Chrome}.app/Contents/MacOS/{name}` · Mullvad: `/Applications/Mullvad Browser.app/Contents/MacOS/mullvadbrowser`. Config: `~/.config/aidevops/browser-prefs.json`.
+Brave/Edge/Chrome/Mullvad: Playwright, Playwriter, Crawl4AI, Stagehand. Bundled Chromium only: playwright-cli, agent-browser, WaterCrawl. macOS: `/Applications/{Brave Browser,Microsoft Edge,Google Chrome}.app/Contents/MacOS/{name}` · Mullvad: `/Applications/Mullvad Browser.app/Contents/MacOS/mullvadbrowser`. Config: `~/.config/aidevops/browser-prefs.json`.
 
-## Chrome DevTools MCP
+## Debugging
 
 ```bash
+# Chrome DevTools MCP
 npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222  # dev-browser
 npx chrome-devtools-mcp@latest --headless                           # own Chrome
-```
 
-## Visual Debugging
-
-```bash
+# Visual debugging
 agent-browser screenshot /tmp/debug.png && agent-browser errors && agent-browser snapshot -i
 ```
 
@@ -125,12 +117,6 @@ agent-browser screenshot /tmp/debug.png && agent-browser errors && agent-browser
 
 > **Screenshot limit**: Never `fullPage: true` for AI vision — can exceed 8000px (hard-rejected). Resize: `magick screenshot.png -resize "1568x1568>" out.png`. See `prompts/build.txt`.
 
-## Ethical Guidelines
-
-Respect ToS, rate limit (2-5s delays), no spam, legitimate use only, no personal data without consent.
-
 <!-- AI-CONTEXT-END -->
 
-## Usage by Tool
-
-Per-tool docs with full examples: `playwright.md` · `playwright-cli.md` · `dev-browser.md` · `agent-browser.md` · `crawl4ai.md` · `playwriter.md` · `stagehand.md`
+Per-tool docs: `playwright.md` · `playwright-cli.md` · `dev-browser.md` · `agent-browser.md` · `crawl4ai.md` · `playwriter.md` · `stagehand.md`. Ethics: respect ToS, rate limit (2-5s delays), no spam, legitimate use only, no personal data without consent.
