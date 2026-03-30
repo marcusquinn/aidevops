@@ -21,9 +21,8 @@ tools:
 - **Helper**: `.agents/scripts/fly-io-helper.sh <cmd> <app> [args]` — `deploy`, `scale <N>`, `status`, `secrets`, `volumes`, `logs`, `machines list`, `ssh`, `postgres <db> status`, `apps`
 - **Config**: `fly.toml` (per-app, repo root) | [Dashboard](https://fly.io/dashboard) | [Docs](https://fly.io/docs/) | [Pricing](https://fly.io/docs/about/pricing/)
 - **Concepts**: Fly Machines (Firecracker micro-VMs), anycast routing, auto-stop/start, Sprites (AI sandboxes), Tigris (S3-compatible storage)
-
-**Best for**: low-latency global apps, AI sandboxes, Elixir/Phoenix, multi-region DBs (LiteFS/Fly Postgres), GPU inference.
-**Not for**: serverless functions (CF Workers), static-only sites (CF Pages), Kubernetes-native, Windows containers.
+- **Best for**: low-latency global apps, AI sandboxes, Elixir/Phoenix, multi-region DBs (LiteFS/Fly Postgres), GPU inference
+- **Not for**: serverless functions (CF Workers), static-only sites (CF Pages), Kubernetes-native, Windows containers
 
 ## fly.toml
 
@@ -66,11 +65,7 @@ fly ssh console --app my-app [--command "rails db:migrate"]
 fly status --app my-app                        # Overview + health
 fly logs --app my-app                          # Stream logs
 fly config validate --app my-app               # Validate fly.toml
-```
-
-**Machines REST API** — base: `https://api.machines.dev`, token: `fly tokens create`:
-
-```bash
+# Machines REST API — base: https://api.machines.dev, token: fly tokens create
 curl "${FLY_API_HOSTNAME}/v1/apps/{app}/machines[/{id}[/{action}]]" \
   -H "Authorization: Bearer ${FLY_API_TOKEN}" [-d '{"signal":"SIGTERM","timeout":"30s"}']
 ```
@@ -126,7 +121,7 @@ fly redis attach my-redis --app my-app         # Sets REDIS_URL
 
 ## Sprites (AI Agent Sandboxes)
 
-Isolated ephemeral Machines for untrusted AI agent code. TypeScript SDK: `@fly/sprites` ([Sprites SDK](https://github.com/superfly/sprites-js)).
+TypeScript SDK: `@fly/sprites` ([Sprites SDK](https://github.com/superfly/sprites-js)).
 
 ```bash
 fly machines run my-image --app my-sprites-app --region lhr \
