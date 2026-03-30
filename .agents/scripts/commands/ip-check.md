@@ -19,6 +19,8 @@ Arguments: $ARGUMENTS
 | `1.2.3.4 --no-cache` | Bypass cache | `ip-reputation-helper.sh check "$IP" --no-cache` |
 | _(no args)_ | Show usage | |
 
+Ops subcommands: `providers`, `cache-stats`, `cache-clear [--provider P] [--ip IP]`, `rate-limit-status`, `help`.
+
 All commands: `~/.aidevops/agents/scripts/ip-reputation-helper.sh`
 
 ## Output Format
@@ -37,7 +39,7 @@ Providers (8/10 responded):
 Flags: Tor=NO  Proxy=NO  VPN=NO
 ```
 
-Providers: Spamhaus DNSBL, ProxyCheck.io, StopForumSpam, Blocklist.de, GreyNoise, AbuseIPDB, IPQualityScore, Scamalytics.
+Supported providers: Spamhaus DNSBL, ProxyCheck.io, StopForumSpam, Blocklist.de, GreyNoise, AbuseIPDB, IPQualityScore, Scamalytics.
 
 After presenting results, offer follow-up: full report, single-provider recheck, batch check, raw JSON, cache-clear recheck.
 
