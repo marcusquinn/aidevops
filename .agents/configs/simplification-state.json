@@ -2237,9 +2237,9 @@
       "pr": 13509
     },
     ".agents/tools/deployment/fly-io.md": {
-      "hash": "a253a5662c26417905411ed3cc1b2848de5df412",
-      "at": "2026-03-29T15:50:23Z",
-      "pr": 13053
+      "hash": "9f909cc457859b48bda12935f7a39f40ec9df3d2",
+      "at": "2026-03-30T01:50:36Z",
+      "pr": 13563
     },
     ".agents/tools/design/brand-identity.md": {
       "hash": "38405b39bf138bc9063395546f92ff1634cb96ec",
@@ -2382,9 +2382,9 @@
       "pr": 13113
     },
     ".agents/workflows/sql-migrations.md": {
-      "hash": "b257f173bcb4bac0f527d4e1e34c7f358ac6ced0",
-      "at": "2026-03-29T23:53:54Z",
-      "pr": 13456
+      "hash": "bef81496721c1b74e3b3f78d0f0d6dfb684c4e54",
+      "at": "2026-03-30T01:50:42Z",
+      "pr": 13485
     },
     ".agents/tools/voice/qwen3-tts.md": {
       "hash": "5e96cd787b4b8b6ae97d6f3113978c0b334e5484",
