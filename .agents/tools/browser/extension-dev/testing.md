@@ -14,7 +14,7 @@ tools:
 
 # Extension Testing - Cross-Browser QA
 
-**Testing tool decision tree**:
+**Decision tree**:
 
 ```text
 E2E with extension loaded?   → Playwright (Chromium only)
@@ -27,16 +27,14 @@ Cross-browser verification?  → Chrome + Firefox + Edge (manual or CI)
 
 ## Unit Tests
 
-Test business logic in isolation (message parsing, storage, data transforms, API clients):
-
 ```bash
 npm run test   # Vitest (recommended with WXT)
 npx jest       # Jest alternative
 ```
 
-## E2E Testing with Playwright
+## E2E Testing (Playwright)
 
-Playwright loads unpacked extensions in Chromium only (not Firefox):
+Playwright loads unpacked extensions in Chromium only (headed mode required, not Firefox):
 
 ```typescript
 import { test, chromium } from '@playwright/test';
@@ -45,7 +43,7 @@ import path from 'path';
 test('extension popup works', async () => {
   const pathToExtension = path.resolve('.output/chrome-mv3');
   const context = await chromium.launchPersistentContext('', {
-    headless: false, // Extensions require headed mode
+    headless: false,
     args: [
       `--disable-extensions-except=${pathToExtension}`,
       `--load-extension=${pathToExtension}`,
@@ -69,6 +67,21 @@ test('extension popup works', async () => {
 });
 ```
 
+## Debugging
+
+| Target | How |
+|--------|-----|
+| Service Worker | `chrome://extensions` → find extension → "Inspect views: service worker" |
+| Content Scripts | DevTools (F12) → Sources → Content scripts → set breakpoints |
+| Popup | Right-click extension icon → "Inspect popup" |
+
+**Storage inspection** (DevTools console in any extension context):
+
+```javascript
+chrome.storage.local.get(null, console.log);
+chrome.storage.sync.get(null, console.log);
+```
+
 ## Manual Testing Checklist
 
 | Check | Chrome (`.output/chrome-mv3/`) | Firefox (`.output/firefox-mv2/`) | Edge (`.output/chrome-mv3/`) |
@@ -84,21 +97,6 @@ test('extension popup works', async () => {
 | No console errors | ☐ | ☐ | ☐ |
 
 Firefox: load temporary add-on from `.output/firefox-mv2/` (or MV3). Edge: same build as Chrome.
-
-## Debugging
-
-**Service Worker**: `chrome://extensions` → find extension → "Inspect views: service worker"
-
-**Content Scripts**: DevTools (F12) → Sources → Content scripts → set breakpoints
-
-**Popup**: Right-click extension icon → "Inspect popup"
-
-**Storage** (DevTools console in any extension context):
-
-```javascript
-chrome.storage.local.get(null, console.log);
-chrome.storage.sync.get(null, console.log);
-```
 
 ## Cross-Browser CI
 
@@ -121,20 +119,17 @@ jobs:
 
 ## Pre-Submission Checklist
 
-- [ ] All unit tests pass
-- [ ] E2E tests pass in Chrome
+- [ ] All unit tests pass; E2E tests pass in Chrome
 - [ ] Manual testing complete in Firefox and Edge
 - [ ] No console errors or warnings
-- [ ] Permissions are minimal and justified
-- [ ] Content Security Policy is configured
+- [ ] Permissions minimal and justified; CSP configured
 - [ ] No hardcoded API keys or secrets
 - [ ] Extension works in incognito mode (if applicable)
-- [ ] Extension handles offline gracefully
-- [ ] Memory usage is reasonable (check via Task Manager)
+- [ ] Handles offline gracefully; memory usage reasonable
 
 ## Related
 
-- `tools/browser/extension-dev/development.md` - Development setup
-- `tools/browser/extension-dev/publishing.md` - Store submission
-- `tools/browser/playwright.md` - Playwright testing
-- `tools/browser/chrome-devtools.md` - Chrome DevTools
+- `tools/browser/extension-dev/development.md` — Development setup
+- `tools/browser/extension-dev/publishing.md` — Store submission
+- `tools/browser/playwright.md` — Playwright testing
+- `tools/browser/chrome-devtools.md` — Chrome DevTools
