@@ -31,7 +31,7 @@ tools:
 
 **Usage**: `./.agents/scripts/coolify-cli-helper.sh [command] [context] [args]`
 
-**Databases**: PostgreSQL, MySQL, MongoDB, Redis, ClickHouse, KeyDB
+**Databases**: PostgreSQL, MySQL, MongoDB, Redis, ClickHouse, KeyDB  
 **Frameworks**: Node.js, PHP, Python, Docker, static sites
 
 **Local Dev** (no Coolify): `./.agents/scripts/coolify-cli-helper.sh dev local ./app 3000`
@@ -42,14 +42,12 @@ tools:
 
 ```bash
 cp configs/coolify-cli-config.json.txt configs/coolify-cli-config.json
-
-# Add contexts
 ./.agents/scripts/coolify-cli-helper.sh add-context production https://coolify.example.com your-api-token true
 ./.agents/scripts/coolify-cli-helper.sh add-context staging https://staging.coolify.example.com staging-token
 ./.agents/scripts/coolify-cli-helper.sh list-contexts
 ```
 
-Multi-context config structure (`configs/coolify-cli-config.json`):
+Config structure (`configs/coolify-cli-config.json`):
 
 ```json
 {
@@ -73,45 +71,32 @@ Multi-context config structure (`configs/coolify-cli-config.json`):
 
 ## Usage
 
-### Local Development (no Coolify required)
-
-Auto-detects project type (Node.js `package.json`, Dockerfile/docker-compose, static HTML):
+Auto-detects project type (Node.js `package.json`, Dockerfile/docker-compose, static HTML) for local dev.
 
 ```bash
+# Local dev (no Coolify required)
 ./.agents/scripts/coolify-cli-helper.sh dev local ./my-app 3000
 ./.agents/scripts/coolify-cli-helper.sh build local ./my-app
-```
 
-### Application Management
-
-```bash
+# Apps
 ./.agents/scripts/coolify-cli-helper.sh list-apps production
 ./.agents/scripts/coolify-cli-helper.sh deploy production my-app          # deploy
 ./.agents/scripts/coolify-cli-helper.sh deploy production my-app true     # force deploy
 ./.agents/scripts/coolify-cli-helper.sh get-app production app-uuid-here
-```
 
-### Server Management
-
-```bash
+# Servers
 ./.agents/scripts/coolify-cli-helper.sh list-servers production
 # add-server: context name ip key-uuid port user validate
 ./.agents/scripts/coolify-cli-helper.sh add-server production myserver 192.168.1.100 key-uuid 22 root true
-```
 
-### Database Management
-
-```bash
+# Databases
 ./.agents/scripts/coolify-cli-helper.sh list-databases production
 # create-db: context type server-uuid project-uuid environment name instant-deploy
 ./.agents/scripts/coolify-cli-helper.sh create-db production postgresql server-uuid project-uuid main mydb true
 ./.agents/scripts/coolify-cli-helper.sh create-db production redis       server-uuid project-uuid main redis-cache true
 ./.agents/scripts/coolify-cli-helper.sh create-db production mongodb     server-uuid project-uuid main mongo-db true
-```
 
-### Monitoring
-
-```bash
+# Monitoring (native coolify CLI)
 coolify app logs app-uuid
 coolify deploy list
 coolify server get server-uuid --resources
