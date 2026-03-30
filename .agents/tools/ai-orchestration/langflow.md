@@ -13,22 +13,16 @@ tools:
 
 # Langflow - Visual AI Workflow Builder
 
-<!-- AI-CONTEXT-START -->
-
 ## Quick Reference
 
-- **Purpose**: Visual drag-and-drop builder for AI-powered agents and workflows
-- **License**: MIT (fully open-source, commercial use permitted)
+- **Purpose**: Visual drag-and-drop builder for AI-powered agents and workflows (MIT, commercial use permitted)
 - **Setup**: `bash .agents/scripts/langflow-helper.sh setup`
 - **Start/Stop/Status**: `~/.aidevops/scripts/start-langflow.sh` / `stop-langflow.sh` / `langflow-status.sh`
 - **URL**: http://localhost:7860 | **API Docs**: http://localhost:7860/docs | **Health**: http://localhost:7860/health
-- **Config**: `~/.aidevops/langflow/.env`
-- **Install**: `pip install langflow` in venv at `~/.aidevops/langflow/venv/`
+- **Config**: `~/.aidevops/langflow/.env` | **venv**: `~/.aidevops/langflow/venv/`
 - **Privacy**: Flows stored locally, optional cloud sync
-
-**Key Features**: Drag-and-drop flow builder, Python code export, MCP server support, LangChain integration, local LLM (Ollama)
-
-<!-- AI-CONTEXT-END -->
+- **Docs**: https://docs.langflow.org | **GitHub**: https://github.com/langflow-ai/langflow
+- **Templates**: https://www.langflow.org/templates | **Discord**: https://discord.gg/EqksyE2EX9
 
 ## Installation
 
@@ -107,6 +101,11 @@ Open http://localhost:7860 → "New Flow" or template → drag components from s
                              → [Aggregator] → [Output]
 ```
 
+**Integrations:**
+
+- **CrewAI**: Custom component importing CrewAI, define agents/tasks, connect to Langflow components
+- **aidevops workflows**: `langflow export --flow-id <id> --output flows/devops-automation.json` then commit to git
+
 ## API Integration
 
 **REST API:**
@@ -177,15 +176,3 @@ volumes:
 | Database errors | `rm ~/.aidevops/langflow/langflow.db && langflow run` |
 | Component not loading | `python -c "from components.my_component import MyCustomComponent"` |
 | Debug logs | `LANGFLOW_LOG_LEVEL=DEBUG langflow run` or `tail -f ~/.aidevops/langflow/langflow.log` |
-
-## Integrations
-
-- **CrewAI**: Custom component importing CrewAI, define agents/tasks, connect to Langflow components
-- **aidevops workflows**: `langflow export --flow-id <id> --output flows/devops-automation.json` then commit to git
-
-## Resources
-
-- **Docs**: https://docs.langflow.org
-- **GitHub**: https://github.com/langflow-ai/langflow
-- **Discord**: https://discord.gg/EqksyE2EX9
-- **Templates**: https://www.langflow.org/templates
