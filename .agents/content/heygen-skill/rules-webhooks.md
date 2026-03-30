@@ -11,11 +11,9 @@ Push notifications to your server when async operations complete, avoiding polli
 
 ## Endpoint Requirements
 
-1. Accept POST requests
-2. Return 200 within 5 seconds
-3. Process events asynchronously (respond first, then handle)
-4. Handle duplicate deliveries (same event may arrive multiple times)
-5. Use job queues for expensive processing
+- Accept POST; return 200 within 5 seconds
+- Respond first, then process asynchronously (use job queues for expensive work)
+- Handle duplicate deliveries (same event may arrive multiple times)
 
 ```typescript
 import express from "express";
@@ -35,8 +33,6 @@ async function processWebhookEvent(event: HeyGenWebhookEvent) {
     default: console.log(`Unknown event type: ${event.event_type}`);
   }
 }
-
-app.listen(3000);
 ```
 
 **Local testing:** `ngrok http 3000` — register the ngrok URL as your webhook endpoint.
@@ -78,8 +74,6 @@ interface VideoFailureEvent {
 
 ## Registering a Webhook
 
-Configure via the HeyGen dashboard or API:
-
 | Field | Type | Req | Description |
 |-------|------|:---:|-------------|
 | `url` | string | ✓ | Your webhook endpoint URL |
@@ -103,7 +97,7 @@ Pass `callback_id` during video generation to correlate webhooks to your records
 ```typescript
 const videoConfig = {
   video_inputs: [...],
-  callback_id: "order_12345", // Your custom identifier
+  callback_id: "order_12345",
 };
 
 async function handleVideoSuccess(event: VideoSuccessEvent) {
@@ -141,7 +135,6 @@ app.post("/webhook/heygen", (req, res) => {
   if (!verifyWebhookSignature(payload, signature, WEBHOOK_SECRET)) {
     return res.status(401).send("Invalid signature");
   }
-  // Process event...
 });
 ```
 
