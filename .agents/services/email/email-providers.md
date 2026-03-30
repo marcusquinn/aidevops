@@ -100,27 +100,24 @@ POP does not sync folders, flags, or read-state across devices.
 
 | Address | Purpose | Typical Protocol |
 |---------|---------|-----------------|
-| `info@` | General enquiries | POP or IMAP shared |
+| `info@` / `hello@` / `contact@` / `enquiries@` | General enquiries | POP or IMAP shared |
 | `support@` | Customer support | IMAP + helpdesk tool |
 | `sales@` | Sales enquiries | IMAP + CRM |
-| `enquiries@` | General enquiries (UK) | POP or IMAP shared |
-| `accounts@` | Financial / billing | IMAP (restricted) |
 | `marketing@` | Marketing team | IMAP shared |
-| `admin@` | Administrative | IMAP (restricted) |
-| `webmaster@` | Website issues | IMAP |
-| `buyers@` | Procurement | IMAP |
-| `dataprotection@` | GDPR / privacy | IMAP (restricted) |
-| `legal@` | Legal matters | IMAP (restricted) |
-| `billing@` | Payment / invoicing | IMAP (restricted) |
 | `noreply@` | Outbound only | SMTP only |
-| `hello@` | Friendly general contact | POP or IMAP shared |
-| `contact@` | General contact | POP or IMAP shared |
-| `hr@` | Human resources | IMAP (restricted) |
-| `careers@` | Job applications | IMAP |
-| `press@` | Media enquiries | IMAP |
-| `abuse@` | Abuse reports (RFC 2142) | IMAP |
-| `postmaster@` | Mail server issues (RFC 2142) | IMAP |
-| `security@` | Security reports | IMAP (restricted) |
+| `accounts@` / `billing@` | Financial / billing | IMAP (restricted) |
+| `admin@` / `dataprotection@` / `legal@` / `security@` | Admin / compliance | IMAP (restricted) |
+| `hr@` / `careers@` | HR / recruitment | IMAP |
+| `press@` / `webmaster@` / `buyers@` | Media / ops | IMAP |
+| `abuse@` / `postmaster@` | RFC 2142 required | IMAP |
+
+**Shared mailbox support by provider:**
+- **Microsoft 365**: Best-in-class — dedicated shared mailbox, no extra license, auto-mapping, send-as/on-behalf.
+- **Google Workspace**: Collaborative inboxes via Google Groups; delegated access for individual mailboxes.
+- **Zoho Mail**: Group mailboxes in paid plans.
+- **Cloudron**: Separate mailbox accounts or aliases via admin panel / CLI.
+- **Proton Mail**: Business plans support multi-user access and catch-all.
+- **Others**: Most free/personal providers have no shared mailbox support.
 
 ## Cloudron Mail Management
 
@@ -138,12 +135,10 @@ cloudron mail catch-all yourdomain.com target@yourdomain.com
 | Provider | Key Notes |
 |----------|-----------|
 | **Gmail / Google Workspace** | Enable IMAP in Settings > Forwarding and POP/IMAP. OAuth2 required since May 2022 (app passwords with 2FA). Labels map to `[Gmail]/` IMAP folders. Limits: 500/day (Gmail), 2000/day (Workspace). |
-| **Microsoft 365** | Basic auth deprecated Oct 2022. OAuth2 via Microsoft Entra ID. Graph API recommended for programmatic access. Shared mailboxes free (no license); best-in-class — auto-mapping, send-as/on-behalf. |
-| **Proton Mail** | Requires Proton Bridge running locally (local IMAP 1143, SMTP 1025). Use Bridge-generated password, not account password. Not suitable for headless/server without Bridge CLI. Business plans support multi-user access and catch-all. |
+| **Microsoft 365** | Basic auth deprecated Oct 2022. OAuth2 via Microsoft Entra ID. Graph API recommended for programmatic access. Shared mailboxes free (no license). |
+| **Proton Mail** | Requires Proton Bridge running locally (local IMAP 1143, SMTP 1025). Use Bridge-generated password, not account password. Not suitable for headless/server without Bridge CLI. |
 | **Tuta** | No IMAP/SMTP/POP3. Tuta apps only (web, desktop, mobile). Deliberate security decision for encryption architecture. |
-| **Zoho Mail** | Enable IMAP in settings. Regional domains affect hostnames (zoho.com, zoho.eu, zoho.in, zoho.com.au, zoho.jp). Free tier: 5 users, 5 GB each. Group mailboxes in paid plans. |
-| **Google Workspace** | Collaborative inboxes via Google Groups; delegated access for individual mailboxes. |
-| **Cloudron** | Separate mailbox accounts or aliases via admin panel / CLI. |
+| **Zoho Mail** | Enable IMAP in settings. Regional domains affect hostnames (zoho.com, zoho.eu, zoho.in, zoho.com.au, zoho.jp). Free tier: 5 users, 5 GB each. |
 
 ## Related
 
