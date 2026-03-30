@@ -86,12 +86,6 @@ export class OrderConfirmed extends DomainEvent {
 }
 ```
 
-```
-class OrderConfirmedHandler:
-    handle(event: OrderConfirmed):
-        db.ordersRead.where(id: event.orderId.value).update({ status: "confirmed", total: event.total.amount, confirmedAt: event.occurredAt })
-```
-
 ## Domain Events vs Integration Events
 
 | | Domain Events | Integration Events |
@@ -182,10 +176,10 @@ Saga: PlaceOrderSaga
 
 ```
 class OrderConfirmedHandler:
-    processedIds: Set<string>
-
     handle(event: OrderConfirmed):
-        if event.eventId in processedIds: return
-        doWork(event)
-        processedIds.add(event.eventId)
+        if db.processedEvents.exists(event.eventId): return
+        db.transaction((tx) => {
+            doWork(event, tx)
+            tx.processedEvents.insert({ id: event.eventId, processedAt: now() })
+        })
 ```
