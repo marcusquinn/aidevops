@@ -380,21 +380,26 @@ rt_config_path() {
 	local path
 	path=$(_rt_expand_path "${_RT_CONFIG_PATH[$idx]}")
 
-	# Platform-aware override for claude-code: on macOS the Desktop app stores
-	# its config in ~/Library/Application Support/Claude/ rather than ~/.config/Claude/.
-	# Check both locations and return the one that exists (Desktop path takes priority
-	# since it's the primary MCP config on macOS).
+	# Platform-aware override for claude-code: config location varies by install type.
+	# Priority order:
+	#   1. ~/.claude.json          — Claude Code CLI (global MCP config, all platforms)
+	#   2. ~/Library/.../claude_desktop_config.json — Claude Desktop macOS
+	#   3. ~/.config/Claude/Claude.json             — Claude Code CLI Linux fallback
 	if [[ "$id" == "claude-code" ]]; then
+		local cli_path="$HOME/.claude.json"
 		local macos_path="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
 		local linux_path="$HOME/.config/Claude/Claude.json"
-		if [[ -f "$macos_path" ]]; then
+		if [[ -f "$cli_path" ]]; then
+			echo "$cli_path"
+			return 0
+		elif [[ -f "$macos_path" ]]; then
 			echo "$macos_path"
 			return 0
 		elif [[ -f "$linux_path" ]]; then
 			echo "$linux_path"
 			return 0
 		fi
-		# Neither exists — fall through to return the registry default (may not exist)
+		# None found — fall through to return the registry default (may not exist)
 	fi
 
 	echo "$path"
