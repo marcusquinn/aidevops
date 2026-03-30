@@ -1,13 +1,9 @@
 ---
-description: "|"
+description: PostgreSQL + Drizzle ORM — type-safe database applications
 mode: subagent
 imported_from: external
 ---
-# postgres-drizzle
-
 # PostgreSQL + Drizzle ORM
-
-Type-safe database applications with PostgreSQL 18 and Drizzle ORM.
 
 ## Essential Commands
 
@@ -39,16 +35,6 @@ Slow query?
 ├─ Full table scan                      → EXPLAIN ANALYZE, add index
 ├─ Large result set                     → Add pagination (limit/offset)
 └─ Connection overhead                  → Enable connection pooling
-```
-
-### "Which drizzle-kit command?"
-
-```
-What do I need?
-├─ Schema changed, need SQL migration   → drizzle-kit generate
-├─ Apply migrations to database         → drizzle-kit migrate
-├─ Quick dev iteration (no migration)   → drizzle-kit push
-└─ Browse/edit data visually            → drizzle-kit studio
 ```
 
 ## Directory Structure
@@ -167,23 +153,8 @@ await db.transaction(async (tx) => {
 
 ## Resources
 
-### Drizzle ORM
+**Drizzle ORM:** [Docs](https://orm.drizzle.team) · [GitHub](https://github.com/drizzle-team/drizzle-orm) · [drizzle-kit](https://orm.drizzle.team/kit-docs/overview)
 
-- **Official Documentation**: https://orm.drizzle.team
-- **GitHub Repository**: https://github.com/drizzle-team/drizzle-orm
-- **Drizzle Kit (Migrations)**: https://orm.drizzle.team/kit-docs/overview
+**PostgreSQL:** [Docs](https://www.postgresql.org/docs/) · [SQL Commands](https://www.postgresql.org/docs/current/sql-commands.html) · [Performance](https://www.postgresql.org/docs/current/performance-tips.html) · [Index Types](https://www.postgresql.org/docs/current/indexes-types.html) · [JSON Functions](https://www.postgresql.org/docs/current/functions-json.html) · [RLS](https://www.postgresql.org/docs/current/ddl-rowsecurity.html)
 
-### PostgreSQL
-
-- **Official Documentation**: https://www.postgresql.org/docs/
-- **SQL Commands Reference**: https://www.postgresql.org/docs/current/sql-commands.html
-- **Performance Tips**: https://www.postgresql.org/docs/current/performance-tips.html
-- **Index Types**: https://www.postgresql.org/docs/current/indexes-types.html
-- **JSON Functions**: https://www.postgresql.org/docs/current/functions-json.html
-- **Row Level Security**: https://www.postgresql.org/docs/current/ddl-rowsecurity.html
-
-### Related Subagents
-
-- **Vector search**: `tools/database/vector-search.md` — decision guide for vector databases including pgvector with Drizzle
-- **Multi-org isolation**: `services/database/multi-org-isolation.md` — tenant isolation schema with RLS
-- **PGlite local-first**: `tools/database/pglite-local-first.md` — embedded Postgres for desktop/extension apps
+**Related subagents:** `tools/database/vector-search.md` (pgvector) · `services/database/multi-org-isolation.md` (RLS tenant isolation) · `tools/database/pglite-local-first.md` (embedded Postgres)
