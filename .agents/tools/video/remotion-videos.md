@@ -83,7 +83,13 @@ Use the `style` prop:
 
 ## Volume
 
-Static: `<Video src={staticFile("video.mp4")} volume={0.5} />` (0 to 1). Mute: `<Video src={staticFile("video.mp4")} muted />`.
+Static volume (0 to 1):
+
+```tsx
+<Video src={staticFile("video.mp4")} volume={0.5} />
+```
+
+Mute: `<Video src={staticFile("video.mp4")} muted />`
 
 Dynamic volume via callback (receives current frame):
 
