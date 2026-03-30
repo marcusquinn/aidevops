@@ -23,8 +23,6 @@ tools:
 - **Content checks**: Subject line, preheader, accessibility, links, images, spam words
 - **Tools**: checkdmarc (`pip install checkdmarc` or `pipx install checkdmarc`), dig/nslookup, mxtoolbox.com
 
-**Quick commands:**
-
 ```bash
 # Full infrastructure health check
 email-health-check-helper.sh check example.com
@@ -106,13 +104,11 @@ email-health-check-helper.sh accessibility newsletter.html
 
 ## Content-Level Checks (v3)
 
-Content validation for HTML email files — catches issues before send.
-
 | Check | What It Does | Score |
 |-------|-------------|-------|
 | **Subject Line** | Length (under 50 chars), ALL CAPS, excessive punctuation, spam trigger words | 2 pts |
 | **Preheader Text** | Presence, length (40-130 chars), not duplicating subject line | 1 pt |
-| **Accessibility** | Alt text on images, lang attribute, semantic structure, color contrast, role attributes | 2 pts |
+| **Accessibility** | Alt text on images, lang attribute, semantic structure, color contrast, role attributes. Delegates to `accessibility-helper.sh email` (WCAG 2.1 AA: 1.1.1, 3.1.1, 1.3.1, 1.4.4, 2.4.4, 1.4.1). Contrast: `accessibility-helper.sh contrast '#fg' '#bg'` | 2 pts |
 | **Link Validation** | Broken links, missing href, unsubscribe link present (CAN-SPAM), excessive links (>20) | 2 pts |
 | **Image Validation** | Oversized files (>200KB), missing dimensions, total weight (>800KB), image-to-text ratio (>60%) | 2 pts |
 | **Spam Word Scan** | High-risk subject words (`free`, `act now`, `click here`, `guarantee`, etc.); medium-risk body words | 1 pt |
@@ -126,21 +122,9 @@ email-health-check-helper.sh precheck example.com newsletter.html
 # Combined:      20/25 (80%) - Grade: B
 ```
 
-## Email Accessibility
-
-Audits HTML email templates against WCAG 2.1 AA (email-applicable subset):
-
-```bash
-email-health-check-helper.sh accessibility newsletter.html
-```
-
-Delegates to `accessibility-helper.sh email`. Checks: images without `alt` (WCAG 1.1.1), missing `lang` on `<html>` (WCAG 3.1.1), layout tables without `role="presentation"` (WCAG 1.3.1), font sizes below 14px (WCAG 1.4.4), generic link text (WCAG 2.4.4), heading structure (WCAG 1.3.1), colour-only indicators (WCAG 1.4.1).
-
-For contrast ratio checks: `accessibility-helper.sh contrast '#fg' '#bg'`
-
 ## Related
 
-- `services/accessibility/accessibility-audit.md` - Email accessibility checks (WCAG compliance)
+- `tools/accessibility/accessibility-audit.md` - Email accessibility checks (WCAG compliance)
 - `services/email/email-testing.md` - Design rendering and delivery testing
 - `services/email/ses.md` - Amazon SES integration
 - `services/hosting/dns.md` - DNS management
