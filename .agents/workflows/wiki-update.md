@@ -18,17 +18,19 @@ Update `.wiki/` to reflect the latest codebase state. Changes pushed to `main` a
 
 ## Wiki Pages
 
-| File | Purpose |
-|------|---------|
-| `.wiki/Home.md` | Landing page, version, quick start |
-| `.wiki/_Sidebar.md` | Navigation structure |
-| `.wiki/Getting-Started.md` | Installation and setup |
-| `.wiki/For-Humans.md` | Non-technical overview |
-| `.wiki/Understanding-AGENTS-md.md` | How AI guidance works |
-| `.wiki/The-Agent-Directory.md` | Framework structure |
-| `.wiki/Workflows-Guide.md` | Development processes |
-| `.wiki/MCP-Integrations.md` | MCP server documentation |
-| `.wiki/Providers.md` | Service provider details |
+| File | Purpose | Key Rules |
+|------|---------|-----------|
+| `.wiki/Home.md` | Landing page, version, quick start | Concise; version prominent; link to detail pages, don't duplicate |
+| `.wiki/_Sidebar.md` | Navigation structure | |
+| `.wiki/Getting-Started.md` | Installation and setup | Test all install commands; verify paths; keep prerequisites current |
+| `.wiki/For-Humans.md` | Non-technical overview | |
+| `.wiki/Understanding-AGENTS-md.md` | How AI guidance works | |
+| `.wiki/The-Agent-Directory.md` | Framework structure | Reflect actual directory structure; update script counts |
+| `.wiki/Workflows-Guide.md` | Development processes | List all workflows from `.agents/workflows/` with brief descriptions |
+| `.wiki/MCP-Integrations.md` | MCP server documentation | List all MCP servers from `configs/`; include config snippets and env vars |
+| `.wiki/Providers.md` | Service provider details | |
+
+Style: tables for structured info, short paragraphs, practical examples, no jargon.
 
 ## Step 1: Build Codebase Context
 
@@ -40,68 +42,34 @@ Reference `repomix-instruction.md` for guidelines. Use Augment Context Engine or
 
 ## Step 2: Review and Identify Updates
 
-### Source of Truth
+| Wiki Section | Source | Update Trigger |
+|--------------|--------|----------------|
+| Version | `VERSION` file | New release → update `Home.md` |
+| Service count | `.agents/services/` | New service → update `Providers.md`, `MCP-Integrations.md` |
+| Script count | `ls .agents/scripts/*.sh \| wc -l` | |
+| MCP integrations | `configs/` | |
+| Workflows | `.agents/workflows/` | New workflow → update `Workflows-Guide.md` |
+| Agent structure | `.agents/AGENTS.md` | Architecture changes → update `The-Agent-Directory.md` |
 
-| Wiki Section | Source |
-|--------------|--------|
-| Version | `VERSION` file |
-| Service count | `.agents/services/` |
-| Script count | `ls .agents/scripts/*.sh \| wc -l` |
-| MCP integrations | `configs/` |
-| Workflows | `.agents/workflows/` |
-| Agent structure | `.agents/AGENTS.md` |
+Setup changes → update `Getting-Started.md`.
 
-### Checklist
-
-- [ ] Version matches `VERSION`
-- [ ] Service and script counts are current
-- [ ] MCP integrations list is current
-- [ ] Workflow guides reflect actual workflows
-- [ ] Code examples are accurate
-
-### Update Triggers
-
-1. **New release** → update version in `Home.md`
-2. **New service** → update `Providers.md`, `MCP-Integrations.md`
-3. **New workflow** → update `Workflows-Guide.md`
-4. **Architecture changes** → update `The-Agent-Directory.md`
-5. **Setup changes** → update `Getting-Started.md`
-
-## Step 3: Update Wiki Pages
-
-| Page | Key Rules |
-|------|-----------|
-| `Home.md` | Concise; version prominent; link to detail pages, don't duplicate |
-| `Getting-Started.md` | Test all install commands; verify paths; keep prerequisites current |
-| `The-Agent-Directory.md` | Reflect actual directory structure; update script counts |
-| `MCP-Integrations.md` | List all MCP servers from `configs/`; include config snippets and env vars |
-| `Workflows-Guide.md` | List all workflows from `.agents/workflows/` with brief descriptions |
-
-Style: tables for structured info, short paragraphs, practical examples, no jargon.
-
-## Step 4: Validate and Commit
+## Step 3: Validate and Commit
 
 ```bash
 .agents/scripts/markdown-formatter.sh lint .wiki/
 .agents/scripts/version-manager.sh validate
 ```
 
-- [ ] Code examples syntactically correct
-- [ ] All file paths exist
-- [ ] All links resolve
-- [ ] Version numbers consistent
+- [ ] Version matches `VERSION`
+- [ ] Service and script counts are current
+- [ ] MCP integrations list is current
+- [ ] Workflow guides reflect actual workflows
+- [ ] Code examples syntactically correct; all file paths exist; all links resolve
 - [ ] No placeholder text remains
 
 ```bash
-git add .wiki/
-git commit -m "docs(wiki): update wiki for v{VERSION}
-
-- Updated version references
-- Added new service integrations
-- Refreshed workflow documentation"
+git add .wiki/ && git commit -m "docs(wiki): update wiki for v{VERSION}"
 ```
-
-Pushing `.wiki/` changes to `main` triggers sync — no manual wiki editing needed.
 
 ## Troubleshooting
 
@@ -110,7 +78,7 @@ Pushing `.wiki/` changes to `main` triggers sync — no manual wiki editing need
 **Link format** — no `.md` extension, no relative path:
 
 ```markdown
-[Getting Started](Getting-Started)   # correct
+[Getting Started](Getting-Started)    # correct
 [Getting Started](Getting-Started.md) # incorrect
 ```
 
