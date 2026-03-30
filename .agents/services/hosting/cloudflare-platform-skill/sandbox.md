@@ -1,15 +1,8 @@
 # Cloudflare Sandbox SDK
 
-Secure isolated code execution in containers on Cloudflare's edge. Run untrusted code, manage files, expose services, integrate with AI agents.
+Isolated container execution on Cloudflare's edge (Durable Object + Container per sandbox). Persistent across requests (same ID = same sandbox), isolated filesystem/processes/network, configurable sleep/wake.
 
-**Use cases**: AI code execution, interactive dev environments, data analysis, CI/CD, code interpreters, multi-tenant execution.
-
-## Architecture
-
-- Each sandbox = Durable Object + Container
-- Persistent across requests (same ID = same sandbox)
-- Isolated filesystem/processes/network
-- Configurable sleep/wake for cost optimization
+**Use cases**: AI code execution, dev environments, data analysis, CI/CD, code interpreters, multi-tenant.
 
 ## Quick Start
 
@@ -85,6 +78,4 @@ EXPOSE 8080 3000  # Required for wrangler dev
 
 ## Resources
 
-- [Patterns](./patterns.md) - Common workflows, CI/CD
-- [Gotchas](./gotchas.md) - Issues, limits, best practices
-- [Official Docs](https://developers.cloudflare.com/sandbox/)
+[Patterns](./sandbox-patterns.md) · [Gotchas](./sandbox-gotchas.md) · [Official Docs](https://developers.cloudflare.com/sandbox/)
