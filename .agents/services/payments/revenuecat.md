@@ -38,16 +38,16 @@ tools:
 
 ## Core Concepts
 
-- **Products**: Platform-specific items (App Store Connect / Play Store Console) mapped to entitlements
-- **Entitlements**: Platform-agnostic access levels — "premium" works regardless of purchase source or platform
-- **Offerings**: Package groups shown to users; swap via dashboard without app updates. Use for A/B testing pricing.
+- **Products**: Platform-specific items (App Store Connect / Play Console) mapped to entitlements
+- **Entitlements**: Platform-agnostic access levels — "premium" works regardless of purchase source
+- **Offerings**: Package groups shown to users; swap via dashboard without app updates (A/B test pricing)
 
 ## Setup
 
-1. **RevenueCat**: Sign up at https://app.revenuecat.com → create project → add app (iOS/Android)
-2. **iOS**: Create IAP products → generate API key (In-App Purchase type) → upload to RevenueCat → add shared secret
-3. **Android**: Create subscription products → create service account (financial perms) → upload JSON to RevenueCat → grant access
-4. **Entitlements**: Create in dashboard (e.g., "premium") → map products → create offerings with packages
+1. **RevenueCat**: https://app.revenuecat.com → create project → add app (iOS/Android)
+2. **iOS**: Create IAP products → generate API key → upload to RevenueCat → add shared secret
+3. **Android**: Create subscriptions → service account (financial perms) → upload JSON → grant access
+4. **Entitlements**: Create in dashboard (e.g., "premium") → map products → create offerings
 
 ### Install SDK
 
@@ -73,31 +73,26 @@ Purchases.configure(withAPIKey: "appl_your_ios_api_key")
 
 ## Common Operations
 
-### Check Subscription Status
+### Check Status / Display Offerings / Purchase / Restore
 
 ```typescript
+// Check subscription status
 const customerInfo = await Purchases.getCustomerInfo();
 const isPremium = customerInfo.entitlements.active['premium'] !== undefined;
 const willRenew = customerInfo.entitlements.active['premium']?.willRenew ?? false;
 const expirationDate = customerInfo.entitlements.active['premium']?.expirationDate;
 // Swift: let info = try await Purchases.shared.customerInfo()
 //        let isPremium = info.entitlements["premium"]?.isActive == true
-```
 
-### Display Offerings (Paywall)
-
-```typescript
+// Display offerings (paywall)
 const offerings = await Purchases.getOfferings();
 const current = offerings.current;
 if (current) {
   console.log(current.monthly?.product.priceString);  // "$4.99"
   console.log(current.annual?.product.priceString);   // "$39.99"
 }
-```
 
-### Make a Purchase
-
-```typescript
+// Make a purchase
 try {
   const { customerInfo } = await Purchases.purchasePackage(selectedPackage);
   if (customerInfo.entitlements.active['premium']) { /* unlock */ }
@@ -106,14 +101,10 @@ try {
 }
 // Swift: let (_, info, _) = try await Purchases.shared.purchase(package: pkg)
 //        if info.entitlements["premium"]?.isActive == true { /* unlock */ }
-```
 
-### Restore Purchases & User Identity
-
-```typescript
 // Restore — required by App Store guidelines
-const customerInfo = await Purchases.restorePurchases();
-const isPremium = customerInfo.entitlements.active['premium'] !== undefined;
+const restored = await Purchases.restorePurchases();
+const restoredPremium = restored.entitlements.active['premium'] !== undefined;
 
 // Cross-platform sync — call after auth events
 await Purchases.logIn(userId);   // After login
@@ -122,7 +113,7 @@ await Purchases.logOut();        // After logout
 
 ## RevenueCat Paywalls (Optional)
 
-Server-side configurable paywalls — change design without app updates:
+Server-configurable paywalls — update design without app releases:
 
 ```typescript
 import RevenueCatUI from 'react-native-purchases-ui';
@@ -134,28 +125,28 @@ import RevenueCatUI from 'react-native-purchases-ui';
 
 ## Webhooks
 
-Configure in dashboard to sync subscription events with your backend:
+Configure in dashboard to sync events with your backend:
 
 | Event | When |
 |-------|------|
-| `INITIAL_PURCHASE` | First subscription purchase |
-| `RENEWAL` | Subscription renewed |
+| `INITIAL_PURCHASE` | First purchase |
+| `RENEWAL` | Renewed |
 | `CANCELLATION` | Cancelled (active until period end) |
-| `EXPIRATION` | Subscription expired |
+| `EXPIRATION` | Expired |
 | `BILLING_ISSUE` | Payment failed |
-| `PRODUCT_CHANGE` | Changed subscription tier |
+| `PRODUCT_CHANGE` | Changed tier |
 
 ## Testing & Best Practices
 
-**Sandbox**: iOS — sandbox Apple ID in App Store Connect. Android — license testing in Play Console. RevenueCat dashboard shows sandbox vs production.
+**Sandbox**: iOS — sandbox Apple ID in App Store Connect. Android — license testing in Play Console. Dashboard shows sandbox vs production.
 
-**Debug**: `Purchases.setLogLevel(LOG_LEVEL.DEBUG)` then inspect `await Purchases.getCustomerInfo()`.
+**Debug**: `Purchases.setLogLevel(LOG_LEVEL.DEBUG)` → inspect `getCustomerInfo()`.
 
 **Rules**:
 
-- Never cache entitlements locally — always check `getCustomerInfo()`
+- Never cache entitlements locally — always call `getCustomerInfo()`
 - Handle offline gracefully — SDK caches last known state
-- Use offerings, not hardcoded product IDs — enables remote configuration
+- Use offerings, not hardcoded product IDs — enables remote config
 - Identify users after login for cross-device sync
 - Monitor dashboard for billing issues and involuntary churn
 
