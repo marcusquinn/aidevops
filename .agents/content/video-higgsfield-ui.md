@@ -88,7 +88,7 @@ higgsfield-helper.sh pipeline --brief brief.json
 | Nano Banana | `nano_banana` | 1cr | Yes |
 | WAN 2.2 | `wan2` | 1cr | No |
 
-Quality ranking (product shots): GPT → Seedream 4.5 → FLUX → Kontext → ... `--prefer-unlimited` (default) auto-selects best unlimited model via dedicated routes (e.g., `/nano-banana-pro`) — standard `/image/` routes cost credits even for subscribed models. Soul presets: All, New, TikTok Core, Instagram Aesthetics, Camera Presets, Beauty, Mood, Surreal, Graphic Art.
+Quality ranking: GPT → Seedream 4.5 → FLUX → Kontext → ... `--prefer-unlimited` (default) selects best unlimited model via dedicated routes (`/nano-banana-pro`) — standard `/image/` routes cost credits even for subscribers. Soul presets: All, New, TikTok Core, Instagram Aesthetics, Camera Presets, Beauty, Mood, Surreal, Graphic Art.
 
 ### Video (5)
 
@@ -131,45 +131,15 @@ Wan 2.5 Fast, Kling 2.6 Lipsync, Google Veo 3, Veo 3 Fast, Wan 2.5 Speak (9cr), 
 }
 ```
 
-`imagePrompts[]` = start-frame images. `captions[]` = Remotion overlay (styles: bold-white, minimal, impact, typewriter, highlight). Remotion setup: `cd .agents/scripts/higgsfield/remotion && npm install` — animated captions, transitions (fade/slide/wipe), title cards, 1080x1920.
+`imagePrompts[]` = start-frame images. `captions[]` = Remotion overlay (styles: bold-white, minimal, impact, typewriter, highlight). Remotion: `cd .agents/scripts/higgsfield/remotion && npm install` — captions, transitions (fade/slide/wipe), title cards, 1080x1920.
 
 ## Output
 
 `--headed` → `~/Downloads/higgsfield/` | headless → `~/.aidevops/.agent-workspace/work/higgsfield/output/` | override: `--output` | subdirs: `--project` | `--no-sidecar` `--no-dedup`
 
-## CLI Options
-
-| Flag | Description |
-|------|-------------|
-| `--model/-m` | Model slug |
-| `--aspect/-a` | `16:9` `9:16` `1:1` `3:4` `4:3` `2:3` `3:2` |
-| `--quality/-q` | `1K` `1.5K` `2K` `4K` |
-| `--output/-o` | Output directory |
-| `--headed/--headless` | Browser mode (headless default) |
-| `--duration/-d` | Video seconds: 5, 10, 15 |
-| `--image-file` | Input image path |
-| `--image-file2` | Second image (multi-reference edit) |
-| `--video-file/--motion-ref` | Motion reference video |
-| `--batch/-b` | Images 1-4 |
-| `--preset/-s` | Style preset name |
-| `--seed` | Seed number |
-| `--seed-range` | `1000-1010` or `"4000,4003,4008"` |
-| `--brief` | Pipeline brief JSON path |
-| `--tab` | `image` `video` |
-| `--filter` | `image` `video` `lipsync` `upscaled` `liked` |
-| `--asset-action` | `list` `download` `download-latest` `download-all` |
-| `--asset-index` | 0-based asset index |
-| `--chain-action` | `animate` `inpaint` `upscale` `relight` `angles` `shots` `ai-stylist` `skin-enhancer` `multishot` |
-| `--feature` | `fashion-factory` `ugc-factory` `photodump-studio` `camera-controls` `effects` |
-| `--subtype` | Vibe: `infographics` `text-animation` `posters` `presentation` `from-scratch` |
-| `--project` | Organized output subdirs |
-| `--prefer-unlimited` | Auto-select best unlimited model (default on) |
-
 ## Prompt Tips
 
-- **Images** (camera + lighting + lens): `"Golden retriever, golden hour, shallow DOF, Canon EOS R5, 85mm, bokeh"`
-- **Videos** (camera movement first): `"Smooth cinematic pan left to right, golden hour, 24fps film grain"`
-- **Modifiers**: photorealistic → `"8k, highly detailed"` | cinematic → `"anamorphic, film grain, color graded"` | portrait → `"studio lighting, bokeh, 85mm"`
+Images: camera + lighting + lens (`"Golden retriever, golden hour, shallow DOF, Canon EOS R5, 85mm, bokeh"`). Videos: camera movement first (`"Smooth cinematic pan left to right, golden hour, 24fps film grain"`). Modifiers: photorealistic `"8k, highly detailed"` | cinematic `"anamorphic, film grain, color graded"` | portrait `"studio lighting, bokeh, 85mm"`.
 
 ## Troubleshooting
 
