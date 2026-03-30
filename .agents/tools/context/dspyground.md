@@ -31,16 +31,14 @@ Optional tool — install via `npm install -g dspyground` when needed.
 ./.agents/scripts/dspyground-helper.sh install
 dspyground --version
 cp configs/dspyground-config.json.txt configs/dspyground-config.json
-```
 
-```bash
 # Create project and start dev server
 ./.agents/scripts/dspyground-helper.sh init my-agent
 ./.agents/scripts/dspyground-helper.sh dev my-agent
 # or from project dir: dspyground dev
 ```
 
-### Environment (`.env`)
+**Environment (`.env`):**
 
 ```bash
 AI_GATEWAY_API_KEY=your_key_here
@@ -63,24 +61,11 @@ export default {
       parameters: z.object({ serverId: z.string() }),
       execute: async ({ serverId }) => `Server ${serverId} is running normally`,
     }),
-    deployApp: tool({
-      description: 'Deploy application to server',
-      parameters: z.object({
-        appName: z.string(),
-        environment: z.enum(['dev', 'staging', 'prod']),
-      }),
-      execute: async ({ appName, environment }) => `Deployed ${appName} to ${environment}`,
-    }),
+    // Add more tools following the same pattern
   },
 
   // Optional: enforce structured output shape
-  schema: z.object({
-    task_type: z.enum(['deployment', 'monitoring', 'troubleshooting']),
-    priority: z.enum(['low', 'medium', 'high', 'critical']),
-    steps: z.array(z.string()),
-    estimated_time: z.string(),
-    risks: z.array(z.string())
-  }),
+  schema: z.object({ task_type: z.string(), priority: z.string(), steps: z.array(z.string()) }),
 
   preferences: {
     selectedModel: 'openai/gpt-4o-mini',
@@ -98,9 +83,7 @@ export default {
       accuracy:   { name: 'Technical Accuracy',  description: 'Is the advice technically correct?',         weight: 1.0 },
       tone:       { name: 'Professional Tone',    description: 'Is the communication professional?',         weight: 0.8 },
       efficiency: { name: 'Solution Efficiency',  description: 'Does the solution optimize for efficiency?', weight: 0.9 },
-      // Custom example:
-      devops_expertise: { name: 'DevOps Expertise', description: 'Deep DevOps knowledge?',   weight: 1.0 },
-      actionability:    { name: 'Actionability',    description: 'Can user act immediately?', weight: 0.9 },
+      // Add custom dimensions: { name: '...', description: '...', weight: N }
     }
   }
 }
