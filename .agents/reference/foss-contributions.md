@@ -2,10 +2,6 @@
 
 > t1697 — repos.json schema extension + budget controls
 
-AI DevOps can contribute to FOSS projects on your behalf, subject to per-repo etiquette controls and a global daily token budget.
-
----
-
 ## Quick Start
 
 1. Enable globally in `~/.config/aidevops/config.jsonc`:
@@ -43,8 +39,6 @@ foss-contribution-helper.sh check wpallstars/some-plugin
 foss-contribution-helper.sh scan --dry-run
 ```
 
----
-
 ## repos.json FOSS Fields
 
 | Field | Type | Default | Description |
@@ -57,8 +51,6 @@ foss-contribution-helper.sh scan --dry-run
 | `foss_config.disclosure` | bool | `true` | Include AI assistance footer in PRs: *"This PR was prepared with AI assistance (aidevops.sh). All changes have been reviewed for correctness."* |
 | `foss_config.labels_filter` | array | `["help wanted", "good first issue", "bug"]` | Issue labels to scan for. |
 
----
-
 ## Global Config (`config.jsonc` `foss` section)
 
 | Key | Type | Default | Description |
@@ -68,8 +60,6 @@ foss-contribution-helper.sh scan --dry-run
 | `foss.max_concurrent_contributions` | int | `2` | Max simultaneous contribution workers. |
 
 **Env overrides**: `AIDEVOPS_FOSS_ENABLED`, `AIDEVOPS_FOSS_MAX_DAILY_TOKENS`, `AIDEVOPS_FOSS_MAX_CONCURRENT`
-
----
 
 ## CLI: `foss-contribution-helper.sh`
 
@@ -97,8 +87,6 @@ foss-contribution-helper.sh record owner/repo 7500    # post-contribution accoun
 foss-contribution-helper.sh budget                    # daily usage summary
 ```
 
----
-
 ## Contribution Workflow
 
 ```text
@@ -108,23 +96,9 @@ foss-contribution-helper.sh budget                    # daily usage summary
 4. foss-contribution-helper.sh record <slug> <tokens>  ← accounting
 ```
 
----
-
 ## State File
 
 Budget state: `~/.aidevops/cache/foss-contribution-state.json`. Daily counter resets at UTC midnight. Use `reset` subcommand to clear manually (testing only).
-
-```json
-{
-  "date": "2026-03-28",
-  "daily_tokens_used": 12500,
-  "contributions": {
-    "owner/repo": { "last_attempt": "2026-03-28T10:15:00Z", "total_tokens": 12500, "prs_by_week": { "2026-13": 1 } }
-  }
-}
-```
-
----
 
 ## Related
 
