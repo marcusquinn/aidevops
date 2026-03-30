@@ -28,27 +28,32 @@ Capture baseline vs current measurements for each AI-search optimization cycle.
 ## Diagnostics
 
 ### Grounding eligibility
+
 - Queries tested:
 - Queries predicted to ground:
 - Queries confirmed grounded:
 - Key blockers:
 
 ### Fan-out and criteria gaps
+
 - Missing high-priority branches:
 - Partial branches:
 - Missing decision criteria:
 
 ### SRO and snippet findings
+
 - Low-survival sections:
 - High-survival sections:
 - Proposed sentence-level edits:
 
 ### Integrity and hallucination risk
+
 - Conflicting facts:
 - Unsupported claims:
 - Canonical source gaps:
 
 ### Agent discoverability
+
 - Task set used:
 - Completion failures:
 - Navigation/comprehension blockers:
