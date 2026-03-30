@@ -1,22 +1,14 @@
 # Wrangler Development Patterns
 
-Common workflows and best practices.
-
-## New Worker Project
+## New Worker / Local Dev
 
 ```bash
 wrangler init my-worker && cd my-worker
-wrangler dev              # Develop locally
-wrangler deploy           # Deploy
-```
-
-## Local Development
-
-```bash
 wrangler dev              # Local (fast, limited accuracy)
 wrangler dev --remote     # Remote (slower, production-accurate)
 wrangler dev --env staging
 wrangler dev --port 8787
+wrangler deploy
 ```
 
 ## Secrets
@@ -24,7 +16,6 @@ wrangler dev --port 8787
 **Never commit secrets.** Use `wrangler secret put` for production, `.dev.vars` for local.
 
 ```bash
-# Production
 echo "secret-value" | wrangler secret put SECRET_KEY
 wrangler secret list
 wrangler secret delete SECRET_KEY
@@ -41,16 +32,16 @@ SECRET_KEY=local-dev-key
 ```bash
 wrangler kv namespace create MY_KV
 wrangler kv namespace create MY_KV --preview
-# Add to wrangler.jsonc: { "binding": "MY_KV", "id": "abc123" }
 wrangler deploy
 ```
+
+Add to `wrangler.jsonc`: `{ "binding": "MY_KV", "id": "abc123" }`
 
 ## Adding D1
 
 ```bash
 wrangler d1 create my-db
 wrangler d1 migrations create my-db "initial_schema"
-# Edit migration file, then:
 wrangler d1 migrations apply my-db --local
 wrangler deploy
 wrangler d1 migrations apply my-db --remote
@@ -81,9 +72,9 @@ await worker.dispose();
 
 ```bash
 wrangler tail                 # Real-time logs
-wrangler tail --status error  # Filter errors
+wrangler tail --status error
 wrangler tail --env production
-wrangler whoami               # Check auth
+wrangler whoami
 ```
 
 ## Version Control
@@ -131,7 +122,7 @@ export default {
 // KV caching
 const cached = await env.CACHE.get("key", { cacheTtl: 3600 });
 
-// Batch DB
+// Batch D1
 await env.DB.batch([
   env.DB.prepare("SELECT * FROM users"),
   env.DB.prepare("SELECT * FROM posts")
@@ -145,5 +136,5 @@ return new Response(data, {
 
 ## See Also
 
-- [README.md](./README.md) - Commands
-- [gotchas.md](./gotchas.md) - Issues
+- [wrangler.md](./wrangler.md) - Commands
+- [wrangler-gotchas.md](./wrangler-gotchas.md) - Issues
