@@ -7,7 +7,7 @@ metadata:
 
 # Writing Scripts for HeyGen Videos
 
-AI avatar scripts differ from human presenter scripts — pacing, pauses, and pronunciation must be explicit.
+Pacing, pauses, and pronunciation must be explicit — AI avatars don't improvise.
 
 ## Speech Rate and Duration
 
@@ -94,15 +94,13 @@ Head to [location] to learn more. <break time="0.5s"/> We can't wait to hear wha
 
 ## Writing Tips
 
-**Do:** Write conversationally. Use contractions. Spell out abbreviations ("A-P-I"). End sections clearly.
-
-**Avoid:** Jargon without context. Long parentheticals. Ambiguous pronunciations. Excessive `!`. Run-on sentences. Dense information without pauses.
-
-**Pronunciation hints:** Spell phonetically inline — `"Our API (A-P-I)"`, `"HeyGen (hey-jen)"`, `"I read (red) the docs"`.
+- Write conversationally; use contractions; end sections clearly
+- Spell out abbreviations: `"Our API (A-P-I)"`, `"HeyGen (hey-jen)"`, `"I read (red) the docs"`
+- Avoid: jargon without context, long parentheticals, ambiguous pronunciations, excessive `!`, run-ons, dense info without pauses
 
 ## Multi-Scene Scripts
 
-Split scripts across scenes for different backgrounds or avatars. End each scene on a complete thought; open new scenes with brief context. Pause at scene starts to let visuals register.
+Split scripts across scenes for different backgrounds or avatars. End each scene on a complete thought; open new scenes with brief context; pause at scene starts to let visuals register.
 
 ```typescript
 const multiSceneVideo = {
