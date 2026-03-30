@@ -57,7 +57,6 @@ Requirements: Python 3.10-3.12, 8GB+ RAM (16GB+ for 4K), 2-10GB model cache.
 ## Usage
 
 ```bash
-# Core operations
 real-video-enhancer-helper.sh upscale input.mp4 output.mp4 --scale 2
 real-video-enhancer-helper.sh interpolate input.mp4 output.mp4 --fps 60
 real-video-enhancer-helper.sh enhance input.mp4 output.mp4 --scale 2 --fps 60 --denoise
@@ -78,24 +77,17 @@ real-video-enhancer-helper.sh models clear
 
 ## Model Reference
 
-**Interpolation** (`--interpolate-model`):
-
-| Model | Speed | Quality | Use Case |
-|-------|-------|---------|----------|
-| rife | Fast | High | General purpose |
-| gmfss | Medium | Very High | Cinematic/complex motion |
-| ifrnet | Very Fast | Medium | Low-end hardware |
-
-**Upscaling** (`--upscale-model`):
-
-| Model | Speed | Quality | Use Case |
-|-------|-------|---------|----------|
-| span | Fast | High | General purpose |
-| realesrgan-x4plus | Medium | Very High | Photo-realistic |
-| animejaNai | Medium | High | Anime/animation |
-
-**Denoising** (`--denoise-model`): `drunet` (high quality), `dncnn` (fast/light).  
-**Decompression**: `deh264` (H.264 artifact removal).
+| Type (`--flag`) | Model | Speed | Quality | Use Case |
+|-----------------|-------|-------|---------|----------|
+| Interpolation (`--interpolate-model`) | rife | Fast | High | General purpose |
+| Interpolation | gmfss | Medium | Very High | Cinematic/complex motion |
+| Interpolation | ifrnet | Very Fast | Medium | Low-end hardware |
+| Upscaling (`--upscale-model`) | span | Fast | High | General purpose |
+| Upscaling | realesrgan-x4plus | Medium | Very High | Photo-realistic |
+| Upscaling | animejaNai | Medium | High | Anime/animation |
+| Denoising (`--denoise-model`) | drunet | Medium | High | High quality |
+| Denoising | dncnn | Fast | Medium | Fast/light |
+| Decompression | deh264 | — | — | H.264 artifact removal |
 
 Model cache: `~/.cache/real-video-enhancer/models/` (auto-downloaded on first use).  
 Sizes: RIFE ~200MB, SPAN ~150MB, Real-ESRGAN ~65MB, GMFSS ~300MB, DRUnet ~50MB.
@@ -120,10 +112,6 @@ Use TensorRT on NVIDIA for production. Default tile-size 1024; reduce to 512/256
 | Model not found | Check internet; verify `~/.cache/real-video-enhancer/models/` is writable |
 | Unsupported codec | `ffmpeg -i input.mp4 -c:v libx264 output.mp4` |
 | Slow on NVIDIA | Verify TensorRT: `real-video-enhancer-helper.sh backends` |
-
-```bash
-real-video-enhancer-helper.sh upscale input.mp4 output.mp4 --scale 2 --verbose
-```
 
 ## Related
 
