@@ -1,6 +1,6 @@
 ## Video Ad Hooks: The Critical First 3 Seconds
 
-Hook decision in <1 second. Every hook needs: visual pattern interrupt, immediate relevance, curiosity gap, emotional trigger, clear value promise. **Target:** 3-second view rate >50%.
+Hook decision in <1 second. Every hook needs: visual pattern interrupt, immediate relevance, curiosity gap, emotional trigger, clear value promise. **Target:** 3-second view rate >50%. **Test variables:** Hook type (question/statement/visual), specificity, emotion (fear/desire/curiosity), length (1s vs 3s), visual (with/without person).
 
 ### Question Hooks (1-20)
 
@@ -87,17 +87,9 @@ Hook decision in <1 second. Every hook needs: visual pattern interrupt, immediat
 | 64 | Challenge + Invitation | "Think you can't [goal]? Watch this" |
 | 65 | Pain + Solution | "Struggling with [problem]? I found the fix" |
 
-### Hook Testing
-
-**Test variables:** Hook type (question/statement/visual), specificity, emotion (fear/desire/curiosity), length (1s vs 3s), visual (with/without person).
-
----
-
 ## UGC-Style Ad Creation
 
 Smartphone-shot, casual, authentic — native to platform, higher trust, lower cost, faster iteration than studio production.
-
-### Creation Process
 
 **Sourcing:** Hire (Fiverr/Billo/Insense: $100-500, 3-7 days) | Customer testimonials (incentive) | Internal team (free, fastest).
 
