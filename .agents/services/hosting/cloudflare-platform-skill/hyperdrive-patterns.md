@@ -7,14 +7,11 @@ See [README.md](./README.md)
 ```typescript
 const sql = postgres(env.HYPERDRIVE.connectionString, {max: 5, prepare: true});
 
-// Cacheable: popular content
 const posts = await sql`SELECT * FROM posts WHERE published = true ORDER BY views DESC LIMIT 20`;
-
-// Cacheable: user profiles
 const [user] = await sql`SELECT id, username, bio FROM users WHERE id = ${userId}`;
 ```
 
-**Benefits:** Trending/profiles cached (60s), connection pooling handles spikes.
+Trending content and profiles cached (~60s). Connection pooling absorbs traffic spikes.
 
 ## Mixed Read/Write
 
@@ -24,13 +21,13 @@ interface Env {
   HYPERDRIVE_REALTIME: Hyperdrive;  // caching disabled
 }
 
-// Reads: cached
+// Reads via cached binding
 if (req.method === "GET") {
   const sql = postgres(env.HYPERDRIVE_CACHED.connectionString, {prepare: true});
   const products = await sql`SELECT * FROM products WHERE category = ${cat}`;
 }
 
-// Writes: no cache (immediate consistency)
+// Writes via realtime binding (immediate consistency)
 if (req.method === "POST") {
   const sql = postgres(env.HYPERDRIVE_REALTIME.connectionString, {prepare: true});
   await sql`INSERT INTO orders ${sql(data)}`;
@@ -43,7 +40,6 @@ if (req.method === "POST") {
 const client = new Client({connectionString: env.HYPERDRIVE.connectionString});
 await client.connect();
 
-// Aggregate queries cached
 const dailyStats = await client.query(`
   SELECT DATE(created_at) as date, COUNT(*) as orders, SUM(amount) as revenue
   FROM orders WHERE created_at >= NOW() - INTERVAL '30 days'
@@ -58,7 +54,7 @@ const topProducts = await client.query(`
 `);
 ```
 
-**Benefits:** Expensive aggregations cached, dashboard instant, reduced DB load.
+Expensive aggregations cached — dashboard loads instantly, reduced DB load.
 
 ## Multi-Tenant
 
@@ -66,54 +62,52 @@ const topProducts = await client.query(`
 const tenantId = req.headers.get("X-Tenant-ID");
 const sql = postgres(env.HYPERDRIVE.connectionString, {prepare: true});
 
-// Tenant-scoped queries cached separately
 const docs = await sql`
-  SELECT * FROM documents 
+  SELECT * FROM documents
   WHERE tenant_id = ${tenantId} AND deleted_at IS NULL
   ORDER BY updated_at DESC LIMIT 50
 `;
 ```
 
-**Benefits:** Per-tenant caching, shared connection pool, protects DB from multi-tenant load.
+Per-tenant query caching with shared connection pool. Protects DB from multi-tenant load.
 
 ## Geographically Distributed
 
 ```typescript
-// Worker runs at edge nearest user
-// Connection setup at edge (fast), pooling near DB (efficient)
+// Worker at edge nearest user; pooling near DB
 const sql = postgres(env.HYPERDRIVE.connectionString, {prepare: true});
 const [user] = await sql`SELECT * FROM users WHERE id = ${userId}`;
 
 return Response.json({
   user,
-  serverRegion: req.cf?.colo,  // Edge location
+  serverRegion: req.cf?.colo,
 });
 ```
 
-**Benefits:** Edge setup + DB pooling = global → single-region DB without replication.
+Edge connection setup + DB-side pooling = global access to a single-region DB without replication.
 
 ## Connection Pooling
 
-Operates in **transaction mode**: connection acquired per transaction, `RESET` on return.
+Transaction mode: connection acquired per transaction, `RESET` on return.
 
-**SET statements:**
+**SET statements** — must stay within a single transaction or statement:
 
 ```typescript
 // ✅ Within transaction
 await client.query("BEGIN");
 await client.query("SET work_mem = '256MB'");
-await client.query("SELECT * FROM large_table");  // Uses SET
+await client.query("SELECT * FROM large_table");
 await client.query("COMMIT");  // RESET after
 
-// ✅ Single statement
+// ✅ Single compound statement
 await client.query("SET work_mem = '256MB'; SELECT * FROM large_table");
 
-// ❌ Across queries (may get different connection)
+// ❌ Across queries — may get different connection
 await client.query("SET work_mem = '256MB'");
 await client.query("SELECT * FROM large_table");  // SET not applied
 ```
 
-**Best practices:**
+**Transaction discipline:**
 
 ```typescript
 // ❌ Long transactions block pooling
@@ -126,7 +120,7 @@ await client.query("BEGIN");
 await client.query("UPDATE users SET status = $1 WHERE id = $2", [status, id]);
 await client.query("COMMIT");
 
-// ✅ SET LOCAL within transaction
+// ✅ SET LOCAL scoped to transaction
 await client.query("BEGIN");
 await client.query("SET LOCAL work_mem = '256MB'");
 await client.query("SELECT * FROM large_table");
@@ -135,17 +129,14 @@ await client.query("COMMIT");
 
 ## Performance Tips
 
-**1. Enable prepared statements:**
+**Prepared statements** — always enable:
 
 ```typescript
-// ✅ Best
-const sql = postgres(connectionString, {prepare: true});  // Caching enabled
-
-// ❌ Slower
-const sql = postgres(connectionString, {prepare: false}); // Extra round-trips
+const sql = postgres(connectionString, {prepare: true});   // ✅ cached plans
+// prepare: false adds extra round-trips per query
 ```
 
-**2. Optimize settings:**
+**Optimal connection settings:**
 
 ```typescript
 const sql = postgres(connectionString, {
@@ -156,27 +147,27 @@ const sql = postgres(connectionString, {
 });
 ```
 
-**3. Cache-friendly queries:**
+**Cache-friendly queries** — use deterministic expressions:
 
 ```typescript
-// ✅ Cacheable (deterministic)
+// ✅ Deterministic — cacheable
 await sql`SELECT * FROM products WHERE category = 'electronics' LIMIT 10`;
 
-// ❌ Not cacheable (volatile)
+// ❌ Volatile — not cacheable
 await sql`SELECT * FROM logs WHERE created_at > NOW()`;
 
-// ✅ Make cacheable (parameterize)
+// ✅ Parameterize volatile parts
 const ts = Date.now();
 await sql`SELECT * FROM logs WHERE created_at > ${ts}`;
 ```
 
-**4. Monitor cache hits:**
+**Monitor cache hits:**
 
 ```typescript
 const start = Date.now();
 const result = await sql`SELECT * FROM users LIMIT 10`;
 const duration = Date.now() - start;
-console.log({duration, likelyCached: duration < 10});  // <10ms = cache hit
+console.log({duration, likelyCached: duration < 10});  // <10ms = likely cache hit
 ```
 
 See [gotchas.md](./gotchas.md) for limits, troubleshooting.
