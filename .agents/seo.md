@@ -46,7 +46,6 @@ subagents:
 
 ## Quick Reference
 
-- **Purpose**: SEO optimization and analysis
 - **Tools**: Google Search Console, Ahrefs, Semrush, DataForSEO, Serper, PageSpeed Insights, Google Analytics, Context7
 - **MCP**: GSC, DataForSEO, Serper, Google Analytics, Context7
 - **Commands**: `/keyword-research`, `/autocomplete-research`, `/keyword-research-extended`, `/seo-export`, `/seo-analyze`, `/seo-opportunities`, `/seo-write`, `/seo-optimize`, `/seo-analyze-content`, `/seo-fanout`, `/seo-geo`, `/seo-sro`, `/seo-hallucination-defense`, `/seo-agent-discovery`, `/seo-ai-readiness`, `/seo-ai-baseline`
@@ -64,27 +63,17 @@ subagents:
 
 **Content analysis** ([SEO Machine](https://github.com/TheCraigHewitt/seomachine)): `python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py {analyze|readability|keywords|quality|intent} <file|query> [--keyword "kw"]`
 
-**Testing**: `opencode run "/keyword-research 'test query'" --agent SEO` (see `tools/opencode/opencode.md`).
-
 <!-- AI-CONTEXT-END -->
 
 ## SEO Workflow
 
-### Keyword Research
+**Keyword research**: `/keyword-research "seed"` | `/autocomplete-research "question"` | `/keyword-research-extended "top keywords"`. Domain/Competitor/Gap modes: `seo/keyword-research.md`. GSC MCP for query performance, CTR, position, index coverage: `seo/google-search-console.md`.
 
-`/keyword-research "seed keywords"` | `/autocomplete-research "question"` | `/keyword-research-extended "top keywords"`. See `seo/keyword-research.md` for Domain/Competitor/Gap modes. GSC MCP for query performance, CTR, position tracking, index coverage (`seo/google-search-console.md`).
+**AI search (GEO/SRO)**: baseline → fanout → GEO → SRO → hallucination defense → agent discovery. Focus: deterministic retrieval signals (clarity, structure, consistency, discoverability). Scorecard: `seo/ai-search-readiness.md`.
 
-### AI Search Optimization (GEO and SRO)
+**SERP/backlinks/technical**: SERP via DataForSEO (comprehensive) or Serper (quick) | Backlinks via DataForSEO or Ahrefs | PageSpeed/CWV: `tools/browser/pagespeed.md` | On-page: DataForSEO | Crawling: `seo/site-crawler.md` | Real-time monitoring: `seo/contentking.md`.
 
-Retrieval-first workflow: baseline → fanout → GEO → SRO → hallucination defense → agent discovery. Focus: deterministic retrieval signals (content clarity, structure, consistency, discoverability). Full scorecard: `seo/ai-search-readiness.md`.
-
-### SERP, Backlinks, and Technical SEO
-
-- **SERP**: DataForSEO (comprehensive) or Serper (quick) | **Backlinks**: DataForSEO or Ahrefs
-- **PageSpeed / CWV**: `tools/browser/pagespeed.md` | **On-page**: DataForSEO
-- **Site crawling**: `seo/site-crawler.md` | **Real-time monitoring**: `seo/contentking.md`
-
-### Site Auditing
+**Site audit**:
 
 ```bash
 site-crawler-helper.sh {crawl|audit-links|audit-meta|audit-redirects} https://example.com
@@ -92,29 +81,27 @@ site-crawler-helper.sh {crawl|audit-links|audit-meta|audit-redirects} https://ex
 
 Output: `~/Downloads/{domain}/{datestamp}/` (CSV/XLSX).
 
-### E-E-A-T Content Quality
+**E-E-A-T scoring** (7 criteria, 1-10: Authorship, Citation, Effort, Originality, Intent, Subjective Quality, Writing):
 
 ```bash
 eeat-score-helper.sh analyze ~/Downloads/example.com/_latest/crawl-data.json
 eeat-score-helper.sh score https://example.com/article
 ```
 
-Scores 7 criteria (1-10): Authorship, Citation, Effort, Originality, Intent, Subjective Quality, Writing. Output: `{domain}-eeat-score-{date}.xlsx`.
+Output: `{domain}-eeat-score-{date}.xlsx`.
 
-### Sitemap Submission
+**Sitemap submission** (Playwright + persistent Chrome; first-time: `gsc-sitemap-helper.sh login`):
 
 ```bash
 gsc-sitemap-helper.sh submit example.com [example.net ...]  # or --file domains.txt
 gsc-sitemap-helper.sh status example.com
 ```
 
-Uses Playwright with persistent Chrome profile. First-time: `gsc-sitemap-helper.sh login`. Full path: `~/.aidevops/agents/scripts/gsc-sitemap-helper.sh`.
+**Opportunities**: Quick Wins (pos 4-20), Striking Distance (pos 11-30), Low CTR, Cannibalization → `~/.aidevops/.agent-workspace/work/seo-data/{domain}/`.
 
-### Data Export, Image SEO, and Content Optimization
+**Image SEO**: AI-powered alt text (WCAG-compliant, Moondream), SEO filenames, keyword tags, upscaling — `seo/image-seo.md`.
 
-- **Opportunities**: Quick Wins (pos 4-20), Striking Distance (pos 11-30), Low CTR, Cannibalization. Output: `~/.aidevops/.agent-workspace/work/seo-data/{domain}/`.
-- **Image SEO**: AI-powered alt text (WCAG-compliant, Moondream), SEO filenames, keyword tags, upscaling. See `seo/image-seo.md`.
-- **Content**: Integrate with `content.md` (calendar, SEO writing, meta, internal linking, editing). Per-project config: `content/context-templates.md`. Workflow: Plan → Research → Write → Analyze → Optimize (`seo/seo-optimizer.md`) → Edit → Publish.
+**Content**: Integrate with `content.md` (calendar, writing, meta, internal linking). Per-project config: `content/context-templates.md`. Workflow: Plan → Research → Write → Analyze → Optimize (`seo/seo-optimizer.md`) → Edit → Publish.
 
 ## Tool Comparison
 
