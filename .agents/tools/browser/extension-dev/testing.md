@@ -14,7 +14,7 @@ tools:
 
 # Extension Testing - Cross-Browser QA
 
-**Testing tool decision tree**:
+**Decision tree**:
 
 ```text
 E2E with extension loaded?   → Playwright (Chromium only)
@@ -27,16 +27,12 @@ Cross-browser verification?  → Chrome + Firefox + Edge (manual or CI)
 
 ## Unit Tests
 
-Test business logic in isolation (message parsing, storage, data transforms, API clients):
-
 ```bash
 npm run test   # Vitest (recommended with WXT)
 npx jest       # Jest alternative
 ```
 
-## E2E Testing with Playwright
-
-Playwright loads unpacked extensions in Chromium only (not Firefox):
+## E2E Testing (Playwright — Chromium only, headed mode required)
 
 ```typescript
 import { test, chromium } from '@playwright/test';
@@ -87,13 +83,13 @@ Firefox: load temporary add-on from `.output/firefox-mv2/` (or MV3). Edge: same 
 
 ## Debugging
 
-**Service Worker**: `chrome://extensions` → find extension → "Inspect views: service worker"
+| Target | How |
+|--------|-----|
+| Service Worker | `chrome://extensions` → find extension → "Inspect views: service worker" |
+| Content Scripts | DevTools (F12) → Sources → Content scripts → set breakpoints |
+| Popup | Right-click extension icon → "Inspect popup" |
 
-**Content Scripts**: DevTools (F12) → Sources → Content scripts → set breakpoints
-
-**Popup**: Right-click extension icon → "Inspect popup"
-
-**Storage** (DevTools console in any extension context):
+Storage (DevTools console in any extension context):
 
 ```javascript
 chrome.storage.local.get(null, console.log);
@@ -121,20 +117,16 @@ jobs:
 
 ## Pre-Submission Checklist
 
-- [ ] All unit tests pass
-- [ ] E2E tests pass in Chrome
+- [ ] Unit tests pass; E2E tests pass in Chrome
 - [ ] Manual testing complete in Firefox and Edge
 - [ ] No console errors or warnings
-- [ ] Permissions are minimal and justified
-- [ ] Content Security Policy is configured
+- [ ] Permissions minimal and justified; CSP configured
 - [ ] No hardcoded API keys or secrets
-- [ ] Extension works in incognito mode (if applicable)
-- [ ] Extension handles offline gracefully
-- [ ] Memory usage is reasonable (check via Task Manager)
+- [ ] Works in incognito (if applicable); handles offline; memory usage reasonable
 
 ## Related
 
-- `tools/browser/extension-dev/development.md` - Development setup
-- `tools/browser/extension-dev/publishing.md` - Store submission
-- `tools/browser/playwright.md` - Playwright testing
-- `tools/browser/chrome-devtools.md` - Chrome DevTools
+- `tools/browser/extension-dev/development.md` — Development setup
+- `tools/browser/extension-dev/publishing.md` — Store submission
+- `tools/browser/playwright.md` — Playwright testing
+- `tools/browser/chrome-devtools.md` — Chrome DevTools
