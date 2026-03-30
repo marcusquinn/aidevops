@@ -65,7 +65,7 @@ Hand-fix: `"tools": {}` (not `[]`), `"type": "local"|"remote"`, `"tool_name": tr
 | Domains | 101domains | `configs/101domains-config.json` | — |
 | Secrets | Vaultwarden | `configs/vaultwarden-config.json` | — |
 
-CodeRabbit key: `mkdir -p ~/.config/coderabbit && chmod 700 ~/.config/coderabbit`, write key to `~/.config/coderabbit/api_key`, `chmod 600 ~/.config/coderabbit/api_key`.
+CodeRabbit key setup (single command): `mkdir -p ~/.config/coderabbit && chmod 700 ~/.config/coderabbit && echo "YOUR_API_KEY_HERE" > ~/.config/coderabbit/api_key && chmod 600 ~/.config/coderabbit/api_key`
 
 SEO: `/keyword-research`, `/autocomplete-research`, `/keyword-research-extended`, `/webmaster-keywords`
 
@@ -110,8 +110,9 @@ chmod 600 ~/.config/aidevops/credentials.sh && chmod 700 ~/.config/aidevops
 ## Repo Sync & Orchestration
 
 ```bash
-# Configure git parent directories for repo sync
-jq --argjson dirs '["~/Git", "~/Projects"]' '. + {git_parent_dirs: $dirs}' \
+# Configure git parent directories for repo sync (creates repos.json if missing)
+mkdir -p ~/.config/aidevops && { [ -s ~/.config/aidevops/repos.json ] || echo '{}' > ~/.config/aidevops/repos.json; } && \
+  jq --argjson dirs '["~/Git", "~/Projects"]' '. + {git_parent_dirs: $dirs}' \
   ~/.config/aidevops/repos.json > /tmp/repos.json && mv /tmp/repos.json ~/.config/aidevops/repos.json
 aidevops repo-sync enable
 aidevops config set orchestration.supervisor_pulse true && ./setup.sh  # Enable autonomous orchestration
