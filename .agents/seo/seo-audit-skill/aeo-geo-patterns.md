@@ -11,7 +11,7 @@ Reusable content block patterns for answer engines and AI citation.
 [Term] is [1-sentence definition]. [Key characteristics]. [Why it matters].
 ```
 
-### Step-by-Step Block — "How to [X]" (list snippets)
+### Step-by-Step Block — "How to [X]"
 
 ```markdown
 ## How to [Action/Goal]
@@ -21,7 +21,7 @@ Reusable content block patterns for answer engines and AI citation.
 3. **[Step]**: [Action in 1-2 sentences]
 ```
 
-### Comparison Table — "[X] vs [Y]" (table snippets)
+### Comparison Table — "[X] vs [Y]"
 
 ```markdown
 ## [Option A] vs [Option B]: [Descriptor]
@@ -32,7 +32,7 @@ Reusable content block patterns for answer engines and AI citation.
 **Bottom line**: [1-2 sentence recommendation]
 ```
 
-### Pros/Cons Block — "Is [X] worth it?", "Should I [X]?"
+### Pros/Cons Block — "Is [X] worth it?"
 
 ```markdown
 ## Advantages and Disadvantages of [Topic]
@@ -41,16 +41,15 @@ Reusable content block patterns for answer engines and AI citation.
 **Verdict**: [Balanced conclusion with recommendation]
 ```
 
-### FAQ Block — common questions (FAQ schema)
+### FAQ Block — common questions
 
 Natural phrasing ("How do I..." not "How does one..."). Match "People Also Ask". 50-100 word answers.
-
 ```markdown
 ### [Question phrased as users search]?
 [Direct answer first sentence]. [Supporting context in 2-3 sentences].
 ```
 
-### Listicle Block — "Best [X]", "Top [X]", "[N] ways to [X]"
+### Listicle Block — "Best [X]", "Top [X]"
 
 ```markdown
 ## [Number] Best [Items] for [Goal/Purpose]
@@ -61,7 +60,7 @@ Natural phrasing ("How do I..." not "How does one..."). Match "People Also Ask".
 
 ### Voice Search
 
-Conversational queries ("What is...", "How do I...", "Where can I find...", "Why does...", "When should I..."). Direct answer under 30 words, natural language, avoid jargon unless targeting experts, include local context where relevant.
+Conversational queries: "What is...", "How do I...", "Where can I find...", "Why does...", "When should I...". Direct answer under 30 words, natural language, avoid jargon unless targeting experts, include local context.
 
 ## GEO Patterns
 
@@ -76,7 +75,7 @@ For citation by AI assistants (ChatGPT, Claude, Perplexity, Gemini).
 | **Authoritative Claim** | `[Topic] [verb] [specific claim]. [Source] [confirms/found] [evidence]. This [means/suggests] [action].` |
 | **Self-Contained Answer** | `**[Topic/Question]**: [Complete, self-contained answer with details/numbers in 2-3 sentences.]` |
 
-### Evidence Sandwich — claims bracketed by evidence
+### Evidence Sandwich
 
 ```markdown
 [Opening claim].
@@ -89,8 +88,7 @@ Evidence:
 
 ### Product Block — domain-scoped AI retrieval
 
-For `site:yourdomain.com [category] features [year]` queries. Align `title`/`H1`/first paragraph to domain-scoped query modifiers.
-
+For `site:yourdomain.com [category] features [year]` queries.
 ```markdown
 ## [Product/Category] Features for [Audience] ([Year])
 **Best for**: [ICP or use case]  |  **Pricing**: [starting point / packaging]
@@ -102,10 +100,9 @@ For `site:yourdomain.com [category] features [year]` queries. Align `title`/`H1`
 - G2: [profile URL with UTM]  |  Capterra: [profile URL with UTM]
 ```
 
-Mirror canonical facts on product page and third-party profiles. UTM: `utm_source=g2`, `utm_medium=referral`, `utm_campaign=ai_citation`. Review freshness monthly.
+Mirror facts on product page and third-party profiles. UTM: `utm_source=g2`, `utm_medium=referral`, `utm_campaign=ai_citation`. Review freshness monthly.
 
-**Site-searchable variant** — H2 with category terms for `site:` queries, standalone opening sentence, date freshness:
-
+**Site-searchable variant:**
 ```markdown
 ## [Product Name]: [Category] [Type] for [Audience]
 [Product Name] is a [category term] that [value proposition]. [Differentiator].
@@ -115,7 +112,7 @@ Mirror canonical facts on product page and third-party profiles. UTM: `utm_sourc
 *Last updated: [YYYY-MM]*
 ```
 
-## Domain-Specific GEO Authority Signals
+## Domain-Specific Authority Signals
 
 | Domain | Key signals |
 |--------|-------------|
@@ -127,8 +124,7 @@ Mirror canonical facts on product page and third-party profiles. UTM: `utm_sourc
 
 ## UTM Citation Attribution
 
-Canonical URL always clean — tracking parameters only in cited variants.
-
+Canonical URL clean — tracking parameters only in cited variants.
 ```markdown
 <!-- Canonical -->
 https://yourdomain.com/product-features/
