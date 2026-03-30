@@ -25,9 +25,8 @@ tools:
 | Logs | `~/.aidevops/.agent-workspace/supervisor/logs/remote/` |
 | Task | t1165.3 |
 
-**Use when**: GPU-heavy tasks, multi-machine distribution, isolated containers, Tailscale mesh dispatch.
-
-**Don't use when**: Local tasks, tasks needing local filesystem access, interactive development.
+**Use when**: GPU tasks, multi-machine distribution, isolated containers, Tailscale mesh dispatch.
+**Don't use when**: Local tasks, local filesystem access needed, interactive development.
 
 <!-- AI-CONTEXT-END -->
 
@@ -55,7 +54,7 @@ Local Supervisor                    Remote Host
 ## Host Management
 
 ```bash
-# Add hosts
+# Add
 remote-dispatch-helper.sh add gpu-server 192.168.1.100
 remote-dispatch-helper.sh add build-node build-node.tailnet.ts.net --transport tailscale
 remote-dispatch-helper.sh add docker-host 10.0.0.5 --user deploy --container worker-1
@@ -70,13 +69,12 @@ remote-dispatch-helper.sh check gpu-server   # verifies SSH, Docker, AI CLI, age
 ## Dispatching Tasks
 
 ```bash
-# Manual dispatch
 remote-dispatch-helper.sh dispatch t123 gpu-server \
   --model anthropic/claude-opus-4-6 \
   --description "Implement feature X"
 ```
 
-**Supervisor integration**: Use `target:hostname` label on GitHub issues or TODO.md tag to route tasks to specific hosts. GitHub is the state DB (SQLite `supervisor.db` dispatch_target is deprecated).
+**Routing**: `target:hostname` label on GitHub issues or TODO.md tag. GitHub is the state DB (`supervisor.db` dispatch_target is deprecated).
 
 ## Credential Forwarding
 
@@ -89,12 +87,12 @@ remote-dispatch-helper.sh dispatch t123 gpu-server \
 | `GOOGLE_API_KEY` | Env var | For Google AI models |
 
 **Security**:
-- SSH agent forwarding passes the socket, not the keys themselves
-- API keys are embedded in a shell script uploaded via SSH stdin — does NOT rely on `AcceptEnv`/`SendEnv`
-- Keys are NOT written to disk as standalone files; they exist only within the generated dispatch script
-- On Linux, env vars are readable from `/proc/<pid>/environ` by same user and root while worker runs
-- For sensitive deployments: restrict remote host access or use short-lived/scoped tokens
-- Remote workspace is cleaned up after task completion
+- SSH agent forwarding passes the socket, not keys
+- API keys embedded in shell script uploaded via SSH stdin — no `AcceptEnv`/`SendEnv` dependency
+- Keys exist only in the generated dispatch script, never as standalone files on disk
+- Linux: env vars readable via `/proc/<pid>/environ` by same user + root while worker runs
+- Sensitive deployments: restrict remote host access or use short-lived/scoped tokens
+- Remote workspace cleaned up after task completion
 
 ## Log Collection
 
@@ -104,9 +102,9 @@ remote-dispatch-helper.sh logs t123 gpu-server --follow  # stream in real-time
 remote-dispatch-helper.sh logs t123 gpu-server --tail 100
 ```
 
-**Automatic collection**: When pulse Phase 1 detects a remote worker has finished (PID gone), it calls `logs`, updates `log_file` in the DB to the local copy, then proceeds with normal evaluation.
+**Auto-collection**: Pulse Phase 1 detects worker exit (PID gone) → calls `logs` → updates `log_file` in DB to local copy → normal evaluation.
 
-## Worker Status and Cleanup
+## Status and Cleanup
 
 ```bash
 remote-dispatch-helper.sh status t123 gpu-server    # host, transport, container, PID, state, log size
@@ -124,9 +122,9 @@ remote-dispatch-helper.sh cleanup t123 gpu-server --keep-logs
 | Auth | SSH keys / agent | Tailscale identity |
 | Command | `ssh` | `tailscale ssh` (falls back to `ssh`) |
 
-Tailscale auto-detected for `*.ts.net` addresses and `100.x.x.x` IPs.
+Tailscale auto-detected for `*.ts.net` and `100.x.x.x` addresses.
 
-## Configuration File (`~/.config/aidevops/remote-hosts.json`)
+## Configuration (`~/.config/aidevops/remote-hosts.json`)
 
 ```json
 {
