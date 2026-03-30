@@ -71,13 +71,13 @@ Marketing agent: strategy, campaigns, paid ads (Meta/Google), email, landing pag
 
 ## Pre-flight Validation
 
-Before generating strategy or campaigns, validate:
+Before generating strategy or campaigns:
 
 1. Real, painful problem? Unique vs. alternatives?
-2. Benefits before features? Pricing vs. alternatives (including doing nothing)?
+2. Benefits before features? Pricing vs. alternatives (incl. doing nothing)?
 3. Claims realistic and provable?
 4. Named personas with real constraints (not demographics)?
-5. Who would say "not for me" — is that the right person to lose?
+5. Who says "not for me" — right person to lose?
 
 ## Email Campaigns
 
@@ -85,7 +85,7 @@ Before generating strategy or campaigns, validate:
 
 **Type routing**: Newsletter/Promotional → Email Campaign. Nurture/Transactional/Re-engagement → Automation.
 
-**Template rules**: Subject 40-60 chars (personalized, clear value). Preheader 40-100 chars. Single column, scannable, mobile-first. CTA above fold. Footer: unsubscribe, contact, social.
+**Template rules**: Subject 40-60 chars (personalized, clear value). Preheader 40-100 chars. Single column, scannable, mobile-first. CTA above fold. Footer: unsubscribe, contact, social links.
 
 **Personalization**: `{{contact.first_name}}`, `{{contact.last_name}}`, `{{contact.email}}`, `{{contact.full_name}}`, `{{contact.custom.field_name}}`
 
