@@ -49,7 +49,7 @@ export async function onRequest(context) {
 ## Rate Limiting
 
 ```typescript
-// Env: { RATE_LIMIT: KVNamespace }
+interface Env { RATE_LIMIT: KVNamespace; }
 async function rateLimitMiddleware(context: EventContext<Env>) {
   const clientIP = context.request.headers.get('CF-Connecting-IP') || 'unknown';
   const key = `ratelimit:${clientIP}`;
