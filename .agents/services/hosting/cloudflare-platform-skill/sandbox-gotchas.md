@@ -125,7 +125,7 @@ const result = await sandbox.exec('git clone ...', {
 
 ### Preview URL Security
 
-Preview URLs include auto-generated tokens (e.g., `https://8080-sandbox-abc123def456.yourdomain.com`). Token changes on each expose operation, preventing unauthorized access.
+Preview URLs include auto-generated tokens (e.g., `https://8080-sandbox-abc123def456.yourdomain.com`) that rotate on each expose operation, reducing the risk of unauthorized access. Note: tokens can be leaked prior to rotation.
 
 ## Limits
 
