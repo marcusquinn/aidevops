@@ -1,10 +1,10 @@
 # Cloudflare Pages Functions
 
-Serverless functions on Cloudflare Pages using Workers runtime. Full-stack dev with file-based routing.
+Serverless functions on Cloudflare Pages using Workers runtime. File-based routing for full-stack dev.
 
 ## File-Based Routing
 
-```
+```text
 /functions
   ├── index.js              → /
   ├── api.js                → /api
@@ -15,11 +15,7 @@ Serverless functions on Cloudflare Pages using Workers runtime. Full-stack dev w
   └── _middleware.js        → runs on all routes
 ```
 
-**Rules:**
-- `index.js` → directory root
-- Trailing slash optional
-- Specific routes precede catch-alls
-- Falls back to static if no match
+`index.js` → directory root · trailing slash optional · specific routes precede catch-alls · falls back to static if no match
 
 ## Dynamic Routes
 
@@ -45,13 +41,9 @@ export function onRequest(context) {
 
 ## Key Features
 
-- **Method handlers:** `onRequestGet`, `onRequestPost`, etc.
-- **Middleware:** `_middleware.js` for cross-cutting concerns
-- **Bindings:** KV, D1, R2, Durable Objects, Workers AI, Service bindings
-- **TypeScript:** Full type support via `@cloudflare/workers-types`
-- **Advanced mode:** Use `_worker.js` for custom routing logic
+**Method handlers:** `onRequestGet`, `onRequestPost`, etc. · **Middleware:** `_middleware.js` for cross-cutting concerns · **Bindings:** KV, D1, R2, Durable Objects, Workers AI, Service bindings · **TypeScript:** `@cloudflare/workers-types` · **Advanced mode:** `_worker.js` for custom routing logic
 
 ## See Also
 
-- [patterns.md](./patterns.md) - Auth, CORS, rate limiting, forms, caching
-- [gotchas.md](./gotchas.md) - Common issues, debugging, limits
+- [pages-functions-patterns.md](./pages-functions-patterns.md) — Auth, CORS, rate limiting, forms, caching
+- [pages-functions-gotchas.md](./pages-functions-gotchas.md) — Common issues, debugging, limits
