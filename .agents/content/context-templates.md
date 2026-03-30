@@ -23,10 +23,10 @@ Run `mkdir -p context` then populate from templates below. Subagents (`seo-write
 
 ## Tone by Content Type
 | Content Type | Tone | Example |
-|-------------|------|---------|
-| Blog posts | [e.g., conversational, expert] | "Here's what we found..." |
-| Landing pages | [e.g., confident, direct] | "Get started in minutes" |
-| Documentation | [e.g., clear, helpful] | "Follow these steps..." |
+|---|---|---|
+| Blog posts | [conversational, expert] | "Here's what we found..." |
+| Landing pages | [confident, direct] | "Get started in minutes" |
+| Documentation | [clear, helpful] | "Follow these steps..." |
 
 ## Core Messages
 1. [Primary value proposition]
@@ -34,17 +34,13 @@ Run `mkdir -p context` then populate from templates below. Subagents (`seo-write
 3. [Differentiator]
 
 ## Writing Style
-- **Sentence length**: [e.g., Mix of short and medium]
-- **Vocabulary level**: [e.g., Professional but accessible]
-- **Contractions**: [e.g., Yes, use naturally]
-- **First person**: [e.g., "We" for company, avoid "I"]
-- **Reader address**: [e.g., "You" directly]
+- **Sentence length**: [Mix of short and medium]
+- **Vocabulary level**: [Professional but accessible]
+- **Contractions**: [Yes/No]
+- **Person**: ["We" for company, "You" for reader]
 
-## Words to Use
-[List preferred terminology]
-
-## Words to Avoid
-[List terms that don't fit the brand]
+## Preferred / Avoided Terminology
+[List preferred terms and terms to avoid]
 ```
 
 ### context/style-guide.md
@@ -52,21 +48,18 @@ Run `mkdir -p context` then populate from templates below. Subagents (`seo-write
 ```markdown
 # Style Guide
 
-## Grammar and Mechanics
+## Grammar and Formatting
 - **Oxford comma**: [Yes/No]
-- **Capitalization**: [Title case for headings / Sentence case]
-- **Numbers**: [Spell out under 10 / Always use digits]
-- **Dates**: [Format: January 15, 2026]
-
-## Formatting
-- **Headings**: [H2 for main sections, H3 for subsections]
-- **Lists**: [Bullet for unordered, numbered for steps]
-- **Bold**: [For key terms and emphasis]
-- **Code**: [Backticks for technical terms]
+- **Capitalization**: [Title case / Sentence case for headings]
+- **Numbers**: [Spell out under 10 / Always digits]
+- **Dates**: [January 15, 2026]
+- **Headings**: [H2 main sections, H3 subsections]
+- **Lists**: [Bullet unordered, numbered for steps]
+- **Emphasis**: [Bold for key terms, backticks for code]
 
 ## Terminology
 | Use | Don't Use |
-|-----|-----------|
+|---|---|
 | [preferred term] | [avoided term] |
 
 ## Content Structure
@@ -82,23 +75,17 @@ Run `mkdir -p context` then populate from templates below. Subagents (`seo-write
 
 ## Pillar Topics
 
-### [Topic Cluster 1]
+### [Topic Cluster Name]
 - **Pillar keyword**: [main keyword] (volume: X, difficulty: Y)
-- **Cluster keywords**:
-  - [subtopic keyword 1] (volume: X)
-  - [subtopic keyword 2] (volume: X)
-  - [subtopic keyword 3] (volume: X)
-- **Long-tail variations**:
-  - [long-tail 1]
-  - [long-tail 2]
+- **Cluster keywords**: [subtopic 1] (vol: X), [subtopic 2] (vol: X)
+- **Long-tail variations**: [long-tail 1], [long-tail 2]
 - **Search intent**: [informational/commercial/transactional]
 
-### [Topic Cluster 2]
-[repeat above structure]
+Repeat structure per cluster.
 
 ## Current Rankings
 | Keyword | Position | URL | Opportunity |
-|---------|----------|-----|-------------|
+|---|---|---|---|
 | [keyword] | [pos] | [url] | [action needed] |
 ```
 
@@ -110,21 +97,15 @@ Run `mkdir -p context` then populate from templates below. Subagents (`seo-write
 ## Product/Feature Pages
 - [/features](/features) - Main features overview (anchor: "our features")
 - [/pricing](/pricing) - Pricing plans (anchor: "pricing", "plans")
-- [/integrations](/integrations) - Integration directory
 
-## Pillar Content
+## Pillar & Top Content
 - [/blog/guide-to-X](/blog/guide-to-X) - Primary pillar (anchor: "complete guide to X")
-- [/blog/Y-explained](/blog/Y-explained) - Secondary pillar (anchor: "understanding Y")
-
-## Top Blog Posts
 - [/blog/how-to-Z](/blog/how-to-Z) - High traffic (anchor: "how to Z")
-- [/blog/best-tools](/blog/best-tools) - High conversion (anchor: "best tools for...")
 
 ## Topic Clusters
 ### Cluster: [Topic A]
 - Pillar: /blog/topic-a-guide
-- Cluster: /blog/topic-a-subtopic-1
-- Cluster: /blog/topic-a-subtopic-2
+- Cluster: /blog/topic-a-subtopic-1, /blog/topic-a-subtopic-2
 ```
 
 ### context/competitor-analysis.md
@@ -134,12 +115,12 @@ Run `mkdir -p context` then populate from templates below. Subagents (`seo-write
 
 ## Primary Competitors
 | Competitor | Domain | Strengths | Weaknesses |
-|-----------|--------|-----------|------------|
+|---|---|---|---|
 | [Name] | [domain.com] | [what they do well] | [gaps we can exploit] |
 
 ## Content Strategy Comparison
 | Topic | Us | Competitor A | Competitor B | Gap |
-|-------|-----|-------------|-------------|-----|
+|---|---|---|---|---|
 | [topic] | [our coverage] | [their coverage] | [their coverage] | [opportunity] |
 
 ## Keyword Gaps
@@ -157,9 +138,9 @@ Run `mkdir -p context` then populate from templates below. Subagents (`seo-write
 - Reading level: Grade 8-10
 
 ## On-Page SEO
-- Meta title: 50-60 characters, keyword near front
-- Meta description: 150-160 characters, include keyword and CTA
-- H1: Single, includes primary keyword
+- Meta title: 50-60 chars, keyword near front
+- Meta description: 150-160 chars, keyword + CTA
+- H1: single, includes primary keyword
 - H2: 4+ sections, 2-3 include keyword variations
 - Internal links: 3-5 per article
 - External links: 2-3 to authoritative sources
