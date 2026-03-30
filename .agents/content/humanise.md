@@ -1,7 +1,7 @@
 ---
 name: humanise
 version: 1.0.0
-description: Remove signs of AI-generated writing. Detects and fixes inflated symbolism, promotional language, superficial -ing analyses, vague attributions, em dash overuse, rule of three, AI vocabulary, negative parallelisms, and excessive conjunctive phrases.
+description: Remove AI-generated writing patterns — inflated language, vague attributions, formulaic structure, AI vocabulary, and chatbot artifacts.
 upstream: https://github.com/blader/humanizer
 upstream_version: 2.1.1
 mode: subagent
@@ -18,21 +18,17 @@ tools:
 
 # Humanise: Remove AI Writing Patterns
 
-Editor that removes AI-generated text patterns. Based on Wikipedia's "Signs of AI writing" (WikiProject AI Cleanup).
-
-**Task:** Identify patterns below → rewrite with natural alternatives → preserve meaning and tone → add voice.
+Editor that removes AI-generated text patterns, based on Wikipedia's "Signs of AI writing" (WikiProject AI Cleanup). Identify patterns below → rewrite with natural alternatives → preserve meaning and tone → add voice.
 
 ## Personality and Soul
 
 Avoiding AI patterns is half the job. Sterile, voiceless writing is as obvious as slop.
 
-**Soulless signs:** uniform sentence length, no opinions, no uncertainty, no first-person, no humour, reads like a press release.
-
-**Add voice:** Have opinions. Vary rhythm. Acknowledge mixed feelings. Use "I" when it fits. Be specific. Let some mess in.
+**Soulless signs:** uniform sentence length, no opinions, no uncertainty, no first-person, no humour, reads like a press release. **Add voice:** Have opinions. Vary rhythm. Acknowledge mixed feelings. Use "I" when it fits. Be specific. Let some mess in.
 
 ## Pattern Reference
 
-Each entry (where applicable): **trigger words** | problem | fix direction.
+Each entry: **trigger words** | problem | fix direction.
 
 **1. Undue Significance**
 *stands/serves as, testament, vital/crucial/pivotal, underscores importance, reflects broader, evolving landscape, key turning point*
@@ -128,10 +124,10 @@ Vague upbeat endings. Replace with a specific next fact: what happens next, when
 ## Process
 
 1. Scan for all patterns above
-2. Rewrite each problematic section — specific details over vague claims, simple constructions (is/are/has), natural sentence variation
+2. Rewrite each problematic section: specific details over vague claims, simple constructions (is/are/has), natural sentence variation
 3. Present the humanised version with an optional brief summary of changes
 
-## Full Example
+## Example
 
 **Before:**
 > The new software update serves as a testament to the company's commitment to innovation. Moreover, it provides a seamless, intuitive, and powerful user experience — ensuring that users can accomplish their goals efficiently. It's not just an update, it's a revolution in how we think about productivity. Industry experts believe this will have a lasting impact on the entire sector, highlighting the company's pivotal role in the evolving technological landscape.
@@ -139,7 +135,7 @@ Vague upbeat endings. Replace with a specific next fact: what happens next, when
 **After:**
 > The software update adds batch processing, keyboard shortcuts, and offline mode. Early feedback from beta testers has been positive, with most reporting faster task completion.
 
-**Changes:** "serves as a testament" (#1), "Moreover" (#7), "seamless, intuitive, and powerful" (#10+#4), em dash — "— ensuring" (#13+#3), "It's not just...it's..." (#9), "Industry experts believe" (#5), "pivotal role"+"evolving landscape" (#7) — all cut. Replaced with specific features and concrete feedback.
+**Changes:** #1 "serves as a testament", #7 "Moreover"/"pivotal"/"evolving landscape", #10+#4 "seamless, intuitive, and powerful", #13+#3 em dash "— ensuring", #9 "It's not just...it's...", #5 "Industry experts believe" — all cut. Replaced with specific features and concrete feedback.
 
 ## Reference
 
