@@ -160,7 +160,8 @@ Endpoints: `/dashboard` | `/playground` | `/schema` | `/metrics`
 ## Integration
 
 \`\`\`bash
-# Crawl → PDF via pandoc
+# Crawl → PDF via pandoc (write to temp file; pandoc-helper.sh requires a real file path)
 ./.agents/scripts/crawl4ai-helper.sh crawl https://docs.com markdown docs.json
-jq -r '.results[0].markdown' docs.json | ./.agents/scripts/pandoc-helper.sh convert - pdf docs.pdf
+jq -r '.results[0].markdown' docs.json > /tmp/docs-crawl.md
+./.agents/scripts/pandoc-helper.sh convert /tmp/docs-crawl.md pdf docs.pdf
 \`\`\`
