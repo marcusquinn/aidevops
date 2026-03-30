@@ -38,7 +38,7 @@ Run each step, report findings with severity and location.
 
    ```bash
    aidevops security scan
-   # Or directly: secret-hygiene-helper.sh scan
+   # Or directly: ./.agents/scripts/secret-hygiene-helper.sh scan
    ```
 
 For deeper analysis, use `/security-analysis` (full taint analysis, git history scanning, detailed remediation).
