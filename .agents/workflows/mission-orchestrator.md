@@ -1,5 +1,5 @@
 ---
-description: Mission orchestrator — drives autonomous multi-day projects from active mission state to completion through milestone execution, self-organisation, and validation
+description: Drive active missions to completion — sequential milestones, parallel features, validation, re-planning
 mode: subagent
 model: opus  # architecture-level reasoning, multi-milestone coordination, re-planning on failure
 tools:
@@ -29,13 +29,13 @@ tools:
 
 ## How to Think
 
-Read the mission state file, understand the current phase, take the next correct action — not a script executor.
+Read the mission state file, understand the current phase, take the next correct action.
 
 - **One orchestrator layer.** Decompose large features via `task-decompose-helper.sh`; workers don't spawn sub-orchestrators.
 - **Serial milestones, parallel features.** Each milestone must pass validation before the next. Features within a milestone run in parallel (up to `max_parallel_workers`).
 - **State lives in git.** Commit and push after every significant action.
 - **Proceed**: dispatching, monitoring, recording completions, advancing milestones, re-dispatching transient failures.
-- **Pause**: budget threshold exceeded, same milestone failed 3×, fundamental failure, external dependency needs human.
+- **Pause**: budget threshold exceeded, same milestone failed 3x, fundamental failure, external dependency needs human.
 - **Never pause for**: style, equivalent library selection, minor scope — decide, document, move on.
 
 ## Execution Loop
@@ -46,25 +46,18 @@ Read the mission state file, understand the current phase, take the next correct
 
 ### Phase 2: Dispatch Features
 
-When milestone `active` with `pending` features. For each:
+When milestone `active` with `pending` features, for each:
 
 1. Check worker running: `ps axo command | grep '/full-loop' | grep '{task_id}'`
-2. Check open PR (Full): `gh pr list --search '{task_id}'`
+2. Check open PR: `gh pr list --search '{task_id}'`
 3. If composite → decompose via `task-decompose-helper.sh`, dispatch leaf sub-features
 
-**Full mode** (`--agent` for non-code features):
+Dispatch (`--agent` for non-code features; add `--poc` for POC mode):
 
 ```bash
 headless-runtime-helper.sh run --dir {repo_path} --title "Mission {id} - {title}" \
-  --prompt "/full-loop Implement {task_id} -- {desc}. Mission: {goal}. Milestone: {name}." &
+  --prompt "/full-loop [--poc] Implement {task_id} -- {desc}. Mission: {goal}. Milestone: {name}." &
 worker_pid=$!; kill -0 "$worker_pid" 2>/dev/null || { echo "Dispatch failed"; exit 1; }
-```
-
-**POC mode:**
-
-```bash
-headless-runtime-helper.sh run --dir {repo_path} --title "Mission {id} - {title}" \
-  --prompt "/full-loop --poc {desc}. Mission: {goal}. Commit directly, skip ceremony." &
 ```
 
 Update → `dispatched`, record `worker_pid`. Respect `max_parallel_workers`.
@@ -84,7 +77,7 @@ When all features `completed`:
 
 Checks: deps, tests, build, lint, browser (if flagged). Exit: 0=pass, 1=fail, 2=config error, 3=not ready.
 
-Budget check: if ≥80% spent → pause and report.
+Budget check: if >=80% spent → pause and report.
 
 **Pass**: milestone → `passed`, next → `active`, commit, push, back to Phase 2.
 **Fail**: create targeted fix features, re-dispatch, re-validate. After 3 failures: pause, report with diagnosis.
@@ -107,13 +100,13 @@ Dirs: `mission.md` (always) · `research/` · `agents/` · `scripts/` · `assets
 
 ## Budget
 
-Pre-execution: `budget-analysis-helper.sh recommend --goal "{goal}" --json`. Per-feature: `budget-analysis-helper.sh estimate --task "{desc}" --tier {tier} --json`. After worker: `budget-tracker-helper.sh record --provider {p} --model {m} --task {id} --input-tokens {N} --output-tokens {N}`.
+Commands: `budget-analysis-helper.sh recommend --goal "{goal}" --json` (pre-execution), `budget-analysis-helper.sh estimate --task "{desc}" --tier {tier} --json` (per-feature), `budget-tracker-helper.sh record --provider {p} --model {m} --task {id} --input-tokens {N} --output-tokens {N}` (after worker).
 
 | Used | Action |
 |------|--------|
 | < 60% | Continue |
-| 60–80% | Warn; consider cheaper tier |
-| 80–100% | Pause; report options |
+| 60-80% | Warn; consider cheaper tier |
+| 80-100% | Pause; report options |
 | > 100% | Stop new dispatches |
 
 **Tiers**: haiku=research, sonnet=implementation, opus=re-planning only.
