@@ -2,18 +2,13 @@
 
 Tailor experiences based on user attributes, behavior, or context. Dynamic content adapts per visitor, increasing relevance and conversion.
 
----
-
 ## Types of Personalization
 
 ### 1. Geo-Based
 
-Customize by visitor location (country, state, city).
-
-**What to personalize**: shipping messaging, currency display, local store/event references, language auto-detection.
+Customize by visitor location (country, state, city): shipping messaging, currency display, local store/event references, language auto-detection.
 
 **Implementation**:
-
 - **Client-side**: IP geolocation API (ipapi.co, MaxMind GeoIP) → JS conditional rendering
 - **Server-side** (better for SEO): detect IP on server, render appropriate content
 - **Edge**: Cloudflare Workers for zero-latency personalization
@@ -94,14 +89,11 @@ Also adapt by cart state (empty → "Start Shopping", items → "Checkout Now ($
 Segment tests by user attributes instead of showing the same variants to all users.
 
 **Example**: E-commerce returning vs first-time visitors:
-
 - Returning: 12% uplift with "Continue shopping" (vs "Welcome back!")
 - First-time: 34% uplift with "Get 10% off" (vs "Browse best sellers")
 - Overall: 23% lift vs 8% from unsegmented test
 
 **Why**: Mobile/desktop, new/returning, and source-based behaviors differ enough that aggregate tests mask segment-specific winners.
-
----
 
 ## Personalization Tools
 
@@ -111,12 +103,9 @@ Segment tests by user attributes instead of showing the same variants to all use
 | Mid-tier | OptinMonster ($9-49/mo), Unbounce ($90-225/mo), HubSpot CMS ($300+/mo) | $9-300+/mo |
 | Enterprise | Dynamic Yield, Optimizely Full Stack, Adobe Target | $$$ |
 
----
-
 ## Best Practices
 
 **Phased rollout** (don't personalize everything at once):
-
 1. Geo-based (currency, language, shipping)
 2. Returning visitor recognition
 3. Referral source adaptation
@@ -131,8 +120,6 @@ Segment tests by user attributes instead of showing the same variants to all use
 
 **Don't over-personalize**: "Hi Sarah, welcome back!" is fine. Using someone's name 5 times on one page is overkill.
 
----
-
 ## Case Studies
 
 | Scenario | Change | Result | Why |
@@ -143,16 +130,12 @@ Segment tests by user attributes instead of showing the same variants to all use
 | E-commerce cart recovery | Tiered incentives by cart value (<$50: shipping nudge, $50-100: 10% off, $100+: free express) | 23% recovery rate (vs 12% generic) | Incentive matched cart value |
 | SaaS industry pages | Separate pages per vertical (real estate, insurance, financial advisors) | 5.8% conversion vs 2.3% generic (+152%) | Specificity and relevance |
 
----
-
 ## Future Trends
 
 - **AI hyper-personalization**: ML models predicting optimal headline, pricing tier, testimonial, and popup timing per user. Modern platforms (AB Tasty, Optimizely, VWO) already auto-allocate traffic to winning variants.
 - **Predictive personalization**: Anticipate needs before user asks (Amazon's predictive shipping patent).
 - **Cross-device**: Recognize users across phone/tablet/desktop with seamless cart and preferences.
 - **Real-time context**: Adapt to weather, trending topics, live inventory, real-time behavior (Starbucks app: hot drinks in cold weather).
-
----
 
 ## Personalization Checklist
 
