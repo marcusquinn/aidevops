@@ -1,6 +1,8 @@
-# Queues Patterns & Best Practices
+# Queues Patterns
 
 ## Async Task Processing
+
+Producer enqueues work, consumer processes in background.
 
 ```typescript
 // Producer
@@ -27,15 +29,17 @@ export default {
 
 ## Buffering API Calls
 
+Collect entries via `waitUntil`, batch-write to external API.
+
 ```typescript
-// Producer — queue log entries via waitUntil
+// Producer — non-blocking via waitUntil
 ctx.waitUntil(env.LOGS_QUEUE.send({
   method: request.method,
   url: request.url,
   timestamp: Date.now()
 }));
 
-// Consumer — batch write to external API
+// Consumer — batch write
 async queue(batch: MessageBatch, env: Env): Promise<void> {
   const logs = batch.messages.map(m => m.body);
   await fetch(env.LOG_ENDPOINT, { method: 'POST', body: JSON.stringify({ logs }) });
@@ -43,7 +47,25 @@ async queue(batch: MessageBatch, env: Env): Promise<void> {
 }
 ```
 
+## Fan-out
+
+Publish one event to multiple queues for parallel processing.
+
+```typescript
+async fetch(request: Request, env: Env): Promise<Response> {
+  const event = await request.json();
+  await Promise.all([
+    env.ANALYTICS_QUEUE.send(event),
+    env.NOTIFICATIONS_QUEUE.send(event),
+    env.AUDIT_LOG_QUEUE.send(event)
+  ]);
+  return Response.json({ status: 'processed' });
+}
+```
+
 ## Rate Limiting Upstream
+
+Retry on 429 with `Retry-After` header delay.
 
 ```typescript
 async queue(batch: MessageBatch, env: Env): Promise<void> {
@@ -62,8 +84,9 @@ async queue(batch: MessageBatch, env: Env): Promise<void> {
 
 ## Event-Driven Workflows
 
+React to R2 (or other) events routed through a queue.
+
 ```typescript
-// R2 event → Queue → Worker
 export default {
   async queue(batch: MessageBatch, env: Env): Promise<void> {
     for (const msg of batch.messages) {
@@ -76,10 +99,12 @@ export default {
 };
 ```
 
-## Dead Letter Queue Pattern
+## Dead Letter Queue
+
+After `max_retries`, messages route to DLQ automatically. Persist for investigation.
 
 ```typescript
-// Main queue — after max_retries, messages go to DLQ automatically
+// Main queue consumer
 export default {
   async queue(batch: MessageBatch, env: Env): Promise<void> {
     for (const msg of batch.messages) {
@@ -104,40 +129,16 @@ export default {
 };
 ```
 
-## Priority Queues
+## Configuration Patterns
 
-High priority: `max_batch_size: 5, max_batch_timeout: 1`. Low priority: `max_batch_size: 100, max_batch_timeout: 30`.
+**Priority queues** — tune batch settings per priority level:
+- High priority: `max_batch_size: 5, max_batch_timeout: 1`
+- Low priority: `max_batch_size: 100, max_batch_timeout: 30`
 
-## Delayed Job Processing
+**Delayed jobs** — defer processing up to 12 hours:
 
 ```typescript
 await env.EMAIL_QUEUE.send({ to, template, userId }, { delaySeconds: 3600 });
 ```
 
-## Fan-out Pattern
-
-```typescript
-async fetch(request: Request, env: Env): Promise<Response> {
-  const event = await request.json();
-  await Promise.all([
-    env.ANALYTICS_QUEUE.send(event),
-    env.NOTIFICATIONS_QUEUE.send(event),
-    env.AUDIT_LOG_QUEUE.send(event)
-  ]);
-  return Response.json({ status: 'processed' });
-}
-```
-
-## Idempotency Pattern
-
-```typescript
-async queue(batch: MessageBatch, env: Env): Promise<void> {
-  for (const msg of batch.messages) {
-    const processed = await env.PROCESSED_KV.get(msg.id);
-    if (processed) { msg.ack(); continue; }
-    await processMessage(msg.body);
-    await env.PROCESSED_KV.put(msg.id, '1', { expirationTtl: 86400 });
-    msg.ack();
-  }
-}
-```
+**Idempotency** — at-least-once delivery means duplicates are possible. See [queues-gotchas.md](./queues-gotchas.md#idempotency-required) for the dedup pattern.
