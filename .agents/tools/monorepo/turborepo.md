@@ -87,7 +87,8 @@ Use `dotenv-cli` to load `.env` before turbo:
     "target": "ES2022", "lib": ["ES2022"], "skipLibCheck": true, "esModuleInterop": true
   }
 }
-// packages/api/tsconfig.json
+
+// packages/api/tsconfig.json — extends shared config
 { "extends": "@workspace/tsconfig/base.json", "compilerOptions": { "outDir": "dist" }, "include": ["src"] }
 ```
 
@@ -96,7 +97,8 @@ Use `dotenv-cli` to load `.env` before turbo:
 ```js
 // tooling/eslint/base.js
 module.exports = { extends: ["eslint:recommended", "prettier"], rules: {} };
-// apps/web/eslint.config.js
+
+// apps/web/eslint.config.js — consuming the shared config
 import baseConfig from "@workspace/eslint-config/base";
 export default [...baseConfig];
 ```
@@ -107,6 +109,7 @@ export default [...baseConfig];
 // packages/db/src/index.ts — public API
 export * from "./schema";
 export type { InferSelectModel, InferInsertModel } from "drizzle-orm";
+
 // packages/db/src/server.ts — server-only
 export { db } from "./client";
 ```
