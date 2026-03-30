@@ -1,38 +1,27 @@
 # Cloudflare Workers Smart Placement
 
-Automatic workload placement optimization to minimize latency by running Workers closer to backend infrastructure rather than end users.
+Runs Workers closer to backend infrastructure instead of end users, reducing overall request duration when backend latency dominates.
 
-## Core Concept
+## When to Enable
 
-Smart Placement automatically analyzes Worker request duration across Cloudflare's global network and intelligently routes requests to optimal data center locations. Instead of defaulting to the location closest to the end user, Smart Placement can forward requests to locations closer to backend infrastructure when this reduces overall request duration.
-
-### When to Use
-
-**Enable Smart Placement when:**
 - Worker makes multiple round trips to backend services/databases
 - Backend infrastructure is geographically concentrated
-- Request duration dominated by backend latency rather than network latency from user
-- Running backend logic in Workers (APIs, data aggregation, SSR with DB calls)
+- Request duration dominated by backend latency, not user-to-edge latency
+- Running backend logic: APIs, data aggregation, SSR with DB calls
 
-**Do NOT enable for:**
-- Workers serving only static content or cached responses
-- Workers without significant backend communication
-- Pure edge logic (auth checks, redirects, simple transformations)
-- Workers without fetch event handlers
+**Do NOT enable for:** static/cached content, Workers without backend communication, pure edge logic (auth, redirects, transforms), Workers without fetch handlers.
 
-### Key Architecture Pattern
+## Architecture: Frontend/Backend Split
 
-**Recommended:** Split full-stack applications into separate Workers:
-
-```
-User → Frontend Worker (at edge, close to user)
+```text
+User → Frontend Worker (edge, close to user)
          ↓ Service Binding
-       Backend Worker (Smart Placement enabled, close to DB/API)
+       Backend Worker (Smart Placement, close to DB/API)
          ↓
        Database/Backend Service
 ```
 
-This maintains fast, reactive frontends while optimizing backend latency.
+Split full-stack apps — monolithic Workers with Smart Placement degrade frontend latency.
 
 ## Quick Start
 
@@ -43,48 +32,48 @@ mode = "smart"
 hint = "wnam"  # Optional: West North America
 ```
 
-Deploy and wait 15 minutes for analysis. Check status via API or dashboard metrics.
+Deploy and wait 15 min for analysis. Check status via API or dashboard.
 
 ## Requirements
 
 - Wrangler 2.20.0+
-- Analysis time: Up to 15 minutes after enabling
-- Traffic requirements: Consistent traffic from multiple global locations
+- Consistent traffic from multiple global locations
+- Only affects fetch handlers (not RPC methods or named entrypoints)
 - Available on all Workers plans (Free, Paid, Enterprise)
+- Analysis: up to 15 min after enabling; Worker runs at edge during analysis
 
-## Placement Status Values
+## Placement Status
 
 ```typescript
-type PlacementStatus = 
+type PlacementStatus =
   | undefined  // Not yet analyzed
-  | 'SUCCESS'  // Successfully optimized
+  | 'SUCCESS'  // Optimized
   | 'INSUFFICIENT_INVOCATIONS'  // Not enough traffic
   | 'UNSUPPORTED_APPLICATION';  // Made Worker slower (reverted)
 ```
 
-## CLI Commands
+1% of requests always route without optimization (baseline comparison) — this is expected.
+
+## CLI
 
 ```bash
-# Deploy with Smart Placement
-wrangler deploy
-
 # Check placement status
 curl -H "Authorization: Bearer $TOKEN" \
   https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/workers/services/$WORKER_NAME \
   | jq .result.placement_status
 
-# Monitor
+# Monitor with placement header
 wrangler tail your-worker-name --header cf-placement
 ```
 
 ## In This Reference
 
-- [patterns.md](./patterns.md) - Frontend/backend split, database workers, SSR patterns
-- [gotchas.md](./gotchas.md) - Troubleshooting INSUFFICIENT_INVOCATIONS, performance issues
+- [patterns.md](./patterns.md) — frontend/backend split, database workers, SSR, API gateway
+- [gotchas.md](./gotchas.md) — troubleshooting INSUFFICIENT_INVOCATIONS, performance issues
 
 ## See Also
 
-- [workers](../workers/) - Worker runtime and fetch handlers
-- [d1](../d1/) - D1 database that benefits from Smart Placement
-- [durable-objects](../durable-objects/) - Durable Objects with backend logic
-- [bindings](../bindings/) - Service bindings for frontend/backend split
+- [workers](../workers/) — Worker runtime and fetch handlers
+- [d1](../d1/) — D1 database (benefits from Smart Placement)
+- [durable-objects](../durable-objects/) — Durable Objects with backend logic
+- [bindings](../bindings/) — Service bindings for frontend/backend split

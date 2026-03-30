@@ -63,25 +63,10 @@
 
 ## Baseline 1% Traffic
 
-**Note:** Smart Placement automatically routes 1% of requests WITHOUT optimization for performance comparison. This is expected behavior.
+Smart Placement routes 1% of requests without optimization for performance comparison. This is expected behavior — not a bug.
 
 ## Analysis Time
 
-**Issue:** Smart Placement takes up to 15 minutes after enabling to complete analysis.
+Up to 15 min after enabling. Worker runs at default edge location during analysis. Monitor `placement_status`.
 
-**Impact:** During analysis, Worker runs at default edge location. Be patient and monitor `placement_status`.
-
-## Requirements
-
-- **Wrangler 2.20.0+** required
-- **Consistent multi-region traffic** needed for analysis
-- **Only affects fetch handlers** - RPC methods and named entrypoints not affected
-
-## When NOT to Use
-
-- Workers serving only static content or cached responses
-- Workers without significant backend communication
-- Pure edge logic (auth checks, redirects, simple transformations)
-- Workers without fetch event handlers
-
-These scenarios won't benefit and may perform worse with Smart Placement.
+> **Note:** Requirements, eligibility criteria, and "when NOT to use" guidance are in [smart-placement.md](./smart-placement.md).
