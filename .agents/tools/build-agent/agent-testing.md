@@ -24,16 +24,12 @@ tools:
 - **User suites**: `~/.aidevops/.agent-workspace/agent-tests/suites/`
 - **Results/Baselines**: `~/.aidevops/.agent-workspace/agent-tests/{results,baselines}/`
 - **CLI**: Auto-detects `opencode` (override with `AGENT_TEST_CLI`)
+- **Flow**: Loads JSON suite → sends prompts via `opencode run --format json` (CLI) or `opencode serve` (HTTP) → validates responses
+- **Server mode**: `POST /session` → `POST /session/:id/message` → extract text → delete. Override host/port with `OPENCODE_HOST`/`OPENCODE_PORT`
 
 **When to use**: Validate agent changes before merging, regression-test after AGENTS.md/subagent edits, compare behavior across models, smoke-test after framework updates.
 
 <!-- AI-CONTEXT-END -->
-
-## Architecture
-
-Loads test suites (JSON) → sends prompts via OpenCode CLI (`opencode run --format json`) or Server HTTP API (`opencode serve`) → validates responses (`expect_contains`, `expect_not_contains`, `expect_regex`, `expect_not_regex`, `min/max_length`).
-
-Server mode: `POST /session` (create) → `POST /session/:id/message` (send) → extract text → delete session. Override with `OPENCODE_HOST`/`OPENCODE_PORT`.
 
 ## Test Suite Format
 
@@ -114,10 +110,9 @@ agent-test-helper.sh results [suite-name]        # view recent results
 ## CI/CD Integration
 
 ```bash
+# Requires opencode CLI in CI with API credentials
 agent-test-helper.sh run agents-md-knowledge || { echo "Agent tests failed"; exit 1; }
 ```
-
-Requires `opencode` CLI in CI with API credentials.
 
 ## Environment Variables
 
