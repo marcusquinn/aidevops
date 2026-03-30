@@ -60,22 +60,17 @@ mcp:
 
 ## Two-Pass Investigation
 
-**Pass 1 — Recon**: Fast scan; identify all untrusted input sources. Build checklist: `SAST Recon on src/auth/handler.ts → Investigate data flow from userId:15, userInput:42`.
+**Pass 1 — Recon**: Fast scan; identify all untrusted input sources. Checklist example: `SAST Recon on src/auth/handler.ts → Investigate data flow from userId:15, userInput:42`.
 
-**Pass 2 — Trace**: For each source: (1) identify origin (req.body, req.query), (2) trace through calls/transforms, (3) find sink (SQL query, HTML output, shell command), (4) verify sanitization.
+**Pass 2 — Trace**: For each source: (1) origin (req.body, req.query), (2) trace through calls/transforms, (3) sink (SQL query, HTML output, shell command), (4) verify sanitization.
 
 ## Integrations
 
 **OSV-Scanner** (deps): npm/Yarn/pnpm, pip, Go, Cargo, Composer, Maven/Gradle. [Docs](https://github.com/google/osv-scanner) | [OSV DB](https://osv.dev/)
 
-**VirusTotal**: SHA256 hash lookup against 70+ AV engines, domain/URL scanning. Rate-limited (16s between requests, max 8 per skill scan). Verdicts: SAFE, MALICIOUS, SUSPICIOUS, UNKNOWN. Does not block imports (Cisco Skill Scanner is the security gate). API key: `aidevops secret set VIRUSTOTAL_MARCUSQUINN` (gopass) or `~/.config/aidevops/credentials.sh`. [API v3](https://docs.virustotal.com/reference/overview)
+**VirusTotal**: SHA256 hash lookup against 70+ AV engines, domain/URL scanning. Rate-limited (16s/request, max 8/skill scan). Verdicts: SAFE, MALICIOUS, SUSPICIOUS, UNKNOWN. Does not block imports (Cisco Skill Scanner is the security gate). API key: `aidevops secret set VIRUSTOTAL_MARCUSQUINN` (gopass) or `~/.config/aidevops/credentials.sh`. [API v3](https://docs.virustotal.com/reference/overview)
 
-**Ferret** (AI CLI configs): Detects prompt injection, jailbreaks, credential leaks, backdoors in Claude Code, Cursor, Windsurf, Continue, Aider, Cline. 65+ rules, 9 threat categories. [Docs](https://github.com/fubak/ferret-scan)
-
-```bash
-npm install -g ferret-scan   # or: npx ferret-scan
-# Custom rules: .ferretrc.json | Exclude known issues: ferret baseline create
-```
+**Ferret** (AI CLI configs): Detects prompt injection, jailbreaks, credential leaks, backdoors in Claude Code, Cursor, Windsurf, Continue, Aider, Cline. 65+ rules, 9 threat categories. [Docs](https://github.com/fubak/ferret-scan) — `npm install -g ferret-scan` (or `npx ferret-scan`). Custom rules: `.ferretrc.json`. Exclude known issues: `ferret baseline create`.
 
 **Shannon** (pentesting): Taint analysis (Pro), exploit validation. **Snyk Code** / **SonarCloud** / **CodeQL**: dependency scanning, taint analysis, CI/CD integration. [CWE DB](https://cwe.mitre.org/) | [OWASP Top 10](https://owasp.org/Top10/)
 
@@ -102,11 +97,11 @@ const query = buildQuery(validatedInput);
 /* security-ignore-end */
 ```
 
-Always verify before allowlisting. Include reason. Prefer code fixes over suppressions.
+Always verify before allowlisting; include reason. Prefer code fixes over suppressions.
 
 ## CI/CD Integration
 
-### GitHub Actions
+**GitHub Actions:**
 
 ```yaml
 - uses: actions/checkout@v4
@@ -119,7 +114,7 @@ Always verify before allowlisting. Include reason. Prefer code fixes over suppre
 - run: grep -q '"severity": "critical"' .security-analysis/security-report.json && exit 1 || true
 ```
 
-### Pre-commit Hook
+**Pre-commit hook:**
 
 ```bash
 ./.agents/scripts/security-helper.sh analyze staged --severity-threshold=high || exit 1
