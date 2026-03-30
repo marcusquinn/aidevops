@@ -92,30 +92,36 @@
 
 ## Framework-Specific
 
-- **Next.js**: `@cloudflare/next-on-pages` adapter. Some features unsupported (ISR, Middleware with waitUntil). [Compatibility](https://github.com/cloudflare/next-on-pages/blob/main/docs/compatibility.md)
-- **SvelteKit**: `@sveltejs/adapter-cloudflare`. Set `platform: 'cloudflare'` in svelte.config.js
-- **Remix**: `@remix-run/cloudflare-pages`. Check server context for bindings
+| Framework | Adapter | Notes |
+|-----------|---------|-------|
+| Next.js | `@cloudflare/next-on-pages` | ISR + Middleware `waitUntil` unsupported — [compat matrix](https://github.com/cloudflare/next-on-pages/blob/main/docs/compatibility.md) |
+| SvelteKit | `@sveltejs/adapter-cloudflare` | Set `platform: 'cloudflare'` in svelte.config.js |
+| Remix | `@remix-run/cloudflare-pages` | Access bindings via server context |
 
 ## Debugging
 
-```typescript
-console.log('Request:', { method: request.method, url: request.url, headers: Object.fromEntries(request.headers) });
-console.log('Env:', Object.keys(env));
+```bash
+# Tail live logs
+npx wrangler pages deployment tail --project-name=my-project
 ```
 
-```bash
-npx wrangler pages deployment tail --project-name=my-project
+```typescript
+// In Function: log request + available bindings
+console.log('Request:', { method: request.method, url: request.url });
+console.log('Env keys:', Object.keys(env));
 ```
 
 ## Common Errors
 
-- **"Module not found"**: Ensure dependencies bundled in build output
-- **"Binding not found"**: Verify wrangler.toml, regenerate types
-- **"Request exceeded CPU limit"**: Optimize hot paths; use Workers for heavy compute
-- **"Script too large"**: Tree-shake, dynamic imports, code-split
-- **"Too many subrequests"**: Max 50/request, batch where possible
-- **"KV key not found"**: Check namespace matches (production vs preview)
-- **"D1 error"**: Verify database_id, check migrations applied
+| Error | Fix |
+|-------|-----|
+| "Module not found" | Bundle dependencies in build output |
+| "Binding not found" | Verify wrangler.toml, regenerate types |
+| "Request exceeded CPU limit" | Optimize hot paths; offload to Workers |
+| "Script too large" | Tree-shake, dynamic imports, code-split |
+| "Too many subrequests" | Batch calls; max 50/request |
+| "KV key not found" | Check namespace (production vs preview) |
+| "D1 error" | Verify database_id, check migrations applied |
 
 ## Limits
 
