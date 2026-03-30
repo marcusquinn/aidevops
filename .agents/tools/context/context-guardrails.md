@@ -13,78 +13,35 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Prevent context overload from large operations
 - **Budget**: Reserve 100K tokens for conversation; never use >100K on context
-- **Key Rule**: README first, check size, use patterns
+- **Escalate gradually**: README → specific files → targeted patterns → full pack (last resort)
+- **Pre-flight**: Always check repo size before packing; if grep/search returns >500 lines, don't load it all
 
-**Size Thresholds**:
+**Size Thresholds** — `gh api repos/{u}/{r} --jq .size` returns KB; KB × 100 ≈ full-pack tokens:
 
 | Repo Size (KB) | Est. Tokens | Action |
 |----------------|-------------|--------|
 | < 500 | < 50K | Safe for compressed pack |
 | 500-2000 | 50-200K | Use `--include` patterns only |
-| > 2000 | > 200K | **NEVER full pack** - targeted files only |
+| > 2000 | > 200K | **NEVER full pack** — targeted files only |
+
+**Tool risk**:
+
+| Tool | Typical Output | Risk |
+|------|----------------|------|
+| `npx repomix --remote` | 100K–5M+ tokens | **EXTREME** |
+| `mcp_grep` on large output | 10K–500K tokens | **HIGH** |
+| `webfetch` on docs site | 5K–50K tokens | Medium |
+| `mcp_read` single file | 1K–20K tokens | Low |
 
 **Self-check before context-heavy operations**:
 > "Could this operation return >50K tokens? Have I checked the size first?"
 
 <!-- AI-CONTEXT-END -->
 
-## The Problem
-
-The active model's context window has a finite limit (refer to the current model's documented capacity). Context-heavy operations can easily exceed it:
-
-| Tool | Typical Output | Risk Level |
-|------|----------------|------------|
-| `npx repomix --remote` | 100K - 5M+ tokens | **EXTREME** |
-| `mcp_grep` on large output | 10K - 500K tokens | **HIGH** |
-| `webfetch` on docs site | 5K - 50K tokens | Medium |
-| `mcp_read` single file | 1K - 20K tokens | Low |
-
-## Golden Rules
-
-1. **Budget**: Reserve 100K tokens for conversation. Never use >100K on context.
-2. **Escalate gradually**: README -> specific files -> targeted patterns -> full pack (last resort)
-3. **Pre-flight checks**: Always check size before packing remote repos
-4. **Post-check output**: If grep/search returns >500 lines, DON'T load it all
-
-## Remote Repository Research Workflow
-
-```text
-START
-  |
-  v
-+-------------------------------------+
-| 1. Fetch README via webfetch        |  ~1-5K tokens
-|    (Understand purpose & structure) |
-+-------------------------------------+
-  |
-  v
-+-------------------------------------+
-| 2. Check repo size                  |
-|    gh api repos/{u}/{r} --jq .size  |
-+-------------------------------------+
-  |
-  +-- < 500 KB --> Safe for compressed pack
-  |
-  +-- 500KB-2MB --> Use --include patterns only
-  |
-  +-- > 2MB --> STOP - targeted files only
-```
-
-## Size Estimation
-
-GitHub API `.size` is in KB. Rough token estimate:
-
-- **Repo KB x 100 = approximate full-pack tokens** (very rough, matches thresholds: 500KB -> ~50K tokens)
-- **Compressed mode reduces by ~70-80%**
-- **Targeted patterns can reduce by 90-99%**
-
 ## Tool-Specific Guardrails
 
 ### npx repomix --remote
-
-CLI command for packing remote repositories.
 
 ```bash
 # BAD - no size check, no patterns
@@ -103,16 +60,9 @@ npx repomix@latest --remote https://github.com/large/repo --include "README.md,s
 
 ### Searching packed output
 
-After packing, use standard tools to search the output file:
-
 ```bash
-# Search for patterns in output
 grep -n "install" context.xml
-
-# Search with context
 grep -B2 -A5 "## Install" context.xml
-
-# Read specific line ranges
 sed -n '100,200p' context.xml
 ```
 
@@ -136,13 +86,13 @@ gh api repos/{owner}/{repo}/readme --jq '.content' | base64 -d
 
 If you hit "prompt is too long":
 
-1. **Start a new conversation** - Context cannot be reduced mid-session
-2. **Ask user what specific question they have** - Focus on the actual need
-3. **Use targeted approach** - Get only needed context
-4. **Document the failure** - Use `/remember` for future sessions:
+1. **Start a new conversation** — context cannot be reduced mid-session
+2. **Ask user what specific question they have** — focus on the actual need
+3. **Use targeted approach** — get only needed context
+4. **Document the failure** — use `/remember` for future sessions:
 
    ```text
-   /remember FAILED_APPROACH: Attempted to pack {repo} without size check. 
+   /remember FAILED_APPROACH: Attempted to pack {repo} without size check.
    Repo was {size}KB (~{tokens} tokens). Use --include patterns next time.
    ```
 
@@ -158,34 +108,14 @@ Before using `mcp_glob`, check if faster alternatives work:
 | Search text file contents | `rg 'pattern'` | `mcp_grep` |
 | Search inside PDFs/DOCX/zips | `rga 'pattern'` | None (unique capability) |
 
-**Why?** `mcp_glob` is CPU-intensive on large codebases. CLI tools are 10x faster.
-
-**Tool roles:** `fd` finds files by name/metadata, `rg` searches text file contents, `rga` (ripgrep-all) searches inside non-text files (PDF, DOCX, SQLite, archives). Same syntax as `rg` but with document adapters.
+`mcp_glob` is CPU-intensive on large codebases; CLI tools are 10× faster. `fd` finds files by name/metadata, `rg` searches text contents, `rga` searches inside non-text files (PDF, DOCX, SQLite, archives) — same syntax as `rg`.
 
 ## Agent Capability Check
 
-Before attempting edits, verify you have the required tools:
+Before attempting edits: "Do I have Edit/Write/Bash tools for this task?" If not (e.g., read-only mode), suggest switching to Build+ agent. If yes, proceed with pre-edit git check.
 
-```text
-Self-check: "Do I have Edit/Write/Bash tools for this task?"
+## Related
 
-If NO (e.g., in @plan-plus subagent or read-only mode):
-  -> Suggest: "This task requires edits. Please switch to Build+ agent."
-
-If YES:
-  -> Proceed with pre-edit git check
-```
-
-## Integration with Other Guardrails
-
-This document complements:
-
-- **Pre-Edit Git Check** (AGENTS.md) - Branch safety before edits
-- **File Discovery** (AGENTS.md) - Tool selection for file operations
-- **Context Builder** (context-builder.md) - Token-efficient context generation
-
-## Related Documentation
-
-- `tools/context/context-builder.md` - Repomix wrapper for context generation
-- `tools/context/context7.md` - External library documentation
-- `tools/build-agent/build-agent.md` - Agent design principles
+- `tools/context/context-builder.md` — repomix wrapper for context generation
+- `tools/context/context7.md` — external library documentation
+- `tools/build-agent/build-agent.md` — agent design principles
