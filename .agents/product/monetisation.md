@@ -19,26 +19,24 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Implement and optimise product revenue streams
-- **Models**: Subscriptions, one-time purchases, freemium, ads, affiliate, funnel
 - **Applies to**: Mobile apps, browser extensions, desktop apps, web apps, SaaS
 
 **Revenue model decision tree**:
 
 ```text
-Product solves a daily recurring problem?      -> Subscription (weekly/monthly/annual)
-Product provides one-time value (tool/utility)? -> One-time purchase or lifetime unlock
-Broad appeal but low willingness to pay?        -> Freemium + premium tier, or ad-supported
-Product drives users to another offering?       -> Free (sales funnel / audience builder)
-Product can recommend relevant products?        -> Affiliate links + optional premium tier
+Daily recurring problem?              -> Subscription (weekly/monthly/annual)
+One-time value (tool/utility)?        -> One-time purchase or lifetime unlock
+Broad appeal, low willingness to pay? -> Freemium + premium tier, or ad-supported
+Drives users to another offering?     -> Free (sales funnel / audience builder)
+Can recommend relevant products?      -> Affiliate links + optional premium tier
 ```
 
 **Platform payment tools**:
 
-| Platform | Primary Tool | Alternative |
-|----------|-------------|-------------|
+| Platform | Primary | Alternative |
+|----------|---------|-------------|
 | Mobile (iOS + Android) | RevenueCat | Superwall (paywall A/B testing) |
-| Browser extensions | Stripe, Chrome Web Store payments | LemonSqueezy, Gumroad |
+| Browser extensions | Stripe, Chrome Web Store | LemonSqueezy, Gumroad |
 | Desktop apps | Stripe, Paddle | LemonSqueezy, Gumroad |
 | Web apps / SaaS | Stripe | Paddle, LemonSqueezy |
 
@@ -85,10 +83,7 @@ Platform-agnostic: users buy products → products grant entitlements → featur
 
 See `product/onboarding.md` for the hard paywall pattern.
 
-**Free trial:**
-- 3-day: higher conversion, lower retention
-- 7-day: lower conversion, higher retention (recommended for subscriptions)
-- No trial: highest friction, attracts committed users; recommended for one-time purchases
+**Free trial:** 3-day = higher conversion, lower retention. 7-day = lower conversion, higher retention (recommended for subscriptions). No trial = highest friction; recommended for one-time purchases.
 
 ## Alternative Revenue Models
 
@@ -101,13 +96,10 @@ See `product/onboarding.md` for the hard paywall pattern.
 
 ## Pricing Strategy
 
-**Research process:**
 1. Check competitor pricing in relevant stores
 2. Survey target users on willingness to pay
 3. Start competitive, adjust based on data
 4. Annual plans: 15–40% discount vs monthly
-
-**Common price points:**
 
 | Model | Typical Range |
 |-------|--------------|
@@ -119,23 +111,17 @@ See `product/onboarding.md` for the hard paywall pattern.
 
 **A/B testing:** Use RevenueCat Experiments, Superwall, or Stripe test mode to test price points, paywall designs, trial lengths, and feature gates.
 
-## Recurring Revenue Mental Model
+## Key Metrics
 
-- **Build once, sell forever** — unlike services, no per-customer delivery cost
-- **Subscription = recurring rent** — predictable monthly revenue that compounds
-- **Churn = vacancy** — reducing churn is as important as acquiring new users
 - **LTV > CAC** — lifetime value must exceed customer acquisition cost
-
-Example: 10,000 subscribers × $3/month = $30k/month with near-zero marginal cost per user.
+- **Churn = vacancy** — reducing churn is as important as acquiring new users
+- Example: 10,000 subscribers × $3/month = $30k/month with near-zero marginal cost
 
 ## Legal Requirements
 
-- Display subscription terms clearly before purchase
-- Show renewal price and frequency
-- Provide easy cancellation instructions
-- Include "Restore Purchases" for returning users (mobile)
-- Privacy policy must cover payment data handling
-- EULA required for subscription apps (mobile)
+- Display subscription terms clearly before purchase; show renewal price and frequency
+- Provide easy cancellation; include "Restore Purchases" for returning users (mobile)
+- Privacy policy must cover payment data handling; EULA required for subscription apps (mobile)
 - Comply with platform payment rules (Apple 3.1.1, Google billing policy)
 
 ## Related
