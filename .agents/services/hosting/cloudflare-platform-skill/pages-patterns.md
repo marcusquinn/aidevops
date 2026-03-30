@@ -114,18 +114,18 @@ export const onRequestGet: PagesFunction<Env> = async ({ env, request }) => {
 
 ```bash
 npm create cloudflare@latest my-app -- --framework=<framework>
-# next, svelte, remix, nuxt, astro, qwik
+# next | svelte | remix | nuxt | astro | qwik
 ```
 
 [Framework Guides](https://developers.cloudflare.com/pages/framework-guides/)
 
 ## Monorepo
 
-Dashboard → Project → Settings → Build settings → Root directory → set to subproject path (e.g., `apps/web`).
+Dashboard → Project → Settings → Build settings → Root directory: set to subproject path (e.g., `apps/web`).
 
 ## Best Practices
 
-**Performance:** Exclude static via `_routes.json` · Cache with KV · Use Cache API: `await caches.default.match(request)` · Keep Functions < 1MB (tree-shake, dynamic imports)
+**Performance:** Exclude static via `_routes.json` · Use Cache API: `await caches.default.match(request)` · Keep Functions < 1MB (tree-shake, dynamic imports)
 
 **Security:** Set headers in `_headers` · Use secrets, never commit to `wrangler.toml` · Validate inputs · Rate limit with KV/DO
 
