@@ -1,7 +1,5 @@
 # Metrics Explained
 
-Definitions, formulas, and benchmarks for Meta Ads Manager.
-
 ## Primary Metrics by Objective
 
 | Objective | Metric | Definition | Good | Great |
@@ -66,7 +64,7 @@ CPA = Spend ÷ Actions = CPC ÷ Conversion Rate ← lower via: lower CPC, higher
 
 ## Quality Metrics
 
-### Ad Relevance Diagnostics (Quality, Engagement Rate, Conversion Rate rankings)
+### Ad Relevance Diagnostics (Quality, Engagement Rate, Conversion Rate)
 
 | Ranking | Meaning |
 |---------|---------|
@@ -105,7 +103,7 @@ CM%             = CM / Revenue × 100
 Incremental ROAS = Raw ROAS × Incrementality %            (e.g. 3.0x × 60% lift = 1.8x true value)
 ```
 
-**Key guidance:** Use MER for cross-channel budget allocation. Use Incremental ROAS for true ROI reporting.
+MER → cross-channel budget allocation. Incremental ROAS → true ROI reporting.
 
 ## Custom Metrics to Create
 
@@ -132,7 +130,7 @@ Incremental ROAS = Raw ROAS × Incrementality %            (e.g. 3.0x × 60% lif
 - **Weekly:** CTR trend, frequency, creative performance, audience performance
 - **Monthly:** Overall ROAS/CPA vs target, attribution review, creative refresh needs, budget allocation
 
-## Recommended Custom Columns (Ads Manager → Columns → Customize Columns)
+## Recommended Custom Columns (Ads Manager → Columns → Customize)
 
 | Objective | Columns |
 |-----------|---------|
