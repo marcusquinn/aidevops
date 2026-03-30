@@ -121,29 +121,12 @@ npm create cloudflare@latest my-app -- --framework=<framework>
 
 ## Monorepo
 
-Dashboard → Project → Settings → Build settings → Root directory
-
-Set to subproject path (e.g., `apps/web`). Only builds when files in that dir change.
+Dashboard → Project → Settings → Build settings → Root directory → set to subproject path (e.g., `apps/web`).
 
 ## Best Practices
 
-### Performance
+**Performance:** Exclude static via `_routes.json` · Cache with KV · Use Cache API: `await caches.default.match(request)` · Keep Functions < 1MB (tree-shake, dynamic imports)
 
-1. Exclude static from Functions via `_routes.json`
-2. Cache with KV (API responses, rendered content)
-3. Use Cache API: `await caches.default.match(request)`
-4. Minimize Function size: tree-shake, dynamic imports, keep < 1MB
+**Security:** Set headers in `_headers` · Use secrets, never commit to `wrangler.toml` · Validate inputs · Rate limit with KV/DO
 
-### Security
-
-1. Set security headers in `_headers` for static
-2. Use secrets, never commit to wrangler.toml
-3. Validate all inputs
-4. Rate limit with KV/DO
-
-### Workflow
-
-1. Preview deployments per branch/PR
-2. Local dev: `npx wrangler pages dev ./dist`
-3. Environment-specific configs in `wrangler.toml`
-4. Rollbacks: Dashboard → Deployments → Rollback (instant)
+**Workflow:** Preview deployments per branch/PR · Local dev: `npx wrangler pages dev ./dist` · Env configs in `wrangler.toml` · Rollbacks: Dashboard → Deployments → Rollback
