@@ -20,7 +20,7 @@ tools:
 
 - **Purpose**: PDF processing - parsing, modification, form filling, signing
 - **Primary Tool**: LibPDF (`@libpdf/core`) - TypeScript-native, full-featured
-- **Install**: `npm install @libpdf/core` or `bun add @libpdf/core`
+- **Install**: `npm install @libpdf/core` | `bun add @libpdf/core` | `pnpm add @libpdf/core`
 - **Docs**: https://libpdf.dev
 
 **Tool Selection**:
@@ -46,20 +46,7 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## When to Use PDF Tools
-
-Use PDF tools when you need to:
-
-1. **Fill PDF forms** - Text fields, checkboxes, radio buttons, dropdowns
-2. **Sign documents** - Digital signatures with certificates (PAdES)
-3. **Modify existing PDFs** - Add content, merge pages, extract pages
-4. **Generate new PDFs** - Create documents from scratch
-5. **Extract content** - Text extraction with positioning
-6. **Handle encrypted PDFs** - Decrypt password-protected documents
-
-## Tool Comparison
-
-### LibPDF vs Alternatives
+## Why LibPDF Over Alternatives
 
 | Feature | LibPDF | pdf-lib | pdf.js |
 |---------|--------|---------|--------|
@@ -74,73 +61,11 @@ Use PDF tools when you need to:
 | Render to image | No | No | Yes |
 | Malformed PDF handling | Excellent | Poor | Excellent |
 
-**LibPDF** is the recommended choice for most PDF tasks because:
-- Combines best features of pdf-lib (API) and pdf.js (parsing)
-- Only library with incremental saves that preserve signatures
-- TypeScript-native with minimal dependencies
-- Works in Node.js, Bun, and browsers
-
-## Installation
-
-```bash
-# npm
-npm install @libpdf/core
-
-# bun
-bun add @libpdf/core
-
-# pnpm
-pnpm add @libpdf/core
-```
-
-## Quick Examples
-
-### Load and Inspect PDF
-
-```typescript
-import { PDF } from '@libpdf/core';
-
-const pdf = await PDF.load(bytes);
-const pages = await pdf.getPages();
-console.log(`${pages.length} pages`);
-```
-
-### Fill a Form
-
-```typescript
-const pdf = await PDF.load(bytes);
-const form = await pdf.getForm();
-
-form.fill({
-  name: 'Jane Doe',
-  email: 'jane@example.com',
-  agreed: true,
-});
-
-const filled = await pdf.save();
-```
-
-### Sign a Document
-
-```typescript
-import { PDF, P12Signer } from '@libpdf/core';
-import { readFileSync } from 'fs';
-
-const pdfBytes = readFileSync('document.pdf');
-const p12Bytes = readFileSync('certificate.p12');
-
-const pdf = await PDF.load(pdfBytes);
-const signer = await P12Signer.create(p12Bytes, 'password');
-
-const { bytes: signed } = await pdf.sign({
-  signer,
-  reason: 'I approve this document',
-});
-```
+LibPDF is preferred because it combines pdf-lib's API with pdf.js's parsing, is the only library with incremental saves that preserve signatures, and is TypeScript-native with minimal dependencies (Node.js, Bun, browsers).
 
 ## Related
 
-- `libpdf.md` - Detailed LibPDF usage guide
+- `libpdf.md` - Detailed LibPDF usage guide with code examples
 - `../document/document-creation.md` - Unified document format conversion and creation
 - `../conversion/mineru.md` - PDF to markdown/JSON (layout-aware, OCR)
 - `../ocr/overview.md` - OCR tool selection guide (PaddleOCR, GLM-OCR, MinerU)
