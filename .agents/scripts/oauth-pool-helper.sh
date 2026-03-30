@@ -109,6 +109,41 @@ get_now_ms() {
 	return 0
 }
 
+# Auto-clear expired cooldowns so stale rate limits do not block availability.
+# Usage: printf '%s' "$pool" | normalize_expired_cooldowns [provider|all]
+# Prints JSON object: {"updated": <count>, "pool": <updated_pool>}
+normalize_expired_cooldowns() {
+	local provider="${1:-all}"
+	local now_ms
+	now_ms=$(get_now_ms)
+	NOW_MS="$now_ms" PROVIDER="$provider" python3 -c "
+import sys, json, os
+
+pool = json.load(sys.stdin)
+target = os.environ['PROVIDER']
+now = int(os.environ['NOW_MS'])
+providers = ['anthropic', 'openai', 'cursor', 'google'] if target == 'all' else [target]
+updated = 0
+
+for prov in providers:
+    for account in pool.get(prov, []):
+        if account.get('status') != 'rate-limited':
+            continue
+        cooldown_until = account.get('cooldownUntil')
+        try:
+            cooldown_ms = int(cooldown_until)
+        except (TypeError, ValueError):
+            continue
+        if cooldown_ms > 0 and cooldown_ms <= now:
+            account['status'] = 'idle'
+            account['cooldownUntil'] = 0
+            updated += 1
+
+json.dump({'updated': updated, 'pool': pool}, sys.stdout, separators=(',', ':'))
+" 2>/dev/null
+	return 0
+}
+
 # Load pool JSON (create if missing)
 load_pool() {
 	if [[ -f "$POOL_FILE" ]]; then
@@ -1067,42 +1102,7 @@ now = int(os.environ['NOW_MS'])
 prov = os.environ['PROV']
 ua = os.environ['UA']
 
-for a in pool.get(prov, []):
-    print(f\"  {a['email']}:\")
-    expires_in = a.get('expires', 0) - now
-    if expires_in <= 0:
-        print(f\"    Token: EXPIRED\")
-    else:
-        mins = expires_in // 60000
-        hours = mins // 60
-        if hours > 0:
-            print(f\"    Token: expires in {hours}h {mins % 60}m\")
-        else:
-            print(f\"    Token: expires in {mins}m\")
-    print(f\"    Status: {a.get('status', 'unknown')}\")
-    cd = a.get('cooldownUntil')
-    if cd and cd > now:
-        cd_mins = (cd - now + 59999) // 60000
-        print(f\"    Cooldown: {cd_mins}m remaining\")
-    lu = a.get('lastUsed')
-    if lu:
-        try:
-            lu_ts = datetime.fromisoformat(lu.replace('Z','+00:00')).timestamp() * 1000
-            ago = now - lu_ts
-            ago_mins = int(ago // 60000)
-            ago_hours = ago_mins // 60
-            if ago_hours > 0:
-                print(f\"    Last used: {ago_hours}h {ago_mins % 60}m ago\")
-            else:
-                print(f\"    Last used: {ago_mins}m ago\")
-        except Exception:
-            print(f\"    Last used: {lu}\")
-    print(f\"    Refresh token: {'present' if a.get('refresh') else 'MISSING'}\")
-    _check_token_validity(a, prov, expires_in, ua)
-
 def _check_token_validity(a, prov, expires_in, ua):
-    from urllib.request import Request, urlopen
-    from urllib.error import HTTPError, URLError
     token = a.get('access', '')
     if prov == 'anthropic':
         if not token:
@@ -1149,6 +1149,39 @@ def _check_token_validity(a, prov, expires_in, ua):
                 print(f\"    Validity: ERROR (network)\")
             except Exception:
                 print(f\"    Validity: ERROR\")
+
+for a in pool.get(prov, []):
+    print(f\"  {a['email']}:\")
+    expires_in = a.get('expires', 0) - now
+    if expires_in <= 0:
+        print(f\"    Token: EXPIRED\")
+    else:
+        mins = expires_in // 60000
+        hours = mins // 60
+        if hours > 0:
+            print(f\"    Token: expires in {hours}h {mins % 60}m\")
+        else:
+            print(f\"    Token: expires in {mins}m\")
+    print(f\"    Status: {a.get('status', 'unknown')}\")
+    cd = a.get('cooldownUntil')
+    if cd and cd > now:
+        cd_mins = (cd - now + 59999) // 60000
+        print(f\"    Cooldown: {cd_mins}m remaining\")
+    lu = a.get('lastUsed')
+    if lu:
+        try:
+            lu_ts = datetime.fromisoformat(lu.replace('Z','+00:00')).timestamp() * 1000
+            ago = now - lu_ts
+            ago_mins = int(ago // 60000)
+            ago_hours = ago_mins // 60
+            if ago_hours > 0:
+                print(f\"    Last used: {ago_hours}h {ago_mins % 60}m ago\")
+            else:
+                print(f\"    Last used: {ago_mins}m ago\")
+        except Exception:
+            print(f\"    Last used: {lu}\")
+    print(f\"    Refresh token: {'present' if a.get('refresh') else 'MISSING'}\")
+    _check_token_validity(a, prov, expires_in, ua)
 " 2>/dev/null
 	return 0
 }
@@ -1171,6 +1204,15 @@ cmd_check() {
 
 	local pool
 	pool=$(load_pool)
+
+	local normalized updated
+	normalized=$(printf '%s' "$pool" | normalize_expired_cooldowns "$provider")
+	updated=$(printf '%s' "$normalized" | jq -r '.updated // 0')
+	pool=$(printf '%s' "$normalized" | jq -c '.pool')
+	if [[ "$updated" != "0" ]]; then
+		save_pool "$pool"
+		print_info "Auto-cleared ${updated} expired cooldown(s)."
+	fi
 
 	local -a providers_to_check
 	if [[ "$provider" == "all" ]]; then
@@ -1225,6 +1267,15 @@ cmd_list() {
 
 	local pool
 	pool=$(load_pool)
+
+	local normalized updated
+	normalized=$(printf '%s' "$pool" | normalize_expired_cooldowns "$provider")
+	updated=$(printf '%s' "$normalized" | jq -r '.updated // 0')
+	pool=$(printf '%s' "$normalized" | jq -c '.pool')
+	if [[ "$updated" != "0" ]]; then
+		save_pool "$pool"
+		print_info "Auto-cleared ${updated} expired cooldown(s)."
+	fi
 
 	local -a providers_to_list
 	if [[ "$provider" == "all" ]]; then
@@ -1834,6 +1885,15 @@ cmd_status() {
 	local pool
 	pool=$(load_pool)
 
+	local normalized updated
+	normalized=$(printf '%s' "$pool" | normalize_expired_cooldowns "$provider")
+	updated=$(printf '%s' "$normalized" | jq -r '.updated // 0')
+	pool=$(printf '%s' "$normalized" | jq -c '.pool')
+	if [[ "$updated" != "0" ]]; then
+		save_pool "$pool"
+		print_info "Auto-cleared ${updated} expired cooldown(s)."
+	fi
+
 	local -a providers_to_check
 	if [[ "$provider" == "all" ]]; then
 		providers_to_check=(anthropic openai cursor google)
@@ -2235,6 +2295,15 @@ cmd_status() {
 
 	local pool
 	pool=$(load_pool)
+
+	local normalized updated
+	normalized=$(printf '%s' "$pool" | normalize_expired_cooldowns "$provider")
+	updated=$(printf '%s' "$normalized" | jq -r '.updated // 0')
+	pool=$(printf '%s' "$normalized" | jq -c '.pool')
+	if [[ "$updated" != "0" ]]; then
+		save_pool "$pool"
+		print_info "Auto-cleared ${updated} expired cooldown(s)."
+	fi
 
 	local now_ms
 	now_ms=$(python3 -c "import time; print(int(time.time() * 1000))")
