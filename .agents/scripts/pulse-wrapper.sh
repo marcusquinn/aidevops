@@ -4430,6 +4430,33 @@ dispatch_with_dedup() {
 	local prompt="$7"
 	local session_key="${8:-issue-${issue_number}}"
 
+	# Hard stop for supervisor/telemetry issues (t1702 pulse guard).
+	# The pulse prompt should already avoid these, but this deterministic
+	# gate prevents dispatch when prompt fallback logic is too permissive.
+	local issue_meta_json
+	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json number,title,state,labels 2>/dev/null) || issue_meta_json=""
+	if [[ -n "$issue_meta_json" ]]; then
+		local target_state target_title
+		target_state=$(echo "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null)
+		target_title=$(echo "$issue_meta_json" | jq -r '.title // ""' 2>/dev/null)
+
+		if [[ "$target_state" != "OPEN" ]]; then
+			echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: issue state is ${target_state:-unknown}" >>"$LOGFILE"
+			return 1
+		fi
+
+		if echo "$issue_meta_json" | jq -e '.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review"))' >/dev/null 2>&1; then
+			echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: non-dispatchable management label present" >>"$LOGFILE"
+			return 1
+		fi
+
+		if [[ "$target_title" == \[Supervisor:* ]]; then
+			echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: supervisor telemetry title" >>"$LOGFILE"
+			return 1
+		fi
+	fi
+
 	# All 7 dedup layers — cannot be skipped
 	if check_dispatch_dedup "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" "$self_login"; then
 		echo "[dispatch_with_dedup] Dedup guard blocked #${issue_number} in ${repo_slug}" >>"$LOGFILE"
@@ -4885,24 +4912,129 @@ count_queued_without_worker() {
 		return 0
 	fi
 
+	local self_login
+	self_login=$(gh api user --jq '.login' 2>/dev/null || echo "")
+
 	local total=0
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
-		local queued_numbers
-		queued_numbers=$(gh issue list --repo "$slug" --state open --label "status:queued" --json number --jq '.[].number' --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || queued_numbers=""
-		if [[ -z "$queued_numbers" ]]; then
+		local queued_json
+		queued_json=$(gh issue list --repo "$slug" --state open --label "status:queued" --json number,assignees --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || queued_json="[]"
+
+		local queued_count
+		queued_count=$(echo "$queued_json" | jq 'length' 2>/dev/null) || queued_count=0
+		[[ "$queued_count" =~ ^[0-9]+$ ]] || queued_count=0
+		if [[ "$queued_count" -eq 0 ]]; then
 			continue
 		fi
 
-		while IFS= read -r issue_num; do
+		while IFS='|' read -r issue_num assigned_to_other; do
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
+
+			# Cross-runner safety: queued issues assigned to another login are not
+			# counted as "without worker" because the worker may be running on that
+			# runner's machine and invisible to local process inspection.
+			if [[ "$assigned_to_other" == "true" ]]; then
+				continue
+			fi
+
 			if ! has_worker_for_repo_issue "$issue_num" "$slug"; then
 				total=$((total + 1))
 			fi
-		done <<<"$queued_numbers"
+		done < <(echo "$queued_json" | jq -r --arg self "$self_login" '.[] | .number as $n | ((.assignees | length) > 0 and (([.assignees[].login] | index($self)) == null)) as $assigned_other | "\($n)|\($assigned_other)"' 2>/dev/null)
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
 
 	echo "$total"
+	return 0
+}
+
+#######################################
+# Recover issue state after launch validation failure (t1702)
+#
+# When launch validation fails, the issue may remain assigned + queued even
+# though no worker process exists. This traps capacity by blocking redispatch.
+#
+# Safety gates:
+#   - Only act on OPEN issues
+#   - Only act when current GitHub login is assigned on the issue
+#   - Only act when issue still has status:queued label
+#   - Re-check for a late-started worker before mutating issue state
+#
+# Actions (best-effort):
+#   1. Mark any in-flight ledger entry for this issue as failed
+#   2. Remove self assignee and status:queued
+#   3. Re-label status:available unless issue is blocked
+#
+# Args:
+#   $1 - issue number
+#   $2 - repo slug
+#   $3 - failure reason string (for logs)
+#######################################
+recover_failed_launch_state() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local failure_reason="${3:-launch_validation_failed}"
+
+	if [[ ! "$issue_number" =~ ^[0-9]+$ ]] || [[ -z "$repo_slug" ]]; then
+		return 0
+	fi
+
+	local self_login
+	self_login=$(gh api user --jq '.login' 2>/dev/null || echo "")
+	if [[ -z "$self_login" ]]; then
+		echo "[pulse-wrapper] Launch recovery skipped for #${issue_number} (${repo_slug}): unable to resolve current login" >>"$LOGFILE"
+		return 0
+	fi
+
+	local issue_meta_json
+	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" --json state,labels,assignees 2>/dev/null) || issue_meta_json=""
+	if [[ -z "$issue_meta_json" ]]; then
+		return 0
+	fi
+
+	local issue_state assigned_to_self has_queued is_blocked
+	issue_state=$(echo "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null)
+	assigned_to_self=$(echo "$issue_meta_json" | jq -r --arg self "$self_login" '([.assignees[].login] | index($self)) != null' 2>/dev/null)
+	has_queued=$(echo "$issue_meta_json" | jq -r '([.labels[].name] | index("status:queued")) != null' 2>/dev/null)
+	is_blocked=$(echo "$issue_meta_json" | jq -r '([.labels[].name] | index("status:blocked")) != null' 2>/dev/null)
+
+	[[ "$assigned_to_self" == "true" || "$assigned_to_self" == "false" ]] || assigned_to_self="false"
+	[[ "$has_queued" == "true" || "$has_queued" == "false" ]] || has_queued="false"
+	[[ "$is_blocked" == "true" || "$is_blocked" == "false" ]] || is_blocked="false"
+
+	if [[ "$issue_state" != "OPEN" ]] || [[ "$assigned_to_self" != "true" ]] || [[ "$has_queued" != "true" ]]; then
+		return 0
+	fi
+
+	# Re-check once for late-started workers before mutating labels/assignees.
+	if has_worker_for_repo_issue "$issue_number" "$repo_slug"; then
+		echo "[pulse-wrapper] Launch recovery skipped for #${issue_number} (${repo_slug}): worker appeared after validation failure" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Mark in-flight ledger entry as failed for this issue.
+	local ledger_helper
+	ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
+	if [[ -x "$ledger_helper" ]]; then
+		local ledger_entry session_key
+		ledger_entry=$("$ledger_helper" check-issue --issue "$issue_number" --repo "$repo_slug" 2>/dev/null || true)
+		session_key=$(printf '%s' "$ledger_entry" | jq -r '.session_key // ""' 2>/dev/null)
+		if [[ -n "$session_key" ]]; then
+			"$ledger_helper" fail --session-key "$session_key" >/dev/null 2>&1 || true
+		fi
+	fi
+
+	if [[ "$is_blocked" == "true" ]]; then
+		gh issue edit "$issue_number" --repo "$repo_slug" \
+			--remove-assignee "$self_login" --remove-label "status:queued" >/dev/null 2>&1 || true
+	else
+		gh issue edit "$issue_number" --repo "$repo_slug" \
+			--remove-assignee "$self_login" --remove-label "status:queued" --add-label "status:available" >/dev/null 2>&1 ||
+			gh issue edit "$issue_number" --repo "$repo_slug" \
+				--remove-assignee "$self_login" --remove-label "status:queued" >/dev/null 2>&1 || true
+	fi
+
+	echo "[pulse-wrapper] Launch recovery reset #${issue_number} (${repo_slug}) after ${failure_reason}: removed self assignee + status:queued" >>"$LOGFILE"
 	return 0
 }
 
@@ -4946,6 +5078,7 @@ check_worker_launch() {
 			local candidate
 			for candidate in "${log_candidates[@]}"; do
 				if [[ -f "$candidate" ]] && rg -q '^opencode run \[message\.\.\]|^run opencode with a message|^Options:' "$candidate"; then
+					recover_failed_launch_state "$issue_number" "$repo_slug" "cli_usage_output"
 					echo "[pulse-wrapper] Launch validation failed for issue #${issue_number} (${repo_slug}) — CLI usage output detected in ${candidate}" >>"$LOGFILE"
 					return 1
 				fi
@@ -4956,6 +5089,7 @@ check_worker_launch() {
 		elapsed=$((elapsed + poll_seconds))
 	done
 
+	recover_failed_launch_state "$issue_number" "$repo_slug" "no_worker_process"
 	echo "[pulse-wrapper] Launch validation failed for issue #${issue_number} (${repo_slug}) — no active worker process within ${grace_seconds}s" >>"$LOGFILE"
 	return 1
 }

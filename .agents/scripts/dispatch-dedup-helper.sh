@@ -542,6 +542,11 @@ has_open_pr() {
 # cover long-running workers). Only comments from other logins are
 # considered; self-posted comments are ignored.
 #
+# Additional guard (t1702): dispatch comments only block when the issue is
+# still actively claimed (OPEN + assigned + status:queued/in-progress).
+# If the claim state has been cleared, old dispatch comments are treated as
+# stale breadcrumbs and must not block redispatch.
+#
 # Args:
 #   $1 = issue number
 #   $2 = repo slug (owner/repo)
@@ -565,6 +570,27 @@ has_dispatch_comment() {
 
 	local now_epoch
 	now_epoch=$(date -u '+%s')
+
+	# Only treat dispatch comments as active when issue is actively claimed.
+	# This prevents stale historical comments from blocking fresh dispatches.
+	local issue_meta_json
+	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" --json state,assignees,labels 2>/dev/null) || issue_meta_json=""
+	if [[ -z "$issue_meta_json" ]]; then
+		return 1
+	fi
+
+	local is_open has_assignee has_active_status
+	is_open=$(printf '%s' "$issue_meta_json" | jq -r '.state == "OPEN"' 2>/dev/null)
+	has_assignee=$(printf '%s' "$issue_meta_json" | jq -r '(.assignees | length) > 0' 2>/dev/null)
+	has_active_status=$(printf '%s' "$issue_meta_json" | jq -r '([.labels[].name] | (index("status:queued") != null or index("status:in-progress") != null))' 2>/dev/null)
+
+	[[ "$is_open" == "true" || "$is_open" == "false" ]] || is_open="false"
+	[[ "$has_assignee" == "true" || "$has_assignee" == "false" ]] || has_assignee="false"
+	[[ "$has_active_status" == "true" || "$has_active_status" == "false" ]] || has_active_status="false"
+
+	if [[ "$is_open" != "true" || "$has_assignee" != "true" || "$has_active_status" != "true" ]]; then
+		return 1
+	fi
 
 	# Fetch recent comments and look for "Dispatching worker" from non-self authors
 	local comments_json
