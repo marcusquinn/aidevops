@@ -14,7 +14,7 @@ on:
   pull_request_target:
     types: [opened, synchronize, reopened, edited]
   issues:
-    types: [unlabeled, labeled]
+    types: [unlabeled, labeled, assigned]
 
 jobs:
   # =========================================================================
@@ -34,6 +34,7 @@ jobs:
       pull-requests: write
       issues: read
       contents: read
+      statuses: write
 
     steps:
       # Security: This job uses pull_request_target for fork PR write access.
@@ -45,6 +46,7 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MAINTAINER_GATE_DEBUG: ${{ vars.MAINTAINER_GATE_DEBUG || 'false' }}
@@ -81,6 +83,13 @@ jobs:
             echo "blocked=true" >> "$GITHUB_OUTPUT"
             printf 'Title-based issue lookup for task ID %s failed — cannot verify linked issues.\n' "$TASK_ID" > /tmp/gate-reasons.txt
             echo "has_reasons=true" >> "$GITHUB_OUTPUT"
+            # Post failure commit status so branch protection sees the result
+            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=failure \
+              -f context="maintainer-gate" \
+              -f description="Title-based issue lookup failed — cannot verify linked issues" \
+              2>/dev/null || echo "::warning::Could not post commit status"
             exit 0
           fi
 
@@ -88,6 +97,13 @@ jobs:
             echo "No linked issues found — gate passes (no issues to check)"
             echo "blocked=false" >> "$GITHUB_OUTPUT"
             echo "reason=" >> "$GITHUB_OUTPUT"
+            # Post success commit status so branch protection sees the result
+            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=success \
+              -f context="maintainer-gate" \
+              -f description="No linked issues to check" \
+              2>/dev/null || echo "::warning::Could not post commit status"
             exit 0
           fi
 
@@ -162,6 +178,28 @@ jobs:
           # Use a temp file for multi-line reasons
           printf '%b' "$REASONS" > /tmp/gate-reasons.txt
           echo "has_reasons=true" >> "$GITHUB_OUTPUT"
+
+          # Post commit status so branch protection sees the result (GH#14277)
+          # The check-run (job name) is separate from the commit status context.
+          # Branch protection may require the "maintainer-gate" commit status,
+          # which was previously only posted by the retrigger-pr-checks job on
+          # issue label changes — not on PR open/sync events.
+          if [[ "$BLOCKED" == "true" ]]; then
+            DESCRIPTION=$(head -c 140 /tmp/gate-reasons.txt | tr '\n' ' ')
+            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=failure \
+              -f context="maintainer-gate" \
+              -f description="${DESCRIPTION}" \
+              2>/dev/null || echo "::warning::Could not post commit status"
+          else
+            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=success \
+              -f context="maintainer-gate" \
+              -f description="All linked issues pass gate checks" \
+              2>/dev/null || echo "::warning::Could not post commit status"
+          fi
 
       - name: Post or update gate comment
         if: steps.check.outputs.blocked == 'true'
@@ -270,14 +308,14 @@ jobs:
           fi
 
   # =========================================================================
-  # Job 3: Re-evaluate PR gate when a linked issue's labels change
+  # Job 3: Re-evaluate PR gate when a linked issue's labels or assignees change
   #         (evaluates conditions and posts final success/failure status)
   # =========================================================================
   retrigger-pr-checks:
-    name: Re-evaluate PR Gate on Issue Label Change
+    name: Re-evaluate PR Gate on Issue Change
     if: >-
       github.event_name == 'issues' &&
-      (github.event.action == 'labeled' || github.event.action == 'unlabeled')
+      (github.event.action == 'labeled' || github.event.action == 'unlabeled' || github.event.action == 'assigned')
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -294,7 +332,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MAINTAINER_GATE_DEBUG: ${{ vars.MAINTAINER_GATE_DEBUG || 'false' }}
         run: |
-          echo "Issue #$ISSUE_NUMBER labels changed — checking for linked PRs"
+          echo "Issue #$ISSUE_NUMBER updated (labels/assignee) — checking for linked PRs"
 
           # Find open PRs that reference this issue
           OPEN_PRS=$(gh pr list --repo "$REPO" --state open --json number,body --limit 50 \
