@@ -1,8 +1,6 @@
 # Chapter 6: Social Proof and Trust Signals
 
-Social proof reduces uncertainty, builds trust, and increases conversions by showing prospects that others have succeeded.
-
-## Cialdini's 5 Types
+## Cialdini's Types
 
 | Type | Description | Example |
 |------|-------------|---------|
@@ -26,8 +24,6 @@ Social proof reduces uncertainty, builds trust, and increases conversions by sho
 4. What surprised you most?
 5. What would you tell someone considering it?
 6. What nearly prevented purchase, and what changed your mind?
-
-**Display:**
 
 ```text
 [Photo]  "Specific result with metrics and emotional impact."
@@ -63,7 +59,7 @@ Video: 60-90s, name/company → results → captions. Carousel: 5-7s auto-rotate
 
 ## Case Studies
 
-Best for: B2B, high-consideration purchases, complex solutions, enterprise sales.
+Best for B2B, high-consideration purchases, complex solutions, enterprise sales.
 
 **Format 1 — PSR:** Customer Background → Challenge → Solution → Results (quantified) → Looking Forward.
 
@@ -128,7 +124,7 @@ Also: Instagram feed integration, dedicated gallery, email newsletters, social p
 
 ## Implementation Roadmap
 
-**Audit:** Inventory existing assets → quality-check (specificity, prominence, metrics) → gap analysis (pages lacking proof, unaddressed objections, unrepresented segments).
+Audit: inventory existing assets → quality-check (specificity, prominence, metrics) → gap analysis (pages lacking proof, unaddressed objections, unrepresented segments).
 
 | Timeframe | Actions |
 |-----------|---------|
@@ -157,7 +153,7 @@ Featured in: [TechCrunch] [Forbes] [WSJ]
 — CEO, Enterprise Customer  [Full Case Study →]
 ```
 
-## Psychology Notes
+## Psychology
 
 - **Bystander effect:** Too much social proof reduces urgency. Mitigate with exclusivity, urgency, personalization.
 - **Negative social proof:** Don't normalize undesired behavior. Bad: "70% abandon checkout." Better: "Join the 30% who complete their purchase."
