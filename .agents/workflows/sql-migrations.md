@@ -5,13 +5,11 @@ mode: subagent
 
 ## Quick Reference
 
-- **Purpose**: Version-controlled database schema changes with rollback support
 - **Declarative**: `schemas/` — desired state, generate migrations automatically
-- **Migrations**: `migrations/` — versioned, timestamped files
-- **Naming**: `{YYYYMMDDHHMMSS}_{action}_{target}.sql`
+- **Migrations**: `migrations/` — versioned, timestamped `{YYYYMMDDHHMMSS}_{action}_{target}.sql` files
 - **Workflow**: Edit `schemas/` → generate migration via diff → review → apply locally → commit both
 
-**Critical Rules**: NEVER modify pushed/deployed migrations (create a NEW one instead). ALWAYS generate via diff, review before committing, backup before production. ONE logical change per file.
+**Critical Rules**: NEVER modify pushed/deployed migrations (create a NEW one). ALWAYS generate via diff, review before committing, backup before production. ONE logical change per file.
 
 ## Directory Structure
 
@@ -38,11 +36,7 @@ project/
 | **Laravel** | `php artisan make:migration` | `php artisan migrate` | `php artisan migrate:rollback --step=1` |
 | **Rails** | `rails g migration` | `rails db:migrate` | `rails db:rollback STEP=1` |
 
-**Dev-only:** `drizzle-kit push`/`pull`, `prisma migrate reset`, `php artisan migrate:fresh --seed`.
-
-**Flyway naming:** `V1__create_users.sql`, `V2__add_email.sql`, `R__refresh_views.sql` (repeatable), `U2__undo_add_email.sql` (undo).
-
-**Known limitations (require manual migrations):** DML statements, RLS policies, view ownership/grants, materialized views, table partitions, comments, some `ALTER POLICY`.
+**Dev-only:** `drizzle-kit push`/`pull`, `prisma migrate reset`, `php artisan migrate:fresh --seed`. **Flyway naming:** `V1__create_users.sql`, `V2__add_email.sql`, `R__refresh_views.sql` (repeatable), `U2__undo_add_email.sql` (undo). **Manual migrations required for:** DML, RLS policies, view ownership/grants, materialized views, table partitions, comments, some `ALTER POLICY`.
 
 ## Naming Convention
 
@@ -110,9 +104,7 @@ UPDATE orders SET status = 'pending' WHERE shipped_at IS NULL;
 | `TRUNCATE` | **Irreversible** | Never use in migrations |
 | Data `UPDATE` | **Irreversible** | Store originals in backup table |
 
-Mark irreversible DOWN sections: `-- IRREVERSIBLE: restore from backup if needed.`
-
-Point-in-time recovery: `pg_dump`/`pg_restore` (PostgreSQL), `mysqldump` (MySQL).
+Mark irreversible DOWN sections: `-- IRREVERSIBLE: restore from backup if needed.` Recovery: `pg_dump`/`pg_restore` (PostgreSQL), `mysqldump` (MySQL).
 
 ## Production Safety
 
@@ -129,13 +121,9 @@ Point-in-time recovery: `pg_dump`/`pg_restore` (PostgreSQL), `mysqldump` (MySQL)
 
 ## Git and CI/CD
 
-**Pre-push checklist:** UP and DOWN sections present; DOWN reverses UP; tested locally (up -> down -> up); no modifications to pushed migrations; timestamp is current (regenerate on rebase).
+**Pre-push checklist:** UP and DOWN sections present; DOWN reverses UP; tested locally (up -> down -> up); no modifications to pushed migrations; timestamp is current (regenerate on rebase). Review: verify only expected changes, no unintended destructive ops, correct types/constraints.
 
-**Review:** Verify only expected changes, no unintended destructive ops, correct types/constraints.
-
-**Team rules:** Pull before creating migrations. Timestamps not sequential numbers. One migration per PR. Rebase carefully -- regenerate timestamps for conflicts.
-
-**Commit messages:** `feat(db): add user_preferences table`, `fix(db): correct FK on orders`, `chore(db): backfill user status`.
+**Team rules:** Pull before creating migrations. Timestamps not sequential numbers. One migration per PR. Rebase carefully -- regenerate timestamps for conflicts. Commit messages: `feat(db): add user_preferences table`, `fix(db): correct FK on orders`, `chore(db): backfill user status`.
 
 **CI/CD:** Trigger on `push` to `main` with `paths: ['migrations/**']`. Steps: backup -> migrate -> verify.
 
@@ -157,11 +145,9 @@ jobs:
       - run: psql $DATABASE_URL -c "SELECT 1"
 ```
 
-Most tools auto-create a tracking table (e.g., `flyway_schema_history`). **Prefer a managed tool** -- it handles ordering, locking, and state tracking automatically.
+Most tools auto-create a tracking table (e.g., `flyway_schema_history`). **Prefer a managed tool** -- it handles ordering, locking, and state tracking automatically. If running SQL directly, gate execution on a tracking table -- never replay all files on every invocation.
 
 ## Framework-Agnostic Runner
-
-If running SQL directly without a migration tool, gate execution on a tracking table -- never replay all files on every invocation.
 
 ```bash
 #!/usr/bin/env bash
@@ -185,6 +171,14 @@ for f in migrations/*.sql; do
   # psql -v binds the filename as a safe literal (:'name') -- no shell interpolation into SQL.
   # \i runs the migration file; the INSERT records it -- both inside one transaction.
   # pg_advisory_xact_lock serialises concurrent runners on the same DB.
+  # Convention: add `-- no-tx` comment in files using CREATE INDEX CONCURRENTLY (cannot run in a transaction).
+  if grep -qiE '^\s*--\s*no-tx\b' "$f"; then
+    psql "$DB_URL" -v "name=$name" -c "SELECT pg_advisory_lock(hashtext('schema_migrations'));"
+    psql "$DB_URL" -f "$f"
+    psql "$DB_URL" -v "name=$name" -c "INSERT INTO schema_migrations (filename) SELECT :'name' WHERE NOT EXISTS (SELECT 1 FROM schema_migrations WHERE filename = :'name');"
+    psql "$DB_URL" -c "SELECT pg_advisory_unlock(hashtext('schema_migrations'));"
+    echo "Applied no-tx (or skipped): $name"; continue
+  fi
   psql "$DB_URL" -v "name=$name" <<SQL
 SELECT pg_advisory_xact_lock(hashtext('schema_migrations'));
 BEGIN;
@@ -200,6 +194,4 @@ SQL
 done
 ```
 
-Key properties: idempotent (`WHERE NOT EXISTS`), ordered (lexicographic glob with timestamp-prefixed filenames), auditable (`schema_migrations` records what ran and when), safe filenames (`psql -v` with `:'name'` avoids SQL injection), concurrent-safe (`pg_advisory_xact_lock`), empty-directory safe (`compgen -G`).
-
-> **Note:** `\i` inside a transaction applies the migration file and the `INSERT` records it atomically in one psql session. For production, prefer a dedicated migration tool (Flyway, Atlas, Prisma Migrate) which handles locking, ordering, and checksums natively.
+**Properties:** idempotent (`WHERE NOT EXISTS`), ordered (lexicographic glob), auditable (`schema_migrations`), injection-safe (`psql -v` + `:'name'`), concurrent-safe (`pg_advisory_xact_lock`), empty-dir safe (`compgen -G`), `-- no-tx` convention for `CREATE INDEX CONCURRENTLY`.
