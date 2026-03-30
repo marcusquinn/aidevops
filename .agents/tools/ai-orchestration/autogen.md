@@ -34,24 +34,20 @@ pip install autogen-agentchat autogen-ext[openai] autogenstudio
 autogenstudio ui --port 8081
 ```
 
-Helper scripts: `autogen-helper.sh setup` → edit `~/.aidevops/autogen/.env` → `start-autogen-studio.sh` | `stop-autogen-studio.sh` | `autogen-status.sh`
-
-Studio UI: http://localhost:8081 | `autogenstudio ui --port 8081 --appdir ./my-app`
+Helpers: `autogen-helper.sh setup` → edit `~/.aidevops/autogen/.env` → `start-autogen-studio.sh` | `stop-autogen-studio.sh` | `autogen-status.sh`. Studio UI: http://localhost:8081
 
 `~/.aidevops/autogen/.env`:
 
 ```bash
 OPENAI_API_KEY=your_openai_api_key_here
-ANTHROPIC_API_KEY=your_anthropic_key_here        # Optional
-AZURE_OPENAI_API_KEY=your_azure_key_here         # Optional
+ANTHROPIC_API_KEY=your_anthropic_key_here         # optional
+AZURE_OPENAI_API_KEY=your_azure_key_here          # optional
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
-OLLAMA_BASE_URL=http://localhost:11434            # Local LLM
+OLLAMA_BASE_URL=http://localhost:11434             # optional, local LLM
 AUTOGEN_STUDIO_PORT=8081
 ```
 
 ## Usage
-
-All examples use: `import asyncio`, `from autogen_agentchat.agents import AssistantAgent`, `from autogen_ext.models.openai import OpenAIChatCompletionClient`.
 
 ### Basic Agent
 
@@ -100,15 +96,13 @@ async def main():
 asyncio.run(main())
 ```
 
-### Alternative Model Clients
+### Alternative Clients
 
 ```python
-# Ollama (local)
-from autogen_ext.models.ollama import OllamaChatCompletionClient
+from autogen_ext.models.ollama import OllamaChatCompletionClient          # Ollama (local)
 client = OllamaChatCompletionClient(model="llama3.2", base_url="http://localhost:11434")
 
-# Azure OpenAI
-from autogen_ext.models.openai import AzureOpenAIChatCompletionClient
+from autogen_ext.models.openai import AzureOpenAIChatCompletionClient     # Azure OpenAI
 client = AzureOpenAIChatCompletionClient(
     model="gpt-4", azure_endpoint="https://your-resource.openai.azure.com/",
     api_version="2024-02-15-preview")
@@ -124,7 +118,7 @@ RUN pip install autogen-agentchat autogen-ext[openai]
 CMD ["python", "main.py"]
 ```
 
-For web frameworks (FastAPI etc.), wrap agent patterns in route handlers. Always call `await client.close()` after each request.
+Web frameworks (FastAPI etc.): wrap agents in route handlers; always `await client.close()` per request.
 
 ## Troubleshooting
 
