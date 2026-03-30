@@ -78,7 +78,6 @@ await worker.dispose();
 wrangler tail                 # Real-time logs
 wrangler tail --status error
 wrangler tail --env production
-wrangler whoami
 ```
 
 ## Version Control
@@ -117,10 +116,6 @@ export default {
 ```
 
 ## Performance
-
-```jsonc
-{ "minify": true }
-```
 
 ```typescript
 // KV caching
