@@ -70,8 +70,8 @@ Compare against 2 competitors on: price, core deliverable, bonuses, guarantee, s
 ## Offer Math Worksheet
 
 ```text
-Core Product + Bonuses = Total Value: $______
-Your Price: $______  →  Value Multiple: ____x (target: 5–10×)
+Core Product: $______  + Bonus 1: $______  + Bonus 2: $______  + Bonus 3: $______
+Total Value: $______   Your Price: $______   Value Multiple: ____x (target: 5–10×)
 Customer ROI: pays $______ → gets $______ in value (10× minimum)
 ```
 
