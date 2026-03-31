@@ -8,7 +8,7 @@ Run a comprehensive SEO audit for the specified URL or domain.
 
 URL/Target: $ARGUMENTS
 
-## Arguments
+## Quick Reference
 
 ```text
 Default: Full audit (technical + on-page + content)
@@ -22,21 +22,19 @@ Options:
 
 ## Workflow
 
-### 1. Load Audit Framework
+### 1. Load the audit framework
 
-Read `~/.aidevops/agents/seo/seo-audit-skill.md` for the complete audit framework:
-- Priority order (crawlability → technical → on-page → content → authority)
-- Technical SEO checklist (Core Web Vitals thresholds, indexation checks)
-- On-page optimization checklist
-- Content quality assessment (E-E-A-T signals)
+Read these files before analysing the site:
 
-Also read reference files:
+- `~/.aidevops/agents/seo/seo-audit-skill.md` — priority order, technical checklist, on-page checklist, content quality review
 - `~/.aidevops/agents/seo/seo-audit-skill/ai-writing-detection.md`
 - `~/.aidevops/agents/seo/seo-audit-skill/aeo-geo-patterns.md`
 
-### 2. Gather Data
+Apply the skill's priority order: crawlability → technical → on-page → content → authority.
 
-**Technical checks:**
+### 2. Gather baseline data
+
+Use lightweight fetches first:
 
 ```bash
 # robots.txt and sitemap
@@ -47,25 +45,26 @@ curl -s "https://$DOMAIN/sitemap.xml" | head -50
 curl -s "https://$DOMAIN" | grep -E '<(title|meta)' | head -20
 ```
 
-**With --gsc flag:**
+If `--gsc` is set, export Search Console data:
 
 ```bash
 ~/.aidevops/agents/scripts/seo-export-gsc.sh "$DOMAIN"
 ```
 
-**For deeper analysis** (browser automation):
+Use browser automation only for checks that need rendering or field data:
+
 - Core Web Vitals via PageSpeed Insights
 - Structured data via Rich Results Test
 - Mobile-friendliness
 - Internal linking analysis
 
-### 3. Run Audit
+### 3. Audit in priority order
 
-Follow the priority order from seo-audit-skill.md. For each category, check status and note issues.
+For each category, record status, evidence, impact, and the next action. Keep the write-up focused on ranked issues, not a long checklist dump.
 
-### 4. Generate Report
+### 4. Generate the report
 
-Output format:
+Use this structure:
 
 ```markdown
 ## SEO Audit Report: [DOMAIN]
@@ -94,6 +93,13 @@ Output format:
 - **Quick Wins** (easy, immediate benefit)
 - **Long-Term** recommendations
 ```
+
+### Reporting rules
+
+- Lead with the top three issues by impact.
+- Separate critical fixes, near-term work, quick wins, and longer-term recommendations.
+- If `--compare` is used, call out relative gaps vs the competitor.
+- If `--output` is set, save the final report to that file.
 
 ## Examples
 
