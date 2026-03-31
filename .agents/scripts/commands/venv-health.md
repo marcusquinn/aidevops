@@ -16,23 +16,14 @@ Arguments: $ARGUMENTS
 
 Display the helper output directly; formatting is built in.
 
-## Arguments
+## Modes
 
-| Argument | Description |
-|----------|-------------|
-| (none) | Scan all repos in `~/.config/aidevops/repos.json` |
-| `--quiet`, `-q` | Only report broken/warning venvs |
-| `--json`, `-j` | JSON output for programmatic use |
-| `--path DIR`, `-p DIR` | Scan a specific directory instead of repos.json |
-
-## Common Invocations
-
-| Command | Purpose |
-|---------|---------|
-| `/venv-health` | Scan all managed repos |
+| Invocation | Result |
+|------------|--------|
+| `/venv-health` | Scan all repos in `~/.config/aidevops/repos.json` |
 | `/venv-health --quiet` | Show only warnings and errors |
-| `/venv-health --json` | Return machine-readable output |
-| `/venv-health --path DIR` | Scan one directory |
+| `/venv-health --json` | Return JSON like `{"summary":{"total":3,"healthy":2,"warnings":0,"broken":1},"venvs":[...]}` |
+| `/venv-health --path DIR` | Scan one directory instead of the managed repo list |
 
 ## Checks Performed
 
@@ -44,7 +35,7 @@ Display the helper output directly; formatting is built in.
 
 ## Venv Discovery
 
-Looks for `.venv/pyvenv.cfg` (PEP 405 marker) up to 3 levels deep in each registered repo. Deduplicates by realpath.
+Looks for `.venv/pyvenv.cfg` (PEP 405 marker) up to 3 levels deep in each registered repo, then deduplicates by realpath.
 
 ## Automatic Checks
 
@@ -69,13 +60,6 @@ aidevops config set updates.venv_health_hours 12
 | 0 | All venvs healthy (or no venvs found) |
 | 1 | One or more venvs have issues |
 | 2 | Usage error |
-
-## Output Expectations
-
-- Default: show all detected venvs
-- `--quiet`: show only warnings and errors
-- `--json`: return JSON like `{"summary":{"total":3,"healthy":2,"warnings":0,"broken":1},"venvs":[...]}`
-- `--path`: scan the supplied directory instead of the managed repo list
 
 ## Related
 
