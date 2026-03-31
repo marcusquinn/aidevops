@@ -29,48 +29,42 @@ tools:
 - **Workflow**: Fetch -> Refine -> Structure -> Update -> Verify
 <!-- AI-CONTEXT-END -->
 
-These guidelines define the standard for creating high-quality, human-sounding, SEO-optimized content for our websites (specifically tailored for local businesses like Trinity Joinery).
+Structural copy rules for website content, especially local-service pages. If a project has `context/brand-identity.toon`, take tone, vocabulary, and personality from that file; this document covers structure only. For brand identity maintenance, see `tools/design/brand-identity.md`.
 
-**Brand identity override**: When a project has `context/brand-identity.toon`, the brand voice and visual identity come from there. This file provides structural copywriting rules only — tone, vocabulary, and personality are defined per-project in the brand identity. See `tools/design/brand-identity.md` for the bridge agent that creates and maintains brand identity files.
+## Core Rules
 
-## Tone of Voice
+- Sound like a local expert, not a generic corporation.
+- Be professional but approachable.
+- Use British English throughout (`specialise`, `colour`, `moulding`, `draughty`, `centre`).
+- Be direct. Cut fluff.
+- Prefer "We make..." to "Trinity Joinery crafts...".
 
-- **Authentic & Local:** Sound like a local expert, not a generic corporation. Use "We make..." instead of "Trinity Joinery crafts...".
-- **Professional but Approachable:** Confident in expertise, but friendly to the homeowner.
-- **British English:** Always use British spelling (e.g., `specialise`, `colour`, `moulding`, `draughty`, `centre`).
-- **Direct:** Avoid fluff. Get to the point.
+## Formatting
 
-## 📝 **Formatting & Structure**
+- Use one sentence per paragraph for screen readability, especially on mobile.
+- Avoid walls of text. If a paragraph runs 3+ lines, split it.
+- Keep sentences short and punchy.
+- Use spaced em-dashes (` — `) for emphasis or connection instead of long subordinate clauses.
+  - Good: "We finish them with marine-grade coatings — they are built specifically to resist swelling."
+  - Bad: "We finish them with marine-grade coatings, which means that they are built specifically..."
 
-### **Paragraphs**
+### SEO
 
-- **One Sentence Per Paragraph:** To improve readability on screens (especially mobile), break text down. Every major sentence gets its own block.
-- **No Walls of Text:** Avoid paragraphs with 3+ lines.
+- Bold primary keywords naturally.
+  - Example: "Hand-crafted here in Jersey, our bespoke **sash windows** are built to last."
+- Never stuff keywords. If it sounds forced, rewrite it.
+- Use long-tail variations such as "Jersey heritage properties", "granite farmhouse windows", and "coastal climate".
 
-### **Sentences**
+## Avoid
 
-- **Short & Punchy:** Keep sentences concise.
-- **Use Dashes:** Use spaced em-dashes (` — `) to connect related thoughts or add emphasis, rather than long subordinate clauses.
-  - *Good:* "We finish them with marine-grade coatings — they are built specifically to resist swelling."
-  - *Bad:* "We finish them with marine-grade coatings, which means that they are built specifically..."
+- Robotic phrasing such as "We pride ourselves on...", "Our commitment to excellence...", and "Elevate your home with...".
+- Repeating the brand name at the start of every sentence.
+- Empty trailing blocks such as `<!-- wp:paragraph --><p></p><!-- /wp:paragraph -->`.
+- Markdown in HTML content fields.
 
-### **Keywords & SEO**
+## HTML Content Fields
 
-- **Bold Keywords:** Use strong emphasis to highlight primary keywords naturally within the text.
-  - *Example:* "Hand-crafted here in Jersey, our bespoke **sash windows** are built to last."
-- **Natural Placement:** Do not stuff keywords. If it sounds forced, rewrite it.
-- **Long-Tail Variations:** Include variations like "Jersey heritage properties", "granite farmhouse windows", "coastal climate".
-
-## 🚫 **Things to Avoid**
-
-- **Robotic Phrasing:** Avoid "We pride ourselves on...", "Our commitment to excellence...", "Elevate your home with...". Show, don't tell.
-- **Repetition:** Don't start every sentence with the brand name.
-- **Empty Blocks:** Ensure no `<!-- wp:paragraph --><p></p><!-- /wp:paragraph -->` blocks are left at the end of sections.
-- **Markdown in HTML Fields:** Use proper HTML tags in HTML content fields.
-
-### **HTML Formatting Guidelines**
-
-For HTML content fields (especially WordPress content areas), use these HTML tags instead of Markdown:
+Use HTML tags, not Markdown, in WordPress content areas.
 
 ```html
 <strong>Bold text</strong>
@@ -81,25 +75,24 @@ For HTML content fields (especially WordPress content areas), use these HTML tag
 <ul><li>List items</li></ul>
 ```
 
-**Note:** Markdown like `**bold**` does not render in HTML content fields.
+Markdown like `**bold**` will not render in HTML fields.
 
-## 🛠️ **Workflow for Content Updates**
+## Content Update Workflow
 
-1. **Fetch:** Download the current content using `wp post get`.
-    - **CRITICAL:** Use `--field=content` (singular) to get raw HTML without table headers/metadata.
-    - *Correct:* `wp post get 123 --field=content > file.txt`
-    - *Incorrect:* `wp post get 123 --fields=post_title,content > file.txt` (This adds "Field/Value" table artifacts to the file).
-2. **Refine:** Apply these guidelines (split sentences, fix spelling, add bolding).
-3. **Structure:** Ensure valid block markup (`<!-- wp:paragraph -->...`).
-4. **Update:** Upload and apply via `wp post update`.
-5. **Verify:** Flush caches (`wp closte devmode enable` if on Closte) and check frontend.
+1. **Fetch:** Download with `wp post get`; use `--field=content` (singular) to get raw HTML without table headers or metadata.
+   - Correct: `wp post get 123 --field=content > file.txt`
+   - Incorrect: `wp post get 123 --fields=post_title,content > file.txt` because it adds `Field/Value` table artefacts.
+2. **Refine:** Apply these guidelines.
+3. **Structure:** Keep valid block markup such as `<!-- wp:paragraph -->...`.
+4. **Update:** Upload with `wp post update`.
+5. **Verify:** Flush caches (`wp closte devmode enable` on Closte) and check the frontend.
 
-## 📄 **Example Transformation**
+## Example Transformation
 
-**Before (AI/Generic):**
+**Before (AI/generic):**
 > Trinity Joinery uses durable hardwoods treated to resist Jersey’s salt air and humidity effectively. Expert carpenters apply marine-grade finishes for long-lasting protection with minimal upkeep.
 
-**After (Human/Local):**
+**After (human/local):**
 > Absolutely.
 >
 > We know how harsh the salt air and damp can be.
@@ -108,8 +101,4 @@ For HTML content fields (especially WordPress content areas), use these HTML tag
 >
 > We finish them with marine-grade coatings — ensuring they resist swelling, warping and weathering.
 
-**Follow these guidelines for all product page updates.**
-
-## Platform-Specific Adaptations
-
-These guidelines define the core voice for website and blog content. When writing for social media or video platforms, see `content/platform-personas.md` for channel-specific adaptations of this voice (LinkedIn, Instagram, YouTube, X, Facebook).
+Apply these rules to product page updates unless a project-specific brief overrides them. For social and video variants, see `content/platform-personas.md`.
