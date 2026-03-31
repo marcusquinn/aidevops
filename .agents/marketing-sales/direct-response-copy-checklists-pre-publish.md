@@ -1,5 +1,16 @@
 # Pre-Publish Checklist
 
+Run the six-point gate first. If any answer is "no," fix that before polishing the page.
+
+## Six-Point Gate
+
+1. **Clear?** Value understood in 5 seconds
+2. **Specific?** Concrete numbers, timeframes, or results present
+3. **Believable?** Promise feels plausible, not too good to be true
+4. **Proof?** Evidence supports the claim
+5. **Risk reversal?** Guarantee clearly reduces fear of the wrong decision
+6. **One action?** Reader knows the next step immediately
+
 ## Core Review
 
 | Area | Checklist |
@@ -20,14 +31,3 @@
 | **Call to Action** | One clear action (no competing CTAs) · Button text action-oriented and visually distinct · Appears multiple times on long pages · Friction minimized and next step obvious |
 | **Technical** | Mobile-optimized (60%+ traffic is mobile) · Load time under 3 seconds · All links work and form submits correctly · Tracking set up (pixels, analytics) · Checkout process smooth |
 | **Final Read** | Read aloud (catches awkward phrasing) · Spelling, grammar, and tone consistent · Redundant words removed · Would you buy based on this page? · Fresh eyes review it |
-
-## Quick Pre-Flight
-
-Before publishing, verify all six:
-
-1. **Clear?** Value understood in 5 seconds
-2. **Specific?** Concrete numbers, timeframes, results
-3. **Believable?** Doesn't feel too good to be true
-4. **Proof?** Evidence this works
-5. **Risk reversal?** Satisfaction guarantee clear
-6. **One action?** Reader knows what to do next
