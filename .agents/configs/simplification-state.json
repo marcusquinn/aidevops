@@ -3065,6 +3065,11 @@
       "hash": "a4bf29e5b45891eeb157e02f740965cd3370cb9d",
       "at": "2026-03-31T06:30:29Z",
       "pr": 14701
+    },
+    ".agents/tools/vision/overview.md": {
+      "hash": "e760976eca7d7c554a6e625d70816805258ebcb1",
+      "at": "2026-03-31T08:01:28Z",
+      "pr": 14726
     }
   }
 }
