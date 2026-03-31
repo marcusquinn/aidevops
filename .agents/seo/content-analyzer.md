@@ -45,7 +45,7 @@ python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py quality article.md \
 
 | Module | Key Metrics |
 |--------|-------------|
-| **Readability** | Flesch Reading Ease (target: 60-70), Flesch-Kincaid Grade (target: 8-10), sentence length, passive voice ratio, transition words, complex word ratio |
+| **Readability** | Flesch Reading Ease (target: 60-70), Flesch-Kincaid Grade (target: 8-10), sentence length, paragraph structure, passive voice ratio, transition words, complex word ratio |
 | **Keyword Optimization** | Primary density (target: 1-2%), critical placements (H1/first 100 words/H2s/conclusion), section heatmap, stuffing risk, LSI suggestions, secondary coverage |
 | **Search Intent** | Intent classification (informational/navigational/transactional/commercial), confidence scores, content-intent alignment, SERP feature targeting |
 | **SEO Quality** | 6-category scoring (content, keywords, meta, structure, links, readability), critical issues, publishing readiness, meta element validation |
