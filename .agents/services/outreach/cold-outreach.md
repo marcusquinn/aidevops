@@ -13,99 +13,102 @@ tools:
 
 ## Quick Reference
 
-- Use dedicated sending domains and inboxes for outreach; never send cold campaigns from the primary business domain
-- Ramp each new mailbox from 5 emails/day to 20 emails/day over 4 weeks before scaling to production volume
-- Hard cap mailbox throughput at 100 emails/day total (new sends + follow-ups + manual replies)
-- Rotate volume across multiple warmed mailboxes instead of pushing one mailbox above safe limits
-- Maintain CAN-SPAM and GDPR controls by default (physical address, one-click unsubscribe, legitimate-interest documentation)
-- Prioritize positive-reply handoff: automate detection, then move qualified responses into human-managed conversation flows
+- Dedicated sending domains/inboxes for outreach — never cold-send from primary business domain
+- Ramp each new mailbox 5→20 emails/day over 4 weeks before production volume
+- Hard cap: 100 emails/day per mailbox (new sends + follow-ups + replies)
+- Rotate volume across multiple warmed mailboxes; never push one above safe limits
+- CAN-SPAM and GDPR controls by default (physical address, one-click unsubscribe, legitimate-interest docs)
+- Auto-detect positive replies → hand off to human-managed conversation flows
+
+## Compliance Baseline
+
+### CAN-SPAM (US)
+
+- Non-deceptive sender identity and subject lines
+- Valid postal address in each campaign email
+- One-click unsubscribe (RFC 8058 where supported)
+- Honor opt-outs promptly; auto-suppress future sends
+
+### GDPR Legitimate Interest (EU/UK)
+
+- Legal basis: legitimate interest for B2B prospecting where applicable
+- Document balancing test outcomes (business need vs privacy impact)
+- Minimize personal data to outreach-essential attributes
+- Clear objection/deletion pathways in first contact and footer
+- Maintain processing records and suppression logs
+
+## Warmup and Volume
 
 ### Default Warmup Ramp (Per Mailbox)
 
-| Week | Daily Send Target | Notes |
-|---|---:|---|
-| 1 | 5-8/day | Mostly warmup network traffic and light manual sends |
-| 2 | 9-12/day | Add low-risk prospects, monitor bounces and spam placement |
-| 3 | 13-16/day | Increase follow-ups slowly; keep copy variation high |
-| 4 | 17-20/day | Stable warm baseline; keep reply handling human-in-loop |
+| Week | Daily Target | Notes |
+|------|---:|---|
+| 1 | 5-8 | Warmup network traffic + light manual sends |
+| 2 | 9-12 | Add low-risk prospects; monitor bounces/spam placement |
+| 3 | 13-16 | Increase follow-ups; keep copy variation high |
+| 4 | 17-20 | Stable warm baseline; reply handling human-in-loop |
 
-Scale above 20/day only after inbox health remains stable for at least 7 days (low bounce, low complaint, stable inbox placement).
+Scale above 20/day only after 7+ days of stable inbox health (low bounce, low complaint, stable placement).
 
-### Daily Limits and Volume Math
+### Daily Limits
 
-- Treat `100/day` as a hard technical and reputation limit per mailbox
-- Include all outbound activity in that number: first touch, follow-up sequence steps, and one-off replies
-- Plan outreach in aggregate: `target_daily_volume / 100 = minimum active mailboxes`
-- Add 20-30% mailbox headroom for pauses, warmup replacement, and deliverability degradation
+- `100/day` hard cap per mailbox — includes first touch, follow-up steps, and one-off replies
+- Plan: `target_daily_volume / 100 = minimum active mailboxes`
+- Add 20-30% mailbox headroom for pauses, warmup replacement, deliverability degradation
 
-### Multi-Mailbox Rotation Pattern
+### Multi-Mailbox Rotation
 
 1. Group mailboxes by sending domain and reputation tier (new, warming, stable)
 2. Route high-priority accounts through stable mailboxes first
-3. Evenly distribute sequence steps so no mailbox peaks at one hour/daypart
-4. Pause individual mailboxes on anomaly signals (bounce spike, spam-folder drift, complaint events)
-5. Rebalance to remaining healthy mailboxes while remediation runs
+3. Distribute sequence steps evenly — no mailbox peaks at one hour/daypart
+4. Pause individual mailboxes on anomaly signals (bounce spike, spam-folder drift, complaints)
+5. Rebalance to remaining healthy mailboxes during remediation
 
-### Compliance Baseline
+## Platform Selection
 
-#### CAN-SPAM (US)
-
-- Use non-deceptive sender identity and subject lines
-- Include valid postal address in each campaign email
-- Provide a one-click unsubscribe mechanism (RFC 8058 where supported)
-- Honor opt-out requests quickly and suppress future sends automatically
-
-#### GDPR Legitimate Interest (EU/UK)
-
-- Record legal basis as legitimate interest for B2B prospecting where applicable
-- Document balancing test outcomes (business need vs contact privacy impact)
-- Minimize personal data fields to outreach-essential attributes only
-- Provide clear objection and deletion pathways in the first contact and footer
-- Maintain processing records and suppression logs for auditability
-
-### Platform Comparison (Cold Outreach)
+### Cold Outreach Platforms
 
 | Platform | Strengths | Trade-Offs | Best Fit |
 |---|---|---|---|
-| Smartlead | Mature inbox rotation, unified inbox, strong deliverability controls, API-friendly for automation | Higher complexity for small teams, setup discipline required | Teams running multi-mailbox outbound at scale with automation needs |
-| Instantly | Fast onboarding, broad community playbooks, integrated lead and campaign workflows | Feature depth can vary by workflow; avoid over-automation without QA | Teams optimizing speed-to-launch and broad campaign experimentation |
-| ManyReach | Leaner interface, simpler operational footprint, cost-conscious entry point | Smaller ecosystem and fewer advanced orchestration capabilities | Smaller teams that need lightweight outbound ops with lower overhead |
+| Smartlead | Mature inbox rotation, unified inbox, strong deliverability, API-friendly | Higher complexity for small teams | Multi-mailbox outbound at scale with automation |
+| Instantly | Fast onboarding, broad community playbooks, integrated lead/campaign workflows | Feature depth varies by workflow; avoid over-automation without QA | Speed-to-launch and broad campaign experimentation |
+| ManyReach | Lean interface, simple ops, cost-conscious entry | Smaller ecosystem, fewer advanced orchestration features | Lightweight outbound with lower overhead |
 
-### Infrastructure Decision Framework
+### Infrastructure Options
 
 | Option | Model | Pros | Cons | Use When |
 |---|---|---|---|---|
-| Infraforge | Private/dedicated infrastructure | More control over sender environment and isolation | Higher setup and management burden | You need tighter infrastructure control and can operate dedicated environments |
-| Mailforge | Shared infrastructure | Faster setup and lower ops overhead | Less isolation/control than private deployments | You need speed and lower complexity for standard outbound programs |
-| Primeforge | Google Workspace / Microsoft 365 based | Uses mainstream mailbox ecosystems and familiar admin workflows | Policy constraints and cost profile depend on provider tenancy | You need enterprise mailbox stack alignment with Google/MS365 workflows |
+| Infraforge | Private/dedicated | More control, sender isolation | Higher setup/management burden | Tighter infrastructure control needed |
+| Mailforge | Shared | Faster setup, lower ops overhead | Less isolation/control | Speed and lower complexity for standard outbound |
+| Primeforge | Google Workspace / M365 | Mainstream mailbox ecosystems, familiar admin | Policy constraints, cost depends on tenancy | Enterprise mailbox stack alignment |
 
-### FluentCRM as a WordPress-Centric Alternative
+### FluentCRM (WordPress-Centric)
 
-- Use FluentCRM when outreach is tightly coupled to WordPress-hosted funnels, forms, and owned contact data
-- Prefer FluentCRM for consent-aware lifecycle messaging; use dedicated outbound platforms for cold scale
-- Keep list governance synchronized between FluentCRM and outbound tools to avoid re-contacting unsubscribed leads
+- Use when outreach is tightly coupled to WordPress-hosted funnels, forms, and owned contact data
+- Prefer for consent-aware lifecycle messaging; use dedicated outbound platforms for cold scale
+- Sync list governance between FluentCRM and outbound tools to avoid re-contacting unsubscribed leads
 
-### Messaging Quality Controls
+## Messaging Quality
 
-#### Avoid Overused Cold Email Phrases
+### Avoid Overused Phrases
 
-Avoid openings that look mass-templated (for example: "just circling back," "quick question," "hope this finds you well"). Replace with context-grounded, specific observations tied to the recipient's role, timing, or initiative.
+Avoid mass-templated openings ("just circling back," "quick question," "hope this finds you well"). Replace with context-grounded observations tied to recipient's role, timing, or initiative.
 
-#### B2B Personalization Patterns
+### B2B Personalization
 
-- Trigger personalization from verifiable business signals (hiring, launch, stack changes, regional expansion)
-- Anchor each email to one problem hypothesis and one clear call-to-action
-- Keep proof concise: one relevant case, metric, or example that matches the prospect segment
-- Maintain variation across openings and CTAs to reduce template fingerprinting
+- Trigger from verifiable business signals (hiring, launch, stack changes, regional expansion)
+- One problem hypothesis + one clear CTA per email
+- One relevant case/metric/example matching the prospect segment
+- Vary openings and CTAs to reduce template fingerprinting
 
-### Reply Detection and Handoff
+## Reply Detection and Handoff
 
-1. Classify replies into positive, neutral, objection, and unsubscribe
-2. Auto-stop sequences immediately for any reply and suppression event
-3. Route positive and high-intent neutral replies to a human owner with SLA
+1. Classify replies: positive, neutral, objection, unsubscribe
+2. Auto-stop sequences on any reply or suppression event
+3. Route positive/high-intent neutral replies to human owner with SLA
 4. Track handoff latency and outcome in CRM for loop closure
-5. Feed objection patterns back into copy and segmentation updates weekly
+5. Feed objection patterns back into copy and segmentation weekly
 
 <!-- AI-CONTEXT-END -->
 
-Use this document as the baseline policy for cold outreach strategy tasks. For execution workflows, pair it with campaign tooling docs and CRM-specific operating procedures.
+Use this document as the baseline policy for cold outreach strategy tasks. Pair with campaign tooling docs and CRM-specific operating procedures for execution workflows.
