@@ -1,5 +1,5 @@
 ---
-description: Attach Playwright to a live Chromium session via remote debugging
+description: Attach to a live Chromium session via local CDP helper or Playwright
 mode: subagent
 tools:
   read: true
@@ -17,7 +17,9 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Reuse an already-open Chrome/Chromium/Brave/Edge/Vivaldi session instead of launching a fresh browser
-- **Mechanism**: Start the browser with `--remote-debugging-port=9222`, then attach with Playwright CDP
+- **Mechanism**: Start the browser with `--remote-debugging-port=9222`, then attach with the local CDP helper or Playwright CDP
+- **Helper**: `.agents/scripts/chromium-debug-use-helper.sh` (Node 22+, raw CDP, no Playwright dependency)
+- **Skill entry**: `tools/browser/chromium-debug-use/SKILL.md`
 - **Best for**: Logged-in/manual-auth flows, extension-heavy sessions, debugging real state, handoff between manual and scripted work
 - **Not for**: Isolated parallel test runs, Firefox/WebKit, or hostile sites where exposed remote debugging is unsafe
 
@@ -114,6 +116,35 @@ curl http://127.0.0.1:9222/json/version
 ```
 
 Use loopback only. Never expose the debug port to untrusted networks.
+
+## Use the Local Helper
+
+The helper gives aidevops a small, direct CDP command surface without requiring Playwright or Puppeteer.
+
+```bash
+# browser version / endpoint sanity check
+.agents/scripts/chromium-debug-use-helper.sh version
+
+# list open tabs and target prefixes
+.agents/scripts/chromium-debug-use-helper.sh list
+
+# inspect one page
+.agents/scripts/chromium-debug-use-helper.sh snapshot <target>
+.agents/scripts/chromium-debug-use-helper.sh html <target> main
+.agents/scripts/chromium-debug-use-helper.sh eval <target> "document.title"
+
+# interact lightly in the live session
+.agents/scripts/chromium-debug-use-helper.sh click <target> "button[type='submit']"
+.agents/scripts/chromium-debug-use-helper.sh type <target> "hello world"
+.agents/scripts/chromium-debug-use-helper.sh screenshot <target> /tmp/chromium-debug-use.png
+```
+
+Notes:
+
+- Commands default to `http://127.0.0.1:9222`, then fall back to browser `DevToolsActivePort` discovery.
+- Override the endpoint with `--browser-url http://127.0.0.1:9333` or `CHROMIUM_DEBUG_USE_BROWSER_URL=...`.
+- The helper uses raw CDP over WebSocket and keeps a per-tab daemon so repeated commands do not require reconnecting every time.
+- Run `list` first, then use the displayed target prefix for page-specific commands.
 
 ## Attach with Playwright
 
