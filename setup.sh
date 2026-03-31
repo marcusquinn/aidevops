@@ -500,14 +500,33 @@ create_backup_with_rotation() {
 	local backup_name="$2"
 	local backup_base="$HOME/.aidevops/${backup_name}-backups"
 	local backup_dir
+	local backup_target
 	backup_dir="$backup_base/$(date +%Y%m%d_%H%M%S)"
+	backup_target="$backup_dir/$(basename "$source_path")"
 
 	# Create backup directory
 	mkdir -p "$backup_dir"
 
 	# Copy source to backup
 	if [[ -d "$source_path" ]]; then
-		cp -R "$source_path" "$backup_dir/"
+		mkdir -p "$backup_target"
+		if command -v rsync >/dev/null 2>&1; then
+			local rsync_status=0
+			if rsync -a "$source_path/" "$backup_target/"; then
+				rsync_status=0
+			else
+				rsync_status=$?
+			fi
+
+			if [[ "$rsync_status" -eq 24 ]]; then
+				print_warning "Backup completed with missing source entries skipped: $source_path"
+			elif [[ "$rsync_status" -ne 0 ]]; then
+				print_error "Backup failed for $source_path (rsync exit $rsync_status)"
+				return "$rsync_status"
+			fi
+		else
+			cp -R "$source_path" "$backup_dir/"
+		fi
 	elif [[ -f "$source_path" ]]; then
 		cp "$source_path" "$backup_dir/"
 	else
