@@ -4,18 +4,18 @@ agent: Build+
 mode: subagent
 ---
 
-Dispatch one or more workers to handle tasks. Route by type:
+Dispatch one or more workers. Route by work type:
 
-- **Code-change work** (repo edits, tests, PRs) -> `/full-loop`
-- **Operational work** (reports, audits, monitoring, outreach) -> direct command execution (no PR ceremony)
+- **Code changes** (repo edits, tests, PRs) -> `/full-loop`
+- **Operational work** (reports, audits, monitoring, outreach) -> direct command execution
 
 Arguments: $ARGUMENTS
 
 ## Scope
 
-**`/runners` is a targeted dispatch tool, not a supervisor.** It resolves specified items, dispatches one worker per item, shows the dispatch table, and stops. It does NOT run supervisor phases, auto-pickup, stale recovery, or audit checks — use `/pulse` for unattended slot-filling (see `scripts/commands/pulse.md`).
+**`/runners` is a targeted dispatcher, not a supervisor.** It resolves explicit items, launches one worker per item, shows the dispatch table, and stops. It does NOT run supervisor phases, auto-pickup, stale recovery, or audits. Use `/pulse` for unattended slot-filling (`scripts/commands/pulse.md`).
 
-Workers are independent — `/runners` never touches source code, tests, branches, or merge conflicts. If a worker fails, improve the worker's instructions, not the dispatcher.
+Workers stay isolated: `/runners` never touches source code, tests, branches, or merge conflicts. If a worker fails, fix the worker prompt or workflow, not the dispatcher.
 
 ## Input Types
 
@@ -29,7 +29,7 @@ Workers are independent — `/runners` never touches source code, tests, branche
 
 ## Step 1: Resolve Items
 
-For each input, resolve to a description:
+Resolve each input to a description:
 
 ```bash
 gh issue view 267 --repo <slug> --json number,title,url
@@ -40,13 +40,13 @@ gh issue view 42 --repo user/repo --json number,title,url
 
 ## Step 2: Dispatch Workers
 
-Launch each worker via `headless-runtime-helper.sh run` — the **ONLY** correct dispatch path. It constructs the full lifecycle prompt, handles provider rotation, session persistence, and backoff. NEVER use bare `opencode run` (workers miss lifecycle reinforcement and stop after PR creation — GH#5096).
+Launch each worker via `headless-runtime-helper.sh run` — the **ONLY** valid dispatch path. It builds the lifecycle prompt, handles provider rotation, preserves sessions, and applies backoff. NEVER use bare `opencode run` or workers may stop after PR creation (GH#5096).
 
 ```bash
 AGENTS_DIR="$(aidevops config get paths.agents_dir)"
 HELPER="${AGENTS_DIR/#\~/$HOME}/scripts/headless-runtime-helper.sh"
 
-# Code task (Build+ default — omit --agent)
+# Code task (Build+ is default; omit --agent)
 $HELPER run \
   --role worker \
   --session-key "task-t083" \
@@ -55,7 +55,7 @@ $HELPER run \
   --prompt "/full-loop t083 -- <description>" &
 sleep 2
 
-# Specialist/operational task (no /full-loop)
+# Specialist or operational task (no /full-loop)
 $HELPER run \
   --role worker \
   --session-key "seo-weekly" \
@@ -77,15 +77,15 @@ sleep 2
 
 ### Dispatch Rules
 
-- `--dir ~/Git/<repo-name>` must match the repo the task belongs to
-- `--agent <name>` routes to a specialist (SEO, Content, Marketing, etc.); omit for code tasks (defaults to Build+)
+- `--dir ~/Git/<repo-name>` must match the target repo
+- `--agent <name>` routes to a specialist; omit it for code tasks (Build+ default)
 - `/full-loop` only for tasks needing repo code changes and PR traceability
 - Do NOT add `--model` unless escalation is required by workflow policy
-- Background each dispatch with `&` and `sleep 2` between to avoid thundering herd
+- Background each dispatch with `&`, then `sleep 2`, to avoid thundering herd
 
 ## Step 3: Show Dispatch Table
 
-After dispatching, show the user what was launched:
+After dispatch, show what was launched:
 
 ```text
 ## Dispatched Workers
@@ -96,4 +96,4 @@ After dispatching, show the user what was launched:
 | 2 | GH#268: <title> | dispatched |
 ```
 
-Then stop. The next `/pulse` cycle (or the user) can check outcomes and dispatch follow-ups.
+Then stop. `/pulse` or a later operator action handles follow-up.
