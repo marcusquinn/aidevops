@@ -1,18 +1,17 @@
 ## Worker Efficiency Protocol
 
-Maximise output per token. Avoid wasted work.
+Maximise output per token. Compress prose, not results.
 
-**1. Decompose with TodoWrite (MANDATORY)**
-Break task into 3-7 subtasks at session start. Last subtask: `gh pr ready`. ONE `in_progress` at a time.
+### 1. Plan, commit, and PR early
 
-**2. Commit early, commit often (CRITICAL — prevents lost work)**
-Commit after EACH subtask. Uncommitted work is LOST on session end.
+- Start with `TodoWrite`: 3-7 subtasks, exactly one `in_progress`, last subtask `gh pr ready`.
+- Commit after each implementation subtask. Uncommitted work is lost when a session ends.
 
 ```bash
 git add -A && git commit -m 'feat: <what you just did> (<task-id>)'
 ```
 
-After FIRST commit, push and create a draft PR:
+- After the first commit, push and open a draft PR. Later commits only need `git push`; finish with `gh pr ready`.
 
 ```bash
 git push -u origin HEAD
@@ -26,9 +25,9 @@ pr_body="${pr_body}${SIG_FOOTER}"
 gh pr create --draft --title '<task-id>: <description>' --body "$pr_body"
 ```
 
-Subsequent commits: `git push`. When done: `gh pr ready`.
+### 2. Preserve audit gates
 
-**3. ShellCheck gate before push (MANDATORY for .sh files — t234)**
+- **ShellCheck before push for `.sh` files (t234).** Do not push violations. If `shellcheck` is missing, skip and note it in the PR body.
 
 ```bash
 if command -v shellcheck &>/dev/null; then
@@ -45,76 +44,38 @@ else
 fi
 ```
 
-Do NOT push `.sh` files with violations. Missing shellcheck: skip and note in PR body.
+- **PR titles must include the task ID (t318.2).** Use `<task-id>: <description>`.
+  - `tNNN` for TODO tasks, e.g. `t318.2: Verify supervisor worker PRs include task ID`
+  - `GH#NNN` for GitHub issues, e.g. `GH#12455: tighten hashline-edit-format.md`
+- Never use `qd-`, bare numbers, or `t` + a GitHub issue number. CI and the supervisor validate this.
 
-**3b. PR title MUST contain task ID (MANDATORY — t318.2)**
-Format: `<task-id>: <description>`. Valid task IDs:
+### 3. Save context aggressively
 
-- `tNNN` — TODO.md task (e.g., `t318.2: Verify supervisor worker PRs include task ID`)
-- `GH#NNN` — GitHub issue (e.g., `GH#12455: tighten hashline-edit-format.md`)
-
-NEVER use `qd-`, bare numbers, or `t` + GitHub issue number. CI and supervisor validate this.
-
-**4. Offload research to ai_research (saves context)**
-For files >200 lines you won't edit, use `ai_research` (~100 tokens vs ~5000):
+- For files over 200 lines that you will not edit, use `ai_research` instead of reading them directly (~100 tokens vs ~5000).
 
 ```text
 ai_research(prompt: "Find all functions that dispatch workers in supervisor-helper.sh. Return: function name, line number, key variables.", domain: "orchestration")
 ```
 
-Rate limit: 10/session. Default: haiku. Do NOT offload files you need to edit.
+- Rate limit: 10 per session. Default model: haiku. Do not offload files you need to edit.
+- Domain shorthand auto-loads agent files: `git=git-workflow,github-cli,conflict-resolution`; `planning=plans,beads`; `code=code-standards,code-simplifier`; `seo=seo,dataforseo,google-search-console`; `content=content,research,writing`; `wordpress=wp-dev,mainwp`; `browser=browser-automation,playwright`; `deploy=coolify,coolify-cli,vercel`; `security=tirith,encryption-stack`; `mcp=build-mcp,server-patterns`; `agent=build-agent,agent-review`; `framework=architecture,setup`; `release=release,version-bump`; `pr=pr,preflight`; `orchestration=headless-dispatch`; `context=model-routing,toon,mcp-discovery`; `video=video-prompt-design,remotion,wavespeed`; `voice=speech-to-speech,voice-bridge`; `mobile=agent-device,maestro`; `hosting=hostinger,cloudflare,hetzner`; `email=email-testing,email-delivery-test`; `accessibility=accessibility,accessibility-audit`; `containers=orbstack`; `vision=overview,image-generation`.
+- Parameters: `prompt` required; optional `domain`, `agents` (paths relative to `~/.aidevops/agents/`), `files` (line ranges allowed, e.g. `src/foo.ts:10-50`), `model` (`haiku|sonnet|opus`), `max_tokens` (default 500, max 4096).
 
-**Domain shorthand** — auto-resolves to agent files:
+### 4. Avoid wasted execution
 
-| Domain | Agents loaded |
-|--------|--------------|
-| git | git-workflow, github-cli, conflict-resolution |
-| planning | plans, beads |
-| code | code-standards, code-simplifier |
-| seo | seo, dataforseo, google-search-console |
-| content | content, research, writing |
-| wordpress | wp-dev, mainwp |
-| browser | browser-automation, playwright |
-| deploy | coolify, coolify-cli, vercel |
-| security | tirith, encryption-stack |
-| mcp | build-mcp, server-patterns |
-| agent | build-agent, agent-review |
-| framework | architecture, setup |
-| release | release, version-bump |
-| pr | pr, preflight |
-| orchestration | headless-dispatch |
-| context | model-routing, toon, mcp-discovery |
-| video | video-prompt-design, remotion, wavespeed |
-| voice | speech-to-speech, voice-bridge |
-| mobile | agent-device, maestro |
-| hosting | hostinger, cloudflare, hetzner |
-| email | email-testing, email-delivery-test |
-| accessibility | accessibility, accessibility-audit |
-| containers | orbstack |
-| vision | overview, image-generation |
+- Parallelise independent subtasks with parallel `Task` calls in one message. Keep one `in_progress` item in `TodoWrite`. Do not parallelise same-file edits or dependent work.
+- Fail fast: read target files, verify imports/dependencies, and stop if the task is already done.
+- Minimise token waste: read only needed line ranges, keep commits concise, and after one failed approach try one fundamentally different strategy before `BLOCKED`.
+- Replan when stuck. Do not patch a broken path incrementally.
 
-**Parameters**: `prompt` (required), `domain`, `agents` (paths relative to `~/.aidevops/agents/`), `files` (optional line ranges e.g. `src/foo.ts:10-50`), `model` (haiku|sonnet|opus), `max_tokens` (default 500, max 4096).
+## Completion Self-Check
 
-**5. Parallel sub-work (MANDATORY when applicable)**
-Independent subtasks (different files, no output dependency) → parallel Task tool calls in one message. ONE `in_progress` in TodoWrite — parallel Tasks delegate to sub-agents. Do NOT parallelise same-file edits or dependent subtasks.
+Before `FULL_LOOP_COMPLETE`, verify all of the following:
 
-**6. Fail fast** — Read target files, verify imports/dependencies, exit if already done.
+1. Requirements checklist: every requirement marked `[DONE]` or `[TODO]`; any `[TODO]` means keep working.
+2. Verification run: tests, ShellCheck on changed `.sh` files, lint/typecheck if configured, and confirmation that expected output files exist.
+3. Generalization check: replace hardcoded values that should be parameterized.
+4. Minimal state changes: only requested files changed; no extra side effects.
+5. Commit+PR gate (GH#5317): `git status --porcelain` is empty and `gh pr list --head "$(git rev-parse --abbrev-ref HEAD)"` returns a PR. This is the #1 worker failure mode.
 
-**7. Minimise token waste** — Line ranges from search results, not full-file reads. Concise commits. One failed approach → ONE different strategy → BLOCKED.
-
-**8. Replan when stuck** — Different strategy, not incremental patches. BLOCKED only after one alternative.
-
-## Completion Self-Check (MANDATORY before FULL_LOOP_COMPLETE)
-
-Before emitting FULL_LOOP_COMPLETE, you MUST:
-
-1. **Requirements checklist**: List every requirement, mark [DONE]/[TODO]. Any [TODO] → keep working.
-2. **Verification run**: Tests, shellcheck on `.sh` files, lint/typecheck if configured. Confirm output files exist.
-3. **Generalization check**: Fix hardcoded values that should be parameterized.
-4. **Minimal state changes**: Only modify files explicitly required. No unrequested side effects.
-5. **Commit+PR gate (GH#5317 — MANDATORY)**: Before ANY completion signal:
-   - `git status --porcelain` returns empty — if not, commit first.
-   - PR exists: `gh pr list --head "$(git rev-parse --abbrev-ref HEAD)"` — if not, create one.
-   This is the #1 failure mode: workers exit without committing or creating a PR.
-
-FULL_LOOP_COMPLETE is IRREVERSIBLE. Extra verification costs nothing; wrong completion wastes an entire retry cycle.
+`FULL_LOOP_COMPLETE` is irreversible. Extra verification is cheaper than a retry cycle.
