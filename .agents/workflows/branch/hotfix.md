@@ -19,8 +19,8 @@ tools:
 | **Prefix** | `hotfix/` |
 | **Commit** | `fix: [HOTFIX] description` |
 | **Version** | Patch bump (1.0.0 → 1.0.1) |
-| **Create from** | **Latest tag** (not main) |
-| **Urgency** | Immediate - bypasses normal review if needed |
+| **Create from** | **Latest tag** (not `main`) |
+| **Urgency** | Immediate; can bypass normal review if authorized |
 
 ```bash
 git fetch --tags
@@ -37,34 +37,27 @@ git checkout -b hotfix/{description}
 - Data corruption issues
 - Service outages
 
-**If it can wait for normal release cycle**, use `bugfix/` instead.
+If it can wait for the normal release cycle, use `bugfix/` instead.
 
-## Unique Guidance
+## Workflow
 
-### Create from Latest Tag (Not Main)
+### Branch from the Latest Tag
 
-This ensures the hotfix applies to what's actually in production:
+Hotfixes start from the latest tag so the fix matches production, not unreleased `main` changes.
 
-```bash
-git fetch --tags
-git checkout $(git describe --tags --abbrev=0)
-git checkout -b hotfix/critical-issue
-```
+### Keep the Scope Tight
 
-### Expedited Process
+1. Apply the minimal fix only.
+2. Test immediately.
+3. Fast-track review, or deploy directly if authorized.
+4. Merge the deployed fix back to `main`.
 
-1. Apply **minimal fix** - only what's needed
-2. Test immediately
-3. Fast-track review (or deploy directly if authorized)
-4. **Merge back to main** after deployment
+### After Deployment
 
-### Post-Hotfix Checklist
-
-After deploying:
-- [ ] Ensure fix is merged to `main`
-- [ ] Create proper regression tests
-- [ ] Document incident
-- [ ] Review how issue was missed
+- [ ] Merge the fix to `main`
+- [ ] Add regression tests
+- [ ] Document the incident
+- [ ] Review how the issue escaped
 
 ## Examples
 
@@ -87,8 +80,6 @@ Deploy immediately. Full audit to follow.
 ```
 
 ## Merge Back to Main
-
-After deployment:
 
 ```bash
 git checkout main
