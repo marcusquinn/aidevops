@@ -18,64 +18,37 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Select and use visual AI models for image generation, understanding, and editing
-- **Categories**: Generation (text-to-image), Understanding (image analysis), Editing (inpainting/outpainting)
-- **Local options**: Stable Diffusion, FLUX, LLaVA, MiniCPM-o (via Ollama or ComfyUI)
-- **Cloud options**: DALL-E 3, Midjourney, GPT-4o vision, Claude vision, Gemini vision
-
-**Decision tree**:
-
-```text
-Need to CREATE images from text?
-  → See image-generation.md
-
-Need to UNDERSTAND/ANALYZE existing images?
-  → See image-understanding.md
-
-Need to EDIT/MODIFY existing images?
-  → See image-editing.md
-
-Need GPU deployment for local models?
-  → See tools/infrastructure/cloud-gpu.md
-```
+- **Purpose**: Route image tasks to the right generation, understanding, or editing guide
+- **Create images**: `image-generation.md` — DALL-E 3, Midjourney, FLUX, Stable Diffusion
+- **Analyze images**: `image-understanding.md` — GPT-4o vision, Claude vision, Gemini, LLaVA, Qwen-VL
+- **Edit images**: `image-editing.md` — DALL-E 3 edit, Stable Diffusion inpaint, FLUX fill
+- **Local stack**: Ollama for VLMs; ComfyUI for generation/editing; `tools/infrastructure/cloud-gpu.md` for GPU deployment
+- **Specialized routes**: OCR → `tools/ocr/glm-ocr.md`; GUI screenshots → `tools/browser/peekaboo.md`
 
 <!-- AI-CONTEXT-END -->
 
-## Category Overview
+## Selection Guide
 
-| Category | Use Case | Key Models | Subagent |
-|----------|----------|------------|----------|
-| **Generation** | Text-to-image, concept art, marketing assets | DALL-E 3, Midjourney, FLUX, Stable Diffusion | `image-generation.md` |
-| **Understanding** | Image analysis, captioning, visual Q&A, OCR | GPT-4o, Claude vision, Gemini, LLaVA, Qwen-VL | `image-understanding.md` |
-| **Editing** | Inpainting, outpainting, style transfer, upscaling | DALL-E 3 edit, Stable Diffusion inpaint, FLUX fill | `image-editing.md` |
+| Need | Route | Best Options | Deployment Notes |
+|------|-------|--------------|------------------|
+| Text-to-image, concept art, marketing assets | `image-generation.md` | DALL-E 3, Midjourney, FLUX, Stable Diffusion | Cloud APIs are fastest to integrate; ComfyUI gives local control |
+| Image analysis, captioning, visual Q&A | `image-understanding.md` | GPT-4o vision, Claude vision, Gemini, LLaVA, Qwen-VL | Ollama fits privacy-sensitive local analysis; cloud models fit large-context reasoning |
+| Inpainting, outpainting, style transfer | `image-editing.md` | DALL-E 3 edit, Stable Diffusion inpaint, FLUX fill | ComfyUI is the main local editing stack |
+| Product photos / marketing visuals | `image-generation.md` | DALL-E 3 (cloud), FLUX (local) | Choose cloud for speed, local for cost/control |
+| Code screenshots, diagrams, alt text | `image-understanding.md` | Claude vision, GPT-4o vision, Gemini, LLaVA | Gemini and GPT-4o fit large diagrams; LLaVA fits local captioning |
+| Documents, receipts, GUI screenshots | `tools/ocr/glm-ocr.md` or `tools/browser/peekaboo.md` | GLM-OCR, Peekaboo | Prefer dedicated OCR or browser capture flows over general VLM analysis |
+| Background removal, upscaling, enhancement | `image-editing.md` | Stable Diffusion inpaint, DALL-E 3 edit, Real-ESRGAN, Topaz | Local tools are strongest for enhancement workflows |
 
-## Model Selection Quick Guide
-
-### By Deployment
+## Deployment Options
 
 | Deployment | Models | Best For |
 |------------|--------|----------|
-| **Cloud API** | DALL-E 3, GPT-4o vision, Claude vision, Gemini | Quick integration, no GPU needed |
-| **Local (Ollama)** | LLaVA, MiniCPM-o, Qwen-VL | Privacy, no API costs, understanding tasks |
-| **Local (ComfyUI)** | FLUX, Stable Diffusion XL, ControlNet | Generation, editing, full control |
-| **Cloud GPU** | Any model via vLLM/ComfyUI | Scale, large models, batch processing |
-
-### By Task
-
-```text
-Product photos / marketing    → DALL-E 3 (cloud) or FLUX (local)
-Code screenshot analysis      → Claude vision or GPT-4o vision
-Document/receipt OCR          → tools/ocr/glm-ocr.md (dedicated OCR)
-GUI automation screenshots    → tools/browser/peekaboo.md (screen capture + vision)
-Architectural diagrams        → GPT-4o vision or Gemini (large context)
-Image captioning / alt text   → Claude vision or LLaVA (local)
-Background removal / editing  → Stable Diffusion inpaint or DALL-E 3 edit
-Upscaling / enhancement       → Real-ESRGAN or Topaz (local)
-```
+| **Cloud API** | DALL-E 3, GPT-4o vision, Claude vision, Gemini, Midjourney | Fast integration, no GPU needed |
+| **Local (Ollama)** | LLaVA, MiniCPM-o, Qwen-VL | Private understanding tasks, no API cost |
+| **Local (ComfyUI)** | FLUX, Stable Diffusion XL, ControlNet | Generation, editing, workflow control |
+| **Cloud GPU** | Any model via vLLM/ComfyUI | Scale, large local models, batch processing |
 
 ## Integration with aidevops
-
-Vision tools integrate with existing subagents:
 
 | Integration | Description |
 |-------------|-------------|
@@ -84,12 +57,3 @@ Vision tools integrate with existing subagents:
 | `tools/video/` | Image-to-video pipelines (Kling, Seedance via Higgsfield) |
 | `tools/infrastructure/cloud-gpu.md` | GPU deployment for local vision models |
 | `content/` | AI-generated images for content workflows |
-
-## See Also
-
-- `image-generation.md` - Text-to-image model guide
-- `image-understanding.md` - Image analysis and multimodal models
-- `image-editing.md` - Image modification and enhancement
-- `tools/ocr/glm-ocr.md` - Dedicated OCR (text extraction from images)
-- `tools/browser/peekaboo.md` - Screen capture with AI vision
-- `tools/infrastructure/cloud-gpu.md` - GPU deployment for local models
