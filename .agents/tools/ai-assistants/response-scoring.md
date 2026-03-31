@@ -1,5 +1,5 @@
 ---
-description: Evaluate and score AI model responses side-by-side with structured criteria
+description: Score AI responses with weighted evaluation criteria
 mode: subagent
 tools:
   read: true
@@ -19,17 +19,14 @@ model: sonnet
 
 ## Quick Reference
 
-- **Purpose**: Evaluate AI model responses against structured scoring criteria
+- **Purpose**: Evaluate real model outputs with structured scoring
+- **Use for**: Task-type model selection, prompt before/after tests, reproducible benchmarks
 - **Command**: `/score-responses` (interactive evaluation)
 - **Helper**: `response-scoring-helper.sh [init|prompt|record|score|compare|leaderboard|export|history|criteria]`
 - **Criteria**: Correctness (30%), Completeness (25%), Code Quality (25%), Clarity (20%)
 - **Storage**: SQLite at `~/.aidevops/.agent-workspace/response-scoring.db`
 
 <!-- AI-CONTEXT-END -->
-
-## When to Use
-
-Evaluate **actual responses** (distinct from `compare-models` which compares specs): model selection for task types, before/after prompt engineering, reproducible benchmarks.
 
 ## Scoring Criteria (1–5 scale, weighted average)
 
@@ -42,7 +39,7 @@ Evaluate **actual responses** (distinct from `compare-models` which compares spe
 
 ## Workflow
 
-**1. Create prompt:**
+### 1. Create prompt
 
 ```bash
 response-scoring-helper.sh prompt add \
@@ -51,7 +48,7 @@ response-scoring-helper.sh prompt add \
 # Or: --file prompts/rest-api.txt
 ```
 
-**2. Record responses:**
+### 2. Record responses
 
 ```bash
 response-scoring-helper.sh record \
@@ -61,7 +58,7 @@ response-scoring-helper.sh record \
 # Or: --file responses/gpt4o-output.txt
 ```
 
-**3. Score:**
+### 3. Score
 
 ```bash
 response-scoring-helper.sh score \
@@ -69,7 +66,7 @@ response-scoring-helper.sh score \
   --correctness 5 --completeness 4 --code-quality 5 --clarity 4
 ```
 
-**4. Compare and rank:**
+### 4. Compare and rank
 
 ```bash
 response-scoring-helper.sh compare --prompt 1        # or --json
@@ -88,14 +85,14 @@ response-scoring-helper.sh export --csv > scores.csv
 
 ## Pattern Tracker Integration (t1099)
 
-Scores feed into the shared pattern tracker:
+Scores feed the shared pattern tracker:
 
 - **On score**: `SUCCESS_PATTERN` (weighted avg >= 3.5) or `FAILURE_PATTERN` (< 3.5), tagged with model tier + category
 - **On compare**: Winner → `SUCCESS_PATTERN` with comparison metadata
 - **Bulk sync**: `response-scoring-helper.sh sync` (`--dry-run` to preview). Disable: `SCORING_NO_PATTERN_SYNC=1`
 - **Tier mapping**: Full model names (e.g., `claude-sonnet-4-6`) auto-mapped to routing tiers (`sonnet`)
 
-Feeds `/route <task>` and `/patterns recommend --task-type <type>` with real A/B data.
+Outputs feed `/route <task>` and `/patterns recommend --task-type <type>` with real A/B data.
 
 ## Database Schema
 
