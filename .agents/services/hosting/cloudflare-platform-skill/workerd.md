@@ -1,29 +1,8 @@
 # Workerd Runtime
 
-V8-based JS/Wasm runtime powering Cloudflare Workers. Use as app server, dev tool, or HTTP proxy.
+V8-based JS/Wasm runtime powering Cloudflare Workers. Standards-based (Fetch API, Web Crypto, Streams, WebSocket), capability-secured bindings (prevent SSRF), nanoservice architecture with local-call-perf service bindings. Version = max compat date supported.
 
-## When to Use
-
-- Local Workers development (via Wrangler)
-- Self-hosted Workers runtime
-- Custom embedded runtime
-- Debugging runtime-specific issues
-
-## Key Features
-
-- **Standards-based**: Fetch API, Web Crypto, Streams, WebSocket
-- **Nanoservices**: Service bindings with local call performance
-- **Capability security**: Explicit bindings prevent SSRF
-- **Backwards compatible**: Version = max compat date supported
-
-## Architecture
-
-```
-Config (workerd.capnp)
-├── Services (workers/endpoints)
-├── Sockets (HTTP/HTTPS listeners)
-└── Extensions (global capabilities)
-```
+**Use cases:** local Workers dev (via Wrangler), self-hosted Workers runtime, custom embedded runtime, debugging runtime-specific issues.
 
 ## Quick Start
 
@@ -35,15 +14,18 @@ workerd test config.capnp
 
 ## Core Concepts
 
-- **Service**: Named endpoint (worker/network/disk/external)
-- **Binding**: Capability-based resource access (KV/DO/R2/services)
-- **Compatibility date**: Feature gate (always set!)
-- **Modules**: ES modules (recommended) or service worker syntax
+| Concept | Detail |
+|---------|--------|
+| **Service** | Named endpoint (worker/network/disk/external) |
+| **Binding** | Capability-based resource access (KV/DO/R2/services) |
+| **Compatibility date** | Feature gate — always set |
+| **Modules** | ES modules (recommended) or service worker syntax |
+| **Config** | `workerd.capnp` — services, sockets (HTTP/HTTPS listeners), extensions |
 
 ## See Also
 
-- [patterns.md](./patterns.md) - Multi-service, DO, proxies
-- [gotchas.md](./gotchas.md) - Common errors, debugging
+- [workerd-patterns.md](./workerd-patterns.md) — multi-service, DO, proxies, dev/prod configs, deployment
+- [workerd-gotchas.md](./workerd-gotchas.md) — config errors, network access, debugging, performance, security
 
 ## References
 
