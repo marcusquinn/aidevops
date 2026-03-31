@@ -1,34 +1,34 @@
 ## Common Use Cases
 
-1. **Performance monitoring** — inspect Core Web Vitals, then use Debug View to trace poor LCP elements back to a selector you can optimize.
+1. **Core Web Vitals triage** — use the LCP debug view to map slow pages back to the element that needs optimization.
 
    ```typescript
    // 1. Enable Web Analytics
    // 2. Dashboard → Core Web Vitals → LCP
-   // 3. Debug View shows top 5 problematic elements
+   // 3. Debug View lists the top 5 problematic elements
    document.querySelector('.hero-image') // Example selector from Debug View
-   // 4. Optimize the element (lazy loading, compression, etc.)
+   // 4. Optimize the element (lazy loading, compression, preloading)
    ```
 
-2. **Bot traffic filtering** — exclude bots so dashboard metrics reflect human traffic only.
+2. **Human-only reporting** — enable bot exclusion before comparing traffic or engagement so the dashboard reflects real visitors.
 
    ```text
    Dashboard filters:
    - Exclude Bots: Yes
    ```
 
-3. **Multi-site analytics** — compare traffic across properties in one account.
+3. **Multi-site comparisons** — track several properties in one account, then pivot on the `Site` dimension to compare them.
 
    ```text
    Proxied sites: Unlimited
-   Non-proxied: Up to 10 sites
+   Non-proxied sites: Up to 10
 
-   View by dimension:
-   - Site: example.com
-   - Site: blog.example.com
+   Site dimension:
+   - example.com
+   - blog.example.com
    ```
 
-4. **Geographic analysis** — combine country and device filters to isolate audience segments.
+4. **Audience segmentation** — combine geography and device filters to isolate a cohort before investigating trends.
 
    ```text
    Filter by:
