@@ -347,6 +347,74 @@ test_count_queued_without_worker_keeps_stdout_numeric_with_debug() {
 	return 0
 }
 
+test_queue_governor_enters_merge_heavy_at_critical_backlog() {
+	STATE_FILE="${HOME}/.aidevops/logs/pulse-state.txt"
+	QUEUE_METRICS_FILE="${HOME}/.aidevops/logs/pulse-queue-metrics"
+	: >"$STATE_FILE"
+	printf '12\n' >"${HOME}/.aidevops/logs/pulse-max-workers"
+	PS_MOCK_OUTPUT="/usr/local/bin/.opencode run --dir /repo-a --title \"Issue #100\" \"/full-loop Implement issue #100\"
+/usr/local/bin/.opencode run --dir /repo-b --title \"Issue #101\" \"/full-loop Implement issue #101\"
+/usr/local/bin/.opencode run --dir /repo-c --title \"Issue #102\" \"/full-loop Implement issue #102\""
+
+	_compute_queue_governor_guidance 180 40 12 8
+
+	local state_text
+	state_text=$(<"$STATE_FILE")
+	if [[ "$state_text" == *"PULSE_QUEUE_MODE=merge-heavy"* && "$state_text" == *"PULSE_PR_BACKLOG_BAND=critical"* && "$state_text" == *"NEW_ISSUE_DISPATCH_PCT=10"* && "$state_text" == *"PULSE_WORKER_UTILIZATION_PCT=25"* ]]; then
+		print_result "queue governor enters merge-heavy at critical backlog" 0
+		return 0
+	fi
+
+	print_result "queue governor enters merge-heavy at critical backlog" 1 "Unexpected governor output: ${state_text}"
+	return 0
+}
+
+test_queue_governor_enters_pr_heavy_at_heavy_backlog() {
+	STATE_FILE="${HOME}/.aidevops/logs/pulse-state.txt"
+	QUEUE_METRICS_FILE="${HOME}/.aidevops/logs/pulse-queue-metrics"
+	: >"$STATE_FILE"
+	printf 'prev_total_prs=80\nprev_total_issues=110\nprev_ready_prs=4\nprev_failing_prs=10\nprev_recorded_at=1\n' >"$QUEUE_METRICS_FILE"
+	printf '8\n' >"${HOME}/.aidevops/logs/pulse-max-workers"
+	PS_MOCK_OUTPUT="/usr/local/bin/.opencode run --dir /repo-a --title \"Issue #200\" \"/full-loop Implement issue #200\""
+
+	_compute_queue_governor_guidance 110 120 3 28
+
+	local state_text
+	state_text=$(<"$STATE_FILE")
+	if [[ "$state_text" == *"PULSE_QUEUE_MODE=pr-heavy"* && "$state_text" == *"PULSE_PR_BACKLOG_BAND=heavy"* && "$state_text" == *"PR_REMEDIATION_FOCUS_PCT=75"* && "$state_text" == *"NEW_ISSUE_DISPATCH_PCT=25"* ]]; then
+		print_result "queue governor enters pr-heavy at heavy backlog" 0
+		return 0
+	fi
+
+	print_result "queue governor enters pr-heavy at heavy backlog" 1 "Unexpected governor output: ${state_text}"
+	return 0
+}
+
+test_queue_governor_reports_drain_rate_telemetry() {
+	STATE_FILE="${HOME}/.aidevops/logs/pulse-state.txt"
+	QUEUE_METRICS_FILE="${HOME}/.aidevops/logs/pulse-queue-metrics"
+	: >"$STATE_FILE"
+	local now_epoch previous_epoch
+	now_epoch=$(date +%s)
+	previous_epoch=$((now_epoch - 1800))
+	printf 'prev_total_prs=120\nprev_total_issues=80\nprev_ready_prs=8\nprev_failing_prs=18\nprev_recorded_at=%s\n' "$previous_epoch" >"$QUEUE_METRICS_FILE"
+	printf '6\n' >"${HOME}/.aidevops/logs/pulse-max-workers"
+	PS_MOCK_OUTPUT="/usr/local/bin/.opencode run --dir /repo-a --title \"Issue #300\" \"/full-loop Implement issue #300\"
+/usr/local/bin/.opencode run --dir /repo-b --title \"Issue #301\" \"/full-loop Implement issue #301\""
+
+	_compute_queue_governor_guidance 114 82 6 16
+
+	local state_text
+	state_text=$(<"$STATE_FILE")
+	if [[ "$state_text" == *"OPEN_PR_DRAIN_PER_CYCLE=6"* && "$state_text" == *"ESTIMATED_MERGE_DRAIN_PER_HOUR=12"* && "$state_text" == *"PULSE_ACTIVE_WORKERS=2"* && "$state_text" == *"PULSE_MAX_WORKERS=6"* && "$state_text" == *"PULSE_WORKER_UTILIZATION_PCT=33"* ]]; then
+		print_result "queue governor reports drain rate telemetry" 0
+		return 0
+	fi
+
+	print_result "queue governor reports drain rate telemetry" 1 "Unexpected telemetry output: ${state_text}"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -363,6 +431,9 @@ main() {
 	test_count_runnable_candidates_counts_passive_assignee_backlog
 	test_count_runnable_candidates_keeps_stdout_numeric_with_debug
 	test_count_queued_without_worker_keeps_stdout_numeric_with_debug
+	test_queue_governor_enters_merge_heavy_at_critical_backlog
+	test_queue_governor_enters_pr_heavy_at_heavy_backlog
+	test_queue_governor_reports_drain_rate_telemetry
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then
