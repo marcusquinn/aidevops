@@ -23,7 +23,7 @@ tools:
 - Metrics: accuracy, tone, efficiency, tool_accuracy, guardrails (customizable)
 - Workflow: Chat + Sample → Organize → Optimize → Export prompt
 
-Optional tool — install via `npm install -g dspyground` when needed.
+DSPyGround is a visual prompt optimization playground powered by the GEPA (Genetic-Pareto Evolutionary Algorithm) optimizer. It's an optional tool that can be installed separately when needed via `npm install -g dspyground`.
 
 ## Setup
 
