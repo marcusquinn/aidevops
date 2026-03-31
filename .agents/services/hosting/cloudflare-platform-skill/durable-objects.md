@@ -1,24 +1,20 @@
 # Cloudflare Durable Objects
 
-Expert guidance for building stateful applications with Cloudflare Durable Objects.
-
-## Overview
-
-Durable Objects combine compute with storage in globally-unique, strongly-consistent packages:
-- **Globally unique instances**: Each DO has unique ID for multi-client coordination
-- **Co-located storage**: Fast, strongly-consistent storage with compute
-- **Automatic placement**: Objects spawn near first request location
+Compute + storage in globally-unique, strongly-consistent packages:
+- **Globally unique instances**: Unique ID per DO for multi-client coordination
+- **Co-located storage**: Strongly-consistent storage with compute
+- **Automatic placement**: Spawns near first request
 - **Stateful serverless**: In-memory state + persistent storage
 - **Single-threaded**: Serial request processing (no race conditions)
 
 ## When to Use DOs
 
-Use DOs for **stateful coordination**, not stateless request handling:
-- **Coordination**: Multiple clients interacting with shared state (chat rooms, multiplayer games)
-- **Strong consistency**: Operations must serialize to avoid races (booking systems, inventory)
-- **Per-entity storage**: Each user/tenant/resource needs isolated database (multi-tenant SaaS)
-- **Persistent connections**: Long-lived WebSockets that survive across requests
-- **Per-entity scheduled work**: Each entity needs its own timer (subscription renewals, game timeouts)
+**Stateful coordination**, not stateless request handling:
+- **Coordination**: Shared state across clients (chat rooms, multiplayer games)
+- **Strong consistency**: Serialized operations (booking systems, inventory)
+- **Per-entity storage**: Isolated database per user/tenant/resource (multi-tenant SaaS)
+- **Persistent connections**: Long-lived WebSockets surviving across requests
+- **Per-entity scheduled work**: Per-entity timers (subscription renewals, game timeouts)
 
 ## When NOT to Use DOs
 
@@ -36,7 +32,7 @@ Use DOs for **stateful coordination**, not stateless request handling:
 
 ## Design Heuristics
 
-Model each DO around your **atom of coordination**—the logical unit needing serialized access (user, room, document, session).
+Model each DO around the **atom of coordination** — the unit needing serialized access (user, room, document, session).
 
 | Characteristic | Feels Right | Question It | Reconsider |
 |----------------|-------------|-------------|------------|
@@ -51,11 +47,11 @@ Model each DO around your **atom of coordination**—the logical unit needing se
 
 ### Class Structure
 
-All DOs extend `DurableObject` base class with constructor receiving `DurableObjectState` (storage, WebSockets, alarms) and `Env` (bindings).
+Extend `DurableObject` base class. Constructor receives `DurableObjectState` (storage, WebSockets, alarms) and `Env` (bindings).
 
 ### Accessing from Workers
 
-Workers use bindings to get stubs, then call RPC methods directly (recommended) or use fetch handler (legacy).
+Workers get stubs via bindings, then call RPC methods (recommended) or use fetch handler (legacy).
 
 ### ID Generation
 
@@ -119,10 +115,10 @@ npx wrangler deploy           # Deploy + auto-apply migrations
 
 ## In This Reference
 
-- [Patterns](./patterns.md) - Rate limiting, locks, real-time collab, sessions
-- [Gotchas](./gotchas.md) - Limits, common issues, troubleshooting
+- [Patterns](./durable-objects-patterns.md) - Rate limiting, locks, real-time collab, sessions
+- [Gotchas](./durable-objects-gotchas.md) - Limits, common issues, troubleshooting
 
 ## See Also
 
-- [Workers](../workers/README.md) - Core Workers runtime
-- [DO Storage](../do-storage/README.md) - Deep dive on storage APIs
+- [Workers](./workers.md) - Core Workers runtime
+- [DO Storage](./do-storage.md) - Deep dive on storage APIs
