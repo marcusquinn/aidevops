@@ -26,21 +26,13 @@ tools:
 
 ## Installation
 
-Automated (recommended) — runs setup, prompts for `.env` config, starts server:
-
 ```bash
-bash .agents/scripts/langflow-helper.sh setup
+bash .agents/scripts/langflow-helper.sh setup  # recommended: setup + .env config + start
 ```
 
 Manual: `mkdir -p ~/.aidevops/langflow && cd ~/.aidevops/langflow && python3 -m venv venv && source venv/bin/activate && pip install langflow && langflow run`
 
-Docker:
-
-```bash
-docker run -p 7860:7860 langflowai/langflow:latest
-# Persistent storage:
-docker run -p 7860:7860 -v langflow_data:/app/langflow langflowai/langflow:latest
-```
+Docker: `docker run -p 7860:7860 -v langflow_data:/app/langflow langflowai/langflow:latest`
 
 Desktop app: <https://www.langflow.org/desktop> (Windows/macOS)
 
@@ -49,27 +41,13 @@ Desktop app: <https://www.langflow.org/desktop> (Windows/macOS)
 `~/.aidevops/langflow/.env` — set API keys via `aidevops secret` or edit directly:
 
 ```bash
-LANGFLOW_HOST=0.0.0.0
-LANGFLOW_PORT=7860
-LANGFLOW_WORKERS=1
-LANGFLOW_DATABASE_URL=sqlite:///./langflow.db
+LANGFLOW_HOST=0.0.0.0              # LANGFLOW_PORT=7860 (default)
 OPENAI_API_KEY=<your-key>
 ANTHROPIC_API_KEY=<your-key>       # optional
 OLLAMA_BASE_URL=http://localhost:11434
 ```
 
-Custom components in `~/.aidevops/langflow/components/` — load with `langflow run --components-path ~/.aidevops/langflow/components/`:
-
-```python
-from langflow.custom import CustomComponent
-from langflow.schema import Data
-
-class MyCustomComponent(CustomComponent):
-    display_name = "My Custom Component"
-    description = "A custom component for aidevops"
-    def build(self, input_text: str) -> Data:
-        return Data(text=input_text.upper())
-```
+Custom components: place `.py` files in `~/.aidevops/langflow/components/`, load with `langflow run --components-path ~/.aidevops/langflow/components/`. Subclass `langflow.custom.CustomComponent`, implement `build()` → `langflow.schema.Data`.
 
 ## Usage
 
@@ -127,21 +105,7 @@ langflow import --directory flows/                                # bulk
 
 ## Deployment
 
-```yaml
-services:
-  langflow:
-    image: langflowai/langflow:latest
-    ports: ["7860:7860"]
-    volumes:
-      - langflow_data:/app/langflow
-      - ./flows:/app/flows
-    environment: [OPENAI_API_KEY=${OPENAI_API_KEY}]
-    restart: unless-stopped
-volumes:
-  langflow_data:
-```
-
-Production: PostgreSQL, auth for multi-user, reverse proxy for HTTPS.
+Docker Compose: `langflowai/langflow:latest` with ports `7860:7860`, volumes `langflow_data:/app/langflow` + `./flows:/app/flows`, env `OPENAI_API_KEY`, `restart: unless-stopped`. Production: PostgreSQL, auth for multi-user, reverse proxy for HTTPS.
 
 ## Troubleshooting
 
