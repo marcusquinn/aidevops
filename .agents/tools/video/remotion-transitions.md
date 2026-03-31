@@ -8,13 +8,11 @@ metadata:
 
 ## Fullscreen transitions
 
-Using `<TransitionSeries>` to animate between multiple scenes or clips.  
-This will absolutely position the children.
+Use `<TransitionSeries>` for fullscreen scene changes between clips or sequences; children are absolutely positioned and transitions overlap adjacent scenes.
 
-## Prerequisites
+## Install
 
-First, the @remotion/transitions package needs to be installed.  
-If it is not, use the following command:
+Install `@remotion/transitions` before using these APIs:
 
 ```bash
 npx remotion add @remotion/transitions # If project uses npm
@@ -23,7 +21,7 @@ yarn remotion add @remotion/transitions # If project uses yarn
 pnpm exec remotion add @remotion/transitions # If project uses pnpm
 ```
 
-## Example usage
+## Core pattern
 
 ```tsx
 import {TransitionSeries, linearTiming} from '@remotion/transitions';
@@ -40,9 +38,9 @@ import {fade} from '@remotion/transitions/fade';
 </TransitionSeries>;
 ```
 
-## Available Transition Types
+## Built-in presentations
 
-Import transitions from their respective modules:
+Import presentations from their module path:
 
 ```tsx
 import {fade} from '@remotion/transitions/fade';
@@ -52,9 +50,7 @@ import {flip} from '@remotion/transitions/flip';
 import {clockWipe} from '@remotion/transitions/clock-wipe';
 ```
 
-## Slide Transition with Direction
-
-Specify slide direction for enter/exit animations.
+## Directional slides
 
 ```tsx
 import {slide} from '@remotion/transitions/slide';
@@ -62,34 +58,36 @@ import {slide} from '@remotion/transitions/slide';
 <TransitionSeries.Transition presentation={slide({direction: 'from-left'})} timing={linearTiming({durationInFrames: 20})} />;
 ```
 
-Directions: `"from-left"`, `"from-right"`, `"from-top"`, `"from-bottom"`
+Directions: `"from-left"`, `"from-right"`, `"from-top"`, `"from-bottom"`.
 
 ## Timing Options
 
 ```tsx
 import {linearTiming, springTiming} from '@remotion/transitions';
 
-// Linear timing - constant speed
+// Linear timing: constant speed
 linearTiming({durationInFrames: 20});
 
-// Spring timing - organic motion
+// Spring timing: organic motion
 springTiming({config: {damping: 200}, durationInFrames: 25});
 ```
 
-## Duration calculation
+Use `linearTiming()` for fixed durations and `springTiming()` for natural settling motion. If `springTiming()` omits `durationInFrames`, duration depends on `fps`.
 
-Transitions overlap adjacent scenes, so the total composition length is **shorter** than the sum of all sequence durations.
+## Duration math
 
-For example, with two 60-frame sequences and a 15-frame transition:
+Transitions overlap adjacent scenes, so total composition length is **shorter** than the sum of all sequence durations.
+
+With two 60-frame sequences and a 15-frame transition:
 
 - Without transitions: `60 + 60 = 120` frames
 - With transition: `60 + 60 - 15 = 105` frames
 
-The transition duration is subtracted because both scenes play simultaneously during the transition.
+Subtract each transition duration because both scenes play simultaneously during the overlap.
 
-### Getting the duration of a transition
+### Read a transition duration
 
-Use the `getDurationInFrames()` method on the timing object:
+Call `getDurationInFrames()` on the timing object:
 
 ```tsx
 import {linearTiming, springTiming} from '@remotion/transitions';
@@ -101,9 +99,7 @@ const springDuration = springTiming({config: {damping: 200}}).getDurationInFrame
 // Returns calculated duration based on spring physics
 ```
 
-For `springTiming` without an explicit `durationInFrames`, the duration depends on `fps` because it calculates when the spring animation settles.
-
-### Calculating total composition duration
+### Calculate total composition duration
 
 ```tsx
 import {linearTiming} from '@remotion/transitions';
