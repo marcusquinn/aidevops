@@ -13,59 +13,49 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Manage Instantly outbound infrastructure via API v2
 - **Base URL**: `https://api.instantly.ai/api/v2`
 - **Auth**: `Authorization: Bearer <INSTANTLY_API_KEY>`
 - **Helper**: `scripts/instantly-helper.sh` (`.agents/scripts/instantly-helper.sh`)
-- **Secret setup**: `aidevops secret set INSTANTLY_API_KEY`
-- **Safe execution**: `aidevops secret run INSTANTLY_API_KEY -- instantly-helper.sh <command>`
+- **Secrets**: `aidevops secret set INSTANTLY_API_KEY` — run via `aidevops secret run INSTANTLY_API_KEY -- instantly-helper.sh <command>`
 
 ## Core Commands
 
-- `instantly-helper.sh campaigns list --status active --limit 20`
-- `instantly-helper.sh campaigns get --campaign-id <campaign_id>`
-- `instantly-helper.sh campaigns create --json-file ./campaign.json`
-- `instantly-helper.sh leads list --campaign-id <campaign_id> --limit 50`
-- `instantly-helper.sh leads create --json-file ./lead.json`
-- `instantly-helper.sh sequences list --limit 20`
-- `instantly-helper.sh warmup list`
-- `instantly-helper.sh warmup enable --email-account-id <account_id>`
-- `instantly-helper.sh analytics campaign --campaign-id <campaign_id>`
+| Resource | Command |
+|----------|---------|
+| Campaigns | `instantly-helper.sh campaigns {list\|get\|create} [--status active] [--campaign-id ID] [--json-file FILE] [--limit N]` |
+| Leads | `instantly-helper.sh leads {list\|create} --campaign-id ID [--json-file FILE] [--limit N]` |
+| Sequences | `instantly-helper.sh sequences list [--limit N]` |
+| Warmup | `instantly-helper.sh warmup list` / `warmup enable --email-account-id ID` |
+| Analytics | `instantly-helper.sh analytics campaign --campaign-id ID` |
 
 ## Raw Requests
 
-Use raw mode when helper aliases lag API changes:
+Use when helper aliases lag API changes:
 
 ```bash
 instantly-helper.sh request --method GET --endpoint /campaigns
 instantly-helper.sh request --method POST --endpoint /leads --json-file ./lead.json
 ```
 
-Payload workflow:
-
-1. Prepare a payload file such as `campaign.json` or `lead.json`
-2. Validate JSON locally with `python3 -m json.tool <file>`
-3. Execute the helper with `--json-file`
-4. Keep payload templates in project docs, not shared terminal history
+Payload workflow: prepare JSON file → validate with `python3 -m json.tool <file>` → execute with `--json-file`. Keep templates in project docs, not shell history.
 
 ## Warmup
 
-- Check account warmup state with `warmup list`
-- Enable warmup for newly connected inboxes before high-volume sends
-- Disable warmup only after mailbox health and reply rates stabilize
-- Pair warmup actions with cold-outreach guardrails from `services/outreach/cold-outreach.md`
+- Check state with `warmup list`; enable for new inboxes before high-volume sends
+- Disable only after mailbox health and reply rates stabilize
+- Pair with cold-outreach guardrails from `services/outreach/cold-outreach.md`
 
 ## Troubleshooting
 
 - **401/403**: verify `INSTANTLY_API_KEY` exists and is current
-- **404**: endpoint/version mismatch; retry via `request --endpoint ...` and validate docs
-- **422**: payload shape invalid; run `python3 -m json.tool` and confirm required fields
-- **Rate limits**: reduce batch size (`--limit`) and stagger writes
+- **404**: endpoint/version mismatch — retry via `request --endpoint ...`
+- **422**: invalid payload — run `python3 -m json.tool`, confirm required fields
+- **Rate limits**: reduce `--limit`, stagger writes
 
 ## Related
 
-- `services/outreach/cold-outreach.md` - policy and volume strategy
-- `scripts/instantly-helper.sh` - command implementation
-- `scripts/secret-helper.sh` - secret management patterns
+- `services/outreach/cold-outreach.md` — policy and volume strategy
+- `scripts/instantly-helper.sh` — command implementation
+- `scripts/secret-helper.sh` — secret management patterns
 
 <!-- AI-CONTEXT-END -->
