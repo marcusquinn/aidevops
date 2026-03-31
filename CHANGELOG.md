@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.513] - 2026-03-31
+
+### Changed
+
+- Documentation: tighten chore branch workflow guidance (#14722)
+- Documentation: tighten workers-patterns.md — add context, deduplicate deployment commands (#14724)
+
 ## [3.5.512] - 2026-03-31
 
 ### Changed
