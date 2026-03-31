@@ -4,21 +4,21 @@ agent: Build+
 mode: subagent
 ---
 
-Scan project dependencies for known vulnerabilities using the OSV (Open Source Vulnerabilities) database.
+Scan project dependencies for known vulnerabilities with OSV.
 
 Target: $ARGUMENTS
 
 ## Quick Reference
 
-- **Tool**: OSV-Scanner (Google) — aggregates CVEs, GHSAs via OSV.dev
+- **Tool**: OSV-Scanner — CVEs and GHSAs via OSV.dev
 - **Command**: `./.agents/scripts/security-helper.sh scan-deps`
 
 ## Process
 
-1. Run scan: `./.agents/scripts/security-helper.sh scan-deps`
-2. Review findings by severity
-3. For each vulnerability: check if it affects usage, find fixed version, assess upgrade risk
-4. Generate upgrade plan
+1. Run `./.agents/scripts/security-helper.sh scan-deps`
+2. Prioritize critical/high findings
+3. For each finding, confirm the package is used, identify the fixed version, and assess upgrade risk
+4. Update dependencies, test, then re-scan
 
 ## Supported Lockfiles
 
@@ -31,16 +31,14 @@ npm/Yarn/pnpm (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`), pip (`requir
 /security-deps ./packages/api     # Specific directory
 ```
 
-Recursive scan is enabled by default (hardcoded in `security-helper.sh`).
+Recursive scan is enabled by default in `security-helper.sh`.
 
 ## Remediation
 
-1. Prioritize critical/high severity first
-2. Check compatibility, then update (`npm update <pkg>`, `yarn upgrade <pkg>`, `pip install --upgrade <pkg>`)
-3. Test after updates
-4. Re-scan to verify fixes
+- Check compatibility before upgrading (`npm update <pkg>`, `yarn upgrade <pkg>`, `pip install --upgrade <pkg>`)
+- Treat unfixable findings as triage work: document reachability, compensating controls, and follow-up
 
-## CI/CD Integration
+## CI Example
 
 ```yaml
 - name: Dependency Scan
