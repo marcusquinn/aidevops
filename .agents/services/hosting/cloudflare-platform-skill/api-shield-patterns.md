@@ -45,43 +45,17 @@ PUT /zones/{zone_id}/api_gateway/settings/schema_validation
 
 ## Architecture Patterns
 
-### Public API (High Security)
+| Pattern | Edge Stack |
+|---------|-----------|
+| **Public API** (high security) | Discovery → Schema Validation → JWT → Rate Limiting → Bot Management → Origin |
+| **Partner API** (mTLS + schema) | mTLS → Schema Validation → Sequence Mitigation → Origin |
+| **Internal API** (discovery + monitoring) | Discovery → Schema Learning → Auth Posture → Origin |
 
-```
-Cloudflare Edge
-├── API Discovery (identify endpoints)
-├── Schema Validation (enforce OpenAPI)
-├── JWT Validation (verify tokens)
-├── Rate Limiting (per-user)
-├── Bot Management (filter abuse)
-└── Origin → API server
-```
-
-### Partner API (mTLS + Schema)
-
-```
-Cloudflare Edge
-├── mTLS (verify client certs)
-├── Schema Validation (validate payloads)
-├── Sequence Mitigation (enforce order)
-└── Origin → API server
-```
-
-### Internal API (Discovery + Monitoring)
-
-```
-Cloudflare Edge
-├── API Discovery (map shadow APIs)
-├── Schema Learning (auto-generate specs)
-├── Authentication Posture (audit coverage)
-└── Origin → API server
-```
-
-## OWASP API Security Top 10 Mapping
+## OWASP API Top 10 Mapping
 
 | OWASP Issue | API Shield Solutions |
 |-------------|---------------------|
-| Broken Object Level Authorization | BOLA detection, Sequence mitigation, Schema, JWT, Rate Limiting |
+| Broken Object Level Auth | BOLA detection, Sequence, Schema, JWT, Rate Limiting |
 | Broken Authentication | Auth Posture, mTLS, JWT, Credential Checks, Bot Management |
 | Broken Object Property Auth | Schema validation, JWT validation |
 | Unrestricted Resource | Rate Limiting, Sequence, Bot Management, GraphQL protection |
