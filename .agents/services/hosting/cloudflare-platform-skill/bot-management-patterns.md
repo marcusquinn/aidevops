@@ -1,9 +1,10 @@
 # Bot Management Patterns
 
+WAF custom rules, Workers code, and rate limiting patterns for Cloudflare Bot Management. Enterprise features (granular scores, JA3/JA4) noted where applicable.
+
 ## E-commerce Protection
 
 ```txt
-# High security for checkout
 (cf.bot_management.score lt 50 and http.request.uri.path in {"/checkout" "/cart/add"} and not cf.bot_management.verified_bot and not cf.bot_management.corporate_proxy)
 Action: Managed Challenge
 ```
@@ -11,7 +12,6 @@ Action: Managed Challenge
 ## API Protection
 
 ```txt
-# Protect API with JS detection + score
 (http.request.uri.path matches "^/api/" and (cf.bot_management.score lt 30 or not cf.bot_management.js_detection.passed) and not cf.bot_management.verified_bot)
 Action: Block
 ```
@@ -19,7 +19,6 @@ Action: Block
 ## SEO-Friendly Bot Handling
 
 ```txt
-# Allow search engine crawlers
 (cf.bot_management.score lt 30 and not cf.verified_bot_category in {"Search Engine Crawler"})
 Action: Managed Challenge
 ```
@@ -27,17 +26,15 @@ Action: Managed Challenge
 ## Block AI Scrapers
 
 ```txt
-# Block AI training bots
 (cf.verified_bot_category eq "AI Crawler")
 Action: Block
-
-# Or use dashboard: Security > Settings > Bot Management > Block AI Bots
 ```
+
+Dashboard alternative: Security > Settings > Bot Management > Block AI Bots.
 
 ## Rate Limiting by Bot Score
 
 ```txt
-# Stricter limits for suspicious traffic
 (cf.bot_management.score lt 50)
 Rate: 10 requests per 10 seconds
 
@@ -48,37 +45,28 @@ Rate: 100 requests per 10 seconds
 ## Mobile App Allowlisting
 
 ```txt
-# Identify mobile app by JA3/JA4
 (cf.bot_management.ja4 in {"fingerprint1" "fingerprint2"})
 Action: Skip (all remaining rules)
 ```
 
-## Layered Defense
+## Score Threshold Strategy
+
+| Context | Threshold | Notes |
+|---------|-----------|-------|
+| Public content | score < 10 | High tolerance |
+| Authenticated | score < 30 | Standard threshold |
+| Sensitive (checkout, login) | score < 50 | + JS Detection |
+
+## Defense Layering
 
 ```txt
 1. Bot Management (score-based)
-2. JavaScript Detections (for JS-capable clients)
-3. Rate Limiting (fallback protection)
+2. JavaScript Detections (JS-capable clients)
+3. Rate Limiting (fallback)
 4. WAF Managed Rules (OWASP, etc.)
 ```
 
-## Progressive Enhancement
-
-```txt
-Public content: High threshold (score < 10)
-Authenticated: Medium threshold (score < 30)
-Sensitive: Low threshold (score < 50) + JSD
-```
-
-## Zero Trust for Bots
-
-```txt
-1. Default deny (all scores < 30)
-2. Allowlist verified bots
-3. Allowlist mobile apps (JA3/JA4)
-4. Allowlist corporate proxies
-5. Allowlist static resources
-```
+Zero-trust approach: default deny (scores < 30), then allowlist verified bots, mobile apps (JA3/JA4), corporate proxies, and static resources.
 
 ## Workers: Score + JS Detection
 
@@ -88,19 +76,18 @@ export default {
     const cf = request.cf as any;
     const botMgmt = cf?.botManagement;
     const url = new URL(request.url);
-    
-    if (botMgmt?.staticResource) return fetch(request); // Skip static
-    
-    // API endpoints: require JS detection + good score
+
+    if (botMgmt?.staticResource) return fetch(request);
+
     if (url.pathname.startsWith('/api/')) {
       const jsDetectionPassed = botMgmt?.jsDetection?.passed ?? false;
       const score = botMgmt?.score ?? 100;
-      
+
       if (!jsDetectionPassed || score < 30) {
         return new Response('Unauthorized', { status: 401 });
       }
     }
-    
+
     return fetch(request);
   }
 };
@@ -109,17 +96,18 @@ export default {
 ## Rate Limiting by JWT Claim + Bot Score
 
 ```txt
-# Enterprise: Combine bot score with JWT validation
 Rate limiting > Custom rules
 - Field: lookup_json_string(http.request.jwt.claims["{config_id}"][0], "sub")
 - Matches: user ID claim
 - Additional condition: cf.bot_management.score lt 50
 ```
 
+Enterprise only — combines bot score with JWT validation.
+
 ## WAF Integration Points
 
-- **WAF Custom Rules**: Primary enforcement mechanism
-- **Rate Limiting Rules**: Bot score as dimension, stricter limits for low scores
-- **Transform Rules**: Pass score to origin via custom header
-- **Workers**: Programmatic bot logic, custom scoring algorithms
-- **Page Rules / Configuration Rules**: Zone-level overrides, path-specific settings
+- **WAF Custom Rules** — primary enforcement mechanism
+- **Rate Limiting Rules** — bot score as dimension, stricter limits for low scores
+- **Transform Rules** — pass score to origin via custom header
+- **Workers** — programmatic bot logic, custom scoring algorithms
+- **Configuration Rules** — zone-level overrides, path-specific settings
