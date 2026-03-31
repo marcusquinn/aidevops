@@ -45,9 +45,9 @@ tools:
 ```bash
 document-extraction-helper.sh status                                          # available tools/schemas
 document-extraction-helper.sh extract invoice.pdf --schema invoice --privacy local  # single doc
-document-extraction-helper.sh batch ./invoices/ --schema invoice --privacy local    # batch → ~/.aidevops/.agent-workspace/work/document-extraction/
+document-extraction-helper.sh batch ./invoices/ --schema invoice --privacy local    # batch
 document-extraction-helper.sh extract document.pdf                            # auto-detect, markdown
-document-extraction-helper.sh pii-scan extracted-text.txt                     # PII scan (optional)
+document-extraction-helper.sh pii-scan extracted-text.txt                     # PII scan
 document-extraction-helper.sh pii-redact extracted-text.txt --output redacted.txt   # PII redact
 ```
 
@@ -69,18 +69,13 @@ Input (PDF/DOCX/Image/HTML)
   → [7. Output]     JSON with data + validation summary
   → [8. De-anon]    Presidio decrypt (if step 4 used encryption)
   → [9. Record]     quickfile-helper.sh — supplier resolution + purchase recording (optional)
-                    Tools: quickfile_supplier_search, quickfile_purchase_create
 ```
 
 ## Validation Rules
 
-**VAT arithmetic:**
-- `subtotal + vat_amount = total` (±2p tolerance)
-- VAT claimed without supplier VAT number → warning
-- Line items VAT sum must match total VAT (±5p)
-- Valid UK rates: 0, 5, 20, exempt, oos, servrc, cisrc, postgoods
+**VAT arithmetic:** `subtotal + vat_amount = total` (±2p tolerance). VAT claimed without supplier VAT number → warning. Line items VAT sum must match total VAT (±5p). Valid UK rates: 0, 5, 20, exempt, oos, servrc, cisrc, postgoods.
 
-**Confidence scoring (per field, 0.0–1.0):** Base 0.7 (present+non-empty) + 0.2 (format match) + 0.1 (required). <0.5 → manual review.
+**Confidence scoring (per field, 0.0-1.0):** Base 0.7 (present+non-empty) + 0.2 (format match) + 0.1 (required). <0.5 → manual review.
 
 ```bash
 python3 extraction_pipeline.py categorise "Shell" "diesel fuel"               # → {"nominal_code": "7401", "category": "Motor Expenses - Fuel"}
@@ -109,7 +104,7 @@ result = extractor.extract("record.pdf", MedicalRecord)
 ## Tool Comparison
 
 | Feature | Docling+ET+Presidio | DocStrange | Unstract | MinerU | Pandoc |
-|---------|-------------------|-----------|---------|--------|--------|
+|---------|---------------------|------------|----------|--------|--------|
 | Structured extraction | Pydantic schemas | JSON schema | Visual builder | No | No |
 | PII redaction | Built-in (Presidio) | No | Manual | No | No |
 | Local processing | Ollama (CPU/GPU) | GPU (CUDA only) | Docker | GPU/CPU | CPU |
