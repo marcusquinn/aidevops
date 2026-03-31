@@ -806,6 +806,71 @@ test_dispatch_deterministic_fill_floor_honors_stop_flag() {
 	return 0
 }
 
+test_active_pulse_refill_skips_without_idle_or_stall_signal() {
+	get_max_workers_target() { echo 4; }
+	count_active_workers() { echo 1; }
+	count_runnable_candidates() { echo 9; }
+	count_queued_without_worker() { echo 2; }
+	run_underfill_worker_recycler() {
+		printf 'recycler\n' >>"${TEST_ROOT}/active-refill-skip.log"
+		return 0
+	}
+	dispatch_deterministic_fill_floor() {
+		printf 'dispatch\n' >>"${TEST_ROOT}/active-refill-skip.log"
+		return 0
+	}
+
+	local last_refill_epoch
+	last_refill_epoch=$(maybe_refill_underfilled_pool_during_active_pulse 0 60 0 true)
+
+	unset -f get_max_workers_target count_active_workers count_runnable_candidates count_queued_without_worker run_underfill_worker_recycler dispatch_deterministic_fill_floor
+
+	if [[ "$last_refill_epoch" == "0" && ! -e "${TEST_ROOT}/active-refill-skip.log" ]]; then
+		print_result "maybe_refill_underfilled_pool_during_active_pulse waits for idle or stall evidence" 0
+		return 0
+	fi
+
+	print_result "maybe_refill_underfilled_pool_during_active_pulse waits for idle or stall evidence" 1 \
+		"Expected no refill without idle/stall; got epoch=${last_refill_epoch}"
+	return 0
+}
+
+test_active_pulse_refill_dispatches_when_underfilled_and_idle() {
+	local action_log="${TEST_ROOT}/active-refill.log"
+	: >"$action_log"
+	export PULSE_ACTIVE_REFILL_INTERVAL=120
+
+	get_max_workers_target() { echo 6; }
+	count_active_workers() { echo 1; }
+	count_runnable_candidates() { echo 12; }
+	count_queued_without_worker() { echo 3; }
+	run_underfill_worker_recycler() {
+		printf 'recycler\n' >>"$action_log"
+		return 0
+	}
+	dispatch_deterministic_fill_floor() {
+		printf 'dispatch\n' >>"$action_log"
+		return 0
+	}
+
+	local first_refill second_refill actions
+	first_refill=$(maybe_refill_underfilled_pool_during_active_pulse 0 0 60 true)
+	second_refill=$(maybe_refill_underfilled_pool_during_active_pulse "$first_refill" 0 60 true)
+	actions=$(tr '\n' ',' <"$action_log" | sed 's/,$//')
+
+	unset -f get_max_workers_target count_active_workers count_runnable_candidates count_queued_without_worker run_underfill_worker_recycler dispatch_deterministic_fill_floor
+	unset PULSE_ACTIVE_REFILL_INTERVAL
+
+	if [[ "$first_refill" =~ ^[0-9]+$ && "$first_refill" -gt 0 && "$second_refill" == "$first_refill" && "$actions" == "recycler,dispatch" ]]; then
+		print_result "maybe_refill_underfilled_pool_during_active_pulse refills once per interval when idle" 0
+		return 0
+	fi
+
+	print_result "maybe_refill_underfilled_pool_during_active_pulse refills once per interval when idle" 1 \
+		"Expected one recycler+dispatch pass with cooldown; got first=${first_refill}, second=${second_refill}, actions=${actions}"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -831,6 +896,8 @@ main() {
 	test_build_ranked_dispatch_candidates_json_respects_schedule_gate
 	test_dispatch_deterministic_fill_floor_dispatches_up_to_capacity
 	test_dispatch_deterministic_fill_floor_honors_stop_flag
+	test_active_pulse_refill_skips_without_idle_or_stall_signal
+	test_active_pulse_refill_dispatches_when_underfilled_and_idle
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

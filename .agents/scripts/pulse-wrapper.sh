@@ -122,6 +122,9 @@ PULSE_PROGRESS_TIMEOUT="${PULSE_PROGRESS_TIMEOUT:-600}"                         
 PULSE_COLD_START_TIMEOUT="${PULSE_COLD_START_TIMEOUT:-1200}"                                # 20 min grace before first output (prevents false early watchdog kills)
 PULSE_COLD_START_TIMEOUT_UNDERFILLED="${PULSE_COLD_START_TIMEOUT_UNDERFILLED:-600}"         # 10 min grace when below worker target to recover capacity faster
 PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT="${PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT:-900}" # 15 min stale-process cutoff when worker pool is underfilled
+PULSE_ACTIVE_REFILL_INTERVAL="${PULSE_ACTIVE_REFILL_INTERVAL:-120}"                         # Min seconds between wrapper-side refill attempts during an active pulse
+PULSE_ACTIVE_REFILL_IDLE_MIN="${PULSE_ACTIVE_REFILL_IDLE_MIN:-60}"                          # Idle seconds before wrapper-side refill may intervene during monitoring sleep
+PULSE_ACTIVE_REFILL_STALL_MIN="${PULSE_ACTIVE_REFILL_STALL_MIN:-120}"                       # Progress stall seconds before wrapper-side refill may intervene during an active pulse
 ORPHAN_MAX_AGE="${ORPHAN_MAX_AGE:-7200}"                                                    # 2 hours — kill orphans older than this
 RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-512}"                                               # 512 MB per worker (opencode headless is lightweight)
 RAM_RESERVE_MB="${RAM_RESERVE_MB:-6144}"                                                    # 6 GB reserved for OS + user apps
@@ -2463,6 +2466,7 @@ _run_pulse_watchdog() {
 	local opencode_pid="$1"
 	local start_epoch="$2"
 	local effective_cold_start_timeout="$3"
+	local last_active_refill_epoch=0
 
 	# Idle detection state (t1398.3)
 	local idle_seconds=0
@@ -2506,6 +2510,11 @@ _run_pulse_watchdog() {
 
 		# Process guard: kill children exceeding RSS/runtime limits (t1398)
 		guard_child_processes "$opencode_pid"
+
+		if [[ -z "$kill_reason" ]]; then
+			last_active_refill_epoch=$(maybe_refill_underfilled_pool_during_active_pulse \
+				"$last_active_refill_epoch" "$progress_stall_seconds" "$idle_seconds" "$has_seen_progress")
+		fi
 		# Sleep 60s then re-check. Portable across bash 3.2+ (macOS default).
 		sleep 60
 	done
@@ -5615,6 +5624,78 @@ run_underfill_worker_recycler() {
 		echo "[pulse-wrapper] Underfill recycler warning: worker-watchdog returned non-zero" >>"$LOGFILE"
 	fi
 
+	return 0
+}
+
+#######################################
+# Refill an underfilled worker pool while the pulse session is still alive.
+#
+# The pulse prompt asks the LLM to monitor every 60s, but the live session can
+# still sleep or focus on a narrow thread while local slots sit idle. When the
+# wrapper sees sustained idle/stall signals plus runnable work, it performs a
+# bounded deterministic refill instead of waiting for the session to exit.
+#
+# Arguments:
+#   $1 - last refill epoch (0 if never)
+#   $2 - progress stall seconds
+#   $3 - idle seconds
+#   $4 - has_seen_progress (true/false)
+#
+# Returns: updated last refill epoch via stdout
+#######################################
+maybe_refill_underfilled_pool_during_active_pulse() {
+	local last_refill_epoch="${1:-0}"
+	local progress_stall_seconds="${2:-0}"
+	local idle_seconds="${3:-0}"
+	local has_seen_progress="${4:-false}"
+
+	[[ "$last_refill_epoch" =~ ^[0-9]+$ ]] || last_refill_epoch=0
+	[[ "$progress_stall_seconds" =~ ^[0-9]+$ ]] || progress_stall_seconds=0
+	[[ "$idle_seconds" =~ ^[0-9]+$ ]] || idle_seconds=0
+	[[ "$PULSE_ACTIVE_REFILL_INTERVAL" =~ ^[0-9]+$ ]] || PULSE_ACTIVE_REFILL_INTERVAL=120
+	[[ "$PULSE_ACTIVE_REFILL_IDLE_MIN" =~ ^[0-9]+$ ]] || PULSE_ACTIVE_REFILL_IDLE_MIN=60
+	[[ "$PULSE_ACTIVE_REFILL_STALL_MIN" =~ ^[0-9]+$ ]] || PULSE_ACTIVE_REFILL_STALL_MIN=120
+
+	if [[ -f "$STOP_FLAG" || "$has_seen_progress" != "true" ]]; then
+		echo "$last_refill_epoch"
+		return 0
+	fi
+
+	if [[ "$idle_seconds" -lt "$PULSE_ACTIVE_REFILL_IDLE_MIN" && "$progress_stall_seconds" -lt "$PULSE_ACTIVE_REFILL_STALL_MIN" ]]; then
+		echo "$last_refill_epoch"
+		return 0
+	fi
+
+	local now_epoch
+	now_epoch=$(date +%s)
+	if [[ "$last_refill_epoch" -gt 0 ]]; then
+		local since_last_refill=$((now_epoch - last_refill_epoch))
+		if [[ "$since_last_refill" -lt "$PULSE_ACTIVE_REFILL_INTERVAL" ]]; then
+			echo "$last_refill_epoch"
+			return 0
+		fi
+	fi
+
+	local max_workers active_workers runnable_count queued_without_worker
+	max_workers=$(get_max_workers_target)
+	active_workers=$(count_active_workers)
+	runnable_count=$(count_runnable_candidates)
+	queued_without_worker=$(count_queued_without_worker)
+	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
+	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
+	[[ "$runnable_count" =~ ^[0-9]+$ ]] || runnable_count=0
+	[[ "$queued_without_worker" =~ ^[0-9]+$ ]] || queued_without_worker=0
+
+	if [[ "$active_workers" -ge "$max_workers" || ("$runnable_count" -eq 0 && "$queued_without_worker" -eq 0) ]]; then
+		echo "$last_refill_epoch"
+		return 0
+	fi
+
+	echo "[pulse-wrapper] Active pulse refill: underfilled ${active_workers}/${max_workers} with runnable=${runnable_count}, queued_without_worker=${queued_without_worker}, idle=${idle_seconds}s, stall=${progress_stall_seconds}s" >>"$LOGFILE"
+	run_underfill_worker_recycler "$max_workers" "$active_workers" "$runnable_count" "$queued_without_worker"
+	dispatch_deterministic_fill_floor >/dev/null || true
+
+	echo "$now_epoch"
 	return 0
 }
 
