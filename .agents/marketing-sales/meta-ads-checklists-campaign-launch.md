@@ -2,28 +2,27 @@
 
 > Don't launch until every box is checked.
 
-## Pre-Launch: Tracking & Technical
+## Pre-Launch
 
-### Pixel & Events
+### Tracking
 
+**Pixel & events**
 - [ ] Meta Pixel installed on all pages and verified in Events Manager
 - [ ] Test events firing correctly (use Test Events tool)
 - [ ] Standard events set up (PageView, ViewContent, AddToCart, Purchase/Lead)
 - [ ] Custom events configured if needed
 - [ ] Event parameters passing correctly (value, currency, content_id)
 
-### Conversion API (CAPI)
-
+**CAPI**
 - [ ] CAPI implemented (server-side tracking)
 - [ ] Event deduplication set up (matching event_id)
 - [ ] Match rate >50%
 
-### Domain
-
+**Domain**
 - [ ] Domain verified in Business Settings
 - [ ] Events Manager > Data Sources > Domain verification complete
 
-## Pre-Launch: Business Manager
+### Business Manager
 
 - [ ] Ad account in good standing, no policy violations pending
 - [ ] Payment method valid and current
@@ -31,78 +30,68 @@
 - [ ] Proper access levels assigned, 2FA enabled
 - [ ] Business Manager ownership clear
 
-## Pre-Launch: Landing Page
+### Landing Page
 
-### Technical
-
+**Technical**
 - [ ] Page loads in <3 seconds
 - [ ] Mobile responsive (test on actual phone)
 - [ ] No broken links or images
 - [ ] Form submits correctly, thank you page works
 
-### Message Match
-
+**Message match**
 - [ ] Headline aligns with ad message
 - [ ] Offer matches ad promise
 - [ ] Visual style consistent with ad, no confusing redirects
 
-### Conversion Optimization
-
+**Conversion optimization**
 - [ ] Clear CTA above the fold
 - [ ] Social proof present (logos, testimonials, reviews)
 - [ ] Trust signals (security badges, guarantees)
 - [ ] Minimal form fields
 - [ ] Privacy policy linked
 
-## Pre-Launch: Audiences
+### Audiences
 
-### Custom & Lookalike Audiences
-
+**Custom and lookalike audiences**
 - [ ] Website visitors (by timeframe)
 - [ ] High-intent page visitors (pricing, cart, checkout)
 - [ ] Engagement audiences (video viewers, page engagers)
 - [ ] Customer lists uploaded (if applicable)
 - [ ] 1% lookalike from best source (source audience 500+)
 
-### Exclusions
-
+**Exclusions**
 - [ ] Exclude recent purchasers/converters
 - [ ] Exclude employees if significant
 - [ ] Higher-intent audiences excluded from lower-intent ad sets
 
-## Pre-Launch: Creative
+### Creative
 
-### Assets
-
+**Assets**
 - [ ] Minimum 3-5 creative variations
 - [ ] Mix of formats (video, static, carousel as appropriate)
 - [ ] Correct aspect ratios (9:16, 1:1, 4:5)
 
-### Quality
-
+**Quality**
 - [ ] Video has captions
 - [ ] Text readable on mobile
 - [ ] Images high resolution
 - [ ] No policy-violating content
 
-### Copy
-
+**Copy**
 - [ ] Primary text compelling and clear
 - [ ] Headline under character limit
 - [ ] CTA appropriate for objective
 - [ ] UTM parameters in URLs
 
-## Pre-Launch: Campaign Settings
+### Campaign Settings
 
-### Campaign Level
-
+**Campaign level**
 - [ ] Correct objective selected
 - [ ] Budget type (CBO/ABO) intentional
 - [ ] Campaign spending limit set (optional)
 - [ ] A/B test configured if testing
 
-### Ad Set Level
-
+**Ad set level**
 - [ ] Audiences configured correctly
 - [ ] Budget appropriate for goal
 - [ ] Schedule set (start/end if needed)
@@ -110,8 +99,7 @@
 - [ ] Optimization event is correct
 - [ ] Bid strategy appropriate
 
-### Ad Level
-
+**Ad level**
 - [ ] All creative uploaded, copy entered correctly
 - [ ] Destination URL correct, UTM parameters working
 - [ ] Preview checked on mobile
