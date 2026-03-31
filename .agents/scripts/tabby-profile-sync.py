@@ -11,6 +11,8 @@ Creates a profile for each registered repo with:
 Existing profiles (matched by cwd path) are never overwritten.
 """
 
+from __future__ import annotations
+
 import argparse
 import colorsys
 import hashlib
