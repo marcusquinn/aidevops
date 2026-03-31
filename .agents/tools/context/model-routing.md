@@ -19,26 +19,25 @@ model: haiku
 
 ## Quick Reference
 
-- **Default**: `sonnet` (best cost/capability balance)
-- **Cost spectrum**: local (free) → composer2 → flash → haiku → sonnet → pro → opus
-- **Rule**: smallest model that produces acceptable quality
-- **Frontmatter**: set `model: haiku` (or any tier) in YAML. Absent → `sonnet`. `local` requires `local-model-helper.sh`; falls back to `composer2`.
+- **Default**: `sonnet`. **Rule**: smallest model that produces acceptable quality.
+- **Spectrum**: local ($0) → composer2 (0.17x) → flash (0.20x) → haiku (0.25x) → sonnet (1x) → pro (1.5x) → opus (3x)
+- **Frontmatter**: `model: haiku` in YAML. Absent → `sonnet`. `local` requires `local-model-helper.sh`; falls back to `composer2`.
 
 ## Model Tiers
 
-| Tier | Model | Cost | Use When |
-|------|-------|------|----------|
-| `local` | llama.cpp (user GGUF) | $0 | Privacy/offline, bulk, experimentation; <32K context |
-| `composer2` | cursor/composer-2 | ~0.17x | Multi-file coding, large refactors (requires Cursor OAuth pool t1549) |
-| `flash` | gemini-2.5-flash-preview-05-20 | ~0.20x | >50K context, summarization, bulk processing, research sweeps |
-| `haiku` | claude-haiku-4-5-20251001 | ~0.25x | Classification, triage, simple transforms, commit messages, routing |
-| `sonnet` | claude-sonnet-4-6 | 1x | Code, review, debugging, docs — most dev tasks |
-| `pro` | gemini-2.5-pro | ~1.5x | >100K codebases + complex reasoning |
-| `opus` | claude-opus-4-6 | ~3x | Architecture, novel problems, security audits, complex trade-offs |
+| Tier | Model | Use When |
+|------|-------|----------|
+| `local` | llama.cpp (user GGUF) | Privacy/offline, bulk, experimentation; <32K context |
+| `composer2` | cursor/composer-2 | Multi-file coding, large refactors (requires Cursor OAuth pool t1549) |
+| `flash` | gemini-2.5-flash-preview-05-20 | >50K context, summarization, bulk processing, research sweeps |
+| `haiku` | claude-haiku-4-5-20251001 | Classification, triage, simple transforms, commit messages, routing |
+| `sonnet` | claude-sonnet-4-6 | Code, review, debugging, docs — most dev tasks |
+| `pro` | gemini-2.5-pro | >100K codebases + complex reasoning |
+| `opus` | claude-opus-4-6 | Architecture, novel problems, security audits, complex trade-offs |
 
-**Model IDs**: Always fully-qualified (e.g., `claude-sonnet-4-6`, not `claude-sonnet-4`). Short-form causes `ProviderModelNotFoundError`. CLI prefix: `anthropic/`, `google/`.
+**Model IDs**: Always fully-qualified (`claude-sonnet-4-6`, not `claude-sonnet-4`). Short-form → `ProviderModelNotFoundError`. CLI prefix: `anthropic/`, `google/`.
 
-**`local` fallback**: Privacy → FAIL (require `--allow-cloud`). Cost → fall back to `composer2`.
+**`local` fallback**: Privacy → FAIL (require `--allow-cloud`). Cost → `composer2`.
 
 ## Decision Flowchart
 
@@ -53,37 +52,30 @@ Privacy/on-device? → YES → local running? → YES: local | NO: FAIL
 
 ## Fallback Routing
 
-| Tier | Primary | Fallback | Trigger |
-|------|---------|----------|---------|
-| `local` | llama.cpp | composer2 (cost) / FAIL (privacy) | Server not running |
-| `flash` | gemini-2.5-flash-preview-05-20 | gpt-4.1-mini | No Google key |
-| `haiku` | claude-haiku-4-5-20251001 | gemini-2.5-flash-preview-05-20 | No Anthropic key |
-| `composer2` | cursor/composer-2 | claude-sonnet-4-6 | No Cursor OAuth pool |
-| `sonnet` | claude-sonnet-4-6 | gpt-5.3-codex | No Anthropic key |
-| `pro` | gemini-2.5-pro | claude-sonnet-4-6 | No Google key |
-| `opus` | claude-opus-4-6 | gpt-5.4 | No Anthropic key |
+| Tier | Fallback | Trigger |
+|------|----------|---------|
+| `local` | composer2 (cost) / FAIL (privacy) | Server not running |
+| `flash` | gpt-4.1-mini | No Google key |
+| `haiku` | flash | No Anthropic key |
+| `composer2` | sonnet | No Cursor OAuth pool |
+| `sonnet` | gpt-5.3-codex | No Anthropic key |
+| `pro` | sonnet | No Google key |
+| `opus` | gpt-5.4 | No Anthropic key |
 
-Supervisor resolves fallbacks automatically. Interactive: `compare-models-helper.sh discover`.
+Supervisor resolves automatically. Interactive: `compare-models-helper.sh discover`.
 
 ## Headless Dispatch
 
-- **Pulse**: Anthropic sonnet only — OpenAI models exit without activity (proven). Pin: `PULSE_MODEL=anthropic/claude-sonnet-4-6`.
-- **Workers**: Any provider. `AIDEVOPS_HEADLESS_MODELS` is rotation with backoff, not escalation. Tier escalation: use `tier:thinking` labels.
-
-```bash
-export PULSE_MODEL="anthropic/claude-sonnet-4-6"
-export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.3-codex"
-```
+- **Pulse**: Anthropic sonnet only — OpenAI models exit without activity (proven). `PULSE_MODEL=anthropic/claude-sonnet-4-6`.
+- **Workers**: Any provider. `AIDEVOPS_HEADLESS_MODELS` is rotation with backoff, not escalation. Tier escalation: `tier:thinking` labels.
 
 ## CLI Tools
 
 ```bash
 compare-models-helper.sh discover [--probe|--list-models|--json]
-local-model-helper.sh status|models
-model-availability-helper.sh check anthropic|anthropic/claude-sonnet-4-6
-model-availability-helper.sh resolve opus|probe|status|rate-limits
-# Exit: 0=available, 1=unavailable, 2=rate-limited, 3=invalid-key
 compare-models-helper.sh list|capabilities|compare|recommend "task"
+local-model-helper.sh status|models
+model-availability-helper.sh check|resolve  # Exit: 0=ok, 1=unavail, 2=rate-limited, 3=bad-key
 ```
 
 Interactive: `/compare-models`, `/compare-models-free`, `/route <task>`
@@ -95,35 +87,19 @@ Interactive: `/compare-models`, `/compare-models-free`, `/route <task>`
     "architecture": "opus", "verification": "sonnet", "documentation": "haiku" } }
 ```
 
-**Precedence** (highest wins): (1) `model:` in TODO.md, (2) subagent frontmatter, (3) bundle `model_defaults`, (4) default `sonnet`. Multiple bundles → most-restrictive tier wins.
-
-```bash
-bundle-helper.sh get model_defaults.implementation ~/Git/my-project
-bundle-helper.sh resolve ~/Git/my-project
-```
-
-Integration: `cron-dispatch.sh` reads `model_defaults.implementation`; pulse uses `agent_routing`; `linters-local.sh` reads `skip_gates`.
+**Precedence** (highest wins): (1) `model:` in TODO.md, (2) subagent frontmatter, (3) bundle `model_defaults`, (4) default `sonnet`. Multiple bundles → most-restrictive tier wins. CLI: `bundle-helper.sh get|resolve`. Integration: `cron-dispatch.sh`, pulse `agent_routing`, `linters-local.sh` `skip_gates`.
 
 ## Failure-Based Escalation (t1416)
 
-After 2 failed attempts, escalate to next tier (sonnet → opus via `--model anthropic/claude-opus-4-6`). One opus (~3x) < 3+ failed sonnet dispatches. Every dispatch/kill comment MUST include model tier for escalation auditing.
+After 2 failed attempts, escalate to next tier (sonnet → opus via `--model anthropic/claude-opus-4-6`). One opus (~3x) < 3+ failed sonnet dispatches. Dispatch/kill comments MUST include model tier for escalation auditing.
 
 ## Tier Drift Detection (t1191)
 
-```bash
-/patterns report|recommend "task type"
-budget-tracker-helper.sh tier-drift [--json|--summary]
-```
-
-Pulse Phase 12b checks hourly: >25% escalation → notice; >50% → warning.
+`budget-tracker-helper.sh tier-drift [--json|--summary]` or `/patterns report|recommend "task type"`. Pulse Phase 12b checks hourly: >25% escalation → notice; >50% → warning.
 
 ## Prompt Version Tracking (t1396)
 
-```bash
-observability-helper.sh record --model claude-sonnet-4-6 \
-  --input-tokens 150 --output-tokens 320 --prompt-file prompts/build.txt
-compare-models-helper.sh results --prompt-version a1b2c3d
-```
+`observability-helper.sh record --model <id> --input-tokens N --output-tokens N --prompt-file <path>`. Results: `compare-models-helper.sh results --prompt-version <hash>`.
 
 <!-- AI-CONTEXT-END -->
 
