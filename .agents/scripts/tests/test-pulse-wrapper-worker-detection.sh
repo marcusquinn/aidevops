@@ -806,6 +806,56 @@ test_dispatch_deterministic_fill_floor_honors_stop_flag() {
 	return 0
 }
 
+test_dispatch_deterministic_fill_floor_ignores_noisy_count_output() {
+	local dispatch_log="${TEST_ROOT}/deterministic-noisy-counts.log"
+	: >"$dispatch_log"
+
+	build_ranked_dispatch_candidates_json() {
+		printf '%s\n' '[
+		  {"number":9401,"repo_slug":"marcusquinn/aidevops","repo_path":"/tmp/aidevops","url":"https://github.com/marcusquinn/aidevops/issues/9401","title":"candidate one","labels":["bug"],"updatedAt":"2026-03-31T00:00:00Z","score":8000}
+		]'
+	}
+	get_max_workers_target() { echo 2; }
+	count_active_workers() { echo 0; }
+	count_runnable_candidates() {
+		printf 'DEBUG: prefetched runnable backlog\n'
+		echo 5
+	}
+	count_queued_without_worker() {
+		printf 'TRACE: queued scan complete\n'
+		echo 0
+	}
+	check_terminal_blockers() { return 1; }
+	dispatch_with_dedup() {
+		printf '%s\n' "$1" >>"$dispatch_log"
+		return 0
+	}
+	check_worker_launch() { return 0; }
+	gh() {
+		if [[ "${1:-}" == "api" && "${2:-}" == "user" ]]; then
+			printf 'testuser\n'
+			return 0
+		fi
+		return 0
+	}
+	export -f gh
+
+	local dispatch_count dispatched_numbers
+	dispatch_count=$(dispatch_deterministic_fill_floor)
+	dispatched_numbers=$(tr '\n' ',' <"$dispatch_log" | sed 's/,$//')
+
+	unset -f gh build_ranked_dispatch_candidates_json get_max_workers_target count_active_workers count_runnable_candidates count_queued_without_worker check_terminal_blockers dispatch_with_dedup check_worker_launch
+
+	if [[ "$dispatch_count" == "1" && "$dispatched_numbers" == "9401" ]]; then
+		print_result "dispatch_deterministic_fill_floor ignores noisy count helper output" 0
+		return 0
+	fi
+
+	print_result "dispatch_deterministic_fill_floor ignores noisy count helper output" 1 \
+		"Expected count=1 and issue 9401; got count=${dispatch_count}, issues=${dispatched_numbers}"
+	return 0
+}
+
 test_active_pulse_refill_skips_without_idle_or_stall_signal() {
 	get_max_workers_target() { echo 4; }
 	count_active_workers() { echo 1; }
@@ -896,6 +946,7 @@ main() {
 	test_build_ranked_dispatch_candidates_json_respects_schedule_gate
 	test_dispatch_deterministic_fill_floor_dispatches_up_to_capacity
 	test_dispatch_deterministic_fill_floor_honors_stop_flag
+	test_dispatch_deterministic_fill_floor_ignores_noisy_count_output
 	test_active_pulse_refill_skips_without_idle_or_stall_signal
 	test_active_pulse_refill_dispatches_when_underfilled_and_idle
 

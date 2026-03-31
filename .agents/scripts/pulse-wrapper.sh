@@ -5198,6 +5198,41 @@ count_queued_without_worker() {
 }
 
 #######################################
+# Normalize noisy helper stdout to a numeric count.
+#
+# Some count helpers may emit diagnostic lines before their final numeric
+# result. Accept the last line that is purely an integer; otherwise fail closed
+# to 0.
+#
+# Arguments:
+#   $1 - raw helper stdout
+# Returns: normalized integer via stdout
+#######################################
+normalize_count_output() {
+	local raw_output="$1"
+	local normalized
+	normalized=$(printf '%s\n' "$raw_output" | awk '
+		/^[[:space:]]*[0-9]+[[:space:]]*$/ {
+			gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+			last = $0
+		}
+		END {
+			if (last != "") {
+				print last
+			}
+		}
+	')
+
+	if [[ "$normalized" =~ ^[0-9]+$ ]]; then
+		echo "$normalized"
+		return 0
+	fi
+
+	echo "0"
+	return 0
+}
+
+#######################################
 # Recover issue state after launch validation failure (t1702)
 #
 # When launch validation fails, the issue may remain assigned + queued even
@@ -5426,19 +5461,13 @@ dispatch_deterministic_fill_floor() {
 	local max_workers active_workers available_slots runnable_count queued_without_worker
 	max_workers=$(get_max_workers_target)
 	active_workers=$(count_active_workers)
-	runnable_count=$(count_runnable_candidates)
-	queued_without_worker=$(count_queued_without_worker)
+	runnable_count=$(normalize_count_output "$(count_runnable_candidates)")
+	queued_without_worker=$(normalize_count_output "$(count_queued_without_worker)")
 	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
 	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
-	[[ "$runnable_count" =~ ^[0-9]+$ ]] || runnable_count=0
-	[[ "$queued_without_worker" =~ ^[0-9]+$ ]] || queued_without_worker=0
 
 	available_slots=$((max_workers - active_workers))
 	if [[ "$available_slots" -le 0 ]]; then
-		echo 0
-		return 0
-	fi
-	if [[ "$runnable_count" -eq 0 && "$queued_without_worker" -eq 0 ]]; then
 		echo 0
 		return 0
 	fi
@@ -5679,12 +5708,10 @@ maybe_refill_underfilled_pool_during_active_pulse() {
 	local max_workers active_workers runnable_count queued_without_worker
 	max_workers=$(get_max_workers_target)
 	active_workers=$(count_active_workers)
-	runnable_count=$(count_runnable_candidates)
-	queued_without_worker=$(count_queued_without_worker)
+	runnable_count=$(normalize_count_output "$(count_runnable_candidates)")
+	queued_without_worker=$(normalize_count_output "$(count_queued_without_worker)")
 	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
 	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
-	[[ "$runnable_count" =~ ^[0-9]+$ ]] || runnable_count=0
-	[[ "$queued_without_worker" =~ ^[0-9]+$ ]] || queued_without_worker=0
 
 	if [[ "$active_workers" -ge "$max_workers" || ("$runnable_count" -eq 0 && "$queued_without_worker" -eq 0) ]]; then
 		echo "$last_refill_epoch"
@@ -5802,10 +5829,8 @@ _compute_initial_underfill() {
 	fi
 
 	local runnable_count queued_without_worker
-	runnable_count=$(count_runnable_candidates)
-	queued_without_worker=$(count_queued_without_worker)
-	[[ "$runnable_count" =~ ^[0-9]+$ ]] || runnable_count=0
-	[[ "$queued_without_worker" =~ ^[0-9]+$ ]] || queued_without_worker=0
+	runnable_count=$(normalize_count_output "$(count_runnable_candidates)")
+	queued_without_worker=$(normalize_count_output "$(count_queued_without_worker)")
 	run_underfill_worker_recycler "$max_workers" "$active_workers" "$runnable_count" "$queued_without_worker"
 
 	# Re-check after recycler
@@ -5872,12 +5897,10 @@ _run_early_exit_recycle_loop() {
 		local post_max post_active post_runnable post_queued
 		post_max=$(get_max_workers_target)
 		post_active=$(count_active_workers)
-		post_runnable=$(count_runnable_candidates)
-		post_queued=$(count_queued_without_worker)
+		post_runnable=$(normalize_count_output "$(count_runnable_candidates)")
+		post_queued=$(normalize_count_output "$(count_queued_without_worker)")
 		[[ "$post_max" =~ ^[0-9]+$ ]] || post_max=1
 		[[ "$post_active" =~ ^[0-9]+$ ]] || post_active=0
-		[[ "$post_runnable" =~ ^[0-9]+$ ]] || post_runnable=0
-		[[ "$post_queued" =~ ^[0-9]+$ ]] || post_queued=0
 
 		if [[ "$post_active" -ge "$post_max" ]]; then
 			break
@@ -5892,11 +5915,9 @@ _run_early_exit_recycle_loop() {
 
 		dispatch_deterministic_fill_floor >/dev/null || true
 		post_active=$(count_active_workers)
-		post_runnable=$(count_runnable_candidates)
-		post_queued=$(count_queued_without_worker)
+		post_runnable=$(normalize_count_output "$(count_runnable_candidates)")
+		post_queued=$(normalize_count_output "$(count_queued_without_worker)")
 		[[ "$post_active" =~ ^[0-9]+$ ]] || post_active=0
-		[[ "$post_runnable" =~ ^[0-9]+$ ]] || post_runnable=0
-		[[ "$post_queued" =~ ^[0-9]+$ ]] || post_queued=0
 		if [[ "$post_active" -ge "$post_max" ]]; then
 			break
 		fi
