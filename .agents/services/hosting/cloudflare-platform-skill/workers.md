@@ -1,25 +1,20 @@
 # Cloudflare Workers
 
-Build request-driven edge applications on Cloudflare's V8 isolate runtime. Prefer web platform APIs for portability.
+Cloudflare Workers run request-driven code on a global V8 isolate runtime. Prefer web platform APIs (`fetch`, `URL`, `Headers`, `Request`, `Response`) for portability.
 
-## Why Workers
+## Best Fit
 
-- V8 isolates, not containers/VMs
+- Edge APIs, proxies, routing logic, and request/response transforms
+- Authentication, authorization, rate limiting, and security layers
+- Static asset optimization, feature flags, and A/B testing
+- WebSocket applications and event-driven handlers
+
+## Why Use Them
+
+- V8 isolates instead of containers or VMs
 - Cold starts under 1 ms
 - Global deployment across 300+ locations
-- Standards-based APIs: `fetch`, `URL`, `Headers`, `Request`, `Response`
 - JS/TS, Python, Rust, and WebAssembly support
-
-## Good Fits
-
-- API endpoints at the edge
-- Request/response transformation
-- Authentication and authorization layers
-- Static asset optimization
-- A/B testing and feature flags
-- Rate limiting and security
-- Proxy and routing logic
-- WebSocket applications
 
 ## Recommended Module Worker
 
@@ -31,7 +26,6 @@ export default {
 };
 ```
 
-Handler parameters:
 - `request`: incoming `Request`
 - `env`: bindings for KV, D1, R2, secrets, and vars
 - `ctx`: `waitUntil()` and `passThroughOnException()`
@@ -45,41 +39,25 @@ async queue(batch: MessageBatch, env: Env, ctx: ExecutionContext): Promise<void>
 async tail(events: TraceItem[], env: Env, ctx: ExecutionContext): Promise<void>
 ```
 
-## Essential Commands
+## Wrangler Essentials
 
 ```bash
+npm create cloudflare@latest my-worker -- --type hello-world
+cd my-worker
 npx wrangler dev                    # Local dev
-npx wrangler dev --remote           # Remote dev (actual resources)
+npx wrangler dev --remote           # Remote dev with actual resources
 npx wrangler deploy                 # Production
 npx wrangler deploy --env staging   # Specific environment
 npx wrangler tail                   # Stream logs
 npx wrangler secret put API_KEY     # Set secret
 ```
 
-## Quick Start
+## Read Next
 
-```bash
-npm create cloudflare@latest my-worker -- --type hello-world
-cd my-worker
-npx wrangler dev
-```
-
-## Resources
-
+- [workers-patterns.md](./workers-patterns.md) - Workflows, testing, and optimization
+- [workers-gotchas.md](./workers-gotchas.md) - Limits, pitfalls, and troubleshooting
+- [wrangler.md](./wrangler.md) - CLI details
+- [kv.md](./kv.md), [d1.md](./d1.md), [r2.md](./r2.md), [durable-objects.md](./durable-objects.md), [queues.md](./queues.md) - Common bindings
 - Docs: https://developers.cloudflare.com/workers/
 - Examples: https://developers.cloudflare.com/workers/examples/
 - Runtime APIs: https://developers.cloudflare.com/workers/runtime-apis/
-
-## In This Reference
-
-- [Workers Patterns](./workers-patterns.md) - Common workflows, testing, and optimization
-- [Workers Gotchas](./workers-gotchas.md) - Limits, pitfalls, and troubleshooting
-
-## See Also
-
-- [KV](./kv.md) - Key-value storage
-- [D1](./d1.md) - SQL database
-- [R2](./r2.md) - Object storage
-- [Durable Objects](./durable-objects.md) - Stateful coordination
-- [Queues](./queues.md) - Message queues
-- [Wrangler](./wrangler.md) - CLI tool reference
