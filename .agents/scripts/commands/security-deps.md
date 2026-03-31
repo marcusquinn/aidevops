@@ -4,39 +4,29 @@ agent: Build+
 mode: subagent
 ---
 
-Scan project dependencies for known vulnerabilities with OSV.
+Scan dependency lockfiles for known vulnerabilities with OSV.
 
 Target: $ARGUMENTS
 
-## Quick Reference
+## Command
 
-- **Tool**: OSV-Scanner — CVEs and GHSAs via OSV.dev
-- **Command**: `./.agents/scripts/security-helper.sh scan-deps`
+- Tool: OSV-Scanner via OSV.dev (CVEs, GHSAs)
+- Run: `./.agents/scripts/security-helper.sh scan-deps`
+- Scope: pass a directory path (for example `/security-deps ./packages/api`)
+- Output: add `--format=json` for machine-readable results
+- Recursive scan is enabled by default in `security-helper.sh`
 
-## Process
+## Workflow
 
 1. Run `./.agents/scripts/security-helper.sh scan-deps`
-2. Prioritize critical/high findings
+2. Triage critical/high findings first
 3. For each finding, confirm the package is used, identify the fixed version, and assess upgrade risk
-4. Update dependencies, test, then re-scan
+4. Upgrade, test, and re-scan
+5. If no fix exists, document reachability, compensating controls, and follow-up
 
 ## Supported Lockfiles
 
-npm/Yarn/pnpm (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`), pip (`requirements.txt`, `Pipfile.lock`), Go (`go.mod`), Cargo (`Cargo.lock`), Composer (`composer.lock`), Maven (`pom.xml`), Gradle (`gradle.lockfile`).
-
-## Options
-
-```bash
-/security-deps --format=json      # JSON output
-/security-deps ./packages/api     # Specific directory
-```
-
-Recursive scan is enabled by default in `security-helper.sh`.
-
-## Remediation
-
-- Check compatibility before upgrading (`npm update <pkg>`, `yarn upgrade <pkg>`, `pip install --upgrade <pkg>`)
-- Treat unfixable findings as triage work: document reachability, compensating controls, and follow-up
+npm/Yarn/pnpm (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`), pip (`requirements.txt`, `Pipfile.lock`), Go (`go.mod`), Cargo (`Cargo.lock`), Composer (`composer.lock`), Maven (`pom.xml`), and Gradle (`gradle.lockfile`).
 
 ## CI Example
 
