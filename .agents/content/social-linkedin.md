@@ -67,44 +67,33 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
   -d '{"author":"urn:li:person:ID","lifecycleState":"PUBLISHED","visibility":"PUBLIC","commentary":"Post text here","distribution":{"feedDistribution":"MAIN_FEED"}}'
 ```
 
-## Post Structure
+## Post Structure & Formatting
 
-Effective LinkedIn posts follow a consistent structure:
+1. **Hook line** — first 1-2 lines visible before "see more" (~210 chars)
+2. **Body** — main content with `\n` line breaks; blank lines for paragraphs
+3. **CTA** — call to action (comment, share, visit link)
+4. **Hashtags** — 3-5 relevant hashtags at end
 
-1. **Hook line** - First 1-2 lines visible before "see more" (~210 chars)
-2. **Body** - Main content with line breaks for readability
-3. **CTA** - Call to action (comment, share, visit link)
-4. **Hashtags** - 3-5 relevant hashtags at the end
-
-### Formatting
-
-- **Bold/Italic**: Use Unicode characters (not supported natively in API)
-- **Line breaks**: `\n` in API; blank lines for paragraph separation
-- **Emoji**: Sparingly as visual anchors (1-3 per post)
-- **Limits**: 3,000 chars for posts, ~210 visible before "see more" fold
+Bold/italic via Unicode characters (not native API). Emoji sparingly (1-3 per post). Post limit: 3,000 chars.
 
 ## Content Best Practices
 
-- **Hashtags**: 3-5 max, mix broad (#Leadership) with niche (#DevOpsAutomation), place at end
+- **Hashtags**: 3-5 max, mix broad (#Leadership) with niche (#DevOpsAutomation)
 - **Timing**: Tue-Thu, 7-8am / 12pm / 5-6pm audience timezone, 3-5 posts/week
 - **Engagement**: Open with question or bold statement, end with CTA question
 - **Personal stories**: "I" narratives perform 2-3x better than generic content
-- **Reply fast**: Respond to comments within first hour to boost algorithmic reach
+- **Reply fast**: Respond to comments within first hour for algorithmic boost
 
 ## Analytics
-
-### Key Metrics
 
 | Metric | Target | API Field |
 |--------|--------|-----------|
 | Impressions | Track trend | `impressionCount` |
 | Engagement rate | >2% good, >5% excellent | `engagementRate` |
 | Click-through | >1% for link posts | `clickCount` |
-| Shares | Indicates high-value content | `shareCount` |
+| Shares | High-value content indicator | `shareCount` |
 
-## Automation Patterns
-
-### Content Repurposing Pipeline
+## Content Repurposing
 
 | Source | LinkedIn Format |
 |--------|----------------|
@@ -114,7 +103,7 @@ Effective LinkedIn posts follow a consistent structure:
 | Documentation | How-to post with code snippets |
 | Reddit answer | Reframe as thought leadership |
 
-**Cross-post workflow**: Draft content once, adapt for LinkedIn (professional tone, hashtags), X/Twitter (concise, threads - see [bird.md](bird.md)), Reddit (subreddit-appropriate - see [reddit.md](reddit.md)).
+**Cross-post workflow**: Draft once, adapt for LinkedIn (professional tone, hashtags), X/Twitter (concise, threads — see [bird.md](bird.md)), Reddit (subreddit-appropriate — see [reddit.md](reddit.md)).
 
 ## Troubleshooting
 
