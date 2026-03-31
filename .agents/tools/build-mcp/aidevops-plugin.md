@@ -15,95 +15,96 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
-- **Status**: Implemented (t008.1 PR #1138, t008.2 PR #1149, t008.3 PR #1150)
+- **Status**: Implemented (`t008.1` PR #1138, `t008.2` PR #1149, `t008.3` PR #1150)
 - **Purpose**: Native OpenCode plugin wrapper for aidevops
-- **Approach**: Single-file ESM plugin using hooks-based SDK pattern
-- **Location**: `.agents/plugins/opencode-aidevops/index.mjs` + `package.json`
-- **SDK**: `@opencode-ai/plugin` v1.1.56+ — full API: `index.d.ts` on npm
-- **Key Decision**: Plugin complements `generate-opencode-agents.sh` — shell script handles primary agent config, plugin adds runtime hooks and tools. Shell script always takes precedence.
+- **Approach**: Single-file ESM plugin with SDK hooks
+- **Location**: `.agents/plugins/opencode-aidevops/index.mjs` plus package metadata
+- **SDK**: `@opencode-ai/plugin` v1.1.56+ (`index.d.ts` on npm)
+- **Boundary**: `generate-opencode-agents.sh` and `setup.sh` own static config; the plugin owns runtime hooks and tools. Shell-generated config wins on conflicts.
 
 <!-- AI-CONTEXT-END -->
 
-## Integration Layers
+## Runtime Surface
 
-Static config (agents, subagent stubs, MCP configs, slash commands) is managed by `generate-opencode-agents.sh` and `setup.sh`. This plugin owns the runtime layer:
-
-| Layer | Hook/Mechanism |
-|-------|---------------|
+| Concern | Mechanism |
+|---|---|
 | Agent loading + MCP registration | `config` hook |
 | Custom tools | `tool` registration |
-| Quality checks (pre/post) | `tool.execute.before` / `tool.execute.after` |
+| Quality checks | `tool.execute.before` / `tool.execute.after` |
 | Shell environment | `shell.env` hook |
 | Compaction context | `experimental.session.compacting` hook |
 
-## Hooks Implemented
+## Hooks
 
-### 1. Config Hook — Agent Loading + MCP Registration
+### Config hook
 
-**Agent Loading** (t008.1): Reads `~/.aidevops/agents/`, parses YAML frontmatter, injects subagent definitions into `config.agent`. Skips agents already configured (shell script takes precedence).
+- **Agent loading (`t008.1`)**: reads `~/.aidevops/agents/`, parses YAML frontmatter, and injects subagent definitions into `config.agent`.
+- **Precedence**: skips agents already configured by shell-generated config.
+- **MCP registration (`t008.2`)**: uses a data-driven registry so MCP servers do not require re-running `generate-opencode-agents.sh`.
+- **Registry fields**: `name`, `type` (`local` or `remote`), `command` or `url`, `eager`, `toolPattern`, `globallyEnabled`, `requiresBinary`, `macOnly`.
+- **Lazy loading**: all MCPs are lazy-loaded, saving ~7K tokens at startup.
+- **Per-agent permissions**: `AGENT_MCP_TOOLS` maps agents to tool globs, for example `@dataforseo` -> `dataforseo_*`.
 
-**MCP Registration** (t008.2): Data-driven registry of 12 MCP servers. Ensures MCPs are registered without re-running `generate-opencode-agents.sh`.
+Registered MCPs:
 
-MCP registry fields: `name`, `type` (`"local"`/`"remote"`), `command`/`url`, `eager` (start at launch vs lazy), `toolPattern` (glob for permissions), `globallyEnabled`, `requiresBinary`, `macOnly`.
+| MCP | Type | Global tools |
+|---|---|---|
+| `playwriter` | local | yes |
+| `context7` | remote | no |
+| `augment-context-engine` | local | no |
+| `outscraper` | local | no |
+| `dataforseo` | local | no |
+| `shadcn` | local | no |
+| `claude-code-mcp` | local | no |
+| `macos-automator` | local | no (macOS only) |
+| `ios-simulator` | local | no (macOS only) |
+| `sentry` | remote | no |
+| `socket` | remote | no |
 
-**Registered MCPs**:
+### Custom tools
 
-| MCP | Type | Tools Global |
-|-----|------|-------------|
-| playwriter | local | yes |
-| context7 | remote | no |
-| augment-context-engine | local | no |
-| outscraper | local | no |
-| dataforseo | local | no |
-| shadcn | local | no |
-| claude-code-mcp | local | no |
-| macos-automator | local | no (macOS) |
-| ios-simulator | local | no (macOS) |
-| sentry | remote | no |
-| socket | remote | no |
+| Tool | Purpose |
+|---|---|
+| `aidevops` | Run aidevops CLI commands |
+| `aidevops_memory` | Recall or store cross-session memory (`recall` or `store`) |
+| `aidevops_pre_edit_check` | Run the pre-edit git safety check |
+| `model-accounts-pool` | Manage OAuth account pools and provider rotation |
 
-All MCPs lazy-loaded (saves ~7K+ tokens on startup). Per-agent tool permissions applied via `AGENT_MCP_TOOLS` mapping (e.g. `@dataforseo` → `dataforseo_*`).
+### Quality hooks (`t008.3`)
 
-### 2. Custom Tools
+**Pre-tool (`tool.execute.before`)**
 
-| Tool | Description |
-|------|-------------|
-| `aidevops` | Run aidevops CLI commands (status, repos, features, etc.) |
-| `aidevops_memory` | Recall or store cross-session memories (action: "recall"\|"store") |
-| `aidevops_pre_edit_check` | Run pre-edit git safety check |
-| `model-accounts-pool` | OAuth account pool management (provider credential rotation) |
+- Shell: ShellCheck (`-x -S warning`), return validation, `local var="$1"` enforcement, secret scanning
+- Markdown: MD031 and trailing whitespace checks
+- All writes: secret scanning for API keys, AWS keys, GitHub tokens, and similar patterns
 
-### 3. Quality Hooks (t008.3)
+**Post-tool (`tool.execute.after`)**
 
-**Pre-tool** (`tool.execute.before`):
+- Detect git operations
+- Track patterns through cross-session memory
+- Write audit logs to `~/.aidevops/logs/quality-hooks.log`
 
-- **Shell scripts (.sh)**: ShellCheck (`-x -S warning`), return statement validation, `local var="$1"` convention, secrets scanning
-- **Markdown (.md)**: MD031 (blank lines around code blocks), trailing whitespace
-- **All files**: Secrets scanning on Write (API keys, AWS keys, GitHub tokens)
+### Shell environment hook
 
-**Post-tool** (`tool.execute.after`): Git operation detection, pattern tracking via cross-session memory, audit logging to `~/.aidevops/logs/quality-hooks.log`.
+Exports `PATH` (prepends `~/.aidevops/agents/scripts/`), `AIDEVOPS_AGENTS_DIR`, `AIDEVOPS_WORKSPACE_DIR`, and `AIDEVOPS_VERSION`.
 
-### 4. Shell Environment
+### Compaction hook
 
-Injects: `PATH` (prepends `~/.aidevops/agents/scripts/`), `AIDEVOPS_AGENTS_DIR`, `AIDEVOPS_WORKSPACE_DIR`, `AIDEVOPS_VERSION`.
+Preserves active agent state, loop guardrails, session checkpoint, project-scoped memories (limit 5), git context, and pending mailbox messages.
 
-### 5. Compaction Context
+## Design decisions
 
-Preserves across context resets: active agent state, loop guardrails, session checkpoint, relevant memories (project-scoped, limit 5), git context, pending mailbox messages.
-
-## Design Decisions
-
-| Decision | Rationale |
-|----------|-----------|
-| Single-file ESM (no build step) | OpenCode loads `file://` ESM directly; avoids TypeScript compilation |
-| Zero runtime dependencies | Built-in Node.js APIs + lightweight YAML parser; no `gray-matter` or `zod` |
-| Complement shell script, don't replace | Shell script handles primary config; plugin adds runtime features |
-| Subagents only in config hook | Primary agents need explicit config; auto-registration would override intentional settings |
-| Data-driven MCP registry | Runtime binary detection and platform logic not expressible in static JSON |
-| All MCPs lazy-loaded | Saves ~7K+ tokens on session startup |
+| Decision | Why |
+|---|---|
+| Single-file ESM, no build step | OpenCode loads `file://` ESM directly; avoids TypeScript compilation |
+| Zero runtime dependencies | Uses built-in Node.js APIs plus a lightweight YAML parser, not `gray-matter` or `zod` |
+| Plugin complements shell setup | Shell handles primary config; plugin adds runtime behavior |
+| Subagents loaded only in `config` hook | Prevents auto-registration from overriding intentional primary-agent config |
+| Data-driven MCP registry | Captures runtime binary checks and platform logic that static JSON cannot |
+| All MCPs lazy-loaded | Reduces startup cost by ~7K tokens |
 
 ## References
 
-- [OpenCode Plugin SDK](https://opencode.ai/docs/plugins) — `@opencode-ai/plugin` npm package
+- [OpenCode Plugin SDK](https://opencode.ai/docs/plugins)
 - Implementation: `.agents/plugins/opencode-aidevops/index.mjs`
-- Plan: `todo/PLANS.md` section "aidevops-opencode Plugin" (p001)
+- Plan: `todo/PLANS.md` section `aidevops-opencode Plugin` (`p001`)
