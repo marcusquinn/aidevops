@@ -111,6 +111,11 @@
       "at": "2026-03-28T02:51:01Z",
       "pr": 11276
     },
+    ".agents/tools/build-mcp/aidevops-plugin.md": {
+      "hash": "e6c20b6bebe7bba7df1f71048584087448284262",
+      "at": "2026-03-31T04:46:03Z",
+      "pr": 14599
+    },
     ".agents/aidevops/add-new-mcp-to-aidevops.md": {
       "hash": "818de6a118b3981cbc732aace97a1220ad7f27ee",
       "at": "2026-03-28T16:41:22Z",
