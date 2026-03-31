@@ -2,10 +2,10 @@
 
 Maximise output per token. Compress prose, not results.
 
-### 1. Plan, commit, and PR early
+## 1. Ship early, keep the audit trail intact
 
 - Start with `TodoWrite`: 3-7 subtasks, exactly one `in_progress`, last subtask `gh pr ready`.
-- Commit after each implementation subtask. Uncommitted work is lost when a session ends.
+- Commit after each implementation subtask; uncommitted work is lost when a session ends.
 
 ```bash
 git add -A && git commit -m 'feat: <what you just did> (<task-id>)'
@@ -24,8 +24,6 @@ SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "$
 pr_body="${pr_body}${SIG_FOOTER}"
 gh pr create --draft --title '<task-id>: <description>' --body "$pr_body"
 ```
-
-### 2. Preserve audit gates
 
 - **ShellCheck before push for `.sh` files (t234).** Do not push violations. If `shellcheck` is missing, skip and note it in the PR body.
 
@@ -49,26 +47,26 @@ fi
   - `GH#NNN` for GitHub issues, e.g. `GH#12455: tighten hashline-edit-format.md`
 - Never use `qd-`, bare numbers, or `t` + a GitHub issue number. CI and the supervisor validate this.
 
-### 3. Save context aggressively
+## 2. Spend tokens where they change outcomes
 
-- For files over 200 lines that you will not edit, use `ai_research` instead of reading them directly (~100 tokens vs ~5000).
+- For files over 200 lines that you will not edit, use `ai_research` instead of reading them directly (~100 tokens vs ~5000). Do not offload files you need to edit.
 
 ```text
 ai_research(prompt: "Find all functions that dispatch workers in supervisor-helper.sh. Return: function name, line number, key variables.", domain: "orchestration")
 ```
 
-- Rate limit: 10 per session. Default model: haiku. Do not offload files you need to edit.
+- Rate limit: 10 per session. Default model: haiku.
 - Domain shorthand auto-loads agent files: `git=git-workflow,github-cli,conflict-resolution`; `planning=plans,beads`; `code=code-standards,code-simplifier`; `seo=seo,dataforseo,google-search-console`; `content=content,research,writing`; `wordpress=wp-dev,mainwp`; `browser=browser-automation,playwright`; `deploy=coolify,coolify-cli,vercel`; `security=tirith,encryption-stack`; `mcp=build-mcp,server-patterns`; `agent=build-agent,agent-review`; `framework=architecture,setup`; `release=release,version-bump`; `pr=pr,preflight`; `orchestration=headless-dispatch`; `context=model-routing,toon,mcp-discovery`; `video=video-prompt-design,remotion,wavespeed`; `voice=speech-to-speech,voice-bridge`; `mobile=agent-device,maestro`; `hosting=hostinger,cloudflare,hetzner`; `email=email-testing,email-delivery-test`; `accessibility=accessibility,accessibility-audit`; `containers=orbstack`; `vision=overview,image-generation`.
 - Parameters: `prompt` required; optional `domain`, `agents` (paths relative to `~/.aidevops/agents/`), `files` (line ranges allowed, e.g. `src/foo.ts:10-50`), `model` (`haiku|sonnet|opus`), `max_tokens` (default 500, max 4096).
 
-### 4. Avoid wasted execution
+## 3. Avoid wasted execution
 
 - Parallelise independent subtasks with parallel `Task` calls in one message. Keep one `in_progress` item in `TodoWrite`. Do not parallelise same-file edits or dependent work.
 - Fail fast: read target files, verify imports/dependencies, and stop if the task is already done.
 - Minimise token waste: read only needed line ranges, keep commits concise, and after one failed approach try one fundamentally different strategy before `BLOCKED`.
 - Replan when stuck. Do not patch a broken path incrementally.
 
-## Completion Self-Check
+## Completion self-check
 
 Before `FULL_LOOP_COMPLETE`, verify all of the following:
 
