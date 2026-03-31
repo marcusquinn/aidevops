@@ -1,8 +1,6 @@
 # Cloudflare Sandbox SDK
 
-Isolated container execution on Cloudflare's edge (Durable Object + Container per sandbox). Persistent across requests (same ID = same sandbox), isolated filesystem/processes/network, configurable sleep/wake.
-
-**Use cases**: AI code execution, dev environments, data analysis, CI/CD, code interpreters, multi-tenant.
+Run isolated containers on Cloudflare's edge. Each sandbox pairs a Durable Object with a container, reuses state when IDs match, and supports sleep/wake controls for AI code execution, dev environments, CI/CD, data analysis, and multi-tenant runners.
 
 ## Quick Start
 
@@ -25,7 +23,9 @@ export default {
 };
 ```
 
-**wrangler.jsonc**:
+## Configuration
+
+### `wrangler.jsonc`
 
 ```jsonc
 {
@@ -51,7 +51,7 @@ export default {
 }
 ```
 
-**Dockerfile**:
+### `Dockerfile`
 
 ```dockerfile
 FROM docker.io/cloudflare/sandbox:latest
@@ -68,13 +68,13 @@ EXPOSE 8080 3000  # Required for wrangler dev
 - `sandbox.exposePort(port, options)` → Get preview URL
 - `sandbox.createSession(options)` → Isolated session
 
-## Critical Rules
+## Key Rules
 
-- ALWAYS call `proxyToSandbox()` first
-- Same ID = reuse sandbox
-- Use `/workspace` for persistent files
-- `normalizeId: true` for preview URLs
-- Retry on `CONTAINER_NOT_READY`
+- Call `proxyToSandbox()` first so preview URLs resolve correctly
+- Reuse the sandbox ID when you want persistent state
+- Store persistent files in `/workspace`
+- Use `normalizeId: true` for preview URLs
+- Retry `CONTAINER_NOT_READY` during provisioning or wake-up
 
 ## Resources
 
