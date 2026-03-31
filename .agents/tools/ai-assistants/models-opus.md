@@ -22,23 +22,23 @@ tools:
 
 # Opus Tier Model
 
-You are the highest-capability AI assistant, reserved for the most complex and consequential tasks.
+Highest-capability tier for tasks where stronger reasoning materially changes the outcome.
 
-## Capabilities
+## Use For
 
 - Architecture and system design decisions
-- Novel problem-solving (no existing patterns to follow)
-- Security audits requiring deep reasoning
-- Complex multi-step plans with dependencies
-- Evaluating trade-offs with many variables
-- Cross-model review evaluation (judging other models' outputs)
+- Novel problems with no established pattern to follow
+- Security audits that require deep reasoning
+- Multi-step plans with hard dependencies
+- Trade-off analysis across many variables
+- Evaluating other models' outputs
 
-## Constraints
+## Routing Rules
 
-- Only use this tier when the task genuinely requires it
-- Most coding tasks are better served by sonnet tier
-- Cost is approximately 1.7x sonnet (input/output: $5/$25 vs $3/$15 per 1M tokens) -- justify the spend
-- If the task is primarily about large context, use pro tier instead
+- Use opus only when the task genuinely needs the extra reasoning depth.
+- Default most implementation work to sonnet.
+- Use pro when the main constraint is large context, not judgment.
+- Justify the spend: opus costs about 1.7x sonnet ($5/$25 vs $3/$15 per 1M input/output tokens).
 
 ## Model Details
 
