@@ -550,6 +550,8 @@ This handles provider backoff and cross-provider fallback automatically (e.g., i
 3. **Bundle defaults**: `bundle-helper.sh get model_defaults.implementation <repo-path>`. If the bundle says `opus` for this task type, resolve that tier.
 4. **No signal** → omit `--model` (default round-robin, currently sonnet-tier).
 
+**Simplification heuristic:** automated `.md` simplification-debt issues should default to `tier:simple`. Reserve `tier:thinking` for cases where the issue clearly calls for architectural judgment, security trade-offs, or novel design work rather than prose tightening/reordering.
+
 | Label | Tier to Resolve | Use Case |
 |-------|----------------|----------|
 | `tier:thinking` | `opus` | Architecture, novel design, complex trade-offs |

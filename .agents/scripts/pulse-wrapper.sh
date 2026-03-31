@@ -245,6 +245,7 @@ OPENCODE_BIN="${OPENCODE_BIN:-$(command -v opencode 2>/dev/null || echo "opencod
 PULSE_DIR="${PULSE_DIR:-${HOME}/.aidevops/.agent-workspace}"
 PULSE_MODEL="${PULSE_MODEL:-}"
 HEADLESS_RUNTIME_HELPER="${HEADLESS_RUNTIME_HELPER:-${SCRIPT_DIR}/headless-runtime-helper.sh}"
+MODEL_AVAILABILITY_HELPER="${MODEL_AVAILABILITY_HELPER:-${SCRIPT_DIR}/model-availability-helper.sh}"
 REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 STATE_FILE="${HOME}/.aidevops/logs/pulse-state.txt"
 QUEUE_METRICS_FILE="${HOME}/.aidevops/logs/pulse-queue-metrics"
@@ -269,6 +270,26 @@ if [[ ! -x "$HEADLESS_RUNTIME_HELPER" ]]; then
 	printf '[pulse-wrapper] ERROR: headless runtime helper is missing or not executable: %s (SCRIPT_DIR=%s)\n' "$HEADLESS_RUNTIME_HELPER" "$SCRIPT_DIR" >&2
 	exit 1
 fi
+
+resolve_dispatch_model_for_labels() {
+	local labels_csv="$1"
+	local tier=""
+	local resolved_model=""
+
+	case ",${labels_csv}," in
+	*,tier:thinking,*) tier="opus" ;;
+	*,tier:simple,*) tier="haiku" ;;
+	esac
+
+	if [[ -z "$tier" || ! -x "$MODEL_AVAILABILITY_HELPER" ]]; then
+		printf '%s' ""
+		return 0
+	fi
+
+	resolved_model=$("$MODEL_AVAILABILITY_HELPER" resolve "$tier" --quiet 2>/dev/null || true)
+	printf '%s' "$resolved_model"
+	return 0
+}
 
 #######################################
 # Ensure log and workspace directories exist
@@ -3829,13 +3850,13 @@ This file was previously simplified (PR #${prev_pr}) but has since been modified
 	if [[ "$needs_recheck" == true ]]; then
 		gh issue create --repo "$aidevops_slug" \
 			--title "$issue_title" \
-			--label "simplification-debt" --label "needs-maintainer-review" --label "tier:thinking" --label "recheck-simplicity" \
+			--label "simplification-debt" --label "needs-maintainer-review" --label "tier:simple" --label "recheck-simplicity" \
 			--assignee "$maintainer" \
 			--body "$issue_body" >/dev/null 2>&1 && create_ok=true
 	else
 		gh issue create --repo "$aidevops_slug" \
 			--title "$issue_title" \
-			--label "simplification-debt" --label "needs-maintainer-review" --label "tier:thinking" \
+			--label "simplification-debt" --label "needs-maintainer-review" --label "tier:simple" \
 			--assignee "$maintainer" \
 			--body "$issue_body" >/dev/null 2>&1 && create_ok=true
 	fi
@@ -3854,8 +3875,9 @@ This file was previously simplified (PR #${prev_pr}) but has since been modified
 }
 
 # Create GitHub issues for agent docs flagged for simplification review.
-# Uses tier:thinking label (opus) because doc simplification requires deep
-# reasoning to distinguish noise from institutional knowledge.
+# Default these to tier:simple so short doc-tightening work routes to a
+# cheaper worker by default; maintainers can raise to tier:thinking when the
+# issue requires architectural reasoning, security trade-offs, or novel design.
 # Arguments: $1 - scan_results (pipe-delimited: file_path|line_count), $2 - repos_json, $3 - aidevops_slug
 _complexity_scan_create_md_issues() {
 	local scan_results="$1"
@@ -4022,8 +4044,9 @@ This is an automated scan. The function lengths are factual, but the best decomp
 # Results are processed longest-first so the biggest wins come early
 # and the process is refined by the time shorter files are reached.
 #
-# .md issues get tier:thinking (opus) because doc simplification requires
-# deep reasoning to distinguish noise from institutional knowledge.
+# .md issues get tier:simple by default because most simplification debt here
+# is prose tightening/reordering; promote to tier:thinking only for genuinely
+# architectural or security-sensitive docs.
 #
 # Runs at most once per COMPLEXITY_SCAN_INTERVAL (default 15 min — each
 # pulse cycle). Creates up to 5 issues per run; the open cap (200) is
@@ -4662,6 +4685,7 @@ dispatch_with_dedup() {
 	local repo_path="$6"
 	local prompt="$7"
 	local session_key="${8:-issue-${issue_number}}"
+	local model_override="${9:-}"
 
 	# Hard stop for supervisor/telemetry issues (t1702 pulse guard).
 	# The pulse prompt should already avoid these, but this deterministic
@@ -4718,13 +4742,16 @@ dispatch_with_dedup() {
 	ln -s "$worker_log" "$worker_log_fallback" 2>/dev/null || true
 
 	# Launch worker
-	"$HEADLESS_RUNTIME_HELPER" run \
-		--role worker \
-		--session-key "$session_key" \
-		--dir "$repo_path" \
-		--title "$dispatch_title" \
-		--prompt "$prompt" \
-		</dev/null >>"$worker_log" 2>&1 &
+	local -a worker_cmd=("$HEADLESS_RUNTIME_HELPER" run
+		--role worker
+		--session-key "$session_key"
+		--dir "$repo_path"
+		--title "$dispatch_title"
+		--prompt "$prompt")
+	if [[ -n "$model_override" ]]; then
+		worker_cmd+=(--model "$model_override")
+	fi
+	"${worker_cmd[@]}" </dev/null >>"$worker_log" 2>&1 &
 	local worker_pid="$!"
 	sleep 2
 
@@ -5503,12 +5530,13 @@ dispatch_deterministic_fill_floor() {
 			break
 		fi
 
-		local issue_number repo_slug repo_path issue_url issue_title dispatch_title prompt
+		local issue_number repo_slug repo_path issue_url issue_title dispatch_title prompt labels_csv model_override
 		issue_number=$(printf '%s' "$candidate_json" | jq -r '.number // empty' 2>/dev/null)
 		repo_slug=$(printf '%s' "$candidate_json" | jq -r '.repo_slug // empty' 2>/dev/null)
 		repo_path=$(printf '%s' "$candidate_json" | jq -r '.repo_path // empty' 2>/dev/null)
 		issue_url=$(printf '%s' "$candidate_json" | jq -r '.url // empty' 2>/dev/null)
 		issue_title=$(printf '%s' "$candidate_json" | jq -r '.title // empty' 2>/dev/null | tr '\n' ' ')
+		labels_csv=$(printf '%s' "$candidate_json" | jq -r '(.labels // []) | join(",")' 2>/dev/null)
 		[[ "$issue_number" =~ ^[0-9]+$ ]] || continue
 		[[ -n "$repo_slug" && -n "$repo_path" ]] || continue
 
@@ -5521,10 +5549,11 @@ dispatch_deterministic_fill_floor() {
 		if [[ -n "$issue_url" ]]; then
 			prompt="${prompt} (${issue_url})"
 		fi
+		model_override=$(resolve_dispatch_model_for_labels "$labels_csv")
 
 		local dispatch_rc=0
 		dispatch_with_dedup "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
-			"$self_login" "$repo_path" "$prompt" || dispatch_rc=$?
+			"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override" || dispatch_rc=$?
 		if [[ "$dispatch_rc" -ne 0 ]]; then
 			continue
 		fi

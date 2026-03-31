@@ -1296,6 +1296,7 @@ cmd_metrics() {
 	local role_filter="pulse"
 	local hours="24"
 	local model_filter=""
+	local fast_threshold_secs="120"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -1311,6 +1312,10 @@ cmd_metrics() {
 			model_filter="${2:-}"
 			shift 2
 			;;
+		--fast-threshold)
+			fast_threshold_secs="${2:-120}"
+			shift 2
+			;;
 		*)
 			print_error "Unknown option for metrics: $1"
 			return 1
@@ -1322,13 +1327,17 @@ cmd_metrics() {
 		print_error "--hours must be an integer"
 		return 1
 	fi
+	if [[ ! "$fast_threshold_secs" =~ ^[0-9]+$ ]]; then
+		print_error "--fast-threshold must be an integer"
+		return 1
+	fi
 
 	if [[ ! -f "$METRICS_FILE" ]]; then
 		print_info "No runtime metrics recorded yet: $METRICS_FILE"
 		return 0
 	fi
 
-	ROLE_FILTER="$role_filter" HOURS="$hours" MODEL_FILTER="$model_filter" METRICS_PATH="$METRICS_FILE" python3 - <<'PY'
+	ROLE_FILTER="$role_filter" HOURS="$hours" MODEL_FILTER="$model_filter" FAST_THRESHOLD_SECS="$fast_threshold_secs" METRICS_PATH="$METRICS_FILE" python3 - <<'PY'
 import json
 import os
 import time
@@ -1338,7 +1347,17 @@ metrics_path = os.environ["METRICS_PATH"]
 role_filter = os.environ.get("ROLE_FILTER", "pulse")
 hours = int(os.environ.get("HOURS", "24"))
 model_filter = os.environ.get("MODEL_FILTER", "")
+fast_threshold_secs = int(os.environ.get("FAST_THRESHOLD_SECS", "120"))
 cutoff = int(time.time()) - (hours * 3600)
+
+def is_expensive_model(model: str) -> bool:
+    normalized = (model or "").lower()
+    return any(token in normalized for token in (
+        "gpt-5.4",
+        "claude-opus",
+        "gemini-2.5-pro",
+        "cursor/composer-2",
+    )) or normalized in {"opus", "pro"}
 
 rows = []
 with open(metrics_path) as f:
@@ -1363,7 +1382,7 @@ if not rows:
     print("No matching runtime metrics in selected window")
     raise SystemExit(0)
 
-agg = defaultdict(lambda: {"runs": 0, "success": 0, "productive": 0, "retry_recovered": 0, "sum_duration": 0})
+agg = defaultdict(lambda: {"runs": 0, "success": 0, "productive": 0, "retry_recovered": 0, "sum_duration": 0, "fast_productive": 0})
 for row in rows:
     model = row.get("model", "unknown")
     item = agg[model]
@@ -1372,18 +1391,28 @@ for row in rows:
         item["success"] += 1
     if row.get("result") == "success" and bool(row.get("activity", False)):
         item["productive"] += 1
+        if int(row.get("duration_ms", 0) or 0) <= (fast_threshold_secs * 1000):
+            item["fast_productive"] += 1
     if int(row.get("exit_code", 1)) == 76:
         item["retry_recovered"] += 1
     item["sum_duration"] += int(row.get("duration_ms", 0) or 0)
 
-print(f"Headless runtime metrics (window={hours}h, role={role_filter})")
+print(f"Headless runtime metrics (window={hours}h, role={role_filter}, fast_threshold={fast_threshold_secs}s)")
+review_candidates = []
 for model in sorted(agg.keys()):
     item = agg[model]
     runs = item["runs"]
     success_pct = (item["success"] / runs) * 100 if runs else 0
     productive_pct = (item["productive"] / runs) * 100 if runs else 0
     avg_sec = (item["sum_duration"] / runs) / 1000 if runs else 0
-    print(f"- {model}: runs={runs}, success={item['success']} ({success_pct:.1f}%), productive={item['productive']} ({productive_pct:.1f}%), pool-recovered={item['retry_recovered']}, avg_duration={avg_sec:.1f}s")
+    print(f"- {model}: runs={runs}, success={item['success']} ({success_pct:.1f}%), productive={item['productive']} ({productive_pct:.1f}%), fast_productive={item['fast_productive']} (<={fast_threshold_secs}s), pool-recovered={item['retry_recovered']}, avg_duration={avg_sec:.1f}s")
+    if item["fast_productive"] > 0 and is_expensive_model(model):
+        review_candidates.append((model, item["fast_productive"], item["productive"]))
+
+if review_candidates:
+    print("Review candidates:")
+    for model, fast_count, productive_count in review_candidates:
+        print(f"- {model}: {fast_count}/{productive_count} productive successful runs finished within {fast_threshold_secs}s; review tier labels for simplification/doc work and prefer a cheaper default where possible")
 PY
 	return 0
 }
@@ -1506,7 +1535,7 @@ Usage:
   headless-runtime-helper.sh run --role pulse|worker --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model] [--agent NAME] [--opencode-arg ARG]
   headless-runtime-helper.sh backoff [status|set MODEL-OR-PROVIDER REASON [SECONDS]|clear MODEL-OR-PROVIDER]
   headless-runtime-helper.sh session [status|clear PROVIDER SESSION_KEY]
-  headless-runtime-helper.sh metrics [--role pulse|worker] [--hours N] [--model SUBSTRING]
+  headless-runtime-helper.sh metrics [--role pulse|worker] [--hours N] [--model SUBSTRING] [--fast-threshold N]
   headless-runtime-helper.sh help
 
 Backoff granularity:

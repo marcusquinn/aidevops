@@ -616,6 +616,75 @@ EOF
 	return 0
 }
 
+test_dispatch_with_dedup_passes_explicit_model_override() {
+	local original_script_dir="$SCRIPT_DIR"
+	local original_helper="$HEADLESS_RUNTIME_HELPER"
+	local args_log="${TEST_ROOT}/worker-args.log"
+	SCRIPT_DIR="$TEST_ROOT"
+
+	set_ps_fixture ""
+	: >"$args_log"
+
+	cat >"${TEST_ROOT}/dispatch-dedup-helper.sh" <<'FIXTURE'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+claim) exit 0 ;;
+*) exit 1 ;;
+esac
+FIXTURE
+	chmod +x "${TEST_ROOT}/dispatch-dedup-helper.sh"
+
+	cat >"${TEST_ROOT}/dispatch-ledger-helper.sh" <<'STUB'
+#!/usr/bin/env bash
+case "${1:-}" in
+check-issue) exit 1 ;;
+*) exit 0 ;;
+esac
+STUB
+	chmod +x "${TEST_ROOT}/dispatch-ledger-helper.sh"
+
+	HEADLESS_RUNTIME_HELPER="${TEST_ROOT}/headless-model-stub.sh"
+	cat >"$HEADLESS_RUNTIME_HELPER" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "\$*" >"${args_log}"
+exit 0
+EOF
+	chmod +x "$HEADLESS_RUNTIME_HELPER"
+
+	gh() {
+		if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
+			printf '{"state":"OPEN","title":"t8891: model override","labels":[{"name":"tier:simple"}]}'
+			return 0
+		fi
+		return 0
+	}
+	export -f gh
+
+	local dispatch_rc=0
+	dispatch_with_dedup "8891" "marcusquinn/aidevops" "Issue #8891: model override" "t8891: model override" \
+		"testuser" "/tmp/aidevops" "/full-loop test" "issue-8891" "anthropic/claude-haiku-4-5" || dispatch_rc=$?
+
+	local args_contents=""
+	if [[ -f "$args_log" ]]; then
+		args_contents=$(tr '\n' ' ' <"$args_log")
+	fi
+
+	HEADLESS_RUNTIME_HELPER="$original_helper"
+	SCRIPT_DIR="$original_script_dir"
+	unset -f gh
+
+	if [[ "$dispatch_rc" -eq 0 && "$args_contents" == *"--model anthropic/claude-haiku-4-5"* ]]; then
+		print_result "dispatch_with_dedup forwards explicit model override to worker launch" 0
+		return 0
+	fi
+
+	print_result "dispatch_with_dedup forwards explicit model override to worker launch" 1 \
+		"dispatch_rc=${dispatch_rc}, args='${args_contents}'"
+	return 0
+}
+
 test_build_ranked_dispatch_candidates_json_scores_candidates() {
 	local original_repos_json="$REPOS_JSON"
 	cat >"${REPOS_JSON}" <<'JSON'
@@ -679,10 +748,19 @@ test_dispatch_deterministic_fill_floor_dispatches_up_to_capacity() {
 	local dispatch_log="${TEST_ROOT}/deterministic-dispatch.log"
 	: >"$dispatch_log"
 
+	resolve_dispatch_model_for_labels() {
+		if [[ "$1" == *"tier:simple"* ]]; then
+			echo "anthropic/claude-haiku-4-5"
+			return 0
+		fi
+		echo ""
+		return 0
+	}
+
 	build_ranked_dispatch_candidates_json() {
 		printf '%s\n' '[
 		  {"number":9101,"repo_slug":"marcusquinn/aidevops","repo_path":"/tmp/aidevops","url":"https://github.com/marcusquinn/aidevops/issues/9101","title":"candidate one","labels":["bug"],"updatedAt":"2026-03-31T00:00:00Z","score":8000},
-		  {"number":9102,"repo_slug":"marcusquinn/aidevops","repo_path":"/tmp/aidevops","url":"https://github.com/marcusquinn/aidevops/issues/9102","title":"candidate two","labels":["simplification-debt"],"updatedAt":"2026-03-31T00:01:00Z","score":4000},
+		  {"number":9102,"repo_slug":"marcusquinn/aidevops","repo_path":"/tmp/aidevops","url":"https://github.com/marcusquinn/aidevops/issues/9102","title":"candidate two","labels":["simplification-debt","tier:simple"],"updatedAt":"2026-03-31T00:01:00Z","score":4000},
 		  {"number":9103,"repo_slug":"marcusquinn/aidevops","repo_path":"/tmp/aidevops","url":"https://github.com/marcusquinn/aidevops/issues/9103","title":"candidate three","labels":["simplification-debt"],"updatedAt":"2026-03-31T00:02:00Z","score":4000}
 		]'
 	}
@@ -692,7 +770,7 @@ test_dispatch_deterministic_fill_floor_dispatches_up_to_capacity() {
 	count_queued_without_worker() { echo 0; }
 	check_terminal_blockers() { return 1; }
 	dispatch_with_dedup() {
-		printf '%s\n' "$1" >>"$dispatch_log"
+		printf '%s|%s\n' "$1" "${9:-}" >>"$dispatch_log"
 		return 0
 	}
 	check_worker_launch() { return 0; }
@@ -711,12 +789,12 @@ test_dispatch_deterministic_fill_floor_dispatches_up_to_capacity() {
 
 	unset -f gh build_ranked_dispatch_candidates_json get_max_workers_target count_active_workers count_runnable_candidates count_queued_without_worker check_terminal_blockers dispatch_with_dedup check_worker_launch
 
-	if [[ "$dispatch_count" == "2" && "$dispatched_numbers" == "9101,9102" ]]; then
-		print_result "dispatch_deterministic_fill_floor dispatches ranked candidates up to capacity" 0
+	if [[ "$dispatch_count" == "2" && "$dispatched_numbers" == "9101|,9102|anthropic/claude-haiku-4-5" ]]; then
+		print_result "dispatch_deterministic_fill_floor dispatches ranked candidates up to capacity and honors simple-tier override" 0
 		return 0
 	fi
 
-	print_result "dispatch_deterministic_fill_floor dispatches ranked candidates up to capacity" 1 \
+	print_result "dispatch_deterministic_fill_floor dispatches ranked candidates up to capacity and honors simple-tier override" 1 \
 		"Expected count=2 and issues 9101,9102; got count=${dispatch_count}, issues=${dispatched_numbers}"
 	return 0
 }
@@ -942,6 +1020,7 @@ main() {
 	test_dispatch_with_dedup_fails_closed_when_issue_metadata_missing
 	test_dispatch_with_dedup_proceeds_when_no_duplicate
 	test_dispatch_with_dedup_detaches_worker_stdio
+	test_dispatch_with_dedup_passes_explicit_model_override
 	test_build_ranked_dispatch_candidates_json_scores_candidates
 	test_build_ranked_dispatch_candidates_json_respects_schedule_gate
 	test_dispatch_deterministic_fill_floor_dispatches_up_to_capacity
