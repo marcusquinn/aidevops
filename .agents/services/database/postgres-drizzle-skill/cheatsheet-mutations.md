@@ -1,24 +1,23 @@
 # Mutations
 
+All mutation methods support `.returning()` to get affected rows back.
+
 ## Insert
 
 ```typescript
-// Single insert
 const [user] = await db.insert(users).values({ email, name }).returning();
 
-// Batch insert
+// Batch
 await db.insert(users).values([
   { email: 'a@b.com', name: 'A' },
   { email: 'b@b.com', name: 'B' },
 ]);
 
-// Upsert
+// Upsert (on conflict)
 await db.insert(users).values({ email, name }).onConflictDoUpdate({
   target: users.email,
   set: { name },
 });
-
-// Ignore conflict
 await db.insert(users).values({ email, name }).onConflictDoNothing();
 ```
 
@@ -26,12 +25,6 @@ await db.insert(users).values({ email, name }).onConflictDoNothing();
 
 ```typescript
 await db.update(users).set({ status: 'active' }).where(eq(users.id, id));
-
-// With returning
-const [updated] = await db.update(users)
-  .set({ status: 'active' })
-  .where(eq(users.id, id))
-  .returning();
 
 // Increment
 await db.update(posts)
@@ -43,8 +36,6 @@ await db.update(posts)
 
 ```typescript
 await db.delete(users).where(eq(users.id, id));
-
-// With returning
 const [deleted] = await db.delete(users).where(eq(users.id, id)).returning();
 ```
 
