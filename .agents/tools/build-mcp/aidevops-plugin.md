@@ -37,7 +37,7 @@ tools:
 
 ### `config` hook
 
-- Reads `~/.aidevops/agents/`, parses YAML frontmatter, injects subagent definitions into `config.agent`, and skips agents already defined by shell-generated config (`t008.1`).
+- Loads subagents from `~/.aidevops/agents/`, parses YAML frontmatter, injects them into `config.agent`, and skips agents already defined by shell-generated config (`t008.1`).
 - Registers MCP servers from a data-driven registry instead of re-running `generate-opencode-agents.sh` (`t008.2`).
 - Registry fields: `name`, `type` (`local`/`remote`), `command` or `url`, `eager`, `toolPattern`, `globallyEnabled`, `requiresBinary`, `macOnly`.
 - `AGENT_MCP_TOOLS` maps agents to tool globs, for example `@dataforseo` -> `dataforseo_*`.
@@ -57,34 +57,15 @@ tools:
 | `sentry` | remote | no |
 | `socket` | remote | no |
 
-### `tool` registration
+### Supporting hooks
 
-| Tool | Purpose |
+| Hook | Coverage |
 |---|---|
-| `aidevops` | Run aidevops CLI commands |
-| `aidevops_memory` | Recall or store cross-session memory (`recall` or `store`) |
-| `aidevops_pre_edit_check` | Run the pre-edit git safety check |
-| `model-accounts-pool` | Manage OAuth account pools and provider rotation |
-
-### `tool.execute.before` / `tool.execute.after` (`t008.3`)
-
-| Phase | Coverage |
-|---|---|
-| Pre-tool | ShellCheck (`-x -S warning`), return validation, `local var="$1"` enforcement, Markdown MD031, trailing whitespace, secret scanning on writes |
-| Post-tool | Git operation detection, pattern tracking via cross-session memory, audit logging to `~/.aidevops/logs/quality-hooks.log` |
-
-### `shell.env` hook
-
-Exports:
-
-- `PATH` with `~/.aidevops/agents/scripts/` prepended
-- `AIDEVOPS_AGENTS_DIR`
-- `AIDEVOPS_WORKSPACE_DIR`
-- `AIDEVOPS_VERSION`
-
-### `experimental.session.compacting` hook
-
-Preserves active agent state, loop guardrails, session checkpoint, project-scoped memories (limit 5), git context, and pending mailbox messages.
+| `tool` registration | `aidevops`, `aidevops_memory`, `aidevops_pre_edit_check`, `model-accounts-pool` |
+| `tool.execute.before` (`t008.3`) | ShellCheck (`-x -S warning`), return validation, `local var="$1"` enforcement, Markdown MD031, trailing whitespace, secret scanning on writes |
+| `tool.execute.after` (`t008.3`) | Git operation detection, pattern tracking via cross-session memory, audit logging to `~/.aidevops/logs/quality-hooks.log` |
+| `shell.env` | Prepends `~/.aidevops/agents/scripts/` to `PATH`; exports `AIDEVOPS_AGENTS_DIR`, `AIDEVOPS_WORKSPACE_DIR`, `AIDEVOPS_VERSION` |
+| `experimental.session.compacting` | Preserves active agent state, loop guardrails, session checkpoint, project-scoped memories (limit 5), git context, pending mailbox messages |
 
 ## Design decisions
 
