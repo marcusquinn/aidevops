@@ -4,15 +4,21 @@ agent: Build+
 mode: subagent
 ---
 
-Score AI model responses against structured criteria (correctness, completeness, code quality, clarity).
+Evaluate real AI responses against correctness, completeness, code quality, and clarity.
 
 Target: $ARGUMENTS
 
 ## Instructions
 
-Read `tools/ai-assistants/response-scoring.md` for full scoring workflow, criteria weights, and CLI reference.
+Read `tools/ai-assistants/response-scoring.md` for criteria weights, storage details, and helper syntax.
 
-**Workflow:** `prompt add` → `record` → `score` → `compare`/`leaderboard`. For live comparisons, send the same prompt to multiple models, record with timing/tokens, score all four criteria, present side-by-side.
+## Workflow
+
+1. `prompt add` — save the shared evaluation prompt.
+2. `record` — capture one response per model with timing/tokens.
+3. `score` — rate all four criteria for each response.
+4. `compare` or `leaderboard` — rank the responses side-by-side.
+5. `export` — optional CSV output for reuse.
 
 Scores auto-sync to the pattern tracker (t1099), feeding `/route` and `/patterns`. Disable: `SCORING_NO_PATTERN_SYNC=1`. Bulk sync: `response-scoring-helper.sh sync`.
 
