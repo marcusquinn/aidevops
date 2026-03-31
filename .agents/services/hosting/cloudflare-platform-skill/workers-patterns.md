@@ -1,5 +1,7 @@
 # Workers Patterns
 
+Common patterns for Cloudflare Workers. For basics and handler signatures, see [workers.md](./workers.md).
+
 ## Error Handling
 
 ```typescript
@@ -33,7 +35,7 @@ const corsHeaders = {
 };
 
 if (request.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
-// Spread corsHeaders into your final Response headers
+// Spread corsHeaders into final Response headers
 ```
 
 ## Routing
@@ -45,22 +47,22 @@ const handler = router[`${request.method} ${url.pathname}`];
 return handler ? handler(request, env) : new Response('Not Found', { status: 404 });
 ```
 
-**Production**: Use Hono, itty-router, or Worktop
+**Production**: Use Hono, itty-router, or Worktop.
 
 ## Performance
 
 ```typescript
-// ❌ Sequential
+// Sequential (slow)
 const user = await fetch('/api/user/1');
 const posts = await fetch('/api/posts?user=1');
-// ✅ Parallel
+// Parallel (fast)
 const [user, posts] = await Promise.all([fetch('/api/user/1'), fetch('/api/posts?user=1')]);
 ```
 
 ## Streaming
 
 ```typescript
-// ReadableStream
+// ReadableStream — yield control every N items to avoid CPU limit
 const stream = new ReadableStream({
   async start(controller) {
     for (let i = 0; i < 1000; i++) {
@@ -96,15 +98,16 @@ describe('Worker', () => {
 ## Deployment
 
 ```bash
-npx wrangler deploy              # production
-npx wrangler deploy --env staging
-npx wrangler versions upload --message "Add feature"
-npx wrangler rollback
+npx wrangler versions upload --message "Add feature"  # gradual rollout
+npx wrangler rollback                                  # revert last deploy
 ```
+
+For `wrangler deploy` and environment-specific deploys, see [workers.md](./workers.md).
 
 ## Monitoring
 
 ```typescript
+// Analytics Engine — track latency and status per request
 const start = Date.now();
 const response = await handleRequest(request, env);
 ctx.waitUntil(env.ANALYTICS.writeDataPoint({
@@ -129,11 +132,12 @@ if (!auth?.startsWith('Bearer ')) return new Response('Unauthorized', { status: 
 
 ## Rate Limiting
 
-See [Durable Objects patterns](./durable-objects-patterns.md) for stateful rate-limiting patterns.
+See [Durable Objects patterns](./durable-objects-patterns.md) for stateful rate-limiting.
 
 ## Gradual Rollouts
 
 ```typescript
+// Hash-based feature flag — deterministic per user
 const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(userId));
 const bucket = new Uint8Array(hash)[0] % 100;
 if (bucket < rolloutPercent) return newFeature(request);
@@ -141,4 +145,4 @@ if (bucket < rolloutPercent) return newFeature(request);
 
 ## See Also
 
-- [Gotchas](./workers-gotchas.md) - Common issues
+- [Gotchas](./workers-gotchas.md) — common issues and limits
