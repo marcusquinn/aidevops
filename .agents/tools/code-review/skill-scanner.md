@@ -63,48 +63,28 @@ tools:
 ## CLI Usage
 
 ```bash
-skill-scanner scan /path/to/skill                                          # static only (fast)
-skill-scanner scan /path/to/skill --use-behavioral                        # + AST dataflow
-skill-scanner scan /path/to/skill --use-behavioral --use-llm              # full scan
-skill-scanner scan /path/to/skill --use-llm --enable-meta                 # + FP filtering
-skill-scanner scan-all /path/to/skills --recursive                        # batch
-skill-scanner scan-all ./skills --fail-on-findings --format sarif --output results.sarif  # CI/CD
-skill-scanner scan /path/to/skill --custom-rules /path/to/rules/          # custom YARA
-skill-scanner scan /path/to/skill --disable-rule YARA_script_injection    # suppress rule
-skill-scanner scan /path/to/skill --yara-mode permissive                  # fewer findings
+skill-scanner scan /path/to/skill                                    # static only (fast)
+skill-scanner scan /path/to/skill --use-behavioral --use-llm         # full scan
+skill-scanner scan-all /path/to/skills --recursive                   # batch
+skill-scanner scan-all ./skills --fail-on-findings --format sarif    # CI/CD
 ```
+
+Additional flags: `--use-llm --enable-meta` (FP filtering), `--custom-rules /path/`, `--disable-rule RULE_NAME`, `--yara-mode permissive`.
 
 ## VirusTotal Integration
 
-Advisory second layer alongside Cisco scanner. Checks file hashes (SHA256) against 70+ AV engines and scans domains/URLs in skill content. **VT is advisory only** — Cisco scanner remains the import gate.
-
-- Rate limit: 16s between requests (free tier: 4 req/min, 500 req/day); max 8 requests per skill scan
+Advisory second layer — checks file hashes (SHA256) against 70+ AV engines and scans domains/URLs. **VT is advisory only** — Cisco scanner remains the import gate. Rate limit: 4 req/min, 500 req/day; max 8 requests per skill scan.
 
 ```bash
-virustotal-helper.sh scan-skill /path/to/skill/
-virustotal-helper.sh scan-file /path/to/file.md
-virustotal-helper.sh scan-domain example.com
-virustotal-helper.sh scan-url https://example.com/payload
-virustotal-helper.sh status
-
-security-helper.sh vt-scan skill /path/to/skill/   # via security-helper
-security-helper.sh vt-scan file /path/to/file.md
-security-helper.sh vt-scan status
-# Runs automatically (advisory) after Cisco scanner in: security-helper.sh skill-scan all, add-skill-helper.sh
+virustotal-helper.sh scan-skill /path/to/skill/    # scan all skill files
+virustotal-helper.sh scan-file /path/to/file.md    # single file
+virustotal-helper.sh scan-domain example.com       # domain check
+security-helper.sh vt-scan skill /path/to/skill/   # via security-helper (also runs automatically after Cisco scanner)
 ```
 
-**API key**: `aidevops secret set VIRUSTOTAL_MARCUSQUINN` (gopass preferred) or add to `~/.config/aidevops/credentials.sh`.
+## Environment
 
-## Environment Variables
-
-```bash
-export SKILL_SCANNER_LLM_API_KEY="your_api_key"   # LLM analyzer (optional)
-export SKILL_SCANNER_LLM_MODEL="claude-sonnet-4-6"
-export VIRUSTOTAL_API_KEY="your_key"               # prefer gopass: aidevops secret set VIRUSTOTAL_MARCUSQUINN
-export AI_DEFENSE_API_KEY="your_key"               # Cisco AI Defense (optional)
-```
-
-Store in `~/.config/aidevops/credentials.sh` (600 permissions).
+API keys (see Analysis Engines table for which engines need them). Store in `~/.config/aidevops/credentials.sh` (600 perms) or use gopass: `aidevops secret set <KEY_NAME>`.
 
 ## Response Guidelines
 
