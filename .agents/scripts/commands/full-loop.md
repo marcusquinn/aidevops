@@ -27,7 +27,7 @@ Fatal modes: **GH#5317** (exits without PR), **GH#5096** (exits after PR). Do NO
 
 ## Step 0: Resolve Task ID
 
-Extract first positional arg. If ` -- ` present, use text after (t158). Task ID (`t\d+`): resolve via TODO.md or `gh issue list --search`. Extract issue number via `sed -En 's/.*[Ii]ssue[[:space:]]*#*([0-9]+).*/\1/p'`.
+Extract the first positional arg; if ` -- ` is present, use the suffix (t158). Resolve task IDs (`t\d+`) via TODO.md or `gh issue list --search`. Extract the issue number with `sed -En 's/.*[Ii]ssue[[:space:]]*#*([0-9]+).*/\1/p'`.
 
 **Decomposition (t1408.2):** Skip if `--no-decompose` or has subtasks. `task-decompose-helper.sh classify "$TASK_DESC"`. Composite interactive → show tree, ask `[Y/n/edit]`, create child IDs via `claim-task-id.sh`. Composite headless → auto-decompose, exit `DECOMPOSED: ...`. Max depth 3.
 
@@ -45,7 +45,7 @@ Extract first positional arg. If ` -- ` present, use text after (t158). Task ID 
 ~/.aidevops/agents/scripts/pre-edit-check.sh --loop-mode --task "$ARGUMENTS"
 ```
 
-Exit 0: on feature branch. Exit 2: on main — auto-create worktree.
+Exit 0: already on a feature branch. Exit 2: on main — auto-create a worktree.
 
 **Operation Verification (t1364.3):** `verify-operation-helper.sh check/verify`. Critical/high → block or verify.
 
@@ -97,13 +97,7 @@ Changelog: `feat:` → Added, `fix:` → Fixed, `docs:`/`perf:`/`refactor:` → 
 
 **4.1 Preflight** — quality checks, auto-fixes.
 
-**4.2 PR Create** — rebase onto `origin/main`, push, create PR. Body MUST include `Closes #NNN` (MANDATORY). Add `origin:worker` or `origin:interactive` label. **Signature footer (GH#12805 — MANDATORY):** append `gh-signature-helper.sh footer` output with explicit mode and issue context so provenance remains audit-grade in both interactive and headless runs.
-
-- Interactive `/full-loop` (default): `SIG_FOOTER=$(gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL" --issue "$REPO#$ISSUE_NUM" --session-type interactive)`
-- Headless `/full-loop` (`FULL_LOOP_HEADLESS=true`): `SIG_FOOTER=$(gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL" --issue "$REPO#$ISSUE_NUM" --no-session --session-type worker --time "$WORKER_ELAPSED_SECS")`
-- If token telemetry is available, pass `--tokens "$WORKER_TOKENS"`; if unavailable, omit token override (do not fabricate).
-
-Append footer to PR body, then verify the final body includes `aidevops.sh` **and** either `spent` or `Overall,` (time provenance present): `gh pr view --json body | jq -e '.body | (contains("aidevops.sh") and (contains("spent") or contains("Overall,")))' >/dev/null`.
+**4.2 PR Create** — rebase onto `origin/main`, push, create PR. Body MUST include `Closes #NNN` (MANDATORY). Add `origin:worker` or `origin:interactive` label. **Signature footer (GH#12805 — MANDATORY):** append `gh-signature-helper.sh footer` output with explicit issue context plus session mode — interactive: `SIG_FOOTER=$(gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL" --issue "$REPO#$ISSUE_NUM" --session-type interactive)`; headless: `SIG_FOOTER=$(gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL" --issue "$REPO#$ISSUE_NUM" --no-session --session-type worker --time "$WORKER_ELAPSED_SECS")`. Pass `--tokens "$WORKER_TOKENS"` only when telemetry exists. Verify the final PR body still contains `aidevops.sh` and either `spent` or `Overall,`: `gh pr view --json body | jq -e '.body | (contains("aidevops.sh") and (contains("spent") or contains("Overall,")))' >/dev/null`.
 
 **4.3 Label `status:in-review` (t1343)** — check issue is `OPEN` first. `status:done` set by `sync-on-pr-merge` — workers don't set it.
 
