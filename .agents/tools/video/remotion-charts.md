@@ -8,21 +8,19 @@ metadata:
 
 # Charts in Remotion
 
-You can create bar charts in Remotion by using regular React code - HTML and SVG is allowed, as well as D3.js.
+Use regular React, HTML, SVG, or D3 to build charts in Remotion.
 
-## No animations not powered by `useCurrentFrame()`
+## Animation rule
 
-Disable all animations by third party libraries.  
-They will cause flickering during rendering.  
-Instead, drive all animations from `useCurrentFrame()`.
+Disable third-party animation systems. They flicker during render. Drive chart motion from `useCurrentFrame()` instead.
 
-## Bar Chart Animations
+## Bar charts
 
-See [Bar Chart Example](assets/charts/bar-chart.tsx) for a basic example implmentation.
+See [Bar Chart Example](assets/charts/bar-chart.tsx) for a basic implementation.
 
-### Staggered Bars
+### Staggered bars
 
-You can animate the height of the bars and stagger them like this:
+Animate each bar height with a per-bar delay:
 
 ```tsx
 const STAGGER_DELAY = 5;
@@ -41,9 +39,9 @@ const bars = data.map((item, i) => {
 });
 ```
 
-## Pie Chart Animation
+## Pie charts
 
-Animate segments using stroke-dashoffset, starting from 12 o'clock.
+Animate segments with `strokeDashoffset` and rotate the circle so drawing starts at 12 o'clock.
 
 ```tsx
 const frame = useCurrentFrame();
