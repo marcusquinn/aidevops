@@ -2975,6 +2975,11 @@
       "hash": "b17c73481de18eb0ad983703fbcae8b5b7e93c98",
       "at": "2026-03-30T06:49:54Z",
       "pr": 13773
+    },
+    ".agents/reference/entity-memory-architecture.md": {
+      "hash": "f459c108bb4697a61a23da603c732273ea6b8fb6",
+      "at": "2026-03-31T02:26:11Z",
+      "pr": 14489
     }
   }
 }
