@@ -112,7 +112,7 @@ POP does not sync folders, flags, or read-state across devices.
 - **Zoho Mail**: Group mailboxes in paid plans.
 - **Cloudron**: Separate mailbox accounts or aliases via admin panel / CLI.
 - **Proton Mail**: Business plans support multi-user access and catch-all.
-- **Others**: Limited or no native shared mailbox/delegation support — check provider docs for group alias or forwarding workarounds.
+- **Others**: Native shared mailbox or delegation support is often limited because standard IMAP setups usually lack delegated-access semantics; check provider docs for aliases, forwarding, or separate mailbox workarounds.
 
 ## Cloudron Mail Management
 
