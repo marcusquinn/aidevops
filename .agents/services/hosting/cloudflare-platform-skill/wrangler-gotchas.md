@@ -1,27 +1,22 @@
 # Wrangler Common Issues
 
-Pitfalls, limits, and troubleshooting.
+Pitfalls, limits, and troubleshooting for the Wrangler CLI.
 
-## Common Gotchas
+## Gotchas
 
 ### Binding IDs vs Names
 
-- Bindings use `binding` (code name) and `id`/`database_id`/`bucket_name` (resource ID)
+- `binding` = code name; `id`/`database_id`/`bucket_name` = resource ID
 - Preview bindings need separate IDs: `preview_id`, `preview_database_id`
 
 ### Environment Inheritance
 
-- Non-inheritable keys (bindings, vars) must be redefined per environment
-- Inheritable keys (routes, compatibility_date) can be overridden
-
-### Local vs Remote Dev
-
-- `wrangler dev` (default): Local simulation, fast, limited accuracy
-- `wrangler dev --remote`: Remote execution, slower, production-accurate
+- **Non-inheritable** (bindings, vars): must redeclare per environment
+- **Inheritable** (routes, compatibility_date): can override
 
 ### Compatibility Dates
 
-Always set `compatibility_date` to avoid unexpected runtime changes:
+Always set — omitting causes unexpected runtime changes:
 
 ```jsonc
 { "compatibility_date": "2025-01-01" }
@@ -41,67 +36,38 @@ With `getPlatformProxy`, always specify `script_name`:
 }
 ```
 
-### Secrets in Local Dev
-
-Secrets set with `wrangler secret put` only work in deployed Workers. For local dev, use `.dev.vars`.
-
 ### Node.js Compatibility
 
-Some bindings (Hyperdrive with `pg`) require Node.js compatibility:
+Some bindings (e.g., Hyperdrive with `pg`) require:
 
 ```jsonc
 { "compatibility_flags": ["nodejs_compat_v2"] }
 ```
 
+### Secrets in Local Dev
+
+`wrangler secret put` only works deployed. Use `.dev.vars` locally. See [wrangler-patterns.md](./wrangler-patterns.md) for full secrets workflow.
+
+### Local vs Remote Dev
+
+`wrangler dev` = local simulation (fast, limited accuracy). `wrangler dev --remote` = remote execution (slower, production-accurate). See [wrangler-patterns.md](./wrangler-patterns.md) for dev patterns.
+
 ## Troubleshooting
 
-### Authentication Issues
-
-```bash
-wrangler logout
-wrangler login
-wrangler whoami
-```
-
-### Configuration Errors
-
-```bash
-wrangler check  # Validate config
-```
-
-Use wrangler.jsonc with `$schema` for validation.
-
-### Binding Not Available
-
-- Check binding exists in config
-- For environments, ensure binding defined for that env
-- Local dev: some bindings need `--remote`
-
-### Deployment Failures
-
-```bash
-wrangler tail              # Check logs
-wrangler deploy --dry-run  # Validate
-wrangler whoami            # Check account limits
-```
-
-### Local Development Issues
-
-```bash
-rm -rf .wrangler/state     # Clear local state
-wrangler dev --remote      # Use remote bindings
-wrangler dev --persist-to ./local-state  # Custom persist location
-```
+| Symptom | Fix |
+|---------|-----|
+| Auth failures | `wrangler logout && wrangler login && wrangler whoami` |
+| Config errors | `wrangler check`; use `wrangler.jsonc` with `$schema` for validation |
+| Binding not available | Verify binding in config; for envs, ensure defined for that env; local dev may need `--remote` |
+| Deploy failures | `wrangler tail` (logs), `wrangler deploy --dry-run` (validate), `wrangler whoami` (account limits) |
+| Stale local state | `rm -rf .wrangler/state`; try `wrangler dev --remote` or `--persist-to ./local-state` |
 
 ## Resources
 
-- Docs: https://developers.cloudflare.com/workers/wrangler/
-- Config: https://developers.cloudflare.com/workers/wrangler/configuration/
-- Commands: https://developers.cloudflare.com/workers/wrangler/commands/
-- Examples: https://github.com/cloudflare/workers-sdk/tree/main/templates
-- Discord: https://discord.gg/cloudflaredev
+- [Wrangler docs](https://developers.cloudflare.com/workers/wrangler/) | [Configuration](https://developers.cloudflare.com/workers/wrangler/configuration/) | [Commands](https://developers.cloudflare.com/workers/wrangler/commands/)
+- [Templates](https://github.com/cloudflare/workers-sdk/tree/main/templates) | [Discord](https://discord.gg/cloudflaredev)
 
 ## See Also
 
-- [wrangler.md](./wrangler.md) - Commands
-- [wrangler-patterns.md](./wrangler-patterns.md) - Workflows
+- [wrangler.md](./wrangler.md) — Commands
+- [wrangler-patterns.md](./wrangler-patterns.md) — Workflows
