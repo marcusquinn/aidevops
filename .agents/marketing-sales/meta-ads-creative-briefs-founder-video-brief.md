@@ -2,89 +2,66 @@
 
 > For filming yourself or executives as the face of the brand.
 
----
-
 ## Video Objective
 
-**Type:** Origin Story / Product Explainer / Direct Response / Myth-Buster / FAQ / Announcement
-
-**Goal:** [Primary action you want viewers to take]
-
----
+- **Type:** Origin Story / Product Explainer / Direct Response / Myth-Buster / FAQ / Announcement
+- **Goal:** [Primary action you want viewers to take]
 
 ## Script
 
-**Hook (0-5s):** [Opening line — most important]
+- **Hook (0-5s):** [Opening line — most important]
+- **Body (5-25s):**
 
-**Body (5-25s):**
-```
-[Main message]
-1. 
-2. 
-3. 
-```
+  ```text
+  [Main message]
+  1.
+  2.
+  3.
+  ```
 
-**Proof (25-35s):** [Social proof, results, credentials]
-
-**CTA (35-45s):** [Clear call to action — URL: ]
-
----
+- **Proof (25-35s):** [Social proof, results, credentials]
+- **CTA (35-45s):** [Clear call to action — URL: ]
 
 ## Technical Setup
 
-**Camera:** iPhone/tripod · Webcam · Mirrorless/DSLR · Professional  
-**Framing:** Medium shot (chest up) or close-up (head/shoulders). Eye line: at lens or slightly above.
-
-**Audio:** Lav mic · Shotgun · AirPods · Built-in (backup only)  
-**Environment:** Quiet room, no echo.
-
-**Lighting:** Natural window (soft) · Ring light · Key+fill · Professional  
-**Tip:** Light in front of you, not behind.
-
-**Background:** Home office · Company office · Neutral/branded wall · Blurred  
-Include: subtle brand elements, books, plants. Avoid: clutter, distractions.
-
----
+- **Camera:** iPhone/tripod · Webcam · Mirrorless/DSLR · Professional
+- **Framing:** Medium shot (chest up) or close-up (head/shoulders). Eye line: at lens or slightly above.
+- **Audio:** Lav mic · Shotgun · AirPods · Built-in (backup only)
+- **Environment:** Quiet room, no echo
+- **Lighting:** Natural window (soft) · Ring light · Key+fill · Professional
+- **Lighting tip:** Light in front of you, not behind
+- **Background:** Home office · Company office · Neutral/branded wall · Blurred
+- **Include:** Subtle brand elements, books, plants
+- **Avoid:** Clutter, distractions
 
 ## Outfit
 
-**Do:** Solid colors, colors that pop against background, natural/put-together look.  
-**Don't:** Thin stripes/small patterns (moiré), all white/black, busy logos, sloppy casual.
-
----
+- **Do:** Solid colors, colors that pop against background, natural/put-together look
+- **Don't:** Thin stripes/small patterns (moiré), all white/black, busy logos, sloppy casual
 
 ## Delivery
 
-**Tone:** Conversational · Energetic · Calm/authoritative · Passionate  
-**Pacing:** Slightly faster than normal conversation. Natural pauses OK. Not rushed, not slow.  
-**Script method:** Teleprompter (sounds scripted) · Bullet points (more natural) · Memorized key lines + improv
-
-**Tips:** Record a practice take first. Talk like you're telling a friend. Keep rolling through mistakes. Use hand gestures. Smile at least once.
-
----
+- **Tone:** Conversational · Energetic · Calm/authoritative · Passionate
+- **Pacing:** Slightly faster than normal conversation. Natural pauses OK. Not rushed, not slow.
+- **Script method:** Teleprompter (sounds scripted) · Bullet points (more natural) · Memorized key lines + improv
+- **Tips:** Record a practice take first. Talk like you're telling a friend. Keep rolling through mistakes. Use hand gestures. Smile at least once.
 
 ## Shot List
 
-**Must capture:** Full talking head (multiple takes), key lines said 2-3 different ways, reaction shots.
-
-**B-roll:** Product in use · Working at desk · Team interaction · Product close-ups · Logo/branding
-
----
+- **Must capture:** Full talking head (multiple takes), key lines said 2-3 different ways, reaction shots
+- **B-roll:** Product in use · Working at desk · Team interaction · Product close-ups · Logo/branding
 
 ## Format
 
-**Primary:** 9:16 (Reels/Stories) · **Secondary:** 1:1 or 4:5 (Feed) · **Backup:** 16:9  
-**Tip:** Frame loose to allow cropping to different ratios.
-
----
+- **Primary:** 9:16 (Reels/Stories)
+- **Secondary:** 1:1 or 4:5 (Feed)
+- **Backup:** 16:9
+- **Tip:** Frame loose to allow cropping to different ratios
 
 ## Post-Production
 
-**Editor adds:** Captions · B-roll cutaways · Lower thirds/text · Music · Brand elements
-
-**Provide to editor:** All takes (labeled) · B-roll footage · Script/key quotes · Brand assets (logo, colors)
-
----
+- **Editor adds:** Captions · B-roll cutaways · Lower thirds/text · Music · Brand elements
+- **Provide to editor:** All takes (labeled) · B-roll footage · Script/key quotes · Brand assets (logo, colors)
 
 ## Self-Review Checklist
 
