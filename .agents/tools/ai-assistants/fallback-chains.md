@@ -26,13 +26,11 @@ tools:
 
 ## Overview
 
-The fallback system uses a **data-driven routing table** (JSON) that AI reads directly to understand available models per tier. The bash script only checks model availability — all routing decisions (which model to try, when to fall back, cooldown logic) are made by the AI agent.
-
-This follows the **Intelligence Over Scripts** principle: deterministic utilities (health checks) stay in bash; judgment calls (routing priority, error recovery) belong to the AI.
+Data-driven routing table (JSON) that AI reads directly. The bash script only checks availability — all routing decisions (which model to try, when to fall back, error recovery) are made by the AI agent, not bash. Follows the **Intelligence Over Scripts** principle.
 
 ## Routing Table
 
-The routing table at `configs/model-routing-table.json` defines models per tier:
+`configs/model-routing-table.json` defines models per tier:
 
 ```json
 {
@@ -50,26 +48,20 @@ Tiers: `haiku`, `flash`, `sonnet`, `pro`, `opus`, `coding`, `eval`, `health`
 ## CLI Usage
 
 ```bash
-# Resolve best available model for a tier
 fallback-chain-helper.sh resolve coding
 fallback-chain-helper.sh resolve sonnet --json --quiet
-
-# Print the full routing table
 fallback-chain-helper.sh table
-
-# Help
 fallback-chain-helper.sh help
 ```
 
 ## How Resolution Works
 
-1. Script reads the routing table for the requested tier
-2. Walks the model list in order
-3. For each model, checks provider availability via `model-availability-helper.sh`
-4. Returns the first available model
-5. If all models exhausted, returns exit code 1
+1. Read routing table for the requested tier
+2. Walk model list in order
+3. Check each model via `model-availability-helper.sh`
+4. Return first available model; exit code 1 if all exhausted
 
-No cooldowns, triggers, gateway probing, or SQLite database. The AI handles error recovery and routing decisions using the routing table as reference data.
+No cooldowns, triggers, gateway probing, or SQLite database.
 
 ## Integration
 
@@ -83,7 +75,7 @@ No cooldowns, triggers, gateway probing, or SQLite database. The AI handles erro
 
 ### AI Agent Usage
 
-AI agents read `model-routing.md` for routing rules and the routing table for available models. When a provider fails at runtime, the AI decides the next action (retry, fall back, escalate) — not bash.
+AI agents read `model-routing.md` for routing rules and the routing table for available models. Runtime failures → AI decides next action (retry, fall back, escalate).
 
 ## Migration from v1
 
