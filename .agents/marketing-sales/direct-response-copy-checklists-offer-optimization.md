@@ -1,7 +1,5 @@
 # Offer Optimization Checklist
 
----
-
 ## Core Offer & Value Stack
 
 | Area | Checklist |
@@ -11,8 +9,6 @@
 | **Bonuses** | Relevant to core offer · Help succeed with main offer · Specific deliverables · Believable values · Named (not "Bonus 1") · 2–3 minimum |
 | **Value math** | Total value 5–10× price · Calculation shown · Each component value listed · Final price feels like a bargain |
 
----
-
 ## Pricing
 
 | Area | Checklist |
@@ -20,8 +16,6 @@
 | **Structure** | Clear and simple · Most popular tier highlighted · Tiers easy to compare · Budget tier present · Power tier if applicable |
 | **Psychology** | Anchor high value before price · Charm pricing ($97/$297/$497) · Payment plan for $200+ offers · Annual discount for subscriptions · Compare to alternatives ("$5k agency vs $79/mo") |
 | **10× rule** | Customer gets 10× value · ROI clear (pay $500 → expect $5k+ value) · ROI communicated in copy |
-
----
 
 ## Guarantee
 
@@ -31,8 +25,6 @@
 | **Strength** | Removes primary fear · Feels fair · Shows confidence · Has a name |
 | **Types** | Money-back · Results-based · Free trial (no CC) · Risk-free trial (CC, cancel anytime) |
 
----
-
 ## Urgency & Scarcity
 
 | Area | Checklist |
@@ -41,15 +33,11 @@
 | **Types** | Limited time · Limited quantity (spots/copies) · Rising price (early bird) · Bonus expiration · Cart expiration |
 | **Copy** | What they lose is clear (bonuses, price, access) · Why the limit exists is explained |
 
----
-
 ## Call to Action
 
 - Action-oriented ("Start My Trial" not "Submit") · Benefit-focused when possible ("Get More Leads")
 - Appears multiple times on long pages · Stands out visually · Explains what happens next
 - Friction minimised (fewest fields possible)
-
----
 
 ## Objection Handling
 
@@ -60,22 +48,9 @@
 | **Time** | Time to results clear · Time investment reasonable · Quick wins highlighted |
 | **Not for me** | Target audience clear · Use cases shown · FAQ covers edge cases |
 
----
-
 ## Offer Comparison
 
-| Factor | Your Offer | Competitor A | Competitor B |
-|--------|------------|--------------|--------------|
-| Price | $ | $ | $ |
-| Core deliverable | | | |
-| Bonuses | | | |
-| Guarantee | | | |
-| Support | | | |
-| Unique advantage | | | |
-
-Your offer should win on at least 2–3 factors.
-
----
+Compare against 2 competitors on: price, core deliverable, bonuses, guarantee, support, unique advantage. Your offer should win on at least 2–3 factors.
 
 ## Testing Priorities (in order of impact)
 
@@ -85,37 +60,20 @@ Your offer should win on at least 2–3 factors.
 4. **Payment options** — one-time vs payment plan
 5. **Urgency type** — deadline vs quantity vs price increase
 
----
-
 ## Pre-Launch Verification
 
-- [ ] Offer documented and team briefed
-- [ ] Checkout process tested · Payment processing confirmed
-- [ ] Fulfillment ready (instant access, onboarding)
-- [ ] Support prepared · Tracking set up (pixels, analytics)
-
----
+- Offer documented and team briefed
+- Checkout process tested · Payment processing confirmed
+- Fulfillment ready (instant access, onboarding)
+- Support prepared · Tracking set up (pixels, analytics)
 
 ## Offer Math Worksheet
 
+```text
+Core Product: $______  + Bonus 1: $______  + Bonus 2: $______  + Bonus 3: $______
+Total Value: $______   Your Price: $______   Value Multiple: ____x (target: 5–10×)
+Customer ROI: pays $______ → gets $______ in value (10× minimum)
 ```
-Core Product Value: $______
-+ Bonus 1 Value:    $______
-+ Bonus 2 Value:    $______
-+ Bonus 3 Value:    $______
-─────────────────────────────
-Total Value:        $______
-Your Price:         $______
-Value Multiple:     ____x  (target: 5–10×)
-
-If customer pays:   $______
-They should get:    $______ in value (10× minimum)
-- [Outcome 1]:      $______
-- [Outcome 2]:      $______
-- [Outcome 3]:      $______
-```
-
----
 
 ## Quick Check (all must be yes before launch)
 
