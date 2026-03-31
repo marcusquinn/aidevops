@@ -3,116 +3,78 @@ mode: subagent
 tools:
   bash: true
 ---
-# Pre-Edit Git Check - Detailed Workflow
+# Pre-Edit Git Check
 
-## Script Usage
+## Usage
 
 ```bash
 ~/.aidevops/agents/scripts/pre-edit-check.sh
+# Loop mode (headless/full-loop):
+~/.aidevops/agents/scripts/pre-edit-check.sh --loop-mode --task "task description"
 ```
 
 ## Exit Codes
 
-| Exit Code | Meaning | Required Action |
-|-----------|---------|-----------------|
+| Code | Meaning | Action |
+|------|---------|--------|
 | `0` | OK to proceed | Continue with edits |
-| `1` | On protected branch (main/master) | STOP - present branch creation options |
-| `2` | Loop mode: worktree needed | Auto-create worktree for code task |
-| `3` | On feature branch in main repo | Present options to user |
+| `1` | On protected branch (main/master) | STOP — present branch options (interactive) |
+| `2` | Loop mode: worktree needed | Auto-create worktree |
+| `3` | Feature branch in main repo | Present options to user |
 
-## Interactive Mode (Exit 1)
+## Interactive Prompts
 
-If on main, present this prompt and WAIT for user response:
+**Exit 1 — on main:** Present and WAIT for user response (do NOT proceed without reply):
 
 > On `main`. Suggested branch: `{type}/{suggested-name}`
 >
-> 1. Create worktree (recommended - keeps main repo on main)
+> 1. Create worktree (recommended)
 > 2. Use different branch name
-> 3. Stay on `main` (docs-only, not recommended for code)
+> 3. Stay on `main` (docs-only)
 
-**Do NOT proceed until user replies with 1, 2, or 3**
+**Exit 3 — feature branch in main repo:**
 
-## Feature Branch in Main Repo (Exit 3)
-
-> Currently on branch: `{branch}` (in main repo, not worktree)
+> On branch: `{branch}` (main repo, not worktree)
 >
 > 1. Create worktree for this task (recommended)
-> 2. Continue on current branch (not recommended for code)
-> 3. Switch main repo back to main, then create worktree
->
-> Which would you prefer? [1/2/3]
+> 2. Continue on current branch
+> 3. Switch to main, then create worktree
 
-## Loop Mode
+## Loop Mode Auto-Decision
 
-```bash
-~/.aidevops/agents/scripts/pre-edit-check.sh --loop-mode --task "task description"
-```
+- **Docs-only** (`readme`, `changelog`, `documentation`, `docs/`, `typo`, `spelling`) → stay on main
+- **Code** (`feature`, `fix`, `bug`, `implement`, `refactor`, `add`, `update`, `enhance`, `port`, `ssl`, `helper`) → create worktree (overrides docs keywords)
 
-Auto-decision rules:
-- **Docs-only tasks** (README, CHANGELOG, docs/, typos) → Option 3 (stay on main)
-- **Code tasks** (feature, fix, implement, refactor, enhance) → Option 1 (create worktree)
+## Worktree Rationale
 
-Detection keywords:
-- Docs-only: `readme`, `changelog`, `documentation`, `docs/`, `typo`, `spelling`
-- Code (overrides docs): `feature`, `fix`, `bug`, `implement`, `refactor`, `add`, `update`, `enhance`, `port`, `ssl`, `helper`
+Main repo (`~/Git/{repo}/`) stays on `main` always. Prevents: uncommitted changes blocking switches, parallel sessions inheriting wrong branch, "local changes would be overwritten" errors.
 
-## Why Worktrees Are Default
+**Stay on main acceptable for:** docs-only (README, CHANGELOG, docs/), typos, version bumps, planning files (TODO.md, todo/).
 
-The main repo directory (`~/Git/{repo}/`) should ALWAYS stay on `main`. This prevents:
-- Uncommitted changes blocking branch switches
-- Parallel sessions inheriting wrong branch state
-- "Your local changes would be overwritten" errors
-
-## When Option 3 Is Acceptable
-
-- Documentation-only changes (README, CHANGELOG, docs/)
-- Typo fixes
-- Version bumps via release script
-- Planning files (TODO.md, todo/)
-
-## Planning Files Exception
-
-TODO.md and todo/ can be edited directly on main:
-
-```bash
-~/.aidevops/agents/scripts/planning-commit-helper.sh "plan: add new task"
-```
+**Planning files** edit directly on main: `planning-commit-helper.sh "plan: add new task"`
 
 ## Feature Branch Scenarios
 
 | Scenario | Script Output | Action |
 |----------|---------------|--------|
-| Feature branch in worktree | `OK - On branch: X (in worktree)` | Proceed normally |
-| Feature branch in main repo | `WARNING - MAIN REPO ON FEATURE BRANCH` | Present options |
-| Personal dev branch | Same as feature branch | Treat as feature branch |
+| In worktree | `OK - On branch: X (in worktree)` | Proceed |
+| In main repo | `WARNING - MAIN REPO ON FEATURE BRANCH` | Present exit 3 options |
 
-## Small Tasks Exception
+**Continue on current branch** acceptable IF: task relates to current branch purpose, will complete before session ends, no parallel sessions expected.
 
-Option 2 (continue on current branch) is acceptable IF:
-- The task is directly related to the current branch's purpose
-- You'll complete and commit before ending the session
-- No parallel sessions are expected
+## aidevops Framework Note
 
-## Working in aidevops Framework
-
-When modifying aidevops agents, you work in TWO locations:
-- **Source**: `~/Git/aidevops/.agents/` - THIS is the git repo, check branch HERE
-- **Deployed**: `~/.aidevops/agents/` - copy of source, not a git repo
-
-Run pre-edit-check.sh in `~/Git/aidevops/` BEFORE any changes to either location.
+Two locations: **Source** `~/Git/aidevops/.agents/` (git repo, check branch here) and **Deployed** `~/.aidevops/agents/` (copy, not git). Run pre-edit-check.sh in source repo BEFORE changes to either.
 
 ## Worktree Creation
 
 ```bash
-# Preferred: Worktrunk
+# Preferred
 wt switch -c {type}/{name}
-
-# Fallback: worktree-helper.sh
+# Fallback
 ~/.aidevops/agents/scripts/worktree-helper.sh add {type}/{name}
 ```
 
-After creating branch, call `session-rename_sync_branch` tool.
+After creating, call `session-rename_sync_branch` tool.
 
-## Branch Types
-
-`feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
+**Branch types:** `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
