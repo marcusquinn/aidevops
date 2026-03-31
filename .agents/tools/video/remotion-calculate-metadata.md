@@ -6,24 +6,31 @@ metadata:
   tags: calculateMetadata, duration, dimensions, props, dynamic
 ---
 
-# Using calculateMetadata
-
-Use `calculateMetadata` on a `<Composition>` to dynamically set duration, dimensions, and transform props before rendering.
+`calculateMetadata` runs before render and can override placeholder `<Composition>` values for duration, dimensions, fps, props, and output defaults.
 
 ```tsx
-<Composition id="MyComp" component={MyComponent} durationInFrames={300} fps={30} width={1920} height={1080} defaultProps={{videoSrc: 'https://remotion.media/video.mp4'}} calculateMetadata={calculateMetadata} />
+<Composition
+  id="MyComp"
+  component={MyComponent}
+  durationInFrames={300}
+  fps={30}
+  width={1920}
+  height={1080}
+  defaultProps={{ videoSrc: "https://remotion.media/video.mp4" }}
+  calculateMetadata={calculateMetadata}
+/>
 ```
 
-## Setting duration based on a video
+## Set duration from one video
 
-Use the `getMediaMetadata()` function from the mediabunny/metadata skill to get the video duration:
+Use `getMediaMetadata()` from the mediabunny/metadata skill when duration depends on the source file.
 
 ```tsx
-import {CalculateMetadataFunction} from 'remotion';
-import {getMediaMetadata} from '../get-media-metadata';
+import { CalculateMetadataFunction } from "remotion";
+import { getMediaMetadata } from "../get-media-metadata";
 
-const calculateMetadata: CalculateMetadataFunction<Props> = async ({props}) => {
-  const {durationInSeconds} = await getMediaMetadata(props.videoSrc);
+const calculateMetadata: CalculateMetadataFunction<Props> = async ({ props }) => {
+  const { durationInSeconds } = await getMediaMetadata(props.videoSrc);
 
   return {
     durationInFrames: Math.ceil(durationInSeconds * 30),
@@ -31,11 +38,11 @@ const calculateMetadata: CalculateMetadataFunction<Props> = async ({props}) => {
 };
 ```
 
-## Matching dimensions of a video
+## Match source dimensions
 
 ```tsx
-const calculateMetadata: CalculateMetadataFunction<Props> = async ({props}) => {
-  const {durationInSeconds, dimensions} = await getMediaMetadata(props.videoSrc);
+const calculateMetadata: CalculateMetadataFunction<Props> = async ({ props }) => {
+  const { durationInSeconds, dimensions } = await getMediaMetadata(props.videoSrc);
 
   return {
     durationInFrames: Math.ceil(durationInSeconds * 30),
@@ -45,14 +52,18 @@ const calculateMetadata: CalculateMetadataFunction<Props> = async ({props}) => {
 };
 ```
 
-## Setting duration based on multiple videos
+## Sum multiple videos
 
 ```tsx
-const calculateMetadata: CalculateMetadataFunction<Props> = async ({props}) => {
-  const metadataPromises = props.videos.map((video) => getMediaMetadata(video.src));
-  const allMetadata = await Promise.all(metadataPromises);
+const calculateMetadata: CalculateMetadataFunction<Props> = async ({ props }) => {
+  const allMetadata = await Promise.all(
+    props.videos.map((video) => getMediaMetadata(video.src)),
+  );
 
-  const totalDuration = allMetadata.reduce((sum, meta) => sum + meta.durationInSeconds, 0);
+  const totalDuration = allMetadata.reduce(
+    (sum, meta) => sum + meta.durationInSeconds,
+    0,
+  );
 
   return {
     durationInFrames: Math.ceil(totalDuration * 30),
@@ -60,25 +71,22 @@ const calculateMetadata: CalculateMetadataFunction<Props> = async ({props}) => {
 };
 ```
 
-## Setting a default outName
-
-Set the default output filename based on props:
+## Set `defaultOutName`
 
 ```tsx
-const calculateMetadata: CalculateMetadataFunction<Props> = async ({props}) => {
-  return {
-    defaultOutName: `video-${props.id}.mp4`,
-  };
-};
+const calculateMetadata: CalculateMetadataFunction<Props> = async ({ props }) => ({
+  defaultOutName: `video-${props.id}.mp4`,
+});
 ```
 
-## Transforming props
-
-Fetch data or transform props before rendering:
+## Transform props before render
 
 ```tsx
-const calculateMetadata: CalculateMetadataFunction<Props> = async ({props, abortSignal}) => {
-  const response = await fetch(props.dataUrl, {signal: abortSignal});
+const calculateMetadata: CalculateMetadataFunction<Props> = async ({
+  props,
+  abortSignal,
+}) => {
+  const response = await fetch(props.dataUrl, { signal: abortSignal });
   const data = await response.json();
 
   return {
@@ -90,16 +98,16 @@ const calculateMetadata: CalculateMetadataFunction<Props> = async ({props, abort
 };
 ```
 
-The `abortSignal` cancels stale requests when props change in the Studio.
+`abortSignal` cancels stale Studio requests when props change.
 
-## Return value
+## Return fields
 
-All fields are optional. Returned values override the `<Composition>` props:
+All fields are optional. Returned values override the `<Composition>` props.
 
-- `durationInFrames`: Number of frames
-- `width`: Composition width in pixels
-- `height`: Composition height in pixels
-- `fps`: Frames per second
-- `props`: Transformed props passed to the component
-- `defaultOutName`: Default output filename
-- `defaultCodec`: Default codec for rendering
+- `durationInFrames`: frame count
+- `width`: composition width in pixels
+- `height`: composition height in pixels
+- `fps`: frames per second
+- `props`: transformed props passed to the component
+- `defaultOutName`: default output filename
+- `defaultCodec`: default codec for rendering
