@@ -315,6 +315,56 @@ test_counts_standalone_opencode_binary_workers() {
 	return 0
 }
 
+test_counts_headless_runtime_helper_wrapper_without_child_process() {
+	# GH#14944: The live worker may be visible only as the outer
+	# headless-runtime-helper.sh wrapper before/without an opencode child in ps.
+	set_ps_fixture "650 S 00:18 bash /Users/test/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker --session-key issue-14944 --dir /tmp/aidevops --title Issue #14944 --prompt-file /tmp/pulse-14944.prompt"
+
+	local count output
+	count=$(count_active_workers)
+	if [[ "$count" != "1" ]]; then
+		print_result "count_active_workers counts wrapper-only headless-runtime-helper worker (GH#14944)" 1 "Expected 1, got ${count}"
+		return 0
+	fi
+
+	output=$(list_active_worker_processes)
+	if ! echo "$output" | grep -q "^650 "; then
+		print_result "count_active_workers counts wrapper-only headless-runtime-helper worker (GH#14944)" 1 "Expected wrapper PID 650 in output"
+		return 0
+	fi
+
+	print_result "count_active_workers counts wrapper-only headless-runtime-helper worker (GH#14944)" 0
+	return 0
+}
+
+test_deduplicates_headless_runtime_helper_wrapper_with_child_processes() {
+	# GH#14944: Wrapper + sandbox + opencode child chain should count as one
+	# logical worker, keeping the outer headless-runtime-helper wrapper PID.
+	set_ps_fixture "660 S 00:20 bash /Users/test/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker --session-key issue-14944 --dir /tmp/aidevops --title Issue #14944 --prompt-file /tmp/pulse-14944.prompt
+661 S 00:19 bash /Users/test/.aidevops/agents/scripts/sandbox-exec-helper.sh run --timeout 3600 --allow-secret-io -- /opt/homebrew/bin/opencode run \"/full-loop Implement issue #14944\" --dir /tmp/aidevops --session-key issue-14944 --title Issue #14944
+662 S 00:19 /opt/homebrew/lib/node_modules/opencode-ai/bin/.opencode run \"/full-loop Implement issue #14944\" --dir /tmp/aidevops --session-key issue-14944 --title Issue #14944"
+
+	local count output
+	count=$(count_active_workers)
+	if [[ "$count" != "1" ]]; then
+		print_result "count_active_workers deduplicates headless-runtime-helper wrapper with children (GH#14944)" 1 "Expected 1, got ${count}"
+		return 0
+	fi
+
+	output=$(list_active_worker_processes)
+	if ! echo "$output" | grep -q "^660 "; then
+		print_result "count_active_workers deduplicates headless-runtime-helper wrapper with children (GH#14944)" 1 "Expected wrapper PID 660 in output"
+		return 0
+	fi
+	if echo "$output" | grep -q "^661 \|^662 "; then
+		print_result "count_active_workers deduplicates headless-runtime-helper wrapper with children (GH#14944)" 1 "Expected child PIDs 661/662 to be deduplicated away"
+		return 0
+	fi
+
+	print_result "count_active_workers deduplicates headless-runtime-helper wrapper with children (GH#14944)" 0
+	return 0
+}
+
 test_deduplicates_chain_but_keeps_standalone_opencode_binary() {
 	# GH#12361: Mix of sandbox-launched chain and standalone /bin/.opencode worker.
 	# The chain (issue #5001) should deduplicate to 1; the standalone (issue #12361)
