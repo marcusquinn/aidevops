@@ -4,19 +4,17 @@ agent: Build+
 mode: subagent
 ---
 
-Arguments: $ARGUMENTS
+Arguments: $ARGUMENTS. Helper: `~/.aidevops/agents/scripts/ip-reputation-helper.sh`
 
-Helper: `~/.aidevops/agents/scripts/ip-reputation-helper.sh`
-
-## Route inputs
+## Commands
 
 - `1.2.3.4` → `check "$IP"`
 - `1.2.3.4 -f json` → `check "$IP" -f json`
 - `1.2.3.4 report` → `report "$IP"`
 - `1.2.3.4 --provider abuseipdb` → `check "$IP" --provider "$PROVIDER"`
-- `1.2.3.4 --no-cache` → `check "$IP" --no-cache`
 - `ips.txt` → `batch "$FILE"`
 - `ips.txt --dnsbl-overlap` → `batch "$FILE" --dnsbl-overlap`
+- `1.2.3.4 --no-cache` → `check "$IP" --no-cache`
 - no args → show usage
 
 Ops: `providers`, `cache-stats`, `cache-clear [--provider P] [--ip IP]`, `rate-limit-status`, `help`.
@@ -37,9 +35,7 @@ Providers (8/10 responded):
 Flags: Tor=NO  Proxy=NO  VPN=NO
 ```
 
-Providers: Spamhaus DNSBL, ProxyCheck.io, StopForumSpam, Blocklist.de, GreyNoise, AbuseIPDB, IPQualityScore, Scamalytics.
-
-Then offer: full report, single-provider recheck, batch check, raw JSON, or cache-clear recheck.
+Providers: Spamhaus DNSBL, ProxyCheck.io, StopForumSpam, Blocklist.de, GreyNoise, AbuseIPDB, IPQualityScore, Scamalytics. After results, offer: full report, single-provider recheck, batch check, raw JSON, or cache-clear recheck.
 
 ## Related
 
