@@ -11,9 +11,8 @@ tools:
 
 # Image Upscaling
 
-**Decision tree**: Local CLI for bulk/privacy → Replicate for quality/convenience → Cloudflare for CDN-integrated
-
-**Minimum targets**: 1200px wide (social sharing), 800px (blog content), 2x for retina
+- **Decision tree**: Real-ESRGAN for bulk/privacy, Replicate for best quality, Cloudflare for CDN-integrated resizing.
+- **Minimum targets**: 1200px wide for social sharing, 800px for blog content, 2x variants for retina.
 
 ## Providers
 
@@ -65,7 +64,7 @@ curl -s "https://api.replicate.com/v1/predictions/$PREDICTION_ID" \
 
 ### Cloudflare Images (CDN-Integrated)
 
-Resize/optimize on-the-fly (requires Cloudflare Pro+). Not AI upscaling — handles format conversion and responsive variants.
+Resize and optimize on the fly. Not AI upscaling; use it for format conversion and responsive delivery when already on Cloudflare Pro+.
 
 ```bash
 # Upload via API
@@ -77,7 +76,7 @@ curl -X POST "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/image
 
 ### Sharp (Node.js — Format Conversion)
 
-Not upscaling. Use for WebP/AVIF conversion and responsive variants.
+Not upscaling. Use it for WebP/AVIF conversion, responsive variants, and `withoutEnlargement` safety.
 
 ```javascript
 import sharp from 'sharp';
@@ -89,7 +88,7 @@ for (const width of [400, 800, 1200, 1600]) {
 }
 ```
 
-## When to Upscale
+## Tool Selection
 
 | Scenario | Tool |
 |----------|------|
@@ -103,14 +102,14 @@ for (const width of [400, 800, 1200, 1600]) {
 ## Pipeline
 
 ```text
-1. Analyze (Moondream)  — get content description
-2. Upscale if needed    — ensure minimum dimensions
-3. Convert format       — WebP (primary), JPEG (fallback)
-4. Compress             — target < 200KB for web
-5. Generate variants    — 400w, 800w, 1200w, 1600w
-6. Rename               — SEO-friendly filename
-7. Add metadata         — alt text, title, IPTC keywords
-8. Validate             — check OG requirements met
+1. Analyze (Moondream) — get content description
+2. Upscale if needed — ensure minimum dimensions
+3. Convert format — WebP (primary), JPEG (fallback)
+4. Compress — target < 200KB for web
+5. Generate variants — 400w, 800w, 1200w, 1600w
+6. Rename — SEO-friendly filename
+7. Add metadata — alt text, title, IPTC keywords
+8. Validate — check OG requirements met
 ```
 
 ## Size Targets
