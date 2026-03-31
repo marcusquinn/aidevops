@@ -538,6 +538,84 @@ STUB
 	return 0
 }
 
+test_dispatch_with_dedup_detaches_worker_stdio() {
+	local original_script_dir="$SCRIPT_DIR"
+	local original_helper="$HEADLESS_RUNTIME_HELPER"
+	local stdin_capture="${TEST_ROOT}/worker-stdin.txt"
+	local issue_log="/tmp/pulse-marcusquinn-aidevops-8890.log"
+	local fallback_log="/tmp/pulse-8890.log"
+	SCRIPT_DIR="$TEST_ROOT"
+
+	rm -f "$stdin_capture" "$issue_log" "$fallback_log"
+	set_ps_fixture ""
+
+	cat >"${TEST_ROOT}/dispatch-dedup-helper.sh" <<'FIXTURE'
+#!/usr/bin/env bash
+set -euo pipefail
+command_name="${1:-}"
+case "$command_name" in
+claim) exit 0 ;;
+*) exit 1 ;;
+esac
+FIXTURE
+	chmod +x "${TEST_ROOT}/dispatch-dedup-helper.sh"
+
+	cat >"${TEST_ROOT}/dispatch-ledger-helper.sh" <<'STUB'
+#!/usr/bin/env bash
+case "${1:-}" in
+check-issue) exit 1 ;;
+*) exit 0 ;;
+esac
+STUB
+	chmod +x "${TEST_ROOT}/dispatch-ledger-helper.sh"
+
+	HEADLESS_RUNTIME_HELPER="${TEST_ROOT}/headless-stdin-stub.sh"
+	cat >"$HEADLESS_RUNTIME_HELPER" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+cat >"${stdin_capture}"
+printf 'stub worker output\n'
+exit 0
+EOF
+	chmod +x "$HEADLESS_RUNTIME_HELPER"
+
+	gh() {
+		if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
+			printf '{"state":"OPEN","title":"t8890: stdio detach","labels":[]}\n'
+			return 0
+		fi
+		return 0
+	}
+	export -f gh
+
+	local dispatch_rc=0
+	dispatch_with_dedup "8890" "marcusquinn/aidevops" "Issue #8890: stdio detach" "t8890: stdio detach" \
+		"testuser" "/tmp/aidevops" "/full-loop test" <<<"candidate-stream-must-not-leak" || dispatch_rc=$?
+
+	local stdin_contents=""
+	if [[ -f "$stdin_capture" ]]; then
+		stdin_contents=$(tr '\n' ' ' <"$stdin_capture")
+	fi
+	local issue_log_contents=""
+	if [[ -f "$issue_log" ]]; then
+		issue_log_contents=$(tr '\n' ' ' <"$issue_log")
+	fi
+
+	HEADLESS_RUNTIME_HELPER="$original_helper"
+	SCRIPT_DIR="$original_script_dir"
+	unset -f gh
+	rm -f "$issue_log" "$fallback_log"
+
+	if [[ "$dispatch_rc" -eq 0 && -z "$stdin_contents" && "$issue_log_contents" == *"stub worker output"* ]]; then
+		print_result "dispatch_with_dedup detaches stdin and captures worker output to issue log (GH#14483)" 0
+		return 0
+	fi
+
+	print_result "dispatch_with_dedup detaches stdin and captures worker output to issue log (GH#14483)" 1 \
+		"dispatch_rc=${dispatch_rc}, stdin='${stdin_contents}', issue_log='${issue_log_contents}'"
+	return 0
+}
+
 test_build_ranked_dispatch_candidates_json_scores_candidates() {
 	local original_repos_json="$REPOS_JSON"
 	cat >"${REPOS_JSON}" <<'JSON'
@@ -748,6 +826,7 @@ main() {
 	test_dispatch_with_dedup_blocks_when_duplicate
 	test_dispatch_with_dedup_fails_closed_when_issue_metadata_missing
 	test_dispatch_with_dedup_proceeds_when_no_duplicate
+	test_dispatch_with_dedup_detaches_worker_stdio
 	test_build_ranked_dispatch_candidates_json_scores_candidates
 	test_build_ranked_dispatch_candidates_json_respects_schedule_gate
 	test_dispatch_deterministic_fill_floor_dispatches_up_to_capacity

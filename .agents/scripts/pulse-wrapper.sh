@@ -4693,13 +4693,28 @@ dispatch_with_dedup() {
 	gh issue edit "$issue_number" --repo "$repo_slug" \
 		--add-assignee "$self_login" --add-label "status:queued" --add-label "origin:worker" 2>/dev/null || true
 
+	# Detach worker stdio from the dispatcher (GH#14483).
+	# Without this, background workers inherit the candidate-loop stdin created by
+	# process substitutions and can consume the remaining candidate stream,
+	# causing the deterministic fill floor to stop after one dispatch. Redirect
+	# worker stdout/stderr into per-issue temp logs so launch validation reads the
+	# intended output file and dispatcher shells stay clean.
+	local safe_slug worker_log worker_log_fallback
+	safe_slug=$(echo "$repo_slug" | tr '/:' '--')
+	worker_log="/tmp/pulse-${safe_slug}-${issue_number}.log"
+	worker_log_fallback="/tmp/pulse-${issue_number}.log"
+	rm -f "$worker_log" "$worker_log_fallback"
+	: >"$worker_log"
+	ln -s "$worker_log" "$worker_log_fallback" 2>/dev/null || true
+
 	# Launch worker
 	"$HEADLESS_RUNTIME_HELPER" run \
 		--role worker \
 		--session-key "$session_key" \
 		--dir "$repo_path" \
 		--title "$dispatch_title" \
-		--prompt "$prompt" &
+		--prompt "$prompt" \
+		</dev/null >>"$worker_log" 2>&1 &
 	local worker_pid="$!"
 	sleep 2
 
