@@ -1281,6 +1281,11 @@
       "at": "2026-03-28T16:40:17Z",
       "pr": 12041
     },
+    ".agents/services/email/email-verification.md": {
+      "hash": "d8d5bf1e0ed2feed034371b34ea74d5a572eac25",
+      "at": "2026-03-31T09:57:12Z",
+      "pr": 14757
+    },
     ".agents/services/email/openpgp-setup.md": {
       "hash": "f893cd98da28874d714707765c45a895d991cede",
       "at": "2026-03-28T16:40:18Z",
