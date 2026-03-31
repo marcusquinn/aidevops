@@ -18,25 +18,27 @@ tools:
 
 ## Quick Reference
 
-- **Token storage**: `~/.config/aidevops/credentials.sh` (600 perms) or gopass
-- **Never commit**: API keys, tokens, passwords, secrets
-- **Branch protection**: Required on `main` — PRs, status checks, signed commits
-- **Secret scanning**: `secretlint-helper.sh scan` before every push
-- **Incident**: Rotate first, remove from history second
+- **Store secrets**: `~/.config/aidevops/credentials.sh` (600 perms) or gopass
+- **Never commit**: API keys, tokens, passwords, private keys, other secrets
+- **Protect `main`**: PRs, required status checks, stale-review dismissal, admin enforcement
+- **Scan before push**: `secretlint-helper.sh scan`; use `trufflehog` for history
+- **Incident order**: rotate first, remove from history second
 
 <!-- AI-CONTEXT-END -->
 
-## Authentication
+## Preventive Controls
 
-CLI auth stores tokens in system keyring (not env vars):
+Use CLI auth so tokens stay in the system keyring instead of repo files or long-lived env vars:
 
 ```bash
 gh auth login -s workflow   # -s workflow for CI PR support
+glab auth login
+tea login add
 ```
 
-Token storage: `~/.config/aidevops/credentials.sh` (600 perms). Rotate every 6-12 months; immediately if exposed. Short-lived tokens for CI/CD. See `git/authentication.md` for full setup.
+Store fallback tokens in `~/.config/aidevops/credentials.sh` with 600 permissions. Rotate every 6-12 months, rotate immediately if exposed, and prefer short-lived CI/CD credentials. See `git/authentication.md` for platform-specific setup.
 
-## Branch Protection
+### Branch Protection
 
 ```bash
 gh api repos/{owner}/{repo}/branches/main/protection -X PUT \
@@ -45,9 +47,9 @@ gh api repos/{owner}/{repo}/branches/main/protection -X PUT \
   -f required_pull_request_reviews='{"required_approving_review_count":1}'
 ```
 
-Require: PR reviews (dismiss stale), CI status checks, code owner review. Signed commits recommended.
+Require PR reviews, dismiss stale approvals, enforce admins, require CI status checks, and require CODEOWNERS review where available. Signed commits are recommended.
 
-## Commit Signing
+### Commit Signing
 
 ```bash
 gpg --full-generate-key
@@ -56,9 +58,9 @@ git config --global user.signingkey KEY_ID
 git config --global commit.gpgsign true
 ```
 
-## Secret Detection
+### Secret Detection
 
-Primary: `secretlint-helper.sh scan`. History: `trufflehog git file://. --only-verified`. Also: `git-secrets` (AWS patterns).
+Primary scan: `secretlint-helper.sh scan`. History scan: `trufflehog git file://. --only-verified`. `git-secrets` remains useful for AWS-focused pattern checks.
 
 Pre-commit hook (supplementary — secretlint is primary):
 
@@ -71,18 +73,31 @@ if git diff --cached | grep -iE "(api_key|token|password|secret|private_key)" > 
 fi
 ```
 
+## Access Control
+
+Use least privilege, review access quarterly, remove inactive collaborators, and prefer teams over direct user grants. Roles: Read = view code/issues; Triage = manage issues without push; Write = push to non-protected branches; Maintain = manage settings and protected-branch workflows; Admin = full access.
+
 ## Incident Response
 
-**Token exposed:** Revoke immediately → generate replacement → update consumers → audit for unauthorized access.
+**Token exposed:** revoke immediately → generate replacement → update consumers → audit for unauthorized access.
 
 **Secret committed:**
 
-1. **Rotate the secret first** — assume compromised
+1. **Rotate the secret first** — assume compromise.
 2. Remove from history:
 
    ```bash
-   # Preferred: git-filter-repo (pip install git-filter-repo)
-   git filter-repo --invert-paths --path path/to/secret
+    # Preferred: git-filter-repo (pip install git-filter-repo)
+    git filter-repo --invert-paths --path path/to/secret
+    git push origin --force --all
+   ```
+
+   If `git filter-repo` is unavailable, use the legacy `git filter-branch` flow only as a fallback:
+
+   ```bash
+   git filter-branch --force --index-filter \
+     "git rm --cached --ignore-unmatch path/to/secret" \
+     --prune-empty --tag-name-filter cat -- --all
    git push origin --force --all
    ```
 
