@@ -4,18 +4,18 @@ agent: Build+
 mode: subagent
 ---
 
-Create recurring operational routines (reports, audits, monitoring, outreach) without forcing `/full-loop`.
+Create recurring operational routines (reports, audits, monitoring, outreach) without `/full-loop`.
 
 Arguments: $ARGUMENTS
 
 ## Route by work type
 
-- Code changes + PR traceability needed → `/full-loop`
+- Code changes or PR traceability needed → `/full-loop`
 - Operational execution only → direct commands with `opencode run`
 
 ## Model the routine in 3 dimensions
 
-Keep these independent so each can change without rewriting the others:
+Keep these independent so one can change without rewriting the others:
 
 1. **SOP** — what to do
 2. **Targets** — who/what to apply it to
@@ -25,7 +25,7 @@ Keep these independent so each can change without rewriting the others:
 
 ### Step 1: Define the SOP command
 
-Pick or create a command that performs one run for one target. Prefer deterministic helpers/scripts over free-form prompts.
+Pick or create a command that runs once for one target. Prefer deterministic helpers/scripts over free-form prompts.
 
 ```bash
 /seo-export --account client-a --format summary
@@ -42,7 +42,7 @@ opencode run --dir ~/Git/<repo> --agent SEO --title "Routine dry run" \
   "/seo-export --account client-a --format summary"
 ```
 
-Required checks before rollout:
+Before rollout, verify:
 
 - Output format stable and client-safe
 - No cross-client data leakage
@@ -51,11 +51,11 @@ Required checks before rollout:
 
 ### Step 3: Pilot rollout
 
-Roll out in order: (1) internal/self → (2) single client → (3) small cohort → (4) full target set. Do not skip stages for outbound client-facing routines.
+Roll out in order: internal/self → single client → small cohort → full target set. Do not skip stages for outbound routines.
 
 ### Step 4: Schedule
 
-Use launchd/cron via `routine-helper.sh` when possible:
+Use `routine-helper.sh` for launchd/cron when possible:
 
 ```bash
 ~/.aidevops/agents/scripts/routine-helper.sh plan \
@@ -75,11 +75,11 @@ opencode run --dir ~/Git/<repo> --agent SEO --title "Weekly rankings" \
   "/seo-export --account client-a --format summary"
 ```
 
-Queue-driven dev work goes through `/pulse`. Fixed-time routines go through scheduler entries.
+Queue-driven development goes through `/pulse`. Fixed-time routines go through scheduler entries.
 
 ## Example: GH Failure Miner routine
 
-Cluster CI failure signatures from GitHub notifications and surface systemic fixes. It mines both PR and push sources by default (`--pr-only` for PR-only).
+Cluster CI failure signatures from GitHub notifications and surface systemic fixes. It mines PR and push sources by default (`--pr-only` for PR-only).
 
 ```bash
 # Ad-hoc report
@@ -111,7 +111,7 @@ This is operational work (triage + issue filing), so do not use `/full-loop`.
 
 ## Routine spec template
 
-Store routine definitions in your repo, for example `routines/seo-weekly.yaml`:
+Store routine definitions in your repo, e.g. `routines/seo-weekly.yaml`:
 
 ```yaml
 name: weekly-seo-rankings
@@ -122,9 +122,9 @@ targets_cmd: "wp-helper --list-category client --jsonl"
 run_template: "/seo-export --account {{target.account}} --format summary"
 ```
 
-`targets_cmd` emits one JSON object per line for target iteration. `routine-helper.sh` currently schedules a literal `--prompt`; it does not parse `targets_cmd` or `run_template` directly.
+`targets_cmd` emits one JSON object per line for target iteration. `routine-helper.sh` currently schedules a literal `--prompt`; it does not parse `targets_cmd` or `run_template`.
 
-## Anti-Patterns
+## Anti-patterns
 
 - Repeating TODO items for routine execution
 - Running operational routines through `/full-loop`
