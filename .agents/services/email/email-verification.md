@@ -8,21 +8,24 @@ Local email address verifier with SMTP RCPT TO probing, disposable domain detect
 ## Quick Start
 
 ```bash
-# Verify a single email
+# Single email
 email-verify-helper.sh verify user@example.com
 
 # Quiet/CSV mode
 email-verify-helper.sh verify user@example.com --quiet
 
-# Bulk verify from file
-email-verify-helper.sh bulk emails.txt results.csv
+# Bulk verify (one email per line, # comments allowed)
+# Output CSV: email,score,check,details
+email-verify-helper.sh bulk input.txt output.csv
 
-# Update disposable domain database (run on first use)
+# Update disposable domain database (run on first use, then weekly/monthly)
 email-verify-helper.sh update-domains
 
 # View statistics
 email-verify-helper.sh stats
 ```
+
+Bulk mode: 1s delay between SMTP probes, progress every 10 emails, summary on completion.
 
 ## 6 Verification Checks
 
@@ -48,36 +51,9 @@ Scores match the FixBounce classification system:
 
 ## Disposable Domain Database
 
-- **Source**: [disposable-email-domains](https://github.com/disposable-email-domains/disposable-email-domains) (MIT, 3.2k stars, 170k+ domains)
-- **Storage**: `~/.aidevops/.agent-workspace/data/disposable-domains.db` (SQLite with FTS5)
-- **Update**: `email-verify-helper.sh update-domains` (downloads and rebuilds)
+- **Source**: [disposable-email-domains](https://github.com/disposable-email-domains/disposable-email-domains) (MIT, 170k+ domains)
+- **Storage**: `~/.aidevops/.agent-workspace/data/disposable-domains.db` (SQLite FTS5)
 - **Lookup**: Exact match on domain + parent domain check (catches subdomains)
-
-Run `update-domains` on first use and periodically (weekly/monthly) to stay current.
-
-## Bulk Verification
-
-```bash
-# Input: one email per line, # comments allowed
-email-verify-helper.sh bulk input.txt output.csv
-```
-
-Output CSV format: `email,score,check,details`
-
-Features:
-
-- 1-second delay between SMTP probes (rate limiting)
-- Progress indicator every 10 emails
-- Summary statistics on completion
-- Results recorded to stats database
-
-## Statistics
-
-All verifications are recorded in `~/.aidevops/.agent-workspace/data/email-verify-stats.db`:
-
-- Score breakdown (deliverable/risky/undeliverable/unknown percentages)
-- Top domains verified
-- Recent verification history
 
 ## Dependencies
 
@@ -91,18 +67,14 @@ All verifications are recorded in `~/.aidevops/.agent-workspace/data/email-verif
 
 ## SMTP Probing Notes
 
-- Uses port 25 (standard MX-to-MX delivery port)
-- Sequential SMTP conversation with delays between commands
-- Falls back to openssl STARTTLS if plain connection fails
-- Many providers (Gmail, Outlook) block RCPT TO verification from unknown sources
-- Results may be `unknown` when SMTP probing is blocked -- this is expected
-- Rate-limited: 1-second delay between probes in bulk mode
+- Port 25 with sequential SMTP conversation; falls back to openssl STARTTLS
+- Many providers (Gmail, Outlook) block RCPT TO from unknown sources -- `unknown` result is expected
+- Rate-limited: 1s delay between probes in bulk mode
 
 ## Architecture
 
 ```text
 email-verify-helper.sh
-  |
   +-- check_syntax()        -- RFC 5321 regex validation
   +-- check_mx()            -- dig MX + A record lookup
   +-- check_disposable()    -- SQLite FTS5 lookup
@@ -112,6 +84,8 @@ email-verify-helper.sh
   +-- calculate_score()     -- Aggregate scoring engine
   +-- record_verification() -- Stats DB recording
 ```
+
+**Stats**: All verifications recorded in `~/.aidevops/.agent-workspace/data/email-verify-stats.db` (score breakdown, top domains, recent history).
 
 ## Related
 
