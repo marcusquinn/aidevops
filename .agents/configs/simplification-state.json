@@ -3164,6 +3164,11 @@
       "hash": "867372b20ef0d4adf0cbefddf0d59533f2ef5a1b",
       "at": "2026-03-31T13:06:56Z",
       "pr": 14916
+    },
+    ".agents/tools/mobile/app-dev-publishing.md": {
+      "hash": "e6cce1633769fd8e9dfc4cc9d29e7b3b3ea58add",
+      "at": "2026-03-31T19:26:30Z",
+      "pr": 15016
     }
   }
 }
