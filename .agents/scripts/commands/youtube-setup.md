@@ -51,7 +51,12 @@ Verify the channel exists and display basic stats (subscribers, videos, total vi
 ~/.aidevops/agents/scripts/memory-helper.sh store \
   --type WORKING_SOLUTION \
   --namespace youtube \
-  "Channel voice: [voice description]. Audience: [target audience]."
+  "Channel voice: [voice description]."
+
+~/.aidevops/agents/scripts/memory-helper.sh store \
+  --type WORKING_SOLUTION \
+  --namespace youtube \
+  "Audience: [target audience]."
 ```
 
 Also store individual competitor profiles:
@@ -86,7 +91,7 @@ Setup complete! Next steps:
 
 Your configuration is stored in memory and will persist across sessions.
 
-The explicit `Channel voice` entry keeps `/youtube script` and the script-writer guide aligned with the stored recall key.
+The explicit `Channel voice` entry ensures `/youtube script` and the script-writer guide can reliably recall it via FTS5 full-text search. Phrase stored entries around likely search tokens such as `Channel voice` instead of relying on exact string equality.
 ```
 
 ## Options
