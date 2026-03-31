@@ -1660,16 +1660,17 @@ list_active_worker_processes() {
 	#   /path/to/.opencode run ...                               (binary grandchild)
 	# All three contain /full-loop (or /review-issue-pr) and opencode in their command line.
 	#
-	# GH#12361: Workers dispatched via headless-runtime-helper.sh without
-	# sandbox-exec-helper.sh run as /bin/.opencode processes directly.
-	# The old approach blanket-excluded /bin/.opencode and node child
-	# processes, which missed standalone workers. New approach:
-	#   1. Match all processes with /full-loop or /review-issue-pr + opencode (any binary path)
+	# GH#12361 / GH#14944: Workers may appear either as direct opencode
+	# processes or as headless-runtime-helper.sh wrappers around sandbox +
+	# opencode children. Counting must treat the whole wrapper/process tree as
+	# one logical worker. New approach:
+	#   1. Match worker processes launched via opencode OR
+	#      headless-runtime-helper.sh run --role worker.
 	#   2. Deduplicate by issue+dir key: when multiple processes share the
-	#      same issue AND --dir path (sandbox chain), prefer the sandbox
-	#      launcher; if no launcher exists, keep the first match (the
-	#      standalone worker). Different --dir paths = different logical
-	#      workers even with the same issue number.
+	#      same issue AND --dir path, prefer the outermost launcher
+	#      (headless-runtime-helper.sh wrapper > sandbox launcher > child).
+	#      Different --dir paths = different logical workers even with the
+	#      same issue number.
 	#
 	# GH#6413: Process state filtering — exclude zombie (Z) and stopped (T)
 	# processes. These are dead/stuck processes that hold no useful work but
@@ -1678,10 +1679,16 @@ list_active_worker_processes() {
 	# used for filtering only; output format remains pid,etime,command for
 	# backward compatibility with all consumers.
 	ps axo pid,stat,etime,command | awk '
-		($0 ~ /\/full-loop/ || $0 ~ /\/review-issue-pr/) &&
-		$0 !~ /(^|[[:space:]])\/pulse([[:space:]]|$)/ &&
-		$0 !~ /Supervisor Pulse/ &&
-		$0 ~ /(^|[[:space:]\/])\.?opencode([[:space:]]|$)/ {
+		{
+			is_headless_wrapper = ($0 ~ /(^|[[:space:]\/])headless-runtime-helper\.sh([[:space:]]|$)/ && $0 ~ /(^|[[:space:]])run([[:space:]]|$)/ && $0 ~ /--role[[:space:]]+worker/)
+			has_worker_prompt = ($0 ~ /\/full-loop/ || $0 ~ /\/review-issue-pr/)
+			has_worker_binary = ($0 ~ /(^|[[:space:]\/])\.?opencode([[:space:]]|$)/ || $0 ~ /(^|[[:space:]\/])headless-runtime-helper\.sh([[:space:]]|$)/)
+
+			if (!(has_worker_prompt || is_headless_wrapper)) next
+			if ($0 ~ /(^|[[:space:]])\/pulse([[:space:]]|$)/) next
+			if ($0 ~ /Supervisor Pulse/) next
+			if (!has_worker_binary) next
+
 			# $2 is the stat column (e.g., S, SN, Ss, Z, Zs, T, TN)
 			stat = $2
 			# Exclude zombies (Z*) and stopped processes (T*)
@@ -1710,20 +1717,25 @@ list_active_worker_processes() {
 				sub(/--dir[[:space:]]+/, "", dir)
 			}
 			dedup_key = issue "|" dir
-			# Prefer sandbox launcher over node/binary children for same issue+dir
-			is_launcher = ($0 ~ /sandbox-exec-helper\.sh/)
+			# Prefer outer launchers over child processes for same issue+dir.
+			launcher_rank = 0
+			if ($0 ~ /(^|[[:space:]\/])headless-runtime-helper\.sh([[:space:]]|$)/ && $0 ~ /--role[[:space:]]+worker/) {
+				launcher_rank = 2
+			} else if ($0 ~ /sandbox-exec-helper\.sh/) {
+				launcher_rank = 1
+			}
 			if (issue != "" && dedup_key in seen) {
 				# Already have a line for this issue+dir
-				if (is_launcher && !seen_launcher[dedup_key]) {
-					# Replace child with launcher
+				if (launcher_rank > seen_launcher_rank[dedup_key]) {
+					# Replace inner child with outer launcher
 					seen_lines[dedup_key] = line
-					seen_launcher[dedup_key] = 1
+					seen_launcher_rank[dedup_key] = launcher_rank
 				}
-				# Otherwise skip (child of existing launcher, or duplicate)
+				# Otherwise skip (lower-rank child of existing launcher, or duplicate)
 			} else if (issue != "") {
 				seen[dedup_key] = 1
 				seen_lines[dedup_key] = line
-				seen_launcher[dedup_key] = is_launcher ? 1 : 0
+				seen_launcher_rank[dedup_key] = launcher_rank
 				key_order[++key_count] = dedup_key
 			} else {
 				# No issue number found — print directly (edge case)
