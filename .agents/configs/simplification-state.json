@@ -2756,6 +2756,11 @@
       "at": "2026-03-30T03:34:12Z",
       "pr": 13637
     },
+    ".agents/reference/session.md": {
+      "hash": "1dd4861e05bb3b702948db2b4eeb8d923adbe411",
+      "at": "2026-03-31T04:18:32Z",
+      "pr": null
+    },
     ".agents/services/hosting/cloudflare-platform-skill/workerd-gotchas.md": {
       "hash": "2cbb9c1c836f4b8fce6dbe5b982d8760a75922ce",
       "at": "2026-03-30T03:34:13Z",
