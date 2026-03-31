@@ -6,11 +6,11 @@ mode: subagent
 
 Arguments: `$ARGUMENTS`
 
-Use `~/.aidevops/agents/scripts/ip-reputation-helper.sh` for all checks.
+Always route through `~/.aidevops/agents/scripts/ip-reputation-helper.sh`.
 
-## Dispatch routes
+## Route map
 
-| Input | Route |
+| Input | Run |
 |---|---|
 | `1.2.3.4` | `check "$IP"` (multi-provider summary) |
 | `1.2.3.4 -f json` | `check "$IP" -f json` |
@@ -19,11 +19,13 @@ Use `~/.aidevops/agents/scripts/ip-reputation-helper.sh` for all checks.
 | `1.2.3.4 --no-cache` | `check "$IP" --no-cache` |
 | `ips.txt` | `batch "$FILE"` |
 | `ips.txt --dnsbl-overlap` | `batch "$FILE" --dnsbl-overlap` |
-| _(no args)_ | Show usage/help |
+| _(no args)_ | Show help/usage |
 
-Operational subcommands: `providers`, `cache-stats`, `cache-clear [--provider P] [--ip IP]`, `rate-limit-status`, `help`.
+Operational commands: `providers`, `cache-stats`, `cache-clear [--provider P] [--ip IP]`, `rate-limit-status`, `help`.
 
-## Expected output
+## Output contract
+
+Expected structure:
 
 ```text
 IP Reputation: 1.2.3.4
@@ -41,7 +43,7 @@ Flags: Tor=NO  Proxy=NO  VPN=NO
 
 Provider set: Spamhaus DNSBL, ProxyCheck.io, StopForumSpam, Blocklist.de, GreyNoise, AbuseIPDB, IPQualityScore, Scamalytics.
 
-After results, offer follow-up options: full report, single-provider recheck, batch check, raw JSON, or cache-clear recheck.
+After returning results, offer next actions: full report, single-provider recheck, batch check, raw JSON, or cache-clear recheck.
 
 ## Related
 
