@@ -17,26 +17,18 @@ tools:
 
 - **Website**: https://mytelfon.com/
 - **Apps**: iOS, Android, Chrome Extension, Microsoft Edge Add-on
-- **Features**: Calls, SMS, WhatsApp, Call Recording, Bulk SMS, Multi-number
+- **Setup time**: ~5 minutes
 - **Pricing**: Telfon subscription + Twilio pay-as-you-go usage
-- **Setup Time**: ~5 minutes
-- **Use when**: user needs a phone interface (not just API), sales/support teams needing softphone, WhatsApp + SMS in one app, non-technical users managing Twilio numbers
+- **Best for**: end users, sales/support teams, WhatsApp + SMS in one app, non-technical users managing Twilio numbers
+- **Core features**: calls, SMS, WhatsApp, call recording, bulk SMS, multi-number
 
 ## Telfon vs Direct Twilio
 
-| Aspect | Telfon | Direct Twilio |
-|--------|--------|---------------|
-| Interface | Mobile/desktop apps | API/CLI only |
-| Setup | 5 minutes | Requires development |
-| Best For | End users, sales teams | Developers, automation |
-| Customization | Limited to app features | Fully customizable |
-| Cost | Telfon subscription + Twilio usage | Twilio usage only |
-| WhatsApp | Built-in | Requires setup |
-| Call Recording | One-click enable | Requires TwiML config |
+- **Telfon**: mobile/desktop interface, ~5 minute setup, built-in WhatsApp, one-click recording, limited to app features
+- **Direct Twilio**: API/CLI only, requires development, fully customizable, lower software cost, recording/WhatsApp need custom setup
+- Use direct Twilio for automated workflows, custom integrations, full API control, or cost optimization. Use Telfon when people need a softphone UI on top of Twilio.
 
-Use Direct Twilio for: automated workflows, custom integrations, full API control, cost optimization.
-
-## Setup (5 Minutes)
+## Setup
 
 **Prerequisites**: Twilio account (https://www.twilio.com/try-twilio), Twilio phone number, Telfon account (https://mytelfon.com/).
 
@@ -46,21 +38,16 @@ Use Direct Twilio for: automated workflows, custom integrations, full API contro
    - Android: https://play.google.com/store/apps/details?id=com.wmt.cloud_telephony.android
    - Chrome: https://chromewebstore.google.com/detail/telfon-twilio-calls/bgkbahmggkomlcagkagcmiggkmcjmgdi
    - Edge: https://microsoftedge.microsoft.com/addons/detail/telfon-virtual-phone-sys/hbdeajgckookmiogfljihebodfammogd
-3. Settings > Twilio Integration → enter Account SID, Auth Token, select number(s)
+3. Open **Settings > Twilio Integration**, enter the SID + Auth Token, then select number(s)
 
-Demo/guides: https://mytelfon.com/demo/
+Demo and guides: https://mytelfon.com/demo/
 
-## Number Management
+## Numbers and Features
 
-| Scenario | Action |
-|----------|--------|
-| Numbers already in Twilio | Settings > Phone Numbers — auto-appear, select to activate |
-| Buy via Telfon | Phone Numbers > Buy New Number (charged to Twilio account) |
-| Unavailable via API (toll-free, short codes) | Contact Twilio support; see `twilio.md` for AI-assisted request |
-
-Numbers always remain in your Twilio account; Telfon provides the interface only.
-
-## Features
+- **Numbers already in Twilio**: open **Settings > Phone Numbers**; they auto-appear and can be activated there
+- **Buy via Telfon**: **Phone Numbers > Buy New Number**; the charge still lands in the Twilio account
+- **Unavailable via API** (toll-free, short codes): contact Twilio support; see `twilio.md` for AI-assisted requests
+- Numbers remain in the Twilio account; Telfon is the interface layer
 
 | Feature | Path | Notes |
 |---------|------|-------|
@@ -73,34 +60,30 @@ Numbers always remain in your Twilio account; Telfon provides the interface only
 | Voicemail | Settings > Voicemail → enable, record greeting, optional transcription | |
 | Call Forwarding | Settings > Call Forwarding → always/busy/no-answer/unreachable rules | |
 
-## Integration with aidevops
+## aidevops Usage
 
-- **AI uses Twilio directly**: automated reminders, OTP, bulk notifications, webhook-triggered messages
-- **Users use Telfon**: manual calls, conversational SMS, WhatsApp, reviewing recordings
-- **Hybrid**: AI sends reminder → customer replies → webhook logs to CRM → user responds in Telfon
+- **AI uses Twilio directly** for automated reminders, OTP, bulk notifications, and webhook-triggered messages
+- **Users use Telfon** for manual calls, conversational SMS, WhatsApp, and reviewing recordings
+- **Hybrid flow**: AI sends reminder → customer replies → webhook logs to CRM → user responds in Telfon
 
-## Pricing
+## Pricing, Troubleshooting, Security
 
 - **Telfon subscription**: https://mytelfon.com/pricing/ (Free Trial / Starter / Professional / Enterprise)
-- **Twilio usage** (separate): SMS ~$0.0079/msg, Voice ~$0.014/min, Numbers ~$1.15/mo, Recording ~$0.0025/min — https://www.twilio.com/en-us/pricing
+- **Twilio usage**: SMS ~$0.0079/msg, Voice ~$0.014/min, Numbers ~$1.15/mo, Recording ~$0.0025/min — https://www.twilio.com/en-us/pricing
 - **Cost tips**: use Messaging Services for bulk SMS, set Twilio spend alerts, review unused numbers monthly
-
-## Troubleshooting
 
 | Issue | Steps |
 |-------|-------|
 | Can't connect to Twilio | Verify Account SID + Auth Token; check account not suspended; verify number active |
-| Poor call quality | WiFi preferred; close bandwidth-heavy apps; check https://status.twilio.com/ |
+| Poor call quality | Prefer Wi-Fi, close bandwidth-heavy apps, check https://status.twilio.com/ |
 | SMS not delivering | Verify +1XXXXXXXXXX format; check Telfon > Messages status; review Twilio debugger; 10DLC required for US A2P |
 | WhatsApp not sending | Verify Business account connected; check 24h window; use approved templates outside window |
 
-## Security
+- Recordings are stored in Telfon cloud + Twilio; review the Telfon privacy policy
+- Use strong passwords + 2FA and revoke access for departed team members
+- Telfon inherits Twilio compliance certifications; verify fit for regulated industries
 
-- Recordings stored in Telfon cloud + Twilio; review Telfon privacy policy
-- Strong passwords + 2FA; revoke access for departed team members
-- Telfon inherits Twilio compliance certifications; verify for regulated industries
-
-## Alternatives
+## Alternatives and Related
 
 | App | Strengths | Best For |
 |-----|-----------|----------|
@@ -110,8 +93,6 @@ Numbers always remain in your Twilio account; Telfon provides the interface only
 | RingCentral | Full UCaaS | Large organizations |
 | JustCall | CRM integrations | Sales teams |
 
-## Related
-
-- `twilio.md` — Direct Twilio API usage
-- `ses.md` — Email integration for multi-channel
+- `twilio.md` — direct Twilio API usage
+- `ses.md` — email integration for multi-channel
 - Telfon Help: https://mytelfon.com/support/
