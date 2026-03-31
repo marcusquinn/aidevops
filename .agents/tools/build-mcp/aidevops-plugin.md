@@ -17,8 +17,7 @@ tools:
 
 - **Status**: Implemented (`t008.1` PR #1138, `t008.2` PR #1149, `t008.3` PR #1150)
 - **Purpose**: Native OpenCode plugin wrapper for aidevops
-- **Approach**: Single-file ESM plugin using SDK hooks
-- **Location**: `.agents/plugins/opencode-aidevops/index.mjs` plus package metadata
+- **Implementation**: Single-file ESM plugin at `.agents/plugins/opencode-aidevops/index.mjs`
 - **SDK**: `@opencode-ai/plugin` v1.1.56+ (`index.d.ts` on npm)
 - **Boundary**: `generate-opencode-agents.sh` and `setup.sh` own static config; the plugin owns runtime hooks and tools. Shell-generated config wins on conflicts.
 
@@ -26,23 +25,23 @@ tools:
 
 ## Runtime surface
 
-| Concern | Mechanism | Notes |
+| Surface | Mechanism | Notes |
 |---|---|---|
 | Agent loading + MCP registration | `config` hook | Runtime-only layer |
 | Custom tools | `tool` registration | Adds aidevops-specific tools |
-| Quality checks | `tool.execute.before` / `tool.execute.after` | Enforces local quality gates |
+| Quality gates | `tool.execute.before` / `tool.execute.after` | Enforces local checks and logging |
 | Shell environment | `shell.env` hook | Exports aidevops paths and version |
-| Compaction context | `experimental.session.compacting` hook | Preserves loop state across resets |
+| Session compaction | `experimental.session.compacting` hook | Preserves loop state across resets |
 
 ## Hook details
 
 ### `config` hook
 
-- **Agent loading (`t008.1`)**: reads `~/.aidevops/agents/`, parses YAML frontmatter, injects subagent definitions into `config.agent`, and skips agents already defined by shell-generated config.
-- **MCP registration (`t008.2`)**: data-driven registry avoids re-running `generate-opencode-agents.sh`.
-- **Registry fields**: `name`, `type` (`local`/`remote`), `command` or `url`, `eager`, `toolPattern`, `globallyEnabled`, `requiresBinary`, `macOnly`.
-- **Startup policy**: all 11 MCPs are lazy-loaded, saving ~7K tokens at startup.
-- **Per-agent permissions**: `AGENT_MCP_TOOLS` maps agents to tool globs, for example `@dataforseo` -> `dataforseo_*`.
+- Reads `~/.aidevops/agents/`, parses YAML frontmatter, injects subagent definitions into `config.agent`, and skips agents already defined by shell-generated config (`t008.1`).
+- Registers MCP servers from a data-driven registry instead of re-running `generate-opencode-agents.sh` (`t008.2`).
+- Registry fields: `name`, `type` (`local`/`remote`), `command` or `url`, `eager`, `toolPattern`, `globallyEnabled`, `requiresBinary`, `macOnly`.
+- `AGENT_MCP_TOOLS` maps agents to tool globs, for example `@dataforseo` -> `dataforseo_*`.
+- Startup policy: all 11 MCPs are lazy-loaded, saving ~7K tokens at startup.
 
 | MCP | Type | Global tools |
 |---|---|---|
@@ -76,7 +75,12 @@ tools:
 
 ### `shell.env` hook
 
-Exports `PATH` (prepends `~/.aidevops/agents/scripts/`), `AIDEVOPS_AGENTS_DIR`, `AIDEVOPS_WORKSPACE_DIR`, and `AIDEVOPS_VERSION`.
+Exports:
+
+- `PATH` with `~/.aidevops/agents/scripts/` prepended
+- `AIDEVOPS_AGENTS_DIR`
+- `AIDEVOPS_WORKSPACE_DIR`
+- `AIDEVOPS_VERSION`
 
 ### `experimental.session.compacting` hook
 
