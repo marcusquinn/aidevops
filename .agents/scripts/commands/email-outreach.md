@@ -6,66 +6,57 @@ mode: subagent
 
 Launch or operate outbound cold email campaigns.
 
-Arguments: $ARGUMENTS
+Arguments: `$ARGUMENTS`
 
 ## Workflow
 
-### Step 1: Determine Platform and Action
+### 1. Parse platform and action
 
-Parse `$ARGUMENTS` into two parts:
-
-- Platform: `smartlead`, `instantly`, `manyreach`, or `help`
+- Platform: `smartlead`, `instantly`, `manyreach`, `help`
 - Action: `launch`, `warmup`, `leads`, `pause`, `status`, `analytics`
+- Missing platform: ask for one and show supported options
 
-If no platform is provided, ask for one and show supported options.
+### 2. Validate launch inputs
 
-### Step 2: Validate Campaign Inputs
-
-Before launching, require:
+Require before launch:
 
 - Campaign objective and offer
-- Sending mailbox/domain to use
+- Sending mailbox or domain
 - Lead source or lead list path
 - Daily volume target and warmup status
 
-Enforce safety defaults from outreach policy:
+Enforce outreach-policy defaults:
 
 - New mailbox ramp: `5-8/day` to `17-20/day` over 4 weeks
-- Hard cap: `100/day` per mailbox including follow-ups
+- Hard cap: `100/day` per mailbox, including follow-ups
 - Include unsubscribe and legal footer controls
 
-### Step 3: Run Platform Action
-
-Use the relevant helper command based on chosen platform:
+### 3. Run the platform helper
 
 ```bash
-# Smartlead
+# Create campaign
 ~/.aidevops/agents/scripts/smartlead-helper.sh create-campaign "$CAMPAIGN_NAME"
-
-# Instantly
 ~/.aidevops/agents/scripts/instantly-helper.sh create-campaign "$CAMPAIGN_NAME"
-
-# ManyReach
 ~/.aidevops/agents/scripts/manyreach-helper.sh create-campaign "$CAMPAIGN_NAME"
 
-# Add leads (platform-specific helper)
+# Import leads
 ~/.aidevops/agents/scripts/<platform>-helper.sh import-leads "$LEADS_FILE"
 
 # Configure warmup and sending limits
 ~/.aidevops/agents/scripts/<platform>-helper.sh set-limits "$CAMPAIGN_ID" "$DAILY_LIMIT"
 ```
 
-### Step 4: Present Campaign State
+### 4. Return campaign state
 
-Return a concise operations report with:
+Report:
 
-- Platform, campaign ID, and status
-- Mailboxes attached and current warmup stage
+- Platform, campaign ID, status
+- Attached mailboxes and warmup stage
 - Lead count and sequence status
-- Risk flags (bounce, complaint, reply handling)
+- Risk flags: bounce, complaint, reply handling
 - Recommended next action
 
-### Step 5: Offer Follow-up Actions
+### 5. Offer follow-up actions
 
 ```text
 Actions:
