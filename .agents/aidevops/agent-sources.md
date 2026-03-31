@@ -1,15 +1,14 @@
 # Agent Sources (Private Repos)
 
-Use agent sources when agents should live in a private Git repo but stay available framework-wide. Sync copies them into `~/.aidevops/agents/custom/<source-name>/`, so they follow `custom/` tier rules: survive framework updates, are never overwritten by `setup.sh`, and auto-sync during `aidevops update` and `./setup.sh` after `deploy_aidevops_agents`.
+Use agent sources when agents should stay in a private Git repo but remain available framework-wide. Sync copies them into `~/.aidevops/agents/custom/<source-name>/`, so they follow `custom/` tier rules: survive framework updates, are never overwritten by `setup.sh`, and auto-sync during `aidevops update` and `./setup.sh` after `deploy_aidevops_agents`.
 
-## Sync Lifecycle
+## Lifecycle
 
 1. Keep private agents under `.agents/` in a private Git repo.
 2. Register the repo with `aidevops sources add <path>`.
 3. Run `aidevops update` or `aidevops sources sync`.
-4. Files sync into `~/.aidevops/agents/custom/<source-name>/`.
-5. `mode: primary` docs are symlinked into `~/.aidevops/agents/` for auto-discovery.
-6. `.md` files with `agent:` frontmatter are symlinked into `~/.config/opencode/command/`.
+4. Synced files land in `~/.aidevops/agents/custom/<source-name>/`.
+5. `mode: primary` docs symlink into `~/.aidevops/agents/`, and `.md` files with `agent:` frontmatter symlink into `~/.config/opencode/command/`.
 
 ## CLI
 
@@ -24,8 +23,6 @@ aidevops sources remove my-private-agents                     # Remove (keeps fi
 
 ## File Classification
 
-Sync classifies `.md` files by YAML frontmatter:
-
 | Frontmatter | Classification | Sync behavior |
 |-------------|----------------|---------------|
 | `mode: primary` | Primary agent | Sync + symlink to `~/.aidevops/agents/` root |
@@ -33,7 +30,8 @@ Sync classifies `.md` files by YAML frontmatter:
 | `agent: <Name>` | Slash command | Sync + symlink to `~/.config/opencode/command/` |
 | none / other | Regular file | Sync only |
 
-The main agent doc is the file whose name matches its directory, for example `my-agent/my-agent.md`; `mode:` decides whether it is primary or subagent. Other `.md` files with `agent:` frontmatter become slash commands. Slash command conflicts append the source slug, for example `/run-pipeline-my-private-agents`. Primary agents that would overwrite core agents backed by real files, not symlinks, are skipped with a warning.
+- The main agent doc is the file whose name matches its directory, for example `my-agent/my-agent.md`; `mode:` decides whether it is primary or subagent, and other `.md` files with `agent:` frontmatter become slash commands.
+- Slash command conflicts append the source slug, for example `/run-pipeline-my-private-agents`. Primary agents that would overwrite core agents backed by real files, not symlinks, are skipped with a warning.
 
 ## Layout
 
