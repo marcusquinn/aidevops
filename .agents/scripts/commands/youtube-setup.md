@@ -24,7 +24,9 @@ Prompt the user for:
 
 1. **Your channel handle** (e.g., @myhandle)
 2. **Niche/topic** (e.g., "AI coding tools", "productivity software")
-3. **Competitor channels** (3-5 handles, e.g., @competitor1 @competitor2)
+3. **Channel voice** (e.g., "data-driven, conversational, mildly contrarian")
+4. **Target audience** (e.g., "indie founders evaluating AI tools")
+5. **Competitor channels** (3-5 handles, e.g., @competitor1 @competitor2)
 
 If the user provides these in $ARGUMENTS, parse them. Otherwise, ask interactively.
 
@@ -45,6 +47,11 @@ Verify the channel exists and display basic stats (subscribers, videos, total vi
   --type WORKING_SOLUTION \
   --namespace youtube \
   "My channel: @myhandle. Niche: [topic]. Competitors: @comp1, @comp2, @comp3"
+
+~/.aidevops/agents/scripts/memory-helper.sh store \
+  --type WORKING_SOLUTION \
+  --namespace youtube \
+  "Channel voice: [voice description]. Audience: [target audience]."
 ```
 
 Also store individual competitor profiles:
@@ -78,6 +85,8 @@ Setup complete! Next steps:
 4. Generate your first script with /youtube script "topic"
 
 Your configuration is stored in memory and will persist across sessions.
+
+The explicit `Channel voice` entry keeps `/youtube script` and the script-writer guide aligned with the stored recall key.
 ```
 
 ## Options
