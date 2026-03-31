@@ -1,17 +1,17 @@
 ---
-description: Check IP reputation across multiple providers — vet VPS/server/proxy IPs before purchase or deployment
+description: Check IP reputation before using VPS/server/proxy IPs
 agent: Build+
 mode: subagent
 ---
 
-Arguments: $ARGUMENTS
-
-## Dispatch
+Arguments: `$ARGUMENTS`
 
 Run all checks through `~/.aidevops/agents/scripts/ip-reputation-helper.sh`.
 
+## Dispatch routes
+
 | Input | Route |
-|-------|-------|
+|---|---|
 | `1.2.3.4` | `check "$IP"` (multi-provider summary) |
 | `1.2.3.4 -f json` | `check "$IP" -f json` |
 | `1.2.3.4 report` | `report "$IP"` (markdown report) |
@@ -19,11 +19,11 @@ Run all checks through `~/.aidevops/agents/scripts/ip-reputation-helper.sh`.
 | `1.2.3.4 --no-cache` | `check "$IP" --no-cache` |
 | `ips.txt` | `batch "$FILE"` |
 | `ips.txt --dnsbl-overlap` | `batch "$FILE" --dnsbl-overlap` |
-| _(no args)_ | usage/help |
+| _(no args)_ | Show usage/help |
 
-Ops subcommands: `providers`, `cache-stats`, `cache-clear [--provider P] [--ip IP]`, `rate-limit-status`, `help`.
+Operational subcommands: `providers`, `cache-stats`, `cache-clear [--provider P] [--ip IP]`, `rate-limit-status`, `help`.
 
-## Output shape
+## Expected output
 
 ```text
 IP Reputation: 1.2.3.4
@@ -39,9 +39,9 @@ Providers (8/10 responded):
 Flags: Tor=NO  Proxy=NO  VPN=NO
 ```
 
-Providers: Spamhaus DNSBL, ProxyCheck.io, StopForumSpam, Blocklist.de, GreyNoise, AbuseIPDB, IPQualityScore, Scamalytics.
+Provider set: Spamhaus DNSBL, ProxyCheck.io, StopForumSpam, Blocklist.de, GreyNoise, AbuseIPDB, IPQualityScore, Scamalytics.
 
-After presenting results, offer follow-up: full report, single-provider recheck, batch check, raw JSON, cache-clear recheck.
+After showing results, offer follow-up options: full report, single-provider recheck, batch check, raw JSON, and cache-clear recheck.
 
 ## Related
 
