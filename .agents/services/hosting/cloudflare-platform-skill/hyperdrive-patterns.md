@@ -139,3 +139,4 @@ const duration = Date.now() - start;
 console.log({duration, likelyCached: duration < 10});  // <10ms = likely cache hit
 ```
 
+See [hyperdrive-gotchas.md](./hyperdrive-gotchas.md) for limits and troubleshooting.

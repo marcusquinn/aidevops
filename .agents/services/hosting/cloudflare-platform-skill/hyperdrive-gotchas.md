@@ -1,6 +1,6 @@
 # Gotchas
 
-See [hyperdrive.md](./hyperdrive.md), [hyperdrive-patterns.md](./hyperdrive-patterns.md).
+See [hyperdrive.md](./hyperdrive.md) and [hyperdrive-patterns.md](./hyperdrive-patterns.md).
 
 ## Common Errors
 

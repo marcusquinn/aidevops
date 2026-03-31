@@ -1,8 +1,17 @@
 # Hyperdrive
 
-Accelerates database queries from Workers via connection pooling, edge setup, query caching. Eliminates ~7 TCP/TLS/auth round-trips per connection. Auto-caches non-mutating queries (default 60s TTL).
+Connect Workers to PostgreSQL or MySQL with edge connection setup, pooled origin connections, and optional caching for non-mutating queries. It removes ~7 TCP/TLS/auth round-trips per connection and supports compatibles such as CockroachDB, Timescale, PlanetScale, Neon, and Supabase.
 
-**Supported:** PostgreSQL 11+, MySQL 5.7+ and compatibles (CockroachDB, Timescale, PlanetScale, Neon, Supabase).
+## Best Fit
+
+- **Use when**: users are global, the database is single-region, reads dominate, or connection setup cost is hurting latency.
+- **Avoid when**: writes dominate, freshness must stay under 1 second, or the Worker already runs close to the database.
+
+## Core Capabilities
+
+- **Connection pooling**: reuses origin connections instead of reconnecting on every request.
+- **Edge setup**: negotiates connections at the edge while pooling near the database.
+- **Query caching**: caches non-mutating queries for 60 seconds by default.
 
 ## Architecture
 
@@ -41,13 +50,9 @@ export default {
 };
 ```
 
-## When to Use
+## Related Docs
 
-**Good fit:** Global access to single-region DBs, high read ratios, popular queries, connection-heavy loads.
-**Poor fit:** Write-heavy, real-time data (<1s freshness), single-region apps close to DB. See [hyperdrive-gotchas.md](./hyperdrive-gotchas.md) for alternatives.
-
-## See Also
-
-- [hyperdrive-patterns.md](./hyperdrive-patterns.md) — use cases, ORMs, performance tips
-- [hyperdrive-gotchas.md](./hyperdrive-gotchas.md) — limits, troubleshooting, migration
-- [Docs](https://developers.cloudflare.com/hyperdrive/) | [Discord #hyperdrive](https://discord.cloudflare.com)
+- [hyperdrive-patterns.md](./hyperdrive-patterns.md) - read-heavy, mixed read/write, multi-tenant, and performance patterns
+- [hyperdrive-gotchas.md](./hyperdrive-gotchas.md) - limits, troubleshooting, migration, and alternatives
+- [Cloudflare Docs](https://developers.cloudflare.com/hyperdrive/)
+- [Discord #hyperdrive](https://discord.cloudflare.com)
