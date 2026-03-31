@@ -6,7 +6,7 @@ mode: subagent
 
 Arguments: `$ARGUMENTS`
 
-Run all checks through `~/.aidevops/agents/scripts/ip-reputation-helper.sh`.
+Use `~/.aidevops/agents/scripts/ip-reputation-helper.sh` for all checks.
 
 ## Dispatch routes
 
@@ -41,7 +41,7 @@ Flags: Tor=NO  Proxy=NO  VPN=NO
 
 Provider set: Spamhaus DNSBL, ProxyCheck.io, StopForumSpam, Blocklist.de, GreyNoise, AbuseIPDB, IPQualityScore, Scamalytics.
 
-After showing results, offer follow-up options: full report, single-provider recheck, batch check, raw JSON, and cache-clear recheck.
+After results, offer follow-up options: full report, single-provider recheck, batch check, raw JSON, or cache-clear recheck.
 
 ## Related
 
