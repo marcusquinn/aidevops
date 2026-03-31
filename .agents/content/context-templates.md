@@ -9,7 +9,7 @@ model: haiku
 
 Project-level context files for SEO content creation. Adapted from [TheCraigHewitt/seomachine](https://github.com/TheCraigHewitt/seomachine) (MIT License).
 
-Run `mkdir -p context` then populate from templates below. Subagents (`seo-writer.md`, `editor.md`, `internal-linker.md`) check for these files automatically.
+Setup: `mkdir -p context` then populate from templates below. Auto-detected by `seo-writer.md`, `editor.md`, `internal-linker.md`.
 
 ### context/brand-voice.md
 
@@ -38,9 +38,7 @@ Run `mkdir -p context` then populate from templates below. Subagents (`seo-write
 - **Vocabulary level**: [Professional but accessible]
 - **Contractions**: [Yes/No]
 - **Person**: ["We" for company, "You" for reader]
-
-## Preferred / Avoided Terminology
-[List preferred terms and terms to avoid]
+- **Preferred / Avoided terms**: [List here]
 ```
 
 ### context/style-guide.md
@@ -74,7 +72,6 @@ Run `mkdir -p context` then populate from templates below. Subagents (`seo-write
 # Target Keywords
 
 ## Pillar Topics
-
 ### [Topic Cluster Name]
 - **Pillar keyword**: [main keyword] (volume: X, difficulty: Y)
 - **Cluster keywords**: [subtopic 1] (vol: X), [subtopic 2] (vol: X)
