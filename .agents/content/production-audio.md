@@ -20,25 +20,24 @@ tools:
 ## Quick Reference
 
 - **Pipeline**: Voice cleanup → Voice transformation → Sound design → Mixing
-- **Key Rule**: ALWAYS clean AI voice output with CapCut BEFORE ElevenLabs transformation
-- **Pipeline Helper**: `voice-pipeline-helper.sh [pipeline|extract|cleanup|transform|normalize|tts|voices|clone|status]`
-- **Voice Bridge**: `voice-helper.sh [talk|devices|voices|benchmark]`
+- **Key rule**: Clean AI voice in CapCut before ElevenLabs; raw AI audio amplifies artifacts
+- **Pipeline helper**: `voice-pipeline-helper.sh [pipeline|extract|cleanup|transform|normalize|tts|voices|clone|status]`
+- **Voice bridge**: `voice-helper.sh [talk|devices|voices|benchmark]`
 - **References**: `tools/voice/speech-to-speech.md`, `voice-helper.sh`
 
 <!-- AI-CONTEXT-END -->
 
 ## Voice Production Pipeline
 
-**NEVER feed raw AI video audio directly to ElevenLabs** — it amplifies artifacts. Always clean first:
+Do not feed raw AI video audio directly to ElevenLabs.
+1. **CapCut AI Voice Cleanup** — normalize accents and artifacts, remove robotic patterns, clean noise, standardize volume
+2. **ElevenLabs Transformation** — add voice cloning, emotional delivery, and character consistency
 
-1. **CapCut AI Voice Cleanup** — normalize accents/artifacts, remove robotic patterns, clean noise, standardize volume
-2. **ElevenLabs Transformation** — voice cloning, emotional delivery, character consistency
-
-**Alternative**: MiniMax TTS for talking-head content where ElevenLabs is overkill. $5/month for 120 min; 10-second clip for voice clone. See `tools/voice/voice-models.md`.
+**Alternative**: MiniMax TTS suits talking-head content where ElevenLabs is overkill. Cost baseline: $5/month for 120 minutes and a 10-second clip for voice clone. See `tools/voice/voice-models.md`.
 
 ### Voice Cloning
 
-**NEVER use pre-made ElevenLabs voices for realistic content** — widely recognised, signals "AI-generated".
+Do not use pre-made ElevenLabs voices for realistic content; they are widely recognized as AI-generated.
 
 | Method | Input | Use |
 |--------|-------|-----|
@@ -46,11 +45,11 @@ tools:
 | Instant Clone | 10-30 second clean clip | Quick personas |
 | Professional Clone | 3-5 minutes | AI influencer personas (highest fidelity) |
 
-**Source quality**: Single speaker, quiet environment, clear pronunciation. Cloning from existing content → run CapCut cleanup first. Use same voice model across all channel content; update samples quarterly.
+**Source quality**: single speaker, quiet environment, clear pronunciation. If cloning from existing content, run CapCut cleanup first. Keep one voice model across the channel; refresh samples quarterly.
 
 ### Emotional Block Cues
 
-Emotion tags for TTS engines with emotion support (ElevenLabs, ChatTTS). Scripts from `content/production-writing.md` should include this markup.
+Use emotion tags with engines that support them (ElevenLabs, ChatTTS). Scripts from `content/production-writing.md` should include this markup.
 
 ```text
 [neutral]Welcome.[/neutral] [excited]Today we're covering something amazing![/excited] [serious]But first, the problem.[/serious]
@@ -66,14 +65,14 @@ Emotion tags for TTS engines with emotion support (ElevenLabs, ChatTTS). Scripts
 | `[urgent]` | CTAs, time-sensitive | CTA (final 5s) |
 | `[neutral]` | Default, informational | Any |
 
-## 4-Layer Audio Design
+## Audio Design Layers
 
 | Layer | Target LUFS | Processing / Notes |
 |-------|-------------|-------------------|
-| **1: Dialogue** (primary) | -15 | `Raw Voice → Noise Reduction → EQ → Compression → De-esser → Limiter`. Centered. EQ: high-pass 80Hz, presence boost 3-5kHz. Tools: CapCut, ElevenLabs, Audacity/Audition, `voice-helper.sh` |
-| **2: Ambient** | -25 | Stereo width for immersion; low-pass to avoid competing with dialogue. Sources: Freesound.org (CC0), Epidemic Sound, AudioCraft, Stable Audio |
-| **3: SFX** | -10 to -20 | Categories: Whooshes, Impacts, UI Sounds, Foley, Risers/Drops. Land 1-2 frames BEFORE visual event. Layer for bigger impacts; reverb to match dialogue space |
-| **4: Music** | -18 to -20 | Ducking: sidechain dialogue → music. Threshold -20dB, ratio 4:1, attack 10ms, release 200ms. Sources: Epidemic Sound, Artlist, Uppbeat, Suno, Udio |
+| **1: Dialogue** (primary) | -15 | `Raw Voice → Noise Reduction → EQ → Compression → De-esser → Limiter`. Keep centered. EQ: high-pass 80Hz, presence boost 3-5kHz. Tools: CapCut, ElevenLabs, Audacity/Audition, `voice-helper.sh` |
+| **2: Ambient** | -25 | Use stereo width for immersion and low-pass filtering so ambience does not compete with dialogue. Sources: Freesound.org (CC0), Epidemic Sound, AudioCraft, Stable Audio |
+| **3: SFX** | -10 to -20 | Whooshes, impacts, UI sounds, foley, risers, drops. Land 1-2 frames before the visual event. Layer larger impacts and match reverb to dialogue space |
+| **4: Music** | -18 to -20 | Sidechain dialogue into music. Threshold -20dB, ratio 4:1, attack 10ms, release 200ms. Sources: Epidemic Sound, Artlist, Uppbeat, Suno, Udio |
 
 | Content Type | Ambient | Music Style | Ducking |
 |--------------|---------|-------------|---------|
@@ -83,7 +82,7 @@ Emotion tags for TTS engines with emotion support (ElevenLabs, ChatTTS). Scripts
 | Documentary | Rich environmental | Cinematic score | -4dB |
 | YouTube | — | Upbeat, royalty-free | -6dB |
 
-## LUFS Reference
+## Loudness Reference
 
 | Platform | Target LUFS | Notes |
 |----------|-------------|-------|
@@ -100,24 +99,24 @@ ffmpeg -i input.mp4 -af loudnorm=print_format=json -f null -
 # DaVinci Resolve: Fairlight > Loudness Meter
 ```
 
-**Normalization workflow**: Mix layers → measure integrated LUFS → apply normalization → limiter (true peak -1dB).
+**Normalization workflow**: mix layers, measure integrated LUFS, normalize, then limit to true peak -1dB.
 
 ## Voice Tools
 
 ```bash
-voice-helper.sh talk                       # Start voice conversation (defaults)
+voice-helper.sh talk                        # Start voice conversation (defaults)
 voice-helper.sh talk whisper-mlx edge-tts  # Explicit engines
 voice-helper.sh talk whisper-mlx macos-say # Offline mode
-voice-helper.sh devices                    # List audio devices
-voice-helper.sh voices                     # List available TTS voices
-voice-helper.sh benchmark                  # Test component speeds
+voice-helper.sh devices                     # List audio devices
+voice-helper.sh voices                      # List available TTS voices
+voice-helper.sh benchmark                   # Test component speeds
 ```
 
-**Architecture**: `Mic → Silero VAD → Whisper MLX (1.4s) → Claude Code run --attach (~4-6s) → Edge TTS (0.4s) → Speaker`. Round-trip: ~6-8s conversational, longer for tool execution.
+**Architecture**: `Mic → Silero VAD → Whisper MLX (1.4s) → Claude Code run --attach (~4-6s) → Edge TTS (0.4s) → Speaker`. Round-trip: ~6-8s conversational, longer with tool execution.
 
 | Service | Details | CLI |
 |---------|---------|-----|
-| ElevenLabs | Voice cloning (3-5 min sample), 29 languages, emotional control | `voice-pipeline-helper.sh [transform\|tts\|voices\|clone]` |
+| ElevenLabs | Voice cloning (3-5 minute sample), 29 languages, emotional control | `voice-pipeline-helper.sh [transform\|tts\|voices\|clone]` |
 | Local ffmpeg | Noise reduction, high-pass, de-essing, loudness normalization | `voice-pipeline-helper.sh cleanup <audio> [output] [target-lufs]` |
 | Edge TTS (free) | 400+ voices, 100+ languages, no API key | Used by `voice-helper.sh` |
 
