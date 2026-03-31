@@ -16,33 +16,33 @@ tools:
 ## Quick Reference
 
 - **Website**: https://mytelfon.com/
+- **Role**: operator UI on top of Twilio
 - **Apps**: iOS, Android, Chrome, Edge
 - **Setup time**: ~5 minutes
 - **Pricing**: Telfon subscription + Twilio pay-as-you-go
-- **Best fit**: sales/support teams, non-technical Twilio users, WhatsApp + SMS in one app
-- **Core features**: calls, SMS, WhatsApp, recording, bulk SMS, multi-number
+- **Best fit**: sales/support teams that want calls, SMS, WhatsApp, recording, and multi-number handling without building on Twilio directly
 
-## When to Use Telfon
+## Selection
 
-- Use **Telfon** when people need a softphone UI on top of Twilio: fast setup, built-in WhatsApp, one-click recording, low operational complexity.
+- Use **Telfon** for fast setup, built-in WhatsApp, one-click recording, and lower operational complexity.
 - Use **direct Twilio** for automation, custom integrations, full API control, or lower software spend.
 - Numbers stay in Twilio; Telfon is the operator interface.
 
 ## Setup
 
-**Prerequisites**: Twilio account (https://www.twilio.com/try-twilio), Twilio number, Telfon account (https://mytelfon.com/).
+**Prerequisites**: Twilio account (https://www.twilio.com/try-twilio), a Twilio number, and a Telfon account (https://mytelfon.com/).
 
-1. Get the Twilio Account SID and Auth Token from https://console.twilio.com/.
+1. Copy the Twilio Account SID and Auth Token from https://console.twilio.com/.
 2. Install Telfon: iOS https://apps.apple.com/in/app/telfon-twilio-calls-chats/id6443471885 · Android https://play.google.com/store/apps/details?id=com.wmt.cloud_telephony.android · Chrome https://chromewebstore.google.com/detail/telfon-twilio-calls/bgkbahmggkomlcagkagcmiggkmcjmgdi · Edge https://microsoftedge.microsoft.com/addons/detail/telfon-virtual-phone-sys/hbdeajgckookmiogfljihebodfammogd
-3. Open **Settings > Twilio Integration**, enter the credentials, and select number(s).
+3. Open **Settings > Twilio Integration**, enter the credentials, and activate the required number(s).
 
-Demo and guides: https://mytelfon.com/demo/
+Guides and demo: https://mytelfon.com/demo/
 
 ## Numbers and Features
 
 - **Existing Twilio numbers**: **Settings > Phone Numbers**; they should auto-appear for activation.
-- **Buy in Telfon**: **Phone Numbers > Buy New Number**; billing still lands in Twilio.
-- **Unavailable via API**: for toll-free, short codes, or other special inventory, contact Twilio support; see `twilio.md`.
+- **Buy in Telfon**: **Phone Numbers > Buy New Number**; Twilio still bills the number.
+- **Special inventory**: toll-free, short codes, and similar inventory may require Twilio support; see `twilio.md`.
 
 | Feature | Path | Notes |
 |---------|------|-------|
@@ -59,13 +59,13 @@ Demo and guides: https://mytelfon.com/demo/
 
 - **AI uses Twilio directly** for reminders, OTP, bulk notifications, and webhook-driven messaging.
 - **Humans use Telfon** for manual calls, conversational SMS, WhatsApp, and recording review.
-- **Hybrid pattern**: AI triggers outreach, the reply lands in system workflows, then a user continues the conversation in Telfon.
+- **Hybrid pattern**: AI starts outreach, the reply lands in system workflows, then a user continues the conversation in Telfon.
 
 ## Operations
 
 - **Pricing**: Telfon plans https://mytelfon.com/pricing/ · Twilio usage https://www.twilio.com/en-us/pricing
 - **Typical Twilio costs**: SMS ~$0.0079/msg, Voice ~$0.014/min, Numbers ~$1.15/mo, Recording ~$0.0025/min
-- **Cost control**: use Messaging Services for bulk SMS, set Twilio spend alerts, review unused numbers monthly
+- **Cost control**: use Messaging Services for bulk SMS, set Twilio spend alerts, and review unused numbers monthly
 
 | Issue | Checks |
 |-------|--------|
