@@ -5,13 +5,13 @@ mode: subagent
 
 # Bugfix Probes
 
-Use 2 probes from this file during `/define` for tasks classified as **bugfix**.
+Use 2 probes during `/define` for tasks classified as **bugfix**.
 
 ## Default Assumptions
 
-Apply these unless the user overrides during interview:
+Apply unless the user overrides them:
 
-- Preserve all existing behaviour except the bug
+- Preserve all behaviour except the bug
 - Add a regression test that fails before the fix and passes after
 - Root-cause fix preferred over symptom suppression
 - No scope creep — fix the reported bug, not adjacent issues
@@ -25,7 +25,7 @@ Can you reproduce this bug reliably?
 
 1. Yes — here are the steps: [user provides]
 2. Intermittent — happens sometimes under [conditions]
-3. Reported by others — I haven't reproduced it myself
+3. Reported by others — I haven't reproduced it
 4. Only in production / specific environment
 ```
 
@@ -35,7 +35,7 @@ Can you reproduce this bug reliably?
 What's the expected behaviour vs what actually happens?
 
 1. [Inferred from description] (recommended)
-2. Let me describe both explicitly
+2. I'll describe both explicitly
 ```
 
 ## Probes (select 2)
@@ -47,7 +47,7 @@ Is the fix you have in mind addressing the root cause or a symptom?
 
 1. Root cause — I know why it breaks (recommended)
 2. Symptom — I know a workaround but not the underlying issue
-3. Not sure — needs investigation first
+3. Not sure — investigate first
 ```
 
 ### Blast Radius
@@ -58,7 +58,7 @@ What else could break when this is fixed?
 1. Nothing — the fix is isolated to one code path (recommended)
 2. Related features that share the same code path
 3. Not sure — need to trace dependencies
-4. Let me specify what's at risk
+4. I'll specify what's at risk
 ```
 
 ### Regression Context
@@ -97,11 +97,11 @@ What's the most likely variant?
 
 ## Sufficiency Test
 
-Before generating the brief, verify you can answer:
+Before generating the brief, verify:
 
-- Can I reproduce this (or do I have clear reproduction steps)?
-- Do I know the root cause or at least where to look?
+- Can I reproduce this, or do I have clear steps?
+- Do I know the root cause, or at least where to look?
 - What regression test would catch this if it recurs?
 - What's the blast radius of the fix?
 
-If any answer is "I don't know" — ask one more targeted question.
+If any answer is "I don't know," ask one more targeted question.
