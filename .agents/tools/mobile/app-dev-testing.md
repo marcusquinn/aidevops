@@ -41,15 +41,11 @@ Test API clients (mock servers), navigation flows, state persistence, notificati
 ### E2E (Maestro)
 
 ```yaml
-# flows/onboarding.yaml
 appId: com.example.myapp
 ---
-- launchApp:
-    clearState: true
+- launchApp: { clearState: true }
 - assertVisible: "Welcome"
 - tapOn: "Get Started"
-- assertVisible: "Step 1"
-- tapOn: "Next"
 - assertVisible: "You're all set"
 - tapOn: "Start Using App"
 - assertVisible: "Home"
@@ -61,9 +57,7 @@ appId: com.example.myapp
 agent-device open "My App" --platform ios   # Open app
 agent-device snapshot                        # Accessibility tree
 agent-device click @e3                       # Interact via refs
-agent-device fill @e7 "test@example.com"
-agent-device screenshot ./test-evidence.png  # Capture state
-agent-device close                           # Clean up
+agent-device screenshot ./evidence.png       # Capture state
 ```
 
 ### Visual Regression
@@ -73,8 +67,7 @@ Capture screenshots at key states via `ios-simulator-mcp` or `agent-device`. Tes
 ### Accessibility
 
 - `agent-device snapshot` — inspect accessibility tree
-- Verify all elements have labels; test VoiceOver/TalkBack
-- Check colour contrast, Dynamic Type support
+- Verify labels, VoiceOver/TalkBack, colour contrast, Dynamic Type
 - See `tools/accessibility/accessibility-audit.md`
 
 ### Performance
@@ -85,28 +78,19 @@ Targets: launch < 2s, animations 60fps. Monitor memory and network payload sizes
 
 | Device | Screen | Purpose |
 |--------|--------|---------|
-| iPhone SE (3rd) | 4.7" | Smallest iPhone |
+| iPhone SE (3rd) | 4.7" | Smallest |
 | iPhone 16 | 6.1" | Standard |
 | iPhone 16 Pro Max | 6.9" | Largest |
 | iPad (10th) | 10.9" | Tablet |
-| Pixel 7 / Galaxy S24 | 6.2–6.3" | Android |
+| Pixel 7 / Galaxy S24 | 6.2-6.3" | Android |
 
 Use `playwright-emulation` device presets for web-based testing.
 
-## TestFlight & Internal Testing
+## Distribution Testing
 
-### iOS (TestFlight)
+**iOS (TestFlight)**: `eas build --platform ios --profile preview` or Xcode archive → App Store Connect. Internal (100, no review) or external (10k, review required).
 
-1. Build: `eas build --platform ios --profile preview` (Expo) or Xcode archive
-2. Upload to App Store Connect
-3. Internal testers (100 max, no review) or external (10k, requires review)
-4. Collect feedback via TestFlight's built-in mechanism
-
-### Android (Internal Testing)
-
-1. Build: `eas build --platform android --profile preview` or `./gradlew assembleRelease`
-2. Upload to Google Play Console → internal testing track
-3. Add testers via email/Google Group; distribute via internal link
+**Android**: `eas build --platform android --profile preview` or `./gradlew assembleRelease` → Google Play Console internal track. Distribute via email/Google Group.
 
 ## Pre-Submission Checklist
 

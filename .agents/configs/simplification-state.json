@@ -2996,5 +2996,11 @@
       "at": "2026-03-31T03:46:07Z",
       "pr": 14541
     }
+  },
+  ".agents/tools/mobile/app-dev-testing.md": {
+    "hash": "61caf35702a4fcac47bd6f5ac4b809e9fbb8cc942619286370a9ab3693d08f25",
+    "lines": 115,
+    "status": "simplified",
+    "simplified_at": "2026-03-31"
   }
 }
