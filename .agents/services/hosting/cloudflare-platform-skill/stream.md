@@ -1,54 +1,22 @@
 # Cloudflare Stream
 
-Serverless live and on-demand video streaming platform with one API.
+Managed video upload, encoding, storage, delivery, and live streaming on Cloudflare's network.
 
 ## Overview
 
-Cloudflare Stream provides video upload, storage, encoding, and delivery without managing infrastructure. Runs on Cloudflare's global network.
+Use Stream when you need hosted VOD or live video without running your own transcoding or delivery stack.
 
-### Key Features
+- **Uploads**: TUS/API uploads, URL import, and direct creator uploads for user-generated content
+- **Playback**: Hosted iframe player, HLS/DASH for custom players, and thumbnail generation
+- **Access control**: Public playback, `requireSignedURLs`, `allowedOrigins`, and geo/IP token rules
+- **Live**: RTMPS/SRT ingest, automatic recording, simulcast, and browser/WebRTC support
+- **Operations**: Webhooks, GraphQL analytics, captions, watermarks, and downloadable MP4s
 
-- **On-demand video**: Upload, encode, store, deliver
-- **Live streaming**: RTMPS/SRT ingestion with ABR
-- **Direct creator uploads**: End users upload without API keys
-- **Signed URLs**: Token-based access control
-- **Analytics**: Server-side metrics via GraphQL
-- **Webhooks**: Processing notifications
-- **Captions**: Upload or AI-generate subtitles
-- **Watermarks**: Apply branding to videos
-- **Downloads**: Enable MP4 offline viewing
-
-## Core Concepts
-
-### Video Upload Methods
-
-1. **API Upload (TUS protocol)**: Direct server upload
-2. **Upload from URL**: Import from external source
-3. **Direct Creator Uploads**: User-generated content (recommended)
-
-### Playback Options
-
-1. **Stream Player (iframe)**: Built-in, optimized player
-2. **Custom Player (HLS/DASH)**: Video.js, HLS.js integration
-3. **Thumbnails**: Static or animated previews
-
-### Access Control
-
-- **Public**: No restrictions
-- **requireSignedURLs**: Token-based access
-- **allowedOrigins**: Domain restrictions
-- **Access Rules**: Geo/IP restrictions in tokens
-
-### Live Streaming
-
-- RTMPS/SRT ingest from OBS, FFmpeg
-- Automatic recording to on-demand
-- Simulcast to YouTube, Twitch, etc.
-- WebRTC support for browser streaming
+Prefer direct creator uploads for end-user content so API tokens never reach the frontend.
 
 ## Quick Start
 
-**Upload video via API**
+**Upload from URL**
 
 ```bash
 curl -X POST \
@@ -58,7 +26,7 @@ curl -X POST \
   -d '{"url": "https://example.com/video.mp4"}'
 ```
 
-**Embed player**
+**Embed the hosted player**
 
 ```html
 <iframe
@@ -70,7 +38,7 @@ curl -X POST \
 ></iframe>
 ```
 
-**Create live input**
+**Create a live input**
 
 ```bash
 curl -X POST \
@@ -80,30 +48,29 @@ curl -X POST \
   -d '{"recording": {"mode": "automatic"}}'
 ```
 
-## Limits
+## Key Limits and Pricing
 
-- Max file size: 30 GB
-- Max frame rate: 60 fps (recommended)
-- Supported formats: MP4, MKV, MOV, AVI, FLV, MPEG-2 TS/PS, MXF, LXF, GXF, 3GP, WebM, MPG, QuickTime
-
-## Pricing
-
-- $5/1000 min stored
-- $1/1000 min delivered
+| Item | Value |
+|------|-------|
+| Max file size | 30 GB |
+| Max frame rate | 60 fps recommended |
+| Supported formats | MP4, MKV, MOV, AVI, FLV, MPEG-2 TS/PS, MXF, LXF, GXF, 3GP, WebM, MPG, QuickTime |
+| Storage pricing | $5/1000 min stored |
+| Delivery pricing | $1/1000 min delivered |
 
 ## Resources
 
 - Dashboard: https://dash.cloudflare.com/?to=/:account/stream
-- API Docs: https://developers.cloudflare.com/api/resources/stream/
-- Stream Docs: https://developers.cloudflare.com/stream/
+- API docs: https://developers.cloudflare.com/api/resources/stream/
+- Product docs: https://developers.cloudflare.com/stream/
 
 ## In This Reference
 
-- [patterns.md](./patterns.md) - Full-stack flows, state management, best practices
-- [gotchas.md](./gotchas.md) - Error codes, troubleshooting, limits
+- [stream-patterns.md](./stream-patterns.md) - Direct uploads, polling/webhooks, live workflows, and best practices
+- [stream-gotchas.md](./stream-gotchas.md) - Errors, limits, troubleshooting, and security pitfalls
 
 ## See Also
 
-- [workers](../workers/) - Deploy Stream APIs in Workers
-- [pages](../pages/) - Integrate Stream with Pages
-- [workers-ai](../workers-ai/) - AI-generate captions
+- [workers.md](./workers.md) - Handle uploads, tokens, and webhooks in Workers
+- [pages.md](./pages.md) - Build upload and playback UIs on Pages
+- [workers-ai.md](./workers-ai.md) - Add AI-generated captions and media enrichment
