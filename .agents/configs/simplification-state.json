@@ -2986,6 +2986,11 @@
       "at": "2026-03-30T06:49:36Z",
       "pr": 13900
     },
+    ".agents/seo/query-fanout-research.md": {
+      "hash": "c8e2191c606fa508f485d216849c5c711e91c4b1",
+      "at": "2026-03-31T05:32:28Z",
+      "pr": 14644
+    },
     ".agents/services/hosting/proxmox-full-skill.md": {
       "hash": "23bcf676fc5edd9dcfebc3fb07b0d4ed6cb61a19",
       "at": "2026-03-30T06:49:37Z",
