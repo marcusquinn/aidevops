@@ -18,10 +18,10 @@ tools:
 ## Quick Reference
 
 - **Script**: `email-test-suite-helper.sh [command] [options]`
-- **Required tools**: `dig`, `openssl`, `curl`; optional: `html-validate`, `mjml`
-- **Related**: `email-health-check-helper.sh` for DNS authentication checks
+- **Required**: `dig`, `openssl`, `curl`; optional: `html-validate`, `mjml`
+- **Related**: `email-health-check-helper.sh` (DNS authentication)
 
-**Design rendering** (HTML validation, CSS compat, dark mode, responsive, accessibility — WCAG 2.1 AA):
+**Design rendering** (HTML, CSS compat, dark mode, responsive, accessibility — WCAG 2.1 AA):
 
 ```bash
 email-test-suite-helper.sh test-design newsletter.html      # full suite
@@ -37,11 +37,9 @@ email-test-suite-helper.sh generate-test-email test.html
 
 ```bash
 email-test-suite-helper.sh test-smtp smtp.gmail.com 587
-email-test-suite-helper.sh test-smtp mail.example.com 25
 email-test-suite-helper.sh test-smtp-domain example.com     # auto-discover MX
 email-test-suite-helper.sh analyze-headers headers.txt
 email-test-suite-helper.sh check-placement example.com      # scored 0-10
-email-test-suite-helper.sh test-tls mail.example.com 465
 email-test-suite-helper.sh test-tls smtp.example.com 587
 ```
 
@@ -60,40 +58,26 @@ email-test-suite-helper.sh test-tls smtp.example.com 587
 
 | Client | Behavior |
 |--------|----------|
-| Apple Mail | Full inversion with `prefers-color-scheme` support |
+| Apple Mail | Full inversion, `prefers-color-scheme` supported |
 | Gmail (iOS) | Partial inversion, respects `color-scheme` meta |
 | Outlook (iOS/Android) | Full inversion, ignores `prefers-color-scheme` |
 | Yahoo | No dark mode support |
 
-1. Add `<meta name="color-scheme" content="light dark">`
-2. Add `@media (prefers-color-scheme: dark)` styles
-3. Avoid hardcoded white backgrounds
-4. Test logos on both light and dark backgrounds
-5. Use borders/shadows on transparent PNGs
+Implementation: add `<meta name="color-scheme" content="light dark">` + `@media (prefers-color-scheme: dark)` styles. Avoid hardcoded white backgrounds. Test logos on light/dark. Use borders/shadows on transparent PNGs.
 
 ## Inbox Placement Scoring
 
-`check-placement` scores domains 0–10:
+`check-placement` scores domains 0-10:
 
-| Factor | Points | Description |
-|--------|--------|-------------|
-| SPF | 1 | Valid SPF with enforcement |
-| DKIM | 1 | At least one valid selector |
-| DMARC (enforce) | 2 | quarantine or reject policy |
-| DMARC (monitor) | 1 | none policy |
-| MX records | 1 | Valid mail exchange records |
-| Reverse DNS | 1 | PTR record for MX IP |
-| MTA-STS | 1 | TLS enforcement configured |
-| TLS-RPT | 1 | TLS reporting configured |
-| BIMI | 1 | Brand logo configured |
-| Not blacklisted | 1 | Clean on Spamhaus |
+| Factor | Pts | Factor | Pts |
+|--------|-----|--------|-----|
+| SPF (valid, enforced) | 1 | Reverse DNS (PTR for MX IP) | 1 |
+| DKIM (valid selector) | 1 | MTA-STS (TLS enforcement) | 1 |
+| DMARC enforce (quarantine/reject) | 2 | TLS-RPT (reporting) | 1 |
+| DMARC monitor (none) | 1 | BIMI (brand logo) | 1 |
+| MX records (valid) | 1 | Not blacklisted (Spamhaus) | 1 |
 
-| Score | Interpretation |
-|-------|---------------|
-| 8–10 | Excellent — high inbox placement expected |
-| 6–7 | Good — most emails reach inbox |
-| 4–5 | Fair — some emails may go to spam |
-| 0–3 | Poor — significant deliverability issues |
+**8-10** excellent | **6-7** good | **4-5** fair (some spam) | **0-3** poor
 
 ## Recommended Workflow
 
@@ -107,22 +91,22 @@ email-health-check-helper.sh accessibility newsletter.html # 5. Standalone a11y
 
 ## External Testing Services
 
-| Service | Purpose | URL |
-|---------|---------|-----|
-| **Litmus** | Visual rendering across 90+ clients | litmus.com |
-| **Email on Acid** | Rendering + accessibility testing | emailonacid.com |
-| **Mailtrap** | Email sandbox for development | mailtrap.io |
-| **mail-tester.com** | Deliverability scoring (free) | mail-tester.com |
-| **Testi@** | Free email rendering preview | testi.at |
-| **Google Postmaster** | Gmail deliverability monitoring | postmaster.google.com |
-| **Microsoft SNDS** | Outlook/Hotmail reputation | sendersupport.olc.protection.outlook.com |
+| Service | Purpose |
+|---------|---------|
+| [Litmus](https://litmus.com) | Visual rendering across 90+ clients |
+| [Email on Acid](https://emailonacid.com) | Rendering + accessibility testing |
+| [Mailtrap](https://mailtrap.io) | Email sandbox for development |
+| [mail-tester.com](https://mail-tester.com) | Deliverability scoring (free) |
+| [Testi@](https://testi.at) | Free email rendering preview |
+| [Google Postmaster](https://postmaster.google.com) | Gmail deliverability monitoring |
+| [Microsoft SNDS](https://sendersupport.olc.protection.outlook.com) | Outlook/Hotmail reputation |
 
 ## Related
 
-- `services/email/email-design-test.md` - Local Playwright rendering + Email on Acid API integration
-- `tools/accessibility/accessibility-audit.md` - Email accessibility checks (WCAG compliance)
-- `services/email/email-health-check.md` - DNS authentication checks
-- `services/email/ses.md` - Amazon SES integration
-- `content/distribution-email.md` - Email content strategy
-- `tools/accessibility/accessibility.md` - WCAG accessibility reference
-- `tools/browser/browser-automation.md` - For automated rendering tests
+- `services/email/email-design-test.md` — Playwright rendering + Email on Acid API
+- `tools/accessibility/accessibility-audit.md` — email WCAG compliance
+- `services/email/email-health-check.md` — DNS authentication
+- `services/email/ses.md` — Amazon SES
+- `content/distribution-email.md` — email content strategy
+- `tools/accessibility/accessibility.md` — WCAG reference
+- `tools/browser/browser-automation.md` — automated rendering tests
