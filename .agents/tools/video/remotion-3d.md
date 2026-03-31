@@ -8,13 +8,11 @@ metadata:
 
 # Using Three.js and React Three Fiber in Remotion
 
-Follow React Three Fiber and Three.js best practices.  
-Only the following Remotion-specific rules need to be followed:
+Follow normal React Three Fiber / Three.js practices. Apply these Remotion-specific rules.
 
 ## Prerequisites
 
-First, the `@remotion/three` package needs to be installed.  
-If it is not, use the following command:
+Install `@remotion/three` first.
 
 ```bash
 npx remotion add @remotion/three # If project uses npm
@@ -23,10 +21,9 @@ yarn remotion add @remotion/three # If project uses yarn
 pnpm exec remotion add @remotion/three # If project uses pnpm
 ```
 
-## Using ThreeCanvas
+## `ThreeCanvas` required
 
-You MUST wrap 3D content in `<ThreeCanvas>` and include proper lighting.  
-`<ThreeCanvas>` MUST have a `width` and `height` prop.
+Wrap 3D content in `<ThreeCanvas>`, pass `width` and `height`, and add lighting.
 
 ```tsx
 import { ThreeCanvas } from "@remotion/three";
@@ -44,17 +41,13 @@ const { width, height } = useVideoConfig();
 </ThreeCanvas>
 ```
 
-## No animations not driven by `useCurrentFrame()`
+## Drive all animation from `useCurrentFrame()`
 
-Shaders, models etc MUST NOT animate by themselves.  
-No animations are allowed unless they are driven by `useCurrentFrame()`.  
-Otherwise, it will cause flickering during rendering.  
+Shaders, models, and other scene elements must not animate on their own. Drive every animation from `useCurrentFrame()` or renders will flicker.
 
-Using `useFrame()` from `@react-three/fiber` is forbidden.
+`useFrame()` from `@react-three/fiber` is forbidden.
 
-## Animate using `useCurrentFrame()`
-
-Use `useCurrentFrame()` to perform animations.
+## Animation example
 
 ```tsx
 const frame = useCurrentFrame();
@@ -66,9 +59,9 @@ const rotationY = frame * 0.02;
 </mesh>
 ```
 
-## Using `<Sequence>` inside `<ThreeCanvas>`
+## `Sequence` inside `ThreeCanvas`
 
-The `layout` prop of any `<Sequence>` inside a `<ThreeCanvas>` must be set to `none`.
+Any `<Sequence>` inside `<ThreeCanvas>` must set `layout="none"`.
 
 ```tsx
 import { Sequence } from "remotion";
