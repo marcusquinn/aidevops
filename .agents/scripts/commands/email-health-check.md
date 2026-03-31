@@ -10,36 +10,37 @@ Arguments: $ARGUMENTS
 
 ## Workflow
 
-### Step 1: Parse Arguments
+### Step 1: Detect mode and run the helper
 
-- **Domain only** (e.g., `example.com`): Infrastructure health check
-- **HTML file only** (e.g., `newsletter.html`): Content precheck
-- **Domain + file** (e.g., `example.com newsletter.html`): Full precheck (both)
-- **Specific check** (e.g., `example.com spf` or `newsletter.html check-links`): Individual check
-
-### Step 2: Run Check
+- `example.com` → infrastructure: `email-health-check-helper.sh check "$DOMAIN"`
+- `newsletter.html` → content: `email-health-check-helper.sh content-check "$FILE"`
+- `example.com newsletter.html` → combined: `email-health-check-helper.sh precheck "$DOMAIN" "$FILE"`
+- `example.com spf` / `newsletter.html check-links` → targeted check
 
 ```bash
-# Infrastructure check (domain)
+# Domain only
 ~/.aidevops/agents/scripts/email-health-check-helper.sh check "$DOMAIN"
 
-# Content precheck (HTML file)
+# HTML file only
 ~/.aidevops/agents/scripts/email-health-check-helper.sh content-check "$FILE"
 
-# Full precheck (domain + HTML file)
+# Domain + HTML file
 ~/.aidevops/agents/scripts/email-health-check-helper.sh precheck "$DOMAIN" "$FILE"
 ```
 
-### Step 3: Present Results
+### Step 2: Return a formatted report
 
-Present the helper output as a formatted report. Scoring: Infrastructure /15 pts (SPF, DKIM, DMARC, MX, Blacklist), Content /10 pts (Subject, Preheader, Accessibility, Links, Images, Spam Words), Combined /25 pts with letter grade. Include issues found and actionable recommendations.
+- Score infrastructure out of 15: SPF, DKIM, DMARC, MX, blacklist
+- Score content out of 10: subject, preheader, accessibility, links, images, spam words
+- Show combined score out of 25 with letter grade when both checks run
+- Preserve helper findings verbatim and end with actionable recommendations
 
 ## Options
 
 | Command | Purpose |
 |---------|---------|
-| `/email-health-check example.com` | Full infrastructure check |
-| `/email-health-check newsletter.html` | Full content precheck |
+| `/email-health-check example.com` | Infrastructure check |
+| `/email-health-check newsletter.html` | Content precheck |
 | `/email-health-check example.com newsletter.html` | Combined precheck |
 | `/email-health-check example.com spf` | SPF only |
 | `/email-health-check example.com dkim google` | DKIM with selector |
@@ -51,18 +52,13 @@ Present the helper output as a formatted report. Scoring: Infrastructure /15 pts
 
 ```text
 User: /email-health-check example.com
-AI: Running email health check for example.com...
-
-    Email Health Check: example.com
-
-    SPF:       OK - v=spf1 include:_spf.google.com ~all
-    DKIM:      OK - Found: google, selector1
-    DMARC:     WARN - p=none (monitoring only)
-    MX:        OK - 2 records (redundant)
+AI: Email Health Check: example.com
+    SPF: OK - v=spf1 include:_spf.google.com ~all
+    DKIM: OK - Found: google, selector1
+    DMARC: WARN - p=none (monitoring only)
+    MX: OK - 2 records (redundant)
     Blacklist: OK - Not listed
-
     Score: 12/15 (80%) - Grade: B
-
     Recommendations:
     1. Upgrade DMARC policy from p=none to p=quarantine
     2. Consider adding rua= for DMARC reports
