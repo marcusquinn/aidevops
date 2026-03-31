@@ -24,7 +24,9 @@ EXTRACT?
 AUTOMATE?
   Password manager/extensions:
     Already unlocked → Playwriter | Unlock once → dev-browser | Programmatic → Playwright + Bitwarden CLI
-  Live already-open Chromium/Chrome session → chromium-debug-use
+  Live already-open Chromium/Chrome session:
+    Inspect current state / understand workflow first → chromium-debug-use
+    Flow understood, need repeatable automation → Playwright / dev-browser / Playwriter / Stagehand
   Parallel sessions: speed → Playwright | CLI → playwright-cli/agent-browser --session
   Persistent login: with extensions → dev-browser | without → playwright-cli/storageState
   Proxy: direct → Playwright/Crawl4AI | via extension → Playwriter
@@ -77,6 +79,19 @@ Overhead: dev-browser +0.1-0.4s | agent-browser +0.5-1.5s (cold) | Stagehand +1-
 | Extensions | Yes | No | Yes | No | No | Yes | Possible |
 | Self-healing/NL | No | No | No | No | LLM only | No | Yes |
 | Setup | npm install | npm install -g | Server running | npm install | pip/Docker | Extension click | npm + API key |
+
+## Inspect First, Then Formalize
+
+Use `chromium-debug-use` when the fastest path is to inspect a browser session that is already open, confirm what the user is doing now, or learn a flow before deciding how to automate it long-term.
+
+| If you learned... | Stay or hand off to... | Why |
+|-------------------|------------------------|-----|
+| You just need to inspect the live session, read DOM state, click lightly, or capture the current flow | `chromium-debug-use` | Fastest path to what is already open |
+| The flow should become reproducible, isolated, parallel, or CI-friendly | `tools/browser/playwright.md` | Fresh contexts are better for repeatable automation |
+| The flow needs a managed persistent profile that aidevops can keep reusing | `tools/browser/dev-browser.md` | Better long-lived state than a user-owned live browser |
+| The user wants tab-by-tab consent in their everyday browser instead of a debug-enabled profile | `tools/browser/playwriter.md` | Extension click keeps the consent boundary narrower |
+| The page structure is still fuzzy and you want natural-language exploration before hardening selectors | `tools/browser/stagehand.md` | Better when the next step is exploratory automation |
+| The goal is console, network, performance, or general DevTools inspection against the same live browser | `tools/browser/chrome-devtools.md` | Better debugging surface than automation-first CDP commands |
 
 ## Parallel Sessions
 

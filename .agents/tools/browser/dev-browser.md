@@ -160,14 +160,16 @@ If the server doesn't expose `executablePath`, use Playwright direct with `launc
 
 ## Comparison with Other Browser Tools
 
-| Feature | Dev-Browser | Playwriter | Playwright MCP | Stagehand |
-|---------|-------------|------------|----------------|-----------|
-| **State** | Persistent | Per-tab | Fresh each call | Fresh |
-| **Speed** | Fast (batched) | Medium | Slow (round-trips) | Medium |
-| **Context** | Low | Minimal | High (17+ tools) | Low |
-| **Approach** | Scripts | Single tool | Tool calls | Natural language |
-| **Best for** | Dev testing | Existing sessions | Cross-browser | AI automation |
-| **Requires** | Bun + server | Chrome extension | Nothing | API key |
+| Feature | Dev-Browser | Chromium Debug Use | Playwriter | Playwright MCP | Stagehand |
+|---------|-------------|--------------------|------------|----------------|-----------|
+| **State** | Persistent aidevops profile | Existing live browser profile | Per-tab | Fresh each call | Fresh |
+| **Speed** | Fast (batched) | Fast for live-session reuse | Medium | Slow (round-trips) | Medium |
+| **Context** | Low | Very low | Minimal | High (17+ tools) | Low |
+| **Approach** | Scripts | CDP attach to current browser | Single tool | Tool calls | Natural language |
+| **Best for** | Dev testing and managed persistent automation | Inspect first, then choose the right automation path | Existing sessions with click consent | Cross-browser | AI automation |
+| **Requires** | Bun + server | Debug-enabled Chromium browser | Chrome extension | Nothing | API key |
+
+Use `chromium-debug-use` when you need to understand a live session that is already open. Switch to dev-browser when that investigation turns into a repeatable workflow that should keep its own persistent state under aidevops control.
 
 ## Troubleshooting
 

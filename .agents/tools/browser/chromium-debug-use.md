@@ -191,6 +191,20 @@ For Chrome, Brave, Edge, and Vivaldi, the enablement step is explicit because yo
 | Your everyday browser with extension click-to-connect | `tools/browser/playwriter.md` |
 | Fast isolated automation | `tools/browser/playwright.md` |
 
+## Workflow Boundary
+
+Use this tool to understand what is already happening in a live Chromium session. Once the flow is understood, move to the tool that matches the long-term job instead of keeping every task attached to the live browser.
+
+| After inspection, if you need... | Hand off to... | Why |
+|----------------------------------|----------------|-----|
+| Repeatable scripts, clean state, parallel runs, or CI | `tools/browser/playwright.md` | Fresh contexts are more reliable than a live user session |
+| A managed persistent profile that aidevops can keep reusing | `tools/browser/dev-browser.md` | Better for ongoing stateful automation owned by aidevops |
+| Everyday-browser, tab-by-tab consent | `tools/browser/playwriter.md` | Narrower consent boundary than profile-level remote debugging |
+| Deeper console, network, or performance debugging on the same session | `tools/browser/chrome-devtools.md` | Better inspection surface once you know the target tab |
+| Natural-language experimentation before you lock in selectors or code | `tools/browser/stagehand.md` | Better when the next step is exploratory automation design |
+
+Rule of thumb: inspect and gather facts with `chromium-debug-use`, then formalize the durable workflow with the stronger-purpose browser tool.
+
 ## Troubleshooting
 
 | Problem | Fix |
