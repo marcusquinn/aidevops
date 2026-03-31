@@ -3140,6 +3140,11 @@
       "hash": "7123b1f29ba3cba9eedf7f7f19f04c561c73a353",
       "at": "2026-03-31T12:08:05Z",
       "pr": 14883
+    },
+    ".agents/scripts/commands/security-deps.md": {
+      "hash": "fbaf83d04fce904137096c772adb42790e04badb",
+      "at": "2026-03-31T14:03:00Z",
+      "pr": 14941
     }
   }
 }
