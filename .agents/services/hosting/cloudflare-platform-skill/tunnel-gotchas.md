@@ -1,12 +1,17 @@
 # Tunnel Gotchas
 
+## Security (check first)
+
+- Use remotely-managed tunnels for centralized control
+- Enable Access policies for sensitive services
+- Rotate tunnel credentials regularly
+- Verify TLS certs (`noTLSVerify: false` in prod)
+- Restrict `bastion` service type
+- Use environment variables for secrets, never hardcode
+
 ## Common Issues
 
-### Error 1016 (Origin DNS Error)
-
-**Cause**: Tunnel not running or not connected
-
-**Fix**:
+**Error 1016 (Origin DNS Error)** -- tunnel not running or not connected:
 
 ```bash
 cloudflared tunnel info my-tunnel     # Check status
@@ -14,11 +19,7 @@ ps aux | grep cloudflared             # Verify running
 journalctl -u cloudflared -n 100      # Check logs
 ```
 
-### Certificate Errors
-
-**Issue**: Self-signed certs rejected
-
-**Fix**:
+**Certificate errors** -- self-signed certs rejected:
 
 ```yaml
 originRequest:
@@ -26,11 +27,7 @@ originRequest:
   caPool: /path/to/ca.pem  # Custom CA
 ```
 
-### Connection Timeouts
-
-**Issue**: Origin slow to respond
-
-**Fix**:
+**Connection timeouts** -- origin slow to respond:
 
 ```yaml
 originRequest:
@@ -39,9 +36,7 @@ originRequest:
   keepAliveTimeout: 120s
 ```
 
-### Tunnel Not Starting
-
-**Check**:
+**Tunnel not starting**:
 
 ```bash
 cloudflared tunnel ingress validate  # Validate config
@@ -49,71 +44,44 @@ ls -la ~/.cloudflared/*.json         # Verify credentials
 cloudflared tunnel list              # Verify tunnel exists
 ```
 
-## Best Practices
-
-### Security
-
-1. Use remotely-managed tunnels for centralized control
-2. Enable Access policies for sensitive services
-3. Rotate tunnel credentials regularly
-4. Verify TLS certs (`noTLSVerify: false`)
-5. Restrict `bastion` service type
-
-### Performance
-
-1. Run multiple replicas for HA
-2. Place `cloudflared` close to origin (same network)
-3. Use HTTP/2 for gRPC (`http2Origin: true`)
-4. Tune keepalive for long-lived connections
-5. Monitor connection counts
-
-### Configuration
-
-1. Use environment variables for secrets
-2. Version control config files
-3. Validate before deploying (`cloudflared tunnel ingress validate`)
-4. Test rules (`cloudflared tunnel ingress rule <URL>`)
-5. Document rule order (first match wins)
-
-### Operations
-
-1. Monitor tunnel health in dashboard
-2. Set up disconnect alerts
-3. Graceful shutdown for config updates
-4. Keep `cloudflared` updated (1 year support)
-5. Use `--no-autoupdate` in prod; control updates manually
-
-## Limitations
-
-- **Free tier**: Unlimited tunnels and traffic
-- **Tunnel limit**: 1000 replicas per tunnel
-- **Connection duration**: No hard limit (hours to days)
-- **Long-lived connections**: Drop during replica updates (WebSocket, SSH, UDP)
-
-## Debug Mode
+## Debug
 
 ```bash
 cloudflared tunnel --loglevel debug run my-tunnel
 cloudflared tunnel ingress rule https://app.example.com
 ```
 
-## Migration Strategies
+## Operations & Configuration
 
-### From Ngrok
+- Run multiple replicas for HA; place `cloudflared` close to origin (same network)
+- Use HTTP/2 for gRPC (`http2Origin: true`); tune keepalive for long-lived connections
+- Monitor tunnel health in dashboard; set up disconnect alerts
+- Validate before deploying (`cloudflared tunnel ingress validate`)
+- Test rules (`cloudflared tunnel ingress rule <URL>`); document rule order (first match wins)
+- Version control config files; graceful shutdown for config updates
+- Keep `cloudflared` updated (1 year support); use `--no-autoupdate` in prod
+
+## Limitations
+
+- **Free tier**: Unlimited tunnels and traffic
+- **Replicas**: Max 1000 per tunnel
+- **Connection duration**: No hard limit (hours to days)
+- **Long-lived connections**: Drop during replica updates (WebSocket, SSH, UDP)
+
+## Migration
+
+**From Ngrok** (`ngrok http 8000`):
 
 ```yaml
-# Ngrok: ngrok http 8000
-# Cloudflare Tunnel:
 ingress:
   - hostname: app.example.com
     service: http://localhost:8000
   - service: http_status:404
 ```
 
-### From VPN
+**From VPN** -- replace with private network routing:
 
 ```yaml
-# Replace VPN with private network routing
 warp-routing:
   enabled: true
 ```
