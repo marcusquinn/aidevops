@@ -18,20 +18,19 @@ tools:
 ## Quick Reference
 
 - **Location**: `.agents/*.md` (lowercase filenames)
-- **Service guides**: hostinger.md, hetzner.md, coolify.md, mainwp.md, etc.
-- **Structure**: Overview, Configuration, Usage, Security, Troubleshooting, MCP Integration
-- **AI Context blocks**: `<!-- AI-CONTEXT-START -->` for quick reference
-- **Cross-service workflows**: Domain -> DNS -> Hosting, Dev -> Quality -> Deploy
-- **Best practices**: recommendations-opinionated.md for provider selection
-- **Setup guides**: *-setup.md for complex integrations
+- **Discovery**: `git ls-files '.agents/*.md'` — never hardcode guide lists
+- **Guide shape**: Overview → Configuration → Usage → Security → Troubleshooting → MCP/AI integration
+- **Quick-load block**: `<!-- AI-CONTEXT-START -->` for stable high-signal context
 - **Config templates**: `configs/[service]-config.json.txt`
-- **Discovery**: Use `git ls-files '.agents/*.md'` — not hardcoded lists
+- **Setup docs**: `*-setup.md` for multi-step integrations
+- **Provider guidance**: `recommendations-opinionated.md`
+- **Cross-service flows**: Domain → DNS → Hosting; Dev → Quality → Deploy
 
 <!-- AI-CONTEXT-END -->
 
-## Service Guides
+## Service Guide Categories
 
-Discover with `git ls-files '.agents/*.md'`. Key categories:
+Discover guides with `git ls-files '.agents/*.md'`. Common categories:
 
 | Category | Guides |
 |----------|--------|
@@ -45,30 +44,22 @@ Discover with `git ls-files '.agents/*.md'`. Key categories:
 
 ## Standard Guide Structure
 
-Each service guide follows this format:
+Default sections:
 
-```markdown
-# [Service Name] Guide
-
-## Provider Overview
-- Service type, strengths, API support, use cases
-
-## Configuration
-## Usage Examples
-## Security Best Practices
-## Troubleshooting
-## MCP Integration (if applicable)
-## Best Practices
-## AI Assistant Integration
-```
+- `# [Service Name] Guide`
+- `## Provider Overview` — service type, strengths, API support, use cases
+- `## Configuration`
+- `## Usage Examples`
+- `## Security Best Practices`
+- `## Troubleshooting`
+- `## MCP Integration` / `## AI Assistant Integration` when relevant
+- `## Best Practices`
 
 ## Documentation Standards
 
-**Content**: Complete feature coverage, real working examples, security considerations, troubleshooting, AI integration patterns.
-
-**Writing**: Clear technical language, consistent formatting, syntax-highlighted code, visual hierarchy with headers, cross-references to related guides.
-
-**Technical**: Accurate command syntax, current API info, working sanitized config examples, version-aware where applicable.
+- **Content**: Cover core features, working examples, security concerns, troubleshooting, and AI integration patterns.
+- **Writing**: Use clear technical language, consistent formatting, syntax-highlighted code, and cross-references.
+- **Technical**: Keep commands accurate, examples sanitized, API details current, and version notes explicit when they matter.
 
 ## Maintenance
 
@@ -81,31 +72,22 @@ Each service guide follows this format:
 
 Common integration patterns:
 
-**Domain -> DNS -> Hosting:**
+**Domain → DNS → Hosting:**
 - Domain purchasing (Spaceship/101domains) -> DNS (Cloudflare/Route53) -> Hosting (Hetzner/Hostinger)
 
-**Development -> Quality -> Deployment:**
+**Development → Quality → Deployment:**
 - Git platforms (GitHub/GitLab) -> Code auditing (CodeRabbit/SonarCloud) -> Deployment (Coolify/hosting)
 
-**Security -> Credentials -> Monitoring:**
+**Security → Credentials → Monitoring:**
 - Vaultwarden (credentials) -> Email monitoring (SES) -> Security auditing
 
-Each service guide includes integration examples, workflow patterns, cross-service dependencies, and combined operation examples.
+Include integration examples, dependency notes, and combined workflows where services are commonly used together.
 
-## Finding Information
+## Navigation
 
-```bash
-# Service-specific information
-.agents/[service-name].md
+- Service-specific guidance: `.agents/[service-name].md`
+- Framework context: `.agents/AGENTS.md`
+- Provider selection: `.agents/recommendations-opinionated.md`
+- Setup procedures: `.agents/[service]-setup.md`
 
-# Framework overview
-.agents/AGENTS.md
-
-# Provider selection guidance
-.agents/recommendations.md
-
-# Setup procedures
-.agents/[service]-setup.md
-```
-
-**Navigation priority**: Service guide (primary) -> Framework context (AGENTS.md) -> Best practices guide -> Setup guides -> Context7 MCP (latest external docs).
+**Navigation priority**: service guide → framework context → best-practices guide → setup guide → Context7 MCP for latest external docs.
