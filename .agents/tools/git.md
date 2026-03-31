@@ -18,15 +18,16 @@ tools:
 
 ## Quick Reference
 
-| Platform | CLI | Install | Auth |
-|----------|-----|---------|------|
-| GitHub | `gh` | `brew install gh` | `gh auth login` |
-| GitLab | `glab` | `brew install glab` | `glab auth login` |
-| Gitea | `tea` | `brew install tea` | `tea login add` |
+| Platform | CLI | Install | Auth | Primary doc |
+|----------|-----|---------|------|-------------|
+| GitHub | `gh` | `brew install gh` | `gh auth login` | `git/github-cli.md` |
+| GitLab | `glab` | `brew install glab` | `glab auth login` | `git/gitlab-cli.md` |
+| Gitea | `tea` | `brew install tea` | `tea login add` | `git/gitea-cli.md` |
 
-**Branching**: `workflows/branch.md`
-
-**Subagents**: `git/github-cli.md`, `git/gitlab-cli.md`, `git/gitea-cli.md`, `git/github-actions.md`, `git/authentication.md`, `git/git-security.md`, `git/opencode-github.md`, `git/opencode-gitlab.md`
+- Branching: `workflows/branch.md`
+- PRs and releases: `workflows/pr.md`, `workflows/version-bump.md`, `workflows/release.md`
+- Security and auth: `git/authentication.md`, `git/git-security.md`
+- Automation: `git/github-actions.md`, `git/opencode-github.md`, `git/opencode-gitlab.md`, `git/opencode-github-security.md`
 
 <!-- AI-CONTEXT-END -->
 
@@ -45,18 +46,18 @@ tools:
 
 ## Authentication
 
-CLI auth stores tokens in the system keyring (preferred). For scripts:
+CLI auth stores tokens in the system keyring; prefer that over plaintext config. Export tokens only when a script requires them:
 
 ```bash
 export GITHUB_TOKEN=$(gh auth token)
 export GITLAB_TOKEN=$(glab auth token)
 ```
 
-See `git/authentication.md` for detailed token setup.
+Detailed token setup and safety rules: `git/authentication.md`.
 
-## Multi-Platform Setup
+## Multi-Platform Remotes
 
-For repositories mirrored across platforms:
+Use named remotes when a repo mirrors across platforms:
 
 ```bash
 git remote add github git@github.com:user/repo.git
@@ -64,7 +65,7 @@ git remote add gitlab git@gitlab.com:user/repo.git
 git push github main
 git push gitlab main
 
-# Combined remote (push to all at once)
+# Combined remote (push to both)
 git remote add all git@github.com:user/repo.git
 git remote set-url --add --push all git@github.com:user/repo.git
 git remote set-url --add --push all git@gitlab.com:user/repo.git
@@ -73,37 +74,24 @@ git push all main
 
 ## OpenCode Integration
 
-AI-powered issue/PR automation from GitHub or GitLab.
-
-### GitHub
+GitHub setup and common commands:
 
 ```bash
-~/.aidevops/agents/scripts/opencode-github-setup-helper.sh check  # Check status
-opencode github install                                            # Automated setup
+~/.aidevops/agents/scripts/opencode-github-setup-helper.sh check
+opencode github install
 ```
 
-Use `/oc` or `/opencode` in any issue/PR comment:
-- `/oc explain this issue`
-- `/oc fix this bug`
-- `/opencode review this PR`
+Issue or PR comments:
+- GitHub: `/oc explain this issue`, `/oc fix this bug`, `/opencode review this PR`
+- GitLab: add OpenCode to `.gitlab-ci.yml`, then use `@opencode explain this issue` and `@opencode fix this`
 
-See `git/opencode-github.md` for full details.
-
-### GitLab
-
-Add OpenCode to `.gitlab-ci.yml` and use `@opencode` in comments:
-- `@opencode explain this issue`
-- `@opencode fix this`
-
-See `git/opencode-gitlab.md` for full details.
+See `git/opencode-github.md`, `git/opencode-gitlab.md`, and `git/opencode-github-security.md` for workflow and hardening details.
 
 ## Related
 
-- `workflows/branch.md` — Branching workflows
-- `workflows/pr.md` — Pull requests
-- `workflows/version-bump.md` — Version management
-- `workflows/release.md` — Releases
+- `workflows/branch.md` — branching workflow
+- `workflows/pr.md` — pull requests
+- `workflows/version-bump.md` — version management
+- `workflows/release.md` — releases
 - `git/github-actions.md` — CI/CD
-- `git/git-security.md` — Security
-- `git/opencode-github.md` — OpenCode GitHub
-- `git/opencode-gitlab.md` — OpenCode GitLab
+- `git/git-security.md` — git security rules
