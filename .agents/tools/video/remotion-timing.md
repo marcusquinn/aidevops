@@ -6,25 +6,29 @@ metadata:
   tags: spring, bounce, easing, interpolation
 ---
 
-Linear interpolation uses the `interpolate` function. Values are unclamped by default:
+Use `interpolate()` for direct frame-to-value mapping and `spring()` for physics-driven 0→1 progress.
 
-```ts title="Going from 0 to 1 over 100 frames"
+## interpolate()
+
+- `interpolate()` is unclamped by default.
+- Clamp explicitly when values must stop at the range edges.
+
+```ts title="Map opacity from frame 0-100"
 import {interpolate} from 'remotion';
 
 const opacity = interpolate(frame, [0, 100], [0, 1]);
 
-// With clamping:
 const clamped = interpolate(frame, [0, 100], [0, 1], {
   extrapolateLeft: 'clamp',
   extrapolateRight: 'clamp',
 });
 ```
 
-## Spring animations
+## spring()
 
-Springs produce natural motion from 0 to 1 over time.
+Springs produce natural motion from 0→1 over time.
 
-```ts title="Spring animation"
+```ts title="Basic spring"
 import {spring, useCurrentFrame, useVideoConfig} from 'remotion';
 
 const frame = useCurrentFrame();
@@ -33,20 +37,22 @@ const {fps} = useVideoConfig();
 const scale = spring({frame, fps});
 ```
 
-### Physical properties
+### Physics
 
-Default: `mass: 1, damping: 10, stiffness: 100` — produces slight bounce. Recommended no-bounce config: `{ damping: 200 }`.
-
-Common presets:
+- Default config: `mass: 1, damping: 10, stiffness: 100`.
+- Default behaviour includes slight bounce.
+- Recommended no-bounce preset: `{damping: 200}`.
 
 ```tsx
-const smooth = {damping: 200}; // Smooth, no bounce (subtle reveals)
-const snappy = {damping: 20, stiffness: 200}; // Snappy, minimal bounce (UI elements)
-const bouncy = {damping: 8}; // Bouncy entrance (playful animations)
+const smooth = {damping: 200}; // Smooth, no bounce; subtle reveals
+const snappy = {damping: 20, stiffness: 200}; // Snappy; UI elements
+const bouncy = {damping: 8}; // Playful entrance
 const heavy = {damping: 15, stiffness: 80, mass: 2}; // Heavy, slow, small bounce
 ```
 
-### Delay
+### Delay and duration
+
+Use either a shifted frame or `delay`, and override the natural spring duration with `durationInFrames` when timing must be fixed.
 
 ```tsx
 const entrance = spring({
@@ -54,19 +60,13 @@ const entrance = spring({
   fps,
   delay: 20,
 });
-```
 
-### Duration
-
-Springs have a natural duration from their physical properties. Override with `durationInFrames`:
-
-```tsx
 const anim = spring({frame, fps, durationInFrames: 40});
 ```
 
-### Combining spring() with interpolate()
+### Reuse spring output
 
-Map spring output (0–1) to any range:
+Spring output is just a number, so you can remap it with `interpolate()` or combine multiple springs arithmetically.
 
 ```tsx
 const springProgress = spring({frame, fps});
@@ -74,10 +74,6 @@ const rotation = interpolate(springProgress, [0, 1], [0, 360]);
 
 <div style={{rotate: rotation + 'deg'}} />;
 ```
-
-### Adding springs
-
-Springs are numbers — arithmetic works directly:
 
 ```tsx
 const {fps, durationInFrames} = useVideoConfig();
@@ -95,12 +91,11 @@ const scale = inAnimation - outAnimation;
 
 ## Easing
 
-Pass an `easing` option to `interpolate`. Default is `Easing.linear`.
-
-Convexities: `Easing.in` (slow start), `Easing.out` (slow end), `Easing.inOut`.
-Curves (most to least linear): `Easing.quad`, `Easing.sin`, `Easing.exp`, `Easing.circle`.
-
-Combine convexity + curve:
+- Pass `easing` to `interpolate()`.
+- Default easing is `Easing.linear`.
+- Convexities: `Easing.in`, `Easing.out`, `Easing.inOut`.
+- Curves from most to least linear: `Easing.quad`, `Easing.sin`, `Easing.exp`, `Easing.circle`.
+- `Easing.bezier(...)` is also supported.
 
 ```ts
 import {interpolate, Easing} from 'remotion';
@@ -111,8 +106,6 @@ const value = interpolate(frame, [0, 100], [0, 1], {
   extrapolateRight: 'clamp',
 });
 ```
-
-Cubic bezier curves are also supported:
 
 ```ts
 const value = interpolate(frame, [0, 100], [0, 1], {
