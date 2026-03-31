@@ -6,41 +6,40 @@ metadata:
   tags: sequence, trim, clip, cut, offset
 ---
 
-Use `<Sequence>` with a negative `from` value to trim the start of an animation.
+Use `<Sequence>` to skip the start of an animation, cap its end, or combine trimming with delay.
 
-## Trim the Beginning
+## Trim the beginning
 
-A negative `from` value shifts time backwards, making the animation start partway through:
+A negative `from` value shifts time backwards, so the sequence starts partway through its local timeline:
 
 ```tsx
-import { Sequence, useVideoConfig } from "remotion";
+import {Sequence, useVideoConfig} from 'remotion';
 
-const fps = useVideoConfig();
+const {fps} = useVideoConfig();
 
 <Sequence from={-0.5 * fps}>
   <MyAnimation />
 </Sequence>
 ```
 
-The animation appears 15 frames into its progress - the first 15 frames are trimmed off.
-Inside `<MyAnimation>`, `useCurrentFrame()` starts at 15 instead of 0.
+- The animation appears 15 frames into its progress, so the first 15 frames are skipped.
+- Inside `<MyAnimation>`, `useCurrentFrame()` starts at 15 instead of 0.
 
-## Trim the End
+## Trim the end
 
-Use `durationInFrames` to unmount content after a specified duration:
+Use `durationInFrames` to unmount content after a fixed duration:
 
 ```tsx
-
 <Sequence durationInFrames={1.5 * fps}>
   <MyAnimation />
 </Sequence>
 ```
 
-The animation plays for 45 frames, then the component unmounts.
+- The animation plays for 45 frames, then the component unmounts.
 
-## Trim and Delay
+## Trim and delay
 
-Nest sequences to both trim the beginning and delay when it appears:
+Nest sequences to trim the beginning and delay when the result appears:
 
 ```tsx
 <Sequence from={30}>
@@ -50,4 +49,5 @@ Nest sequences to both trim the beginning and delay when it appears:
 </Sequence>
 ```
 
-The inner sequence trims 15 frames from the start, and the outer sequence delays the result by 30 frames.
+- The inner sequence trims 15 frames from the start.
+- The outer sequence delays the trimmed result by 30 frames.
