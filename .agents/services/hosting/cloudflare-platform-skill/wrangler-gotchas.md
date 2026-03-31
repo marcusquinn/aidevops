@@ -103,5 +103,5 @@ wrangler dev --persist-to ./local-state  # Custom persist location
 
 ## See Also
 
-- [README.md](./README.md) - Commands
-- [patterns.md](./patterns.md) - Workflows
+- [wrangler.md](./wrangler.md) - Commands
+- [wrangler-patterns.md](./wrangler-patterns.md) - Workflows

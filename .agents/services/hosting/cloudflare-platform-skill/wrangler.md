@@ -1,44 +1,35 @@
 # Cloudflare Wrangler
 
-Official CLI for Cloudflare Workers - develop, manage, and deploy Workers from the command line.
+Primary CLI for Cloudflare Workers: scaffold projects, run local/remote dev, manage bindings, deploy, and inspect versions.
 
-## What is Wrangler?
-
-Wrangler is the Cloudflare Developer Platform CLI that allows you to:
-- Create, develop, and deploy Workers
-- Manage bindings (KV, D1, R2, Durable Objects, etc.)
-- Configure routing and environments
-- Run local development servers
-- Execute migrations and manage resources
-- Perform integration testing
-
-## Installation
+## Install
 
 ```bash
-npm install wrangler --save-dev
+npm install -D wrangler
 # or globally
 npm install -g wrangler
 ```
 
-Run commands: `npx wrangler <command>` (or `pnpm`/`yarn wrangler`)
+Run with `npx wrangler <command>` (or your package manager's wrapper).
 
-## Essential Commands
-
-### Project & Development
+## Core Commands
 
 ```bash
-wrangler init [name]              # Create new project
-wrangler dev                      # Local dev server
-wrangler dev --remote             # Dev with remote resources
-wrangler deploy                   # Deploy to production
-wrangler deploy --env staging     # Deploy to environment
-wrangler versions list            # List versions
-wrangler rollback [id]            # Rollback deployment
-wrangler login                    # OAuth login
-wrangler whoami                   # Check auth status
+wrangler init [name]                  # Create project
+wrangler dev                          # Local dev server
+wrangler dev --remote                 # Remote dev with real bindings
+wrangler deploy                       # Deploy production
+wrangler deploy --env staging         # Deploy named environment
+wrangler versions list                # List deployed versions
+wrangler rollback [id]                # Roll back deployment
+wrangler login                        # OAuth login
+wrangler whoami                       # Check auth/account
+wrangler tail                         # Stream logs
+wrangler tail --env production        # Tail specific environment
+wrangler tail --status error          # Show only errors
 ```
 
-## Resource Management
+## Resource Commands
 
 ### KV
 
@@ -65,7 +56,7 @@ wrangler r2 object put BUCKET/key --file path
 wrangler r2 object get BUCKET/key
 ```
 
-### Other Resources
+### Other Platform Resources
 
 ```bash
 wrangler queues create NAME
@@ -76,20 +67,12 @@ wrangler hyperdrive create NAME --connection-string "..."
 ### Secrets
 
 ```bash
-wrangler secret put NAME          # Set secret
-wrangler secret list              # List secrets
-wrangler secret delete NAME       # Delete secret
+wrangler secret put NAME
+wrangler secret list
+wrangler secret delete NAME
 ```
 
-### Monitoring
+## See Also
 
-```bash
-wrangler tail                     # Real-time logs
-wrangler tail --env production    # Tail specific env
-wrangler tail --status error      # Filter by status
-```
-
-## In This Reference
-
-- [patterns.md](./patterns.md) - Common workflows and development patterns
-- [gotchas.md](./gotchas.md) - Common pitfalls, limits, and troubleshooting
+- [wrangler-patterns.md](./wrangler-patterns.md) - Common workflows and testing patterns
+- [wrangler-gotchas.md](./wrangler-gotchas.md) - Limits, pitfalls, and troubleshooting
