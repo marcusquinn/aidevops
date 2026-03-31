@@ -15,7 +15,7 @@ tools:
 
 # GEO Strategy
 
-Design and evaluate AI search optimization strategy with a retrieval-first approach.
+Design and evaluate AI search visibility with a retrieval-first approach.
 
 ## Quick Reference
 
@@ -35,7 +35,8 @@ Design and evaluate AI search optimization strategy with a retrieval-first appro
 ### 1) Scope high-value intents
 
 - Select 5-20 intents that influence revenue or lead quality
-- Map each intent to an existing target page; exclude intents without a realistic ranking path
+- Map each intent to an existing target page
+- Exclude intents without a realistic ranking path
 - Classify intents by grounding likelihood to avoid optimizing non-retrieval prompts
 
 ### 2) Extract decision criteria
@@ -46,50 +47,53 @@ Design and evaluate AI search optimization strategy with a retrieval-first appro
 
 ### 3) Score coverage per page
 
-- For each criterion, mark page state: strong, partial, missing, not applicable
+- For each criterion, mark page state: strong, partial, missing, or not applicable
 - Require evidence references (URL section, data source, policy, certification)
 - Flag unsupported marketing claims immediately
 
 ### 4) Build retrieval-ready summaries
 
 - Add a concise criteria-matching block near top of page
-- Keep claims specific, self-contained, with provenance over broad brand language
+- Keep claims specific and self-contained
+- Prefer facts with provenance over broad brand language
 
 ### 5) Validate and iterate
 
 - Re-check retrieval fitness after edits
-- Evaluate by coverage and consistency first; monitor citations directionally
+- Evaluate coverage and consistency before citation counts
+- Monitor citations directionally, not as the only success metric
 - Re-run criteria extraction monthly or after major model shifts
 
 ## Implementation Rules
 
-- First 200-300 words: highly informative and criteria-dense
-- Explicit headings for key buyer concerns
-- Terminology aligned with user query vocabulary and synonyms
-- Single canonical value for every critical fact across the site
+- Keep the first 200-300 words highly informative and criteria-dense
+- Use explicit headings for key buyer concerns
+- Keep terminology aligned with user query vocabulary and synonyms
+- Keep a single canonical value for every critical fact across the site
 - Prefer additive edits to existing pages before creating net-new pages
 - Ensure key pages remain accessible to major AI/search crawlers
 
 ### Domain-scoped retrieval
 
-AI models use `site:yourdomain.com` queries to extract detail from domains already identified as relevant — bypassing traditional SERP ranking. Structure content accordingly:
+AI models use `site:yourdomain.com` queries to extract detail from domains already identified as relevant. This bypasses traditional SERP ranking, so structure content for direct domain retrieval:
 
-- Each major product/feature/service gets a dedicated page with descriptive title containing category terms (not just brand names)
-- Page titles, H1s, and section headings include high-intent terms: product category, feature type, year, pricing
 - Key pages must return relevant results for `site:yourdomain.com [category] features [year]` patterns
-- Pricing, feature lists, and comparison data in crawlable HTML — not behind JS rendering or gated forms
+- Each major product, feature, or service should have a dedicated page with a descriptive title containing category terms, not just brand names
+- Page titles, H1s, and section headings should include the terms a model would use in a `site:` query: product category, feature type, year, pricing where applicable
 - Avoid consolidating all product info into a single page; domain-scoped search works best with one topic per URL
+- Keep pricing, feature lists, and comparison data in crawlable HTML, not behind JavaScript rendering or gated forms
 
 ### Review platform parity
 
-AI models query `site:g2.com`, `site:capterra.com`, `site:trustradius.com` as a validation stage after extracting brand-site claims:
+AI models query `site:g2.com`, `site:capterra.com`, and `site:trustradius.com` as a validation stage after extracting brand-site claims. Treat these profiles as third-party confirmation:
 
 - Maintain complete, current profiles with the same canonical facts (pricing, features, integrations) as the primary site
 - Consistent product naming and categorization across platforms
 - Respond to reviews — AI models may extract vendor responses as support quality evidence
 - Keep category listings accurate; wrong category = invisible to model queries
-- Monitor profiles quarterly; consider TrustRadius, PeerSpot, and vertical-specific sites for thin B2B coverage
 - Track outbound citations from profile links with UTM conventions for attribution
+- Monitor profiles quarterly
+- Consider TrustRadius, PeerSpot, and vertical-specific sites where G2/Capterra coverage is thin
 
 ## Anti-Patterns
 
