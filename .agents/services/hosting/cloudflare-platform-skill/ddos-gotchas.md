@@ -1,13 +1,31 @@
 # DDoS Gotchas
 
-## False Positives
+## Always-on Protection
 
-**Symptom**: Legitimate traffic blocked/challenged
+DDoS managed rulesets cannot be fully disabled. Minimum mitigation: `sensitivity_level: "eoff"`.
 
-**Diagnosis**:
+## Attacks Getting Through
+
+Sensitivity too low or wrong action. Fix — increase to default (high) sensitivity:
 
 ```typescript
-// Query GraphQL API for flagged requests
+const config = {
+  rules: [{
+    expression: "true",
+    action: "execute",
+    action_parameters: {
+      id: managedRulesetId,
+      overrides: { sensitivity_level: "default", action: "block" },
+    },
+  }],
+};
+```
+
+## False Positives
+
+Legitimate traffic blocked/challenged. Diagnose via GraphQL API:
+
+```typescript
 const query = `
   query {
     viewer {
@@ -31,86 +49,46 @@ const query = `
 `;
 ```
 
-**Fix**:
+Fix:
+
 1. Lower sensitivity for specific rule/category
 2. Use `log` action first to validate (Enterprise Advanced)
 3. Add exception with custom expression (e.g., allowlist IPs)
 4. Reduce category sensitivity: `{ category: "http-flood", sensitivity_level: "low" }`
 
-## Attacks Getting Through
-
-**Cause**: Sensitivity too low, wrong action
-
-**Fix**:
-
-```typescript
-// Increase to default (high) sensitivity
-const config = {
-  rules: [{
-    expression: "true",
-    action: "execute",
-    action_parameters: {
-      id: managedRulesetId,
-      overrides: { sensitivity_level: "default", action: "block" },
-    },
-  }],
-};
-```
-
 ## Adaptive Rules Not Working
 
-**Cause**: Insufficient traffic history (needs 7 days)
-
-**Fix**: Wait for baseline to establish, check dashboard for adaptive rule status
+Needs 7 days of traffic history for baseline. Check dashboard for adaptive rule status.
 
 ## Zone vs Account Override Conflict
 
-**Issue**: Account overrides ignored when zone has overrides
-
-**Solution**: Configure at zone level OR remove zone overrides to use account-level
+Account overrides ignored when zone has overrides. Configure at zone level OR remove zone overrides to use account-level.
 
 ## Log Action Not Available
 
-**Cause**: Not on Enterprise Advanced DDoS plan
+Requires Enterprise Advanced DDoS plan. Workaround: use `managed_challenge` with low sensitivity for testing.
 
-**Workaround**: Use `managed_challenge` with low sensitivity for testing
+## Rule Limits
 
-## Rule Limit Exceeded
+| Plan | Override rules |
+|------|---------------|
+| Free/Pro/Business | 1 |
+| Enterprise Advanced | Up to 10 |
 
-**Plans**:
-- Free/Pro/Business: 1 override rule only
-- Enterprise Advanced: Up to 10 rules
-
-**Workaround**: Combine conditions in single expression using `and`/`or`
+Workaround: combine conditions in single expression using `and`/`or`.
 
 ## Read-only Managed Rules
 
-**Issue**: Some rules cannot be overridden
-
-**Check**: API response indicates if rule is read-only
-
-## Always-on Protection
-
-**Reality**: DDoS managed rulesets cannot be fully disabled
-
-**Minimum**: Set `sensitivity_level: "eoff"` for minimal mitigation
+Some rules cannot be overridden — API response indicates if rule is read-only.
 
 ## Tuning Strategy
 
 1. Start with `log` action + `medium` sensitivity
-2. Monitor for 24-48 hours
-3. Identify false positives, add exceptions
-4. Gradually increase to `default` sensitivity
-5. Change action from `log` → `managed_challenge` → `block`
-6. Document all adjustments
+2. Monitor 24-48 hours, identify false positives, add exceptions
+3. Gradually increase to `default` sensitivity
+4. Escalate action: `log` → `managed_challenge` → `block`
+5. Document all adjustments
 
-## Best Practices
-
-- Test during low-traffic periods
-- Use zone-level for per-site tuning
-- Reference IP lists for easier management
-- Set appropriate alert thresholds (avoid noise)
-- Combine with WAF for layered defense
-- Avoid over-tuning (keep config simple)
+Best practices: test during low-traffic periods, use zone-level for per-site tuning, reference IP lists for easier management, set appropriate alert thresholds (avoid noise), combine with WAF for layered defense, avoid over-tuning.
 
 See [patterns.md](./patterns.md) for progressive rollout examples.

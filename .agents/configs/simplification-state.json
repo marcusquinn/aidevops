@@ -2366,6 +2366,11 @@
       "at": "2026-03-29T15:50:34Z",
       "pr": 13064
     },
+    ".agents/services/hosting/cloudflare-platform-skill/ddos-gotchas.md": {
+      "hash": "f795b81e886d9849d9c4d1ed64ec335e02a1cfe9",
+      "at": "2026-03-31T10:01:00Z",
+      "pr": null
+    },
     ".agents/services/hosting/cloudflare-platform-skill/ddos-patterns.md": {
       "hash": "d94a33ca854e976d5ef5819ab6a04b4710d7c710",
       "at": "2026-03-30T02:30:53Z",
