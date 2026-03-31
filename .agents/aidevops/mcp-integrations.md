@@ -255,5 +255,5 @@ Per-agent enablement: `services/document-processing/unstract.md`.
 ## Resources
 
 - [Setup Script](.agents/scripts/setup-mcp-integrations.sh) | [Validation Script](.agents/scripts/validate-mcp-integrations.sh) | [Config Templates](configs/mcp-templates/)
-- [Chrome DevTools Guide](.agents/tools/browser/chrome-devtools.md) | [Playwright Guide](.agents/tools/browser/playwright.md)
+- [Chrome DevTools Guide](.agents/tools/browser/chrome-devtools.md) | [Playwright Guide](.agents/tools/browser/playwright.md) | [Chromium Debug Use Guide](.agents/tools/browser/chromium-debug-use.md)
 - [Troubleshooting](.agents/aidevops/mcp-troubleshooting.md)

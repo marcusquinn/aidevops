@@ -24,6 +24,7 @@ EXTRACT?
 AUTOMATE?
   Password manager/extensions:
     Already unlocked → Playwriter | Unlock once → dev-browser | Programmatic → Playwright + Bitwarden CLI
+  Live already-open Chromium/Chrome session → chromium-debug-use
   Parallel sessions: speed → Playwright | CLI → playwright-cli/agent-browser --session
   Persistent login: with extensions → dev-browser | without → playwright-cli/storageState
   Proxy: direct → Playwright/Crawl4AI | via extension → Playwriter
@@ -116,4 +117,4 @@ agent-browser screenshot /tmp/debug.png && agent-browser errors && agent-browser
 
 <!-- AI-CONTEXT-END -->
 
-Per-tool docs: `playwright.md` · `playwright-cli.md` · `dev-browser.md` · `agent-browser.md` · `crawl4ai.md` · `playwriter.md` · `stagehand.md`. Ethics: respect ToS, rate limit (2-5s delays), no spam, legitimate use only, no personal data without consent.
+Per-tool docs: `playwright.md` · `playwright-cli.md` · `chromium-debug-use.md` · `dev-browser.md` · `agent-browser.md` · `crawl4ai.md` · `playwriter.md` · `stagehand.md`. Ethics: respect ToS, rate limit (2-5s delays), no spam, legitimate use only, no personal data without consent.
