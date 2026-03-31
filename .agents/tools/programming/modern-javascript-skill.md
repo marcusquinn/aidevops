@@ -3,11 +3,9 @@ description: "|"
 mode: subagent
 imported_from: external
 ---
-# modern-javascript
-
 # Modern JavaScript (ES6-ES2025)
 
-Write clean, performant, maintainable JavaScript using modern language features. This skill covers ES6 through ES2025, emphasizing immutability, functional patterns, and expressive syntax.
+Use this file as the reference index: quick decision trees up front, then chapter links for the full corpus. The detailed material lives in `modern-javascript-skill/*.md`.
 
 ## Quick Decision Trees
 
@@ -67,7 +65,7 @@ Always prefer non-mutating methods:
 | ES2024 | 2024 | Object.groupBy(), Map.groupBy(), Promise.withResolvers(), RegExp v flag, resizable ArrayBuffer |
 | ES2025 | 2025 | Iterator helpers (.map, .filter, .take), Set methods (.union, .intersection), RegExp.escape(), using/await using |
 
-## Reference Documentation
+## Reference Chapters
 
 ### ES Version References
 
