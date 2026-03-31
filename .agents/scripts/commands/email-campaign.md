@@ -12,29 +12,17 @@ Arguments: $ARGUMENTS
 
 ### Step 1: Parse Campaign Intent
 
-Parse `$ARGUMENTS` into:
-
-- Campaign type: `newsletter`, `broadcast`, `sequence`, `help`
-- Action: `create`, `schedule`, `send`, `pause`, `status`, `analytics`
-- Optional audience segment/tag filter
+Parse `$ARGUMENTS` into campaign type (`newsletter`, `broadcast`, `sequence`, `help`), action (`create`, `schedule`, `send`, `pause`, `status`, `analytics`), and optional audience segment/tag filter.
 
 If campaign type is missing, request it and show examples.
 
 ### Step 2: Validate Required Inputs
 
-For create/schedule/send actions, confirm:
+For create/schedule/send, confirm: subject line + preview text, audience segment/list, single primary CTA, send window/timezone, compliance footer + unsubscribe handling.
 
-- Subject line and preview text
-- Audience segment/list
-- Single primary CTA
-- Send window/timezone
-- Compliance footer and unsubscribe handling
-
-Before sending, run preflight checks on content and delivery readiness.
+Run preflight checks on content and delivery readiness before sending.
 
 ### Step 3: Execute Campaign Operation
-
-Use the appropriate helper workflow:
 
 ```bash
 # Create campaign draft
@@ -47,17 +35,11 @@ Use the appropriate helper workflow:
 ~/.aidevops/agents/scripts/email-delivery-test-helper.sh report "$DOMAIN"
 ```
 
-If the user asks for CRM-first campaign operations (segmentation, automations, broadcasts), route to the configured CRM tooling flow for contact/list operations.
+CRM-first operations (segmentation, automations, broadcasts) → route to configured CRM tooling flow.
 
 ### Step 4: Return Campaign Report
 
-Include:
-
-- Campaign type, ID, and current state
-- Segment/list size and send count
-- Send window and cadence
-- Key metrics: open, click, reply, unsubscribe, spam complaint
-- Recommended optimization action
+Include: campaign type/ID/state, segment size + send count, send window/cadence, key metrics (open, click, reply, unsubscribe, spam complaint), recommended optimization action.
 
 ### Step 5: Offer Follow-up Actions
 
