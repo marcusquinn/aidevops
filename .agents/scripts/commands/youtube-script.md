@@ -4,17 +4,15 @@ agent: Build+
 mode: subagent
 ---
 
-Generate YouTube video scripts optimized for audience retention. Delegates to `content/distribution-youtube-script-writer.md` for hook formulas, storytelling frameworks, retention checklist, output format, and memory integration.
+Generate retention-optimized YouTube scripts. Use `content/distribution-youtube-script-writer.md` for hook formulas, storytelling frameworks, retention checks, pacing, and output format.
 
-Topic: $ARGUMENTS
+Arguments: $ARGUMENTS
 
 ## Workflow
 
-### Step 1: Parse Input and Load Context
+### Step 1: Parse Request and Load Context
 
-Parse `$ARGUMENTS` for topic/title and optional flags: `--remix VIDEO_ID`, `--hook-only`, `--outline-only`, `--length [short|medium|long]`.
-
-Load context:
+Parse a topic/title plus optional flags: `--remix VIDEO_ID`, `--hook-only`, `--outline-only`, `--length [short|medium|long]`.
 
 ```bash
 memory-helper.sh recall --namespace youtube-topics "$TOPIC"
@@ -28,9 +26,9 @@ memory-helper.sh recall --namespace youtube "channel voice"
 | **Full Script** | *(default)* | Hook → Intro → Body (with pattern interrupts) → Climax → CTA |
 | **Hook Only** | `--hook-only` | 5-10 hook variants (Bold Claim, Question, Story, Contrarian, Result, List, Problem) |
 | **Outline Only** | `--outline-only` | Hook concept, intro roadmap, body sections (3-7), interrupt placements, CTA strategy |
-| **Remix** | `--remix VIDEO_ID` | Fetch transcript via `youtube-helper.sh transcript VIDEO_ID`, analyze structure, generate unique version with different angle/examples |
+| **Remix** | `--remix VIDEO_ID` | Fetch transcript via `youtube-helper.sh transcript VIDEO_ID`, analyze the source structure, then rewrite with a new angle and examples |
 
-Read `content/distribution-youtube-script-writer.md` for hook formulas, pattern interrupt types, retention curve optimization, storytelling frameworks, B-roll markers, pacing (120-150 wpm), and output format.
+Read `content/distribution-youtube-script-writer.md` before drafting.
 
 ### Step 3: Store and Offer Follow-up
 
@@ -39,7 +37,7 @@ memory-helper.sh store --type WORKING_SOLUTION --namespace youtube-scripts \
   "Script: {title}. Hook: {formula}. Length: {duration}. Generated: {date}"
 ```
 
-Offer: hook variants, thumbnail brief, title/tags/description optimization, B-roll shot list, YouTube Short version (first 60s).
+Offer follow-up help for hook variants, thumbnail brief, title/tags/description optimization, B-roll shot list, or a YouTube Short version (first 60s).
 
 ## Options
 
