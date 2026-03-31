@@ -1,6 +1,11 @@
 {
   "_comment": null,
   "files": {
+    ".agents/aidevops/agent-sources.md": {
+      "hash": "86113ed3f6cb39ad363af10d420942cff1af592c",
+      "at": "2026-03-31T05:32:40Z",
+      "pr": 14645
+    },
     ".agents/seo/analytics-tracking.md": {
       "hash": "07ff0feec55ad3f8477a6badd724b479c1b09370",
       "at": "2026-03-27T21:25:04Z",
