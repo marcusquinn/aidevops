@@ -234,7 +234,7 @@ test_counts_review_issue_pr_workers() {
 	return 0
 }
 
-test_list_dispatchable_candidates_include_passive_assignees() {
+test_list_dispatchable_candidates_default_open_except_needs_labels() {
 	local repos_json_path="${HOME}/.config/aidevops/repos.json"
 	mkdir -p "$(dirname "$repos_json_path")"
 	printf '{"initialized_repos":[{"slug":"owner/repo","path":"/tmp/repo","pulse":true,"maintainer":"maintainer-bot"}]}\n' >"$repos_json_path"
@@ -247,23 +247,25 @@ test_list_dispatchable_candidates_include_passive_assignees() {
 	  {"number":4,"title":"runner assigned","updatedAt":"2026-03-31T00:03:00Z","assignees":[{"login":"other-runner"}],"labels":[{"name":"priority:high"}]},
 	  {"number":5,"title":"owner queued","updatedAt":"2026-03-31T00:04:00Z","assignees":[{"login":"owner"}],"labels":[{"name":"status:queued"}]},
 	  {"number":6,"title":"needs review","updatedAt":"2026-03-31T00:05:00Z","assignees":[],"labels":[{"name":"needs-maintainer-review"}]},
-	  {"number":7,"title":"supervisor telemetry","updatedAt":"2026-03-31T00:06:00Z","assignees":[],"labels":[{"name":"supervisor"}]}
+	  {"number":7,"title":"needs docs","updatedAt":"2026-03-31T00:06:00Z","assignees":[],"labels":[{"name":"needs-docs"}]},
+	  {"number":8,"title":"supervisor telemetry","updatedAt":"2026-03-31T00:07:00Z","assignees":[],"labels":[{"name":"supervisor"}]},
+	  {"number":9,"title":"in progress but runnable","updatedAt":"2026-03-31T00:08:00Z","assignees":[{"login":"owner"}],"labels":[{"name":"status:in-progress"}]}
 	]'
 	GH_PR_LIST_JSON='[]'
 
 	local output
 	output=$(list_dispatchable_issue_candidates "owner/repo" 100)
 
-	if [[ "$output" == *$'1|unassigned'* && "$output" == *$'2|owner assigned'* && "$output" == *$'3|maintainer assigned'* && "$output" != *$'4|runner assigned'* && "$output" != *$'5|owner queued'* && "$output" != *$'6|needs review'* && "$output" != *$'7|supervisor telemetry'* ]]; then
-		print_result "list_dispatchable_issue_candidates includes passive assignees only" 0
+	if [[ "$output" == *$'1|unassigned'* && "$output" == *$'2|owner assigned'* && "$output" == *$'3|maintainer assigned'* && "$output" == *$'4|runner assigned'* && "$output" == *$'5|owner queued'* && "$output" == *$'9|in progress but runnable'* && "$output" != *$'6|needs review'* && "$output" != *$'7|needs docs'* && "$output" != *$'8|supervisor telemetry'* ]]; then
+		print_result "list_dispatchable_issue_candidates is default-open except needs-*" 0
 		return 0
 	fi
 
-	print_result "list_dispatchable_issue_candidates includes passive assignees only" 1 "Unexpected candidate set: ${output}"
+	print_result "list_dispatchable_issue_candidates is default-open except needs-*" 1 "Unexpected candidate set: ${output}"
 	return 0
 }
 
-test_count_runnable_candidates_counts_passive_assignee_backlog() {
+test_count_runnable_candidates_counts_default_open_backlog() {
 	local repos_json_path="${HOME}/.config/aidevops/repos.json"
 	mkdir -p "$(dirname "$repos_json_path")"
 	printf '{"initialized_repos":[{"slug":"owner/repo","path":"/tmp/repo","pulse":true,"maintainer":"maintainer-bot"}]}\n' >"$repos_json_path"
@@ -283,12 +285,12 @@ test_count_runnable_candidates_counts_passive_assignee_backlog() {
 	local count
 	count=$(count_runnable_candidates)
 
-	if [[ "$count" == "5" ]]; then
-		print_result "count_runnable_candidates counts passive assignee backlog" 0
+	if [[ "$count" == "6" ]]; then
+		print_result "count_runnable_candidates counts default-open backlog" 0
 		return 0
 	fi
 
-	print_result "count_runnable_candidates counts passive assignee backlog" 1 "Expected 5 runnable items, got '${count}'"
+	print_result "count_runnable_candidates counts default-open backlog" 1 "Expected 6 runnable items, got '${count}'"
 	return 0
 }
 
@@ -359,8 +361,8 @@ main() {
 	test_has_worker_exact_dir_match_no_sibling_false_positive
 	test_has_worker_exact_dir_match_accepts_correct_path
 	test_counts_review_issue_pr_workers
-	test_list_dispatchable_candidates_include_passive_assignees
-	test_count_runnable_candidates_counts_passive_assignee_backlog
+	test_list_dispatchable_candidates_default_open_except_needs_labels
+	test_count_runnable_candidates_counts_default_open_backlog
 	test_count_runnable_candidates_keeps_stdout_numeric_with_debug
 	test_count_queued_without_worker_keeps_stdout_numeric_with_debug
 

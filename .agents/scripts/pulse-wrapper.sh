@@ -4362,27 +4362,19 @@ list_dispatchable_issue_candidates_json() {
 	fi
 	[[ "$limit" =~ ^[0-9]+$ ]] || limit=100
 
-	local repo_owner repo_maintainer passive_assignees_json issue_json
-	repo_owner=$(get_repo_owner_by_slug "$repo_slug")
-	repo_maintainer=$(get_repo_maintainer_by_slug "$repo_slug")
-	passive_assignees_json=$(printf '%s\n%s\n' "$repo_owner" "$repo_maintainer" | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null) || passive_assignees_json='[]'
+	local issue_json
 
 	issue_json=$(gh issue list --repo "$repo_slug" --state open --json number,title,url,assignees,labels,updatedAt --limit "$limit" 2>/dev/null) || issue_json="[]"
 
-	printf '%s' "$issue_json" | jq -c --argjson passive "$passive_assignees_json" '
+	printf '%s' "$issue_json" | jq -c '
 		[
 			.[] |
 			(.labels | map(.name)) as $labels |
 			(.assignees | map(.login)) as $assignees |
 			select(($labels | index("status:blocked")) == null) |
-			select(($labels | index("status:needs-info")) == null) |
-			select(($labels | index("needs-maintainer-review")) == null) |
-			select(($labels | index("status:queued")) == null) |
-			select(($labels | index("status:in-progress")) == null) |
-			select(($labels | index("status:in-review")) == null) |
+			select(([$labels[] | select(startswith("needs-"))] | length) == 0) |
 			select(($labels | index("supervisor")) == null) |
 			select(($labels | index("persistent")) == null) |
-			select(($assignees | length) == 0 or ($assignees | all(.[]; . as $a | $passive | index($a) != null))) |
 			{
 				number,
 				title,
@@ -4401,11 +4393,11 @@ list_dispatchable_issue_candidates_json() {
 # in a single repo.
 #
 # Candidate rules:
-# - open and not blocked / needs-info / needs-maintainer-review
-# - not already in queued/in-progress/in-review state
-# - not supervisor/persistent telemetry issues
-# - unassigned OR assigned only to passive backlog holders
-#   (repo owner and/or repo maintainer)
+# - open and not blocked
+# - exclude any issue carrying a needs-* label (e.g. needs-maintainer-review)
+# - include queued/in-progress/in-review states (status labels are not blockers)
+# - include assigned issues (assignment state is resolved by dedup/claim checks)
+# - exclude supervisor/persistent telemetry issues
 #
 # Active PR/worker overlap is handled later by deterministic dedup guards.
 # This helper only answers: "should the pulse look at this issue at all?"
@@ -5116,8 +5108,8 @@ get_max_workers_target() {
 #######################################
 # Count runnable backlog candidates across pulse scope
 # Heuristic for t1453 utilization loop:
-# - open inactive backlog issues (unassigned or only passively assigned to
-#   repo owner/maintainer)
+# - open issues passing default-open candidate filter
+#   (non-needs-* and non-management labels)
 # - open PRs with failing checks or changes requested
 # Returns: count via stdout
 #######################################
