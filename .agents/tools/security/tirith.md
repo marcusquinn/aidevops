@@ -21,13 +21,13 @@ tools:
 - **Repo**: [github.com/sheeki03/tirith](https://github.com/sheeki03/tirith) (1.5k stars, Rust, AGPL-3.0)
 - **Key trait**: Sub-millisecond overhead, fully local, no network calls, no telemetry
 - **Coverage**: 30 rules across 7 categories
+- **Activation**: Add the shell hook once; every later command is checked automatically
 
-Browsers block homograph attacks, ANSI injection, and suspicious URLs. Terminals don't.
-Tirith hooks into your shell and intercepts dangerous commands before they execute.
+Browsers guard homograph attacks, ANSI injection, and suspicious URLs. Terminals usually don't. Tirith adds that check before command execution.
 
 <!-- AI-CONTEXT-END -->
 
-## Installation
+## Install and activate
 
 ```bash
 brew install sheeki03/tap/tirith   # macOS
@@ -38,9 +38,7 @@ mise use -g tirith                 # mise
 
 Also available via Nix, deb, rpm, AUR, Scoop, and Chocolatey.
 
-## Shell Hook Setup
-
-Add to your shell profile — this is the only activation step:
+Add one shell hook to your profile — this is the only activation step:
 
 ```bash
 # zsh (~/.zshrc)
@@ -53,9 +51,9 @@ eval "$(tirith init --shell bash)"
 tirith init --shell fish | source
 ```
 
-Every command is now guarded. Clean commands pass through invisibly.
+After that, clean commands pass through invisibly and risky ones are blocked or warned on.
 
-## Rule Categories
+## What it catches
 
 | Category | What it stops |
 |----------|---------------|
@@ -83,7 +81,7 @@ tirith doctor                  # Diagnostic check (shell, hooks, policy)
 
 ## Configuration
 
-YAML policy file, discovered in order:
+Policy file lookup order:
 
 1. `.tirith/policy.yaml` (walks up to repo root)
 2. `~/.config/tirith/policy.yaml`
@@ -104,19 +102,18 @@ Organizations can set `allow_bypass: false` to prevent per-command bypass.
 
 ## Bypass
 
-For commands you've verified manually:
+Use only for commands you have reviewed manually:
 
 ```bash
 TIRITH=0 curl -L https://known-safe.example.com | bash
 ```
 
-Standard shell prefix — applies to that single command only, does not persist.
+This standard shell prefix applies to one command only and does not persist.
 
 ## Integration with aidevops
 
-**setup.sh recommendation**: Check for tirith and suggest installation if missing.
-Once `eval "$(tirith init)"` is in the shell profile, all terminal commands
-(including those spawned by aidevops scripts) are automatically guarded.
+- **setup.sh recommendation**: Check for Tirith and suggest installation if missing.
+- Once `eval "$(tirith init)"` is in the shell profile, terminal commands spawned by aidevops scripts are guarded automatically.
 
 **Audit log**: Local JSONL at `~/.local/share/tirith/log.jsonl` (timestamp, action, rule ID, redacted preview). Disable with `TIRITH_LOG=0`.
 
