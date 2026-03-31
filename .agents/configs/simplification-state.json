@@ -3015,6 +3015,11 @@
       "hash": "102c82fd40a93f9e219e84ee053645eff00db29b",
       "at": "2026-03-31T03:46:07Z",
       "pr": 14541
+    },
+    ".agents/reference/agent-routing.md": {
+      "hash": "83e56233f5c7fc633bc3a64de90d9b5529a0bd33",
+      "at": "2026-03-31T05:34:14Z",
+      "pr": 14650
     }
   }
 }
