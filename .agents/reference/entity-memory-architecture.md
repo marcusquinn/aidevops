@@ -18,11 +18,9 @@ tools:
 
 ## Purpose
 
-Provide cross-channel relationship continuity for agents on Matrix, SimpleX, email, CLI, and similar channels.
+Provide cross-channel relationship continuity for agents on Matrix, SimpleX, email, CLI, and similar channels. Core loop: interaction patterns → gap detection → auto TODO → system upgrade. The model should evolve from observed user needs, not fixed assumptions.
 
-Core loop: interaction patterns → gap detection → auto TODO → system upgrade. The architecture is meant to evolve from observed user needs, not fixed assumptions.
-
-## Design Summary
+## Core Decisions
 
 | Decision | Why |
 |----------|-----|
@@ -33,7 +31,7 @@ Core loop: interaction patterns → gap detection → auto TODO → system upgra
 | AI judgment for thresholds | Haiku-tier (~$0.001/call) handles outliers better than fixed thresholds |
 | Structured summaries over flat dumps | ~2k tokens recovers ~80% continuity at ~10% of raw-dump cost |
 
-## Layers
+## Layer Model
 
 | Layer | Role | Tables | Script |
 |-------|------|--------|--------|
@@ -42,7 +40,7 @@ Core loop: interaction patterns → gap detection → auto TODO → system upgra
 | **1: Conversation context** | Active threads, immutable summaries, tone profile, pending actions | conversations, conversation_summaries | `conversation-helper.sh` |
 | **0: Raw interaction log** | Immutable source of truth; FTS5 indexed; privacy-filtered on write | interactions, interactions_fts | `entity-helper.sh log-interaction` |
 
-**Immutability:** Layer 0 is INSERT-only except privacy deletion. Layers 1-2 use `supersedes_id` chains: new rows supersede old rows, never edit in place. The current record is the row whose `id` is not referenced by another row's `supersedes_id`. This keeps a full audit trail and avoids concurrent-write conflicts.
+**Immutability:** Layer 0 is INSERT-only except privacy deletion. Layers 1-2 use `supersedes_id` chains: new rows supersede old rows, never edit in place. The current record is the row whose `id` is not referenced by another row's `supersedes_id`. This preserves a full audit trail and avoids concurrent-write conflicts.
 
 ## Database Schema
 
@@ -66,16 +64,20 @@ All tables live in `~/.aidevops/.agent-workspace/memory/memory.db` alongside `le
 
 ### Layer 1: `conversations` + `conversation_summaries`
 
-- **`conversations`**: `id` (conv_…), `entity_id`, `channel`, `channel_id`, `topic`, `summary` (denormalised latest), `status` (active|idle|closed), `interaction_count`, `first/last_interaction_at`, `created/updated_at`
-- **`conversation_summaries`**: `id` (sum_…), `conversation_id`, `summary`, `source_range_start/end` (interaction IDs covered), `source_interaction_count`, `tone_profile` (JSON: formality/technical_level/sentiment/pace), `pending_actions` (JSON array), `supersedes_id`, `created_at`
+| Table | Fields |
+|-------|--------|
+| **`conversations`** | `id` (conv_…), `entity_id`, `channel`, `channel_id`, `topic`, `summary` (denormalised latest), `status` (active\|idle\|closed), `interaction_count`, `first/last_interaction_at`, `created/updated_at` |
+| **`conversation_summaries`** | `id` (sum_…), `conversation_id`, `summary`, `source_range_start/end` (interaction IDs covered), `source_interaction_count`, `tone_profile` (JSON: formality/technical_level/sentiment/pace), `pending_actions` (JSON array), `supersedes_id`, `created_at` |
 
 ### Layer 2: `entities`, `entity_channels`, `entity_profiles`, `capability_gaps`, `gap_evidence`
 
-- **`entities`**: `id` (ent_…), `name`, `type` (person|agent|service), `display_name`, `aliases`, `notes`, `created/updated_at`
-- **`entity_channels`**: PK `(channel, channel_id)` → `entity_id`, `display_name`, `confidence` (confirmed|suggested|inferred), `verified_at`, `created_at`
-- **`entity_profiles`**: `id` (prof_…), `entity_id`, `profile_key` (for example `communication_style`), `profile_value`, `evidence`, `confidence` (high|medium|low), `supersedes_id`, `created_at`
-- **`capability_gaps`**: `id` (gap_…), `entity_id`, `description`, `evidence`, `frequency`, `status` (detected|todo_created|resolved|wont_fix), `todo_ref` (for example `t1400 GH#2600`), `created/updated_at`
-- **`gap_evidence`**: PK `(gap_id, interaction_id)`, `relevance` (primary|supporting), `added_at`
+| Table | Fields |
+|-------|--------|
+| **`entities`** | `id` (ent_…), `name`, `type` (person\|agent\|service), `display_name`, `aliases`, `notes`, `created/updated_at` |
+| **`entity_channels`** | PK `(channel, channel_id)` → `entity_id`, `display_name`, `confidence` (confirmed\|suggested\|inferred), `verified_at`, `created_at` |
+| **`entity_profiles`** | `id` (prof_…), `entity_id`, `profile_key` (for example `communication_style`), `profile_value`, `evidence`, `confidence` (high\|medium\|low), `supersedes_id`, `created_at` |
+| **`capability_gaps`** | `id` (gap_…), `entity_id`, `description`, `evidence`, `frequency`, `status` (detected\|todo_created\|resolved\|wont_fix), `todo_ref` (for example `t1400 GH#2600`), `created/updated_at` |
+| **`gap_evidence`** | PK `(gap_id, interaction_id)`, `relevance` (primary\|supporting), `added_at` |
 
 ## Script Responsibilities
 
@@ -94,9 +96,9 @@ All tables live in `~/.aidevops/.agent-workspace/memory/memory.db` alongside `le
 
 ## Self-Evolution Loop
 
-Layer 0 interactions → AI pattern detection (haiku, ~$0.001/call) → deduped gap identification with frequency tracking → TODO creation with interaction-ID evidence → normal task lifecycle (dispatch → PR → merge) → updated Layer 2 model.
+Flow: Layer 0 interactions → AI pattern detection (haiku, ~$0.001/call) → deduped gap identification with frequency tracking → TODO creation with interaction-ID evidence → normal task lifecycle (dispatch → PR → merge) → updated Layer 2 model.
 
-**Gap lifecycle:** `detected` → `todo_created` → `resolved` | `wont_fix`. Auto-TODO creation starts at frequency ≥ 3 (configurable) and keeps the evidence trail.
+Gap lifecycle: `detected` → `todo_created` → `resolved` | `wont_fix`. Auto-TODO creation starts at frequency ≥ 3 (configurable) and preserves the evidence trail.
 
 ## Intelligent Threshold Replacement
 
