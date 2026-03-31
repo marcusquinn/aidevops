@@ -161,21 +161,25 @@ if [[ -z "${AIDEVOPS_HEADLESS_MODELS:-}" ]]; then
 		export AIDEVOPS_HEADLESS_MODELS
 	fi
 fi
-PULSE_BACKFILL_MAX_ATTEMPTS="${PULSE_BACKFILL_MAX_ATTEMPTS:-3}"              # Additional pulse passes when below utilization target (t1453)
-PULSE_LAUNCH_GRACE_SECONDS="${PULSE_LAUNCH_GRACE_SECONDS:-20}"               # Grace window for worker process to appear after dispatch (t1453)
-PRE_RUN_STAGE_TIMEOUT="${PRE_RUN_STAGE_TIMEOUT:-600}"                        # 10 min cap per pre-run stage (cleanup/prefetch)
-PULSE_PREFETCH_PR_LIMIT="${PULSE_PREFETCH_PR_LIMIT:-200}"                    # Open PR list window per repo for pre-fetched state
-PULSE_PREFETCH_ISSUE_LIMIT="${PULSE_PREFETCH_ISSUE_LIMIT:-200}"              # Open issue list window for pulse prompt payload (keep compact)
-PULSE_RUNNABLE_PR_LIMIT="${PULSE_RUNNABLE_PR_LIMIT:-200}"                    # Open PR sample size for runnable-candidate counting
-PULSE_RUNNABLE_ISSUE_LIMIT="${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}"             # Open issue sample size for runnable-candidate counting
-PULSE_QUEUED_SCAN_LIMIT="${PULSE_QUEUED_SCAN_LIMIT:-1000}"                   # Queued/in-progress scan window per repo
-UNDERFILL_RECYCLE_DEFICIT_MIN_PCT="${UNDERFILL_RECYCLE_DEFICIT_MIN_PCT:-25}" # Run worker recycler when underfill reaches this threshold
-GH_FAILURE_PREFETCH_HOURS="${GH_FAILURE_PREFETCH_HOURS:-24}"                 # Window for failed-notification mining summary
-GH_FAILURE_PREFETCH_LIMIT="${GH_FAILURE_PREFETCH_LIMIT:-100}"                # Notification page size for failed-notification mining
-GH_FAILURE_SYSTEMIC_THRESHOLD="${GH_FAILURE_SYSTEMIC_THRESHOLD:-3}"          # Cluster threshold for systemic-failure flag
-GH_FAILURE_MAX_RUN_LOGS="${GH_FAILURE_MAX_RUN_LOGS:-6}"                      # Max failed workflow runs to sample for signatures per pulse
-FOSS_SCAN_TIMEOUT="${FOSS_SCAN_TIMEOUT:-30}"                                 # Timeout for FOSS contribution scan prefetch (t1702)
-FOSS_MAX_DISPATCH_PER_CYCLE="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"              # Max FOSS contribution workers per pulse cycle (t1702)
+PULSE_BACKFILL_MAX_ATTEMPTS="${PULSE_BACKFILL_MAX_ATTEMPTS:-3}"                    # Additional pulse passes when below utilization target (t1453)
+PULSE_LAUNCH_GRACE_SECONDS="${PULSE_LAUNCH_GRACE_SECONDS:-20}"                     # Grace window for worker process to appear after dispatch (t1453)
+PRE_RUN_STAGE_TIMEOUT="${PRE_RUN_STAGE_TIMEOUT:-600}"                              # 10 min cap per pre-run stage (cleanup/prefetch)
+PULSE_PREFETCH_PR_LIMIT="${PULSE_PREFETCH_PR_LIMIT:-200}"                          # Open PR list window per repo for pre-fetched state
+PULSE_PREFETCH_ISSUE_LIMIT="${PULSE_PREFETCH_ISSUE_LIMIT:-200}"                    # Open issue list window for pulse prompt payload (keep compact)
+PULSE_RUNNABLE_PR_LIMIT="${PULSE_RUNNABLE_PR_LIMIT:-200}"                          # Open PR sample size for runnable-candidate counting
+PULSE_RUNNABLE_ISSUE_LIMIT="${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}"                   # Open issue sample size for runnable-candidate counting
+PULSE_QUEUED_SCAN_LIMIT="${PULSE_QUEUED_SCAN_LIMIT:-1000}"                         # Queued/in-progress scan window per repo
+UNDERFILL_RECYCLE_DEFICIT_MIN_PCT="${UNDERFILL_RECYCLE_DEFICIT_MIN_PCT:-25}"       # Run worker recycler when underfill reaches this threshold
+PULSE_PR_BACKLOG_HEAVY_THRESHOLD="${PULSE_PR_BACKLOG_HEAVY_THRESHOLD:-100}"        # Stronger PR-first mode when open backlog reaches this size
+PULSE_PR_BACKLOG_CRITICAL_THRESHOLD="${PULSE_PR_BACKLOG_CRITICAL_THRESHOLD:-175}"  # Merge-first mode when open backlog becomes severe
+PULSE_READY_PR_MERGE_HEAVY_THRESHOLD="${PULSE_READY_PR_MERGE_HEAVY_THRESHOLD:-10}" # Merge-first when enough PRs are ready immediately
+PULSE_FAILING_PR_HEAVY_THRESHOLD="${PULSE_FAILING_PR_HEAVY_THRESHOLD:-25}"         # PR-first when failing/review-blocked queue is large
+GH_FAILURE_PREFETCH_HOURS="${GH_FAILURE_PREFETCH_HOURS:-24}"                       # Window for failed-notification mining summary
+GH_FAILURE_PREFETCH_LIMIT="${GH_FAILURE_PREFETCH_LIMIT:-100}"                      # Notification page size for failed-notification mining
+GH_FAILURE_SYSTEMIC_THRESHOLD="${GH_FAILURE_SYSTEMIC_THRESHOLD:-3}"                # Cluster threshold for systemic-failure flag
+GH_FAILURE_MAX_RUN_LOGS="${GH_FAILURE_MAX_RUN_LOGS:-6}"                            # Max failed workflow runs to sample for signatures per pulse
+FOSS_SCAN_TIMEOUT="${FOSS_SCAN_TIMEOUT:-30}"                                       # Timeout for FOSS contribution scan prefetch (t1702)
+FOSS_MAX_DISPATCH_PER_CYCLE="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"                    # Max FOSS contribution workers per pulse cycle (t1702)
 
 # Process guard limits (t1398)
 CHILD_RSS_LIMIT_KB="${CHILD_RSS_LIMIT_KB:-2097152}"           # 2 GB default — kill child if RSS exceeds this
@@ -213,6 +217,13 @@ PULSE_QUEUED_SCAN_LIMIT=$(_validate_int PULSE_QUEUED_SCAN_LIMIT "$PULSE_QUEUED_S
 UNDERFILL_RECYCLE_DEFICIT_MIN_PCT=$(_validate_int UNDERFILL_RECYCLE_DEFICIT_MIN_PCT "$UNDERFILL_RECYCLE_DEFICIT_MIN_PCT" 25 1)
 if [[ "$UNDERFILL_RECYCLE_DEFICIT_MIN_PCT" -gt 100 ]]; then
 	UNDERFILL_RECYCLE_DEFICIT_MIN_PCT=100
+fi
+PULSE_PR_BACKLOG_HEAVY_THRESHOLD=$(_validate_int PULSE_PR_BACKLOG_HEAVY_THRESHOLD "$PULSE_PR_BACKLOG_HEAVY_THRESHOLD" 100 1)
+PULSE_PR_BACKLOG_CRITICAL_THRESHOLD=$(_validate_int PULSE_PR_BACKLOG_CRITICAL_THRESHOLD "$PULSE_PR_BACKLOG_CRITICAL_THRESHOLD" 175 1)
+PULSE_READY_PR_MERGE_HEAVY_THRESHOLD=$(_validate_int PULSE_READY_PR_MERGE_HEAVY_THRESHOLD "$PULSE_READY_PR_MERGE_HEAVY_THRESHOLD" 10 1)
+PULSE_FAILING_PR_HEAVY_THRESHOLD=$(_validate_int PULSE_FAILING_PR_HEAVY_THRESHOLD "$PULSE_FAILING_PR_HEAVY_THRESHOLD" 25 1)
+if [[ "$PULSE_PR_BACKLOG_CRITICAL_THRESHOLD" -lt "$PULSE_PR_BACKLOG_HEAVY_THRESHOLD" ]]; then
+	PULSE_PR_BACKLOG_CRITICAL_THRESHOLD="$PULSE_PR_BACKLOG_HEAVY_THRESHOLD"
 fi
 GH_FAILURE_PREFETCH_HOURS=$(_validate_int GH_FAILURE_PREFETCH_HOURS "$GH_FAILURE_PREFETCH_HOURS" 24 1)
 GH_FAILURE_PREFETCH_LIMIT=$(_validate_int GH_FAILURE_PREFETCH_LIMIT "$GH_FAILURE_PREFETCH_LIMIT" 100 1)
@@ -4992,7 +5003,7 @@ _compute_queue_governor_guidance() {
 	[[ "$ready_prs" =~ ^[0-9]+$ ]] || ready_prs=0
 	[[ "$failing_prs" =~ ^[0-9]+$ ]] || failing_prs=0
 
-	local prev_total_prs=0 prev_total_issues=0 prev_ready_prs=0 prev_failing_prs=0
+	local prev_total_prs=0 prev_total_issues=0 prev_ready_prs=0 prev_failing_prs=0 prev_recorded_at=0
 	if [[ -f "$QUEUE_METRICS_FILE" ]]; then
 		while IFS='=' read -r key value; do
 			case "$key" in
@@ -5000,6 +5011,7 @@ _compute_queue_governor_guidance() {
 			prev_total_issues) prev_total_issues="$value" ;;
 			prev_ready_prs) prev_ready_prs="$value" ;;
 			prev_failing_prs) prev_failing_prs="$value" ;;
+			prev_recorded_at) prev_recorded_at="$value" ;;
 			esac
 		done <"$QUEUE_METRICS_FILE"
 	fi
@@ -5008,12 +5020,34 @@ _compute_queue_governor_guidance() {
 	[[ "$prev_total_issues" =~ ^-?[0-9]+$ ]] || prev_total_issues=0
 	[[ "$prev_ready_prs" =~ ^-?[0-9]+$ ]] || prev_ready_prs=0
 	[[ "$prev_failing_prs" =~ ^-?[0-9]+$ ]] || prev_failing_prs=0
+	[[ "$prev_recorded_at" =~ ^[0-9]+$ ]] || prev_recorded_at=0
+
+	local now_epoch elapsed_seconds
+	now_epoch=$(date +%s)
+	elapsed_seconds=$((now_epoch - prev_recorded_at))
+	if [[ "$elapsed_seconds" -lt 0 ]]; then
+		elapsed_seconds=0
+	fi
 
 	local pr_delta issue_delta ready_delta failing_delta
 	pr_delta=$((total_prs - prev_total_prs))
 	issue_delta=$((total_issues - prev_total_issues))
 	ready_delta=$((ready_prs - prev_ready_prs))
 	failing_delta=$((failing_prs - prev_failing_prs))
+
+	local backlog_drain_per_cycle backlog_growth_pressure drain_rate_per_hour
+	backlog_drain_per_cycle=$((prev_total_prs - total_prs))
+	if [[ "$backlog_drain_per_cycle" -lt 0 ]]; then
+		backlog_drain_per_cycle=0
+	fi
+	backlog_growth_pressure=$pr_delta
+	if [[ "$backlog_growth_pressure" -lt 0 ]]; then
+		backlog_growth_pressure=0
+	fi
+	drain_rate_per_hour="n/a"
+	if [[ "$elapsed_seconds" -gt 0 && "$backlog_drain_per_cycle" -gt 0 ]]; then
+		drain_rate_per_hour=$(((backlog_drain_per_cycle * 3600) / elapsed_seconds))
+	fi
 
 	local denominator pr_share_pct growth_bias pr_focus_pct new_issue_pct
 	denominator=$((total_prs + total_issues))
@@ -5035,32 +5069,68 @@ _compute_queue_governor_guidance() {
 	fi
 	new_issue_pct=$((100 - pr_focus_pct))
 
-	local queue_mode
+	local queue_mode backlog_band
 	queue_mode="balanced"
-	if [[ "$ready_prs" -gt 0 && "$pr_delta" -ge 0 ]]; then
-		queue_mode="merge-heavy"
-	elif [[ "$pr_focus_pct" -ge 60 ]]; then
-		queue_mode="pr-heavy"
+	backlog_band="normal"
+	if [[ "$total_prs" -ge "$PULSE_PR_BACKLOG_CRITICAL_THRESHOLD" ]]; then
+		backlog_band="critical"
+	elif [[ "$total_prs" -ge "$PULSE_PR_BACKLOG_HEAVY_THRESHOLD" ]]; then
+		backlog_band="heavy"
 	fi
+
+	if [[ "$backlog_band" == "critical" || ("$ready_prs" -ge "$PULSE_READY_PR_MERGE_HEAVY_THRESHOLD" && "$pr_delta" -ge 0) ]]; then
+		queue_mode="merge-heavy"
+		if [[ "$pr_focus_pct" -lt 90 ]]; then
+			pr_focus_pct=90
+		fi
+	elif [[ "$backlog_band" == "heavy" || "$failing_prs" -ge "$PULSE_FAILING_PR_HEAVY_THRESHOLD" || "$pr_focus_pct" -ge 60 ]]; then
+		queue_mode="pr-heavy"
+		if [[ "$pr_focus_pct" -lt 75 ]]; then
+			pr_focus_pct=75
+		fi
+	fi
+	new_issue_pct=$((100 - pr_focus_pct))
+
+	local active_workers max_workers utilization_pct
+	active_workers=$(count_active_workers)
+	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
+	max_workers=$(get_max_workers_target)
+	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
+	if [[ "$max_workers" -lt 1 ]]; then
+		max_workers=1
+	fi
+	utilization_pct=$(((active_workers * 100) / max_workers))
 
 	cat >"$QUEUE_METRICS_FILE" <<EOF
 prev_total_prs=${total_prs}
 prev_total_issues=${total_issues}
 prev_ready_prs=${ready_prs}
 prev_failing_prs=${failing_prs}
+prev_recorded_at=${now_epoch}
 EOF
 
 	{
 		echo ""
 		echo "## Adaptive Queue Governor"
 		echo "- Queue totals: PRs=${total_prs} (delta ${pr_delta}), issues=${total_issues} (delta ${issue_delta})"
+		echo "- Backlog thresholds: heavy>=${PULSE_PR_BACKLOG_HEAVY_THRESHOLD}, critical>=${PULSE_PR_BACKLOG_CRITICAL_THRESHOLD}; current_band=${backlog_band}"
 		echo "- PR execution pressure: ready=${ready_prs} (delta ${ready_delta}), failing_or_changes_requested=${failing_prs} (delta ${failing_delta})"
+		echo "- Merge-drain telemetry: open_pr_drain_per_cycle=${backlog_drain_per_cycle}, open_pr_growth_pressure=${backlog_growth_pressure}, estimated_merge_drain_per_hour=${drain_rate_per_hour}"
+		echo "- Worker utilization snapshot: active=${active_workers}/${max_workers} (${utilization_pct}%)"
 		echo "- Adaptive mode this cycle: ${queue_mode}"
 		echo "- Recommended dispatch focus: PR remediation ${pr_focus_pct}% / new issue dispatch ${new_issue_pct}%"
 		echo ""
 		echo "PULSE_QUEUE_MODE=${queue_mode}"
+		echo "PULSE_PR_BACKLOG_BAND=${backlog_band}"
 		echo "PR_REMEDIATION_FOCUS_PCT=${pr_focus_pct}"
 		echo "NEW_ISSUE_DISPATCH_PCT=${new_issue_pct}"
+		echo "OPEN_PR_BACKLOG=${total_prs}"
+		echo "OPEN_PR_DRAIN_PER_CYCLE=${backlog_drain_per_cycle}"
+		echo "OPEN_PR_GROWTH_PRESSURE=${backlog_growth_pressure}"
+		echo "ESTIMATED_MERGE_DRAIN_PER_HOUR=${drain_rate_per_hour}"
+		echo "PULSE_ACTIVE_WORKERS=${active_workers}"
+		echo "PULSE_MAX_WORKERS=${max_workers}"
+		echo "PULSE_WORKER_UTILIZATION_PCT=${utilization_pct}"
 		echo ""
 		echo "When PR backlog is rising, prioritize merge-ready and failing-check PR advancement before new issue starts."
 	} >>"$STATE_FILE"
