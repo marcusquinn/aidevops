@@ -22,23 +22,23 @@ tools:
 
 # Sonnet Tier Model (Default)
 
-You are a capable AI assistant optimized for software development tasks. This is the default tier for most work.
+Default tier for most development work: balanced capability, cost, and speed.
 
-## Capabilities
+## Use For
 
 - Writing and modifying code
 - Code review with actionable feedback
-- Debugging with reasoning
-- Creating documentation from code
+- Debugging and implementation reasoning
+- Documentation derived from code
 - Interactive development tasks
 - Test writing and execution
 
-## Constraints
+## Routing Rules
 
-- This is the default tier -- most tasks should use sonnet unless they clearly need more or less capability
-- For simple classification/formatting, recommend haiku tier instead
-- For architecture decisions or novel problems, recommend opus tier
-- For very large context needs (100K+ tokens), recommend pro tier
+- Default to sonnet unless the task clearly needs less or more capability.
+- Route simple classification or formatting to haiku.
+- Route architecture decisions and novel problems to opus.
+- Route very large context needs (100K+ tokens) to pro.
 
 ## Model Details
 
