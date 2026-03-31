@@ -6,24 +6,24 @@ mode: subagent
 
 Arguments: $ARGUMENTS
 
-## Argument Dispatch
+## Dispatch
 
-| Input | Action | Command |
-|-------|--------|---------|
-| `1.2.3.4` | Full multi-provider check, table output | `ip-reputation-helper.sh check "$IP"` |
-| `1.2.3.4 -f json` | JSON output | `ip-reputation-helper.sh check "$IP" -f json` |
-| `1.2.3.4 report` | Detailed markdown report | `ip-reputation-helper.sh report "$IP"` |
-| `1.2.3.4 --provider abuseipdb` | Single-provider check | `ip-reputation-helper.sh check "$IP" --provider "$PROVIDER"` |
-| `ips.txt` | Batch check from file | `ip-reputation-helper.sh batch "$FILE"` |
-| `ips.txt --dnsbl-overlap` | Batch with DNSBL cross-reference | `ip-reputation-helper.sh batch "$FILE" --dnsbl-overlap` |
-| `1.2.3.4 --no-cache` | Bypass cache | `ip-reputation-helper.sh check "$IP" --no-cache` |
-| _(no args)_ | Show usage | |
+Run all checks through `~/.aidevops/agents/scripts/ip-reputation-helper.sh`.
+
+| Input | Route |
+|-------|-------|
+| `1.2.3.4` | `check "$IP"` (multi-provider summary) |
+| `1.2.3.4 -f json` | `check "$IP" -f json` |
+| `1.2.3.4 report` | `report "$IP"` (markdown report) |
+| `1.2.3.4 --provider abuseipdb` | `check "$IP" --provider "$PROVIDER"` |
+| `1.2.3.4 --no-cache` | `check "$IP" --no-cache` |
+| `ips.txt` | `batch "$FILE"` |
+| `ips.txt --dnsbl-overlap` | `batch "$FILE" --dnsbl-overlap` |
+| _(no args)_ | usage/help |
 
 Ops subcommands: `providers`, `cache-stats`, `cache-clear [--provider P] [--ip IP]`, `rate-limit-status`, `help`.
 
-All commands: `~/.aidevops/agents/scripts/ip-reputation-helper.sh`
-
-## Output Format
+## Output shape
 
 ```text
 IP Reputation: 1.2.3.4
@@ -39,7 +39,7 @@ Providers (8/10 responded):
 Flags: Tor=NO  Proxy=NO  VPN=NO
 ```
 
-Supported providers: Spamhaus DNSBL, ProxyCheck.io, StopForumSpam, Blocklist.de, GreyNoise, AbuseIPDB, IPQualityScore, Scamalytics.
+Providers: Spamhaus DNSBL, ProxyCheck.io, StopForumSpam, Blocklist.de, GreyNoise, AbuseIPDB, IPQualityScore, Scamalytics.
 
 After presenting results, offer follow-up: full report, single-provider recheck, batch check, raw JSON, cache-clear recheck.
 
