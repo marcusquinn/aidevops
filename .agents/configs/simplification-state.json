@@ -1141,6 +1141,11 @@
       "at": "2026-03-28T16:00:33Z",
       "pr": 11987
     },
+    ".agents/tools/video/remotion-display-captions.md": {
+      "hash": "eeb59904b83f9d4edbf179c97266e73c7b0e0598",
+      "at": "2026-03-31T03:20:58Z",
+      "pr": 14524
+    },
     ".agents/tools/video/remotion.md": {
       "hash": "e587ff6f81433c2bcc6b89ee139561849007d27e",
       "at": "2026-03-28T15:30:25Z",
