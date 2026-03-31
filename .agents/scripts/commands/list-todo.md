@@ -8,17 +8,17 @@ Display tasks from TODO.md and optionally PLANS.md.
 
 Arguments: $ARGUMENTS
 
-## Quick Output (Default)
+## Default
 
 ```bash
 ~/.aidevops/agents/scripts/list-todo-helper.sh $ARGUMENTS
 ```
 
-Display output directly — the script handles all formatting (Markdown tables, grouping, summary).
+Display the helper output directly.
 
-## Fallback (Script Unavailable)
+## Fallback
 
-If the script fails, parse manually:
+If the helper is unavailable, parse manually:
 
 1. Read `TODO.md` and `todo/PLANS.md`
 2. Parse tasks by status (In Progress, Backlog, Done)
@@ -27,11 +27,9 @@ If the script fails, parse manually:
 
 ## Arguments
 
-**Sorting:** `--priority`/`-p` (security/bugfix first), `--estimate`/`-e` (shortest first), `--date`/`-d` (newest first), `--alpha`/`-a` (alphabetical).
-
-**Filtering:** `--tag <tag>`/`-t <tag>`, `--owner <name>`/`-o <name>`, `--status <status>`, `--estimate-filter <range>` (`<2h`, `>1d`, `1h-4h`).
-
-**Display:** `--plans` (include PLANS.md), `--done` (completed tasks), `--all` (everything), `--compact` (one-line per task), `--limit <n>`, `--json`.
+- **Sorting:** `--priority`/`-p`, `--estimate`/`-e`, `--date`/`-d`, `--alpha`/`-a`
+- **Filtering:** `--tag <tag>`/`-t <tag>`, `--owner <name>`/`-o <name>`, `--status <status>`, `--estimate-filter <range>`
+- **Display:** `--plans`, `--done`, `--all`, `--compact`, `--limit <n>`, `--json`
 
 ## Examples
 
@@ -45,15 +43,15 @@ If the script fails, parse manually:
 /list-todo --all --compact           # Everything, one line each
 ```
 
-## After Display
+## Follow-up
 
-Wait for user input:
+Wait for:
 
-1. **Task ID or row number** — start working on that task (e.g., `t014` or `5`)
-2. **Filter command** — re-run with new filters (e.g., `-t seo`)
+1. **Task ID or row number** — start that task (`t014`, `5`)
+2. **Filter command** — rerun with new filters (`-t seo`)
 3. **"done"** — end browsing
 
-On task selection: if `#plan` tag or `→ PLANS.md` → suggest `/show-plan <name>`. Otherwise offer to start work (check branch, create if needed).
+If the task has `#plan` or points to `PLANS.md`, suggest `/show-plan <name>`. Otherwise offer to start work after checking branch state and creating one if needed.
 
 ## Related
 
