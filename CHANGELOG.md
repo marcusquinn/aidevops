@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.506] - 2026-03-31
+
+### Changed
+
+- Maintenance: tighten Claude-Flow comparison doc (#14688)
+
 ## [3.5.504] - 2026-03-31
 
 ### Changed
