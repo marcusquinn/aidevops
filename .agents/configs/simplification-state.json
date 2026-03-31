@@ -2995,13 +2995,13 @@
       "hash": "102c82fd40a93f9e219e84ee053645eff00db29b",
       "at": "2026-03-31T03:46:07Z",
       "pr": 14541
+    },
+    ".agents/scripts/commands/patterns.md": {
+      "hash": "5da4c06f4da8c535b9c4fe2fbed287a232730c2ad101f0665831bb2976df58c0",
+      "status": "simplified",
+      "lines": 36,
+      "original_lines": 44,
+      "date": "2026-03-31"
     }
-  },
-  ".agents/scripts/commands/patterns.md": {
-    "hash": "5da4c06f4da8c535b9c4fe2fbed287a232730c2ad101f0665831bb2976df58c0",
-    "status": "simplified",
-    "lines": 36,
-    "original_lines": 44,
-    "date": "2026-03-31"
   }
 }
