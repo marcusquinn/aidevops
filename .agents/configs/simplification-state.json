@@ -156,6 +156,11 @@
       "at": "2026-03-28T03:53:13Z",
       "pr": 11337
     },
+    ".agents/workflows/mission-skill-learning.md": {
+      "hash": "148c10e3b94088c2c8ed5e14e1bad0516433ccde",
+      "at": "2026-03-31T03:57:53Z",
+      "pr": 14545
+    },
     ".agents/workflows/milestone-validation.md": {
       "hash": "3e8c88a4d98e24993198b7a6cfc0c93b7825bd26",
       "at": "2026-03-28T03:53:42Z",
