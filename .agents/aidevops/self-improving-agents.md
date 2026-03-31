@@ -18,27 +18,25 @@ tools:
 
 ## Quick Reference
 
-- **Principle**: AGENTS.md "Self-Improvement" section — universal for all agents
-- **Mechanism**: Pulse supervisor outcome observation (Step 2a) + agent `/remember` + GitHub issues
-- **No dedicated script**: The `self-improve-helper.sh` has been archived. Self-improvement is now a universal agent behaviour, not a separate tool.
+- **Principle**: AGENTS.md "Self-Improvement" section — universal for every agent session
+- **Mechanism**: Pulse Step 2a outcome observation + `/remember`/`/recall` + GitHub issues
+- **Status**: `self-improve-helper.sh` is archived; self-improvement is behaviour, not a standalone tool
 
 <!-- AI-CONTEXT-END -->
 
-## How Self-Improvement Works Now
+## Current Model
 
-Self-improvement is a **universal principle** embedded in every agent session — interactive, worker, or supervisor. It is defined in AGENTS.md "Self-Improvement" section and does not require a dedicated script.
+Self-improvement is a universal principle for interactive, worker, and supervisor sessions. The authoritative rules live in AGENTS.md and `reference/self-improvement.md`.
 
-### Observation
+### Observe existing state
 
-Every agent observes outcomes from existing state:
+- `TODO.md`, `todo/PLANS.md`, and GitHub issues/PRs are the state database
+- Pulse Step 2a checks stale PRs (6h+ without progress), closed-without-merge PRs, and duplicate work
+- Workers observe their own outcomes and store reusable patterns via `/remember`
 
-- **TODO.md, PLANS.md, and GitHub issues/PRs** are the state database
-- **Pulse Step 2a** checks for stale PRs (6h+ no progress), repeated failures (closed-without-merge PRs), and duplicate work
-- **Workers** observe their own outcomes and record patterns via `/remember`
+### Respond with a GitHub issue
 
-### Response
-
-When a systemic problem is observed, the response is to **create a GitHub issue**, not a workaround:
+When a systemic problem appears, create a GitHub issue instead of adding a workaround:
 
 ```bash
 gh issue create --repo <owner/repo> \
@@ -47,16 +45,14 @@ gh issue create --repo <owner/repo> \
   --label "bug,priority:high"
 ```
 
-### What Counts as Self-Improvement
+### What counts as self-improvement
 
 - Filing issues for repeated failure patterns
 - Improving agent prompts when workers consistently misunderstand instructions
-- Identifying missing automation (e.g., a manual step that could be a `gh` command)
+- Identifying missing automation (for example, a manual step that should be a `gh` command)
 - Flagging stale tasks that are blocked but not marked as such
 
-### Recording Patterns
-
-Agents record learnings via cross-session memory:
+### Record and reuse patterns
 
 ```bash
 # After a successful approach
@@ -69,20 +65,21 @@ Agents record learnings via cross-session memory:
 /recall "bugfix patterns"
 ```
 
-## Why the Script Was Archived
+## Archived Script
 
-The `self-improve-helper.sh` (773 lines) implemented a 4-phase cycle (analyze → refine → test → PR) using OpenCode server sessions. This has been replaced by:
+`self-improve-helper.sh` (773 lines) used a 4-phase cycle (analyze → refine → test → PR) with OpenCode server sessions. It was replaced by:
 
-1. **AGENTS.md "Self-Improvement" section** — every agent session improves the system as a universal principle
-2. **Pulse Step 2a** — observes outcomes from GitHub state (stale PRs, failures, duplicates)
-3. **Cross-session memory** — agents record patterns via `/remember` and `/recall`
-4. **GitHub issues** — systemic problems become trackable tasks, not workarounds
+1. AGENTS.md "Self-Improvement" — universal session behaviour
+2. Pulse Step 2a — outcome observation from GitHub state
+3. Cross-session memory — `/remember` and `/recall`
+4. GitHub issues — trackable fixes instead of local workarounds
 
-The archived script is at `scripts/archived/self-improve-helper.sh` for reference.
+Archived reference: `scripts/archived/self-improve-helper.sh`
 
 ## Related Documentation
 
-- AGENTS.md "Self-Improvement" section — the authoritative definition
-- `scripts/commands/pulse.md` — supervisor outcome observation (Step 2a)
-- `reference/memory.md` — cross-session memory system
-- `tools/security/privacy-filter.md` — privacy filter for PRs
+- AGENTS.md "Self-Improvement" section
+- `reference/self-improvement.md`
+- `scripts/commands/pulse.md`
+- `reference/memory.md`
+- `tools/security/privacy-filter.md`
