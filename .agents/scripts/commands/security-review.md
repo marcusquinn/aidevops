@@ -1,17 +1,33 @@
 # /security-review
 
-Review quarantined security items and provide feedback to improve detection accuracy.
+Review quarantined security items and feed the decision back into the security config.
 
-## What it does
+## What it reviews
 
-Presents a digest of ambiguous security items that were flagged but not automatically blocked. These items come from:
+`/security-review` shows ambiguous items that were flagged but not auto-blocked:
 
-- **prompt-guard-helper.sh** — WARN-level prompt injection detections (below block threshold)
-- **network-tier-helper.sh** — Tier 4 unknown domains (allowed but flagged)
+- **prompt-guard-helper.sh** — WARN-level prompt injection detections
+- **network-tier-helper.sh** — Tier 4 unknown domains that were allowed but flagged
 - **sandbox-exec-helper.sh** — Tier 5 denied domains from sandbox pre-checks
 - **mcp-audit** — MCP tool descriptions with ambiguous injection patterns
 
-Each item can be reviewed and a decision applied that feeds back into the security configuration, creating a self-improving feedback loop.
+Each review applies a learn action so future detections are more accurate.
+
+## Learn actions
+
+| Action | Effect | Config file modified |
+|--------|--------|---------------------|
+| `allow` | Add domain to Tier 3 (known tools, allowed + logged) | `~/.config/aidevops/network-tiers-custom.conf` |
+| `deny` | Add domain to Tier 5 (blocked) or pattern to prompt guard deny list | `network-tiers-custom.conf` (for network-tier/sandbox-exec sources) or `prompt-guard-custom.txt` (for prompt-guard/mcp-audit sources) |
+| `trust` | Add MCP server to trusted list | `~/.config/aidevops/mcp-trusted-servers.txt` |
+| `dismiss` | Mark as false positive, no config change | None (recorded in reviewed.jsonl) |
+
+These decisions shrink the quarantine queue over time:
+
+1. `allow` moves legitimate domains into Tier 3 so they are logged, not flagged.
+2. `deny` blocks domains or adds prompt-guard deny patterns.
+3. `trust` whitelists legitimate MCP servers.
+4. `dismiss` records false positives; `quarantine-helper.sh stats` tracks the rate.
 
 ## Usage
 
@@ -44,26 +60,6 @@ quarantine-helper.sh stats
 # Maintenance
 quarantine-helper.sh purge --older-than 60 --reviewed-only
 ```
-
-## Learn actions
-
-| Action | Effect | Config file modified |
-|--------|--------|---------------------|
-| `allow` | Add domain to Tier 3 (known tools, allowed + logged) | `~/.config/aidevops/network-tiers-custom.conf` |
-| `deny` | Add domain to Tier 5 (blocked) or pattern to prompt guard deny list | `network-tiers-custom.conf` (for network-tier/sandbox-exec sources) or `prompt-guard-custom.txt` (for prompt-guard/mcp-audit sources) |
-| `trust` | Add MCP server to trusted list | `~/.config/aidevops/mcp-trusted-servers.txt` |
-| `dismiss` | Mark as false positive, no config change | None (recorded in reviewed.jsonl) |
-
-## Feedback loop
-
-Each review decision improves future accuracy:
-
-1. **allow** decisions add domains to Tier 3, so future access to that domain is logged but not flagged
-2. **deny** decisions add domains to Tier 5 (blocked) or patterns to the prompt guard custom deny list
-3. **trust** decisions whitelist MCP servers so their tool descriptions are not flagged
-4. **dismiss** decisions are recorded as false positives — the `stats` command tracks the false positive rate
-
-Over time, the quarantine queue shrinks as the system learns which domains, patterns, and servers are legitimate vs malicious.
 
 ## Queue files
 
