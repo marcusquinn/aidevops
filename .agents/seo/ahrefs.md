@@ -16,8 +16,8 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Backlink analysis, keyword research, site audit, rank tracking
-- **API**: REST at `https://api.ahrefs.com/v3/`
-- **Auth**: Bearer token in `~/.config/aidevops/credentials.sh` as `AHREFS_API_KEY`
+- **API**: `https://api.ahrefs.com/v3/`
+- **Auth**: `AHREFS_API_KEY` in `~/.config/aidevops/credentials.sh`
 - **Docs**: https://docs.ahrefs.com/reference
 - **No MCP required** — uses curl directly
 
@@ -25,37 +25,32 @@ tools:
 
 ## Setup
 
-Get API key from https://app.ahrefs.com/user/api and add to `~/.config/aidevops/credentials.sh`:
+Get an API key from https://app.ahrefs.com/user/api, then set shared shell vars:
 
 ```bash
 export AHREFS_API_KEY="your_key_here"
-```
-
-Before calling endpoints, source credentials and set common variables:
-
-```bash
 source ~/.config/aidevops/credentials.sh
 AHREFS_AUTH=(-H "Authorization: Bearer $AHREFS_API_KEY" -H "Accept: application/json")
 TODAY=$(date +%Y-%m-%d)
 ```
 
-All examples below use `${AHREFS_AUTH[@]}` and `$TODAY` from this block.
+All examples use `${AHREFS_AUTH[@]}` and `$TODAY` from this block.
 
-## Parameters
+## Common Parameters
 
 | Param | Description | Values | Required |
 |-------|-------------|--------|----------|
 | `target` | Domain or URL to analyze | `example.com` | Yes |
-| `date` | Data snapshot date | `YYYY-MM-DD` | Yes (most endpoints) |
-| `mode` | Analysis scope | `domain`, `prefix`, `exact` | Yes (most) |
+| `date` | Data snapshot | `YYYY-MM-DD` | Yes (most endpoints) |
+| `mode` | Scope | `domain`, `prefix`, `exact` | Yes (most) |
 | `select` | Fields to return | Comma-separated field names | Yes (list endpoints) |
-| `country` | Country for organic data | `us`, `gb`, `de`, etc. | For organic endpoints |
-| `limit` | Results per page | `10`–`1000` | No (default varies) |
+| `country` | Country code for organic data | `us`, `gb`, `de`, etc. | Organic endpoints |
+| `limit` | Results per page | `10`–`1000` | No |
 | `offset` | Pagination offset | `0`, `50`, `100` | No |
 
 ## Site Explorer Endpoints
 
-All require `date`. List endpoints require `select`.
+`date` is required for all examples below. List endpoints also require `select`.
 
 ### Domain Rating
 
@@ -94,6 +89,8 @@ curl -s "${AHREFS_AUTH[@]}" "https://api.ahrefs.com/v3/site-explorer/top-pages?t
 ```
 
 ## Keywords Explorer Endpoints
+
+Google examples use the `keywords-explorer/google/*` routes.
 
 ### Volume
 
