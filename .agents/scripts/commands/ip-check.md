@@ -4,28 +4,24 @@ agent: Build+
 mode: subagent
 ---
 
-Arguments: `$ARGUMENTS`
+Arguments: $ARGUMENTS
 
 Helper: `~/.aidevops/agents/scripts/ip-reputation-helper.sh`
 
 ## Route inputs
 
-| Input | Invoke |
-|---|---|
-| `1.2.3.4` | `check "$IP"` |
-| `1.2.3.4 -f json` | `check "$IP" -f json` |
-| `1.2.3.4 report` | `report "$IP"` |
-| `1.2.3.4 --provider abuseipdb` | `check "$IP" --provider "$PROVIDER"` |
-| `1.2.3.4 --no-cache` | `check "$IP" --no-cache` |
-| `ips.txt` | `batch "$FILE"` |
-| `ips.txt --dnsbl-overlap` | `batch "$FILE" --dnsbl-overlap` |
-| _(no args)_ | Show usage |
+- `1.2.3.4` → `check "$IP"`
+- `1.2.3.4 -f json` → `check "$IP" -f json`
+- `1.2.3.4 report` → `report "$IP"`
+- `1.2.3.4 --provider abuseipdb` → `check "$IP" --provider "$PROVIDER"`
+- `1.2.3.4 --no-cache` → `check "$IP" --no-cache`
+- `ips.txt` → `batch "$FILE"`
+- `ips.txt --dnsbl-overlap` → `batch "$FILE" --dnsbl-overlap`
+- no args → show usage
 
 Ops: `providers`, `cache-stats`, `cache-clear [--provider P] [--ip IP]`, `rate-limit-status`, `help`.
 
 ## Output
-
-Return risk score, provider results, and proxy flags:
 
 ```text
 IP Reputation: 1.2.3.4
