@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.523] - 2026-03-31
+
+### Changed
+
+- Documentation: tighten Socket MCP agent doc (#14882)
+- Documentation: tighten fallback-chains.md agent doc (GH#14190) (#14878)
+
 ## [3.5.522] - 2026-03-31
 
 ### Changed
