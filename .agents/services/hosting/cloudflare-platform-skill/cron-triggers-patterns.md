@@ -1,6 +1,9 @@
 # Cron Triggers Patterns
 
-## API Data Sync
+Common scheduled-worker patterns for sync jobs, cleanup, reporting, health checks, and monitoring.
+
+## Scheduled API Sync
+Refresh external data on a schedule and cache the result for reads between runs.
 
 ```typescript
 export default {
@@ -13,6 +16,7 @@ export default {
 ```
 
 ## Database Cleanup
+Delete expired rows during off-peak windows, then defer maintenance work with `ctx.waitUntil()`.
 
 ```typescript
 export default {
@@ -25,6 +29,7 @@ export default {
 ```
 
 ## Report Generation
+Build periodic summaries, store them in R2, and notify downstream systems after upload.
 
 ```typescript
 export default {
@@ -39,7 +44,8 @@ export default {
 };
 ```
 
-## Health Checks
+## Service Health Checks
+Probe multiple dependencies, persist the latest status, and alert only on failures.
 
 ```typescript
 export default {
@@ -61,7 +67,8 @@ export default {
 };
 ```
 
-## Batch Processing (Rate-Limited)
+## Rate-Limited Batch Processing
+Drain a queue in bounded batches so a single run stays within cron execution limits.
 
 ```typescript
 export default {
@@ -76,7 +83,8 @@ export default {
 };
 ```
 
-## Monitoring & Logging
+## Operational Monitoring
+Capture start, success, and failure events with enough context to debug slow or failing runs.
 
 ```typescript
 export default {
@@ -99,17 +107,15 @@ export default {
 ```
 
 ## View Past Events
-
-**Dashboard:** Workers & Pages → Select Worker → Settings → Triggers → Cron Events
-
-**Wrangler:**
+- **Dashboard:** Workers & Pages → Select Worker → Settings → Triggers → Cron Events
+- **Wrangler tail:**
 
 ```bash
 npx wrangler tail
 npx wrangler tail --format json | jq 'select(.event.cron != null)'
 ```
 
-**GraphQL:**
+- **GraphQL metrics:**
 
 ```graphql
 query CronMetrics($accountTag: string!, $workerName: string!) {
@@ -118,6 +124,5 @@ query CronMetrics($accountTag: string!, $workerName: string!) {
 ```
 
 ## See Also
-
-- [README.md](./README.md) - Overview
-- [gotchas.md](./gotchas.md) - Troubleshooting
+- [Cloudflare Cron Triggers](./cron-triggers.md) - Syntax, limits, and local testing
+- [Cron Triggers Gotchas](./cron-triggers-gotchas.md) - Duplicate execution, timezones, and debugging
