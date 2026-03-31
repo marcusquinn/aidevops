@@ -3,37 +3,29 @@
 ## Insert
 
 ```typescript
-// Single
-const [user] = await db.insert(users)
-  .values({ email, name })
-  .returning();
+// Single insert
+const [user] = await db.insert(users).values({ email, name }).returning();
 
-// Multiple
+// Batch insert
 await db.insert(users).values([
   { email: 'a@b.com', name: 'A' },
   { email: 'b@b.com', name: 'B' },
 ]);
 
 // Upsert
-await db.insert(users)
-  .values({ email, name })
-  .onConflictDoUpdate({
-    target: users.email,
-    set: { name },
-  });
+await db.insert(users).values({ email, name }).onConflictDoUpdate({
+  target: users.email,
+  set: { name },
+});
 
 // Ignore conflict
-await db.insert(users)
-  .values({ email, name })
-  .onConflictDoNothing();
+await db.insert(users).values({ email, name }).onConflictDoNothing();
 ```
 
 ## Update
 
 ```typescript
-await db.update(users)
-  .set({ status: 'active' })
-  .where(eq(users.id, id));
+await db.update(users).set({ status: 'active' }).where(eq(users.id, id));
 
 // With returning
 const [updated] = await db.update(users)
@@ -52,9 +44,8 @@ await db.update(posts)
 ```typescript
 await db.delete(users).where(eq(users.id, id));
 
-const [deleted] = await db.delete(users)
-  .where(eq(users.id, id))
-  .returning();
+// With returning
+const [deleted] = await db.delete(users).where(eq(users.id, id)).returning();
 ```
 
 ## Transactions
@@ -69,6 +60,6 @@ await db.transaction(async (tx) => {
 // Rollback
 await db.transaction(async (tx) => {
   await tx.insert(users).values({ ... });
-  if (condition) tx.rollback();  // Throws
+  if (condition) tx.rollback(); // Throws
 });
 ```
