@@ -4,15 +4,16 @@ agent: SEO
 mode: subagent
 ---
 
-Export SEO data from all configured platforms and run full analysis in one step.
+Run the complete SEO export + analysis workflow in one step.
 
 Target: $ARGUMENTS
 
 ## Quick Reference
 
-- **Purpose**: Complete SEO opportunity analysis workflow
+- **Purpose**: Full SEO opportunity workflow
 - **Combines**: `/seo-export all` + `/seo-analyze`
-- **Output**: Full analysis report with actionable opportunities
+- **Default range**: 90 days
+- **Output**: Export TOON files plus one analysis report
 
 ## Usage
 
@@ -26,7 +27,7 @@ Target: $ARGUMENTS
 
 ## Process
 
-1. Parse $ARGUMENTS to extract domain and options
+1. Parse `$ARGUMENTS` for domain and options.
 2. Export from all configured platforms:
 
 ```bash
@@ -39,48 +40,29 @@ Target: $ARGUMENTS
 ~/.aidevops/agents/scripts/seo-analysis-helper.sh $DOMAIN
 ```
 
-4. Present summary of findings:
+4. Summarize findings:
    - Top 10 quick wins
-   - Top 10 striking distance opportunities
-   - Low CTR pages needing optimization
+   - Top 10 striking-distance opportunities
+   - Low-CTR pages needing optimization
    - Content cannibalization issues
 
 ## Output
 
-Two types of files are created:
-
-**Export files** (one per platform):
+Created files:
 
 ```text
 ~/.aidevops/.agent-workspace/work/seo-data/{domain}/{platform}-{start}-{end}.toon
-```
-
-**Analysis file**:
-
-```text
 ~/.aidevops/.agent-workspace/work/seo-data/{domain}/analysis-{date}.toon
 ```
 
 ## Recommendations
 
-After analysis, provide prioritized recommendations:
+Prioritize recommendations in this order:
 
-1. **Quick Wins** (do first)
-   - Fastest ROI
-   - Minimal effort required
-   - On-page changes only
-
-2. **Low CTR** (do second)
-   - Title/meta changes are quick
-   - Can significantly increase traffic
-
-3. **Cannibalization** (do third)
-   - Prevents wasted effort
-   - Consolidates ranking signals
-
-4. **Striking Distance** (longer term)
-   - Requires more effort
-   - Higher potential reward
+1. **Quick Wins** — fastest ROI, minimal effort, on-page only
+2. **Low CTR** — title/meta changes with fast traffic upside
+3. **Cannibalization** — consolidate ranking signals before new work
+4. **Striking Distance** — higher effort, higher upside
 
 ## Documentation
 
