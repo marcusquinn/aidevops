@@ -19,12 +19,12 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Capture reusable patterns from missions, promote useful artifacts, feed learnings into cross-session memory
-- **Script**: `scripts/mission-skill-learner.sh` — CLI for scanning, scoring, promoting, and tracking
-- **Called by**: Mission orchestrator (Phase 5), pulse supervisor (mission completion), manual invocation
-- **Stores to**: `memory.db` (mission_learnings table + memory entries via memory-helper.sh)
+- **Purpose**: Capture reusable mission patterns, suggest promotions, and feed cross-session memory
+- **Script**: `scripts/mission-skill-learner.sh`
+- **Used by**: mission orchestrator (Phase 5), pulse supervisor, manual runs
+- **Stores to**: `memory.db` (`mission_learnings` + memory entries via `memory-helper.sh`)
 
-**Key commands**:
+**Commands**:
 
 ```bash
 mission-skill-learner.sh scan <mission-dir>          # Scan a completed mission
@@ -35,26 +35,17 @@ mission-skill-learner.sh suggest <mission-dir>       # Suggest promotions
 mission-skill-learner.sh stats                       # Show statistics
 ```
 
-**Related**:
-
-| File | Purpose |
-|------|---------|
-| `workflows/mission-orchestrator.md` | Orchestrator that invokes skill learning at completion |
-| `reference/memory.md` | Cross-session memory system |
-| `tools/build-agent/build-agent.md` | Agent lifecycle tiers (draft/custom/shared) |
-| `templates/mission-template.md` | Mission state file with "Mission Agents" table |
+- **Related**: `workflows/mission-orchestrator.md`, `reference/memory.md`, `tools/build-agent/build-agent.md`, `templates/mission-template.md`
 
 <!-- AI-CONTEXT-END -->
 
 ## Capture Points
 
-**During execution (lightweight):** The orchestrator notes observations in the mission's decision log as they occur — no interruption. Raw observations, not yet scored.
-
-**At completion (full scan):** When a mission reaches `status: completed`, run `mission-skill-learner.sh scan <mission-dir>`. This scans `agents/` and `scripts/` subdirectories, extracts decisions and lessons from the decision log and retrospective, scores each artifact (0-100), stores results in `memory.db`, and suggests promotions.
+During execution, the orchestrator logs raw observations in the mission decision log. At completion, `mission-skill-learner.sh scan <mission-dir>` scans `agents/` and `scripts/`, extracts decisions and lessons from the decision log and retrospective, scores each artifact (0-100), stores results in `memory.db`, and suggests promotions.
 
 ## Artifact Scoring
 
-Mission agents and scripts are scored on 5 dimensions:
+Mission agents and scripts are scored on five dimensions:
 
 | Factor | Weight | Measures |
 |--------|--------|----------|
@@ -66,9 +57,7 @@ Mission agents and scripts are scored on 5 dimensions:
 
 ## Pattern Capture
 
-Decisions and lessons from the mission state file are stored as `MISSION_PATTERN` memory entries, accumulating across missions and surfacing via `/recall` when planning future missions.
-
-**Pattern types**: decisions (technology/architecture choices), lessons (what worked/didn't), failure modes (approaches that failed and why).
+Decisions and lessons from the mission state file are stored as `MISSION_PATTERN` entries. They accumulate across missions and surface via `/recall` when planning future missions. Pattern types: decisions (technology or architecture choices), lessons (what worked or failed), and failure modes (approaches that failed and why).
 
 ## Promotion Lifecycle
 
@@ -84,7 +73,7 @@ mission-only -> draft/ -> custom/ -> shared/
 | Custom | >= 70 | `~/.aidevops/agents/custom/` | Proven useful across missions. `promote <path> custom` |
 | Shared | >= 85 | Requires PR to aidevops repo | Flagged as candidate; user/supervisor creates PR |
 
-**Recurring patterns**: `mission-skill-learner.sh patterns` identifies artifacts appearing across multiple missions — strong promotion candidates.
+**Recurring patterns**: `mission-skill-learner.sh patterns` highlights artifacts seen across multiple missions — strong promotion candidates.
 
 ## Integration Points
 
@@ -96,20 +85,22 @@ mission-only -> draft/ -> custom/ -> shared/
 | Lessons | `MISSION_PATTERN` | `mission,lesson,{mission_id}` |
 | Promotions | `MISSION_AGENT` | `mission,promotion,{tier},{name}` |
 
-These surface automatically when planning missions (`/recall "mission patterns"`), when workers encounter problems (`/recall "mission lesson {domain}"`), and during pulse runs.
+These surface automatically during mission planning (`/recall "mission patterns"`), when workers hit problems (`/recall "mission lesson {domain}"`), and during pulse runs.
 
 ### Mission Orchestrator (Phase 5)
 
-1. Run `mission-skill-learner.sh scan <mission-dir>`
-2. For each suggestion with score >= 40, promote based on tier:
-   - **Score >= 40 and < 85 (draft/custom)**: promote directly via CLI — `mission-skill-learner.sh promote <path> draft` (score 40–69) or `mission-skill-learner.sh promote <path> custom` (score 70–84); leave project-specific artifacts in place
-   - **Score >= 85 (shared)**: do NOT use CLI promote; create a PR to the aidevops repo and follow the shared-tier review workflow (see Promotion Lifecycle table above)
-3. Record decisions in the mission's "Mission Agents" table
-4. File GitHub issues for framework improvements; record in "Framework Improvements" section
+1. Run `mission-skill-learner.sh scan <mission-dir>`.
+2. For each suggestion with score >= 40, promote by tier:
+   - **40-69 (draft)**: `mission-skill-learner.sh promote <path> draft`
+   - **70-84 (custom)**: `mission-skill-learner.sh promote <path> custom`
+   - **85+ (shared)**: do **not** use CLI promote; create an aidevops PR and follow the shared-tier review workflow
+3. Leave project-specific artifacts in place.
+4. Record decisions in the mission's "Mission Agents" table.
+5. File GitHub issues for framework improvements and record them in "Framework Improvements".
 
 ### Pulse Supervisor
 
-Detects missions with `status: completed` not yet scanned (no `mission_learnings` entries for that mission_id), runs the scan, and logs promotion candidates in the pulse report.
+Detects missions with `status: completed` but no `mission_learnings` entries for that `mission_id`, runs the scan, and logs promotion candidates in the pulse report.
 
 ## CLI Detail
 
