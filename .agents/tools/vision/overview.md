@@ -18,11 +18,11 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Route image tasks to the right generation, understanding, or editing guide
-- **Create images**: `image-generation.md` — DALL-E 3, Midjourney, FLUX, Stable Diffusion
-- **Analyze images**: `image-understanding.md` — GPT-4o vision, Claude vision, Gemini, LLaVA, Qwen-VL
-- **Edit images**: `image-editing.md` — DALL-E 3 edit, Stable Diffusion inpaint, FLUX fill
-- **Local stack**: Ollama for VLMs; ComfyUI for generation/editing; `tools/infrastructure/cloud-gpu.md` for GPU deployment
+- **Route by task**: generate → `image-generation.md`; analyze → `image-understanding.md`; edit → `image-editing.md`
+- **Create**: DALL-E 3, Midjourney, FLUX, Stable Diffusion
+- **Analyze**: GPT-4o vision, Claude vision, Gemini, LLaVA, Qwen-VL
+- **Edit**: DALL-E 3 edit, Stable Diffusion inpaint, FLUX fill
+- **Local stack**: Ollama for VLMs, ComfyUI for generation/editing, `tools/infrastructure/cloud-gpu.md` for GPU deployment
 - **Specialized routes**: OCR → `tools/ocr/glm-ocr.md`; GUI screenshots → `tools/browser/peekaboo.md`
 
 <!-- AI-CONTEXT-END -->
@@ -48,12 +48,10 @@ tools:
 | **Local (ComfyUI)** | FLUX, Stable Diffusion XL, ControlNet | Generation, editing, workflow control |
 | **Cloud GPU** | Any model via vLLM/ComfyUI | Scale, large local models, batch processing |
 
-## Integration with aidevops
+## Related aidevops Routes
 
-| Integration | Description |
-|-------------|-------------|
-| `tools/ocr/glm-ocr.md` | Dedicated OCR (prefer over general vision for text extraction) |
-| `tools/browser/peekaboo.md` | Screen capture + vision analysis for GUI automation |
-| `tools/video/` | Image-to-video pipelines (Kling, Seedance via Higgsfield) |
-| `tools/infrastructure/cloud-gpu.md` | GPU deployment for local vision models |
-| `content/` | AI-generated images for content workflows |
+- `tools/ocr/glm-ocr.md` — dedicated OCR for text extraction
+- `tools/browser/peekaboo.md` — screen capture plus vision analysis for GUI automation
+- `tools/video/` — image-to-video pipelines (Kling, Seedance via Higgsfield)
+- `tools/infrastructure/cloud-gpu.md` — GPU deployment for local vision models
+- `content/` — AI-generated images for content workflows
