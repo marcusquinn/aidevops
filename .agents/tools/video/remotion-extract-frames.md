@@ -8,11 +8,9 @@ metadata:
 
 # Extracting frames from videos
 
-Use [Mediabunny](https://mediabunny.dev) to extract frames at specific timestamps. Useful for thumbnails, filmstrips, and per-frame processing.
+Use [Mediabunny](https://mediabunny.dev) to extract frames at specific timestamps for thumbnails, filmstrips, and per-frame processing.
 
-## API
-
-### `extractFrames(props)` — copy-paste into any project
+## `extractFrames(props)`
 
 | Prop | Type | Required | Description |
 |------|------|----------|-------------|
@@ -88,9 +86,9 @@ await extractFrames({
 });
 ```
 
-## Filmstrip (dynamic timestamps via callback)
+## Filmstrip (dynamic timestamps)
 
-Pass a callback to `timestampsInSeconds` to compute timestamps from video metadata:
+Use a callback when timestamps depend on video metadata:
 
 ```tsx
 const canvasWidth = 500;
@@ -119,7 +117,7 @@ await extractFrames({
 
 ## Cancellation and timeout
 
-Pass `signal` for cancellation. For simple timeout: `setTimeout(() => controller.abort(), ms)`. For racing with a cleanup-safe timeout:
+Pass `signal` to support cancellation. For a timeout, abort the controller and race extraction against a rejecting promise:
 
 ```tsx
 const controller = new AbortController();
