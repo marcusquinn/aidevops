@@ -39,7 +39,7 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-Before creating a branch, read `workflows/git-workflow.md` for issue URL handling, fork detection, commit/PR rules, and repo setup. Read `workflows/worktree.md` for worktree creation and cleanup. If the name comes from a planning file, slugify the task description: lowercase, spaces→hyphens, special chars removed.
+Before creating a branch, read `workflows/git-workflow.md` for issue URL handling, fork detection, commit/PR rules, and repo setup. Read `workflows/worktree.md` for worktree creation and cleanup. Worktree paths are slugified unconditionally by `generate_worktree_path()` (converts `/` to `-`, lowercases). Planning-file-derived task descriptions should be pre-slugified (lowercase, spaces→hyphens, special chars removed) before use as branch names if you want to preserve the exact slug format in the path.
 
 ## Branch Lifecycle
 
