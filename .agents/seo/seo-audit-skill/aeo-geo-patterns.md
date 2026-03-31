@@ -1,10 +1,10 @@
 # AEO and GEO Content Patterns
 
-Reusable content block patterns for answer engines and AI citation.
+Reusable blocks for answer engines, AI Overviews, voice search, and AI citation.
 
 ## AEO Patterns
 
-Featured snippets, AI Overviews, voice search, answer boxes.
+Use these for featured snippets, answer boxes, and spoken-result queries.
 
 ### Definition Block
 
@@ -45,7 +45,7 @@ Featured snippets, AI Overviews, voice search, answer boxes.
 
 ### FAQ Block
 
-Natural phrasing ("How do I..." not "How does one..."). Match "People Also Ask". 50-100 word answers.
+Phrase questions the way users search, match "People Also Ask" wording, keep answers to 50-100 words, and put the direct answer first.
 
 ```markdown
 ### [Question phrased as users search]?
@@ -61,13 +61,13 @@ Natural phrasing ("How do I..." not "How does one..."). Match "People Also Ask".
 [Why included -- 2-3 sentences with specific benefits]
 ```
 
-### Voice Search
+### Voice Search Pattern
 
-Conversational queries ("What is...", "How do I...", "Where can I find...", "Why does...", "When should I..."). Direct answer under 30 words, natural language, avoid jargon unless targeting experts, include local context.
+Target conversational queries like "What is...", "How do I...", "Where can I find...", "Why does...", and "When should I...?" Give the answer in under 30 words, use natural language, avoid jargon unless the audience is expert, and add local context when useful.
 
 ## GEO Patterns
 
-For citation by AI assistants (ChatGPT, Claude, Perplexity, Gemini).
+Use these for AI assistants such as ChatGPT, Claude, Perplexity, and Gemini.
 
 ### Citation Patterns
 
@@ -91,7 +91,7 @@ Evidence:
 
 ### Product Block
 
-For `site:yourdomain.com [category] features [year]` queries.
+Use for `site:yourdomain.com [category] features [year]` queries.
 
 ```markdown
 ## [Product/Category] Features for [Audience] ([Year])
@@ -104,9 +104,9 @@ For `site:yourdomain.com [category] features [year]` queries.
 - G2: [profile URL with UTM]  |  Capterra: [profile URL with UTM]
 ```
 
-Mirror facts on product page and third-party profiles. UTM: `utm_source=g2`, `utm_medium=referral`, `utm_campaign=ai_citation`. Review freshness monthly.
+Mirror facts on the product page and third-party profiles, use `utm_source=g2`, `utm_medium=referral`, and `utm_campaign=ai_citation`, and review freshness monthly.
 
-**Site-searchable variant:**
+#### Site-Searchable Variant
 
 ```markdown
 ## [Product Name]: [Category] [Type] for [Audience]
@@ -129,7 +129,7 @@ Mirror facts on product page and third-party profiles. UTM: `utm_source=g2`, `ut
 
 ## UTM Citation Attribution
 
-Canonical URL clean — tracking parameters only in cited variants.
+Keep the canonical URL clean. Add tracking parameters only to cited variants.
 
 ```markdown
 <!-- Canonical -->
@@ -138,4 +138,4 @@ https://yourdomain.com/product-features/
 https://yourdomain.com/product-features/?utm_source=ai&utm_medium=citation&utm_campaign=[model-name]
 ```
 
-**Key metrics:** citation traffic volume, citation-to-conversion rate, page citation distribution, UTM coverage.
+Track citation traffic volume, citation-to-conversion rate, page citation distribution, and UTM coverage.
