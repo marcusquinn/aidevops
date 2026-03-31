@@ -1026,6 +1026,11 @@
       "at": "2026-03-29T16:31:29Z",
       "pr": 13117
     },
+    ".agents/scripts/commands/ip-check.md": {
+      "hash": "50712771a5effc6d34ec205c3dd4616540d26311",
+      "at": "2026-03-31T02:20:51Z",
+      "pr": 14484
+    },
     ".agents/workflows/pr.md": {
       "hash": "8f6584d97315d02aa4914a1f26165c57ff873479",
       "at": "2026-03-29T14:29:47Z",
