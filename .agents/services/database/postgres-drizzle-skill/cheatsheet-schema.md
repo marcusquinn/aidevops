@@ -3,35 +3,26 @@
 ## Column Types
 
 ```typescript
-import { pgTable, uuid, text, varchar, integer, bigint, boolean,
-  timestamp, date, numeric, json, jsonb, pgEnum, serial } from 'drizzle-orm/pg-core';
+import { bigint, boolean, integer, jsonb, numeric, serial, text, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
 
-// Primary Keys
-id: uuid('id').primaryKey().defaultRandom(),           // UUIDv4
-id: uuid('id').primaryKey().default(sql`uuidv7()`),    // UUIDv7 (PG18+)
-id: integer('id').primaryKey().generatedAlwaysAsIdentity(),  // Identity
-id: serial('id').primaryKey(),                          // Serial (legacy)
+// Primary keys
+id: uuid('id').primaryKey().defaultRandom(),
+id: uuid('id').primaryKey().default(sql`uuidv7()`),
+id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+id: serial('id').primaryKey(),
 
-// Strings
+// Scalars
 name: text('name').notNull(),
 email: varchar('email', { length: 255 }).unique(),
-
-// Numbers
 age: integer('age'),
 price: numeric('price', { precision: 10, scale: 2 }),
 count: bigint('count', { mode: 'number' }),
-
-// Boolean
 active: boolean('active').default(true),
 
-// Timestamps
+// Time and structured data
 createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 updatedAt: timestamp('updated_at', { withTimezone: true }).$onUpdate(() => new Date()),
-
-// JSON
 data: jsonb('data').$type<{ key: string }>(),
-
-// Arrays
 tags: text('tags').array(),
 ```
 
@@ -42,7 +33,7 @@ email: text('email').notNull().unique(),
 status: text('status').notNull().default('pending'),
 price: numeric('price').check(sql`price > 0`),
 
-// Foreign Key
+// Foreign key
 authorId: uuid('author_id').references(() => users.id, { onDelete: 'cascade' }),
 ```
 
