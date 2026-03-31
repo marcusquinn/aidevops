@@ -55,6 +55,7 @@ chore: update dependencies
 docs: improve installation instructions
 
 ci: optimize GitHub Actions workflow
+
 - Add dependency caching
 - Run tests in parallel
 
