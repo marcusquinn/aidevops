@@ -1,18 +1,27 @@
 # Cloudflare Workers
 
-Expert guidance for building, deploying, and optimizing Cloudflare Workers applications.
+Build request-driven edge applications on Cloudflare's V8 isolate runtime. Prefer web platform APIs for portability.
 
-## Overview
+## Why Workers
 
-Cloudflare Workers run on V8 isolates (NOT containers/VMs):
-- Extremely fast cold starts (< 1ms)
+- V8 isolates, not containers/VMs
+- Cold starts under 1 ms
 - Global deployment across 300+ locations
-- Web standards compliant (fetch, URL, Headers, Request, Response)
-- Support JS/TS, Python, Rust, and WebAssembly
+- Standards-based APIs: `fetch`, `URL`, `Headers`, `Request`, `Response`
+- JS/TS, Python, Rust, and WebAssembly support
 
-**Key principle**: Workers use web platform APIs wherever possible for portability.
+## Good Fits
 
-## Module Worker Pattern (Recommended)
+- API endpoints at the edge
+- Request/response transformation
+- Authentication and authorization layers
+- Static asset optimization
+- A/B testing and feature flags
+- Rate limiting and security
+- Proxy and routing logic
+- WebSocket applications
+
+## Recommended Module Worker
 
 ```typescript
 export default {
@@ -22,10 +31,19 @@ export default {
 };
 ```
 
-**Handler parameters**:
-- `request`: Incoming HTTP request (standard Request object)
-- `env`: Environment bindings (KV, D1, R2, secrets, vars)
-- `ctx`: Execution context (`waitUntil`, `passThroughOnException`)
+Handler parameters:
+- `request`: incoming `Request`
+- `env`: bindings for KV, D1, R2, secrets, and vars
+- `ctx`: `waitUntil()` and `passThroughOnException()`
+
+## Handler Surfaces
+
+```typescript
+async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response>
+async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void>
+async queue(batch: MessageBatch, env: Env, ctx: ExecutionContext): Promise<void>
+async tail(events: TraceItem[], env: Env, ctx: ExecutionContext): Promise<void>
+```
 
 ## Essential Commands
 
@@ -38,17 +56,6 @@ npx wrangler tail                   # Stream logs
 npx wrangler secret put API_KEY     # Set secret
 ```
 
-## When to Use Workers
-
-- API endpoints at the edge
-- Request/response transformation
-- Authentication/authorization layers
-- Static asset optimization
-- A/B testing and feature flags
-- Rate limiting and security
-- Proxy/routing logic
-- WebSocket applications
-
 ## Quick Start
 
 ```bash
@@ -57,38 +64,22 @@ cd my-worker
 npx wrangler dev
 ```
 
-## Handler Signatures
-
-```typescript
-// HTTP requests
-async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response>
-
-// Cron triggers
-async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void>
-
-// Queue consumer
-async queue(batch: MessageBatch, env: Env, ctx: ExecutionContext): Promise<void>
-
-// Tail consumer
-async tail(events: TraceItem[], env: Env, ctx: ExecutionContext): Promise<void>
-```
-
 ## Resources
 
-**Docs**: https://developers.cloudflare.com/workers/  
-**Examples**: https://developers.cloudflare.com/workers/examples/  
-**Runtime APIs**: https://developers.cloudflare.com/workers/runtime-apis/
+- Docs: https://developers.cloudflare.com/workers/
+- Examples: https://developers.cloudflare.com/workers/examples/
+- Runtime APIs: https://developers.cloudflare.com/workers/runtime-apis/
 
 ## In This Reference
 
-- [Patterns](./patterns.md) - Common workflows, testing, optimization
-- [Gotchas](./gotchas.md) - Common issues, limits, troubleshooting
+- [Workers Patterns](./workers-patterns.md) - Common workflows, testing, and optimization
+- [Workers Gotchas](./workers-gotchas.md) - Limits, pitfalls, and troubleshooting
 
 ## See Also
 
-- [KV](../kv/README.md) - Key-value storage
-- [D1](../d1/README.md) - SQL database
-- [R2](../r2/README.md) - Object storage
-- [Durable Objects](../durable-objects/README.md) - Stateful coordination
-- [Queues](../queues/README.md) - Message queues
-- [Wrangler](../wrangler/README.md) - CLI tool reference
+- [KV](./kv.md) - Key-value storage
+- [D1](./d1.md) - SQL database
+- [R2](./r2.md) - Object storage
+- [Durable Objects](./durable-objects.md) - Stateful coordination
+- [Queues](./queues.md) - Message queues
+- [Wrangler](./wrangler.md) - CLI tool reference
