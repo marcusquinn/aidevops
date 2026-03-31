@@ -36,7 +36,20 @@ Can recommend relevant products?   -> Affiliate links + optional premium tier
 
 <!-- AI-CONTEXT-END -->
 
-## Payment Providers
+## Choose Model
+
+Use the decision tree first, then match the model to product shape:
+
+| Model | Best for | Notes |
+|-------|---------|-------|
+| Subscription | Recurring problems, ongoing value | Weekly/monthly/annual plans; 7-day trial is the default |
+| One-time purchase | Utilities, focused tools | Consider lifetime unlock instead of recurring billing |
+| Freemium | Products with a genuinely useful free tier | Premium should feel like an upgrade, not ransom |
+| Ad-supported | High-volume, low-WTP audiences | AdMob (mobile), Unity Ads (games), Carbon Ads (dev/tech); pair with paid ad removal |
+| Affiliate | Recommendation/review products | Transparent disclosure required |
+| Sales funnel | Consultants, coaches, SaaS | Product stays free; revenue comes from the external offer |
+
+## Choose Provider
 
 | Platform | Primary | Alternative | Notes |
 |----------|---------|-------------|-------|
@@ -45,9 +58,9 @@ Can recommend relevant products?   -> Affiliate links + optional premium tier
 | Desktop apps | Stripe, Paddle | LemonSqueezy, Gumroad | |
 | Web apps / SaaS | Stripe | Paddle, LemonSqueezy | |
 
-Superwall: remote paywall config, price/layout/copy A/B testing (`services/payments/superwall.md`).
+Superwall handles remote paywall config and price/layout/copy A/B testing (`services/payments/superwall.md`).
 
-## Entitlements Model
+## Define Entitlements
 
 Products → entitlements → feature gates (platform-agnostic):
 
@@ -58,9 +71,9 @@ Products → entitlements → feature gates (platform-agnostic):
 └── Pro Add-on ($2.99/mo)     -> "pro" entitlement
 ```
 
-## Paywall Design
+## Design Paywall
 
-**Principles**:
+Rules:
 
 - Show at moment of highest intent (after user tries a premium feature)
 - Display value proposition, not price
@@ -86,20 +99,11 @@ Products → entitlements → feature gates (platform-agnostic):
 | 7-day | Lower | Higher | Subscriptions (recommended) |
 | No trial | Lowest | Highest | One-time purchases |
 
-**A/B testing**: RevenueCat Experiments, Superwall, or Stripe test mode for price points, paywall designs, trial lengths, and feature gates.
+A/B test price points, paywall designs, trial lengths, and feature gates with RevenueCat Experiments, Superwall, or Stripe test mode.
 
-## Alternative Revenue Models
+## Set Pricing
 
-| Model | Best for | Notes |
-|-------|---------|-------|
-| **Ad-supported** | High-volume, low WTP | AdMob (mobile), Unity Ads (games), Carbon Ads (dev/tech). Combine with premium to remove ads |
-| **Freemium** | Genuine free-tier value | Premium should feel like upgrade, not ransom |
-| **Affiliate** | Recommendation/review products | Transparent disclosure required |
-| **Sales funnel** | Consultants, coaches, SaaS | Product is free; revenue from external offering |
-
-## Pricing Strategy
-
-**Process**: Check competitor pricing -> survey target users on WTP -> start competitive, adjust on data -> annual plans: 15-40% discount vs monthly.
+Process: check competitor pricing -> survey target users on willingness to pay -> start competitive -> adjust on data. Annual plans usually land at a 15-40% discount vs monthly.
 
 | Model | Typical Range |
 |-------|--------------|
@@ -109,7 +113,7 @@ Products → entitlements → feature gates (platform-agnostic):
 | Lifetime | $49.99-$149.99 |
 | One-time (extension/desktop) | $9.99-$49.99 |
 
-## Legal Requirements
+## Meet Legal Requirements
 
 | Requirement | Applies to |
 |-------------|-----------|
