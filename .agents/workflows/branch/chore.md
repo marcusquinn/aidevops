@@ -38,45 +38,27 @@ git checkout -b chore/{description}
 
 ## Guidance
 
-- Branch names use `chore/{description}`.
-- Pick the narrowest commit prefix for the change.
-- Chore branches usually do not need a version bump.
+Pick the narrowest commit prefix for the change:
 
-| Prefix | Use For |
+| Prefix | Use for |
 |--------|---------|
 | `chore:` | General maintenance |
 | `docs:` | Documentation |
 | `ci:` | CI/CD changes |
 | `build:` | Build system |
 
-## Common Tasks
-
-### Dependency updates
+## Commit Examples
 
 ```bash
-npm outdated          # Check for updates
-npm update            # Update and test
-git commit -m "chore: update dependencies"
-```
+chore: update dependencies
 
-### CI/CD changes
+docs: improve installation instructions
 
-```bash
-git commit -m "ci: optimize GitHub Actions workflow
-
+ci: optimize GitHub Actions workflow
 - Add dependency caching
 - Run tests in parallel
-- Reduce build time by 40%"
-```
 
-### Documentation
-
-```bash
-git commit -m "docs: improve installation instructions
-
-- Add troubleshooting section
-- Update screenshots
-- Fix broken links"
+build: switch bundler to esbuild
 ```
 
 ## Examples
