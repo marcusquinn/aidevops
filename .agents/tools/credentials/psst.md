@@ -12,17 +12,17 @@ tools:
   task: false
 ---
 
-# psst - AI-Native Secret Manager (Alternative)
+# psst - AI-Native Secret Manager Alternative
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
-- **Status**: Documented alternative; `gopass` remains the default recommendation
+- **Status**: documented alternative; `gopass` remains the default
 - **Repo**: https://github.com/nicholasgasior/psst (61 stars, v0.3.0)
 - **Install**: `bun install -g psst-cli`
 - **Requires**: Bun runtime
-- **Use psst when**: you want the simplest solo setup, already use Bun, and do not need team sharing or an audit trail
+- **Choose psst when**: you want the simplest solo setup, already use Bun, and do not need team sharing or an audit trail
 
 | Feature | gopass (recommended) | psst |
 |---------|----------------------|------|
@@ -32,6 +32,8 @@ tools:
 | Dependencies | Single Go binary | Bun runtime |
 | AI-native | Via aidevops wrapper | Built-in |
 | Audit trail | Git history | None |
+
+**Recommendation**: prefer `gopass` for shared, long-lived, or compliance-sensitive secrets. Choose `psst` only when simplicity matters more than maturity, team workflows, and auditability.
 
 <!-- AI-CONTEXT-END -->
 
@@ -44,28 +46,19 @@ bun install -g psst-cli
 ## Usage
 
 ```bash
-# Store a secret
 psst set MY_API_KEY
-
-# List secrets (names only)
 psst list
-
-# Use in subprocess (AI-safe)
 psst run MY_API_KEY -- curl https://api.example.com
 ```
 
-## Recommendation
-
-Prefer `gopass` for most aidevops setups:
+## Why gopass remains the default
 
 - Mature ecosystem (6.7k stars, 8+ years of development)
 - GPG encryption (industry-standard, audited)
 - Team sharing via git sync
-- Zero runtime dependencies (single Go binary)
+- Single Go binary; no Bun runtime dependency
 - Audit trail via git history
 - `gopass audit` for breach detection
-
-Choose psst only when simplicity matters more than maturity, team workflows, and auditability.
 
 ## Related
 
