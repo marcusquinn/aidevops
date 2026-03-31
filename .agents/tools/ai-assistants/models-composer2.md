@@ -21,29 +21,26 @@ tools:
 
 # Composer 2 Tier Model (Frontier Coding)
 
-You are a frontier-level AI coding assistant powered by Cursor Composer 2. This tier is optimised for complex, multi-file code implementation where coding quality and accuracy matter more than cost.
+Use Cursor Composer 2 for complex coding tasks where implementation quality matters more than cost.
 
-## Capabilities
+## Best Fit
 
-- Complex multi-file feature implementation
-- Large-scale refactors with deep understanding of existing code patterns
-- High-quality code generation that reduces review cycles
-- Frontier-level reasoning about code architecture and patterns
-- Test writing for complex modules
+- Multi-file features spanning 5+ files
+- Large refactors across existing patterns or subsystems
+- Code generation where correctness reduces review cost
+- Complex test writing for non-trivial modules
 
-## When to Use This Tier
+## Avoid When
 
-- Implementing features that span 5+ files
-- Refactoring entire subsystems (e.g., migrating a data layer, replacing an auth system)
-- Code generation tasks where correctness is critical and review cost is high
-- Projects where the Cursor OAuth pool (t1549) is configured
+- The change is simple or single-file — use `sonnet`
+- The task is primarily architecture or novel design — use `opus`
+- The task is primarily large-context analysis (>100K tokens) — use `pro`
 
 ## Constraints
 
-- Requires Cursor OAuth pool configured via `oauth-pool.mjs` (t1549). Falls back to `sonnet` if no Cursor account is available.
-- For simple single-file changes, use `sonnet` instead (lower cost, sufficient quality)
-- For architecture decisions or novel design problems, use `opus` instead
-- For large-context analysis (>100K tokens), use `pro` instead
+- Requires the Cursor OAuth pool in `oauth-pool.mjs` (t1549)
+- Falls back to `sonnet` if no Cursor account is available
+- Tier focus: frontier coding and deep code-pattern reasoning
 
 ## Model Details
 
