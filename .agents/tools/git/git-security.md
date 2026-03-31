@@ -28,15 +28,13 @@ tools:
 
 ## Authentication
 
-Use CLI auth — stores tokens in system keyring, not env vars:
+CLI auth stores tokens in system keyring (not env vars):
 
 ```bash
 gh auth login -s workflow   # -s workflow for CI PR support
-glab auth login
-tea login add
 ```
 
-Token storage: `~/.config/aidevops/credentials.sh` (600 perms). Rotate every 6–12 months; immediately if exposed. Use short-lived tokens for CI/CD.
+Token storage: `~/.config/aidevops/credentials.sh` (600 perms). Rotate every 6-12 months; immediately if exposed. Short-lived tokens for CI/CD. See `git/authentication.md` for full setup.
 
 ## Branch Protection
 
@@ -58,7 +56,11 @@ git config --global user.signingkey KEY_ID
 git config --global commit.gpgsign true
 ```
 
-## Pre-commit Hook
+## Secret Detection
+
+Primary: `secretlint-helper.sh scan`. History: `trufflehog git file://. --only-verified`. Also: `git-secrets` (AWS patterns).
+
+Pre-commit hook (supplementary — secretlint is primary):
 
 ```bash
 # .git/hooks/pre-commit
@@ -69,43 +71,18 @@ if git diff --cached | grep -iE "(api_key|token|password|secret|private_key)" > 
 fi
 ```
 
-## Secret Detection
-
-```bash
-./.agents/scripts/secretlint-helper.sh scan   # current state
-trufflehog git file://. --only-verified        # git history
-```
-
-Tools: `secretlint-helper.sh` (primary), `git-secrets` (AWS), `trufflehog` (history).
-
-## Access Control
-
-Principle of least privilege: grant minimum necessary, review quarterly, remove inactive collaborators. Use teams for group permissions.
-
-| Role | Permissions |
-|------|-------------|
-| Read | View code, issues |
-| Triage | Manage issues, no push |
-| Write | Push to non-protected branches |
-| Maintain | Push to protected, manage settings |
-| Admin | Full access |
-
 ## Incident Response
 
-**Token exposed:**
-1. Revoke immediately
-2. Generate replacement
-3. Update all consumers
-4. Audit for unauthorized access
+**Token exposed:** Revoke immediately → generate replacement → update consumers → audit for unauthorized access.
 
 **Secret committed:**
-1. **Rotate the secret first** — assume it's compromised
+
+1. **Rotate the secret first** — assume compromised
 2. Remove from history:
 
    ```bash
-   git filter-branch --force --index-filter \
-     "git rm --cached --ignore-unmatch path/to/secret" \
-     --prune-empty --tag-name-filter cat -- --all
+   # Preferred: git-filter-repo (pip install git-filter-repo)
+   git filter-repo --invert-paths --path path/to/secret
    git push origin --force --all
    ```
 
