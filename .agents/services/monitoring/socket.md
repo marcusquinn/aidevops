@@ -31,7 +31,7 @@ mcp:
 ## Setup
 
 1. Sign up at [socket.dev](https://socket.dev). GitHub connection is optional for repo scans.
-2. Go to Settings → API Tokens, create a token, and grant Full Access if available.
+2. Create an API token in Settings → API Tokens. Grant Full Access if available.
 3. Save the token:
 
 ```bash
@@ -47,7 +47,7 @@ jq '.mcp.socket = {"type": "remote", "url": "https://mcp.socket.dev/", "enabled"
 ```
 
 5. If API-token auth fails, complete the browser OAuth flow on first use.
-6. Test connection:
+6. Test the token:
 
 ```bash
 source ~/.config/aidevops/credentials.sh
@@ -56,12 +56,10 @@ curl -s -H "Authorization: Bearer $SOCKET_YOURNAME" "https://api.socket.dev/v0/o
 
 ## MCP Tools
 
-| Tool | Description |
-|------|-------------|
-| `scan_package` | Scan a specific package for issues |
-| `scan_repo` | Scan a repository's dependencies |
-| `get_package_info` | Get security info for a package |
-| `list_issues` | List known issues in dependencies |
+- `scan_package` — scan a package for issues
+- `scan_repo` — scan repository dependencies
+- `get_package_info` — fetch package security data
+- `list_issues` — list known dependency issues
 
 ## Example prompts
 
@@ -97,11 +95,12 @@ socket npm info lodash
 
 ### MCP not connecting
 
-`mcp.socket.dev` may require browser OAuth instead of API-token auth. Start the MCP and complete the prompt if shown.
+- `mcp.socket.dev` may require browser OAuth instead of API-token auth
+- Start the MCP and complete the prompt if shown
 
 ### Rate limits
 
-Free tier requests are rate-limited. Upgrade if scans are throttled.
+- Free tier requests are rate-limited; upgrade if scans are throttled
 
 ## Related
 
