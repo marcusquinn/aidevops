@@ -6,11 +6,11 @@ mode: subagent
 
 Arguments: `$ARGUMENTS`
 
-Use only: `~/.aidevops/agents/scripts/ip-reputation-helper.sh`.
+Helper: `~/.aidevops/agents/scripts/ip-reputation-helper.sh`
 
-## Command routing
+## Route inputs
 
-| Input | Helper invocation |
+| Input | Invoke |
 |---|---|
 | `1.2.3.4` | `check "$IP"` |
 | `1.2.3.4 -f json` | `check "$IP" -f json` |
@@ -19,13 +19,13 @@ Use only: `~/.aidevops/agents/scripts/ip-reputation-helper.sh`.
 | `1.2.3.4 --no-cache` | `check "$IP" --no-cache` |
 | `ips.txt` | `batch "$FILE"` |
 | `ips.txt --dnsbl-overlap` | `batch "$FILE" --dnsbl-overlap` |
-| _(no args)_ | Show usage/help |
+| _(no args)_ | Show usage |
 
-Ops subcommands: `providers`, `cache-stats`, `cache-clear [--provider P] [--ip IP]`, `rate-limit-status`, `help`.
+Ops: `providers`, `cache-stats`, `cache-clear [--provider P] [--ip IP]`, `rate-limit-status`, `help`.
 
-## Output shape
+## Output
 
-Return a summary with risk score, provider results, and proxy flags:
+Return risk score, provider results, and proxy flags:
 
 ```text
 IP Reputation: 1.2.3.4
@@ -41,9 +41,9 @@ Providers (8/10 responded):
 Flags: Tor=NO  Proxy=NO  VPN=NO
 ```
 
-Provider set: Spamhaus DNSBL, ProxyCheck.io, StopForumSpam, Blocklist.de, GreyNoise, AbuseIPDB, IPQualityScore, Scamalytics.
+Providers: Spamhaus DNSBL, ProxyCheck.io, StopForumSpam, Blocklist.de, GreyNoise, AbuseIPDB, IPQualityScore, Scamalytics.
 
-After showing results, offer: full report, single-provider recheck, batch check, raw JSON, or cache-clear recheck.
+Then offer: full report, single-provider recheck, batch check, raw JSON, or cache-clear recheck.
 
 ## Related
 
