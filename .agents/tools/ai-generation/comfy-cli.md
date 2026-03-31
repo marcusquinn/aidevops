@@ -24,12 +24,11 @@ tools:
 - **Docs**: <https://docs.comfy.org/comfy-cli/getting-started>
 - **Repo**: <https://github.com/Comfy-Org/comfy-cli>
 - **Shell completion**: `comfy --install-completion`
-
-**Use for**: installing/managing ComfyUI instances, custom nodes, models, snapshots, workflow dependencies.
+- **Use for**: installing and managing ComfyUI instances, custom nodes, models, snapshots, and workflow dependencies
 
 <!-- AI-CONTEXT-END -->
 
-## Installation
+## Install
 
 Prerequisites: Python >= 3.9, git, CUDA or ROCm (GPU).
 
@@ -41,7 +40,7 @@ conda create -n comfy-env python=3.11 && conda activate comfy-env
 comfy install
 ```
 
-## Commands
+## Native CLI
 
 ### Core
 
@@ -83,7 +82,7 @@ comfy tracking disable   # opt out of usage analytics
 
 ## Helper Script
 
-`comfy-cli-helper.sh` wraps comfy-cli with aidevops conventions:
+`comfy-cli-helper.sh` wraps comfy-cli with aidevops conventions.
 
 ```bash
 comfy-cli-helper.sh status                              # check installation
@@ -99,7 +98,7 @@ comfy-cli-helper.sh node-list [installed|all|enabled|disabled]
 comfy-cli-helper.sh model-list [relative-path]
 ```
 
-## Common Workflows
+## Workflows
 
 ```bash
 # Fresh setup
@@ -115,13 +114,10 @@ comfy-cli-helper.sh snapshot-save --output my-setup.json
 comfy-cli-helper.sh snapshot-restore my-setup.json
 ```
 
-## Integration
+## Related
 
 - `content/production-image.md`, `content/production-video.md` — local ComfyUI generation pipeline
 - `tools/vision/image-generation.md` — local model inference
 - `tools/video/` — local video generation workflows
-
-## Related
-
 - `tools/vision/overview.md` — Vision AI decision tree
 - `content/video-higgsfield.md` — Cloud-based AI generation
