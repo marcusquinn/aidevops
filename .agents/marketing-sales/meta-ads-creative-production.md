@@ -1,114 +1,35 @@
 # Creative Production System
 
----
+Reference corpus for Meta creative operations. This file is now a slim index; detailed guidance lives in focused chapter files.
 
-## Production Pipeline
+## What This Covers
 
-```text
-1. IDEATION   → Review winners, competitor research, customer feedback, brainstorm angles
-2. BRIEF      → Define concept, script/outline, technical specs, assign to creator
-3. PRODUCTION → Shoot/create, edit, add captions, export all formats
-4. QA         → Check specs, review messaging, compliance check, approve/revise
-5. LAUNCH     → Upload to Ads Manager, add to testing campaign, set up tracking, document
-```
+- Production pipeline from ideation through launch
+- QA and pre-launch review
+- Creative volume planning by spend level
+- Iteration rules for refreshing winners
+- Asset organization, naming, and tracking
+- Technical specs, team models, and hiring guidance
 
-**Weekly rhythm:** Mon = review performance, kill losers · Tue = creative ideation · Wed = brief creators, start production · Thu = continue production, early QA · Fri = launch new creative
+## File Index
 
-**Monthly rhythm:** Week 1 & 3 = new concept testing · Week 2 = iterate Week 1 winners · Week 4 = iteration + review/planning
+| File | Topic |
+|------|-------|
+| `meta-ads-creative-production-pipeline.md` | End-to-end production pipeline plus weekly and monthly operating rhythm |
+| `meta-ads-creative-production-qa.md` | Pre-launch checklist and phone test |
+| `meta-ads-creative-production-volume.md` | Volume requirements, 70/30 pipeline split, expected win rates |
+| `meta-ads-creative-production-iteration.md` | Winner analysis, variation types, refresh triggers, refresh process |
+| `meta-ads-creative-production-assets.md` | Folder structure, file naming, tracking sheet fields |
+| `meta-ads-creative-production-specs-team.md` | Technical specs, team models, creator sourcing, editor checklist |
 
----
+## Quick Reference
 
-## Quality Assurance
+- Pipeline: ideation → brief → production → QA → launch
+- Weekly rhythm: Mon performance review · Tue ideation · Wed creator briefing/start production · Thu production + early QA · Fri launch
+- Monthly rhythm: Weeks 1 and 3 test new concepts · Week 2 iterate winners · Week 4 iterate + review
+- Default mix: 70% winner iterations / 30% net-new concepts
 
-**Pre-launch checklist:**
+## Related
 
-- [ ] Correct dimensions, clear audio (no clipping), readable text (mobile test), captions accurate, no tool watermarks
-- [ ] Hook compelling, message clear in 3 seconds, benefit obvious, CTA clear, brand present
-- [ ] No prohibited claims, testimonials real, no competitor trademark misuse, age/content appropriate, landing page matches ad
-
-**Phone test:** (1) without sound -- does it work? (2) at 2x speed -- is hook strong enough? (3) show to non-marketer -- do they understand? (4) show to target customer if possible
-
----
-
-## Volume Requirements
-
-| Monthly Ad Spend | New Concepts/Week | Iterations/Week | Total/Week |
-|------------------|-------------------|-----------------|------------|
-| <$5K | 2-3 | 2-3 | 4-6 |
-| $5-20K | 4-6 | 4-6 | 8-12 |
-| $20-50K | 6-10 | 6-10 | 12-20 |
-| $50-100K | 10-15 | 10-15 | 20-30 |
-| $100K+ | 15-25+ | 15-25+ | 30-50+ |
-
-**Pipeline split:** 70% iterations (variations of winners) / 30% new concepts
-
-**Win rates:** Untested concepts 10-20% · Research-based 20-30% · Iterations of winners 30-50% · AI-optimized variations 25-40%. Expect 5-10 concepts to find 1-2 winners.
-
----
-
-## Iteration Process
-
-**Winner analysis -- ask:** (1) Hook -- what made people stop? (2) Emotion -- fear, desire, curiosity? (3) Proof -- testimonial, data, authority? (4) Format -- video vs static, length, ratio? (5) Audience -- age, gender, interest?
-
-**Variation types:** Hook swap (same body, different hook) · Visual swap (same script, different creator/visuals) · Format swap (static to video) · Length swap (shorter/longer) · Offer swap (different offer/CTA) · Angle shift (same benefit, different angle)
-
-**Mashup method:** Combine elements from different winners -- A's hook + B's proof section + C's CTA
-
-**Refresh triggers:** CTR declining 20%+ WoW · Frequency >3.0 (prospecting) or >5.0 (retargeting) · Creative unchanged 3+ weeks · CPA rising despite stable CPM
-
-**Refresh process:** Create 2-3 iterations, add to same ad set, let algorithm choose, pause original when new creative wins
-
----
-
-## Asset Organization
-
-```text
-Creative Assets/
-├── Raw Footage/
-│   ├── UGC/[Creator Name]/[Date]_[Concept].mp4
-│   ├── Founder/
-│   └── Product/
-├── Edited/
-│   ├── Videos/[Date]_[Product]_[Angle]_[Format].mp4
-│   ├── Images/[Date]_[Product]_[Angle]_[Format].jpg
-│   └── Carousels/
-├── Templates/ (Canva, Figma, Premiere)
-├── Exports/ (1x1, 4x5, 9x16)
-└── Archive/
-```
-
-**Naming:** Video = `[Date]_[Product]_[Angle]_[Creator]_[Format]_[Version]` · Image = `[Date]_[Product]_[Angle]_[Type]_[Format]_[Version]` · Ads Manager = `[Format]_[Angle/Hook]_[Version]` (e.g. `VID_PainPoint_v1`, `IMG_Testimonial_v2`, `CAR_Features_v1`)
-
-**Tracking sheet columns:** Creative ID · Date Created · Type · Product · Angle · Creator · Format · Status · Days Live · Spend · CPA · ROAS · Outcome
-
----
-
-## Technical Specifications
-
-**Video:** 1080x1920 (9:16) min · MP4/MOV · H.264 · 30fps · 15-60s · max 4GB
-
-**Image:** 1080x1080 (1:1) min · JPG/PNG · max 30MB · text <20% of image area
-
-**Aspect ratios:** 1:1 1080x1080 (feed, universal) · 4:5 1080x1350 (feed, mobile-optimized) · 9:16 1080x1920 (Stories, Reels) · 16:9 1920x1080 (in-stream, desktop)
-
----
-
-## Team & Resources
-
-| Option | Pros | Cons | When |
-|--------|------|------|------|
-| **In-house** | Full control, faster iteration, deep product knowledge, lower cost at scale | Fixed costs, limited perspectives, capacity constraints | $20K+/month, constant creative flow |
-| **Agency** | Diverse experience, scalable capacity, strategic guidance | Higher cost, less control, slower feedback loops | New to paid ads, lack internal capability |
-| **Freelancers** | Flexible, cost-effective for specialists, diverse perspectives | Management overhead, variable quality, availability issues | Specialist needs, variable volume |
-
-**Freelancer platforms:** Upwork/Fiverr (budget) · Working Not Working/Dribbble (premium) · Industry Slack communities · Referrals
-
-**UGC creators -- find:** Billo, Insense, Trend, Minisocial · social search · direct DM outreach · creator agencies. **Manage:** Clear brief, reference examples, 1-2 revision rounds, usage rights agreement, payment terms.
-
-**Creative strategist** (hire at $50K+/month): analyzes performance data, identifies winning patterns, creates briefs, manages pipeline, tests and iterates
-
-**Editor checklist:** correct aspect ratios · captions added and timed · sound levels normalized · brand guidelines followed · file naming convention followed
-
----
-
-*Next: [Creator Briefs](briefs/ugc-brief.md)*
+- Previous: [Creative Frameworks](meta-ads-creative-frameworks.md)
+- Next: [Creator Briefs](meta-ads-creative-briefs-ugc-brief.md)
