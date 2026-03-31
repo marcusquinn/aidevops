@@ -7,30 +7,29 @@ model: sonnet
 
 # Blog - SEO-Optimized Article Distribution
 
-**Purpose**: Transform content pipeline assets into SEO-optimized blog articles (1,500–3,000 words).
+<!-- AI-CONTEXT-START -->
 
-**Critical Rules**:
-- **Keyword-first** — every article targets a primary keyword with validated search volume
-- **Human voice** — AI-generated content must pass through `content/humanise.md` and `content/editor.md`
-- **Internal linking** — 3–5 internal links per article via `content/internal-linker.md`
-- **Meta optimization** — title tag, meta description, OG tags via `content/meta-creator.md`
-- **One sentence per paragraph** — per `content/guidelines.md`
+## Quick Reference
+
+- **Purpose**: Turn content pipeline assets into SEO blog posts
+- **Default length**: Pillar 2,000–3,000 words; supporting 800–1,500; listicle 1,000–2,000
+- **Primary rule**: One validated primary keyword per article
+- **Voice**: Run drafts through `content/editor.md` and `content/humanise.md`
+- **Links**: Add 3–5 internal links via `content/internal-linker.md`
+- **Metadata**: Generate title tag, meta description, and OG fields via `content/meta-creator.md`
+- **Style**: One sentence per paragraph per `content/guidelines.md`
+
+<!-- AI-CONTEXT-END -->
 
 ## Article Types
 
-| Type | Length | Target |
-|------|--------|--------|
-| **Pillar** | 2,000–3,000 words | High-volume keywords, link hubs |
-| **Supporting** | 800–1,500 words | Long-tail keywords, link to pillar |
-| **Listicle** | 1,000–2,000 words | "best", "top", "how to" keywords |
+| Type | Length | Target | Structure |
+|------|--------|--------|-----------|
+| **Pillar** | 2,000–3,000 words | High-volume keywords, link hubs | Title (keyword-front, under 60 chars) → Meta (150–160 chars) → Intro (100–150 words) → TOC → H2/H3 body → Key takeaways → CTA → FAQ |
+| **Supporting** | 800–1,500 words | Long-tail keywords, link to pillar | Title → Intro (50–100 words) → 3–5 H2 sections → Internal link to pillar → CTA |
+| **Listicle** | 1,000–2,000 words | "best", "top", "how to" keywords | Number + keyword + year title → Selection criteria → Numbered H2 items → Comparison table → Verdict |
 
-**Pillar structure**: Title (keyword-front, <60 chars) → Meta (150–160 chars) → Intro (100–150w) → TOC → H2/H3 body → Key takeaways → CTA → FAQ
-
-**Supporting structure**: Title → Intro (50–100w) → 3–5 H2 sections → Internal link to pillar → CTA
-
-**Listicle structure**: Number + keyword + year title → Selection criteria → Numbered H2 items → Comparison table → Verdict
-
-**Example** (pillar from story "Why 95% of AI influencers fail"):
+**Example pillar outline** (from story "Why 95% of AI influencers fail"):
 
 ```text
 Title: Why 95% of AI Influencers Fail (And How to Be in the 5%)
@@ -65,16 +64,14 @@ keyword-research-helper.sh difficulty "AI video generation tools"
 
 ### 2. Content Brief
 
-- Primary keyword + 3–5 secondary keywords
-- Search intent, target word count from SERP analysis, competitor gaps
-- Unique angle; internal link targets
+- Include primary keyword, 3–5 secondary keywords, search intent, SERP-derived word count, competitor gaps, unique angle, and internal link targets.
 
 ### 3. Writing Pipeline
 
 1. `content/story.md` — narrative framework
 2. `content/research.md` — data and insights
 3. `content/seo-writer.md` — keyword-optimized draft
-4. `content/editor.md` — human voice transformation
+4. `content/editor.md` — human voice pass
 5. `content/humanise.md` — remove AI patterns
 6. `content/meta-creator.md` — title tag and meta description
 7. `content/internal-linker.md` — strategic internal links
@@ -99,17 +96,17 @@ python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py quality article.md
 
 ## Content from Pipeline Assets
 
-**From YouTube**: Extract transcript (`youtube-helper.sh transcript VIDEO_ID`) → restructure for reading → add SEO elements → expand with research → add visuals.
-
-**From Research**: Use brief as foundation → structure around findings → add original analysis → include data (stats, charts) → link sources.
-
-**From Short-Form**: Expand high-performing short → add depth (context, examples, methodology) → target related long-tail keywords → embed original video.
+| Source | Workflow |
+|--------|----------|
+| **YouTube** | Extract transcript with `youtube-helper.sh transcript VIDEO_ID` → restructure for reading → add SEO elements → expand with research → add visuals |
+| **Research** | Use brief as foundation → structure around findings → add original analysis → include data → link sources |
+| **Short-form** | Expand high-performing short → add context, examples, methodology → target related long-tail keywords → embed original video |
 
 ## Publishing Workflow
 
-**WordPress**: Draft via WP REST API or WP-CLI; assign categories/tags; upload featured image; set Yoast/RankMath SEO fields; schedule. See `tools/wordpress/wp-dev.md`.
+**WordPress**: Draft via WP REST API or WP-CLI; assign categories and tags; upload featured image; set Yoast/RankMath SEO fields; schedule. See `tools/wordpress/wp-dev.md`.
 
-**Content Calendar**: Pillar 1–2/month · Supporting posts 2–4/week · Listicles 1–2/month · Refresh top performers quarterly.
+**Content calendar**: Pillar 1–2/month · Supporting 2–4/week · Listicles 1–2/month · Refresh top performers quarterly
 
 **Post-Publish Checklist**:
 - [ ] Verify indexing (Google Search Console)
