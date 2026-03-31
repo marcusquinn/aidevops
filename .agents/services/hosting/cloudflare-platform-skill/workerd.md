@@ -1,8 +1,8 @@
 # Workerd Runtime
 
-V8-based JS/Wasm runtime powering Cloudflare Workers. Standards-based (Fetch API, Web Crypto, Streams, WebSocket), capability-secured bindings (prevent SSRF), nanoservice architecture with local-call-perf service bindings. Version = max compat date supported.
+V8-based JS/Wasm runtime for Cloudflare Workers. It exposes web-standard APIs (Fetch, Web Crypto, Streams, WebSocket), uses capability-based bindings to limit resource access and SSRF risk, and supports nanoservice-style local service bindings. Workerd version sets the newest supported compatibility date.
 
-**Use cases:** local Workers dev (via Wrangler), self-hosted Workers runtime, custom embedded runtime, debugging runtime-specific issues.
+Use it for local Workers development via Wrangler, self-hosted Workers runtimes, embedded runtime experiments, and debugging runtime-specific behavior.
 
 ## Quick Start
 
@@ -14,21 +14,19 @@ workerd test config.capnp
 
 ## Core Concepts
 
-| Concept | Detail |
-|---------|--------|
-| **Service** | Named endpoint (worker/network/disk/external) |
-| **Binding** | Capability-based resource access (KV/DO/R2/services) |
-| **Compatibility date** | Feature gate — always set |
-| **Modules** | ES modules (recommended) or service worker syntax |
-| **Config** | `workerd.capnp` — services, sockets (HTTP/HTTPS listeners), extensions |
+- **Service** — named endpoint backed by a worker, network target, disk resource, or external service.
+- **Binding** — capability-based access to KV, Durable Objects, R2, services, and other resources.
+- **Compatibility date** — feature gate; always set it explicitly.
+- **Modules** — prefer ES modules; service worker syntax still works.
+- **Config** — `workerd.capnp` declares services, sockets, and extensions.
 
-## See Also
+## Related Docs
 
-- [workerd-patterns.md](./workerd-patterns.md) — multi-service, DO, proxies, dev/prod configs, deployment
-- [workerd-gotchas.md](./workerd-gotchas.md) — config errors, network access, debugging, performance, security
+- [workerd-patterns.md](./workerd-patterns.md) — multi-service layouts, Durable Objects, proxying, env-specific config, deployment
+- [workerd-gotchas.md](./workerd-gotchas.md) — config failures, network access, debugging, performance, security
 
 ## References
 
 - [GitHub](https://github.com/cloudflare/workerd)
-- [Compat Dates](https://developers.cloudflare.com/workers/configuration/compatibility-dates/)
+- [Compatibility dates](https://developers.cloudflare.com/workers/configuration/compatibility-dates/)
 - [workerd.capnp](https://github.com/cloudflare/workerd/blob/main/src/workerd/server/workerd.capnp)
