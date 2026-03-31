@@ -103,7 +103,7 @@ Changelog: `feat:` → Added, `fix:` → Fixed, `docs:`/`perf:`/`refactor:` → 
 - Headless `/full-loop` (`FULL_LOOP_HEADLESS=true`): `SIG_FOOTER=$(gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL" --issue "$REPO#$ISSUE_NUM" --no-session --session-type worker --time "$WORKER_ELAPSED_SECS")`
 - If token telemetry is available, pass `--tokens "$WORKER_TOKENS"`; if unavailable, omit token override (do not fabricate).
 
-Append footer to PR body, then verify the final body includes `aidevops.sh` **and** either `spent` or `Overall,` (time provenance present): `gh pr view --json body -q .body | grep -q 'aidevops.sh' && gh pr view --json body -q .body | grep -Eq 'spent|Overall,'`.
+Append footer to PR body, then verify the final body includes `aidevops.sh` **and** either `spent` or `Overall,` (time provenance present): `gh pr view --json body | jq -e '.body | (contains("aidevops.sh") and (contains("spent") or contains("Overall,")))' >/dev/null`.
 
 **4.3 Label `status:in-review` (t1343)** — check issue is `OPEN` first. `status:done` set by `sync-on-pr-merge` — workers don't set it.
 
