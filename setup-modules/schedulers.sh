@@ -215,13 +215,11 @@ setup_supervisor_pulse() {
 	return 0
 }
 
-# Install supervisor pulse via launchd (macOS)
-_install_pulse_launchd() {
+# Clean up old/legacy pulse launchd plists before reinstalling.
+# Args: $1=pulse_label, $2=pulse_plist path
+_cleanup_old_pulse_plists() {
 	local pulse_label="$1"
-	local wrapper_script="$2"
-	local opencode_bin="$3"
-	local _pulse_installed="$4"
-	local pulse_plist="$HOME/Library/LaunchAgents/${pulse_label}.plist"
+	local pulse_plist="$2"
 
 	# Unload old plist if upgrading
 	if _launchd_has_agent "$pulse_label"; then
@@ -235,21 +233,18 @@ _install_pulse_launchd() {
 		launchctl unload "$old_plist" || true
 		rm -f "$old_plist"
 	fi
+	return 0
+}
 
-	# XML-escape paths for safe plist embedding (prevents injection
-	# if $HOME or paths contain &, <, > characters)
-	local _xml_wrapper_script _xml_home _xml_opencode_bin _xml_pulse_dir _xml_path
+# Build XML environment variable fragment for headless model overrides.
+# Reads configured overrides and emits XML key/string pairs for plist embedding.
+# Prints the XML fragment to stdout (may be empty if no overrides configured).
+_build_pulse_headless_env_xml() {
 	local _headless_xml_env=""
 	local _configured_headless_models _configured_pulse_model
 	_configured_headless_models=$(_resolve_headless_models_override)
 	_configured_pulse_model=$(_resolve_pulse_model_override)
-	_xml_wrapper_script=$(_xml_escape "$wrapper_script")
-	_xml_home=$(_xml_escape "$HOME")
-	_xml_opencode_bin=$(_xml_escape "$opencode_bin")
-	# Use neutral workspace path for PULSE_DIR so supervisor sessions
-	# are not associated with any specific managed repo (GH#5136).
-	_xml_pulse_dir=$(_xml_escape "${HOME}/.aidevops/.agent-workspace")
-	_xml_path=$(_xml_escape "$PATH")
+
 	if [[ -n "$_configured_headless_models" ]]; then
 		local _xml_headless_models
 		_xml_headless_models=$(_xml_escape "$_configured_headless_models")
@@ -275,8 +270,33 @@ _install_pulse_launchd() {
 		_headless_xml_env+=$'\t\t'"<string>${_xml_headless_allowlist}</string>"
 	fi
 
-	# Write the plist (always regenerated to pick up config changes)
-	cat >"$pulse_plist" <<PLIST
+	printf '%s' "$_headless_xml_env"
+	return 0
+}
+
+# Generate the full pulse launchd plist XML content.
+# Args: $1=pulse_label, $2=wrapper_script, $3=opencode_bin
+# Prints the complete plist XML to stdout.
+_generate_pulse_plist_content() {
+	local pulse_label="$1"
+	local wrapper_script="$2"
+	local opencode_bin="$3"
+
+	# XML-escape paths for safe plist embedding (prevents injection
+	# if $HOME or paths contain &, <, > characters)
+	local _xml_wrapper_script _xml_home _xml_opencode_bin _xml_pulse_dir _xml_path
+	_xml_wrapper_script=$(_xml_escape "$wrapper_script")
+	_xml_home=$(_xml_escape "$HOME")
+	_xml_opencode_bin=$(_xml_escape "$opencode_bin")
+	# Use neutral workspace path for PULSE_DIR so supervisor sessions
+	# are not associated with any specific managed repo (GH#5136).
+	_xml_pulse_dir=$(_xml_escape "${HOME}/.aidevops/.agent-workspace")
+	_xml_path=$(_xml_escape "$PATH")
+
+	local _headless_xml_env
+	_headless_xml_env=$(_build_pulse_headless_env_xml)
+
+	cat <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -315,6 +335,21 @@ _install_pulse_launchd() {
 </dict>
 </plist>
 PLIST
+	return 0
+}
+
+# Install supervisor pulse via launchd (macOS)
+_install_pulse_launchd() {
+	local pulse_label="$1"
+	local wrapper_script="$2"
+	local opencode_bin="$3"
+	local _pulse_installed="$4"
+	local pulse_plist="$HOME/Library/LaunchAgents/${pulse_label}.plist"
+
+	_cleanup_old_pulse_plists "$pulse_label" "$pulse_plist"
+
+	# Write the plist (always regenerated to pick up config changes)
+	_generate_pulse_plist_content "$pulse_label" "$wrapper_script" "$opencode_bin" >"$pulse_plist"
 
 	if launchctl load "$pulse_plist"; then
 		if [[ "$_pulse_installed" == "true" ]]; then
