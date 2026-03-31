@@ -5,18 +5,16 @@ mode: subagent
 
 # Docs Probes
 
-Use 2 probes from this file during `/define` for tasks classified as **docs**.
+Use this for `/define` tasks classified as **docs**: ask the 2 questions below, then select 2 probes.
 
 ## Default Assumptions
-
-Apply these unless the user overrides during interview:
 
 - Follow existing documentation patterns and style in the project
 - Accurate and verifiable — no speculative claims
 - Concise — prefer examples over lengthy explanations
 - Maintainable — don't document implementation details that change frequently
 
-## Structured Questions
+## Required Questions
 
 ### Audience
 
