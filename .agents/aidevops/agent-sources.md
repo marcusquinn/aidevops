@@ -1,42 +1,48 @@
 # Agent Sources (Private Repos)
 
-Sync agents from private Git repos into `~/.aidevops/agents/custom/<source-name>/`. Private agents stay in their own repos but are available framework-wide — including primary agents and slash commands.
+Use agent sources when agents should live in a private Git repo but remain available framework-wide. Sync copies them into `~/.aidevops/agents/custom/<source-name>/`, so they follow `custom/` tier rules: they survive framework updates and are never overwritten by `setup.sh`.
 
-## How It Works
+## Lifecycle
 
-1. Private repo contains `.agents/` with agent subdirectories
-2. Register via `aidevops sources add <path>`
-3. On `aidevops update` or `aidevops sources sync`, agents rsync into `custom/`
-4. `mode: primary` agents symlink to `~/.aidevops/agents/` root for auto-discovery
-5. `.md` files with `agent:` frontmatter symlink to `~/.config/opencode/command/`
+1. Keep agents in a private repo under `.agents/`
+2. Register the repo with `aidevops sources add <path>`
+3. Run `aidevops update` or `aidevops sources sync`
+4. Synced files land in `~/.aidevops/agents/custom/<source-name>/`
+5. `mode: primary` agent docs are symlinked into `~/.aidevops/agents/` for auto-discovery
+6. `.md` files with `agent:` frontmatter are symlinked into `~/.config/opencode/command/`
+
+Automatic sync runs during `aidevops update` and `./setup.sh` after `deploy_aidevops_agents`, so the base directory already exists.
 
 ## CLI
 
 ```bash
-aidevops sources add ~/Git/my-private-agents        # Add local repo
-aidevops sources add-remote git@github.com:user/agents.git  # Clone + add
-aidevops sources list                                # List sources
-aidevops sources status                              # Path, agent count, git state
-aidevops sources sync                                # Pull, rsync, symlink
-aidevops sources remove my-private-agents            # Remove (keeps files on disk)
+aidevops sources add ~/Git/my-private-agents                  # Add local repo
+aidevops sources add-remote git@github.com:user/agents.git    # Clone + add
+aidevops sources list                                         # List sources
+aidevops sources status                                       # Path, agent count, git state
+aidevops sources sync                                         # Pull, rsync, symlink
+aidevops sources remove my-private-agents                     # Remove (keeps files on disk)
 ```
 
-## File Detection Rules
+## File Classification
 
-Each `.md` file is classified by YAML frontmatter during sync:
+Sync classifies `.md` files by YAML frontmatter:
 
-| Frontmatter | Classification | Action |
-|-------------|---------------|--------|
-| `mode: primary` | Primary agent | Symlink to `~/.aidevops/agents/` root |
-| `mode: subagent` | Subagent doc | Synced only |
-| `agent: <Name>` | Slash command | Symlink to `~/.config/opencode/command/` |
-| (none / other) | Regular file | Synced only |
+| Frontmatter | Classification | Sync behavior |
+|-------------|----------------|---------------|
+| `mode: primary` | Primary agent | Sync + symlink to `~/.aidevops/agents/` root |
+| `mode: subagent` | Subagent doc | Sync only |
+| `agent: <Name>` | Slash command | Sync + symlink to `~/.config/opencode/command/` |
+| none / other | Regular file | Sync only |
 
-The agent's own doc (filename matching directory name, e.g., `my-agent/my-agent.md`) is identified by `mode:`. Other `.md` files with `agent:` are slash commands.
+The directory's main agent doc is the file whose name matches the directory (for example, `my-agent/my-agent.md`); its role is determined by `mode:`. Other `.md` files with `agent:` frontmatter become slash commands.
 
-**Collisions:** Slash command name conflicts append the source slug (`/run-pipeline-my-private-agents`). Primary agents colliding with core agents (real files, not symlinks) are skipped with a warning.
+Collision handling:
 
-## Directory Structure
+- Slash command name conflicts append the source slug, for example `/run-pipeline-my-private-agents`
+- Primary agents that would overwrite core agents backed by real files, not symlinks, are skipped with a warning
+
+## Layout
 
 ```text
 # Private repo
@@ -64,27 +70,23 @@ my-private-agents/.agents/my-agent/
 
 ## Configuration
 
-Sources tracked in `~/.aidevops/agents/configs/agent-sources.json`:
+Source metadata lives in `~/.aidevops/agents/configs/agent-sources.json`:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Derived from directory name (deploy subdirectory) |
-| `local_path` | string | Absolute path to local repo |
-| `remote_url` | string | Git remote URL (auto-detected, optional) |
-| `added_at` | string | ISO timestamp when added |
-| `last_synced` | string | ISO timestamp of last sync |
-| `agent_count` | number | Agents synced on last run |
+| Field | Type | Meaning |
+|-------|------|---------|
+| `name` | string | Directory name used for the deploy subdirectory |
+| `local_path` | string | Absolute path to the local repo |
+| `remote_url` | string | Git remote URL, if detected |
+| `added_at` | string | ISO timestamp when the source was added |
+| `last_synced` | string | ISO timestamp of the last sync |
+| `agent_count` | number | Agent count from the last sync |
 
-## Automatic Sync
-
-Runs automatically during `aidevops update` and `./setup.sh` (both modes). Executes after `deploy_aidevops_agents` to ensure the base directory exists.
-
-## Difference from Plugins
+## Agent Sources vs Plugins
 
 | Feature | Agent Sources | Plugins |
-|---------|--------------|---------|
+|---------|---------------|---------|
 | Config | `agent-sources.json` | `.aidevops.json` per project |
-| Deploy target | `custom/<source-name>/` | `<namespace>/` (top-level) |
+| Deploy target | `custom/<source-name>/` | `<namespace>/` at top level |
 | Scope | Global | Per-project |
 | Use case | Private agent repos | Third-party extensions |
 | Primary agents | Yes | No |
@@ -93,12 +95,12 @@ Runs automatically during `aidevops update` and `./setup.sh` (both modes). Execu
 
 ## Creating a Private Agent Repo
 
-1. Create Git repo with `.agents/` directory
-2. Add agent subdirectory with `<name>.md` (`mode: primary` for auto-discovery)
+1. Create a Git repo with a `.agents/` directory
+2. Add an agent subdirectory with `<name>.md`; use `mode: primary` if it should auto-discover
 3. Add slash commands as `.md` files with `agent: <Name>` frontmatter
-4. Add helper scripts (`.sh`) for CLI automation
+4. Add any helper `.sh` scripts needed for CLI automation
 5. Follow `tools/build-agent/build-agent.md`
-6. Register: `aidevops sources add <path>`
+6. Register the repo with `aidevops sources add <path>`
 
 ### Slash Command Format
 
@@ -112,5 +114,3 @@ Instructions for the AI when this command is invoked.
 
 Arguments: $ARGUMENTS
 ```
-
-Agents in private repos follow `custom/` tier conventions — they survive framework updates and are never overwritten by `setup.sh`.
