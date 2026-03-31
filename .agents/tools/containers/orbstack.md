@@ -29,16 +29,14 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## OrbStack-Specific Features
+## OrbStack-Specific Commands
 
-Standard `docker` and `docker compose` commands work without modification. These are OrbStack-only capabilities:
+Standard `docker` and `docker compose` commands work without modification. OrbStack-only:
 
 ```bash
-# Management
 orb list                          # List all containers and VMs
 orb shell <container-name>        # Quick shell access
-orb start                         # Start OrbStack
-orb stop                          # Stop OrbStack (frees resources)
+orb start / orb stop              # Start/stop OrbStack
 
 # Automatic .orb.local DNS — no config needed
 curl http://<container-name>.orb.local
@@ -46,7 +44,7 @@ curl http://<container-name>.orb.local
 
 ## Linux VMs
 
-OrbStack runs lightweight Linux VMs alongside Docker with automatic `.orb.local` DNS, SSH, and shared filesystem:
+Lightweight VMs alongside Docker with `.orb.local` DNS, SSH, and shared filesystem:
 
 ```bash
 orb create ubuntu my-ubuntu       # Create VM
@@ -56,51 +54,12 @@ orb start my-ubuntu               # Start VM
 orb delete my-ubuntu              # Delete VM
 ```
 
-## OpenClaw in OrbStack
-
-### Setup
-
-```bash
-git clone https://github.com/openclaw/openclaw.git
-cd openclaw
-./docker-setup.sh                 # Builds image, runs onboarding, starts gateway
-open http://127.0.0.1:18789/      # Access Control UI
-```
-
-### Management
-
-```bash
-docker compose ps                                    # Status
-docker compose logs -f openclaw-gateway              # Logs
-docker compose restart openclaw-gateway              # Restart
-docker compose run --rm openclaw-cli doctor           # Health check
-docker compose run --rm openclaw-cli security audit   # Security audit
-docker compose run --rm openclaw-cli channels login   # Channel setup
-```
-
-### Persistent Data
-
-Config and workspace are bind-mounted from the host (persist across container restarts):
-
-| Path | Contents |
-|------|----------|
-| `~/.openclaw/openclaw.json` | Config |
-| `~/.openclaw/workspace` | Workspace |
-| `~/.openclaw/credentials/` | Credentials |
-| `~/.openclaw/agents/<agentId>/sessions/` | Sessions |
-
 ## Common Use Cases
 
 ```bash
 # Isolated dev database (access at postgres.orb.local or localhost:5432)
 docker run -d --name postgres -p 5432:5432 \
   -e POSTGRES_PASSWORD=dev postgres:16
-
-# OpenClaw sandbox images for agent tool isolation
-cd openclaw
-scripts/sandbox-setup.sh           # Base sandbox
-scripts/sandbox-common-setup.sh    # With build tools
-scripts/sandbox-browser-setup.sh   # With Chromium
 ```
 
 ## Troubleshooting
@@ -110,12 +69,7 @@ orb status                        # Check OrbStack status
 orb restart                       # Restart OrbStack
 orb logs                          # View OrbStack logs
 docker info                       # Check Docker daemon
-# WARNING: The following command permanently removes ALL unused containers,
-# images, networks, and build cache. This can cause data loss and cannot be
-# undone. Prefer targeted alternatives: `docker image prune` (images only),
-# `docker container prune` (stopped containers only), or omit `-a` to keep
-# tagged images. Only run with `-a` when you are certain you want a full reset.
-docker system prune -a            # Prune ALL unused resources (destructive)
 docker system df                  # Check disk usage
+docker system prune -a            # DESTRUCTIVE: removes ALL unused resources
 orb reset                         # Factory reset (last resort)
 ```
