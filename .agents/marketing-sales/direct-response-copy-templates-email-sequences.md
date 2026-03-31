@@ -6,12 +6,12 @@ Copy-paste templates for common sequences. Strategy/planning: [Email Sequences F
 
 | File | Contents |
 |------|----------|
-| [direct-response-copy-templates-email-sequences-01-shared-patterns.md](direct-response-copy-templates-email-sequences-01-shared-patterns.md) | Shared defaults and reusable patterns used across every sequence |
-| [direct-response-copy-templates-email-sequences-02-welcome.md](direct-response-copy-templates-email-sequences-02-welcome.md) | Welcome sequence — 5 emails from delivery to offer |
-| [direct-response-copy-templates-email-sequences-03-cart-abandonment.md](direct-response-copy-templates-email-sequences-03-cart-abandonment.md) | Cart abandonment sequence — 3 emails from reminder to final incentive |
-| [direct-response-copy-templates-email-sequences-04-saas-trial.md](direct-response-copy-templates-email-sequences-04-saas-trial.md) | SaaS trial sequence — 7 emails from onboarding to upgrade deadline |
-| [direct-response-copy-templates-email-sequences-05-launch.md](direct-response-copy-templates-email-sequences-05-launch.md) | Launch sequence — 7 emails from teaser to final-hours close |
-| [direct-response-copy-templates-email-sequences-06-subject-lines.md](direct-response-copy-templates-email-sequences-06-subject-lines.md) | Subject line quick reference by trigger category |
+| [01: Shared Patterns](direct-response-copy-templates-email-sequences-01-shared-patterns.md) | Shared defaults and reusable patterns used across every sequence |
+| [02: Welcome Sequence](direct-response-copy-templates-email-sequences-02-welcome.md) | Welcome sequence — 5 emails from delivery to offer |
+| [03: Cart Abandonment](direct-response-copy-templates-email-sequences-03-cart-abandonment.md) | Cart abandonment sequence — 3 emails from reminder to final incentive |
+| [04: SaaS Trial](direct-response-copy-templates-email-sequences-04-saas-trial.md) | SaaS trial sequence — 7 emails from onboarding to upgrade deadline |
+| [05: Launch Sequence](direct-response-copy-templates-email-sequences-05-launch.md) | Launch sequence — 7 emails from teaser to final-hours close |
+| [06: Subject Lines](direct-response-copy-templates-email-sequences-06-subject-lines.md) | Subject line quick reference by trigger category |
 
 ## How to Use
 

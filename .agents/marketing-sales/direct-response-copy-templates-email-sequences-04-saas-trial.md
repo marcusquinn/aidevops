@@ -18,7 +18,7 @@ Source: split from `direct-response-copy-templates-email-sequences.md`.
 
 **Subject:** `"[Result]" — How [Customer] uses [Product]`
 
-**Body:** Uses **Social Proof** + `"They did it by [product action]."` Hard CTA.
+**Body:** Uses [**Social Proof**](direct-response-copy-templates-email-sequences-01-shared-patterns.md#reusable-patterns) + `"They did it by [product action]."` Hard CTA.
 
 ## E4 — Check-in (Day 7)
 
@@ -36,7 +36,7 @@ Source: split from `direct-response-copy-templates-email-sequences.md`.
 
 **Subject:** `Your trial ends in 2 days`
 
-**Body:** Uses **Urgency** (losses = features + data). CTA: `[Upgrade →]`. `"Need more time? Reply."`
+**Body:** Uses [**Urgency**](direct-response-copy-templates-email-sequences-01-shared-patterns.md#reusable-patterns) (losses = features + data). CTA: `[Upgrade →]`. `"Need more time? Reply."`
 
 ## E7 — Last Day (Day 14)
 

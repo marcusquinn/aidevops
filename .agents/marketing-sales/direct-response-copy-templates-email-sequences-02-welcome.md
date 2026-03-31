@@ -24,7 +24,7 @@ Source: split from `direct-response-copy-templates-email-sequences.md`.
 
 **Subject:** `How [Customer] [achieved result]`
 
-**Body:** Uses **Social Proof**. Soft CTA: preview tomorrow's offer.
+**Body:** Uses [**Social Proof**](direct-response-copy-templates-email-sequences-01-shared-patterns.md#reusable-patterns). Soft CTA: preview tomorrow's offer.
 
 ## E5 — Offer (Day 7)
 

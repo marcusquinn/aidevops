@@ -24,19 +24,19 @@ Source: split from `direct-response-copy-templates-email-sequences.md`.
 
 **Subject:** `"I can't believe this worked" — [Customer]`
 
-**Body:** Uses **Social Proof**. Frame as launch momentum. Hard CTA.
+**Body:** Uses [**Social Proof**](direct-response-copy-templates-email-sequences-01-shared-patterns.md#reusable-patterns). Frame as launch momentum. Hard CTA.
 
 ## E5 — FAQ (Day 4)
 
 **Subject:** `Your [Product] questions, answered`
 
-**Body:** Uses **Objection Handling** + `"How long for results?"` + `"What's included?"`
+**Body:** Uses [**Objection Handling**](direct-response-copy-templates-email-sequences-01-shared-patterns.md#reusable-patterns) + `"How long for results?"` + `"What's included?"`
 
 ## E6 — Urgency (Day 6)
 
 **Subject:** `48 hours left for [bonus/price]`
 
-**Body:** Uses **Urgency**. Losses = bonuses + price increase.
+**Body:** Uses [**Urgency**](direct-response-copy-templates-email-sequences-01-shared-patterns.md#reusable-patterns). Losses = bonuses + price increase.
 
 ## E7 — Final Hours (Day 7)
 

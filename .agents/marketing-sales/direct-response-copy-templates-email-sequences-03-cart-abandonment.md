@@ -12,7 +12,7 @@ Source: split from `direct-response-copy-templates-email-sequences.md`.
 
 **Subject:** `Quick question about your [Product] order`
 
-**Body:** Uses **Objection Handling**. Include cart link after Q&A.
+**Body:** Uses [**Objection Handling**](direct-response-copy-templates-email-sequences-01-shared-patterns.md#reusable-patterns). Include cart link after Q&A.
 
 ## E3 — Final + Incentive (48h)
 
