@@ -500,32 +500,24 @@ create_backup_with_rotation() {
 	local backup_name="$2"
 	local backup_base="$HOME/.aidevops/${backup_name}-backups"
 	local backup_dir
-	local backup_target
 	backup_dir="$backup_base/$(date +%Y%m%d_%H%M%S)"
-	backup_target="$backup_dir/$(basename "$source_path")"
 
 	# Create backup directory
 	mkdir -p "$backup_dir"
 
-	# Copy source to backup
+	# Copy source to backup (tolerant of broken symlinks / missing entries)
 	if [[ -d "$source_path" ]]; then
-		mkdir -p "$backup_target"
-		if command -v rsync >/dev/null 2>&1; then
-			local rsync_status=0
-			if rsync -a "$source_path/" "$backup_target/"; then
-				rsync_status=0
-			else
-				rsync_status=$?
-			fi
-
-			if [[ "$rsync_status" -eq 24 ]]; then
-				print_warning "Backup completed with missing source entries skipped: $source_path"
-			elif [[ "$rsync_status" -ne 0 ]]; then
-				print_error "Backup failed for $source_path (rsync exit $rsync_status)"
-				return "$rsync_status"
+		if command -v rsync >/dev/null 2>&1 && rsync --help 2>&1 | grep -q -- '--ignore-missing-args'; then
+			# rsync >= 3.1.0: --ignore-missing-args skips missing/broken entries gracefully
+			if ! rsync -a --ignore-missing-args "$source_path/" "$backup_dir/$(basename "$source_path")/" 2>/dev/null; then
+				print_warning "Backup had partial failures (broken symlinks?), continuing"
 			fi
 		else
-			cp -R "$source_path" "$backup_dir/"
+			# Fallback: cp -R may fail on broken symlinks under set -e,
+			# so run in a subshell that tolerates errors
+			if ! (cp -R "$source_path" "$backup_dir/" 2>/dev/null); then
+				print_warning "Backup had partial failures (broken symlinks?), continuing"
+			fi
 		fi
 	elif [[ -f "$source_path" ]]; then
 		cp "$source_path" "$backup_dir/"
