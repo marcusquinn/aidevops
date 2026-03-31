@@ -13,8 +13,24 @@ tools:
 <!-- AI-CONTEXT-START -->
 
 - **Scripts**: `mcp-diagnose.sh check-all`, `tool-version-check.sh`
-- **Common cause**: Version mismatch (outdated tool with changed MCP command)
+- **Primary cause**: version mismatch (outdated tool, changed MCP command)
 - **Config**: `~/.config/opencode/opencode.json`
+- **Dead schemas (t1682)**: MCP tools can remain listed after startup failure; treat that server as unavailable for the session
+
+## Errored Servers — Dead Tool Schemas (t1682)
+
+When an MCP server fails to start, its tool schemas can remain in the tool list. Calls then fail with `MCP error -32000: Connection closed`, wasting context tokens.
+
+```bash
+# Detect errored servers
+~/.aidevops/agents/scripts/mcp-diagnose.sh check-all
+
+# Disable persistently errored server in ~/.config/opencode/opencode.json
+{ "playwright": { "enabled": false } }
+# Restart runtime to reload tool list.
+```
+
+**Agent rule:** On `MCP error -32000`, `Connection closed`, `spawn ENOENT`, or similar startup failures, mark that server unavailable for the session and do not retry it. See `prompts/build.txt` "Errored MCP Server Guard".
 
 ## Common Errors
 
@@ -26,22 +42,6 @@ tools:
 | "Permission denied" | Missing credentials | Check `~/.config/aidevops/credentials.sh` |
 | "Timeout" | Server not starting | Check Node.js version, run command manually |
 | "unauthorized" | HTTP server instead of MCP | Use correct MCP command (not `serve`) |
-
-## Errored Servers — Dead Tool Schemas (t1682)
-
-When an MCP server fails to start, its tool schemas remain in the tool list. Every call returns "MCP error -32000: Connection closed", wasting context tokens.
-
-```bash
-# Detect errored servers
-~/.aidevops/agents/scripts/mcp-diagnose.sh check-all
-
-# Disable persistently errored server (removes schemas from context)
-# In ~/.config/opencode/opencode.json:
-{ "playwright": { "enabled": false } }
-# Restart runtime to reload tool list.
-```
-
-**Agent rule:** On "MCP error -32000" or "Connection closed", mark that server unavailable for the session — do not retry. See `prompts/build.txt` "Errored MCP Server Guard".
 
 ## Diagnostic Commands
 
@@ -59,16 +59,12 @@ opencode mcp list                                        # verify MCP status
 
 ### augment-context-engine
 
-| Issue | Solution |
-|-------|----------|
-| "unauthorized" | Run `auggie login` first |
-| Session expired | Re-run `auggie login` |
-
-**Correct command**: `["auggie", "--mcp"]`
+- `unauthorized` or expired session → run `auggie login`
+- Correct command: `["auggie", "--mcp"]`
 
 ### context7
 
-Remote MCP — no local installation needed.
+Remote MCP; no local installation needed.
 
 ```json
 { "context7": { "type": "remote", "url": "https://mcp.context7.com/mcp", "enabled": true } }
@@ -76,11 +72,11 @@ Remote MCP — no local installation needed.
 
 ## Manual MCP Testing
 
-Run the MCP command directly — it should output JSON-RPC, not HTTP server info:
+Run the configured MCP command directly. Expect JSON-RPC startup output, not an HTTP server banner:
 
 ```bash
 auggie --mcp   # augment
-<tool> serve   # most MCPs
+<configured MCP command>
 ```
 
 ## Related
