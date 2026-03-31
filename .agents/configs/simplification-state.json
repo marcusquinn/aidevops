@@ -3120,6 +3120,10 @@
       "hash": "e760976eca7d7c554a6e625d70816805258ebcb1",
       "at": "2026-03-31T08:01:28Z",
       "pr": 14726
+    },
+    ".agents/scripts/commands/tech-stack.md": {
+      "hash": "9dba492befd5f6766895b9087b2a4428e4596147",
+      "at": "2026-03-31T10:21:56Z"
     }
   }
 }
