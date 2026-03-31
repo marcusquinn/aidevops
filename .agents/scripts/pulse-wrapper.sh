@@ -4137,27 +4137,12 @@ run_weekly_complexity_scan() {
 	local aidevops_path
 	aidevops_path=$(_complexity_scan_find_repo "$repos_json" "$aidevops_slug" "$now_epoch") || return 0
 
-	# Phase 1: Shell script function complexity (longest-first)
-	local sh_results
-	sh_results=$(_complexity_scan_collect_violations "$aidevops_path" "$now_epoch") || true
-	if [[ -n "$sh_results" ]]; then
-		# Sort longest-first by violation count (field 2)
-		sh_results=$(printf '%s' "$sh_results" | sort -t'|' -k2 -rn)
-		_complexity_scan_create_issues "$sh_results" "$repos_json" "$aidevops_slug"
-	fi
-
-	# Phase 2: Agent doc size (.md files, longest-first)
-	local md_results
-	md_results=$(_complexity_scan_collect_md_violations "$aidevops_path") || true
-	if [[ -n "$md_results" ]]; then
-		_complexity_scan_create_md_issues "$md_results" "$repos_json" "$aidevops_slug"
-	fi
-
-	# Phase 3: Backfill simplification state from recently-closed issues.
+	# Phase 1: Backfill simplification state from recently-closed issues.
 	# Finds simplification-debt issues closed in the last 7 days that have a
 	# linked merged PR, extracts the changed files, and records their current
-	# git blob hashes in the state file. This catches simplifications done by
-	# workers without requiring them to update the state file explicitly.
+	# git blob hashes in the state file before running new scans. This catches
+	# simplifications done by workers without requiring them to update the state
+	# file explicitly and prevents stale follow-up issues in the same pulse run.
 	local state_file="${aidevops_path}/.agents/configs/simplification-state.json"
 	local state_updated=false
 
@@ -4209,6 +4194,22 @@ run_weekly_complexity_scan() {
 	# Push state file if updated (planning data — direct to main)
 	if [[ "$state_updated" == true ]]; then
 		_simplification_state_push "$aidevops_path"
+	fi
+
+	# Phase 2: Shell script function complexity (longest-first)
+	local sh_results
+	sh_results=$(_complexity_scan_collect_violations "$aidevops_path" "$now_epoch") || true
+	if [[ -n "$sh_results" ]]; then
+		# Sort longest-first by violation count (field 2)
+		sh_results=$(printf '%s' "$sh_results" | sort -t'|' -k2 -rn)
+		_complexity_scan_create_issues "$sh_results" "$repos_json" "$aidevops_slug"
+	fi
+
+	# Phase 3: Agent doc size (.md files, longest-first)
+	local md_results
+	md_results=$(_complexity_scan_collect_md_violations "$aidevops_path") || true
+	if [[ -n "$md_results" ]]; then
+		_complexity_scan_create_md_issues "$md_results" "$repos_json" "$aidevops_slug"
 	fi
 
 	echo "$now_epoch" >"$COMPLEXITY_SCAN_LAST_RUN"
