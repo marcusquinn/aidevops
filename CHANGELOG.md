@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.536] - 2026-03-31
+
+### Added
+
+- clarify chromium debug routing handoffs (#15006)
+- add chromium-debug-use skill and local CDP helper (#15007)
+
 ## [3.5.535] - 2026-03-31
 
 ### Added
