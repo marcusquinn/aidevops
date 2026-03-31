@@ -22,15 +22,16 @@ Target: $ARGUMENTS
 
 ## Supported Lockfiles
 
-npm/Yarn/pnpm (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`), pip (`requirements.txt`, `Pipfile.lock`), Go (`go.sum`), Cargo (`Cargo.lock`), Composer (`composer.lock`), Maven/Gradle (`pom.xml`, `build.gradle`).
+npm/Yarn/pnpm (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`), pip (`requirements.txt`, `Pipfile.lock`), Go (`go.mod`), Cargo (`Cargo.lock`), Composer (`composer.lock`), Maven (`pom.xml`), Gradle (`gradle.lockfile`).
 
 ## Options
 
 ```bash
-/security-deps --recursive        # Monorepo recursive scan
 /security-deps --format=json      # JSON output
 /security-deps ./packages/api     # Specific directory
 ```
+
+Recursive scan is enabled by default (hardcoded in `security-helper.sh`).
 
 ## Remediation
 
