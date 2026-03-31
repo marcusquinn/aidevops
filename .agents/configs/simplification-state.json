@@ -62,9 +62,9 @@
       "pr": 11012
     },
     ".agents/tools/architecture/feature-slicing-skill.md": {
-      "hash": "7a86b72e717f9805c458d44fa69e00b9b845addd",
-      "at": "2026-03-27T21:25:18Z",
-      "pr": 11010
+      "hash": "bb7e28e69e417b4701428fbc2ec0d0608f09e3e2",
+      "at": "2026-03-31T05:34:18Z",
+      "pr": "pending-GH-14058"
     },
     ".agents/tools/automation/macos-automator.md": {
       "hash": "f8771a0d1548af0fbdd76f1944d50ce6b1107f13",
