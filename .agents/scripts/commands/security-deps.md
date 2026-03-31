@@ -10,96 +10,36 @@ Target: $ARGUMENTS
 
 ## Quick Reference
 
-- **Purpose**: Find vulnerable dependencies
-- **Tool**: OSV-Scanner (Google's vulnerability scanner)
-- **Database**: OSV.dev (aggregates CVEs, GHSAs, etc.)
+- **Tool**: OSV-Scanner (Google) — aggregates CVEs, GHSAs via OSV.dev
+- **Command**: `./.agents/scripts/security-helper.sh scan-deps`
 
 ## Process
 
-1. **Run dependency scan**:
+1. Run scan: `./.agents/scripts/security-helper.sh scan-deps`
+2. Review findings by severity
+3. For each vulnerability: check if it affects usage, find fixed version, assess upgrade risk
+4. Generate upgrade plan
 
-   ```bash
-   ./.agents/scripts/security-helper.sh scan-deps
-   ```
+## Supported Lockfiles
 
-2. **Review findings** by severity
-
-3. **For each vulnerability**:
-   - Check if it affects your usage
-   - Find fixed version
-   - Assess upgrade risk
-
-4. **Generate upgrade plan**
-
-## Supported Package Managers
-
-| Manager | Lockfile |
-|---------|----------|
-| npm/Yarn/pnpm | package-lock.json, yarn.lock, pnpm-lock.yaml |
-| pip | requirements.txt, Pipfile.lock |
-| Go | go.sum |
-| Cargo | Cargo.lock |
-| Composer | composer.lock |
-| Maven/Gradle | pom.xml, build.gradle |
-
-## Output Format
-
-```text
-Dependency Vulnerability Scan
-=============================
-Scanned: 245 packages
-Vulnerabilities: 3 found
-
-[HIGH] lodash@4.17.20
-  CVE-2021-23337: Prototype pollution
-  Fixed in: 4.17.21
-  Upgrade: npm update lodash
-
-[MEDIUM] axios@0.21.1
-  CVE-2021-3749: ReDoS vulnerability
-  Fixed in: 0.21.2
-  Upgrade: npm update axios
-```
+npm/Yarn/pnpm (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`), pip (`requirements.txt`, `Pipfile.lock`), Go (`go.sum`), Cargo (`Cargo.lock`), Composer (`composer.lock`), Maven/Gradle (`pom.xml`, `build.gradle`).
 
 ## Options
 
-Pass options via $ARGUMENTS:
-
 ```bash
-# Recursive scan (monorepos)
-/security-deps --recursive
-
-# JSON output
-/security-deps --format=json
-
-# Specific directory
-/security-deps ./packages/api
+/security-deps --recursive        # Monorepo recursive scan
+/security-deps --format=json      # JSON output
+/security-deps ./packages/api     # Specific directory
 ```
 
-## Remediation Workflow
+## Remediation
 
-1. **Prioritize** by severity (critical/high first)
-2. **Check compatibility** of newer versions
-3. **Update** with appropriate command:
-
-   ```bash
-   # npm
-   npm update <package>
-   npm audit fix
-
-   # yarn
-   yarn upgrade <package>
-
-   # pip
-   pip install --upgrade <package>
-   ```
-
-4. **Test** after updates
-5. **Re-scan** to verify fixes
+1. Prioritize critical/high severity first
+2. Check compatibility, then update (`npm update <pkg>`, `yarn upgrade <pkg>`, `pip install --upgrade <pkg>`)
+3. Test after updates
+4. Re-scan to verify fixes
 
 ## CI/CD Integration
-
-Add to your pipeline:
 
 ```yaml
 - name: Dependency Scan
@@ -112,7 +52,7 @@ Add to your pipeline:
     sarif_file: deps.sarif
 ```
 
-## Related Commands
+## Related
 
-- `/security-analysis` - Full code security analysis
-- `/security-scan` - Quick secrets + vulnerability scan
+- `/security-analysis` — full code security analysis
+- `/security-scan` — quick secrets + vulnerability scan
