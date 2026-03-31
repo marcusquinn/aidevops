@@ -30,22 +30,17 @@ git checkout -b chore/{description}
 
 ## When to Use
 
-- Dependency updates
-- CI/CD configuration changes
-- Documentation updates
-- Build system changes
-- Tooling configuration
+- Dependency, CI/CD, docs, build, and tooling maintenance
 - Code formatting/linting fixes
-- License updates
-- Gitignore changes
+- License or `.gitignore` updates
 
-**Not for**: Code changes that affect behavior (use `feature/`, `bugfix/`, or `refactor/`).
+**Not for** behavior changes; use `feature/`, `bugfix/`, or `refactor/` instead.
 
-## Unique Guidance
+## Guidance
 
-### Multiple Commit Prefixes
-
-Use specific prefixes when applicable:
+- Branch names use `chore/{description}`.
+- Pick the narrowest commit prefix for the change.
+- Chore branches usually do not need a version bump.
 
 | Prefix | Use For |
 |--------|---------|
@@ -54,9 +49,9 @@ Use specific prefixes when applicable:
 | `ci:` | CI/CD changes |
 | `build:` | Build system |
 
-### Common Chore Tasks
+## Common Tasks
 
-**Dependency Updates:**
+### Dependency updates
 
 ```bash
 npm outdated          # Check for updates
@@ -64,7 +59,7 @@ npm update            # Update and test
 git commit -m "chore: update dependencies"
 ```
 
-**CI/CD Changes:**
+### CI/CD changes
 
 ```bash
 git commit -m "ci: optimize GitHub Actions workflow
@@ -74,7 +69,7 @@ git commit -m "ci: optimize GitHub Actions workflow
 - Reduce build time by 40%"
 ```
 
-**Documentation:**
+### Documentation
 
 ```bash
 git commit -m "docs: improve installation instructions
