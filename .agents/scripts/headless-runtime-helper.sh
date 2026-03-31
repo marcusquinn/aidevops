@@ -12,7 +12,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
-# shellcheck source=shared-constants.sh
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=./shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 readonly DEFAULT_HEADLESS_MODELS="anthropic/claude-sonnet-4-6"
@@ -1388,6 +1389,79 @@ PY
 	return 0
 }
 
+_cmd_run_finish() {
+	local session_key="$1"
+	local ledger_status="$2"
+
+	_update_dispatch_ledger "$session_key" "$ledger_status"
+	_release_session_lock "$session_key"
+	trap - EXIT
+	return 0
+}
+
+_cmd_run_prepare() {
+	local session_key="$1"
+	local work_dir="$2"
+
+	# GH#6538: Acquire a session-key lock to prevent duplicate workers.
+	# The pulse (or any caller) may dispatch the same session-key twice in
+	# rapid succession — before the first worker appears in process lists.
+	# The lock file acts as an immediate dedup guard: the second invocation
+	# sees the first's PID and exits without spawning a sandbox process.
+	if ! _acquire_session_lock "$session_key"; then
+		return 2
+	fi
+	# shellcheck disable=SC2064
+	trap "_release_session_lock '$session_key'; _update_dispatch_ledger '$session_key' 'fail'" EXIT
+
+	# GH#6696: Register this dispatch in the in-flight ledger so the pulse
+	# can detect workers that haven't created PRs yet. The ledger bridges
+	# the 10-15 minute gap between dispatch and PR creation.
+	_register_dispatch_ledger "$session_key" "$work_dir"
+	return 0
+}
+
+_cmd_run_prepare_retry() {
+	local role="$1"
+	local session_key="$2"
+	local model_override="$3"
+	local attempt="$4"
+	local max_attempts="$5"
+	local selected_model="$6"
+	local attempt_exit="$7"
+	local provider=""
+	local next_model=""
+
+	cmd_run_action="retry"
+	cmd_run_next_model="$selected_model"
+
+	# Retry only in auto-selection mode and only when attempts remain.
+	if [[ -n "$model_override" || "$attempt" -ge "$max_attempts" ]]; then
+		_cmd_run_finish "$session_key" "fail"
+		return "$attempt_exit"
+	fi
+
+	if [[ "$_run_should_retry" == "1" ]]; then
+		print_warning "Retrying ${selected_model} once after pool account rotation"
+		return 0
+	fi
+
+	if [[ "$_run_failure_reason" != "auth_error" && "$_run_failure_reason" != "rate_limit" ]]; then
+		_cmd_run_finish "$session_key" "fail"
+		return "$attempt_exit"
+	fi
+
+	provider=$(extract_provider "$selected_model")
+	next_model=$(choose_model "$role" "") || {
+		_cmd_run_finish "$session_key" "fail"
+		return "$attempt_exit"
+	}
+	print_warning "$provider $_run_failure_reason detected; retrying with alternate provider model $next_model"
+	cmd_run_action="switch"
+	cmd_run_next_model="$next_model"
+	return 0
+}
+
 cmd_run() {
 	local role="worker"
 	local session_key=""
@@ -1406,33 +1480,26 @@ cmd_run() {
 		prompt=$(append_worker_headless_contract "$prompt")
 	fi
 
-	# GH#6538: Acquire a session-key lock to prevent duplicate workers.
-	# The pulse (or any caller) may dispatch the same session-key twice in
-	# rapid succession — before the first worker appears in process lists.
-	# The lock file acts as an immediate dedup guard: the second invocation
-	# sees the first's PID and exits without spawning a sandbox process.
-	if ! _acquire_session_lock "$session_key"; then
+	local prepare_exit=0
+	_cmd_run_prepare "$session_key" "$work_dir" || prepare_exit=$?
+	if [[ "$prepare_exit" -eq 2 ]]; then
 		return 0
 	fi
-	# shellcheck disable=SC2064
-	trap "_release_session_lock '$session_key'; _update_dispatch_ledger '$session_key' 'fail'" EXIT
-
-	# GH#6696: Register this dispatch in the in-flight ledger so the pulse
-	# can detect workers that haven't created PRs yet. The ledger bridges
-	# the 10-15 minute gap between dispatch and PR creation.
-	_register_dispatch_ledger "$session_key" "$work_dir"
+	if [[ "$prepare_exit" -ne 0 ]]; then
+		return "$prepare_exit"
+	fi
 
 	local selected_model
 	selected_model=$(choose_model "$role" "$model_override") || {
 		local choose_exit=$?
-		_update_dispatch_ledger "$session_key" "fail"
-		_release_session_lock "$session_key"
-		trap - EXIT
+		_cmd_run_finish "$session_key" "fail"
 		return "$choose_exit"
 	}
 
 	local attempt=1
 	local max_attempts=3
+	local cmd_run_action="retry"
+	local cmd_run_next_model="$selected_model"
 	local _run_failure_reason=""
 	local _run_should_retry=0
 	local _run_result_label="failed"
@@ -1442,58 +1509,33 @@ cmd_run() {
 		_run_should_retry=0
 		_run_result_label="failed"
 		_run_activity_detected="0"
-		_execute_run_attempt \
+		local attempt_exit=0
+		if _execute_run_attempt \
 			"$role" "$session_key" "$work_dir" "$title" "$prompt" \
 			"$selected_model" "$agent_name" "$model_override" \
-			"${extra_args[@]+"${extra_args[@]}"}"
-		local attempt_exit=$?
+			"${extra_args[@]+"${extra_args[@]}"}"; then
+			attempt_exit=0
+		else
+			attempt_exit=$?
+		fi
 
 		if [[ "$attempt_exit" -eq 0 ]]; then
-			_update_dispatch_ledger "$session_key" "complete"
-			_release_session_lock "$session_key"
-			trap - EXIT
+			_cmd_run_finish "$session_key" "complete"
 			return 0
 		fi
 
-		# Retry only in auto-selection mode and only when attempts remain.
-		if [[ -n "$model_override" || "$attempt" -ge "$max_attempts" ]]; then
-			_update_dispatch_ledger "$session_key" "fail"
-			_release_session_lock "$session_key"
-			trap - EXIT
-			return "$attempt_exit"
+		_cmd_run_prepare_retry \
+			"$role" "$session_key" "$model_override" "$attempt" \
+			"$max_attempts" "$selected_model" "$attempt_exit" || return $?
+		if [[ "$cmd_run_action" == "switch" ]]; then
+			selected_model="$cmd_run_next_model"
 		fi
-
-		if [[ "$_run_should_retry" == "1" ]]; then
-			print_warning "Retrying ${selected_model} once after pool account rotation"
-			attempt=$((attempt + 1))
-			continue
-		fi
-
-		if [[ "$_run_failure_reason" != "auth_error" && "$_run_failure_reason" != "rate_limit" ]]; then
-			_update_dispatch_ledger "$session_key" "fail"
-			_release_session_lock "$session_key"
-			trap - EXIT
-			return "$attempt_exit"
-		fi
-
-		local provider next_model
-		provider=$(extract_provider "$selected_model")
-		next_model=$(choose_model "$role" "") || {
-			_update_dispatch_ledger "$session_key" "fail"
-			_release_session_lock "$session_key"
-			trap - EXIT
-			return "$attempt_exit"
-		}
-		print_warning "$provider $_run_failure_reason detected; retrying with alternate provider model $next_model"
-		selected_model="$next_model"
 		attempt=$((attempt + 1))
 	done
 
 	# Unreachable: loop always executes (attempt starts at 1, max_attempts=3)
 	# and every path inside returns explicitly. Kept as defensive fallback.
-	_update_dispatch_ledger "$session_key" "fail"
-	_release_session_lock "$session_key"
-	trap - EXIT
+	_cmd_run_finish "$session_key" "fail"
 	return 1
 }
 
