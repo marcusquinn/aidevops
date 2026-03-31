@@ -1,6 +1,6 @@
 # Sales Emails
 
-High-converting sales email examples with analysis.
+High-converting sales email swipe examples with analysis.
 
 ---
 
@@ -42,7 +42,7 @@ I'll see you inside.
 P.S. Doors close Friday at 11:59pm. No extensions.
 ```
 
-**Why it works:** Social proof via student story, before/after transformation, scarcity (5 days, small group), exclusivity filter, and a hard deadline in the P.S.
+**Why it works:** Student-story social proof, before/after transformation, launch scarcity, exclusivity filter, and a hard P.S. deadline.
 
 ---
 
@@ -71,7 +71,7 @@ We're here to help.
 — [Name/Team]
 ```
 
-**Why it works:** Specific deadline, loss aversion (itemized losses), low-friction solution (30 seconds), and a reply escape valve.
+**Why it works:** Specific deadline, itemized loss aversion, low-friction upgrade path, and a reply escape valve.
 
 ---
 
@@ -102,7 +102,7 @@ P.S. If you decided it's not right for you, that's
 totally fine too. Just let me know and I'll stop bugging you.
 ```
 
-**Why it works:** Personal (not automated) tone, objections surfaced as questions, open dialogue, and pressure release in the P.S.
+**Why it works:** Personal tone, objection prompts, open dialogue, and a low-pressure P.S.
 
 ---
 
@@ -136,4 +136,4 @@ See you there,
 [Name]
 ```
 
-**Why it works:** Outcome-first subject, specific date/time, bullet takeaways, and replay availability to remove attendance friction.
+**Why it works:** Outcome-first subject, specific schedule, bullet takeaways, and replay availability that removes attendance friction.
