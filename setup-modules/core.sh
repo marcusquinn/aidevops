@@ -536,51 +536,132 @@ check_requirements() {
 
 # Check for quality/linting tools (shellcheck, shfmt, markdownlint)
 # These are optional but recommended for development
+_check_quality_tool() {
+	local tool_name="$1"
+	local version=""
+
+	if command -v "$tool_name" >/dev/null 2>&1; then
+		case "$tool_name" in
+		shellcheck)
+			version=$(shellcheck --version 2>/dev/null | head -1)
+			;;
+		shfmt)
+			version=$(shfmt --version 2>/dev/null)
+			;;
+		esac
+		print_success "$tool_name: ${version:-installed}"
+	else
+		missing_tools+=("$tool_name")
+	fi
+
+	return 0
+}
+
+_check_markdownlint_tool() {
+	local version=""
+
+	if command -v markdownlint >/dev/null 2>&1; then
+		version=$(markdownlint --version 2>/dev/null | head -1)
+		print_success "markdownlint: ${version:-installed}"
+		return 0
+	fi
+
+	if command -v markdownlint-cli2 >/dev/null 2>&1; then
+		version=$(markdownlint-cli2 --version 2>/dev/null | head -1)
+		print_success "markdownlint-cli2: ${version:-installed}"
+		return 0
+	fi
+
+	missing_npm_tools+=("markdownlint-cli2")
+	return 0
+}
+
+_report_missing_quality_tools() {
+	if [[ ${#missing_tools[@]} -gt 0 ]]; then
+		print_warning "Missing quality tools: ${missing_tools[*]}"
+	fi
+
+	if [[ ${#missing_npm_tools[@]} -gt 0 ]]; then
+		print_warning "Missing npm quality tools: ${missing_npm_tools[*]}"
+	fi
+
+	print_info "These tools are used by linters-local.sh for code quality checks"
+	return 0
+}
+
+_install_missing_quality_tools() {
+	local pkg_manager="$1"
+	local install_quality="Y"
+
+	if [[ "$pkg_manager" == "unknown" ]]; then
+		print_info "Install manually:"
+		echo "  macOS: brew install ${missing_tools[*]}"
+		echo "  Ubuntu/Debian: sudo apt-get install ${missing_tools[*]}"
+		echo "  Fedora: sudo dnf install ${missing_tools[*]}"
+		return 0
+	fi
+
+	echo ""
+	setup_prompt install_quality "Install quality tools using $pkg_manager? [Y/n]: " "Y"
+
+	if [[ "$install_quality" =~ ^[Yy]?$ ]]; then
+		print_info "Installing ${missing_tools[*]}..."
+		if install_packages "$pkg_manager" "${missing_tools[@]}"; then
+			print_success "Quality tools installed successfully"
+		else
+			print_warning "Failed to install some quality tools - continuing anyway"
+		fi
+	else
+		print_info "Skipped quality tools installation"
+		print_info "Install later: $pkg_manager install ${missing_tools[*]}"
+	fi
+
+	return 0
+}
+
+_install_missing_npm_quality_tools() {
+	local install_npm_quality="Y"
+
+	if ! command -v npm >/dev/null 2>&1; then
+		print_warning "npm not found; cannot auto-install ${missing_npm_tools[*]}"
+		print_info "Install Node.js/npm, then run: npm install -g ${missing_npm_tools[*]}"
+		return 0
+	fi
+
+	echo ""
+	setup_prompt install_npm_quality "Install npm quality tools (npm install -g ${missing_npm_tools[*]})? [Y/n]: " "Y"
+	if [[ "$install_npm_quality" =~ ^[Yy]?$ ]]; then
+		print_info "Installing npm quality tools: ${missing_npm_tools[*]}..."
+		if npm install -g "${missing_npm_tools[@]}" >/dev/null 2>&1; then
+			print_success "npm quality tools installed successfully"
+		else
+			print_warning "Failed to install npm quality tools - continuing anyway"
+		fi
+	else
+		print_info "Skipped npm quality tools installation"
+		print_info "Install later: npm install -g ${missing_npm_tools[*]}"
+	fi
+
+	return 0
+}
+
 check_quality_tools() {
 	print_info "Checking quality tools..."
 
 	local missing_tools=()
 	local missing_npm_tools=()
 
-	# Check for shellcheck
-	if command -v shellcheck >/dev/null 2>&1; then
-		print_success "shellcheck: $(shellcheck --version | head -1)"
-	else
-		missing_tools+=("shellcheck")
-	fi
+	_check_quality_tool "shellcheck"
+	_check_quality_tool "shfmt"
+	_check_markdownlint_tool
 
-	# Check for shfmt
-	if command -v shfmt >/dev/null 2>&1; then
-		print_success "shfmt: $(shfmt --version)"
-	else
-		missing_tools+=("shfmt")
-	fi
-
-	# Check for markdownlint (accept either CLI variant)
-	if command -v markdownlint >/dev/null 2>&1; then
-		print_success "markdownlint: $(markdownlint --version 2>/dev/null | head -1)"
-	elif command -v markdownlint-cli2 >/dev/null 2>&1; then
-		print_success "markdownlint-cli2: $(markdownlint-cli2 --version 2>/dev/null | head -1)"
-	else
-		missing_npm_tools+=("markdownlint-cli2")
-	fi
-
-	# If all tools present, return early
 	if [[ ${#missing_tools[@]} -eq 0 && ${#missing_npm_tools[@]} -eq 0 ]]; then
 		print_success "All quality tools installed"
 		return 0
 	fi
 
-	# Show missing tools
-	if [[ ${#missing_tools[@]} -gt 0 ]]; then
-		print_warning "Missing quality tools: ${missing_tools[*]}"
-	fi
-	if [[ ${#missing_npm_tools[@]} -gt 0 ]]; then
-		print_warning "Missing npm quality tools: ${missing_npm_tools[*]}"
-	fi
-	print_info "These tools are used by linters-local.sh for code quality checks"
+	_report_missing_quality_tools
 
-	# In non-interactive mode, just warn and continue
 	if [[ "$NON_INTERACTIVE" == "true" ]]; then
 		if [[ ${#missing_tools[@]} -gt 0 ]]; then
 			print_info "Install later: brew install ${missing_tools[*]}"
@@ -599,49 +680,12 @@ check_quality_tools() {
 	local pkg_manager
 	pkg_manager=$(detect_package_manager)
 
-	if [[ "$pkg_manager" == "unknown" && ${#missing_tools[@]} -gt 0 ]]; then
-		print_info "Install manually:"
-		echo "  macOS: brew install ${missing_tools[*]}"
-		echo "  Ubuntu/Debian: sudo apt-get install ${missing_tools[*]}"
-		echo "  Fedora: sudo dnf install ${missing_tools[*]}"
-	elif [[ ${#missing_tools[@]} -gt 0 ]]; then
-		local install_quality="Y"
-		echo ""
-		setup_prompt install_quality "Install quality tools using $pkg_manager? [Y/n]: " "Y"
-
-		if [[ "$install_quality" =~ ^[Yy]?$ ]]; then
-			print_info "Installing ${missing_tools[*]}..."
-			if install_packages "$pkg_manager" "${missing_tools[@]}"; then
-				print_success "Quality tools installed successfully"
-			else
-				print_warning "Failed to install some quality tools - continuing anyway"
-			fi
-		else
-			print_info "Skipped quality tools installation"
-			print_info "Install later: $pkg_manager install ${missing_tools[*]}"
-		fi
+	if [[ ${#missing_tools[@]} -gt 0 ]]; then
+		_install_missing_quality_tools "$pkg_manager"
 	fi
 
 	if [[ ${#missing_npm_tools[@]} -gt 0 ]]; then
-		if ! command -v npm >/dev/null 2>&1; then
-			print_warning "npm not found; cannot auto-install ${missing_npm_tools[*]}"
-			print_info "Install Node.js/npm, then run: npm install -g ${missing_npm_tools[*]}"
-		else
-			local install_npm_quality="Y"
-			echo ""
-			setup_prompt install_npm_quality "Install npm quality tools (npm install -g ${missing_npm_tools[*]})? [Y/n]: " "Y"
-			if [[ "$install_npm_quality" =~ ^[Yy]?$ ]]; then
-				print_info "Installing npm quality tools: ${missing_npm_tools[*]}..."
-				if npm install -g "${missing_npm_tools[@]}" >/dev/null 2>&1; then
-					print_success "npm quality tools installed successfully"
-				else
-					print_warning "Failed to install npm quality tools - continuing anyway"
-				fi
-			else
-				print_info "Skipped npm quality tools installation"
-				print_info "Install later: npm install -g ${missing_npm_tools[*]}"
-			fi
-		fi
+		_install_missing_npm_quality_tools
 	fi
 
 	return 0
