@@ -122,7 +122,19 @@
     // Maximum share of worker slots that quality-debt issues may consume.
     // Default 30 preserves current behavior.
     // Env override: AIDEVOPS_QUALITY_DEBT_CAP_PCT
-    "quality_debt_cap_pct": 30
+    "quality_debt_cap_pct": 30,
+
+    // Optional explicit pulse model override.
+    // Empty string keeps the shared default selection behavior.
+    // Example local opt-in: "openai/gpt-5.4"
+    // Env override: PULSE_MODEL
+    "pulse_model": "",
+
+    // Optional explicit headless worker model list override (comma-separated).
+    // Empty string keeps the shared round-robin/default behavior.
+    // Example local opt-in: "openai/gpt-5.4"
+    // Env override: AIDEVOPS_HEADLESS_MODELS
+    "headless_models": ""
   },
 
   // ---------------------------------------------------------------------------

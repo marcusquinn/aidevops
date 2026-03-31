@@ -473,6 +473,28 @@ else
 	pass "sourcing sandbox-exec-helper.sh with watchdog args does not print help text (GH#6617)"
 fi
 
+section "JSONC Config Overrides"
+CONFIG_USER_FILE="$TEST_TMP_DIR/headless-config.jsonc"
+cat >"$CONFIG_USER_FILE" <<'JSONC'
+{
+  "orchestration": {
+    "headless_models": "openai/gpt-5.4"
+  }
+}
+JSONC
+config_selected=$(
+	AIDEVOPS_HEADLESS_MODELS="" \
+		JSONC_DEFAULTS="$REPO_DIR/.agents/configs/aidevops.defaults.jsonc" \
+		JSONC_USER="$CONFIG_USER_FILE" \
+		OPENAI_API_KEY="test-key-for-provider-auth-check" \
+		bash "$HELPER" select --role worker 2>/dev/null || true
+)
+if [[ "$config_selected" == "openai/gpt-5.4" ]]; then
+	pass "JSONC orchestration.headless_models overrides default selection"
+else
+	fail "JSONC orchestration.headless_models overrides default selection" "got: $config_selected"
+fi
+
 echo ""
 printf "Total: %d, Passed: %d, Failed: %d\n" "$TOTAL_COUNT" "$PASS_COUNT" "$FAIL_COUNT"
 

@@ -124,6 +124,16 @@
           "maximum": 100,
           "description": "Maximum share of worker slots quality-debt issues may consume. Env: AIDEVOPS_QUALITY_DEBT_CAP_PCT"
         },
+        "pulse_model": {
+          "type": "string",
+          "default": "",
+          "description": "Optional explicit pulse model override. Empty string keeps shared defaults. Env: PULSE_MODEL"
+        },
+        "headless_models": {
+          "type": "string",
+          "default": "",
+          "description": "Optional comma-separated headless worker model override. Empty string keeps shared defaults. Env: AIDEVOPS_HEADLESS_MODELS"
+        },
         "peak_hours_enabled": {
           "type": "boolean",
           "default": false,

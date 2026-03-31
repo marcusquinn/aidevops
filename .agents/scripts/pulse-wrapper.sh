@@ -143,21 +143,36 @@ MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-$(config_get "orchestration.max_workers_cap"
 DAILY_PR_CAP="${DAILY_PR_CAP:-1000}"                                                                    # Max PRs created per repo per day (GH#3821)
 PRODUCT_RESERVATION_PCT="${PRODUCT_RESERVATION_PCT:-60}"                                                # % of worker slots reserved for product repos (t1423)
 QUALITY_DEBT_CAP_PCT="${QUALITY_DEBT_CAP_PCT:-$(config_get "orchestration.quality_debt_cap_pct" "30")}" # % cap for quality-debt dispatch share
-PULSE_BACKFILL_MAX_ATTEMPTS="${PULSE_BACKFILL_MAX_ATTEMPTS:-3}"                                         # Additional pulse passes when below utilization target (t1453)
-PULSE_LAUNCH_GRACE_SECONDS="${PULSE_LAUNCH_GRACE_SECONDS:-20}"                                          # Grace window for worker process to appear after dispatch (t1453)
-PRE_RUN_STAGE_TIMEOUT="${PRE_RUN_STAGE_TIMEOUT:-600}"                                                   # 10 min cap per pre-run stage (cleanup/prefetch)
-PULSE_PREFETCH_PR_LIMIT="${PULSE_PREFETCH_PR_LIMIT:-200}"                                               # Open PR list window per repo for pre-fetched state
-PULSE_PREFETCH_ISSUE_LIMIT="${PULSE_PREFETCH_ISSUE_LIMIT:-200}"                                         # Open issue list window for pulse prompt payload (keep compact)
-PULSE_RUNNABLE_PR_LIMIT="${PULSE_RUNNABLE_PR_LIMIT:-200}"                                               # Open PR sample size for runnable-candidate counting
-PULSE_RUNNABLE_ISSUE_LIMIT="${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}"                                        # Open issue sample size for runnable-candidate counting
-PULSE_QUEUED_SCAN_LIMIT="${PULSE_QUEUED_SCAN_LIMIT:-1000}"                                              # Queued/in-progress scan window per repo
-UNDERFILL_RECYCLE_DEFICIT_MIN_PCT="${UNDERFILL_RECYCLE_DEFICIT_MIN_PCT:-25}"                            # Run worker recycler when underfill reaches this threshold
-GH_FAILURE_PREFETCH_HOURS="${GH_FAILURE_PREFETCH_HOURS:-24}"                                            # Window for failed-notification mining summary
-GH_FAILURE_PREFETCH_LIMIT="${GH_FAILURE_PREFETCH_LIMIT:-100}"                                           # Notification page size for failed-notification mining
-GH_FAILURE_SYSTEMIC_THRESHOLD="${GH_FAILURE_SYSTEMIC_THRESHOLD:-3}"                                     # Cluster threshold for systemic-failure flag
-GH_FAILURE_MAX_RUN_LOGS="${GH_FAILURE_MAX_RUN_LOGS:-6}"                                                 # Max failed workflow runs to sample for signatures per pulse
-FOSS_SCAN_TIMEOUT="${FOSS_SCAN_TIMEOUT:-30}"                                                            # Timeout for FOSS contribution scan prefetch (t1702)
-FOSS_MAX_DISPATCH_PER_CYCLE="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"                                         # Max FOSS contribution workers per pulse cycle (t1702)
+if [[ -z "${PULSE_MODEL:-}" ]]; then
+	PULSE_MODEL=$(config_get "orchestration.pulse_model" "")
+	if [[ "$PULSE_MODEL" == "null" ]]; then
+		PULSE_MODEL=""
+	fi
+fi
+if [[ -z "${AIDEVOPS_HEADLESS_MODELS:-}" ]]; then
+	AIDEVOPS_HEADLESS_MODELS=$(config_get "orchestration.headless_models" "")
+	if [[ "$AIDEVOPS_HEADLESS_MODELS" == "null" ]]; then
+		AIDEVOPS_HEADLESS_MODELS=""
+	fi
+	if [[ -n "$AIDEVOPS_HEADLESS_MODELS" ]]; then
+		export AIDEVOPS_HEADLESS_MODELS
+	fi
+fi
+PULSE_BACKFILL_MAX_ATTEMPTS="${PULSE_BACKFILL_MAX_ATTEMPTS:-3}"              # Additional pulse passes when below utilization target (t1453)
+PULSE_LAUNCH_GRACE_SECONDS="${PULSE_LAUNCH_GRACE_SECONDS:-20}"               # Grace window for worker process to appear after dispatch (t1453)
+PRE_RUN_STAGE_TIMEOUT="${PRE_RUN_STAGE_TIMEOUT:-600}"                        # 10 min cap per pre-run stage (cleanup/prefetch)
+PULSE_PREFETCH_PR_LIMIT="${PULSE_PREFETCH_PR_LIMIT:-200}"                    # Open PR list window per repo for pre-fetched state
+PULSE_PREFETCH_ISSUE_LIMIT="${PULSE_PREFETCH_ISSUE_LIMIT:-200}"              # Open issue list window for pulse prompt payload (keep compact)
+PULSE_RUNNABLE_PR_LIMIT="${PULSE_RUNNABLE_PR_LIMIT:-200}"                    # Open PR sample size for runnable-candidate counting
+PULSE_RUNNABLE_ISSUE_LIMIT="${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}"             # Open issue sample size for runnable-candidate counting
+PULSE_QUEUED_SCAN_LIMIT="${PULSE_QUEUED_SCAN_LIMIT:-1000}"                   # Queued/in-progress scan window per repo
+UNDERFILL_RECYCLE_DEFICIT_MIN_PCT="${UNDERFILL_RECYCLE_DEFICIT_MIN_PCT:-25}" # Run worker recycler when underfill reaches this threshold
+GH_FAILURE_PREFETCH_HOURS="${GH_FAILURE_PREFETCH_HOURS:-24}"                 # Window for failed-notification mining summary
+GH_FAILURE_PREFETCH_LIMIT="${GH_FAILURE_PREFETCH_LIMIT:-100}"                # Notification page size for failed-notification mining
+GH_FAILURE_SYSTEMIC_THRESHOLD="${GH_FAILURE_SYSTEMIC_THRESHOLD:-3}"          # Cluster threshold for systemic-failure flag
+GH_FAILURE_MAX_RUN_LOGS="${GH_FAILURE_MAX_RUN_LOGS:-6}"                      # Max failed workflow runs to sample for signatures per pulse
+FOSS_SCAN_TIMEOUT="${FOSS_SCAN_TIMEOUT:-30}"                                 # Timeout for FOSS contribution scan prefetch (t1702)
+FOSS_MAX_DISPATCH_PER_CYCLE="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"              # Max FOSS contribution workers per pulse cycle (t1702)
 
 # Process guard limits (t1398)
 CHILD_RSS_LIMIT_KB="${CHILD_RSS_LIMIT_KB:-2097152}"           # 2 GB default — kill child if RSS exceeds this
@@ -4299,6 +4314,79 @@ get_repo_maintainer_by_slug() {
 }
 
 #######################################
+# Resolve repo priority class from repos.json
+# Arguments:
+#   $1 - repo slug (owner/repo)
+# Returns: priority via stdout (product/tooling/profile, default tooling)
+#######################################
+get_repo_priority_by_slug() {
+	local repo_slug="$1"
+	if [[ -z "$repo_slug" ]] || [[ ! -f "$REPOS_JSON" ]]; then
+		echo "tooling"
+		return 0
+	fi
+
+	local repo_priority
+	repo_priority=$(jq -r --arg slug "$repo_slug" '.initialized_repos[] | select(.slug == $slug) | .priority // "tooling"' "$REPOS_JSON" 2>/dev/null | head -n 1)
+	if [[ -z "$repo_priority" || "$repo_priority" == "null" ]]; then
+		repo_priority="tooling"
+	fi
+	printf '%s\n' "$repo_priority"
+	return 0
+}
+
+#######################################
+# Return dispatchable issue candidates as JSON for one repo.
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - max issues to fetch (optional, default 100)
+# Returns: JSON array of issue objects
+#######################################
+list_dispatchable_issue_candidates_json() {
+	local repo_slug="$1"
+	local limit="${2:-100}"
+
+	if [[ -z "$repo_slug" ]]; then
+		printf '[]\n'
+		return 0
+	fi
+	[[ "$limit" =~ ^[0-9]+$ ]] || limit=100
+
+	local repo_owner repo_maintainer passive_assignees_json issue_json
+	repo_owner=$(get_repo_owner_by_slug "$repo_slug")
+	repo_maintainer=$(get_repo_maintainer_by_slug "$repo_slug")
+	passive_assignees_json=$(printf '%s\n%s\n' "$repo_owner" "$repo_maintainer" | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null) || passive_assignees_json='[]'
+
+	issue_json=$(gh issue list --repo "$repo_slug" --state open --json number,title,url,assignees,labels,updatedAt --limit "$limit" 2>/dev/null) || issue_json="[]"
+
+	printf '%s' "$issue_json" | jq -c --argjson passive "$passive_assignees_json" '
+		[
+			.[] |
+			(.labels | map(.name)) as $labels |
+			(.assignees | map(.login)) as $assignees |
+			select(($labels | index("status:blocked")) == null) |
+			select(($labels | index("status:needs-info")) == null) |
+			select(($labels | index("needs-maintainer-review")) == null) |
+			select(($labels | index("status:queued")) == null) |
+			select(($labels | index("status:in-progress")) == null) |
+			select(($labels | index("status:in-review")) == null) |
+			select(($labels | index("supervisor")) == null) |
+			select(($labels | index("persistent")) == null) |
+			select(($assignees | length) == 0 or ($assignees | all(.[]; . as $a | $passive | index($a) != null))) |
+			{
+				number,
+				title,
+				url,
+				updatedAt,
+				labels: $labels,
+				assignees: $assignees
+			}
+		]
+	' 2>/dev/null || printf '[]\n'
+	return 0
+}
+
+#######################################
 # List inactive backlog issues that are eligible for dispatch evaluation
 # in a single repo.
 #
@@ -4326,28 +4414,7 @@ list_dispatchable_issue_candidates() {
 	fi
 	[[ "$limit" =~ ^[0-9]+$ ]] || limit=100
 
-	local repo_owner repo_maintainer passive_assignees_json issue_json
-	repo_owner=$(get_repo_owner_by_slug "$repo_slug")
-	repo_maintainer=$(get_repo_maintainer_by_slug "$repo_slug")
-	passive_assignees_json=$(printf '%s\n%s\n' "$repo_owner" "$repo_maintainer" | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null) || passive_assignees_json='[]'
-
-	issue_json=$(gh issue list --repo "$repo_slug" --state open --json number,title,assignees,labels,updatedAt --limit "$limit" 2>/dev/null) || issue_json="[]"
-
-	printf '%s' "$issue_json" | jq -r --argjson passive "$passive_assignees_json" '
-		.[] |
-		(.labels | map(.name)) as $labels |
-		(.assignees | map(.login)) as $assignees |
-		select(($labels | index("status:blocked")) == null) |
-		select(($labels | index("status:needs-info")) == null) |
-		select(($labels | index("needs-maintainer-review")) == null) |
-		select(($labels | index("status:queued")) == null) |
-		select(($labels | index("status:in-progress")) == null) |
-		select(($labels | index("status:in-review")) == null) |
-		select(($labels | index("supervisor")) == null) |
-		select(($labels | index("persistent")) == null) |
-		select(($assignees | length) == 0 or ($assignees | all(.[]; . as $a | $passive | index($a) != null))) |
-		"\(.number)|\(.title)|\($labels | join(","))|\(.updatedAt // "")"
-	' 2>/dev/null || true
+	list_dispatchable_issue_candidates_json "$repo_slug" "$limit" | jq -r '.[] | "\(.number)|\(.title)|\(.labels | join(","))|\(.updatedAt // "")"' 2>/dev/null || true
 	return 0
 }
 
@@ -5256,6 +5323,193 @@ check_worker_launch() {
 }
 
 #######################################
+# Build ranked deterministic dispatch candidates across all pulse repos.
+# Arguments:
+#   $1 - max issues to fetch per repo (optional)
+# Returns: JSON array sorted by score desc, updatedAt asc
+#######################################
+build_ranked_dispatch_candidates_json() {
+	local per_repo_limit="${1:-$PULSE_RUNNABLE_ISSUE_LIMIT}"
+	[[ "$per_repo_limit" =~ ^[0-9]+$ ]] || per_repo_limit="$PULSE_RUNNABLE_ISSUE_LIMIT"
+
+	if [[ ! -f "$REPOS_JSON" ]]; then
+		printf '[]\n'
+		return 0
+	fi
+
+	local tmp_candidates
+	tmp_candidates=$(mktemp 2>/dev/null || echo "/tmp/aidevops-pulse-candidates.$$")
+	: >"$tmp_candidates"
+
+	while IFS='|' read -r repo_slug repo_path repo_priority ph_start ph_end expires; do
+		[[ -n "$repo_slug" && -n "$repo_path" ]] || continue
+		if ! check_repo_pulse_schedule "$repo_slug" "$ph_start" "$ph_end" "$expires" "$REPOS_JSON"; then
+			continue
+		fi
+		local repo_candidates_json
+		repo_candidates_json=$(list_dispatchable_issue_candidates_json "$repo_slug" "$per_repo_limit") || repo_candidates_json='[]'
+		if [[ -z "$repo_candidates_json" || "$repo_candidates_json" == "[]" ]]; then
+			continue
+		fi
+
+		printf '%s' "$repo_candidates_json" | jq -c --arg slug "$repo_slug" --arg path "$repo_path" --arg priority "$repo_priority" '
+			.[] |
+			. + {
+				repo_slug: $slug,
+				repo_path: $path,
+				repo_priority: $priority,
+				score: (
+					(if $priority == "product" then 2000 elif $priority == "tooling" then 1000 else 0 end) +
+					(if (.labels | index("priority:critical")) != null then 10000
+					 elif (.labels | index("priority:high")) != null then 8000
+					 elif (.labels | index("bug")) != null then 7000
+					 elif (.labels | index("enhancement")) != null then 6000
+					 elif (.labels | index("quality-debt")) != null then 5000
+					 elif (.labels | index("simplification-debt")) != null then 4000
+					 else 3000 end)
+				)
+			}
+		' >>"$tmp_candidates" 2>/dev/null || true
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "" and .path != "") | [(.slug), (.path), (.priority // "tooling"), (if .pulse_hours then (.pulse_hours.start | tostring) else "" end), (if .pulse_hours then (.pulse_hours.end | tostring) else "" end), (.pulse_expires // "")] | join("|")' "$REPOS_JSON" 2>/dev/null)
+
+	if [[ ! -s "$tmp_candidates" ]]; then
+		rm -f "$tmp_candidates"
+		printf '[]\n'
+		return 0
+	fi
+
+	jq -cs 'sort_by([-.score, (.updatedAt // "")])' "$tmp_candidates" 2>/dev/null || printf '[]\n'
+	rm -f "$tmp_candidates"
+	return 0
+}
+
+#######################################
+# Deterministic fill floor for obvious backlog.
+#
+# This is intentionally narrow: it only materializes already-eligible issues
+# and fills empty local slots. Ranking remains simple and auditable; judgment
+# stays with the pulse LLM for merges, blockers, and unusual edge cases.
+#
+# Returns: dispatched worker count via stdout
+#######################################
+dispatch_deterministic_fill_floor() {
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Deterministic fill floor skipped: stop flag present" >>"$LOGFILE"
+		echo 0
+		return 0
+	fi
+
+	local max_workers active_workers available_slots runnable_count queued_without_worker
+	max_workers=$(get_max_workers_target)
+	active_workers=$(count_active_workers)
+	runnable_count=$(count_runnable_candidates)
+	queued_without_worker=$(count_queued_without_worker)
+	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
+	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
+	[[ "$runnable_count" =~ ^[0-9]+$ ]] || runnable_count=0
+	[[ "$queued_without_worker" =~ ^[0-9]+$ ]] || queued_without_worker=0
+
+	available_slots=$((max_workers - active_workers))
+	if [[ "$available_slots" -le 0 ]]; then
+		echo 0
+		return 0
+	fi
+	if [[ "$runnable_count" -eq 0 && "$queued_without_worker" -eq 0 ]]; then
+		echo 0
+		return 0
+	fi
+
+	local self_login
+	self_login=$(gh api user --jq '.login' 2>/dev/null || echo "")
+	if [[ -z "$self_login" ]]; then
+		echo "[pulse-wrapper] Deterministic fill floor skipped: unable to resolve GitHub login" >>"$LOGFILE"
+		echo 0
+		return 0
+	fi
+
+	local candidates_json candidate_count
+	candidates_json=$(build_ranked_dispatch_candidates_json "$PULSE_RUNNABLE_ISSUE_LIMIT") || candidates_json='[]'
+	candidate_count=$(printf '%s' "$candidates_json" | jq 'length' 2>/dev/null) || candidate_count=0
+	[[ "$candidate_count" =~ ^[0-9]+$ ]] || candidate_count=0
+	if [[ "$candidate_count" -eq 0 ]]; then
+		echo 0
+		return 0
+	fi
+
+	echo "[pulse-wrapper] Deterministic fill floor: available=${available_slots}, runnable=${runnable_count}, queued_without_worker=${queued_without_worker}, candidates=${candidate_count}" >>"$LOGFILE"
+
+	local dispatched_count=0
+	while IFS= read -r candidate_json; do
+		[[ -n "$candidate_json" ]] || continue
+		if [[ "$dispatched_count" -ge "$available_slots" ]]; then
+			break
+		fi
+		if [[ -f "$STOP_FLAG" ]]; then
+			echo "[pulse-wrapper] Deterministic fill floor stopping early: stop flag appeared" >>"$LOGFILE"
+			break
+		fi
+
+		local issue_number repo_slug repo_path issue_url issue_title dispatch_title prompt
+		issue_number=$(printf '%s' "$candidate_json" | jq -r '.number // empty' 2>/dev/null)
+		repo_slug=$(printf '%s' "$candidate_json" | jq -r '.repo_slug // empty' 2>/dev/null)
+		repo_path=$(printf '%s' "$candidate_json" | jq -r '.repo_path // empty' 2>/dev/null)
+		issue_url=$(printf '%s' "$candidate_json" | jq -r '.url // empty' 2>/dev/null)
+		issue_title=$(printf '%s' "$candidate_json" | jq -r '.title // empty' 2>/dev/null | tr '\n' ' ')
+		[[ "$issue_number" =~ ^[0-9]+$ ]] || continue
+		[[ -n "$repo_slug" && -n "$repo_path" ]] || continue
+
+		if check_terminal_blockers "$issue_number" "$repo_slug" >/dev/null 2>&1; then
+			continue
+		fi
+
+		dispatch_title="Issue #${issue_number}"
+		prompt="/full-loop Implement issue #${issue_number}"
+		if [[ -n "$issue_url" ]]; then
+			prompt="${prompt} (${issue_url})"
+		fi
+
+		local dispatch_rc=0
+		dispatch_with_dedup "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
+			"$self_login" "$repo_path" "$prompt" || dispatch_rc=$?
+		if [[ "$dispatch_rc" -ne 0 ]]; then
+			continue
+		fi
+
+		if ! check_worker_launch "$issue_number" "$repo_slug" >/dev/null 2>&1; then
+			continue
+		fi
+
+		dispatched_count=$((dispatched_count + 1))
+	done < <(printf '%s' "$candidates_json" | jq -c '.[]' 2>/dev/null)
+
+	echo "[pulse-wrapper] Deterministic fill floor complete: dispatched=${dispatched_count}, target_available=${available_slots}" >>"$LOGFILE"
+	echo "$dispatched_count"
+	return 0
+}
+
+#######################################
+# Apply deterministic fill floor after a pulse pass.
+#
+# Waits the normal launch grace period first so workers launched by the LLM
+# can appear in process lists before deterministic backfill runs.
+#######################################
+apply_deterministic_fill_floor() {
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Deterministic fill floor skipped before grace wait: stop flag present" >>"$LOGFILE"
+		return 0
+	fi
+
+	local grace_wait="$PULSE_LAUNCH_GRACE_SECONDS"
+	[[ "$grace_wait" =~ ^[0-9]+$ ]] || grace_wait=20
+	if [[ "$grace_wait" -gt 0 ]]; then
+		echo "[pulse-wrapper] Deterministic fill floor: waiting ${grace_wait}s for worker launches to settle" >>"$LOGFILE"
+		sleep "$grace_wait"
+	fi
+	dispatch_deterministic_fill_floor >/dev/null || true
+	return 0
+}
+
+#######################################
 # Enforce utilization invariants post-pulse (DEPRECATED — t1453)
 #
 # The LLM pulse session now runs a monitoring loop (sleep 60s, check
@@ -5535,6 +5789,24 @@ _run_early_exit_recycle_loop() {
 		if [[ "$post_runnable" -eq 0 && "$post_queued" -eq 0 ]]; then
 			break
 		fi
+		if [[ -f "$STOP_FLAG" ]]; then
+			echo "[pulse-wrapper] Early-exit recycle: stop flag appeared before deterministic fill" >>"$LOGFILE"
+			break
+		fi
+
+		dispatch_deterministic_fill_floor >/dev/null || true
+		post_active=$(count_active_workers)
+		post_runnable=$(count_runnable_candidates)
+		post_queued=$(count_queued_without_worker)
+		[[ "$post_active" =~ ^[0-9]+$ ]] || post_active=0
+		[[ "$post_runnable" =~ ^[0-9]+$ ]] || post_runnable=0
+		[[ "$post_queued" =~ ^[0-9]+$ ]] || post_queued=0
+		if [[ "$post_active" -ge "$post_max" ]]; then
+			break
+		fi
+		if [[ "$post_runnable" -eq 0 && "$post_queued" -eq 0 ]]; then
+			break
+		fi
 
 		local post_deficit_pct=$(((post_max - post_active) * 100 / post_max))
 		recycle_attempt=$((recycle_attempt + 1))
@@ -5625,6 +5897,11 @@ main() {
 	local pulse_end_epoch
 	pulse_end_epoch=$(date +%s)
 	local pulse_duration=$((pulse_end_epoch - pulse_start_epoch))
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Stop flag appeared after run_pulse() — skipping deterministic fill floor" >>"$LOGFILE"
+	else
+		apply_deterministic_fill_floor
+	fi
 	_run_early_exit_recycle_loop "$pulse_duration"
 
 	return 0

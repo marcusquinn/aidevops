@@ -298,12 +298,22 @@ get_auth_signature() {
 }
 
 get_configured_models() {
-	local configured="${AIDEVOPS_HEADLESS_MODELS:-$DEFAULT_HEADLESS_MODELS}"
+	local configured="${AIDEVOPS_HEADLESS_MODELS:-}"
 	local allowlist_raw="${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}"
 	local -a allowlist=()
 	local -a raw_models=()
 	local -a models=()
 	local item provider
+
+	if [[ -z "$configured" ]] && type config_get >/dev/null 2>&1; then
+		configured=$(config_get "orchestration.headless_models" "")
+		if [[ "$configured" == "null" ]]; then
+			configured=""
+		fi
+	fi
+	if [[ -z "$configured" ]]; then
+		configured="$DEFAULT_HEADLESS_MODELS"
+	fi
 
 	if [[ -n "$allowlist_raw" ]]; then
 		IFS=',' read -r -a allowlist <<<"$allowlist_raw"

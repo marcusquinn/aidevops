@@ -538,6 +538,196 @@ STUB
 	return 0
 }
 
+test_build_ranked_dispatch_candidates_json_scores_candidates() {
+	local original_repos_json="$REPOS_JSON"
+	cat >"${REPOS_JSON}" <<'JSON'
+{
+  "initialized_repos": [
+    {
+      "slug": "marcusquinn/aidevops",
+      "path": "/tmp/aidevops",
+      "pulse": true,
+      "priority": "tooling",
+      "maintainer": "marcusquinn"
+    },
+    {
+      "slug": "awardsapp/awardsapp",
+      "path": "/tmp/awardsapp",
+      "pulse": true,
+      "priority": "product",
+      "maintainer": "marcusquinn"
+    }
+  ]
+}
+JSON
+
+	gh() {
+		if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
+			if [[ "${4:-}" == "marcusquinn/aidevops" ]]; then
+				printf '%s\n' '[
+				  {"number":7001,"title":"tooling simplification","url":"https://github.com/marcusquinn/aidevops/issues/7001","updatedAt":"2026-03-31T00:00:00Z","assignees":[],"labels":[{"name":"simplification-debt"}]},
+				  {"number":7002,"title":"tooling bug","url":"https://github.com/marcusquinn/aidevops/issues/7002","updatedAt":"2026-03-31T00:01:00Z","assignees":[],"labels":[{"name":"bug"}]}
+				]'
+				return 0
+			fi
+			if [[ "${4:-}" == "awardsapp/awardsapp" ]]; then
+				printf '%s\n' '[
+				  {"number":8001,"title":"product simplification","url":"https://github.com/awardsapp/awardsapp/issues/8001","updatedAt":"2026-03-31T00:02:00Z","assignees":[],"labels":[{"name":"simplification-debt"}]}
+				]'
+				return 0
+			fi
+		fi
+		return 1
+	}
+	export -f gh
+
+	local ordered_numbers
+	ordered_numbers=$(build_ranked_dispatch_candidates_json 20 | jq -r '.[].number' 2>/dev/null || true)
+
+	unset -f gh
+	REPOS_JSON="$original_repos_json"
+
+	if [[ "$ordered_numbers" == $'7002\n8001\n7001' ]]; then
+		print_result "build_ranked_dispatch_candidates_json orders bug before product simplification before tooling simplification" 0
+		return 0
+	fi
+
+	print_result "build_ranked_dispatch_candidates_json orders bug before product simplification before tooling simplification" 1 \
+		"Unexpected order: ${ordered_numbers}"
+	return 0
+}
+
+test_dispatch_deterministic_fill_floor_dispatches_up_to_capacity() {
+	local dispatch_log="${TEST_ROOT}/deterministic-dispatch.log"
+	: >"$dispatch_log"
+
+	build_ranked_dispatch_candidates_json() {
+		printf '%s\n' '[
+		  {"number":9101,"repo_slug":"marcusquinn/aidevops","repo_path":"/tmp/aidevops","url":"https://github.com/marcusquinn/aidevops/issues/9101","title":"candidate one","labels":["bug"],"updatedAt":"2026-03-31T00:00:00Z","score":8000},
+		  {"number":9102,"repo_slug":"marcusquinn/aidevops","repo_path":"/tmp/aidevops","url":"https://github.com/marcusquinn/aidevops/issues/9102","title":"candidate two","labels":["simplification-debt"],"updatedAt":"2026-03-31T00:01:00Z","score":4000},
+		  {"number":9103,"repo_slug":"marcusquinn/aidevops","repo_path":"/tmp/aidevops","url":"https://github.com/marcusquinn/aidevops/issues/9103","title":"candidate three","labels":["simplification-debt"],"updatedAt":"2026-03-31T00:02:00Z","score":4000}
+		]'
+	}
+	get_max_workers_target() { echo 2; }
+	count_active_workers() { echo 0; }
+	count_runnable_candidates() { echo 3; }
+	count_queued_without_worker() { echo 0; }
+	check_terminal_blockers() { return 1; }
+	dispatch_with_dedup() {
+		printf '%s\n' "$1" >>"$dispatch_log"
+		return 0
+	}
+	check_worker_launch() { return 0; }
+	gh() {
+		if [[ "${1:-}" == "api" && "${2:-}" == "user" ]]; then
+			printf 'testuser\n'
+			return 0
+		fi
+		return 0
+	}
+	export -f gh
+
+	local dispatch_count dispatched_numbers
+	dispatch_count=$(dispatch_deterministic_fill_floor)
+	dispatched_numbers=$(tr '\n' ',' <"$dispatch_log" | sed 's/,$//')
+
+	unset -f gh build_ranked_dispatch_candidates_json get_max_workers_target count_active_workers count_runnable_candidates count_queued_without_worker check_terminal_blockers dispatch_with_dedup check_worker_launch
+
+	if [[ "$dispatch_count" == "2" && "$dispatched_numbers" == "9101,9102" ]]; then
+		print_result "dispatch_deterministic_fill_floor dispatches ranked candidates up to capacity" 0
+		return 0
+	fi
+
+	print_result "dispatch_deterministic_fill_floor dispatches ranked candidates up to capacity" 1 \
+		"Expected count=2 and issues 9101,9102; got count=${dispatch_count}, issues=${dispatched_numbers}"
+	return 0
+}
+
+test_build_ranked_dispatch_candidates_json_respects_schedule_gate() {
+	local original_repos_json="$REPOS_JSON"
+	cat >"${REPOS_JSON}" <<'JSON'
+{
+  "initialized_repos": [
+    {
+      "slug": "marcusquinn/aidevops",
+      "path": "/tmp/aidevops",
+      "pulse": true,
+      "priority": "tooling"
+    },
+    {
+      "slug": "awardsapp/awardsapp",
+      "path": "/tmp/awardsapp",
+      "pulse": true,
+      "priority": "product"
+    }
+  ]
+}
+JSON
+
+	check_repo_pulse_schedule() {
+		[[ "$1" == "marcusquinn/aidevops" ]]
+	}
+	gh() {
+		if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
+			if [[ "${4:-}" == "marcusquinn/aidevops" ]]; then
+				printf '%s\n' '[{"number":9201,"title":"allowed","url":"https://github.com/marcusquinn/aidevops/issues/9201","updatedAt":"2026-03-31T00:00:00Z","assignees":[],"labels":[{"name":"bug"}]}]'
+				return 0
+			fi
+			if [[ "${4:-}" == "awardsapp/awardsapp" ]]; then
+				printf '%s\n' '[{"number":9202,"title":"blocked by schedule","url":"https://github.com/awardsapp/awardsapp/issues/9202","updatedAt":"2026-03-31T00:00:00Z","assignees":[],"labels":[{"name":"bug"}]}]'
+				return 0
+			fi
+		fi
+		return 1
+	}
+	export -f gh
+
+	local candidate_numbers
+	candidate_numbers=$(build_ranked_dispatch_candidates_json 20 | jq -r '.[].number' 2>/dev/null || true)
+
+	unset -f gh check_repo_pulse_schedule
+	REPOS_JSON="$original_repos_json"
+
+	if [[ "$candidate_numbers" == "9201" ]]; then
+		print_result "build_ranked_dispatch_candidates_json skips repos outside schedule gate" 0
+		return 0
+	fi
+
+	print_result "build_ranked_dispatch_candidates_json skips repos outside schedule gate" 1 \
+		"Unexpected scheduled candidate set: ${candidate_numbers}"
+	return 0
+}
+
+test_dispatch_deterministic_fill_floor_honors_stop_flag() {
+	local dispatch_log="${TEST_ROOT}/deterministic-stop.log"
+	: >"$dispatch_log"
+	touch "$STOP_FLAG"
+
+	build_ranked_dispatch_candidates_json() {
+		printf '%s\n' '[{"number":9301,"repo_slug":"marcusquinn/aidevops","repo_path":"/tmp/aidevops","url":"https://github.com/marcusquinn/aidevops/issues/9301","title":"candidate one","labels":["bug"],"updatedAt":"2026-03-31T00:00:00Z","score":8000}]'
+	}
+	dispatch_with_dedup() {
+		printf '%s\n' "$1" >>"$dispatch_log"
+		return 0
+	}
+
+	local dispatch_count dispatched_numbers
+	dispatch_count=$(dispatch_deterministic_fill_floor)
+	dispatched_numbers=$(tr '\n' ',' <"$dispatch_log" | sed 's/,$//')
+
+	rm -f "$STOP_FLAG"
+	unset -f build_ranked_dispatch_candidates_json dispatch_with_dedup
+
+	if [[ "$dispatch_count" == "0" && -z "$dispatched_numbers" ]]; then
+		print_result "dispatch_deterministic_fill_floor skips dispatch when stop flag is present" 0
+		return 0
+	fi
+
+	print_result "dispatch_deterministic_fill_floor skips dispatch when stop flag is present" 1 \
+		"Expected no dispatch with stop flag; got count=${dispatch_count}, issues=${dispatched_numbers}"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -558,6 +748,10 @@ main() {
 	test_dispatch_with_dedup_blocks_when_duplicate
 	test_dispatch_with_dedup_fails_closed_when_issue_metadata_missing
 	test_dispatch_with_dedup_proceeds_when_no_duplicate
+	test_build_ranked_dispatch_candidates_json_scores_candidates
+	test_build_ranked_dispatch_candidates_json_respects_schedule_gate
+	test_dispatch_deterministic_fill_floor_dispatches_up_to_capacity
+	test_dispatch_deterministic_fill_floor_honors_stop_flag
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

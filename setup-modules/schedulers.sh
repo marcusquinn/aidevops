@@ -68,6 +68,7 @@ _determine_pulse_install() {
 		elif [[ -f "$wrapper_script" ]]; then
 			# Interactive: prompt with default-no
 			# All user-facing output goes to stderr so $() captures only the result
+			local enable_pulse=""
 			echo "" >&2
 			echo "The supervisor pulse enables autonomous orchestration." >&2
 			echo "It will act under your GitHub identity and consume API credits:" >&2
@@ -101,6 +102,30 @@ _determine_pulse_install() {
 	fi
 
 	printf '%s' "$_do_install"
+	return 0
+}
+
+_resolve_headless_models_override() {
+	local configured="${AIDEVOPS_HEADLESS_MODELS:-}"
+	if [[ -z "$configured" ]] && type config_get &>/dev/null; then
+		configured=$(config_get "orchestration.headless_models" "")
+		if [[ "$configured" == "null" ]]; then
+			configured=""
+		fi
+	fi
+	printf '%s' "$configured"
+	return 0
+}
+
+_resolve_pulse_model_override() {
+	local configured="${PULSE_MODEL:-}"
+	if [[ -z "$configured" ]] && type config_get &>/dev/null; then
+		configured=$(config_get "orchestration.pulse_model" "")
+		if [[ "$configured" == "null" ]]; then
+			configured=""
+		fi
+	fi
+	printf '%s' "$configured"
 	return 0
 }
 
@@ -215,6 +240,9 @@ _install_pulse_launchd() {
 	# if $HOME or paths contain &, <, > characters)
 	local _xml_wrapper_script _xml_home _xml_opencode_bin _xml_pulse_dir _xml_path
 	local _headless_xml_env=""
+	local _configured_headless_models _configured_pulse_model
+	_configured_headless_models=$(_resolve_headless_models_override)
+	_configured_pulse_model=$(_resolve_pulse_model_override)
 	_xml_wrapper_script=$(_xml_escape "$wrapper_script")
 	_xml_home=$(_xml_escape "$HOME")
 	_xml_opencode_bin=$(_xml_escape "$opencode_bin")
@@ -222,13 +250,21 @@ _install_pulse_launchd() {
 	# are not associated with any specific managed repo (GH#5136).
 	_xml_pulse_dir=$(_xml_escape "${HOME}/.aidevops/.agent-workspace")
 	_xml_path=$(_xml_escape "$PATH")
-	if [[ -n "${AIDEVOPS_HEADLESS_MODELS:-}" ]]; then
+	if [[ -n "$_configured_headless_models" ]]; then
 		local _xml_headless_models
-		_xml_headless_models=$(_xml_escape "$AIDEVOPS_HEADLESS_MODELS")
+		_xml_headless_models=$(_xml_escape "$_configured_headless_models")
 		_headless_xml_env+=$'\n'
 		_headless_xml_env+=$'\t\t<key>AIDEVOPS_HEADLESS_MODELS</key>'
 		_headless_xml_env+=$'\n'
 		_headless_xml_env+=$'\t\t'"<string>${_xml_headless_models}</string>"
+	fi
+	if [[ -n "$_configured_pulse_model" ]]; then
+		local _xml_pulse_model
+		_xml_pulse_model=$(_xml_escape "$_configured_pulse_model")
+		_headless_xml_env+=$'\n'
+		_headless_xml_env+=$'\t\t<key>PULSE_MODEL</key>'
+		_headless_xml_env+=$'\n'
+		_headless_xml_env+=$'\t\t'"<string>${_xml_pulse_model}</string>"
 	fi
 	if [[ -n "${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}" ]]; then
 		local _xml_headless_allowlist
@@ -302,13 +338,21 @@ _install_pulse_cron() {
 	# OPENCODE_BIN removed — resolved from PATH at runtime via command -v.
 	# See #4099 and #4240 for history.
 	local _cron_pulse_dir _cron_wrapper_script _cron_headless_env=""
+	local _configured_headless_models _configured_pulse_model
+	_configured_headless_models=$(_resolve_headless_models_override)
+	_configured_pulse_model=$(_resolve_pulse_model_override)
 	# Use neutral workspace path for PULSE_DIR (GH#5136)
 	_cron_pulse_dir=$(_cron_escape "${HOME}/.aidevops/.agent-workspace")
 	_cron_wrapper_script=$(_cron_escape "$wrapper_script")
-	if [[ -n "${AIDEVOPS_HEADLESS_MODELS:-}" ]]; then
+	if [[ -n "$_configured_headless_models" ]]; then
 		local _cron_headless_models
-		_cron_headless_models=$(_cron_escape "$AIDEVOPS_HEADLESS_MODELS")
+		_cron_headless_models=$(_cron_escape "$_configured_headless_models")
 		_cron_headless_env+=" AIDEVOPS_HEADLESS_MODELS=${_cron_headless_models}"
+	fi
+	if [[ -n "$_configured_pulse_model" ]]; then
+		local _cron_pulse_model
+		_cron_pulse_model=$(_cron_escape "$_configured_pulse_model")
+		_cron_headless_env+=" PULSE_MODEL=${_cron_pulse_model}"
 	fi
 	if [[ -n "${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}" ]]; then
 		local _cron_headless_allowlist
