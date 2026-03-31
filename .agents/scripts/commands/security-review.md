@@ -46,7 +46,7 @@ quarantine-helper.sh purge --older-than 60 --reviewed-only
 | Action | Effect | Config file modified |
 |--------|--------|---------------------|
 | `allow` | Add domain to Tier 3 so future access is allowed and logged | `~/.config/aidevops/network-tiers-custom.conf` |
-| `deny` | Add a domain to Tier 5 or a pattern to the prompt-guard deny list | `network-tiers-custom.conf` (network-tier / sandbox-exec) or `prompt-guard-custom.txt` (prompt-guard / mcp-audit) |
+| `deny` | Add a domain to Tier 5 or a pattern to the prompt-guard deny list | `~/.config/aidevops/network-tiers-custom.conf` (network-tier / sandbox-exec) or `~/.config/aidevops/prompt-guard-custom.txt` (prompt-guard / mcp-audit) |
 | `trust` | Add an MCP server to the trusted list | `~/.config/aidevops/mcp-trusted-servers.txt` |
 | `dismiss` | Mark as false positive without config changes; recorded in `reviewed.jsonl` | None |
 
