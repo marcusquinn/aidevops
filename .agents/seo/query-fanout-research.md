@@ -15,13 +15,14 @@ tools:
 
 # Query Fan-Out Research
 
-Model how AI systems split a broad prompt into sub-queries, then use that map to find coverage gaps.
+Model how AI systems split a broad prompt into sub-queries, then map coverage gaps.
 
 ## Quick Reference
 
 - Purpose: expose hidden sub-query themes behind one user intent
 - Inputs: seed intent, market context, existing page set
 - Outputs: fan-out map, priority tiers, coverage matrix, remediation backlog
+- Retrieval model: broad discovery -> domain deep-dive -> third-party validation
 
 ## Workflow
 
@@ -33,15 +34,13 @@ Model how AI systems split a broad prompt into sub-queries, then use that map to
 
 ### 2) Generate sub-queries
 
-- Write sub-queries per branch with a clear purpose tag
+- Write sub-queries per branch with a purpose tag
 - Assign priority: high, medium, low
 - Include common modifiers where relevant: location, budget, urgency, compliance, integration
 
 ### 3) Classify retrieval stage and scope
 
-Treat fan-out as a 3-stage retrieval model:
-
-Frontier models often generate 10+ sub-queries from one prompt, including direct `site:` lookups.
+Frontier models often generate 10+ sub-queries from one prompt, including direct `site:` lookups. Treat fan-out as a 3-stage retrieval model:
 
 1. **Broad discovery**: open-web category and comparison queries such as `best ATS for SMB [year]`
 2. **Domain deep-dive**: `site:brand.com` queries such as `site:brand.com pricing` or `site:brand.com enterprise features`
@@ -53,11 +52,11 @@ Tag each branch by likely scope:
 - **Domain-scoped**: model already chose a domain and is extracting detail; page architecture and self-contained answers matter more than SERP position
 - **Third-party**: model wants corroboration from review platforms or independent sources
 
-Predict required stages before content work begins: product-detail branches usually need stage 2, while trust and risk branches usually need stage 3 as well.
+Predict stages before content work begins: product-detail branches usually need stage 2; trust and risk branches usually need stage 3 too.
 
 ### 4) Map coverage
 
-- Link each sub-query to the best existing page or external proof source
+- Link each sub-query to the best existing page or proof source
 - Mark coverage as complete, partial, or missing
 - Flag overloaded pages trying to answer unrelated branches
 - Treat a branch as incomplete if your site covers it but review-platform evidence does not
@@ -72,7 +71,7 @@ Predict required stages before content work begins: product-detail branches usua
 
 ## Coverage Rules
 
-- Domain-scoped branches need individually addressable pages with self-contained answers; the model is searching your site like a database
+- Domain-scoped branches need individually addressable pages with self-contained answers; the model is querying your site like a database
 - Important pages should match `site:yourdomain.com [category] [feature] [year]` query patterns
 - Third-party branches need current review-platform profiles with the same canonical facts as the primary site
 
