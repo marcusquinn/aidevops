@@ -53,6 +53,8 @@ Use a dedicated profile when possible.
   --user-data-dir=/tmp/chromium-debug-use-profile
 ```
 
+Adjust the executable path for your platform. On Linux, check `which google-chrome`, `which chromium`, or `/opt/...`; on Windows, use `where chrome.exe` or the installed path under `C:\Program Files\...`.
+
 Approval model: by launching Chrome with the debug port, you are granting local tooling profile-level access for this temporary investigation window.
 
 ### Brave
