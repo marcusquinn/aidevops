@@ -18,9 +18,9 @@ tools:
 
 ## Quick Reference
 
-- **Before building**: Check for existing WIP branch (`git branch -a | grep -E "(feature|bugfix|hotfix|refactor|chore|experiment)/"`)
-- **Continue WIP**: `git checkout <branch>` and resume
-- **New work**: Create branch from updated `main`, using type below
+- **Resume first**: `git branch -a | rg "(feature|bugfix|hotfix|refactor|chore|experiment)/"`
+- **Continue WIP**: `git checkout <branch>`
+- **New work**: branch from updated `main`
 
 | Task Type | Branch Prefix | Subagent |
 |-----------|---------------|----------|
@@ -32,7 +32,7 @@ tools:
 | Spike, POC | `experiment/` | `branch/experiment.md` |
 | Version release | `release/` | `branch/release.md` |
 
-**Branch naming**: `{type}/{short-description}` — lowercase, hyphens, max ~50 chars (e.g., `feature/user-dashboard`, `bugfix/123-login-timeout`). Release branches use semver: `release/1.2.0`.
+**Branch naming**: `{type}/{short-description}` — lowercase, hyphenated, ~50 chars max. Example: `feature/user-dashboard`, `bugfix/123-login-timeout`; releases use semver (`release/1.2.0`).
 
 **Mandatory start**:
 
@@ -40,22 +40,15 @@ tools:
 git checkout main && git pull origin main && git checkout -b {type}/{description}
 ```
 
-**Task status**: Move task to `## In Progress`, add `started:` timestamp, then `beads-sync-helper.sh push`.
+**Task status**: move task to `## In Progress`, add `started:`, then `beads-sync-helper.sh push`.
 
-**Lifecycle**: Create → Develop → Preflight → Version → Push → PR → Review → Merge → Release → Postflight → Cleanup
-
-**Task lifecycle**:
-
-```text
-Ready/Backlog → In Progress → In Review → Done
-   (branch)       (develop)      (PR)     (merge/release)
-```
+**Lifecycle**: Create → Develop → Preflight → Push → PR → Review → Merge → Cleanup. Add Version/Release/Postflight only when shipping a release.
 
 <!-- AI-CONTEXT-END -->
 
-**Before creating branches**: Read `workflows/git-workflow.md` for issue URL handling, fork detection, and new repo initialization.
+Read `workflows/git-workflow.md` before branch creation for issue URL handling, fork detection, and new repo setup.
 
-**Branch names from planning files**: Slugify task descriptions — lowercase, spaces→hyphens, remove special chars. See `git-workflow.md` for full rules.
+**Names from planning files**: slugify the task description — lowercase, spaces→hyphens, special chars removed. See `git-workflow.md` for full rules.
 
 ## Branch Lifecycle
 
@@ -71,20 +64,20 @@ Ready/Backlog → In Progress → In Review → Done
 | 8. Merge | Squash merge | `gh pr merge --squash --delete-branch` | Yes |
 | 9. Release | Tag and publish | `.agents/scripts/version-manager.sh release [major\|minor\|patch]` → `workflows/release.md` | Releases only |
 | 10. Postflight | Verify CI/CD | `gh run watch $(gh run list --limit=1 --json databaseId -q '.[0].databaseId') --exit-status` → `workflows/postflight.md` | Releases only |
-| 11. Cleanup | Delete branch | `git branch -d {name}` / `git push origin --delete {name}` (if not auto-deleted) | Yes |
+| 11. Cleanup | Delete branch | `git branch -d {name}` / `git push origin --delete {name}` if needed | Yes |
 
-**Task status update on branch create**: Move task from `## Ready`/`## Backlog` to `## In Progress`, add `started:<ISO>`, then `beads-sync-helper.sh push`.
+On branch creation: move the task from `## Ready`/`## Backlog` to `## In Progress`, add `started:<ISO>`, then `beads-sync-helper.sh push`.
 
 ## Keeping Branch Updated
 
 ```bash
 git checkout main && git pull origin main && git checkout your-branch && git merge main
-# Resolve conflicts if any — see tools/git/conflict-resolution.md
+# Resolve conflicts if needed — see tools/git/conflict-resolution.md
 ```
 
 ## Safety: Protecting Uncommitted Work
 
-Before destructive operations (reset, clean, rebase, checkout with changes):
+Before reset, clean, rebase, or checkout with local changes:
 
 ```bash
 git stash --include-untracked -m "safety: before [operation]"
@@ -107,9 +100,9 @@ Types: `feat:` `fix:` `refactor:` `docs:` `chore:` `test:`
 
 ## Related Workflows
 
-- `workflows/git-workflow.md` — complete git workflow (issue URLs, fork detection, new repos)
+- `workflows/git-workflow.md` — issue URLs, fork detection, repo setup
 - `workflows/pr.md` — PR creation and review
 - `workflows/preflight.md` — quality checks before push
 - `workflows/version-bump.md`, `workflows/changelog.md` — versioning
-- `workflows/release.md`, `workflows/postflight.md` — release and verification
+- `workflows/release.md`, `workflows/postflight.md` — release verification
 - `workflows/code-audit-remote.md` — code review
