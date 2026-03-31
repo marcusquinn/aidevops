@@ -2781,6 +2781,11 @@
       "at": "2026-03-30T03:34:18Z",
       "pr": 13531
     },
+    ".agents/seo/upscale.md": {
+      "hash": "9ac63de45de90e25c2de33409fc931e65da4c121",
+      "at": "2026-03-31T03:14:42Z",
+      "pr": 14510
+    },
     ".agents/tools/mobile/maestro.md": {
       "hash": "9cfba2015ca5bd40086f5d15c690910a0a3c6bfd",
       "at": "2026-03-30T03:34:20Z",
