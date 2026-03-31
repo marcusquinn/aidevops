@@ -4,35 +4,35 @@ agent: Build+
 mode: subagent
 ---
 
-Run Python venv smoke tests across all repos registered in repos.json.
+Run Python venv smoke tests across managed repos.
 
 Arguments: $ARGUMENTS
 
-## Quick Output (Default)
+## Quick Output
 
 ```bash
 ~/.aidevops/agents/scripts/venv-health-check-helper.sh scan $ARGUMENTS
 ```
 
-Display the output directly to the user. The script handles all formatting.
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `/venv-health` | Scan all managed repos, show all results |
-| `/venv-health --quiet` | Only show broken or warning venvs |
-| `/venv-health --json` | Machine-readable JSON output |
-| `/venv-health --path DIR` | Scan a specific directory |
+Display the helper output directly; formatting is built in.
 
 ## Arguments
 
 | Argument | Description |
 |----------|-------------|
-| (none) | Scan all repos in repos.json |
+| (none) | Scan all repos in `~/.config/aidevops/repos.json` |
 | `--quiet`, `-q` | Only report broken/warning venvs |
 | `--json`, `-j` | JSON output for programmatic use |
 | `--path DIR`, `-p DIR` | Scan a specific directory instead of repos.json |
+
+## Common Invocations
+
+| Command | Purpose |
+|---------|---------|
+| `/venv-health` | Scan all managed repos |
+| `/venv-health --quiet` | Show only warnings and errors |
+| `/venv-health --json` | Return machine-readable output |
+| `/venv-health --path DIR` | Scan one directory |
 
 ## Checks Performed
 
@@ -44,21 +44,19 @@ Display the output directly to the user. The script handles all formatting.
 
 ## Venv Discovery
 
-Looks for `.venv/pyvenv.cfg` (PEP 405 marker) up to 3 levels deep in each repo
-registered in `~/.config/aidevops/repos.json`. Deduplicates by realpath.
+Looks for `.venv/pyvenv.cfg` (PEP 405 marker) up to 3 levels deep in each registered repo. Deduplicates by realpath.
 
 ## Automatic Checks
 
-The venv health check runs automatically once per day via `auto-update-helper.sh`
-when the user is idle. Results are logged to `~/.aidevops/logs/auto-update.log`.
+Runs daily via `auto-update-helper.sh` when the user is idle. Results go to `~/.aidevops/logs/auto-update.log`.
 
-To disable automatic checks:
+Disable automatic checks:
 
 ```bash
 aidevops config set updates.venv_health_check false
 ```
 
-To change the check interval (default: 24h):
+Change the interval (default: 24h):
 
 ```bash
 aidevops config set updates.venv_health_hours 12
@@ -72,21 +70,12 @@ aidevops config set updates.venv_health_hours 12
 | 1 | One or more venvs have issues |
 | 2 | Usage error |
 
-## Examples
+## Output Expectations
 
-```text
-User: /venv-health
-AI: [Runs venv-health-check-helper.sh scan and displays results]
-
-User: /venv-health --quiet
-AI: [Shows only broken/warning venvs]
-
-User: /venv-health --json
-AI: {"summary":{"total":3,"healthy":2,"warnings":0,"broken":1},"venvs":[...]}
-
-User: /venv-health --path ~/Git/myproject
-AI: [Scans ~/Git/myproject for venvs]
-```
+- Default: show all detected venvs
+- `--quiet`: show only warnings and errors
+- `--json`: return JSON like `{"summary":{"total":3,"healthy":2,"warnings":0,"broken":1},"venvs":[...]}`
+- `--path`: scan the supplied directory instead of the managed repo list
 
 ## Related
 
