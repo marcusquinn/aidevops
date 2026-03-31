@@ -6,34 +6,34 @@ mode: subagent
 
 Check email authentication, deliverability, and content quality.
 
-Arguments: $ARGUMENTS
+Arguments: `$ARGUMENTS`
 
 ## Workflow
 
-### Step 1: Detect mode and run the helper
+### Step 1: Select the helper
 
 - `example.com` → infrastructure: `email-health-check-helper.sh check "$DOMAIN"`
 - `newsletter.html` → content: `email-health-check-helper.sh content-check "$FILE"`
 - `example.com newsletter.html` → combined: `email-health-check-helper.sh precheck "$DOMAIN" "$FILE"`
-- `example.com spf` / `newsletter.html check-links` → targeted check
+- Extra selector/check arg (`example.com spf`, `newsletter.html check-links`) → targeted check
 
 ```bash
-# Domain only
+# Domain
 ~/.aidevops/agents/scripts/email-health-check-helper.sh check "$DOMAIN"
 
-# HTML file only
+# HTML file
 ~/.aidevops/agents/scripts/email-health-check-helper.sh content-check "$FILE"
 
 # Domain + HTML file
 ~/.aidevops/agents/scripts/email-health-check-helper.sh precheck "$DOMAIN" "$FILE"
 ```
 
-### Step 2: Return a formatted report
+### Step 2: Format the report
 
-- Score infrastructure out of 15: SPF, DKIM, DMARC, MX, blacklist
-- Score content out of 10: subject, preheader, accessibility, links, images, spam words
-- Show combined score out of 25 with letter grade when both checks run
-- Preserve helper findings verbatim and end with actionable recommendations
+- Infrastructure: score out of 15 for SPF, DKIM, DMARC, MX, blacklist
+- Content: score out of 10 for subject, preheader, accessibility, links, images, spam words
+- Combined runs: score out of 25 with a letter grade
+- Keep helper findings verbatim and end with actionable recommendations
 
 ## Options
 
@@ -52,7 +52,8 @@ Arguments: $ARGUMENTS
 
 ```text
 User: /email-health-check example.com
-AI: Email Health Check: example.com
+AI:
+    Email Health Check: example.com
     SPF: OK - v=spf1 include:_spf.google.com ~all
     DKIM: OK - Found: google, selector1
     DMARC: WARN - p=none (monitoring only)
