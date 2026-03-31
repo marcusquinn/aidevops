@@ -1,6 +1,6 @@
 # Gotchas
 
-See [README.md](./README.md), [patterns.md](./patterns.md).
+See [hyperdrive.md](./hyperdrive.md), [hyperdrive-patterns.md](./hyperdrive-patterns.md).
 
 ## Limits
 

@@ -1,6 +1,6 @@
 # Patterns
 
-See [README.md](./README.md)
+See [hyperdrive.md](./hyperdrive.md)
 
 ## High-Traffic Read-Heavy
 
@@ -179,4 +179,4 @@ const duration = Date.now() - start;
 console.log({duration, likelyCached: duration < 10});  // <10ms = cache hit
 ```
 
-See [gotchas.md](./gotchas.md) for limits, troubleshooting.
+See [hyperdrive-gotchas.md](./hyperdrive-gotchas.md) for limits, troubleshooting.
