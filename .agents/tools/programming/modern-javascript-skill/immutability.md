@@ -1,33 +1,46 @@
 # Immutability and Pure Functions
 
-Never modify data in place. Same input → same output, no side effects. Prefer declarative style.
+Copy instead of mutating. Keep transforms pure, and push I/O to the edge.
 
-## Immutable Array Operations
+## Quick Reference
+
+| Need | Prefer |
+|------|--------|
+| Append/prepend array items | `[...arr, item]`, `[item, ...arr]` |
+| Remove/update array items | `.filter()`, `.toSpliced()`, `.with()` |
+| Sort/reverse without mutation | `.toSorted()`, `.toReversed()` |
+| Update object fields | `{ ...obj, key: value }` |
+| Update nested objects | nested spread (`{ ...obj, nested: { ...obj.nested, key: value } }`) |
+| Deep clone | `structuredClone(obj)` |
+| Make functions testable | inject time, randomness, and I/O dependencies |
+| Update UI state | `.map()`, `.filter()`, small helpers like `setIn()` |
+
+## Non-Mutating Array Updates
 
 ```javascript
 const nums = [1, 2, 3, 4, 5];
 
-const withSix = [...nums, 6];                          // Append
-const withZero = [0, ...nums];                         // Prepend
-const withoutThree = nums.filter(n => n !== 3);        // Remove by value
-const withoutSecond = nums.toSpliced(1, 1);            // Remove by index (ES2023)
-const updated = nums.with(2, 99);                      // Replace at index (ES2023)
-const doubled = nums.with(2, nums.at(2) * 2);         // Transform at index
-const sorted = nums.toSorted((a, b) => b - a);        // Non-mutating sort (ES2023)
-const reversed = nums.toReversed();                    // Non-mutating reverse (ES2023)
+const withSix = [...nums, 6];                   // Append
+const withZero = [0, ...nums];                  // Prepend
+const withoutThree = nums.filter(n => n !== 3); // Remove by value
+const withoutSecond = nums.toSpliced(1, 1);     // Remove by index (ES2023)
+const updated = nums.with(2, 99);               // Replace at index (ES2023)
+const doubled = nums.with(2, nums.at(2) * 2);   // Transform at index
+const sorted = nums.toSorted((a, b) => b - a);  // Sort without mutation (ES2023)
+const reversed = nums.toReversed();             // Reverse without mutation (ES2023)
 ```
 
-## Immutable Object Operations
+## Non-Mutating Object Updates
 
 ```javascript
 const user = { name: 'Alice', age: 30, address: { city: 'NYC' } };
 
-const older = { ...user, age: 31 };                                    // Update property
+const older = { ...user, age: 31 };                                      // Update property
 const withZip = { ...user, address: { ...user.address, zip: '10001' } }; // Update nested
-const { age, ...userWithoutAge } = user;                               // Remove property
-const { name: fullName, ...rest } = user;                              // Rename property
+const { age, ...userWithoutAge } = user;                                 // Remove property
+const { name: fullName, ...rest } = user;                                // Rename property
 const renamed = { fullName, ...rest };
-const maybeAdmin = { ...user, ...(isAdmin && { role: 'admin' }) };     // Conditional property
+const maybeAdmin = { ...user, ...(isAdmin && { role: 'admin' }) };       // Conditional property
 
 // Deep clone (handles circular refs, preserves types)
 const clone = structuredClone(obj);
@@ -42,17 +55,17 @@ const formatUser = (user) => ({
   initials: `${user.firstName[0]}${user.lastName[0]}`
 });
 
-// ❌ Impure: external state | non-deterministic | side effects
+// ❌ Impure: external state, non-determinism, side effects
 let counter = 0;
-function increment() { return ++counter; }           // Mutates external state
+function increment() { return ++counter; }            // Mutates external state
 function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; } // Non-deterministic
 function save(u) { localStorage.setItem('u', JSON.stringify(u)); }         // Side effect
 ```
 
-### Purifying Impure Functions
+### Make Impure Functions Testable
 
 ```javascript
-// Inject dependencies to make functions pure and testable
+// Inject dependencies instead of reading globals directly
 const isExpired = (token, now) => token.expiresAt < now;
 isExpired(token, Date.now());
 
