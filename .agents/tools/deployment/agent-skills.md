@@ -8,6 +8,8 @@ tools:
 
 # Vercel Agent Skills
 
+Community [Agent Skills](https://agentskills.io/) packages for common Vercel-adjacent tasks.
+
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
@@ -32,22 +34,18 @@ tools:
 
 ## vercel-deploy-claimable
 
-The primary deployment skill. Deploys without Vercel auth via "claimable" URLs.
-
-**How it works:**
+Primary deployment skill. It deploys without Vercel auth by returning a live preview URL plus a claim URL.
 
 1. Packages project as tarball (excludes `node_modules`, `.git`)
 2. Auto-detects framework from `package.json` (40+ frameworks)
 3. Uploads to deployment service
 4. Returns preview URL (live site) + claim URL (transfer ownership)
 
-**Framework detection** includes: Next.js, Remix, Astro, Vite, SvelteKit, Nuxt,
-Angular, Gatsby, Hono, Express, NestJS, Fastify, Storybook, and many more.
-Static HTML projects (no `package.json`) are handled automatically.
+Framework detection covers Next.js, Remix, Astro, Vite, SvelteKit, Nuxt, Angular, Gatsby, Hono, Express, NestJS, Fastify, Storybook, and more. Static HTML projects (no `package.json`) also work.
 
-## SKILL.md Format Specification
+## SKILL.md Layout
 
-Each skill is a directory containing:
+Each skill directory contains:
 
 ```text
 skill-name/
@@ -56,7 +54,7 @@ skill-name/
   references/    # Supporting documentation (optional)
 ```
 
-**SKILL.md frontmatter:**
+Minimal frontmatter:
 
 ```yaml
 ---
@@ -68,8 +66,7 @@ metadata:
 ---
 ```
 
-The body contains agent instructions: how the skill works, usage examples,
-expected output format, and troubleshooting guidance.
+The body should cover how the skill works, usage examples, expected output format, and troubleshooting.
 
 ## Installation
 
@@ -79,12 +76,11 @@ aidevops skill add vercel-labs/agent-skills       # aidevops (preferred)
 /add-skill vercel-labs/agent-skills --name vercel-deploy  # With custom name
 ```
 
-Skills are auto-detected after installation. The agent uses them when relevant
-tasks are detected (e.g., "deploy my app" triggers vercel-deploy).
+Installed skills are auto-detected and used when the task matches (for example, "deploy my app" triggers `vercel-deploy`).
 
 ## aidevops Integration
 
-The `add-skill-helper.sh` script handles importing Agent Skills:
+`add-skill-helper.sh` imports Agent Skills by:
 
 1. Clones the repo (`git clone --depth 1`)
 2. Detects SKILL.md format, converts frontmatter to aidevops style
@@ -92,8 +88,7 @@ The `add-skill-helper.sh` script handles importing Agent Skills:
 4. Registers in `.agents/configs/skill-sources.json` for update tracking
 5. `setup.sh` creates symlinks to all AI assistant skill directories
 
-**Naming**: Imported skills get a `-skill` suffix (e.g., `vercel-deploy-skill.md`)
-to distinguish from native subagents. See `tools/build-agent/add-skill.md`.
+Imported skills get a `-skill` suffix (for example `vercel-deploy-skill.md`) to distinguish them from native subagents. See `tools/build-agent/add-skill.md`.
 
 ## When to Use What
 
