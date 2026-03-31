@@ -22,7 +22,7 @@ mcp:
 ## Quick Reference
 
 - **Purpose**: Cross-browser testing and automation (fastest browser engine)
-- **Install**: `npx playwright install` (browsers) | `npx @playwright/mcp@latest` (MCP server)
+- **Install**: `npm install playwright && npx playwright install` (lib + browsers) | `npx @playwright/mcp@latest` (MCP server)
 - **Browsers**: chromium, firefox, webkit + custom (Brave, Edge, Chrome via `executablePath`)
 - **Headless**: Yes (default)
 - **Performance**: Navigate 1.4s, form fill 0.9s, extraction 1.3s, reliability 0.64s avg
@@ -40,6 +40,7 @@ Underlying engine for dev-browser, agent-browser, and Stagehand. Supports proxy 
 ```bash
 ./setup.sh --interactive           # Select: "Setup browser automation tools"
 # Or manually:
+npm install playwright             # Install library (needed for JS examples)
 npx playwright install             # Install browsers
 npx @playwright/mcp@latest         # Run MCP server
 npx --no-install playwright --version  # Check if installed
