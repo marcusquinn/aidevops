@@ -721,6 +721,59 @@ test_dispatch_deterministic_fill_floor_dispatches_up_to_capacity() {
 	return 0
 }
 
+test_dispatch_deterministic_fill_floor_tolerates_noisy_backlog_counts() {
+	local dispatch_log="${TEST_ROOT}/deterministic-noisy-counts.log"
+	: >"$dispatch_log"
+
+	build_ranked_dispatch_candidates_json() {
+		printf '%s\n' '[
+		  {"number":9401,"repo_slug":"marcusquinn/aidevops","repo_path":"/tmp/aidevops","url":"https://github.com/marcusquinn/aidevops/issues/9401","title":"candidate one","labels":["bug"],"updatedAt":"2026-03-31T00:00:00Z","score":8000},
+		  {"number":9402,"repo_slug":"marcusquinn/aidevops","repo_path":"/tmp/aidevops","url":"https://github.com/marcusquinn/aidevops/issues/9402","title":"candidate two","labels":["simplification-debt"],"updatedAt":"2026-03-31T00:01:00Z","score":4000}
+		]'
+	}
+	get_max_workers_target() { echo 2; }
+	count_active_workers() { echo 0; }
+	count_runnable_candidates() {
+		printf 'debug: runnable prefilter returned candidates\n'
+		printf '5\n'
+		return 0
+	}
+	count_queued_without_worker() {
+		printf 'debug: queued scan complete\n'
+		printf '0\n'
+		return 0
+	}
+	check_terminal_blockers() { return 1; }
+	dispatch_with_dedup() {
+		printf '%s\n' "$1" >>"$dispatch_log"
+		return 0
+	}
+	check_worker_launch() { return 0; }
+	gh() {
+		if [[ "${1:-}" == "api" && "${2:-}" == "user" ]]; then
+			printf 'testuser\n'
+			return 0
+		fi
+		return 0
+	}
+	export -f gh
+
+	local dispatch_count dispatched_numbers
+	dispatch_count=$(dispatch_deterministic_fill_floor)
+	dispatched_numbers=$(tr '\n' ',' <"$dispatch_log" | sed 's/,$//')
+
+	unset -f gh build_ranked_dispatch_candidates_json get_max_workers_target count_active_workers count_runnable_candidates count_queued_without_worker check_terminal_blockers dispatch_with_dedup check_worker_launch
+
+	if [[ "$dispatch_count" == "2" && "$dispatched_numbers" == "9401,9402" ]]; then
+		print_result "dispatch_deterministic_fill_floor tolerates noisy backlog counter output" 0
+		return 0
+	fi
+
+	print_result "dispatch_deterministic_fill_floor tolerates noisy backlog counter output" 1 \
+		"Expected count=2 and issues 9401,9402 with noisy counter output; got count=${dispatch_count}, issues=${dispatched_numbers}"
+	return 0
+}
+
 test_build_ranked_dispatch_candidates_json_respects_schedule_gate() {
 	local original_repos_json="$REPOS_JSON"
 	cat >"${REPOS_JSON}" <<'JSON'
@@ -945,6 +998,7 @@ main() {
 	test_build_ranked_dispatch_candidates_json_scores_candidates
 	test_build_ranked_dispatch_candidates_json_respects_schedule_gate
 	test_dispatch_deterministic_fill_floor_dispatches_up_to_capacity
+	test_dispatch_deterministic_fill_floor_tolerates_noisy_backlog_counts
 	test_dispatch_deterministic_fill_floor_honors_stop_flag
 	test_dispatch_deterministic_fill_floor_ignores_noisy_count_output
 	test_active_pulse_refill_skips_without_idle_or_stall_signal

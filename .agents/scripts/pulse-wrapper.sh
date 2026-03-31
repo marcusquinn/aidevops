@@ -5114,6 +5114,38 @@ get_max_workers_target() {
 }
 
 #######################################
+# Normalize a counter command's stdout into a single integer.
+#
+# Some helper commands may emit debug chatter before or after the numeric
+# result. Prefer the last line that is only digits; otherwise fall back.
+#
+# Arguments:
+#   $1 - raw stdout
+#   $2 - fallback value (optional, default 0)
+# Returns: integer via stdout
+#######################################
+normalize_count_output() {
+	local raw_output="$1"
+	local fallback_value="${2:-0}"
+	local line
+	local normalized=""
+
+	while IFS= read -r line; do
+		if [[ "$line" =~ ^[[:space:]]*([0-9]+)[[:space:]]*$ ]]; then
+			normalized="${BASH_REMATCH[1]}"
+		fi
+	done <<<"$raw_output"
+
+	if [[ -n "$normalized" ]]; then
+		echo "$normalized"
+		return 0
+	fi
+
+	echo "$fallback_value"
+	return 0
+}
+
+#######################################
 # Count runnable backlog candidates across pulse scope
 # Heuristic for t1453 utilization loop:
 # - open inactive backlog issues (unassigned or only passively assigned to
@@ -5462,8 +5494,8 @@ dispatch_deterministic_fill_floor() {
 	local max_workers active_workers available_slots runnable_count queued_without_worker
 	max_workers=$(get_max_workers_target)
 	active_workers=$(count_active_workers)
-	runnable_count=$(normalize_count_output "$(count_runnable_candidates)")
-	queued_without_worker=$(normalize_count_output "$(count_queued_without_worker)")
+	runnable_count=$(normalize_count_output "$(count_runnable_candidates)" 0)
+	queued_without_worker=$(normalize_count_output "$(count_queued_without_worker)" 0)
 	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
 	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
 
@@ -5709,8 +5741,8 @@ maybe_refill_underfilled_pool_during_active_pulse() {
 	local max_workers active_workers runnable_count queued_without_worker
 	max_workers=$(get_max_workers_target)
 	active_workers=$(count_active_workers)
-	runnable_count=$(normalize_count_output "$(count_runnable_candidates)")
-	queued_without_worker=$(normalize_count_output "$(count_queued_without_worker)")
+	runnable_count=$(normalize_count_output "$(count_runnable_candidates)" 0)
+	queued_without_worker=$(normalize_count_output "$(count_queued_without_worker)" 0)
 	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
 	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
 
@@ -5830,8 +5862,8 @@ _compute_initial_underfill() {
 	fi
 
 	local runnable_count queued_without_worker
-	runnable_count=$(normalize_count_output "$(count_runnable_candidates)")
-	queued_without_worker=$(normalize_count_output "$(count_queued_without_worker)")
+	runnable_count=$(normalize_count_output "$(count_runnable_candidates)" 0)
+	queued_without_worker=$(normalize_count_output "$(count_queued_without_worker)" 0)
 	run_underfill_worker_recycler "$max_workers" "$active_workers" "$runnable_count" "$queued_without_worker"
 
 	# Re-check after recycler
@@ -5898,8 +5930,8 @@ _run_early_exit_recycle_loop() {
 		local post_max post_active post_runnable post_queued
 		post_max=$(get_max_workers_target)
 		post_active=$(count_active_workers)
-		post_runnable=$(normalize_count_output "$(count_runnable_candidates)")
-		post_queued=$(normalize_count_output "$(count_queued_without_worker)")
+		post_runnable=$(normalize_count_output "$(count_runnable_candidates)" 0)
+		post_queued=$(normalize_count_output "$(count_queued_without_worker)" 0)
 		[[ "$post_max" =~ ^[0-9]+$ ]] || post_max=1
 		[[ "$post_active" =~ ^[0-9]+$ ]] || post_active=0
 
@@ -5916,8 +5948,8 @@ _run_early_exit_recycle_loop() {
 
 		dispatch_deterministic_fill_floor >/dev/null || true
 		post_active=$(count_active_workers)
-		post_runnable=$(normalize_count_output "$(count_runnable_candidates)")
-		post_queued=$(normalize_count_output "$(count_queued_without_worker)")
+		post_runnable=$(normalize_count_output "$(count_runnable_candidates)" 0)
+		post_queued=$(normalize_count_output "$(count_queued_without_worker)" 0)
 		[[ "$post_active" =~ ^[0-9]+$ ]] || post_active=0
 		if [[ "$post_active" -ge "$post_max" ]]; then
 			break
