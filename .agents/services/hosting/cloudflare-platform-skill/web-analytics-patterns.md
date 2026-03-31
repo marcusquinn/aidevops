@@ -1,52 +1,37 @@
 ## Common Use Cases
 
-### 1. Performance Monitoring
+1. **Performance monitoring** — inspect Core Web Vitals, then use Debug View to trace poor LCP elements back to a selector you can optimize.
 
-Track Core Web Vitals to identify slow-loading elements:
+   ```typescript
+   // 1. Enable Web Analytics
+   // 2. Dashboard → Core Web Vitals → LCP
+   // 3. Debug View shows top 5 problematic elements
+   document.querySelector('.hero-image') // Example selector from Debug View
+   // 4. Optimize the element (lazy loading, compression, etc.)
+   ```
 
-```typescript
-// Debug poor LCP scores
-// 1. Enable Web Analytics
-// 2. Dashboard → Core Web Vitals → LCP section
-// 3. Debug View shows top 5 problematic elements
-// 4. Use element CSS selector in browser console:
-document.querySelector('.hero-image') // Example element
-// 5. Optimize identified elements (lazy loading, compression, etc.)
-```
+2. **Bot traffic filtering** — exclude bots so dashboard metrics reflect human traffic only.
 
-### 2. Bot Traffic Filtering
+   ```text
+   Dashboard filters:
+   - Exclude Bots: Yes
+   ```
 
-Exclude bots to see real user metrics:
+3. **Multi-site analytics** — compare traffic across properties in one account.
 
-```
-Dashboard filters:
-- Exclude Bots: Yes
-→ Shows human traffic only
-```
+   ```text
+   Proxied sites: Unlimited
+   Non-proxied: Up to 10 sites
 
-### 3. Multi-Site Analytics
+   View by dimension:
+   - Site: example.com
+   - Site: blog.example.com
+   ```
 
-Track multiple properties under one account:
+4. **Geographic analysis** — combine country and device filters to isolate audience segments.
 
-```
-Proxied sites: Unlimited
-Non-proxied: Up to 10 sites
-
-View by dimension:
-- Site: example.com
-- Site: blog.example.com
-→ Compare traffic across properties
-```
-
-### 4. Geographic Analysis
-
-Understand visitor distribution:
-
-```
-Filter by:
-- Country: United States
-- Device type: Mobile
-→ Mobile traffic from US
-```
-
-### 5.
+   ```text
+   Filter by:
+   - Country: United States
+   - Device type: Mobile
+   ```
