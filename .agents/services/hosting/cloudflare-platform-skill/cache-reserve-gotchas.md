@@ -2,7 +2,7 @@
 
 ## Eligibility Requirements
 
-All must hold for an asset to enter Cache Reserve:
+An asset enters Cache Reserve only if all hold:
 
 - Paid Cache Reserve plan active
 - Tiered Cache enabled (strongly recommended)
@@ -15,7 +15,7 @@ All must hold for an asset to enter Cache Reserve:
 
 ## Assets Not Being Cached
 
-**Diagnostics:**
+Run these checks first:
 
 ```bash
 # Check Cache Reserve status and asset eligibility
@@ -24,11 +24,11 @@ curl -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/cache/cache_res
   -H "Authorization: Bearer $API_TOKEN" | jq
 ```
 
-**Verify eligibility** — see Eligibility Requirements above. Common failures:
+Common failures after checking eligibility above:
 - `cf-cache-status: MISS` — check TTL (must be ≥36000s), `Content-Length` header, and blocking headers
 - Review Cloudflare Trace output and Logpush `CacheReserveUsed` field
 
-**Fixes:**
+Typical fixes:
 
 ```typescript
 // Ensure minimum TTL (10+ hours)
@@ -51,7 +51,7 @@ response.headers.set('Vary', 'Accept-Encoding'); // Not *
 
 ## High Class A Operations Costs
 
-Frequent cache misses, short TTLs, or frequent revalidation trigger Class A charges. Increase TTL for stable content and enable Tiered Cache to reduce direct Cache Reserve misses:
+Frequent misses, short TTLs, and repeated revalidation increase Class A charges. For stable content, raise TTLs and use Tiered Cache to reduce direct Cache Reserve misses:
 
 ```typescript
 response.headers.set('Cache-Control', 'public, max-age=86400, stale-while-revalidate=86400');
@@ -64,7 +64,7 @@ response.headers.set('Cache-Control', 'public, max-age=86400, stale-while-revali
 | By URL | Immediately removed | Immediately removed | Free |
 | By Tag | Revalidation triggered (NOT removed) | Immediately removed | Storage costs continue until TTL |
 
-For immediate removal, use purge by URL. For complete removal, disable + clear:
+Use purge by URL for immediate removal. Purge by tag triggers revalidation but does not remove stored content. For complete removal, disable Cache Reserve, then clear it:
 
 ```typescript
 await purgeByURL(['https://example.com/asset.jpg']);
@@ -76,7 +76,7 @@ await clearAllCacheReserve(zoneId, token);
 
 ## Clearing Cache Reserve
 
-**Error**: `"Cache Reserve must be OFF before clearing data"`
+Error: `"Cache Reserve must be OFF before clearing data"`
 
 ```typescript
 const clearProcess = async (zoneId: string, token: string) => {
@@ -105,7 +105,7 @@ const clearProcess = async (zoneId: string, token: string) => {
 | Max file size | Same as R2 limits |
 | Purge/clear time | Up to 24 hours |
 
-**API endpoints:**
+API endpoints:
 
 | Action | Method + Path |
 |--------|--------------|
@@ -125,5 +125,5 @@ const clearProcess = async (zoneId: string, token: string) => {
 - [R2 docs](https://developers.cloudflare.com/r2/)
 - [Smart Shield](https://developers.cloudflare.com/smart-shield/)
 - [Tiered Cache](https://developers.cloudflare.com/cache/how-to/tiered-cache/)
-- [README](./README.md) — overview and core concepts
-- [Patterns](./patterns.md) — best practices and optimization
+- [Cache Reserve overview](./cache-reserve.md) — overview and core concepts
+- [Cache Reserve patterns](./cache-reserve-patterns.md) — best practices and optimization
