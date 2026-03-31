@@ -3055,6 +3055,11 @@
       "hash": "83e56233f5c7fc633bc3a64de90d9b5529a0bd33",
       "at": "2026-03-31T05:34:14Z",
       "pr": 14650
+    },
+    ".agents/marketing-sales/meta-ads-creative-briefs-founder-video-brief.md": {
+      "hash": "a4bf29e5b45891eeb157e02f740965cd3370cb9d",
+      "at": "2026-03-31T06:30:29Z",
+      "pr": 14701
     }
   }
 }
