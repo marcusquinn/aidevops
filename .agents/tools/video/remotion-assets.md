@@ -8,13 +8,9 @@ metadata:
 
 # Importing assets in Remotion
 
-## The public folder
+## Local assets: `public/` + `staticFile()`
 
-Place assets in the `public/` folder at your project root.
-
-## Using staticFile()
-
-You MUST use `staticFile()` to reference files from the `public/` folder:
+Place project assets in `public/` and reference them with `staticFile()`. It returns an encoded URL that keeps local asset paths working, including deployments under subdirectories and filenames with characters like `#`, `?`, and `&`.
 
 ```tsx
 import {Img, staticFile} from 'remotion';
@@ -24,37 +20,20 @@ export const MyComposition = () => {
 };
 ```
 
-The function returns an encoded URL that works correctly when deploying to subdirectories.
+## Supported asset types
 
-## Using with components
-
-**Images:**
+Use `staticFile()` for local images, videos, audio, and fonts:
 
 ```tsx
 import {Img, staticFile} from 'remotion';
+import {Video, Audio} from '@remotion/media';
 
 <Img src={staticFile('photo.png')} />;
-```
-
-**Videos:**
-
-```tsx
-import {Video} from '@remotion/media';
-import {staticFile} from 'remotion';
-
 <Video src={staticFile('clip.mp4')} />;
-```
-
-**Audio:**
-
-```tsx
-import {Audio} from '@remotion/media';
-import {staticFile} from 'remotion';
-
 <Audio src={staticFile('music.mp3')} />;
 ```
 
-**Fonts:**
+For fonts, load the file URL returned by `staticFile()`:
 
 ```tsx
 import {staticFile} from 'remotion';
@@ -66,14 +45,13 @@ document.fonts.add(fontFamily);
 
 ## Remote URLs
 
-Remote URLs can be used directly without `staticFile()`:
+Remote URLs can be passed directly without `staticFile()`:
 
 ```tsx
 <Img src="https://example.com/image.png" />
 <Video src="https://remotion.media/video.mp4" />
 ```
 
-## Important notes
+## Why use Remotion components
 
 - Remotion components (`<Img>`, `<Video>`, `<Audio>`) ensure assets are fully loaded before rendering
-- Special characters in filenames (`#`, `?`, `&`) are automatically encoded
