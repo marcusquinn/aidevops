@@ -8,29 +8,29 @@ Cross-session SQLite FTS5. Commands: `/remember {content}`, `/recall {query}`, `
 
 **CLI**: `memory-helper.sh [store|recall|log|stats|prune|consolidate|export|graduate]`
 
-**Session distillation**: `session-distill-helper.sh auto` — extract learnings at session end. **Auto-capture log**: `/memory-log` or `memory-helper.sh log`.
+**Distillation**: `session-distill-helper.sh auto` at session end. **Auto-capture**: `/memory-log` or `memory-helper.sh log`.
 
-**Graduation**: `/graduate-memories` or `memory-graduate-helper.sh` — promote validated memories (high confidence or 3+ accesses) into shared docs.
+**Graduation**: `/graduate-memories` or `memory-graduate-helper.sh` — promotes high-confidence or 3+-access memories into shared docs.
 
-**Semantic search** (opt-in): `memory-embeddings-helper.sh setup --provider local`. Use `--semantic` or `--hybrid` with recall. **Memory audit**: `memory-audit-pulse.sh run` — dedup, prune, graduate. Runs as Phase 9 of supervisor pulse.
+**Semantic search** (opt-in): `memory-embeddings-helper.sh setup --provider local`. Use `--semantic` or `--hybrid` with recall. **Audit**: `memory-audit-pulse.sh run` — dedup, prune, graduate (Phase 9 of supervisor pulse).
 
-**Namespaces**: `--namespace <name>` for runner isolation, `--shared` to also search global. List: `memory-helper.sh namespaces`.
+**Namespaces**: `--namespace <name>` for runner isolation, `--shared` for global. List: `memory-helper.sh namespaces`.
 
-**Auto-recall**: Surfaces at interactive session start (last 5), session resume, runner dispatch (task-specific), objective runner (objective + failure patterns). Silent when empty; namespace-isolated for runners.
+**Auto-recall**: Surfaces at session start (last 5), resume, runner dispatch (task-specific), objective runner (objective + failure patterns). Silent when empty; namespace-isolated for runners.
 
-**Proactive memory**: Suggest `/remember {description}` on solutions, preferences, workarounds, failed approaches, decisions. `memory-helper.sh store --auto` for auto-captured. Privacy: `<private>` blocks stripped, secrets rejected.
+**Proactive**: Suggest `/remember` on solutions, preferences, workarounds, failed approaches, decisions. `memory-helper.sh store --auto` for auto-captured. Privacy: `<private>` blocks stripped, secrets rejected.
 
 **Full docs**: `reference/memory.md`
 
 ## Inter-Agent Mailbox
 
-SQLite-backed async communication between parallel agent sessions.
+SQLite-backed async messaging between parallel agent sessions.
 
 **CLI**: `mail-helper.sh [send|check|read|archive|prune|status|register|deregister|agents|migrate]`
 
-**Types/lifecycle**: task_dispatch, status_report, discovery, request, broadcast — send → check → read → archive. History preserved; `mail-helper.sh prune` for cleanup (`--force` deletes old archived).
+**Types**: task_dispatch, status_report, discovery, request, broadcast. Lifecycle: send → check → read → archive. `mail-helper.sh prune` for cleanup (`--force` deletes old archived).
 
-**Runner integration**: Runners auto-check inbox before work, send status reports after. Unread messages prepended as context. Migration from TOON files runs on `aidevops update`.
+**Runner integration**: Auto-check inbox before work, send status reports after. Unread messages prepended as context. TOON migration runs on `aidevops update`.
 
 ## MCP On-Demand Loading
 
@@ -40,9 +40,9 @@ MCPs disabled globally, enabled per-agent via YAML frontmatter.
 
 ## Skills & Cross-Tool
 
-Import community skills: `aidevops skill add <source>` (→ `*-skill.md` suffix)
+Import: `aidevops skill add <source>` (→ `*-skill.md` suffix)
 
-**Discover**: `aidevops skills` or `/skills`. Subcommands: `search <query>`, `browse <category>`, `describe <name>`, `categories`, `recommend "<task>"`, `list [--imported]`
+**Discover**: `aidevops skills` or `/skills`. Subcommands: `search`, `browse`, `describe`, `categories`, `recommend`, `list [--imported]`
 
 **Online registry** ([skills.sh](https://skills.sh/)):
 
@@ -53,30 +53,30 @@ aidevops skills install vercel-labs/agent-browser@agent-browser
 
 Local search with no results → `/skills` suggests the public registry automatically.
 
-**Persistence**: Stored in `~/.aidevops/agents/`, tracked in `configs/skill-sources.json`. Daily auto-update. Only `custom/` and `draft/` survive `aidevops update` — re-import or place in `custom/` for persistence.
+**Persistence**: `~/.aidevops/agents/`, tracked in `configs/skill-sources.json`. Daily auto-update. Only `custom/` and `draft/` survive `aidevops update`.
 
 **Full docs**: `scripts/commands/add-skill.md`, `scripts/commands/skills.md`
 
 ## User Settings
 
-Persistent preferences in `~/.config/aidevops/settings.json` (optional; all keys default `true`). Env vars take priority.
+`~/.config/aidevops/settings.json` (optional; all keys default `true`). Env vars take priority.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `auto_update` | `true` | Enable/disable auto-update launchd/cron |
-| `supervisor_pulse` | `true` | Enable/disable supervisor pulse scheduler |
-| `repo_sync` | `true` | Enable/disable daily repo sync |
+| `auto_update` | `true` | Auto-update launchd/cron |
+| `supervisor_pulse` | `true` | Supervisor pulse scheduler |
+| `repo_sync` | `true` | Daily repo sync |
 
-**Shell access**: Scripts sourcing `shared-constants.sh` use `get_setting "key" "default"`.
+**Shell access**: `shared-constants.sh` → `get_setting "key" "default"`.
 
 ## Contribution Watch
 
-Monitors external issues/PRs for new activity via GitHub Notifications API. Managed repos (`pulse: true`) excluded.
+Monitors external issues/PRs via GitHub Notifications API. Managed repos (`pulse: true`) excluded.
 
 **CLI**: `contribution-watch-helper.sh seed|scan|status|install|uninstall`
 
 - `seed` — seed tracked threads from contributed repos
-- `scan` — check for new activity (`--backfill` for low-frequency safety-net sweeps)
+- `scan` — check for new activity (`--backfill` for safety-net sweeps)
 - `install` / `uninstall` — manage scheduled scanner
 
 **Security**: Deterministic metadata checks (no LLM). Comment bodies shown only in interactive sessions after `prompt-guard-helper.sh scan`.
@@ -87,17 +87,17 @@ Per-repo etiquette controls and global daily token budget. Enforces rate limits 
 
 **CLI**: `foss-contribution-helper.sh scan|check|budget|record|reset|status`
 
-- `scan [--dry-run]` — list eligible repos (respects `labels_filter`, skips `blocklist: true`)
+- `scan [--dry-run]` — eligible repos (respects `labels_filter`, skips `blocklist: true`)
 - `check <slug> [tokens]` — gate check (budget + rate limit + blocklist)
 - `budget` — daily token usage vs ceiling
 - `record <slug> <tokens>` — record usage after contribution
 - `status` — all FOSS repos and config
 
-**Config**: `config.jsonc` `foss` section — `enabled`, `max_daily_tokens`, `max_concurrent_contributions`. **repos.json fields**: `foss: true`, `app_type`, `foss_config` (see `reference/foss-contributions.md`).
+**Config**: `config.jsonc` `foss` section — `enabled`, `max_daily_tokens`, `max_concurrent_contributions`. **repos.json**: `foss: true`, `app_type`, `foss_config` (see `reference/foss-contributions.md`).
 
 ## Auto-Update
 
-Polls GitHub every 10 minutes; runs `aidevops update` on new version. Safe during active AI sessions.
+Polls GitHub every 10 min; runs `aidevops update` on new version. Safe during active sessions.
 
 **CLI**: `aidevops auto-update [enable|disable|status|check|logs]`
 
@@ -105,17 +105,17 @@ Polls GitHub every 10 minutes; runs `aidevops update` on new version. Safe durin
 
 **Disable**: `aidevops auto-update disable`, `"auto_update": false` in settings.json, or `AIDEVOPS_AUTO_UPDATE=false`. Priority: env > settings.json > default (`true`). **Logs**: `~/.aidevops/logs/auto-update.log`
 
-**Daily skill refresh**: 24h-gated via `skill-update-helper.sh --auto-update --quiet`. Disable: `AIDEVOPS_SKILL_AUTO_UPDATE=false`. Frequency: `AIDEVOPS_SKILL_FRESHNESS_HOURS=<hours>` (default: 24). View: `aidevops auto-update status`.
+**Skill refresh**: 24h-gated via `skill-update-helper.sh --auto-update --quiet`. Disable: `AIDEVOPS_SKILL_AUTO_UPDATE=false`. Frequency: `AIDEVOPS_SKILL_FRESHNESS_HOURS=<hours>` (default: 24).
 
-**Upstream watch**: `upstream-watch-helper.sh check` monitors external repos for new releases. Config: `.agents/configs/upstream-watch.json`. State: `~/.aidevops/cache/upstream-watch-state.json`. Commands: `status`, `check`, `ack <slug>`.
+**Upstream watch**: `upstream-watch-helper.sh check` — monitors external repos for new releases. Config: `.agents/configs/upstream-watch.json`. State: `~/.aidevops/cache/upstream-watch-state.json`. Commands: `status`, `check`, `ack <slug>`.
 
-**Update behavior**: Shared agents in `~/.aidevops/agents/` overwritten on update. Only `custom/` and `draft/` preserved.
+**Update behavior**: Shared agents overwritten on update. Only `custom/` and `draft/` preserved.
 
 ## Repo Sync
 
-Daily `git pull --ff-only` for all repos in configured parent directories. Fast-forwards clean, default-branch checkouts only. Skips dirty trees, non-default branches, no-remote repos, and worktrees.
+Daily `git pull --ff-only` for repos in configured parent dirs. Fast-forwards clean, default-branch checkouts only. Skips dirty trees, non-default branches, no-remote repos, worktrees.
 
-**CLI**: `aidevops repo-sync [enable|disable|status|check|dirs|config|logs]` — `check` for immediate one-shot (no scheduler).
+**CLI**: `aidevops repo-sync [enable|disable|status|check|dirs|config|logs]` — `check` for immediate one-shot.
 
 **Scheduler**: macOS launchd (`~/Library/LaunchAgents/com.aidevops.aidevops-repo-sync.plist`); Linux cron (daily 3am).
 
@@ -129,4 +129,4 @@ aidevops repo-sync dirs add ~/Projects # Add a parent directory
 aidevops repo-sync dirs remove ~/Old   # Remove a parent directory
 ```
 
-**Logs**: `~/.aidevops/logs/repo-sync.log` — `aidevops repo-sync logs [--tail N|--follow]`. **Status**: `aidevops repo-sync status` — scheduler state, directories, last sync results.
+**Logs**: `~/.aidevops/logs/repo-sync.log` — `aidevops repo-sync logs [--tail N|--follow]`. **Status**: `aidevops repo-sync status`.
