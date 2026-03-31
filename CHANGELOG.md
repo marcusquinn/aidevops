@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.476] - 2026-03-31
+
+### Changed
+
+- Documentation: tighten workerd.md — merge intro sections, compress to table, fix See Also links (52→34 lines) (#14538)
+- Documentation: tighten workerd.md — merge intro sections, compress to table, fix See Also links (52→34 lines) (#14538)
+
+### Fixed
+
+- refill underfilled pulse slots during active monitoring (#14498)
+
 ## [3.5.475] - 2026-03-31
 
 ### Changed
