@@ -18,35 +18,35 @@ tools:
 
 ## Purpose
 
-Cross-channel relationship continuity for multi-channel agents (Matrix, SimpleX, email, CLI) with self-evolving capabilities from observed interaction patterns.
+Provide cross-channel relationship continuity for agents on Matrix, SimpleX, email, CLI, and similar channels.
 
-**Differentiator:** interaction patterns → gap detection → auto TODO → system upgrade. The system upgrades itself based on what users actually need.
+Core loop: interaction patterns → gap detection → auto TODO → system upgrade. The architecture is meant to evolve from observed user needs, not fixed assumptions.
 
-## Design Decisions
+## Design Summary
 
-| Decision | Rationale |
-|----------|-----------|
-| Same `memory.db`, new tables | Cross-queries without cross-DB joins |
-| Three layers, not two | Layer 0 (immutable raw log) is primary — summaries/profiles derived |
-| Versioned profiles via `supersedes_id` | Never update in place — mirrors `learning_relations` pattern |
-| Identity resolution requires confirmation | Never auto-link across channels — suggest, don't assume |
-| AI judgment for thresholds | Haiku-tier (~$0.001/call) handles outliers fixed thresholds can't |
-| Structured summaries over flat dumps | ~2k tokens recovers 80% continuity at 10% cost; raw data in Layer 0 |
+| Decision | Why |
+|----------|-----|
+| Same `memory.db`, new tables | Enables cross-queries without cross-DB joins |
+| Three layers, not two | Layer 0 raw data is primary; summaries and profiles are derived |
+| Versioned profiles via `supersedes_id` | Never update in place; mirrors `learning_relations` |
+| Identity resolution requires confirmation | Never auto-link across channels |
+| AI judgment for thresholds | Haiku-tier (~$0.001/call) handles outliers better than fixed thresholds |
+| Structured summaries over flat dumps | ~2k tokens recovers ~80% continuity at ~10% of raw-dump cost |
 
-## Three-Layer Architecture
+## Layers
 
 | Layer | Role | Tables | Script |
 |-------|------|--------|--------|
 | **Self-evolution loop** | Gap → TODO → upgrade | — | `self-evolution-helper.sh` |
-| **2: Entity model** (strategic) | Cross-channel identity, versioned profiles, capability gaps | entities, entity_channels, entity_profiles, capability_gaps, gap_evidence | `entity-helper.sh` |
-| **1: Conversation context** (tactical) | Active threads, immutable summaries, tone profile, pending actions | conversations, conversation_summaries | `conversation-helper.sh` |
-| **0: Raw interaction log** (immutable) | Source of truth — all layers derived from this; FTS5 indexed; privacy-filtered on write | interactions, interactions_fts | `entity-helper.sh log-interaction` |
+| **2: Entity model** | Cross-channel identity, versioned profiles, capability gaps | entities, entity_channels, entity_profiles, capability_gaps, gap_evidence | `entity-helper.sh` |
+| **1: Conversation context** | Active threads, immutable summaries, tone profile, pending actions | conversations, conversation_summaries | `conversation-helper.sh` |
+| **0: Raw interaction log** | Immutable source of truth; FTS5 indexed; privacy-filtered on write | interactions, interactions_fts | `entity-helper.sh log-interaction` |
 
-**Immutability:** Layer 0 is INSERT-only (no UPDATE/DELETE except privacy deletion). Layers 1–2 use `supersedes_id` chains — new rows supersede old, never edit in place. Current record = row whose `id` appears in no other row's `supersedes_id`. Full audit trail, conflict-free concurrent writes.
+**Immutability:** Layer 0 is INSERT-only except privacy deletion. Layers 1-2 use `supersedes_id` chains: new rows supersede old rows, never edit in place. The current record is the row whose `id` is not referenced by another row's `supersedes_id`. This keeps a full audit trail and avoids concurrent-write conflicts.
 
 ## Database Schema
 
-All tables in `~/.aidevops/.agent-workspace/memory/memory.db` alongside existing `learnings`, `learning_access`, `learning_relations`.
+All tables live in `~/.aidevops/.agent-workspace/memory/memory.db` alongside `learnings`, `learning_access`, and `learning_relations`.
 
 ### Layer 0: `interactions` + `interactions_fts`
 
@@ -55,62 +55,57 @@ All tables in `~/.aidevops/.agent-workspace/memory/memory.db` alongside existing
 | `id` | TEXT PK | `int_YYYYMMDDHHMMSS_hex` |
 | `entity_id` | TEXT NOT NULL | FK → entities.id |
 | `channel` | TEXT NOT NULL | `matrix\|simplex\|email\|cli\|slack\|discord\|telegram\|irc\|web` |
-| `channel_id` | TEXT | channel-specific room/contact |
+| `channel_id` | TEXT | Channel-specific room/contact |
 | `conversation_id` | TEXT | FK → conversations.id |
 | `direction` | TEXT | `inbound\|outbound\|system` |
-| `content` | TEXT NOT NULL | privacy-filtered |
+| `content` | TEXT NOT NULL | Privacy-filtered |
 | `metadata` | TEXT | JSON |
 | `created_at` | TEXT | ISO 8601 UTC |
 
-FTS5 virtual table `interactions_fts` mirrors content with porter unicode61 tokenizer.
+`interactions_fts` is an FTS5 mirror of `content` using the porter unicode61 tokenizer.
 
 ### Layer 1: `conversations` + `conversation_summaries`
 
-**conversations:** `id` (conv_…), `entity_id`, `channel`, `channel_id`, `topic`, `summary` (denormalised latest), `status` (active|idle|closed), `interaction_count`, `first/last_interaction_at`, `created/updated_at`
-
-**conversation_summaries:** `id` (sum_…), `conversation_id`, `summary`, `source_range_start/end` (interaction IDs covered), `source_interaction_count`, `tone_profile` (JSON: formality/technical_level/sentiment/pace), `pending_actions` (JSON array), `supersedes_id`, `created_at`
+- **`conversations`**: `id` (conv_…), `entity_id`, `channel`, `channel_id`, `topic`, `summary` (denormalised latest), `status` (active|idle|closed), `interaction_count`, `first/last_interaction_at`, `created/updated_at`
+- **`conversation_summaries`**: `id` (sum_…), `conversation_id`, `summary`, `source_range_start/end` (interaction IDs covered), `source_interaction_count`, `tone_profile` (JSON: formality/technical_level/sentiment/pace), `pending_actions` (JSON array), `supersedes_id`, `created_at`
 
 ### Layer 2: `entities`, `entity_channels`, `entity_profiles`, `capability_gaps`, `gap_evidence`
 
-**entities:** `id` (ent_…), `name`, `type` (person|agent|service), `display_name`, `aliases`, `notes`, `created/updated_at`
-
-**entity_channels:** PK `(channel, channel_id)` → `entity_id`, `display_name`, `confidence` (confirmed|suggested|inferred), `verified_at`, `created_at`
-
-**entity_profiles:** `id` (prof_…), `entity_id`, `profile_key` (e.g. communication_style), `profile_value`, `evidence`, `confidence` (high|medium|low), `supersedes_id`, `created_at`
-
-**capability_gaps:** `id` (gap_…), `entity_id`, `description`, `evidence`, `frequency`, `status` (detected|todo_created|resolved|wont_fix), `todo_ref` (e.g. t1400 GH#2600), `created/updated_at`
-
-**gap_evidence:** PK `(gap_id, interaction_id)`, `relevance` (primary|supporting), `added_at`
+- **`entities`**: `id` (ent_…), `name`, `type` (person|agent|service), `display_name`, `aliases`, `notes`, `created/updated_at`
+- **`entity_channels`**: PK `(channel, channel_id)` → `entity_id`, `display_name`, `confidence` (confirmed|suggested|inferred), `verified_at`, `created_at`
+- **`entity_profiles`**: `id` (prof_…), `entity_id`, `profile_key` (for example `communication_style`), `profile_value`, `evidence`, `confidence` (high|medium|low), `supersedes_id`, `created_at`
+- **`capability_gaps`**: `id` (gap_…), `entity_id`, `description`, `evidence`, `frequency`, `status` (detected|todo_created|resolved|wont_fix), `todo_ref` (for example `t1400 GH#2600`), `created/updated_at`
+- **`gap_evidence`**: PK `(gap_id, interaction_id)`, `relevance` (primary|supporting), `added_at`
 
 ## Script Responsibilities
 
 | Script | Layer | Responsibility |
 |--------|-------|----------------|
 | `entity-helper.sh` | 0 + 2 | Entity CRUD, channel linking, identity resolution, interaction logging, profile management, context loading |
-| `conversation-helper.sh` | 1 | Conversation lifecycle, context loading (summary + recent messages), AI-judged idle detection, immutable summary generation |
-| `self-evolution-helper.sh` | Loop | Pattern scanning (AI-judged), gap detection, TODO creation via `claim-task-id.sh`, gap lifecycle, pulse integration |
-| `memory-helper.sh` | — | Existing project-scoped memory; entity-linked via `--entity` flag |
+| `conversation-helper.sh` | 1 | Conversation lifecycle, summary + recent-message context loading, AI-judged idle detection, immutable summary generation |
+| `self-evolution-helper.sh` | Loop | AI-judged pattern scanning, gap detection, TODO creation via `claim-task-id.sh`, gap lifecycle, pulse integration |
+| `memory-helper.sh` | — | Existing project-scoped memory with optional `--entity` linkage |
 
 ## Identity Resolution
 
-1. **Suggest, don't assume.** `entity-helper.sh suggest` proposes matches; never auto-links. Separate entities until human confirms via `entity-helper.sh link` or `verify`.
-2. **Confidence levels:** `confirmed` (user verified) | `suggested` (name/pattern match) | `inferred` (display name match)
-3. **Primary key on `(channel, channel_id)`** — each channel identity maps to exactly one entity.
+1. **Suggest, don't assume.** `entity-helper.sh suggest` may propose matches; linking requires `entity-helper.sh link` or `verify`.
+2. **Confidence levels:** `confirmed` (user verified), `suggested` (name or pattern match), `inferred` (display-name match).
+3. **Primary key on `(channel, channel_id)`** means each channel identity maps to exactly one entity.
 
 ## Self-Evolution Loop
 
-Layer 0 interactions → AI pattern detection (haiku, ~$0.001/call) → gap identification (dedup, frequency tracking) → TODO creation with evidence trail (interaction IDs) → normal task lifecycle (dispatch → PR → merge) → updated entity model (Layer 2) → cycle continues.
+Layer 0 interactions → AI pattern detection (haiku, ~$0.001/call) → deduped gap identification with frequency tracking → TODO creation with interaction-ID evidence → normal task lifecycle (dispatch → PR → merge) → updated Layer 2 model.
 
-**Gap lifecycle:** `detected` → `todo_created` → `resolved` | `wont_fix`. Auto-TODO at frequency ≥ 3 (configurable) via `claim-task-id.sh` with full evidence trail.
+**Gap lifecycle:** `detected` → `todo_created` → `resolved` | `wont_fix`. Auto-TODO creation starts at frequency ≥ 3 (configurable) and keeps the evidence trail.
 
 ## Intelligent Threshold Replacement
 
 | Old (deterministic) | New (intelligent) | Script |
 |---------------------|-------------------|--------|
-| `sessionIdleTimeout: 300` | AI judges "has this conversation naturally paused?" | `conversation-helper.sh idle-check` |
+| `sessionIdleTimeout: 300` | AI judges whether a conversation has naturally paused | `conversation-helper.sh idle-check` |
 | `DEFAULT_MAX_AGE_DAYS=90` | AI judges relevance to active entity relationships | `memory-helper.sh` (future) |
 | Exact-string dedup | Semantic similarity via embeddings | `memory-helper.sh dedup` |
-| Fixed compaction at token limit | AI judges what's worth preserving per entity | `conversation-helper.sh summarise` |
+| Fixed compaction at token limit | AI judges what is worth preserving per entity | `conversation-helper.sh summarise` |
 
 ## Integration
 
