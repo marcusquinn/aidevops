@@ -18,10 +18,10 @@ tools:
 
 ## Quick Reference
 
-- **Resume first**: `git worktree list` or `wt list`
-- **Preferred start**: `wt switch -c {type}/{name}` from the canonical repo on `main`
-- **Fallback**: `worktree-helper.sh add {type}/{name}`
-- **Canonical repo rule**: keep `~/Git/{repo}/` on `main`; do branch work in the linked worktree path
+- Resume existing work first: `git worktree list` or `wt list`
+- Start from the canonical repo on `main`: `wt switch -c {type}/{name}`
+- Fallback: `worktree-helper.sh add {type}/{name}`
+- Keep `~/Git/{repo}/` on `main`; do task work in the linked worktree path
 
 | Task Type | Branch Prefix | Subagent |
 |-----------|---------------|----------|
@@ -33,33 +33,29 @@ tools:
 | Spike, POC | `experiment/` | `branch/experiment.md` |
 | Version release | `release/` | `branch/release.md` |
 
-**Branch naming**: `{type}/{short-description}` — lowercase, hyphenated, ~50 chars max. Example: `feature/user-dashboard`, `bugfix/123-login-timeout`; releases use semver (`release/1.2.0`).
-
-**Start**: `wt switch -c {type}/{description}`. Fallback: `worktree-helper.sh add {type}/{description}`.
-
-**Task status**: move the task to `## In Progress`, add `started:<ISO>`, then `beads-sync-helper.sh push`.
-
-**Lifecycle**: Create → Develop → Preflight → Push → PR → Review → Merge → Cleanup. Add Version → Release → Postflight only for releases.
+- Branch names: `{type}/{short-description}` — lowercase, hyphenated, ~50 chars max. Example: `feature/user-dashboard`, `bugfix/123-login-timeout`; releases use semver (`release/1.2.0`).
+- Planning tasks: move the task to `## In Progress`, add `started:<ISO>`, then `beads-sync-helper.sh push`.
+- Standard lifecycle: Create → Develop → Preflight → Push → PR → Review → Merge → Cleanup. Releases add Version → Release → Postflight.
 
 <!-- AI-CONTEXT-END -->
 
-Read `workflows/git-workflow.md` before branch creation for issue URL handling, fork detection, commit/PR rules, and repo setup. Read `workflows/worktree.md` for worktree creation and cleanup. Names from planning files: slugify the task description — lowercase, spaces→hyphens, special chars removed.
+Before creating a branch, read `workflows/git-workflow.md` for issue URL handling, fork detection, commit/PR rules, and repo setup. Read `workflows/worktree.md` for worktree creation and cleanup. If the name comes from a planning file, slugify the task description: lowercase, spaces→hyphens, special chars removed.
 
 ## Branch Lifecycle
 
-| Stage | Action | Command / Agent | Required |
-|-------|--------|-----------------|----------|
-| 1. Create | Create linked worktree from `main` | `wt switch -c {type}/{desc}` or `worktree-helper.sh add {type}/{desc}` | Yes |
-| 2. Develop | Conventional commits | `branch/{type}.md`, domain agents | Yes |
-| 3. Preflight | Local quality checks | `.agents/scripts/linters-local.sh --fast` → `workflows/preflight.md` | Yes |
-| 4. Version | Bump for releases | `.agents/scripts/version-manager.sh bump [major\|minor\|patch]` → `workflows/version-bump.md` | Releases only |
-| 5. Push | Remote backup | `git push -u origin HEAD` | Yes |
-| 6. PR | Create PR/MR | `gh pr create --fill` / `glab mr create --fill` → `workflows/pr.md` | Yes |
-| 7. Review | Address feedback | `git add . && git commit -m "fix: ..." && git push` → `workflows/code-audit-remote.md` | Yes |
-| 8. Merge | Squash merge | `gh pr merge --squash` | Yes |
-| 9. Release | Tag and publish | `.agents/scripts/version-manager.sh release [major\|minor\|patch]` → `workflows/release.md` | Releases only |
-| 10. Postflight | Verify CI/CD | `gh run watch $(gh run list --limit=1 --json databaseId -q '.[0].databaseId') --exit-status` → `workflows/postflight.md` | Releases only |
-| 11. Cleanup | Remove merged worktree and delete branch if needed | `worktree-helper.sh remove {type}/{desc}` / `git push origin --delete {name}` | Yes |
+| Stage | Command / Agent | Notes |
+|-------|-----------------|-------|
+| Create | `wt switch -c {type}/{desc}` or `worktree-helper.sh add {type}/{desc}` | Create a linked worktree from `main` |
+| Develop | `branch/{type}.md`, domain agents | Use conventional commits |
+| Preflight | `.agents/scripts/linters-local.sh --fast` → `workflows/preflight.md` | Required before push |
+| Version | `.agents/scripts/version-manager.sh bump [major\|minor\|patch]` → `workflows/version-bump.md` | Releases only |
+| Push | `git push -u origin HEAD` | Remote backup |
+| PR | `gh pr create --fill` / `glab mr create --fill` → `workflows/pr.md` | Required |
+| Review | `git add . && git commit -m "fix: ..." && git push` → `workflows/code-audit-remote.md` | Address feedback |
+| Merge | `gh pr merge --squash` | Required |
+| Release | `.agents/scripts/version-manager.sh release [major\|minor\|patch]` → `workflows/release.md` | Releases only |
+| Postflight | `gh run watch $(gh run list --limit=1 --json databaseId -q '.[0].databaseId') --exit-status` → `workflows/postflight.md` | Releases only |
+| Cleanup | `worktree-helper.sh remove {type}/{desc}` / `git push origin --delete {name}` | Remove merged worktree; delete branch if needed |
 
 ## Worktree Rules
 
