@@ -1614,7 +1614,7 @@
     ".agents/scripts/commands/seo-analyze.md": {
       "hash": "4e16b075f7d019c5c8f65815e2cbb7d9eb484840",
       "at": "2026-03-31T05:34:33Z",
-      "pr": null
+      "pr": 14655
     },
     ".agents/seo/debug-favicon.md": {
       "hash": "045e2c9b649ddcdfcd71fd207f187edc86071587",
