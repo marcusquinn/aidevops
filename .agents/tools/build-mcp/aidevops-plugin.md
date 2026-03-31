@@ -25,23 +25,23 @@ tools:
 
 ## Runtime surface
 
-| Surface | Mechanism | Notes |
+| Surface | Mechanism | Purpose |
 |---|---|---|
-| Agent loading + MCP registration | `config` hook | Runtime-only layer |
-| Custom tools | `tool` registration | Adds aidevops-specific tools |
-| Quality gates | `tool.execute.before` / `tool.execute.after` | Enforces local checks and logging |
+| Agent loading + MCP registration | `config` hook | Adds runtime-only agent and MCP state |
+| Custom tools | `tool` registration | Exposes aidevops-specific tools |
+| Quality gates | `tool.execute.before` / `tool.execute.after` | Runs checks, tracking, and audit logging |
 | Shell environment | `shell.env` hook | Exports aidevops paths and version |
 | Session compaction | `experimental.session.compacting` hook | Preserves loop state across resets |
 
-## Hook details
+## Hooks
 
-### `config` hook
+### `config`
 
-- Loads subagents from `~/.aidevops/agents/`, parses YAML frontmatter, injects them into `config.agent`, and skips agents already defined by shell-generated config (`t008.1`).
+- Loads subagents from `~/.aidevops/agents/`, parses YAML frontmatter, injects them into `config.agent`, and skips shell-generated entries (`t008.1`).
 - Registers MCP servers from a data-driven registry instead of re-running `generate-opencode-agents.sh` (`t008.2`).
 - Registry fields: `name`, `type` (`local`/`remote`), `command` or `url`, `eager`, `toolPattern`, `globallyEnabled`, `requiresBinary`, `macOnly`.
 - `AGENT_MCP_TOOLS` maps agents to tool globs, for example `@dataforseo` -> `dataforseo_*`.
-- Startup policy: all 11 MCPs are lazy-loaded, saving ~7K tokens at startup.
+- Startup policy: all 11 MCPs are lazy-loaded, saving ~7K startup tokens.
 
 | MCP | Type | Global tools |
 |---|---|---|
@@ -62,7 +62,7 @@ tools:
 | Hook | Coverage |
 |---|---|
 | `tool` registration | `aidevops`, `aidevops_memory`, `aidevops_pre_edit_check`, `model-accounts-pool` |
-| `tool.execute.before` (`t008.3`) | ShellCheck (`-x -S warning`), return validation, `local var="$1"` enforcement, Markdown MD031, trailing whitespace, secret scanning on writes |
+| `tool.execute.before` (`t008.3`) | ShellCheck (`-x -S warning`), return validation, `local var="$1"`, Markdown MD031, trailing whitespace, write-time secret scanning |
 | `tool.execute.after` (`t008.3`) | Git operation detection, pattern tracking via cross-session memory, audit logging to `~/.aidevops/logs/quality-hooks.log` |
 | `shell.env` | Prepends `~/.aidevops/agents/scripts/` to `PATH`; exports `AIDEVOPS_AGENTS_DIR`, `AIDEVOPS_WORKSPACE_DIR`, `AIDEVOPS_VERSION` |
 | `experimental.session.compacting` | Preserves active agent state, loop guardrails, session checkpoint, project-scoped memories (limit 5), git context, pending mailbox messages |
@@ -71,12 +71,12 @@ tools:
 
 | Decision | Why |
 |---|---|
-| Single-file ESM, no build step | OpenCode loads `file://` ESM directly; avoids TypeScript compilation |
+| Single-file ESM, no build step | OpenCode loads `file://` ESM directly; no TypeScript build needed |
 | Zero runtime dependencies | Uses built-in Node.js APIs plus a lightweight YAML parser, not `gray-matter` or `zod` |
-| Plugin complements shell setup | Shell handles primary config; plugin adds runtime behavior |
-| Subagents load only in `config` hook | Prevents auto-registration from overriding intentional primary-agent config |
+| Plugin complements shell setup | Shell owns primary config; plugin adds runtime behavior |
+| Subagents load only in `config` | Avoids overriding intentional primary-agent config |
 | Data-driven MCP registry | Captures runtime binary checks and platform logic that static JSON cannot |
-| All MCPs lazy-loaded | Reduces startup cost by ~7K tokens |
+| All MCPs lazy-loaded | Cuts startup cost by ~7K tokens |
 
 ## References
 
