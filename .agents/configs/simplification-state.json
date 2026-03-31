@@ -1051,6 +1051,11 @@
       "at": "2026-03-28T15:30:49Z",
       "pr": 11897
     },
+    ".agents/services/communications/telfon.md": {
+      "hash": "02d4e621aff6b2ef17eecba67d3189df35171c09",
+      "at": "2026-03-31T04:46:03Z",
+      "pr": 14595
+    },
     ".agents/services/communications/twilio.md": {
       "hash": "e0541a43f7a10413213681c64f35a4bfd4dd6616",
       "at": "2026-03-28T14:15:37Z",
