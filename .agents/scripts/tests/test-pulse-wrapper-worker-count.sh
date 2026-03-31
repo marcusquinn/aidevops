@@ -69,6 +69,11 @@ gh() {
 		return 0
 	fi
 
+	if [[ "${1:-}" == "api" && "${2:-}" == "user" ]]; then
+		printf 'owner\n'
+		return 0
+	fi
+
 	printf 'unsupported gh invocation in test stub\n' >&2
 	return 1
 }
@@ -287,6 +292,61 @@ test_count_runnable_candidates_counts_passive_assignee_backlog() {
 	return 0
 }
 
+test_count_runnable_candidates_keeps_stdout_numeric_with_debug() {
+	local repos_json_path="${HOME}/.config/aidevops/repos.json"
+	mkdir -p "$(dirname "$repos_json_path")"
+	printf '{"initialized_repos":[{"slug":"owner/repo","path":"/tmp/repo","pulse":true,"maintainer":"maintainer-bot"}]}\n' >"$repos_json_path"
+	REPOS_JSON="$repos_json_path"
+
+	GH_ISSUE_LIST_JSON='[
+	  {"number":1,"title":"unassigned","updatedAt":"2026-03-31T00:00:00Z","assignees":[],"labels":[]}
+	]'
+	GH_PR_LIST_JSON='[
+	  {"reviewDecision":"CHANGES_REQUESTED","statusCheckRollup":[]}
+	]'
+
+	local count stderr_file
+	stderr_file="${TEST_ROOT}/count-runnable-debug.stderr"
+	PULSE_DEBUG=1 count=$(count_runnable_candidates 2>"$stderr_file")
+
+	if [[ "$count" == "2" ]] && grep -q 'count_runnable_candidates repo=owner/repo issues=1 prs=1 total=2' "$stderr_file"; then
+		print_result "count_runnable_candidates keeps stdout numeric with debug enabled" 0
+		return 0
+	fi
+
+	print_result "count_runnable_candidates keeps stdout numeric with debug enabled" 1 \
+		"Expected numeric stdout 2 with stderr debug log; got count='${count}', stderr='$(tr '\n' '|' <"$stderr_file")'"
+	return 0
+}
+
+test_count_queued_without_worker_keeps_stdout_numeric_with_debug() {
+	local repos_json_path="${HOME}/.config/aidevops/repos.json"
+	mkdir -p "$(dirname "$repos_json_path")"
+	printf '{"initialized_repos":[{"slug":"owner/repo","path":"/tmp/repo","pulse":true}]}\n' >"$repos_json_path"
+	REPOS_JSON="$repos_json_path"
+
+	GH_ISSUE_LIST_JSON='[
+	  {"number":11,"assignees":[]}
+	]'
+	has_worker_for_repo_issue() {
+		return 1
+	}
+
+	local count stderr_file
+	stderr_file="${TEST_ROOT}/count-queued-debug.stderr"
+	PULSE_DEBUG=1 count=$(count_queued_without_worker 2>"$stderr_file")
+	unset -f has_worker_for_repo_issue
+
+	if [[ "$count" == "1" ]] && grep -q 'count_queued_without_worker repo=owner/repo queued=1' "$stderr_file" && grep -q 'count_queued_without_worker repo=owner/repo issue=11 missing_worker=true' "$stderr_file"; then
+		print_result "count_queued_without_worker keeps stdout numeric with debug enabled" 0
+		return 0
+	fi
+
+	print_result "count_queued_without_worker keeps stdout numeric with debug enabled" 1 \
+		"Expected numeric stdout 1 with stderr debug logs; got count='${count}', stderr='$(tr '\n' '|' <"$stderr_file")'"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -301,6 +361,8 @@ main() {
 	test_counts_review_issue_pr_workers
 	test_list_dispatchable_candidates_include_passive_assignees
 	test_count_runnable_candidates_counts_passive_assignee_backlog
+	test_count_runnable_candidates_keeps_stdout_numeric_with_debug
+	test_count_queued_without_worker_keeps_stdout_numeric_with_debug
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then

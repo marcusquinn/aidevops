@@ -5141,6 +5141,7 @@ count_runnable_candidates() {
 		local pr_count
 		pr_count=$(echo "$pr_json" | jq '[.[] | select(.reviewDecision == "CHANGES_REQUESTED" or ((.statusCheckRollup // []) | any((.conclusion // .state) == "FAILURE")))] | length' 2>/dev/null) || pr_count=0
 		[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+		pulse_count_debug_log "count_runnable_candidates repo=${slug} issues=${issue_count} prs=${pr_count} total=$((issue_count + pr_count))"
 
 		total=$((total + issue_count + pr_count))
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null)
@@ -5174,6 +5175,7 @@ count_queued_without_worker() {
 		local queued_count
 		queued_count=$(echo "$queued_json" | jq 'length' 2>/dev/null) || queued_count=0
 		[[ "$queued_count" =~ ^[0-9]+$ ]] || queued_count=0
+		pulse_count_debug_log "count_queued_without_worker repo=${slug} queued=${queued_count}"
 		if [[ "$queued_count" -eq 0 ]]; then
 			continue
 		fi
@@ -5190,11 +5192,32 @@ count_queued_without_worker() {
 
 			if ! has_worker_for_repo_issue "$issue_num" "$slug"; then
 				total=$((total + 1))
+				pulse_count_debug_log "count_queued_without_worker repo=${slug} issue=${issue_num} missing_worker=true"
 			fi
 		done < <(echo "$queued_json" | jq -r --arg self "$self_login" '.[] | .number as $n | ((.assignees | length) > 0 and (([.assignees[].login] | index($self)) == null)) as $assigned_other | "\($n)|\($assigned_other)"' 2>/dev/null)
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
 
 	echo "$total"
+	return 0
+}
+
+#######################################
+# Emit debug logs for pulse count helpers without polluting stdout.
+#
+# Debug logs are opt-in via PULSE_DEBUG and always go to stderr so helpers that
+# are consumed numerically keep a strict stdout contract.
+#
+# Arguments:
+#   $1 - message to log
+# Returns: 0 always
+#######################################
+pulse_count_debug_log() {
+	local message="$1"
+	case "${PULSE_DEBUG:-}" in
+	1 | true | TRUE | yes | YES | on | ON)
+		printf '[pulse-wrapper] DEBUG: %s\n' "$message" >&2
+		;;
+	esac
 	return 0
 }
 
