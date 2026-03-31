@@ -3,11 +3,11 @@ mode: subagent
 ---
 # Conversation Starter Prompts
 
-Shared prompts for Build+ agent to ensure consistent UX.
+Shared prompts for Build+ so session opening stays consistent.
 
 ## Inside Git Repository
 
-**First**: Check git context and auto-recall recent lessons:
+Before prompting, check git context and auto-recall recent lessons:
 
 ```bash
 BRANCH=$(git branch --show-current)
@@ -25,25 +25,23 @@ if [[ -n "$RECENT_MEMORIES" ]]; then
 fi
 ```
 
-**Auto-recall behavior**: The memory system automatically surfaces recent lessons
-at session start. If results are returned, briefly note any relevant lessons
-(e.g., "Recent lesson: always read domain subagents before content generation tasks").
-Do not dump raw memory output — summarize actionable items only.
+- If recent memories are returned, summarize only actionable lessons.
+- Do not dump raw memory output.
 
-If on `main` branch, include this note in the prompt:
+If on `main`, include:
 
 > **Note**: You're on the `main` branch. For file changes, I'll check for existing branches and offer options before proceeding.
 
-What are you working on?
+Use this prompt:
 
-**Planning & Analysis** (Build+ deliberation mode):
+> What are you working on?
 >
+> **Planning & Analysis** (Build+ deliberation mode)
 > 1. Architecture Analysis
 > 2. Code Review (`workflows/code-audit-remote.md`)
 > 3. Documentation Review
 >
-> **Implementation** (Build+):
->
+> **Implementation** (Build+)
 > 1. Feature Development (`workflows/feature-development.md`, `workflows/branch/feature.md`)
 > 2. Bug Fixing (`workflows/bug-fixing.md`, `workflows/branch/bugfix.md`)
 > 3. Hotfix (`workflows/branch/hotfix.md`)
@@ -55,9 +53,7 @@ What are you working on?
 > 9. Work on Issue (paste GitHub/GitLab/Gitea issue URL)
 > 10. Something else (describe)
 
-**For implementation tasks (1-4, 9-10)**: Read `workflows/git-workflow.md` first for branch creation, issue URL handling, and fork detection.
-
-After selection, read the relevant workflow subagent to add context.
+For implementation tasks (1-4, 9-10), read `workflows/git-workflow.md` first for branch creation, issue URL handling, and fork detection. After selection, read the relevant workflow subagent.
 
 ## Outside Git Repository
 
@@ -66,7 +62,7 @@ After selection, read the relevant workflow subagent to add context.
 > 1. Local project (provide path)
 > 2. Remote services
 
-If "Remote services", show available services:
+If the user picks remote services, show:
 
 > Which service do you need?
 >
@@ -80,4 +76,4 @@ If "Remote services", show available services:
 > 8. SES (`services/email/ses.md`)
 > 9. Spaceship (`services/hosting/spaceship.md`)
 
-After selection, read the relevant service subagent to add context.
+After selection, read the relevant service subagent.
