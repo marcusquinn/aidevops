@@ -20,36 +20,31 @@ tools:
 
 - **Command**: `/list-keys` or `@list-keys`
 - **Script**: `~/.aidevops/agents/scripts/list-keys-helper.sh`
-- **Purpose**: Show all API keys available in the session with their file paths
-- **Security**: Shows key names only, never exposes actual values
+- **Purpose**: Show available API key names plus source paths
+- **Security**: Names and locations only — never values
 
-**Key Sources** (checked in order):
-1. `~/.config/aidevops/credentials.sh` - Primary credential store (600 permissions)
-2. `~/.zshrc`, `~/.bashrc`, etc. - Shell config exports (credential patterns)
-3. Environment variables - Session-only keys matching `*_KEY`, `*_TOKEN`, `*_SECRET`, etc.
-4. `~/.config/coderabbit/api_key` - CodeRabbit CLI token
-5. `configs/*-config.json` - Repository-specific configs (gitignored)
+**Key sources** (checked in order):
+1. `~/.config/aidevops/credentials.sh` — primary credential store (600 perms)
+2. Shell configs (`~/.zshrc`, `~/.bashrc`, etc.) — exported credential patterns
+3. Environment variables — session-only keys such as `*_KEY`, `*_TOKEN`, `*_SECRET`
+4. `~/.config/coderabbit/api_key` — CodeRabbit CLI token
+5. `configs/*-config.json` — repo-specific configs (gitignored)
 
 <!-- AI-CONTEXT-END -->
 
 ## Usage
 
 ```bash
-# List all keys with sources
 ~/.aidevops/agents/scripts/list-keys-helper.sh
-
-# Or use the command
 /list-keys
 ```
 
-## Output Format
+## Output
 
-The script outputs a table showing:
-- Key name (environment variable name)
-- Source file path
-- Status (loaded/not loaded in current session)
-
-Example output:
+Shows a table with:
+- key name
+- source path
+- status in the current session
 
 ```text
 API Keys Available in Session
@@ -75,32 +70,30 @@ Total: 7 keys from 4 sources
 
 ## Status Indicators
 
-| Status | Color | Meaning |
-|--------|-------|---------|
-| `[loaded]` | Green | Key has a valid value in the session |
-| `[placeholder]` | Red | Key contains a placeholder value (e.g., `YOUR_KEY_HERE`, `changeme`, `xxx`) |
-| `[not loaded]` | Yellow | Key is defined but not loaded in current session |
-| `[configured]` | Blue | Key exists in a config file |
+| Status | Meaning |
+|--------|---------|
+| `[loaded]` | Valid value is loaded in the session |
+| `[placeholder]` | Placeholder value such as `YOUR_KEY_HERE`, `changeme`, or `xxx` |
+| `[not loaded]` | Defined but not loaded in the current session |
+| `[configured]` | Present in a config file |
 
-### Placeholder Detection
-
-The script detects common placeholder patterns:
+Placeholder detection covers:
 - `YOUR_*_HERE`, `REPLACE_*`, `CHANGEME`, `FIXME`, `TODO`
 - `example`, `sample`, `test-key`, `dummy`, `fake`
 - `xxx`, `yyy`, `zzz`, `placeholder`, `none`, `null`
-- Template markers: `<...>`, `{...}`, `[...]`
-- Repeated characters: `xxxx`, `0000`, etc.
+- template markers: `<...>`, `{...}`, `[...]`
+- repeated characters: `xxxx`, `0000`, etc.
 
 ## Security Notes
 
-- This tool NEVER displays actual key values
-- Only shows key names and their storage locations
-- Use `echo "${KEY_NAME:0:10}..."` to verify a specific key exists
-- All credential files should have 600 permissions
+- Never displays actual key values
+- Only reports key names and storage locations
+- Use `echo "${KEY_NAME:0:10}..."` only to confirm a specific key exists
+- Credential files should have 600 permissions
 
 ## Integration
 
-This subagent is called by:
-- `/list-keys` slash command
-- `@list-keys` agent reference
-- `api-keys list` tool action (simplified version)
+Called by:
+- `/list-keys`
+- `@list-keys`
+- `api-keys list` (simplified action)
