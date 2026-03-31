@@ -1,22 +1,18 @@
 # Workers Gotchas
 
-## CPU Time Limits
+## Design Constraints
 
-**Standard**: 10ms CPU time  
-**Unbound**: 30ms CPU time
+### CPU Budget
 
-**Solutions**:
-- Use `ctx.waitUntil()` for background work
-- Offload heavy compute to Durable Objects
-- Consider Workers AI for ML workloads
+Standard: 10ms CPU time. Unbound: 30ms CPU time.
 
-## No Persistent State in Worker
+Use `ctx.waitUntil()` for background work, Durable Objects for heavy compute, and Workers AI for ML workloads.
 
-Workers are stateless between requests - module-level variables reset unpredictably.
+### No Persistent State in Worker
 
-**Solution**: Use KV, D1, or Durable Objects for persistent state.
+Workers are stateless between requests. Module-level variables reset unpredictably, so store persistent state in KV, D1, or Durable Objects.
 
-## Response Bodies Are Streams
+### Response Bodies Are Streams
 
 ```typescript
 // ❌ BAD
@@ -31,7 +27,7 @@ await logBody(text);
 return new Response(text, response);
 ```
 
-## No Node.js Built-ins (by default)
+### No Node.js Built-ins by Default
 
 ```typescript
 // ❌ BAD
@@ -44,7 +40,7 @@ const data = await env.MY_BUCKET.get('file.txt');
 { "compatibility_flags": ["nodejs_compat_v2"] }
 ```
 
-## Fetch in Global Scope Forbidden
+### Fetch in Global Scope Is Forbidden
 
 ```typescript
 // ❌ BAD
@@ -63,7 +59,7 @@ export default {
 };
 ```
 
-## Limits
+## Runtime Limits
 
 | Resource | Limit |
 |----------|-------|
@@ -79,19 +75,19 @@ export default {
 
 ### "Error: Body has already been used"
 
-**Cause**: Response body read twice  
-**Solution**: Clone response before reading: `response.clone()`
+- Cause: response body read twice
+- Solution: clone before reading with `response.clone()`
 
 ### "Error: Too much CPU time used"
 
-**Cause**: Exceeded CPU limit  
-**Solution**: Use `ctx.waitUntil()` for background work
+- Cause: exceeded CPU limit
+- Solution: move background work into `ctx.waitUntil()`
 
 ### "Error: Subrequest depth limit exceeded"
 
-**Cause**: Too many nested subrequests  
-**Solution**: Flatten request chain, use service bindings
+- Cause: too many nested subrequests
+- Solution: flatten the request chain and use service bindings
 
 ## See Also
 
-- [Patterns](./patterns.md) - Best practices
+- [workers-patterns.md](./workers-patterns.md) - Best practices
