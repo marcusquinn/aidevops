@@ -1,5 +1,5 @@
 ---
-description: Directory of service links and URLs
+description: Service consoles and documentation directory
 mode: subagent
 tools:
   read: true
@@ -17,14 +17,11 @@ tools:
 
 ## Quick Reference
 
-- **Hosting**: Hostinger (hpanel.hostinger.com), Hetzner (console.hetzner.cloud), Closte (app.closte.com)
-- **Deployment**: Coolify (coolify.io/docs), Cloudron (docs.cloudron.io)
-- **DNS**: Cloudflare (dash.cloudflare.com), Route 53 (console.aws.amazon.com/route53)
-- **Git**: GitHub (github.com), GitLab (gitlab.com), Gitea (gitea.io)
-- **Quality**: SonarCloud (sonarcloud.io), CodeFactor (codefactor.io), Codacy (app.codacy.com), CodeRabbit (coderabbit.ai)
-- **Security**: Vaultwarden (github.com/dani-garcia/vaultwarden)
-- **AI Tools**: Factory AI (factory.ai), Augment (augmentcode.com), Warp (warp.dev)
-- **MCP**: Chrome DevTools, Playwright, Ahrefs, Perplexity, Google Search Console, Context7, LocalWP
+- **Hosting / deployment**: Hostinger, Hetzner, Closte, Coolify, Cloudron
+- **DNS**: Cloudflare, Route 53, Spaceship, 101domains, Namecheap
+- **Development**: GitHub, GitLab, Gitea, LocalWP, Playwright, Pandoc
+- **Security / quality**: Vaultwarden, SonarCloud, CodeFactor, Codacy, CodeRabbit
+- **AI / MCP**: Factory AI, Augment Code, Claude, OpenAI, Chrome DevTools, Playwright, Context7, LocalWP
 
 <!-- AI-CONTEXT-END -->
 
@@ -117,12 +114,14 @@ tools:
 
 ## Development Tools & Support
 
-**CLI tools**: [jq](https://stedolan.github.io/jq/) · [yq](https://mikefarah.gitbook.io/yq/) · [ShellCheck](https://www.shellcheck.net/) · [Homebrew](https://brew.sh/)
-
-**Support**: [GitHub Issues](https://github.com/marcusquinn/aidevops/issues) · [GitHub Discussions](https://github.com/marcusquinn/aidevops/discussions) · [Stack Overflow](https://stackoverflow.com/) · [Reddit r/devops](https://www.reddit.com/r/devops/)
+| Category | Links |
+|----------|-------|
+| CLI tools | [jq](https://stedolan.github.io/jq/) · [yq](https://mikefarah.gitbook.io/yq/) · [ShellCheck](https://www.shellcheck.net/) · [Homebrew](https://brew.sh/) |
+| Support | [GitHub Issues](https://github.com/marcusquinn/aidevops/issues) · [GitHub Discussions](https://github.com/marcusquinn/aidevops/discussions) · [Stack Overflow](https://stackoverflow.com/) · [Reddit r/devops](https://www.reddit.com/r/devops/) |
 
 ## Framework Documentation
 
-**Core**: [README](https://github.com/marcusquinn/aidevops) · [AGENTS.md](https://github.com/marcusquinn/aidevops/blob/main/AGENTS.md) · [Security](.agents/aidevops/security.md) · [API Integrations](.agents/aidevops/api-integrations.md)
-
-**Platform guides**: [MCP Integrations](.agents/aidevops/mcp-integrations.md) · [Quality Control](.agents/tools/code-review/code-standards.md) · [Troubleshooting](.agents/aidevops/troubleshooting.md)
+| Category | Links |
+|----------|-------|
+| Core | [README](https://github.com/marcusquinn/aidevops) · [AGENTS.md](https://github.com/marcusquinn/aidevops/blob/main/AGENTS.md) · [Security](.agents/aidevops/security.md) · [API Integrations](.agents/aidevops/api-integrations.md) |
+| Platform guides | [MCP Integrations](.agents/aidevops/mcp-integrations.md) · [Quality Control](.agents/tools/code-review/code-standards.md) · [Troubleshooting](.agents/aidevops/troubleshooting.md) |
