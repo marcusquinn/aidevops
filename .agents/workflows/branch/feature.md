@@ -30,19 +30,22 @@ git checkout -b feature/{description}
 
 ## When to Use
 
-- New functionality or capabilities
-- New integrations
-- Significant enhancements
+- New functionality or integrations
+- Significant capability expansion
 
-## Unique Guidance
+**Not for** bug fixes, refactors, or docs/config-only work.
 
-For detailed feature implementation patterns, see `workflows/feature-development.md`.
+## Guidance
+
+- Branch names use `feature/{description}`.
+- Commits use `feat:`.
+- Minor-version guidance applies when the branch ships user-visible capability, not internal-only maintenance.
+- For implementation patterns, see `workflows/feature-development.md`.
 
 ## Examples
 
 ```bash
 feature/user-dashboard
-feature/123-api-rate-limiting
 feature/export-to-csv
 ```
 
@@ -50,10 +53,4 @@ feature/export-to-csv
 
 ```bash
 feat: add user authentication
-
-- Implement OAuth2 flow
-- Add session management
-- Create login/logout endpoints
-
-Closes #123
 ```
