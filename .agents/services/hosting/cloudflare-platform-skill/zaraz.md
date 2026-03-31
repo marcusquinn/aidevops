@@ -1,10 +1,10 @@
 # Cloudflare Zaraz
 
-Server-side tag manager: offloads third-party scripts (analytics, ads, chat) to Cloudflare's edge. Zero client-side JS overhead; single HTTP request for all tools; privacy-first data control.
+Server-side tag manager: offloads third-party scripts (analytics, ads, chat) to Cloudflare's edge. Zero client-side JS; single HTTP request for all tools; privacy-first data control.
 
 ## Setup
 
-Dashboard: domain > Zaraz > Start setup > add tools > configure triggers and actions. Config file (`zaraz.toml`):
+Dashboard: domain > Zaraz > Start setup > add tools > configure triggers/actions. Config (`zaraz.toml`):
 
 ```toml
 [settings]
@@ -28,7 +28,7 @@ zaraz.set('userId', 'user_12345');
 zaraz.set({ email: '[email protected]', country: 'US' });
 ```
 
-Tool-specific event names follow each platform's conventions (e.g. GA4: `sign_up`; Facebook Pixel: `Purchase`; Google Ads: `conversion` with `send_to`).
+Event names follow platform conventions (GA4: `sign_up`; Facebook Pixel: `Purchase`; Google Ads: `conversion` with `send_to`).
 
 Data layer: `window.zaraz.dataLayer = { user_id: '12345', page_type: 'product' }`. Access in triggers: `{{client.__zarazTrack.page_type}}`.
 
@@ -57,15 +57,7 @@ zaraz.consent.addEventListener('consentChanged', () => {
 
 ## Triggers
 
-| Type | Description |
-|------|-------------|
-| Pageview | Every page load |
-| DOM Ready | When DOM is ready |
-| Click | CSS selector match |
-| Form submission | Form submits |
-| Scroll depth | User scrolls % |
-| Timer | After elapsed time |
-| Variable match | Custom conditions |
+Types: Pageview, DOM Ready, Click (CSS selector), Form submission, Scroll depth (%), Timer, Variable match (custom conditions).
 
 Example: Trigger `Button Click` on `.buy-button` → action `Track event "purchase_intent"`.
 
@@ -93,15 +85,15 @@ zaraz.set('user_id', user.id);
 zaraz.track('login', { method: 'password' });
 ```
 
-For Workers integration patterns, see `cloudflare-workers` skill.
+For Workers integration, see `cloudflare-workers` skill.
 
 ## Privacy & Limits
 
-IP anonymization (automatic), consent-based cookie control, GDPR/CCPA compliance. Tools and events unlimited; request size 100 KB; data retention per tool's policy.
+Automatic IP anonymization, consent-based cookie control, GDPR/CCPA compliant. Tools/events unlimited; request size 100 KB; data retention per tool's policy.
 
 ## Debugging
 
-Enable debug mode in dashboard or `zaraz.debug = true`. Check: trigger conditions, tool enabled status, browser console, `zaraz.consent.getAll()` for consent issues.
+Enable debug: dashboard toggle or `zaraz.debug = true`. Check trigger conditions, tool enabled status, browser console, `zaraz.consent.getAll()` for consent issues.
 
 ## Reference
 
