@@ -24,48 +24,37 @@ mcp:
 - **MCP**: Remote at `https://mcp.socket.dev/`
 - **Auth**: API token from socket.dev
 - **Credentials**: `~/.config/aidevops/credentials.sh` → `SOCKET_YOURNAME`
-- **When to use**: Scan dependencies for vulnerabilities, malware, typosquatting, and package reputation before install
+- **Use for**: Vulnerability scans, malware/typosquat checks, and package reputation review before install
 
 <!-- AI-CONTEXT-END -->
 
-## MCP Setup
+## Setup
 
-### 1. Create account
-
-1. Sign up at [socket.dev](https://socket.dev)
-2. Connect your GitHub account (optional, for repo scanning)
-
-### 2. Generate API token
-
-1. Go to Settings → API Tokens
-2. Click "Create Token"
-3. Select permissions (Full Access recommended for MCP)
-4. Save the token:
+1. Sign up at [socket.dev](https://socket.dev). GitHub connection is optional for repo scans.
+2. Go to Settings → API Tokens, create a token, and grant Full Access if available.
+3. Save the token:
 
 ```bash
 echo 'export SOCKET_YOURNAME="sktsec_..."' >> ~/.config/aidevops/credentials.sh
 chmod 600 ~/.config/aidevops/credentials.sh
 ```
 
-### 3. Configure OpenCode MCP
-
-Socket uses the remote endpoint. Update your config:
+4. Configure OpenCode MCP. Socket uses the remote endpoint:
 
 ```bash
 jq '.mcp.socket = {"type": "remote", "url": "https://mcp.socket.dev/", "enabled": false}' \
   ~/.config/opencode/opencode.json > /tmp/oc.json && mv /tmp/oc.json ~/.config/opencode/opencode.json
 ```
 
-If API-token auth fails, the remote MCP may require a browser OAuth flow on first use.
-
-### 4. Test Connection
+5. If API-token auth fails, complete the browser OAuth flow on first use.
+6. Test connection:
 
 ```bash
 source ~/.config/aidevops/credentials.sh
 curl -s -H "Authorization: Bearer $SOCKET_YOURNAME" "https://api.socket.dev/v0/organizations" | jq '.organizations'
 ```
 
-## Available MCP Tools
+## MCP Tools
 
 | Tool | Description |
 |------|-------------|
@@ -74,7 +63,7 @@ curl -s -H "Authorization: Bearer $SOCKET_YOURNAME" "https://api.socket.dev/v0/o
 | `get_package_info` | Get security info for a package |
 | `list_issues` | List known issues in dependencies |
 
-## Usage Examples
+## Example prompts
 
 ```text
 @socket scan my package.json for vulnerabilities
@@ -83,9 +72,9 @@ curl -s -H "Authorization: Bearer $SOCKET_YOURNAME" "https://api.socket.dev/v0/o
 @socket is this package safe to install: some-new-package
 ```
 
-## CLI Alternative
+## CLI fallback
 
-Use the Socket CLI directly when MCP is unavailable:
+Use the Socket CLI when MCP is unavailable:
 
 ```bash
 # Install
@@ -102,13 +91,13 @@ socket npm info lodash
 
 ### "Unauthorized" error
 
-1. Verify token: `source ~/.config/aidevops/credentials.sh && echo $SOCKET_YOURNAME`
-2. Check token has correct permissions in socket.dev dashboard
-3. Token format should start with `sktsec_`
+- Verify the token is set: `source ~/.config/aidevops/credentials.sh && echo $SOCKET_YOURNAME`
+- Check token permissions in the socket.dev dashboard
+- Confirm the token starts with `sktsec_`
 
 ### MCP not connecting
 
-`mcp.socket.dev` may require browser OAuth instead of API-token auth. Start the MCP and complete the auth prompt if shown.
+`mcp.socket.dev` may require browser OAuth instead of API-token auth. Start the MCP and complete the prompt if shown.
 
 ### Rate limits
 
