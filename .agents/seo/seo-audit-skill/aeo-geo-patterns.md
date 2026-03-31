@@ -2,16 +2,18 @@
 
 Reusable content block patterns for answer engines and AI citation.
 
-## AEO Patterns — featured snippets, AI Overviews, voice search, answer boxes
+## AEO Patterns
 
-### Definition Block — "What is [X]?"
+Featured snippets, AI Overviews, voice search, answer boxes.
+
+### Definition Block
 
 ```markdown
 ## What is [Term]?
 [Term] is [1-sentence definition]. [Key characteristics]. [Why it matters].
 ```
 
-### Step-by-Step Block — "How to [X]"
+### Step-by-Step Block
 
 ```markdown
 ## How to [Action/Goal]
@@ -21,7 +23,7 @@ Reusable content block patterns for answer engines and AI citation.
 3. **[Step]**: [Action in 1-2 sentences]
 ```
 
-### Comparison Table — "[X] vs [Y]"
+### Comparison Table
 
 ```markdown
 ## [Option A] vs [Option B]: [Descriptor]
@@ -32,7 +34,7 @@ Reusable content block patterns for answer engines and AI citation.
 **Bottom line**: [1-2 sentence recommendation]
 ```
 
-### Pros/Cons Block — "Is [X] worth it?"
+### Pros/Cons Block
 
 ```markdown
 ## Advantages and Disadvantages of [Topic]
@@ -41,15 +43,16 @@ Reusable content block patterns for answer engines and AI citation.
 **Verdict**: [Balanced conclusion with recommendation]
 ```
 
-### FAQ Block — common questions
+### FAQ Block
 
 Natural phrasing ("How do I..." not "How does one..."). Match "People Also Ask". 50-100 word answers.
+
 ```markdown
 ### [Question phrased as users search]?
 [Direct answer first sentence]. [Supporting context in 2-3 sentences].
 ```
 
-### Listicle Block — "Best [X]", "Top [X]"
+### Listicle Block
 
 ```markdown
 ## [Number] Best [Items] for [Goal/Purpose]
@@ -60,13 +63,13 @@ Natural phrasing ("How do I..." not "How does one..."). Match "People Also Ask".
 
 ### Voice Search
 
-Conversational queries: "What is...", "How do I...", "Where can I find...", "Why does...", "When should I...". Direct answer under 30 words, natural language, avoid jargon unless targeting experts, include local context.
+Conversational queries ("What is...", "How do I...", "Where can I find...", "Why does...", "When should I..."). Direct answer under 30 words, natural language, avoid jargon unless targeting experts, include local context.
 
 ## GEO Patterns
 
 For citation by AI assistants (ChatGPT, Claude, Perplexity, Gemini).
 
-### Single-Line Citation Patterns
+### Citation Patterns
 
 | Pattern | Template |
 |---------|----------|
@@ -86,9 +89,10 @@ Evidence:
 [Conclusion connecting evidence to actionable insight].
 ```
 
-### Product Block — domain-scoped AI retrieval
+### Product Block
 
 For `site:yourdomain.com [category] features [year]` queries.
+
 ```markdown
 ## [Product/Category] Features for [Audience] ([Year])
 **Best for**: [ICP or use case]  |  **Pricing**: [starting point / packaging]
@@ -103,6 +107,7 @@ For `site:yourdomain.com [category] features [year]` queries.
 Mirror facts on product page and third-party profiles. UTM: `utm_source=g2`, `utm_medium=referral`, `utm_campaign=ai_citation`. Review freshness monthly.
 
 **Site-searchable variant:**
+
 ```markdown
 ## [Product Name]: [Category] [Type] for [Audience]
 [Product Name] is a [category term] that [value proposition]. [Differentiator].
@@ -125,6 +130,7 @@ Mirror facts on product page and third-party profiles. UTM: `utm_source=g2`, `ut
 ## UTM Citation Attribution
 
 Canonical URL clean — tracking parameters only in cited variants.
+
 ```markdown
 <!-- Canonical -->
 https://yourdomain.com/product-features/
