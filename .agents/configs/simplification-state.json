@@ -1589,7 +1589,7 @@
     ".agents/scripts/commands/route.md": {
       "hash": "8167fb30e984e156e02b5fb22c134db28ed8853d",
       "at": "2026-03-31T04:45:56Z",
-      "pr": null
+      "pr": 14604
     },
     ".agents/seo/debug-favicon.md": {
       "hash": "045e2c9b649ddcdfcd71fd207f187edc86071587",
