@@ -8,9 +8,9 @@ metadata:
 
 # Getting video duration with Mediabunny
 
-Mediabunny can extract the duration of a video file. It works in browser, Node.js, and Bun environments.
+Use `Input.computeDuration()` to get video duration in seconds. This works in browser, Node.js, and Bun.
 
-## Getting video duration
+## URL source
 
 ```tsx
 import { Input, ALL_FORMATS, UrlSource } from "mediabunny";
@@ -28,16 +28,14 @@ export const getVideoDuration = async (src: string) => {
 };
 ```
 
-## Usage
+Example:
 
 ```tsx
 const duration = await getVideoDuration("https://remotion.media/video.mp4");
 console.log(duration); // e.g. 10.5 (seconds)
 ```
 
-## Using with local files
-
-For local files, use `FileSource` instead of `UrlSource`:
+## Local file source
 
 ```tsx
 import { Input, ALL_FORMATS, FileSource } from "mediabunny";
@@ -50,7 +48,9 @@ const input = new Input({
 const durationInSeconds = await input.computeDuration();
 ```
 
-## Using with staticFile in Remotion
+Use `FileSource` instead of `UrlSource` when `file` comes from an input or drag-and-drop handler.
+
+## Remotion `staticFile()`
 
 ```tsx
 import { staticFile } from "remotion";
