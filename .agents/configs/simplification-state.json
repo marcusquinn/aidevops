@@ -87,9 +87,9 @@
       "pr": 11019
     },
     ".agents/tools/ai-generation/comfy-cli.md": {
-      "hash": "6d885b8f28374a6d71d6f4095a6015f3359a668e",
-      "at": "2026-03-27T21:25:22Z",
-      "pr": 11014
+      "hash": "370b96d8f1a441c0cce9dd93fc376e8ddbfd1685",
+      "at": "2026-03-31T16:45:28Z",
+      "pr": 14977
     },
     ".agents/tools/architecture/feature-slicing-skill/cheatsheet.md": {
       "hash": "b244fb8417fc27f0de33c83c86092f5bebd736f3",
