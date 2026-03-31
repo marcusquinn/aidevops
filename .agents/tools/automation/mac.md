@@ -14,17 +14,24 @@ tools:
 
 # @mac - macOS Automation Subagent
 
-Invoke with `@mac` to enable the macos-automator MCP tools for AppleScript and JXA automation.
+Use `@mac` for local macOS automation through AppleScript, JXA, and Accessibility APIs.
 
-## Tools
+## Quick Reference
 
-| Tool | Purpose |
-|------|---------|
-| `execute_script` | Run AppleScript or JXA code |
-| `get_scripting_tips` | Search 200+ pre-built automation scripts |
-| `accessibility_query` | Query and interact with UI elements |
+- **Scope**: macOS-only app, UI, and system automation
+- **Tools enabled**: `execute_script`, `get_scripting_tips`, `accessibility_query`
+- **Permissions**: System Settings > Privacy & Security > Automation and Accessibility
+- **Full setup + params**: `tools/automation/macos-automator.md`
 
-## Examples
+## Tool Use
+
+| Tool | Use it for |
+|------|------------|
+| `execute_script` | Run AppleScript or JXA code directly |
+| `get_scripting_tips` | Search 200+ built-in scripts before writing custom automation |
+| `accessibility_query` | Inspect or click UI elements when an app lacks a scripting API |
+
+## Example Prompts
 
 ```text
 @mac Get the current Safari URL
@@ -38,13 +45,6 @@ Invoke with `@mac` to enable the macos-automator MCP tools for AppleScript and J
 @mac Search for clipboard scripts
 ```
 
-The MCP includes 200+ pre-built scripts searchable via `get_scripting_tips` (categories, search terms, or browse all).
+## Related
 
-## Requirements
-
-- **macOS only** — AppleScript is macOS-specific
-- **Permissions**: System Settings > Privacy & Security > Automation + Accessibility
-
-## Full Documentation
-
-See `tools/automation/macos-automator.md` for setup, configuration, and tool parameter reference.
+See `tools/automation/macos-automator.md` for installation, configuration, and parameter details.
