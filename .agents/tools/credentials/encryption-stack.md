@@ -18,54 +18,31 @@ tools:
 
 ## Quick Reference
 
-aidevops provides three complementary encryption tools, each for a different use case:
+Use the smallest tool that fits the problem:
 
-| Tool | Purpose | Scope | Git-safe | AI-safe |
-|------|---------|-------|----------|---------|
-| **gopass** | Individual secrets (API keys, tokens) | Per-secret | No (separate store) | Yes (subprocess injection) |
-| **SOPS** | Structured config files | Per-file | Yes (encrypted in repo) | Yes (stdout only) |
-| **gocryptfs** | Directory-level encryption at rest | Per-directory | No (filesystem overlay) | Yes (mount/unmount) |
+| Tool | Best for | Scope | Git-safe | AI-safe |
+|------|----------|-------|----------|---------|
+| **gopass** | API keys, tokens, passwords | Per secret | No (separate store) | Yes (subprocess injection) |
+| **SOPS** | Structured config files with secrets | Per file | Yes (encrypted in repo) | Yes (stdout only) |
+| **gocryptfs** | Sensitive directories at rest | Per directory | No (filesystem overlay) | Yes (mount/unmount) |
 
-**Decision tree**:
-
-1. Single API key or token? -> `aidevops secret set NAME` (gopass)
-2. Config file with secrets to commit to git? -> `sops-helper.sh encrypt file.enc.yaml` (SOPS)
-3. Directory of sensitive files at rest? -> `gocryptfs-helper.sh create vault-name` (gocryptfs)
+1. Single secret -> `aidevops secret set NAME`
+2. Structured file you must commit -> `sops-helper.sh encrypt file.enc.yaml`
+3. Sensitive directory at rest -> `gocryptfs-helper.sh create vault-name`
 
 <!-- AI-CONTEXT-END -->
 
-## Tool Comparison
+## Tool Guide
 
-### gopass (Individual Secrets)
-
-- **What**: GPG/age-encrypted key-value store
-- **When**: API keys, tokens, passwords, connection strings
-- **How**: `aidevops secret set NAME` / `aidevops secret run CMD`
-- **Storage**: `~/.local/share/gopass/stores/root/aidevops/`
-- **Fallback**: `~/.config/aidevops/credentials.sh` (plaintext, 600 perms)
-- **Docs**: `tools/credentials/gopass.md`
-
-### SOPS (Config File Encryption)
-
-- **What**: Encrypts structured files (YAML, JSON, ENV, INI) in-place
-- **When**: Config files that need git versioning but contain secrets
-- **How**: `sops-helper.sh encrypt config.enc.yaml`
-- **Storage**: Encrypted files committed to git
-- **Backends**: age (preferred), GPG, AWS KMS, GCP KMS, Azure Key Vault
-- **Docs**: `tools/credentials/sops.md`
-
-### gocryptfs (Directory Encryption)
-
-- **What**: FUSE encrypted filesystem overlay
-- **When**: Protecting entire directories of sensitive data at rest
-- **How**: `gocryptfs-helper.sh create vault-name`
-- **Storage**: `~/.aidevops/.agent-workspace/vaults/`
-- **Algorithm**: AES-256-GCM (hardware-accelerated)
-- **Docs**: `tools/credentials/gocryptfs.md`
+| Tool | What | Use when | Commands | Storage | Notes | Docs |
+|------|------|----------|----------|---------|-------|------|
+| **gopass** | GPG/age-encrypted key-value store | API keys, tokens, passwords, connection strings | `aidevops secret set NAME` / `aidevops secret run CMD` | `~/.local/share/gopass/stores/root/aidevops/` | Fallback: `~/.config/aidevops/credentials.sh` (plaintext, 600 perms) | `tools/credentials/gopass.md` |
+| **SOPS** | In-place encryption for YAML, JSON, ENV, INI | Config files that need git versioning | `sops-helper.sh encrypt config.enc.yaml` | Encrypted files committed to git | Backends: age (preferred), GPG, AWS KMS, GCP KMS, Azure Key Vault | `tools/credentials/sops.md` |
+| **gocryptfs** | FUSE encrypted filesystem overlay | Entire directories of sensitive data at rest | `gocryptfs-helper.sh create vault-name` | `~/.aidevops/.agent-workspace/vaults/` | AES-256-GCM, hardware accelerated | `tools/credentials/gocryptfs.md` |
 
 ## Common Workflows
 
-### New Project Setup
+### New project setup
 
 ```bash
 # 1. Initialize gopass for API keys
@@ -84,7 +61,7 @@ gocryptfs-helper.sh create myproject
 gocryptfs-helper.sh open myproject
 ```
 
-### CI/CD Pipeline
+### CI/CD pipeline
 
 ```bash
 # gopass: inject secrets into build
@@ -96,7 +73,7 @@ deploy --config /tmp/config.yaml
 rm /tmp/config.yaml
 ```
 
-### Team Onboarding
+### Team onboarding
 
 ```bash
 # 1. Share gopass store via git
@@ -112,11 +89,11 @@ sops updatekeys config.enc.yaml
 
 ## Security Principles
 
-1. **Never expose secrets in AI context** -- All tools support AI-safe operation
-2. **Encryption at rest** -- All three tools encrypt data when not in active use
-3. **Minimal exposure** -- Decrypt only what you need, when you need it
-4. **Key separation** -- Each tool uses independent key material
-5. **Audit trail** -- gopass and SOPS changes are git-versioned
+1. **Never expose secrets in AI context** -- use the AI-safe flows above.
+2. **Encryption at rest** -- all three tools protect data when idle.
+3. **Minimal exposure** -- decrypt only what you need, when you need it.
+4. **Key separation** -- each tool uses independent key material.
+5. **Audit trail** -- gopass and SOPS changes are git-versioned.
 
 ## Related
 
