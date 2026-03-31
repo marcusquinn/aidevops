@@ -14,47 +14,45 @@ tools:
 
 # Cross-Channel Conversation Continuity
 
-## Goal
+Maintain one relationship history per person across email, Matrix, SimpleX, Slack, CLI, and similar channels without leaking private context between unrelated identities.
 
-Maintain one coherent relationship history per person across channels (email, Matrix, SimpleX, Slack, CLI) without leaking private context between unrelated identities.
-
-The continuity key is the entity ID in `memory.db`:
+Use the entity ID in `memory.db` as the continuity key:
 
 - Layer 2 identity: `entities` + `entity_channels`
 - Layer 1 threads: `conversations`
 - Layer 0 evidence: `interactions`
 
-## Core Principle
+## Core Rule
 
 Resolve identity first, then continue the conversation.
 
-Do not infer continuity from display name alone. Use explicit channel mapping and confidence levels.
+Never infer continuity from display name alone. Require explicit channel mapping and an explicit confidence level.
 
-## Continuity Workflow
+## Workflow
 
-1. Resolve incoming sender/channel to an entity.
-2. If no entity exists, suggest candidates and require confirmation.
-3. Reuse existing conversation when topic + participants align.
-4. Start a new conversation when topic or audience has changed.
+1. Resolve the incoming sender and channel to an entity.
+2. If unresolved, suggest candidates and require confirmation.
+3. Reuse an existing conversation when topic and participants still align.
+4. Start a new conversation when topic or audience changed.
 5. Log the interaction to Layer 0 with channel metadata.
-6. Load context from the same entity before responding.
+6. Load context from the same entity before replying.
 
-## Email-Specific Identity Rules
+## Email Identity Rules
 
-Use `entity-helper.sh` email normalization behavior for stable matching:
+Use `entity-helper.sh` email normalization for stable matching:
 
 - trim whitespace
-- lowercase address
-- strip plus aliases from local part
+- lowercase the address
+- strip plus aliases from the local part
 
 Examples:
 
 - ` User+alerts@Example.COM ` -> `user@example.com`
 - `sales+q1@company.com` -> `sales@company.com`
 
-This normalization improves continuity when the same person uses tagged aliases for filtering.
+This preserves continuity when the same person uses tagged aliases for filtering.
 
-## Recommended Command Pattern
+## Command Pattern
 
 ```bash
 # Resolve sender to known entity
@@ -80,21 +78,21 @@ entity-helper.sh context <entity_id> --channel email --limit 20 --privacy-filter
 - Use `--privacy-filter` when rendering context to shared or lower-trust channels.
 - Keep irreversible decisions (identity merges, external sends) human-verifiable.
 
-## Threading Decision Guide
+## Threading Guide
 
-Reply in existing thread when:
+Reply in the existing thread when:
 
-- same topic
-- recent history (roughly <= 30 days)
+- topic is the same
+- history is recent (roughly <= 30 days)
 - recipient set is stable
 
 Start a new thread when:
 
-- new decision/request topic
-- long dormant thread
-- materially different audience
+- the decision or request topic is new
+- the thread is long dormant
+- the audience changed materially
 
-When starting new thread, reference the old thread in the first line for continuity.
+When starting a new thread, reference the old thread in the first line for continuity.
 
 ## Verification Checklist
 
