@@ -23,8 +23,8 @@ Annotated landing page examples, reusable section templates, and design principl
 
 | When You Need | Start Here |
 |---------------|------------|
-| SaaS positioning and product-led structure | SaaS Landing Page Examples |
-| Course or info-product sales angles | Course Sales Page Example |
-| Hero copy frameworks | Hero Section Templates |
-| Proof bars and button ideas | Social Proof and CTA Templates |
-| Risk reversal and layout checks | Guarantees and Design Principles |
+| SaaS positioning and product-led structure | [SaaS Landing Page Examples](direct-response-copy-swipe-file-landing-pages-01-saas-examples.md) |
+| Course or info-product sales angles | [Course Sales Page Example](direct-response-copy-swipe-file-landing-pages-02-course-sales-page.md) |
+| Hero copy frameworks | [Hero Section Templates](direct-response-copy-swipe-file-landing-pages-03-hero-section-templates.md) |
+| Proof bars and button ideas | [Social Proof and CTA Templates](direct-response-copy-swipe-file-landing-pages-04-social-proof-and-cta-templates.md) |
+| Risk reversal and layout checks | [Guarantees and Design Principles](direct-response-copy-swipe-file-landing-pages-05-guarantees-and-design-principles.md) |
