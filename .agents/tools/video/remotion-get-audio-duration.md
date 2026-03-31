@@ -8,9 +8,9 @@ metadata:
 
 # Getting audio duration with Mediabunny
 
-Mediabunny can extract the duration of an audio file. It works in browser, Node.js, and Bun environments.
+Use `Input.computeDuration()` to get audio length in seconds. This works in browser, Node.js, and Bun.
 
-## Getting audio duration
+## URLs and `staticFile()`
 
 ```tsx
 import { Input, ALL_FORMATS, UrlSource } from "mediabunny";
@@ -28,16 +28,16 @@ export const getAudioDuration = async (src: string) => {
 };
 ```
 
-## Usage
-
 ```tsx
-const duration = await getAudioDuration("https://remotion.media/audio.mp3");
-console.log(duration); // e.g. 180.5 (seconds)
+import { staticFile } from "remotion";
+
+const remoteDuration = await getAudioDuration("https://remotion.media/audio.mp3");
+const staticDuration = await getAudioDuration(staticFile("audio.mp3"));
 ```
 
-## Using with local files
+## Local files
 
-For local files, use `FileSource` instead of `UrlSource`:
+Use `FileSource` for browser uploads or drag-and-drop files:
 
 ```tsx
 import { Input, ALL_FORMATS, FileSource } from "mediabunny";
@@ -48,12 +48,4 @@ const input = new Input({
 });
 
 const durationInSeconds = await input.computeDuration();
-```
-
-## Using with staticFile in Remotion
-
-```tsx
-import { staticFile } from "remotion";
-
-const duration = await getAudioDuration(staticFile("audio.mp3"));
 ```
