@@ -22,14 +22,13 @@ tools:
 - **Core principle**: Main repo (`~/Git/{repo}/`) ALWAYS stays on `main`. **Never `git checkout -b` in the main repo** — the next session inherits wrong state.
 - **Preferred tool**: [Worktrunk](https://worktrunk.dev) (`brew install max-sixty/worktrunk/wt`)
 - **Fallback**: `~/.aidevops/agents/scripts/worktree-helper.sh`
-
-**Directory structure**: `~/Git/myrepo/` (main) | `~/Git/myrepo-feature-auth/` (linked) | `~/Git/myrepo-bugfix-login/` (linked)
+- **Paths**: `~/Git/myrepo/` (main) | `~/Git/myrepo-feature-auth/` (linked) | `~/Git/myrepo-bugfix-login/` (linked)
 
 <!-- AI-CONTEXT-END -->
 
 ## Commands
 
-**Worktrunk** (preferred — has shell cd, hooks, CI status, merge workflow):
+**Worktrunk** (preferred — shell cd, hooks, CI status, merge workflow):
 
 ```bash
 wt switch -c feature/my-feature   # Create worktree + cd into it
@@ -38,7 +37,7 @@ wt merge                          # Squash/rebase/merge + cleanup
 wt remove                         # Remove current worktree
 ```
 
-**worktree-helper.sh** (fallback — bash only, no cd support):
+**worktree-helper.sh** (fallback — no cd support):
 
 ```bash
 worktree-helper.sh add feature/my-feature          # Auto-path: ~/Git/{repo}-feature-my-feature/
@@ -49,7 +48,7 @@ worktree-helper.sh remove feature/auth              # Removes directory, NOT the
 worktree-helper.sh clean                            # Batch cleanup merged branches (interactive, runs git fetch --prune)
 ```
 
-Use Worktrunk when available. Fallback in minimal environments. Full Worktrunk docs: `tools/git/worktrunk.md`.
+Full Worktrunk docs: `tools/git/worktrunk.md`.
 
 ## Workflow Patterns
 
@@ -65,9 +64,9 @@ opencode ~/Git/myrepo-bugfix-login/    # Session 2
 
 ## Integration
 
-`pre-edit-check.sh` works correctly in any worktree — main or linked.
+`pre-edit-check.sh` works in any worktree — main or linked.
 
-**Localdev (t1224.8):** For projects registered with `localdev add`, worktree creation auto-sets up branch-specific subdomain routing (`https://feature-auth.myapp.local`). Removal auto-cleans the route.
+**Localdev (t1224.8):** Worktree creation auto-sets branch-specific subdomain routing (`https://feature-auth.myapp.local`) for `localdev add` projects. Removal auto-cleans the route.
 
 **Session recovery:**
 
@@ -80,7 +79,7 @@ Use `session-rename_sync_branch` after creating branches. Check `worktree-sessio
 
 ## Ownership Safety (t189)
 
-Worktrees are registered to the creating session's PID in a SQLite registry (`~/.aidevops/.agent-workspace/worktree-registry.db`) — prevents cross-session removal.
+Worktrees registered to creating session's PID in SQLite (`~/.aidevops/.agent-workspace/worktree-registry.db`) — prevents cross-session removal.
 
 ```bash
 worktree-helper.sh registry list    # View ownership
@@ -90,7 +89,7 @@ worktree-helper.sh remove feature/branch --force  # Override ownership (use with
 
 ## Worker Self-Cleanup (GH#6740)
 
-Workers dispatched via `/full-loop` must remove their worktree after successful PR merge. Without this, batch dispatches (50+ workers) accumulate worktrees faster than the pulse cleanup cycle can remove them. See `full-loop.md` Step 4.8 and `commands/worktree-cleanup.md`.
+Workers must remove their worktree after PR merge — batch dispatches (50+ workers) accumulate worktrees faster than pulse cleanup. See `full-loop.md` Step 4.8 and `commands/worktree-cleanup.md`.
 
 ## Troubleshooting
 
@@ -101,8 +100,6 @@ Workers dispatched via `/full-loop` must remove their worktree after successful 
 | Stale worktree references | `git worktree prune` |
 | Detached HEAD | `cd` into worktree, `git checkout feature/auth` |
 | Worktree deleted mid-session | `git branch --list feature/my-feature` → `worktree-helper.sh add feature/my-feature` → `git stash pop` |
-
-Use `session-rename_sync_branch` to re-sync session name after recreating a worktree.
 
 ## Related
 
