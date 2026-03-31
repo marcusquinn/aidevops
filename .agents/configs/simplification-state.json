@@ -1756,6 +1756,11 @@
       "at": "2026-03-29T03:15:00Z",
       "pr": 12502
     },
+    ".agents/services/hosting/cloudflare-platform-skill/workers-gotchas.md": {
+      "hash": "6be4c58234dacd462fbb89034a8cffb21ede28d5",
+      "at": "2026-03-31T19:26:26Z",
+      "pr": 15014
+    },
     ".agents/services/hosting/cloudflare-platform-skill/workers.md": {
       "hash": "12b23db6429e9400868f947faff09d534d18165d",
       "at": "2026-03-31T09:29:58Z",
