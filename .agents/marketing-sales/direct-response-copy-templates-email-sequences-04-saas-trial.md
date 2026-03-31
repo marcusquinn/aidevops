@@ -36,7 +36,7 @@ Source: split from `direct-response-copy-templates-email-sequences.md`.
 
 **Subject:** `Your trial ends in 2 days`
 
-**Body:** Uses [**Urgency**](direct-response-copy-templates-email-sequences-01-shared-patterns.md#reusable-patterns) (losses = features + data). CTA: `[Upgrade →]`. `"Need more time? Reply."`
+**Body:** Uses [**Urgency / Final Push**](direct-response-copy-templates-email-sequences-01-shared-patterns.md#reusable-patterns) (losses = features + data). CTA: `[Upgrade →]`. `"Need more time? Reply."`
 
 ## E7 — Last Day (Day 14)
 

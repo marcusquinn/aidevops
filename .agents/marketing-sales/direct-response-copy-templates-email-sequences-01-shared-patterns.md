@@ -6,7 +6,12 @@ Source: split from `direct-response-copy-templates-email-sequences.md` to keep t
 
 ## Shared Conventions
 
-**Defaults** (don't repeat per email): Greeting `Hey [First Name],` / Sign-off `[Your Name]` / Reply invitation at end / Guarantee: `"Protected by our [X]-day guarantee. Zero risk."`
+**Defaults** (don't repeat per email):
+
+- Greeting: `Hey [First Name],`
+- Sign-off: `[Your Name]`
+- Reply invitation: at end
+- Guarantee: `"Protected by our [X]-day guarantee. Zero risk."`
 
 ## Reusable Patterns
 

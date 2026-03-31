@@ -30,13 +30,13 @@ Source: split from `direct-response-copy-templates-email-sequences.md`.
 
 **Subject:** `Your [Product] questions, answered`
 
-**Body:** Uses [**Objection Handling**](direct-response-copy-templates-email-sequences-01-shared-patterns.md#reusable-patterns) + `"How long for results?"` + `"What's included?"`
+**Body:** Uses [**Objection Handling (Q&A)**](direct-response-copy-templates-email-sequences-01-shared-patterns.md#reusable-patterns) + `"How long for results?"` + `"What's included?"`
 
 ## E6 — Urgency (Day 6)
 
 **Subject:** `48 hours left for [bonus/price]`
 
-**Body:** Uses [**Urgency**](direct-response-copy-templates-email-sequences-01-shared-patterns.md#reusable-patterns). Losses = bonuses + price increase.
+**Body:** Uses [**Urgency / Final Push**](direct-response-copy-templates-email-sequences-01-shared-patterns.md#reusable-patterns). Losses = bonuses + price increase.
 
 ## E7 — Final Hours (Day 7)
 
