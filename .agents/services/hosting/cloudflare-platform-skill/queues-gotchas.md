@@ -1,8 +1,10 @@
-# Queues Gotchas & Troubleshooting
+# Gotchas
 
-## Idempotency Required
+See [queues.md](./queues.md), [queues-patterns.md](./queues-patterns.md).
 
-At-least-once delivery means duplicates possible. Design consumers to handle duplicates:
+## Delivery Semantics
+
+Queues are at-least-once. Consumers must tolerate duplicates and should ack only after durable success.
 
 ```typescript
 // ✅ GOOD: Track processed messages
@@ -15,9 +17,9 @@ msg.ack();
 
 ## Content Type Visibility
 
-- `json`: Visible in dashboard, works with pull consumers
-- `v8`: NOT decodable by pull consumers or dashboard
-- Use `json` for pull consumers
+- `json` is dashboard-visible and works with pull consumers.
+- `v8` is not decodable in pull consumers or the dashboard.
+- For pull consumers, send `json`.
 
 ```typescript
 // ✅ For pull consumers
@@ -27,7 +29,9 @@ await env.MY_QUEUE.send(data, { contentType: 'json' });
 await env.MY_QUEUE.send(new Date(), { contentType: 'v8' }); // Can't decode
 ```
 
-## Retry Behavior
+## Retries and CPU Budget
+
+If a handler exits without `ack()` or `retry()`, Cloudflare retries with the queue's configured policy. Default consumer CPU budget is 30s; raise it for heavier work.
 
 ```typescript
 // If you DON'T call ack() or retry(), message retries automatically
@@ -45,48 +49,19 @@ async queue(batch: MessageBatch): Promise<void> {
 }
 ```
 
-## CPU Time Limits
-
-Default: 30s per consumer invocation. Increase if needed:
-
 ```jsonc
 { "limits": { "cpu_ms": 300000 } } // 5 minutes
 ```
 
-## Cost Optimization
+## Cost and Throughput
 
-Operations: write + read + delete = 3 ops per message  
-Retries add read ops  
-Formula: `((messages × 3) - 1M) / 1M × $0.40` per month
+Each message normally incurs write + read + delete = 3 ops. Retries add reads. Monthly queue cost beyond the free tier is `((messages × 3) - 1M) / 1M × $0.40`.
 
 ```typescript
 // Keep messages <64 KB (charged per 64 KB chunk)
 // Batch aggressively to reduce frequency
 { "max_batch_size": 100, "max_batch_timeout": 30 }
 ```
-
-## Message Not Delivered
-
-```bash
-# Check queue paused
-wrangler queues list
-
-# Verify consumer configured
-wrangler queues consumer worker remove my-queue my-worker
-wrangler queues consumer add my-queue my-worker
-
-# Check logs for errors
-wrangler tail my-worker
-```
-
-## High DLQ Rate
-
-- Review consumer error logs
-- Check external dependency availability
-- Verify message format matches expectations
-- Increase retry delay: `"retry_delay": 300`
-
-## Limits
 
 | Limit | Value |
 |-------|-------|
@@ -100,13 +75,36 @@ wrangler tail my-worker
 | Max delay | 12 hours (43,200s) |
 | Max retries | 100 |
 
+## Troubleshooting
+
+### Message not delivered
+
+```bash
+# Check queue paused
+wrangler queues list
+
+# Verify consumer configured
+wrangler queues consumer worker remove my-queue my-worker
+wrangler queues consumer add my-queue my-worker
+
+# Check logs for errors
+wrangler tail my-worker
+```
+
+### High DLQ rate
+
+- Review consumer error logs.
+- Check external dependency availability.
+- Verify message format matches expectations.
+- Increase retry delay: `"retry_delay": 300`.
+
 ## Best Practices
 
-- ✅ Design for idempotency (at-least-once delivery)
-- ✅ Use `json` content type for visibility
-- ✅ Log failures with context
-- ✅ Configure DLQ for permanent failures
-- ✅ Use `waitUntil()` for non-blocking sends
-- ✅ Batch sends when possible
-- ❌ Don't use v8 with pull consumers
-- ❌ Don't rely on message ordering
+- ✅ Design for idempotency.
+- ✅ Use `json` for visibility and pull compatibility.
+- ✅ Log failures with enough context to replay or diagnose.
+- ✅ Configure a DLQ for permanent failures.
+- ✅ Use `waitUntil()` for non-blocking sends.
+- ✅ Batch sends when possible.
+- ❌ Don't use `v8` with pull consumers.
+- ❌ Don't rely on message ordering.
