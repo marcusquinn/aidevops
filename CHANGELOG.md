@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.525] - 2026-03-31
+
+### Changed
+
+- Maintenance: claim t1710
+- Maintenance: claim t1709
+- Maintenance: claim t1708
+- Maintenance: claim t1707
+- Maintenance: claim t1706
+
 ## [3.5.524] - 2026-03-31
 
 ### Changed
