@@ -6,7 +6,9 @@ metadata:
   tags: sequence, series, timing, delay, trim
 ---
 
-Use `<Sequence>` to delay when an element appears in the timeline.
+## Sequence
+
+Delays when an element appears in the timeline. Wraps children in an absolute fill element by default — use `layout="none"` to disable.
 
 ```tsx
 import { Sequence } from "remotion";
@@ -21,19 +23,7 @@ const {fps} = useVideoConfig();
 </Sequence>
 ```
 
-This will by default wrap the component in an absolute fill element.  
-If the items should not be wrapped, use the `layout` prop:
-
-```tsx
-<Sequence layout="none">
-  <Title />
-</Sequence>
-```
-
-## Premounting
-
-This loads the component in the timeline before it is actually played.  
-Always premount any `<Sequence>`!
+**Premounting:** Loads the component before playback. Always premount every `<Sequence>`:
 
 ```tsx
 <Sequence premountFor={1 * fps}>
@@ -41,9 +31,18 @@ Always premount any `<Sequence>`!
 </Sequence>
 ```
 
+**Local frames:** Inside a Sequence, `useCurrentFrame()` returns frame relative to sequence start (0-based), not the global frame.
+
+```tsx
+<Sequence from={60} durationInFrames={30}>
+  <MyComponent />
+  {/* useCurrentFrame() returns 0-29, not 60-89 */}
+</Sequence>
+```
+
 ## Series
 
-Use `<Series>` when elements should play one after another without overlap.
+Sequential playback without overlap. Same absolute fill wrapping as `<Sequence>` — use `layout="none"` to disable.
 
 ```tsx
 import {Series} from 'remotion';
@@ -61,11 +60,9 @@ import {Series} from 'remotion';
 </Series>;
 ```
 
-Same as with `<Sequence>`, the items will be wrapped in an absolute fill element by default when using `<Series.Sequence>`, unless the `layout` prop is set to `none`.
+### Overlaps
 
-### Series with overlaps
-
-Use negative offset for overlapping sequences:
+Negative `offset` starts the next sequence before the previous ends:
 
 ```tsx
 <Series>
@@ -79,20 +76,9 @@ Use negative offset for overlapping sequences:
 </Series>
 ```
 
-## Frame References Inside Sequences
-
-Inside a Sequence, `useCurrentFrame()` returns the local frame (starting from 0):
-
-```tsx
-<Sequence from={60} durationInFrames={30}>
-  <MyComponent />
-  {/* Inside MyComponent, useCurrentFrame() returns 0-29, not 60-89 */}
-</Sequence>
-```
-
 ## Nested Sequences
 
-Sequences can be nested for complex timing:
+Sequences nest for complex timing:
 
 ```tsx
 <Sequence from={0} durationInFrames={120}>
