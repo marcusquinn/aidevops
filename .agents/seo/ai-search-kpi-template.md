@@ -1,7 +1,7 @@
 # AI Search KPI Scorecard Template
 
-Use one scorecard per AI-search optimization cycle. Record baseline vs current values,
-then capture the evidence behind any change.
+Use one scorecard per AI-search cycle. Record baseline, current, delta,
+target, and evidence for each material change.
 
 ## Cycle Metadata
 
@@ -9,7 +9,7 @@ then capture the evidence behind any change.
 - Date:
 - Owner:
 - Scope (domain/pages):
-- Intent cluster(s):
+- Intent clusters:
 - Competitor set:
 
 ## KPI Snapshot
@@ -30,9 +30,9 @@ then capture the evidence behind any change.
 
 | Area | Record |
 |------|--------|
-| Grounding eligibility | Queries tested; queries predicted to ground; queries confirmed grounded; key blockers |
+| Grounding eligibility | Queries tested; predicted-to-ground queries; confirmed grounded queries; key blockers |
 | Fan-out and criteria gaps | Missing high-priority branches; partial branches; missing decision criteria |
-| SRO and snippet findings | Low-survival sections; high-survival sections; proposed sentence-level edits |
+| SRO and snippet findings | Low-survival sections; high-survival sections; sentence-level edits to test |
 | Integrity and hallucination risk | Conflicting facts; unsupported claims; canonical source gaps |
 | Agent discoverability | Task set used; completion failures; navigation/comprehension blockers |
 
