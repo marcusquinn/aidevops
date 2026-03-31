@@ -1351,6 +1351,10 @@ if [[ -d "$COMMANDS_DIR" ]]; then
 			((++command_count))
 			echo -e "  ${GREEN}✓${NC} Auto-discovered /$cmd_name command"
 		else
+			if [[ ! -f "$cmd_file" ]]; then
+				echo -e "  ${YELLOW}!${NC} Skipped /$cmd_name command (source missing: $cmd_file)" >&2
+				continue
+			fi
 			echo -e "  ${RED}✗${NC} Failed to copy /$cmd_name command" >&2
 			exit 1
 		fi

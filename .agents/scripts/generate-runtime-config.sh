@@ -992,6 +992,7 @@ _generate_commands_for_runtime() {
 	mkdir -p "$cmd_dir"
 
 	local command_count=0
+	local skipped_count=0
 	local display_name
 	display_name=$(rt_display_name "$runtime_id") || display_name="$runtime_id"
 
@@ -1014,16 +1015,40 @@ _generate_commands_for_runtime() {
 			case "$runtime_id" in
 			opencode)
 				# Copy as-is (OpenCode format already)
-				cp "$cmd_file" "${cmd_dir}/${cmd_name}.md"
+				if ! cp "$cmd_file" "${cmd_dir}/${cmd_name}.md"; then
+					if [[ ! -f "$cmd_file" ]]; then
+						print_warning "Skipping command ${cmd_name}: source file disappeared (${cmd_file})"
+						skipped_count=$((skipped_count + 1))
+						continue
+					fi
+					print_warning "Failed to copy command ${cmd_name} for ${display_name}"
+					return 1
+				fi
 				;;
 			claude-code)
 				# Strip OpenCode-specific frontmatter fields (agent, subtask, mode)
-				sed -E '/^---$/,/^---$/{/^(agent|subtask|mode):/d;}' "$cmd_file" \
-					>"${cmd_dir}/${cmd_name}.md"
+				if ! sed -E '/^---$/,/^---$/{/^(agent|subtask|mode):/d;}' "$cmd_file" \
+					>"${cmd_dir}/${cmd_name}.md"; then
+					if [[ ! -f "$cmd_file" ]]; then
+						print_warning "Skipping command ${cmd_name}: source file disappeared (${cmd_file})"
+						skipped_count=$((skipped_count + 1))
+						continue
+					fi
+					print_warning "Failed to render command ${cmd_name} for ${display_name}"
+					return 1
+				fi
 				;;
 			*)
 				# Generic: copy as-is
-				cp "$cmd_file" "${cmd_dir}/${cmd_name}.md"
+				if ! cp "$cmd_file" "${cmd_dir}/${cmd_name}.md"; then
+					if [[ ! -f "$cmd_file" ]]; then
+						print_warning "Skipping command ${cmd_name}: source file disappeared (${cmd_file})"
+						skipped_count=$((skipped_count + 1))
+						continue
+					fi
+					print_warning "Failed to copy command ${cmd_name} for ${display_name}"
+					return 1
+				fi
 				;;
 			esac
 
@@ -1037,6 +1062,9 @@ _generate_commands_for_runtime() {
 	local hc_count=$?
 	command_count=$((command_count + hc_count))
 
+	if [[ "$skipped_count" -gt 0 ]]; then
+		print_warning "$display_name: skipped $skipped_count command file(s) that disappeared during generation"
+	fi
 	print_success "$display_name: $command_count commands in $cmd_dir"
 	return 0
 }
