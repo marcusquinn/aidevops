@@ -3135,6 +3135,11 @@
       "hash": "4d6b7f27d34a145fddf6bc662ce9fe4ca289f7e6b78f29add65726d7bae2db3f",
       "at": "2026-04-01T00:00:00Z",
       "pr": 14823
+    },
+    ".agents/tools/automation/mac.md": {
+      "hash": "bbb8afdf33120ef89a7bec1bd5cdc14493d72bc4",
+      "at": "2026-04-01T00:00:00Z",
+      "pr": 15178
     }
   }
 }
