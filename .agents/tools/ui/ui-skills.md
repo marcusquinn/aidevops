@@ -18,36 +18,24 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Opinionated constraints for building better interfaces with agents
+- **Purpose**: Constraints for building better interfaces with agents
 - **Source**: https://www.ui-skills.com/llms.txt
-- **Stack**: Tailwind CSS, motion/react, tw-animate-css, `cn` utility (`clsx` + `tailwind-merge`)
-
-**When to apply these constraints**:
-- Building React/Next.js interfaces
-- Working with Tailwind CSS
-- Adding animations or transitions
-- Creating accessible components
-- Optimizing UI performance
-
-**Key Principles**:
-- Use Tailwind defaults before custom values
-- Use accessible component primitives (Base UI, React Aria, Radix)
-- Never add animation unless explicitly requested
-- Respect `prefers-reduced-motion`
-- Never block paste in inputs
+- **Stack**: Tailwind CSS, `motion/react`, `tw-animate-css`, `cn` (`clsx` + `tailwind-merge`)
+- **Apply when**: Building React/Next.js UIs, Tailwind components, animation, accessibility, or UI performance
+- **Defaults**: Tailwind defaults first; use accessible primitives; no animation unless requested; respect `prefers-reduced-motion`; never block paste
 
 <!-- AI-CONTEXT-END -->
 
 ## Stack
 
-- MUST use Tailwind CSS defaults (spacing, radius, shadows) before custom values
-- MUST use `motion/react` (formerly `framer-motion`) when JavaScript animation is required
-- SHOULD use `tw-animate-css` for entrance and micro-animations in Tailwind CSS
-- MUST use `cn` utility (`clsx` + `tailwind-merge`) for class logic
+- MUST use Tailwind defaults (spacing, radius, shadows) before custom values
+- MUST use `motion/react` (formerly `framer-motion`) for JavaScript animation
+- SHOULD use `tw-animate-css` for Tailwind entrance and micro-animations
+- MUST use `cn` (`clsx` + `tailwind-merge`) for class logic
 
 ## Components
 
-- MUST use accessible component primitives for anything with keyboard or focus behavior (`Base UI`, `React Aria`, `Radix`)
+- MUST use accessible component primitives for keyboard/focus behavior (`Base UI`, `React Aria`, `Radix`)
 - MUST use the project's existing component primitives first
 - NEVER mix primitive systems within the same interaction surface
 - SHOULD prefer [`Base UI`](https://base-ui.com/react/components) for new primitives if compatible with the stack
@@ -60,16 +48,16 @@ tools:
 - SHOULD use structural skeletons for loading states
 - NEVER use `h-screen`, use `h-dvh`
 - MUST respect `safe-area-inset` for fixed elements
-- MUST show errors next to where the action happens
+- MUST show errors at the action point
 - NEVER block paste in `input` or `textarea` elements
 
 ## Animation
 
-- NEVER add animation unless it is explicitly requested
+- NEVER add animation unless explicitly requested
 - MUST animate only compositor props (`transform`, `opacity`)
 - NEVER animate layout properties (`width`, `height`, `top`, `left`, `margin`, `padding`)
 - SHOULD avoid animating paint properties (`background`, `color`) except for small, local UI (text, icons)
-- SHOULD use `ease-out` on entrance
+- SHOULD use `ease-out` for entrance
 - NEVER exceed `200ms` for interaction feedback
 - MUST pause looping animations when off-screen
 - MUST respect `prefers-reduced-motion`
@@ -78,14 +66,14 @@ tools:
 
 ## Typography
 
-- MUST use `text-balance` for headings and `text-pretty` for body/paragraphs
+- MUST use `text-balance` for headings and `text-pretty` for body text
 - MUST use `tabular-nums` for data
 - SHOULD use `truncate` or `line-clamp` for dense UI
 - NEVER modify `letter-spacing` (`tracking-`) unless explicitly requested
 
 ## Layout
 
-- MUST use a fixed `z-index` scale (e.g., `z-10`, `z-20`) and avoid arbitrary values (e.g., `z-[99]`)
+- MUST use a fixed `z-index` scale (for example `z-10`, `z-20`) and avoid arbitrary values (for example `z-[99]`)
 - SHOULD use `size-*` for square elements instead of `w-*` + `h-*`
 
 ## Performance
@@ -99,12 +87,12 @@ tools:
 - NEVER use gradients unless explicitly requested
 - SHOULD avoid purple or multicolor gradients even when gradients are requested (prefer subtle, single-hue gradients)
 - NEVER use glow effects as primary affordances
-- SHOULD use Tailwind CSS default shadow scale unless explicitly requested
+- SHOULD use Tailwind default shadow scale unless explicitly requested
 - MUST give empty states one clear next action
 - SHOULD limit accent color usage to one per view
-- SHOULD use existing theme or Tailwind CSS color tokens before introducing new ones
+- SHOULD use existing theme or Tailwind color tokens before introducing new ones
 
-## Related Resources
+## References
 
 - [UI Skills](https://www.ui-skills.com/)
 - [Base UI](https://base-ui.com/react/components)
