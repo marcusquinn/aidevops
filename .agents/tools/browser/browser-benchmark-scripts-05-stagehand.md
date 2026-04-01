@@ -1,6 +1,6 @@
 # Stagehand Benchmark Scripts
 
-Uses AI-driven `act()` / `extract()` instead of CSS selectors. Same harness as Playwright but creates a new `Stagehand({ env: "LOCAL", headless: true, verbose: 0 })` per run (measures cold-start). Tests receive `sh` instead of `page`; access page via `sh.ctx.pages()[0]`.
+AI-driven `act()`/`extract()` instead of CSS selectors. New `Stagehand` instance per run (measures cold-start). Tests receive `sh`; access page via `sh.ctx.pages()[0]`.
 
 ```javascript
 import { Stagehand } from "@browserbasehq/stagehand";
@@ -8,8 +8,9 @@ import { z } from "zod";
 
 const TESTS = {
   async navigate(sh) {
-    await sh.ctx.pages()[0].goto('https://the-internet.herokuapp.com/');
-    await sh.ctx.pages()[0].screenshot({ path: '/tmp/bench-sh-nav.png' });
+    const page = sh.ctx.pages()[0];
+    await page.goto('https://the-internet.herokuapp.com/');
+    await page.screenshot({ path: '/tmp/bench-sh-nav.png' });
   },
   async formFill(sh) {
     await sh.ctx.pages()[0].goto('https://the-internet.herokuapp.com/login');
@@ -30,8 +31,7 @@ const TESTS = {
   }
 };
 
-// Harness: same as Playwright — iterate TESTS, 3 runs, JSON output.
-// Per run: sh = new Stagehand(...); sh.init(); <time fn(sh)>; sh.close().
+// Harness: new Stagehand → init → time fn(sh) → close; 3 runs per test, JSON output.
 async function run() {
   const results = {};
   for (const [name, fn] of Object.entries(TESTS)) {
