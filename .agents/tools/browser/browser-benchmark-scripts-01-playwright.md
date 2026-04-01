@@ -6,6 +6,11 @@ Reference implementation for `browser-benchmark-scripts.md`.
 - Coverage: `navigate`, `formFill`, `extract`, `multiStep`
 - Sampling: 3 runs per test, median reported
 
+| Script | What it measures |
+|--------|-----------------|
+| Sequential | Per-test latency: navigate, formFill, extract, multiStep — one page at a time |
+| Parallel | Throughput: 5 contexts, 3 browsers, 10 pages — concurrent load |
+
 ## Sequential script
 
 ```javascript
