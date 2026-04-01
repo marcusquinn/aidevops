@@ -1,6 +1,10 @@
 # Crawl4AI Benchmark Scripts
 
-Only supports navigate and extract (no form interaction or multi-step navigation).
+Reference implementation for `browser-benchmark-scripts.md`.
+
+- Target: `https://the-internet.herokuapp.com`
+- Coverage: `navigate`, `extract` (no form interaction or multi-step navigation)
+- Sampling: 3 runs per test
 
 ## Sequential benchmark
 
