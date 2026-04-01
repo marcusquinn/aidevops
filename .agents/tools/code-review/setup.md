@@ -33,35 +33,6 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Setup Notes
-
-### CodeRabbit
-
-1. Sign in with GitHub.
-2. Add the repository.
-3. Enable automatic PR reviews.
-
-### CodeFactor
-
-1. Sign in with GitHub.
-2. Add the repository.
-3. Enable GitHub Checks so PRs show the grade.
-
-### Codacy
-
-1. Sign in with GitHub.
-2. Import the repository.
-3. Confirm `.codacy.yml` was detected.
-
-### SonarCloud
-
-1. Sign in with GitHub.
-2. Create an organization linked to the GitHub account.
-3. Import the project.
-4. Generate a token from `My Account > Security > Generate Token`.
-5. Add `SONAR_TOKEN` under `Settings > Secrets and variables > Actions`.
-6. Push a commit and confirm the SonarCloud workflow succeeds.
-
 ## README Badges
 
 | Platform | Badge |
