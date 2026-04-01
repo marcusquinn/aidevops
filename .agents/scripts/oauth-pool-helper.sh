@@ -1481,6 +1481,15 @@ cmd_set_priority() {
 		print_error "Usage: set-priority <provider> <email> <N> (higher = preferred, 0 = clear)"
 		return 1
 	fi
+
+	case "$provider" in
+	anthropic | openai | cursor | google) ;;
+	*)
+		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, google)"
+		return 1
+		;;
+	esac
+
 	if ! [[ "$priority" =~ ^-?[0-9]+$ ]]; then
 		print_error "Priority must be an integer, got: $priority"
 		return 1
@@ -1488,10 +1497,26 @@ cmd_set_priority() {
 
 	local pool new_pool
 	pool=$(load_pool)
-	new_pool=$(printf '%s' "$pool" | jq -e --arg p "$provider" --arg e "$email" --argjson n "$priority" \
-		'if (.[$p] | map(select(.email == $e)) | length) == 0 then error("not found")
-		 else .[$p] |= map(if .email == $e then (if $n == 0 then del(.priority) else .priority = $n end) else . end)
-		 end') || {
+	new_pool=$(printf '%s' "$pool" | PROVIDER="$provider" EMAIL="$email" PRIORITY="$priority" python3 -c "
+import json, os, sys
+pool = json.load(sys.stdin)
+provider = os.environ['PROVIDER']
+email = os.environ['EMAIL']
+priority = int(os.environ['PRIORITY'])
+accounts = pool.get(provider, [])
+found = False
+for a in accounts:
+    if a.get('email') == email:
+        if priority == 0:
+            a.pop('priority', None)
+        else:
+            a['priority'] = priority
+        found = True
+        break
+if not found:
+    sys.exit(1)
+json.dump(pool, sys.stdout, indent=2)
+") || {
 		print_error "Account ${email} not found in ${provider} pool"
 		return 1
 	}

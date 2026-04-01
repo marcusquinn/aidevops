@@ -133,7 +133,10 @@ export function createProviderAuthHook(client) {
                 const aOrder = STATUS_ORDER[a.status] ?? 99;
                 const bOrder = STATUS_ORDER[b.status] ?? 99;
                 if (aOrder !== bOrder) return aOrder - bOrder;
-                // Within same status, prefer least recently used
+                // t1833: prefer higher priority within same status
+                const pDiff = (b.priority || 0) - (a.priority || 0);
+                if (pDiff !== 0) return pDiff;
+                // Then least recently used
                 return new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0);
               });
 
@@ -418,7 +421,12 @@ export function createProviderAuthHook(client) {
                     (a.status === "active" || a.status === "idle") &&
                     (!a.cooldownUntil || a.cooldownUntil <= now),
                 )
-                .sort((a, b) => new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0));
+                .sort((a, b) => {
+                  // t1833: prefer higher priority, then LRU
+                  const pDiff = (b.priority || 0) - (a.priority || 0);
+                  if (pDiff !== 0) return pDiff;
+                  return new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0);
+                });
 
               for (const alt of alternates) {
                 // Force-refresh alternate accounts too — their tokens may
@@ -510,7 +518,12 @@ export function createProviderAuthHook(client) {
                   (a.status === "active" || a.status === "idle") &&
                   (!a.cooldownUntil || a.cooldownUntil <= now),
               )
-              .sort((a, b) => new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0));
+              .sort((a, b) => {
+                // t1833: prefer higher priority, then LRU
+                const pDiff = (b.priority || 0) - (a.priority || 0);
+                if (pDiff !== 0) return pDiff;
+                return new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0);
+              });
 
             let rotated = false;
             for (const alt of alternates) {
