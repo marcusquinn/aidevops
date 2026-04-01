@@ -109,6 +109,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [ ] t1727 simplification: tighten agent doc Ahrefs SEO Integration (.agents/seo/ahrefs.md, 106 lines) #simplification #seo #auto-dispatch ~1h model:sonnet ref:GH#15129 logged:2026-04-01
 - [ ] t15015 simplification: tighten agent doc Dev-Browser - Stateful Browser Automation (.agents/tools/browser/dev-browser.md, 186 lines) #simplification #browser #auto-dispatch ~1h model:sonnet ref:GH#15015 logged:2026-04-01
+- [ ] t15075 simplification: tighten agent doc Concurrency Patterns (.agents/tools/programming/modern-javascript-skill/concurrency.md, 221 lines) @marcusquinn #simplification-debt ~1h ref:GH#15075 logged:2026-04-01
 - [ ] t1728 simplification: tighten agent doc Vercel Agent Skills (.agents/tools/deployment/agent-skills.md, 100 lines) #simplification #deployment #auto-dispatch ~1h model:sonnet ref:GH#15017 logged:2026-04-01
 - [ ] t1730 simplification: tighten agent doc Landing Page Structure (.agents/marketing-sales/direct-response-copy-frameworks-landing-page-structure.md, 66 lines) #simplification #marketing-sales #auto-dispatch ~1h model:sonnet ref:GH#15061 logged:2026-04-01
 
