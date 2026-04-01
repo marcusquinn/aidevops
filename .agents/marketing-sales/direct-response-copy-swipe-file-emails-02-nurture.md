@@ -6,10 +6,10 @@ Reference corpus: examples stay intact in companion files; this page is the inde
 
 ## Examples
 
-1. `04-morning-brew-story-driven-value`
+4. `04-morning-brew-story-driven-value`
    - File: `direct-response-copy-swipe-file-emails-02-nurture-04-morning-brew-story-driven-value.md`
    - Angle: story-led nurture email that teaches through a surprising business failure.
-2. `05-james-clear-value-first`
+5. `05-james-clear-value-first`
    - File: `direct-response-copy-swipe-file-emails-02-nurture-05-james-clear-value-first.md`
    - Angle: repeatable newsletter structure built around ideas, quotes, and a question.
 
