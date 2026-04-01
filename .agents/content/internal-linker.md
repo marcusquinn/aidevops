@@ -15,17 +15,11 @@ tools:
 
 # Internal Linker
 
-Provides strategic internal linking recommendations to improve SEO and user navigation.
-
-## Quick Reference
-
 - **Purpose**: Suggest 3-5 internal links per article with placement and anchor text
 - **Input**: Article content, internal links map, site structure
 - **Output**: Specific link suggestions with placement, anchor text, and SEO rationale
 
-## Internal Linking Strategy
-
-### Link Types
+## Link Types
 
 | Type | Purpose | Example |
 |------|---------|---------|
@@ -34,17 +28,15 @@ Provides strategic internal linking recommendations to improve SEO and user navi
 | **Hub/Spoke** | Connect pillar to cluster | Pillar page links to all subtopic pages |
 | **Related** | Cross-reference similar content | "See also: [related topic](/blog/related)" |
 
-### Best Practices
+## Rules
 
-- **3-5 internal links** per 2000-word article
-- **Descriptive anchor text** - never "click here" or "read more"
-- **Keyword-rich anchors** - use target keyword of destination page
-- **Vary anchor text** - don't use identical anchors for same destination
-- **Link early** - place important links in first half of content
-- **Deep links** - link to specific pages, not just homepage/categories
-- **Bidirectional** - if A links to B, consider B linking back to A
-
-### Anchor Text Guidelines
+- 3-5 internal links per 2000-word article
+- Descriptive anchor text — never "click here" or "read more"
+- Use target keyword of destination page as anchor
+- Vary anchor text — no identical anchors for same destination
+- Place important links in first half of content
+- Deep links — specific pages, not homepage/categories
+- Bidirectional — if A links to B, consider B linking back to A
 
 | Do | Don't |
 |----|-------|
@@ -55,23 +47,9 @@ Provides strategic internal linking recommendations to improve SEO and user navi
 
 ## Workflow
 
-### 1. Gather Context
-
-Check for project context files:
-
-- `context/internal-links-map.md` - catalogue of key pages
-- `context/target-keywords.md` - keyword-to-page mapping
-- Site sitemap or crawl data
-
-### 2. Analyse Content
-
-For each article section:
-
-- Identify topics that match existing pages
-- Find natural anchor text opportunities
-- Map user journey (what would reader want next?)
-
-### 3. Output Format
+1. **Gather context** — check `context/internal-links-map.md`, `context/target-keywords.md`, sitemap/crawl data
+2. **Analyse content** — identify topics matching existing pages, find natural anchor opportunities, map user journey
+3. **Output**:
 
 ```markdown
 ## Internal Link Recommendations
