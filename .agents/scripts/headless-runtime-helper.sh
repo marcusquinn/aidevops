@@ -542,6 +542,12 @@ record_provider_backoff() {
 	local model="${4:-$provider}"
 	local details retry_seconds auth_signature retry_after backoff_key
 
+	# local_error = worker/sandbox/prompt issue, NOT provider's fault.
+	# Skip backoff entirely — recording it falsely flags healthy providers.
+	if [[ "$reason" == "local_error" ]]; then
+		return 0
+	fi
+
 	# Auth errors back off at provider level (shared credentials).
 	# Rate limits and provider errors back off at model level so that
 	# other models from the same provider remain available as fallbacks.
@@ -705,7 +711,16 @@ PY
 		printf '%s' "auth_error"
 		return 0
 	fi
-	printf '%s' "provider_error"
+	# Distinguish actual provider errors (5xx, connection refused, timeout)
+	# from local/worker failures (sandbox crash, bad prompt, opencode bug).
+	# Only provider errors should trigger backoff — local failures don't
+	# mean the provider is unhealthy.
+	if [[ "$lowered" =~ (500|502|503|504|internal\ server\ error|service\ unavailable|gateway|connection\ refused|connection.*reset|overloaded) ]]; then
+		printf '%s' "provider_error"
+		return 0
+	fi
+	# Default: local_error — do NOT record provider backoff for this
+	printf '%s' "local_error"
 	return 0
 }
 
@@ -1296,9 +1311,14 @@ _handle_run_result() {
 	if [[ "$exit_code" -eq 0 ]]; then
 		if [[ "$activity_detected" != "1" ]]; then
 			_run_result_label="no_activity"
-			record_provider_backoff "$provider" "provider_error" "$output_file" "$selected_model"
+			# Do NOT record provider backoff for no_activity. Exit 0 with no LLM
+			# output can be caused by local issues (bad prompt, sandbox problem,
+			# opencode bug) — not the provider's fault. Recording provider_error
+			# here falsely flags healthy providers as rate-limited, causing the
+			# pre-dispatch check to skip them and starve the worker pool.
+			# The activity watchdog (exit 124) handles genuine provider failures.
 			rm -f "$output_file"
-			print_warning "$selected_model returned exit 0 without any model activity; backing off model"
+			print_warning "$selected_model returned exit 0 without any model activity (no backoff recorded — may be local issue)"
 			return 75
 		fi
 		_run_result_label="success"
