@@ -5234,9 +5234,14 @@ check_dispatch_dedup() {
 	# Exit codes from claim: 0=won, 1=lost, 2=error (fail-open).
 	# On error (exit 2), we allow dispatch to proceed — better to risk a rare
 	# duplicate than to block all dispatch on a transient GitHub API failure.
+	#
+	# GH#15317: Capture claim output to extract comment_id for cleanup after
+	# the deterministic dispatch comment is posted.
+	local _claim_comment_id=""
 	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
-		local claim_exit=0
-		"$dedup_helper" claim "$issue_number" "$repo_slug" "$self_login" >>"$LOGFILE" 2>&1 || claim_exit=$?
+		local claim_exit=0 claim_output=""
+		claim_output=$("$dedup_helper" claim "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE") || claim_exit=$?
+		echo "$claim_output" >>"$LOGFILE"
 		if [[ "$claim_exit" -eq 1 ]]; then
 			echo "[pulse-wrapper] Dedup: claim lost for #${issue_number} in ${repo_slug} — another runner claimed first (GH#11086)" >>"$LOGFILE"
 			return 0
@@ -5244,6 +5249,8 @@ check_dispatch_dedup() {
 		if [[ "$claim_exit" -eq 2 ]]; then
 			echo "[pulse-wrapper] Dedup: claim error for #${issue_number} in ${repo_slug} — proceeding (fail-open)" >>"$LOGFILE"
 		fi
+		# Extract claim comment_id for post-dispatch cleanup (GH#15317)
+		_claim_comment_id=$(printf '%s' "$claim_output" | sed -n 's/.*comment_id=\([0-9]*\).*/\1/p')
 		# claim_exit 0 = won, proceed to dispatch
 	fi
 
@@ -5393,6 +5400,34 @@ dispatch_with_dedup() {
 	if [[ -x "$ledger_helper" ]]; then
 		"$ledger_helper" record --issue "$issue_number" --repo "$repo_slug" \
 			--pid "$worker_pid" --title "$dispatch_title" 2>/dev/null || true
+	fi
+
+	# GH#15317: Post deterministic "Dispatching worker" comment from the dispatcher,
+	# not from the worker LLM session. Previously, the worker was responsible for
+	# posting this comment — but workers could crash before posting, leaving no
+	# persistent signal. Without this signal, Layer 5 (has_dispatch_comment) had
+	# nothing to find, and the issue would be re-dispatched every pulse cycle.
+	# Evidence: awardsapp #2051 accumulated 29 DISPATCH_CLAIM comments over 6 hours
+	# because workers kept dying before posting.
+	local dispatch_comment_body
+	dispatch_comment_body="Dispatching worker (deterministic).
+- **Worker PID**: ${worker_pid}
+- **Model**: ${selected_model}
+- **Runner**: ${self_login}
+- **Issue**: #${issue_number}"
+	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--method POST --field body="$dispatch_comment_body" \
+		>/dev/null 2>>"$LOGFILE" || {
+		echo "[dispatch_with_dedup] Warning: failed to post deterministic dispatch comment for #${issue_number}" >>"$LOGFILE"
+	}
+
+	# GH#15317: Clean up the DISPATCH_CLAIM comment now that the persistent
+	# dispatch comment is posted. The claim served its purpose (optimistic lock
+	# during the 8s consensus window). Leaving it pollutes the issue timeline —
+	# awardsapp #2051 had 29 stale claim comments.
+	if [[ -n "$_claim_comment_id" ]]; then
+		gh api "repos/${repo_slug}/issues/comments/${_claim_comment_id}" \
+			--method DELETE >/dev/null 2>>"$LOGFILE" || true
 	fi
 
 	echo "[dispatch_with_dedup] Dispatched worker PID ${worker_pid} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"

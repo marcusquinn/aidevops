@@ -833,7 +833,14 @@ has_dispatch_comment() {
 		return 1
 	fi
 
-	# Fetch recent comments and look for "Dispatching worker" from non-self authors
+	# Fetch recent comments and look for "Dispatching worker" comments.
+	# GH#15317: Check ALL dispatch comments regardless of author. Previously,
+	# self-posted comments were skipped (self_login filter), which allowed the
+	# same runner to re-dispatch every cycle — its own dispatch comment was
+	# invisible to its own dedup check. Evidence: awardsapp #2040 had
+	# alex-solovyev dispatch twice (20:33 and 22:57) because Layer 5 skipped
+	# its own dispatch comment. The self_login parameter is now unused by this
+	# function but kept in the signature for backward compatibility.
 	local comments_json
 	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 		--jq '[.[] | select(.body | startswith("Dispatching worker")) | {author: .user.login, created_at: .created_at}]' \
@@ -843,20 +850,15 @@ has_dispatch_comment() {
 		return 1
 	fi
 
-	# Check each dispatch comment
+	# Check each dispatch comment — any recent dispatch blocks, regardless of author
 	local count
 	count=$(printf '%s' "$comments_json" | jq 'length' 2>/dev/null) || count=0
 
 	local i
 	for i in $(seq 0 $((count - 1))); do
-		local author created_at
-		author=$(printf '%s' "$comments_json" | jq -r ".[$i].author // \"\"" 2>/dev/null) || author=""
+		local created_at author
 		created_at=$(printf '%s' "$comments_json" | jq -r ".[$i].created_at // \"\"" 2>/dev/null) || created_at=""
-
-		# Skip self-posted comments
-		if [[ -n "$self_login" && "$author" == "$self_login" ]]; then
-			continue
-		fi
+		author=$(printf '%s' "$comments_json" | jq -r ".[$i].author // \"\"" 2>/dev/null) || author=""
 
 		# Check age
 		if [[ -n "$created_at" ]]; then

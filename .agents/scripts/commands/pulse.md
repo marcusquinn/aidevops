@@ -330,16 +330,10 @@ SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer \
   --model "<full model ID>" --issue "<slug>#<number>")
 ```
 
-**Dispatch comment** (post on issue when dispatching):
-
-```text
-Dispatching worker.
-- **Branch**: <branch name>
-- **Scope**: <1-line description>
-- **Attempt**: <N of M>
-- **Direction**: <specific guidance>
-${SIG_FOOTER}
-```
+**Dispatch comment** — posted automatically by `dispatch_with_dedup()` (GH#15317).
+Do NOT post a "Dispatching worker" comment manually — the function handles it
+deterministically after confirming the worker PID is alive. Duplicate dispatch
+comments break the Layer 5 dedup check.
 
 **Kill/failure comment**:
 
