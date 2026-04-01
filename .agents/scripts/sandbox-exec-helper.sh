@@ -457,8 +457,20 @@ _sandbox_spawn_child() {
 	# its descendants share a PGID distinct from the wrapper's PGID.
 	# stdout/stderr are redirected here so the redirection applies to the
 	# backgrounded child process, not to the polling loop.
+	#
+	# --stream-stdout mode (GH#15180 bug #4): when stream_stdout=true (set
+	# by sandbox_run via dynamic scoping), stdout is NOT redirected to the
+	# capture file. Instead it flows to the caller's stdout (e.g., through
+	# a pipe to tee in headless-runtime-helper.sh) so external watchdogs
+	# can monitor activity in real-time. Stderr is still captured. The
+	# capture file remains empty; _sandbox_emit_redacted_output handles
+	# this gracefully (returns early on empty/missing files).
 	if command -v setsid &>/dev/null; then
-		setsid "$@" >"$sc_stdout_file" 2>"$sc_stderr_file" &
+		if [[ "${stream_stdout:-false}" == "true" ]]; then
+			setsid "$@" 2>"$sc_stderr_file" &
+		else
+			setsid "$@" >"$sc_stdout_file" 2>"$sc_stderr_file" &
+		fi
 		child_pid=$!
 		# Retrieve the process group ID of the child.
 		# On Linux: ps -o pgid= returns the PGID. On macOS: same flag works.
@@ -469,7 +481,11 @@ _sandbox_spawn_child() {
 			child_pgid=""
 		fi
 	else
-		"$@" >"$sc_stdout_file" 2>"$sc_stderr_file" &
+		if [[ "${stream_stdout:-false}" == "true" ]]; then
+			"$@" 2>"$sc_stderr_file" &
+		else
+			"$@" >"$sc_stdout_file" 2>"$sc_stderr_file" &
+		fi
 		child_pid=$!
 		# setsid not available — child shares the script's process group.
 		# Do NOT read the PGID here: ps would return the script's own PGID,
@@ -918,8 +934,12 @@ _sandbox_run_post_exec() {
 		log_sandbox "WARN" "Command timed out after ${timeout_secs}s"
 	fi
 
-	# Output results with redaction and taint-aware handling
-	_sandbox_emit_redacted_output "$stdout_file" "stdout" "$command_tainted"
+	# Output results with redaction and taint-aware handling.
+	# In --stream-stdout mode, stdout was already sent to the caller in
+	# real-time (not captured to file), so skip its emission here.
+	if [[ "${stream_stdout:-false}" != "true" ]]; then
+		_sandbox_emit_redacted_output "$stdout_file" "stdout" "$command_tainted"
+	fi
 	_sandbox_emit_redacted_output "$stderr_file" "stderr" "$command_tainted"
 
 	# Audit log
@@ -1004,6 +1024,12 @@ sandbox_run() {
 	local worker_id="sandbox-$$"
 	local extra_passthrough=""
 	local secret_io_guard="${AIDEVOPS_BLOCK_SECRET_IO:-$SECRET_IO_GUARD_DEFAULT}"
+	# Stream stdout mode (GH#15180 bug #4): when true, child stdout flows to
+	# the caller's stdout in real-time instead of being captured to a file and
+	# replayed after exit. This allows external watchdogs (e.g., the headless
+	# activity watchdog) to monitor output as it's produced. Stderr is still
+	# captured. Post-exec stdout emission is skipped (already streamed).
+	local stream_stdout=false
 	# cmd_args is an array — preserves spaces, avoids bash -c eval risks
 	local -a cmd_args=()
 
@@ -1037,6 +1063,10 @@ sandbox_run() {
 		--passthrough)
 			extra_passthrough="$2"
 			shift 2
+			;;
+		--stream-stdout)
+			stream_stdout=true
+			shift
 			;;
 		--)
 			shift

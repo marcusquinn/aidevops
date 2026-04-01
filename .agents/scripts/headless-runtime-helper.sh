@@ -769,7 +769,7 @@ for line in Path(sys.argv[1]).read_text(errors="ignore").splitlines():
     except Exception:
         continue
     event_type = obj.get("type", "")
-    if event_type in {"text", "tool", "tool-invocation", "tool-result", "step-start", "step_finish", "reasoning"}:
+    if event_type in {"text", "tool", "tool-invocation", "tool-result", "step_start", "step_finish", "reasoning"}:
         activity = True
         break
 
@@ -1219,17 +1219,22 @@ _invoke_opencode() {
 		if [[ -x "$SANDBOX_EXEC_HELPER" && "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" != "1" ]]; then
 			local passthrough_csv
 			passthrough_csv="$(build_sandbox_passthrough_csv)"
+			# --stream-stdout: let child stdout flow through the pipe to tee
+			# so the activity watchdog can monitor output in real-time
+			# (GH#15180 bug #4). Without this, the sandbox captures stdout to
+			# a temp file and replays it after exit — the watchdog sees nothing
+			# and kills every sandboxed worker at ~93s.
 			if [[ -n "$passthrough_csv" ]]; then
-				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --passthrough "$passthrough_csv" -- "${cmd[@]}" 2>&1 | tee "$output_file"
+				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --stream-stdout --passthrough "$passthrough_csv" -- "${cmd[@]}" 2>&1 | tee "$output_file"
 			else
-				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io -- "${cmd[@]}" 2>&1 | tee "$output_file"
+				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --stream-stdout -- "${cmd[@]}" 2>&1 | tee "$output_file"
 			fi
 			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
 		else
-			"${cmd[@]}" 2>&1 | tee "$output_file"
+			timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" "${cmd[@]}" 2>&1 | tee "$output_file"
 			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
 		fi
-	) &
+	) >/dev/null 2>&1 &
 	local worker_pid=$!
 
 	# Activity watchdog: monitor the output file for LLM activity.
@@ -1260,7 +1265,7 @@ _invoke_opencode() {
 #
 # Runs as a background process alongside the worker. Polls the output
 # file for LLM activity indicators (JSON events from opencode: text,
-# tool, reasoning, step-start). If none appear within the timeout,
+# tool, reasoning, step_start). If none appear within the timeout,
 # kills the worker process.
 #
 # The initial output always contains the sandbox startup line (~300 bytes).
@@ -1294,7 +1299,7 @@ _run_activity_watchdog() {
 			# output_has_activity is defined earlier — checks for JSON events
 			# But we can't call it from a background process easily.
 			# Instead, check for common activity markers directly.
-			if grep -qE '"type"\s*:\s*"(text|tool|tool-invocation|tool-result|step-start|reasoning)"' "$output_file" 2>/dev/null; then
+			if grep -qE '"type"\s*:\s*"(text|tool|tool-invocation|tool-result|step_start|step_finish|reasoning)"' "$output_file" 2>/dev/null; then
 				# Real LLM activity detected — worker is alive
 				return 0
 			fi
@@ -1304,15 +1309,21 @@ _run_activity_watchdog() {
 		elapsed=$((elapsed + poll_interval))
 	done
 
-	# Timeout reached with no activity — kill the stalled worker
+	# Timeout reached with no activity — kill the stalled worker and all its
+	# children (opencode, tee, etc.). Sending only to $worker_pid leaves
+	# pipeline children as orphans consuming CPU+memory (GH#15180 bug #2).
 	if kill -0 "$worker_pid" 2>/dev/null; then
 		print_warning "Activity watchdog: no LLM activity in ${timeout}s — killing stalled worker (PID $worker_pid)"
 		# Write the marker BEFORE killing — the dying subshell may overwrite
 		# exit_code_file with its own exit code (race condition). The marker
 		# file survives because only the watchdog writes to it.
 		touch "${exit_code_file}.watchdog_killed"
+		# Kill child processes first (pipeline members: opencode, tee), then
+		# the subshell itself. pkill -P walks the process tree by PPID.
+		pkill -P "$worker_pid" 2>/dev/null || true
 		kill "$worker_pid" 2>/dev/null || true
 		sleep 2
+		pkill -9 -P "$worker_pid" 2>/dev/null || true
 		kill -9 "$worker_pid" 2>/dev/null || true
 		printf '124' >"$exit_code_file"
 	fi
