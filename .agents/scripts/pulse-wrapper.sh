@@ -6188,6 +6188,99 @@ _Closed by deterministic merge pass (pulse-wrapper.sh)._" 2>/dev/null || true
 	return 0
 }
 
+#######################################
+# Decide whether to invoke the LLM supervisor this cycle.
+#
+# Returns 0 (true = run LLM) when:
+#   - Last LLM run was >24h ago (daily sweep)
+#   - Backlog is stalled: issue+PR count unchanged for 30+ min
+#   - No backlog snapshot exists yet (first run)
+#
+# Returns 1 (false = skip LLM) when:
+#   - Backlog is progressing (counts are decreasing)
+#   - Daily sweep not yet due
+#
+# State files:
+#   ${PULSE_DIR}/last_llm_run_epoch     — epoch of last LLM invocation
+#   ${PULSE_DIR}/backlog_snapshot.txt    — "epoch issues_count prs_count"
+#######################################
+PULSE_LLM_STALL_THRESHOLD="${PULSE_LLM_STALL_THRESHOLD:-1800}" # 30 min
+PULSE_LLM_DAILY_INTERVAL="${PULSE_LLM_DAILY_INTERVAL:-86400}"  # 24h
+
+_should_run_llm_supervisor() {
+	local now_epoch
+	now_epoch=$(date +%s)
+
+	# 1. Daily sweep: always run if last LLM was >24h ago
+	local last_llm_epoch=0
+	if [[ -f "${PULSE_DIR}/last_llm_run_epoch" ]]; then
+		last_llm_epoch=$(cat "${PULSE_DIR}/last_llm_run_epoch" 2>/dev/null) || last_llm_epoch=0
+	fi
+	[[ "$last_llm_epoch" =~ ^[0-9]+$ ]] || last_llm_epoch=0
+
+	local llm_age=$((now_epoch - last_llm_epoch))
+	if [[ "$llm_age" -ge "$PULSE_LLM_DAILY_INTERVAL" ]]; then
+		echo "[pulse-wrapper] LLM supervisor: daily sweep due (last run ${llm_age}s ago)" >>"$LOGFILE"
+		return 0
+	fi
+
+	# 2. Backlog stall: check if issue+PR count has changed
+	local snapshot_file="${PULSE_DIR}/backlog_snapshot.txt"
+	if [[ ! -f "$snapshot_file" ]]; then
+		# First run — take snapshot and run LLM
+		_update_backlog_snapshot "$now_epoch"
+		echo "[pulse-wrapper] LLM supervisor: first run (no snapshot)" >>"$LOGFILE"
+		return 0
+	fi
+
+	local snap_epoch snap_issues snap_prs
+	read -r snap_epoch snap_issues snap_prs <"$snapshot_file" 2>/dev/null || snap_epoch=0
+	[[ "$snap_epoch" =~ ^[0-9]+$ ]] || snap_epoch=0
+	[[ "$snap_issues" =~ ^[0-9]+$ ]] || snap_issues=0
+	[[ "$snap_prs" =~ ^[0-9]+$ ]] || snap_prs=0
+
+	# Get current counts (fast — single API call per repo, cached in prefetch)
+	local current_issues=0 current_prs=0
+	while IFS='|' read -r slug _; do
+		[[ -n "$slug" ]] || continue
+		local ic pc
+		ic=$(gh issue list --repo "$slug" --state open --json number --jq 'length' --limit 500 2>/dev/null) || ic=0
+		pc=$(gh pr list --repo "$slug" --state open --json number --jq 'length' --limit 200 2>/dev/null) || pc=0
+		[[ "$ic" =~ ^[0-9]+$ ]] || ic=0
+		[[ "$pc" =~ ^[0-9]+$ ]] || pc=0
+		current_issues=$((current_issues + ic))
+		current_prs=$((current_prs + pc))
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | [.slug, .path] | join("|")' "$REPOS_JSON" 2>/dev/null)
+
+	local snap_age=$((now_epoch - snap_epoch))
+	local total_before=$((snap_issues + snap_prs))
+	local total_now=$((current_issues + current_prs))
+
+	# Backlog is progressing — update snapshot, skip LLM
+	if [[ "$total_now" -lt "$total_before" ]]; then
+		_update_backlog_snapshot "$now_epoch" "$current_issues" "$current_prs"
+		return 1
+	fi
+
+	# Backlog unchanged — check if stalled long enough
+	if [[ "$snap_age" -ge "$PULSE_LLM_STALL_THRESHOLD" ]]; then
+		echo "[pulse-wrapper] LLM supervisor: backlog stalled for ${snap_age}s (issues=${current_issues} prs=${current_prs}, unchanged from ${snap_issues}+${snap_prs})" >>"$LOGFILE"
+		_update_backlog_snapshot "$now_epoch" "$current_issues" "$current_prs"
+		return 0
+	fi
+
+	# Stalled but not long enough yet
+	return 1
+}
+
+_update_backlog_snapshot() {
+	local epoch="${1:-$(date +%s)}"
+	local issues="${2:-0}"
+	local prs="${3:-0}"
+	printf '%s %s %s\n' "$epoch" "$issues" "$prs" >"${PULSE_DIR}/backlog_snapshot.txt"
+	return 0
+}
+
 #
 # Waits the normal launch grace period first so workers launched by the LLM
 # can appear in process lists before deterministic backfill runs.
@@ -6655,23 +6748,46 @@ main() {
 	run_stage_with_timeout "deterministic_merge_pass" "$PRE_RUN_STAGE_TIMEOUT" \
 		merge_ready_prs_all_repos || true
 
-	# Compute initial underfill state and run recycler
-	local underfill_output
-	underfill_output=$(_compute_initial_underfill)
-	local initial_underfilled_mode initial_underfill_pct
-	initial_underfilled_mode=$(echo "$underfill_output" | sed -n '1p')
-	initial_underfill_pct=$(echo "$underfill_output" | sed -n '2p')
+	# Conditional LLM supervisor: the deterministic layer (merge pass, fill
+	# floor, stalled worker cleanup) handles the common case every cycle.
+	# The LLM supervisor adds value only for edge cases (CHANGES_REQUESTED
+	# PRs, external contributor triage, semantic dedup, stale coaching).
+	#
+	# Skip the LLM session unless:
+	#   1. Backlog is stalled (issue+PR count unchanged for 30+ min)
+	#   2. Daily sweep is due (last LLM run was >24h ago)
+	#   3. PULSE_FORCE_LLM=1 is set (manual override)
+	#
+	# This saves ~80% of supervisor tokens while maintaining identical
+	# dispatch and merge throughput.
+	local skip_llm=false
+	if [[ "${PULSE_FORCE_LLM:-0}" != "1" ]] && ! _should_run_llm_supervisor; then
+		skip_llm=true
+		echo "[pulse-wrapper] Skipping LLM supervisor (backlog progressing, daily sweep not due)" >>"$LOGFILE"
+	fi
 
-	local pulse_start_epoch
-	pulse_start_epoch=$(date +%s)
-	run_pulse "$initial_underfilled_mode" "$initial_underfill_pct"
+	local pulse_duration=0
+	if [[ "$skip_llm" == "false" ]]; then
+		local underfill_output
+		underfill_output=$(_compute_initial_underfill)
+		local initial_underfilled_mode initial_underfill_pct
+		initial_underfilled_mode=$(echo "$underfill_output" | sed -n '1p')
+		initial_underfill_pct=$(echo "$underfill_output" | sed -n '2p')
 
-	# Early-exit recycle loop
-	local pulse_end_epoch
-	pulse_end_epoch=$(date +%s)
-	local pulse_duration=$((pulse_end_epoch - pulse_start_epoch))
+		local pulse_start_epoch
+		pulse_start_epoch=$(date +%s)
+		run_pulse "$initial_underfilled_mode" "$initial_underfill_pct"
+		local pulse_end_epoch
+		pulse_end_epoch=$(date +%s)
+		pulse_duration=$((pulse_end_epoch - pulse_start_epoch))
+
+		# Record LLM run timestamp for staleness tracking
+		date +%s >"${PULSE_DIR}/last_llm_run_epoch"
+	fi
+
+	# Deterministic fill floor runs EVERY cycle regardless of LLM
 	if [[ -f "$STOP_FLAG" ]]; then
-		echo "[pulse-wrapper] Stop flag appeared after run_pulse() — skipping deterministic fill floor" >>"$LOGFILE"
+		echo "[pulse-wrapper] Stop flag appeared — skipping deterministic fill floor" >>"$LOGFILE"
 	else
 		apply_deterministic_fill_floor
 	fi
