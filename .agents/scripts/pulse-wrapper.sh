@@ -578,17 +578,73 @@ _prefetch_repo_prs() {
 	local slug="$1"
 
 	# PRs (createdAt included for daily PR cap — GH#3821)
-	local pr_json
+	# GH#15060: statusCheckRollup is the heaviest field in the GraphQL payload —
+	# each PR's full check suite data can be kilobytes. With 100+ PRs, the
+	# response exceeds GitHub's internal timeout and `gh` returns an error that
+	# the `2>/dev/null || pr_json="[]"` pattern silently swallows, producing
+	# "Open PRs (0)" when hundreds exist. This was the root cause of the pulse
+	# seeing 0 PRs and never merging anything.
+	#
+	# Fix: fetch without statusCheckRollup first (fast, always works), then
+	# enrich with check status in a separate lightweight call. If the enrichment
+	# fails, the pulse still sees the PR list and can act on review status.
+	local pr_json pr_err
+	pr_err=$(mktemp)
 	pr_json=$(gh pr list --repo "$slug" --state open \
-		--json number,title,reviewDecision,statusCheckRollup,updatedAt,headRefName,createdAt \
-		--limit "$PULSE_PREFETCH_PR_LIMIT" 2>/dev/null) || pr_json="[]"
+		--json number,title,reviewDecision,updatedAt,headRefName,createdAt,author \
+		--limit "$PULSE_PREFETCH_PR_LIMIT" 2>"$pr_err") || pr_json=""
+
+	# Log errors instead of swallowing them silently
+	if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
+		local err_msg
+		err_msg=$(cat "$pr_err" 2>/dev/null || echo "unknown error")
+		echo "[pulse-wrapper] _prefetch_repo_prs: gh pr list FAILED for ${slug}: ${err_msg}" >>"$LOGFILE"
+		pr_json="[]"
+	fi
+	rm -f "$pr_err"
 
 	local pr_count
-	pr_count=$(echo "$pr_json" | jq 'length')
+	pr_count=$(echo "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+
+	# Enrichment: fetch statusCheckRollup separately with a smaller batch.
+	# This is the expensive field — do it only if we have PRs, and cap the
+	# batch to avoid GraphQL timeouts on repos with large PR backlogs.
+	local checks_json=""
+	local checks_limit=50
+	if [[ "$pr_count" -gt 0 ]]; then
+		checks_json=$(gh pr list --repo "$slug" --state open \
+			--json number,statusCheckRollup \
+			--limit "$checks_limit" 2>/dev/null) || checks_json=""
+	fi
 
 	if [[ "$pr_count" -gt 0 ]]; then
 		echo "### Open PRs ($pr_count)"
-		echo "$pr_json" | jq -r '.[] | "- PR #\(.number): \(.title) [checks: \(if .statusCheckRollup == null or (.statusCheckRollup | length) == 0 then "none" elif (.statusCheckRollup | all((.conclusion // .state) == "SUCCESS")) then "PASS" elif (.statusCheckRollup | any((.conclusion // .state) == "FAILURE")) then "FAIL" else "PENDING" end)] [review: \(if .reviewDecision == null or .reviewDecision == "" then "NONE" else .reviewDecision end)] [branch: \(.headRefName)] [updated: \(.updatedAt)]"'
+		# Merge check status into the PR list where available
+		if [[ -n "$checks_json" && "$checks_json" != "[]" ]]; then
+			# Build a lookup map: number -> check summary
+			echo "$pr_json" | jq -r --argjson checks "${checks_json:-[]}" '
+				# Build check lookup indexed by PR number
+				($checks | map({(.number | tostring): .statusCheckRollup}) | add // {}) as $check_map |
+				.[] |
+				(.number | tostring) as $num |
+				($check_map[$num] // null) as $rolls |
+				"- PR #\(.number): \(.title) [checks: \(
+					if $rolls == null or ($rolls | length) == 0 then "none"
+					elif ($rolls | all((.conclusion // .state) == "SUCCESS")) then "PASS"
+					elif ($rolls | any((.conclusion // .state) == "FAILURE")) then "FAIL"
+					else "PENDING"
+					end
+				)] [review: \(
+					if .reviewDecision == null or .reviewDecision == "" then "NONE"
+					else .reviewDecision
+					end
+				)] [author: \(.author.login // "unknown")] [branch: \(.headRefName)] [updated: \(.updatedAt)]"
+			'
+		else
+			# No check data available — show PRs without check status
+			echo "$pr_json" | jq -r '.[] | "- PR #\(.number): \(.title) [checks: unknown] [review: \(if .reviewDecision == null or .reviewDecision == "" then "NONE" else .reviewDecision end)] [author: \(.author.login // "unknown")] [branch: \(.headRefName)] [updated: \(.updatedAt)]"'
+		fi
 	else
 		echo "### Open PRs (0)"
 		echo "- None"
@@ -656,10 +712,20 @@ _prefetch_repo_issues() {
 	# these are managed by pulse-wrapper.sh and must not be touched by the
 	# pulse agent. Exposing them in pre-fetched state causes the LLM to
 	# close them as "stale", creating churn (wrapper recreates on next cycle).
-	local issue_json
+	# GH#15060: Log errors instead of silently swallowing them with 2>/dev/null.
+	local issue_json issue_err
+	issue_err=$(mktemp)
 	issue_json=$(gh issue list --repo "$slug" --state open \
 		--json number,title,labels,updatedAt,assignees \
-		--limit "$PULSE_PREFETCH_ISSUE_LIMIT" 2>/dev/null) || issue_json="[]"
+		--limit "$PULSE_PREFETCH_ISSUE_LIMIT" 2>"$issue_err") || issue_json=""
+
+	if [[ -z "$issue_json" || "$issue_json" == "null" ]]; then
+		local issue_err_msg
+		issue_err_msg=$(cat "$issue_err" 2>/dev/null || echo "unknown error")
+		echo "[pulse-wrapper] _prefetch_repo_issues: gh issue list FAILED for ${slug}: ${issue_err_msg}" >>"$LOGFILE"
+		issue_json="[]"
+	fi
+	rm -f "$issue_err"
 
 	# Remove issues with supervisor, contributor, persistent, or quality-review labels
 	local filtered_json
@@ -1067,8 +1133,10 @@ prefetch_state() {
 
 	# Wait for all parallel fetches with a hard timeout (t1482).
 	# Each repo does 3 gh API calls (pr list, pr list --state all, issue list).
-	# Normal completion: <30s. Timeout at 60s catches hung gh connections.
-	_wait_parallel_pids 60 "${pids[@]}"
+	# GH#15060: Raised from 60s to 120s. With 13 repos and repos having 100+ PRs,
+	# the GraphQL responses are large and rate limiting serializes parallel calls.
+	# 60s caused silent timeouts producing "Open PRs (0)" on large backlogs.
+	_wait_parallel_pids 120 "${pids[@]}"
 
 	# Assemble state file in repo order
 	_assemble_state_file "$tmpdir"

@@ -71,7 +71,12 @@ first repo" bug).
 
 ### 3. Approve and merge ready PRs (free — no worker slot needed)
 
-For each PR with green CI + all status checks passed + collaborator author:
+For each PR where CI checks pass (or have no failures) AND the author is a collaborator:
+
+**`REVIEW_REQUIRED` is NOT a merge blocker for collaborator PRs.** The `reviewDecision` field
+shows `REVIEW_REQUIRED` when no human has approved yet. Since the pulse user IS a collaborator
+with merge permissions, it satisfies the review requirement by calling `approve_collaborator_pr`
+before merging. The review gate only blocks non-collaborators (external contributors).
 
 ```bash
 # Auto-approve collaborator PRs to satisfy required_approving_review_count (GH#10522)
@@ -83,6 +88,12 @@ approve_collaborator_pr NUMBER SLUG AUTHOR
 # Then merge
 gh pr merge NUMBER --repo SLUG --squash
 ```
+
+**Merge criteria for collaborator PRs:**
+- CI checks: all PASS, or no failing checks (PENDING is OK to wait on, NONE is OK to merge)
+- Review: `REVIEW_REQUIRED` or `NONE` — approve then merge (pulse user is a reviewer)
+- Review: `CHANGES_REQUESTED` — dispatch a fix worker (do NOT merge)
+- Review: `APPROVED` — merge directly (already approved)
 
 Check external contributor gate before ANY approve/merge (see Pre-merge checks below).
 
@@ -356,7 +367,7 @@ Before merging ANY PR:
 
 ### PR triage
 
-- **Green CI + no blocking reviews** → approve then merge: `approve_collaborator_pr <number> <slug> <author>` then `gh pr merge <number> --repo <slug> --squash`. If the PR resolves an issue, comment on both the PR and the issue to link them, then close the issue: `gh issue comment <issue> --repo <slug> --body "Completed via PR #<N>. merged to main."` then `gh issue close <issue> --repo <slug>`.
+- **Green CI + collaborator author** → approve then merge (REVIEW_REQUIRED is not a blocker — the pulse user satisfies it): `approve_collaborator_pr <number> <slug> <author>` then `gh pr merge <number> --repo <slug> --squash`. If the PR resolves an issue, comment on both the PR and the issue to link them, then close the issue: `gh issue comment <issue> --repo <slug> --body "Completed via PR #<N>. merged to main."` then `gh issue close <issue> --repo <slug>`.
 - **Green CI + WAITING on review bots** → skip, run `request-retry`
 - **Failing CI** → check if systemic (same check fails on 3+ PRs). If systemic, file a workflow issue instead of dispatching per-PR fixes. If per-PR, dispatch a fix worker.
 - **Open 6+ hours with no recent commits** → something is stuck. Comment, consider closing and re-filing.

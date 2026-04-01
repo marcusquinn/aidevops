@@ -400,6 +400,182 @@ _get_repo_maintainer() {
 }
 
 #######################################
+# Stale assignment recovery (GH#15060)
+#
+# When an issue is assigned to a blocking user (another runner), check
+# whether that assignment is stale: no active worker process, dispatch
+# claim comment is >1h old, and no progress (comments) in the last hour.
+#
+# If stale, unassign the blocking users, remove status:queued and
+# status:in-progress labels (they are lies — no worker is running),
+# post a recovery comment for audit trail, and return 0 (stale, safe
+# to re-dispatch). The caller then proceeds with dispatch.
+#
+# This breaks the orphaned-assignment deadlock where a runner goes
+# offline and leaves hundreds of issues assigned to it. Without this,
+# the dedup guard permanently blocks all dispatch (0 workers, 100%
+# failure rate observed in production — 370 issues, 159 PRs stuck).
+#
+# The 1-hour threshold is conservative: any legitimate worker would
+# have produced at least one comment or commit within an hour. Workers
+# that crash or exit without cleanup leave the assignment orphaned.
+#
+# Args:
+#   $1 = issue number
+#   $2 = repo slug (owner/repo)
+#   $3 = comma-separated blocking assignee logins
+# Returns:
+#   exit 0 = stale assignment recovered (safe to dispatch)
+#   exit 1 = assignment is NOT stale (genuine active claim, block dispatch)
+#######################################
+STALE_ASSIGNMENT_THRESHOLD_SECONDS="${STALE_ASSIGNMENT_THRESHOLD_SECONDS:-3600}" # 1 hour
+
+_is_stale_assignment() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local blocking_assignees="$3"
+
+	# Fetch issue comments to find the most recent dispatch claim and
+	# overall activity timestamp. Use --paginate to catch all comments
+	# on issues with long histories, but cap with --jq to only extract
+	# what we need (timestamp + body snippet for matching).
+	local comments_json
+	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--jq '[.[] | {created_at: .created_at, author: .user.login, body_start: (.body[:200])}] | sort_by(.created_at) | reverse' \
+		2>/dev/null) || comments_json="[]"
+
+	# Find the most recent dispatch/claim comment
+	# Matches: "Dispatching worker", "DISPATCH_CLAIM", "Worker (PID"
+	local last_dispatch_ts=""
+	last_dispatch_ts=$(printf '%s' "$comments_json" | jq -r '
+		[.[] | select(
+			(.body_start | test("Dispatching worker"; "i")) or
+			(.body_start | test("DISPATCH_CLAIM"; "i")) or
+			(.body_start | test("Worker \\(PID"; "i"))
+		)] | first | .created_at // empty
+	' 2>/dev/null) || last_dispatch_ts=""
+
+	# Find the most recent comment of any kind (progress signal)
+	local last_activity_ts=""
+	last_activity_ts=$(printf '%s' "$comments_json" | jq -r '
+		first | .created_at // empty
+	' 2>/dev/null) || last_activity_ts=""
+
+	# If no dispatch comment exists at all, the assignment is from a
+	# non-worker source (e.g., auto-assignment at issue creation). Treat
+	# as stale since there's no worker claim to protect.
+	local now_epoch dispatch_epoch activity_epoch
+	now_epoch=$(date +%s)
+
+	if [[ -z "$last_dispatch_ts" ]]; then
+		# No dispatch comment — check if the last activity is also old
+		if [[ -n "$last_activity_ts" ]]; then
+			activity_epoch=$(_ts_to_epoch "$last_activity_ts")
+			local activity_age=$((now_epoch - activity_epoch))
+			if [[ "$activity_age" -lt "$STALE_ASSIGNMENT_THRESHOLD_SECONDS" ]]; then
+				# Recent activity but no dispatch comment — could be manual work
+				return 1
+			fi
+		fi
+		# No dispatch comment AND no recent activity — stale
+		_recover_stale_assignment "$issue_number" "$repo_slug" "$blocking_assignees" "no dispatch claim comment found, no recent activity"
+		return 0
+	fi
+
+	# Dispatch comment exists — check its age
+	dispatch_epoch=$(_ts_to_epoch "$last_dispatch_ts")
+	local dispatch_age=$((now_epoch - dispatch_epoch))
+
+	if [[ "$dispatch_age" -lt "$STALE_ASSIGNMENT_THRESHOLD_SECONDS" ]]; then
+		# Dispatch claim is recent (< threshold) — honour it
+		return 1
+	fi
+
+	# Dispatch claim is old. Check if there's been any progress since.
+	if [[ -n "$last_activity_ts" ]]; then
+		activity_epoch=$(_ts_to_epoch "$last_activity_ts")
+		local activity_age=$((now_epoch - activity_epoch))
+		if [[ "$activity_age" -lt "$STALE_ASSIGNMENT_THRESHOLD_SECONDS" ]]; then
+			# Old dispatch but recent activity — worker may still be alive
+			return 1
+		fi
+	fi
+
+	# Both dispatch claim and last activity are older than threshold — stale
+	_recover_stale_assignment "$issue_number" "$repo_slug" "$blocking_assignees" \
+		"dispatch claim ${dispatch_age}s old, last activity ${activity_age:-unknown}s old"
+	return 0
+}
+
+#######################################
+# Convert ISO 8601 timestamp to epoch seconds
+# Handles both "2026-03-31T23:59:07Z" and "2026-03-31T23:59:07+00:00" formats.
+# Bash 3.2 compatible (no date -d on macOS).
+# Args: $1 = ISO timestamp
+# Returns: epoch seconds on stdout
+#######################################
+_ts_to_epoch() {
+	local ts="$1"
+	# macOS date -j -f parses a formatted date string
+	if [[ "$(uname)" == "Darwin" ]]; then
+		# Strip trailing Z or timezone offset for macOS date parsing
+		local clean_ts="${ts%%Z*}"
+		clean_ts="${clean_ts%%+*}"
+		date -j -f "%Y-%m-%dT%H:%M:%S" "$clean_ts" "+%s" 2>/dev/null || echo "0"
+	else
+		date -d "$ts" "+%s" 2>/dev/null || echo "0"
+	fi
+	return 0
+}
+
+#######################################
+# Execute stale assignment recovery: unassign, relabel, comment
+# Args:
+#   $1 = issue number
+#   $2 = repo slug
+#   $3 = comma-separated stale assignee logins
+#   $4 = reason string for audit trail
+#######################################
+_recover_stale_assignment() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local stale_assignees="$3"
+	local reason="$4"
+
+	# Unassign all stale users
+	local saved_ifs="${IFS:-}"
+	local -a assignee_arr=()
+	IFS=',' read -ra assignee_arr <<<"$stale_assignees"
+	IFS="$saved_ifs"
+
+	for assignee in "${assignee_arr[@]}"; do
+		gh issue edit "$issue_number" --repo "$repo_slug" \
+			--remove-assignee "$assignee" 2>/dev/null || true
+	done
+
+	# Remove stale status labels — they are lies (no worker is running)
+	gh issue edit "$issue_number" --repo "$repo_slug" \
+		--remove-label "status:queued" --remove-label "status:in-progress" \
+		--add-label "status:available" 2>/dev/null || true
+
+	# Post audit comment
+	gh issue comment "$issue_number" --repo "$repo_slug" \
+		--body "**Stale assignment recovered** (GH#15060)
+
+Previously assigned to: ${stale_assignees}
+Reason: ${reason}
+Threshold: ${STALE_ASSIGNMENT_THRESHOLD_SECONDS}s
+
+The assigned runner had no active worker process and produced no progress within the threshold. Unassigned and relabeled \`status:available\` for re-dispatch.
+
+_This recovery prevents the orphaned-assignment deadlock where offline runners permanently block all dispatch._" 2>/dev/null || true
+
+	printf 'STALE_RECOVERED: issue #%s in %s — unassigned %s (%s)\n' \
+		"$issue_number" "$repo_slug" "$stale_assignees" "$reason"
+	return 0
+}
+
+#######################################
 # Check if a GitHub issue is already assigned to another runner.
 #
 # This is the primary cross-machine dedup guard. Process-based checks
@@ -421,7 +597,9 @@ _get_repo_maintainer() {
 # - self_login never blocks
 # - owner/maintainer assignees are passive unless the issue has an active
 #   claim status label (status:queued or status:in-progress)
-# - any other assignee blocks dispatch
+# - any other assignee blocks dispatch — UNLESS the assignment is stale
+#   (no active worker, dispatch claim >1h old, no recent progress).
+#   Stale assignments are auto-recovered (GH#15060).
 #
 # This preserves GH#10521 (maintainer assignment alone must not starve the
 # queue) while still protecting GH#11141 (owner-assigned queued work must
@@ -502,6 +680,22 @@ is_assigned() {
 	if [[ -z "$blocking_assignees" ]]; then
 		# Only passive assignees remain (self and/or owner/maintainer without
 		# active claim state) — safe to dispatch.
+		return 1
+	fi
+
+	# Stale assignment recovery (GH#15060): if the blocking assignee has no
+	# active worker process AND the most recent dispatch/claim comment is >1h
+	# old AND there's been no progress (no new comments) in the last hour,
+	# treat the assignment as abandoned. Unassign the stale user, remove
+	# queued/in-progress labels, and allow re-dispatch.
+	#
+	# Root cause: when a runner goes offline or a worker crashes without
+	# cleanup, the issue stays assigned to that runner forever. The dedup
+	# guard blocks all other runners from dispatching for it, creating a
+	# permanent deadlock where 0 workers run despite available slots and
+	# open issues. This was observed in production with 370 issues and 0
+	# active workers — 100% dispatch failure rate.
+	if _is_stale_assignment "$issue_number" "$repo_slug" "$blocking_assignees"; then
 		return 1
 	fi
 
