@@ -270,6 +270,14 @@ COMPLEXITY_FUNC_LINE_THRESHOLD="${COMPLEXITY_FUNC_LINE_THRESHOLD:-100}"         
 COMPLEXITY_FILE_VIOLATION_THRESHOLD="${COMPLEXITY_FILE_VIOLATION_THRESHOLD:-1}" # Files with >= this many violations get an issue (was 5)
 COMPLEXITY_MD_MIN_LINES="${COMPLEXITY_MD_MIN_LINES:-50}"                        # Agent docs shorter than this are not actionable for simplification
 WORKER_WATCHDOG_HELPER="${SCRIPT_DIR}/worker-watchdog.sh"
+PULSE_HEALTH_FILE="${HOME}/.aidevops/logs/pulse-health.json"
+
+# Per-cycle health counters — incremented by merge/cleanup/dispatch functions
+# and flushed to PULSE_HEALTH_FILE by write_pulse_health_file() at cycle end.
+_PULSE_HEALTH_PRS_MERGED=0
+_PULSE_HEALTH_PRS_CLOSED_CONFLICTING=0
+_PULSE_HEALTH_STALLED_KILLED=0
+_PULSE_HEALTH_PREFETCH_ERRORS=0
 
 # Validate complexity scan configuration (defined above, validated here)
 COMPLEXITY_SCAN_INTERVAL=$(_validate_int COMPLEXITY_SCAN_INTERVAL "$COMPLEXITY_SCAN_INTERVAL" 900 300)
@@ -5832,6 +5840,9 @@ merge_ready_prs_all_repos() {
 	if [[ $((total_merged + total_closed)) -gt 0 ]]; then
 		echo "[pulse-wrapper] Deterministic merge pass complete: merged=${total_merged}, closed_conflicting=${total_closed}, failed=${total_failed}" >>"$LOGFILE"
 	fi
+	# Accumulate into per-cycle health counters (GH#15107)
+	_PULSE_HEALTH_PRS_MERGED=$((_PULSE_HEALTH_PRS_MERGED + total_merged))
+	_PULSE_HEALTH_PRS_CLOSED_CONFLICTING=$((_PULSE_HEALTH_PRS_CLOSED_CONFLICTING + total_closed))
 	return 0
 }
 
@@ -6338,6 +6349,7 @@ _run_preflight_stages() {
 
 	if ! run_stage_with_timeout "prefetch_state" "$PRE_RUN_STAGE_TIMEOUT" prefetch_state; then
 		echo "[pulse-wrapper] prefetch_state did not complete successfully — aborting this cycle to avoid stale dispatch decisions" >>"$LOGFILE"
+		_PULSE_HEALTH_PREFETCH_ERRORS=$((_PULSE_HEALTH_PREFETCH_ERRORS + 1))
 		echo "IDLE:$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$PIDFILE"
 		return 1
 	fi
@@ -6574,6 +6586,9 @@ main() {
 	fi
 	_run_early_exit_recycle_loop "$pulse_duration"
 
+	# Write structured health snapshot for instant diagnosis (GH#15107)
+	write_pulse_health_file || true
+
 	return 0
 }
 
@@ -6590,6 +6605,79 @@ main() {
 # These are completed headless sessions where opencode entered idle
 # state with a file watcher and never exited.
 #######################################
+
+#######################################
+# Write pulse-health.json — structured status snapshot for instant diagnosis.
+#
+# Fields (GH#15107):
+#   workers_active          — current live worker count
+#   workers_max             — configured max worker slots
+#   prs_merged_this_cycle   — PRs squash-merged by deterministic merge pass
+#   prs_closed_conflicting  — conflicting PRs closed this cycle
+#   issues_dispatched       — workers launched this cycle (from dispatch ledger)
+#   prefetch_errors         — prefetch_state failures this cycle
+#   stalled_workers_killed  — stalled workers killed by cleanup_stalled_workers
+#   models_backed_off       — active backoff entries in provider_backoff DB
+#
+# Atomic write: write to tmp file then mv to avoid partial reads.
+# Non-fatal: any failure is logged and silently ignored.
+#######################################
+write_pulse_health_file() {
+	local ts
+	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+	local workers_active workers_max
+	workers_active=$(count_active_workers 2>/dev/null || echo "0")
+	[[ "$workers_active" =~ ^[0-9]+$ ]] || workers_active=0
+	workers_max=$(get_max_workers_target 2>/dev/null || echo "1")
+	[[ "$workers_max" =~ ^[0-9]+$ ]] || workers_max=1
+
+	# issues_dispatched: in-flight worker count from dispatch ledger
+	local issues_dispatched=0
+	local _ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
+	if [[ -x "$_ledger_helper" ]]; then
+		local _ledger_count
+		_ledger_count=$("$_ledger_helper" count 2>/dev/null || echo "0")
+		[[ "$_ledger_count" =~ ^[0-9]+$ ]] && issues_dispatched="$_ledger_count"
+	fi
+
+	# models_backed_off: count active backoff entries in provider_backoff DB
+	local models_backed_off=0
+	if [[ -x "$HEADLESS_RUNTIME_HELPER" ]]; then
+		local _backoff_rows
+		_backoff_rows=$("$HEADLESS_RUNTIME_HELPER" backoff status 2>/dev/null | grep -c '|' || echo "0")
+		[[ "$_backoff_rows" =~ ^[0-9]+$ ]] && models_backed_off="$_backoff_rows"
+	fi
+
+	local tmp_health
+	tmp_health=$(mktemp "${HOME}/.aidevops/logs/.pulse-health-XXXXXX.json") || {
+		echo "[pulse-wrapper] write_pulse_health_file: mktemp failed — skipping health write" >>"$LOGFILE"
+		return 0
+	}
+
+	cat >"$tmp_health" <<EOF
+{
+  "timestamp": "${ts}",
+  "workers_active": ${workers_active},
+  "workers_max": ${workers_max},
+  "prs_merged_this_cycle": ${_PULSE_HEALTH_PRS_MERGED},
+  "prs_closed_conflicting": ${_PULSE_HEALTH_PRS_CLOSED_CONFLICTING},
+  "issues_dispatched": ${issues_dispatched},
+  "prefetch_errors": ${_PULSE_HEALTH_PREFETCH_ERRORS},
+  "stalled_workers_killed": ${_PULSE_HEALTH_STALLED_KILLED},
+  "models_backed_off": ${models_backed_off}
+}
+EOF
+
+	mv "$tmp_health" "$PULSE_HEALTH_FILE" || {
+		rm -f "$tmp_health"
+		echo "[pulse-wrapper] write_pulse_health_file: mv failed — skipping health write" >>"$LOGFILE"
+		return 0
+	}
+
+	echo "[pulse-wrapper] pulse-health.json written: workers=${workers_active}/${workers_max} merged=${_PULSE_HEALTH_PRS_MERGED} closed_conflicting=${_PULSE_HEALTH_PRS_CLOSED_CONFLICTING} dispatched=${issues_dispatched} stalled_killed=${_PULSE_HEALTH_STALLED_KILLED} backed_off=${models_backed_off}" >>"$LOGFILE"
+	return 0
+}
 
 #######################################
 # Kill workers stalled on rate-limited providers.
@@ -6704,6 +6792,8 @@ cleanup_stalled_workers() {
 	if [[ "$killed" -gt 0 ]]; then
 		echo "[pulse-wrapper] cleanup_stalled_workers: killed ${killed} stalled workers (freed ~${freed_mb}MB)" >>"$LOGFILE"
 	fi
+	# Accumulate into per-cycle health counter (GH#15107)
+	_PULSE_HEALTH_STALLED_KILLED=$((_PULSE_HEALTH_STALLED_KILLED + killed))
 	return 0
 }
 
