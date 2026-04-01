@@ -10,6 +10,8 @@ clawdhub_version: "1.0.1"
 
 vdirsyncer syncs CalDAV calendars to local .ics files. khal reads and writes them.
 
+**For reminders/tasks** (not calendar events): see `tools/productivity/apple-reminders.md`.
+
 **Sync First** — Always sync before querying or after making changes: `vdirsyncer sync`
 
 ## View Events
