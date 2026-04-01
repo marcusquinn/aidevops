@@ -74,8 +74,8 @@ dataset-helper.sh merge dataset1.jsonl dataset2.jsonl -o merged.jsonl
 
 ### Promote from traces
 
-1. Find the trace ID: `jq '.request_id' ~/.aidevops/.agent-workspace/observability/metrics.jsonl | tail`
-2. Promote it: `dataset-helper.sh promote --trace-id <id> --tags "edge-case"`
+1. Find trace ID: `jq '.request_id' ~/.aidevops/.agent-workspace/observability/metrics.jsonl | tail`
+2. Promote: `dataset-helper.sh promote --trace-id <id> --tags "edge-case"`
 3. Edit the promoted entry with expected output and cleaner input.
 
 ### Integrations
@@ -85,8 +85,8 @@ dataset-helper.sh merge dataset1.jsonl dataset2.jsonl -o merged.jsonl
 
 ## Design decisions
 
-- **JSONL over CSV/JSON-array**: Streamable, append-friendly, grep/wc-friendly, standard in ML/eval tooling, consistent with observability-helper.sh.
-- **`id` required**: Enables deduplication, trace-back, and merges.
+- **JSONL**: Streamable, append-friendly, grep/wc-friendly; consistent with observability-helper.sh.
+- **`id` required**: Enables dedup, trace-back, and merges.
 - **`expected` optional**: Some evals have no single correct answer.
-- **`source` provenance**: Distinguishes manual, promoted, and generated cases.
-- **`tags` filtering**: Supports subsets by scenario, domain, or difficulty.
+- **`source`**: Distinguishes manual, promoted, and generated cases.
+- **`tags`**: Supports subsets by scenario, domain, or difficulty.
