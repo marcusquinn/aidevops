@@ -7220,6 +7220,354 @@ calculate_priority_allocations() {
 	return 0
 }
 
+#######################################
+# Count active debt workers for a repo (quality-debt + simplification-debt)
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - debt type: "quality-debt", "simplification-debt", or "all" (default: all)
+#
+# Outputs two lines: active_count queued_count
+# Exit code: always 0
+#######################################
+count_debt_workers() {
+	local repo_slug="$1"
+	local debt_type="${2:-all}"
+	local active=0
+	local queued=0
+
+	case "$debt_type" in
+	quality-debt)
+		active=$(gh issue list --repo "$repo_slug" --label "quality-debt" --label "status:in-progress" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		queued=$(gh issue list --repo "$repo_slug" --label "quality-debt" --label "status:queued" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		;;
+	simplification-debt)
+		active=$(gh issue list --repo "$repo_slug" --label "simplification-debt" --label "status:in-progress" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		queued=$(gh issue list --repo "$repo_slug" --label "simplification-debt" --label "status:queued" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		;;
+	all)
+		local qa_active qa_queued sd_active sd_queued
+		qa_active=$(gh issue list --repo "$repo_slug" --label "quality-debt" --label "status:in-progress" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		qa_queued=$(gh issue list --repo "$repo_slug" --label "quality-debt" --label "status:queued" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		sd_active=$(gh issue list --repo "$repo_slug" --label "simplification-debt" --label "status:in-progress" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		sd_queued=$(gh issue list --repo "$repo_slug" --label "simplification-debt" --label "status:queued" --state open --json number --jq 'length' 2>/dev/null || echo 0)
+		active=$((qa_active + sd_active))
+		queued=$((qa_queued + sd_queued))
+		;;
+	esac
+
+	[[ "$active" =~ ^[0-9]+$ ]] || active=0
+	[[ "$queued" =~ ^[0-9]+$ ]] || queued=0
+	echo "$active"
+	echo "$queued"
+	return 0
+}
+
+#######################################
+# Check per-repo worker cap before dispatch
+#
+# Arguments:
+#   $1 - repo path (canonical path on disk)
+#   $2 - max workers per repo (default: MAX_WORKERS_PER_REPO or 5)
+#
+# Exit codes:
+#   0 - at or above cap (skip dispatch for this repo)
+#   1 - below cap (safe to dispatch)
+#######################################
+check_repo_worker_cap() {
+	local repo_path="$1"
+	local cap="${2:-${MAX_WORKERS_PER_REPO:-5}}"
+	local active_for_repo
+
+	active_for_repo=$(list_active_worker_processes | awk -v path="$repo_path" '
+		BEGIN { esc=path; gsub(/[][(){}.^$*+?|\\]/, "\\\\&", esc) }
+		$0 ~ ("--dir[[:space:]]+" esc "([[:space:]]|$)") { count++ }
+		END { print count + 0 }
+	')
+	[[ "$active_for_repo" =~ ^[0-9]+$ ]] || active_for_repo=0
+
+	if [[ "$active_for_repo" -ge "$cap" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Create a pre-isolated worktree for a quality-debt worker
+#
+# Generates a branch name from the issue number + title slug, creates the
+# worktree under the same parent directory as the canonical repo, and prints
+# the worktree path to stdout. Idempotent — reuses an existing worktree if
+# the branch already exists.
+#
+# Arguments:
+#   $1 - canonical repo path
+#   $2 - issue number
+#   $3 - issue title (used for branch slug)
+#
+# Outputs: worktree path (stdout)
+# Exit codes:
+#   0 - worktree path printed to stdout
+#   1 - failed to create worktree
+#######################################
+create_quality_debt_worktree() {
+	local repo_path="$1"
+	local issue_number="$2"
+	local issue_title="$3"
+
+	local qd_branch_slug qd_branch qd_wt_path
+	qd_branch_slug=$(printf '%s' "$issue_title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | cut -c1-30)
+	qd_branch="bugfix/qd-${issue_number}-${qd_branch_slug}"
+
+	# Check if worktree already exists for this branch
+	qd_wt_path=$(git -C "$repo_path" worktree list --porcelain |
+		grep -B2 "branch refs/heads/${qd_branch}$" |
+		grep "^worktree " | cut -d' ' -f2- 2>/dev/null || true)
+
+	if [[ -z "$qd_wt_path" ]]; then
+		local repo_name parent_dir qd_wt_slug
+		repo_name=$(basename "$repo_path")
+		parent_dir=$(dirname "$repo_path")
+		qd_wt_slug=$(printf '%s' "$qd_branch" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+		qd_wt_path="${parent_dir}/${repo_name}-${qd_wt_slug}"
+		git -C "$repo_path" worktree add -b "$qd_branch" "$qd_wt_path" 2>/dev/null || {
+			echo "[create_quality_debt_worktree] Failed to create worktree for #${issue_number}" >>"${LOGFILE:-/dev/null}"
+			return 1
+		}
+	fi
+
+	if [[ -z "$qd_wt_path" || ! -d "$qd_wt_path" ]]; then
+		return 1
+	fi
+
+	printf '%s\n' "$qd_wt_path"
+	return 0
+}
+
+#######################################
+# Close stale quality-debt PRs that have been CONFLICTING for 24+ hours
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#
+# Exit code: always 0
+#######################################
+close_stale_quality_debt_prs() {
+	local repo_slug="$1"
+	local cutoff_epoch
+	cutoff_epoch=$(date -v-24H +%s 2>/dev/null || date -d '24 hours ago' +%s 2>/dev/null || echo 0)
+
+	local pr_json
+	pr_json=$(gh pr list --repo "$repo_slug" --state open \
+		--json number,title,labels,mergeable,updatedAt \
+		--jq '[.[] | select(.mergeable == "CONFLICTING") | select(.labels[]?.name == "quality-debt" or (.title | test("quality.debt|fix:.*batch|fix:.*harden"; "i")))]' \
+		2>/dev/null) || pr_json="[]"
+
+	local pr_count
+	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null || echo 0)
+	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+	[[ "$pr_count" -gt 0 ]] || return 0
+
+	local i
+	for i in $(seq 0 $((pr_count - 1))); do
+		local pr_num pr_updated_at pr_epoch
+		pr_num=$(printf '%s' "$pr_json" | jq -r ".[$i].number" 2>/dev/null) || continue
+		pr_updated_at=$(printf '%s' "$pr_json" | jq -r ".[$i].updatedAt" 2>/dev/null) || continue
+		pr_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$pr_updated_at" +%s 2>/dev/null ||
+			date -d "$pr_updated_at" +%s 2>/dev/null || echo 0)
+
+		if [[ "$pr_epoch" -lt "$cutoff_epoch" ]]; then
+			gh pr close "$pr_num" --repo "$repo_slug" \
+				-c "Closing — this PR has merge conflicts and touches too many files (blast radius issue, see t1422). The underlying fixes will be re-created as smaller PRs (max 5 files each) to prevent conflict cascades." \
+				2>/dev/null || true
+			# Relabel linked issue status:available
+			local issue_num
+			issue_num=$(gh pr view "$pr_num" --repo "$repo_slug" --json body \
+				--jq '.body | match("(?i)(closes|fixes|resolves)[[:space:]]+#([0-9]+)").captures[1].string' \
+				2>/dev/null || true)
+			if [[ -n "$issue_num" ]]; then
+				gh issue edit "$issue_num" --repo "$repo_slug" \
+					--remove-label "status:in-review" --add-label "status:available" 2>/dev/null || true
+			fi
+		fi
+	done
+	return 0
+}
+
+#######################################
+# Dispatch triage review workers for needs-maintainer-review issues
+#
+# Reads the pre-fetched triage status from STATE_FILE and dispatches
+# opus-tier review workers for issues marked needs-review. Respects
+# the 2-per-cycle cap and available worker slots.
+#
+# Arguments:
+#   $1 - available worker slots (AVAILABLE)
+#   $2 - repos JSON path (default: REPOS_JSON)
+#
+# Outputs: updated available count to stdout (one integer)
+# Exit code: always 0
+#######################################
+dispatch_triage_reviews() {
+	local available="$1"
+	local repos_json="${2:-${REPOS_JSON:-~/.config/aidevops/repos.json}}"
+	local triage_count=0
+	local triage_max=2
+
+	[[ "$available" =~ ^[0-9]+$ ]] || available=0
+
+	# Parse needs-review items from pre-fetched state
+	local state_file="${STATE_FILE:-}"
+	[[ -f "$state_file" ]] || return 0
+
+	local resolved_model
+	resolved_model=$(~/.aidevops/agents/scripts/model-availability-helper.sh resolve opus 2>/dev/null || echo "")
+	[[ -n "$resolved_model" ]] || return 0
+
+	while IFS='|' read -r issue_num repo_slug repo_path; do
+		[[ -n "$issue_num" && -n "$repo_slug" ]] || continue
+		[[ "$available" -gt 0 && "$triage_count" -lt "$triage_max" ]] || break
+
+		~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
+			--role worker \
+			--session-key "triage-review-${issue_num}" \
+			--dir "$repo_path" \
+			--model "$resolved_model" \
+			--title "Triage review: Issue #${issue_num}" \
+			--prompt "/review-issue-pr ${issue_num}" </dev/null >>"/tmp/pulse-triage-${issue_num}.log" 2>&1 &
+		sleep 2
+
+		triage_count=$((triage_count + 1))
+		available=$((available - 1))
+	done < <(grep -A1 'needs-review' "$state_file" 2>/dev/null |
+		grep -oP '\d+\|[^|]+\|[^\n]+' || true)
+
+	printf '%d\n' "$available"
+	return 0
+}
+
+#######################################
+# Relabel status:needs-info issues where contributor has replied
+#
+# Reads the pre-fetched needs-info reply status from STATE_FILE and
+# transitions replied issues to needs-maintainer-review.
+#
+# Arguments:
+#   $1 - repos JSON path (default: REPOS_JSON)
+#
+# Exit code: always 0
+#######################################
+relabel_needs_info_replies() {
+	local repos_json="${1:-${REPOS_JSON:-~/.config/aidevops/repos.json}}"
+	local state_file="${STATE_FILE:-}"
+	[[ -f "$state_file" ]] || return 0
+
+	# Parse replied items from pre-fetched state (format: number|slug)
+	while IFS='|' read -r issue_num repo_slug; do
+		[[ -n "$issue_num" && -n "$repo_slug" ]] || continue
+
+		gh issue edit "$issue_num" --repo "$repo_slug" \
+			--remove-label "status:needs-info" \
+			--add-label "needs-maintainer-review" 2>/dev/null || true
+		gh issue comment "$issue_num" --repo "$repo_slug" \
+			--body "Contributor replied to the information request. Relabeled to \`needs-maintainer-review\` for re-evaluation." \
+			2>/dev/null || true
+	done < <(grep -oP '(?<=replied\|)\d+\|[^\n]+' "$state_file" 2>/dev/null || true)
+
+	return 0
+}
+
+#######################################
+# Dispatch FOSS contribution workers when idle capacity exists (t1702)
+#
+# Reads the pre-fetched FOSS scan from STATE_FILE and dispatches workers
+# for eligible repos. Respects the FOSS_MAX_DISPATCH_PER_CYCLE cap and
+# available worker slots.
+#
+# Arguments:
+#   $1 - available worker slots (AVAILABLE)
+#   $2 - repos JSON path (default: REPOS_JSON)
+#
+# Outputs: updated available count to stdout (one integer)
+# Exit code: always 0
+#######################################
+dispatch_foss_workers() {
+	local available="$1"
+	local repos_json="${2:-${REPOS_JSON:-~/.config/aidevops/repos.json}}"
+	local foss_count=0
+	local foss_max="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"
+
+	[[ "$available" =~ ^[0-9]+$ ]] || available=0
+
+	while IFS='|' read -r foss_slug foss_path; do
+		[[ -n "$foss_slug" && -n "$foss_path" ]] || continue
+		[[ "$available" -gt 0 && "$foss_count" -lt "$foss_max" ]] || break
+
+		# Pre-dispatch eligibility check (budget + rate limit)
+		~/.aidevops/agents/scripts/foss-contribution-helper.sh check "$foss_slug" >/dev/null 2>&1 || continue
+
+		# Scan for a suitable issue
+		local labels_filter foss_issue foss_issue_num foss_issue_title
+		labels_filter=$(jq -r --arg slug "$foss_slug" \
+			'.initialized_repos[] | select(.slug == $slug) | .foss_config.labels_filter // ["help wanted","good first issue","bug"] | join(",")' \
+			"$repos_json" 2>/dev/null || echo "help wanted")
+		foss_issue=$(gh issue list --repo "$foss_slug" --state open \
+			--label "${labels_filter%%,*}" --limit 1 \
+			--json number,title --jq '.[0] | "\(.number)|\(.title)"' 2>/dev/null) || foss_issue=""
+		[[ -n "$foss_issue" ]] || continue
+
+		foss_issue_num="${foss_issue%%|*}"
+		foss_issue_title="${foss_issue#*|}"
+
+		local disclosure_flag=""
+		local disclosure
+		disclosure=$(jq -r --arg slug "$foss_slug" \
+			'.initialized_repos[] | select(.slug == $slug) | .foss_config.disclosure // true' \
+			"$repos_json" 2>/dev/null || echo "true")
+		[[ "$disclosure" == "true" ]] && disclosure_flag=" Include AI disclosure note in the PR."
+
+		~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
+			--role worker \
+			--session-key "foss-${foss_slug}-${foss_issue_num}" \
+			--dir "$foss_path" \
+			--title "FOSS: ${foss_slug} #${foss_issue_num}: ${foss_issue_title}" \
+			--prompt "/full-loop Implement issue #${foss_issue_num} (https://github.com/${foss_slug}/issues/${foss_issue_num}) -- ${foss_issue_title}. This is a FOSS contribution.${disclosure_flag} After completion, run: foss-contribution-helper.sh record ${foss_slug} <tokens_used>" \
+			</dev/null >>"/tmp/pulse-foss-${foss_issue_num}.log" 2>&1 &
+		sleep 2
+
+		foss_count=$((foss_count + 1))
+		available=$((available - 1))
+	done < <(jq -r '.initialized_repos[] | select(.foss == true and (.foss_config.blocklist // false) == false) | "\(.slug)|\(.path)"' \
+		"$repos_json" 2>/dev/null || true)
+
+	printf '%d\n' "$available"
+	return 0
+}
+
+#######################################
+# Sync GitHub issue refs to TODO.md and close completed issues for a repo
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - repo path (canonical path on disk)
+#
+# Exit code: always 0
+#######################################
+sync_todo_refs_for_repo() {
+	local repo_slug="$1"
+	local repo_path="$2"
+	local script_dir="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)}"
+
+	/bin/bash "${script_dir}/issue-sync-helper.sh" pull --repo "$repo_slug" 2>&1 || true
+	/bin/bash "${script_dir}/issue-sync-helper.sh" close --repo "$repo_slug" 2>&1 || true
+	git -C "$repo_path" diff --quiet TODO.md 2>/dev/null || {
+		git -C "$repo_path" add TODO.md &&
+			git -C "$repo_path" commit -m "chore: sync GitHub issue refs to TODO.md [skip ci]" &&
+			git -C "$repo_path" push
+	} 2>/dev/null || true
+	return 0
+}
+
 # Only run main when executed directly, not when sourced.
 # The pulse agent sources this file to access helper functions
 # (check_external_contributor_pr, check_permission_failure_pr)
