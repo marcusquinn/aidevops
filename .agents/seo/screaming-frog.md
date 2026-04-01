@@ -17,35 +17,22 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Advanced site crawling and SEO auditing via CLI
-- **License**: **Paid license required** for CLI automation ($259/yr)
-- **Free Tier**: GUI only, limited to 500 URLs (CLI not supported in free mode)
+- **License**: Paid license required for CLI automation ($259/yr); free tier = GUI only, 500 URL cap
 - **Command**: `screamingfrogseospider` (requires alias/path setup)
 - **Output**: Headless mode supports CSV, PDF, and Google Sheets exports
 
-## Prerequisites
-
-1. **Installation**: Download from [screamingfrog.co.uk](https://www.screamingfrog.co.uk/seo-spider/)
-2. **License**: Enter license key in GUI first (`Help > Enter License`)
-3. **CLI Setup**:
-   - **macOS**: Alias required (see below)
-   - **Linux**: Standard package install
-   - **Windows**: Path configuration required
-
 ## Setup
 
-### macOS Alias
-
-Add to `~/.zshrc` or `~/.bashrc`:
+1. Download from [screamingfrog.co.uk](https://www.screamingfrog.co.uk/seo-spider/)
+2. Enter license key in GUI (`Help > Enter License`)
+3. **macOS**: Add alias to `~/.zshrc` or `~/.bashrc`:
 
 ```bash
 alias screamingfrogseospider="/Applications/Screaming\ Frog\ SEO\ Spider.app/Contents/MacOS/ScreamingFrogSEOSpiderLauncher"
 ```
 
-### Verification
-
-```bash
-screamingfrogseospider --help
-```
+4. **Linux**: Standard package install. **Windows**: Add install dir to PATH.
+5. Verify: `screamingfrogseospider --help`
 
 ## Usage
 
