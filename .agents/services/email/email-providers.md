@@ -20,7 +20,7 @@ tools:
 - **Config**: `configs/email-providers.json` (from `.json.txt` template)
 - **Providers**: 19 — Cloudron, Gmail, Google Workspace, Outlook, Microsoft 365, Proton Mail, Fastmail, mailbox.org, Tuta, Yahoo, Zoho, GMX, IONOS, Namecheap, mail.com, StartMail, Disroot, ChatMail, iCloud
 - **Protocols**: IMAP (993/TLS), SMTP (465/TLS or 587/STARTTLS), POP3 (995/TLS), JMAP (Fastmail only)
-- **Privacy tiers**: A+ (Proton, Tuta, Cloudron) > A (Fastmail, mailbox.org, StartMail, Disroot, ChatMail) > B (Zoho, IONOS, Namecheap, iCloud) > C (Google Workspace, Microsoft 365, GMX, mail.com) > D (Gmail, Outlook, Yahoo)
+- **Privacy**: A+ (Proton, Tuta, Cloudron) > A (Fastmail, mailbox.org, StartMail, Disroot, ChatMail) > B (Zoho, IONOS, Namecheap, iCloud) > C (GWS, M365, GMX, mail.com) > D (Gmail, Outlook, Yahoo)
 - **Default protocol**: IMAP. POP only for shared mailboxes where all users must read the same emails.
 
 <!-- AI-CONTEXT-END -->
@@ -36,36 +36,36 @@ cp configs/email-providers.json.txt configs/email-providers.json
 
 ### By Privacy Rating
 
-| Rating | Providers | Key Characteristics |
-|--------|-----------|-------------------|
-| A+ | Proton Mail, Tuta, Cloudron | E2EE built-in or self-hosted, zero-knowledge, open-source |
-| A | Fastmail, mailbox.org, StartMail, Disroot, ChatMail | No data mining, privacy-focused business model |
-| B | Zoho, IONOS, Namecheap, iCloud | No ads/mining, but less privacy-focused jurisdiction or practices |
-| C | Google Workspace, Microsoft 365, GMX, mail.com | Business plans with no ad targeting, but telemetry active |
-| D | Gmail, Outlook/Hotmail, Yahoo | Ad-supported, content scanning, broad data usage policies |
+| Rating | Providers | Characteristics |
+|--------|-----------|-----------------|
+| A+ | Proton Mail, Tuta, Cloudron | E2EE / self-hosted, zero-knowledge, open-source |
+| A | Fastmail, mailbox.org, StartMail, Disroot, ChatMail | No data mining, privacy-focused model |
+| B | Zoho, IONOS, Namecheap, iCloud | No ads/mining; less privacy-focused jurisdiction |
+| C | Google Workspace, Microsoft 365, GMX, mail.com | Business plans without ad targeting; telemetry active |
+| D | Gmail, Outlook/Hotmail, Yahoo | Ad-supported, content scanning, broad data usage |
 
 ### By Protocol Support
 
 | Protocol | Providers | Notes |
 |----------|-----------|-------|
 | IMAP + SMTP | All except Tuta | Gmail: enable in Settings > Forwarding and POP/IMAP. Zoho: enable in settings; regional hostnames (zoho.com/eu/in/com.au/jp) |
-| JMAP | Fastmail only | RFC 8620/8621. Prefer over IMAP for new Fastmail integrations |
-| POP3 | Gmail, Google Workspace, Outlook, Microsoft 365, Yahoo, Zoho, GMX, IONOS, Namecheap, mail.com, Fastmail, mailbox.org, Disroot, Cloudron | |
+| JMAP | Fastmail | RFC 8620/8621 — prefer over IMAP for new Fastmail integrations |
+| POP3 | Gmail, GWS, Outlook, M365, Yahoo, Zoho, GMX, IONOS, Namecheap, mail.com, Fastmail, mailbox.org, Disroot, Cloudron | |
 | Graph API | Outlook, Microsoft 365 | Recommended for programmatic access |
-| Bridge required | Proton Mail | Local IMAP 1143, SMTP 1025 via Proton Bridge. Use Bridge-generated password, not account password. Not suitable for headless/server without Bridge CLI |
-| No standard protocols | Tuta | Proprietary client only (web, desktop, mobile). Deliberate security decision for encryption architecture |
+| Bridge required | Proton Mail | Local IMAP 1143 / SMTP 1025 via Proton Bridge (use Bridge-generated password). Not suitable for headless without Bridge CLI |
+| No standard protocols | Tuta | Proprietary client only — deliberate design for encryption architecture |
 
 ### By Auth Method
 
 | Method | Providers | Notes |
 |--------|-----------|-------|
-| OAuth2 | Gmail, Google Workspace, Outlook, Microsoft 365, Zoho | Gmail/Workspace: OAuth2 required since May 2022 (app passwords with 2FA). Microsoft 365: basic auth deprecated Oct 2022, OAuth2 via Microsoft Entra ID |
+| OAuth2 | Gmail, GWS, Outlook, M365, Zoho | Gmail/GWS: required since May 2022. M365: basic auth deprecated Oct 2022 (OAuth2 via Entra ID) |
 | App passwords | Gmail, Fastmail, Yahoo, StartMail, iCloud | |
 | Regular password | Cloudron, mailbox.org, GMX, IONOS, Namecheap, mail.com, Disroot, ChatMail, Zoho | |
 | Bridge password | Proton Mail | |
 | Service account | Google Workspace, Microsoft 365 | |
 
-**Send limits:** Gmail 500/day, Google Workspace 2000/day. Zoho free tier: 5 users, 5 GB each.
+**Send limits:** Gmail 500/day, Google Workspace 2000/day. Zoho free: 5 users, 5 GB each.
 
 ## POP vs IMAP Decision Tree
 
@@ -93,8 +93,7 @@ POP does not sync folders, flags, or read-state across devices.
 | Spam/Junk | `[Gmail]/Spam` | `Junk` / `Junk Email` | `Bulk Mail` | `Junk` | `Junk` or `Spam` |
 | Archive | `[Gmail]/All Mail` | `Archive` | `Archive` | `Archive` | `Archive` |
 
-- **Gmail**: labels, not folders — deleting from a label removes the label only; move to Trash for true deletion.
-- **Outlook/365**: free Outlook.com uses `Sent`/`Deleted`; Microsoft 365 business uses `Sent Items`/`Deleted Items`.
+Gmail uses labels, not folders — deleting from a label removes the label only; move to Trash for true deletion. Outlook.com uses `Sent`/`Deleted`; M365 business uses `Sent Items`/`Deleted Items`.
 
 ## Shared Mailbox Patterns
 
@@ -106,13 +105,7 @@ POP does not sync folders, flags, or read-state across devices.
 | Outbound only | `noreply@` | SMTP only |
 | RFC 2142 / ops | `abuse@`, `postmaster@`, `press@`, `webmaster@`, `buyers@` | IMAP |
 
-**Shared mailbox support by provider:**
-- **Microsoft 365**: Dedicated shared mailbox, no extra license, auto-mapping, send-as/on-behalf.
-- **Google Workspace**: Collaborative inboxes via Google Groups; delegated access for individual mailboxes.
-- **Zoho Mail**: Group mailboxes in paid plans.
-- **Cloudron**: Separate mailbox accounts or aliases via admin panel / CLI.
-- **Proton Mail**: Business plans support multi-user access and catch-all.
-- **Others**: Native shared mailbox or delegation support is often limited because standard IMAP setups usually lack delegated-access semantics; check provider docs for aliases, forwarding, or separate mailbox workarounds.
+**Shared mailbox support:** M365: dedicated shared mailbox (no extra license, auto-mapping, send-as/on-behalf). GWS: collaborative inboxes via Groups + delegated access. Zoho: group mailboxes (paid). Cloudron: separate accounts or aliases via admin/CLI. Proton: multi-user + catch-all (business plans). Others: limited/no native support — check provider docs for alias/forwarding workarounds.
 
 ## Cloudron Mail Management
 
