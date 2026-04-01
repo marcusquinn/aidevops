@@ -89,9 +89,11 @@ Interactive: `/compare-models`, `/compare-models-free`, `/route <task>`
 
 **Precedence** (highest wins): (1) `model:` in TODO.md, (2) subagent frontmatter, (3) bundle `model_defaults`, (4) default `sonnet`. Multiple bundles → most-restrictive tier wins. CLI: `bundle-helper.sh get|resolve`. Integration: `cron-dispatch.sh`, pulse `agent_routing`, `linters-local.sh` `skip_gates`.
 
-## Failure-Based Escalation (t1416)
+## Failure-Based Escalation (t1416 + GH#14964)
 
 After 2 failed attempts, escalate to next tier (sonnet → opus via `--model anthropic/claude-opus-4-6`). One opus (~3x) < 3+ failed sonnet dispatches. Dispatch/kill comments MUST include model tier for escalation auditing.
+
+**Worker BLOCKED policy (GH#14964 — MANDATORY):** Workers must attempt model escalation before exiting `BLOCKED`. Review-policy metadata, nominal GitHub states, and lower-tier model limits are NOT valid blockers on their own. A genuine blocker requires evidence that persists after escalation. See `prompts/worker-efficiency-protocol.md` "Model escalation before BLOCKED".
 
 ## Tier Drift Detection (t1191)
 

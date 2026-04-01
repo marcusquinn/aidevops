@@ -66,6 +66,33 @@ ai_research(prompt: "Find all functions that dispatch workers in supervisor-help
 - Minimise token waste: read only needed line ranges, keep commits concise, and after one failed approach try one fundamentally different strategy before `BLOCKED`.
 - Replan when stuck. Do not patch a broken path incrementally.
 
+## 4. Model escalation before BLOCKED (GH#14964 — MANDATORY)
+
+`BLOCKED` is only valid after exhausting all autonomous solution paths. Before exiting `BLOCKED`:
+
+1. Attempt model escalation: retry with the next tier (sonnet → opus via `--model anthropic/claude-opus-4-6`).
+2. One opus attempt (~3x cost) is cheaper than a failed worker cycle plus human triage.
+3. Review-policy metadata, nominal GitHub states, and lower-tier model limits are **not** valid blockers on their own.
+4. A genuine blocker requires evidence that persists after escalation: failing check, missing permission, unresolved conflict, or explicit policy gate.
+
+```bash
+# Escalation pattern — use when current model stalls or cannot finish safely
+ESCALATED_MODEL="anthropic/claude-opus-4-6"
+headless-runtime-helper.sh run --role worker --session-key "$SESSION_KEY" \
+  --dir "$WORK_DIR" --title "$TITLE" --prompt "$PROMPT" --model "$ESCALATED_MODEL"
+```
+
+Escalation decision matrix:
+
+| Situation | Action |
+|-----------|--------|
+| Model stalls after 2+ attempts | Escalate to next tier |
+| Review-policy state (e.g. "changes requested") | Continue — address findings, do not stop |
+| Rate limit / auth error | Rotate provider (handled by headless-runtime-helper.sh) |
+| Missing credentials | EXIT BLOCKED (genuine blocker) |
+| Architectural decision needed | EXIT BLOCKED (genuine blocker) |
+| Failing CI check | Fix the check, do not stop |
+
 ## Completion self-check
 
 Before `FULL_LOOP_COMPLETE`, verify all of the following:

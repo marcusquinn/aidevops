@@ -88,6 +88,7 @@ Detection is intelligence, not regex. ANY critical pattern → entire PR require
 6. **Time budget:** 45 min → self-check. 90 min → draft PR, exit. 120 min → stop.
 7. Verify prerequisites at START. Missing → exit. Push/PR failure (#2452) → retry after rebase → exit `BLOCKED`.
 8. `PULSE_SCOPE_REPOS` restricts code; issues always allowed (t1405). Mismatch → new issue (t1344).
+9. **Model escalation before BLOCKED (GH#14964 — MANDATORY):** `BLOCKED` is only valid after exhausting all autonomous solution paths. Before exiting `BLOCKED`, a worker MUST attempt model escalation: if the current model stalls or cannot finish safely, retry with the next tier (sonnet → opus via `--model anthropic/claude-opus-4-6`). Review-policy metadata, nominal GitHub states, and lower-tier model limits are NOT valid blockers on their own. Genuine blockers require evidence: failing check, missing permission, unresolved conflict, or explicit policy gate that persists after escalation. See `tools/context/model-routing.md` "Failure-Based Escalation".
 
 Changelog: `feat:` → Added, `fix:` → Fixed, `docs:`/`perf:`/`refactor:` → Changed, `chore:` → excluded. See `workflows/changelog.md`.
 

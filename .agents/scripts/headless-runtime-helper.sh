@@ -1132,6 +1132,7 @@ Mandatory behavior:
 3. Continue through review polling, merge readiness checks, merge, and required closing comments.
 4. If merge/close cannot complete, exit only with a clear BLOCKED outcome and evidence (failing check, missing permission, unresolved conflict, or explicit policy gate).
 5. Do not emit user-directed language like "If you want, I can...".
+6. Model escalation before BLOCKED (GH#14964): BLOCKED is only valid after exhausting all autonomous solution paths. Before exiting BLOCKED, attempt model escalation — retry with the next tier (sonnet -> opus via --model anthropic/claude-opus-4-6). Review-policy metadata, nominal GitHub states, and lower-tier model limits are NOT valid blockers on their own. A genuine blocker requires evidence that persists after escalation.
 EOF
 	)
 
