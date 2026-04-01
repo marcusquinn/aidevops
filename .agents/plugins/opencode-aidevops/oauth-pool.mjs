@@ -1319,6 +1319,66 @@ export async function ensureValidToken(provider, account) {
 }
 
 // ---------------------------------------------------------------------------
+// Expired cooldown normalization (MJS counterpart of shell's auto_clear_expired_cooldowns)
+// ---------------------------------------------------------------------------
+
+/**
+ * Auto-clear expired cooldowns for a provider's accounts.
+ *
+ * Accounts with status "rate-limited" or "auth-error" whose cooldownUntil
+ * has passed are reset to "idle" with cooldownUntil cleared. Without this,
+ * the inject functions' status filter (`["active", "idle"].includes(...)`)
+ * permanently excludes these accounts even after their cooldown expires —
+ * causing rotation to skip them (the "only 2 of 3 accounts" bug).
+ *
+ * The shell script handles this via auto_clear_expired_cooldowns() called
+ * before cmd_rotate(). This function is the MJS counterpart, called before
+ * account selection in inject functions (the mid-session rotation path).
+ *
+ * Modifies accounts in-place AND persists changes to disk.
+ *
+ * @param {string} provider
+ * @param {PoolAccount[]} accounts - mutable array from getAccounts()
+ * @returns {number} count of accounts normalized
+ */
+function normalizeExpiredCooldowns(provider, accounts) {
+  const now = Date.now();
+  let normalized = 0;
+  for (const a of accounts) {
+    if (a.cooldownUntil && a.cooldownUntil <= now &&
+        (a.status === "rate-limited" || a.status === "auth-error")) {
+      a.status = "idle";
+      a.cooldownUntil = null;
+      normalized++;
+    }
+  }
+  if (normalized > 0) {
+    // Persist to disk — re-read to avoid overwriting concurrent changes
+    withPoolLock(() => {
+      const pool = loadPool();
+      const diskAccounts = pool[provider] || [];
+      const diskNow = Date.now();
+      let diskChanged = false;
+      for (const a of diskAccounts) {
+        if (a.cooldownUntil && a.cooldownUntil <= diskNow &&
+            (a.status === "rate-limited" || a.status === "auth-error")) {
+          a.status = "idle";
+          a.cooldownUntil = null;
+          diskChanged = true;
+        }
+      }
+      if (diskChanged) {
+        savePool(pool);
+      }
+    });
+    console.error(
+      `[aidevops] OAuth pool: auto-cleared ${normalized} expired cooldown(s) for ${provider}`,
+    );
+  }
+  return normalized;
+}
+
+// ---------------------------------------------------------------------------
 // Account selection (rotation)
 // ---------------------------------------------------------------------------
 
@@ -1529,6 +1589,9 @@ export async function injectPoolToken(client, skipEmail) {
   const accounts = getAccounts("anthropic");
   if (accounts.length === 0) return false;
 
+  // Auto-clear expired cooldowns so rate-limited accounts become available again
+  normalizeExpiredCooldowns("anthropic", accounts);
+
   // Pick least-recently-used account, optionally skipping one.
   // Accept both "active" and "idle" — idle accounts are valid (cooldowns cleared).
   const now = Date.now();
@@ -1605,6 +1668,9 @@ export async function injectPoolToken(client, skipEmail) {
 export async function injectOpenAIPoolToken(client, skipEmail) {
   const accounts = getAccounts("openai");
   if (accounts.length === 0) return false;
+
+  // Auto-clear expired cooldowns so rate-limited accounts become available again
+  normalizeExpiredCooldowns("openai", accounts);
 
   const now = Date.now();
   // Pick least-recently-used eligible account, optionally skipping one.
@@ -1763,6 +1829,9 @@ export async function injectCursorPoolToken(client, skipEmail) {
   const accounts = getAccounts("cursor");
   if (accounts.length === 0) return false;
 
+  // Auto-clear expired cooldowns so rate-limited accounts become available again
+  normalizeExpiredCooldowns("cursor", accounts);
+
   const now = Date.now();
   let account = null;
   const sorted = [...accounts]
@@ -1833,6 +1902,9 @@ export async function injectCursorPoolToken(client, skipEmail) {
 export async function injectGooglePoolToken(client, skipEmail) {
   const accounts = getAccounts("google");
   if (accounts.length === 0) return false;
+
+  // Auto-clear expired cooldowns so rate-limited accounts become available again
+  normalizeExpiredCooldowns("google", accounts);
 
   const now = Date.now();
   let account = null;
