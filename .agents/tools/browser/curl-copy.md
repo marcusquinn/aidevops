@@ -16,13 +16,11 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
-## Quick Reference
-
-- **Purpose**: Extract data from authenticated pages with the browser's live session cookies
+- **Purpose**: Extract data from authenticated pages using the browser's live session cookies
 - **Setup**: Browser DevTools + `curl` (built into macOS/Linux)
 - **Best for**: Dashboards, gated content, private APIs, admin panels, one-off debugging
 - **Use when**: one-off extraction from an authenticated page or internal API
-- **Don't use when**: repeated jobs -> `sweet-cookie`; interaction required -> Playwright/Stagehand; bulk crawling -> Crawl4AI; long-lived sessions -> persistent browser tooling
+- **Don't use when**: repeated jobs → `sweet-cookie`; interaction required → Playwright/Stagehand; bulk crawling → Crawl4AI
 
 ```text
 Need data from an authenticated page?
@@ -36,21 +34,13 @@ Need data from an authenticated page?
 
 ## Workflow
 
-### 1. Copy a real request from DevTools
-
-1. Open the target page in Chrome, Firefox, Edge, or Safari.
-2. Open DevTools (`Cmd+Option+I` on macOS, `F12` on Windows/Linux).
-3. In **Network**, filter to `Fetch/XHR`.
-4. Reload or repeat the action that loads the data.
-5. Right-click the request -> **Copy** -> **Copy as cURL**.
-
-- Chrome/Edge: `Copy as cURL (bash)`
-- Firefox: `Copy Value -> Copy as cURL`
-- Safari: `Copy as cURL`
-
-### 2. Execute and reshape the response
-
-Paste the copied command into a terminal or local AI assistant. It already contains the active headers, cookies, and auth state.
+1. Open the target page; open DevTools (`Cmd+Option+I` / `F12`).
+2. In **Network**, filter to `Fetch/XHR`; reload or repeat the action.
+3. Right-click the request → **Copy** → **Copy as cURL**:
+   - Chrome/Edge: `Copy as cURL (bash)`
+   - Firefox: `Copy Value → Copy as cURL`
+   - Safari: `Copy as cURL`
+4. Paste into a terminal or local AI assistant — the command already contains active headers, cookies, and auth state.
 
 ```bash
 # Example copied command (headers truncated)
@@ -99,7 +89,7 @@ curl 'https://app.example.com/graphql' \
 ## Operating Notes
 
 | Topic | Guidance |
-|------|----------|
+|-------|----------|
 | Find the right request | Stay in `Fetch/XHR`, inspect **Response/Preview**, search by URL path |
 | Session lifetime | Keep the tab open if possible; copy a fresh command after `401/403` |
 | Sharing safely | Strip `cookie`, `authorization`, and `x-csrf-token` before sharing |

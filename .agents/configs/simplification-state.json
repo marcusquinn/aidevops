@@ -3380,6 +3380,11 @@
       "hash": "4c6d024fd0bd6ab3cbc9881e5cd83bd7dec582e4",
       "at": "2026-04-01T21:00:01Z",
       "pr": 14853
+    },
+    ".agents/tools/browser/curl-copy.md": {
+      "hash": "134632d988b4e18e35f9e3c90106391f8461c114",
+      "at": "2026-04-01T21:56:13Z",
+      "pr": null
     }
   }
 }
