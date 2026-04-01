@@ -26,16 +26,16 @@ tools:
 
 | Need | Tool | Command |
 |------|------|---------|
-| Structured extraction (± PII) | Docling+ExtractThinker+Pipeline | `document-extraction-helper.sh extract file --schema invoice --privacy local` |
+| Structured extraction (± PII) | Docling+ET+Pipeline | `document-extraction-helper.sh extract file --schema invoice --privacy local` |
 | Classify document type | Classification pipeline | `document-extraction-helper.sh classify file.pdf` |
 | Validate extracted JSON | Validation pipeline | `document-extraction-helper.sh validate file.json` |
 | Quick extraction, good OCR | DocStrange | `docstrange file.pdf --output json` |
 | Enterprise ETL | Unstract | `unstract-helper.sh` |
-| PDF → markdown (layout-aware) | MinerU | `mineru -p file.pdf -o output/` |
+| PDF → MD (layout-aware) | MinerU | `mineru -p file.pdf -o output/` |
 | Format conversion | Pandoc | `pandoc-helper.sh convert file.docx` |
 | Local OCR only | GLM-OCR | `ollama run glm-ocr "Extract text" --images file.png` |
-| Receipt/invoice → QuickFile | OCR Receipt Pipeline | `ocr-receipt-helper.sh extract invoice.pdf` |
-| Auto-categorise nominal code | Pipeline utility | `python3 extraction_pipeline.py categorise "Amazon" "office supplies"` |
+| Receipt → QuickFile | OCR Receipt Pipeline | `ocr-receipt-helper.sh extract invoice.pdf` |
+| Categorise nominal code | Pipeline utility | `python3 extraction_pipeline.py categorise "Amazon" "office supplies"` |
 | Layout-aware conversion | Docling | `document-extraction-helper.sh convert report.pdf --output markdown` |
 
 <!-- AI-CONTEXT-END -->
@@ -47,11 +47,10 @@ document-extraction-helper.sh status                                          # 
 document-extraction-helper.sh extract invoice.pdf --schema invoice --privacy local  # single doc
 document-extraction-helper.sh batch ./invoices/ --schema invoice --privacy local    # batch
 document-extraction-helper.sh extract document.pdf                            # auto-detect, markdown
-document-extraction-helper.sh pii-scan extracted-text.txt                     # PII scan
-document-extraction-helper.sh pii-redact extracted-text.txt --output redacted.txt   # PII redact
+document-extraction-helper.sh pii-scan extracted-text.txt                     # PII scan/redact
 ```
 
-**Privacy modes:** `local` (sensitive — Ollama) · `edge` (moderate — CF Workers AI) · `cloud` (non-sensitive — OpenAI/Anthropic) · `none` (auto-select)
+**Privacy modes:** `local` (Ollama) · `edge` (CF Workers AI) · `cloud` (OpenAI/Anthropic) · `none` (auto)
 
 ## Pipeline Architecture
 
@@ -73,9 +72,9 @@ Input (PDF/DOCX/Image/HTML)
 
 ## Validation Rules
 
-**VAT arithmetic:** `subtotal + vat_amount = total` (±2p tolerance). VAT claimed without supplier VAT number → warning. Line items VAT sum must match total VAT (±5p). Valid UK rates: 0, 5, 20, exempt, oos, servrc, cisrc, postgoods.
+**VAT arithmetic:** `subtotal + vat_amount = total` (±2p). VAT claimed without supplier VAT number → warning. Line items VAT sum must match total VAT (±5p). Valid UK rates: 0, 5, 20, exempt, oos, servrc, cisrc, postgoods.
 
-**Confidence scoring (per field, 0.0-1.0):** Base 0.7 (present+non-empty) + 0.2 (format match) + 0.1 (required). <0.5 → manual review.
+**Confidence scoring (0.0-1.0):** Base 0.7 (present) + 0.2 (format) + 0.1 (required). <0.5 → manual review.
 
 ```bash
 python3 extraction_pipeline.py categorise "Shell" "diesel fuel"               # → {"nominal_code": "7401", "category": "Motor Expenses - Fuel"}
@@ -105,9 +104,9 @@ result = extractor.extract("record.pdf", MedicalRecord)
 
 | Feature | Docling+ET+Presidio | DocStrange | Unstract | MinerU | Pandoc |
 |---------|---------------------|------------|----------|--------|--------|
-| Structured extraction | Pydantic schemas | JSON schema | Visual builder | No | No |
-| PII redaction | Built-in (Presidio) | No | Manual | No | No |
-| Local processing | Ollama (CPU/GPU) | GPU (CUDA only) | Docker | GPU/CPU | CPU |
+| Structured | Pydantic schemas | JSON schema | Visual builder | No | No |
+| PII | Built-in (Presidio) | No | Manual | No | No |
+| Local | Ollama (CPU/GPU) | GPU (CUDA) | Docker | GPU/CPU | CPU |
 | OCR | Tesseract/EasyOCR | 7B model | LLM-based | 109 languages | pdftotext |
 | Formats | PDF/DOCX/PPTX/XLSX/HTML/images | PDF/DOCX/PPTX/XLSX/images/URLs | PDF/DOCX/images | PDF only | 20+ formats |
 
@@ -115,10 +114,10 @@ result = extractor.extract("record.pdf", MedicalRecord)
 
 | Problem | Fix |
 |---------|-----|
-| Docling parse failure | `python3 --version` (3.10+ required); `document-extraction-helper.sh install --core` |
+| Docling parse failure | `python3 --version` (3.10+); `document-extraction-helper.sh install --core` |
 | Ollama not responding | `ollama list`; `brew services restart ollama`; `ollama pull llama3.2` |
 | PII scan misses entities | `document-extraction-helper.sh install --pii`; `python3 -m spacy validate` |
-| Out of memory | Use smaller model (e.g. `phi-4`); process one at a time; use `cloud` privacy mode |
+| Out of memory | Use smaller model (e.g. `phi-4`); process one at a time; use `cloud` privacy |
 
 ## Related
 
