@@ -218,6 +218,127 @@ batch_hash_check() {
 }
 
 #######################################
+# Check if a markdown file is mostly frontmatter (stub file).
+# Returns 0 if the file should be skipped, 1 if it has enough content.
+# Arguments: $1 - full_path, $2 - line_count
+#######################################
+_is_frontmatter_stub() {
+	local full_path="$1"
+	local line_count="$2"
+	local frontmatter_end=0
+
+	if ! head -1 "$full_path" 2>/dev/null | grep -q '^---$'; then
+		return 1
+	fi
+
+	frontmatter_end=$(awk 'NR==1 && /^---$/ { in_fm=1; next } in_fm && /^---$/ { print NR; exit }' "$full_path" 2>/dev/null)
+	frontmatter_end=${frontmatter_end:-0}
+
+	[[ "$frontmatter_end" -eq 0 ]] && return 1
+
+	local content_lines=$((line_count - frontmatter_end))
+	local threshold=$(((line_count * 40) / 100))
+	[[ "$content_lines" -lt "$threshold" ]] && return 0
+	return 1
+}
+
+# Exclusion patterns shared by scan phases
+_EXCLUDED_DIRS='_archive/|archived/|supervisor-archived/|/templates/|/todo/'
+_EXCLUDED_FILES='/README\.md$'
+_PROTECTED_PATTERN='prompts/build\.txt|^\.agents/AGENTS\.md|^AGENTS\.md|scripts/commands/pulse\.md'
+
+#######################################
+# Scan shell files for complexity violations.
+# Arguments: $1 - repo_path, $2 - state_file
+# Output: pipe-delimited results to stdout (one line per violation)
+#######################################
+_scan_shell_files() {
+	local repo_path="$1"
+	local state_file="$2"
+
+	local check_results
+	check_results=$(batch_hash_check "$repo_path" "$state_file" '*.sh') || check_results=""
+	[[ -z "$check_results" ]] && return 0
+
+	while IFS='|' read -r status file_path; do
+		[[ -n "$file_path" ]] || continue
+		echo "$file_path" | grep -qE "$_EXCLUDED_DIRS" && continue
+		[[ "$status" == "unchanged" ]] && continue
+
+		local full_path="${repo_path}/${file_path}"
+		local metrics
+		metrics=$(compute_file_metrics "$full_path") || metrics="0|0|0|0|shell"
+
+		local line_count func_count long_func_count max_nesting file_type
+		IFS='|' read -r line_count func_count long_func_count max_nesting file_type <<<"$metrics"
+
+		if [[ "$long_func_count" -ge "$COMPLEXITY_FILE_VIOLATION_THRESHOLD" ]] ||
+			[[ "$max_nesting" -gt "$COMPLEXITY_NESTING_DEPTH_THRESHOLD" ]]; then
+			printf '%s|%s|%s|%s|%s|%s|%s\n' "$status" "$file_path" "$line_count" "$func_count" "$long_func_count" "$max_nesting" "$file_type"
+		fi
+	done <<<"$check_results"
+	return 0
+}
+
+#######################################
+# Scan markdown files for complexity violations.
+# Arguments: $1 - repo_path, $2 - state_file
+# Output: pipe-delimited results to stdout (one line per violation)
+#######################################
+_scan_md_files() {
+	local repo_path="$1"
+	local state_file="$2"
+
+	local check_results
+	check_results=$(batch_hash_check "$repo_path" "$state_file" '*.md') || check_results=""
+	[[ -z "$check_results" ]] && return 0
+
+	while IFS='|' read -r status file_path; do
+		[[ -n "$file_path" ]] || continue
+		echo "$file_path" | grep -q '^\.agents/' || continue
+		echo "$file_path" | grep -qE "$_EXCLUDED_DIRS|$_EXCLUDED_FILES|$_PROTECTED_PATTERN" && continue
+		[[ "$status" == "unchanged" ]] && continue
+
+		local full_path="${repo_path}/${file_path}"
+		local line_count=0
+		line_count=$(wc -l <"$full_path" 2>/dev/null | tr -d ' ') || line_count=0
+		[[ "$line_count" -lt "$COMPLEXITY_MD_MIN_LINES" ]] && continue
+		_is_frontmatter_stub "$full_path" "$line_count" && continue
+
+		local metrics
+		metrics=$(compute_file_metrics "$full_path") || metrics="${line_count}|0|0|0|markdown"
+
+		local _lc _fc _lfc max_nesting file_type
+		IFS='|' read -r _lc _fc _lfc max_nesting file_type <<<"$metrics"
+
+		printf '%s|%s|%s|%s|0|%s|%s\n' "$status" "$file_path" "$line_count" "$_fc" "$max_nesting" "$file_type"
+	done <<<"$check_results"
+	return 0
+}
+
+#######################################
+# Format scan results as JSON array.
+# Arguments: reads from stdin (pipe-delimited lines)
+#######################################
+_format_results_json() {
+	echo "["
+	local first=true
+	while IFS='|' read -r status file_path line_count func_count long_func_count max_nesting file_type; do
+		[[ -n "$file_path" ]] || continue
+		if [[ "$first" == true ]]; then
+			first=false
+		else
+			echo ","
+		fi
+		printf '  {"status":"%s","file":"%s","lines":%s,"functions":%s,"long_functions":%s,"max_nesting":%s,"type":"%s"}' \
+			"$status" "$file_path" "$line_count" "$func_count" "$long_func_count" "$max_nesting" "$file_type"
+	done
+	echo ""
+	echo "]"
+	return 0
+}
+
+#######################################
 # Main scan command — deterministic complexity scan.
 # Compares file hashes against simplification-state.json, only computes
 # metrics for changed/new files. Outputs results in pipe or JSON format.
@@ -246,9 +367,7 @@ cmd_scan() {
 			shift 2
 			;;
 		*)
-			if [[ -z "$repo_path" ]]; then
-				repo_path="$1"
-			fi
+			[[ -z "$repo_path" ]] && repo_path="$1"
 			shift
 			;;
 		esac
@@ -259,151 +378,45 @@ cmd_scan() {
 		return 1
 	fi
 
-	# Default state file location
-	if [[ -z "$state_file" ]]; then
-		state_file="${repo_path}/.agents/configs/simplification-state.json"
-	fi
+	[[ -z "$state_file" ]] && state_file="${repo_path}/.agents/configs/simplification-state.json"
 
 	local start_time
 	start_time=$(date +%s)
 
-	local total_files=0
-	local changed_files=0
-	local unchanged_files=0
-	local results=""
+	# Use temp files for scan output (subshell counter workaround)
+	local results_tmp
+	results_tmp=$(mktemp)
 
-	# Protected files and directories
-	local protected_pattern='prompts/build\.txt|^\.agents/AGENTS\.md|^AGENTS\.md|scripts/commands/pulse\.md'
-	local excluded_dirs='_archive/|archived/|supervisor-archived/|/templates/|/todo/'
-	local excluded_files='/README\.md$'
-
-	# Phase 1: Shell files
 	if [[ "$scan_type" == "all" || "$scan_type" == "sh" ]]; then
-		local sh_check_results
-		sh_check_results=$(batch_hash_check "$repo_path" "$state_file" '*.sh') || sh_check_results=""
-
-		if [[ -n "$sh_check_results" ]]; then
-			while IFS='|' read -r status file_path; do
-				[[ -n "$file_path" ]] || continue
-				# Skip excluded directories
-				if echo "$file_path" | grep -qE "$excluded_dirs"; then
-					continue
-				fi
-				total_files=$((total_files + 1))
-
-				if [[ "$status" == "unchanged" ]]; then
-					unchanged_files=$((unchanged_files + 1))
-					continue
-				fi
-
-				# Compute metrics only for changed/new files
-				local full_path="${repo_path}/${file_path}"
-				local metrics
-				metrics=$(compute_file_metrics "$full_path") || metrics="0|0|0|0|shell"
-
-				local line_count func_count long_func_count max_nesting file_type
-				IFS='|' read -r line_count func_count long_func_count max_nesting file_type <<<"$metrics"
-
-				# Only report files that exceed thresholds
-				if [[ "$long_func_count" -ge "$COMPLEXITY_FILE_VIOLATION_THRESHOLD" ]] ||
-					[[ "$max_nesting" -gt "$COMPLEXITY_NESTING_DEPTH_THRESHOLD" ]]; then
-					changed_files=$((changed_files + 1))
-					results="${results}${status}|${file_path}|${line_count}|${func_count}|${long_func_count}|${max_nesting}|${file_type}"$'\n'
-				fi
-			done <<<"$sh_check_results"
-		fi
+		_scan_shell_files "$repo_path" "$state_file" >>"$results_tmp"
 	fi
 
-	# Phase 2: Markdown files
 	if [[ "$scan_type" == "all" || "$scan_type" == "md" ]]; then
-		local md_check_results
-		md_check_results=$(batch_hash_check "$repo_path" "$state_file" '*.md') || md_check_results=""
-
-		if [[ -n "$md_check_results" ]]; then
-			while IFS='|' read -r status file_path; do
-				[[ -n "$file_path" ]] || continue
-				# Only .agents/ markdown files
-				if ! echo "$file_path" | grep -q '^\.agents/'; then
-					continue
-				fi
-				# Skip excluded patterns
-				if echo "$file_path" | grep -qE "$excluded_dirs|$excluded_files|$protected_pattern"; then
-					continue
-				fi
-				total_files=$((total_files + 1))
-
-				if [[ "$status" == "unchanged" ]]; then
-					unchanged_files=$((unchanged_files + 1))
-					continue
-				fi
-
-				# Compute metrics only for changed/new files
-				local full_path="${repo_path}/${file_path}"
-				local line_count=0
-				line_count=$(wc -l <"$full_path" 2>/dev/null | tr -d ' ') || line_count=0
-
-				# Apply minimum line threshold
-				if [[ "$line_count" -lt "$COMPLEXITY_MD_MIN_LINES" ]]; then
-					continue
-				fi
-
-				# Check frontmatter ratio (skip stub files)
-				local frontmatter_end=0
-				if head -1 "$full_path" 2>/dev/null | grep -q '^---$'; then
-					frontmatter_end=$(awk 'NR==1 && /^---$/ { in_fm=1; next } in_fm && /^---$/ { print NR; exit }' "$full_path" 2>/dev/null)
-					frontmatter_end=${frontmatter_end:-0}
-				fi
-				if [[ "$frontmatter_end" -gt 0 ]]; then
-					local content_lines=$((line_count - frontmatter_end))
-					local threshold=$(((line_count * 40) / 100))
-					if [[ "$content_lines" -lt "$threshold" ]]; then
-						continue
-					fi
-				fi
-
-				local metrics
-				metrics=$(compute_file_metrics "$full_path") || metrics="${line_count}|0|0|0|markdown"
-
-				local _lc _fc _lfc max_nesting file_type
-				IFS='|' read -r _lc _fc _lfc max_nesting file_type <<<"$metrics"
-
-				changed_files=$((changed_files + 1))
-				results="${results}${status}|${file_path}|${line_count}|${_fc}|0|${max_nesting}|${file_type}"$'\n'
-			done <<<"$md_check_results"
-		fi
+		_scan_md_files "$repo_path" "$state_file" >>"$results_tmp"
 	fi
+
+	local results
+	results=$(cat "$results_tmp")
+	rm -f "$results_tmp"
+
+	# Count results from output (counters don't propagate from subshells)
+	local changed_files=0
+	[[ -n "$results" ]] && changed_files=$(printf '%s\n' "$results" | grep -c '.' || echo "0")
 
 	local elapsed=$(($(date +%s) - start_time))
-
-	# Output summary to stderr
-	_log "INFO" "Scan complete in ${elapsed}s: ${total_files} files checked, ${changed_files} changed/new, ${unchanged_files} unchanged"
+	_log "INFO" "Scan complete in ${elapsed}s: ${changed_files} files with violations found"
 
 	if [[ -z "$results" ]]; then
 		_log "INFO" "No files exceed complexity thresholds"
 		return 2
 	fi
 
-	# Sort by line count (field 3) descending — biggest wins first
+	# Sort by line count (field 3) descending
 	results=$(printf '%s' "$results" | sort -t'|' -k3 -rn)
 
 	if [[ "$output_format" == "json" ]]; then
-		# Convert to JSON array
-		echo "["
-		local first=true
-		while IFS='|' read -r status file_path line_count func_count long_func_count max_nesting file_type; do
-			[[ -n "$file_path" ]] || continue
-			if [[ "$first" == true ]]; then
-				first=false
-			else
-				echo ","
-			fi
-			printf '  {"status":"%s","file":"%s","lines":%s,"functions":%s,"long_functions":%s,"max_nesting":%s,"type":"%s"}' \
-				"$status" "$file_path" "$line_count" "$func_count" "$long_func_count" "$max_nesting" "$file_type"
-		done <<<"$results"
-		echo ""
-		echo "]"
+		printf '%s' "$results" | _format_results_json
 	else
-		# Pipe-delimited output (default)
 		printf '%s' "$results"
 	fi
 
