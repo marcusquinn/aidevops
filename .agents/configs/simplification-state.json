@@ -1717,9 +1717,9 @@
       "pr": 12376
     },
     ".agents/services/hosting/cloudflare-platform-skill/sandbox-patterns.md": {
-      "hash": "49d87469f73578ad10a6c6de4715c7b60af41b7f",
-      "at": "2026-03-29T01:03:18Z",
-      "pr": 12379
+      "hash": "00c4e5e54479091aae2b294a8ff3da6e",
+      "at": "2026-04-01T22:30:00Z",
+      "pr": 15182
     },
     ".agents/content/distribution-youtube.md": {
       "hash": "a44106f7677388ea6146e99c5c94de36b9e337ba",

@@ -1,107 +1,23 @@
 # Common Patterns
 
-Handler-body-only examples — all use the Worker boilerplate from `sandbox.md` Quick Start.
+Reference corpus for Cloudflare Sandbox examples. Content moved into chapter files to keep the entry point short while preserving every example.
 
-## AI Code Execution
+## Chapters
 
-```typescript
-const { code } = await request.json();
-const sandbox = getSandbox(env.Sandbox, 'ai-agent');
-await sandbox.writeFile('/workspace/user_code.py', code);
-const result = await sandbox.exec('python3 /workspace/user_code.py');
-return Response.json({ output: result.stdout, error: result.stderr, success: result.success });
-```
+- [01-ai-code-execution.md](./sandbox-patterns/01-ai-code-execution.md) - Execute AI-generated code in a secure sandbox.
+- [02-interactive-dev-environment.md](./sandbox-patterns/02-interactive-dev-environment.md) - Spin up an interactive VS Code (code-server) instance.
+- [03-ci-cd-pipeline.md](./sandbox-patterns/03-ci-cd-pipeline.md) - Run automated tests and builds in isolated environments.
+- [04-multi-language-code-runner.md](./sandbox-patterns/04-multi-language-code-runner.md) - Support for Python, Node.js, TypeScript, and Bash.
+- [05-multi-tenant.md](./sandbox-patterns/05-multi-tenant.md) - Isolate user sessions with dedicated working directories.
+- [06-jupyter-integration.md](./sandbox-patterns/06-jupyter-integration.md) - Interactive notebooks and headless nbconvert execution.
+- [07-git-operations.md](./sandbox-patterns/07-git-operations.md) - Clone, pull, and branch management within the sandbox.
 
-## Interactive Dev Environment
+## Related
 
-```typescript
-// Requires proxyToSandbox() call first (see sandbox.md)
-const sandbox = getSandbox(env.Sandbox, 'ide', { normalizeId: true });
-await sandbox.exec('curl -fsSL https://code-server.dev/install.sh | sh');
-await sandbox.startProcess('code-server --bind-addr 0.0.0.0:8080', { processId: 'vscode' });
-const exposed = await sandbox.exposePort(8080);
-return Response.json({ url: exposed.url });
-```
+- [sandbox.md](./sandbox.md) - API overview, quick start, and core capabilities.
+- [sandbox-gotchas.md](./sandbox-gotchas.md) - Common pitfalls and performance considerations.
 
-## CI/CD Pipeline
+## Preservation Notes
 
-```typescript
-const { repo, branch } = await request.json();
-const sandbox = getSandbox(env.Sandbox, `ci-${repo}-${Date.now()}`);
-await sandbox.exec(`git clone -b ${branch} ${repo} /workspace/repo`);
-const install = await sandbox.exec('npm install', {
-  cwd: '/workspace/repo', stream: true, onOutput: (stream, data) => console.log(data)
-});
-if (!install.success) return Response.json({ success: false, error: 'Install failed' });
-const test = await sandbox.exec('npm test', { cwd: '/workspace/repo' });
-return Response.json({ success: test.success, output: test.stdout, exitCode: test.exitCode });
-```
-
-## Multi-Language Code Runner
-
-```typescript
-const langs: Record<string, { cmd: string; ext: string }> = {
-  python: { cmd: 'python3', ext: 'py' }, javascript: { cmd: 'node', ext: 'js' },
-  typescript: { cmd: 'ts-node', ext: 'ts' }, bash: { cmd: 'bash', ext: 'sh' }
-};
-const { language, code } = await request.json();
-const config = langs[language];
-if (!config) return Response.json({ error: 'Unsupported language' }, { status: 400 });
-const sandbox = getSandbox(env.Sandbox, 'code-runner');
-const filename = `/workspace/script.${config.ext}`;
-await sandbox.writeFile(filename, code);
-const result = await sandbox.exec(`${config.cmd} ${filename}`);
-return Response.json({ output: result.stdout, error: result.stderr, exitCode: result.exitCode });
-```
-
-## Multi-Tenant
-
-```typescript
-const userId = request.headers.get('X-User-ID');
-const sandbox = getSandbox(env.Sandbox, 'multi-tenant');
-let session;
-try { session = await sandbox.getSession(userId); }
-catch { session = await sandbox.createSession({
-  id: userId, cwd: `/workspace/users/${userId}`, env: { USER_ID: userId }
-}); }
-const code = await request.text();
-const result = await session.exec(`python3 -c "${code}"`);
-return Response.json({ output: result.stdout });
-```
-
-## Jupyter Integration
-
-**Dockerfile**: `FROM docker.io/cloudflare/sandbox:latest` + `RUN pip3 install --no-cache-dir jupyter-server ipykernel matplotlib pandas` + `EXPOSE 8888`
-
-**Interactive notebook**:
-
-```typescript
-await sandbox.startProcess('jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser', {
-  processId: 'jupyter', cwd: '/workspace'
-});
-const exposed = await sandbox.exposePort(8888, { name: 'jupyter' });
-return Response.json({ url: exposed.url });
-```
-
-**Headless execution** (nbconvert):
-
-```typescript
-const sandbox = getSandbox(env.Sandbox, 'data-analysis');
-await sandbox.writeFile('/workspace/analysis.ipynb', JSON.stringify(notebook));
-const result = await sandbox.exec(
-  'jupyter nbconvert --to notebook --execute analysis.ipynb --output results.ipynb',
-  { cwd: '/workspace' }
-);
-const output = await sandbox.readFile('/workspace/results.ipynb');
-return Response.json({ success: result.success, notebook: JSON.parse(output.content) });
-```
-
-## Git Operations
-
-```typescript
-await sandbox.exec('git clone https://github.com/user/repo.git /workspace/repo');
-await sandbox.exec('git clone -b main --single-branch https://github.com/user/repo.git /workspace/repo'); // shallow
-await sandbox.exec(`git clone https://${env.GITHUB_TOKEN}@github.com/user/private-repo.git`); // authenticated
-await sandbox.exec('git pull', { cwd: '/workspace/repo' });
-await sandbox.exec('git checkout -b feature', { cwd: '/workspace/repo' });
-```
+- All original code blocks moved to the chapter files above.
+- No examples were removed; this file is now the index for the same material.
