@@ -62,8 +62,8 @@ Stay in analyst mode. Answer with findings, evidence, and recommendations; do no
 
 ### Output format
 
-- Executive summary
-- Key findings
+- Decision
+- Options
 - Evidence/citations
 - Recommendation
 - Next steps
