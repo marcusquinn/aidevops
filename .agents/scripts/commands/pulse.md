@@ -71,7 +71,19 @@ first repo" bug).
 
 ### 3. Approve and merge ready PRs (free — no worker slot needed)
 
-For each PR where CI checks pass (or have no failures) AND the author is a collaborator:
+**Most merging is now handled deterministically by `merge_ready_prs_all_repos()` in
+pulse-wrapper.sh.** This function runs every cycle BEFORE the LLM session starts. It
+approves and merges all MERGEABLE collaborator PRs, posts closing comments (using the
+worker's `<!-- MERGE_SUMMARY -->` comment if available), and closes linked issues. It
+also closes CONFLICTING PRs with an audit comment.
+
+The LLM session should focus on edge cases the deterministic pass can't handle:
+- PRs needing CI fix workers dispatched
+- PRs with `CHANGES_REQUESTED` that need follow-up
+- External contributor PRs requiring manual review
+- Complex merge conflicts requiring rebase strategy decisions
+
+For any remaining PRs where CI checks pass AND the author is a collaborator:
 
 **`REVIEW_REQUIRED` is NOT a merge blocker for collaborator PRs.** The `reviewDecision` field
 shows `REVIEW_REQUIRED` when no human has approved yet. Since the pulse user IS a collaborator
