@@ -4,6 +4,8 @@ mode: subagent
 tools:
   read: true
   bash: true
+  glob: true
+  grep: true
   webfetch: true
 ---
 
@@ -23,6 +25,7 @@ tools:
 - Config: `configs/crawl4ai-config.json.txt`, `configs/mcp-templates/crawl4ai-mcp-config.json`
 - Endpoints: Dashboard http://localhost:11235/dashboard | Health `/health` | Metrics `/metrics`
 - Docs: https://docs.crawl4ai.com/ | https://github.com/unclecode/crawl4ai
+- Env vars: `LLM_PROVIDER=openai/gpt-4o-mini`, `CRAWL4AI_MAX_PAGES=50`, `CRAWL4AI_TIMEOUT=60`, `CRAWL4AI_DEFAULT_FORMAT=markdown` (`OPENAI_API_KEY`/`ANTHROPIC_API_KEY` from secure storage)
 
 <!-- AI-CONTEXT-END -->
 
@@ -40,18 +43,7 @@ tools:
 }
 ```
 
-## Configuration
-
-Environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY` from secure storage):
-
-```bash
-LLM_PROVIDER=openai/gpt-4o-mini
-CRAWL4AI_MAX_PAGES=50
-CRAWL4AI_TIMEOUT=60
-CRAWL4AI_DEFAULT_FORMAT=markdown
-```
-
-## Features
+## API Reference
 
 | Feature | API |
 |---------|-----|
