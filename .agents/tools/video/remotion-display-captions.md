@@ -8,12 +8,9 @@ metadata:
 
 # Displaying captions in Remotion
 
-This guide explains how to display captions in Remotion, assuming you already have captions in the `Caption` format.
+Display `Caption[]` data with TikTok-style pages and per-word highlighting.
 
-## Prerequisites
-
-First, the @remotion/captions package needs to be installed.
-If it is not installed, use the following command:
+## Install `@remotion/captions`
 
 ```bash
 npx remotion add @remotion/captions # If project uses npm
@@ -22,9 +19,9 @@ yarn remotion add @remotion/captions # If project uses yarn
 pnpm exec remotion add @remotion/captions # If project uses pnpm
 ```
 
-## Creating pages
+## 1. Group captions into pages
 
-Use `createTikTokStyleCaptions()` to group captions into pages. The `combineTokensWithinMilliseconds` option controls how many words appear at once:
+Use `createTikTokStyleCaptions()` to batch words into timed pages. `combineTokensWithinMilliseconds` controls how many words appear at once.
 
 ```tsx
 import {useMemo} from 'react';
@@ -36,23 +33,25 @@ import type {Caption} from '@remotion/captions';
 // Lower values = fewer words (more word-by-word)
 const SWITCH_CAPTIONS_EVERY_MS = 1200;
 
-const {pages} = useMemo(() => {
-  return createTikTokStyleCaptions({
-    captions,
-    combineTokensWithinMilliseconds: SWITCH_CAPTIONS_EVERY_MS,
-  });
-}, [captions]);
+const CaptionedContent: React.FC<{captions: Caption[]}> = ({captions}) => {
+  const {pages} = useMemo(() => {
+    return createTikTokStyleCaptions({
+      captions,
+      combineTokensWithinMilliseconds: SWITCH_CAPTIONS_EVERY_MS,
+    });
+  }, [captions]);
+};
 ```
 
-## Rendering with Sequences
+## 2. Render each page in a `<Sequence>`
 
-Map over the pages and render each one in a `<Sequence>`. Calculate the start frame and duration from the page timing:
+Map over `pages` and derive each sequence from the page timing.
 
 ```tsx
 import {Sequence, useVideoConfig, AbsoluteFill} from 'remotion';
 import type {TikTokPage} from '@remotion/captions';
 
-const CaptionedContent: React.FC = () => {
+const CaptionedContent: React.FC<{pages: TikTokPage[]}> = ({pages}) => {
   const {fps} = useVideoConfig();
 
   return (
@@ -85,9 +84,9 @@ const CaptionedContent: React.FC = () => {
 };
 ```
 
-## Word highlighting
+## 3. Highlight the active word
 
-A caption page contains `tokens` which you can use to highlight the currently spoken word:
+Each page exposes `tokens`, so you can compare the current playback time against `fromMs` and `toMs`.
 
 ```tsx
 import {AbsoluteFill, useCurrentFrame, useVideoConfig} from 'remotion';
@@ -99,9 +98,7 @@ const CaptionPage: React.FC<{page: TikTokPage}> = ({page}) => {
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
 
-  // Current time relative to the start of the sequence
   const currentTimeMs = (frame / fps) * 1000;
-  // Convert to absolute time by adding the page start
   const absoluteTimeMs = page.startMs + currentTimeMs;
 
   return (
