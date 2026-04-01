@@ -1,22 +1,14 @@
 # Miniflare
 
-Local simulator for Cloudflare Workers development/testing. Runs Workers in workerd sandbox implementing runtime APIs - no internet required.
+Local simulator for Cloudflare Workers. Runs Workers in workerd sandbox with full runtime API support — no internet required.
 
-## Features
-
-- Full-featured: KV, Durable Objects, R2, D1, WebSockets, Queues
-- Fully-local: test without internet, instant reload
-- TypeScript-native: detailed logging, source maps
-- Advanced testing: dispatch events without HTTP, simulate Worker connections
+> **Most users should use Wrangler (`wrangler dev`).** Use Miniflare for advanced testing requiring programmatic control.
 
 ## When to Use
 
-- Integration tests for Workers
-- Advanced use cases requiring fine-grained control
-- Testing bindings/storage locally
+- Integration tests for Workers with bindings (KV, DO, R2, D1, Queues, WebSockets)
+- Fine-grained test control: dispatch events without HTTP, simulate Worker connections
 - Multiple Workers with service bindings
-
-**Note:** Most users should use Wrangler. Miniflare for advanced testing.
 
 ## Setup
 
@@ -24,11 +16,7 @@ Local simulator for Cloudflare Workers development/testing. Runs Workers in work
 npm i -D miniflare
 ```
 
-Requires ES modules in `package.json`:
-
-```json
-{"type": "module"}
-```
+Requires ES modules (`"type": "module"` in `package.json`).
 
 ## Quick Start
 
