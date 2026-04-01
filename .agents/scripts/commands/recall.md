@@ -13,8 +13,9 @@ Search query: $ARGUMENTS
 1. Run: `~/.aidevops/agents/scripts/memory-helper.sh recall "{query}"`
 2. Present results with type, tags, project, and age. Offer to apply selected memory to current context.
 3. No results: suggest different keywords, broader terms, or `--recent`.
+4. Search proactively when starting a project, encountering errors, making architecture decisions, or setting up tools. Check `--project {current-project}` at session start.
 
-## Search Options
+## Options
 
 | Command | Purpose |
 |---------|---------|
@@ -43,16 +44,12 @@ AI: Found 2 memories for "cors":
     Which memory is relevant to your current task?
 ```
 
-## Proactive Recall
-
-Search memories proactively when: starting a project, encountering errors, making architecture decisions, or setting up tools. Check `--project {current-project}` at session start.
-
 ## Maintenance
+
+Stale memories (>90 days, never accessed) are candidates for pruning.
 
 ```bash
 ~/.aidevops/agents/scripts/memory-helper.sh validate
 ~/.aidevops/agents/scripts/memory-helper.sh prune --dry-run
 ~/.aidevops/agents/scripts/memory-helper.sh prune
 ```
-
-Stale memories (>90 days, never accessed) are candidates for pruning.
