@@ -7,63 +7,12 @@ imported_from: external
 
 Use this file as the reference index: quick decision trees up front, then chapter links for the full corpus. The detailed material lives in `modern-javascript-skill/*.md`.
 
-## Quick Decision Trees
+## Quick Reference
 
-### "Which array method should I use?"
-
-```text
-What do I need?
-├─ Transform each element           → .map()
-├─ Keep some elements               → .filter()
-├─ Find one element                 → .find() / .findLast()
-├─ Check if condition met           → .some() / .every()
-├─ Reduce to single value           → .reduce()
-├─ Get last element                 → .at(-1)
-├─ Sort without mutating            → .toSorted()
-├─ Reverse without mutating         → .toReversed()
-├─ Group by property                → Object.groupBy()
-└─ Flatten nested arrays            → .flat() / .flatMap()
-```
-
-### "How do I handle nullish values?"
-
-```text
-Nullish handling?
-├─ Safe property access              → obj?.prop / obj?.[key]
-├─ Safe method call                  → obj?.method?.()
-├─ Default for null/undefined only   → value ?? 'default'
-├─ Default for any falsy             → value || 'default'
-├─ Assign if null/undefined          → obj.prop ??= 'default'
-└─ Check property exists             → Object.hasOwn(obj, 'key')
-```
-
-### "Should I mutate or copy?"
-
-```text
-Always prefer non-mutating methods:
-├─ Sort array      → .toSorted()    (not .sort())
-├─ Reverse array   → .toReversed()  (not .reverse())
-├─ Splice array    → .toSpliced()   (not .splice())
-├─ Update element  → .with(i, val)  (not arr[i] = val)
-├─ Add to array    → [...arr, item] (not .push())
-└─ Merge objects   → {...obj, key}  (not Object.assign())
-```
-
-## ES Version Quick Reference
-
-| Version | Year | Key Features |
-|---------|------|--------------|
-| ES6 | 2015 | let/const, arrow functions, classes, destructuring, spread, Promises, modules, Symbol, Map/Set, Proxy, generators |
-| ES2016 | 2016 | Array.includes(), exponentiation operator ** |
-| ES2017 | 2017 | async/await, Object.values/entries, padStart/padEnd, trailing commas, SharedArrayBuffer, Atomics |
-| ES2018 | 2018 | Rest/spread for objects, for await...of, Promise.finally(), RegExp named groups, lookbehind, dotAll flag |
-| ES2019 | 2019 | .flat(), .flatMap(), Object.fromEntries(), trimStart/End(), optional catch binding, stable Array.sort() |
-| ES2020 | 2020 | Optional chaining ?., nullish coalescing ??, BigInt, Promise.allSettled(), globalThis, dynamic import() |
-| ES2021 | 2021 | String.replaceAll(), Promise.any(), logical assignment ??= and or=, numeric separators 1_000_000 |
-| ES2022 | 2022 | .at(), Object.hasOwn(), top-level await, private class fields #field, static blocks, Error.cause |
-| ES2023 | 2023 | .toSorted(), .toReversed(), .toSpliced(), .with(), .findLast(), .findLastIndex(), hashbang grammar |
-| ES2024 | 2024 | Object.groupBy(), Map.groupBy(), Promise.withResolvers(), RegExp v flag, resizable ArrayBuffer |
-| ES2025 | 2025 | Iterator helpers (.map, .filter, .take), Set methods (.union, .intersection), RegExp.escape(), using/await using |
+| File | Purpose |
+|------|---------|
+| [modern-javascript-skill/01-decision-trees.md](modern-javascript-skill/01-decision-trees.md) | Array methods, nullish handling, mutation vs copy |
+| [modern-javascript-skill/02-es-versions.md](modern-javascript-skill/02-es-versions.md) | ES6 to ES2025 feature matrix |
 
 ## Reference Chapters
 
