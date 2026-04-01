@@ -1379,7 +1379,16 @@ _handle_run_result() {
 		return 76
 	fi
 
-	record_provider_backoff "$provider" "$failure_reason" "$output_file" "$selected_model"
+	# Pulse supervisor failures must NOT block worker dispatch. The supervisor
+	# and workers may use different accounts (isolated auth) and the supervisor
+	# hitting a rate limit doesn't mean the provider is down for workers.
+	# Record pulse backoffs under a role-scoped key so the pre-dispatch check
+	# (which queries the model key) doesn't see them.
+	if [[ "$role" == "pulse" ]]; then
+		record_provider_backoff "$provider" "$failure_reason" "$output_file" "pulse/${selected_model}"
+	else
+		record_provider_backoff "$provider" "$failure_reason" "$output_file" "$selected_model"
+	fi
 	rm -f "$output_file"
 	_run_failure_reason="$failure_reason"
 	_run_should_retry=0
