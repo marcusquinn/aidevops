@@ -1238,106 +1238,143 @@ cmd_add_google() {
 # Print formatted details for all accounts of a provider (stdin = pool JSON).
 # Tests live token validity for anthropic and google via urllib (in-process).
 # Usage: printf '%s' "$pool" | _check_print_provider_accounts "$prov" "$now_ms" "$ua"
+# Print token expiry line for a single account.
+# Args: expires_in (ms, may be negative)
+_check_print_token_expiry() {
+	local expires_in="$1"
+	python3 -c "
+import sys
+expires_in = int(sys.argv[1])
+if expires_in <= 0:
+    print('    Token: EXPIRED')
+else:
+    mins = expires_in // 60000
+    hours = mins // 60
+    if hours > 0:
+        print(f'    Token: expires in {hours}h {mins % 60}m')
+    else:
+        print(f'    Token: expires in {mins}m')
+" "$expires_in"
+	return 0
+}
+
+# Print status, cooldown, last-used, and refresh-token presence for one account.
+# Reads account JSON from stdin; NOW_MS env var required.
+_check_print_account_meta() {
+	local now_ms="$1"
+	NOW_MS="$now_ms" python3 -c "
+import sys, json, os
+from datetime import datetime
+a = json.load(sys.stdin)
+now = int(os.environ['NOW_MS'])
+print(f\"    Status: {a.get('status', 'unknown')}\")
+cd = a.get('cooldownUntil')
+if cd and cd > now:
+    cd_mins = (cd - now + 59999) // 60000
+    print(f'    Cooldown: {cd_mins}m remaining')
+lu = a.get('lastUsed')
+if lu:
+    try:
+        lu_ts = datetime.fromisoformat(lu.replace('Z','+00:00')).timestamp() * 1000
+        ago = now - lu_ts
+        ago_mins = int(ago // 60000)
+        ago_hours = ago_mins // 60
+        if ago_hours > 0:
+            print(f'    Last used: {ago_hours}h {ago_mins % 60}m ago')
+        else:
+            print(f'    Last used: {ago_mins}m ago')
+    except Exception:
+        print(f'    Last used: {lu}')
+print(f\"    Refresh token: {'present' if a.get('refresh') else 'MISSING'}\")
+"
+	return 0
+}
+
+# Perform a live HTTP validity check for a single token.
+# Args: provider, expires_in (ms), access_token, user_agent
+_check_validate_token() {
+	local prov="$1"
+	local expires_in="$2"
+	local token="$3"
+	local ua="$4"
+	PROV="$prov" EXPIRES_IN="$expires_in" TOKEN="$token" UA="$ua" python3 -c "
+import os
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+prov      = os.environ['PROV']
+expires_in = int(os.environ['EXPIRES_IN'])
+token     = os.environ['TOKEN']
+ua        = os.environ['UA']
+if prov not in ('anthropic', 'google'):
+    raise SystemExit(0)
+if not token:
+    print('    Validity: no access token')
+    raise SystemExit(0)
+if expires_in <= 0:
+    print('    Validity: EXPIRED - will auto-refresh on next use')
+    raise SystemExit(0)
+if prov == 'anthropic':
+    req = Request('https://api.anthropic.com/v1/models', method='GET')
+    req.add_header('Authorization', f'Bearer {token}')
+    req.add_header('User-Agent', ua)
+    req.add_header('anthropic-version', '2023-06-01')
+    # Claude CLI sends this beta header on profile/API requests.
+    # We include it on health checks for parity. If this endpoint
+    # ever rejects the header, remove it — it is not required for
+    # the /v1/models listing, only for OAuth-specific endpoints.
+    req.add_header('anthropic-beta', 'oauth-2025-04-20')
+else:
+    req = Request('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', method='GET')
+    req.add_header('Authorization', f'Bearer {token}')
+try:
+    urlopen(req, timeout=10)
+    print('    Validity: OK')
+except HTTPError as e:
+    if e.code == 401:
+        print('    Validity: INVALID (401 - needs refresh)')
+    elif prov == 'google' and e.code == 403:
+        print('    Validity: OK (403 - token valid, check AI Pro/Ultra subscription)')
+    else:
+        print(f'    Validity: HTTP {e.code}')
+except (URLError, OSError):
+    print('    Validity: ERROR (network)')
+except Exception:
+    print('    Validity: ERROR')
+" 2>/dev/null
+	return 0
+}
+
+# Iterate all accounts for a provider and print a health summary.
+# Pool JSON is read from stdin; args: provider, now_ms, user_agent.
 _check_print_provider_accounts() {
 	local prov="$1"
 	local now_ms="$2"
 	local ua="$3"
-	NOW_MS="$now_ms" PROV="$prov" UA="$ua" python3 -c "
+	local tmp_records
+	tmp_records=$(mktemp)
+	# Emit one JSON record per account (newline-delimited) to a temp file.
+	NOW_MS="$now_ms" PROV="$prov" python3 -c "
 import sys, json, os
-from datetime import datetime
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError
-
 pool = json.load(sys.stdin)
-now = int(os.environ['NOW_MS'])
 prov = os.environ['PROV']
-ua = os.environ['UA']
-
-def _check_token_validity(a, prov, expires_in, ua):
-    token = a.get('access', '')
-    if prov == 'anthropic':
-        if not token:
-            print(f\"    Validity: no access token\")
-        elif expires_in <= 0:
-            print(f\"    Validity: EXPIRED - will auto-refresh on next use\")
-        else:
-            try:
-                req = Request('https://api.anthropic.com/v1/models', method='GET')
-                req.add_header('Authorization', f'Bearer {token}')
-                req.add_header('User-Agent', ua)
-                req.add_header('anthropic-version', '2023-06-01')
-                # Claude CLI sends this beta header on profile/API requests.
-                # We include it on health checks for parity. If this endpoint
-                # ever rejects the header, remove it — it is not required for
-                # the /v1/models listing, only for OAuth-specific endpoints.
-                req.add_header('anthropic-beta', 'oauth-2025-04-20')
-                urlopen(req, timeout=10)
-                print(f\"    Validity: OK\")
-            except HTTPError as e:
-                if e.code == 401:
-                    print(f\"    Validity: INVALID (401 - needs refresh)\")
-                else:
-                    print(f\"    Validity: HTTP {e.code}\")
-            except (URLError, OSError):
-                print(f\"    Validity: ERROR (network)\")
-            except Exception:
-                print(f\"    Validity: ERROR\")
-    elif prov == 'google':
-        if not token:
-            print(f\"    Validity: no access token\")
-        elif expires_in <= 0:
-            print(f\"    Validity: EXPIRED - will auto-refresh on next use\")
-        else:
-            try:
-                req = Request('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', method='GET')
-                req.add_header('Authorization', f'Bearer {token}')
-                urlopen(req, timeout=10)
-                print(f\"    Validity: OK\")
-            except HTTPError as e:
-                if e.code == 401:
-                    print(f\"    Validity: INVALID (401 - needs refresh)\")
-                elif e.code == 403:
-                    print(f\"    Validity: OK (403 - token valid, check AI Pro/Ultra subscription)\")
-                else:
-                    print(f\"    Validity: HTTP {e.code}\")
-            except (URLError, OSError):
-                print(f\"    Validity: ERROR (network)\")
-            except Exception:
-                print(f\"    Validity: ERROR\")
-
+now  = int(os.environ['NOW_MS'])
 for a in pool.get(prov, []):
-    print(f\"  {a['email']}:\")
     expires_in = a.get('expires', 0) - now
-    if expires_in <= 0:
-        print(f\"    Token: EXPIRED\")
-    else:
-        mins = expires_in // 60000
-        hours = mins // 60
-        if hours > 0:
-            print(f\"    Token: expires in {hours}h {mins % 60}m\")
-        else:
-            print(f\"    Token: expires in {mins}m\")
-    print(f\"    Status: {a.get('status', 'unknown')}\")
-    cd = a.get('cooldownUntil')
-    if cd and cd > now:
-        cd_mins = (cd - now + 59999) // 60000
-        print(f\"    Cooldown: {cd_mins}m remaining\")
-    lu = a.get('lastUsed')
-    if lu:
-        try:
-            lu_ts = datetime.fromisoformat(lu.replace('Z','+00:00')).timestamp() * 1000
-            ago = now - lu_ts
-            ago_mins = int(ago // 60000)
-            ago_hours = ago_mins // 60
-            if ago_hours > 0:
-                print(f\"    Last used: {ago_hours}h {ago_mins % 60}m ago\")
-            else:
-                print(f\"    Last used: {ago_mins}m ago\")
-        except Exception:
-            print(f\"    Last used: {lu}\")
-    print(f\"    Refresh token: {'present' if a.get('refresh') else 'MISSING'}\")
-    _check_token_validity(a, prov, expires_in, ua)
-" 2>/dev/null
+    print(json.dumps({'email': a['email'], 'expires_in': expires_in,
+                      'account': a}))
+" 2>/dev/null >"$tmp_records"
+	while IFS= read -r record; do
+		local email expires_in acc_json token
+		email=$(printf '%s' "$record" | python3 -c "import sys,json; print(json.load(sys.stdin)['email'])" 2>/dev/null)
+		expires_in=$(printf '%s' "$record" | python3 -c "import sys,json; print(json.load(sys.stdin)['expires_in'])" 2>/dev/null)
+		acc_json=$(printf '%s' "$record" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin)['account']))" 2>/dev/null)
+		token=$(printf '%s' "$acc_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('access',''))" 2>/dev/null)
+		printf '  %s:\n' "$email"
+		_check_print_token_expiry "$expires_in"
+		printf '%s' "$acc_json" | _check_print_account_meta "$now_ms"
+		_check_validate_token "$prov" "$expires_in" "$token" "$ua"
+	done <"$tmp_records"
+	rm -f "$tmp_records"
 	return 0
 }
 
