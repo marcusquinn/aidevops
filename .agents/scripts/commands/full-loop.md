@@ -27,15 +27,14 @@ Fatal modes: **GH#5317** (exits without PR), **GH#5096** (exits after PR). Do NO
 
 ## Step 0: Resolve Task ID
 
-Extract the first positional arg; if ` -- ` is present, use the suffix (t158). Resolve task IDs (`t\d+`) via TODO.md or `gh issue list --search`. Extract the issue number with `sed -En 's/.*[Ii]ssue[[:space:]]*#*([0-9]+).*/\1/p'`.
+Extract first positional arg; if ` -- ` present, use suffix (t158). Resolve `t\d+` via TODO.md or `gh issue list --search`. Extract issue number: `sed -En 's/.*[Ii]ssue[[:space:]]*#*([0-9]+).*/\1/p'`.
 
-**Decomposition (t1408.2):** Skip if `--no-decompose` or has subtasks. `task-decompose-helper.sh classify "$TASK_DESC"`. Composite interactive → show tree, ask `[Y/n/edit]`, create child IDs via `claim-task-id.sh`. Composite headless → auto-decompose, exit `DECOMPOSED: ...`. Max depth 3.
-
-**Claim (t1017):** Add `assignee:<identity> started:<ISO>` to TODO.md. Push rejection = claimed → **STOP**.
-
-**Issue labels (t1343/#2452):** Find via `$ISSUE_NUM`, `ref:GH#NNN`, or `gh issue list --search`. Guard: state must be `OPEN`. Set `status:in-progress`, remove stale labels. Lifecycle: `available` → `queued` → `in-progress` → `in-review` → `done`. Idempotent (t1687).
-
-**Step 0.7 — Dispatch model:** `dispatched:{opus|sonnet|haiku}` from `$ANTHROPIC_MODEL`. **Step 0.8 — Session origin:** `origin:worker` or `origin:interactive` via `shared-constants.sh`. **Step 1.7 — Lineage (t1408.3):** If `TASK LINEAGE:` block: implement only `<-- THIS TASK`, stub siblings, include in PR body.
+- **Decomposition (t1408.2):** Skip if `--no-decompose` or has subtasks. `task-decompose-helper.sh classify "$TASK_DESC"`. Composite interactive → show tree, ask `[Y/n/edit]`, create child IDs via `claim-task-id.sh`. Composite headless → auto-decompose, exit `DECOMPOSED: ...`. Max depth 3.
+- **Claim (t1017):** Add `assignee:<identity> started:<ISO>` to TODO.md. Push rejection = claimed → **STOP**.
+- **Issue labels (t1343/#2452):** Guard: state must be `OPEN`. Set `status:in-progress`, remove stale labels. Lifecycle: `available` → `queued` → `in-progress` → `in-review` → `done`. Idempotent (t1687).
+- **Step 0.7 — Dispatch model:** `dispatched:{opus|sonnet|haiku}` from `$ANTHROPIC_MODEL`.
+- **Step 0.8 — Session origin:** `origin:worker` or `origin:interactive` via `shared-constants.sh`.
+- **Step 1.7 — Lineage (t1408.3):** If `TASK LINEAGE:` block: implement only `<-- THIS TASK`, stub siblings, include in PR body.
 
 ---
 
@@ -58,12 +57,12 @@ Start: `~/.aidevops/agents/scripts/full-loop-helper.sh start "$ARGUMENTS" --back
 Iterate until emitting `<promise>TASK_COMPLETE</promise>`.
 
 **Completion criteria (ALL required):**
-1. Requirements implemented (list each `[DONE]`); tests pass; lint/shellcheck/type-check clean; works for varying inputs
+1. Requirements implemented (list each `[DONE]`); tests pass; lint/shellcheck/type-check clean
 2. **README gate (t099)** — update if user-facing features change; skip for refactor/bugfix
 3. Conventional commits; headless rules observed; every deferred finding has tracked task+issue (`findings-to-tasks-helper.sh create`)
 4. **Runtime testing gate (t1660.7)** — risk-appropriate verification (see below)
 5. **Commit+PR gate (GH#5317 — MANDATORY):** Commit all changes, push, ensure PR exists. Do NOT emit `TASK_COMPLETE` with uncommitted changes or no PR.
-6. **Signature footer gate (GH#12805 — MANDATORY):** PR body and issue closing comment MUST contain the `aidevops.sh` signature footer. Verify: `echo "$PR_BODY" | grep -q 'aidevops.sh'`. Missing signature = incomplete PR.
+6. **Signature footer gate (GH#12805 — MANDATORY):** PR body and issue closing comment MUST contain the `aidevops.sh` signature footer. Verify: `echo "$PR_BODY" | grep -q 'aidevops.sh'`.
 
 ### Runtime Testing Gate (t1660.7 — MANDATORY)
 
@@ -88,7 +87,7 @@ Detection is intelligence, not regex. ANY critical pattern → entire PR require
 6. **Time budget:** 45 min → self-check. 90 min → draft PR, exit. 120 min → stop.
 7. Verify prerequisites at START. Missing → exit. Push/PR failure (#2452) → retry after rebase → exit `BLOCKED`.
 8. `PULSE_SCOPE_REPOS` restricts code; issues always allowed (t1405). Mismatch → new issue (t1344).
-9. **Model escalation before BLOCKED (GH#14964 — MANDATORY):** `BLOCKED` is only valid after exhausting all autonomous solution paths. Before exiting `BLOCKED`, a worker MUST attempt model escalation: if the current model stalls or cannot finish safely, retry with the next tier (sonnet → opus via `--model anthropic/claude-opus-4-6`). Review-policy metadata, nominal GitHub states, and lower-tier model limits are NOT valid blockers on their own. Genuine blockers require evidence: failing check, missing permission, unresolved conflict, or explicit policy gate that persists after escalation. See `tools/context/model-routing.md` "Failure-Based Escalation".
+9. **Model escalation before BLOCKED (GH#14964 — MANDATORY):** `BLOCKED` is only valid after exhausting all autonomous solution paths. Before exiting `BLOCKED`, retry with the next tier (sonnet → opus via `--model anthropic/claude-opus-4-6`). Review-policy metadata, nominal GitHub states, and lower-tier model limits are NOT valid blockers. Genuine blockers require evidence: failing check, missing permission, unresolved conflict, or explicit policy gate that persists after escalation. See `tools/context/model-routing.md` "Failure-Based Escalation".
 
 Changelog: `feat:` → Added, `fix:` → Fixed, `docs:`/`perf:`/`refactor:` → Changed, `chore:` → excluded. See `workflows/changelog.md`.
 
@@ -98,9 +97,15 @@ Changelog: `feat:` → Added, `fix:` → Fixed, `docs:`/`perf:`/`refactor:` → 
 
 **4.1 Preflight** — quality checks, auto-fixes.
 
-**4.2 PR Create** — rebase onto `origin/main`, push, create PR. Body MUST include `Closes #NNN` (MANDATORY). Add `origin:worker` or `origin:interactive` label. **Signature footer (GH#12805 — MANDATORY):** append `gh-signature-helper.sh footer` output with explicit issue context plus session mode — interactive: `SIG_FOOTER=$(gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL" --issue "$REPO#$ISSUE_NUM" --session-type interactive)`; headless: `SIG_FOOTER=$(gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL" --issue "$REPO#$ISSUE_NUM" --no-session --session-type worker --time "$WORKER_ELAPSED_SECS")`. Pass `--tokens "$WORKER_TOKENS"` only when telemetry exists. Verify the final PR body still contains `aidevops.sh` and either `spent` or `Overall,`: `gh pr view --json body | jq -e '.body | (contains("aidevops.sh") and (contains("spent") or contains("Overall,")))' >/dev/null`.
+**4.2 PR Create** — rebase onto `origin/main`, push, create PR. Body MUST include `Closes #NNN`. Add `origin:worker` or `origin:interactive` label.
 
-**4.2.1 Merge Summary Comment (MANDATORY)** — immediately after PR creation, post a structured merge summary comment on the PR. This is read by the deterministic merge pass in `pulse-wrapper.sh` when merging — it becomes the closing comment on both PR and issue. Post this EARLY (right after PR create) so it's available even if the worker crashes before step 4.7. The comment must contain the HTML marker `<!-- MERGE_SUMMARY -->` on the first line for machine extraction.
+**Signature footer (GH#12805 — MANDATORY):** append `gh-signature-helper.sh footer` output:
+- Interactive: `SIG_FOOTER=$(gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL" --issue "$REPO#$ISSUE_NUM" --session-type interactive)`
+- Headless: `SIG_FOOTER=$(gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL" --issue "$REPO#$ISSUE_NUM" --no-session --session-type worker --time "$WORKER_ELAPSED_SECS")`
+- Pass `--tokens "$WORKER_TOKENS"` only when telemetry exists.
+- Verify: `gh pr view --json body | jq -e '.body | (contains("aidevops.sh") and (contains("spent") or contains("Overall,")))' >/dev/null`
+
+**4.2.1 Merge Summary Comment (MANDATORY)** — post immediately after PR creation. Read by `pulse-wrapper.sh` deterministic merge pass. Must contain `<!-- MERGE_SUMMARY -->` on first line.
 
 ```bash
 gh pr comment "$PR_NUMBER" --repo "$REPO" --body "<!-- MERGE_SUMMARY -->
@@ -115,7 +120,7 @@ gh pr comment "$PR_NUMBER" --repo "$REPO" --body "<!-- MERGE_SUMMARY -->
 _This summary was written by the worker at PR creation time for the deterministic merge pass._"
 ```
 
-Update this comment at step 4.7 if you have more context (test results, review feedback incorporated). The deterministic merge pass uses the latest `<!-- MERGE_SUMMARY -->` comment found.
+Update at step 4.7 if you have more context. The deterministic merge pass uses the latest `<!-- MERGE_SUMMARY -->` comment found.
 
 **4.3 Label `status:in-review` (t1343)** — check issue is `OPEN` first. `status:done` set by `sync-on-pr-merge` — workers don't set it.
 
@@ -125,7 +130,7 @@ Update this comment at step 4.7 if you have more context (test results, review f
 
 **4.6 Auto-Release (aidevops only)** — `version-manager.sh bump patch`, tag, push, `gh release create`, `setup.sh --non-interactive`.
 
-**4.7 Closing Comments (MANDATORY)** — post the same structured closing comment on **both** the issue AND the PR: What done, Testing Evidence (level required), Key decisions, Files changed, Blockers, Follow-up, Released in. Every section ≥1 bullet. The PR comment cross-references the issue ("Closes #NNN") and the issue comment cross-references the PR ("PR #NNN"). Gate — no `FULL_LOOP_COMPLETE` until both are posted.
+**4.7 Closing Comments (MANDATORY)** — post structured closing comment on **both** the issue AND the PR: What done, Testing Evidence, Key decisions, Files changed, Blockers, Follow-up, Released in. Every section ≥1 bullet. PR comment: `Closes #NNN`. Issue comment: `PR #NNN`. Gate — no `FULL_LOOP_COMPLETE` until both posted.
 
 **4.8 Postflight + Deploy** — verify release health; `setup.sh --non-interactive`. Emit: `<promise>FULL_LOOP_COMPLETE</promise>`
 
