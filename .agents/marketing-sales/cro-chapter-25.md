@@ -66,15 +66,15 @@ Optimize for **RPV**, not CR alone: `LRPV = CR × Avg Transaction × (1 + Expans
 
 ### B2B SaaS: Usage-Based Pricing ($5M ARR)
 
-Flat $99/mo → tiered by contact list (Starter $49/≤1K · Growth $99/≤10K · Scale $199/≤50K · Enterprise custom). Grandfathered 6 months; 80% usage alerts; contact-cleaning tool; 20% annual discount.
+Flat $99/mo → tiered by contact list: Starter $49/≤1K · Growth $99/≤10K · Scale $199/≤50K · Enterprise custom. Grandfathered 6 months; 80% usage alerts; contact-cleaning tool; 20% annual discount.
 
-**Results (6 mo):** ARPU +28% ($99→$127) · LTV +34% · Churn 4.5→3.2% · Expansion 0→23% of new MRR · NRR 102→118% — customer growth drives natural upgrades.
+**Results (6 mo):** ARPU +28% ($99→$127) · LTV +34% · Churn 4.5→3.2% · Expansion 0→23% of new MRR · NRR 102→118%
 
 ### Subscription Box: Strategic Bundling (Coffee)
 
-$25/mo flat (CAC $35, 40% GM, 45% 6-mo retention) → Explorer $29 / **Enthusiast $49** *(flagship: micro-lot, virtual cupping, 15% add-on discount)* / Connoisseur $79 *(equipment, private Slack)*.
+$25/mo flat → Explorer $29 / **Enthusiast $49** *(flagship: micro-lot, virtual cupping, 15% add-on discount)* / Connoisseur $79 *(equipment, private Slack)*.
 
-**Results (9 mo):** Mix 15/62/23% · ARPU +116% ($25→$54) · GM 40→52% · LTV +200% ($67→$201) · CAC payback 3.5→0.7 mo · Retention 45→68% — equipment inclusion created switching costs.
+**Results (9 mo):** Mix 15/62/23% · ARPU +116% ($25→$54) · GM 40→52% · LTV +200% ($67→$201) · CAC payback 3.5→0.7 mo · Retention 45→68%
 
 ### Online Course Platform: Checkout Optimization
 
@@ -93,7 +93,7 @@ Recovery sequence: 1h pre-filled cart → 24h FAQ+testimonials → 72h 10% disco
 
 ## 25.6 Monetization CRO Checklist
 
-**Pre-launch:** Define primary metric (RPV/ARPU/LTV) + guardrails (CR, churn, NPS) · Calculate MDE + sample size · Document full journey impact · Set up cohort-level revenue tracking · Confirm legal compliance in all markets · Brief support · Establish rollback criteria
+**Pre-launch:** Define primary metric (RPV/ARPU/LTV) + guardrails (CR, churn, NPS) · Calculate MDE + sample size · Document full journey impact · Set up cohort-level revenue tracking · Confirm legal compliance · Brief support · Establish rollback criteria
 
 **During:** Monitor daily revenue + conversion · Track pricing-related tickets · Watch segment effects (new/returning, mobile/desktop, geo) · Verify allocation balance
 
