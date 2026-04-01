@@ -28,37 +28,11 @@ Writes long-form, SEO-optimized content that ranks well and serves the target au
 
 ### 1. Pre-Writing Research
 
-Before writing, gather:
-
-- **Primary keyword** and search volume (from `seo/keyword-research.md`)
-- **Secondary keywords** (3-5 related terms)
-- **Search intent** (run `seo-content-analyzer.py intent "keyword"`)
-- **Brand voice** (check project `context/brand-voice.md` if exists)
-- **Internal links map** (check project `context/internal-links-map.md` if exists)
+Gather: primary keyword + search volume (`seo/keyword-research.md`), 3-5 secondary keywords, search intent (`seo-content-analyzer.py intent "keyword"`), brand voice (`context/brand-voice.md`), internal links map (`context/internal-links-map.md`).
 
 ### 2. Article Structure
 
-```markdown
-# [H1 with Primary Keyword] (50-60 chars for meta title)
-
-[Introduction: Hook + problem + promise. Primary keyword in first 100 words.]
-
-## [H2 with keyword variation]
-[2-4 sentence paragraphs. Short, punchy sentences.]
-
-## [H2 section]
-[Include secondary keywords naturally.]
-
-## [H2 with keyword variation]
-[Data, examples, actionable advice.]
-
-## [FAQ Section - target People Also Ask]
-### [Question with long-tail keyword]
-[Concise answer targeting featured snippet.]
-
-## Conclusion
-[Summary + CTA. Mention primary keyword.]
-```
+H1 with primary keyword (50-60 chars). Introduction: hook + problem + promise, keyword in first 100 words. 4-6 H2 sections with keyword variations, secondary keywords, data and examples. FAQ section targeting People Also Ask with long-tail keywords. Conclusion with CTA and primary keyword mention.
 
 ### 3. Content Requirements
 
@@ -80,39 +54,21 @@ Before writing, gather:
 
 ### 4. Post-Writing Analysis
 
-After writing, run these scripts to validate:
-
 ```bash
-# Full analysis
 python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py analyze article.md \
   --keyword "primary keyword" --secondary "kw1,kw2"
-
-# Individual checks
-python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py readability article.md
-python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py keywords article.md --keyword "primary keyword"
-python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py quality article.md \
-  --keyword "primary keyword" --meta-title "Title" --meta-desc "Description"
+# Subcommands: readability, keywords, quality, intent
 ```
 
 ### 5. Output Format
 
-Deliver the article with:
-
-1. **Article content** in markdown
-2. **Meta elements** block:
-   - Meta title (50-60 chars)
-   - Meta description (150-160 chars)
-   - Focus keyword
-   - Secondary keywords
-3. **SEO checklist** (pass/fail for each requirement)
-4. **Internal link suggestions** (if links map available)
+Deliver: article content in markdown, meta elements block (title 50-60 chars, description 150-160 chars, focus keyword, secondary keywords), SEO checklist (pass/fail per requirement), internal link suggestions if links map available.
 
 ## Writing Guidelines
 
 - **Natural keyword integration** - if it sounds forced, rewrite
 - **Show, don't tell** - use specific examples and data
 - **One idea per paragraph** - break up walls of text
-- **Use transition words** - however, therefore, additionally
 - **Active voice** - keep passive voice under 20%
 - **Cite sources** - link to statistics and data
 - **Answer questions** - address "People Also Ask" queries
