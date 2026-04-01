@@ -23,75 +23,19 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Authentication
+## Setup
+
+Get API key from https://serper.dev/ and add to `~/.config/aidevops/credentials.sh`:
+
+```bash
+export SERPER_API_KEY="your_key_here"
+```
+
+Load credentials and define reusable curl options:
 
 ```bash
 source ~/.config/aidevops/credentials.sh
-```
-
-## API Endpoints
-
-### Web Search
-
-```bash
-curl -s -X POST https://google.serper.dev/search \
-  -H "X-API-KEY: $SERPER_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"q": "your search query", "gl": "us", "hl": "en", "num": 10}'
-```
-
-### Image Search
-
-```bash
-curl -s -X POST https://google.serper.dev/images \
-  -H "X-API-KEY: $SERPER_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"q": "your image query", "gl": "us", "num": 20}'
-```
-
-### News Search
-
-```bash
-curl -s -X POST https://google.serper.dev/news \
-  -H "X-API-KEY: $SERPER_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"q": "topic", "gl": "us", "tbs": "qdr:w"}'
-```
-
-### Places/Local Search
-
-```bash
-curl -s -X POST https://google.serper.dev/places \
-  -H "X-API-KEY: $SERPER_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"q": "business type", "location": "City, State"}'
-```
-
-### Shopping Search
-
-```bash
-curl -s -X POST https://google.serper.dev/shopping \
-  -H "X-API-KEY: $SERPER_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"q": "product name", "gl": "us"}'
-```
-
-### Scholar Search
-
-```bash
-curl -s -X POST https://google.serper.dev/scholar \
-  -H "X-API-KEY: $SERPER_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"q": "research topic", "num": 10}'
-```
-
-### Autocomplete
-
-```bash
-curl -s -X POST https://google.serper.dev/autocomplete \
-  -H "X-API-KEY: $SERPER_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"q": "partial query"}'
+SERPER_CURL=(-s -X POST -H "X-API-KEY: $SERPER_API_KEY" -H "Content-Type: application/json")
 ```
 
 ## Parameters
@@ -105,10 +49,53 @@ curl -s -X POST https://google.serper.dev/autocomplete \
 | `tbs` | Time filter | `"qdr:h"` (hour), `"qdr:d"` (day), `"qdr:w"` (week), `"qdr:m"` (month) |
 | `page` | Page number | `1`, `2`, `3` |
 
-## Setup
+## API Endpoints
 
-Get API key from https://serper.dev/ and add to `~/.config/aidevops/credentials.sh`:
+### Web Search
 
 ```bash
-export SERPER_API_KEY="your_key_here"
+curl "${SERPER_CURL[@]}" https://google.serper.dev/search \
+  -d '{"q": "your search query", "gl": "us", "hl": "en", "num": 10}'
+```
+
+### Image Search
+
+```bash
+curl "${SERPER_CURL[@]}" https://google.serper.dev/images \
+  -d '{"q": "your image query", "gl": "us", "num": 20}'
+```
+
+### News Search
+
+```bash
+curl "${SERPER_CURL[@]}" https://google.serper.dev/news \
+  -d '{"q": "topic", "gl": "us", "tbs": "qdr:w"}'
+```
+
+### Places/Local Search
+
+```bash
+curl "${SERPER_CURL[@]}" https://google.serper.dev/places \
+  -d '{"q": "business type", "location": "City, State"}'
+```
+
+### Shopping Search
+
+```bash
+curl "${SERPER_CURL[@]}" https://google.serper.dev/shopping \
+  -d '{"q": "product name", "gl": "us"}'
+```
+
+### Scholar Search
+
+```bash
+curl "${SERPER_CURL[@]}" https://google.serper.dev/scholar \
+  -d '{"q": "research topic", "num": 10}'
+```
+
+### Autocomplete
+
+```bash
+curl "${SERPER_CURL[@]}" https://google.serper.dev/autocomplete \
+  -d '{"q": "partial query"}'
 ```
