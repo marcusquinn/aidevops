@@ -17,6 +17,7 @@ tools:
 - **MCP**: `claude-code-mcp` (loaded on-demand when this subagent is invoked)
 - **Source**: https://github.com/steipete/claude-code-mcp
 - **Install**: `npm install -g @steipete/claude-code-mcp`
+- **Tool exposure**: `claude-code-mcp_*` tools become available when invoked
 
 **When to use**:
 - Complex multi-file refactoring that benefits from fresh context
@@ -31,56 +32,26 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Overview
+Use this subagent when fresh context or parallel execution is worth the overhead. It loads the `claude-code-mcp` tools, runs the prompt in Claude Code, and returns the result to the parent agent.
 
-The Claude Code MCP allows spawning Claude Code as a sub-agent. This is useful for:
-
-1. **Context isolation**: Sub-agent gets fresh context, avoiding token bloat
-2. **Parallel execution**: Multiple sub-agents can work on independent tasks
-3. **Model flexibility**: Sub-agent can use different model/settings
-4. **Complex workflows**: Multi-step tasks that benefit from dedicated focus
-
-## Usage
-
-Invoke this subagent when you need Claude Code capabilities:
+## Invocation
 
 ```text
 @claude-code Refactor the authentication module to use JWT tokens
 ```
 
-The subagent will:
-1. Load the `claude-code-mcp` tools
-2. Execute the task using Claude Code
-3. Return results to the parent agent
-
-## Available Tools
-
-When this subagent is invoked, these tools become available:
-
-| Tool | Description |
-|------|-------------|
-| `claude-code-mcp_*` | MCP-exposed Claude Code tools (use the generated tool name from your runtime) |
-
 ## Example Prompts
 
 ```text
-# Complex refactoring
 @claude-code Refactor src/auth/ to use the new token validation library
-
-# Multi-file analysis
 @claude-code Analyze all API endpoints and create a comprehensive test suite
-
-# Architecture review
 @claude-code Review the database schema and suggest optimizations
-
-# Parallel tasks (invoke multiple times)
 @claude-code Update all React components to use the new design system
-@claude-code Migrate all API routes to the new error handling pattern
 ```
 
 ## Configuration
 
-The MCP is configured in `opencode.json`:
+`opencode.json`:
 
 ```json
 {
@@ -97,14 +68,14 @@ The MCP is configured in `opencode.json`:
 }
 ```
 
-The MCP starts on-demand when this subagent is invoked, avoiding startup overhead.
+The MCP stays disabled globally and starts on demand when this subagent is invoked.
 
 ## Best Practices
 
-1. **Be specific**: Provide clear, detailed prompts for best results
-2. **Scope appropriately**: Don't use for trivial tasks
-3. **Check results**: Review sub-agent output before proceeding
-4. **Avoid loops**: Don't have sub-agents spawn more sub-agents; nested invocations multiply token usage and cost quickly
+- Be specific; detailed prompts improve results.
+- Scope appropriately; trivial edits are cheaper with native tools.
+- Review sub-agent output before acting on it.
+- Avoid nested sub-agents; they multiply token usage and cost quickly.
 
 ## Related
 
