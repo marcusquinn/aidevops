@@ -22,8 +22,8 @@ mcp:
 ## Quick Reference
 
 - **Helper**: `.agents/scripts/security-helper.sh`
-- **Commands**: `analyze [scope]` | `scan-deps` | `history [commits]` | `skill-scan` | `vt-scan` | `ferret` | `report`
-- **Scopes**: `diff` (default), `staged`, `branch`, `full`
+- **Commands**: `analyze [diff|staged|branch|full]` | `scan-deps [path]` | `history [commits]` | `skill-scan` | `vt-scan [status|file|url|domain|skill] [target]` | `ferret` | `report [--format=sarif]`
+- **Workflow**: pre-commit (`analyze staged`) → PR review (`analyze branch`) → weekly (`analyze full`) → post-dep-change (`scan-deps`)
 - **Output**: `.security-analysis/` — `SECURITY_REPORT.md`, `security-report.json`, `security-report.sarif`
 - **Severity**: critical > high > medium > low > info
 - **Benchmarks**: 90% precision, 93% recall (OpenSSF CVE Benchmark)
@@ -33,20 +33,6 @@ mcp:
 **Categories**: Secrets (keys, passwords, connection strings) · Injection (XSS, SQLi, SSRF, SSTI, command) · Crypto (weak algorithms, short keys) · Auth (bypass, weak sessions) · Data (PII, insecure deserialization, sensitive logging) · LLM Safety (prompt injection, insecure tool use) · AI Config (jailbreaks, backdoors via Ferret)
 
 <!-- AI-CONTEXT-END -->
-
-## Commands
-
-```bash
-./.agents/scripts/security-helper.sh analyze [diff|staged|branch|full]
-./.agents/scripts/security-helper.sh history 50          # or abc123..def456, --since=, --author=
-./.agents/scripts/security-helper.sh scan-deps [path]
-./.agents/scripts/security-helper.sh skill-scan          # Cisco + VirusTotal advisory
-./.agents/scripts/security-helper.sh vt-scan [status|file|url|domain|skill] [target]
-./.agents/scripts/security-helper.sh ferret              # AI CLI config scan
-./.agents/scripts/security-helper.sh report [--format=sarif]
-```
-
-**Workflow**: Pre-commit (`analyze staged`) → PR review (`analyze branch`) → weekly (`analyze full`) → post-dep-change (`scan-deps`).
 
 ## Two-Pass Investigation
 
@@ -64,7 +50,7 @@ mcp:
 
 **Shannon** (pentesting): Taint analysis (Pro), exploit validation. **Snyk/SonarCloud/CodeQL**: dependency scanning, taint analysis, CI/CD. [CWE DB](https://cwe.mitre.org/) | [OWASP Top 10](https://owasp.org/Top10/)
 
-**Gemini CLI Security MCP**: `find_line_numbers`, `get_audit_scope`, `run_poc`. Config: `"gemini-cli-security": { "command": "npx", "args": ["-y", "gemini-cli-security-mcp-server"] }`, `"osv-scanner": { "command": "osv-scanner", "args": ["mcp"] }`.
+**Gemini CLI Security MCP config**: `"gemini-cli-security": { "command": "npx", "args": ["-y", "gemini-cli-security-mcp-server"] }`, `"osv-scanner": { "command": "osv-scanner", "args": ["mcp"] }`.
 
 ## Allowlisting
 
