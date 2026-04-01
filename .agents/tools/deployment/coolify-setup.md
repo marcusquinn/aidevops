@@ -36,7 +36,7 @@ tools:
 ```bash
 ssh root@your-server-ip
 curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash
-systemctl status coolify  # verify
+systemctl status coolify --no-pager  # verify
 ufw allow 22/tcp && ufw allow 80/tcp && ufw allow 443/tcp && ufw allow 8000/tcp && ufw --force enable
 apt update && apt upgrade -y
 apt install unattended-upgrades -y && dpkg-reconfigure -plow unattended-upgrades
