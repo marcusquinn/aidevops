@@ -2,20 +2,6 @@
 
 See [hyperdrive.md](./hyperdrive.md), [hyperdrive-patterns.md](./hyperdrive-patterns.md).
 
-## Limits
-
-| Category | Limit | Free | Paid |
-|----------|-------|------|------|
-| Config | Max configs | 10 | 25 |
-| Config | Username/DB name | 63 bytes | 63 bytes |
-| Connection | Timeout | 15s | 15s |
-| Connection | Idle timeout | 10min | 10min |
-| Connection | Max origin connections | ~20 | ~100 |
-| Query | Max duration | 60s | 60s |
-| Query | Max cached response | 50MB | 50MB |
-
-Queries >60s are terminated. Responses >50MB are returned but not cached.
-
 ## Common Errors
 
 ```typescript
@@ -74,6 +60,20 @@ WHERE application_name = 'Cloudflare Hyperdrive';
 
 **Env var not working:** Format: `CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_<BINDING>` → binding matches wrangler.jsonc → variable exported in shell → restart wrangler dev.
 
+## Limits
+
+| Category | Limit | Free | Paid |
+|----------|-------|------|------|
+| Config | Max configs | 10 | 25 |
+| Config | Username/DB name | 63 bytes | 63 bytes |
+| Connection | Timeout | 15s | 15s |
+| Connection | Idle timeout | 10min | 10min |
+| Connection | Max origin connections | ~20 | ~100 |
+| Query | Max duration | 60s | 60s |
+| Query | Max cached response | 50MB | 50MB |
+
+Queries >60s are terminated. Responses >50MB are returned but not cached.
+
 ## Migration Checklist
 
 - [ ] Create config via Wrangler
@@ -89,12 +89,6 @@ WHERE application_name = 'Cloudflare Hyperdrive';
 - [ ] Update firewall (Cloudflare IPs)
 - [ ] Configure observability
 
-## Supported Databases
-
-**PostgreSQL 11+** (CockroachDB, Timescale, Materialize, Neon, Supabase) — `pg` >= 8.16.3. `sslmode`: `require`, `verify-ca`, `verify-full`.
-
-**MySQL 5.7+** (PlanetScale) — `mysql2` >= 3.13.0. `sslMode`: `REQUIRED`, `VERIFY_CA`, `VERIFY_IDENTITY`.
-
 ## When NOT to Use
 
 ❌ Write-heavy workloads (limited cache benefit)
@@ -104,6 +98,12 @@ WHERE application_name = 'Cloudflare Hyperdrive';
 ❌ DB with strict connection limits already exceeded
 
 Alternatives: D1 (Cloudflare native SQL), Durable Objects (stateful Workers), KV (global key-value), R2 (object storage).
+
+## Supported Databases
+
+**PostgreSQL 11+** (CockroachDB, Timescale, Materialize, Neon, Supabase) — `pg` >= 8.16.3. `sslmode`: `require`, `verify-ca`, `verify-full`.
+
+**MySQL 5.7+** (PlanetScale) — `mysql2` >= 3.13.0. `sslMode`: `REQUIRED`, `VERIFY_CA`, `VERIFY_IDENTITY`.
 
 ## Resources
 
