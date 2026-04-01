@@ -5737,6 +5737,322 @@ dispatch_deterministic_fill_floor() {
 
 #######################################
 # Apply deterministic fill floor after a pulse pass.
+#######################################
+# Deterministic merge pass: approve and merge all ready PRs.
+#
+# Runs every pulse cycle as a wrapper-level stage (not LLM-dependent).
+# This prevents PR backlogs from accumulating when the LLM fails to
+# execute merge steps or the prefetch was broken.
+#
+# A PR is merge-ready when ALL of:
+#   1. mergeable == MERGEABLE (not conflicting)
+#   2. Author is a collaborator (admin/maintain/write permission)
+#   3. Not modifying .github/workflows/ without workflow token scope
+#   4. No linked issue with needs-maintainer-review label
+#   5. Not from an external contributor
+#
+# REVIEW_REQUIRED is not a blocker — the pulse user auto-approves
+# collaborator PRs via approve_collaborator_pr().
+#
+# Conflicting PRs are closed with a comment (they will be superseded
+# by workers re-dispatching the issue).
+#
+# Returns: 0 always (non-fatal — merge failures don't block the pulse)
+#######################################
+PULSE_MERGE_BATCH_LIMIT="${PULSE_MERGE_BATCH_LIMIT:-50}"
+PULSE_MERGE_CLOSE_CONFLICTING="${PULSE_MERGE_CLOSE_CONFLICTING:-true}"
+
+merge_ready_prs_all_repos() {
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Deterministic merge pass skipped: stop flag present" >>"$LOGFILE"
+		return 0
+	fi
+
+	if [[ ! -f "$REPOS_JSON" ]]; then
+		echo "[pulse-wrapper] Deterministic merge pass skipped: repos.json not found" >>"$LOGFILE"
+		return 0
+	fi
+
+	local total_merged=0
+	local total_closed=0
+	local total_failed=0
+
+	while IFS='|' read -r repo_slug repo_path; do
+		[[ -n "$repo_slug" ]] || continue
+
+		local repo_merged=0
+		local repo_closed=0
+		local repo_failed=0
+
+		_merge_ready_prs_for_repo "$repo_slug" repo_merged repo_closed repo_failed
+
+		total_merged=$((total_merged + repo_merged))
+		total_closed=$((total_closed + repo_closed))
+		total_failed=$((total_failed + repo_failed))
+
+		if [[ -f "$STOP_FLAG" ]]; then
+			echo "[pulse-wrapper] Deterministic merge pass: stop flag appeared mid-run" >>"$LOGFILE"
+			break
+		fi
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | [.slug, .path] | join("|")' "$REPOS_JSON" 2>/dev/null)
+
+	if [[ $((total_merged + total_closed)) -gt 0 ]]; then
+		echo "[pulse-wrapper] Deterministic merge pass complete: merged=${total_merged}, closed_conflicting=${total_closed}, failed=${total_failed}" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
+# Merge ready PRs for a single repo.
+#
+# Uses nameref variables to return counts to the caller.
+# Args:
+#   $1 - repo slug
+#   $2 - nameref for merged count
+#   $3 - nameref for closed count
+#   $4 - nameref for failed count
+#######################################
+_merge_ready_prs_for_repo() {
+	local repo_slug="$1"
+	# Bash 3.2 compat: no nameref. Use eval to set caller variables.
+	local _merged_var="$2"
+	local _closed_var="$3"
+	local _failed_var="$4"
+
+	local merged=0
+	local closed=0
+	local failed=0
+
+	# Fetch open PRs — lightweight call without statusCheckRollup (GH#15060 lesson)
+	local pr_json
+	pr_json=$(gh pr list --repo "$repo_slug" --state open \
+		--json number,mergeable,reviewDecision,author,title \
+		--limit "$PULSE_MERGE_BATCH_LIMIT" 2>/dev/null) || pr_json="[]"
+
+	local pr_count
+	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+
+	if [[ "$pr_count" -eq 0 ]]; then
+		eval "${_merged_var}=0; ${_closed_var}=0; ${_failed_var}=0"
+		return 0
+	fi
+
+	# Process each PR
+	local i=0
+	while [[ "$i" -lt "$pr_count" ]]; do
+		if [[ -f "$STOP_FLAG" ]]; then
+			break
+		fi
+
+		local pr_number pr_mergeable pr_review pr_author pr_title
+		pr_number=$(printf '%s' "$pr_json" | jq -r ".[$i].number" 2>/dev/null)
+		pr_mergeable=$(printf '%s' "$pr_json" | jq -r ".[$i].mergeable" 2>/dev/null)
+		pr_review=$(printf '%s' "$pr_json" | jq -r ".[$i].reviewDecision // \"NONE\"" 2>/dev/null)
+		pr_author=$(printf '%s' "$pr_json" | jq -r ".[$i].author.login // \"unknown\"" 2>/dev/null)
+		pr_title=$(printf '%s' "$pr_json" | jq -r ".[$i].title // \"\"" 2>/dev/null)
+		i=$((i + 1))
+
+		[[ "$pr_number" =~ ^[0-9]+$ ]] || continue
+
+		# Close conflicting PRs — they can never be merged and block the queue
+		if [[ "$pr_mergeable" == "CONFLICTING" && "$PULSE_MERGE_CLOSE_CONFLICTING" == "true" ]]; then
+			_close_conflicting_pr "$pr_number" "$repo_slug" "$pr_title"
+			closed=$((closed + 1))
+			continue
+		fi
+
+		# Skip non-mergeable
+		if [[ "$pr_mergeable" != "MERGEABLE" ]]; then
+			continue
+		fi
+
+		# Skip CHANGES_REQUESTED — needs a fix worker, not a merge
+		if [[ "$pr_review" == "CHANGES_REQUESTED" ]]; then
+			continue
+		fi
+
+		# Skip external contributor PRs (non-collaborator)
+		if ! _is_collaborator_author "$pr_author" "$repo_slug"; then
+			continue
+		fi
+
+		# Skip PRs modifying workflow files when we lack the scope
+		if check_pr_modifies_workflows "$pr_number" "$repo_slug" 2>/dev/null; then
+			if ! check_gh_workflow_scope 2>/dev/null; then
+				continue
+			fi
+		fi
+
+		# Check maintainer-gate: skip if linked issue has needs-maintainer-review
+		local linked_issue
+		linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
+		if [[ -n "$linked_issue" ]]; then
+			local issue_labels
+			issue_labels=$(gh api "repos/${repo_slug}/issues/${linked_issue}" \
+				--jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+			if [[ "$issue_labels" == *"needs-maintainer-review"* ]]; then
+				continue
+			fi
+		fi
+
+		# Approve (satisfies REVIEW_REQUIRED for collaborator PRs)
+		approve_collaborator_pr "$pr_number" "$repo_slug" "$pr_author" 2>/dev/null || true
+
+		# Extract worker's merge summary comment (if any) for closing comments.
+		# Workers write a <!-- MERGE_SUMMARY --> tagged comment on the PR at
+		# creation time (full-loop.md step 4.2.1). This contains context that
+		# the deterministic merge pass can't know: what changed, why, testing.
+		local merge_summary
+		merge_summary=$(_extract_merge_summary "$pr_number" "$repo_slug")
+
+		# Merge
+		local merge_output
+		merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --admin 2>&1)
+		if [[ $? -eq 0 ]]; then
+			merged=$((merged + 1))
+			echo "[pulse-wrapper] Deterministic merge: merged PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+
+			# Build closing comment — use worker summary if available, fall back to generic
+			local closing_comment
+			if [[ -n "$merge_summary" ]]; then
+				closing_comment="${merge_summary}
+
+---
+Merged via PR #${pr_number} to main.
+_Merged by deterministic merge pass (pulse-wrapper.sh)._"
+			else
+				closing_comment="Completed via PR #${pr_number}, merged to main.
+
+_Merged by deterministic merge pass (pulse-wrapper.sh). No worker summary was available — the worker either crashed before writing one or this PR predates the merge summary convention._"
+			fi
+
+			# Post closing comment on PR
+			gh pr comment "$pr_number" --repo "$repo_slug" \
+				--body "$closing_comment" 2>/dev/null || true
+
+			# Close linked issue with the same context
+			if [[ -n "$linked_issue" ]]; then
+				gh issue comment "$linked_issue" --repo "$repo_slug" \
+					--body "$closing_comment" 2>/dev/null || true
+				gh issue close "$linked_issue" --repo "$repo_slug" 2>/dev/null || true
+			fi
+		else
+			failed=$((failed + 1))
+			echo "[pulse-wrapper] Deterministic merge: FAILED PR #${pr_number} in ${repo_slug}: ${merge_output}" >>"$LOGFILE"
+		fi
+
+		# Rate-limit: 1 second between merges to avoid GitHub API abuse
+		sleep 1
+	done
+
+	eval "${_merged_var}=${merged}; ${_closed_var}=${closed}; ${_failed_var}=${failed}"
+	return 0
+}
+
+#######################################
+# Check if a PR author is a collaborator (admin/maintain/write).
+# Args: $1=author login, $2=repo slug
+# Returns: 0=collaborator, 1=not collaborator or error
+#######################################
+_is_collaborator_author() {
+	local author="$1"
+	local repo_slug="$2"
+	local perm_response
+	perm_response=$(gh api -i "repos/${repo_slug}/collaborators/${author}/permission" 2>/dev/null | head -1)
+	if [[ "$perm_response" == *"200"* ]]; then
+		local perm
+		perm=$(gh api "repos/${repo_slug}/collaborators/${author}/permission" --jq '.permission' 2>/dev/null)
+		case "$perm" in
+		admin | maintain | write) return 0 ;;
+		esac
+	fi
+	return 1
+}
+
+#######################################
+# Extract linked issue number from PR title or body.
+# Looks for: "Closes #NNN", "Fixes #NNN", "GH#NNN:" prefix in title.
+# Args: $1=PR number, $2=repo slug
+# Returns: issue number on stdout, or empty if none found
+#######################################
+_extract_linked_issue() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_data
+	pr_data=$(gh pr view "$pr_number" --repo "$repo_slug" --json title,body --jq '.title + " " + .body' 2>/dev/null) || pr_data=""
+
+	# Match: Closes #NNN, Fixes #NNN, Resolves #NNN
+	local issue_num
+	issue_num=$(printf '%s' "$pr_data" | grep -oE '(Closes|Fixes|Resolves)\s+#[0-9]+' | head -1 | grep -oE '[0-9]+')
+	if [[ -n "$issue_num" ]]; then
+		printf '%s' "$issue_num"
+		return 0
+	fi
+
+	# Match: GH#NNN: in title
+	issue_num=$(printf '%s' "$pr_data" | grep -oE 'GH#[0-9]+' | head -1 | grep -oE '[0-9]+')
+	if [[ -n "$issue_num" ]]; then
+		printf '%s' "$issue_num"
+		return 0
+	fi
+
+	return 0
+}
+
+#######################################
+# Extract the worker's merge summary from PR comments.
+#
+# Workers post a structured comment tagged with <!-- MERGE_SUMMARY -->
+# on the PR at creation time (full-loop.md step 4.2.1). This function
+# finds the most recent such comment and returns its body (without the
+# HTML tag) for use in closing comments.
+#
+# Args: $1=PR number, $2=repo slug
+# Output: merge summary text on stdout (empty if none found)
+#######################################
+_extract_merge_summary() {
+	local pr_number="$1"
+	local repo_slug="$2"
+
+	# Fetch PR comments and find the last one containing the MERGE_SUMMARY tag
+	local summary
+	summary=$(gh api "repos/${repo_slug}/issues/${pr_number}/comments" \
+		--jq '[.[] | select(.body | test("<!-- MERGE_SUMMARY -->"))] | last | .body // empty' \
+		2>/dev/null) || summary=""
+
+	if [[ -z "$summary" ]]; then
+		return 0
+	fi
+
+	# Strip the HTML marker tag
+	summary=$(printf '%s' "$summary" | sed 's/<!-- MERGE_SUMMARY -->//')
+
+	# Strip the worker's "written at PR creation time" note if present
+	summary=$(printf '%s' "$summary" | sed '/written by the worker at PR creation time/d')
+
+	printf '%s' "$summary"
+	return 0
+}
+
+#######################################
+# Close a conflicting PR with audit comment.
+# Args: $1=PR number, $2=repo slug, $3=PR title
+#######################################
+_close_conflicting_pr() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_title="$3"
+
+	gh pr close "$pr_number" --repo "$repo_slug" \
+		--comment "Closing — this PR has merge conflicts with the base branch. The linked issue (if any) remains open for a worker to re-attempt with a fresh branch.
+
+_Closed by deterministic merge pass (pulse-wrapper.sh)._" 2>/dev/null || true
+
+	echo "[pulse-wrapper] Deterministic merge: closed conflicting PR #${pr_number} in ${repo_slug}: ${pr_title}" >>"$LOGFILE"
+	return 0
+}
+
 #
 # Waits the normal launch grace period first so workers launched by the LLM
 # can appear in process lists before deterministic backfill runs.
@@ -6193,6 +6509,14 @@ main() {
 		echo "[pulse-wrapper] Stop flag appeared during setup — aborting before run_pulse()" >>"$LOGFILE"
 		return 0
 	fi
+
+	# Deterministic merge pass: approve and merge all ready PRs across pulse
+	# repos. This runs BEFORE the LLM session because merging is free (no
+	# worker slot) and deterministic (no judgment needed). Previously merging
+	# was LLM-only, which meant backlogs of 100+ PRs accumulated when the
+	# LLM failed to execute merge steps or the prefetch showed 0 PRs.
+	run_stage_with_timeout "deterministic_merge_pass" "$PRE_RUN_STAGE_TIMEOUT" \
+		merge_ready_prs_all_repos || true
 
 	# Compute initial underfill state and run recycler
 	local underfill_output

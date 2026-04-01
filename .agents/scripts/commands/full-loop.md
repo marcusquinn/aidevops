@@ -99,6 +99,23 @@ Changelog: `feat:` → Added, `fix:` → Fixed, `docs:`/`perf:`/`refactor:` → 
 
 **4.2 PR Create** — rebase onto `origin/main`, push, create PR. Body MUST include `Closes #NNN` (MANDATORY). Add `origin:worker` or `origin:interactive` label. **Signature footer (GH#12805 — MANDATORY):** append `gh-signature-helper.sh footer` output with explicit issue context plus session mode — interactive: `SIG_FOOTER=$(gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL" --issue "$REPO#$ISSUE_NUM" --session-type interactive)`; headless: `SIG_FOOTER=$(gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL" --issue "$REPO#$ISSUE_NUM" --no-session --session-type worker --time "$WORKER_ELAPSED_SECS")`. Pass `--tokens "$WORKER_TOKENS"` only when telemetry exists. Verify the final PR body still contains `aidevops.sh` and either `spent` or `Overall,`: `gh pr view --json body | jq -e '.body | (contains("aidevops.sh") and (contains("spent") or contains("Overall,")))' >/dev/null`.
 
+**4.2.1 Merge Summary Comment (MANDATORY)** — immediately after PR creation, post a structured merge summary comment on the PR. This is read by the deterministic merge pass in `pulse-wrapper.sh` when merging — it becomes the closing comment on both PR and issue. Post this EARLY (right after PR create) so it's available even if the worker crashes before step 4.7. The comment must contain the HTML marker `<!-- MERGE_SUMMARY -->` on the first line for machine extraction.
+
+```bash
+gh pr comment "$PR_NUMBER" --repo "$REPO" --body "<!-- MERGE_SUMMARY -->
+## Completion Summary
+
+- **What**: <1-line description of what was done>
+- **Issue**: #<issue_number>
+- **Files changed**: <comma-separated list of key files>
+- **Testing**: <what was verified — linter, build, manual, etc.>
+- **Key decisions**: <any notable trade-offs or choices made>
+
+_This summary was written by the worker at PR creation time for the deterministic merge pass._"
+```
+
+Update this comment at step 4.7 if you have more context (test results, review feedback incorporated). The deterministic merge pass uses the latest `<!-- MERGE_SUMMARY -->` comment found.
+
 **4.3 Label `status:in-review` (t1343)** — check issue is `OPEN` first. `status:done` set by `sync-on-pr-merge` — workers don't set it.
 
 **4.4 Review Bot Gate (t1382)** — `review-bot-gate-helper.sh check "$PR_NUMBER" "$REPO"`. Poll 60s up to 10 min.
