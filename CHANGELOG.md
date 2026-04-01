@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.551] - 2026-04-01
+
+### Fixed
+
+- isolate headless worker auth via XDG_DATA_HOME (#15114)
+
 ## [3.5.550] - 2026-04-01
 
 ### Fixed
