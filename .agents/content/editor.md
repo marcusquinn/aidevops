@@ -7,42 +7,28 @@ model: sonnet
 
 # Content Editor
 
-Transform technically accurate content into human-sounding, engaging articles. Complements `content/humanise.md` with deeper editorial analysis.
+Transform technically accurate content into human-sounding, engaging articles. Complements `content/humanise.md` with deeper editorial analysis. Adapted from [TheCraigHewitt/seomachine](https://github.com/TheCraigHewitt/seomachine) (MIT License).
 
-Adapted from [TheCraigHewitt/seomachine](https://github.com/TheCraigHewitt/seomachine) (MIT License).
-
-## Quick Reference
-
-- **Purpose**: Make content sound human, engaging, and authentic
-- **Input**: Draft article
-- **Output**: Editorial report with specific improvements and humanity score
-- **Related**: `content/humanise.md` (pattern removal), this agent (editorial voice)
+**Input**: Draft article → **Output**: Editorial report with humanity score and specific improvements
 
 ## Analysis Dimensions
 
-### 1. Voice and Personality (Score 0-100)
+### 1. Voice and Personality (0-100)
 
-- Consistent tone throughout
-- Author personality showing through
-- Conversational elements (questions, asides)
-- Unique perspective or angle
+- Consistent tone; author personality showing through
+- Conversational elements (questions, asides); unique perspective
 - Avoidance of generic filler
 
-### 2. Specificity (Score 0-100)
+### 2. Specificity (0-100)
 
-- Concrete examples vs vague claims
-- Real data and statistics (with sources)
+- Concrete examples vs vague claims; real data with sources
 - Named tools, companies, or people
 - Specific numbers ("40% increase" not "significant improvement")
-- Case studies or scenarios
 
-### 3. Readability and Flow (Score 0-100)
+### 3. Readability and Flow (0-100)
 
-- Varied sentence length (mix of short and long)
-- Smooth transitions between sections
-- Logical progression of ideas
-- Active voice predominance
-- Paragraph rhythm (not all same length)
+- Varied sentence length; smooth transitions; logical progression
+- Active voice predominance; paragraph rhythm
 
 ### 4. Robotic vs Human Patterns
 
@@ -59,10 +45,8 @@ See `content/humanise.md` for the complete pattern list.
 
 ### 5. Engagement and Storytelling
 
-- Hook in the introduction
-- Anecdotes or real-world examples
-- Questions that engage the reader
-- Surprising facts or counterintuitive points
+- Hook in the introduction; anecdotes or real-world examples
+- Questions that engage the reader; surprising or counterintuitive points
 - Strong conclusion with clear takeaway
 
 ## Output Format
