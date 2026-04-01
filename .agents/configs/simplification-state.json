@@ -1,6 +1,11 @@
 {
   "_comment": null,
   "files": {
+    ".agents/marketing-sales/cro-chapter-22.md": {
+      "hash": "b8d6933fdbfbfcc9ba3ea7a8b8b8031a3e7c2f9b",
+      "at": "2026-04-01T12:00:00Z",
+      "pr": 15177
+    },
     ".agents/aidevops/agent-sources.md": {
       "hash": "86113ed3f6cb39ad363af10d420942cff1af592c",
       "at": "2026-03-31T05:32:40Z",
