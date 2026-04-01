@@ -4606,25 +4606,25 @@ This is an automated scan. The function lengths are factual, but the best decomp
 }
 
 #######################################
-# Complexity scan (GH#5628)
+# Complexity scan (GH#5628, GH#15285)
+#
+# Deterministic scan using shell-based heuristics via complexity-scan-helper.sh:
+# - Batch hash comparison against simplification-state.json (skip unchanged files)
+# - Shell heuristics: line count, function count, nesting depth
+# - No per-file LLM analysis — LLM reserved for daily deep sweep only
 #
 # Scans both shell scripts (.sh) and agent docs (.md) for complexity:
 # - .sh files: functions exceeding COMPLEXITY_FUNC_LINE_THRESHOLD lines
 # - .md files: all agent docs (no size gate — classification determines action, t1679)
 #
-# Protected files (build.txt, AGENTS.md, pulse.md, pulse-sweep.md) are excluded from
-# .md scanning — these are core infrastructure requiring manual review.
+# Protected files (build.txt, AGENTS.md, pulse.md, pulse-sweep.md) are excluded.
+# Results processed longest-first. .md issues get tier:simple by default.
 #
-# Results are processed longest-first so the biggest wins come early
-# and the process is refined by the time shorter files are reached.
+# Daily LLM sweep (GH#15285): if simplification debt hasn't decreased in 6h,
+# creates a tier:thinking issue for LLM-powered deep review of stalled debt.
 #
-# .md issues get tier:simple by default because most simplification debt here
-# is prose tightening/reordering; promote to tier:thinking only for genuinely
-# architectural or security-sensitive docs.
-#
-# Runs at most once per COMPLEXITY_SCAN_INTERVAL (default 15 min — each
-# pulse cycle). Creates up to 5 issues per run; the open cap (200) is
-# the safety valve against backlog flooding.
+# Runs at most once per COMPLEXITY_SCAN_INTERVAL (default 15 min).
+# Creates up to 5 issues per run; open cap (500) prevents backlog flooding.
 #
 # Returns: 0 always (best-effort, never breaks the pulse)
 #######################################
@@ -4820,20 +4820,96 @@ run_weekly_complexity_scan() {
 		_simplification_state_push "$aidevops_path"
 	fi
 
-	# Phase 2: Shell script function complexity (longest-first)
-	local sh_results
-	sh_results=$(_complexity_scan_collect_violations "$aidevops_path" "$now_epoch") || true
-	if [[ -n "$sh_results" ]]; then
-		# Sort longest-first by violation count (field 2)
-		sh_results=$(printf '%s' "$sh_results" | sort -t'|' -k2 -rn)
-		_complexity_scan_create_issues "$sh_results" "$repos_json" "$aidevops_slug"
-	fi
+	# Phase 2+3: Deterministic complexity scan via helper (GH#15285)
+	# Uses shell-based heuristics (line count, function count, nesting depth)
+	# with batch hash comparison against simplification-state.json.
+	# Only processes files whose hash has changed since last scan.
+	local scan_helper="${SCRIPT_DIR}/complexity-scan-helper.sh"
+	if [[ -x "$scan_helper" ]]; then
+		# Shell files — convert helper output to existing issue creation format
+		local sh_scan_output
+		sh_scan_output=$("$scan_helper" scan "$aidevops_path" --type sh --state-file "$state_file" 2>>"$LOGFILE") || true
+		if [[ -n "$sh_scan_output" ]]; then
+			# Helper outputs: status|file_path|line_count|func_count|long_func_count|max_nesting|file_type
+			# Issue creation expects: file_path|violation_count
+			local sh_results=""
+			while IFS='|' read -r _status file_path _lines _funcs long_funcs _nesting _type; do
+				[[ -n "$file_path" ]] || continue
+				sh_results="${sh_results}${file_path}|${long_funcs}"$'\n'
+			done <<<"$sh_scan_output"
+			if [[ -n "$sh_results" ]]; then
+				sh_results=$(printf '%s' "$sh_results" | sort -t'|' -k2 -rn)
+				_complexity_scan_create_issues "$sh_results" "$repos_json" "$aidevops_slug"
+			fi
+		fi
 
-	# Phase 3: Agent doc size (.md files, longest-first)
-	local md_results
-	md_results=$(_complexity_scan_collect_md_violations "$aidevops_path") || true
-	if [[ -n "$md_results" ]]; then
-		_complexity_scan_create_md_issues "$md_results" "$repos_json" "$aidevops_slug"
+		# Markdown files — convert helper output to existing issue creation format
+		local md_scan_output
+		md_scan_output=$("$scan_helper" scan "$aidevops_path" --type md --state-file "$state_file" 2>>"$LOGFILE") || true
+		if [[ -n "$md_scan_output" ]]; then
+			# Helper outputs: status|file_path|line_count|func_count|long_func_count|max_nesting|file_type
+			# Issue creation expects: file_path|line_count
+			local md_results=""
+			while IFS='|' read -r _status file_path lines _funcs _long_funcs _nesting _type; do
+				[[ -n "$file_path" ]] || continue
+				md_results="${md_results}${file_path}|${lines}"$'\n'
+			done <<<"$md_scan_output"
+			if [[ -n "$md_results" ]]; then
+				md_results=$(printf '%s' "$md_results" | sort -t'|' -k2 -rn)
+				_complexity_scan_create_md_issues "$md_results" "$repos_json" "$aidevops_slug"
+			fi
+		fi
+
+		# Phase 4: Daily LLM sweep check (GH#15285)
+		# If simplification debt hasn't decreased in 6h, flag for LLM review.
+		# The sweep itself runs as a separate worker dispatch, not inline.
+		local sweep_result
+		sweep_result=$("$scan_helper" sweep-check "$aidevops_slug" 2>>"$LOGFILE") || sweep_result=""
+		if [[ "$sweep_result" == needed* ]]; then
+			echo "[pulse-wrapper] LLM sweep triggered: ${sweep_result}" >>"$LOGFILE"
+			# Create a one-off issue for the LLM sweep if none exists
+			local sweep_issue_exists
+			sweep_issue_exists=$(gh issue list --repo "$aidevops_slug" \
+				--label "simplification-debt" --state open \
+				--search "in:title \"LLM complexity sweep\"" \
+				--json number --jq 'length' 2>/dev/null) || sweep_issue_exists="0"
+			if [[ "${sweep_issue_exists:-0}" -eq 0 ]]; then
+				local sweep_reason
+				sweep_reason=$(echo "$sweep_result" | cut -d'|' -f2)
+				gh issue create --repo "$aidevops_slug" \
+					--title "LLM complexity sweep: review stalled simplification debt" \
+					--label "simplification-debt" --label "auto-dispatch" --label "tier:thinking" \
+					--body "## Daily LLM sweep (automated, GH#15285)
+
+**Trigger:** ${sweep_reason}
+
+The deterministic complexity scan detected that simplification debt has not decreased in the configured stall window. An LLM-powered deep review is needed to:
+
+1. Identify why existing simplification issues are not being resolved
+2. Re-prioritize the backlog based on actual impact
+3. Close issues that are no longer relevant (files deleted, already simplified)
+4. Suggest new decomposition strategies for stuck files
+
+### Scope
+
+Review all open \`simplification-debt\` issues and the current \`simplification-state.json\`. Focus on the top 10 largest files first." >/dev/null 2>&1 || true
+				"$scan_helper" sweep-done 2>>"$LOGFILE" || true
+			fi
+		fi
+	else
+		# Fallback to inline scan if helper not available
+		echo "[pulse-wrapper] complexity-scan-helper.sh not found, using inline scan" >>"$LOGFILE"
+		local sh_results
+		sh_results=$(_complexity_scan_collect_violations "$aidevops_path" "$now_epoch") || true
+		if [[ -n "$sh_results" ]]; then
+			sh_results=$(printf '%s' "$sh_results" | sort -t'|' -k2 -rn)
+			_complexity_scan_create_issues "$sh_results" "$repos_json" "$aidevops_slug"
+		fi
+		local md_results
+		md_results=$(_complexity_scan_collect_md_violations "$aidevops_path") || true
+		if [[ -n "$md_results" ]]; then
+			_complexity_scan_create_md_issues "$md_results" "$repos_json" "$aidevops_slug"
+		fi
 	fi
 
 	printf '%s\n' "$now_epoch" >"$COMPLEXITY_SCAN_LAST_RUN"
