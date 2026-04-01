@@ -1,5 +1,5 @@
 /**
- * Anthropic Provider Auth (t1543)
+ * Anthropic Provider Auth (t1543, t1714)
  *
  * Handles OAuth authentication for the built-in "anthropic" provider.
  * Re-implements the essential functionality of the removed opencode-anthropic-auth
@@ -14,6 +14,9 @@
  *     account with force-refresh, and retries once
  *   - Mid-session 429 rotation: on rate limit, marks current account as
  *     rate-limited, rotates to next pool account, and retries once
+ *   - Session-level account affinity (t1714): each session remembers its
+ *     account in closure memory, preventing cross-session token overwrites
+ *     when multiple sessions share the same auth store file
  *
  * The pool (oauth-pool.mjs) manages multiple account tokens.
  * This module makes the built-in provider use them correctly.
@@ -72,6 +75,15 @@ export function createProviderAuthHook(client) {
         };
       }
 
+      // Session-level account affinity (t1714): each session's fetch closure
+      // remembers which pool account it's using. This prevents cross-session
+      // token overwrites when multiple OpenCode processes share the same
+      // auth.json file. Without this, Session B's token refresh overwrites
+      // auth.json with a different account's token, and Session A's next
+      // getAuth() call picks up the wrong account — causing unnecessary
+      // 429s and disruptive rotation messages.
+      let sessionAccountEmail = null;
+
       return {
         apiKey: "",
         async fetch(input, init) {
@@ -81,48 +93,77 @@ export function createProviderAuthHook(client) {
           // Refresh token if expired
           let accessToken = auth.access;
           if (!accessToken || auth.expires < Date.now()) {
-            // Try refreshing via the pool's ensureValidToken (handles
-            // rotation across multiple accounts and cooldown logic).
-            // Sort by least-recently-used so we try the freshest account
-            // first, maximising the chance of finding one not rate-limited.
             const accounts = getAccounts("anthropic");
             let refreshed = false;
 
-            // Sort accounts: active first (by LRU), then others
-            const sorted = [...accounts].sort((a, b) => {
-              // Prefer active/idle accounts over rate-limited/auth-error
-              const aOrder = STATUS_ORDER[a.status] ?? 99;
-              const bOrder = STATUS_ORDER[b.status] ?? 99;
-              if (aOrder !== bOrder) return aOrder - bOrder;
-              // Within same status, prefer least recently used
-              return new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0);
-            });
-
-            for (const account of sorted) {
-              // Skip accounts in cooldown
-              if (account.cooldownUntil && account.cooldownUntil > Date.now()) {
-                console.error(`[aidevops] provider-auth: skipping ${account.email} — cooldown active`);
-                continue;
+            // Session affinity (t1714): try the session's own account first.
+            // This avoids picking a different account via LRU when the shared
+            // auth store was overwritten by another concurrent session.
+            if (sessionAccountEmail) {
+              const myAccount = accounts.find((a) => a.email === sessionAccountEmail);
+              if (myAccount && (!myAccount.cooldownUntil || myAccount.cooldownUntil <= Date.now())) {
+                const token = await ensureValidToken("anthropic", myAccount);
+                if (token) {
+                  await client.auth.set({
+                    path: { id: "anthropic" },
+                    body: {
+                      type: "oauth",
+                      refresh: myAccount.refresh,
+                      access: myAccount.access,
+                      expires: myAccount.expires,
+                    },
+                  });
+                  patchAccount("anthropic", myAccount.email, {
+                    lastUsed: new Date().toISOString(),
+                    status: "active",
+                  });
+                  accessToken = token;
+                  refreshed = true;
+                  console.error(`[aidevops] provider-auth: refreshed session account ${myAccount.email}`);
+                }
               }
-              const token = await ensureValidToken("anthropic", account);
-              if (token) {
-                await client.auth.set({
-                  path: { id: "anthropic" },
-                  body: {
-                    type: "oauth",
-                    refresh: account.refresh,
-                    access: account.access,
-                    expires: account.expires,
-                  },
-                });
-                patchAccount("anthropic", account.email, {
-                  lastUsed: new Date().toISOString(),
-                  status: "active",
-                });
-                accessToken = token;
-                refreshed = true;
-                console.error(`[aidevops] provider-auth: refreshed via pool account ${account.email}`);
-                break;
+            }
+
+            // Fallback: pool rotation (LRU) if session account failed or not yet assigned
+            if (!refreshed) {
+              // Sort by least-recently-used so we try the freshest account
+              // first, maximising the chance of finding one not rate-limited.
+              const sorted = [...accounts].sort((a, b) => {
+                // Prefer active/idle accounts over rate-limited/auth-error
+                const aOrder = STATUS_ORDER[a.status] ?? 99;
+                const bOrder = STATUS_ORDER[b.status] ?? 99;
+                if (aOrder !== bOrder) return aOrder - bOrder;
+                // Within same status, prefer least recently used
+                return new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0);
+              });
+
+              for (const account of sorted) {
+                // Skip accounts in cooldown
+                if (account.cooldownUntil && account.cooldownUntil > Date.now()) {
+                  console.error(`[aidevops] provider-auth: skipping ${account.email} — cooldown active`);
+                  continue;
+                }
+                const token = await ensureValidToken("anthropic", account);
+                if (token) {
+                  await client.auth.set({
+                    path: { id: "anthropic" },
+                    body: {
+                      type: "oauth",
+                      refresh: account.refresh,
+                      access: account.access,
+                      expires: account.expires,
+                    },
+                  });
+                  patchAccount("anthropic", account.email, {
+                    lastUsed: new Date().toISOString(),
+                    status: "active",
+                  });
+                  accessToken = token;
+                  sessionAccountEmail = account.email;
+                  refreshed = true;
+                  console.error(`[aidevops] provider-auth: refreshed via pool account ${account.email}`);
+                  break;
+                }
               }
             }
 
@@ -145,6 +186,14 @@ export function createProviderAuthHook(client) {
                 `Token refresh failed: all ${accounts.length} pool account(s) exhausted ` +
                 `(rate-limited or auth-error). Use /model-accounts-pool reset-cooldowns to retry.`,
               );
+            }
+          } else if (!sessionAccountEmail) {
+            // First request with a valid token — identify which account owns it
+            // so subsequent refreshes prefer the same account.
+            const accounts = getAccounts("anthropic");
+            const owner = accounts.find((a) => a.access === accessToken);
+            if (owner) {
+              sessionAccountEmail = owner.email;
             }
           }
 
@@ -288,7 +337,12 @@ export function createProviderAuthHook(client) {
           // Both paths retry the request exactly once after recovery.
           if (response.status === 401 || response.status === 403) {
             const accounts = getAccounts("anthropic");
-            const currentAccount = accounts.find((a) => a.access === accessToken);
+            // Use session affinity to identify the current account first,
+            // falling back to token matching (which may be wrong if another
+            // session overwrote the shared auth store).
+            const currentAccount = sessionAccountEmail
+              ? accounts.find((a) => a.email === sessionAccountEmail)
+              : accounts.find((a) => a.access === accessToken);
             const currentEmail = currentAccount?.email || "unknown";
 
             console.error(
@@ -328,6 +382,7 @@ export function createProviderAuthHook(client) {
                   lastUsed: new Date().toISOString(),
                   status: "active",
                 });
+                sessionAccountEmail = currentEmail;
 
                 console.error(
                   `[aidevops] provider-auth: token refreshed for ${currentEmail} — retrying request`,
@@ -402,6 +457,7 @@ export function createProviderAuthHook(client) {
                   lastUsed: new Date().toISOString(),
                   status: "active",
                 });
+                sessionAccountEmail = alt.email;
 
                 console.error(
                   `[aidevops] provider-auth: rotated to ${alt.email} — retrying request once`,
@@ -429,7 +485,10 @@ export function createProviderAuthHook(client) {
           // Rate limited — rotate to next pool account immediately (no refresh attempt).
           if (response.status === 429) {
             const accounts = getAccounts("anthropic");
-            const currentAccount = accounts.find((a) => a.access === accessToken);
+            // Use session affinity to identify the current account (t1714)
+            const currentAccount = sessionAccountEmail
+              ? accounts.find((a) => a.email === sessionAccountEmail)
+              : accounts.find((a) => a.access === accessToken);
             const currentEmail = currentAccount?.email || "unknown";
 
             console.error(
@@ -486,6 +545,7 @@ export function createProviderAuthHook(client) {
                 lastUsed: new Date().toISOString(),
                 status: "active",
               });
+              sessionAccountEmail = alt.email;
 
               console.error(
                 `[aidevops] provider-auth: rotated to ${alt.email} — retrying request once`,
