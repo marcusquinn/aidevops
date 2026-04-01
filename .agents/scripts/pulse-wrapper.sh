@@ -4832,29 +4832,28 @@ dispatch_with_dedup() {
 	# If a model_override is requested (e.g., tier:thinking → opus), we
 	# validate it against backoff first and fall back to auto-selection if
 	# it's currently backed off.
+	# Model selection: use the first available model from AIDEVOPS_HEADLESS_MODELS.
+	# The headless-runtime-helper.sh handles backoff checks and model rotation
+	# internally when it launches the worker — we don't need to pre-validate
+	# here. The previous approach of calling `select` as a subprocess failed
+	# because the subprocess couldn't resolve provider auth in the launchd context
+	# (reported "No direct provider models configured" despite correct env vars).
+	#
+	# Simply pass the model to the worker launcher and let it handle selection.
 	local selected_model=""
 	if [[ -n "$model_override" ]]; then
-		# Check if the requested model is backed off
-		if "$HEADLESS_RUNTIME_HELPER" select --role worker --model "$model_override" >/dev/null 2>&1; then
-			selected_model="$model_override"
-		else
-			# Requested model is backed off — fall back to auto-selection
-			selected_model=$("$HEADLESS_RUNTIME_HELPER" select --role worker 2>/dev/null) || selected_model=""
-			if [[ -n "$selected_model" ]]; then
-				echo "[dispatch_with_dedup] Model ${model_override} backed off — using ${selected_model} instead for #${issue_number}" >>"$LOGFILE"
-			fi
-		fi
+		selected_model="$model_override"
 	else
-		# No override — auto-select best available model
-		selected_model=$("$HEADLESS_RUNTIME_HELPER" select --role worker 2>/dev/null) || selected_model=""
+		# Use the first model from the configured list
+		selected_model=$(printf '%s' "${AIDEVOPS_HEADLESS_MODELS:-}" | cut -d',' -f1 | tr -d ' ')
+		# Fallback to config if env not set
+		if [[ -z "$selected_model" ]] && type config_get >/dev/null 2>&1; then
+			selected_model=$(config_get "orchestration.headless_models" "" | cut -d',' -f1 | tr -d ' ')
+		fi
 	fi
 
-	# If ALL models are backed off, skip this dispatch entirely.
-	# The issue stays assigned+queued and will be retried next cycle
-	# when backoffs may have expired.
 	if [[ -z "$selected_model" ]]; then
-		echo "[dispatch_with_dedup] All models backed off — skipping dispatch for #${issue_number} in ${repo_slug} (will retry next cycle)" >>"$LOGFILE"
-		# Unassign and remove queued label so the issue is re-dispatchable
+		echo "[dispatch_with_dedup] No models configured — skipping dispatch for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 		gh issue edit "$issue_number" --repo "$repo_slug" \
 			--remove-assignee "$self_login" --remove-label "status:queued" 2>/dev/null || true
 		return 1
