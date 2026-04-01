@@ -32,9 +32,7 @@ Write for natural speech, not written text:
 | **MiniMax TTS** | High | $5/mo (120 min) | Yes (10s clip) | Easiest setup, best value |
 | **Qwen3-TTS** | High | Free (local, CUDA) | Yes (3s clip) | Self-hosted, open source |
 
-**NEVER use pre-made ElevenLabs voices** for realism — widely recognised as AI. Use Voice Design or Instant Voice Clone. For cloning: quiet room, single speaker, no background music. Run through CapCut cleanup pipeline first if cloning from existing content (see `content/production-audio.md`).
-
-MiniMax: best quality-to-effort ratio, natural-sounding by default, $5/month for 120 minutes. Qwen3-TTS: 97ms streaming latency, instruction-controlled emotion — see `tools/voice/qwen3-tts.md`.
+**NEVER use pre-made ElevenLabs voices** — widely recognised as AI. Use Voice Design or Instant Voice Clone. For cloning: quiet room, single speaker, no background music. Run through CapCut cleanup pipeline first if cloning from existing content (see `content/production-audio.md`). Qwen3-TTS: see `tools/voice/qwen3-tts.md`.
 
 ## Step 4: Talking-Head Video
 
@@ -44,7 +42,7 @@ MiniMax: best quality-to-effort ratio, natural-sounding by default, $5/month for
 | **VEED Fabric 1.0** | Highest | Higher | Maximum quality, premium content |
 | **InfiniteTalk** | Good | Free (self-hosted) | Budget/self-hosted |
 
-HeyGen: upload starting image as photo avatar, upload voice audio, generate. See `content/heygen-skill.md`. VEED: via MuAPI lipsync endpoint `POST /api/v1/veed-lipsync` (see `content/video-muapi.md`).
+HeyGen: see `content/heygen-skill.md`. VEED: via MuAPI lipsync endpoint `POST /api/v1/veed-lipsync` (see `content/video-muapi.md`).
 
 ## Step 5: Post-Processing
 
