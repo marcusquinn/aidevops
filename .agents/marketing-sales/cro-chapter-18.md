@@ -1,6 +1,6 @@
 # Chapter 18: CRO Case Studies and Implementation Playbook
 
-Real-world CRO implementations across e-commerce, SaaS, and B2B services, plus a phased implementation playbook. Builds on foundations from [Chapter 1](./cro-chapter-01.md)–[Chapter 12](./cro-chapter-12.md).
+Real-world implementations across e-commerce, SaaS, and B2B. Builds on [Chapter 1](./cro-chapter-01.md)–[Chapter 12](./cro-chapter-12.md).
 
 ## 18.1 E-commerce: Fashion Retailer ($50M Revenue)
 
