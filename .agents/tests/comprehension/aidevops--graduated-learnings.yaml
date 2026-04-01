@@ -1,0 +1,36 @@
+# Test: .agents/aidevops/graduated-learnings.md (69 lines — moderate knowledge doc)
+file: .agents/aidevops/graduated-learnings.md
+tier_minimum: haiku
+
+scenarios:
+  - name: "identifies haiku limitation pattern"
+    prompt: "Based on the graduated learnings, what is a known limitation of haiku-tier models?"
+    expected:
+      contains:
+        - "edge case"
+      min_length: 30
+      max_length: 500
+    reference_answer: |
+      Haiku missed edge cases when refactoring complex shell scripts with many
+      conditionals. This is a documented anti-pattern from graduated learnings.
+    fast_fail_triggers:
+      - refusal
+      - disengagement
+
+  - name: "identifies deployed scripts update pattern"
+    prompt: "After merging script changes, are deployed scripts at ~/.aidevops/agents/scripts/ automatically updated?"
+    expected:
+      contains:
+        - "not"
+      not_contains:
+        - "automatically updated"
+        - "yes"
+      min_length: 30
+      max_length: 500
+    reference_answer: |
+      No. Deployed scripts at ~/.aidevops/agents/scripts/ are NOT auto-updated
+      after merging. Run aidevops update or rsync after script changes. The cron
+      pulse runs the deployed copy.
+    fast_fail_triggers:
+      - refusal
+      - confabulation

@@ -1,0 +1,52 @@
+# Test: .agents/workflows/pre-edit.md (78 lines — moderate workflow doc)
+file: .agents/workflows/pre-edit.md
+tier_minimum: haiku
+
+scenarios:
+  - name: "identifies exit code actions"
+    prompt: "The pre-edit-check.sh script returns exit code 1. What does this mean and what should the agent do?"
+    expected:
+      contains:
+        - "main"
+        - "stop"
+      not_contains:
+        - "proceed"
+        - "continue editing"
+      min_length: 30
+      max_length: 500
+    reference_answer: |
+      Exit code 1 means the agent is on main/master branch. The agent must STOP
+      and present branch options to the user before proceeding.
+    fast_fail_triggers:
+      - refusal
+      - structural_violation
+
+  - name: "identifies loop mode behavior for code tasks"
+    prompt: "In loop mode, a task description contains 'implement new feature'. Should the script stay on main or create a worktree?"
+    expected:
+      contains:
+        - "worktree"
+      not_contains:
+        - "stay on main"
+      min_length: 20
+      max_length: 500
+    reference_answer: |
+      Code keywords like 'implement' and 'feature' trigger worktree creation
+      in loop mode. Code keywords override docs keywords.
+    fast_fail_triggers:
+      - refusal
+      - structural_violation
+
+  - name: "identifies why worktrees are default"
+    prompt: "Why are worktrees the default instead of working directly on branches in the main repo?"
+    expected:
+      contains:
+        - "main"
+      min_length: 40
+      max_length: 600
+    reference_answer: |
+      Worktrees keep ~/Git/{repo}/ on main, avoiding blocked branch switches,
+      parallel sessions inheriting the wrong branch, and 'local changes would
+      be overwritten' errors.
+    fast_fail_triggers:
+      - refusal

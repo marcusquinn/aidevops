@@ -1,0 +1,33 @@
+# Test: .agents/aidevops/memory-patterns.md (48 lines — simple config doc)
+file: .agents/aidevops/memory-patterns.md
+tier_minimum: haiku
+
+scenarios:
+  - name: "identifies memory file purpose"
+    prompt: "What do the AI memory files contain and what is their purpose?"
+    expected:
+      contains:
+        - "AGENTS.md"
+        - "session"
+      min_length: 30
+      max_length: 500
+    reference_answer: |
+      All memory files contain the instruction to read ~/AGENTS.md at the
+      beginning of each session. Their purpose is to ensure AI CLI tools
+      load the aidevops framework context.
+    fast_fail_triggers:
+      - refusal
+      - disengagement
+
+  - name: "identifies Claude Code memory file location"
+    prompt: "Where is the memory file for Claude Code located?"
+    expected:
+      contains:
+        - "CLAUDE.md"
+      min_length: 10
+      max_length: 300
+    reference_answer: |
+      Claude Code uses ~/CLAUDE.md (home directory) and CLAUDE.md (project-level).
+    fast_fail_triggers:
+      - refusal
+      - confabulation

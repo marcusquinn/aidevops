@@ -1,0 +1,55 @@
+# Test: .agents/aidevops/architecture.md (124 lines — complex architecture doc)
+file: .agents/aidevops/architecture.md
+tier_minimum: sonnet
+
+scenarios:
+  - name: "identifies intelligence over scripts principle"
+    prompt: "A supervisor bug is found. Should the fix be a new bash script or an improvement to an agent doc?"
+    expected:
+      contains:
+        - "agent doc"
+        - "guidance"
+      not_contains:
+        - "new script"
+        - "bash script"
+      min_length: 40
+      max_length: 600
+    reference_answer: |
+      Improve the relevant agent doc. Never create a bash script to enforce what
+      the agent should reason about. The test: if the fix adds a .sh file or
+      state mechanism, it's the wrong direction. If it adds a paragraph of clear
+      guidance, it's the right track.
+    fast_fail_triggers:
+      - refusal
+      - structural_violation
+
+  - name: "identifies MCP migration criteria"
+    prompt: "When should an MCP server be replaced with a curl subagent?"
+    expected:
+      contains:
+        - "REST"
+      min_length: 30
+      max_length: 500
+    reference_answer: |
+      Migrate MCP to curl subagent when: simple REST with Bearer/Basic auth,
+      fewer than 10 endpoints, no complex state, and all patterns fit one
+      markdown file. This saves ~2K context tokens permanently.
+    fast_fail_triggers:
+      - refusal
+      - confabulation
+
+  - name: "identifies knowledge organization model"
+    prompt: "Where do helper scripts live? What naming convention do they follow?"
+    expected:
+      contains:
+        - "scripts/"
+        - "helper"
+      min_length: 30
+      max_length: 500
+    reference_answer: |
+      All scripts live flat in scripts/ with prefix-based naming (email-*,
+      seo-*, browser-*). *-helper.sh files are agent-callable; other .sh
+      files are framework infrastructure.
+    fast_fail_triggers:
+      - refusal
+      - confabulation

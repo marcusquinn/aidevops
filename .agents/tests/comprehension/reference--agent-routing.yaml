@@ -1,0 +1,46 @@
+# Test: .agents/reference/agent-routing.md (69 lines — moderate routing doc)
+file: .agents/reference/agent-routing.md
+tier_minimum: haiku
+
+scenarios:
+  - name: "identifies correct dispatch method"
+    prompt: "How should workers be dispatched? Can you use bare 'claude run' or 'opencode' commands?"
+    expected:
+      contains:
+        - "headless-runtime-helper.sh"
+      not_contains:
+        - "bare"
+      min_length: 30
+      max_length: 500
+    reference_answer: |
+      Workers must be dispatched with headless-runtime-helper.sh run, not bare
+      runtime CLIs. The helper provides provider rotation, session persistence,
+      backoff, and lifecycle reinforcement.
+    fast_fail_triggers:
+      - refusal
+      - confabulation
+
+  - name: "routes SEO task to correct agent"
+    prompt: "A task is to run an SEO audit on landing pages. What --agent flag should be passed?"
+    expected:
+      contains:
+        - "SEO"
+      min_length: 10
+      max_length: 300
+    reference_answer: |
+      Pass --agent SEO for SEO audit tasks.
+    fast_fail_triggers:
+      - refusal
+
+  - name: "identifies default agent"
+    prompt: "If a task is uncertain or clearly code work, what agent should be used?"
+    expected:
+      contains:
+        - "Build+"
+      min_length: 10
+      max_length: 300
+    reference_answer: |
+      Default to Build+ for code work or when uncertain. It can load narrower
+      docs on demand.
+    fast_fail_triggers:
+      - refusal

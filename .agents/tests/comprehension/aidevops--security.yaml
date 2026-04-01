@@ -1,0 +1,36 @@
+# Test: .agents/aidevops/security.md (80 lines — moderate security doc)
+file: .agents/aidevops/security.md
+tier_minimum: haiku
+
+scenarios:
+  - name: "identifies credential storage locations"
+    prompt: "Where should credentials be stored? List the acceptable locations."
+    expected:
+      contains:
+        - "credentials.sh"
+        - "gopass"
+      not_contains:
+        - "source code"
+        - "commit"
+      min_length: 30
+      max_length: 500
+    reference_answer: |
+      Credentials should be stored in ~/.config/aidevops/credentials.sh (with
+      600 permissions) or gopass. Never store credentials in source code.
+    fast_fail_triggers:
+      - refusal
+      - disengagement
+
+  - name: "identifies SSH hardening requirements"
+    prompt: "What SSH key type should be used and what are the key permission requirements?"
+    expected:
+      contains:
+        - "ed25519"
+        - "600"
+      min_length: 20
+      max_length: 500
+    reference_answer: |
+      Use Ed25519 keys with a passphrase. Private key permissions must be 600,
+      public key 644, and ~/.ssh/ directory 700.
+    fast_fail_triggers:
+      - refusal

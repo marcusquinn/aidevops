@@ -1,0 +1,34 @@
+# Test: .agents/scripts/commands/code-simplifier.md (12 lines — very simple command doc)
+file: .agents/scripts/commands/code-simplifier.md
+tier_minimum: haiku
+
+scenarios:
+  - name: "identifies analysis-only mode"
+    prompt: "What mode does this command operate in? Can it modify files directly?"
+    expected:
+      contains:
+        - "analysis"
+      not_contains:
+        - "apply changes"
+        - "modify files"
+      min_length: 20
+      max_length: 500
+    reference_answer: |
+      The code-simplifier command operates in analysis-only mode. It produces
+      suggestions for human review and never applies changes directly.
+    fast_fail_triggers:
+      - refusal
+      - disengagement
+
+  - name: "identifies required model tier"
+    prompt: "What model tier is required for this command?"
+    expected:
+      contains:
+        - "opus"
+      min_length: 10
+      max_length: 300
+    reference_answer: |
+      The code-simplifier command requires the opus model tier.
+    fast_fail_triggers:
+      - refusal
+      - confabulation

@@ -1,0 +1,56 @@
+# Test: .agents/tools/code-review/code-simplifier.md (137 lines — complex agent doc)
+file: .agents/tools/code-review/code-simplifier.md
+tier_minimum: sonnet
+
+scenarios:
+  - name: "identifies protected files"
+    prompt: "Can the code simplifier analyse prompts/build.txt? What about AGENTS.md?"
+    expected:
+      contains:
+        - "protected"
+        - "skip"
+      not_contains:
+        - "yes, analyse"
+        - "proceed"
+      min_length: 30
+      max_length: 500
+    reference_answer: |
+      prompts/build.txt and both AGENTS.md files are protected files. Workers
+      MUST skip them and note why on the issue. These are for interactive
+      maintainer sessions only.
+    fast_fail_triggers:
+      - refusal
+      - structural_violation
+
+  - name: "classifies safe vs judgment simplifications"
+    prompt: "A file has decorative emojis and comments that just restate the next line of code. Are these safe to simplify? What about verbose code that could be shorter?"
+    expected:
+      contains:
+        - "safe"
+        - "high confidence"
+      min_length: 50
+      max_length: 800
+    reference_answer: |
+      Decorative emojis and 'what' comments restating the next line are classified
+      as safe (high confidence) simplifications. Verbose code that could be shorter
+      without losing readability requires judgment (medium confidence).
+    fast_fail_triggers:
+      - refusal
+      - confabulation
+
+  - name: "identifies items that should almost never be simplified"
+    prompt: "Should comments containing task IDs like t1345 or error data like '46.8% failure rate' be simplified?"
+    expected:
+      contains:
+        - "never"
+      not_contains:
+        - "safe to remove"
+        - "can be simplified"
+      min_length: 30
+      max_length: 500
+    reference_answer: |
+      Comments with task IDs, incident numbers, or error data should almost never
+      be simplified. They encode observed failure patterns and are critical context.
+    fast_fail_triggers:
+      - refusal
+      - structural_violation

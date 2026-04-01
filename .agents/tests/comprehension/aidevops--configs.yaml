@@ -1,0 +1,31 @@
+# Test: .agents/aidevops/configs.md (89 lines — moderate config doc)
+file: .agents/aidevops/configs.md
+tier_minimum: haiku
+
+scenarios:
+  - name: "identifies template vs working file rule"
+    prompt: "What is the difference between .json.txt and .json config files? Which ones can be committed to git?"
+    expected:
+      contains:
+        - "template"
+        - "never"
+      min_length: 40
+      max_length: 600
+    reference_answer: |
+      Template files (.json.txt) contain placeholders only and are safe to commit.
+      Working files (.json) contain real credentials and must NEVER be committed.
+    fast_fail_triggers:
+      - refusal
+      - disengagement
+
+  - name: "identifies security rules"
+    prompt: "What file permissions should working config files have?"
+    expected:
+      contains:
+        - "600"
+      min_length: 10
+      max_length: 300
+    reference_answer: |
+      Working config files should have chmod 600 permissions.
+    fast_fail_triggers:
+      - refusal

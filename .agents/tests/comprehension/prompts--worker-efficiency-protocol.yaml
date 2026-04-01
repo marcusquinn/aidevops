@@ -1,0 +1,57 @@
+# Test: .agents/prompts/worker-efficiency-protocol.md (106 lines — complex protocol doc)
+file: .agents/prompts/worker-efficiency-protocol.md
+tier_minimum: sonnet
+
+scenarios:
+  - name: "identifies commit-first workflow"
+    prompt: "After implementing a subtask, what should the worker do before moving to the next subtask?"
+    expected:
+      contains:
+        - "commit"
+      not_contains:
+        - "skip"
+        - "batch"
+      min_length: 30
+      max_length: 500
+    reference_answer: |
+      Commit after each implementation subtask. Uncommitted work is lost when
+      a session ends. After the first commit, push and open a draft PR.
+    fast_fail_triggers:
+      - refusal
+      - disengagement
+
+  - name: "identifies model escalation rule"
+    prompt: "A worker is stuck and considering exiting BLOCKED. What must it do first?"
+    expected:
+      contains:
+        - "escalat"
+      not_contains:
+        - "exit immediately"
+        - "give up"
+      min_length: 40
+      max_length: 600
+    reference_answer: |
+      Before exiting BLOCKED, the worker must attempt model escalation -- retry
+      with the next tier (sonnet to opus). BLOCKED is only valid after exhausting
+      all autonomous solution paths. One opus attempt is cheaper than a failed
+      worker cycle plus human triage.
+    fast_fail_triggers:
+      - refusal
+      - structural_violation
+
+  - name: "identifies ai_research token-saving pattern"
+    prompt: "A worker needs to understand a 300-line file it will NOT edit. Should it read the file directly or use ai_research?"
+    expected:
+      contains:
+        - "ai_research"
+      not_contains:
+        - "read directly"
+        - "read the full file"
+      min_length: 30
+      max_length: 500
+    reference_answer: |
+      For files over 200 lines that the worker will not edit, use ai_research
+      instead of reading them directly (~100 tokens vs ~5000). Do not offload
+      files you need to edit.
+    fast_fail_triggers:
+      - refusal

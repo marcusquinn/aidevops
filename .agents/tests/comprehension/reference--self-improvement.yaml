@@ -1,0 +1,38 @@
+# Test: .agents/reference/self-improvement.md (59 lines — moderate reference doc)
+file: .agents/reference/self-improvement.md
+tier_minimum: haiku
+
+scenarios:
+  - name: "identifies framework vs project routing"
+    prompt: "A bug is found in the supervisor pulse script at ~/.aidevops/agents/scripts/pulse-wrapper.sh. Should this be filed as a framework issue or a project issue? What tool should be used?"
+    expected:
+      contains:
+        - "framework"
+      not_contains:
+        - "project"
+        - "current repo"
+      min_length: 40
+      max_length: 600
+    reference_answer: |
+      This is a framework-level issue because it involves files under ~/.aidevops/
+      and framework scripts. Use framework-issue-helper.sh log to file it on
+      marcusquinn/aidevops. Never create framework tasks in project repos.
+    fast_fail_triggers:
+      - refusal
+      - confabulation
+
+  - name: "identifies correct response to failure pattern"
+    prompt: "Multiple PRs are failing CI with the same shellcheck error. What should the agent do?"
+    expected:
+      contains:
+        - "issue"
+      not_contains:
+        - "workaround"
+        - "ignore"
+      min_length: 30
+      max_length: 500
+    reference_answer: |
+      File an issue describing the pattern, root cause hypothesis, and proposed
+      fix. Never patch around a broken process -- fix the process.
+    fast_fail_triggers:
+      - refusal

@@ -1,0 +1,55 @@
+# Test: .agents/workflows/git-workflow.md (158 lines — complex workflow doc)
+file: .agents/workflows/git-workflow.md
+tier_minimum: sonnet
+
+scenarios:
+  - name: "identifies pre-edit gate"
+    prompt: "Before editing any file, what must the agent check? What happens if the result is 'main'?"
+    expected:
+      contains:
+        - "branch"
+        - "stop"
+      not_contains:
+        - "proceed"
+        - "continue editing"
+      min_length: 30
+      max_length: 500
+    reference_answer: |
+      Before any file edit, run git branch --show-current. If the result is
+      main, STOP and present branch options before proceeding.
+    fast_fail_triggers:
+      - refusal
+      - structural_violation
+
+  - name: "identifies PR title format"
+    prompt: "What format must PR titles follow? Give an example."
+    expected:
+      contains:
+        - "task-id"
+      not_contains:
+        - "qd-"
+      min_length: 30
+      max_length: 500
+    reference_answer: |
+      PR titles must follow {task-id}: {description}. Task ID is tNNN (from
+      TODO.md) or GH#NNN (GitHub issue number). Examples: t318: Update PR
+      workflow documentation, GH#12455: tighten hashline-edit-format.md.
+      Never use qd-, bare numbers, or invented prefixes.
+    fast_fail_triggers:
+      - refusal
+      - confabulation
+
+  - name: "identifies destructive command safety"
+    prompt: "Is 'git push --force' allowed? What about 'git push --force-with-lease'?"
+    expected:
+      contains:
+        - "blocked"
+        - "force-with-lease"
+      min_length: 30
+      max_length: 500
+    reference_answer: |
+      git push --force is blocked by the safety hooks. git push --force-with-lease
+      is safe (allowlisted) because it prevents overwriting others' work.
+    fast_fail_triggers:
+      - refusal
+      - structural_violation

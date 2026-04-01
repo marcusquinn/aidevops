@@ -1,0 +1,34 @@
+# Test: .agents/aidevops/onboarding.md (130 lines — complex onboarding doc)
+file: .agents/aidevops/onboarding.md
+tier_minimum: haiku
+
+scenarios:
+  - name: "identifies onboarding flow steps"
+    prompt: "What are the steps in the onboarding welcome flow?"
+    expected:
+      contains:
+        - "capabilities"
+        - "status"
+      min_length: 40
+      max_length: 600
+    reference_answer: |
+      The welcome flow is: 1) Introduce capabilities, 2) Capture concept
+      familiarity, 3) Capture work type, 4) Show status, 5) Guide
+      service-by-service setup.
+    fast_fail_triggers:
+      - refusal
+      - disengagement
+
+  - name: "identifies credential setup for Anthropic"
+    prompt: "What environment variable is needed for Anthropic API access? Where can the key be obtained?"
+    expected:
+      contains:
+        - "ANTHROPIC_API_KEY"
+      min_length: 20
+      max_length: 400
+    reference_answer: |
+      The ANTHROPIC_API_KEY environment variable is needed. The key can be
+      obtained from https://console.anthropic.com/settings/keys.
+    fast_fail_triggers:
+      - refusal
+      - confabulation

@@ -1,0 +1,51 @@
+# Test: .agents/reference/task-taxonomy.md (63 lines — simple reference doc)
+file: .agents/reference/task-taxonomy.md
+tier_minimum: haiku
+
+scenarios:
+  - name: "routes SEO task correctly"
+    prompt: "A task involves auditing keyword rankings and GSC data. What domain tag and GitHub label should it get? What agent handles it?"
+    expected:
+      contains:
+        - "seo"
+        - "SEO"
+      min_length: 30
+      max_length: 500
+    reference_answer: |
+      An SEO audit task should get the #seo TODO tag, the "seo" GitHub label,
+      and be routed to the SEO agent.
+    fast_fail_triggers:
+      - refusal
+      - confabulation
+
+  - name: "identifies default code routing"
+    prompt: "A task is to fix a bug in a shell script. What domain tag should it get?"
+    expected:
+      contains:
+        - "none"
+      not_contains:
+        - "#code"
+        - "#build"
+      min_length: 20
+      max_length: 500
+    reference_answer: |
+      Code tasks (features, bug fixes, refactors, CI, tests) get no domain tag.
+      Build+ is the default agent and no label is needed.
+    fast_fail_triggers:
+      - refusal
+      - confabulation
+
+  - name: "identifies tier:simple usage"
+    prompt: "When should the tier:simple label be applied to a task?"
+    expected:
+      contains:
+        - "docs"
+      action:
+        - "simple"
+      min_length: 30
+      max_length: 500
+    reference_answer: |
+      The tier:simple label should be applied for docs-only changes, simple
+      renames, formatting, config tweaks, and label/tag updates.
+    fast_fail_triggers:
+      - refusal
