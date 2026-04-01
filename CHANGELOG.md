@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.553] - 2026-04-01
+
+### Changed
+
+- Maintenance: claim t1730
+- Maintenance: claim t1729
+- Maintenance: claim t1728
+- Maintenance: claim t1727
+- Maintenance: claim t1726
+- Maintenance: claim t1725
+- Maintenance: claim t1724
+- Maintenance: claim t1723
+- Maintenance: claim t1722
+- Maintenance: claim t1721
+- Maintenance: claim t1720
+- Maintenance: claim t1719
+- Maintenance: claim t1718
+- Maintenance: claim t1717
+- Maintenance: claim t1716
+- Maintenance: claim t1715
+
+### Fixed
+
+- isolate supervisor backoff from worker dispatch (#15167)
+
 ## [3.5.552] - 2026-04-01
 
 ### Fixed
