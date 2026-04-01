@@ -543,7 +543,7 @@ _check_quality_tool() {
 	if command -v "$tool_name" >/dev/null 2>&1; then
 		case "$tool_name" in
 		shellcheck)
-			version=$(shellcheck --version 2>/dev/null | head -1)
+			version=$(shellcheck --version 2>/dev/null | head -1 || true)
 			;;
 		shfmt)
 			version=$(shfmt --version 2>/dev/null)
@@ -561,13 +561,13 @@ _check_markdownlint_tool() {
 	local version=""
 
 	if command -v markdownlint >/dev/null 2>&1; then
-		version=$(markdownlint --version 2>/dev/null | head -1)
+		version=$(markdownlint --version 2>/dev/null | head -1 || true)
 		print_success "markdownlint: ${version:-installed}"
 		return 0
 	fi
 
 	if command -v markdownlint-cli2 >/dev/null 2>&1; then
-		version=$(markdownlint-cli2 --version 2>/dev/null | head -1)
+		version=$(markdownlint-cli2 --version 2>/dev/null | head -1 || true)
 		print_success "markdownlint-cli2: ${version:-installed}"
 		return 0
 	fi
