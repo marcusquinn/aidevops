@@ -40,7 +40,7 @@ const config :Workerd.Config = (
 
 ## Durable Objects
 
-Add to a worker block (see Multi-Service Architecture for full config structure):
+Add as a service entry in the `services` list (see Multi-Service Architecture for full config structure):
 
 ```capnp
 (name = "app", worker = (
