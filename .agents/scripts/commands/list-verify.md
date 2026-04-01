@@ -38,7 +38,7 @@ Arguments: $ARGUMENTS
 
 ## Output Format
 
-Tables grouped failed → pending → passed. Columns: `# | Verify | Task | Description | PR | Merged | Status`.
+Tables grouped failed → pending → passed. Columns: `# | Verify | Task | Description | PR | Merged | Reason/Checks/Verified` (column varies by section).
 Footer: `N pending | N passed | N failed | N total`.
 
 ## After Display
