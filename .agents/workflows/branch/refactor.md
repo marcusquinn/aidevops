@@ -31,45 +31,32 @@ git checkout -b refactor/{description}
 ## When to Use
 
 - Code restructuring without behavior change
-- Extracting reusable components
-- Improving code organization
-- Reducing technical debt
+- Extracting reusable components, reducing technical debt
 - Performance improvements (same behavior, faster)
 
-**Not for**: Bug fixes (use `bugfix/`) or new features (use `feature/`).
+**Not for**: Bug fixes (`bugfix/`) or new features (`feature/`).
 
 ## The Golden Rule
 
 > **Same inputs → Same outputs**
 
-If behavior changes, it's not a refactor. Either:
-- Split into separate `bugfix/` or `feature/` branch
-- Document the intentional behavior change
+If behavior changes: split into `bugfix/`/`feature/` or document the intentional change.
 
-## Unique Guidance
+## Testing & Review
 
-### Extra Testing Scrutiny
+Refactors require extra scrutiny — all existing tests must pass before and after.
 
-Refactors require **extra testing scrutiny**:
-
-- [ ] All existing tests pass (mandatory)
-- [ ] No new test failures
-- [ ] Manual verification of key flows
-- [ ] Performance not degraded (if applicable)
-
-### Ensure Tests Pass Before Starting
+**Before starting and after each change:**
 
 ```bash
 npm test  # or project-specific test command
 ```
 
-### PR Review Focus
+**PR reviewers verify:**
 
-Reviewers should verify:
 1. No behavior changes (unless documented)
-2. Tests still pass
+2. Tests still pass; no performance regression
 3. Code is actually cleaner/better
-4. No hidden bugs introduced
 
 ## Examples
 
@@ -79,14 +66,11 @@ refactor/simplify-database-layer
 refactor/consolidate-api-handlers
 ```
 
-## Commit Example
+**Commit format:**
 
 ```bash
 refactor: extract authentication into dedicated service
 
 - Move auth logic from UserController to AuthService
-- No behavior changes
-- All existing tests pass
-
-This improves testability and separation of concerns.
+- No behavior changes; all existing tests pass
 ```
