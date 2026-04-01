@@ -36,21 +36,8 @@ tools:
 ```bash
 ssh root@your-server-ip
 curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash
-
-# Verify
-systemctl status coolify
-docker logs coolify
-```
-
-### Firewall
-
-```bash
+systemctl status coolify  # verify
 ufw allow 22/tcp && ufw allow 80/tcp && ufw allow 443/tcp && ufw allow 8000/tcp && ufw enable
-```
-
-### Security Hardening
-
-```bash
 apt update && apt upgrade -y
 apt install unattended-upgrades -y && dpkg-reconfigure -plow unattended-upgrades
 ```
@@ -63,8 +50,6 @@ apt install unattended-upgrades -y && dpkg-reconfigure -plow unattended-upgrades
 4. Settings → API Tokens → create token for framework integration
 
 ## Framework Configuration
-
-Copy the config template and edit with your server details:
 
 ```bash
 cp configs/coolify-config.json.txt configs/coolify-config.json
@@ -86,5 +71,3 @@ Workflow: push to Git → Coolify auto-deploys → health check → rollback if 
 
 - Docs: https://coolify.io/docs
 - GitHub: https://github.com/coollabsio/coolify
-- Discord: https://discord.gg/coolify
-- Examples: https://github.com/coollabsio/coolify-examples
