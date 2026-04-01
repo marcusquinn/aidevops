@@ -243,7 +243,7 @@ _is_frontmatter_stub() {
 }
 
 # Exclusion patterns shared by scan phases
-_EXCLUDED_DIRS='_archive/|archived/|supervisor-archived/|/templates/|/todo/'
+_EXCLUDED_DIRS='_archive/|/templates/|/todo/'
 _EXCLUDED_FILES='/README\.md$'
 _PROTECTED_PATTERN='prompts/build\.txt|^\.agents/AGENTS\.md|^AGENTS\.md|scripts/commands/pulse\.md'
 
