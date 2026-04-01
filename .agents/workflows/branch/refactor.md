@@ -3,6 +3,9 @@ description: Refactor branch - code restructure, same behavior
 mode: subagent
 tools:
   read: true
+  write: true
+  edit: true
+  bash: true
   glob: true
   grep: true
 ---
@@ -43,7 +46,7 @@ If behavior changes: split into `bugfix/`/`feature/` or document the intentional
 
 Refactors require extra scrutiny — all existing tests must pass before and after.
 
-**Before starting:**
+**Before starting and after each change:**
 
 ```bash
 npm test  # or project-specific test command
