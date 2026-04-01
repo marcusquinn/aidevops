@@ -5,103 +5,81 @@ mode: subagent
 
 # Bugfix Probes
 
-Use 2 probes during `/define` for tasks classified as **bugfix**.
+Use 2 probes during `/define` for **bugfix** tasks.
 
 ## Default Assumptions
+Apply unless overridden:
+- Preserve all behavior except the bug.
+- Add a regression test (fail before, pass after).
+- Prefer root-cause fix over symptom suppression.
+- No scope creep — fix the reported bug only.
 
-Apply unless the user overrides them:
-
-- Preserve all behaviour except the bug
-- Add a regression test that fails before the fix and passes after
-- Root-cause fix preferred over symptom suppression
-- No scope creep — fix the reported bug, not adjacent issues
-
-## Structured Questions
-
+## Core Probes
 ### Reproduction
-
 ```text
-Can you reproduce this bug reliably?
-
-1. Yes — here are the steps: [user provides]
-2. Intermittent — happens sometimes under [conditions]
-3. Reported by others — I haven't reproduced it
-4. Only in production / specific environment
+Can you reproduce this reliably?
+1. Yes (steps provided)
+2. Intermittent (under specific conditions)
+3. Reported by others (not yet reproduced)
+4. Environment-specific (e.g., production only)
 ```
 
 ### Expected vs Actual
-
 ```text
-What's the expected behaviour vs what actually happens?
-
-1. [Inferred from description] (recommended)
-2. I'll describe both explicitly
+What is the expected behavior vs actual?
+1. Inferred from description (recommended)
+2. Explicitly described
 ```
 
-## Probes (select 2)
-
+## Specialist Probes (Select 2)
 ### Root Cause vs Symptom
-
 ```text
-Is the fix you have in mind addressing the root cause or a symptom?
-
-1. Root cause — I know why it breaks (recommended)
-2. Symptom — I know a workaround but not the underlying issue
-3. Not sure — investigate first
+Is the fix addressing the root cause or a symptom?
+1. Root cause (recommended)
+2. Symptom/workaround
+3. Not sure (investigate first)
 ```
 
 ### Blast Radius
-
 ```text
-What else could break when this is fixed?
-
-1. Nothing — the fix is isolated to one code path (recommended)
-2. Related features that share the same code path
-3. Not sure — need to trace dependencies
-4. I'll specify what's at risk
+What else could break?
+1. Nothing (isolated fix - recommended)
+2. Related features sharing code path
+3. Not sure (trace dependencies)
+4. User-specified risks
 ```
 
 ### Regression Context
-
 ```text
-Did this work before? If so, what changed?
-
-1. Yes — broke after a recent commit/deploy (regression)
-2. Never worked correctly — latent bug
-3. Works in some environments but not others
-4. Not sure when it started
+Did this work before?
+1. Yes (regression)
+2. Never (latent bug)
+3. Environment-specific
+4. Unknown start
 ```
 
 ### Assumption Surfacing
-
 ```text
-I'm assuming this bug affects [inferred scope — e.g., "all users" or "only mobile"].
-Is that correct?
-
-1. Yes — affects [scope]
-2. No — it's narrower: [user specifies]
-3. No — it's broader: [user specifies]
+I'm assuming this affects [inferred scope]. Correct?
+1. Yes
+2. No (narrower)
+3. No (broader)
 ```
 
 ### Pre-mortem
-
 ```text
-Imagine the fix ships but the bug comes back in a different form.
-What's the most likely variant?
-
+If the bug returns in a different form, what's most likely?
 1. Same root cause, different trigger (recommended)
-2. Fix introduces a new bug in adjacent code
-3. Fix works locally but not in production
-4. The original report was incomplete — there's a deeper issue
+2. New bug in adjacent code
+3. Environment-specific failure
+4. Deeper issue (original report incomplete)
 ```
 
 ## Sufficiency Test
-
-Before generating the brief, verify:
-
-- Can I reproduce this, or do I have clear steps?
-- Do I know the root cause, or at least where to look?
-- What regression test would catch this if it recurs?
-- What's the blast radius of the fix?
+Verify before generating brief:
+- Reproduction steps clear?
+- Root cause identified or investigation path set?
+- Regression test defined?
+- Blast radius assessed?
 
 If any answer is "I don't know," ask one more targeted question.
