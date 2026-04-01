@@ -114,6 +114,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t15076 simplification: tighten agent doc Patterns (.agents/services/hosting/cloudflare-platform-skill/hyperdrive-patterns.md, 173 lines) @marcusquinn #simplification-debt ~1h ref:GH#15076 logged:2026-04-01 started:2026-04-01T19:30:00Z assignee:marcusquinn
 - [ ] t1728 simplification: tighten agent doc Vercel Agent Skills (.agents/tools/deployment/agent-skills.md, 100 lines) #simplification #deployment #auto-dispatch ~1h model:sonnet ref:GH#15017 logged:2026-04-01
 - [ ] t1730 simplification: tighten agent doc Landing Page Structure (.agents/marketing-sales/direct-response-copy-frameworks-landing-page-structure.md, 66 lines) #simplification #marketing-sales #auto-dispatch ~1h model:sonnet ref:GH#15061 logged:2026-04-01
+- [x] t15176 simplification: tighten agent doc Stagehand Benchmark Scripts (.agents/tools/browser/browser-benchmark-scripts-05-stagehand.md, 52 lines) #simplification #browser #auto-dispatch ~1h model:sonnet ref:GH#15176 logged:2026-04-01 pr:#15258 completed:2026-04-01
 
 ## Backlog
 
