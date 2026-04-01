@@ -2925,6 +2925,9 @@ _run_pulse_watchdog() {
 run_pulse() {
 	local underfilled_mode="${1:-0}"
 	local underfill_pct="${2:-0}"
+	# trigger_mode: "daily_sweep" uses /pulse-sweep (full edge-case agent);
+	# "stall" and "first_run" use /pulse (lightweight dispatch+merge agent).
+	local trigger_mode="${3:-stall}"
 	local effective_cold_start_timeout="$PULSE_COLD_START_TIMEOUT"
 	if [[ "$underfilled_mode" == "1" ]]; then
 		effective_cold_start_timeout="$PULSE_COLD_START_TIMEOUT_UNDERFILLED"
@@ -2936,17 +2939,23 @@ run_pulse() {
 
 	local start_epoch
 	start_epoch=$(date +%s)
-	echo "[pulse-wrapper] Starting pulse at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$WRAPPER_LOGFILE"
+	echo "[pulse-wrapper] Starting pulse at $(date -u +%Y-%m-%dT%H:%M:%SZ) (trigger=${trigger_mode})" >>"$WRAPPER_LOGFILE"
 	echo "[pulse-wrapper] Watchdog cold-start timeout: ${effective_cold_start_timeout}s (underfilled_mode=${underfilled_mode}, underfill_pct=${underfill_pct})" >>"$LOGFILE"
 
-	# Build the prompt: /pulse + reference to pre-fetched state file.
+	# Select agent prompt based on trigger mode:
+	#   daily_sweep → /pulse-sweep (full edge-case triage, quality review, mission awareness)
+	#   stall / first_run → /pulse (lightweight dispatch+merge, unblocks the stall faster)
 	# The state is NOT inlined into the prompt — on Linux, execve() enforces
 	# MAX_ARG_STRLEN (128KB per argument) and the state routinely exceeds this,
 	# causing "Argument list too long" on every pulse invocation. The agent
 	# reads the file via its Read tool instead. See: #4257
-	local prompt="/pulse"
+	local pulse_command="/pulse"
+	if [[ "$trigger_mode" == "daily_sweep" ]]; then
+		pulse_command="/pulse-sweep"
+	fi
+	local prompt="$pulse_command"
 	if [[ -f "$STATE_FILE" ]]; then
-		prompt="/pulse
+		prompt="${pulse_command}
 
 Pre-fetched state file: ${STATE_FILE}
 Read this file before proceeding — it contains the current repo/PR/issue state
@@ -3735,7 +3744,7 @@ _complexity_scan_should_open_md_issue() {
 # determines the action, not line count (t1679, code-simplifier.md).
 # Files must pass _complexity_scan_should_open_md_issue to be included —
 # this filters out stubs, short files, and frontmatter-only definitions.
-# Protected files (build.txt, AGENTS.md, pulse.md) are excluded — these are
+# Protected files (build.txt, AGENTS.md, pulse.md, pulse-sweep.md) are excluded — these are
 # core infrastructure that must be simplified manually with a maintainer present.
 # Results are sorted longest-first so biggest wins come early.
 # Arguments: $1 - aidevops_path
@@ -3744,11 +3753,11 @@ _complexity_scan_collect_md_violations() {
 	local aidevops_path="$1"
 
 	# Protected files and directories — excluded from automated simplification.
-	# - build.txt, AGENTS.md, pulse.md: core infrastructure (code-simplifier.md)
+	# - build.txt, AGENTS.md, pulse.md, pulse-sweep.md: core infrastructure (code-simplifier.md)
 	# - templates/: template files meant to be copied, not compressed
 	# - README.md: navigation/index docs, not instruction docs
 	# - todo/: planning files, not code
-	local protected_pattern='prompts/build\.txt|^\.agents/AGENTS\.md|^AGENTS\.md|scripts/commands/pulse\.md'
+	local protected_pattern='prompts/build\.txt|^\.agents/AGENTS\.md|^AGENTS\.md|scripts/commands/pulse\.md|scripts/commands/pulse-sweep\.md'
 	local excluded_dirs='_archive/|archived/|/templates/|/todo/'
 	local excluded_files='/README\.md$'
 
@@ -4441,7 +4450,7 @@ This is an automated scan. The function lengths are factual, but the best decomp
 # - .sh files: functions exceeding COMPLEXITY_FUNC_LINE_THRESHOLD lines
 # - .md files: all agent docs (no size gate — classification determines action, t1679)
 #
-# Protected files (build.txt, AGENTS.md, pulse.md) are excluded from
+# Protected files (build.txt, AGENTS.md, pulse.md, pulse-sweep.md) are excluded from
 # .md scanning — these are core infrastructure requiring manual review.
 #
 # Results are processed longest-first so the biggest wins come early
@@ -6460,9 +6469,15 @@ _Closed by deterministic merge pass (pulse-wrapper.sh)._" 2>/dev/null || true
 #   - Backlog is progressing (counts are decreasing)
 #   - Daily sweep not yet due
 #
+# Side effect: writes the trigger mode to ${PULSE_DIR}/llm_trigger_mode
+#   Values: "daily_sweep" | "stall" | "first_run"
+#   Callers read this file to select the correct agent prompt
+#   (pulse-sweep.md for daily_sweep, pulse.md for stall/first_run).
+#
 # State files:
 #   ${PULSE_DIR}/last_llm_run_epoch     — epoch of last LLM invocation
 #   ${PULSE_DIR}/backlog_snapshot.txt    — "epoch issues_count prs_count"
+#   ${PULSE_DIR}/llm_trigger_mode        — last trigger reason (daily_sweep|stall|first_run)
 #######################################
 PULSE_LLM_STALL_THRESHOLD="${PULSE_LLM_STALL_THRESHOLD:-1800}" # 30 min
 PULSE_LLM_DAILY_INTERVAL="${PULSE_LLM_DAILY_INTERVAL:-86400}"  # 24h
@@ -6481,6 +6496,7 @@ _should_run_llm_supervisor() {
 	local llm_age=$((now_epoch - last_llm_epoch))
 	if [[ "$llm_age" -ge "$PULSE_LLM_DAILY_INTERVAL" ]]; then
 		echo "[pulse-wrapper] LLM supervisor: daily sweep due (last run ${llm_age}s ago)" >>"$LOGFILE"
+		printf 'daily_sweep\n' >"${PULSE_DIR}/llm_trigger_mode"
 		return 0
 	fi
 
@@ -6490,6 +6506,7 @@ _should_run_llm_supervisor() {
 		# First run — take snapshot and run LLM
 		_update_backlog_snapshot "$now_epoch"
 		echo "[pulse-wrapper] LLM supervisor: first run (no snapshot)" >>"$LOGFILE"
+		printf 'first_run\n' >"${PULSE_DIR}/llm_trigger_mode"
 		return 0
 	fi
 
@@ -6526,6 +6543,7 @@ _should_run_llm_supervisor() {
 	if [[ "$snap_age" -ge "$PULSE_LLM_STALL_THRESHOLD" ]]; then
 		echo "[pulse-wrapper] LLM supervisor: backlog stalled for ${snap_age}s (issues=${current_issues} prs=${current_prs}, unchanged from ${snap_issues}+${snap_prs})" >>"$LOGFILE"
 		_update_backlog_snapshot "$now_epoch" "$current_issues" "$current_prs"
+		printf 'stall\n' >"${PULSE_DIR}/llm_trigger_mode"
 		return 0
 	fi
 
@@ -7020,10 +7038,24 @@ main() {
 	#
 	# This saves ~80% of supervisor tokens while maintaining identical
 	# dispatch and merge throughput.
+	#
+	# Trigger mode routing (GH#15287):
+	#   daily_sweep → /pulse-sweep (full edge-case triage, quality review, mission awareness)
+	#   stall / first_run → /pulse (lightweight dispatch+merge, unblocks the stall faster)
 	local skip_llm=false
+	local llm_trigger_mode="stall"
 	if [[ "${PULSE_FORCE_LLM:-0}" != "1" ]] && ! _should_run_llm_supervisor; then
 		skip_llm=true
 		echo "[pulse-wrapper] Skipping LLM supervisor (backlog progressing, daily sweep not due)" >>"$LOGFILE"
+	else
+		# Read the trigger mode written by _should_run_llm_supervisor
+		if [[ -f "${PULSE_DIR}/llm_trigger_mode" ]]; then
+			llm_trigger_mode=$(cat "${PULSE_DIR}/llm_trigger_mode" 2>/dev/null) || llm_trigger_mode="stall"
+		fi
+		# PULSE_FORCE_LLM=1 defaults to daily_sweep (full triage)
+		if [[ "${PULSE_FORCE_LLM:-0}" == "1" && "$llm_trigger_mode" == "stall" ]]; then
+			llm_trigger_mode="daily_sweep"
+		fi
 	fi
 
 	local pulse_duration=0
@@ -7036,7 +7068,7 @@ main() {
 
 		local pulse_start_epoch
 		pulse_start_epoch=$(date +%s)
-		run_pulse "$initial_underfilled_mode" "$initial_underfill_pct"
+		run_pulse "$initial_underfilled_mode" "$initial_underfill_pct" "$llm_trigger_mode"
 		local pulse_end_epoch
 		pulse_end_epoch=$(date +%s)
 		pulse_duration=$((pulse_end_epoch - pulse_start_epoch))
