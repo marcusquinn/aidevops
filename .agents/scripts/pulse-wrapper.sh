@@ -610,12 +610,22 @@ _prefetch_repo_prs() {
 	# Enrichment: fetch statusCheckRollup separately with a smaller batch.
 	# This is the expensive field — do it only if we have PRs, and cap the
 	# batch to avoid GraphQL timeouts on repos with large PR backlogs.
+	# Non-fatal: if this fails, the pulse still sees the PR list without check status.
 	local checks_json=""
 	local checks_limit=50
 	if [[ "$pr_count" -gt 0 ]]; then
+		local checks_err
+		checks_err=$(mktemp)
 		checks_json=$(gh pr list --repo "$slug" --state open \
 			--json number,statusCheckRollup \
-			--limit "$checks_limit" 2>/dev/null) || checks_json=""
+			--limit "$checks_limit" 2>"$checks_err") || checks_json=""
+		if [[ -z "$checks_json" || "$checks_json" == "null" ]]; then
+			local _checks_err_msg
+			_checks_err_msg=$(cat "$checks_err" 2>/dev/null || echo "unknown error")
+			echo "[pulse-wrapper] _prefetch_repo_prs: statusCheckRollup enrichment FAILED for ${slug} (non-fatal, PRs shown without check status): ${_checks_err_msg}" >>"$LOGFILE"
+			checks_json=""
+		fi
+		rm -f "$checks_err"
 	fi
 
 	if [[ "$pr_count" -gt 0 ]]; then
@@ -669,9 +679,17 @@ _prefetch_repo_daily_cap() {
 
 	local today_utc
 	today_utc=$(date -u +%Y-%m-%d)
-	local daily_cap_json
+	local daily_cap_json daily_cap_err
+	daily_cap_err=$(mktemp)
 	daily_cap_json=$(gh pr list --repo "$slug" --state all \
-		--json createdAt --limit 200 2>/dev/null) || daily_cap_json="[]"
+		--json createdAt --limit 200 2>"$daily_cap_err") || daily_cap_json="[]"
+	if [[ -z "$daily_cap_json" || "$daily_cap_json" == "null" ]]; then
+		local _daily_cap_err_msg
+		_daily_cap_err_msg=$(cat "$daily_cap_err" 2>/dev/null || echo "unknown error")
+		echo "[pulse-wrapper] _prefetch_repo_daily_cap: gh pr list FAILED for ${slug}: ${_daily_cap_err_msg}" >>"$LOGFILE"
+		daily_cap_json="[]"
+	fi
+	rm -f "$daily_cap_err"
 	local daily_pr_count
 	daily_pr_count=$(echo "$daily_cap_json" | jq --arg today "$today_utc" \
 		'[.[] | select(.createdAt | startswith($today))] | length') || daily_pr_count=0
@@ -3062,10 +3080,18 @@ prefetch_triage_review_status() {
 		[[ -n "$slug" ]] || continue
 
 		# Get needs-maintainer-review issues for this repo
-		local nmr_json
+		local nmr_json nmr_err
+		nmr_err=$(mktemp)
 		nmr_json=$(gh issue list --repo "$slug" --label "needs-maintainer-review" \
 			--state open --json number,title,createdAt,updatedAt \
-			--limit 50 2>/dev/null) || nmr_json="[]"
+			--limit 50 2>"$nmr_err") || nmr_json="[]"
+		if [[ -z "$nmr_json" || "$nmr_json" == "null" ]]; then
+			local _nmr_err_msg
+			_nmr_err_msg=$(cat "$nmr_err" 2>/dev/null || echo "unknown error")
+			echo "[pulse-wrapper] prefetch_triage_review_status: gh issue list FAILED for ${slug}: ${_nmr_err_msg}" >>"$LOGFILE"
+			nmr_json="[]"
+		fi
+		rm -f "$nmr_err"
 
 		local nmr_count
 		nmr_count=$(echo "$nmr_json" | jq 'length')
@@ -3161,10 +3187,18 @@ prefetch_needs_info_replies() {
 		[[ -n "$slug" ]] || continue
 
 		# Get status:needs-info issues for this repo
-		local ni_json
+		local ni_json ni_err
+		ni_err=$(mktemp)
 		ni_json=$(gh issue list --repo "$slug" --label "status:needs-info" \
 			--state open --json number,title,author,createdAt,updatedAt \
-			--limit 50 2>/dev/null) || ni_json="[]"
+			--limit 50 2>"$ni_err") || ni_json="[]"
+		if [[ -z "$ni_json" || "$ni_json" == "null" ]]; then
+			local _ni_err_msg
+			_ni_err_msg=$(cat "$ni_err" 2>/dev/null || echo "unknown error")
+			echo "[pulse-wrapper] prefetch_needs_info_replies: gh issue list FAILED for ${slug}: ${_ni_err_msg}" >>"$LOGFILE"
+			ni_json="[]"
+		fi
+		rm -f "$ni_err"
 
 		local ni_count
 		ni_count=$(echo "$ni_json" | jq 'length')
@@ -3266,8 +3300,18 @@ normalize_active_issue_assignments() {
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
 
-		local issue_rows
-		issue_rows=$(gh issue list --repo "$slug" --state open --json number,assignees,labels --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null | jq -r '.[] | select(((.labels | map(.name) | index("status:queued")) or (.labels | map(.name) | index("status:in-progress"))) and ((.assignees | length) == 0)) | .number' 2>/dev/null) || issue_rows=""
+		local issue_rows issue_rows_json issue_rows_err
+		issue_rows_err=$(mktemp)
+		issue_rows_json=$(gh issue list --repo "$slug" --state open --json number,assignees,labels --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>"$issue_rows_err") || issue_rows_json=""
+		if [[ -z "$issue_rows_json" || "$issue_rows_json" == "null" ]]; then
+			local _issue_rows_err_msg
+			_issue_rows_err_msg=$(cat "$issue_rows_err" 2>/dev/null || echo "unknown error")
+			echo "[pulse-wrapper] normalize_active_issue_assignments: gh issue list FAILED for ${slug}: ${_issue_rows_err_msg}" >>"$LOGFILE"
+			rm -f "$issue_rows_err"
+			continue
+		fi
+		rm -f "$issue_rows_err"
+		issue_rows=$(printf '%s' "$issue_rows_json" | jq -r '.[] | select(((.labels | map(.name) | index("status:queued")) or (.labels | map(.name) | index("status:in-progress"))) and ((.assignees | length) == 0)) | .number' 2>/dev/null) || issue_rows=""
 		if [[ -z "$issue_rows" ]]; then
 			continue
 		fi
@@ -4476,9 +4520,16 @@ list_dispatchable_issue_candidates_json() {
 	fi
 	[[ "$limit" =~ ^[0-9]+$ ]] || limit=100
 
-	local issue_json
-
-	issue_json=$(gh issue list --repo "$repo_slug" --state open --json number,title,url,assignees,labels,updatedAt --limit "$limit" 2>/dev/null) || issue_json="[]"
+	local issue_json issue_dispatch_err
+	issue_dispatch_err=$(mktemp)
+	issue_json=$(gh issue list --repo "$repo_slug" --state open --json number,title,url,assignees,labels,updatedAt --limit "$limit" 2>"$issue_dispatch_err") || issue_json="[]"
+	if [[ -z "$issue_json" || "$issue_json" == "null" ]]; then
+		local _issue_dispatch_err_msg
+		_issue_dispatch_err_msg=$(cat "$issue_dispatch_err" 2>/dev/null || echo "unknown error")
+		echo "[pulse-wrapper] list_dispatchable_issue_candidates: gh issue list FAILED for ${repo_slug}: ${_issue_dispatch_err_msg}" >>"$LOGFILE"
+		issue_json="[]"
+	fi
+	rm -f "$issue_dispatch_err"
 
 	printf '%s' "$issue_json" | jq -c '
 		[
@@ -5091,15 +5142,31 @@ _fetch_queue_metrics() {
 	while IFS='|' read -r slug _path; do
 		[[ -n "$slug" ]] || continue
 
-		local pr_json
-		pr_json=$(gh pr list --repo "$slug" --state open --json reviewDecision,statusCheckRollup --limit "$PULSE_RUNNABLE_PR_LIMIT" 2>/dev/null) || pr_json="[]"
+		local pr_json pr_qm_err
+		pr_qm_err=$(mktemp)
+		pr_json=$(gh pr list --repo "$slug" --state open --json reviewDecision,statusCheckRollup --limit "$PULSE_RUNNABLE_PR_LIMIT" 2>"$pr_qm_err") || pr_json="[]"
+		if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
+			local _pr_qm_err_msg
+			_pr_qm_err_msg=$(cat "$pr_qm_err" 2>/dev/null || echo "unknown error")
+			echo "[pulse-wrapper] _fetch_queue_metrics: gh pr list FAILED for ${slug}: ${_pr_qm_err_msg}" >>"$LOGFILE"
+			pr_json="[]"
+		fi
+		rm -f "$pr_qm_err"
 		local repo_pr_total repo_ready repo_failing
 		repo_pr_total=$(echo "$pr_json" | jq 'length' 2>/dev/null) || repo_pr_total=0
 		repo_ready=$(echo "$pr_json" | jq '[.[] | select(.reviewDecision == "APPROVED" and ((.statusCheckRollup // []) | length > 0) and ((.statusCheckRollup // []) | all((.conclusion // .state) == "SUCCESS")))] | length' 2>/dev/null) || repo_ready=0
 		repo_failing=$(echo "$pr_json" | jq '[.[] | select(.reviewDecision == "CHANGES_REQUESTED" or ((.statusCheckRollup // []) | any((.conclusion // .state) == "FAILURE")))] | length' 2>/dev/null) || repo_failing=0
 
-		local issue_json repo_issue_total
-		issue_json=$(gh issue list --repo "$slug" --state open --json number --limit "$PULSE_RUNNABLE_ISSUE_LIMIT" 2>/dev/null) || issue_json="[]"
+		local issue_json repo_issue_total issue_qm_err
+		issue_qm_err=$(mktemp)
+		issue_json=$(gh issue list --repo "$slug" --state open --json number --limit "$PULSE_RUNNABLE_ISSUE_LIMIT" 2>"$issue_qm_err") || issue_json="[]"
+		if [[ -z "$issue_json" || "$issue_json" == "null" ]]; then
+			local _issue_qm_err_msg
+			_issue_qm_err_msg=$(cat "$issue_qm_err" 2>/dev/null || echo "unknown error")
+			echo "[pulse-wrapper] _fetch_queue_metrics: gh issue list FAILED for ${slug}: ${_issue_qm_err_msg}" >>"$LOGFILE"
+			issue_json="[]"
+		fi
+		rm -f "$issue_qm_err"
 		repo_issue_total=$(echo "$issue_json" | jq 'length' 2>/dev/null) || repo_issue_total=0
 
 		[[ "$repo_pr_total" =~ ^[0-9]+$ ]] || repo_pr_total=0
@@ -5338,8 +5405,16 @@ count_runnable_candidates() {
 		issue_count=$(list_dispatchable_issue_candidates "$slug" "$PULSE_RUNNABLE_ISSUE_LIMIT" | wc -l | tr -d ' ') || issue_count=0
 		[[ "$issue_count" =~ ^[0-9]+$ ]] || issue_count=0
 
-		local pr_json
-		pr_json=$(gh pr list --repo "$slug" --state open --json reviewDecision,statusCheckRollup --limit "$PULSE_RUNNABLE_PR_LIMIT" 2>/dev/null) || pr_json="[]"
+		local pr_json pr_rc_err
+		pr_rc_err=$(mktemp)
+		pr_json=$(gh pr list --repo "$slug" --state open --json reviewDecision,statusCheckRollup --limit "$PULSE_RUNNABLE_PR_LIMIT" 2>"$pr_rc_err") || pr_json="[]"
+		if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
+			local _pr_rc_err_msg
+			_pr_rc_err_msg=$(cat "$pr_rc_err" 2>/dev/null || echo "unknown error")
+			echo "[pulse-wrapper] count_runnable_candidates: gh pr list FAILED for ${slug}: ${_pr_rc_err_msg}" >>"$LOGFILE"
+			pr_json="[]"
+		fi
+		rm -f "$pr_rc_err"
 		local pr_count
 		pr_count=$(echo "$pr_json" | jq '[.[] | select(.reviewDecision == "CHANGES_REQUESTED" or ((.statusCheckRollup // []) | any((.conclusion // .state) == "FAILURE")))] | length' 2>/dev/null) || pr_count=0
 		[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
@@ -5371,8 +5446,16 @@ count_queued_without_worker() {
 	local total=0
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
-		local queued_json
-		queued_json=$(gh issue list --repo "$slug" --state open --label "status:queued" --json number,assignees --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || queued_json="[]"
+		local queued_json queued_err
+		queued_err=$(mktemp)
+		queued_json=$(gh issue list --repo "$slug" --state open --label "status:queued" --json number,assignees --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>"$queued_err") || queued_json="[]"
+		if [[ -z "$queued_json" || "$queued_json" == "null" ]]; then
+			local _queued_err_msg
+			_queued_err_msg=$(cat "$queued_err" 2>/dev/null || echo "unknown error")
+			echo "[pulse-wrapper] count_queued_without_worker: gh issue list FAILED for ${slug}: ${_queued_err_msg}" >>"$LOGFILE"
+			queued_json="[]"
+		fi
+		rm -f "$queued_err"
 
 		local queued_count
 		queued_count=$(echo "$queued_json" | jq 'length' 2>/dev/null) || queued_count=0
@@ -5857,10 +5940,18 @@ _merge_ready_prs_for_repo() {
 	local failed=0
 
 	# Fetch open PRs — lightweight call without statusCheckRollup (GH#15060 lesson)
-	local pr_json
+	local pr_json pr_merge_err
+	pr_merge_err=$(mktemp)
 	pr_json=$(gh pr list --repo "$repo_slug" --state open \
 		--json number,mergeable,reviewDecision,author,title \
-		--limit "$PULSE_MERGE_BATCH_LIMIT" 2>/dev/null) || pr_json="[]"
+		--limit "$PULSE_MERGE_BATCH_LIMIT" 2>"$pr_merge_err") || pr_json="[]"
+	if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
+		local _pr_merge_err_msg
+		_pr_merge_err_msg=$(cat "$pr_merge_err" 2>/dev/null || echo "unknown error")
+		echo "[pulse-wrapper] _process_merge_batch: gh pr list FAILED for ${repo_slug}: ${_pr_merge_err_msg}" >>"$LOGFILE"
+		pr_json="[]"
+	fi
+	rm -f "$pr_merge_err"
 
 	local pr_count
 	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
@@ -7070,9 +7161,17 @@ calculate_priority_allocations() {
 	if [[ "$product_repos" -gt 0 && "$DAILY_PR_CAP" -gt 0 ]]; then
 		while IFS= read -r slug; do
 			[[ -n "$slug" ]] || continue
-			local pr_json daily_pr_count
+			local pr_json daily_pr_count pr_alloc_err
 			# GH#4412: use --state all to count merged/closed PRs too
-			pr_json=$(gh pr list --repo "$slug" --state all --json createdAt --limit 200 2>/dev/null) || pr_json="[]"
+			pr_alloc_err=$(mktemp)
+			pr_json=$(gh pr list --repo "$slug" --state all --json createdAt --limit 200 2>"$pr_alloc_err") || pr_json="[]"
+			if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
+				local _pr_alloc_err_msg
+				_pr_alloc_err_msg=$(cat "$pr_alloc_err" 2>/dev/null || echo "unknown error")
+				echo "[pulse-wrapper] calculate_priority_allocations: gh pr list FAILED for ${slug}: ${_pr_alloc_err_msg}" >>"$LOGFILE"
+				pr_json="[]"
+			fi
+			rm -f "$pr_alloc_err"
 			daily_pr_count=$(echo "$pr_json" | jq --arg today "$today_utc" '[.[] | select(.createdAt | startswith($today))] | length' 2>/dev/null) || daily_pr_count=0
 			[[ "$daily_pr_count" =~ ^[0-9]+$ ]] || daily_pr_count=0
 			if [[ "$daily_pr_count" -lt "$DAILY_PR_CAP" ]]; then
