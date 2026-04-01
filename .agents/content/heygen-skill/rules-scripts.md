@@ -7,7 +7,7 @@ metadata:
 
 # Writing Scripts for HeyGen Videos
 
-AI avatar scripts differ from human presenter scripts — pacing, pauses, and pronunciation must be explicit.
+Pacing, pauses, and pronunciation must be explicit — AI avatars don't improvise.
 
 ## Speech Rate and Duration
 
@@ -94,11 +94,9 @@ Head to [location] to learn more. <break time="0.5s"/> We can't wait to hear wha
 
 ## Writing Tips
 
-**Do:** Write conversationally, use contractions, spell out abbreviations ("A-P-I"), end sections clearly.
-
-**Avoid:** Jargon without context, long parentheticals, ambiguous pronunciations, excessive `!`, run-ons, dense info without pauses.
-
-**Pronunciation:** Spell phonetically inline — `"Our API (A-P-I)"`, `"HeyGen (hey-jen)"`, `"I read (red) the docs"`.
+- Write conversationally; use contractions; end sections clearly
+- Spell out abbreviations: `"Our API (A-P-I)"`, `"HeyGen (hey-jen)"`, `"I read (red) the docs"`
+- Avoid: jargon without context, long parentheticals, ambiguous pronunciations, excessive `!`, run-ons, dense info without pauses
 
 ## Multi-Scene Scripts
 
