@@ -260,6 +260,16 @@ _classify_commit_to_category() {
 		clean_msg=$(echo "$commit" | sed 's/^chore([^)]*): //')
 		printf 'changed\t- Maintenance: %s\n' "$clean_msg"
 		;;
+	# Task-ID prefixed commits (e.g., t1741: plan autoresearch, GH#14391: tighten miniflare)
+	# These use the commit description which already serves as the issue title.
+	t[0-9]*:*)
+		clean_msg=$(echo "$commit" | sed 's/^t[0-9][0-9]*[^:]*: //')
+		printf 'changed\t- %s\n' "$clean_msg"
+		;;
+	GH\#[0-9]*:*)
+		clean_msg=$(echo "$commit" | sed 's/^GH#[0-9]*: //')
+		printf 'changed\t- %s\n' "$clean_msg"
+		;;
 	*) ;; # Ignore other commit types
 	esac
 	return 0
@@ -283,6 +293,10 @@ generate_changelog_content() {
 	while IFS= read -r commit; do
 		[[ -z "$commit" ]] && continue
 		[[ "$commit" == chore\(release\):* ]] && continue
+		# Skip task ID claim commits (internal bookkeeping, not user-facing)
+		[[ "$commit" == "chore: claim t"* ]] && continue
+		# Skip bare version bump commits that lack (release) scope
+		[[ "$commit" == "chore: bump version to "* ]] && continue
 
 		local category entry classified
 		classified=$(_classify_commit_to_category "$commit")
