@@ -1143,6 +1143,15 @@ _build_run_cmd() {
 # Args: output_file exit_code_file cmd_args (null-delimited, read from stdin via process sub)
 # Caller passes the cmd array elements as positional args after the two file args.
 # Returns: 0 always (exit code written to exit_code_file).
+#
+# Includes an activity watchdog: if no LLM activity appears in the output
+# file within HEADLESS_ACTIVITY_TIMEOUT_SECONDS (default 90s), the opencode
+# process is killed. This catches rate-limited providers that cause the
+# worker to hang indefinitely waiting for an API response. Without this,
+# stalled workers consume slots permanently and rotation never fires
+# (because the retry logic only runs after the process exits).
+HEADLESS_ACTIVITY_TIMEOUT_SECONDS="${HEADLESS_ACTIVITY_TIMEOUT_SECONDS:-90}"
+
 _invoke_opencode() {
 	local output_file="$1"
 	local exit_code_file="$2"
@@ -1157,11 +1166,6 @@ _invoke_opencode() {
 	(
 		set +e
 		if [[ -x "$SANDBOX_EXEC_HELPER" && "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" != "1" ]]; then
-			# Pass cmd array elements as separate arguments after --.
-			# Previous code used printf -v to build a single escaped string,
-			# which the sandbox received as one argument and passed to env as
-			# a single executable path — causing "No such file or directory".
-			# Bash 3.2 compat: no local -a in subshells, no printf -v tricks.
 			local passthrough_csv
 			passthrough_csv="$(build_sandbox_passthrough_csv)"
 			if [[ -n "$passthrough_csv" ]]; then
@@ -1174,7 +1178,85 @@ _invoke_opencode() {
 			"${cmd[@]}" 2>&1 | tee "$output_file"
 			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
 		fi
-	) || true
+	) &
+	local worker_pid=$!
+
+	# Activity watchdog: monitor the output file for LLM activity.
+	# If no activity appears within the timeout, the provider is likely
+	# rate-limited and the worker will hang indefinitely. Kill it so the
+	# retry loop in cmd_run can rotate to the next provider.
+	_run_activity_watchdog "$output_file" "$worker_pid" "$exit_code_file" &
+	local watchdog_pid=$!
+
+	# Wait for the worker to finish (watchdog will kill it if stalled)
+	wait "$worker_pid" 2>/dev/null || true
+
+	# Clean up the watchdog
+	kill "$watchdog_pid" 2>/dev/null || true
+	wait "$watchdog_pid" 2>/dev/null || true
+
+	return 0
+}
+
+#######################################
+# Activity watchdog for _invoke_opencode.
+#
+# Runs as a background process alongside the worker. Polls the output
+# file for LLM activity indicators (JSON events from opencode: text,
+# tool, reasoning, step-start). If none appear within the timeout,
+# kills the worker process.
+#
+# The initial output always contains the sandbox startup line (~300 bytes).
+# This is NOT activity — it's just the executor logging. Real activity
+# starts when the LLM responds with structured JSON events.
+#
+# Args:
+#   $1 - output file path
+#   $2 - worker PID to kill on timeout
+#   $3 - exit code file (written with 124 on timeout)
+#######################################
+_run_activity_watchdog() {
+	local output_file="$1"
+	local worker_pid="$2"
+	local exit_code_file="$3"
+	local timeout="${HEADLESS_ACTIVITY_TIMEOUT_SECONDS:-90}"
+	[[ "$timeout" =~ ^[0-9]+$ ]] || timeout=90
+
+	local elapsed=0
+	local poll_interval=5
+
+	while [[ "$elapsed" -lt "$timeout" ]]; do
+		# Check if worker already exited (success or failure — watchdog not needed)
+		if ! kill -0 "$worker_pid" 2>/dev/null; then
+			return 0
+		fi
+
+		# Check for LLM activity in the output file
+		# Activity indicators: JSON events from opencode (text, tool, reasoning, etc.)
+		if [[ -f "$output_file" ]]; then
+			# output_has_activity is defined earlier — checks for JSON events
+			# But we can't call it from a background process easily.
+			# Instead, check for common activity markers directly.
+			if grep -qE '"type"\s*:\s*"(text|tool|tool-invocation|tool-result|step-start|reasoning)"' "$output_file" 2>/dev/null; then
+				# Real LLM activity detected — worker is alive
+				return 0
+			fi
+		fi
+
+		sleep "$poll_interval"
+		elapsed=$((elapsed + poll_interval))
+	done
+
+	# Timeout reached with no activity — kill the stalled worker
+	if kill -0 "$worker_pid" 2>/dev/null; then
+		print_warning "Activity watchdog: no LLM activity in ${timeout}s — killing stalled worker (PID $worker_pid)"
+		kill "$worker_pid" 2>/dev/null || true
+		# Give it a moment then force-kill
+		sleep 2
+		kill -9 "$worker_pid" 2>/dev/null || true
+		# Write timeout exit code so _handle_run_result classifies correctly
+		printf '124' >"$exit_code_file"
+	fi
 	return 0
 }
 
@@ -1213,7 +1295,17 @@ _handle_run_result() {
 	fi
 
 	local failure_reason
-	failure_reason=$(classify_failure_reason "$output_file")
+	# Exit code 124 = activity watchdog timeout. The worker produced no LLM
+	# activity, which almost always means the provider is rate-limited or
+	# unreachable. Classify as rate_limit to trigger pool rotation — the
+	# output file won't contain explicit rate limit text since the API never
+	# responded at all.
+	if [[ "$exit_code" -eq 124 ]]; then
+		failure_reason="rate_limit"
+		print_warning "$selected_model activity watchdog timeout — classifying as rate_limit for rotation"
+	else
+		failure_reason=$(classify_failure_reason "$output_file")
+	fi
 	_run_result_label="$failure_reason"
 
 	if attempt_pool_recovery "$provider" "$failure_reason" "$output_file"; then

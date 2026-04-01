@@ -6266,6 +6266,7 @@ _run_preflight_stages() {
 
 	run_stage_with_timeout "cleanup_orphans" "$PRE_RUN_STAGE_TIMEOUT" cleanup_orphans || true
 	run_stage_with_timeout "cleanup_stale_opencode" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stale_opencode || true
+	run_stage_with_timeout "cleanup_stalled_workers" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stalled_workers || true
 	run_stage_with_timeout "cleanup_worktrees" "$PRE_RUN_STAGE_TIMEOUT" cleanup_worktrees || true
 	run_stage_with_timeout "cleanup_stashes" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stashes || true
 
@@ -6556,7 +6557,125 @@ main() {
 # These are completed headless sessions where opencode entered idle
 # state with a file watcher and never exited.
 #######################################
+
+#######################################
+# Kill workers stalled on rate-limited providers.
+#
+# When a provider hits its rate limit, already-running workers don't exit —
+# they hang indefinitely waiting for the API to respond. The retry/rotation
+# logic in headless-runtime-helper.sh only runs AFTER the process exits,
+# creating a deadlock: worker waits for API → API is rate-limited → worker
+# never exits → rotation never fires → slot wasted permanently.
+#
+# Observed in production: 20 of 24 worker slots consumed by stalled openai
+# workers with 306 bytes of output (just the sandbox startup line, zero LLM
+# activity) for 20-30 minutes. 0% CPU, 0 commits, 0 PRs.
+#
+# Detection: a worker running >STALLED_WORKER_MIN_AGE seconds with a log
+# file ≤STALLED_WORKER_MAX_LOG_BYTES is stalled. The log file only contains
+# the sandbox startup line when the LLM never responded.
+#
+# Action: kill the stalled worker, record provider backoff so the next
+# dispatch rotates to a working provider, and log the kill for audit.
+#######################################
+STALLED_WORKER_MIN_AGE="${STALLED_WORKER_MIN_AGE:-300}"             # 5 minutes
+STALLED_WORKER_MAX_LOG_BYTES="${STALLED_WORKER_MAX_LOG_BYTES:-500}" # just the startup line
+
+cleanup_stalled_workers() {
+	local killed=0
+	local freed_mb=0
+
+	while IFS= read -r line; do
+		local pid etime cpu rss cmd
+		read -r pid etime cpu rss cmd <<<"$line"
+
+		# Only check headless workers (no TTY, full-loop in command)
+		case "$cmd" in
+		*"/full-loop"*) ;;
+		*) continue ;;
+		esac
+
+		# Check process age
+		local age_seconds
+		age_seconds=$(_get_process_age "$pid")
+		if [[ "$age_seconds" -lt "$STALLED_WORKER_MIN_AGE" ]]; then
+			continue
+		fi
+
+		# Extract issue number and find log file
+		local issue_num
+		issue_num=$(echo "$cmd" | grep -oE 'issue #[0-9]+' | grep -oE '[0-9]+' | head -1)
+		[[ -n "$issue_num" ]] || continue
+
+		local safe_slug log_file log_size
+		# Check all pulse-enabled repos for matching log
+		local found_log=""
+		for safe_slug in $(jq -r '.initialized_repos[] | select(.pulse == true) | .slug' "$REPOS_JSON" 2>/dev/null | tr '/:' '--'); do
+			log_file="/tmp/pulse-${safe_slug}-${issue_num}.log"
+			if [[ -f "$log_file" ]]; then
+				found_log="$log_file"
+				break
+			fi
+		done
+		# Fallback log path
+		if [[ -z "$found_log" ]]; then
+			log_file="/tmp/pulse-${issue_num}.log"
+			[[ -f "$log_file" ]] && found_log="$log_file"
+		fi
+
+		if [[ -z "$found_log" ]]; then
+			continue
+		fi
+
+		# Check log size — stalled workers have ≤500 bytes (just sandbox startup)
+		log_size=$(wc -c <"$found_log" 2>/dev/null || echo "0")
+		log_size=$(echo "$log_size" | tr -d ' ')
+		[[ "$log_size" =~ ^[0-9]+$ ]] || log_size=0
+
+		if [[ "$log_size" -gt "$STALLED_WORKER_MAX_LOG_BYTES" ]]; then
+			# Worker has produced real output — it's working, not stalled
+			continue
+		fi
+
+		# Extract model from the command line for backoff recording
+		local worker_model
+		worker_model=$(echo "$cmd" | grep -oE '\-m [^ ]+' | head -1 | sed 's/-m //')
+
+		# Kill the stalled worker
+		[[ "$rss" =~ ^[0-9]+$ ]] || rss=0
+		local mb=$((rss / 1024))
+		kill "$pid" 2>/dev/null || true
+		killed=$((killed + 1))
+		freed_mb=$((freed_mb + mb))
+
+		# Record provider backoff so next dispatch rotates away
+		if [[ -n "$worker_model" ]]; then
+			local provider
+			provider=$(echo "$worker_model" | cut -d/ -f1)
+			local tmp_backoff
+			tmp_backoff=$(mktemp)
+			printf 'Worker stalled: PID %s, issue #%s, model %s, age %ss, log %s bytes\n' \
+				"$pid" "$issue_num" "$worker_model" "$age_seconds" "$log_size" >"$tmp_backoff"
+
+			# Use the headless runtime helper to record backoff properly
+			if [[ -x "${SCRIPT_DIR}/headless-runtime-helper.sh" ]]; then
+				"${SCRIPT_DIR}/headless-runtime-helper.sh" backoff set "$worker_model" "rate_limit" 900 2>/dev/null || true
+			fi
+			rm -f "$tmp_backoff"
+		fi
+
+		echo "[pulse-wrapper] Killed stalled worker PID $pid (issue #${issue_num}, model=${worker_model:-unknown}, age=${age_seconds}s, log=${log_size}B) — provider likely rate-limited" >>"$LOGFILE"
+
+	done < <(ps axo pid,etime,%cpu,rss,command | grep '[.]opencode run' | grep -v grep)
+
+	if [[ "$killed" -gt 0 ]]; then
+		echo "[pulse-wrapper] cleanup_stalled_workers: killed ${killed} stalled workers (freed ~${freed_mb}MB)" >>"$LOGFILE"
+	fi
+	return 0
+}
+
 cleanup_orphans() {
+
 	local killed=0
 	local total_mb=0
 
