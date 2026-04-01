@@ -1,6 +1,6 @@
 # Workers Patterns
 
-Common patterns for Cloudflare Workers. For basics and handler signatures, see [workers.md](./workers.md).
+For basics and handler signatures, see [workers.md](./workers.md).
 
 ## Error Handling
 
@@ -130,10 +130,6 @@ const auth = request.headers.get('Authorization');
 if (!auth?.startsWith('Bearer ')) return new Response('Unauthorized', { status: 401 });
 ```
 
-## Rate Limiting
-
-See [Durable Objects patterns](./durable-objects-patterns.md) for stateful rate-limiting.
-
 ## Gradual Rollouts
 
 ```typescript
@@ -146,3 +142,4 @@ if (bucket < rolloutPercent) return newFeature(request);
 ## See Also
 
 - [Gotchas](./workers-gotchas.md) — common issues and limits
+- [Durable Objects patterns](./durable-objects-patterns.md) — stateful rate-limiting
