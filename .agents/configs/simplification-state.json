@@ -3385,6 +3385,11 @@
       "hash": "134632d988b4e18e35f9e3c90106391f8461c114",
       "at": "2026-04-01T21:56:13Z",
       "pr": null
+    },
+    ".agents/marketing-sales/cro-chapter-11.md": {
+      "hash": "be3bf907be217b866da1d7990427e4fc1c925971",
+      "at": "2026-04-01T22:00:00Z",
+      "pr": 14514
     }
   }
 }
