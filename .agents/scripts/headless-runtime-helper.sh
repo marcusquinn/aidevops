@@ -485,6 +485,20 @@ attempt_pool_recovery() {
 	local reason="$2"
 	local details_file="$3"
 
+	# CRITICAL SAFETY GUARD: oauth-pool-helper.sh rotate OVERWRITES the shared
+	# auth file (~/.local/share/opencode/auth.json) which is used by BOTH
+	# interactive sessions AND headless workers. When a headless worker triggers
+	# rotation, it kills the user's interactive session by swapping the token
+	# out from under it. The user must then Esc+Esc, manually rotate in a
+	# terminal, and type "continue" to recover.
+	#
+	# Fix: headless workers NEVER call pool rotation. They only record the
+	# backoff so the pre-dispatch check skips the dead provider on the next
+	# cycle. Token rotation is an INTERACTIVE-ONLY operation — the user
+	# decides when to switch accounts.
+	#
+	# The mark-failure call below is safe (only updates the pool JSON metadata,
+	# does not touch auth.json). The rotate call is the dangerous one.
 	case "$provider" in
 	anthropic | openai | cursor | google) ;;
 	*)
@@ -511,12 +525,13 @@ attempt_pool_recovery() {
 		esac
 	fi
 
+	# Safe: mark the account as failed in pool metadata (no auth file mutation)
 	"$OAUTH_POOL_HELPER" mark-failure "$provider" "$reason" "$retry_seconds" >/dev/null 2>&1 || true
-	if "$OAUTH_POOL_HELPER" rotate "$provider" >/dev/null 2>&1; then
-		print_warning "${provider} ${reason} detected; cooled down active account and rotated to alternate"
-		return 0
-	fi
 
+	# DANGEROUS: rotate rewrites the shared auth.json — SKIP for headless workers.
+	# Only record backoff so the pre-dispatch check routes to the other provider.
+	# Interactive sessions handle rotation explicitly via `oauth-pool-helper.sh rotate`.
+	print_warning "${provider} ${reason} detected; recorded backoff (rotation skipped — interactive-only)"
 	return 1
 }
 
