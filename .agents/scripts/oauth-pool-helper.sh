@@ -29,10 +29,25 @@ POOL_FILE="${HOME}/.aidevops/oauth-pool.json"
 OPENCODE_AUTH_FILE="${HOME}/.local/share/opencode/auth.json"
 
 # Anthropic OAuth
+# Alignment notes (vs Claude CLI codebase, for troubleshooting):
+#   CLIENT_ID        — identical to Claude CLI (public, same for all clients)
+#   TOKEN_ENDPOINT   — identical to Claude CLI prod config
+#   AUTHORIZE_URL    — we hit claude.ai directly; Claude CLI now routes through
+#                      https://claude.com/cai/oauth/authorize for attribution,
+#                      which 307-redirects to claude.ai. Ours is the final dest.
+#                      FALLBACK: if authorize breaks, try the claude.com route.
+#   REDIRECT_URI     — we use console.anthropic.com; Claude CLI switched to
+#                      platform.claude.com (the new Console domain). Both are
+#                      currently registered redirect URIs. If Anthropic
+#                      deregisters the old domain, switch to the new one below.
+#                      FALLBACK: "https://platform.claude.com/oauth/code/callback"
+#   SCOPES           — identical to Claude CLI's ALL_OAUTH_SCOPES union
 ANTHROPIC_CLIENT_ID="9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 ANTHROPIC_TOKEN_ENDPOINT="https://platform.claude.com/v1/oauth/token"
 ANTHROPIC_AUTHORIZE_URL="https://claude.ai/oauth/authorize"
+# FALLBACK_AUTHORIZE_URL="https://claude.com/cai/oauth/authorize"
 ANTHROPIC_REDIRECT_URI="https://console.anthropic.com/oauth/code/callback"
+# FALLBACK_REDIRECT_URI="https://platform.claude.com/oauth/code/callback"
 ANTHROPIC_SCOPES="org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
 
 # OpenAI OAuth
@@ -54,6 +69,11 @@ GOOGLE_SCOPES="https://www.googleapis.com/auth/generative-language https://www.g
 GOOGLE_HEALTH_CHECK_URL="https://generativelanguage.googleapis.com/v1beta/models?pageSize=1"
 
 # User-Agent (detect Claude CLI version)
+# Note: Claude CLI itself uses axios defaults (no custom UA) for token exchange
+# and refresh requests. We set an explicit UA to appear as a Claude CLI client.
+# The "(external, cli)" suffix is our addition — not sent by the real CLI.
+# FALLBACK: if UA filtering ever causes issues, try removing the suffix or
+# switching to an axios-style UA like "axios/1.7.9".
 CLAUDE_VERSION="2.1.80"
 if command -v claude &>/dev/null; then
 	local_ver=$(claude --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
@@ -297,6 +317,13 @@ _oauth_exchange_code() {
 
 # Extract access_token, refresh_token, expires_in from a JSON token response (stdin).
 # Prints three lines: access_token, refresh_token, expires_in.
+# Alignment note: Claude CLI's token response also contains 'scope' (space-delimited
+# string) and optionally 'account' (object with uuid, email_address) and
+# 'organization' (object with uuid). We ignore these — pool doesn't need them.
+# DIAGNOSTIC: if debugging, parse the full response to inspect granted scopes:
+#   d.get('scope', '').split()     — should include user:inference
+#   d.get('account', {})           — account uuid + email
+#   d.get('organization', {})      — org uuid (for team/enterprise)
 _extract_token_fields() {
 	python3 -c "
 import sys, json
@@ -354,7 +381,14 @@ _add_build_authorize_url() {
 	fi
 	full_url="${full_url}?client_id=${client_id}&response_type=code&redirect_uri=${encoded_redirect}&scope=${encoded_scopes}&code_challenge=${challenge}&code_challenge_method=S256&state=${state_nonce}"
 	if [[ "$provider" == "anthropic" ]]; then
+		# Alignment: &code=true matches Claude CLI — tells the login page to show
+		# the Claude Max upsell. Required for parity with the official client.
 		full_url="${full_url}&code=true"
+		# Claude CLI also supports these optional params (we don't send them):
+		#   &orgUUID=...      — pre-select org for team/enterprise logins
+		#   &login_hint=...   — pre-populate email (standard OIDC parameter)
+		#   &login_method=... — request specific login method (sso, magic_link, google)
+		# FALLBACK: if org-scoped auth is needed, add &orgUUID= to the URL.
 	fi
 	printf '%s' "$full_url"
 	return 0
@@ -521,6 +555,10 @@ _add_build_token_body() {
 		# Build JSON via Python to safely encode the auth code.
 		# The 'state' field is required by Anthropic's token endpoint as of
 		# Claude CLI v2.1.x — omitting it causes HTTP 400 "Invalid request format".
+		# Alignment: body fields match Claude CLI's exchangeCodeForTokens() exactly:
+		#   grant_type, code, redirect_uri, client_id, code_verifier, state
+		# Claude CLI also supports an optional 'expires_in' field for custom token
+		# lifetimes — we don't send it (server default is fine for pool rotation).
 		CODE="$code" CLIENT_ID="$client_id" REDIR="$redirect_uri" \
 			VERIFIER="$verifier" STATE="$state_nonce" python3 -c "
 import json, os
@@ -624,6 +662,16 @@ _cmd_add_exchange_and_save() {
 		print_error "No access token in response"
 		return 1
 	fi
+
+	# Alignment note: after token exchange, Claude CLI fetches the user profile
+	# via GET https://api.anthropic.com/api/oauth/profile (Bearer token auth) to
+	# determine subscription type (pro/max/team/enterprise) and rate limit tier.
+	# We skip this — pool rotation doesn't need subscription info. But if
+	# debugging auth issues, this endpoint is useful for verifying the token
+	# grants the expected access level.
+	# DIAGNOSTIC: curl -s -H "Authorization: Bearer $access_token" \
+	#   -H "Content-Type: application/json" \
+	#   https://api.anthropic.com/api/oauth/profile
 
 	local now_ms expires_ms now_iso
 	now_ms=$(get_now_ms)
@@ -1115,6 +1163,10 @@ def _check_token_validity(a, prov, expires_in, ua):
                 req.add_header('Authorization', f'Bearer {token}')
                 req.add_header('User-Agent', ua)
                 req.add_header('anthropic-version', '2023-06-01')
+                # Claude CLI sends this beta header on profile/API requests.
+                # We include it on health checks for parity. If this endpoint
+                # ever rejects the header, remove it — it is not required for
+                # the /v1/models listing, only for OAuth-specific endpoints.
                 req.add_header('anthropic-beta', 'oauth-2025-04-20')
                 urlopen(req, timeout=10)
                 print(f\"    Validity: OK\")
@@ -1436,6 +1488,12 @@ def _try_refresh(account, provider, now_ms):
     client_id = CLIENT_IDS.get(provider, '')
     if not (refresh_tok and token_url and client_id):
         return
+    # Alignment note: Claude CLI sends 'scope' on refresh requests (the full
+    # CLAUDE_AI_OAUTH_SCOPES set). The backend allows scope expansion beyond
+    # what the initial authorize granted. We omit it — the server returns the
+    # originally granted scopes, which is sufficient for our use.
+    # FALLBACK: if refresh starts returning fewer scopes than expected, add:
+    #   'scope': 'user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload'
     body = json.dumps({
         'grant_type': 'refresh_token',
         'refresh_token': refresh_tok,
@@ -1736,6 +1794,8 @@ try:
         if expires and expires > now_ms + 3600000:
             continue
 
+        # Alignment: Claude CLI sends 'scope' on refresh (see _try_refresh note).
+        # FALLBACK: add 'scope' key if refresh returns insufficient scopes.
         body = json.dumps({
             'grant_type': 'refresh_token',
             'refresh_token': refresh_tok,
