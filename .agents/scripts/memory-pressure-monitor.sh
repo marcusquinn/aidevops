@@ -181,15 +181,13 @@ notify() {
 	fi
 
 	# terminal-notifier (preferred — clickable, persistent)
+	# Sound disabled — visual popup only. Was causing repeated system beeps
+	# every 5 min (cooldown interval) when thresholds were breached.
+	# To re-enable: add -sound "${sound}" back to the terminal-notifier call.
 	if command -v terminal-notifier &>/dev/null; then
-		local sound="default"
-		if [[ "${urgency}" == "critical" ]]; then
-			sound="Sosumi"
-		fi
 		terminal-notifier \
 			-title "${title}" \
 			-message "${message}" \
-			-sound "${sound}" \
 			-group "${SCRIPT_NAME}" \
 			-sender "com.apple.ActivityMonitor" 2>/dev/null || true
 		return 0
