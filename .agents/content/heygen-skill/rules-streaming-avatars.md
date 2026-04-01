@@ -17,7 +17,7 @@ Real-time interactive avatar via WebRTC. Use for live customer service, virtual 
 |-------|------|:---:|-------------|
 | `avatar_id` | string | ✓ | Avatar to use |
 | `voice_id` | string | ✓ | Voice for TTS |
-| `quality` | string | | `"low"` / `"medium"` / `"high"` |
+| `quality` | string | | `"low"` (480p ~500kbps) / `"medium"` (720p ~1Mbps) / `"high"` (1080p ~2Mbps) |
 | `video_encoding` | string | | `"H264"` / `"VP8"` |
 
 **Response:** `{ session_id, access_token, url, ice_servers[] }`
@@ -38,14 +38,6 @@ const res = await fetch("https://api.heygen.com/v1/streaming.new", {
 const { data } = await res.json(); // { session_id, access_token, url, ice_servers }
 ```
 
-## Quality Options
-
-| Quality | Resolution | Bandwidth |
-|---------|------------|-----------|
-| `low` | 480p | ~500kbps |
-| `medium` | 720p | ~1Mbps |
-| `high` | 1080p | ~2Mbps |
-
 ## Send Text (Avatar Speaks)
 
 `POST https://api.heygen.com/v1/streaming.task`
@@ -64,17 +56,13 @@ curl -X POST "https://api.heygen.com/v1/streaming.task" \
   -d '{"session_id": "your_session_id", "text": "Hello!", "task_type": "talk"}'
 ```
 
-## Stop Session
+## Session Management
 
-`POST https://api.heygen.com/v1/streaming.stop` — body: `{ session_id }`
-
-## Interrupt Speech
-
-`POST https://api.heygen.com/v1/streaming.interrupt` — body: `{ session_id }` — then send new text task.
-
-## List Active Sessions
-
-`GET https://api.heygen.com/v1/streaming.list` — returns `{ data: { sessions: string[] } }`
+| Action | Endpoint | Body |
+|--------|----------|------|
+| Stop | `POST https://api.heygen.com/v1/streaming.stop` | `{ session_id }` |
+| Interrupt speech | `POST https://api.heygen.com/v1/streaming.interrupt` | `{ session_id }` — then send new task |
+| List active | `GET https://api.heygen.com/v1/streaming.list` | — returns `{ data: { sessions: string[] } }` |
 
 ## WebRTC Integration Pattern
 
@@ -88,10 +76,9 @@ await pc.setLocalDescription(offer);
 // Exchange SDP with server via signaling, then attach stream to <video>
 ```
 
-Keep-alive: send a ping task every 30s to prevent session timeout.
-
 ## Best Practices
 
+- Send a ping task every 30s to prevent session timeout
 - Implement reconnection logic for disconnections
 - Adjust `quality` based on available bandwidth
 - Close unused sessions promptly — credits consumed per session-second
