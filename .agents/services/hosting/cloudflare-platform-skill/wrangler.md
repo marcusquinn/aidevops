@@ -5,12 +5,9 @@ Primary CLI for Cloudflare Workers: scaffold projects, run local/remote dev, man
 ## Install
 
 ```bash
-npm install -D wrangler
-# or globally
-npm install -g wrangler
+npm install -D wrangler   # dev dependency (npx wrangler <cmd>)
+npm install -g wrangler   # global
 ```
-
-Run with `npx wrangler <command>` (or your package manager's wrapper).
 
 ## Core Commands
 
@@ -56,7 +53,7 @@ wrangler r2 object put BUCKET/key --file path
 wrangler r2 object get BUCKET/key
 ```
 
-### Other Platform Resources
+### Other
 
 ```bash
 wrangler queues create NAME
