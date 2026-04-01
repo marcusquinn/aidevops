@@ -1,6 +1,8 @@
 # Hyperdrive
 
-Connect Workers to PostgreSQL or MySQL with edge connection setup, pooled origin connections, and optional caching for non-mutating queries. It removes ~7 TCP/TLS/auth round-trips per connection. Compatible with CockroachDB, Timescale, PlanetScale, Neon, and Supabase.
+Connect Workers to PostgreSQL or MySQL with edge connection setup, pooled origin connections, and optional caching for non-mutating queries. Removes ~7 TCP/TLS/auth round-trips per connection.
+
+Compatible with CockroachDB, Timescale, PlanetScale, Neon, and Supabase.
 
 ## Best Fit
 
