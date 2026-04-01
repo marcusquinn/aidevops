@@ -30,8 +30,6 @@ tools:
 
 ## Service Guide Categories
 
-Discover guides with `git ls-files '.agents/*.md'`. Common categories:
-
 | Category | Guides |
 |----------|--------|
 | Infrastructure & Hosting | hostinger.md, hetzner.md, closte.md, cloudron.md |
@@ -44,8 +42,6 @@ Discover guides with `git ls-files '.agents/*.md'`. Common categories:
 
 ## Standard Guide Structure
 
-Default sections:
-
 - `# [Service Name] Guide`
 - `## Provider Overview` — service type, strengths, API support, use cases
 - `## Configuration`
@@ -57,37 +53,28 @@ Default sections:
 
 ## Documentation Standards
 
-- **Content**: Cover core features, working examples, security concerns, troubleshooting, and AI integration patterns.
-- **Writing**: Use clear technical language, consistent formatting, syntax-highlighted code, and cross-references.
-- **Technical**: Keep commands accurate, examples sanitized, API details current, and version notes explicit when they matter.
+- Cover core features, working examples, security concerns, troubleshooting, and AI integration patterns
+- Clear technical language, consistent formatting, syntax-highlighted code, cross-references
+- Keep commands accurate, examples sanitized, API details current; version notes when they matter
 
 ## Maintenance
 
-- Update on service API changes, new features, security advisories
-- Verify all commands and examples work
-- Keep structure consistent across guides
-- Evolve best practices from experience
+- Update on API changes, new features, security advisories
+- Verify commands and examples work; keep structure consistent across guides
 
 ## Cross-Service Workflows
 
-Common integration patterns:
+**Domain → DNS → Hosting:** Domain purchasing (Spaceship/101domains) → DNS (Cloudflare/Route53) → Hosting (Hetzner/Hostinger)
 
-**Domain → DNS → Hosting:**
-- Domain purchasing (Spaceship/101domains) -> DNS (Cloudflare/Route53) -> Hosting (Hetzner/Hostinger)
+**Development → Quality → Deployment:** Git platforms (GitHub/GitLab) → Code auditing (CodeRabbit/SonarCloud) → Deployment (Coolify/hosting)
 
-**Development → Quality → Deployment:**
-- Git platforms (GitHub/GitLab) -> Code auditing (CodeRabbit/SonarCloud) -> Deployment (Coolify/hosting)
-
-**Security → Credentials → Monitoring:**
-- Vaultwarden (credentials) -> Email monitoring (SES) -> Security auditing
-
-Include integration examples, dependency notes, and combined workflows where services are commonly used together.
+**Security → Credentials → Monitoring:** Vaultwarden (credentials) → Email monitoring (SES) → Security auditing
 
 ## Navigation
 
-- Service-specific guidance: `.agents/[service-name].md`
+- Service-specific: `.agents/[service-name].md`
 - Framework context: `.agents/AGENTS.md`
 - Provider selection: `.agents/recommendations-opinionated.md`
 - Setup procedures: `.agents/[service]-setup.md`
 
-**Navigation priority**: service guide → framework context → best-practices guide → setup guide → Context7 MCP for latest external docs.
+**Priority**: service guide → framework context → best-practices guide → setup guide → Context7 MCP for latest external docs.
