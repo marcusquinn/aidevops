@@ -794,6 +794,7 @@ _setup_run_non_interactive() {
 	wait "$_pid_scan" 2>/dev/null || print_warning "Skill security scan encountered issues (non-critical)"
 
 	inject_agents_reference
+	deploy_agents_to_runtimes
 	update_opencode_config
 	update_claude_config
 	update_codex_config
@@ -866,6 +867,7 @@ _setup_run_interactive() {
 	confirm_step "Check for skill updates from upstream" && check_skill_updates
 	confirm_step "Security scan imported skills" && scan_imported_skills
 	confirm_step "Inject agents reference into AI configs" && inject_agents_reference
+	confirm_step "Deploy aidevops agents to runtime agent directories" && deploy_agents_to_runtimes
 	confirm_step "Setup Python environment (DSPy, crawl4ai)" && setup_python_env
 	confirm_step "Setup Node.js environment" && setup_nodejs_env
 	confirm_step "Install MCP packages globally (fast startup)" && install_mcp_packages

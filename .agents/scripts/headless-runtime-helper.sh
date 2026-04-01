@@ -1019,6 +1019,11 @@ _parse_run_args() {
 			agent_name="${2:-}"
 			shift 2
 			;;
+		--runtime)
+			# Explicit runtime override: "opencode" (default), "claude", etc.
+			headless_runtime="${2:-}"
+			shift 2
+			;;
 		--opencode-arg)
 			extra_args+=("${2:-}")
 			shift 2
@@ -1178,6 +1183,80 @@ _invoke_opencode() {
 	return 0
 }
 
+# _build_claude_cmd: build the claude CLI headless command as null-delimited tokens.
+# Used when --runtime claude is explicitly specified. OpenCode remains the default.
+# Args: selected_model work_dir prompt title agent_name [extra_args...]
+_build_claude_cmd() {
+	local selected_model="$1"
+	local work_dir="$2"
+	local prompt="$3"
+	local title="$4"
+	local agent_name="$5"
+	shift 5
+
+	# claude -p runs headless and prints output. --output-format stream-json
+	# gives structured output compatible with our result parsing.
+	printf '%s\0' "claude" "-p" "$prompt" "--output-format" "stream-json" "--verbose"
+	if [[ -n "$work_dir" ]]; then
+		printf '%s\0' "--directory" "$work_dir"
+	fi
+	if [[ -n "$agent_name" ]]; then
+		printf '%s\0' "--agent" "$agent_name"
+	elif type -P claude >/dev/null 2>&1; then
+		# Default to build-plus agent when none specified, if it exists in
+		# the agent directory. This gives headless Claude sessions the same
+		# aidevops agent behaviour as interactive sessions.
+		local claude_agent_dir="$HOME/.claude/agents"
+		if [[ -f "$claude_agent_dir/build-plus.md" ]]; then
+			printf '%s\0' "--agent" "build-plus"
+		fi
+	fi
+	# Model override: claude CLI uses --model flag
+	if [[ -n "$selected_model" ]]; then
+		# Strip provider prefix (anthropic/) — claude CLI doesn't need it
+		local claude_model="${selected_model#*/}"
+		printf '%s\0' "--model" "$claude_model"
+	fi
+	# Max turns for safety
+	printf '%s\0' "--max-turns" "50"
+	# Permission mode: allow all tools in headless
+	printf '%s\0' "--permission-mode" "bypassPermissions"
+	# Emit any extra args
+	while [[ $# -gt 0 ]]; do
+		printf '%s\0' "$1"
+		shift
+	done
+	return 0
+}
+
+# _invoke_claude: run the claude CLI command and capture output.
+# Same interface as _invoke_opencode for interchangeability.
+# Args: output_file exit_code_file cmd_args...
+_invoke_claude() {
+	local output_file="$1"
+	local exit_code_file="$2"
+	shift 2
+	local -a cmd=("$@")
+
+	(
+		set +e
+		if [[ -x "$SANDBOX_EXEC_HELPER" && "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" != "1" ]]; then
+			local passthrough_csv
+			passthrough_csv="$(build_sandbox_passthrough_csv)"
+			if [[ -n "$passthrough_csv" ]]; then
+				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --passthrough "$passthrough_csv" -- "${cmd[@]}" 2>&1 | tee "$output_file"
+			else
+				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io -- "${cmd[@]}" 2>&1 | tee "$output_file"
+			fi
+			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
+		else
+			"${cmd[@]}" 2>&1 | tee "$output_file"
+			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
+		fi
+	) || true
+	return 0
+}
+
 # _handle_run_result: process output_file after opencode exits.
 # Args: exit_code output_file role provider session_key selected_model
 # Sets caller variable _run_failure_reason on failure.
@@ -1230,9 +1309,11 @@ _handle_run_result() {
 	return "$exit_code"
 }
 
-# _execute_run_attempt: run one opencode invocation and handle the result.
+# _execute_run_attempt: run one headless invocation and handle the result.
+# Dispatches to OpenCode (default) or Claude CLI (when --runtime claude specified).
 # Args: role session_key work_dir title prompt selected_model agent_name model_override
 #       extra_args (array passed as remaining positional args after the named ones)
+# Reads caller variable headless_runtime (set by _parse_run_args --runtime flag).
 # Prints the discovered session ID to stdout on success (may be empty).
 # Returns: 0 success, 75 no-activity backoff, non-zero on failure.
 # Sets caller variable _run_failure_reason on failure.
@@ -1248,12 +1329,15 @@ _execute_run_attempt() {
 	shift 8
 	local -a extra_args=("$@")
 
+	# Determine which runtime to use. Default is opencode unless explicitly overridden.
+	local runtime="${headless_runtime:-opencode}"
+
 	local provider persisted_session=""
 	provider=$(extract_provider "$selected_model")
 	if [[ "$role" == "pulse" ]]; then
 		# Pulse runs must start from the current pre-fetched state each cycle.
-		# Reusing a prior OpenCode session contaminates later /pulse runs with
-		# stale conversational context, which leads to idle watchdog kills and an
+		# Reusing a prior session contaminates later /pulse runs with stale
+		# conversational context, which leads to idle watchdog kills and an
 		# empty worker pool. Workers still keep session reuse.
 		clear_session_id "$provider" "$session_key"
 	else
@@ -1261,10 +1345,24 @@ _execute_run_attempt() {
 	fi
 
 	local -a cmd=()
-	while IFS= read -r -d '' arg; do
-		cmd+=("$arg")
-	done < <(_build_run_cmd "$selected_model" "$work_dir" "$prompt" "$title" \
-		"$agent_name" "$persisted_session" "${extra_args[@]+"${extra_args[@]}"}")
+	case "$runtime" in
+	claude)
+		if ! type -P claude >/dev/null 2>&1; then
+			print_error "Claude CLI not found in PATH (requested via --runtime claude)"
+			return 1
+		fi
+		while IFS= read -r -d '' arg; do
+			cmd+=("$arg")
+		done < <(_build_claude_cmd "$selected_model" "$work_dir" "$prompt" "$title" \
+			"$agent_name" "${extra_args[@]+"${extra_args[@]}"}")
+		;;
+	opencode | *)
+		while IFS= read -r -d '' arg; do
+			cmd+=("$arg")
+		done < <(_build_run_cmd "$selected_model" "$work_dir" "$prompt" "$title" \
+			"$agent_name" "$persisted_session" "${extra_args[@]+"${extra_args[@]}"}")
+		;;
+	esac
 
 	local output_file exit_code_file exit_code
 	local start_ms end_ms duration_ms
@@ -1273,7 +1371,10 @@ _execute_run_attempt() {
 	exit_code_file=$(mktemp)
 	exit_code=0
 
-	_invoke_opencode "$output_file" "$exit_code_file" "${cmd[@]}"
+	case "$runtime" in
+	claude) _invoke_claude "$output_file" "$exit_code_file" "${cmd[@]}" ;;
+	*) _invoke_opencode "$output_file" "$exit_code_file" "${cmd[@]}" ;;
+	esac
 	exit_code=$(cat "$exit_code_file" 2>/dev/null) || exit_code=1
 	rm -f "$exit_code_file"
 
@@ -1500,6 +1601,7 @@ cmd_run() {
 	local prompt_file=""
 	local model_override=""
 	local agent_name=""
+	local headless_runtime=""
 	local -a extra_args=()
 
 	_parse_run_args "$@" || return 1
@@ -1570,15 +1672,19 @@ cmd_run() {
 
 show_help() {
 	cat <<'EOF'
-headless-runtime-helper.sh - Model-aware headless OpenCode runtime
+headless-runtime-helper.sh - Model-aware headless runtime (OpenCode default, Claude CLI opt-in)
 
 Usage:
   headless-runtime-helper.sh select [--role pulse|worker] [--model provider/model]
-  headless-runtime-helper.sh run --role pulse|worker --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model] [--agent NAME] [--opencode-arg ARG]
+  headless-runtime-helper.sh run --role pulse|worker --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG]
   headless-runtime-helper.sh backoff [status|set MODEL-OR-PROVIDER REASON [SECONDS]|clear MODEL-OR-PROVIDER]
   headless-runtime-helper.sh session [status|clear PROVIDER SESSION_KEY]
   headless-runtime-helper.sh metrics [--role pulse|worker] [--hours N] [--model SUBSTRING] [--fast-threshold N]
   headless-runtime-helper.sh help
+
+Runtime selection:
+  Default runtime is OpenCode. Use --runtime claude to dispatch via Claude CLI.
+  Claude CLI headless uses `claude -p` with --agent build-plus (auto-detected).
 
 Backoff granularity:
   Rate limits and provider errors are recorded per model (e.g. anthropic/claude-sonnet-4-6).

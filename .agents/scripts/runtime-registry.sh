@@ -229,6 +229,24 @@ _RT_PROCESS_PATTERN=(
 	"amp"      # amp
 )
 
+# --- Agent directories (where the runtime loads agent definitions) ---
+# Runtimes that support user-defined agents via markdown + YAML frontmatter.
+# Empty string means "no agent directory support".
+_RT_AGENT_DIR=(
+	""                      # opencode (agents via config, not directory)
+	"\$HOME/.claude/agents" # claude-code
+	""                      # codex (no agent dir)
+	"\$HOME/.cursor/agents" # cursor
+	""                      # droid (no agent dir)
+	""                      # gemini-cli (no agent dir)
+	""                      # windsurf (no agent dir)
+	""                      # continue (no agent dir)
+	""                      # kilo (no agent dir)
+	""                      # kiro (no agent dir)
+	""                      # aider (no agent dir)
+	"\$HOME/.amp/agents"    # amp
+)
+
 # --- Headless support (can the runtime run without a UI?) ---
 # "yes" = has a headless/CLI mode, "no" = GUI/editor only, "" = unknown
 _RT_HEADLESS_SUPPORT=(
@@ -427,6 +445,14 @@ rt_command_dir() {
 	local idx
 	idx=$(_rt_index "$id") || return 1
 	_rt_expand_path "${_RT_COMMAND_DIR[$idx]}"
+	return 0
+}
+
+rt_agent_dir() {
+	local id="$1"
+	local idx
+	idx=$(_rt_index "$id") || return 1
+	_rt_expand_path "${_RT_AGENT_DIR[$idx]}"
 	return 0
 }
 
@@ -645,6 +671,19 @@ rt_list_with_commands() {
 	return 0
 }
 
+# List runtimes that have agent directories.
+# Prints runtime IDs, one per line.
+rt_list_with_agents() {
+	local i=0
+	while [[ $i -lt $_RT_COUNT ]]; do
+		if [[ -n "${_RT_AGENT_DIR[$i]}" ]]; then
+			echo "${_RT_IDS[$i]}"
+		fi
+		i=$((i + 1))
+	done
+	return 0
+}
+
 # =============================================================================
 # Validation (called by test suite, safe to call at source time)
 # =============================================================================
@@ -660,6 +699,7 @@ rt_validate_registry() {
 		"_RT_CONFIG_FORMAT"
 		"_RT_MCP_ROOT_KEY"
 		"_RT_COMMAND_DIR"
+		"_RT_AGENT_DIR"
 		"_RT_PROMPT_MECHANISM"
 		"_RT_SESSION_DB"
 		"_RT_SESSION_DB_FORMAT"
