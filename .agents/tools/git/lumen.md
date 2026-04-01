@@ -36,33 +36,17 @@ lumen operate "squash last 3"     # Natural language to git command
 
 ## Setup
 
-```bash
-brew install jnsahaj/lumen/lumen   # macOS/Linux
-cargo install lumen                # Any platform with Rust
-brew install fzf mdcat             # Optional: picker + pretty output
-```
+Optional deps: `brew install fzf mdcat` (picker + pretty output).
 
-Run `lumen configure`, or create `~/.config/lumen/lumen.config.json`:
-
-```json
-{
-  "provider": "openai",
-  "model": "gpt-5-mini",
-  "api_key": "your-key-here"
-}
-```
-
-Config precedence: CLI flags > `--config` file > project `lumen.config.json` > global config > env vars > defaults.
-
-Reuse keys already in `~/.config/aidevops/credentials.sh`, or set env vars:
+Configure via `lumen configure`, env vars, or `~/.config/lumen/lumen.config.json`:
 
 ```bash
-export LUMEN_AI_PROVIDER="openai"   # or claude, gemini, groq, etc.
-export LUMEN_API_KEY="your-key"
+export LUMEN_AI_PROVIDER="openai"   # or claude, gemini, groq, deepseek, xai, ollama, openrouter
+export LUMEN_API_KEY="your-key"     # reuse keys from ~/.config/aidevops/credentials.sh
 export LUMEN_AI_MODEL="gpt-5-mini"  # optional, uses provider default
 ```
 
-Providers: `openai` (default), `claude`, `gemini`, `groq`, `deepseek`, `xai`, `ollama`, `openrouter`.
+Precedence: CLI flags > `--config` file > project config > global config > env vars > defaults.
 
 ## Common Workflows
 
@@ -76,12 +60,7 @@ lumen explain --query "impact?"     # Ask specific questions about changes
 lumen explain --list                # Interactive commit picker (requires fzf)
 ```
 
-- **Pre-commit review**: `lumen diff`, then `lumen draft`
-- **PR review**: `lumen diff --pr 123` alongside `gh pr view`
-- **AI-generated changes**: `lumen explain --staged` before committing
-- **Commit messages**: `lumen draft --context "task description"`
-- **Complex git ops**: `lumen operate "description"`
-- **Conflict resolution**: use `lumen diff`; see `conflict-resolution.md`
+Typical flows: `lumen diff` then `lumen draft` (pre-commit review) | `lumen diff --pr 123` with `gh pr view` (PR review) | `lumen explain --staged` (review AI-generated changes) | `lumen operate "description"` (complex git ops) | `lumen diff` for conflict resolution (see `conflict-resolution.md`).
 
 Diff keybindings: `j/k` navigate, `{/}` jump hunks, `tab` sidebar, `space` mark viewed, `i` annotate, `e` open in editor, `?` all keys.
 
