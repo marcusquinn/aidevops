@@ -30,7 +30,9 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Configuration — `cp configs/ses-config.json.txt configs/ses-config.json`
+## Configuration
+
+Copy template: `cp configs/ses-config.json.txt configs/ses-config.json`
 
 ```json
 {
@@ -69,7 +71,7 @@ ses-helper.sh verified-emails production
 ses-helper.sh verified-domains production
 ses-helper.sh verify-email production newuser@yourdomain.com
 ses-helper.sh verify-domain production newdomain.com
-ses-helper.sh verify-identity production yourdomain.com
+ses-helper.sh verify-identity production yourdomain.com  # check verification status
 
 # DKIM
 ses-helper.sh dkim production yourdomain.com
@@ -81,7 +83,7 @@ ses-helper.sh suppressed production
 ses-helper.sh suppression-details production user@example.com
 ses-helper.sh remove-suppression production user@example.com
 
-# Testing (use simulator addresses for bounce/success testing)
+# Testing (simulator addresses avoid real bounces)
 ses-helper.sh send-test production noreply@yourdomain.com success@simulator.amazonses.com "Success Test"
 ses-helper.sh send-test production noreply@yourdomain.com bounce@simulator.amazonses.com "Bounce Test"
 ses-helper.sh debug production problematic@example.com
@@ -129,7 +131,10 @@ Dedicated IAM users per environment. Rotate access keys regularly. Separate AWS 
 
 ## Compliance & Backup
 
-Configure SPF, DKIM, DMARC for all sending domains. Process bounces and complaints promptly; maintain suppression list. Provide unsubscribe mechanisms; follow GDPR/CAN-SPAM. Warm up new sending IPs gradually; clean lists regularly.
+- Configure SPF, DKIM, DMARC for all sending domains
+- Process bounces and complaints promptly; maintain suppression list
+- Provide unsubscribe mechanisms; follow GDPR/CAN-SPAM
+- Warm up new sending IPs gradually; clean lists regularly
 
 ```bash
 ses-helper.sh audit production > ses-config-backup-$(date +%Y%m%d).txt
