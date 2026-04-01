@@ -96,8 +96,6 @@ NEW WAY: "With [PRODUCT]: ✅ [Benefit 1] ✅ [Benefit 2] ✅ [Benefit 3]"
 
 ## Mini-Story Arc — video 30-60s
 
-Setup (5-10s) → Conflict (5-10s) → Climax (5-10s) → Resolution (5-10s) → CTA (5s)
-
 ```text
 [SETUP]      "Meet Sarah. She runs a marketing agency and was working 70-hour weeks."
 [CONFLICT]   "Client requests were piling up, deadlines were slipping, she was burning out."
@@ -118,8 +116,6 @@ Same me. Different tools. Different results. [CTA]"
 
 ## Customer Journey Story
 
-Before → Trigger → Search → Discovery → Experience → After
-
 ```text
 [BEFORE]     "A year ago, I was struggling to get leads for my coaching business."
 [TRIGGER]    "I'd post on social media for hours with nothing to show for it."
@@ -130,8 +126,6 @@ Before → Trigger → Search → Discovery → Experience → After
 ```
 
 ## Origin Story (Founder Content)
-
-Frustration → Decision → Journey → Achievement → Connection
 
 ```text
 [FRUSTRATION] "When I worked at [company], I spent 4 hours a day on [painful task]. Every. Single. Day."
