@@ -1,6 +1,11 @@
 {
   "_comment": null,
   "files": {
+    ".agents/marketing-sales/cro-chapter-25.md": {
+      "hash": "b74f0ff498c385d2647512d5f68dc6261a0063e3",
+      "at": "2026-04-01T21:00:00Z",
+      "pr": 15276
+    },
     ".agents/marketing-sales/cro-chapter-22.md": {
       "hash": "882c97fc64eb63b11312049223c04eaa52882296",
       "at": "2026-04-01T20:58:50Z",
