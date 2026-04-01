@@ -5,64 +5,35 @@ mode: subagent
 ---
 
 Compare AI models using only embedded reference data. No web fetches, no API calls.
-Useful when working offline or to avoid token spend on web fetches.
 
 Target: $ARGUMENTS
 
 ## Instructions
 
-1. Run the helper script to get structured model data:
+Run the appropriate helper subcommand based on `$ARGUMENTS`:
 
-   ```bash
-   ~/.aidevops/agents/scripts/compare-models-helper.sh list
-   ```
+```bash
+~/.aidevops/agents/scripts/compare-models-helper.sh list                        # all models
+~/.aidevops/agents/scripts/compare-models-helper.sh compare <model1> <model2>  # specific models
+~/.aidevops/agents/scripts/compare-models-helper.sh recommend "<task>"         # task-based recommendation
+~/.aidevops/agents/scripts/compare-models-helper.sh pricing                    # pricing overview
+~/.aidevops/agents/scripts/compare-models-helper.sh capabilities               # capability matrix
+```
 
-2. If specific models were requested, compare them:
+**Do NOT fetch any web pages.** Note the "Last updated" date in output for data freshness.
 
-   ```bash
-   ~/.aidevops/agents/scripts/compare-models-helper.sh compare <model1> <model2> ...
-   ```
-
-3. If a `--task` was specified, get recommendations:
-
-   ```bash
-   ~/.aidevops/agents/scripts/compare-models-helper.sh recommend "<task>"
-   ```
-
-4. For pricing overview:
-
-   ```bash
-   ~/.aidevops/agents/scripts/compare-models-helper.sh pricing
-   ```
-
-5. For capability matrix:
-
-   ```bash
-   ~/.aidevops/agents/scripts/compare-models-helper.sh capabilities
-   ```
-
-6. **Do NOT fetch any web pages.** All data comes from the helper script's embedded database.
-   Note the "Last updated" date in the output so the user knows data freshness.
-
-7. Present results in a structured comparison table with:
-   - Pricing per 1M tokens (input and output)
-   - Context window sizes
-   - Capability matrix
-   - Task suitability recommendations
-   - aidevops tier mapping (haiku/flash/sonnet/pro/opus)
+Present results as a structured comparison table:
+- Pricing per 1M tokens (input and output)
+- Context window sizes
+- Capability matrix
+- Task suitability recommendations
+- aidevops tier mapping (haiku/flash/sonnet/pro/opus)
 
 ## Examples
 
 ```bash
-# Compare specific models (offline)
-/compare-models-free claude-sonnet-4-6 gpt-4o
-
-# Get recommendation for a task (offline)
-/compare-models-free --task "summarization"
-
-# Show all pricing (offline)
-/compare-models-free --pricing
-
-# Show capabilities matrix (offline)
-/compare-models-free --capabilities
+/compare-models-free claude-sonnet-4-6 gpt-4o   # compare specific models
+/compare-models-free --task "summarization"      # task recommendation
+/compare-models-free --pricing                   # all pricing
+/compare-models-free --capabilities              # capabilities matrix
 ```
