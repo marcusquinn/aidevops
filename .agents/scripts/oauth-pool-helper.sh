@@ -1460,9 +1460,44 @@ prov = os.environ['PROVIDER']
 for i, a in enumerate(pool.get(prov, []), 1):
     status = a.get('status', 'unknown')
     email = a.get('email', 'unknown')
-    print(f'  {i}. {email} [{status}]')
+    prio = a.get('priority', 0)
+    prio_str = f' (priority={prio})' if prio else ''
+    print(f'  {i}. {email} [{status}]{prio_str}')
 "
 	done
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Set account priority (higher = preferred during rotation)
+# ---------------------------------------------------------------------------
+
+cmd_set_priority() {
+	local provider="${1:-}"
+	local email="${2:-}"
+	local priority="${3:-}"
+
+	if [[ -z "$provider" || -z "$email" || -z "$priority" ]]; then
+		print_error "Usage: set-priority <provider> <email> <N> (higher = preferred, 0 = clear)"
+		return 1
+	fi
+	if ! [[ "$priority" =~ ^-?[0-9]+$ ]]; then
+		print_error "Priority must be an integer, got: $priority"
+		return 1
+	fi
+
+	local pool new_pool
+	pool=$(load_pool)
+	new_pool=$(printf '%s' "$pool" | jq -e --arg p "$provider" --arg e "$email" --argjson n "$priority" \
+		'if (.[$p] | map(select(.email == $e)) | length) == 0 then error("not found")
+		 else .[$p] |= map(if .email == $e then (if $n == 0 then del(.priority) else .priority = $n end) else . end)
+		 end') || {
+		print_error "Account ${email} not found in ${provider} pool"
+		return 1
+	}
+
+	save_pool "$new_pool"
+	print_success "priority=${priority} for ${email} in ${provider}"
 	return 0
 }
 
@@ -1666,7 +1701,7 @@ try:
         print('ERROR:no_alternate')
         sys.exit(0)
 
-    candidates.sort(key=lambda a: a.get('lastUsed', ''))
+    candidates.sort(key=lambda a: (-a.get('priority', 0), a.get('lastUsed', '')))
     next_account = candidates[0]
     next_email   = next_account.get('email', 'unknown')
 
@@ -2567,6 +2602,7 @@ Commands:
   mark-failure <provider> <reason> [retry_secs]   Mark current account cooldown/status from runtime failures
   reset-cooldowns [provider|all]                  Clear rate-limit cooldowns so all accounts retry
   assign-pending <provider> [email]               Assign a stranded pending token to an account
+  set-priority <provider> <email> <N>             Set rotation priority (higher = preferred, 0 = clear)
   remove <provider> <email>                       Remove an account from the pool
   import [claude-cli]                             Import account from Claude CLI auth
 
@@ -2592,8 +2628,11 @@ Examples:
   oauth-pool-helper.sh remove anthropic user@example.com
   oauth-pool-helper.sh assign-pending anthropic           # Show pending token info
   oauth-pool-helper.sh assign-pending anthropic user@example.com  # Assign pending token
+  oauth-pool-helper.sh set-priority anthropic user@example.com 10  # Prefer this account
+  oauth-pool-helper.sh set-priority anthropic user@example.com 0   # Clear priority
 
 Notes:
+  - Rotation prefers accounts with higher priority, then least-recently-used
   - Pool file: ~/.aidevops/oauth-pool.json (600 permissions)
   - Auth file: ~/.local/share/opencode/auth.json (written by rotate)
   - After adding/rotating an account, restart OpenCode to use the new token
@@ -2628,6 +2667,7 @@ main() {
 	rotate) cmd_rotate "$@" ;;
 	reset-cooldowns | reset_cooldowns | reset) cmd_reset_cooldowns "$@" ;;
 	remove) cmd_remove "$@" ;;
+	set-priority | set_priority) cmd_set_priority "$@" ;;
 	status) cmd_status "$@" ;;
 	help | -h | --help) cmd_help ;;
 	*)
