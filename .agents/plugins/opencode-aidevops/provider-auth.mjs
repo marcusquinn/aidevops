@@ -24,11 +24,11 @@
 
 import { ensureValidToken, getAccounts, patchAccount, getAnthropicUserAgent } from "./oauth-pool.mjs";
 
-/** Default cooldown when rate limited mid-session (ms) — 15 seconds.
- *  Reduced from 60s: Anthropic per-minute rate limits reset quickly.
- *  A 60s cooldown caused all 3 accounts to appear exhausted simultaneously
- *  even though the rate limit had already cleared, killing the session. */
-const RATE_LIMIT_COOLDOWN_MS = 15_000;
+/** Default cooldown when rate limited mid-session (ms) — 5 seconds.
+ *  Anthropic per-minute rate limits reset in seconds. Conservative cooldowns
+ *  (60s, then 15s) caused all accounts to appear exhausted simultaneously.
+ *  5s is enough to avoid hammering while recovering almost instantly. */
+const RATE_LIMIT_COOLDOWN_MS = 5_000;
 
 /**
  * Parse Retry-After header into milliseconds (t1835).
