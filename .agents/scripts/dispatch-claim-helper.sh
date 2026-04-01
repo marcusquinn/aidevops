@@ -41,8 +41,9 @@ DISPATCH_CLAIM_WINDOW="${DISPATCH_CLAIM_WINDOW:-8}"
 # Claims older than this are stale and ignored by the lock check.
 DISPATCH_CLAIM_MAX_AGE="${DISPATCH_CLAIM_MAX_AGE:-120}"
 
-# When the oldest active claim belongs to this same runner and is older than
-# this threshold, reclaim the lock by deleting only the fresh duplicate claim.
+# GH#15317: Self-reclaim removed. Previously, same-runner stale claims were
+# "reclaimed" after this threshold, creating dispatch loops. Now stale self-
+# claims are cleaned up and treated as lost. Variable kept for backward compat.
 DISPATCH_CLAIM_SELF_RECLAIM_AGE="${DISPATCH_CLAIM_SELF_RECLAIM_AGE:-30}"
 
 # Claim comment marker — used as both the posting format and the search pattern.
@@ -309,11 +310,31 @@ cmd_claim() {
 		return 0
 	fi
 
-	if [[ "$oldest_runner" == "$runner" && "$oldest_age_seconds" -ge "$DISPATCH_CLAIM_SELF_RECLAIM_AGE" ]]; then
-		printf 'CLAIM_RECLAIMED: runner=%s reclaimed stale claim nonce=%s on issue #%s (stale_nonce=%s stale_age_s=%s)\n' \
-			"$runner" "$nonce" "$issue_number" "$oldest_nonce" "$oldest_age_seconds"
+	# GH#15317: Self-reclaim removed. Previously, if the oldest claim belonged to
+	# the same runner and was >30s old, the runner would "reclaim" — allowing
+	# re-dispatch. This created same-runner dispatch loops: claim → dispatch →
+	# worker dies → 30s passes → self-reclaim → dispatch again. Evidence:
+	# awardsapp #2051 had 25 claims from alex-solovyev over 6 hours.
+	#
+	# The dispatch_with_dedup() caller now posts a deterministic "Dispatching
+	# worker" comment and cleans up claim comments after dispatch. If a worker
+	# needs to be re-dispatched, the pulse must first post a kill/failure comment
+	# and remove the dispatch comment — making the re-dispatch explicit, not
+	# an implicit side effect of stale claims.
+	#
+	# If the oldest claim is from the same runner, treat as a lost claim (stale
+	# from a previous cycle that wasn't cleaned up). Delete both claims.
+	if [[ "$oldest_runner" == "$runner" && "$oldest_nonce" != "$nonce" ]]; then
+		printf 'CLAIM_STALE_SELF: runner=%s found own stale claim on issue #%s (stale_age_s=%s) — cleaning up\n' \
+			"$runner" "$issue_number" "$oldest_age_seconds"
+		# Delete both the stale claim and the fresh one we just posted
+		local stale_comment_id
+		stale_comment_id=$(printf '%s' "$claims" | jq -r '.[0].id // ""' 2>/dev/null) || stale_comment_id=""
+		if [[ -n "$stale_comment_id" ]]; then
+			_delete_comment "$repo_slug" "$stale_comment_id" 2>/dev/null || true
+		fi
 		_delete_comment "$repo_slug" "$comment_id" 2>/dev/null || true
-		return 0
+		return 1
 	fi
 
 	# Step 5: We lost — another runner's claim is older

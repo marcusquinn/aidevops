@@ -119,6 +119,6 @@ export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.3-code
 
 Every action must leave a trace in issue/PR comments. Version from `~/.aidevops/agents/VERSION` or `$AIDEVOPS_VERSION`. All templates include `**[aidevops.sh](https://github.com/marcusquinn/aidevops)**: vX.X.X` + `**Model**` + `**Branch**`.
 
-**Dispatch:** `Dispatching worker.` + Scope, Attempt (N of M), Direction.
+**Dispatch:** Posted automatically by `dispatch_with_dedup()` (GH#15317). Do NOT post manually.
 **Kill/failure:** `Worker killed after Xh Ym with N commits (struggle_ratio: NN).` + Reason, Diagnosis, Next action (escalate/reassign/decompose).
 **Completion:** `Completed via PR #NNN.` + Attempts, Duration.

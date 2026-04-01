@@ -285,9 +285,13 @@ test_env_var_defaults() {
 }
 
 #######################################
-# Test: stale same-runner oldest claim is reclaimed successfully
+# Test: stale same-runner oldest claim is cleaned up and rejected (GH#15317)
+#
+# Previously this tested self-reclaim (CLAIM_RECLAIMED, exit 0). After
+# GH#15317, same-runner stale claims are treated as lost to prevent
+# dispatch loops. The stale claim and fresh claim are both deleted.
 #######################################
-test_claim_reclaims_stale_same_runner_claim() {
+test_claim_rejects_stale_same_runner_claim() {
 	local tmp_dir
 	tmp_dir="$(mktemp -d)"
 	local mock_path
@@ -309,22 +313,27 @@ test_claim_reclaims_stale_same_runner_claim() {
 	exit_code=$?
 	set -e
 
-	if [[ "$exit_code" -eq 0 ]]; then
-		print_result "stale same-runner claim exits 0" 0
+	if [[ "$exit_code" -eq 1 ]]; then
+		print_result "stale same-runner claim exits 1 (rejected)" 0
 	else
-		print_result "stale same-runner claim exits 0" 1 "got exit $exit_code output: $output"
+		print_result "stale same-runner claim exits 1 (rejected)" 1 "got exit $exit_code output: $output"
 	fi
 
-	if printf '%s' "$output" | grep -q "CLAIM_RECLAIMED:"; then
-		print_result "stale same-runner claim emits CLAIM_RECLAIMED" 0
+	if printf '%s' "$output" | grep -q "CLAIM_STALE_SELF:"; then
+		print_result "stale same-runner claim emits CLAIM_STALE_SELF" 0
 	else
-		print_result "stale same-runner claim emits CLAIM_RECLAIMED" 1 "output: $output"
+		print_result "stale same-runner claim emits CLAIM_STALE_SELF" 1 "output: $output"
 	fi
 
-	if [[ -f "${tmp_dir}/delete_ids.log" ]] && grep -q '^999$' "${tmp_dir}/delete_ids.log"; then
-		print_result "stale reclaim deletes only fresh duplicate claim" 0
+	# Both the stale claim (id=1) and fresh claim (id=999) should be deleted
+	if [[ -f "${tmp_dir}/delete_ids.log" ]] && grep -q '^1$' "${tmp_dir}/delete_ids.log" && grep -q '^999$' "${tmp_dir}/delete_ids.log"; then
+		print_result "stale self-claim deletes both stale and fresh claims" 0
 	else
-		print_result "stale reclaim deletes only fresh duplicate claim" 1 "missing delete id 999"
+		local delete_log=""
+		if [[ -f "${tmp_dir}/delete_ids.log" ]]; then
+			delete_log=$(<"${tmp_dir}/delete_ids.log")
+		fi
+		print_result "stale self-claim deletes both stale and fresh claims" 1 "deleted: ${delete_log:-none}"
 	fi
 
 	rm -rf "$tmp_dir"
@@ -332,9 +341,14 @@ test_claim_reclaims_stale_same_runner_claim() {
 }
 
 #######################################
-# Test: fresh same-runner oldest claim still loses
+# Test: fresh same-runner oldest claim is also rejected (GH#15317)
+#
+# After GH#15317, ALL same-runner duplicate claims (fresh or stale)
+# are rejected with CLAIM_STALE_SELF. Both the stale and fresh claims
+# are deleted. This prevents dispatch loops where the same runner
+# keeps reclaiming its own stale claims.
 #######################################
-test_claim_loses_on_fresh_same_runner_claim() {
+test_claim_rejects_fresh_same_runner_claim() {
 	local tmp_dir
 	tmp_dir="$(mktemp -d)"
 	local mock_path
@@ -357,21 +371,26 @@ test_claim_loses_on_fresh_same_runner_claim() {
 	set -e
 
 	if [[ "$exit_code" -eq 1 ]]; then
-		print_result "fresh same-runner claim exits 1" 0
+		print_result "fresh same-runner claim exits 1 (rejected)" 0
 	else
-		print_result "fresh same-runner claim exits 1" 1 "got exit $exit_code output: $output"
+		print_result "fresh same-runner claim exits 1 (rejected)" 1 "got exit $exit_code output: $output"
 	fi
 
-	if printf '%s' "$output" | grep -q "CLAIM_LOST: runner=marcusquinn lost to marcusquinn"; then
-		print_result "fresh same-runner claim emits CLAIM_LOST" 0
+	if printf '%s' "$output" | grep -q "CLAIM_STALE_SELF:"; then
+		print_result "fresh same-runner claim emits CLAIM_STALE_SELF" 0
 	else
-		print_result "fresh same-runner claim emits CLAIM_LOST" 1 "output: $output"
+		print_result "fresh same-runner claim emits CLAIM_STALE_SELF" 1 "output: $output"
 	fi
 
-	if [[ -f "${tmp_dir}/delete_ids.log" ]] && grep -q '^999$' "${tmp_dir}/delete_ids.log"; then
-		print_result "fresh same-runner loss deletes fresh claim" 0
+	# Both claims should be deleted
+	if [[ -f "${tmp_dir}/delete_ids.log" ]] && grep -q '^1$' "${tmp_dir}/delete_ids.log" && grep -q '^999$' "${tmp_dir}/delete_ids.log"; then
+		print_result "fresh same-runner deletes both claims" 0
 	else
-		print_result "fresh same-runner loss deletes fresh claim" 1 "missing delete id 999"
+		local delete_log=""
+		if [[ -f "${tmp_dir}/delete_ids.log" ]]; then
+			delete_log=$(<"${tmp_dir}/delete_ids.log")
+		fi
+		print_result "fresh same-runner deletes both claims" 1 "deleted: ${delete_log:-none}"
 	fi
 	return 0
 }
@@ -390,8 +409,8 @@ main() {
 	test_unknown_command
 	test_dedup_claim_routing
 	test_env_var_defaults
-	test_claim_reclaims_stale_same_runner_claim
-	test_claim_loses_on_fresh_same_runner_claim
+	test_claim_rejects_stale_same_runner_claim
+	test_claim_rejects_fresh_same_runner_claim
 
 	echo ""
 	echo "Results: ${TESTS_RUN} tests, ${TESTS_FAILED} failed"
