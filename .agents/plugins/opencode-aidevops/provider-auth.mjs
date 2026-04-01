@@ -24,11 +24,20 @@
 
 import { ensureValidToken, getAccounts, patchAccount, getAnthropicUserAgent } from "./oauth-pool.mjs";
 
-/** Default cooldown when rate limited mid-session (ms) — 1 minute */
-const RATE_LIMIT_COOLDOWN_MS = 60_000;
+/** Default cooldown when rate limited mid-session (ms) — 15 seconds.
+ *  Reduced from 60s: Anthropic per-minute rate limits reset quickly.
+ *  A 60s cooldown caused all 3 accounts to appear exhausted simultaneously
+ *  even though the rate limit had already cleared, killing the session. */
+const RATE_LIMIT_COOLDOWN_MS = 15_000;
 
 /** Default cooldown on auth failure (ms) — 5 minutes */
 const AUTH_FAILURE_COOLDOWN_MS = 300_000;
+
+/** Max wait time when all accounts are exhausted before giving up (ms) */
+const MAX_EXHAUSTION_WAIT_MS = 120_000;
+
+/** Poll interval when waiting for cooldowns to expire (ms) */
+const EXHAUSTION_POLL_MS = 5_000;
 
 const TOOL_PREFIX = "mcp_";
 
@@ -168,24 +177,80 @@ export function createProviderAuthHook(client) {
             }
 
             if (!refreshed) {
-              // All pool accounts exhausted (rate-limited or auth-error).
-              // Log which accounts were tried and their status for debugging.
-              const accountSummary = accounts.map((a) => {
-                const cooldown = a.cooldownUntil && a.cooldownUntil > Date.now()
-                  ? ` (cooldown: ${Math.ceil((a.cooldownUntil - Date.now()) / 60000)}m)`
-                  : "";
-                return `${a.email}[${a.status}${cooldown}]`;
-              }).join(", ");
-              console.error(
-                `[aidevops] provider-auth: all pool accounts exhausted. ` +
-                `Accounts: ${accountSummary || "none"}. ` +
-                `Use /model-accounts-pool reset-cooldowns to clear cooldowns, ` +
-                `or wait for cooldowns to expire.`,
-              );
-              throw new Error(
-                `Token refresh failed: all ${accounts.length} pool account(s) exhausted ` +
-                `(rate-limited or auth-error). Use /model-accounts-pool reset-cooldowns to retry.`,
-              );
+              // All pool accounts exhausted — wait for shortest cooldown to
+              // expire instead of throwing (which kills the session). A brief
+              // pause is much better than forcing the user to Esc+Esc and
+              // manually rotate.
+              const waitStart = Date.now();
+              while (Date.now() - waitStart < MAX_EXHAUSTION_WAIT_MS) {
+                const now = Date.now();
+                const freshAccounts = getAccounts("anthropic");
+                // Find an account whose cooldown has expired
+                const recovered = freshAccounts.find(
+                  (a) => a.status !== "auth-error" && (!a.cooldownUntil || a.cooldownUntil <= now),
+                );
+                if (recovered) {
+                  const token = await ensureValidToken("anthropic", {
+                    ...recovered,
+                    expires: 0,
+                  });
+                  if (token) {
+                    try {
+                      await client.auth.set({
+                        path: { id: "anthropic" },
+                        body: {
+                          type: "oauth",
+                          refresh: recovered.refresh,
+                          access: recovered.access,
+                          expires: recovered.expires,
+                        },
+                      });
+                    } catch { /* best-effort */ }
+                    accessToken = token;
+                    process.env.ANTHROPIC_API_KEY = token;
+                    patchAccount("anthropic", recovered.email, {
+                      lastUsed: new Date().toISOString(),
+                      status: "active",
+                    });
+                    sessionAccountEmail = recovered.email;
+                    refreshed = true;
+                    console.error(
+                      `[aidevops] provider-auth: recovered ${recovered.email} after cooldown wait (${Math.ceil((Date.now() - waitStart) / 1000)}s)`,
+                    );
+                    break;
+                  }
+                }
+                // Log on first iteration only
+                if (Date.now() - waitStart < EXHAUSTION_POLL_MS + 1000) {
+                  const accountSummary = freshAccounts.map((a) => {
+                    const cd = a.cooldownUntil && a.cooldownUntil > now
+                      ? ` (${Math.ceil((a.cooldownUntil - now) / 1000)}s)`
+                      : "";
+                    return `${a.email}[${a.status}${cd}]`;
+                  }).join(", ");
+                  console.error(
+                    `[aidevops] provider-auth: all accounts exhausted — waiting for cooldown. ${accountSummary}`,
+                  );
+                }
+                await new Promise((r) => setTimeout(r, EXHAUSTION_POLL_MS));
+              }
+              if (!refreshed) {
+                // Still exhausted after MAX_EXHAUSTION_WAIT_MS — last resort:
+                // clear all cooldowns and try once more
+                const lastResort = getAccounts("anthropic");
+                for (const acc of lastResort) {
+                  patchAccount("anthropic", acc.email, {
+                    status: "idle",
+                    cooldownUntil: 0,
+                  });
+                }
+                console.error(
+                  `[aidevops] provider-auth: force-cleared all cooldowns after ${MAX_EXHAUSTION_WAIT_MS / 1000}s wait — retrying`,
+                );
+                // Recursive retry with cleared cooldowns — ensureValidToken
+                // will re-read the pool. Don't throw — let the next fetch
+                // attempt trigger a fresh auth cycle.
+              }
             }
           } else if (!sessionAccountEmail) {
             // First request with a valid token — identify which account owns it
@@ -561,10 +626,76 @@ export function createProviderAuthHook(client) {
             }
 
             if (!rotated) {
-              console.error(
-                `[aidevops] provider-auth: 429 for ${currentEmail} — no alternate account available. ` +
-                `Pool has ${accounts.length} account(s). Use /model-accounts-pool to check status.`,
-              );
+              // All accounts rate-limited on 429 — wait for shortest cooldown
+              // instead of returning the 429 response (which may crash the session).
+              const waitStart = Date.now();
+              while (Date.now() - waitStart < MAX_EXHAUSTION_WAIT_MS) {
+                const now = Date.now();
+                const freshAccounts = getAccounts("anthropic");
+                const recovered = freshAccounts.find(
+                  (a) => (a.status === "active" || a.status === "idle") &&
+                    (!a.cooldownUntil || a.cooldownUntil <= now),
+                );
+                if (recovered) {
+                  let altToken;
+                  try {
+                    altToken = await ensureValidToken("anthropic", recovered);
+                  } catch { continue; }
+                  if (!altToken) continue;
+
+                  try {
+                    await client.auth.set({
+                      path: { id: "anthropic" },
+                      body: {
+                        type: "oauth",
+                        refresh: recovered.refresh,
+                        access: recovered.access,
+                        expires: recovered.expires,
+                      },
+                    });
+                  } catch { /* best-effort */ }
+
+                  requestHeaders.set("authorization", `Bearer ${altToken}`);
+                  process.env.ANTHROPIC_API_KEY = altToken;
+                  patchAccount("anthropic", recovered.email, {
+                    lastUsed: new Date().toISOString(),
+                    status: "active",
+                  });
+                  sessionAccountEmail = recovered.email;
+
+                  console.error(
+                    `[aidevops] provider-auth: 429 recovered via ${recovered.email} after ${Math.ceil((Date.now() - waitStart) / 1000)}s wait`,
+                  );
+
+                  response = await fetch(requestInput, {
+                    ...requestInit,
+                    body,
+                    headers: requestHeaders,
+                  });
+                  rotated = true;
+                  break;
+                }
+                // First iteration log
+                if (Date.now() - waitStart < EXHAUSTION_POLL_MS + 1000) {
+                  console.error(
+                    `[aidevops] provider-auth: 429 for ${currentEmail} — all accounts on cooldown, waiting...`,
+                  );
+                }
+                await new Promise((r) => setTimeout(r, EXHAUSTION_POLL_MS));
+              }
+              if (!rotated) {
+                // Last resort: clear cooldowns and return the 429 — let opencode retry
+                const lastResort = getAccounts("anthropic");
+                for (const acc of lastResort) {
+                  patchAccount("anthropic", acc.email, {
+                    status: "idle",
+                    cooldownUntil: 0,
+                  });
+                }
+                console.error(
+                  `[aidevops] provider-auth: 429 — force-cleared cooldowns after ${MAX_EXHAUSTION_WAIT_MS / 1000}s. Returning response for opencode retry.`,
+                );
+              }
             }
           }
 
