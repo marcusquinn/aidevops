@@ -1188,6 +1188,27 @@ _invoke_opencode() {
 	shift 2
 	local -a cmd=("$@")
 
+	# Auth isolation for headless workers: each worker gets its own copy of
+	# auth.json via XDG_DATA_HOME redirection. opencode uses
+	# $XDG_DATA_HOME/opencode/auth.json for OAuth tokens. Without isolation,
+	# headless workers share the interactive session's auth file — when ANY
+	# worker's opencode process refreshes an expired access token, it writes
+	# a new token to the shared file, invalidating the interactive session's
+	# in-flight request and crashing it.
+	#
+	# The isolated dir is per-PID and cleaned up after the worker exits.
+	local isolated_data_dir=""
+	if [[ "${AIDEVOPS_HEADLESS_AUTH_ISOLATION:-1}" == "1" ]]; then
+		isolated_data_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-worker-auth.XXXXXX")
+		mkdir -p "${isolated_data_dir}/opencode"
+		# Copy the current auth.json so the worker has valid tokens at startup
+		if [[ -f "$OPENCODE_AUTH_FILE" ]]; then
+			cp "$OPENCODE_AUTH_FILE" "${isolated_data_dir}/opencode/auth.json" 2>/dev/null || true
+			chmod 600 "${isolated_data_dir}/opencode/auth.json" 2>/dev/null || true
+		fi
+		export XDG_DATA_HOME="$isolated_data_dir"
+	fi
+
 	# Run in subshell to avoid fragile set +e/set -e toggling (GH#4225).
 	# Subshell localises errexit so main shell state is never modified.
 	# Exit code is written to a temp file — NOT captured via $() — because
@@ -1224,6 +1245,12 @@ _invoke_opencode() {
 	# Clean up the watchdog
 	kill "$watchdog_pid" 2>/dev/null || true
 	wait "$watchdog_pid" 2>/dev/null || true
+
+	# Clean up isolated auth dir (worker is done, tokens no longer needed)
+	if [[ -n "$isolated_data_dir" && -d "$isolated_data_dir" ]]; then
+		rm -rf "$isolated_data_dir" 2>/dev/null || true
+		unset XDG_DATA_HOME
+	fi
 
 	return 0
 }
