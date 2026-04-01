@@ -764,6 +764,7 @@ function startOAuthCallbackServer() {
  * @property {"active"|"idle"|"rate-limited"|"auth-error"} status
  * @property {number|null} cooldownUntil
  * @property {string} [accountId] - OpenAI account ID (chatgpt_account_id from JWT claims)
+ * @property {number} [priority] - Rotation priority (higher = preferred; missing/0 = default LRU)
  */
 
 /**
@@ -1383,8 +1384,24 @@ function normalizeExpiredCooldowns(provider, accounts) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Compare two accounts for rotation preference.
+ * Primary: priority descending (higher priority first; missing/0 = default).
+ * Secondary: lastUsed ascending (least recently used first, i.e. LRU).
+ * @param {PoolAccount} a
+ * @param {PoolAccount} b
+ * @returns {number}
+ */
+function compareAccountPriority(a, b) {
+  const pa = a.priority || 0;
+  const pb = b.priority || 0;
+  if (pa !== pb) return pb - pa; // higher priority first
+  return new Date(a.lastUsed || 0).getTime() - new Date(b.lastUsed || 0).getTime();
+}
+
+/**
  * Pick the best available account from the pool.
- * Skips accounts that are in cooldown. Prefers least-recently-used.
+ * Skips accounts that are in cooldown.
+ * Prefers higher-priority accounts; breaks ties by least-recently-used.
  * @param {string} provider
  * @returns {PoolAccount|null}
  */
@@ -1395,15 +1412,13 @@ function pickAccount(provider) {
     (a) => !a.cooldownUntil || a.cooldownUntil <= now,
   );
   if (available.length === 0) return null;
-  // Sort by lastUsed ascending (least recently used first)
-  available.sort(
-    (a, b) => new Date(a.lastUsed).getTime() - new Date(b.lastUsed).getTime(),
-  );
+  available.sort(compareAccountPriority);
   return available[0];
 }
 
 /**
  * Pick the next available account, excluding a specific email.
+ * Prefers higher-priority accounts; breaks ties by least-recently-used.
  * @param {string} provider
  * @param {string} excludeEmail
  * @returns {PoolAccount|null}
@@ -1417,9 +1432,7 @@ function pickNextAccount(provider, excludeEmail) {
       (!a.cooldownUntil || a.cooldownUntil <= now),
   );
   if (available.length === 0) return null;
-  available.sort(
-    (a, b) => new Date(a.lastUsed).getTime() - new Date(b.lastUsed).getTime(),
-  );
+  available.sort(compareAccountPriority);
   return available[0];
 }
 
@@ -1592,7 +1605,7 @@ export async function injectPoolToken(client, skipEmail) {
   // Auto-clear expired cooldowns so rate-limited accounts become available again
   normalizeExpiredCooldowns("anthropic", accounts);
 
-  // Pick least-recently-used account, optionally skipping one.
+  // Pick best account by priority (desc) then LRU, optionally skipping one.
   // Accept both "active" and "idle" — idle accounts are valid (cooldowns cleared).
   const now = Date.now();
   let account = null;
@@ -1603,7 +1616,7 @@ export async function injectPoolToken(client, skipEmail) {
         a.email !== skipEmail &&
         (!a.cooldownUntil || a.cooldownUntil <= now),
     )
-    .sort((a, b) => new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0));
+    .sort(compareAccountPriority);
 
   if (sorted.length === 0) {
     // All accounts skipped or in cooldown — try any active/idle account as last resort
@@ -1673,7 +1686,7 @@ export async function injectOpenAIPoolToken(client, skipEmail) {
   normalizeExpiredCooldowns("openai", accounts);
 
   const now = Date.now();
-  // Pick least-recently-used eligible account, optionally skipping one.
+  // Pick best account by priority (desc) then LRU, optionally skipping one.
   // Retry token validation across all candidates before failing.
   let account = null;
   const sorted = [...accounts]
@@ -1683,7 +1696,7 @@ export async function injectOpenAIPoolToken(client, skipEmail) {
         a.email !== skipEmail &&
         (!a.cooldownUntil || a.cooldownUntil <= now),
     )
-    .sort((a, b) => new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0));
+    .sort(compareAccountPriority);
 
   for (const candidate of sorted) {
     const accessToken = await ensureValidToken("openai", candidate);
@@ -1841,7 +1854,7 @@ export async function injectCursorPoolToken(client, skipEmail) {
         a.email !== skipEmail &&
         (!a.cooldownUntil || a.cooldownUntil <= now),
     )
-    .sort((a, b) => new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0));
+    .sort(compareAccountPriority);
 
   for (const candidate of sorted) {
     const accessToken = await ensureValidToken("cursor", candidate);
@@ -1915,7 +1928,7 @@ export async function injectGooglePoolToken(client, skipEmail) {
         a.email !== skipEmail &&
         (!a.cooldownUntil || a.cooldownUntil <= now),
     )
-    .sort((a, b) => new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0));
+    .sort(compareAccountPriority);
 
   for (const candidate of sorted) {
     const accessToken = await ensureValidToken("google", candidate);
@@ -2935,7 +2948,8 @@ function poolActionList(provider, accounts, addAccountHint, now) {
       ? ` | last used: ${new Date(a.lastUsed).toLocaleString()}`
       : "";
     const accountIdSuffix = a.accountId ? ` | id: ${a.accountId.slice(0, 8)}...` : "";
-    return `${i + 1}. ${a.email} [${a.status}]${cooldown}${lastUsed}${accountIdSuffix}`;
+    const prioritySuffix = a.priority ? ` | priority: ${a.priority}` : "";
+    return `${i + 1}. ${a.email} [${a.status}]${cooldown}${lastUsed}${accountIdSuffix}${prioritySuffix}`;
   });
   const pending = getPendingToken(provider);
   const pendingLine = pending
@@ -3082,6 +3096,46 @@ function poolActionAssignPending(provider, accounts, email) {
 }
 
 /**
+ * Set the priority field on a pool account.
+ * Priority 0 (or omitted) means default LRU behaviour.
+ * Higher integers are preferred during rotation.
+ * @param {string} provider
+ * @param {string|undefined} email
+ * @param {number|undefined} priority
+ * @returns {string}
+ */
+function poolActionSetPriority(provider, email, priority) {
+  if (!email) {
+    return "Error: email is required for set-priority action. Usage: set-priority with email and priority parameters.";
+  }
+  if (priority === undefined || priority === null) {
+    return "Error: priority (integer) is required for set-priority action.";
+  }
+  const p = Number(priority);
+  if (!Number.isInteger(p)) {
+    return `Error: priority must be an integer, got: ${priority}`;
+  }
+  return withPoolLock(() => {
+    const pool = loadPool();
+    const accounts = pool[provider] || [];
+    const idx = accounts.findIndex((a) => a.email === email);
+    if (idx < 0) {
+      return `Account ${email} not found in ${provider} pool.`;
+    }
+    if (p === 0) {
+      delete accounts[idx].priority;
+    } else {
+      accounts[idx].priority = p;
+    }
+    savePool(pool);
+    if (p === 0) {
+      return `Cleared priority for ${email} in ${provider} pool (defaults to 0 — LRU order).`;
+    }
+    return `Set priority ${p} for ${email} in ${provider} pool. Higher-priority accounts are preferred during rotation.`;
+  });
+}
+
+/**
  * @param {string|undefined} providerArg
  * @param {number} now
  * @returns {Promise<string>}
@@ -3121,23 +3175,27 @@ async function poolActionCheck(providerArg, now) {
  */
 export function createPoolTool(client) {
   return {
-    description: "Manage OAuth account pool for provider credential rotation. Actions: list, rotate, remove, assign-pending, check, status, reset-cooldowns. Providers: anthropic, openai, cursor, google. Shell equivalent: oauth-pool-helper.sh.",
+    description: "Manage OAuth account pool for provider credential rotation. Actions: list, rotate, remove, assign-pending, check, status, reset-cooldowns, set-priority. Providers: anthropic, openai, cursor, google. Shell equivalent: oauth-pool-helper.sh.",
     parameters: {
       type: "object",
       properties: {
         action: {
           type: "string",
-          enum: ["list", "remove", "status", "reset-cooldowns", "rotate", "assign-pending", "check"],
+          enum: ["list", "remove", "status", "reset-cooldowns", "rotate", "assign-pending", "check", "set-priority"],
           description: "Action to perform",
         },
         email: {
           type: "string",
-          description: "Account email (required for 'remove' and 'assign-pending' actions)",
+          description: "Account email (required for 'remove', 'assign-pending', and 'set-priority' actions)",
         },
         provider: {
           type: "string",
           enum: ["anthropic", "openai", "cursor", "google"],
           description: "Provider name: 'anthropic' (default), 'openai', 'cursor', or 'google'",
+        },
+        priority: {
+          type: "integer",
+          description: "Rotation priority for 'set-priority' action (higher = preferred; 0 = default LRU order)",
         },
       },
       required: ["action"],
@@ -3163,7 +3221,8 @@ export function createPoolTool(client) {
         case "rotate":       return poolActionRotate(client, provider, accounts);
         case "assign-pending": return poolActionAssignPending(provider, accounts, args.email);
         case "check":        return poolActionCheck(args.provider, now);
-        default:             return `Unknown action: ${args.action}. Available: list, rotate, remove, assign-pending, status, reset-cooldowns, check`;
+        case "set-priority": return poolActionSetPriority(provider, args.email, args.priority);
+        default:             return `Unknown action: ${args.action}. Available: list, rotate, remove, assign-pending, status, reset-cooldowns, check, set-priority`;
       }
     },
   };

@@ -1460,7 +1460,9 @@ prov = os.environ['PROVIDER']
 for i, a in enumerate(pool.get(prov, []), 1):
     status = a.get('status', 'unknown')
     email = a.get('email', 'unknown')
-    print(f'  {i}. {email} [{status}]')
+    priority = a.get('priority')
+    priority_str = f' priority:{priority}' if priority is not None else ''
+    print(f'  {i}. {email} [{status}]{priority_str}')
 "
 	done
 	return 0
@@ -1666,7 +1668,7 @@ try:
         print('ERROR:no_alternate')
         sys.exit(0)
 
-    candidates.sort(key=lambda a: a.get('lastUsed', ''))
+    candidates.sort(key=lambda a: (-(a.get('priority') or 0), a.get('lastUsed', '')))
     next_account = candidates[0]
     next_email   = next_account.get('email', 'unknown')
 
@@ -2085,6 +2087,77 @@ json.dump({'cleared': cleared, 'pool': pool}, sys.stdout, indent=2)
 		print_success "Cleared cooldowns on ${cleared} account(s). All accounts set to idle."
 	fi
 	print_info "Restart OpenCode to pick up the reset state."
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Set priority — set the priority field on an account
+# ---------------------------------------------------------------------------
+
+cmd_set_priority() {
+	local provider="${1:-}"
+	local email="${2:-}"
+	local priority="${3:-}"
+
+	if [[ -z "$provider" || -z "$email" || -z "$priority" ]]; then
+		print_error "Usage: oauth-pool-helper.sh set-priority <provider> <email> <N>"
+		print_info "  N is an integer; higher values are preferred during rotation."
+		print_info "  Example: oauth-pool-helper.sh set-priority anthropic work@example.com 10"
+		return 1
+	fi
+
+	case "$provider" in
+	anthropic | openai | cursor | google) ;;
+	*)
+		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, google)"
+		return 1
+		;;
+	esac
+
+	if ! [[ "$priority" =~ ^-?[0-9]+$ ]]; then
+		print_error "Priority must be an integer (e.g. 0, 5, 10)"
+		return 1
+	fi
+
+	local pool
+	pool=$(load_pool)
+
+	local new_pool
+	new_pool=$(printf '%s' "$pool" | PROVIDER="$provider" EMAIL="$email" PRIORITY="$priority" python3 -c "
+import sys, json, os
+pool = json.load(sys.stdin)
+provider = os.environ['PROVIDER']
+email = os.environ['EMAIL']
+priority = int(os.environ['PRIORITY'])
+
+accounts = pool.get(provider, [])
+idx = next((i for i, a in enumerate(accounts) if a.get('email') == email), -1)
+if idx < 0:
+    print('ERROR:not_found')
+    sys.exit(0)
+
+if priority == 0:
+    accounts[idx].pop('priority', None)
+else:
+    accounts[idx]['priority'] = priority
+json.dump(pool, sys.stdout, indent=2)
+" 2>/dev/null)
+
+	case "$new_pool" in
+	ERROR:not_found)
+		print_error "Account ${email} not found in ${provider} pool"
+		print_info "Run 'oauth-pool-helper.sh list ${provider}' to see existing accounts"
+		return 1
+		;;
+	esac
+
+	save_pool "$new_pool"
+	if [[ "$priority" == "0" ]]; then
+		print_success "Cleared priority for ${email} in ${provider} pool (defaults to 0)"
+	else
+		print_success "Set priority ${priority} for ${email} in ${provider} pool"
+	fi
+	print_info "Higher priority accounts are preferred during rotation."
 	return 0
 }
 
@@ -2564,6 +2637,7 @@ Commands:
   status [anthropic|openai|cursor|google|all]     Pool aggregate stats (counts, availability)
   refresh [anthropic|openai|google] [email|all]   Refresh expired tokens without re-auth (uses refresh_token)
   rotate [anthropic|openai|cursor|google]         Switch to next available account NOW (auto-refreshes expired tokens)
+  set-priority <provider> <email> <N>             Set rotation priority (higher N = preferred; 0 = default)
   mark-failure <provider> <reason> [retry_secs]   Mark current account cooldown/status from runtime failures
   reset-cooldowns [provider|all]                  Clear rate-limit cooldowns so all accounts retry
   assign-pending <provider> [email]               Assign a stranded pending token to an account
@@ -2587,6 +2661,8 @@ Examples:
   oauth-pool-helper.sh list                               # List all accounts
   oauth-pool-helper.sh rotate anthropic                   # Switch to next Anthropic account
   oauth-pool-helper.sh rotate google                      # Switch to next Google account
+  oauth-pool-helper.sh set-priority anthropic work@example.com 10  # Prefer work account
+  oauth-pool-helper.sh set-priority anthropic work@example.com 0   # Clear priority (default)
   oauth-pool-helper.sh reset-cooldowns                    # Clear all cooldowns
   oauth-pool-helper.sh status                             # Show pool statistics
   oauth-pool-helper.sh remove anthropic user@example.com
@@ -2628,6 +2704,7 @@ main() {
 	rotate) cmd_rotate "$@" ;;
 	reset-cooldowns | reset_cooldowns | reset) cmd_reset_cooldowns "$@" ;;
 	remove) cmd_remove "$@" ;;
+	set-priority | set_priority) cmd_set_priority "$@" ;;
 	status) cmd_status "$@" ;;
 	help | -h | --help) cmd_help ;;
 	*)
