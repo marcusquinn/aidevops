@@ -25,13 +25,13 @@ tools:
 
 | Type | Use Case | Notes |
 |------|----------|-------|
-| **Text post** | Thought leadership, updates | 3,000 char limit |
-| **Article** | Long-form content | Published on LinkedIn's platform |
-| **Carousel** | Multi-page visual content | PDF upload, up to 300 pages |
-| **Document** | Whitepapers, guides | PDF/PPT/DOC, 100MB max |
-| **Poll** | Audience engagement | 2-4 options, 1-2 week duration |
-| **Image post** | Visual content | Up to 9 images per post |
-| **Video** | Native video content | Up to 10 min recommended |
+| **Text** | Thought leadership | 3k char limit |
+| **Article** | Long-form | Native platform |
+| **Carousel** | Visual | PDF, 300 pgs max |
+| **Document** | Guides | PDF/PPT/DOC, 100MB |
+| **Poll** | Engagement | 2-4 options, 1-2 wks |
+| **Image** | Visual | Up to 9 images |
+| **Video** | Native | 10 min max |
 
 <!-- AI-CONTEXT-END -->
 
@@ -69,48 +69,48 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 
 ## Post Structure & Formatting
 
-1. **Hook line** — first 1-2 lines visible before "see more" (~210 chars)
-2. **Body** — main content with `\n` line breaks; blank lines for paragraphs
-3. **CTA** — call to action (comment, share, visit link)
-4. **Hashtags** — 3-5 relevant hashtags at end
+1. **Hook** — first 1-2 lines (~210 chars)
+2. **Body** — content with `\n` breaks; blank lines for paragraphs
+3. **CTA** — call to action (comment, share, link)
+4. **Hashtags** — 3-5 relevant tags at end
 
-Bold/italic via Unicode characters (not native API). Emoji sparingly (1-3 per post). Post limit: 3,000 chars.
+Bold/italic via Unicode. Emoji 1-3 per post. Limit: 3k chars.
 
 ## Content Best Practices
 
-- **Hashtags**: 3-5 max, mix broad (#Leadership) with niche (#DevOpsAutomation)
-- **Timing**: Tue-Thu, 7-8am / 12pm / 5-6pm audience timezone, 3-5 posts/week
-- **Engagement**: Open with question or bold statement, end with CTA question
-- **Personal stories**: "I" narratives perform 2-3x better than generic content
-- **Reply fast**: Respond to comments within first hour for algorithmic boost
+- **Hashtags**: 3-5 max, mix broad (#Leadership) with niche (#DevOps)
+- **Timing**: Tue-Thu, 7-8am / 12pm / 5-6pm, 3-5 posts/week
+- **Engagement**: Open with hook/bold statement, end with CTA question
+- **Stories**: "I" narratives perform 2-3x better
+- **Reply**: Respond within 1h for algorithmic boost
 
 ## Analytics
 
 | Metric | Target | API Field |
 |--------|--------|-----------|
-| Impressions | Track trend | `impressionCount` |
-| Engagement rate | >2% good, >5% excellent | `engagementRate` |
-| Click-through | >1% for link posts | `clickCount` |
-| Shares | High-value content indicator | `shareCount` |
+| Impressions | Trend | `impressionCount` |
+| Engagement | >2% good | `engagementRate` |
+| Click-through | >1% links | `clickCount` |
+| Shares | High-value | `shareCount` |
 
 ## Content Repurposing
 
 | Source | LinkedIn Format |
 |--------|----------------|
-| Blog post | Extract key points into text post + link |
-| Tweet thread | Expand into single LinkedIn post |
-| Conference talk | Carousel with key slides |
-| Documentation | How-to post with code snippets |
-| Reddit answer | Reframe as thought leadership |
+| Blog | Key points + link |
+| Tweet | Expand into post |
+| Talk | Carousel slides |
+| Docs | How-to + code |
+| Reddit | Thought leadership |
 
-**Cross-post workflow**: Draft once, adapt for LinkedIn (professional tone, hashtags), X/Twitter (concise, threads — see [bird.md](bird.md)), Reddit (subreddit-appropriate — see [reddit.md](reddit.md)).
+**Cross-post**: Adapt for LinkedIn (professional), X/Twitter (concise — [bird.md](bird.md)), Reddit (subreddit-appropriate — [reddit.md](reddit.md)).
 
 ## Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
-| 401 Unauthorized | Token expired; re-authenticate OAuth flow |
-| 403 Forbidden | Missing API scope or app not approved |
-| 429 Rate limited | Daily limit ~100 API calls; implement backoff |
-| Post not visible | Check visibility setting; may need `PUBLIC` scope |
-| Image upload fails | Register upload first, then PUT binary to upload URL |
+| 401 | Token expired; re-auth |
+| 403 | Missing scope/approval |
+| 429 | Daily limit ~100; backoff |
+| Hidden | Check visibility; `PUBLIC` |
+| Upload | Register first, then PUT |
