@@ -1,6 +1,6 @@
 # Stagehand Benchmark Scripts
 
-AI-driven `act()`/`extract()` instead of CSS selectors. New `Stagehand` instance per run (measures cold-start). Tests receive `sh`; access page via `sh.ctx.pages()[0]`.
+AI-driven `act()`/`extract()`. New `Stagehand` per run (cold-start). Tests use `sh`; page: `sh.ctx.pages()[0]`.
 
 ```javascript
 import { Stagehand } from "@browserbasehq/stagehand";
@@ -31,7 +31,7 @@ const TESTS = {
   }
 };
 
-// Harness: new Stagehand → init → time fn(sh) → close; 3 runs per test, JSON output.
+// Harness: new Stagehand → init → time fn(sh) → close; 3 runs, JSON output.
 async function run() {
   const results = {};
   for (const [name, fn] of Object.entries(TESTS)) {
