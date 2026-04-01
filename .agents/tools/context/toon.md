@@ -29,8 +29,6 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-**Token-Oriented Object Notation (TOON)** — compact, human-readable, schema-aware serialization for LLM prompts.
-
 ## Format Examples
 
 ### Simple Object
