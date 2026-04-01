@@ -161,25 +161,27 @@ if [[ -z "${AIDEVOPS_HEADLESS_MODELS:-}" ]]; then
 		export AIDEVOPS_HEADLESS_MODELS
 	fi
 fi
-PULSE_BACKFILL_MAX_ATTEMPTS="${PULSE_BACKFILL_MAX_ATTEMPTS:-3}"                    # Additional pulse passes when below utilization target (t1453)
-PULSE_LAUNCH_GRACE_SECONDS="${PULSE_LAUNCH_GRACE_SECONDS:-20}"                     # Grace window for worker process to appear after dispatch (t1453)
-PRE_RUN_STAGE_TIMEOUT="${PRE_RUN_STAGE_TIMEOUT:-600}"                              # 10 min cap per pre-run stage (cleanup/prefetch)
-PULSE_PREFETCH_PR_LIMIT="${PULSE_PREFETCH_PR_LIMIT:-200}"                          # Open PR list window per repo for pre-fetched state
-PULSE_PREFETCH_ISSUE_LIMIT="${PULSE_PREFETCH_ISSUE_LIMIT:-200}"                    # Open issue list window for pulse prompt payload (keep compact)
-PULSE_RUNNABLE_PR_LIMIT="${PULSE_RUNNABLE_PR_LIMIT:-200}"                          # Open PR sample size for runnable-candidate counting
-PULSE_RUNNABLE_ISSUE_LIMIT="${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}"                   # Open issue sample size for runnable-candidate counting
-PULSE_QUEUED_SCAN_LIMIT="${PULSE_QUEUED_SCAN_LIMIT:-1000}"                         # Queued/in-progress scan window per repo
-UNDERFILL_RECYCLE_DEFICIT_MIN_PCT="${UNDERFILL_RECYCLE_DEFICIT_MIN_PCT:-25}"       # Run worker recycler when underfill reaches this threshold
-PULSE_PR_BACKLOG_HEAVY_THRESHOLD="${PULSE_PR_BACKLOG_HEAVY_THRESHOLD:-100}"        # Stronger PR-first mode when open backlog reaches this size
-PULSE_PR_BACKLOG_CRITICAL_THRESHOLD="${PULSE_PR_BACKLOG_CRITICAL_THRESHOLD:-175}"  # Merge-first mode when open backlog becomes severe
-PULSE_READY_PR_MERGE_HEAVY_THRESHOLD="${PULSE_READY_PR_MERGE_HEAVY_THRESHOLD:-10}" # Merge-first when enough PRs are ready immediately
-PULSE_FAILING_PR_HEAVY_THRESHOLD="${PULSE_FAILING_PR_HEAVY_THRESHOLD:-25}"         # PR-first when failing/review-blocked queue is large
-GH_FAILURE_PREFETCH_HOURS="${GH_FAILURE_PREFETCH_HOURS:-24}"                       # Window for failed-notification mining summary
-GH_FAILURE_PREFETCH_LIMIT="${GH_FAILURE_PREFETCH_LIMIT:-100}"                      # Notification page size for failed-notification mining
-GH_FAILURE_SYSTEMIC_THRESHOLD="${GH_FAILURE_SYSTEMIC_THRESHOLD:-3}"                # Cluster threshold for systemic-failure flag
-GH_FAILURE_MAX_RUN_LOGS="${GH_FAILURE_MAX_RUN_LOGS:-6}"                            # Max failed workflow runs to sample for signatures per pulse
-FOSS_SCAN_TIMEOUT="${FOSS_SCAN_TIMEOUT:-30}"                                       # Timeout for FOSS contribution scan prefetch (t1702)
-FOSS_MAX_DISPATCH_PER_CYCLE="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"                    # Max FOSS contribution workers per pulse cycle (t1702)
+PULSE_BACKFILL_MAX_ATTEMPTS="${PULSE_BACKFILL_MAX_ATTEMPTS:-3}"                                            # Additional pulse passes when below utilization target (t1453)
+PULSE_LAUNCH_GRACE_SECONDS="${PULSE_LAUNCH_GRACE_SECONDS:-20}"                                             # Grace window for worker process to appear after dispatch (t1453)
+PRE_RUN_STAGE_TIMEOUT="${PRE_RUN_STAGE_TIMEOUT:-600}"                                                      # 10 min cap per pre-run stage (cleanup/prefetch)
+PULSE_PREFETCH_PR_LIMIT="${PULSE_PREFETCH_PR_LIMIT:-200}"                                                  # Open PR list window per repo for pre-fetched state
+PULSE_PREFETCH_ISSUE_LIMIT="${PULSE_PREFETCH_ISSUE_LIMIT:-200}"                                            # Open issue list window for pulse prompt payload (keep compact)
+PULSE_PREFETCH_CACHE_FILE="${PULSE_PREFETCH_CACHE_FILE:-${HOME}/.aidevops/logs/pulse-prefetch-cache.json}" # Delta prefetch state cache (GH#15286)
+PULSE_PREFETCH_FULL_SWEEP_INTERVAL="${PULSE_PREFETCH_FULL_SWEEP_INTERVAL:-86400}"                          # Full sweep interval in seconds (default 24h) (GH#15286)
+PULSE_RUNNABLE_PR_LIMIT="${PULSE_RUNNABLE_PR_LIMIT:-200}"                                                  # Open PR sample size for runnable-candidate counting
+PULSE_RUNNABLE_ISSUE_LIMIT="${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}"                                           # Open issue sample size for runnable-candidate counting
+PULSE_QUEUED_SCAN_LIMIT="${PULSE_QUEUED_SCAN_LIMIT:-1000}"                                                 # Queued/in-progress scan window per repo
+UNDERFILL_RECYCLE_DEFICIT_MIN_PCT="${UNDERFILL_RECYCLE_DEFICIT_MIN_PCT:-25}"                               # Run worker recycler when underfill reaches this threshold
+PULSE_PR_BACKLOG_HEAVY_THRESHOLD="${PULSE_PR_BACKLOG_HEAVY_THRESHOLD:-100}"                                # Stronger PR-first mode when open backlog reaches this size
+PULSE_PR_BACKLOG_CRITICAL_THRESHOLD="${PULSE_PR_BACKLOG_CRITICAL_THRESHOLD:-175}"                          # Merge-first mode when open backlog becomes severe
+PULSE_READY_PR_MERGE_HEAVY_THRESHOLD="${PULSE_READY_PR_MERGE_HEAVY_THRESHOLD:-10}"                         # Merge-first when enough PRs are ready immediately
+PULSE_FAILING_PR_HEAVY_THRESHOLD="${PULSE_FAILING_PR_HEAVY_THRESHOLD:-25}"                                 # PR-first when failing/review-blocked queue is large
+GH_FAILURE_PREFETCH_HOURS="${GH_FAILURE_PREFETCH_HOURS:-24}"                                               # Window for failed-notification mining summary
+GH_FAILURE_PREFETCH_LIMIT="${GH_FAILURE_PREFETCH_LIMIT:-100}"                                              # Notification page size for failed-notification mining
+GH_FAILURE_SYSTEMIC_THRESHOLD="${GH_FAILURE_SYSTEMIC_THRESHOLD:-3}"                                        # Cluster threshold for systemic-failure flag
+GH_FAILURE_MAX_RUN_LOGS="${GH_FAILURE_MAX_RUN_LOGS:-6}"                                                    # Max failed workflow runs to sample for signatures per pulse
+FOSS_SCAN_TIMEOUT="${FOSS_SCAN_TIMEOUT:-30}"                                                               # Timeout for FOSS contribution scan prefetch (t1702)
+FOSS_MAX_DISPATCH_PER_CYCLE="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"                                            # Max FOSS contribution workers per pulse cycle (t1702)
 
 # Process guard limits (t1398)
 CHILD_RSS_LIMIT_KB="${CHILD_RSS_LIMIT_KB:-2097152}"           # 2 GB default — kill child if RSS exceeds this
@@ -231,6 +233,7 @@ GH_FAILURE_SYSTEMIC_THRESHOLD=$(_validate_int GH_FAILURE_SYSTEMIC_THRESHOLD "$GH
 GH_FAILURE_MAX_RUN_LOGS=$(_validate_int GH_FAILURE_MAX_RUN_LOGS "$GH_FAILURE_MAX_RUN_LOGS" 6 0)
 FOSS_SCAN_TIMEOUT=$(_validate_int FOSS_SCAN_TIMEOUT "$FOSS_SCAN_TIMEOUT" 30 5)
 FOSS_MAX_DISPATCH_PER_CYCLE=$(_validate_int FOSS_MAX_DISPATCH_PER_CYCLE "$FOSS_MAX_DISPATCH_PER_CYCLE" 2 0)
+PULSE_PREFETCH_FULL_SWEEP_INTERVAL=$(_validate_int PULSE_PREFETCH_FULL_SWEEP_INTERVAL "$PULSE_PREFETCH_FULL_SWEEP_INTERVAL" 86400 60)
 CHILD_RSS_LIMIT_KB=$(_validate_int CHILD_RSS_LIMIT_KB "$CHILD_RSS_LIMIT_KB" 2097152 1)
 CHILD_RUNTIME_LIMIT=$(_validate_int CHILD_RUNTIME_LIMIT "$CHILD_RUNTIME_LIMIT" 1800 1)
 SHELLCHECK_RSS_LIMIT_KB=$(_validate_int SHELLCHECK_RSS_LIMIT_KB "$SHELLCHECK_RSS_LIMIT_KB" 1048576 1)
@@ -574,16 +577,130 @@ check_dedup() {
 # _get_pid_cpu, _get_process_tree_cpu) provided by worker-lifecycle-common.sh
 
 #######################################
-# Print the Open PRs section for a repo (GH#5627)
+# Delta prefetch cache helpers (GH#15286)
 #
-# Fetches open PRs and emits a markdown section to stdout.
-# Called from _prefetch_single_repo inside a subshell redirect.
+# The cache file is a JSON object keyed by repo slug:
+#   {
+#     "owner/repo": {
+#       "last_prefetch": "2026-04-01T12:00:00Z",
+#       "last_full_sweep": "2026-04-01T00:00:00Z",
+#       "issues": [...],   # full issue list from last full sweep
+#       "prs": [...]       # full PR list from last full sweep
+#     }
+#   }
+#
+# Delta cycle: fetch only items with updatedAt > last_prefetch, merge into
+# cached full list, update last_prefetch timestamp.
+# Full sweep: fetch everything, replace cached list, update both timestamps.
+# Fallback: if delta fetch fails or cache is corrupt, fall back to full fetch.
+#######################################
+
+#######################################
+# Load the prefetch cache for a single repo slug.
+#
+# Outputs the JSON object for the slug, or "{}" if not found/corrupt.
 #
 # Arguments:
 #   $1 - repo slug (owner/repo)
 #######################################
+_prefetch_cache_get() {
+	local slug="$1"
+	local cache_file="$PULSE_PREFETCH_CACHE_FILE"
+	if [[ ! -f "$cache_file" ]]; then
+		echo "{}"
+		return 0
+	fi
+	local entry
+	entry=$(jq -r --arg slug "$slug" '.[$slug] // {}' "$cache_file" 2>/dev/null) || entry="{}"
+	[[ -n "$entry" ]] || entry="{}"
+	echo "$entry"
+	return 0
+}
+
+#######################################
+# Write updated cache entry for a repo slug.
+#
+# Merges the new entry into the cache file atomically (write to tmp, mv).
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - JSON object to store for this slug
+#######################################
+_prefetch_cache_set() {
+	local slug="$1"
+	local entry="$2"
+	local cache_file="$PULSE_PREFETCH_CACHE_FILE"
+	local cache_dir
+	cache_dir=$(dirname "$cache_file")
+	mkdir -p "$cache_dir" 2>/dev/null || true
+
+	local existing="{}"
+	if [[ -f "$cache_file" ]]; then
+		existing=$(cat "$cache_file" 2>/dev/null) || existing="{}"
+		# Validate JSON; reset if corrupt
+		echo "$existing" | jq empty 2>/dev/null || existing="{}"
+	fi
+
+	local tmp_file
+	tmp_file=$(mktemp "${cache_dir}/.pulse-prefetch-cache.XXXXXX")
+	echo "$existing" | jq --arg slug "$slug" --argjson entry "$entry" \
+		'.[$slug] = $entry' >"$tmp_file" 2>/dev/null && mv "$tmp_file" "$cache_file" || {
+		rm -f "$tmp_file"
+		echo "[pulse-wrapper] _prefetch_cache_set: failed to write cache for ${slug}" >>"$LOGFILE"
+	}
+	return 0
+}
+
+#######################################
+# Determine whether a full sweep is needed for a repo.
+#
+# Returns 0 (true) if:
+#   - Cache entry missing or has no last_full_sweep
+#   - last_full_sweep is older than PULSE_PREFETCH_FULL_SWEEP_INTERVAL seconds
+#
+# Arguments:
+#   $1 - cache entry JSON (from _prefetch_cache_get)
+#######################################
+_prefetch_needs_full_sweep() {
+	local entry="$1"
+	local last_full_sweep
+	last_full_sweep=$(echo "$entry" | jq -r '.last_full_sweep // ""' 2>/dev/null) || last_full_sweep=""
+	if [[ -z "$last_full_sweep" || "$last_full_sweep" == "null" ]]; then
+		return 0 # No prior full sweep — must do one
+	fi
+
+	# Convert ISO timestamp to epoch (macOS date -j -f)
+	local last_epoch now_epoch
+	last_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_full_sweep" "+%s" 2>/dev/null) || last_epoch=0
+	now_epoch=$(date -u +%s)
+	local age=$((now_epoch - last_epoch))
+	if [[ "$age" -ge "$PULSE_PREFETCH_FULL_SWEEP_INTERVAL" ]]; then
+		return 0 # Sweep interval elapsed
+	fi
+	return 1 # Delta is sufficient
+}
+
+#######################################
+# Print the Open PRs section for a repo (GH#5627, GH#15286)
+#
+# Fetches open PRs and emits a markdown section to stdout.
+# Called from _prefetch_single_repo inside a subshell redirect.
+#
+# Delta prefetch (GH#15286): on non-full-sweep cycles, fetches only PRs
+# updated since last_prefetch and merges into the cached full list.
+# Falls back to full fetch if delta fails or cache is missing.
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - cache entry JSON (from _prefetch_cache_get)
+#   $3 - "full" for full sweep, "delta" for delta fetch
+#   $4 - output variable name for updated prs JSON (nameref not available in bash 3.2;
+#        caller reads PREFETCH_UPDATED_PRS after return)
+#######################################
 _prefetch_repo_prs() {
 	local slug="$1"
+	local cache_entry="${2:-{}}"
+	local sweep_mode="${3:-full}"
 
 	# PRs (createdAt included for daily PR cap — GH#3821)
 	# GH#15060: statusCheckRollup is the heaviest field in the GraphQL payload —
@@ -596,20 +713,70 @@ _prefetch_repo_prs() {
 	# Fix: fetch without statusCheckRollup first (fast, always works), then
 	# enrich with check status in a separate lightweight call. If the enrichment
 	# fails, the pulse still sees the PR list and can act on review status.
+	#
+	# GH#15286: Delta mode — fetch only PRs updated since last_prefetch, then
+	# merge into cached full list. Full sweep replaces the cache entirely.
 	local pr_json pr_err
 	pr_err=$(mktemp)
-	pr_json=$(gh pr list --repo "$slug" --state open \
-		--json number,title,reviewDecision,updatedAt,headRefName,createdAt,author \
-		--limit "$PULSE_PREFETCH_PR_LIMIT" 2>"$pr_err") || pr_json=""
 
-	# Log errors instead of swallowing them silently
-	if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
-		local err_msg
-		err_msg=$(cat "$pr_err" 2>/dev/null || echo "unknown error")
-		echo "[pulse-wrapper] _prefetch_repo_prs: gh pr list FAILED for ${slug}: ${err_msg}" >>"$LOGFILE"
-		pr_json="[]"
+	if [[ "$sweep_mode" == "delta" ]]; then
+		# Delta: fetch only recently-updated PRs
+		local last_prefetch
+		last_prefetch=$(echo "$cache_entry" | jq -r '.last_prefetch // ""' 2>/dev/null) || last_prefetch=""
+		local delta_json=""
+		if [[ -n "$last_prefetch" && "$last_prefetch" != "null" ]]; then
+			delta_json=$(gh pr list --repo "$slug" --state open \
+				--json number,title,reviewDecision,updatedAt,headRefName,createdAt,author \
+				--search "updated:>=${last_prefetch}" \
+				--limit "$PULSE_PREFETCH_PR_LIMIT" 2>"$pr_err") || delta_json=""
+		fi
+
+		if [[ -z "$delta_json" || "$delta_json" == "null" ]]; then
+			# Delta failed or no timestamp — fall back to full fetch
+			local _delta_err_msg
+			_delta_err_msg=$(cat "$pr_err" 2>/dev/null || echo "no timestamp or fetch error")
+			echo "[pulse-wrapper] _prefetch_repo_prs: delta fetch failed for ${slug} (falling back to full): ${_delta_err_msg}" >>"$LOGFILE"
+			sweep_mode="full"
+		else
+			# Merge delta into cached full list: replace matching numbers, append new ones
+			local cached_prs
+			cached_prs=$(echo "$cache_entry" | jq '.prs // []' 2>/dev/null) || cached_prs="[]"
+			pr_json=$(echo "$cached_prs" | jq --argjson delta "$delta_json" '
+				# Build lookup of delta PR numbers
+				($delta | map(.number) | map(tostring) | map({(.) : true}) | add // {}) as $delta_nums |
+				# Remove cached entries that appear in delta (they will be replaced)
+				[.[] | select((.number | tostring) as $n | $delta_nums[$n] | not)] +
+				# Append all delta entries (updated + new)
+				$delta
+			' 2>/dev/null) || pr_json=""
+			if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
+				echo "[pulse-wrapper] _prefetch_repo_prs: delta merge failed for ${slug} (falling back to full)" >>"$LOGFILE"
+				sweep_mode="full"
+			else
+				local delta_count
+				delta_count=$(echo "$delta_json" | jq 'length' 2>/dev/null) || delta_count=0
+				echo "[pulse-wrapper] _prefetch_repo_prs: delta for ${slug}: ${delta_count} changed PRs merged into cache" >>"$LOGFILE"
+			fi
+		fi
+	fi
+
+	if [[ "$sweep_mode" == "full" ]]; then
+		pr_json=$(gh pr list --repo "$slug" --state open \
+			--json number,title,reviewDecision,updatedAt,headRefName,createdAt,author \
+			--limit "$PULSE_PREFETCH_PR_LIMIT" 2>"$pr_err") || pr_json=""
+
+		# Log errors instead of swallowing them silently
+		if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
+			local err_msg
+			err_msg=$(cat "$pr_err" 2>/dev/null || echo "unknown error")
+			echo "[pulse-wrapper] _prefetch_repo_prs: gh pr list FAILED for ${slug}: ${err_msg}" >>"$LOGFILE"
+			pr_json="[]"
+		fi
 	fi
 	rm -f "$pr_err"
+
+	# Export updated PR list for cache update by caller (Bash 3.2: no namerefs)
+	PREFETCH_UPDATED_PRS="$pr_json"
 
 	local pr_count
 	pr_count=$(echo "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
@@ -721,17 +888,26 @@ _prefetch_repo_daily_cap() {
 }
 
 #######################################
-# Print the Open Issues sections for a repo (GH#5627)
+# Print the Open Issues sections for a repo (GH#5627, GH#15286)
 #
 # Fetches open issues, filters managed labels, splits into dispatchable
 # vs quality-sweep-tracked, and emits markdown sections to stdout.
 # Called from _prefetch_single_repo inside a subshell redirect.
 #
+# Delta prefetch (GH#15286): on non-full-sweep cycles, fetches only issues
+# updated since last_prefetch and merges into the cached full list.
+# Falls back to full fetch if delta fails or cache is missing.
+# Sets PREFETCH_UPDATED_ISSUES for cache update by caller.
+#
 # Arguments:
 #   $1 - repo slug (owner/repo)
+#   $2 - cache entry JSON (from _prefetch_cache_get)
+#   $3 - "full" for full sweep, "delta" for delta fetch
 #######################################
 _prefetch_repo_issues() {
 	local slug="$1"
+	local cache_entry="${2:-{}}"
+	local sweep_mode="${3:-full}"
 
 	# Issues (include assignees for dispatch dedup)
 	# Filter out supervisor/contributor/persistent/quality-review issues —
@@ -739,19 +915,62 @@ _prefetch_repo_issues() {
 	# pulse agent. Exposing them in pre-fetched state causes the LLM to
 	# close them as "stale", creating churn (wrapper recreates on next cycle).
 	# GH#15060: Log errors instead of silently swallowing them with 2>/dev/null.
+	# GH#15286: Delta mode — fetch only recently-updated issues, merge into cache.
 	local issue_json issue_err
 	issue_err=$(mktemp)
-	issue_json=$(gh issue list --repo "$slug" --state open \
-		--json number,title,labels,updatedAt,assignees \
-		--limit "$PULSE_PREFETCH_ISSUE_LIMIT" 2>"$issue_err") || issue_json=""
 
-	if [[ -z "$issue_json" || "$issue_json" == "null" ]]; then
-		local issue_err_msg
-		issue_err_msg=$(cat "$issue_err" 2>/dev/null || echo "unknown error")
-		echo "[pulse-wrapper] _prefetch_repo_issues: gh issue list FAILED for ${slug}: ${issue_err_msg}" >>"$LOGFILE"
-		issue_json="[]"
+	if [[ "$sweep_mode" == "delta" ]]; then
+		local last_prefetch
+		last_prefetch=$(echo "$cache_entry" | jq -r '.last_prefetch // ""' 2>/dev/null) || last_prefetch=""
+		local delta_json=""
+		if [[ -n "$last_prefetch" && "$last_prefetch" != "null" ]]; then
+			delta_json=$(gh issue list --repo "$slug" --state open \
+				--json number,title,labels,updatedAt,assignees \
+				--search "updated:>=${last_prefetch}" \
+				--limit "$PULSE_PREFETCH_ISSUE_LIMIT" 2>"$issue_err") || delta_json=""
+		fi
+
+		if [[ -z "$delta_json" || "$delta_json" == "null" ]]; then
+			local _delta_issue_err
+			_delta_issue_err=$(cat "$issue_err" 2>/dev/null || echo "no timestamp or fetch error")
+			echo "[pulse-wrapper] _prefetch_repo_issues: delta fetch failed for ${slug} (falling back to full): ${_delta_issue_err}" >>"$LOGFILE"
+			sweep_mode="full"
+		else
+			# Merge delta into cached full list
+			local cached_issues
+			cached_issues=$(echo "$cache_entry" | jq '.issues // []' 2>/dev/null) || cached_issues="[]"
+			issue_json=$(echo "$cached_issues" | jq --argjson delta "$delta_json" '
+				($delta | map(.number) | map(tostring) | map({(.) : true}) | add // {}) as $delta_nums |
+				[.[] | select((.number | tostring) as $n | $delta_nums[$n] | not)] +
+				$delta
+			' 2>/dev/null) || issue_json=""
+			if [[ -z "$issue_json" || "$issue_json" == "null" ]]; then
+				echo "[pulse-wrapper] _prefetch_repo_issues: delta merge failed for ${slug} (falling back to full)" >>"$LOGFILE"
+				sweep_mode="full"
+			else
+				local delta_count
+				delta_count=$(echo "$delta_json" | jq 'length' 2>/dev/null) || delta_count=0
+				echo "[pulse-wrapper] _prefetch_repo_issues: delta for ${slug}: ${delta_count} changed issues merged into cache" >>"$LOGFILE"
+			fi
+		fi
+	fi
+
+	if [[ "$sweep_mode" == "full" ]]; then
+		issue_json=$(gh issue list --repo "$slug" --state open \
+			--json number,title,labels,updatedAt,assignees \
+			--limit "$PULSE_PREFETCH_ISSUE_LIMIT" 2>"$issue_err") || issue_json=""
+
+		if [[ -z "$issue_json" || "$issue_json" == "null" ]]; then
+			local issue_err_msg
+			issue_err_msg=$(cat "$issue_err" 2>/dev/null || echo "unknown error")
+			echo "[pulse-wrapper] _prefetch_repo_issues: gh issue list FAILED for ${slug}: ${issue_err_msg}" >>"$LOGFILE"
+			issue_json="[]"
+		fi
 	fi
 	rm -f "$issue_err"
+
+	# Export updated issue list for cache update by caller (Bash 3.2: no namerefs)
+	PREFETCH_UPDATED_ISSUES="$issue_json"
 
 	# Remove issues with supervisor, contributor, persistent, or quality-review labels
 	local filtered_json
@@ -793,11 +1012,14 @@ _prefetch_repo_issues() {
 }
 
 #######################################
-# Fetch PR, issue, and daily-cap data for a single repo (GH#5627)
+# Fetch PR, issue, and daily-cap data for a single repo (GH#5627, GH#15286)
 #
 # Runs inside a subshell (called from prefetch_state parallel loop).
 # Writes a compact markdown summary to the specified output file.
 # Delegates to focused helpers for each data section.
+#
+# Delta prefetch (GH#15286): determines sweep mode from cache, calls helpers
+# with cache entry, then updates the cache file with fresh data.
 #
 # Arguments:
 #   $1 - repo slug (owner/repo)
@@ -809,13 +1031,51 @@ _prefetch_single_repo() {
 	local path="$2"
 	local outfile="$3"
 
+	# GH#15286: Determine sweep mode from cache
+	local cache_entry
+	cache_entry=$(_prefetch_cache_get "$slug")
+	local sweep_mode="delta"
+	if _prefetch_needs_full_sweep "$cache_entry"; then
+		sweep_mode="full"
+		echo "[pulse-wrapper] _prefetch_single_repo: full sweep for ${slug}" >>"$LOGFILE"
+	else
+		echo "[pulse-wrapper] _prefetch_single_repo: delta prefetch for ${slug}" >>"$LOGFILE"
+	fi
+
+	# Reset shared output vars (subshell-safe: each repo runs in its own subshell)
+	PREFETCH_UPDATED_PRS="[]"
+	PREFETCH_UPDATED_ISSUES="[]"
+
 	{
 		echo "## ${slug} (${path})"
 		echo ""
-		_prefetch_repo_prs "$slug"
+		_prefetch_repo_prs "$slug" "$cache_entry" "$sweep_mode"
 		_prefetch_repo_daily_cap "$slug"
-		_prefetch_repo_issues "$slug"
+		_prefetch_repo_issues "$slug" "$cache_entry" "$sweep_mode"
 	} >"$outfile"
+
+	# GH#15286: Update cache with fresh data
+	local now_iso
+	now_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	local new_entry
+	if [[ "$sweep_mode" == "full" ]]; then
+		new_entry=$(jq -n \
+			--arg now "$now_iso" \
+			--argjson prs "${PREFETCH_UPDATED_PRS:-[]}" \
+			--argjson issues "${PREFETCH_UPDATED_ISSUES:-[]}" \
+			'{last_prefetch: $now, last_full_sweep: $now, prs: $prs, issues: $issues}')
+	else
+		local last_full_sweep
+		last_full_sweep=$(echo "$cache_entry" | jq -r '.last_full_sweep // ""' 2>/dev/null) || last_full_sweep=""
+		new_entry=$(jq -n \
+			--arg now "$now_iso" \
+			--arg lfs "$last_full_sweep" \
+			--argjson prs "${PREFETCH_UPDATED_PRS:-[]}" \
+			--argjson issues "${PREFETCH_UPDATED_ISSUES:-[]}" \
+			'{last_prefetch: $now, last_full_sweep: $lfs, prs: $prs, issues: $issues}')
+	fi
+	_prefetch_cache_set "$slug" "$new_entry"
+
 	return 0
 }
 
