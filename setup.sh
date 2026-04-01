@@ -775,6 +775,7 @@ _setup_run_non_interactive() {
 	validate_opencode_config
 	deploy_aidevops_agents
 	sync_agent_sources
+	install_aidevops_cli
 	setup_shellcheck_wrapper
 	if is_feature_enabled safety_hooks 2>/dev/null; then
 		setup_safety_hooks
