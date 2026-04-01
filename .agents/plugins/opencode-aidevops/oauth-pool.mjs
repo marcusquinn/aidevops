@@ -1342,7 +1342,7 @@ export async function ensureValidToken(provider, account) {
  * @param {PoolAccount[]} accounts - mutable array from getAccounts()
  * @returns {number} count of accounts normalized
  */
-function normalizeExpiredCooldowns(provider, accounts) {
+export function normalizeExpiredCooldowns(provider, accounts) {
   const now = Date.now();
   let normalized = 0;
   for (const a of accounts) {

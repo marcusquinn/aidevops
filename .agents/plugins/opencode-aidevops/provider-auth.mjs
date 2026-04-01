@@ -22,7 +22,7 @@
  * This module makes the built-in provider use them correctly.
  */
 
-import { ensureValidToken, getAccounts, patchAccount, getAnthropicUserAgent } from "./oauth-pool.mjs";
+import { ensureValidToken, getAccounts, patchAccount, getAnthropicUserAgent, normalizeExpiredCooldowns } from "./oauth-pool.mjs";
 
 /** Default cooldown when rate limited mid-session (ms) — 5 seconds.
  *  Anthropic per-minute rate limits reset in seconds. Conservative cooldowns
@@ -137,6 +137,8 @@ export function createProviderAuthHook(client) {
 
           if (!accessToken || accessExpires < Date.now()) {
             const accounts = getAccounts("anthropic");
+            // Clear expired cooldowns before filtering (GH#15322).
+            normalizeExpiredCooldowns("anthropic", accounts);
             let refreshed = false;
 
             // Session affinity (t1714): try the session's own account first.
@@ -436,12 +438,27 @@ export function createProviderAuthHook(client) {
           // Both paths retry the request exactly once after recovery.
           if (response.status === 401 || response.status === 403) {
             const accounts = getAccounts("anthropic");
+            // Clear expired cooldowns so rate-limited accounts with elapsed
+            // cooldowns become available for rotation (GH#15322).
+            normalizeExpiredCooldowns("anthropic", accounts);
+
             // Use session affinity to identify the current account first,
-            // falling back to token matching (which may be wrong if another
-            // session overwrote the shared auth store).
-            const currentAccount = sessionAccountEmail
+            // falling back to token matching, then most-recently-used as
+            // last resort (GH#15322: avoids "unknown" dead end when auth.json
+            // has a stale token that doesn't match any pool account).
+            let currentAccount = sessionAccountEmail
               ? accounts.find((a) => a.email === sessionAccountEmail)
               : accounts.find((a) => a.access === accessToken);
+            if (!currentAccount && accounts.length > 0) {
+              // Stale auth.json — no token match. Pick the most recently
+              // used account as the likely owner of this session.
+              currentAccount = [...accounts].sort(
+                (a, b) => new Date(b.lastUsed || 0) - new Date(a.lastUsed || 0),
+              )[0];
+              console.error(
+                `[aidevops] provider-auth: no token match — assuming ${currentAccount.email} (most recently used)`,
+              );
+            }
             const currentEmail = currentAccount?.email || "unknown";
 
             console.error(
@@ -590,10 +607,20 @@ export function createProviderAuthHook(client) {
             const cooldownMs = parseRetryAfterMs(response);
 
             const accounts = getAccounts("anthropic");
-            // Use session affinity to identify the current account (t1714)
-            const currentAccount = sessionAccountEmail
+            // Clear expired cooldowns so stale rate-limited accounts become
+            // available for rotation (GH#15322).
+            normalizeExpiredCooldowns("anthropic", accounts);
+
+            // Use session affinity to identify the current account (t1714),
+            // with MRU fallback for stale auth.json (GH#15322).
+            let currentAccount = sessionAccountEmail
               ? accounts.find((a) => a.email === sessionAccountEmail)
               : accounts.find((a) => a.access === accessToken);
+            if (!currentAccount && accounts.length > 0) {
+              currentAccount = [...accounts].sort(
+                (a, b) => new Date(b.lastUsed || 0) - new Date(a.lastUsed || 0),
+              )[0];
+            }
             const currentEmail = currentAccount?.email || "unknown";
 
             console.error(
