@@ -1307,11 +1307,13 @@ _run_activity_watchdog() {
 	# Timeout reached with no activity — kill the stalled worker
 	if kill -0 "$worker_pid" 2>/dev/null; then
 		print_warning "Activity watchdog: no LLM activity in ${timeout}s — killing stalled worker (PID $worker_pid)"
+		# Write the marker BEFORE killing — the dying subshell may overwrite
+		# exit_code_file with its own exit code (race condition). The marker
+		# file survives because only the watchdog writes to it.
+		touch "${exit_code_file}.watchdog_killed"
 		kill "$worker_pid" 2>/dev/null || true
-		# Give it a moment then force-kill
 		sleep 2
 		kill -9 "$worker_pid" 2>/dev/null || true
-		# Write timeout exit code so _handle_run_result classifies correctly
 		printf '124' >"$exit_code_file"
 	fi
 	return 0
@@ -1429,6 +1431,15 @@ _execute_run_attempt() {
 
 	_invoke_opencode "$output_file" "$exit_code_file" "${cmd[@]}"
 	exit_code=$(cat "$exit_code_file" 2>/dev/null) || exit_code=1
+
+	# Activity watchdog race fix: the watchdog writes a marker file when it
+	# kills a stalled worker. The dying subshell may overwrite exit_code_file
+	# with its own exit code (0 or 143), losing the watchdog's 124. The marker
+	# file is authoritative — if it exists, this was a watchdog kill.
+	if [[ -f "${exit_code_file}.watchdog_killed" ]]; then
+		exit_code=124
+		rm -f "${exit_code_file}.watchdog_killed"
+	fi
 	rm -f "$exit_code_file"
 
 	local handle_exit=0
