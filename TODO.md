@@ -106,6 +106,9 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [x] t1542 fix: aidevops update leaves 14 additional orphaned archived scripts beyond supervisor — `cleanup_deprecated_paths()` in `setup-modules/migrations.sh` only handles `supervisor-helper.sh` + `supervisor/` directory (PR #5151). 14 more scripts archived upstream still present in active paths locally: pattern-tracker-helper.sh, quality-sweep-helper.sh, quality-loop-helper.sh, review-pulse-helper.sh, self-improve-helper.sh, coderabbit-pulse-helper.sh, coderabbit-task-creator-helper.sh, audit-task-creator-helper.sh, batch-cleanup-helper.sh, coordinator-helper.sh, finding-to-task-helper.sh, objective-runner-helper.sh, ralph-loop-helper.sh, stale-pr-helper.sh. Follow-up to GH#5147/PR#5151. #bugfix #setup #auto-dispatch ~1h model:sonnet ref:GH#5155 logged:2026-03-17 pr:#5157 completed:2026-03-17
 
+- [ ] t1727 simplification: tighten agent doc Ahrefs SEO Integration (.agents/seo/ahrefs.md, 106 lines) #simplification #seo #auto-dispatch ~1h model:sonnet ref:GH#15129 logged:2026-04-01
+- [ ] t15015 simplification: tighten agent doc Dev-Browser - Stateful Browser Automation (.agents/tools/browser/dev-browser.md, 186 lines) #simplification #browser #auto-dispatch ~1h model:sonnet ref:GH#15015 logged:2026-04-01
+
 ## Backlog
 
 - [ ] t1701 fix: make dispatch dedup guard atomic — wrap dedup+assign+launch in single dispatch_with_dedup() function so LLM cannot skip dedup layers. Root cause of GH#12141 duplicate dispatch: both pulses skipped check_dispatch_dedup entirely (no DISPATCH_CLAIM comments posted). Move from LLM-instructed bash to single atomic function call. #bugfix #pulse #dispatch #auto-dispatch ~3h ref:GH#12436 logged:2026-03-29
