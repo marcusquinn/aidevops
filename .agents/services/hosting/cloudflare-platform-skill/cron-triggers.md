@@ -4,15 +4,13 @@ Schedule Workers execution using cron expressions. Runs on Cloudflare's global n
 
 ## Key Features
 
-- **UTC-only execution** - All schedules run on UTC time
 - **5-field cron syntax** - Quartz scheduler extensions (L, W, #)
-- **Global propagation** - 15min deployment delay
 - **At-least-once delivery** - Rare duplicate executions possible
 - **Workflow integration** - Trigger long-running multi-step tasks
 
 ## Cron Syntax
 
-```
+```text
  ┌─────────── minute (0-59)
  │ ┌───────── hour (0-23)
  │ │ ┌─────── day of month (1-31)
