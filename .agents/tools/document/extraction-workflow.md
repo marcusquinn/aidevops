@@ -40,17 +40,9 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Structured Extraction
-
-```bash
-document-extraction-helper.sh status                                          # available tools/schemas
-document-extraction-helper.sh extract invoice.pdf --schema invoice --privacy local  # single doc
-document-extraction-helper.sh batch ./invoices/ --schema invoice --privacy local    # batch
-document-extraction-helper.sh extract document.pdf                            # auto-detect, markdown
-document-extraction-helper.sh pii-scan extracted-text.txt                     # PII scan
-```
-
 **Privacy modes:** `local` (Ollama) · `edge` (CF Workers AI) · `cloud` (OpenAI/Anthropic) · `none` (auto)
+
+**Batch:** `document-extraction-helper.sh batch ./invoices/ --schema invoice --privacy local`
 
 ## Pipeline Architecture
 
@@ -76,28 +68,22 @@ Input (PDF/DOCX/Image/HTML)
 
 **Confidence scoring (0.0-1.0):** Base 0.7 (present+non-empty) + 0.2 (format) + 0.1 (required). <0.5 → manual review.
 
-```bash
-python3 extraction_pipeline.py categorise "Shell" "diesel fuel"               # → {"nominal_code": "7401", "category": "Motor Expenses - Fuel"}
-document-extraction-helper.sh validate extracted.json --type purchase_invoice  # standalone validation
-```
-
 ## Custom Schemas
+
+Define a Pydantic `BaseModel`, then extract:
 
 ```python
 from pydantic import BaseModel
 from extract_thinker import Extractor
 
-class MedicalRecord(BaseModel):
-    patient_id: str
-    diagnosis: str
-    medications: list[str]
-    provider: str
-    date: str
+class MyDoc(BaseModel):
+    field_a: str
+    field_b: list[str]
 
 extractor = Extractor()
 extractor.load_document_loader("docling")
 extractor.load_llm("ollama/llama3.2")
-result = extractor.extract("record.pdf", MedicalRecord)
+result = extractor.extract("file.pdf", MyDoc)
 ```
 
 ## Tool Comparison
