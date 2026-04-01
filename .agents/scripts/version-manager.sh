@@ -1315,6 +1315,28 @@ create_git_tag() {
 
 	cd "$REPO_ROOT" || exit 1
 
+	# Guard: abort if tag already exists locally or on remote
+	if git show-ref --tags "$tag_name" &>/dev/null; then
+		local existing_sha
+		existing_sha=$(git rev-parse "$tag_name^{}" 2>/dev/null || git rev-parse "$tag_name" 2>/dev/null)
+		print_error "Tag $tag_name already exists locally (points to $existing_sha)"
+		print_info "This indicates a partial or concurrent release. Diagnose with:"
+		print_info "  git show $tag_name"
+		print_info "  gh release view $tag_name"
+		print_info "If the tag is orphaned (no matching GitHub release), delete it and retry:"
+		print_info "  git tag -d $tag_name && git push origin :refs/tags/$tag_name"
+		return 1
+	fi
+
+	# Also check remote tags to catch tags pushed by a concurrent run
+	if git ls-remote --tags origin "refs/tags/$tag_name" 2>/dev/null | grep -q "$tag_name"; then
+		print_error "Tag $tag_name already exists on remote origin"
+		print_info "A concurrent release run may have pushed this tag. Diagnose with:"
+		print_info "  git fetch --tags && git show $tag_name"
+		print_info "  gh release view $tag_name"
+		return 1
+	fi
+
 	if git tag -a "$tag_name" -m "Release $tag_name - AI DevOps Framework"; then
 		print_success "Created git tag: $tag_name"
 		return 0
@@ -1335,6 +1357,13 @@ create_github_release() {
 	# Try GitHub CLI first
 	if command -v gh &>/dev/null && gh auth status &>/dev/null; then
 		print_info "Using GitHub CLI for release creation"
+
+		# Guard: check if GitHub release already exists for this tag
+		if gh release view "$tag_name" &>/dev/null; then
+			print_warning "GitHub release $tag_name already exists — skipping creation"
+			print_info "To view the existing release: gh release view $tag_name"
+			return 0
+		fi
 
 		# Generate release notes based on version
 		local release_notes
@@ -1524,6 +1553,29 @@ _release_check_changelog() {
 _release_execute() {
 	local bump_type="$1"
 	local new_version="$2"
+	local tag_name="v$new_version"
+
+	# Guard: detect partial release state before making any changes.
+	# A tag without a matching GitHub release indicates a prior failed run.
+	# Abort early with clear diagnostics rather than creating a duplicate tag.
+	if git show-ref --tags "$tag_name" &>/dev/null ||
+		git ls-remote --tags origin "refs/tags/$tag_name" 2>/dev/null | grep -q "$tag_name"; then
+		print_error "PARTIAL RELEASE STATE DETECTED: tag $tag_name already exists"
+		print_info ""
+		print_info "Diagnosis:"
+		print_info "  git show $tag_name                    # inspect the existing tag"
+		print_info "  gh release view $tag_name             # check if GitHub release exists"
+		print_info "  git log $tag_name --oneline -5        # see what the tag points to"
+		print_info ""
+		print_info "Recovery options:"
+		print_info "  A) Tag exists + GitHub release exists → already released, nothing to do"
+		print_info "  B) Tag exists + no GitHub release    → run: $0 github-release"
+		print_info "  C) Tag is orphaned/wrong commit      → delete and retry:"
+		print_info "       git tag -d $tag_name"
+		print_info "       git push origin :refs/tags/$tag_name"
+		print_info "       $0 release $bump_type"
+		exit 1
+	fi
 
 	print_info "Updating version references in files..."
 	if ! update_version_in_files "$new_version"; then
@@ -1545,11 +1597,24 @@ _release_execute() {
 	if validate_version_consistency "$new_version"; then
 		print_success "Version validation passed"
 		commit_version_changes "$new_version"
-		create_git_tag "$new_version"
+		if ! create_git_tag "$new_version"; then
+			print_error "Aborting release: tag creation failed (see above for diagnosis)"
+			exit 1
+		fi
 		if ! push_changes; then
-			# Rollback: delete local tag since --atomic ensures nothing was pushed
+			# --atomic push failed: tag was NOT pushed to remote.
+			# Check whether a concurrent run already pushed the tag before rolling back.
+			if git ls-remote --tags origin "refs/tags/v$new_version" 2>/dev/null | grep -q "v$new_version"; then
+				print_warning "Push failed but tag v$new_version already exists on remote (concurrent release?)"
+				print_info "Deleting local tag to avoid divergence. Check remote state:"
+				git tag -d "v$new_version" 2>/dev/null || true
+				print_info "  gh release view v$new_version   # check if GitHub release was created"
+				print_info "  git fetch --tags && git log v$new_version --oneline -3"
+				exit 1
+			fi
+			# Safe to roll back: tag is local-only
 			print_warning "Rolling back local tag v$new_version due to push failure"
-			git tag -d "v$new_version" 2>/dev/null
+			git tag -d "v$new_version" 2>/dev/null || true
 			echo ""
 			print_info "The version commit exists locally. To complete the release:"
 			print_info "  1. Fix the issue (e.g., git fetch origin && git rebase origin/main)"
