@@ -99,9 +99,21 @@ export function createProviderAuthHook(client) {
           const auth = await getAuth();
           if (auth.type !== "oauth") return fetch(input, init);
 
-          // Refresh token if expired
+          // Resolve access token: prefer pool over shared auth.json (t1836).
+          // auth.json is a shared singleton overwritten by concurrent sessions.
+          // Reading from it causes stale-token → 401 → unnecessary refresh cycles.
+          // If we already know our session account, use the pool token directly.
           let accessToken = auth.access;
-          if (!accessToken || auth.expires < Date.now()) {
+          let accessExpires = auth.expires;
+          if (sessionAccountEmail) {
+            const myAccount = getAccounts("anthropic").find((a) => a.email === sessionAccountEmail);
+            if (myAccount?.access && myAccount.expires > Date.now()) {
+              accessToken = myAccount.access;
+              accessExpires = myAccount.expires;
+            }
+          }
+
+          if (!accessToken || accessExpires < Date.now()) {
             const accounts = getAccounts("anthropic");
             let refreshed = false;
 
