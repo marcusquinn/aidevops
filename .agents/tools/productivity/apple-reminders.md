@@ -1,5 +1,5 @@
 ---
-description: Create and manage Apple Reminders from agent sessions
+description: Create and manage reminders from agent sessions (macOS + Linux)
 mode: subagent
 tools:
   read: true
@@ -12,19 +12,39 @@ tools:
   task: false
 ---
 
-# Apple Reminders
+# Reminders
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
 - **Helper**: `~/.aidevops/agents/scripts/reminders-helper.sh [command] [args]`
-- **Underlying tool**: `remindctl` (`brew install steipete/tap/remindctl`)
-- **Setup**: `reminders-helper.sh setup` (install + authorize)
+- **macOS backend**: `remindctl` (`brew install steipete/tap/remindctl`) + osascript for flag
+- **Linux backend**: `todoman` + `vdirsyncer` (`pipx install todoman vdirsyncer`)
+- **Setup**: `reminders-helper.sh setup` (install + authorize/configure)
 - **Related**: `tools/productivity/caldav-calendar-skill.md` (calendar events, not tasks)
-- **macOS only** — uses EventKit via `remindctl`
 
 <!-- AI-CONTEXT-END -->
+
+## Field Coverage
+
+| Reminders field | macOS | Linux | Flag |
+|---|---|---|---|
+| Title | `--title` | `--title` | core |
+| Notes | `--notes` | `--notes` | core |
+| URL | `--url` (in notes) | `--url` (in notes) | workaround |
+| Date + Time | `--due` | `--due` | core |
+| List | `--list` | `--list` | core |
+| Tags | warn only | `--tags` | Linux only |
+| Flag | `--flag` (osascript) | `--flag` (in notes) | macOS native |
+| Priority | `--priority` | `--priority` | core |
+| Location | warn only | `--location` | Linux only |
+| When Messaging | not available | N/A | iOS-only trigger |
+| Assign Reminder | not available | N/A | no CLI support |
+| Add Image | not available | N/A | no CLI support |
+
+URL is prepended to notes as a clickable line (no CLI exposes the native URL field).
+Flag uses osascript post-creation on macOS; prepended as `[FLAGGED]` in notes on Linux.
 
 ## When Agents Should Create Reminders
 
@@ -59,79 +79,84 @@ If the user has configured a default list mapping in their config, use it. Other
 
 ## Usage
 
-### List available lists
-
-```bash
-reminders-helper.sh lists
-```
-
 ### Create a reminder
 
 ```bash
 # Simple
 reminders-helper.sh add "Buy milk" --list Shopping
 
-# With due date and priority
-reminders-helper.sh add "Review quarterly report" --list Work --due "next Friday" --priority high
+# With due date, priority, and flag
+reminders-helper.sh add "Review quarterly report" --list Work \
+  --due "next Friday" --priority high --flag
 
-# With notes
-reminders-helper.sh add "Call dentist" --due "Monday 9am" --notes "Ask about cleaning schedule"
+# With notes and URL
+reminders-helper.sh add "Read article on CalDAV" \
+  --url "https://example.com/article" --notes "Found via RSS feed"
 
-# Natural date expressions (handled by remindctl)
-reminders-helper.sh add "Submit tax return" --due "April 15" --priority high --list Personal
+# With tags (Linux) and location (Linux)
+reminders-helper.sh add "Pick up package" --list Personal \
+  --location "Post Office" --tags "errands,urgent"
+
+# Full example
+reminders-helper.sh add "Call dentist" --list Personal \
+  --due "Monday 9am" --priority medium --flag \
+  --notes "Ask about cleaning schedule" --url "https://dentist.example.com"
 ```
 
-### View reminders
+### Other commands
 
 ```bash
-reminders-helper.sh show today
-reminders-helper.sh show overdue --list Work
-reminders-helper.sh show week
-reminders-helper.sh show upcoming
-```
-
-### Complete a reminder
-
-```bash
-# Use index from show output
-reminders-helper.sh complete 1
-```
-
-### JSON output (for agent parsing)
-
-```bash
-JSON_OUTPUT=true reminders-helper.sh lists
-reminders-helper.sh show today --json
+reminders-helper.sh lists                          # List all lists
+reminders-helper.sh show today                     # Today's reminders
+reminders-helper.sh show overdue --list Work       # Overdue in Work
+reminders-helper.sh show week                      # This week
+reminders-helper.sh complete 1                     # Complete by index
+reminders-helper.sh edit 2 --priority high         # Edit fields
+reminders-helper.sh sync                           # CalDAV sync (Linux)
+JSON_OUTPUT=true reminders-helper.sh show today    # JSON for agents
 ```
 
 ## Due Date Formats
 
-`remindctl` accepts natural language dates:
+macOS (`remindctl`) accepts natural language: `today`, `tomorrow`, `next Monday`, `in 2 hours`, `in 3 days`, `April 15`, `end of month`.
 
-- `today`, `tomorrow`, `next Monday`
-- `in 2 hours`, `in 3 days`
-- `2026-04-15`, `April 15`
-- `next week`, `end of month`
+Linux (`todoman`) uses the configured date format (default `%Y-%m-%d`): `2026-04-15`.
 
-## Setup (One-Time)
+## Setup
 
-Run `reminders-helper.sh setup` or manually:
+### macOS (one-time)
 
-1. `brew install steipete/tap/remindctl`
-2. `remindctl authorize` (triggers macOS permission prompt)
-3. System Settings > Privacy & Security > Reminders > enable your terminal app
-4. Verify: `remindctl list` (should show your reminder lists)
+```bash
+reminders-helper.sh setup
+# Or manually:
+# 1. brew install steipete/tap/remindctl
+# 2. remindctl authorize
+# 3. System Settings > Privacy & Security > Reminders > enable terminal app
+```
 
-If using multiple accounts (iCloud + other CalDAV), all accounts configured in System Settings > Internet Accounts appear automatically — no extra setup per account.
+All accounts from System Settings > Internet Accounts (iCloud, CalDAV, Google, etc.) appear automatically.
+
+### Linux (one-time)
+
+```bash
+reminders-helper.sh setup
+# Or manually:
+# 1. pipx install todoman vdirsyncer
+# 2. Configure ~/.config/vdirsyncer/config (CalDAV credentials)
+# 3. Configure ~/.config/todoman/config.py (point to synced calendars)
+# 4. vdirsyncer discover && vdirsyncer sync
+```
+
+See `reminders-helper.sh help` for example vdirsyncer/todoman configs.
 
 ## Integration with Routines and Missions
 
-Other agents should create reminders by calling the helper script directly:
+Other agents call the helper script directly:
 
 ```bash
 # From any agent with bash access:
 ~/.aidevops/agents/scripts/reminders-helper.sh add "Follow up with client" \
-  --list Work --due "in 3 days" --priority medium \
+  --list Work --due "in 3 days" --priority medium --flag \
   --notes "Re: proposal sent on $(date +%Y-%m-%d)"
 ```
 
@@ -155,6 +180,6 @@ reminders-helper.sh add "MISSION: ${mission_name} — ${action_needed}" \
 
 ## Accounts
 
-All accounts configured in macOS System Settings > Internet Accounts (iCloud, Google, Fastmail, CalDAV, etc.) are accessible. `remindctl` sees every list across all accounts. The list name is the selector — no need to specify the account explicitly.
+**macOS**: All accounts configured in System Settings > Internet Accounts are accessible. List name is the selector -- no account specification needed. If two accounts share a list name, rename one to disambiguate.
 
-If two accounts have lists with the same name, `remindctl` uses the default account's list. Rename one list to disambiguate.
+**Linux**: Each CalDAV account needs a `[pair]` + `[storage]` block in `~/.config/vdirsyncer/config`. After `vdirsyncer discover && vdirsyncer sync`, all lists appear as directories under the todoman path.
