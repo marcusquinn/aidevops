@@ -6,13 +6,9 @@ metadata:
   tags: 3d, three, threejs
 ---
 
-# Using Three.js and React Three Fiber in Remotion
+Follow normal React Three Fiber / Three.js practices, plus these Remotion-specific rules.
 
-Follow normal React Three Fiber / Three.js practices. Apply these Remotion-specific rules.
-
-## Prerequisites
-
-Install `@remotion/three` first.
+## Install `@remotion/three`
 
 ```bash
 npx remotion add @remotion/three # If project uses npm
@@ -41,11 +37,11 @@ const { width, height } = useVideoConfig();
 </ThreeCanvas>
 ```
 
-## Drive all animation from `useCurrentFrame()`
+## Animation rule
 
-Shaders, models, and other scene elements must not animate on their own. Drive every animation from `useCurrentFrame()` or renders will flicker.
+Drive all animation from `useCurrentFrame()`. Shaders, models, and other scene elements must not animate on their own or renders may flicker.
 
-`useFrame()` from `@react-three/fiber` is forbidden.
+Never use `useFrame()` from `@react-three/fiber`.
 
 ## Animation example
 
