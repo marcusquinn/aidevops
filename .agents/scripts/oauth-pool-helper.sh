@@ -174,6 +174,109 @@ load_pool() {
 	return 0
 }
 
+# Auto-clear expired cooldowns in the pool JSON.
+# Accounts with status "rate-limited" whose cooldownUntil has passed
+# are reset to "idle" with cooldownUntil cleared.
+# Uses the same file-level lock as mark-failure to prevent races.
+# Saves the pool file only if changes were made.
+auto_clear_expired_cooldowns() {
+	if [[ ! -f "$POOL_FILE" ]]; then
+		return 0
+	fi
+	local result py_stderr_file
+	py_stderr_file=$(mktemp "${TMPDIR:-/tmp}/oauth-autoclear-err.XXXXXX")
+	if ! result=$(POOL_FILE_PATH="$POOL_FILE" python3 -c "
+import sys, json, os, time, tempfile
+
+pool_path = os.environ['POOL_FILE_PATH']
+
+def _acquire_lock(lock_fd):
+    if sys.platform == 'win32':
+        import msvcrt
+        deadline = time.time() + 30
+        while True:
+            try:
+                lock_fd.seek(0)
+                msvcrt.locking(lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
+                return
+            except OSError:
+                if time.time() >= deadline:
+                    raise
+                time.sleep(0.1)
+    else:
+        import fcntl
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+def _release_lock(lock_fd):
+    if sys.platform == 'win32':
+        import msvcrt
+        try:
+            lock_fd.seek(0)
+            msvcrt.locking(lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+    else:
+        import fcntl
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+
+def _atomic_write_json(path, data):
+    d = os.path.dirname(path)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix='.tmp-', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w') as f:
+            json.dump(data, f, indent=2)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+lock_path = pool_path + '.lock'
+lock_fd = open(lock_path, 'w')
+try:
+    _acquire_lock(lock_fd)
+    with open(pool_path) as f:
+        pool = json.load(f)
+
+    now = int(time.time() * 1000)
+    changed = False
+    for provider in list(pool.keys()):
+        if provider.startswith('_'):
+            continue
+        accounts = pool.get(provider, [])
+        if not isinstance(accounts, list):
+            continue
+        for acct in accounts:
+            cd = acct.get('cooldownUntil')
+            if cd and isinstance(cd, (int, float)) and cd > 0 and cd <= now:
+                if acct.get('status') == 'rate-limited':
+                    acct['status'] = 'idle'
+                acct['cooldownUntil'] = 0
+                changed = True
+    if changed:
+        _atomic_write_json(pool_path, pool)
+        print('CHANGED')
+    else:
+        print('UNCHANGED')
+finally:
+    _release_lock(lock_fd)
+    lock_fd.close()
+" 2>"$py_stderr_file"); then
+		local py_err
+		py_err=$(cat "$py_stderr_file" 2>/dev/null)
+		rm -f "$py_stderr_file"
+		if [[ -n "${py_err:-}" ]]; then
+			print_warning "oauth-pool-helper: auto-clear python error: ${py_err}" >&2
+		fi
+		return 1
+	fi
+	rm -f "$py_stderr_file"
+	return 0
+}
+
 # Save pool JSON (atomic write, 600 perms)
 save_pool() {
 	local json="$1"
@@ -1254,6 +1357,9 @@ cmd_check() {
 		;;
 	esac
 
+	# Auto-clear expired cooldowns before reporting
+	auto_clear_expired_cooldowns
+
 	local pool
 	pool=$(load_pool)
 
@@ -1316,6 +1422,9 @@ cmd_list() {
 		return 1
 		;;
 	esac
+
+	# Auto-clear expired cooldowns before reporting
+	auto_clear_expired_cooldowns
 
 	local pool
 	pool=$(load_pool)
@@ -1642,6 +1751,9 @@ cmd_rotate() {
 		;;
 	esac
 
+	# Auto-clear expired cooldowns so rotate sees all available accounts
+	auto_clear_expired_cooldowns
+
 	local pool
 	pool=$(load_pool)
 
@@ -1928,192 +2040,6 @@ if not refreshed and not failed:
 }
 
 # ---------------------------------------------------------------------------
-# Status (rotation statistics)
-# ---------------------------------------------------------------------------
-
-cmd_status() {
-	local provider="${1:-all}"
-
-	case "$provider" in
-	all | anthropic | openai | cursor | google) ;;
-	*)
-		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, google, all)"
-		return 1
-		;;
-	esac
-
-	local pool
-	pool=$(load_pool)
-
-	local normalized updated
-	normalized=$(printf '%s' "$pool" | normalize_expired_cooldowns "$provider")
-	updated=$(printf '%s' "$normalized" | jq -r '.updated // 0')
-	pool=$(printf '%s' "$normalized" | jq -c '.pool')
-	if [[ "$updated" != "0" ]]; then
-		save_pool "$pool"
-		print_info "Auto-cleared ${updated} expired cooldown(s)."
-	fi
-
-	local -a providers_to_check
-	if [[ "$provider" == "all" ]]; then
-		providers_to_check=(anthropic openai cursor google)
-	else
-		providers_to_check=("$provider")
-	fi
-
-	local found_any="false"
-	local now_ms
-	now_ms=$(get_now_ms)
-
-	for prov in "${providers_to_check[@]}"; do
-		local count
-		count=$(printf '%s' "$pool" | count_provider_accounts "$prov")
-		if [[ "$count" == "0" ]]; then
-			continue
-		fi
-		found_any="true"
-
-		printf '%s' "$pool" | NOW_MS="$now_ms" PROV="$prov" python3 -c "
-import sys, json, os
-
-pool = json.load(sys.stdin)
-now = int(os.environ['NOW_MS'])
-prov = os.environ['PROV']
-accounts = pool.get(prov, [])
-
-active = sum(1 for a in accounts if a.get('status') in ('active', 'idle'))
-rate_limited = sum(1 for a in accounts if a.get('status') == 'rate-limited' and a.get('cooldownUntil', 0) > now)
-auth_error = sum(1 for a in accounts if a.get('status') == 'auth-error')
-available = sum(1 for a in accounts if a.get('status', 'active') in ('active', 'idle') and (not a.get('cooldownUntil') or a['cooldownUntil'] <= now))
-
-print(f'{prov} pool status:')
-print(f'  Total accounts: {len(accounts)}')
-print(f'  Available now:  {available}')
-print(f'  Active/idle:    {active}')
-print(f'  Rate limited:   {rate_limited}')
-print(f'  Auth errors:    {auth_error}')
-" 2>/dev/null
-	done
-
-	if [[ "$found_any" == "false" ]]; then
-		print_info "No accounts in any pool."
-		echo ""
-		echo "To add an account:"
-		echo "  oauth-pool-helper.sh add anthropic    # Claude Pro/Max"
-		echo "  oauth-pool-helper.sh add openai       # ChatGPT Plus/Pro (device flow default)"
-		echo "  oauth-pool-helper.sh add cursor       # Cursor Pro (reads from IDE)"
-		echo "  oauth-pool-helper.sh add google       # Google AI Pro/Ultra/Workspace"
-	fi
-
-	printf 'Pool file: %s\n' "$POOL_FILE"
-	return 0
-}
-
-# ---------------------------------------------------------------------------
-# Assign pending token to an account
-# ---------------------------------------------------------------------------
-
-cmd_assign_pending() {
-	local provider="${1:-anthropic}"
-	local email="${2:-}"
-
-	case "$provider" in
-	anthropic | openai | cursor | google) ;;
-	*)
-		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, google)"
-		return 1
-		;;
-	esac
-
-	local pool
-	pool=$(load_pool)
-
-	# Check if a pending token exists for this provider
-	local pending_info
-	pending_info=$(printf '%s' "$pool" | PROVIDER="$provider" python3 -c "
-import sys, json, os
-pool = json.load(sys.stdin)
-provider = os.environ['PROVIDER']
-pending_key = '_pending_' + provider
-pending = pool.get(pending_key)
-if pending:
-    print('FOUND:' + pending.get('added', 'unknown'))
-else:
-    print('NONE')
-" 2>/dev/null)
-
-	if [[ "$pending_info" == "NONE" ]]; then
-		print_info "No pending token for ${provider}."
-		print_info "Pending tokens are created when you re-auth via the Pool provider but the email could not be identified."
-		return 0
-	fi
-
-	local pending_added
-	pending_added=$(printf '%s' "$pending_info" | cut -d: -f2-)
-
-	if [[ -z "$email" ]]; then
-		# Show available accounts and pending token info
-		print_info "Pending ${provider} token found (added: ${pending_added})"
-		print_info "Available accounts to assign to:"
-		printf '%s' "$pool" | PROVIDER="$provider" python3 -c "
-import sys, json, os
-pool = json.load(sys.stdin)
-provider = os.environ['PROVIDER']
-for i, a in enumerate(pool.get(provider, []), 1):
-    print(f'  {i}. {a[\"email\"]}')
-" 2>/dev/null
-		echo ""
-		echo "Usage: oauth-pool-helper.sh assign-pending ${provider} <email>"
-		return 0
-	fi
-
-	# Assign the pending token to the specified account
-	local assign_result
-	assign_result=$(printf '%s' "$pool" | PROVIDER="$provider" EMAIL="$email" python3 -c "
-import sys, json, os
-pool = json.load(sys.stdin)
-provider = os.environ['PROVIDER']
-email = os.environ['EMAIL']
-pending_key = '_pending_' + provider
-pending = pool.get(pending_key)
-
-if not pending:
-    print('ERROR:no_pending')
-    sys.exit(0)
-
-accounts = pool.get(provider, [])
-idx = next((i for i, a in enumerate(accounts) if a.get('email') == email), -1)
-if idx < 0:
-    print('ERROR:not_found')
-    sys.exit(0)
-
-# Apply pending token fields to the account
-accounts[idx]['refresh'] = pending.get('refresh', accounts[idx].get('refresh', ''))
-accounts[idx]['access'] = pending.get('access', accounts[idx].get('access', ''))
-accounts[idx]['expires'] = pending.get('expires', accounts[idx].get('expires', 0))
-accounts[idx]['status'] = 'active'
-accounts[idx]['cooldownUntil'] = None
-
-# Remove pending entry
-del pool[pending_key]
-json.dump(pool, sys.stdout, indent=2)
-" 2>/dev/null)
-
-	if printf '%s' "$assign_result" | grep -q '^ERROR:no_pending$'; then
-		print_error "No pending token for ${provider}"
-		return 1
-	fi
-	if printf '%s' "$assign_result" | grep -q '^ERROR:not_found$'; then
-		print_error "Account ${email} not found in ${provider} pool"
-		return 1
-	fi
-
-	save_pool "$assign_result"
-	print_success "Assigned pending token to ${email} in ${provider} pool. Token is now active."
-	return 0
-}
-
-# ---------------------------------------------------------------------------
 # Reset cooldowns — clear rate-limit cooldowns so all accounts are retried
 # ---------------------------------------------------------------------------
 
@@ -2352,6 +2278,9 @@ cmd_status() {
 		return 1
 		;;
 	esac
+
+	# Auto-clear expired cooldowns before reporting
+	auto_clear_expired_cooldowns
 
 	local pool
 	pool=$(load_pool)
