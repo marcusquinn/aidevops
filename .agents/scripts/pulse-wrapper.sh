@@ -7084,9 +7084,13 @@ cleanup_orphans() {
 #
 # Criteria (ALL must be true):
 #   - Is a .opencode binary process
+#   - Launched as a headless worker (command contains --format json)
 #   - Older than STALE_OPENCODE_MAX_AGE seconds (default: 4 hours)
 #   - CPU usage below PULSE_IDLE_CPU_THRESHOLD (default: 5%)
 #   - Not the current interactive session (skip our own PID tree)
+#
+# Interactive sessions (no --format json) are NEVER killed — they may be
+# idle because the user stepped away, not because the task completed.
 #
 # Also kills the parent node launcher and grandparent zsh for each
 # stale .opencode process to fully reclaim the terminal tab.
@@ -7111,6 +7115,18 @@ cleanup_stale_opencode() {
 			continue
 		fi
 
+		# Skip interactive sessions — only kill headless workers.
+		# Headless workers are launched via headless-runtime-helper.sh with
+		# --format json in the command line. Interactive sessions (user typing
+		# in a terminal) never have this flag. Without this guard, any idle
+		# interactive session (user stepped away) gets killed along with its
+		# parent shell, closing the terminal tab entirely.
+		local proc_cmd
+		proc_cmd=$(ps -p "$pid" -o command= 2>/dev/null) || proc_cmd=""
+		if [[ "$proc_cmd" != *"--format json"* ]]; then
+			continue
+		fi
+
 		# Skip young processes
 		local age_seconds
 		age_seconds=$(_get_process_age "$pid")
@@ -7127,7 +7143,7 @@ cleanup_stale_opencode() {
 			continue
 		fi
 
-		# This is a stale opencode process — kill it and its parent chain
+		# This is a stale headless worker — kill it and its parent chain
 		[[ "$rss" =~ ^[0-9]+$ ]] || rss=0
 		local mb=$((rss / 1024))
 
@@ -7164,7 +7180,7 @@ cleanup_stale_opencode() {
 	done < <(ps axo pid,%cpu,rss,command | awk '$0 ~ /[.]opencode/ && $0 !~ /bash-language-server/ { print $1, $2, $3 }')
 
 	if [[ "$killed" -gt 0 ]]; then
-		echo "[pulse-wrapper] Cleaned up $killed stale TTY-attached opencode processes (freed ~${total_mb}MB)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Cleaned up $killed stale headless opencode workers (freed ~${total_mb}MB)" >>"$LOGFILE"
 	fi
 	return 0
 }
