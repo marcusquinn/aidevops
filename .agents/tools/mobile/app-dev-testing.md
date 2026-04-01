@@ -1,7 +1,14 @@
 ---
 description: Mobile app testing - simulator, emulator, device, E2E, accessibility, QA workflows
 mode: subagent
-tools: [read, write, edit, bash, glob, grep, task]
+tools:
+  read: true
+  write: true
+  edit: true
+  bash: true
+  glob: true
+  grep: true
+  task: true
 ---
 
 # Mobile App Testing
@@ -10,11 +17,8 @@ tools: [read, write, edit, bash, glob, grep, task]
 
 ## Quick Reference
 
-- **Purpose**: Test mobile apps across simulators, emulators, and physical devices
-- **Tools**: agent-device, xcodebuild-mcp, maestro, ios-simulator-mcp, playwright-emulation
 - **Levels**: Unit → Integration → E2E → Visual → Accessibility → Performance
-
-**Tool decision tree**:
+- **Tool decision**:
 
 ```text
 AI-driven exploratory?     -> agent-device (CLI, both platforms)
@@ -28,17 +32,11 @@ Mobile web layout?         -> playwright-emulation (device presets, touch)
 
 ## Testing Strategy
 
-### Unit
+**Unit**: Expo → Jest + React Native Testing Library. Swift → XCTest (`xcodebuild-mcp test_sim`). Cover: business logic, data transforms, state management.
 
-- **Expo**: Jest + React Native Testing Library
-- **Swift**: XCTest (`xcodebuild-mcp test_sim`)
-- Cover: business logic, data transforms, state management
+**Integration**: API clients (mock servers), navigation flows, state persistence, notification handling.
 
-### Integration
-
-Test API clients (mock servers), navigation flows, state persistence, notification handling.
-
-### E2E (Maestro)
+**E2E (Maestro)**:
 
 ```yaml
 appId: com.example.myapp
@@ -51,7 +49,7 @@ appId: com.example.myapp
 - assertVisible: "Home"
 ```
 
-### AI-Driven (agent-device)
+**AI-Driven (agent-device)**:
 
 ```bash
 agent-device open "My App" --platform ios   # Open app
@@ -60,19 +58,11 @@ agent-device click @e3                       # Interact via refs
 agent-device screenshot ./evidence.png       # Capture state
 ```
 
-### Visual Regression
+**Visual**: Screenshots at key states via `ios-simulator-mcp` or `agent-device`. Test light/dark modes across: iPhone SE, iPhone 16, iPhone 16 Pro Max, iPad.
 
-Capture screenshots at key states via `ios-simulator-mcp` or `agent-device`. Test light/dark modes across sizes (iPhone SE, iPhone 16, iPhone 16 Pro Max, iPad).
+**Accessibility**: `agent-device snapshot` — inspect tree. Verify labels, VoiceOver/TalkBack, colour contrast, Dynamic Type. See `tools/accessibility/accessibility-audit.md`.
 
-### Accessibility
-
-- `agent-device snapshot` — inspect accessibility tree
-- Verify labels, VoiceOver/TalkBack, colour contrast, Dynamic Type
-- See `tools/accessibility/accessibility-audit.md`
-
-### Performance
-
-Targets: launch < 2s, animations 60fps. Monitor memory and network payload sizes. Test on older devices.
+**Performance**: Launch < 2s, animations 60fps. Monitor memory and network payload. Test on older devices.
 
 ## Device Matrix
 
@@ -88,7 +78,7 @@ Use `playwright-emulation` device presets for web-based testing.
 
 ## Distribution Testing
 
-**iOS (TestFlight)**: `eas build --platform ios --profile preview` or Xcode archive → App Store Connect. Internal (100, no review) or external (10k, review required).
+**iOS (TestFlight)**: `eas build --platform ios --profile preview` or Xcode archive → App Store Connect. Internal: 100 testers, no review. External: 10k testers, review required.
 
 **Android**: `eas build --platform android --profile preview` or `./gradlew assembleRelease` → Google Play Console internal track. Distribute via email/Google Group.
 
