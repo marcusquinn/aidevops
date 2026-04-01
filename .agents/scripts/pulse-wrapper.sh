@@ -4824,16 +4824,50 @@ dispatch_with_dedup() {
 	: >"$worker_log"
 	ln -s "$worker_log" "$worker_log_fallback" 2>/dev/null || true
 
-	# Launch worker
+	# Pre-dispatch model selection: check provider backoff BEFORE launching.
+	# Previously, the wrapper dispatched blindly with whatever model was
+	# configured, wasting an assign/claim/launch cycle when the provider was
+	# rate-limited. Now we ask headless-runtime-helper.sh to select the best
+	# available model (respects backoff DB, auth availability, round-robin).
+	# If a model_override is requested (e.g., tier:thinking → opus), we
+	# validate it against backoff first and fall back to auto-selection if
+	# it's currently backed off.
+	local selected_model=""
+	if [[ -n "$model_override" ]]; then
+		# Check if the requested model is backed off
+		if "$HEADLESS_RUNTIME_HELPER" select --role worker --model "$model_override" >/dev/null 2>&1; then
+			selected_model="$model_override"
+		else
+			# Requested model is backed off — fall back to auto-selection
+			selected_model=$("$HEADLESS_RUNTIME_HELPER" select --role worker 2>/dev/null) || selected_model=""
+			if [[ -n "$selected_model" ]]; then
+				echo "[dispatch_with_dedup] Model ${model_override} backed off — using ${selected_model} instead for #${issue_number}" >>"$LOGFILE"
+			fi
+		fi
+	else
+		# No override — auto-select best available model
+		selected_model=$("$HEADLESS_RUNTIME_HELPER" select --role worker 2>/dev/null) || selected_model=""
+	fi
+
+	# If ALL models are backed off, skip this dispatch entirely.
+	# The issue stays assigned+queued and will be retried next cycle
+	# when backoffs may have expired.
+	if [[ -z "$selected_model" ]]; then
+		echo "[dispatch_with_dedup] All models backed off — skipping dispatch for #${issue_number} in ${repo_slug} (will retry next cycle)" >>"$LOGFILE"
+		# Unassign and remove queued label so the issue is re-dispatchable
+		gh issue edit "$issue_number" --repo "$repo_slug" \
+			--remove-assignee "$self_login" --remove-label "status:queued" 2>/dev/null || true
+		return 1
+	fi
+
+	# Launch worker with the pre-validated model
 	local -a worker_cmd=("$HEADLESS_RUNTIME_HELPER" run
 		--role worker
 		--session-key "$session_key"
 		--dir "$repo_path"
 		--title "$dispatch_title"
-		--prompt "$prompt")
-	if [[ -n "$model_override" ]]; then
-		worker_cmd+=(--model "$model_override")
-	fi
+		--prompt "$prompt"
+		--model "$selected_model")
 	"${worker_cmd[@]}" </dev/null >>"$worker_log" 2>&1 &
 	local worker_pid="$!"
 	sleep 2
