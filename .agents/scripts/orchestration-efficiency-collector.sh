@@ -170,13 +170,15 @@ collect_token_efficiency() {
 	# Query observability DB for the target date
 	if [[ -f "$OBS_DB" ]] && command -v sqlite3 &>/dev/null; then
 		local db_result
+		# worker_avg: restrict to rows where agent contains 'worker' (not just
+		# "not supervisor") to avoid pulling pulse/other rows into the average.
 		db_result=$(sqlite3 "$OBS_DB" \
 			"SELECT
 				COUNT(*) as requests,
 				COALESCE(SUM(tokens_total), 0) as total_tokens,
 				COALESCE(SUM(cost), 0) as total_cost,
 				COALESCE(AVG(CASE WHEN agent LIKE '%supervisor%' OR agent LIKE '%pulse%' THEN tokens_total ELSE NULL END), 0) as supervisor_avg,
-				COALESCE(AVG(CASE WHEN agent LIKE '%worker%' OR agent NOT LIKE '%supervisor%' THEN tokens_total ELSE NULL END), 0) as worker_avg
+				COALESCE(AVG(CASE WHEN agent LIKE '%worker%' THEN tokens_total ELSE NULL END), 0) as worker_avg
 			FROM llm_requests
 			WHERE timestamp >= datetime($start_epoch, 'unixepoch')
 			  AND timestamp < datetime($end_epoch, 'unixepoch');" 2>/dev/null || echo "0|0|0|0|0")
@@ -255,7 +257,10 @@ collect_speed() {
 	end_epoch=$((start_epoch + 86400))
 
 	local preflight_duration_avg=0
-	local dispatch_to_first_output_avg=0
+	# dispatch_to_first_output_avg: not yet instrumented — requires correlating
+	# dispatch timestamps with first log output timestamps. Emitted as null
+	# until a dedicated data source is available.
+	local dispatch_to_first_output_avg="null"
 	local worker_completion_p50=0
 	local worker_completion_p90=0
 	local worker_completion_p99=0
@@ -630,26 +635,41 @@ collect_throughput() {
 	local prs_closed_conflicting=0
 	local net_backlog_delta=0
 
-	# From pulse-health.json (most recent cycle)
-	if [[ -f "$PULSE_HEALTH" ]] && command -v jq &>/dev/null; then
-		prs_merged=$(jq -r '.prs_merged_this_cycle // 0' "$PULSE_HEALTH" 2>/dev/null || echo "0")
-		prs_closed_conflicting=$(jq -r '.prs_closed_conflicting // 0' "$PULSE_HEALTH" 2>/dev/null || echo "0")
-		issues_opened=$(jq -r '.issues_dispatched // 0' "$PULSE_HEALTH" 2>/dev/null || echo "0")
-		prs_merged=$(safe_int "$prs_merged")
-		prs_closed_conflicting=$(safe_int "$prs_closed_conflicting")
-		issues_opened=$(safe_int "$issues_opened")
-	fi
-
-	# Aggregate from pulse log for the day
+	# Aggregate from pulse log for the target date (date-filtered, not snapshot)
 	if [[ -f "$PULSE_LOG" ]]; then
-		local day_merged
-		day_merged=$(grep -a "merged=\|prs_merged=" "$PULSE_LOG" 2>/dev/null |
-			awk -v date="$date" '$0 ~ date {
+		local day_merged day_conflicting day_dispatched
+		day_merged=$(grep -a "\[${date}" "$PULSE_LOG" 2>/dev/null |
+			awk '{
 				match($0, /merged=([0-9]+)/, m)
-				sum += m[1]+0
+				if (m[1]+0 > 0) sum += m[1]+0
+			}
+			END { print sum+0 }' 2>/dev/null || echo "0")
+		day_conflicting=$(grep -a "\[${date}" "$PULSE_LOG" 2>/dev/null |
+			awk '{
+				match($0, /closed_conflicting=([0-9]+)/, m)
+				if (m[1]+0 > 0) sum += m[1]+0
+			}
+			END { print sum+0 }' 2>/dev/null || echo "0")
+		day_dispatched=$(grep -a "\[${date}" "$PULSE_LOG" 2>/dev/null |
+			awk '{
+				match($0, /dispatched=([0-9]+)/, m)
+				if (m[1]+0 > 0) sum += m[1]+0
 			}
 			END { print sum+0 }' 2>/dev/null || echo "0")
 		prs_merged=$(safe_int "$day_merged")
+		prs_closed_conflicting=$(safe_int "$day_conflicting")
+		issues_opened=$(safe_int "$day_dispatched")
+	fi
+
+	# Issues closed: from dispatch ledger — count completed entries for the date
+	if [[ -f "$DISPATCH_LEDGER" ]]; then
+		issues_closed=$(awk -v date="$date" \
+			'$0 ~ "\"status\":\"completed\"" {
+				match($0, /"updated_at":"([^"]+)"/, ts)
+				if (ts[1] ~ date) count++
+			}
+			END { print count+0 }' "$DISPATCH_LEDGER" 2>/dev/null || echo "0")
+		issues_closed=$(safe_int "$issues_closed")
 	fi
 
 	net_backlog_delta=$((issues_opened - issues_closed))

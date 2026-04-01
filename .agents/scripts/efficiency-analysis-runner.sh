@@ -136,7 +136,8 @@ should_run_phase2() {
 		return 0
 	fi
 
-	# Evaluate thresholds from the report
+	# Evaluate thresholds from the report using bc for float-safe comparison.
+	# bc returns 1 (true) or 0 (false) for comparison expressions.
 	local launch_failure_rate fill_rate tokens_wasted issues_no_pr prs_no_summary
 	launch_failure_rate=$(jq -r '.errors.launch_failure_rate_pct // 0' "$report_file" 2>/dev/null || echo "0")
 	fill_rate=$(jq -r '.concurrency.fill_rate_pct // 100' "$report_file" 2>/dev/null || echo "100")
@@ -144,46 +145,53 @@ should_run_phase2() {
 	issues_no_pr=$(jq -r '.audit_trails.issues_closed_without_pr_link // 0' "$report_file" 2>/dev/null || echo "0")
 	prs_no_summary=$(jq -r '.audit_trails.prs_without_merge_summary // 0' "$report_file" 2>/dev/null || echo "0")
 
-	# Convert to integers for comparison (strip decimals)
-	launch_failure_rate="${launch_failure_rate%%.*}"
-	fill_rate="${fill_rate%%.*}"
-	tokens_wasted="${tokens_wasted%%.*}"
-	issues_no_pr="${issues_no_pr%%.*}"
-	prs_no_summary="${prs_no_summary%%.*}"
+	# Sanitize: replace empty/non-numeric with safe defaults
+	[[ "$launch_failure_rate" =~ ^[0-9]+(\.[0-9]+)?$ ]] || launch_failure_rate="0"
+	[[ "$fill_rate" =~ ^[0-9]+(\.[0-9]+)?$ ]] || fill_rate="100"
+	[[ "$tokens_wasted" =~ ^[0-9]+(\.[0-9]+)?$ ]] || tokens_wasted="0"
+	[[ "$issues_no_pr" =~ ^[0-9]+(\.[0-9]+)?$ ]] || issues_no_pr="0"
+	[[ "$prs_no_summary" =~ ^[0-9]+(\.[0-9]+)?$ ]] || prs_no_summary="0"
 
-	# Default to 0 if empty
-	launch_failure_rate="${launch_failure_rate:-0}"
-	fill_rate="${fill_rate:-100}"
-	tokens_wasted="${tokens_wasted:-0}"
-	issues_no_pr="${issues_no_pr:-0}"
-	prs_no_summary="${prs_no_summary:-0}"
+	# Float-safe comparisons via bc (avoids truncation of values like 5.9 -> 5)
+	float_gt() {
+		[ "$(echo "$1 > $2" | bc 2>/dev/null || echo 0)" = "1" ]
+		return 0
+	}
+	float_lt() {
+		[ "$(echo "$1 < $2" | bc 2>/dev/null || echo 0)" = "1" ]
+		return 0
+	}
+	float_gt_eq() {
+		[ "$(echo "$1 >= $2" | bc 2>/dev/null || echo 0)" = "1" ]
+		return 0
+	}
 
 	local anomaly_found=false
 	local anomaly_reason=""
 
-	if [[ "$launch_failure_rate" -gt "$THRESHOLD_LAUNCH_FAILURE_RATE" ]]; then
+	if float_gt "$launch_failure_rate" "$THRESHOLD_LAUNCH_FAILURE_RATE"; then
 		anomaly_found=true
 		anomaly_reason="launch_failure_rate=${launch_failure_rate}% > ${THRESHOLD_LAUNCH_FAILURE_RATE}%"
 	fi
 
-	if [[ "$fill_rate" -lt "$THRESHOLD_FILL_RATE" ]]; then
+	if float_lt "$fill_rate" "$THRESHOLD_FILL_RATE"; then
 		anomaly_found=true
 		anomaly_reason="${anomaly_reason:+${anomaly_reason}, }fill_rate=${fill_rate}% < ${THRESHOLD_FILL_RATE}%"
 	fi
 
-	if [[ "$tokens_wasted" -gt "$THRESHOLD_TOKENS_WASTED" ]]; then
+	if float_gt "$tokens_wasted" "$THRESHOLD_TOKENS_WASTED"; then
 		anomaly_found=true
 		anomaly_reason="${anomaly_reason:+${anomaly_reason}, }tokens_wasted=${tokens_wasted} > ${THRESHOLD_TOKENS_WASTED}"
 	fi
 
-	if [[ "$issues_no_pr" -gt "$THRESHOLD_ISSUES_NO_PR" ]]; then
+	if float_gt_eq "$issues_no_pr" "1"; then
 		anomaly_found=true
-		anomaly_reason="${anomaly_reason:+${anomaly_reason}, }issues_no_pr=${issues_no_pr} > ${THRESHOLD_ISSUES_NO_PR}"
+		anomaly_reason="${anomaly_reason:+${anomaly_reason}, }issues_no_pr=${issues_no_pr} >= 1"
 	fi
 
-	if [[ "$prs_no_summary" -gt "$THRESHOLD_PRS_NO_SUMMARY" ]]; then
+	if float_gt_eq "$prs_no_summary" "1"; then
 		anomaly_found=true
-		anomaly_reason="${anomaly_reason:+${anomaly_reason}, }prs_no_summary=${prs_no_summary} > ${THRESHOLD_PRS_NO_SUMMARY}"
+		anomaly_reason="${anomaly_reason:+${anomaly_reason}, }prs_no_summary=${prs_no_summary} >= 1"
 	fi
 
 	if [[ "$anomaly_found" == "true" ]]; then
@@ -217,10 +225,11 @@ run_phase2() {
 	local analysis_log="${AGENT_WORKSPACE}/logs/efficiency-analysis-llm.log"
 	mkdir -p "$(dirname "$analysis_log")" 2>/dev/null || true
 
-	# Run the analysis agent via headless runtime
-	# Pass the report file path as the task argument
+	# Run the analysis agent via headless runtime.
+	# Pass the report file path as the first positional argument so the agent
+	# can resolve it deterministically (not from natural-language task text).
 	local task_prompt
-	task_prompt="Analyse the orchestration efficiency report at ${report_file} and produce findings per the orchestration-analysis.md framework. File GitHub issues for critical/high findings."
+	task_prompt="${report_file}"
 
 	if "$HEADLESS_RUNTIME" run \
 		--agent "$ANALYSIS_AGENT" \
@@ -241,10 +250,23 @@ run_phase2() {
 # Main
 # =============================================================================
 
+get_yesterday() {
+	if date --version >/dev/null 2>&1; then
+		# GNU date (Linux)
+		date -u -d "yesterday" +%Y-%m-%d 2>/dev/null || date -u +%Y-%m-%d
+	else
+		# BSD date (macOS)
+		date -u -v-1d +%Y-%m-%d 2>/dev/null || date -u +%Y-%m-%d
+	fi
+	return 0
+}
+
 main() {
 	parse_args "$@"
 
-	local target_date="${TARGET_DATE:-$(date -u +%Y-%m-%d)}"
+	# Default to yesterday: the runner fires at 05:00, so "today" is only
+	# a partial day. Analyse the completed previous day instead.
+	local target_date="${TARGET_DATE:-$(get_yesterday)}"
 	local report_file="${LOGS_DIR}/efficiency-report-${target_date}.json"
 
 	log_info "=== Orchestration Efficiency Analysis: ${target_date} ==="

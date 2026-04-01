@@ -85,7 +85,9 @@ When `historical_context.has_yesterday_report` or `historical_context.has_week_a
 1. Read the referenced report files
 2. Compare key metrics: `token_efficiency.total_cost_usd`, `errors.launch_failure_rate_pct`, `concurrency.fill_rate_pct`, `throughput.prs_merged`
 3. Report direction: `↑ improved`, `↓ degraded`, `→ stable` (±5% = stable)
-4. Flag regressions (degraded vs yesterday AND vs 7-day avg) as additional findings
+4. Flag regressions (degraded vs yesterday AND vs week-ago snapshot) as additional findings
+
+Note: `historical_context.week_ago_report_path` is a single snapshot from 7 days ago, not a rolling 7-day average. Use it for point-in-time comparison only.
 
 ### Meta-Assessment
 
