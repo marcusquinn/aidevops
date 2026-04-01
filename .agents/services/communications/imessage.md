@@ -45,15 +45,19 @@ BB="http://localhost:1234/api/v1"; AUTH='-H "Authorization: Bearer YOUR_PASSWORD
 curl -X POST "$BB/message/text" -H "Content-Type: application/json" $AUTH \
   -d '{"chatGuid":"iMessage;-;+1234567890","message":"Hello!","method":"apple-script"}'
 # Send attachment
-curl -X POST "$BB/message/attachment" $AUTH -F "chatGuid=iMessage;-;+1234567890" -F "attachment=@/path/to/file.png"
+curl -X POST "$BB/message/attachment" $AUTH \
+  -F "chatGuid=iMessage;-;+1234567890" -F "attachment=@/path/to/file.png"
 # React
 curl -X POST "$BB/message/react" -H "Content-Type: application/json" $AUTH \
   -d '{"chatGuid":"iMessage;-;+1234567890","selectedMessageGuid":"p:0/MSG-GUID","reaction":"love"}'
+# Register webhook
+curl -X POST "$BB/server/webhook" -H "Content-Type: application/json" \
+  -d '{"url":"http://localhost:8080/webhook","password":"YOUR_PASSWORD"}'
 ```
 
 - **Endpoints**: `GET /api/v1/chat/:guid/message` · `GET /api/v1/contact` · `GET /api/v1/server/info`
-- **GUIDs**: `iMessage;-;+14155551234` (phone) · `iMessage;-;user@example.com` (email) · `iMessage;+;chat123456789` (group)
-- **Events**: `new-message` · `typing-indicator` · `read-receipt` · `group-name-change` · `participant-added/removed`
+- **GUIDs**: `iMessage;-;+14155551234` (phone) · `iMessage;-;user@example.com` (email) · `iMessage;+;chat123456789` (group) · `SMS;-;+14155551234` (SMS)
+- **Events**: `new-message` (fields: `data.text`, `data.chatGuid`, `data.handle.address`) · `updated-message` · `typing-indicator` · `read-receipt` · `group-name-change` · `participant-added/removed`
 - **Supported**: Text, attachments, tapbacks (6), threading, edit/unsend detection, SMS fallback.
 - **Unsupported**: `@mentions`, stickers.
 
@@ -96,7 +100,7 @@ pgrep -x "BlueBubbles" > /dev/null || open -a "BlueBubbles"
 `iMessage User → Bot (webhook) → aidevops Runner → AI session → response`
 
 - **Pattern**: Listener on 8080 → `new-message`: verify allowlist, extract `text` + `chatGuid`, call `runner-helper.sh`, reply via API.
-- **Bridges**: Use BlueBubbles API custom adapter or Matrix (`matrix-bot.md`).
+- **Bridges**: Use BlueBubbles API custom adapter or Matrix (`matterbridge.md`).
 
 ## Limitations
 
@@ -109,7 +113,7 @@ pgrep -x "BlueBubbles" > /dev/null || open -a "BlueBubbles"
 
 | Issue | Fix |
 |-------|-----|
-| App not running | `open -a Messages` / `open -a BlueBubbles` |
+| App not running | `open -a Messages; open -a BlueBubbles` |
 | Read failure | Grant Full Disk Access to BlueBubbles |
 | Send failure | Grant Accessibility permission to BlueBubbles |
 | Mac sleeping | `caffeinate -d &` |
