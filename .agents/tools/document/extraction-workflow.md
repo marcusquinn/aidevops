@@ -26,7 +26,7 @@ tools:
 
 | Need | Tool | Command |
 |------|------|---------|
-| Structured extraction (± PII) | Docling+ET+Pipeline | `document-extraction-helper.sh extract file --schema invoice --privacy local` |
+| Structured extraction (± PII) | Docling+ET (ExtractThinker)+Pipeline | `document-extraction-helper.sh extract file --schema invoice --privacy local` |
 | Classify document type | Classification pipeline | `document-extraction-helper.sh classify file.pdf` |
 | Validate extracted JSON | Validation pipeline | `document-extraction-helper.sh validate file.json` |
 | Quick extraction, good OCR | DocStrange | `docstrange file.pdf --output json` |
@@ -47,7 +47,7 @@ document-extraction-helper.sh status                                          # 
 document-extraction-helper.sh extract invoice.pdf --schema invoice --privacy local  # single doc
 document-extraction-helper.sh batch ./invoices/ --schema invoice --privacy local    # batch
 document-extraction-helper.sh extract document.pdf                            # auto-detect, markdown
-document-extraction-helper.sh pii-scan extracted-text.txt                     # PII scan/redact
+document-extraction-helper.sh pii-scan extracted-text.txt                     # PII scan
 ```
 
 **Privacy modes:** `local` (Ollama) · `edge` (CF Workers AI) · `cloud` (OpenAI/Anthropic) · `none` (auto)
@@ -74,7 +74,7 @@ Input (PDF/DOCX/Image/HTML)
 
 **VAT arithmetic:** `subtotal + vat_amount = total` (±2p). VAT claimed without supplier VAT number → warning. Line items VAT sum must match total VAT (±5p). Valid UK rates: 0, 5, 20, exempt, oos, servrc, cisrc, postgoods.
 
-**Confidence scoring (0.0-1.0):** Base 0.7 (present) + 0.2 (format) + 0.1 (required). <0.5 → manual review.
+**Confidence scoring (0.0-1.0):** Base 0.7 (present+non-empty) + 0.2 (format) + 0.1 (required). <0.5 → manual review.
 
 ```bash
 python3 extraction_pipeline.py categorise "Shell" "diesel fuel"               # → {"nominal_code": "7401", "category": "Motor Expenses - Fuel"}
@@ -117,7 +117,7 @@ result = extractor.extract("record.pdf", MedicalRecord)
 | Docling parse failure | `python3 --version` (3.10+); `document-extraction-helper.sh install --core` |
 | Ollama not responding | `ollama list`; `brew services restart ollama`; `ollama pull llama3.2` |
 | PII scan misses entities | `document-extraction-helper.sh install --pii`; `python3 -m spacy validate` |
-| Out of memory | Use smaller model (e.g. `phi-4`); process one at a time; use `cloud` privacy |
+| Out of memory | Use smaller model (e.g. `phi-4`); process one at a time; switch to `cloud` privacy |
 
 ## Related
 
