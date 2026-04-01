@@ -3832,7 +3832,7 @@ _complexity_scan_collect_violations() {
 	local aidevops_path="$1"
 	local now_epoch="$2"
 	local shell_files
-	shell_files=$(git -C "$aidevops_path" ls-files '*.sh' | grep -Ev '_archive/|archived/|supervisor-archived/' || true)
+	shell_files=$(git -C "$aidevops_path" ls-files '*.sh' | grep -Ev '_archive/' || true)
 	if [[ -z "$shell_files" ]]; then
 		echo "[pulse-wrapper] Complexity scan: no shell files found — skipping" >>"$LOGFILE"
 		echo "$now_epoch" >"$COMPLEXITY_SCAN_LAST_RUN"
@@ -3920,7 +3920,7 @@ _complexity_scan_collect_md_violations() {
 	# - README.md: navigation/index docs, not instruction docs
 	# - todo/: planning files, not code
 	local protected_pattern='prompts/build\.txt|^\.agents/AGENTS\.md|^AGENTS\.md|scripts/commands/pulse\.md|scripts/commands/pulse-sweep\.md'
-	local excluded_dirs='_archive/|archived/|/templates/|/todo/'
+	local excluded_dirs='_archive/|/templates/|/todo/'
 	local excluded_files='/README\.md$'
 
 	local md_files

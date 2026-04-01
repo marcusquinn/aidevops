@@ -1609,7 +1609,7 @@ _sweep_shellcheck() {
 		sh_files=$(git -C "$repo_path" ls-files '*.sh' 2>/dev/null | head -100)
 	else
 		# Fallback for non-git directories (should not occur for pulse repos)
-		sh_files=$(find "$repo_path" -name "*.sh" -not -path "*/archived/*" -not -path "*/node_modules/*" -not -path "*/.git/*" -type f 2>/dev/null | head -100)
+		sh_files=$(find "$repo_path" -name "*.sh" -not -path "*/node_modules/*" -not -path "*/.git/*" -type f 2>/dev/null | head -100)
 	fi
 
 	[[ -z "$sh_files" ]] && return 0

@@ -1144,24 +1144,22 @@ migrate_pulse_repos_to_repos_json() {
 	return 0
 }
 
-# Migrate orphaned supervisor-helper.sh and supervisor/ modules (GH#5147)
-# After the supervisor-to-pulse-wrapper migration (PR #2291, PR #2475), the
-# upstream repo moved supervisor files to supervisor-archived/. But aidevops
-# update (rsync) only adds/overwrites — it doesn't delete files that no longer
-# exist in the source. Users who installed before the migration retain:
+# Migrate orphaned supervisor files from deployed installs (GH#5147)
+# After the supervisor-to-pulse-wrapper migration (PR #2291, PR #2475), and
+# subsequent removal of archived dirs from the repo, deployed installs may
+# retain orphaned files that rsync doesn't clean up:
 #   - ~/.aidevops/agents/scripts/supervisor-helper.sh (old entry point)
 #   - ~/.aidevops/agents/scripts/supervisor/ (old module directory)
+#   - ~/.aidevops/agents/scripts/archived/ (removed from repo)
+#   - ~/.aidevops/agents/scripts/supervisor-archived/ (removed from repo)
 #   - cron/launchd entries invoking supervisor-helper.sh pulse
-# These orphaned files shadow the new pulse-wrapper.sh architecture.
-# This migration removes the orphaned files and rewrites scheduler entries.
+# This migration removes all orphaned files and rewrites scheduler entries.
 migrate_orphaned_supervisor() {
 	local agents_dir="$HOME/.aidevops/agents"
 	local scripts_dir="$agents_dir/scripts"
 	local cleaned=0
 
 	# 1. Remove orphaned supervisor-helper.sh from deployed scripts
-	#    The canonical location is now supervisor-archived/supervisor-helper.sh
-	#    (shipped for reference/tests only, not as an active entry point)
 	if [[ -f "$scripts_dir/supervisor-helper.sh" ]]; then
 		rm -f "$scripts_dir/supervisor-helper.sh"
 		print_info "Removed orphaned supervisor-helper.sh from deployed scripts"
@@ -1169,11 +1167,7 @@ migrate_orphaned_supervisor() {
 	fi
 
 	# 2. Remove orphaned supervisor/ module directory
-	#    The canonical location is now supervisor-archived/ (shipped by rsync)
-	#    Only remove if it's the old modules dir (contains pulse.sh, dispatch.sh, etc.)
-	#    Do NOT remove supervisor-archived/ — that's the intentional archive
 	if [[ -d "$scripts_dir/supervisor" && ! -L "$scripts_dir/supervisor" ]]; then
-		# Verify it's the old module directory (not something user-created)
 		if [[ -f "$scripts_dir/supervisor/pulse.sh" ]] ||
 			[[ -f "$scripts_dir/supervisor/dispatch.sh" ]] ||
 			[[ -f "$scripts_dir/supervisor/_common.sh" ]]; then
@@ -1181,6 +1175,18 @@ migrate_orphaned_supervisor() {
 			print_info "Removed orphaned supervisor/ module directory from deployed scripts"
 			((++cleaned))
 		fi
+	fi
+
+	# 3. Remove archived dirs no longer shipped in repo
+	if [[ -d "$scripts_dir/archived" ]]; then
+		rm -rf "$scripts_dir/archived"
+		print_info "Removed orphaned archived/ directory from deployed scripts"
+		((++cleaned))
+	fi
+	if [[ -d "$scripts_dir/supervisor-archived" ]]; then
+		rm -rf "$scripts_dir/supervisor-archived"
+		print_info "Removed orphaned supervisor-archived/ directory from deployed scripts"
+		((++cleaned))
 	fi
 
 	# 3. Migrate cron entries from supervisor-helper.sh to pulse-wrapper.sh

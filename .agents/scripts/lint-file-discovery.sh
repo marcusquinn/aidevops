@@ -7,8 +7,6 @@
 #
 # Exclusion policy (single source of truth):
 #   _archive/            - local archive directories
-#   archived/            - archived code (versioned for reference, not maintained)
-#   supervisor-archived/ - archived supervisor modules
 #
 # Usage (CI — git-based):
 #   source .agents/scripts/lint-file-discovery.sh
@@ -29,7 +27,7 @@ _LINT_FILE_DISCOVERY_LOADED=1
 
 # Exclusion pattern for grep -v (pipe-separated, used with grep -E)
 # Single source of truth for all archive/excluded directories.
-readonly LINT_EXCLUDE_PATTERN='_archive/|archived/|supervisor-archived/'
+readonly LINT_EXCLUDE_PATTERN='_archive/'
 
 # -----------------------------------------------------------------------------
 # Git-based discovery (CI mode)
@@ -69,8 +67,6 @@ lint_shell_files_local() {
 		LINT_SH_FILES_LOCAL+=("$f")
 	done < <(find .agents/scripts -name "*.sh" \
 		-not -path "*/_archive/*" \
-		-not -path "*/archived/*" \
-		-not -path "*/supervisor-archived/*" \
 		-print0 2>/dev/null | sort -z)
 
 	# Include setup-modules/ (extracted setup.sh modules) if present
@@ -93,8 +89,6 @@ lint_python_files_local() {
 		LINT_PY_FILES_LOCAL+=("$f")
 	done < <(find .agents/scripts -name "*.py" \
 		-not -path "*/_archive/*" \
-		-not -path "*/archived/*" \
-		-not -path "*/supervisor-archived/*" \
 		-print0 2>/dev/null | sort -z)
 	return 0
 }
