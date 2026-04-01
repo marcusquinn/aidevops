@@ -144,66 +144,20 @@ pre_filter() {
 	return 0
 }
 
+# Python helper directory
+LIB_DIR="${SCRIPT_DIR}/comprehension-lib"
+
 #######################################
 # Run deterministic checks on model output
-# Arguments:
-#   $1 — model output text
-#   $2 — expected JSON (from scenario)
+# Arguments: $1 — model output, $2 — expected JSON
 # Output: JSON result on stdout
-# Returns: 0=pass, 1=fail, 2=ambiguous (needs adjudication)
+# Returns: 0=pass, 1=fail, 2=ambiguous
 #######################################
 deterministic_check() {
 	local output="$1"
 	local expected_json="$2"
 
-	python3 -c "
-import sys, json
-
-output = sys.argv[1]
-expected = json.loads(sys.argv[2])
-output_lower = output.lower()
-
-results = {'pass': True, 'checks': [], 'ambiguous': False}
-
-# contains checks
-for kw in expected.get('contains', []):
-    found = kw.lower() in output_lower
-    results['checks'].append({'type': 'contains', 'value': kw, 'passed': found})
-    if not found:
-        results['pass'] = False
-
-# not_contains checks
-for kw in expected.get('not_contains', []):
-    found = kw.lower() in output_lower
-    results['checks'].append({'type': 'not_contains', 'value': kw, 'passed': not found})
-    if found:
-        results['pass'] = False
-
-# action checks
-for act in expected.get('action', []):
-    found = act.lower() in output_lower
-    results['checks'].append({'type': 'action', 'value': act, 'passed': found})
-    if not found:
-        # Action checks are often ambiguous — model may use synonyms
-        results['ambiguous'] = True
-
-# length checks
-min_len = expected.get('min_length', 0)
-max_len = expected.get('max_length', 999999)
-actual_len = len(output)
-if min_len > 0:
-    passed = actual_len >= min_len
-    results['checks'].append({'type': 'min_length', 'value': min_len, 'actual': actual_len, 'passed': passed})
-    if not passed:
-        results['pass'] = False
-if max_len < 999999:
-    passed = actual_len <= max_len
-    results['checks'].append({'type': 'max_length', 'value': max_len, 'actual': actual_len, 'passed': passed})
-    if not passed:
-        results['pass'] = False
-
-print(json.dumps(results))
-" "$output" "$expected_json" 2>/dev/null || {
+	python3 "${LIB_DIR}/deterministic_check.py" "$output" "$expected_json" 2>/dev/null || {
 		echo '{"pass": false, "checks": [], "ambiguous": true}'
 		return 2
 	}
@@ -212,10 +166,7 @@ print(json.dumps(results))
 
 #######################################
 # Detect fast-fail escalation triggers
-# Arguments:
-#   $1 — model output text
-#   $2 — fast_fail_triggers JSON array
-#   $3 — scenario prompt (for context comparison)
+# Arguments: $1 — output, $2 — triggers JSON, $3 — prompt
 # Output: trigger name if detected, empty if none
 # Returns: 0=no trigger, 1=trigger detected
 #######################################
@@ -224,62 +175,98 @@ detect_fast_fail() {
 	local triggers_json="$2"
 	local prompt="$3"
 
-	python3 -c "
-import sys, json
-
-output = sys.argv[1]
-triggers = json.loads(sys.argv[2])
-prompt = sys.argv[3]
-output_lower = output.lower()
-
-detected = []
-
-for trigger in triggers:
-    if trigger == 'refusal':
-        refusal_phrases = [
-            'i don\\'t understand', 'i cannot', 'not able to',
-            'i\\'m unable', 'i am unable', 'i\\'m not sure what',
-            'could you clarify', 'i need more context'
-        ]
-        if any(p in output_lower for p in refusal_phrases):
-            detected.append('refusal')
-
-    elif trigger == 'confabulation':
-        # Check for file paths not in the prompt
-        import re
-        output_paths = set(re.findall(r'[\\w./\\-]+\\.(?:md|sh|json|yaml|txt)', output))
-        prompt_paths = set(re.findall(r'[\\w./\\-]+\\.(?:md|sh|json|yaml|txt)', prompt))
-        hallucinated = output_paths - prompt_paths
-        # Allow common well-known paths
-        known_paths = {'build.txt', 'AGENTS.md', 'TODO.md', 'README.md'}
-        hallucinated = hallucinated - known_paths
-        if len(hallucinated) > 3:
-            detected.append('confabulation')
-
-    elif trigger == 'structural_violation':
-        # Detected by action checks in deterministic_check, not here
-        pass
-
-    elif trigger == 'disengagement':
-        if len(output.strip()) < 50:
-            detected.append('disengagement')
-
-if detected:
-    print(','.join(detected))
-    sys.exit(1)
-else:
-    print('')
-    sys.exit(0)
-" "$output" "$triggers_json" "$prompt" 2>/dev/null
+	python3 "${LIB_DIR}/detect_fast_fail.py" "$output" "$triggers_json" "$prompt" 2>/dev/null
 	return $?
 }
 
 #######################################
+# Build the full prompt for a scenario
+# Arguments: $1 — agent file path, $2 — task prompt
+# Output: full prompt on stdout
+# Returns: 0=success, 1=file not found
+#######################################
+build_scenario_prompt() {
+	local agent_file="$1"
+	local task_prompt="$2"
+	local full_path="${REPO_ROOT}/${agent_file}"
+
+	if [[ ! -f "$full_path" ]]; then
+		return 1
+	fi
+
+	local agent_content
+	agent_content=$(cat "$full_path" 2>/dev/null || echo "")
+
+	printf '%s\n\n--- BEGIN AGENT FILE: %s ---\n%s\n--- END AGENT FILE ---\n\nNow respond to this task:\n%s\n\nRespond concisely and precisely. Follow the agent file instructions exactly.' \
+		"You are reading the following agent instruction file. Follow its instructions precisely." \
+		"$agent_file" "$agent_content" "$task_prompt"
+	return 0
+}
+
+#######################################
+# Run adjudication on ambiguous results
+# Arguments: $1 — expected JSON, $2 — model output, $3 — tier
+# Output: "pass" or "fail" on stdout
+# Returns: 0=pass, 1=fail
+#######################################
+run_adjudication() {
+	local expected_json="$1"
+	local model_output="$2"
+	local tier="$3"
+
+	local adjudication_tier="haiku"
+	[[ "$tier" != "haiku" ]] && adjudication_tier="sonnet"
+
+	local adj_prompt
+	adj_prompt="Compare this model output against the expected behavior. Answer PASS or FAIL with a one-line reason.
+
+Expected behavior: ${expected_json}
+
+Model output:
+${model_output}
+
+Answer format: PASS: <reason> or FAIL: <reason>"
+
+	local adj_result
+	adj_result=$("${SCRIPT_DIR}/ai-research-helper.sh" --prompt "$adj_prompt" --model "$adjudication_tier" --max-tokens 100 2>/dev/null) || {
+		echo "fail"
+		return 1
+	}
+
+	local adj_lower
+	adj_lower=$(echo "$adj_result" | tr '[:upper:]' '[:lower:]')
+	if echo "$adj_lower" | grep -q "^pass"; then
+		echo "pass:${adjudication_tier}"
+		return 0
+	fi
+	echo "fail:${adjudication_tier}:$(echo "$adj_result" | head -c 200 | tr '\n' ' ')"
+	return 1
+}
+
+#######################################
+# Format a JSON result object
+# Arguments: $1=scenario, $2=tier, $3=result, $4=method, $5=extra_json (optional)
+# Output: JSON on stdout
+#######################################
+format_result() {
+	local scenario="$1"
+	local tier="$2"
+	local result="$3"
+	local method="$4"
+	local extra="${5:-}"
+
+	local base='{"scenario":"'"$scenario"'","tier":"'"$tier"'","result":"'"$result"'","method":"'"$method"'"'
+	if [[ -n "$extra" ]]; then
+		echo "${base},${extra}}"
+	else
+		echo "${base}}"
+	fi
+	return 0
+}
+
+#######################################
 # Run a single scenario against a model tier
-# Arguments:
-#   $1 — agent file path
-#   $2 — scenario JSON
-#   $3 — model tier (haiku|sonnet|opus)
+# Arguments: $1 — agent file, $2 — scenario JSON, $3 — tier
 # Output: JSON result on stdout
 # Returns: 0=pass, 1=fail
 #######################################
@@ -299,46 +286,30 @@ run_scenario() {
 
 	log_info "Running scenario '$scenario_name' at tier=$tier"
 
-	# Build the full prompt with agent file context
-	local agent_content
-	if [[ -f "${REPO_ROOT}/${agent_file}" ]]; then
-		agent_content=$(cat "${REPO_ROOT}/${agent_file}" 2>/dev/null || echo "")
-	else
-		log_error "Agent file not found: ${REPO_ROOT}/${agent_file}"
-		echo '{"scenario":"'"$scenario_name"'","tier":"'"$tier"'","result":"error","reason":"agent_file_not_found"}'
-		return 1
-	fi
-
+	# Build prompt
 	local full_prompt
-	full_prompt="You are reading the following agent instruction file. Follow its instructions precisely.
-
---- BEGIN AGENT FILE: ${agent_file} ---
-${agent_content}
---- END AGENT FILE ---
-
-Now respond to this task:
-${prompt}
-
-Respond concisely and precisely. Follow the agent file instructions exactly."
-
-	# Call the model via ai-research-helper.sh
-	local model_output
-	model_output=$("${SCRIPT_DIR}/ai-research-helper.sh" --prompt "$full_prompt" --model "$tier" --max-tokens 500 2>/dev/null) || {
-		log_error "Model call failed for tier=$tier"
-		echo '{"scenario":"'"$scenario_name"'","tier":"'"$tier"'","result":"error","reason":"model_call_failed"}'
+	full_prompt=$(build_scenario_prompt "$agent_file" "$prompt") || {
+		format_result "$scenario_name" "$tier" "error" "setup" '"reason":"agent_file_not_found"'
 		return 1
 	}
 
-	# 1. Check fast-fail triggers
+	# Call model
+	local model_output
+	model_output=$("${SCRIPT_DIR}/ai-research-helper.sh" --prompt "$full_prompt" --model "$tier" --max-tokens 500 2>/dev/null) || {
+		format_result "$scenario_name" "$tier" "error" "api" '"reason":"model_call_failed"'
+		return 1
+	}
+
+	# Check fast-fail triggers
 	local ff_result
 	ff_result=$(detect_fast_fail "$model_output" "$fast_fail_json" "$prompt" 2>/dev/null) || true
 	if [[ -n "$ff_result" ]]; then
-		log_fail "Fast-fail trigger: $ff_result (scenario=$scenario_name, tier=$tier)"
-		echo '{"scenario":"'"$scenario_name"'","tier":"'"$tier"'","result":"fast_fail","trigger":"'"$ff_result"'","output_preview":"'"$(echo "$model_output" | head -c 200 | tr '\n' ' ')"'"}'
+		log_fail "Fast-fail: $ff_result (scenario=$scenario_name, tier=$tier)"
+		format_result "$scenario_name" "$tier" "fast_fail" "escalation" '"trigger":"'"$ff_result"'"'
 		return 1
 	fi
 
-	# 2. Run deterministic checks
+	# Deterministic checks
 	local det_result
 	det_result=$(deterministic_check "$model_output" "$expected_json" 2>/dev/null) || true
 	local det_pass
@@ -346,55 +317,64 @@ Respond concisely and precisely. Follow the agent file instructions exactly."
 	local det_ambiguous
 	det_ambiguous=$(echo "$det_result" | jq -r '.ambiguous // false')
 
+	# Clear pass
 	if [[ "$det_pass" == "true" && "$det_ambiguous" != "true" ]]; then
 		log_pass "Deterministic pass (scenario=$scenario_name, tier=$tier)"
-		echo '{"scenario":"'"$scenario_name"'","tier":"'"$tier"'","result":"pass","method":"deterministic","checks":'"$det_result"'}'
+		format_result "$scenario_name" "$tier" "pass" "deterministic" '"checks":'"$det_result"
 		return 0
 	fi
 
+	# Clear fail
 	if [[ "$det_pass" == "false" && "$det_ambiguous" != "true" ]]; then
 		log_fail "Deterministic fail (scenario=$scenario_name, tier=$tier)"
-		echo '{"scenario":"'"$scenario_name"'","tier":"'"$tier"'","result":"fail","method":"deterministic","checks":'"$det_result"',"output_preview":"'"$(echo "$model_output" | head -c 200 | tr '\n' ' ')"'"}'
+		format_result "$scenario_name" "$tier" "fail" "deterministic" '"checks":'"$det_result"
 		return 1
 	fi
 
-	# 3. Ambiguous — needs adjudication (haiku self-check or sonnet judge)
-	log_info "Ambiguous result, running adjudication (scenario=$scenario_name, tier=$tier)"
-	local adjudication_prompt
-	adjudication_prompt="Compare this model output against the expected behavior. Answer PASS or FAIL with a one-line reason.
+	# Ambiguous — adjudicate
+	log_info "Ambiguous, adjudicating (scenario=$scenario_name, tier=$tier)"
+	local adj_out
+	adj_out=$(run_adjudication "$expected_json" "$model_output" "$tier" 2>/dev/null) || true
+	local adj_verdict="${adj_out%%:*}"
 
-Expected behavior: ${expected_json}
-
-Model output:
-${model_output}
-
-Answer format: PASS: <reason> or FAIL: <reason>"
-
-	local adjudication_tier="haiku"
-	if [[ "$tier" == "haiku" ]]; then
-		adjudication_tier="haiku" # haiku self-check first
-	else
-		adjudication_tier="sonnet"
-	fi
-
-	local adj_result
-	adj_result=$("${SCRIPT_DIR}/ai-research-helper.sh" --prompt "$adjudication_prompt" --model "$adjudication_tier" --max-tokens 100 2>/dev/null) || {
-		log_error "Adjudication call failed"
-		echo '{"scenario":"'"$scenario_name"'","tier":"'"$tier"'","result":"ambiguous","method":"adjudication_failed"}'
-		return 1
-	}
-
-	local adj_lower
-	adj_lower=$(echo "$adj_result" | tr '[:upper:]' '[:lower:]')
-	if echo "$adj_lower" | grep -q "^pass"; then
+	if [[ "$adj_verdict" == "pass" ]]; then
 		log_pass "Adjudication pass (scenario=$scenario_name, tier=$tier)"
-		echo '{"scenario":"'"$scenario_name"'","tier":"'"$tier"'","result":"pass","method":"adjudication","adjudicator":"'"$adjudication_tier"'"}'
+		format_result "$scenario_name" "$tier" "pass" "adjudication"
 		return 0
-	else
-		log_fail "Adjudication fail (scenario=$scenario_name, tier=$tier)"
-		echo '{"scenario":"'"$scenario_name"'","tier":"'"$tier"'","result":"fail","method":"adjudication","adjudicator":"'"$adjudication_tier"'","reason":"'"$(echo "$adj_result" | head -c 200 | tr '\n' ' ')"'"}'
-		return 1
 	fi
+	log_fail "Adjudication fail (scenario=$scenario_name, tier=$tier)"
+	format_result "$scenario_name" "$tier" "fail" "adjudication"
+	return 1
+}
+
+#######################################
+# Run one scenario with tier escalation (haiku → sonnet → opus)
+# Arguments: $1 — agent file, $2 — scenario JSON
+# Output: "tier_name:json_results_array" on stdout
+# Returns: 0=passed at some tier
+#######################################
+escalate_scenario() {
+	local agent_file="$1"
+	local scenario_json="$2"
+	local current_order=1
+	local results="[]"
+
+	while [[ "$current_order" -le 3 ]]; do
+		local t
+		t=$(tier_name "$current_order")
+		local result
+		result=$(run_scenario "$agent_file" "$scenario_json" "$t" 2>/dev/null) || true
+		results=$(echo "$results" | jq --argjson r "$result" '. + [$r]')
+		local status
+		status=$(echo "$result" | jq -r '.result // "error"')
+		if [[ "$status" == "pass" ]]; then
+			echo "${t}:${results}"
+			return 0
+		fi
+		current_order=$((current_order + 1))
+	done
+	echo "opus:${results}"
+	return 1
 }
 
 #######################################
@@ -405,7 +385,6 @@ Answer format: PASS: <reason> or FAIL: <reason>"
 #######################################
 cmd_test() {
 	local yaml_file="$1"
-
 	local scenario_data
 	scenario_data=$(parse_yaml "$yaml_file") || return 1
 
@@ -416,64 +395,36 @@ cmd_test() {
 	local scenario_count
 	scenario_count=$(echo "$scenario_data" | jq '.scenarios | length')
 
-	log_info "Testing: $agent_file (expected tier_minimum=$expected_tier, scenarios=$scenario_count)"
+	log_info "Testing: $agent_file (expected=$expected_tier, scenarios=$scenario_count)"
 
-	# Pre-filter
 	local complexity
 	complexity=$(pre_filter "${REPO_ROOT}/${agent_file}")
 	log_info "Structural complexity: $complexity"
 
 	local all_results="[]"
 	local actual_tier_minimum="haiku"
-
 	local i=0
+
 	while [[ "$i" -lt "$scenario_count" ]]; do
 		local scenario_json
 		scenario_json=$(echo "$scenario_data" | jq -c ".scenarios[$i]")
 
-		# Start at haiku, escalate on failure
-		local current_tier_order=1
-		local scenario_passed=false
-		local scenario_tier="haiku"
+		local esc_output
+		esc_output=$(escalate_scenario "$agent_file" "$scenario_json" 2>/dev/null) || true
+		local scenario_tier="${esc_output%%:*}"
+		local scenario_results="${esc_output#*:}"
+		all_results=$(echo "$all_results" | jq --argjson r "$scenario_results" '. + $r')
 
-		while [[ "$current_tier_order" -le 3 ]]; do
-			local tier_name
-			tier_name=$(tier_name "$current_tier_order")
-
-			local result
-			result=$(run_scenario "$agent_file" "$scenario_json" "$tier_name" 2>/dev/null) || true
-			local result_status
-			result_status=$(echo "$result" | jq -r '.result // "error"')
-
-			all_results=$(echo "$all_results" | jq --argjson r "$result" '. + [$r]')
-
-			if [[ "$result_status" == "pass" ]]; then
-				scenario_passed=true
-				scenario_tier="$tier_name"
-				break
-			fi
-
-			# Escalate
-			current_tier_order=$((current_tier_order + 1))
-		done
-
-		if [[ "$scenario_passed" == "true" ]]; then
-			# Update actual minimum tier
-			local scenario_order
-			scenario_order=$(tier_order "$scenario_tier")
-			local current_min_order
-			current_min_order=$(tier_order "$actual_tier_minimum")
-			if [[ "$scenario_order" -gt "$current_min_order" ]]; then
-				actual_tier_minimum="$scenario_tier"
-			fi
-		else
-			actual_tier_minimum="opus" # Failed at all tiers — needs opus or test is bad
-		fi
+		# Update minimum tier
+		local s_order
+		s_order=$(tier_order "$scenario_tier")
+		local m_order
+		m_order=$(tier_order "$actual_tier_minimum")
+		[[ "$s_order" -gt "$m_order" ]] && actual_tier_minimum="$scenario_tier"
 
 		i=$((i + 1))
 	done
 
-	# Final summary
 	local summary
 	summary=$(jq -n \
 		--arg file "$agent_file" \
@@ -486,9 +437,9 @@ cmd_test() {
 	echo "$summary"
 
 	if [[ "$actual_tier_minimum" == "$expected_tier" ]]; then
-		log_pass "RESULT: $agent_file — tier_minimum=$actual_tier_minimum (matches expected)"
+		log_pass "RESULT: $agent_file — tier=$actual_tier_minimum (matches expected)"
 	else
-		log_info "RESULT: $agent_file — tier_minimum=$actual_tier_minimum (expected=$expected_tier)"
+		log_info "RESULT: $agent_file — tier=$actual_tier_minimum (expected=$expected_tier)"
 	fi
 	return 0
 }
@@ -587,29 +538,7 @@ cmd_update_state() {
 	fi
 
 	# Update state file with tier_minimum for each tested file
-	python3 -c "
-import json, sys
-
-with open(sys.argv[1]) as f:
-    results = json.load(f)
-
-with open(sys.argv[2]) as f:
-    state = json.load(f)
-
-updated = 0
-for r in results.get('results', []):
-    file_path = r.get('file', '')
-    tier = r.get('actual_tier', '')
-    if file_path and tier and file_path in state.get('files', {}):
-        state['files'][file_path]['tier_minimum'] = tier
-        updated += 1
-
-with open(sys.argv[2], 'w') as f:
-    json.dump(state, f, indent=2)
-    f.write('\n')
-
-print(f'Updated {updated} entries in simplification-state.json')
-" "$results_file" "$STATE_FILE" || {
+	python3 "${LIB_DIR}/update_state.py" "$results_file" "$STATE_FILE" || {
 		log_error "Failed to update state file"
 		return 1
 	}
