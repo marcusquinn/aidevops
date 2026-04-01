@@ -14,14 +14,11 @@ tools:
 
 ## Quick Reference
 
-- **CLI Tool**: `lumen` - Beautiful git diff viewer + AI commit messages
-- **Install**: `brew install jnsahaj/lumen/lumen` (macOS/Linux) | `cargo install lumen` (any)
-- **Config**: `~/.config/lumen/lumen.config.json`
-- **Setup**: `lumen configure` (interactive provider/key setup)
+- **CLI**: `lumen` — visual git diffs, AI commit drafts, change explanations
+- **Install**: `brew install jnsahaj/lumen/lumen` or `cargo install lumen`
+- **Config**: `~/.config/lumen/lumen.config.json` or `lumen configure`
 - **Repo**: https://github.com/jnsahaj/lumen (Rust, MIT)
 - **Note**: `lumen diff` works without AI config; AI features need a provider
-
-**Key Commands**:
 
 ```bash
 lumen diff                        # Visual side-by-side diff (uncommitted)
@@ -37,17 +34,15 @@ lumen operate "squash last 3"     # Natural language to git command
 
 <!-- AI-CONTEXT-END -->
 
-## Installation
+## Setup
 
 ```bash
 brew install jnsahaj/lumen/lumen   # macOS/Linux
 cargo install lumen                # Any platform with Rust
-brew install fzf mdcat             # Optional: interactive picker + pretty output
+brew install fzf mdcat             # Optional: picker + pretty output
 ```
 
-## Configuration
-
-Run `lumen configure` for interactive setup, or create `~/.config/lumen/lumen.config.json`:
+Run `lumen configure`, or create `~/.config/lumen/lumen.config.json`:
 
 ```json
 {
@@ -57,26 +52,19 @@ Run `lumen configure` for interactive setup, or create `~/.config/lumen/lumen.co
 }
 ```
 
-**Precedence** (highest to lowest): CLI flags > `--config` file > project `lumen.config.json` > global config > env vars > defaults.
+Config precedence: CLI flags > `--config` file > project `lumen.config.json` > global config > env vars > defaults.
 
-### API Key Setup
-
-Reuse keys already in `~/.config/aidevops/credentials.sh` or set per-provider env vars:
+Reuse keys already in `~/.config/aidevops/credentials.sh`, or set env vars:
 
 ```bash
-# Environment variables (alternative to config file)
 export LUMEN_AI_PROVIDER="openai"   # or claude, gemini, groq, etc.
 export LUMEN_API_KEY="your-key"
 export LUMEN_AI_MODEL="gpt-5-mini"  # optional, uses provider default
 ```
 
-### Supported Providers
+Providers: `openai` (default), `claude`, `gemini`, `groq`, `deepseek`, `xai`, `ollama`, `openrouter`.
 
-`openai` (default), `claude`, `gemini` (free tier), `groq` (free), `deepseek`, `xai`, `ollama` (local, no key), `openrouter`. Run `lumen configure` to select provider and model interactively.
-
-## Additional Options
-
-`lumen diff` extras beyond Quick Reference:
+## Common Workflows
 
 ```bash
 lumen diff --watch                  # Auto-refresh on file changes
@@ -88,17 +76,14 @@ lumen explain --query "impact?"     # Ask specific questions about changes
 lumen explain --list                # Interactive commit picker (requires fzf)
 ```
 
-**Diff keybindings**: `j/k` navigate, `{/}` jump hunks, `tab` sidebar, `space` mark viewed, `i` annotate, `e` open in editor, `?` all keys.
+- **Pre-commit review**: `lumen diff`, then `lumen draft`
+- **PR review**: `lumen diff --pr 123` alongside `gh pr view`
+- **AI-generated changes**: `lumen explain --staged` before committing
+- **Commit messages**: `lumen draft --context "task description"`
+- **Complex git ops**: `lumen operate "description"`
+- **Conflict resolution**: use `lumen diff`; see `conflict-resolution.md`
 
-## When to Use Lumen
-
-- **Pre-commit review**: `lumen diff` to review, then `lumen draft` for the commit message
-- **PR review**: `lumen diff --pr 123` for visual side-by-side review alongside `gh pr view`
-- **Understanding AI-generated changes**: `lumen explain --staged` before committing agent output
-- **Commit message generation**: `lumen draft --context "task description"` for conventional commits
-- **Complex git ops**: `lumen operate "description"` instead of memorising git syntax
-- **Stacked review**: `lumen diff main..feature --stacked` to review commits one by one
-- **Conflict resolution**: Use `lumen diff` to visualise merge conflicts (see `conflict-resolution.md`)
+Diff keybindings: `j/k` navigate, `{/}` jump hunks, `tab` sidebar, `space` mark viewed, `i` annotate, `e` open in editor, `?` all keys.
 
 ## See Also
 
