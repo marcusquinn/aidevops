@@ -144,6 +144,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [ ] t1689 feat: add Windows schtasks support to schedulers.sh — no background OAuth token refresh exists on Windows (MINGW64/Git Bash). `schedulers.sh` only handles macOS (launchd) and Linux (cron). Add `schtasks` code path to run `oauth-pool-helper.sh refresh anthropic` every 30 min. #feature #windows #auto-dispatch ~2h model:sonnet ref:GH#6900 logged:2026-03-27
 - [ ] t1690 fix: replace fcntl with cross-platform file locking in oauth-pool-helper.sh — embedded Python uses `import fcntl` for file locking which doesn't exist on Windows, silently crashing refresh/rotate commands. Use `msvcrt.locking` on Windows or a portability wrapper. #bugfix #windows #auto-dispatch ~1h model:sonnet ref:GH#6901 logged:2026-03-27
+- [ ] t1748 feat: add Linux/WSL2 platform support — create platform-detect.sh abstraction layer, refactor setup.sh scheduler from hardcoded launchd to launchd/systemd/cron backends, audit+fix macOS-only calls in helper scripts (pbcopy, mdfind, osascript, open), add reference/platform-support.md with WSL2 getting-started guide, expand CI to Ubuntu. Subsumes t1689 and t1690. #feature #windows #linux #platform #auto-dispatch ~10h ref:GH#15391 logged:2026-04-02 -> [todo/tasks/t1748-brief.md]
 
 ### Repo Hygiene
 
