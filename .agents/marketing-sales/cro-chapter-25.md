@@ -68,13 +68,13 @@ Optimize for **RPV**, not CR alone: `LRPV = CR × Avg Transaction × (1 + Expans
 
 Flat $99/mo → tiered by contact list: Starter $49/≤1K · Growth $99/≤10K · Scale $199/≤50K · Enterprise custom. Grandfathered 6 months; 80% usage alerts; contact-cleaning tool; 20% annual discount.
 
-**Results (6 mo):** ARPU +28% ($99→$127) · LTV +34% · Churn 4.5→3.2% · Expansion 0→23% of new MRR · NRR 102→118%
+**Results (6 mo):** ARPU +28% ($99→$127) · LTV +34% · Churn 4.5→3.2% · Expansion 0→23% of new MRR · NRR 102→118% — growth-driven upgrades
 
 ### Subscription Box: Strategic Bundling (Coffee)
 
 $25/mo flat → Explorer $29 / **Enthusiast $49** *(flagship: micro-lot, virtual cupping, 15% add-on discount)* / Connoisseur $79 *(equipment, private Slack)*.
 
-**Results (9 mo):** Mix 15/62/23% · ARPU +116% ($25→$54) · GM 40→52% · LTV +200% ($67→$201) · CAC payback 3.5→0.7 mo · Retention 45→68%
+**Results (9 mo):** Mix 15/62/23% · ARPU +116% ($25→$54) · GM 40→52% · LTV +200% ($67→$201) · CAC payback 3.5→0.7 mo · Retention 45→68% — equipment inclusion created switching costs
 
 ### Online Course Platform: Checkout Optimization
 
