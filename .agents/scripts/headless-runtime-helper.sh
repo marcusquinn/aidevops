@@ -412,6 +412,35 @@ clear_provider_backoff() {
 
 parse_retry_after_seconds() {
 	local file_path="$1"
+	local provider="${2:-anthropic}"
+
+	# t1835: Check if provider-auth.mjs already set a server-sourced cooldown
+	# in oauth-pool.json for this account. If so, respect it — don't overwrite
+	# with our text-parsed guess. Returns the remaining cooldown in seconds.
+	local pool_file="${HOME}/.aidevops/oauth-pool.json"
+	if [[ -f "$pool_file" ]]; then
+		local remaining
+		remaining=$(POOL_FILE="$pool_file" PROVIDER="$provider" python3 -c "
+import json, os, time, sys
+try:
+    pool = json.load(open(os.environ['POOL_FILE']))
+    now_ms = int(time.time() * 1000)
+    for a in pool.get(os.environ['PROVIDER'], []):
+        cd = a.get('cooldownUntil')
+        if cd and int(cd) > now_ms and a.get('status') == 'rate-limited':
+            print(max(1, (int(cd) - now_ms) // 1000))
+            sys.exit(0)
+except Exception:
+    pass
+print(0)
+" 2>/dev/null)
+		if [[ "$remaining" -gt 0 ]]; then
+			echo "$remaining"
+			return 0
+		fi
+	fi
+
+	# Fallback: parse worker log text for retry hints
 	python3 - "$file_path" <<'PY'
 import re
 import sys
@@ -434,9 +463,11 @@ for pattern, multiplier in patterns:
         print(int(match.group(1)) * multiplier)
         sys.exit(0)
 
+# t1835: Reduced from 900s — Anthropic API rate limits clear in 10-60s.
+# 900s was blocking interactive sessions for 15 minutes unnecessarily.
 numeric = re.search(r"\b429\b", text)
 if numeric:
-    print(900)
+    print(60)
     sys.exit(0)
 
 print(0)
@@ -516,10 +547,13 @@ attempt_pool_recovery() {
 	[[ -x "$OAUTH_POOL_HELPER" ]] || return 1
 
 	local retry_seconds
-	retry_seconds=$(parse_retry_after_seconds "$details_file")
+	retry_seconds=$(parse_retry_after_seconds "$details_file" "$provider")
 	if [[ "$retry_seconds" -le 0 ]]; then
+		# t1835: Reduced rate_limit fallback from 900s to 60s.
+		# Anthropic API rate limits clear in 10-60s; 900s was blocking
+		# interactive sessions for 15 minutes unnecessarily.
 		case "$reason" in
-		rate_limit) retry_seconds=900 ;;
+		rate_limit) retry_seconds=60 ;;
 		auth_error) retry_seconds=3600 ;;
 		*) retry_seconds=300 ;;
 		esac
@@ -567,10 +601,11 @@ print(text[:400])
 PY
 	)
 	auth_signature=$(get_auth_signature "$provider")
-	retry_seconds=$(parse_retry_after_seconds "$details_file")
+	retry_seconds=$(parse_retry_after_seconds "$details_file" "$provider")
 	if [[ "$retry_seconds" -le 0 ]]; then
+		# t1835: Reduced rate_limit fallback from 900s to 60s
 		case "$reason" in
-		rate_limit) retry_seconds=900 ;;
+		rate_limit) retry_seconds=60 ;;
 		auth_error) retry_seconds=3600 ;;
 		*) retry_seconds=300 ;;
 		esac

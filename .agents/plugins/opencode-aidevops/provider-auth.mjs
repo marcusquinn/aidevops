@@ -30,6 +30,28 @@ import { ensureValidToken, getAccounts, patchAccount, getAnthropicUserAgent } fr
  *  even though the rate limit had already cleared, killing the session. */
 const RATE_LIMIT_COOLDOWN_MS = 15_000;
 
+/**
+ * Parse Retry-After header into milliseconds (t1835).
+ * Supports integer seconds and HTTP-date formats. Falls back to default.
+ * The value is written directly into the account's cooldownUntil via
+ * patchAccount(), so the shell mark-failure path sees the real server value.
+ * @param {Response} response
+ * @returns {number} cooldown in ms
+ */
+function parseRetryAfterMs(response) {
+  const raw = response.headers?.get?.("retry-after");
+  if (!raw) return RATE_LIMIT_COOLDOWN_MS;
+  const seconds = parseInt(raw, 10);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return Math.max(seconds * 1000, RATE_LIMIT_COOLDOWN_MS);
+  }
+  const date = Date.parse(raw);
+  if (Number.isFinite(date)) {
+    return Math.max(date - Date.now(), RATE_LIMIT_COOLDOWN_MS);
+  }
+  return RATE_LIMIT_COOLDOWN_MS;
+}
+
 /** Default cooldown on auth failure (ms) — 5 minutes */
 const AUTH_FAILURE_COOLDOWN_MS = 300_000;
 
@@ -549,6 +571,12 @@ export function createProviderAuthHook(client) {
           // --- 429 mid-session rotation ---
           // Rate limited — rotate to next pool account immediately (no refresh attempt).
           if (response.status === 429) {
+            // t1835: Use server's Retry-After header for cooldown instead of hardcoded value.
+            // The parsed value is written to the account's cooldownUntil in oauth-pool.json,
+            // so the shell mark-failure path sees the real server value and won't overwrite
+            // with its own (previously 900s) fallback.
+            const cooldownMs = parseRetryAfterMs(response);
+
             const accounts = getAccounts("anthropic");
             // Use session affinity to identify the current account (t1714)
             const currentAccount = sessionAccountEmail
@@ -557,13 +585,13 @@ export function createProviderAuthHook(client) {
             const currentEmail = currentAccount?.email || "unknown";
 
             console.error(
-              `[aidevops] provider-auth: 429 rate limit hit for ${currentEmail} mid-session — attempting pool rotation`,
+              `[aidevops] provider-auth: 429 rate limit hit for ${currentEmail} mid-session (cooldown ${Math.ceil(cooldownMs / 1000)}s) — attempting pool rotation`,
             );
 
             if (currentAccount) {
               patchAccount("anthropic", currentEmail, {
                 status: "rate-limited",
-                cooldownUntil: Date.now() + RATE_LIMIT_COOLDOWN_MS,
+                cooldownUntil: Date.now() + cooldownMs,
               });
             }
 
