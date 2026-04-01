@@ -3140,6 +3140,11 @@
       "hash": "bbb8afdf33120ef89a7bec1bd5cdc14493d72bc4",
       "at": "2026-04-01T00:00:00Z",
       "pr": 15178
+    },
+    ".agents/scripts/commands/list-verify.md": {
+      "hash": "70b9ea13391fe10fb6a74157f8c68e1c4e784d47b9744d217fc3507d744006c9",
+      "at": "2026-04-01T19:51:55Z",
+      "pr": 15247
     }
   }
 }
