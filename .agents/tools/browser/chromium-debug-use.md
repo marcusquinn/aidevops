@@ -249,6 +249,65 @@ Rule of thumb: inspect and gather facts with `chromium-debug-use`, then formaliz
 | Ungoogled Chromium never exposes `/json/version` | Treat that build as unsupported for this workflow and switch to Chrome/Brave/Edge/Vivaldi/Chromium |
 | Need repeatable tests | Stop using live-session attach; launch a fresh Playwright context instead |
 
+## Future Scope: Electron and macOS Extension Path
+
+> **v1 scope boundary**: Everything above this section describes supported v1 behavior — attaching to Chromium-family browsers launched with `--remote-debugging-port`. The section below documents the extension envelope for future work. None of it implies current support.
+
+### Electron Apps
+
+Electron embeds Chromium and can expose a CDP endpoint, but there is no universal contract.
+
+**When Electron CDP attachment may work:**
+
+- The app is launched with `--remote-debugging-port=N` (either by the user or via a launch script).
+- The app does not call `app.commandLine.removeSwitch('remote-debugging-port')` or equivalent to block the flag.
+- The app does not use `BrowserWindow.webContents.debugger` in a way that conflicts with external CDP attachment.
+
+**Why Electron support must be app-specific:**
+
+- Each Electron app controls whether the debug port is exposed. There is no OS-level mechanism to force it open.
+- Apps that ship with auto-update or code signing may reject modified launch arguments.
+- The CDP surface inside an Electron app reflects the app's `BrowserWindow` contents, not a general browser tab list. Navigation, extension, and cookie APIs behave differently than in a standalone browser.
+- Some apps (VS Code, Figma desktop, Slack) have been tested to accept `--remote-debugging-port` in development builds but block it in production packaging.
+
+**Decision rule for a future Electron task:** Before implementing, verify that the target app exposes a working `/json/version` endpoint when launched with the debug flag. If it does not, this workflow does not apply and there is no safe attach contract.
+
+**Potential follow-up task (if v1 CDP proves useful):** Define a per-app Electron launch wrapper that sets `--remote-debugging-port` and verifies the endpoint before handing off to the helper. Scope to one specific app with a confirmed working debug path.
+
+### macOS App and Window Automation
+
+macOS provides two OS-level automation layers that complement (but do not replace) CDP:
+
+| Layer | What it can do | What it cannot do |
+|-------|---------------|-------------------|
+| AppleScript / `osascript` | Activate apps, bring windows to front, send menu commands, switch tabs in Safari/Chrome | Read DOM state, execute JS, intercept network requests |
+| Accessibility API (`AXUIElement`) | Enumerate windows and UI elements for apps that expose the accessibility tree | Access web content inside a `WKWebView` or Electron `BrowserWindow` |
+
+**Where macOS automation helps aidevops:**
+
+- Focusing the correct app or window before a CDP attach, so the right browser is in the foreground.
+- Discovering which browser is frontmost when the user has not specified one.
+- Switching tabs in browsers that do not expose CDP (e.g., Safari without the Web Inspector flag).
+- Triggering app-level actions (open URL, new tab) via AppleScript when a debug port is not available.
+
+**Where macOS automation does not replace CDP:**
+
+- Reading or modifying DOM state requires CDP or a browser extension. AppleScript cannot reach inside a web page.
+- Executing JavaScript in a page requires CDP `Runtime.evaluate`. There is no AppleScript equivalent.
+- Network interception requires CDP `Network` domain or a proxy. macOS automation has no network layer.
+
+**Decision rule for a future macOS task:** Use macOS automation only as a discovery or focus layer — to get the right app/window into position before handing off to CDP or Playwright. Do not attempt to replace CDP with AppleScript for any task that requires DOM or JS access.
+
+### Explicit Out-of-Scope for v1
+
+The following are not supported in v1 and should not be implied by any routing decision:
+
+- Attaching to Safari via CDP (Safari uses WebKit Inspector Protocol, not CDP).
+- Attaching to Firefox (uses its own remote debugging protocol, not CDP).
+- Attaching to Electron apps without a confirmed working debug port.
+- Using macOS Accessibility API to read web page content.
+- Automating iOS simulators or real devices via this workflow (use Maestro or `tools/mobile/`).
+
 ## Related
 
 - `tools/browser/browser-automation.md` - browser tool selection
