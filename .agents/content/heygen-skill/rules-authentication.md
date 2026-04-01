@@ -7,19 +7,19 @@ metadata:
 
 # HeyGen Authentication
 
-All requests require an API key in the `X-Api-Key` header.
+All requests require an API key in the `X-Api-Key` header. Keep it server-side, load it from an environment variable, and never expose it in client code.
 
 ## Setup
 
-1. Log in at https://app.heygen.com → Settings > API → copy your key
-2. Store as environment variable:
+1. Log in at https://app.heygen.com → Settings > API and copy the key.
+2. Store it as an environment variable:
 
 ```bash
 export HEYGEN_API_KEY="your-api-key-here"   # shell
 # or in .env: HEYGEN_API_KEY=your-api-key-here
 ```
 
-## Making Authenticated Requests
+## Request Pattern
 
 ### curl
 
@@ -49,7 +49,7 @@ response = requests.get(
 data = response.json()
 ```
 
-The pattern is identical for any HTTP client — set `X-Api-Key` header to your key.
+The pattern is the same in every HTTP client: send `X-Api-Key` on each request.
 
 ## Reusable API Client
 
@@ -80,7 +80,9 @@ const client = new HeyGenClient(process.env.HEYGEN_API_KEY!);
 const avatars = await client.get("/v2/avatars");
 ```
 
-## API Response Format
+## Response Shape
+
+Successful responses return `{ error: null, data: ... }`; auth failures return `{ "error": "Invalid API key", "data": null }`.
 
 ```typescript
 interface ApiResponse<T> {
@@ -89,9 +91,7 @@ interface ApiResponse<T> {
 }
 ```
 
-Example error: `{ "error": "Invalid API key", "data": null }`
-
-## Error Handling
+## Common Auth Errors
 
 | Status | Error | Cause |
 |--------|-------|-------|
@@ -99,9 +99,9 @@ Example error: `{ "error": "Invalid API key", "data": null }`
 | 403 | Forbidden | Insufficient permissions |
 | 429 | Rate limit exceeded | Too many requests — use exponential backoff |
 
-## Rate Limiting
+## Rate Limits
 
-Standard limits per API key; video generation endpoints are stricter. Retry 429s with exponential backoff:
+Rate limits apply per API key; video generation endpoints are stricter. Retry 429 responses with exponential backoff:
 
 ```typescript
 async function requestWithRetry(fn: () => Promise<Response>, maxRetries = 3): Promise<Response> {
@@ -116,7 +116,7 @@ async function requestWithRetry(fn: () => Promise<Response>, maxRetries = 3): Pr
 
 ## Security Best Practices
 
-1. **Never expose API keys in client-side code** — always call from a backend server
-2. **Use environment variables** — never hardcode keys in source code
-3. **Rotate keys periodically** — generate new keys on a regular schedule
-4. **Monitor usage** — check your HeyGen dashboard for unusual activity
+1. **Keep keys server-side** — route requests through a backend service
+2. **Use environment variables** — never hardcode keys in source
+3. **Rotate keys periodically** — replace old keys on a regular schedule
+4. **Monitor usage** — review the HeyGen dashboard for unusual activity
