@@ -2,36 +2,24 @@
 
 ## 21.1 Hypothesis Development
 
-### Hypothesis Framework
-
 Structure: **IF** [change], **THEN** [expected result], **BECAUSE** [reasoning]
 
-Example: "IF we simplify checkout from 12 to 6 fields, THEN checkout completion increases 15%, BECAUSE reducing friction removes purchase barriers"
-
-**Data Sources:**
-- Analytics drop-off points
-- Heatmap clicks/scrolls
-- Session recordings
-- User surveys and support tickets
-- Competitor benchmarking
+**Data Sources:** Analytics drop-off points, heatmap clicks/scrolls, session recordings, user surveys, support tickets, competitor benchmarking
 
 **Prioritization Matrix:**
 
-| Factor | Weight | Score | Weighted |
-|--------|--------|-------|----------|
-| Potential Impact | 30% | 8 | 2.4 |
-| Confidence | 20% | 7 | 1.4 |
-| Ease of Implementation | 25% | 9 | 2.25 |
-| Resource Requirements | 25% | 6 | 1.5 |
-| **Total** | | | **7.55** |
+| Factor | Weight |
+|--------|--------|
+| Potential Impact | 30% |
+| Confidence | 20% |
+| Ease of Implementation | 25% |
+| Resource Requirements | 25% |
 
 ## 21.2 Advanced Test Design
 
 ### Factorial Experiments
 
-Test multiple variables simultaneously to detect interaction effects.
-
-Example (2×2×2 = 8 variations): Headline A/B × Image X/Y × CTA Red/Blue
+Test multiple variables simultaneously to detect interaction effects. Example (2×2×2 = 8 variations): Headline A/B × Image X/Y × CTA Red/Blue
 
 | | Benefits | Challenges |
 |-|----------|------------|
