@@ -262,7 +262,11 @@ STATE_FILE="${HOME}/.aidevops/logs/pulse-state.txt"
 QUEUE_METRICS_FILE="${HOME}/.aidevops/logs/pulse-queue-metrics"
 SCOPE_FILE="${HOME}/.aidevops/logs/pulse-scope-repos"
 COMPLEXITY_SCAN_LAST_RUN="${HOME}/.aidevops/logs/complexity-scan-last-run"
-COMPLEXITY_SCAN_INTERVAL="${COMPLEXITY_SCAN_INTERVAL:-900}" # 15 min — runs each pulse cycle, per-run cap governs throughput
+COMPLEXITY_SCAN_INTERVAL="${COMPLEXITY_SCAN_INTERVAL:-900}"                       # 15 min — runs each pulse cycle, per-run cap governs throughput
+COMPLEXITY_SCAN_TREE_HASH_FILE="${HOME}/.aidevops/logs/complexity-scan-tree-hash" # cached git tree hash for skip-if-unchanged
+COMPLEXITY_LLM_SWEEP_LAST_RUN="${HOME}/.aidevops/logs/complexity-llm-sweep-last-run"
+COMPLEXITY_LLM_SWEEP_INTERVAL="${COMPLEXITY_LLM_SWEEP_INTERVAL:-21600}"   # 6h — daily LLM sweep when debt is stalled
+COMPLEXITY_DEBT_COUNT_FILE="${HOME}/.aidevops/logs/complexity-debt-count" # tracks open simplification-debt count for stall detection
 DEDUP_CLEANUP_LAST_RUN="${HOME}/.aidevops/logs/dedup-cleanup-last-run"
 DEDUP_CLEANUP_INTERVAL="${DEDUP_CLEANUP_INTERVAL:-86400}"                       # 1 day in seconds
 DEDUP_CLEANUP_BATCH_SIZE="${DEDUP_CLEANUP_BATCH_SIZE:-50}"                      # Max issues to close per run
@@ -281,6 +285,7 @@ _PULSE_HEALTH_PREFETCH_ERRORS=0
 
 # Validate complexity scan configuration (defined above, validated here)
 COMPLEXITY_SCAN_INTERVAL=$(_validate_int COMPLEXITY_SCAN_INTERVAL "$COMPLEXITY_SCAN_INTERVAL" 900 300)
+COMPLEXITY_LLM_SWEEP_INTERVAL=$(_validate_int COMPLEXITY_LLM_SWEEP_INTERVAL "$COMPLEXITY_LLM_SWEEP_INTERVAL" 21600 3600)
 COMPLEXITY_FUNC_LINE_THRESHOLD=$(_validate_int COMPLEXITY_FUNC_LINE_THRESHOLD "$COMPLEXITY_FUNC_LINE_THRESHOLD" 100 50)
 COMPLEXITY_FILE_VIOLATION_THRESHOLD=$(_validate_int COMPLEXITY_FILE_VIOLATION_THRESHOLD "$COMPLEXITY_FILE_VIOLATION_THRESHOLD" 1 1)
 COMPLEXITY_MD_MIN_LINES=$(_validate_int COMPLEXITY_MD_MIN_LINES "$COMPLEXITY_MD_MIN_LINES" 50 10)
@@ -3341,7 +3346,7 @@ normalize_active_issue_assignments() {
 }
 
 #######################################
-# Daily complexity scan helpers (GH#5628)
+# Daily complexity scan helpers (GH#5628, GH#15285)
 #######################################
 
 # Check if the complexity scan interval has elapsed.
@@ -3361,6 +3366,163 @@ _complexity_scan_check_interval() {
 		echo "[pulse-wrapper] Complexity scan not due yet (${remaining}h remaining)" >>"$LOGFILE"
 		return 1
 	fi
+	return 0
+}
+
+# Compute a deterministic tree hash for the files the complexity scan cares about.
+# Uses git ls-tree to hash the current state of .agents/ *.sh and *.md files.
+# This is O(1) — a single git command, not per-file iteration.
+# Arguments: $1 - repo_path
+# Outputs: tree hash string to stdout (empty on failure)
+_complexity_scan_tree_hash() {
+	local repo_path="$1"
+	# Hash the tree of .agents/ tracked files — covers both .sh and .md targets.
+	# git ls-tree -r HEAD outputs blob hashes + paths; piping through sha256sum
+	# gives a single stable hash that changes iff any tracked file changes.
+	git -C "$repo_path" ls-tree -r HEAD -- .agents/ 2>/dev/null |
+		awk '{print $3, $4}' |
+		sha256sum 2>/dev/null |
+		awk '{print $1}' ||
+		true
+	return 0
+}
+
+# Check whether the repo tree has changed since the last complexity scan.
+# Compares current tree hash against the cached value in COMPLEXITY_SCAN_TREE_HASH_FILE.
+# Arguments: $1 - repo_path
+# Returns: 0 if changed (scan needed), 1 if unchanged (skip)
+# Side effect: updates COMPLEXITY_SCAN_TREE_HASH_FILE when changed
+_complexity_scan_tree_changed() {
+	local repo_path="$1"
+	local current_hash
+	current_hash=$(_complexity_scan_tree_hash "$repo_path")
+	if [[ -z "$current_hash" ]]; then
+		# Cannot compute hash — proceed with scan to be safe
+		return 0
+	fi
+	local cached_hash=""
+	if [[ -f "$COMPLEXITY_SCAN_TREE_HASH_FILE" ]]; then
+		cached_hash=$(cat "$COMPLEXITY_SCAN_TREE_HASH_FILE" 2>/dev/null || true)
+	fi
+	if [[ "$current_hash" == "$cached_hash" ]]; then
+		echo "[pulse-wrapper] Complexity scan: tree unchanged since last scan — skipping file iteration" >>"$LOGFILE"
+		return 1
+	fi
+	# Tree changed — update cache and signal scan needed
+	printf '%s\n' "$current_hash" >"$COMPLEXITY_SCAN_TREE_HASH_FILE"
+	return 0
+}
+
+# Check if the daily LLM sweep is due and debt is stalled.
+# The LLM sweep fires when:
+#   1. COMPLEXITY_LLM_SWEEP_INTERVAL has elapsed since last sweep, AND
+#   2. The open simplification-debt count has not decreased since last check
+# Arguments: $1 - now_epoch, $2 - aidevops_slug
+# Returns: 0 if sweep is due, 1 if not due
+_complexity_llm_sweep_due() {
+	local now_epoch="$1"
+	local aidevops_slug="$2"
+
+	# Interval guard
+	if [[ -f "$COMPLEXITY_LLM_SWEEP_LAST_RUN" ]]; then
+		local last_sweep
+		last_sweep=$(cat "$COMPLEXITY_LLM_SWEEP_LAST_RUN" 2>/dev/null || echo "0")
+		[[ "$last_sweep" =~ ^[0-9]+$ ]] || last_sweep=0
+		local elapsed=$((now_epoch - last_sweep))
+		if [[ "$elapsed" -lt "$COMPLEXITY_LLM_SWEEP_INTERVAL" ]]; then
+			return 1
+		fi
+	fi
+
+	# Fetch current open debt count
+	local current_count
+	current_count=$(gh api graphql \
+		-f query="query { repository(owner:\"${aidevops_slug%%/*}\", name:\"${aidevops_slug##*/}\") { issues(labels:[\"simplification-debt\"], states:OPEN) { totalCount } } }" \
+		--jq '.data.repository.issues.totalCount' 2>/dev/null) || current_count=""
+	[[ "$current_count" =~ ^[0-9]+$ ]] || return 1
+
+	# Compare against last recorded count
+	local prev_count=""
+	if [[ -f "$COMPLEXITY_DEBT_COUNT_FILE" ]]; then
+		prev_count=$(cat "$COMPLEXITY_DEBT_COUNT_FILE" 2>/dev/null || true)
+	fi
+
+	# Always update the count file
+	printf '%s\n' "$current_count" >"$COMPLEXITY_DEBT_COUNT_FILE"
+
+	# Sweep is due if debt count has not decreased (stalled or growing)
+	if [[ -n "$prev_count" && "$prev_count" =~ ^[0-9]+$ ]]; then
+		if [[ "$current_count" -lt "$prev_count" ]]; then
+			echo "[pulse-wrapper] Complexity LLM sweep: debt reduced (${prev_count} → ${current_count}) — sweep not needed" >>"$LOGFILE"
+			printf '%s\n' "$now_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
+			return 1
+		fi
+	fi
+
+	echo "[pulse-wrapper] Complexity LLM sweep: debt stalled at ${current_count} (prev: ${prev_count:-unknown}) — sweep due" >>"$LOGFILE"
+	return 0
+}
+
+# Run the daily LLM sweep: create a GitHub issue asking the LLM to review
+# why simplification debt is stalled and suggest approach adjustments.
+# Arguments: $1 - aidevops_slug, $2 - now_epoch, $3 - maintainer
+# Returns: 0 always (best-effort)
+_complexity_run_llm_sweep() {
+	local aidevops_slug="$1"
+	local now_epoch="$2"
+	local maintainer="$3"
+
+	local current_count=""
+	if [[ -f "$COMPLEXITY_DEBT_COUNT_FILE" ]]; then
+		current_count=$(cat "$COMPLEXITY_DEBT_COUNT_FILE" 2>/dev/null || true)
+	fi
+
+	local sweep_body
+	sweep_body="## Simplification debt stall — LLM sweep (automated, GH#15285)
+
+**Open simplification-debt issues:** ${current_count:-unknown}
+
+The simplification debt count has not decreased in the last $((COMPLEXITY_LLM_SWEEP_INTERVAL / 3600))h. This issue is a prompt for the LLM to review the current state and suggest approach adjustments.
+
+### Questions to investigate
+
+1. Are the open simplification-debt issues actionable? Check for issues that are blocked, stale, or need maintainer review.
+2. Are workers dispatching on simplification-debt issues? Check recent pulse logs for dispatch activity.
+3. Is the open cap (500) being hit? If so, consider raising it or closing stale issues.
+4. Are there systemic blockers (e.g., all remaining issues require architectural decisions)?
+
+### Suggested actions
+
+- Review the oldest 10 open simplification-debt issues and close any that are no longer relevant.
+- Check if \`tier:simple\` issues are being dispatched — if not, verify the pulse is routing them correctly.
+- If debt is growing, consider lowering \`COMPLEXITY_MD_MIN_LINES\` or \`COMPLEXITY_FILE_VIOLATION_THRESHOLD\` to catch more candidates.
+
+### Confidence: low
+
+This is an automated stall-detection sweep. The LLM should review the actual issue list before acting.
+
+---
+**To dismiss**, comment \`dismissed: <reason>\` on this issue."
+
+	# Append signature footer
+	local sig_footer="" _sweep_elapsed=""
+	_sweep_elapsed=$((now_epoch - PULSE_START_EPOCH))
+	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer \
+		--body "$sweep_body" --cli "OpenCode" --no-session \
+		--tokens 0 --time "$_sweep_elapsed" --session-type routine 2>/dev/null || true)
+	sweep_body="${sweep_body}${sig_footer}"
+
+	if gh issue create --repo "$aidevops_slug" \
+		--title "perf: simplification debt stalled — LLM sweep needed ($(date -u +%Y-%m-%d))" \
+		--label "simplification-debt" --label "needs-maintainer-review" --label "tier:thinking" \
+		--assignee "$maintainer" \
+		--body "$sweep_body" >/dev/null 2>&1; then
+		echo "[pulse-wrapper] Complexity LLM sweep: created stall-review issue" >>"$LOGFILE"
+	else
+		echo "[pulse-wrapper] Complexity LLM sweep: failed to create stall-review issue" >>"$LOGFILE"
+	fi
+
+	printf '%s\n' "$now_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
 	return 0
 }
 
@@ -4294,14 +4456,41 @@ run_weekly_complexity_scan() {
 
 	_complexity_scan_check_interval "$now_epoch" || return 0
 
-	echo "[pulse-wrapper] Running daily complexity scan (GH#5628)..." >>"$LOGFILE"
+	local aidevops_path
+	aidevops_path=$(_complexity_scan_find_repo "$repos_json" "$aidevops_slug" "$now_epoch") || return 0
+
+	# Deterministic skip: if no tracked files changed since last scan, skip all
+	# file iteration (O(1) tree hash check vs O(n) per-file awk/wc scan).
+	# GH#15285: this is the primary perf fix — most pulse cycles see no changes.
+	local tree_changed=true
+	if ! _complexity_scan_tree_changed "$aidevops_path"; then
+		tree_changed=false
+	fi
+
+	# Daily LLM sweep: check independently of tree change — debt can stall even
+	# when no files changed (workers not dispatching, issues blocked, etc.).
+	local maintainer
+	maintainer=$(jq -r --arg slug "$aidevops_slug" \
+		'.initialized_repos[] | select(.slug == $slug) | .maintainer // empty' \
+		"$repos_json" 2>/dev/null)
+	if [[ -z "$maintainer" ]]; then
+		maintainer=$(printf '%s' "$aidevops_slug" | cut -d/ -f1)
+	fi
+	if _complexity_llm_sweep_due "$now_epoch" "$aidevops_slug"; then
+		_complexity_run_llm_sweep "$aidevops_slug" "$now_epoch" "$maintainer"
+	fi
+
+	# If tree unchanged, update last-run timestamp and return — no file work needed.
+	if [[ "$tree_changed" == false ]]; then
+		printf '%s\n' "$now_epoch" >"$COMPLEXITY_SCAN_LAST_RUN"
+		return 0
+	fi
+
+	echo "[pulse-wrapper] Running deterministic complexity scan (GH#5628, GH#15285)..." >>"$LOGFILE"
 
 	# Ensure recheck label exists (used when a simplified file changes)
 	gh label create "recheck-simplicity" --repo "$aidevops_slug" --color "D4C5F9" \
 		--description "File changed since last simplification and needs recheck" --force 2>/dev/null || true
-
-	local aidevops_path
-	aidevops_path=$(_complexity_scan_find_repo "$repos_json" "$aidevops_slug" "$now_epoch") || return 0
 
 	# Phase 1: Backfill simplification state from recently-closed issues.
 	# Finds simplification-debt issues closed in the last 7 days that have a
@@ -4378,7 +4567,7 @@ run_weekly_complexity_scan() {
 		_complexity_scan_create_md_issues "$md_results" "$repos_json" "$aidevops_slug"
 	fi
 
-	echo "$now_epoch" >"$COMPLEXITY_SCAN_LAST_RUN"
+	printf '%s\n' "$now_epoch" >"$COMPLEXITY_SCAN_LAST_RUN"
 	return 0
 }
 

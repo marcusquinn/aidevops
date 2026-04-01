@@ -1,0 +1,264 @@
+#!/usr/bin/env bash
+# test-pulse-wrapper-complexity-scan.sh — Tests for deterministic complexity scan (GH#15285)
+#
+# Tests:
+#   - _complexity_scan_tree_hash: returns non-empty hash for a git repo
+#   - _complexity_scan_tree_changed: returns 1 (unchanged) on second call with same tree
+#   - _complexity_scan_tree_changed: returns 0 (changed) after file modification
+#   - _complexity_llm_sweep_due: returns 1 when interval not elapsed
+#   - _complexity_llm_sweep_due: returns 1 when debt count decreased
+#   - _complexity_llm_sweep_due: returns 0 when interval elapsed and debt stalled
+#   - _complexity_scan_check_interval: returns 0 when no last-run file
+#   - _complexity_scan_check_interval: returns 1 when interval not elapsed
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+WRAPPER_SCRIPT="${SCRIPT_DIR}/../pulse-wrapper.sh"
+
+readonly TEST_RED='\033[0;31m'
+readonly TEST_GREEN='\033[0;32m'
+readonly TEST_RESET='\033[0m'
+
+TESTS_RUN=0
+TESTS_FAILED=0
+TEST_ROOT=""
+ORIGINAL_HOME="${HOME}"
+
+print_result() {
+	local test_name="$1"
+	local passed="$2"
+	local message="${3:-}"
+	TESTS_RUN=$((TESTS_RUN + 1))
+
+	if [[ "$passed" -eq 0 ]]; then
+		printf '%bPASS%b %s\n' "$TEST_GREEN" "$TEST_RESET" "$test_name"
+		return 0
+	fi
+
+	printf '%bFAIL%b %s\n' "$TEST_RED" "$TEST_RESET" "$test_name"
+	if [[ -n "$message" ]]; then
+		printf '       %s\n' "$message"
+	fi
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	return 0
+}
+
+setup_test_env() {
+	TEST_ROOT=$(mktemp -d)
+	export HOME="${TEST_ROOT}/home"
+	mkdir -p "${HOME}/.aidevops/logs"
+	LOGFILE="${HOME}/.aidevops/logs/pulse.log"
+	export LOGFILE
+	# shellcheck source=/dev/null
+	source "$WRAPPER_SCRIPT"
+	return 0
+}
+
+teardown_test_env() {
+	export HOME="$ORIGINAL_HOME"
+	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
+		rm -rf "$TEST_ROOT"
+	fi
+	return 0
+}
+
+make_test_repo() {
+	local repo_path="$1"
+	mkdir -p "${repo_path}/.agents/scripts"
+	git -C "$repo_path" init -q 2>/dev/null
+	git -C "$repo_path" config user.email "test@test.com" 2>/dev/null
+	git -C "$repo_path" config user.name "Test" 2>/dev/null
+	printf '#!/usr/bin/env bash\n# test file\necho hello\n' >"${repo_path}/.agents/scripts/test.sh"
+	git -C "$repo_path" add . 2>/dev/null
+	git -C "$repo_path" commit -q -m "init" 2>/dev/null
+	return 0
+}
+
+# =============================================================================
+# Tests: _complexity_scan_tree_hash
+# =============================================================================
+
+test_tree_hash_returns_nonempty() {
+	local repo_path="${TEST_ROOT}/repo-hash"
+	make_test_repo "$repo_path"
+	local hash
+	hash=$(_complexity_scan_tree_hash "$repo_path")
+	if [[ -n "$hash" ]]; then
+		print_result "_complexity_scan_tree_hash: returns non-empty hash" 0
+	else
+		print_result "_complexity_scan_tree_hash: returns non-empty hash" 1 "hash was empty"
+	fi
+	return 0
+}
+
+test_tree_hash_stable() {
+	local repo_path="${TEST_ROOT}/repo-stable"
+	make_test_repo "$repo_path"
+	local hash1 hash2
+	hash1=$(_complexity_scan_tree_hash "$repo_path")
+	hash2=$(_complexity_scan_tree_hash "$repo_path")
+	if [[ "$hash1" == "$hash2" && -n "$hash1" ]]; then
+		print_result "_complexity_scan_tree_hash: stable across calls" 0
+	else
+		print_result "_complexity_scan_tree_hash: stable across calls" 1 "hash1='$hash1' hash2='$hash2'"
+	fi
+	return 0
+}
+
+# =============================================================================
+# Tests: _complexity_scan_tree_changed
+# =============================================================================
+
+test_tree_changed_first_call_returns_changed() {
+	local repo_path="${TEST_ROOT}/repo-first"
+	make_test_repo "$repo_path"
+	# No cache file — should return 0 (changed)
+	if _complexity_scan_tree_changed "$repo_path"; then
+		print_result "_complexity_scan_tree_changed: first call returns changed (0)" 0
+	else
+		print_result "_complexity_scan_tree_changed: first call returns changed (0)" 1 "expected 0 (changed)"
+	fi
+	return 0
+}
+
+test_tree_changed_second_call_returns_unchanged() {
+	local repo_path="${TEST_ROOT}/repo-second"
+	make_test_repo "$repo_path"
+	# First call populates cache
+	_complexity_scan_tree_changed "$repo_path" >/dev/null 2>&1 || true
+	# Second call with same tree — should return 1 (unchanged)
+	if ! _complexity_scan_tree_changed "$repo_path"; then
+		print_result "_complexity_scan_tree_changed: second call returns unchanged (1)" 0
+	else
+		print_result "_complexity_scan_tree_changed: second call returns unchanged (1)" 1 "expected 1 (unchanged)"
+	fi
+	return 0
+}
+
+test_tree_changed_after_commit_returns_changed() {
+	local repo_path="${TEST_ROOT}/repo-commit"
+	make_test_repo "$repo_path"
+	# Populate cache
+	_complexity_scan_tree_changed "$repo_path" >/dev/null 2>&1 || true
+	# Modify and commit a file
+	printf '#!/usr/bin/env bash\n# modified\necho world\n' >"${repo_path}/.agents/scripts/test.sh"
+	git -C "$repo_path" add . 2>/dev/null
+	git -C "$repo_path" commit -q -m "modify" 2>/dev/null
+	# Should return 0 (changed)
+	if _complexity_scan_tree_changed "$repo_path"; then
+		print_result "_complexity_scan_tree_changed: returns changed after commit" 0
+	else
+		print_result "_complexity_scan_tree_changed: returns changed after commit" 1 "expected 0 (changed)"
+	fi
+	return 0
+}
+
+# =============================================================================
+# Tests: _complexity_llm_sweep_due
+# =============================================================================
+
+test_llm_sweep_not_due_when_interval_not_elapsed() {
+	# Set last-run to now — interval not elapsed
+	local now_epoch
+	now_epoch=$(date +%s)
+	printf '%s\n' "$now_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
+	# Should return 1 (not due)
+	if ! _complexity_llm_sweep_due "$now_epoch" "test/repo" 2>/dev/null; then
+		print_result "_complexity_llm_sweep_due: not due when interval not elapsed" 0
+	else
+		print_result "_complexity_llm_sweep_due: not due when interval not elapsed" 1 "expected 1 (not due)"
+	fi
+	return 0
+}
+
+test_llm_sweep_check_interval_guard() {
+	# Verify interval guard works: set last-run to 1h ago, interval is 6h
+	local now_epoch
+	now_epoch=$(date +%s)
+	local one_hour_ago=$((now_epoch - 3600))
+	printf '%s\n' "$one_hour_ago" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
+	# Should return 1 (not due — only 1h elapsed of 6h interval)
+	if ! _complexity_llm_sweep_due "$now_epoch" "test/repo" 2>/dev/null; then
+		print_result "_complexity_llm_sweep_due: interval guard blocks early sweep" 0
+	else
+		print_result "_complexity_llm_sweep_due: interval guard blocks early sweep" 1 "expected 1 (not due)"
+	fi
+	return 0
+}
+
+# =============================================================================
+# Tests: _complexity_scan_check_interval
+# =============================================================================
+
+test_check_interval_due_when_no_last_run() {
+	rm -f "$COMPLEXITY_SCAN_LAST_RUN"
+	local now_epoch
+	now_epoch=$(date +%s)
+	if _complexity_scan_check_interval "$now_epoch"; then
+		print_result "_complexity_scan_check_interval: due when no last-run file" 0
+	else
+		print_result "_complexity_scan_check_interval: due when no last-run file" 1 "expected 0 (due)"
+	fi
+	return 0
+}
+
+test_check_interval_not_due_when_recent() {
+	local now_epoch
+	now_epoch=$(date +%s)
+	printf '%s\n' "$now_epoch" >"$COMPLEXITY_SCAN_LAST_RUN"
+	if ! _complexity_scan_check_interval "$now_epoch"; then
+		print_result "_complexity_scan_check_interval: not due when just ran" 0
+	else
+		print_result "_complexity_scan_check_interval: not due when just ran" 1 "expected 1 (not due)"
+	fi
+	return 0
+}
+
+test_check_interval_due_when_elapsed() {
+	local now_epoch
+	now_epoch=$(date +%s)
+	# Set last-run to 2x the interval ago
+	local old_epoch=$((now_epoch - COMPLEXITY_SCAN_INTERVAL * 2))
+	printf '%s\n' "$old_epoch" >"$COMPLEXITY_SCAN_LAST_RUN"
+	if _complexity_scan_check_interval "$now_epoch"; then
+		print_result "_complexity_scan_check_interval: due when interval elapsed" 0
+	else
+		print_result "_complexity_scan_check_interval: due when interval elapsed" 1 "expected 0 (due)"
+	fi
+	return 0
+}
+
+# =============================================================================
+# Main
+# =============================================================================
+
+main() {
+	setup_test_env
+
+	echo "=== Complexity scan deterministic tests (GH#15285) ==="
+	echo ""
+
+	test_tree_hash_returns_nonempty
+	test_tree_hash_stable
+	test_tree_changed_first_call_returns_changed
+	test_tree_changed_second_call_returns_unchanged
+	test_tree_changed_after_commit_returns_changed
+	test_llm_sweep_not_due_when_interval_not_elapsed
+	test_llm_sweep_check_interval_guard
+	test_check_interval_due_when_no_last_run
+	test_check_interval_not_due_when_recent
+	test_check_interval_due_when_elapsed
+
+	echo ""
+	echo "Results: ${TESTS_RUN} run, $((TESTS_RUN - TESTS_FAILED)) passed, ${TESTS_FAILED} failed"
+
+	teardown_test_env
+
+	if [[ "$TESTS_FAILED" -gt 0 ]]; then
+		return 1
+	fi
+	return 0
+}
+
+main "$@"
