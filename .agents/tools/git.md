@@ -86,12 +86,3 @@ Issue or PR comments:
 - GitLab: add OpenCode to `.gitlab-ci.yml`, then use `@opencode explain this issue` and `@opencode fix this`
 
 See `git/opencode-github.md`, `git/opencode-gitlab.md`, and `git/opencode-github-security.md` for workflow and hardening details.
-
-## Related
-
-- `workflows/branch.md` — branching workflow
-- `workflows/pr.md` — pull requests
-- `workflows/version-bump.md` — version management
-- `workflows/release.md` — releases
-- `git/github-actions.md` — CI/CD
-- `git/git-security.md` — git security rules
