@@ -22,9 +22,9 @@
     "status": "done"
   },
   ".agents/services/hosting/cloudflare-platform-skill/ddos-gotchas.md": {
-    "hash": "e23cf4d9b7e33a77e7f888a1672ef537c8e24aaec892c769b731859d21a67c91",
+    "hash": "d226f42b982f0a9ef82204b118405cf7b01eb0360905feacaec8b2bca9b946ba",
     "issue": "GH#15041",
-    "lines": 68,
+    "lines": 85,
     "status": "simplified"
   },
   ".agents/services/hosting/cloudflare-platform-skill/zaraz.md": {

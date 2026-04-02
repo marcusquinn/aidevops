@@ -23,7 +23,24 @@ const config = {
 
 ## False Positives
 
-Legitimate traffic blocked/challenged. Diagnose via GraphQL `httpRequestsAdaptiveGroups` (filter by `ruleId` + `action: "log"`, dimensions: `clientCountryName`, `clientRequestHTTPHost`, `clientRequestPath`, `userAgent`).
+Legitimate traffic blocked/challenged. Diagnose via GraphQL:
+
+```graphql
+{
+  viewer {
+    zones(filter: { zoneTag: "<ZONE_ID>" }) {
+      httpRequestsAdaptiveGroups(
+        filter: { ruleId: "<RULE_ID>", action: "log" }
+        limit: 100
+        orderBy: [datetime_DESC]
+      ) {
+        dimensions { clientCountryName clientRequestHTTPHost clientRequestPath userAgent }
+        count
+      }
+    }
+  }
+}
+```
 
 Fix:
 
