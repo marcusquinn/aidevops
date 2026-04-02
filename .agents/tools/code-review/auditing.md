@@ -96,8 +96,8 @@ run: |
   ./.agents/scripts/code-audit-helper.sh report ${{ github.repository }} audit-report.json
 ```
 
-Upload `audit-report.json` as an artifact via `actions/upload-artifact@v3`.
+Upload `audit-report.json` as an artifact via `actions/upload-artifact@v4`.
 
 ## Security
 
-Store API tokens via `aidevops secret set NAME` (gopass) or `credentials.sh` (600 perms). Use minimal-scope tokens. See `prompts/build.txt` for full secret-handling rules.
+Store API tokens via `aidevops secret set NAME` (gopass) or `~/.config/aidevops/credentials.sh` (600 perms — never store tokens elsewhere). Use minimal-scope tokens. See `prompts/build.txt` for full secret-handling rules.
