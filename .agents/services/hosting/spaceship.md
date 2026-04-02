@@ -19,7 +19,7 @@ tools:
 
 - **Type**: Domain registrar + DNS hosting
 - **Auth**: API key + secret
-- **Config**: `configs/spaceship-config.json`
+- **Config**: `configs/spaceship-config.json` (copy from `configs/spaceship-config.json.txt`)
 - **Commands**: `spaceship-helper.sh [accounts|domains|domain-details|dns-records|add-dns|update-dns|delete-dns|nameservers|update-ns|check-availability|contacts|lock|unlock|transfer-status|monitor-expiration|audit] [account] [domain] [args]`
 - **DNS records**: A, AAAA, CNAME, MX, TXT, NS
 - **Security**: Domain locking, privacy protection, DNSSEC
@@ -28,27 +28,11 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Configuration
-
-```bash
-cp configs/spaceship-config.json.txt configs/spaceship-config.json
-```
-
-```json
-{
-  "accounts": {
-    "personal": {
-      "api_key": "YOUR_SPACESHIP_API_KEY_HERE",
-      "api_secret": "YOUR_SPACESHIP_API_SECRET_HERE",
-      "email": "your-email@domain.com",
-      "description": "Personal domain account",
-      "domains": ["yourdomain.com"]
-    }
-  }
-}
-```
+## Setup
 
 Credentials: Spaceship Dashboard → API Settings → Generate Key + Secret. Store: `setup-local-api-keys.sh set spaceship YOUR_API_KEY`. Test: `spaceship-helper.sh accounts`.
+
+Config schema: `configs/spaceship-config.json.txt` — copy to `configs/spaceship-config.json` and fill in `api_key`, `api_secret`, `email`, `domains`.
 
 ## Commands
 
@@ -86,8 +70,7 @@ spaceship-helper.sh domains personal > domains-backup-$(date +%Y%m%d).txt
 
 - Separate API keys per project; rotate every 6–12 months; minimal permissions
 - Store in `~/.config/aidevops/` only — never commit to repository files
-- Enable domain lock: `spaceship-helper.sh lock personal example.com`
-- Enable DNSSEC; monitor records for unauthorized changes; limit API access to trusted systems
+- Enable domain lock (`lock` command) and DNSSEC; monitor records for unauthorized changes
 
 ## Troubleshooting
 
