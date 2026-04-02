@@ -6,11 +6,9 @@ metadata:
   tags: sequence, trim, clip, cut, offset
 ---
 
-Use `<Sequence>` to skip the start of an animation, cap its end, or combine trimming with delay.
-
 ## Trim the beginning
 
-A negative `from` value shifts time backwards, so the sequence starts partway through its local timeline:
+A negative `from` value shifts time backwards — the sequence starts partway through its local timeline:
 
 ```tsx
 import {Sequence, useVideoConfig} from 'remotion';
