@@ -24,9 +24,7 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Overview
-
-Data-driven routing table (JSON) that AI reads directly. The bash script only checks availability — all routing decisions (which model to try, when to fall back, error recovery) are made by the AI agent, not bash. Follows the **Intelligence Over Scripts** principle.
+Data-driven routing table (JSON) that AI reads directly. The bash script only checks availability — all routing decisions are made by the AI agent, not bash. Follows the **Intelligence Over Scripts** principle.
 
 ## Routing Table
 
@@ -54,7 +52,7 @@ fallback-chain-helper.sh table
 fallback-chain-helper.sh help
 ```
 
-## How Resolution Works
+## Resolution
 
 1. Read routing table for the requested tier
 2. Walk model list in order
@@ -65,32 +63,19 @@ No cooldowns, triggers, gateway probing, or SQLite database.
 
 ## Integration
 
-### Callers
-
 | Caller | Function | How it calls |
 |--------|----------|-------------|
 | `model-availability-helper.sh` | `resolve_tier()` | `fallback-chain-helper.sh resolve <tier> --quiet` as extended fallback |
 | `model-availability-helper.sh` | `resolve_tier_chain()` | `fallback-chain-helper.sh resolve <tier> --quiet` for full chain |
 | `shared-constants.sh` | `resolve_model_tier()` | `fallback-chain-helper.sh resolve <tier> --quiet` with static fallback |
 
-### AI Agent Usage
-
 AI agents read `model-routing.md` for routing rules and the routing table for available models. Runtime failures → AI decides next action (retry, fall back, escalate).
 
 ## Migration from v1
 
-v2 removed (moved to AI judgment):
-- SQLite database (cooldowns, trigger logs, gateway health)
-- Provider cooldown management
-- Trigger classification (429, 5xx, timeout detection)
-- Gateway probing (OpenRouter, Cloudflare AI Gateway)
-- Per-agent YAML frontmatter parsing
-- `chain`, `status`, `validate`, `gateway`, `trigger` commands
+v2 removed (moved to AI judgment): SQLite database, provider cooldown management, trigger classification (429, 5xx, timeout), gateway probing (OpenRouter, Cloudflare AI Gateway), per-agent YAML frontmatter parsing, `chain`/`status`/`validate`/`gateway`/`trigger` commands.
 
-v2 kept:
-- `resolve <tier>` command (table lookup + availability check)
-- `is_model_available()` health check (delegates to model-availability-helper.sh)
-- Same exit codes and stdout interface
+v2 kept: `resolve <tier>` (table lookup + availability check), `is_model_available()` health check, same exit codes and stdout interface.
 
 ## Related
 
