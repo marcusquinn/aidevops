@@ -36,22 +36,13 @@ cargo install tirith               # from source
 mise use -g tirith                 # mise
 ```
 
-Also available via Nix, deb, rpm, AUR, Scoop, and Chocolatey.
-
-Add one shell hook to your profile — this is the only activation step:
+Also available via Nix, deb, rpm, AUR, Scoop, and Chocolatey. Add one shell hook to activate:
 
 ```bash
-# zsh (~/.zshrc)
-eval "$(tirith init --shell zsh)"
-
-# bash (~/.bashrc)
-eval "$(tirith init --shell bash)"
-
-# fish (~/.config/fish/config.fish)
-tirith init --shell fish | source
+eval "$(tirith init --shell zsh)"   # ~/.zshrc
+eval "$(tirith init --shell bash)"  # ~/.bashrc
+tirith init --shell fish | source   # ~/.config/fish/config.fish
 ```
-
-After that, clean commands pass through invisibly and risky ones are blocked or warned on.
 
 ## What it catches
 
@@ -81,10 +72,7 @@ tirith doctor                  # Diagnostic check (shell, hooks, policy)
 
 ## Configuration
 
-Policy file lookup order:
-
-1. `.tirith/policy.yaml` (walks up to repo root)
-2. `~/.config/tirith/policy.yaml`
+Policy lookup: `.tirith/policy.yaml` (walks up to repo root), then `~/.config/tirith/policy.yaml`.
 
 ```yaml
 version: 1
@@ -98,24 +86,19 @@ severity_overrides:
 fail_mode: open  # or "closed" for strict environments
 ```
 
-Organizations can set `allow_bypass: false` to prevent per-command bypass.
+Set `allow_bypass: false` to prevent per-command bypass in org environments.
 
 ## Bypass
 
-Use only for commands you have reviewed manually:
-
 ```bash
-TIRITH=0 curl -L https://known-safe.example.com | bash
+TIRITH=0 curl -L https://known-safe.example.com | bash  # one command only, does not persist
 ```
-
-This standard shell prefix applies to one command only and does not persist.
 
 ## Integration with aidevops
 
-- **setup.sh recommendation**: Check for Tirith and suggest installation if missing.
-- Once `eval "$(tirith init)"` is in the shell profile, terminal commands spawned by aidevops scripts are guarded automatically.
-
-**Audit log**: Local JSONL at `~/.local/share/tirith/log.jsonl` (timestamp, action, rule ID, redacted preview). Disable with `TIRITH_LOG=0`.
+- **setup.sh**: checks for Tirith and suggests installation if missing
+- **Auto-guard**: once `eval "$(tirith init)"` is in the shell profile, all terminal commands spawned by aidevops scripts are guarded automatically
+- **Audit log**: `~/.local/share/tirith/log.jsonl` (timestamp, action, rule ID, redacted preview); disable with `TIRITH_LOG=0`
 
 ## Related
 
