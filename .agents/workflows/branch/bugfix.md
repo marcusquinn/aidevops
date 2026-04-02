@@ -30,20 +30,20 @@ git checkout -b bugfix/{description}
 
 ## When to Use
 
-- Non-urgent bug fixes, issues that can wait for the normal release cycle, bugs found in development/staging.
-
-For urgent production issues, use `hotfix/` instead.
+- Non-urgent bug fixes (can wait for release cycle) or bugs found in dev/staging.
+- **Not for** urgent production issues (use `hotfix/`).
 
 ## Guidance
 
-Always add a regression test to prevent recurrence. For investigation patterns, see `workflows/bug-fixing.md`.
+- **Regression test**: MANDATORY to prevent recurrence.
+- **Scope**: Minimal changes only — no new features or refactoring.
+- **Investigation**: See `workflows/bug-fixing.md`.
 
 ## Examples
 
 ```bash
 bugfix/login-timeout
 bugfix/123-null-pointer
-bugfix/api-response-parsing
 ```
 
 ## Commit Example
