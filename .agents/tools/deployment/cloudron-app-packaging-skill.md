@@ -60,12 +60,11 @@ CMD [ "/app/code/start.sh" ]
 
 ### `start.sh` Conventions
 
-- Starts as root; drop privileges with `exec gosu cloudron:cloudron <cmd>`
+- Drop privileges: `exec gosu cloudron:cloudron <cmd>` (e.g. `exec gosu cloudron:cloudron node /app/code/server.js`)
 - Reset ownership on every start: `chown -R cloudron:cloudron /app/data`
-- Forward SIGTERM with `exec`, for example `exec gosu cloudron:cloudron node /app/code/server.js`
-- Gate first-run setup with a marker: `if [[ ! -f /app/data/.initialized ]]; then ...; touch /app/data/.initialized; fi`
-- Log to stdout/stderr; fallback logs go under `/run/<subdir>/*.log` (two levels deep, autorotated)
-- For multiple processes use `supervisor` or `pm2`; see `cloudron-app-packaging.md` "start.sh Architecture"
+- Gate first-run setup: `if [[ ! -f /app/data/.initialized ]]; then ...; touch /app/data/.initialized; fi`
+- Log to stdout/stderr; fallback logs: `/run/<subdir>/*.log` (two levels deep, autorotated)
+- Multiple processes: use `supervisor` or `pm2`; see `cloudron-app-packaging.md` "start.sh Architecture"
 
 ## Manifest Essentials
 
