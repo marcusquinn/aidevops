@@ -83,6 +83,19 @@ gh pr merge NUMBER --repo SLUG --squash
 `CHANGES_REQUESTED` → dispatch fix worker. `APPROVED` → merge directly.
 Check external contributor gate before ANY approve/merge (see Pre-merge checks below).
 
+### 3.5. Dispatch triage reviews for needs-maintainer-review issues
+
+**Before implementation workers.** External contributor issues deserve fast feedback —
+dispatch opus-tier triage reviews first so the community isn't left waiting. Max 2 per cycle.
+Uses pre-fetched triage status.
+
+```bash
+source ~/.aidevops/agents/scripts/pulse-wrapper.sh
+AVAILABLE=$(dispatch_triage_reviews "$AVAILABLE")
+```
+
+Skip when: all slots occupied, issue created <5 min ago, or maintainer already commented.
+
 ### 4. Dispatch workers for open issues
 
 ```bash
@@ -96,19 +109,7 @@ dispatch_with_dedup NUMBER SLUG "Issue #NUMBER: TITLE" "TASK_ID: TITLE" "$RUNNER
 
 Repeat until `AVAILABLE` slots are filled or no dispatchable issues remain.
 
-### 4.5. Dispatch triage reviews for needs-maintainer-review issues
-
-After filling implementation slots, dispatch opus-tier triage reviews for unreviewed
-`needs-maintainer-review` issues. Max 2 per cycle. Uses pre-fetched triage status.
-
-```bash
-source ~/.aidevops/agents/scripts/pulse-wrapper.sh
-AVAILABLE=$(dispatch_triage_reviews "$AVAILABLE")
-```
-
-Skip when: all slots occupied, issue created <5 min ago, or maintainer already commented.
-
-### 4.6. Scan status:needs-info issues for contributor replies
+### 4.5. Scan status:needs-info issues for contributor replies
 
 Transition replied issues to `needs-maintainer-review` so they re-enter the triage pipeline.
 No worker dispatch, no slots consumed.
@@ -118,7 +119,7 @@ source ~/.aidevops/agents/scripts/pulse-wrapper.sh
 relabel_needs_info_replies
 ```
 
-### 4.7. Dispatch FOSS contribution workers when idle capacity exists (t1702)
+### 4.6. Dispatch FOSS contribution workers when idle capacity exists (t1702)
 
 Lowest priority — only when all managed-repo work is dispatched and slots remain.
 
@@ -167,8 +168,8 @@ After the initial dispatch, enter a monitoring loop. Each cycle:
    ```
 
 4. **If slots are open**: check for mergeable PRs (free), dispatch workers for highest-priority
-   open issues, dispatch triage reviews (step 4.5), scan needs-info replies (step 4.6), dispatch
-   FOSS workers if idle (step 4.7). Use the same dedup guards and dispatch commands as the
+   open issues, dispatch triage reviews (step 3.5), scan needs-info replies (step 4.5), dispatch
+   FOSS workers if idle (step 4.6). Use the same dedup guards and dispatch commands as the
    initial dispatch. Re-fetch issue state with targeted `gh` calls only for repos where you
    need to dispatch.
 
@@ -208,14 +209,15 @@ your best call and move on — the next monitoring cycle is 60 seconds away.
 
 1. PRs with green CI → merge (free — no worker slot needed)
 2. PRs with failing CI or review feedback → fix (uses a slot, but closer to done)
-3. Issues labelled `priority:high` or `bug`
-4. Active mission features (keeps multi-day projects moving)
-5. Product repos over tooling — enforced by priority-class reservations
-6. Smaller/simpler tasks over large ones (faster throughput)
-7. `quality-debt` issues — use worktree dispatch (see below)
-8. `simplification-debt` issues (human-approved)
-9. Oldest issues
-10. FOSS contributions — only when all managed-repo work is dispatched
+3. Triage reviews for `needs-maintainer-review` issues → community responsiveness (step 3.5)
+4. Issues labelled `priority:high` or `bug`
+5. Active mission features (keeps multi-day projects moving)
+6. Product repos over tooling — enforced by priority-class reservations
+7. Smaller/simpler tasks over large ones (faster throughput)
+8. `quality-debt` issues — use worktree dispatch (see below)
+9. `simplification-debt` issues (human-approved)
+10. Oldest issues
+11. FOSS contributions — only when all managed-repo work is dispatched
 
 ## PRs — Merge, Fix, or Flag
 
@@ -261,8 +263,8 @@ When closing any issue, ALWAYS comment first explaining why and linking to the P
 - **Duplicate issues** → keep the one referenced by `ref:GH#` in TODO.md, close others.
 - **Too large** → `task-decompose-helper.sh classify`. If composite, decompose into subtask issues.
 - **`status:queued`/`status:in-progress`** → if updated within 3h, skip. If 3+ hours with no PR/worker, relabel `status:available`, unassign, comment recovery.
-- **`needs-maintainer-review`** → dispatch triage review worker (step 4.5), NOT implementation worker.
-- **`status:needs-info`** → check pre-fetched reply status (step 4.6).
+- **`needs-maintainer-review`** → dispatch triage review worker (step 3.5), NOT implementation worker.
+- **`status:needs-info`** → check pre-fetched reply status (step 4.5).
 - **`status:available` or no status** → dispatch implementation worker.
 
 ### Maintainer review gate (t1545)

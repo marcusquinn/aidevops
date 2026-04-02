@@ -1,25 +1,37 @@
 # Tunnel Gotchas
 
-## Security (check first)
+## Security (Critical)
 
-- Use remotely-managed tunnels for centralized control
-- Enable Access policies for sensitive services
-- Rotate tunnel credentials regularly
-- Verify TLS certs (`noTLSVerify: false` in prod)
-- Restrict `bastion` service type
-- Use environment variables for secrets, never hardcode
+- Use remotely-managed tunnels for centralized control.
+- Enable Cloudflare Access policies for sensitive services.
+- Rotate tunnel credentials regularly; use environment variables for secrets.
+- Verify TLS certs in production (`noTLSVerify: false`).
+- Restrict `bastion` service type usage.
 
-## Common Issues
+## Operations & Configuration
 
-**Error 1016 (Origin DNS Error)** -- tunnel not running or not connected:
+- **High Availability**: Run multiple replicas; place `cloudflared` close to origin.
+- **Performance**: Use HTTP/2 for gRPC (`http2Origin: true`); tune `keepAliveTimeout`.
+- **Validation**: Run `cloudflared tunnel ingress validate` (locally-managed only).
+- **Rules**: Test with `cloudflared tunnel ingress rule <URL>` (locally-managed only).
+- **Maintenance**: Keep `cloudflared` updated (1 year support); use `--no-autoupdate` in prod.
+- **Monitoring**: Set up disconnect alerts in dashboard.
+
+## Common Issues & Troubleshooting
+
+### Error 1016 (Origin DNS Error)
+
+Tunnel not running or connected.
 
 ```bash
-cloudflared tunnel info my-tunnel     # Check status
-ps aux | grep cloudflared             # Verify running
+cloudflared tunnel info <tunnel>     # Check status
+ps aux | grep cloudflared             # Verify process
 journalctl -u cloudflared -n 100      # Check logs
 ```
 
-**Certificate errors** -- self-signed certs rejected:
+### Certificate Errors
+
+Self-signed certs rejected by default.
 
 ```yaml
 originRequest:
@@ -27,7 +39,9 @@ originRequest:
   caPool: /path/to/ca.pem  # Custom CA
 ```
 
-**Connection timeouts** -- origin slow to respond:
+### Connection Timeouts
+
+Origin slow to respond.
 
 ```yaml
 originRequest:
@@ -36,41 +50,30 @@ originRequest:
   keepAliveTimeout: 120s
 ```
 
-**Tunnel not starting**:
+### Tunnel Not Starting
 
 ```bash
-cloudflared tunnel ingress validate  # Validate config
+cloudflared tunnel ingress validate  # Validate local config
 ls -la ~/.cloudflared/*.json         # Verify credentials
 cloudflared tunnel list              # Verify tunnel exists
 ```
 
-## Debug
+### Debugging
 
 ```bash
-cloudflared tunnel --loglevel debug run my-tunnel
+cloudflared tunnel --loglevel debug run <tunnel>
 cloudflared tunnel ingress rule https://app.example.com
 ```
 
-## Operations & Configuration
-
-- Run multiple replicas for HA; place `cloudflared` close to origin (same network)
-- Use HTTP/2 for gRPC (`http2Origin: true`); tune keepalive for long-lived connections
-- Monitor tunnel health in dashboard; set up disconnect alerts
-- Validate before deploying (`cloudflared tunnel ingress validate`)
-- Test rules (`cloudflared tunnel ingress rule <URL>`); document rule order (first match wins)
-- Version control config files; graceful shutdown for config updates
-- Keep `cloudflared` updated (1 year support); use `--no-autoupdate` in prod
-
 ## Limitations
 
-- **Free tier**: Unlimited tunnels and traffic
-- **Replicas**: Max 1000 per tunnel
-- **Connection duration**: No hard limit (hours to days)
-- **Long-lived connections**: Drop during replica updates (WebSocket, SSH, UDP)
+- **Free tier**: Unlimited tunnels and traffic.
+- **Replicas**: Max 1000 per tunnel.
+- **Persistence**: Long-lived connections (WebSocket, SSH, UDP) drop during replica updates.
 
 ## Migration
 
-**From Ngrok** (`ngrok http 8000`):
+### From Ngrok (`ngrok http 8000`)
 
 ```yaml
 ingress:
@@ -79,7 +82,7 @@ ingress:
   - service: http_status:404
 ```
 
-**From VPN** -- replace with private network routing:
+### From VPN (Private Network Routing)
 
 ```yaml
 warp-routing:
@@ -87,7 +90,7 @@ warp-routing:
 ```
 
 ```bash
-cloudflared tunnel route ip add 10.0.0.0/8 my-tunnel
+cloudflared tunnel route ip add 10.0.0.0/8 <tunnel>
 ```
 
 Users install WARP client instead of VPN.

@@ -4001,12 +4001,15 @@ _complexity_scan_extract_md_topic_label() {
 
 # Check if a file has already been simplified and is unchanged.
 # Arguments: $1 - repo_path, $2 - file_path (repo-relative), $3 - state_file path
-# Returns: 0 = already simplified (unchanged), 1 = not simplified or changed
-# Outputs to stdout: "unchanged" | "recheck" | "new"
+# Returns: 0 = already simplified (unchanged/converged), 1 = not simplified or changed
+# Outputs to stdout: "unchanged" | "converged" | "recheck" | "new"
+# "converged" means the file has been through SIMPLIFICATION_MAX_PASSES passes
+# and should not be re-flagged until it is genuinely modified by non-simplification work.
 _simplification_state_check() {
 	local repo_path="$1"
 	local file_path="$2"
 	local state_file="$3"
+	local max_passes="${SIMPLIFICATION_MAX_PASSES:-3}"
 
 	if [[ ! -f "$state_file" ]]; then
 		echo "new"
@@ -4035,11 +4038,24 @@ _simplification_state_check() {
 		return 0
 	fi
 
+	# Hash differs — check pass count before flagging for recheck (t1754).
+	# Files that have been through max_passes simplification rounds are
+	# considered converged. They won't be re-flagged until the hash is
+	# refreshed by _simplification_state_refresh (which resets passes to 0
+	# only when the file is genuinely modified by non-simplification work).
+	local passes
+	passes=$(jq -r --arg fp "$file_path" '.files[$fp].passes // 0' "$state_file" 2>/dev/null) || passes=0
+	if [[ "$passes" -ge "$max_passes" ]]; then
+		echo "converged"
+		return 0
+	fi
+
 	echo "recheck"
 	return 1
 }
 
 # Record a file as simplified in the state file.
+# Increments the pass counter each time a file is re-simplified (t1754).
 # Arguments: $1 - repo_path, $2 - file_path, $3 - state_file, $4 - pr_number
 _simplification_state_record() {
 	local repo_path="$1"
@@ -4060,15 +4076,84 @@ _simplification_state_record() {
 		printf '{"files":{}}\n' >"$state_file"
 	fi
 
-	# Update the entry using jq
+	# Read existing pass count and increment (t1754 — convergence tracking)
+	local prev_passes
+	prev_passes=$(jq -r --arg fp "$file_path" '.files[$fp].passes // 0' "$state_file" 2>/dev/null) || prev_passes=0
+	local new_passes=$((prev_passes + 1))
+
+	# Update the entry using jq — includes pass counter
 	local tmp_file
 	tmp_file=$(mktemp)
-	jq --arg fp "$file_path" --arg hash "$current_hash" --arg at "$now_iso" --argjson pr "$pr_number" \
-		'.files[$fp] = {"hash": $hash, "at": $at, "pr": $pr}' \
+	jq --arg fp "$file_path" --arg hash "$current_hash" --arg at "$now_iso" \
+		--argjson pr "$pr_number" --argjson passes "$new_passes" \
+		'.files[$fp] = {"hash": $hash, "at": $at, "pr": $pr, "passes": $passes}' \
 		"$state_file" >"$tmp_file" 2>/dev/null && mv "$tmp_file" "$state_file" || {
 		rm -f "$tmp_file"
 		return 1
 	}
+	return 0
+}
+
+# Refresh all hashes in the simplification state file against current main (t1754).
+# This replaces the fragile timeline-API-based backfill. For every file already
+# in state, recompute git hash-object. If the hash matches, do nothing. If it
+# differs, update the hash AND increment the pass counter (the file was changed
+# by a simplification PR that merged since the last scan).
+# Arguments: $1 - repo_path, $2 - state_file path
+# Returns: 0 on success. Outputs refreshed count to stdout.
+_simplification_state_refresh() {
+	local repo_path="$1"
+	local state_file="$2"
+	local refreshed=0
+
+	if [[ ! -f "$state_file" ]]; then
+		echo "0"
+		return 0
+	fi
+
+	local file_paths
+	file_paths=$(jq -r '.files | keys[]' "$state_file" 2>/dev/null) || file_paths=""
+	[[ -z "$file_paths" ]] && {
+		echo "0"
+		return 0
+	}
+
+	local tmp_state
+	tmp_state=$(mktemp)
+	cp "$state_file" "$tmp_state"
+
+	while IFS= read -r fp; do
+		[[ -z "$fp" ]] && continue
+		local full_path="${repo_path}/${fp}"
+		[[ ! -f "$full_path" ]] && continue
+
+		local current_hash stored_hash
+		current_hash=$(git -C "$repo_path" hash-object "$full_path" 2>/dev/null) || continue
+		stored_hash=$(jq -r --arg fp "$fp" '.files[$fp].hash // empty' "$tmp_state" 2>/dev/null) || stored_hash=""
+
+		# Also fix any non-SHA1 hashes (wrong algorithm, t1754)
+		local stored_len=${#stored_hash}
+		if [[ "$current_hash" != "$stored_hash" || "$stored_len" -ne 40 ]]; then
+			local now_iso prev_passes new_passes
+			now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+			prev_passes=$(jq -r --arg fp "$fp" '.files[$fp].passes // 0' "$tmp_state" 2>/dev/null) || prev_passes=0
+			new_passes=$((prev_passes + 1))
+			local inner_tmp
+			inner_tmp=$(mktemp)
+			jq --arg fp "$fp" --arg hash "$current_hash" --arg at "$now_iso" \
+				--argjson passes "$new_passes" \
+				'.files[$fp].hash = $hash | .files[$fp].at = $at | .files[$fp].passes = $passes' \
+				"$tmp_state" >"$inner_tmp" 2>/dev/null && mv "$inner_tmp" "$tmp_state" || rm -f "$inner_tmp"
+			refreshed=$((refreshed + 1))
+		fi
+	done <<<"$file_paths"
+
+	if [[ "$refreshed" -gt 0 ]]; then
+		mv "$tmp_state" "$state_file"
+	else
+		rm -f "$tmp_state"
+	fi
+	echo "$refreshed"
 	return 0
 }
 
@@ -4367,6 +4452,11 @@ _complexity_scan_process_single_md_file() {
 		file_status=$(_simplification_state_check "$aidevops_path" "$file_path" "$state_file")
 		if [[ "$file_status" == "unchanged" ]]; then
 			echo "[pulse-wrapper] Complexity scan (.md): skipping ${file_path} — already simplified (hash unchanged)" >>"$LOGFILE"
+			echo "skipped"
+			return 0
+		fi
+		if [[ "$file_status" == "converged" ]]; then
+			echo "[pulse-wrapper] Complexity scan (.md): skipping ${file_path} — converged after ${SIMPLIFICATION_MAX_PASSES:-3} passes (t1754)" >>"$LOGFILE"
 			echo "skipped"
 			return 0
 		fi
@@ -4761,12 +4851,12 @@ run_weekly_complexity_scan() {
 	gh label create "recheck-simplicity" --repo "$aidevops_slug" --color "D4C5F9" \
 		--description "File changed since last simplification and needs recheck" --force 2>/dev/null || true
 
-	# Phase 1: Backfill simplification state from recently-closed issues.
-	# Finds simplification-debt issues closed in the last 7 days that have a
-	# linked merged PR, extracts the changed files, and records their current
-	# git blob hashes in the state file before running new scans. This catches
-	# simplifications done by workers without requiring them to update the state
-	# file explicitly and prevents stale follow-up issues in the same pulse run.
+	# Phase 1: Refresh simplification state hashes against current main (t1754).
+	# Replaces the previous timeline-API-based backfill which was fragile and
+	# frequently missed state updates, causing infinite recheck loops.
+	# Now simply recomputes git hash-object for every file in state and updates
+	# any that differ. This catches all modifications (simplification PRs,
+	# feature work, refactors) without depending on GitHub API link resolution.
 	local state_file="${aidevops_path}/.agents/configs/simplification-state.json"
 	local state_updated=false
 
@@ -4777,42 +4867,13 @@ run_weekly_complexity_scan() {
 		echo "[pulse-wrapper] simplification-state: pruned $pruned_count stale entries (files no longer exist)" >>"$LOGFILE"
 		state_updated=true
 	fi
-	local closed_issues
-	closed_issues=$(gh issue list --repo "$aidevops_slug" \
-		--label "simplification-debt" --state closed \
-		--limit 50 --json number,title,closedAt \
-		--jq '[.[] | select(.closedAt > (now - 604800 | strftime("%Y-%m-%dT%H:%M:%SZ")))] | .[].number' 2>/dev/null) || closed_issues=""
 
-	if [[ -n "$closed_issues" ]]; then
-		while IFS= read -r issue_num; do
-			[[ -z "$issue_num" ]] && continue
-			# Find linked merged PR
-			local pr_num
-			pr_num=$(gh api "repos/${aidevops_slug}/issues/${issue_num}/timeline" \
-				--jq '[.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null and .source.issue.pull_request.merged_at != null)] | .[0].source.issue.number // empty' 2>/dev/null) || pr_num=""
-			[[ -z "$pr_num" ]] && continue
-
-			# Get changed files from the PR
-			local changed_files
-			changed_files=$(gh pr view "$pr_num" --repo "$aidevops_slug" --json files --jq '.files[].path' 2>/dev/null) || changed_files=""
-			[[ -z "$changed_files" ]] && continue
-
-			# Record each changed file that still exists
-			while IFS= read -r changed_file; do
-				[[ -z "$changed_file" ]] && continue
-				# Only record files that match the simplification target patterns
-				case "$changed_file" in
-				*.md | *.sh) ;;
-				*) continue ;;
-				esac
-				# Check if already in state with current hash
-				local check_result
-				check_result=$(_simplification_state_check "$aidevops_path" "$changed_file" "$state_file")
-				if [[ "$check_result" != "unchanged" ]]; then
-					_simplification_state_record "$aidevops_path" "$changed_file" "$state_file" "$pr_num" && state_updated=true
-				fi
-			done <<<"$changed_files"
-		done <<<"$closed_issues"
+	# Refresh all hashes — O(n) git hash-object calls, no API requests (t1754)
+	local refreshed_count
+	refreshed_count=$(_simplification_state_refresh "$aidevops_path" "$state_file")
+	if [[ "$refreshed_count" -gt 0 ]]; then
+		echo "[pulse-wrapper] simplification-state: refreshed $refreshed_count hashes (files changed since last scan)" >>"$LOGFILE"
+		state_updated=true
 	fi
 
 	# Push state file if updated (planning data — direct to main)
@@ -6445,6 +6506,17 @@ dispatch_deterministic_fill_floor() {
 
 	echo "[pulse-wrapper] Deterministic fill floor: available=${available_slots}, runnable=${runnable_count}, queued_without_worker=${queued_without_worker}, candidates=${candidate_count}" >>"$LOGFILE"
 
+	# Triage reviews first — community responsiveness before implementation backlog.
+	# dispatch_triage_reviews returns the remaining available count via stdout.
+	local triage_remaining
+	triage_remaining=$(dispatch_triage_reviews "$available_slots" 2>>"$LOGFILE") || triage_remaining="$available_slots"
+	[[ "$triage_remaining" =~ ^[0-9]+$ ]] || triage_remaining="$available_slots"
+	local triage_dispatched=$((available_slots - triage_remaining))
+	if [[ "$triage_dispatched" -gt 0 ]]; then
+		echo "[pulse-wrapper] Deterministic fill floor: dispatched ${triage_dispatched} triage review(s), ${triage_remaining} slots remaining for implementation" >>"$LOGFILE"
+	fi
+	available_slots="$triage_remaining"
+
 	local dispatched_count=0
 	while IFS= read -r candidate_json; do
 		[[ -n "$candidate_json" ]] || continue
@@ -6491,8 +6563,9 @@ dispatch_deterministic_fill_floor() {
 		dispatched_count=$((dispatched_count + 1))
 	done < <(printf '%s' "$candidates_json" | jq -c '.[]' 2>/dev/null)
 
-	echo "[pulse-wrapper] Deterministic fill floor complete: dispatched=${dispatched_count}, target_available=${available_slots}" >>"$LOGFILE"
-	echo "$dispatched_count"
+	local total_dispatched=$((dispatched_count + triage_dispatched))
+	echo "[pulse-wrapper] Deterministic fill floor complete: dispatched=${total_dispatched} (${triage_dispatched} triage + ${dispatched_count} implementation), target_available=${available_slots}" >>"$LOGFILE"
+	echo "$total_dispatched"
 	return 0
 }
 

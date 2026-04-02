@@ -88,30 +88,16 @@ cp configs/code-audit-config.json.txt configs/code-audit-config.json
 
 ## CI/CD Integration
 
-```yaml
-name: Code Quality Audit
-on: [push, pull_request]
+Add to a GitHub Actions workflow step:
 
-jobs:
-  audit:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - name: Run Code Audit
-        run: |
-          ./.agents/scripts/code-audit-helper.sh audit ${{ github.repository }}
-          ./.agents/scripts/code-audit-helper.sh report ${{ github.repository }} audit-report.json
-      - name: Upload Report
-        uses: actions/upload-artifact@v3
-        with:
-          name: audit-report
-          path: audit-report.json
+```yaml
+run: |
+  ./.agents/scripts/code-audit-helper.sh audit ${{ github.repository }}
+  ./.agents/scripts/code-audit-helper.sh report ${{ github.repository }} audit-report.json
 ```
+
+Upload `audit-report.json` as an artifact via `actions/upload-artifact@v4`.
 
 ## Security
 
-- **Token management**: Store via `aidevops secret set NAME` (gopass) or `credentials.sh` (600 perms)
-- **Scope limitation**: Use tokens with minimal required permissions
-- **Regular rotation**: Rotate API tokens regularly
-- **Dependency scanning**: Monitor dependencies for security issues
-- **Secret detection**: Scan for accidentally committed secrets
+Store API tokens via `aidevops secret set NAME` (gopass) or `~/.config/aidevops/credentials.sh` (600 perms — never store tokens elsewhere). Use minimal-scope tokens. See `prompts/build.txt` for full secret-handling rules.
