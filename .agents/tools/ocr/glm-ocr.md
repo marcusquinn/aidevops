@@ -29,14 +29,9 @@ tools:
 ## Usage
 
 ```bash
-# Single image
 ollama run glm-ocr "Extract all text from this image" --images /path/to/document.png
-
-# Base64 (for scripts)
-base64 -i document.png | ollama run glm-ocr "Extract all text" --images -
+base64 -i document.png | ollama run glm-ocr "Extract all text" --images -  # scripts
 ```
-
-### Common Prompts
 
 | Task | Prompt |
 |------|--------|
@@ -49,33 +44,31 @@ base64 -i document.png | ollama run glm-ocr "Extract all text" --images -
 ## Workflow Patterns
 
 ```bash
-# Screenshot OCR (macOS)
+# Screenshot (macOS)
 screencapture -i /tmp/capture.png && ollama run glm-ocr "Extract all text" --images /tmp/capture.png
 
-# Batch processing
+# Batch
 for img in ~/Documents/scans/*.png; do
   echo "=== $img ===" && ollama run glm-ocr "Extract all text" --images "$img"
 done > extracted_text.txt
 
-# PDF to text (requires ImageMagick)
+# PDF (requires ImageMagick)
 convert -density 300 document.pdf -quality 90 /tmp/page-%03d.png
 for page in /tmp/page-*.png; do ollama run glm-ocr "Extract all text" --images "$page"; done
 
-# With Peekaboo (screen/window capture)
+# Peekaboo integration
 peekaboo image --mode screen --analyze "What text is visible?" --model ollama/glm-ocr
 peekaboo image --mode window --app "Preview" --analyze "Extract document text" --model ollama/glm-ocr
 ```
 
 ## Model Comparison
 
-| Model | Best For | Size | Local | Notes |
-|-------|----------|------|-------|-------|
-| **glm-ocr** | Document OCR, forms, tables | ~2GB | Yes | Purpose-built; complex layouts, multi-column. No JSON output. |
-| llava | General vision, scene understanding | ~4GB | Yes | Better at general image understanding |
-| GPT-4o | Complex reasoning + vision | Cloud | No | Higher accuracy, structured output |
-| Claude 4 | Nuanced text understanding | Cloud | No | Best for reasoning about content |
-
-**Limitations**: Weak at general image understanding; struggles with very low quality images; no structured JSON output (use Unstract for that).
+| Model | Best For | Size | Notes |
+|-------|----------|------|-------|
+| **glm-ocr** | Document OCR, forms, tables | ~2GB local | Purpose-built; complex layouts, multi-column. No JSON output. Weak on low-quality images. |
+| llava | General vision, scene understanding | ~4GB local | Better at general image understanding |
+| GPT-4o | Complex reasoning + vision | Cloud | Higher accuracy, structured output |
+| Claude 4 | Nuanced text understanding | Cloud | Best for reasoning about content |
 
 ## Troubleshooting
 
