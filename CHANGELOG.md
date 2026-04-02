@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.636] - 2026-04-02
+
+### Fixed
+
+- Fix broken chapter links in production-video.md index — corrected 9 paths from video/NN-*.md to production-video-NN-*.md (#15684)
+
+## [3.5.635] - 2026-04-02
+
+### Changed
+
+- Tightened changelog.md agent doc (66→59 lines) — compressed prose, merged redundant sections, zero content loss (#15672)
+
 ## [3.5.596] - 2026-04-02
 
 ### Changed
