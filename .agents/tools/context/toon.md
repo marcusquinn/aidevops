@@ -24,59 +24,35 @@ tools:
 - **Format**: `users[2]{id,name,role}:` followed by `1,Alice,admin` rows
 - **Delimiters**: comma (default), tab (`\t`), pipe (`|`)
 - **Best for**: Tabular data (60%+ savings), config data, API responses
-- **Config**: `configs/toon-config.json`
+- **Config**: `configs/toon-config.json` (copy from `configs/toon-config.json.txt`); key options: `default_delimiter`, `key_folding`, `batch_processing`, `ai_prompts`
 - **Resources**: https://toonformat.dev, https://github.com/toon-format/toon
 
 <!-- AI-CONTEXT-END -->
 
 ## Format Examples
 
-### Simple Object
-
 ```toon
+# Simple object
 id: 1
 name: Alice
 active: true
-```
 
-### Tabular Data (most efficient)
-
-```toon
+# Tabular (most efficient)
 users[2]{id,name,role}:
   1,Alice,admin
   2,Bob,user
 ```
 
-### Nested Structures
-
-```toon
-project:
-  name: AI DevOps
-  metrics[2]{date,users}:
-    2025-01-01,100
-    2025-01-02,150
-```
-
 ## Helper Script Commands
 
 ```bash
-# File conversion
 toon-helper.sh encode input.json output.toon
 toon-helper.sh encode input.json output.toon '\t' true   # tab delimiter
 toon-helper.sh decode input.toon output.json false        # lenient validation
-
-# Batch processing
 toon-helper.sh batch ./json-files ./toon-files json-to-toon
-toon-helper.sh batch ./toon-files ./json-files toon-to-json '\t'
-
-# Stream processing
 cat data.json | toon-helper.sh stdin-encode
-cat data.toon | toon-helper.sh stdin-decode
-
-# Validation and comparison
 toon-helper.sh validate data.toon
 toon-helper.sh compare large-dataset.json
-toon-helper.sh info
 ```
 
 ## Token Efficiency
@@ -110,14 +86,6 @@ Data is in TOON format (2-space indent, arrays show length and fields):
 - Show expected header format: `users[N]{id,name,role}:`
 - Rules: 2-space indent, no trailing spaces, `[N]` matches row count
 - Request code block output only
-
-## Configuration
-
-```bash
-cp configs/toon-config.json.txt configs/toon-config.json
-```
-
-Key options: `default_delimiter` (`,`/`\t`/`|`), `key_folding` (path compression), `batch_processing` (concurrency), `ai_prompts` (LLM optimisation).
 
 ## Best Practices
 
