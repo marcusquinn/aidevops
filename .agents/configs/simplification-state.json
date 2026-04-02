@@ -4469,5 +4469,10 @@
     "issue": "GH#15700",
     "note": "Reference corpus split into 7 chapter files (01-overview.md through 07-versioning.md). Index is 15 lines; chapters total 87 lines.",
     "status": "done"
+  },
+  ".agents/services/hosting/cloudflare-platform-skill/zaraz.md": {
+    "hash": "abcd8c44ae2709e94448fc7186503c5e84adbf4b249090c3144acc78e73482f4",
+    "status": "simplified",
+    "issue": "GH#15033"
   }
 }
