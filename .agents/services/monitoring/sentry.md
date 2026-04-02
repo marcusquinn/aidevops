@@ -59,16 +59,6 @@ chmod 600 ~/.config/aidevops/credentials.sh
 }
 ```
 
-Or update it programmatically:
-
-```bash
-source ~/.config/aidevops/credentials.sh
-tmp_json="$(mktemp)"
-jq --arg token "$SENTRY_YOURNAME" \
-  '.mcpServers.sentry = {"command": "npx", "args": ["@sentry/mcp-server@latest", "--access-token", $token], "enabled": true}' \
-   ~/.config/opencode/opencode.json > "$tmp_json" && mv "$tmp_json" ~/.config/opencode/opencode.json
-```
-
 5. Test the token:
 
 ```bash
