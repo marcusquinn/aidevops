@@ -1492,8 +1492,8 @@
       "pr": 12145
     },
     ".agents/scripts/pulse-wrapper.sh": {
-      "hash": "2b493075cf9a13cfd27deb2f2c91c6e300b9be67",
-      "at": "2026-04-01T23:23:58Z",
+      "hash": "6b9d13e50feab054ca390c1615647e4c52698e29",
+      "at": "2026-04-02T01:57:17Z",
       "pr": 15086
     },
     ".agents/tools/browser/stagehand-python.md": {
@@ -3277,8 +3277,8 @@
       "pr": 15149
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "hash": "b275a61c57927dfe2366d4f9c67881947debf25b",
-      "at": "2026-04-01T20:59:22Z",
+      "hash": "9def7343d95a3f656371aa9bc7eeac2c829a3215",
+      "at": "2026-04-02T01:57:17Z",
       "pr": 15086
     },
     ".agents/tools/programming/modern-javascript-skill.md": {
