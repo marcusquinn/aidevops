@@ -10,8 +10,6 @@ tools:
   grep: true
 ---
 
-# Bing Webmaster Tools Integration
-
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
