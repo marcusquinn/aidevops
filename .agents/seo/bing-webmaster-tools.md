@@ -29,7 +29,7 @@ tools:
 
 ## API Operations
 
-Base: `BASE="https://ssl.bing.com/webmaster/api.svc/json"`
+Set once per session: `BASE="https://ssl.bing.com/webmaster/api.svc/json"`
 
 ### Submit URL
 
@@ -89,8 +89,8 @@ curl -s -G "$BASE/GetFeedStats" \
 | HTTP 500 | Transient — retry |
 | Quota exceeded | 10,000 URLs/day/site limit |
 
-<!-- AI-CONTEXT-END -->
-
 ## Integration with SEO Audit
 
 Used by `seo-audit-skill` for cross-engine verification: check GSC index status, check Bing index status, compare for engine-specific issues.
+
+<!-- AI-CONTEXT-END -->
