@@ -42,9 +42,9 @@ All tests use `https://the-internet.herokuapp.com`. Run each test 3 times per to
 |------|-------|-------|-------|
 | Playwright | Full | `mkdir -p ~/.aidevops/playwright-bench && cd ~/.aidevops/playwright-bench && npm init -y && npm i playwright` | |
 | dev-browser | Full | `dev-browser-helper.sh setup` | Server must be running (`dev-browser-helper.sh start-headless`) |
-| agent-browser | Full | `agent-browser-helper.sh setup` | First run slower (daemon startup) |
+| agent-browser | Full | `agent-browser-helper.sh setup` | First run slower (daemon startup) — discard or note separately |
 | Crawl4AI | Navigate + extract only | `python3 -m venv ~/.aidevops/crawl4ai-venv && source ~/.aidevops/crawl4ai-venv/bin/activate && pip install crawl4ai` | No form fill or multi-step |
-| Stagehand | Full (AI-dependent latency) | `mkdir -p ~/.aidevops/stagehand-bench && cd ~/.aidevops/stagehand-bench && npm init -y && npm i @browserbasehq/stagehand` | Needs `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` |
+| Stagehand | Full (AI-dependent latency) | `mkdir -p ~/.aidevops/stagehand-bench && cd ~/.aidevops/stagehand-bench && npm init -y && npm i @browserbasehq/stagehand` | Needs `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`; note model used |
 | Playwriter | Full | `npm i -g playwriter` | Requires manual extension activation (localhost:19988) — may skip in automated runs |
 
 ## Running Benchmarks
@@ -60,27 +60,19 @@ source ~/.aidevops/crawl4ai-venv/bin/activate && python bench-crawl4ai.py | tee 
 OPENAI_API_KEY=... node bench-stagehand.mjs | tee results-stagehand.json
 ```
 
-## Interpreting Results
-
-- **Cold start**: First agent-browser run slower (daemon startup) — discard or note separately
-- **Network variance**: ~0.2-0.5s — use median of 3
-- **Stagehand**: Latency depends on LLM provider response time — note model used
-- **Playwriter**: Requires manual extension activation — may skip in automated runs
+Network variance ~0.2-0.5s — use median of 3 runs.
 
 ## Updating Documentation
 
 After benchmarks, update the Performance Benchmarks table in `browser-automation.md`:
 
-1. Median of 3 runs per test
-2. Bold fastest time per row
-3. Update "Key insight" section if relative performance changed
-4. Note date and environment (`date`, `uname -a`, `node --version`, `python3 --version`)
+1. Median of 3 runs per test; bold fastest time per row
+2. Update "Key insight" section if relative performance changed
+3. Note date and environment (`date`, `uname -a`, `node --version`, `python3 --version`)
 
 ## Adding New Tools
 
 1. Add benchmark script per patterns in `browser-benchmark-scripts.md`
-2. Add tool to the Tool Coverage table above
-3. Run full suite including new tool
-4. Update `browser-automation.md` tables (Performance, Feature Matrix, Parallel, Extensions)
-5. Update this file's test matrix
-6. Test parallel capabilities, extension support, visual verification
+2. Add tool to Tool Coverage table; run full suite
+3. Update `browser-automation.md` tables (Performance, Feature Matrix, Parallel, Extensions)
+4. Update Test Matrix above; test parallel capabilities, extension support, visual verification
