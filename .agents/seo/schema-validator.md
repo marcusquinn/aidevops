@@ -45,22 +45,6 @@ schema-validator-helper.sh help
 
 <!-- AI-CONTEXT-END -->
 
-## Features
-
-- **Multi-format extraction**: Parses JSON-LD, Microdata, and RDFa from HTML pages
-- **Schema.org compliance**: Validates against the latest Schema.org vocabulary (auto-fetched, cached 24h)
-- **Google Rich Results**: Checks for compliance with Google's structured data requirements
-- **URL and file support**: Validates live URLs or local HTML/JSON files
-- **Detailed reporting**: JSON output with error severity, location, and description
-
-## Validation Workflow
-
-1. **Input**: URL, local HTML file, or raw JSON-LD file
-2. **Extract**: Parse structured data from HTML using `@marbec/web-auto-extractor`
-3. **Fetch schema**: Download/cache latest Schema.org definition
-4. **Validate**: Run `@adobe/structured-data-validator` against extracted data
-5. **Report**: Output validation results as JSON (errors, warnings, info)
-
 ## Common Schema Types
 
 | Type | Use Case |
@@ -74,15 +58,11 @@ schema-validator-helper.sh help
 | `BreadcrumbList` | Navigation breadcrumbs |
 | `WebSite` | Sitelinks search box |
 
-## Integration with SEO Audit
+## SEO Audit Integration
 
-This subagent is referenced by the SEO audit workflow (`seo-audit-skill.md`) under "Tools Referenced > Free Tools > Schema Validator". Use it during the **Technical SEO Audit** phase to validate structured data implementation.
+Use during the **Technical SEO Audit** phase (`seo-audit-skill.md` → "Tools Referenced > Free Tools > Schema Validator").
 
-**Complementary tools**:
-
-- `seo/schema-markup.md` - Schema.org implementation templates (t092)
-- `seo/seo-audit-skill.md` - Full SEO audit framework
-- Google Rich Results Test - Online validation (t084)
+**Complementary tools**: `seo/schema-markup.md` (templates, t092) · `seo/seo-audit-skill.md` (full audit) · Google Rich Results Test (t084)
 
 ## Troubleshooting
 
