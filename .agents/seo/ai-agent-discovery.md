@@ -15,13 +15,7 @@ tools:
 
 # AI Agent Discovery
 
-Evaluate machine discoverability, not only human UX, using multi-turn exploration scenarios.
-
-## Quick Reference
-
-- Purpose: verify that autonomous agents can find, interpret, and trust key business information
-- Inputs: target tasks/questions, indexed pages, navigation structure
-- Outputs: discoverability report, gap classification, remediation backlog
+Verify that autonomous agents can find, interpret, and trust key business information using multi-turn exploration scenarios. Outputs: discoverability report, gap classification, remediation backlog.
 
 ## Workflow
 
