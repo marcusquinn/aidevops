@@ -4,7 +4,7 @@ Globally-unique compute + storage: single-threaded, strongly-consistent, co-loca
 
 ## When to Use DOs
 
-Use for **stateful coordination** — serialized access to shared state:
+Stateful coordination — serialized access to shared state:
 - **Coordination**: Shared state across clients (chat rooms, multiplayer games)
 - **Strong consistency**: Serialized operations (booking systems, inventory)
 - **Per-entity storage**: Isolated database per user/tenant/resource (multi-tenant SaaS)
@@ -29,7 +29,7 @@ Use for **stateful coordination** — serialized access to shared state:
 
 Model each DO around the **atom of coordination** — the unit needing serialized access (user, room, document, session).
 
-| Characteristic | Feels Right | Question It | Reconsider |
+| Metric | Feels Right | Question It | Reconsider |
 |----------------|-------------|-------------|------------|
 | Requests/sec (sustained) | < 100 | 100-500 | > 500 |
 | Storage keys | < 100 | 100-1000 | > 1000 |
@@ -46,7 +46,7 @@ Model each DO around the **atom of coordination** — the unit needing serialize
 
 **ID generation**: `idFromName()` deterministic/named; `newUniqueId()` random/sharding; `idFromString()` derive from existing; jurisdiction option for data locality.
 
-**Storage**: SQLite (recommended, 10GB/DO, transactions); Synchronous KV API (simple key-value on SQLite); Asynchronous KV API (legacy/advanced).
+**Storage**: SQLite (default, 10GB/DO, transactions); Synchronous KV API (simple key-value on SQLite); Asynchronous KV API (legacy/advanced).
 
 **Special features**: Alarms (per-DO scheduled execution); WebSocket Hibernation (zero-cost idle); Point-in-Time Recovery (30-day window).
 
@@ -87,16 +87,13 @@ npx wrangler deploy           # Deploy + auto-apply migrations
 
 ## Resources
 
-**Docs**: https://developers.cloudflare.com/durable-objects/  
-**API Reference**: https://developers.cloudflare.com/durable-objects/api/  
-**Examples**: https://developers.cloudflare.com/durable-objects/examples/
-
-## In This Reference
-
-- [Patterns](./durable-objects-patterns.md) - Rate limiting, locks, real-time collab, sessions
-- [Gotchas](./durable-objects-gotchas.md) - Limits, common issues, troubleshooting
+- [Docs](https://developers.cloudflare.com/durable-objects/)
+- [API Reference](https://developers.cloudflare.com/durable-objects/api/)
+- [Examples](https://developers.cloudflare.com/durable-objects/examples/)
 
 ## See Also
 
-- [Workers](./workers.md) - Core Workers runtime
-- [DO Storage](./do-storage.md) - Deep dive on storage APIs
+- [Patterns](./durable-objects-patterns.md) — Rate limiting, locks, real-time collab, sessions
+- [Gotchas](./durable-objects-gotchas.md) — Limits, common issues, troubleshooting
+- [Workers](./workers.md) — Core Workers runtime
+- [DO Storage](./do-storage.md) — Deep dive on storage APIs
