@@ -1,7 +1,5 @@
 # Subject Line Quick Reference
 
-Source: split from `direct-response-copy-templates-email-sequences.md`.
-
 | Category | Templates |
 |----------|-----------|
 | **Value** | `[Number] [things] to [result] this week` · `The [adj] way to [outcome]` · `How I [result] (finally)` |

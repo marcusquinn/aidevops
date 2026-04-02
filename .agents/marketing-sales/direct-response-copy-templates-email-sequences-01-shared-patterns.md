@@ -2,8 +2,6 @@
 
 Reusable defaults and snippets referenced across the email sequence templates.
 
-Source: split from `direct-response-copy-templates-email-sequences.md` to keep the index slim without dropping any template content.
-
 ## Shared Conventions
 
 **Defaults** (don't repeat per email):

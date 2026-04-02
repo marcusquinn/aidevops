@@ -15,22 +15,7 @@ Copy-paste templates for common sequences. Strategy/planning: [Email Sequences F
 
 ## How to Use
 
-1. Pick the sequence that matches the funnel stage.
-2. Reuse the shared patterns instead of rewriting them per email.
-3. Replace every bracketed placeholder with product-, audience-, and offer-specific detail.
-4. Adjust timing, CTA strength, and urgency to fit the campaign.
-
-This file is now the index for the email-sequence reference set. The chapter files retain the original template content.
-
-## Selection Guide
-
-- **Welcome**: New lead, subscriber, or download opt-in.
-- **Cart abandonment**: Checkout started but not completed.
-- **SaaS trial**: Product activation and upgrade conversion.
-- **Launch**: Timed launch, bonus window, or price-rise campaign.
-
-## Preservation Notes
-
-- All original templates now live in the chapter files above.
-- Shared defaults and reusable patterns moved to the shared-patterns chapter.
-- Subject line formulas moved to the subject-lines chapter.
+1. **Select sequence** matching the funnel stage.
+2. **Reuse patterns** from [Shared Patterns](direct-response-copy-templates-email-sequences-01-shared-patterns.md).
+3. **Customize** all bracketed placeholders with product/audience details.
+4. **Adjust** timing and CTA strength for the specific campaign.

@@ -1,7 +1,5 @@
 # Launch Sequence (7 Emails)
 
-Source: split from `direct-response-copy-templates-email-sequences.md`.
-
 ## E1 — Teaser (Day -3)
 
 **Subject:** `Something new is coming...`

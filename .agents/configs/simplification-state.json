@@ -447,9 +447,39 @@
       "pr": 11590
     },
     ".agents/marketing-sales/direct-response-copy-templates-email-sequences.md": {
-      "hash": "5af4b4e800d180cb185bfa6d14ee93f2fc2661e9",
-      "at": "2026-03-28T13:37:24Z",
-      "pr": 11886
+      "hash": "b8583de58a62ecbaa78945857ece8c1a839e113a",
+      "at": "2026-04-02T12:00:00Z",
+      "pr": 15046
+    },
+    ".agents/marketing-sales/direct-response-copy-templates-email-sequences-01-shared-patterns.md": {
+      "hash": "778bb2596f4b6132271132a551456786eacd363f",
+      "at": "2026-04-02T12:00:00Z",
+      "pr": 15046
+    },
+    ".agents/marketing-sales/direct-response-copy-templates-email-sequences-02-welcome.md": {
+      "hash": "2ba03ea97152c5008676168ed6738612b4e06d13",
+      "at": "2026-04-02T12:00:00Z",
+      "pr": 15046
+    },
+    ".agents/marketing-sales/direct-response-copy-templates-email-sequences-03-cart-abandonment.md": {
+      "hash": "0870d62a357aa39b2fe3c27f7f015a311632b392",
+      "at": "2026-04-02T12:00:00Z",
+      "pr": 15046
+    },
+    ".agents/marketing-sales/direct-response-copy-templates-email-sequences-04-saas-trial.md": {
+      "hash": "3ef0903a0a078642916595766be93ecf24dd40b1",
+      "at": "2026-04-02T12:00:00Z",
+      "pr": 15046
+    },
+    ".agents/marketing-sales/direct-response-copy-templates-email-sequences-05-launch.md": {
+      "hash": "6c6fa923a9613c26ce2cba7fee7400506a878093",
+      "at": "2026-04-02T12:00:00Z",
+      "pr": 15046
+    },
+    ".agents/marketing-sales/direct-response-copy-templates-email-sequences-06-subject-lines.md": {
+      "hash": "887e0cc6c8f5689ae1d4a3b571db2d73e8e84420",
+      "at": "2026-04-02T12:00:00Z",
+      "pr": 15046
     },
     ".agents/marketing-sales/direct-response-copy-templates-readme.md": {
       "hash": "2717d1e9cb1edfd85d932502b6de7c4765c8a7ec",

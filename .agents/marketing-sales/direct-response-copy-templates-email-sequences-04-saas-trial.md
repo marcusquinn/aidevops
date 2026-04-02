@@ -1,7 +1,5 @@
 # SaaS Trial (7 Emails)
 
-Source: split from `direct-response-copy-templates-email-sequences.md`.
-
 ## E1 — Welcome + Quick Start (Day 0)
 
 **Subject:** `Welcome to [Product]! Here's how to start`

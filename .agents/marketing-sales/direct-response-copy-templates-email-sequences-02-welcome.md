@@ -1,7 +1,5 @@
 # Welcome Sequence (5 Emails)
 
-Source: split from `direct-response-copy-templates-email-sequences.md`.
-
 ## E1 — Welcome + Delivery (Day 0)
 
 **Subject:** `Welcome to [Brand] + Your [Resource] Is Here`

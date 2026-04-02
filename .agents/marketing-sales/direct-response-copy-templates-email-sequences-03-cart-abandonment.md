@@ -1,7 +1,5 @@
 # Cart Abandonment (3 Emails)
 
-Source: split from `direct-response-copy-templates-email-sequences.md`.
-
 ## E1 — Reminder (1h)
 
 **Subject:** `Did something go wrong?`
