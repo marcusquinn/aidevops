@@ -22,10 +22,13 @@ tools:
 - **Config**: `~/.config/aidevops/email-inbound-commands.conf`
 - **Dedup state**: `~/.aidevops/.agent-workspace/email-inbound-commands/processed-message-ids.txt`
 - **Reply path**: `email-compose-helper.sh` if present, otherwise `apple-mail-helper.sh send`
+- **Platform**: Apple Mail integration (macOS only)
+- **Task requests**: parse inbound email, create task with `claim-task-id.sh`, reply with task ID
+- **Question requests**: return bounded, deterministic status/help responses
 
 <!-- AI-CONTEXT-END -->
 
-Security-first interface: sender allowlist, prompt-injection scanning, executable attachment blocking, and audit logging.
+Security-first: sender allowlist, prompt-injection scanning, executable attachment blocking, audit logging.
 
 ## Security Gates
 
@@ -52,29 +55,11 @@ Permissions: `admin` (full privileged sender), `operator` (operational requests)
 ## Commands
 
 ```bash
-# Poll and process newest messages
 scripts/email-inbound-command-helper.sh poll --mailbox INBOX --limit 10
-
-# Poll a mailbox in a specific account
 scripts/email-inbound-command-helper.sh poll --mailbox INBOX --account "Work" --limit 20
-
-# Dry run (no task creation, no send)
 scripts/email-inbound-command-helper.sh poll --mailbox INBOX --limit 5 --dry-run
-
-# Check sender allowlist status
 scripts/email-inbound-command-helper.sh sender-check user@example.com
 ```
-
-## Request Handling
-
-- **Task requests**: parse inbound email content, create tasks with `claim-task-id.sh`, and reply with the task ID.
-- **Question requests**: return bounded, deterministic status/help responses for lightweight operational query and acknowledgement flows.
-
-## Operational Notes
-
-- Polling uses Apple Mail integration on macOS.
-- Dedup: processed message IDs tracked in `~/.aidevops/.agent-workspace/email-inbound-commands/processed-message-ids.txt`.
-- Replies: `email-compose-helper.sh` preferred; fallback `apple-mail-helper.sh send`.
 
 ## Troubleshooting
 
