@@ -743,7 +743,7 @@
       "hash": "347272e46c7d04f05dd13a4683cf44bef0dd3da7",
       "issue": "GH#14286",
       "passes": 2,
-      "note": "Reference corpus chapter tightened: 92 → 90 lines. Removed decorative closing sentence with no information value. Zero content loss."
+      "note": "Reference corpus chapter tightened: 92 \u2192 90 lines. Removed decorative closing sentence with no information value. Zero content loss."
     },
     ".agents/marketing-sales/cro-chapter-20.md": {
       "at": "2026-03-29T16:34:29Z",
@@ -4690,5 +4690,12 @@
       "pr": 15665,
       "passes": 1
     }
+  },
+  ".agents/tools/ai-assistants/models-sonnet.md": {
+    "hash": "0c05100e46a64137b6b5ac05c49b6460b8393e773942fdeffd4b10ebfca75af9",
+    "simplified": true,
+    "issue": "GH#15027",
+    "lines_before": 54,
+    "lines_after": 56
   }
 }

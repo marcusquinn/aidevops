@@ -22,22 +22,25 @@ tools:
 
 # Sonnet Tier Model (Default)
 
-Default tier for most development work: balanced capability, cost, and speed for implementation-heavy tasks.
+Default tier for most development work: balanced capability, cost, and speed.
 
 ## Use For
 
-- Writing and modifying code
-- Debugging, implementation reasoning, and code review
-- Test writing and execution
+- Code writing, debugging, review, and test authoring
 - Documentation derived from code
 - Interactive development tasks
 
 ## Routing Rules
 
-- Use sonnet unless the task clearly needs less, more, or much larger context.
-- Route simple classification and formatting to haiku.
-- Route architecture decisions and novel problems to opus.
-- Route very large context needs (100K+ tokens) to pro.
+- Default: use sonnet unless the task clearly needs less, more, or much larger context.
+- Route simple classification and formatting → haiku.
+- Route architecture decisions and novel problems → opus.
+- Route very large context needs (100K+ tokens) → pro.
+
+## Constraints
+
+- Do not use for tasks that are purely classification or reformatting — route to haiku.
+- Do not use for novel architecture decisions or complex trade-offs — route to opus.
 
 ## Model Details
 
