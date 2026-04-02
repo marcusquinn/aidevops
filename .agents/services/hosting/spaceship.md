@@ -30,9 +30,7 @@ tools:
 
 ## Setup
 
-Credentials: Spaceship Dashboard → API Settings → Generate Key + Secret. Store: `setup-local-api-keys.sh set spaceship YOUR_API_KEY`. Test: `spaceship-helper.sh accounts`.
-
-Config schema: `configs/spaceship-config.json.txt` — copy to `configs/spaceship-config.json` and fill in `api_key`, `api_secret`, `email`, `domains`.
+Spaceship Dashboard → API Settings → Generate Key + Secret → `setup-local-api-keys.sh set spaceship YOUR_API_KEY`. Config: copy `configs/spaceship-config.json.txt` → `configs/spaceship-config.json`, fill `api_key`, `api_secret`, `email`, `domains`. Test: `spaceship-helper.sh accounts`.
 
 ## Commands
 
