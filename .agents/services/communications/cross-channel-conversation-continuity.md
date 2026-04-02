@@ -24,33 +24,21 @@ Use the entity ID in `memory.db` as the continuity key:
 
 ## Core Rule
 
-Resolve identity first, then continue the conversation.
-
-Never infer continuity from display name alone. Require explicit channel mapping and an explicit confidence level.
+Resolve identity first, then continue the conversation. Never infer continuity from display name alone — require explicit channel mapping and an explicit confidence level.
 
 ## Workflow
 
 1. Resolve the incoming sender and channel to an entity.
 2. If unresolved, suggest candidates and require confirmation.
-3. Reuse an existing conversation when topic and participants still align.
-4. Start a new conversation when topic or audience changed.
-5. Log the interaction to Layer 0 with channel metadata.
-6. Load context from the same entity before replying.
+3. Reuse an existing conversation when topic and participants still align; start a new one when topic or audience changed.
+4. Log the interaction to Layer 0 with channel metadata.
+5. Load context from the same entity before replying.
 
 ## Email Identity Rules
 
-Use `entity-helper.sh` email normalization for stable matching:
+Use `entity-helper.sh` email normalization for stable matching: trim whitespace, lowercase, strip plus aliases from the local part.
 
-- trim whitespace
-- lowercase the address
-- strip plus aliases from the local part
-
-Examples:
-
-- ` User+alerts@Example.COM ` -> `user@example.com`
-- `sales+q1@company.com` -> `sales@company.com`
-
-This preserves continuity when the same person uses tagged aliases for filtering.
+Example: ` User+alerts@Example.COM ` → `user@example.com`
 
 ## Command Pattern
 
@@ -80,17 +68,10 @@ entity-helper.sh context <entity_id> --channel email --limit 20 --privacy-filter
 
 ## Threading Guide
 
-Reply in the existing thread when:
-
-- topic is the same
-- history is recent (roughly <= 30 days)
-- recipient set is stable
-
-Start a new thread when:
-
-- the decision or request topic is new
-- the thread is long dormant
-- the audience changed materially
+| Condition | Action |
+|-----------|--------|
+| Same topic, recent history (≤30 days), stable recipients | Reply in existing thread |
+| New topic, dormant thread, or audience changed | Start new thread |
 
 When starting a new thread, reference the old thread in the first line for continuity.
 
