@@ -417,9 +417,283 @@ test_queue_governor_reports_drain_rate_telemetry() {
 	return 0
 }
 
+# ─── dispatch_triage_reviews tests (GH#15655) ────────────────────────────────
+#
+# These tests exercise the full parse → resolve → dispatch path of
+# dispatch_triage_reviews() without spawning real workers.  headless-runtime-
+# helper.sh is stubbed so no external processes are launched.
+#
+# Key regressions guarded:
+#   #15614 — function never called (ordering bug, not tested here)
+#   #15617 — grep -P (GNU-only), state-file format mismatch, wrong jq path
+#   #15631 — head -n -2 (GNU-only) in model-availability-helper.sh
+#   #15636 — ${model_args[@]} unbound variable under set -u
+
+# Stub headless-runtime-helper.sh so dispatch_triage_reviews does not launch
+# real workers.  Records each invocation in DISPATCH_LOG for assertion.
+DISPATCH_LOG=""
+
+headless_runtime_helper_stub() {
+	# Capture the --session-key value to confirm which issue was dispatched.
+	local session_key=""
+	while [[ $# -gt 0 ]]; do
+		if [[ "$1" == "--session-key" ]]; then
+			session_key="${2:-}"
+			shift 2
+		else
+			shift
+		fi
+	done
+	DISPATCH_LOG="${DISPATCH_LOG}${session_key}"$'\n'
+	return 0
+}
+
+# Redirect the helper path used inside dispatch_triage_reviews to our stub.
+# We override the function that pulse-wrapper.sh calls by shadowing the
+# absolute path with a shell function of the same basename, then patching
+# the call via PATH prepend.
+_setup_dispatch_stub() {
+	local stub_dir="${TEST_ROOT}/stubs"
+	mkdir -p "$stub_dir"
+	# Write a stub script that appends the session-key to DISPATCH_LOG.
+	printf '#!/usr/bin/env bash\n' >"${stub_dir}/headless-runtime-helper.sh"
+	printf 'session_key=""\n' >>"${stub_dir}/headless-runtime-helper.sh"
+	printf 'while [[ $# -gt 0 ]]; do\n' >>"${stub_dir}/headless-runtime-helper.sh"
+	# shellcheck disable=SC2016
+	printf '  if [[ "$1" == "--session-key" ]]; then session_key="${2:-}"; shift 2; else shift; fi\n' >>"${stub_dir}/headless-runtime-helper.sh"
+	printf 'done\n' >>"${stub_dir}/headless-runtime-helper.sh"
+	# shellcheck disable=SC2016
+	printf 'printf "%%s\\n" "$session_key" >> "${DISPATCH_LOG_FILE}"\n' >>"${stub_dir}/headless-runtime-helper.sh"
+	chmod +x "${stub_dir}/headless-runtime-helper.sh"
+	export PATH="${stub_dir}:${PATH}"
+	export DISPATCH_LOG_FILE="${TEST_ROOT}/dispatch.log"
+	: >"$DISPATCH_LOG_FILE"
+	return 0
+}
+
+_make_repos_json() {
+	local slug="$1"
+	local path="$2"
+	local repos_json_path="${HOME}/.config/aidevops/repos.json"
+	mkdir -p "$(dirname "$repos_json_path")"
+	printf '{"initialized_repos":[{"slug":"%s","path":"%s","pulse":true}]}\n' \
+		"$slug" "$path" >"$repos_json_path"
+	printf '%s\n' "$repos_json_path"
+	return 0
+}
+
+_make_state_file() {
+	local state_path="${TEST_ROOT}/pulse-state.txt"
+	printf '%s' "$1" >"$state_path"
+	printf '%s\n' "$state_path"
+	return 0
+}
+
+# ── Test 1: slot count decremented for each dispatched triage review ──────────
+test_dispatch_triage_reviews_decrements_slot_count() {
+	DISPATCH_LOG_FILE="${TEST_ROOT}/dispatch-t1.log"
+	: >"$DISPATCH_LOG_FILE"
+
+	local repos_json
+	repos_json=$(_make_repos_json "owner/repo" "/tmp/repo")
+
+	local state_file
+	state_file=$(_make_state_file "## owner/repo
+
+- Issue #100: Fix login bug [status: **needs-review**] [created: 2026-01-01T00:00:00Z]
+- Issue #101: Add dark mode [status: **needs-review**] [created: 2026-01-02T00:00:00Z]
+- Issue #102: Already reviewed [status: **reviewed**] [created: 2026-01-03T00:00:00Z]
+")
+
+	STATE_FILE="$state_file"
+	# model-availability-helper.sh is not available in test env; resolved_model
+	# will be empty, which exercises the no-model branch (same as production
+	# when all models are rate-limited).
+	local remaining
+	remaining=$(dispatch_triage_reviews 5 "$repos_json" 2>/dev/null)
+
+	# 2 needs-review issues dispatched → 5 - 2 = 3 remaining
+	if [[ "$remaining" == "3" ]]; then
+		print_result "dispatch_triage_reviews decrements slot count for each dispatch" 0
+		return 0
+	fi
+
+	print_result "dispatch_triage_reviews decrements slot count for each dispatch" 1 \
+		"Expected remaining=3, got '${remaining}'"
+	return 0
+}
+
+# ── Test 2: no stderr errors (catches GNU grep -P / head -n -N regressions) ───
+test_dispatch_triage_reviews_no_stderr_errors() {
+	local repos_json
+	repos_json=$(_make_repos_json "owner/repo" "/tmp/repo")
+
+	local state_file
+	state_file=$(_make_state_file "## owner/repo
+
+- Issue #200: Needs triage [status: **needs-review**] [created: 2026-01-01T00:00:00Z]
+")
+
+	STATE_FILE="$state_file"
+	local stderr_file="${TEST_ROOT}/triage-stderr.txt"
+	dispatch_triage_reviews 3 "$repos_json" 2>"$stderr_file" >/dev/null
+
+	local stderr_content
+	stderr_content=$(<"$stderr_file")
+
+	# Fail if any of the known macOS-incompatible error strings appear.
+	if [[ "$stderr_content" == *"illegal line count"* ]]; then
+		print_result "dispatch_triage_reviews produces no 'illegal line count' stderr (head -n -N)" 1 \
+			"stderr: ${stderr_content}"
+		return 0
+	fi
+	if [[ "$stderr_content" == *"unbound variable"* ]]; then
+		print_result "dispatch_triage_reviews produces no 'unbound variable' stderr (set -u)" 1 \
+			"stderr: ${stderr_content}"
+		return 0
+	fi
+	if [[ "$stderr_content" == *"invalid option"* && "$stderr_content" == *"grep"* ]]; then
+		print_result "dispatch_triage_reviews produces no grep -P stderr (GNU-only flag)" 1 \
+			"stderr: ${stderr_content}"
+		return 0
+	fi
+
+	print_result "dispatch_triage_reviews produces no macOS-incompatible stderr errors" 0
+	return 0
+}
+
+# ── Test 3: returns available unchanged when no needs-review entries ──────────
+test_dispatch_triage_reviews_returns_available_when_no_candidates() {
+	local repos_json
+	repos_json=$(_make_repos_json "owner/repo" "/tmp/repo")
+
+	local state_file
+	state_file=$(_make_state_file "## owner/repo
+
+- Issue #300: Already done [status: **reviewed**] [created: 2026-01-01T00:00:00Z]
+")
+
+	STATE_FILE="$state_file"
+	local remaining
+	remaining=$(dispatch_triage_reviews 4 "$repos_json" 2>/dev/null)
+
+	if [[ "$remaining" == "4" ]]; then
+		print_result "dispatch_triage_reviews returns available unchanged when no candidates" 0
+		return 0
+	fi
+
+	print_result "dispatch_triage_reviews returns available unchanged when no candidates" 1 \
+		"Expected remaining=4, got '${remaining}'"
+	return 0
+}
+
+# ── Test 4: caps dispatches at triage_max=2 even with more candidates ─────────
+test_dispatch_triage_reviews_caps_at_triage_max() {
+	local repos_json
+	repos_json=$(_make_repos_json "owner/repo" "/tmp/repo")
+
+	local state_file
+	state_file=$(_make_state_file "## owner/repo
+
+- Issue #400: First [status: **needs-review**] [created: 2026-01-01T00:00:00Z]
+- Issue #401: Second [status: **needs-review**] [created: 2026-01-02T00:00:00Z]
+- Issue #402: Third [status: **needs-review**] [created: 2026-01-03T00:00:00Z]
+")
+
+	STATE_FILE="$state_file"
+	local remaining
+	remaining=$(dispatch_triage_reviews 10 "$repos_json" 2>/dev/null)
+
+	# triage_max=2, so only 2 dispatched → 10 - 2 = 8
+	if [[ "$remaining" == "8" ]]; then
+		print_result "dispatch_triage_reviews caps dispatches at triage_max=2" 0
+		return 0
+	fi
+
+	print_result "dispatch_triage_reviews caps dispatches at triage_max=2" 1 \
+		"Expected remaining=8 (capped at 2 dispatches), got '${remaining}'"
+	return 0
+}
+
+# ── Test 5: returns available=0 unchanged when no slots ──────────────────────
+test_dispatch_triage_reviews_returns_zero_when_no_slots() {
+	local repos_json
+	repos_json=$(_make_repos_json "owner/repo" "/tmp/repo")
+
+	local state_file
+	state_file=$(_make_state_file "## owner/repo
+
+- Issue #500: Needs triage [status: **needs-review**] [created: 2026-01-01T00:00:00Z]
+")
+
+	STATE_FILE="$state_file"
+	local remaining
+	remaining=$(dispatch_triage_reviews 0 "$repos_json" 2>/dev/null)
+
+	if [[ "$remaining" == "0" ]]; then
+		print_result "dispatch_triage_reviews returns 0 when no slots available" 0
+		return 0
+	fi
+
+	print_result "dispatch_triage_reviews returns 0 when no slots available" 1 \
+		"Expected remaining=0, got '${remaining}'"
+	return 0
+}
+
+# ── Test 6: jq path uses .initialized_repos[] not .[] ────────────────────────
+# Regression for #15617 bug 4: wrong jq path caused path lookup to return empty,
+# so no workers were dispatched even when candidates existed.
+test_dispatch_triage_reviews_resolves_repo_path_via_initialized_repos() {
+	local repos_json_path="${HOME}/.config/aidevops/repos.json"
+	mkdir -p "$(dirname "$repos_json_path")"
+	# Use the correct .initialized_repos[] structure; a flat .[] would fail.
+	printf '{"initialized_repos":[{"slug":"owner/myrepo","path":"/tmp/myrepo","pulse":true}]}\n' \
+		>"$repos_json_path"
+
+	local state_file
+	state_file=$(_make_state_file "## owner/myrepo
+
+- Issue #600: Needs triage [status: **needs-review**] [created: 2026-01-01T00:00:00Z]
+")
+
+	STATE_FILE="$state_file"
+	local remaining
+	remaining=$(dispatch_triage_reviews 3 "$repos_json_path" 2>/dev/null)
+
+	# Path resolved correctly → 1 dispatch → 3 - 1 = 2
+	if [[ "$remaining" == "2" ]]; then
+		print_result "dispatch_triage_reviews resolves repo path via .initialized_repos[] (not .[])" 0
+		return 0
+	fi
+
+	print_result "dispatch_triage_reviews resolves repo path via .initialized_repos[] (not .[])" 1 \
+		"Expected remaining=2 (1 dispatch), got '${remaining}' — likely jq path bug"
+	return 0
+}
+
+# ── Test 7: returns available unchanged when state file is missing ────────────
+test_dispatch_triage_reviews_returns_available_when_no_state_file() {
+	local repos_json
+	repos_json=$(_make_repos_json "owner/repo" "/tmp/repo")
+
+	STATE_FILE="/nonexistent/state-file-that-does-not-exist.txt"
+	local remaining
+	remaining=$(dispatch_triage_reviews 7 "$repos_json" 2>/dev/null)
+
+	if [[ "$remaining" == "7" ]]; then
+		print_result "dispatch_triage_reviews returns available unchanged when state file missing" 0
+		return 0
+	fi
+
+	print_result "dispatch_triage_reviews returns available unchanged when state file missing" 1 \
+		"Expected remaining=7, got '${remaining}'"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
+	_setup_dispatch_stub
 
 	test_counts_workers_and_ignores_supervisor_session
 	test_returns_zero_when_no_full_loop_workers
@@ -436,6 +710,13 @@ main() {
 	test_queue_governor_enters_merge_heavy_at_critical_backlog
 	test_queue_governor_enters_pr_heavy_at_heavy_backlog
 	test_queue_governor_reports_drain_rate_telemetry
+	test_dispatch_triage_reviews_decrements_slot_count
+	test_dispatch_triage_reviews_no_stderr_errors
+	test_dispatch_triage_reviews_returns_available_when_no_candidates
+	test_dispatch_triage_reviews_caps_at_triage_max
+	test_dispatch_triage_reviews_returns_zero_when_no_slots
+	test_dispatch_triage_reviews_resolves_repo_path_via_initialized_repos
+	test_dispatch_triage_reviews_returns_available_when_no_state_file
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then
