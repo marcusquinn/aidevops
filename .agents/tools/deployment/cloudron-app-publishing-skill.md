@@ -13,8 +13,6 @@ tools:
 
 # Cloudron App Publishing
 
-Distribute Cloudron apps via a `CloudronVersions.json` version catalog. Users add the URL in their dashboard or install via `cloudron install --versions-url <url>`.
-
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
@@ -23,6 +21,7 @@ Distribute Cloudron apps via a `CloudronVersions.json` version catalog. Users ad
 - **Upstream skill**: [git.cloudron.io/docs/skills](https://git.cloudron.io/docs/skills) (`cloudron-app-publishing`)
 - **Prerequisite**: App must be built with `cloudron build` (local or build service) -- on-server builds cannot be published
 - **Key file**: `CloudronVersions.json` -- version catalog hosted at a public URL
+- **Forum**: [App Packaging & Development](https://forum.cloudron.io/category/96/app-packaging-development)
 
 <!-- AI-CONTEXT-END -->
 
@@ -80,7 +79,3 @@ Host `CloudronVersions.json` at any public URL (static host, git repo, web serve
 ## Community Packages (9.1+)
 
 Community packages can be non-free (paid). Publishers keep Docker images private; end users set up a [private Docker registry](https://docs.cloudron.io/docker#private-registry) for access.
-
-## Forum
-
-Post new packages in [App Packaging & Development](https://forum.cloudron.io/category/96/app-packaging-development).
