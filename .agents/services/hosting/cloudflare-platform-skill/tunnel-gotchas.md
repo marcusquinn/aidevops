@@ -11,9 +11,9 @@
 ## Operations & Configuration
 
 - **High Availability**: Run multiple replicas; place `cloudflared` close to origin.
-- **Performance**: Use HTTP/2 for gRPC (`http2Origin: true`); tune keepalive.
-- **Validation**: Run `cloudflared tunnel ingress validate` before deploying.
-- **Rules**: Test with `cloudflared tunnel ingress rule <URL>`; first match wins.
+- **Performance**: Use HTTP/2 for gRPC (`http2Origin: true`); tune `keepAliveTimeout`.
+- **Validation**: Run `cloudflared tunnel ingress validate` (locally-managed only).
+- **Rules**: Test with `cloudflared tunnel ingress rule <URL>` (locally-managed only).
 - **Maintenance**: Keep `cloudflared` updated (1 year support); use `--no-autoupdate` in prod.
 - **Monitoring**: Set up disconnect alerts in dashboard.
 
@@ -53,7 +53,7 @@ originRequest:
 ### Tunnel Not Starting
 
 ```bash
-cloudflared tunnel ingress validate  # Validate config
+cloudflared tunnel ingress validate  # Validate local config
 ls -la ~/.cloudflared/*.json         # Verify credentials
 cloudflared tunnel list              # Verify tunnel exists
 ```
