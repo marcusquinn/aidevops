@@ -771,6 +771,76 @@ session_origin_label() {
 }
 
 # =============================================================================
+# Origin-Label-Aware gh Wrappers (t1756)
+# =============================================================================
+# Every gh issue/pr create call MUST use these wrappers to ensure the session
+# origin label (origin:worker or origin:interactive) is always applied.
+# GitHub deduplicates labels, so callers that already pass --label origin:*
+# will not get duplicates.
+#
+# Usage (drop-in replacement for gh issue create / gh pr create):
+#   gh_create_issue --repo owner/repo --title "..." --label "bug" --body "..."
+#   gh_create_pr --head branch --base main --title "..." --body "..."
+#
+# These forward all arguments to gh and append --label <origin>.
+
+gh_create_issue() {
+	local origin_label
+	origin_label=$(session_origin_label)
+	# Ensure labels exist on the target repo (once per repo per process)
+	_ensure_origin_labels_for_args "$@"
+	gh issue create "$@" --label "$origin_label"
+}
+
+gh_create_pr() {
+	local origin_label
+	origin_label=$(session_origin_label)
+	_ensure_origin_labels_for_args "$@"
+	gh pr create "$@" --label "$origin_label"
+}
+
+# Internal: extract --repo from args and ensure labels exist (cached per repo).
+_ORIGIN_LABELS_ENSURED=""
+_ensure_origin_labels_for_args() {
+	local repo=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--repo)
+			repo="${2:-}"
+			break
+			;;
+		--repo=*)
+			repo="${1#--repo=}"
+			break
+			;;
+		*) shift ;;
+		esac
+	done
+	[[ -z "$repo" ]] && return 0
+	# Skip if already ensured for this repo in this process
+	case ",$_ORIGIN_LABELS_ENSURED," in
+	*",$repo,"*) return 0 ;;
+	esac
+	ensure_origin_labels_exist "$repo"
+	_ORIGIN_LABELS_ENSURED="${_ORIGIN_LABELS_ENSURED:+$_ORIGIN_LABELS_ENSURED,}$repo"
+	return 0
+}
+
+# Ensure origin labels exist on a repo (idempotent).
+# Usage: ensure_origin_labels_exist "owner/repo"
+ensure_origin_labels_exist() {
+	local repo="$1"
+	[[ -z "$repo" ]] && return 1
+	gh label create "origin:worker" --repo "$repo" \
+		--description "Created by headless/pulse worker session" \
+		--color "C5DEF5" 2>/dev/null || true
+	gh label create "origin:interactive" --repo "$repo" \
+		--description "Created by interactive user session" \
+		--color "BFD4F2" 2>/dev/null || true
+	return 0
+}
+
+# =============================================================================
 # TODO.md Serialized Commit+Push
 # =============================================================================
 # Provides atomic locking and pull-rebase-retry for TODO.md operations.

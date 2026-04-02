@@ -13,6 +13,11 @@
 # t1386: https://github.com/marcusquinn/aidevops/issues/2785
 set -euo pipefail
 
+# Source shared-constants for gh_create_issue wrapper (t1756)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=shared-constants.sh
+[[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
+
 SCANNER_DAYS="${SCANNER_DAYS:-7}"
 SCANNER_MAX_ISSUES="${SCANNER_MAX_ISSUES:-10}"
 SCANNER_LABEL="${SCANNER_LABEL:-review-followup}"
@@ -83,7 +88,7 @@ PR #${pr} was merged with unaddressed review bot feedback.
 ### Actionable comments
 
 ${summary}${sig_footer}"
-	gh issue create --repo "$repo" --title "$title" --label "$SCANNER_LABEL,source:review-scanner" --body "$body"
+	gh_create_issue --repo "$repo" --title "$title" --label "$SCANNER_LABEL,source:review-scanner" --body "$body"
 }
 
 do_scan() {

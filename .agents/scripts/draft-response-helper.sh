@@ -269,7 +269,7 @@ _create_notification_issue() {
 	issue_body="${issue_body}${sig_footer}"
 
 	local issue_url
-	issue_url=$(gh issue create \
+	issue_url=$(gh_create_issue \
 		--repo "$slug" \
 		--title "$safe_title" \
 		--body "$issue_body" \

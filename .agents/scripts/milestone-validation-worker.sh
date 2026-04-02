@@ -1064,7 +1064,7 @@ create_fix_tasks() {
 				gh label create "source:mission-validation" --repo "$repo_slug" \
 					--description "Auto-created by milestone-validation-worker.sh" \
 					--color "C2E0C6" --force 2>/dev/null || true
-				issue_url=$(gh issue create --repo "$repo_slug" \
+				issue_url=$(gh_create_issue --repo "$repo_slug" \
 					--title "$fix_title" \
 					--body "$issue_body" \
 					--label "bug,mission:$mission_id,source:mission-validation" 2>/dev/null || echo "")

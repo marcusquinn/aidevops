@@ -274,7 +274,7 @@ _create_health_issue() {
 	health_body="${health_body}${sig_footer}"
 
 	local health_issue_number
-	health_issue_number=$(gh issue create --repo "$repo_slug" \
+	health_issue_number=$(gh_create_issue --repo "$repo_slug" \
 		--title "${runner_prefix} starting..." \
 		--body "$health_body" \
 		--label "$role_label" --label "$runner_user" --label "source:health-dashboard" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
@@ -1499,7 +1499,7 @@ _ensure_quality_issue() {
 		qa_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$qa_body" 2>/dev/null || true)
 		qa_body="${qa_body}${qa_sig}"
 
-		issue_number=$(gh issue create --repo "$repo_slug" \
+		issue_number=$(gh_create_issue --repo "$repo_slug" \
 			--title "Code Audit Routines" \
 			--body "$qa_body" \
 			--label "quality-review" --label "persistent" --label "source:quality-sweep" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
@@ -2497,7 +2497,7 @@ _create_simplification_issues() {
 		qlty_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$issue_body" 2>/dev/null || true)
 		issue_body="${issue_body}${qlty_sig}"
 
-		if gh issue create --repo "$repo_slug" \
+		if gh_create_issue --repo "$repo_slug" \
 			--title "$issue_title" \
 			--label "simplification-debt" --label "needs-maintainer-review" --label "source:quality-sweep" \
 			--assignee "$maintainer" \

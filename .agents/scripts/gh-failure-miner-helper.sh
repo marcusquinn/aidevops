@@ -659,7 +659,7 @@ create_or_preview_issue() {
 		fi
 	fi
 
-	local create_cmd=(gh issue create --repo "$repo_slug" --title "$title" --body "$body" --label bug --label "source:ci-failure-miner")
+	local create_cmd=(gh_create_issue --repo "$repo_slug" --title "$title" --body "$body" --label bug --label "source:ci-failure-miner")
 	local label
 	for label in ${extra_labels[@]+"${extra_labels[@]}"}; do
 		if [[ -n "$label" ]]; then
