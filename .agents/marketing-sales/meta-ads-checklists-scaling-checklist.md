@@ -31,14 +31,7 @@
 
 ## 2. Go / No-Go Gate
 
-All Section 1 boxes must be checked. Key gates:
-
-- CPA below target for 5+ days
-- 50+ conversions recorded
-- Frequency under 3
-- Business can handle more volume
-
-Fix any unchecked bottleneck before increasing budget.
+All Section 1 boxes must be checked. Fix any unchecked bottleneck before increasing budget.
 
 ## 3. Choose the Scaling Method
 
@@ -102,12 +95,8 @@ Stop scaling if any box is checked:
 | Date | Action | Budget Before | Budget After | CPA Before | CPA After | Notes |
 |------|--------|---------------|--------------|------------|-----------|-------|
 | | | $ | $ | $ | $ | |
-| | | $ | $ | $ | $ | |
-| | | $ | $ | $ | $ | |
 
 ## 8. Record the Ceiling
-
-Document current limits before the next increase:
 
 - [ ] Maximum efficient daily spend before diminishing returns
 - [ ] Maximum daily business capacity
