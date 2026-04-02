@@ -19,11 +19,10 @@ tools:
 
 - **Script**: `email-test-suite-helper.sh [command] [options]`
 - **Required**: `dig`, `openssl`, `curl`; optional: `html-validate`, `mjml`
-- **Related**: `email-health-check-helper.sh` (DNS authentication)
-
-**Design rendering** (HTML, CSS compat, dark mode, responsive, accessibility — WCAG 2.1 AA):
+- **Related**: `email-health-check-helper.sh` (DNS auth), `email-design-test.md` (Playwright + Email on Acid API)
 
 ```bash
+# Design rendering (HTML, CSS compat, dark mode, responsive, WCAG 2.1 AA)
 email-test-suite-helper.sh test-design newsletter.html      # full suite
 email-test-suite-helper.sh validate-html newsletter.html
 email-test-suite-helper.sh check-css newsletter.html
@@ -31,16 +30,23 @@ email-test-suite-helper.sh check-dark-mode template.html
 email-test-suite-helper.sh check-responsive campaign.html
 email-test-suite-helper.sh check-accessibility newsletter.html
 email-test-suite-helper.sh generate-test-email test.html
-```
 
-**Delivery** (SMTP, TLS, headers, inbox placement):
-
-```bash
+# Delivery (SMTP, TLS, headers, inbox placement)
 email-test-suite-helper.sh test-smtp smtp.gmail.com 587
 email-test-suite-helper.sh test-smtp-domain example.com     # auto-discover MX
 email-test-suite-helper.sh analyze-headers headers.txt
 email-test-suite-helper.sh check-placement example.com      # scored 0-10
 email-test-suite-helper.sh test-tls smtp.example.com 587
+```
+
+## Recommended Workflow
+
+```bash
+email-health-check-helper.sh check example.com             # 1. DNS auth
+email-test-suite-helper.sh test-design newsletter.html     # 2. Design rendering
+email-test-suite-helper.sh check-placement example.com     # 3. Delivery infra
+email-test-suite-helper.sh test-smtp-domain example.com    # 4. SMTP connectivity
+email-health-check-helper.sh accessibility newsletter.html # 5. Standalone a11y
 ```
 
 <!-- AI-CONTEXT-END -->
@@ -50,20 +56,20 @@ email-test-suite-helper.sh test-tls smtp.example.com 587
 | Engine | Clients | Flexbox/Grid | Media Queries | Custom Fonts | Notes |
 |--------|---------|-------------|---------------|-------------|-------|
 | **WebKit** | Apple Mail, iOS Mail, Outlook macOS | Yes | Yes | Yes | Best CSS support |
-| **Blink** | Gmail Web, Gmail Android | Yes | **Partial** | **No** | Strips `<style>` blocks |
-| **Word** | Outlook 2016+, Outlook 365 | **No** | **No** | **No** | VML for backgrounds; no border-radius on images |
-| **Custom** | Yahoo, AOL, Thunderbird | Yes/Partial | **Partial** | **No** | Partial media query support |
+| **Blink** | Gmail Web, Gmail Android | Yes | Partial | No | Strips `<style>` blocks |
+| **Word** | Outlook 2016+, Outlook 365 | No | No | No | VML for backgrounds; no `border-radius` on images |
+| **Custom** | Yahoo, AOL, Thunderbird | Yes/Partial | Partial | No | Partial media query support |
 
 ## Dark Mode
 
 | Client | Behavior |
 |--------|----------|
-| Apple Mail | Full inversion, `prefers-color-scheme` supported |
-| Gmail (iOS) | Partial inversion, respects `color-scheme` meta |
-| Outlook (iOS/Android) | Full inversion, ignores `prefers-color-scheme` |
+| Apple Mail | Full inversion; `prefers-color-scheme` supported |
+| Gmail (iOS) | Partial inversion; respects `color-scheme` meta |
+| Outlook (iOS/Android) | Full inversion; ignores `prefers-color-scheme` |
 | Yahoo | No dark mode support |
 
-Implementation: add `<meta name="color-scheme" content="light dark">` + `@media (prefers-color-scheme: dark)` styles. Avoid hardcoded white backgrounds. Test logos on light/dark. Use borders/shadows on transparent PNGs.
+Implementation: `<meta name="color-scheme" content="light dark">` + `@media (prefers-color-scheme: dark)`. Avoid hardcoded white backgrounds. Test logos on light/dark. Use borders/shadows on transparent PNGs.
 
 ## Inbox Placement Scoring
 
@@ -78,16 +84,6 @@ Implementation: add `<meta name="color-scheme" content="light dark">` + `@media 
 | MX records (valid) | 1 | Not blacklisted (Spamhaus) | 1 |
 
 **8-10** excellent | **6-7** good | **4-5** fair (some spam) | **0-3** poor
-
-## Recommended Workflow
-
-```bash
-email-health-check-helper.sh check example.com             # 1. DNS auth
-email-test-suite-helper.sh test-design newsletter.html     # 2. Design rendering
-email-test-suite-helper.sh check-placement example.com     # 3. Delivery infra
-email-test-suite-helper.sh test-smtp-domain example.com    # 4. SMTP connectivity
-email-health-check-helper.sh accessibility newsletter.html # 5. Standalone a11y
-```
 
 ## External Testing Services
 
