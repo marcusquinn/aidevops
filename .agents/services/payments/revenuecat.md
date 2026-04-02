@@ -21,24 +21,12 @@ tools:
 - **Dashboard**: https://app.revenuecat.com
 - **SDKs**: `react-native-purchases` (Expo/RN), `purchases-ios` (Swift), `purchases-android` (Kotlin)
 - **Pricing**: Free up to $2,500 MTR, then 1% of tracked revenue
+- **Concepts**: Products (platform-specific) → Entitlements (platform-agnostic access) → Offerings (package groups, swappable via dashboard)
 
-| RevenueCat handles | You handle |
-|---|---|
-| Receipt validation (Apple, Google, Stripe, Amazon) | Product creation in App Store Connect / Play Console |
-| Entitlement management | Paywall UI design and implementation |
-| Subscription lifecycle (trials, renewals, cancellations, grace periods) | Feature gating logic in your app |
-| Cross-platform subscription state sync | App Store / Play Store submission |
-| Analytics (MRR, churn, LTV, cohorts, conversion) | |
-| Experiments (A/B test pricing and paywalls) | |
-| Integrations (webhooks, Amplitude, Mixpanel, Slack) | |
+**RevenueCat handles:** receipt validation, entitlement management, subscription lifecycle, cross-platform sync, analytics, A/B experiments, webhooks.
+**You handle:** product creation in App Store Connect / Play Console, paywall UI, feature gating, app submission.
 
 <!-- AI-CONTEXT-END -->
-
-## Core Concepts
-
-- **Products**: Platform-specific items (App Store Connect / Play Console) mapped to entitlements
-- **Entitlements**: Platform-agnostic access levels — "premium" works regardless of purchase source
-- **Offerings**: Package groups shown to users; swap via dashboard without app updates (A/B test pricing)
 
 ## Setup
 
@@ -50,7 +38,6 @@ tools:
 ### Install SDK
 
 ```bash
-# Expo / React Native
 npx expo install react-native-purchases
 ```
 
@@ -75,20 +62,14 @@ Purchases.configure(withAPIKey: "appl_your_ios_api_key")
 // Check subscription status
 const customerInfo = await Purchases.getCustomerInfo();
 const isPremium = customerInfo.entitlements.active['premium'] !== undefined;
-const willRenew = customerInfo.entitlements.active['premium']?.willRenew ?? false;
-const expirationDate = customerInfo.entitlements.active['premium']?.expirationDate;
 // Swift: let info = try await Purchases.shared.customerInfo()
 //        let isPremium = info.entitlements["premium"]?.isActive == true
 
-// Display offerings (paywall)
-const offerings = await Purchases.getOfferings();
-const current = offerings.current;
-if (current) {
-  console.log(current.monthly?.product.priceString);  // "$4.99"
-  console.log(current.annual?.product.priceString);   // "$39.99"
-}
+// Display offerings
+const current = (await Purchases.getOfferings()).current;
+// current.monthly?.product.priceString, current.annual?.product.priceString
 
-// Make a purchase
+// Purchase
 try {
   const { customerInfo } = await Purchases.purchasePackage(selectedPackage);
   if (customerInfo.entitlements.active['premium']) { /* unlock */ }
@@ -96,15 +77,13 @@ try {
   if (!e.userCancelled) { /* handle error */ }
 }
 // Swift: let (_, info, _) = try await Purchases.shared.purchase(package: pkg)
-//        if info.entitlements["premium"]?.isActive == true { /* unlock */ }
 
-// Restore — required by App Store guidelines
-const restored = await Purchases.restorePurchases();
-const restoredPremium = restored.entitlements.active['premium'] !== undefined;
+// Restore (required by App Store guidelines)
+await Purchases.restorePurchases();
 
 // Cross-platform sync — call after auth events
-await Purchases.logIn(userId);   // After login
-await Purchases.logOut();        // After logout
+await Purchases.logIn(userId);
+await Purchases.logOut();
 ```
 
 ## Paywalls
@@ -134,7 +113,7 @@ Configure in dashboard to sync events with your backend:
 
 ## Testing & Best Practices
 
-**Sandbox**: iOS — sandbox Apple ID in App Store Connect. Android — license testing in Play Console. Dashboard shows sandbox vs production.
+**Sandbox**: iOS — sandbox Apple ID in App Store Connect. Android — license testing in Play Console.
 
 **Debug**: `Purchases.setLogLevel(LOG_LEVEL.DEBUG)` → inspect `getCustomerInfo()`.
 
