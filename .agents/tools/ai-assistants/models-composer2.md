@@ -21,7 +21,8 @@ tools:
 
 # Composer 2 Tier Model (Frontier Coding)
 
-Use Cursor Composer 2 for complex coding tasks where implementation quality matters more than cost.
+Cursor Composer 2 for complex coding tasks where implementation quality matters more than cost.
+Context: 200K tokens. Cost: $0.50/1M input, $2.50/1M output. Requires Cursor OAuth pool (t1549).
 
 ## Best Fit
 
@@ -32,24 +33,6 @@ Use Cursor Composer 2 for complex coding tasks where implementation quality matt
 
 ## Avoid When
 
-- The change is simple or single-file — use `sonnet`
-- The task is primarily architecture or novel design — use `opus`
-- The task is primarily large-context analysis (>100K tokens) — use `pro`
-
-## Constraints
-
-- Requires the Cursor OAuth pool in `oauth-pool.mjs` (t1549)
-- Falls back to `sonnet` if no Cursor account is available
-- Tier focus: frontier coding and deep code-pattern reasoning
-
-## Model Details
-
-| Field | Value |
-|-------|-------|
-| Provider | Cursor |
-| Model | composer-2 |
-| Context | 200K tokens |
-| Input cost | $0.50/1M tokens |
-| Output cost | $2.50/1M tokens |
-| Tier | composer2 (frontier coding) |
-| Requires | Cursor OAuth pool (t1549) |
+- Simple or single-file change — use `sonnet`
+- Primarily architecture or novel design — use `opus`
+- Primarily large-context analysis (>100K tokens) — use `pro`
