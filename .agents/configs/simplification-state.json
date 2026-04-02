@@ -4420,6 +4420,12 @@
       "hash": "c820f0bd721d4d8ff4fb35dff40ff98c6ba3b71f",
       "passes": 1,
       "pr": 15470
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/r2-gotchas.md": {
+      "hash": "15664c439e4f42388852766e353f09c3d2ff0773405f329109ce47c293e3aff1",
+      "at": "2026-04-02T14:18:00Z",
+      "pr": 15629,
+      "passes": 1
     }
   },
   ".agents/workflows/branch/experiment.md": {
