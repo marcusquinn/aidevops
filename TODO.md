@@ -14,6 +14,7 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
     - [ ] tXXX.1.1 Sub-subtask ~1h
   - [ ] tXXX.2 Another subtask ~1h blocks:tZZZ
 - [x] tYYY Completed task ~2h actual:1.5h logged:2025-01-10 completed:2025-01-15
+- [x] t1852 simplification: tighten agent doc Screaming Frog SEO Spider (.agents/seo/screaming-frog.md, 62 lines) #simplification #seo #auto-dispatch ~1h model:sonnet ref:GH#15460 logged:2026-04-02 pr:#15492 completed:2026-04-02
 - [-] tZZZ Declined task
 ```
 
