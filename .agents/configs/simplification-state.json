@@ -3,7 +3,7 @@
     "hash": "b7c346582edd627a9ab4f70a7c7e4b8f8d97be32231069f4e10126d2db94062d",
     "issue": "GH#15647",
     "status": "simplified",
-    "note": "Instruction doc tightened: 103 → 90 lines. Merged config code blocks, moved URLs inline, compressed CI/CD prose. Zero content loss."
+    "note": "Instruction doc tightened: 103 \u2192 90 lines. Merged config code blocks, moved URLs inline, compressed CI/CD prose. Zero content loss."
   },
   ".agents/seo/ai-search-kpi-template.md": {
     "hash": "03478debc956ad02835cde5c946e89762351c2c00c836d8c9c24fca3ebd366cc",
@@ -819,12 +819,12 @@
       "pr": 12753
     },
     ".agents/marketing-sales/direct-response-copy-swipe-file-landing-pages.md": {
-    "hash": "08f939130363372a3f8667c083bb0d46e0cfed5b619406b76d42730490934237",
-    "issue": "GH#15068",
-    "note": "Reference corpus already split into 5 chapter files (01-saas-examples.md through 05-guarantees-and-design-principles.md). Index is 30 lines; chapters total 163 lines. No further action needed.",
-    "status": "done"
-  },
-  ".agents/marketing-sales/direct-response-copy-checklists-pre-publish.md": {
+      "hash": "08f939130363372a3f8667c083bb0d46e0cfed5b619406b76d42730490934237",
+      "issue": "GH#15068",
+      "note": "Reference corpus already split into 5 chapter files (01-saas-examples.md through 05-guarantees-and-design-principles.md). Index is 30 lines; chapters total 163 lines. No further action needed.",
+      "status": "done"
+    },
+    ".agents/marketing-sales/direct-response-copy-checklists-pre-publish.md": {
       "at": "2026-04-01T20:59:28Z",
       "hash": "ab1f9c5d69340fa7acfd756c2ae37710b9fa600c",
       "passes": 1,
@@ -4504,5 +4504,12 @@
     "issue": "GH#14091",
     "status": "simplified",
     "note": "Consolidated 4 fragmented fuzz.* code blocks into 1 cohesive block. 121 -> 104 lines. All content preserved."
+  },
+  ".agents/tools/context/openapi-search.md": {
+    "hash": "f473e91d5fc0f3a6b0f72c294761cc4902de15e1796343de11449b10bb8ee235",
+    "issue": "GH#14263",
+    "status": "simplified",
+    "lines_before": 96,
+    "lines_after": 85
   }
 }

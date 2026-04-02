@@ -44,24 +44,13 @@ mcp:
 
 ## Configuration
 
-aidevops configures all clients automatically via `setup.sh` / `generate-opencode-agents.sh`. Manual setup:
+aidevops configures all clients automatically via `setup.sh` / `generate-opencode-agents.sh`. Manual setup (Claude Code):
 
 ```bash
 claude mcp add --scope user openapi-search --transport http https://openapi-mcp.openapisearch.com/mcp
 ```
 
-| Client | Config file | Key field |
-|--------|-------------|-----------|
-| OpenCode | `~/.config/opencode/opencode.json` | `mcp.openapi-search` — `type: remote`, `url`, `enabled: false` |
-| Claude Code | `~/.claude/settings.json` | `mcpServers.openapi-search` — `type: http`, `url` |
-| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` | `mcpServers.openapi-search` — `type: http`, `url` |
-| Cursor | `~/.cursor/mcp.json` | `mcpServers.openapi-search.url` |
-| Windsurf | `~/.codeium/windsurf/mcp_config.json` | `mcpServers.openapi-search.url` |
-| Gemini CLI | `~/.gemini/settings.json` | `mcpServers.openapi-search.url` |
-| Continue.dev | `~/.continue/config.json` | `mcpServers[].transport` — `type: sse`, `url` |
-| GitHub Copilot | `.vscode/mcp.json` | `servers.openapi-search` — `type: http`, `url` |
-| Kilo Code / Kiro | global MCP config | `mcpServers.openapi-search.url` (unverified — no official docs) |
-| Zed | `~/.config/zed/settings.json` | `context_servers.openapi-search.url` |
+For other clients, add `mcpServers.openapi-search` with `type: http` and `url: https://openapi-mcp.openapisearch.com/mcp` to the client's MCP config file. Exceptions: OpenCode uses `type: remote`; Continue.dev uses `type: sse`; Zed uses `context_servers`.
 
 ## Usage
 
