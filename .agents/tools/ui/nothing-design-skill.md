@@ -1,4 +1,5 @@
 ---
+name: nothing-design
 mode: subagent
 description: >
   Nothing-inspired UI/UX design system. Use when user explicitly says "Nothing style",

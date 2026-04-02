@@ -1,10 +1,10 @@
 # Cloudflare Zaraz
 
-Server-side tag manager: offloads third-party scripts (analytics, ads, chat) to Cloudflare's edge. Zero client-side JS; single HTTP request for all tools; privacy-first data control.
+Server-side tag manager offloads third-party scripts (analytics, ads, chat) to Cloudflare's edge. Zero client-side JS; single HTTP request; privacy-first data control.
 
 ## Setup
 
-Dashboard: domain > Zaraz > Start setup > add tools > configure triggers/actions. Config (`zaraz.toml`):
+Dashboard: domain > Zaraz > Start setup. Config (`zaraz.toml`):
 
 ```toml
 [settings]
@@ -19,22 +19,15 @@ id = "G-XXXXXXXXXX"
 match_rule = "Pageview"
 ```
 
-## Web API
+## Web API & E-commerce
 
 ```javascript
 zaraz.track('button_click');
 zaraz.track('purchase', { value: 99.99, currency: 'USD', item_id: '12345' });
 zaraz.set('userId', 'user_12345');
 zaraz.set({ email: '[email protected]', country: 'US' });
-```
 
-Event names follow platform conventions (GA4: `sign_up`; Facebook Pixel: `Purchase`; Google Ads: `conversion` with `send_to`).
-
-Data layer: `window.zaraz.dataLayer = { user_id: '12345', page_type: 'product' }`. Access in triggers: `{{client.__zarazTrack.page_type}}`.
-
-### E-commerce
-
-```javascript
+// E-commerce
 zaraz.ecommerce('Product Viewed', { product_id: 'SKU123', name: 'Blue Widget', price: 49.99, currency: 'USD' });
 zaraz.ecommerce('Product Added', { product_id: 'SKU123', quantity: 2, price: 49.99 });
 zaraz.ecommerce('Order Completed', {
@@ -43,6 +36,9 @@ zaraz.ecommerce('Order Completed', {
   products: [{ product_id: 'SKU123', quantity: 2, price: 49.99 }]
 });
 ```
+
+Event names follow platform conventions (GA4: `sign_up`, FB: `Purchase`, Google Ads: `conversion`).
+Data layer: `window.zaraz.dataLayer = { user_id: '12345', page_type: 'product' }`. Access in triggers: `{{client.__zarazTrack.page_type}}`.
 
 ## Consent Management
 
@@ -55,11 +51,18 @@ zaraz.consent.addEventListener('consentChanged', () => {
 });
 ```
 
-## Triggers
+## Triggers & Patterns
 
-Types: Pageview, DOM Ready, Click (CSS selector), Form submission, Scroll depth (%), Timer, Variable match (custom conditions).
-
+Types: Pageview, DOM Ready, Click (CSS selector), Form, Scroll (%), Timer, Variable match.
 Example: Trigger `Button Click` on `.buy-button` → action `Track event "purchase_intent"`.
+
+```javascript
+// SPA route tracking
+router.afterEach((to) => zaraz.track('pageview', { page_path: to.path, page_title: to.meta.title }));
+// User identification on login
+zaraz.set('user_id', user.id);
+zaraz.track('login', { method: 'password' });
+```
 
 ## Custom Managed Components
 
@@ -75,27 +78,10 @@ export default class CustomAnalytics {
 }
 ```
 
-## Common Patterns
+## Operations & Reference
 
-```javascript
-// SPA route tracking
-router.afterEach((to) => zaraz.track('pageview', { page_path: to.path, page_title: to.meta.title }));
-// User identification on login
-zaraz.set('user_id', user.id);
-zaraz.track('login', { method: 'password' });
-```
-
-For Workers integration, see `cloudflare-workers` skill.
-
-## Privacy & Limits
-
-Automatic IP anonymization, consent-based cookie control, GDPR/CCPA compliant. Tools/events unlimited; request size 100 KB; data retention per tool's policy.
-
-## Debugging
-
-Enable debug: dashboard toggle or `zaraz.debug = true`. Check trigger conditions, tool enabled status, browser console, `zaraz.consent.getAll()` for consent issues.
-
-## Reference
+Automatic IP anonymization, consent-based cookie control, GDPR/CCPA compliant. Unlimited tools/events; 100 KB request limit; data retention per tool policy.
+Enable debug: dashboard toggle or `zaraz.debug = true`. Check triggers, tool status, console, `zaraz.consent.getAll()`.
 
 - [Zaraz Docs](https://developers.cloudflare.com/zaraz/)
 - [Web API](https://developers.cloudflare.com/zaraz/web-api/)
