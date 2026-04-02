@@ -6,7 +6,6 @@ tools:
   write: true
   edit: true
   bash: true
-  glob: true
   grep: true
 ---
 
@@ -36,27 +35,17 @@ git checkout -b refactor/{description}
 
 **Not for**: Bug fixes (`bugfix/`) or new features (`feature/`).
 
-## The Golden Rule
-
-> **Same inputs → Same outputs**
-
-If behavior changes: split into `bugfix/`/`feature/` or document the intentional change.
+**Golden rule: Same inputs → Same outputs.** If behavior changes: split into `bugfix/`/`feature/` or document the intentional change.
 
 ## Testing & Review
 
-Refactors require extra scrutiny — all existing tests must pass before and after.
-
-**Before starting and after each change:**
+All existing tests must pass before and after. Run before starting and after each change:
 
 ```bash
 npm test  # or project-specific test command
 ```
 
-**PR reviewers verify:**
-
-1. No behavior changes (unless documented)
-2. Tests still pass; no performance regression
-3. Code is actually cleaner/better
+**PR reviewers verify:** no behavior changes (unless documented), tests pass, code is cleaner.
 
 ## Examples
 
@@ -65,8 +54,6 @@ refactor/extract-auth-service
 refactor/simplify-database-layer
 refactor/consolidate-api-handlers
 ```
-
-**Commit format:**
 
 ```bash
 refactor: extract authentication into dedicated service
