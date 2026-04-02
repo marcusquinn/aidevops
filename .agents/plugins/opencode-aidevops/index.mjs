@@ -698,16 +698,28 @@ async function toolExecuteBefore(input, output) {
     }
   }
 
-  // Signature footer gate (GH#12805): warn when gh pr create / gh issue create
-  // / gh issue comment is called without the aidevops.sh signature footer.
-  // This is the systemic enforcement — prompt instructions alone are insufficient.
+  // Signature footer gate (GH#12805, t1755): warn when gh pr create / gh issue
+  // create / gh issue comment is called without the aidevops.sh signature footer.
+  // Systemic enforcement — prompt instructions alone are insufficient.
+  // t1755: Reduce false positives — accept footer variable references and exclude
+  // machine protocol comments (DISPATCH_CLAIM, KILL_WORKER, etc.).
   if (isBashTool(input.tool)) {
     const cmd = output.args?.command || "";
     if (/gh\s+(pr\s+create|issue\s+(create|comment))/.test(cmd)) {
-      if (!cmd.includes("aidevops.sh") && !cmd.includes("gh-signature-helper")) {
+      // Machine protocol comments are internal signals, not user-facing content
+      const isMachineProtocol =
+        /DISPATCH_CLAIM|KILL_WORKER|DISPATCH_ACK|<!-- MERGE_SUMMARY -->/.test(cmd);
+      // Direct footer text or helper invocation in the command
+      const hasDirectFooter =
+        cmd.includes("aidevops.sh") || cmd.includes("gh-signature-helper");
+      // Footer stored in a shell variable from a prior command (unexpanded at hook time)
+      const hasFooterVar =
+        /\$\{?(?:SIG_FOOTER|FOOTER|footer|sig_footer|SIGNATURE|signature)\}?/.test(cmd);
+
+      if (!isMachineProtocol && !hasDirectFooter && !hasFooterVar) {
         console.error(
           "[aidevops] SIGNATURE GATE: gh pr/issue command missing aidevops.sh signature footer. " +
-          "Generate with: gh-signature-helper.sh footer --model <model-id>",
+            "Generate with: gh-signature-helper.sh footer --model <model-id>",
         );
         qualityLog("WARN", `Signature footer missing in: ${cmd.substring(0, 120)}`);
       }
