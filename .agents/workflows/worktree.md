@@ -54,8 +54,7 @@ Full Worktrunk docs: `tools/git/worktrunk.md`.
 
 ```bash
 # Hotfix without leaving feature work
-worktree-helper.sh add hotfix/security-patch
-# Fix, commit, push, PR in ~/Git/myrepo-hotfix-security-patch/ — feature worktree unchanged
+worktree-helper.sh add hotfix/security-patch  # ~/Git/myrepo-hotfix-security-patch/ — feature worktree unchanged
 
 # Multiple AI sessions on separate worktrees
 opencode ~/Git/myrepo-feature-auth/    # Session 1
@@ -68,14 +67,14 @@ opencode ~/Git/myrepo-bugfix-login/    # Session 2
 
 **Localdev (t1224.8):** Worktree creation auto-sets branch-specific subdomain routing (`https://feature-auth.myapp.local`) for `localdev add` projects. Removal auto-cleans the route.
 
-**Session recovery:**
+**Session recovery:** Use `session-rename_sync_branch` after creating branches. Check `worktree-sessions.sh list` before closing PRs or deleting branches.
 
 ```bash
 worktree-sessions.sh list   # List worktrees with matching sessions
 worktree-sessions.sh open   # Interactive: select + open
 ```
 
-Use `session-rename_sync_branch` after creating branches. Check `worktree-sessions.sh list` before closing PRs or deleting branches.
+**Worker self-cleanup (GH#6740):** Workers must remove their worktree after PR merge — batch dispatches (50+ workers) accumulate worktrees faster than pulse cleanup. See `full-loop.md` Step 4.8 and `commands/worktree-cleanup.md`.
 
 ## Ownership Safety (t189)
 
@@ -86,10 +85,6 @@ worktree-helper.sh registry list    # View ownership
 worktree-helper.sh registry prune   # Prune stale entries (dead PIDs, missing dirs)
 worktree-helper.sh remove feature/branch --force  # Override ownership (use with caution)
 ```
-
-## Worker Self-Cleanup (GH#6740)
-
-Workers must remove their worktree after PR merge — batch dispatches (50+ workers) accumulate worktrees faster than pulse cleanup. See `full-loop.md` Step 4.8 and `commands/worktree-cleanup.md`.
 
 ## Troubleshooting
 
