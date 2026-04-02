@@ -41,7 +41,7 @@ asc apps list
 
 **If accounts**: Account deletion (required since 2022) · Demo credentials · Sign in with Apple (if any third-party sign-in)
 
-**If payments**: IAP configured in App Store Connect · Subscription terms shown before purchase · Restore purchases button · No external payment links (guideline 3.1.1)
+**If payments**: IAP configured in App Store Connect · Subscription terms shown before purchase · Restore purchases button · External payment links: prohibited by default (guideline 3.1.1), but US storefronts now allow them post-2025 Epic ruling; EU storefronts allow them via StoreKit External Purchase Link Entitlement — verify storefront-specific entitlements in App Store Connect before adding
 
 **If social**: Block/report functionality · Content moderation plan · UGC guidelines
 
@@ -55,7 +55,7 @@ asc apps list
 | Privacy violations | 5.1.1 | Add privacy policy, declare data collection accurately |
 | Misleading description | 2.3.1 | Description must match actual functionality |
 | No account deletion | 5.1.1 | Add in-app account deletion if accounts exist |
-| External payment links | 3.1.1 | Remove links to external payment methods |
+| External payment links | 3.1.1 | Remove unless storefront entitlement granted (US/EU exceptions apply — check App Store Connect) |
 | Minimum functionality | 4.2 | App must provide lasting value beyond a simple website |
 
 ### Screenshot Requirements
