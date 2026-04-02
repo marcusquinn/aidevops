@@ -2,17 +2,11 @@
 
 ## Design Constraints
 
-### CPU Budget
+**CPU Budget:** Standard 10ms, Unbound 30ms. Use `ctx.waitUntil()` for background work, Durable Objects for heavy compute, Workers AI for ML.
 
-Standard: 10ms CPU time. Unbound: 30ms CPU time.
+**No Persistent State:** Workers are stateless between requests. Module-level variables reset unpredictably — store persistent state in KV, D1, or Durable Objects.
 
-Use `ctx.waitUntil()` for background work, Durable Objects for heavy compute, and Workers AI for ML workloads.
-
-### No Persistent State in Worker
-
-Workers are stateless between requests. Module-level variables reset unpredictably, so store persistent state in KV, D1, or Durable Objects.
-
-### Response Bodies Are Streams
+**Response Bodies Are Streams:**
 
 ```typescript
 // ❌ BAD
@@ -27,7 +21,7 @@ await logBody(text);
 return new Response(text, response);
 ```
 
-### No Node.js Built-ins by Default
+**No Node.js Built-ins by Default:**
 
 ```typescript
 // ❌ BAD
@@ -40,7 +34,7 @@ const data = await env.MY_BUCKET.get('file.txt');
 { "compatibility_flags": ["nodejs_compat_v2"] }
 ```
 
-### Fetch in Global Scope Is Forbidden
+**Fetch in Global Scope Is Forbidden:**
 
 ```typescript
 // ❌ BAD
@@ -73,20 +67,11 @@ export default {
 
 ## Common Errors
 
-### "Error: Body has already been used"
-
-- Cause: response body read twice
-- Solution: clone before reading with `response.clone()`
-
-### "Error: Too much CPU time used"
-
-- Cause: exceeded CPU limit
-- Solution: move background work into `ctx.waitUntil()`
-
-### "Error: Subrequest depth limit exceeded"
-
-- Cause: too many nested subrequests
-- Solution: flatten the request chain and use service bindings
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `Body has already been used` | Response body read twice | Clone before reading: `response.clone()` |
+| `Too much CPU time used` | Exceeded CPU limit | Move background work into `ctx.waitUntil()` |
+| `Subrequest depth limit exceeded` | Too many nested subrequests | Flatten request chain, use service bindings |
 
 ## See Also
 
