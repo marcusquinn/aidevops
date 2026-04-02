@@ -1033,9 +1033,21 @@ _clean_build_open_pr_branches() {
 	return 0
 }
 
+# Build newline-delimited list of CLOSED (abandoned, not merged) PR branch names.
+# These are PRs that were closed without merging — the work is abandoned and the
+# worktree is safe to remove. The remote branch may still exist if auto-delete
+# only fires on merge.
+_clean_build_closed_pr_branches() {
+	if command -v gh &>/dev/null; then
+		gh pr list --state closed --limit 200 --json headRefName,mergedAt --jq '[.[] | select(.mergedAt == null)] | .[].headRefName' 2>/dev/null || true
+	fi
+	return 0
+}
+
 # Determine if a worktree entry is merged, and print it if so.
 # Args: $1=wt_path, $2=wt_branch, $3=default_branch, $4=remote_state_unknown,
-#       $5=merged_pr_branches, $6=open_pr_branches, $7=force_merged
+#       $5=merged_pr_branches, $6=open_pr_branches, $7=force_merged,
+#       $8=closed_pr_branches
 # Outputs the merge_type to stdout if merged (caller checks non-empty).
 _clean_classify_worktree() {
 	local wt_path="$1"
@@ -1045,6 +1057,7 @@ _clean_classify_worktree() {
 	local merged_prs="$5"
 	local open_prs="$6"
 	local force_merged="$7"
+	local closed_prs="${8:-}"
 
 	local is_merged=false
 	local merge_type=""
@@ -1068,6 +1081,12 @@ _clean_classify_worktree() {
 	elif [[ -n "$merged_prs" ]] && echo "$merged_prs" | grep -Fxq "$wt_branch"; then
 		is_merged=true
 		merge_type="squash-merged PR"
+	# Check 4: Closed (abandoned) PR — PR was closed without merging.
+	# The remote branch may still exist (auto-delete only fires on merge).
+	# Work is abandoned; worktree is safe to remove.
+	elif [[ -n "$closed_prs" ]] && echo "$closed_prs" | grep -Fxq "$wt_branch"; then
+		is_merged=true
+		merge_type="closed PR"
 	fi
 
 	if [[ "$is_merged" == "false" ]]; then
@@ -1090,7 +1109,8 @@ _clean_classify_worktree() {
 
 # Scan worktrees and print those eligible for cleanup. Returns 0 if any found, 1 if none.
 # Args: $1=default_branch, $2=main_worktree_path, $3=remote_state_unknown,
-#       $4=merged_pr_branches, $5=open_pr_branches, $6=force_merged
+#       $4=merged_pr_branches, $5=open_pr_branches, $6=force_merged,
+#       $7=closed_pr_branches
 _clean_scan_merged() {
 	local default_br="$1"
 	local main_wt_path="$2"
@@ -1098,6 +1118,7 @@ _clean_scan_merged() {
 	local merged_prs="$4"
 	local open_prs="$5"
 	local force_merged="$6"
+	local closed_prs="${7:-}"
 
 	local found_any=false
 	local worktree_path=""
@@ -1111,7 +1132,7 @@ _clean_scan_merged() {
 		elif [[ -z "$line" ]]; then
 			if [[ -n "$worktree_branch" ]] && [[ "$worktree_branch" != "$default_br" ]] && [[ "$worktree_path" != "$main_wt_path" ]]; then
 				local merge_type
-				merge_type=$(_clean_classify_worktree "$worktree_path" "$worktree_branch" "$default_br" "$remote_unknown" "$merged_prs" "$open_prs" "$force_merged")
+				merge_type=$(_clean_classify_worktree "$worktree_path" "$worktree_branch" "$default_br" "$remote_unknown" "$merged_prs" "$open_prs" "$force_merged" "$closed_prs")
 				if [[ -n "$merge_type" ]]; then
 					found_any=true
 					echo -e "  ${YELLOW}$worktree_branch${NC} ($merge_type)"
@@ -1133,7 +1154,8 @@ _clean_scan_merged() {
 
 # Remove worktrees that are eligible for cleanup (second pass after user confirmation).
 # Args: $1=default_branch, $2=main_worktree_path, $3=remote_state_unknown,
-#       $4=merged_pr_branches, $5=open_pr_branches, $6=force_merged
+#       $4=merged_pr_branches, $5=open_pr_branches, $6=force_merged,
+#       $7=closed_pr_branches
 _clean_remove_merged() {
 	local default_br="$1"
 	local main_wt_path="$2"
@@ -1141,6 +1163,7 @@ _clean_remove_merged() {
 	local merged_prs="$4"
 	local open_prs="$5"
 	local force_merged="$6"
+	local closed_prs="${7:-}"
 
 	local worktree_path=""
 	local worktree_branch=""
@@ -1153,7 +1176,7 @@ _clean_remove_merged() {
 		elif [[ -z "$line" ]]; then
 			if [[ -n "$worktree_branch" ]] && [[ "$worktree_branch" != "$default_br" ]] && [[ "$worktree_path" != "$main_wt_path" ]]; then
 				local merge_type
-				merge_type=$(_clean_classify_worktree "$worktree_path" "$worktree_branch" "$default_br" "$remote_unknown" "$merged_prs" "$open_prs" "$force_merged")
+				merge_type=$(_clean_classify_worktree "$worktree_path" "$worktree_branch" "$default_br" "$remote_unknown" "$merged_prs" "$open_prs" "$force_merged" "$closed_prs")
 				if [[ -n "$merge_type" ]]; then
 					local use_force=false
 					if worktree_has_changes "$worktree_path" && [[ "$force_merged" == "true" ]]; then
@@ -1245,8 +1268,13 @@ cmd_clean() {
 	local open_pr_branches
 	open_pr_branches=$(_clean_build_open_pr_branches)
 
+	# Closed (abandoned) PRs: closed without merging. Remote branch may linger
+	# because auto-delete only fires on merge.
+	local closed_pr_branches
+	closed_pr_branches=$(_clean_build_closed_pr_branches)
+
 	# First pass: scan and display merged worktrees
-	if ! _clean_scan_merged "$default_branch" "$main_worktree_path" "$remote_state_unknown" "$merged_pr_branches" "$open_pr_branches" "$force_merged"; then
+	if ! _clean_scan_merged "$default_branch" "$main_worktree_path" "$remote_state_unknown" "$merged_pr_branches" "$open_pr_branches" "$force_merged" "$closed_pr_branches"; then
 		echo -e "${GREEN}No merged worktrees to clean up${NC}"
 		return 0
 	fi
@@ -1262,7 +1290,7 @@ cmd_clean() {
 
 	if [[ "$response" =~ ^[Yy]$ ]]; then
 		# Second pass: remove merged worktrees
-		_clean_remove_merged "$default_branch" "$main_worktree_path" "$remote_state_unknown" "$merged_pr_branches" "$open_pr_branches" "$force_merged"
+		_clean_remove_merged "$default_branch" "$main_worktree_path" "$remote_state_unknown" "$merged_pr_branches" "$open_pr_branches" "$force_merged" "$closed_pr_branches"
 		echo -e "${GREEN}Cleanup complete${NC}"
 	else
 		echo "Cancelled"
