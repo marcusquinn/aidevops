@@ -1,6 +1,6 @@
 # GEO Patterns
 
-Use these for AI assistants such as ChatGPT, Claude, Perplexity, and Gemini.
+Content patterns optimised for AI assistant citation (ChatGPT, Claude, Perplexity, Gemini).
 
 ## Citation Patterns
 
@@ -37,7 +37,7 @@ Use for `site:yourdomain.com [category] features [year]` queries.
 - G2: [profile URL with UTM]  |  Capterra: [profile URL with UTM]
 ```
 
-Mirror facts on the product page and third-party profiles, use `utm_source=g2`, `utm_medium=referral`, and `utm_campaign=ai_citation`, and review freshness monthly.
+Mirror facts across product page and third-party profiles. UTM: `utm_source=g2&utm_medium=referral&utm_campaign=ai_citation`. Review freshness monthly.
 
 ### Site-Searchable Variant
 
