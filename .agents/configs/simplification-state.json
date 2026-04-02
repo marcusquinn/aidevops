@@ -1477,49 +1477,49 @@
       "pr": 12117
     },
     ".agents/services/hosting/cloudflare-platform-skill/pulumi-gotchas.md": {
-      "hash": "733d3525cbf26277967990e47a34c41691036be8",
-      "at": "2026-03-31T07:50:54Z",
-      "pr": 14717
+      "hash": "6f21e87db5f7073e6e3c7c58bcd200553f1362bd",
+      "at": "2026-04-02T00:00:00Z",
+      "pr": 14797
     },
     ".agents/services/hosting/cloudflare-platform-skill/pulumi-gotchas/best-practices.md": {
-      "hash": "785bdeaad722d0f542517cebae0f89e8f6828e73",
-      "at": "2026-03-31T07:50:54Z",
-      "pr": 14717
+      "hash": "94e4a09c8278ba5e5eb4cb44aeadc6a0eb6a53ad",
+      "at": "2026-04-02T00:00:00Z",
+      "pr": 14797
     },
     ".agents/services/hosting/cloudflare-platform-skill/pulumi-gotchas/ci-cd.md": {
-      "hash": "93baaad7916863404459e50d80bfbba593f30589",
-      "at": "2026-03-31T07:50:54Z",
-      "pr": 14717
+      "hash": "c38803612f71b78dc90e51b279452e6b51f0e383",
+      "at": "2026-04-02T00:00:00Z",
+      "pr": 14797
     },
     ".agents/services/hosting/cloudflare-platform-skill/pulumi-gotchas/common-errors.md": {
-      "hash": "97c3a7d841885f7124cda4603bc4f24f25394771",
-      "at": "2026-03-31T07:50:54Z",
-      "pr": 14717
+      "hash": "4199ffb5b63b069ddb8b3ad8508dba6b7d72e699",
+      "at": "2026-04-02T00:00:00Z",
+      "pr": 14797
     },
     ".agents/services/hosting/cloudflare-platform-skill/pulumi-gotchas/debugging.md": {
-      "hash": "bf9eb0a6805213c30a476ba1a193467d85f8a0b7",
-      "at": "2026-03-31T07:50:54Z",
-      "pr": 14717
+      "hash": "197b920049e040bf81b6295e8bf760732130c5a9",
+      "at": "2026-04-02T00:00:00Z",
+      "pr": 14797
     },
     ".agents/services/hosting/cloudflare-platform-skill/pulumi-gotchas/migration.md": {
-      "hash": "eb8f44407cfde984193f403d441a2f080f32db71",
-      "at": "2026-03-31T07:50:54Z",
-      "pr": 14717
+      "hash": "c32415af75bf1288b0d52d7a8765b4e864292fab",
+      "at": "2026-04-02T00:00:00Z",
+      "pr": 14797
     },
     ".agents/services/hosting/cloudflare-platform-skill/pulumi-gotchas/performance.md": {
-      "hash": "1f2ca15e1758f9c72bf63021b81902c746f08a5d",
-      "at": "2026-03-31T07:50:54Z",
-      "pr": 14717
+      "hash": "79b4e58a49cf10008f774b3dd7f92e1301dae3eb",
+      "at": "2026-04-02T00:00:00Z",
+      "pr": 14797
     },
     ".agents/services/hosting/cloudflare-platform-skill/pulumi-gotchas/resources.md": {
-      "hash": "3459fb86214d51707322f38fc1de4c32ca7434a0",
-      "at": "2026-03-31T07:50:54Z",
-      "pr": 14717
+      "hash": "f54dc9504f5d680aa797a4677fa8d6955531aa73",
+      "at": "2026-04-02T00:00:00Z",
+      "pr": 14797
     },
     ".agents/services/hosting/cloudflare-platform-skill/pulumi-gotchas/security.md": {
-      "hash": "8225af6a25a3cbad5d152becfc7be32b66146897",
-      "at": "2026-03-31T07:50:54Z",
-      "pr": 14717
+      "hash": "12f54c4e7de2db16e3bed2fc32c1288ad551ef5d",
+      "at": "2026-04-02T00:00:00Z",
+      "pr": 14797
     },
     ".agents/scripts/framework-issue-helper.sh": {
       "hash": "a53fde8f11aabd50fbda03386f967721d987e07a",
