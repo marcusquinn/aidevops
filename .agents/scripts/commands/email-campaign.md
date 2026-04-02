@@ -10,19 +10,11 @@ Arguments: $ARGUMENTS
 
 ## Workflow
 
-### Step 1: Parse Campaign Intent
+**Step 1 — Parse intent:** Extract campaign type (`newsletter`, `broadcast`, `sequence`), action (`create`, `schedule`, `send`, `pause`, `status`, `analytics`), and optional audience segment. If type is missing, request it.
 
-Parse `$ARGUMENTS` into campaign type (`newsletter`, `broadcast`, `sequence`, `help`), action (`create`, `schedule`, `send`, `pause`, `status`, `analytics`), and optional audience segment/tag filter.
+**Step 2 — Validate inputs:** For create/schedule/send confirm: subject + preview text, audience segment, single primary CTA, send window/timezone, compliance footer + unsubscribe handling.
 
-If campaign type is missing, request it and show examples.
-
-### Step 2: Validate Required Inputs
-
-For create/schedule/send, confirm: subject line + preview text, audience segment/list, single primary CTA, send window/timezone, compliance footer + unsubscribe handling.
-
-Run preflight checks on content and delivery readiness before sending.
-
-### Step 3: Execute Campaign Operation
+**Step 3 — Execute:**
 
 ```bash
 # Create campaign draft
@@ -31,28 +23,17 @@ Run preflight checks on content and delivery readiness before sending.
 # Content and infrastructure preflight
 ~/.aidevops/agents/scripts/email-health-check-helper.sh precheck "$DOMAIN" "$HTML_FILE"
 
-# Delivery readiness checks
+# Delivery readiness
 ~/.aidevops/agents/scripts/email-delivery-test-helper.sh report "$DOMAIN"
 ```
 
 CRM-first operations (segmentation, automations, broadcasts) → route to configured CRM tooling flow.
 
-### Step 4: Return Campaign Report
+**Step 4 — Report:** campaign type/ID/state, segment size + send count, send window/cadence, key metrics (open, click, reply, unsubscribe, spam complaint), recommended optimization action.
 
-Include: campaign type/ID/state, segment size + send count, send window/cadence, key metrics (open, click, reply, unsubscribe, spam complaint), recommended optimization action.
+**Step 5 — Follow-up options:** A/B test subject lines · re-segment non-openers · tune CTA · schedule next in sequence · export performance summary.
 
-### Step 5: Offer Follow-up Actions
-
-```text
-Actions:
-1. A/B test two subject lines
-2. Re-segment non-openers for resend
-3. Tune CTA placement and copy
-4. Schedule next campaign in sequence
-5. Export campaign performance summary
-```
-
-## Options
+## Commands
 
 | Command | Purpose |
 |---------|---------|
@@ -61,41 +42,6 @@ Actions:
 | `/email-campaign sequence status seq_77` | Show sequence state and progress |
 | `/email-campaign newsletter analytics campaign_101` | Show campaign metrics snapshot |
 | `/email-campaign broadcast pause campaign_101` | Pause pending or active campaign |
-
-## Examples
-
-**Create and schedule newsletter:**
-
-```text
-User: /email-campaign newsletter create "Friday Product Brief"
-AI: Creating newsletter campaign draft...
-
-    Campaign: Friday Product Brief (camp_101)
-    Type: Newsletter
-    Segment: Engaged subscribers (8,420 contacts)
-    State: Draft
-
-    Next steps:
-    1. Run precheck on content and domain
-    2. Schedule send window (Tue-Thu 09:00-11:00 local)
-```
-
-**Analytics review:**
-
-```text
-User: /email-campaign newsletter analytics camp_101
-AI: Campaign analytics for camp_101:
-
-    Delivered: 8,297
-    Open rate: 37.2%
-    Click rate: 4.8%
-    Reply rate: 1.3%
-    Unsubscribe: 0.21%
-    Complaints: 0.03%
-
-    Recommendation:
-    Keep audience/offer stable and test two new subject lines next send
-```
 
 ## Related
 
