@@ -22,7 +22,7 @@ tools:
 - **Trigger**: Session end, user correction, observable failure, periodic maintenance
 - **Output**: Proposed improvements with evidence and scope
 
-**Review Checklist**: (1) Instruction count (<50 main, <100 subagent). (2) Universal applicability (>80% tasks). (3) Duplicate detection (`rg "pattern" .agents/`). (4) Code examples (authoritative/working). (5) AI-CONTEXT block (standalone essentials). (6) Slash commands (in `scripts/commands/`).
+**Review Checklist**: (1) Instruction count (~50-100 main, <100 subagent). (2) Universal applicability (>80% tasks). (3) Duplicate detection (`rg "pattern" .agents/`). (4) Code examples (authoritative/working). (5) AI-CONTEXT block (standalone essentials). (6) Slash commands (in `scripts/commands/`).
 
 **Self-Assessment Triggers**: User correction, command/path failure, contradiction, staleness.
 
@@ -43,7 +43,7 @@ Suggest `@agent-review` at session end, after user corrections, observable failu
 | 1 | **Instruction count** | Consolidate, move to subagent, or remove |
 | 2 | **Universal applicability** | Extract task-specific content to subagents |
 | 3 | **Duplicate detection** | Single authoritative source per concept |
-| 4 | **Code examples** | Replace with search-pattern reference if possible |
+| 4 | **Code examples** | Keep authoritative examples; add search-pattern reference only as supplement |
 | 5 | **AI-CONTEXT block** | Rewrite if an AI would get stuck with only this |
 | 6 | **Slash commands** | Move to `scripts/commands/` or domain subagent |
 
@@ -63,7 +63,7 @@ Suggest `@agent-review` at session end, after user corrections, observable failu
 
 - **Consolidating**: Merge redundant rules (e.g., `local var="$1"` for all parameters).
 - **Moving to subagent**: Replace inline rules with pointers (e.g., `See aidevops/architecture.md`).
-- **Replacing code with reference**: Use `rg "pattern" .agents/scripts/` instead of inline blocks.
+- **Replacing code with reference**: Pair `rg "pattern" .agents/scripts/` with minimal authoritative examples, not as a full replacement.
 
 ## Contributing
 
