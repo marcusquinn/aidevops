@@ -662,8 +662,13 @@ _remove_validate_path() {
 	local path_to_remove="$1"
 
 	# Don't allow removing main worktree
-	local main_worktree
-	main_worktree=$(git worktree list --porcelain | head -1 | cut -d' ' -f2-)
+	# NOTE: avoid piping git worktree list through head — with set -o pipefail
+	# and many worktrees, head closes the pipe early, git gets SIGPIPE (exit 141),
+	# and pipefail propagates the failure causing set -e to abort the script.
+	local _porcelain main_worktree
+	_porcelain=$(git worktree list --porcelain)
+	main_worktree="${_porcelain%%$'\n'*}"      # first line
+	main_worktree="${main_worktree#worktree }" # strip prefix
 	if [[ "$path_to_remove" == "$main_worktree" ]]; then
 		echo -e "${RED}Error: Cannot remove main worktree${NC}"
 		return 1
@@ -1220,8 +1225,12 @@ cmd_clean() {
 
 	# Identify the main worktree path — must never be cleaned up.
 	# The first entry in `git worktree list --porcelain` is always the main worktree.
-	local main_worktree_path
-	main_worktree_path=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
+	# NOTE: avoid piping through head — with set -o pipefail and many worktrees,
+	# head closes the pipe early → git SIGPIPE (exit 141) → pipefail → set -e abort.
+	local _porcelain main_worktree_path
+	_porcelain=$(git worktree list --porcelain)
+	main_worktree_path="${_porcelain%%$'\n'*}"           # first line
+	main_worktree_path="${main_worktree_path#worktree }" # strip prefix
 
 	# Fetch to get current remote branch state (detects deleted branches)
 	# Prune all remotes, not just origin (GH#3797)
