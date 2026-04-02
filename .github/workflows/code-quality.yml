@@ -16,6 +16,53 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Cross-platform shellcheck: catches macOS-only assumptions in shell scripts
+  # (t1748: Linux/WSL2 platform support)
+  cross-platform-shellcheck:
+    name: ShellCheck (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+      fail-fast: false
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+    - name: Install ShellCheck (macOS)
+      if: runner.os == 'macOS'
+      run: brew install shellcheck
+
+    - name: ShellCheck (cross-platform)
+      run: |
+        echo "Running ShellCheck on ${{ matrix.os }}..."
+        source .agents/scripts/lint-file-discovery.sh
+        lint_shell_files
+        errors=0
+        while IFS= read -r file; do
+          [ -n "$file" ] || continue
+          if shellcheck -S error "$file" > /dev/null 2>&1; then
+            echo "OK $file"
+          else
+            echo "FAIL $file"
+            shellcheck -S error -f gcc "$file" 2>&1
+            errors=$((errors + 1))
+          fi
+        done <<< "$LINT_SH_FILES"
+        if [ "$errors" -gt 0 ]; then
+          echo ""
+          echo "$errors script(s) failed ShellCheck on ${{ matrix.os }}"
+          exit 1
+        fi
+        echo "All shell scripts passed ShellCheck on ${{ matrix.os }}"
+
+    - name: Platform detection smoke test
+      run: |
+        echo "Testing platform-detect.sh on ${{ matrix.os }}..."
+        bash .agents/scripts/platform-detect.sh
+        echo "Platform detection: OK"
+
   framework-validation:
     name: Framework Validation
     runs-on: ubuntu-latest
