@@ -1,4 +1,11 @@
 {
+  ".agents/scripts/commands/email-design-test.md": {
+    "hash": "26ddaca5f452dc780a671998a856a009b78d4174aff92160b21ed6874f617ff0",
+    "issue": "GH#15034",
+    "lines": 39,
+    "simplified_at": "2026-04-02",
+    "status": "simplified"
+  },
   ".agents/tools/video/remotion-lottie.md": {
     "hash": "a820978d45af76119342be368db8358e40a9d082e44fa560080964b34b61c182",
     "issue": "GH#15459",

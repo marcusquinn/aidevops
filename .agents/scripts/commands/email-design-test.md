@@ -1,53 +1,39 @@
 ---
-description: Test email design locally and via Email on Acid API for real-client rendering
+description: Test email design locally and via Email on Acid (EOA) API
 agent: Build+
 mode: subagent
 ---
 
-Run local email design tests (HTML, CSS, accessibility, images, links) and optionally submit to Email on Acid (EOA) for real-client rendering.
+Run local email design tests (HTML, CSS, accessibility, images, links) and optionally submit to EOA for real-client rendering.
 
 Arguments: $ARGUMENTS
 
 ## Dispatch
 
-Parse `$ARGUMENTS`: HTML file path → local tests; `eoa` prefix → EOA API commands; empty/help → show usage.
+Parse `$ARGUMENTS`: HTML path → local tests; `eoa` prefix → EOA API; empty/help → usage.
 
-**Local tests (no API key):**
-
-```bash
-~/.aidevops/agents/scripts/email-design-test-helper.sh test "$ARGUMENTS"
-```
-
-**Full EOA test (local + API rendering):**
-
-```bash
-~/.aidevops/agents/scripts/email-design-test-helper.sh eoa-test "$ARGUMENTS"
-```
-
-**Sandbox mode (no API key):**
-
-```bash
-~/.aidevops/agents/scripts/email-design-test-helper.sh eoa-sandbox "$ARGUMENTS"
-```
+- **Local (no API key):** `~/.aidevops/agents/scripts/email-design-test-helper.sh test "$ARGUMENTS"`
+- **Full EOA (API):** `~/.aidevops/agents/scripts/email-design-test-helper.sh eoa-test "$ARGUMENTS"`
+- **Sandbox (no API key):** `~/.aidevops/agents/scripts/email-design-test-helper.sh eoa-sandbox "$ARGUMENTS"`
 
 ## Output
 
-Present results as a report: local test results (HTML, CSS, dark mode, responsive, accessibility, images, links), EOA screenshots grouped by client category, issues with severity, actionable recommendations.
+Report: local results (HTML/CSS/dark/responsive/a11y/images/links), EOA screenshots (grouped by client), issues by severity, recommendations.
 
-Follow-up actions: full health check (`email-health-check-helper.sh`), view client screenshot, reprocess failures, get inlined CSS, run delivery/placement tests.
+Follow-up: `email-health-check-helper.sh`, view screenshot, reprocess failures, get inlined CSS, delivery/placement tests.
 
 ## Commands
 
 | Command | Purpose |
 |---------|---------|
-| `/email-design-test newsletter.html` | Local design tests only |
-| `/email-design-test eoa-sandbox newsletter.html` | Sandbox test (no API key) |
-| `/email-design-test eoa-test newsletter.html "Subject" outlook16,gmail_chr26_win` | Full EOA test with specific clients |
-| `/email-design-test eoa-results abc123` | Get results for existing test |
+| `/email-design-test file.html` | Local design tests only |
+| `/email-design-test eoa-sandbox file.html` | Sandbox test (no API key) |
+| `/email-design-test eoa-test file.html "Subj" c1,c2` | Full EOA test (specific clients) |
+| `/email-design-test eoa-results ID` | Get results for existing test |
 | `/email-design-test eoa-clients` | List available email clients |
 
 ## Related
 
-- `services/email/email-design-test.md` - Full documentation
-- `services/email/email-testing.md` - Design rendering + delivery testing
-- `services/email/email-health-check.md` - DNS authentication checks
+- `services/email/email-design-test.md` (Full docs)
+- `services/email/email-testing.md` (Rendering + delivery)
+- `services/email/email-health-check.md` (DNS/Auth)
