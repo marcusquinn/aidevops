@@ -15,13 +15,7 @@ tools:
 
 # Meta Creator
 
-Generates optimised meta titles and descriptions that maximise click-through rates in search results.
-
-## Quick Reference
-
-- **Purpose**: Create meta title and description variations for A/B testing
-- **Input**: Article content, primary keyword, target audience
-- **Output**: 5 title + 5 description variations with SERP preview
+Generates 5 title + 5 description variations with SERP preview for A/B testing. Input: article content, primary keyword, target audience.
 
 ## Meta Title Guidelines
 
@@ -31,6 +25,7 @@ Generates optimised meta titles and descriptions that maximise click-through rat
 | Keyword | Include primary keyword, preferably near start |
 | Brand | Append brand name with separator if space allows |
 | Format | Use numbers, power words, or brackets for CTR |
+| Power words | Urgency: Essential, Critical; Value: Ultimate, Proven; Specificity: Step-by-Step, [Number]+, [Year]; Curiosity: Surprising, Secret |
 | Uniqueness | Each page needs a unique title |
 
 ### Title Formulas
@@ -42,13 +37,6 @@ Generates optimised meta titles and descriptions that maximise click-through rat
 5. **Comparison**: "[Option A] vs [Option B]: [Differentiator]"
 6. **Benefit**: "[Keyword] That [Specific Benefit]"
 
-### Power Words for CTR
-
-- Urgency: Essential, Critical, Must-Know
-- Value: Complete, Ultimate, Proven, Expert
-- Specificity: Step-by-Step, [Number]+, [Year]
-- Curiosity: Surprising, Little-Known, Secret
-
 ## Meta Description Guidelines
 
 | Rule | Requirement |
@@ -59,13 +47,9 @@ Generates optimised meta titles and descriptions that maximise click-through rat
 | Unique | Summarise page content specifically |
 | Active voice | Direct, action-oriented language |
 
-### Description Formula
-
-`[What the page covers] + [Key benefit/differentiator] + [CTA or value hook]`
+Formula: `[What the page covers] + [Key benefit/differentiator] + [CTA or value hook]`
 
 ## Output Format
-
-For each article, provide:
 
 ```markdown
 ## Meta Elements
@@ -87,12 +71,9 @@ For each article, provide:
 
 ## Validation
 
-Check each option against:
-
 - [ ] Title 50-60 characters
 - [ ] Description 150-160 characters
-- [ ] Primary keyword in title
-- [ ] Primary keyword in description
+- [ ] Primary keyword in title and description
 - [ ] No duplicate titles across site
 - [ ] Matches search intent
 - [ ] Includes CTA or value hook
