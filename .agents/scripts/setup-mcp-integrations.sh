@@ -431,14 +431,9 @@ install_mcp() {
 	return 0
 }
 
-# Create MCP configuration templates
-create_config_templates() {
-	print_header "Creating MCP Configuration Templates"
-
-	local config_dir="configs/mcp-templates"
-	mkdir -p "$config_dir"
-
-	# Chrome DevTools template
+# Write chrome-devtools MCP config template
+_write_chrome_devtools_template() {
+	local config_dir="$1"
 	cat >"$config_dir/chrome-devtools.json" <<'EOF'
 {
   "mcpServers": {
@@ -454,11 +449,14 @@ create_config_templates() {
       ]
     }
   }
-    return 0
 }
 EOF
+	return 0
+}
 
-	# Playwright template
+# Write playwright MCP config template
+_write_playwright_template() {
+	local config_dir="$1"
 	cat >"$config_dir/playwright.json" <<'EOF'
 {
   "mcpServers": {
@@ -469,8 +467,12 @@ EOF
   }
 }
 EOF
+	return 0
+}
 
-	# Stagehand JavaScript template
+# Write stagehand JavaScript MCP config template
+_write_stagehand_js_template() {
+	local config_dir="$1"
 	cat >"$config_dir/stagehand.json" <<'EOF'
 {
   "mcpServers": {
@@ -489,8 +491,12 @@ EOF
   }
 }
 EOF
+	return 0
+}
 
-	# Stagehand Python template
+# Write stagehand Python MCP config template
+_write_stagehand_python_template() {
+	local config_dir="$1"
 	cat >"$config_dir/stagehand-python.json" <<'EOF'
 {
   "mcpServers": {
@@ -510,8 +516,12 @@ EOF
   }
 }
 EOF
+	return 0
+}
 
-	# Combined Stagehand template
+# Write combined stagehand (JS + Python) MCP config template
+_write_stagehand_both_template() {
+	local config_dir="$1"
 	cat >"$config_dir/stagehand-both.json" <<'EOF'
 {
   "mcpServers": {
@@ -542,6 +552,21 @@ EOF
   }
 }
 EOF
+	return 0
+}
+
+# Create MCP configuration templates
+create_config_templates() {
+	print_header "Creating MCP Configuration Templates"
+
+	local config_dir="configs/mcp-templates"
+	mkdir -p "$config_dir"
+
+	_write_chrome_devtools_template "$config_dir"
+	_write_playwright_template "$config_dir"
+	_write_stagehand_js_template "$config_dir"
+	_write_stagehand_python_template "$config_dir"
+	_write_stagehand_both_template "$config_dir"
 
 	print_success "Configuration templates created in $config_dir/"
 	return 0
