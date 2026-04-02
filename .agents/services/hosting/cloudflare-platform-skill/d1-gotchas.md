@@ -35,7 +35,7 @@ EXPLAIN QUERY PLAN SELECT * FROM users WHERE email = ?;  -- Check for "USING IND
 CREATE INDEX idx_users_email ON users(email);  -- Add if missing
 ```
 
-Monitor query performance via `meta.duration`, add indexes on frequently queried columns, and break long work into smaller queries instead of long transactions.
+Monitor query performance via `meta.duration`, add indexes on frequently queried columns, and split long transactions into smaller queries.
 
 ## Common Errors
 
@@ -52,7 +52,7 @@ Monitor query performance via `meta.duration`, add indexes on frequently queried
 | Query timeout | 30s | Break long queries into smaller chunks |
 | Batch size | 10,000 statements | Split large batches |
 
-Avoid a single large database when horizontal partitioning fits the workload better.
+Prefer horizontal partitioning (multiple small DBs per tenant) over a single large database.
 
 ## Local vs Remote
 
@@ -63,14 +63,3 @@ Local D1 uses `.wrangler/state/v3/d1/<database-id>.sqlite`. Test migrations loca
 - **Boolean:** SQLite uses `INTEGER` (`0`/`1`), not a native boolean. Bind `1` or `0`, not `true`/`false`.
 - **Date/time:** Use `TEXT` (ISO 8601) or `INTEGER` (Unix timestamp), not native `DATE`/`TIME`.
 
-## Operating Rules
-
-- ✅ Use prepared statements with `bind()`.
-- ✅ Create indexes on frequently queried columns.
-- ✅ Use `batch()` for multiple queries to reduce latency.
-- ✅ Design for horizontal scaling with multiple small DBs when needed.
-- ✅ Test migrations locally before applying remotely.
-- ✅ Monitor query performance via `meta.duration`.
-- ❌ Don't store binary data directly in D1; use R2 for blobs.
-- ❌ Don't rely on a single large database as the default scaling plan.
-- ❌ Don't run long transactions; the timeout is `30s`.
