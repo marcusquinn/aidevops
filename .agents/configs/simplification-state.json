@@ -4515,6 +4515,13 @@
       "at": "2026-04-02T00:00:00Z",
       "pr": 0,
       "passes": 1
+    },
+    ".agents/content/social-reddit.md": {
+      "hash": "075713dfdeacce388604098177afb0bd5f9d94df9549ceb6d0da9241f610001b",
+      "issue": "GH#16374",
+      "at": "2026-04-03T00:00:00Z",
+      "pr": 0,
+      "passes": 1
     }
   }
 }
