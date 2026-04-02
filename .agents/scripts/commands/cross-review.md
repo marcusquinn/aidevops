@@ -10,44 +10,20 @@ Target: $ARGUMENTS
 
 ## Instructions
 
-1. Parse the user's arguments. Common forms:
-
-   ```bash
-   /cross-review "review this PR diff" --models sonnet,opus
-   /cross-review "audit this code" --models sonnet,gemini-pro,gpt-4.1 --score
-   /cross-review "design this API" --score --judge opus
-   ```
+1. Parse `$ARGUMENTS` — extract `--prompt`, `--models`, `--score`, `--judge`, `--timeout`.
 
 2. Run the cross-review:
 
    ```bash
-   # Basic cross-review (diff only)
-   ~/.aidevops/agents/scripts/compare-models-helper.sh cross-review \
-     --prompt "your prompt here" \
-     --models "sonnet,opus"
-
-   # With auto-scoring via judge model (default judge: opus)
-   ~/.aidevops/agents/scripts/compare-models-helper.sh cross-review \
-     --prompt "your prompt here" \
-     --models "sonnet,gemini-pro,gpt-4.1" \
-     --score
-
-   # With custom judge model
    ~/.aidevops/agents/scripts/compare-models-helper.sh cross-review \
      --prompt "your prompt here" \
      --models "sonnet,opus" \
-     --score --judge sonnet
+     [--score] [--judge sonnet]
    ```
 
-3. Present the results:
-   - Show each model's response summary
-   - Show the diff between responses (for 2-model comparisons)
-   - If `--score` was used, show the judge's structured scores and winner declaration
-   - Note any models that failed to respond
+3. Present results: each model's response summary, diff (2-model comparisons), judge scores and winner if `--score` used, note any failures.
 
-4. If `--score` was used, scores are automatically:
-   - Recorded in the model-comparisons SQLite DB
-   - Fed into the pattern tracker for model routing (`/route`, `/patterns`)
+4. If `--score` used, scores are recorded in the model-comparisons SQLite DB and fed into the pattern tracker (`/route`, `/patterns`).
 
 ## Options
 
