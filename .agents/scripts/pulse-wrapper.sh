@@ -7413,18 +7413,34 @@ main() {
 	run_stage_with_timeout "deterministic_merge_pass" "$PRE_RUN_STAGE_TIMEOUT" \
 		merge_ready_prs_all_repos || true
 
+	# Deterministic fill floor runs EVERY cycle — before the LLM session,
+	# not after. This ensures workers are dispatched every 2-min cycle
+	# regardless of whether the LLM supervisor is running.
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Stop flag appeared — skipping deterministic fill floor" >>"$LOGFILE"
+	else
+		apply_deterministic_fill_floor
+	fi
+
+	# Write structured health snapshot for instant diagnosis (GH#15107)
+	write_pulse_health_file || true
+
+	# Release the instance lock BEFORE the LLM session so the next 2-min
+	# cycle can run deterministic ops (merge pass + fill floor) concurrently.
+	# The LLM session is protected by its own stall/daily-sweep gating,
+	# and workers are protected by 7-layer dedup guards (assignee labels,
+	# DISPATCH_CLAIM comments, ledger checks). No risk of duplication.
+	release_instance_lock
+
 	# Conditional LLM supervisor: the deterministic layer (merge pass, fill
 	# floor, stalled worker cleanup) handles the common case every cycle.
 	# The LLM supervisor adds value only for edge cases (CHANGES_REQUESTED
 	# PRs, external contributor triage, semantic dedup, stale coaching).
 	#
 	# Skip the LLM session unless:
-	#   1. Backlog is stalled (issue+PR count unchanged for 30+ min)
+	#   1. Backlog is stalled (issue+PR count unchanged for PULSE_LLM_STALL_THRESHOLD)
 	#   2. Daily sweep is due (last LLM run was >24h ago)
 	#   3. PULSE_FORCE_LLM=1 is set (manual override)
-	#
-	# This saves ~80% of supervisor tokens while maintaining identical
-	# dispatch and merge throughput.
 	#
 	# Trigger mode routing (GH#15287):
 	#   daily_sweep → /pulse-sweep (full edge-case triage, quality review, mission awareness)
@@ -7435,45 +7451,43 @@ main() {
 		skip_llm=true
 		echo "[pulse-wrapper] Skipping LLM supervisor (backlog progressing, daily sweep not due)" >>"$LOGFILE"
 	else
-		# Read the trigger mode written by _should_run_llm_supervisor
 		if [[ -f "${PULSE_DIR}/llm_trigger_mode" ]]; then
 			llm_trigger_mode=$(cat "${PULSE_DIR}/llm_trigger_mode" 2>/dev/null) || llm_trigger_mode="stall"
 		fi
-		# PULSE_FORCE_LLM=1 defaults to daily_sweep (full triage)
 		if [[ "${PULSE_FORCE_LLM:-0}" == "1" && "$llm_trigger_mode" == "stall" ]]; then
 			llm_trigger_mode="daily_sweep"
 		fi
 	fi
 
-	local pulse_duration=0
 	if [[ "$skip_llm" == "false" ]]; then
-		local underfill_output
-		underfill_output=$(_compute_initial_underfill)
-		local initial_underfilled_mode initial_underfill_pct
-		initial_underfilled_mode=$(echo "$underfill_output" | sed -n '1p')
-		initial_underfill_pct=$(echo "$underfill_output" | sed -n '2p')
+		# Use a separate LLM lock so only one LLM session runs at a time,
+		# without blocking the deterministic 2-min cycle.
+		local llm_lockdir="${LOCKDIR}.llm"
+		if mkdir "$llm_lockdir" 2>/dev/null; then
+			echo "$$" >"${llm_lockdir}/pid" 2>/dev/null || true
+			# shellcheck disable=SC2064
+			trap "rm -rf '$llm_lockdir' 2>/dev/null" EXIT
 
-		local pulse_start_epoch
-		pulse_start_epoch=$(date +%s)
-		run_pulse "$initial_underfilled_mode" "$initial_underfill_pct" "$llm_trigger_mode"
-		local pulse_end_epoch
-		pulse_end_epoch=$(date +%s)
-		pulse_duration=$((pulse_end_epoch - pulse_start_epoch))
+			local underfill_output
+			underfill_output=$(_compute_initial_underfill)
+			local initial_underfilled_mode initial_underfill_pct
+			initial_underfilled_mode=$(echo "$underfill_output" | sed -n '1p')
+			initial_underfill_pct=$(echo "$underfill_output" | sed -n '2p')
 
-		# Record LLM run timestamp for staleness tracking
-		date +%s >"${PULSE_DIR}/last_llm_run_epoch"
+			local pulse_start_epoch
+			pulse_start_epoch=$(date +%s)
+			run_pulse "$initial_underfilled_mode" "$initial_underfill_pct" "$llm_trigger_mode"
+			local pulse_end_epoch
+			pulse_end_epoch=$(date +%s)
+			local pulse_duration=$((pulse_end_epoch - pulse_start_epoch))
+
+			date +%s >"${PULSE_DIR}/last_llm_run_epoch"
+			_run_early_exit_recycle_loop "$pulse_duration"
+			rm -rf "$llm_lockdir" 2>/dev/null || true
+		else
+			echo "[pulse-wrapper] LLM session already running (lock held) — skipping" >>"$LOGFILE"
+		fi
 	fi
-
-	# Deterministic fill floor runs EVERY cycle regardless of LLM
-	if [[ -f "$STOP_FLAG" ]]; then
-		echo "[pulse-wrapper] Stop flag appeared — skipping deterministic fill floor" >>"$LOGFILE"
-	else
-		apply_deterministic_fill_floor
-	fi
-	_run_early_exit_recycle_loop "$pulse_duration"
-
-	# Write structured health snapshot for instant diagnosis (GH#15107)
-	write_pulse_health_file || true
 
 	return 0
 }
