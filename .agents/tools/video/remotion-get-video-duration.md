@@ -28,13 +28,6 @@ export const getVideoDuration = async (src: string) => {
 };
 ```
 
-Example:
-
-```tsx
-const duration = await getVideoDuration("https://remotion.media/video.mp4");
-console.log(duration); // e.g. 10.5 (seconds)
-```
-
 ## Local file source
 
 ```tsx
@@ -47,8 +40,6 @@ const input = new Input({
 
 const durationInSeconds = await input.computeDuration();
 ```
-
-Use `FileSource` instead of `UrlSource` when `file` comes from an input or drag-and-drop handler.
 
 ## Remotion `staticFile()`
 
