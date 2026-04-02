@@ -60,5 +60,8 @@ wrangler tail your-worker-name --header cf-placement
 
 - [patterns.md](./patterns.md) — split architecture, DB workers, SSR, API gateway
 - [gotchas.md](./gotchas.md) — troubleshooting performance and invocations
-- [workers](../workers/), [d1](../d1/), [durable-objects](../durable-objects/), [bindings](../bindings/)
+- [workers](../workers/)
+- [d1](../d1/)
+- [durable-objects](../durable-objects/)
+- [bindings](../bindings/)
 

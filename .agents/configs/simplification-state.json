@@ -9,7 +9,7 @@
     ".agents/services/hosting/cloudflare-platform-skill/smart-placement.md": {
       "hash": "baf384cb7692ef8b1823812501f147d4",
       "at": "2026-04-02T10:00:00Z",
-      "pr": null
+      "pr": 15551
     },
     ".agents/content/seo-writer.md": {
       "hash": "b26db2ddd38996e2ad605d9c79db94f8",
@@ -3092,9 +3092,9 @@
       "pr": 13958
     },
     "TODO.md": {
-      "hash": "9e296aaac5ac00cb7ad14c8de7e5c6b1930b1184",
-      "at": "2026-04-02T04:56:51Z",
-      "pr": 15490
+      "hash": "b98d88c3e22cc11e57f0bad0024cbd0ec50c494c",
+      "at": "2026-03-30T06:49:22Z",
+      "pr": 18
     },
     ".agents/content/heygen-skill/rules-webhooks.md": {
       "hash": "c3ba360303dc273741e6f76b2f235b8319f78734",
@@ -3167,9 +3167,9 @@
       "pr": 15253
     },
     ".agents/scripts/commands/list-verify.md": {
-      "hash": "dc43be77f9d72dac6880004350a5b63ce9a326f0",
-      "at": "2026-04-02T04:56:43Z",
-      "pr": 15514
+      "hash": "70b9ea13391fe10fb6a74157f8c68e1c4e784d47b9744d217fc3507d744006c9",
+      "at": "2026-04-01T19:51:55Z",
+      "pr": 15247
     },
     ".agents/scripts/commands/budget-analysis.md": {
       "hash": "ac77aaf850ecc1f9cee81c9e04a026a954fc7359",
@@ -3482,14 +3482,14 @@
       "pr": 15301
     },
     "aidevops.sh": {
-      "hash": "612281685856997848a5bf3f023e563a1bb8780c",
-      "at": "2026-04-02T04:56:57Z",
-      "pr": 15470
+      "hash": "133623e34d3b54551ae0049f820addfc6bcbbcd1",
+      "at": "2026-04-02T03:11:18Z",
+      "pr": 15277
     },
     "setup.sh": {
-      "hash": "6d9dba530ed27ddfbe02cbc469483903f9a706b4",
-      "at": "2026-04-02T04:56:57Z",
-      "pr": 15470
+      "hash": "3302da9803a49a23c7e2276e138871a41d8affa1",
+      "at": "2026-04-02T03:11:18Z",
+      "pr": 15277
     },
     ".agents/seo/backlink-checker.md": {
       "hash": "aa5038f9569e0d64e563b31a0e2243bd9c2b959c",
@@ -3520,86 +3520,6 @@
       "hash": "d8d6dee50a191d538e032247f78abb02ebb504a8",
       "at": "2026-04-02T03:11:11Z",
       "pr": 15477
-    },
-    ".agents/scripts/commands/recall.md": {
-      "hash": "9b0b04b0aeda1a0436139a205db96efcf0e662ad",
-      "at": "2026-04-02T04:56:44Z",
-      "pr": 15515
-    },
-    ".agents/content/production-video-08-talking-head-pipeline.md": {
-      "hash": "cee1bc46bfdf4612fb0560748fe9e7b134ac0086",
-      "at": "2026-04-02T04:56:45Z",
-      "pr": 15516
-    },
-    ".agents/workflows/branch/bugfix.md": {
-      "hash": "236b78c40f92a6c1b7c36085c0ecdf1ea42058be",
-      "at": "2026-04-02T04:56:46Z",
-      "pr": 15517
-    },
-    ".agents/seo/content-analyzer.md": {
-      "hash": "7972fdccf29515026f0f710dac5f8e1b792e77c5",
-      "at": "2026-04-02T04:56:49Z",
-      "pr": 15478
-    },
-    ".agents/services/hosting/cloudflare-platform-skill/hyperdrive.md": {
-      "hash": "1a63158e184bf8c3c6ac2f4b5110e44451c5d837",
-      "at": "2026-04-02T04:56:50Z",
-      "pr": 15481
-    },
-    ".agents/tools/video/remotion-import-srt-captions.md": {
-      "hash": "75f8b0d089b9eaae8a7e08498af9b8c5f1ac4655",
-      "at": "2026-04-02T04:56:51Z",
-      "pr": 15490
-    },
-    "todo/tasks/t15472-brief.md": {
-      "hash": "3de8a77d3743c3530c563e9aff8775c22a7edb4b",
-      "at": "2026-04-02T04:56:51Z",
-      "pr": 15490
-    },
-    ".agents/scripts/commands/security-history.md": {
-      "hash": "0c74f125bbb3e299040015ee24fb345e43486ec7",
-      "at": "2026-04-02T04:56:52Z",
-      "pr": 15487
-    },
-    ".agents/tools/video/remotion-lottie.md": {
-      "hash": "72d843e6717a28f61294372a6752cb8e9736fe6b",
-      "at": "2026-04-02T04:56:53Z",
-      "pr": 15525
-    },
-    ".agents/marketing-sales/direct-response-copy-swipe-file-emails-06-templates.md": {
-      "hash": "d662c65c03864c29b198db3a89950538a7949ef2",
-      "at": "2026-04-02T04:56:54Z",
-      "pr": 15526
-    },
-    ".agents/tools/credentials/bitwarden.md": {
-      "hash": "808ffa447534e25dd4090033275c4861a8612f2c",
-      "at": "2026-04-02T04:56:56Z",
-      "pr": 15468
-    },
-    "todo/tasks/t15450-brief.md": {
-      "hash": "c0ba871cfce440d57c630e49cd6ba939bf27b261",
-      "at": "2026-04-02T04:56:56Z",
-      "pr": 15468
-    },
-    "todo/tasks/t2052-brief.md": {
-      "hash": "c820f0bd721d4d8ff4fb35dff40ff98c6ba3b71f",
-      "at": "2026-04-02T04:56:57Z",
-      "pr": 15470
-    },
-    ".agents/tools/browser/crawl4ai-integration.md": {
-      "hash": "5b8849f598a7c31bff13579aedda9586682f6ad7",
-      "at": "2026-04-02T04:56:58Z",
-      "pr": 15463
-    },
-    "todo/tasks/t15448-brief.md": {
-      "hash": "b43fa2d5b0515af1ecbebbc502099ca5e6d0a9c2",
-      "at": "2026-04-02T04:56:58Z",
-      "pr": 15463
-    },
-    ".agents/scripts/platform-detect.sh": {
-      "hash": "a551a07e07c08853c909e7b8141ddddf2de43420",
-      "at": "2026-04-02T04:56:59Z",
-      "pr": 15455
     }
   }
 }
