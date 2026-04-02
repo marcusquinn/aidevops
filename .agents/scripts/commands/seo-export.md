@@ -8,67 +8,38 @@ Export SEO ranking data from configured platforms to a common TOON format for an
 
 Target: $ARGUMENTS
 
-## Quick Reference
-
-- **Purpose**: Export SEO data for analysis
-- **Platforms**: GSC, Bing, Ahrefs, DataForSEO
-- **Output**: `~/.aidevops/.agent-workspace/work/seo-data/{domain}/`
-
 ## Usage
 
 ```bash
-# Export from all platforms
 /seo-export all example.com
-
-# Export from specific platform
 /seo-export gsc example.com
 /seo-export bing example.com
 /seo-export ahrefs example.com
 /seo-export dataforseo example.com
-
-# With date range
 /seo-export all example.com --days 30
-
-# List available platforms
 /seo-export list
-
-# List exports for a domain
 /seo-export exports example.com
 ```
 
+Output: `~/.aidevops/.agent-workspace/work/seo-data/{domain}/`
+
 ## Process
 
-1. Parse $ARGUMENTS to extract platform, domain, and options
-2. Run the appropriate export script:
-
-```bash
-~/.aidevops/agents/scripts/seo-export-helper.sh $ARGUMENTS
-```
-
-3. Report results including:
-   - Number of rows exported
-   - Output file location
-   - Any errors or warnings
+1. Parse `$ARGUMENTS` for platform, domain, and options
+2. Run: `~/.aidevops/agents/scripts/seo-export-helper.sh $ARGUMENTS`
+3. Report: rows exported, output file path, errors/warnings
 
 ## Platform Requirements
 
-| Platform | Credential | Location |
-|----------|------------|----------|
+| Platform | Credential | Env var |
+|----------|------------|---------|
 | GSC | Service account JSON | `GOOGLE_APPLICATION_CREDENTIALS` |
 | Bing | API key | `BING_WEBMASTER_API_KEY` |
 | Ahrefs | API key | `AHREFS_API_KEY` |
 | DataForSEO | Username/password | `DATAFORSEO_USERNAME`, `DATAFORSEO_PASSWORD` |
 
-All credentials should be set in `~/.config/aidevops/credentials.sh`.
+Credentials: `~/.config/aidevops/credentials.sh`
 
 ## Next Steps
 
-After export, suggest running analysis:
-
-```bash
-/seo-analyze example.com
-```
-
-## Documentation
-
-For full documentation, read `seo/data-export.md`.
+Run `/seo-analyze example.com` after export. Full docs: `seo/data-export.md`.
