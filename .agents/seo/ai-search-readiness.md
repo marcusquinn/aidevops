@@ -28,9 +28,8 @@ Run a complete, high-signal workflow to improve AI search citations and answer q
 
 ### Phase 0: Grounding eligibility gate
 
-- Classify queries by likelihood of triggering search grounding; prioritize intents where retrieval can be influenced by SEO changes
-- Validate crawler/bot accessibility so eligible queries can fetch content
-- Run site-query readiness checks: `site:yourdomain.com [product category] features`, `site:yourdomain.com pricing`, `site:yourdomain.com integrations`
+- Classify queries by grounding likelihood; prioritize intents where retrieval can be influenced by SEO changes
+- Validate crawler/bot accessibility and run site-query checks: `site:yourdomain.com [category] features`, `site:yourdomain.com pricing`, `site:yourdomain.com integrations`
 
 ### Phase 1: Query decomposition
 
@@ -54,10 +53,8 @@ Use `ai-agent-discovery.md` → task-completion diagnostics and discoverability 
 
 ### Phase 6: Citation and volatility monitoring
 
-- Track citation frequency and confidence by intent cluster; monitor volatility and re-run high-impact intents on schedule
-- Keep a rolling benchmark so wins are distinguished from noise
-- Audit third-party citation readiness quarterly: verify G2/Capterra/TrustRadius profiles are current and fact-aligned with canonical site pages
-- Use UTM-tagged profile links and partner citations so citation-driven sessions and conversion contribution are measurable
+- Track citation frequency and confidence by intent cluster; keep a rolling benchmark to distinguish wins from noise; re-run high-impact intents on schedule
+- Audit third-party profiles (G2/Capterra/TrustRadius) quarterly for fact-alignment; use UTM-tagged links so citation-driven sessions are measurable
 
 ## Readiness Scorecard
 
