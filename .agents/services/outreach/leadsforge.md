@@ -20,6 +20,7 @@ tools:
 - **Free tier**: 100 credits on signup; credits never expire
 - **Capabilities**: ICP search (500M+ contacts, natural language), contact enrichment (waterfall), company lookalikes, LinkedIn followers, CSV/Salesforge export
 - **Stack**: LeadsForge (search/enrich) → Salesforge (sequences) → Warmforge (deliverability) → FluentCRM (lifecycle)
+- **Compliance**: Public B2B data; CAN-SPAM/GDPR apply — document legitimate interest for EU/UK contacts, honor opt-outs. See `cold-outreach.md`.
 
 ## Credit Costs
 
@@ -33,44 +34,23 @@ tools:
 
 ## Commands
 
-### Search by ICP
-
-Be specific: include role, company attributes, industry, geography.
+ICP search: be specific — include role, company attributes, industry, geography.
 
 ```bash
-leadsforge-helper.sh search \
-  --icp "CTOs at Series A SaaS companies in the US" \
-  --limit 50 \
-  --output leads.json
+# Search by ICP
+leadsforge-helper.sh search --icp "CTOs at Series A SaaS companies in the US" --limit 50 --output leads.json
+leadsforge-helper.sh search --icp "Marketing managers at e-commerce companies in Europe" --enrich --limit 25
 
-# With enrichment (emails + LinkedIn included):
-leadsforge-helper.sh search \
-  --icp "Marketing managers at e-commerce companies in Europe" \
-  --enrich \
-  --limit 25
-```
-
-### Enrich a contact
-
-```bash
+# Enrich a contact
 leadsforge-helper.sh enrich --email "john@example.com"
 leadsforge-helper.sh enrich --linkedin "https://linkedin.com/in/johndoe"
-```
 
-### Other commands
-
-```bash
+# Other
 leadsforge-helper.sh lookalikes --domain "salesforce.com" --limit 20
 leadsforge-helper.sh followers --domain "hubspot.com" --limit 50
 leadsforge-helper.sh credits
 leadsforge-helper.sh export --list-id "abc123" --format csv --output leads.csv
 ```
-
-## Compliance
-
-- Data sourced from public B2B databases — suitable for legitimate interest prospecting
-- Maintain CAN-SPAM and GDPR compliance (see `cold-outreach.md`)
-- Document legitimate interest basis before contacting EU/UK contacts; honor opt-outs immediately
 
 ## Environment Variables
 
