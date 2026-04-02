@@ -88,8 +88,8 @@ Suggest based on repo type and Q1:
 
 | Context | Metric command | Name | Direction |
 |---------|---------------|------|-----------|
-| aidevops + "agent" | `agent-test-helper.sh run --json \| jq '.pass_rate - 0.3 * .token_ratio'` | `composite_score` | higher |
-| aidevops + "token" | `agent-test-helper.sh run --json \| jq '.avg_tokens'` | `avg_tokens` | lower |
+| aidevops + "agent" | `agent-test-helper.sh run {suite} --json \| jq '.composite_score'` | `composite_score` | higher |
+| aidevops + "token" | `agent-test-helper.sh run {suite} --json \| jq '.avg_response_chars'` | `avg_response_chars` | lower |
 | Node + "build" | `npm run build 2>&1 \| grep 'Time:' \| awk '{print $2}'` | `build_time_seconds` | lower |
 | Node + "test" | `npm test -- --json 2>/dev/null \| jq '.numPassedTests'` | `tests_passed` | higher |
 | Python + "test" | `pytest --tb=no -q 2>&1 \| grep passed \| awk '{print $1}'` | `tests_passed` | higher |
@@ -241,4 +241,4 @@ After scaffolding: "Repo ready at `~/Git/autoresearch-{name}/`. Edit `todo/resea
 
 ## Related
 
-`.agents/templates/research-program-template.md` · `.agents/tools/autoresearch/autoresearch.md` · `todo/research/`
+`.agents/templates/research-program-template.md` · `.agents/tools/autoresearch/autoresearch.md` · `todo/research/` · `todo/research/agent-optimization.md` (predefined agent optimization program)

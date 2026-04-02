@@ -6,7 +6,7 @@
 # comparison for agent modifications.
 #
 # Usage:
-#   agent-test-helper.sh run <test-file>           # Run a test suite
+#   agent-test-helper.sh run <test-file> [--json]  # Run a test suite
 #   agent-test-helper.sh run-one "prompt" [--expect "pattern"] [--agent name]
 #   agent-test-helper.sh compare <test-file>        # Compare current vs baseline
 #   agent-test-helper.sh baseline <test-file>       # Save current results as baseline
@@ -14,6 +14,20 @@
 #   agent-test-helper.sh create <name>              # Create test suite template
 #   agent-test-helper.sh results [test-name]        # Show recent results
 #   agent-test-helper.sh help                       # Show this help
+#
+# Metric output (--json flag):
+#   Outputs a JSON object to stdout with composite optimization metrics:
+#   {
+#     "pass_rate": 0.9,          # passed / total (0-1)
+#     "token_ratio": 1.0,        # avg_response_chars / baseline_chars (1.0 if no baseline)
+#     "composite_score": 0.63,   # pass_rate * (1 - 0.3 * token_ratio)
+#     "avg_response_chars": 1234,
+#     "baseline_chars": 1234,
+#     "passed": 9,
+#     "failed": 1,
+#     "total": 10
+#   }
+#   Used by autoresearch agent-optimization programs as the metric command.
 #
 # Test Suite Format (JSON):
 #   {
@@ -538,12 +552,15 @@ _cmd_run_execute_test() {
 
 	local response_preview
 	response_preview=$(echo "$response" | head -c 500)
+	local response_chars
+	response_chars=${#response}
 	results=$(echo "$results" | jq \
 		--arg id "$test_id" \
 		--arg status "$run_status" \
 		--arg response "$response_preview" \
 		--argjson duration "$test_duration" \
-		'. + [{"id": $id, "status": $status, "response_preview": $response, "duration": $duration}]')
+		--argjson chars "$response_chars" \
+		'. + [{"id": $id, "status": $status, "response_preview": $response, "duration": $duration, "response_chars": $chars}]')
 
 	echo "$results"
 	echo "$run_status"
@@ -604,6 +621,11 @@ _cmd_run_save_results() {
 
 	local result_file
 	result_file="${RESULTS_DIR}/${suite_name}-$(date +%Y%m%d-%H%M%S).json"
+
+	# Compute avg_response_chars from results array (exclude skipped/error entries)
+	local avg_chars
+	avg_chars=$(echo "$results" | jq '[.[] | select(.response_chars != null) | .response_chars] | if length > 0 then (add / length | floor) else 0 end')
+
 	jq -n \
 		--arg name "$suite_name" \
 		--arg cli "$AI_CLI" \
@@ -615,13 +637,14 @@ _cmd_run_save_results() {
 		--argjson skipped "$skipped" \
 		--argjson duration "$total_duration" \
 		--argjson results "$results" \
+		--argjson avg_chars "$avg_chars" \
 		'{
             name: $name,
             cli: $cli,
             agent: $agent,
             model: $model,
             timestamp: $timestamp,
-            summary: {passed: $passed, failed: $failed, skipped: $skipped, duration: $duration},
+            summary: {passed: $passed, failed: $failed, skipped: $skipped, duration: $duration, avg_response_chars: $avg_chars},
             results: $results
         }' >"$result_file"
 
@@ -690,10 +713,106 @@ _cmd_run_sync_pattern_tracker() {
 }
 
 #######################################
+# Emit composite metric JSON for autoresearch integration
+# Arguments:
+#   $1 - suite name
+#   $2 - passed count
+#   $3 - failed count
+#   $4 - skipped count
+#   $5 - results JSON array
+# Outputs:
+#   JSON object to stdout with pass_rate, token_ratio, composite_score
+#######################################
+_cmd_run_emit_json_metrics() {
+	local suite_name="$1"
+	local passed="$2"
+	local failed="$3"
+	local skipped="$4"
+	local results="$5"
+
+	local total=$((passed + failed + skipped))
+	local active=$((passed + failed))
+
+	# pass_rate: passed / (passed + failed), ignoring skipped
+	local pass_rate
+	if [[ $active -gt 0 ]]; then
+		pass_rate=$(echo "scale=4; $passed / $active" | bc 2>/dev/null || echo "0")
+	else
+		pass_rate="0"
+	fi
+
+	# avg_response_chars from results
+	local avg_chars
+	avg_chars=$(echo "$results" | jq '[.[] | select(.response_chars != null) | .response_chars] | if length > 0 then (add / length | floor) else 0 end' 2>/dev/null || echo "0")
+
+	# baseline_chars: read from latest baseline file if it exists
+	local baseline_chars="$avg_chars"
+	local baseline_file="${BASELINES_DIR}/${suite_name}.json"
+	if [[ -f "$baseline_file" ]]; then
+		local b_chars
+		b_chars=$(jq '.summary.avg_response_chars // 0' "$baseline_file" 2>/dev/null || echo "0")
+		if [[ "$b_chars" -gt 0 ]]; then
+			baseline_chars="$b_chars"
+		fi
+	fi
+
+	# token_ratio: avg_chars / baseline_chars (1.0 if no baseline or baseline=0)
+	local token_ratio
+	if [[ "$baseline_chars" -gt 0 ]]; then
+		token_ratio=$(echo "scale=4; $avg_chars / $baseline_chars" | bc 2>/dev/null || echo "1.0")
+	else
+		token_ratio="1.0"
+	fi
+
+	# composite_score: pass_rate * (1 - 0.3 * token_ratio)
+	local composite_score
+	composite_score=$(echo "scale=4; $pass_rate * (1 - 0.3 * $token_ratio)" | bc 2>/dev/null || echo "0")
+
+	jq -n \
+		--argjson pass_rate "$pass_rate" \
+		--argjson token_ratio "$token_ratio" \
+		--argjson composite_score "$composite_score" \
+		--argjson avg_chars "$avg_chars" \
+		--argjson baseline_chars "$baseline_chars" \
+		--argjson passed "$passed" \
+		--argjson failed "$failed" \
+		--argjson total "$total" \
+		'{
+			pass_rate: $pass_rate,
+			token_ratio: $token_ratio,
+			composite_score: $composite_score,
+			avg_response_chars: $avg_chars,
+			baseline_chars: $baseline_chars,
+			passed: $passed,
+			failed: $failed,
+			total: $total
+		}'
+	return 0
+}
+
+#######################################
 # RUN command - execute a test suite
+# Arguments:
+#   $1 - test file path or name
+#   [--json] - emit composite metric JSON to stdout (for autoresearch integration)
 #######################################
 cmd_run() {
 	local test_file="$1"
+	shift || true
+	local json_output=false
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--json)
+			json_output=true
+			shift
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
+
 	ensure_dirs
 
 	# Resolve test file path
@@ -711,7 +830,9 @@ cmd_run() {
 	suite_timeout=$(echo "$suite" | jq -r '.timeout // 120')
 	test_count=$(echo "$suite" | jq '.tests | length')
 
-	_cmd_run_print_header "$suite_name" "$suite_desc" "$suite_agent" "$test_count"
+	if [[ "$json_output" == "false" ]]; then
+		_cmd_run_print_header "$suite_name" "$suite_desc" "$suite_agent" "$test_count"
+	fi
 
 	if [[ -z "$AI_CLI" ]]; then
 		log_fail "No AI CLI available. Install claude or opencode."
@@ -749,17 +870,26 @@ cmd_run() {
 	end_time=$(date +%s)
 	total_duration=$((end_time - start_time))
 
-	_cmd_run_print_summary "$suite_name" "$passed" "$failed" "$skipped" "$total_duration"
+	if [[ "$json_output" == "false" ]]; then
+		_cmd_run_print_summary "$suite_name" "$passed" "$failed" "$skipped" "$total_duration"
+	fi
 
 	local result_file
 	result_file=$(_cmd_run_save_results \
 		"$suite_name" "$suite_agent" "$suite_model" \
 		"$passed" "$failed" "$skipped" "$total_duration" "$results")
-	log_info "Results saved: $result_file"
+
+	if [[ "$json_output" == "false" ]]; then
+		log_info "Results saved: $result_file"
+	fi
 
 	_cmd_run_sync_pattern_tracker \
 		"$suite_name" "$suite_agent" "$suite_model" \
 		"$passed" "$failed" "$total_duration"
+
+	if [[ "$json_output" == "true" ]]; then
+		_cmd_run_emit_json_metrics "$suite_name" "$passed" "$failed" "$skipped" "$results"
+	fi
 
 	if [[ $failed -gt 0 ]]; then
 		return 1
@@ -1143,7 +1273,8 @@ USAGE:
   agent-test-helper.sh <command> [options]
 
 COMMANDS:
-  run <test-file>           Run a test suite (JSON file or name in suites/)
+  run <test-file> [--json]  Run a test suite (JSON file or name in suites/)
+    --json                    Emit composite metric JSON (for autoresearch integration)
   run-one "prompt"          Run a single prompt test
     --expect "pattern"        Expected pattern in response
     --agent <name>            Agent to use
@@ -1198,6 +1329,11 @@ EXAMPLES:
   # ... make agent changes ...
   agent-test-helper.sh compare my-tests     # Compare against baseline
 
+  # Autoresearch integration: emit composite metric JSON
+  agent-test-helper.sh baseline smoke-test  # Set baseline first
+  agent-test-helper.sh run smoke-test --json
+  # Output: {"pass_rate":1.0,"token_ratio":0.85,"composite_score":0.745,...}
+
   # View results
   agent-test-helper.sh results
 EOF
@@ -1214,10 +1350,10 @@ main() {
 	case "$command" in
 	run)
 		if [[ $# -lt 1 ]]; then
-			log_fail "Usage: agent-test-helper.sh run <test-file>"
+			log_fail "Usage: agent-test-helper.sh run <test-file> [--json]"
 			return 1
 		fi
-		cmd_run "$1"
+		cmd_run "$@"
 		;;
 	run-one)
 		cmd_run_one "$@"
