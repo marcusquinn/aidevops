@@ -83,7 +83,7 @@ meeting.chat.on('chatUpdate', (data) => console.log('[chat]:', data));
 
 Security and performance best practices: see [patterns.md](./patterns.md) §Security and §Performance.
 
-## In This Reference
+## See Also
 
-- [realtimekit.md](./realtimekit.md) — Overview, core concepts, quick start
-- [realtimekit-patterns.md](./realtimekit-patterns.md) — Common patterns, React hooks, backend integration
+- [realtimekit.md](./realtimekit.md) - Overview, core concepts, quick start
+- [realtimekit-patterns.md](./realtimekit-patterns.md) - Common patterns, React hooks, backend integration
