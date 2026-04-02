@@ -1,15 +1,6 @@
 # Playwright Benchmark Scripts
 
-Reference implementation for `browser-benchmark-scripts.md`.
-
-- Target: `https://the-internet.herokuapp.com`
-- Coverage: `navigate`, `formFill`, `extract`, `multiStep`
-- Sampling: 3 runs per test, median reported
-
-| Script | What it measures |
-|--------|-----------------|
-| Sequential | Per-test latency: navigate, formFill, extract, multiStep — one page at a time |
-| Parallel | Throughput: 5 contexts, 3 browsers, 10 pages — concurrent load |
+Reference implementation for `browser-benchmark-scripts.md`. Target: `https://the-internet.herokuapp.com`. Tests: `navigate`, `formFill`, `extract`, `multiStep` — 3 runs each, median reported.
 
 ## Sequential script
 
