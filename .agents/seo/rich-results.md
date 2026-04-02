@@ -30,45 +30,26 @@ Run `node rich-results-test.js <url>`:
 import { chromium } from 'playwright';
 
 const TEST_URL = process.argv[2];
-
-if (!TEST_URL) {
-  console.error('Usage: node rich-results-test.js <url>');
-  process.exit(1);
-}
+if (!TEST_URL) { console.error('Usage: node rich-results-test.js <url>'); process.exit(1); }
 
 async function main() {
   const browser = await chromium.launch({ headless: false });
   const page = await browser.newPage();
-
   console.log(`Testing: ${TEST_URL}`);
-
   await page.goto('https://search.google.com/test/rich-results');
-
-  const input = await page.waitForSelector(
-    'input[type="url"], input[type="text"]',
-    { timeout: 10000 }
-  );
+  const input = await page.waitForSelector('input[type="url"], input[type="text"]', { timeout: 10000 });
   await input.fill(TEST_URL);
   await page.keyboard.press('Enter');
-
-  console.log('Test started... waiting for results (up to 60s)');
-  console.log('Complete CAPTCHA if prompted.');
-
+  console.log('Test started... waiting for results (up to 60s). Complete CAPTCHA if prompted.');
   try {
-    await page.waitForSelector('.result-card, .error-card, [data-result]', {
-      timeout: 60000,
-    });
-    console.log('Results loaded.');
-
+    await page.waitForSelector('.result-card, .error-card, [data-result]', { timeout: 60000 });
     await page.screenshot({ path: 'rich-results.png', fullPage: true });
     console.log('Screenshot saved to rich-results.png');
   } catch {
-    console.log('Timed out waiting for results or CAPTCHA encountered.');
+    console.log('Timed out or CAPTCHA encountered.');
     await page.screenshot({ path: 'rich-results-timeout.png', fullPage: true });
   }
-
   // Keep browser open for manual inspection
-  // await browser.close();
 }
 
 main().catch(console.error);
@@ -93,10 +74,10 @@ curl -sL "https://example.com" \
   | jq . 2>/dev/null || echo "No valid JSON-LD found"
 ```
 
-<!-- AI-CONTEXT-END -->
-
 ## Related
 
 - `seo/debug-opengraph.md` - Open Graph meta tag validation
 - `seo/site-crawler.md` - Bulk structured data auditing
 - `tools/browser/playwright.md` - Browser automation for JS-rendered pages
+
+<!-- AI-CONTEXT-END -->
