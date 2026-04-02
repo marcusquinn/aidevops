@@ -46,16 +46,6 @@ tools:
       "expect_contains": ["50", "100"],
       "expect_not_contains": ["unlimited"],
       "min_length": 50
-    },
-    {
-      "id": "slow-deep-analysis",
-      "prompt": "Generate a comprehensive analysis...",
-      "agent": "Plan+",
-      "model": "anthropic/claude-opus-4-20250514",
-      "timeout": 300,
-      "expect_contains": ["analysis"],
-      "expect_regex": "read.*when.*needed",
-      "min_length": 100
     }
   ]
 }
@@ -80,7 +70,7 @@ Per-test fields (`agent`, `model`, `timeout`) override suite-level defaults.
 ```bash
 # Run suites
 agent-test-helper.sh run path/to/suite.json
-agent-test-helper.sh run smoke-test              # by name (searches suites/ and .agents/tests/)
+agent-test-helper.sh run smoke-test
 
 # Quick single-prompt test
 agent-test-helper.sh run-one "What is your primary purpose?"
@@ -88,16 +78,15 @@ agent-test-helper.sh run-one "List your tools" --expect "bash"
 agent-test-helper.sh run-one "Explain git workflow" --agent "Build+" --model "anthropic/claude-sonnet-4-6" --timeout 60
 
 # Before/after comparison
-agent-test-helper.sh baseline smoke-test         # 1. save current behavior
-# 2. make agent changes
-agent-test-helper.sh compare smoke-test          # 3. compare — non-zero exit on regression
+agent-test-helper.sh baseline smoke-test
+agent-test-helper.sh compare smoke-test
 
 # Manage suites
-agent-test-helper.sh create my-new-tests         # create template in user suites dir
-agent-test-helper.sh list                        # list all suites (user + shipped)
-agent-test-helper.sh results [suite-name]        # view recent results
+agent-test-helper.sh create my-new-tests
+agent-test-helper.sh list
+agent-test-helper.sh results [suite-name]
 
-# CI/CD (requires opencode CLI with API credentials)
+# CI/CD
 agent-test-helper.sh run agents-md-knowledge || { echo "Agent tests failed"; exit 1; }
 ```
 
@@ -123,6 +112,5 @@ agent-test-helper.sh run agents-md-knowledge || { echo "Agent tests failed"; exi
 
 - `build-agent.md` — Agent design and composition
 - `agent-review.md` — Reviewing and improving agents
-- `tools/ai-assistants/headless-dispatch.md` — Headless AI dispatch patterns
+- `tools/ai-assistants/headless-dispatch.md` — Headless dispatch patterns
 - `tools/ai-assistants/opencode-server.md` — OpenCode server API
-- AGENTS.md "Self-Improvement" section
