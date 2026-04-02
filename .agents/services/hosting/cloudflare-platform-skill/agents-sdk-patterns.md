@@ -20,7 +20,7 @@ export class ChatAgent extends Agent<Env, ChatState> {
 }
 ```
 
-## AI w/Tools
+## AI with Tools
 
 ```ts
 import {tool} from "ai"; import {z} from "zod";
@@ -48,7 +48,7 @@ export class StreamingAgent extends Agent<Env> {
 }
 ```
 
-## Cron/Scheduled
+## Cron / Scheduled
 
 ```ts
 export class TaskAgent extends Agent<Env> {
@@ -58,7 +58,7 @@ export class TaskAgent extends Agent<Env> {
 }
 ```
 
-## Email+AI
+## Email with AI
 
 ```ts
 export class EmailAgent extends Agent<Env> {
