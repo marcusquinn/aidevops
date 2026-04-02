@@ -7,7 +7,7 @@
 #   - Persists OpenCode session IDs per provider + session key
 #   - Records backoff state per model (rate limits) or per provider (auth errors)
 #   - Clears backoff automatically when auth changes or retry windows expire
-#   - Supports opencode/* gateway models when explicitly configured
+#   - NOTE: opencode/* gateway models are NOT used (per-token billing, too expensive)
 
 set -euo pipefail
 
@@ -1972,7 +1972,7 @@ Defaults:
   AIDEVOPS_HEADLESS_MODELS defaults to anthropic/claude-sonnet-4-6,openai/gpt-4o
   AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST can restrict selection to providers like: openai
   AIDEVOPS_HEADLESS_APPEND_CONTRACT=0 disables worker /full-loop contract injection
-  Gateway models (opencode/*) are supported when explicitly configured.
+  NOTE: opencode/* gateway models are NOT used — per-token billing is too expensive.
 EOF
 	return 0
 }
