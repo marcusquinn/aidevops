@@ -1,4 +1,9 @@
 {
+  ".agents/services/database/postgres-drizzle-skill/cheatsheet-schema.md": {
+    "hash": "1aa15519d959c89c0e09c3e30ac0210d6da35134",
+    "issue": "GH#15501",
+    "status": "simplified"
+  },
   ".agents/seo/ai-search-kpi-template.md": {
     "hash": "03478debc956ad02835cde5c946e89762351c2c00c836d8c9c24fca3ebd366cc",
     "issue": "GH#14993",

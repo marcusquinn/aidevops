@@ -32,11 +32,14 @@ tags: text('tags').array(),
 ## Constraints & Foreign Keys
 
 ```typescript
+import { check, uuid } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+
 email: text('email').notNull().unique(),
 status: text('status').notNull().default('pending'),
 authorId: uuid('author_id').references(() => users.id, { onDelete: 'cascade' }),
 
-// Check constraints are table-level
+// check() is table-level only (not column-level)
 }, (table) => [
   check('price_positive', sql`${table.price} > 0`),
 ]);
@@ -45,6 +48,9 @@ authorId: uuid('author_id').references(() => users.id, { onDelete: 'cascade' }),
 ## Indexes
 
 ```typescript
+import { index, uniqueIndex } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+
 }, (table) => [
   index('idx_name').on(table.column),                    // B-tree
   uniqueIndex('idx_unique').on(table.column),            // Unique
