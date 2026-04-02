@@ -63,3 +63,95 @@ check_tool_updates() {
 	:
 	return 0
 }
+
+# Setup PIM tools (Reminders, Calendar, Contacts)
+# macOS: remindctl (Reminders), osascript (Calendar, Contacts — no install)
+# Linux: todoman, khal, khard + vdirsyncer (CalDAV/CardDAV)
+setup_pim_tools() {
+	local os
+	os="$(uname -s)"
+
+	print_info "Setting up PIM tools (Reminders, Calendar, Contacts)..."
+
+	if [[ "$os" == "Darwin" ]]; then
+		# macOS: Calendar and Contacts use osascript (no install needed)
+		print_success "Calendar: uses Calendar.app via osascript (no install needed)"
+		print_success "Contacts: uses Contacts.app via osascript (no install needed)"
+
+		# Reminders needs remindctl
+		if command -v remindctl >/dev/null 2>&1; then
+			print_success "Reminders: remindctl installed"
+		else
+			print_info "Reminders: installing remindctl..."
+			if command -v brew >/dev/null 2>&1; then
+				brew install steipete/tap/remindctl 2>&1 || print_warning "remindctl install failed"
+				if command -v remindctl >/dev/null 2>&1; then
+					print_success "remindctl installed"
+					print_info "Run 'remindctl authorize' to grant Reminders access"
+				fi
+			else
+				print_warning "Homebrew not found. Install remindctl manually: brew install steipete/tap/remindctl"
+			fi
+		fi
+	else
+		# Linux: todoman, khal, khard via pipx/brew; vdirsyncer for sync
+		local missing=()
+
+		if ! command -v todo >/dev/null 2>&1; then
+			missing+=("todoman")
+		else
+			print_success "Reminders: todoman installed"
+		fi
+
+		if ! command -v khal >/dev/null 2>&1; then
+			missing+=("khal")
+		else
+			print_success "Calendar: khal installed"
+		fi
+
+		if ! command -v khard >/dev/null 2>&1; then
+			missing+=("khard")
+		else
+			print_success "Contacts: khard installed"
+		fi
+
+		if ! command -v vdirsyncer >/dev/null 2>&1; then
+			missing+=("vdirsyncer")
+		else
+			print_success "CalDAV/CardDAV sync: vdirsyncer installed"
+		fi
+
+		if [[ ${#missing[@]} -gt 0 ]]; then
+			local pkg_list
+			pkg_list="$(printf '%s ' "${missing[@]}")"
+			print_info "Installing missing PIM tools: ${pkg_list}"
+			if command -v pipx >/dev/null 2>&1; then
+				local pkg
+				for pkg in "${missing[@]}"; do
+					pipx install "$pkg" 2>&1 || print_warning "Failed to install ${pkg}"
+				done
+			elif command -v brew >/dev/null 2>&1; then
+				brew install "${missing[@]}" 2>&1 || print_warning "Some PIM tools failed to install"
+			else
+				print_warning "Install manually with pipx or brew: ${pkg_list}"
+			fi
+		fi
+
+		# Check configs
+		if [[ ! -f "${HOME}/.config/vdirsyncer/config" ]]; then
+			print_warning "vdirsyncer not configured. Run: reminders-helper.sh help (for CalDAV config example)"
+		fi
+		if [[ ! -f "${HOME}/.config/khal/config" ]]; then
+			print_warning "khal not configured. Run: khal configure"
+		fi
+		if [[ ! -f "${HOME}/.config/khard/khard.conf" ]]; then
+			print_warning "khard not configured. See: contacts-helper.sh help"
+		fi
+		if [[ ! -f "${HOME}/.config/todoman/config.py" ]]; then
+			print_warning "todoman not configured. See: reminders-helper.sh help"
+		fi
+	fi
+
+	print_success "PIM tools setup complete. Use *-helper.sh setup for per-tool verification."
+	return 0
+}

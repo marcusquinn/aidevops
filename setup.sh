@@ -826,6 +826,7 @@ _setup_run_interactive() {
 	confirm_step "Check optional dependencies (bun, node, python)" && check_optional_deps
 	confirm_step "Check Python version (recommend upgrade if outdated)" && check_python_upgrade_available
 	confirm_step "Setup recommended tools (Tabby, Zed, etc.)" && setup_recommended_tools
+	confirm_step "Setup PIM tools (Reminders, Calendar, Contacts)" && setup_pim_tools
 	confirm_step "Setup MiniSim (iOS/Android emulator launcher)" && setup_minisim
 	confirm_step "Setup ClaudeBar (AI quota monitor in menu bar)" && setup_claudebar
 	confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis

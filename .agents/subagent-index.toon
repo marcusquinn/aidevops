@@ -20,7 +20,7 @@ pro,gemini-2.5-pro,Capable large context
 grok,grok-3,Research and real-time web knowledge
 -->
 
-<!--TOON:subagents[65]{folder,purpose,key_files}:
+<!--TOON:subagents[66]{folder,purpose,key_files}:
 product/,Universal product concerns - validation onboarding monetisation growth UI design and analytics for all app types,validation|onboarding|monetisation|growth|ui-design|analytics
 aidevops/,Framework internals - extending aidevops and architecture and plugins,setup|architecture|troubleshooting|self-improving-agents|claude-flow-comparison|plugins
 business/,Company orchestration - runner configs for company functions,company-runners
@@ -34,6 +34,7 @@ tools/build-mcp/,MCP development - creating MCP servers and plugins,build-mcp|se
 tools/mcp-toolkit/,MCP runtime toolkit - discover call compose and generate CLIs/typed clients for MCP servers,mcporter
 tools/ai-assistants/,AI tool integration - OpenCode headless dispatch model comparison and response scoring,agno|capsolver|claude-code|compare-models|response-scoring|overview|openclaw|opencode-server|headless-dispatch
 tools/ai-orchestration/,AI orchestration - visual builders and multi-agent,overview|langflow|crewai|autogen|openprose
+tools/productivity/,PIM - reminders calendar contacts across macOS and Linux with CalDAV CardDAV,apple-reminders|calendar|contacts|caldav-calendar-skill
 tools/browser/,Browser automation - scraping testing and QA,agent-browser|browser-automation|browser-qa|browser-use|chromium-debug-use|skyvern|stagehand|playwright|playwright-cli|playwright-emulation|playwriter|crawl4ai|watercrawl|pagespeed|peekaboo|curl-copy|chrome-webstore-release
 tools/mobile/,Mobile development - iOS/macOS build test simulator App Store Connect and emulator automation,app-store-connect|agent-device|xcodebuild-mcp|ios-simulator-mcp|maestro|axe-cli|minisim
 tools/pdf/,PDF processing - form filling and digital signatures,overview|libpdf
