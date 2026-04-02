@@ -2,7 +2,7 @@
 name: streaming-avatars
 description: Real-time interactive avatar sessions for HeyGen
 metadata:
-  tags: streaming, real-time, interactive, websocket, live
+  tags: streaming, real-time, interactive, webrtc, live
 ---
 
 # Streaming Avatars
@@ -21,13 +21,6 @@ Real-time interactive avatar via WebRTC. Use for live customer service, virtual 
 | `video_encoding` | string | | `"H264"` / `"VP8"` |
 
 **Response:** `{ session_id, access_token, url, ice_servers[] }`
-
-```bash
-curl -X POST "https://api.heygen.com/v1/streaming.new" \
-  -H "X-Api-Key: $HEYGEN_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"avatar_id": "josh_lite3_20230714", "voice_id": "1bd001e7e50f421d891986aad5158bc8", "quality": "high"}'
-```
 
 ```typescript
 const res = await fetch("https://api.heygen.com/v1/streaming.new", {
@@ -48,13 +41,6 @@ const { data } = await res.json(); // { session_id, access_token, url, ice_serve
 | `text` | string | ✓ | Text to speak |
 | `task_type` | string | ✓ | `"talk"` or `"repeat"` |
 | `task_mode` | string | | `"sync"` or `"async"` |
-
-```bash
-curl -X POST "https://api.heygen.com/v1/streaming.task" \
-  -H "X-Api-Key: $HEYGEN_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"session_id": "your_session_id", "text": "Hello!", "task_type": "talk"}'
-```
 
 ## Session Management
 
@@ -82,5 +68,4 @@ await pc.setLocalDescription(offer);
 - Implement reconnection logic for disconnections
 - Adjust `quality` based on available bandwidth
 - Close unused sessions promptly — credits consumed per session-second
-- Concurrent session and duration limits vary by plan
 - WebRTC requires modern browser support
