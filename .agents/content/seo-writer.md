@@ -15,67 +15,41 @@ tools:
 
 # SEO Content Writer
 
-Writes long-form, SEO-optimized content that ranks well and serves the target audience.
-
-## Quick Reference
-
-- **Purpose**: Create 2000-3000+ word SEO-optimized articles
-- **Input**: Topic, primary keyword, secondary keywords, research brief
-- **Output**: Complete article with meta elements, internal links, SEO checklist
-- **Script**: `seo-content-analyzer.py` (readability, keywords, intent, quality)
+Writes long-form, SEO-optimized content (2000-3000+ words) that ranks and serves audience intent.
 
 ## Workflow
 
-### 1. Pre-Writing Research
+### 1. Research & Structure
+- **Gather**: Primary keyword + volume (`seo/keyword-research.md`), 3-5 secondary keywords, search intent (`seo-content-analyzer.py intent`), brand voice (`context/brand-voice.md`), internal links (`context/internal-links-map.md`).
+- **Structure**: H1 with primary keyword (50-60 chars). Intro: hook + problem + promise (keyword in first 100 words). 4-6 H2s with keyword variations. FAQ for "People Also Ask". Conclusion with CTA.
 
-Gather: primary keyword + search volume (`seo/keyword-research.md`), 3-5 secondary keywords, search intent (`seo-content-analyzer.py intent "keyword"`), brand voice (`context/brand-voice.md`), internal links map (`context/internal-links-map.md`).
-
-### 2. Article Structure
-
-H1 with primary keyword (50-60 chars). Introduction: hook + problem + promise, keyword in first 100 words. 4-6 H2 sections with keyword variations, secondary keywords, data and examples. FAQ section targeting People Also Ask with long-tail keywords. Conclusion with CTA and primary keyword mention.
-
-### 3. Content Requirements
+### 2. Content Requirements
 
 | Requirement | Target |
 |-------------|--------|
 | Word count | 2000-3000+ words |
 | Primary keyword density | 1-2% |
-| Keyword in H1 | Required |
-| Keyword in first 100 words | Required |
-| Keyword in 2-3 H2s | Required |
-| Internal links | 3-5 with descriptive anchor text |
-| External links | 2-3 to authority sources |
-| Meta title | 50-60 characters with keyword |
-| Meta description | 150-160 characters with keyword |
-| H2 sections | 4-6 minimum |
-| Paragraph length | 2-4 sentences |
-| Sentence length | 15-20 words average |
-| Reading level | Grade 8-10 |
+| Keyword placement | H1, first 100 words, 2-3 H2s |
+| Links | 3-5 internal (descriptive anchor), 2-3 external (authority) |
+| Meta | Title (50-60 chars), Description (150-160 chars) |
+| Readability | Grade 8-10, 2-4 sentence paragraphs, 15-20 word sentences |
 
-### 4. Post-Writing Analysis
-
-```bash
-python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py analyze article.md \
-  --keyword "primary keyword" --secondary "kw1,kw2"
-# Subcommands: readability, keywords, quality, intent
-```
-
-### 5. Output Format
-
-Deliver: article content in markdown, meta elements block (title 50-60 chars, description 150-160 chars, focus keyword, secondary keywords), SEO checklist (pass/fail per requirement), internal link suggestions if links map available.
+### 3. Analysis & Delivery
+- **Analyze**:
+  ```bash
+  python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py analyze article.md \
+    --keyword "primary keyword" --secondary "kw1,kw2"
+  ```
+- **Deliver**: Markdown content, meta block (title, desc, keywords), SEO checklist (pass/fail), internal link suggestions.
 
 ## Writing Guidelines
 
-- **Natural keyword integration** - if it sounds forced, rewrite
-- **Show, don't tell** - use specific examples and data
-- **One idea per paragraph** - break up walls of text
-- **Active voice** - keep passive voice under 20%
-- **Cite sources** - link to statistics and data
-- **Answer questions** - address "People Also Ask" queries
+- **Natural integration**: Rewrite if keyword sounds forced.
+- **Evidence-based**: Show, don't tell; use specific data/examples.
+- **Readability**: One idea per paragraph; active voice (>80%).
+- **Authority**: Cite sources for stats; answer "People Also Ask" queries.
 
 ## Integration
 
-- Uses `content/guidelines.md` for voice and style
-- Uses `content/humanise.md` for removing AI patterns
-- Uses `seo/keyword-research.md` for keyword data
-- Uses `seo/eeat-score.md` for quality validation
+- **Style**: `content/guidelines.md`, `content/humanise.md` (AI pattern removal).
+- **Data**: `seo/keyword-research.md`, `seo/eeat-score.md` (quality validation).
