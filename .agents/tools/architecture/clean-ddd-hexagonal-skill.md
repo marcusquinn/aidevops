@@ -1,11 +1,10 @@
 ---
 description: Clean Architecture + DDD + Hexagonal patterns for maintainable backend systems
 mode: subagent
-imported_from: external
 ---
 # Clean Architecture + DDD + Hexagonal
 
-DDD tactical patterns, Clean Architecture dependency rules, and Hexagonal ports/adapters for maintainable, testable systems. **Start simple. Evolve complexity only when needed.** When-to-use decision tree: [cheatsheet.md](clean-ddd-hexagonal-skill/cheatsheet.md#when-to-use--skip).
+DDD tactical patterns, Clean Architecture dependency rules, and Hexagonal ports/adapters. **Start simple. Evolve complexity only when needed.** Decision trees (when-to-use, code placement, entity vs value object): [cheatsheet.md](clean-ddd-hexagonal-skill/cheatsheet.md).
 
 ## CRITICAL: The Dependency Rule
 
@@ -21,9 +20,7 @@ Infrastructure → Application → Domain
 - Controllers calling repositories directly (bypassing use cases)
 - Entities depending on application services
 
-**Design validation:** "Create your application to work without either a UI or a database" — Alistair Cockburn. If you can run your domain logic from tests with no infrastructure, your boundaries are correct.
-
-Decision trees (code placement, entity vs value object, aggregate boundaries): [cheatsheet.md](clean-ddd-hexagonal-skill/cheatsheet.md#quick-decision-trees).
+**Design validation:** If you can run domain logic from tests with no infrastructure, your boundaries are correct.
 
 ## Directory Structure
 
@@ -66,17 +63,15 @@ src/
 | **Domain Service** | Stateless logic | Domain | When logic doesn't fit an entity |
 | **Application Service** | Orchestration | Application | Coordinates domain + infra |
 
-Anti-patterns (anemic domain, leaking infrastructure, god aggregate, etc.): [cheatsheet.md](clean-ddd-hexagonal-skill/cheatsheet.md#common-anti-patterns).
+Anti-patterns (anemic domain, leaking infrastructure, god aggregate): [cheatsheet.md](clean-ddd-hexagonal-skill/cheatsheet.md#common-anti-patterns).
 
 ## Implementation Order
 
-1. **Discover the Domain** — Event Storming, conversations with domain experts
+1. **Discover the Domain** — Event Storming, domain expert conversations
 2. **Model the Domain** — Entities, value objects, aggregates (no infra)
 3. **Define Ports** — Repository interfaces, external service interfaces
 4. **Implement Use Cases** — Application services coordinating domain
 5. **Add Adapters last** — HTTP, database, messaging implementations
-
-**DDD is collaborative.** Modeling sessions with domain experts are as important as the code patterns.
 
 ## Reference Documentation
 
@@ -89,5 +84,3 @@ Anti-patterns (anemic domain, leaking infrastructure, god aggregate, etc.): [che
 | [clean-ddd-hexagonal-skill/cqrs-events.md](clean-ddd-hexagonal-skill/cqrs-events.md) | Command/query separation, events |
 | [clean-ddd-hexagonal-skill/testing.md](clean-ddd-hexagonal-skill/testing.md) | Unit, integration, architecture tests |
 | [clean-ddd-hexagonal-skill/cheatsheet.md](clean-ddd-hexagonal-skill/cheatsheet.md) | Quick decision guide |
-
-Sources and references: [cheatsheet.md](clean-ddd-hexagonal-skill/cheatsheet.md#resources).
