@@ -49,15 +49,15 @@ Full content is split into focused chapter files. Each is self-contained.
 
 | # | Chapter | Description |
 |---|---------|-------------|
-| 01 | [Model Selection](video/01-model-selection.md) | Decision tree, model comparison table, content type presets |
-| 02 | [Sora 2 Pro Template](video/02-sora-template.md) | 6-section master template with UGC product demo example |
-| 03 | [Veo 3.1 Workflow](video/03-veo-workflow.md) | 7-component prompting framework, ingredients-to-video (mandatory) |
-| 04 | [Seed Bracketing](video/04-seed-bracketing.md) | Systematic seed testing (15% → 70%+ success), scoring, automation |
-| 05 | [Camera & Shot Reference](video/05-camera-shot-reference.md) | 8K camera models, lens characteristics, shot types, angles, movements |
-| 06 | [2-Track Production](video/06-two-track-production.md) | Objects/environments (Track 1) vs characters/people (Track 2) |
-| 07 | [Post-Production](video/07-post-production.md) | Upscaling, frame rate conversion, denoising, film grain |
-| 08 | [Talking-Head Pipeline](video/08-talking-head-pipeline.md) | Longform 30s+ pipeline: image → script → voice → video → post |
-| 09 | [Tools & Resources](video/09-tools-resources.md) | Internal references, helper scripts, external links |
+| 01 | [Model Selection](production-video-01-model-selection.md) | Decision tree, model comparison table, content type presets |
+| 02 | [Sora 2 Pro Template](production-video-02-sora-template.md) | 6-section master template with UGC product demo example |
+| 03 | [Veo 3.1 Workflow](production-video-03-veo-workflow.md) | 7-component prompting framework, ingredients-to-video (mandatory) |
+| 04 | [Seed Bracketing](production-video-04-seed-bracketing.md) | Systematic seed testing (15% → 70%+ success), scoring, automation |
+| 05 | [Camera & Shot Reference](production-video-05-camera-shot-reference.md) | 8K camera models, lens characteristics, shot types, angles, movements |
+| 06 | [2-Track Production](production-video-06-two-track-production.md) | Objects/environments (Track 1) vs characters/people (Track 2) |
+| 07 | [Post-Production](production-video-07-post-production.md) | Upscaling, frame rate conversion, denoising, film grain |
+| 08 | [Talking-Head Pipeline](production-video-08-talking-head-pipeline.md) | Longform 30s+ pipeline: image → script → voice → video → post |
+| 09 | [Tools & Resources](production-video-09-tools-resources.md) | Internal references, helper scripts, external links |
 
 ## Key Rules
 
