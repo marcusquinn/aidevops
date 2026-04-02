@@ -4,17 +4,11 @@ agent: Build+
 mode: subagent
 ---
 
-Run Python venv smoke tests across managed repos.
-
-Arguments: $ARGUMENTS
-
-## Quick Output
+Run Python venv smoke tests across managed repos. Arguments: $ARGUMENTS
 
 ```bash
 ~/.aidevops/agents/scripts/venv-health-check-helper.sh scan $ARGUMENTS
 ```
-
-Display the helper output directly; formatting is built in.
 
 ## Modes
 
@@ -33,23 +27,19 @@ Display the helper output directly; formatting is built in.
 | Stale editable installs | `.pth` files pointing to deleted paths (e.g., pruned git worktrees) | Error |
 | Missing requirements file | Venvs with no `requirements.txt`, `pyproject.toml`, `setup.py`, `setup.cfg`, or `Pipfile` | Warning |
 
-## Venv Discovery
-
-Looks for `.venv/pyvenv.cfg` (PEP 405 marker) up to 3 levels deep in each registered repo, then deduplicates by realpath.
+Discovery: looks for `.venv/pyvenv.cfg` (PEP 405 marker) up to 3 levels deep in each registered repo, deduplicated by realpath.
 
 ## Automatic Checks
 
-Runs daily via `auto-update-helper.sh` when the user is idle. Results go to `~/.aidevops/logs/auto-update.log`.
+Runs daily via `auto-update-helper.sh` when idle. Results: `~/.aidevops/logs/auto-update.log`.
 
-Disable automatic checks:
+| Config key | Default | Effect |
+|------------|---------|--------|
+| `updates.venv_health_check` | `true` | Set `false` to disable |
+| `updates.venv_health_hours` | `24` | Check interval in hours |
 
 ```bash
 aidevops config set updates.venv_health_check false
-```
-
-Change the interval (default: 24h):
-
-```bash
 aidevops config set updates.venv_health_hours 12
 ```
 
