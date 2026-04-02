@@ -1,4 +1,10 @@
 {
+  ".agents/tools/local-models/huggingface.md": {
+    "hash": "ff26e48eb6bcafa363114bbc83c5db1c",
+    "issue": "GH#14100",
+    "lines": 99,
+    "status": "simplified"
+  },
   ".agents/seo/ai-search-kpi-template.md": {
     "hash": "03478debc956ad02835cde5c946e89762351c2c00c836d8c9c24fca3ebd366cc",
     "issue": "GH#14993",
