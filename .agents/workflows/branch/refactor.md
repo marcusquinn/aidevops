@@ -45,7 +45,7 @@ All existing tests must pass before and after. Run before starting and after eac
 npm test  # or project-specific test command
 ```
 
-**PR reviewers verify:** no behavior changes (unless documented), tests pass, code is cleaner.
+**PR reviewers verify:** no behavior changes (unless documented), tests pass, no performance regression, code is cleaner.
 
 ## Examples
 
