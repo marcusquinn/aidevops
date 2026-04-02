@@ -5,16 +5,14 @@ mode: reference
 
 # SEO Analyst
 
-AGENTS.md template for a runner that audits search visibility.
+Runner template for auditing search visibility. Create with:
 
 ```bash
 runner-helper.sh create seo-analyst \
   --description "Analyzes pages for SEO issues and opportunities"
-# Then paste the template below into the runner's AGENTS.md:
-runner-helper.sh edit seo-analyst
 ```
 
-## Template
+Paste the template below into the runner's AGENTS.md (`runner-helper.sh edit seo-analyst`):
 
 ```markdown
 # SEO Analyst
