@@ -26,9 +26,41 @@ test-all-apis.sh
 
 <!-- AI-CONTEXT-END -->
 
+## Setup
+
+```bash
+# Full setup
+bash setup.sh
+
+# Single service
+cp configs/[service]-config.json.txt configs/[service]-config.json
+# Edit with credentials, then:
+scripts/[service]-helper.sh test-connection
+```
+
 ## Service Catalog
 
-Config/helper follow the standard pattern unless noted. Auth column shows credential type required.
+Standard pattern: `configs/[service]-config.json` + `scripts/[service]-helper.sh`. Auth: credential type.
+
+### Security & Code Quality
+
+| Service | Auth | Setup | Notes |
+|---------|------|-------|-------|
+| Vaultwarden | API Token | Config + helper | Credential storage, secure sharing, audit logs |
+| CodeRabbit | API Key | `coderabbit-cli.sh` | AI code review, security scanning |
+| Codacy | API Token | `codacy-cli.sh` | Quality metrics, coverage tracking |
+| SonarCloud | API Token | GitHub Actions | Security hotspots, code smells, coverage |
+| CodeFactor | GitHub integration | Automatic | Quality scoring, trend analysis |
+
+### Git Platforms
+
+Shared helper: `git-platforms-helper.sh`.
+
+| Service | Auth | Notes |
+|---------|------|-------|
+| GitHub | Personal Access Token | Repos, Actions, security scanning |
+| GitLab | Personal Access Token | Projects, CI/CD pipelines, security features |
+| Gitea | API Token | Self-hosted repos, user admin, webhooks |
 
 ### Infrastructure & Hosting
 
@@ -54,18 +86,8 @@ Config/helper follow the standard pattern unless noted. Auth column shows creden
 | Service | Auth | Notes |
 |---------|------|-------|
 | Amazon SES | AWS Access Keys | Email delivery, bounce tracking, reputation |
-| Twilio | Account SID + Auth Token | SMS/MMS, voice, WhatsApp Business, Verify (2FA), Lookup, recordings. AUP compliance required. Telfon app for end-user UI (https://mytelfon.com/) |
+| Twilio | SID + Token | SMS, voice, WhatsApp, 2FA, recordings. AUP required. Telfon UI: https://mytelfon.com/ |
 | MainWP | API Key | WordPress site management, updates, backups |
-
-### Security & Code Quality
-
-| Service | Auth | Setup | Notes |
-|---------|------|-------|-------|
-| Vaultwarden | API Token | Config + helper | Credential storage, secure sharing, audit logs |
-| CodeRabbit | API Key | `coderabbit-cli.sh` | AI code review, security scanning |
-| Codacy | API Token | `codacy-cli.sh` | Quality metrics, coverage tracking |
-| SonarCloud | API Token | GitHub Actions | Security hotspots, code smells, coverage |
-| CodeFactor | GitHub integration | Automatic | Quality scoring, trend analysis |
 
 ### SEO & Analytics
 
@@ -75,16 +97,6 @@ Config/helper follow the standard pattern unless noted. Auth column shows creden
 | Google Search Console | Service Account (GCP) | `mcp-server-gsc` | Search analytics, Core Web Vitals, index coverage |
 | Perplexity | API Key | `perplexity-mcp` | Research queries, content generation, fact-checking |
 
-### Git Platforms
-
-All three share `git-platforms-helper.sh`.
-
-| Service | Auth | Notes |
-|---------|------|-------|
-| GitHub | Personal Access Token | Repos, Actions, security scanning |
-| GitLab | Personal Access Token | Projects, CI/CD pipelines, security features |
-| Gitea | API Token | Self-hosted repos, user admin, webhooks |
-
 ### Development Tools
 
 | Service | Auth | Integration | Notes |
@@ -92,20 +104,8 @@ All three share `git-platforms-helper.sh`.
 | Context7 | API Key | `@context7/mcp-server` | Real-time library docs, code examples, API references |
 | LocalWP | Local access | Custom MCP server | WordPress DB queries, site management, dev tools |
 | Pandoc | None (local) | `pandoc-helper.sh` | Multi-format to markdown conversion (20+ formats) |
-| Agno AgentOS | LLM provider keys | `agno-setup.sh` | Multi-agent framework, production runtime, Agent-UI web interface |
-| Playwright/Selenium | Site credentials (local) | Included in `agno-setup.sh` | Local browser automation. No cloud services. |
-
-## Setup
-
-```bash
-# Full setup
-bash setup.sh
-
-# Single service
-cp configs/[service]-config.json.txt configs/[service]-config.json
-# Edit with credentials, then:
-scripts/[service]-helper.sh test-connection
-```
+| Agno AgentOS | LLM keys | `agno-setup.sh` | Multi-agent framework, production runtime, Agent-UI |
+| Playwright/Selenium | Site credentials | `agno-setup.sh` | Local browser automation. No cloud services. |
 
 ## References
 

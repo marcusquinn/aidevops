@@ -29,8 +29,8 @@
   },
   ".agents/services/hosting/cloudflare-platform-skill/zaraz.md": {
     "hash": "abcd8c44ae2709e94448fc7186503c5e84adbf4b249090c3144acc78e73482f4",
-    "issue": "GH#15033",
-    "status": "simplified"
+    "status": "simplified",
+    "issue": "GH#15033"
   },
   ".agents/tools/deployment/cloudron-app-packaging-skill/manifest-ref.md": {
     "hash": "edecc25afbace885cab2eac01e07629d890a4fad",
@@ -4481,17 +4481,16 @@
     }
   },
   "status": "done",
+  ".agents/aidevops/api-integrations.md": {
+    "hash": "b846f1a8ef5bc661dde4fced618c9a7fe5d76db6ab487eff7f231258cab764e8",
+    "issue": "GH#15042",
+    "status": "simplified",
+    "note": "Tightened: Setup moved before catalog, Security/Git sections reordered to top, Twilio entry compressed, prose tightened. 114 lines."
+  },
   ".agents/tools/context/rapidfuzz.md": {
     "hash": "f06e2a2bf6fc561deeaff84f8ec5389eb942307d89902687e82d9c4c31e1c9cf",
     "issue": "GH#14091",
     "status": "simplified",
     "note": "Consolidated 4 fragmented fuzz.* code blocks into 1 cohesive block. 121 -> 104 lines. All content preserved."
-  },
-  ".agents/services/hosting/cloudflare-platform-skill/miniflare.md": {
-    "hash": "4471ddd0229e26f2af30d5833d95c9a1f0261dac",
-    "issue": "GH#15561",
-    "passes": 1,
-    "status": "simplified",
-    "note": "Merged ES modules note into setup code block; merged See Also + Resources into single References section. 51->47 lines."
   }
 }
