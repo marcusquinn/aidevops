@@ -1,6 +1,11 @@
 {
     "_comment": null,
     "files": {
+        ".agents/workflows/branch/feature.md": {
+            "hash": "1316d72ee54f00be656cb942a010b1a1",
+            "at": "2026-04-02T05:30:00Z",
+            "pr": 15550
+        },
         ".agents/scripts/commands/worktree-cleanup.md": {
             "hash": "f333ce7dce4127c4c2150a07b4c1f50c",
             "at": "2026-04-02T02:30:00Z",

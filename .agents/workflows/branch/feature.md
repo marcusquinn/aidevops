@@ -19,7 +19,7 @@ tools:
 | **Prefix** | `feature/` |
 | **Commit** | `feat: description` |
 | **Version** | Minor bump (1.0.0 → 1.1.0) |
-| **Create from** | `main` |
+| **Source** | `main` |
 
 ```bash
 git checkout main && git pull origin main
@@ -28,17 +28,12 @@ git checkout -b feature/{description}
 
 <!-- AI-CONTEXT-END -->
 
-## When to Use
+## Usage
 
-- New functionality or integrations
-- Significant capability expansion
-
-**Not for** bug fixes, refactors, or docs/config-only work.
-
-## Guidance
-
-- Minor-version bump applies when the branch ships user-visible capability, not internal-only maintenance.
-- For implementation patterns, see `workflows/feature-development.md`.
+- **Use for**: New functionality, integrations, significant capability expansion.
+- **Not for**: Bug fixes, refactors, docs, or config-only work.
+- **Version**: Minor bump applies to user-visible capabilities, not internal maintenance.
+- **Patterns**: See `workflows/feature-development.md`.
 
 ## Examples
 
