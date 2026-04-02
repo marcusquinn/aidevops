@@ -546,7 +546,8 @@ _write_stagehand_both_template() {
       "env": {
         "STAGEHAND_ENV": "LOCAL",
         "STAGEHAND_VERBOSE": "1",
-        "STAGEHAND_HEADLESS": "false"
+        "STAGEHAND_HEADLESS": "false",
+        "PYTHONPATH": "${HOME}/.aidevops/stagehand-python/.venv/lib/python3.11/site-packages"
       }
     }
   }
