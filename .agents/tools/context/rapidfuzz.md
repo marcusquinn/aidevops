@@ -27,31 +27,14 @@ tools:
 
 ## Core Functions
 
-### Simple Ratio (character-level similarity)
-
 ```python
 from rapidfuzz import fuzz
 
-fuzz.ratio("fuzzy wuzzy", "fuzzy wuzzy")       # 100.0
-fuzz.ratio("fuzzy wuzzy", "fzzy wzzy")         # ~84.2
-```
-
-### Partial Ratio (substring matching)
-
-```python
-fuzz.partial_ratio("fuzzy wuzzy", "wuzzy")     # 100.0
-```
-
-### Token Sort Ratio (order-independent)
-
-```python
-fuzz.token_sort_ratio("New York Mets", "Mets New York")  # 100.0
-```
-
-### Token Set Ratio (handles duplicates and extras)
-
-```python
-fuzz.token_set_ratio(
+fuzz.ratio("fuzzy wuzzy", "fuzzy wuzzy")                  # 100.0  — character-level similarity
+fuzz.ratio("fuzzy wuzzy", "fzzy wzzy")                    # ~84.2
+fuzz.partial_ratio("fuzzy wuzzy", "wuzzy")                # 100.0  — substring matching
+fuzz.token_sort_ratio("New York Mets", "Mets New York")   # 100.0  — order-independent
+fuzz.token_set_ratio(                                      # handles duplicates and extras
     "fuzzy wuzzy was a bear",
     "fuzzy fuzzy was a bear"
 )  # High score despite differences
