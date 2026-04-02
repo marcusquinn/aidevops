@@ -29,21 +29,6 @@ Search query: $ARGUMENTS
 
 `WORKING_SOLUTION`, `FAILED_APPROACH`, `USER_PREFERENCE`, `CODEBASE_PATTERN`, `DECISION`, `TOOL_CONFIG`
 
-## Example
-
-```text
-User: /recall cors
-AI: Found 2 memories for "cors":
-
-    1. [WORKING_SOLUTION] Fixed CORS by adding Access-Control-Allow-Origin header to nginx.conf
-       Tags: cors,nginx,headers | Project: api-gateway | 3 days ago
-
-    2. [FAILED_APPROACH] Setting CORS in Express middleware didn't work with nginx proxy
-       Tags: cors,express,nginx | Project: api-gateway | 3 days ago
-
-    Which memory is relevant to your current task?
-```
-
 ## Maintenance
 
 Stale memories (>90 days, never accessed) are candidates for pruning.
