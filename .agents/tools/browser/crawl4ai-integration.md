@@ -4,7 +4,6 @@ mode: subagent
 tools:
   read: true
   bash: true
-  glob: true
   grep: true
   webfetch: true
 ---
@@ -25,9 +24,16 @@ tools:
 - **Config**: `configs/crawl4ai-config.json.txt`, `configs/mcp-templates/crawl4ai-mcp-config.json`
 - **Endpoints**: Dashboard http://localhost:11235/dashboard | Health `/health` | Metrics `/metrics`
 - **Docs**: https://docs.crawl4ai.com/ | https://github.com/unclecode/crawl4ai
-- **Env**: `LLM_PROVIDER=openai/gpt-4o-mini`, `CRAWL4AI_MAX_PAGES=50`, `CRAWL4AI_TIMEOUT=60`, `CRAWL4AI_DEFAULT_FORMAT=markdown` (`OPENAI_API_KEY`/`ANTHROPIC_API_KEY` from secure storage)
+- **Env**: `LLM_PROVIDER=openai/gpt-4o-mini`, `CRAWL4AI_MAX_PAGES=50`, `CRAWL4AI_TIMEOUT=60`, `CRAWL4AI_DEFAULT_FORMAT=markdown`
+- **Secrets**: `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` from secure storage
 
 <!-- AI-CONTEXT-END -->
+
+## Security
+
+- **Rate limiting**: configure `rate_limiting.default_limit` in deployment config
+- **Hook security**: never trust user-provided hook code; validate, sandbox, and timeout all hooks
+- **Security headers**: set `x_content_type_options`, `x_frame_options`, `content_security_policy`
 
 ## MCP Config
 
@@ -56,12 +62,6 @@ tools:
 | Proxy | `BrowserConfig(proxy={"server": "...", "username": "...", "password": "..."})` |
 | Browser hooks | `crawler.arun(hooks={"on_page_context_created": setup_hook})` |
 | Async job queue | `POST http://localhost:11235/crawl/job` with `webhook_config` |
-
-## Security
-
-- **Rate limiting**: configure `rate_limiting.default_limit` in deployment config
-- **Hook security**: never trust user-provided hook code; validate, sandbox, and timeout all hooks
-- **Security headers**: set `x_content_type_options`, `x_frame_options`, `content_security_policy`
 
 ## Troubleshooting
 
