@@ -17,16 +17,10 @@ tools:
 
 Analyses keyword placement, distribution, and integration quality across content sections.
 
-## Quick Reference
+**Input**: article content, primary keyword, secondary keywords  
+**Script**: `seo-content-analyzer.py keywords`
 
-- **Purpose**: Map keyword distribution, identify gaps, detect stuffing
-- **Input**: Article content, primary keyword, secondary keywords
-- **Output**: Distribution heatmap, gap analysis, revision suggestions
-- **Script**: `seo-content-analyzer.py keywords`
-
-## Analysis
-
-### Run Keyword Analysis
+## Run Analysis
 
 ```bash
 python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py keywords article.md \
@@ -34,9 +28,7 @@ python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py keywords article.md \
   --secondary "secondary1,secondary2,secondary3"
 ```
 
-### Output Interpretation
-
-#### Density Status
+## Density Status
 
 | Status | Density | Action |
 |--------|---------|--------|
@@ -46,7 +38,7 @@ python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py keywords article.md \
 | `slightly_high` | 1.8-2.25% | Replace some with synonyms |
 | `too_high` | > 2.25% | Remove instances, risk of stuffing |
 
-#### Critical Placements
+## Critical Placements
 
 | Location | Priority | Why |
 |----------|----------|-----|
@@ -57,30 +49,20 @@ python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py keywords article.md \
 | Meta title | Critical | SERP display |
 | Meta description | High | SERP display, bold matching |
 
-#### Distribution Heatmap
+## Distribution
 
-The script outputs per-section keyword density. Ideal distribution:
+Ideal per-section density from script output:
 
 - **Introduction**: Higher density (establish topic)
 - **Body sections**: Even distribution (1-2 mentions per section)
 - **Conclusion**: Moderate density (reinforce topic)
 - **No section**: Zero mentions (gap to fill)
 
-### Keyword Stuffing Detection
-
-The script checks for:
-
-- Overall density > 2.5% (medium risk) or > 3% (high risk)
-- Per-paragraph density > 5% (concentrated stuffing)
-- 3+ consecutive sentences with keyword (unnatural repetition)
+**Stuffing detection** — script flags: overall > 2.5% (medium risk) or > 3% (high risk); per-paragraph > 5%; 3+ consecutive sentences with keyword.
 
 ## LSI Keywords
 
-The script discovers semantically related terms (LSI keywords) from content. Use these to:
-
-- Replace some primary keyword instances with variations
-- Add topical depth without increasing primary density
-- Cover related search queries
+Script discovers semantically related terms. Use to replace primary keyword instances with variations, add topical depth, and cover related queries.
 
 ## Revision Workflow
 
@@ -88,7 +70,7 @@ The script discovers semantically related terms (LSI keywords) from content. Use
 2. Fix critical placement gaps first
 3. Adjust density if outside 1-2% range
 4. Add LSI keywords for topical coverage
-5. Re-run analysis to verify
+5. Re-run to verify
 
 ## Integration
 
