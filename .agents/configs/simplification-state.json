@@ -743,7 +743,7 @@
       "hash": "347272e46c7d04f05dd13a4683cf44bef0dd3da7",
       "issue": "GH#14286",
       "passes": 2,
-      "note": "Reference corpus chapter tightened: 92 \u2192 90 lines. Removed decorative closing sentence with no information value. Zero content loss."
+      "note": "Reference corpus chapter tightened: 92 → 90 lines. Removed decorative closing sentence with no information value. Zero content loss."
     },
     ".agents/marketing-sales/cro-chapter-20.md": {
       "at": "2026-03-29T16:34:29Z",
@@ -2176,9 +2176,9 @@
       "pr": 12909
     },
     ".agents/services/hosting/cloudflare-platform-skill/network-interconnect.md": {
-      "at": "2026-04-01T20:59:42Z",
-      "hash": "a87bdad3db117a280177a98592d12acba7a2e676",
-      "passes": 1,
+      "at": "2026-04-02T23:13:23Z",
+      "hash": "dc0ab9b5d1eadafd4faf927c93a89eb11db185eb",
+      "passes": 2,
       "pr": 14916
     },
     ".agents/services/hosting/cloudflare-platform-skill/pages-functions-patterns.md": {
@@ -2278,9 +2278,9 @@
       "pr": 11985
     },
     ".agents/services/hosting/cloudflare-platform-skill/r2.md": {
-      "at": "2026-04-01T20:59:44Z",
-      "hash": "c0c080bb82f1488a996f7cf50c231ac89179bc6f",
-      "passes": 1,
+      "at": "2026-04-02T23:13:24Z",
+      "hash": "5a75b54baf9c39a8298e2ebbbee01c5c1988db13",
+      "passes": 2,
       "pr": 14914
     },
     ".agents/services/hosting/cloudflare-platform-skill/realtimekit-gotchas.md": {
@@ -2657,9 +2657,9 @@
       "pr": 15227
     },
     ".agents/tools/ai-assistants/models-sonnet.md": {
-      "at": "2026-04-01T20:59:40Z",
-      "hash": "035dfbf3d02fc552dd1f4dab55ea1bf70331e2b1",
-      "passes": 1,
+      "at": "2026-04-02T23:13:26Z",
+      "hash": "64800a1556f7948083c746ea4bda589616a0f19c",
+      "passes": 2,
       "pr": 14913
     },
     ".agents/tools/ai-assistants/openclaw.md": {
@@ -4385,15 +4385,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-04-02T22:44:02Z",
-      "hash": "4ae644881ead1d1ca26be6ca5c465284fcc84afe",
-      "passes": 13,
+      "at": "2026-04-02T23:13:35Z",
+      "hash": "1927c2adf50d10f392004f15a686d70e8ec1618e",
+      "passes": 14,
       "pr": 15470
     },
     "setup.sh": {
-      "at": "2026-04-02T22:44:02Z",
-      "hash": "171575babb9f77bfbcb24099945ec9e90ef346de",
-      "passes": 13,
+      "at": "2026-04-02T23:13:35Z",
+      "hash": "e76a133ab59c519df06f5e24b8717740aa77291b",
+      "passes": 14,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
