@@ -1,5 +1,15 @@
 # KV Gotchas & Troubleshooting
 
+## When to Use
+
+| Use KV | Use Instead |
+|--------|-------------|
+| Read-heavy, globally distributed | Strong consistency → Durable Objects |
+| Low-latency reads, key-value access | Write-heavy → D1 or Durable Objects |
+| Eventually consistent is acceptable | Relational queries → D1 |
+| | Large files (>25 MiB) → R2 |
+| | Atomic operations → Durable Objects |
+
 ## Eventual Consistency
 
 ```typescript
@@ -18,6 +28,22 @@ return new Response(newValue);
 ```
 
 **Propagation:** Writes visible immediately in same location, ≤60s globally.
+
+## Null Handling
+
+```typescript
+// ❌ No null check
+const value = await env.MY_KV.get("key");
+const result = value.toUpperCase(); // Error if null
+
+// ✅ Check for null
+const value = await env.MY_KV.get("key");
+if (value === null) return new Response("Not found", { status: 404 });
+return new Response(value);
+
+// ✅ Provide default
+const value = (await env.MY_KV.get("config")) ?? "default-config";
+```
 
 ## Concurrent Writes
 
@@ -70,26 +96,10 @@ const users = await env.USERS.get(["user:1", "user:2", "user:3"]);
 
 **Note:** Bulk write NOT available in Workers (only via CLI/API).
 
-## Null Handling
-
-```typescript
-// ❌ No null check
-const value = await env.MY_KV.get("key");
-const result = value.toUpperCase(); // Error if null
-
-// ✅ Check for null
-const value = await env.MY_KV.get("key");
-if (value === null) return new Response("Not found", { status: 404 });
-return new Response(value);
-
-// ✅ Provide default
-const value = (await env.MY_KV.get("config")) ?? "default-config";
-```
-
 ## Limits & Pricing
 
-| | |
-|---|---|
+| Limit / Pricing | Value |
+|-----------------|-------|
 | Key size | 512 bytes max |
 | Value size | 25 MiB max |
 | Metadata | 1024 bytes max |
@@ -98,13 +108,3 @@ const value = (await env.MY_KV.get("config")) ?? "default-config";
 | Writes | $5.00 per 1M |
 | Deletes | $5.00 per 1M |
 | Storage | $0.50 per GB-month |
-
-## When to Use
-
-| Use KV | Use Instead |
-|--------|-------------|
-| Read-heavy, globally distributed, eventually consistent | Strong consistency → Durable Objects |
-| Low-latency reads, key-value access | Write-heavy → D1 or Durable Objects |
-| | Relational queries → D1 |
-| | Large files (>25 MiB) → R2 |
-| | Atomic operations → Durable Objects |
