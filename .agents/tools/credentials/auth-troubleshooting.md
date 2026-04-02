@@ -1,16 +1,9 @@
 # Auth Troubleshooting
 
-Use this when a user reports "Key Missing", auth errors, or the model has stopped responding.
-
+Use when a user reports "Key Missing", auth errors, or the model has stopped responding.
 All recovery commands work from any terminal — no working model session required.
 
-## Important: Anthropic Integration (OAuth only)
-
-The pool's Anthropic integration uses **OAuth only** (Claude Pro/Max subscription). API keys are not used and not needed.
-
-- `opencode auth login` prompts for an API key — **do not use this for OAuth**
-- The correct OAuth setup path is `aidevops model-accounts-pool add anthropic` (opens browser)
-- Or via OpenCode TUI: `Ctrl+A` → Anthropic → Login with Claude.ai
+**Anthropic uses OAuth only** (Claude Pro/Max). `opencode auth login` prompts for an API key — do not use it for OAuth. Use `aidevops model-accounts-pool add anthropic` (opens browser) or OpenCode TUI: `Ctrl+A` → Anthropic → Login with Claude.ai.
 
 ## Recovery flow (run in order)
 
@@ -55,34 +48,19 @@ aidevops model-accounts-pool remove <p> <email>   # remove an account
 
 ## Google AI Pool
 
-The Google provider supports **subscription-based AI plans** (not API key/credit billing):
+Supports subscription-based plans (Google AI Pro ~$25/mo, Ultra ~$65/mo, Workspace with Gemini add-on). Tokens injected as `GOOGLE_OAUTH_ACCESS_TOKEN` (ADC bearer token) — picked up by Gemini CLI, Vertex AI SDK, and `generativelanguage.googleapis.com` automatically.
 
-- **Google AI Pro** (~$25/mo) — includes Gemini CLI daily limits
-- **Google AI Ultra** (~$65/mo) — higher daily limits
-- **Google Workspace** with Gemini add-on — enterprise daily limits
+**Isolation guarantee:** Google auth failures never affect Anthropic/OpenAI/Cursor providers. A Google 429 or auth error only puts the Google pool into cooldown.
 
-Tokens are injected as `GOOGLE_OAUTH_ACCESS_TOKEN` (ADC bearer token), which Gemini CLI,
-Vertex AI SDK, and `generativelanguage.googleapis.com` pick up automatically.
-
-**Setup:**
-
-```bash
-aidevops model-accounts-pool add google    # opens browser → sign in → paste code
-```
-
-**Isolation guarantee:** Google auth failures never affect Anthropic/OpenAI/Cursor providers.
-A Google 429 or auth error only puts the Google pool into cooldown.
-
-**Health check:** `aidevops model-accounts-pool check google`
-validates the token against `generativelanguage.googleapis.com/v1beta/models`.
+**Health check:** `aidevops model-accounts-pool check google` validates against `generativelanguage.googleapis.com/v1beta/models`.
 
 ## Key diagnostic facts
 
-- Token injection uses `process.env.ANTHROPIC_API_KEY` (and `OPENAI_API_KEY`, `GOOGLE_OAUTH_ACCESS_TOKEN`) — works on all OpenCode versions. The env var is set by the plugin at startup and updated on rotation/refresh.
-- `rotate` updates the env var and `auth.json` immediately — takes effect on the next API call without restart
-- `reset-cooldowns` clears the **pool file** cooldowns only; the in-memory token endpoint cooldown in a running OpenCode process requires a restart or `/model-accounts-pool reset-cooldowns` inside an active session
-- Pool file: `~/.aidevops/oauth-pool.json` — if corrupt or missing, `add` recreates it
-- "Key Missing" means the plugin didn't load or the pool is empty — check `aidevops model-accounts-pool status`
-- `assign-pending` is needed when OAuth completes but the email lookup fails — the token is saved as `_pending_<provider>` and stranded until assigned
-- If `ANTHROPIC_API_KEY` is set in your shell environment (e.g. `.bashrc`), the pool injection will override it at startup. Remove any manual API key env vars to avoid confusion.
-- Google tokens expire after ~1 hour (standard OAuth2 access token lifetime). The pool auto-refreshes using the stored refresh token. If refresh fails, re-auth with `add google`.
+- Token injection uses `process.env.ANTHROPIC_API_KEY` (and `OPENAI_API_KEY`, `GOOGLE_OAUTH_ACCESS_TOKEN`) — works on all OpenCode versions; updated on rotation/refresh without restart.
+- `rotate` updates the env var and `auth.json` immediately — takes effect on the next API call.
+- `reset-cooldowns` clears **pool file** cooldowns only; in-memory cooldown in a running OpenCode process requires a restart or `/model-accounts-pool reset-cooldowns` inside an active session.
+- Pool file: `~/.aidevops/oauth-pool.json` — if corrupt or missing, `add` recreates it.
+- "Key Missing" = plugin didn't load or pool is empty — check `aidevops model-accounts-pool status`.
+- `assign-pending` needed when OAuth completes but email lookup fails — token saved as `_pending_<provider>` until assigned.
+- If `ANTHROPIC_API_KEY` is set in your shell (e.g. `.bashrc`), pool injection overrides it at startup. Remove manual API key env vars to avoid confusion.
+- Google tokens expire after ~1 hour (standard OAuth2). Pool auto-refreshes via stored refresh token; if refresh fails, re-auth with `add google`.
