@@ -4,37 +4,15 @@ See [hyperdrive.md](./hyperdrive.md) and [hyperdrive-patterns.md](./hyperdrive-p
 
 ## Common Errors
 
-```typescript
-try {
-  const result = await client.query("SELECT * FROM users");
-} catch (error: any) {
-  const msg = error.message || "";
+| `error.message` contains | Cause | HTTP status | Action |
+|--------------------------|-------|-------------|--------|
+| `Failed to acquire a connection` | Pool exhausted | 503 | Reduce transaction duration; upgrade plan |
+| `connection_refused` | DB refusing | 503 | Check firewall/limits |
+| `timeout` / `deadline exceeded` | Query >60s | 504 | Optimize query; add indexes |
+| `password authentication failed` | Bad credentials | 500 | Check credentials |
+| `SSL` / `TLS` | TLS misconfiguration | 500 | Check `sslmode` setting |
 
-  if (msg.includes("Failed to acquire a connection")) {
-    console.error("Pool exhausted - long transactions?");
-    return new Response("Service busy", {status: 503});
-  }
-  if (msg.includes("connection_refused")) {
-    console.error("DB refusing - firewall/limits?");
-    return new Response("DB unavailable", {status: 503});
-  }
-  if (msg.includes("timeout") || msg.includes("deadline exceeded")) {
-    console.error("Query timeout - exceeded 60s");
-    return new Response("Query timeout", {status: 504});
-  }
-  if (msg.includes("password authentication failed")) {
-    console.error("Auth failed - check credentials");
-    return new Response("Config error", {status: 500});
-  }
-  if (msg.includes("SSL") || msg.includes("TLS")) {
-    console.error("TLS issue - check sslmode");
-    return new Response("Connection security error", {status: 500});
-  }
-
-  console.error("Unknown DB error:", error);
-  return new Response("Internal error", {status: 500});
-}
-```
+Catch pattern: `const msg = error.message || ""; if (msg.includes("...")) { ... }`
 
 ## Troubleshooting
 
