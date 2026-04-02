@@ -38,9 +38,7 @@ target, and evidence for each material change.
 
 ## Prioritized Backlog
 
-1. [ ]
-2. [ ]
-3. [ ]
+<!-- Add items as: 1. [ ] Description -->
 
 ## Re-test Plan
 
