@@ -20,21 +20,11 @@ tools:
 - **Auth**: OAuth 2.0 three-legged flow, scopes: `w_member_social`, `r_organization_social`
 - **Related**: [bird.md](bird.md) (X/Twitter), [reddit.md](reddit.md) (Reddit)
 
-## Post Types
-
-| Type | Use Case | Notes |
-|------|----------|-------|
-| Text | Thought leadership | 3k char limit |
-| Article | Long-form | Native platform |
-| Carousel | Visual | PDF, 300 pgs max |
-| Document | Guides | PDF/PPT/DOC, 100MB |
-| Poll | Engagement | 2-4 options, 1-2 wks |
-| Image | Visual | Up to 9 images |
-| Video | Native | 10 min max |
+**Post types**: Text (3k chars), Article (long-form), Carousel (PDF, 300p), Document (PDF/PPT/DOC, 100MB), Poll (2-4 options, 1-2 wks), Image (up to 9), Video (10 min max)
 
 <!-- AI-CONTEXT-END -->
 
-## OAuth 2.0 Setup
+## API Setup
 
 1. Create app at https://www.linkedin.com/developers/apps
 2. Request Community Management API access (requires app review)
@@ -46,14 +36,7 @@ aidevops secret set LINKEDIN_CLIENT_SECRET
 aidevops secret set LINKEDIN_ACCESS_TOKEN
 ```
 
-## Key Endpoints
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/v2/userinfo` | GET | Authenticated user profile |
-| `/v2/posts` | POST | Create text/media posts |
-| `/v2/images?action=initializeUpload` | POST | Register image upload |
-| `/v2/organizationalEntityShareStatistics` | GET | Post analytics |
+**Key endpoints**: `GET /v2/userinfo` (profile), `POST /v2/posts` (create), `POST /v2/images?action=initializeUpload` (media), `GET /v2/organizationalEntityShareStatistics` (analytics)
 
 ```bash
 curl -X POST -H "Authorization: Bearer $TOKEN" \
@@ -71,6 +54,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 - **Engagement**: Open with hook/bold statement, end with CTA question
 - **Stories**: "I" narratives perform 2-3x better
 - **Reply**: Respond within 1h for algorithmic boost
+- **Repurposing**: Blog → key points + link; Tweet → expand; Talk → carousel; Docs → how-to + code; Reddit → thought leadership
 
 ## Analytics
 
@@ -80,16 +64,6 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | Engagement | >2% good | `engagementRate` |
 | Click-through | >1% links | `clickCount` |
 | Shares | High-value | `shareCount` |
-
-## Content Repurposing
-
-| Source | LinkedIn Format |
-|--------|----------------|
-| Blog | Key points + link |
-| Tweet | Expand into post |
-| Talk | Carousel slides |
-| Docs | How-to + code |
-| Reddit | Thought leadership |
 
 ## Troubleshooting
 
