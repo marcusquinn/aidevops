@@ -1,6 +1,6 @@
 # Chapter 15: Personalization and Dynamic Content
 
-Tailor experiences based on user attributes, behavior, or context. Dynamic content adapts per visitor, increasing relevance and conversion.
+Dynamic content adapts per visitor based on attributes, behavior, or context — increasing relevance and conversion.
 
 ## Types of Personalization
 
@@ -105,7 +105,7 @@ Segment tests by user attributes instead of showing the same variants to all use
 
 ## Best Practices
 
-**Phased rollout** (don't personalize everything at once):
+**Phased rollout**:
 1. Geo-based (currency, language, shipping)
 2. Returning visitor recognition
 3. Referral source adaptation
@@ -114,11 +114,9 @@ Segment tests by user attributes instead of showing the same variants to all use
 
 **Privacy**: Avoid creepy specificity (no addresses). Be transparent about data usage. GDPR/CCPA compliant. Provide opt-out.
 
-**Always test**: Don't assume personalization wins — test generic vs personalized. Over-personalization can feel invasive and hurt conversion.
+**Always test**: Don't assume personalization wins — test generic vs personalized. Over-personalization feels invasive and hurts conversion. "Hi Sarah, welcome back!" is fine; using someone's name 5 times on one page is not.
 
 **Fallbacks mandatory**: Cookies blocked or VPN hides location → show generic content. Never break the page.
-
-**Don't over-personalize**: "Hi Sarah, welcome back!" is fine. Using someone's name 5 times on one page is overkill.
 
 ## Case Studies
 
