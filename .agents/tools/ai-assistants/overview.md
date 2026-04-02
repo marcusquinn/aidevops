@@ -27,8 +27,6 @@ tools:
 
 ## Supported Tools
 
-aidevops is developed, tested, and supported exclusively with OpenCode and the claude-code CLI.
-
 ### OpenCode (Primary)
 
 | Variant | Description |
@@ -46,7 +44,7 @@ aidevops is developed, tested, and supported exclusively with OpenCode and the c
 
 ### claude-code CLI (Companion)
 
-The `claude` CLI from Anthropic is used as a companion tool, called from within OpenCode for sub-tasks and headless dispatch.
+Called from within OpenCode for sub-tasks and headless dispatch.
 
 - **Usage**: `claude -p "subtask"` (spawns from OpenCode)
 - **Config**: `~/.claude/`, `~/.config/Claude/`
@@ -61,7 +59,7 @@ Personal AI assistant accessible via WhatsApp, Telegram, Slack, Discord, Signal,
 
 ## Collaborator Compatibility
 
-aidevops generates lightweight pointer files (`.cursorrules`, `.windsurfrules`, etc.) in projects initialized with `aidevops init`. These contain a single reference to `AGENTS.md`, helping collaborators using other editors find the project context. aidevops does not install into, configure, or manage those tools.
+`aidevops init` generates lightweight pointer files (`.cursorrules`, `.windsurfrules`, etc.) containing a single reference to `AGENTS.md`. aidevops does not install into, configure, or manage those tools.
 
 ## Related
 
