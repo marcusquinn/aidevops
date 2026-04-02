@@ -1823,6 +1823,14 @@ approve_collaborator_pr() {
 	current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
 
 	if [[ -n "$current_user" ]]; then
+		# Skip self-approval — GitHub rejects it and the failed review state
+		# blocks subsequent --admin merge. Admin bypass works without approval
+		# when the PR author is the authenticated user (repo admin).
+		if [[ "$current_user" == "$pr_author" ]]; then
+			echo "[pulse-wrapper] approve_collaborator_pr: PR #$pr_number is self-authored ($current_user) — skipping approval (--admin handles it)" >>"$LOGFILE"
+			return 0
+		fi
+
 		local existing_approval
 		existing_approval=$(gh api "repos/${repo_slug}/pulls/${pr_number}/reviews" \
 			--jq "[.[] | select(.user.login == \"${current_user}\" and .state == \"APPROVED\")] | length" 2>/dev/null || echo "0")
@@ -8412,14 +8420,56 @@ dispatch_triage_reviews() {
 	local triage_max=2
 
 	[[ "$available" =~ ^[0-9]+$ ]] || available=0
+	[[ "$available" -gt 0 ]] || {
+		printf '%d\n' "$available"
+		return 0
+	}
 
 	# Parse needs-review items from pre-fetched state
 	local state_file="${STATE_FILE:-}"
-	[[ -f "$state_file" ]] || return 0
+	[[ -f "$state_file" ]] || {
+		printf '%d\n' "$available"
+		return 0
+	}
 
-	local resolved_model
+	# Resolve model: prefer opus, fall back to sonnet for triage reviews
+	local resolved_model=""
 	resolved_model=$(~/.aidevops/agents/scripts/model-availability-helper.sh resolve opus 2>/dev/null || echo "")
-	[[ -n "$resolved_model" ]] || return 0
+	if [[ -z "$resolved_model" ]]; then
+		resolved_model=$(~/.aidevops/agents/scripts/model-availability-helper.sh resolve sonnet 2>/dev/null || echo "")
+	fi
+	[[ -n "$resolved_model" ]] || {
+		printf '%d\n' "$available"
+		return 0
+	}
+
+	# Parse markdown-format state entries:
+	#   ## owner/repo            ← repo slug header
+	#   - Issue #NNN: ... [status: **needs-review**] ...
+	# Build pipe-separated list: issue_num|repo_slug|repo_path
+	local current_slug="" current_path="" candidates=""
+	while IFS= read -r line; do
+		# Match repo slug headers: "## owner/repo"
+		if [[ "$line" =~ ^##[[:space:]]+([^[:space:]]+/[^[:space:]]+) ]]; then
+			current_slug="${BASH_REMATCH[1]}"
+			current_path=$(jq -r --arg s "$current_slug" '.initialized_repos[]? | select(.slug == $s) | .path' "$repos_json" 2>/dev/null || echo "")
+			# Expand ~ in path
+			current_path="${current_path/#\~/$HOME}"
+			continue
+		fi
+		# Match needs-review issue lines
+		if [[ "$line" == *"**needs-review**"* && "$line" =~ Issue\ #([0-9]+) ]]; then
+			local issue_num="${BASH_REMATCH[1]}"
+			if [[ -n "$current_slug" && -n "$current_path" ]]; then
+				candidates="${candidates}${issue_num}|${current_slug}|${current_path}"$'\n'
+			fi
+		fi
+	done <"$state_file"
+
+	[[ -n "$candidates" ]] || {
+		printf '%d\n' "$available"
+		return 0
+	}
 
 	while IFS='|' read -r issue_num repo_slug repo_path; do
 		[[ -n "$issue_num" && -n "$repo_slug" ]] || continue
@@ -8436,8 +8486,7 @@ dispatch_triage_reviews() {
 
 		triage_count=$((triage_count + 1))
 		available=$((available - 1))
-	done < <(grep -A1 'needs-review' "$state_file" 2>/dev/null |
-		grep -oP '\d+\|[^|]+\|[^\n]+' || true)
+	done <<<"$candidates"
 
 	printf '%d\n' "$available"
 	return 0

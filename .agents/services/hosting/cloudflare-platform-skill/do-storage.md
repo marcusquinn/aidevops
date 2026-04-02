@@ -1,6 +1,6 @@
 # Cloudflare Durable Objects Storage
 
-Persistent storage API for Durable Objects — SQLite/KV backends, PITR, automatic concurrency gates. Use cases: stateful coordination, real-time collaboration, counters, sessions, rate limiters.
+Persistent storage for Durable Objects — SQLite (recommended, with 30-day PITR) or KV (legacy), automatic concurrency gates. Suited for counters, sessions, rate limiters, real-time collaboration.
 
 ## Storage Backends
 
@@ -43,8 +43,8 @@ export class Counter extends DurableObject {
 
 ## See Also
 
-- [do-storage-patterns.md](./do-storage-patterns.md) — schema migrations, caching, rate limiting, batch processing
-- [do-storage-gotchas.md](./do-storage-gotchas.md) — concurrency gates, transaction rules, SQL limits, async pitfalls
+- [do-storage-patterns.md](./do-storage-patterns.md) — migrations, caching, rate limiting, batching
+- [do-storage-gotchas.md](./do-storage-gotchas.md) — concurrency gates, transaction rules, SQL limits
 - [durable-objects.md](./durable-objects.md) — DO fundamentals and coordination patterns
 - [workers.md](./workers.md) — Worker runtime for DO stubs
 - [d1.md](./d1.md) — shared database alternative to per-DO storage
