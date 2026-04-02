@@ -1,15 +1,14 @@
 # Cloudflare Workers Smart Placement
 
-Runs Workers closer to backend infrastructure instead of end users, reducing overall request duration when backend latency dominates.
+Runs Workers closer to backend infrastructure instead of end users — reduces latency when backend round-trips dominate over user-to-edge distance.
 
 ## When to Enable
 
-- Worker makes multiple round trips to backend services/databases
-- Backend infrastructure is geographically concentrated
-- Request duration dominated by backend latency, not user-to-edge latency
-- Running backend logic: APIs, data aggregation, SSR with DB calls
+Enable when: multiple backend round-trips, geographically concentrated backend, backend latency dominates request duration (APIs, data aggregation, SSR with DB calls).
 
-**Do NOT enable for:** static/cached content, Workers without backend communication, pure edge logic (auth, redirects, transforms), Workers without fetch handlers.
+**Do NOT enable for:** static/cached content, Workers without backend calls, pure edge logic (auth, redirects, transforms), Workers without fetch handlers.
+
+**Requirements:** Wrangler 2.20.0+, consistent traffic from multiple global locations. Only affects fetch handlers (not RPC methods or named entrypoints). Available on all plans. Analysis takes up to 15 min; Worker runs at edge during analysis.
 
 ## Architecture: Frontend/Backend Split
 
@@ -34,14 +33,6 @@ hint = "wnam"  # Optional: West North America
 
 Deploy and wait 15 min for analysis. Check status via API or dashboard.
 
-## Requirements
-
-- Wrangler 2.20.0+
-- Consistent traffic from multiple global locations
-- Only affects fetch handlers (not RPC methods or named entrypoints)
-- Available on all Workers plans (Free, Paid, Enterprise)
-- Analysis: up to 15 min after enabling; Worker runs at edge during analysis
-
 ## Placement Status
 
 ```typescript
@@ -52,7 +43,7 @@ type PlacementStatus =
   | 'UNSUPPORTED_APPLICATION';  // Made Worker slower (reverted)
 ```
 
-1% of requests always route without optimization (baseline comparison) — this is expected.
+1% of requests always route without optimization (baseline comparison) — expected behaviour.
 
 ## CLI
 
@@ -66,13 +57,10 @@ curl -H "Authorization: Bearer $TOKEN" \
 wrangler tail your-worker-name --header cf-placement
 ```
 
-## In This Reference
+## See Also
 
 - [patterns.md](./patterns.md) — frontend/backend split, database workers, SSR, API gateway
 - [gotchas.md](./gotchas.md) — troubleshooting INSUFFICIENT_INVOCATIONS, performance issues
-
-## See Also
-
 - [workers](../workers/) — Worker runtime and fetch handlers
 - [d1](../d1/) — D1 database (benefits from Smart Placement)
 - [durable-objects](../durable-objects/) — Durable Objects with backend logic
