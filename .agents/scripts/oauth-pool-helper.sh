@@ -1693,19 +1693,32 @@ try:
         current_email = sorted_by_used[0].get('email', 'unknown')
 
     now_ms = int(time.time() * 1000)
+    # Tier 1: non-current accounts that are available right now
     candidates = [
         a for a in accounts
         if a.get('email') != current_email
         and a.get('status', 'active') in ('active', 'idle')
         and (not a.get('cooldownUntil') or a['cooldownUntil'] <= now_ms)
     ]
+    all_rate_limited = False
     if not candidates:
-        candidates = [a for a in accounts if a.get('email') != current_email]
+        # Tier 2: ALL accounts (including current) sorted by shortest
+        # remaining cooldown — maximise concurrency by using whichever
+        # account recovers soonest rather than hard-failing.
+        candidates = sorted(
+            accounts,
+            key=lambda a: a.get('cooldownUntil') or 0,
+        )
+        all_rate_limited = True
     if not candidates:
         print('ERROR:no_alternate')
         sys.exit(0)
 
-    candidates.sort(key=lambda a: (-(a.get('priority') or 0), a.get('lastUsed', '')))
+    if not all_rate_limited:
+        # Normal path: prefer high-priority, least-recently-used
+        candidates.sort(key=lambda a: (-(a.get('priority') or 0), a.get('lastUsed', '')))
+    # else: already sorted by shortest cooldown — first entry recovers soonest
+
     next_account = candidates[0]
     next_email   = next_account.get('email', 'unknown')
 
@@ -1737,7 +1750,12 @@ finally:
     _release_lock(lock_fd)
     lock_fd.close()
 
-print('OK')
+if all_rate_limited:
+    cd = next_account.get('cooldownUntil') or 0
+    wait_mins = max(0, (cd - now_ms + 59999) // 60000) if cd > now_ms else 0
+    print(f'OK_COOLDOWN:{wait_mins}')
+else:
+    print('OK')
 print(current_email)
 print(next_email)
 "
@@ -1759,6 +1777,19 @@ _rotate_parse_result() {
 	ERROR:no_alternate)
 		print_error "No alternate account available for ${provider} (all others may be in cooldown)"
 		return 1
+		;;
+	OK_COOLDOWN:*)
+		local wait_mins prev_email next_email
+		wait_mins="${first_line#OK_COOLDOWN:}"
+		prev_email=$(printf '%s\n' "$result" | sed -n '2p')
+		next_email=$(printf '%s\n' "$result" | sed -n '3p')
+		print_warning "All ${provider} accounts are rate-limited"
+		if [[ "$prev_email" == "$next_email" ]]; then
+			print_info "Staying on ${next_email} (shortest cooldown: ~${wait_mins}m remaining)"
+		else
+			print_info "Switched to ${next_email} (shortest cooldown: ~${wait_mins}m remaining)"
+		fi
+		return 0
 		;;
 	OK)
 		local prev_email next_email
