@@ -53,7 +53,7 @@ wrangler r2 object put BUCKET/key --file path
 wrangler r2 object get BUCKET/key
 ```
 
-### Other
+### Queues / Vectorize / Hyperdrive
 
 ```bash
 wrangler queues create NAME
