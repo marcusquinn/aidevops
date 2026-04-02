@@ -30,6 +30,8 @@ Arguments: `--program <path>` (required)
 - **Worktree**: `experiment/{name}` (created at session start)
 - **State**: git HEAD of experiment branch = current best; results.tsv = full history
 - **Resume**: re-run with same `--program` — reads results.tsv to reconstruct state
+- **Mailbox**: `mail-helper.sh` — inter-agent discovery sharing (concurrent mode)
+- **Memory**: `aidevops-memory` — cross-session finding persistence
 
 <!-- AI-CONTEXT-END -->
 
@@ -45,6 +47,8 @@ Read the program file. Extract:
 PROGRAM_NAME   ← frontmatter `name`
 MODE           ← frontmatter `mode` (in-repo | cross-repo | standalone)
 TARGET_REPO    ← frontmatter `target_repo` (path or ".")
+DIMENSION      ← frontmatter `dimension` (optional, for multi-dimension campaigns)
+CAMPAIGN_ID    ← frontmatter `campaign_id` (optional, for multi-dimension campaigns)
 FILES          ← ## Target section, `files:` line
 BRANCH         ← ## Target section, `branch:` line (default: experiment/{name})
 METRIC_CMD     ← ## Metric section, `command:` line
@@ -98,18 +102,21 @@ RESULTS_FILE = "$REPO_ROOT/todo/research/{name}-results.tsv"
 
 if RESUMING and RESULTS_FILE exists:
     Read results.tsv to reconstruct:
-    - ITERATION_COUNT = number of rows
-    - BEST_METRIC = best metric value seen (per direction)
-    - BASELINE = first row's metric value
-    - FAILED_HYPOTHESES = list of hypothesis descriptions that were discarded
+    - ITERATION_COUNT = number of data rows (excluding header)
+    - BEST_METRIC = best metric_value seen (per direction)
+    - BASELINE = metric_value from row where status == "baseline"
+    - FAILED_HYPOTHESES = list of hypothesis from rows where status == "discard"
+    - TOTAL_TOKENS = sum of tokens_used column
     Log: "Resuming from iteration N, best metric: X"
 else:
     ITERATION_COUNT = 0
     BEST_METRIC = null
     BASELINE = null
     FAILED_HYPOTHESES = []
+    TOTAL_TOKENS = 0
     mkdir -p $(dirname RESULTS_FILE)
-    Write TSV header: iteration\tcommit\tmetric\tstatus\thypothesis\ttimestamp\ttokens
+    Write TSV header:
+      iteration\tcommit\tmetric_name\tmetric_value\tbaseline\tdelta\tstatus\thypothesis\ttimestamp\ttokens_used
 ```
 
 ### 1.4 Recall cross-session memory
@@ -120,7 +127,17 @@ aidevops-memory recall "autoresearch $PROGRAM_NAME" --limit 10
 
 Store recalled findings as MEMORY_CONTEXT for hypothesis generation.
 
-### 1.5 Measure baseline (first run only)
+### 1.5 Register with mailbox (multi-dimension mode only)
+
+If CAMPAIGN_ID is set (multi-dimension campaign):
+
+```bash
+AGENT_ID="autoresearch-${PROGRAM_NAME}-${DIMENSION:-solo}"
+mail-helper.sh register --agent "$AGENT_ID"
+Log: "Registered as $AGENT_ID in campaign $CAMPAIGN_ID"
+```
+
+### 1.6 Measure baseline (first run only)
 
 ```text
 if BASELINE == null:
@@ -130,7 +147,8 @@ if BASELINE == null:
     BEST_METRIC = result
     Update program file: set `baseline: {value}`
     Log: "Baseline: {METRIC_NAME} = {BASELINE}"
-    Append to results.tsv: 0\t(baseline)\t{BASELINE}\tbaseline\t(initial measurement)\t{timestamp}\t0
+    Append to results.tsv:
+      0\t(baseline)\t{METRIC_NAME}\t{BASELINE}\t{BASELINE}\t0.0\tbaseline\t(initial measurement)\t{timestamp}\t0
 ```
 
 ---
@@ -141,6 +159,8 @@ Repeat until any budget condition is met:
 
 ```text
 SESSION_START = current time
+ITER_TOKENS = 0
+
 while true:
     # Budget checks
     elapsed = now - SESSION_START
@@ -149,7 +169,13 @@ while true:
     if GOAL is set and goal_met(BEST_METRIC, GOAL, METRIC_DIR): break with reason "goal_reached"
 
     ITERATION_COUNT += 1
+    ITER_START_TOKENS = current_token_estimate()
     Log: "--- Iteration {ITERATION_COUNT} ---"
+
+    # Check peer discoveries (multi-dimension mode)
+    if CAMPAIGN_ID is set:
+        peer_discoveries = check_peer_discoveries()
+        # Incorporate peer findings into hypothesis context
 
     # Generate hypothesis
     hypothesis = generate_hypothesis(...)
@@ -161,28 +187,39 @@ while true:
     constraint_result = run_constraints()
     if constraint_result == FAIL:
         git -C WORKTREE_PATH reset --hard HEAD
-        log_result(ITERATION_COUNT, null, "constraint_fail", hypothesis)
+        ITER_TOKENS = current_token_estimate() - ITER_START_TOKENS
+        TOTAL_TOKENS += ITER_TOKENS
+        log_result(ITERATION_COUNT, null, null, "constraint_fail", hypothesis, ITER_TOKENS)
         continue
 
     # Measure metric
     metric_result = run_metric()
     if metric_result == ERROR:
         git -C WORKTREE_PATH reset --hard HEAD
-        log_result(ITERATION_COUNT, null, "crash", hypothesis)
+        ITER_TOKENS = current_token_estimate() - ITER_START_TOKENS
+        TOTAL_TOKENS += ITER_TOKENS
+        log_result(ITERATION_COUNT, null, null, "crash", hypothesis, ITER_TOKENS)
         continue
+
+    delta = metric_result - BASELINE
+    ITER_TOKENS = current_token_estimate() - ITER_START_TOKENS
+    TOTAL_TOKENS += ITER_TOKENS
 
     # Keep or discard
     if is_improvement(metric_result, BEST_METRIC, METRIC_DIR):
         git -C WORKTREE_PATH add -A
         git -C WORKTREE_PATH commit -m "experiment: {hypothesis[:60]} ({METRIC_NAME}: {metric_result})"
+        HEAD_SHA = git -C WORKTREE_PATH rev-parse --short HEAD
         BEST_METRIC = metric_result
-        log_result(ITERATION_COUNT, HEAD_SHA, metric_result, "keep", hypothesis)
+        log_result(ITERATION_COUNT, HEAD_SHA, metric_result, "keep", hypothesis, ITER_TOKENS)
         store_memory(hypothesis, metric_result, "keep")
+        send_discovery(hypothesis, metric_result, "keep", HEAD_SHA)
     else:
         git -C WORKTREE_PATH reset --hard HEAD
         FAILED_HYPOTHESES.append(hypothesis)
-        log_result(ITERATION_COUNT, null, metric_result, "discard", hypothesis)
+        log_result(ITERATION_COUNT, null, metric_result, "discard", hypothesis, ITER_TOKENS)
         store_memory(hypothesis, metric_result, "discard")
+        send_discovery(hypothesis, metric_result, "discard", null)
 ```
 
 ---
@@ -196,10 +233,11 @@ generate the next modification to try.
 
 1. **Program hints** — from `## Hints` section
 2. **Memory context** — recalled findings from prior sessions
-3. **Failed hypotheses** — what was tried and discarded this session
-4. **Current best** — metric value and which commit achieved it
-5. **Current code state** — read the target files (FILES glob)
-6. **Iteration number** — to guide progression strategy
+3. **Peer discoveries** — from mailbox (multi-dimension mode only)
+4. **Failed hypotheses** — what was tried and discarded this session
+5. **Current best** — metric value and which commit achieved it
+6. **Current code state** — read the target files (FILES glob)
+7. **Iteration number** — to guide progression strategy
 
 ### Progression strategy
 
@@ -242,7 +280,6 @@ All constraints must pass. First failure short-circuits (don't run remaining con
 
 ```bash
 timeout PER_EXPERIMENT bash -c "{METRIC_CMD}" 2>/dev/null
-output=$?
 ```
 
 Parse the last non-empty line of stdout as a float. If parsing fails or command
@@ -261,76 +298,258 @@ is_improvement(new_value, best_value, direction):
 
 ---
 
+## Token Estimation
+
+Track approximate token usage per iteration:
+
+```text
+current_token_estimate():
+    # Estimate from context size: count characters in all tool inputs/outputs
+    # since session start, divide by 4 (rough chars-per-token ratio)
+    # This is an approximation — exact counting requires API response parsing
+    return estimated_tokens
+```
+
+If the runtime exposes token counts in API responses, use those directly.
+Otherwise, estimate from character count of tool calls and responses.
+
+---
+
 ## Results Logging
 
 Append to `todo/research/{name}-results.tsv`:
 
 ```text
-{iteration}\t{commit_sha_or_null}\t{metric_value_or_null}\t{status}\t{hypothesis}\t{ISO_timestamp}\t{tokens_used}
+{iteration}\t{commit_sha_or_dash}\t{metric_name}\t{metric_value_or_dash}\t{baseline}\t{delta_or_dash}\t{status}\t{hypothesis}\t{ISO_timestamp}\t{tokens_used}
 ```
 
-Status values: `baseline`, `keep`, `discard`, `constraint_fail`, `crash`
+Column definitions:
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `iteration` | int | Sequential experiment number (0 = baseline) |
+| `commit` | string | Short SHA or `-` for crashes/discards |
+| `metric_name` | string | From research program `name:` field |
+| `metric_value` | float or `-` | Measured value; `-` for crashes/constraint fails |
+| `baseline` | float | Original baseline value (same for all rows) |
+| `delta` | float or `-` | `metric_value - baseline` (signed); `-` for crashes |
+| `status` | string | `baseline`, `keep`, `discard`, `constraint_fail`, `crash` |
+| `hypothesis` | string | What was tried (one line, no tabs) |
+| `timestamp` | ISO 8601 | UTC timestamp |
+| `tokens_used` | int | Approximate tokens consumed by this iteration |
+
+Example rows:
+
+```tsv
+iteration	commit	metric_name	metric_value	baseline	delta	status	hypothesis	timestamp	tokens_used
+0	(baseline)	build_time_s	12.4	12.4	0.0	baseline	(initial measurement)	2026-04-01T10:00:00Z	0
+1	a1b2c3d	build_time_s	11.1	12.4	-1.3	keep	remove unused lodash import	2026-04-01T10:12:00Z	2340
+2	-	build_time_s	12.8	12.4	0.4	discard	switch to esbuild (breaks API)	2026-04-01T10:24:00Z	3100
+3	-	build_time_s	-	12.4	-	crash	double worker threads (OOM)	2026-04-01T10:36:00Z	1800
+4	b2c3d4e	build_time_s	10.5	12.4	-1.9	keep	tree-shake utils/ barrel exports	2026-04-01T10:48:00Z	2800
+```
 
 ---
 
 ## Memory Storage
 
-After each iteration:
+After each **keep** or **discard** iteration:
 
 ```text
-aidevops-memory store "autoresearch {PROGRAM_NAME}: iteration {N} — {hypothesis[:80]} → {status} ({metric})"
+aidevops-memory store \
+  "autoresearch {PROGRAM_NAME}: {hypothesis[:80]} → {status} ({METRIC_NAME}: {metric_value}, delta={delta:+.2f})" \
+  --confidence medium
+```
+
+After **keep** iterations, also store a higher-confidence finding:
+
+```text
+aidevops-memory store \
+  "autoresearch {PROGRAM_NAME} FINDING: {hypothesis}. Improved {METRIC_NAME} by {abs(delta):.2f} ({improvement_pct:.1f}%). Commit: {commit_sha}" \
+  --confidence high
 ```
 
 At session end, store a summary:
 
 ```text
-aidevops-memory store "autoresearch {PROGRAM_NAME} session complete: {ITERATION_COUNT} iterations, best {METRIC_NAME}={BEST_METRIC} (baseline={BASELINE}, improvement={improvement_pct}%)"
+aidevops-memory store \
+  "autoresearch {PROGRAM_NAME} session complete: {ITERATION_COUNT} iterations, best {METRIC_NAME}={BEST_METRIC} (baseline={BASELINE}, improvement={improvement_pct:.1f}%), total_tokens={TOTAL_TOKENS}" \
+  --confidence high
+```
+
+---
+
+## Mailbox Discovery Integration
+
+Used in multi-dimension campaigns (CAMPAIGN_ID is set). No-ops when CAMPAIGN_ID is absent.
+
+### Check peer discoveries (before each hypothesis generation)
+
+```bash
+mail-helper.sh check --agent "$AGENT_ID" --unread-only
+# For each unread discovery message:
+#   mail-helper.sh read <message-id> --agent "$AGENT_ID"
+#   Parse payload JSON → add to hypothesis context as PEER_DISCOVERIES
+```
+
+Incorporate peer discoveries into hypothesis generation:
+- If a peer found a `keep` result, consider whether the same change applies to this dimension
+- If a peer found a `discard` result, deprioritize similar approaches
+
+### Send discovery (after each keep or discard)
+
+```bash
+DISCOVERY_PAYLOAD=$(cat <<EOF
+{
+  "campaign": "{CAMPAIGN_ID}",
+  "dimension": "{DIMENSION}",
+  "hypothesis": "{hypothesis}",
+  "status": "{keep|discard}",
+  "metric_name": "{METRIC_NAME}",
+  "metric_before": {BASELINE},
+  "metric_after": {metric_value},
+  "metric_delta": {delta},
+  "files_changed": [{list of files modified}],
+  "iteration": {ITERATION_COUNT},
+  "commit": "{commit_sha_or_null}"
+}
+EOF
+)
+
+mail-helper.sh send \
+  --from "$AGENT_ID" \
+  --to "broadcast" \
+  --type discovery \
+  --payload "$DISCOVERY_PAYLOAD" \
+  --convoy "{CAMPAIGN_ID}"
+```
+
+### Deregister on completion
+
+```bash
+mail-helper.sh deregister --agent "$AGENT_ID"
 ```
 
 ---
 
 ## Step 3: Completion
 
-### 3.1 Write results summary
+### 3.1 Deregister from mailbox (multi-dimension mode)
+
+```bash
+if CAMPAIGN_ID is set:
+    mail-helper.sh deregister --agent "$AGENT_ID"
+```
+
+### 3.2 Store final memory
+
+```text
+aidevops-memory store \
+  "autoresearch {PROGRAM_NAME} complete: {kept_count} kept, {discarded_count} discarded, {improvement_pct:.1f}% improvement in {METRIC_NAME}. Top finding: {top_hypothesis}" \
+  --confidence high
+```
+
+### 3.3 Generate completion summary
+
+Build the results summary for the PR body:
 
 ```markdown
 ## Autoresearch Results: {PROGRAM_NAME}
 
-- **Iterations**: {ITERATION_COUNT}
-- **Baseline**: {METRIC_NAME} = {BASELINE}
-- **Best**: {METRIC_NAME} = {BEST_METRIC} ({improvement_pct}% improvement)
-- **Exit reason**: {timeout | max_iterations | goal_reached}
-- **Kept**: {kept_count} experiments
-- **Discarded**: {discarded_count} experiments
-- **Constraint failures**: {constraint_fail_count}
-- **Crashes**: {crash_count}
+**Research:** {PROGRAM_NAME}
+**Duration:** {elapsed_human} ({ITERATION_COUNT} iterations)
+**Baseline → Best:** {BASELINE} → {BEST_METRIC} ({improvement_pct:+.1f}%)
+**Exit reason:** {timeout | max_iterations | goal_reached}
 
-### Key findings
+### Experiment Outcomes
 
-{List top 3-5 kept hypotheses with their metric improvements}
+| Status | Count |
+|--------|-------|
+| Kept | {kept_count} |
+| Discarded | {discarded_count} |
+| Constraint failures | {constraint_fail_count} |
+| Crashes | {crash_count} |
 
-### Failed approaches
+### Key Findings
 
-{List top 3-5 discarded hypotheses — useful for future sessions to avoid}
+{For each kept hypothesis, sorted by delta (best first):}
+{N}. **{hypothesis}**: {METRIC_NAME} {metric_before} → {metric_after} ({delta:+.2f}, {improvement_pct:.1f}%)
+
+### Failed Approaches
+
+{For top 3-5 discarded hypotheses:}
+- {hypothesis}: {METRIC_NAME} = {metric_value} (delta={delta:+.2f})
+
+### Token Usage
+
+- Total: ~{TOTAL_TOKENS:,} tokens across {ITERATION_COUNT} iterations
+- Average per iteration: ~{avg_tokens:,} tokens
+- Cost estimate: ~${cost_estimate:.2f} (sonnet pricing)
+
+{If CAMPAIGN_ID is set, add cross-dimension summary section — see below}
 ```
 
-### 3.2 Create PR from experiment branch
+ASCII sparkline (if ≥5 kept iterations):
+
+```text
+{METRIC_NAME} progression ({direction}):
+{sparkline of metric_value for kept rows, 40 chars wide}
+  iter: {first_kept}  →  {last_kept}
+```
+
+### 3.4 Cross-dimension summary (multi-dimension campaigns only)
+
+If CAMPAIGN_ID is set, query the mailbox convoy for all dimension results:
+
+```bash
+sqlite3 ~/.aidevops/.agent-workspace/mail/mailbox.db \
+  "SELECT from_agent, payload FROM messages
+   WHERE convoy='{CAMPAIGN_ID}' AND type='discovery' AND json_extract(payload,'$.status')='keep'
+   ORDER BY created_at"
+```
+
+Build cross-dimension summary:
+
+```markdown
+### Cross-Dimension Summary
+
+| Dimension | Baseline | Best | Delta | Improvement | Iterations |
+|-----------|----------|------|-------|-------------|------------|
+{For each dimension found in convoy messages:}
+| {dimension} | {baseline} | {best} | {delta:+.2f} | {improvement_pct:.1f}% | {iteration_count} |
+
+### Cross-Pollination
+
+{For each discovery where a peer's finding was adopted:}
+- {source_dimension} found "{hypothesis}" → {target_dimension} adopted (iteration {N})
+
+{If no cross-pollination occurred:}
+- Dimensions ran independently (no cross-pollination detected)
+```
+
+### 3.5 Create PR from experiment branch
 
 ```bash
 git -C WORKTREE_PATH push -u origin BRANCH
+
+RESULTS_SUMMARY="$(generate_completion_summary)"
 
 gh pr create \
   --repo {REPO_SLUG} \
   --head BRANCH \
   --base main \
-  --title "experiment({PROGRAM_NAME}): {improvement_pct}% improvement in {METRIC_NAME}" \
-  --body "{results_summary}\n\nCloses #{issue_number_if_any}"
+  --title "experiment({PROGRAM_NAME}): {improvement_pct:+.1f}% improvement in {METRIC_NAME}" \
+  --body "${RESULTS_SUMMARY}
+
+Closes #{issue_number_if_any}"
 ```
 
-### 3.3 Store final memory
+### 3.6 Store PR memory
 
 ```text
-aidevops-memory store "autoresearch {PROGRAM_NAME} PR created: {pr_url}. Best: {METRIC_NAME}={BEST_METRIC}. Key finding: {top_hypothesis}"
+aidevops-memory store \
+  "autoresearch {PROGRAM_NAME} PR created: {pr_url}. Best: {METRIC_NAME}={BEST_METRIC}. Key finding: {top_hypothesis}" \
+  --confidence high
 ```
 
 ---
