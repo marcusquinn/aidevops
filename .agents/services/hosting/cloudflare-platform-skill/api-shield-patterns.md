@@ -2,7 +2,7 @@
 
 ## Protect API with Schema + JWT
 
-```bash
+```http
 # 1. Upload OpenAPI schema
 POST /zones/{zone_id}/api_gateway/user_schemas
 
@@ -68,21 +68,11 @@ PUT /zones/{zone_id}/api_gateway/settings/schema_validation
 
 ## Monitoring
 
-**Security Events:** Security > Events — Filter: Action = block, Service = API Shield
+Security Events: Security > Events — filter Action=block, Service=API Shield
 
-**Firewall Analytics:** Analytics > Security — Filter by `cf.api_gateway.*` fields
+Firewall Analytics: Analytics > Security — filter by `cf.api_gateway.*` fields
 
-**Logpush fields:**
-
-```json
-{
-  "APIGatewayAuthIDPresent": true,
-  "APIGatewayRequestViolatesSchema": false,
-  "APIGatewayFallthroughDetected": false,
-  "JWTValidationResult": "valid",
-  "ClientCertFingerprint": "abc123..."
-}
-```
+Logpush fields: `APIGatewayAuthIDPresent`, `APIGatewayRequestViolatesSchema`, `APIGatewayFallthroughDetected`, `JWTValidationResult`, `ClientCertFingerprint`
 
 ## Availability
 
@@ -96,6 +86,4 @@ PUT /zones/{zone_id}/api_gateway/settings/schema_validation
 | Sequence Mitigation | Enterprise (closed beta) |
 | BOLA Detection | Enterprise (add-on) |
 | Volumetric Abuse | Enterprise (add-on) |
-| Full Suite | Enterprise add-on |
-
-Enterprise: 10K ops (contact for higher); non-contract preview available.
+| Full Suite | Enterprise add-on; 10K ops (contact for higher); non-contract preview available |
