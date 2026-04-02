@@ -37,13 +37,13 @@ Matrix Room --> Matrix Bot --> OpenCode / runner-helper.sh --> AI session
               +-- matrix_room_sessions
 ```
 
-**Message flow**: `!ai <prompt>` -> sync -> permission check -> room-to-runner lookup -> entity resolution -> L0 log -> load entity profile + conversation summary + recent interactions -> privacy filter -> dispatch -> log response -> post to room + reaction.
+**Message flow**: `!ai <prompt>` → sync → permission check → room-to-runner lookup → entity resolution → L0 log → load entity profile + conversation summary + recent interactions → privacy filter → dispatch → log response → post to room + reaction.
 
-**Session lifecycle**: First message creates session -> messages logged to L0 (immutable) -> after `sessionIdleTimeout` idle, AI summarises -> stored in L1 (**L0 never deleted**) -> next message primed with entity profile + summary -> SIGINT/SIGTERM compacts all sessions before exit.
+**Session lifecycle**: First message creates session → L0 log (immutable) → after `sessionIdleTimeout` idle, AI summarises → stored in L1 (L0 never deleted) → next message primed with entity profile + summary → SIGINT/SIGTERM compacts all sessions before exit.
 
 ## Setup
 
-**Prerequisites**: Matrix homeserver (Synapse recommended), bot account + access token, OpenCode server, at least one runner. Preview with `matrix-dispatch-helper.sh setup --dry-run`.
+**Prerequisites**: Matrix homeserver (Synapse recommended), bot account + access token, OpenCode server, at least one runner. Preview: `matrix-dispatch-helper.sh setup --dry-run`.
 
 ### Cloudron (Recommended)
 
@@ -118,11 +118,11 @@ matrix-dispatch-helper.sh sessions clear '!room:server'
 matrix-dispatch-helper.sh sessions clear-all
 ```
 
-Trigger with `!ai <prompt>` in any mapped room. Behaviour: typing indicator, status reactions, one dispatch per room (prevents flooding), long responses truncated, auto-joins on invite, per-room context persisted.
+Trigger with `!ai <prompt>` in any mapped room. Typing indicator shown, status reactions posted, one dispatch per room (prevents flooding), long responses truncated, auto-joins on invite, per-room context persisted.
 
 ## Entity Integration
 
-**Resolution**: `@user:server` -> lookup `entity_channels` -> create if new -> cache per session. Context per prompt: entity profile (L2) -> conversation summary (L1) -> recent interactions (L0, this channel only) -> privacy filter (emails, IPs, API keys redacted).
+**Resolution**: `@user:server` → lookup `entity_channels` → create if new → cache per session. Context per prompt: entity profile (L2) → conversation summary (L1) → recent interactions (L0, this channel only) → privacy filter (emails, IPs, API keys redacted).
 
 **Storage** (`memory.db`, SQLite WAL): `matrix_room_sessions` (per-room state), `interactions` (L0 immutable), `conversations` (L1 summaries), `entities`/`entity_channels`/`entity_profiles` (L2 identity). Legacy `sessions.db` auto-detected.
 
@@ -132,7 +132,7 @@ Trigger with `!ai <prompt>` in any mapped room. Behaviour: typing indicator, sta
 2. Only mapped rooms dispatch to runners; one dispatch per room prevents exhaustion
 3. Bot account must NOT have Synapse admin privileges
 4. OpenCode server should be localhost-only unless secured; set `OPENCODE_SERVER_PASSWORD` on shared systems
-5. Bot cannot read encrypted messages -- rooms must have encryption disabled; use Element (not FluffyChat) when creating rooms
+5. Bot cannot read encrypted messages — rooms must have encryption disabled; use Element (not FluffyChat) when creating rooms
 
 ## Troubleshooting
 
@@ -151,10 +151,10 @@ Trigger with `!ai <prompt>` in any mapped room. Behaviour: typing indicator, sta
 
 ## Related
 
-- `scripts/entity-helper.sh` -- Entity memory system (identity resolution, Layer 0/1/2)
-- `scripts/runner-helper.sh` -- Runner management
-- `scripts/memory-helper.sh` -- Memory system (shared memory.db)
-- `tools/ai-assistants/headless-dispatch.md` -- Headless dispatch patterns
-- `tools/ai-assistants/opencode-server.md` -- OpenCode server API
-- `tools/ai-assistants/openclaw.md` -- Alternative: OpenClaw multi-channel bot
-- `services/hosting/cloudron.md` -- Cloudron platform for hosting Synapse
+- `scripts/entity-helper.sh` — Entity memory system (identity resolution, Layer 0/1/2)
+- `scripts/runner-helper.sh` — Runner management
+- `scripts/memory-helper.sh` — Memory system (shared memory.db)
+- `tools/ai-assistants/headless-dispatch.md` — Headless dispatch patterns
+- `tools/ai-assistants/opencode-server.md` — OpenCode server API
+- `tools/ai-assistants/openclaw.md` — Alternative: OpenClaw multi-channel bot
+- `services/hosting/cloudron.md` — Cloudron platform for hosting Synapse
