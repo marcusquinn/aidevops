@@ -4402,8 +4402,12 @@
     ".agents/services/hosting/cloudflare-platform-skill/bot-management-gotchas.md": {
       "hash": "b2899f138eb2c8f2acfea6aea0d2aa0f274ee4a4",
       "at": "2026-04-02T12:50:00Z",
-      "pr": 15047,
-      "passes": 1
+      "pr": 15047
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/pulumi.md": {
+      "hash": "608340f4cbba07e9c819f7b855b28675",
+      "at": "2026-04-02T00:00:00Z",
+      "pr": "GH#14101"
     }
   },
   ".agents/seo/ai-search-kpi-template.md": {
