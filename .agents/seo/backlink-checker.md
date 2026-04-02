@@ -88,18 +88,9 @@ done
    - Registration cost vs. link value
 5. **Output ranked list** of purchase candidates
 
-The full reclamation pipeline combines backlink export with WHOIS checks. Use the Ahrefs or DataForSEO export scripts to get lost backlinks, then pipe through WHOIS lookups above.
-
-## Integration with aidevops
-
-- Pairs with `seo/ahrefs.md` for API access
-- Pairs with `seo/dataforseo.md` for alternative data source
-- Pairs with `seo/domain-research.md` for DNS intelligence on candidates
-- Results can feed into `seo/link-building.md` workflows
-
 ## Related
 
-- `seo/ahrefs.md` - Ahrefs API integration
-- `seo/dataforseo.md` - DataForSEO API integration
-- `seo/domain-research.md` - DNS reconnaissance
+- `seo/ahrefs.md` - Ahrefs API (primary data source)
+- `seo/dataforseo.md` - DataForSEO API (alternative data source)
+- `seo/domain-research.md` - DNS reconnaissance on candidates
 - `seo/link-building.md` - Link-building strategies
