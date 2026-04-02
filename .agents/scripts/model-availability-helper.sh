@@ -661,7 +661,8 @@ probe_provider() {
 	local http_code headers body
 	http_code=$(echo "$response" | tail -1)
 	headers=$(echo "$response" | sed '/^$/q' | head -50)
-	body=$(echo "$response" | sed '1,/^$/d' | head -n -2)
+	# head -n -2 is GNU-only (unsupported on macOS); use awk to drop last 2 lines
+	body=$(echo "$response" | sed '1,/^$/d' | awk 'NR>2{print buf[NR%2]} {buf[NR%2]=$0}')
 
 	_parse_rate_limits "$provider" "$headers"
 
