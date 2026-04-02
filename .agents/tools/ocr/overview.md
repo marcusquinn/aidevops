@@ -18,23 +18,17 @@ tools:
 
 ## Quick Reference
 
-- **Scene text (screenshots, photos)**: PaddleOCR PP-OCRv5 — best accuracy on varied images
-- **Document-to-markdown**: MinerU — layout-aware PDF conversion with built-in OCR
-- **Structured extraction**: Docling + ExtractThinker — schema-mapped JSON from documents
-- **Local quick OCR**: GLM-OCR via Ollama — no install beyond `ollama pull glm-ocr`
-- **PDF manipulation**: LibPDF — text extraction with positions, form filling, signing
-
 **Tool selection:**
 
 | Input | Tool | Output | Use when |
 |-------|------|--------|----------|
-| Screenshot / photo / sign | PaddleOCR | Raw text + bounding boxes | You need scene-text accuracy, UI capture support, or varied lighting / angles |
-| Complex PDF (tables, columns, formulas) | MinerU | Markdown / JSON | You need LLM-ready document conversion |
-| Invoice / receipt / form | Docling + ExtractThinker | Structured JSON | You need schema validation or PII redaction |
-| Any image (quick, local) | GLM-OCR (Ollama) | Plain text | You need a private local fallback with minimal setup |
-| PDF text + positions | LibPDF | Text with coordinates | You need form filling, signing, or PDF manipulation |
-| Simple text PDF | Pandoc | Markdown | You need the fastest text-only conversion |
-| Document understanding (VLM) | PaddleOCR-VL | Structured understanding | You need local document understanding, not plain OCR |
+| Screenshot / photo / sign | PaddleOCR | Raw text + bounding boxes | Scene-text accuracy, UI capture, varied lighting / angles |
+| Complex PDF (tables, columns, formulas) | MinerU | Markdown / JSON | LLM-ready document conversion |
+| Invoice / receipt / form | Docling + ExtractThinker | Structured JSON | Schema validation or PII redaction |
+| Any image (quick, local) | GLM-OCR (Ollama) | Plain text | Private local fallback, minimal setup |
+| PDF text + positions | LibPDF | Text with coordinates | Form filling, signing, or PDF manipulation |
+| Simple text PDF | Pandoc | Markdown | Fastest text-only conversion |
+| Document understanding (VLM) | PaddleOCR-VL | Structured understanding | Local document understanding, not plain OCR |
 
 **Subagents:**
 
@@ -63,35 +57,19 @@ tools:
 
 ```bash
 # Screenshot to text
-# PaddleOCR (best accuracy, bounding boxes)
-paddleocr-helper.sh ocr screenshot.png
-
-# GLM-OCR (simplest, Ollama required)
-ollama run glm-ocr "Extract all text" --images screenshot.png
+paddleocr-helper.sh ocr screenshot.png                                          # PaddleOCR (best accuracy, bounding boxes)
+ollama run glm-ocr "Extract all text" --images screenshot.png                   # GLM-OCR (simplest, Ollama required)
 
 # PDF to LLM-ready markdown
-# MinerU (complex layouts, tables, formulas)
-mineru -p document.pdf -o output_dir
-
-# Pandoc (simple text PDFs, fastest)
-pandoc document.pdf -o document.md
+mineru -p document.pdf -o output_dir                                            # MinerU (complex layouts, tables, formulas)
+pandoc document.pdf -o document.md                                              # Pandoc (simple text PDFs, fastest)
 
 # Invoice to structured JSON
-# Docling + ExtractThinker pipeline
 document-extraction-helper.sh extract invoice.pdf --schema purchase-invoice --privacy local
 
 # Batch image OCR
-# PaddleOCR (100+ languages, bounding boxes)
-for img in ./images/*.png; do paddleocr-helper.sh ocr "$img"; done
-
-# GLM-OCR (simpler, no bounding boxes)
-for img in ./images/*.png; do ollama run glm-ocr "Extract all text" --images "$img"; done
+for img in ./images/*.png; do paddleocr-helper.sh ocr "$img"; done             # PaddleOCR (100+ languages, bounding boxes)
+for img in ./images/*.png; do ollama run glm-ocr "Extract all text" --images "$img"; done  # GLM-OCR (simpler)
 ```
 
-## Integration Points
-
-- Image / screenshot → PaddleOCR → raw text → LLM analysis
-- Image / screenshot → PaddleOCR → ExtractThinker → structured JSON
-- PDF → MinerU → markdown → LLM context window
-- PDF → Docling → ExtractThinker → structured JSON → QuickFile
-- PaddleOCR MCP server and Docling MCP server both plug into Claude Desktop / the agent framework
+**Pipelines:** image → PaddleOCR → raw text or ExtractThinker → structured JSON; PDF → MinerU → markdown → LLM; PDF → Docling → ExtractThinker → structured JSON → QuickFile. PaddleOCR and Docling MCP servers plug into Claude Desktop / the agent framework.
