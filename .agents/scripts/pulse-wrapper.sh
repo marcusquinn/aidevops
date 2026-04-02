@@ -1823,6 +1823,14 @@ approve_collaborator_pr() {
 	current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
 
 	if [[ -n "$current_user" ]]; then
+		# Skip self-approval — GitHub rejects it and the failed review state
+		# blocks subsequent --admin merge. Admin bypass works without approval
+		# when the PR author is the authenticated user (repo admin).
+		if [[ "$current_user" == "$pr_author" ]]; then
+			echo "[pulse-wrapper] approve_collaborator_pr: PR #$pr_number is self-authored ($current_user) — skipping approval (--admin handles it)" >>"$LOGFILE"
+			return 0
+		fi
+
 		local existing_approval
 		existing_approval=$(gh api "repos/${repo_slug}/pulls/${pr_number}/reviews" \
 			--jq "[.[] | select(.user.login == \"${current_user}\" and .state == \"APPROVED\")] | length" 2>/dev/null || echo "0")
