@@ -13,21 +13,17 @@ Use `parseSrt()` from `@remotion/captions` to import `.srt` files.
 ## Install
 
 ```bash
-npx remotion add @remotion/captions  # npm
-bunx remotion add @remotion/captions  # bun
-yarn remotion add @remotion/captions  # yarn
-pnpm exec remotion add @remotion/captions  # pnpm
+npx remotion add @remotion/captions
 ```
 
 ## Usage
 
-`staticFile()` references files in `public/`; remote URLs work via `fetch()` directly.
+`staticFile()` references files in `public/`; remote URLs work via `fetch()`.
 
 ```tsx
 import {useState, useEffect, useCallback} from 'react';
 import {AbsoluteFill, staticFile, useDelayRender} from 'remotion';
-import {parseSrt} from '@remotion/captions';
-import type {Caption} from '@remotion/captions';
+import {parseSrt, type Caption} from '@remotion/captions';
 
 export const MyComponent: React.FC = () => {
   const [captions, setCaptions] = useState<Caption[] | null>(null);
@@ -46,15 +42,10 @@ export const MyComponent: React.FC = () => {
     }
   }, [continueRender, cancelRender, handle]);
 
-  useEffect(() => {
-    fetchCaptions();
-  }, [fetchCaptions]);
+  useEffect(() => { fetchCaptions(); }, [fetchCaptions]);
 
-  if (!captions) {
-    return null;
-  }
+  if (!captions) return null;
 
-  // captions: Caption[] — use with all @remotion/captions utilities
   return <AbsoluteFill>{/* Use captions here */}</AbsoluteFill>;
 };
 ```
