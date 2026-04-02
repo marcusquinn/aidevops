@@ -71,13 +71,17 @@ await browser.newContext({ viewport: { width: 2560, height: 1440 }, deviceScaleF
 use: { geolocation: { longitude: -122.4194, latitude: 37.7749 }, permissions: ['geolocation'] }
 await context.setGeolocation({ longitude: 48.8584, latitude: 2.2945 });
 
-// Locale / Timezone
+// Locale / Timezone — pairs: en-US/America/Los_Angeles, en-US/America/New_York,
+//   en-GB/Europe/London, de-DE/Europe/Berlin, fr-FR/Europe/Paris, ja-JP/Asia/Tokyo,
+//   zh-CN/Asia/Shanghai, hi-IN/Asia/Kolkata, pt-BR/America/Sao_Paulo, en-AU/Australia/Sydney
 use: { locale: 'en-GB', timezoneId: 'Europe/London' }
 
 // Color scheme / media
 await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce', forcedColors: 'active', media: 'print' });
 
-// Permissions
+// Permissions: geolocation, midi, midi-sysex, notifications, camera, microphone,
+//   background-sync, ambient-light-sensor, accelerometer, gyroscope, magnetometer,
+//   accessibility-events, clipboard-read, clipboard-write, payment-handler
 await context.grantPermissions(['geolocation'], { origin: 'https://example.com' });
 await context.clearPermissions();
 
@@ -90,10 +94,6 @@ const ctx = await browser.newContext({ ...devices['iPhone 13'], hasTouch: true }
 await page.tap('.button');
 await page.touchscreen.tap(200, 300);
 ```
-
-**Permissions**: `geolocation`, `midi`, `midi-sysex`, `notifications`, `camera`, `microphone`, `background-sync`, `ambient-light-sensor`, `accelerometer`, `gyroscope`, `magnetometer`, `accessibility-events`, `clipboard-read`, `clipboard-write`, `payment-handler`
-
-**Locale/timezone pairs**: `en-US`/`America/Los_Angeles`, `en-US`/`America/New_York`, `en-GB`/`Europe/London`, `de-DE`/`Europe/Berlin`, `fr-FR`/`Europe/Paris`, `ja-JP`/`Asia/Tokyo`, `zh-CN`/`Asia/Shanghai`, `hi-IN`/`Asia/Kolkata`, `pt-BR`/`America/Sao_Paulo`, `en-AU`/`Australia/Sydney`
 
 ## Recipes
 
