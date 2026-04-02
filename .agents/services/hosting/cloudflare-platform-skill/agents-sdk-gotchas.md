@@ -1,13 +1,11 @@
 # Agents SDK Gotchas & Best Practices
-
 ## Security and auth
 
 - Auth **before** `conn.accept()` — unauthenticated connections can read broadcasts.
 - Secrets in env bindings only; never in agent/connection state.
-- Don't trust client-controlled headers without validation.
+- Validate all client-controlled headers.
 
 ```ts
-// ❌ conn.accept(); then check auth later
 // ✅ Validate first, accept only on success
 async onConnect(conn: Connection, ctx: ConnectionContext) {
   const token = (ctx.request.headers.get("Authorization") ?? "").replace("Bearer ", "");
@@ -15,60 +13,53 @@ async onConnect(conn: Connection, ctx: ConnectionContext) {
   conn.accept();
 }
 ```
-
 ## State discipline
 
-- Always `setState()` — direct `this.state` mutation skips sync to clients and persistence.
-- Keep state serializable and small; move large data to SQL storage.
-- Don't store functions, class instances, or circular references in state.
+- Always use `setState()` — direct `this.state` mutation skips sync and persistence.
+- Keep state serializable and small; move large data to SQL.
+- `conn.setState()`: per-connection metadata (userId); lost on disconnect.
+- `this.setState()`: shared agent state; persisted and broadcast to all.
 
 ```ts
 // ❌ this.state.count++
 // ✅ this.setState({ ...this.state, count: this.state.count + 1 })
 ```
 
-### Connection state vs agent state
-
-- `conn.setState()` — per-connection metadata (userId, session token); lost on disconnect.
-- `this.setState()` — shared agent state; persisted and broadcast to all connections.
-- Don't put user-specific data in agent state or shared data in connection state.
-
 ## SQL
 
-- Initialize schema in `onStart()` — tables don't exist until created.
-- Always parameterize — tagged template literals auto-escape; string interpolation does not.
+- Initialize schema in `onStart()` — tables must be created before use.
+- Always parameterize — tagged template literals (`this.sql`...`) auto-escape.
 
 ```ts
-// ❌ this.sql`...WHERE id = '${userId}'`  (SQL injection)
-// ✅ this.sql`...WHERE id = ${userId}`     (parameterized)
+// ❌ this.sql`...WHERE id = '${userId}'` (Injection risk)
+// ✅ this.sql`...WHERE id = ${userId}`     (Safe)
 ```
 
 ## Routing and entry point
 
-- `routeAgentRequest()` in the Worker `fetch` handler is required to route requests to agent DOs. Missing it = "Agent not found" errors.
+- `routeAgentRequest()` in Worker `fetch` is required to route requests to agent DOs.
 
 ```ts
-// ❌ export default { fetch(req, env) { return new Response("ok"); } }
 // ✅ export default { fetch(req, env, ctx) { return routeAgentRequest(req, env) ?? new Response("Not found", { status: 404 }); } }
 ```
 
 ## WebSocket lifecycle
 
-- Call `conn.accept()` promptly — delayed accept causes client-side timeout.
-- Handle `onClose`/`onError` for cleanup; don't assume connections persist across hibernation.
+- Call `conn.accept()` promptly to avoid client timeouts.
+- Handle `onClose`/`onError` for cleanup; don't assume persistence across hibernation.
 - Connection state survives hibernation; in-memory variables do not.
 
 ## Scheduling
 
-- 1 alarm per DO — `setAlarm()` overwrites any existing alarm.
-- Alarm handlers have a 15-minute wall-clock limit; retries use exponential backoff (max 6 attempts).
-- Use `schedule()` for cron-like patterns; use `setAlarm()` for one-shot delayed work.
+- 1 alarm per DO — `setAlarm()` overwrites existing alarms.
+- 15-minute wall-clock limit for handlers; 6 max retry attempts.
+- Use `schedule()` for cron patterns; `setAlarm()` for one-shot delays.
 
 ## AI and performance
 
-- Use AI Gateway for caching, streaming, and rate limiting.
-- Wrap model calls in `try/catch` with fallbacks for quota/timeout/provider errors.
-- Batch `setState()` calls; reduce write frequency; limit broadcast fan-out with backpressure.
+- Use AI Gateway for caching and rate limiting.
+- Wrap model calls in `try/catch` with fallbacks.
+- Batch `setState()` calls; limit broadcast fan-out with backpressure.
 
 ```ts
 try { return await this.env.AI.run(model, { prompt }); }
@@ -81,15 +72,15 @@ catch { return { error: "Unavailable" }; }
 |----------|-------|
 | CPU | 30s/request (up to 5 min via `limits.cpu_ms`) |
 | Memory | 128 MB/instance |
-| WebSocket connections | 32,768/DO (practical limit lower) |
+| WebSockets | 32,768/DO |
 | Alarms | 1 per DO |
-| SQL storage | Shares DO 10 GB quota |
+| SQL storage | 10 GB (shared with DO) |
 
 ## Migration
 
-- `new_sqlite_classes` must be set when the class is **first created** — cannot add SQLite to an existing deployed class.
-- `deleted_classes` destroys all data permanently; no rollback.
-- Test migrations in staging with `--dry-run`.
+- `new_sqlite_classes` must be set when the class is **first created**.
+- `deleted_classes` destroys all data permanently.
+- Test migrations with `--dry-run`.
 
 ```toml
 [[migrations]]
@@ -101,14 +92,7 @@ new_sqlite_classes = ["MyAgent"]
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| "Agent not found" | Missing DO binding or `routeAgentRequest()` | Check `wrangler.toml` bindings and Worker entry point |
+| "Agent not found" | Missing DO binding or `routeAgentRequest()` | Check `wrangler.toml` and entry point |
 | State not syncing | Direct `this.state` mutation | Use `setState()` |
-| Connect timeout | Delayed `conn.accept()` | Call `conn.accept()` immediately in `onConnect` |
-| SQL errors on start | Missing `onStart()` schema init | Create tables in `onStart()` |
-
-## Debugging
-
-```bash
-npx wrangler dev          # Local development
-npx wrangler tail         # Stream remote logs
-```
+| Connect timeout | Delayed `conn.accept()` | Call `conn.accept()` immediately |
+| SQL errors | Missing `onStart()` schema init | Create tables in `onStart()` |
