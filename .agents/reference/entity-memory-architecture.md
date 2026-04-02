@@ -18,7 +18,7 @@ tools:
 
 ## Purpose
 
-Provide cross-channel relationship continuity for agents on Matrix, SimpleX, email, CLI, and similar channels. Core loop: interaction patterns → gap detection → auto TODO → system upgrade. The model should evolve from observed user needs, not fixed assumptions.
+Cross-channel relationship continuity for agents on Matrix, SimpleX, email, CLI, and similar channels. Core loop: interaction patterns → gap detection → auto TODO → system upgrade. Model evolves from observed user needs, not fixed assumptions.
 
 ## Core Decisions
 
@@ -40,7 +40,7 @@ Provide cross-channel relationship continuity for agents on Matrix, SimpleX, ema
 | **1: Conversation context** | Active threads, immutable summaries, tone profile, pending actions | conversations, conversation_summaries | `conversation-helper.sh` |
 | **0: Raw interaction log** | Immutable source of truth; FTS5 indexed; privacy-filtered on write | interactions, interactions_fts | `entity-helper.sh log-interaction` |
 
-**Immutability:** Layer 0 is INSERT-only except privacy deletion. Layers 1-2 use `supersedes_id` chains: new rows supersede old rows, never edit in place. The current record is the row whose `id` is not referenced by another row's `supersedes_id`. This preserves a full audit trail and avoids concurrent-write conflicts.
+**Immutability:** Layer 0 is INSERT-only (except privacy deletion). Layers 1-2 use `supersedes_id` chains — new rows supersede old, never edit in place. Current record = row whose `id` is not referenced by another row's `supersedes_id`. Preserves full audit trail; avoids concurrent-write conflicts.
 
 ## Database Schema
 
@@ -92,13 +92,13 @@ All tables live in `~/.aidevops/.agent-workspace/memory/memory.db` alongside `le
 
 1. **Suggest, don't assume.** `entity-helper.sh suggest` may propose matches; linking requires `entity-helper.sh link` or `verify`.
 2. **Confidence levels:** `confirmed` (user verified), `suggested` (name or pattern match), `inferred` (display-name match).
-3. **Primary key on `(channel, channel_id)`** means each channel identity maps to exactly one entity.
+3. **Primary key on `(channel, channel_id)`** — each channel identity maps to exactly one entity.
 
 ## Self-Evolution Loop
 
 Flow: Layer 0 interactions → AI pattern detection (haiku, ~$0.001/call) → deduped gap identification with frequency tracking → TODO creation with interaction-ID evidence → normal task lifecycle (dispatch → PR → merge) → updated Layer 2 model.
 
-Gap lifecycle: `detected` → `todo_created` → `resolved` | `wont_fix`. Auto-TODO creation starts at frequency ≥ 3 (configurable) and preserves the evidence trail.
+Gap lifecycle: `detected` → `todo_created` → `resolved` | `wont_fix`. Auto-TODO creation starts at frequency ≥ 3 (configurable).
 
 ## Intelligent Threshold Replacement
 
@@ -112,7 +112,7 @@ Gap lifecycle: `detected` → `todo_created` → `resolved` | `wont_fix`. Auto-T
 ## Integration
 
 ```bash
-# Memory system cross-queries
+# Cross-queries
 memory-helper.sh store --content "Prefers concise responses" --entity ent_xxx --type USER_PREFERENCE
 memory-helper.sh recall --query "deployment" --entity ent_xxx --project ~/Git/myproject
 
@@ -141,10 +141,10 @@ self-evolution-helper.sh pulse-scan --auto-todo-threshold 3 --repo-path ~/Git/ai
 └── preferences/                       # Optional: markdown preference files
 
 .agents/scripts/
-├── entity-helper.sh                   # Layer 0 + 2
-├── conversation-helper.sh             # Layer 1
-├── self-evolution-helper.sh           # Self-evolution loop
-├── memory-helper.sh                   # Existing memory system
+├── entity-helper.sh
+├── conversation-helper.sh
+├── self-evolution-helper.sh
+├── memory-helper.sh
 └── memory/                            # Modules: _common, store, recall, maintenance
 
 tests/
