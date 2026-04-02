@@ -33,7 +33,7 @@ tools:
 | Experiment | `experiment/` | `branch/experiment.md` |
 | Release | `release/` | `branch/release.md` |
 
-- **Naming**: `{type}/{short-desc}` (lowercase, hyphenated, ~50 chars). Example: `feature/user-dashboard`.
+- **Naming**: `{type}/{name}` (lowercase, hyphenated, ~50 chars). Example: `feature/user-dashboard`.
 - **Tasks**: Move to `## In Progress`, add `started:<ISO>`, then `beads-sync-helper.sh push`.
 
 <!-- AI-CONTEXT-END -->
@@ -42,7 +42,7 @@ tools:
 
 | Stage | Command / Agent | Notes |
 |-------|-----------------|-------|
-| Create | `wt switch -c {type}/{desc}` | Create linked worktree from `main` |
+| Create | `wt switch -c {type}/{name}` | Create linked worktree from `main` |
 | Develop | `branch/{type}.md` | Use conventional commits |
 | Preflight | `linters-local.sh --fast` | Required before push; see `workflows/preflight.md` |
 | Version | `version-manager.sh bump` | Releases only; see `workflows/version-bump.md` |
@@ -52,7 +52,7 @@ tools:
 | Merge | `gh pr merge --squash` | Required |
 | Release | `version-manager.sh release` | Releases only; see `workflows/release.md` |
 | Postflight | `gh run watch` | Releases only; see `workflows/postflight.md` |
-| Cleanup | `worktree-helper.sh remove` | Remove worktree; delete branch if needed |
+| Cleanup | `worktree-helper.sh remove {type}/{name}` | Remove worktree; delete branch if needed |
 
 ## Worktree Rules
 
