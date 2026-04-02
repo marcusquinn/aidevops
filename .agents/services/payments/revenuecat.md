@@ -1,14 +1,6 @@
 ---
 description: RevenueCat - cross-platform in-app subscription and purchase management
 mode: subagent
-tools:
-  read: true
-  write: true
-  edit: true
-  bash: true
-  webfetch: true
-  task: true
-  context7_*: true
 ---
 
 # RevenueCat
@@ -42,15 +34,12 @@ tools:
 
 ## Setup
 
-1. **RevenueCat**: https://app.revenuecat.com → create project → add app (iOS/Android)
+1. https://app.revenuecat.com → create project → add app (iOS/Android)
 2. **iOS**: Create IAP products → generate API key → upload to RevenueCat → add shared secret
 3. **Android**: Create subscriptions → service account (financial perms) → upload JSON → grant access
 4. **Entitlements**: Create in dashboard (e.g., "premium") → map products → create offerings
 
-### Install SDK
-
 ```bash
-# Expo / React Native
 npx expo install react-native-purchases
 ```
 
@@ -76,7 +65,6 @@ Purchases.configure(withAPIKey: "appl_your_ios_api_key")
 const customerInfo = await Purchases.getCustomerInfo();
 const isPremium = customerInfo.entitlements.active['premium'] !== undefined;
 const willRenew = customerInfo.entitlements.active['premium']?.willRenew ?? false;
-const expirationDate = customerInfo.entitlements.active['premium']?.expirationDate;
 // Swift: let info = try await Purchases.shared.customerInfo()
 //        let isPremium = info.entitlements["premium"]?.isActive == true
 
@@ -100,7 +88,6 @@ try {
 
 // Restore — required by App Store guidelines
 const restored = await Purchases.restorePurchases();
-const restoredPremium = restored.entitlements.active['premium'] !== undefined;
 
 // Cross-platform sync — call after auth events
 await Purchases.logIn(userId);   // After login
@@ -121,8 +108,6 @@ import RevenueCatUI from 'react-native-purchases-ui';
 
 ## Webhooks
 
-Configure in dashboard to sync events with your backend:
-
 | Event | When |
 |-------|------|
 | `INITIAL_PURCHASE` | First purchase |
@@ -134,7 +119,7 @@ Configure in dashboard to sync events with your backend:
 
 ## Testing & Best Practices
 
-**Sandbox**: iOS — sandbox Apple ID in App Store Connect. Android — license testing in Play Console. Dashboard shows sandbox vs production.
+**Sandbox**: iOS — sandbox Apple ID in App Store Connect. Android — license testing in Play Console.
 
 **Debug**: `Purchases.setLogLevel(LOG_LEVEL.DEBUG)` → inspect `getCustomerInfo()`.
 
