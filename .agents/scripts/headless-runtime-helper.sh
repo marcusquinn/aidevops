@@ -1827,6 +1827,27 @@ _cmd_run_prepare_retry() {
 	return 0
 }
 
+_detach_worker() {
+	local session_key="$1"
+	shift
+	local log_file="/tmp/worker-${session_key}.log"
+	print_info "Detaching worker (log: $log_file)"
+	(
+		# Detach from terminal and redirect all output
+		exec </dev/null >"$log_file" 2>&1
+		# Re-invoke the script without --detach to avoid recursion
+		local -a filtered_args=()
+		for arg in "$@"; do
+			[[ "$arg" == "--detach" ]] && continue
+			filtered_args+=("$arg")
+		done
+		"$0" run "${filtered_args[@]}"
+	) &
+	local child_pid=$!
+	print_info "Dispatched PID: $child_pid"
+	return 0
+}
+
 cmd_run() {
 	local role="worker"
 	local session_key=""
@@ -1844,24 +1865,7 @@ cmd_run() {
 	_validate_run_args || return 1
 
 	if [[ "$detach" -eq 1 ]]; then
-		# Self-daemonize: fork a child to handle the full lifecycle,
-		# redirect its own stdout/stderr to a log file, and return
-		# the child PID immediately.
-		local log_file="/tmp/worker-${session_key}.log"
-		print_info "Detaching worker (log: $log_file)"
-		(
-			# Detach from terminal and redirect all output
-			exec </dev/null >"$log_file" 2>&1
-			# Re-invoke the script without --detach to avoid recursion
-			local -a filtered_args=()
-			for arg in "$@"; do
-				[[ "$arg" == "--detach" ]] && continue
-				filtered_args+=("$arg")
-			done
-			"$0" run "${filtered_args[@]}"
-		) &
-		local child_pid=$!
-		print_info "Dispatched PID: $child_pid"
+		_detach_worker "$session_key" "$@"
 		return 0
 	fi
 
