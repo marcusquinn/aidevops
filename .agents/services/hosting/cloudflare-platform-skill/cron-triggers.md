@@ -1,12 +1,6 @@
 # Cloudflare Cron Triggers
 
-Schedule Workers execution using cron expressions. Runs on Cloudflare's global network during underutilized periods.
-
-## Key Features
-
-- **5-field cron syntax** - Quartz scheduler extensions (L, W, #)
-- **At-least-once delivery** - Rare duplicate executions possible
-- **Workflow integration** - Trigger long-running multi-step tasks
+Schedule Workers execution using cron expressions. Runs on Cloudflare's global network during underutilized periods. Uses 5-field cron syntax with Quartz extensions (L, W, #). At-least-once delivery — rare duplicate executions possible. Supports Workflow integration for long-running multi-step tasks.
 
 ## Cron Syntax
 
@@ -58,23 +52,20 @@ export default {
   ): Promise<void> {
     console.log("Cron:", controller.cron);
     console.log("Time:", new Date(controller.scheduledTime));
-    
     ctx.waitUntil(asyncTask(env)); // Non-blocking
   },
 };
 ```
 
-**Test locally:**
-
-```bash
-npx wrangler dev
-curl "http://localhost:8787/__scheduled?cron=*/5+*+*+*+*"
-```
+**Test locally:** `npx wrangler dev` then `curl "http://localhost:8787/__scheduled?cron=*/5+*+*+*+*"`
 
 ## Limits
 
-- **Free:** 3 triggers/worker, 10ms CPU
-- **Paid:** Unlimited triggers, 50ms CPU
+| Plan | Triggers/worker | CPU |
+|------|----------------|-----|
+| Free | 3 | 10ms |
+| Paid | Unlimited | 50ms |
+
 - **Propagation:** 15min global deployment
 - **Timezone:** UTC only
 
