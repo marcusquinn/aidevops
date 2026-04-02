@@ -812,7 +812,13 @@
       "passes": 1,
       "pr": 12753
     },
-    ".agents/marketing-sales/direct-response-copy-checklists-pre-publish.md": {
+    ".agents/marketing-sales/direct-response-copy-swipe-file-landing-pages.md": {
+    "hash": "08f939130363372a3f8667c083bb0d46e0cfed5b619406b76d42730490934237",
+    "issue": "GH#15068",
+    "note": "Reference corpus already split into 5 chapter files (01-saas-examples.md through 05-guarantees-and-design-principles.md). Index is 30 lines; chapters total 163 lines. No further action needed.",
+    "status": "done"
+  },
+  ".agents/marketing-sales/direct-response-copy-checklists-pre-publish.md": {
       "at": "2026-04-01T20:59:28Z",
       "hash": "ab1f9c5d69340fa7acfd756c2ae37710b9fa600c",
       "passes": 1,
