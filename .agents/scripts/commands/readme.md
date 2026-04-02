@@ -6,22 +6,15 @@ mode: subagent
 
 Create or update README.md for the current project.
 
-**Arguments**: Optional `--sections "installation,usage"` for partial updates. Without arguments, generates/updates the full README.
+**Use `--sections`** when adding a feature, changing install process, discovering a common issue, or when a full update would lose custom content. **Use full `/readme`** for new projects, significantly outdated docs, major restructuring, or explicit user request.
 
 ## Usage
 
 ```bash
-# Full README (default)
-/readme
-
-# Partial update
-/readme --sections "installation,usage"
-/readme --sections "troubleshooting"
+/readme                                        # Full README (default)
+/readme --sections "installation,usage"        # Partial update
+/readme --sections "installation,usage,config" # Multiple sections
 ```
-
-**Use `--sections` when**: Adding a feature, changing install process, discovering common issue, or updating would lose custom content.
-
-**Use full `/readme` when**: New project, significantly outdated, major restructuring, or explicit user request.
 
 ## Workflow
 
@@ -33,29 +26,16 @@ Create or update README.md for the current project.
 
 ## Section Mapping
 
-| Argument | Sections Updated |
-|----------|------------------|
-| `installation` | Installation, Prerequisites, Quick Start |
-| `usage` | Usage, Commands, Examples, API |
-| `config` | Configuration, Environment Variables |
-| `architecture` | Architecture, Project Structure |
-| `troubleshooting` | Troubleshooting |
-| `deployment` | Deployment, Production Setup |
-| `badges` | Badge section only |
-| `all` | Full regeneration (same as no flag) |
-
-Multiple sections: `--sections "installation,usage,config"`
-
-## Examples
-
-```bash
-/readme                                          # Full README
-/readme --sections "usage"                       # Added CLI commands
-/readme --sections "config"                      # Changed env vars
-/readme --sections "installation,deployment"    # Added Docker support
-/readme --sections "troubleshooting"             # Fixed common issue
-/readme --sections "all"                         # Major update
-```
+| Argument | Sections Updated | Use when |
+|----------|-----------------|----------|
+| `installation` | Installation, Prerequisites, Quick Start | Added Docker support, changed setup steps |
+| `usage` | Usage, Commands, Examples, API | Added CLI commands, new endpoints |
+| `config` | Configuration, Environment Variables | Changed env vars, new config options |
+| `architecture` | Architecture, Project Structure | Restructured codebase |
+| `troubleshooting` | Troubleshooting | Fixed common issue |
+| `deployment` | Deployment, Production Setup | Added deployment target |
+| `badges` | Badge section only | CI status changed |
+| `all` | Full regeneration | Same as no flag |
 
 ## Dynamic Counts (aidevops repo)
 
