@@ -15,8 +15,6 @@ tools:
 
 # Open Tech Explorer - Tech Stack Discovery Provider
 
-<!-- AI-CONTEXT-START -->
-
 ## Quick Reference
 
 - **Purpose**: Discover website technology stacks via OpenExplorer.tech
@@ -25,6 +23,7 @@ tools:
 - **Cost**: Free, open-source, community-driven
 - **API Auth**: Supabase anon key embedded in the web app; use Playwright for the UI fallback
 - **Rate Limits**: None documented
+- **Links**: [openexplorer.tech](https://openexplorer.tech) · [Chrome Extension](https://openexplorer.tech/extension)
 
 ```bash
 tech-stack-helper.sh openexplorer search github.com            # Search by URL
@@ -37,13 +36,11 @@ tech-stack-helper.sh compare https://example.com               # Compare provide
 
 **Use when**: free lookups, metadata/performance/security signals, cross-checking other providers, or when no API key is available.
 
-**Avoid when**: you need broad coverage (~7k indexed sites), version detection, historical tracking, or enterprise-scale research.
-
-<!-- AI-CONTEXT-END -->
+**Avoid when**: you need broad coverage beyond ~7k indexed sites, version detection, historical tracking, or enterprise-scale research.
 
 ## API Integration
 
-**Endpoint**: `{SUPABASE_URL}/functions/v1/search` via a Supabase Edge Function; the anon key is embedded in the web app JS bundle.
+**Endpoint**: `{SUPABASE_URL}/functions/v1/search` (Supabase Edge Function; anon key embedded in web app JS bundle).
 
 | Param | Type | Description |
 |-------|------|-------------|
@@ -57,7 +54,7 @@ tech-stack-helper.sh compare https://example.com               # Compare provide
 | `responsive` / `https` / `spa` / `service_worker` | bool | Metadata filters |
 
 - **Response**: `results[].technologies[{name, category}]`, `results[].metadata{is_responsive, is_https, likely_spa, has_service_worker, page_load_time}`, `pagination{page, limit, total, totalPages}`
-- **Fallback**: if the API is unavailable or a URL is not indexed, open `https://openexplorer.tech`, submit the URL, wait for the React SPA to render, then parse the results table. The helper tries API first, then Playwright.
+- **Fallback**: URL not indexed → open `https://openexplorer.tech`, submit URL, wait for React SPA to render, parse results table. Helper tries API first, then Playwright.
 
 ## Provider Comparison
 
@@ -95,9 +92,3 @@ tech-stack-helper.sh compare https://example.com               # Compare provide
 | No results for URL | URL not in database; try Playwright analysis |
 | Stale data | Check `lastScraped` timestamp; depends on community visits |
 | Slow response | Supabase Edge Functions have cold start; retry after 2-3 seconds |
-
-## References
-
-- Website: [openexplorer.tech](https://openexplorer.tech)
-- GitHub: [turazashvili/openexplorer.tech](https://github.com/turazashvili/openexplorer.tech)
-- Chrome Extension: [openexplorer.tech/extension](https://openexplorer.tech/extension)
