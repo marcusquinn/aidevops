@@ -1,5 +1,7 @@
 # Patterns & Use Cases
 
+Patterns: [Chat](#chat) · [AI with Tools](#ai-with-tools) · [Streaming](#streaming) · [Cron / Scheduled](#cron--scheduled) · [Email with AI](#email-with-ai) · [Game](#game)
+
 ## Chat
 
 ```ts

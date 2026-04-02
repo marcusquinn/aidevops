@@ -3,7 +3,7 @@
     "hash": "b7c346582edd627a9ab4f70a7c7e4b8f8d97be32231069f4e10126d2db94062d",
     "issue": "GH#15647",
     "status": "simplified",
-    "note": "Instruction doc tightened: 103 → 90 lines. Merged config code blocks, moved URLs inline, compressed CI/CD prose. Zero content loss."
+    "note": "Instruction doc tightened: 103 \u2192 90 lines. Merged config code blocks, moved URLs inline, compressed CI/CD prose. Zero content loss."
   },
   ".agents/seo/ai-search-kpi-template.md": {
     "hash": "03478debc956ad02835cde5c946e89762351c2c00c836d8c9c24fca3ebd366cc",
@@ -4506,5 +4506,11 @@
     "issue": "GH#14091",
     "status": "simplified",
     "note": "Consolidated 4 fragmented fuzz.* code blocks into 1 cohesive block. 121 -> 104 lines. All content preserved."
+  },
+  ".agents/services/hosting/cloudflare-platform-skill/agents-sdk-patterns.md": {
+    "hash": "3b5aad8cadb464560c0bee6e9adeee54110b13f223f7cb19b1a1bb872c28caab",
+    "issue": "GH#15679",
+    "status": "simplified",
+    "note": "Reference corpus: added navigation index (89 \u2192 91 lines). All code examples preserved verbatim."
   }
 }
