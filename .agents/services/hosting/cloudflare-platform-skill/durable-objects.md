@@ -1,20 +1,15 @@
 # Cloudflare Durable Objects
 
-Compute + storage in globally-unique, strongly-consistent packages:
-- **Globally unique instances**: Unique ID per DO for multi-client coordination
-- **Co-located storage**: Strongly-consistent storage with compute
-- **Automatic placement**: Spawns near first request
-- **Stateful serverless**: In-memory state + persistent storage
-- **Single-threaded**: Serial request processing (no race conditions)
+Globally-unique compute + storage: single-threaded, strongly-consistent, co-located with state. Spawns near first request.
 
 ## When to Use DOs
 
-**Stateful coordination**, not stateless request handling:
+Use for **stateful coordination** — serialized access to shared state:
 - **Coordination**: Shared state across clients (chat rooms, multiplayer games)
 - **Strong consistency**: Serialized operations (booking systems, inventory)
 - **Per-entity storage**: Isolated database per user/tenant/resource (multi-tenant SaaS)
 - **Persistent connections**: Long-lived WebSockets surviving across requests
-- **Per-entity scheduled work**: Per-entity timers (subscription renewals, game timeouts)
+- **Per-entity scheduled work**: Timers per entity (subscription renewals, game timeouts)
 
 ## When NOT to Use DOs
 
@@ -45,32 +40,15 @@ Model each DO around the **atom of coordination** — the unit needing serialize
 
 ## Core Concepts
 
-### Class Structure
+**Class**: Extend `DurableObject`. Constructor receives `DurableObjectState` (storage, WebSockets, alarms) and `Env` (bindings).
 
-Extend `DurableObject` base class. Constructor receives `DurableObjectState` (storage, WebSockets, alarms) and `Env` (bindings).
+**Access**: Workers get stubs via bindings → call RPC methods (recommended) or fetch handler (legacy).
 
-### Accessing from Workers
+**ID generation**: `idFromName()` deterministic/named; `newUniqueId()` random/sharding; `idFromString()` derive from existing; jurisdiction option for data locality.
 
-Workers get stubs via bindings, then call RPC methods (recommended) or use fetch handler (legacy).
+**Storage**: SQLite (recommended, 10GB/DO, transactions); Synchronous KV API (simple key-value on SQLite); Asynchronous KV API (legacy/advanced).
 
-### ID Generation
-
-- `idFromName()`: Deterministic, named coordination
-- `newUniqueId()`: Random IDs for sharding
-- `idFromString()`: Derive from existing IDs
-- Jurisdiction option: Data locality
-
-### Storage Options
-
-- **SQLite** (recommended): Structured data, transactions, 10GB/DO
-- **Synchronous KV API**: Simple key-value on SQLite objects
-- **Asynchronous KV API**: Legacy/advanced use cases
-
-### Special Features
-
-- **Alarms**: Schedule future execution per-DO
-- **WebSocket Hibernation**: Zero-cost idle connections
-- **Point-in-Time Recovery**: Restore to any point in 30 days
+**Special features**: Alarms (per-DO scheduled execution); WebSocket Hibernation (zero-cost idle); Point-in-Time Recovery (30-day window).
 
 ## Quick Start
 
