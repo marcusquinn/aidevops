@@ -7,7 +7,6 @@ See [queues.md](./queues.md), [queues-patterns.md](./queues-patterns.md).
 Queues are at-least-once. Consumers must tolerate duplicates and should ack only after durable success.
 
 ```typescript
-// ✅ GOOD: Track processed messages
 const processed = await env.PROCESSED_KV.get(msg.id);
 if (processed) { msg.ack(); continue; }
 await processMessage(msg.body);
@@ -17,16 +16,10 @@ msg.ack();
 
 ## Content Type Visibility
 
-- `json` is dashboard-visible and works with pull consumers.
-- `v8` is not decodable in pull consumers or the dashboard.
-- For pull consumers, send `json`.
+`json` is dashboard-visible and works with pull consumers. `v8` is not decodable in pull consumers or the dashboard — use `json` for pull.
 
 ```typescript
-// ✅ For pull consumers
 await env.MY_QUEUE.send(data, { contentType: 'json' });
-
-// ❌ Avoid v8 with pull
-await env.MY_QUEUE.send(new Date(), { contentType: 'v8' }); // Can't decode
 ```
 
 ## Retries and CPU Budget
@@ -34,16 +27,13 @@ await env.MY_QUEUE.send(new Date(), { contentType: 'v8' }); // Can't decode
 If a handler exits without `ack()` or `retry()`, Cloudflare retries with the queue's configured policy. Default consumer CPU budget is 30s; raise it for heavier work.
 
 ```typescript
-// If you DON'T call ack() or retry(), message retries automatically
 async queue(batch: MessageBatch): Promise<void> {
   for (const msg of batch.messages) {
     try {
       await processMessage(msg.body);
-      msg.ack(); // Explicit success
+      msg.ack();
     } catch (error) {
-      // Don't call retry() - auto-retries with configured delay
-      // OR call retry() with custom delay
-      msg.retry({ delaySeconds: 600 });
+      msg.retry({ delaySeconds: 600 }); // or omit to auto-retry
     }
   }
 }
@@ -59,7 +49,6 @@ Each message normally incurs write + read + delete = 3 ops. Retries add reads. M
 
 ```typescript
 // Keep messages <64 KB (charged per 64 KB chunk)
-// Batch aggressively to reduce frequency
 { "max_batch_size": 100, "max_batch_timeout": 30 }
 ```
 
@@ -80,15 +69,10 @@ Each message normally incurs write + read + delete = 3 ops. Retries add reads. M
 ### Message not delivered
 
 ```bash
-# Check queue paused
-wrangler queues list
-
-# Verify consumer configured
-wrangler queues consumer worker remove my-queue my-worker
+wrangler queues list                                          # Check queue paused
+wrangler queues consumer worker remove my-queue my-worker    # Verify consumer
 wrangler queues consumer add my-queue my-worker
-
-# Check logs for errors
-wrangler tail my-worker
+wrangler tail my-worker                                       # Check logs
 ```
 
 ### High DLQ rate
