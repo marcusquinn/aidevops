@@ -20,25 +20,17 @@ tools:
 
 Use the smallest tool that fits the problem:
 
-| Tool | Best for | Scope | Git-safe | AI-safe |
-|------|----------|-------|----------|---------|
-| **gopass** | API keys, tokens, passwords | Per secret | No (separate store) | Yes (subprocess injection) |
-| **SOPS** | Structured config files with secrets | Per file | Yes (encrypted in repo) | Yes (stdout only) |
-| **gocryptfs** | Sensitive directories at rest | Per directory | No (filesystem overlay) | Yes (mount/unmount) |
+| Tool | Best for | Scope | Git-safe | AI-safe | Commands | Storage | Docs |
+|------|----------|-------|----------|---------|----------|---------|------|
+| **gopass** | API keys, tokens, passwords | Per secret | No (separate store) | Yes (subprocess injection) | `aidevops secret set NAME` / `aidevops secret run CMD` | `~/.local/share/gopass/stores/root/aidevops/` — fallback: `~/.config/aidevops/credentials.sh` (plaintext, 600 perms) | `tools/credentials/gopass.md` |
+| **SOPS** | Structured config files with secrets | Per file | Yes (encrypted in repo) | Yes (stdout only) | `sops-helper.sh encrypt config.enc.yaml` | Encrypted files committed to git — backends: age (preferred), GPG, AWS KMS, GCP KMS, Azure Key Vault | `tools/credentials/sops.md` |
+| **gocryptfs** | Sensitive directories at rest | Per directory | No (filesystem overlay) | Yes (mount/unmount) | `gocryptfs-helper.sh create vault-name` | `~/.aidevops/.agent-workspace/vaults/` — AES-256-GCM, hardware accelerated | `tools/credentials/gocryptfs.md` |
 
-1. Single secret -> `aidevops secret set NAME`
-2. Structured file you must commit -> `sops-helper.sh encrypt file.enc.yaml`
-3. Sensitive directory at rest -> `gocryptfs-helper.sh create vault-name`
+1. Single secret → `aidevops secret set NAME`
+2. Structured file you must commit → `sops-helper.sh encrypt file.enc.yaml`
+3. Sensitive directory at rest → `gocryptfs-helper.sh create vault-name`
 
 <!-- AI-CONTEXT-END -->
-
-## Tool Guide
-
-| Tool | What | Use when | Commands | Storage | Notes | Docs |
-|------|------|----------|----------|---------|-------|------|
-| **gopass** | GPG/age-encrypted key-value store | API keys, tokens, passwords, connection strings | `aidevops secret set NAME` / `aidevops secret run CMD` | `~/.local/share/gopass/stores/root/aidevops/` | Fallback: `~/.config/aidevops/credentials.sh` (plaintext, 600 perms) | `tools/credentials/gopass.md` |
-| **SOPS** | In-place encryption for YAML, JSON, ENV, INI | Config files that need git versioning | `sops-helper.sh encrypt config.enc.yaml` | Encrypted files committed to git | Backends: age (preferred), GPG, AWS KMS, GCP KMS, Azure Key Vault | `tools/credentials/sops.md` |
-| **gocryptfs** | FUSE encrypted filesystem overlay | Entire directories of sensitive data at rest | `gocryptfs-helper.sh create vault-name` | `~/.aidevops/.agent-workspace/vaults/` | AES-256-GCM, hardware accelerated | `tools/credentials/gocryptfs.md` |
 
 ## Common Workflows
 
@@ -97,8 +89,5 @@ sops updatekeys config.enc.yaml
 
 ## Related
 
-- `tools/credentials/gopass.md` -- gopass documentation
-- `tools/credentials/sops.md` -- SOPS documentation
-- `tools/credentials/gocryptfs.md` -- gocryptfs documentation
 - `tools/credentials/api-key-setup.md` -- API key setup guide
 - `tools/credentials/multi-tenant.md` -- Multi-tenant credential storage
