@@ -36,28 +36,16 @@ Engine for dev-browser, agent-browser, and Stagehand. Supports proxy (HTTP/SOCKS
 ## Setup
 
 ```bash
-./setup.sh --interactive           # Select: "Setup browser automation tools"
-# Or manually:
-npm install playwright             # Install library (needed for JS examples)
-npx playwright install             # Install browsers
-npx @playwright/mcp@latest         # Run MCP server
-npx --no-install playwright --version  # Check if installed
+./setup.sh --interactive  # Select: "Setup browser automation tools"
+npm install playwright && npx playwright install  # lib + browsers
+npx @playwright/mcp@latest  # MCP server
 ```
 
-MCP configuration (Claude Code, OpenCode, etc.):
-
-```json
-{
-  "playwright": {
-    "command": "npx",
-    "args": ["@playwright/mcp@latest"]
-  }
-}
-```
+MCP config (Claude Code, OpenCode, etc.): `{ "playwright": { "command": "npx", "args": ["@playwright/mcp@latest"] } }`
 
 ## Custom Browser Engines
 
-Use `executablePath` to launch Brave, Edge, or Chrome instead of bundled Chromium.
+Use `executablePath` to launch Brave, Edge, or Chrome instead of bundled Chromium. Extensions require `headless: false` on older Chromium; `--headless=new` supports them. Brave Shields may make uBlock Origin redundant.
 
 | Browser | macOS | Linux | Windows |
 |---------|-------|-------|---------|
@@ -66,11 +54,8 @@ Use `executablePath` to launch Brave, Edge, or Chrome instead of bundled Chromiu
 | **Chrome** | `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` | `/usr/bin/google-chrome` | `C:\Program Files\Google\Chrome\Application\chrome.exe` |
 | **Chromium** (bundled) | Auto-detected by Playwright | Auto-detected | Auto-detected |
 
-Extensions require `headless: false` on older Chromium; `--headless=new` supports them. Brave Shields may make uBlock Origin redundant.
-
 ```javascript
 import { chromium } from 'playwright';
-
 const executablePath = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser';
 
 // Simple launch
@@ -78,16 +63,13 @@ const browser = await chromium.launch({ executablePath, headless: true });
 
 // Persistent context with extensions
 const context = await chromium.launchPersistentContext('/tmp/brave-profile', {
-  executablePath,
-  headless: false,
+  executablePath, headless: false,
   args: ['--load-extension=/path/to/ext', '--disable-extensions-except=/path/to/ext'],
 });
 
-// Parallel instances (isolated profiles)
+// Parallel isolated profiles
 const contexts = await Promise.all(
-  [1, 2, 3].map(i =>
-    chromium.launchPersistentContext(`/tmp/profile-${i}`, { executablePath, headless: false })
-  )
+  [1, 2, 3].map(i => chromium.launchPersistentContext(`/tmp/profile-${i}`, { executablePath, headless: false }))
 );
 ```
 
