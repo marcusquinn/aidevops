@@ -4463,10 +4463,17 @@
       "pr": 15470
     }
   },
+<<<<<<< HEAD
   ".agents/content/production-video.md": {
     "hash": "6dc66bc8bec7277b6c9112286516b39229be1a66",
     "issue": "GH#15699",
     "note": "Reference corpus already split into 9 chapter files (01-model-selection.md through 09-tools-resources.md). Index is 82 lines; chapters total 478 lines. No changes needed.",
+=======
+  ".agents/tools/deployment/cloudron-app-packaging-skill/manifest-ref.md": {
+    "hash": "edecc25afbace885cab2eac01e07629d890a4fad",
+    "issue": "GH#15700",
+    "note": "Reference corpus split into 7 chapter files (01-overview.md through 07-versioning.md). Index is 15 lines; chapters total 87 lines.",
+>>>>>>> 5f3fa3046 (GH#15700: restructure manifest-ref.md into chapter files)
     "status": "done"
   }
 }
