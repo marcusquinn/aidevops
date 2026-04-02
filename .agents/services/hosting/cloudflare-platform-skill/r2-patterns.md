@@ -95,8 +95,9 @@ const valid = object.checksums.sha256 && arrayBuffersEqual(retrievedHash, object
 
 ## Storage Class Transitions
 
+Uses S3-compatible API (not Workers binding):
+
 ```typescript
-// Use S3 SDK CopyObject to transition
 const s3 = new S3Client({...});
 await s3.send(new CopyObjectCommand({
   Bucket: 'my-bucket',
@@ -108,20 +109,18 @@ await s3.send(new CopyObjectCommand({
 
 ## Public Bucket with Custom Domain
 
+Extends the streaming pattern with CORS and long-lived cache headers:
+
 ```typescript
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    const key = new URL(request.url).pathname.slice(1);
-    const object = await env.MY_BUCKET.get(key);
-    if (!object) return new Response('Not found', { status: 404 });
+const key = new URL(request.url).pathname.slice(1);
+const object = await env.MY_BUCKET.get(key);
+if (!object) return new Response('Not found', { status: 404 });
 
-    const headers = new Headers();
-    object.writeHttpMetadata(headers);
-    headers.set('etag', object.httpEtag);
-    headers.set('access-control-allow-origin', '*');
-    headers.set('cache-control', 'public, max-age=31536000, immutable');
+const headers = new Headers();
+object.writeHttpMetadata(headers);
+headers.set('etag', object.httpEtag);
+headers.set('access-control-allow-origin', '*');
+headers.set('cache-control', 'public, max-age=31536000, immutable');
 
-    return new Response(object.body, { headers });
-  }
-};
+return new Response(object.body, { headers });
 ```
