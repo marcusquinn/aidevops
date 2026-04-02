@@ -1,9 +1,4 @@
 {
-  ".agents/services/database/postgres-drizzle-skill/cheatsheet-schema.md": {
-    "hash": "1aa15519d959c89c0e09c3e30ac0210d6da35134",
-    "issue": "GH#15501",
-    "status": "simplified"
-  },
   ".agents/seo/ai-search-kpi-template.md": {
     "hash": "03478debc956ad02835cde5c946e89762351c2c00c836d8c9c24fca3ebd366cc",
     "issue": "GH#14993",
@@ -15,10 +10,32 @@
     "note": "Reference corpus split into 3 chapter files (01-aeo-patterns.md, 02-geo-patterns.md, 03-authority-signals-and-attribution.md). Index is 22 lines; chapters total 137 lines.",
     "status": "done"
   },
+  ".agents/services/database/postgres-drizzle-skill/cheatsheet-schema.md": {
+    "hash": "1aa15519d959c89c0e09c3e30ac0210d6da35134",
+    "issue": "GH#15501",
+    "status": "simplified"
+  },
   ".agents/services/hosting/cloudflare-platform-skill/cron-triggers-gotchas.md": {
     "hash": "e3e34c32d8a2ae9da4da7a0b66ffd1f38255ec8d2ae2aef281c6e9d8eec8fa89",
     "issue": 14025,
     "pr": 15606,
+    "status": "done"
+  },
+  ".agents/services/hosting/cloudflare-platform-skill/ddos-gotchas.md": {
+    "hash": "e23cf4d9b7e33a77e7f888a1672ef537c8e24aaec892c769b731859d21a67c91",
+    "issue": "GH#15041",
+    "lines": 68,
+    "status": "simplified"
+  },
+  ".agents/services/hosting/cloudflare-platform-skill/zaraz.md": {
+    "hash": "abcd8c44ae2709e94448fc7186503c5e84adbf4b249090c3144acc78e73482f4",
+    "issue": "GH#15033",
+    "status": "simplified"
+  },
+  ".agents/tools/deployment/cloudron-app-packaging-skill/manifest-ref.md": {
+    "hash": "edecc25afbace885cab2eac01e07629d890a4fad",
+    "issue": "GH#15700",
+    "note": "Reference corpus split into 7 chapter files (01-overview.md through 07-versioning.md). Index is 15 lines; chapters total 87 lines.",
     "status": "done"
   },
   ".agents/workflows/branch/experiment.md": {
@@ -177,12 +194,6 @@
       "passes": 1,
       "pr": 11616
     },
-    ".agents/content/editor.md": {
-      "at": "2026-04-02T16:30:00Z",
-      "hash": "1b10ff74a546e869506efa2abe19f9f34eb56ad6",
-      "passes": 1,
-      "pr": null
-    },
     ".agents/content/VERIFICATION.md": {
       "at": "2026-03-30T03:34:30Z",
       "hash": "f0090056bf6625c2ce2c676d4cf9ba25a901198e",
@@ -260,6 +271,12 @@
       "hash": "a44106f7677388ea6146e99c5c94de36b9e337ba",
       "passes": 1,
       "pr": 12386
+    },
+    ".agents/content/editor.md": {
+      "at": "2026-04-02T16:30:00Z",
+      "hash": "1b10ff74a546e869506efa2abe19f9f34eb56ad6",
+      "passes": 1,
+      "pr": null
     },
     ".agents/content/heygen-skill/rules-assets.md": {
       "at": "2026-03-29T16:34:55Z",
@@ -4463,16 +4480,5 @@
       "pr": 15470
     }
   },
-  "status": "done",
-  ".agents/tools/deployment/cloudron-app-packaging-skill/manifest-ref.md": {
-    "hash": "edecc25afbace885cab2eac01e07629d890a4fad",
-    "issue": "GH#15700",
-    "note": "Reference corpus split into 7 chapter files (01-overview.md through 07-versioning.md). Index is 15 lines; chapters total 87 lines.",
-    "status": "done"
-  },
-  ".agents/services/hosting/cloudflare-platform-skill/zaraz.md": {
-    "hash": "abcd8c44ae2709e94448fc7186503c5e84adbf4b249090c3144acc78e73482f4",
-    "status": "simplified",
-    "issue": "GH#15033"
-  }
+  "status": "done"
 }
