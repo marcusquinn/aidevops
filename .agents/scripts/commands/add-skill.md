@@ -35,31 +35,15 @@ URL/Repo: $ARGUMENTS
 
 ## Naming Convention
 
-Imported skills use a `-skill` suffix to distinguish from native subagents:
-
-| Type | Example | Managed by |
-|------|---------|------------|
-| Native subagent | `playwright.md` | aidevops team |
-| Imported skill | `playwright-skill.md` | Upstream repo, checked for updates |
-
-Benefits: no name clashes; `*-skill.md` glob finds all imports; `aidevops skill check` knows which to update; issues with imports → check upstream.
+Imported skills use a `-skill` suffix: `playwright-skill.md` (imported, upstream-tracked) vs `playwright.md` (native, aidevops team). Benefits: no name clashes; `*-skill.md` glob finds all imports; `aidevops skill check` knows which to update; issues with imports → check upstream.
 
 ## Workflow
 
-**Step 1 — Parse input** (GitHub shorthand, full URL, ClawdHub shorthand/URL, raw URL, or command).
-
-**Step 2 — Run helper:**
-
-```bash
-~/.aidevops/agents/scripts/add-skill-helper.sh add "$ARGUMENTS"
-# Other commands: list | check-updates | remove <name>
-```
-
-**Step 3 — Handle conflicts** (if file exists): Merge / Replace / Separate / Skip.
-
-**Step 4 — Security scan:** Uses [Cisco Skill Scanner](https://github.com/cisco-ai-defense/skill-scanner) if installed. CRITICAL/HIGH findings block import. `--skip-security` bypasses (not recommended). `--force` only controls file overwrite, not security. Scan also runs on `aidevops skill update`.
-
-**Step 5 — Post-import:** Placed in `.agents/` per conventions → registered in `.agents/configs/skill-sources.json` → run `./setup.sh` to create symlinks.
+1. **Parse input** — GitHub shorthand, full URL, ClawdHub shorthand/URL, raw URL, or management command.
+2. **Run helper:** `~/.aidevops/agents/scripts/add-skill-helper.sh add "$ARGUMENTS"` (other commands: `list | check-updates | remove <name>`)
+3. **Handle conflicts** (if file exists): Merge / Replace / Separate / Skip.
+4. **Security scan:** Uses [Cisco Skill Scanner](https://github.com/cisco-ai-defense/skill-scanner) if installed. CRITICAL/HIGH findings block import. `--skip-security` bypasses (not recommended). `--force` only controls file overwrite, not security. Scan also runs on `aidevops skill update`.
+5. **Post-import:** Placed in `.agents/` per conventions → registered in `.agents/configs/skill-sources.json` → run `./setup.sh` to create symlinks.
 
 ## Supported Sources & Formats
 
@@ -78,36 +62,7 @@ Benefits: no name clashes; `*-skill.md` glob finds all imports; `aidevops skill 
 
 ## Update Tracking
 
-Tracked in `.agents/configs/skill-sources.json`. URL-sourced skills use SHA-256 content hashing instead of git commit comparison.
-
-```json
-{
-  "skills": [
-    {
-      "name": "cloudflare",
-      "upstream_url": "https://github.com/dmmulroy/cloudflare-skill",
-      "upstream_commit": "abc123...",
-      "local_path": ".agents/services/hosting/cloudflare-skill.md",
-      "format_detected": "skill-md",
-      "imported_at": "2026-01-21T00:00:00Z",
-      "last_checked": "2026-01-21T00:00:00Z",
-      "merge_strategy": "added"
-    },
-    {
-      "name": "convos",
-      "upstream_url": "https://convos.org/skill.md",
-      "upstream_commit": "",
-      "local_path": ".agents/tools/convos-skill.md",
-      "format_detected": "url",
-      "imported_at": "2026-03-07T00:00:00Z",
-      "last_checked": "2026-03-07T00:00:00Z",
-      "merge_strategy": "added",
-      "notes": "Imported from URL",
-      "upstream_hash": "a1b2c3d4e5f6..."
-    }
-  ]
-}
-```
+Tracked in `.agents/configs/skill-sources.json`. URL-sourced skills use SHA-256 content hashing instead of git commit comparison. Key fields: `name`, `upstream_url`, `upstream_commit` (or `upstream_hash` for URL sources), `local_path`, `format_detected`, `imported_at`, `last_checked`, `merge_strategy`.
 
 Run `/add-skill check-updates` periodically to detect upstream changes.
 
