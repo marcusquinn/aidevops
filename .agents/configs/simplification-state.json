@@ -1,6 +1,11 @@
 {
   "_comment": null,
   "files": {
+    ".agents/scripts/commands/worktree-cleanup.md": {
+      "hash": "f333ce7dce4127c4c2150a07b4c1f50c",
+      "at": "2026-04-02T02:30:00Z",
+      "pr": null
+    },
     ".agents/content/seo-writer.md": {
       "hash": "b26db2ddd38996e2ad605d9c79db94f8",
       "at": "2026-04-01T22:10:00Z",
