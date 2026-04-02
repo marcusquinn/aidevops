@@ -1,33 +1,22 @@
 # Hyperdrive
 
-Connect Workers to PostgreSQL or MySQL with edge connection setup, pooled origin connections, and optional caching for non-mutating queries. Removes ~7 TCP/TLS/auth round-trips per connection.
+Connect Workers to PostgreSQL/MySQL with connection pooling and edge setup. Reuses origin connections to remove ~7 round-trips.
 
-Compatible with CockroachDB, Timescale, PlanetScale, Neon, and Supabase.
+- **Compatibility**: CockroachDB, Timescale, PlanetScale, Neon, Supabase.
+- **Best Fit**: Global users, single-region DB, read-heavy, or high connection setup cost.
+- **Avoid**: Write-heavy, <1s freshness required, or Worker in same region as DB.
 
-## Best Fit
-
-- **Use when**: users are globally distributed, the database is single-region, reads dominate, or connection setup cost is hurting latency.
-- **Avoid when**: writes dominate, freshness must stay under 1 second, or the Worker runs in the same region as the database.
-
-## Core Capabilities
-
-- **Connection pooling**: reuses origin connections instead of reconnecting on every request.
-- **Edge setup**: negotiates connections at the edge while pooling near the database.
-- **Query caching**: caches non-mutating queries for 60 seconds by default.
+## Capabilities
+- **Pooling**: Reuses origin connections.
+- **Edge Setup**: Negotiates at edge, pools near DB.
+- **Caching**: 60s default for non-mutating queries.
 
 ## Architecture
-
-```text
-Worker → Edge (setup) → Pool (near DB) → Origin
-         ↓ cached reads
-         Cache
-```
+`Worker → Edge (setup) → Pool (near DB) → Origin`
 
 ## Quick Start
-
 ```bash
-npx wrangler hyperdrive create my-db \
-  --connection-string="postgres://user:pass@host:5432/db"
+npx wrangler hyperdrive create my-db --connection-string="postgres://user:pass@host:5432/db"
 ```
 
 ```jsonc
@@ -40,7 +29,6 @@ npx wrangler hyperdrive create my-db \
 
 ```typescript
 import { Client } from "pg";
-
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const client = new Client({ connectionString: env.HYPERDRIVE.connectionString });
@@ -53,8 +41,5 @@ export default {
 ```
 
 ## Related Docs
-
-- [hyperdrive-patterns.md](./hyperdrive-patterns.md) - read-heavy, mixed read/write, multi-tenant, and performance patterns
-- [hyperdrive-gotchas.md](./hyperdrive-gotchas.md) - limits, troubleshooting, migration, and alternatives
-- [Cloudflare Docs](https://developers.cloudflare.com/hyperdrive/)
-- [Discord #hyperdrive](https://discord.cloudflare.com)
+- [Patterns](./hyperdrive-patterns.md) | [Gotchas](./hyperdrive-gotchas.md)
+- [Cloudflare Docs](https://developers.cloudflare.com/hyperdrive/) | [Discord #hyperdrive](https://discord.cloudflare.com)
