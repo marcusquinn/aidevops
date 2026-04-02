@@ -28,98 +28,47 @@ tools:
 
 ## Field Coverage
 
-| Contacts field | macOS | Linux | Notes |
+| Field | macOS | Linux | Notes |
 |---|---|---|---|
-| First/Last name | osascript | khard | core |
-| Organization | osascript | khard | core |
-| Job title | osascript | khard | core |
-| Email addresses | osascript | khard | core |
-| Phone numbers | osascript | khard | core |
-| Postal addresses | osascript (read) | khard | read on macOS, full on Linux |
-| Notes | osascript | khard | core |
-| URLs/websites | osascript (read) | khard | read on macOS, full on Linux |
-| Birthday | osascript (read) | khard | read on macOS, full on Linux |
+| First/Last name, Organization, Job title, Email, Phone, Notes | osascript | khard | full read/write |
+| Postal addresses, URLs/websites, Birthday | osascript (read) | khard | read-only on macOS |
 | Social profiles | limited | khard | Linux has better support |
-| Photos | not available | not available | no CLI support |
-| Relationships | not available | not available | no CLI support |
+| Photos, Relationships | — | — | no CLI support |
 
-## When Agents Should Use Contacts
+## When to Use Contacts
 
-Look up a contact when:
+**Look up** when: user needs email/phone/address for a person, composing email, creating a calendar event with someone, or a workflow needs to reach someone.
 
-- User mentions a person by name and needs their email/phone/address
-- Composing an email and need the recipient's address
-- Creating a calendar event with a person (look up their details)
-- A workflow needs to reach someone (outreach, follow-up)
+**Create** when: user explicitly asks, a new business relationship is established, or an agent workflow discovers contact info the user should keep. Always require user confirmation — contacts sync to all devices.
 
-Create a contact when:
-
-- User explicitly asks ("save this contact", "add them to my contacts")
-- A new business relationship is established and user wants it recorded
-- An agent workflow discovers contact info the user should keep
-
-Do NOT create contacts for:
-
-- Temporary or one-off interactions
-- Information already in a CRM (use the CRM instead)
-- Without user confirmation (contacts sync to all devices)
+**Do NOT create** for temporary interactions or info already in a CRM.
 
 ## Usage
 
-### Search and look up
-
 ```bash
-# Search by name
+# Search / look up
 contacts-helper.sh search "John"
-
-# Full details for a contact
 contacts-helper.sh show "John Smith"
-
-# Quick email lookup
 contacts-helper.sh email "Smith"
-
-# Quick phone lookup
 contacts-helper.sh phone "Smith"
-```
+contacts-helper.sh books
 
-### Create a contact
-
-```bash
-# Basic contact
+# Create
 contacts-helper.sh add --first John --last Smith --email john@example.com
-
-# Full contact
 contacts-helper.sh add --first Jane --last Doe \
   --org "Acme Corp" --title "CTO" \
   --email jane@acme.com --phone "+44123456789" \
   --notes "Met at DevOps conference 2026"
 ```
 
-### List addressbooks
-
-```bash
-contacts-helper.sh books
-```
-
 ## Setup
 
-### macOS (one-time)
-
 ```bash
 contacts-helper.sh setup
-# No install needed. May need: System Settings > Privacy & Security > Contacts
 ```
 
-All accounts from System Settings > Internet Accounts appear automatically.
-
-### Linux (one-time)
-
-```bash
-contacts-helper.sh setup
-# Requires: khard + vdirsyncer with CardDAV config
-```
-
-Example `~/.config/khard/khard.conf`:
+- **macOS**: no install needed. Grant access: System Settings > Privacy & Security > Contacts. All accounts from Internet Accounts appear automatically.
+- **Linux**: requires `khard` + `vdirsyncer`. Example `~/.config/khard/khard.conf`:
 
 ```ini
 [addressbooks]
@@ -127,20 +76,7 @@ Example `~/.config/khard/khard.conf`:
 path = ~/.local/share/contacts/
 ```
 
-## Integration with Other Agents
-
-```bash
-# Look up a contact's email for outreach:
-~/.aidevops/agents/scripts/contacts-helper.sh email "Client Name"
-
-# Create a contact after a business interaction:
-~/.aidevops/agents/scripts/contacts-helper.sh add \
-  --first "New" --last "Client" \
-  --org "Their Company" --email "client@company.com" \
-  --notes "Referred by existing client, interested in consulting"
-```
-
-### Cross-tool workflow
+## Cross-tool Workflow
 
 ```bash
 # 1. Look up contact
