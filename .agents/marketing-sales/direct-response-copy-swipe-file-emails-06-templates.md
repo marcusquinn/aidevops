@@ -1,6 +1,6 @@
 # Email Templates to Swipe
 
-Fill-in-the-blank templates for common email types.
+Fill-in-the-blank templates. Use Quick Value for tips/insights, Story for narrative-driven engagement, Social Proof for conversion.
 
 ## Quick Value Email
 
