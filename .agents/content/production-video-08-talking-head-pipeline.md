@@ -1,73 +1,59 @@
 # Longform Talking-Head Pipeline (30s+)
 
-Audio-driven pipeline — voice audio controls lip movement and timing.
+Audio-driven pipeline: voice audio controls lip movement and timing.
 
-```text
-Starting Image → Script → Voice Audio → Talking-Head Video → Post-Processing
-     (1)           (2)        (3)              (4)                (5)
-```
+`Image (1) → Script (2) → Voice (3) → Video (4) → Post-Processing (5)`
 
-## Step 1: Starting Image
+## 1. Starting Image
+Use Nanobanana Pro with JSON prompts (see `content/production-image.md`). JSON `color`/`lighting` fields prevent flat output. Video models amplify artifacts — use high-res, photorealistic sources.
 
-Use Nanobanana Pro with JSON prompts (see `content/production-image.md`) for precise color grading. The JSON `color` and `lighting` fields prevent flat greyscale output. Video models amplify any source artifacts — use high-resolution, photorealistic images.
+- **Character/Person**: Nanobanana Pro / Freepik
+- **4K Refinement**: Seedream 4
+- **Consistency**: Ideogram face swap
 
-Tool routing: Character/person → Nanobanana Pro or Freepik; 4K refinement → Seedream 4; face consistency across series → Ideogram face swap.
+## 2. Script
+Write for natural speech:
+- **Contractions**: "it's", "don't", "we're" (never "it is", "do not")
+- **Pacing**: 8-12 words per sentence
+- **Cues**: `[excited]Text[/excited]`
+- **Test**: Read aloud; if it sounds awkward, rewrite.
 
-## Step 2: Script
+## 3. Voice Audio (Critical)
+Robotic audio is scrolled past. **NEVER use pre-made ElevenLabs voices.** Use Voice Design or Instant Voice Clone.
 
-Write for natural speech, not written text:
+| Tool | Quality | Cost | Best For |
+|------|---------|------|----------|
+| **ElevenLabs** | Highest | $5-99/mo | Realism, custom clones (10-30s) |
+| **MiniMax TTS** | High | $5/mo | Value, easy setup (10s clone) |
+| **Qwen3-TTS** | High | Free | Local/CUDA, open source (3s clone) |
 
-- Contractions: "it's", "don't", "we're" — never "it is", "do not"
-- Short sentences: 8-12 words for natural pacing
-- Emotional block cues: `[excited]This changed how I work.[/excited]`
-- Read-aloud test: if it sounds awkward spoken, rewrite it
+*Cloning: Quiet room, no music. Cleanup via CapCut (see `content/production-audio.md`). Qwen3: `tools/voice/qwen3-tts.md`.*
 
-## Step 3: Voice Audio
-
-**This is the most important step.** Robotic audio gets scrolled past immediately.
-
-| Tool | Quality | Cost | Voice Clone | Best For |
-|------|---------|------|-------------|----------|
-| **ElevenLabs** | Highest | $5-99/mo | Yes (10-30s clip) | Maximum realism, custom voices |
-| **MiniMax TTS** | High | $5/mo (120 min) | Yes (10s clip) | Easiest setup, best value |
-| **Qwen3-TTS** | High | Free (local, CUDA) | Yes (3s clip) | Self-hosted, open source |
-
-**NEVER use pre-made ElevenLabs voices** — widely recognised as AI. Use Voice Design or Instant Voice Clone. For cloning: quiet room, single speaker, no background music. Run through CapCut cleanup pipeline first if cloning from existing content (see `content/production-audio.md`). Qwen3-TTS: see `tools/voice/qwen3-tts.md`.
-
-## Step 4: Talking-Head Video
-
+## 4. Talking-Head Video
 | Model | Quality | Cost | Best For |
 |-------|---------|------|----------|
-| **HeyGen Avatar 4** | High | Subscription | Best all-around, easiest workflow |
-| **VEED Fabric 1.0** | Highest | Higher | Maximum quality, premium content |
-| **InfiniteTalk** | Good | Free (self-hosted) | Budget/self-hosted |
+| **HeyGen 4** | High | Sub | All-around (see `content/heygen-skill.md`) |
+| **VEED Fabric** | Highest | $$$ | Premium (see `content/video-muapi.md`) |
+| **InfiniteTalk** | Good | Free | Budget/Self-hosted |
 
-HeyGen: see `content/heygen-skill.md`. VEED: via MuAPI lipsync endpoint `POST /api/v1/veed-lipsync` (see `content/video-muapi.md`).
-
-## Step 5: Post-Processing
-
-1. Upscale if needed: `real-video-enhancer-helper.sh upscale input.mp4 output.mp4 --scale 2`
-2. Denoise: `real-video-enhancer-helper.sh denoise input.mp4 output.mp4`
-3. Film grain: subtle grain for organic aesthetic
-4. Audio mix: layer ambient sound and music behind voice (see `content/production-audio.md` 4-Layer Audio Design)
+## 5. Post-Processing
+1. **Upscale**: `real-video-enhancer-helper.sh upscale in.mp4 out.mp4 --scale 2`
+2. **Denoise**: `real-video-enhancer-helper.sh denoise in.mp4 out.mp4`
+3. **Grain**: Subtle film grain for organic look.
+4. **Mix**: Layer ambient sound/music (see `content/production-audio.md`).
 
 ## Longform Assembly (30s+)
-
+Split script into segments (e.g., 10s for HeyGen). Generate with identical settings.
 ```bash
-# Split script into segments matching model's max duration (e.g., 10s for HeyGen)
-# Generate each segment with same starting image and voice settings
-# Stitch segments:
 printf "file '%s'\n" segment_*.mp4 > concat.txt
-ffmpeg -f concat -safe 0 -i concat.txt -c copy longform_output.mp4
-# Add B-roll cuts between segments to hide transition artifacts
-# Replace stitched audio with original full-length voice track for seamless continuity
+ffmpeg -f concat -safe 0 -i concat.txt -c copy output.mp4
+# Add B-roll cuts between segments; replace audio with full-length track.
 ```
 
 ## Use Case Routing
-
-| Use Case | Starting Image | Voice | Video Model | Post-Processing |
-|----------|---------------|-------|-------------|-----------------|
-| Paid ads | Nanobanana Pro (brand colors) | ElevenLabs (custom clone) | VEED Fabric | Full pipeline |
-| Organic social | Nanobanana Pro or Freepik | MiniMax (default voice) | HeyGen Avatar 4 | Light denoise |
-| AI influencer | Nanobanana Pro (consistent character) | ElevenLabs (cloned persona) | HeyGen Avatar 4 | Film grain + upscale |
-| Budget/volume | Freepik | Qwen3-TTS (local) | InfiniteTalk | Minimal |
+| Use Case | Image | Voice | Video | Post |
+|----------|-------|-------|-------|------|
+| **Paid ads** | Nanobanana | ElevenLabs | VEED | Full |
+| **Organic** | Freepik | MiniMax | HeyGen | Denoise |
+| **Influencer** | Nanobanana | ElevenLabs | HeyGen | Grain+Upscale |
+| **Budget** | Freepik | Qwen3-TTS | InfiniteTalk | Minimal |
