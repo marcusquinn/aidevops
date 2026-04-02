@@ -36,38 +36,21 @@ git checkout -b chore/{description}
 
 **Not for** behavior changes; use `feature/`, `bugfix/`, or `refactor/` instead.
 
-## Guidance
+## Commit Prefixes
 
-Pick the narrowest commit prefix for the change:
+Pick the narrowest prefix for the change:
 
-| Prefix | Use for |
-|--------|---------|
-| `chore:` | General maintenance |
-| `docs:` | Documentation |
-| `ci:` | CI/CD changes |
-| `build:` | Build system |
+| Prefix | Use for | Example |
+|--------|---------|---------|
+| `chore:` | General maintenance | `chore: update dependencies` |
+| `docs:` | Documentation | `docs: improve installation instructions` |
+| `ci:` | CI/CD changes | `ci: add dependency caching` |
+| `build:` | Build system | `build: switch bundler to esbuild` |
 
-## Commit Examples
+## Branch Examples
 
-```bash
-chore: update dependencies
-
-docs: improve installation instructions
-
-ci: optimize GitHub Actions workflow
-
-- Add dependency caching
-- Run tests in parallel
-
-build: switch bundler to esbuild
 ```
-
-## Examples
-
-```bash
 chore/update-dependencies
 chore/fix-github-actions
-chore/add-codecov
-chore/update-readme
 chore/configure-eslint
 ```
