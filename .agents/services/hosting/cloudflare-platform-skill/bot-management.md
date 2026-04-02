@@ -1,10 +1,7 @@
 # Cloudflare Bot Management
 
-Enterprise-grade bot detection, protection, and mitigation using ML/heuristics, bot scores, JavaScript detections, and verified bot handling.
+Multi-tier bot detection and mitigation using ML/heuristics, bot scores, JavaScript detections, and verified bot handling.
 
-## Overview
-
-Bot Management provides multi-tier protection:
 - **Free (Bot Fight Mode)**: Auto-blocks definite bots, no config
 - **Pro/Business (Super Bot Fight Mode)**: Configurable actions, static resource protection, analytics groupings
 - **Enterprise (Bot Management)**: Granular 1-99 scores, WAF integration, JA3/JA4 fingerprinting, Workers API, Advanced Analytics
@@ -22,7 +19,7 @@ Bot Management provides multi-tier protection:
 
 **Bot Scores**: 1-99 (1 = definitely automated, 99 = definitely human). Threshold: <30 indicates bot traffic. Enterprise gets granular 1-99; Pro/Business get groupings only.
 
-**Detection Engines**: Heuristics (known fingerprints, assigns score=1), ML (majority of detections, supervised learning on billions of requests), Anomaly Detection (optional, baseline traffic analysis), JavaScript Detections (headless browser detection).
+**Detection Engines**: Heuristics (known fingerprints → score=1), ML (supervised learning on billions of requests), Anomaly Detection (optional, baseline analysis), JavaScript Detections (headless browser detection).
 
 **Verified Bots**: Allowlisted good bots (search engines, AI crawlers) verified via reverse DNS or Web Bot Auth. Access via `cf.bot_management.verified_bot` or `cf.verified_bot_category`.
 
@@ -37,7 +34,7 @@ Bot Management provides multi-tier protection:
 ## Basic Patterns
 
 ```typescript
-// Workers: Check bot score
+// Workers API
 export default {
   async fetch(request: Request): Promise<Response> {
     const botScore = request.cf?.botManagement?.score;
