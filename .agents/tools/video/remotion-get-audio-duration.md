@@ -1,14 +1,12 @@
 ---
 name: get-audio-duration
 mode: subagent
-description: Getting the duration of an audio file in seconds with Mediabunny
-metadata:
-  tags: duration, audio, length, time, seconds, mp3, wav
+description: Get audio file duration in seconds using Mediabunny's Input.computeDuration()
 ---
 
 # Getting audio duration with Mediabunny
 
-Use `Input.computeDuration()` to get audio length in seconds. This works in browser, Node.js, and Bun.
+`Input.computeDuration()` returns audio length in seconds. Works in browser, Node.js, and Bun.
 
 ## URLs and `staticFile()`
 
@@ -37,7 +35,7 @@ const staticDuration = await getAudioDuration(staticFile("audio.mp3"));
 
 ## Local files
 
-Use `FileSource` for browser uploads or drag-and-drop files:
+Use `FileSource` for browser uploads or drag-and-drop:
 
 ```tsx
 import { Input, ALL_FORMATS, FileSource } from "mediabunny";

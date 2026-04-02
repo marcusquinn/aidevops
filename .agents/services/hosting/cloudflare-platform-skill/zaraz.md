@@ -32,71 +32,24 @@ Event names follow platform conventions (GA4: `sign_up`; Facebook Pixel: `Purcha
 
 Data layer: `window.zaraz.dataLayer = { user_id: '12345', page_type: 'product' }`. Access in triggers: `{{client.__zarazTrack.page_type}}`.
 
-### E-commerce
-
-```javascript
-zaraz.ecommerce('Product Viewed', { product_id: 'SKU123', name: 'Blue Widget', price: 49.99, currency: 'USD' });
-zaraz.ecommerce('Product Added', { product_id: 'SKU123', quantity: 2, price: 49.99 });
-zaraz.ecommerce('Order Completed', {
-  order_id: 'ORD-789', total: 149.98, revenue: 149.98,
-  shipping: 10.00, tax: 12.50, currency: 'USD',
-  products: [{ product_id: 'SKU123', quantity: 2, price: 49.99 }]
-});
-```
-
-## Consent Management
-
-```javascript
-if (zaraz.consent.getAll().analytics) { zaraz.track('page_view'); }
-zaraz.consent.modal = true;
-zaraz.consent.setAll({ analytics: true, marketing: false, preferences: true });
-zaraz.consent.addEventListener('consentChanged', () => {
-  console.log('Consent updated:', zaraz.consent.getAll());
-});
-```
-
 ## Triggers
 
 Types: Pageview, DOM Ready, Click (CSS selector), Form submission, Scroll depth (%), Timer, Variable match (custom conditions).
 
 Example: Trigger `Button Click` on `.buy-button` → action `Track event "purchase_intent"`.
 
-## Custom Managed Components
-
-```javascript
-export default class CustomAnalytics {
-  async handleEvent(event) {
-    const { type, payload } = event;
-    await fetch('https://analytics.example.com/track', {
-      method: 'POST',
-      body: JSON.stringify({ event: type, properties: payload, timestamp: Date.now() })
-    });
-  }
-}
-```
-
-## Common Patterns
-
-```javascript
-// SPA route tracking
-router.afterEach((to) => zaraz.track('pageview', { page_path: to.path, page_title: to.meta.title }));
-// User identification on login
-zaraz.set('user_id', user.id);
-zaraz.track('login', { method: 'password' });
-```
-
-For Workers integration, see `cloudflare-workers` skill.
-
 ## Privacy & Limits
 
 Automatic IP anonymization, consent-based cookie control, GDPR/CCPA compliant. Tools/events unlimited; request size 100 KB; data retention per tool's policy.
 
-## Debugging
+## In This Reference
 
-Enable debug: dashboard toggle or `zaraz.debug = true`. Check trigger conditions, tool enabled status, browser console, `zaraz.consent.getAll()` for consent issues.
+- [zaraz-patterns.md](./zaraz-patterns.md) - E-commerce, SPA tracking, consent management, custom components
+- [zaraz-gotchas.md](./zaraz-gotchas.md) - Debugging, trigger troubleshooting, consent issues
 
-## Reference
+## See Also
 
 - [Zaraz Docs](https://developers.cloudflare.com/zaraz/)
 - [Web API](https://developers.cloudflare.com/zaraz/web-api/)
 - [Managed Components](https://developers.cloudflare.com/zaraz/advanced/load-custom-managed-component/)
+- `cloudflare-workers` skill — Workers integration
