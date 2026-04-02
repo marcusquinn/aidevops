@@ -3789,7 +3789,7 @@ This is an automated stall-detection sweep. The LLM should review the actual iss
 		--tokens 0 --time "$_sweep_elapsed" --session-type routine 2>/dev/null || true)
 	sweep_body="${sweep_body}${sig_footer}"
 
-	if gh issue create --repo "$aidevops_slug" \
+	if gh_create_issue --repo "$aidevops_slug" \
 		--title "perf: simplification debt stalled — LLM sweep needed ($(date -u +%Y-%m-%d))" \
 		--label "simplification-debt" --label "needs-maintainer-review" --label "tier:thinking" \
 		--assignee "$maintainer" \
@@ -4520,13 +4520,13 @@ This file was previously simplified (PR #${prev_pr}) but has since been modified
 
 	local create_ok=false
 	if [[ "$needs_recheck" == true ]]; then
-		gh issue create --repo "$aidevops_slug" \
+		gh_create_issue --repo "$aidevops_slug" \
 			--title "$issue_title" \
 			--label "simplification-debt" --label "needs-maintainer-review" --label "tier:simple" --label "recheck-simplicity" \
 			--assignee "$maintainer" \
 			--body "$issue_body" >/dev/null 2>&1 && create_ok=true
 	else
-		gh issue create --repo "$aidevops_slug" \
+		gh_create_issue --repo "$aidevops_slug" \
 			--title "$issue_title" \
 			--label "simplification-debt" --label "needs-maintainer-review" --label "tier:simple" \
 			--assignee "$maintainer" \
@@ -4687,7 +4687,7 @@ This is an automated scan. The function lengths are factual, but the best decomp
 
 		local issue_key="$file_path"
 		local issue_title="simplification: reduce function complexity in ${issue_key} (${violation_count} functions >${COMPLEXITY_FUNC_LINE_THRESHOLD} lines)"
-		if gh issue create --repo "$aidevops_slug" \
+		if gh_create_issue --repo "$aidevops_slug" \
 			--title "$issue_title" \
 			--label "simplification-debt" --label "needs-maintainer-review" \
 			--assignee "$maintainer" \
@@ -4945,7 +4945,7 @@ run_weekly_complexity_scan() {
 			if [[ "${sweep_issue_exists:-0}" -eq 0 ]]; then
 				local sweep_reason
 				sweep_reason=$(echo "$sweep_result" | cut -d'|' -f2)
-				gh issue create --repo "$aidevops_slug" \
+				gh_create_issue --repo "$aidevops_slug" \
 					--title "LLM complexity sweep: review stalled simplification debt" \
 					--label "simplification-debt" --label "auto-dispatch" --label "tier:thinking" \
 					--body "## Daily LLM sweep (automated, GH#15285)

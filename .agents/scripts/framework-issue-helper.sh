@@ -454,7 +454,7 @@ log_framework_issue() {
 	log_info "Creating issue on ${AIDEVOPS_SLUG}: $title"
 
 	local issue_url
-	issue_url=$(gh issue create \
+	issue_url=$(gh_create_issue \
 		--repo "$AIDEVOPS_SLUG" \
 		--title "$title" \
 		--body "$body" \

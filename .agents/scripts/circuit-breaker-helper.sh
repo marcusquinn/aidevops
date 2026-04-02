@@ -24,6 +24,11 @@
 
 set -euo pipefail
 
+# Source shared-constants for gh_create_issue wrapper (t1756)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=shared-constants.sh
+[[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
+
 # ============================================================
 # CONFIGURATION
 # ============================================================
@@ -613,7 +618,7 @@ _cb_create_new_issue() {
 		--force || true
 
 	local issue_url
-	issue_url=$(gh issue create \
+	issue_url=$(gh_create_issue \
 		--repo "$repo_slug" \
 		--title "Supervisor circuit breaker tripped — ${failure_count} consecutive failures" \
 		--body "$body" \

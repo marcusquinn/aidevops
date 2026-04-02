@@ -349,7 +349,7 @@ log_framework_issue() {
 
 	# Create the issue
 	local issue_url
-	if ! issue_url=$(gh issue create --repo "$slug" \
+	if ! issue_url=$(gh_create_issue --repo "$slug" \
 		--title "$title" \
 		--body "$body" \
 		--label "$labels" 2>&1); then
