@@ -18,9 +18,9 @@ tools:
 
 ## Quick Reference
 
-- **Command**: `/list-keys` or `@list-keys`
+- **Command**: `/list-keys` or `@list-keys` or `api-keys list`
 - **Script**: `~/.aidevops/agents/scripts/list-keys-helper.sh`
-- **Purpose**: Show available API key names plus source paths
+- **Purpose**: Show available API key names plus source paths — never values
 - **Security**: Names and locations only — never values
 
 **Key sources** (checked in order):
@@ -32,19 +32,7 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Usage
-
-```bash
-~/.aidevops/agents/scripts/list-keys-helper.sh
-/list-keys
-```
-
 ## Output
-
-Shows a table with:
-- key name
-- source path
-- status in the current session
 
 ```text
 API Keys Available in Session
@@ -77,23 +65,10 @@ Total: 7 keys from 4 sources
 | `[not loaded]` | Defined but not loaded in the current session |
 | `[configured]` | Present in a config file |
 
-Placeholder detection covers:
-- `YOUR_*_HERE`, `REPLACE_*`, `CHANGEME`, `FIXME`, `TODO`
-- `example`, `sample`, `test-key`, `dummy`, `fake`
-- `xxx`, `yyy`, `zzz`, `placeholder`, `none`, `null`
-- template markers: `<...>`, `{...}`, `[...]`
-- repeated characters: `xxxx`, `0000`, etc.
+Placeholder detection covers: `YOUR_*_HERE`, `REPLACE_*`, `CHANGEME`, `FIXME`, `TODO`, `example`, `sample`, `test-key`, `dummy`, `fake`, `xxx`/`yyy`/`zzz`, `placeholder`, `none`, `null`, template markers (`<...>`, `{...}`, `[...]`), repeated characters (`xxxx`, `0000`).
 
 ## Security Notes
 
-- Never displays actual key values
-- Only reports key names and storage locations
+- Never displays actual key values — only names and storage locations
 - Use `echo "${KEY_NAME:0:10}..."` only to confirm a specific key exists
-- Credential files should have 600 permissions
-
-## Integration
-
-Called by:
-- `/list-keys`
-- `@list-keys`
-- `api-keys list` (simplified action)
+- Credential files must have 600 permissions
