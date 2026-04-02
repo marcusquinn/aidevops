@@ -8428,6 +8428,7 @@ dispatch_triage_reviews() {
 	# Parse needs-review items from pre-fetched state
 	local state_file="${STATE_FILE:-}"
 	[[ -f "$state_file" ]] || {
+		echo "[pulse-wrapper] dispatch_triage_reviews: no state file" >>"$LOGFILE"
 		printf '%d\n' "$available"
 		return 0
 	}
@@ -8438,6 +8439,9 @@ dispatch_triage_reviews() {
 	resolved_model=$(~/.aidevops/agents/scripts/model-availability-helper.sh resolve opus 2>/dev/null || echo "")
 	if [[ -z "$resolved_model" ]]; then
 		resolved_model=$(~/.aidevops/agents/scripts/model-availability-helper.sh resolve sonnet 2>/dev/null || echo "")
+	fi
+	if [[ -z "$resolved_model" ]]; then
+		echo "[pulse-wrapper] dispatch_triage_reviews: model resolution failed (opus and sonnet unavailable)" >>"$LOGFILE"
 	fi
 
 	# Parse markdown-format state entries:
@@ -8463,7 +8467,14 @@ dispatch_triage_reviews() {
 		fi
 	done <"$state_file"
 
+	local candidate_count=0
+	if [[ -n "$candidates" ]]; then
+		candidate_count=$(printf '%s' "$candidates" | grep -c '|' 2>/dev/null || echo 0)
+	fi
+	echo "[pulse-wrapper] dispatch_triage_reviews: parsed ${candidate_count} candidates from state file" >>"$LOGFILE"
+
 	[[ -n "$candidates" ]] || {
+		echo "[pulse-wrapper] dispatch_triage_reviews: 0 candidates found in state file" >>"$LOGFILE"
 		printf '%d\n' "$available"
 		return 0
 	}
@@ -8493,6 +8504,9 @@ dispatch_triage_reviews() {
 		triage_count=$((triage_count + 1))
 		available=$((available - 1))
 	done <<<"$candidates"
+
+	local slots_remaining="$available"
+	echo "[pulse-wrapper] dispatch_triage_reviews: dispatched ${triage_count} triage workers (${slots_remaining} slots remaining)" >>"$LOGFILE"
 
 	printf '%d\n' "$available"
 	return 0
