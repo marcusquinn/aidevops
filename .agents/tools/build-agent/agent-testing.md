@@ -26,8 +26,7 @@ tools:
 - **CLI**: Auto-detects `opencode` (override with `AGENT_TEST_CLI`)
 - **Flow**: Loads JSON suite → sends prompts via `opencode run --format json` (CLI) or `opencode serve` (HTTP) → validates responses
 - **Server mode**: `POST /session` → `POST /session/:id/message` → extract text → delete. Override host/port with `OPENCODE_HOST`/`OPENCODE_PORT`
-
-**When to use**: Validate agent changes before merging, regression-test after AGENTS.md/subagent edits, compare behavior across models, smoke-test after framework updates.
+- **When to use**: Validate agent changes before merging, regression-test after AGENTS.md/subagent edits, compare behavior across models, smoke-test after framework updates
 
 <!-- AI-CONTEXT-END -->
 
@@ -97,6 +96,9 @@ agent-test-helper.sh compare smoke-test          # 3. compare — non-zero exit 
 agent-test-helper.sh create my-new-tests         # create template in user suites dir
 agent-test-helper.sh list                        # list all suites (user + shipped)
 agent-test-helper.sh results [suite-name]        # view recent results
+
+# CI/CD (requires opencode CLI with API credentials)
+agent-test-helper.sh run agents-md-knowledge || { echo "Agent tests failed"; exit 1; }
 ```
 
 ## Shipped Test Suites
@@ -106,13 +108,6 @@ agent-test-helper.sh results [suite-name]        # view recent results
 | `smoke-test` | 3 | Quick agent responsiveness and identity check |
 | `agents-md-knowledge` | 5 | Core AGENTS.md instruction absorption |
 | `git-workflow` | 4 | Git workflow knowledge validation |
-
-## CI/CD Integration
-
-```bash
-# Requires opencode CLI in CI with API credentials
-agent-test-helper.sh run agents-md-knowledge || { echo "Agent tests failed"; exit 1; }
-```
 
 ## Environment Variables
 
