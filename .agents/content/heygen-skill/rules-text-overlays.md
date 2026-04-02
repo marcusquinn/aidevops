@@ -7,8 +7,6 @@ metadata:
 
 # Text Overlays
 
-Text overlays for titles, captions, lower thirds, and on-screen text in HeyGen videos.
-
 ## Text Overlay Interface
 
 ```typescript
@@ -30,8 +28,6 @@ interface TextOverlay {
   };
 }
 ```
-
-Availability varies by API tier/plan.
 
 ## Positioning
 
@@ -72,8 +68,6 @@ Availability varies by API tier/plan.
 All presets use `font_family: "Arial"`.
 
 ## Timing Coordination
-
-Coordinate text appearance with script timing:
 
 ```typescript
 const overlays = [
