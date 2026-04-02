@@ -201,28 +201,168 @@ If headless: begin now (option 1).
 
 Scaffold a new standalone research repo at `~/Git/autoresearch-{name}/`.
 
-```bash
-# 1. Create directory and git init
-mkdir -p ~/Git/autoresearch-{name}
-git -C ~/Git/autoresearch-{name} init
+The `autoresearch-` prefix is mandatory. It makes all research repos discoverable:
+- `ls ~/Git/autoresearch-*` — find all local research repos
+- `grep autoresearch ~/.config/aidevops/repos.json` — find all registered ones
 
-# 2. Run aidevops init
-aidevops init --path ~/Git/autoresearch-{name} --non-interactive
+### Step I1: Validate name
 
-# 3. Create baseline program
-mkdir -p ~/Git/autoresearch-{name}/todo/research
-# Write program.md from template with mode: standalone
+Extract `{name}` from `init "{name}"` or `init {name}`. Slugify: lowercase, replace spaces/underscores with hyphens, strip non-alphanumeric except hyphens.
 
-# 4. Register in repos.json
-# Add entry: { "slug": "local/autoresearch-{name}", "path": "~/Git/autoresearch-{name}", "local_only": true, "pulse": false }
-
-# 5. Optional: create GitHub remote
-# Ask: "Create GitHub remote? [y/N]"
-# If yes: gh repo create autoresearch-{name} --private --source ~/Git/autoresearch-{name} --push
-# Update repos.json: remove local_only, set slug to "owner/autoresearch-{name}"
+```text
+REPO_NAME="autoresearch-{name}"
+REPO_PATH="$HOME/Git/$REPO_NAME"
 ```
 
-After scaffolding: "Repo ready at `~/Git/autoresearch-{name}/`. Edit `todo/research/program.md` to define your experiment, then run `/autoresearch --program todo/research/program.md`."
+If `$REPO_PATH` already exists: exit with error — "Repo already exists at `$REPO_PATH`. Use `/autoresearch --program $REPO_PATH/todo/research/program.md` to run it."
+
+### Step I2: Interactive prompts (skip if headless)
+
+```text
+Creating research repo: ~/Git/autoresearch-{name}/
+
+1. Description? (one line, for README)
+   → [Enter to skip]
+
+2. Create GitHub remote? [y/N]
+   → N
+
+3. Enable pulse dispatch? [y/N]
+   → N
+
+4. Begin experiment loop now? [y/N]
+   → N
+```
+
+Headless defaults: description=empty, GitHub remote=no, pulse=no, begin now=no.
+
+### Step I3: Scaffold directory structure
+
+```bash
+mkdir -p "$REPO_PATH/baseline"
+mkdir -p "$REPO_PATH/results"
+mkdir -p "$REPO_PATH/todo/research"
+touch "$REPO_PATH/baseline/.gitkeep"
+touch "$REPO_PATH/results/.gitkeep"
+```
+
+Write `$REPO_PATH/program.md`:
+
+```markdown
+# Research: {name}
+
+{description if provided, else: "Describe your research goal here."}
+
+## Instructions
+
+Edit `todo/research/program.md` to define your experiment program, then run:
+
+    /autoresearch --program todo/research/program.md
+
+## Structure
+
+- `baseline/` — starting code, data, or config for the experiment
+- `results/` — experiment outputs (may be gitignored for large files)
+- `todo/research/program.md` — the autoresearch program file
+```
+
+Write `$REPO_PATH/todo/research/program.md` from `.agents/templates/research-program-template.md` with these substitutions:
+
+```text
+name: {name}
+mode: standalone
+target_repo: .
+```
+
+Replace the `## Target` `files:` line with `files: baseline/**/*` as a starting point.
+
+Write `$REPO_PATH/.gitignore`:
+
+```text
+results/
+*.log
+.DS_Store
+```
+
+### Step I4: Git init and initial commit
+
+```bash
+git -C "$REPO_PATH" init
+git -C "$REPO_PATH" add .
+git -C "$REPO_PATH" commit -m "chore: init autoresearch-{name} repo"
+```
+
+### Step I5: aidevops init
+
+```bash
+aidevops init --path "$REPO_PATH" --non-interactive
+```
+
+If `aidevops init` fails or is not available: warn but continue. The repo is still usable without aidevops task management.
+
+### Step I6: Register in repos.json
+
+Read `~/.config/aidevops/repos.json`. Add entry to `initialized_repos` array:
+
+```json
+{
+  "path": "~/Git/autoresearch-{name}",
+  "slug": "local/autoresearch-{name}",
+  "local_only": true,
+  "pulse": false,
+  "priority": "research",
+  "app_type": "generic",
+  "maintainer": "{gh_username}"
+}
+```
+
+Get `{gh_username}` from `gh api user --jq '.login' 2>/dev/null` or omit if unavailable.
+
+Write the updated JSON back to `~/.config/aidevops/repos.json`.
+
+### Step I7: Optional GitHub remote
+
+If user answered yes to "Create GitHub remote?":
+
+```bash
+gh repo create "autoresearch-{name}" --private --source "$REPO_PATH" --push
+```
+
+On success, update the repos.json entry:
+- Remove `"local_only": true`
+- Set `"slug": "{gh_username}/autoresearch-{name}"`
+
+If `gh repo create` fails: warn, leave `local_only: true` in repos.json, continue.
+
+### Step I8: Optional pulse dispatch
+
+If user answered yes to "Enable pulse dispatch?":
+
+Update the repos.json entry: set `"pulse": true`.
+
+Suggest adding `pulse_hours` for overnight-only runs:
+
+```text
+Pulse enabled. To limit to overnight runs (avoid conflicts with daytime work):
+  Set "pulse_hours": {"start": 17, "end": 5} in repos.json for this entry.
+```
+
+### Step I9: Optional begin now
+
+If user answered yes to "Begin experiment loop now?":
+
+Dispatch to interactive setup: `/autoresearch --program "$REPO_PATH/todo/research/program.md"`
+
+Otherwise, print completion summary:
+
+```text
+Repo ready at ~/Git/autoresearch-{name}/
+
+Next steps:
+  1. Edit todo/research/program.md — define your experiment (metric, files, budget)
+  2. Add starting code/data to baseline/
+  3. Run: /autoresearch --program ~/Git/autoresearch-{name}/todo/research/program.md
+```
 
 ---
 
