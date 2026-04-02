@@ -24,8 +24,6 @@ tools:
 | **Output** | Text/JSON report plus `{output-dir}/qa-report.json` and screenshots |
 | **Prerequisites** | Node.js v18+, Playwright (`npm install playwright && npx playwright install`) |
 
-**Key files:** `scripts/browser-qa-worker.sh`, `scripts/browser-qa/browser-qa.mjs`, `scripts/milestone-validation-worker.sh`, `workflows/milestone-validation.md`, `tools/browser/browser-automation.md`
-
 <!-- AI-CONTEXT-END -->
 
 ## When to Use
@@ -48,7 +46,7 @@ tools:
 | Screenshot | Full-page capture for review | Info |
 | ARIA snapshot | Accessibility tree snapshot | Info |
 
-Aggregate output includes visited/passed/failed pages, broken links, console errors, and screenshot paths. JSON summary: `{output-dir}/qa-report.json`.
+JSON summary: `{output-dir}/qa-report.json` — visited/passed/failed pages, broken links, console errors, screenshot paths.
 
 ## Usage
 
@@ -89,8 +87,6 @@ milestone-validation-worker.sh mission.md 1 \
 
 ## Flows and output
 
-Flows define the pages to visit. Supported formats:
-
 ```json
 ["/", "/about", "/contact", "/login"]
 
@@ -115,10 +111,8 @@ With `--mission-file` and `--milestone`, the worker extracts URL-like patterns f
 | `accessibility-audit-helper.sh` | Broader accessibility audit | WCAG compliance reviews |
 | `pagespeed` | Performance testing | Core Web Vitals work |
 | Project Playwright suite | Project-specific E2E coverage | CI/CD and regression testing |
-
-- `scripts/milestone-validation-worker.sh` - parent validation worker
-- `workflows/milestone-validation.md` - validation workflow
-- `workflows/mission-orchestrator.md` - mission orchestrator
-- `tools/browser/browser-automation.md` - browser tool selection guide
-- `tools/browser/playwright.md` - Playwright reference
-- `scripts/accessibility/playwright-contrast.mjs` - related Playwright script pattern
+| `scripts/milestone-validation-worker.sh` | Parent validation worker | — |
+| `workflows/milestone-validation.md` | Validation workflow | — |
+| `workflows/mission-orchestrator.md` | Mission orchestrator | — |
+| `tools/browser/browser-automation.md` | Browser tool selection guide | — |
+| `tools/browser/playwright.md` | Playwright reference | — |
