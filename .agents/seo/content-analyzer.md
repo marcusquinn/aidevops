@@ -1,6 +1,6 @@
 ---
 name: content-analyzer
-description: Comprehensive SEO content analysis - readability, keyword density, search intent, quality scoring
+description: SEO content analysis (readability, keywords, intent, quality)
 mode: subagent
 tools:
   read: true
@@ -15,46 +15,44 @@ tools:
 
 # SEO Content Analyzer
 
-Full content audit via `seo-content-analyzer.py` — 5 Python modules covering readability, keyword density, search intent, content length, and SEO quality scoring.
+Full content audit via `seo-content-analyzer.py` (readability, keywords, intent, length, quality).
 
 ## Quick Reference
 
-- **Input**: Article file/URL, primary keyword, secondary keywords
-- **Output**: Executive summary with scores, publishing readiness, priority actions
+- **Input**: Article file/URL, primary/secondary keywords
+- **Output**: Executive summary, scores, readiness, priority actions
 - **Script**: `~/.aidevops/agents/scripts/seo-content-analyzer.py`
 
 ## Analysis Pipeline
 
 ```bash
-# Full analysis (readability + keywords + quality + intent)
+# Full analysis
 python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py analyze article.md \
-  --keyword "primary keyword" \
-  --secondary "secondary1,secondary2"
+  --keyword "primary keyword" --secondary "secondary1,secondary2"
 
-# Individual analyses
+# Individual modules
 python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py readability article.md
 python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py keywords article.md \
   --keyword "primary keyword" --secondary "secondary1,secondary2"
 python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py intent "target keyword"
 python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py quality article.md \
-  --keyword "primary keyword" \
-  --meta-title "Article Title Here" --meta-desc "Article description here"
+  --keyword "primary keyword" --meta-title "Title" --meta-desc "Desc"
 ```
 
 ## Analysis Categories
 
 | Module | Key Metrics |
 |--------|-------------|
-| **Readability** | Flesch Reading Ease (target: 60-70), Flesch-Kincaid Grade (target: 8-10), sentence length, paragraph structure, passive voice ratio, transition words, complex word ratio |
-| **Keyword Optimization** | Primary density (target: 1-2%), critical placements (H1/first 100 words/H2s/conclusion), section heatmap, stuffing risk, LSI suggestions, secondary coverage |
-| **Search Intent** | Intent classification (informational/navigational/transactional/commercial), confidence scores, content-intent alignment, SERP feature targeting |
-| **SEO Quality** | 6-category scoring (content, keywords, meta, structure, links, readability), critical issues, publishing readiness, meta element validation |
+| **Readability** | Flesch Ease (60-70), Grade (8-10), sentence/para structure, passive voice, transition words |
+| **Keywords** | Primary density (1-2%), placements (H1/H2/intro/outro), heatmap, stuffing, LSI, secondary |
+| **Intent** | Class (info/nav/trans/comm), confidence, alignment, SERP features |
+| **Quality** | 6-category scoring, critical issues, readiness, meta validation |
 
-Output report structure: scores table → Publishing Readiness (Yes/No) → Priority Actions (Critical / High Priority / Optimization) → Detailed Findings per module.
+Report: scores → Publishing Readiness (Y/N) → Priority Actions (Critical/High/Opt) → Detailed Findings.
 
 ## Integration
 
-- Feeds into `content/seo-writer.md` for content creation
-- Uses data from `seo/dataforseo.md` for SERP competitor data
-- Works with `seo/eeat-score.md` for quality validation
-- Results inform `content/meta-creator.md` for meta optimisation
+- Feeds `content/seo-writer.md` (creation)
+- Uses `seo/dataforseo.md` (SERP data)
+- Works with `seo/eeat-score.md` (validation)
+- Informs `content/meta-creator.md` (meta)
