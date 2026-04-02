@@ -47,7 +47,7 @@ H2: Key Takeaways / FAQ
 
 ## SEO Workflow
 
-### 1. Keyword Research
+### Keyword Research
 
 ```bash
 keyword-research-helper.sh volume "AI video generation tools"
@@ -62,11 +62,9 @@ keyword-research-helper.sh difficulty "AI video generation tools"
 | Search intent | Informational or commercial investigation |
 | SERP features | Featured snippet opportunity = priority |
 
-### 2. Content Brief
+**Content brief**: Include primary keyword, 3–5 secondary keywords, search intent, SERP-derived word count, competitor gaps, unique angle, and internal link targets.
 
-- Include primary keyword, 3–5 secondary keywords, search intent, SERP-derived word count, competitor gaps, unique angle, and internal link targets.
-
-### 3. Writing Pipeline
+### Writing Pipeline
 
 1. `content/story.md` — narrative framework
 2. `content/research.md` — data and insights
@@ -76,7 +74,7 @@ keyword-research-helper.sh difficulty "AI video generation tools"
 6. `content/meta-creator.md` — title tag and meta description
 7. `content/internal-linker.md` — strategic internal links
 
-### 4. On-Page Optimization Checklist
+### On-Page Optimization
 
 - [ ] Primary keyword in title tag (first 60 chars), H1, first 100 words, meta description
 - [ ] Secondary keywords in H2 headings
@@ -85,7 +83,7 @@ keyword-research-helper.sh difficulty "AI video generation tools"
 - [ ] URL slug contains primary keyword
 - [ ] Schema markup (Article, FAQ, HowTo as applicable)
 
-### 5. Content Analysis
+### Content Analysis
 
 ```bash
 python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py analyze article.md --keyword "target keyword"
@@ -109,6 +107,7 @@ python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py quality article.md
 **Content calendar**: Pillar 1–2/month · Supporting 2–4/week · Listicles 1–2/month · Refresh top performers quarterly
 
 **Post-Publish Checklist**:
+
 - [ ] Verify indexing (Google Search Console)
 - [ ] Share on social (`content/distribution-social.md`)
 - [ ] Include in next newsletter (`content/distribution-email.md`)
