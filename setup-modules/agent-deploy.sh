@@ -636,6 +636,78 @@ _agent_source_dirs() {
 	return 0
 }
 
+# _collect_agent_files: print "abspath|relpath" lines for all deployable agent files
+# under agents_source. Excludes AGENTS.md, SKILL.md stubs, and non-agent markdown.
+# Output is consumed by deploy_agents_to_runtimes via a process substitution.
+_collect_agent_files() {
+	local agents_source="$1"
+	local f bn
+
+	# Top-level agents
+	for f in "$agents_source"/*.md; do
+		[[ -f "$f" ]] || continue
+		bn=$(basename "$f")
+		[[ "$bn" == "AGENTS.md" ]] && continue
+		if _is_agent_definition "$f"; then
+			printf '%s|%s\n' "$f" "$bn"
+		fi
+	done
+
+	# Subagent directories (recursive)
+	local subdir
+	while IFS= read -r subdir; do
+		while IFS= read -r f; do
+			[[ -f "$f" ]] || continue
+			bn=$(basename "$f")
+			# Skip SKILL.md stubs — they're directory indexes, not real agents
+			[[ "$bn" == "SKILL.md" ]] && continue
+			if _is_agent_definition "$f"; then
+				local relpath="${f#"$agents_source"/}"
+				printf '%s|%s\n' "$f" "$relpath"
+			fi
+		done < <(find "$subdir" -name '*.md' -type f 2>/dev/null)
+	done < <(_agent_source_dirs "$agents_source")
+	return 0
+}
+
+# _deploy_agents_to_single_runtime: convert and copy all agent files to one runtime.
+# Arguments: runtime_id agent_dir agent_list_file
+# agent_list_file contains "abspath|relpath" lines produced by _collect_agent_files.
+# Prints the count of successfully deployed agents to stdout.
+_deploy_agents_to_single_runtime() {
+	local runtime_id="$1"
+	local agent_dir="$2"
+	local agent_list_file="$3"
+
+	# Only deploy if the runtime is actually installed
+	local binary config_path config_dir
+	binary=$(rt_binary "$runtime_id")
+	config_path=$(rt_config_path "$runtime_id")
+	config_dir="$(dirname "$config_path" 2>/dev/null)"
+
+	if ! type -P "$binary" >/dev/null 2>&1 && [[ ! -d "$config_dir" ]]; then
+		echo "0"
+		return 0
+	fi
+
+	mkdir -p "$agent_dir"
+	local agent_count=0
+	local src rel target target_parent
+
+	while IFS='|' read -r src rel; do
+		[[ -n "$src" && -n "$rel" ]] || continue
+		target="$agent_dir/$rel"
+		target_parent=$(dirname "$target")
+		[[ -d "$target_parent" ]] || mkdir -p "$target_parent"
+		if _convert_agent_frontmatter <"$src" >"$target"; then
+			agent_count=$((agent_count + 1))
+		fi
+	done <"$agent_list_file"
+
+	echo "$agent_count"
+	return 0
+}
+
 # deploy_agents_to_runtimes: main entry point called by setup.sh.
 # Iterates all installed runtimes with agent directory support, converts and
 # deploys aidevops agents (top-level and subagent directories) to each runtime's
@@ -660,44 +732,16 @@ deploy_agents_to_runtimes() {
 		return 0
 	fi
 
-	# Build the list of agent files to deploy (once, shared across runtimes).
-	# Includes top-level *.md and all *.md in subagent directories that:
-	#   1. Have name: in frontmatter (actual agent definitions)
-	#   2. Are not SKILL.md stubs (directory index files)
-	local -a agent_files=()
-	local -a agent_relpaths=()
+	# Build the agent file list once (shared across all runtimes) into a temp file.
+	# Each line: "abspath|relpath"
+	local agent_list_file
+	agent_list_file=$(mktemp)
+	trap 'rm -f "${agent_list_file:-}"' RETURN
+	_collect_agent_files "$agents_source" >"$agent_list_file"
 
-	# Top-level agents
-	local f bn
-	for f in "$agents_source"/*.md; do
-		[[ -f "$f" ]] || continue
-		bn=$(basename "$f")
-		[[ "$bn" == "AGENTS.md" ]] && continue
-		if _is_agent_definition "$f"; then
-			agent_files+=("$f")
-			agent_relpaths+=("$bn")
-		fi
-	done
-
-	# Subagent directories (recursive)
-	local subdir
-	while IFS= read -r subdir; do
-		while IFS= read -r f; do
-			[[ -f "$f" ]] || continue
-			bn=$(basename "$f")
-			# Skip SKILL.md stubs — they're directory indexes, not real agents
-			[[ "$bn" == "SKILL.md" ]] && continue
-			if _is_agent_definition "$f"; then
-				# Compute path relative to agents_source
-				local relpath="${f#"$agents_source"/}"
-				agent_files+=("$f")
-				agent_relpaths+=("$relpath")
-			fi
-		done < <(find "$subdir" -name '*.md' -type f 2>/dev/null)
-	done < <(_agent_source_dirs "$agents_source")
-
-	local total_agents=${#agent_files[@]}
-	if [[ $total_agents -eq 0 ]]; then
+	local total_agents
+	total_agents=$(wc -l <"$agent_list_file" | tr -d ' ')
+	if [[ "$total_agents" -eq 0 ]]; then
 		print_warning "No agent definitions found in $agents_source"
 		return 0
 	fi
@@ -706,48 +750,19 @@ deploy_agents_to_runtimes() {
 	local runtime_count=0
 
 	# Deploy to each installed runtime
-	local runtime_id agent_dir
+	local runtime_id agent_dir agent_count display_name
 	while IFS= read -r runtime_id; do
 		agent_dir=$(rt_agent_dir "$runtime_id")
 		[[ -z "$agent_dir" ]] && continue
 
-		# Only deploy if the runtime is actually installed
-		local binary
-		binary=$(rt_binary "$runtime_id")
-		local config_path
-		config_path=$(rt_config_path "$runtime_id")
-		local config_dir
-		config_dir="$(dirname "$config_path" 2>/dev/null)"
-
-		if ! type -P "$binary" >/dev/null 2>&1 && [[ ! -d "$config_dir" ]]; then
-			continue
+		agent_count=$(_deploy_agents_to_single_runtime "$runtime_id" "$agent_dir" "$agent_list_file")
+		# A count of 0 means runtime not installed (skipped) — don't increment runtime_count
+		if [[ "$agent_count" -gt 0 ]]; then
+			display_name=$(rt_display_name "$runtime_id")
+			print_info "Deployed $agent_count agents to $display_name ($agent_dir)"
+			deployed_count=$((deployed_count + agent_count))
+			runtime_count=$((runtime_count + 1))
 		fi
-
-		mkdir -p "$agent_dir"
-		runtime_count=$((runtime_count + 1))
-		local agent_count=0
-		local i=0
-
-		while [[ $i -lt $total_agents ]]; do
-			local src="${agent_files[$i]}"
-			local rel="${agent_relpaths[$i]}"
-			local target="$agent_dir/$rel"
-
-			# Ensure target subdirectory exists
-			local target_parent
-			target_parent=$(dirname "$target")
-			[[ -d "$target_parent" ]] || mkdir -p "$target_parent"
-
-			if _convert_agent_frontmatter <"$src" >"$target"; then
-				agent_count=$((agent_count + 1))
-			fi
-			i=$((i + 1))
-		done
-
-		local display_name
-		display_name=$(rt_display_name "$runtime_id")
-		print_info "Deployed $agent_count agents to $display_name ($agent_dir)"
-		deployed_count=$((deployed_count + agent_count))
 	done < <(rt_list_with_agents)
 
 	if [[ $runtime_count -eq 0 ]]; then
