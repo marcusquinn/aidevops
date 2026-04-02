@@ -4,50 +4,25 @@ agent: SEO
 mode: subagent
 ---
 
-Run the complete SEO export + analysis workflow.
+Run the complete SEO export + analysis workflow. Combines `/seo-export all` + `/seo-analyze`. Default range: 90 days.
 
 Target: $ARGUMENTS
-
-## Quick Reference
-
-- **Combines**: `/seo-export all` + `/seo-analyze`
-- **Default range**: 90 days
-- **Outputs**: Platform export TOON files plus one analysis report
 
 ## Usage
 
 ```bash
-# Full workflow with default 90 days
-/seo-opportunities example.com
-
-# Custom date range
+/seo-opportunities example.com          # 90-day default
 /seo-opportunities example.com --days 30
 ```
 
 ## Workflow
 
-1. Parse `$ARGUMENTS` for the domain and options.
-2. Export all configured platforms:
-
-```bash
-~/.aidevops/agents/scripts/seo-export-helper.sh all $DOMAIN --days $DAYS
-```
-
-3. Run full analysis:
-
-```bash
-~/.aidevops/agents/scripts/seo-analysis-helper.sh $DOMAIN
-```
-
-4. Summarize:
-   - Top 10 quick wins
-   - Top 10 striking-distance opportunities
-   - Low-CTR pages needing optimization
-   - Content cannibalization issues
+1. Parse `$ARGUMENTS` for domain and options.
+2. Export all configured platforms: `~/.aidevops/agents/scripts/seo-export-helper.sh all $DOMAIN --days $DAYS`
+3. Run full analysis: `~/.aidevops/agents/scripts/seo-analysis-helper.sh $DOMAIN`
+4. Summarize: top 10 quick wins, top 10 striking-distance opportunities, low-CTR pages, content cannibalization issues.
 
 ## Outputs
-
-Created files:
 
 ```text
 ~/.aidevops/.agent-workspace/work/seo-data/{domain}/{platform}-{start}-{end}.toon
