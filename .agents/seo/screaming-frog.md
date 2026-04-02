@@ -1,62 +1,42 @@
 ---
-description: Screaming Frog SEO Spider CLI integration for site auditing and crawling
+description: Screaming Frog SEO Spider CLI for site auditing
 mode: subagent
 tools:
   read: true
-  write: false
-  edit: false
   bash: true
   glob: true
   grep: true
 ---
 
-# Screaming Frog SEO Spider Integration
+# Screaming Frog SEO Spider
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
-- **Purpose**: Advanced site crawling and SEO auditing via CLI
-- **License**: Paid license required for CLI automation ($259/yr); free tier = GUI only, 500 URL cap
-- **Command**: `screamingfrogseospider` (requires alias/path setup)
-- **Output**: Headless mode supports CSV, PDF, and Google Sheets exports
-
-## Setup
-
-1. Download from [screamingfrog.co.uk](https://www.screamingfrog.co.uk/seo-spider/)
-2. Enter license key in GUI (`Help > Enter License`)
-3. **macOS**: Add alias to `~/.zshrc` or `~/.bashrc`:
-
-```bash
-alias screamingfrogseospider="/Applications/Screaming\ Frog\ SEO\ Spider.app/Contents/MacOS/ScreamingFrogSEOSpiderLauncher"
-```
-
-4. **Linux**: Standard package install. **Windows**: Add install dir to PATH.
-5. Verify: `screamingfrogseospider --help`
+- **Purpose**: Advanced site crawling and SEO auditing via CLI.
+- **License**: Paid ($259/yr) for CLI; free tier is GUI-only (500 URL cap).
+- **Command**: `screamingfrogseospider`
+- **Setup**: Download from [screamingfrog.co.uk](https://www.screamingfrog.co.uk/seo-spider/).
+- **macOS Alias**: `alias screamingfrogseospider="/Applications/Screaming\ Frog\ SEO\ Spider.app/Contents/MacOS/ScreamingFrogSEOSpiderLauncher"`
 
 ## Usage
 
 ### Basic Crawl
-
 ```bash
 screamingfrogseospider --crawl https://example.com --headless --output-folder ./reports
 ```
 
-### Configuration
+### Configuration & Export
+- **Load Config**: `--config profile.seospiderconfig` (save from GUI first).
+- **Export Tabs**: `--export-tabs "Internal:All,Response Codes:All"`
+- **Bulk Export**: `--bulk-export "All Inlinks"`
+- **Save Crawl**: `--save-crawl` (creates `.seospider` file).
 
-- **Save Config**: Configure in GUI, save as `profile.seospiderconfig`
-- **Load Config**: Use `--config profile.seospiderconfig`
+## AI DevOps Integration
 
-### Export Options
-
-- `--export-tabs "Internal:All,Response Codes:All"`
-- `--save-crawl` (saves .seospider file)
-- `--bulk-export "All Inlinks"`
-
-## Integration with AI DevOps
-
-- **Audit**: Use for deep technical audits when `site-crawler` is insufficient
-- **Validation**: Verify fixes by re-crawling specific paths
-- **Reporting**: Generate CSVs for analysis by other agents
+- **Deep Audit**: Use when `site-crawler` is insufficient for technical SEO.
+- **Validation**: Re-crawl specific paths to verify fixes.
+- **Analysis**: Generate CSVs for processing by other agents.
 
 <!-- AI-CONTEXT-END -->
