@@ -6,11 +6,7 @@ metadata:
   category: Animation
 ---
 
-# Using Lottie Animations in Remotion
-
-## Prerequisites
-
-Install `@remotion/lottie`:
+## Install
 
 ```bash
 npx remotion add @remotion/lottie # npm
