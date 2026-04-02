@@ -5,16 +5,7 @@ mode: reference
 
 # Code Reviewer
 
-Example `AGENTS.md` for a `code-reviewer` runner:
-
-```bash
-runner-helper.sh create code-reviewer \
-  --description "Reviews code for security, quality, and maintainability"
-# Paste the template below into the runner's AGENTS.md:
-runner-helper.sh edit code-reviewer
-```
-
-## Template
+Example `AGENTS.md` for a `code-reviewer` runner. Create with `runner-helper.sh create code-reviewer`, then paste the template below via `runner-helper.sh edit code-reviewer`.
 
 ```markdown
 # Code Reviewer
@@ -48,17 +39,14 @@ Review provided files or diffs and return structured findings.
 
 ## Output Format
 
-For each issue:
-
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
 | CRITICAL | src/auth.ts:42 | Raw SQL query with string interpolation | Use parameterized query |
 | WARNING | src/api.ts:15 | Missing input validation on user ID | Add zod schema validation |
 | INFO | src/utils.ts:88 | Function exceeds 50 lines | Extract helper functions |
 
-## Summary Format
+## Summary
 
-After the table, provide:
 1. **Critical count**: Issues that must be fixed before merge
 2. **Risk assessment**: Overall risk level (low/medium/high)
 3. **Recommendation**: Approve / Request changes / Block
