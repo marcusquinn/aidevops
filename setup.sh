@@ -40,6 +40,15 @@ PLATFORM_MACOS=$([[ "$(uname -s)" == "Darwin" ]] && echo true || echo false)
 PLATFORM_ARM64=$([[ "$(uname -m)" == "arm64" || "$(uname -m)" == "aarch64" ]] && echo true || echo false)
 export PLATFORM_MACOS PLATFORM_ARM64
 readonly PLATFORM_MACOS PLATFORM_ARM64
+# Extended platform detection (t1748: Linux/WSL2 support).
+# Sources platform-detect.sh when available to export AIDEVOPS_PLATFORM,
+# AIDEVOPS_SCHEDULER, AIDEVOPS_CLIPBOARD_COPY, etc.
+_platform_detect_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.agents/scripts/platform-detect.sh"
+if [[ -f "$_platform_detect_script" ]]; then
+	# shellcheck disable=SC1090  # dynamic path, exists at runtime
+	source "$_platform_detect_script"
+fi
+unset _platform_detect_script
 # Repo constants — exported; consumed by setup-modules/core.sh, agent-deploy.sh
 REPO_URL="https://github.com/marcusquinn/aidevops.git"
 # INSTALL_DIR: resolve from the directory where setup.sh is executed (supports worktrees)
