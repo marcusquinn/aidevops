@@ -35,17 +35,7 @@ tools:
 | `CODACY_API_TOKEN` | Needs setup | https://app.codacy.com/account/api-tokens |
 | `GITHUB_TOKEN` | Auto-provided | GitHub |
 
-### Add `CODACY_API_TOKEN`
-
-1. Open https://github.com/marcusquinn/aidevops/settings/secrets/actions.
-2. Click **New repository secret**.
-3. Set **Name** to `CODACY_API_TOKEN` and **Value** to the token from secure local storage.
-
-## Workflow Behavior
-
-- Push to `main` or `develop` runs full analysis.
-- Pull requests to `main` run full analysis.
-- `Codacy Analysis` is conditional on the token being present.
+To add `CODACY_API_TOKEN`: Repository Settings → Secrets and variables → Actions → **New repository secret**. `Codacy Analysis` job is conditional on this token being present.
 
 ## Concurrent Push Patterns
 
