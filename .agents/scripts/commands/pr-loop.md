@@ -4,9 +4,7 @@ agent: Build+
 mode: subagent
 ---
 
-Monitor and iterate on a PR until it is approved or merged.
-
-Arguments: $ARGUMENTS
+Monitor and iterate on a PR until it is approved or merged. Arguments: $ARGUMENTS
 
 ## Usage
 
@@ -23,14 +21,9 @@ Arguments: $ARGUMENTS
 
 ## Workflow
 
-Each iteration checks:
+Each iteration checks: CI Status → Review Bot Gate (t1382) → Review Status → Merge Readiness.
 
-1. **CI Status** — all GitHub Actions workflows
-2. **Review Bot Gate (t1382)** — verify AI review bots have posted
-3. **Review Status** — approvals or change requests
-4. **Merge Readiness** — verify PR can be merged
-
-**On issues:** CI failures → report and wait. Changes requested → verify, then address valid feedback. Stale review → auto-trigger re-review (unless `--no-auto-trigger`).
+**On issues:** CI failures → report and wait. Changes requested → verify, address valid feedback. Stale review → auto-trigger re-review (unless `--no-auto-trigger`).
 
 **COMMENTED reviews:** Some bots (e.g., Gemini Code Assist) post as `COMMENTED` not `CHANGES_REQUESTED`, so `reviewDecision` stays `NONE`. The loop detects unresolved review threads and surfaces them.
 
@@ -69,13 +62,11 @@ AI review verification: `Bot Reviewer Feedback` in `.agents/reference/session.md
 
 ## Recovery
 
-State tracked in `.agents/loop-state/quality-loop.local.state`.
+State tracked in `.agents/loop-state/quality-loop.local.state`. Common blockers: CI running (wait), review pending (ping reviewer), failing checks (fix). Resume: `/pr review` (single cycle) or `/pr-loop` (restart).
 
 ```bash
 gh pr view --json state,reviewDecision,statusCheckRollup  # Check current status
 ```
-
-Common blockers: CI running (wait), review pending (ping reviewer), failing checks (fix). Resume: `/pr review` (single cycle) or `/pr-loop` (restart).
 
 ## Related
 
