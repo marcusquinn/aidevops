@@ -47,9 +47,8 @@ Never use raw `opencode run` or `claude` CLI — always use the headless runtime
   --title "Issue #NUMBER: TITLE" \
   --prompt "/full-loop Implement issue #NUMBER (URL) -- DESCRIPTION" &
 sleep 2  # between dispatches
-# Do NOT add --model unless escalating after 2+ failures (then: --model anthropic/claude-opus-4-6)
-# Helper handles round-robin, backoff, session persistence
-# Validate launch after each dispatch; re-dispatch immediately on failure
+# --model only for escalation after 2+ failures: --model anthropic/claude-opus-4-6
+# Helper handles round-robin, backoff, session persistence; validate launch, re-dispatch on failure
 ```
 
 ## Agent Routing
@@ -113,7 +112,7 @@ export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.3-code
 ```
 
 **Backoff:** `headless-runtime-helper.sh backoff status` / `backoff clear PROVIDER`. Exit code 75 = all providers backed off.
-**Escalation:** After 2+ failed attempts on same issue, use `--model anthropic/claude-opus-4-6`. One opus dispatch (~3x cost) is cheaper than 5+ failed sonnet dispatches.
+**Escalation:** After 2+ failed attempts, use `--model anthropic/claude-opus-4-6`. One opus dispatch (~3x cost) is cheaper than 5+ failed sonnet dispatches.
 
 ## Audit Trail
 
