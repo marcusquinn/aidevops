@@ -32,8 +32,6 @@ Transform technically accurate content into human-sounding, engaging articles. C
 
 ### 4. Robotic vs Human Patterns
 
-Detect and flag:
-
 - **AI vocabulary**: delve, tapestry, landscape, leverage, utilize, facilitate
 - **Filler phrases**: "It's worth noting that", "In today's digital age"
 - **Rule of three**: Excessive use of three-item lists
