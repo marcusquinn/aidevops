@@ -13,6 +13,8 @@ mode: subagent
 - **Dashboard**: https://app.revenuecat.com
 - **SDKs**: `react-native-purchases` (Expo/RN), `purchases-ios` (Swift), `purchases-android` (Kotlin)
 - **Pricing**: Free up to $2,500 MTR, then 1% of tracked revenue
+- **Products**: Platform-specific items mapped to **Entitlements** (platform-agnostic access levels, e.g. "premium")
+- **Offerings**: Package groups shown to users; swap via dashboard without app updates (A/B test pricing)
 
 | RevenueCat handles | You handle |
 |---|---|
@@ -25,12 +27,6 @@ mode: subagent
 | Integrations (webhooks, Amplitude, Mixpanel, Slack) | |
 
 <!-- AI-CONTEXT-END -->
-
-## Core Concepts
-
-- **Products**: Platform-specific items (App Store Connect / Play Console) mapped to entitlements
-- **Entitlements**: Platform-agnostic access levels — "premium" works regardless of purchase source
-- **Offerings**: Package groups shown to users; swap via dashboard without app updates (A/B test pricing)
 
 ## Setup
 
@@ -61,22 +57,16 @@ Purchases.configure(withAPIKey: "appl_your_ios_api_key")
 ## Common Operations
 
 ```typescript
-// Check subscription status
+// Check entitlement
 const customerInfo = await Purchases.getCustomerInfo();
 const isPremium = customerInfo.entitlements.active['premium'] !== undefined;
-const willRenew = customerInfo.entitlements.active['premium']?.willRenew ?? false;
-// Swift: let info = try await Purchases.shared.customerInfo()
-//        let isPremium = info.entitlements["premium"]?.isActive == true
+// .willRenew — check renewal status; Swift: info.entitlements["premium"]?.isActive == true
 
-// Display offerings (paywall)
+// Display offerings
 const offerings = await Purchases.getOfferings();
-const current = offerings.current;
-if (current) {
-  console.log(current.monthly?.product.priceString);  // "$4.99"
-  console.log(current.annual?.product.priceString);   // "$39.99"
-}
+const current = offerings.current; // current.monthly?.product.priceString
 
-// Make a purchase
+// Purchase
 try {
   const { customerInfo } = await Purchases.purchasePackage(selectedPackage);
   if (customerInfo.entitlements.active['premium']) { /* unlock */ }
@@ -84,14 +74,13 @@ try {
   if (!e.userCancelled) { /* handle error */ }
 }
 // Swift: let (_, info, _) = try await Purchases.shared.purchase(package: pkg)
-//        if info.entitlements["premium"]?.isActive == true { /* unlock */ }
 
-// Restore — required by App Store guidelines
-const restored = await Purchases.restorePurchases();
+// Restore (required by App Store guidelines)
+await Purchases.restorePurchases();
 
-// Cross-platform sync — call after auth events
-await Purchases.logIn(userId);   // After login
-await Purchases.logOut();        // After logout
+// Identity sync — call after auth events
+await Purchases.logIn(userId);
+await Purchases.logOut();
 ```
 
 ## Paywalls
@@ -120,7 +109,6 @@ import RevenueCatUI from 'react-native-purchases-ui';
 ## Testing & Best Practices
 
 **Sandbox**: iOS — sandbox Apple ID in App Store Connect. Android — license testing in Play Console.
-
 **Debug**: `Purchases.setLogLevel(LOG_LEVEL.DEBUG)` → inspect `getCustomerInfo()`.
 
 - Never cache entitlements locally — always call `getCustomerInfo()`
