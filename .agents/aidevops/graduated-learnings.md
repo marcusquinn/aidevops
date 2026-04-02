@@ -9,55 +9,39 @@ tools: { read: true, write: false, edit: false, bash: false, glob: false, grep: 
 Validated patterns promoted from local memory (3+ accesses or high confidence).
 Graduated by `memory-graduate-helper.sh`. Usage: `memory-helper.sh graduate [candidates|graduate|status]`
 
-## Graduated: 2026-02-08
-
-### Anti-Patterns
+## Anti-Patterns
 
 - PostgreSQL for memory adds deployment complexity — SQLite FTS5 is simpler *(high, 9x)*
 - [task:refactor] Haiku missed edge cases refactoring complex shell scripts with many conditionals [model:haiku] *(high, 3x)*
+- Mentioning issues in summary text without logging TODOs or fixing them. Fix: log issues immediately, don't batch to end *(high, 1x)*
 
-### Architecture Decisions
+## Architecture Decisions
 
 - YAML handoffs more token-efficient than markdown (~400 vs ~2000 tokens) *(high, 0x)*
 - Mailbox uses SQLite (`mailbox.db`) not TOON files. Prune shows storage report by default, `--force` to delete. Migration from TOON runs automatically on `aidevops update` via `setup.sh` *(medium, 8x)*
 - Agent lifecycle: three tiers — `draft/` (R&D, orchestration-created), `custom/` (private, permanent), shared (`.agents/` via PR). Both `draft/` and `custom/` survive `setup.sh`. Orchestration agents can create drafts for reusable parallel processing context and propose them for inclusion *(medium, 3x)*
-
-### Configuration & Preferences
-
-- Prefer conventional commits with scope: `feat(memory): description` *(medium, 4x)*
-
-### Patterns & Best Practices
-
-- [task:feature] Breaking task into 4 phases with separate commits worked well for Claude-Flow feature adoption [model:sonnet] *(high, 3x)*
-- [task:bugfix] Opus identified root cause of race condition by reasoning through concurrent execution paths [model:opus] *(high, 2x)*
-- Memory daemon should auto-extract learnings from thinking blocks when sessions end *(medium, 5x)*
-
-## Graduated: 2026-02-11
-
-### Anti-Patterns
-
-- Mentioning issues in summary text without logging TODOs or fixing them. Fix: log issues immediately, don't batch to end *(high, 1x)*
-
-### Architecture Decisions
-
 - Log discovered issues as TODOs immediately, not at session end. Deferring loses context *(high, 1x)*
 - Content generation (images, video, UGC, ads): read domain subagents first. Structured templates (Nanobanana Pro, 7-component video format, hook frameworks) produce better results than freehand *(high, 1x)*
 - UGC content: generate all shots, assemble with `ffmpeg` transitions, output final sequence as primary deliverable (not individual clips) *(high, 1x)*
 - CRITICAL: Supervisor needs orphaned PR scanner (Phase 3c). Pattern: workers emit `TASK_COMPLETE` before PR, or `evaluate_worker` fails to parse PR URL. Fix: scan `gh pr list --state open --head feature/tXXX` for tasks with `task_only`/`no_pr`/NULL `pr_url`. Would catch t199.2 (PR #849), t199.3 (PR #846), t199.5 (PR #872) automatically *(high, 0x)*
 
-### Configuration & Preferences
+## Configuration & Preferences
 
+- Prefer conventional commits with scope: `feat(memory): description` *(medium, 4x)*
 - User-facing generated assets (images, videos, documents) → `~/Downloads/` for immediate review. Do NOT bury outputs in `~/.aidevops/.agent-workspace/` for interactive sessions. Reserve `.agent-workspace` for headless/pipeline runs only *(high, 0x)*
 - Runtime identity: use version-check output, don't guess. Wrong identity → wrong config paths, CLI commands, prompt loading *(high, 0x)*
 
-### Patterns & Best Practices
+## Patterns & Best Practices
 
+- [task:feature] Breaking task into 4 phases with separate commits worked well for Claude-Flow feature adoption [model:sonnet] *(high, 3x)*
+- [task:bugfix] Opus identified root cause of race condition by reasoning through concurrent execution paths [model:opus] *(high, 2x)*
+- Memory daemon should auto-extract learnings from thinking blocks when sessions end *(medium, 5x)*
 - OpenCode: `prompt` field in `opencode.json` replaces (not appends) `anthropic_default`. All active agents must have `build.txt` set or fall back to upstream `anthropic.txt`, losing aidevops overrides *(high, 1x)*
 - Task ID collision: t264 assigned by two sessions simultaneously (PR #1040 vs version-manager fix). Prevention: `git pull` and re-read TODO.md before assigning IDs *(high, 1x)*
 - Stale TODO.md: completed tasks (t231 PR #955, t247 subtasks, t259 PR #1020) remain open because `update_todo_on_complete()` only runs post-PR. Fix: run `supervisor-helper.sh reconcile-todo` periodically; workers check if work is done and report `task_obsolete` *(high, 0x)*
 - [task:feature] t136.5: Scaffold aidevops-pro/anon repos | PR #792 | [model:opus] [duration:1206s] *(medium, 51x)*
 
-### Solutions & Fixes
+## Solutions & Fixes
 
 - Deploying auto-recovery infinite loop: `retry_count` was LOCAL, reset every pulse cycle. If both `deployed` and `failed` transitions fail, task stuck forever. Fixed t263 (PR #1036): persistent `deploying_recovery_attempts` DB column, max 10 attempts, fallback SQL UPDATE *(high, 0x)*
 - Pulse silent failure: Phase 3 called with `2>/dev/null || true` masks crashes. Symptom: only header printed. Diagnosis: check `post-pr.log` for repeated entries *(high, 0x)*
