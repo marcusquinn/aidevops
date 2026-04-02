@@ -34,8 +34,6 @@ tools:
 cp configs/spaceship-config.json.txt configs/spaceship-config.json
 ```
 
-Config structure (`configs/spaceship-config.json`):
-
 ```json
 {
   "accounts": {
@@ -50,7 +48,7 @@ Config structure (`configs/spaceship-config.json`):
 }
 ```
 
-API credentials: Login → Spaceship Dashboard → API Settings → Generate Key + Secret. Store with `setup-local-api-keys.sh set spaceship YOUR_API_KEY`. Test: `spaceship-helper.sh accounts`.
+Credentials: Spaceship Dashboard → API Settings → Generate Key + Secret. Store: `setup-local-api-keys.sh set spaceship YOUR_API_KEY`. Test: `spaceship-helper.sh accounts`.
 
 ## Commands
 
