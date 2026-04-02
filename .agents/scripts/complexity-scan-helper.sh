@@ -74,22 +74,30 @@ compute_file_metrics() {
 	local max_nesting=0
 
 	if [[ "$file_type" == "shell" ]]; then
-		# Count functions and identify long ones using awk
+		# Count functions and identify long ones using awk.
+		# Nesting depth is measured per-function (resets at each function boundary)
+		# to avoid false positives from accumulated depth across the whole file
+		# (GH#15356). Global accumulation inflates depth for files with many
+		# short functions defined at the same level (e.g., test suites).
 		local awk_result
 		awk_result=$(awk '
-			BEGIN { fc=0; lfc=0; max_nest=0; cur_nest=0 }
+			BEGIN { fc=0; lfc=0; global_max_nest=0; cur_nest=0; in_func=0; func_max_nest=0 }
 			/^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ {
-				fc++; fname=$1; sub(/\(\)/, "", fname); start=NR; next
+				fc++; fname=$1; sub(/\(\)/, "", fname); start=NR
+				in_func=1; func_max_nest=0; cur_nest=1; next
 			}
-			fname && /^\}$/ {
+			in_func && /^\}$/ {
 				lines=NR-start
 				if (lines > '"$COMPLEXITY_FUNC_LINE_THRESHOLD"') lfc++
-				fname=""
+				if (func_max_nest > global_max_nest) global_max_nest = func_max_nest
+				in_func=0; cur_nest=0; fname=""; next
 			}
-			# Nesting depth tracking (braces, if/then/fi, case/esac, while/do/done)
-			/\{[[:space:]]*$/ || /\bthen\b/ || /\bdo\b/ { cur_nest++; if (cur_nest > max_nest) max_nest = cur_nest }
-			/^\}/ || /\bfi\b/ || /\bdone\b/ || /\besac\b/ { if (cur_nest > 0) cur_nest-- }
-			END { printf "%d|%d|%d", fc, lfc, max_nest }
+			in_func {
+				# Nesting depth tracking within function body only
+				if (/\{[[:space:]]*$/ || /\bthen\b/ || /\bdo\b/) { cur_nest++; if (cur_nest > func_max_nest) func_max_nest = cur_nest }
+				if (/^\}/ || /\bfi\b/ || /\bdone\b/ || /\besac\b/) { if (cur_nest > 0) cur_nest-- }
+			}
+			END { printf "%d|%d|%d", fc, lfc, global_max_nest }
 		' "$file_path" 2>/dev/null) || awk_result="0|0|0"
 
 		func_count=$(echo "$awk_result" | cut -d'|' -f1)
