@@ -1,39 +1,33 @@
 ---
-description: Run comprehensive web performance analysis (Core Web Vitals, network, accessibility)
+description: Comprehensive web performance analysis (CWV, network, accessibility)
 agent: Build+
 mode: subagent
 ---
 
-Analyze web performance for the specified URL using Chrome DevTools MCP.
-
-URL/Target: $ARGUMENTS
+Analyze web performance for $ARGUMENTS using Chrome DevTools MCP.
 
 ## Prerequisites
 
-```bash
-which npx && npx chrome-devtools-mcp@latest --version || echo "Install: npm i -g chrome-devtools-mcp"
-```
-
-Read `~/.aidevops/agents/tools/performance/performance.md` for CWV thresholds, common issues, and fix patterns.
+- `chrome-devtools-mcp` installed (`npx chrome-devtools-mcp@latest --version`)
+- Read `tools/performance/performance.md` for thresholds and fix patterns.
 
 ## Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--categories=performance,accessibility,network` | all | Specific categories |
-| `--device=mobile\|desktop` | mobile | Device emulation |
+| `--categories=...` | all | performance, accessibility, network |
+| `--device=...` | mobile | mobile or desktop |
 | `--iterations=N` | 3 | Runs to average |
-| `--compare=baseline.json` | — | Compare against baseline |
+| `--compare=FILE` | — | Compare against baseline.json |
 | `--local` | — | Assume localhost URL |
 
 ## Run Analysis
 
-Using Chrome DevTools MCP, execute in order:
-
-1. **Lighthouse Audit** — performance, accessibility, best practices, SEO scores
-2. **Core Web Vitals** — FCP, LCP, CLS, FID, TTFB measurements
-3. **Network Analysis** — third-party scripts, request chains, bundle sizes
-4. **Accessibility** — WCAG compliance issues
+Execute in order via Chrome DevTools MCP:
+1. **Lighthouse Audit** (scores)
+2. **Core Web Vitals** (FCP, LCP, CLS, FID, TTFB)
+3. **Network Analysis** (third-party, chains, sizes)
+4. **Accessibility** (WCAG compliance)
 
 ## Report Format
 
@@ -49,7 +43,7 @@ Using Chrome DevTools MCP, execute in order:
 | TTFB | Xms | GOOD/NEEDS WORK/POOR | <800ms |
 
 ### Top Issues (Priority Order)
-1. **Issue** — File: `path/to/file:line` — Fix: specific recommendation
+1. **Issue** — File: `path/to/file` (use `rg` to find) — Fix: recommendation
 
 ### Network Dependencies
 - X third-party scripts; longest chain: X requests; total blocking time: Xms
@@ -58,7 +52,7 @@ Using Chrome DevTools MCP, execute in order:
 - Score: X/100 — X issues found
 ```
 
-For each issue: **What** (problem), **Where** (file path), **How** (code/config fix), **Impact** (expected improvement).
+For each issue: **What** (problem), **Where** (file), **How** (fix), **Impact** (improvement).
 
 ## Examples
 
@@ -72,6 +66,6 @@ For each issue: **What** (problem), **Where** (file path), **How** (code/config 
 
 ## Related
 
-- `tools/performance/performance.md` — full performance subagent
-- `tools/browser/pagespeed.md` — PageSpeed Insights integration
-- `tools/browser/chrome-devtools.md` — Chrome DevTools MCP
+- `tools/performance/performance.md` (subagent)
+- `tools/browser/pagespeed.md` (PageSpeed Insights)
+- `tools/browser/chrome-devtools.md` (Chrome DevTools MCP)
