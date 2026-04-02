@@ -28,7 +28,7 @@ tools:
 
 ## Preventive Controls
 
-Use CLI auth so tokens stay in the system keyring instead of repo files or long-lived env vars:
+Use CLI auth to keep tokens in the system keyring, not repo files:
 
 ```bash
 gh auth login -s workflow   # -s workflow for CI PR support
@@ -36,7 +36,7 @@ glab auth login
 tea login add
 ```
 
-Store fallback tokens in `~/.config/aidevops/credentials.sh` with 600 permissions. Rotate every 6-12 months, rotate immediately if exposed, and prefer short-lived CI/CD credentials. See `git/authentication.md` for platform-specific setup.
+Store fallback tokens in `~/.config/aidevops/credentials.sh` (600 perms). Rotate every 6-12 months or immediately on exposure. Prefer short-lived CI/CD credentials. See `git/authentication.md`.
 
 ### Branch Protection
 
@@ -47,7 +47,7 @@ gh api repos/{owner}/{repo}/branches/main/protection -X PUT \
   -f required_pull_request_reviews='{"required_approving_review_count":1}'
 ```
 
-Require PR reviews, dismiss stale approvals, enforce admins, require CI status checks, and require CODEOWNERS review where available. Signed commits are recommended.
+Require PR reviews, dismiss stale approvals, enforce admins, require CI checks, require CODEOWNERS where available. Signed commits recommended.
 
 ### Commit Signing
 
@@ -60,7 +60,7 @@ git config --global commit.gpgsign true
 
 ### Secret Detection
 
-Primary scan: `secretlint-helper.sh scan`. History scan: `trufflehog git file://. --only-verified`. `git-secrets` remains useful for AWS-focused pattern checks.
+Primary: `secretlint-helper.sh scan`. History: `trufflehog git file://. --only-verified`. `git-secrets` useful for AWS-focused checks.
 
 Pre-commit hook (supplementary — secretlint is primary):
 
@@ -75,24 +75,31 @@ fi
 
 ## Access Control
 
-Use least privilege, review access quarterly, remove inactive collaborators, and prefer teams over direct user grants. Roles: Read = view code/issues; Triage = manage issues without push; Write = push to non-protected branches; Maintain = manage settings and protected-branch workflows; Admin = full access.
+Least privilege, quarterly access review, remove inactive collaborators, prefer teams over direct grants.
+
+| Role | Permissions |
+|------|-------------|
+| Read | View code/issues |
+| Triage | Manage issues, no push |
+| Write | Push to non-protected branches |
+| Maintain | Settings + protected-branch workflows |
+| Admin | Full access |
 
 ## Incident Response
 
-**Token exposed:** revoke immediately → generate replacement → update consumers → audit for unauthorized access.
+**Token exposed:** revoke → replace → update consumers → audit for unauthorized access.
 
 **Secret committed:**
 
-1. **Rotate the secret first** — assume compromise.
-2. Remove from history:
+1. **Rotate first** — assume compromise.
+2. Remove from history (preferred: `git-filter-repo`):
 
    ```bash
-    # Preferred: git-filter-repo (pip install git-filter-repo)
-    git filter-repo --invert-paths --path path/to/secret
-    git push origin --force --all
+   git filter-repo --invert-paths --path path/to/secret
+   git push origin --force --all
    ```
 
-   If `git filter-repo` is unavailable, use the legacy `git filter-branch` flow only as a fallback:
+   Fallback (`git filter-branch`, legacy):
 
    ```bash
    git filter-branch --force --index-filter \
@@ -101,7 +108,7 @@ Use least privilege, review access quarterly, remove inactive collaborators, and
    git push origin --force --all
    ```
 
-3. Notify affected parties
+3. Notify affected parties.
 
 ## Related
 
