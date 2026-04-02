@@ -1,7 +1,5 @@
 # Platform Support
 
-aidevops runs on macOS (primary) and Linux (including WSL2 on Windows).
-
 ## Supported Platforms
 
 | Platform | Status | Scheduler | Notes |
@@ -16,35 +14,27 @@ aidevops runs on macOS (primary) and Linux (including WSL2 on Windows).
 
 ## WSL2 Getting Started (Windows)
 
-WSL2 runs a real Linux kernel inside Windows. It is the recommended path for Windows users — native Windows (PowerShell) is not supported.
+Native Windows (PowerShell) is not supported — use WSL2.
 
-### 1. Install WSL2
-
-Open PowerShell as Administrator:
+**1. Install WSL2** — open PowerShell as Administrator:
 
 ```powershell
 wsl --install
 ```
 
-This installs Ubuntu by default. Restart when prompted.
+Installs Ubuntu by default. Restart when prompted.
 
-### 2. Open a WSL2 terminal
+**2. Open a WSL2 terminal** — launch "Ubuntu" from the Start menu, or run `wsl` in PowerShell.
 
-Launch "Ubuntu" from the Start menu, or run `wsl` in PowerShell.
-
-### 3. Install Homebrew (recommended) or use apt
-
-Homebrew on Linux provides the same package names as macOS:
+**3. Install Homebrew (recommended) or use apt:**
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 ```
 
-Follow the post-install instructions to add brew to your PATH.
+Follow the post-install instructions to add brew to your PATH. Alternatively, use apt directly — aidevops detects and uses it automatically.
 
-Alternatively, use apt directly — aidevops detects and uses it automatically.
-
-### 4. Install aidevops
+**4. Install aidevops:**
 
 ```bash
 # Via npm (recommended)
@@ -57,21 +47,17 @@ brew install marcusquinn/tap/aidevops && aidevops update
 bash <(curl -fsSL https://aidevops.sh/install)
 ```
 
-### 5. Run setup
+**5. Run setup** — detects Linux/WSL2 automatically and uses the appropriate scheduler:
 
 ```bash
 ./setup.sh
 ```
 
-Setup detects Linux/WSL2 automatically and uses the appropriate scheduler.
-
 ---
 
 ## Platform Detection
 
-aidevops includes a platform detection helper at `.agents/scripts/platform-detect.sh`.
-
-Source it to get platform-specific variables:
+Source `.agents/scripts/platform-detect.sh` to get platform-specific variables:
 
 ```bash
 source ~/.aidevops/agents/scripts/platform-detect.sh
@@ -161,7 +147,7 @@ sudo apt-get install -y wl-clipboard
 
 ## Enabling systemd in WSL2
 
-By default, WSL2 Ubuntu 22.04+ supports systemd. Enable it if not already active:
+WSL2 Ubuntu 22.04+ supports systemd by default. Enable if not already active:
 
 ```bash
 # Check if systemd is running
