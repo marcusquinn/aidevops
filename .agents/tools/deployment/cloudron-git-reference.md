@@ -9,7 +9,7 @@ tools:
 
 # Using git.cloudron.io as Reference
 
-The Cloudron GitLab instance at https://git.cloudron.io/ hosts all official app packages and is the authoritative source for packaging patterns. Use it to study real-world implementations when packaging new apps.
+https://git.cloudron.io/ hosts all official Cloudron app packages — the authoritative source for real-world packaging patterns.
 
 ## Repository Structure
 
@@ -23,8 +23,6 @@ The Cloudron GitLab instance at https://git.cloudron.io/ hosts all official app 
 | `utils` | https://git.cloudron.io/utils | Tools and utilities |
 
 ## Finding Reference Apps by Technology
-
-Browse apps by topic/tag to find packages using similar technology stacks:
 
 | Technology | URL | Count |
 |------------|-----|-------|
@@ -41,8 +39,6 @@ Browse apps by topic/tag to find packages using similar technology stacks:
 **All topics**: https://git.cloudron.io/explore/projects/topics
 
 ## GitLab API for Programmatic Access
-
-The GitLab API enables searching and fetching package code programmatically:
 
 ```bash
 # List all packages group projects
@@ -63,8 +59,6 @@ curl -s "https://git.cloudron.io/api/v4/projects/packages%2Fghost-app/search?sco
 
 ## Recommended Reference Apps by Use Case
 
-When packaging a new app, study these well-maintained packages as templates:
-
 | Use Case | Reference App | Why |
 |----------|---------------|-----|
 | **Node.js + nginx** | [ghost-app](https://git.cloudron.io/packages/ghost-app) | Clean supervisor setup, nginx proxy |
@@ -80,7 +74,7 @@ When packaging a new app, study these well-maintained packages as templates:
 
 ## What to Study in Reference Apps
 
-When examining a reference package, focus on these files:
+Focus on these files in any reference package:
 
 1. **CloudronManifest.json** - Addon requirements, memory limits, health check path
 2. **Dockerfile** - Base image choice, build steps, file permissions
@@ -92,18 +86,15 @@ When examining a reference package, focus on these files:
 ## Cloning for Local Study
 
 ```bash
-# Clone a reference app for local study
 git clone https://git.cloudron.io/packages/ghost-app.git
 
-# Or use sparse checkout for specific files
+# Sparse checkout for specific files only
 git clone --filter=blob:none --sparse https://git.cloudron.io/packages/ghost-app.git
 cd ghost-app
 git sparse-checkout set start.sh Dockerfile CloudronManifest.json
 ```
 
 ## Finding Solutions to Specific Problems
-
-When facing a specific packaging challenge, search across all packages:
 
 ```bash
 # Find apps using supervisord
@@ -112,8 +103,7 @@ curl -s "https://git.cloudron.io/api/v4/projects?topic=supervisor"
 # Find apps with proxyAuth (Cloudron handles auth)
 curl -s "https://git.cloudron.io/api/v4/projects?topic=proxyAuth"
 
-# Browse recently updated packages (most active/maintained)
-# Visit: https://git.cloudron.io/explore/projects?sort=latest_activity_desc
+# Browse recently updated packages: https://git.cloudron.io/explore/projects?sort=latest_activity_desc
 ```
 
 **Common patterns to search for**:
