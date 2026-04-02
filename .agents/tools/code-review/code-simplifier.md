@@ -123,7 +123,9 @@ List pending: `gh issue list --label simplification-debt --label needs-maintaine
 
 **Convergence (t1754):** Each simplification pass increments `passes` in `simplification-state.json`. After `SIMPLIFICATION_MAX_PASSES` (default 3), the file is "converged" and the scanner skips it. This prevents infinite re-simplification loops where each pass changes the hash, triggering another recheck. The pass counter resets naturally: when a file is genuinely modified by non-simplification work, the hash refresh detects the change and records it as a new pass 1. State hashes are refreshed each pulse cycle via `_simplification_state_refresh()` (O(n) `git hash-object`, no API calls) — replacing the previous timeline-API backfill which frequently missed updates.
 
-**Daily LLM sweep:** Reserved for stall detection only. When simplification debt count hasn't decreased in 6h (`SWEEP_STALL_HOURS`), creates a `tier:thinking` issue for LLM-powered deep review. Managed by `complexity-scan-helper.sh sweep-check`.
+**Post-merge backfill (t1855):** Each scan cycle calls `_simplification_state_backfill_closed()` which queries recently closed `simplification-debt` issues, extracts file paths from titles, and records their current hashes in state. This ensures all collaborator instances see completed work even when the worker that did the simplification didn't update the state file. The state JSON uses a single canonical format: `{ "files": { "<path>": { "hash", "at", "pr", "passes" } } }`.
+
+**Daily LLM sweep:** Reserved for stall detection only. When simplification debt count hasn't decreased in 6h (`SWEEP_STALL_HOURS`), creates a `tier:thinking` issue for LLM-powered deep review. Dedup checks both title patterns to prevent duplicates (t1855). Managed by `complexity-scan-helper.sh sweep-check`.
 
 **CI ratchet:** `.agents/configs/complexity-thresholds.conf` (`FUNCTION_COMPLEXITY_THRESHOLD`, `NESTING_DEPTH_THRESHOLD`, `FILE_SIZE_THRESHOLD`). Lower after simplification PRs merge.
 
