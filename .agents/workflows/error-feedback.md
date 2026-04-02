@@ -25,19 +25,11 @@ gh api repos/{owner}/{repo}/actions/runs --jq '.workflow_runs[:5] | .[] | "\(.na
 gh api repos/{owner}/{repo}/actions/runs/{run_id}/jobs
 ```
 
-**Concurrency control:**
-
-```yaml
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-```
-
 ## Code Quality Tools
 
 ```bash
-bash ~/Git/aidevops/.agents/scripts/linters-local.sh      # universal quality check
-bash ~/Git/aidevops/.agents/scripts/qlty-cli.sh fmt --all  # auto-fix all
+bash ~/.aidevops/agents/scripts/linters-local.sh           # universal quality check
+bash ~/.aidevops/agents/scripts/qlty-cli.sh fmt --all      # auto-fix all
 shellcheck script.sh                                       # bash scripts
 npx eslint . --format json                                 # JavaScript
 pylint module/ --output-format=json                        # Python
@@ -46,33 +38,31 @@ pylint module/ --output-format=json                        # Python
 ## Quality Feedback via GitHub Checks API
 
 ```bash
-# All check runs for current commit
-gh api repos/{owner}/{repo}/commits/$(git rev-parse HEAD)/check-runs \
-  --jq '.check_runs[] | {name: .name, status: .status, conclusion: .conclusion}'
+REPO="${GITHUB_REPOSITORY:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
+SHA="$(git rev-parse HEAD)"
+
+# All check runs (status summary)
+gh api "repos/$REPO/commits/$SHA/check-runs" \
+  --jq '.check_runs[] | "\(.conclusion // .status | ascii_upcase)\t\(.name)"' | sort
 
 # Failed checks only
-gh api repos/{owner}/{repo}/commits/$(git rev-parse HEAD)/check-runs \
+gh api "repos/$REPO/commits/$SHA/check-runs" \
   --jq '.check_runs[] | select(.conclusion == "failure" or .conclusion == "action_required") | {name: .name, conclusion: .conclusion}'
 
 # Line-level annotations from a check run
 gh api repos/{owner}/{repo}/check-runs/{check_run_id}/annotations \
   --jq '.[] | {path: .path, line: .start_line, level: .annotation_level, message: .message}'
 
-# Quick status summary
-REPO="${GITHUB_REPOSITORY:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
-gh api "repos/$REPO/commits/$(git rev-parse HEAD)/check-runs" \
-  --jq '.check_runs[] | "\(.conclusion // .status | ascii_upcase)\t\(.name)"' | sort
-
-# Codacy
-gh api repos/{owner}/{repo}/commits/{sha}/check-runs \
+# Bot-specific: Codacy
+gh api "repos/$REPO/commits/$SHA/check-runs" \
   --jq '.check_runs[] | select(.app.slug == "codacy-production") | {conclusion: .conclusion, summary: .output.summary}'
 
-# CodeRabbit
+# Bot-specific: CodeRabbit
 gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
   --jq '.[] | select(.user.login | contains("coderabbit")) | {path: .path, line: .line, body: .body}'
 
-# SonarCloud
-gh api repos/{owner}/{repo}/commits/{sha}/check-runs \
+# Bot-specific: SonarCloud
+gh api "repos/$REPO/commits/$SHA/check-runs" \
   --jq '.check_runs[] | select(.name | contains("SonarCloud")) | {conclusion: .conclusion, url: .details_url}'
 ```
 
