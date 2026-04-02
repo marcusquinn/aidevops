@@ -17,22 +17,19 @@ tools:
 
 ## Quick Reference
 
-- **Type**: AWS cloud email service
-- **Auth**: AWS IAM credentials (access key + secret key)
-- **Config**: `configs/ses-config.json`
+- **Type**: AWS cloud email service | **Auth**: IAM credentials (access key + secret)
+- **Config**: `configs/ses-config.json` | **Regions**: us-east-1, eu-west-1, etc.
 - **Commands**: `ses-helper.sh [accounts|quota|stats|monitor|verified-emails|verified-domains|verify-email|verify-domain|dkim|reputation|suppressed|send-test|audit] [account] [args]`
-- **Thresholds**: Bounce rate < 5%, Complaint rate < 0.1%
-- **Regions**: us-east-1, eu-west-1, etc.
+- **Thresholds**: Bounce < 5%, Complaint < 0.1%
 - **Test addresses**: success@simulator.amazonses.com, bounce@simulator.amazonses.com
-- **DKIM**: Enable for all domains
+- **DKIM**: Enable for all domains | **Prerequisite**: `awscli` installed
 - **IAM permissions**: ses:GetSendQuota, ses:SendEmail, sesv2:ListSuppressedDestinations
-- **Prerequisite**: `awscli` installed; credentials managed per account (no `aws configure` needed)
 
 <!-- AI-CONTEXT-END -->
 
 ## Configuration
 
-Copy template: `cp configs/ses-config.json.txt configs/ses-config.json`
+Template: `cp configs/ses-config.json.txt configs/ses-config.json`
 
 ```json
 {
@@ -60,30 +57,26 @@ Copy template: `cp configs/ses-config.json.txt configs/ses-config.json`
 ## Commands
 
 ```bash
-# Account overview
+# Account & Identity
 ses-helper.sh accounts
 ses-helper.sh quota production
 ses-helper.sh stats production
-ses-helper.sh monitor production   # bounce rate, complaint rate, quota, reputation
-
-# Identity management
+ses-helper.sh monitor production   # bounce, complaint, quota, reputation
 ses-helper.sh verified-emails production
 ses-helper.sh verified-domains production
 ses-helper.sh verify-email production newuser@yourdomain.com
 ses-helper.sh verify-domain production newdomain.com
-ses-helper.sh verify-identity production yourdomain.com  # check verification status
+ses-helper.sh verify-identity production yourdomain.com
 
-# DKIM
+# DKIM & Reputation
 ses-helper.sh dkim production yourdomain.com
 ses-helper.sh enable-dkim production yourdomain.com
-
-# Reputation & suppression
 ses-helper.sh reputation production
 ses-helper.sh suppressed production
 ses-helper.sh suppression-details production user@example.com
 ses-helper.sh remove-suppression production user@example.com
 
-# Testing (simulator addresses avoid real bounces)
+# Testing & Audit
 ses-helper.sh send-test production noreply@yourdomain.com success@simulator.amazonses.com "Success Test"
 ses-helper.sh send-test production noreply@yourdomain.com bounce@simulator.amazonses.com "Bounce Test"
 ses-helper.sh debug production problematic@example.com
@@ -92,7 +85,7 @@ ses-helper.sh audit production
 
 ## IAM Policy
 
-Dedicated IAM users per environment. Rotate access keys regularly. Separate AWS accounts for prod/staging.
+Rotate keys regularly. Separate AWS accounts for prod/staging.
 
 ```json
 {
@@ -124,17 +117,15 @@ Dedicated IAM users per environment. Rotate access keys regularly. Separate AWS 
 
 | Problem | Commands |
 |---------|----------|
-| Auth errors | `aws sts get-caller-identity` then `ses-helper.sh quota production` |
-| Sending limits | `ses-helper.sh quota production` — request increase via AWS Support if needed |
-| Delivery issues | `ses-helper.sh reputation production`, `ses-helper.sh suppressed production`, `ses-helper.sh debug production user@example.com` |
+| Auth | `aws sts get-caller-identity` then `ses-helper.sh quota production` |
+| Limits | `ses-helper.sh quota production` — request increase via AWS Support |
+| Delivery | `ses-helper.sh reputation production`, `ses-helper.sh suppressed production`, `ses-helper.sh debug production user@example.com` |
 | Verification | `ses-helper.sh verify-identity production yourdomain.com`, `dig TXT _amazonses.yourdomain.com` |
 
 ## Compliance & Backup
 
-- Configure SPF, DKIM, DMARC for all sending domains
-- Process bounces and complaints promptly; maintain suppression list
-- Provide unsubscribe mechanisms; follow GDPR/CAN-SPAM
-- Warm up new sending IPs gradually; clean lists regularly
+- Configure SPF, DKIM, DMARC. Process bounces/complaints promptly; maintain suppression list.
+- Provide unsubscribe mechanisms; follow GDPR/CAN-SPAM. Warm up new IPs; clean lists regularly.
 
 ```bash
 ses-helper.sh audit production > ses-config-backup-$(date +%Y%m%d).txt
