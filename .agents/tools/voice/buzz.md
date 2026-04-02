@@ -11,23 +11,15 @@ tools:
 # Buzz - Offline Transcription
 
 <!-- AI-CONTEXT-START -->
-
-## Quick Reference
-
-- **Purpose**: Local audio/video transcription with Whisper-family models; no cloud API required
-- **Install**: `brew install --cask buzz` (macOS GUI), `pip install buzz-captions` (CLI), or build from source
-- **Repo**: https://github.com/chidiwilliams/buzz (Python, MIT)
-- **Backends**: Whisper, `faster-whisper`, `whisper.cpp`
-- **When to use**: Privacy-sensitive transcription, subtitle export, offline batch work, quick GUI workflow on macOS
-
+Local audio/video transcription with Whisper-family models; no cloud API required. Use for privacy-sensitive transcription, subtitle export, offline batch work. Repo: https://github.com/chidiwilliams/buzz (Python, MIT). Backends: Whisper, `faster-whisper`, `whisper.cpp`.
 <!-- AI-CONTEXT-END -->
 
 ## Install
 
 ```bash
-brew install --cask buzz
-pip install buzz-captions
-git clone https://github.com/chidiwilliams/buzz && cd buzz && pip install -e .
+brew install --cask buzz          # macOS GUI
+pip install buzz-captions         # CLI
+git clone https://github.com/chidiwilliams/buzz && cd buzz && pip install -e .  # from source
 ```
 
 ## Capabilities
@@ -37,7 +29,7 @@ git clone https://github.com/chidiwilliams/buzz && cd buzz && pip install -e .
 - **Languages**: 100+ via Whisper language support
 - **Extras**: Speaker diarization, subtitle export, automatic audio extraction from video
 
-Use `Buzz` when the requirement is local/private transcription. For provider comparison and cloud options, see `tools/voice/transcription.md`.
+Use Buzz when the requirement is local/private transcription. For provider comparison and cloud options, see `tools/voice/transcription.md`.
 
 ## CLI
 
@@ -60,7 +52,7 @@ buzz transcribe audio.mp3 --model-type faster-whisper --model large-v3
 
 Approximate Whisper model sizes: `tiny` 39MB, `base` 74MB, `small` 244MB, `medium` 769MB, `large-v3` 1.5GB. Typical VRAM: 1GB, 1GB, 2GB, 5GB, 10GB respectively.
 
-## aidevops examples
+## Examples
 
 ```bash
 buzz transcribe meeting.mp4 --model medium --output-format txt > meeting-notes.txt
