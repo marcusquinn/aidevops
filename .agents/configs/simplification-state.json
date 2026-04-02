@@ -4469,5 +4469,10 @@
     "issue": "GH#15700",
     "note": "Reference corpus split into 7 chapter files (01-overview.md through 07-versioning.md). Index is 15 lines; chapters total 87 lines.",
     "status": "done"
+  },
+  ".agents/tools/browser/chromium-debug-use.md": {
+    "hash": "d5de3fe741a30c298ba6349c2fc8023998fbef3f",
+    "issue": "GH#14962",
+    "status": "simplified"
   }
 }
