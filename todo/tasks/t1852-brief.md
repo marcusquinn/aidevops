@@ -1,55 +1,24 @@
----
-mode: subagent
----
-# t1852: simplification: tighten agent doc Documentation AI Context (.agents/aidevops/docs.md)
+# Task Brief: Simplify Screaming Frog SEO Spider agent (t1852)
 
-## Origin
+## Summary
+Review and simplify the `.agents/seo/screaming-frog.md` subagent file to be more concise while retaining essential information.
 
-- **Created:** 2026-04-02
-- **Session:** opencode:gemini-3-flash
-- **Created by:** ai-interactive
-- **Parent task:** GH#15433
-- **Conversation context:** Automated scan flagged `.agents/aidevops/docs.md` for simplification. The goal is to tighten the prose and restructure the document according to `build-agent.md` guidance.
-
-## What
-
-A simplified and restructured version of `.agents/aidevops/docs.md` that is more token-efficient while preserving all institutional knowledge.
-
-## Why
-
-The current document is 80 lines and contains verbose prose. Simplifying it reduces the token cost for every agent load that includes this context.
-
-## How (Approach)
-
-1.  Classify the file: Instruction doc.
-2.  Tighten prose: Convert narrative to direct rules.
-3.  Order by importance: Move critical instructions (Quick Reference, Standards) to the top.
-4.  Preserve knowledge: Ensure all task IDs, categories, and structure requirements are kept.
-5.  Follow `build-agent.md` guidance: Use search patterns instead of line numbers (though none are currently present).
+## Context
+- **Session Origin**: User request to review and simplify the agent file.
+- **What**: Reduce the line count of `.agents/seo/screaming-frog.md` from 62 to ~41 lines.
+- **Why**: Improve instruction efficiency and follow the "Instruction budget" principle.
+- **How**: 
+    - Merge "Setup" into "Quick Reference".
+    - Consolidate "Usage" sections.
+    - Simplify "Integration" descriptions.
+    - Remove non-essential platform-specific notes (Linux/Windows) and obvious GUI instructions.
 
 ## Acceptance Criteria
+- [ ] File `.agents/seo/screaming-frog.md` is ~41 lines.
+- [ ] Retains Purpose, License, Command, Setup, Usage, and Integration.
+- [ ] Follows aidevops agent formatting (frontmatter, AI-CONTEXT blocks).
+- [ ] Passes `linters-local.sh`.
 
-- [ ] Content preservation: all categories, guide structure requirements, and workflow definitions are present.
-- [ ] Prose is tightened: narrative sentences are converted to concise rules.
-- [ ] Order by importance: Quick Reference and Standards are prominent.
-- [ ] No broken internal links or references.
-- [ ] Markdown linting passes.
-  ```yaml
-  verify:
-    method: bash
-    run: "bunx markdownlint-cli2 .agents/aidevops/docs.md"
-  ```
-
-## Relevant Files
-
-- `.agents/aidevops/docs.md` — target for simplification.
-- `.agents/tools/build-agent/build-agent.md` — guidance for simplification.
-
-## Estimate Breakdown
-
-| Phase | Time | Notes |
-|-------|------|-------|
-| Research/read | 5m | Read docs.md and build-agent.md |
-| Implementation | 15m | Tighten prose and restructure |
-| Testing | 5m | Markdown lint and manual review |
-| **Total** | **25m** | |
+## Contextual References
+- Original file: `.agents/seo/screaming-frog.md` (62 lines)
+- Proposed content: Provided in session.
