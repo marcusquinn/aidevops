@@ -31,72 +31,37 @@ git checkout -b experiment/{description}
 
 ## When to Use
 
-- Proof of concept (POC)
-- Technical spikes
-- Exploring new approaches
-- Testing third-party integrations
-- Performance experiments
-- Architecture exploration
-- "What if we tried..." investigations
+POC, technical spikes, exploring new approaches, testing third-party integrations, performance experiments, architecture exploration. May never merge — that's a valid outcome.
 
-**Key difference**: Experiments may never merge, and that's a valid outcome.
-
-## The Experiment Mindset
-
-Experiments are about **learning**, not shipping:
-
-- **Success** = You learned something valuable
-- **Failure** = You learned what doesn't work (also valuable)
-- **Abandoned** = Priorities changed (document why)
-
-## Unique Guidance
+## Guidance
 
 ### Document the Hypothesis
 
-Before starting, document what you're testing:
+Before starting, record what you're testing and the expected outcome in the first commit message:
 
-```bash
+```
 experiment: test GraphQL for API layer
 
 Hypothesis: GraphQL could reduce API calls by 60%
-
-Testing:
-- Set up Apollo Server
-- Migrate 3 endpoints
-- Measure performance
+Testing: Apollo Server, migrate 3 endpoints, measure performance
 ```
 
 ### Document Results (Even If Not Merging)
 
-When experiment concludes, document in PR:
+When the experiment concludes, document in the PR regardless of outcome:
 
 ```markdown
-## Experiment: GraphQL Migration
-
-### Hypothesis
-GraphQL could reduce API calls by 60%
-
-### What We Tried
-- Migrated user, posts, and comments endpoints
-- Implemented DataLoader for batching
-
-### Results
-- API calls reduced by 45% (not 60%)
-- Complexity increased significantly
-- Team learning curve is steep
-
-### Conclusion
-**Not proceeding** - benefits don't outweigh costs.
-
-### Learnings
-- GraphQL works well for complex nested data
-- Our API is mostly flat, so benefit is limited
-- Consider for future mobile app API
+## Experiment: {name}
+**Hypothesis**: {what you expected}
+**What we tried**: {approach}
+**Results**: {what actually happened}
+**Conclusion**: Proceeding / Not proceeding — {reason}
+**Learnings**: {what to carry forward}
 ```
 
 ### Transitioning to Feature
 
-If experiment succeeds and should be productionized:
+If the experiment succeeds:
 
 1. **Don't merge experiment directly**
 2. Create new `feature/` branch from `main`
@@ -106,10 +71,4 @@ If experiment succeeds and should be productionized:
 
 ## Examples
 
-```bash
-experiment/graphql-migration
-experiment/redis-caching
-experiment/serverless-functions
-experiment/lazy-loading-images
-experiment/microservices-split
-```
+`experiment/graphql-migration`, `experiment/redis-caching`, `experiment/serverless-functions`, `experiment/lazy-loading-images`, `experiment/microservices-split`

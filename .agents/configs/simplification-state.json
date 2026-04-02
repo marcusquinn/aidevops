@@ -4421,5 +4421,9 @@
       "passes": 1,
       "pr": 15470
     }
+  },
+  ".agents/workflows/branch/experiment.md": {
+    "hash": "3a37ba8edc24966b9bc8ee7dd979c7349d455abec0dd31d72cd78b30f4e58c6d",
+    "status": "simplified"
   }
 }
