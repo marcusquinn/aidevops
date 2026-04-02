@@ -221,6 +221,9 @@ export function createProviderAuthHook(client) {
               while (Date.now() - waitStart < MAX_EXHAUSTION_WAIT_MS) {
                 const now = Date.now();
                 const freshAccounts = getAccounts("anthropic");
+                // Normalize expired cooldowns so rate-limited accounts whose
+                // cooldownUntil has passed are reset to "idle" (same fix as 429 path).
+                normalizeExpiredCooldowns("anthropic", freshAccounts);
                 // Find an account whose cooldown has expired
                 const recovered = freshAccounts.find(
                   (a) => a.status !== "auth-error" && (!a.cooldownUntil || a.cooldownUntil <= now),
@@ -699,8 +702,13 @@ export function createProviderAuthHook(client) {
               while (Date.now() - waitStart < MAX_EXHAUSTION_WAIT_MS) {
                 const now = Date.now();
                 const freshAccounts = getAccounts("anthropic");
+                // Normalize expired cooldowns so rate-limited accounts whose
+                // cooldownUntil has passed are reset to "idle" (GH#15322 fix).
+                // Without this, short cooldowns (e.g. 5s per-minute limits)
+                // that expire mid-loop are invisible to the status filter below.
+                normalizeExpiredCooldowns("anthropic", freshAccounts);
                 const recovered = freshAccounts.find(
-                  (a) => (a.status === "active" || a.status === "idle") &&
+                  (a) => a.status !== "auth-error" &&
                     (!a.cooldownUntil || a.cooldownUntil <= now),
                 );
                 if (recovered) {
