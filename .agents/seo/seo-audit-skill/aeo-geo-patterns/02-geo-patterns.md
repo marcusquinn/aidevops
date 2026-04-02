@@ -37,7 +37,7 @@ Use for `site:yourdomain.com [category] features [year]` queries.
 - G2: [profile URL with UTM]  |  Capterra: [profile URL with UTM]
 ```
 
-Mirror facts across product page and third-party profiles. UTM: `utm_source=g2&utm_medium=referral&utm_campaign=ai_citation`. Review freshness monthly.
+Mirror facts across product page and third-party profiles. UTM: `utm_source=g2&utm_medium=referral&utm_campaign=ai_citation`. Review monthly.
 
 ### Site-Searchable Variant
 

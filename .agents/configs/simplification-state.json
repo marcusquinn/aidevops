@@ -4425,5 +4425,10 @@
   ".agents/workflows/branch/experiment.md": {
     "hash": "3a37ba8edc24966b9bc8ee7dd979c7349d455abec0dd31d72cd78b30f4e58c6d",
     "status": "simplified"
+  },
+  ".agents/seo/seo-audit-skill/aeo-geo-patterns/02-geo-patterns.md": {
+    "hash": "b4cf936475f4834fd541b14c6173969e",
+    "issue": "GH#15568",
+    "status": "simplified"
   }
 }
