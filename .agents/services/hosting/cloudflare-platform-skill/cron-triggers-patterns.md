@@ -1,7 +1,5 @@
 # Cron Triggers Patterns
 
-Common scheduled-worker patterns for sync jobs, cleanup, reporting, health checks, and monitoring.
-
 ## Scheduled API Sync
 Refresh external data on a schedule and cache the result for reads between runs.
 
