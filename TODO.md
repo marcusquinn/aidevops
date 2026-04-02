@@ -58,6 +58,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 <!--TOON:ready[0]{id,desc,owner,tags,est,logged}:
 -->
 
+- [x] t15047 simplification: tighten agent doc Bot Management Gotchas (.agents/services/hosting/cloudflare-platform-skill/bot-management-gotchas.md, 102 lines) #simplification #auto-dispatch ~1h model:sonnet ref:GH#15047 logged:2026-04-02 started:2026-04-02 pr:#15590 completed:2026-04-02 -> [todo/tasks/t15047-brief.md]
 - [ ] t1852 simplification: tighten agent doc Feature Branch (.agents/workflows/branch/feature.md, 52 lines) #simplification #auto-dispatch ~1h model:sonnet ref:GH#15550 logged:2026-04-02 started:2026-04-02 -> [todo/tasks/t1852-brief.md]
 - [ ] t15162 simplification: tighten agent doc Model-Specific Subagents @marcusquinn #simplification-debt #auto-dispatch ~1h ref:GH#15162
 - [ ] t1729 simplification: tighten agent doc Model-Specific Subagents @marcusquinn #simplification-debt ~1h ref:GH#15020
