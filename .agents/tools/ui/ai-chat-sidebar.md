@@ -1,14 +1,7 @@
 ---
 description: AI chat sidebar component architecture — design, state management, and integration patterns
 mode: subagent
-tools:
-  read: true
-  write: true
-  edit: true
-  bash: true
-  glob: true
-  grep: true
-  task: true
+tools: [read, write, edit, bash, glob, grep, task]
 ---
 
 # AI Chat Sidebar — Component Architecture
@@ -25,7 +18,7 @@ Main Content (left) + AI Chat Sidebar (right, fixed-position panel). Toggle butt
 | Decision | Rationale |
 |----------|-----------|
 | React scoped to sidebar | Dashboard is vanilla JS; chat needs interactive state |
-| 3 split Contexts (no libs) | Small app; split prevents cross-concern re-renders |
+| 3 split Contexts (no libs) | Split prevents cross-concern re-renders |
 | SSE not WebSocket | Unidirectional; simpler, proxy-friendly, auto-reconnects |
 | Elysia `/api/chat/*` | Unified with existing API gateway |
 
@@ -58,14 +51,8 @@ Main Content (left) + AI Chat Sidebar (right, fixed-position panel). Toggle butt
 type MessageRole = 'user' | 'assistant' | 'system'
 type MessageStatus = 'pending' | 'streaming' | 'complete' | 'error'
 
-interface ChatMessage {
-  id: string; role: MessageRole; content: string; status: MessageStatus
-  timestamp: number; model?: string; tokenCount?: number; error?: string
-}
-interface Conversation {
-  id: string; title: string; messages: ChatMessage[]
-  createdAt: number; updatedAt: number; model: string; contextSources: ContextSource[]
-}
+interface ChatMessage { id: string; role: MessageRole; content: string; status: MessageStatus; timestamp: number; model?: string; tokenCount?: number; error?: string }
+interface Conversation { id: string; title: string; messages: ChatMessage[]; createdAt: number; updatedAt: number; model: string; contextSources: ContextSource[] }
 interface ContextSource { type: 'file'|'directory'|'memory'|'agent'|'custom'; path: string; label: string; enabled: boolean }
 interface SidebarState { open: boolean; width: number; position: 'right'|'left' }
 interface ChatState { conversations: Conversation[]; activeConversationId: string|null; isStreaming: boolean; streamingContent: string }
@@ -132,17 +119,15 @@ event: error  data: {"message":"Rate limit exceeded","code":"rate_limited"}
 - `prefers-reduced-motion`: instant show/hide; `h-dvh` not `h-screen`
 - `useCallback`/`useMemo` throughout; SSE updates `streamingContent` string (not array); lazy-load markdown
 
-## Dependencies
-
-`react` + `react-dom` (~85KB gzipped). Optional: `marked`/`markdown-it` (markdown), `highlight.js`/`shiki` (syntax).
-
-## Integration
+## Integration & Dependencies
 
 ```typescript
 const apiKey = await getCredential('ANTHROPIC_API_KEY')   // gopass → credentials.sh → env
 const model = await resolveModel(settings.defaultModel)    // 'sonnet' → concrete model ID
 const memories = await execCommand('memory-helper.sh', ['recall', query, '--limit', '5'])
 ```
+
+`react` + `react-dom` (~85KB gzipped). Optional: `marked`/`markdown-it` (markdown), `highlight.js`/`shiki` (syntax).
 
 ## Testing
 
