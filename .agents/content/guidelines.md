@@ -19,52 +19,38 @@ tools:
 ## Quick Reference
 
 - **Tone**: Authentic, local, professional but approachable, British English
-- **Spelling**: British (specialise, colour, moulding, draughty, centre)
-- **Paragraphs**: One sentence per paragraph, no walls of text
-- **Sentences**: Short & punchy, use spaced em-dashes ( — ) for emphasis
-- **SEO**: Bold **keywords** naturally, avoid stuffing, use long-tail variations
+- **Spelling**: British (`specialise`, `colour`, `moulding`, `draughty`, `centre`)
+- **Paragraphs**: One sentence per paragraph; split at 3+ lines
+- **Sentences**: Short & punchy; use spaced em-dashes ( — ) instead of subordinate clauses
+- **SEO**: Bold **keywords** naturally; use long-tail variations; never stuff
 - **Avoid**: "We pride ourselves...", "Our commitment to excellence...", repetitive brand names
-- **HTML fields**: Use `<strong>`, `<em>`, `<p>` instead of Markdown
-- **WP fetch**: Use `wp post get ID --field=content` (singular, not --fields)
-- **Workflow**: Fetch -> Refine -> Structure -> Update -> Verify
+- **HTML fields**: Use `<strong>`, `<em>`, `<p>` — not Markdown (`**bold**` won't render)
+- **WP fetch**: `wp post get ID --field=content` (singular `--field`, not `--fields`)
+- **Workflow**: Fetch → Refine → Structure → Update → Verify
+
 <!-- AI-CONTEXT-END -->
 
 Structural copy rules for website content, especially local-service pages. If a project has `context/brand-identity.toon`, take tone, vocabulary, and personality from that file; this document covers structure only. For brand identity maintenance, see `tools/design/brand-identity.md`.
 
-## Core Rules
-
-- Sound like a local expert, not a generic corporation.
-- Be professional but approachable.
-- Use British English throughout (`specialise`, `colour`, `moulding`, `draughty`, `centre`).
-- Be direct. Cut fluff.
-- Prefer "We make..." to "Trinity Joinery crafts...".
-
 ## Formatting
 
-- Use one sentence per paragraph for screen readability, especially on mobile.
-- Avoid walls of text. If a paragraph runs 3+ lines, split it.
-- Keep sentences short and punchy.
-- Use spaced em-dashes (` — `) for emphasis or connection instead of long subordinate clauses.
-  - Good: "We finish them with marine-grade coatings — they are built specifically to resist swelling."
+- One sentence per paragraph for screen readability, especially on mobile.
+- Use spaced em-dashes (` — `) for emphasis instead of long subordinate clauses.
+  - Good: "We finish them with marine-grade coatings — they resist swelling."
   - Bad: "We finish them with marine-grade coatings, which means that they are built specifically..."
-
-### SEO
-
-- Bold primary keywords naturally.
-  - Example: "Hand-crafted here in Jersey, our bespoke **sash windows** are built to last."
-- Never stuff keywords. If it sounds forced, rewrite it.
-- Use long-tail variations such as "Jersey heritage properties", "granite farmhouse windows", and "coastal climate".
+- Bold primary keywords naturally: "Hand-crafted here in Jersey, our bespoke **sash windows** are built to last."
+- Use long-tail variations: "Jersey heritage properties", "granite farmhouse windows", "coastal climate".
 
 ## Avoid
 
-- Robotic phrasing such as "We pride ourselves on...", "Our commitment to excellence...", and "Elevate your home with...".
-- Repeating the brand name at the start of every sentence.
-- Empty trailing blocks such as `<!-- wp:paragraph --><p></p><!-- /wp:paragraph -->`.
+- Robotic phrasing: "We pride ourselves on...", "Our commitment to excellence...", "Elevate your home with...".
+- Repeating the brand name at the start of every sentence. Prefer "We make..." over "Trinity Joinery crafts...".
+- Empty trailing blocks: `<!-- wp:paragraph --><p></p><!-- /wp:paragraph -->`.
 - Markdown in HTML content fields.
 
 ## HTML Content Fields
 
-Use HTML tags, not Markdown, in WordPress content areas.
+Use HTML tags in WordPress content areas, not Markdown.
 
 ```html
 <strong>Bold text</strong>
@@ -75,13 +61,9 @@ Use HTML tags, not Markdown, in WordPress content areas.
 <ul><li>List items</li></ul>
 ```
 
-Markdown like `**bold**` will not render in HTML fields.
-
 ## Content Update Workflow
 
-1. **Fetch:** Download with `wp post get`; use `--field=content` (singular) to get raw HTML without table headers or metadata.
-   - Correct: `wp post get 123 --field=content > file.txt`
-   - Incorrect: `wp post get 123 --fields=post_title,content > file.txt` because it adds `Field/Value` table artefacts.
+1. **Fetch:** `wp post get 123 --field=content > file.txt` — `--field` (singular) avoids `Field/Value` table artefacts. Do not use `--fields=post_title,content`.
 2. **Refine:** Apply these guidelines.
 3. **Structure:** Keep valid block markup such as `<!-- wp:paragraph -->...`.
 4. **Update:** Upload with `wp post update`.
@@ -90,14 +72,14 @@ Markdown like `**bold**` will not render in HTML fields.
 ## Example Transformation
 
 **Before (AI/generic):**
-> Trinity Joinery uses durable hardwoods treated to resist Jersey’s salt air and humidity effectively. Expert carpenters apply marine-grade finishes for long-lasting protection with minimal upkeep.
+> Trinity Joinery uses durable hardwoods treated to resist Jersey's salt air and humidity effectively. Expert carpenters apply marine-grade finishes for long-lasting protection with minimal upkeep.
 
 **After (human/local):**
 > Absolutely.
 >
 > We know how harsh the salt air and damp can be.
 >
-> That’s why we use high-performance, rot-resistant timbers like Accoya and Sapele.
+> That's why we use high-performance, rot-resistant timbers like Accoya and Sapele.
 >
 > We finish them with marine-grade coatings — ensuring they resist swelling, warping and weathering.
 
