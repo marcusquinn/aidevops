@@ -8,18 +8,13 @@ List `todo/VERIFY.md` verification queue with status filtering.
 
 Arguments: $ARGUMENTS
 
-## Default
+## Run
 
 ```bash
 ~/.aidevops/agents/scripts/list-verify-helper.sh $ARGUMENTS
 ```
 
-## Fallback (Script Unavailable)
-
-1. Read `todo/VERIFY.md`
-2. Parse entries between `<!-- VERIFY-QUEUE-START -->` and `<!-- VERIFY-QUEUE-END -->`
-3. Group by status: failed `[!]`, pending `[ ]`, passed `[x]`
-4. Format as Markdown tables
+**Fallback (script unavailable):** Read `todo/VERIFY.md`, parse entries between `<!-- VERIFY-QUEUE-START -->` and `<!-- VERIFY-QUEUE-END -->`, group by status: failed `[!]`, pending `[ ]`, passed `[x]`, format as Markdown tables.
 
 ## Arguments
 
