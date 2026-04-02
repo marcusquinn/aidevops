@@ -39,14 +39,12 @@ Voice feedback: hold spacebar in feedback dialogs to record; auto-transcribed.
 ```bash
 ./.agents/scripts/dspyground-helper.sh install
 cp configs/dspyground-config.json.txt configs/dspyground-config.json
-
-# Create project and start dev server
 ./.agents/scripts/dspyground-helper.sh init my-agent
 ./.agents/scripts/dspyground-helper.sh dev my-agent
 # or from project dir: dspyground dev
 ```
 
-**Environment (`.env`):**
+`.env`:
 
 ```bash
 AI_GATEWAY_API_KEY=your_key_here
