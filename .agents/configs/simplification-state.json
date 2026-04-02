@@ -1,4 +1,10 @@
 {
+  ".agents/tools/code-review/auditing.md": {
+    "hash": "b7c346582edd627a9ab4f70a7c7e4b8f8d97be32231069f4e10126d2db94062d",
+    "issue": "GH#15647",
+    "status": "simplified",
+    "note": "Instruction doc tightened: 103 → 90 lines. Merged config code blocks, moved URLs inline, compressed CI/CD prose. Zero content loss."
+  },
   ".agents/seo/ai-search-kpi-template.md": {
     "hash": "03478debc956ad02835cde5c946e89762351c2c00c836d8c9c24fca3ebd366cc",
     "issue": "GH#14993",
