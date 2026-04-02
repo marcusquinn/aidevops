@@ -415,8 +415,9 @@ parse_retry_after_seconds() {
 	local provider="${2:-anthropic}"
 
 	# t1835: Check if provider-auth.mjs already set a server-sourced cooldown
-	# in oauth-pool.json for this account. If so, respect it — don't overwrite
-	# with our text-parsed guess. Returns the remaining cooldown in seconds.
+	# in oauth-pool.json. Only return a cooldown if ALL accounts for this
+	# provider are rate-limited. A single exhausted account must NOT block
+	# workers that can use another available account (GH#15489).
 	local pool_file="${HOME}/.aidevops/oauth-pool.json"
 	if [[ -f "$pool_file" ]]; then
 		local remaining
@@ -425,14 +426,22 @@ import json, os, time, sys
 try:
     pool = json.load(open(os.environ['POOL_FILE']))
     now_ms = int(time.time() * 1000)
-    for a in pool.get(os.environ['PROVIDER'], []):
+    accounts = pool.get(os.environ['PROVIDER'], [])
+    if not accounts:
+        print(0); sys.exit(0)
+    # Only back off if ALL accounts are rate-limited with active cooldowns
+    min_remaining = None
+    for a in accounts:
         cd = a.get('cooldownUntil')
         if cd and int(cd) > now_ms and a.get('status') == 'rate-limited':
-            print(max(1, (int(cd) - now_ms) // 1000))
-            sys.exit(0)
+            remaining_s = max(1, (int(cd) - now_ms) // 1000)
+            min_remaining = min(min_remaining, remaining_s) if min_remaining else remaining_s
+        else:
+            # At least one account is available — no provider-level backoff
+            print(0); sys.exit(0)
+    print(min_remaining or 0)
 except Exception:
-    pass
-print(0)
+    print(0)
 " 2>/dev/null)
 		if [[ "$remaining" -gt 0 ]]; then
 			echo "$remaining"
