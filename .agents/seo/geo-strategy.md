@@ -17,15 +17,10 @@ tools:
 
 Design and evaluate AI search visibility with a retrieval-first approach.
 
-## Quick Reference
-
 - Purpose: increase citation likelihood in AI search by matching decision criteria with verifiable page content
 - Primary outcome: better AI retrieval fit on pages that already rank in traditional search
 - Inputs: core query set, top landing pages, competitor set, proof assets (certifications, policies, prices, case evidence)
 - Outputs: criteria matrix, page gap map, prioritized implementation plan
-
-## Positioning
-
 - GEO is an operational label, not a replacement for SEO
 - Ranking is prerequisite — unranked pages cannot be consistently cited
 - Optimize for deterministic retrieval signals, not daily answer volatility
@@ -66,26 +61,26 @@ Design and evaluate AI search visibility with a retrieval-first approach.
 
 ## Implementation Rules
 
-- Keep the first 200-300 words highly informative and criteria-dense
+- First 200-300 words must be highly informative and criteria-dense
 - Use explicit headings for key buyer concerns
-- Keep terminology aligned with user query vocabulary and synonyms
-- Keep a single canonical value for every critical fact across the site
+- Align terminology with user query vocabulary and synonyms
+- Single canonical value for every critical fact across the site
 - Prefer additive edits to existing pages before creating net-new pages
 - Ensure key pages remain accessible to major AI/search crawlers
 
 ### Domain-scoped retrieval
 
-AI models use `site:yourdomain.com` queries to extract detail from domains already identified as relevant. This bypasses traditional SERP ranking, so structure content for direct domain retrieval:
+AI models use `site:yourdomain.com` queries to extract detail from domains already identified as relevant — bypassing traditional SERP ranking:
 
 - Key pages must return relevant results for `site:yourdomain.com [category] features [year]` patterns
-- Each major product, feature, or service should have a dedicated page with a descriptive title containing category terms, not just brand names
-- Page titles, H1s, and section headings should include the terms a model would use in a `site:` query: product category, feature type, year, pricing where applicable
+- Each major product, feature, or service needs a dedicated page with a descriptive title containing category terms, not just brand names
+- Page titles, H1s, and section headings should include terms a model would use in a `site:` query: product category, feature type, year, pricing where applicable
 - Avoid consolidating all product info into a single page; domain-scoped search works best with one topic per URL
 - Keep pricing, feature lists, and comparison data in crawlable HTML, not behind JavaScript rendering or gated forms
 
 ### Review platform parity
 
-AI models query `site:g2.com`, `site:capterra.com`, and `site:trustradius.com` as a validation stage after extracting brand-site claims. Treat these profiles as third-party confirmation:
+AI models query `site:g2.com`, `site:capterra.com`, and `site:trustradius.com` as a validation stage after extracting brand-site claims:
 
 - Maintain complete, current profiles with the same canonical facts (pricing, features, integrations) as the primary site
 - Consistent product naming and categorization across platforms
