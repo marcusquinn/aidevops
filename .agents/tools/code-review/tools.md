@@ -24,15 +24,6 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Linter Manager
-
-```bash
-bash .agents/scripts/linter-manager.sh detect            # detect languages
-bash .agents/scripts/linter-manager.sh install-detected  # install for detected langs
-bash .agents/scripts/linter-manager.sh install-all       # install all supported
-bash .agents/scripts/linter-manager.sh install python    # install for specific lang
-```
-
 ## Language-Specific Linters
 
 | Language | Tools | Config |
@@ -71,13 +62,6 @@ Reference: [CodeFactor Analysis Tools](https://docs.codefactor.io/bootcamp/analy
 | CodeFactor | Web only | No | Reference collection for tool selection |
 
 **ESLint** auto-fix: 60-80% (JS/TS style + best practices)
-
-## Workflow Integration
-
-- **Pre-commit hooks**: run linters before commits
-- **CI/CD pipeline**: integrate with build process
-- **IDE plugins**: configure editor integration
-- **Quality gates**: block merges on violations
 
 ## Additional Resources
 
