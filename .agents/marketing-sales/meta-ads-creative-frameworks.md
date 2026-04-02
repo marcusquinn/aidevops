@@ -23,7 +23,9 @@
 | 30s video | `[HOOK 3s] + [PROBLEM 7s] + [SOLUTION 10s] + [PROOF 5s] + [CTA 5s]` |
 | 60s video | `[HOOK 5s] + [PROBLEM 10s] + [AGITATE 10s] + [SOLUTION 15s] + [PROOF 10s] + [CTA 10s]` |
 
-## PAS — static
+## PAS
+
+### Static
 
 ```text
 PRIMARY TEXT:
@@ -41,7 +43,7 @@ HEADLINE: Automate Data Entry in 5 Minutes
 CTA: Try Free
 ```
 
-## PAS — video 25s
+### Video 25s
 
 ```text
 [0-3s]   "If you're still manually entering data, I need to talk to you."
