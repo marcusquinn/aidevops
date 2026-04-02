@@ -19,9 +19,7 @@
 
 ## Common Issues & Troubleshooting
 
-### Error 1016 (Origin DNS Error)
-
-Tunnel not running or connected.
+**Error 1016 (Origin DNS Error)** — tunnel not running or connected.
 
 ```bash
 cloudflared tunnel info <tunnel>     # Check status
@@ -29,9 +27,7 @@ ps aux | grep cloudflared             # Verify process
 journalctl -u cloudflared -n 100      # Check logs
 ```
 
-### Certificate Errors
-
-Self-signed certs rejected by default.
+**Certificate Errors** — self-signed certs rejected by default.
 
 ```yaml
 originRequest:
@@ -39,9 +35,7 @@ originRequest:
   caPool: /path/to/ca.pem  # Custom CA
 ```
 
-### Connection Timeouts
-
-Origin slow to respond.
+**Connection Timeouts** — origin slow to respond.
 
 ```yaml
 originRequest:
@@ -50,7 +44,7 @@ originRequest:
   keepAliveTimeout: 120s
 ```
 
-### Tunnel Not Starting
+**Tunnel Not Starting**
 
 ```bash
 cloudflared tunnel ingress validate  # Validate local config
@@ -58,7 +52,7 @@ ls -la ~/.cloudflared/*.json         # Verify credentials
 cloudflared tunnel list              # Verify tunnel exists
 ```
 
-### Debugging
+**Debugging**
 
 ```bash
 cloudflared tunnel --loglevel debug run <tunnel>
@@ -73,7 +67,7 @@ cloudflared tunnel ingress rule https://app.example.com
 
 ## Migration
 
-### From Ngrok (`ngrok http 8000`)
+**From Ngrok** (`ngrok http 8000`)
 
 ```yaml
 ingress:
@@ -82,7 +76,7 @@ ingress:
   - service: http_status:404
 ```
 
-### From VPN (Private Network Routing)
+**From VPN** (Private Network Routing)
 
 ```yaml
 warp-routing:
