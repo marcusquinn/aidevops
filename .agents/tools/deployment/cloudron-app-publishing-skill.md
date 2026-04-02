@@ -56,7 +56,7 @@ cloudron versions add        # add version to catalog
 | `cloudron build push --id <id>` | Push a remote build to a registry |
 | `cloudron build status --id <id>` | Check status of a remote build |
 
-On first run, prompts for the Docker repository (e.g. `registry/username/myapp`). Remembers it for subsequent runs.
+First run prompts for Docker repository (e.g. `registry/username/myapp`) — saved for subsequent runs.
 
 ## Versions Commands
 
@@ -71,10 +71,10 @@ On first run, prompts for the Docker repository (e.g. `registry/username/myapp`)
 
 ## Distribution
 
-Host `CloudronVersions.json` at any public URL (static host, git repo, web server).
+Host `CloudronVersions.json` at any public URL (static host, git repo, web server):
 
-- **Dashboard** -- Add URL under Community apps in dashboard settings. Updates appear automatically.
-- **CLI** -- `cloudron install --versions-url <url>`
+- **Dashboard**: add URL under Community apps in dashboard settings — updates appear automatically
+- **CLI**: `cloudron install --versions-url <url>`
 
 ## Community Packages (9.1+)
 
