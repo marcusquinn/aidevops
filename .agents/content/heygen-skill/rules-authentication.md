@@ -7,12 +7,19 @@ metadata:
 
 # HeyGen Authentication
 
-All requests require an API key in the `X-Api-Key` header. Keep it server-side, load it from an environment variable, and never expose it in client code.
+All requests require an API key in the `X-Api-Key` header. Keep it server-side, load it from an environment variable, never expose it in client code.
+
+## Security Rules
+
+1. **Keep keys server-side** — route requests through a backend service
+2. **Use environment variables** — never hardcode keys in source
+3. **Rotate keys periodically** — replace old keys on a regular schedule
+4. **Monitor usage** — review the HeyGen dashboard for unusual activity
 
 ## Setup
 
 1. Log in at https://app.heygen.com → Settings > API and copy the key.
-2. Store it as an environment variable:
+2. Store as an environment variable:
 
 ```bash
 export HEYGEN_API_KEY="your-api-key-here"   # shell
@@ -20,6 +27,8 @@ export HEYGEN_API_KEY="your-api-key-here"   # shell
 ```
 
 ## Request Pattern
+
+Send `X-Api-Key` on every request:
 
 ### curl
 
@@ -48,8 +57,6 @@ response = requests.get(
 )
 data = response.json()
 ```
-
-The pattern is the same in every HTTP client: send `X-Api-Key` on each request.
 
 ## Reusable API Client
 
@@ -82,7 +89,7 @@ const avatars = await client.get("/v2/avatars");
 
 ## Response Shape
 
-Successful responses return `{ error: null, data: ... }`; auth failures return `{ "error": "Invalid API key", "data": null }`.
+`{ error: null, data: ... }` on success; `{ error: "Invalid API key", data: null }` on auth failure.
 
 ```typescript
 interface ApiResponse<T> {
@@ -91,7 +98,7 @@ interface ApiResponse<T> {
 }
 ```
 
-## Common Auth Errors
+## Errors & Rate Limits
 
 | Status | Error | Cause |
 |--------|-------|-------|
@@ -99,9 +106,7 @@ interface ApiResponse<T> {
 | 403 | Forbidden | Insufficient permissions |
 | 429 | Rate limit exceeded | Too many requests — use exponential backoff |
 
-## Rate Limits
-
-Rate limits apply per API key; video generation endpoints are stricter. Retry 429 responses with exponential backoff:
+Rate limits apply per API key; video generation endpoints are stricter. Retry 429 with exponential backoff:
 
 ```typescript
 async function requestWithRetry(fn: () => Promise<Response>, maxRetries = 3): Promise<Response> {
@@ -113,10 +118,3 @@ async function requestWithRetry(fn: () => Promise<Response>, maxRetries = 3): Pr
   throw new Error("Max retries exceeded");
 }
 ```
-
-## Security Best Practices
-
-1. **Keep keys server-side** — route requests through a backend service
-2. **Use environment variables** — never hardcode keys in source
-3. **Rotate keys periodically** — replace old keys on a regular schedule
-4. **Monitor usage** — review the HeyGen dashboard for unusual activity
