@@ -11,7 +11,7 @@ metadata:
 Delays when an element appears in the timeline. Wraps children in an absolute fill element by default — use `layout="none"` to disable.
 
 ```tsx
-import { Sequence } from "remotion";
+import {Sequence, useVideoConfig} from 'remotion';
 
 const {fps} = useVideoConfig();
 
@@ -23,13 +23,7 @@ const {fps} = useVideoConfig();
 </Sequence>
 ```
 
-**Premounting:** Loads the component before playback. Always premount every `<Sequence>`:
-
-```tsx
-<Sequence premountFor={1 * fps}>
-  <Title />
-</Sequence>
-```
+**Premounting:** Always set `premountFor={1 * fps}` on every `<Sequence>` — loads the component before playback starts.
 
 **Local frames:** Inside a Sequence, `useCurrentFrame()` returns frame relative to sequence start (0-based), not the global frame.
 
@@ -81,7 +75,7 @@ Negative `offset` starts the next sequence before the previous ends:
 Sequences nest for complex timing:
 
 ```tsx
-<Sequence from={0} durationInFrames={120}>
+<Sequence durationInFrames={120}>
   <Background />
   <Sequence from={15} durationInFrames={90} layout="none">
     <Title />
