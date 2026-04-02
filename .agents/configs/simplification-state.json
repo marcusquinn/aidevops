@@ -4512,5 +4512,11 @@
     "issue": "GH#15679",
     "status": "simplified",
     "note": "Reference corpus: added navigation index (89 \u2192 91 lines). All code examples preserved verbatim."
+  },
+  ".agents/seo/query-fanout-research.md": {
+    "hash": "cae5a5769ab0cc567a2d1e58241cc0d5bbae87af7256fc9fc8c30aa8fec2fd25",
+    "issue": "GH#15680",
+    "status": "simplified",
+    "note": "Instruction doc tightened: 89 \u2192 77 lines. Merged Quick Reference into intro, merged Coverage Rules + Guardrails into Rules, compressed step prose. Zero content loss."
   }
 }
