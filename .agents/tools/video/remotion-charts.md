@@ -2,23 +2,13 @@
 name: charts
 mode: subagent
 description: Chart and data visualization patterns for Remotion. Use when creating bar charts, pie charts, histograms, progress bars, or any data-driven animations.
-metadata:
-  tags: charts, data, visualization, bar-chart, pie-chart, graphs
 ---
 
 # Charts in Remotion
 
-Use regular React, HTML, SVG, or D3 to build charts in Remotion.
+Use regular React, HTML, SVG, or D3. Disable third-party animation systems — they flicker during render. Drive all chart motion from `useCurrentFrame()`.
 
-## Animation rule
-
-Disable third-party animation systems. They flicker during render. Drive chart motion from `useCurrentFrame()` instead.
-
-## Bar charts
-
-See [Bar Chart Example](assets/charts/bar-chart.tsx) for a basic implementation.
-
-### Staggered bars
+## Bar charts — staggered bars
 
 Animate each bar height with a per-bar delay:
 
