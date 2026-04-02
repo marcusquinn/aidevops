@@ -142,7 +142,13 @@
     // external contributor triage, semantic dedup, stale coaching).
     // Lower = more LLM sessions (higher token cost), higher = more autonomous.
     // Env override: PULSE_LLM_STALL_THRESHOLD
-    "llm_stall_threshold": 3600
+    "llm_stall_threshold": 3600,
+
+    // Hard ceiling in seconds for a single pulse cycle (LLM session + preflight).
+    // The LLM supervisor should complete within 15 minutes — longer runs block
+    // the deterministic fill floor from dispatching new workers.
+    // Env override: PULSE_STALE_THRESHOLD
+    "pulse_stale_threshold": 900
   },
 
   // ---------------------------------------------------------------------------

@@ -115,7 +115,7 @@ fi
 #######################################
 # Configuration
 #######################################
-PULSE_STALE_THRESHOLD="${PULSE_STALE_THRESHOLD:-3600}"                                      # 60 min hard ceiling (raised from 30 min — GH#2958)
+PULSE_STALE_THRESHOLD="${PULSE_STALE_THRESHOLD:-900}"                                       # 15 min hard ceiling (was 60 min; deterministic fill floor handles dispatch every 2-min cycle)
 PULSE_IDLE_TIMEOUT="${PULSE_IDLE_TIMEOUT:-600}"                                             # 10 min idle before kill (reduces false positives during active triage)
 PULSE_IDLE_CPU_THRESHOLD="${PULSE_IDLE_CPU_THRESHOLD:-5}"                                   # CPU% below this = idle (0-100 scale)
 PULSE_PROGRESS_TIMEOUT="${PULSE_PROGRESS_TIMEOUT:-600}"                                     # 10 min no log output = stuck (GH#2958)
