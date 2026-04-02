@@ -121,6 +121,8 @@ List pending: `gh issue list --label simplification-debt --label needs-maintaine
 
 **Deterministic scan:** `complexity-scan-helper.sh` replaces per-file LLM analysis with shell-based heuristics (line count, function count, nesting depth). Batch hash comparison against `simplification-state.json` skips unchanged files. Completes in <30s vs 5-8 min previously. `pulse-wrapper.sh` calls the helper each cycle and creates `simplification-debt` issues for files exceeding thresholds. Config: `COMPLEXITY_SCAN_INTERVAL` (15 min), `COMPLEXITY_FILE_VIOLATION_THRESHOLD` (1), `COMPLEXITY_MD_MIN_LINES` (50).
 
+**Convergence (t1754):** Each simplification pass increments `passes` in `simplification-state.json`. After `SIMPLIFICATION_MAX_PASSES` (default 3), the file is "converged" and the scanner skips it. This prevents infinite re-simplification loops where each pass changes the hash, triggering another recheck. The pass counter resets naturally: when a file is genuinely modified by non-simplification work, the hash refresh detects the change and records it as a new pass 1. State hashes are refreshed each pulse cycle via `_simplification_state_refresh()` (O(n) `git hash-object`, no API calls) — replacing the previous timeline-API backfill which frequently missed updates.
+
 **Daily LLM sweep:** Reserved for stall detection only. When simplification debt count hasn't decreased in 6h (`SWEEP_STALL_HOURS`), creates a `tier:thinking` issue for LLM-powered deep review. Managed by `complexity-scan-helper.sh sweep-check`.
 
 **CI ratchet:** `.agents/configs/complexity-thresholds.conf` (`FUNCTION_COMPLEXITY_THRESHOLD`, `NESTING_DEPTH_THRESHOLD`, `FILE_SIZE_THRESHOLD`). Lower after simplification PRs merge.
