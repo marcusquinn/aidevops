@@ -15,24 +15,17 @@ tools:
 
 # SEO Optimizer
 
-Use for on-page SEO audits and concrete content fixes.
-
-## Quick Reference
-
-- **Purpose**: Audit and optimise on-page SEO elements
-- **Input**: Article content, target keyword, current meta elements
-- **Output**: SEO score (0-100) with prioritised improvement recommendations
-- **Script**: `seo-content-analyzer.py quality`
+On-page SEO audits and concrete content fixes. Script: `seo-content-analyzer.py quality`
 
 ## On-Page Checklist
 
-- **Title tag**: primary keyword near start; 50-60 characters; unique site-wide; compelling for click-through
-- **Meta description**: primary keyword; 150-160 characters; call-to-action; unique and descriptive
-- **Headings**: one H1 with primary keyword; at least 4-6 H2 sections; 2-3 H2s with keyword/variation; proper H1 > H2 > H3 hierarchy; descriptive headings
-- **Content**: primary keyword in first 100 words; keyword density 1-2%; 2000+ words unless competitor benchmark suggests otherwise; natural keyword use; secondary keywords included; answers search intent
-- **Links**: 3-5 internal links with descriptive anchors; 2-3 external authority links; no broken links; internal links same tab, external links new tab
-- **Media**: descriptive alt text with keyword where natural; compressed, correctly sized images; at least 1 image per 500 words
-- **Technical**: short descriptive URL with keyword; schema markup where applicable; mobile-friendly layout; fast page load time
+- **Title tag**: primary keyword near start; 50-60 chars; unique site-wide; compelling for CTR
+- **Meta description**: primary keyword; 150-160 chars; call-to-action; unique
+- **Headings**: one H1 with primary keyword; 4-6 H2s; 2-3 H2s with keyword/variation; H1 > H2 > H3 hierarchy
+- **Content**: keyword in first 100 words; density 1-2%; 2000+ words unless competitor benchmark differs; answers search intent; secondary keywords included
+- **Links**: 3-5 internal (descriptive anchors, same tab); 2-3 external authority (new tab); no broken links
+- **Media**: descriptive alt text with keyword where natural; compressed images; 1 image per 500 words
+- **Technical**: short descriptive URL with keyword; schema markup where applicable; mobile-friendly; fast load
 
 ## Workflow
 
@@ -47,33 +40,28 @@ python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py quality article.md \
 
 ### 2. Prioritise fixes
 
-1. **Critical** (score impact > 15 points): missing H1, no keyword in title, content too short
-2. **High** (score impact 5-15 points): low keyword density, missing meta elements
-3. **Medium** (score impact < 5 points): few internal links, no lists
+1. **Critical** (>15 pts): missing H1, no keyword in title, content too short
+2. **High** (5-15 pts): low keyword density, missing meta elements
+3. **Medium** (<5 pts): few internal links, no lists
 
 ### 3. Apply fixes
 
-For each issue, provide:
-
-- **What**: specific element to change
-- **Where**: exact location in content
-- **How**: concrete rewrite or addition
-- **Why**: expected SEO impact
+Per issue: **What** (element), **Where** (location), **How** (rewrite/addition), **Why** (SEO impact).
 
 ### 4. Re-score
 
-Run analysis again after fixes to verify improvement.
+Re-run analysis after fixes to verify improvement.
 
 ## Featured Snippet Optimisation
 
-- **Paragraph snippets**: 40-60 word answer directly after the question heading
-- **List snippets**: numbered or bulleted lists with 5-8 items
-- **Table snippets**: comparison tables with clear headers
-- **Definition snippets**: `X is...` format in the first sentence after the heading
+- **Paragraph**: 40-60 word answer directly after question heading
+- **List**: numbered/bulleted, 5-8 items
+- **Table**: comparison tables with clear headers
+- **Definition**: `X is...` format in first sentence after heading
 
 ## Integration
 
-- Uses `seo/content-analyzer.md` for comprehensive analysis
-- Works with `content/seo-writer.md` during content creation
-- Feeds into `content/meta-creator.md` for meta optimisation
-- References `seo/keyword-research.md` for keyword data
+- `seo/content-analyzer.md` — comprehensive analysis
+- `content/seo-writer.md` — content creation
+- `content/meta-creator.md` — meta optimisation
+- `seo/keyword-research.md` — keyword data
