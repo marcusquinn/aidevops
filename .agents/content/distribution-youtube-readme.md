@@ -17,13 +17,11 @@ subagents:
 
 ## Quick Reference
 
-- **Purpose**: YouTube long-form video distribution within the content pipeline
 - **Main Agent**: `youtube.md` (this directory) - orchestrator for all YouTube operations
 - **Subagents**: `channel-intel`, `topic-research`, `script-writer`, `optimizer`, `pipeline`
 - **Helper**: `youtube-helper.sh` - YouTube Data API v3 wrapper
 - **Commands**: `/youtube setup`, `/youtube research`, `/youtube script`
-
-**This directory is the authoritative location for all YouTube agents.** YouTube is a distribution channel within the content pipeline (`content.md`). The subagents here handle competitor research, topic ideation, script generation, metadata optimization, and automated pipelines.
+- **Pipeline**: YouTube is a distribution channel within `content.md`
 
 <!-- AI-CONTEXT-END -->
 
@@ -78,9 +76,7 @@ From one YouTube video, generate:
 
 ## Related Agents
 
-- `youtube.md` - Full YouTube orchestrator (this directory)
 - `content/production-video.md` - Video generation (Sora 2 Pro, Veo 3.1)
 - `content/production-audio.md` - Voice pipeline
 - `content/story.md` - Narrative design and hook formulas
 - `content/optimization.md` - A/B testing and analytics
-- `youtube-helper.sh` - YouTube Data API v3 wrapper
