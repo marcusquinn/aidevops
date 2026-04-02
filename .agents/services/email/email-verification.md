@@ -8,24 +8,16 @@ Local email address verifier with SMTP RCPT TO probing, disposable domain detect
 ## Quick Start
 
 ```bash
-# Single email
 email-verify-helper.sh verify user@example.com
+email-verify-helper.sh verify user@example.com --quiet   # CSV output
 
-# Quiet/CSV mode
-email-verify-helper.sh verify user@example.com --quiet
-
-# Bulk verify (one email per line, # comments allowed)
-# Output CSV: email,score,check,details
+# Bulk (one email per line, # comments allowed) — output CSV: email,score,check,details
+# 1s delay between SMTP probes, progress every 10 emails, summary on completion
 email-verify-helper.sh bulk input.txt output.csv
 
-# Update disposable domain database (run on first use, then weekly/monthly)
-email-verify-helper.sh update-domains
-
-# View statistics
+email-verify-helper.sh update-domains  # run on first use, then weekly/monthly
 email-verify-helper.sh stats
 ```
-
-Bulk mode: 1s delay between SMTP probes, progress every 10 emails, summary on completion.
 
 ## 6 Verification Checks
 
@@ -75,17 +67,15 @@ Scores match the FixBounce classification system:
 
 ```text
 email-verify-helper.sh
-  +-- check_syntax()        -- RFC 5321 regex validation
-  +-- check_mx()            -- dig MX + A record lookup
-  +-- check_disposable()    -- SQLite FTS5 lookup
-  +-- smtp_probe()          -- nc/openssl SMTP conversation
-  |     +-- check_rcpt_to() -- RCPT TO response parsing (250/452/550)
+  +-- check_syntax()          -- RFC 5321 regex validation
+  +-- check_mx()              -- dig MX + A record lookup
+  +-- check_disposable()      -- SQLite FTS5 lookup
+  +-- smtp_probe()            -- nc/openssl SMTP conversation
+  |     +-- check_rcpt_to()   -- RCPT TO response parsing (250/452/550)
   |     +-- check_catch_all() -- Random address probe
-  +-- calculate_score()     -- Aggregate scoring engine
-  +-- record_verification() -- Stats DB recording
+  +-- calculate_score()       -- Aggregate scoring engine
+  +-- record_verification()   -- Stats: ~/.aidevops/.agent-workspace/data/email-verify-stats.db
 ```
-
-**Stats**: All verifications recorded in `~/.aidevops/.agent-workspace/data/email-verify-stats.db` (score breakdown, top domains, recent history).
 
 ## Related
 
