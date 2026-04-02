@@ -506,7 +506,7 @@ graph_request() {
 	local response http_code
 	response=$(curl "${curl_args[@]}" -w "\n%{http_code}" 2>/dev/null)
 	http_code=$(echo "$response" | tail -1)
-	response=$(echo "$response" | head -n -1)
+	response=$(echo "$response" | sed '$d')
 
 	if [[ "$http_code" -ge 400 ]]; then
 		local error_msg

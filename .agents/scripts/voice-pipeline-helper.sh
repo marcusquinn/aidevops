@@ -891,7 +891,7 @@ cmd_status() {
 		local http_code
 		http_code=$(echo "$response" | tail -1)
 		local body
-		body=$(echo "$response" | head -n -1)
+		body=$(echo "$response" | sed '$d')
 
 		if [[ "$http_code" == "200" ]]; then
 			local char_count char_limit tier

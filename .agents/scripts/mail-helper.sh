@@ -1336,7 +1336,7 @@ cmd_prune() {
 	prunable="${prunable% archivable=*}"
 	archivable="${counts_line##* archivable=}"
 	# Print the report (all lines except the last counts line)
-	printf '%s\n' "$report_output" | head -n -1
+	printf '%s\n' "$report_output" | sed '$d'
 
 	if [[ "$force" != true ]]; then
 		if [[ "$prunable" -gt 0 || "$archivable" -gt 0 ]]; then

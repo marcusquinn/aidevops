@@ -854,7 +854,7 @@ cmd_run() {
 			"$test_json" "$i" "$test_count" \
 			"$suite_agent" "$suite_model" "$suite_timeout" \
 			"$results")
-		results=$(echo "$exec_output" | head -n -1)
+		results=$(echo "$exec_output" | sed '$d')
 		outcome=$(echo "$exec_output" | tail -n 1)
 
 		case "$outcome" in

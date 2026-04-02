@@ -686,7 +686,8 @@ output_results() {
 
 cleanup_old_pulses() {
 	local old_dirs
-	old_dirs=$(find "${MINER_DIR}" -maxdepth 1 -type d -name "pulse_*" | sort | head -n -7 2>/dev/null || true)
+	# head -n -7 is GNU-only; use awk to keep all except the last 7 (newest) entries
+	old_dirs=$(find "${MINER_DIR}" -maxdepth 1 -type d -name "pulse_*" | sort | awk -v n=7 '{a[NR]=$0} END{for(i=1;i<=NR-n;i++) print a[i]}' 2>/dev/null || true)
 	if [[ -n "${old_dirs}" ]]; then
 		echo "${old_dirs}" | while read -r dir; do
 			rm -rf "${dir}"

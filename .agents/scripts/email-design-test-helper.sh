@@ -476,7 +476,7 @@ eoa_auth() {
 	local http_code
 	http_code=$(echo "$response" | tail -1)
 	local body
-	body=$(echo "$response" | head -n -1)
+	body=$(echo "$response" | sed '$d')
 
 	if [[ "$http_code" == "200" ]]; then
 		print_success "EOA API authentication successful"
@@ -645,7 +645,7 @@ eoa_create_test() {
 	local http_code
 	http_code=$(echo "$response" | tail -1)
 	local body
-	body=$(echo "$response" | head -n -1)
+	body=$(echo "$response" | sed '$d')
 
 	if [[ "$http_code" == "200" || "$http_code" == "201" ]]; then
 		local test_id
