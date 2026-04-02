@@ -118,6 +118,3 @@ But here's the thing... [Solution + brief explanation + social proof]
 
 **Subject line checklist**: Would I open this? · Under 50 chars? · Preview text complements? · Curiosity/urgency/benefit? · Matches content? · No spam triggers? · Tested on mobile?
 
----
-
-**Further reading**: [Templates](direct-response-copy-templates-email-sequences.md)
