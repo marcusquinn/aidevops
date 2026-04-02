@@ -1016,24 +1016,12 @@ _sandbox_run_pre_exec() {
 	return 0
 }
 
-sandbox_run() {
-	local timeout_secs="$SANDBOX_DEFAULT_TIMEOUT"
-	local block_network=false
-	local network_tiering=false
-	local allow_secret_io=false
-	local worker_id="sandbox-$$"
-	local extra_passthrough=""
-	local secret_io_guard="${AIDEVOPS_BLOCK_SECRET_IO:-$SECRET_IO_GUARD_DEFAULT}"
-	# Stream stdout mode (GH#15180 bug #4): when true, child stdout flows to
-	# the caller's stdout in real-time instead of being captured to a file and
-	# replayed after exit. This allows external watchdogs (e.g., the headless
-	# activity watchdog) to monitor output as it's produced. Stderr is still
-	# captured. Post-exec stdout emission is skipped (already streamed).
-	local stream_stdout=false
-	# cmd_args is an array — preserves spaces, avoids bash -c eval risks
-	local -a cmd_args=()
-
-	# Parse flags; remaining positional args become the sandboxed command
+# Parse sandbox_run flags into caller-scoped variables (bash dynamic scoping).
+# Caller must declare all target variables as local before calling this function:
+#   timeout_secs, block_network, network_tiering, allow_secret_io,
+#   worker_id, extra_passthrough, stream_stdout, cmd_args (array).
+# Returns 0 on success, 1 if no command was provided after flag parsing.
+_sandbox_run_parse_args() {
 	while [[ $# -gt 0 ]]; do
 		case $1 in
 		--timeout)
@@ -1071,14 +1059,35 @@ sandbox_run() {
 		--)
 			shift
 			cmd_args=("$@")
-			break
+			return 0
 			;;
 		*)
 			cmd_args=("$@")
-			break
+			return 0
 			;;
 		esac
 	done
+	return 0
+}
+
+sandbox_run() {
+	local timeout_secs="$SANDBOX_DEFAULT_TIMEOUT"
+	local block_network=false
+	local network_tiering=false
+	local allow_secret_io=false
+	local worker_id="sandbox-$$"
+	local extra_passthrough=""
+	local secret_io_guard="${AIDEVOPS_BLOCK_SECRET_IO:-$SECRET_IO_GUARD_DEFAULT}"
+	# Stream stdout mode (GH#15180 bug #4): when true, child stdout flows to
+	# the caller's stdout in real-time instead of being captured to a file and
+	# replayed after exit. This allows external watchdogs (e.g., the headless
+	# activity watchdog) to monitor output as it's produced. Stderr is still
+	# captured. Post-exec stdout emission is skipped (already streamed).
+	local stream_stdout=false
+	# cmd_args is an array — preserves spaces, avoids bash -c eval risks
+	local -a cmd_args=()
+
+	_sandbox_run_parse_args "$@"
 
 	if [[ ${#cmd_args[@]} -eq 0 ]]; then
 		log_sandbox "ERROR" "No command provided"
