@@ -119,11 +119,7 @@ ctx.waitUntil(env.ANALYTICS.writeDataPoint({
 
 ```typescript
 // Security headers
-const security = {
-  'X-Content-Type-Options': 'nosniff',
-  'X-Frame-Options': 'DENY',
-  'Content-Security-Policy': "default-src 'self'",
-};
+const security = { 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'self'" };
 
 // Bearer auth
 const auth = request.headers.get('Authorization');
