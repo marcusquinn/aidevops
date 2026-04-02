@@ -195,6 +195,8 @@ setup_supervisor_pulse() {
 
 		if [[ "$_os" == "Darwin" ]]; then
 			_install_pulse_launchd "$pulse_label" "$wrapper_script" "$opencode_bin" "$_pulse_installed"
+		elif _systemd_user_available; then
+			_install_pulse_systemd "aidevops-supervisor-pulse" "$wrapper_script"
 		else
 			_install_pulse_cron "$wrapper_script"
 		fi
@@ -406,6 +408,78 @@ _install_pulse_cron() {
 	return 0
 }
 
+# Check if systemd user services are available on this Linux system.
+# Returns 0 if systemd --user is functional, 1 otherwise.
+_systemd_user_available() {
+	command -v systemctl >/dev/null 2>&1 || return 1
+	systemctl --user status >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# Install supervisor pulse via systemd user service (Linux with systemd)
+# Args: $1=service_name (e.g. "aidevops-supervisor-pulse"), $2=wrapper_script
+_install_pulse_systemd() {
+	local service_name="$1"
+	local wrapper_script="$2"
+	local service_dir="$HOME/.config/systemd/user"
+	local service_file="${service_dir}/${service_name}.service"
+	local timer_file="${service_dir}/${service_name}.timer"
+
+	mkdir -p "$service_dir"
+
+	# Build environment overrides for the service
+	local _env_lines=""
+	local _configured_headless_models _configured_pulse_model
+	_configured_headless_models=$(_resolve_headless_models_override)
+	_configured_pulse_model=$(_resolve_pulse_model_override)
+	if [[ -n "$_configured_headless_models" ]]; then
+		_env_lines+="Environment=AIDEVOPS_HEADLESS_MODELS=${_configured_headless_models}\n"
+	fi
+	if [[ -n "$_configured_pulse_model" ]]; then
+		_env_lines+="Environment=PULSE_MODEL=${_configured_pulse_model}\n"
+	fi
+	if [[ -n "${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}" ]]; then
+		_env_lines+="Environment=AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST}\n"
+	fi
+	_env_lines+="Environment=PULSE_DIR=${HOME}/.aidevops/.agent-workspace\n"
+	_env_lines+="Environment=HOME=${HOME}\n"
+
+	# Write the service unit
+	printf '%s' "[Unit]
+Description=aidevops Supervisor Pulse
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash ${wrapper_script}
+${_env_lines}StandardOutput=append:${HOME}/.aidevops/logs/pulse-wrapper.log
+StandardError=append:${HOME}/.aidevops/logs/pulse-wrapper.log
+" >"$service_file"
+
+	# Write the timer unit (every 2 minutes)
+	printf '%s' "[Unit]
+Description=aidevops Supervisor Pulse Timer
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+" >"$timer_file"
+
+	systemctl --user daemon-reload 2>/dev/null || true
+	if systemctl --user enable --now "${service_name}.timer" 2>/dev/null; then
+		print_info "Supervisor pulse enabled (systemd user timer, every 2 min)"
+		print_info "Disable: systemctl --user disable --now ${service_name}.timer"
+	else
+		print_warning "Failed to enable systemd timer — falling back to cron"
+		_install_pulse_cron "$wrapper_script"
+	fi
+	return 0
+}
+
 # Uninstall supervisor pulse (user explicitly disabled)
 _uninstall_pulse() {
 	local _os="$1"
@@ -417,6 +491,15 @@ _uninstall_pulse() {
 			rm -f "$pulse_plist"
 			pkill -f 'Supervisor Pulse' 2>/dev/null || true
 			print_info "Supervisor pulse disabled (launchd agent removed per config)"
+		fi
+	elif _systemd_user_available; then
+		local service_name="aidevops-supervisor-pulse"
+		if systemctl --user is-enabled "${service_name}.timer" >/dev/null 2>&1; then
+			systemctl --user disable --now "${service_name}.timer" 2>/dev/null || true
+			rm -f "$HOME/.config/systemd/user/${service_name}.service"
+			rm -f "$HOME/.config/systemd/user/${service_name}.timer"
+			systemctl --user daemon-reload 2>/dev/null || true
+			print_info "Supervisor pulse disabled (systemd timer removed per config)"
 		fi
 	else
 		if crontab -l 2>/dev/null | grep -qF "pulse-wrapper"; then

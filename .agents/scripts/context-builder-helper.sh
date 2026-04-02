@@ -25,7 +25,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 readonly SCRIPT_DIR
-export SCRIPT_DIR  # Available for sourced scripts
+export SCRIPT_DIR # Available for sourced scripts
 declare SCRIPT_NAME
 SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_NAME
@@ -39,54 +39,54 @@ readonly DEFAULT_OUTPUT_DIR="$HOME/.aidevops/.agent-workspace/work/context"
 # =============================================================================
 
 print_header() {
-    echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}  Context Builder - Token-Efficient AI Context${NC}"
-    echo -e "${CYAN}========================================${NC}"
-    echo ""
-    return 0
+	echo -e "${CYAN}========================================${NC}"
+	echo -e "${CYAN}  Context Builder - Token-Efficient AI Context${NC}"
+	echo -e "${CYAN}========================================${NC}"
+	echo ""
+	return 0
 }
 
 # Check if repomix is available
 check_repomix() {
-    if ! command -v npx &>/dev/null; then
-        print_error "npx not found - please install Node.js"
-        return 1
-    fi
-    return 0
+	if ! command -v npx &>/dev/null; then
+		print_error "npx not found - please install Node.js"
+		return 1
+	fi
+	return 0
 }
 
 # Ensure output directory exists
 ensure_output_dir() {
-    if [[ ! -d "$DEFAULT_OUTPUT_DIR" ]]; then
-        mkdir -p "$DEFAULT_OUTPUT_DIR"
-        print_info "Created output directory: $DEFAULT_OUTPUT_DIR"
-    fi
-    return 0
+	if [[ ! -d "$DEFAULT_OUTPUT_DIR" ]]; then
+		mkdir -p "$DEFAULT_OUTPUT_DIR"
+		print_info "Created output directory: $DEFAULT_OUTPUT_DIR"
+	fi
+	return 0
 }
 
 # Generate timestamped output filename
 generate_output_name() {
-    local base_path="$1"
-    local style="${2:-xml}"
-    local suffix="${3:-}"
-    local base_name
-    
-    # Get directory name for output file
-    if [[ "$base_path" == "." ]]; then
-        base_name=$(basename "$(pwd)")
-    else
-        base_name=$(basename "$base_path")
-    fi
-    
-    local timestamp
-    timestamp=$(date +%Y%m%d-%H%M%S)
-    
-    if [[ -n "$suffix" ]]; then
-        echo "${DEFAULT_OUTPUT_DIR}/${base_name}-${suffix}-${timestamp}.${style}"
-    else
-        echo "${DEFAULT_OUTPUT_DIR}/${base_name}-${timestamp}.${style}"
-    fi
-    return 0
+	local base_path="$1"
+	local style="${2:-xml}"
+	local suffix="${3:-}"
+	local base_name
+
+	# Get directory name for output file
+	if [[ "$base_path" == "." ]]; then
+		base_name=$(basename "$(pwd)")
+	else
+		base_name=$(basename "$base_path")
+	fi
+
+	local timestamp
+	timestamp=$(date +%Y%m%d-%H%M%S)
+
+	if [[ -n "$suffix" ]]; then
+		echo "${DEFAULT_OUTPUT_DIR}/${base_name}-${suffix}-${timestamp}.${style}"
+	else
+		echo "${DEFAULT_OUTPUT_DIR}/${base_name}-${timestamp}.${style}"
+	fi
+	return 0
 }
 
 # =============================================================================
@@ -95,270 +95,290 @@ generate_output_name() {
 
 # Pack repository with smart defaults
 cmd_pack() {
-    local target_path="${1:-.}"
-    local style="${2:-xml}"
-    local output_file
-    
-    check_repomix || return 1
-    ensure_output_dir
-    
-    output_file=$(generate_output_name "$target_path" "$style" "full")
-    
-    print_info "Packing repository: $target_path"
-    print_info "Output format: $style"
-    print_info "Output file: $output_file"
-    echo ""
-    
-    npx repomix@latest "$target_path" \
-        --output "$output_file" \
-        --style "$style" \
-        --output-show-line-numbers \
-        --top-files-len 10
-    
-    if [[ -f "$output_file" ]]; then
-        local size
-        size=$(du -h "$output_file" | cut -f1)
-        print_success "Context file generated: $output_file ($size)"
-        print_info "Copy to clipboard: cat '$output_file' | pbcopy"
-    fi
-    
-    return 0
+	local target_path="${1:-.}"
+	local style="${2:-xml}"
+	local output_file
+
+	check_repomix || return 1
+	ensure_output_dir
+
+	output_file=$(generate_output_name "$target_path" "$style" "full")
+
+	print_info "Packing repository: $target_path"
+	print_info "Output format: $style"
+	print_info "Output file: $output_file"
+	echo ""
+
+	npx repomix@latest "$target_path" \
+		--output "$output_file" \
+		--style "$style" \
+		--output-show-line-numbers \
+		--top-files-len 10
+
+	if [[ -f "$output_file" ]]; then
+		local size
+		size=$(du -h "$output_file" | cut -f1)
+		print_success "Context file generated: $output_file ($size)"
+		# Platform-agnostic clipboard hint
+		local _clip_cmd="pbcopy"
+		if [[ "$(uname -s)" != "Darwin" ]]; then
+			if command -v xclip &>/dev/null; then
+				_clip_cmd="xclip -selection clipboard"
+			elif command -v xsel &>/dev/null; then
+				_clip_cmd="xsel --clipboard --input"
+			elif command -v wl-copy &>/dev/null; then
+				_clip_cmd="wl-copy"
+			fi
+		fi
+		print_info "Copy to clipboard: cat '$output_file' | $_clip_cmd"
+	fi
+
+	return 0
 }
 
 # Pack with Tree-sitter compression (Code Maps equivalent)
 cmd_compress() {
-    local target_path="${1:-.}"
-    local style="${2:-xml}"
-    local output_file
-    
-    check_repomix || return 1
-    ensure_output_dir
-    
-    output_file=$(generate_output_name "$target_path" "$style" "compressed")
-    
-    print_info "Compressing repository with Tree-sitter (Code Maps mode)"
-    print_info "This extracts code structure (classes, functions, interfaces)"
-    print_info "Expected token reduction: ~80%"
-    print_info "Target: $target_path"
-    print_info "Output: $output_file"
-    echo ""
-    
-    npx repomix@latest "$target_path" \
-        --output "$output_file" \
-        --style "$style" \
-        --compress \
-        --remove-comments \
-        --remove-empty-lines \
-        --top-files-len 10
-    
-    if [[ -f "$output_file" ]]; then
-        local size
-        size=$(du -h "$output_file" | cut -f1)
-        print_success "Compressed context file: $output_file ($size)"
-        print_info "This contains code structure only - ideal for architecture understanding"
-    fi
-    
-    return 0
+	local target_path="${1:-.}"
+	local style="${2:-xml}"
+	local output_file
+
+	check_repomix || return 1
+	ensure_output_dir
+
+	output_file=$(generate_output_name "$target_path" "$style" "compressed")
+
+	print_info "Compressing repository with Tree-sitter (Code Maps mode)"
+	print_info "This extracts code structure (classes, functions, interfaces)"
+	print_info "Expected token reduction: ~80%"
+	print_info "Target: $target_path"
+	print_info "Output: $output_file"
+	echo ""
+
+	npx repomix@latest "$target_path" \
+		--output "$output_file" \
+		--style "$style" \
+		--compress \
+		--remove-comments \
+		--remove-empty-lines \
+		--top-files-len 10
+
+	if [[ -f "$output_file" ]]; then
+		local size
+		size=$(du -h "$output_file" | cut -f1)
+		print_success "Compressed context file: $output_file ($size)"
+		print_info "This contains code structure only - ideal for architecture understanding"
+	fi
+
+	return 0
 }
 
 # Quick pack for focused small contexts
 cmd_quick() {
-    local target_path="${1:-.}"
-    local include_pattern="${2:-}"
-    local output_file
-    
-    check_repomix || return 1
-    ensure_output_dir
-    
-    output_file=$(generate_output_name "$target_path" "md" "quick")
-    
-    print_info "Quick pack mode (minimal output)"
-    print_info "Target: $target_path"
-    
-    local include_args=()
-    if [[ -n "$include_pattern" ]]; then
-        include_args=("--include" "$include_pattern")
-        print_info "Include pattern: $include_pattern"
-    fi
-    
-    echo ""
-    
-    npx repomix@latest "$target_path" \
-        --output "$output_file" \
-        --style markdown \
-        --no-file-summary \
-        --remove-comments \
-        --remove-empty-lines \
-        "${include_args[@]}"
-    
-    if [[ -f "$output_file" ]]; then
-        local size
-        size=$(du -h "$output_file" | cut -f1)
-        print_success "Quick context: $output_file ($size)"
-        
-        # Copy to clipboard on macOS
-        if command -v pbcopy &>/dev/null; then
-            cat "$output_file" | pbcopy
-            print_success "Copied to clipboard!"
-        fi
-    fi
-    
-    return 0
+	local target_path="${1:-.}"
+	local include_pattern="${2:-}"
+	local output_file
+
+	check_repomix || return 1
+	ensure_output_dir
+
+	output_file=$(generate_output_name "$target_path" "md" "quick")
+
+	print_info "Quick pack mode (minimal output)"
+	print_info "Target: $target_path"
+
+	local include_args=()
+	if [[ -n "$include_pattern" ]]; then
+		include_args=("--include" "$include_pattern")
+		print_info "Include pattern: $include_pattern"
+	fi
+
+	echo ""
+
+	npx repomix@latest "$target_path" \
+		--output "$output_file" \
+		--style markdown \
+		--no-file-summary \
+		--remove-comments \
+		--remove-empty-lines \
+		"${include_args[@]}"
+
+	if [[ -f "$output_file" ]]; then
+		local size
+		size=$(du -h "$output_file" | cut -f1)
+		print_success "Quick context: $output_file ($size)"
+
+		# Copy to clipboard (platform-agnostic)
+		if command -v pbcopy &>/dev/null; then
+			pbcopy <"$output_file"
+			print_success "Copied to clipboard!"
+		elif command -v xclip &>/dev/null; then
+			xclip -selection clipboard <"$output_file"
+			print_success "Copied to clipboard!"
+		elif command -v xsel &>/dev/null; then
+			xsel --clipboard --input <"$output_file"
+			print_success "Copied to clipboard!"
+		elif command -v wl-copy &>/dev/null; then
+			wl-copy <"$output_file"
+			print_success "Copied to clipboard!"
+		fi
+	fi
+
+	return 0
 }
 
 # Analyze token usage without generating full output
 cmd_analyze() {
-    local target_path="${1:-.}"
-    local threshold="${2:-100}"
-    
-    check_repomix || return 1
-    
-    print_info "Analyzing token usage in: $target_path"
-    print_info "Showing files with >= $threshold tokens"
-    echo ""
-    
-    npx repomix@latest "$target_path" \
-        --token-count-tree "$threshold" \
-        --no-files \
-        --quiet 2>/dev/null || npx repomix@latest "$target_path" --token-count-tree "$threshold"
-    
-    return 0
+	local target_path="${1:-.}"
+	local threshold="${2:-100}"
+
+	check_repomix || return 1
+
+	print_info "Analyzing token usage in: $target_path"
+	print_info "Showing files with >= $threshold tokens"
+	echo ""
+
+	npx repomix@latest "$target_path" \
+		--token-count-tree "$threshold" \
+		--no-files \
+		--quiet 2>/dev/null || npx repomix@latest "$target_path" --token-count-tree "$threshold"
+
+	return 0
 }
 
 # Pack a remote GitHub repository
 cmd_remote() {
-    local repo_url="$1"
-    local branch="${2:-}"
-    local style="${3:-xml}"
-    local output_file
-    
-    if [[ -z "$repo_url" ]]; then
-        print_error "Repository URL required"
-        print_info "Usage: $SCRIPT_NAME remote <github-url|user/repo> [branch] [style]"
-        return 1
-    fi
-    
-    check_repomix || return 1
-    ensure_output_dir
-    
-    # Extract repo name for output file
-    local repo_name
-    repo_name=$(echo "$repo_url" | sed 's|.*/||' | sed 's|\.git$||')
-    output_file="${DEFAULT_OUTPUT_DIR}/${repo_name}-remote-$(date +%Y%m%d-%H%M%S).${style}"
-    
-    print_info "Packing remote repository: $repo_url"
-    if [[ -n "$branch" ]]; then
-        print_info "Branch: $branch"
-    fi
-    print_info "Output: $output_file"
-    echo ""
-    
-    local branch_args=()
-    if [[ -n "$branch" ]]; then
-        branch_args=("--remote-branch" "$branch")
-    fi
-    
-    npx repomix@latest \
-        --remote "$repo_url" \
-        "${branch_args[@]}" \
-        --output "$output_file" \
-        --style "$style" \
-        --compress \
-        --top-files-len 10
-    
-    if [[ -f "$output_file" ]]; then
-        local size
-        size=$(du -h "$output_file" | cut -f1)
-        print_success "Remote context file: $output_file ($size)"
-    fi
-    
-    return 0
+	local repo_url="$1"
+	local branch="${2:-}"
+	local style="${3:-xml}"
+	local output_file
+
+	if [[ -z "$repo_url" ]]; then
+		print_error "Repository URL required"
+		print_info "Usage: $SCRIPT_NAME remote <github-url|user/repo> [branch] [style]"
+		return 1
+	fi
+
+	check_repomix || return 1
+	ensure_output_dir
+
+	# Extract repo name for output file
+	local repo_name
+	repo_name=$(echo "$repo_url" | sed 's|.*/||' | sed 's|\.git$||')
+	output_file="${DEFAULT_OUTPUT_DIR}/${repo_name}-remote-$(date +%Y%m%d-%H%M%S).${style}"
+
+	print_info "Packing remote repository: $repo_url"
+	if [[ -n "$branch" ]]; then
+		print_info "Branch: $branch"
+	fi
+	print_info "Output: $output_file"
+	echo ""
+
+	local branch_args=()
+	if [[ -n "$branch" ]]; then
+		branch_args=("--remote-branch" "$branch")
+	fi
+
+	npx repomix@latest \
+		--remote "$repo_url" \
+		"${branch_args[@]}" \
+		--output "$output_file" \
+		--style "$style" \
+		--compress \
+		--top-files-len 10
+
+	if [[ -f "$output_file" ]]; then
+		local size
+		size=$(du -h "$output_file" | cut -f1)
+		print_success "Remote context file: $output_file ($size)"
+	fi
+
+	return 0
 }
 
 # Compare full vs compressed token usage
 cmd_compare() {
-    local target_path="${1:-.}"
-    
-    check_repomix || return 1
-    ensure_output_dir
-    
-    print_header
-    print_info "Comparing full vs compressed context for: $target_path"
-    echo ""
-    
-    # Generate both versions
-    local full_output
-    local compressed_output
-    full_output=$(generate_output_name "$target_path" "xml" "full-compare")
-    compressed_output=$(generate_output_name "$target_path" "xml" "compressed-compare")
-    
-    print_info "Generating full context..."
-    npx repomix@latest "$target_path" \
-        --output "$full_output" \
-        --style xml \
-        --quiet 2>/dev/null || true
-    
-    print_info "Generating compressed context..."
-    npx repomix@latest "$target_path" \
-        --output "$compressed_output" \
-        --style xml \
-        --compress \
-        --remove-comments \
-        --remove-empty-lines \
-        --quiet 2>/dev/null || true
-    
-    if [[ -f "$full_output" ]] && [[ -f "$compressed_output" ]]; then
-        local full_size
-        local compressed_size
-        local full_lines
-        local compressed_lines
-        
-        full_size=$(du -h "$full_output" | cut -f1)
-        compressed_size=$(du -h "$compressed_output" | cut -f1)
-        full_lines=$(wc -l < "$full_output" | tr -d ' ')
-        compressed_lines=$(wc -l < "$compressed_output" | tr -d ' ')
-        
-        echo ""
-        echo "┌─────────────────────────────────────────────────┐"
-        echo "│              Context Comparison                 │"
-        echo "├─────────────────────────────────────────────────┤"
-        printf "│ %-20s │ %10s │ %10s │\n" "Metric" "Full" "Compressed"
-        echo "├─────────────────────────────────────────────────┤"
-        printf "│ %-20s │ %10s │ %10s │\n" "File Size" "$full_size" "$compressed_size"
-        printf "│ %-20s │ %10s │ %10s │\n" "Lines" "$full_lines" "$compressed_lines"
-        echo "└─────────────────────────────────────────────────┘"
-        echo ""
-        
-        # Calculate reduction percentage
-        local full_bytes
-        local compressed_bytes
-        full_bytes=$(wc -c < "$full_output" | tr -d ' ')
-        compressed_bytes=$(wc -c < "$compressed_output" | tr -d ' ')
-        
-        if [[ "$full_bytes" -gt 0 ]]; then
-            local reduction
-            reduction=$(echo "scale=1; (1 - $compressed_bytes / $full_bytes) * 100" | bc)
-            print_success "Size reduction: ${reduction}%"
-        fi
-        
-        print_info "Full output: $full_output"
-        print_info "Compressed output: $compressed_output"
-    fi
-    
-    return 0
+	local target_path="${1:-.}"
+
+	check_repomix || return 1
+	ensure_output_dir
+
+	print_header
+	print_info "Comparing full vs compressed context for: $target_path"
+	echo ""
+
+	# Generate both versions
+	local full_output
+	local compressed_output
+	full_output=$(generate_output_name "$target_path" "xml" "full-compare")
+	compressed_output=$(generate_output_name "$target_path" "xml" "compressed-compare")
+
+	print_info "Generating full context..."
+	npx repomix@latest "$target_path" \
+		--output "$full_output" \
+		--style xml \
+		--quiet 2>/dev/null || true
+
+	print_info "Generating compressed context..."
+	npx repomix@latest "$target_path" \
+		--output "$compressed_output" \
+		--style xml \
+		--compress \
+		--remove-comments \
+		--remove-empty-lines \
+		--quiet 2>/dev/null || true
+
+	if [[ -f "$full_output" ]] && [[ -f "$compressed_output" ]]; then
+		local full_size
+		local compressed_size
+		local full_lines
+		local compressed_lines
+
+		full_size=$(du -h "$full_output" | cut -f1)
+		compressed_size=$(du -h "$compressed_output" | cut -f1)
+		full_lines=$(wc -l <"$full_output" | tr -d ' ')
+		compressed_lines=$(wc -l <"$compressed_output" | tr -d ' ')
+
+		echo ""
+		echo "┌─────────────────────────────────────────────────┐"
+		echo "│              Context Comparison                 │"
+		echo "├─────────────────────────────────────────────────┤"
+		printf "│ %-20s │ %10s │ %10s │\n" "Metric" "Full" "Compressed"
+		echo "├─────────────────────────────────────────────────┤"
+		printf "│ %-20s │ %10s │ %10s │\n" "File Size" "$full_size" "$compressed_size"
+		printf "│ %-20s │ %10s │ %10s │\n" "Lines" "$full_lines" "$compressed_lines"
+		echo "└─────────────────────────────────────────────────┘"
+		echo ""
+
+		# Calculate reduction percentage
+		local full_bytes
+		local compressed_bytes
+		full_bytes=$(wc -c <"$full_output" | tr -d ' ')
+		compressed_bytes=$(wc -c <"$compressed_output" | tr -d ' ')
+
+		if [[ "$full_bytes" -gt 0 ]]; then
+			local reduction
+			reduction=$(echo "scale=1; (1 - $compressed_bytes / $full_bytes) * 100" | bc)
+			print_success "Size reduction: ${reduction}%"
+		fi
+
+		print_info "Full output: $full_output"
+		print_info "Compressed output: $compressed_output"
+	fi
+
+	return 0
 }
 
 # Start MCP server mode
 cmd_mcp() {
-    check_repomix || return 1
-    
-    print_info "Starting Context Builder MCP server..."
-    print_info "This allows AI assistants to directly call context building tools"
-    echo ""
-    
-    npx repomix@latest --mcp
-    
-    return 0
+	check_repomix || return 1
+
+	print_info "Starting Context Builder MCP server..."
+	print_info "This allows AI assistants to directly call context building tools"
+	echo ""
+
+	npx repomix@latest --mcp
+
+	return 0
 }
 
 # =============================================================================
@@ -366,7 +386,7 @@ cmd_mcp() {
 # =============================================================================
 
 show_help() {
-    cat << 'HELP_EOF'
+	cat <<'HELP_EOF'
 Context Builder - Token-Efficient AI Context Generation
 =========================================================
 
@@ -439,7 +459,7 @@ For more information:
   https://github.com/marcusquinn/aidevops
 
 HELP_EOF
-    return 0
+	return 0
 }
 
 # =============================================================================
@@ -447,46 +467,46 @@ HELP_EOF
 # =============================================================================
 
 main() {
-    local command="${1:-help}"
-    shift || true
-    
-    case "$command" in
-        pack)
-            cmd_pack "$@"
-            ;;
-        compress)
-            cmd_compress "$@"
-            ;;
-        quick)
-            cmd_quick "$@"
-            ;;
-        analyze)
-            cmd_analyze "$@"
-            ;;
-        remote)
-            cmd_remote "$@"
-            ;;
-        compare)
-            cmd_compare "$@"
-            ;;
-        mcp)
-            cmd_mcp "$@"
-            ;;
-        help|--help|-h)
-            show_help
-            ;;
-        version|--version|-v)
-            echo "context-builder-helper.sh version $VERSION"
-            ;;
-        *)
-            print_error "Unknown command: $command"
-            echo ""
-            show_help
-            return 1
-            ;;
-    esac
-    
-    return 0
+	local command="${1:-help}"
+	shift || true
+
+	case "$command" in
+	pack)
+		cmd_pack "$@"
+		;;
+	compress)
+		cmd_compress "$@"
+		;;
+	quick)
+		cmd_quick "$@"
+		;;
+	analyze)
+		cmd_analyze "$@"
+		;;
+	remote)
+		cmd_remote "$@"
+		;;
+	compare)
+		cmd_compare "$@"
+		;;
+	mcp)
+		cmd_mcp "$@"
+		;;
+	help | --help | -h)
+		show_help
+		;;
+	version | --version | -v)
+		echo "context-builder-helper.sh version $VERSION"
+		;;
+	*)
+		print_error "Unknown command: $command"
+		echo ""
+		show_help
+		return 1
+		;;
+	esac
+
+	return 0
 }
 
 main "$@"

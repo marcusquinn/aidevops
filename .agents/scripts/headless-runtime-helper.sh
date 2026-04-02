@@ -1093,6 +1093,10 @@ _parse_run_args() {
 			extra_args+=("${2:-}")
 			shift 2
 			;;
+		--detach)
+			detach=1
+			shift
+			;;
 		*)
 			print_error "Unknown option for run: $1"
 			return 1
@@ -1660,6 +1664,16 @@ cmd_metrics() {
 		return 0
 	fi
 
+	_execute_metrics_analysis "$role_filter" "$hours" "$model_filter" "$fast_threshold_secs"
+	return 0
+}
+
+_execute_metrics_analysis() {
+	local role_filter="$1"
+	local hours="$2"
+	local model_filter="$3"
+	local fast_threshold_secs="$4"
+
 	ROLE_FILTER="$role_filter" HOURS="$hours" MODEL_FILTER="$model_filter" FAST_THRESHOLD_SECS="$fast_threshold_secs" METRICS_PATH="$METRICS_FILE" python3 - <<'PY'
 import json
 import os
@@ -1823,10 +1837,33 @@ cmd_run() {
 	local model_override=""
 	local agent_name=""
 	local headless_runtime=""
+	local detach=0
 	local -a extra_args=()
 
 	_parse_run_args "$@" || return 1
 	_validate_run_args || return 1
+
+	if [[ "$detach" -eq 1 ]]; then
+		# Self-daemonize: fork a child to handle the full lifecycle,
+		# redirect its own stdout/stderr to a log file, and return
+		# the child PID immediately.
+		local log_file="/tmp/worker-${session_key}.log"
+		print_info "Detaching worker (log: $log_file)"
+		(
+			# Detach from terminal and redirect all output
+			exec </dev/null >"$log_file" 2>&1
+			# Re-invoke the script without --detach to avoid recursion
+			local -a filtered_args=()
+			for arg in "$@"; do
+				[[ "$arg" == "--detach" ]] && continue
+				filtered_args+=("$arg")
+			done
+			"$0" run "${filtered_args[@]}"
+		) &
+		local child_pid=$!
+		print_info "Dispatched PID: $child_pid"
+		return 0
+	fi
 
 	if [[ "$role" == "worker" ]]; then
 		prompt=$(append_worker_headless_contract "$prompt")
@@ -1897,7 +1934,7 @@ headless-runtime-helper.sh - Model-aware headless runtime (OpenCode default, Cla
 
 Usage:
   headless-runtime-helper.sh select [--role pulse|worker] [--model provider/model]
-  headless-runtime-helper.sh run --role pulse|worker --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG]
+  headless-runtime-helper.sh run --role pulse|worker --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG] [--detach]
   headless-runtime-helper.sh backoff [status|set MODEL-OR-PROVIDER REASON [SECONDS]|clear MODEL-OR-PROVIDER]
   headless-runtime-helper.sh session [status|clear PROVIDER SESSION_KEY]
   headless-runtime-helper.sh metrics [--role pulse|worker] [--hours N] [--model SUBSTRING] [--fast-threshold N]

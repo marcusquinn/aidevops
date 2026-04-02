@@ -1,0 +1,179 @@
+# Platform Support
+
+aidevops runs on macOS (primary) and Linux (including WSL2 on Windows).
+
+## Supported Platforms
+
+| Platform | Status | Scheduler | Notes |
+|----------|--------|-----------|-------|
+| macOS 12+ | Full | launchd | Primary development platform |
+| Ubuntu 22.04+ | Full | systemd / cron | Native Linux and WSL2 |
+| Debian 11+ | Full | systemd / cron | |
+| Fedora 38+ | Full | systemd / cron | |
+| Arch Linux | Full | systemd / cron | |
+| WSL2 (Ubuntu) | Full | systemd / cron | Recommended Windows path |
+| Windows (native) | Not supported | — | Use WSL2 instead |
+
+## WSL2 Getting Started (Windows)
+
+WSL2 runs a real Linux kernel inside Windows. It is the recommended path for Windows users — native Windows (PowerShell) is not supported.
+
+### 1. Install WSL2
+
+Open PowerShell as Administrator:
+
+```powershell
+wsl --install
+```
+
+This installs Ubuntu by default. Restart when prompted.
+
+### 2. Open a WSL2 terminal
+
+Launch "Ubuntu" from the Start menu, or run `wsl` in PowerShell.
+
+### 3. Install Homebrew (recommended) or use apt
+
+Homebrew on Linux provides the same package names as macOS:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+Follow the post-install instructions to add brew to your PATH.
+
+Alternatively, use apt directly — aidevops detects and uses it automatically.
+
+### 4. Install aidevops
+
+```bash
+# Via npm (recommended)
+npm install -g aidevops && aidevops update
+
+# Via Homebrew tap
+brew install marcusquinn/tap/aidevops && aidevops update
+
+# Manual
+bash <(curl -fsSL https://aidevops.sh/install)
+```
+
+### 5. Run setup
+
+```bash
+./setup.sh
+```
+
+Setup detects Linux/WSL2 automatically and uses the appropriate scheduler.
+
+---
+
+## Platform Detection
+
+aidevops includes a platform detection helper at `.agents/scripts/platform-detect.sh`.
+
+Source it to get platform-specific variables:
+
+```bash
+source ~/.aidevops/agents/scripts/platform-detect.sh
+
+echo "$AIDEVOPS_PLATFORM"   # macos | linux | wsl2 | windows-native
+echo "$AIDEVOPS_SCHEDULER"  # launchd | systemd | cron
+```
+
+### Exported variables
+
+| Variable | macOS | Linux (systemd) | Linux (no systemd) | WSL2 |
+|----------|-------|-----------------|-------------------|------|
+| `AIDEVOPS_PLATFORM` | `macos` | `linux` | `linux` | `wsl2` |
+| `AIDEVOPS_SCHEDULER` | `launchd` | `systemd` | `cron` | `systemd` or `cron` |
+| `AIDEVOPS_CLIPBOARD_COPY` | `pbcopy` | `xclip -selection clipboard` | `xclip ...` or empty | `clip.exe` |
+| `AIDEVOPS_CLIPBOARD_PASTE` | `pbpaste` | `xclip -selection clipboard -o` | ... | `powershell.exe -c Get-Clipboard` |
+| `AIDEVOPS_OPEN_CMD` | `open` | `xdg-open` | `xdg-open` | `wslview` |
+| `AIDEVOPS_FILE_SEARCH` | `mdfind` | `fd` | `fd` or `locate` | `fd` |
+| `AIDEVOPS_PKG_INSTALL` | `brew install` | `sudo apt-get install -y` | varies | `sudo apt-get install -y` |
+
+---
+
+## Scheduler Backends
+
+### macOS — launchd
+
+The pulse and other scheduled tasks run as LaunchAgents in `~/Library/LaunchAgents/`.
+
+- Label prefix: `com.aidevops.*`
+- Manage: `launchctl list | grep aidevops`
+- Disable pulse: `aidevops config set orchestration.supervisor_pulse false && ./setup.sh`
+
+### Linux — systemd user services (preferred)
+
+When `systemctl --user status` succeeds, aidevops installs systemd user timers:
+
+- Service files: `~/.config/systemd/user/aidevops-*.{service,timer}`
+- List: `systemctl --user list-timers | grep aidevops`
+- Disable pulse: `systemctl --user disable --now aidevops-supervisor-pulse.timer`
+
+systemd is preferred over cron because it supports `Restart=on-failure`, journal logging, and dependency ordering.
+
+### Linux — cron (fallback)
+
+Used when systemd user services are unavailable (containers, older distros, WSL2 without systemd).
+
+- List: `crontab -l | grep aidevops`
+- Disable pulse: `crontab -e` and remove the `supervisor-pulse` line
+
+---
+
+## Known Limitations on Linux/WSL2
+
+| Feature | macOS | Linux | Notes |
+|---------|-------|-------|-------|
+| Clipboard auto-copy | pbcopy | xclip / xsel / wl-copy | Install `xclip` for clipboard support |
+| Open URL | `open` | `xdg-open` | Works in desktop Linux; no-op in headless |
+| Spotlight search | mdfind | fd / locate | `fd` recommended |
+| Apple Mail integration | Full | Not available | macOS-only (Contacts.app, Calendar.app) |
+| osascript / AppleScript | Full | Not available | macOS-only |
+| Reminders.app | Full | todoman (via caldav) | Different backend |
+| Calendar.app | Full | khal (via caldav) | Different backend |
+| Contacts.app | Full | khard (via carddav) | Different backend |
+| OrbStack VMs | macOS only | N/A | Use native Docker on Linux |
+| MiniSim | macOS only | N/A | iOS/Android emulator launcher |
+| ClaudeBar | macOS only | N/A | Menu bar quota monitor |
+
+---
+
+## Installing Clipboard Tools on Linux
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install -y xclip
+
+# Fedora
+sudo dnf install -y xclip
+
+# Arch
+sudo pacman -S xclip
+
+# Wayland (use wl-clipboard instead)
+sudo apt-get install -y wl-clipboard
+```
+
+---
+
+## Enabling systemd in WSL2
+
+By default, WSL2 Ubuntu 22.04+ supports systemd. Enable it if not already active:
+
+```bash
+# Check if systemd is running
+systemctl --user status
+
+# If not running, enable it in /etc/wsl.conf
+echo -e "[boot]\nsystemd=true" | sudo tee /etc/wsl.conf
+# Then restart WSL: wsl --shutdown (from PowerShell), then reopen Ubuntu
+```
+
+---
+
+## CI/CD
+
+The GitHub Actions CI runs on both `ubuntu-latest` and `macos-latest` to catch platform regressions. See `.github/workflows/code-quality.yml`.

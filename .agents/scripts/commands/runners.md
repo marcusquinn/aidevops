@@ -42,36 +42,29 @@ gh issue view 42 --repo user/repo --json number,title,url
 
 Launch each worker via `headless-runtime-helper.sh run` — the **ONLY** valid dispatch path. It builds the lifecycle prompt, handles provider rotation, preserves sessions, and applies backoff. NEVER use bare `opencode run` or workers may stop after PR creation (GH#5096).
 
+Use the `--detach` flag to self-daemonize the worker and return control to the calling agent immediately. This is the preferred pattern for agent-to-agent dispatch.
+
 ```bash
 AGENTS_DIR="$(aidevops config get paths.agents_dir)"
 HELPER="${AGENTS_DIR/#\~/$HOME}/scripts/headless-runtime-helper.sh"
 
 # Code task (Build+ is default; omit --agent)
 $HELPER run \
+  --detach \
   --role worker \
   --session-key "task-t083" \
   --dir ~/Git/<repo> \
   --title "t083: <description>" \
-  --prompt "/full-loop t083 -- <description>" &
-sleep 2
+  --prompt "/full-loop t083 -- <description>"
+# Returns immediately with: "Dispatched PID: 12345"
+```
 
-# Specialist or operational task (no /full-loop)
-$HELPER run \
-  --role worker \
-  --session-key "seo-weekly" \
-  --dir ~/Git/<repo> \
-  --agent SEO \
-  --title "Weekly rankings" \
-  --prompt "/seo-export --account client-a --format summary" &
-sleep 2
+### Manual Redirection (Legacy)
 
-# Issue dispatch
-$HELPER run \
-  --role worker \
-  --session-key "issue-42" \
-  --dir ~/Git/<repo> \
-  --title "Issue #42: <title>" \
-  --prompt "/full-loop Implement issue #42 (https://github.com/user/repo/issues/42) -- <description>" &
+If using an older version of `aidevops` without `--detach`, redirect at the caller level to avoid blocking the interactive session:
+
+```bash
+$HELPER run ... </dev/null >>/tmp/worker-${session_key}.log 2>&1 &
 sleep 2
 ```
 
@@ -80,8 +73,8 @@ sleep 2
 - `--dir ~/Git/<repo-name>` must match the target repo
 - `--agent <name>` routes to a specialist; omit it for code tasks (Build+ default)
 - `/full-loop` only for tasks needing repo code changes and PR traceability
+- `--detach` is recommended for agent-to-agent dispatch to avoid blocking
 - Do NOT add `--model` unless escalation is required by workflow policy
-- Background each dispatch with `&`, then `sleep 2`, to avoid thundering herd
 
 ## Step 3: Show Dispatch Table
 
