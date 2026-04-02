@@ -119,7 +119,7 @@ detect_repo_slug() {
 	return 0
 }
 
-# --- Validate PR belongs to task (mirrors supervisor-helper.sh:5110) ----------
+# --- Validate PR belongs to task ----------
 
 validate_pr_belongs_to_task() {
 	local task_id="$1"
@@ -177,7 +177,7 @@ validate_pr_belongs_to_task() {
 	return 1
 }
 
-# --- Write proof log entry (mirrors supervisor-helper.sh:264) -----------------
+# --- Write proof log entry -----------------
 
 write_proof_log() {
 	local task_id="$1"

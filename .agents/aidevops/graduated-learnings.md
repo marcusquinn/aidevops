@@ -38,7 +38,7 @@ Graduated by `memory-graduate-helper.sh`. Usage: `memory-helper.sh graduate [can
 - Memory daemon should auto-extract learnings from thinking blocks when sessions end *(medium, 5x)*
 - OpenCode: `prompt` field in `opencode.json` replaces (not appends) `anthropic_default`. All active agents must have `build.txt` set or fall back to upstream `anthropic.txt`, losing aidevops overrides *(high, 1x)*
 - Task ID collision: t264 assigned by two sessions simultaneously (PR #1040 vs version-manager fix). Prevention: `git pull` and re-read TODO.md before assigning IDs *(high, 1x)*
-- Stale TODO.md: completed tasks (t231 PR #955, t247 subtasks, t259 PR #1020) remain open because `update_todo_on_complete()` only runs post-PR. Fix: run `supervisor-helper.sh reconcile-todo` periodically; workers check if work is done and report `task_obsolete` *(high, 0x)*
+- Stale TODO.md: completed tasks (t231 PR #955, t247 subtasks, t259 PR #1020) remain open because `update_todo_on_complete()` only runs post-PR. Fix: use `task-complete-helper.sh` for reconciliation; workers check if work is done and report `task_obsolete` *(high, 0x)*
 - [task:feature] t136.5: Scaffold aidevops-pro/anon repos | PR #792 | [model:opus] [duration:1206s] *(medium, 51x)*
 
 ## Solutions & Fixes

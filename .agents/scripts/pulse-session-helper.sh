@@ -196,16 +196,12 @@ is_scheduler_installed() {
 # Returns: the appropriate install command string
 #######################################
 get_scheduler_install_cmd() {
-	local os_type
-	os_type=$(uname -s)
-	case "$os_type" in
-	Darwin)
-		echo "supervisor-helper.sh cron install"
-		;;
-	*)
-		echo "supervisor-helper.sh cron install"
-		;;
-	esac
+	local setup_script="${SCRIPT_DIR}/../../setup.sh"
+	if [[ -f "$setup_script" ]]; then
+		echo "$setup_script"
+	else
+		echo "aidevops update"
+	fi
 	return 0
 }
 
@@ -585,7 +581,14 @@ _status_print_process() {
 	else
 		local idle_scheduler_name
 		idle_scheduler_name=$(get_scheduler_name)
-		echo -e "  Process:     ${BLUE}idle${NC} (waiting for next ${idle_scheduler_name} cycle)"
+		if is_scheduler_installed; then
+			echo -e "  Process:     ${BLUE}idle${NC} (waiting for next ${idle_scheduler_name} cycle)"
+		else
+			echo -e "  Process:     ${RED}idle${NC} (scheduler: NOT INSTALLED)"
+			local install_cmd
+			install_cmd=$(get_scheduler_install_cmd)
+			echo -e "               Install with: ${install_cmd}"
+		fi
 	fi
 	return 0
 }

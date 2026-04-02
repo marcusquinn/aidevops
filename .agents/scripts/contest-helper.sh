@@ -129,7 +129,7 @@ sql_escape() {
 ensure_contest_tables() {
 	if [[ ! -f "$SUPERVISOR_DB" ]]; then
 		log_error "Supervisor DB not found: $SUPERVISOR_DB"
-		log_error "Run 'supervisor-helper.sh init' first"
+		log_error "Supervisor DB not found at $SUPERVISOR_DB — run 'aidevops pulse start' to initialize"
 		return 1
 	fi
 
@@ -502,11 +502,12 @@ _dispatch_single_entry() {
 	local crepo="$6"
 	local cbatch_id="$7"
 
-	local supervisor_helper="${SCRIPT_DIR}/supervisor-helper.sh"
+	local supervisor_helper="${SCRIPT_DIR}/pulse-wrapper.sh"
 
 	log_info "Dispatching contest entry: $entry_id (model: $entry_model)"
 
 	# Add subtask to supervisor DB with the specific model
+	# NOTE: supervisor-helper.sh was removed; pulse-wrapper.sh is the successor
 	if ! "$supervisor_helper" add "$entry_task_id" \
 		--repo "${crepo:-.}" \
 		--description "Contest entry for $ctask_id: $cdesc" \
@@ -1388,7 +1389,7 @@ cmd_apply() {
 	while IFS=$'\t' read -r loser_task _loser_wt; do
 		[[ -z "$loser_task" ]] && continue
 		log_info "Cancelling losing entry task: $loser_task"
-		"${SCRIPT_DIR}/supervisor-helper.sh" cancel "$loser_task" 2>/dev/null || true
+		"${SCRIPT_DIR}/pulse-wrapper.sh" cancel "$loser_task" 2>/dev/null || true
 	done <<<"$losers"
 
 	log_success "Applied contest winner: $cwinner_model for task $ctask_id"

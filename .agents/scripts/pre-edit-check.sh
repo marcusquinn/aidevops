@@ -472,7 +472,7 @@ else
 				task_assignee=""
 				task_assignee=$(echo "$task_line" | grep -oE 'assignee:[A-Za-z0-9._@-]+' | head -1 | sed 's/^assignee://' || true)
 				if [[ -n "$task_assignee" ]]; then
-					# Must match get_aidevops_identity() in supervisor-helper.sh
+					# Must match get_aidevops_identity() in pulse-session-helper.sh
 					my_identity="${AIDEVOPS_IDENTITY:-$(whoami 2>/dev/null || echo unknown)@$(hostname -s 2>/dev/null || echo local)}"
 					if [[ "$task_assignee" != "$my_identity" ]]; then
 						echo -e "${YELLOW}WARNING${NC}: Task $task_id_from_branch is claimed by assignee:$task_assignee"

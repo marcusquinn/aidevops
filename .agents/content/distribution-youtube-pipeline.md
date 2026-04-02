@@ -86,37 +86,27 @@ Add to TODO.md for the supervisor:
 - [ ] yt-optimize YouTube metadata optimization @runner #youtube ~20m blocked-by:yt-scripts
 ```
 
-### Step 3: Create Supervisor Batch
+### Step 3: Add Tasks to TODO.md
 
-```bash
-supervisor-helper.sh add yt-intel --repo "$(pwd)" \
-  --description "Scan competitor channels for new videos and outliers"
+Add tasks with auto-dispatch tags so the pulse picks them up:
 
-supervisor-helper.sh add yt-research --repo "$(pwd)" \
-  --description "Analyze content gaps and trending topics from intel data"
-
-supervisor-helper.sh add yt-scripts --repo "$(pwd)" \
-  --description "Generate draft scripts for top 3 topic opportunities"
-
-supervisor-helper.sh add yt-optimize --repo "$(pwd)" \
-  --description "Generate titles, tags, descriptions for draft scripts"
-
-# Sequential execution (respects dependencies)
-supervisor-helper.sh batch "youtube-daily" \
-  --concurrency 1 \
-  --tasks "yt-intel,yt-research,yt-scripts,yt-optimize"
+```markdown
+- [ ] yt-intel Scan competitor channels for new videos and outliers @runner #youtube #auto-dispatch ~30m
+- [ ] yt-research Analyze content gaps and trending topics from intel data @runner #youtube #auto-dispatch ~30m blocked-by:yt-intel
+- [ ] yt-scripts Generate draft scripts for top 3 topic opportunities @runner #youtube #auto-dispatch ~30m blocked-by:yt-research
+- [ ] yt-optimize Generate titles, tags, descriptions for draft scripts @runner #youtube #auto-dispatch ~20m blocked-by:yt-scripts
 ```
 
-### Step 4: Install Cron
+### Step 4: Enable the Pulse
 
 ```bash
-# Install supervisor cron pulse (checks every 2 minutes)
-supervisor-helper.sh cron install
+# Enable the supervisor pulse (checks every 2 minutes)
+aidevops pulse start
 
 # Or add a specific YouTube pipeline cron (daily at 6 AM)
 cron-helper.sh add "youtube-pipeline" \
   --schedule "0 6 * * *" \
-  --command "supervisor-helper.sh pulse --batch youtube-daily"
+  --command "pulse-wrapper.sh"
 ```
 
 ## Worker Instructions
@@ -189,8 +179,7 @@ Each worker receives these prompts via the supervisor:
 
 ```bash
 # Pipeline status and quota
-supervisor-helper.sh dashboard --batch youtube-daily
-supervisor-helper.sh status youtube-daily
+aidevops pulse status
 youtube-helper.sh quota
 mail-helper.sh check
 
@@ -216,7 +205,7 @@ With 10,000 daily quota units, the full pipeline can run daily with ~9,700 units
 
 | Issue | Solution |
 |-------|----------|
-| Worker fails to start | Check `supervisor-helper.sh status` for error messages |
+| Worker fails to start | Check `aidevops pulse status` for error messages |
 | Quota exceeded | Check `youtube-helper.sh quota`, reduce search calls |
 | Memory not persisting | Verify `memory-helper.sh stats` shows entries |
 | Stale competitor data | Run `youtube-helper.sh channel @handle` manually to verify API access |
@@ -251,4 +240,4 @@ With 10,000 daily quota units, the full pipeline can run daily with ~9,700 units
 - `optimizer.md` — Worker 4 detailed instructions
 - `tools/ai-assistants/headless-dispatch.md` — Supervisor architecture
 - `tools/automation/cron-agent.md` — Cron job configuration
-- `scripts/supervisor-helper.sh` — Supervisor CLI reference
+- `scripts/pulse-wrapper.sh` — Pulse orchestration CLI reference

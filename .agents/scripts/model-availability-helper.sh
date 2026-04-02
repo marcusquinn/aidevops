@@ -23,7 +23,7 @@
 #   --ttl N       Override cache TTL in seconds (default: 300)
 #
 # Integration:
-#   - Called by supervisor-helper.sh before dispatch (replaces inline health check)
+#   - Called by pulse-wrapper.sh before dispatch (replaces inline health check)
 #   - Uses direct HTTP API calls (~1-2s) instead of full AI CLI sessions (~8s)
 #   - Reads API keys from: env vars > gopass > credentials.sh
 #   - Cache: SQLite at ~/.aidevops/.agent-workspace/model-availability.db

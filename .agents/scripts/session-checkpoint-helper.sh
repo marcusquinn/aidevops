@@ -427,7 +427,7 @@ _gather_continuation_state() {
 
 	# Supervisor batch state
 	_cont_batch_state="none"
-	local supervisor_helper="${SCRIPT_DIR}/supervisor-helper.sh"
+	local supervisor_helper="${SCRIPT_DIR}/pulse-wrapper.sh"
 	if [[ -x "$supervisor_helper" ]]; then
 		_cont_batch_state="$(bash "$supervisor_helper" list --active 2>/dev/null || echo "none")"
 	fi
@@ -577,7 +577,7 @@ cmd_auto_save() {
 
 	# Auto-detect batch from supervisor if not provided
 	local batch=""
-	local supervisor_helper="${SCRIPT_DIR}/supervisor-helper.sh"
+	local supervisor_helper="${SCRIPT_DIR}/pulse-wrapper.sh"
 	if [[ -x "$supervisor_helper" ]]; then
 		batch="$(bash "$supervisor_helper" list --active --format=id 2>/dev/null | head -1 || echo "")"
 	fi
