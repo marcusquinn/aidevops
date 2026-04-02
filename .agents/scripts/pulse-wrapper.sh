@@ -8472,18 +8472,22 @@ dispatch_triage_reviews() {
 		[[ -n "$issue_num" && -n "$repo_slug" ]] || continue
 		[[ "$available" -gt 0 && "$triage_count" -lt "$triage_max" ]] || break
 
-		local model_args=()
 		if [[ -n "$resolved_model" ]]; then
-			model_args=(--model "$resolved_model")
+			~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
+				--role worker \
+				--session-key "triage-review-${issue_num}" \
+				--dir "$repo_path" \
+				--model "$resolved_model" \
+				--title "Triage review: Issue #${issue_num}" \
+				--prompt "/review-issue-pr ${issue_num}" </dev/null >>"/tmp/pulse-triage-${issue_num}.log" 2>&1 &
+		else
+			~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
+				--role worker \
+				--session-key "triage-review-${issue_num}" \
+				--dir "$repo_path" \
+				--title "Triage review: Issue #${issue_num}" \
+				--prompt "/review-issue-pr ${issue_num}" </dev/null >>"/tmp/pulse-triage-${issue_num}.log" 2>&1 &
 		fi
-
-		~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
-			--role worker \
-			--session-key "triage-review-${issue_num}" \
-			--dir "$repo_path" \
-			"${model_args[@]}" \
-			--title "Triage review: Issue #${issue_num}" \
-			--prompt "/review-issue-pr ${issue_num}" </dev/null >>"/tmp/pulse-triage-${issue_num}.log" 2>&1 &
 		sleep 2
 
 		triage_count=$((triage_count + 1))
