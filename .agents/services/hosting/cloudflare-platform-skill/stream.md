@@ -48,16 +48,6 @@ curl -X POST \
   -d '{"recording": {"mode": "automatic"}}'
 ```
 
-## Key Limits and Pricing
-
-| Item | Value |
-|------|-------|
-| Max file size | 30 GB |
-| Max frame rate | 60 fps recommended |
-| Supported formats | MP4, MKV, MOV, AVI, FLV, MPEG-2 TS/PS, MXF, LXF, GXF, 3GP, WebM, MPG, QuickTime |
-| Storage pricing | $5/1000 min stored |
-| Delivery pricing | $1/1000 min delivered |
-
 ## Resources
 
 - Dashboard: https://dash.cloudflare.com/?to=/:account/stream

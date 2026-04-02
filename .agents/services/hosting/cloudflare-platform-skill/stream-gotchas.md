@@ -83,8 +83,8 @@ async function uploadWithErrorHandling(url: string, file: File) {
 
 ## In This Reference
 
-- [README.md](./README.md) — Overview and quick start
-- [patterns.md](./patterns.md) — Full-stack flows, best practices
+- [stream.md](./stream.md) — Overview and quick start
+- [stream-patterns.md](./stream-patterns.md) — Full-stack flows, best practices
 
 ## See Also
 
