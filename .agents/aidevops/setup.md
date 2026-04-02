@@ -18,18 +18,11 @@ tools:
 ## Quick Reference
 
 - **Script**: `~/Git/aidevops/setup.sh`
-- **Purpose**: Deploy aidevops agents to `~/.aidevops/agents/`
 - **Run**: `cd ~/Git/aidevops && ./setup.sh`
 - **Update**: `git pull && ./setup.sh` (backs up existing configs automatically)
 - **Agents**: `~/.aidevops/agents/` | **Backups**: `~/.aidevops/config-backups/` | **Credentials**: `~/.config/aidevops/credentials.sh`
 
-**What setup.sh does**:
-
-1. Checks required deps: `jq`, `curl`, `ssh`, `sqlite3` (FTS5 memory system)
-2. Checks optional deps: `sshpass` (Hostinger SSH), `gh`, `glab`, `tea`
-3. Copies `.agents/` → `~/.aidevops/agents/`; backs up existing configs to `~/.aidevops/config-backups/[timestamp]/`
-4. Injects `Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.` into `~/.opencode/AGENTS.md`, `~/.cursor/AGENTS.md`, `~/.claude/AGENTS.md`, `~/.config/cursor/AGENTS.md`
-5. Updates OpenCode agent paths in `~/.config/opencode/opencode.json`
+**What setup.sh does**: checks required deps (`jq`, `curl`, `ssh`, `sqlite3`) and optional deps (`sshpass`, `gh`, `glab`, `tea`); copies `.agents/` → `~/.aidevops/agents/` with timestamped config backups; injects AGENTS.md pointer into `~/.opencode/AGENTS.md`, `~/.cursor/AGENTS.md`, `~/.claude/AGENTS.md`, `~/.config/cursor/AGENTS.md`; updates OpenCode agent paths in `~/.config/opencode/opencode.json`.
 
 <!-- AI-CONTEXT-END -->
 
