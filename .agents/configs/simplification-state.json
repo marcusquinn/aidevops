@@ -782,13 +782,20 @@
       "passes": 1,
       "pr": 13339
     },
-    ".agents/marketing-sales/cro-chapter-18.md": {
-      "at": "2026-04-01T20:59:11Z",
-      "hash": "4111c2a2ec25f39fecd814fc065f58ac91c263b0",
-      "passes": 1,
-      "pr": 15220
-    },
-    ".agents/marketing-sales/cro-chapter-20.md": {
+  ".agents/marketing-sales/cro-chapter-18.md": {
+    "at": "2026-04-01T20:59:11Z",
+    "hash": "4111c2a2ec25f39fecd814fc065f58ac91c263b0",
+    "passes": 1,
+    "pr": 15220
+  },
+  ".agents/marketing-sales/cro-chapter-19.md": {
+    "at": "2026-04-02T20:51:07Z",
+    "hash": "57c88fea52a008b1e08e1e4427f363ea9a9ddbdc56e86c36655bf8da7fd59f3e",
+    "issue": "GH#14286",
+    "passes": 1,
+    "note": "Reference corpus chapter tightened: 92 → 90 lines. Removed decorative closing sentence with no information value. Zero content loss."
+  },
+  ".agents/marketing-sales/cro-chapter-20.md": {
       "at": "2026-03-29T16:34:29Z",
       "hash": "07aa1e83fefdc10d56b044961da2976b1e693895",
       "passes": 1,

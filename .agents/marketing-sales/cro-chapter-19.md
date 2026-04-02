@@ -88,5 +88,3 @@ Place primary actions in easy-to-reach areas.
 - Preview video
 - Ratings and reviews
 - App description
-
-This chapter covers advanced tactics for sophisticated CRO programs.
