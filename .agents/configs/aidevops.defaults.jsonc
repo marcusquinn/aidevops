@@ -134,7 +134,15 @@
     // Empty string keeps the shared round-robin/default behavior.
     // Example local opt-in: "openai/gpt-5.4"
     // Env override: AIDEVOPS_HEADLESS_MODELS
-    "headless_models": ""
+    "headless_models": "",
+
+    // Seconds of unchanged backlog before triggering an LLM supervisor session.
+    // The deterministic fill floor handles routine dispatch every 2-min cycle;
+    // the LLM supervisor only adds value for edge cases (CHANGES_REQUESTED PRs,
+    // external contributor triage, semantic dedup, stale coaching).
+    // Lower = more LLM sessions (higher token cost), higher = more autonomous.
+    // Env override: PULSE_LLM_STALL_THRESHOLD
+    "llm_stall_threshold": 3600
   },
 
   // ---------------------------------------------------------------------------

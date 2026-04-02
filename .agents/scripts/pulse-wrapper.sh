@@ -6786,8 +6786,8 @@ _Closed by deterministic merge pass (pulse-wrapper.sh)._" 2>/dev/null || true
 #   ${PULSE_DIR}/backlog_snapshot.txt    — "epoch issues_count prs_count"
 #   ${PULSE_DIR}/llm_trigger_mode        — last trigger reason (daily_sweep|stall|first_run)
 #######################################
-PULSE_LLM_STALL_THRESHOLD="${PULSE_LLM_STALL_THRESHOLD:-1800}" # 30 min
-PULSE_LLM_DAILY_INTERVAL="${PULSE_LLM_DAILY_INTERVAL:-86400}"  # 24h
+PULSE_LLM_STALL_THRESHOLD="${PULSE_LLM_STALL_THRESHOLD:-$(config_get "orchestration.llm_stall_threshold" "3600")}" # 1h (was 30 min; deterministic fill floor handles routine dispatch)
+PULSE_LLM_DAILY_INTERVAL="${PULSE_LLM_DAILY_INTERVAL:-86400}"                                                      # 24h
 
 _should_run_llm_supervisor() {
 	local now_epoch
