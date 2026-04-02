@@ -15,28 +15,15 @@ tools:
 
 # SRO Grounding
 
-Selection Rate Optimization (SRO): whether a source gets selected into grounded context, not only whether it ranks.
-
-## Quick Reference
-
-- **Purpose**: improve source selection share in AI retrieval pipelines
-- **Core metric**: Selection Rate (selected appearances / available retrieval opportunities)
-- **Inputs**: query themes, ranked pages, extracted snippets, page structure and copy
-- **Outputs**: snippet optimization recommendations, structural cleanup, SRO test plan
-
-## Working Model
-
-- AI retrieval works with fixed context budgets — higher-relevance sources get larger share
-- Long pages suffer low content survival when key facts are buried
-- Domain-scoped probes (`site:brand.com ...`) depend on page metadata matching category/feature modifiers
+Selection Rate Optimization (SRO): whether a source gets selected into grounded context, not only whether it ranks. AI retrieval works with fixed context budgets — higher-relevance sources get larger share. Long pages suffer low content survival when key facts are buried. Domain-scoped probes (`site:brand.com ...`) depend on page metadata matching category/feature modifiers.
 
 ## SRO Workflow
 
-1. **Baseline** — collect snippets for representative intents; tag type (lead paragraph, list item, heading-adjacent, table row); identify what wins vs never survives
+1. **Baseline** — collect snippets for representative intents; tag snippet type; identify what wins vs never survives
 2. **Improve snippet fitness** — rewrite critical statements as standalone factual sentences; move essential facts to top-of-page; reduce context dependency
 3. **Reduce structural noise** — minimize boilerplate near top content blocks; keep heading hierarchy clean; avoid decorative text competing with facts
 4. **Cover fan-out angles** — map sub-questions retrieval systems may dispatch per intent; ensure concise answers for each angle; add internal links to deeper evidence
-5. **Validate** — re-run same intent set after updates; compare snippet quality, coverage breadth, citation persistence; keep SRO changelog tied to page revisions; re-test after index/model updates (grounding behavior is transient)
+5. **Validate** — re-run same intent set after updates; compare snippet quality, coverage breadth, citation persistence; re-test after index/model updates (grounding behavior is transient)
 
 ## Content Rules
 
