@@ -22,13 +22,9 @@ tools:
 
 ## Usage
 
-### Basic Crawl
-
 ```bash
 screamingfrogseospider --crawl https://example.com --headless --output-folder ./reports
 ```
-
-### Configuration & Export
 
 - **Load Config**: `--config profile.seospiderconfig` (save from GUI first).
 - **Export Tabs**: `--export-tabs "Internal:All,Response Codes:All"`
