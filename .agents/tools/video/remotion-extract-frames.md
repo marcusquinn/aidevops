@@ -10,7 +10,7 @@ metadata:
 
 Use [Mediabunny](https://mediabunny.dev) to extract frames at specific timestamps for thumbnails, filmstrips, and per-frame processing.
 
-## `extractFrames(props)`
+## API
 
 | Prop | Type | Required | Description |
 |------|------|----------|-------------|
@@ -18,6 +18,8 @@ Use [Mediabunny](https://mediabunny.dev) to extract frames at specific timestamp
 | `timestampsInSeconds` | `number[]` \| `(opts) => Promise<number[]>` | Yes | Fixed list or callback receiving `{track, container, durationInSeconds}` |
 | `onVideoSample` | `(sample: VideoSample) => void` | Yes | Called for each decoded frame |
 | `signal` | `AbortSignal` | No | Cancel in-flight extraction |
+
+## Implementation
 
 ```tsx
 import {
@@ -109,7 +111,6 @@ await extractFrames({
     return timestamps;
   },
   onVideoSample: (sample) => {
-    // Render to canvas (see Basic usage above)
     sample.draw(document.createElement("canvas").getContext("2d")!, 0, 0);
   },
 });
