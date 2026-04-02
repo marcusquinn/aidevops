@@ -31,15 +31,11 @@ pip install rebrowser-playwright          # Drop-in replacement (Python)
 npx rebrowser-patches@latest unpatch     # Restore original
 ```
 
-**Node.js:**
-
 ```javascript
 import { chromium } from 'rebrowser-playwright';  // or 'playwright' after patching
 const browser = await chromium.launch({ headless: true, args: ['--disable-blink-features=AutomationControlled'] });
 const context = await browser.newContext({ viewport: { width: 1920, height: 1080 }, userAgent: '<realistic UA string>' });
 ```
-
-**Python:**
 
 ```python
 from rebrowser_playwright.sync_api import sync_playwright  # or playwright after patching
@@ -48,7 +44,7 @@ with sync_playwright() as p:
     context = browser.new_context(viewport={'width': 1920, 'height': 1080}, user_agent='<realistic UA string>')
 ```
 
-## playwright-stealth (Python)
+## playwright-stealth
 
 JS-level evasions cover `navigator.webdriver`, plugins, languages, `chrome.runtime`, `window.chrome`, Permissions API, iframe detection, WebGL, and `hardwareConcurrency`.
 
