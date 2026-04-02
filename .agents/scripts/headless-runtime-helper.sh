@@ -1279,7 +1279,7 @@ _invoke_opencode() {
 			timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" "${cmd[@]}" 2>&1 | tee "$output_file"
 			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
 		fi
-	) >/dev/null 2>&1 &
+	) &
 	local worker_pid=$!
 
 	# Activity watchdog: monitor the output file for LLM activity.
