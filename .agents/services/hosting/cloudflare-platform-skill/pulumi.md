@@ -1,18 +1,8 @@
 # Cloudflare Pulumi Provider
 
-Expert guidance for Cloudflare Pulumi Provider (@pulumi/cloudflare).
+Programmatic management of Cloudflare resources via `@pulumi/cloudflare` v6.x: Workers, Pages, D1, KV, R2, DNS, Queues, etc.
 
-## Overview
-
-Programmatic management of Cloudflare resources: Workers, Pages, D1, KV, R2, DNS, Queues, etc.
-
-**Packages:**
-- TypeScript/JS: `@pulumi/cloudflare`
-- Python: `pulumi-cloudflare`
-- Go: `github.com/pulumi/pulumi-cloudflare/sdk/v6/go/cloudflare`
-- .NET: `Pulumi.Cloudflare`
-
-**Version:** v6.x
+**Packages:** TypeScript/JS: `@pulumi/cloudflare` | Python: `pulumi-cloudflare` | Go: `github.com/pulumi/pulumi-cloudflare/sdk/v6/go/cloudflare` | .NET: `Pulumi.Cloudflare`
 
 ## Core Principles
 
@@ -24,40 +14,31 @@ Programmatic management of Cloudflare resources: Workers, Pages, D1, KV, R2, DNS
 
 ## Authentication
 
-Three methods (mutually exclusive):
+Three methods (mutually exclusive). Preferred: API Token.
 
-**1. API Token (Recommended)**
+| Method | Env vars |
+|--------|----------|
+| API Token (recommended) | `CLOUDFLARE_API_TOKEN` |
+| API Key (legacy) | `CLOUDFLARE_API_KEY`, `CLOUDFLARE_EMAIL` |
+| API User Service Key | `CLOUDFLARE_API_USER_SERVICE_KEY` |
 
 ```typescript
-import * as cloudflare from "@pulumi/cloudflare";
-
+// API Token (recommended)
 const provider = new cloudflare.Provider("cf", {
     apiToken: process.env.CLOUDFLARE_API_TOKEN,
 });
-```
 
-Env: `CLOUDFLARE_API_TOKEN`
-
-**2. API Key (Legacy)**
-
-```typescript
+// API Key (legacy)
 const provider = new cloudflare.Provider("cf", {
     apiKey: process.env.CLOUDFLARE_API_KEY,
     email: process.env.CLOUDFLARE_EMAIL,
 });
-```
 
-Env: `CLOUDFLARE_API_KEY`, `CLOUDFLARE_EMAIL`
-
-**3. API User Service Key**
-
-```typescript
+// API User Service Key
 const provider = new cloudflare.Provider("cf", {
     apiUserServiceKey: process.env.CLOUDFLARE_API_USER_SERVICE_KEY,
 });
 ```
-
-Env: `CLOUDFLARE_API_USER_SERVICE_KEY`
 
 ## Setup
 
@@ -71,7 +52,7 @@ config:
     value: ${CLOUDFLARE_API_TOKEN}
 ```
 
-**Pulumi.<stack>.yaml:**
+**Pulumi.\<stack\>.yaml:**
 
 ```yaml
 config:
@@ -86,13 +67,6 @@ import * as cloudflare from "@pulumi/cloudflare";
 
 const config = new pulumi.Config("cloudflare");
 const accountId = config.require("accountId");
-```
-
-## Essential Imports
-
-```typescript
-import * as pulumi from "@pulumi/pulumi";
-import * as cloudflare from "@pulumi/cloudflare";
 ```
 
 ## Common Resource Types
@@ -116,4 +90,5 @@ import * as cloudflare from "@pulumi/cloudflare";
 - `*Bindings` - Connect resources to Workers
 
 ---
+
 See: [patterns.md](./patterns.md), [gotchas.md](./gotchas.md)
