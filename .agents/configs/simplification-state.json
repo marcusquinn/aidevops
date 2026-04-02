@@ -32,6 +32,11 @@
     "issue": "GH#15033",
     "status": "simplified"
   },
+  ".agents/tools/browser/crawl4ai-usage.md": {
+    "hash": "067ef0de4d0805ad316a0693c50dd2f6823fa63dc704b66db88d758db34119a3",
+    "issue": "GH#14108",
+    "status": "simplified"
+  },
   ".agents/tools/deployment/cloudron-app-packaging-skill/manifest-ref.md": {
     "hash": "edecc25afbace885cab2eac01e07629d890a4fad",
     "issue": "GH#15700",
