@@ -1,15 +1,22 @@
 # Cloudflare Workers Smart Placement
 
-Runs Workers closer to backend infrastructure instead of end users, reducing overall request duration when backend latency dominates.
+Optimizes request duration by running Workers closer to backend infrastructure when backend latency dominates.
+
+## Quick Start
+
+```toml
+# wrangler.toml
+[placement]
+mode = "smart"
+hint = "wnam"  # Optional: e.g., West North America
+```
+
+Deploy and wait 15 min for analysis.
 
 ## When to Enable
 
-- Worker makes multiple round trips to backend services/databases
-- Backend infrastructure is geographically concentrated
-- Request duration dominated by backend latency, not user-to-edge latency
-- Running backend logic: APIs, data aggregation, SSR with DB calls
-
-**Do NOT enable for:** static/cached content, Workers without backend communication, pure edge logic (auth, redirects, transforms), Workers without fetch handlers.
+- **Enable for:** Multiple backend round trips, geographically concentrated infrastructure, backend-heavy logic (APIs, data aggregation, SSR with DB calls).
+- **Do NOT enable for:** Static/cached content, pure edge logic (auth, redirects, transforms), Workers without fetch handlers.
 
 ## Architecture: Frontend/Backend Split
 
@@ -23,26 +30,11 @@ User → Frontend Worker (edge, close to user)
 
 Split full-stack apps — monolithic Workers with Smart Placement degrade frontend latency.
 
-## Quick Start
+## Requirements & Status
 
-```toml
-# wrangler.toml
-[placement]
-mode = "smart"
-hint = "wnam"  # Optional: West North America
-```
-
-Deploy and wait 15 min for analysis. Check status via API or dashboard.
-
-## Requirements
-
-- Wrangler 2.20.0+
-- Consistent traffic from multiple global locations
-- Only affects fetch handlers (not RPC methods or named entrypoints)
-- Available on all Workers plans (Free, Paid, Enterprise)
-- Analysis: up to 15 min after enabling; Worker runs at edge during analysis
-
-## Placement Status
+- **Requirements:** Wrangler 2.20.0+, consistent global traffic. Only affects fetch handlers.
+- **Analysis:** Up to 15 min after enabling; Worker runs at edge during analysis.
+- **Baseline:** 1% of requests always route without optimization for comparison.
 
 ```typescript
 type PlacementStatus =
@@ -51,8 +43,6 @@ type PlacementStatus =
   | 'INSUFFICIENT_INVOCATIONS'  // Not enough traffic
   | 'UNSUPPORTED_APPLICATION';  // Made Worker slower (reverted)
 ```
-
-1% of requests always route without optimization (baseline comparison) — this is expected.
 
 ## CLI
 
@@ -66,14 +56,9 @@ curl -H "Authorization: Bearer $TOKEN" \
 wrangler tail your-worker-name --header cf-placement
 ```
 
-## In This Reference
-
-- [patterns.md](./patterns.md) — frontend/backend split, database workers, SSR, API gateway
-- [gotchas.md](./gotchas.md) — troubleshooting INSUFFICIENT_INVOCATIONS, performance issues
-
 ## See Also
 
-- [workers](../workers/) — Worker runtime and fetch handlers
-- [d1](../d1/) — D1 database (benefits from Smart Placement)
-- [durable-objects](../durable-objects/) — Durable Objects with backend logic
-- [bindings](../bindings/) — Service bindings for frontend/backend split
+- [patterns.md](./patterns.md) — split architecture, DB workers, SSR, API gateway
+- [gotchas.md](./gotchas.md) — troubleshooting performance and invocations
+- [workers](../workers/), [d1](../d1/), [durable-objects](../durable-objects/), [bindings](../bindings/)
+
