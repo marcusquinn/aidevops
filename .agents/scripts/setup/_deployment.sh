@@ -2,9 +2,87 @@
 # Agent deployment functions for setup.sh
 
 # Deploy aidevops agents to ~/.aidevops/agents/
+#
+# Uses atomic swap: deploy to a temp directory first, then rename over the
+# target. If the deploy fails mid-way, the old agents directory remains intact.
+# This prevents the scripts/ directory from disappearing during partial deploys.
 deploy_aidevops_agents() {
-	# TODO: Extract from setup.sh lines 3076-3268
-	:
+	local repo_dir="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+	local source_dir="${repo_dir}/.agents"
+	local target_dir="${HOME}/.aidevops/agents"
+	local staging_dir="${HOME}/.aidevops/.agents-staging-$$"
+
+	if [[ ! -d "$source_dir" ]]; then
+		echo "[deploy] ERROR: Source directory not found: $source_dir"
+		return 1
+	fi
+
+	# Stage: copy to temp directory
+	rm -rf "$staging_dir"
+	mkdir -p "$staging_dir"
+
+	if command -v rsync >/dev/null 2>&1; then
+		# rsync preserves permissions, handles symlinks, and is resumable
+		rsync -a --exclude '.git' --exclude '__pycache__' "$source_dir/" "$staging_dir/" || {
+			echo "[deploy] ERROR: rsync failed — aborting (old agents preserved)"
+			rm -rf "$staging_dir"
+			return 1
+		}
+	else
+		cp -R "$source_dir/." "$staging_dir/" || {
+			echo "[deploy] ERROR: cp failed — aborting (old agents preserved)"
+			rm -rf "$staging_dir"
+			return 1
+		}
+	fi
+
+	# Verify: critical files must exist in staging before swap
+	local critical_files=(
+		"scripts/pulse-wrapper.sh"
+		"scripts/headless-runtime-helper.sh"
+		"scripts/shared-constants.sh"
+		"AGENTS.md"
+	)
+	local missing=0
+	for f in "${critical_files[@]}"; do
+		if [[ ! -f "${staging_dir}/${f}" ]]; then
+			echo "[deploy] ERROR: Critical file missing from staging: ${f}"
+			missing=1
+		fi
+	done
+	if [[ "$missing" -eq 1 ]]; then
+		echo "[deploy] ERROR: Staging verification failed — aborting (old agents preserved)"
+		rm -rf "$staging_dir"
+		return 1
+	fi
+
+	# Preserve user customizations that survive updates
+	for preserve_dir in custom draft; do
+		if [[ -d "${target_dir}/${preserve_dir}" ]]; then
+			cp -R "${target_dir}/${preserve_dir}" "${staging_dir}/${preserve_dir}" 2>/dev/null || true
+		fi
+	done
+
+	# Swap: atomic rename (same filesystem, so this is a single inode operation)
+	local backup_dir="${HOME}/.aidevops/.agents-previous"
+	rm -rf "$backup_dir"
+	if [[ -d "$target_dir" ]]; then
+		mv "$target_dir" "$backup_dir" || {
+			echo "[deploy] ERROR: Failed to move old agents dir — aborting"
+			rm -rf "$staging_dir"
+			return 1
+		}
+	fi
+	mv "$staging_dir" "$target_dir" || {
+		echo "[deploy] ERROR: Failed to move staging to target — restoring backup"
+		mv "$backup_dir" "$target_dir" 2>/dev/null || true
+		return 1
+	}
+
+	# Set permissions on scripts
+	chmod +x "${target_dir}/scripts/"*.sh 2>/dev/null || true
+
+	echo "[deploy] Deployed agents to ${target_dir} ($(find "$target_dir" -type f | wc -l | tr -d ' ') files)"
 	return 0
 }
 
