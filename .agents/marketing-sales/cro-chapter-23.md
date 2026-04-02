@@ -57,7 +57,9 @@
 
 ## 23.4 B2B SaaS Specifics
 
-- Champion enablement: business case templates, ROI calculators, competitor comparisons, security documentation
-- Decision maker content: executive summaries, total cost of ownership, implementation timelines, risk mitigation
-- Sales-assisted trials: dedicated success manager, custom onboarding, technical implementation support, executive business reviews
-- Proof of concept: limited scope pilot; success criteria defined upfront; timeline commitments; expansion planning
+| Area | Key elements |
+|------|-------------|
+| Champion enablement | Business case templates, ROI calculators, competitor comparisons, security docs |
+| Decision maker content | Executive summaries, TCO analysis, implementation timelines, risk mitigation |
+| Sales-assisted trials | Dedicated success manager, custom onboarding, technical support, EBRs |
+| Proof of concept | Limited scope pilot; success criteria upfront; timeline commitments; expansion planning |
