@@ -59,7 +59,6 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 -->
 
 - [ ] t1852 simplification: tighten agent doc Feature Branch (.agents/workflows/branch/feature.md, 52 lines) #simplification #auto-dispatch ~1h model:sonnet ref:GH#15550 logged:2026-04-02 started:2026-04-02 -> [todo/tasks/t1852-brief.md]
-- [x] t2155 simplification: tighten agent doc API Integration Guide (.agents/aidevops/api-integrations.md, 115 lines) #simplification #auto-dispatch ~1h model:sonnet ref:GH#15042 logged:2026-04-02 started:2026-04-02 pr:#15580 completed:2026-04-02 -> [todo/tasks/t2155-brief.md]
 - [ ] t15162 simplification: tighten agent doc Model-Specific Subagents @marcusquinn #simplification-debt #auto-dispatch ~1h ref:GH#15162
 - [ ] t1729 simplification: tighten agent doc Model-Specific Subagents @marcusquinn #simplification-debt ~1h ref:GH#15020
 
@@ -1907,6 +1906,7 @@ t165,Provider-agnostic task claiming via TODO.md,marcusquinn,orchestration archi
 
 ## Done
 
+- [x] t2155 simplification: tighten agent doc API Integration Guide (.agents/aidevops/api-integrations.md, 115 lines) #simplification #auto-dispatch ~1h model:sonnet ref:GH#15042 logged:2026-04-02 started:2026-04-02 pr:#15580 completed:2026-04-02 -> [todo/tasks/t2155-brief.md]
 - [x] t1387 Add conversational memory lookup guidance to build.txt harness — three-tier progressive discovery (local cached → local indexed → remote) covering 8 knowledge sources so agents proactively search when users reference past work from prior sessions #feature #agent #memory ~30m model:opus ref:GH#2798 logged:2026-03-04 pr:#2797 completed:2026-03-04
 - [x] t205 YouTube competitor research and content automation agent #feature #youtube #content ~6h actual:4h logged:2026-02-09 started:2026-02-09 completed:2026-02-09 verified:2026-02-09 pr:#811
   - Notes: Post-merge verification (2026-02-09): ShellCheck clean (SC1091 info only), markdownlint clean after PR #828 fixed 12 MD022 violations, all cross-references resolve, live API tests pass (auth-test, channel @mkbhd, quota tracking). 9/10000 API units used.
@@ -2342,7 +2342,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t1677 Peak-hours concurrency scaling for pulse dispatcher — Anthropic tightens 5-hour session limits during weekday peak (5am-11am PT). Add `supervisor.peak_hours` config to settings.json so the pulse dynamically caps `MAX_WORKERS` at 20% of off-peak value (fraction-based, rounded up, min 1) during configured peak windows. Touch points: settings-helper.sh, pulse.md/pulse-wrapper.sh, schema, settings docs. Disabled by default. #enhancement #auto-dispatch ~3h model:sonnet ref:GH#6783 logged:2026-03-26
 
-- [ ] t1852 simplification: tighten agent doc Documentation AI Context (.agents/aidevops/docs.md) #simplification #auto-dispatch ~0.5h model:sonnet ref:GH#15433 pr:#15571 status:blocked (review-required) logged:2026-04-02
+- [ ] t1852 simplification: tighten agent doc Documentation AI Context (.agents/aidevops/docs.md) #simplification #auto-dispatch ~0.5h model:sonnet ref:GH#15433 pr:#15571 blocked-by:pr-15571 status:blocked (review-required) logged:2026-04-02
 
 - [ ] t1665 Runtime abstraction layer — decouple framework from specific AI CLI runtimes. Create runtime-registry.sh (central data source for 11+ runtimes), mcp-config-adapter.sh (universal MCP → per-runtime format), prompt-injection-adapter.sh (per-runtime system prompt deployment), unified generator script, and migrate ~45 accidentally-coupled scripts. Enables adding new runtimes (Codex, Cursor, Droid, Gemini, Windsurf, etc.) via ~30 lines of registry config instead of modifying 45+ files. #refactor #enhancement #auto-dispatch ~27h model:opus ref:GH#6530 logged:2026-03-26
   - [ ] t1665.1 Create runtime-registry.sh — central data source defining all runtime properties (binary, config path, format, MCP root key, command dir, prompt mechanism, session DB, process pattern) for 11+ runtimes. Bash 3.2 compatible parallel arrays. Sourced from shared-constants.sh. Functions: detect_installed_runtimes(), get_runtime_config_path(), is_runtime_installed(), for_each_installed_runtime(). #refactor #auto-dispatch ~4h model:sonnet ref:GH#6532 logged:2026-03-26
