@@ -17,7 +17,7 @@
 import { mkdirSync, readFileSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
-import { execSync } from "child_process";
+import { execSync, spawn } from "child_process";
 import { fileURLToPath } from "url";
 
 const HOME = homedir();
@@ -131,15 +131,155 @@ function calculateCost(tokens, modelID) {
 // ---------------------------------------------------------------------------
 // SQLite helpers (uses sqlite3 CLI — no native dependency needed in ESM)
 // ---------------------------------------------------------------------------
+//
+// Two execution modes:
+//   sqliteExecSync(sql, timeout) — forks a new process per call. Used ONLY at
+//     init time (schema creation, migrations) where synchronous return values
+//     are needed and calls are one-shot.
+//   sqliteExec(sql) — writes to a persistent sqlite3 child process. Used for
+//     all hot-path writes (INSERT, UPSERT). Fire-and-forget; errors logged.
+//     Sentinel-based protocol serialises queries and provides backpressure.
+//     Auto-respawns on process death.
+//
+// This eliminates the fork storm (hundreds of concurrent spawnSync) that
+// occurred under sustained load — see GH#15957.
+// ---------------------------------------------------------------------------
+
+/** Sentinel string appended after each query to detect completion in stdout */
+const SQLITE_SENTINEL = "__AIDEVOPS_QUERY_DONE__";
+
+/** @type {import("child_process").ChildProcess | null} */
+let _sqliteProc = null;
+/** @type {Array<{ sql: string, callback: (err: Error | null, result: string) => void }>} */
+let _queryQueue = [];
+/** Whether a query is currently in-flight (waiting for sentinel) */
+let _processing = false;
+/** Callback for the currently in-flight query */
+let _currentCallback = null;
+/** Accumulated stdout from the persistent process */
+let _stdoutBuf = "";
 
 /**
- * Run a sqlite3 command. Returns stdout on success, null on failure.
- * Logs errors to stderr for debugging (never silently swallows).
+ * Spawn (or respawn) the persistent sqlite3 child process.
+ * Configured with WAL journal mode and 5-second busy timeout.
+ */
+function _spawnSqlite() {
+  if (_sqliteProc) return;
+
+  try {
+    _sqliteProc = spawn("sqlite3", ["-cmd", ".timeout 5000", DB_PATH], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch (err) {
+    console.error(`[aidevops] Failed to spawn sqlite3: ${err.message}`);
+    return;
+  }
+
+  _sqliteProc.stdout.on("data", (chunk) => {
+    _stdoutBuf += chunk.toString();
+    const idx = _stdoutBuf.indexOf(SQLITE_SENTINEL);
+    if (idx !== -1) {
+      const result = _stdoutBuf.substring(0, idx).trim();
+      const endOfLine = _stdoutBuf.indexOf("\n", idx);
+      _stdoutBuf = endOfLine !== -1 ? _stdoutBuf.substring(endOfLine + 1) : "";
+
+      const cb = _currentCallback;
+      _currentCallback = null;
+      _processing = false;
+      if (cb) cb(null, result);
+      _drainQueue();
+    }
+  });
+
+  _sqliteProc.stderr.on("data", (chunk) => {
+    const msg = chunk.toString().trim();
+    if (msg) console.error(`[aidevops] SQLite: ${msg}`);
+  });
+
+  _sqliteProc.on("close", (code) => {
+    _sqliteProc = null;
+    _stdoutBuf = "";
+    if (_currentCallback) {
+      const cb = _currentCallback;
+      _currentCallback = null;
+      _processing = false;
+      cb(new Error(`sqlite3 exited with code ${code}`));
+    }
+    // Auto-respawn if queries remain in the queue
+    if (_queryQueue.length > 0) {
+      _spawnSqlite();
+      _drainQueue();
+    }
+  });
+
+  _sqliteProc.on("error", (err) => {
+    console.error(`[aidevops] SQLite process error: ${err.message}`);
+    _sqliteProc = null;
+    if (_currentCallback) {
+      const cb = _currentCallback;
+      _currentCallback = null;
+      _processing = false;
+      cb(err);
+    }
+  });
+}
+
+/**
+ * Process the next queued query. Called after a sentinel is received
+ * (previous query complete) or when a new query is enqueued while idle.
+ */
+function _drainQueue() {
+  if (_processing || _queryQueue.length === 0) return;
+  if (!_sqliteProc) _spawnSqlite();
+  if (!_sqliteProc) {
+    // Spawn failed — drain all queued queries with error
+    const pending = _queryQueue.splice(0);
+    const err = new Error("sqlite3 process unavailable");
+    for (const q of pending) q.callback(err, "");
+    return;
+  }
+
+  _processing = true;
+  const { sql, callback } = _queryQueue.shift();
+  _currentCallback = callback;
+
+  try {
+    _sqliteProc.stdin.write(`${sql}\nSELECT '${SQLITE_SENTINEL}';\n`);
+  } catch (err) {
+    _processing = false;
+    _currentCallback = null;
+    callback(err, "");
+    _drainQueue();
+  }
+}
+
+/**
+ * Execute SQL via the persistent sqlite3 process (async, queued).
+ * For hot-path writes where the return value is not needed.
+ * Errors are logged to stderr — callers are fire-and-forget.
+ * @param {string} sql
+ */
+function sqliteExec(sql) {
+  _queryQueue.push({
+    sql,
+    callback: (err) => {
+      if (err) {
+        console.error(`[aidevops] SQLite async exec failed: ${err.message}`);
+      }
+    },
+  });
+  _drainQueue();
+}
+
+/**
+ * Execute SQL synchronously via execSync (for init-time operations ONLY).
+ * Forks a new process per call — do NOT use in hot paths.
+ * Returns stdout on success, null on failure.
  * @param {string} sql - SQL statement(s) to execute
  * @param {number} [timeout=5000]
- * @returns {string | null} stdout on success, null on failure
+ * @returns {string | null}
  */
-function sqliteExec(sql, timeout = 5000) {
+function sqliteExecSync(sql, timeout = 5000) {
   try {
     return execSync(`sqlite3 -cmd ".timeout 5000" "${DB_PATH}"`, {
       input: sql,
@@ -148,9 +288,27 @@ function sqliteExec(sql, timeout = 5000) {
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
   } catch (e) {
-    console.error(`[aidevops] SQLite execution failed: ${e.stderr || e.message}`);
+    console.error(`[aidevops] SQLite sync exec failed: ${e.stderr || e.message}`);
     return null;
   }
+}
+
+/**
+ * Shut down the persistent sqlite3 process gracefully.
+ */
+function _shutdownSqlite() {
+  if (!_sqliteProc) return;
+  try {
+    _sqliteProc.stdin.end();
+    _sqliteProc.kill("SIGTERM");
+  } catch {
+    // Process may already be dead
+  }
+  _sqliteProc = null;
+  _queryQueue = [];
+  _processing = false;
+  _currentCallback = null;
+  _stdoutBuf = "";
 }
 
 /**
@@ -259,7 +417,7 @@ CREATE INDEX IF NOT EXISTS idx_session_summaries_session
   ON session_summaries(session_id);
 `;
 
-  const result = sqliteExec(schema, 10000);
+  const result = sqliteExecSync(schema, 10000);
   if (result === null) {
     console.error("[aidevops] Observability: schema creation failed");
     return false;
@@ -268,12 +426,12 @@ CREATE INDEX IF NOT EXISTS idx_session_summaries_session
   // Migration: add intent column to tool_calls if it doesn't exist (t1309).
   // Check first to avoid noisy "duplicate column" errors in logs.
   // Fresh DBs already have the column from the CREATE TABLE above.
-  const hasIntentCol = sqliteExec(
+  const hasIntentCol = sqliteExecSync(
     "SELECT COUNT(*) FROM pragma_table_info('tool_calls') WHERE name='intent';",
     5000,
   );
   if (hasIntentCol === "0") {
-    sqliteExec("ALTER TABLE tool_calls ADD COLUMN intent TEXT;", 5000);
+    sqliteExecSync("ALTER TABLE tool_calls ADD COLUMN intent TEXT;", 5000);
   }
 
   // Migration: backfill cost for rows where cost=0 but tokens exist.
@@ -308,16 +466,16 @@ SET cost = CASE
 WHERE cost = 0.0 AND tokens_total > 0;
 `;
 
-  // Combine UPDATE and SELECT changes() in a single sqliteExec so they run
-  // on the same sqlite3 connection — a separate call would always return 0.
-  const countRaw = sqliteExec(`${sql}\nSELECT changes();`, 30000);
+  // Combine UPDATE and SELECT changes() in a single sqliteExecSync call so
+  // they run on the same sqlite3 connection — a separate call returns 0.
+  const countRaw = sqliteExecSync(`${sql}\nSELECT changes();`, 30000);
   const count = countRaw?.split("\n").pop() ?? "0";
   if (parseInt(count, 10) > 0) {
     console.error(`[aidevops] Observability: backfilled cost for ${count} rows`);
 
     // Rebuild session_summaries from the corrected data.
     // Compute total_errors from actual error columns instead of hardcoding 0.
-    sqliteExec(`
+    sqliteExecSync(`
 DELETE FROM session_summaries;
 INSERT INTO session_summaries (session_id, first_seen, last_seen, request_count,
   total_tokens_input, total_tokens_output, total_cost, total_tool_calls, total_errors,
@@ -371,6 +529,8 @@ export function initObservability() {
   dbReady = initDatabase();
   if (dbReady) {
     console.error("[aidevops] Observability: SQLite DB ready at " + DB_PATH);
+    // Shut down the persistent sqlite3 process on exit
+    process.on("exit", _shutdownSqlite);
   }
   return dbReady;
 }
