@@ -4984,6 +4984,12 @@
       "at": "2026-04-03T03:37:02Z",
       "pr": 16141,
       "passes": 1
+    },
+    ".agents/seo/query-fanout-research.md": {
+      "hash": "cae5a5769ab0cc567a2d1e58241cc0d5bbae87af7256fc9fc8c30aa8fec2fd25",
+      "at": "2026-04-03T04:00:00Z",
+      "pr": 0,
+      "passes": 1
     }
   },
   ".agents/workflows/pre-edit.md": {
