@@ -32,9 +32,7 @@ if command -v shellcheck &>/dev/null; then
   sc_errors=0
   while IFS= read -r f; do
     [[ -z "$f" ]] && continue
-    if ! shellcheck -x -S warning -- "$f"; then
-      sc_errors=$((sc_errors + 1))
-    fi
+    shellcheck -x -S warning -- "$f" || sc_errors=$((sc_errors + 1))
   done < <(git diff --name-only origin/HEAD..HEAD 2>/dev/null | grep '\.sh$' || true)
   [[ "$sc_errors" -gt 0 ]] && echo "ShellCheck: $sc_errors file(s) failed — fix before pushing" && exit 1
 else
@@ -45,11 +43,11 @@ fi
 - **PR titles must include the task ID (t318.2).** Use `<task-id>: <description>`.
   - `tNNN` for TODO tasks, e.g. `t318.2: Verify supervisor worker PRs include task ID`
   - `GH#NNN` for GitHub issues, e.g. `GH#12455: tighten hashline-edit-format.md`
-- Never use `qd-`, bare numbers, or `t` + a GitHub issue number. CI and the supervisor validate this.
+  - Never use `qd-`, bare numbers, or `t` + a GitHub issue number. CI and the supervisor validate this.
 
 ## 2. Spend tokens where they change outcomes
 
-- For files over 200 lines that you will not edit, use `ai_research` instead of reading them directly (~100 tokens vs ~5000). Do not offload files you need to edit.
+- Files over 200 lines you will not edit: use `ai_research` (~100 tokens vs ~5000). Do not offload files you need to edit.
 
 ```text
 ai_research(prompt: "Find all functions that dispatch workers in supervisor-helper.sh. Return: function name, line number, key variables.", domain: "orchestration")
@@ -63,17 +61,12 @@ ai_research(prompt: "Find all functions that dispatch workers in supervisor-help
 
 - Parallelise independent subtasks with parallel `Task` calls in one message. Keep one `in_progress` item in `TodoWrite`. Do not parallelise same-file edits or dependent work.
 - Fail fast: read target files, verify imports/dependencies, and stop if the task is already done.
-- Minimise token waste: read only needed line ranges, keep commits concise, and after one failed approach try one fundamentally different strategy before `BLOCKED`.
+- Read only needed line ranges, keep commits concise, and after one failed approach try one fundamentally different strategy before `BLOCKED`.
 - Replan when stuck. Do not patch a broken path incrementally.
 
 ## 4. Model escalation before BLOCKED (GH#14964 — MANDATORY)
 
-`BLOCKED` is only valid after exhausting all autonomous solution paths. Before exiting `BLOCKED`:
-
-1. Attempt model escalation: retry with the next tier (sonnet → opus via `--model anthropic/claude-opus-4-6`).
-2. One opus attempt (~3x cost) is cheaper than a failed worker cycle plus human triage.
-3. Review-policy metadata, nominal GitHub states, and lower-tier model limits are **not** valid blockers on their own.
-4. A genuine blocker requires evidence that persists after escalation: failing check, missing permission, unresolved conflict, or explicit policy gate.
+`BLOCKED` is only valid after exhausting all autonomous solution paths. Before exiting `BLOCKED`, attempt model escalation — one opus attempt (~3x cost) is cheaper than a failed worker cycle plus human triage. Review-policy metadata, nominal GitHub states, and lower-tier model limits are **not** valid blockers. A genuine blocker requires evidence that persists after escalation: failing check, missing permission, unresolved conflict, or explicit policy gate.
 
 ```bash
 # Escalation pattern — use when current model stalls or cannot finish safely
@@ -81,8 +74,6 @@ ESCALATED_MODEL="anthropic/claude-opus-4-6"
 headless-runtime-helper.sh run --role worker --session-key "$SESSION_KEY" \
   --dir "$WORK_DIR" --title "$TITLE" --prompt "$PROMPT" --model "$ESCALATED_MODEL"
 ```
-
-Escalation decision matrix:
 
 | Situation | Action |
 |-----------|--------|
@@ -95,10 +86,10 @@ Escalation decision matrix:
 
 ## Completion self-check
 
-Before `FULL_LOOP_COMPLETE`, verify all of the following:
+Before `FULL_LOOP_COMPLETE`, verify:
 
 1. Requirements checklist: every requirement marked `[DONE]` or `[TODO]`; any `[TODO]` means keep working.
-2. Verification run: tests, ShellCheck on changed `.sh` files, lint/typecheck if configured, and confirmation that expected output files exist.
+2. Verification run: tests, ShellCheck on changed `.sh` files, lint/typecheck if configured, expected output files exist.
 3. Generalization check: replace hardcoded values that should be parameterized.
 4. Minimal state changes: only requested files changed; no extra side effects.
 5. Commit+PR gate (GH#5317): `git status --porcelain` is empty and `gh pr list --head "$(git rev-parse --abbrev-ref HEAD)"` returns a PR. This is the #1 worker failure mode.
