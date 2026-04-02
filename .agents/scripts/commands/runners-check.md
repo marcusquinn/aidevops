@@ -11,7 +11,9 @@ Arguments: $ARGUMENTS
 ## Steps
 
 ```bash
-# 1. Active workers (count /full-loop processes)
+# 1. Active workers (raw process count — may differ from pulse's deduplicated count)
+# Note: pulse uses list_active_worker_processes() which deduplicates by issue+dir.
+# This grep-based count is a quick approximation; use pulse logs for authoritative count.
 MAX_WORKERS=$(test -r ~/.aidevops/logs/pulse-max-workers && cat ~/.aidevops/logs/pulse-max-workers || echo 4)
 WORKER_COUNT=$(ps axo command | grep '/full-loop' | grep -v grep | wc -l | tr -d ' ')
 AVAILABLE=$((MAX_WORKERS - WORKER_COUNT))
