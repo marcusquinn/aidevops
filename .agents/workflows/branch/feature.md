@@ -37,9 +37,7 @@ git checkout -b feature/{description}
 
 ## Guidance
 
-- Branch names use `feature/{description}`.
-- Commits use `feat:`.
-- Minor-version guidance applies when the branch ships user-visible capability, not internal-only maintenance.
+- Minor-version bump applies when the branch ships user-visible capability, not internal-only maintenance.
 - For implementation patterns, see `workflows/feature-development.md`.
 
 ## Examples
@@ -48,8 +46,6 @@ git checkout -b feature/{description}
 feature/user-dashboard
 feature/export-to-csv
 ```
-
-## Commit Example
 
 ```bash
 feat: add user authentication
