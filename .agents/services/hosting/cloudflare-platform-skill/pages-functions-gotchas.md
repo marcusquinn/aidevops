@@ -44,10 +44,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
 ```typescript
 export async function onRequest(context) {
-  console.log('Request:', context.request.method, context.request.url);
-  console.log('Headers:', Object.fromEntries(context.request.headers));
+  console.log(context.request.method, context.request.url);
   const response = await context.next();
-  console.log('Response status:', response.status);
+  console.log('Status:', response.status);
   return response;
 }
 ```
@@ -80,22 +79,18 @@ As of 2026-03-20 — [Cloudflare Pages Functions limits](https://developers.clou
 
 ## Best Practices
 
-**Performance:** Minimize deps for cold starts · KV for infrequent reads, D1 for relational, R2 for large files · set `Cache-Control` headers · use prepared statements and batch operations
+Performance: Minimize deps for cold starts · KV for infrequent reads, D1 for relational, R2 for large files · set `Cache-Control` headers · use prepared statements and batch operations
 
-**Security:** Never commit secrets · use secrets (encrypted) not vars for sensitive data · validate and sanitize all input · implement auth middleware · set CORS headers · rate limit per-IP
+Security: Never commit secrets · use secrets (encrypted) not vars for sensitive data · validate and sanitize all input · implement auth middleware · set CORS headers · rate limit per-IP
 
 ## Migration
 
 ### From Workers
 
 ```typescript
-// Worker
-export default { fetch(request, env) { } }
-
-// Pages Function
-export function onRequest(context) {
-  const { request, env } = context;
-}
+// Worker → Pages Function
+export default { fetch(request, env) { } }        // Worker
+export function onRequest({ request, env }) { }   // Pages Function
 ```
 
 In `_worker.js`: `return env.ASSETS.fetch(request)` for static assets.
@@ -108,12 +103,5 @@ In `_worker.js`: `return env.ASSETS.fetch(request)` for static assets.
 
 ## Resources
 
-- [Docs](https://developers.cloudflare.com/pages/functions/)
-- [Workers APIs](https://developers.cloudflare.com/workers/runtime-apis/)
-- [Examples](https://github.com/cloudflare/pages-example-projects)
-- [Discord](https://discord.gg/cloudflaredev)
-
-## See Also
-
-- [README.md](./README.md) - Overview
-- [patterns.md](./patterns.md) - Common patterns
+- [Docs](https://developers.cloudflare.com/pages/functions/) · [Workers APIs](https://developers.cloudflare.com/workers/runtime-apis/) · [Examples](https://github.com/cloudflare/pages-example-projects) · [Discord](https://discord.gg/cloudflaredev)
+- See also: [README.md](./README.md) · [patterns.md](./patterns.md)
