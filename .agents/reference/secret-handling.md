@@ -6,27 +6,13 @@ Rules for preventing credential exposure in AI agent sessions. Extracted from `p
 
 ---
 
-## 8.1 Session Transcript Exposure (t1457)
-
-**Threat:** Commands run by AI tools and their output are captured in session transcripts and may be sent to a remote model provider.
-
-- Treat command input + stdout/stderr as transcript-visible. If printing it would leak a secret in chat, it leaks in tool output too.
-- When giving secret setup instructions, start with: `WARNING: Never paste secret values into AI chat. Run the command in your terminal and enter the value at the hidden prompt.`
-- Prefer secret-safe patterns: key-name listings, masked previews, one-way fingerprints, exit-code checks.
-- Avoid writing raw secrets to temp files (e.g., `/tmp/*.json`); prefer in-memory piping. If unavoidable, clean up immediately.
-- If a command can expose secrets and no safe alternative exists, do not run it via AI tools — instruct the user to run it locally.
-
----
-
-## 8.2 Secret Value Leaking in Conversation (t2846)
+## 8.2 Never Run Commands That Print Secret Values (t2846)
 
 **Threat:** Agent runs commands whose output contains secret values, exposing credentials in the transcript. Once a secret appears in conversation, it must be rotated.
 
-**Root cause:** Agents reach for obvious commands (`gopass show`, `cat .env`, `pm2 env`) without considering that output enters conversation context.
+**Incident:** ILDS t006 — Zoho OAuth credentials exposed via `gopass show`, required rotation.
 
-**Incident:** ILDS t006 — Zoho OAuth credentials exposed, required rotation.
-
-- NEVER run, suggest, or output any command whose stdout/stderr would contain secret values. This is a principle, not a blocklist — apply judgment to ANY command that could print credentials. Common violations:
+- NEVER run, suggest, or output any command whose stdout/stderr would contain secret values. Principle, not a blocklist — apply judgment to ANY command that could print credentials. Common violations:
   - `gopass show <secret>`, `pass show`, `op read` (password managers)
   - `cat .env`, `cat credentials.sh`, `cat dump.pm2`, `cat */secrets.*`
   - `echo $SECRET_NAME`, `printenv SECRET_NAME`, `env | grep KEY`
@@ -36,9 +22,9 @@ Rules for preventing credential exposure in AI agent sessions. Extracted from `p
   - `systemctl show <service> --property=Environment`
   - Python/Node/Ruby one-liners parsing credential files (e.g., `python3 -c "import json; print(json.load(open('.env')))"`)
   - `heroku config`, `vercel env pull`, `fly secrets list` (with values)
-  - `grep`/`rg` that may display secret values; allow only when patterns guarantee values are not printed (see safe examples below)
+  - `grep`/`rg` that may display secret values; allow only when patterns guarantee values are not printed
 - When debugging env var issues, show key NAMES only, never values:
-  - SAFE: `pm2 show <app> --json | jq -r '.[0].pm2_env | keys_unsorted[]'` (key names only, robust)
+  - SAFE: `pm2 show <app> --json | jq -r '.[0].pm2_env | keys_unsorted[]'`
   - SAFE: `printenv | cut -d= -f1 | sort`
   - SAFE: `grep -oP '^[A-Z_]+(?==)' .env`
   - SAFE: `docker inspect <container> --format '{{range .Config.Env}}{{println .}}{{end}}' | cut -d= -f1`
@@ -54,9 +40,21 @@ Rules for preventing credential exposure in AI agent sessions. Extracted from `p
 
 ---
 
+## 8.1 Session Transcript Exposure (t1457)
+
+**Threat:** Commands run by AI tools and their output are captured in session transcripts and may be sent to a remote model provider.
+
+- Treat command input + stdout/stderr as transcript-visible. If printing it would leak a secret in chat, it leaks in tool output too.
+- When giving secret setup instructions, start with: `WARNING: Never paste secret values into AI chat. Run the command in your terminal and enter the value at the hidden prompt.`
+- Prefer secret-safe patterns: key-name listings, masked previews, one-way fingerprints, exit-code checks.
+- Avoid writing raw secrets to temp files (e.g., `/tmp/*.json`); prefer in-memory piping. If unavoidable, clean up immediately.
+- If a command can expose secrets and no safe alternative exists, do not run it via AI tools — instruct the user to run it locally.
+
+---
+
 ## 8.3 Secret as Command Argument Exposure (t4939)
 
-**Threat:** A secret passed as a command argument can appear in error messages, `ps` output, and logs — even when the command's intent is safe. Any program can print its argv on failure.
+**Threat:** A secret passed as a command argument can appear in error messages, `ps` output, and logs — even when the command's intent is safe.
 
 **Incident:** qs-agency migration — WEBHOOK_SECRET interpolated into `wp db query` SQL argument; WP-CLI printed the full argument on parse failure. Required immediate rotation.
 
@@ -67,22 +65,22 @@ Rules for preventing credential exposure in AI agent sessions. Extracted from `p
   - SAFE: `SECRET=$(gopass show -o name) MY_SECRET="$SECRET" cmd` — subprocess reads via `getenv("MY_SECRET")`; error handlers never print env vars
   - SAFE: `aidevops secret NAME -- cmd` — injects as env var with automatic output redaction
   - SAFE: `SSH_AUTH_SOCK=... ssh ...` — env-based auth, no secret in argv
-  - The subprocess must read the value from its environment (`getenv()` in C/PHP, `process.env` in Node, `os.environ` in Python, `ENV[]` in Ruby), not from `$1`/`argv`.
-  - Last resort (program only accepts args): write secret to `mktemp` file (`chmod 0600`), pass the path, clean up via `trap EXIT`. Prefer programs supporting env var or stdin input.
-  - SSH/remote: `ssh host "ENV_VAR='value' command"` passes the secret in the remote shell's environment. Alternatively, use `ssh -o SendEnv=VAR` with server-side `AcceptEnv`.
+  - Subprocess must read value from environment (`getenv()` in C/PHP, `process.env` in Node, `os.environ` in Python, `ENV[]` in Ruby), not from `$1`/`argv`.
+  - Last resort (program only accepts args): write secret to `mktemp` file (`chmod 0600`), pass the path, clean up via `trap EXIT`.
+  - SSH/remote: `ssh host "ENV_VAR='value' command"` or `ssh -o SendEnv=VAR` with server-side `AcceptEnv`.
 
 ### Post-Execution Secret Detection (t4939, layer 2)
 
 After any Bash command referencing a credential variable (`gopass`, `$*_SECRET`, `$*_TOKEN`, `$*_KEY`, `$*_PASSWORD`), verify the output doesn't contain the secret before presenting it.
 
 - If the command failed (non-zero exit) and the secret was passed as an argument (violating 8.3), assume the output is contaminated — do not present it. Flag for immediate credential rotation.
-- This is a judgment call, not a regex check. Assess whether output contains credential material (long base64 strings, API key patterns, JSON with auth fields).
+- Judgment call, not a regex check. Assess whether output contains credential material (long base64 strings, API key patterns, JSON with auth fields).
 
 ---
 
 ## 8.4 Application Config Contains Embedded Credentials (t4954)
 
-**Threat:** Application config tables (webhook settings, integration records, OAuth configs) store authenticated callback URLs with secrets as query parameters (e.g., `?secret=<value>`). A `SELECT *` returns the full record including embedded credentials — even though the command doesn't reference any credential variable. Sections 8.3 and post-execution detection don't catch this.
+**Threat:** Application config tables store authenticated callback URLs with secrets as query parameters (e.g., `?secret=<value>`). A `SELECT *` returns embedded credentials — even without referencing any credential variable. Sections 8.3 and post-execution detection don't catch this.
 
 **Incident:** FluentForms webhook config queried via `wp db query`; output contained `request_url` with `?secret=<value>`. Required immediate rotation.
 
