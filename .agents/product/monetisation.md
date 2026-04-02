@@ -38,8 +38,6 @@ Can recommend relevant products?   -> Affiliate links + optional premium tier
 
 ## Choose Model
 
-Use the decision tree first, then match the model to product shape:
-
 | Model | Best for | Notes |
 |-------|---------|-------|
 | Subscription | Recurring problems, ongoing value | Weekly/monthly/annual plans; 7-day trial is the default |
@@ -62,7 +60,7 @@ Superwall handles remote paywall config and price/layout/copy A/B testing (`serv
 
 ## Define Entitlements
 
-Products → entitlements → feature gates (platform-agnostic):
+Products → entitlements → feature gates:
 
 ```text
 ├── Monthly ($4.99/mo)        -> "premium" entitlement
@@ -72,8 +70,6 @@ Products → entitlements → feature gates (platform-agnostic):
 ```
 
 ## Design Paywall
-
-Rules:
 
 - Show at moment of highest intent (after user tries a premium feature)
 - Display value proposition, not price
@@ -103,7 +99,7 @@ A/B test price points, paywall designs, trial lengths, and feature gates with Re
 
 ## Set Pricing
 
-Process: check competitor pricing -> survey target users on willingness to pay -> start competitive -> adjust on data. Annual plans usually land at a 15-40% discount vs monthly.
+Process: competitor pricing → user WTP survey → start competitive → adjust on data. Annual plans: 15-40% discount vs monthly.
 
 | Model | Typical Range |
 |-------|--------------|

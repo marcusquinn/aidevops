@@ -3670,6 +3670,11 @@
       "hash": "23966f40446ab560b3d8837fbe851615d372bf809b321725ae58ab70d57dc181",
       "at": "2026-04-02T12:50:00Z",
       "pr": 15047
+    },
+    ".agents/product/monetisation.md": {
+      "hash": "45e90e4a5ea84ee64c7c83125716b656",
+      "at": "2026-04-02T13:53:12Z",
+      "pr": null
     }
   },
   ".agents/seo/ai-search-kpi-template.md": {
