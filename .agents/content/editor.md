@@ -15,37 +15,30 @@ Transform technically accurate content into human-sounding, engaging articles. C
 
 ### 1. Voice and Personality (0-100)
 
-- Consistent tone; author personality showing through
-- Conversational elements (questions, asides); unique perspective
-- Avoidance of generic filler
+Consistent tone with author personality; conversational elements (questions, asides); unique perspective; avoidance of generic filler.
 
 ### 2. Specificity (0-100)
 
-- Concrete examples vs vague claims; real data with sources
-- Named tools, companies, or people
-- Specific numbers ("40% increase" not "significant improvement")
+Concrete examples vs vague claims; real data with sources; named tools/companies/people; specific numbers ("40% increase" not "significant improvement").
 
 ### 3. Readability and Flow (0-100)
 
-- Varied sentence length; smooth transitions; logical progression
-- Active voice predominance; paragraph rhythm
+Varied sentence length; smooth transitions; logical progression; active voice predominance; paragraph rhythm.
 
 ### 4. Robotic vs Human Patterns
 
 - **AI vocabulary**: delve, tapestry, landscape, leverage, utilize, facilitate
 - **Filler phrases**: "It's worth noting that", "In today's digital age"
-- **Rule of three**: Excessive use of three-item lists
-- **Em dash overuse**: More than 2-3 per article
+- **Rule of three**: Excessive three-item lists
+- **Em dash overuse**: >2-3 per article
 - **Hedging**: "might", "could potentially", "it's possible that"
 - **Promotional language**: "game-changer", "revolutionary", "cutting-edge"
 
-See `content/humanise.md` for the complete pattern list.
+See `content/humanise.md` for complete patterns.
 
 ### 5. Engagement and Storytelling
 
-- Hook in the introduction; anecdotes or real-world examples
-- Questions that engage the reader; surprising or counterintuitive points
-- Strong conclusion with clear takeaway
+Hook in introduction; anecdotes or real-world examples; reader-engaging questions; surprising/counterintuitive points; strong conclusion with clear takeaway.
 
 ## Output Format
 
@@ -60,7 +53,7 @@ See `content/humanise.md` for the complete pattern list.
    **Why**: [explanation]
 
 ### Pattern Analysis
-- AI vocabulary found: [list]
+- AI vocabulary: [list]
 - Filler phrases: [count]
 - Passive voice: [percentage]
 - Hedging instances: [count]
@@ -68,10 +61,9 @@ See `content/humanise.md` for the complete pattern list.
 ### Section-by-Section Notes
 - Introduction: [feedback]
 - Section 2: [feedback]
-- ...
 
 ### Specific Rewrites
-[3-5 before/after examples targeting the weakest sections]
+[3-5 before/after examples targeting weakest sections]
 ```
 
 ## Related
