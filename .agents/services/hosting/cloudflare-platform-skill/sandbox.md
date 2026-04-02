@@ -1,6 +1,6 @@
 # Cloudflare Sandbox SDK
 
-Run isolated containers on Cloudflare's edge. Each sandbox pairs a Durable Object with a container, reuses state when IDs match, and supports sleep/wake controls for AI code execution, dev environments, CI/CD, data analysis, and multi-tenant runners.
+Run isolated containers on Cloudflare's edge. Each sandbox pairs a Durable Object with a container, reuses state when IDs match. Use cases: AI code execution, dev environments, CI/CD, data analysis, multi-tenant runners.
 
 ## Quick Start
 
@@ -25,25 +25,22 @@ export default {
 
 ## Configuration
 
-### `wrangler.jsonc`
+**`wrangler.jsonc`**
 
 ```jsonc
 {
   "name": "my-sandbox-worker",
   "main": "src/index.ts",
   "compatibility_date": "2024-01-01",
-  
   "containers": [{
     "class_name": "Sandbox",
     "image": "./Dockerfile",
-    "instance_type": "lite",        // lite | standard | heavy
+    "instance_type": "lite",  // lite | standard | heavy
     "max_instances": 5
   }],
-  
   "durable_objects": {
     "bindings": [{ "class_name": "Sandbox", "name": "Sandbox" }]
   },
-  
   "migrations": [{
     "tag": "v1",
     "new_sqlite_classes": ["Sandbox"]
@@ -51,7 +48,7 @@ export default {
 }
 ```
 
-### `Dockerfile`
+**`Dockerfile`**
 
 ```dockerfile
 FROM docker.io/cloudflare/sandbox:latest
