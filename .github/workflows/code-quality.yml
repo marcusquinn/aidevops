@@ -13,7 +13,10 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Only cancel in-progress runs on PR branches, not main.
+  # Cancelled runs show as "failing" on the badge — rapid main pushes
+  # (e.g. pulse auto-merges) would keep the badge red indefinitely.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   # Cross-platform shellcheck: catches macOS-only assumptions in shell scripts
