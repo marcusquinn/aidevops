@@ -208,10 +208,24 @@ _detect_cli() {
 }
 
 # =============================================================================
+# Resolve OpenCode DB path (XDG_DATA_HOME-aware)
+# =============================================================================
+# Headless workers run with XDG_DATA_HOME redirected to an isolated temp dir
+# (headless-runtime-helper.sh auth isolation). The session DB is created there,
+# not at the default ~/.local/share/opencode/opencode.db. Without this, the
+# signature helper can't find the worker's session data and footers show time
+# but no tokens (GH#15486).
+
+_opencode_db_path() {
+	printf '%s' "${XDG_DATA_HOME:-${HOME}/.local/share}/opencode/opencode.db"
+	return 0
+}
+
+# =============================================================================
 # Auto-detect session token count from runtime DB
 # =============================================================================
 # Queries the runtime's session database for cumulative token usage.
-# Currently supports OpenCode (SQLite DB at ~/.local/share/opencode/opencode.db).
+# Currently supports OpenCode (SQLite DB, path resolved via _opencode_db_path).
 # Returns total input+output tokens for the most recent session in the current
 # working directory, or empty string if unavailable.
 
@@ -412,7 +426,8 @@ _sum_session_tokens_for_session() {
 
 _detect_session_tokens_with_since() {
 	local since_epoch="${1:-}"
-	local db_path="${HOME}/.local/share/opencode/opencode.db"
+	local db_path
+	db_path=$(_opencode_db_path)
 
 	# If the OpenCode DB exists, try it — don't gate on process detection.
 	# The old PPID-only check failed on Linux where the immediate parent is
@@ -515,7 +530,8 @@ _detect_issue_scoped_tokens() {
 # This eliminates the need for callers to pass --model explicitly (GH#12965).
 
 _detect_session_model() {
-	local db_path="${HOME}/.local/share/opencode/opencode.db"
+	local db_path
+	db_path=$(_opencode_db_path)
 
 	if [[ ! -r "$db_path" ]] || ! command -v sqlite3 &>/dev/null; then
 		echo ""
@@ -563,7 +579,8 @@ _detect_session_model() {
 # =============================================================================
 
 _detect_session_type() {
-	local db_path="${HOME}/.local/share/opencode/opencode.db"
+	local db_path
+	db_path=$(_opencode_db_path)
 
 	if [[ ! -r "$db_path" ]] || ! command -v sqlite3 &>/dev/null; then
 		echo ""
@@ -599,7 +616,8 @@ _detect_session_type() {
 # Returns session duration in seconds (now - session.time_created), or empty.
 
 _detect_session_time() {
-	local db_path="${HOME}/.local/share/opencode/opencode.db"
+	local db_path
+	db_path=$(_opencode_db_path)
 
 	# If the OpenCode DB exists, try it — don't gate on process detection.
 	# The old PPID-only check failed on Linux where the immediate parent is

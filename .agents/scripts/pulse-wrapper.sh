@@ -6699,6 +6699,21 @@ _Merged by deterministic merge pass (pulse-wrapper.sh)._"
 _Merged by deterministic merge pass (pulse-wrapper.sh). No worker summary was available — the worker either crashed before writing one or this PR predates the merge summary convention._"
 			fi
 
+			# Append signature footer to closing comment (GH#15486).
+			# The merge pass is not an LLM session, so use --no-session.
+			# Pass --issue for total-time and cumulative token tracking.
+			local _merge_sig_footer="" _merge_elapsed=""
+			_merge_elapsed=$(($(date +%s) - PULSE_START_EPOCH))
+			local _merge_issue_ref=""
+			if [[ -n "$linked_issue" ]]; then
+				_merge_issue_ref="${repo_slug}#${linked_issue}"
+			fi
+			_merge_sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer \
+				--body "$closing_comment" --no-session --tokens 0 \
+				--time "$_merge_elapsed" --session-type routine \
+				${_merge_issue_ref:+--issue "$_merge_issue_ref"} --solved 2>/dev/null || true)
+			closing_comment="${closing_comment}${_merge_sig_footer}"
+
 			# Post closing comment on PR
 			gh pr comment "$pr_number" --repo "$repo_slug" \
 				--body "$closing_comment" 2>/dev/null || true
