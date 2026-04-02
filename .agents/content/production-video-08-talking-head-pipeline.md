@@ -1,35 +1,37 @@
 # Longform Talking-Head Pipeline (30s+)
 
-Audio-driven pipeline: voice audio controls lip movement and timing.
+Audio-driven: voice controls lip movement and timing. `Image → Script → Voice → Video → Post`
 
-`Image (1) → Script (2) → Voice (3) → Video (4) → Post-Processing (5)`
+> **Voice quality is the #1 drop-off factor.** NEVER use pre-made ElevenLabs voices — use Voice Design or Instant Voice Clone.
 
 ## 1. Starting Image
 Use Nanobanana Pro with JSON prompts (see `content/production-image.md`). JSON `color`/`lighting` fields prevent flat output. Video models amplify artifacts — use high-res, photorealistic sources.
 
-- **Character/Person**: Nanobanana Pro / Freepik
-- **4K Refinement**: Seedream 4
-- **Consistency**: Ideogram face swap
+| Purpose | Tool |
+|---------|------|
+| Character/Person | Nanobanana Pro / Freepik |
+| 4K Refinement | Seedream 4 |
+| Consistency | Ideogram face swap |
 
 ## 2. Script
 Write for natural speech:
 - **Contractions**: "it's", "don't", "we're" (never "it is", "do not")
 - **Pacing**: 8-12 words per sentence
 - **Cues**: `[excited]Text[/excited]`
-- **Test**: Read aloud; if it sounds awkward, rewrite.
+- **Test**: Read aloud; rewrite anything that sounds awkward.
 
-## 3. Voice Audio (Critical)
-Robotic audio is scrolled past. **NEVER use pre-made ElevenLabs voices.** Use Voice Design or Instant Voice Clone.
+## 3. Voice Audio
+Clone in a quiet room (no music). Cleanup via CapCut — see `content/production-audio.md`. Qwen3 setup: `tools/voice/qwen3-tts.md`.
 
 | Tool | Quality | Cost | Best For |
 |------|---------|------|----------|
-| **ElevenLabs** | Highest | $5-99/mo | Realism, custom clones (10-30s) |
-| **MiniMax TTS** | High | $5/mo | Value, easy setup (10s clone) |
-| **Qwen3-TTS** | High | Free | Local/CUDA, open source (3s clone) |
-
-*Cloning: Quiet room, no music. Cleanup via CapCut (see `content/production-audio.md`). Qwen3: `tools/voice/qwen3-tts.md`.*
+| **ElevenLabs** | Highest | $5-99/mo | Realism, custom clones (10-30s sample) |
+| **MiniMax TTS** | High | $5/mo | Value, easy setup (10s sample) |
+| **Qwen3-TTS** | High | Free | Local/CUDA, open source (3s sample) |
 
 ## 4. Talking-Head Video
+Match model to budget and quality target.
+
 | Model | Quality | Cost | Best For |
 |-------|---------|------|----------|
 | **HeyGen 4** | High | Sub | All-around (see `content/heygen-skill.md`) |
@@ -42,8 +44,9 @@ Robotic audio is scrolled past. **NEVER use pre-made ElevenLabs voices.** Use Vo
 3. **Grain**: Subtle film grain for organic look.
 4. **Mix**: Layer ambient sound/music (see `content/production-audio.md`).
 
-## Longform Assembly (30s+)
-Split script into segments (e.g., 10s for HeyGen). Generate with identical settings.
+## Assembly
+Split script into segments (e.g., 10s for HeyGen). Generate with identical settings, then concatenate:
+
 ```bash
 printf "file '%s'\n" segment_*.mp4 > concat.txt
 ffmpeg -f concat -safe 0 -i concat.txt -c copy output.mp4
