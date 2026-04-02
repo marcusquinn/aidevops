@@ -4,18 +4,13 @@ description: Canonical routing taxonomy — domain labels and model tier labels 
 
 # Task Taxonomy: Domain and Model Tier Classification
 
-Canonical source for task classification used by `/new-task`, `/save-todo`,
-`/define`, and `/pulse`.
-
-When a domain or tier changes, update **only this file**. Command docs should
-point here, not duplicate the tables.
+Canonical source for `/new-task`, `/save-todo`, `/define`, and `/pulse`. When a domain or tier changes, update **only this file** — command docs point here, not duplicate the tables.
 
 ---
 
 ## Domain Routing Table
 
-Add a domain tag and label only when the task clearly belongs to a specialist
-agent. Code work stays unlabeled and routes to Build+.
+Apply a domain tag only when the task clearly belongs to a specialist agent. Code work stays unlabeled and routes to Build+.
 
 | Domain Signal | TODO Tag | GitHub Label | Agent |
 |--------------|----------|--------------|-------|
@@ -37,9 +32,7 @@ agent. Code work stays unlabeled and routes to Build+.
 
 ## Model Tier Table
 
-Add a tier tag and label only when the task clearly needs more or less reasoning
-than the default dispatch path (currently sonnet-tier). `/pulse` resolves labels
-through `model-availability-helper.sh resolve <tier>`.
+Apply a tier tag only when the task needs more or less reasoning than the default (sonnet). `/pulse` resolves labels via `model-availability-helper.sh resolve <tier>`.
 
 | Tier | TODO Tag | GitHub Label | When to Apply |
 |------|----------|--------------|---------------|
@@ -47,8 +40,7 @@ through `model-availability-helper.sh resolve <tier>`.
 | simple | `tier:simple` | `tier:simple` | Docs-only changes, simple renames, formatting, config tweaks, label/tag updates |
 | *(coding)* | *(none)* | *(none)* | Standard implementation, bug fixes, refactors, tests — **default, no label needed** |
 
-**Rule:** Default to no tier label. Use `thinking` for deeper reasoning, `simple`
-for lighter work, and omit when uncertain.
+**Rule:** Default to no tier label. Use `thinking` for deeper reasoning, `simple` for lighter work, omit when uncertain.
 
 ---
 
@@ -59,5 +51,4 @@ for lighter work, and omit when uncertain.
 - **`/define`** — classify during task type detection
 - **`/pulse`** — consume labels for agent routing and model tier selection
 
-See `scripts/commands/pulse.md` "Agent routing from labels" and "Model tier
-selection" for dispatch behaviour.
+See `scripts/commands/pulse.md` "Agent routing from labels" and "Model tier selection" for dispatch behaviour.
