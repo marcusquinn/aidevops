@@ -3334,7 +3334,7 @@
     ".agents/scripts/commands/venv-health.md": {
       "hash": "4d7437501f44b30e1a2ba194692f5c437ea144879609ccae12dba08ea6f83e5a",
       "at": "2026-04-02T09:43:51Z",
-      "pr": 15575
+      "pr": 15577
     },
     ".agents/seo/ai-search-kpi-template.md": {
       "hash": "b750815aa689ad99b32c355078ef3d168b489789",
