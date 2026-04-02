@@ -13,15 +13,11 @@ tools:
 
 # aidevops-opencode Plugin Architecture
 
-<!-- AI-CONTEXT-START -->
-
 - **Status**: Implemented (`t008.1` PR #1138, `t008.2` PR #1149, `t008.3` PR #1150)
 - **Purpose**: Native OpenCode plugin wrapper for aidevops
 - **Implementation**: Single-file ESM plugin at `.agents/plugins/opencode-aidevops/index.mjs`
 - **SDK**: `@opencode-ai/plugin` v1.1.56+ (`index.d.ts` on npm)
 - **Boundary**: `generate-opencode-agents.sh` and `setup.sh` own static config; the plugin owns runtime hooks and tools. Shell-generated config wins on conflicts.
-
-<!-- AI-CONTEXT-END -->
 
 ## Runtime surface
 
@@ -37,11 +33,10 @@ tools:
 
 ### `config`
 
-- Loads subagents from `~/.aidevops/agents/`, parses YAML frontmatter, injects them into `config.agent`, and skips shell-generated entries (`t008.1`).
+- Loads subagents from `~/.aidevops/agents/`, parses YAML frontmatter, injects into `config.agent`, skips shell-generated entries (`t008.1`).
 - Registers MCP servers from a data-driven registry instead of re-running `generate-opencode-agents.sh` (`t008.2`).
 - Registry fields: `name`, `type` (`local`/`remote`), `command` or `url`, `eager`, `toolPattern`, `globallyEnabled`, `requiresBinary`, `macOnly`.
-- `AGENT_MCP_TOOLS` maps agents to tool globs, for example `@dataforseo` -> `dataforseo_*`.
-- Startup policy: all 11 MCPs are lazy-loaded, saving ~7K startup tokens.
+- `AGENT_MCP_TOOLS` maps agents to tool globs (e.g. `@dataforseo` → `dataforseo_*`). All 11 MCPs lazy-loaded, saving ~7K startup tokens.
 
 | MCP | Type | Global tools |
 |---|---|---|
@@ -57,7 +52,7 @@ tools:
 | `sentry` | remote | no |
 | `socket` | remote | no |
 
-### Supporting hooks
+### Other hooks
 
 | Hook | Coverage |
 |---|---|
