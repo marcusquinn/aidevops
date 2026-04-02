@@ -5312,8 +5312,10 @@ check_dispatch_dedup() {
 	# duplicate than to block all dispatch on a transient GitHub API failure.
 	#
 	# GH#15317: Capture claim output to extract comment_id for cleanup after
-	# the deterministic dispatch comment is posted.
-	local _claim_comment_id=""
+	# the deterministic dispatch comment is posted. Uses the caller's
+	# _claim_comment_id variable (declared in dispatch_with_dedup) via bash
+	# dynamic scoping — do NOT declare local here or the value is lost on return.
+	_claim_comment_id=""
 	if [[ -x "$dedup_helper" ]] && [[ "$issue_number" =~ ^[0-9]+$ ]]; then
 		local claim_exit=0 claim_output=""
 		claim_output=$("$dedup_helper" claim "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE") || claim_exit=$?
@@ -5369,6 +5371,11 @@ dispatch_with_dedup() {
 	local prompt="$7"
 	local session_key="${8:-issue-${issue_number}}"
 	local model_override="${9:-}"
+	# GH#15317 fix: _claim_comment_id is set by check_dispatch_dedup() via
+	# bash dynamic scoping, but must be declared in the calling function's
+	# scope first. Without this, set -u crashes the wrapper on every dispatch,
+	# SIGTERM-ing all active workers.
+	local _claim_comment_id=""
 
 	# Hard stop for supervisor/telemetry issues (t1702 pulse guard).
 	# The pulse prompt should already avoid these, but this deterministic
