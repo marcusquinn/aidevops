@@ -21,9 +21,9 @@ Structure: **IF** [change], **THEN** [expected result], **BECAUSE** [reasoning]
 
 Test multiple variables simultaneously to detect interaction effects. Example (2×2×2 = 8 variations): Headline A/B × Image X/Y × CTA Red/Blue
 
-| | Benefits | Challenges |
-|-|----------|------------|
-| Factorial | Interaction effects, sample-efficient when interactions matter | Complex analysis, more traffic, implementation complexity |
+**Benefits:** Interaction effects, sample-efficient when interactions matter
+
+**Challenges:** Complex analysis, more traffic required, implementation complexity
 
 ### Bandit Algorithms
 
@@ -51,8 +51,6 @@ Stop tests early **only with pre-specified stopping rules** — ad-hoc stopping 
 - Pocock boundaries (equal spending at each interim look)
 - Always Valid P-values (anytime-valid inference)
 - Alpha-spending functions (flexible interim analysis scheduling)
-
-**Benefits:** Faster decisions, lower opportunity cost, reduced sample size while maintaining validity
 
 ## 21.4 Test Analysis Deep Dive
 
