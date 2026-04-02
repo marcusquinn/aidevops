@@ -1,10 +1,6 @@
 # Crawl4AI Benchmark Scripts
 
-Reference implementation for `browser-benchmark-scripts.md`.
-
-- Target: `https://the-internet.herokuapp.com`
-- Coverage: `navigate`, `extract` (no form interaction or multi-step navigation)
-- Sampling: 3 runs per test
+Reference implementation for `browser-benchmark-scripts.md`. Target: `https://the-internet.herokuapp.com`. Tests: `navigate`, `extract` only (no form/multi-step) — 3 runs each.
 
 ## Sequential benchmark
 
