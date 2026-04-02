@@ -1,5 +1,5 @@
 ---
-description: Screaming Frog SEO Spider CLI for site auditing
+description: Screaming Frog SEO Spider CLI for site crawling and auditing
 mode: subagent
 tools:
   read: true
@@ -23,11 +23,13 @@ tools:
 ## Usage
 
 ### Basic Crawl
+
 ```bash
 screamingfrogseospider --crawl https://example.com --headless --output-folder ./reports
 ```
 
 ### Configuration & Export
+
 - **Load Config**: `--config profile.seospiderconfig` (save from GUI first).
 - **Export Tabs**: `--export-tabs "Internal:All,Response Codes:All"`
 - **Bulk Export**: `--bulk-export "All Inlinks"`
