@@ -10,12 +10,7 @@ Arguments: `$ARGUMENTS`
 
 ## Workflow
 
-1. Run the log command:
-
-```bash
-~/.aidevops/agents/scripts/memory-helper.sh log
-```
-
+1. Run the log command: `~/.aidevops/agents/scripts/memory-helper.sh log`
 2. Apply requested filters:
 
 | Argument | Command |
@@ -52,8 +47,7 @@ Auto-capture stores memories when AI agents detect:
   - Architecture decisions
   - Tool configurations
 
-Trigger auto-capture with:
-  memory-helper.sh store --auto --content "..."
+Trigger auto-capture with: memory-helper.sh store --auto --content "..."
 ```
 
 ## Auto-capture triggers
@@ -72,7 +66,6 @@ Agents store memories with `--auto` when they detect:
 ## Privacy
 
 Apply privacy filters before storage:
-
 - `<private>...</private>` tags are stripped before storage
 - Content matching secret patterns (API keys, tokens) is rejected
 - Use `privacy-filter-helper.sh scan` for comprehensive scanning
