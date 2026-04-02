@@ -37,7 +37,9 @@ pip install llm-tldr
 
 Template: `configs/mcp-templates/llm-tldr.json`
 
-## CLI Commands
+## Commands
+
+CLI: `tldr <cmd>` — MCP (via `tldr-mcp`): same commands prefixed `tldr_`.
 
 | Command | Usage | Purpose |
 |---------|-------|---------|
@@ -50,10 +52,6 @@ Template: `configs/mcp-templates/llm-tldr.json`
 | `impact` | `tldr impact /path/to/file.py fn_name` | What would break if this function changes |
 | `dead` | `tldr dead /path/to/project` | Unused functions and classes |
 | `slice` | `tldr slice /path/to/file.py var_name` | Code slice affecting a variable |
-
-## MCP Tools (via tldr-mcp)
-
-Same commands as CLI, prefixed `tldr_`: `tldr_tree`, `tldr_structure`, `tldr_context`, `tldr_cfg`, `tldr_dfg`, `tldr_search`, `tldr_impact`, `tldr_dead`, `tldr_slice`.
 
 ## Token Savings
 
@@ -70,14 +68,6 @@ Same commands as CLI, prefixed `tldr_`: `tldr_tree`, `tldr_structure`, `tldr_con
 - **Code review**: `tldr dead` for unused code, `tldr dfg` for data flow
 
 **vs other tools**: llm-tldr for structure/semantics; rg/Augment for finding code; repomix for full context.
-
-## Integration with Memory System
-
-```bash
-~/.aidevops/agents/scripts/memory-helper.sh store "CODEBASE_PATTERN" \
-  "Auth flow: validate_token -> check_permissions -> authorize" \
-  "auth,flow,pattern" "myproject"
-```
 
 ## Troubleshooting
 
