@@ -3749,6 +3749,19 @@ _complexity_run_llm_sweep() {
 	local now_epoch="$2"
 	local maintainer="$3"
 
+	# Dedup: check if an open sweep issue already exists (t1855).
+	# Both sweep code paths use different title patterns — check both.
+	local sweep_exists
+	sweep_exists=$(gh issue list --repo "$aidevops_slug" \
+		--label "simplification-debt" --state open \
+		--search "in:title \"simplification debt stalled\"" \
+		--json number --jq 'length' 2>/dev/null) || sweep_exists="0"
+	if [[ "${sweep_exists:-0}" -gt 0 ]]; then
+		echo "[pulse-wrapper] Complexity LLM sweep: skipping — open stall issue already exists" >>"$LOGFILE"
+		printf '%s\n' "$now_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
+		return 0
+	fi
+
 	local current_count=""
 	if [[ -f "$COMPLEXITY_DEBT_COUNT_FILE" ]]; then
 		current_count=$(cat "$COMPLEXITY_DEBT_COUNT_FILE" 2>/dev/null || true)
@@ -4206,7 +4219,7 @@ _simplification_state_prune() {
 			[[ -z "$sp" ]] && continue
 			jq_filter="${jq_filter} | del(.[\"${sp}\"])"
 		done < <(printf '%b' "$stale_paths")
-		jq "${jq_filter} | {\"_comment\": ._comment, \"files\": .}" "$state_file" >"$tmp_file" 2>/dev/null || {
+		jq "${jq_filter} | {\"files\": .}" "$state_file" >"$tmp_file" 2>/dev/null || {
 			# Fallback: remove one at a time
 			cp "$state_file" "$tmp_file"
 			while IFS= read -r sp; do
@@ -4250,6 +4263,92 @@ _simplification_state_push() {
 		git -C "$repo_path" push origin "$main_branch" 2>/dev/null || return 1
 		echo "[pulse-wrapper] simplification-state: pushed updated state to $main_branch" >>"$LOGFILE"
 	fi
+	return 0
+}
+
+# Backfill simplification state for recently closed issues (t1855).
+#
+# The critical bug: _simplification_state_record() was defined but never called.
+# Workers complete simplification PRs and issues auto-close via "Closes #NNN",
+# but the state file never gets updated. This function runs each scan cycle
+# to detect recently closed simplification issues and record their file hashes.
+#
+# Arguments: $1 - repo_path, $2 - state_file, $3 - aidevops_slug
+# Returns: 0. Outputs count of entries added to stdout.
+_simplification_state_backfill_closed() {
+	local repo_path="$1"
+	local state_file="$2"
+	local aidevops_slug="$3"
+	local added=0
+
+	# Fetch recently closed simplification issues (last 7 days, max 50)
+	local closed_issues
+	closed_issues=$(gh issue list --repo "$aidevops_slug" \
+		--label "simplification-debt" --state closed \
+		--limit 50 --json number,title,closedAt 2>/dev/null) || {
+		echo "0"
+		return 0
+	}
+	[[ -z "$closed_issues" || "$closed_issues" == "[]" ]] && {
+		echo "0"
+		return 0
+	}
+
+	local tmp_state
+	tmp_state=$(mktemp)
+	cp "$state_file" "$tmp_state"
+
+	# Use process substitution to avoid subshell variable propagation bug (t1855).
+	# A pipe (| while read) runs the loop in a subshell where $added won't propagate.
+	while IFS= read -r issue; do
+		[[ -z "$issue" ]] && continue
+		local title file_path issue_num
+
+		title=$(echo "$issue" | jq -r '.title') || continue
+		issue_num=$(echo "$issue" | jq -r '.number') || continue
+
+		# Extract file path from title — pattern: "simplification: tighten agent doc ... (path, N lines)"
+		# or "simplification: reduce function complexity in path (N functions ...)"
+		file_path=$(echo "$title" | grep -oE '\.[a-z][^ ,)]+\.(md|sh)' | head -1) || continue
+		[[ -z "$file_path" ]] && continue
+
+		# Skip if file doesn't exist
+		[[ ! -f "${repo_path}/${file_path}" ]] && continue
+
+		# Skip if already in state with matching hash
+		local existing_hash
+		existing_hash=$(jq -r --arg fp "$file_path" '.files[$fp].hash // empty' "$tmp_state" 2>/dev/null) || existing_hash=""
+		local current_hash
+		current_hash=$(git -C "$repo_path" hash-object "${repo_path}/${file_path}" 2>/dev/null) || continue
+
+		if [[ "$existing_hash" == "$current_hash" ]]; then
+			continue
+		fi
+
+		# Record the file in state — either new entry or updated hash
+		local now_iso prev_passes new_passes
+		now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+		prev_passes=$(jq -r --arg fp "$file_path" '.files[$fp].passes // 0' "$tmp_state" 2>/dev/null) || prev_passes=0
+		new_passes=$((prev_passes + 1))
+
+		local inner_tmp
+		inner_tmp=$(mktemp)
+		jq --arg fp "$file_path" --arg hash "$current_hash" --arg at "$now_iso" \
+			--argjson pr "$issue_num" --argjson passes "$new_passes" \
+			'.files[$fp] = {"hash": $hash, "at": $at, "pr": $pr, "passes": $passes}' \
+			"$tmp_state" >"$inner_tmp" 2>/dev/null && mv "$inner_tmp" "$tmp_state" || {
+			rm -f "$inner_tmp"
+			continue
+		}
+		added=$((added + 1))
+	done < <(echo "$closed_issues" | jq -c '.[]')
+
+	if [[ "$added" -gt 0 ]]; then
+		mv "$tmp_state" "$state_file"
+	else
+		rm -f "$tmp_state"
+	fi
+	echo "$added"
 	return 0
 }
 
@@ -4884,6 +4983,18 @@ run_weekly_complexity_scan() {
 		state_updated=true
 	fi
 
+	# Backfill state for recently closed issues (t1855).
+	# _simplification_state_record() was defined but never called — workers
+	# complete simplification and close issues, but the state file was never
+	# updated. This backfill detects closed issues and records their file hashes
+	# so the scanner knows they're done and doesn't create duplicate issues.
+	local backfilled_count
+	backfilled_count=$(_simplification_state_backfill_closed "$aidevops_path" "$state_file" "$aidevops_slug")
+	if [[ "${backfilled_count:-0}" -gt 0 ]]; then
+		echo "[pulse-wrapper] simplification-state: backfilled $backfilled_count entries from recently closed issues (t1855)" >>"$LOGFILE"
+		state_updated=true
+	fi
+
 	# Push state file if updated (planning data — direct to main)
 	if [[ "$state_updated" == true ]]; then
 		_simplification_state_push "$aidevops_path"
@@ -4936,11 +5047,11 @@ run_weekly_complexity_scan() {
 		sweep_result=$("$scan_helper" sweep-check "$aidevops_slug" 2>>"$LOGFILE") || sweep_result=""
 		if [[ "$sweep_result" == needed* ]]; then
 			echo "[pulse-wrapper] LLM sweep triggered: ${sweep_result}" >>"$LOGFILE"
-			# Create a one-off issue for the LLM sweep if none exists
+			# Create a one-off issue for the LLM sweep if none exists (t1855: check both title patterns)
 			local sweep_issue_exists
 			sweep_issue_exists=$(gh issue list --repo "$aidevops_slug" \
 				--label "simplification-debt" --state open \
-				--search "in:title \"LLM complexity sweep\"" \
+				--search "in:title \"simplification debt stalled\" OR in:title \"LLM complexity sweep\"" \
 				--json number --jq 'length' 2>/dev/null) || sweep_issue_exists="0"
 			if [[ "${sweep_issue_exists:-0}" -eq 0 ]]; then
 				local sweep_reason
