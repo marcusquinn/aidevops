@@ -37,21 +37,6 @@ Slow query?
 └─ Connection overhead                  → Enable connection pooling
 ```
 
-## Directory Structure
-
-```text
-src/db/
-├── schema/
-│   ├── index.ts          # Re-export all tables
-│   ├── users.ts          # Table + relations
-│   └── posts.ts          # Table + relations
-├── db.ts                 # Connection with pooling
-└── migrate.ts            # Migration runner
-drizzle/
-└── migrations/           # Generated SQL files
-drizzle.config.ts         # drizzle-kit config
-```
-
 ## Anti-Patterns and Performance
 
 | Priority | Issue | Impact | Fix |
@@ -65,7 +50,7 @@ drizzle.config.ts         # drizzle-kit config
 | MEDIUM | No partial indexes | Oversized indexes | Partial indexes for filtered subsets |
 | MEDIUM | Random UUIDs for PKs | Poor index locality | UUIDv7 (PG18+) |
 
-For schema, query, and relation patterns see the chapter files below — the index file stays slim.
+See chapter files below for schema, query, and relation patterns.
 
 ## Reference Documentation
 
