@@ -8,8 +8,6 @@ tools:
 
 # Vercel Agent Skills
 
-Use this doc for community [Agent Skills](https://agentskills.io/) from `vercel-labs/agent-skills`. For full Vercel CLI workflows, use `vercel.md`.
-
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
@@ -26,31 +24,11 @@ Use this doc for community [Agent Skills](https://agentskills.io/) from `vercel-
 
 | Skill | Use when | Notes |
 |-------|----------|-------|
-| `vercel-deploy-claimable` | "Deploy my app", "Push this live" | Primary skill; instant deploy without auth |
+| `vercel-deploy-claimable` | "Deploy my app", "Push this live" | Deploys without auth; returns preview URL + claim URL. Detects 40+ frameworks. Use instead of `vercel.md` for quick deploys |
 | `react-best-practices` | Writing/reviewing React or Next.js code | 40+ rules across 8 categories |
 | `web-design-guidelines` | "Review my UI", "Check accessibility" | 100+ rules across 11 areas |
 | `react-native-guidelines` | Building React Native or Expo apps | 16 rules across 7 sections |
 | `composition-patterns` | Refactoring components with boolean props | Compound component patterns |
-
-## Primary Skill: `vercel-deploy-claimable`
-
-Deploys without Vercel auth by returning a live preview URL plus a claim URL.
-
-1. Packages the project as a tarball (excluding `node_modules`, `.git`)
-2. Detects the framework from `package.json` when present
-3. Uploads to deployment service
-4. Returns preview URL (live site) + claim URL (transfer ownership)
-
-Framework detection covers 40+ frameworks, including Next.js, Remix, Astro, Vite, SvelteKit, Nuxt, Angular, Gatsby, Hono, Express, NestJS, Fastify, and Storybook. Static HTML projects without `package.json` also work.
-
-## When to Use What
-
-| Need | Use |
-|------|-----|
-| Full Vercel CLI (teams, env vars, domains) | `vercel.md` |
-| Quick deploy without auth | `vercel-deploy-claimable` |
-| Import any community skill | `/add-skill <source>` |
-| Create aidevops-compatible SKILL.md | `scripts/generate-skills.sh` |
 
 ## SKILL.md Layout
 
@@ -74,8 +52,6 @@ metadata:
   version: "1.0.0"
 ---
 ```
-
-The body should cover how the skill works, usage examples, expected output, and troubleshooting.
 
 ## Install
 
