@@ -1051,6 +1051,26 @@ _update_health_issue_for_repo() {
 	local health_issue_file="${cache_dir}/health-issue-${runner_user}-${role_label}-${slug_safe}"
 	mkdir -p "$cache_dir"
 
+	# Guard: skip health issue creation for repos with no activity (GH#15959).
+	# Only applies when no cached issue exists (i.e. this would CREATE a new one).
+	# Existing health issues are still updated normally so the dashboard shows idle state.
+	if [[ ! -f "$health_issue_file" ]]; then
+		local guard_pr_count guard_assigned_count guard_worker_output guard_worker_count
+		guard_pr_count=$(gh pr list --repo "$repo_slug" --state open \
+			--json number --jq 'length' 2>/dev/null || echo "0")
+		guard_assigned_count=$(gh issue list --repo "$repo_slug" \
+			--assignee "$runner_user" --state open \
+			--json number --jq 'length' 2>/dev/null || echo "0")
+		guard_worker_output=$(_scan_active_workers "${repo_path:-}")
+		guard_worker_count="${guard_worker_output##*$'\n'}"
+
+		if [[ "${guard_pr_count:-0}" -eq 0 && "${guard_assigned_count:-0}" -eq 0 && "${guard_worker_count:-0}" -eq 0 ]]; then
+			echo "[stats] Health issue: skipping creation for ${repo_slug} — no active PRs, issues, or workers" \
+				>>"${LOGFILE:-/dev/null}"
+			return 0
+		fi
+	fi
+
 	local health_issue_number
 	health_issue_number=$(_resolve_health_issue_number \
 		"$repo_slug" "$runner_user" "$runner_role" "$runner_prefix" \
