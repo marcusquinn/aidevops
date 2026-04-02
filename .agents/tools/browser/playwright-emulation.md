@@ -28,7 +28,9 @@ tools:
 
 ## Device Presets
 
-100+ built-in descriptors (`viewport`, `userAgent`, `deviceScaleFactor`, `isMobile`, `hasTouch`). Landscape variant: append `landscape` (e.g., `devices['iPhone 13 landscape']`). List all: `node -e "const { devices } = require('playwright'); console.log(Object.keys(devices).join('\n'))"`
+100+ built-in descriptors (`viewport`, `userAgent`, `deviceScaleFactor`, `isMobile`, `hasTouch`):
+- **Landscape variant**: append `landscape` (e.g., `devices['iPhone 13 landscape']`)
+- **List all**: `node -e "const { devices } = require('playwright'); console.log(Object.keys(devices).join('\n'))"`
 
 | Category | Examples | Viewport | Scale | Mobile |
 |----------|----------|----------|-------|--------|
