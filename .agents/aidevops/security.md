@@ -71,10 +71,9 @@ Server: disable root login, non-standard SSH port, fail2ban.
 - **Private scripts**: safe for real API keys; create from `scripts/` templates; never share outside secure channels
 - Verify: `git status --ignored | grep scripts-private` → should show `(ignored)`
 
-## Access Control
+## Access Control & Monitoring
 
-MFA on all cloud accounts; hardware security keys where available. VPNs or bastion hosts for production; IP whitelisting. TLS 1.2+ for all API communications; separate tokens per project/environment.
-
-## Monitoring
-
-Monitor API rate limits; alert on unusual activity; log all API calls in production.
+- MFA on all cloud accounts; hardware security keys where available
+- VPNs or bastion hosts for production; IP whitelisting; TLS 1.2+ for all API communications
+- Separate tokens per project/environment
+- Monitor API rate limits; alert on unusual activity; log all API calls in production
