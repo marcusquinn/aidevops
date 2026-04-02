@@ -22,50 +22,29 @@ Options:
 
 ## Workflow
 
-### 1. Load the audit framework
+### 1. Preparation & Baseline
 
-Read these files before analysing the site:
+Read audit framework files before analysis:
+- `seo/seo-audit-skill.md` (priority: crawlability → technical → on-page → content → authority)
+- `seo/seo-audit-skill/ai-writing-detection.md`
+- `seo/seo-audit-skill/aeo-geo-patterns.md`
 
-- `~/.aidevops/agents/seo/seo-audit-skill.md` — priority order, technical checklist, on-page checklist, content quality review
-- `~/.aidevops/agents/seo/seo-audit-skill/ai-writing-detection.md`
-- `~/.aidevops/agents/seo/seo-audit-skill/aeo-geo-patterns.md`
-
-Apply the skill's priority order: crawlability → technical → on-page → content → authority.
-
-### 2. Gather baseline data
-
-Use lightweight fetches first:
-
+Gather baseline data using lightweight fetches:
 ```bash
-# robots.txt and sitemap
+# robots.txt, sitemap, and homepage meta
 curl -s "https://$DOMAIN/robots.txt"
 curl -s "https://$DOMAIN/sitemap.xml" | head -50
-
-# Meta tags on homepage
 curl -s "https://$DOMAIN" | grep -E '<(title|meta)' | head -20
 ```
 
-If `--gsc` is set, export Search Console data:
+If `--gsc` set, export Search Console: `~/.aidevops/agents/scripts/seo-export-gsc.sh "$DOMAIN"`.
+Use browser automation only for rendering/field data (Core Web Vitals, Structured Data, Mobile, Internal links).
 
-```bash
-~/.aidevops/agents/scripts/seo-export-gsc.sh "$DOMAIN"
-```
+### 2. Audit & Reporting
 
-Use browser automation only for checks that need rendering or field data:
+Audit in priority order. Record status, evidence, impact, and next action. Focus on ranked issues.
 
-- Core Web Vitals via PageSpeed Insights
-- Structured data via Rich Results Test
-- Mobile-friendliness
-- Internal linking analysis
-
-### 3. Audit in priority order
-
-For each category, record status, evidence, impact, and the next action. Keep the write-up focused on ranked issues, not a long checklist dump.
-
-### 4. Generate the report
-
-Use this structure:
-
+**Report Structure:**
 ```markdown
 ## SEO Audit Report: [DOMAIN]
 **Date:** YYYY-MM-DD | **Scope:** [scope]
@@ -88,18 +67,14 @@ Use this structure:
 - E-E-A-T Score, Content Depth, AI Writing Patterns
 
 ### Prioritized Action Plan
-- **Critical** (fix immediately)
-- **High Priority** (this week)
-- **Quick Wins** (easy, immediate benefit)
-- **Long-Term** recommendations
+- **Critical** (fix immediately) | **High Priority** (this week) | **Quick Wins** (easy) | **Long-Term**
 ```
 
-### Reporting rules
-
-- Lead with the top three issues by impact.
-- Separate critical fixes, near-term work, quick wins, and longer-term recommendations.
-- If `--compare` is used, call out relative gaps vs the competitor.
-- If `--output` is set, save the final report to that file.
+**Rules:**
+- Lead with top 3 issues by impact.
+- Separate fixes by priority (Critical, High, Quick Wins, Long-Term).
+- If `--compare` used, call out gaps vs competitor.
+- If `--output` set, save to file.
 
 ## Examples
 
@@ -114,7 +89,7 @@ Use this structure:
 
 ## Related
 
-- `seo/seo-audit-skill.md` — Full audit framework (imported skill)
+- `seo/seo-audit-skill.md` — Full audit framework
 - `seo/google-search-console.md` — GSC integration
 - `seo/dataforseo.md` — DataForSEO API
 - `commands/performance.md` — Performance audit command
