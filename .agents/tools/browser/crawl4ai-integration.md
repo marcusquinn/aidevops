@@ -15,17 +15,17 @@ tools:
 
 ## Quick Reference
 
-- Install: `./.agents/scripts/crawl4ai-helper.sh install`
-- Docker: `./.agents/scripts/crawl4ai-helper.sh docker-setup && docker-start`
-- MCP setup: `./.agents/scripts/crawl4ai-helper.sh mcp-setup`
-- Crawl: `./.agents/scripts/crawl4ai-helper.sh crawl URL markdown output.json`
-- Extract: `./.agents/scripts/crawl4ai-helper.sh extract URL '{"title":"h1"}' data.json`
-- Status: `./.agents/scripts/crawl4ai-helper.sh status` | `docker logs crawl4ai`
-- MCP tools: `crawl_url`, `crawl_multiple`, `extract_structured`, `take_screenshot`, `generate_pdf`, `execute_javascript`
-- Config: `configs/crawl4ai-config.json.txt`, `configs/mcp-templates/crawl4ai-mcp-config.json`
-- Endpoints: Dashboard http://localhost:11235/dashboard | Health `/health` | Metrics `/metrics`
-- Docs: https://docs.crawl4ai.com/ | https://github.com/unclecode/crawl4ai
-- Env vars: `LLM_PROVIDER=openai/gpt-4o-mini`, `CRAWL4AI_MAX_PAGES=50`, `CRAWL4AI_TIMEOUT=60`, `CRAWL4AI_DEFAULT_FORMAT=markdown` (`OPENAI_API_KEY`/`ANTHROPIC_API_KEY` from secure storage)
+- **Install**: `./.agents/scripts/crawl4ai-helper.sh install`
+- **Docker**: `./.agents/scripts/crawl4ai-helper.sh docker-setup && docker-start`
+- **MCP**: `./.agents/scripts/crawl4ai-helper.sh mcp-setup`
+- **Crawl**: `./.agents/scripts/crawl4ai-helper.sh crawl URL markdown output.json`
+- **Extract**: `./.agents/scripts/crawl4ai-helper.sh extract URL '{"title":"h1"}' data.json`
+- **Status**: `./.agents/scripts/crawl4ai-helper.sh status` | `docker logs crawl4ai`
+- **Tools**: `crawl_url`, `crawl_multiple`, `extract_structured`, `take_screenshot`, `generate_pdf`, `execute_javascript`
+- **Config**: `configs/crawl4ai-config.json.txt`, `configs/mcp-templates/crawl4ai-mcp-config.json`
+- **Endpoints**: Dashboard http://localhost:11235/dashboard | Health `/health` | Metrics `/metrics`
+- **Docs**: https://docs.crawl4ai.com/ | https://github.com/unclecode/crawl4ai
+- **Env**: `LLM_PROVIDER=openai/gpt-4o-mini`, `CRAWL4AI_MAX_PAGES=50`, `CRAWL4AI_TIMEOUT=60`, `CRAWL4AI_DEFAULT_FORMAT=markdown` (`OPENAI_API_KEY`/`ANTHROPIC_API_KEY` from secure storage)
 
 <!-- AI-CONTEXT-END -->
 
@@ -59,9 +59,9 @@ tools:
 
 ## Security
 
-- Rate limiting: configure `rate_limiting.default_limit` in deployment config
-- Hook security: never trust user-provided hook code; validate, sandbox, and timeout all hooks
-- Security headers: set `x_content_type_options`, `x_frame_options`, `content_security_policy`
+- **Rate limiting**: configure `rate_limiting.default_limit` in deployment config
+- **Hook security**: never trust user-provided hook code; validate, sandbox, and timeout all hooks
+- **Security headers**: set `x_content_type_options`, `x_frame_options`, `content_security_policy`
 
 ## Troubleshooting
 
