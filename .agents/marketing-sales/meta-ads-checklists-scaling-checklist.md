@@ -31,31 +31,31 @@
 
 ## 2. Go / No-Go Gate
 
-Scale only if every box is checked:
+All Section 1 boxes must be checked. Key gates:
 
-- [ ] CPA is below target for 5+ days
-- [ ] 50+ conversions are recorded
-- [ ] Frequency is under 3
-- [ ] The business can handle more volume
+- CPA below target for 5+ days
+- 50+ conversions recorded
+- Frequency under 3
+- Business can handle more volume
 
-If any box is unchecked, fix that bottleneck before increasing budget.
+Fix any unchecked bottleneck before increasing budget.
 
 ## 3. Choose the Scaling Method
 
 | Method | Use when | Next action |
 |--------|----------|-------------|
-| **Vertical scaling** | CPA is 20%+ below target, frequency is still low (<2.5), diminishing returns have not started, and one campaign or ad set is the clear winner | Increase budget 20-30% every 2-3 days |
-| **Horizontal scaling** | Vertical scaling is flattening, you want audience variation, you want to spread risk across ad sets, or the campaign is mature | Duplicate the winning ad set and change **one** variable |
-| **Creative scaling** | Performance is capped by fatigue, you want more volume without a budget jump, or testing already found multiple winners | Add proven new creative to existing ad sets |
+| **Vertical** | CPA 20%+ below target, frequency <2.5, no diminishing returns, one clear winner | Increase budget 20-30% every 2-3 days |
+| **Horizontal** | Vertical flattening, want audience variation or risk spread, mature campaign | Duplicate winning ad set, change **one** variable |
+| **Creative** | Performance capped by fatigue, want volume without budget jump, multiple winners found | Add proven creative to existing ad sets |
 
 ## 4. Execute
 
 ### Vertical Scaling
 
-- [ ] Calculate the new budget (`current × 1.2-1.3`)
-- [ ] Raise budget early in the day when possible
+- [ ] Calculate new budget (`current × 1.2-1.3`)
+- [ ] Raise budget early in the day
 - [ ] Set a maximum budget cap
-- [ ] Schedule a check-in 48 hours later
+- [ ] Schedule check-in 48 hours later
 - [ ] Document the change
 
 ### Horizontal Scaling
@@ -64,7 +64,7 @@ If any box is unchecked, fix that bottleneck before increasing budget.
 - [ ] Change exactly one variable
 - [ ] Start with the same budget as the original
 - [ ] Check for audience overlap
-- [ ] Schedule a check-in 5 days later
+- [ ] Schedule check-in 5 days later
 
 ### Creative Scaling
 
@@ -76,9 +76,9 @@ If any box is unchecked, fix that bottleneck before increasing budget.
 
 | Window | Check |
 |--------|-------|
-| **First 48 hours** | Spend rises as expected, CPA stays within 20% of pre-scale, no delivery issues appear, and learning phase is not reset |
-| **Day 3-5** | CPA starts stabilising, no major swings appear, frequency stays acceptable, and you can decide to keep scaling or pause |
-| **Day 7** | Review full-week data, compare CPA to the pre-scale baseline, and decide whether another increment is justified |
+| **First 48 hours** | Spend rises as expected; CPA within 20% of pre-scale; no delivery issues; learning phase not reset |
+| **Day 3-5** | CPA stabilising; no major swings; frequency acceptable; decide to continue or pause |
+| **Day 7** | Review full-week data; compare CPA to pre-scale baseline; decide if another increment is justified |
 
 ## 6. Stop Signals and Recovery
 
@@ -87,7 +87,7 @@ Stop scaling if any box is checked:
 - [ ] CPA rises 30%+ and does not recover within 48 hours
 - [ ] Prospecting frequency rises above 3.5
 - [ ] CTR drops 30%+ week over week
-- [ ] The algorithm re-enters learning phase
+- [ ] Algorithm re-enters learning phase
 - [ ] Business capacity becomes the bottleneck
 
 | Problem | Response |
@@ -107,7 +107,7 @@ Stop scaling if any box is checked:
 
 ## 8. Record the Ceiling
 
-Before the next increase, document the current limits:
+Document current limits before the next increase:
 
 - [ ] Maximum efficient daily spend before diminishing returns
 - [ ] Maximum daily business capacity
