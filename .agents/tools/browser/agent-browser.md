@@ -109,11 +109,9 @@ agent-browser highlight <sel> | state save/load <path>
 
 ## iOS Simulator (macOS only)
 
+Env vars: `AGENT_BROWSER_PROVIDER=ios`, `AGENT_BROWSER_IOS_DEVICE="iPhone 16 Pro"`, `AGENT_BROWSER_IOS_UDID=<udid>`. First launch ~30-60s (simulator boot). Real device: UDID via `xcrun xctrace list devices`, sign WebDriverAgent in Xcode.
+
 ```bash
-# Env vars: AGENT_BROWSER_PROVIDER=ios, AGENT_BROWSER_IOS_DEVICE="iPhone 16 Pro",
-#           AGENT_BROWSER_IOS_UDID=<udid>
-# First launch ~30-60s (simulator boot); subsequent commands fast
-# Real device: UDID via `xcrun xctrace list devices`, sign WebDriverAgent in Xcode (free Apple Developer account)
 agent-browser device list
 agent-browser -p ios --device "iPhone 16 Pro" open https://example.com
 agent-browser -p ios snapshot -i | tap @e1 | swipe up/down/left/right [px]
@@ -141,21 +139,20 @@ agent-browser -p ios screenshot mobile.png | close
 ## Common Patterns
 
 ```bash
-# Login flow — fill, submit, save auth state
+# Login — fill, submit, save auth state
 agent-browser open https://app.example.com/login && agent-browser snapshot -i
 agent-browser fill @e3 "user@example.com" && agent-browser fill @e4 "password"
 agent-browser click @e5 && agent-browser wait --url "**/dashboard" && agent-browser state save auth.json
 
-# Form submission — fill fields, select, check, submit
+# Form — fill, select, check, submit
 agent-browser open https://example.com/form && agent-browser snapshot -i
 agent-browser fill @e1 "John Doe" && agent-browser fill @e2 "john@example.com"
-agent-browser select @e3 "US" && agent-browser check @e4
-agent-browser click @e5 && agent-browser wait --text "Success"
+agent-browser select @e3 "US" && agent-browser check @e4 && agent-browser click @e5 && agent-browser wait --text "Success"
 
 # Data extraction
 agent-browser open https://example.com/products && agent-browser snapshot --json > products.json
 
-# Multi-session parallel — load saved auth per session
+# Multi-session parallel
 agent-browser --session s1 open https://site-a.com && agent-browser --session s1 state load auth-a.json
 agent-browser --session s2 open https://site-b.com && agent-browser --session s2 state load auth-b.json
 ```
