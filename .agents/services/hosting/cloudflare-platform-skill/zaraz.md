@@ -1,6 +1,6 @@
 # Cloudflare Zaraz
 
-Server-side tag manager offloads third-party scripts (analytics, ads, chat) to Cloudflare's edge. Zero client-side JS; single HTTP request; privacy-first data control.
+Server-side tag manager offloads third-party scripts to Cloudflare's edge. Requires minimal client-side loader for event tracking and SPA integration; privacy-first data control.
 
 ## Setup
 
@@ -64,7 +64,9 @@ zaraz.set('user_id', user.id);
 zaraz.track('login', { method: 'password' });
 ```
 
-## Custom Managed Components
+## Workers & Custom Components
+
+Workers can intercept fetch events to attach Zaraz logic. Custom Managed Components allow server-side event handling:
 
 ```javascript
 export default class CustomAnalytics {

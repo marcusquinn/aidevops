@@ -12,7 +12,7 @@ mcp_servers:
 
 **MCP server URL**: `https://mcp.cloudflare.com/mcp` | **Config template**: `configs/mcp-templates/cloudflare-api.json`
 
-## When to Use This (vs cloudflare-platform skill)
+## When to Use This (vs cloudflare-platform-skill)
 
 - **Code Mode MCP** (`search` + `execute`): Manage DNS, zones, WAF, DDoS, firewall rules, R2 buckets, Workers deployments, Zero Trust, Access policies
 - **`cloudflare-platform-skill`**: Build Workers (SDK, bindings, patterns), configure wrangler.toml, local dev, debug runtime issues, understand product architecture
