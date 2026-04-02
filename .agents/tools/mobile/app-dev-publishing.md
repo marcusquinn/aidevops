@@ -37,39 +37,13 @@ asc apps list
 
 ### Pre-Submission Checklist
 
-**Required**:
+**Required**: Active Developer Program membership · App builds without crashes · Privacy policy URL · ToS URL (if applicable) · Description (≤4000 chars) · Keywords (≤100 chars) · Screenshots for required sizes · App icon (1024×1024, no alpha, no rounded corners) · Age rating · Category · Support URL · Review contact info
 
-- [ ] Active Apple Developer Program membership
-- [ ] App builds and runs without crashes
-- [ ] Privacy policy URL (hosted, accessible)
-- [ ] Terms of service URL (if applicable)
-- [ ] App Store description (up to 4000 characters)
-- [ ] Keywords (up to 100 characters)
-- [ ] Screenshots for required device sizes
-- [ ] App icon (1024x1024, no alpha channel, no rounded corners)
-- [ ] Age rating questionnaire completed
-- [ ] App category selected
-- [ ] Support URL provided
-- [ ] Contact information for review team
+**If accounts**: Account deletion (required since 2022) · Demo credentials · Sign in with Apple (if any third-party sign-in)
 
-**If accounts**:
+**If payments**: IAP configured in App Store Connect · Subscription terms shown before purchase · Restore purchases button · No external payment links (guideline 3.1.1)
 
-- [ ] Account deletion feature (required since 2022)
-- [ ] Demo account credentials for review team
-- [ ] Sign in with Apple supported (if any third-party sign-in exists)
-
-**If payments**:
-
-- [ ] In-app purchases configured in App Store Connect
-- [ ] Subscription terms clearly displayed before purchase
-- [ ] Restore purchases button accessible
-- [ ] No external payment links (App Store guideline 3.1.1)
-
-**If social features**:
-
-- [ ] Block/report functionality
-- [ ] Content moderation plan
-- [ ] User-generated content guidelines
+**If social**: Block/report functionality · Content moderation plan · UGC guidelines
 
 ### Common Rejection Reasons
 
@@ -88,60 +62,42 @@ asc apps list
 
 | Device | Size (portrait) | Required |
 |--------|-----------------|----------|
-| iPhone 6.9" | 1320 x 2868 | Yes (covers 6.7" and 6.9") |
-| iPhone 6.5" | 1284 x 2778 | Yes |
-| iPad Pro 13" | 2064 x 2752 | If iPad supported |
-| iPad Pro 12.9" | 2048 x 2732 | If iPad supported |
+| iPhone 6.9" | 1320 × 2868 | Yes (covers 6.7" and 6.9") |
+| iPhone 6.5" | 1284 × 2778 | Yes |
+| iPad Pro 13" | 2064 × 2752 | If iPad supported |
+| iPad Pro 12.9" | 2048 × 2732 | If iPad supported |
 
-- Show the app in use, not empty states; highlight key features with captions
-- Use consistent style; first screenshot is most important (shown in search results)
-- Use Remotion to create animated App Store preview videos (up to 30 seconds)
+Show app in use (not empty states); highlight key features with captions. First screenshot is most important (shown in search). Use Remotion for animated preview videos (≤30 seconds).
 
 ### App Review Process
 
-- **Timeline**: 24-48 hours typically, up to 7 days
+- **Timeline**: 24-48h typically, up to 7 days
 - **Expedited review**: Available for critical bug fixes via App Store Connect
-- **Rejection**: Fix the specific issue cited, resubmit with explanation; appeal available
+- **Rejection**: Fix the cited issue, resubmit with explanation; appeal available
 
 ## Google Play Store
 
 ### Pre-Submission Checklist
 
-**Required**:
+**Required**: Play Developer account · Privacy policy URL · Description (≤4000 chars) · Short description (≤80 chars) · Feature graphic (1024×500) · App icon (512×512) · Screenshots (min 2, up to 8/device type) · Content rating questionnaire · Target audience declarations · Data safety section
 
-- [ ] Google Play Developer account
-- [ ] Privacy policy URL
-- [ ] App description (up to 4000 characters)
-- [ ] Short description (up to 80 characters)
-- [ ] Feature graphic (1024 x 500)
-- [ ] App icon (512 x 512)
-- [ ] Screenshots (minimum 2, up to 8 per device type)
-- [ ] Content rating questionnaire completed
-- [ ] Target audience and content declarations
-- [ ] Data safety section completed
-
-**Android-specific**:
-
-- [ ] AAB (Android App Bundle) format (not APK)
-- [ ] Target API level meets current requirement
-- [ ] 64-bit support
-- [ ] Permissions justified and minimal
+**Android-specific**: AAB format (not APK) · Target API level current · 64-bit support · Permissions justified and minimal
 
 ### Play Store Review
 
 - **Timeline**: Hours to a few days
-- **Policy centre**: Check for policy violations
-- **Pre-launch report**: Automated testing on multiple devices — review results before release
+- **Policy centre**: Check for violations before submission
+- **Pre-launch report**: Review automated device testing results before release
 
 ## Metadata Optimisation (ASO)
 
-**App name**: Primary keyword naturally included; ≤30 chars (Apple) / ≤50 chars (Google); brand + keyword pattern.
+**App name**: Primary keyword included naturally; ≤30 chars (Apple) / ≤50 chars (Google); brand + keyword pattern.
 
 **Keywords (Apple)**: 100 char limit, comma-separated, no repeats from app name, singular forms, no spaces after commas.
 
-**Description**: First 3 lines visible without "Read More" — lead with core value proposition. Short paragraphs, bullet points, social proof, call to action.
+**Description**: First 3 lines visible without "Read More" — lead with core value prop. Short paragraphs, bullets, social proof, CTA.
 
-**Localisation**: Localise metadata for target markets even if app is English-only. Localised screenshots improve conversion. Top markets: US, UK, Germany, Japan, Brazil, France.
+**Localisation**: Localise metadata for target markets even if app is English-only. Top markets: US, UK, Germany, Japan, Brazil, France.
 
 ## Related
 
