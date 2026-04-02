@@ -7,26 +7,7 @@ Shared prompts for Build+ so session opening stays consistent.
 
 ## Inside Git Repository
 
-Before prompting, check git context and auto-recall recent lessons:
-
-```bash
-BRANCH=$(git branch --show-current)
-if [[ "$BRANCH" == "main" ]]; then
-    echo "Currently on main branch - will suggest work branch for coding tasks"
-fi
-
-# Auto-recall recent lessons from memory (silent if no results)
-# This runs automatically at session start to surface relevant context
-RECENT_MEMORIES=$(~/.aidevops/agents/scripts/memory-helper.sh recall --recent --limit 5 2>/dev/null || echo "")
-if [[ -n "$RECENT_MEMORIES" ]]; then
-    echo "## Recent Learnings"
-    echo "$RECENT_MEMORIES"
-    echo ""
-fi
-```
-
-- If recent memories are returned, summarize only actionable lessons.
-- Do not dump raw memory output.
+On session start: check `git branch --show-current`. If on `main`, note it. Run `memory-helper.sh recall --recent --limit 5` — if results, summarize actionable lessons only (no raw dump).
 
 If on `main`, include:
 
