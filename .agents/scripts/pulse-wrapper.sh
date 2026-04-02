@@ -6445,6 +6445,17 @@ dispatch_deterministic_fill_floor() {
 
 	echo "[pulse-wrapper] Deterministic fill floor: available=${available_slots}, runnable=${runnable_count}, queued_without_worker=${queued_without_worker}, candidates=${candidate_count}" >>"$LOGFILE"
 
+	# Triage reviews first — community responsiveness before implementation backlog.
+	# dispatch_triage_reviews returns the remaining available count via stdout.
+	local triage_remaining
+	triage_remaining=$(dispatch_triage_reviews "$available_slots" 2>>"$LOGFILE") || triage_remaining="$available_slots"
+	[[ "$triage_remaining" =~ ^[0-9]+$ ]] || triage_remaining="$available_slots"
+	local triage_dispatched=$((available_slots - triage_remaining))
+	if [[ "$triage_dispatched" -gt 0 ]]; then
+		echo "[pulse-wrapper] Deterministic fill floor: dispatched ${triage_dispatched} triage review(s), ${triage_remaining} slots remaining for implementation" >>"$LOGFILE"
+	fi
+	available_slots="$triage_remaining"
+
 	local dispatched_count=0
 	while IFS= read -r candidate_json; do
 		[[ -n "$candidate_json" ]] || continue
@@ -6491,8 +6502,9 @@ dispatch_deterministic_fill_floor() {
 		dispatched_count=$((dispatched_count + 1))
 	done < <(printf '%s' "$candidates_json" | jq -c '.[]' 2>/dev/null)
 
-	echo "[pulse-wrapper] Deterministic fill floor complete: dispatched=${dispatched_count}, target_available=${available_slots}" >>"$LOGFILE"
-	echo "$dispatched_count"
+	local total_dispatched=$((dispatched_count + triage_dispatched))
+	echo "[pulse-wrapper] Deterministic fill floor complete: dispatched=${total_dispatched} (${triage_dispatched} triage + ${dispatched_count} implementation), target_available=${available_slots}" >>"$LOGFILE"
+	echo "$total_dispatched"
 	return 0
 }
 
