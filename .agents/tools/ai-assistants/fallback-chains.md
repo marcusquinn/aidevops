@@ -24,24 +24,11 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-Data-driven routing table (JSON) that AI reads directly. The bash script only checks availability — all routing decisions are made by the AI agent, not bash. Follows the **Intelligence Over Scripts** principle.
+AI reads the routing table directly; bash only checks availability. All routing decisions are AI judgment (**Intelligence Over Scripts**).
 
 ## Routing Table
 
-`configs/model-routing-table.json` defines models per tier:
-
-```json
-{
-  "tiers": {
-    "haiku":  { "models": ["anthropic/claude-haiku-4-5"] },
-    "sonnet": { "models": ["anthropic/claude-sonnet-4-6"] },
-    "opus":   { "models": ["anthropic/claude-opus-4-6"] },
-    "coding": { "models": ["anthropic/claude-opus-4-6", "anthropic/claude-sonnet-4-6"] }
-  }
-}
-```
-
-Tiers: `haiku`, `flash`, `sonnet`, `pro`, `opus`, `coding`, `eval`, `health`
+`configs/model-routing-table.json` — tiers: `haiku`, `flash`, `sonnet`, `pro`, `opus`, `coding`, `eval`, `health`
 
 ## CLI Usage
 
@@ -68,8 +55,6 @@ No cooldowns, triggers, gateway probing, or SQLite database.
 | `model-availability-helper.sh` | `resolve_tier()` | `fallback-chain-helper.sh resolve <tier> --quiet` as extended fallback |
 | `model-availability-helper.sh` | `resolve_tier_chain()` | `fallback-chain-helper.sh resolve <tier> --quiet` for full chain |
 | `shared-constants.sh` | `resolve_model_tier()` | `fallback-chain-helper.sh resolve <tier> --quiet` with static fallback |
-
-AI agents read `model-routing.md` for routing rules and the routing table for available models. Runtime failures → AI decides next action (retry, fall back, escalate).
 
 ## Migration from v1
 
