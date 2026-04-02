@@ -4,11 +4,21 @@
     "issue": "GH#14993",
     "status": "simplified"
   },
+  ".agents/seo/seo-audit-skill/aeo-geo-patterns.md": {
+    "hash": "66f82e3082e12432782da9a151756ad89125ec656763ee2f494bf8a6dce8c28d",
+    "issue": "GH#14980",
+    "note": "Reference corpus split into 3 chapter files (01-aeo-patterns.md, 02-geo-patterns.md, 03-authority-signals-and-attribution.md). Index is 22 lines; chapters total 137 lines.",
+    "status": "done"
+  },
   ".agents/services/hosting/cloudflare-platform-skill/cron-triggers-gotchas.md": {
     "hash": "e3e34c32d8a2ae9da4da7a0b66ffd1f38255ec8d2ae2aef281c6e9d8eec8fa89",
     "issue": 14025,
     "pr": 15606,
     "status": "done"
+  },
+  ".agents/workflows/branch/experiment.md": {
+    "hash": "3a37ba8edc24966b9bc8ee7dd979c7349d455abec0dd31d72cd78b30f4e58c6d",
+    "status": "simplified"
   },
   "_comment": null,
   "files": {
@@ -2257,10 +2267,10 @@
       "pr": 13735
     },
     ".agents/services/hosting/cloudflare-platform-skill/r2-gotchas.md": {
-      "hash": "c4d5ed8a074df52b72e94f16782306bf95098b3b",
       "at": "2026-04-02T15:27:02Z",
-      "pr": 15629,
-      "passes": 2
+      "hash": "c4d5ed8a074df52b72e94f16782306bf95098b3b",
+      "passes": 2,
+      "pr": 15629
     },
     ".agents/services/hosting/cloudflare-platform-skill/r2-sql.md": {
       "at": "2026-03-28T16:00:25Z",
@@ -2277,9 +2287,9 @@
     ".agents/services/hosting/cloudflare-platform-skill/realtimekit-gotchas.md": {
       "at": "2026-04-02T15:00:00Z",
       "hash": "d9ece80ba981cecbe018d046364998faba4503b1",
+      "issue": 14302,
       "passes": 1,
-      "pr": 15651,
-      "issue": 14302
+      "pr": 15651
     },
     ".agents/services/hosting/cloudflare-platform-skill/realtimekit-patterns.md": {
       "at": "2026-03-30T03:33:46Z",
@@ -4024,8 +4034,8 @@
     ".agents/tools/video/remotion-fonts.md": {
       "at": "2026-04-02T14:42:45Z",
       "hash": "2e12fc37c6a4f8397a9444f522ea88ef9d10285f",
-      "pr": 15615,
-      "passes": 1
+      "passes": 1,
+      "pr": 15615
     },
     ".agents/tools/video/remotion-gifs.md": {
       "at": "2026-03-29T22:09:13Z",
@@ -4441,9 +4451,5 @@
       "passes": 1,
       "pr": 15470
     }
-  },
-  ".agents/workflows/branch/experiment.md": {
-    "hash": "3a37ba8edc24966b9bc8ee7dd979c7349d455abec0dd31d72cd78b30f4e58c6d",
-    "status": "simplified"
   }
 }
