@@ -214,6 +214,107 @@ _classify_item() {
 # ============================================================
 # Batch fetch and process
 # ============================================================
+
+# _resolve_graphql_params — set items_field and query_params for item_type+state
+# Outputs two lines: "items_field=<value>" and "query_params=<value>"
+_resolve_graphql_params() {
+	local item_type="$1"
+	local state="$2"
+
+	if [[ "$item_type" == "pr" ]]; then
+		local pr_params
+		case "$state" in
+		closed) pr_params="states: [CLOSED, MERGED]" ;;
+		all) pr_params="states: [OPEN, CLOSED, MERGED]" ;;
+		*) pr_params="states: [OPEN]" ;;
+		esac
+		echo "items_field=pullRequests"
+		echo "query_params=${pr_params}"
+	else
+		local state_filter="OPEN"
+		case "$state" in
+		closed) state_filter="CLOSED" ;;
+		all) state_filter="" ;;
+		esac
+		local issue_params=""
+		[[ -n "$state_filter" ]] && issue_params="states: [${state_filter}]"
+		echo "items_field=issues"
+		echo "query_params=${issue_params}"
+	fi
+	return 0
+}
+
+# _fetch_page — execute one GraphQL page query; prints raw JSON to stdout
+# Returns 1 on API failure.
+_fetch_page() {
+	local repo="$1"
+	local items_field="$2"
+	local page_size="$3"
+	local after_clause="$4"
+	local query_params="$5"
+
+	local graphql_query
+	graphql_query="query {
+		repository(owner: \"${repo%%/*}\", name: \"${repo##*/}\") {
+			${items_field}(first: ${page_size}${after_clause}, orderBy: {field: CREATED_AT, direction: DESC}, ${query_params}) {
+				pageInfo { hasNextPage endCursor }
+				nodes {
+					number
+					title
+					body
+					labels(first: 20) { nodes { name } }
+				}
+			}
+		}
+	}"
+
+	gh api graphql -f query="$graphql_query" 2>/dev/null || return 1
+	return 0
+}
+
+# _process_page_items — classify each node in a page result; updates counters via
+# nameref-style globals passed by name (Bash 4.3+ not required — use indirect
+# assignment via eval for Bash 3.2 compat).
+# Args: item_type items_field result repo limit
+# Outputs: "<fetched_delta> <worker_delta> <interactive_delta> <skipped_delta> <ambiguous_delta>"
+_process_page_items() {
+	local item_type="$1"
+	local items_field="$2"
+	local result="$3"
+	local repo="$4"
+	local limit="$5"
+	local already_fetched="$6"
+
+	local count
+	count=$(echo "$result" | jq -r ".data.repository.${items_field}.nodes | length" 2>/dev/null) || count=0
+
+	local d_fetched=0 d_worker=0 d_interactive=0 d_skipped=0 d_ambiguous=0
+	local i
+	for ((i = 0; i < count; i++)); do
+		local number title labels_str body
+		number=$(echo "$result" | jq -r ".data.repository.${items_field}.nodes[$i].number")
+		title=$(echo "$result" | jq -r ".data.repository.${items_field}.nodes[$i].title")
+		labels_str=$(echo "$result" | jq -r "[.data.repository.${items_field}.nodes[$i].labels.nodes[].name] | join(\",\")")
+		body=$(echo "$result" | jq -r ".data.repository.${items_field}.nodes[$i].body // \"\"")
+
+		local classification
+		classification=$(_classify_item "$item_type" "$number" "$title" "$labels_str" "$body" "$repo")
+
+		case "$classification" in
+		"") d_skipped=$((d_skipped + 1)) ;;
+		worker-*) d_worker=$((d_worker + 1)) ;;
+		interactive-*) d_interactive=$((d_interactive + 1)) ;;
+		ambiguous) d_ambiguous=$((d_ambiguous + 1)) ;;
+		esac
+
+		d_fetched=$((d_fetched + 1))
+		[[ $((already_fetched + d_fetched)) -ge "$limit" ]] && break
+	done
+
+	echo "$d_fetched $d_worker $d_interactive $d_skipped $d_ambiguous"
+	return 0
+}
+
 _process_items() {
 	local item_type="$1" # "issue" or "pr"
 	local repo="$2"
@@ -234,6 +335,13 @@ _process_items() {
 	local endCursor=""
 	local has_next=true
 
+	# Resolve GraphQL field name and state params once
+	local items_field query_params
+	local _params
+	_params=$(_resolve_graphql_params "$item_type" "$state")
+	items_field=$(echo "$_params" | grep '^items_field=' | cut -d= -f2-)
+	query_params=$(echo "$_params" | grep '^query_params=' | cut -d= -f2-)
+
 	while [[ "$has_next" == "true" ]] && [[ "$fetched" -lt "$limit" ]]; do
 		local remaining=$((limit - fetched))
 		[[ "$remaining" -lt "$page_size" ]] && page_size="$remaining"
@@ -241,47 +349,8 @@ _process_items() {
 		local after_clause=""
 		[[ -n "$endCursor" ]] && after_clause=", after: \"$endCursor\""
 
-		local state_filter="OPEN"
-		case "$state" in
-		closed) state_filter="CLOSED" ;;
-		all) state_filter="" ;;
-		esac
-
-		local state_clause=""
-		if [[ -n "$state_filter" ]]; then
-			if [[ "$item_type" == "pr" ]]; then
-				state_clause="states: [$state_filter]"
-			else
-				state_clause="states: [$state_filter]"
-			fi
-		fi
-
-		local items_field="issues"
-		local query_params="$state_clause"
-		if [[ "$item_type" == "pr" ]]; then
-			items_field="pullRequests"
-			[[ "$state" == "closed" ]] && query_params="states: [CLOSED, MERGED]"
-			[[ "$state" == "all" ]] && query_params="states: [OPEN, CLOSED, MERGED]"
-			[[ "$state" == "open" ]] && query_params="states: [OPEN]"
-		fi
-
-		local graphql_query
-		graphql_query="query {
-			repository(owner: \"${repo%%/*}\", name: \"${repo##*/}\") {
-				${items_field}(first: ${page_size}${after_clause}, orderBy: {field: CREATED_AT, direction: DESC}, ${query_params}) {
-					pageInfo { hasNextPage endCursor }
-					nodes {
-						number
-						title
-						body
-						labels(first: 20) { nodes { name } }
-					}
-				}
-			}
-		}"
-
 		local result
-		result=$(gh api graphql -f query="$graphql_query" 2>/dev/null) || {
+		result=$(_fetch_page "$repo" "$items_field" "$page_size" "$after_clause" "$query_params") || {
 			_log "WARN: GraphQL query failed, stopping pagination"
 			break
 		}
@@ -293,27 +362,17 @@ _process_items() {
 		count=$(echo "$result" | jq -r ".data.repository.${items_field}.nodes | length" 2>/dev/null) || count=0
 		[[ "$count" -eq 0 ]] && break
 
-		local i
-		for ((i = 0; i < count; i++)); do
-			local number title labels_str body
-			number=$(echo "$result" | jq -r ".data.repository.${items_field}.nodes[$i].number")
-			title=$(echo "$result" | jq -r ".data.repository.${items_field}.nodes[$i].title")
-			labels_str=$(echo "$result" | jq -r "[.data.repository.${items_field}.nodes[$i].labels.nodes[].name] | join(\",\")")
-			body=$(echo "$result" | jq -r ".data.repository.${items_field}.nodes[$i].body // \"\"")
+		local page_counts
+		page_counts=$(_process_page_items "$item_type" "$items_field" "$result" "$repo" "$limit" "$fetched")
 
-			local classification
-			classification=$(_classify_item "$item_type" "$number" "$title" "$labels_str" "$body" "$repo")
+		local d_fetched d_worker d_interactive d_skipped d_ambiguous
+		read -r d_fetched d_worker d_interactive d_skipped d_ambiguous <<<"$page_counts"
 
-			case "$classification" in
-			"") skipped_existing=$((skipped_existing + 1)) ;;
-			worker-*) labelled_worker=$((labelled_worker + 1)) ;;
-			interactive-*) labelled_interactive=$((labelled_interactive + 1)) ;;
-			ambiguous) ambiguous=$((ambiguous + 1)) ;;
-			esac
-
-			fetched=$((fetched + 1))
-			[[ "$fetched" -ge "$limit" ]] && break
-		done
+		fetched=$((fetched + d_fetched))
+		labelled_worker=$((labelled_worker + d_worker))
+		labelled_interactive=$((labelled_interactive + d_interactive))
+		skipped_existing=$((skipped_existing + d_skipped))
+		ambiguous=$((ambiguous + d_ambiguous))
 
 		_log "  ...processed ${fetched}/${limit} ${item_type}s (${labelled_worker}W/${labelled_interactive}I/${skipped_existing}skip/${ambiguous}ambig)"
 	done
