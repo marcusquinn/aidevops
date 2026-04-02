@@ -8,17 +8,13 @@ All requests serve static, functions never run.
 
 **Fix:** `/functions` at project root · files have `.js`/`.ts` extension · check `pages_build_output_dir` in wrangler.json · `_routes.json` not excluding paths
 
-### Binding Not Available
+### Binding or Env Var Undefined
 
-`context.env.MY_BINDING is undefined`
+`context.env.MY_BINDING is undefined` / `context.env.VAR_NAME is undefined`
 
-**Fix:** Binding declared in wrangler.json or dashboard · name matches exactly (case-sensitive) · local dev: pass flags or configure wrangler.json · redeploy after changes
+**Bindings:** Declared in wrangler.json or dashboard · name matches exactly (case-sensitive) · local dev: pass flags or configure wrangler.json · redeploy after changes
 
-### Environment Variables Missing
-
-`context.env.VAR_NAME is undefined`
-
-**Fix:** `vars` in wrangler.json · secrets: `.dev.vars` locally, dashboard/wrangler.json for prod · redeploy after changes
+**Vars/Secrets:** `vars` in wrangler.json · secrets: `.dev.vars` locally, dashboard/wrangler.json for prod · redeploy after changes
 
 ### TypeScript Errors
 
