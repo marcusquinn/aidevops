@@ -4,13 +4,10 @@ agent: Build+
 mode: subagent
 ---
 
-Run comprehensive AI-powered security vulnerability analysis on the codebase.
-
 Target: $ARGUMENTS
 
 ## Quick Reference
 
-- **Purpose**: Deep security analysis with AI-powered vulnerability detection
 - **Helper**: `.agents/scripts/security-helper.sh`
 - **Scopes**: `diff` (default), `staged`, `branch`, `full`, or specific path
 - **Output**: `.security-analysis/` directory with reports
@@ -41,7 +38,7 @@ Target: $ARGUMENTS
 
 4. **For each finding**:
    - Verify it's a true positive (not false positive)
-   - Trace data flow from source to sink
+   - Trace data flow from source to sink (reconnaissance → investigation)
    - Propose remediation with code fix
 
 5. **Generate report**:
@@ -49,6 +46,12 @@ Target: $ARGUMENTS
    ```bash
    ./.agents/scripts/security-helper.sh report
    ```
+
+6. **Provide output**:
+   - Summary: total findings by severity
+   - Critical/High findings: detailed with file:line, CWE, and remediation
+   - Recommendations: prioritized action items
+   - Report location: path to generated reports
 
 ## Vulnerability Categories
 
@@ -60,20 +63,6 @@ Target: $ARGUMENTS
 | Auth | Bypass, weak sessions, insecure password reset |
 | Data | PII violations, insecure deserialization |
 | LLM Safety | Prompt injection, improper output handling |
-
-## Two-Pass Investigation
-
-1. **Reconnaissance**: Fast scan to identify potential sources of untrusted input
-2. **Investigation**: Deep-dive tracing data flow from source to sink
-
-## Output
-
-After analysis, provide:
-
-1. **Summary**: Total findings by severity
-2. **Critical/High findings**: Detailed with file:line, CWE, and remediation
-3. **Recommendations**: Prioritized action items
-4. **Report location**: Path to generated reports
 
 ## Related Commands
 
