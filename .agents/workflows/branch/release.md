@@ -31,66 +31,42 @@ git checkout -b release/1.2.0
 
 ## When to Create
 
-| Scenario | Action |
-|----------|--------|
-| Features ready for release | Create `release/X.Y.0` |
-| Bug fixes accumulated | Create `release/X.Y.Z` (patch) |
-| Breaking changes ready | Create `release/X+1.0.0` |
-| Hotfix needed | Use `hotfix/` branch instead |
+| Scenario | Branch | vs Hotfix |
+|----------|--------|-----------|
+| Features ready | `release/X.Y.0` (minor) | Planned; full test cycle |
+| Bug fixes accumulated | `release/X.Y.Z` (patch) | Planned; full test cycle |
+| Breaking changes | `release/X+1.0.0` (major) | Planned; full test cycle |
+| Urgent critical fix | Use `hotfix/` instead | Urgent; minimal testing |
 
-## Unique Guidance
+## Version Selection
 
-### Version Selection
-
-| Change Type | Version Bump | Example |
-|-------------|--------------|---------|
+| Change Type | Bump | Example |
+|-------------|------|---------|
 | Bug fixes only | Patch | 1.2.3 → 1.2.4 |
 | New features (backward compatible) | Minor | 1.2.3 → 1.3.0 |
 | Breaking changes | Major | 1.2.3 → 2.0.0 |
 
-### Release Lifecycle
+## Release Lifecycle
 
-1. **Create release branch**
-2. **Update version files**: `.agents/scripts/version-manager.sh bump {type}`
-3. **Update CHANGELOG.md**
-4. **Final testing**: `.agents/scripts/linters-local.sh`
-5. **Create PR to main**
-6. **Merge and tag**
-7. **Create GitHub release**
-8. **Run postflight**
-
-### Cherry-Picking (If Needed)
+1. Create release branch
+2. `version-manager.sh bump {type}` — update version files
+3. Update `CHANGELOG.md`
+4. `linters-local.sh` — final testing
+5. Create PR to `main`, merge and tag
+6. `gh release create v{VERSION} --generate-notes`
+7. Run postflight
 
 ```bash
-# List unmerged feature branches
-git branch --no-merged main | grep -E "^  (feature|bugfix)/"
-
-# Cherry-pick specific commits
-git cherry-pick {commit-hash}
-```
-
-### Tag and Release
-
-```bash
-# After PR merged
+# After PR merged — tag and publish
 git checkout main && git pull
 git tag -a v{VERSION} -m "Release v{VERSION}"
 git push origin v{VERSION}
 gh release create v{VERSION} --generate-notes
 ```
 
-## Difference from Hotfix
-
-| Aspect | Release Branch | Hotfix Branch |
-|--------|----------------|---------------|
-| Urgency | Planned | Urgent |
-| Source | `main` | Latest tag |
-| Content | Multiple features/fixes | Single critical fix |
-| Testing | Full test cycle | Minimal, focused |
-
 ## Related
 
-- `workflows/version-bump.md` - Version file management
-- `workflows/release.md` - Full release process
-- `workflows/changelog.md` - Changelog format
-- `workflows/postflight.md` - Post-release verification
+- `workflows/version-bump.md` — version file management
+- `workflows/release.md` — full release process
+- `workflows/changelog.md` — changelog format
+- `workflows/postflight.md` — post-release verification
