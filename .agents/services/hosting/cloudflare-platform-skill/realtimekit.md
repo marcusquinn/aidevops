@@ -1,10 +1,6 @@
 # Cloudflare RealtimeKit
 
-Expert guidance for building real-time video and audio applications using **Cloudflare RealtimeKit** - a comprehensive SDK suite for adding customizable live video and voice to web or mobile applications.
-
-## Overview
-
-RealtimeKit is Cloudflare's SDK suite built on Realtime SFU, abstracting WebRTC complexity with fast integration, pre-built UI components, global performance (300+ cities), and production features (recording, transcription, chat, polls).
+SDK suite built on Realtime SFU — abstracts WebRTC complexity with pre-built UI components, global performance (300+ cities), and production features (recording, transcription, chat, polls).
 
 **Use cases**: Team meetings, webinars, social video, audio calls, interactive plugins
 
@@ -61,13 +57,10 @@ const meeting = new RealtimeKitClient({ authToken: '<token>', video: true, audio
 await meeting.join();
 ```
 
-## In This Reference
-
-- [Patterns](./patterns.md) - Common workflows, code examples
-- [Gotchas](./gotchas.md) - Common issues, troubleshooting
-
 ## See Also
 
+- [Patterns](./realtimekit-patterns.md) - Common workflows, code examples
+- [Gotchas](./realtimekit-gotchas.md) - Common issues, troubleshooting, limits
 - [Workers](../workers/) - Backend integration
 - [D1](../d1/) - Meeting metadata storage
 - [R2](../r2/) - Recording storage
