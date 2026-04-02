@@ -41,26 +41,19 @@ tools: { read: true, write: true, edit: true, bash: true, glob: true, grep: true
 [X.Y.Z]: https://github.com/user/repo/compare/vA.B.C...vX.Y.Z
 ```
 
-## Writing Good Entries
+## Entry Rules
 
-- **User perspective**: Describe impact, not implementation details
-- **Actionable**: What can users do now that they couldn't before?
-- **Concise**: One line per change; **past tense** ("Added", "Fixed", not "Add", "Fix")
-
-Good: "Added bulk export for usage metrics" / "Fixed login timeout on slow connections"
-Bad: "Refactored MetricsExporter class to support batch operations" / "Updated auth.js to handle edge case"
+- User perspective, past tense, one line per change — impact not implementation
+- Good: `"Added bulk export for usage metrics"` / Bad: `"Refactored MetricsExporter class"`
 
 ## Release Checklist
 
-1. Create version section: `## [X.Y.Z] - YYYY-MM-DD`
-2. Add entries under appropriate subsections (Added, Changed, Fixed, etc.)
-3. If using `[Unreleased]`, move items to the new version section
-4. Update comparison links at bottom of CHANGELOG.md
-5. Validate: `version-manager.sh changelog-check`
+1. Create `## [X.Y.Z] - YYYY-MM-DD` section; move `[Unreleased]` items into it
+2. Add entries under appropriate subsections
+3. Update comparison links at bottom of CHANGELOG.md
+4. Validate: `version-manager.sh changelog-check` (or use `release` — enforces this automatically; `--force` to bypass)
 
-`version-manager.sh release` enforces this — fails if changelog is out of sync (use `--force` to bypass) and updates comparison links automatically.
+## Related
 
-## Related Workflows
-
-- **Version bumping**: `workflows/version-bump.md`
-- **Creating releases**: `workflows/release.md`
+- `workflows/version-bump.md` — version bumping
+- `workflows/release.md` — creating releases
