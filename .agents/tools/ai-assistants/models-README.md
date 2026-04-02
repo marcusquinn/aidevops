@@ -1,11 +1,11 @@
 # Model-Specific Subagents
 
-Model-specific subagents handle model routing. The orchestrator selects a subagent based on its frontmatter `model` declaration.
+Orchestrator selects subagents based on frontmatter `model` declaration for cross-provider routing.
 
 ## Core Rules
 
 - **In-session Task calls use the session model.** Runtimes do not switch models mid-session.
-- **Cross-model routing requires headless dispatch.** Supervisor/runner reads subagent frontmatter and passes resolved model ID to CLI.
+- **Cross-model routing requires headless dispatch.** Supervisor reads subagent frontmatter and passes resolved model ID to CLI.
 - **Tier names are the stable interface.** Target `haiku`, `sonnet`, `pro`, `opus`, etc.; concrete models change behind these aliases.
 
 ## Tier Mapping
@@ -21,18 +21,9 @@ Model-specific subagents handle model routing. The orchestrator selects a subage
 
 ## Resolution Flow
 
-### In-session Task tool
+**In-session:** `Task(subagent_type="general", ...)` — prompt model requests ignored; runs on session model.
 
-`Task(subagent_type="general", prompt="Review this code using gemini-2.5-pro...")`
-Prompt requests are ignored; the tool runs on the current session model.
-
-### Headless dispatch
-
-`Claude -m "gemini-2.5-pro" -p "Review this codebase..."`
-
-1. Task metadata specifies tier (e.g., `model: pro`).
-2. Supervisor reads `models/pro.md` frontmatter.
-3. Runner receives `--model` with resolved ID.
+**Headless:** `Claude -m "gemini-2.5-pro" -p "..."` — task metadata specifies tier → supervisor reads `models/<tier>.md` frontmatter → runner receives `--model` with resolved ID.
 
 ## Fallback Chains (t132.4)
 
@@ -60,7 +51,7 @@ fallback-chain:
 
 ## Model Registry
 
-`model-registry-helper.sh` maintains `~/.aidevops/.agent-workspace/model-registry.db` from subagent frontmatter, `compare-models-helper.sh` data, and provider APIs. Syncs on `aidevops update`.
+`model-registry-helper.sh` maintains `~/.aidevops/.agent-workspace/model-registry.db`. Syncs on `aidevops update`.
 
 ```bash
 model-registry-helper.sh sync          # Sync all sources
