@@ -27,6 +27,15 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
+## Typical Workflow
+
+1. `discover_projs` -- scan for .xcodeproj/.xcworkspace
+2. `build_sim --scheme MyApp` -- build for simulator
+3. `test_sim --scheme MyApp` -- run XCTest suite
+4. `build_run_sim --scheme MyApp` -- deploy and launch with logs
+5. `screenshot` / `snapshot_ui` -- verify UI state
+6. `maestro test flows/login.yaml` -- E2E tests on running simulator
+
 ## Tool Groups (76 tools, 15 workflow groups)
 
 | Group | Key Tools | Purpose |
@@ -44,23 +53,14 @@ tools:
 | **session-management** | `session_set_defaults`, `sync_xcode_defaults` | Persistent session config |
 | **doctor** | `doctor` | Environment diagnostics |
 
-Only simulator tools enabled by default. Use `manage-workflows` to enable device, macOS, debugging, or other groups.
-
-## Typical Workflow
-
-1. `discover_projs` -- scan for .xcodeproj/.xcworkspace
-2. `build_sim --scheme MyApp` -- build for simulator
-3. `test_sim --scheme MyApp` -- run XCTest suite
-4. `build_run_sim --scheme MyApp` -- deploy and launch with logs
-5. `screenshot` / `snapshot_ui` -- verify UI state
-6. `maestro test flows/login.yaml` -- E2E tests on running simulator
+Only simulator tools enabled by default. Use `manage-workflows` to enable other groups.
 
 ## Notes
 
-- Device tools require code signing configured in Xcode
-- Macro validation skipped automatically to avoid Swift Macro build errors
-- `snapshot_ui` returns view hierarchy with coordinates (useful for UI automation)
-- Session defaults persist scheme/simulator/device across tool calls
+- **Device tools**: require code signing configured in Xcode.
+- **Swift Macros**: validation skipped automatically to avoid build errors.
+- **UI Automation**: `snapshot_ui` returns view hierarchy with coordinates.
+- **Persistence**: Session defaults persist scheme/simulator/device across calls.
 
 ## MCP Configuration
 
