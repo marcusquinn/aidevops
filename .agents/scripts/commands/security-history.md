@@ -4,40 +4,22 @@ agent: Build+
 mode: subagent
 ---
 
-Scan git history for vulnerabilities introduced in past commits.
+Scan git history for vulnerabilities introduced in past commits (audit, compliance, incident investigation).
 
 Target: $ARGUMENTS
 
-## Quick Reference
+## Usage
 
-- **Default scope**: last 50 commits
-- **Scopes**: commit count, commit range, `--since`, `--until`, `--author`
-- **Helper**: `./.agents/scripts/security-helper.sh history`
-- **Use cases**: audit, compliance, incident investigation
+```bash
+./.agents/scripts/security-helper.sh history [scope]
+```
 
-## Process
-
-1. **Resolve scope** from `$ARGUMENTS`:
-   - Empty → last 50 commits
-   - Number (for example `100`) → last N commits
-   - Range (for example `abc123..def456`) → explicit commit range
-   - `--since="2024-01-01"` / `--until="2024-03-31"` → date window
-   - `--author="email"` → author filter
-2. **Run the history scan**:
-
-   ```bash
-   ./.agents/scripts/security-helper.sh history              # default: last 50
-   ./.agents/scripts/security-helper.sh history 100           # last N
-   ./.agents/scripts/security-helper.sh history abc123..def456 # range
-   ./.agents/scripts/security-helper.sh history --since="2024-01-01"
-   ```
-
-3. **Review each finding** with commit, author, file, severity, and whether it is still present in `HEAD`.
-4. **Assess impact**: is it still present, was it deployed, and what data or secrets may have been exposed?
-
-## Output
-
-Each finding includes severity, commit, author, file, issue description, and current status (still present or fixed in which commit).
+**Scopes (from $ARGUMENTS):**
+- Empty: last 50 commits (default)
+- `N`: last N commits (e.g., `100`)
+- `range`: explicit range (e.g., `abc123..def456`)
+- `--since="YYYY-MM-DD"` / `--until="YYYY-MM-DD"`: date window
+- `--author="email"`: author filter
 
 ## Common Invocations
 
@@ -48,11 +30,16 @@ Each finding includes severity, commit, author, file, issue description, and cur
 /security-history v1.0.0..HEAD                                # pre-release audit
 ```
 
+## Process & Output
+
+1. **Scan**: Run helper with resolved scope.
+2. **Review Findings**: Includes severity, commit, author, file, description, and status (present/fixed).
+3. **Assess Impact**: Check if still present in `HEAD`, if deployed, and what data/secrets were exposed.
+
 ## Remediation
 
-**Still present:** fix in a new commit, rotate exposed secrets, check whether it reached production, and document the incident.
-
-**Already fixed:** verify the fix is complete, confirm whether secrets were exposed, rotate if needed, and capture the lesson learned.
+- **Still present**: Fix in new commit, rotate secrets, check production reach, document incident.
+- **Already fixed**: Verify fix completeness, confirm exposure, rotate if needed, capture lessons.
 
 ## Related Commands
 
