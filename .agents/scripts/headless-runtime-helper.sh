@@ -1664,6 +1664,16 @@ cmd_metrics() {
 		return 0
 	fi
 
+	_execute_metrics_analysis "$role_filter" "$hours" "$model_filter" "$fast_threshold_secs"
+	return 0
+}
+
+_execute_metrics_analysis() {
+	local role_filter="$1"
+	local hours="$2"
+	local model_filter="$3"
+	local fast_threshold_secs="$4"
+
 	ROLE_FILTER="$role_filter" HOURS="$hours" MODEL_FILTER="$model_filter" FAST_THRESHOLD_SECS="$fast_threshold_secs" METRICS_PATH="$METRICS_FILE" python3 - <<'PY'
 import json
 import os
