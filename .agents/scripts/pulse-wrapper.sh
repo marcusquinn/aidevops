@@ -8432,16 +8432,13 @@ dispatch_triage_reviews() {
 		return 0
 	}
 
-	# Resolve model: prefer opus, fall back to sonnet for triage reviews
+	# Resolve model: prefer opus, fall back to sonnet, then omit --model
+	# (lets headless-runtime-helper pick its default, same as implementation workers)
 	local resolved_model=""
 	resolved_model=$(~/.aidevops/agents/scripts/model-availability-helper.sh resolve opus 2>/dev/null || echo "")
 	if [[ -z "$resolved_model" ]]; then
 		resolved_model=$(~/.aidevops/agents/scripts/model-availability-helper.sh resolve sonnet 2>/dev/null || echo "")
 	fi
-	[[ -n "$resolved_model" ]] || {
-		printf '%d\n' "$available"
-		return 0
-	}
 
 	# Parse markdown-format state entries:
 	#   ## owner/repo            ← repo slug header
@@ -8475,11 +8472,16 @@ dispatch_triage_reviews() {
 		[[ -n "$issue_num" && -n "$repo_slug" ]] || continue
 		[[ "$available" -gt 0 && "$triage_count" -lt "$triage_max" ]] || break
 
+		local model_args=()
+		if [[ -n "$resolved_model" ]]; then
+			model_args=(--model "$resolved_model")
+		fi
+
 		~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
 			--role worker \
 			--session-key "triage-review-${issue_num}" \
 			--dir "$repo_path" \
-			--model "$resolved_model" \
+			"${model_args[@]}" \
 			--title "Triage review: Issue #${issue_num}" \
 			--prompt "/review-issue-pr ${issue_num}" </dev/null >>"/tmp/pulse-triage-${issue_num}.log" 2>&1 &
 		sleep 2
