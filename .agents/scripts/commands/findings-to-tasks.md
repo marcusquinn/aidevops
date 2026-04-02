@@ -4,19 +4,17 @@ agent: Build+
 mode: subagent
 ---
 
-Convert deferred actionable findings from an audit/review report into tracked TODO tasks and linked GitHub issues.
+Convert actionable findings from an audit/review report into tracked TODO tasks and linked GitHub issues.
 
 Input file: `$ARGUMENTS`
 
 ## Required Format
 
-Create a text file with one actionable finding per line:
+One finding per line:
 
 ```text
 severity|title|details
 ```
-
-Examples:
 
 ```text
 high|Harden prompt-guard fallback on malformed markdown|Reject malformed HTML comments before rendering summary
@@ -27,8 +25,6 @@ low|Improve stale worker log wording|Clarify blocked vs failed in watchdog outpu
 If severity is omitted, it defaults to `medium`.
 
 ## Command
-
-Run:
 
 ```bash
 ~/.aidevops/agents/scripts/findings-to-tasks-helper.sh create \
