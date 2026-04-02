@@ -7,9 +7,9 @@ model: haiku
 
 # Platform Persona Adaptations
 
-Adapt your core brand voice for each platform. Base voice: `content/guidelines.md` or `context/brand-voice.md`. If `context/brand-identity.toon` exists, read it first — it defines tone, vocabulary, imagery style, and personality. See `tools/design/brand-identity.md`.
+Base voice: `content/guidelines.md` or `context/brand-voice.md`. If `context/brand-identity.toon` exists, read it first (tone, vocabulary, imagery, personality). See `tools/design/brand-identity.md`.
 
-**Workflow**: (1) establish core voice, (2) apply platform shift below, (3) keep identity constant — only delivery changes.
+**Workflow**: establish core voice → apply platform shift below → identity constant, delivery changes.
 
 ## Platform Quick Reference
 
@@ -36,7 +36,7 @@ Adapt your core brand voice for each platform. Base voice: `content/guidelines.m
 - Hashtags: 3-5 at the end
 - Avoid: corporate jargon, "excited to announce", empty self-promotion
 
-**Example**: Core: "We build custom timber windows that last decades." → LinkedIn: "Most replacement windows fail within 15 years.\n\nWe engineered ours to last 30+.\n\nHere's what makes the difference (thread):"
+**Example**: "We build custom timber windows that last decades." → "Most replacement windows fail within 15 years.\n\nWe engineered ours to last 30+.\n\nHere's what makes the difference (thread):"
 
 ## Instagram
 
@@ -71,7 +71,7 @@ Adapt your core brand voice for each platform. Base voice: `content/guidelines.m
 - Tags: 5-10 keywords (include common misspellings)
 - Avoid: clickbait, long intros, "don't forget to like and subscribe" as opener
 
-**Script tone**: Written: "Marine-grade coatings provide superior weather resistance." → YouTube: "So we coat these with marine-grade finish — the same stuff they use on boats. And that's what stops them warping in the salt air."
+**Script tone**: "Marine-grade coatings provide superior weather resistance." → "So we coat these with marine-grade finish — the same stuff they use on boats. And that's what stops them warping in the salt air."
 
 ## X (Twitter)
 
@@ -99,7 +99,7 @@ Adapt your core brand voice for each platform. Base voice: `content/guidelines.m
 
 ## Blog / Website
 
-See `content/guidelines.md` for full formatting standards. See `content/social-bird.md` for X/Twitter API and `content/social-linkedin.md` for LinkedIn automation.
+Full standards: `content/guidelines.md`. Automation: `content/social-bird.md` (X/Twitter API), `content/social-linkedin.md` (LinkedIn).
 
 - Longer form: 1,500-3,000 words for pillar content
 - H2/H3 hierarchy; internal links (3-5 per article); one sentence per paragraph
@@ -110,8 +110,7 @@ See `content/guidelines.md` for full formatting standards. See `content/social-b
 ## Adaptation Framework
 
 **Constant**: brand values, key messages, spelling conventions, honesty, expertise.
-
-**Variable**: sentence length, formality, emoji/hashtags, content structure, CTA style, level of detail.
+**Variable**: sentence length, formality, emoji/hashtags, content structure, CTA style, detail level.
 
 ## Cross-Platform Repurposing
 
@@ -125,4 +124,4 @@ Blog post (2,000 words)
   -> Facebook post (community angle + link)
 ```
 
-Use `content/seo-writer.md` for the blog original, then adapt using the platform guidelines above.
+Blog original: `content/seo-writer.md`. Adapt using platform guidelines above.
