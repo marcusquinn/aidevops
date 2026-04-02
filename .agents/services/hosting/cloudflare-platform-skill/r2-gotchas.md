@@ -1,8 +1,22 @@
 # R2 Gotchas & Troubleshooting
 
+## Key Validation
+
+Unsanitized keys allow path traversal:
+
+```typescript
+// DANGEROUS
+const key = url.pathname.slice(1); // could be ../../../etc/passwd
+
+// SAFE
+if (!key || key.includes('..') || key.startsWith('/')) {
+  return new Response('Invalid key', { status: 400 });
+}
+```
+
 ## List Truncation
 
-`include` with metadata may return fewer objects per page. Always paginate via `truncated`, never `objects.length`:
+`include` with metadata may return fewer objects per page. Paginate via `truncated`, not `objects.length`:
 
 ```typescript
 // WRONG — breaks when include reduces page size
@@ -15,6 +29,18 @@ while (listed.truncated) {
 ```
 
 Requires `compatibility_date >= 2022-08-04` or `r2_list_honor_include` flag.
+
+## Conditional Operations
+
+Precondition failure returns the object WITHOUT body (not null):
+
+```typescript
+const object = await env.MY_BUCKET.get(key, {
+  onlyIf: { etagMatches: '"wrong"' }
+});
+if (!object) return new Response('Not found', { status: 404 });
+if (!object.body) return new Response(null, { status: 304 }); // precondition failed
+```
 
 ## ETag Format
 
@@ -38,32 +64,6 @@ await env.MY_BUCKET.put(key, data, { sha256: hash }); // not { md5: h1, sha256: 
 - Part numbers start at 1 (not 0)
 - Uncompleted uploads auto-abort after 7 days
 - `resumeMultipartUpload` doesn't validate uploadId existence
-
-## Conditional Operations
-
-Precondition failure returns the object WITHOUT body (not null):
-
-```typescript
-const object = await env.MY_BUCKET.get(key, {
-  onlyIf: { etagMatches: '"wrong"' }
-});
-if (!object) return new Response('Not found', { status: 404 });
-if (!object.body) return new Response(null, { status: 304 }); // precondition failed
-```
-
-## Key Validation
-
-Unsanitized keys allow path traversal:
-
-```typescript
-// DANGEROUS
-const key = url.pathname.slice(1); // could be ../../../etc/passwd
-
-// SAFE
-if (!key || key.includes('..') || key.startsWith('/')) {
-  return new Response('Invalid key', { status: 400 });
-}
-```
 
 ## Storage Class (InfrequentAccess)
 
