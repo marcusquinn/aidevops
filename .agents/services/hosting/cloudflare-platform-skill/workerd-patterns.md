@@ -40,7 +40,7 @@ const config :Workerd.Config = (
 
 ## Durable Objects
 
-Add as a service entry in the `services` list (see Multi-Service Architecture for full config structure):
+Add as a service entry in the `services` list:
 
 ```capnp
 (name = "app", worker = (
@@ -74,7 +74,7 @@ Run with: `API_URL=http://localhost:3000 DEBUG=true workerd serve dev.capnp`
 
 ## HTTP Reverse Proxy
 
-Service-worker syntax with external backend (add to `services`/`sockets`):
+Service-worker syntax with external backend (add to `services`/`sockets` blocks):
 
 ```capnp
 (name = "proxy", worker = (
@@ -115,10 +115,9 @@ workerd test config.capnp --test-only=test.js
 
 ### Systemd
 
-`/etc/systemd/system/workerd.service` + `workerd.socket`:
+`/etc/systemd/system/workerd.service`:
 
 ```ini
-# workerd.service
 [Unit]
 Description=workerd runtime
 After=network-online.target
@@ -133,8 +132,11 @@ NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target
+```
 
-# workerd.socket
+`/etc/systemd/system/workerd.socket`:
+
+```ini
 [Socket]
 ListenStream=0.0.0.0:80
 
