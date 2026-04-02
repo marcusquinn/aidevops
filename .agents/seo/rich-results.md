@@ -16,15 +16,14 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Validate structured data and preview rich snippets
 - **URL**: `https://search.google.com/test/rich-results`
-- **API Status**: **Deprecated** (standalone API removed) -- browser automation required
-- **Alternative**: Schema.org Validator (`https://validator.schema.org/`) -- faster, no CAPTCHA, no Google-specific eligibility
-- **Rich result types**: [Google's structured data gallery](https://developers.google.com/search/docs/appearance/structured-data/search-gallery)
+- **API**: Deprecated — browser automation required
+- **Alternative**: `https://validator.schema.org/` — faster, no CAPTCHA, no Google eligibility gate
+- **Rich result types**: [Google structured data gallery](https://developers.google.com/search/docs/appearance/structured-data/search-gallery)
 
 ## Browser Automation (Playwright)
 
-Primary method. Run `node rich-results-test.js <url>`:
+Run `node rich-results-test.js <url>`:
 
 ```javascript
 // rich-results-test.js
