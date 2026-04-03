@@ -25,9 +25,10 @@ model: sonnet
 - **Origin**: Google Stitch (https://stitch.withgoogle.com/docs/design-md/overview)
 - **Location**: `DESIGN.md` in project root (alongside `AGENTS.md`)
 - **Template**: `templates/DESIGN.md.template` (skeleton for `aidevops init`)
-- **Library**: `tools/design/library/` (55 brand examples + style templates)
+- **Library**: `tools/design/library/` (54 brand examples + 12 style templates)
 - **Preview**: `tools/design/library/_template/preview.html.template` (visual catalogue generator)
 - **Palette tools**: `tools/design/colour-palette.md` (generation, spinning, narrowing)
+- **CLI scripts**: `scripts/colormind-helper.sh` (palette API), `scripts/design-preview-helper.sh` (screenshot capture)
 
 **Relationship to other design agents:**
 

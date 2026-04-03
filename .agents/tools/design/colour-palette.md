@@ -23,6 +23,8 @@ model: sonnet
 - **Purpose**: Generate, spin, and narrow colour palettes for DESIGN.md files
 - **Trigger**: New project palette, "try different colours", "spin the palette", palette exploration
 - **Output**: Colour section for `DESIGN.md` (Section 2: Colour Palette & Roles)
+- **CLI helper**: `scripts/colormind-helper.sh` (generate, spin, contrast, models)
+- **Preview helper**: `scripts/design-preview-helper.sh` (screenshot preview.html in light+dark)
 - **Tools**: Colormind API, HSL manipulation, contrast checking
 - **Related**: `tools/design/design-md.md`, `tools/design/brand-identity.md`, `tools/design/library/`
 
