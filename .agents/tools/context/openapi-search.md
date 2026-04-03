@@ -24,9 +24,7 @@ mcp:
 ## Quick Reference
 
 - **Purpose**: Navigate any API's OpenAPI spec without loading full docs into context
-- **Install**: Zero install — remote Cloudflare Worker at `https://openapi-mcp.openapisearch.com/mcp`
-- **Auth**: None required
-- **Backend**: `https://search.apis.guru/v1` (override via `OPENAPI_SEARCH_URL`)
+- **Install**: Zero install — remote Cloudflare Worker, no auth required; backend `https://search.apis.guru/v1` (override via `OPENAPI_SEARCH_URL`)
 - **Workflow**: `searchAPIs` → `getAPIOverview` → `getOperationDetails`
 - **Enabled for**: `@openapi-search` subagent only (lazy-loaded — zero install overhead)
 - **Docs**: <https://github.com/janwilmake/openapi-mcp-server> | **Directory**: <https://openapisearch.com/search>
@@ -52,7 +50,7 @@ Auto-configured by `setup.sh` / `generate-opencode-agents.sh`. Manual (Claude Co
 claude mcp add --scope user openapi-search --transport http https://openapi-mcp.openapisearch.com/mcp
 ```
 
-Other clients: add `mcpServers.openapi-search` with `type: http`, `url: https://openapi-mcp.openapisearch.com/mcp`. Exceptions: OpenCode → `type: remote`; Continue.dev → `type: sse`; Zed → `context_servers`.
+Other clients: `mcpServers.openapi-search` with `type: http`, `url: https://openapi-mcp.openapisearch.com/mcp`. Exceptions: OpenCode → `type: remote`; Continue.dev → `type: sse`; Zed → `context_servers`.
 
 ## Usage
 
