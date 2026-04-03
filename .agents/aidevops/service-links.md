@@ -13,6 +13,8 @@ tools:
 
 # Service Links Directory
 
+**Sections:** [Infrastructure](#infrastructure--hosting) · [DNS](#domain--dns) · [Dev & Git](#development--git) · [Browser Automation](#browser-automation) · [Security & Quality](#security--quality) · [Monitoring](#performance--monitoring) · [AI Tools](#ai-tools) · [MCP](#mcp-integrations) · [Framework](#framework-documentation)
+
 ## Infrastructure & Hosting
 
 | Service | Console | Docs |
@@ -45,9 +47,15 @@ tools:
 | [LocalWP](https://localwp.com/) | [localwp.com](https://localwp.com/) | [localwp.com/help-docs](https://localwp.com/help-docs/) |
 | [Agno](https://agno.ai/) | [agno.ai](https://agno.ai/) | [docs.agno.ai](https://docs.agno.ai/) |
 | [Pandoc](https://pandoc.org/) | — | [pandoc.org/MANUAL.html](https://pandoc.org/MANUAL.html) |
-| [Playwright](https://playwright.dev/) | — | [playwright.dev/docs/intro](https://playwright.dev/docs/intro) |
-| [Selenium](https://www.selenium.dev/) | — | [selenium.dev](https://www.selenium.dev/) |
-| [Puppeteer](https://pptr.dev/) | — | [pptr.dev](https://pptr.dev/) |
+| CLI tools | — | [jq](https://stedolan.github.io/jq/) · [yq](https://mikefarah.gitbook.io/yq/) · [ShellCheck](https://www.shellcheck.net/) · [Homebrew](https://brew.sh/) |
+
+## Browser Automation
+
+| Tool | Docs |
+|------|------|
+| [Playwright](https://playwright.dev/) | [playwright.dev/docs/intro](https://playwright.dev/docs/intro) |
+| [Selenium](https://www.selenium.dev/) | [selenium.dev](https://www.selenium.dev/) |
+| [Puppeteer](https://pptr.dev/) | [pptr.dev](https://pptr.dev/) |
 
 ## Security & Quality
 
@@ -95,16 +103,10 @@ tools:
 | Context7 | [context7.io](https://context7.io/) | [docs.context7.io](https://docs.context7.io/) |
 | LocalWP | [localwp.com](https://localwp.com/) | [localwp.com/help-docs](https://localwp.com/help-docs/) |
 
-## Development Tools & Support
-
-| Category | Links |
-|----------|-------|
-| CLI tools | [jq](https://stedolan.github.io/jq/) · [yq](https://mikefarah.gitbook.io/yq/) · [ShellCheck](https://www.shellcheck.net/) · [Homebrew](https://brew.sh/) |
-| Support | [GitHub Issues](https://github.com/marcusquinn/aidevops/issues) · [GitHub Discussions](https://github.com/marcusquinn/aidevops/discussions) · [Stack Overflow](https://stackoverflow.com/) · [Reddit r/devops](https://www.reddit.com/r/devops/) |
-
 ## Framework Documentation
 
 | Category | Links |
 |----------|-------|
 | Core | [README](https://github.com/marcusquinn/aidevops) · [AGENTS.md](https://github.com/marcusquinn/aidevops/blob/main/AGENTS.md) · [Security](.agents/aidevops/security.md) · [API Integrations](.agents/aidevops/api-integrations.md) |
 | Platform guides | [MCP Integrations](.agents/aidevops/mcp-integrations.md) · [Quality Control](.agents/tools/code-review/code-standards.md) · [Troubleshooting](.agents/aidevops/troubleshooting.md) |
+| Support | [GitHub Issues](https://github.com/marcusquinn/aidevops/issues) · [GitHub Discussions](https://github.com/marcusquinn/aidevops/discussions) · [Stack Overflow](https://stackoverflow.com/) · [Reddit r/devops](https://www.reddit.com/r/devops/) |
