@@ -44,20 +44,16 @@ anti-detect-helper.sh launch --profile "name"                    # Loads saved s
 anti-detect-helper.sh launch --disposable [--proxy "socks5://proxy:1080"]
 anti-detect-helper.sh warmup "name" --duration 30m               # Visits popular sites, scrolls, builds history
 
-# CRUD + Bulk
+# CRUD
 anti-detect-helper.sh profile list [--format json]
 anti-detect-helper.sh profile show "name" [--format json]
-anti-detect-helper.sh profile delete "name" [--keep-cookies]
+anti-detect-helper.sh profile delete "name"
 anti-detect-helper.sh profile clone "source-name" "target-name"
 anti-detect-helper.sh profile update "name" --proxy "new-proxy:8080" [--notes "text"]
-anti-detect-helper.sh profile bulk-create --count 10 --prefix "worker" --type clean
-anti-detect-helper.sh profile bulk-delete --type clean
-anti-detect-helper.sh profile export|import --output|--input /tmp/profiles-backup.tar.gz
 
 # Cookies
-anti-detect-helper.sh cookies export|import "profile" --output|--input cookies.txt  # Netscape format
-anti-detect-helper.sh cookies import-browser "profile" --browser chrome --domain example.com
-anti-detect-helper.sh cookies clear "profile" [--domain example.com]
+anti-detect-helper.sh cookies export "profile" --output cookies.txt  # Netscape format
+anti-detect-helper.sh cookies clear "profile"
 ```
 
 ## Python API
