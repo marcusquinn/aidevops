@@ -10,6 +10,8 @@ URL/Target: $ARGUMENTS
 
 **Prerequisites:** Verify Chrome DevTools MCP: `which npx && npx chrome-devtools-mcp@latest --version || echo "Install: npm i -g chrome-devtools-mcp"`. Read `~/.aidevops/agents/tools/performance/performance.md` for CWV thresholds, common issues, and fix patterns.
 
+Run in order: Lighthouse audit → Core Web Vitals (FCP, LCP, CLS, FID, TTFB) → Network analysis (third-party scripts, request chains, bundle sizes) → Accessibility (WCAG).
+
 ## Options
 
 | Flag | Default | Description |
@@ -19,15 +21,6 @@ URL/Target: $ARGUMENTS
 | `--iterations=N` | 3 | Runs to average |
 | `--compare=baseline.json` | — | Compare against baseline |
 | `--local` | — | Assume localhost URL |
-
-## Run Analysis
-
-Execute in order:
-
-1. **Lighthouse Audit** — performance, accessibility, best practices, SEO
-2. **Core Web Vitals** — FCP, LCP, CLS, FID, TTFB
-3. **Network Analysis** — third-party scripts, request chains, bundle sizes
-4. **Accessibility** — WCAG compliance issues
 
 ## Report Format
 
