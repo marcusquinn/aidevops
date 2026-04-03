@@ -14,11 +14,9 @@ tools:
 
 # Content Guidelines for AI Copywriting
 
-<!-- AI-CONTEXT-START -->
-
 Structural copy rules for website content, especially local-service pages. Tone, vocabulary, and personality come from `context/brand-identity.toon` if present; this doc covers structure only. Brand identity maintenance: `tools/design/brand-identity.md`.
 
-## Quick Reference
+## Rules
 
 - **Tone**: Authentic, local, professional but approachable, British English
 - **Spelling**: British (`specialise`, `colour`, `moulding`, `draughty`, `centre`)
@@ -26,29 +24,16 @@ Structural copy rules for website content, especially local-service pages. Tone,
 - **Sentences**: Short & punchy; spaced em-dashes (` — `) instead of subordinate clauses — e.g. "We finish them with marine-grade coatings — they resist swelling." not "...coatings, which means that they are built specifically..."
 - **SEO**: Bold **keywords** naturally; use long-tail variations ("Jersey heritage properties", "granite farmhouse windows"); never stuff
 - **Avoid**: "We pride ourselves...", "Our commitment to excellence...", "Elevate your home with...", repeating brand name at sentence start (prefer "We make..." over "Trinity Joinery crafts..."), empty trailing blocks (`<!-- wp:paragraph --><p></p><!-- /wp:paragraph -->`), Markdown in HTML fields
-- **HTML fields**: `<strong>`, `<em>`, `<p>` — not Markdown (`**bold**` won't render)
-- **WP fetch**: `wp post get ID --field=content` (singular `--field`, not `--fields`)
+- **HTML fields**: `<strong>`, `<em>`, `<p>`, `<h2>`, `<ul><li>` — not Markdown (`**bold**` won't render)
+- **WP fetch**: `wp post get ID --field=content` (singular `--field`, not `--fields` — avoids `Field/Value` table artefacts)
 - **Workflow**: Fetch → Refine → Structure → Update → Verify
-
-<!-- AI-CONTEXT-END -->
-
-## HTML Content Fields
-
-```html
-<strong>Bold text</strong>
-<em>Italic text</em>
-<br>
-<p>Paragraphs</p>
-<h2>Headings</h2>
-<ul><li>List items</li></ul>
-```
 
 ## Content Update Workflow
 
-1. **Fetch:** `wp post get 123 --field=content > file.txt` — `--field` (singular) avoids `Field/Value` table artefacts. Do not use `--fields=post_title,content`.
+1. **Fetch:** `wp post get 123 --field=content > file.txt`
 2. **Refine:** Apply these guidelines.
 3. **Structure:** Keep valid block markup such as `<!-- wp:paragraph -->...`.
-4. **Update:** Upload with `wp post update`.
+4. **Update:** `wp post update 123 content.txt`
 5. **Verify:** Flush caches (`wp closte devmode enable` on Closte) and check the frontend.
 
 ## Example Transformation
