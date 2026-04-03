@@ -838,11 +838,69 @@ cmd_reconcile() {
 	[[ $ref_fixed -eq 0 && $stale -eq 0 && $orphans -eq 0 && $reverse_drift -eq 0 ]] && print_success "All refs correct"
 }
 
+# Reopen closed GitHub issues whose TODO entries are still open [ ].
+# TODO.md is the source of truth: if a task is [ ], the work is not done,
+# regardless of whether a commit message prematurely closed the issue.
+# Safety: only reopens issues closed as "COMPLETED" (not "NOT_PLANNED").
+cmd_reopen() {
+	_init_cmd || return 1
+	local repo="$_CMD_REPO" todo_file="$_CMD_TODO"
+
+	# Build set of open issue numbers for fast lookup
+	local open_json
+	open_json=$(gh_list_issues "$repo" "open" 500)
+	local open_numbers
+	open_numbers=$(echo "$open_json" | jq -r '.[].number' 2>/dev/null | sort -n)
+
+	local stripped
+	stripped=$(strip_code_fences <"$todo_file")
+	local reopened=0 skipped=0 not_planned=0
+
+	while IFS= read -r line; do
+		local ref_num
+		ref_num=$(echo "$line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
+		[[ -z "$ref_num" ]] && continue
+
+		# Skip if already open
+		echo "$open_numbers" | grep -qx "$ref_num" && continue
+
+		local tid
+		tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
+
+		# Check closure reason — only reopen "COMPLETED", not "NOT_PLANNED"
+		local reason
+		reason=$(gh issue view "$ref_num" --repo "$repo" --json stateReason --jq '.stateReason' 2>/dev/null || echo "")
+		if [[ "$reason" == "NOT_PLANNED" ]]; then
+			log_verbose "#$ref_num ($tid) closed as NOT_PLANNED — skipping"
+			not_planned=$((not_planned + 1))
+			continue
+		fi
+
+		if [[ "$DRY_RUN" == "true" ]]; then
+			print_info "[DRY-RUN] Would reopen #$ref_num ($tid)"
+			reopened=$((reopened + 1))
+			continue
+		fi
+
+		gh issue reopen "$ref_num" --repo "$repo" \
+			--comment "Reopened: TODO.md still has this as \`[ ]\` (open). The issue was prematurely closed by a commit keyword. TODO.md is the source of truth for task state." 2>/dev/null && {
+			reopened=$((reopened + 1))
+			print_success "Reopened #$ref_num ($tid)"
+		} || {
+			skipped=$((skipped + 1))
+			print_warning "Failed to reopen #$ref_num ($tid)"
+		}
+	done < <(echo "$stripped" | grep -E '^\s*- \[ \] t[0-9]+.*ref:GH#[0-9]+' || true)
+
+	print_info "Reopen: $reopened reopened, $skipped failed, $not_planned skipped (NOT_PLANNED)"
+	return 0
+}
+
 cmd_help() {
 	cat <<'EOF'
 Issue Sync Helper — stateless TODO.md <-> GitHub Issues sync via gh CLI.
 Usage: issue-sync-helper.sh [command] [options]
-Commands: push [tNNN] | enrich [tNNN] | pull | close [tNNN] | reconcile | status | help
+Commands: push [tNNN] | enrich [tNNN] | pull | close [tNNN] | reopen | reconcile | status | help
 Options: --repo SLUG | --dry-run | --verbose | --force (skip evidence on close)
          --force-push (allow bulk push outside CI — use with caution, risk of duplicates)
 
@@ -850,6 +908,9 @@ Drift detection:
   status    — reports forward drift (open issue, done TODO) and reverse drift
               (open TODO, closed issue) without making changes.
   reconcile — same detection plus ref mismatches, with actionable guidance.
+  reopen    — reopens closed issues whose TODO entry is still [ ] (open).
+              Only reopens issues closed as COMPLETED, not NOT_PLANNED.
+              Safe for automated use in the pulse.
 
 Note: Bulk push (no task ID) is CI-only by default to prevent duplicate issues.
       Use 'push <task_id>' for single tasks, or --force-push to override.
@@ -893,7 +954,7 @@ main() {
 	command="${positional_args[0]:-help}"
 	case "$command" in
 	push) cmd_push "${positional_args[1]:-}" ;; enrich) cmd_enrich "${positional_args[1]:-}" ;;
-	pull) cmd_pull ;; close) cmd_close "${positional_args[1]:-}" ;;
+	pull) cmd_pull ;; close) cmd_close "${positional_args[1]:-}" ;; reopen) cmd_reopen ;;
 	reconcile) cmd_reconcile ;; status) cmd_status ;; help) cmd_help ;;
 	*)
 		print_error "Unknown command: $command"
