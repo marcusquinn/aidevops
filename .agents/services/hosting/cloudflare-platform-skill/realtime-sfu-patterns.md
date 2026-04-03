@@ -25,7 +25,7 @@ Publisher -> Edge A -> Edge B -> Sub1
 
 ## Backend
 
-Express:
+**Express:**
 
 ```js
 app.post('/api/new-session', async (req, res) => {
@@ -35,7 +35,7 @@ app.post('/api/new-session', async (req, res) => {
 });
 ```
 
-Workers:
+**Workers:**
 
 ```ts
 export default {
@@ -46,7 +46,7 @@ export default {
 };
 ```
 
-DO Presence:
+**DO Presence:**
 
 ```ts
 export class Room {
@@ -73,7 +73,7 @@ export class Room {
 
 ## Advanced
 
-Bandwidth mgmt:
+**Bandwidth mgmt:**
 
 ```ts
 const s = pc.getSenders().find(s => s.track?.kind === 'video');
@@ -83,7 +83,7 @@ p.encodings[0].maxBitrate = 1200000; p.encodings[0].maxFramerate = 24;
 await s.setParameters(p);
 ```
 
-Simulcast (CF auto-forwards best layer):
+**Simulcast** (CF auto-forwards best layer):
 
 ```ts
 pc.addTransceiver('video', {direction: 'sendonly', sendEncodings: [
@@ -93,7 +93,7 @@ pc.addTransceiver('video', {direction: 'sendonly', sendEncodings: [
 ]});
 ```
 
-DataChannel:
+**DataChannel:**
 
 ```ts
 const dc = pc.createDataChannel('chat', {ordered: true, maxRetransmits: 3});
@@ -101,6 +101,6 @@ dc.onopen = () => dc.send(JSON.stringify({type: 'chat', text: 'Hi'}));
 dc.onmessage = (e) => console.log('RX:', JSON.parse(e.data));
 ```
 
-Integrations: R2 for recording `env.R2_BUCKET.put(...)`, Queues for analytics
+**Integrations:** R2 for recording `env.R2_BUCKET.put(...)`, Queues for analytics
 
-Perf: 100-250ms connect, ~50ms latency (95%), 200-400ms glass-to-glass, no participant limit (client: 10-50 tracks)
+**Perf:** 100-250ms connect, ~50ms latency (95%), 200-400ms glass-to-glass, no participant limit (client: 10-50 tracks)
