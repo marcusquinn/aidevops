@@ -5198,5 +5198,13 @@
     "hash": "f5453a48a29c9dd411399f4079384edf",
     "status": "simplified",
     "issue": "GH#16493"
+  },
+  ".agents/services/hosting/cloudflare-platform-skill/realtime-sfu-gotchas.md": {
+    "at": "2026-04-03T00:00:00Z",
+    "hash": "b2dcaa7150cdce0316c029f0c91a10e471e081141e07d60441620219c128c154",
+    "issue": "GH#16502",
+    "passes": 1,
+    "pr": "pending",
+    "status": "simplified"
   }
 }
