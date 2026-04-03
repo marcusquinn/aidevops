@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Design System Preview: {{DESIGN_NAME}}</title>
+<!--
+  Parameterised preview template for DESIGN.md files.
+  Replace {{TOKENS}} with values from the DESIGN.md.
+
+  Usage:
+  1. Copy this template alongside your DESIGN.md
+  2. Replace all {{TOKEN}} placeholders with actual values
+  3. Open in browser to preview, or use Playwright for screenshots
+
+  Screenshot workflow:
+  - Playwright: 1440px viewport, networkidle, full-page PNG
+  - Convert: WebP (quality 90), AVIF (quality 80)
+  - Max 1568px longest side for AI review
+  - Generate both light and dark variants
+
+  Source: AI DevOps (https://aidevops.sh)
+  Format: Google Stitch DESIGN.md (https://stitch.withgoogle.com/docs/design-md/format/)
+
+  DISCLAIMER: Brand examples are for educational and design inspiration purposes only.
+  All trademarks and brand names belong to their respective owners.
+-->
+<style>
+  /* ============================================================
+     CSS CUSTOM PROPERTIES — Replace {{TOKENS}} from DESIGN.md
+     ============================================================ */
+  :root {
+    /* Section 2: Colour Palette */
+    --bg-primary: {{BG_PRIMARY}};
+    --bg-secondary: {{BG_SECONDARY}};
+    --bg-surface: {{BG_SURFACE}};
+    --text-primary: {{TEXT_PRIMARY}};
+    --text-secondary: {{TEXT_SECONDARY}};
+    --accent: {{ACCENT}};
+    --accent-hover: {{ACCENT_HOVER}};
+    --border: {{BORDER}};
+    --success: {{SUCCESS}};
+    --warning: {{WARNING}};
+    --error: {{ERROR}};
+    --btn-primary-bg: {{BTN_PRIMARY_BG}};
+    --btn-primary-text: {{BTN_PRIMARY_TEXT}};
+    --btn-secondary-bg: {{BTN_SECONDARY_BG}};
+    --btn-secondary-text: {{BTN_SECONDARY_TEXT}};
+    --input-bg: {{INPUT_BG}};
+    --input-border: {{INPUT_BORDER}};
+    --shadow-sm: {{SHADOW_SM}};
+    --shadow-md: {{SHADOW_MD}};
+    --shadow-lg: {{SHADOW_LG}};
+
+    /* Section 3: Typography */
+    --font-heading: {{FONT_HEADING}};
+    --font-body: {{FONT_BODY}};
+    --font-mono: {{FONT_MONO}};
+
+    /* Section 5: Layout */
+    --radius-sm: {{RADIUS_SM}};
+    --radius-md: {{RADIUS_MD}};
+    --radius-lg: {{RADIUS_LG}};
+    --spacing-unit: {{SPACING_UNIT}};
+    --max-width: {{MAX_WIDTH}};
+  }
+
+  /* Dark mode overrides */
+  [data-theme="dark"] {
+    --bg-primary: {{DARK_BG_PRIMARY}};
+    --bg-secondary: {{DARK_BG_SECONDARY}};
+    --bg-surface: {{DARK_BG_SURFACE}};
+    --text-primary: {{DARK_TEXT_PRIMARY}};
+    --text-secondary: {{DARK_TEXT_SECONDARY}};
+    --border: {{DARK_BORDER}};
+    --input-bg: {{DARK_INPUT_BG}};
+    --input-border: {{DARK_INPUT_BORDER}};
+  }
+
+  /* ============================================================
+     BASE STYLES
+     ============================================================ */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  .container {
+    max-width: var(--max-width);
+    margin: 0 auto;
+    padding: 0 calc(var(--spacing-unit) * 4);
+  }
+
+  /* ============================================================
+     HEADER / THEME TOGGLE
+     ============================================================ */
+  .preview-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    padding: calc(var(--spacing-unit) * 2) 0;
+  }
+
+  .preview-header .container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .preview-title {
+    font-family: var(--font-heading);
+    font-size: 18px;
+    font-weight: 600;
+  }
+
+  .theme-toggle {
+    display: flex;
+    gap: calc(var(--spacing-unit) * 1);
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 4px;
+  }
+
+  .theme-toggle button {
+    padding: 6px 16px;
+    border: none;
+    border-radius: calc(var(--radius-md) - 2px);
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .theme-toggle button.active {
+    background: var(--accent);
+    color: var(--btn-primary-text);
+  }
+
+  /* ============================================================
+     SECTION LAYOUT
+     ============================================================ */
+  .section {
+    padding: calc(var(--spacing-unit) * 8) 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .section:last-child { border-bottom: none; }
+
+  .section-title {
+    font-family: var(--font-heading);
+    font-size: 24px;
+    font-weight: 700;
+    margin-bottom: calc(var(--spacing-unit) * 4);
+  }
+
+  .section-subtitle {
+    font-family: var(--font-heading);
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: calc(var(--spacing-unit) * 2);
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .subsection {
+    margin-bottom: calc(var(--spacing-unit) * 6);
+  }
+
+  /* ============================================================
+     COLOUR SWATCHES
+     ============================================================ */
+  .swatch-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: calc(var(--spacing-unit) * 2);
+  }
+
+  .swatch {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+
+  .swatch-colour {
+    height: 80px;
+    display: flex;
+    align-items: flex-end;
+    padding: 8px 12px;
+  }
+
+  .swatch-info {
+    padding: 12px;
+    background: var(--bg-surface);
+  }
+
+  .swatch-name {
+    font-weight: 600;
+    font-size: 13px;
+    margin-bottom: 2px;
+  }
+
+  .swatch-hex {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .swatch-role {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+  }
+
+  /* ============================================================
+     TYPOGRAPHY SCALE
+     ============================================================ */
+  .type-sample {
+    margin-bottom: calc(var(--spacing-unit) * 3);
+    padding: calc(var(--spacing-unit) * 2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .type-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-bottom: calc(var(--spacing-unit) * 1);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* ============================================================
+     COMPONENTS
+     ============================================================ */
+  .component-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: calc(var(--spacing-unit) * 2);
+    align-items: center;
+    margin-bottom: calc(var(--spacing-unit) * 3);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-body);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .btn-primary {
+    background: var(--btn-primary-bg);
+    color: var(--btn-primary-text);
+    border: none;
+    padding: 10px 20px;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .btn-primary:hover {
+    opacity: 0.9;
+    box-shadow: var(--shadow-md);
+  }
+
+  .btn-secondary {
+    background: var(--btn-secondary-bg);
+    color: var(--btn-secondary-text);
+    border: 1px solid var(--border);
+    padding: 10px 20px;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    padding: 10px 20px;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+  }
+
+  .btn-sm {
+    padding: 6px 14px;
+    font-size: 13px;
+  }
+
+  .btn-lg {
+    padding: 14px 28px;
+    font-size: 16px;
+  }
+
+  .input-field {
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    font-family: var(--font-body);
+    font-size: 14px;
+    color: var(--text-primary);
+    width: 100%;
+    max-width: 360px;
+    transition: border-color 0.15s ease;
+  }
+
+  .input-field:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+  }
+
+  .input-field::placeholder {
+    color: var(--text-secondary);
+  }
+
+  /* Cards */
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: calc(var(--spacing-unit) * 3);
+  }
+
+  .card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: calc(var(--spacing-unit) * 3);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .card-title {
+    font-family: var(--font-heading);
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: calc(var(--spacing-unit) * 1);
+  }
+
+  .card-text {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+
+  /* Badges */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 9999px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .badge-success { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); }
+  .badge-warning { background: color-mix(in srgb, var(--warning) 15%, transparent); color: var(--warning); }
+  .badge-error { background: color-mix(in srgb, var(--error) 15%, transparent); color: var(--error); }
+
+  /* ============================================================
+     SPACING SCALE
+     ============================================================ */
+  .spacing-scale {
+    display: flex;
+    align-items: flex-end;
+    gap: calc(var(--spacing-unit) * 2);
+    flex-wrap: wrap;
+  }
+
+  .spacing-block {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .spacing-visual {
+    background: var(--accent);
+    opacity: 0.3;
+    border-radius: 2px;
+    width: 40px;
+  }
+
+  .spacing-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+
+  /* ============================================================
+     SHADOW SAMPLES
+     ============================================================ */
+  .shadow-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: calc(var(--spacing-unit) * 4);
+  }
+
+  .shadow-sample {
+    background: var(--bg-surface);
+    border-radius: var(--radius-md);
+    padding: calc(var(--spacing-unit) * 4);
+    text-align: center;
+  }
+
+  .shadow-label {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: calc(var(--spacing-unit) * 2);
+  }
+
+  /* ============================================================
+     DISCLAIMER
+     ============================================================ */
+  .disclaimer {
+    padding: calc(var(--spacing-unit) * 4) 0;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-secondary);
+    border-top: 1px solid var(--border);
+  }
+
+  .disclaimer a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="preview-header">
+  <div class="container">
+    <span class="preview-title">{{DESIGN_NAME}} Design System</span>
+    <div class="theme-toggle">
+      <button class="active" onclick="setTheme('light')">Light</button>
+      <button onclick="setTheme('dark')">Dark</button>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <!-- SECTION 1: COLOURS -->
+  <section class="section">
+    <h2 class="section-title">Colour Palette</h2>
+
+    <div class="subsection">
+      <h3 class="section-subtitle">Primary</h3>
+      <div class="swatch-grid">
+        <!-- Repeat for each colour from Section 2 -->
+        <div class="swatch">
+          <div class="swatch-colour" style="background: var(--bg-primary)"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Background Primary</div>
+            <div class="swatch-hex">{{BG_PRIMARY}}</div>
+            <div class="swatch-role">Page background</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-colour" style="background: var(--bg-secondary)"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Background Secondary</div>
+            <div class="swatch-hex">{{BG_SECONDARY}}</div>
+            <div class="swatch-role">Sections, panels</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-colour" style="background: var(--bg-surface)"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Surface</div>
+            <div class="swatch-hex">{{BG_SURFACE}}</div>
+            <div class="swatch-role">Cards, elevated</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-colour" style="background: var(--accent)"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Accent</div>
+            <div class="swatch-hex">{{ACCENT}}</div>
+            <div class="swatch-role">CTAs, links</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-colour" style="background: var(--text-primary)"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Text Primary</div>
+            <div class="swatch-hex">{{TEXT_PRIMARY}}</div>
+            <div class="swatch-role">Main text</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-colour" style="background: var(--text-secondary)"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Text Secondary</div>
+            <div class="swatch-hex">{{TEXT_SECONDARY}}</div>
+            <div class="swatch-role">Muted text</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="subsection">
+      <h3 class="section-subtitle">Semantic</h3>
+      <div class="swatch-grid">
+        <div class="swatch">
+          <div class="swatch-colour" style="background: var(--success)"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Success</div>
+            <div class="swatch-hex">{{SUCCESS}}</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-colour" style="background: var(--warning)"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Warning</div>
+            <div class="swatch-hex">{{WARNING}}</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-colour" style="background: var(--error)"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Error</div>
+            <div class="swatch-hex">{{ERROR}}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 2: TYPOGRAPHY -->
+  <section class="section">
+    <h2 class="section-title">Typography Scale</h2>
+    <!-- Replace font specs from Section 3 of DESIGN.md -->
+    <div class="type-sample">
+      <div class="type-label">Display -- {{FONT_HEADING}} / 48px / 700</div>
+      <div style="font-family: var(--font-heading); font-size: 48px; font-weight: 700; line-height: 1.1;">
+        The quick brown fox
+      </div>
+    </div>
+    <div class="type-sample">
+      <div class="type-label">Heading 1 -- {{FONT_HEADING}} / 36px / 700</div>
+      <div style="font-family: var(--font-heading); font-size: 36px; font-weight: 700; line-height: 1.2;">
+        The quick brown fox jumps over
+      </div>
+    </div>
+    <div class="type-sample">
+      <div class="type-label">Heading 2 -- {{FONT_HEADING}} / 28px / 600</div>
+      <div style="font-family: var(--font-heading); font-size: 28px; font-weight: 600; line-height: 1.25;">
+        The quick brown fox jumps over the lazy dog
+      </div>
+    </div>
+    <div class="type-sample">
+      <div class="type-label">Heading 3 -- {{FONT_HEADING}} / 22px / 600</div>
+      <div style="font-family: var(--font-heading); font-size: 22px; font-weight: 600; line-height: 1.3;">
+        The quick brown fox jumps over the lazy dog
+      </div>
+    </div>
+    <div class="type-sample">
+      <div class="type-label">Body -- {{FONT_BODY}} / 16px / 400</div>
+      <div style="font-family: var(--font-body); font-size: 16px; font-weight: 400; line-height: 1.5;">
+        The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs.
+        How vexingly quick daft zebras jump. The five boxing wizards jump quickly at dawn.
+      </div>
+    </div>
+    <div class="type-sample">
+      <div class="type-label">Caption -- {{FONT_BODY}} / 12px / 500</div>
+      <div style="font-family: var(--font-body); font-size: 12px; font-weight: 500; line-height: 1.33; color: var(--text-secondary);">
+        Caption text, metadata, timestamps, supplementary information
+      </div>
+    </div>
+    <div class="type-sample">
+      <div class="type-label">Code -- {{FONT_MONO}} / 14px / 400</div>
+      <div style="font-family: var(--font-mono); font-size: 14px; font-weight: 400; line-height: 1.5; background: var(--bg-secondary); padding: 12px; border-radius: var(--radius-sm);">
+        const theme = { primary: "{{BG_PRIMARY}}", accent: "{{ACCENT}}" };
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 3: COMPONENTS -->
+  <section class="section">
+    <h2 class="section-title">Components</h2>
+
+    <div class="subsection">
+      <h3 class="section-subtitle">Buttons</h3>
+      <div class="component-row">
+        <button class="btn btn-primary btn-lg">Large Primary</button>
+        <button class="btn btn-primary">Primary</button>
+        <button class="btn btn-primary btn-sm">Small</button>
+      </div>
+      <div class="component-row">
+        <button class="btn btn-secondary">Secondary</button>
+        <button class="btn btn-ghost">Ghost / Outline</button>
+        <button class="btn btn-primary" disabled style="opacity: 0.5; cursor: not-allowed;">Disabled</button>
+      </div>
+    </div>
+
+    <div class="subsection">
+      <h3 class="section-subtitle">Inputs</h3>
+      <div class="component-row" style="flex-direction: column; align-items: flex-start;">
+        <input class="input-field" type="text" placeholder="Text input placeholder...">
+        <input class="input-field" type="text" value="Filled input with value">
+        <input class="input-field" type="text" placeholder="Disabled" disabled style="opacity: 0.5;">
+      </div>
+    </div>
+
+    <div class="subsection">
+      <h3 class="section-subtitle">Badges</h3>
+      <div class="component-row">
+        <span class="badge badge-success">Active</span>
+        <span class="badge badge-warning">Pending</span>
+        <span class="badge badge-error">Failed</span>
+      </div>
+    </div>
+
+    <div class="subsection">
+      <h3 class="section-subtitle">Cards</h3>
+      <div class="card-grid">
+        <div class="card">
+          <div class="card-title">Feature Card</div>
+          <div class="card-text">A sample card component showing the surface colour, border radius, shadow depth, and internal spacing from the design system.</div>
+        </div>
+        <div class="card">
+          <div class="card-title">Another Card</div>
+          <div class="card-text">Cards demonstrate elevation, typography hierarchy, and the relationship between surface and background colours in the system.</div>
+        </div>
+        <div class="card">
+          <div class="card-title">Third Card</div>
+          <div class="card-text">The grid layout shows responsive behaviour with auto-fill columns that collapse gracefully on smaller viewports.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 4: SPACING -->
+  <section class="section">
+    <h2 class="section-title">Spacing Scale</h2>
+    <div class="spacing-scale">
+      <div class="spacing-block">
+        <div class="spacing-visual" style="height: 4px;"></div>
+        <span class="spacing-label">4px</span>
+      </div>
+      <div class="spacing-block">
+        <div class="spacing-visual" style="height: 8px;"></div>
+        <span class="spacing-label">8px</span>
+      </div>
+      <div class="spacing-block">
+        <div class="spacing-visual" style="height: 12px;"></div>
+        <span class="spacing-label">12px</span>
+      </div>
+      <div class="spacing-block">
+        <div class="spacing-visual" style="height: 16px;"></div>
+        <span class="spacing-label">16px</span>
+      </div>
+      <div class="spacing-block">
+        <div class="spacing-visual" style="height: 24px;"></div>
+        <span class="spacing-label">24px</span>
+      </div>
+      <div class="spacing-block">
+        <div class="spacing-visual" style="height: 32px;"></div>
+        <span class="spacing-label">32px</span>
+      </div>
+      <div class="spacing-block">
+        <div class="spacing-visual" style="height: 48px;"></div>
+        <span class="spacing-label">48px</span>
+      </div>
+      <div class="spacing-block">
+        <div class="spacing-visual" style="height: 64px;"></div>
+        <span class="spacing-label">64px</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 5: SHADOWS -->
+  <section class="section">
+    <h2 class="section-title">Depth & Elevation</h2>
+    <div class="shadow-grid">
+      <div class="shadow-sample" style="box-shadow: none;">
+        <div>Flat</div>
+        <div class="shadow-label">Level 0</div>
+      </div>
+      <div class="shadow-sample" style="box-shadow: var(--shadow-sm);">
+        <div>Raised</div>
+        <div class="shadow-label">Level 1</div>
+      </div>
+      <div class="shadow-sample" style="box-shadow: var(--shadow-md);">
+        <div>Elevated</div>
+        <div class="shadow-label">Level 2</div>
+      </div>
+      <div class="shadow-sample" style="box-shadow: var(--shadow-lg);">
+        <div>Overlay</div>
+        <div class="shadow-label">Level 3</div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- DISCLAIMER -->
+<footer class="disclaimer container">
+  <p>Design system preview generated by <a href="https://aidevops.sh">AI DevOps</a>.
+  DESIGN.md format by <a href="https://stitch.withgoogle.com/docs/design-md/overview">Google Stitch</a>.
+  Brand examples sourced from <a href="https://github.com/VoltAgent/awesome-design-md">VoltAgent/awesome-design-md</a> (MIT).
+  All trademarks belong to their respective owners. Educational use only.</p>
+</footer>
+
+<script>
+  function setTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    document.querySelectorAll('.theme-toggle button').forEach(function(btn) {
+      btn.classList.toggle('active', btn.textContent.toLowerCase() === theme);
+    });
+  }
+</script>
+</body>
+</html>

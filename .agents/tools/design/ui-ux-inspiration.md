@@ -19,19 +19,23 @@ model: sonnet
 
 ## Quick Reference
 
-- **Purpose**: Extract design patterns from real websites to inform brand identity and UI decisions
-- **Trigger**: New project, rebrand, or "I need design inspiration"
-- **Output**: `tools/design/brand-identity.md` (per-project brand profile)
+- **Purpose**: Extract design patterns from real websites to inform brand identity, UI decisions, and DESIGN.md generation
+- **Trigger**: New project, rebrand, "I need design inspiration", or "build me a DESIGN.md from this URL"
+- **Output**: `tools/design/brand-identity.md` (per-project brand profile) and/or `DESIGN.md` (AI-readable design system)
 - **Data**: `tools/design/ui-ux-catalogue.toon` (styles, palettes, pattern library)
-- **Resources**: `tools/design/design-inspiration.md` (60+ curated galleries)
+- **Resources**: `tools/design/design-inspiration.md` (60+ curated galleries), `tools/design/library/` (54 brand + 12 style examples)
+- **DESIGN.md format**: `tools/design/design-md.md` (format spec, generation workflows, library index)
+- **Palette tools**: `tools/design/colour-palette.md` (generation, spinning, narrowing)
 - **Browser**: Playwright full-render extraction (see `tools/browser/browser-automation.md`)
 
 **Design workflow** (apply in order):
 
 1. **Check brand identity** -- does `brand-identity.md` exist? If yes, use it. If no, run brand identity interview.
-2. **Consult catalogue** -- check `ui-ux-catalogue.toon` for matching style presets and palettes.
-3. **Check inspiration** -- user has reference URLs? Run URL study. No URLs? Present curated examples from `design-inspiration.md`.
-4. **Apply quality gates** -- validate against accessibility (WCAG 2.1 AA), performance, and platform conventions.
+2. **Check DESIGN.md** -- does `DESIGN.md` exist in project root? If yes, coding agents can use it directly. If no, generate one after brand identity is established.
+3. **Consult catalogue** -- check `ui-ux-catalogue.toon` for matching style presets and palettes. Browse `tools/design/library/` for brand examples and style archetypes.
+4. **Check inspiration** -- user has reference URLs? Run URL study. No URLs? Present curated examples from `design-inspiration.md`.
+5. **Generate palette** -- use `tools/design/colour-palette.md` to spin palette variants and narrow to final choice.
+6. **Apply quality gates** -- validate against accessibility (WCAG 2.1 AA), performance, and platform conventions.
 
 <!-- AI-CONTEXT-END -->
 
@@ -76,7 +80,7 @@ For each selected URL, run URL study (below) then synthesise:
 - **Interaction**: minimal/animated, subtle/bold transitions
 - **Tone**: formal/casual, technical/approachable, minimal/decorative
 
-### Step 4: Generate Brand Identity
+### Step 4: Generate Brand Identity + DESIGN.md
 
 Write to `tools/design/brand-identity.md`:
 
@@ -87,6 +91,8 @@ Write to `tools/design/brand-identity.md`:
 - Tone and voice summary
 - Reference URLs with extracted screenshots
 - Date generated and source session
+
+Then generate `DESIGN.md` in the project root following the 9-section format (see `tools/design/design-md.md`). Use `tools/design/colour-palette.md` to spin palette variants before finalising. Generate preview.html using `tools/design/library/_template/preview.html.template`.
 
 ## URL Study Workflow
 
@@ -201,9 +207,25 @@ Validate before finalising any brand identity or design recommendation:
 - Android: cross-reference Material Design (`m3.material.io`)
 - Web: check against common component library defaults (shadcn/ui, Radix)
 
+## URL Study to DESIGN.md
+
+The URL study workflow can output directly as a DESIGN.md file instead of (or in addition to) the standard URL study format. This is the preferred path when the user says "build me a DESIGN.md from this URL" or similar.
+
+1. Run full URL study extraction (above)
+2. Map extracted values to the 9-section DESIGN.md format (`tools/design/design-md.md`)
+3. Fill gaps: infer do's/don'ts from patterns, add responsive rules from viewport testing
+4. Validate contrast ratios (WCAG 2.1 AA)
+5. Write to `DESIGN.md` in project root
+6. Generate preview.html for visual verification
+
+For detailed section mapping, see `tools/design/design-md.md` > "Browser Automation: DESIGN.md from URL".
+
 ## Related
 
+- `tools/design/design-md.md` -- DESIGN.md format spec, generation workflows, library index
 - `tools/design/design-inspiration.md` -- 60+ curated UI/UX resource galleries
+- `tools/design/colour-palette.md` -- palette generation, spinning, narrowing
+- `tools/design/library/` -- 54 brand examples + 12 style archetypes
 - `tools/design/ui-ux-catalogue.toon` -- style presets and palette data
 - `tools/design/brand-identity.md` -- output destination for brand profiles
 - `tools/browser/browser-automation.md` -- Playwright tool selection and usage
@@ -212,3 +234,4 @@ Validate before finalising any brand identity or design recommendation:
 - `tools/ui/ui-skills.md` -- opinionated UI constraints
 - `product/ui-design.md` -- product design standards (all platforms)
 - `workflows/ui-verification.md` -- visual regression testing
+- `templates/DESIGN.md.template` -- skeleton for new projects

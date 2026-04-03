@@ -1966,6 +1966,18 @@ GITATTRSEOF
 		print_info "Collaborator pointer files already exist"
 	fi
 
+	# Seed DESIGN.md template (AI-readable design system skeleton)
+	if [[ ! -f "$project_root/DESIGN.md" ]]; then
+		local design_template="$AGENTS_DIR/templates/DESIGN.md.template"
+		if [[ -f "$design_template" ]]; then
+			# Replace {Project Name} with the repo name
+			sed "s/{Project Name}/$repo_name/g" "$design_template" >"$project_root/DESIGN.md"
+			print_success "Created DESIGN.md (design system skeleton — populate with tools/design/design-md.md)"
+		fi
+	else
+		print_info "DESIGN.md already exists, skipping"
+	fi
+
 	# Scaffold repo courtesy files (README, LICENCE, CHANGELOG, etc.)
 	scaffold_repo_courtesy_files "$project_root"
 
@@ -2019,6 +2031,7 @@ GITATTRSEOF
 	[[ -f "$project_root/.gitignore" ]] && init_files+=(".gitignore")
 	[[ -d "$project_root/.agents" ]] && init_files+=(".agents/")
 	[[ -f "$project_root/AGENTS.md" ]] && init_files+=("AGENTS.md")
+	[[ -f "$project_root/DESIGN.md" ]] && init_files+=("DESIGN.md")
 	[[ -f "$project_root/TODO.md" ]] && init_files+=("TODO.md")
 	[[ -d "$project_root/todo" ]] && init_files+=("todo/")
 	[[ -f "$project_root/MODELS.md" ]] && init_files+=("MODELS.md")
