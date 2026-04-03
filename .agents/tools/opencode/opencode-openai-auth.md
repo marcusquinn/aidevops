@@ -8,15 +8,12 @@ tools:
 
 # OpenCode OpenAI Auth Pool (t1548)
 
-Multi-account OAuth pool for ChatGPT Plus/Pro accounts in OpenCode.
-Uses the same token injection architecture as the Anthropic pool.
-
-<!-- AI-CONTEXT-START -->
+Multi-account OAuth pool for ChatGPT Plus/Pro accounts in OpenCode. Same token injection architecture as the Anthropic pool.
 
 ## Quick Reference
 
 - **Provider ID**: `openai-pool` (account management), `openai` (model usage)
-- **Pool file**: `~/.aidevops/oauth-pool.json` (key `openai`)
+- **Pool file**: `~/.aidevops/oauth-pool.json` (key `openai`) — 0600 permissions, never commit
 - **OAuth issuer**: `https://auth.openai.com`
 - **Client ID**: `app_EMoamEEZ73f0CkXaXp7hrann`
 
@@ -24,8 +21,7 @@ Uses the same token injection architecture as the Anthropic pool.
 
 ```bash
 aidevops model-accounts-pool add openai
-# Go to: https://auth.openai.com/codex/device
-# Enter code: XXXX-XXXXX
+# Go to: https://auth.openai.com/codex/device and enter the displayed code
 
 # Fallback (callback URL flow)
 AIDEVOPS_OPENAI_ADD_MODE=callback aidevops model-accounts-pool add openai
@@ -43,8 +39,6 @@ AIDEVOPS_OPENAI_ADD_MODE=callback aidevops model-accounts-pool add openai
 # List emails only (never expose token values)
 jq -r '.openai[].email' ~/.aidevops/oauth-pool.json
 ```
-
-<!-- AI-CONTEXT-END -->
 
 ## Architecture
 
@@ -79,13 +73,6 @@ Token injection flow: LRU active account → injected into `openai` provider's `
   }]
 }
 ```
-
-## Security
-
-- Pool file: 0600 permissions (owner-only)
-- Tokens stored locally, never transmitted to third parties
-- Do not commit `~/.aidevops/oauth-pool.json` to version control
-- Rotate: re-run `aidevops model-accounts-pool add openai`
 
 ## Related
 
