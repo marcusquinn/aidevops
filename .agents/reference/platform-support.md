@@ -16,7 +16,7 @@
 
 Native Windows (PowerShell) is not supported — use WSL2.
 
-**1. Install WSL2** — open PowerShell as Administrator:
+**1. Install WSL2** (PowerShell as Administrator):
 
 ```powershell
 wsl --install
@@ -32,7 +32,7 @@ Installs Ubuntu by default. Restart when prompted.
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 ```
 
-Follow the post-install instructions to add brew to your PATH. Alternatively, use apt directly — aidevops detects and uses it automatically.
+Add brew to your PATH per post-install instructions. Alternatively, use apt — aidevops detects and uses it automatically.
 
 **4. Install aidevops:**
 
@@ -47,13 +47,11 @@ brew install marcusquinn/tap/aidevops && aidevops update
 bash <(curl -fsSL https://aidevops.sh/install)
 ```
 
-**5. Run setup** — detects Linux/WSL2 automatically and uses the appropriate scheduler:
+**5. Run setup** (detects Linux/WSL2 automatically):
 
 ```bash
 ./setup.sh
 ```
-
----
 
 ## Platform Detection
 
@@ -78,13 +76,11 @@ echo "$AIDEVOPS_SCHEDULER"  # launchd | systemd | cron
 | `AIDEVOPS_FILE_SEARCH` | `mdfind` | `fd` | `fd` or `locate` | `fd` |
 | `AIDEVOPS_PKG_INSTALL` | `brew install` | `sudo apt-get install -y` | varies | `sudo apt-get install -y` |
 
----
-
 ## Scheduler Backends
 
 ### macOS — launchd
 
-The pulse and other scheduled tasks run as LaunchAgents in `~/Library/LaunchAgents/`.
+Pulse and scheduled tasks run as LaunchAgents in `~/Library/LaunchAgents/`.
 
 - Label prefix: `com.aidevops.*`
 - Manage: `launchctl list | grep aidevops`
@@ -92,22 +88,18 @@ The pulse and other scheduled tasks run as LaunchAgents in `~/Library/LaunchAgen
 
 ### Linux — systemd user services (preferred)
 
-When `systemctl --user status` succeeds, aidevops installs systemd user timers:
+When `systemctl --user status` succeeds, aidevops installs systemd user timers. Preferred over cron: supports `Restart=on-failure`, journal logging, and dependency ordering.
 
 - Service files: `~/.config/systemd/user/aidevops-*.{service,timer}`
 - List: `systemctl --user list-timers | grep aidevops`
 - Disable pulse: `systemctl --user disable --now aidevops-supervisor-pulse.timer`
 
-systemd is preferred over cron because it supports `Restart=on-failure`, journal logging, and dependency ordering.
-
 ### Linux — cron (fallback)
 
-Used when systemd user services are unavailable (containers, older distros, WSL2 without systemd).
+Used when systemd is unavailable (containers, older distros, WSL2 without systemd).
 
 - List: `crontab -l | grep aidevops`
 - Disable pulse: `crontab -e` and remove the `supervisor-pulse` line
-
----
 
 ## Known Limitations on Linux/WSL2
 
@@ -125,8 +117,6 @@ Used when systemd user services are unavailable (containers, older distros, WSL2
 | MiniSim | macOS only | N/A | iOS/Android emulator launcher |
 | ClaudeBar | macOS only | N/A | Menu bar quota monitor |
 
----
-
 ## Installing Clipboard Tools on Linux
 
 ```bash
@@ -143,22 +133,17 @@ sudo pacman -S xclip
 sudo apt-get install -y wl-clipboard
 ```
 
----
-
 ## Enabling systemd in WSL2
 
 WSL2 Ubuntu 22.04+ supports systemd by default. Enable if not already active:
 
 ```bash
-# Check if systemd is running
 systemctl --user status
 
-# If not running, enable it in /etc/wsl.conf
+# If not running, enable in /etc/wsl.conf then restart WSL
 echo -e "[boot]\nsystemd=true" | sudo tee /etc/wsl.conf
-# Then restart WSL: wsl --shutdown (from PowerShell), then reopen Ubuntu
+# wsl --shutdown (from PowerShell), then reopen Ubuntu
 ```
-
----
 
 ## CI/CD
 
