@@ -14,18 +14,11 @@ tools:
 
 # GitHub Actions Setup Guide
 
-<!-- AI-CONTEXT-START -->
-
-## Quick Reference
-
 - **Workflow**: `.github/workflows/code-quality.yml`
 - **Triggers**: push to `main`/`develop`; pull requests to `main`
 - **Jobs**: Framework Validation, SonarCloud Analysis, Codacy Analysis
-- **Secrets**: `SONAR_TOKEN` configured; `CODACY_API_TOKEN` needs setup (conditional job); `GITHUB_TOKEN` auto-provided
 - **Dashboards**: [SonarCloud](https://sonarcloud.io/project/overview?id=marcusquinn_aidevops) · [Codacy](https://app.codacy.com/gh/marcusquinn/aidevops) · [Actions](https://github.com/marcusquinn/aidevops/actions)
 - **Add secret**: Repository Settings → Secrets and variables → Actions → New repository secret
-
-<!-- AI-CONTEXT-END -->
 
 ## Secrets
 
