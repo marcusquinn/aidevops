@@ -28,14 +28,14 @@ https://git.cloudron.io/ — 200+ official Cloudron app packages; authoritative 
 
 ## Key Files to Study
 
-In any reference package:
-
-1. **CloudronManifest.json** — addon requirements, memory limits, health check path
-2. **Dockerfile** — base image choice, build steps, file permissions
-3. **start.sh** — initialization sequence, config injection, symlink patterns
-4. **nginx/*.conf** or **apache/*.conf** — web server configuration
-5. **supervisor/*.conf** — multi-process orchestration (if used)
-6. **CHANGELOG.md** — version history and migration patterns
+| File | Purpose |
+|------|---------|
+| `CloudronManifest.json` | Addon requirements, memory limits, health check path |
+| `Dockerfile` | Base image choice, build steps, file permissions |
+| `start.sh` | Initialization sequence, config injection, symlink patterns |
+| `nginx/*.conf` / `apache/*.conf` | Web server configuration |
+| `supervisor/*.conf` | Multi-process orchestration (if used) |
+| `CHANGELOG.md` | Version history and migration patterns |
 
 ## Finding Apps by Technology
 
@@ -69,12 +69,12 @@ All topics: https://git.cloudron.io/explore/projects/topics
 ## Cloning for Local Study
 
 ```bash
+# Full clone
 git clone https://git.cloudron.io/packages/ghost-app.git
 
-# Sparse checkout for specific files only
+# Sparse checkout (specific files only)
 git clone --filter=blob:none --sparse https://git.cloudron.io/packages/ghost-app.git
-cd ghost-app
-git sparse-checkout set start.sh Dockerfile CloudronManifest.json
+cd ghost-app && git sparse-checkout set start.sh Dockerfile CloudronManifest.json
 ```
 
 ## GitLab API
@@ -92,8 +92,8 @@ curl -s "https://git.cloudron.io/api/v4/projects?topic=proxyAuth"
 curl -s "https://git.cloudron.io/api/v4/projects/packages%2Fghost-app/repository/tree"
 curl -s "https://git.cloudron.io/api/v4/projects/packages%2Fghost-app/repository/files/start.sh/raw?ref=master"
 
-# Code search within a repo (auth required for some endpoints)
+# Code search (auth required for some endpoints)
 curl -s "https://git.cloudron.io/api/v4/projects/packages%2Fghost-app/search?scope=blobs&search=supervisord"
-
-# Browse recently updated: https://git.cloudron.io/explore/projects?sort=latest_activity_desc
 ```
+
+Browse recently updated: https://git.cloudron.io/explore/projects?sort=latest_activity_desc
