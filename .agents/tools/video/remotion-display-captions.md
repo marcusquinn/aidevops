@@ -8,8 +8,6 @@ metadata:
 
 # Displaying captions in Remotion
 
-Display `Caption[]` data with TikTok-style pages and per-word highlighting.
-
 ## Install
 
 ```bash

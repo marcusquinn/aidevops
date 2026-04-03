@@ -82,6 +82,16 @@
     "status": "simplified",
     "issue": "GH#16179"
   },
+  ".agents/tools/video/remotion-display-captions.md": {
+    "at": "2026-04-03T00:00:00Z",
+    "hash": "6dcdc470b94e1e415d3e09b76a06088646364cd9",
+    "issue": "GH#16476",
+    "lines_before": 119,
+    "lines_after": 117,
+    "passes": 1,
+    "note": "Removed redundant intro line (exact duplicate of YAML description). Code blocks preserved verbatim. Zero content loss.",
+    "status": "simplified"
+  },
   ".agents/tools/video/remotion-get-video-dimensions.md": {
     "at": "2026-04-03T05:33:46Z",
     "hash": "c5f36530db3354d5de3048458c3849ec22c1710a",
