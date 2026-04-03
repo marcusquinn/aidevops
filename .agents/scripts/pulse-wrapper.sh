@@ -9191,6 +9191,7 @@ sync_todo_refs_for_repo() {
 
 	/bin/bash "${script_dir}/issue-sync-helper.sh" pull --repo "$repo_slug" 2>&1 || true
 	/bin/bash "${script_dir}/issue-sync-helper.sh" close --repo "$repo_slug" 2>&1 || true
+	/bin/bash "${script_dir}/issue-sync-helper.sh" reopen --repo "$repo_slug" 2>&1 || true
 	git -C "$repo_path" diff --quiet TODO.md 2>/dev/null || {
 		git -C "$repo_path" add TODO.md &&
 			git -C "$repo_path" commit -m "chore: sync GitHub issue refs to TODO.md [skip ci]" &&
