@@ -16,11 +16,7 @@ tools:
 
 One relationship history per person across email, Matrix, SimpleX, Slack, CLI, and similar channels — no private context leaks between unrelated identities.
 
-Continuity key: entity ID in `memory.db`.
-
-- Layer 2 identity: `entities` + `entity_channels`
-- Layer 1 threads: `conversations`
-- Layer 0 evidence: `interactions`
+Continuity key: entity ID in `memory.db` (Layer 2: `entities`+`entity_channels` → Layer 1: `conversations` → Layer 0: `interactions`).
 
 ## Core Rule
 
@@ -34,11 +30,7 @@ Resolve identity first, then continue the conversation. Never infer continuity f
 4. Log interaction to Layer 0 with channel metadata.
 5. Load context from same entity before replying.
 
-## Email Identity Rules
-
-Use `entity-helper.sh` email normalization: trim whitespace, lowercase, strip plus aliases from local part.
-
-Example: ` User+alerts@Example.COM ` → `user@example.com`
+**Email normalization** (`entity-helper.sh`): trim whitespace, lowercase, strip plus aliases. Example: ` User+alerts@Example.COM ` → `user@example.com`
 
 ## Commands
 
@@ -50,10 +42,9 @@ entity-helper.sh log-interaction <entity_id> --channel email --channel-id "sende
 entity-helper.sh context <entity_id> --channel email --limit 20 --privacy-filter
 ```
 
-## Channel Boundary Guardrails
+## Guardrails
 
-- Never merge entities automatically.
-- Keep confidence explicit: `suggested` until verified.
+- Never merge entities automatically; keep confidence explicit (`suggested` until verified).
 - Use `--privacy-filter` when rendering context to shared or lower-trust channels.
 - Keep irreversible decisions (identity merges, external sends) human-verifiable.
 
