@@ -10,7 +10,7 @@ Input file: `$ARGUMENTS`
 
 ## Format
 
-One finding per line — `severity|title|details`. Severity defaults to `medium` if omitted.
+One finding per line — `severity|title|details`. Severity is `critical`, `high`, `medium`, `low`, or `info` (defaults to `medium` if omitted).
 
 ```text
 high|Harden prompt-guard fallback on malformed markdown|Reject malformed HTML comments before rendering summary
@@ -24,7 +24,7 @@ low|Improve stale worker log wording|Clarify blocked vs failed in watchdog outpu
 ~/.aidevops/agents/scripts/findings-to-tasks-helper.sh create \
   --input <path/to/actionable-findings.txt> \
   --repo-path "$(git rev-parse --show-toplevel)" \
-  --source <any-free-form-tag>  # e.g. security-audit, code-review, seo-audit
+  --source <custom-source>  # any free-form tag, not validated — e.g. security-audit, code-review, seo-audit
 ```
 
 Optional flags: `--labels "label1,label2"` · `--tags "tag1,tag2"` · `--dry-run` · `--no-issue` · `--allow-partial`
