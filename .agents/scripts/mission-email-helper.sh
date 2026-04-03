@@ -145,6 +145,21 @@ sql_escape() {
 }
 
 #######################################
+# Validate that a flag has a following value argument.
+# Arguments: flag_name remaining_arg_count
+# Returns 1 (and logs error) if no value follows.
+#######################################
+_require_arg() {
+	local flag="$1"
+	local remaining="$2"
+	if [[ "$remaining" -lt 2 ]]; then
+		log_error "${flag} requires a value"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
 # Generate unique ID
 # Format: me-YYYYMMDD-HHMMSS-RANDOM
 #######################################
@@ -199,75 +214,48 @@ _parse_send_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--account)
-			[[ $# -lt 2 ]] && {
-				log_error "--account requires a value"
-				return 1
-			}
+			_require_arg "$1" "$#" || return 1
 			account="$2"
 			shift 2
 			;;
 		--from)
-			[[ $# -lt 2 ]] && {
-				log_error "--from requires a value"
-				return 1
-			}
+			_require_arg "$1" "$#" || return 1
 			from_addr="$2"
 			shift 2
 			;;
 		--to)
-			[[ $# -lt 2 ]] && {
-				log_error "--to requires a value"
-				return 1
-			}
+			_require_arg "$1" "$#" || return 1
 			to_addr="$2"
 			shift 2
 			;;
 		--subject)
-			[[ $# -lt 2 ]] && {
-				log_error "--subject requires a value"
-				return 1
-			}
+			_require_arg "$1" "$#" || return 1
 			subject="$2"
 			shift 2
 			;;
 		--template)
-			[[ $# -lt 2 ]] && {
-				log_error "--template requires a value"
-				return 1
-			}
+			_require_arg "$1" "$#" || return 1
 			template="$2"
 			shift 2
 			;;
 		--body)
-			[[ $# -lt 2 ]] && {
-				log_error "--body requires a value"
-				return 1
-			}
+			_require_arg "$1" "$#" || return 1
 			body="$2"
 			shift 2
 			;;
 		--var)
-			[[ $# -lt 2 ]] && {
-				log_error "--var requires key=value"
-				return 1
-			}
-			# Accumulate vars as newline-separated string (no arrays across subshells)
+			_require_arg "$1" "$#" || return 1
+			# Accumulate vars as unit-separator-delimited string (no arrays across subshells)
 			template_vars_str="${template_vars_str}${2}"$'\x1f'
 			shift 2
 			;;
 		--thread-id)
-			[[ $# -lt 2 ]] && {
-				log_error "--thread-id requires a value"
-				return 1
-			}
+			_require_arg "$1" "$#" || return 1
 			thread_id="$2"
 			shift 2
 			;;
 		--region)
-			[[ $# -lt 2 ]] && {
-				log_error "--region requires a value"
-				return 1
-			}
+			_require_arg "$1" "$#" || return 1
 			region="$2"
 			shift 2
 			;;
@@ -543,34 +531,22 @@ _parse_receive_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--account)
-			[[ $# -lt 2 ]] && {
-				log_error "--account requires a value"
-				return 1
-			}
+			_require_arg "$1" "$#" || return 1
 			account="$2"
 			shift 2
 			;;
 		--mailbox)
-			[[ $# -lt 2 ]] && {
-				log_error "--mailbox requires a value"
-				return 1
-			}
+			_require_arg "$1" "$#" || return 1
 			mailbox="$2"
 			shift 2
 			;;
 		--since)
-			[[ $# -lt 2 ]] && {
-				log_error "--since requires ISO date"
-				return 1
-			}
+			_require_arg "$1" "$#" || return 1
 			since="$2"
 			shift 2
 			;;
 		--thread-id)
-			[[ $# -lt 2 ]] && {
-				log_error "--thread-id requires a value"
-				return 1
-			}
+			_require_arg "$1" "$#" || return 1
 			thread_id="$2"
 			shift 2
 			;;
@@ -1031,10 +1007,7 @@ _parse_thread_args() {
 			shift
 			;;
 		--show)
-			[[ $# -lt 2 ]] && {
-				log_error "--show requires thread-id"
-				return 1
-			}
+			_require_arg "$1" "$#" || return 1
 			action="show"
 			thread_id="$2"
 			shift 2
@@ -1044,34 +1017,22 @@ _parse_thread_args() {
 			shift
 			;;
 		--mission)
-			[[ $# -lt 2 ]] && {
-				log_error "--mission requires a value"
-				return 1
-			}
+			_require_arg "$1" "$#" || return 1
 			mission_id="$2"
 			shift 2
 			;;
 		--subject)
-			[[ $# -lt 2 ]] && {
-				log_error "--subject requires a value"
-				return 1
-			}
+			_require_arg "$1" "$#" || return 1
 			subject="$2"
 			shift 2
 			;;
 		--counterparty)
-			[[ $# -lt 2 ]] && {
-				log_error "--counterparty requires a value"
-				return 1
-			}
+			_require_arg "$1" "$#" || return 1
 			counterparty="$2"
 			shift 2
 			;;
 		--context)
-			[[ $# -lt 2 ]] && {
-				log_error "--context requires a value"
-				return 1
-			}
+			_require_arg "$1" "$#" || return 1
 			context="$2"
 			shift 2
 			;;
