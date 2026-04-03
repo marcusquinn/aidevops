@@ -50,31 +50,19 @@ JSON summary: `{output-dir}/qa-report.json` — visited/passed/failed pages, bro
 
 ## Usage
 
-### Standalone
-
 ```bash
+# Standalone — basic, with flows, with output dir, JSON format, skip links, mission-scoped
 browser-qa-worker.sh --url http://localhost:3000
-browser-qa-worker.sh --url http://localhost:3000 \
-  --flows '["/", "/about", "/login", "/dashboard"]'
-browser-qa-worker.sh --url http://localhost:8080 \
-  --output-dir ~/Git/myproject/todo/missions/m001/assets/qa
-browser-qa-worker.sh --url http://localhost:3000 --format json
-browser-qa-worker.sh --url http://localhost:3000 --no-check-links
-browser-qa-worker.sh --url http://localhost:3000 \
-  --mission-file ~/Git/myproject/todo/missions/m001/mission.md \
-  --milestone 2
-```
+browser-qa-worker.sh --url http://localhost:3000 --flows '["/", "/about", "/login"]'
+browser-qa-worker.sh --url http://localhost:8080 --output-dir ~/Git/myproject/todo/missions/m001/assets/qa
+browser-qa-worker.sh --url http://localhost:3000 --format json --no-check-links
+browser-qa-worker.sh --url http://localhost:3000 --mission-file mission.md --milestone 2
 
-### Via milestone validation
-
-```bash
-milestone-validation-worker.sh mission.md 2 \
-  --browser-qa --browser-url http://localhost:3000
-milestone-validation-worker.sh mission.md 2 \
-  --browser-qa --browser-url http://localhost:3000 \
+# Via milestone validation
+milestone-validation-worker.sh mission.md 2 --browser-qa --browser-url http://localhost:3000
+milestone-validation-worker.sh mission.md 2 --browser-qa --browser-url http://localhost:3000 \
   --browser-qa-flows '["/", "/about", "/api/health"]'
-milestone-validation-worker.sh mission.md 1 \
-  --browser-tests --browser-qa --browser-url http://localhost:3000
+milestone-validation-worker.sh mission.md 1 --browser-tests --browser-qa --browser-url http://localhost:3000
 ```
 
 ### Exit codes
@@ -87,14 +75,11 @@ milestone-validation-worker.sh mission.md 1 \
 
 ## Flows and output
 
+Flows accept a JSON array of path strings or `{url, name}` objects:
+
 ```json
 ["/", "/about", "/contact", "/login"]
-
-[
-  {"url": "/", "name": "homepage"},
-  {"url": "/login", "name": "login-page"},
-  {"url": "/dashboard", "name": "dashboard"}
-]
+[{"url": "/", "name": "homepage"}, {"url": "/dashboard", "name": "dashboard"}]
 ```
 
 With `--mission-file` and `--milestone`, the worker extracts URL-like patterns from the milestone acceptance criteria.
