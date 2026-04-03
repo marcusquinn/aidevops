@@ -89,7 +89,7 @@ Show at moment of highest intent. Display value proposition, not price. Offer 3 
 | 7-day | Lower | Higher | Subscriptions (recommended) |
 | No trial | Lowest | Highest | One-time purchases |
 
-A/B test price points, paywall designs, trial lengths, and feature gates via RevenueCat Experiments, Superwall, or Stripe test mode.
+A/B test price points, paywall designs, trial lengths, and feature gates via RevenueCat Experiments or Superwall (Superwall also handles remote paywall config). Stripe test mode validates checkout and billing flows — it is not an A/B testing tool.
 
 ## Set Pricing
 

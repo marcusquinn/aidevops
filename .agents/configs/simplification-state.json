@@ -1161,6 +1161,12 @@
       "passes": 1,
       "pr": 12037
     },
+    ".agents/product/monetisation.md": {
+      "at": "2026-04-03T00:36:00Z",
+      "hash": "067387aeab9c0709c10d2d5e8d436c79e99d64f4",
+      "passes": 1,
+      "pr": 16017
+    },
     ".agents/product/onboarding.md": {
       "at": "2026-03-29T23:54:00Z",
       "hash": "bc634e70e9bb850181c2c4c0d239a36447560921",
