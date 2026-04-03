@@ -1,6 +1,6 @@
 ---
 name: streaming-avatars
-description: Real-time interactive avatar sessions for HeyGen via WebRTC — live customer service, virtual assistants, interactive apps
+description: Real-time interactive avatar sessions via WebRTC — live customer service, virtual assistants
 ---
 
 # Streaming Avatars
@@ -24,7 +24,7 @@ const res = await fetch("https://api.heygen.com/v1/streaming.new", {
   headers: { "X-Api-Key": process.env.HEYGEN_API_KEY!, "Content-Type": "application/json" },
   body: JSON.stringify({ avatar_id, voice_id, quality: "high" }),
 });
-const { data } = await res.json(); // { session_id, access_token, url, ice_servers }
+const { data } = await res.json();
 ```
 
 ## Send Text (Avatar Speaks)
@@ -43,8 +43,8 @@ const { data } = await res.json(); // { session_id, access_token, url, ice_serve
 | Action | Endpoint | Body |
 |--------|----------|------|
 | Stop | `POST https://api.heygen.com/v1/streaming.stop` | `{ session_id }` |
-| Interrupt speech | `POST https://api.heygen.com/v1/streaming.interrupt` | `{ session_id }` — then send new task |
-| List active | `GET https://api.heygen.com/v1/streaming.list` | — returns `{ data: { sessions: string[] } }` |
+| Interrupt | `POST https://api.heygen.com/v1/streaming.interrupt` | `{ session_id }` — then send new task |
+| List active | `GET https://api.heygen.com/v1/streaming.list` | returns `{ data: { sessions: string[] } }` |
 
 ## WebRTC Integration Pattern
 
@@ -55,13 +55,13 @@ const stream = new MediaStream();
 pc.ontrack = (e) => e.streams[0].getTracks().forEach(t => stream.addTrack(t));
 const offer = await pc.createOffer();
 await pc.setLocalDescription(offer);
-// Exchange SDP with server via signaling, then attach stream to <video>
+// Exchange SDP via signaling, attach stream to <video>
 ```
 
 ## Best Practices
 
-- Send a ping task every 30s to prevent session timeout
-- Implement reconnection logic for disconnections
-- Adjust `quality` based on available bandwidth
+- Ping every 30s to prevent session timeout
+- Implement reconnection logic
+- Adjust `quality` to available bandwidth
 - Close unused sessions promptly — credits consumed per session-second
-- WebRTC requires modern browser support
+- Requires modern browser (WebRTC)
