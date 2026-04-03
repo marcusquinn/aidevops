@@ -44,23 +44,16 @@ Keep `~/Git/{repo}/` on `main`. Avoids blocked branch switches, parallel session
 
 Stay on `main` only for: docs-only changes (README, CHANGELOG, `docs/`), typos, version bumps, planning files (`TODO.md`, `todo/`). Planning-file commits use `planning-commit-helper.sh "plan: add new task"`.
 
-| Scenario | Script output | Action |
-|----------|---------------|--------|
-| In worktree | `OK - On branch: X (in worktree)` | Proceed |
-| In main repo | `WARNING - MAIN REPO ON FEATURE BRANCH` | Present exit-3 options |
+Continue on current branch only when: task matches branch purpose, finishes this session, no parallel sessions expected.
 
-Continuing on the current branch is acceptable only when the task matches the branch purpose, will be finished in this session, and no parallel sessions are expected.
-
-## Worktree Creation
+**Create worktree:**
 
 ```bash
 wt switch -c {type}/{name}
 ~/.aidevops/agents/scripts/worktree-helper.sh add {type}/{name}
 ```
 
-After creating the worktree, call `session-rename_sync_branch`.
-
-Branch types: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
+After creating, call `session-rename_sync_branch`. Branch types: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
 
 ## Source vs Deployed Copy
 
