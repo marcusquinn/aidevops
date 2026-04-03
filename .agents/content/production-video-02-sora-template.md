@@ -1,6 +1,6 @@
 # Sora 2 Pro Master Template
 
-6-section template for UGC-style authentic content.
+6-section master template for UGC-style authentic content.
 
 ```text
 [1. HEADER]
@@ -17,7 +17,7 @@ Shot 1 (0-2s):
 [3. TIMESTAMPED ACTIONS]
 0.0s: [precise action description]
 0.5s: [micro-movement or expression change]
-[continue through full duration — 0.5s intervals]
+[continue through full duration — 0.5s intervals or ranges]
 
 [4. DIALOGUE]
 Character: "Exact dialogue text"
