@@ -1474,7 +1474,7 @@ _ratchet_write_baseline() {
 	local count_missing="$6"
 
 	local now
-	now=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+	now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 	local new_json
 	new_json=$(jq -n \
 		--arg updated "$now" \
