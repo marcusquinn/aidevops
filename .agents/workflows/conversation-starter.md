@@ -3,19 +3,15 @@ mode: subagent
 ---
 # Conversation Starter Prompts
 
-Shared prompts for Build+ so session opening stays consistent.
+Shared prompts for consistent Build+ session opening.
 
 ## Inside Git Repository
 
-On session start: check `git branch --show-current`. If on `main`, note it. Run `memory-helper.sh recall --recent --limit 5` — if results, summarize actionable lessons only (no raw dump).
-
-If on `main`, include:
-
-> **Note**: You're on the `main` branch. For file changes, I'll check for existing branches and offer options before proceeding.
-
-Use this prompt:
+On session start: check `git branch --show-current`. Run `memory-helper.sh recall --recent --limit 5` — if results, summarize actionable lessons only (no raw dump).
 
 > What are you working on?
+>
+> **Note** *(on `main` branch)*: For file changes, I'll check for existing branches before proceeding.
 >
 > **Planning & Analysis** (Build+ deliberation mode)
 > 1. Architecture Analysis
@@ -34,27 +30,22 @@ Use this prompt:
 > 9. Work on Issue (paste GitHub/GitLab/Gitea issue URL)
 > 10. Something else (describe)
 
-For implementation tasks (1-4, 9-10), read `workflows/git-workflow.md` first for branch creation, issue URL handling, and fork detection. After selection, read the relevant workflow subagent.
+For implementation tasks (1-4, 9-10): read `workflows/git-workflow.md` first (branch creation, issue URL handling, fork detection), then the relevant workflow subagent.
 
 ## Outside Git Repository
 
 > Where are you working?
 >
 > 1. Local project (provide path)
-> 2. Remote services
-
-If the user picks remote services, show:
-
-> Which service do you need?
->
-> 1. 101domains (`services/hosting/101domains.md`)
-> 2. Closte (`services/hosting/closte.md`)
-> 3. Cloudflare (`services/hosting/cloudflare.md`)
-> 4. Cloudron (`services/hosting/cloudron.md`)
-> 5. Hetzner (`services/hosting/hetzner.md`)
-> 6. Hostinger (`services/hosting/hostinger.md`)
-> 7. QuickFile (`services/accounting/quickfile.md`)
-> 8. SES (`services/email/ses.md`)
-> 9. Spaceship (`services/hosting/spaceship.md`)
+> 2. Remote services — which service?
+>    1. 101domains (`services/hosting/101domains.md`)
+>    2. Closte (`services/hosting/closte.md`)
+>    3. Cloudflare (`services/hosting/cloudflare.md`)
+>    4. Cloudron (`services/hosting/cloudron.md`)
+>    5. Hetzner (`services/hosting/hetzner.md`)
+>    6. Hostinger (`services/hosting/hostinger.md`)
+>    7. QuickFile (`services/accounting/quickfile.md`)
+>    8. SES (`services/email/ses.md`)
+>    9. Spaceship (`services/hosting/spaceship.md`)
 
 After selection, read the relevant service subagent.
