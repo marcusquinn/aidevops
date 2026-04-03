@@ -10,8 +10,6 @@ tools:
   grep: true
 ---
 
-<!-- AI-CONTEXT-START -->
-
 ## Quick Reference
 
 - **API Base**: `https://ssl.bing.com/webmaster/api.svc/json/`
@@ -22,12 +20,10 @@ tools:
 ## Setup
 
 1. [Bing Webmaster Tools](https://www.bing.com/webmasters/) → **Settings** → **API Access** → **Generate API Key**
-2. Add `export BING_API_KEY="your_api_key_here"` to `~/.config/aidevops/credentials.sh`
+2. Add to `~/.config/aidevops/credentials.sh`: `export BING_API_KEY="your_api_key_here"`
 3. `source ~/.config/aidevops/credentials.sh`
 
-## API Operations
-
-Set once per session: `BASE="https://ssl.bing.com/webmaster/api.svc/json"`
+## API Operations (`BASE="https://ssl.bing.com/webmaster/api.svc/json"`)
 
 ### Submit URL
 
@@ -90,5 +86,3 @@ curl -s -G "$BASE/GetFeedStats" \
 ## Integration with SEO Audit
 
 Used by `seo-audit-skill` for cross-engine verification: check GSC index status, check Bing index status, compare for engine-specific issues.
-
-<!-- AI-CONTEXT-END -->
