@@ -96,6 +96,6 @@ const newState = setIn(state, ['users', 'u1', 'profile', 'name'], 'Alice');
 
 ## Best Practices
 
-- **`const` by default; never mutate parameters** — prevent reassignment, always return new objects
-- **Separate pure logic from I/O** — extract side effects to boundaries
+- **`const` by default; never mutate parameters** — always return new values
+- **Separate pure logic from I/O** — push side effects to the edges
 - **Inject non-determinism** — pass `Date.now`, `Math.random` as params for testability

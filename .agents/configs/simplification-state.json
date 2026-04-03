@@ -5177,5 +5177,10 @@
     "hash": "b767318f3046f9a52ff3d31a2f733bb83f4e5475501f57862a874c05e853ad7b",
     "issue": "GH#16449",
     "status": "simplified"
+  },
+  ".agents/tools/programming/modern-javascript-skill/immutability.md": {
+    "hash": "f5453a48a29c9dd411399f4079384edf",
+    "status": "simplified",
+    "issue": "GH#16493"
   }
 }
