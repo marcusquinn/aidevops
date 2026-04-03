@@ -19,8 +19,6 @@ tools:
 - **Offline tool**: `tools/voice/buzz.md` (Buzz GUI/CLI for Whisper)
 - **CLI**: `voice-helper.sh`
 
-<!-- AI-CONTEXT-END -->
-
 ## Decision Flow
 
 ```text
@@ -42,6 +40,8 @@ Need voice AI?
     └── Default → speech-to-speech.md cascaded pipeline
 ```
 
+<!-- AI-CONTEXT-END -->
+
 ## TTS (Text-to-Speech)
 
 ### Cloud
@@ -56,13 +56,13 @@ Need voice AI?
 
 ### Local
 
-| Model | Params | License | Languages | Voice Clone | VRAM |
-|-------|--------|---------|-----------|-------------|------|
-| Qwen3-TTS 0.6B | 0.6B | Apache-2.0 | 10 | Yes (5s ref) | 2GB |
-| Qwen3-TTS 1.7B | 1.7B | Apache-2.0 | 10 | Yes (5s ref) | 4GB |
-| Bark (Suno) | 1.0B | MIT | 13+ | Yes (prompt) | 6GB (stale, expressive: laughter/music) |
-| Coqui TTS | varies | MPL-2.0 | 20+ | Yes | 2-6GB |
-| Piper | <100M | MIT | 30+ | No | CPU only |
+| Model | Params | License | Languages | Voice Clone | VRAM | Notes |
+|-------|--------|---------|-----------|-------------|------|-------|
+| Qwen3-TTS 0.6B | 0.6B | Apache-2.0 | 10 | Yes (5s ref) | 2GB | |
+| Qwen3-TTS 1.7B | 1.7B | Apache-2.0 | 10 | Yes (5s ref) | 4GB | |
+| Bark (Suno) | 1.0B | MIT | 13+ | Yes (prompt) | 6GB | Expressive (laughter/music); stale |
+| Coqui TTS | varies | MPL-2.0 | 20+ | Yes | 2-6GB | |
+| Piper | <100M | MIT | 30+ | No | CPU only | |
 
 Also available: EdgeTTS (free, 300+ voices), macOS Say (zero deps), FacebookMMS (1100+ languages). See `voice-models.md`.
 
