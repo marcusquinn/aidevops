@@ -4,11 +4,11 @@ Runs Workers closer to backend infrastructure instead of end users — reduces l
 
 ## When to Enable
 
-Enable when: multiple backend round-trips, geographically concentrated backend, backend latency dominates request duration (APIs, data aggregation, SSR with DB calls).
+**Enable:** multiple backend round-trips, geographically concentrated backend, backend latency dominates (APIs, data aggregation, SSR with DB calls).
 
-**Do NOT enable for:** static/cached content, Workers without backend calls, pure edge logic (auth, redirects, transforms), Workers without fetch handlers.
+**Do NOT enable:** static/cached content, no backend calls, pure edge logic (auth, redirects, transforms), no fetch handlers.
 
-**Requirements:** Wrangler 2.20.0+, consistent traffic from multiple global locations. Only affects fetch handlers (not RPC methods or named entrypoints). Available on all plans. Analysis takes up to 15 min; Worker runs at edge until analysis completes.
+**Requirements:** Wrangler 2.20.0+, consistent traffic from multiple global locations. Affects fetch handlers only (not RPC methods or named entrypoints). All plans. Analysis ≤15 min; runs at edge until complete.
 
 ## Architecture: Frontend/Backend Split
 
