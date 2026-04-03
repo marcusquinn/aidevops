@@ -52,23 +52,12 @@ Only simulator tools enabled by default. Use `manage-workflows` to enable other 
 
 ## MCP Configuration
 
-**Claude Code:**
+**Claude Code:** `claude mcp add XcodeBuildMCP -- npx -y xcodebuildmcp@beta mcp`
 
-```bash
-claude mcp add XcodeBuildMCP -- npx -y xcodebuildmcp@beta mcp
-```
-
-**JSON (Cursor, VS Code, Claude Desktop, OpenCode):**
+**JSON** (Cursor, VS Code, Claude Desktop, OpenCode):
 
 ```json
-{
-  "mcpServers": {
-    "XcodeBuildMCP": {
-      "command": "npx",
-      "args": ["-y", "xcodebuildmcp@beta", "mcp"]
-    }
-  }
-}
+{ "mcpServers": { "XcodeBuildMCP": { "command": "npx", "args": ["-y", "xcodebuildmcp@beta", "mcp"] } } }
 ```
 
 ## Related
