@@ -46,7 +46,7 @@ with sync_playwright() as p:
 
 ## playwright-stealth
 
-JS-level evasions cover `navigator.webdriver`, plugins, languages, `chrome.runtime`, `window.chrome`, Permissions API, iframe detection, WebGL, and `hardwareConcurrency`.
+JS-level evasions: `navigator.webdriver`, plugins, languages, `chrome.runtime`, `window.chrome`, Permissions API, iframe detection, WebGL, `hardwareConcurrency`.
 
 ```python
 from playwright.sync_api import sync_playwright
@@ -103,7 +103,7 @@ const { browser, context, page } = await createStealthContext({
 - **rebrowser-patches**: Chromium only; re-patch after Playwright updates.
 - **playwright-stealth**: JS-level only; sophisticated anti-bots still detect it.
 - **Neither** handles fingerprint rotation or WebRTC/font spoofing.
-- **Full anti-detect**: use Camoufox (`fingerprint-profiles.md`) for C++-level fingerprint spoofing on Firefox, with `pip upgrade` maintenance.
+- **Full anti-detect**: use Camoufox (`fingerprint-profiles.md`) for C++-level fingerprint spoofing on Firefox; requires `pip upgrade` maintenance.
 
 | Aspect | rebrowser-patches | Camoufox |
 |--------|------------------|----------|
