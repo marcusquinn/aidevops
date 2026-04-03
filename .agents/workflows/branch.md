@@ -3,12 +3,9 @@ description: Git branch creation and management workflow
 mode: subagent
 tools:
   read: true
-  write: false
-  edit: false
   bash: true
   glob: true
   grep: true
-  webfetch: false
   task: true
 ---
 
@@ -86,10 +83,12 @@ git stash pop   # or: git stash show -p to review on conflict
 
 ## Related Workflows
 
-- `workflows/git-workflow.md` — issue URLs, commit/PR rules, repo setup
-- `workflows/worktree.md` — worktree creation, ownership, cleanup
-- `workflows/pr.md` — PR creation and review
-- `workflows/preflight.md` — quality checks before push
-- `workflows/version-bump.md`, `workflows/changelog.md` — versioning
-- `workflows/release.md`, `workflows/postflight.md` — release verification
-- `workflows/code-audit-remote.md` — code review
+| Workflow | Purpose |
+|----------|---------|
+| `workflows/git-workflow.md` | Issue URLs, commit/PR rules, repo setup |
+| `workflows/worktree.md` | Worktree creation, ownership, cleanup |
+| `workflows/pr.md` | PR creation and review |
+| `workflows/preflight.md` | Quality checks before push |
+| `workflows/version-bump.md`, `workflows/changelog.md` | Versioning |
+| `workflows/release.md`, `workflows/postflight.md` | Release verification |
+| `workflows/code-audit-remote.md` | Code review |
