@@ -22,7 +22,7 @@ tools:
 - **Crawl**: `./crawl4ai-helper.sh crawl URL markdown output.json`
 - **Extract**: `./crawl4ai-helper.sh extract URL '{"title":"h1"}' data.json`
 - **MCP Tools**: `crawl_url | crawl_multiple | extract_structured | take_screenshot | generate_pdf`
-- **Output**: JSON with markdown, html, extracted_content, links, media, metadata
+- **Output**: JSON with `markdown`, `html`, `extracted_content`, `links`, `media`, `metadata`
 - **Config template**: `configs/crawl4ai-config.json.txt`
 - **MCP template**: `configs/mcp-templates/crawl4ai-mcp-config.json`
 - **Integration guide**: `.agents/tools/browser/crawl4ai-integration.md`
@@ -32,8 +32,7 @@ tools:
 
 ```bash
 ./.agents/scripts/crawl4ai-helper.sh install
-./.agents/scripts/crawl4ai-helper.sh docker-setup
-./.agents/scripts/crawl4ai-helper.sh docker-start
+./.agents/scripts/crawl4ai-helper.sh docker-setup && docker-start
 ./.agents/scripts/crawl4ai-helper.sh mcp-setup   # MCP server for AI assistants
 ```
 
@@ -42,7 +41,6 @@ tools:
 ```bash
 # Crawl (markdown or html)
 ./.agents/scripts/crawl4ai-helper.sh crawl https://example.com markdown output.json
-./.agents/scripts/crawl4ai-helper.sh crawl https://example.com html output.json
 
 # Extract with CSS selectors
 ./.agents/scripts/crawl4ai-helper.sh extract https://example.com '{"title":"h1","content":".article"}' data.json
@@ -73,20 +71,13 @@ jq -r '.results[0].markdown' docs.json > /tmp/docs-crawl.md
 
 ## AI Assistant Integration
 
-### MCP (Claude Desktop)
+**MCP (Claude Desktop)** — add to MCP config:
 
 ```json
-{
-  "mcpServers": {
-    "crawl4ai": {
-      "command": "npx",
-      "args": ["crawl4ai-mcp-server@latest"]
-    }
-  }
-}
+{"mcpServers": {"crawl4ai": {"command": "npx", "args": ["crawl4ai-mcp-server@latest"]}}}
 ```
 
-### REST API (other assistants)
+**REST API (other assistants)**:
 
 ```bash
 curl -s -X POST http://localhost:11235/crawl \
@@ -111,7 +102,7 @@ export CRAWL4AI_CONCURRENT_REQUESTS=5
 export CRAWL4AI_BROWSER_POOL_SIZE=3
 export CRAWL4AI_MEMORY_THRESHOLD=90
 
-# LLM extraction (store secrets via `aidevops secret set`, never plaintext)
+# LLM extraction — store secrets via `aidevops secret set`, never plaintext
 export LLM_PROVIDER=openai/gpt-4o-mini
 export CRAWL4AI_MAX_PAGES=50
 export CRAWL4AI_TIMEOUT=60
@@ -119,8 +110,7 @@ export CRAWL4AI_TIMEOUT=60
 
 ## Security
 
-- robots.txt respected by default
-- Built-in rate limiting and timeout protection
+- robots.txt respected by default; built-in rate limiting and timeout protection
 - User agent identifies as Crawl4AI
 - Clear cache: `docker exec crawl4ai redis-cli FLUSHALL`
 - **Never write API keys to files** — use `aidevops secret set OPENAI_API_KEY`
