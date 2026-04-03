@@ -9,6 +9,8 @@ metadata:
 
 HeyGen video generation is asynchronous: store the `video_id`, poll until terminal state, then download or hand off to a webhook-driven flow.
 
+**Production:** Prefer webhooks over polling to avoid idle connections; see [rules-webhooks.md](rules-webhooks.md). Cache `video_url` values — they expire.
+
 ## Check Status
 
 ```bash
@@ -50,13 +52,7 @@ async function getVideoStatus(videoId: string) {
 
 ## Timing Guidance
 
-Typical generation time is **5-15 min**. At peak load, with long scripts, or at higher resolution, expect **20+ min**. Use a timeout of **15-20 min** (`900000-1200000` ms).
-
-| Factor | Effect |
-|--------|--------|
-| Script length | Longer scripts take significantly more time |
-| Resolution | 1080p is slower than 720p |
-| Queue load | Peak hours can add 15-20+ min |
+Typical: **5-15 min**. Peak load, long scripts, or 1080p: **20+ min**. Use a timeout of **15-20 min** (`900000-1200000` ms).
 
 ## Polling Pattern
 
@@ -118,7 +114,3 @@ if (process.argv.includes("--wait")) {
   console.log("Status:", status.status, status.video_url ?? "");
 }
 ```
-
-## Production Note
-
-Prefer webhooks over polling in production to avoid idle connections; see [rules-webhooks.md](rules-webhooks.md). Cache `video_url` values because they expire.
