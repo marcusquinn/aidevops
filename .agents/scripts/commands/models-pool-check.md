@@ -4,7 +4,7 @@ agent: Build+
 mode: subagent
 ---
 
-Entry point for OAuth pool setup and troubleshooting. Diagnose first, give one next step. Assume the user knows nothing about OAuth or pools.
+Diagnose first, give one next step. Assume the user knows nothing about OAuth or pools.
 
 ## Core rules
 
@@ -19,18 +19,13 @@ Entry point for OAuth pool setup and troubleshooting. Diagnose first, give one n
 
 ### Step 1: Diagnose
 
-Run in parallel:
-
-1. `oauth-pool-helper.sh check` — current pool state
-2. `claude auth status --json 2>/dev/null` — whether Claude CLI is authenticated
+Run in parallel: `oauth-pool-helper.sh check` (pool state) and `claude auth status --json 2>/dev/null` (CLI auth).
 
 ### Step 2: Choose the path
 
 #### Path A — no accounts exist
 
-If `claude auth status --json` shows `loggedIn: true` with `pro` or `max`:
-
-> You're already logged into Claude CLI with a **{subscriptionType}** account ({email}). Run in a separate terminal: `oauth-pool-helper.sh import claude-cli`
+If `claude auth status --json` shows `loggedIn: true` with `pro` or `max`, say: "You're already logged into Claude CLI with a **{subscriptionType}** account ({email}). Run in a separate terminal: `oauth-pool-helper.sh import claude-cli`"
 
 Otherwise, ask which provider they have and run the matching command in a separate terminal:
 
@@ -45,18 +40,19 @@ Anthropic/OpenAI/Google: browser opens → authorize → paste code → restart 
 
 #### Path B — accounts exist and are healthy
 
-Show a summary table, then: "Everything looks good. Your pool has N account(s) and will auto-rotate if one hits rate limits."
+Say: "Everything looks good. Your pool has N account(s) and will auto-rotate if one hits rate limits."
 
-- **One account:** "Consider adding a second for automatic failover. Run `oauth-pool-helper.sh add <provider>` in a separate terminal."
-- **CLI account not in pool:** "I noticed a Claude {subscriptionType} account ({email}) in the CLI that isn't in your pool. Run `oauth-pool-helper.sh import claude-cli` in a separate terminal to add it."
+- **One account:** suggest adding a second — `oauth-pool-helper.sh add <provider>` (separate terminal).
+- **CLI account not in pool:** suggest importing — `oauth-pool-helper.sh import claude-cli` (separate terminal).
 
 #### Path C — accounts exist but have problems
 
 Give one fix at a time:
 
-- **EXPIRED / INVALID (401) / auth-error**: Re-add with same email: `oauth-pool-helper.sh add <provider>` (separate terminal). Cursor exception: expired tokens are normal (IDE re-reads them) — only flag Cursor if status is also `auth-error`.
+- **EXPIRED / INVALID (401) / auth-error**: Re-add — `oauth-pool-helper.sh add <provider>` (separate terminal).
+  - Cursor exception: expired tokens are normal (IDE re-reads them) — only flag Cursor if status is also `auth-error`.
 - **Missing refresh token**: Remove first (`oauth-pool-helper.sh remove <provider> <email>`), then re-add.
-- **All rate-limited**: "All accounts are rate-limited. Wait for cooldowns or I can reset them now." If they agree: `model-accounts-pool` tool `{"action": "reset-cooldowns"}`.
+- **All rate-limited**: Offer to reset: `model-accounts-pool` tool `{"action": "reset-cooldowns"}`.
 
 #### Path D — manage existing accounts
 
