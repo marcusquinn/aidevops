@@ -14,8 +14,6 @@ tools:
 
 # OrbStack - Container & VM Runtime
 
-<!-- AI-CONTEXT-START -->
-
 ## Quick Reference
 
 - **Purpose**: Fast, lightweight Docker and Linux VM runtime for macOS; Docker Desktop replacement
@@ -25,22 +23,19 @@ tools:
 - **Pricing**: Free for personal use, paid for teams
 - **When to use**: Lower memory, faster startup, native macOS integration, `.orb.local` DNS, built-in Linux VMs, Rosetta x86 emulation on Apple Silicon
 
-<!-- AI-CONTEXT-END -->
-
 ## Core Commands
-
-`docker` and `docker compose` commands work unchanged. Use `orb` for OrbStack-specific management:
 
 ```bash
 orb list                          # List containers and VMs
 orb shell <name>                  # Shell into a container or VM
 orb start / orb stop              # Start / stop OrbStack
 curl http://<container-name>.orb.local
+
+# Isolated dev database (postgres.orb.local or localhost:5432)
+docker run -d --name postgres -p 5432:5432 -e POSTGRES_PASSWORD=dev postgres:16
 ```
 
 ## Linux VMs
-
-Lightweight VMs with shared filesystem, SSH, and `.orb.local` networking:
 
 ```bash
 orb create ubuntu my-ubuntu       # Create VM
@@ -48,13 +43,6 @@ orb shell my-ubuntu               # Shell into VM
 ssh my-ubuntu@orb                 # SSH alternative
 orb stop / orb start my-ubuntu    # Stop / start VM
 orb delete my-ubuntu              # Delete VM
-```
-
-## Common Use Cases
-
-```bash
-# Isolated dev database (postgres.orb.local or localhost:5432)
-docker run -d --name postgres -p 5432:5432 -e POSTGRES_PASSWORD=dev postgres:16
 ```
 
 ## Troubleshooting
