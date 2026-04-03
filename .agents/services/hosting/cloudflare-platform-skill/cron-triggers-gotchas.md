@@ -50,7 +50,11 @@ export default {
 ```typescript
 export default {
   async scheduled(controller, env, ctx) {
-    console.log("EXECUTED", {time: new Date().toISOString(), scheduledTime: new Date(controller.scheduledTime).toISOString(), cron: controller.cron});
+    console.log("EXECUTED", {
+      time: new Date().toISOString(),
+      scheduledTime: new Date(controller.scheduledTime).toISOString(),
+      cron: controller.cron,
+    });
     ctx.waitUntil(env.KV.put("last_execution", Date.now().toString()));
   },
 };
@@ -80,7 +84,7 @@ export default {
 
 ## Local Testing
 
-Ensure `wrangler dev` runs, `scheduled()` is exported, Wrangler is up to date: `npm i -g wrangler@latest`
+Requires: `wrangler dev` running, `scheduled()` exported, `npm i -g wrangler@latest`
 
 ```bash
 curl "http://localhost:8787/__scheduled?cron=*/5+*+*+*+*"  # URL-encode spaces
@@ -130,4 +134,4 @@ Enable via Dashboard: Workers & Pages → Account details → Compute Setting �
 - [Scheduled Handler API](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/)
 - [Cloudflare Workflows](https://developers.cloudflare.com/workflows/)
 - [Workers Limits](https://developers.cloudflare.com/workers/platform/limits/)
-- [Crontab Guru](https://crontab.guru/) - Validator
+- [Crontab Guru](https://crontab.guru/)
