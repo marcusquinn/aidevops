@@ -1,6 +1,6 @@
 # Nothing Design System — Platform Mapping
 
-## 1. HTML / CSS / WEB
+## HTML / CSS / WEB
 
 Load fonts via Google Fonts `<link>` or `@import`. Use CSS custom properties, `rem` for type, `px` for spacing/borders. Dark/light via `prefers-color-scheme` or class toggle.
 
@@ -31,11 +31,9 @@ Load fonts via Google Fonts `<link>` or `@import`. Use CSS custom properties, `r
 }
 ```
 
----
+## SWIFTUI / iOS
 
-## 2. SWIFTUI / iOS
-
-Register fonts in Info.plist, bundle `.ttf` files. Use `@Environment(\.colorScheme)` for mode switching.
+Register fonts in Info.plist, bundle `.ttf` files. Use `@Environment(\.colorScheme)` for mode switching. Light mode values: tokens.md Dark/Light table. Font extension: `.custom("Doto"/"SpaceGrotesk-Regular"/"SpaceMono-Regular", size:)`.
 
 ```swift
 extension Color {
@@ -55,10 +53,6 @@ extension Color {
 }
 ```
 
-Light mode values in tokens.md Dark/Light table. Derive Font extension from font stack table (trivial: `.custom("Doto"/"SpaceGrotesk-Regular"/"SpaceMono-Regular", size:)`).
-
----
-
-## 3. PAPER (DESIGN TOOL)
+## PAPER (DESIGN TOOL)
 
 Use `get_font_family_info` to verify fonts before writing styles. Direct hex values (no CSS variables). Dark mode as default canvas, light mode as separate artboard.
