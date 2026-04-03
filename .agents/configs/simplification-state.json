@@ -1,4 +1,12 @@
 {
+  ".agents/tools/browser/browser-benchmark-scripts-01-playwright.md": {
+    "at": "2026-04-03T00:00:00Z",
+    "hash": "9958f23ad99c271fe00d6abb99241cff82ffae9db2b351bc5a15129693063569",
+    "issue": "GH#16500",
+    "passes": 1,
+    "pr": "pending",
+    "status": "simplified"
+  },
   ".agents/aidevops/api-integrations.md": {
     "at": "2026-04-03T00:00:00Z",
     "hash": "1d9ae72e2a62060ee1524f7440825f1a5539f3ce2e64b691d67d66ea36cf0edb",

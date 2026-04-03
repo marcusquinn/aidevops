@@ -53,9 +53,7 @@ async function run() {
 run();
 ```
 
-## Parallel script
-
-Measures multi-context, multi-browser, and multi-page throughput.
+## Parallel script — multi-context, multi-browser, multi-page throughput
 
 ```javascript
 import { chromium } from 'playwright';
