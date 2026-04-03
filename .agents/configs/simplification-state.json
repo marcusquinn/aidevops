@@ -4768,5 +4768,11 @@
       "pr": "16041",
       "passes": 1
     }
+  },
+  ".agents/tools/ai-orchestration/overview.md": {
+    "hash": "3a63b044317f50c757951158e4e711234d09cd299f8dc557bdc5af9e580735f6",
+    "status": "simplified",
+    "issue": "GH#15266",
+    "pr": "PR#16047"
   }
 }
