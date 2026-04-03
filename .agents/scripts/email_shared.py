@@ -49,13 +49,17 @@ def extract_frontmatter(content: str) -> tuple[str, str, str]:
 # YAML escaping
 # ---------------------------------------------------------------------------
 
-def yaml_escape(value: str) -> str:
+def yaml_escape(value: Optional[str]) -> str:
     """Escape a string value for safe YAML output.
 
     Handles special characters, newlines, and leading whitespace.
     Superset of both _yaml_escape (email-summary) and _yaml_escape_value
     (entity-extraction) — includes \\r handling from email-summary.
+    Accepts None and returns empty-string YAML value.
     """
+    if value is None:
+        return '""'
+    value = str(value)
     if not value:
         return '""'
     needs_quoting = any(c in value for c in [
@@ -111,15 +115,20 @@ def get_ollama_model(preferred_models: Optional[list[str]] = None) -> Optional[s
     if preferred_models is None:
         preferred_models = ["llama3.2", "llama3.1", "llama3", "mistral", "gemma2", "phi3"]
 
-    available = result.stdout.lower()
+    # Parse model names exactly (first column, strip :tag suffix) to avoid
+    # substring false positives (e.g. "phi3" matching "dolphin-phi3-medium")
+    available_models: list[str] = []
+    for line in result.stdout.strip().split("\n")[1:]:  # Skip header line
+        if line.strip():
+            model_name = line.split()[0].split(":")[0].lower()
+            available_models.append(model_name)
+
     for model in preferred_models:
-        if model in available:
+        if model.lower() in available_models:
             return model
 
     # Fall back to first available model
-    lines = result.stdout.strip().split("\n")
-    if len(lines) > 1:  # Skip header line
-        first_model = lines[1].split()[0]
-        return first_model.split(":")[0]
+    if available_models:
+        return available_models[0]
 
     return None
