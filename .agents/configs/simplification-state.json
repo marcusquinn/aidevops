@@ -5063,5 +5063,11 @@
       "passes": 1,
       "pr": 15470
     }
+  },
+  ".agents/content/production-video-02-sora-template.md": {
+    "at": "2026-04-03T00:00:00Z",
+    "hash": "7d18119d4d8ff939a2c5e2f708799a7a2511414b597c5b58a4b36015fe7f322e",
+    "issue": "GH#14349",
+    "status": "simplified"
   }
 }
