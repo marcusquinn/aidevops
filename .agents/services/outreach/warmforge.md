@@ -9,8 +9,6 @@ tools:
 
 # WarmForge
 
-<!-- AI-CONTEXT-START -->
-
 ## Quick Reference
 
 - Monitor domain-level deliverability signals; automate mailbox warmup state transitions
@@ -19,7 +17,7 @@ tools:
 - Auto-pause on anomaly thresholds (bounce spike, complaint spike, inbox-placement drop)
 - Resume with reduced profile after remediation — never jump back to prior peak volume
 
-### Operational Policy
+## Operational Policy
 
 1. Check `health` and `domains` before any orchestration command.
 2. Pull `deliverability` metrics for the active domain window (default `7d`).
@@ -27,9 +25,9 @@ tools:
 4. Degraded metrics → `warmup-pause`; open incident note with root-cause hypothesis.
 5. After remediation → resume with lower profile before re-scaling.
 
-### Helper Script
+## Helper Script
 
-Use `.agents/scripts/warmforge-helper.sh` for API access.
+`.agents/scripts/warmforge-helper.sh` — commands:
 
 - `warmforge-helper.sh health`
 - `warmforge-helper.sh domains`
@@ -41,15 +39,10 @@ Use `.agents/scripts/warmforge-helper.sh` for API access.
 - `warmforge-helper.sh warmup-resume <mailbox_id>`
 - `warmforge-helper.sh raw <METHOD> <PATH> [JSON_BODY]`
 
-### Required Environment
+**Env:** `WARMFORGE_API_KEY` (required); `WARMFORGE_API_BASE_URL` (optional, defaults to `https://api.warmforge.ai/v1`)
 
-- `WARMFORGE_API_KEY` (required)
-- `WARMFORGE_API_BASE_URL` (optional, defaults to `https://api.warmforge.ai/v1`)
-
-### Failure Handling
+## Failure Handling
 
 - HTTP 4xx → configuration/auth problem (token scope, mailbox ID, domain ID)
 - HTTP 5xx → provider-side incident; retry with backoff, preserve request context
 - API keys: terminal-local only; never paste into chat or issue comments
-
-<!-- AI-CONTEXT-END -->
