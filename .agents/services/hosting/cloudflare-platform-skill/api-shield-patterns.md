@@ -1,4 +1,6 @@
-# Patterns & Use Cases
+# API Shield — Patterns & Use Cases
+
+Practical patterns for securing APIs with Cloudflare API Shield. See `api-shield.md` for concepts and `api-shield-gotchas.md` for known issues.
 
 ## Protect API with Schema + JWT
 
@@ -46,7 +48,7 @@ PUT /zones/{zone_id}/api_gateway/settings/schema_validation
 ## Architecture Patterns
 
 | Pattern | Edge Stack |
-|---------|-----------|
+|---------|------------|
 | **Public API** (high security) | Discovery → Schema Validation → JWT → Rate Limiting → Bot Management → Origin |
 | **Partner API** (mTLS + schema) | mTLS → Schema Validation → Sequence Mitigation → Origin |
 | **Internal API** (discovery + monitoring) | Discovery → Schema Learning → Auth Posture → Origin |
