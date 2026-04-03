@@ -30,9 +30,6 @@ chmod 600 configs/.*.json ~/.ssh/id_* ~/.ssh/config ~/.ssh/*_password
 chmod 644 ~/.ssh/id_*.pub
 chmod 700 ~/.ssh/
 chmod 755 *.sh .agents/scripts/*.sh
-```
-
-```bash
 # .gitignore entries
 printf "configs/.*.json\n*.password\n.env\n*.key\n*.pem\n" >> .gitignore
 ```
@@ -46,7 +43,7 @@ chmod 600 ~/.ssh/id_ed25519 && chmod 644 ~/.ssh/id_ed25519.pub
 ssh-keygen -p -f ~/.ssh/id_ed25519
 ```
 
-```bash
+```text
 # ~/.ssh/config hardening
 Host *
     PasswordAuthentication no
