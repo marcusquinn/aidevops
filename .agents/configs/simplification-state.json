@@ -1,12 +1,4 @@
 {
-  ".agents/seo/geo-strategy.md": {
-    "at": "2026-04-03T00:00:00Z",
-    "hash": "f2c7b8507a0eb39c56689d7ce778518d7e15b27b7da668ef2b2caebdbe5b50df",
-    "issue": "GH#15895",
-    "passes": 1,
-    "pr": "pending",
-    "status": "simplified"
-  },
   ".agents/aidevops/api-integrations.md": {
     "at": "2026-04-03T00:00:00Z",
     "hash": "1d9ae72e2a62060ee1524f7440825f1a5539f3ce2e64b691d67d66ea36cf0edb",
@@ -23,6 +15,20 @@
     "pr": "pending",
     "status": "simplified"
   },
+  ".agents/content/production-video-02-sora-template.md": {
+    "at": "2026-04-03T00:00:00Z",
+    "hash": "7d18119d4d8ff939a2c5e2f708799a7a2511414b597c5b58a4b36015fe7f322e",
+    "issue": "GH#14349",
+    "status": "simplified"
+  },
+  ".agents/seo/geo-strategy.md": {
+    "at": "2026-04-03T00:00:00Z",
+    "hash": "f2c7b8507a0eb39c56689d7ce778518d7e15b27b7da668ef2b2caebdbe5b50df",
+    "issue": "GH#15895",
+    "passes": 1,
+    "pr": "pending",
+    "status": "simplified"
+  },
   ".agents/services/hosting/cloudflare-platform-skill/hyperdrive-gotchas.md": {
     "hash": "289d1ce963a8bfbb69d5199ff47d8368f19a653f67305bafd8940e7a0982c67b",
     "issue": "GH#15925",
@@ -34,6 +40,14 @@
     "issue": "GH#15076",
     "lines_after": 130,
     "lines_before": 142,
+    "status": "simplified"
+  },
+  ".agents/services/hosting/cloudflare-platform-skill/pipelines.md": {
+    "at": "2026-04-03T05:55:25Z",
+    "hash": "7a3d9f5ead63a859a91acd0ebb4dd11a237f4f85",
+    "issue": "GH#13394",
+    "passes": 1,
+    "pr": "pending",
     "status": "simplified"
   },
   ".agents/tools/ai-orchestration/overview.md": {
@@ -3193,12 +3207,6 @@
       "passes": 1,
       "pr": 13007
     },
-    ".agents/tools/build-agent/agent-testing.md": {
-      "at": "2026-04-02T21:58:18Z",
-      "hash": "cc7b9b5e44e530964c79af624de3408b1076cbe3",
-      "passes": 1,
-      "pr": 15662
-    },
     ".agents/tools/ai-orchestration/overview.md": {
       "at": "2026-04-03T01:53:08Z",
       "hash": "4e97ab8ea80342eabab4b326411f74eaeb88bba0",
@@ -3552,6 +3560,12 @@
       "hash": "36065ac3559aa2e929cbb858c8220961454f9dd9",
       "passes": 1,
       "pr": 12376
+    },
+    ".agents/tools/build-agent/agent-testing.md": {
+      "at": "2026-04-02T21:58:18Z",
+      "hash": "cc7b9b5e44e530964c79af624de3408b1076cbe3",
+      "passes": 1,
+      "pr": 15662
     },
     ".agents/tools/build-agent/build-agent.md": {
       "at": "2026-03-29T14:29:12Z",
@@ -5079,12 +5093,6 @@
       "passes": 1,
       "pr": 15470
     }
-  },
-  ".agents/content/production-video-02-sora-template.md": {
-    "at": "2026-04-03T00:00:00Z",
-    "hash": "7d18119d4d8ff939a2c5e2f708799a7a2511414b597c5b58a4b36015fe7f322e",
-    "issue": "GH#14349",
-    "status": "simplified"
   },
   ".agents/services/hosting/cloudflare-platform-skill/pages-functions-gotchas.md": {
     "hash": "1253c92066cfa913e522251a5dc37bd66b8a581483d712f7f3556afbdc2c03cd",

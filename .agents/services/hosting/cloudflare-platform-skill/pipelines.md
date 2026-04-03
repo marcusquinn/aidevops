@@ -38,6 +38,9 @@ npx wrangler pipelines sinks create my-sink --type r2-data-catalog \
   --bucket my-bucket --namespace default --table my_table --catalog-token YOUR_TOKEN
 npx wrangler pipelines create my-pipeline \
   --sql "INSERT INTO my_sink SELECT * FROM my_stream"
+# All subcommands support [list|get <ID>|delete <ID>]
+# Deleting a stream also deletes dependent pipelines and buffered events
+npx wrangler pipelines create my-pipeline --sql "..."  # or: --sql-file transform.sql
 ```
 
 **Schema (structured streams):** Define fields in JSON with `name`, `type`, `required`, and optional `items` (for `list`) or `fields` (for `struct`).
@@ -59,7 +62,13 @@ npx wrangler pipelines create my-pipeline \
 
 ## Writing Data
 
-**Worker Binding (recommended):** `wrangler.toml`: `[[pipelines]]` with `pipeline = "<STREAM_ID>"`, `binding = "STREAM"`. Or `wrangler.jsonc`: `{ "pipelines": [{ "pipeline": "<STREAM_ID>", "binding": "STREAM" }] }`.
+**Worker Binding (recommended):** Add to `wrangler.toml`:
+
+```toml
+[[pipelines]]
+pipeline = "<STREAM_ID>"
+binding = "STREAM"
+```
 
 ```typescript
 export default {
@@ -116,17 +125,6 @@ npx wrangler pipelines sinks create my-sink \
 ```
 
 Output path: `bucket/analytics/events/year=2025/month=01/day=11/uuid.parquet`
-
-## Wrangler Commands
-
-All subcommands support `[list|get <ID>|delete <ID>]`. Deleting a stream also deletes dependent pipelines and buffered events.
-
-```bash
-npx wrangler pipelines setup [list|get <ID>|delete <ID>]
-npx wrangler pipelines create my-pipeline --sql "..."          # or: --sql-file transform.sql
-npx wrangler pipelines streams create my-stream --schema-file schema.json
-npx wrangler pipelines sinks create my-sink --type r2-data-catalog --bucket B --namespace N --table T --catalog-token TOKEN
-```
 
 ## Best Practices
 
