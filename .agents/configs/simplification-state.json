@@ -48,7 +48,7 @@
     "issue": "GH#16443",
     "lines_after": 111,
     "lines_before": 113,
-    "note": "Pass 2: 113→111 lines. Merged templates link into intro line, moved subject line guidance above table as compact note. Zero content loss.",
+    "note": "Pass 2: 113\u2192111 lines. Merged templates link into intro line, moved subject line guidance above table as compact note. Zero content loss.",
     "passes": 2,
     "status": "simplified"
   },
@@ -144,6 +144,13 @@
     "at": "2026-04-03T00:00:00Z",
     "hash": "b767318f3046f9a52ff3d31a2f733bb83f4e5475501f57862a874c05e853ad7b",
     "issue": "GH#16449",
+    "status": "simplified"
+  },
+  ".agents/tools/productivity/contacts.md": {
+    "hash": "d99fc5b67969194e84d7952de9bfa655d26d6d4e9e84b2fcf0ef5790cf413af6",
+    "issue": "GH#16497",
+    "lines": 67,
+    "note": "tightened: merged Linux Setup into Quick Reference, consolidated When to Use paragraphs (79\u219267 lines)",
     "status": "simplified"
   },
   ".agents/tools/programming/modern-javascript-skill/immutability.md": {
@@ -458,6 +465,12 @@
       "hash": "1b10ff74a546e869506efa2abe19f9f34eb56ad6",
       "passes": 1,
       "pr": null
+    },
+    ".agents/content/guidelines.md": {
+      "at": "2026-04-03T12:15:32Z",
+      "hash": "b424d0157dd601eef0ea21fbc10b57dd2eb572da",
+      "passes": 1,
+      "pr": 16557
     },
     ".agents/content/heygen-skill/rules-assets.md": {
       "at": "2026-03-29T16:34:55Z",
@@ -1015,7 +1028,7 @@
       "at": "2026-04-02T21:19:54Z",
       "hash": "347272e46c7d04f05dd13a4683cf44bef0dd3da7",
       "issue": "GH#14286",
-      "note": "Reference corpus chapter tightened: 92 → 90 lines. Removed decorative closing sentence with no information value. Zero content loss.",
+      "note": "Reference corpus chapter tightened: 92 \u2192 90 lines. Removed decorative closing sentence with no information value. Zero content loss.",
       "passes": 2
     },
     ".agents/marketing-sales/cro-chapter-20.md": {
@@ -1619,6 +1632,12 @@
       "hash": "b509e2fae5168065f0142ae29dca1ec2d410c53b",
       "passes": 1,
       "pr": 14996
+    },
+    ".agents/scripts/anti-detect-helper.sh": {
+      "at": "2026-04-03T12:15:33Z",
+      "hash": "51caf0d510816996bb82f91e466b32d0760e790b",
+      "passes": 1,
+      "pr": 16548
     },
     ".agents/scripts/backfill-origin-labels.sh": {
       "at": "2026-04-02T21:58:18Z",
@@ -3190,6 +3209,12 @@
       "passes": 1,
       "pr": 12686
     },
+    ".agents/services/hosting/cloudflare-platform-skill/workers-gotchas.md": {
+      "at": "2026-04-03T12:15:32Z",
+      "hash": "d5df86bf28ef23dcadc6de62b8e086978aa68117",
+      "passes": 1,
+      "pr": 16556
+    },
     ".agents/services/hosting/cloudflare-platform-skill/workers-patterns.md": {
       "at": "2026-04-03T11:54:14Z",
       "hash": "42343be0bc849aed9f1fc3ed5b0e590ccee248d6",
@@ -3519,6 +3544,12 @@
       "hash": "8494627274fa59f222b8c19aeb61280ded29e8ec",
       "passes": 1,
       "pr": 11566
+    },
+    ".agents/tools/api/cloudflare-mcp.md": {
+      "at": "2026-04-03T12:15:33Z",
+      "hash": "1832e77768442f25fde63a70b822d38c0b7b5e13",
+      "passes": 1,
+      "pr": 16551
     },
     ".agents/tools/api/drizzle.md": {
       "at": "2026-03-30T04:52:00Z",
@@ -4493,6 +4524,12 @@
       "passes": 1,
       "pr": 12618
     },
+    ".agents/tools/git/github-actions.md": {
+      "at": "2026-04-03T12:15:32Z",
+      "hash": "9315e263cad3848da2640a0392d82bd02c22b487",
+      "passes": 1,
+      "pr": 16558
+    },
     ".agents/tools/git/github-cli.md": {
       "at": "2026-04-03T11:54:14Z",
       "hash": "dbc4e2c3b4140e5631e6e03994c68a941d11b1ad",
@@ -4504,6 +4541,12 @@
       "hash": "de6952c2d9d3316c91c942921113892f89ddd42c",
       "passes": 1,
       "pr": 12498
+    },
+    ".agents/tools/git/jujutsu.md": {
+      "at": "2026-04-03T12:15:32Z",
+      "hash": "ad5d89b33b790787ec44d8782eb0d3116e94d897",
+      "passes": 1,
+      "pr": 16553
     },
     ".agents/tools/git/lumen.md": {
       "at": "2026-04-01T23:23:19Z",
@@ -4685,6 +4728,12 @@
       "passes": 2,
       "pr": 13795
     },
+    ".agents/tools/ocr/glm-ocr.md": {
+      "at": "2026-04-03T12:15:32Z",
+      "hash": "2f69712b674fe089100c62ae6831cd3bbe329f27",
+      "passes": 1,
+      "pr": 16554
+    },
     ".agents/tools/ocr/ocr-research.md": {
       "at": "2026-03-28T13:37:30Z",
       "hash": "667a0af0fe47f5c2c316520d13beb61f1f9d0b7f",
@@ -4726,6 +4775,12 @@
       "hash": "e0b3e8da23436e916aecd40d37bceeea48f99642",
       "passes": 1,
       "pr": 11594
+    },
+    ".agents/tools/productivity/notes.md": {
+      "at": "2026-04-03T12:15:32Z",
+      "hash": "8b8bbc3005076b5ccaff84b0a48254a7e2587078",
+      "passes": 1,
+      "pr": 16552
     },
     ".agents/tools/programming/modern-javascript-skill.md": {
       "at": "2026-04-01T20:59:25Z",
@@ -5502,54 +5557,6 @@
       "hash": "c820f0bd721d4d8ff4fb35dff40ff98c6ba3b71f",
       "passes": 1,
       "pr": 15470
-    },
-    ".agents/tools/git/github-actions.md": {
-      "hash": "9315e263cad3848da2640a0392d82bd02c22b487",
-      "at": "2026-04-03T12:15:32Z",
-      "pr": 16558,
-      "passes": 1
-    },
-    ".agents/content/guidelines.md": {
-      "hash": "b424d0157dd601eef0ea21fbc10b57dd2eb572da",
-      "at": "2026-04-03T12:15:32Z",
-      "pr": 16557,
-      "passes": 1
-    },
-    ".agents/services/hosting/cloudflare-platform-skill/workers-gotchas.md": {
-      "hash": "d5df86bf28ef23dcadc6de62b8e086978aa68117",
-      "at": "2026-04-03T12:15:32Z",
-      "pr": 16556,
-      "passes": 1
-    },
-    ".agents/tools/ocr/glm-ocr.md": {
-      "hash": "2f69712b674fe089100c62ae6831cd3bbe329f27",
-      "at": "2026-04-03T12:15:32Z",
-      "pr": 16554,
-      "passes": 1
-    },
-    ".agents/tools/git/jujutsu.md": {
-      "hash": "ad5d89b33b790787ec44d8782eb0d3116e94d897",
-      "at": "2026-04-03T12:15:32Z",
-      "pr": 16553,
-      "passes": 1
-    },
-    ".agents/tools/productivity/notes.md": {
-      "hash": "8b8bbc3005076b5ccaff84b0a48254a7e2587078",
-      "at": "2026-04-03T12:15:32Z",
-      "pr": 16552,
-      "passes": 1
-    },
-    ".agents/tools/api/cloudflare-mcp.md": {
-      "hash": "1832e77768442f25fde63a70b822d38c0b7b5e13",
-      "at": "2026-04-03T12:15:33Z",
-      "pr": 16551,
-      "passes": 1
-    },
-    ".agents/scripts/anti-detect-helper.sh": {
-      "hash": "51caf0d510816996bb82f91e466b32d0760e790b",
-      "at": "2026-04-03T12:15:33Z",
-      "pr": 16548,
-      "passes": 1
     }
   }
 }

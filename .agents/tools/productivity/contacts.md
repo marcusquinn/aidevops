@@ -20,7 +20,7 @@ tools:
 
 - **Helper**: `~/.aidevops/agents/scripts/contacts-helper.sh [command] [args]`
 - **macOS**: `osascript` via Contacts.app (JXA reads, AppleScript writes) — grant access: System Settings > Privacy & Security > Contacts
-- **Linux**: `khard` + `vdirsyncer` (CardDAV) — run `contacts-helper.sh setup`
+- **Linux**: `khard` + `vdirsyncer` (CardDAV) — run `contacts-helper.sh setup`; config: `~/.config/khard/khard.conf`
 - **Related**: `tools/productivity/calendar.md`, `tools/productivity/apple-reminders.md`, `tools/productivity/notes.md`
 
 <!-- AI-CONTEXT-END -->
@@ -38,9 +38,7 @@ tools:
 
 **Look up**: user needs email/phone/address, composing email, creating a calendar event, or a workflow needs to reach someone.
 
-**Create**: user explicitly asks, new business relationship established, or agent discovers contact info to keep. Always require user confirmation — contacts sync to all devices.
-
-**Do NOT create** for temporary interactions or info already in a CRM.
+**Create**: user explicitly asks, new business relationship established, or agent discovers contact info to keep. Always require user confirmation — contacts sync to all devices. Do NOT create for temporary interactions or info already in a CRM.
 
 ## Usage
 
@@ -58,16 +56,6 @@ contacts-helper.sh add --first Jane --last Doe \
   --org "Acme Corp" --title "CTO" \
   --email jane@acme.com --phone "+44123456789" \
   --notes "Met at DevOps conference 2026"
-```
-
-## Linux Setup
-
-`contacts-helper.sh setup`. Example `~/.config/khard/khard.conf`:
-
-```ini
-[addressbooks]
-[[contacts]]
-path = ~/.local/share/contacts/
 ```
 
 ## Cross-tool Workflow
