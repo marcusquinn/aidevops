@@ -6,8 +6,6 @@ description: Canonical routing taxonomy — domain labels and model tier labels 
 
 Canonical source for `/new-task`, `/save-todo`, `/define`, and `/pulse`. When a domain or tier changes, update **only this file** — command docs point here, not duplicate the tables.
 
----
-
 ## Domain Routing Table
 
 Apply a domain tag only when the task clearly belongs to a specialist agent. Code work stays unlabeled and routes to Build+.
@@ -28,8 +26,6 @@ Apply a domain tag only when the task clearly belongs to a specialist agent. Cod
 
 **Rule:** Omit the domain tag for code tasks. Build+ is the default.
 
----
-
 ## Model Tier Table
 
 Apply a tier tag only when the task needs more or less reasoning than the default (sonnet). `/pulse` resolves labels via `model-availability-helper.sh resolve <tier>`.
@@ -42,13 +38,11 @@ Apply a tier tag only when the task needs more or less reasoning than the defaul
 
 **Rule:** Default to no tier label. Use `thinking` for deeper reasoning, `simple` for lighter work, omit when uncertain.
 
----
-
 ## Command Use
 
-- **`/new-task`** — classify after brief creation; apply labels via `gh issue edit`
-- **`/save-todo`** — classify during dispatch tag evaluation
-- **`/define`** — classify during task type detection
-- **`/pulse`** — consume labels for agent routing and model tier selection
+- `/new-task` — classify after brief creation; apply labels via `gh issue edit`
+- `/save-todo` — classify during dispatch tag evaluation
+- `/define` — classify during task type detection
+- `/pulse` — consume labels for agent routing and model tier selection
 
 See `scripts/commands/pulse.md` "Agent routing from labels" and "Model tier selection" for dispatch behaviour.

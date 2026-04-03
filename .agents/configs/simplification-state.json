@@ -5775,7 +5775,18 @@
       "pr": 16714,
       "passes": 1
     },
-    ".agents/seo/ranking-opportunities.md": {
+  ".agents/reference/task-taxonomy.md": {
+    "at": "2026-04-03T16:50:00Z",
+    "hash": "e5313d0bc4a7e2bf7cb1e807abd6dd33b3da64f901dd1bb6aeca7903b56e7de7",
+    "issue": "GH#16752",
+    "lines_after": 48,
+    "lines_before": 54,
+    "note": "Instruction doc: removed 3 decorative --- horizontal rules and redundant **bold** wrapping on command names in list (backtick code formatting sufficient). All tables, rules, command examples, and references preserved.",
+    "passes": 1,
+    "pr": "pending",
+    "status": "simplified"
+  },
+  ".agents/seo/ranking-opportunities.md": {
       "hash": "b45ae335184c658835328022167c130b09f12e03",
       "at": "2026-04-03T16:35:52Z",
       "pr": 16713,
