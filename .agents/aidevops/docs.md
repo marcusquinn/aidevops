@@ -25,6 +25,7 @@ tools:
 - **Setup docs**: `*-setup.md` for multi-step integrations
 - **Provider guidance**: `recommendations-opinionated.md`
 - **Cross-service flows**: Domain → DNS → Hosting; Dev → Quality → Deploy
+- **Priority**: service guide → framework context → best-practices guide → setup guide → Context7 MCP for latest external docs
 
 <!-- AI-CONTEXT-END -->
 
@@ -42,27 +43,8 @@ tools:
 
 ## Standard Guide Structure
 
-- `# [Service Name] Guide`
-- `## Provider Overview` — service type, strengths, API support, use cases
-- `## Configuration`
-- `## Usage Examples`
-- `## Security Best Practices`
-- `## Troubleshooting`
-- `## MCP Integration` / `## AI Assistant Integration` when relevant
-- `## Best Practices`
+Sections in order: `# [Service Name] Guide` → `## Provider Overview` (type, strengths, API, use cases) → `## Configuration` → `## Usage Examples` → `## Security Best Practices` → `## Troubleshooting` → `## MCP Integration` / `## AI Assistant Integration` (when relevant) → `## Best Practices`
 
 ## Standards & Maintenance
 
-- Cover core features, working examples, security concerns, troubleshooting, and AI integration patterns
-- Clear technical language, consistent formatting, syntax-highlighted code, cross-references
-- Keep commands accurate, examples sanitized, API details current; version notes when they matter
-- Update on API changes, new features, security advisories; keep structure consistent across guides
-
-## Navigation
-
-- Service-specific: `.agents/[service-name].md`
-- Framework context: `.agents/AGENTS.md`
-- Provider selection: `.agents/recommendations-opinionated.md`
-- Setup procedures: `.agents/[service]-setup.md`
-
-**Priority**: service guide → framework context → best-practices guide → setup guide → Context7 MCP for latest external docs.
+Cover core features, working examples, security concerns, troubleshooting, and AI integration patterns. Use clear technical language, consistent formatting, syntax-highlighted code, and cross-references. Keep commands accurate, examples sanitized, API details current (version notes when they matter). Update on API changes, new features, and security advisories.
