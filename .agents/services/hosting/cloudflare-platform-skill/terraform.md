@@ -1,7 +1,5 @@
 # Cloudflare Terraform Provider
 
-**Expert guidance for Cloudflare Terraform Provider - infrastructure as code for Cloudflare resources.**
-
 ## Core Principles
 
 - **Provider-first**: Use Terraform provider for ALL infrastructure - never mix with wrangler.toml for the same resources
@@ -70,5 +68,5 @@ terraform validate      # Validate configuration
 
 ## See Also
 
-- [Patterns & Use Cases](./patterns.md) - Architecture patterns, multi-env setup, CI/CD integration
-- [Troubleshooting & Best Practices](./gotchas.md) - Common issues, security, best practices
+- [Patterns & Use Cases](./terraform-patterns.md) — multi-env, CI/CD, worker bindings, load balancing
+- [Troubleshooting & Best Practices](./terraform-gotchas.md) — common errors, security, state management
