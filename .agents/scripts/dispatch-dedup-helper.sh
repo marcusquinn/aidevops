@@ -769,51 +769,16 @@ has_open_pr() {
 }
 
 #######################################
-# Check whether an issue has a recent "Dispatching worker" comment
-# from another runner (GH#11141).
-#
-# The pulse agent posts a "Dispatching worker." comment on every issue
-# it dispatches. This is a persistent, cross-machine signal that a
-# worker is in-flight — unlike the dispatch ledger (local-only) or
-# the claim lock (8-second window). Checking for this comment catches
-# the gap between dispatch and PR creation across machines.
-#
-# A comment is considered active if it was posted within the last
-# DISPATCH_COMMENT_MAX_AGE seconds (default 4 hours — generous to
-# cover long-running workers). Only comments from other logins are
-# considered; self-posted comments are ignored.
-#
-# Additional guard (t1702): dispatch comments only block when the issue is
-# still actively claimed (OPEN + assigned + status:queued/in-progress).
-# If the claim state has been cleared, old dispatch comments are treated as
-# stale breadcrumbs and must not block redispatch.
-#
-# Args:
-#   $1 = issue number
-#   $2 = repo slug (owner/repo)
-#   $3 = self login (optional; comments from self are ignored)
-# Returns:
-#   exit 0 if a recent dispatch comment from another runner exists (do NOT dispatch)
-#   exit 1 if no recent dispatch comment (safe to dispatch)
-# Outputs:
-#   single-line reason when evidence is found
+# Check whether an issue has an active claim state.
+# Active = OPEN + has assignee + has status:queued or status:in-progress label.
+# Args: $1 = issue number, $2 = repo slug
+# Returns: exit 0 if actively claimed, exit 1 otherwise
+# Outputs: issue_meta_json on stdout (for reuse by caller)
 #######################################
-has_dispatch_comment() {
+_get_active_claim_meta() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	local self_login="${3:-}"
 
-	if [[ ! "$issue_number" =~ ^[0-9]+$ ]] || [[ -z "$repo_slug" ]]; then
-		return 1
-	fi
-
-	local max_age="${DISPATCH_COMMENT_MAX_AGE:-3600}" # 1 hour (reduced from 4h — GH#16626)
-
-	local now_epoch
-	now_epoch=$(date -u '+%s')
-
-	# Only treat dispatch comments as active when issue is actively claimed.
-	# This prevents stale historical comments from blocking fresh dispatches.
 	local issue_meta_json
 	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" --json state,assignees,labels 2>/dev/null) || issue_meta_json=""
 	if [[ -z "$issue_meta_json" ]]; then
@@ -833,14 +798,113 @@ has_dispatch_comment() {
 		return 1
 	fi
 
+	return 0
+}
+
+#######################################
+# Check whether a single dispatch comment is still active (within TTL and
+# backed by a live local worker process).
+#
+# GH#16626: Process liveness check — if the comment is within TTL but no
+# worker process is running for this issue locally, the worker completed or
+# crashed without cleanup. Treat as stale and allow re-dispatch.
+# Grace period: comments <5 min old skip the liveness check to avoid racing
+# with worker startup (process may not be visible yet).
+#
+# Args:
+#   $1 = comment created_at (ISO 8601)
+#   $2 = comment author login
+#   $3 = issue number (for process search)
+#   $4 = now_epoch (seconds since epoch)
+#   $5 = max_age (seconds)
+# Returns: exit 0 if comment is active (blocks dispatch), exit 1 if stale/expired
+# Outputs: reason string on stdout when active
+#######################################
+_is_dispatch_comment_active() {
+	local created_at="$1"
+	local author="$2"
+	local issue_number="$3"
+	local now_epoch="$4"
+	local max_age="$5"
+
+	[[ -z "$created_at" ]] && return 1
+
+	local comment_epoch
+	comment_epoch=$(date -u -d "$created_at" '+%s' 2>/dev/null ||
+		TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$created_at" '+%s' 2>/dev/null ||
+		printf '%s' "0")
+	local age=$((now_epoch - comment_epoch))
+
+	[[ "$age" -ge "$max_age" ]] && return 1
+
+	local grace_period="${DISPATCH_COMMENT_GRACE_SECONDS:-300}" # 5 minutes
+	if [[ "$age" -gt "$grace_period" ]]; then
+		# Check if any local worker process is running for this issue
+		local has_local_worker=""
+		has_local_worker=$(pgrep -f "issue.${issue_number}" 2>/dev/null | head -1 || true)
+		if [[ -z "$has_local_worker" ]]; then
+			has_local_worker=$(pgrep -f "#${issue_number}" 2>/dev/null | head -1 || true)
+		fi
+		if [[ -z "$has_local_worker" ]]; then
+			# No local worker running — dispatch comment is orphaned; allow re-dispatch
+			return 1
+		fi
+	fi
+
+	printf 'dispatch comment by %s posted %ds ago on issue #%s\n' "$author" "$age" "$issue_number"
+	return 0
+}
+
+#######################################
+# Check whether an issue has a recent "Dispatching worker" comment
+# from another runner (GH#11141).
+#
+# The pulse agent posts a "Dispatching worker." comment on every issue
+# it dispatches. This is a persistent, cross-machine signal that a
+# worker is in-flight — unlike the dispatch ledger (local-only) or
+# the claim lock (8-second window). Checking for this comment catches
+# the gap between dispatch and PR creation across machines.
+#
+# A comment is considered active if it was posted within the last
+# DISPATCH_COMMENT_MAX_AGE seconds (default 1 hour — GH#16626).
+#
+# Additional guard (t1702): dispatch comments only block when the issue is
+# still actively claimed (OPEN + assigned + status:queued/in-progress).
+# If the claim state has been cleared, old dispatch comments are treated as
+# stale breadcrumbs and must not block redispatch.
+#
+# Args:
+#   $1 = issue number
+#   $2 = repo slug (owner/repo)
+#   $3 = self login (unused; kept for backward compatibility — GH#15317)
+# Returns:
+#   exit 0 if a recent dispatch comment from another runner exists (do NOT dispatch)
+#   exit 1 if no recent dispatch comment (safe to dispatch)
+# Outputs:
+#   single-line reason when evidence is found
+#######################################
+has_dispatch_comment() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	# $3 = self_login — unused since GH#15317 (all dispatch comments checked regardless of author)
+
+	if [[ ! "$issue_number" =~ ^[0-9]+$ ]] || [[ -z "$repo_slug" ]]; then
+		return 1
+	fi
+
+	# Only treat dispatch comments as active when issue is actively claimed.
+	# This prevents stale historical comments from blocking fresh dispatches.
+	if ! _get_active_claim_meta "$issue_number" "$repo_slug"; then
+		return 1
+	fi
+
+	local max_age="${DISPATCH_COMMENT_MAX_AGE:-3600}" # 1 hour (reduced from 4h — GH#16626)
+	local now_epoch
+	now_epoch=$(date -u '+%s')
+
 	# Fetch recent comments and look for "Dispatching worker" comments.
-	# GH#15317: Check ALL dispatch comments regardless of author. Previously,
-	# self-posted comments were skipped (self_login filter), which allowed the
-	# same runner to re-dispatch every cycle — its own dispatch comment was
-	# invisible to its own dedup check. Evidence: awardsapp #2040 had
-	# alex-solovyev dispatch twice (20:33 and 22:57) because Layer 5 skipped
-	# its own dispatch comment. The self_login parameter is now unused by this
-	# function but kept in the signature for backward compatibility.
+	# GH#15317: Check ALL dispatch comments regardless of author — self-posted
+	# comments are no longer skipped (self_login param kept for compat only).
 	local comments_json
 	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 		--jq '[.[] | select(.body | startswith("Dispatching worker")) | {author: .user.login, created_at: .created_at}]' \
@@ -850,7 +914,7 @@ has_dispatch_comment() {
 		return 1
 	fi
 
-	# Check each dispatch comment — any recent dispatch blocks, regardless of author
+	# Check each dispatch comment — any recent active dispatch blocks
 	local count
 	count=$(printf '%s' "$comments_json" | jq 'length' 2>/dev/null) || count=0
 
@@ -860,46 +924,8 @@ has_dispatch_comment() {
 		created_at=$(printf '%s' "$comments_json" | jq -r ".[$i].created_at // \"\"" 2>/dev/null) || created_at=""
 		author=$(printf '%s' "$comments_json" | jq -r ".[$i].author // \"\"" 2>/dev/null) || author=""
 
-		# Check age
-		if [[ -n "$created_at" ]]; then
-			local comment_epoch
-			comment_epoch=$(date -u -d "$created_at" '+%s' 2>/dev/null ||
-				TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$created_at" '+%s' 2>/dev/null ||
-				printf '%s' "0")
-			local age=$((now_epoch - comment_epoch))
-			if [[ "$age" -lt "$max_age" ]]; then
-				# GH#16626: Process liveness check — if the dispatch comment is
-				# within TTL but no worker process is running for this issue on
-				# the local machine, the previous worker completed or crashed
-				# without cleanup. Treat the comment as stale and allow re-dispatch.
-				#
-				# This fixes a throughput bottleneck where 10/24 worker slots sat
-				# idle because stale dispatch comments from dead workers blocked
-				# re-dispatch for up to 4 hours. The comment TTL alone is insufficient
-				# because it can't distinguish "worker in-flight" from "worker dead,
-				# comment left behind". Process check resolves this for same-machine
-				# scenarios; cross-machine is covered by the assignee guard (Layer 6)
-				# which has its own stale recovery (GH#15060).
-				#
-				# Grace period: comments <5 min old skip the liveness check to avoid
-				# racing with worker startup (process may not be visible yet).
-				local grace_period="${DISPATCH_COMMENT_GRACE_SECONDS:-300}" # 5 minutes
-				if [[ "$age" -gt "$grace_period" ]]; then
-					# Check if any local worker process is running for this issue
-					local has_local_worker=""
-					has_local_worker=$(pgrep -f "issue.${issue_number}" 2>/dev/null | head -1 || true)
-					if [[ -z "$has_local_worker" ]]; then
-						has_local_worker=$(pgrep -f "#${issue_number}" 2>/dev/null | head -1 || true)
-					fi
-					if [[ -z "$has_local_worker" ]]; then
-						# No local worker running — dispatch comment is orphaned
-						# Allow re-dispatch by skipping this comment
-						continue
-					fi
-				fi
-				printf 'dispatch comment by %s posted %ds ago on issue #%s\n' "$author" "$age" "$issue_number"
-				return 0
-			fi
+		if _is_dispatch_comment_active "$created_at" "$author" "$issue_number" "$now_epoch" "$max_age"; then
+			return 0
 		fi
 	done
 
