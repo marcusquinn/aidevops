@@ -199,10 +199,18 @@ _screenshot_parse_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--output-dir)
+			if [[ -z "${2:-}" || "${2:-}" == -* ]]; then
+				print_error "--output-dir requires a directory argument" >&2
+				return 1
+			fi
 			_output_dir="$2"
 			shift 2
 			;;
 		--format)
+			if [[ -z "${2:-}" || "${2:-}" == -* ]]; then
+				print_error "--format requires a value (png, webp, avif, all)" >&2
+				return 1
+			fi
 			_format="$2"
 			shift 2
 			;;
@@ -211,6 +219,10 @@ _screenshot_parse_args() {
 			shift
 			;;
 		--width)
+			if [[ -z "${2:-}" || "${2:-}" == -* ]]; then
+				print_error "--width requires a pixel value" >&2
+				return 1
+			fi
 			_viewport_width="$2"
 			shift 2
 			;;
@@ -227,12 +239,10 @@ _screenshot_parse_args() {
 			shift
 			;;
 		-h | --help)
-			usage
 			return 2
 			;;
 		-*)
-			print_error "Unknown option: $1"
-			usage
+			print_error "Unknown option: $1" >&2
 			return 1
 			;;
 		*)
@@ -302,18 +312,18 @@ _screenshot_capture_modes() {
 	local capture_dark="$6"
 
 	local light_png="$output_dir/${base_name}-light.png"
-	print_info "Capturing light mode screenshot..."
+	print_info "Capturing light mode screenshot..." >&2
 	if ! capture_screenshot "$html_path" "$light_png" "$viewport_width" "light" "$full_page"; then
 		return 1
 	fi
-	print_success "Light mode: $light_png"
+	print_success "Light mode: $light_png" >&2
 
 	local dark_png=""
 	if [[ "$capture_dark" == "true" ]]; then
 		dark_png="$output_dir/${base_name}-dark.png"
-		print_info "Capturing dark mode screenshot..."
+		print_info "Capturing dark mode screenshot..." >&2
 		if capture_screenshot "$html_path" "$dark_png" "$viewport_width" "dark" "$full_page"; then
-			print_success "Dark mode: $dark_png"
+			print_success "Dark mode: $dark_png" >&2
 		else
 			dark_png=""
 		fi
@@ -373,12 +383,16 @@ _screenshot_convert_formats() {
 # Main screenshot command — orchestrates parse, validate, capture, resize, convert
 cmd_screenshot() {
 	# Parse arguments
-	local parsed
-	parsed="$(_screenshot_parse_args "$@")" || {
-		local rc="$?"
-		[[ "$rc" -eq 2 ]] && return 0 # --help
+	local parsed rc
+	parsed="$(_screenshot_parse_args "$@")"
+	rc="$?"
+	if [[ "$rc" -eq 2 ]]; then
+		usage
+		return 0
+	elif [[ "$rc" -ne 0 ]]; then
+		usage
 		return 1
-	}
+	fi
 
 	local html_path output_dir format capture_dark viewport_width full_page ai_safe
 	while IFS='=' read -r key val; do
