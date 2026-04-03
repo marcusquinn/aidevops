@@ -8,15 +8,7 @@ Analyze web performance for the specified URL using Chrome DevTools MCP.
 
 URL/Target: $ARGUMENTS
 
-## Prerequisites
-
-Verify Chrome DevTools MCP is available:
-
-```bash
-which npx && npx chrome-devtools-mcp@latest --version || echo "Install: npm i -g chrome-devtools-mcp"
-```
-
-Read `~/.aidevops/agents/tools/performance/performance.md` for CWV thresholds, common issues, and fix patterns.
+**Prerequisites:** Verify Chrome DevTools MCP: `which npx && npx chrome-devtools-mcp@latest --version || echo "Install: npm i -g chrome-devtools-mcp"`. Read `~/.aidevops/agents/tools/performance/performance.md` for CWV thresholds, common issues, and fix patterns.
 
 ## Options
 
@@ -30,12 +22,7 @@ Read `~/.aidevops/agents/tools/performance/performance.md` for CWV thresholds, c
 
 ## Run Analysis
 
-Using Chrome DevTools MCP, execute in order:
-
-1. **Lighthouse Audit** — performance, accessibility, best practices, SEO scores
-2. **Core Web Vitals** — FCP, LCP, CLS, FID, TTFB measurements
-3. **Network Analysis** — third-party scripts, request chains, bundle sizes
-4. **Accessibility** — WCAG compliance issues
+Execute in order: (1) **Lighthouse Audit** — performance, accessibility, best practices, SEO; (2) **Core Web Vitals** — FCP, LCP, CLS, FID, TTFB; (3) **Network Analysis** — third-party scripts, request chains, bundle sizes; (4) **Accessibility** — WCAG compliance issues.
 
 ## Report Format
 
