@@ -121,6 +121,12 @@ Pipeline: `Audio -> [Parakeet ASR] -> [Any LLM] -> [Magpie TTS] -> Audio`. See `
 
 ## GPU Planning
 
-Min/recommended VRAM: STT (Whisper Turbo) 5/8GB, TTS (Qwen3 0.6B) 2/4GB, S2S (MiniCPM-o) 8/16GB, full cascaded pipeline 4/12GB, CPU-only (Piper + whisper.cpp) 0/8GB RAM.
+| Workload | Min VRAM | Recommended |
+|----------|----------|-------------|
+| STT (Whisper Turbo) | 5GB | 8GB |
+| TTS (Qwen3 0.6B) | 2GB | 4GB |
+| S2S (MiniCPM-o) | 8GB | 16GB |
+| Full cascaded pipeline | 4GB | 12GB |
+| CPU-only (Piper + whisper.cpp) | 0 | 8GB RAM |
 
 Apple Silicon: MPS for PyTorch models; `whisper-mlx` or `mlx-audio-whisper` for optimized macOS inference.
