@@ -11,9 +11,7 @@ Arguments: $ARGUMENTS
 ## Steps
 
 ```bash
-# 1. Active workers (raw process count — may differ from pulse's deduplicated count)
-# Note: pulse uses list_active_worker_processes() which deduplicates by issue+dir.
-# This grep-based count is a quick approximation; use pulse logs for authoritative count.
+# 1. Active workers (grep approximation — pulse deduplicates by issue+dir; use pulse logs for authoritative count)
 MAX_WORKERS=$(test -r ~/.aidevops/logs/pulse-max-workers && cat ~/.aidevops/logs/pulse-max-workers || echo 4)
 WORKER_COUNT=$(ps axo command | grep '/full-loop' | grep -v grep | wc -l | tr -d ' ')
 AVAILABLE=$((MAX_WORKERS - WORKER_COUNT))
@@ -73,21 +71,12 @@ fi
 
 ## Report Format
 
-Present as a concise dashboard. Flag anomalies (most important first):
+Concise dashboard, anomalies first:
 
-**Worker Status** — Running: X / Y max (Z slots). Flag: all slots full; 0 workers + dispatchable tasks exist (scheduler issue).
-
-**Queue Depth** — Total open: X (Y parents, Z subtasks). Dispatchable: N (M tagged, K inherited). Blocked: B. Claimed: C. Flag: dispatchable=0 but open count high (queue stall).
-
-**Action Items**
-
-1. PRs ready to merge — CI green, no review comments
-2. PRs with CI failures — need investigation
-3. Stale worktrees — tasks already deployed/merged
-4. Subtasks missing `#auto-dispatch` — parent has tag but subtasks don't (dispatch gap)
-5. Pulse scheduler not running
-
-**System Health** — Worker count, pulse scheduler status (launchd/macOS, cron/Linux), recent log: `tail -20 ~/.aidevops/logs/pulse.log`
+- **Worker Status** — `Running: X / Y max (Z slots)`. Flag: all slots full; 0 workers + dispatchable tasks (scheduler issue).
+- **Queue Depth** — `Total open: X (Y parents, Z subtasks). Dispatchable: N (tagged: M, inherited: K). Blocked: B. Claimed: C.` Flag: dispatchable=0 but open count high (queue stall).
+- **Action Items** (priority order): PRs ready to merge (CI green, no comments) → PRs with CI failures → stale worktrees → subtasks missing `#auto-dispatch` (dispatch gap) → pulse scheduler not running.
+- **System Health** — pulse scheduler (launchd/macOS, cron/Linux), recent log: `tail -20 ~/.aidevops/logs/pulse.log`
 
 ## Arguments
 
