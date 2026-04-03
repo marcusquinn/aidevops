@@ -12,7 +12,7 @@ Run before any file edits:
 ~/.aidevops/agents/scripts/pre-edit-check.sh --loop-mode --task "task description"
 ```
 
-## Exit Codes and Actions
+## Exit Codes
 
 | Code | Meaning | Action |
 |------|---------|--------|
@@ -38,13 +38,11 @@ Run before any file edits:
 - **Docs-only** (`readme`, `changelog`, `documentation`, `docs/`, `typo`, `spelling`) → stay on `main`
 - **Code** (`feature`, `fix`, `bug`, `implement`, `refactor`, `add`, `update`, `enhance`, `port`, `ssl`, `helper`) → create worktree; code keywords override docs keywords
 
-## Why Worktrees Are Default
+## Worktree Default
 
 Keep `~/Git/{repo}/` on `main`. Avoids blocked branch switches, parallel sessions inheriting the wrong branch, and `local changes would be overwritten` errors.
 
 Stay on `main` only for: docs-only changes (README, CHANGELOG, `docs/`), typos, version bumps, planning files (`TODO.md`, `todo/`). Planning-file commits use `planning-commit-helper.sh "plan: add new task"`.
-
-## Feature-Branch Cases
 
 | Scenario | Script output | Action |
 |----------|---------------|--------|
@@ -64,7 +62,7 @@ After creating the worktree, call `session-rename_sync_branch`.
 
 Branch types: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
 
-## aidevops Source vs Deployed Copy
+## Source vs Deployed Copy
 
 - Source: `~/Git/aidevops/.agents/` — git-tracked, branch matters
 - Deployed: `~/.aidevops/agents/` — copied output, not a git repo
