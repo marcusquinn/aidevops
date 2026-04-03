@@ -12,6 +12,7 @@ VENV_DIR="$HOME/.aidevops/anti-detect-venv"
 # shellcheck disable=SC2034
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 
+# shellcheck source=/dev/null
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 show_help() {
@@ -117,6 +118,7 @@ setup_camoufox() {
 	fi
 
 	# Install camoufox + browserforge
+	# shellcheck source=/dev/null
 	source "$VENV_DIR/bin/activate"
 	pip install --quiet --upgrade camoufox browserforge 2>/dev/null || {
 		echo -e "${YELLOW}Warning: pip install failed. Trying with --break-system-packages...${NC}"
@@ -615,6 +617,7 @@ launch_camoufox() {
 	local url="$3"
 	local disposable="$4"
 
+	# shellcheck source=/dev/null
 	source "$VENV_DIR/bin/activate" 2>/dev/null || {
 		echo -e "${RED}Error: Camoufox venv not found. Run: anti-detect-helper.sh setup${NC}" >&2
 		return 1
@@ -751,7 +754,9 @@ launch_chromium_stealth() {
 		fi
 		if [[ -n "$profile_dir" && -f "$profile_dir/proxy.json" ]]; then
 			proxy_server=$(python3 -c "import json; print(json.load(open('$profile_dir/proxy.json')).get('server',''))" 2>/dev/null)
+			local proxy_username
 			proxy_username=$(python3 -c "import json; print(json.load(open('$profile_dir/proxy.json')).get('username',''))" 2>/dev/null)
+			local proxy_password
 			proxy_password=$(python3 -c "import json; print(json.load(open('$profile_dir/proxy.json')).get('password',''))" 2>/dev/null)
 		fi
 	fi
@@ -951,6 +956,7 @@ test_detection() {
 
 	echo -e "${BLUE}Testing bot detection (engine: $engine)...${NC}"
 
+	# shellcheck source=/dev/null
 	source "$VENV_DIR/bin/activate" 2>/dev/null || true
 
 	if [[ "$engine" == "firefox" ]]; then
@@ -1000,6 +1006,7 @@ warmup_build_config() {
 		return 1
 	fi
 
+	# shellcheck source=/dev/null
 	source "$VENV_DIR/bin/activate" 2>/dev/null || {
 		echo -e "${RED}Error: Camoufox venv not found. Run: anti-detect-helper.sh setup${NC}" >&2
 		return 1
