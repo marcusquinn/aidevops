@@ -25,7 +25,7 @@ Generates 5 title + 5 description variations with SERP preview for A/B testing. 
 | Keyword | Include primary keyword, preferably near start |
 | Brand | Append brand name with separator if space allows |
 | Format | Use numbers, power words, or brackets for CTR |
-| Power words | Urgency: Essential, Critical; Value: Ultimate, Proven; Specificity: Step-by-Step, [Number]+, [Year]; Curiosity: Surprising, Secret |
+| Power words | Urgency: Essential, Critical — Value: Ultimate, Proven — Specificity: Step-by-Step, [N]+, [Year] — Curiosity: Surprising, Secret |
 | Uniqueness | Each page needs a unique title |
 
 ### Title Formulas
