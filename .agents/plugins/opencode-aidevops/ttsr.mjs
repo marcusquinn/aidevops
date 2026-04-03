@@ -72,6 +72,38 @@ const BUILTIN_TTSR_RULES = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// Token Cost Advisory
+// ---------------------------------------------------------------------------
+// Injects a synthetic message when session context exceeds a token threshold,
+// prompting the LLM to advise the user to run /compact. Fires at 200k tokens,
+// then every 50k above that (250k, 300k, ...). Uses the last assistant
+// message's token counts — which represent the full context sent to the model
+// on that turn — so the number tracks real cost, not model capacity.
+//
+// For headless sessions: autocompact already fires at ~(limit - 20k), so
+// this advisory primarily helps interactive sessions on large-context models
+// (Gemini 1M+, future models) where autocompact is far above 200k, or when
+// autocompact is disabled.
+
+const TOKEN_ADVISORY_INITIAL = 200_000;
+const TOKEN_ADVISORY_INTERVAL = 50_000;
+
+/**
+ * Compute token total from an assistant message's token counts.
+ * Matches the calculation in OpenCode's session-context-metrics.ts.
+ * @param {object} tokens - { input, output, reasoning, cache: { read, write } }
+ * @returns {number}
+ */
+function getTokenTotal(tokens) {
+  if (!tokens) return 0;
+  return (tokens.input || 0) +
+    (tokens.output || 0) +
+    (tokens.reasoning || 0) +
+    (tokens.cache?.read || 0) +
+    (tokens.cache?.write || 0);
+}
+
 /**
  * Build TTSR hook functions with injected dependencies from index.mjs.
  * @param {object} deps
@@ -91,6 +123,101 @@ export function createTtsrHooks(deps) {
   let ttsrRules = null;
   /** @type {Map<string, Set<string>>} */
   const ttsrFiredState = new Map();
+
+  // ---------------------------------------------------------------------------
+  // Token Cost Advisory — per-session state
+  // ---------------------------------------------------------------------------
+  // Maps sessionID → highest threshold that has been warned about.
+  // E.g., after warning at 200k, value is 200000. After 250k, value is 250000.
+  /** @type {Map<string, number>} */
+  const tokenAdvisoryState = new Map();
+
+  /**
+   * Check whether the token cost advisory should fire for this message set.
+   * Looks at the last assistant message with token data and compares against
+   * the threshold schedule (200k, 250k, 300k, ...).
+   *
+   * @param {Array<object>} messages - MessageV2.WithParts[] from the transform hook
+   * @returns {{ sessionID: string, totalK: number, total: number } | null}
+   */
+  function checkTokenAdvisory(messages) {
+    // Walk backwards to find the last assistant message with token data
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const info = messages[i].info;
+      if (info?.role !== "assistant" || !info.tokens) continue;
+
+      const total = getTokenTotal(info.tokens);
+      if (total < TOKEN_ADVISORY_INITIAL) return null;
+
+      const sessionID = info.sessionID || "";
+      const lastWarned = tokenAdvisoryState.get(sessionID) || 0;
+
+      // Calculate which threshold bracket we're in
+      const stepsAboveInitial = Math.floor(
+        (total - TOKEN_ADVISORY_INITIAL) / TOKEN_ADVISORY_INTERVAL,
+      );
+      const currentThreshold =
+        TOKEN_ADVISORY_INITIAL + stepsAboveInitial * TOKEN_ADVISORY_INTERVAL;
+
+      if (currentThreshold <= lastWarned) return null;
+
+      tokenAdvisoryState.set(sessionID, currentThreshold);
+
+      // Prune old sessions to prevent unbounded memory growth
+      if (tokenAdvisoryState.size > 500) {
+        const keys = Array.from(tokenAdvisoryState.keys());
+        for (const k of keys.slice(0, 250)) {
+          tokenAdvisoryState.delete(k);
+        }
+      }
+
+      return { sessionID, totalK: Math.round(total / 1000), total };
+    }
+    return null;
+  }
+
+  /**
+   * Build the synthetic advisory message injected into the message stream.
+   * Phrased as an instruction to the LLM so it naturally informs the user.
+   *
+   * @param {{ sessionID: string, totalK: number }} advisory
+   * @returns {object} MessageV2.WithParts-shaped synthetic message
+   */
+  function buildTokenAdvisoryMessage(advisory) {
+    const advisoryId = `token-advisory-${Date.now()}`;
+
+    const text = [
+      `[TOKEN COST ADVISORY] This session has reached approximately ${advisory.totalK}k tokens.`,
+      "",
+      "Briefly inform the user in your next response:",
+      `The token cost of this session is rising with each interaction \u2014 currently at ~${advisory.totalK}k tokens. ` +
+        "You can use the /compact command to significantly reduce ongoing costs. " +
+        "Compaction preserves full understanding of what we\u2019re working on, so nothing is lost.",
+      "",
+      "Deliver this as a short note at the start of your response, then continue normally.",
+      "Do not repeat this advisory if you have already mentioned it.",
+    ].join("\n");
+
+    return {
+      info: {
+        id: advisoryId,
+        sessionID: advisory.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        parentID: "",
+      },
+      parts: [
+        {
+          id: `${advisoryId}-part`,
+          sessionID: advisory.sessionID,
+          messageID: advisoryId,
+          type: "text",
+          text,
+          synthetic: true,
+        },
+      ],
+    };
+  }
 
   function mergeUserTtsrRules(rules, userRules) {
     for (const rule of userRules) {
@@ -284,6 +411,17 @@ export function createTtsrHooks(deps) {
   async function messagesTransformHook(_input, output) {
     if (!output.messages || output.messages.length === 0) return;
 
+    // --- Token cost advisory (fires at 200k, then every 50k above) ---
+    const advisory = checkTokenAdvisory(output.messages);
+    if (advisory) {
+      output.messages.push(buildTokenAdvisoryMessage(advisory));
+      qualityLog(
+        "INFO",
+        `Token advisory: session ${advisory.sessionID} at ~${advisory.totalK}k tokens`,
+      );
+    }
+
+    // --- TTSR rule violation corrections ---
     const assistantMessages = getRecentAssistantMessages(output.messages, 3);
     if (assistantMessages.length === 0) return;
 
