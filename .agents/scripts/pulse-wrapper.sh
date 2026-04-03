@@ -1831,6 +1831,14 @@ approve_collaborator_pr() {
 			return 0
 		fi
 
+		# Guard: only collaborators (write/maintain/admin) may approve.
+		# Non-collaborator approvals are accepted by GitHub on public repos
+		# but don't count toward branch protection — they just create noise.
+		if ! _is_collaborator_author "$current_user" "$repo_slug"; then
+			echo "[pulse-wrapper] approve_collaborator_pr: current user ($current_user) lacks write access to $repo_slug — skipping approval" >>"$LOGFILE"
+			return 0
+		fi
+
 		local existing_approval
 		existing_approval=$(gh api "repos/${repo_slug}/pulls/${pr_number}/reviews" \
 			--jq "[.[] | select(.user.login == \"${current_user}\" and .state == \"APPROVED\")] | length" 2>/dev/null || echo "0")
