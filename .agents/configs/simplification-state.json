@@ -44,7 +44,7 @@
     "lines_before": 113,
     "lines_after": 111,
     "passes": 2,
-    "note": "Pass 2: 113\u2192111 lines. Merged templates link into intro line, moved subject line guidance above table as compact note. Zero content loss.",
+    "note": "Pass 2: 113→111 lines. Merged templates link into intro line, moved subject line guidance above table as compact note. Zero content loss.",
     "status": "simplified"
   },
   ".agents/seo/geo-strategy.md": {
@@ -157,9 +157,9 @@
       "pr": 14645
     },
     ".agents/aidevops/api-integrations.md": {
-      "at": "2026-04-02T21:19:50Z",
-      "hash": "9ed830efd42c0b7901229915ff9fe70d6f50fdac",
-      "passes": 2,
+      "at": "2026-04-03T11:53:46Z",
+      "hash": "62214081cdcd977a20980563deac1064715a2367",
+      "passes": 3,
       "pr": 0
     },
     ".agents/aidevops/architecture.md": {
@@ -934,7 +934,7 @@
       "at": "2026-04-02T21:19:54Z",
       "hash": "347272e46c7d04f05dd13a4683cf44bef0dd3da7",
       "issue": "GH#14286",
-      "note": "Reference corpus chapter tightened: 92 \u2192 90 lines. Removed decorative closing sentence with no information value. Zero content loss.",
+      "note": "Reference corpus chapter tightened: 92 → 90 lines. Removed decorative closing sentence with no information value. Zero content loss.",
       "passes": 2
     },
     ".agents/marketing-sales/cro-chapter-20.md": {
@@ -1829,9 +1829,9 @@
       "pr": 15455
     },
     ".agents/scripts/pulse-wrapper.sh": {
-      "at": "2026-04-02T21:57:56Z",
-      "hash": "0a1b0e22b71d7c37bca0d17c5c476b053ff76b06",
-      "passes": 6,
+      "at": "2026-04-03T11:53:54Z",
+      "hash": "39d2af5cabcb66409e3bc79504f2462f4163ce9e",
+      "passes": 7,
       "pr": 15086
     },
     ".agents/scripts/schema-validator-helper.sh": {
@@ -2423,9 +2423,9 @@
       "pr": 13343
     },
     ".agents/services/email/email-testing.md": {
-      "at": "2026-04-03T04:23:07Z",
-      "hash": "26cce9683b49ebe28109716eebad75ab1470360b",
-      "passes": 1,
+      "at": "2026-04-03T11:53:57Z",
+      "hash": "a1418e2412a8303a5c7aa1cba579a4e1fba0d55b",
+      "passes": 2,
       "pr": 15839
     },
     ".agents/services/email/email-verification.md": {
@@ -2465,10 +2465,10 @@
       "pr": 12040
     },
     ".agents/services/email/ses.md": {
-      "at": "2026-04-03T00:00:00Z",
-      "hash": "580742968b7a22cee8c7b74cbc323803c67530474f8200f6e03b3165376dbf1d",
+      "at": "2026-04-03T11:53:57Z",
+      "hash": "b00aba2448dd10e6ca6ac80203a0497e5d95d02e",
       "issue": "GH#16498",
-      "passes": 1,
+      "passes": 2,
       "pr": "pending",
       "status": "simplified"
     },
@@ -2599,9 +2599,9 @@
       "pr": 12192
     },
     ".agents/services/hosting/cloudflare-platform-skill/durable-objects.md": {
-      "at": "2026-04-02T21:58:18Z",
-      "hash": "7a4852a2f3e454c5962f11cefa855b6e4a1555b4",
-      "passes": 1,
+      "at": "2026-04-03T11:53:58Z",
+      "hash": "e8ac0cdd603c8c601800af32bfb9edf40918c0f5",
+      "passes": 2,
       "pr": 15663
     },
     ".agents/services/hosting/cloudflare-platform-skill/email-workers.md": {
@@ -2623,9 +2623,9 @@
       "pr": 15481
     },
     ".agents/services/hosting/cloudflare-platform-skill/kv-gotchas.md": {
-      "at": "2026-04-02T21:58:19Z",
-      "hash": "839f69b3a40ac4728392bc8bf8396b643274c96c",
-      "passes": 1,
+      "at": "2026-04-03T11:53:58Z",
+      "hash": "3a79a0d94e7609e38b0135f9dba6400beab1f576",
+      "passes": 2,
       "pr": 15645
     },
     ".agents/services/hosting/cloudflare-platform-skill/kv-patterns.md": {
@@ -2671,9 +2671,9 @@
       "pr": 14916
     },
     ".agents/services/hosting/cloudflare-platform-skill/pages-functions-gotchas.md": {
-      "at": "2026-04-02T21:58:19Z",
-      "hash": "67350510852f0967a6591a03b13812ae2c7899d1",
-      "passes": 1,
+      "at": "2026-04-03T11:53:58Z",
+      "hash": "5042b2b4bff1ba15c9f564f97af842244453029d",
+      "passes": 2,
       "pr": 15646
     },
     ".agents/services/hosting/cloudflare-platform-skill/pages-functions-patterns.md": {
@@ -3620,9 +3620,9 @@
       "pr": 12376
     },
     ".agents/tools/build-agent/agent-testing.md": {
-      "at": "2026-04-02T21:58:18Z",
-      "hash": "cc7b9b5e44e530964c79af624de3408b1076cbe3",
-      "passes": 1,
+      "at": "2026-04-03T11:54:02Z",
+      "hash": "1e58098f926339b4837807611db64d45e8246c91",
+      "passes": 2,
       "pr": 15662
     },
     ".agents/tools/build-agent/build-agent.md": {
@@ -4978,9 +4978,9 @@
       "pr": 13841
     },
     ".agents/workflows/mission-skill-learning.md": {
-      "at": "2026-04-01T20:59:28Z",
-      "hash": "dd665af8ed215a57226bbb176cee5ee5a552ee65",
-      "passes": 1,
+      "at": "2026-04-03T11:54:11Z",
+      "hash": "83583db20a5c20a591850f951a067de35398a6d0",
+      "passes": 2,
       "pr": 14996
     },
     ".agents/workflows/multi-repo-workspace.md": {
@@ -5080,15 +5080,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-04-03T04:23:04Z",
-      "hash": "cdc7525cc6728e14cd8f2407961219fe9ed99b13",
-      "passes": 19,
+      "at": "2026-04-03T11:54:11Z",
+      "hash": "ccd9e60fddcfeb10e9318812f24bfba24fbc2b8e",
+      "passes": 20,
       "pr": 15470
     },
     "setup.sh": {
-      "at": "2026-04-03T04:23:05Z",
-      "hash": "2eb678f3aac8976d6d6abe4400dc0c0f39a3bf44",
-      "passes": 19,
+      "at": "2026-04-03T11:54:12Z",
+      "hash": "e2643b4c9540cadb77a124c9e4ac6ddabfb2f3b0",
+      "passes": 20,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -5152,14 +5152,292 @@
       "pr": 15470
     },
     ".agents/tools/code-review/management.md": {
-      "hash": "9c54376593091811cc3981781814336a892d0e7f11ce5a29b8ada517c22f6237",
+      "hash": "f3bcdd56d8b720302d905c246e4a5720dc500be5",
       "status": "simplified",
-      "issue": 16257
+      "issue": 16257,
+      "at": "2026-04-03T11:54:03Z",
+      "passes": 1
     },
     ".agents/services/hosting/cloudflare-platform-skill/wrangler.md": {
-      "hash": "9b89ade16613a27d028233cbff7cbb915e089cc7",
-      "at": "2026-04-03T09:34:09Z",
+      "hash": "9888fe0a3427bb360be2cc3a111064ceff4a863b",
+      "at": "2026-04-03T11:53:59Z",
       "pr": null,
+      "passes": 2
+    },
+    ".agents/seo/ai-agent-discovery.md": {
+      "hash": "b80db727a51fefd4805ea5a64c203cde01dc6712",
+      "at": "2026-04-03T11:54:12Z",
+      "pr": 16541,
+      "passes": 1
+    },
+    ".agents/tools/deployment/agent-skills.md": {
+      "hash": "f87f82d19f5adc7267836c963cef8b6ecbc7fb5a",
+      "at": "2026-04-03T11:54:13Z",
+      "pr": 16540,
+      "passes": 1
+    },
+    ".agents/tools/mobile/xcodebuild-mcp.md": {
+      "hash": "7de1a6f27f79e78e4b33ec6a8c81d92342cf0922",
+      "at": "2026-04-03T11:54:13Z",
+      "pr": 16539,
+      "passes": 1
+    },
+    ".agents/reference/define-probes/research.md": {
+      "hash": "ad3ee2324999918fa0fbfca29e13e16fd0f6bb35",
+      "at": "2026-04-03T11:54:13Z",
+      "pr": 16538,
+      "passes": 1
+    },
+    ".agents/scripts/secretlint-helper.sh": {
+      "hash": "ebb41d9b800015f47e367e09caecda5ee7725ab7",
+      "at": "2026-04-03T11:54:13Z",
+      "pr": 16537,
+      "passes": 1
+    },
+    ".agents/scripts/seo-analysis-helper.sh": {
+      "hash": "fe50f85bb1cb9d24286bb37d183b1eafc25ec541",
+      "at": "2026-04-03T11:54:13Z",
+      "pr": 16536,
+      "passes": 1
+    },
+    ".agents/scripts/commands/cross-review.md": {
+      "hash": "6ac59e81458dd68a29d1ba81a5d178679d156fcd",
+      "at": "2026-04-03T11:54:13Z",
+      "pr": 16528,
+      "passes": 1
+    },
+    ".agents/scripts/commands/performance.md": {
+      "hash": "04ce3fd53b737d4f08b6983075a6acd50de3c9a5",
+      "at": "2026-04-03T11:54:13Z",
+      "pr": 16527,
+      "passes": 1
+    },
+    ".agents/legal.md": {
+      "hash": "b2f5c0c595082613b430121ff3e1347f759e0700",
+      "at": "2026-04-03T11:54:13Z",
+      "pr": 16526,
+      "passes": 1
+    },
+    ".agents/tools/code-review/skill-scanner.md": {
+      "hash": "3f8511a2458436c1e8efe28e9c5227428e83da0f",
+      "at": "2026-04-03T11:54:13Z",
+      "pr": 16525,
+      "passes": 1
+    },
+    ".agents/marketing-sales/cro-chapter-21.md": {
+      "hash": "c32a8b9e1fba8691204c235115e53b63866d50f3",
+      "at": "2026-04-03T11:54:13Z",
+      "pr": 16514,
+      "passes": 1
+    },
+    ".agents/tools/context/openapi-search.md": {
+      "hash": "9b90c34f31571d7df240b6f98e4c3dc9c76f7f2e",
+      "at": "2026-04-03T11:54:13Z",
+      "pr": 16513,
+      "passes": 1
+    },
+    ".agents/tools/browser/playwright.md": {
+      "hash": "e1ff8edf9424a19c3d3dd1c369d0489e54f7b141",
+      "at": "2026-04-03T11:54:13Z",
+      "pr": 16512,
+      "passes": 1
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/realtime-sfu-gotchas.md": {
+      "hash": "1c8265f439e8ac9e4d1a6c0f888d7d7812921c5c",
+      "at": "2026-04-03T11:54:13Z",
+      "pr": 16502,
+      "passes": 1
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/queues-gotchas.md": {
+      "hash": "6980303ffbf4bd1d5bbd434442f7188e298efed8",
+      "at": "2026-04-03T11:54:13Z",
+      "pr": 16501,
+      "passes": 1
+    },
+    ".agents/tools/browser/browser-benchmark-scripts-01-playwright.md": {
+      "hash": "491b2958ceab8fcdfe0beafb4d0bf0d168d2199c",
+      "at": "2026-04-03T11:54:13Z",
+      "pr": 16500,
+      "passes": 1
+    },
+    ".agents/tools/git/github-cli.md": {
+      "hash": "dbc4e2c3b4140e5631e6e03994c68a941d11b1ad",
+      "at": "2026-04-03T11:54:14Z",
+      "pr": 16499,
+      "passes": 1
+    },
+    ".agents/seo/query-fanout-research.md": {
+      "hash": "314f90ae6018e6e5f2796d7ce877453187bb6c29",
+      "at": "2026-04-03T11:54:14Z",
+      "pr": 16495,
+      "passes": 1
+    },
+    ".agents/tools/context/dspyground.md": {
+      "hash": "cc612715f76465057c9f47363400a203994cbd40",
+      "at": "2026-04-03T11:54:14Z",
+      "pr": 16494,
+      "passes": 1
+    },
+    ".agents/tools/programming/modern-javascript-skill/immutability.md": {
+      "hash": "bfadffb9d971049a407c8c48c2dd4d858da039a6",
+      "at": "2026-04-03T11:54:14Z",
+      "pr": 16493,
+      "passes": 1
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/api-shield-patterns.md": {
+      "hash": "d023e1ac72a2f29b7e821a93ece163726b419a77",
+      "at": "2026-04-03T11:54:14Z",
+      "pr": 16481,
+      "passes": 1
+    },
+    ".agents/tools/local-models/huggingface.md": {
+      "hash": "f1cfbf6a979f5b789de3b9a358883ed0c5c57030",
+      "at": "2026-04-03T11:54:14Z",
+      "pr": 16479,
+      "passes": 1
+    },
+    ".agents/tools/deployment/cloudron-git-reference.md": {
+      "hash": "76c053a118c8fd08c126bf8a6e54cac3a4eae0c2",
+      "at": "2026-04-03T11:54:14Z",
+      "pr": 16478,
+      "passes": 1
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/realtime-sfu-patterns.md": {
+      "hash": "5ddb6520a1364583168350d32784c001f7bcb7c7",
+      "at": "2026-04-03T11:54:14Z",
+      "pr": 16477,
+      "passes": 1
+    },
+    ".agents/tools/video/remotion-display-captions.md": {
+      "hash": "d019511525698e04eb9485a13a4ede10ee0c94c3",
+      "at": "2026-04-03T11:54:14Z",
+      "pr": 16476,
+      "passes": 1
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/pipelines.md": {
+      "hash": "3e2817c3aa952895211444559e4ebfecbc7da600",
+      "at": "2026-04-03T11:54:14Z",
+      "pr": 16475,
+      "passes": 1
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/workers-patterns.md": {
+      "hash": "42343be0bc849aed9f1fc3ed5b0e590ccee248d6",
+      "at": "2026-04-03T11:54:14Z",
+      "pr": 16474,
+      "passes": 1
+    },
+    ".agents/tools/browser/chromium-debug-use.md": {
+      "hash": "67ee04fa1b7d6c3c62137e37158e678303224a92",
+      "at": "2026-04-03T11:54:14Z",
+      "pr": 16473,
+      "passes": 1
+    },
+    ".agents/scripts/commands/pulse-sweep.md": {
+      "hash": "7212fe6c0a3ad8b8614d656a3fca67fd80d02cc1",
+      "at": "2026-04-03T11:54:14Z",
+      "pr": 16472,
+      "passes": 1
+    },
+    ".agents/scripts/issue-sync-lib.sh": {
+      "hash": "9f29ed93cd738e7aa49fe3c1448f03bfabebc971",
+      "at": "2026-04-03T11:54:14Z",
+      "pr": 16471,
+      "passes": 1
+    },
+    ".agents/services/database/postgres-drizzle-skill.md": {
+      "hash": "9ccc5e6c2d06382573e726d3c7e45799e772c7ab",
+      "at": "2026-04-03T11:54:15Z",
+      "pr": 16450,
+      "passes": 1
+    },
+    ".agents/tools/code-review/tools.md": {
+      "hash": "f293782edf944eb949b549a368d8c704e26cd789",
+      "at": "2026-04-03T11:54:15Z",
+      "pr": 16449,
+      "passes": 1
+    },
+    ".agents/reference/define-probes/feature.md": {
+      "hash": "74a4d468ffc96d6c402a9e74cd5b8a4e81e0d8a2",
+      "at": "2026-04-03T11:54:15Z",
+      "pr": 16447,
+      "passes": 1
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/cron-triggers.md": {
+      "hash": "dfabe33774ae17284c3ede934ec994d82ed3d324",
+      "at": "2026-04-03T11:54:15Z",
+      "pr": 16445,
+      "passes": 1
+    },
+    ".agents/marketing-sales/direct-response-copy-frameworks-email-sequences.md": {
+      "hash": "b594411242a14e362274593486ec16fdf2862f80",
+      "at": "2026-04-03T11:54:15Z",
+      "pr": 16443,
+      "passes": 1
+    },
+    ".agents/tools/git/git-security.md": {
+      "hash": "7e362c40925cfe604ba484cf3e06993edf41c4ad",
+      "at": "2026-04-03T11:54:15Z",
+      "pr": 16442,
+      "passes": 1
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/hyperdrive-patterns.md": {
+      "hash": "c8ef92c95d372bb1e4aa7a8a4a6a5f4c10f8ea6e",
+      "at": "2026-04-03T11:54:15Z",
+      "pr": 16441,
+      "passes": 1
+    },
+    ".agents/aidevops/security.md": {
+      "hash": "40a30044a14e7309b142c11970c87f603e9303d4",
+      "at": "2026-04-03T11:54:15Z",
+      "pr": 16429,
+      "passes": 1
+    },
+    ".agents/tools/git.md": {
+      "hash": "9bc113efe808b36914cead169e86a5282a2d9d0e",
+      "at": "2026-04-03T11:54:15Z",
+      "pr": 16428,
+      "passes": 1
+    },
+    ".agents/reference/orchestration.md": {
+      "hash": "9cdfd8a8b2ea2122f523b7f8fc7d6e496c968c16",
+      "at": "2026-04-03T11:54:15Z",
+      "pr": 16427,
+      "passes": 1
+    },
+    ".agents/scripts/commands/runners-check.md": {
+      "hash": "6c6ee913ac0c1d85160533b60b64502c8fcc9cfe",
+      "at": "2026-04-03T11:54:15Z",
+      "pr": 16418,
+      "passes": 1
+    },
+    ".agents/reference/session.md": {
+      "hash": "b309fad6b7e022fa0499919d57c53d5796dd11e2",
+      "at": "2026-04-03T11:54:15Z",
+      "pr": 16417,
+      "passes": 1
+    },
+    ".agents/workflows/branch.md": {
+      "hash": "cd2507f1889283d8b0922a389cb93d803d31945c",
+      "at": "2026-04-03T11:54:15Z",
+      "pr": 16416,
+      "passes": 1
+    },
+    ".agents/workflows/worktree.md": {
+      "hash": "0be096cde3a0156616f962054fb08c60e38b0938",
+      "at": "2026-04-03T11:54:16Z",
+      "pr": 16415,
+      "passes": 1
+    },
+    ".agents/aidevops/service-links.md": {
+      "hash": "41b35c410df5209c3c66a5678e237822f1fa3667",
+      "at": "2026-04-03T11:54:16Z",
+      "pr": 16410,
+      "passes": 1
+    },
+    ".agents/content/heygen-skill/rules-video-status.md": {
+      "hash": "6cfdb227e3fdc94d81c9e877f353d10dd456cec3",
+      "at": "2026-04-03T11:54:16Z",
+      "pr": 16409,
       "passes": 1
     }
   },
