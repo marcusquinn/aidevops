@@ -10,8 +10,6 @@ metadata:
 
 ## Setup
 
-Install and import:
-
 ```bash
 npx remotion add @remotion/media  # npm; use bunx / yarn dlx / pnpm dlx for others
 ```
@@ -45,9 +43,6 @@ return (
 Wrap in `<Sequence>`:
 
 ```tsx
-import { Sequence, staticFile } from "remotion";
-import { Video } from "@remotion/media";
-
 const { fps } = useVideoConfig();
 return (
   <Sequence from={1 * fps}>
@@ -56,7 +51,7 @@ return (
 );
 ```
 
-## Sizing and Position
+## Sizing
 
 Use the `style` prop:
 
@@ -77,7 +72,6 @@ Use the `style` prop:
 Dynamic (fade in over 1s):
 
 ```tsx
-import { interpolate } from "remotion";
 const { fps } = useVideoConfig();
 return (
   <Video
