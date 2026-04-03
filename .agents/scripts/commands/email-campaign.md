@@ -4,34 +4,24 @@ agent: Build+
 mode: subagent
 ---
 
-Manage newsletter and broadcast campaigns: list setup, send workflow, and analytics review.
-
 Arguments: $ARGUMENTS
 
 ## Workflow
 
-**Step 1 — Parse intent:** Extract campaign type (`newsletter`, `broadcast`, `sequence`), action (`create`, `schedule`, `send`, `pause`, `status`, `analytics`), and optional audience segment. If type is missing, request it.
-
-**Step 2 — Validate inputs:** For create/schedule/send confirm: subject + preview text, audience segment, single primary CTA, send window/timezone, compliance footer + unsubscribe handling.
-
-**Step 3 — Execute:**
+1. **Parse intent:** Extract campaign type (`newsletter`, `broadcast`, `sequence`), action (`create`, `schedule`, `send`, `pause`, `status`, `analytics`), and optional audience segment. Missing type → request it.
+2. **Validate:** For create/schedule/send confirm: subject + preview text, audience segment, single primary CTA, send window/timezone, compliance footer + unsubscribe handling.
+3. **Execute:**
 
 ```bash
-# Create campaign draft
 ~/.aidevops/agents/scripts/email-agent-helper.sh send --mission "$MISSION_ID" --template "$TEMPLATE"
-
-# Content and infrastructure preflight
 ~/.aidevops/agents/scripts/email-health-check-helper.sh precheck "$DOMAIN" "$HTML_FILE"
-
-# Delivery readiness
 ~/.aidevops/agents/scripts/email-delivery-test-helper.sh report "$DOMAIN"
 ```
 
 CRM-first operations (segmentation, automations, broadcasts) → route to configured CRM tooling flow.
 
-**Step 4 — Report:** campaign type/ID/state, segment size + send count, send window/cadence, key metrics (open, click, reply, unsubscribe, spam complaint), recommended optimization action.
-
-**Step 5 — Follow-up options:** A/B test subject lines · re-segment non-openers · tune CTA · schedule next in sequence · export performance summary.
+4. **Report:** campaign type/ID/state, segment size + send count, send window/cadence, key metrics (open, click, reply, unsubscribe, spam complaint), recommended optimization action.
+5. **Follow-up:** A/B test subject lines · re-segment non-openers · tune CTA · schedule next in sequence · export performance summary.
 
 ## Commands
 
@@ -45,7 +35,7 @@ CRM-first operations (segmentation, automations, broadcasts) → route to config
 
 ## Related
 
-- `content/distribution-email.md` - Newsletter and sequence strategy
-- `services/email/email-testing.md` - Design and delivery testing workflow
-- `services/email/email-delivery-test.md` - Inbox placement and spam scoring
-- `services/email/email-health-check.md` - DNS and content precheck
+- `content/distribution-email.md` — Newsletter and sequence strategy
+- `services/email/email-testing.md` — Design and delivery testing workflow
+- `services/email/email-delivery-test.md` — Inbox placement and spam scoring
+- `services/email/email-health-check.md` — DNS and content precheck
