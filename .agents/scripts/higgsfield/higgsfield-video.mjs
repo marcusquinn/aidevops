@@ -69,76 +69,76 @@ function selectVideoModel(options) {
 // Video page interaction helpers
 // ---------------------------------------------------------------------------
 
-export async function uploadStartFrame(page, imageFile) {
-  console.log(`Uploading start frame: ${imageFile}`);
-
-  // Remove existing start frame if present
+async function removeExistingStartFrame(page) {
   const existingFrame = page.getByRole('button', { name: 'Uploaded image' });
-  if (await existingFrame.count() > 0) {
-    const smallButtons = await page.evaluate(() => {
-      const btns = [...document.querySelectorAll('main button')];
-      return btns
-        .filter(b => {
-          const r = b.getBoundingClientRect();
-          return r.width <= 24 && r.height <= 24 && r.y > 200 && r.y < 300;
-        })
-        .map(b => ({ x: b.getBoundingClientRect().x + 10, y: b.getBoundingClientRect().y + 10 }));
-    });
-    if (smallButtons.length > 0) {
-      await page.mouse.click(smallButtons[0].x, smallButtons[0].y);
-      await page.waitForTimeout(1500);
-      console.log('Removed existing start frame');
-    }
+  if (await existingFrame.count() === 0) return;
+  const smallButtons = await page.evaluate(() => {
+    const btns = [...document.querySelectorAll('main button')];
+    return btns
+      .filter(b => {
+        const r = b.getBoundingClientRect();
+        return r.width <= 24 && r.height <= 24 && r.y > 200 && r.y < 300;
+      })
+      .map(b => ({ x: b.getBoundingClientRect().x + 10, y: b.getBoundingClientRect().y + 10 }));
+  });
+  if (smallButtons.length > 0) {
+    await page.mouse.click(smallButtons[0].x, smallButtons[0].y);
+    await page.waitForTimeout(1500);
+    console.log('Removed existing start frame');
   }
+}
 
-  // Strategy A: Click the "Upload image" button
+async function tryUploadViaButton(page, imageFile) {
   const uploadBtn = page.getByRole('button', { name: /Upload image/ });
-  if (await uploadBtn.count() > 0) {
-    try {
-      const [fileChooser] = await Promise.all([
-        page.waitForEvent('filechooser', { timeout: 10000 }),
-        uploadBtn.click({ force: true }),
-      ]);
-      await fileChooser.setFiles(imageFile);
-      await page.waitForTimeout(3000);
-      console.log('Start frame uploaded via Upload button');
-      return true;
-    } catch (uploadErr) {
-      console.log(`Upload button approach failed: ${uploadErr.message}`);
-    }
+  if (await uploadBtn.count() === 0) return false;
+  try {
+    const [fileChooser] = await Promise.all([
+      page.waitForEvent('filechooser', { timeout: 10000 }),
+      uploadBtn.click({ force: true }),
+    ]);
+    await fileChooser.setFiles(imageFile);
+    await page.waitForTimeout(3000);
+    console.log('Start frame uploaded via Upload button');
+    return true;
+  } catch (uploadErr) {
+    console.log(`Upload button approach failed: ${uploadErr.message}`);
+    return false;
   }
+}
 
-  // Strategy B: Click the "Start frame" text/area directly
+async function tryUploadViaStartFrameArea(page, imageFile) {
   const startFrameBtn = page.locator('text=Start frame').first();
-  if (await startFrameBtn.count() > 0) {
-    try {
-      const [fileChooser] = await Promise.all([
-        page.waitForEvent('filechooser', { timeout: 10000 }),
-        startFrameBtn.click({ force: true }),
-      ]);
-      await fileChooser.setFiles(imageFile);
-      await page.waitForTimeout(3000);
-      console.log('Start frame uploaded via Start frame area');
-      return true;
-    } catch (err) {
-      console.log(`Start frame area click failed: ${err.message}`);
-    }
+  if (await startFrameBtn.count() === 0) return false;
+  try {
+    const [fileChooser] = await Promise.all([
+      page.waitForEvent('filechooser', { timeout: 10000 }),
+      startFrameBtn.click({ force: true }),
+    ]);
+    await fileChooser.setFiles(imageFile);
+    await page.waitForTimeout(3000);
+    console.log('Start frame uploaded via Start frame area');
+    return true;
+  } catch (err) {
+    console.log(`Start frame area click failed: ${err.message}`);
+    return false;
   }
+}
 
-  // Strategy C: Use hidden file input
+async function tryUploadViaFileInput(page, imageFile) {
   const fileInput = page.locator('input[type="file"]');
-  if (await fileInput.count() > 0) {
-    try {
-      await fileInput.first().setInputFiles(imageFile);
-      await page.waitForTimeout(3000);
-      console.log('Start frame uploaded via hidden file input');
-      return true;
-    } catch (err) {
-      console.log(`Hidden file input failed: ${err.message}`);
-    }
+  if (await fileInput.count() === 0) return false;
+  try {
+    await fileInput.first().setInputFiles(imageFile);
+    await page.waitForTimeout(3000);
+    console.log('Start frame uploaded via hidden file input');
+    return true;
+  } catch (err) {
+    console.log(`Hidden file input failed: ${err.message}`);
+    return false;
   }
+}
 
-  // Strategy D: Click coordinates of the Start frame box
+async function tryUploadViaCoordinates(page, imageFile) {
   try {
     const [fileChooser] = await Promise.all([
       page.waitForEvent('filechooser', { timeout: 5000 }),
@@ -152,6 +152,45 @@ export async function uploadStartFrame(page, imageFile) {
     console.log('WARNING: Could not upload start frame image (all strategies failed)');
     return false;
   }
+}
+
+export async function uploadStartFrame(page, imageFile) {
+  console.log(`Uploading start frame: ${imageFile}`);
+  await removeExistingStartFrame(page);
+  return (
+    await tryUploadViaButton(page, imageFile) ||
+    await tryUploadViaStartFrameArea(page, imageFile) ||
+    await tryUploadViaFileInput(page, imageFile) ||
+    await tryUploadViaCoordinates(page, imageFile)
+  );
+}
+
+async function findModelButtonInDropdown(page, uiModelName) {
+  const matchingBtns = await page.evaluate((modelName) => {
+    return [...document.querySelectorAll('button')]
+      .filter(b => b.textContent?.includes(modelName) && b.offsetParent !== null)
+      .map(b => {
+        const r = b.getBoundingClientRect();
+        return { x: r.x, y: r.y, w: r.width, h: r.height, text: b.textContent?.trim()?.substring(0, 60) };
+      })
+      .filter(b => b.x < 800 && b.x > 100);
+  }, uiModelName);
+  return matchingBtns;
+}
+
+async function selectModelViaSearch(page, uiModelName) {
+  const searchBox = page.locator('input[placeholder*="Search"]');
+  if (await searchBox.count() === 0) return false;
+  await searchBox.fill(uiModelName);
+  await page.waitForTimeout(1000);
+  const filtered = await findModelButtonInDropdown(page, uiModelName);
+  if (filtered.length > 0) {
+    await page.mouse.click(filtered[0].x + filtered[0].w / 2, filtered[0].y + filtered[0].h / 2);
+    await page.waitForTimeout(1500);
+    console.log(`Selected model via search: ${uiModelName}`);
+    return true;
+  }
+  return false;
 }
 
 async function selectVideoModelFromDropdown(page, model) {
@@ -170,16 +209,8 @@ async function selectVideoModelFromDropdown(page, model) {
   await modelSelector.click({ force: true });
   await page.waitForTimeout(1500);
 
+  const matchingBtns = await findModelButtonInDropdown(page, uiModelName);
   let selected = false;
-  const matchingBtns = await page.evaluate((modelName) => {
-    return [...document.querySelectorAll('button')]
-      .filter(b => b.textContent?.includes(modelName) && b.offsetParent !== null)
-      .map(b => {
-        const r = b.getBoundingClientRect();
-        return { x: r.x, y: r.y, w: r.width, h: r.height, text: b.textContent?.trim()?.substring(0, 60) };
-      })
-      .filter(b => b.x < 800 && b.x > 100);
-  }, uiModelName);
 
   if (matchingBtns.length > 0) {
     const btn = matchingBtns[0];
@@ -189,28 +220,8 @@ async function selectVideoModelFromDropdown(page, model) {
     console.log(`Selected model from dropdown: ${btn.text}`);
   }
 
-  // Fallback: use search box
   if (!selected) {
-    const searchBox = page.locator('input[placeholder*="Search"]');
-    if (await searchBox.count() > 0) {
-      await searchBox.fill(uiModelName);
-      await page.waitForTimeout(1000);
-      const filtered = await page.evaluate((modelName) => {
-        return [...document.querySelectorAll('button')]
-          .filter(b => b.textContent?.includes(modelName) && b.offsetParent !== null)
-          .map(b => {
-            const r = b.getBoundingClientRect();
-            return { x: r.x, y: r.y, w: r.width, h: r.height };
-          })
-          .filter(b => b.x < 800 && b.x > 100);
-      }, uiModelName);
-      if (filtered.length > 0) {
-        await page.mouse.click(filtered[0].x + filtered[0].w / 2, filtered[0].y + filtered[0].h / 2);
-        await page.waitForTimeout(1500);
-        selected = true;
-        console.log(`Selected model via search: ${uiModelName}`);
-      }
-    }
+    selected = await selectModelViaSearch(page, uiModelName);
   }
 
   if (!selected) {
@@ -243,7 +254,6 @@ async function enableVideoUnlimitedMode(page) {
 }
 
 async function fillVideoPrompt(page, prompt) {
-  // Strategy 1: ARIA textbox named "Prompt"
   const promptByRole = page.getByRole('textbox', { name: 'Prompt' });
   if (await promptByRole.count() > 0) {
     await promptByRole.click({ force: true });
@@ -252,7 +262,6 @@ async function fillVideoPrompt(page, prompt) {
     console.log(`Entered prompt via ARIA textbox: "${prompt.substring(0, 60)}..."`);
     return true;
   }
-  // Strategy 2: textarea or input with placeholder
   const promptInput = page.locator('textarea, input[placeholder*="Describe" i], input[placeholder*="prompt" i]');
   if (await promptInput.count() > 0) {
     await promptInput.first().click({ force: true });
@@ -261,7 +270,6 @@ async function fillVideoPrompt(page, prompt) {
     console.log(`Entered prompt via textarea: "${prompt.substring(0, 60)}..."`);
     return true;
   }
-  // Strategy 3: contenteditable div
   const editable = page.locator('[contenteditable="true"], [role="textbox"]');
   if (await editable.count() > 0) {
     await editable.first().click({ force: true });
@@ -334,6 +342,26 @@ export async function logVideoPollingProgress(page, state, { elapsedSec, wasProc
   return { wasProcessing, lastRefreshTime };
 }
 
+function evaluateHistoryState(items, prevCount, prevPrompt, ourPrompt) {
+  const currentCount = items.length;
+  const firstItem = items[0];
+  if (!firstItem) return { currentCount, isComplete: false, isProcessing: false };
+
+  const itemText = firstItem.textContent || '';
+  const isProcessing = itemText.includes('In queue') || itemText.includes('Processing') || itemText.includes('Cancel');
+
+  const textbox = firstItem.querySelector('[role="textbox"], textarea');
+  const promptText = textbox?.textContent?.trim() || '';
+  const promptPrefix = promptText.substring(0, 60);
+
+  const matchesOurPrompt = ourPrompt && promptPrefix.includes(ourPrompt.substring(0, 40));
+  const isNewItem = prevPrompt && promptPrefix !== prevPrompt.substring(0, 60);
+  const countIncreased = currentCount > prevCount;
+  const isComplete = !isProcessing && (matchesOurPrompt || isNewItem || countIncreased);
+
+  return { currentCount, isProcessing, promptText: promptPrefix, matchesOurPrompt, isNewItem, countIncreased, isComplete };
+}
+
 export async function waitForVideoGeneration(page, historyState, prompt, options = {}) {
   const timeout = options.timeout || 600000;
   const startTime = Date.now();
@@ -355,7 +383,16 @@ export async function waitForVideoGeneration(page, historyState, prompt, options
     await page.waitForTimeout(pollInterval);
     await dismissAllModals(page);
 
-    const state = await page.evaluate(({ prevCount, prevPrompt, ourPrompt }) => {
+    const state = await page.evaluate(
+      ({ prevCount, prevPrompt, ourPrompt }) => {
+        const items = [...document.querySelectorAll('main li')];
+        return evaluateHistoryState(items, prevCount, prevPrompt, ourPrompt);
+      },
+      { prevCount: existingCount, prevPrompt: existingNewestPrompt, ourPrompt: submittedPromptPrefix }
+    ).catch(() => ({ currentCount: 0, isComplete: false, isProcessing: false }));
+
+    // evaluateHistoryState runs in page context, so we inline it here
+    const rawState = await page.evaluate(({ prevCount, prevPrompt, ourPrompt }) => {
       const items = document.querySelectorAll('main li');
       const currentCount = items.length;
       const firstItem = items[0];
@@ -378,14 +415,14 @@ export async function waitForVideoGeneration(page, historyState, prompt, options
 
     const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(0);
 
-    if (state.isComplete) {
-      const reason = state.matchesOurPrompt ? 'prompt match' : state.isNewItem ? 'new item' : 'count increase';
-      console.log(`Video generation complete! (${elapsedSec}s, ${state.currentCount} items, ${reason}, prompt: "${state.promptText}...")`);
+    if (rawState.isComplete) {
+      const reason = rawState.matchesOurPrompt ? 'prompt match' : rawState.isNewItem ? 'new item' : 'count increase';
+      console.log(`Video generation complete! (${elapsedSec}s, ${rawState.currentCount} items, ${reason}, prompt: "${rawState.promptText}...")`);
       return true;
     }
 
     ({ wasProcessing, lastRefreshTime } = await logVideoPollingProgress(
-      page, state, { elapsedSec, wasProcessing, lastRefreshTime, historyTab }
+      page, rawState, { elapsedSec, wasProcessing, lastRefreshTime, historyTab }
     ));
   }
 
@@ -510,7 +547,6 @@ async function fetchProjectApiData(page) {
   await page.waitForTimeout(6000);
   page.off('response', apiHandler);
 
-  // Fallback: Direct API fetch if interception missed the response
   if (!projectApiData) {
     try {
       projectApiData = await page.evaluate(async () => {
@@ -607,7 +643,6 @@ export async function downloadVideoFromHistory(page, outputDir, metadata = {}, o
       promptSnippet: videoInfo?.promptText?.substring(0, 80) || metadata.promptSnippet,
     };
 
-    // Strategy 1: Full-quality CloudFront URL via project API
     console.log('Extracting full-quality video URL from API data...');
     const projectApiData = await fetchProjectApiWithPolling(page, { shouldWait, maxWaitMs });
 
@@ -621,7 +656,6 @@ export async function downloadVideoFromHistory(page, outputDir, metadata = {}, o
       console.log('API interception did not yield a video URL');
     }
 
-    // Strategy 2: CDN fallback (lower quality motion template)
     if (downloaded.length === 0) {
       const path = await downloadVideoViaCdnFallback(page, outputDir, combinedMeta, options);
       if (path) downloaded.push(path);
@@ -735,7 +769,6 @@ async function uploadLipsyncCharacter(page, imageFile) {
     console.log('Character image uploaded');
     return true;
   }
-  // Try clicking an upload button first
   const uploadBtn = page.locator('button:has-text("Upload"), [class*="upload"]');
   if (await uploadBtn.count() > 0) {
     await uploadBtn.first().click({ force: true });
@@ -877,47 +910,11 @@ export async function generateLipsync(options = {}) {
 // ---------------------------------------------------------------------------
 
 async function uploadJobStartFrame(page, imageFile, promptSnippet) {
-  const existingFrame = page.getByRole('button', { name: 'Uploaded image' });
-  if (await existingFrame.count() > 0) {
-    const smallButtons = await page.evaluate(() => {
-      const btns = [...document.querySelectorAll('main button')];
-      return btns
-        .filter(b => { const r = b.getBoundingClientRect(); return r.width <= 24 && r.height <= 24 && r.y > 200 && r.y < 300; })
-        .map(b => ({ x: b.getBoundingClientRect().x + 10, y: b.getBoundingClientRect().y + 10 }));
-    });
-    if (smallButtons.length > 0) {
-      await page.mouse.click(smallButtons[0].x, smallButtons[0].y);
-      await page.waitForTimeout(1500);
-    }
-  }
+  await removeExistingStartFrame(page);
 
-  let uploaded = false;
-  const uploadBtn = page.getByRole('button', { name: /Upload image/ });
-  if (await uploadBtn.count() > 0) {
-    try {
-      const [fileChooser] = await Promise.all([
-        page.waitForEvent('filechooser', { timeout: 10000 }),
-        uploadBtn.click({ force: true }),
-      ]);
-      await fileChooser.setFiles(imageFile);
-      await page.waitForTimeout(3000);
-      uploaded = true;
-    } catch {}
-  }
-  if (!uploaded) {
-    const startFrameBtn = page.locator('text=Start frame').first();
-    if (await startFrameBtn.count() > 0) {
-      try {
-        const [fileChooser] = await Promise.all([
-          page.waitForEvent('filechooser', { timeout: 10000 }),
-          startFrameBtn.click({ force: true }),
-        ]);
-        await fileChooser.setFiles(imageFile);
-        await page.waitForTimeout(3000);
-        uploaded = true;
-      } catch {}
-    }
-  }
+  const uploaded = await tryUploadViaButton(page, imageFile) ||
+    await tryUploadViaStartFrameArea(page, imageFile);
+
   if (!uploaded) {
     console.log(`  WARNING: Could not upload start frame for: "${promptSnippet}"`);
   }
@@ -927,24 +924,19 @@ async function uploadJobStartFrame(page, imageFile, promptSnippet) {
 async function selectJobVideoModel(page, model) {
   const uiModelName = VIDEO_MODEL_NAME_MAP[model] || model;
   const modelSelector = page.getByRole('button', { name: 'Model' });
-  if (await modelSelector.count() > 0) {
-    const currentModel = await modelSelector.textContent().catch(() => '');
-    if (!currentModel.includes(uiModelName)) {
-      await modelSelector.click({ force: true });
-      await page.waitForTimeout(1500);
-      const matchingBtns = await page.evaluate((mn) => {
-        return [...document.querySelectorAll('button')]
-          .filter(b => b.textContent?.includes(mn) && b.offsetParent !== null)
-          .map(b => { const r = b.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })
-          .filter(b => b.x < 800 && b.x > 100);
-      }, uiModelName);
-      if (matchingBtns.length > 0) {
-        await page.mouse.click(matchingBtns[0].x + matchingBtns[0].w / 2, matchingBtns[0].y + matchingBtns[0].h / 2);
-        await page.waitForTimeout(1500);
-      } else {
-        await page.keyboard.press('Escape');
-      }
-    }
+  if (await modelSelector.count() === 0) return;
+
+  const currentModel = await modelSelector.textContent().catch(() => '');
+  if (currentModel.includes(uiModelName)) return;
+
+  await modelSelector.click({ force: true });
+  await page.waitForTimeout(1500);
+  const matchingBtns = await findModelButtonInDropdown(page, uiModelName);
+  if (matchingBtns.length > 0) {
+    await page.mouse.click(matchingBtns[0].x + matchingBtns[0].w / 2, matchingBtns[0].y + matchingBtns[0].h / 2);
+    await page.waitForTimeout(1500);
+  } else {
+    await page.keyboard.press('Escape');
   }
 }
 
@@ -965,7 +957,6 @@ export async function submitVideoJobOnPage(page, sceneOptions) {
     await dismissAllModals(page);
     await selectJobVideoModel(page, model);
 
-    // Enable unlimited mode
     const unlimitedSwitch = page.getByRole('switch', { name: 'Unlimited mode' });
     if (await unlimitedSwitch.count() > 0) {
       const isChecked = await unlimitedSwitch.isChecked().catch(() => false);
@@ -975,7 +966,6 @@ export async function submitVideoJobOnPage(page, sceneOptions) {
       }
     }
 
-    // Fill prompt
     const promptByRole = page.getByRole('textbox', { name: 'Prompt' });
     if (await promptByRole.count() > 0) {
       await promptByRole.click({ force: true });
@@ -983,7 +973,6 @@ export async function submitVideoJobOnPage(page, sceneOptions) {
       await promptByRole.fill(prompt, { force: true });
     }
 
-    // Click Generate
     const generateBtn = page.locator('button:has-text("Generate")');
     if (await generateBtn.count() > 0) {
       await generateBtn.last().click({ force: true });
@@ -1059,7 +1048,6 @@ async function interceptVideoApiData(page) {
   }
   page.off('response', apiHandler);
 
-  // Fallback: direct fetch using the page's auth context
   if (!projectApiData) {
     console.log(`  API interception missed. Trying direct fetch...`);
     try {
@@ -1094,7 +1082,6 @@ function scorePromptMatch(promptA, promptB) {
 export function matchJobSetsToSubmittedJobs(submittedJobs, completedJobSets, results) {
   const matchedJobSetIds = new Set();
 
-  // Strategy 1: Prompt-based matching
   for (const job of submittedJobs) {
     if (results.has(job.sceneIndex)) continue;
     let bestMatch = null;
@@ -1117,7 +1104,6 @@ export function matchJobSetsToSubmittedJobs(submittedJobs, completedJobSets, res
     }
   }
 
-  // Strategy 2: Order-based fallback for models with empty prompts (e.g. Seedance)
   const unmatchedJobs = submittedJobs.filter(j => !results.has(j.sceneIndex) && !j._matchedJobSet);
   if (unmatchedJobs.length > 0) {
     const unmatchedJobSets = completedJobSets.filter(js => !matchedJobSetIds.has(js.id || js.prompt));

@@ -125,6 +125,12 @@ export function isUnlimitedModel(slug, commandType) {
 // Retry wrapper
 // ---------------------------------------------------------------------------
 
+function isNonRetryableError(msg) {
+  return msg.includes('unsupported content') || msg.includes('content policy') ||
+    msg.includes('No assets found') || msg.includes('not found') ||
+    msg.includes('CREDIT_GUARD');
+}
+
 export async function withRetry(fn, { maxRetries = 2, baseDelay = 3000, label = 'operation' } = {}) {
   let lastError;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -133,13 +139,7 @@ export async function withRetry(fn, { maxRetries = 2, baseDelay = 3000, label = 
     } catch (error) {
       lastError = error;
       const msg = error.message || String(error);
-
-      if (msg.includes('unsupported content') || msg.includes('content policy') ||
-          msg.includes('No assets found') || msg.includes('not found') ||
-          msg.includes('CREDIT_GUARD')) {
-        throw error;
-      }
-
+      if (isNonRetryableError(msg)) throw error;
       if (attempt < maxRetries) {
         const delay = baseDelay * Math.pow(2, attempt);
         console.log(`[retry] ${label} failed (attempt ${attempt + 1}/${maxRetries + 1}): ${msg}`);
@@ -294,6 +294,24 @@ for (const [flag, key, type, alias] of FLAG_DEFS) {
   if (alias) FLAG_MAP.set(alias, { key, type });
 }
 
+function applyFlagValue(options, def, args, i) {
+  if (def.type === 'string') {
+    options[def.key] = args[i + 1];
+    return i + 1;
+  }
+  if (def.type === 'int') {
+    options[def.key] = parseInt(args[i + 1], 10);
+    return i + 1;
+  }
+  if (def.type === 'true') { options[def.key] = true; return i; }
+  if (def.type === 'false') { options[def.key] = false; return i; }
+  if (def.type === 'compound' && args[i] === '--api-only') {
+    options.useApi = true;
+    options.apiOnly = true;
+  }
+  return i;
+}
+
 export function parseArgs() {
   const args = process.argv.slice(2);
   const command = args[0];
@@ -302,21 +320,7 @@ export function parseArgs() {
   for (let i = 1; i < args.length; i++) {
     const def = FLAG_MAP.get(args[i]);
     if (!def) continue;
-
-    if (def.type === 'string') {
-      options[def.key] = args[++i];
-    } else if (def.type === 'int') {
-      options[def.key] = parseInt(args[++i], 10);
-    } else if (def.type === 'true') {
-      options[def.key] = true;
-    } else if (def.type === 'false') {
-      options[def.key] = false;
-    } else if (def.type === 'compound') {
-      if (args[i] === '--api-only') {
-        options.useApi = true;
-        options.apiOnly = true;
-      }
-    }
+    i = applyFlagValue(options, def, args, i);
   }
 
   return { command, options };
@@ -343,7 +347,7 @@ export function saveCreditCache(creditInfo) {
   } catch { /* ignore write errors */ }
 }
 
-export function estimateCreditCost(command, options = {}) {
+function getCreditCostForCommand(command, options) {
   const typeMap = {
     image: 'image', video: 'video', lipsync: 'video',
     'video-edit': 'video-edit', 'motion-control': 'motion-control',
@@ -352,32 +356,32 @@ export function estimateCreditCost(command, options = {}) {
   };
   const modelType = typeMap[command] || command;
   const model = options.model;
-  if (model) {
-    if (isUnlimitedModel(model, modelType)) return 0;
-  } else if (options.preferUnlimited !== false) {
-    const unlimited = getUnlimitedModelForCommand(modelType);
-    if (unlimited) return 0;
+
+  if (model && isUnlimitedModel(model, modelType)) return 0;
+  if (!model && options.preferUnlimited !== false) {
+    if (getUnlimitedModelForCommand(modelType)) return 0;
   }
 
   let cost = CREDIT_COSTS[command] || 5;
-
   if (command === 'image' && options.batch) cost *= parseInt(options.batch, 10) || 1;
   if (command === 'video' && options.duration) {
     const dur = parseInt(options.duration, 10);
-    if (dur >= 10) cost = 30;
     if (dur >= 15) cost = 40;
+    else if (dur >= 10) cost = 30;
   }
   if (command === 'seed-bracket' && options.seedRange) {
     const parts = options.seedRange.split(/[-,]/);
     cost = Math.max(parts.length, 2) * 2;
   }
-
   return cost;
 }
 
+export function estimateCreditCost(command, options = {}) {
+  return getCreditCostForCommand(command, options);
+}
+
 export function checkCreditGuard(command, options = {}) {
-  if (FREE_COMMANDS.has(command)) return;
-  if (options.dryRun) return;
+  if (FREE_COMMANDS.has(command) || options.dryRun) return;
 
   const cached = getCachedCredits();
   if (!cached) return;
@@ -514,13 +518,12 @@ export function logNewInterruption(type, selector, detail) {
 export async function dismissModalsAndBanners(page) {
   return page.evaluate(() => {
     const dismissed = [];
-    // 1-2. React-Aria modals and dismiss buttons
+
     document.querySelectorAll('.react-aria-ModalOverlay, [data-rac].react-aria-ModalOverlay')
       .forEach(o => { o.remove(); dismissed.push('react-aria-modal'); });
     document.querySelectorAll('button[aria-label="Dismiss"]')
       .forEach(b => { b.click(); dismissed.push('dismiss-button'); });
 
-    // 3. Cookie banners
     for (const sel of ['[class*="cookie"]','[id*="cookie"]','[class*="consent"]','[id*="consent"]','[class*="gdpr"]','[id*="gdpr"]','[class*="CookieBanner"]']) {
       document.querySelectorAll(sel).forEach(el => {
         const ab = el.querySelector('button');
@@ -529,11 +532,9 @@ export async function dismissModalsAndBanners(page) {
       });
     }
 
-    // 4. Toasts
     document.querySelectorAll('[role="alert"],[class*="toast"],[class*="Toast"],[class*="notification"],[class*="Notification"],[class*="snackbar"]')
       .forEach(el => { const cb = el.querySelector('button'); if (cb) { cb.click(); dismissed.push('toast-close'); } });
 
-    // 5. Onboarding
     document.querySelectorAll('[class*="tooltip"][class*="onboard"],[class*="tour"],[class*="walkthrough"],[class*="Popover"][class*="guide"]')
       .forEach(el => { const sb = el.querySelector('button:last-child') || el.querySelector('button'); if (sb) { sb.click(); dismissed.push('onboarding-skip'); } else { el.remove(); dismissed.push('onboarding-remove'); } });
 
@@ -544,17 +545,14 @@ export async function dismissModalsAndBanners(page) {
 export async function dismissOverlaysAndAgreements(page) {
   return page.evaluate(() => {
     const dismissed = [];
-    // 6. Upgrade overlays
+
     document.querySelectorAll('[class*="upgrade"],[class*="paywall"],[class*="subscribe"]')
       .forEach(el => { if (el.style.position==='fixed'||el.style.position==='absolute'||getComputedStyle(el).position==='fixed') { el.remove(); dismissed.push('upgrade-overlay'); } });
 
-    // 7. Generic dialogs
     document.querySelectorAll('[role="dialog"]').forEach(d => { const p=d.parentElement; if(p&&(p.classList.contains('react-aria-ModalOverlay')||getComputedStyle(p).position==='fixed')){p.remove();dismissed.push('generic-dialog');} });
 
-    // 8. Loading overlays
     document.querySelectorAll('main .size-full.flex.items-center.justify-center').forEach(el => { if(!el.querySelector('textarea,input,button[type="submit"],form')&&el.children.length<=2){el.remove();dismissed.push('loading-overlay');} });
 
-    // 9. Media upload agreements
     document.querySelectorAll('[role="dialog"],dialog').forEach(dialog => {
       const t=dialog.textContent||'';
       if(t.includes('Media upload agreement')||t.includes('I agree, continue')||t.includes('terms of service')||t.includes('Terms of Service')){
@@ -562,11 +560,25 @@ export async function dismissOverlaysAndAgreements(page) {
       }
     });
 
-    // 10. Body unlock
     if(document.body.style.overflow==='hidden'||document.body.style.pointerEvents==='none'){document.body.style.overflow='';document.body.style.pointerEvents='';dismissed.push('body-unlock');}
 
     return dismissed;
   });
+}
+
+async function tryDismissEscapeKey(page) {
+  const remaining = await page.evaluate(() =>
+    document.querySelectorAll('.react-aria-ModalOverlay').length
+  );
+  if (remaining === 0) return;
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(500);
+  const afterEsc = await page.evaluate(() =>
+    document.querySelectorAll('.react-aria-ModalOverlay').length
+  );
+  if (afterEsc < remaining) {
+    console.log(`Escape dismissed ${remaining - afterEsc} more modal(s)`);
+  }
 }
 
 export async function dismissInterruptions(page) {
@@ -581,21 +593,7 @@ export async function dismissInterruptions(page) {
     }
   }
 
-  // Also try Escape key for any remaining react-aria modals
-  const remaining = await page.evaluate(() =>
-    document.querySelectorAll('.react-aria-ModalOverlay').length
-  );
-  if (remaining > 0) {
-    await page.keyboard.press('Escape');
-    await page.waitForTimeout(500);
-    const afterEsc = await page.evaluate(() =>
-      document.querySelectorAll('.react-aria-ModalOverlay').length
-    );
-    if (afterEsc < remaining) {
-      console.log(`Escape dismissed ${remaining - afterEsc} more modal(s)`);
-    }
-  }
-
+  await tryDismissEscapeKey(page);
   return results.length;
 }
 
@@ -707,6 +705,15 @@ export function computeFileHash(filePath) {
   }
 }
 
+function loadDedupIndex(indexPath) {
+  if (!existsSync(indexPath)) return {};
+  try {
+    return JSON.parse(readFileSync(indexPath, 'utf-8'));
+  } catch {
+    return {};
+  }
+}
+
 export function checkDuplicate(filePath, outputDir, options = {}) {
   if (options.noDedup) return null;
 
@@ -714,13 +721,7 @@ export function checkDuplicate(filePath, outputDir, options = {}) {
   if (!hash) return null;
 
   const indexPath = safeJoin(outputDir, '.dedup-index.json');
-  let index = {};
-
-  if (existsSync(indexPath)) {
-    try {
-      index = JSON.parse(readFileSync(indexPath, 'utf-8'));
-    } catch { index = {}; }
-  }
+  const index = loadDedupIndex(indexPath);
 
   if (index[hash] && index[hash] !== basename(filePath)) {
     const existingPath = safeJoin(outputDir, sanitizePathSegment(index[hash], 'unknown'));
@@ -774,6 +775,14 @@ export function buildDescriptiveFilename(metadata, originalFilename, index) {
 // Image download helpers (used by image and download modules)
 // ---------------------------------------------------------------------------
 
+async function clickDownloadButton(page) {
+  const dlBtn = page.locator('[role="dialog"] button:has-text("Download"), dialog button:has-text("Download")');
+  if (await dlBtn.count() === 0) return null;
+  const downloadPromise = page.waitForEvent('download', { timeout: 30000 }).catch(() => null);
+  await dlBtn.first().click({ force: true });
+  return downloadPromise;
+}
+
 export async function downloadImageViaDialog({ page, imgLocator, index, outputDir, extraMeta, options }) {
   await imgLocator.click({ force: true });
   await page.waitForTimeout(1500);
@@ -782,15 +791,7 @@ export async function downloadImageViaDialog({ page, imgLocator, index, outputDi
   if (await dialog.count() === 0) return null;
 
   const metadata = await extractDialogMetadata(page);
-  const dlBtn = page.locator('[role="dialog"] button:has-text("Download"), dialog button:has-text("Download")');
-  if (await dlBtn.count() === 0) {
-    await forceCloseDialogs(page);
-    return null;
-  }
-
-  const downloadPromise = page.waitForEvent('download', { timeout: 30000 }).catch(() => null);
-  await dlBtn.first().click({ force: true });
-  const download = await downloadPromise;
+  const download = await clickDownloadButton(page);
 
   if (!download) {
     await page.waitForTimeout(2000);
@@ -811,6 +812,13 @@ export async function downloadImageViaDialog({ page, imgLocator, index, outputDi
   return result.skipped ? null : result.path;
 }
 
+async function extractCdnVideoUrls(page) {
+  return page.evaluate(() => {
+    const videos = document.querySelectorAll('video source[src], video[src]');
+    return [...videos].map(v => v.src || v.getAttribute('src')).filter(Boolean);
+  });
+}
+
 export async function downloadImagesByCDN(page, indices, outputDir, extraMeta, options) {
   const downloaded = [];
   const cdnUrls = await page.evaluate(({ idxList, imgSelector }) => {
@@ -824,12 +832,8 @@ export async function downloadImagesByCDN(page, indices, outputDir, extraMeta, o
     }).filter(Boolean);
   }, { idxList: indices, imgSelector: GENERATED_IMAGE_SELECTOR });
 
-  // Also check for video elements when downloading all
   if (indices == null) {
-    const videoUrls = await page.evaluate(() => {
-      const videos = document.querySelectorAll('video source[src], video[src]');
-      return [...videos].map(v => v.src || v.getAttribute('src')).filter(Boolean);
-    });
+    const videoUrls = await extractCdnVideoUrls(page);
     for (const url of videoUrls) {
       cdnUrls.push({ url, idx: cdnUrls.length });
     }
@@ -858,6 +862,25 @@ export async function downloadImagesByCDN(page, indices, outputDir, extraMeta, o
   return downloaded;
 }
 
+async function downloadImagesViaDialog(page, generatedImgs, toDownload, outputDir, options) {
+  const downloaded = [];
+  for (let i = 0; i < toDownload; i++) {
+    try {
+      const path = await downloadImageViaDialog({
+        page, imgLocator: generatedImgs.nth(i), index: i, outputDir,
+        extraMeta: { command: 'download' }, options,
+      });
+      if (path) {
+        console.log(`Downloaded [${i + 1}/${toDownload}]: ${path}`);
+        downloaded.push(path);
+      }
+    } catch (imgErr) {
+      console.log(`Error downloading image ${i + 1}: ${imgErr.message}`);
+    }
+  }
+  return downloaded;
+}
+
 export async function downloadLatestResult(page, outputDir, count = 4, options = {}) {
   const downloaded = [];
 
@@ -870,23 +893,10 @@ export async function downloadLatestResult(page, outputDir, count = 4, options =
 
     if (imgCount > 0) {
       const toDownload = count === 0 ? imgCount : Math.min(count, imgCount);
-      for (let i = 0; i < toDownload; i++) {
-        try {
-          const path = await downloadImageViaDialog({
-            page, imgLocator: generatedImgs.nth(i), index: i, outputDir,
-            extraMeta: { command: 'download' }, options,
-          });
-          if (path) {
-            console.log(`Downloaded [${i + 1}/${toDownload}]: ${path}`);
-            downloaded.push(path);
-          }
-        } catch (imgErr) {
-          console.log(`Error downloading image ${i + 1}: ${imgErr.message}`);
-        }
-      }
+      const dialogDownloads = await downloadImagesViaDialog(page, generatedImgs, toDownload, outputDir, options);
+      downloaded.push(...dialogDownloads);
     }
 
-    // CDN fallback if dialog download failed
     if (downloaded.length === 0) {
       console.log('Falling back to direct CDN URL extraction...');
       const cdnDownloads = await downloadImagesByCDN(page, null, outputDir, { command: 'download' }, options);
@@ -926,7 +936,6 @@ export async function downloadSpecificImages(page, outputDir, indices, options =
     }
   }
 
-  // CDN fallback for any that failed
   if (downloaded.length < indices.length) {
     console.log(`Dialog download got ${downloaded.length}/${indices.length}, trying CDN fallback for remainder...`);
     const cdnDownloads = await downloadImagesByCDN(page, indices.slice(downloaded.length), outputDir, { command: 'image' }, options);
@@ -948,11 +957,9 @@ export async function extractDialogMetadata(page) {
 
     const metadata = {};
 
-    // Extract prompt text
     const textbox = dialog.querySelector('[role="textbox"], textarea');
     if (textbox) metadata.promptSnippet = textbox.textContent?.trim()?.substring(0, 80);
 
-    // Extract model info from visible text
     const modelText = dialog.textContent || '';
     const modelMatch = modelText.match(/Model:\s*([^\n]+)/i) || modelText.match(/via\s+([A-Z][^\n]+)/);
     if (modelMatch) metadata.model = modelMatch[1].trim().substring(0, 40);
@@ -1018,6 +1025,18 @@ export async function runWithConcurrency(tasks, concurrency) {
   return results;
 }
 
+function loadResumeState(options, outputDir, type) {
+  let completedIndices = new Set();
+  if (options.resume) {
+    const prevState = loadBatchState(outputDir);
+    if (prevState?.completed) {
+      completedIndices = new Set(prevState.completed);
+      console.log(`Resuming: ${completedIndices.size}/${prevState.total || '?'} already completed`);
+    }
+  }
+  return completedIndices;
+}
+
 export function initBatch(type, options, defaultConcurrency) {
   const manifestPath = options.batchFile;
   if (!manifestPath) {
@@ -1029,15 +1048,7 @@ export function initBatch(type, options, defaultConcurrency) {
   const { jobs, defaults } = loadBatchManifest(manifestPath);
   const concurrency = options.concurrency || defaultConcurrency;
   const outputDir = ensureDir(options.output || safeJoin(getDefaultOutputDir(options), `${type}-${Date.now()}`));
-
-  let completedIndices = new Set();
-  if (options.resume) {
-    const prevState = loadBatchState(outputDir);
-    if (prevState?.completed) {
-      completedIndices = new Set(prevState.completed);
-      console.log(`Resuming: ${completedIndices.size}/${jobs.length} already completed`);
-    }
-  }
+  const completedIndices = loadResumeState(options, outputDir, type);
 
   const batchState = {
     type, total: jobs.length, concurrency,
@@ -1094,6 +1105,12 @@ export function finalizeBatch({ type, batchState, results, startTime, outputDir,
 // General generation result waiter (shared by multiple commands)
 // ---------------------------------------------------------------------------
 
+async function pollForHistoryResult(page, historyTab) {
+  await page.waitForTimeout(10000);
+  await historyTab.click();
+  await page.waitForTimeout(3000);
+}
+
 export async function waitForGenerationResult(page, options, opts = {}) {
   const {
     selector = `${GENERATED_IMAGE_SELECTOR}, video`,
@@ -1110,9 +1127,7 @@ export async function waitForGenerationResult(page, options, opts = {}) {
   if (useHistoryPoll) {
     const historyTab = page.locator('[role="tab"]:has-text("History")');
     if (await historyTab.count() > 0) {
-      await page.waitForTimeout(10000);
-      await historyTab.click();
-      await page.waitForTimeout(3000);
+      await pollForHistoryResult(page, historyTab);
     }
   }
 
@@ -1207,6 +1222,51 @@ export function discoveryNeeded() {
   }
 }
 
+async function scrapeDiscoveryLinks(page) {
+  return page.evaluate(() => {
+    const allLinks = [...document.querySelectorAll('a[href]')];
+    const map = {};
+    allLinks.forEach(a => {
+      const href = a.getAttribute('href');
+      let text = a.textContent?.trim()
+        .replace(/Your browser does not support the video\.\s*/g, '')
+        .replace(/\s+/g, ' ')
+        .substring(0, 80) || '';
+      if (href && href.startsWith('/') && !href.startsWith('//') && text) {
+        if (!map[href]) map[href] = text;
+      }
+    });
+    return map;
+  });
+}
+
+async function scrapeImageModels(page) {
+  await page.goto(`${BASE_URL}/image/soul`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForTimeout(3000);
+  await dismissAllModals(page);
+  return page.evaluate(() => {
+    const modelBtns = [...document.querySelectorAll('button')].filter(b =>
+      b.textContent?.match(/soul|nano|seedream|flux|gpt|wan|kontext/i)
+    );
+    return modelBtns.map(b => b.textContent?.trim().substring(0, 60));
+  });
+}
+
+function logDiscoverySummary(links, routes, changes) {
+  console.log(`Discovery complete: ${Object.keys(links).length} paths found`);
+  console.log(`  Images: ${Object.keys(routes.image).length} models`);
+  console.log(`  Video: ${Object.keys(routes.video).length} tools`);
+  console.log(`  Apps: ${Object.keys(routes.apps).length} apps`);
+  console.log(`  Motions: ${Object.keys(routes.motions).length} presets`);
+  console.log(`  Features: ${Object.keys(routes.features).length} features`);
+  if (changes.length > 0) {
+    console.log(`\n  CHANGES since last discovery:`);
+    changes.forEach(c => console.log(`    ${c}`));
+  } else if (existsSync(ROUTES_CACHE)) {
+    console.log('  No changes since last discovery');
+  }
+}
+
 export async function runDiscovery(options = {}) {
   console.log('Running site discovery (checking for new/changed features)...');
   const { browser, context, page } = await launchBrowser({ ...options, headless: true });
@@ -1216,35 +1276,9 @@ export async function runDiscovery(options = {}) {
     await page.waitForTimeout(5000);
     await dismissAllModals(page);
 
-    const links = await page.evaluate(() => {
-      const allLinks = [...document.querySelectorAll('a[href]')];
-      const map = {};
-      allLinks.forEach(a => {
-        const href = a.getAttribute('href');
-        let text = a.textContent?.trim()
-          .replace(/Your browser does not support the video\.\s*/g, '')
-          .replace(/\s+/g, ' ')
-          .substring(0, 80) || '';
-        if (href && href.startsWith('/') && !href.startsWith('//') && text) {
-          if (!map[href]) map[href] = text;
-        }
-      });
-      return map;
-    });
-
+    const links = await scrapeDiscoveryLinks(page);
     const routes = categoriseRoutes(links);
-
-    await page.goto(`${BASE_URL}/image/soul`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
-
-    const imageModels = await page.evaluate(() => {
-      const modelBtns = [...document.querySelectorAll('button')].filter(b =>
-        b.textContent?.match(/soul|nano|seedream|flux|gpt|wan|kontext/i)
-      );
-      return modelBtns.map(b => b.textContent?.trim().substring(0, 60));
-    });
-
+    const imageModels = await scrapeImageModels(page);
     const changes = diffRoutesAgainstCache(routes);
 
     const cacheData = {
@@ -1259,18 +1293,7 @@ export async function runDiscovery(options = {}) {
     writeFileSync(ROUTES_CACHE, JSON.stringify(cacheData, null, 2));
     writeFileSync(DISCOVERY_TIMESTAMP, String(Date.now()));
 
-    console.log(`Discovery complete: ${Object.keys(links).length} paths found`);
-    console.log(`  Images: ${Object.keys(routes.image).length} models`);
-    console.log(`  Video: ${Object.keys(routes.video).length} tools`);
-    console.log(`  Apps: ${Object.keys(routes.apps).length} apps`);
-    console.log(`  Motions: ${Object.keys(routes.motions).length} presets`);
-    console.log(`  Features: ${Object.keys(routes.features).length} features`);
-    if (changes.length > 0) {
-      console.log(`\n  CHANGES since last discovery:`);
-      changes.forEach(c => console.log(`    ${c}`));
-    } else if (existsSync(ROUTES_CACHE)) {
-      console.log('  No changes since last discovery');
-    }
+    logDiscoverySummary(links, routes, changes);
 
     await context.storageState({ path: STATE_FILE });
     await browser.close();
@@ -1294,31 +1317,33 @@ export async function ensureDiscovery(options = {}) {
 // Login
 // ---------------------------------------------------------------------------
 
-export async function login(options = {}) {
-  const { user, pass } = loadCredentials();
-  const { browser, context, page } = await launchBrowser({ ...options, headed: true });
+async function waitForLoginRedirect(page, options) {
+  try {
+    await page.waitForURL(isNonAuthUrl, { timeout: 30000 });
+    console.log('Login successful! Redirected to:', page.url());
+  } catch {
+    console.log('Still on auth page. Current URL:', page.url());
+    await debugScreenshot(page, 'login-result', { fullPage: true });
 
-  const loginUrl = `${BASE_URL}/auth/email/sign-in?rp=%2F`;
-  console.log(`Navigating to ${loginUrl}...`);
-  await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await page.waitForTimeout(5000);
+    const errorText = await page.evaluate(() => {
+      const errors = document.querySelectorAll('[class*="error"], [class*="alert"], [role="alert"]');
+      return [...errors].map(e => e.textContent?.trim()).filter(Boolean).join('; ');
+    });
+    if (errorText) console.log('Error message:', errorText);
 
-  const currentUrl = page.url();
-  if (!currentUrl.includes('login') && !currentUrl.includes('auth')) {
-    console.log('Already logged in! Saving state...');
-    await context.storageState({ path: STATE_FILE });
-    console.log(`Auth state saved to ${STATE_FILE}`);
-    await browser.close();
-    return;
+    if (options.headed) {
+      console.log('Waiting 60s for manual login completion...');
+      try {
+        await page.waitForURL(isNonAuthUrl, { timeout: 60000 });
+        console.log('Login completed manually! URL:', page.url());
+      } catch {
+        console.log('Timeout. Saving current state anyway...');
+      }
+    }
   }
+}
 
-  await dismissAllModals(page);
-  await debugScreenshot(page, 'login-page', { fullPage: true });
-  console.log('Login page screenshot saved');
-
-  const ariaSnap = await page.locator('body').ariaSnapshot();
-  console.log('Page structure:', ariaSnap.substring(0, 2000));
-
+async function performLoginSteps(page, user, pass) {
   const emailSelectors = [
     'input[type="email"]',
     'input[name="email"]',
@@ -1351,10 +1376,7 @@ export async function login(options = {}) {
   ];
 
   let passFilled = await tryFillField(page, passwordSelectors, pass, 'Password');
-
-  if (!passFilled) {
-    console.log('No password field found yet - may appear after email submission');
-  }
+  if (!passFilled) console.log('No password field found yet - may appear after email submission');
 
   await page.waitForTimeout(500);
 
@@ -1368,50 +1390,49 @@ export async function login(options = {}) {
   ];
 
   const submitted = await tryClickSubmit(page, submitSelectors);
-
   if (!submitted) {
     console.log('No submit button found, trying Enter key...');
     await page.keyboard.press('Enter');
   }
 
   await page.waitForTimeout(3000);
-
-  const currentUrl2 = page.url();
-  console.log('Current URL after submit:', currentUrl2);
+  console.log('Current URL after submit:', page.url());
 
   if (!passFilled) {
     passFilled = await tryFillField(page, passwordSelectors, pass, 'Password (step 2)');
-    if (passFilled) {
-      await tryClickSubmit(page, submitSelectors);
-    }
+    if (passFilled) await tryClickSubmit(page, submitSelectors);
   }
+}
+
+export async function login(options = {}) {
+  const { user, pass } = loadCredentials();
+  const { browser, context, page } = await launchBrowser({ ...options, headed: true });
+
+  const loginUrl = `${BASE_URL}/auth/email/sign-in?rp=%2F`;
+  console.log(`Navigating to ${loginUrl}...`);
+  await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForTimeout(5000);
+
+  const currentUrl = page.url();
+  if (!currentUrl.includes('login') && !currentUrl.includes('auth')) {
+    console.log('Already logged in! Saving state...');
+    await context.storageState({ path: STATE_FILE });
+    console.log(`Auth state saved to ${STATE_FILE}`);
+    await browser.close();
+    return;
+  }
+
+  await dismissAllModals(page);
+  await debugScreenshot(page, 'login-page', { fullPage: true });
+  console.log('Login page screenshot saved');
+
+  const ariaSnap = await page.locator('body').ariaSnapshot();
+  console.log('Page structure:', ariaSnap.substring(0, 2000));
+
+  await performLoginSteps(page, user, pass);
 
   console.log('Waiting for login to complete...');
-  try {
-    await page.waitForURL(isNonAuthUrl, { timeout: 30000 });
-    console.log('Login successful! Redirected to:', page.url());
-  } catch {
-    console.log('Still on auth page. Current URL:', page.url());
-    await debugScreenshot(page, 'login-result', { fullPage: true });
-
-    const errorText = await page.evaluate(() => {
-      const errors = document.querySelectorAll('[class*="error"], [class*="alert"], [role="alert"]');
-      return [...errors].map(e => e.textContent?.trim()).filter(Boolean).join('; ');
-    });
-    if (errorText) {
-      console.log('Error message:', errorText);
-    }
-
-    if (options.headed) {
-      console.log('Waiting 60s for manual login completion...');
-      try {
-        await page.waitForURL(isNonAuthUrl, { timeout: 60000 });
-        console.log('Login completed manually! URL:', page.url());
-      } catch {
-        console.log('Timeout. Saving current state anyway...');
-      }
-    }
-  }
+  await waitForLoginRedirect(page, options);
 
   await context.storageState({ path: STATE_FILE });
   console.log(`Auth state saved to ${STATE_FILE}`);
