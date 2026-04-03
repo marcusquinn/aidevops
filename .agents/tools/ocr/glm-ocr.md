@@ -30,7 +30,7 @@ tools:
 
 ```bash
 ollama run glm-ocr "Extract all text from this image" --images /path/to/document.png
-base64 -i document.png | ollama run glm-ocr "Extract all text" --images -  # scripts
+base64 -i document.png | ollama run glm-ocr "Extract all text" --images -  # pipe in scripts
 ```
 
 | Task | Prompt |
@@ -44,19 +44,19 @@ base64 -i document.png | ollama run glm-ocr "Extract all text" --images -  # scr
 ## Workflow Patterns
 
 ```bash
-# Screenshot (macOS)
+# macOS screenshot → OCR
 screencapture -i /tmp/capture.png && ollama run glm-ocr "Extract all text" --images /tmp/capture.png
 
-# Batch
+# Batch directory
 for img in ~/Documents/scans/*.png; do
   echo "=== $img ===" && ollama run glm-ocr "Extract all text" --images "$img"
 done > extracted_text.txt
 
-# PDF (requires ImageMagick)
+# PDF via ImageMagick
 convert -density 300 document.pdf -quality 90 /tmp/page-%03d.png
 for page in /tmp/page-*.png; do ollama run glm-ocr "Extract all text" --images "$page"; done
 
-# Peekaboo integration
+# Peekaboo (screen/window capture)
 peekaboo image --mode screen --analyze "What text is visible?" --model ollama/glm-ocr
 peekaboo image --mode window --app "Preview" --analyze "Extract document text" --model ollama/glm-ocr
 ```
