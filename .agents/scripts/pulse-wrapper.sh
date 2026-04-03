@@ -3800,6 +3800,74 @@ normalize_active_issue_assignments() {
 }
 
 #######################################
+# Close open issues whose work is already done — a merged PR exists
+# that references the issue via "Closes #N" or matching task ID in
+# the PR title (GH#16851).
+#
+# The dedup guard (Layer 4) detects these and blocks re-dispatch,
+# but the issue stays open forever. This stage closes them with a
+# comment linking to the merged PR, cleaning the backlog.
+#######################################
+close_issues_with_merged_prs() {
+	local repos_json="$REPOS_JSON"
+	[[ -f "$repos_json" ]] || return 0
+
+	local dedup_helper="${HOME}/.aidevops/agents/scripts/dedup-helper.sh"
+	[[ -x "$dedup_helper" ]] || return 0
+
+	local total_closed=0
+
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+
+		# Get open issues with auto-dispatch or simplification-debt labels
+		# (these are the ones the fill floor would try to dispatch)
+		local issues_json
+		issues_json=$(gh issue list --repo "$slug" --state open \
+			--json number,title --limit 100 2>/dev/null) || issues_json="[]"
+		[[ -n "$issues_json" && "$issues_json" != "null" ]] || continue
+
+		local issue_count
+		issue_count=$(printf '%s' "$issues_json" | jq 'length' 2>/dev/null) || issue_count=0
+
+		local i=0
+		while [[ "$i" -lt "$issue_count" ]]; do
+			local issue_num issue_title
+			issue_num=$(printf '%s' "$issues_json" | jq -r ".[$i].number" 2>/dev/null)
+			issue_title=$(printf '%s' "$issues_json" | jq -r ".[$i].title // empty" 2>/dev/null)
+			i=$((i + 1))
+			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
+
+			# Skip management issues (supervisor, persistent, quality-review)
+			# — these are intentionally kept open
+			local labels_csv
+			labels_csv=$(printf '%s' "$issues_json" | jq -r ".[$((i - 1))].labels // [] | map(.name) | join(\",\")" 2>/dev/null) || labels_csv=""
+
+			# Ask dedup helper if a merged PR exists for this issue
+			local dedup_output=""
+			if dedup_output=$("$dedup_helper" has-open-pr "$issue_num" "$slug" "$issue_title" 2>/dev/null); then
+				# has-open-pr returns 0 when merged PR evidence found (confusing name but correct)
+				local pr_ref
+				pr_ref=$(printf '%s' "$dedup_output" | grep -o '#[0-9]*' | head -1) || pr_ref=""
+
+				gh issue close "$issue_num" --repo "$slug" \
+					--comment "Closing: work completed via merged PR ${pr_ref:-"(detected by dedup helper)"}. Issue was open but dedup guard was blocking re-dispatch." \
+					>/dev/null 2>&1 || continue
+
+				echo "[pulse-wrapper] Auto-closed #${issue_num} in ${slug} — merged PR evidence: ${dedup_output:-"found"}" >>"$LOGFILE"
+				total_closed=$((total_closed + 1))
+			fi
+		done
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
+
+	if [[ "$total_closed" -gt 0 ]]; then
+		echo "[pulse-wrapper] Close issues with merged PRs: closed ${total_closed} issue(s)" >>"$LOGFILE"
+	fi
+
+	return 0
+}
+
+#######################################
 # Auto-approve needs-maintainer-review issues where the maintainer
 # created the issue or has already commented (GH#16842).
 #
@@ -7837,6 +7905,10 @@ _run_preflight_stages() {
 
 	# Ensure active labels reflect ownership to prevent multi-worker overlap.
 	run_stage_with_timeout "normalize_active_issue_assignments" "$PRE_RUN_STAGE_TIMEOUT" normalize_active_issue_assignments || true
+
+	# Close issues whose linked PRs already merged (GH#16851).
+	# The dedup guard blocks re-dispatch for these but they stay open forever.
+	run_stage_with_timeout "close_issues_with_merged_prs" "$PRE_RUN_STAGE_TIMEOUT" close_issues_with_merged_prs || true
 
 	# Auto-approve maintainer issues: remove needs-maintainer-review when
 	# the maintainer created or commented on the issue (GH#16842).
