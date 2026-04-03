@@ -5,18 +5,11 @@ mode: subagent
 
 # Research Probes
 
-Use 2 probes during `/define` for tasks classified as **research**.
+Use 2 probes during `/define` for tasks classified as **research**. Defaults: time-boxed, written recommendation (not code), compare ≥2 options with cost/effort estimates.
 
-## Defaults
+## Required (ask both)
 
-- Time-boxed — research without a deadline expands indefinitely
-- Deliverable is a written recommendation, not code
-- Compare at least 2 options before recommending one
-- Include cost or effort estimates for each option
-
-## Required Questions (ask both)
-
-**Time Box** — How much time should be spent on this research?
+**Time Box** — How much time should be spent?
 1. 30 minutes — quick comparison (recommended for simple evaluations)
 2. 1-2 hours — thorough analysis with examples
 3. Half day — deep dive with prototypes
@@ -30,7 +23,7 @@ Use 2 probes during `/define` for tasks classified as **research**.
 
 ## Probes (pick 2)
 
-**Decision Criteria** — What matters most when choosing between options?
+**Decision Criteria** — What matters most when choosing?
 1. Cost (monetary or compute) (recommended if comparing services/tools)
 2. Developer experience / ease of integration
 3. Performance / scalability
@@ -43,7 +36,7 @@ Use 2 probes during `/define` for tasks classified as **research**.
 3. A specific stakeholder — needs to address their concerns
 4. No decision needed — this is exploratory
 
-**Outside View** — Have you or the team evaluated similar options before?
+**Outside View** — Have you evaluated similar options before?
 1. Yes — we chose [X] last time, checking if it's still the best option
 2. Yes — we rejected [X] last time, want to reconsider
 3. No — this is a new area for us
@@ -55,7 +48,7 @@ Use 2 probes during `/define` for tasks classified as **research**.
 3. A better option emerged after the decision
 4. The evaluation criteria were wrong
 
-**Backcasting** — After this research is done, what's the next concrete action?
+**Backcasting** — What's the next concrete action after this research?
 1. Implement the recommended option (recommended)
 2. Present findings and get approval
 3. Create a task/brief for the implementation
@@ -63,10 +56,4 @@ Use 2 probes during `/define` for tasks classified as **research**.
 
 ## Sufficiency Test
 
-Before generating the brief, verify you can answer:
-- What's the time box?
-- What deliverable is expected?
-- What are the ranked decision criteria?
-- Who makes the final decision?
-
-If any answer is "I don't know" — ask one more targeted question.
+Before generating the brief, confirm you can answer: time box, deliverable, ranked decision criteria, decision owner. If any is unknown — ask one more targeted question.
