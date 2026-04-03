@@ -55,10 +55,13 @@ tools:
 ## Commands
 
 ```bash
+# Overview
 ses-helper.sh accounts
 ses-helper.sh quota production           # send quota
 ses-helper.sh stats production           # send statistics
 ses-helper.sh monitor production         # bounce, complaint, quota, reputation
+
+# Identity & DKIM
 ses-helper.sh verified-emails production
 ses-helper.sh verified-domains production
 ses-helper.sh verify-email production newuser@yourdomain.com
@@ -66,10 +69,14 @@ ses-helper.sh verify-domain production newdomain.com
 ses-helper.sh verify-identity production yourdomain.com
 ses-helper.sh dkim production yourdomain.com
 ses-helper.sh enable-dkim production yourdomain.com
+
+# Reputation & suppression
 ses-helper.sh reputation production
 ses-helper.sh suppressed production
 ses-helper.sh suppression-details production user@example.com
 ses-helper.sh remove-suppression production user@example.com
+
+# Testing & audit
 ses-helper.sh send-test production noreply@yourdomain.com success@simulator.amazonses.com "Test"
 ses-helper.sh send-test production noreply@yourdomain.com bounce@simulator.amazonses.com "Bounce Test"
 ses-helper.sh debug production problematic@example.com
@@ -115,9 +122,7 @@ ses-helper.sh audit production
 
 ## Compliance & Backup
 
-- Configure SPF, DKIM, DMARC; process bounces/complaints promptly
-- Maintain suppression list; provide unsubscribe mechanisms; follow GDPR/CAN-SPAM
-- Warm up new IPs; clean lists regularly
+Configure SPF, DKIM, DMARC; process bounces/complaints promptly; maintain suppression list; provide unsubscribe mechanisms; follow GDPR/CAN-SPAM; warm up new IPs; clean lists regularly.
 
 ```bash
 ses-helper.sh audit production > ses-config-backup-$(date +%Y%m%d).txt
