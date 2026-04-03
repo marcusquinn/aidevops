@@ -15,40 +15,38 @@ tools:
 
 # AI Agent Discovery
 
-Verify that autonomous agents can find, interpret, and trust key business information using multi-turn exploration scenarios. Outputs: discoverability report, gap classification, remediation backlog.
+Verify autonomous agents can find, interpret, and trust key business information via multi-turn exploration. Outputs: discoverability report, gap classification, remediation backlog.
 
 ## Workflow
 
-### 1) Define discovery tasks
+### 1. Define discovery tasks
 
-- Select 5-15 user tasks (pricing, eligibility, integration, support, compliance)
-- Write each task as a natural language goal an agent would execute
+- Select 5–15 user tasks (pricing, eligibility, integration, support, compliance)
+- Write each as a natural language goal an agent would execute
 - Include both broad and goal-focused scenarios
 
-### 2) Simulate multi-turn exploration
+### 2. Simulate multi-turn exploration
 
-- Capture sequence of search attempts, page hits, and confidence changes
+- Capture search attempts, page hits, and confidence changes
 - Note where agent loops, backtracks, or stalls
 - Separate retrieval failure from comprehension failure
-- Run explicit `site:` retrieval passes against first-party domain pages
-  (`site:yourdomain.com pricing`, `site:yourdomain.com integrations`)
-- Run third-party validation passes (`site:g2.com [brand]`,
-  `site:capterra.com [brand]`) and compare fact consistency
+- First-party: `site:yourdomain.com pricing`, `site:yourdomain.com integrations`
+- Third-party: `site:g2.com [brand]`, `site:capterra.com [brand]` — compare fact consistency
 
-### 3) Classify findings
+### 3. Classify findings
 
 - Clearly found and accurate
 - Found but partial/uncertain
 - Not found though content exists (discoverability issue)
 - Not found because content missing (content gap)
 
-### 4) Fix by failure type
+### 4. Fix by failure type
 
-- Discoverability issue: improve wording, headings, and internal linking
+- Discoverability: improve wording, headings, internal linking
 - Content gap: add concise, evidence-backed section or dedicated page
-- Comprehension issue: rewrite for standalone clarity
+- Comprehension: rewrite for standalone clarity
 
-### 5) Re-run and score
+### 5. Re-run and score
 
 - Re-test same tasks after changes
 - Track task completion rate and turn count reduction
@@ -57,15 +55,15 @@ Verify that autonomous agents can find, interpret, and trust key business inform
 ## Common Discoverability Problems
 
 - Critical facts trapped in PDFs or images without text equivalents
-- Site language uses internal jargon instead of user vocabulary
+- Internal jargon instead of user vocabulary
 - Key answers scattered across weakly-linked pages
 - High-value pages lack explicit sections for common decision questions
-- Page titles use brand-centric language that does not match `site:` query patterns (e.g., "Our Solution" instead of "[Category] Software Features")
-- Review platform profiles are outdated or incomplete, causing third-party validation queries to return stale information
-- Key product pages are consolidated into a single URL, making domain-scoped search return one page for all queries instead of topic-specific matches
+- Page titles use brand-centric language that doesn't match `site:` query patterns (e.g., "Our Solution" vs "[Category] Software Features")
+- Review platform profiles outdated or incomplete — third-party validation returns stale data
+- Key product pages consolidated into one URL — domain-scoped search returns one page for all queries
 
 ## Related Subagents
 
-- `query-fanout-research.md` for thematic query planning
-- `ai-hallucination-defense.md` for factual consistency and claim hygiene
-- `site-crawler.md` for structure and linking audits
+- `query-fanout-research.md` — thematic query planning
+- `ai-hallucination-defense.md` — factual consistency and claim hygiene
+- `site-crawler.md` — structure and linking audits
