@@ -41,9 +41,8 @@ Use these for featured snippets, answer boxes, and spoken-result queries.
 
 ## FAQ Block
 
-Phrase questions the way users search, match "People Also Ask" wording, keep answers to 50-100 words, and put the direct answer first.
-
 ```markdown
+<!-- Phrase questions the way users search; match "People Also Ask" wording; keep answers 50-100 words; direct answer first -->
 ### [Question phrased as users search]?
 [Direct answer first sentence]. [Supporting context in 2-3 sentences].
 ```
@@ -59,4 +58,8 @@ Phrase questions the way users search, match "People Also Ask" wording, keep ans
 
 ## Voice Search Pattern
 
-Target conversational queries like "What is...", "How do I...", "Where can I find...", "Why does...", and "When should I...?" Give the answer in under 30 words, use natural language, avoid jargon unless the audience is expert, and add local context when useful.
+```markdown
+<!-- Target: "What is...", "How do I...", "Where can I find...", "Why does...", "When should I...?" -->
+<!-- Answer in under 30 words; natural language; avoid jargon unless expert audience; add local context when useful -->
+[Direct conversational answer in under 30 words].
+```
