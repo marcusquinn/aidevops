@@ -4,16 +4,12 @@
 
 - [ ] Define target audience & awareness level
 - [ ] Identify pain point, outcome, & unique value
-- [ ] Review swipe file for inspiration
+- [ ] Review [swipe file](direct-response-copy-swipe-file-headlines.md) for inspiration
 
 ## Drafting Pass
 
-- [ ] Write 25+ variations using these formulas:
-  - How to [Outcome] | [Number] Ways to [Benefit] | The [Adjective] Guide to [Topic]
-  - Why [Common Belief] Is Wrong | [Outcome] Without [Objection] | Warning: [Negative Outcome]
-  - Are You Making These [Topic] Mistakes? | Who Else Wants [Desired Outcome]?
-  - The Secret of [Desirable Group] | [Question about their problem]
-- [ ] Try angles: benefit, problem, curiosity, social proof, urgency, contrarian
+- [ ] Write 25+ variations using [headline formulas](direct-response-copy-frameworks-headline-formulas.md)
+- [ ] Cover angles: benefit, problem, curiosity, social proof, urgency, contrarian
 
 ## 4 U's Scorecard (Aim for 12+)
 
@@ -25,7 +21,7 @@
 | **Unique:** Different from competitors? | ___ |
 | **Total** | ___ / 16 |
 
-**Evaluation:** Clarity (understood in 5 sec, customer sees themselves) · Benefit (concrete numbers/results, not "better/easier/more") · Believability (plausible to a skeptic, curiosity without hiding the offer)
+**Evaluate:** Clarity (understood in 5 sec, customer sees themselves) · Benefit (concrete numbers/results, not "better/easier/more") · Believability (plausible to a skeptic, curiosity without hiding the offer) · "So what?" (reason to care)
 
 ## Red Flags
 
@@ -33,7 +29,6 @@
 - [ ] Long (>15 words) or hypey ("Revolutionary," "Game-changing," "Breakthrough")
 - [ ] Features-only (no payoff), me-focused ("We're excited to..."), or clickbait (promise > delivery)
 - [ ] 5-second test fails: unclear what's offered or who it's for
-- [ ] "So what?" unanswered: no reason to care
 
 ## A/B Testing
 
