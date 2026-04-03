@@ -1,12 +1,10 @@
 # Cloudflare Pipelines
 
-ETL streaming: ingest events → SQL transforms → R2 as Apache Iceberg or Parquet/JSON.
+ETL streaming: ingest events → SQL transforms → R2 as Apache Iceberg or Parquet/JSON. Open beta, Workers Paid plan required, no charge beyond R2 storage/operations.
 
 **Components:** Streams (durable buffered queues) → Pipelines (SQL transforms, immutable — delete/recreate to modify) → Sinks (R2 Data Catalog with Iceberg/ACID, or R2 Storage as Parquet/JSON; exactly-once delivery).
 
-**Status:** Open beta, Workers Paid plan required, no charge beyond R2 storage/operations.
-
-## Limits (Open Beta)
+## Limits & Auth
 
 | Resource | Limit |
 |----------|-------|
@@ -14,9 +12,7 @@ ETL streaming: ingest events → SQL transforms → R2 as Apache Iceberg or Parq
 | Payload size per request | 1 MB |
 | Ingest rate per stream | 5 MB/s |
 
-Request increases: [Limit Increase Form](https://forms.gle/ukpeZVLWLnKeixDu7)
-
-## Auth & Permissions
+[Limit Increase Form](https://forms.gle/ukpeZVLWLnKeixDu7)
 
 | Token type | Permission | Used for |
 |-----------|-----------|---------|
@@ -36,20 +32,17 @@ npx wrangler r2 bucket catalog enable my-bucket
 npx wrangler pipelines streams create my-stream --schema-file schema.json
 npx wrangler pipelines sinks create my-sink --type r2-data-catalog \
   --bucket my-bucket --namespace default --table my_table --catalog-token YOUR_TOKEN
-npx wrangler pipelines create my-pipeline \
-  --sql "INSERT INTO my_sink SELECT * FROM my_stream"
-# All subcommands support [list|get <ID>|delete <ID>]
+npx wrangler pipelines create my-pipeline --sql "INSERT INTO my_sink SELECT * FROM my_stream"
+# All subcommands: list | get <ID> | delete <ID>
 # Deleting a stream also deletes dependent pipelines and buffered events
-npx wrangler pipelines create my-pipeline --sql "..."  # or: --sql-file transform.sql
 ```
 
-**Schema (structured streams):** Define fields in JSON with `name`, `type`, `required`, and optional `items` (for `list`) or `fields` (for `struct`).
+**Schema (structured streams):** JSON with `name`, `type`, `required`; optional `items` (list) or `fields` (struct). Omit `--schema-file` for unstructured streams (no validation, single `value` column).
 
 ```json
 {
   "fields": [
     { "name": "user_id", "type": "string", "required": true },
-    { "name": "event_type", "type": "string", "required": false },
     { "name": "amount", "type": "float64", "required": false },
     { "name": "tags", "type": "list", "required": false, "items": { "type": "string" } },
     { "name": "metadata", "type": "struct", "required": false,
@@ -58,17 +51,11 @@ npx wrangler pipelines create my-pipeline --sql "..."  # or: --sql-file transfor
 }
 ```
 
-**Types:** `string`, `int32`, `int64`, `float32`, `float64`, `bool`, `timestamp`, `json`, `binary`, `list`, `struct`. Unstructured streams (no validation, single `value` column): omit `--schema-file`.
+**Types:** `string`, `int32`, `int64`, `float32`, `float64`, `bool`, `timestamp`, `json`, `binary`, `list`, `struct`.
 
 ## Writing Data
 
-**Worker Binding (recommended):** Add to `wrangler.toml`:
-
-```toml
-[[pipelines]]
-pipeline = "<STREAM_ID>"
-binding = "STREAM"
-```
+**Worker Binding (recommended):** `wrangler.toml`: `[[pipelines]] pipeline = "<STREAM_ID>" binding = "STREAM"`
 
 ```typescript
 export default {
@@ -86,7 +73,7 @@ export default {
 curl -X POST https://{stream-id}.ingest.cloudflare.com \
   -H "Content-Type: application/json" \
   -d '[{"user_id": "user_12345", "event_type": "purchase", "amount": 29.99}]'
-# Production: add -H "Authorization: Bearer YOUR_API_TOKEN" (requires "Workers Pipeline Send" permission)
+# Production: add -H "Authorization: Bearer YOUR_API_TOKEN" (Workers Pipeline Send permission)
 ```
 
 ## SQL Transformations
@@ -108,11 +95,11 @@ npx wrangler pipelines sinks create my-sink \
   --type r2-data-catalog --bucket my-bucket --namespace my_namespace \
   --table my_table --catalog-token YOUR_CATALOG_TOKEN \
   --compression zstd --roll-interval 60 --roll-size 100
+npx wrangler r2 sql query "warehouse_name" "SELECT user_id, COUNT(*) FROM default.my_table GROUP BY user_id LIMIT 100"
+# Set WRANGLER_R2_SQL_AUTH_TOKEN for queries
 ```
 
-**Compression:** `zstd` (default), `snappy`, `gzip`, `lz4`, `uncompressed`. **Roll:** `--roll-interval` seconds between writes (default 300), `--roll-size` max MB.
-
-Query: `npx wrangler r2 sql query "warehouse_name" "SELECT user_id, COUNT(*) FROM default.my_table GROUP BY user_id LIMIT 100"` (set `WRANGLER_R2_SQL_AUTH_TOKEN`).
+**Compression:** `zstd` (default), `snappy`, `gzip`, `lz4`, `uncompressed`. **Roll:** `--roll-interval` seconds (default 300), `--roll-size` max MB.
 
 **R2 Storage (Raw Parquet/JSON):**
 
@@ -122,16 +109,15 @@ npx wrangler pipelines sinks create my-sink \
   --path analytics/events --partitioning "year=%Y/month=%m/day=%d/hour=%H" \
   --target-row-group-size 256 --roll-interval 300 --roll-size 100 \
   --access-key-id YOUR_KEY --secret-access-key YOUR_SECRET
+# Output: bucket/analytics/events/year=2025/month=01/day=11/uuid.parquet
 ```
-
-Output path: `bucket/analytics/events/year=2025/month=01/day=11/uuid.parquet`
 
 ## Best Practices
 
-- **Schema:** Structured streams with `required: true` on critical fields. Native `timestamp` for temporal columns; `int64` only for epoch representations. `float64` for decimals. Recreate to change schemas. Avoid deep nesting.
+- **Schema:** `required: true` on critical fields. Native `timestamp` for temporal; `float64` for decimals. Recreate to change schemas. Avoid deep nesting.
 - **Performance:** Low latency: `--roll-interval 10`. Query perf: `--roll-interval 300 --roll-size 100`. `zstd` for ratio, `snappy` for speed. Filter early with `WHERE`.
 - **Workers:** Bindings (no token management). Batch: `send([e1, e2, ...])`. `ctx.waitUntil()` for fire-and-forget.
-- **HTTP:** Auth in production. CORS for browsers. Arrays for batch efficiency. Retry on 4xx/5xx.
+- **HTTP:** Auth in production. Arrays for batch efficiency. Retry on 4xx/5xx.
 
 ## Troubleshooting
 
