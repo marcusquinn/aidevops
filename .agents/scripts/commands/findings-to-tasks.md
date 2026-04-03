@@ -10,19 +10,14 @@ Input file: `$ARGUMENTS`
 
 ## Required Format
 
-One finding per line:
-
 ```text
 severity|title|details
-```
-
-```text
 high|Harden prompt-guard fallback on malformed markdown|Reject malformed HTML comments before rendering summary
 medium|Add retries for Codacy API timeout|Use capped exponential backoff in codacy-cli.sh
 low|Improve stale worker log wording|Clarify blocked vs failed in watchdog output
 ```
 
-If severity is omitted, it defaults to `medium`.
+Severity defaults to `medium` if omitted.
 
 ## Command
 
@@ -33,17 +28,15 @@ If severity is omitted, it defaults to `medium`.
   --source <security-audit|code-review|seo-audit|accessibility|performance>
 ```
 
-Optional flags:
-
-- `--labels "label1,label2"` add extra issue labels
-- `--tags "tag1,tag2"` add extra TODO hashtags
-- `--dry-run` preview without allocating task IDs
-- `--no-issue` allocate task IDs without creating GitHub issues
-- `--allow-partial` allow non-100% conversion (normally treated as failure)
+- `--labels "label1,label2"` — add extra issue labels
+- `--tags "tag1,tag2"` — add extra TODO hashtags
+- `--dry-run` — preview without allocating task IDs
+- `--no-issue` — allocate task IDs without creating GitHub issues
+- `--allow-partial` — allow non-100% conversion (normally treated as failure)
 
 ## Completion Rule
 
-A multi-finding report is complete only when helper output confirms full conversion coverage:
+Complete only when helper output confirms full conversion coverage:
 
 - `actionable_findings_total=<N>`
 - `deferred_tasks_created=<N>`
