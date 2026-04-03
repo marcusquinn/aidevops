@@ -1,6 +1,6 @@
 # Cloudflare Wrangler
 
-Primary CLI for Cloudflare Workers: scaffold projects, run local/remote dev, manage bindings, deploy, and inspect versions.
+Primary CLI for Workers: scaffold, dev, deploy, manage bindings.
 
 ## Install
 
@@ -12,18 +12,16 @@ npm install -g wrangler   # global
 ## Core Commands
 
 ```bash
-wrangler init [name]                  # Create project
-wrangler dev                          # Local dev server
-wrangler dev --remote                 # Remote dev with real bindings
-wrangler deploy                       # Deploy production
-wrangler deploy --env staging         # Deploy named environment
-wrangler versions list                # List deployed versions
-wrangler rollback [id]                # Roll back deployment
-wrangler login                        # OAuth login
-wrangler whoami                       # Check auth/account
-wrangler tail                         # Stream logs
-wrangler tail --env production        # Tail specific environment
-wrangler tail --status error          # Show only errors
+wrangler init [name]           # Create project
+wrangler dev                   # Local dev server
+wrangler dev --remote          # Remote dev with real bindings
+wrangler deploy                # Deploy production
+wrangler deploy --env staging  # Deploy named environment
+wrangler versions list         # List deployed versions
+wrangler rollback [id]         # Roll back deployment
+wrangler login                 # OAuth login
+wrangler whoami                # Check auth/account
+wrangler tail [--env ENV] [--status error]  # Stream logs (filter by env/status)
 ```
 
 ## Resource Commands
