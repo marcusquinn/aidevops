@@ -1,5 +1,20 @@
 # Gotchas & Troubleshooting
 
+## Security
+
+❌ Never expose App Secret client-side (use backend env vars, Wrangler secrets)
+Track IDs = capabilities, authz required:
+
+```ts
+app.post('/api/sessions/:sid/tracks', async (req, res) => {
+  for (const t of req.body.tracks)
+    if (!await canAccessTrack(req.user.id, t.trackName)) return res.status(403).json({error: 'Unauth'});
+  // CF API call
+});
+```
+
+Validate session ownership, timeouts, cleanup abandoned sessions.
+
 ## Common Issues
 
 **Slow connect (~1.8s):** First STUN delayed (consensus forming), normal, subsequent faster
@@ -38,21 +53,6 @@ setInterval(async () => {
   });
 }, 1000);
 ```
-
-## Security
-
-❌ Never expose App Secret client-side (use backend env vars, Wrangler secrets)
-Track IDs = capabilities, authz required:
-
-```ts
-app.post('/api/sessions/:sid/tracks', async (req, res) => {
-  for (const t of req.body.tracks)
-    if (!await canAccessTrack(req.user.id, t.trackName)) return res.status(403).json({error: 'Unauth'});
-  // CF API call
-});
-```
-
-Validate session ownership, timeouts, cleanup abandoned sessions.
 
 ## Pricing & Limits
 
