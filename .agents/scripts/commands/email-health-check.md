@@ -4,10 +4,6 @@ agent: Build+
 mode: subagent
 ---
 
-Check email authentication, deliverability, and content quality.
-
-Arguments: `$ARGUMENTS`
-
 ## Workflow
 
 Select and run the helper based on arguments:
@@ -37,21 +33,19 @@ Format the report from helper output:
 | `/email-health-check newsletter.html check-subject` | Subject line check only |
 | `/email-health-check accessibility newsletter.html` | Email accessibility audit |
 
-## Example
+## Example output (`/email-health-check example.com`)
 
 ```text
-User: /email-health-check example.com
-AI:
-    Email Health Check: example.com
-    SPF: OK - v=spf1 include:_spf.google.com ~all
-    DKIM: OK - Found: google, selector1
-    DMARC: WARN - p=none (monitoring only)
-    MX: OK - 2 records (redundant)
-    Blacklist: OK - Not listed
-    Score: 12/15 (80%) - Grade: B
-    Recommendations:
-    1. Upgrade DMARC policy from p=none to p=quarantine
-    2. Consider adding rua= for DMARC reports
+Email Health Check: example.com
+SPF: OK - v=spf1 include:_spf.google.com ~all
+DKIM: OK - Found: google, selector1
+DMARC: WARN - p=none (monitoring only)
+MX: OK - 2 records (redundant)
+Blacklist: OK - Not listed
+Score: 12/15 (80%) - Grade: B
+Recommendations:
+1. Upgrade DMARC policy from p=none to p=quarantine
+2. Consider adding rua= for DMARC reports
 ```
 
 ## Related
