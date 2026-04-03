@@ -3,27 +3,21 @@ description: Overview of supported AI coding tools
 mode: subagent
 tools:
   read: true
-  glob: true
   grep: true
   webfetch: true
-  task: true
 ---
 
 # AI Coding Tools - Supported by aidevops
 
 <!-- AI-CONTEXT-START -->
-**Primary**: OpenCode TUI, OpenCode Desktop, OpenCode extension (Zed/VSCode/forks)
-**Companion**: claude-code CLI (spawned from OpenCode for sub-tasks)
-**Config**: `~/.config/opencode/opencode.json`, `~/.claude/`
-**Setup**: `aidevops update` deploys agents, configures OpenCode MCPs
-**Marketplace**: aidevops is available in the Claude marketplace
+**Primary**: OpenCode (TUI, Desktop, Extension) | **Companion**: claude-code CLI | **Setup**: `aidevops update`
 <!-- AI-CONTEXT-END -->
 
 ## Supported Tools
 
 ### OpenCode (Primary)
 
-Variants: **TUI** (terminal, keyboard-driven), **Desktop** (same capabilities), **Extension** (Zed, VSCode, forks).
+Variants: TUI (terminal), Desktop, Extension (Zed/VSCode/forks).
 
 - **Install**: `curl -fsSL https://opencode.ai/install | bash`
 - **Config**: `~/.config/opencode/opencode.json` or project `.opencode/`
@@ -33,22 +27,22 @@ Variants: **TUI** (terminal, keyboard-driven), **Desktop** (same capabilities), 
 
 ### claude-code CLI (Companion)
 
-Called from within OpenCode for sub-tasks and headless dispatch.
+Spawned from OpenCode for sub-tasks and headless dispatch.
 
-- **Usage**: `claude -p "subtask"` (spawns from OpenCode)
+- **Usage**: `claude -p "subtask"`
 - **Config**: `~/.claude/`, `~/.config/Claude/`
 - **Docs**: `claude-code.md`
 
 ### OpenClaw (Multi-Channel Assistant)
 
-Personal AI assistant via WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Teams.
+WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Teams.
 
 - **Install**: `npm install -g openclaw@latest && openclaw onboard --install-daemon`
 - **Docs**: `openclaw.md`
 
 ## Collaborator Compatibility
 
-`aidevops init` generates lightweight pointer files (`.cursorrules`, `.windsurfrules`, etc.) referencing `AGENTS.md`. aidevops does not install into, configure, or manage those tools.
+`aidevops init` generates pointer files (`.cursorrules`, `.windsurfrules`, etc.) referencing `AGENTS.md`. aidevops does not install into or manage those tools.
 
 ## Related
 
