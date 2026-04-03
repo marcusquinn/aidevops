@@ -5,11 +5,11 @@ Globally-unique compute + storage: single-threaded, strongly-consistent, co-loca
 ## When to Use DOs
 
 Stateful coordination — serialized access to shared state:
-- **Coordination**: Shared state across clients (chat rooms, multiplayer games)
-- **Strong consistency**: Serialized operations (booking systems, inventory)
-- **Per-entity storage**: Isolated database per user/tenant/resource (multi-tenant SaaS)
-- **Persistent connections**: Long-lived WebSockets surviving across requests
-- **Per-entity scheduled work**: Timers per entity (subscription renewals, game timeouts)
+- **Coordination**: shared state across clients (chat rooms, multiplayer games)
+- **Strong consistency**: serialized operations (booking systems, inventory)
+- **Per-entity storage**: isolated database per user/tenant/resource (multi-tenant SaaS)
+- **Persistent connections**: long-lived WebSockets surviving across requests
+- **Per-entity scheduled work**: timers per entity (subscription renewals, game timeouts)
 
 ## When NOT to Use DOs
 
@@ -40,15 +40,13 @@ Model each DO around the **atom of coordination** — the unit needing serialize
 
 ## Core Concepts
 
-**Class**: Extend `DurableObject`. Constructor receives `DurableObjectState` (storage, WebSockets, alarms) and `Env` (bindings).
-
-**Access**: Workers get stubs via bindings → call RPC methods (recommended) or fetch handler (legacy).
-
-**ID generation**: `idFromName()` deterministic/named; `newUniqueId()` random/sharding; `idFromString()` derive from existing; jurisdiction option for data locality.
-
-**Storage**: SQLite (default, 10GB/DO, transactions); Synchronous KV API (simple key-value on SQLite); Asynchronous KV API (legacy/advanced).
-
-**Special features**: Alarms (per-DO scheduled execution); WebSocket Hibernation (zero-cost idle); Point-in-Time Recovery (30-day window).
+| Concept | Detail |
+|---------|--------|
+| **Class** | Extend `DurableObject`. Constructor receives `DurableObjectState` (storage, WebSockets, alarms) and `Env` (bindings). |
+| **Access** | Workers get stubs via bindings → RPC methods (recommended) or fetch handler (legacy). |
+| **ID generation** | `idFromName()` deterministic; `newUniqueId()` random/sharding; `idFromString()` from existing; jurisdiction for data locality. |
+| **Storage** | SQLite default (10GB/DO, transactions); Sync KV API (simple key-value); Async KV API (legacy/advanced). |
+| **Special features** | Alarms (per-DO scheduled execution); WebSocket Hibernation (zero-cost idle); PITR (30-day window). |
 
 ## Quick Start
 
