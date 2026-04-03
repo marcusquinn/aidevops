@@ -22,28 +22,16 @@ tools:
 - **Model**: `glm-ocr` via Ollama (~2GB) — [THUDM](https://github.com/THUDM) GLM-V architecture
 - **Install**: `ollama pull glm-ocr` (requires Ollama: `brew install ollama` / `curl -fsSL https://ollama.com/install.sh | sh`)
 - **Use when**: Quick OCR of screenshots, photos, scanned docs, receipts, forms — local, no cloud
-- **Alternatives**: Structured extraction (tables, nested forms) → Unstract (`services/document-processing/unstract.md`) | Screen capture + GUI → Peekaboo (`tools/browser/peekaboo.md`) | Higher accuracy → GPT-4o / Claude vision APIs
+- **Limitations**: No JSON output; weak on low-quality images (<150 DPI); needs >=8GB RAM
 
 <!-- AI-CONTEXT-END -->
 
 ## Usage
 
 ```bash
+# Basic
 ollama run glm-ocr "Extract all text from this image" --images /path/to/document.png
-base64 -i document.png | ollama run glm-ocr "Extract all text" --images -  # pipe in scripts
-```
 
-| Task | Prompt |
-|------|--------|
-| Full text | `"Extract all text from this image exactly as written"` |
-| Table | `"Extract the table data as markdown"` |
-| Form fields | `"List all form fields and their values"` |
-| Receipt | `"Extract merchant, date, items, and total from this receipt"` |
-| Handwriting | `"Transcribe the handwritten text"` |
-
-## Workflow Patterns
-
-```bash
 # macOS screenshot → OCR
 screencapture -i /tmp/capture.png && ollama run glm-ocr "Extract all text" --images /tmp/capture.png
 
@@ -61,14 +49,22 @@ peekaboo image --mode screen --analyze "What text is visible?" --model ollama/gl
 peekaboo image --mode window --app "Preview" --analyze "Extract document text" --model ollama/glm-ocr
 ```
 
-## Model Comparison
+| Task | Prompt |
+|------|--------|
+| Full text | `"Extract all text from this image exactly as written"` |
+| Table | `"Extract the table data as markdown"` |
+| Form fields | `"List all form fields and their values"` |
+| Receipt | `"Extract merchant, date, items, and total from this receipt"` |
+| Handwriting | `"Transcribe the handwritten text"` |
 
-| Model | Best For | Size | Notes |
-|-------|----------|------|-------|
-| **glm-ocr** | Document OCR, forms, tables | ~2GB local | Purpose-built; complex layouts, multi-column. No JSON output. Weak on low-quality images. |
-| llava | General vision, scene understanding | ~4GB local | Better at general image understanding |
-| GPT-4o | Complex reasoning + vision | Cloud | Higher accuracy, structured output |
-| Claude 4 | Nuanced text understanding | Cloud | Best for reasoning about content |
+## When to Use Alternatives
+
+| Need | Use Instead |
+|------|-------------|
+| Structured extraction (tables, nested forms) | Unstract (`services/document-processing/unstract.md`) |
+| JSON output / structured data | GPT-4o or Claude vision APIs |
+| Higher accuracy on complex content | GPT-4o (cloud) |
+| Screen/window capture + GUI | Peekaboo (`tools/browser/peekaboo.md`) |
 
 ## Troubleshooting
 
