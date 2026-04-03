@@ -98,29 +98,94 @@ done
 #   TODO.md            — task backlog
 #   todo/**            — plans, briefs, task files
 #
+# Usage: _canonicalize_repo_relative_path <file_path> <repo_root>
+# Returns: canonical repo-relative path on stdout, or "OUTSIDE_REPO" if path escapes root
+# Resolves ./ and ../ segments without requiring the path to exist on disk.
+_canonicalize_repo_relative_path() {
+	local file_path="$1"
+	local repo_root="$2"
+
+	# Resolve to absolute path (relative paths are resolved from repo_root)
+	local abs_path
+	if [[ "$file_path" == /* ]]; then
+		abs_path="$file_path"
+	else
+		abs_path="${repo_root}/${file_path}"
+	fi
+
+	# Use python3 for portable normpath (resolves ./ and ../ without filesystem access)
+	if command -v python3 &>/dev/null; then
+		python3 - "$abs_path" "$repo_root" <<'PYEOF'
+import os, sys
+abs_path = sys.argv[1]
+repo_root = sys.argv[2]
+canonical = os.path.normpath(abs_path)
+if canonical.startswith(repo_root + os.sep) or canonical == repo_root:
+    print(os.path.relpath(canonical, repo_root))
+else:
+    print("OUTSIDE_REPO")
+PYEOF
+		return 0
+	fi
+
+	# Fallback: pure bash normalization (handles common cases without python3)
+	# Remove double slashes
+	abs_path="${abs_path//\/\//\/}"
+	# Resolve embedded ./ segments
+	while [[ "$abs_path" == *"/./"* ]]; do
+		abs_path="${abs_path//\/.\//\/}"
+	done
+	# Resolve ../ segments iteratively
+	while [[ "$abs_path" == *"/../"* ]]; do
+		abs_path=$(echo "$abs_path" | sed 's|[^/]*/\.\./||')
+	done
+	# Check if within repo root
+	if [[ "$abs_path" == "${repo_root}/"* ]] || [[ "$abs_path" == "$repo_root" ]]; then
+		echo "${abs_path#"${repo_root}/"}"
+	else
+		echo "OUTSIDE_REPO"
+	fi
+	return 0
+}
+
 # Usage: is_main_allowlisted_path <file_path>
 # Returns: 0 if path is allowlisted, 1 if not
+# Canonicalizes the path to a repo-relative form before evaluating the allowlist,
+# preventing path traversal bypasses (e.g. todo/../secret.py).
 is_main_allowlisted_path() {
 	local file_path="$1"
 
-	# Normalise: strip leading ./ to get a repo-relative path
+	# Resolve repo root for canonicalization
+	local repo_root
+	repo_root="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
+
 	local normalised
-	normalised=$(echo "$file_path" | sed 's|^\./||')
+	if [[ -n "$repo_root" ]]; then
+		# Canonicalize: resolve ./ and ../ segments, reject paths outside repo root
+		normalised="$(_canonicalize_repo_relative_path "$file_path" "$repo_root")"
+		# Reject paths that escape the repo root
+		if [[ "$normalised" == "OUTSIDE_REPO" ]]; then
+			return 1
+		fi
+	else
+		# No git repo context: fall back to simple normalization
+		# Strip leading ./ to get a repo-relative path
+		normalised=$(echo "$file_path" | sed 's|^\./||')
 
-	# Reject path traversal: any path containing .. segments is not allowlisted.
-	# This prevents todo/../secret.py from matching the todo/ prefix.
-	case "$normalised" in
-	*..*)
-		return 1
-		;;
-	esac
+		# Reject path traversal: any path containing .. segments is not allowlisted.
+		case "$normalised" in
+		*..*)
+			return 1
+			;;
+		esac
 
-	# Reject absolute paths that escape the repo root
-	case "$normalised" in
-	/*)
-		return 1
-		;;
-	esac
+		# Reject absolute paths
+		case "$normalised" in
+		/*)
+			return 1
+			;;
+		esac
+	fi
 
 	# Exact matches
 	case "$normalised" in
