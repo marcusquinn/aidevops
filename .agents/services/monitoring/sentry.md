@@ -31,12 +31,8 @@ mcp:
 
 ## MCP Setup
 
-1. Create the account structure first:
-   - Sign up at [sentry.io](https://sentry.io)
-   - Create the organization (`Settings → Organizations → Create`)
-   - Create a project inside that organization
-2. Generate a **personal** auth token at `Settings → Account → Personal Tokens → Create New Token`
-   - Create the token **after** the organization exists; earlier tokens may not inherit org access
+1. Sign up at [sentry.io](https://sentry.io), create an organization (`Settings → Organizations → Create`), then create a project inside it.
+2. Generate a **personal** auth token at `Settings → Account → Personal Tokens → Create New Token` — create it **after** the org exists; earlier tokens may not inherit org access.
    - Required scopes: `alerts:read`, `alerts:write`, `event:admin`, `event:read`, `event:write`, `member:read`, `org:read`, `project:read`, `project:releases`, `team:read`
 3. Save the token:
 
@@ -68,12 +64,7 @@ curl -s -H "Authorization: Bearer $SENTRY_YOURNAME" "https://sentry.io/api/0/org
 
 ## Available MCP Tools
 
-- `list_projects` — list Sentry projects
-- `get_issue` — fetch one issue
-- `list_issues` — list project issues
-- `get_event` — fetch one event
-- `resolve_issue` — mark an issue resolved
-- `assign_issue` — assign an issue
+`list_projects` · `get_issue` · `list_issues` · `get_event` · `resolve_issue` · `assign_issue`
 
 ## Usage Examples
 
@@ -87,9 +78,9 @@ curl -s -H "Authorization: Bearer $SENTRY_YOURNAME" "https://sentry.io/api/0/org
 ## SDK Integration
 
 ```bash
-npx @sentry/wizard@latest -i nextjs  # Next.js
-npx @sentry/wizard@latest -i node    # Node.js
-npx @sentry/wizard@latest -i react   # React
+npx @sentry/wizard@latest -i nextjs
+npx @sentry/wizard@latest -i node
+npx @sentry/wizard@latest -i react
 ```
 
 The wizard creates the required config files. See [Sentry Docs](https://docs.sentry.io/) for platform-specific guides. Keep `sendDefaultPii` disabled unless you explicitly need user/IP metadata and have privacy coverage.
@@ -97,15 +88,10 @@ The wizard creates the required config files. See [Sentry Docs](https://docs.sen
 ## Troubleshooting
 
 - **Empty organizations**: create a new token **after** the organization exists.
-- **`Not authenticated`**:
-  1. Verify the variable exists: `source ~/.config/aidevops/credentials.sh && printenv | cut -d= -f1 | grep '^SENTRY_YOURNAME$'`
-  2. Test the API directly: `curl -H "Authorization: Bearer $SENTRY_YOURNAME" https://sentry.io/api/0/`
-  3. Restart the runtime after config changes
+- **`Not authenticated`**: verify the variable (`source ~/.config/aidevops/credentials.sh && printenv | grep '^SENTRY_YOURNAME$'`), test the API (`curl -H "Authorization: Bearer $SENTRY_YOURNAME" https://sentry.io/api/0/`), then restart the runtime.
 - **Wrong token type**: org tokens (`org:ci`) are for CI/CD; MCP needs a personal token.
 
 ## Related
 
-- [Sentry Documentation](https://docs.sentry.io/)
-- [Sentry MCP](https://mcp.sentry.dev/)
-- `services/monitoring/langwatch.md`
-- `services/monitoring/socket.md`
+- [Sentry Documentation](https://docs.sentry.io/) · [Sentry MCP](https://mcp.sentry.dev/)
+- `services/monitoring/langwatch.md` · `services/monitoring/socket.md`
