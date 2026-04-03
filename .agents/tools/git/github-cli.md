@@ -16,47 +16,41 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
-## Quick Reference
-
-```bash
-# Auth — always include workflow scope
-gh auth login -s workflow && gh auth status
-gh auth refresh -s workflow  # Add scope to existing token
-gh auth switch               # Switch accounts
-gh auth token                # Get token for scripts
-
-# Repos / Issues / PRs / Releases / Runs
-gh repo list / create / clone / view / fork
-gh issue list / create / view / close
-gh pr list / create / view / merge
-gh release list / create / view / download
-gh run list / view / watch / rerun
-gh api repos/owner/repo      # Direct API access
-```
-
 **Required scope: `workflow`** — Without it, pushes modifying `.github/workflows/` fail with "refusing to allow...workflow scope". Fix: `gh auth refresh -s workflow`.
 
-<!-- AI-CONTEXT-END -->
+## Auth
+
+```bash
+gh auth login -s workflow   # Always include workflow scope
+gh auth refresh -s workflow # Add scope to existing token
+gh auth switch              # Switch accounts
+gh auth token               # Get token for scripts
+```
 
 ## Core Commands
 
 ```bash
-gh repo create my-repo --public --description "My project"
-gh repo clone owner/repo && gh repo fork owner/repo
+# Repos
+gh repo list / create / clone / view / fork
 
+# Issues
 gh issue list --state open --label bug
 gh issue create --title "Bug report" --body "Description"
 gh issue view 123 && gh issue close 123
 
+# PRs
 gh pr create --title "Feature X" --body "Description"
 gh pr create --fill          # Auto-fill from commits
 gh pr view 123 && gh pr merge 123 --squash  # Also: --merge, --rebase
 
+# Releases
 gh release create v1.2.3 --generate-notes [--draft]
 
+# CI Runs
 gh run list && gh run view 123456 && gh run watch
 gh run rerun 123456 --failed
 
+# API
 gh api repos/owner/repo/issues [-f title="Bug" -f body="Details"]
 ```
 
@@ -94,6 +88,8 @@ YAML issue forms (`.yml`) map each `label:` to a `### Label` header in the body.
 3. `CONTRIBUTING.md` exists? Follow its guidelines (CLA, branch naming)
 4. PRs: check for signed commits, branch targets, linked issue requirements
 5. If bot closes: read its comment for what's missing; resubmit (don't edit closed issues)
+
+<!-- AI-CONTEXT-END -->
 
 ## See Also
 
