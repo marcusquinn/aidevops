@@ -20,7 +20,7 @@ pro,gemini-2.5-pro,Capable large context
 grok,grok-3,Research and real-time web knowledge
 -->
 
-<!--TOON:subagents[107]{folder,purpose,key_files}:
+<!--TOON:subagents[108]{folder,purpose,key_files}:
 aidevops/,aidevops subagents,add-new-mcp-to-aidevops|agent-sources|api-integrations|architecture|claude-flow-comparison|configs|docs|extension|graduated-learnings|mcp-integrations|mcp-troubleshooting|memory-patterns|onboarding|orchestration-analysis|plugins|providers|recommendations|requirements|resources|security|security-requirements|self-improving-agents|service-links|services|setup|supervisor-module-map|troubleshooting
 content/,content subagents,content-calendar|context-templates|distribution-blog|distribution-email|distribution-podcast|distribution-short-form|distribution-social|distribution-youtube-channel-intel|distribution-youtube|distribution-youtube-optimizer|distribution-youtube-pipeline|distribution-youtube-readme|distribution-youtube-script-writer|distribution-youtube-topic-research|editor|guidelines
 content/heygen-skill/,content/heygen-skill subagents,rules-assets|rules-authentication|rules-avatars|rules-backgrounds|rules-captions|rules-dimensions|rules-photo-avatars|rules-quota|rules-remotion-integration|rules-scripts|rules-streaming-avatars|rules-templates|rules-text-overlays|rules-video-agent|rules-video-generation|rules-video-status|rules-video-translation|rules-voices|rules-webhooks
@@ -63,6 +63,7 @@ tools/architecture/clean-ddd-hexagonal-skill/hexagonal/,tools/architecture/clean
 tools/architecture/clean-ddd-hexagonal-skill/,tools/architecture/clean-ddd-hexagonal-skill subagents,hexagonal|layers|testing
 tools/architecture/feature-slicing-skill/,tools/architecture/feature-slicing-skill subagents,cheatsheet|implementation|layers|migration|nextjs|public-api
 tools/automation/,tools/automation subagents,cron-agent|mac|macos-automator|objective-runner
+tools/autoagent/,tools/autoagent subagents,autoagent
 tools/autoresearch/,tools/autoresearch subagents,autoresearch
 tools/browser/,tools/browser subagents,agent-browser|anti-detect-browser|browser-automation|browser-benchmark|browser-benchmark-scripts-01-playwright|browser-benchmark-scripts-02-dev-browser|browser-benchmark-scripts-03-agent-browser|browser-benchmark-scripts-04-crawl4ai|browser-benchmark-scripts-05-stagehand|browser-benchmark-scripts-06-visual-verification|browser-benchmark-scripts|browser-profiles|browser-qa|browser-use|chrome-devtools|chrome-webstore-release|chromium-debug-use|crawl4ai-integration|crawl4ai|crawl4ai-resources|crawl4ai-usage|curl-copy|dev-browser
 tools/browser/extension-dev/,tools/browser/extension-dev subagents,development
