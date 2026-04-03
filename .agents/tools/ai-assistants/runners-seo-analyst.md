@@ -5,7 +5,7 @@ mode: reference
 
 # SEO Analyst
 
-Runner template for auditing search visibility. Create with:
+Create with:
 
 ```bash
 runner-helper.sh create seo-analyst \
