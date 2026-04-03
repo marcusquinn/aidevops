@@ -1,17 +1,9 @@
 ---
-description: Example runner template - security and quality code reviewer
+description: Runner template - security and quality code reviewer
 mode: reference
 ---
 
 # Code Reviewer
-
-```bash
-runner-helper.sh create code-reviewer
-runner-helper.sh edit code-reviewer  # paste template below
-runner-helper.sh run code-reviewer "Review these files: src/auth.ts src/api.ts"
-runner-helper.sh run code-reviewer "Review the changes in PR #42: $(gh pr diff 42)"
-runner-helper.sh run code-reviewer "Review src/auth/" --attach http://localhost:4096
-```
 
 ```markdown
 # Code Reviewer
@@ -63,4 +55,14 @@ Review provided files or diffs and return structured findings.
 - Check that all API endpoints have authentication middleware
 - Verify error responses don't leak internal details
 - Note missing tests but don't block for them unless critical path
+```
+
+## Usage
+
+```bash
+runner-helper.sh create code-reviewer
+runner-helper.sh edit code-reviewer  # paste template above
+runner-helper.sh run code-reviewer "Review these files: src/auth.ts src/api.ts"
+runner-helper.sh run code-reviewer "Review the changes in PR #42: $(gh pr diff 42)"
+runner-helper.sh run code-reviewer "Review src/auth/" --attach http://localhost:4096
 ```
