@@ -4,7 +4,7 @@ Loaded on-demand for session management, browser automation, localhost, or quali
 
 ## Terminal Capabilities
 
-Full PTY access: run any CLI (`vim`, `psql`, `ssh`, `htop`, dev servers, `opencode -p "subtask"`).
+Full PTY access: run any CLI (`vim`, `psql`, `ssh`, `htop`, dev servers).
 
 - Long-running processes: use `&`, `nohup`, or `tmux`.
 - Parallel AI dispatch: `tools/ai-assistants/opencode-server.md`.
@@ -39,7 +39,6 @@ worktree-helper.sh add feature/x  # Fallback
 ```
 
 - After switching to a worktree, re-read files at the worktree path before editing. Edit tracking is path-specific.
-- After completing changes, offer: 1) Preflight checks 2) Skip preflight 3) Continue editing.
 - Worktree ownership: remove only if you created it this session, it's deployed/complete, or user asked. Ownership enforced by `worktree-helper.sh registry list`; `remove`/`clean` refuse live worktrees owned by other processes.
 - Safety hooks block destructive commands (`git reset --hard`, `rm -rf`). Verify with `install-hooks.sh --test`. See `workflows/git-workflow.md` "Destructive Command Safety Hooks".
 - Full docs: `workflows/git-workflow.md`, `tools/git/worktrunk.md`.
@@ -69,8 +68,7 @@ Quick commands: `linters-local.sh` (pre-commit), `/pr review` (full), `version-m
 
 ## Agents & Subagents
 
-- Full inventory: `subagent-index.toon`.
-- Strategy: load subagents only when domain expertise is needed.
+Full inventory: `subagent-index.toon`. Load subagents only when domain expertise is needed.
 
 | Tier | Location | Purpose |
 |------|----------|---------|
