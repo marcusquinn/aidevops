@@ -2,11 +2,9 @@
 
 ## 1. Visual Theme & Atmosphere
 
-This design system communicates exclusivity, craftsmanship, and quiet confidence. It serves brands where the product speaks for itself and the interface exists only to frame it beautifully — luxury automotive, high-end real estate, premium hospitality, fine jewellery, and couture fashion. Every design decision prioritises restraint over embellishment.
+Exclusivity, craftsmanship, quiet confidence. Serves luxury automotive, high-end real estate, premium hospitality, fine jewellery, couture fashion. Restraint over embellishment throughout.
 
-The foundation is darkness. Near-black backgrounds create a cinematic stage where content — particularly photography — commands absolute attention. The palette is deliberately minimal: black, near-black, white, and a single champagne gold accent that signals prestige without ostentation. Colour is rationed like rare material; when it appears, it matters.
-
-Typography is thin, tall, and breathtakingly precise. Headings use an ultra-light serif at large scale, creating the visual equivalent of a whisper that commands silence. Body text is small, well-spaced, and secondary to imagery. The overall density is extremely low — massive whitespace (or rather, blackspace) dominates every composition. Transitions are slow and cinematic. The interface moves like a luxury car: smooth, unhurried, deliberate.
+Near-black backgrounds create a cinematic stage for photography. Palette: black, near-black, white, single champagne gold accent. Ultra-light serif headings at large scale; body text small and secondary to imagery. Density extremely low — blackspace dominates. Transitions slow and cinematic (400–600ms).
 
 **Key characteristics:**
 - **Mood:** Exclusive, cinematic, restrained, aspirational
@@ -289,7 +287,7 @@ Nav links:
 
 ### Whitespace Philosophy
 
-Negative space is not empty — it is the primary design material. Sections are separated by 80–160px of blackspace. Content is concentrated in narrow columns surrounded by vast dark margins. The ratio of content to space should feel like 30:70 or even 20:80. This extreme spatial generosity is what distinguishes luxury from merely dark themes.
+Negative space is the primary design material. Sections: 80–160px blackspace separation. Content in narrow columns; content-to-space ratio 30:70 or 20:80. Spatial generosity distinguishes luxury from merely dark themes.
 
 ### Border-Radius Scale
 
