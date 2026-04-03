@@ -9,12 +9,7 @@ Use 2 probes from this file during `/define` for tasks classified as **feature**
 
 ## Default Assumptions
 
-Apply unless user overrides:
-
-- Minimal footprint — no new dependencies without discussion
-- Follow existing codebase patterns
-- Include tests for new behaviour
-- No breaking changes to existing APIs
+Apply unless user overrides: minimal footprint (no new deps without discussion), follow existing patterns, include tests for new behaviour, no breaking API changes.
 
 ## Required Questions (always ask)
 
@@ -70,7 +65,7 @@ Apply unless user overrides:
 
 ## Sufficiency Test
 
-Before generating the brief, verify you can answer:
+Before generating the brief, verify you can answer all four:
 
 - What does the user see/experience when done?
 - What existing code does this touch?
