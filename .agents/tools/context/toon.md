@@ -12,21 +12,20 @@ tools:
   task: true
 ---
 
-# TOON Format Integration - AI DevOps Framework
-
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
 - **Purpose**: 20-60% token reduction vs JSON for LLM prompts
 - **CLI**: `npx @toon-format/cli` (no install needed)
-- **Commands**: `toon-helper.sh [encode|decode|compare|validate|batch|stdin-encode|stdin-decode] [input] [output]`
 - **Format**: object (`id: 1`) or tabular (`users[2]{id,name,role}:` + `1,Alice,admin` rows)
 - **Delimiters**: comma (default), tab (`\t`), pipe (`|`)
 - **Best for**: Tabular data (60%+ savings), config data, API responses
 - **Config**: `configs/toon-config.json` (copy from `configs/toon-config.json.txt`); key options: `default_delimiter`, `key_folding`, `batch_processing`, `ai_prompts`
 - **Resources**: https://toonformat.dev, https://github.com/toon-format/toon
 - **Best practices**: validate input; keep JSON backups; use strict mode in production; monitor actual savings (tabular data benefits most)
+- **LLM send**: include preamble `Data is in TOON format (2-space indent, arrays show length and fields):`
+- **LLM generate**: show header format `users[N]{id,name,role}:` — 2-space indent, no trailing spaces, `[N]` matches row count, code block output only
 
 <!-- AI-CONTEXT-END -->
 
@@ -59,9 +58,3 @@ toon-helper.sh compare large-dataset.json
 | API response to LLM | `curl -s "https://api.example.com/data" \| toon-helper.sh stdin-encode` |
 | Database export | `mysql -e "SELECT * FROM users" --json \| toon-helper.sh stdin-encode '\t'` |
 | Log analysis | `toon-helper.sh batch ./logs/json ./logs/toon json-to-toon` |
-
-## LLM Integration
-
-**Sending TOON to LLMs** — include preamble: `Data is in TOON format (2-space indent, arrays show length and fields):`
-
-**Generating TOON from LLMs** — show expected header format: `users[N]{id,name,role}:`. Rules: 2-space indent, no trailing spaces, `[N]` matches row count, request code block output only.
