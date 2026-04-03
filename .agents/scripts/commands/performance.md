@@ -10,6 +10,8 @@ URL/Target: $ARGUMENTS
 
 ## Prerequisites
 
+Verify Chrome DevTools MCP is available:
+
 ```bash
 which npx && npx chrome-devtools-mcp@latest --version || echo "Install: npm i -g chrome-devtools-mcp"
 ```
@@ -49,7 +51,7 @@ Using Chrome DevTools MCP, execute in order:
 | TTFB | Xms | GOOD/NEEDS WORK/POOR | <800ms |
 
 ### Top Issues (Priority Order)
-1. **Issue** — File: `path/to/file:line` — Fix: specific recommendation
+1. **Issue** — File: `path/to/file` — Fix: specific recommendation
 
 ### Network Dependencies
 - X third-party scripts; longest chain: X requests; total blocking time: Xms
@@ -63,10 +65,10 @@ For each issue: **What** (problem), **Where** (file path), **How** (code/config 
 ## Examples
 
 ```bash
-/performance https://example.com                                    # full audit
-/performance http://localhost:3000 --local                          # local dev
-/performance https://example.com --device=mobile                    # mobile only
-/performance https://example.com --compare=baseline.json            # diff baseline
+/performance https://example.com                          # full audit
+/performance http://localhost:3000 --local                # local dev
+/performance https://example.com --device=mobile          # mobile only
+/performance https://example.com --compare=baseline.json  # diff baseline
 /performance https://example.com --categories=performance,accessibility
 ```
 
