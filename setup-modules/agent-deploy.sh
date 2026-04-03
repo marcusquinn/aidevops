@@ -286,38 +286,57 @@ deploy_aidevops_agents() {
 	# Create target directory
 	mkdir -p "$target_dir"
 
-	# Always clean stale files from previous deployments. Files that were
-	# moved or deleted in the source repo would otherwise persist in the
-	# deployed directory indefinitely (rsync without --delete is additive).
-	# Preserves user directories (custom/, draft/) and plugin namespaces.
+	# Atomic deploy: build a staging directory, then swap it into place.
+	# Previously, clean + copy happened in-place, creating a window where
+	# scripts were missing. The pulse could dispatch workers mid-deploy,
+	# hitting "No such file or directory" errors. Now we:
+	#   1. rsync into a staging dir (target_dir.staging)
+	#   2. Move preserved dirs (custom/, draft/, plugins) from live to staging
+	#   3. mv live → .old, mv staging → live (atomic on same filesystem)
+	#   4. rm .old
+	local staging_dir="${target_dir}.staging"
+	local old_dir="${target_dir}.old"
+	rm -rf "$staging_dir" "$old_dir"
+	mkdir -p "$staging_dir"
+
+	# Copy source into staging
+	local copy_rc
+	if [[ ${#plugin_namespaces[@]} -gt 0 ]]; then
+		_deploy_agents_copy "$source_dir" "$staging_dir" "${plugin_namespaces[@]}"
+		copy_rc=$?
+	else
+		_deploy_agents_copy "$source_dir" "$staging_dir"
+		copy_rc=$?
+	fi
+	if [[ "$copy_rc" -ne 0 ]]; then
+		print_error "Failed to deploy agents to staging directory"
+		rm -rf "$staging_dir"
+		return 1
+	fi
+
+	# Carry over preserved directories from live target to staging
 	local -a preserved_dirs=("custom" "draft")
 	if [[ ${#plugin_namespaces[@]} -gt 0 ]]; then
 		for pns in "${plugin_namespaces[@]}"; do
 			preserved_dirs+=("$pns")
 		done
 	fi
-	_deploy_agents_clean_mode "$target_dir" "${preserved_dirs[@]}" || return 1
+	for pdir in "${preserved_dirs[@]}"; do
+		if [[ -d "$target_dir/$pdir" ]]; then
+			# Move user dirs into staging so they survive the swap
+			cp -a "$target_dir/$pdir" "$staging_dir/$pdir" 2>/dev/null || true
+		fi
+	done
 
-	# Copy all agent files and folders, excluding:
-	# - loop-state/ (local runtime state, not agents)
-	# - custom/ (user's private agents, never overwritten)
-	# - draft/ (user's experimental agents, never overwritten)
-	# - plugin namespace directories (managed separately)
-	local copy_rc
-	if [[ ${#plugin_namespaces[@]} -gt 0 ]]; then
-		_deploy_agents_copy "$source_dir" "$target_dir" "${plugin_namespaces[@]}"
-		copy_rc=$?
-	else
-		_deploy_agents_copy "$source_dir" "$target_dir"
-		copy_rc=$?
+	# Atomic swap: mv is atomic on the same filesystem (POSIX rename())
+	if [[ -d "$target_dir" ]]; then
+		mv "$target_dir" "$old_dir"
 	fi
-	if [[ "$copy_rc" -eq 0 ]]; then
-		print_success "Deployed agents to $target_dir"
-		_deploy_agents_post_copy "$target_dir" "$repo_dir" "$source_dir" "$plugins_file"
-	else
-		print_error "Failed to deploy agents"
-		return 1
-	fi
+	mv "$staging_dir" "$target_dir"
+	rm -rf "$old_dir"
+
+	print_success "Deployed agents to $target_dir"
+	_deploy_agents_post_copy "$target_dir" "$repo_dir" "$source_dir" "$plugins_file"
 
 	return 0
 }
