@@ -21,22 +21,17 @@ mcp:
 
 ## Quick Reference
 
-- **Purpose**: Cross-browser testing and automation (fastest browser engine)
+- **Purpose**: Cross-browser testing and automation (fastest browser engine) — engine for dev-browser, agent-browser, and Stagehand
 - **Install**: `npm install playwright && npx playwright install` (lib + browsers) | `npx @playwright/mcp@latest` (MCP server)
+- **MCP config**: `{ "playwright": { "command": "npx", "args": ["@playwright/mcp@latest"] } }`
 - **Browsers**: chromium, firefox, webkit + custom (Brave, Edge, Chrome via `executablePath`)
-- **Headless**: Yes (default)
+- **Headless**: Yes (default) | **Proxy**: HTTP/SOCKS5 | **Session**: `storageState` / `userDataDir`
+- **Extensions**: `launchPersistentContext` (requires `headless: false`; `--headless=new` on newer Chromium)
+- **Ad blocking**: Brave Shields or uBlock Origin | **AI page understanding**: `page.locator('body').ariaSnapshot()` ~0.01s, 50-200 tokens
 - **Performance**: Navigate 1.4s, form fill 0.9s, extraction 1.3s, reliability 0.64s avg
 - **Parallel**: 5 contexts in 2.1s, 3 browsers in 1.9s, 10 pages in 1.8s
-- **Subagents**: `playwright-emulation.md` (device/viewport), `playwright-cli.md` (CLI agent)
-
-Engine for dev-browser, agent-browser, and Stagehand. Use directly for maximum speed, proxy support, parallel instances, extensions, or custom browser engines.
-
-- **Proxy**: HTTP/SOCKS5
-- **Session**: `storageState` / `userDataDir`
-- **Extensions**: `launchPersistentContext`
-- **Ad blocking**: Brave Shields or uBlock Origin
-- **AI page understanding**: `page.locator('body').ariaSnapshot()` ~0.01s, 50-200 tokens
 - **Chrome DevTools MCP**: `npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222`
+- **Subagents**: `playwright-emulation.md` (device/viewport), `playwright-cli.md` (CLI agent)
 
 <!-- AI-CONTEXT-END -->
 
@@ -48,11 +43,9 @@ npm install playwright && npx playwright install  # lib + browsers
 npx @playwright/mcp@latest  # MCP server
 ```
 
-MCP config (Claude Code, OpenCode, etc.): `{ "playwright": { "command": "npx", "args": ["@playwright/mcp@latest"] } }`
-
 ## Custom Browser Engines
 
-Use `executablePath` for Brave, Edge, or Chrome instead of bundled Chromium. Extensions: `headless: false` on older Chromium; `--headless=new` supports them. Brave Shields may make uBlock Origin redundant.
+Use `executablePath` for Brave, Edge, or Chrome instead of bundled Chromium. Brave Shields may make uBlock Origin redundant.
 
 | Browser | macOS | Linux | Windows |
 |---------|-------|-------|---------|
@@ -65,7 +58,6 @@ Use `executablePath` for Brave, Edge, or Chrome instead of bundled Chromium. Ext
 import { chromium } from 'playwright';
 const executablePath = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser';
 
-// Simple launch
 const browser = await chromium.launch({ executablePath, headless: true });
 
 // Persistent context with extensions
