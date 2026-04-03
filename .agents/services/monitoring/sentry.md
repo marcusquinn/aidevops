@@ -20,19 +20,19 @@ mcp:
 
 ## Quick Reference
 
-- **Purpose**: Error monitoring, debugging, and issue tracking via Sentry
+- **Purpose**: Production error debugging, trend analysis, stack trace investigation, release health
 - **MCP**: Local stdio mode with `@sentry/mcp-server`
-- **Auth**: Personal Auth Token (created after org exists)
+- **Auth**: Personal Auth Token (created **after** org exists — earlier tokens may not inherit org access)
 - **Credentials**: `~/.config/aidevops/credentials.sh` → `SENTRY_YOURNAME`
-- **When to use**: Production error debugging, trend analysis, stack trace investigation, release health checks
-- **Use something else for**: LLM traces/evals → `services/monitoring/langwatch.md`; dependency security → `services/monitoring/socket.md`
+- **MCP tools**: `list_projects` · `get_issue` · `list_issues` · `get_event` · `resolve_issue` · `assign_issue`
+- **Use instead**: LLM traces/evals → `services/monitoring/langwatch.md`; dependency security → `services/monitoring/socket.md`
 
 <!-- AI-CONTEXT-END -->
 
 ## MCP Setup
 
 1. Sign up at [sentry.io](https://sentry.io), create an org (`Settings → Organizations → Create`), then a project.
-2. Generate a **personal** auth token (`Settings → Account → Personal Tokens → Create New Token`) **after** the org exists — earlier tokens may not inherit org access. Required scopes: `alerts:read`, `alerts:write`, `event:admin`, `event:read`, `event:write`, `member:read`, `org:read`, `project:read`, `project:releases`, `team:read`
+2. Generate a **personal** auth token (`Settings → Account → Personal Tokens → Create New Token`). Required scopes: `alerts:read`, `alerts:write`, `event:admin`, `event:read`, `event:write`, `member:read`, `org:read`, `project:read`, `project:releases`, `team:read`
 3. Save the token:
 
 ```bash
@@ -61,10 +61,6 @@ source ~/.config/aidevops/credentials.sh
 curl -s -H "Authorization: Bearer $SENTRY_YOURNAME" "https://sentry.io/api/0/organizations/" | jq '.[].slug'
 ```
 
-## Available MCP Tools
-
-`list_projects` · `get_issue` · `list_issues` · `get_event` · `resolve_issue` · `assign_issue`
-
 ## Usage Examples
 
 ```text
@@ -77,12 +73,10 @@ curl -s -H "Authorization: Bearer $SENTRY_YOURNAME" "https://sentry.io/api/0/org
 ## SDK Integration
 
 ```bash
-npx @sentry/wizard@latest -i nextjs
-npx @sentry/wizard@latest -i node
-npx @sentry/wizard@latest -i react
+npx @sentry/wizard@latest -i nextjs   # also: node, react
 ```
 
-See [Sentry Docs](https://docs.sentry.io/) for platform-specific guides. Keep `sendDefaultPii` disabled unless you explicitly need user/IP metadata and have privacy coverage.
+Keep `sendDefaultPii` disabled unless you explicitly need user/IP metadata and have privacy coverage. See [Sentry Docs](https://docs.sentry.io/) for platform-specific guides.
 
 ## Troubleshooting
 
