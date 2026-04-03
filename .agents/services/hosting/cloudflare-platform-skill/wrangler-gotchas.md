@@ -1,9 +1,5 @@
 # Wrangler Common Issues
 
-Pitfalls and troubleshooting for the Wrangler CLI.
-
-## Gotchas
-
 **Compatibility Dates** — Always set; omitting causes unexpected runtime changes:
 
 ```jsonc
