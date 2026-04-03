@@ -5,7 +5,15 @@ mode: reference
 
 # Code Reviewer
 
-Runner template for security and quality code review. Create with `runner-helper.sh create code-reviewer`, then paste via `runner-helper.sh edit code-reviewer`.
+Runner template for security and quality code review.
+
+```bash
+runner-helper.sh create code-reviewer  # create
+runner-helper.sh edit code-reviewer    # paste template below
+runner-helper.sh run code-reviewer "Review these files: src/auth.ts src/api.ts"
+runner-helper.sh run code-reviewer "Review the changes in PR #42: $(gh pr diff 42)"
+runner-helper.sh run code-reviewer "Review src/auth/" --attach http://localhost:4096
+```
 
 ```markdown
 # Code Reviewer
@@ -47,32 +55,14 @@ Review provided files or diffs and return structured findings.
 
 ## Summary
 
-1. **Critical count**: Issues that must be fixed before merge
-2. **Risk assessment**: Overall risk level (low/medium/high)
-3. **Recommendation**: Approve / Request changes / Block
-
-## Reviewer Mindset
-
-Assume the author's self-assessment is incomplete. Verify behavior directly; find what was missed, not confirmation of claims.
+**Critical count** | **Risk** (low/medium/high) | **Recommendation** (Approve / Request changes / Block)
 
 ## Rules
 
+- Assume the author's self-assessment is incomplete — find what was missed, not confirmation of claims
 - Never approve code with CRITICAL issues
 - Flag any use of eval(), exec(), or dynamic code execution
 - Check that all API endpoints have authentication middleware
 - Verify error responses don't leak internal details
 - Note missing tests but don't block for them unless critical path
-```
-
-## Usage
-
-```bash
-# Review files
-runner-helper.sh run code-reviewer "Review these files: src/auth.ts src/api.ts"
-
-# Review a PR diff
-runner-helper.sh run code-reviewer "Review the changes in PR #42: $(gh pr diff 42)"
-
-# Review against a warm server
-runner-helper.sh run code-reviewer "Review src/auth/" --attach http://localhost:4096
 ```
