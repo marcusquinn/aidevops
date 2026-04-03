@@ -33,27 +33,36 @@ tools:
 
 ## Components
 
-- MUST use accessible component primitives (`Base UI`, `React Aria`, `Radix`) for keyboard/focus behavior
+- MUST use accessible component primitives (`Base UI`, `React Aria`, `Radix`) to ensure full accessibility (ARIA attributes, screen readers, keyboard and focus handling)
 - MUST use the project's existing component primitives first; NEVER mix primitive systems on the same surface
 - SHOULD prefer [`Base UI`](https://base-ui.com/react/components) for new primitives if compatible
-- MUST add `aria-label` to icon-only buttons; NEVER rebuild keyboard/focus behavior by hand
+- MUST add `aria-label` to icon-only buttons
+- NEVER rebuild keyboard or focus behavior by hand unless explicitly requested
 
 ## Interaction
 
 - MUST use `AlertDialog` for destructive or irreversible actions
-- SHOULD use structural skeletons for loading states; MUST show errors at the action point
-- NEVER use `h-screen`; use `h-dvh`; MUST respect `safe-area-inset` for fixed elements
+- SHOULD use structural skeletons for loading states
+- MUST show errors at the action point
+- NEVER use `h-screen`; use `h-dvh`
+- MUST respect `safe-area-inset` for fixed elements
 - NEVER block paste in `input` or `textarea`
 
 ## Animation & Performance
 
-- NEVER add animation unless explicitly requested; NEVER introduce custom easing curves
-- MUST animate only compositor props (`transform`, `opacity`); NEVER animate layout props (`width`, `height`, `top`, `left`, `margin`, `padding`)
+- NEVER add animation unless explicitly requested
+- NEVER introduce custom easing curves unless explicitly requested
+- MUST animate only compositor props (`transform`, `opacity`)
+- NEVER animate layout props (`width`, `height`, `top`, `left`, `margin`, `padding`)
 - SHOULD avoid animating paint properties (`background`, `color`) except for small local UI
-- SHOULD use `ease-out` for entrance; NEVER exceed `200ms` for interaction feedback
-- MUST pause looping animations when off-screen; MUST respect `prefers-reduced-motion`
-- SHOULD avoid animating large images or full-screen surfaces; NEVER animate large `blur()`/`backdrop-filter`
-- NEVER apply `will-change` outside an active animation; NEVER use `useEffect` for render logic
+- SHOULD use `ease-out` for entrance
+- NEVER exceed `200ms` for interaction feedback
+- MUST pause looping animations when off-screen
+- MUST respect `prefers-reduced-motion`
+- SHOULD avoid animating large images or full-screen surfaces
+- NEVER animate large `blur()` or `backdrop-filter` surfaces
+- NEVER apply `will-change` outside an active animation
+- NEVER use `useEffect` for anything expressible as render logic
 
 ## Typography
 
