@@ -13,26 +13,19 @@ tools:
 # SEO Ranking Opportunities
 
 <!-- AI-CONTEXT-START -->
-
-## Quick Reference
-
-- **Purpose**: Analyze exported SEO data for ranking opportunities
-- **Input**: TOON files from `seo-export-helper.sh`
-- **Output**: Analysis report in TOON format
 - **Commands**: `/seo-analyze`, `/seo-opportunities`, `seo-analysis-helper.sh`
-
-```bash
-seo-analysis-helper.sh example.com [quick-wins|striking-distance|low-ctr|cannibalization|summary]
-```
-
+- `seo-analysis-helper.sh example.com [quick-wins|striking-distance|low-ctr|cannibalization|summary]`
 <!-- AI-CONTEXT-END -->
 
 ## Workflow
 
 1. **Export**: `seo-export-helper.sh all example.com --days 90`
 2. **Analyze**: `seo-analysis-helper.sh example.com`
-3. **Review**: `cat ~/.aidevops/.agent-workspace/work/seo-data/example.com/analysis-*.toon`
+3. **Review**: `~/.aidevops/.agent-workspace/work/seo-data/example.com/analysis-*.toon`
 4. **Prioritize**: Quick wins → Low CTR → Cannibalization → Striking distance
+5. **Extend**: `seo-analysis-helper.sh example.com quick-wins` → `/keyword-research-extended "top opportunity keyword"`
+
+Data sources: GSC (clicks/impr), Ahrefs/DataForSEO (volume/difficulty), Bing — merged across sources; cannibalization detection spans all.
 
 ## Analysis Types
 
@@ -66,17 +59,3 @@ seo tips	/blog/tips	3000	0.015	5	150	gsc
 query	pages	positions	page_count
 seo tools	/blog/tools,/guides/seo	8.2,15.3	2
 ```
-
-## Multi-Source
-
-GSC (clicks/impr), Ahrefs/DataForSEO (volume/difficulty), and Bing data are merged. Queries across sources are considered for cannibalization detection.
-
-## Integration
-
-```bash
-# Find opportunities, then research related keywords
-seo-analysis-helper.sh example.com quick-wins
-/keyword-research-extended "top opportunity keyword"
-```
-
-Prioritize: quick wins (update) → striking distance (expand) → cannibalization (consolidate).
