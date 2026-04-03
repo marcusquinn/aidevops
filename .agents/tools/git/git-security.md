@@ -28,7 +28,7 @@ tools:
 
 ## Preventive Controls
 
-Use CLI auth — keeps tokens in the system keyring, not repo files:
+**Auth:** Use CLI auth (tokens in system keyring, not repo files). Fallback: `~/.config/aidevops/credentials.sh` (600 perms). Rotate every 6-12 months or on exposure. Prefer short-lived CI/CD credentials. See `git/authentication.md`.
 
 ```bash
 gh auth login -s workflow   # -s workflow for CI PR support
@@ -36,9 +36,9 @@ glab auth login
 tea login add
 ```
 
-Fallback: `~/.config/aidevops/credentials.sh` (600 perms). Rotate every 6-12 months or on exposure. Prefer short-lived CI/CD credentials. See `git/authentication.md`.
-
 ### Branch Protection
+
+Require PR reviews, dismiss stale approvals, enforce admins, require CI checks, CODEOWNERS where available. Signed commits recommended.
 
 ```bash
 gh api repos/{owner}/{repo}/branches/main/protection -X PUT \
@@ -46,8 +46,6 @@ gh api repos/{owner}/{repo}/branches/main/protection -X PUT \
   -f enforce_admins=true \
   -f required_pull_request_reviews='{"required_approving_review_count":1}'
 ```
-
-Require PR reviews, dismiss stale approvals, enforce admins, require CI checks, CODEOWNERS where available. Signed commits recommended.
 
 ### Commit Signing
 
@@ -62,20 +60,19 @@ git config --global commit.gpgsign true
 
 Primary: `secretlint-helper.sh scan`. History: `trufflehog git file://. --only-verified`. `git-secrets` useful for AWS-focused checks.
 
-Pre-commit hook (supplementary — secretlint is primary):
+Supplementary pre-commit hook (pattern-based, secretlint is primary):
 
 ```bash
 # .git/hooks/pre-commit
 #!/bin/bash
 if git diff --cached | grep -iE "(api_key|token|password|secret|private_key)" > /dev/null; then
-    echo "ERROR: Possible secret detected — review before committing."
-    exit 1
+    echo "ERROR: Possible secret detected — review before committing."; exit 1
 fi
 ```
 
 ## Access Control
 
-Least privilege. Quarterly access review. Remove inactive collaborators. Prefer teams over direct grants.
+Least privilege. Quarterly review. Remove inactive collaborators. Prefer teams over direct grants.
 
 | Role | Permissions |
 |------|-------------|
@@ -92,7 +89,7 @@ Least privilege. Quarterly access review. Remove inactive collaborators. Prefer 
 **Secret committed:**
 
 1. **Rotate first** — assume compromise.
-2. Remove from history (preferred: `git-filter-repo`):
+2. Remove from history. Preferred (`git-filter-repo`):
 
    ```bash
    git filter-repo --invert-paths --path path/to/secret
