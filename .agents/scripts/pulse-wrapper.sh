@@ -3800,6 +3800,77 @@ normalize_active_issue_assignments() {
 }
 
 #######################################
+# Auto-approve needs-maintainer-review issues where the maintainer
+# created the issue or has already commented (GH#16842).
+#
+# The review gate exists for external contributions. When the
+# maintainer is the author or has engaged, the gate is redundant —
+# remove the label and add auto-dispatch so the fill floor can
+# dispatch workers immediately.
+#######################################
+auto_approve_maintainer_issues() {
+	local repos_json="$REPOS_JSON"
+	[[ -f "$repos_json" ]] || return 0
+
+	local total_approved=0
+
+	while IFS='|' read -r slug maintainer; do
+		[[ -n "$slug" && -n "$maintainer" ]] || continue
+
+		# Get all open needs-maintainer-review issues
+		local nmr_json
+		nmr_json=$(gh issue list --repo "$slug" --label "needs-maintainer-review" \
+			--state open --json number,author --limit 100 2>/dev/null) || nmr_json="[]"
+		[[ -n "$nmr_json" && "$nmr_json" != "null" ]] || continue
+
+		local nmr_count
+		nmr_count=$(printf '%s' "$nmr_json" | jq 'length' 2>/dev/null) || nmr_count=0
+		[[ "$nmr_count" -gt 0 ]] || continue
+
+		local i=0
+		while [[ "$i" -lt "$nmr_count" ]]; do
+			local issue_num issue_author
+			issue_num=$(printf '%s' "$nmr_json" | jq -r ".[$i].number" 2>/dev/null)
+			issue_author=$(printf '%s' "$nmr_json" | jq -r ".[$i].author.login // empty" 2>/dev/null)
+			i=$((i + 1))
+			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
+
+			local should_approve=false
+
+			# Case 1: maintainer created the issue
+			if [[ "$issue_author" == "$maintainer" ]]; then
+				should_approve=true
+			fi
+
+			# Case 2: maintainer commented on the issue
+			if [[ "$should_approve" == "false" ]]; then
+				local maintainer_commented
+				maintainer_commented=$(gh api "repos/${slug}/issues/${issue_num}/comments" \
+					--jq "[.[] | select(.user.login == \"${maintainer}\")] | length" 2>/dev/null) || maintainer_commented=0
+				[[ "$maintainer_commented" =~ ^[0-9]+$ ]] || maintainer_commented=0
+				if [[ "$maintainer_commented" -gt 0 ]]; then
+					should_approve=true
+				fi
+			fi
+
+			if [[ "$should_approve" == "true" ]]; then
+				gh issue edit "$issue_num" --repo "$slug" \
+					--remove-label "needs-maintainer-review" \
+					--add-label "auto-dispatch" >/dev/null 2>&1 || true
+				echo "[pulse-wrapper] Auto-approved #${issue_num} in ${slug} — maintainer ($maintainer) is author or commenter" >>"$LOGFILE"
+				total_approved=$((total_approved + 1))
+			fi
+		done
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | "\(.slug)|\(.maintainer // (.slug | split("/")[0]))"' "$repos_json" 2>/dev/null)
+
+	if [[ "$total_approved" -gt 0 ]]; then
+		echo "[pulse-wrapper] Auto-approve maintainer issues: approved ${total_approved} issue(s)" >>"$LOGFILE"
+	fi
+
+	return 0
+}
+
+#######################################
 # Daily complexity scan helpers (GH#5628, GH#15285)
 #######################################
 
@@ -7766,6 +7837,10 @@ _run_preflight_stages() {
 
 	# Ensure active labels reflect ownership to prevent multi-worker overlap.
 	run_stage_with_timeout "normalize_active_issue_assignments" "$PRE_RUN_STAGE_TIMEOUT" normalize_active_issue_assignments || true
+
+	# Auto-approve maintainer issues: remove needs-maintainer-review when
+	# the maintainer created or commented on the issue (GH#16842).
+	run_stage_with_timeout "auto_approve_maintainer_issues" "$PRE_RUN_STAGE_TIMEOUT" auto_approve_maintainer_issues || true
 
 	if ! run_stage_with_timeout "prefetch_state" "$PRE_RUN_STAGE_TIMEOUT" prefetch_state; then
 		echo "[pulse-wrapper] prefetch_state did not complete successfully — aborting this cycle to avoid stale dispatch decisions" >>"$LOGFILE"
