@@ -41,6 +41,14 @@
     "lines_before": 316,
     "status": "simplified"
   },
+  ".agents/tools/video/remotion-get-video-dimensions.md": {
+    "at": "2026-04-03T05:33:46Z",
+    "hash": "c5f36530db3354d5de3048458c3849ec22c1710a",
+    "issue": "GH#14370",
+    "passes": 1,
+    "pr": "pending",
+    "status": "simplified"
+  },
   ".agents/tools/voice/voice-ai-models.md": {
     "action": "converted GPU Planning prose to table; clarified VRAM/RAM column header",
     "hash": "80802e36e4fae1517223fb0553a50f7aa9e01acd908f7d50b6d53f60e3a1dda2",

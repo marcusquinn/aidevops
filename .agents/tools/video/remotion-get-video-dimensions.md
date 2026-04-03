@@ -8,9 +8,7 @@ metadata:
 
 # Getting video dimensions with Mediabunny
 
-Mediabunny can extract the width and height of a video file. It works in browser, Node.js, and Bun environments.
-
-## Getting video dimensions
+Mediabunny extracts width and height from video files. Works in browser, Node.js, and Bun.
 
 ```tsx
 import { Input, ALL_FORMATS, UrlSource } from "mediabunny";
@@ -33,37 +31,30 @@ export const getVideoDimensions = async (src: string) => {
     height: videoTrack.displayHeight,
   };
 };
-```
 
-## Usage
-
-```tsx
+// Usage
 const dimensions = await getVideoDimensions("https://remotion.media/video.mp4");
 console.log(dimensions.width);  // e.g. 1920
 console.log(dimensions.height); // e.g. 1080
+
+// With staticFile in Remotion
+import { staticFile } from "remotion";
+const dims = await getVideoDimensions(staticFile("video.mp4"));
 ```
 
-## Using with local files
+## Local files
 
-For local files, use `FileSource` instead of `UrlSource`:
+Use `FileSource` instead of `UrlSource` for `File` objects (input or drag-drop):
 
 ```tsx
 import { Input, ALL_FORMATS, FileSource } from "mediabunny";
 
 const input = new Input({
   formats: ALL_FORMATS,
-  source: new FileSource(file), // File object from input or drag-drop
+  source: new FileSource(file),
 });
 
 const videoTrack = await input.getPrimaryVideoTrack();
 const width = videoTrack.displayWidth;
 const height = videoTrack.displayHeight;
-```
-
-## Using with staticFile in Remotion
-
-```tsx
-import { staticFile } from "remotion";
-
-const dimensions = await getVideoDimensions(staticFile("video.mp4"));
 ```
