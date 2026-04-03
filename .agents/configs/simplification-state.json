@@ -29,7 +29,7 @@
   ".agents/tools/opencode/opencode-openai-auth.md": {
     "hash": "b84e3ee65c1f7ed9446b0a8754341cc1621094c030377049f6f72cb83757089d",
     "issue": "GH#14021",
-    "pr": "pending",
+    "pr": "PR#16183",
     "status": "simplified"
   },
   ".agents/tools/voice/voice-ai-models.md": {
