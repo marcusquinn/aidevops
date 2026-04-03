@@ -6,14 +6,13 @@ Sub-doc for `autoresearch.md`. Loaded on demand during Step 3.
 
 ## Step 3: Completion
 
-### 3.1 Deregister from mailbox (multi-dimension mode)
+**3.1 Deregister** (multi-dimension mode — if `CAMPAIGN_ID` is set):
 
 ```bash
-if CAMPAIGN_ID is set:
-    mail-helper.sh deregister --agent "$AGENT_ID"
+mail-helper.sh deregister --agent "$AGENT_ID"
 ```
 
-### 3.2 Store final memory
+**3.2 Store final memory:**
 
 ```text
 aidevops-memory store \
@@ -21,9 +20,7 @@ aidevops-memory store \
   --confidence high
 ```
 
-### 3.3 Generate completion summary
-
-Build the results summary for the PR body:
+**3.3 Generate completion summary** (use as PR body):
 
 ```markdown
 ## Autoresearch Results: {PROGRAM_NAME}
@@ -57,8 +54,6 @@ Build the results summary for the PR body:
 - Total: ~{TOTAL_TOKENS:,} tokens across {ITERATION_COUNT} iterations
 - Average per iteration: ~{avg_tokens:,} tokens
 - Cost estimate: ~${cost_estimate:.2f} (sonnet pricing)
-
-{If CAMPAIGN_ID is set, add cross-dimension summary section — see below}
 ```
 
 ASCII sparkline (if ≥5 kept iterations):
@@ -69,9 +64,7 @@ ASCII sparkline (if ≥5 kept iterations):
   iter: {first_kept}  →  {last_kept}
 ```
 
-### 3.4 Cross-dimension summary (multi-dimension campaigns only)
-
-If CAMPAIGN_ID is set, query the mailbox convoy for all dimension results:
+**3.4 Cross-dimension summary** (if `CAMPAIGN_ID` is set — append to PR body):
 
 ```bash
 sqlite3 ~/.aidevops/.agent-workspace/mail/mailbox.db \
@@ -80,43 +73,35 @@ sqlite3 ~/.aidevops/.agent-workspace/mail/mailbox.db \
    ORDER BY created_at"
 ```
 
-Build cross-dimension summary:
-
 ```markdown
 ### Cross-Dimension Summary
 
 | Dimension | Baseline | Best | Delta | Improvement | Iterations |
 |-----------|----------|------|-------|-------------|------------|
-{For each dimension found in convoy messages:}
 | {dimension} | {baseline} | {best} | {delta:+.2f} | {improvement_pct:.1f}% | {iteration_count} |
 
 ### Cross-Pollination
 
-{For each discovery where a peer's finding was adopted:}
 - {source_dimension} found "{hypothesis}" → {target_dimension} adopted (iteration {N})
-
-{If no cross-pollination occurred:}
-- Dimensions ran independently (no cross-pollination detected)
+- (or: Dimensions ran independently — no cross-pollination detected)
 ```
 
-### 3.5 Create PR from experiment branch
+**3.5 Create PR:**
 
 ```bash
 git -C WORKTREE_PATH push -u origin BRANCH
-
-RESULTS_SUMMARY="$(generate_completion_summary)"
 
 gh pr create \
   --repo {REPO_SLUG} \
   --head BRANCH \
   --base main \
   --title "experiment({PROGRAM_NAME}): {improvement_pct:+.1f}% improvement in {METRIC_NAME}" \
-  --body "${RESULTS_SUMMARY}
+  --body "$(generate_completion_summary)
 
 Closes #{issue_number_if_any}"
 ```
 
-### 3.6 Store PR memory
+**3.6 Store PR memory:**
 
 ```text
 aidevops-memory store \
@@ -128,15 +113,9 @@ aidevops-memory store \
 
 ## Crash Recovery
 
-If the subagent session crashes mid-loop:
+Worktree, results.tsv, and branch HEAD persist across crashes. On resume, uncommitted changes are discarded via `git reset --hard HEAD`.
 
-1. The experiment worktree persists at `WORKTREE_PATH`
-2. The results.tsv persists at `RESULTS_FILE`
-3. The experiment branch HEAD is always the last known-good state
-4. Any uncommitted changes are discarded on resume via `git reset --hard HEAD`
-
-To resume: re-run `/autoresearch --program {program_path}`. The subagent detects
-the existing worktree and results.tsv and continues from where it left off.
+To resume: re-run `/autoresearch --program {program_path}`. The subagent detects the existing worktree and results.tsv and continues from where it left off.
 
 ---
 
