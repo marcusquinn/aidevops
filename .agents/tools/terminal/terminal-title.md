@@ -51,18 +51,9 @@ terminal-title-helper.sh detect            # Check terminal compatibility
 
 ## How It Works
 
-Uses OSC escape sequences — supported by virtually all modern terminal emulators:
-
-```bash
-printf '\033]0;%s\007' "title"   # OSC 0 - window title + icon name
-printf '\033]2;%s\007' "title"   # OSC 2 - window title only
-```
-
-**Full support**: Tabby, iTerm2, Windows Terminal, Kitty, Alacritty, WezTerm, Hyper, GNOME Terminal, Konsole, VS Code Terminal, xterm. **Partial**: Apple Terminal (basic), tmux/screen (requires config).
+Uses OSC escape sequences (`printf '\033]0;%s\007' "title"`). **Full support**: Tabby, iTerm2, Windows Terminal, Kitty, Alacritty, WezTerm, Hyper, GNOME Terminal, Konsole, VS Code Terminal, xterm. **Partial**: Apple Terminal (basic), tmux/screen (requires config).
 
 ## Shell Integration
-
-Add to shell config for automatic updates on directory change:
 
 | Shell | Config file | Hook |
 |-------|-------------|------|
