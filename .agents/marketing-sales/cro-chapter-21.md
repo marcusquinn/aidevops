@@ -4,16 +4,16 @@
 
 Structure: **IF** [change], **THEN** [expected result], **BECAUSE** [reasoning]
 
-**Data Sources:** Analytics drop-off points, heatmap clicks/scrolls, session recordings, user surveys, support tickets, competitor benchmarking
+**Data sources:** Analytics drop-off points, heatmap clicks/scrolls, session recordings, user surveys, support tickets, competitor benchmarking
 
-**Prioritization Matrix:**
+**Prioritization matrix:**
 
 | Factor | Weight |
 |--------|--------|
 | Potential Impact | 30% |
-| Confidence | 20% |
 | Ease of Implementation | 25% |
 | Resource Requirements | 25% |
+| Confidence | 20% |
 
 ## 21.2 Advanced Test Design
 
@@ -21,17 +21,16 @@ Structure: **IF** [change], **THEN** [expected result], **BECAUSE** [reasoning]
 
 Test multiple variables simultaneously to detect interaction effects. Example (2×2×2 = 8 variations): Headline A/B × Image X/Y × CTA Red/Blue
 
-**Benefits:** Interaction effects, sample-efficient when interactions matter
-
-**Challenges:** Complex analysis, more traffic required, implementation complexity
+| | |
+|---|---|
+| **Benefits** | Interaction effects, sample-efficient when interactions matter |
+| **Challenges** | Complex analysis, more traffic required, implementation complexity |
 
 ### Bandit Algorithms
 
 Dynamic traffic allocation to winning variations during the test.
 
-**Epsilon-Greedy:** 90% traffic to current best, 10% exploration, adapts in real-time
-
-**Use cases:** Continuous optimization, long-running campaigns, seasonal adjustments
+**Epsilon-Greedy:** 90% traffic to current best, 10% exploration, adapts in real-time. Use for continuous optimization, long-running campaigns, seasonal adjustments.
 
 ## 21.3 Statistical Rigor
 
@@ -59,7 +58,7 @@ Stop tests early **only with pre-specified stopping rules** — ad-hoc stopping 
 **Dimensions:** Device type, traffic source, new vs returning, geography, browser
 
 ```sql
-SELECT 
+SELECT
   device_type,
   variation,
   COUNT(*) as users,
