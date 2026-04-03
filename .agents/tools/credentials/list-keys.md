@@ -36,23 +36,14 @@ tools:
 ```text
 API Keys Available in Session
 =============================
-
 Source: ~/.config/aidevops/credentials.sh
   OPENAI_API_KEY          [loaded]
   ANTHROPIC_API_KEY       [loaded]
-  CLOUDFLARE_API_KEY      [loaded]
-
-Source: Shell configs (~/.zshrc, ~/.bashrc, etc.)
-  CUSTOM_API_KEY          [loaded]
-
 Source: Environment (shell session)
   GITHUB_TOKEN            [loaded]
-  NPM_TOKEN               [loaded]
-
 Source: ~/.config/coderabbit/api_key
   CODERABBIT_API_KEY      [loaded]
-
-Total: 7 keys from 4 sources
+Total: 4 keys from 3 sources
 ```
 
 ## Status Indicators
@@ -60,6 +51,6 @@ Total: 7 keys from 4 sources
 | Status | Meaning |
 |--------|---------|
 | `[loaded]` | Valid value loaded in session |
-| `[placeholder]` | Placeholder detected: `YOUR_*_HERE`, `REPLACE_*`, `CHANGEME`, `FIXME`, `TODO`, `example`, `sample`, `test-key`, `dummy`, `fake`, `xxx`/`yyy`/`zzz`, `placeholder`, `none`, `null`, template markers (`<...>`, `{...}`, `[...]`), repeated chars (`xxxx`, `0000`) |
+| `[placeholder]` | Placeholder detected: `YOUR_*_HERE`, `CHANGEME`, `example`, `dummy`, `fake`, template markers (`<...>`, `{...}`), repeated chars (`xxxx`, `0000`) |
 | `[not loaded]` | Defined but not loaded in current session |
 | `[configured]` | Present in a config file |
