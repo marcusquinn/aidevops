@@ -70,10 +70,11 @@ never_modify: []            # additional files beyond default never-modify list
 require_review: []          # files that need manual review before keep
 ```
 
-**Standard safety** (default): never modifies `AGENTS.md`, `prompts/build.txt`,
-`configs/*.json`, or any file containing credentials.
+**Standard safety** (default): never modifies root `AGENTS.md` (developer/contributor
+guide), `prompts/build.txt`, `configs/*.json`, or any file containing credentials.
+`.agents/AGENTS.md` (user/operational guide) is also protected by default.
 
-**Elevated safety**: may touch `AGENTS.md` and `prompts/build.txt` non-security
+**Elevated safety**: may touch root `AGENTS.md` and `prompts/build.txt` non-security
 sections. Requires `trials: 3` minimum and explicit `level: elevated` declaration.
 Use only for overnight programs with full signal coverage.
 
@@ -378,7 +379,7 @@ workflow_optimization: true
 \`\`\`text
 level: elevated
 never_modify: []
-require_review: [".agents/prompts/build.txt", "AGENTS.md"]
+require_review: [".agents/prompts/build.txt", "AGENTS.md"]   # root AGENTS.md
 \`\`\`
 
 ## Metric
@@ -422,7 +423,7 @@ trials: 3
 - Progress to instruction refinement after self-healing exhausts low-hanging fruit
 - Tool creation and agent composition only after iteration 20
 - Equal-or-better with less code is always a win
-- Elevated safety: AGENTS.md and build.txt changes go to require_review — do not auto-keep
+- Elevated safety: root AGENTS.md and build.txt changes go to require_review — do not auto-keep
 - 3 trials required for consistency — a change must improve in 2 of 3 runs to be kept
 - pulse_outcomes requires pulse history in ~/.aidevops/.agent-workspace/; skip if absent
 ```
