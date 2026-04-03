@@ -24,6 +24,7 @@ tools:
 - **Test addresses**: success@simulator.amazonses.com, bounce@simulator.amazonses.com
 - **DKIM**: Enable for all domains | **Prerequisite**: `awscli` installed
 - **IAM permissions**: ses:GetSendQuota, ses:SendEmail, sesv2:ListSuppressedDestinations
+- **Security**: Rotate IAM keys regularly; separate AWS accounts for prod/staging
 
 <!-- AI-CONTEXT-END -->
 
@@ -59,7 +60,7 @@ tools:
 ses-helper.sh accounts
 ses-helper.sh quota production
 ses-helper.sh stats production
-ses-helper.sh monitor production   # bounce, complaint, quota, reputation
+ses-helper.sh monitor production  # bounce, complaint, quota, reputation
 ses-helper.sh verified-emails production
 ses-helper.sh verified-domains production
 ses-helper.sh verify-email production newuser@yourdomain.com
@@ -82,8 +83,6 @@ ses-helper.sh audit production
 ```
 
 ## IAM Policy
-
-Rotate keys regularly. Separate AWS accounts for prod/staging.
 
 ```json
 {
