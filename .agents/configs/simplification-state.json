@@ -800,7 +800,7 @@
       "at": "2026-04-02T21:19:54Z",
       "hash": "347272e46c7d04f05dd13a4683cf44bef0dd3da7",
       "issue": "GH#14286",
-      "note": "Reference corpus chapter tightened: 92 \u2192 90 lines. Removed decorative closing sentence with no information value. Zero content loss.",
+      "note": "Reference corpus chapter tightened: 92 → 90 lines. Removed decorative closing sentence with no information value. Zero content loss.",
       "passes": 2
     },
     ".agents/marketing-sales/cro-chapter-20.md": {
@@ -816,9 +816,9 @@
       "pr": 15257
     },
     ".agents/marketing-sales/cro-chapter-25.md": {
-      "at": "2026-04-01T21:00:00Z",
-      "hash": "076db4b43144a19221004451da2ab384161bcb17",
-      "passes": 2,
+      "at": "2026-04-03T03:15:07Z",
+      "hash": "2c74493ea612ebc2fc0351c5f151f5f6e81234ae",
+      "passes": 3,
       "pr": 15276
     },
     ".agents/marketing-sales/cro-chapters.md": {
@@ -1550,10 +1550,10 @@
       "pr": 12756
     },
     ".agents/scripts/commands/tech-stack.md": {
-      "at": "2026-04-03T02:32:23Z",
-      "hash": "9bf2bb063f1d99e2a8de56dab74bf2e910ddbbc4",
+      "at": "2026-04-03T03:15:10Z",
+      "hash": "00340ffd42b01d390af29f476c2cae8c2d6a37e4",
       "issue": 14163,
-      "passes": 1,
+      "passes": 2,
       "pr": null
     },
     ".agents/scripts/commands/testing-setup.md": {
@@ -1617,9 +1617,9 @@
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "at": "2026-04-02T03:11:26Z",
-      "hash": "afbddbc0f8e639803f170b9d8557c01f8c4ba212",
-      "passes": 2,
+      "at": "2026-04-03T03:15:11Z",
+      "hash": "aa643d9f5040eb0a939f867546feb9668f196057",
+      "passes": 3,
       "pr": 15086
     },
     ".agents/scripts/matrix-dispatch-helper.sh": {
@@ -4348,11 +4348,12 @@
       "pr": 15566
     },
     ".agents/tools/ui/nothing-design-skill/components.md": {
-      "at": "2026-04-03T02:38:11Z",
-      "hash": "f2d9cc3cf44863cc6af0f53ff02a971ffa5136a6",
+      "at": "2026-04-03T03:15:24Z",
+      "hash": "c939c537eafaeea9476376e6189ed8f8d28c1ad8",
       "issue": "GH#15366",
       "lines_after": 125,
-      "lines_before": 153
+      "lines_before": 153,
+      "passes": 1
     },
     ".agents/tools/ui/react-context.md": {
       "at": "2026-03-30T06:49:50Z",
@@ -4781,15 +4782,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-04-03T02:09:24Z",
-      "hash": "0562e51f78407a765633920ee1d05218053856ad",
-      "passes": 17,
+      "at": "2026-04-03T03:15:26Z",
+      "hash": "a1e9358dae2f74f7113852f7fd333d1399859043",
+      "passes": 18,
       "pr": 15470
     },
     "setup.sh": {
-      "at": "2026-04-03T02:09:24Z",
-      "hash": "b2f66c702293d628a153902fdfba321b0530478c",
-      "passes": 17,
+      "at": "2026-04-03T03:15:26Z",
+      "hash": "93394ade97c3f3b34911961644570326ca43f9e8",
+      "passes": 18,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -4851,6 +4852,126 @@
       "hash": "c820f0bd721d4d8ff4fb35dff40ff98c6ba3b71f",
       "passes": 1,
       "pr": 15470
+    },
+    ".agents/scripts/dataset-helper.sh": {
+      "hash": "96a800ed0595fe0b974acf1c19d27a029d1c49fe",
+      "at": "2026-04-03T03:15:27Z",
+      "pr": 16098,
+      "passes": 1
+    },
+    ".agents/scripts/browser-qa-helper.sh": {
+      "hash": "25b515a9f2777842519da29fbd097585ca4577cc",
+      "at": "2026-04-03T03:15:27Z",
+      "pr": 16086,
+      "passes": 1
+    },
+    ".agents/scripts/budget-analysis-helper.sh": {
+      "hash": "349d6023e95be88974de6ac4be3115d3d90b6c14",
+      "at": "2026-04-03T03:15:27Z",
+      "pr": 16085,
+      "passes": 1
+    },
+    ".agents/scripts/config-helper.sh": {
+      "hash": "f3835ea3610ca1031ddce938d81d473ed7009710",
+      "at": "2026-04-03T03:15:27Z",
+      "pr": 16084,
+      "passes": 1
+    },
+    ".agents/scripts/generate-runtime-config.sh": {
+      "hash": "5fa2222625d83c338a8ae68782a665f2f0ccc35b",
+      "at": "2026-04-03T03:15:28Z",
+      "pr": 15933,
+      "passes": 1
+    },
+    ".agents/scripts/tests/test-quality-feedback-main-verification.sh": {
+      "hash": "62205e0ccf0e418c5fa92dc447e11e187923ffcf",
+      "at": "2026-04-03T03:15:28Z",
+      "pr": 15931,
+      "passes": 1
+    },
+    ".agents/scripts/cron-helper.sh": {
+      "hash": "fee68144def6f04b03f8473a0092455cb7056378",
+      "at": "2026-04-03T03:15:28Z",
+      "pr": 15920,
+      "passes": 1
+    },
+    ".agents/scripts/email-agent-helper.sh": {
+      "hash": "9d3095a732abae2b4fa11914b1bab89f8d6bc8ba",
+      "at": "2026-04-03T03:15:28Z",
+      "pr": 15919,
+      "passes": 1
+    },
+    ".agents/scripts/opencode-github-setup-helper.sh": {
+      "hash": "a5a9852d4feb2de34839b8bbe4db6375babe83a6",
+      "at": "2026-04-03T03:15:28Z",
+      "pr": 15918,
+      "passes": 1
+    },
+    ".agents/scripts/session-checkpoint-helper.sh": {
+      "hash": "321474cda29aa78eb9bcd25a639a51fd16c62205",
+      "at": "2026-04-03T03:15:28Z",
+      "pr": 15917,
+      "passes": 1
+    },
+    ".agents/scripts/settings-helper.sh": {
+      "hash": "e8d5d7546c1ccdf728fca2c13ee27fd5a64eb8d1",
+      "at": "2026-04-03T03:15:28Z",
+      "pr": 15916,
+      "passes": 1
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/r2-patterns.md": {
+      "hash": "6db3ad07eef857c00860416a7868a2a42636a888",
+      "at": "2026-04-03T03:15:28Z",
+      "pr": 15908,
+      "passes": 1
+    },
+    ".agents/tools/video/remotion-extract-frames.md": {
+      "hash": "cdadd937d6ba36526460ec12feb224e7b3bdc2b8",
+      "at": "2026-04-03T03:15:28Z",
+      "pr": 15907,
+      "passes": 1
+    },
+    ".agents/marketing-sales/meta-ads-creative-frameworks.md": {
+      "hash": "246a973d66f4a046b7479124fd2fba2fdcc35d8d",
+      "at": "2026-04-03T03:15:28Z",
+      "pr": 15906,
+      "passes": 1
+    },
+    ".agents/scripts/thumbnail-helper.sh": {
+      "hash": "c157536da90b2552920287287e391f75b15ccc94",
+      "at": "2026-04-03T03:15:28Z",
+      "pr": 15905,
+      "passes": 1
+    },
+    ".agents/scripts/video-gen-helper.sh": {
+      "hash": "79f7fcd2afb40f9bf21367af3cbb24107da2a7ba",
+      "at": "2026-04-03T03:15:28Z",
+      "pr": 15904,
+      "passes": 1
+    },
+    ".agents/tools/browser/agent-browser.md": {
+      "hash": "52400ec344f64870dd6977c9950c80a22d939df5",
+      "at": "2026-04-03T03:15:28Z",
+      "pr": 15892,
+      "passes": 1
+    },
+    ".agents/content/heygen-skill/rules-authentication.md": {
+      "hash": "6812919264796812f8cb6b375d01f49664c1af40",
+      "at": "2026-04-03T03:15:28Z",
+      "pr": 15871,
+      "passes": 1
+    },
+    ".agents/scripts/schema-validator-helper.sh": {
+      "hash": "a1a29c0ed6b6f49f88e0a081d88189ac9cce2d00",
+      "at": "2026-04-03T03:15:29Z",
+      "pr": 15776,
+      "passes": 1
+    },
+    ".agents/scripts/mission-email-helper.sh": {
+      "hash": "59ee94eb2742602d86611ae48998e14befd606f0",
+      "at": "2026-04-03T03:15:29Z",
+      "pr": 15752,
+      "passes": 1
     }
   }
 }
