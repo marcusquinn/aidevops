@@ -8,16 +8,15 @@ Convert actionable findings from an audit/review report into tracked TODO tasks 
 
 Input file: `$ARGUMENTS`
 
-## Required Format
+## Format
+
+One finding per line — `severity|title|details`. Severity defaults to `medium` if omitted.
 
 ```text
-severity|title|details
 high|Harden prompt-guard fallback on malformed markdown|Reject malformed HTML comments before rendering summary
 medium|Add retries for Codacy API timeout|Use capped exponential backoff in codacy-cli.sh
 low|Improve stale worker log wording|Clarify blocked vs failed in watchdog output
 ```
-
-Severity defaults to `medium` if omitted.
 
 ## Command
 
@@ -25,18 +24,14 @@ Severity defaults to `medium` if omitted.
 ~/.aidevops/agents/scripts/findings-to-tasks-helper.sh create \
   --input <path/to/actionable-findings.txt> \
   --repo-path "$(git rev-parse --show-toplevel)" \
-  --source <security-audit|code-review|seo-audit|accessibility|performance>
+  --source <any-free-form-tag>  # e.g. security-audit, code-review, seo-audit
 ```
 
-- `--labels "label1,label2"` — add extra issue labels
-- `--tags "tag1,tag2"` — add extra TODO hashtags
-- `--dry-run` — preview without allocating task IDs
-- `--no-issue` — allocate task IDs without creating GitHub issues
-- `--allow-partial` — allow non-100% conversion (normally treated as failure)
+Optional flags: `--labels "label1,label2"` · `--tags "tag1,tag2"` · `--dry-run` · `--no-issue` · `--allow-partial`
 
 ## Completion Rule
 
-Complete only when helper output confirms full conversion coverage:
+Done only when helper output confirms full coverage:
 
 - `actionable_findings_total=<N>`
 - `deferred_tasks_created=<N>`
