@@ -12,7 +12,7 @@ One goal, one CTA, one path.
 | Problem Aware | Long (2000-4000) | Hero, Problem, Agitate, Solution, Proof, Offer, CTA |
 | Unaware | Very Long (4000+) | Story-driven full education |
 
-Less awareness = more education. Cold traffic needs longer pages.
+Less awareness = more education.
 
 ## Universal Framework
 
@@ -63,4 +63,3 @@ Test headline value props, CTA text/color, social proof type/placement, page len
 
 - [Headline Formulas](headline-formulas.md) for hero section headlines
 - [Offer Construction](offer-construction.md) for pricing sections
-- [Templates](direct-response-copy-templates-landing-page.md) for copy-paste templates
