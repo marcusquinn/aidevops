@@ -1,5 +1,5 @@
 ---
-description: AI DevOps code review tools and resources
+description: Code review tools — linters, quality platforms, and config references
 mode: subagent
 tools:
   read: true
@@ -12,19 +12,17 @@ tools:
   task: true
 ---
 
-# AI DevOps Resources
+# Code Review Tools
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
-- Linter manager: `bash .agents/scripts/linter-manager.sh detect|install-detected|install-all|install [lang]`
+- Linter manager: `linter-manager.sh detect|install-detected|install-all|install [lang]`
 - Config files: `.eslintrc.*`, `.pylintrc`, `.shellcheckrc`, `.hadolint.yaml`, `.stylelintrc.*`
 - Best practices: start conservative, customize gradually, version control configs
 
-<!-- AI-CONTEXT-END -->
-
-## Language-Specific Linters
+## Language Linters
 
 | Language | Tools | Config |
 |----------|-------|--------|
@@ -51,7 +49,7 @@ tools:
 
 Reference: [CodeFactor Analysis Tools](https://docs.codefactor.io/bootcamp/analysis-tools/)
 
-## Quality Analysis Platforms
+## Quality Platforms
 
 | Platform | Integration | Auto-Fix | Notes |
 |----------|-------------|----------|-------|
@@ -60,13 +58,14 @@ Reference: [CodeFactor Analysis Tools](https://docs.codefactor.io/bootcamp/analy
 | SonarCloud | CLI + Web | No | Enterprise analysis, security vuln detection, tech debt |
 | Qlty | CLI | Yes (80-95%) | 70+ tools, 40+ langs, auto-formatting |
 | CodeFactor | Web only | No | Reference collection for tool selection |
+| ESLint | CLI | Yes (60-80%) | JS/TS style + best practices |
 
-**ESLint** auto-fix: 60-80% (JS/TS style + best practices)
-
-## Additional Resources
+## Rule References
 
 - [ESLint Rules](https://eslint.org/docs/rules/)
 - [Pylint Messages](https://pylint.pycqa.org/en/latest/technical_reference/features.html)
 - [ShellCheck Wiki](https://github.com/koalaman/shellcheck/wiki)
 - [Stylelint Rules](https://stylelint.io/user-guide/rules/list)
 - [Awesome Static Analysis](https://github.com/analysis-tools-dev/static-analysis)
+
+<!-- AI-CONTEXT-END -->

@@ -53,14 +53,6 @@ CLI: `tldr <cmd>` — MCP (via `tldr-mcp`): same commands prefixed `tldr_`.
 | `dead` | `tldr dead /path/to/project` | Unused functions and classes |
 | `slice` | `tldr slice /path/to/file.py var_name` | Code slice affecting a variable |
 
-## Token Savings
-
-| Content Type | Raw Tokens | TLDR Tokens | Savings |
-|--------------|------------|-------------|---------|
-| 1000-line file | ~15,000 | ~750 | 95% |
-| Class definition | ~500 | ~50 | 90% |
-| Function body | ~200 | ~20 | 90% |
-
 ## When to Use
 
 - **Before editing**: `tldr context` + `tldr impact` to understand scope

@@ -6,9 +6,25 @@ Email converts 2-5x vs social, ~$36 ROI per $1. Works for acquisition, nurturing
 
 ---
 
-## High-Converting Email Anatomy
+## Best Practices
+
+**Send timing**: B2B Tue-Thu 9-11 AM · B2C test weekends/8 PM · Transactional immediately · Cart abandonment 1h/24h/48h
+
+**Length**: Subject 40-50 chars · Preview 40-100 chars · Body 200-500 words (sales 500-1000)
+
+**Formatting**: Short paragraphs (1-3 sentences) · One CTA per email · Mobile-first (50%+ on mobile) · Plain text often outperforms HTML
+
+**Personalization**: [First Name] in subject increases opens · [Company Name] for B2B · Behavioral triggers · Segment by engagement
+
+**Subject line checklist**: Would I open this? · Under 50 chars? · Preview text complements? · Curiosity/urgency/benefit? · Matches content? · No spam triggers? · Tested on mobile?
+
+---
+
+## Email Anatomy
 
 ### Subject Line Formulas
+
+40-50 chars (mobile-first), first 3 words must hook, avoid spam triggers (FREE!!!, $$$$), preview text extends subject.
 
 | Formula | Example |
 |---------|---------|
@@ -22,8 +38,6 @@ Email converts 2-5x vs social, ~$36 ROI per $1. Works for acquisition, nurturing
 | Social proof | "How Sarah got 10x more traffic in 30 days" |
 | Contrarian | "Why I stopped chasing backlinks" |
 | Direct | "Your free trial starts now" |
-
-40-50 chars (mobile-first), first 3 words must hook, avoid spam triggers (FREE!!!, $$$$), preview text extends subject.
 
 ### Structure: Star-Chain-Hook
 
@@ -103,18 +117,3 @@ But here's the thing... [Solution + brief explanation + social proof]
 | 5 | Day 9 | Show hidden value | Underutilized feature |
 | 6 | Day 12 | Create urgency | Loss aversion (what they'll lose) |
 | 7 | Day 14 | Final conversion | Discount code, guarantee |
-
----
-
-## Best Practices
-
-**Send timing**: B2B Tue-Thu 9-11 AM · B2C test weekends/8 PM · Transactional immediately · Cart abandonment 1h/24h/48h
-
-**Length**: Subject 40-50 chars · Preview 40-100 chars · Body 200-500 words (sales 500-1000)
-
-**Formatting**: Short paragraphs (1-3 sentences) · One CTA per email · Mobile-first (50%+ on mobile) · Plain text often outperforms HTML
-
-**Personalization**: [First Name] in subject increases opens · [Company Name] for B2B · Behavioral triggers · Segment by engagement
-
-**Subject line checklist**: Would I open this? · Under 50 chars? · Preview text complements? · Curiosity/urgency/benefit? · Matches content? · No spam triggers? · Tested on mobile?
-

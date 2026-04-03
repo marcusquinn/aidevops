@@ -4,7 +4,7 @@ agent: Build+
 mode: subagent
 ---
 
-Import an external skill from GitHub, ClawdHub, or a raw URL, convert it to aidevops format, and register it for update tracking.
+Import an external skill, convert to aidevops format, and register for update tracking.
 
 URL/Repo: $ARGUMENTS
 
@@ -35,7 +35,7 @@ URL/Repo: $ARGUMENTS
 
 ## Naming Convention
 
-Imported skills use a `-skill` suffix: `playwright-skill.md` (imported, upstream-tracked) vs `playwright.md` (native, aidevops team). Benefits: no name clashes; `*-skill.md` glob finds all imports; `aidevops skill check` knows which to update; issues with imports → check upstream.
+Imported skills use a `-skill` suffix: `playwright-skill.md` (imported, upstream-tracked) vs `playwright.md` (native). Benefits: no name clashes; `*-skill.md` glob finds all imports; `aidevops skill check` knows which to update; issues → check upstream.
 
 ## Workflow
 
@@ -62,7 +62,7 @@ Imported skills use a `-skill` suffix: `playwright-skill.md` (imported, upstream
 
 ## Update Tracking
 
-Tracked in `.agents/configs/skill-sources.json`. URL-sourced skills use SHA-256 content hashing instead of git commit comparison. Key fields: `name`, `upstream_url`, `upstream_commit` (or `upstream_hash` for URL sources), `local_path`, `format_detected`, `imported_at`, `last_checked`, `merge_strategy`.
+Tracked in `.agents/configs/skill-sources.json`. Key fields: `name`, `upstream_url`, `upstream_commit` (or `upstream_hash` for URL sources), `local_path`, `format_detected`, `imported_at`, `last_checked`, `merge_strategy`. URL-sourced skills use SHA-256 content hashing instead of git commit comparison.
 
 Run `/add-skill check-updates` periodically to detect upstream changes.
 

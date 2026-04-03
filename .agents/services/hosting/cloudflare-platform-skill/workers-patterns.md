@@ -62,7 +62,7 @@ const [user, posts] = await Promise.all([fetch('/api/user/1'), fetch('/api/posts
 ## Streaming
 
 ```typescript
-// ReadableStream — yield control every N items to avoid CPU limit
+// ReadableStream — yield control every N items to avoid CPU time limit
 const stream = new ReadableStream({
   async start(controller) {
     for (let i = 0; i < 1000; i++) {

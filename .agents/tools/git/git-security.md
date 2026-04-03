@@ -28,7 +28,7 @@ tools:
 
 ## Preventive Controls
 
-Use CLI auth to keep tokens in the system keyring, not repo files:
+Use CLI auth — keeps tokens in the system keyring, not repo files:
 
 ```bash
 gh auth login -s workflow   # -s workflow for CI PR support
@@ -36,7 +36,7 @@ glab auth login
 tea login add
 ```
 
-Store fallback tokens in `~/.config/aidevops/credentials.sh` (600 perms). Rotate every 6-12 months or immediately on exposure. Prefer short-lived CI/CD credentials. See `git/authentication.md`.
+Fallback: `~/.config/aidevops/credentials.sh` (600 perms). Rotate every 6-12 months or on exposure. Prefer short-lived CI/CD credentials. See `git/authentication.md`.
 
 ### Branch Protection
 
@@ -47,7 +47,7 @@ gh api repos/{owner}/{repo}/branches/main/protection -X PUT \
   -f required_pull_request_reviews='{"required_approving_review_count":1}'
 ```
 
-Require PR reviews, dismiss stale approvals, enforce admins, require CI checks, require CODEOWNERS where available. Signed commits recommended.
+Require PR reviews, dismiss stale approvals, enforce admins, require CI checks, CODEOWNERS where available. Signed commits recommended.
 
 ### Commit Signing
 
@@ -75,7 +75,7 @@ fi
 
 ## Access Control
 
-Least privilege, quarterly access review, remove inactive collaborators, prefer teams over direct grants.
+Least privilege. Quarterly access review. Remove inactive collaborators. Prefer teams over direct grants.
 
 | Role | Permissions |
 |------|-------------|
@@ -87,7 +87,7 @@ Least privilege, quarterly access review, remove inactive collaborators, prefer 
 
 ## Incident Response
 
-**Token exposed:** revoke → replace → update consumers → audit for unauthorized access.
+**Token exposed:** revoke → replace → update consumers → audit for unauthorized use.
 
 **Secret committed:**
 

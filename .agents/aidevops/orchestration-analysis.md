@@ -13,20 +13,13 @@ tools:
 
 # Orchestration Efficiency Analysis
 
-Reads the structured JSON from `orchestration-efficiency-collector.sh` (Phase 1). Does NOT collect data. Produces:
+Reads JSON from `orchestration-efficiency-collector.sh` (Phase 1). Does NOT collect data. Produces top 3 findings, trend analysis, meta-assessment, and auto-files `critical`/`high` findings as GitHub issues.
 
-1. **Top 3 findings** — ranked by impact, with recommendations and expected savings
-2. **Trend analysis** — today vs yesterday vs 7-day snapshot (when historical reports exist)
-3. **Meta-assessment** — data sufficiency and instrumentation gaps
-4. **Auto-filed issues** — `critical`/`high` findings become GitHub issues
+**Input:** `REPORT_FILE="${1:-${HOME}/.aidevops/logs/efficiency-report-$(date -u +%Y-%m-%d).json}"`
 
-## Input
+Missing file → exit: `ERROR: No report file found at $REPORT_FILE. Run orchestration-efficiency-collector.sh first.`
 
-```bash
-REPORT_FILE="${1:-${HOME}/.aidevops/logs/efficiency-report-$(date -u +%Y-%m-%d).json}"
-```
-
-If the file does not exist, exit: `ERROR: No report file found at $REPORT_FILE. Run orchestration-efficiency-collector.sh first.`
+**Token budget:** <5K tokens. Read only the report file; produce structured output; file issues via bash; stop.
 
 ## Metric Thresholds
 
@@ -47,22 +40,21 @@ If the file does not exist, exit: `ERROR: No report file found at $REPORT_FILE. 
 
 ```
 ## Finding N: <title>
-
 **Severity**: critical | high | medium | low
 **Metric**: <metric.path> = <value> (threshold: <threshold>)
-**Impact**: <quantified impact — tokens saved, time saved, issues unblocked>
+**Impact**: <quantified — tokens saved, time saved, issues unblocked>
 **Root cause hypothesis**: <1-2 sentences>
-**Recommendation**: <specific, actionable change — script name, config key, or workflow step>
+**Recommendation**: <specific, actionable — script name, config key, or workflow step>
 **Expected saving**: <quantified estimate>
 ```
 
 ## Trend Analysis
 
-When `historical_context.has_yesterday_report` or `historical_context.has_week_ago_report` is true:
+When `historical_context.has_yesterday_report` or `has_week_ago_report` is true:
 
-1. Read the referenced report files
+1. Read referenced report files
 2. Compare: `token_efficiency.total_cost_usd`, `errors.launch_failure_rate_pct`, `concurrency.fill_rate_pct`, `throughput.prs_merged`
-3. Report direction: `↑ improved`, `↓ degraded`, `→ stable` (±5% = stable)
+3. Direction: `↑ improved`, `↓ degraded`, `→ stable` (±5% = stable)
 4. Flag regressions (degraded vs yesterday AND vs week-ago) as additional findings
 
 Note: `historical_context.week_ago_report_path` is a point-in-time snapshot, not a rolling average.
@@ -73,11 +65,11 @@ Note: `historical_context.week_ago_report_path` is a point-in-time snapshot, not
 2. **Instrumentation improvements**: What additional data points would enable better diagnosis?
 3. **Confidence**: `high` (all key metrics populated), `medium` (some gaps), `low` (major gaps)
 
-If confidence is `low`, the meta-assessment becomes a `medium` finding.
+Low confidence → meta-assessment becomes a `medium` finding.
 
 ## Auto-Filing Issues
 
-Gate: only `critical` and `high`. Check for duplicates first: `gh issue list --repo "$REPO" --search "<finding title>" --state open`.
+Gate: `critical` and `high` only. Check duplicates first: `gh issue list --repo "$REPO" --search "<finding title>" --state open`.
 
 ```bash
 REPO="marcusquinn/aidevops"
@@ -134,13 +126,11 @@ ${SIG_FOOTER}"
 [complete list including medium/low]
 ```
 
-Token budget: <5K tokens. Read only the report file; produce structured output; file issues via bash; stop after the output above.
-
 ## Scheduling Context
 
 Invoked by `sh.aidevops.efficiency-analysis` launchd job:
 - **Phase 1** (collector): 05:00 daily → `efficiency-report-YYYY-MM-DD.json`
-- **Phase 2** (this agent): conditional — skipped if all baseline metrics are within range AND not Sunday
+- **Phase 2** (this agent): conditional — skipped if all skip thresholds pass AND not Sunday
 
 **Skip thresholds** (all must pass to skip):
 - `errors.launch_failure_rate_pct` < 5%
@@ -149,4 +139,4 @@ Invoked by `sh.aidevops.efficiency-analysis` launchd job:
 - `audit_trails.prs_without_merge_summary` == 0
 - `token_efficiency.tokens_wasted_on_stalls` < 50000
 
-If any threshold is exceeded, Phase 2 runs regardless of day.
+Any threshold exceeded → Phase 2 runs regardless of day.

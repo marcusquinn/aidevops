@@ -28,43 +28,23 @@ tools:
 
 ## Field Coverage
 
-| Field | macOS | Linux | Flag |
-|---|---|---|---|
-| Title | `--title` | `--title` | core |
-| Notes | `--notes` | `--notes` | core |
-| URL | `--url` (notes) | `--url` (notes) | workaround |
-| Due | `--due` | `--due` | core |
-| List | `--list` | `--list` | core |
-| Tags | warn | `--tags` | Linux only |
-| Flag | `--flag` (osascript) | `--flag` (notes) | macOS native |
-| Priority | `--priority` | `--priority` | core |
-| Location | warn | `--location` | Linux only |
-
-URL/Flag: prepended to notes if native CLI support missing.
+| Field | macOS | Linux |
+|---|---|---|
+| Title, Notes, Due, List, Priority | core | core |
+| URL | prepended to notes | prepended to notes |
+| Flag | `--flag` (osascript) | prepended to notes |
+| Tags | warn (unsupported) | `--tags` |
+| Location | warn (unsupported) | `--location` |
 
 ## When to Create Reminders
 
-Create when:
-- User explicitly asks ("remind me to...", "set a reminder for...")
-- Task has a deadline requiring action outside dev session
-- Routine/mission produces follow-up requiring human action
-- Waiting on external dependency with check-back date
-- Physical world actions (calls, meetings, purchases)
+**Create:** user asks ("remind me to..."), deadline requiring action outside dev session, routine/mission follow-up needing human action, waiting on external dependency, physical world actions (calls, meetings, purchases).
 
-Do NOT create for:
-- Items in `TODO.md` / GitHub issues (use task system)
-- Automated checks (use launchd/cron)
-- Future agent-executable tasks
+**Do NOT create:** items in `TODO.md`/GitHub issues (use task system), automated checks (use launchd/cron), future agent-executable tasks.
 
 ## List Selection
 
-Ask user if unclear. Common mappings:
-- **Work**: Work tasks, deadlines (medium-high)
-- **Personal/Reminders**: Errands, health, calls, bills (low-high)
-- **Shopping/Groceries**: Shopping items (none-low)
-- **Finance**: Bills/payments (high)
-
-Use default list mapping from config if available.
+Ask user if unclear. Common mappings: **Work** (tasks, deadlines), **Personal/Reminders** (errands, health, calls, bills), **Shopping/Groceries** (shopping items), **Finance** (bills/payments). Use default list mapping from config if available.
 
 ## Usage
 
@@ -103,35 +83,22 @@ JSON_OUTPUT=true reminders-helper.sh show today    # JSON for agents
 
 ## Setup
 
-### macOS
-
 ```bash
 reminders-helper.sh setup
-# Manual: brew install steipete/tap/remindctl && remindctl authorize
-# Enable in System Settings > Privacy & Security > Reminders
-```
-
-### Linux
-
-```bash
-reminders-helper.sh setup
-# Manual: pipx install todoman vdirsyncer
-# Config: ~/.config/vdirsyncer/config + ~/.config/todoman/config.py
-# Sync: vdirsyncer discover && vdirsyncer sync
+# macOS: brew install steipete/tap/remindctl && remindctl authorize
+#        Enable in System Settings > Privacy & Security > Reminders
+# Linux: pipx install todoman vdirsyncer
+#        Config: ~/.config/vdirsyncer/config + ~/.config/todoman/config.py
+#        Sync: vdirsyncer discover && vdirsyncer sync
 ```
 
 ## Integration
 
-Agents call helper directly:
-
 ```bash
+# Agent call
 ~/.aidevops/agents/scripts/reminders-helper.sh add "Follow up" \
   --list Work --due "in 3 days" --notes "Context: ${details}"
-```
 
-### Routine/Mission
-
-```bash
 # Routine follow-up
 reminders-helper.sh add "ACTION: ${desc}" --list Work --due "${deadline}"
 

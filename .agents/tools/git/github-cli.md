@@ -19,18 +19,19 @@ tools:
 ## Quick Reference
 
 ```bash
-gh auth login -s workflow   # Login (include workflow scope)
-gh auth status              # Verify scopes + list accounts
-gh auth refresh -s workflow # Add workflow scope to existing token
-gh auth token               # Get token for scripts
-gh auth switch              # Switch between accounts
+# Auth — always include workflow scope
+gh auth login -s workflow && gh auth status
+gh auth refresh -s workflow  # Add scope to existing token
+gh auth switch               # Switch accounts
+gh auth token                # Get token for scripts
 
+# Repos / Issues / PRs / Releases / Runs
 gh repo list / create / clone / view / fork
 gh issue list / create / view / close
 gh pr list / create / view / merge
 gh release list / create / view / download
 gh run list / view / watch / rerun
-gh api repos/owner/repo     # Direct API access
+gh api repos/owner/repo      # Direct API access
 ```
 
 **Required scope: `workflow`** — Without it, pushes modifying `.github/workflows/` fail with "refusing to allow...workflow scope". Fix: `gh auth refresh -s workflow`.
@@ -42,7 +43,7 @@ gh api repos/owner/repo     # Direct API access
 ```bash
 # Repos
 gh repo create my-repo --public --description "My project"
-gh repo clone owner/repo && gh repo view owner/repo && gh repo fork owner/repo
+gh repo clone owner/repo && gh repo fork owner/repo
 
 # Issues
 gh issue list --state open --label bug
@@ -56,7 +57,6 @@ gh pr view 123 && gh pr merge 123 --squash  # Also: --merge, --rebase
 
 # Releases
 gh release create v1.2.3 --generate-notes [--draft]
-gh release list / view / download v1.2.3
 
 # Workflow runs
 gh run list && gh run view 123456 && gh run watch

@@ -96,10 +96,8 @@ const newState = setIn(state, ['users', 'u1', 'profile', 'name'], 'Alice');
 
 ## Best Practices
 
-1. **`const` by default** — prevent accidental reassignment
-2. **ES2023 methods** — `.toSorted()`, `.toReversed()`, `.toSpliced()`, `.with()`
-3. **Spread for shallow** — `{ ...obj }`, `[...arr]`; `structuredClone()` for deep
-4. **Never mutate parameters** — always return new objects
-5. **Separate pure logic from I/O** — extract side effects to boundaries
-6. **Inject non-determinism** — pass `Date.now`, `Math.random` as params for testability
-7. **Optional chaining** — `obj?.nested?.value` instead of manual guards
+- **`const` by default** — prevent accidental reassignment
+- **Never mutate parameters** — always return new objects
+- **Separate pure logic from I/O** — extract side effects to boundaries
+- **Inject non-determinism** — pass `Date.now`, `Math.random` as params for testability
+- **Optional chaining** — `obj?.nested?.value` instead of manual guards

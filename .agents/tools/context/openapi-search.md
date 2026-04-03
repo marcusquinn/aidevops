@@ -38,9 +38,9 @@ mcp:
 
 | Step | Tool | Parameters | Returns |
 |------|------|------------|---------|
-| 0 | `searchAPIs` | `query` (required), `limit` (default 5, max 20) | `apiId`, name, description, relevance score |
-| 1 | `getAPIOverview` | `apiId` — identifier or raw OpenAPI URL | Endpoint list, base URL, auth info |
-| 2 | `getOperationDetails` | `apiId`, `operationId` (e.g. `"POST /mail/send"`) | Parameters, request/response schemas |
+| 1 | `searchAPIs` | `query` (required), `limit` (default 5, max 20) | `apiId`, name, description, relevance score |
+| 2 | `getAPIOverview` | `apiId` — identifier or raw OpenAPI URL | Endpoint list, base URL, auth info |
+| 3 | `getOperationDetails` | `apiId`, `operationId` (e.g. `"POST /mail/send"`) | Parameters, request/response schemas |
 
 ## Configuration
 
@@ -50,20 +50,17 @@ aidevops configures all clients automatically via `setup.sh` / `generate-opencod
 claude mcp add --scope user openapi-search --transport http https://openapi-mcp.openapisearch.com/mcp
 ```
 
-For other clients, add `mcpServers.openapi-search` with `type: http` and `url: https://openapi-mcp.openapisearch.com/mcp` to the client's MCP config file. Exceptions: OpenCode uses `type: remote`; Continue.dev uses `type: sse`; Zed uses `context_servers`.
+For other clients, add `mcpServers.openapi-search` with `type: http` and `url: https://openapi-mcp.openapisearch.com/mcp`. Exceptions: OpenCode uses `type: remote`; Continue.dev uses `type: sse`; Zed uses `context_servers`.
 
 ## Usage
 
 ```text
-# 1. Find APIs for a use case
 searchAPIs(query: "convert currency exchange rates")
 # → [{ apiId: "exchangerate-api", ... }, { apiId: "fixer.io", ... }]
 
-# 2. Explore the best match
 getAPIOverview(apiId: "exchangerate-api")
 # → endpoints list, base URL, auth info
 
-# 3. Get details for the specific operation
 getOperationDetails(apiId: "exchangerate-api", operationId: "GET /latest/{base}")
 # → parameters, response schema, example responses
 ```

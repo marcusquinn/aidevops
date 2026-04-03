@@ -15,12 +15,10 @@ interface Env {
   HYPERDRIVE_CACHED: Hyperdrive;    // max_age=120
   HYPERDRIVE_REALTIME: Hyperdrive;  // caching disabled
 }
-// Reads via cached binding
 if (req.method === "GET") {
   const sql = postgres(env.HYPERDRIVE_CACHED.connectionString, {prepare: true});
   const products = await sql`SELECT * FROM products WHERE category = ${cat}`;
 }
-// Writes via realtime binding (immediate consistency)
 if (req.method === "POST") {
   const sql = postgres(env.HYPERDRIVE_REALTIME.connectionString, {prepare: true});
   await sql`INSERT INTO orders ${sql(data)}`;
@@ -60,13 +58,9 @@ const docs = await sql`
 ## Geographically Distributed
 Edge setup + DB-side pooling = global access to single-region DB without replication.
 ```typescript
-// Worker at edge nearest user; pooling near DB
 const sql = postgres(env.HYPERDRIVE.connectionString, {prepare: true});
 const [user] = await sql`SELECT * FROM users WHERE id = ${userId}`;
-return Response.json({
-  user,
-  serverRegion: req.cf?.colo,
-});
+return Response.json({user, serverRegion: req.cf?.colo});
 ```
 
 ## Connection Pooling
@@ -86,13 +80,13 @@ await client.query("SET work_mem = '256MB'");
 await client.query("SELECT * FROM large_table");  // SET not applied
 ```
 
-**Transaction discipline:**
+**Transaction discipline** — keep transactions short; long ones block pooling:
 ```typescript
-// ❌ Long transactions block pooling
+// ❌ Long transaction holds connection
 await client.query("BEGIN");
-await processThousands();  // Connection held entire time
+await processThousands();
 await client.query("COMMIT");
-// ✅ Short transactions
+// ✅ Short transaction
 await client.query("BEGIN");
 await client.query("UPDATE users SET status = $1 WHERE id = $2", [status, id]);
 await client.query("COMMIT");
@@ -104,18 +98,13 @@ await client.query("COMMIT");
 ```
 
 ## Performance Tips
-**Prepared statements** — always enable:
-```typescript
-const sql = postgres(connectionString, {prepare: true});   // ✅ cached plans
-// prepare: false adds extra round-trips per query
-```
 
-**Optimal connection settings:**
+**Connection settings** — always enable prepared statements; tune per Worker:
 ```typescript
 const sql = postgres(connectionString, {
   max: 5,             // Limit per Worker
   fetch_types: false, // Skip if not using arrays
-  prepare: true,
+  prepare: true,      // Cached plans; false adds extra round-trips
   idle_timeout: 60,   // Match Worker lifetime
 });
 ```
@@ -135,8 +124,7 @@ await sql`SELECT * FROM logs WHERE created_at > ${ts}`;
 ```typescript
 const start = Date.now();
 const result = await sql`SELECT * FROM users LIMIT 10`;
-const duration = Date.now() - start;
-console.log({duration, likelyCached: duration < 10});  // <10ms = likely cache hit
+console.log({duration: Date.now() - start, likelyCached: Date.now() - start < 10});  // <10ms = likely cache hit
 ```
 
 See [hyperdrive-gotchas.md](./hyperdrive-gotchas.md) for limits and troubleshooting.

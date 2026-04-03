@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.784] - 2026-04-03
+
+### Changed
+
+- Tightened toon.md agent doc (94→80 lines) — removed redundant Format Examples section (inline in Quick Reference), renamed section header; zero information loss (#15872)
+
 ## [3.5.694] - 2026-04-02
 
 ### Changed

@@ -29,7 +29,14 @@ mcp:
 - **Parallel**: 5 contexts in 2.1s, 3 browsers in 1.9s, 10 pages in 1.8s
 - **Subagents**: `playwright-emulation.md` (device/viewport), `playwright-cli.md` (CLI agent)
 
-Engine for dev-browser, agent-browser, and Stagehand. Supports proxy (HTTP/SOCKS5), session persistence (`storageState`/`userDataDir`), extensions via `launchPersistentContext`, throttling, device emulation, ad blocking (Brave Shields or uBlock Origin), AI page understanding (`page.locator('body').ariaSnapshot()` ~0.01s, 50-200 tokens), and Chrome DevTools MCP (`npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222`). Use it directly for maximum speed, proxy support, parallel instances, extensions, custom browser engines, or when wrappers add overhead.
+Engine for dev-browser, agent-browser, and Stagehand. Use directly for maximum speed, proxy support, parallel instances, extensions, or custom browser engines.
+
+- **Proxy**: HTTP/SOCKS5
+- **Session**: `storageState` / `userDataDir`
+- **Extensions**: `launchPersistentContext`
+- **Ad blocking**: Brave Shields or uBlock Origin
+- **AI page understanding**: `page.locator('body').ariaSnapshot()` ~0.01s, 50-200 tokens
+- **Chrome DevTools MCP**: `npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222`
 
 <!-- AI-CONTEXT-END -->
 
@@ -45,7 +52,7 @@ MCP config (Claude Code, OpenCode, etc.): `{ "playwright": { "command": "npx", "
 
 ## Custom Browser Engines
 
-Use `executablePath` to launch Brave, Edge, or Chrome instead of bundled Chromium. Extensions require `headless: false` on older Chromium; `--headless=new` supports them. Brave Shields may make uBlock Origin redundant.
+Use `executablePath` for Brave, Edge, or Chrome instead of bundled Chromium. Extensions: `headless: false` on older Chromium; `--headless=new` supports them. Brave Shields may make uBlock Origin redundant.
 
 | Browser | macOS | Linux | Windows |
 |---------|-------|-------|---------|

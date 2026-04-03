@@ -1,27 +1,17 @@
 # KV Gotchas & Troubleshooting
 
-## When to Use
-
-| Use KV | Use Instead |
-|--------|-------------|
-| Read-heavy, globally distributed | Strong consistency → Durable Objects |
-| Low-latency reads, key-value access | Write-heavy → D1 or Durable Objects |
-| Eventually consistent is acceptable | Relational queries → D1 |
-| | Large files (>25 MiB) → R2 |
-| | Atomic operations → Durable Objects |
-
 ## Eventual Consistency
 
 ```typescript
-// ❌ Read immediately after write (may see stale globally)
+// ❌ Read immediately after write — may see stale value in other regions
 await env.MY_KV.put("key", "value");
-const value = await env.MY_KV.get("key"); // May be null in other regions
+const value = await env.MY_KV.get("key"); // May be null globally
 
-// ✅ Return confirmation without reading
+// ✅ Return confirmation without re-reading
 await env.MY_KV.put("key", "value");
 return new Response("Updated", { status: 200 });
 
-// ✅ Use local value
+// ✅ Use the local value directly
 const newValue = "updated";
 await env.MY_KV.put("key", newValue);
 return new Response(newValue);
@@ -32,27 +22,27 @@ return new Response(newValue);
 ## Null Handling
 
 ```typescript
-// ❌ No null check
+// ❌ No null check — throws if key missing
 const value = await env.MY_KV.get("key");
-const result = value.toUpperCase(); // Error if null
+const result = value.toUpperCase();
 
-// ✅ Check for null
+// ✅ Explicit null check
 const value = await env.MY_KV.get("key");
 if (value === null) return new Response("Not found", { status: 404 });
 return new Response(value);
 
-// ✅ Provide default
+// ✅ Nullish coalescing default
 const value = (await env.MY_KV.get("config")) ?? "default-config";
 ```
 
 ## Concurrent Writes
 
 ```typescript
-// ❌ Concurrent writes to same key (429 rate limit)
+// ❌ Concurrent writes to same key — 429 rate limit
 await Promise.all([
   env.MY_KV.put("counter", "1"),
   env.MY_KV.put("counter", "2")
-]); // 429 error
+]);
 
 // ✅ Sequential writes
 await env.MY_KV.put("counter", "3");
@@ -63,7 +53,7 @@ await Promise.all([
   env.MY_KV.put("counter:2", "2")
 ]);
 
-// ✅ Retry with backoff
+// ✅ Retry with exponential backoff
 async function putWithRetry(kv: KVNamespace, key: string, value: string) {
   let delay = 1000;
   for (let i = 0; i < 5; i++) {
@@ -85,16 +75,16 @@ async function putWithRetry(kv: KVNamespace, key: string, value: string) {
 ## Bulk Operations
 
 ```typescript
-// ❌ Multiple individual gets (uses 3 operations)
+// ❌ Individual gets — 3 separate operations
 const user1 = await env.USERS.get("user:1");
 const user2 = await env.USERS.get("user:2");
 const user3 = await env.USERS.get("user:3");
 
-// ✅ Single bulk get (uses 1 operation)
+// ✅ Bulk get — 1 operation
 const users = await env.USERS.get(["user:1", "user:2", "user:3"]);
 ```
 
-**Note:** Bulk write NOT available in Workers (only via CLI/API).
+**Note:** Bulk write not available in Workers (CLI/API only).
 
 ## Limits & Pricing
 
@@ -108,3 +98,8 @@ const users = await env.USERS.get(["user:1", "user:2", "user:3"]);
 | Writes | $5.00 per 1M |
 | Deletes | $5.00 per 1M |
 | Storage | $0.50 per GB-month |
+
+## Read Next
+
+- [kv.md](./kv.md) - Core API, when to use KV vs D1/DO/R2
+- [kv-patterns.md](./kv-patterns.md) - Caching, sessions, rate limiting, A/B testing

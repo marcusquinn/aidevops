@@ -12,8 +12,6 @@ tools:
   task: false
 ---
 
-# XcodeBuildMCP - Xcode Integration for AI Agents
-
 <!-- AI-CONTEXT-START -->
 
 - **Install**: `npx -y xcodebuildmcp@beta mcp` (MCP server mode)
@@ -54,13 +52,13 @@ Only simulator tools enabled by default. Use `manage-workflows` to enable other 
 
 ## MCP Configuration
 
-### Claude Code
+**Claude Code:**
 
 ```bash
 claude mcp add XcodeBuildMCP -- npx -y xcodebuildmcp@beta mcp
 ```
 
-### JSON Config (Cursor, VS Code, Claude Desktop, OpenCode)
+**JSON (Cursor, VS Code, Claude Desktop, OpenCode):**
 
 ```json
 {

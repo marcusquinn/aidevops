@@ -68,11 +68,9 @@ PUT /zones/{zone_id}/api_gateway/settings/schema_validation
 
 ## Monitoring
 
-Security Events: Security > Events — filter Action=block, Service=API Shield
-
-Firewall Analytics: Analytics > Security — filter by `cf.api_gateway.*` fields
-
-Logpush fields: `APIGatewayAuthIDPresent`, `APIGatewayRequestViolatesSchema`, `APIGatewayFallthroughDetected`, `JWTValidationResult`, `ClientCertFingerprint`
+- **Security Events**: Security > Events — filter Action=block, Service=API Shield
+- **Firewall Analytics**: Analytics > Security — filter by `cf.api_gateway.*` fields
+- **Logpush fields**: `APIGatewayAuthIDPresent`, `APIGatewayRequestViolatesSchema`, `APIGatewayFallthroughDetected`, `JWTValidationResult`, `ClientCertFingerprint`
 
 ## Availability
 

@@ -21,7 +21,7 @@ tools:
 - **Purpose**: 20-60% token reduction vs JSON for LLM prompts
 - **CLI**: `npx @toon-format/cli` (no install needed)
 - **Commands**: `toon-helper.sh [encode|decode|compare|validate|batch|stdin-encode|stdin-decode] [input] [output]`
-- **Format**: `users[2]{id,name,role}:` followed by `1,Alice,admin` rows
+- **Format**: object (`id: 1`) or tabular (`users[2]{id,name,role}:` + `1,Alice,admin` rows)
 - **Delimiters**: comma (default), tab (`\t`), pipe (`|`)
 - **Best for**: Tabular data (60%+ savings), config data, API responses
 - **Config**: `configs/toon-config.json` (copy from `configs/toon-config.json.txt`); key options: `default_delimiter`, `key_folding`, `batch_processing`, `ai_prompts`
@@ -29,21 +29,7 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Format Examples
-
-```toon
-# Simple object
-id: 1
-name: Alice
-active: true
-
-# Tabular (most efficient)
-users[2]{id,name,role}:
-  1,Alice,admin
-  2,Bob,user
-```
-
-## Helper Script Commands
+## Commands
 
 ```bash
 toon-helper.sh encode input.json output.toon

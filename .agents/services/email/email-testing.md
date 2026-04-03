@@ -69,7 +69,7 @@ email-health-check-helper.sh accessibility newsletter.html # 5. Standalone a11y
 | Outlook (iOS/Android) | Full inversion; ignores `prefers-color-scheme` |
 | Yahoo | No dark mode support |
 
-Implementation: `<meta name="color-scheme" content="light dark">` + `@media (prefers-color-scheme: dark)`. Avoid hardcoded white backgrounds. Test logos on light/dark. Use borders/shadows on transparent PNGs.
+Use `<meta name="color-scheme" content="light dark">` + `@media (prefers-color-scheme: dark)`. Avoid hardcoded white backgrounds; test logos on light/dark; use borders/shadows on transparent PNGs.
 
 ## Inbox Placement Scoring
 
@@ -100,9 +100,8 @@ Implementation: `<meta name="color-scheme" content="light dark">` + `@media (pre
 ## Related
 
 - `services/email/email-design-test.md` — Playwright rendering + Email on Acid API
-- `tools/accessibility/accessibility-audit.md` — email WCAG compliance
 - `services/email/email-health-check.md` — DNS authentication
 - `services/email/ses.md` — Amazon SES
 - `content/distribution-email.md` — email content strategy
-- `tools/accessibility/accessibility.md` — WCAG reference
+- `tools/accessibility/accessibility-audit.md` — email WCAG compliance
 - `tools/browser/browser-automation.md` — automated rendering tests

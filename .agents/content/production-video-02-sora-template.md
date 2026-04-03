@@ -1,6 +1,6 @@
 # Sora 2 Pro Master Template
 
-Sora 2 excels at UGC-style, authentic content. Use the 6-section master template for professional results.
+6-section master template for UGC-style authentic content.
 
 ```text
 [1. HEADER - Style Definition (7 parameters)]

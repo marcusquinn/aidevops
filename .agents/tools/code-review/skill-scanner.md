@@ -57,7 +57,7 @@ Keys: `~/.config/aidevops/credentials.sh` (600 perms) or `aidevops secret set <K
 - **Import gate**: `add-skill-helper.sh` — `CRITICAL`/`HIGH` blocks unless `--skip-security` (or explicit interactive override)
 - **Batch scans**: `aidevops skill scan`, `security-helper.sh skill-scan all`
 - **Update path**: `setup.sh` scans all skills during `aidevops update` (non-blocking); `skill-update-helper.sh update` re-imports with `--force`
-- **Audit log**: `.agents/configs/configs/SKILL-SCAN-RESULTS.md`
+- **Audit log**: `.agents/configs/SKILL-SCAN-RESULTS.md`
 
 ## CLI
 
