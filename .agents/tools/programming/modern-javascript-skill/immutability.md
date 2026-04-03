@@ -20,14 +20,14 @@ Copy instead of mutating. Keep transforms pure, push I/O to the edge.
 ```javascript
 const nums = [1, 2, 3, 4, 5];
 
-const withSix      = [...nums, 6];                   // append
-const withZero     = [0, ...nums];                   // prepend
-const withoutThree = nums.filter(n => n !== 3);      // remove by value
-const withoutSecond = nums.toSpliced(1, 1);          // remove by index (ES2023)
-const updated      = nums.with(2, 99);               // replace at index (ES2023)
-const doubled      = nums.with(2, nums.at(2) * 2);   // transform at index
-const sorted       = nums.toSorted((a, b) => b - a); // sort (ES2023)
-const reversed     = nums.toReversed();              // reverse (ES2023)
+const withSix       = [...nums, 6];                   // append
+const withZero      = [0, ...nums];                   // prepend
+const withoutThree  = nums.filter(n => n !== 3);      // remove by value
+const withoutSecond = nums.toSpliced(1, 1);           // remove by index (ES2023)
+const updated       = nums.with(2, 99);               // replace at index (ES2023)
+const doubled       = nums.with(2, nums.at(2) * 2);   // transform at index
+const sorted        = nums.toSorted((a, b) => b - a); // sort (ES2023)
+const reversed      = nums.toReversed();              // reverse (ES2023)
 ```
 
 ## Non-Mutating Object Updates
@@ -38,8 +38,8 @@ const user = { name: 'Alice', age: 30, address: { city: 'NYC' } };
 const older      = { ...user, age: 31 };                                      // update property
 const withZip    = { ...user, address: { ...user.address, zip: '10001' } };   // update nested
 const { age, ...userWithoutAge } = user;                                      // remove property
-const { name: fullName, ...rest } = user;                                     // rename property
-const renamed    = { fullName, ...rest };
+const { name: fullName, ...rest } = user;
+const renamed    = { fullName, ...rest };                                     // rename property
 const maybeAdmin = { ...user, ...(isAdmin && { role: 'admin' }) };            // conditional property
 
 const clone = structuredClone(obj); // deep clone (handles circular refs, preserves types)
@@ -66,7 +66,7 @@ isExpired(token, Date.now());
 
 const shuffle = (array, random = Math.random) =>
   array.toSorted(() => random() - 0.5);   // ES2023 non-mutating
-shuffle(items);           // random in production
+shuffle(items);            // random in production
 shuffle(items, () => 0.5); // deterministic in tests
 ```
 
@@ -96,8 +96,6 @@ const newState = setIn(state, ['users', 'u1', 'profile', 'name'], 'Alice');
 
 ## Best Practices
 
-- **`const` by default** — prevent accidental reassignment
-- **Never mutate parameters** — always return new objects
+- **`const` by default; never mutate parameters** — prevent reassignment, always return new objects
 - **Separate pure logic from I/O** — extract side effects to boundaries
 - **Inject non-determinism** — pass `Date.now`, `Math.random` as params for testability
-- **Optional chaining** — `obj?.nested?.value` instead of manual guards
