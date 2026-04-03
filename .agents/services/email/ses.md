@@ -18,7 +18,7 @@ tools:
 ## Quick Reference
 
 - **Type**: AWS cloud email service | **Auth**: IAM credentials (access key + secret)
-- **Config**: `configs/ses-config.json` | **Regions**: us-east-1, eu-west-1, etc.
+- **Config**: `cp configs/ses-config.json.txt configs/ses-config.json` | **Regions**: us-east-1, eu-west-1, etc.
 - **Commands**: `ses-helper.sh [accounts|quota|stats|monitor|verified-emails|verified-domains|verify-email|verify-domain|dkim|reputation|suppressed|send-test|audit] [account] [args]`
 - **Thresholds**: Bounce < 5%, Complaint < 0.1%
 - **Test addresses**: success@simulator.amazonses.com, bounce@simulator.amazonses.com
@@ -28,8 +28,6 @@ tools:
 <!-- AI-CONTEXT-END -->
 
 ## Configuration
-
-Template: `cp configs/ses-config.json.txt configs/ses-config.json`
 
 ```json
 {
@@ -124,8 +122,7 @@ Rotate keys regularly. Separate AWS accounts for prod/staging.
 
 ## Compliance & Backup
 
-- Configure SPF, DKIM, DMARC. Process bounces/complaints promptly; maintain suppression list.
-- Provide unsubscribe mechanisms; follow GDPR/CAN-SPAM. Warm up new IPs; clean lists regularly.
+Configure SPF, DKIM, DMARC; process bounces/complaints promptly; maintain suppression list; provide unsubscribe mechanisms; follow GDPR/CAN-SPAM; warm up new IPs; clean lists regularly.
 
 ```bash
 ses-helper.sh audit production > ses-config-backup-$(date +%Y%m%d).txt
