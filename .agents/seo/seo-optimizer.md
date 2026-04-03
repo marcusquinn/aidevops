@@ -29,28 +29,10 @@ On-page SEO audits and concrete content fixes. Script: `seo-content-analyzer.py 
 
 ## Workflow
 
-### 1. Run analysis
-
-```bash
-python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py quality article.md \
-  --keyword "target keyword" \
-  --meta-title "Current Title" \
-  --meta-desc "Current description"
-```
-
-### 2. Prioritise fixes
-
-1. **Critical** (>15 pts): missing H1, no keyword in title, content too short
-2. **High** (5-15 pts): low keyword density, missing meta elements
-3. **Medium** (<5 pts): few internal links, no lists
-
-### 3. Apply fixes
-
-Per issue: **What** (element), **Where** (location), **How** (rewrite/addition), **Why** (SEO impact).
-
-### 4. Re-score
-
-Re-run analysis after fixes to verify improvement.
+1. **Analyse**: `python3 ~/.aidevops/agents/scripts/seo-content-analyzer.py quality article.md --keyword "target keyword" --meta-title "Current Title" --meta-desc "Current description"`
+2. **Prioritise**: Critical (>15 pts): missing H1, no keyword in title, content too short. High (5-15 pts): low keyword density, missing meta elements. Medium (<5 pts): few internal links, no lists.
+3. **Fix**: Per issue — **What** (element), **Where** (location), **How** (rewrite/addition), **Why** (SEO impact).
+4. **Re-score**: Re-run analysis to verify improvement.
 
 ## Featured Snippet Optimisation
 
