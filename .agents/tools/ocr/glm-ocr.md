@@ -24,12 +24,9 @@ tools:
 - **Use when**: Quick OCR of screenshots, photos, scanned docs, receipts, forms — local, no cloud
 - **Limitations**: No JSON output; weak on low-quality images (<150 DPI); needs >=8GB RAM
 
-<!-- AI-CONTEXT-END -->
-
 ## Usage
 
 ```bash
-# Basic
 ollama run glm-ocr "Extract all text from this image" --images /path/to/document.png
 
 # macOS screenshot → OCR
@@ -73,3 +70,5 @@ peekaboo image --mode window --app "Preview" --analyze "Extract document text" -
 | Model not found | `ollama pull glm-ocr` then `ollama list` to verify |
 | Slow performance | Needs >=8GB RAM; process large batches sequentially |
 | Poor OCR quality | Use >=150 DPI (300 for scans); crop to relevant area; try specific prompts |
+
+<!-- AI-CONTEXT-END -->
