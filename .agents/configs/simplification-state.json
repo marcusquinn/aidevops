@@ -1,4 +1,15 @@
 {
+  ".agents/marketing-sales/direct-response-copy-swipe-file-landing-pages-01-saas-examples.md": {
+    "at": "2026-04-03T00:00:00Z",
+    "hash": "b67f8c428d9457f76f2e6227baaaa46768eccf9604fd1e71ee17c9b002831039",
+    "issue": "GH#16636",
+    "lines_after": 81,
+    "lines_before": 66,
+    "note": "Reference corpus: added intro line and Key Patterns summary table. All original content preserved. 4 SaaS examples (Slack, Notion, Basecamp, Mailchimp) intact.",
+    "passes": 1,
+    "pr": "pending",
+    "status": "simplified"
+  },
   ".agents/aidevops/api-integrations.md": {
     "at": "2026-04-03T00:00:00Z",
     "hash": "1d9ae72e2a62060ee1524f7440825f1a5539f3ce2e64b691d67d66ea36cf0edb",

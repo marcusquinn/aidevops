@@ -1,5 +1,7 @@
 # SaaS Landing Page Examples
 
+Annotated breakdowns of high-converting SaaS landing pages. Swipe the structure, not the specific claims.
+
 ## 1. Slack — "Where Work Happens"
 
 **Hero:**
@@ -64,3 +66,16 @@ Grow your business with email marketing and automations that convert.
 - Outcome-focused headline (revenue); low-friction CTA.
 - Features: Email Builder / Audience Tools / Automations / Analytics — each with action-oriented benefit.
 - Stat: `Generate up to 25x more orders with automations* (*Mailchimp data, 2023)` — specific, sourced, believable.
+
+## Key Patterns
+
+| Pattern | Example |
+|---------|---------|
+| Category claim headline | Slack: "Where Work Happens" |
+| Pain-point opener | Basecamp: "Frustrated with your project management?" |
+| Outcome headline | Mailchimp: "Turn Emails into Revenue" |
+| Multi-use-case headline | Notion: "Your Wiki, Docs, & Projects. Together." |
+| Dual CTA (awareness + intent) | Slack: [Get Started] + [Talk to Sales] |
+| Before/After contrast | Basecamp: meetings/anxiety → one place/calm |
+| Specific stat with source | Mailchimp: 25x orders, Mailchimp data 2023 |
+| Flat pricing anti-positioning | Basecamp: "No per-user pricing games" |
