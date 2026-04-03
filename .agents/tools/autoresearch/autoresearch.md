@@ -52,13 +52,14 @@ Extract `--program <path>`; exit with error if missing or file not found. Extrac
 | `METRIC_DIR` | `## Metric` section, `direction:` line (`lower` \| `higher`) |
 | `BASELINE` | `## Metric` section, `baseline:` line (`null` = not yet measured) |
 | `GOAL` | `## Metric` section, `goal:` line (`null` = no goal) |
-| `CONSTRAINTS` | `## Constraints` section, each `- ` bullet as a shell command |
+| `CONSTRAINTS` | `## Constraints` section, each bullet as a shell command |
 | `RESEARCHER` | `## Models` section, `researcher:` line |
 | `EVALUATOR` | `## Models` section, `evaluator:` line (optional) |
 | `TARGET_MODEL` | `## Models` section, `target:` line (optional) |
 | `TIMEOUT` | `## Budget` section, `timeout:` line (seconds) |
 | `MAX_ITER` | `## Budget` section, `max_iterations:` line |
 | `PER_EXPERIMENT` | `## Budget` section, `per_experiment:` line |
+| `TRIALS` | `## Budget` section, `trials:` line (default: 1) |
 | `HINTS` | `## Hints` section, all bullet lines |
 
 ## Step 1: Setup
@@ -87,7 +88,7 @@ if RESUMING and RESULTS_FILE exists:
 else:
     ITERATION_COUNT=0; BEST_METRIC=null; BASELINE=null; FAILED_HYPOTHESES=[]; TOTAL_TOKENS=0
     mkdir -p $(dirname RESULTS_FILE)
-    Write TSV header: iteration\tcommit\tmetric_name\tmetric_value\tbaseline\tdelta\tstatus\thypothesis\ttimestamp\ttokens_used
+    Write TSV header: iteration\tcommit\tmetric_name\tmetric_value\tbaseline\tdelta\tstatus\thypothesis\ttimestamp\ttokens_used\tpass_rate\ttoken_ratio\ttrials\ttrial_variance
 ```
 
 **1.4 Recall cross-session memory:** `aidevops-memory recall "autoresearch $PROGRAM_NAME" --limit 10` → store as MEMORY_CONTEXT.

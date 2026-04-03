@@ -29,30 +29,48 @@ while true:
     if constraint_result == FAIL:
         git -C WORKTREE_PATH reset --hard HEAD
         track_tokens(ITER_START_TOKENS)
-        log_result(ITERATION_COUNT, null, null, "constraint_fail", hypothesis, ITER_TOKENS)
+        log_result(ITERATION_COUNT, null, null, "constraint_fail", hypothesis, ITER_TOKENS, 0, "-")
         continue
 
-    metric_result = run_metric()
+    if TRIALS > 1:
+        (metric_result, variance, trial_results) = multi_trial_evaluate(METRIC_CMD, TRIALS, PER_EXPERIMENT)
+    else:
+        metric_result = run_metric()
+        variance = 0
+        trial_results = [metric_result]
+
     if metric_result == ERROR:
         git -C WORKTREE_PATH reset --hard HEAD
         track_tokens(ITER_START_TOKENS)
-        log_result(ITERATION_COUNT, null, null, "crash", hypothesis, ITER_TOKENS)
+        log_result(ITERATION_COUNT, null, null, "crash", hypothesis, ITER_TOKENS, 0, "-")
         continue
 
     track_tokens(ITER_START_TOKENS)
 
     if is_improvement(metric_result, BEST_METRIC, METRIC_DIR):
+        # Multi-trial consistency check: median improved but require majority of trials to improve
+        if TRIALS > 1:
+            improvement_count = count(r for r in trial_results if is_improvement(r, BEST_METRIC, METRIC_DIR))
+            if improvement_count <= TRIALS / 2:
+                # Median improved but not consistently — treat as noise
+                git -C WORKTREE_PATH reset --hard HEAD
+                FAILED_HYPOTHESES.append(hypothesis)
+                log_result(ITERATION_COUNT, null, metric_result, "discard_inconsistent", hypothesis, ITER_TOKENS, TRIALS, variance)
+                store_memory(hypothesis, metric_result, "discard_inconsistent")
+                send_discovery(hypothesis, metric_result, "discard_inconsistent", null)
+                continue
+
         git -C WORKTREE_PATH add -A
         git -C WORKTREE_PATH commit -m "experiment: {hypothesis[:60]} ({METRIC_NAME}: {metric_result})"
         HEAD_SHA = git -C WORKTREE_PATH rev-parse --short HEAD
         BEST_METRIC = metric_result
-        log_result(ITERATION_COUNT, HEAD_SHA, metric_result, "keep", hypothesis, ITER_TOKENS)
+        log_result(ITERATION_COUNT, HEAD_SHA, metric_result, "keep", hypothesis, ITER_TOKENS, TRIALS, variance)
         store_memory(hypothesis, metric_result, "keep")
         send_discovery(hypothesis, metric_result, "keep", HEAD_SHA)
     else:
         git -C WORKTREE_PATH reset --hard HEAD
         FAILED_HYPOTHESES.append(hypothesis)
-        log_result(ITERATION_COUNT, null, metric_result, "discard", hypothesis, ITER_TOKENS)
+        log_result(ITERATION_COUNT, null, metric_result, "discard", hypothesis, ITER_TOKENS, TRIALS, variance)
         store_memory(hypothesis, metric_result, "discard")
         send_discovery(hypothesis, metric_result, "discard", null)
 
@@ -104,11 +122,34 @@ timeout PER_EXPERIMENT bash -c "{constraint_command}"
 # exit_code != 0 → return FAIL; all constraints must pass (first failure short-circuits)
 ```
 
-**Metric measurement:**
+**Metric measurement (single trial):**
 
 ```bash
 timeout PER_EXPERIMENT bash -c "{METRIC_CMD}" 2>/dev/null
 # Parse last non-empty stdout line as float. Parsing failure or non-zero exit → ERROR.
+```
+
+**Multi-trial evaluation (when TRIALS > 1):**
+
+```text
+multi_trial_evaluate(metric_cmd, n_trials, per_experiment_timeout):
+    results = []
+    for i in 1..n_trials:
+        result = timeout per_experiment_timeout bash -c "{metric_cmd}" 2>/dev/null
+        # Parse last non-empty stdout line as float
+        if parse_error or non_zero_exit:
+            return ERROR  # Any trial failure = overall failure (infrastructure problem, not noise)
+        results.append(parsed_float)
+
+    # Sort and take median (robust to outliers)
+    sorted_results = sort(results)
+    if n_trials is odd:
+        median = sorted_results[n_trials / 2]
+    else:
+        median = (sorted_results[n_trials/2 - 1] + sorted_results[n_trials/2]) / 2
+
+    variance = max(results) - min(results)  # range as variance proxy
+    return (median, variance, results)
 ```
 
 **Improvement check:**

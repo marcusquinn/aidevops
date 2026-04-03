@@ -7,7 +7,7 @@ Sub-doc for `autoresearch.md`. Loaded on demand.
 Append to `todo/research/{name}-results.tsv`:
 
 ```text
-{iteration}\t{commit_sha_or_dash}\t{metric_name}\t{metric_value_or_dash}\t{baseline}\t{delta_or_dash}\t{status}\t{hypothesis}\t{ISO_timestamp}\t{tokens_used}\t{pass_rate_or_dash}\t{token_ratio_or_dash}
+{iteration}\t{commit_sha_or_dash}\t{metric_name}\t{metric_value_or_dash}\t{baseline}\t{delta_or_dash}\t{status}\t{hypothesis}\t{ISO_timestamp}\t{tokens_used}\t{pass_rate_or_dash}\t{token_ratio_or_dash}\t{trials}\t{trial_variance_or_dash}
 ```
 
 | Column | Type | Notes |
@@ -15,23 +15,27 @@ Append to `todo/research/{name}-results.tsv`:
 | `iteration` | int | Sequential (0 = baseline) |
 | `commit` | string | Short SHA or `-` for crashes/discards |
 | `metric_name` | string | From research program `name:` field |
-| `metric_value` | float\|`-` | `-` for crashes/constraint fails |
+| `metric_value` | float\|`-` | `-` for crashes/constraint fails; median when TRIALS > 1 |
 | `baseline` | float | Original value (same for all rows) |
 | `delta` | float\|`-` | `metric_value - baseline` (signed); `-` for crashes |
-| `status` | string | `baseline`, `keep`, `discard`, `constraint_fail`, `crash` |
+| `status` | string | `baseline`, `keep`, `discard`, `discard_inconsistent`, `constraint_fail`, `crash` |
 | `hypothesis` | string | One line, no tabs |
 | `timestamp` | ISO 8601 | UTC |
 | `tokens_used` | int | Approximate tokens for this iteration |
 | `pass_rate` | float\|`-` | 0–1; agent-optimization only |
 | `token_ratio` | float\|`-` | `avg_response_chars / baseline_chars`; agent-optimization only |
+| `trials` | int | Number of evaluation trials run (1 if single-shot) |
+| `trial_variance` | float\|`-` | `max - min` of trial results; `-` for single trial or crashes |
 
 Example:
 
 ```tsv
-iteration	commit	metric_name	metric_value	baseline	delta	status	hypothesis	timestamp	tokens_used	pass_rate	token_ratio
-0	(baseline)	build_time_s	12.4	12.4	0.0	baseline	(initial measurement)	2026-04-01T10:00:00Z	0	-	-
-1	a1b2c3d	build_time_s	11.1	12.4	-1.3	keep	remove unused lodash import	2026-04-01T10:12:00Z	2340	-	-
-2	-	build_time_s	12.8	12.4	0.4	discard	switch to esbuild (breaks API)	2026-04-01T10:24:00Z	3100	-	-
+iteration	commit	metric_name	metric_value	baseline	delta	status	hypothesis	timestamp	tokens_used	pass_rate	token_ratio	trials	trial_variance
+0	(baseline)	build_time_s	12.4	12.4	0.0	baseline	(initial measurement)	2026-04-01T10:00:00Z	0	-	-	1	-
+1	a1b2c3d	build_time_s	11.1	12.4	-1.3	keep	remove unused lodash import	2026-04-01T10:12:00Z	2340	-	-	1	-
+2	-	build_time_s	12.8	12.4	0.4	discard	switch to esbuild (breaks API)	2026-04-01T10:24:00Z	3100	-	-	1	-
+3	b3c4d5e	avg_tokens_per_task	85.2	92.0	-6.8	keep	remove redundant constraint examples	2026-04-01T10:36:00Z	4200	0.94	0.92	3	2.1
+4	-	avg_tokens_per_task	91.5	92.0	-0.5	discard_inconsistent	merge hints into single bullet	2026-04-01T10:48:00Z	3800	0.93	0.91	3	4.7
 ```
 
 ## Memory Storage

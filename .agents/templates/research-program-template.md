@@ -81,7 +81,10 @@ Model tiers: `haiku` (fast/cheap), `sonnet` (balanced), `opus` (best quality).
 timeout: 7200          # required: total wall-clock seconds (default: 2h)
 max_iterations: 50     # required: max experiment count
 per_experiment: 300    # optional: max seconds per single experiment (default: 5min)
+trials: 1              # optional: evaluations per hypothesis (default: 1, use 2-3 for noisy metrics)
 ```
+
+Multi-trial evaluation reduces noise from stochastic metrics (e.g., LLM-scored tests). Each trial re-runs the full metric command. The median result is used for keep/discard. Set to 2-3 for LLM-based metrics, 1 for deterministic metrics (build time, file size).
 
 ## Hints
 
