@@ -7,14 +7,14 @@ mode: subagent
 
 Use 2 probes during `/define` for tasks classified as **research**.
 
-## Defaults (apply unless overridden)
+## Defaults
 
 - Time-boxed — research without a deadline expands indefinitely
 - Deliverable is a written recommendation, not code
 - Compare at least 2 options before recommending one
 - Include cost or effort estimates for each option
 
-## Required Questions (always ask both)
+## Required Questions (ask both)
 
 **Time Box** — How much time should be spent on this research?
 1. 30 minutes — quick comparison (recommended for simple evaluations)
@@ -28,7 +28,7 @@ Use 2 probes during `/define` for tasks classified as **research**.
 3. Decision document for team review
 4. Just a verbal summary in this conversation
 
-## Probes (select 2)
+## Probes (pick 2)
 
 **Decision Criteria** — What matters most when choosing between options?
 1. Cost (monetary or compute) (recommended if comparing services/tools)
