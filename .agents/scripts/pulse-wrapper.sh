@@ -3869,6 +3869,78 @@ close_issues_with_merged_prs() {
 }
 
 #######################################
+# Reconcile status:done issues that are still open.
+#
+# Workers set status:done when they believe work is complete, but the
+# issue may stay open if: (1) PR merged but Closes #N was missing,
+# (2) worker declared done but never created a PR, (3) PR was rejected.
+#
+# Case 1: merged PR found → close the issue (work verified done).
+# Cases 2+3: no merged PR → reset to status:available for re-dispatch.
+#
+# Capped at 20 per repo per cycle to limit API calls.
+#######################################
+reconcile_stale_done_issues() {
+	local repos_json="$REPOS_JSON"
+	[[ -f "$repos_json" ]] || return 0
+
+	local dedup_helper="${HOME}/.aidevops/agents/scripts/dispatch-dedup-helper.sh"
+	[[ -x "$dedup_helper" ]] || return 0
+
+	local total_closed=0
+	local total_reset=0
+
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+
+		local issues_json
+		issues_json=$(gh issue list --repo "$slug" --state open \
+			--label "status:done" \
+			--json number,title --limit 20 2>/dev/null) || issues_json="[]"
+		[[ -n "$issues_json" && "$issues_json" != "null" ]] || continue
+
+		local issue_count
+		issue_count=$(printf '%s' "$issues_json" | jq 'length' 2>/dev/null) || issue_count=0
+		[[ "$issue_count" -gt 0 ]] || continue
+
+		local i=0
+		while [[ "$i" -lt "$issue_count" ]]; do
+			local issue_num issue_title
+			issue_num=$(printf '%s' "$issues_json" | jq -r ".[$i].number" 2>/dev/null)
+			issue_title=$(printf '%s' "$issues_json" | jq -r ".[$i].title // empty" 2>/dev/null)
+			i=$((i + 1))
+			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
+
+			# Check if a merged PR exists for this issue
+			local dedup_output=""
+			if dedup_output=$("$dedup_helper" has-open-pr "$issue_num" "$slug" "$issue_title" 2>/dev/null); then
+				# Merged PR found — close the issue
+				local pr_ref
+				pr_ref=$(printf '%s' "$dedup_output" | grep -o '#[0-9]*' | head -1) || pr_ref=""
+				gh issue close "$issue_num" --repo "$slug" \
+					--comment "Closing: work completed via merged PR ${pr_ref:-"(detected by dedup)"}." \
+					>/dev/null 2>&1 || continue
+				echo "[pulse-wrapper] Reconcile done: closed #${issue_num} in ${slug} — merged PR: ${dedup_output:-"found"}" >>"$LOGFILE"
+				total_closed=$((total_closed + 1))
+			else
+				# No merged PR — reset for re-evaluation
+				gh issue edit "$issue_num" --repo "$slug" \
+					--remove-label "status:done" \
+					--add-label "status:available" >/dev/null 2>&1 || continue
+				echo "[pulse-wrapper] Reconcile done: reset #${issue_num} in ${slug} to status:available — no merged PR evidence" >>"$LOGFILE"
+				total_reset=$((total_reset + 1))
+			fi
+		done
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
+
+	if [[ "$((total_closed + total_reset))" -gt 0 ]]; then
+		echo "[pulse-wrapper] Reconcile stale done issues: closed=${total_closed}, reset=${total_reset}" >>"$LOGFILE"
+	fi
+
+	return 0
+}
+
+#######################################
 # Auto-approve needs-maintainer-review issues where the maintainer
 # created the issue or has already commented (GH#16842).
 #
@@ -7910,6 +7982,10 @@ _run_preflight_stages() {
 	# Close issues whose linked PRs already merged (GH#16851).
 	# The dedup guard blocks re-dispatch for these but they stay open forever.
 	run_stage_with_timeout "close_issues_with_merged_prs" "$PRE_RUN_STAGE_TIMEOUT" close_issues_with_merged_prs || true
+
+	# Reconcile status:done issues: close if merged PR exists, reset to
+	# status:available if not (needs re-evaluation by a worker).
+	run_stage_with_timeout "reconcile_stale_done_issues" "$PRE_RUN_STAGE_TIMEOUT" reconcile_stale_done_issues || true
 
 	# Auto-approve maintainer issues: remove needs-maintainer-review when
 	# the maintainer created or commented on the issue (GH#16842).
