@@ -117,44 +117,16 @@ fetch_skill_info() {
 	return 0
 }
 
-# Extract SKILL.md content using Playwright
-# The ClawdHub SPA renders SKILL.md as HTML on the skill detail page.
-# We use Playwright to navigate, wait for render, and extract the markdown content.
-fetch_skill_content_playwright() {
-	local slug="$1"
-	local output_dir="$2"
-
-	mkdir -p "$output_dir"
-
-	# First get the owner handle from API to construct the full URL
-	local info
-	info=$(fetch_skill_info "$slug") || return 1
-
-	local owner
-	owner=$(echo "$info" | jq -r '.owner.handle // ""')
-
-	if [[ -z "$owner" ]]; then
-		log_error "Could not determine owner for skill: $slug"
-		return 1
-	fi
-
-	local skill_url="${CLAWDHUB_BASE_URL}/${owner}/${slug}"
-	log_info "Fetching SKILL.md from: $skill_url"
-
-	# Create a temporary Node.js project with Playwright to extract SKILL.md
+# Create a temporary Playwright project directory with package.json and fetch script.
+# Outputs the path to the created directory on stdout.
+_create_playwright_project() {
 	local pw_dir
 	pw_dir=$(mktemp -d "${TMPDIR:-/tmp}/clawdhub-pw-XXXXXX")
-	trap 'rm -rf "$pw_dir"' EXIT
-	_save_cleanup_scope
-	trap '_run_cleanups' RETURN
-	push_cleanup "rm -rf '${pw_dir}'"
 
-	# Create package.json for the temporary project
 	cat >"$pw_dir/package.json" <<'PKGJSON'
 {"name":"clawdhub-fetch","private":true,"type":"module","dependencies":{"playwright":"^1.50.0"}}
 PKGJSON
 
-	# Create the extraction script
 	cat >"$pw_dir/fetch.mjs" <<'PLAYWRIGHT_SCRIPT'
 import { chromium } from 'playwright';
 import { writeFileSync } from 'fs';
@@ -270,39 +242,108 @@ try {
 }
 PLAYWRIGHT_SCRIPT
 
-	local output_file="${output_dir}/SKILL.md"
+	echo "$pw_dir"
+	return 0
+}
 
-	# Install playwright and run the fetch script
+# Install Playwright dependencies and run the browser extraction script.
+# Returns 0 on success (output file written), 1 on failure.
+_run_playwright_fetch() {
+	local pw_dir="$1"
+	local skill_url="$2"
+	local output_file="$3"
+
 	log_info "Installing Playwright (temporary)..."
-	if (cd "$pw_dir" && npm install --silent && npx playwright install chromium --with-deps 2>&1); then
-		log_info "Running browser extraction..."
-		if (cd "$pw_dir" && node fetch.mjs "$skill_url" "$output_file"); then
-			rm -rf "$pw_dir"
-			if [[ -f "$output_file" && -s "$output_file" ]]; then
-				log_success "Extracted SKILL.md ($(wc -c <"$output_file" | tr -d ' ') bytes)"
-				return 0
-			fi
-		fi
+	if ! (cd "$pw_dir" && npm install --silent && npx playwright install chromium --with-deps 2>&1); then
+		return 1
+	fi
+
+	log_info "Running browser extraction..."
+	if ! (cd "$pw_dir" && node fetch.mjs "$skill_url" "$output_file"); then
+		return 1
+	fi
+
+	if [[ -f "$output_file" && -s "$output_file" ]]; then
+		log_success "Extracted SKILL.md ($(wc -c <"$output_file" | tr -d ' ') bytes)"
+		return 0
+	fi
+
+	return 1
+}
+
+# Attempt to fetch SKILL.md via the clawdhub CLI (npx clawdhub install).
+# Returns 0 on success, 1 on failure.
+_try_clawdhub_cli_fallback() {
+	local slug="$1"
+	local output_dir="$2"
+	local output_file="$3"
+
+	if ! command -v npx &>/dev/null; then
+		return 1
+	fi
+
+	log_info "Trying: npx clawdhub install $slug"
+	if ! (cd "$output_dir" && npx --yes clawdhub@latest install "$slug" --force); then
+		return 1
+	fi
+
+	# clawdhub installs to ./skills/<slug>/SKILL.md
+	local installed_skill
+	installed_skill=$(find "$output_dir" -name "SKILL.md" -type f 2>/dev/null | head -1)
+	if [[ -z "$installed_skill" || ! -f "$installed_skill" ]]; then
+		return 1
+	fi
+
+	if [[ "$installed_skill" != "$output_file" ]]; then
+		cp "$installed_skill" "$output_file"
+	fi
+
+	log_success "Fetched via clawdhub CLI"
+	return 0
+}
+
+# Extract SKILL.md content using Playwright (with clawdhub CLI fallback).
+# The ClawdHub SPA renders SKILL.md as HTML on the skill detail page.
+fetch_skill_content_playwright() {
+	local slug="$1"
+	local output_dir="$2"
+
+	mkdir -p "$output_dir"
+
+	# Resolve owner handle from API to construct the full skill URL
+	local info
+	info=$(fetch_skill_info "$slug") || return 1
+
+	local owner
+	owner=$(echo "$info" | jq -r '.owner.handle // ""')
+
+	if [[ -z "$owner" ]]; then
+		log_error "Could not determine owner for skill: $slug"
+		return 1
+	fi
+
+	local skill_url="${CLAWDHUB_BASE_URL}/${owner}/${slug}"
+	local output_file="${output_dir}/SKILL.md"
+	log_info "Fetching SKILL.md from: $skill_url"
+
+	# Create temporary Playwright project and register cleanup
+	local pw_dir
+	pw_dir=$(_create_playwright_project)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -rf '${pw_dir}'"
+
+	# Attempt Playwright extraction; fall back to clawdhub CLI on failure
+	if _run_playwright_fetch "$pw_dir" "$skill_url" "$output_file"; then
+		rm -rf "$pw_dir"
+		return 0
 	fi
 
 	rm -rf "$pw_dir"
 	log_warning "Playwright extraction failed, trying clawdhub CLI fallback..."
 
-	# Fallback: try clawdhub CLI
-	if command -v npx &>/dev/null; then
-		log_info "Trying: npx clawdhub install $slug"
-		if (cd "$output_dir" && npx --yes clawdhub@latest install "$slug" --force); then
-			# clawdhub installs to ./skills/<slug>/SKILL.md
-			local installed_skill
-			installed_skill=$(find "$output_dir" -name "SKILL.md" -type f 2>/dev/null | head -1)
-			if [[ -n "$installed_skill" && -f "$installed_skill" ]]; then
-				if [[ "$installed_skill" != "$output_file" ]]; then
-					cp "$installed_skill" "$output_file"
-				fi
-				log_success "Fetched via clawdhub CLI"
-				return 0
-			fi
-		fi
+	if _try_clawdhub_cli_fallback "$slug" "$output_dir" "$output_file"; then
+		return 0
 	fi
 
 	log_error "Could not fetch SKILL.md for: $slug"
