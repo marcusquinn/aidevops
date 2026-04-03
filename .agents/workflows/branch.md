@@ -38,9 +38,11 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-Before creating a branch, read `workflows/git-workflow.md` (issue URL handling, fork detection, commit/PR rules) and `workflows/worktree.md` (worktree creation and cleanup). Worktree paths are slugified unconditionally by `generate_worktree_path()` (converts `/` to `-`, lowercases). Pre-slugify task descriptions (lowercase, spaces→hyphens, special chars removed) before use as branch names.
+Before creating a branch, read `workflows/git-workflow.md` (issue URLs, fork detection, commit/PR rules) and `workflows/worktree.md` (creation, cleanup). Pre-slugify branch names: lowercase, spaces→hyphens, special chars removed. Worktree paths auto-slugified by `generate_worktree_path()` (`/` → `-`, lowercased).
 
 ## Branch Lifecycle
+
+Commits: conventional (`feat:` `fix:` `refactor:` `docs:` `chore:` `test:`). Include issue refs when the repo workflow requires them.
 
 | Stage | Command / Agent | Notes |
 |-------|-----------------|-------|
@@ -66,9 +68,8 @@ Before creating a branch, read `workflows/git-workflow.md` (issue URL handling, 
 ## Keeping Branch Updated
 
 ```bash
-git fetch origin main
-git merge origin/main
-# Rebase if repo workflow requires it; resolve conflicts with tools/git/conflict-resolution.md
+git fetch origin main && git merge origin/main
+# Rebase if required; conflicts → tools/git/conflict-resolution.md
 ```
 
 ## Safety: Protecting Uncommitted Work
@@ -81,11 +82,7 @@ git stash --include-untracked -m "safety: before [operation]"
 git stash pop   # or: git stash show -p to review on conflict
 ```
 
-`git restore` only recovers tracked files — untracked new files are permanently lost without stash.
-
-## Commit Message Standards
-
-Conventional commits: `feat:` `fix:` `refactor:` `docs:` `chore:` `test:`. Include issue references when the repo workflow requires them.
+`git restore` only recovers tracked files — untracked files are permanently lost without stash.
 
 ## Related Workflows
 
