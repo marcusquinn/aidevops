@@ -21,9 +21,9 @@ tools:
 - **Workflow**: `.github/workflows/code-quality.yml`
 - **Triggers**: push to `main`/`develop`; pull requests to `main`
 - **Jobs**: Framework Validation, SonarCloud Analysis, Codacy Analysis
-- **Secrets**: `SONAR_TOKEN` configured; `CODACY_API_TOKEN` still needed; `GITHUB_TOKEN` is auto-provided
-- **Dashboards**: SonarCloud https://sonarcloud.io/project/overview?id=marcusquinn_aidevops · Codacy https://app.codacy.com/gh/marcusquinn/aidevops · Actions https://github.com/marcusquinn/aidevops/actions
-- **Secret management**: Repository Settings → Secrets and variables → Actions
+- **Secrets**: `SONAR_TOKEN` configured; `CODACY_API_TOKEN` needs setup (conditional job); `GITHUB_TOKEN` auto-provided
+- **Dashboards**: [SonarCloud](https://sonarcloud.io/project/overview?id=marcusquinn_aidevops) · [Codacy](https://app.codacy.com/gh/marcusquinn/aidevops) · [Actions](https://github.com/marcusquinn/aidevops/actions)
+- **Add secret**: Repository Settings → Secrets and variables → Actions → New repository secret
 
 <!-- AI-CONTEXT-END -->
 
@@ -34,8 +34,6 @@ tools:
 | `SONAR_TOKEN` | Configured | https://sonarcloud.io/account/security |
 | `CODACY_API_TOKEN` | Needs setup | https://app.codacy.com/account/api-tokens |
 | `GITHUB_TOKEN` | Auto-provided | GitHub |
-
-To add `CODACY_API_TOKEN`: Repository Settings → Secrets and variables → Actions → **New repository secret**. `Codacy Analysis` job is conditional on this token being present.
 
 ## Concurrent Push Patterns
 
