@@ -22,48 +22,9 @@ Infrastructure → Application → Domain
 
 **Design validation:** If you can run domain logic from tests with no infrastructure, your boundaries are correct.
 
-## Directory Structure
+Directory structure and layer specifications: [layers.md](clean-ddd-hexagonal-skill/layers.md).
 
-```text
-src/
-├── domain/                    # Core business logic (NO external dependencies)
-│   ├── {aggregate}/
-│   │   ├── entity              # Aggregate root + child entities
-│   │   ├── value_objects       # Immutable value types
-│   │   ├── events              # Domain events
-│   │   ├── repository          # Repository interface (DRIVEN PORT)
-│   │   └── services            # Domain services (stateless logic)
-│   └── shared/
-│       └── errors              # Domain errors
-├── application/               # Use cases / Application services
-│   ├── {use-case}/
-│   │   ├── command             # Command/Query DTOs
-│   │   ├── handler             # Use case implementation
-│   │   └── port                # Driver port interface
-│   └── shared/
-│       └── unit_of_work        # Transaction abstraction
-├── infrastructure/            # Adapters (external concerns)
-│   ├── persistence/           # Database adapters
-│   ├── messaging/             # Message broker adapters
-│   ├── http/                  # REST/GraphQL adapters (DRIVER)
-│   └── config/
-│       └── di                  # Dependency injection / composition root
-└── main                        # Bootstrap / entry point
-```
-
-## DDD Building Blocks
-
-| Pattern | Purpose | Layer | Key Rule |
-|---------|---------|-------|----------|
-| **Entity** | Identity + behavior | Domain | Equality by ID |
-| **Value Object** | Immutable data | Domain | Equality by value, no setters |
-| **Aggregate** | Consistency boundary | Domain | Only root is referenced externally |
-| **Domain Event** | Record of change | Domain | Past tense naming (`OrderPlaced`) |
-| **Repository** | Persistence abstraction | Domain (port) | Per aggregate, not per table |
-| **Domain Service** | Stateless logic | Domain | When logic doesn't fit an entity |
-| **Application Service** | Orchestration | Application | Coordinates domain + infra |
-
-Anti-patterns (anemic domain, leaking infrastructure, god aggregate): [cheatsheet.md](clean-ddd-hexagonal-skill/cheatsheet.md#common-anti-patterns).
+DDD building blocks (Entity, Value Object, Aggregate, Domain Event, Repository, Domain Service, Application Service) and anti-patterns (anemic domain, leaking infrastructure, god aggregate): [ddd-tactical.md](clean-ddd-hexagonal-skill/ddd-tactical.md) · [cheatsheet.md](clean-ddd-hexagonal-skill/cheatsheet.md#common-anti-patterns).
 
 ## Implementation Order
 
