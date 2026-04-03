@@ -27,28 +27,21 @@
 
 ## Evaluation Criteria
 
-- **Clarity:** Understood in 5 seconds
-- **Benefit:** Clear "what's in it for me"
-- **Specificity:** Concrete numbers/results; avoid "better," "easier," "more"
-- **Believability:** Plausible to a skeptic; no hype
-- **Curiosity:** Creates interest without hiding the offer
-- **Audience fit:** Target customer sees themselves in it
+- **Clarity:** Understood in 5 seconds; target customer sees themselves in it
+- **Benefit:** Clear "what's in it for me"; concrete numbers/results — avoid "better," "easier," "more"
+- **Believability:** Plausible to a skeptic; creates curiosity without hiding the offer
 
 ## Red Flags
 
-- [ ] Vague: "Improve your business"
-- [ ] Clever: wordplay hurting clarity
-- [ ] Long: >15 words
-- [ ] Hypey: "Revolutionary," "Game-changing," "Breakthrough"
-- [ ] Features-only: No payoff
-- [ ] Me-focused: "We're excited to announce..."
-- [ ] Clickbait: promise exceeds delivery
+- [ ] Vague ("Improve your business") or clever (wordplay hurting clarity)
+- [ ] Long (>15 words) or hypey ("Revolutionary," "Game-changing," "Breakthrough")
+- [ ] Features-only (no payoff), me-focused ("We're excited to..."), or clickbait (promise > delivery)
 
 ## Quick Tests
 
-- **5-second test:** "What is this offering and who is it for?"
+- **5-second test:** What is this offering and who is it for?
 - **Would I click?** Imagine beside 10 competing posts.
-- **So what?** "Why should I care?"
+- **So what?** Why should I care?
 
 ## A/B Testing
 
@@ -58,12 +51,14 @@
 
 ## Improvement Tactics
 
-1. **Add specificity:** "Grow list" → "Grow list to 10,000 in 90 days"
-2. **Add urgency:** "Learn copy" → "Learn copy before competitors do"
-3. **Address objection:** "Get fit" → "Get fit without giving up favorite foods"
-4. **Make it personal:** "Improve sales" → "Improve YOUR sales this quarter"
-5. **Add proof:** "Increase conversions" → "Increase conversions 47% (like 500+ others)"
-6. **Open curiosity gap:** "SEO tips" → "The SEO trick that doubled my traffic"
+| Weak | Strong |
+|------|--------|
+| "Grow list" | "Grow list to 10,000 in 90 days" (specificity) |
+| "Learn copy" | "Learn copy before competitors do" (urgency) |
+| "Get fit" | "Get fit without giving up favorite foods" (objection) |
+| "Improve sales" | "Improve YOUR sales this quarter" (personal) |
+| "Increase conversions" | "Increase conversions 47% (like 500+ others)" (proof) |
+| "SEO tips" | "The SEO trick that doubled my traffic" (curiosity gap) |
 
 ## Final Selection
 
