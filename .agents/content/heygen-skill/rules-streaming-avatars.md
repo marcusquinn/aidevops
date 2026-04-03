@@ -1,13 +1,9 @@
 ---
 name: streaming-avatars
-description: Real-time interactive avatar sessions for HeyGen
-metadata:
-  tags: streaming, real-time, interactive, webrtc, live
+description: Real-time interactive avatar sessions for HeyGen via WebRTC — live customer service, virtual assistants, interactive apps
 ---
 
 # Streaming Avatars
-
-Real-time interactive avatar via WebRTC. Use for live customer service, virtual assistants, interactive apps.
 
 ## Create Session
 
