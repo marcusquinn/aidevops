@@ -726,8 +726,8 @@ provider_auth_available() {
 		fi
 		return 1
 		;;
-	local)
-		# Local provider is always considered available (no auth needed)
+	local | ollama)
+		# Local/Ollama providers are always considered available (no auth needed — local daemon)
 		return 0
 		;;
 	*)
