@@ -1,8 +1,8 @@
 # Bot Management Patterns
 
-WAF custom rules, rate limiting, and Workers patterns for Cloudflare Bot Management. Enterprise-only features such as granular scores and JA3/JA4 are noted inline.
+WAF custom rules, rate limiting, and Workers patterns for Cloudflare Bot Management. Enterprise-only features (granular scores, JA3/JA4) are noted inline.
 
-## Rule Patterns
+## WAF Rule Patterns
 
 ### Sensitive flows
 
@@ -11,7 +11,7 @@ WAF custom rules, rate limiting, and Workers patterns for Cloudflare Bot Managem
 Action: Managed Challenge
 ```
 
-### APIs (score + JavaScript Detections)
+### APIs
 
 ```txt
 (http.request.uri.path matches "^/api/" and (cf.bot_management.score lt 30 or not cf.bot_management.js_detection.passed) and not cf.bot_management.verified_bot)
@@ -75,7 +75,7 @@ Rate limiting > Custom rules
 - Additional condition: cf.bot_management.score lt 50
 ```
 
-## Workers Pattern
+## Workers
 
 ```typescript
 export default {
