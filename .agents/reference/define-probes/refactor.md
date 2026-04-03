@@ -7,14 +7,12 @@ mode: subagent
 
 Use 2 probes from this file during `/define` for tasks classified as **refactor**.
 
-## Default Assumptions
-
-Apply unless user overrides:
+## Default Assumptions (apply unless overridden)
 
 - Zero behaviour changes — all existing tests must pass unchanged
 - No new dependencies
 - Improve readability, maintainability, or performance (pick one primary goal)
-- If tests don't exist for the refactored code, add them before refactoring
+- No tests for refactored code → add them before refactoring
 
 ## Required Questions
 
@@ -69,11 +67,11 @@ Apply unless user overrides:
 
 ## Sufficiency Test
 
-Before generating the brief, verify you can answer:
+Before generating the brief, confirm you can answer:
 
 - What tests exist for the code being refactored?
 - What's the public API that must not change?
 - What's the primary metric that improves (readability/performance/extensibility)?
-- What would a code reviewer check to verify behaviour preservation?
+- What would a reviewer check to verify behaviour preservation?
 
-If any answer is "I don't know" — ask one more targeted question.
+Unknown answer → ask one more targeted question.
