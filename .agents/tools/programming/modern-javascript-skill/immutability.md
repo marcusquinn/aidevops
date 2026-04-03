@@ -1,6 +1,6 @@
 # Immutability and Pure Functions
 
-Copy instead of mutating. Keep transforms pure, and push I/O to the edge.
+Copy instead of mutating. Keep transforms pure, push I/O to the edge.
 
 ## Quick Reference
 
@@ -20,14 +20,14 @@ Copy instead of mutating. Keep transforms pure, and push I/O to the edge.
 ```javascript
 const nums = [1, 2, 3, 4, 5];
 
-const withSix = [...nums, 6];                   // Append
-const withZero = [0, ...nums];                  // Prepend
-const withoutThree = nums.filter(n => n !== 3); // Remove by value
-const withoutSecond = nums.toSpliced(1, 1);     // Remove by index (ES2023)
-const updated = nums.with(2, 99);               // Replace at index (ES2023)
-const doubled = nums.with(2, nums.at(2) * 2);   // Transform at index
-const sorted = nums.toSorted((a, b) => b - a);  // Sort without mutation (ES2023)
-const reversed = nums.toReversed();             // Reverse without mutation (ES2023)
+const withSix      = [...nums, 6];                   // append
+const withZero     = [0, ...nums];                   // prepend
+const withoutThree = nums.filter(n => n !== 3);      // remove by value
+const withoutSecond = nums.toSpliced(1, 1);          // remove by index (ES2023)
+const updated      = nums.with(2, 99);               // replace at index (ES2023)
+const doubled      = nums.with(2, nums.at(2) * 2);   // transform at index
+const sorted       = nums.toSorted((a, b) => b - a); // sort (ES2023)
+const reversed     = nums.toReversed();              // reverse (ES2023)
 ```
 
 ## Non-Mutating Object Updates
@@ -35,15 +35,14 @@ const reversed = nums.toReversed();             // Reverse without mutation (ES2
 ```javascript
 const user = { name: 'Alice', age: 30, address: { city: 'NYC' } };
 
-const older = { ...user, age: 31 };                                      // Update property
-const withZip = { ...user, address: { ...user.address, zip: '10001' } }; // Update nested
-const { age, ...userWithoutAge } = user;                                 // Remove property
-const { name: fullName, ...rest } = user;                                // Rename property
-const renamed = { fullName, ...rest };
-const maybeAdmin = { ...user, ...(isAdmin && { role: 'admin' }) };       // Conditional property
+const older      = { ...user, age: 31 };                                      // update property
+const withZip    = { ...user, address: { ...user.address, zip: '10001' } };   // update nested
+const { age, ...userWithoutAge } = user;                                      // remove property
+const { name: fullName, ...rest } = user;                                     // rename property
+const renamed    = { fullName, ...rest };
+const maybeAdmin = { ...user, ...(isAdmin && { role: 'admin' }) };            // conditional property
 
-// Deep clone (handles circular refs, preserves types)
-const clone = structuredClone(obj);
+const clone = structuredClone(obj); // deep clone (handles circular refs, preserves types)
 ```
 
 ## Pure Functions
@@ -57,28 +56,23 @@ const formatUser = (user) => ({
 
 // ❌ Impure: external state, non-determinism, side effects
 let counter = 0;
-function increment() { return ++counter; }            // Mutates external state
-function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; } // Non-deterministic
-function save(u) { localStorage.setItem('u', JSON.stringify(u)); }         // Side effect
-```
+function increment() { return ++counter; }            // mutates external state
+function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; } // non-deterministic
+function save(u) { localStorage.setItem('u', JSON.stringify(u)); }         // side effect
 
-### Make Impure Functions Testable
-
-```javascript
-// Inject dependencies instead of reading globals directly
+// Inject dependencies to make impure functions testable
 const isExpired = (token, now) => token.expiresAt < now;
 isExpired(token, Date.now());
 
 const shuffle = (array, random = Math.random) =>
-  array.toSorted(() => random() - 0.5);             // ES2023 non-mutating
-shuffle(items);                                       // Random in production
-shuffle(items, () => 0.5);                            // Deterministic in tests
+  array.toSorted(() => random() - 0.5);   // ES2023 non-mutating
+shuffle(items);           // random in production
+shuffle(items, () => 0.5); // deterministic in tests
 ```
 
 ## State Updates (React/Redux)
 
 ```javascript
-// Array state operations
 const addTodo    = (todos, todo) => [...todos, todo];
 const removeTodo = (todos, id)  => todos.filter(t => t.id !== id);
 const updateTodo = (todos, id, updates) =>
