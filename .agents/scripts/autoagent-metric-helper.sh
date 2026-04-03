@@ -131,6 +131,103 @@ cmd_comprehension() {
 }
 
 #######################################
+# Resolve the base git ref for diff-based file selection
+# Outputs: ref name on stdout, or empty if none found
+# Returns: 0 always
+#######################################
+_lint_base_ref() {
+	if git rev-parse --verify origin/main >/dev/null 2>&1; then
+		echo "origin/main"
+	elif git rev-parse --verify origin/master >/dev/null 2>&1; then
+		echo "origin/master"
+	elif git rev-parse --verify main >/dev/null 2>&1; then
+		echo "main"
+	fi
+	return 0
+}
+
+#######################################
+# Count passing shellcheck files from a newline-separated list
+# Arguments:
+#   $1 - newline-separated file list
+# Outputs:
+#   "passed total" on stdout
+# Returns: 0 always
+#######################################
+_lint_count_shellcheck() {
+	local file_list="$1"
+	local total=0
+	local passed=0
+	local file
+
+	while IFS= read -r file; do
+		[[ -f "$file" ]] || continue
+		total=$((total + 1))
+		if shellcheck --severity=warning "$file" >/dev/null 2>&1; then
+			passed=$((passed + 1))
+		fi
+	done <<<"$file_list"
+
+	echo "$passed $total"
+	return 0
+}
+
+#######################################
+# Count passing markdownlint files from a newline-separated list
+# Arguments:
+#   $1 - markdownlint command
+#   $2 - newline-separated file list
+# Outputs:
+#   "passed total" on stdout
+# Returns: 0 always
+#######################################
+_lint_count_markdown() {
+	local md_cmd="$1"
+	local file_list="$2"
+	local total=0
+	local passed=0
+	local file
+
+	while IFS= read -r file; do
+		[[ -f "$file" ]] || continue
+		total=$((total + 1))
+		if $md_cmd "$file" >/dev/null 2>&1; then
+			passed=$((passed + 1))
+		fi
+	done <<<"$file_list"
+
+	echo "$passed $total"
+	return 0
+}
+
+#######################################
+# Format a ratio as a 4dp float with leading zero
+# Arguments:
+#   $1 - numerator
+#   $2 - denominator
+# Outputs: float string on stdout
+# Returns: 0 always
+#######################################
+_format_ratio() {
+	local num="$1"
+	local den="$2"
+
+	if command -v awk >/dev/null 2>&1; then
+		awk "BEGIN { printf \"%.4f\", $num / $den }" 2>/dev/null || echo "1.0"
+	elif command -v bc >/dev/null 2>&1; then
+		local raw
+		raw=$(echo "scale=4; $num / $den" | bc 2>/dev/null) || raw="1.0"
+		case "$raw" in
+		.*) echo "0${raw}" ;;
+		*) echo "$raw" ;;
+		esac
+	else
+		if [[ "$num" -eq "$den" ]]; then echo "1.0"; else echo "0.0"; fi
+	fi
+	return 0
+}
+
+#######################################
 # Compute linter pass rate
 # Checks changed files (git diff vs main) or a capped sample of tracked files.
 # Scoped to changed files for performance — full-repo lint is too slow for a
@@ -144,51 +241,44 @@ cmd_lint() {
 	local total=0
 	local passed=0
 
-	# Determine which shell files to check:
-	# 1. Changed files vs main (fast, relevant for autoagent loop)
-	# 2. Fall back to a capped sample of all tracked files
-	local sh_files_to_check=""
-	local md_files_to_check=""
+	# Resolve base ref for diff-based file selection
+	local base_ref
+	base_ref=$(_lint_base_ref)
 
-	# Try to get changed files vs main/master
-	local base_ref=""
-	if git rev-parse --verify origin/main >/dev/null 2>&1; then
-		base_ref="origin/main"
-	elif git rev-parse --verify origin/master >/dev/null 2>&1; then
-		base_ref="origin/master"
-	elif git rev-parse --verify main >/dev/null 2>&1; then
-		base_ref="main"
-	fi
-
+	# Collect shell files: changed vs base, or capped sample
+	local sh_files=""
 	if [[ -n "$base_ref" ]]; then
-		sh_files_to_check=$(git diff --name-only "$base_ref" HEAD -- '*.sh' 2>/dev/null | grep '.agents/scripts/' || true)
-		md_files_to_check=$(git diff --name-only "$base_ref" HEAD -- '*.md' 2>/dev/null | grep '.agents/' || true)
+		sh_files=$(git diff --name-only "$base_ref" HEAD -- '*.sh' 2>/dev/null | grep '.agents/scripts/' || true)
+	fi
+	if [[ -z "$sh_files" ]]; then
+		sh_files=$(git ls-files '.agents/scripts/*.sh' 2>/dev/null | head -20) || sh_files=""
 	fi
 
-	# If no changed files, sample up to 20 tracked files (capped for performance)
-	if [[ -z "$sh_files_to_check" ]]; then
-		sh_files_to_check=$(git ls-files '.agents/scripts/*.sh' 2>/dev/null | head -20) || sh_files_to_check=""
+	# Collect markdown files: changed vs base, or capped sample
+	local md_files=""
+	if [[ -n "$base_ref" ]]; then
+		md_files=$(git diff --name-only "$base_ref" HEAD -- '*.md' 2>/dev/null | grep '.agents/' || true)
 	fi
-	if [[ -z "$md_files_to_check" ]]; then
-		md_files_to_check=$(git ls-files '.agents/**/*.md' 2>/dev/null | head -20) || md_files_to_check=""
+	if [[ -z "$md_files" ]]; then
+		md_files=$(git ls-files '.agents/**/*.md' 2>/dev/null | head -20) || md_files=""
 	fi
 
-	# --- ShellCheck ---
+	# Run shellcheck
 	if command -v shellcheck >/dev/null 2>&1; then
-		if [[ -n "$sh_files_to_check" ]]; then
-			while IFS= read -r file; do
-				[[ -f "$file" ]] || continue
-				total=$((total + 1))
-				if shellcheck --severity=warning "$file" >/dev/null 2>&1; then
-					passed=$((passed + 1))
-				fi
-			done <<<"$sh_files_to_check"
+		if [[ -n "$sh_files" ]]; then
+			local sc_result
+			sc_result=$(_lint_count_shellcheck "$sh_files")
+			local sc_passed sc_total
+			sc_passed=$(echo "$sc_result" | cut -d' ' -f1)
+			sc_total=$(echo "$sc_result" | cut -d' ' -f2)
+			passed=$((passed + sc_passed))
+			total=$((total + sc_total))
 		fi
 	else
 		log_warn "shellcheck not installed — skipping shell lint checks"
 	fi
 
-	# --- markdownlint ---
+	# Run markdownlint
 	local md_cmd=""
 	if command -v markdownlint-cli2 >/dev/null 2>&1; then
 		md_cmd="markdownlint-cli2"
@@ -196,17 +286,15 @@ cmd_lint() {
 		md_cmd="markdownlint"
 	fi
 
-	if [[ -n "$md_cmd" ]]; then
-		if [[ -n "$md_files_to_check" ]]; then
-			while IFS= read -r file; do
-				[[ -f "$file" ]] || continue
-				total=$((total + 1))
-				if $md_cmd "$file" >/dev/null 2>&1; then
-					passed=$((passed + 1))
-				fi
-			done <<<"$md_files_to_check"
-		fi
-	else
+	if [[ -n "$md_cmd" && -n "$md_files" ]]; then
+		local ml_result
+		ml_result=$(_lint_count_markdown "$md_cmd" "$md_files")
+		local ml_passed ml_total
+		ml_passed=$(echo "$ml_result" | cut -d' ' -f1)
+		ml_total=$(echo "$ml_result" | cut -d' ' -f2)
+		passed=$((passed + ml_passed))
+		total=$((total + ml_total))
+	elif [[ -z "$md_cmd" ]]; then
 		log_warn "markdownlint not installed — skipping markdown lint checks"
 	fi
 
@@ -216,29 +304,7 @@ cmd_lint() {
 		return 0
 	fi
 
-	# Compute ratio — always use awk for proper float formatting (leading zero, 4dp)
-	local ratio
-	if command -v awk >/dev/null 2>&1; then
-		ratio=$(awk "BEGIN { printf \"%.4f\", $passed / $total }" 2>/dev/null) || ratio="1.0"
-	elif command -v bc >/dev/null 2>&1; then
-		# bc may omit leading zero (e.g. ".8333"); normalize with sed
-		local raw
-		raw=$(echo "scale=4; $passed / $total" | bc 2>/dev/null) || raw="1.0"
-		# Add leading zero if missing
-		case "$raw" in
-		.*) ratio="0${raw}" ;;
-		*) ratio="$raw" ;;
-		esac
-	else
-		# Integer fallback
-		if [[ $passed -eq $total ]]; then
-			ratio="1.0"
-		else
-			ratio="0.0"
-		fi
-	fi
-
-	echo "$ratio"
+	_format_ratio "$passed" "$total"
 	return 0
 }
 
@@ -294,21 +360,7 @@ cmd_tokens() {
 		return 0
 	fi
 
-	local ratio
-	if command -v awk >/dev/null 2>&1; then
-		ratio=$(awk "BEGIN { printf \"%.4f\", $current_chars / $baseline_chars }" 2>/dev/null) || ratio="1.0"
-	elif command -v bc >/dev/null 2>&1; then
-		local raw
-		raw=$(echo "scale=4; $current_chars / $baseline_chars" | bc 2>/dev/null) || raw="1.0"
-		case "$raw" in
-		.*) ratio="0${raw}" ;;
-		*) ratio="$raw" ;;
-		esac
-	else
-		ratio="1.0"
-	fi
-
-	echo "$ratio"
+	_format_ratio "$current_chars" "$baseline_chars"
 	return 0
 }
 
@@ -396,6 +448,44 @@ EOF
 }
 
 #######################################
+# Compute composite score from sub-scores
+# composite = wc*comprehension + wl*lint - wt*max(0, token_ratio-1.0), clamped [0,1]
+# Arguments:
+#   $1 - comprehension score
+#   $2 - linter score
+#   $3 - token ratio
+#   $4 - weight_comprehension
+#   $5 - weight_lint
+#   $6 - weight_tokens
+# Outputs: float on stdout
+# Returns: 0 always
+#######################################
+_compute_composite() {
+	local c="$1" l="$2" t="$3" wc="$4" wl="$5" wt="$6"
+	local result
+
+	# Use awk with ternary operators to avoid multi-line if blocks (nesting depth)
+	if command -v awk >/dev/null 2>&1; then
+		result=$(awk -v c="$c" -v l="$l" -v t="$t" -v wc="$wc" -v wl="$wl" -v wt="$wt" \
+			'BEGIN { p=(t>1?t-1:0); s=wc*c+wl*l-wt*p; s=(s<0?0:(s>1?1:s)); printf "%.4f\n",s }' \
+			2>/dev/null) || result="0.0"
+		echo "$result"
+	elif command -v bc >/dev/null 2>&1; then
+		local raw
+		raw=$(printf 'scale=4; c=%s; l=%s; t=%s; p=t-1.0; if(p<0)p=0; %s*c+%s*l-%s*p\n' \
+			"$c" "$l" "$t" "$wc" "$wl" "$wt" | bc 2>/dev/null) || raw="0.0"
+		case "$raw" in
+		.*) echo "0${raw}" ;;
+		*) echo "$raw" ;;
+		esac
+	else
+		log_warn "Neither bc nor awk available — cannot compute composite score"
+		echo "0.0"
+	fi
+	return 0
+}
+
+#######################################
 # Compute composite score
 # Arguments:
 #   $1 - suite path (optional)
@@ -419,38 +509,10 @@ cmd_score() {
 	linter_score=$(cmd_lint 2>/dev/null) || linter_score="1.0"
 	token_ratio=$(cmd_tokens "$suite" "$baseline_file" 2>/dev/null) || token_ratio="1.0"
 
-	# composite = w1 * comprehension + w2 * lint - w3 * max(0, token_ratio - 1.0)
-	# Prefer awk for proper float formatting (leading zero, clamping)
 	local composite
-	if command -v awk >/dev/null 2>&1; then
-		composite=$(awk -v c="$comprehension_score" -v l="$linter_score" -v t="$token_ratio" \
-			-v wc="$WEIGHT_COMPREHENSION" -v wl="$WEIGHT_LINT" -v wt="$WEIGHT_TOKENS" \
-			'BEGIN {
-				penalty = t - 1.0
-				if (penalty < 0) penalty = 0
-				score = wc * c + wl * l - wt * penalty
-				if (score < 0) score = 0
-				if (score > 1) score = 1
-				printf "%.4f\n", score
-			}' 2>/dev/null) || composite="0.0"
-	elif command -v bc >/dev/null 2>&1; then
-		local raw
-		raw=$(echo "scale=4; \
-			c = $comprehension_score; \
-			l = $linter_score; \
-			t = $token_ratio; \
-			penalty = t - 1.0; \
-			if (penalty < 0) penalty = 0; \
-			$WEIGHT_COMPREHENSION * c + $WEIGHT_LINT * l - $WEIGHT_TOKENS * penalty" | bc 2>/dev/null) || raw="0.0"
-		# Normalize leading zero
-		case "$raw" in
-		.*) composite="0${raw}" ;;
-		*) composite="$raw" ;;
-		esac
-	else
-		log_warn "Neither bc nor awk available — cannot compute composite score"
-		composite="0.0"
-	fi
+	composite=$(_compute_composite \
+		"$comprehension_score" "$linter_score" "$token_ratio" \
+		"$WEIGHT_COMPREHENSION" "$WEIGHT_LINT" "$WEIGHT_TOKENS")
 
 	echo "$composite"
 	return 0
