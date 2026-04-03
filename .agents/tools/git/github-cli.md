@@ -78,41 +78,23 @@ gh api repos/owner/repo/issues [-f title="Bug" -f body="Details"]
 
 ## External Repo Submissions
 
-Bots may auto-close non-conforming submissions. Check templates first.
+Bots auto-close non-conforming submissions — check templates before submitting.
 
-### Discovering Templates
+### Fetch Templates
 
 ```bash
-# Issue templates (list, then fetch specific template)
+# Issue templates
 gh api repos/{owner}/{repo}/contents/.github/ISSUE_TEMPLATE/ --jq '.[].name' || true
 gh api repos/{owner}/{repo}/contents/.github/ISSUE_TEMPLATE/bug-report.yml --jq '.content' | base64 -d || true
 
-# CONTRIBUTING.md and PR templates
+# CONTRIBUTING.md and PR template
 gh api repos/{owner}/{repo}/contents/CONTRIBUTING.md --jq '.content' | base64 -d || true
 gh api repos/{owner}/{repo}/contents/.github/PULL_REQUEST_TEMPLATE.md --jq '.content' | base64 -d || true
 ```
 
 ### YAML Form Templates → Markdown
 
-GitHub YAML issue forms (`.yml`) produce markdown with `### Label` headers matching each field's `label:` attribute. Replicate this structure:
-
-```yaml
-# Template defines:           # Your issue body:
-- type: textarea              ### Describe the bug
-  attributes:                 The app crashes on Save.
-    label: Describe the bug
-- type: input                 ### Version
-  attributes:                 v2.4.1
-    label: Version
-```
-
-**Rules:** Match `label:` exactly (case-sensitive). Required fields must be non-empty. `type: checkboxes` → `- [x]`/`- [ ]` lists. `type: dropdown` → selected option text.
-
-### Auto-Close Bots
-
-1. Read the bot's closing comment — it explains what's missing
-2. Resubmit with correct format (don't edit closed issues)
-3. Some bots use AI to verify compliance — partial matches may fail
+YAML issue forms (`.yml`) map each `label:` to a `### Label` header in the body. Match `label:` exactly (case-sensitive). Required fields must be non-empty. `type: checkboxes` → `- [x]`/`- [ ]`. `type: dropdown` → selected option text.
 
 ### Pre-Submission Checklist
 
@@ -120,6 +102,7 @@ GitHub YAML issue forms (`.yml`) produce markdown with `### Label` headers match
 2. `.github/ISSUE_TEMPLATE/` exists? Use matching template
 3. `CONTRIBUTING.md` exists? Follow its guidelines (CLA, branch naming)
 4. PRs: check for signed commits, branch targets, linked issue requirements
+5. If bot closes: read its comment for what's missing; resubmit (don't edit closed issues)
 
 ## See Also
 
