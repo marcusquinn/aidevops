@@ -3082,6 +3082,113 @@ cleanup_worktrees() {
 		fi
 	fi
 
+	# --- Age-based orphan cleanup (GH#16830) ---
+	# Workers that crash leave worktrees with 0 commits / no PR. The
+	# --force-merged pass above won't touch them. Clean based on age:
+	#   0 commits, 0 dirty, >3h  → empty, safe to remove
+	#   0 commits, dirty,  >6h  → worker died mid-edit, no process
+	#   any commits, no PR, >24h → abandoned, issue will be re-dispatched
+	local now_epoch
+	now_epoch=$(date +%s)
+	local age_3h=$((3 * 3600))
+	local age_6h=$((6 * 3600))
+	local age_24h=$((24 * 3600))
+
+	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
+		local repo_paths_age
+		repo_paths_age=$(jq -r '.initialized_repos[] | select((.local_only // false) == false) | .path' "$repos_json" || echo "")
+
+		local rp_age
+		while IFS= read -r rp_age; do
+			[[ -z "$rp_age" ]] && continue
+			[[ ! -d "$rp_age/.git" ]] && continue
+
+			local main_branch
+			main_branch=$(git -C "$rp_age" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || main_branch="main"
+
+			local repo_slug_age
+			repo_slug_age=$(git -C "$rp_age" remote get-url origin 2>/dev/null | sed 's|.*github.com[:/]||;s|\.git$||') || repo_slug_age=""
+
+			# Parse worktree list (skip main worktree)
+			local wt_line
+			git -C "$rp_age" worktree list --porcelain 2>/dev/null | while IFS= read -r wt_line; do
+				local wt_path_age="" wt_branch_age="" wt_head_age=""
+				while [[ -n "$wt_line" ]]; do
+					case "$wt_line" in
+					"worktree "*) wt_path_age="${wt_line#worktree }" ;;
+					"HEAD "*) wt_head_age="${wt_line#HEAD }" ;;
+					"branch "*) wt_branch_age="${wt_line#branch refs/heads/}" ;;
+					esac
+					IFS= read -r wt_line || break
+				done
+
+				# Skip main worktree and detached HEADs without a path
+				[[ -z "$wt_path_age" ]] && continue
+				[[ "$wt_path_age" == "$rp_age" ]] && continue
+
+				# Get worktree creation time from .git file or directory mtime
+				local wt_created=0
+				if [[ -f "$wt_path_age/.git" ]]; then
+					wt_created=$(stat -f '%m' "$wt_path_age/.git" 2>/dev/null) || wt_created=0
+				fi
+				[[ "$wt_created" -eq 0 ]] && continue
+				local wt_age=$((now_epoch - wt_created))
+
+				# Count commits ahead of main
+				local commits_ahead=0
+				commits_ahead=$(git -C "$wt_path_age" rev-list --count "HEAD" "^${main_branch}" 2>/dev/null) || commits_ahead=0
+
+				# Count dirty files
+				local dirty_count=0
+				dirty_count=$(git -C "$wt_path_age" status --porcelain 2>/dev/null | wc -l | tr -d ' ') || dirty_count=0
+
+				# Check for active worker process using this worktree
+				local has_active_worker=false
+				if pgrep -f "$wt_path_age" >/dev/null 2>&1; then
+					has_active_worker=true
+				fi
+				[[ "$has_active_worker" == "true" ]] && continue
+
+				local should_remove=false
+				local reason=""
+
+				if [[ "$commits_ahead" -eq 0 && "$dirty_count" -eq 0 && "$wt_age" -ge "$age_3h" ]]; then
+					should_remove=true
+					reason="0 commits, clean, age $((wt_age / 3600))h"
+				elif [[ "$commits_ahead" -eq 0 && "$dirty_count" -gt 0 && "$wt_age" -ge "$age_6h" ]]; then
+					should_remove=true
+					reason="0 commits, ${dirty_count} dirty files, age $((wt_age / 3600))h"
+				elif [[ "$commits_ahead" -gt 0 && "$wt_age" -ge "$age_24h" ]]; then
+					# Only if no PR exists for this branch
+					local has_pr=false
+					if [[ -n "$repo_slug_age" && -n "$wt_branch_age" ]]; then
+						local pr_count
+						pr_count=$(gh pr list --repo "$repo_slug_age" --head "$wt_branch_age" --state all --limit 1 2>/dev/null | wc -l | tr -d ' ') || pr_count=0
+						[[ "$pr_count" -gt 0 ]] && has_pr=true
+					fi
+					if [[ "$has_pr" == "false" ]]; then
+						should_remove=true
+						reason="${commits_ahead} commits, no PR, age $((wt_age / 3600))h"
+					fi
+				fi
+
+				if [[ "$should_remove" == "true" ]]; then
+					local repo_name_age
+					repo_name_age=$(basename "$rp_age")
+					echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): removing ${wt_branch_age:-detached} — $reason" >>"$LOGFILE"
+					git -C "$rp_age" worktree remove --force "$wt_path_age" 2>/dev/null || rm -rf "$wt_path_age"
+					# Also delete the branch if it exists
+					if [[ -n "$wt_branch_age" ]]; then
+						git -C "$rp_age" branch -D "$wt_branch_age" 2>/dev/null || true
+						# Clean remote tracking branch
+						git -C "$rp_age" push origin --delete "$wt_branch_age" 2>/dev/null || true
+					fi
+					total_removed=$((total_removed + 1))
+				fi
+			done
+		done <<<"$repo_paths_age"
+	fi
+
 	if [[ "$total_removed" -gt 0 ]]; then
 		echo "[pulse-wrapper] Worktree cleanup total: $total_removed worktree(s) removed across all repos" >>"$LOGFILE"
 	fi
