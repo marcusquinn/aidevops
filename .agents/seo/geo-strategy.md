@@ -15,13 +15,10 @@ tools:
 
 # GEO Strategy
 
-Increase citation likelihood in AI search by matching decision criteria with verifiable page content on pages that already rank in traditional search.
+Increase citation likelihood in AI search by matching decision criteria with verifiable page content on pages that already rank. GEO is an operational label, not a replacement for SEO — ranking is prerequisite; unranked pages cannot be consistently cited. Optimize for deterministic retrieval signals, not daily answer volatility.
 
 - Inputs: core query set, top landing pages, competitor set, proof assets (certifications, policies, prices, case evidence)
 - Outputs: criteria matrix, page gap map, prioritized implementation plan
-- GEO is an operational label, not a replacement for SEO
-- Ranking is prerequisite — unranked pages cannot be consistently cited
-- Optimize for deterministic retrieval signals, not daily answer volatility
 
 ## Workflow
 
