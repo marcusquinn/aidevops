@@ -113,7 +113,7 @@ ${SIG_FOOTER}"
 
 When the authenticated user is NOT the repo maintainer, issues are gated with `needs-maintainer-review`. List pending: `gh issue list --label simplification-debt --label needs-maintainer-review`
 
-- **Approve**: comment `approved` → pulse removes gate, adds `auto-dispatch` → PR → merged → `status:done`
+- **Approve**: comment `approved` → pulse removes gate, adds `auto-dispatch` → PR → merged → issue closed
 - **Decline**: comment `declined: <reason>` → pulse closes issue
 - **Defer**: no comment — stays gated
 
