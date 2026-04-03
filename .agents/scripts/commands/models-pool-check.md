@@ -4,11 +4,11 @@ agent: Build+
 mode: subagent
 ---
 
-Entry point for provider-account setup and troubleshooting. Diagnose first, give exactly one next step. Assume the user knows nothing about OAuth or pools.
+Entry point for OAuth pool setup and troubleshooting. Diagnose first, give one next step. Assume the user knows nothing about OAuth or pools.
 
 ## Core rules
 
-- **One step at a time.** Give one command or action, not branches.
+- **One step at a time.** One command or action, not branches.
 - **Diagnose before advising.** Run checks first, then choose the path.
 - **Auth commands go in a separate terminal.** Never ask for tokens or codes in chat.
 - **Explain what, not internals.** Do not mention pool.json, PKCE, token endpoints, or auth hooks.
@@ -19,7 +19,7 @@ Entry point for provider-account setup and troubleshooting. Diagnose first, give
 
 ### Step 1: Diagnose
 
-Run both in parallel:
+Run in parallel:
 
 1. `oauth-pool-helper.sh check` — current pool state
 2. `claude auth status --json 2>/dev/null` — whether Claude CLI is authenticated
@@ -32,19 +32,14 @@ If `claude auth status --json` shows `loggedIn: true` with `pro` or `max`:
 
 > You're already logged into Claude CLI with a **{subscriptionType}** account ({email}). Run in a separate terminal: `oauth-pool-helper.sh import claude-cli`
 
-Otherwise, ask which provider they have:
+Otherwise, ask which provider they have and run the matching command in a separate terminal:
 
-> - **Claude Pro or Max** ($20-100/mo, anthropic.com)
-> - **ChatGPT Plus or Pro** ($20-200/mo, openai.com)
-> - **Cursor Pro** ($20/mo, cursor.com)
-> - **Google AI Pro or Ultra** ($25-65/mo, one.google.com)
-
-| Provider | Command (separate terminal) |
-|----------|-----------------------------|
-| Anthropic | `oauth-pool-helper.sh add anthropic` |
-| OpenAI | `oauth-pool-helper.sh add openai` |
-| Cursor | `opencode auth login --provider cursor` |
-| Google | `oauth-pool-helper.sh add google` |
+| Provider | Subscription | Command |
+|----------|-------------|---------|
+| Anthropic | Claude Pro or Max ($20-100/mo) | `oauth-pool-helper.sh add anthropic` |
+| OpenAI | ChatGPT Plus or Pro ($20-200/mo) | `oauth-pool-helper.sh add openai` |
+| Cursor | Cursor Pro ($20/mo) | `opencode auth login --provider cursor` |
+| Google | AI Pro or Ultra ($25-65/mo) | `oauth-pool-helper.sh add google` |
 
 Anthropic/OpenAI/Google: browser opens → authorize → paste code → restart app. Cursor: browser opens → authorize → tokens saved automatically → restart app.
 
@@ -52,16 +47,16 @@ Anthropic/OpenAI/Google: browser opens → authorize → paste code → restart 
 
 Show a summary table, then: "Everything looks good. Your pool has N account(s) and will auto-rotate if one hits rate limits."
 
-- Only one account: "Consider adding a second for automatic failover. Run `oauth-pool-helper.sh add <provider>` in a separate terminal."
-- Claude CLI has an account not in the pool: "I noticed a Claude {subscriptionType} account ({email}) in the CLI that isn't in your pool. Run `oauth-pool-helper.sh import claude-cli` in a separate terminal to add it."
+- **One account:** "Consider adding a second for automatic failover. Run `oauth-pool-helper.sh add <provider>` in a separate terminal."
+- **CLI account not in pool:** "I noticed a Claude {subscriptionType} account ({email}) in the CLI that isn't in your pool. Run `oauth-pool-helper.sh import claude-cli` in a separate terminal to add it."
 
 #### Path C — accounts exist but have problems
 
 Give one fix at a time:
 
-- **EXPIRED / INVALID (401) / auth-error**: `oauth-pool-helper.sh add <provider>` in a separate terminal with the same email. Cursor exception: expired tokens are normal (short-lived, IDE re-reads them automatically) — only flag Cursor if status is also `auth-error`.
+- **EXPIRED / INVALID (401) / auth-error**: Re-add with same email: `oauth-pool-helper.sh add <provider>` (separate terminal). Cursor exception: expired tokens are normal (IDE re-reads them) — only flag Cursor if status is also `auth-error`.
 - **Missing refresh token**: Remove first (`oauth-pool-helper.sh remove <provider> <email>`), then re-add.
-- **All rate-limited**: "All accounts are rate-limited. Wait for cooldowns or I can reset them now." If they agree: `model-accounts-pool` tool with `{"action": "reset-cooldowns"}`.
+- **All rate-limited**: "All accounts are rate-limited. Wait for cooldowns or I can reset them now." If they agree: `model-accounts-pool` tool `{"action": "reset-cooldowns"}`.
 
 #### Path D — manage existing accounts
 
