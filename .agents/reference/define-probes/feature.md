@@ -7,11 +7,9 @@ mode: subagent
 
 Use 2 probes from this file during `/define` for tasks classified as **feature**.
 
-## Default Assumptions
+**Defaults** (apply unless overridden): minimal footprint, follow existing patterns, include tests for new behaviour, no breaking API changes.
 
-Apply unless user overrides: minimal footprint (no new deps without discussion), follow existing patterns, include tests for new behaviour, no breaking API changes.
-
-## Required Questions (always ask)
+## Required Questions
 
 **Scope & Integration** — Where does this feature live in the user's workflow?
 
