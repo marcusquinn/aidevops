@@ -54,6 +54,8 @@ gh run rerun 123456 --failed
 gh api repos/owner/repo/issues [-f title="Bug" -f body="Details"]
 ```
 
+<!-- AI-CONTEXT-END -->
+
 ## Troubleshooting
 
 | Issue | Solution |
@@ -88,8 +90,6 @@ YAML issue forms (`.yml`) map each `label:` to a `### Label` header in the body.
 3. `CONTRIBUTING.md` exists? Follow its guidelines (CLA, branch naming)
 4. PRs: check for signed commits, branch targets, linked issue requirements
 5. If bot closes: read its comment for what's missing; resubmit (don't edit closed issues)
-
-<!-- AI-CONTEXT-END -->
 
 ## See Also
 
