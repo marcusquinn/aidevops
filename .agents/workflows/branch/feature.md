@@ -24,6 +24,7 @@ tools:
 ```bash
 git checkout main && git pull origin main
 git checkout -b feature/{description}
+# e.g. feature/user-dashboard, feat: add user authentication
 ```
 
 <!-- AI-CONTEXT-END -->
@@ -39,14 +40,3 @@ git checkout -b feature/{description}
 
 - Minor-version bump applies when the branch ships user-visible capability, not internal-only maintenance.
 - For implementation patterns, see `workflows/feature-development.md`.
-
-## Examples
-
-```bash
-feature/user-dashboard
-feature/export-to-csv
-```
-
-```bash
-feat: add user authentication
-```
