@@ -21,6 +21,7 @@ tools:
 - **Capabilities**: ICP search (500M+ contacts, natural language), contact enrichment (waterfall), company lookalikes, LinkedIn followers, CSV/Salesforge export
 - **Stack**: LeadsForge (search/enrich) → Salesforge (sequences) → Warmforge (deliverability) → FluentCRM (lifecycle)
 - **Compliance**: Public B2B data; CAN-SPAM/GDPR apply — document legitimate interest for EU/UK contacts, honor opt-outs. See `cold-outreach.md`.
+- **Env vars**: `LEADSFORGE_API_KEY` (required), `LEADSFORGE_API_BASE` (override base URL), `LEADSFORGE_DEFAULT_LIMIT` (default: `25`)
 
 ## Credit Costs
 
@@ -34,7 +35,7 @@ tools:
 
 ## Commands
 
-ICP search: be specific — include role, company attributes, industry, geography.
+ICP search: be specific — role, company attributes, industry, geography.
 
 ```bash
 # Search by ICP
@@ -51,13 +52,5 @@ leadsforge-helper.sh followers --domain "hubspot.com" --limit 50
 leadsforge-helper.sh credits
 leadsforge-helper.sh export --list-id "abc123" --format csv --output leads.csv
 ```
-
-## Environment Variables
-
-| Variable | Purpose | Default |
-|---|---|---|
-| `LEADSFORGE_API_KEY` | API authentication | (required) |
-| `LEADSFORGE_API_BASE` | Override API base URL | `https://api.leadsforge.ai/public` |
-| `LEADSFORGE_DEFAULT_LIMIT` | Default result limit | `25` |
 
 <!-- AI-CONTEXT-END -->
