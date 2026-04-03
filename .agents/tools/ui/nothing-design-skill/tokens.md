@@ -10,7 +10,7 @@
 | **Body / UI** | `"Space Grotesk"` | `"DM Sans", system-ui, sans-serif` | Light 300, Regular 400, Medium 500, Bold 700 |
 | **Data / Labels** | `"Space Mono"` | `"JetBrains Mono", "SF Mono", monospace` | Regular 400, Bold 700 |
 
-**Why these fonts:** Doto = variable dot-matrix (closest to NDot 57). Space Grotesk + Space Mono by Colophon Foundry — same foundry as Nothing's actual typefaces. Shared design DNA.
+Doto = variable dot-matrix (closest to NDot 57). Space Grotesk + Space Mono by Colophon Foundry — same foundry as Nothing's actual typefaces.
 
 ### Type Scale
 
@@ -63,7 +63,7 @@
 | `--info` | `#999999` | Uses secondary text color |
 | `--interactive` | `#007AFF` / `#5B9BF6` | Tappable text: links, picker values. Not for buttons. |
 
-**Data status colors:** `--success` = good/in range, `--warning` = moderate/attention, `--accent` = bad/over limit, `--text-primary` = neutral. Apply color to **value**, not label or background. Labels stay `--text-secondary`. Trend arrows inherit value color.
+Data status: `--success` = good/in range, `--warning` = moderate/attention, `--accent` = bad/over limit, `--text-primary` = neutral. Apply color to **value**, not label or background. Labels stay `--text-secondary`. Trend arrows inherit value color.
 
 ### Dark / Light Mode
 
@@ -80,10 +80,10 @@
 | `--text-display` | `#FFFFFF` | `#000000` |
 | `--interactive` | `#5B9BF6` | `#007AFF` |
 
-**Identical across modes:** Accent red, status colors, ALL CAPS labels, fonts, type scale, spacing, component shapes.
+Identical across modes: Accent red, status colors, ALL CAPS labels, fonts, type scale, spacing, component shapes.
 
-**Dark feel:** Instrument panel in a dark room. OLED black, white data glowing.
-**Light feel:** Printed technical manual. Off-white paper (#F5F5F5), black ink. Cards = `#FFFFFF` on off-white page = subtle elevation without shadows.
+Dark: Instrument panel in a dark room — OLED black, white data glowing.
+Light: Printed technical manual — off-white paper (#F5F5F5), black ink. Cards = `#FFFFFF` on off-white = subtle elevation without shadows.
 
 ---
 
@@ -126,8 +126,6 @@
 ## 6. DOT-MATRIX MOTIF
 
 **When to use:** Hero typography (Doto), decorative grid backgrounds, dot-grid data viz, loading indicators, empty state illustrations.
-
-### CSS Implementation
 
 ```css
 .dot-grid {
