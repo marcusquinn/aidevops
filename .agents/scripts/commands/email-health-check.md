@@ -10,30 +10,19 @@ Arguments: `$ARGUMENTS`
 
 ## Workflow
 
-### Step 1: Select the helper
+Select and run the helper based on arguments:
 
 - `example.com` → infrastructure: `email-health-check-helper.sh check "$DOMAIN"`
 - `newsletter.html` → content: `email-health-check-helper.sh content-check "$FILE"`
 - `example.com newsletter.html` → combined: `email-health-check-helper.sh precheck "$DOMAIN" "$FILE"`
 - Extra selector/check arg (`example.com spf`, `newsletter.html check-links`) → targeted check
 
-```bash
-# Domain
-~/.aidevops/agents/scripts/email-health-check-helper.sh check "$DOMAIN"
-
-# HTML file
-~/.aidevops/agents/scripts/email-health-check-helper.sh content-check "$FILE"
-
-# Domain + HTML file
-~/.aidevops/agents/scripts/email-health-check-helper.sh precheck "$DOMAIN" "$FILE"
-```
-
-### Step 2: Format the report
+Format the report from helper output:
 
 - Infrastructure: score out of 15 for SPF, DKIM, DMARC, MX, blacklist
 - Content: score out of 10 for subject, preheader, accessibility, links, images, spam words
-- Combined runs: score out of 25 with a letter grade
-- Keep helper findings verbatim and end with actionable recommendations
+- Combined: score out of 25 with a letter grade
+- Keep helper findings verbatim; end with actionable recommendations
 
 ## Options
 
