@@ -27,7 +27,7 @@ model: haiku
 
 | Tier | Model | Use When |
 |------|-------|----------|
-| `local` | llama.cpp (user GGUF) | Privacy/offline, bulk, experimentation; <32K context |
+| `local` | llama.cpp or Ollama (user models) | Privacy/offline, bulk, experimentation; opt-in only |
 | `composer2` | cursor/composer-2 | Multi-file coding, large refactors (requires Cursor OAuth pool t1549) |
 | `flash` | gemini-2.5-flash-preview-05-20 | >50K context, summarization, bulk processing, research sweeps |
 | `haiku` | claude-haiku-4-5-20251001 | Classification, triage, simple transforms, commit messages, routing |
@@ -37,7 +37,7 @@ model: haiku
 
 **Model IDs**: Always fully-qualified (`claude-sonnet-4-6`, not `claude-sonnet-4`). Short-form → `ProviderModelNotFoundError`. CLI prefix: `anthropic/`, `google/`.
 
-**`local` fallback**: Privacy → FAIL (require `--allow-cloud`). Cost → `composer2`.
+**`local` fallback**: Privacy → FAIL (require `--allow-cloud`). Cost → Ollama → `composer2`. Local is opt-in only — default dispatch uses `haiku`. Users who explicitly configure local tier: llama.cpp → Ollama → `haiku`.
 
 ## Decision Flowchart
 
@@ -54,7 +54,7 @@ Privacy/on-device? → YES → local running? → YES: local | NO: FAIL
 
 | Tier | Fallback | Trigger |
 |------|----------|---------|
-| `local` | composer2 (cost) / FAIL (privacy) | Server not running |
+| `local` | Ollama → composer2 (cost) / FAIL (privacy) | llama.cpp not running |
 | `flash` | gpt-4.1-mini | No Google key |
 | `haiku` | flash | No Anthropic key |
 | `composer2` | sonnet | No Cursor OAuth pool |
