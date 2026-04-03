@@ -1,7 +1,6 @@
 # Comprehension Benchmark Pilot Results
 
-**Date:** 2026-04-02 | **Files:** 15 | **Scenarios:** 38 (2-3/file)
-**Method:** Structural pre-filter + predicted tier assignment
+**Date:** 2026-04-02 | **Files:** 15 | **Scenarios:** 38 (2-3/file) | **Method:** Structural pre-filter + predicted tier assignment
 
 ## Summary
 
@@ -37,7 +36,7 @@
 
 Right topic, wrong conclusion — multiple valid readings exist.
 
-**Expected haiku failures:**
+**Expected haiku failures (ambiguous docs):**
 - `code-simplifier.md`: nuanced "almost never simplify" categories → haiku over-simplifies classification
 - `planning-detail.md`: 3-step PR lookup fallback chain with conditional logic → haiku skips or conflates steps
 - `worker-efficiency-protocol.md`: 6-row model escalation decision matrix → haiku misses edge cases
@@ -59,11 +58,11 @@ Right topic, wrong conclusion — multiple valid readings exist.
 
 **Sonnet false-fails:** None expected. Opus-tier files (e.g., `prompts/build.txt` 400+ lines, deeply nested cross-refs) excluded from pilot.
 
-**False-pass risk:** Haiku passes deterministic checks but misunderstands intent. Example: `reference/self-improvement.md` "framework vs project routing" — haiku outputs "framework" (passes `contains` check) with wrong reasoning. Mitigation: adjudication layer (haiku self-check or sonnet judge); `reference_answer` field enables precise comparison for critical files.
+**False-pass risk:** Haiku passes deterministic checks but misunderstands intent (e.g., `reference/self-improvement.md` "framework vs project routing" — outputs "framework" but with wrong reasoning). Mitigation: adjudication layer (haiku self-check or sonnet judge); `reference_answer` field enables precise comparison for critical files.
 
 ## Structural Pre-Filter
 
-Predicts complexity from line count, cross-ref count, code blocks, table rows, heading depth — no model calls.
+Predicts complexity from line count, cross-refs, code blocks, table rows, heading depth — no model calls.
 
 | Complexity | Criteria | Predicted Tier |
 |-----------|----------|----------------|
