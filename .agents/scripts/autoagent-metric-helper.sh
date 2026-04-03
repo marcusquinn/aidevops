@@ -25,7 +25,6 @@ log() {
 die() {
 	echo "[autoagent-metric] ERROR: $*" >&2
 	exit 1
-	return 1
 }
 
 require_tool() {
@@ -267,6 +266,10 @@ run_baseline() {
 		fi
 	fi
 
+	if [ "$avg_chars" -eq 0 ]; then
+		log "WARNING: baseline established with 0 chars — token scoring will return neutral values (1.0)"
+	fi
+
 	local timestamp
 	timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -292,6 +295,14 @@ run_compare() {
 
 	if [ -z "$before" ] || [ -z "$after" ]; then
 		die "Usage: autoagent-metric-helper.sh compare <before_score> <after_score>"
+	fi
+
+	# Validate numeric inputs to prevent silent awk coercion
+	if ! echo "$before" | grep -qE '^-?[0-9]+(\.[0-9]+)?$'; then
+		die "compare: 'before' must be numeric (got: $before)"
+	fi
+	if ! echo "$after" | grep -qE '^-?[0-9]+(\.[0-9]+)?$'; then
+		die "compare: 'after' must be numeric (got: $after)"
 	fi
 
 	local delta improvement improved
