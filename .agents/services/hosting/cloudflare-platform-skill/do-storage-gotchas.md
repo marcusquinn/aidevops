@@ -69,13 +69,9 @@ await this.ctx.storage.deleteAll();
 
 ## Auto Caching & Bypass
 
-```typescript
-async getUniqueNumber() {
-  let val = await this.ctx.storage.get("counter"); // Cached after first read
-  await this.ctx.storage.put("counter", val + 1);  // Instant cache write
-  return val;
-}
+Storage reads are cached after first access; writes update cache instantly.
 
+```typescript
 // Bypass opts: allowConcurrency, noCache, allowUnconfirmed
 await this.ctx.storage.get("key", { allowConcurrency: true, noCache: true });
 ```
