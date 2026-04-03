@@ -37,7 +37,6 @@ readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
 command_exists() {
 	local cmd="$1"
 	command -v "$cmd" >/dev/null 2>&1
-	return $?
 }
 
 # Install npm dependencies to tool directory
