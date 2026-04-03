@@ -21,16 +21,13 @@ pnpm exec remotion add @remotion/captions # If project uses pnpm
 
 ## 1. Group captions into pages
 
-Use `createTikTokStyleCaptions()` to batch words into timed pages. `combineTokensWithinMilliseconds` controls how many words appear at once.
+Use `createTikTokStyleCaptions()` to batch words into timed pages. `combineTokensWithinMilliseconds` (ms) controls page duration — higher = more words per page.
 
 ```tsx
 import {useMemo} from 'react';
 import {createTikTokStyleCaptions} from '@remotion/captions';
 import type {Caption} from '@remotion/captions';
 
-// How often captions should switch (in milliseconds)
-// Higher values = more words per page
-// Lower values = fewer words (more word-by-word)
 const SWITCH_CAPTIONS_EVERY_MS = 1200;
 
 const CaptionedContent: React.FC<{captions: Caption[]}> = ({captions}) => {
@@ -45,7 +42,7 @@ const CaptionedContent: React.FC<{captions: Caption[]}> = ({captions}) => {
 
 ## 2. Render each page in a `<Sequence>`
 
-Map over `pages` and derive each sequence from the page timing.
+Map over `pages`, derive frame timing from `startMs`, and render each page in a bounded `<Sequence>`.
 
 ```tsx
 import {Sequence, useVideoConfig, AbsoluteFill} from 'remotion';
@@ -86,7 +83,7 @@ const CaptionedContent: React.FC<{pages: TikTokPage[]}> = ({pages}) => {
 
 ## 3. Highlight the active word
 
-Each page exposes `tokens`, so you can compare the current playback time against `fromMs` and `toMs`.
+Each page exposes `tokens` with `fromMs`/`toMs` bounds. Compare against current playback time to highlight the active token.
 
 ```tsx
 import {AbsoluteFill, useCurrentFrame, useVideoConfig} from 'remotion';
