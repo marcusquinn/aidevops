@@ -6,7 +6,6 @@ tools:
   write: true
   edit: true
   bash: true
-  glob: true
   grep: true
   task: true
 ---
@@ -26,7 +25,7 @@ Run standardised benchmarks across all browser automation tools and update `brow
 
 ## Test Matrix
 
-All tests use `https://the-internet.herokuapp.com`. Run each test 3 times per tool, report median.
+All tests use `https://the-internet.herokuapp.com`. Run each test 3 times per tool, report median. Network variance ~0.2-0.5s.
 
 | Test | Measures |
 |------|----------|
@@ -60,11 +59,9 @@ source ~/.aidevops/crawl4ai-venv/bin/activate && python bench-crawl4ai.py | tee 
 OPENAI_API_KEY=... node bench-stagehand.mjs | tee results-stagehand.json
 ```
 
-Network variance ~0.2-0.5s — use median of 3 runs.
-
 ## Updating Documentation
 
-After benchmarks, update the Performance Benchmarks table in `browser-automation.md`:
+After benchmarks, update `browser-automation.md` Performance Benchmarks table:
 
 1. Median of 3 runs per test; bold fastest time per row
 2. Update "Key insight" section if relative performance changed
