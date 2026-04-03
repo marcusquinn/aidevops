@@ -7,14 +7,21 @@
 #
 # Usage:
 #   ~/.aidevops/agents/scripts/pre-edit-check.sh
+#   ~/.aidevops/agents/scripts/pre-edit-check.sh --loop-mode --file "path/to/file"
 #   ~/.aidevops/agents/scripts/pre-edit-check.sh --loop-mode --task "description"
 #   ~/.aidevops/agents/scripts/pre-edit-check.sh --check-command "git push --force origin main"
 #   ~/.aidevops/agents/scripts/pre-edit-check.sh --verify-op "git push --force origin main"
 #
+# Main-branch write protection (t1712):
+#   Pass --file <path> for path-based enforcement (preferred).
+#   Allowlisted paths (writable on main without a worktree): README.md, TODO.md, todo/**
+#   All other paths require a linked worktree.
+#   --task description heuristics are a fallback when --file is not provided.
+#
 # Exit codes:
-#   0 - OK to proceed (in a linked worktree, or docs-only on main)
+#   0 - OK to proceed (in a linked worktree, or allowlisted path on main)
 #   1 - STOP (on protected main/master, interactive mode)
-#   2 - Create worktree (loop mode detected code task on main)
+#   2 - Create worktree (loop mode detected non-allowlisted path on main)
 #   3 - WARNING (canonical repo directory is not on main - move it back and continue from a linked worktree)
 #
 # High-stakes detection (--check-command):
@@ -39,14 +46,18 @@ set -euo pipefail
 # =============================================================================
 # Loop Mode Support
 # =============================================================================
-# When --loop-mode is passed, the script auto-decides based on task description:
-# - Docs-only tasks (README, CHANGELOG, docs/) -> stay on main (exit 0)
-# - Code tasks (feature, fix, implement, etc.) -> signal worktree needed (exit 2)
+# When --loop-mode is passed, the script auto-decides based on file path or task description:
+# - Allowlisted paths (README.md, TODO.md, todo/**) -> stay on main (exit 0)
+# - All other paths -> signal worktree needed (exit 2)
+#
+# Pass --file <path> for path-based enforcement (preferred, harder to bypass).
+# Fall back to --task description heuristics only when no --file is provided.
 
 LOOP_MODE=false
 TASK_DESC=""
 CHECK_COMMAND=""
 VERIFY_OP=""
+TARGET_FILE=""
 
 while [[ $# -gt 0 ]]; do
 	case $1 in
@@ -56,6 +67,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--task)
 		TASK_DESC="$2"
+		shift 2
+		;;
+	--file)
+		TARGET_FILE="$2"
 		shift 2
 		;;
 	--check-command)
@@ -72,7 +87,46 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-# Function to detect if task is docs-only
+# =============================================================================
+# Main-branch file allowlist (t1712)
+# =============================================================================
+# Canonical list of paths writable on main/master without a linked worktree.
+# All other paths require a worktree.
+#
+# Allowlisted paths:
+#   README.md          — top-level readme
+#   TODO.md            — task backlog
+#   todo/**            — plans, briefs, task files
+#
+# Usage: is_main_allowlisted_path <file_path>
+# Returns: 0 if path is allowlisted, 1 if not
+is_main_allowlisted_path() {
+	local file_path="$1"
+
+	# Normalise: strip leading ./ and resolve relative to repo root basename
+	local normalised
+	normalised=$(echo "$file_path" | sed 's|^\./||')
+
+	# Exact matches
+	case "$normalised" in
+	README.md | TODO.md)
+		return 0
+		;;
+	esac
+
+	# Prefix matches (todo/ subtree)
+	case "$normalised" in
+	todo/*)
+		return 0
+		;;
+	esac
+
+	return 1
+}
+
+# Function to detect if task is docs-only (fallback when --file is not provided)
+# Deprecated: prefer --file for path-based enforcement. Kept for backward compatibility
+# with callers that only pass --task descriptions.
 is_docs_only() {
 	local task="$1"
 	# Use tr for lowercase (portable across bash versions including macOS default bash 3.x)
@@ -99,6 +153,18 @@ is_docs_only() {
 
 	# Default: not docs-only (safer to require a worktree)
 	return 1
+}
+
+# Unified main-branch write check: path-based when --file provided, else task heuristic.
+# Returns: 0 if write is allowed on main, 1 if worktree required
+is_main_write_allowed() {
+	if [[ -n "$TARGET_FILE" ]]; then
+		is_main_allowlisted_path "$TARGET_FILE"
+		return $?
+	fi
+	# Fallback: task-description heuristic (backward compat)
+	is_docs_only "$TASK_DESC"
+	return $?
 }
 
 # =============================================================================
@@ -287,15 +353,23 @@ fi
 
 # Check if on main or master
 if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
-	# Loop mode: auto-decide based on task description
+	# Loop mode: auto-decide based on file path (preferred) or task description
 	if [[ "$LOOP_MODE" == "true" ]]; then
-		if is_docs_only "$TASK_DESC"; then
-			echo -e "${YELLOW}LOOP-AUTO${NC}: Docs-only task detected, staying on $current_branch"
+		if is_main_write_allowed; then
+			if [[ -n "$TARGET_FILE" ]]; then
+				echo -e "${YELLOW}LOOP-AUTO${NC}: Allowlisted path '$TARGET_FILE', staying on $current_branch"
+			else
+				echo -e "${YELLOW}LOOP-AUTO${NC}: Docs-only task detected, staying on $current_branch"
+			fi
 			echo "LOOP_DECISION=stay"
 			exit 0
 		else
-			# Auto-create worktree for code changes
-			echo -e "${YELLOW}LOOP-AUTO${NC}: Code task detected, worktree required"
+			# Auto-create worktree for non-allowlisted paths / code changes
+			if [[ -n "$TARGET_FILE" ]]; then
+				echo -e "${YELLOW}LOOP-AUTO${NC}: Non-allowlisted path '$TARGET_FILE', worktree required"
+			else
+				echo -e "${YELLOW}LOOP-AUTO${NC}: Code task detected, worktree required"
+			fi
 			echo "LOOP_DECISION=worktree"
 			exit 2 # Special exit code for "create worktree"
 		fi
@@ -427,12 +501,16 @@ else
 	if [[ "$is_main_worktree" == "true" ]]; then
 		# Loop mode: auto-decide for canonical repo directory off main
 		if [[ "$LOOP_MODE" == "true" ]]; then
-			if is_docs_only "$TASK_DESC"; then
-				echo -e "${YELLOW}LOOP-AUTO${NC}: Docs-only task in main repo directory, continuing"
+			if is_main_write_allowed; then
+				if [[ -n "$TARGET_FILE" ]]; then
+					echo -e "${YELLOW}LOOP-AUTO${NC}: Allowlisted path '$TARGET_FILE' in main repo directory, continuing"
+				else
+					echo -e "${YELLOW}LOOP-AUTO${NC}: Docs-only task in main repo directory, continuing"
+				fi
 				echo "LOOP_DECISION=continue"
 				exit 0
 			else
-				# For code tasks, warn but continue so the caller can relocate into a worktree.
+				# For non-allowlisted paths / code tasks, warn but continue so the caller can relocate into a worktree.
 				echo -e "${YELLOW}LOOP-AUTO${NC}: Main repo directory is off main (not ideal - relocate to a linked worktree)"
 				echo "LOOP_DECISION=continue_warning"
 				exit 0

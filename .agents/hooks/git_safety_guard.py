@@ -3,7 +3,10 @@
 Git/filesystem safety guard for Claude Code (PreToolUse hook).
 
 Blocks destructive commands that can lose uncommitted work or delete files.
-This hook runs before Bash commands execute and can deny dangerous operations.
+Also enforces the main-branch file allowlist (t1712): Edit and Write tool calls
+targeting non-allowlisted paths on main/master are blocked.
+
+This hook runs before Bash/Edit/Write tool calls execute and can deny dangerous operations.
 
 Installed by: aidevops setup (setup.sh) or install-hooks-helper.sh
 Location: ~/.aidevops/hooks/git_safety_guard.py
@@ -17,7 +20,9 @@ Exit behavior:
   - Exit 0 with no output = allow
 """
 import json
+import os
 import re
+import subprocess
 import sys
 
 # Destructive patterns to block - tuple of (regex, reason)
@@ -144,6 +149,122 @@ SAFE_PATTERNS = [
 ]
 
 
+# =============================================================================
+# Main-branch file allowlist (t1712)
+# =============================================================================
+# Paths writable on main/master without a linked worktree.
+# Checked as exact match or prefix match (normalised, no leading ./).
+MAIN_BRANCH_ALLOWLIST = [
+    "README.md",
+    "TODO.md",
+    "todo/",  # prefix: todo/** subtree
+]
+
+
+def _get_current_branch(cwd: str) -> str:
+    """Return the current git branch name, or empty string on failure."""
+    try:
+        result = subprocess.run(
+            ["git", "branch", "--show-current"],
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=5,
+        )
+        return result.stdout.strip()
+    except Exception:
+        return ""
+
+
+def _is_linked_worktree(cwd: str) -> bool:
+    """Return True if cwd is inside a linked worktree (not the main worktree)."""
+    try:
+        git_dir = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=5,
+        ).stdout.strip()
+        git_common_dir = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=5,
+        ).stdout.strip()
+        # In a linked worktree, git-dir != git-common-dir
+        return git_dir != git_common_dir and git_dir != ".git"
+    except Exception:
+        return False
+
+
+def _is_main_allowlisted(file_path: str) -> bool:
+    """Return True if file_path is in the main-branch write allowlist."""
+    # Normalise: strip leading ./ and any absolute prefix to get repo-relative path
+    normalised = file_path.lstrip("/")
+    # If absolute path, try to extract repo-relative portion
+    # For relative paths, just strip ./
+    if normalised.startswith("./"):
+        normalised = normalised[2:]
+    # Strip leading ./ again after any manipulation
+    normalised = normalised.lstrip("./")
+
+    for allowed in MAIN_BRANCH_ALLOWLIST:
+        if allowed.endswith("/"):
+            # Prefix match (subtree)
+            if normalised == allowed.rstrip("/") or normalised.startswith(allowed):
+                return True
+        else:
+            # Exact match
+            if normalised == allowed:
+                return True
+    return False
+
+
+def _check_main_branch_allowlist(file_path: str) -> dict | None:
+    """Check if an Edit/Write to file_path is allowed on the current branch.
+
+    Returns a deny dict if the write should be blocked, None if allowed.
+    """
+    if not file_path:
+        return None
+
+    # Determine cwd: use the directory of the file if absolute, else cwd
+    if os.path.isabs(file_path):
+        cwd = os.path.dirname(file_path) or "/"
+    else:
+        cwd = os.getcwd()
+
+    branch = _get_current_branch(cwd)
+    if branch not in ("main", "master"):
+        return None  # Not on a protected branch — allow
+
+    # On main/master: check if this is a linked worktree (allowed) or main worktree (restricted)
+    if _is_linked_worktree(cwd):
+        return None  # Linked worktrees are always allowed
+
+    # Main worktree on main/master: enforce allowlist
+    if _is_main_allowlisted(file_path):
+        return None  # Allowlisted path — allow
+
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": (
+                f"BLOCKED by git_safety_guard.py (aidevops t1712)\n\n"
+                f"Reason: '{file_path}' is not in the main-branch write allowlist.\n\n"
+                f"Allowlisted paths (writable on main without a worktree): "
+                f"README.md, TODO.md, todo/**\n\n"
+                f"All other edits must be made in a linked worktree:\n"
+                f"  wt switch -c feature/your-task-name\n\n"
+                f"This enforces the canonical-repo-on-main policy (t1712)."
+            ),
+        }
+    }
+
+
 def _normalize_absolute_paths(cmd):
     """Normalize absolute paths to rm/git for consistent pattern matching.
 
@@ -163,7 +284,7 @@ def _normalize_absolute_paths(cmd):
 
 
 def main():
-    """Check stdin for destructive Bash commands and block them."""
+    """Check stdin for destructive Bash commands and enforce main-branch allowlist."""
     try:
         input_data = json.load(sys.stdin)
     except json.JSONDecodeError:
@@ -171,6 +292,20 @@ def main():
 
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input") or {}
+
+    # ==========================================================================
+    # Edit / Write tool: enforce main-branch file allowlist (t1712)
+    # ==========================================================================
+    if tool_name in ("Edit", "Write"):
+        file_path = tool_input.get("filePath", "")
+        deny = _check_main_branch_allowlist(file_path)
+        if deny:
+            print(json.dumps(deny))
+        sys.exit(0)
+
+    # ==========================================================================
+    # Bash tool: block destructive commands
+    # ==========================================================================
     command = tool_input.get("command", "")
 
     if tool_name != "Bash" or not isinstance(command, str) or not command:
