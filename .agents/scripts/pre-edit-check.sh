@@ -8,14 +8,20 @@
 # Usage:
 #   ~/.aidevops/agents/scripts/pre-edit-check.sh
 #   ~/.aidevops/agents/scripts/pre-edit-check.sh --loop-mode --task "description"
+#   ~/.aidevops/agents/scripts/pre-edit-check.sh --loop-mode --task "description" --file "path/to/file"
 #   ~/.aidevops/agents/scripts/pre-edit-check.sh --check-command "git push --force origin main"
 #   ~/.aidevops/agents/scripts/pre-edit-check.sh --verify-op "git push --force origin main"
 #
 # Exit codes:
-#   0 - OK to proceed (in a linked worktree, or docs-only on main)
+#   0 - OK to proceed (in a linked worktree, or allowlisted path on main)
 #   1 - STOP (on protected main/master, interactive mode)
-#   2 - Create worktree (loop mode detected code task on main)
+#   2 - Create worktree (loop mode detected non-allowlisted edit on main)
 #   3 - WARNING (canonical repo directory is not on main - move it back and continue from a linked worktree)
+#
+# Main-branch file allowlist (--file, t1712):
+#   When --file is passed, the script enforces a hard path-based allowlist on main/master.
+#   Only README.md, TODO.md, and todo/** are writable without a linked worktree.
+#   This is stronger than the task-description heuristic and takes precedence when provided.
 #
 # High-stakes detection (--check-command):
 #   When --check-command is passed, the script checks the command against
@@ -47,6 +53,7 @@ LOOP_MODE=false
 TASK_DESC=""
 CHECK_COMMAND=""
 VERIFY_OP=""
+FILE_PATH=""
 
 while [[ $# -gt 0 ]]; do
 	case $1 in
@@ -66,13 +73,64 @@ while [[ $# -gt 0 ]]; do
 		VERIFY_OP="$2"
 		shift 2
 		;;
+	--file)
+		FILE_PATH="$2"
+		shift 2
+		;;
 	*)
 		shift
 		;;
 	esac
 done
 
-# Function to detect if task is docs-only
+# =============================================================================
+# Path-Based Main-Branch Allowlist (t1712)
+# =============================================================================
+# Returns 0 (true) if the given file path is allowed to be written on main/master.
+# Allowlisted paths: README.md, TODO.md, todo/** (planning files only).
+# All other paths require a linked worktree.
+#
+# This is a hard file-level gate — it does NOT rely on task description heuristics.
+# It is the primary enforcement mechanism for the main-branch write policy when
+# a --file argument is provided.
+#
+# Usage:
+#   is_allowlisted_main_path "/abs/path/to/file"
+#   is_allowlisted_main_path "relative/path/to/file"
+is_allowlisted_main_path() {
+	local file_path="$1"
+
+	if [[ -z "$file_path" ]]; then
+		return 1 # No path provided — not allowlisted
+	fi
+
+	# Normalise: strip leading ./ so we match on relative paths consistently.
+	local rel_path
+	rel_path="${file_path#./}"
+
+	# Strip absolute repo root prefix if present (e.g. /home/user/Git/repo/)
+	local repo_root=""
+	repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+	if [[ -n "$repo_root" ]]; then
+		rel_path="${rel_path#"${repo_root}/"}"
+	fi
+
+	# Allowlist (case-sensitive, exact or prefix match):
+	#   README.md          — top-level readme
+	#   TODO.md            — top-level task list
+	#   todo/              — planning directory (all files under it)
+	case "$rel_path" in
+	README.md | TODO.md | todo | todo/*)
+		return 0 # Allowlisted
+		;;
+	*)
+		return 1 # Not allowlisted — requires worktree
+		;;
+	esac
+}
+
+# Function to detect if task is docs-only (task-description heuristic).
+# Used as a fallback when no --file path is provided.
 is_docs_only() {
 	local task="$1"
 	# Use tr for lowercase (portable across bash versions including macOS default bash 3.x)
@@ -287,8 +345,23 @@ fi
 
 # Check if on main or master
 if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
-	# Loop mode: auto-decide based on task description
+	# Loop mode: auto-decide based on file path (preferred) or task description (fallback)
 	if [[ "$LOOP_MODE" == "true" ]]; then
+		# Path-based allowlist check (t1712): takes precedence over task-description heuristic
+		if [[ -n "$FILE_PATH" ]]; then
+			if is_allowlisted_main_path "$FILE_PATH"; then
+				echo -e "${YELLOW}LOOP-AUTO${NC}: Allowlisted path '$FILE_PATH', staying on $current_branch"
+				echo "LOOP_DECISION=stay"
+				echo "ALLOWLIST_MATCH=true"
+				exit 0
+			else
+				echo -e "${YELLOW}LOOP-AUTO${NC}: Path '$FILE_PATH' not in main-branch allowlist, worktree required"
+				echo "LOOP_DECISION=worktree"
+				echo "ALLOWLIST_MATCH=false"
+				exit 2 # Special exit code for "create worktree"
+			fi
+		fi
+		# Fallback: task-description heuristic (used when no --file is provided)
 		if is_docs_only "$TASK_DESC"; then
 			echo -e "${YELLOW}LOOP-AUTO${NC}: Docs-only task detected, staying on $current_branch"
 			echo "LOOP_DECISION=stay"
@@ -298,6 +371,43 @@ if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
 			echo -e "${YELLOW}LOOP-AUTO${NC}: Code task detected, worktree required"
 			echo "LOOP_DECISION=worktree"
 			exit 2 # Special exit code for "create worktree"
+		fi
+	fi
+
+	# Non-loop mode: path-based allowlist check for headless/interactive with --file
+	if [[ -n "$FILE_PATH" ]]; then
+		if is_allowlisted_main_path "$FILE_PATH"; then
+			# Allowlisted path — allow even on main (headless or interactive)
+			echo -e "${GREEN}OK${NC} - Allowlisted path on $current_branch: ${BOLD}$FILE_PATH${NC}"
+			echo "ALLOWLIST_MATCH=true"
+			exit 0
+		else
+			# Non-allowlisted path on main — block with worktree guidance
+			if [[ ! -t 0 ]] || [[ "${FULL_LOOP_HEADLESS:-false}" == "true" ]]; then
+				echo -e "${RED}BLOCKED${NC}: Path '$FILE_PATH' is not in the main-branch write allowlist."
+				echo "HEADLESS_BLOCKED=true"
+				echo "ACTION_REQUIRED=create_worktree"
+				echo "ALLOWLIST_MATCH=false"
+				echo "HINT: Only README.md, TODO.md, and todo/** are writable on main without a worktree."
+				exit 2
+			fi
+			echo ""
+			echo -e "${RED}${BOLD}======================================================${NC}"
+			echo -e "${RED}${BOLD}  STOP - PATH NOT IN MAIN-BRANCH ALLOWLIST${NC}"
+			echo -e "${RED}${BOLD}======================================================${NC}"
+			echo ""
+			echo -e "Path: ${BOLD}$FILE_PATH${NC}"
+			echo ""
+			echo -e "${YELLOW}Only README.md, TODO.md, and todo/** are writable on main without a linked worktree.${NC}"
+			echo -e "${YELLOW}Create a linked worktree before editing this file.${NC}"
+			echo ""
+			if command -v wt &>/dev/null; then
+				echo "    wt switch -c {type}/{description}"
+			else
+				echo "    ~/.aidevops/agents/scripts/worktree-helper.sh add {type}/{description}"
+			fi
+			echo ""
+			exit 1
 		fi
 	fi
 

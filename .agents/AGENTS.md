@@ -41,7 +41,7 @@ New to aidevops? Type `/onboarding`.
 
 Rules: `prompts/build.txt`. Details: `workflows/pre-edit.md`.
 
-Subagent write restrictions: on `main`/`master`, subagents may ONLY write to `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`. All other writes → proposed edits in a worktree.
+Subagent write restrictions: on `main`/`master`, subagents may ONLY write to `README.md`, `TODO.md`, and `todo/**`. All other writes → proposed edits in a worktree. This is enforced by path-based allowlist in `pre-edit-check.sh` and `git_safety_guard.py` (t1712).
 
 ---
 

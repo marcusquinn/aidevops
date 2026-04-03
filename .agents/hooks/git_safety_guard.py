@@ -3,7 +3,10 @@
 Git/filesystem safety guard for Claude Code (PreToolUse hook).
 
 Blocks destructive commands that can lose uncommitted work or delete files.
-This hook runs before Bash commands execute and can deny dangerous operations.
+Also enforces the main-branch file allowlist: only README.md, TODO.md, and
+todo/** are writable on main/master without a linked worktree (t1712).
+
+This hook runs before Bash/Edit/Write tool calls and can deny dangerous operations.
 
 Installed by: aidevops setup (setup.sh) or install-hooks-helper.sh
 Location: ~/.aidevops/hooks/git_safety_guard.py
@@ -17,7 +20,9 @@ Exit behavior:
   - Exit 0 with no output = allow
 """
 import json
+import os
 import re
+import subprocess
 import sys
 
 # Destructive patterns to block - tuple of (regex, reason)
@@ -162,8 +167,167 @@ def _normalize_absolute_paths(cmd):
     return result
 
 
+# =============================================================================
+# Main-Branch File Allowlist (t1712)
+# =============================================================================
+# Allowlisted paths that may be written on main/master without a linked worktree.
+# All other file writes on main/master are blocked.
+#
+# Allowlist:
+#   README.md   — top-level readme
+#   TODO.md     — top-level task list
+#   todo/       — planning directory (all files under it)
+_MAIN_BRANCH_ALLOWLIST = ("README.md", "TODO.md")
+_MAIN_BRANCH_ALLOWLIST_PREFIXES = ("todo/", "todo")
+
+
+def _get_git_branch(cwd=None):
+    """Return the current git branch name, or None if not in a git repo."""
+    try:
+        result = subprocess.run(
+            ["git", "branch", "--show-current"],
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip() or None
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _get_git_root(cwd=None):
+    """Return the absolute path of the git repo root, or None."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip() or None
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _is_linked_worktree(cwd=None):
+    """Return True if the current directory is a linked worktree (not the main worktree)."""
+    try:
+        git_dir = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=5,
+        )
+        git_common_dir = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=5,
+        )
+        if git_dir.returncode == 0 and git_common_dir.returncode == 0:
+            gd = git_dir.stdout.strip()
+            gcd = git_common_dir.stdout.strip()
+            # In a linked worktree, git-dir != git-common-dir
+            # In the main worktree, git-dir == git-common-dir (or git-dir == ".git")
+            return gd != gcd and gd != ".git"
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return False
+
+
+def _normalize_file_path(file_path, repo_root=None):
+    """Normalise a file path to a repo-relative path for allowlist matching."""
+    if not file_path:
+        return ""
+    # Strip leading ./
+    rel = file_path.lstrip("./") if file_path.startswith("./") else file_path
+    # Strip absolute repo root prefix
+    if repo_root and rel.startswith(repo_root + "/"):
+        rel = rel[len(repo_root) + 1:]
+    elif repo_root and rel == repo_root:
+        rel = ""
+    return rel
+
+
+def _is_allowlisted_main_path(file_path, repo_root=None):
+    """Return True if file_path is in the main-branch write allowlist.
+
+    Allowlisted: README.md, TODO.md, todo/ (and all files under it).
+    """
+    rel = _normalize_file_path(file_path, repo_root)
+    if rel in _MAIN_BRANCH_ALLOWLIST:
+        return True
+    for prefix in _MAIN_BRANCH_ALLOWLIST_PREFIXES:
+        if rel == prefix or rel.startswith(prefix + "/") or rel.startswith(prefix):
+            return True
+    return False
+
+
+def _check_main_branch_allowlist(file_path, cwd=None):
+    """Block Edit/Write to non-allowlisted paths on main/master.
+
+    Returns a denial reason string if the write should be blocked, or None to allow.
+    """
+    if not file_path:
+        return None
+
+    branch = _get_git_branch(cwd=cwd)
+    if branch not in ("main", "master"):
+        return None  # Not on a protected branch — allow
+
+    # Linked worktrees are always allowed (they're on a feature branch by design,
+    # but even if somehow on main, the worktree isolation is the primary guard)
+    if _is_linked_worktree(cwd=cwd):
+        return None
+
+    repo_root = _get_git_root(cwd=cwd)
+    if _is_allowlisted_main_path(file_path, repo_root=repo_root):
+        return None  # Allowlisted — allow
+
+    return (
+        f"Path '{file_path}' is not in the main-branch write allowlist.\n\n"
+        "Only README.md, TODO.md, and todo/** are writable on main/master "
+        "without a linked worktree.\n\n"
+        "Create a linked worktree for this task:\n"
+        "  wt switch -c feature/<description>\n"
+        "  # or: ~/.aidevops/agents/scripts/worktree-helper.sh add feature/<description>"
+    )
+
+
+def _deny(reason, original_input=None):
+    """Return a deny JSON response."""
+    context = ""
+    if original_input:
+        context = f"\n\nInput: {original_input}"
+    output = {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": (
+                f"BLOCKED by git_safety_guard.py (aidevops)\n\n"
+                f"Reason: {reason}{context}\n\n"
+                f"If this operation is truly needed, ask the user "
+                f"for explicit permission and have them run the "
+                f"command manually."
+            ),
+        }
+    }
+    return output
+
+
 def main():
-    """Check stdin for destructive Bash commands and block them."""
+    """Check stdin for destructive Bash commands and block them.
+
+    Also enforces the main-branch file allowlist for Edit/Write tool calls.
+    """
     try:
         input_data = json.load(sys.stdin)
     except json.JSONDecodeError:
@@ -171,6 +335,26 @@ def main():
 
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input") or {}
+
+    # Resolve cwd from tool context if available (Claude Code passes session cwd)
+    cwd = input_data.get("cwd") or os.getcwd()
+
+    # -------------------------------------------------------------------------
+    # Main-branch file allowlist check (t1712)
+    # Applies to Edit and Write tool calls on main/master.
+    # -------------------------------------------------------------------------
+    if tool_name in ("Edit", "Write"):
+        file_path = tool_input.get("filePath", "")
+        denial_reason = _check_main_branch_allowlist(file_path, cwd=cwd)
+        if denial_reason:
+            print(json.dumps(_deny(denial_reason, original_input=file_path)))
+            sys.exit(0)
+        # Allowlisted or not on main — fall through to allow
+        sys.exit(0)
+
+    # -------------------------------------------------------------------------
+    # Destructive Bash command check
+    # -------------------------------------------------------------------------
     command = tool_input.get("command", "")
 
     if tool_name != "Bash" or not isinstance(command, str) or not command:
@@ -187,21 +371,7 @@ def main():
     # Check destructive patterns
     for pattern, reason in DESTRUCTIVE_PATTERNS:
         if re.search(pattern, command):
-            output = {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": (
-                        f"BLOCKED by git_safety_guard.py (aidevops)\n\n"
-                        f"Reason: {reason}\n\n"
-                        f"Command: {original_command}\n\n"
-                        f"If this operation is truly needed, ask the user "
-                        f"for explicit permission and have them run the "
-                        f"command manually."
-                    ),
-                }
-            }
-            print(json.dumps(output))
+            print(json.dumps(_deny(reason, original_input=original_command)))
             sys.exit(0)
 
     # Allow all other commands
