@@ -40,8 +40,6 @@ const config :Workerd.Config = (
 
 ## Durable Objects
 
-Add as a service entry in the `services` list:
-
 ```capnp
 (name = "app", worker = (
   modules = [
@@ -57,7 +55,7 @@ Add as a service entry in the `services` list:
 
 ## Dev vs Prod Configs
 
-Named configs per environment; override bindings via `fromEnvironment`:
+Named configs per environment; bindings via `fromEnvironment`:
 
 ```capnp
 const devWorker :Workerd.Worker = (
@@ -70,11 +68,13 @@ const devWorker :Workerd.Worker = (
 );
 ```
 
-Run with: `API_URL=http://localhost:3000 DEBUG=true workerd serve dev.capnp`
+```bash
+API_URL=http://localhost:3000 DEBUG=true workerd serve dev.capnp
+```
 
 ## HTTP Reverse Proxy
 
-Service-worker syntax with external backend (add to `services`/`sockets` blocks):
+Service-worker syntax with external backend (add to `services`/`sockets`):
 
 ```capnp
 (name = "proxy", worker = (
@@ -115,7 +115,7 @@ workerd test config.capnp --test-only=test.js
 
 ### Systemd
 
-`/etc/systemd/system/workerd.service`:
+`/etc/systemd/system/workerd.service`
 
 ```ini
 [Unit]
@@ -134,7 +134,7 @@ NoNewPrivileges=true
 WantedBy=multi-user.target
 ```
 
-`/etc/systemd/system/workerd.socket`:
+`/etc/systemd/system/workerd.socket`
 
 ```ini
 [Socket]
