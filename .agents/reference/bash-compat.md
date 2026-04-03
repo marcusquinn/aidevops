@@ -22,7 +22,7 @@ Production failures: pulse dispatch, worktree cleanup, dataset helpers, routine 
 
 ## Array passing across process boundaries
 
-Arrays flatten to strings across subshell, `$()`, or pipe boundaries. Pass via `"${arr[@]}"` (positional args) or temp file (one element per line, read back with `while read`).
+Arrays flatten to strings across subshell, `$()`, or pipe boundaries. Pass via `${arr[@]+"${arr[@]}"}` (positional args, safe under `set -u`) or temp file (one element per line, read back with `while IFS= read -r`).
 
 ## Escape sequence quoting (recurring production bug)
 
