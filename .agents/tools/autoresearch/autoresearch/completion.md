@@ -2,11 +2,9 @@
 
 Sub-doc for `autoresearch.md`. Loaded on demand during Step 3.
 
----
-
 ## Step 3: Completion
 
-**3.1 Deregister** (multi-dimension mode — if `CAMPAIGN_ID` is set):
+**3.1 Deregister** (multi-dimension — if `CAMPAIGN_ID` set):
 
 ```bash
 mail-helper.sh deregister --agent "$AGENT_ID"
@@ -20,7 +18,7 @@ aidevops-memory store \
   --confidence high
 ```
 
-**3.3 Generate completion summary** (use as PR body):
+**3.3 Generate completion summary** (use as PR body; append ASCII sparkline if ≥5 kept iterations):
 
 ```markdown
 ## Autoresearch Results: {PROGRAM_NAME}
@@ -56,7 +54,7 @@ aidevops-memory store \
 - Cost estimate: ~${cost_estimate:.2f} (sonnet pricing)
 ```
 
-ASCII sparkline (if ≥5 kept iterations):
+Sparkline (if ≥5 kept iterations):
 
 ```text
 {METRIC_NAME} progression ({direction}):
@@ -64,7 +62,7 @@ ASCII sparkline (if ≥5 kept iterations):
   iter: {first_kept}  →  {last_kept}
 ```
 
-**3.4 Cross-dimension summary** (if `CAMPAIGN_ID` is set — append to PR body):
+**3.4 Cross-dimension summary** (if `CAMPAIGN_ID` set — append to PR body):
 
 ```bash
 sqlite3 ~/.aidevops/.agent-workspace/mail/mailbox.db \
@@ -109,15 +107,11 @@ aidevops-memory store \
   --confidence high
 ```
 
----
-
 ## Crash Recovery
 
 Worktree, results.tsv, and branch HEAD persist across crashes. On resume, uncommitted changes are discarded via `git reset --hard HEAD`.
 
-To resume: re-run `/autoresearch --program {program_path}`. The subagent detects the existing worktree and results.tsv and continues from where it left off.
-
----
+Resume: re-run `/autoresearch --program {program_path}`. The subagent detects the existing worktree and results.tsv and continues from where it left off.
 
 ## Budget Enforcement
 
