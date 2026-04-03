@@ -53,8 +53,13 @@ rg "observed|recurring|failure rate|%" ~/.aidevops/agents/prompts/build.txt 2>/d
 
 ```bash
 # Run comprehension tests and capture failures
+# --json emits composite metric only (pass_rate, failed, passed, total)
 agent-test-helper.sh run --suite agent-optimization --json 2>/dev/null | \
-  jq -r '.failures[]? | {file: .agent_file, issue: .failure_reason, source: "comprehension-tests"}'
+  jq '{failed: .failed, pass_rate: .pass_rate, source: "comprehension-tests"}'
+
+# List individual failed tests from the latest result file
+latest=$(ls -t ~/.aidevops/.agent-workspace/agent-tests/results/agent-optimization-*.json 2>/dev/null | head -1)
+[[ -n "$latest" ]] && jq -r '.results[] | select(.status == "fail") | {id: .id, status: .status}' "$latest"
 
 # Check which test suites exist
 ls ~/.aidevops/agents/tests/*.test.json 2>/dev/null | head -10
