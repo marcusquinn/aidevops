@@ -8,11 +8,6 @@ Core pointers: `AGENTS.md`. Full docs: `tools/ai-assistants/headless-dispatch.md
 - `/pulse` is the autonomous supervisor. Reads GitHub state (issues, PRs) and `TODO.md`, dispatches workers via `headless-runtime-helper.sh run`. GitHub + `TODO.md` are the database; do not add SQLite/state-machine layers.
 - Without the pulse scheduler, dispatch manually via `/runners`. Cycle: check capacity → scan prefetched GitHub state → merge ready PRs → dispatch open issues → sync TODOs. macOS: launchd; Linux: cron. Setup: `scripts/commands/runners.md`.
 
-```bash
-/runners t001 t002 t003   # Interactive dispatch of specific tasks
-/pulse                    # Manual pulse (scheduler runs every 2 minutes)
-```
-
 ## Task Claiming
 
 - (t165) `TODO.md` `assignee:` is the authoritative claim source. Works offline and with any git host. GitHub issue sync is optional best-effort and requires `gh` CLI plus `ref:GH#` in `TODO.md`.
@@ -31,14 +26,8 @@ Core pointers: `AGENTS.md`. Full docs: `tools/ai-assistants/headless-dispatch.md
 
 - **Token-billed APIs** (Anthropic direct, OpenRouter): track daily spend; degrade when nearing budget caps (e.g., 80% of daily opus budget → route to sonnet unless critical).
 - **Subscription APIs** (OAuth with periodic allowances): maximise use within the allowance window; alert near period limits.
-- **CLI**: `budget-tracker-helper.sh [record|check|recommend|status|configure|burn-rate]`
+- **CLI**: `budget-tracker-helper.sh [record|check|recommend|status|configure|burn-rate]`. Configure: `budget-tracker-helper.sh configure anthropic --billing-type token --daily-budget 50` or `configure-period opencode --start YYYY-MM-DD --end YYYY-MM-DD --allowance 200`.
 - **Integration**: `dispatch.sh` checks budget state before model selection. Spend recorded automatically after each worker evaluation.
-
-```bash
-budget-tracker-helper.sh configure anthropic --billing-type token --daily-budget 50
-budget-tracker-helper.sh configure opencode --billing-type subscription
-budget-tracker-helper.sh configure-period opencode --start 2026-02-01 --end 2026-03-01 --allowance 200
-```
 
 Full docs: `tools/context/model-routing.md`, `tools/ai-assistants/compare-models.md`
 
@@ -58,14 +47,6 @@ Decomposition output can recommend dispatch order, but the pulse supervisor resp
 |----------|-----------|----------|
 | `depth-first` (default) | Complete all subtasks under one branch before starting the next | Dependent work, sequential integration |
 | `breadth-first` | Dispatch one subtask from each branch per batch | Independent work, even progress |
-
-```text
-depth-first (concurrency=2):       breadth-first (concurrency=3):
-  t1.1, t1.2 ─ batch 1              t1.1, t2.1, t3.1 ─ batch 1
-  t1.3       ─ batch 2              t1.2, t2.2, t3.2 ─ batch 2
-  t2.1, t2.2 ─ batch 3              t1.3, t2.3       ─ batch 3
-  t3.1       ─ batch 4
-```
 
 - **CLI**: `batch-strategy-helper.sh [order|next-batch|validate] --strategy <strategy> --tasks <json> --concurrency <N>`
 - **Integration**: pulse supervisor uses `batch-strategy-helper.sh next-batch`; blocked tasks stay out of batches until blockers clear.
