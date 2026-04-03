@@ -13,18 +13,6 @@ tools:
 
 # Service Links Directory
 
-<!-- AI-CONTEXT-START -->
-
-## Quick Reference
-
-- **Hosting / deployment**: Hostinger, Hetzner, Closte, Coolify, Cloudron
-- **DNS**: Cloudflare, Route 53, Spaceship, 101domains, Namecheap
-- **Development**: GitHub, GitLab, Gitea, LocalWP, Playwright, Pandoc
-- **Security / quality**: Vaultwarden, SonarCloud, CodeFactor, Codacy, CodeRabbit
-- **AI / MCP**: Factory AI, Augment Code, Claude, OpenAI, Chrome DevTools, Playwright, Context7, LocalWP
-
-<!-- AI-CONTEXT-END -->
-
 ## Infrastructure & Hosting
 
 | Service | Console | Docs |
@@ -71,13 +59,6 @@ tools:
 | [Codacy](https://www.codacy.com/) | [app.codacy.com](https://app.codacy.com/) | [docs.codacy.com](https://docs.codacy.com/) |
 | [CodeRabbit](https://coderabbit.ai/) | [app.coderabbit.ai](https://app.coderabbit.ai/) | [docs.coderabbit.ai](https://docs.coderabbit.ai/) |
 
-## AI Prompt Optimization
-
-| Service | Console | Docs |
-|---------|---------|------|
-| [DSPy](https://dspy.ai/) | [dspy.ai](https://dspy.ai/) | [dspy.ai/learn](https://dspy.ai/learn/) |
-| [DSPyGround](https://dspyground.com/) | [playground.dspyground.com](https://playground.dspyground.com/) | [docs.dspyground.com](https://docs.dspyground.com/) |
-
 ## Performance & Monitoring
 
 | Service | Console | Docs |
@@ -86,17 +67,19 @@ tools:
 | [PageSpeed Insights](https://pagespeed.web.dev/) | [pagespeed.web.dev](https://pagespeed.web.dev/) | [developers.google.com/speed/pagespeed](https://developers.google.com/speed/pagespeed/) |
 | [Lighthouse](https://developer.chrome.com/docs/lighthouse/) | — | [developer.chrome.com/docs/lighthouse](https://developer.chrome.com/docs/lighthouse/) |
 
-## AI CLI Tools
+## AI Tools
 
 | Service | Console | Docs |
 |---------|---------|------|
 | [Factory AI](https://www.factory.ai/) | [app.factory.ai](https://app.factory.ai/) | [docs.factory.ai](https://docs.factory.ai/) |
 | [Augment Code](https://www.augmentcode.com/) | [augmentcode.com](https://www.augmentcode.com/) | [docs.augmentcode.com](https://docs.augmentcode.com/) |
 | [Claude](https://claude.ai/) | [claude.ai](https://claude.ai/) | [docs.anthropic.com/claude](https://docs.anthropic.com/claude) |
-| [Warp AI](https://www.warp.dev/) | [warp.dev](https://www.warp.dev/) | [docs.warp.dev](https://docs.warp.dev/) |
+| [Warp AI](https://www.warp.dev/) | [warp.dev](https://warp.dev/) | [docs.warp.dev](https://docs.warp.dev/) |
 | [OpenAI](https://openai.com/) | [platform.openai.com/playground](https://platform.openai.com/playground) | [platform.openai.com/docs](https://platform.openai.com/docs) |
 | [AmpCode](https://ampcode.com/) | [ampcode.com](https://ampcode.com/) | [docs.ampcode.com](https://docs.ampcode.com/) |
 | [Continue.dev](https://continue.dev/) | [continue.dev](https://continue.dev/) | [docs.continue.dev](https://docs.continue.dev/) |
+| [DSPy](https://dspy.ai/) | [dspy.ai](https://dspy.ai/) | [dspy.ai/learn](https://dspy.ai/learn/) |
+| [DSPyGround](https://dspyground.com/) | [playground.dspyground.com](https://playground.dspyground.com/) | [docs.dspyground.com](https://docs.dspyground.com/) |
 
 ## MCP Integrations
 
