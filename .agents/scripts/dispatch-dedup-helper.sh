@@ -807,7 +807,7 @@ has_dispatch_comment() {
 		return 1
 	fi
 
-	local max_age="${DISPATCH_COMMENT_MAX_AGE:-14400}" # 4 hours
+	local max_age="${DISPATCH_COMMENT_MAX_AGE:-3600}" # 1 hour (reduced from 4h — GH#16626)
 
 	local now_epoch
 	now_epoch=$(date -u '+%s')
@@ -868,6 +868,35 @@ has_dispatch_comment() {
 				printf '%s' "0")
 			local age=$((now_epoch - comment_epoch))
 			if [[ "$age" -lt "$max_age" ]]; then
+				# GH#16626: Process liveness check — if the dispatch comment is
+				# within TTL but no worker process is running for this issue on
+				# the local machine, the previous worker completed or crashed
+				# without cleanup. Treat the comment as stale and allow re-dispatch.
+				#
+				# This fixes a throughput bottleneck where 10/24 worker slots sat
+				# idle because stale dispatch comments from dead workers blocked
+				# re-dispatch for up to 4 hours. The comment TTL alone is insufficient
+				# because it can't distinguish "worker in-flight" from "worker dead,
+				# comment left behind". Process check resolves this for same-machine
+				# scenarios; cross-machine is covered by the assignee guard (Layer 6)
+				# which has its own stale recovery (GH#15060).
+				#
+				# Grace period: comments <5 min old skip the liveness check to avoid
+				# racing with worker startup (process may not be visible yet).
+				local grace_period="${DISPATCH_COMMENT_GRACE_SECONDS:-300}" # 5 minutes
+				if [[ "$age" -gt "$grace_period" ]]; then
+					# Check if any local worker process is running for this issue
+					local has_local_worker=""
+					has_local_worker=$(pgrep -f "issue.${issue_number}" 2>/dev/null | head -1 || true)
+					if [[ -z "$has_local_worker" ]]; then
+						has_local_worker=$(pgrep -f "#${issue_number}" 2>/dev/null | head -1 || true)
+					fi
+					if [[ -z "$has_local_worker" ]]; then
+						# No local worker running — dispatch comment is orphaned
+						# Allow re-dispatch by skipping this comment
+						continue
+					fi
+				fi
 				printf 'dispatch comment by %s posted %ds ago on issue #%s\n' "$author" "$age" "$issue_number"
 				return 0
 			fi
