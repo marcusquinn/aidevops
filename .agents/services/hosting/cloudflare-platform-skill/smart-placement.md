@@ -31,7 +31,7 @@ mode = "smart"
 hint = "wnam"  # Optional: West North America
 ```
 
-Deploy and wait 15 min for analysis.
+Deploy and wait up to 15 min for analysis.
 
 ## Placement Status
 
