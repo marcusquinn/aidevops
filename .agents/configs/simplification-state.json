@@ -5132,5 +5132,10 @@
     "issue": "GH#16320",
     "lines_before": 89,
     "lines_after": 88
+  },
+  ".agents/reference/define-probes/refactor.md": {
+    "hash": "1eb86f1e0b8873942014f1f20414250077bd694a254e6e97537e706199b2460a",
+    "status": "simplified",
+    "issue": "GH#16350"
   }
 }
