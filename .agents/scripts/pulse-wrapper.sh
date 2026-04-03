@@ -6013,28 +6013,15 @@ _fetch_queue_metrics() {
 }
 
 #######################################
-# Compute queue governor guidance from metrics (GH#5627)
+# Load previous queue metrics from the metrics file (GH#14960)
 #
-# Pure computation — no I/O except reading/writing the metrics file.
+# Reads QUEUE_METRICS_FILE and populates caller-scope variables via
+# stdout in key=value format. Caller evals the output.
 #
-# Arguments:
-#   $1 - total_prs
-#   $2 - total_issues
-#   $3 - ready_prs
-#   $4 - failing_prs
-# Output: governor guidance appended to STATE_FILE
+# Output: key=value lines for prev_total_prs, prev_total_issues,
+#         prev_ready_prs, prev_failing_prs, prev_recorded_at
 #######################################
-_compute_queue_governor_guidance() {
-	local total_prs="$1"
-	local total_issues="$2"
-	local ready_prs="$3"
-	local failing_prs="$4"
-
-	[[ "$total_prs" =~ ^[0-9]+$ ]] || total_prs=0
-	[[ "$total_issues" =~ ^[0-9]+$ ]] || total_issues=0
-	[[ "$ready_prs" =~ ^[0-9]+$ ]] || ready_prs=0
-	[[ "$failing_prs" =~ ^[0-9]+$ ]] || failing_prs=0
-
+_load_queue_metrics_history() {
 	local prev_total_prs=0 prev_total_issues=0 prev_ready_prs=0 prev_failing_prs=0 prev_recorded_at=0
 	if [[ -f "$QUEUE_METRICS_FILE" ]]; then
 		while IFS='=' read -r key value; do
@@ -6047,12 +6034,44 @@ _compute_queue_governor_guidance() {
 			esac
 		done <"$QUEUE_METRICS_FILE"
 	fi
-
 	[[ "$prev_total_prs" =~ ^-?[0-9]+$ ]] || prev_total_prs=0
 	[[ "$prev_total_issues" =~ ^-?[0-9]+$ ]] || prev_total_issues=0
 	[[ "$prev_ready_prs" =~ ^-?[0-9]+$ ]] || prev_ready_prs=0
 	[[ "$prev_failing_prs" =~ ^-?[0-9]+$ ]] || prev_failing_prs=0
 	[[ "$prev_recorded_at" =~ ^[0-9]+$ ]] || prev_recorded_at=0
+	printf 'prev_total_prs=%s\nprev_total_issues=%s\nprev_ready_prs=%s\nprev_failing_prs=%s\nprev_recorded_at=%s\n' \
+		"$prev_total_prs" "$prev_total_issues" "$prev_ready_prs" "$prev_failing_prs" "$prev_recorded_at"
+	return 0
+}
+
+#######################################
+# Compute queue deltas and drain/growth metrics (GH#14960)
+#
+# Arguments:
+#   $1 - total_prs (current)
+#   $2 - total_issues (current)
+#   $3 - ready_prs (current)
+#   $4 - failing_prs (current)
+#   $5 - prev_total_prs
+#   $6 - prev_total_issues
+#   $7 - prev_ready_prs
+#   $8 - prev_failing_prs
+#   $9 - prev_recorded_at (epoch)
+#
+# Output: key=value lines for pr_delta, issue_delta, ready_delta,
+#         failing_delta, backlog_drain_per_cycle, backlog_growth_pressure,
+#         drain_rate_per_hour, elapsed_seconds, now_epoch
+#######################################
+_compute_queue_deltas() {
+	local total_prs="$1"
+	local total_issues="$2"
+	local ready_prs="$3"
+	local failing_prs="$4"
+	local prev_total_prs="$5"
+	local prev_total_issues="$6"
+	local prev_ready_prs="$7"
+	local prev_failing_prs="$8"
+	local prev_recorded_at="$9"
 
 	local now_epoch elapsed_seconds
 	now_epoch=$(date +%s)
@@ -6081,6 +6100,33 @@ _compute_queue_governor_guidance() {
 		drain_rate_per_hour=$(((backlog_drain_per_cycle * 3600) / elapsed_seconds))
 	fi
 
+	printf 'pr_delta=%s\nissue_delta=%s\nready_delta=%s\nfailing_delta=%s\nbacklog_drain_per_cycle=%s\nbacklog_growth_pressure=%s\ndrain_rate_per_hour=%s\nelapsed_seconds=%s\nnow_epoch=%s\n' \
+		"$pr_delta" "$issue_delta" "$ready_delta" "$failing_delta" \
+		"$backlog_drain_per_cycle" "$backlog_growth_pressure" "$drain_rate_per_hour" \
+		"$elapsed_seconds" "$now_epoch"
+	return 0
+}
+
+#######################################
+# Determine queue mode and PR focus percentages (GH#14960)
+#
+# Arguments:
+#   $1 - total_prs
+#   $2 - total_issues
+#   $3 - ready_prs
+#   $4 - failing_prs
+#   $5 - pr_delta
+#
+# Output: key=value lines for queue_mode, backlog_band,
+#         pr_focus_pct, new_issue_pct
+#######################################
+_compute_queue_mode() {
+	local total_prs="$1"
+	local total_issues="$2"
+	local ready_prs="$3"
+	local failing_prs="$4"
+	local pr_delta="$5"
+
 	local denominator pr_share_pct growth_bias pr_focus_pct new_issue_pct
 	denominator=$((total_prs + total_issues))
 	if [[ "$denominator" -lt 1 ]]; then
@@ -6099,7 +6145,6 @@ _compute_queue_governor_guidance() {
 	elif [[ "$pr_focus_pct" -gt 85 ]]; then
 		pr_focus_pct=85
 	fi
-	new_issue_pct=$((100 - pr_focus_pct))
 
 	local queue_mode backlog_band
 	queue_mode="balanced"
@@ -6123,15 +6168,55 @@ _compute_queue_governor_guidance() {
 	fi
 	new_issue_pct=$((100 - pr_focus_pct))
 
-	local active_workers max_workers utilization_pct
-	active_workers=$(count_active_workers)
-	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
-	max_workers=$(get_max_workers_target)
-	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
-	if [[ "$max_workers" -lt 1 ]]; then
-		max_workers=1
-	fi
-	utilization_pct=$(((active_workers * 100) / max_workers))
+	printf 'queue_mode=%s\nbacklog_band=%s\npr_focus_pct=%s\nnew_issue_pct=%s\n' \
+		"$queue_mode" "$backlog_band" "$pr_focus_pct" "$new_issue_pct"
+	return 0
+}
+
+#######################################
+# Write metrics file and emit governor state to STATE_FILE (GH#14960)
+#
+# Arguments:
+#   $1  - total_prs
+#   $2  - total_issues
+#   $3  - ready_prs
+#   $4  - failing_prs
+#   $5  - now_epoch
+#   $6  - pr_delta
+#   $7  - issue_delta
+#   $8  - ready_delta
+#   $9  - failing_delta
+#   $10 - backlog_drain_per_cycle
+#   $11 - backlog_growth_pressure
+#   $12 - drain_rate_per_hour
+#   $13 - backlog_band
+#   $14 - queue_mode
+#   $15 - pr_focus_pct
+#   $16 - new_issue_pct
+#   $17 - active_workers
+#   $18 - max_workers
+#   $19 - utilization_pct
+#######################################
+_emit_queue_governor_state() {
+	local total_prs="$1"
+	local total_issues="$2"
+	local ready_prs="$3"
+	local failing_prs="$4"
+	local now_epoch="$5"
+	local pr_delta="$6"
+	local issue_delta="$7"
+	local ready_delta="$8"
+	local failing_delta="$9"
+	local backlog_drain_per_cycle="${10}"
+	local backlog_growth_pressure="${11}"
+	local drain_rate_per_hour="${12}"
+	local backlog_band="${13}"
+	local queue_mode="${14}"
+	local pr_focus_pct="${15}"
+	local new_issue_pct="${16}"
+	local active_workers="${17}"
+	local max_workers="${18}"
+	local utilization_pct="${19}"
 
 	cat >"$QUEUE_METRICS_FILE" <<EOF
 prev_total_prs=${total_prs}
@@ -6166,6 +6251,72 @@ EOF
 		echo ""
 		echo "When PR backlog is rising, prioritize merge-ready and failing-check PR advancement before new issue starts."
 	} >>"$STATE_FILE"
+
+	return 0
+}
+
+#######################################
+# Compute queue governor guidance from metrics (GH#5627)
+#
+# Orchestrates focused helpers to load history, compute deltas,
+# determine queue mode, and emit state. Each helper is under 50 lines.
+# Refactored from a 145-line monolith (GH#14960).
+#
+# Arguments:
+#   $1 - total_prs
+#   $2 - total_issues
+#   $3 - ready_prs
+#   $4 - failing_prs
+# Output: governor guidance appended to STATE_FILE
+#######################################
+_compute_queue_governor_guidance() {
+	local total_prs="$1"
+	local total_issues="$2"
+	local ready_prs="$3"
+	local failing_prs="$4"
+
+	[[ "$total_prs" =~ ^[0-9]+$ ]] || total_prs=0
+	[[ "$total_issues" =~ ^[0-9]+$ ]] || total_issues=0
+	[[ "$ready_prs" =~ ^[0-9]+$ ]] || ready_prs=0
+	[[ "$failing_prs" =~ ^[0-9]+$ ]] || failing_prs=0
+
+	# Load previous cycle metrics
+	local prev_total_prs prev_total_issues prev_ready_prs prev_failing_prs prev_recorded_at
+	eval "$(_load_queue_metrics_history)"
+
+	# Compute deltas and drain metrics
+	local pr_delta issue_delta ready_delta failing_delta
+	local backlog_drain_per_cycle backlog_growth_pressure drain_rate_per_hour
+	local elapsed_seconds now_epoch
+	eval "$(_compute_queue_deltas \
+		"$total_prs" "$total_issues" "$ready_prs" "$failing_prs" \
+		"$prev_total_prs" "$prev_total_issues" "$prev_ready_prs" "$prev_failing_prs" \
+		"$prev_recorded_at")"
+
+	# Determine queue mode and focus percentages
+	local queue_mode backlog_band pr_focus_pct new_issue_pct
+	eval "$(_compute_queue_mode \
+		"$total_prs" "$total_issues" "$ready_prs" "$failing_prs" "$pr_delta")"
+
+	# Get worker utilization
+	local active_workers max_workers utilization_pct
+	active_workers=$(count_active_workers)
+	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
+	max_workers=$(get_max_workers_target)
+	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
+	if [[ "$max_workers" -lt 1 ]]; then
+		max_workers=1
+	fi
+	utilization_pct=$(((active_workers * 100) / max_workers))
+
+	# Write metrics file and emit state output
+	_emit_queue_governor_state \
+		"$total_prs" "$total_issues" "$ready_prs" "$failing_prs" \
+		"$now_epoch" \
+		"$pr_delta" "$issue_delta" "$ready_delta" "$failing_delta" \
+		"$backlog_drain_per_cycle" "$backlog_growth_pressure" "$drain_rate_per_hour" \
+		"$backlog_band" "$queue_mode" "$pr_focus_pct" "$new_issue_pct" \
+		"$active_workers" "$max_workers" "$utilization_pct"
 
 	echo "[pulse-wrapper] Adaptive queue governor: mode=${queue_mode} prs=${total_prs} issues=${total_issues} pr_focus=${pr_focus_pct}%" >>"$LOGFILE"
 	return 0
