@@ -34,6 +34,14 @@
     "issue": 16258,
     "status": "simplified"
   },
+  ".agents/marketing-sales/direct-response-copy-checklists-headline-testing.md": {
+    "at": "2026-04-03T12:24:52Z",
+    "hash": "be06c785ca2ac3c4f6a7c5fd58fd79299e95507b56db7c3ed5f515602f4e556f",
+    "issue": "GH#16380",
+    "passes": 1,
+    "pr": "pending",
+    "status": "simplified"
+  },
   ".agents/marketing-sales/direct-response-copy-frameworks-email-sequences.md": {
     "at": "2026-04-03T09:30:00Z",
     "hash": "bbb3ea1df32f53c905d3c8b174a0bd212fc5dd55a168169d06d81542127e8bb3",

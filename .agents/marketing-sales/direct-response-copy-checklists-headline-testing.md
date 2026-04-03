@@ -25,23 +25,15 @@
 | **Unique:** Different from competitors? | ___ |
 | **Total** | ___ / 16 |
 
-## Evaluation Criteria
-
-- **Clarity:** Understood in 5 seconds; target customer sees themselves in it
-- **Benefit:** Clear "what's in it for me"; concrete numbers/results — avoid "better," "easier," "more"
-- **Believability:** Plausible to a skeptic; creates curiosity without hiding the offer
+**Evaluation:** Clarity (understood in 5 sec, customer sees themselves) · Benefit (concrete numbers/results, not "better/easier/more") · Believability (plausible to a skeptic, curiosity without hiding the offer)
 
 ## Red Flags
 
 - [ ] Vague ("Improve your business") or clever (wordplay hurting clarity)
 - [ ] Long (>15 words) or hypey ("Revolutionary," "Game-changing," "Breakthrough")
 - [ ] Features-only (no payoff), me-focused ("We're excited to..."), or clickbait (promise > delivery)
-
-## Quick Tests
-
-- **5-second test:** What is this offering and who is it for?
-- **Would I click?** Imagine beside 10 competing posts.
-- **So what?** Why should I care?
+- [ ] 5-second test fails: unclear what's offered or who it's for
+- [ ] "So what?" unanswered: no reason to care
 
 ## A/B Testing
 
