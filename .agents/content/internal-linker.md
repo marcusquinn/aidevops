@@ -21,29 +21,21 @@ tools:
 
 ## Link Types
 
-| Type | Purpose | Example |
-|------|---------|---------|
-| **Contextual** | Natural in-content links | "Learn more about [keyword research](/seo/keyword-research)" |
-| **Navigational** | Guide user journey | "Next step: [setting up analytics](/guides/analytics)" |
-| **Hub/Spoke** | Connect pillar to cluster | Pillar page links to all subtopic pages |
-| **Related** | Cross-reference similar content | "See also: [related topic](/blog/related)" |
+| Type | Purpose |
+|------|---------|
+| **Contextual** | Natural in-content links |
+| **Navigational** | Guide user journey |
+| **Hub/Spoke** | Connect pillar to cluster |
+| **Related** | Cross-reference similar content |
 
 ## Rules
 
 - 3-5 internal links per 2000-word article
-- Descriptive anchor text — never "click here" or "read more"
-- Use target keyword of destination page as anchor
+- Descriptive anchor text using destination page's target keyword — never "click here", "read more", or "this article"
 - Vary anchor text — no identical anchors for same destination
 - Place important links in first half of content
 - Deep links — specific pages, not homepage/categories
 - Bidirectional — if A links to B, consider B linking back to A
-
-| Do | Don't |
-|----|-------|
-| "comprehensive keyword research guide" | "click here" |
-| "podcast hosting comparison" | "this article" |
-| "step-by-step SEO audit process" | "read more" |
-| Natural sentence integration | Forced keyword stuffing |
 
 ## Workflow
 
