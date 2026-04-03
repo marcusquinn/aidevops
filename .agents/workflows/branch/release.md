@@ -10,8 +10,6 @@ tools:
 
 # Release Branch
 
-<!-- AI-CONTEXT-START -->
-
 | Aspect | Value |
 |--------|-------|
 | **Prefix** | `release/` |
@@ -25,16 +23,14 @@ git checkout main && git pull origin main
 git checkout -b release/1.2.0
 ```
 
-<!-- AI-CONTEXT-END -->
-
 ## When to Create
 
-| Scenario | Branch | Bump | vs Hotfix |
-|----------|--------|------|-----------|
-| Bug fixes accumulated | `release/X.Y.Z` | Patch | Planned; full test cycle |
-| New features ready | `release/X.Y.0` | Minor | Planned; full test cycle |
-| Breaking changes | `release/X+1.0.0` | Major | Planned; full test cycle |
-| Urgent critical fix | Use `hotfix/` | — | Urgent; minimal testing |
+| Scenario | Bump | Note |
+|----------|------|------|
+| Bug fixes accumulated | Patch | Planned; full test cycle |
+| New features ready | Minor | Planned; full test cycle |
+| Breaking changes | Major | Planned; full test cycle |
+| Urgent critical fix | — | Use `hotfix/` instead |
 
 ## Release Lifecycle
 
@@ -46,7 +42,7 @@ version-manager.sh bump {patch|minor|major}
 # 2. Run final checks
 linters-local.sh
 
-# 3. PR to main, merge, then tag and publish
+# 3. PR to main, merge, tag and publish
 git checkout main && git pull
 git tag -a v{VERSION} -m "Release v{VERSION}"
 git push origin v{VERSION}
