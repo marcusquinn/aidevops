@@ -15,8 +15,6 @@ tools:
 
 # Query Fan-Out Research
 
-## Quick Reference
-
 - **Purpose**: expose hidden sub-query themes behind one user intent
 - **Inputs**: seed intent, market context, existing page set
 - **Outputs**: fan-out map, priority tiers, coverage matrix, remediation backlog
@@ -24,26 +22,15 @@ tools:
 
 ## Workflow
 
-### 1) Build theme branches
+**1) Build theme branches** — one core intent → 3-7 branches (selection criteria, trust, risk, alternatives, constraints). Each branch is a distinct retrieval objective.
 
-- One core user intent → 3-7 distinct branches (selection criteria, trust, risk, alternatives, constraints)
-- Each branch is its own retrieval objective
+**2) Generate sub-queries** — write sub-queries per branch with a purpose tag; assign priority (high/medium/low); include modifiers where relevant (location, budget, urgency, compliance, integration).
 
-### 2) Generate sub-queries
-
-- Write sub-queries per branch with a purpose tag
-- Assign priority: high / medium / low
-- Include modifiers where relevant: location, budget, urgency, compliance, integration
-
-### 3) Classify retrieval stage and scope
-
-Frontier models generate 10+ sub-queries per prompt, including `site:` lookups. Treat fan-out as 3 stages:
+**3) Classify retrieval stage and scope** — frontier models generate 10+ sub-queries per prompt, including `site:` lookups. Treat fan-out as 3 stages:
 
 1. **Broad discovery**: open-web category/comparison queries (e.g. `best ATS for SMB [year]`)
 2. **Domain deep-dive**: `site:brand.com` queries (e.g. `site:brand.com pricing`)
 3. **Third-party validation**: `site:g2.com`, `site:capterra.com`, `site:trustradius.com` — independent corroboration
-
-Tag each branch by scope:
 
 | Scope | Meaning |
 |-------|---------|
@@ -53,20 +40,9 @@ Tag each branch by scope:
 
 Predict stages before content work: product-detail branches → stage 2; trust/risk branches → stage 3.
 
-### 4) Map coverage
+**4) Map coverage** — link each sub-query to the best existing page or proof source; mark coverage (complete/partial/missing); flag overloaded pages; branch is incomplete if your site covers it but review-platform evidence does not.
 
-- Link each sub-query to the best existing page or proof source
-- Mark coverage: complete / partial / missing
-- Flag overloaded pages answering unrelated branches
-- Branch is incomplete if your site covers it but review-platform evidence does not
-
-### 5) Remediate and validate
-
-- Add concise sections for partial high-priority branches
-- Create focused pages only for genuinely missing high-priority branches
-- Add internal links mirroring fan-out relationships
-- Re-run fan-out prompts and stage-specific retrieval checks
-- Record match quality, citation mix changes, and unresolved branches for the next sprint
+**5) Remediate and validate** — add concise sections for partial high-priority branches; create focused pages only for genuinely missing high-priority branches; add internal links mirroring fan-out relationships; re-run fan-out prompts and stage-specific retrieval checks; record match quality, citation mix changes, and unresolved branches for the next sprint.
 
 ## Coverage Rules
 
