@@ -4,15 +4,11 @@ agent: Build+
 mode: subagent
 ---
 
-Dispatch a prompt to multiple AI models in parallel, collect and diff their responses, and optionally score them via a judge model.
-
-Target: $ARGUMENTS
-
 ## Instructions
 
 1. Parse `$ARGUMENTS` — extract `--prompt`, `--models`, `--score`, `--judge`, `--timeout`.
 
-2. Run the cross-review:
+2. Run:
 
    ```bash
    ~/.aidevops/agents/scripts/compare-models-helper.sh cross-review \
@@ -21,9 +17,9 @@ Target: $ARGUMENTS
      [--score] [--judge sonnet]
    ```
 
-3. Present results: each model's response summary, diff (2-model comparisons), judge scores and winner if `--score` used, note any failures.
+3. Present: each model's response summary, diff (2-model comparisons), judge scores and winner if `--score` used, note failures.
 
-4. If `--score` used, scores are recorded in the model-comparisons SQLite DB and fed into the pattern tracker (`/route`, `/patterns`).
+4. If `--score`: scores recorded in model-comparisons SQLite DB, fed into pattern tracker (`/route`, `/patterns`).
 
 ## Options
 
@@ -40,15 +36,15 @@ Target: $ARGUMENTS
 
 `haiku`, `flash`, `sonnet`, `pro`, `opus` — or full model IDs like `gemini-2.5-pro`, `gpt-4.1`
 
-## Scoring Criteria (judge model, 1-10 scale)
+## Scoring Criteria (judge model, 1-10)
 
 | Criterion | Description |
 |-----------|-------------|
-| correctness | Factual accuracy and technical correctness |
-| completeness | Coverage of all requirements and edge cases |
-| quality | Code quality, best practices, maintainability |
-| clarity | Clear explanation, good formatting, readability |
-| adherence | Following the original prompt instructions precisely |
+| correctness | Factual accuracy |
+| completeness | Coverage of requirements and edge cases |
+| quality | Code quality, best practices |
+| clarity | Formatting, readability |
+| adherence | Follows prompt instructions |
 
 ## Examples
 
