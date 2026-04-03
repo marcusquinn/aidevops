@@ -1250,6 +1250,11 @@ _invoke_opencode() {
 	# a new token to the shared file, invalidating the interactive session's
 	# in-flight request and crashing it.
 	#
+	# IMPORTANT: XDG_DATA_HOME redirection moves the ENTIRE opencode data dir,
+	# including the session database. We set OPENCODE_DB to point back to the
+	# shared DB so worker sessions are visible to stats/session-time queries
+	# while auth remains isolated.
+	#
 	# The isolated dir is per-PID and cleaned up after the worker exits.
 	local isolated_data_dir=""
 	if [[ "${AIDEVOPS_HEADLESS_AUTH_ISOLATION:-1}" == "1" ]]; then
@@ -1260,6 +1265,11 @@ _invoke_opencode() {
 			cp "$OPENCODE_AUTH_FILE" "${isolated_data_dir}/opencode/auth.json" 2>/dev/null || true
 			chmod 600 "${isolated_data_dir}/opencode/auth.json" 2>/dev/null || true
 		fi
+		# Preserve the shared session DB path before redirecting XDG_DATA_HOME.
+		# OPENCODE_DB tells opencode to use the shared DB for session/message
+		# persistence even when XDG_DATA_HOME points to an isolated temp dir.
+		local real_data_home="${XDG_DATA_HOME:-${HOME}/.local/share}"
+		export OPENCODE_DB="${real_data_home}/opencode/opencode.db"
 		export XDG_DATA_HOME="$isolated_data_dir"
 	fi
 
