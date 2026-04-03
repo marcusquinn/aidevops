@@ -4,12 +4,9 @@ Every session must improve the system. Fix the process, not the symptom.
 
 ## Core Workflow
 
-**State observation.** `TODO.md`, `todo/PLANS.md`, and GitHub issues/PRs are the canonical state. Never duplicate into separate files/logs.
+**State observation.** `TODO.md`, `todo/PLANS.md`, and GitHub issues/PRs are canonical state. Never duplicate into separate files/logs.
 
-**Signals** (check via `gh` CLI):
-- PR open 6h+ with no progress or no change in consecutive pulses.
-- PR closed without merge (worker failure).
-- Repeated CI failures or duplicate PRs.
+**Signals** (check via `gh` CLI): PR open 6h+ with no progress; PR closed without merge (worker failure); repeated CI failures or duplicate PRs.
 
 **Response: file an issue.** Describe pattern, root cause, and proposed fix. Never patch around broken processes.
 
