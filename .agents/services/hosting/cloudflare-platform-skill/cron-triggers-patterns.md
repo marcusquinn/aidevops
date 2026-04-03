@@ -1,7 +1,7 @@
 # Cron Triggers Patterns
 
 ## Scheduled API Sync
-Refresh external data on a schedule and cache the result for reads between runs.
+Fetch external data on a schedule and cache in KV for reads between runs.
 
 ```typescript
 export default {
@@ -14,7 +14,7 @@ export default {
 ```
 
 ## Database Cleanup
-Delete expired rows during off-peak windows, then defer maintenance work with `ctx.waitUntil()`.
+Delete expired rows during off-peak windows; defer VACUUM with `ctx.waitUntil()`.
 
 ```typescript
 export default {
@@ -27,7 +27,7 @@ export default {
 ```
 
 ## Report Generation
-Build periodic summaries, store them in R2, and notify downstream systems after upload.
+Build periodic summaries, store in R2, and notify downstream systems after upload.
 
 ```typescript
 export default {
@@ -82,7 +82,7 @@ export default {
 ```
 
 ## Operational Monitoring
-Capture start, success, and failure events with enough context to debug slow or failing runs.
+Log start, success, and failure events with timing context to debug slow or failing runs.
 
 ```typescript
 export default {
