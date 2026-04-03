@@ -3,8 +3,8 @@
 ## Critical: Bind Parameters, Never Interpolate
 
 ```typescript
-// ❌ NEVER: String interpolation - SQL injection vulnerability
-await env.DB.prepare(`SELECT * FROM users WHERE id = ${userId}`).all(); // DANGEROUS!
+// ❌ NEVER: SQL injection via string interpolation
+await env.DB.prepare(`SELECT * FROM users WHERE id = ${userId}`).all();
 
 // ✅ ALWAYS: Prepared statements with bind()
 await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(userId).all();
@@ -12,54 +12,49 @@ await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(userId).all();
 
 Interpolated SQL lets attackers pass `1 OR 1=1` to dump a table or `1; DROP TABLE users;--` to delete data.
 
-## Query Performance Pitfalls
+## Query Performance
 
-### N+1 Queries
+**N+1 queries** — use JOIN or `batch()` instead of per-row fetches:
 
 ```typescript
-// ❌ BAD: N+1 queries (multiple round trips)
+// ❌ N+1: one query per post
 for (const post of posts.results) {
   const author = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(post.user_id).first();
 }
 
-// ✅ GOOD: Single JOIN or batch()
-const postsWithAuthors = await env.DB.prepare(`
-  SELECT posts.*, users.name FROM posts JOIN users ON posts.user_id = users.id
-`).all();
+// ✅ Single JOIN
+const postsWithAuthors = await env.DB.prepare(
+  'SELECT posts.*, users.name FROM posts JOIN users ON posts.user_id = users.id'
+).all();
 ```
 
-### Missing Indexes
+**Missing indexes** — check with `EXPLAIN QUERY PLAN`, add if not using index:
 
 ```sql
-EXPLAIN QUERY PLAN SELECT * FROM users WHERE email = ?;  -- Check for "USING INDEX"
-CREATE INDEX idx_users_email ON users(email);  -- Add if missing
+EXPLAIN QUERY PLAN SELECT * FROM users WHERE email = ?;  -- look for "USING INDEX"
+CREATE INDEX idx_users_email ON users(email);
 ```
 
-Monitor query performance via `meta.duration`, add indexes on frequently queried columns, and split long transactions into smaller queries.
+Monitor via `meta.duration`. Split long transactions into smaller queries.
 
 ## Common Errors
 
 - **`no such table`** — run migrations first.
 - **`UNIQUE constraint failed`** — catch and return `409`.
 - **Query timeout (`30s`)** — add indexes or split the query.
+- **Local state** — local D1 uses `.wrangler/state/v3/d1/<database-id>.sqlite`; test migrations locally before applying remotely.
 
 ## Limits That Change Design
 
 | Limit | Value | Impact |
 |-------|-------|--------|
-| Database size | 10 GB | Design for multiple DBs per tenant |
+| Database size | 10 GB | Horizontal partitioning: multiple small DBs per tenant |
 | Row size | 1 MB | Store large files in R2, not D1 |
 | Query timeout | 30s | Break long queries into smaller chunks |
 | Batch size | 10,000 statements | Split large batches |
 
-Prefer horizontal partitioning (multiple small DBs per tenant) over a single large database.
-
-## Local vs Remote
-
-Local D1 uses `.wrangler/state/v3/d1/<database-id>.sqlite`. Test migrations locally before applying them remotely.
-
 ## Data Type Gotchas
 
-- **Boolean:** SQLite uses `INTEGER` (`0`/`1`), not a native boolean. Bind `1` or `0`, not `true`/`false`.
-- **Date/time:** Use `TEXT` (ISO 8601) or `INTEGER` (Unix timestamp), not native `DATE`/`TIME`.
+- **Boolean:** SQLite uses `INTEGER` (`0`/`1`). Bind `1` or `0`, not `true`/`false`.
+- **Date/time:** Use `TEXT` (ISO 8601) or `INTEGER` (Unix timestamp) — no native `DATE`/`TIME`.
 
