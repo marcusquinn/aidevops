@@ -24,7 +24,7 @@ export default {
 };
 ```
 
-**Test locally:** `npx wrangler dev` then `curl "http://localhost:8787/__scheduled?cron=*/5+*+*+*+*"`
+**Test locally:** `npx wrangler dev` — see [gotchas.md](./cron-triggers-gotchas.md) "Local Testing" for curl commands and alternative paths.
 
 ## Cron Syntax
 
