@@ -95,10 +95,14 @@ kill PID  # Then comment on issue: model, branch, reason, diagnosis, next action
 ## Scheduling & Config
 
 **launchd (macOS):** Labels `sh.aidevops.<name>` — plists at `~/Library/LaunchAgents/sh.aidevops.<name>.plist`
-- Start: `launchctl kickstart gui/$(id -u)/sh.aidevops.<name>`
-- Full restart (env var changes): `launchctl bootout gui/$(id -u)/sh.aidevops.<name> && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/sh.aidevops.<name>.plist`
 
-**Env vars:** `launchctl setenv` persists across launchd, overrides `${VAR:-default}`. `launchctl unsetenv` requires `bootout/bootstrap` (not just `kickstart`). Prefer `config.jsonc` — env vars are invisible and hard to audit.
+```bash
+launchctl kickstart gui/$(id -u)/sh.aidevops.<name>                          # Start
+launchctl bootout gui/$(id -u)/sh.aidevops.<name> && \
+  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/sh.aidevops.<name>.plist  # Full restart (env var changes)
+```
+
+**Env vars:** `launchctl setenv` persists across launchd; `launchctl unsetenv` requires `bootout/bootstrap` (not just `kickstart`). Prefer `config.jsonc` — env vars are invisible and hard to audit.
 
 **Config:** `~/.config/aidevops/config.jsonc` authoritative via `config_get()` / `_get_merged_config()`. Defaults: `~/.aidevops/agents/configs/aidevops.defaults.jsonc`. `settings.json` is legacy/UI-facing — NOT read by `config_get()`. Key: `orchestration.max_workers_cap` (config.jsonc), NOT `max_concurrent_workers` (settings.json).
 
@@ -107,8 +111,8 @@ kill PID  # Then comment on issue: model, branch, reason, diagnosis, next action
 **Round-robin:** Helper alternates providers in `AIDEVOPS_HEADLESS_MODELS`. Pulse requires Anthropic (sonnet) — OpenAI models exit immediately without activity, wasting every other cycle. Pin pulse with `PULSE_MODEL`; workers can use any provider.
 
 ```bash
-export PULSE_MODEL="anthropic/claude-sonnet-4-6"           # Pulse pinned to Anthropic
-export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.3-codex"  # Workers rotated
+export PULSE_MODEL="anthropic/claude-sonnet-4-6"
+export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.3-codex"
 ```
 
 **Backoff:** `headless-runtime-helper.sh backoff status` / `backoff clear PROVIDER`. Exit code 75 = all providers backed off.
