@@ -44,40 +44,19 @@ Security boundaries:
 All Chromium-family browsers use the same flags. Use a dedicated profile when possible.
 
 ```bash
-# Chrome (macOS)
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --remote-debugging-port=9222 \
-  --user-data-dir=/tmp/chromium-debug-use-profile
-
-# Brave
-"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" \
-  --remote-debugging-port=9222 \
-  --user-data-dir=/tmp/chromium-debug-use-profile
-
-# Edge
-"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" \
-  --remote-debugging-port=9222 \
-  --user-data-dir=/tmp/chromium-debug-use-profile
-
-# Vivaldi
-"/Applications/Vivaldi.app/Contents/MacOS/Vivaldi" \
-  --remote-debugging-port=9222 \
-  --user-data-dir=/tmp/chromium-debug-use-profile
-
-# Chromium (cleanest baseline, no vendor features)
-chromium \
-  --remote-debugging-port=9222 \
-  --user-data-dir=/tmp/chromium-debug-use-profile
-
-# Ungoogled Chromium (build-dependent — verify endpoint before use)
-"/Applications/Ungoogled Chromium.app/Contents/MacOS/Ungoogled Chromium" \
+# Replace <browser-path> with the binary for your browser:
+#   Chrome (macOS):    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+#   Brave:             "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
+#   Edge:              "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
+#   Vivaldi:           "/Applications/Vivaldi.app/Contents/MacOS/Vivaldi"
+#   Chromium:          chromium
+#   Ungoogled Chromium:"/Applications/Ungoogled Chromium.app/Contents/MacOS/Ungoogled Chromium"
+#   Linux:             which google-chrome / which chromium / /opt/...
+#   Windows:           where chrome.exe
+<browser-path> \
   --remote-debugging-port=9222 \
   --user-data-dir=/tmp/chromium-debug-use-profile
 ```
-
-Linux: check `which google-chrome`, `which chromium`, or `/opt/...`. Windows: `where chrome.exe`.
-
-Ungoogled Chromium: if `/json/version` is not exposed, treat that build as unsupported and fall back to Chrome/Brave/Edge/Vivaldi/Chromium, `tools/browser/playwriter.md`, or `tools/browser/chrome-devtools.md` in headless mode.
 
 Verify the endpoint:
 
@@ -86,6 +65,8 @@ curl http://127.0.0.1:9222/json/version
 ```
 
 Use loopback only. Never expose the debug port to untrusted networks.
+
+**Ungoogled Chromium**: if `/json/version` is not exposed, treat that build as unsupported and fall back to Chrome/Brave/Edge/Vivaldi/Chromium, `tools/browser/playwriter.md`, or `tools/browser/chrome-devtools.md` in headless mode.
 
 ## Use the Local Helper
 
@@ -199,15 +180,9 @@ For Chrome, Brave, Edge, and Vivaldi, enablement requires relaunching with the d
 
 ### Electron Apps
 
-Electron embeds Chromium and can expose a CDP endpoint, but there is no universal contract.
+Electron embeds Chromium and can expose a CDP endpoint, but there is no universal contract. CDP attachment may work when the app is launched with `--remote-debugging-port=N` and does not strip or conflict with that flag. Support must be app-specific: each app controls whether the debug port is exposed; apps with auto-update or code signing may reject modified launch arguments; some apps (VS Code, Figma desktop, Slack) accept the flag in dev builds but block it in production.
 
-CDP attachment may work when: the app is launched with `--remote-debugging-port=N`; the app does not call `app.commandLine.removeSwitch('remote-debugging-port')`; the app does not use `BrowserWindow.webContents.debugger` in a conflicting way.
-
-Electron support must be app-specific because: each app controls whether the debug port is exposed (no OS-level mechanism to force it); apps with auto-update or code signing may reject modified launch arguments; the CDP surface reflects `BrowserWindow` contents, not a general browser tab list; some apps (VS Code, Figma desktop, Slack) accept `--remote-debugging-port` in dev builds but block it in production packaging.
-
-**Decision rule:** Before implementing, verify the target app exposes a working `/json/version` endpoint when launched with the debug flag. If not, this workflow does not apply.
-
-**Potential follow-up task:** Define a per-app Electron launch wrapper that sets `--remote-debugging-port` and verifies the endpoint before handing off to the helper. Scope to one specific app with a confirmed working debug path.
+**Decision rule:** Verify the target app exposes a working `/json/version` endpoint when launched with the debug flag. If not, this workflow does not apply.
 
 ### macOS App and Window Automation
 
@@ -216,19 +191,15 @@ Electron support must be app-specific because: each app controls whether the deb
 | AppleScript / `osascript` | Activate apps, bring windows to front, send menu commands, switch tabs in Safari/Chrome | Read DOM state, execute JS, intercept network requests |
 | Accessibility API (`AXUIElement`) | Enumerate windows and UI elements for apps that expose the accessibility tree | Access web content inside a `WKWebView` or Electron `BrowserWindow` |
 
-macOS automation helps aidevops for: focusing the correct app/window before CDP attach; discovering which browser is frontmost; switching tabs in browsers without CDP (e.g., Safari without Web Inspector); triggering app-level actions via AppleScript when no debug port is available.
-
-macOS automation does not replace CDP: DOM read/modify requires CDP or a browser extension; JS execution requires CDP `Runtime.evaluate`; network interception requires CDP `Network` domain or a proxy.
-
 **Decision rule:** Use macOS automation only as a discovery or focus layer before handing off to CDP or Playwright. Do not attempt to replace CDP for any task requiring DOM or JS access.
 
 ### Explicit Out-of-Scope for v1
 
-- Attaching to Safari via CDP (uses WebKit Inspector Protocol, not CDP)
-- Attaching to Firefox (uses its own remote debugging protocol)
-- Attaching to Electron apps without a confirmed working debug port
-- Using macOS Accessibility API to read web page content
-- Automating iOS simulators or real devices (use Maestro or `tools/mobile/`)
+- Safari via CDP (uses WebKit Inspector Protocol, not CDP)
+- Firefox (uses its own remote debugging protocol)
+- Electron apps without a confirmed working debug port
+- macOS Accessibility API for reading web page content
+- iOS simulators or real devices (use Maestro or `tools/mobile/`)
 
 ## Related
 
