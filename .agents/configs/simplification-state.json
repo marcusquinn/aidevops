@@ -13,8 +13,8 @@
     "status": "simplified"
   },
   ".agents/tools/voice/voice-ai-models.md": {
-    "action": "converted GPU Planning prose to table for scannability",
-    "hash": "c98f16d2e036ac71f800a984d60d74534f6799cabb2ea3875238e1e8f8cf0d8d",
+    "action": "converted GPU Planning prose to table; clarified VRAM/RAM column header",
+    "hash": "80802e36e4fae1517223fb0553a50f7aa9e01acd908f7d50b6d53f60e3a1dda2",
     "issue": "GH#15102",
     "lines_after": 132,
     "lines_before": 126,
