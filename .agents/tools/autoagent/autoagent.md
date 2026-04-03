@@ -27,7 +27,7 @@ Arguments: `--program <path>` (required)
 - **Results file**: `todo/research/{name}-results.tsv`
 - **Worktree**: `experiment/{name}` (created at session start)
 - **State**: git HEAD of experiment branch = current best; results.tsv = full history
-- **Resume**: re-run with same `--program` — reads results.tsv to reconstruct state
+- **Resume**: re-run with same `--program` — reads results.tsv to reconstruct state; uncommitted changes discarded via `git reset --hard HEAD`
 - **Memory**: `aidevops-memory` — cross-session finding persistence
 - **Metric command**: `autoagent-metric-helper.sh` — composite score for framework quality
 - **Sub-docs**: `autoagent/signal-mining.md` · `autoagent/hypothesis-types.md` · `autoagent/safety.md` · `autoagent/evaluation.md`
@@ -91,17 +91,15 @@ else:
 
 **1.4 Recall cross-session memory:** `aidevops-memory recall "autoagent $PROGRAM_NAME" --limit 10` → store as MEMORY_CONTEXT.
 
-**1.5 Mine signals from enabled sources:** Load `autoagent/signal-mining.md`. Run signal extraction for each source in `SIGNAL_SOURCES`. Store as `SIGNAL_FINDINGS` — list of `{file, issue, source}` objects.
+**1.5 Mine signals:** Load `autoagent/signal-mining.md`. Run signal extraction for each source in `SIGNAL_SOURCES`. Store as `SIGNAL_FINDINGS` — list of `{file, issue, source}` objects.
 
-**1.6 Load safety constraints:** Load `autoagent/safety.md`. Apply `SAFETY_LEVEL` to determine which files are modifiable and which require elevated approval.
+**1.6 Load safety constraints:** Load `autoagent/safety.md`. Apply `SAFETY_LEVEL` to determine modifiable files and elevated-approval requirements.
 
 **1.7 Measure baseline (first run only):** If `BASELINE == null`: run all constraints (fail → exit); run METRIC_CMD → `BASELINE = BEST_METRIC`; update program file `baseline: {value}`; append baseline row to results.tsv.
 
 ## Step 2: Experiment Loop
 
-See `autoagent/hypothesis-types.md` for the 6 hypothesis types, progression strategy, and overfitting test.
-
-See `autoagent/evaluation.md` for multi-trial evaluation pseudocode, trajectory recording, and failure analysis.
+See `autoagent/hypothesis-types.md` (6 hypothesis types, progression, overfitting test) and `autoagent/evaluation.md` (multi-trial pseudocode, trajectory recording, failure analysis).
 
 Loop exits when any budget condition is met (timeout / max_iterations / goal_reached).
 
@@ -221,12 +219,6 @@ aidevops-memory store \
   "autoagent {PROGRAM_NAME} PR created: {pr_url}. Best: {METRIC_NAME}={BEST_METRIC}. Key finding: {top_hypothesis}" \
   --confidence high
 ```
-
-## Crash Recovery
-
-Worktree, results.tsv, and branch HEAD persist across crashes. On resume, uncommitted changes are discarded via `git reset --hard HEAD`.
-
-Resume: re-run `/autoagent --program {program_path}`. The subagent detects the existing worktree and results.tsv and continues from where it left off.
 
 ## Related
 
