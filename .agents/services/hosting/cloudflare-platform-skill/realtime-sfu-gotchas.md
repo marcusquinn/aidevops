@@ -2,7 +2,7 @@
 
 ## Security
 
-❌ Never expose App Secret client-side (use backend env vars, Wrangler secrets)
+Never expose App Secret client-side (use backend env vars, Wrangler secrets)
 Track IDs = capabilities, authz required:
 
 ```ts
