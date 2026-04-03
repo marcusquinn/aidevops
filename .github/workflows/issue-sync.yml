@@ -35,7 +35,7 @@ jobs:
     timeout-minutes: 10
     concurrency:
       group: issue-sync-push-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: false  # GH#15234 Fix 3: false prevents orphaned issues from cancelled runs
     permissions:
       contents: write
       issues: write

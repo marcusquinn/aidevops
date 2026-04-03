@@ -118,7 +118,7 @@ gh_create_label() {
 }
 
 gh_find_issue_by_title() {
-	local repo="$1" prefix="$2" state="${3:-all}" limit="${4:-50}"
+	local repo="$1" prefix="$2" state="${3:-all}" limit="${4:-500}"
 	gh issue list --repo "$repo" --state "$state" --limit "$limit" \
 		--json number,title --jq "[.[] | select(.title | startswith(\"${prefix}\"))][0].number" 2>/dev/null || echo ""
 }
@@ -313,7 +313,7 @@ _push_create_issue() {
 
 	# Race-condition guard: re-check immediately before creating
 	local recheck
-	recheck=$(gh_find_issue_by_title "$repo" "${task_id}:" "all" 50)
+	recheck=$(gh_find_issue_by_title "$repo" "${task_id}:" "all" 500)
 	if [[ -n "$recheck" && "$recheck" != "null" ]]; then
 		add_gh_ref_to_todo "$task_id" "$recheck" "$todo_file"
 		return 1
@@ -321,12 +321,33 @@ _push_create_issue() {
 
 	local -a args=("issue" "create" "--repo" "$repo" "--title" "$title" "--body" "$body" "--label" "$all_labels")
 	[[ -n "$assignee" ]] && args+=("--assignee" "$assignee")
-	local url
-	url=$(gh "${args[@]}" 2>/dev/null || echo "")
-	[[ -z "$url" ]] && {
-		print_error "Failed to create issue for $task_id"
+
+	# GH#15234 Fix 1: Capture stderr for diagnostics; gh issue create may return empty
+	# stdout (e.g. when label application fails after issue creation) while still
+	# creating the issue server-side. Treat empty URL or non-zero exit as a soft
+	# failure and attempt a recovery lookup before declaring an error.
+	local url gh_exit stderr_content stderr_file
+	stderr_file=$(mktemp)
+	url=$(gh "${args[@]}" 2>"$stderr_file") || true
+	gh_exit=$?
+	stderr_content=$(cat "$stderr_file" 2>/dev/null || true)
+	rm -f "$stderr_file"
+
+	if [[ $gh_exit -ne 0 || -z "$url" || ! "$url" =~ ^https:// ]]; then
+		# Issue may have been created despite the error — check before failing
+		sleep 1
+		local recovery
+		recovery=$(gh_find_issue_by_title "$repo" "${task_id}:" "all" 500)
+		if [[ -n "$recovery" && "$recovery" != "null" ]]; then
+			print_warning "gh create exited $gh_exit but issue found via recovery: #$recovery"
+			[[ -n "$stderr_content" ]] && log_verbose "gh stderr: ${stderr_content:0:200}"
+			_PUSH_CREATED_NUM="$recovery"
+			return 0
+		fi
+		print_error "Failed to create issue for $task_id (exit $gh_exit)${stderr_content:+: ${stderr_content:0:200}}"
 		return 2
-	}
+	fi
+
 	local num
 	num=$(echo "$url" | grep -oE '[0-9]+$' || echo "")
 	[[ -n "$num" ]] && _PUSH_CREATED_NUM="$num"
@@ -344,7 +365,7 @@ _push_process_task() {
 
 	# Skip if issue already exists
 	local existing
-	existing=$(gh_find_issue_by_title "$repo" "${task_id}:" "all" 50)
+	existing=$(gh_find_issue_by_title "$repo" "${task_id}:" "all" 500)
 	if [[ -n "$existing" && "$existing" != "null" ]]; then
 		add_gh_ref_to_todo "$task_id" "$existing" "$todo_file"
 		echo "SKIPPED"
@@ -481,7 +502,7 @@ cmd_enrich() {
 		task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 || echo "")
 		local num
 		num=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
-		[[ -z "$num" ]] && num=$(gh_find_issue_by_title "$repo" "${task_id}:" "all" 50)
+		[[ -z "$num" ]] && num=$(gh_find_issue_by_title "$repo" "${task_id}:" "all" 500)
 		[[ -z "$num" || "$num" == "null" ]] && {
 			print_warning "$task_id: no issue found"
 			continue
@@ -550,9 +571,18 @@ cmd_pull() {
 					print_info "[DRY-RUN] Would add ref:GH#$num to $tid"
 					synced=$((synced + 1))
 				else
+					# GH#15234 Fix 4: check file modification to avoid misleading success
+					# messages when add_gh_ref_to_todo silently skips (ref already exists)
+					local before_hash after_hash
+					before_hash=$(md5sum "$todo_file" 2>/dev/null | cut -d' ' -f1 || echo "")
 					add_gh_ref_to_todo "$tid" "$num" "$todo_file"
-					print_success "Added ref:GH#$num to $tid"
-					synced=$((synced + 1))
+					after_hash=$(md5sum "$todo_file" 2>/dev/null | cut -d' ' -f1 || echo "")
+					if [[ "$before_hash" != "$after_hash" ]]; then
+						print_success "Added ref:GH#$num to $tid"
+						synced=$((synced + 1))
+					else
+						log_verbose "ref:GH#$num already present for $tid — skipped"
+					fi
 				fi
 			fi
 
@@ -607,7 +637,7 @@ cmd_close() {
 		local num
 		num=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
 		if [[ -z "$num" ]]; then
-			num=$(gh_find_issue_by_title "$repo" "${target_task}:" "open" 50)
+			num=$(gh_find_issue_by_title "$repo" "${target_task}:" "open" 500)
 			[[ -n "$num" && "$num" != "null" && "$DRY_RUN" != "true" ]] && add_gh_ref_to_todo "$target_task" "$num" "$todo_file"
 		fi
 		[[ -z "$num" || "$num" == "null" ]] && {
@@ -729,7 +759,7 @@ cmd_reconcile() {
 
 		print_warning "MISMATCH: $tid ref:GH#$gh_ref -> '$it'"
 		local correct
-		correct=$(gh_find_issue_by_title "$repo" "${tid}:" "all" 50)
+		correct=$(gh_find_issue_by_title "$repo" "${tid}:" "all" 500)
 		if [[ -n "$correct" && "$correct" != "null" && "$correct" != "$gh_ref" ]]; then
 			if [[ "$DRY_RUN" == "true" ]]; then
 				print_info "[DRY-RUN] Fix $tid: #$gh_ref -> #$correct"
