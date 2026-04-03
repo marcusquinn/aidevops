@@ -29,8 +29,6 @@ tools:
 - Security and auth: `git/authentication.md`, `git/git-security.md`
 - Automation: `git/github-actions.md`, `git/opencode-github.md`, `git/opencode-gitlab.md`, `git/opencode-github-security.md`
 
-<!-- AI-CONTEXT-END -->
-
 ## Common Operations
 
 | Operation | GitHub (`gh`) | GitLab (`glab`) | Gitea (`tea`) |
@@ -46,26 +44,23 @@ tools:
 
 ## Authentication
 
-CLI auth stores tokens in the system keyring; prefer that over plaintext config. Export tokens only when a script requires them:
+Prefer system keyring over plaintext config. Export tokens only when scripts require them:
 
 ```bash
 export GITHUB_TOKEN=$(gh auth token)
 export GITLAB_TOKEN=$(glab auth token)
 ```
 
-Detailed token setup and safety rules: `git/authentication.md`.
+Token setup and safety rules: `git/authentication.md`.
 
 ## Multi-Platform Remotes
-
-Use named remotes when a repo mirrors across platforms:
 
 ```bash
 git remote add github git@github.com:user/repo.git
 git remote add gitlab git@gitlab.com:user/repo.git
-git push github main
-git push gitlab main
+git push github main && git push gitlab main
 
-# Combined remote (push to both)
+# Push to both with a combined remote
 git remote add all git@github.com:user/repo.git
 git remote set-url --add --push all git@github.com:user/repo.git
 git remote set-url --add --push all git@gitlab.com:user/repo.git
@@ -83,3 +78,5 @@ opencode github install
 - GitLab: add OpenCode to `.gitlab-ci.yml`, then `@opencode explain this issue` / `@opencode fix this`
 
 Full workflow and hardening: `git/opencode-github.md`, `git/opencode-gitlab.md`, `git/opencode-github-security.md`.
+
+<!-- AI-CONTEXT-END -->
