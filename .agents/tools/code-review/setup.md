@@ -3,13 +3,8 @@ description: Setup guide for code quality services
 mode: subagent
 tools:
   read: true
-  write: true
-  edit: true
-  bash: true
-  glob: true
   grep: true
   webfetch: true
-  task: true
 ---
 
 # Code Quality Services Setup Guide
@@ -19,8 +14,8 @@ tools:
 ## Quick Reference
 
 - Platforms: CodeRabbit (AI PR review), CodeFactor (grade/trends), Codacy (quality/security), SonarCloud (quality gate)
-- Setup time: ~5 minutes per platform, all via GitHub OAuth
-- Existing config files: `.codacy.yml`, `sonar-project.properties`
+- Setup time: ~5 min per platform via GitHub OAuth
+- Config files: `.codacy.yml`, `sonar-project.properties`
 - Targets: CodeFactor A+, Codacy A, SonarCloud passed gate, CodeRabbit useful PR feedback
 - Deep dives: `coderabbit.md`, `codacy.md`, `tools.md`, `.agents/scripts/sonarcloud-cli.sh`
 
@@ -47,6 +42,6 @@ tools:
 | Problem | Checks |
 |---|---|
 | SonarCloud not running | Verify `SONAR_TOKEN`, organization setup, and `sonar-project.properties`. |
-| CodeRabbit not reviewing | Ensure the repo is connected, app permissions are granted, and PR triggers are enabled. |
-| CodeFactor not updating | Check the repo connection, webhook/GitHub Checks status, and repo authorization. |
-| Codacy analysis issues | Check `.codacy.yml`, confirm import succeeded, and verify the file types are supported. |
+| CodeRabbit not reviewing | Ensure repo is connected, app permissions granted, and PR triggers enabled. |
+| CodeFactor not updating | Check repo connection, webhook/GitHub Checks status, and repo authorization. |
+| Codacy analysis issues | Check `.codacy.yml`, confirm import succeeded, and verify file types are supported. |
