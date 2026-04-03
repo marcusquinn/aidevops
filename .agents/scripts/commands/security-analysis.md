@@ -14,44 +14,15 @@ Target: $ARGUMENTS
 
 ## Process
 
-1. **Determine scope** from $ARGUMENTS:
-   - Empty or `diff` → Analyze uncommitted changes
-   - `staged` → Analyze staged changes only
-   - `branch` → Analyze all commits on current branch vs main
-   - `full` → Scan entire codebase
-   - Path (e.g., `src/`) → Scan specific directory
+1. **Determine scope** from $ARGUMENTS: empty/`diff` → uncommitted changes; `staged` → staged only; `branch` → current branch vs main; `full` → entire codebase; path → specific directory.
 
-2. **Run security analysis**:
+2. **Run analysis**: `./.agents/scripts/security-helper.sh analyze [$ARGUMENTS]`
 
-   ```bash
-   # Default: analyze git diff
-   ./.agents/scripts/security-helper.sh analyze
+3. **Review findings** by severity (critical > high > medium > low). For each: verify true positive, trace data flow source→sink, propose remediation with code fix.
 
-   # Full codebase scan
-   ./.agents/scripts/security-helper.sh analyze full
+4. **Generate report**: `./.agents/scripts/security-helper.sh report`
 
-   # Specific scope
-   ./.agents/scripts/security-helper.sh analyze $ARGUMENTS
-   ```
-
-3. **Review findings** by severity (critical > high > medium > low)
-
-4. **For each finding**:
-   - Verify it's a true positive (not false positive)
-   - Trace data flow from source to sink (reconnaissance → investigation)
-   - Propose remediation with code fix
-
-5. **Generate report**:
-
-   ```bash
-   ./.agents/scripts/security-helper.sh report
-   ```
-
-6. **Provide output**:
-   - Summary: total findings by severity
-   - Critical/High findings: detailed with file:line, CWE, and remediation
-   - Recommendations: prioritized action items
-   - Report location: path to generated reports
+5. **Output**: summary by severity; critical/high with file:line, CWE, remediation; prioritized recommendations; report path.
 
 ## Vulnerability Categories
 
