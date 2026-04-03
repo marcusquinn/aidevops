@@ -4,8 +4,6 @@ Email converts 2-5x vs social, ~$36 ROI per $1. Works for acquisition, nurturing
 
 **Templates**: [Email Sequence Templates](direct-response-copy-templates-email-sequences.md)
 
----
-
 ## High-Converting Email Anatomy
 
 ### Subject Line Formulas
@@ -43,8 +41,6 @@ But here's the thing... [Solution + brief explanation + social proof]
 [CTA]
 [P.S. - Urgency or bonus reminder]
 ```
-
----
 
 ## Core Sequences
 
@@ -103,8 +99,6 @@ But here's the thing... [Solution + brief explanation + social proof]
 | 5 | Day 9 | Show hidden value | Underutilized feature |
 | 6 | Day 12 | Create urgency | Loss aversion (what they'll lose) |
 | 7 | Day 14 | Final conversion | Discount code, guarantee |
-
----
 
 ## Best Practices
 
