@@ -20,11 +20,7 @@ Session runs up to 60 minutes. Each monitoring cycle is ~3K tokens. Dispatch →
 
 This session is unattended. Never ask for permission, confirmation, or input. Never stop after a single dispatch pass unless an exit condition is met. After each cycle, immediately continue.
 
-Exit only when:
-
-1. Elapsed runtime ≥ 55 minutes
-2. Circuit breaker or stop flag is active
-3. No dispatchable work remains AND all worker slots are full
+Exit only when: (1) elapsed runtime ≥ 55 minutes; (2) circuit breaker or stop flag is active; (3) no dispatchable work remains AND all worker slots are full.
 
 If `AVAILABLE > 0` and `WORKER_COUNT == 0`, MUST attempt dispatch before sleeping. If no worker launches, log `NO_DISPATCHABLE_EVIDENCE` with counts/reasons, sleep 60s, continue.
 
@@ -96,14 +92,12 @@ relabel_needs_info_replies
 
 ### 4.6. Dispatch FOSS contribution workers when idle capacity exists (t1702)
 
-Lowest priority — only when all managed-repo work is dispatched and slots remain.
+Lowest priority — only when all managed-repo work is dispatched and slots remain. Skip when: managed-repo slots occupied, daily budget exhausted, or no eligible FOSS repos.
 
 ```bash
 source ~/.aidevops/agents/scripts/pulse-wrapper.sh
 AVAILABLE=$(dispatch_foss_workers "$AVAILABLE")
 ```
-
-Skip when: managed-repo slots occupied, daily budget exhausted, or no eligible FOSS repos.
 
 ### 5. Record initial dispatch success
 
