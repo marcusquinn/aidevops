@@ -3820,11 +3820,12 @@ close_issues_with_merged_prs() {
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
 
-		# Get open issues with auto-dispatch or simplification-debt labels
-		# (these are the ones the fill floor would try to dispatch)
+		# Only check issues marked available for dispatch. Capped at 20
+		# per repo to limit API calls (dedup helper makes 1 call per issue).
 		local issues_json
 		issues_json=$(gh issue list --repo "$slug" --state open \
-			--json number,title --limit 100 2>/dev/null) || issues_json="[]"
+			--label "status:available" \
+			--json number,title --limit 20 2>/dev/null) || issues_json="[]"
 		[[ -n "$issues_json" && "$issues_json" != "null" ]] || continue
 
 		local issue_count
