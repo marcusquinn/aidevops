@@ -14,8 +14,6 @@ Run an autonomous experiment loop that modifies code, measures a metric, and kee
 
 Arguments: $ARGUMENTS
 
----
-
 ## Invocation Patterns
 
 | Pattern | Example | Behaviour |
@@ -25,8 +23,6 @@ Arguments: $ARGUMENTS
 | **Bare** | `/autoresearch` | Full interactive setup interview |
 | **Init** | `/autoresearch init "name"` | Scaffold new standalone research repo |
 
----
-
 ## Step 1: Resolve Invocation Pattern
 
 ```text
@@ -35,8 +31,6 @@ elif $ARGUMENTS contains "--program ":  → extract program path, skip to Step 3
 elif $ARGUMENTS is non-empty:           → One-Liner Mode
 else:                                   → Interactive Setup
 ```
-
----
 
 ## Step 2a: Interactive Setup (bare invocation)
 
@@ -51,6 +45,7 @@ Ask questions sequentially. Each question shows the inferred default as option 1
 | `pyproject.toml` / `setup.py` | "pytest suite speed" or "import time" |
 | `Cargo.toml` | "cargo build time" or "benchmark regression" |
 | `Makefile` / `CMakeLists.txt` | "build time" |
+| `go.mod` | "go test or go build time" |
 | No signal | "code quality improvement" |
 
 ### Q2 — Where does the work happen?
@@ -119,8 +114,6 @@ Target model:     [sonnet]  (only for agent optimization)
 
 Only ask about Target model if Q1 mentions "agent" or "instruction".
 
----
-
 ## Step 2b: One-Liner Mode
 
 Detect repo type and infer all fields using the tables in Step 2a. Show compact summary:
@@ -140,8 +133,6 @@ Research program: optimize-build-time
 
 If headless (no TTY): proceed without confirmation.
 
----
-
 ## Step 3: Write Research Program
 
 Write to `todo/research/{name}.md` using schema from `.agents/templates/research-program-template.md`:
@@ -154,8 +145,6 @@ Write to `todo/research/{name}.md` using schema from `.agents/templates/research
 - `## Budget`
 
 Confirm: "Research program written to `todo/research/{name}.md`."
-
----
 
 ## Step 4: Dispatch Decision
 
@@ -175,8 +164,6 @@ If headless: begin now (option 1).
 ```text
 - [ ] t{next_id} autoresearch: {name} — {one-line description} #auto-dispatch ~{budget.timeout/3600}h ref:GH#{issue}
 ```
-
----
 
 ## Init Mode (`/autoresearch init "name"`)
 
@@ -273,21 +260,6 @@ Next steps:
   2. Add starting code/data to baseline/
   3. Run: /autoresearch --program ~/Git/autoresearch-{name}/todo/research/program.md
 ```
-
----
-
-## Context Detection Reference
-
-| File present | Repo type | Default metric category |
-|-------------|-----------|------------------------|
-| `package.json` | Node.js | build time or test count |
-| `pyproject.toml` / `setup.py` | Python | pytest pass rate or execution time |
-| `Cargo.toml` | Rust | cargo bench or build time |
-| `Makefile` | C/C++/generic | make time |
-| `.agents/` directory | aidevops | agent pass rate + token count |
-| `go.mod` | Go | go test or go build time |
-
----
 
 ## Related
 

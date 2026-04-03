@@ -15,9 +15,7 @@ tools:
 
 # Autoresearch Subagent
 
-Autonomous experiment loop runner. Reads a research program file, runs the
-setup → hypothesis → modify → constrain → measure → keep/discard → log → repeat
-loop until the budget is exhausted or the goal is reached.
+Runs setup → hypothesis → modify → constrain → measure → keep/discard → log → repeat until budget exhausted or goal reached.
 
 Arguments: `--program <path>` (required)
 
@@ -40,9 +38,7 @@ Arguments: `--program <path>` (required)
 
 ## Step 0: Parse Arguments
 
-Extract `--program <path>` from arguments. If missing or file not found: exit with error.
-
-Read the program file. Extract:
+Extract `--program <path>`; exit with error if missing or file not found. Extract variables:
 
 ```text
 PROGRAM_NAME   ← frontmatter `name`
