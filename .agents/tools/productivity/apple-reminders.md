@@ -22,7 +22,7 @@ tools:
 - **macOS**: `remindctl` (`brew install steipete/tap/remindctl`) + osascript for flag
 - **Linux**: `todoman` + `vdirsyncer` (`pipx install todoman vdirsyncer`)
 - **Setup**: `reminders-helper.sh setup`
-- **Related**: `tools/productivity/caldav-calendar-skill.md` (calendar events)
+- **Related**: `tools/productivity/caldav-calendar-skill.md` (calendar events), `tools/productivity/notes.md`
 
 <!-- AI-CONTEXT-END -->
 

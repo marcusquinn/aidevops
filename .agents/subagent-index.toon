@@ -103,7 +103,7 @@ tools/ocr/,tools/ocr subagents,glm-ocr|ocr-research|overview|paddleocr
 tools/opencode/,tools/opencode subagents,opencode-anthropic-auth|opencode|opencode-openai-auth
 tools/pdf/,tools/pdf subagents,libpdf|overview
 tools/performance/,tools/performance subagents,performance|webpagetest
-tools/productivity/,tools/productivity subagents,apple-reminders|calendar|contacts
+tools/productivity/,tools/productivity subagents,apple-reminders|calendar|contacts|notes
 tools/programming/modern-javascript-skill/,tools/programming/modern-javascript-skill subagents,01-decision-trees|02-es-versions|cheatsheet|composition
 tools/programming/modern-javascript-skill/concurrency/,tools/programming/modern-javascript-skill/concurrency subagents,01-sequential|02-parallel|03-batched|04-pool|05-retry|06-timeout|07-debounce|08-throttle|09-async-iteration|10-cancellation|11-semaphore
 tools/programming/modern-javascript-skill/,tools/programming/modern-javascript-skill subagents,concurrency|es2016-es2017|es2018-es2019|es2022-es2023|es2024|es2025|immutability

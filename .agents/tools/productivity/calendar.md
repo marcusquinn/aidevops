@@ -22,7 +22,7 @@ tools:
 - **macOS backend**: `osascript` via Calendar.app (no install needed)
 - **Linux backend**: `khal` + `vdirsyncer` (CalDAV)
 - **Setup**: `calendar-helper.sh setup`
-- **Related**: `tools/productivity/apple-reminders.md` (tasks/reminders, not events)
+- **Related**: `tools/productivity/apple-reminders.md` (tasks/reminders, not events), `tools/productivity/notes.md`
 
 <!-- AI-CONTEXT-END -->
 

@@ -64,19 +64,20 @@ check_tool_updates() {
 	return 0
 }
 
-# Setup PIM tools (Reminders, Calendar, Contacts)
-# macOS: remindctl (Reminders), osascript (Calendar, Contacts — no install)
-# Linux: todoman, khal, khard + vdirsyncer (CalDAV/CardDAV)
+# Setup PIM tools (Reminders, Calendar, Contacts, Notes)
+# macOS: remindctl (Reminders), osascript (Calendar, Contacts, Notes — no install)
+# Linux: todoman, khal, khard + vdirsyncer (CalDAV/CardDAV), nb (notes)
 setup_pim_tools() {
 	local os
 	os="$(uname -s)"
 
-	print_info "Setting up PIM tools (Reminders, Calendar, Contacts)..."
+	print_info "Setting up PIM tools (Reminders, Calendar, Contacts, Notes)..."
 
 	if [[ "$os" == "Darwin" ]]; then
-		# macOS: Calendar and Contacts use osascript (no install needed)
+		# macOS: Calendar, Contacts, Notes use osascript (no install needed)
 		print_success "Calendar: uses Calendar.app via osascript (no install needed)"
 		print_success "Contacts: uses Contacts.app via osascript (no install needed)"
+		print_success "Notes: uses Notes.app via osascript (no install needed)"
 
 		# Reminders needs remindctl
 		if command -v remindctl >/dev/null 2>&1; then
@@ -94,7 +95,7 @@ setup_pim_tools() {
 			fi
 		fi
 	else
-		# Linux: todoman, khal, khard via pipx/brew; vdirsyncer for sync
+		# Linux: todoman, khal, khard via pipx/brew; vdirsyncer for sync; nb for notes
 		local missing=()
 
 		if ! command -v todo >/dev/null 2>&1; then
@@ -119,6 +120,22 @@ setup_pim_tools() {
 			missing+=("vdirsyncer")
 		else
 			print_success "CalDAV/CardDAV sync: vdirsyncer installed"
+		fi
+
+		# Notes: nb (not in pipx — brew or direct install)
+		if ! command -v nb >/dev/null 2>&1; then
+			print_info "Notes: nb not installed"
+			if command -v brew >/dev/null 2>&1; then
+				print_info "Notes: installing nb..."
+				brew install nb 2>&1 || print_warning "nb install failed"
+				if command -v nb >/dev/null 2>&1; then
+					print_success "nb installed"
+				fi
+			else
+				print_warning "Notes: install nb manually — brew install nb (or see https://xwmx.github.io/nb/)"
+			fi
+		else
+			print_success "Notes: nb installed"
 		fi
 
 		if [[ ${#missing[@]} -gt 0 ]]; then

@@ -22,7 +22,7 @@ tools:
 - **macOS backend**: `osascript` via Contacts.app (JXA for reads, AppleScript for writes)
 - **Linux backend**: `khard` + `vdirsyncer` (CardDAV)
 - **Setup**: `contacts-helper.sh setup`
-- **Related**: `tools/productivity/calendar.md`, `tools/productivity/apple-reminders.md`
+- **Related**: `tools/productivity/calendar.md`, `tools/productivity/apple-reminders.md`, `tools/productivity/notes.md`
 
 <!-- AI-CONTEXT-END -->
 
