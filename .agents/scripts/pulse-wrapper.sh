@@ -3697,6 +3697,8 @@ normalize_active_issue_assignments() {
 
 	local total_checked=0
 	local total_assigned=0
+	local now_epoch
+	now_epoch=$(date +%s)
 
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
@@ -3728,6 +3730,70 @@ normalize_active_issue_assignments() {
 
 	if [[ "$total_checked" -gt 0 ]]; then
 		echo "[pulse-wrapper] Assignment normalization: assigned ${total_assigned}/${total_checked} active unassigned issues to ${runner_user}" >>"$LOGFILE"
+	fi
+
+	# --- Pass 2: Reset stale assignments (GH#16842) ---
+	# Workers that crash after the launch validation window leave issues with
+	# assignees + status:queued/in-progress but no running worker process.
+	# The dedup guard then blocks re-dispatch indefinitely. Reset these so
+	# the deterministic fill floor can re-dispatch them.
+	local total_reset=0
+
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+
+		# Find issues assigned to runner_user with active-dispatch labels
+		local stale_json
+		stale_json=$(gh issue list --repo "$slug" --assignee "$runner_user" --state open \
+			--json number,labels,updatedAt --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || stale_json=""
+		[[ -n "$stale_json" && "$stale_json" != "null" ]] || continue
+
+		# Filter: has status:queued or status:in-progress, updated >1h ago
+		local stale_issues
+		stale_issues=$(printf '%s' "$stale_json" | jq -r --arg cutoff "$((now_epoch - 3600))" '
+			[.[] | select(
+				((.labels | map(.name)) | (index("status:queued") or index("status:in-progress")))
+				and ((.updatedAt | sub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime) < ($cutoff | tonumber))
+			) | .number] | .[]
+		' 2>/dev/null) || stale_issues=""
+		[[ -n "$stale_issues" ]] || continue
+
+		# For each candidate, verify no active worker process exists
+		local repo_path_for_slug
+		repo_path_for_slug=$(jq -r --arg s "$slug" '.initialized_repos[] | select(.slug == $s) | .path' "$repos_json" 2>/dev/null) || repo_path_for_slug=""
+
+		local stale_num
+		while IFS= read -r stale_num; do
+			[[ "$stale_num" =~ ^[0-9]+$ ]] || continue
+
+			# Check if any worker process references this issue
+			if pgrep -f "issue.*${stale_num}" >/dev/null 2>&1 || pgrep -f "#${stale_num}" >/dev/null 2>&1; then
+				continue
+			fi
+			# Also check worker log recency — if log was written in last 10 min, worker may still be active
+			local safe_slug_check
+			safe_slug_check=$(printf '%s' "$slug" | tr '/:' '--')
+			local worker_log="/tmp/pulse-${safe_slug_check}-${stale_num}.log"
+			if [[ -f "$worker_log" ]]; then
+				local log_mtime
+				log_mtime=$(stat -f '%m' "$worker_log" 2>/dev/null) || log_mtime=0
+				if [[ $((now_epoch - log_mtime)) -lt 600 ]]; then
+					continue
+				fi
+			fi
+
+			# No worker — reset the issue for re-dispatch
+			echo "[pulse-wrapper] Stale assignment reset: #${stale_num} in ${slug} — assigned to ${runner_user} with active label but no worker process" >>"$LOGFILE"
+			gh issue edit "$stale_num" --repo "$slug" \
+				--remove-assignee "$runner_user" \
+				--remove-label "status:queued" --remove-label "status:in-progress" \
+				--add-label "status:available" >/dev/null 2>&1 || true
+			total_reset=$((total_reset + 1))
+		done <<<"$stale_issues"
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
+
+	if [[ "$total_reset" -gt 0 ]]; then
+		echo "[pulse-wrapper] Stale assignment cleanup: reset ${total_reset} issues for re-dispatch" >>"$LOGFILE"
 	fi
 
 	return 0
