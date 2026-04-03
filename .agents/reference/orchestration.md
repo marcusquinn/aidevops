@@ -1,12 +1,12 @@
 # Orchestration & Model Routing — Detail Reference
 
-Loaded on demand for supervisor behaviour, model routing, task decomposition, and pattern tracking. Core pointers: `AGENTS.md`. Full docs: `tools/ai-assistants/headless-dispatch.md`, `scripts/commands/pulse.md`.
+Core pointers: `AGENTS.md`. Full docs: `tools/ai-assistants/headless-dispatch.md`, `scripts/commands/pulse.md`.
 
 ## Supervisor
 
 - `opencode` is the ONLY supported CLI for worker dispatch. Never use `claude` CLI. Always dispatch via `headless-runtime-helper.sh run` — never bare `opencode run` (GH#5096).
 - `/pulse` is the autonomous supervisor. Reads GitHub state (issues, PRs) and `TODO.md`, dispatches workers via `headless-runtime-helper.sh run`. GitHub + `TODO.md` are the database; do not add SQLite/state-machine layers.
-- Autonomous operation requires the pulse scheduler. Without it, dispatch manually via `/runners`. Cycle: check capacity → scan prefetched GitHub state → merge ready PRs → dispatch open issues → sync TODOs. macOS: launchd; Linux: cron. Setup: `scripts/commands/runners.md`.
+- Without the pulse scheduler, dispatch manually via `/runners`. Cycle: check capacity → scan prefetched GitHub state → merge ready PRs → dispatch open issues → sync TODOs. macOS: launchd; Linux: cron. Setup: `scripts/commands/runners.md`.
 
 ```bash
 /runners t001 t002 t003   # Interactive dispatch of specific tasks
@@ -29,7 +29,7 @@ Loaded on demand for supervisor behaviour, model routing, task decomposition, an
 
 ### Budget-aware routing (t1100)
 
-- **Token-billed APIs** (Anthropic direct, OpenRouter): track daily spend per provider; degrade when nearing budget caps (e.g., 80% of daily opus budget → route to sonnet unless critical).
+- **Token-billed APIs** (Anthropic direct, OpenRouter): track daily spend; degrade when nearing budget caps (e.g., 80% of daily opus budget → route to sonnet unless critical).
 - **Subscription APIs** (OAuth with periodic allowances): maximise use within the allowance window; alert near period limits.
 - **CLI**: `budget-tracker-helper.sh [record|check|recommend|status|configure|burn-rate]`
 - **Integration**: `dispatch.sh` checks budget state before model selection. Spend recorded automatically after each worker evaluation.
