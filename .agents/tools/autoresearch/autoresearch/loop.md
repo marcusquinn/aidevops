@@ -225,7 +225,9 @@ Replace the single `metric_result = run_metric()` call with:
 if TRIALS > 1:
     trial_results = []
     for i in 1..TRIALS:
-        trial_results.append(run_metric())
+        r = run_metric()
+        # Convert ERROR to null so failed trials count as non-improving in consistency check
+        trial_results.append(null if r == ERROR else r)
     metric_result = multi_trial_evaluate(trial_results, AGGREGATION, CONSISTENCY_THRESHOLD)
     consistent = is_consistent_improvement(trial_results, BEST_METRIC, METRIC_DIR, CONSISTENCY_THRESHOLD)
 else:

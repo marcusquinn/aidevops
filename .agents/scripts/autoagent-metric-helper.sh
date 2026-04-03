@@ -165,6 +165,14 @@ run_tokens() {
 		return 0
 	fi
 
+	# Guard against zero/negative baseline (would cause divide-by-zero)
+	if ! echo "$baseline_chars" | grep -qE '^[0-9]+(\.[0-9]+)?$' ||
+		awk -v v="$baseline_chars" 'BEGIN { exit (v > 0) ? 0 : 1 }'; then
+		log "WARNING: baseline_chars must be a positive number (got: $baseline_chars) — returning 1.0"
+		echo "1.0"
+		return 0
+	fi
+
 	if ! require_tool "agent-test-helper.sh"; then
 		log "WARNING: agent-test-helper.sh not found — returning 1.0 (neutral)"
 		echo "1.0"

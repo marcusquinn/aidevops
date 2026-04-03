@@ -26,12 +26,15 @@ Arguments: $ARGUMENTS
 ## Step 1: Resolve Invocation Pattern
 
 ```text
-if $ARGUMENTS contains "--signal-scan":  → Signal Scan Mode
-elif $ARGUMENTS contains "--program ":   → extract program path, skip to Step 3
+if $ARGUMENTS contains "--signal-scan":  → Signal Scan Mode (Step 2 only)
+elif $ARGUMENTS contains "--program ":   → validate path exists, skip directly to Step 4 (Dispatch)
 elif $ARGUMENTS contains "--focus ":     → extract focus type, pre-fill Q2, show summary
 elif $ARGUMENTS is non-empty:            → One-Liner Mode (infer defaults)
 else:                                    → Interactive Setup (Q1–Q6)
 ```
+
+**`--program` path:** Validate the supplied path exists and is readable. Do NOT overwrite
+it with Step 3 (Write Research Program). Pass it directly to Step 4 dispatch.
 
 ## Step 2: Interactive Setup (Q1–Q6)
 
