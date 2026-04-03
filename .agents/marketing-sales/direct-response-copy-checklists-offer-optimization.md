@@ -35,9 +35,11 @@
 
 ## Call to Action
 
-- Action-oriented ("Start My Trial" not "Submit") · Benefit-focused when possible ("Get More Leads")
-- Appears multiple times on long pages · Stands out visually · Explains what happens next
-- Friction minimised (fewest fields possible)
+| Area | Checklist |
+|------|-----------|
+| **Copy** | Action-oriented ("Start My Trial" not "Submit") · Benefit-focused when possible ("Get More Leads") |
+| **Placement** | Appears multiple times on long pages · Stands out visually · Explains what happens next |
+| **Friction** | Fewest fields possible |
 
 ## Objection Handling
 
@@ -50,7 +52,7 @@
 
 ## Offer Comparison
 
-Compare against 2 competitors on: price, core deliverable, bonuses, guarantee, support, unique advantage. Your offer should win on at least 2–3 factors.
+Compare 2 competitors on: price, core deliverable, bonuses, guarantee, support, unique advantage. Win on ≥2–3 factors.
 
 ## Testing Priorities (in order of impact)
 
@@ -62,10 +64,12 @@ Compare against 2 competitors on: price, core deliverable, bonuses, guarantee, s
 
 ## Pre-Launch Verification
 
-- Offer documented and team briefed
-- Checkout process tested · Payment processing confirmed
-- Fulfillment ready (instant access, onboarding)
-- Support prepared · Tracking set up (pixels, analytics)
+| Area | Checklist |
+|------|-----------|
+| **Offer** | Documented · Team briefed |
+| **Checkout** | Process tested · Payment processing confirmed |
+| **Fulfillment** | Ready (instant access, onboarding) |
+| **Ops** | Support prepared · Tracking set up (pixels, analytics) |
 
 ## Offer Math Worksheet
 
