@@ -328,8 +328,7 @@ _push_create_issue() {
 	# failure and attempt a recovery lookup before declaring an error.
 	local url gh_exit stderr_content stderr_file
 	stderr_file=$(mktemp)
-	url=$(gh "${args[@]}" 2>"$stderr_file") || true
-	gh_exit=$?
+	url=$(gh "${args[@]}" 2>"$stderr_file") && gh_exit=0 || gh_exit=$?
 	stderr_content=$(cat "$stderr_file" 2>/dev/null || true)
 	rm -f "$stderr_file"
 
