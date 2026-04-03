@@ -1,6 +1,6 @@
 # Cloudflare Tunnel
 
-Use Cloudflare Tunnel when you need outbound-only connectivity from an origin to Cloudflare with no inbound ports, direct firewall exposure, or public IP on the service host.
+Outbound-only connectivity from origin to Cloudflare — no inbound ports, no firewall exposure, no public IP required.
 
 ## Architecture
 
@@ -13,9 +13,9 @@ Use Cloudflare Tunnel when you need outbound-only connectivity from an origin to
 ## Quick start
 
 ```bash
-brew install cloudflared               # macOS; use your package manager elsewhere
-cloudflared tunnel login               # authorizes this machine
-cloudflared tunnel create my-tunnel    # creates named tunnel + credentials
+brew install cloudflared               # macOS; use distro package manager elsewhere
+cloudflared tunnel login               # authorize this machine
+cloudflared tunnel create my-tunnel    # creates named tunnel + credentials file
 cloudflared tunnel route dns my-tunnel app.example.com
 cloudflared tunnel run my-tunnel
 ```
@@ -54,10 +54,10 @@ ingress:
 
 ## Operating notes
 
-- Run multiple connectors against the same named tunnel for HA; Cloudflare load-balances them automatically.
-- Ingress rules are first-match-wins; always keep a final catch-all such as `http_status:404`.
-- Long-lived connections can drop during connector restarts or replica replacements.
 - Prefer remotely managed tunnels and Access policies for sensitive services.
+- Multiple connectors per named tunnel = HA; Cloudflare load-balances automatically.
+- Ingress rules are first-match-wins; always end with a catch-all (`http_status:404`).
+- Long-lived connections may drop on connector restart or replica replacement.
 
 ## Related docs
 
