@@ -6,6 +6,18 @@ Rules for preventing credential exposure in AI agent sessions. Extracted from `p
 
 ---
 
+## 8.1 Session Transcript Exposure (t1457)
+
+**Threat:** AI tool inputs and outputs are captured in session transcripts and may be sent to a remote model provider.
+
+- Treat command input + stdout/stderr as transcript-visible. If printing it would leak a secret in chat, it leaks in tool output too.
+- When giving secret setup instructions, start with: `WARNING: Never paste secret values into AI chat. Run the command in your terminal and enter the value at the hidden prompt.`
+- Prefer secret-safe patterns: key-name listings, masked previews, one-way fingerprints, exit-code checks.
+- Avoid writing raw secrets to temp files (e.g., `/tmp/*.json`); prefer in-memory piping. If unavoidable, clean up immediately.
+- If a command can expose secrets and no safe alternative exists, do not run it via AI tools — instruct the user to run it locally.
+
+---
+
 ## 8.2 Never Run Commands That Print Secret Values (t2846)
 
 **Threat:** Agent runs commands whose output contains secret values, exposing credentials in the transcript. Once a secret appears in conversation, it must be rotated.
@@ -37,18 +49,6 @@ Rules for preventing credential exposure in AI agent sessions. Extracted from `p
   - Immediately warn: "That looks like a credential. Conversation transcripts are stored on disk — treat this value as compromised. Rotate it and store the new value via `aidevops secret set NAME` in your terminal."
   - Do NOT repeat, echo, or reference the pasted value in your response
   - Continue with a placeholder like `<YOUR_API_KEY>` instead
-
----
-
-## 8.1 Session Transcript Exposure (t1457)
-
-**Threat:** Commands run by AI tools and their output are captured in session transcripts and may be sent to a remote model provider.
-
-- Treat command input + stdout/stderr as transcript-visible. If printing it would leak a secret in chat, it leaks in tool output too.
-- When giving secret setup instructions, start with: `WARNING: Never paste secret values into AI chat. Run the command in your terminal and enter the value at the hidden prompt.`
-- Prefer secret-safe patterns: key-name listings, masked previews, one-way fingerprints, exit-code checks.
-- Avoid writing raw secrets to temp files (e.g., `/tmp/*.json`); prefer in-memory piping. If unavoidable, clean up immediately.
-- If a command can expose secrets and no safe alternative exists, do not run it via AI tools — instruct the user to run it locally.
 
 ---
 
