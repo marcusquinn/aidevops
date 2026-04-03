@@ -71,15 +71,10 @@ Before the keep decision on any hypothesis, verify ALL comprehension tests still
 
 ```bash
 agent-test-helper.sh run --suite agent-optimization --json 2>/dev/null | \
-  jq -e '.pass_rate >= .baseline_pass_rate' 2>/dev/null
-
-agent-test-helper.sh run --suite agent-optimization --json 2>/dev/null | \
-  jq -r '.failures[]? | .test_name' | while read -r test; do
-    echo "REGRESSION: $test now failing"
-  done
+  jq -e '.failed == 0' 2>/dev/null
 ```
 
-**Rule:** No existing passing comprehension test may start failing. A hypothesis that improves the composite score but causes a regression must be discarded.
+**Rule:** No existing passing comprehension test may start failing (`failed == 0`). A hypothesis that improves the composite score but causes a regression must be discarded.
 
 ---
 
@@ -113,5 +108,5 @@ All must pass (exit 0) before a hypothesis is accepted. First failure short-circ
 ~/.aidevops/agents/scripts/pre-edit-check.sh
 shellcheck --severity=error .agents/scripts/*.sh
 markdownlint-cli2 .agents/**/*.md
-agent-test-helper.sh run --suite agent-optimization --json | jq -e '.pass_rate >= .baseline_pass_rate'
+agent-test-helper.sh run --suite agent-optimization --json | jq -e '.failed == 0'
 ```
