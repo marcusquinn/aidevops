@@ -2,15 +2,13 @@
 name: can-decode
 mode: subagent
 description: Check if a video can be decoded by the browser using Mediabunny
-metadata:
-  tags: decode, validation, video, audio, compatibility, browser
 ---
 
 # Checking if a video can be decoded
 
 Use Mediabunny to check if a video can be decoded by the browser before attempting to play it.
 
-## Shared track-check helper
+## Helper
 
 ```tsx
 import { Input, ALL_FORMATS } from "mediabunny";
@@ -32,7 +30,9 @@ const checkTracks = async (input: Input): Promise<boolean> => {
 };
 ```
 
-## URL source
+## Usage
+
+**URL source:**
 
 ```tsx
 import { UrlSource } from "mediabunny";
@@ -40,11 +40,10 @@ import { UrlSource } from "mediabunny";
 export const canDecode = (src: string) =>
   checkTracks(new Input({ formats: ALL_FORMATS, source: new UrlSource(src, { getRetryDelay: () => null }) }));
 
-// Usage
 const isDecodable = await canDecode("https://remotion.media/video.mp4");
 ```
 
-## Blob source (file uploads / drag-and-drop)
+**Blob source** (file uploads / drag-and-drop):
 
 ```tsx
 import { BlobSource } from "mediabunny";
