@@ -35,7 +35,7 @@ Manage: `memory-graduate-helper.sh` · `memory-helper.sh graduate [candidates|gr
 - [task:feature] Breaking task into 4 phases with separate commits worked well for Claude-Flow feature adoption [model:sonnet] *(high, 3x)*
 - [task:bugfix] Opus identified root cause of race condition by reasoning through concurrent execution paths [model:opus] *(high, 2x)*
 - Memory daemon should auto-extract learnings from thinking blocks when sessions end *(medium, 5x)*
-- OpenCode: `prompt` field in `opencode.json` replaces (not appends) `anthropic_default`. All active agents must have `build.txt` set or fall back to upstream `anthropic.txt` *(high, 1x)*
+- OpenCode: `prompt` field in `opencode.json` replaces (not appends) `anthropic_default`. All active agents must have `build.txt` set or fall back to upstream `anthropic.txt`, losing aidevops overrides *(high, 1x)*
 - Task ID collision: t264 assigned by two sessions simultaneously (PR #1040 vs version-manager fix). Prevention: `git pull` and re-read TODO.md before assigning IDs *(high, 1x)*
 - Stale TODO.md: completed tasks (t231 PR #955, t247, t259 PR #1020) remain open because `update_todo_on_complete()` only runs post-PR. Fix: use `task-complete-helper.sh`; workers report `task_obsolete` *(high, 0x)*
 - [task:feature] t136.5: Scaffold aidevops-pro/anon repos | PR #792 | [model:opus] [duration:1206s] *(medium, 51x)*
