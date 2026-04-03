@@ -10,26 +10,8 @@ mode: subagent
 
 ## Quick Reference
 
-- **Purpose**: Route WordPress work to the right specialist doc
-- **Local dev**: LocalWP + `localwp.md`
-- **Fleet ops**: MainWP + `mainwp.md`
-- **Plugin curation**: `wp-preferred.md` (127+ plugins across 19 categories — performance, security, SEO, forms, e-commerce, membership, backup, staging, dev tooling)
-- **Custom fields**: `scf.md` for Secure Custom Fields / ACF
-
-**Platform integrations**
-
-- LocalWP MCP — direct database access for local sites
-- MainWP REST API — fleet operations across multiple sites
-
-**Key commands**
-
-```bash
-# LocalWP sites
-.agents/scripts/wordpress-mcp-helper.sh list-sites
-
-# MainWP operations
-.agents/scripts/mainwp-helper.sh [command] [site]
-```
+- **LocalWP MCP** — direct DB access for local sites: `.agents/scripts/wordpress-mcp-helper.sh list-sites`
+- **MainWP REST API** — fleet ops: `.agents/scripts/mainwp-helper.sh [command] [site]`
 
 <!-- AI-CONTEXT-END -->
 
@@ -41,7 +23,7 @@ mode: subagent
 | Manage content or routine upkeep | `wp-admin.md` | Admin tasks and site maintenance |
 | Inspect a local site or database | `localwp.md` | LocalWP setup and MCP-backed local DB access |
 | Update many sites | `mainwp.md` | Centralized MainWP operations |
-| Choose plugins | `wp-preferred.md` | Curated, reliability-first recommendations |
+| Choose plugins | `wp-preferred.md` | 127+ curated plugins across 19 categories |
 | Work with custom fields | `scf.md` | Field modeling and SCF/ACF guidance |
 
 ## Default workflow
