@@ -228,6 +228,21 @@ _build_output_line() {
 }
 
 # -----------------------------------------------------------------------------
+# _is_auto_update_active: check if the auto-update scheduler is running.
+# Returns 0 if launchd (macOS) or cron (Linux) auto-update job is active.
+# -----------------------------------------------------------------------------
+_is_auto_update_active() {
+	local launchd_label="com.aidevops.aidevops-auto-update"
+	if launchctl list "$launchd_label" &>/dev/null; then
+		return 0
+	fi
+	if crontab -l 2>/dev/null | grep -q 'aidevops-auto-update'; then
+		return 0
+	fi
+	return 1
+}
+
+# -----------------------------------------------------------------------------
 # _get_runtime_hint: emit a runtime config hint for the AI model, if known.
 # -----------------------------------------------------------------------------
 _get_runtime_hint() {
@@ -447,6 +462,12 @@ main() {
 	# Build version string — returns 1 and prints UPDATE_AVAILABLE if update found
 	local version_str
 	if ! version_str=$(_build_version_str "$current" "$remote" "$app_name" "$cache_dir"); then
+		# Output the UPDATE_AVAILABLE line so the AI sees it via stdout
+		echo "$version_str"
+		# Append auto-update status so the AI can reassure the user
+		if _is_auto_update_active; then
+			echo "AUTO_UPDATE_ENABLED"
+		fi
 		return 0
 	fi
 
