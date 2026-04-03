@@ -2,19 +2,13 @@
 
 Sub-doc for `autoagent.md`. Loaded during Step 1 (Setup) to extract actionable signals.
 
----
-
-## Overview
-
-Signal mining converts raw operational data into structured findings: `{file, issue, source}` objects that feed hypothesis generation. Each source produces a list of specific file + issue pairs.
-
----
+Signal mining converts raw operational data into structured findings: `{file, issue, source}` objects that feed hypothesis generation.
 
 ## Signal Sources
 
-### 1. Session Miner Data
+Run all sources unless `SIGNAL_SOURCES` is set (see [Filtering](#filtering-by-signal_sources)).
 
-Extracts error patterns and recurring failures from session history.
+### 1. Session Miner Data
 
 ```bash
 # Get error patterns from session miner
@@ -29,11 +23,7 @@ rg --json "error|failed|FAIL|not found" ~/.claude/projects/ 2>/dev/null | \
   sort | uniq -c | sort -rn | head -20
 ```
 
-**Finding format:** `{file: ".agents/path/to/file.md", issue: "recurring error description", source: "session-miner"}`
-
 ### 2. Pulse Dispatch Outcomes
-
-Identifies which tasks fail repeatedly or take disproportionate time.
 
 ```bash
 # Worker success/failure rates from recent pulse runs
@@ -47,11 +37,7 @@ gh pr list --repo marcusquinn/aidevops --state closed --limit 50 \
   jq -r '.[] | select(.mergedAt == null) | .title' | head -10
 ```
 
-**Finding format:** `{file: null, issue: "task pattern that fails repeatedly", source: "pulse-outcomes"}`
-
 ### 3. Error-Feedback Patterns
-
-Mines recurring errors from the error-feedback agent's documented patterns.
 
 ```bash
 # Load error-feedback patterns
@@ -63,11 +49,7 @@ rg "observed|recurring|failure rate|%" ~/.aidevops/agents/prompts/build.txt 2>/d
   head -20
 ```
 
-**Finding format:** `{file: ".agents/prompts/build.txt", issue: "pattern description from error-feedback", source: "error-feedback"}`
-
 ### 4. Comprehension Test Results
-
-Identifies which agent files cause model confusion or test failures.
 
 ```bash
 # Run comprehension tests and capture failures
@@ -78,11 +60,7 @@ agent-test-helper.sh run --suite agent-optimization --json 2>/dev/null | \
 ls ~/.aidevops/agents/tests/*.test.json 2>/dev/null | head -10
 ```
 
-**Finding format:** `{file: ".agents/path/to/agent.md", issue: "test failure description", source: "comprehension-tests"}`
-
 ### 5. Git Churn Analysis
-
-Files that change most frequently are likely pain points or poorly-designed abstractions.
 
 ```bash
 # Files in .agents/ that changed most in last 30 days
@@ -94,11 +72,7 @@ git -C "$REPO_ROOT" log --oneline --since="30 days ago" 2>/dev/null | \
   grep -i "revert\|fix\|hotfix" | head -10
 ```
 
-**Finding format:** `{file: ".agents/path/to/file.md", issue: "high churn — N changes in 30 days", source: "git-churn"}`
-
 ### 6. Linter Violations
-
-Current lint violations indicate quality debt in specific files.
 
 ```bash
 # Run linters and capture violations
@@ -114,19 +88,24 @@ markdownlint-cli2 ~/.aidevops/agents/**/*.md 2>&1 | \
   grep -v "^$" | head -30
 ```
 
-**Finding format:** `{file: ".agents/scripts/helper.sh", issue: "shellcheck SC2086: double-quote variable", source: "linter"}`
+## Finding Format
 
----
+Each source produces findings in this shape:
+
+| Source | `file` | `issue` | `source` key |
+|--------|--------|---------|--------------|
+| Session Miner | `.agents/path/to/file.md` | recurring error description | `session-miner` |
+| Pulse Outcomes | `null` | task pattern that fails repeatedly | `pulse-outcomes` |
+| Error-Feedback | `.agents/prompts/build.txt` | pattern description | `error-feedback` |
+| Comprehension Tests | `.agents/path/to/agent.md` | test failure description | `comprehension-tests` |
+| Git Churn | `.agents/path/to/file.md` | high churn — N changes in 30 days | `git-churn` |
+| Linter | `.agents/scripts/helper.sh` | shellcheck SC2086: double-quote variable | `linter` |
 
 ## Finding Aggregation
 
-After running all enabled signal sources, aggregate findings:
+After all sources run, deduplicate by `(file, issue)` pair, rank by frequency, limit to top 20:
 
 ```bash
-# Deduplicate by (file, issue) pair
-# Sort by frequency (files appearing in multiple sources = higher priority)
-# Limit to top 20 findings for hypothesis generation
-
 SIGNAL_FINDINGS = deduplicate_and_rank([
     session_miner_findings,
     pulse_outcome_findings,
@@ -145,8 +124,6 @@ SIGNAL_FINDINGS = deduplicate_and_rank([
 | Medium | File appears in 2 signal sources |
 | Low | File appears in 1 signal source |
 
----
-
 ## Filtering by SIGNAL_SOURCES
 
 When `SIGNAL_SOURCES` is set in the research program, only run the listed sources:
@@ -162,8 +139,6 @@ When `SIGNAL_SOURCES` is set in the research program, only run the listed source
 | `all` | All sources (default) |
 
 Example: `signal_sources: session-miner,git-churn` runs only those two sources.
-
----
 
 ## Output Contract
 
