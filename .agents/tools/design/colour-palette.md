@@ -56,17 +56,21 @@ curl -s -X POST http://colormind.io/api/ \
 
 **Models**: `default` (general), `ui` (UI-optimised when available). Check `http://colormind.io/api/` for current models.
 
-### Other Palette Resources
+### Other Palette & Typography Resources
 
 | Tool | URL | Use |
 |------|-----|-----|
-| Colormind | http://colormind.io/ | AI palette generation |
-| Coolors | https://coolors.co/ | Interactive palette generator |
-| Realtime Colors | https://realtimecolors.com/ | See palette applied to UI instantly |
-| Huemint | https://huemint.com/ | AI colour for brand identity |
-| Adobe Color | https://color.adobe.com/ | Colour wheel, harmony rules |
-| Colour Hunt | https://colorhunt.co/ | Curated palette collections |
-| Happy Hues | https://www.happyhues.co/ | Palettes with UI context |
+| Colormind | http://colormind.io/ | AI palette generation (deep learning trained on photos, film, art) |
+| Colormind Bootstrap | http://colormind.io/bootstrap/ | Live Bootstrap theme preview with AI palettes |
+| Colormind Dashboard | http://colormind.io/template/paper-dashboard/ | Live dashboard template preview with AI palettes |
+| Huemint | https://huemint.com/ | AI colour for brand identity, logos, and web mockups |
+| Fontjoy | https://fontjoy.com/ | AI font pairing generator (heading + body + accent) |
+| Poolors | https://poolors.com/ | Discover colour combinations that stand out |
+| Coolors | https://coolors.co/ | Interactive palette generator with lock/shuffle |
+| Realtime Colors | https://realtimecolors.com/ | See palette applied to a live UI mockup instantly |
+| Adobe Color | https://color.adobe.com/ | Colour wheel, harmony rules, accessibility tools |
+| Colour Hunt | https://colorhunt.co/ | Curated palette collections by community |
+| Happy Hues | https://www.happyhues.co/ | Palettes shown in realistic UI context |
 
 ## Palette Generation Workflow
 

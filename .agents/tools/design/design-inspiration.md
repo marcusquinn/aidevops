@@ -124,6 +124,24 @@ tools:
 | **Checklist Design** | https://checklistdesign.com | UX/UI best practices as checklists for common page types | Free |
 | **Toools.design** | https://toools.design | Directory of 1,500+ design tools and resources | Free |
 
+## Colour & Typography Tools
+
+Interactive tools for generating palettes and font pairings. See also `tools/design/colour-palette.md` for the full palette workflow and CLI helper.
+
+| Resource | URL | Description | Pricing |
+|----------|-----|-------------|---------|
+| **Colormind** | http://colormind.io/ | AI palette generation using deep learning trained on photos, film, and art | Free |
+| **Colormind Bootstrap** | http://colormind.io/bootstrap/ | Live Bootstrap theme preview with AI-generated palettes | Free |
+| **Colormind Dashboard** | http://colormind.io/template/paper-dashboard/ | Live dashboard template preview with AI palettes | Free |
+| **Huemint** | https://huemint.com/ | AI colour for brand identity, logos, and web mockups | Free |
+| **Fontjoy** | https://fontjoy.com/ | AI font pairing generator -- finds heading + body + accent combos | Free |
+| **Poolors** | https://poolors.com/ | Discover unique colour combinations that stand out | Free |
+| **Coolors** | https://coolors.co/ | Interactive palette generator with lock, shuffle, and export | Freemium |
+| **Realtime Colors** | https://realtimecolors.com/ | See your palette applied to a live UI mockup instantly | Free |
+| **Adobe Color** | https://color.adobe.com/ | Colour wheel, harmony rules, accessibility checker | Free |
+| **Colour Hunt** | https://colorhunt.co/ | Community-curated palette collections | Free |
+| **Happy Hues** | https://www.happyhues.co/ | Palettes shown in realistic UI context | Free |
+
 ## Design Resource Tools
 
 | Resource | URL | Description | Pricing |

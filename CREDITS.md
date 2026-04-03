@@ -26,11 +26,22 @@ Sources, inspirations, and third-party resources incorporated into or referenced
   - Repository: https://github.com/dominikmartn/nothing-design-skill
   - Adapted as `.agents/tools/ui/nothing-design-skill/`
 
-### Colour Palette Tools
+### Colour, Typography & Palette Tools
 
-- **Colormind** -- AI-powered colour palette generator using deep learning.
+- **Colormind** -- AI-powered colour palette generator using deep learning trained on photographs, film, and art.
   - Website: http://colormind.io/
-  - Referenced in design palette generation workflows
+  - Bootstrap preview: http://colormind.io/bootstrap/
+  - Dashboard preview: http://colormind.io/template/paper-dashboard/
+  - API wrapper: `.agents/scripts/colormind-helper.sh`
+
+- **Huemint** -- AI colour palette generator for brand identity, logos, and web mockups.
+  - Website: https://huemint.com/
+
+- **Fontjoy** -- AI font pairing generator using deep learning to find harmonious heading + body + accent combinations.
+  - Website: https://fontjoy.com/
+
+- **Poolors** -- Discover unique colour combinations that stand out from the crowd.
+  - Website: https://poolors.com/
 
 ## UI & Frontend
 
