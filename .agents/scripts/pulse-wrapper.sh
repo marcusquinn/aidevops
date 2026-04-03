@@ -3810,9 +3810,15 @@ This is an automated stall-detection sweep. The LLM should review the actual iss
 		--tokens 0 --time "$_sweep_elapsed" --session-type routine 2>/dev/null || true)
 	sweep_body="${sweep_body}${sig_footer}"
 
+	# Skip needs-maintainer-review when user is maintainer (GH#16786)
+	local sweep_review_label=""
+	if [[ "${_COMPLEXITY_SCAN_SKIP_REVIEW_GATE:-false}" != "true" ]]; then
+		sweep_review_label="--label needs-maintainer-review"
+	fi
+	# shellcheck disable=SC2086
 	if gh_create_issue --repo "$aidevops_slug" \
 		--title "perf: simplification debt stalled — LLM sweep needed ($(date -u +%Y-%m-%d))" \
-		--label "simplification-debt" --label "needs-maintainer-review" --label "tier:thinking" \
+		--label "simplification-debt" $sweep_review_label --label "tier:thinking" \
 		--assignee "$maintainer" \
 		--body "$sweep_body" >/dev/null 2>&1; then
 		echo "[pulse-wrapper] Complexity LLM sweep: created stall-review issue" >>"$LOGFILE"
@@ -4625,17 +4631,25 @@ This file was previously simplified (PR #${prev_pr}) but has since been modified
 		--tokens 0 --time "$_pulse_elapsed" --session-type routine 2>/dev/null || true)
 	issue_body="${issue_body}${sig_footer}"
 
+	# Build label list — skip needs-maintainer-review when user is maintainer (GH#16786)
+	local review_label=""
+	if [[ "${_COMPLEXITY_SCAN_SKIP_REVIEW_GATE:-false}" != "true" ]]; then
+		review_label="--label needs-maintainer-review"
+	fi
+
 	local create_ok=false
 	if [[ "$needs_recheck" == true ]]; then
+		# shellcheck disable=SC2086
 		gh_create_issue --repo "$aidevops_slug" \
 			--title "$issue_title" \
-			--label "simplification-debt" --label "needs-maintainer-review" --label "tier:simple" --label "recheck-simplicity" \
+			--label "simplification-debt" $review_label --label "tier:simple" --label "recheck-simplicity" \
 			--assignee "$maintainer" \
 			--body "$issue_body" >/dev/null 2>&1 && create_ok=true
 	else
+		# shellcheck disable=SC2086
 		gh_create_issue --repo "$aidevops_slug" \
 			--title "$issue_title" \
-			--label "simplification-debt" --label "needs-maintainer-review" --label "tier:simple" \
+			--label "simplification-debt" $review_label --label "tier:simple" \
 			--assignee "$maintainer" \
 			--body "$issue_body" >/dev/null 2>&1 && create_ok=true
 	fi
@@ -4794,9 +4808,15 @@ This is an automated scan. The function lengths are factual, but the best decomp
 
 		local issue_key="$file_path"
 		local issue_title="simplification: reduce function complexity in ${issue_key} (${violation_count} functions >${COMPLEXITY_FUNC_LINE_THRESHOLD} lines)"
+		# Skip needs-maintainer-review when user is maintainer (GH#16786)
+		local review_label_sh=""
+		if [[ "${_COMPLEXITY_SCAN_SKIP_REVIEW_GATE:-false}" != "true" ]]; then
+			review_label_sh="--label needs-maintainer-review"
+		fi
+		# shellcheck disable=SC2086
 		if gh_create_issue --repo "$aidevops_slug" \
 			--title "$issue_title" \
-			--label "simplification-debt" --label "needs-maintainer-review" \
+			--label "simplification-debt" $review_label_sh \
 			--assignee "$maintainer" \
 			--body "$issue_body" >/dev/null 2>&1; then
 			_complexity_scan_close_duplicate_issues_by_title "$aidevops_slug" "$issue_title"
@@ -4929,6 +4949,37 @@ run_weekly_complexity_scan() {
 	now_epoch=$(date +%s)
 
 	_complexity_scan_check_interval "$now_epoch" || return 0
+
+	# Permission gate: only collaborators/maintainers/admins may create
+	# simplification issues. Non-collaborator instances running a pulse with
+	# this repo in their repos.json were filing spurious issues (GH#16786).
+	local current_user
+	current_user=$(gh api user --jq '.login' 2>/dev/null) || current_user=""
+	if [[ -n "$current_user" ]]; then
+		local perm_level
+		perm_level=$(gh api "repos/${aidevops_slug}/collaborators/${current_user}/permission" \
+			--jq '.permission' 2>/dev/null) || perm_level=""
+		case "$perm_level" in
+		admin | maintain | write) ;; # allowed
+		*)
+			echo "[pulse-wrapper] Complexity scan: skipped — user '$current_user' has '$perm_level' permission on $aidevops_slug (need write+)" >>"$LOGFILE"
+			return 0
+			;;
+		esac
+	fi
+
+	# When the authenticated user IS the repo maintainer, skip the
+	# needs-maintainer-review label — the standard auto-dispatch + PR
+	# review flow provides sufficient gating (GH#16786).
+	local maintainer_from_config
+	maintainer_from_config=$(jq -r --arg slug "$aidevops_slug" \
+		'.initialized_repos[] | select(.slug == $slug) | .maintainer // empty' \
+		"$REPOS_JSON" 2>/dev/null)
+	[[ -z "$maintainer_from_config" ]] && maintainer_from_config=$(printf '%s' "$aidevops_slug" | cut -d/ -f1)
+	_COMPLEXITY_SCAN_SKIP_REVIEW_GATE=false
+	if [[ "$current_user" == "$maintainer_from_config" ]]; then
+		_COMPLEXITY_SCAN_SKIP_REVIEW_GATE=true
+	fi
 
 	local aidevops_path
 	aidevops_path=$(_complexity_scan_find_repo "$repos_json" "$aidevops_slug" "$now_epoch") || return 0

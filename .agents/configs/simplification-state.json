@@ -1,231 +1,4 @@
 {
-  ".agents/seo/ranking-opportunities.md": {
-    "at": "2026-04-03T00:00:00Z",
-    "hash": "eb967c184a79c17e51d3eaea892f52fd50faf124aac7161e3aa9fef581237a57",
-    "issue": "GH#16713",
-    "lines_after": 61,
-    "lines_before": 61,
-    "note": "Pass 2: instruction doc at minimum viable size. Previously tightened 82\u219261 lines (GH#15698, PR#16081). All sections necessary: YAML frontmatter, workflow steps, analysis types table, TOON output format. No further compression possible without content loss.",
-    "passes": 2,
-    "pr": "pending",
-    "status": "simplified"
-  },
-  ".agents/marketing-sales/direct-response-copy-swipe-file-landing-pages-01-saas-examples.md": {
-    "at": "2026-04-03T00:00:00Z",
-    "hash": "b67f8c428d9457f76f2e6227baaaa46768eccf9604fd1e71ee17c9b002831039",
-    "issue": "GH#16636",
-    "lines_after": 81,
-    "lines_before": 66,
-    "note": "Reference corpus: added intro line and Key Patterns summary table. All original content preserved. 4 SaaS examples (Slack, Notion, Basecamp, Mailchimp) intact.",
-    "passes": 1,
-    "pr": "pending",
-    "status": "simplified"
-  },
-  ".agents/aidevops/api-integrations.md": {
-    "at": "2026-04-03T00:00:00Z",
-    "hash": "1d9ae72e2a62060ee1524f7440825f1a5539f3ce2e64b691d67d66ea36cf0edb",
-    "issue": "GH#15818",
-    "passes": 1,
-    "pr": "pending",
-    "status": "simplified"
-  },
-  ".agents/aidevops/service-links.md": {
-    "at": "2026-04-03T00:00:00Z",
-    "hash": "1b4d0cbc25fd53ad0a3de4ad3f1b3b8f1b8ab31d",
-    "issue": "GH#14974",
-    "passes": 1,
-    "pr": "pending",
-    "status": "simplified"
-  },
-  ".agents/content/heygen-skill/rules-streaming-avatars.md": {
-    "at": "2026-04-03T00:00:00Z",
-    "hash": "db7582c5895ac7185939740cb16cbe5f72afd9ebad7bb4586b8eee5897af27d3",
-    "issue": "GH#16581",
-    "lines_after": 67,
-    "lines_before": 67,
-    "note": "Pass 2: reference corpus (API docs, tables, code examples) at minimum viable size. No further compression possible without content loss. File reviewed and confirmed appropriately structured.",
-    "passes": 2,
-    "pr": "pending",
-    "status": "simplified"
-  },
-  ".agents/content/production-video-02-sora-template.md": {
-    "at": "2026-04-03T00:00:00Z",
-    "hash": "7d18119d4d8ff939a2c5e2f708799a7a2511414b597c5b58a4b36015fe7f322e",
-    "issue": "GH#14349",
-    "status": "simplified"
-  },
-  ".agents/legal.md": {
-    "hash": "544a65fb7a2195dd41e36bafecfa2251b9c2800fae8c8ec7fbef892ff1b03bc4",
-    "issue": 16258,
-    "status": "simplified"
-  },
-  ".agents/marketing-sales/direct-response-copy-checklists-headline-testing.md": {
-    "at": "2026-04-03T12:24:52Z",
-    "hash": "be06c785ca2ac3c4f6a7c5fd58fd79299e95507b56db7c3ed5f515602f4e556f",
-    "issue": "GH#16380",
-    "passes": 1,
-    "pr": "pending",
-    "status": "simplified"
-  },
-  ".agents/marketing-sales/direct-response-copy-frameworks-email-sequences.md": {
-    "at": "2026-04-03T09:30:00Z",
-    "hash": "bbb3ea1df32f53c905d3c8b174a0bd212fc5dd55a168169d06d81542127e8bb3",
-    "issue": "GH#16443",
-    "lines_after": 111,
-    "lines_before": 113,
-    "note": "Pass 2: 113\u2192111 lines. Merged templates link into intro line, moved subject line guidance above table as compact note. Zero content loss.",
-    "passes": 2,
-    "status": "simplified"
-  },
-  ".agents/reference/define-probes/refactor.md": {
-    "hash": "1eb86f1e0b8873942014f1f20414250077bd694a254e6e97537e706199b2460a",
-    "issue": "GH#16350",
-    "status": "simplified"
-  },
-  ".agents/scripts/commands/add-skill.md": {
-    "at": "2026-04-03T00:00:00Z",
-    "hash": "ce5f2025958525f3fc2e2e3224b331b5c9ccdd13a5966ad21d5878ba1a9a2067",
-    "issue": "GH#16379",
-    "passes": 1,
-    "pr": "pending",
-    "status": "simplified"
-  },
-  ".agents/seo/geo-strategy.md": {
-    "at": "2026-04-03T00:00:00Z",
-    "hash": "f2c7b8507a0eb39c56689d7ce778518d7e15b27b7da668ef2b2caebdbe5b50df",
-    "issue": "GH#15895",
-    "passes": 1,
-    "pr": "pending",
-    "status": "simplified"
-  },
-  ".agents/services/hosting/cloudflare-platform-skill/hyperdrive-gotchas.md": {
-    "hash": "289d1ce963a8bfbb69d5199ff47d8368f19a653f67305bafd8940e7a0982c67b",
-    "issue": "GH#15925",
-    "pr": "PR#16125",
-    "status": "simplified"
-  },
-  ".agents/services/hosting/cloudflare-platform-skill/hyperdrive-patterns.md": {
-    "hash": "9f49d8ba3b960d10d7b1638fe98bcb57c26ea9d3",
-    "issue": "GH#15076",
-    "lines_after": 130,
-    "lines_before": 142,
-    "status": "simplified"
-  },
-  ".agents/services/hosting/cloudflare-platform-skill/pages-functions-gotchas.md": {
-    "hash": "1253c92066cfa913e522251a5dc37bd66b8a581483d712f7f3556afbdc2c03cd",
-    "issue": "GH#15840",
-    "status": "simplified"
-  },
-  ".agents/services/hosting/cloudflare-platform-skill/pipelines.md": {
-    "at": "2026-04-03T05:55:25Z",
-    "hash": "7a3d9f5ead63a859a91acd0ebb4dd11a237f4f85",
-    "issue": "GH#13394",
-    "passes": 1,
-    "pr": "pending",
-    "status": "simplified"
-  },
-  ".agents/services/hosting/cloudflare-platform-skill/queues-gotchas.md": {
-    "at": "2026-04-03T00:00:00Z",
-    "hash": "5df3a339524d800afe6cc2148b7a71c5f898d396d92d30e3949b522955a525a2",
-    "issue": "GH#16320",
-    "lines_after": 88,
-    "lines_before": 89
-  },
-  ".agents/services/hosting/cloudflare-platform-skill/workers-patterns.md": {
-    "action": "tightened",
-    "at": "2026-04-03T00:00:00Z",
-    "hash": "4a94ab9f82abafc568298f41f4913b4e504b962f651338f6dbb20a6fecc984cc",
-    "issue": "GH#16293",
-    "lines_after": 139,
-    "lines_before": 141
-  },
-  ".agents/services/hosting/cloudflare-platform-skill/wrangler.md": {
-    "hash": "3d566d9fbf05fdee08380d0ffbaf538854887e326c9b658e8236d837c8993cb3",
-    "lines": 63,
-    "status": "simplified"
-  },
-  ".agents/tools/ai-orchestration/overview.md": {
-    "hash": "3a63b044317f50c757951158e4e711234d09cd299f8dc557bdc5af9e580735f6",
-    "issue": "GH#15266",
-    "pr": "PR#16047",
-    "status": "simplified"
-  },
-  ".agents/tools/browser/browser-benchmark-scripts-01-playwright.md": {
-    "at": "2026-04-03T00:00:00Z",
-    "hash": "9958f23ad99c271fe00d6abb99241cff82ffae9db2b351bc5a15129693063569",
-    "issue": "GH#16500",
-    "passes": 1,
-    "pr": "pending",
-    "status": "simplified"
-  },
-  ".agents/tools/browser/chromium-debug-use.md": {
-    "hash": "fd324c70aff1b6cc040970d3e6c91b2ac714405abedb7838e34f109755c80dd7",
-    "issue": "GH#14962",
-    "lines_after": 238,
-    "lines_before": 316,
-    "status": "simplified"
-  },
-  ".agents/tools/code-review/tools.md": {
-    "at": "2026-04-03T00:00:00Z",
-    "hash": "b767318f3046f9a52ff3d31a2f733bb83f4e5475501f57862a874c05e853ad7b",
-    "issue": "GH#16449",
-    "status": "simplified"
-  },
-  ".agents/tools/productivity/contacts.md": {
-    "hash": "d99fc5b67969194e84d7952de9bfa655d26d6d4e9e84b2fcf0ef5790cf413af6",
-    "issue": "GH#16497",
-    "lines": 67,
-    "note": "tightened: merged Linux Setup into Quick Reference, consolidated When to Use paragraphs (79\u219267 lines)",
-    "status": "simplified"
-  },
-  ".agents/tools/programming/modern-javascript-skill/immutability.md": {
-    "hash": "f5453a48a29c9dd411399f4079384edf",
-    "issue": "GH#16493",
-    "status": "simplified"
-  },
-  ".agents/tools/ui/ui-skills.md": {
-    "at": "2026-04-03T06:08:00Z",
-    "hash": "f75020ffda4b498042577c5888bf9b0aa1efebd4ae355bf4acf33ab10e74137e",
-    "issue": "GH#16179",
-    "lines": 96,
-    "passes": 1,
-    "pr": 16281,
-    "status": "simplified"
-  },
-  ".agents/tools/video/remotion-display-captions.md": {
-    "at": "2026-04-03T00:00:00Z",
-    "hash": "6dcdc470b94e1e415d3e09b76a06088646364cd9",
-    "issue": "GH#16476",
-    "lines_after": 117,
-    "lines_before": 119,
-    "note": "Removed redundant intro line (exact duplicate of YAML description). Code blocks preserved verbatim. Zero content loss.",
-    "passes": 1,
-    "status": "simplified"
-  },
-  ".agents/tools/video/remotion-get-video-dimensions.md": {
-    "at": "2026-04-03T05:33:46Z",
-    "hash": "c5f36530db3354d5de3048458c3849ec22c1710a",
-    "issue": "GH#14370",
-    "passes": 1,
-    "pr": "pending",
-    "status": "simplified"
-  },
-  ".agents/tools/voice/voice-ai-models.md": {
-    "action": "converted GPU Planning prose to table; clarified VRAM/RAM column header",
-    "hash": "80802e36e4fae1517223fb0553a50f7aa9e01acd908f7d50b6d53f60e3a1dda2",
-    "issue": "GH#15102",
-    "lines_after": 132,
-    "lines_before": 126,
-    "pr": "pending",
-    "status": "simplified"
-  },
-  ".agents/workflows/pre-edit.md": {
-    "hash": "d87135a808a845416e0193a101bef0fd1c0b4a032969d819556ce109c40da4ba",
-    "issue": "GH#15439",
-    "lines_after": 72,
-    "lines_before": 78,
-    "status": "simplified"
-  },
   "files": {
     ".agents/aidevops.md": {
       "at": "2026-03-29T16:31:51Z",
@@ -1053,7 +826,7 @@
       "at": "2026-04-02T21:19:54Z",
       "hash": "347272e46c7d04f05dd13a4683cf44bef0dd3da7",
       "issue": "GH#14286",
-      "note": "Reference corpus chapter tightened: 92 \u2192 90 lines. Removed decorative closing sentence with no information value. Zero content loss.",
+      "note": "Reference corpus chapter tightened: 92 → 90 lines. Removed decorative closing sentence with no information value. Zero content loss.",
       "passes": 2
     },
     ".agents/marketing-sales/cro-chapter-20.md": {
@@ -5775,18 +5548,18 @@
       "pr": 16714,
       "passes": 1
     },
-  ".agents/reference/task-taxonomy.md": {
-    "at": "2026-04-03T16:50:00Z",
-    "hash": "e5313d0bc4a7e2bf7cb1e807abd6dd33b3da64f901dd1bb6aeca7903b56e7de7",
-    "issue": "GH#16752",
-    "lines_after": 48,
-    "lines_before": 54,
-    "note": "Instruction doc: removed 3 decorative --- horizontal rules and redundant **bold** wrapping on command names in list (backtick code formatting sufficient). All tables, rules, command examples, and references preserved.",
-    "passes": 1,
-    "pr": "pending",
-    "status": "simplified"
-  },
-  ".agents/seo/ranking-opportunities.md": {
+    ".agents/reference/task-taxonomy.md": {
+      "at": "2026-04-03T16:50:00Z",
+      "hash": "e5313d0bc4a7e2bf7cb1e807abd6dd33b3da64f901dd1bb6aeca7903b56e7de7",
+      "issue": "GH#16752",
+      "lines_after": 48,
+      "lines_before": 54,
+      "note": "Instruction doc: removed 3 decorative --- horizontal rules and redundant **bold** wrapping on command names in list (backtick code formatting sufficient). All tables, rules, command examples, and references preserved.",
+      "passes": 1,
+      "pr": "pending",
+      "status": "simplified"
+    },
+    ".agents/seo/ranking-opportunities.md": {
       "hash": "b45ae335184c658835328022167c130b09f12e03",
       "at": "2026-04-03T16:35:52Z",
       "pr": 16713,
@@ -5977,26 +5750,58 @@
       "at": "2026-04-03T16:35:55Z",
       "pr": 16627,
       "passes": 1
+    },
+    ".agents/content/production-video-02-sora-template.md": {
+      "at": "2026-04-03T00:00:00Z",
+      "hash": "7d18119d4d8ff939a2c5e2f708799a7a2511414b597c5b58a4b36015fe7f322e",
+      "issue": "GH#14349",
+      "status": "simplified"
+    },
+    ".agents/marketing-sales/direct-response-copy-checklists-headline-testing.md": {
+      "at": "2026-04-03T12:24:52Z",
+      "hash": "be06c785ca2ac3c4f6a7c5fd58fd79299e95507b56db7c3ed5f515602f4e556f",
+      "issue": "GH#16380",
+      "passes": 1,
+      "pr": "pending",
+      "status": "simplified"
+    },
+    ".agents/seo/geo-strategy.md": {
+      "at": "2026-04-03T00:00:00Z",
+      "hash": "f2c7b8507a0eb39c56689d7ce778518d7e15b27b7da668ef2b2caebdbe5b50df",
+      "issue": "GH#15895",
+      "passes": 1,
+      "pr": "pending",
+      "status": "simplified"
+    },
+    ".agents/seo/serper.md": {
+      "hash": "3d0adf5a1a1e65e20e30d3ba749a1d2fccc090dcdad90dcbc8bbb6a254317e72",
+      "status": "simplified",
+      "issue": "GH#16731",
+      "lines": 60
+    },
+    ".agents/tools/pdf/overview.md": {
+      "at": "2026-04-03T00:00:00Z",
+      "hash": "d8fe67896cf7e6dafe4e6e8c92f37864cf671107860e019b4c78834d544b05b7",
+      "issue": "GH#16748",
+      "lines_before": 57,
+      "lines_after": 43,
+      "action": "tightened"
+    },
+    ".agents/tools/ui/ui-skills.md": {
+      "at": "2026-04-03T06:08:00Z",
+      "hash": "f75020ffda4b498042577c5888bf9b0aa1efebd4ae355bf4acf33ab10e74137e",
+      "issue": "GH#16179",
+      "lines": 96,
+      "passes": 1,
+      "pr": 16281,
+      "status": "simplified"
+    },
+    ".agents/workflows/pre-edit.md": {
+      "hash": "d87135a808a845416e0193a101bef0fd1c0b4a032969d819556ce109c40da4ba",
+      "issue": "GH#15439",
+      "lines_after": 72,
+      "lines_before": 78,
+      "status": "simplified"
     }
-  },
-  ".agents/reference/define-probes/docs.md": {
-    "at": "2026-04-03T00:00:00Z",
-    "hash": "42730e6d8c7fb235e7594467232c9ab9d4f69db6e66316c6d6e073ad6d3838f9",
-    "issue": "GH#16671",
-    "status": "simplified"
-  },
-  ".agents/seo/serper.md": {
-    "hash": "3d0adf5a1a1e65e20e30d3ba749a1d2fccc090dcdad90dcbc8bbb6a254317e72",
-    "status": "simplified",
-    "issue": "GH#16731",
-    "lines": 60
-  },
-  ".agents/tools/pdf/overview.md": {
-    "at": "2026-04-03T00:00:00Z",
-    "hash": "d8fe67896cf7e6dafe4e6e8c92f37864cf671107860e019b4c78834d544b05b7",
-    "issue": "GH#16748",
-    "lines_before": 57,
-    "lines_after": 43,
-    "action": "tightened"
   }
 }
