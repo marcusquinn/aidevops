@@ -58,6 +58,63 @@ import {
   apiStatus,
 } from './higgsfield-api.mjs';
 
+// ─── Shared command helpers ────────────────────────────────────────────────────
+
+async function uploadFileToPage(page, filePath, label = 'file') {
+  const fileInput = page.locator('input[type="file"]').first();
+  if (await fileInput.count() > 0) {
+    await fileInput.setInputFiles(filePath);
+    await page.waitForTimeout(2000);
+    console.log(`${label} uploaded: ${basename(filePath)}`);
+    return true;
+  }
+  return false;
+}
+
+async function uploadSecondFileToPage(page, filePath, label = 'second file') {
+  const fileInputs = page.locator('input[type="file"]');
+  const count = await fileInputs.count();
+  if (count > 1) {
+    await fileInputs.nth(1).setInputFiles(filePath);
+    await page.waitForTimeout(2000);
+    console.log(`${label} uploaded: ${basename(filePath)}`);
+    return true;
+  }
+  return false;
+}
+
+async function fillPromptField(page, prompt) {
+  const promptInput = page.locator('textarea').first();
+  if (await promptInput.count() > 0) {
+    await promptInput.fill(prompt);
+    console.log('Prompt entered');
+    return true;
+  }
+  return false;
+}
+
+async function selectButtonOption(page, value, label) {
+  const btn = page.locator(`button:has-text("${value}")`);
+  if (await btn.count() > 0) {
+    await btn.first().click();
+    await page.waitForTimeout(500);
+    console.log(`${label} set to ${value}`);
+    return true;
+  }
+  return false;
+}
+
+async function navigateAndDismiss(page, path, waitMs = 3000) {
+  await page.goto(`${BASE_URL}${path}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForTimeout(waitMs);
+  await dismissAllModals(page);
+}
+
+async function saveStateAndClose(context, browser) {
+  await context.storageState({ path: STATE_FILE });
+  await browser.close();
+}
+
 // ─── Asset Chain ──────────────────────────────────────────────────────────────
 
 const CHAIN_ACTION_MAP = {
@@ -130,25 +187,27 @@ async function openAssetDialog(page, targetAsset) {
   return false;
 }
 
-async function clickAssetAction(page, actionLabel) {
-  const dialog = page.locator('[role="dialog"], dialog');
+async function clickActionFromMenu(page, actionLabel) {
+  const openInBtn = page.locator('[role="dialog"], dialog').locator('button:has-text("Open in")');
+  if (await openInBtn.count() === 0) return false;
 
-  const openInBtn = dialog.locator('button:has-text("Open in")');
-  if (await openInBtn.count() > 0) {
-    await openInBtn.first().click({ force: true });
-    await page.waitForTimeout(1000);
-    console.log('Opened "Open in" menu');
-    await debugScreenshot(page, 'asset-chain-openin-menu');
+  await openInBtn.first().click({ force: true });
+  await page.waitForTimeout(1000);
+  console.log('Opened "Open in" menu');
+  await debugScreenshot(page, 'asset-chain-openin-menu');
 
-    const actionBtn = page.locator(`[role="menuitem"]:has-text("${actionLabel}"), [role="option"]:has-text("${actionLabel}"), [data-radix-popper-content-wrapper] button:has-text("${actionLabel}"), [data-radix-popper-content-wrapper] a:has-text("${actionLabel}")`);
-    if (await actionBtn.count() > 0) {
-      await actionBtn.first().click({ force: true });
-      await page.waitForTimeout(3000);
-      console.log(`Clicked "${actionLabel}" from Open in menu`);
-      return true;
-    }
+  const actionBtn = page.locator(`[role="menuitem"]:has-text("${actionLabel}"), [role="option"]:has-text("${actionLabel}"), [data-radix-popper-content-wrapper] button:has-text("${actionLabel}"), [data-radix-popper-content-wrapper] a:has-text("${actionLabel}")`);
+  if (await actionBtn.count() > 0) {
+    await actionBtn.first().click({ force: true });
+    await page.waitForTimeout(3000);
+    console.log(`Clicked "${actionLabel}" from Open in menu`);
+    return true;
   }
+  return false;
+}
 
+async function clickActionFromDialog(page, actionLabel) {
+  const dialog = page.locator('[role="dialog"], dialog');
   const directBtn = dialog.locator(`button:has-text("${actionLabel}"), a:has-text("${actionLabel}")`);
   if (await directBtn.count() > 0) {
     await directBtn.first().click({ force: true });
@@ -156,7 +215,11 @@ async function clickAssetAction(page, actionLabel) {
     console.log(`Clicked "${actionLabel}" inside dialog`);
     return true;
   }
+  return false;
+}
 
+async function clickActionFromOverflowMenu(page, actionLabel) {
+  const dialog = page.locator('[role="dialog"], dialog');
   const moreBtn = dialog.locator('button[aria-label*="more" i], button[aria-label*="menu" i], button:has(svg[class*="dots"]), button:has(svg[class*="ellipsis"])');
   for (let m = 0; m < await moreBtn.count(); m++) {
     await moreBtn.nth(m).click({ force: true });
@@ -169,8 +232,15 @@ async function clickAssetAction(page, actionLabel) {
       return true;
     }
   }
-
   return false;
+}
+
+async function clickAssetAction(page, actionLabel) {
+  return (
+    await clickActionFromMenu(page, actionLabel) ||
+    await clickActionFromDialog(page, actionLabel) ||
+    await clickActionFromOverflowMenu(page, actionLabel)
+  );
 }
 
 async function assetChainFallbackUpload(page, action, options) {
@@ -240,13 +310,14 @@ async function waitForChainedResult(page, action, timeout = 300000) {
       return true;
     }
 
-    if (Date.now() - startTime > 30000) {
+    const elapsed = Date.now() - startTime;
+    if (elapsed > 30000) {
       await debugScreenshot(page, `asset-chain-${action}-waiting`);
       if (await dismissMediaUploadAgreement(page)) {
         console.log('Late media upload agreement dismissed, continuing...');
         continue;
       }
-      if (Date.now() - startTime > 60000) {
+      if (elapsed > 60000) {
         console.log('No progress detected after 60s, checking result...');
         return false;
       }
@@ -327,14 +398,7 @@ export async function assetChain(options = {}) {
     const sourceUrl = options.prompt || `${BASE_URL}/asset/all`;
     await navigateTo(page, sourceUrl);
 
-    if (options.imageFile) {
-      const fileInput = page.locator('input[type="file"]').first();
-      if (await fileInput.count() > 0) {
-        await fileInput.setInputFiles(options.imageFile);
-        await page.waitForTimeout(3000);
-        console.log('Source image uploaded');
-      }
-    }
+    if (options.imageFile) await uploadFileToPage(page, options.imageFile, 'Source image');
 
     const { assetImg, assetCount } = await findAssetOnPage(page);
     if (assetCount === 0) {
@@ -358,18 +422,12 @@ export async function assetChain(options = {}) {
     }
 
     const actionClicked = await clickAssetAction(page, actionLabel);
-    if (!actionClicked) {
-      await assetChainFallbackUpload(page, action, options);
-    }
+    if (!actionClicked) await assetChainFallbackUpload(page, action, options);
 
     await debugScreenshot(page, `asset-chain-${action}`);
 
     if (options.prompt && !options.prompt.startsWith('http')) {
-      const promptInput = page.locator('textarea').first();
-      if (await promptInput.count() > 0) {
-        await promptInput.fill(options.prompt);
-        console.log('Additional prompt entered');
-      }
+      await fillPromptField(page, options.prompt);
     }
 
     await page.waitForTimeout(2000);
@@ -396,8 +454,7 @@ export async function assetChain(options = {}) {
       }
     }
 
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
+    await saveStateAndClose(context, browser);
     return { success: true };
   } catch (error) {
     console.error('Asset Chain error:', error.message);
@@ -490,7 +547,7 @@ async function pipelineSceneImages(brief, options, outputDir, pipelineState) {
   return sceneImages;
 }
 
-async function pipelineAnimateScenes(brief, sceneImages, options, outputDir, pipelineState) {
+async function submitPipelineVideoJobs(brief, sceneImages, options) {
   const validScenes = brief.scenes
     .map((scene, i) => ({ scene, index: i, image: sceneImages[i] }))
     .filter(s => s.image);
@@ -498,43 +555,58 @@ async function pipelineAnimateScenes(brief, sceneImages, options, outputDir, pip
   if (skippedScenes > 0) console.log(`Skipping ${skippedScenes} scene(s) with no image`);
 
   console.log(`\n--- Step 3a: Submit ${validScenes.length} video job(s) in parallel ---`);
-  const sceneVideos = new Array(brief.scenes.length).fill(null);
 
-  if (validScenes.length > 0) {
-    const { browser: videoBrowser, context: videoCtx, page: videoPage } = await launchBrowser(options);
-    try {
-      const submittedJobs = [];
-      for (const { scene, index, image } of validScenes) {
-        console.log(`\n  Submitting scene ${index + 1}/${brief.scenes.length}...`);
-        const promptPrefix = await submitVideoJobOnPage(videoPage, {
-          prompt: scene.prompt, imageFile: image,
-          model: brief.videoModel, duration: String(scene.duration || 5),
-        });
-        if (promptPrefix) {
-          submittedJobs.push({ sceneIndex: index, promptPrefix, model: brief.videoModel });
-        }
-      }
+  if (validScenes.length === 0) return [];
 
-      if (submittedJobs.length > 0) {
-        console.log(`\n--- Step 3b: Polling for ${submittedJobs.length} video(s) ---`);
-        const videoResults = await pollAndDownloadVideos(
-          videoPage, submittedJobs, outputDir, options.timeout || 600000
-        );
-        for (const [sceneIndex, path] of videoResults) {
-          sceneVideos[sceneIndex] = path;
-        }
+  const { browser: videoBrowser, context: videoCtx, page: videoPage } = await launchBrowser(options);
+  const submittedJobs = [];
+  try {
+    for (const { scene, index, image } of validScenes) {
+      console.log(`\n  Submitting scene ${index + 1}/${brief.scenes.length}...`);
+      const promptPrefix = await submitVideoJobOnPage(videoPage, {
+        prompt: scene.prompt, imageFile: image,
+        model: brief.videoModel, duration: String(scene.duration || 5),
+      });
+      if (promptPrefix) {
+        submittedJobs.push({ sceneIndex: index, promptPrefix, model: brief.videoModel });
       }
-      await videoCtx.storageState({ path: STATE_FILE });
-    } catch (err) {
-      console.error('Error during parallel video generation:', err.message);
     }
-    try { await videoBrowser.close(); } catch {}
+    await videoCtx.storageState({ path: STATE_FILE });
+  } catch (err) {
+    console.error('Error during parallel video submission:', err.message);
   }
+  try { await videoBrowser.close(); } catch {}
+  return submittedJobs;
+}
+
+async function pollPipelineVideoResults(brief, submittedJobs, outputDir, options, pipelineState) {
+  const sceneVideos = new Array(brief.scenes.length).fill(null);
+  if (submittedJobs.length === 0) return sceneVideos;
+
+  const { browser: pollBrowser, context: pollCtx, page: pollPage } = await launchBrowser(options);
+  try {
+    console.log(`\n--- Step 3b: Polling for ${submittedJobs.length} video(s) ---`);
+    const videoResults = await pollAndDownloadVideos(
+      pollPage, submittedJobs, outputDir, options.timeout || 600000
+    );
+    for (const [sceneIndex, path] of videoResults) {
+      sceneVideos[sceneIndex] = path;
+    }
+    await pollCtx.storageState({ path: STATE_FILE });
+  } catch (err) {
+    console.error('Error during video polling:', err.message);
+  }
+  try { await pollBrowser.close(); } catch {}
 
   const videoCount = sceneVideos.filter(Boolean).length;
   console.log(`\nVideo generation: ${videoCount}/${brief.scenes.length} scenes completed`);
   pipelineState.steps.push({ step: 'scene-videos', count: videoCount, total: brief.scenes.length });
   return sceneVideos;
+}
+
+async function pipelineAnimateScenes(brief, sceneImages, options, outputDir, pipelineState) {
+  const submittedJobs = await submitPipelineVideoJobs(brief, sceneImages, options);
+  return pollPipelineVideoResults(brief, submittedJobs, outputDir, options, pipelineState);
 }
 
 async function pipelineLipsync({ brief, sceneVideos, characterImagePath, options, outputDir, pipelineState }) {
@@ -572,48 +644,54 @@ async function pipelineLipsync({ brief, sceneVideos, characterImagePath, options
   return lipsyncVideos;
 }
 
+function runFfmpegConcat(concatList, finalPath) {
+  const baseArgs = ['-y', '-f', 'concat', '-safe', '0', '-i', concatList, '-c', 'copy', finalPath];
+  const reencodeArgs = ['-y', '-f', 'concat', '-safe', '0', '-i', concatList, '-c:v', 'libx264', '-c:a', 'aac', '-movflags', '+faststart', finalPath];
+  try {
+    execFileSync('ffmpeg', baseArgs, { timeout: 120000, stdio: 'pipe' });
+    return { success: true, method: 'copy' };
+  } catch {
+    try {
+      execFileSync('ffmpeg', reencodeArgs, { timeout: 300000, stdio: 'pipe' });
+      return { success: true, method: 'reencode' };
+    } catch (reencodeErr) {
+      return { success: false, error: reencodeErr.message };
+    }
+  }
+}
+
+function addMusicToVideo(finalPath, musicPath) {
+  const withMusicPath = finalPath.replace('-final.mp4', '-final-music.mp4');
+  try {
+    execFileSync('ffmpeg', ['-y', '-i', finalPath, '-i', musicPath, '-c:v', 'copy', '-c:a', 'aac', '-map', '0:v:0', '-map', '1:a:0', '-shortest', withMusicPath], {
+      timeout: 120000, stdio: 'pipe',
+    });
+    console.log(`Final video with music: ${withMusicPath}`);
+  } catch (musicErr) {
+    console.log(`Adding music failed: ${musicErr.message}`);
+  }
+}
+
 function assembleWithFfmpeg(validVideos, finalPath, brief, outputDir, pipelineState) {
   if (validVideos.length === 1) {
     copyFileSync(validVideos[0], finalPath);
     console.log(`Final video (single scene, ffmpeg copy): ${finalPath}`);
   } else {
     const concatList = safeJoin(outputDir, 'concat-list.txt');
-    const concatContent = validVideos.map(v => `file '${v}'`).join('\n');
-    writeFileSync(concatList, concatContent);
+    writeFileSync(concatList, validVideos.map(v => `file '${v}'`).join('\n'));
 
-    try {
-      execFileSync('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', concatList, '-c', 'copy', finalPath], {
-        timeout: 120000,
-        stdio: 'pipe',
-      });
-      console.log(`Final video (ffmpeg concat, ${validVideos.length} scenes): ${finalPath}`);
-    } catch (ffmpegErr) {
-      try {
-        execFileSync('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', concatList, '-c:v', 'libx264', '-c:a', 'aac', '-movflags', '+faststart', finalPath], {
-          timeout: 300000,
-          stdio: 'pipe',
-        });
-        console.log(`Final video (ffmpeg re-encoded, ${validVideos.length} scenes): ${finalPath}`);
-      } catch (reencodeErr) {
-        console.log(`ffmpeg assembly failed: ${reencodeErr.message}`);
-        console.log(`Individual scene videos are in: ${outputDir}`);
-        pipelineState.steps.push({ step: 'assembly', success: false, method: 'ffmpeg', reason: reencodeErr.message });
-        return;
-      }
+    const result = runFfmpegConcat(concatList, finalPath);
+    if (!result.success) {
+      console.log(`ffmpeg assembly failed: ${result.error}`);
+      console.log(`Individual scene videos are in: ${outputDir}`);
+      pipelineState.steps.push({ step: 'assembly', success: false, method: 'ffmpeg', reason: result.error });
+      return;
     }
+    console.log(`Final video (ffmpeg ${result.method}, ${validVideos.length} scenes): ${finalPath}`);
   }
 
   if (brief.music && existsSync(brief.music) && existsSync(finalPath)) {
-    const withMusicPath = finalPath.replace('-final.mp4', '-final-music.mp4');
-    try {
-      execFileSync('ffmpeg', ['-y', '-i', finalPath, '-i', brief.music, '-c:v', 'copy', '-c:a', 'aac', '-map', '0:v:0', '-map', '1:a:0', '-shortest', withMusicPath], {
-        timeout: 120000,
-        stdio: 'pipe',
-      });
-      console.log(`Final video with music: ${withMusicPath}`);
-    } catch (musicErr) {
-      console.log(`Adding music failed: ${musicErr.message}`);
-    }
+    addMusicToVideo(finalPath, brief.music);
   }
 
   pipelineState.steps.push({ step: 'assembly', success: true, method: 'ffmpeg', path: finalPath });
@@ -732,22 +810,8 @@ export async function useApp(options = {}) {
     await navigateTo(page, `/app/${appSlug}`);
     await debugScreenshot(page, `app-${appSlug}`);
 
-    if (options.imageFile) {
-      const fileInput = page.locator('input[type="file"]');
-      if (await fileInput.count() > 0) {
-        await fileInput.first().setInputFiles(options.imageFile);
-        await page.waitForTimeout(2000);
-        console.log('Image uploaded to app');
-      }
-    }
-
-    if (options.prompt) {
-      const promptInput = page.locator('textarea, input[placeholder*="prompt" i]');
-      if (await promptInput.count() > 0) {
-        await promptInput.first().fill(options.prompt);
-        console.log('Prompt entered');
-      }
-    }
+    if (options.imageFile) await uploadFileToPage(page, options.imageFile, 'Image');
+    if (options.prompt) await fillPromptField(page, options.prompt);
 
     const generateBtn = page.locator('button:has-text("Generate"), button:has-text("Create"), button:has-text("Apply"), button[type="submit"]:visible');
     if (await generateBtn.count() > 0) {
@@ -802,6 +866,45 @@ export async function screenshot(options = {}) {
   });
 }
 
+async function scrapeSubscriptionCredits(page) {
+  const rowsPerPageSelect = page.locator('select');
+  if (await rowsPerPageSelect.count() > 0) {
+    await rowsPerPageSelect.selectOption('50');
+    await page.waitForTimeout(2000);
+    console.log('Set rows per page to 50 to show all models');
+  }
+
+  return page.evaluate(() => {
+    const text = document.body.innerText;
+
+    const creditMatch = text.match(/([\d\s,]+)\/([\d\s,]+)/);
+    const remaining = creditMatch ? creditMatch[1].trim().replace(/[\s,]/g, '') : 'unknown';
+    const total = creditMatch ? creditMatch[2].trim().replace(/[\s,]/g, '') : 'unknown';
+
+    const planMatch = text.match(/(Creator|Team|Enterprise|Free)\s*Plan/i);
+    const plan = planMatch ? planMatch[1] : 'unknown';
+
+    const rows = document.querySelectorAll('table tbody tr');
+    const unlimitedModels = [];
+    for (const row of rows) {
+      const cells = [...row.querySelectorAll('td')];
+      if (cells.length >= 4 && cells[3]?.textContent?.trim() === 'Active') {
+        unlimitedModels.push({
+          model: cells[0]?.textContent?.trim(),
+          starts: cells[1]?.textContent?.trim(),
+          expires: cells[2]?.textContent?.trim(),
+        });
+      }
+    }
+
+    const pageInfo = text.match(/Page (\d+) of (\d+)/);
+    const currentPage = pageInfo ? parseInt(pageInfo[1], 10) : 1;
+    const totalPages = pageInfo ? parseInt(pageInfo[2], 10) : 1;
+
+    return { remaining, total, plan, unlimitedModels, currentPage, totalPages };
+  });
+}
+
 export async function checkCredits(options = {}) {
   const { browser, context, page } = await launchBrowser(options);
 
@@ -814,42 +917,7 @@ export async function checkCredits(options = {}) {
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
     await page.waitForTimeout(2000);
 
-    const rowsPerPageSelect = page.locator('select');
-    if (await rowsPerPageSelect.count() > 0) {
-      await rowsPerPageSelect.selectOption('50');
-      await page.waitForTimeout(2000);
-      console.log('Set rows per page to 50 to show all models');
-    }
-
-    const creditInfo = await page.evaluate(() => {
-      const text = document.body.innerText;
-
-      const creditMatch = text.match(/([\d\s,]+)\/([\d\s,]+)/);
-      const remaining = creditMatch ? creditMatch[1].trim().replace(/[\s,]/g, '') : 'unknown';
-      const total = creditMatch ? creditMatch[2].trim().replace(/[\s,]/g, '') : 'unknown';
-
-      const planMatch = text.match(/(Creator|Team|Enterprise|Free)\s*Plan/i);
-      const plan = planMatch ? planMatch[1] : 'unknown';
-
-      const rows = document.querySelectorAll('table tbody tr');
-      const unlimitedModels = [];
-      for (const row of rows) {
-        const cells = [...row.querySelectorAll('td')];
-        if (cells.length >= 4 && cells[3]?.textContent?.trim() === 'Active') {
-          unlimitedModels.push({
-            model: cells[0]?.textContent?.trim(),
-            starts: cells[1]?.textContent?.trim(),
-            expires: cells[2]?.textContent?.trim(),
-          });
-        }
-      }
-
-      const pageInfo = text.match(/Page (\d+) of (\d+)/);
-      const currentPage = pageInfo ? parseInt(pageInfo[1], 10) : 1;
-      const totalPages = pageInfo ? parseInt(pageInfo[2], 10) : 1;
-
-      return { remaining, total, plan, unlimitedModels, currentPage, totalPages };
-    });
+    const creditInfo = await scrapeSubscriptionCredits(page);
 
     console.log(`Plan: ${creditInfo.plan}`);
     console.log(`Credits: ${creditInfo.remaining} / ${creditInfo.total}`);
@@ -865,8 +933,7 @@ export async function checkCredits(options = {}) {
     saveCreditCache(creditInfo);
 
     await debugScreenshot(page, 'subscription', { fullPage: true });
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
+    await saveStateAndClose(context, browser);
     return creditInfo;
 
   } catch (error) {
@@ -907,8 +974,7 @@ export async function listAssets(options = {}) {
       console.log(`  [${a.index}] ${a.type}: ${a.text || a.src || 'no info'}`);
     });
 
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
+    await saveStateAndClose(context, browser);
     return assets;
 
   } catch (error) {
@@ -944,10 +1010,9 @@ export async function seedBracket(options = {}) {
 
   for (const seed of seeds) {
     console.log(`\n--- Testing seed ${seed} ---`);
-    const seedPrompt = `${prompt} --seed ${seed}`;
     const result = await generateImage({
       ...options,
-      prompt: seedPrompt,
+      prompt: `${prompt} --seed ${seed}`,
       output: outputDir,
       batch: 1,
     });
@@ -964,8 +1029,7 @@ export async function seedBracket(options = {}) {
   console.log(`Then use --seed <number> with your chosen seed for consistent results.`);
 
   const manifest = {
-    prompt,
-    model,
+    prompt, model,
     seeds: results.map(r => ({ seed: r.seed, success: r.success })),
     timestamp: new Date().toISOString(),
   };
@@ -981,9 +1045,7 @@ export async function cinemaStudio(options = {}) {
 
   try {
     console.log('Navigating to Cinema Studio...');
-    await page.goto(`${BASE_URL}/cinema-studio`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
+    await navigateAndDismiss(page, '/cinema-studio');
 
     const tabName = options.duration ? 'Video' : (options.tab || 'Image');
     const tab = page.locator(`[role="tab"]:has-text("${tabName}")`);
@@ -993,40 +1055,10 @@ export async function cinemaStudio(options = {}) {
       console.log(`Selected ${tabName} tab`);
     }
 
-    if (options.imageFile) {
-      const fileInput = page.locator('input[type="file"]').first();
-      if (await fileInput.count() > 0) {
-        await fileInput.setInputFiles(options.imageFile);
-        await page.waitForTimeout(2000);
-        console.log('Image uploaded to Cinema Studio');
-      }
-    }
-
-    if (options.prompt) {
-      const promptInput = page.locator('textarea').first();
-      if (await promptInput.count() > 0) {
-        await promptInput.fill(options.prompt);
-        console.log('Prompt entered');
-      }
-    }
-
-    if (options.quality) {
-      const qualityBtn = page.locator(`button:has-text("${options.quality}")`);
-      if (await qualityBtn.count() > 0) {
-        await qualityBtn.first().click();
-        await page.waitForTimeout(500);
-        console.log(`Quality set to ${options.quality}`);
-      }
-    }
-
-    if (options.aspect) {
-      const aspectBtn = page.locator(`button:has-text("${options.aspect}")`);
-      if (await aspectBtn.count() > 0) {
-        await aspectBtn.first().click();
-        await page.waitForTimeout(500);
-        console.log(`Aspect set to ${options.aspect}`);
-      }
-    }
+    if (options.imageFile) await uploadFileToPage(page, options.imageFile, 'Image');
+    if (options.prompt) await fillPromptField(page, options.prompt);
+    if (options.quality) await selectButtonOption(page, options.quality, 'Quality');
+    if (options.aspect) await selectButtonOption(page, options.aspect, 'Aspect');
 
     await debugScreenshot(page, 'cinema-studio-configured');
     await clickGenerate(page, 'Cinema Studio');
@@ -1034,8 +1066,7 @@ export async function cinemaStudio(options = {}) {
       screenshotName: 'cinema-studio-result', label: 'Cinema Studio', outputSubdir: 'cinema',
     });
 
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
+    await saveStateAndClose(context, browser);
     return { success: true };
   } catch (error) {
     console.error('Cinema Studio error:', error.message);
@@ -1049,37 +1080,13 @@ export async function motionControl(options = {}) {
 
   try {
     console.log('Navigating to Motion Control...');
-    await page.goto(`${BASE_URL}/create/motion-control`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
+    await navigateAndDismiss(page, '/create/motion-control');
 
     if (options.videoFile || options.motionRef) {
-      const videoPath = options.videoFile || options.motionRef;
-      const fileInputs = page.locator('input[type="file"]');
-      if (await fileInputs.count() > 0) {
-        await fileInputs.first().setInputFiles(videoPath);
-        await page.waitForTimeout(3000);
-        console.log(`Motion reference uploaded: ${basename(videoPath)}`);
-      }
+      await uploadFileToPage(page, options.videoFile || options.motionRef, 'Motion reference');
     }
-
-    if (options.imageFile) {
-      const fileInputs = page.locator('input[type="file"]');
-      const count = await fileInputs.count();
-      if (count > 1) {
-        await fileInputs.nth(1).setInputFiles(options.imageFile);
-        await page.waitForTimeout(2000);
-        console.log(`Character image uploaded: ${basename(options.imageFile)}`);
-      }
-    }
-
-    if (options.prompt) {
-      const promptInput = page.locator('textarea').first();
-      if (await promptInput.count() > 0) {
-        await promptInput.fill(options.prompt);
-        console.log('Prompt entered');
-      }
-    }
+    if (options.imageFile) await uploadSecondFileToPage(page, options.imageFile, 'Character image');
+    if (options.prompt) await fillPromptField(page, options.prompt);
 
     if (options.unlimited) {
       const unlimitedToggle = page.locator('text=Unlimited mode').locator('..').locator('[role="switch"], input[type="checkbox"]');
@@ -1100,8 +1107,7 @@ export async function motionControl(options = {}) {
       outputSubdir: 'videos', defaultTimeout: 300000, isVideo: true, useHistoryPoll: true,
     });
 
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
+    await saveStateAndClose(context, browser);
     return { success: true };
   } catch (error) {
     console.error('Motion Control error:', error.message);
@@ -1115,38 +1121,12 @@ export async function editImage(options = {}) {
 
   try {
     const model = options.model || 'soul_inpaint';
-    const editUrl = `${BASE_URL}/edit?model=${model}`;
     console.log(`Navigating to Edit (${model})...`);
-    await page.goto(editUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
+    await navigateAndDismiss(page, `/edit?model=${model}`);
 
-    if (options.imageFile) {
-      const fileInput = page.locator('input[type="file"]').first();
-      if (await fileInput.count() > 0) {
-        await fileInput.setInputFiles(options.imageFile);
-        await page.waitForTimeout(3000);
-        console.log(`Image uploaded for editing: ${basename(options.imageFile)}`);
-      }
-    }
-
-    if (options.imageFile2) {
-      const fileInputs = page.locator('input[type="file"]');
-      const count = await fileInputs.count();
-      if (count > 1) {
-        await fileInputs.nth(1).setInputFiles(options.imageFile2);
-        await page.waitForTimeout(2000);
-        console.log(`Second image uploaded: ${basename(options.imageFile2)}`);
-      }
-    }
-
-    if (options.prompt) {
-      const promptInput = page.locator('textarea').first();
-      if (await promptInput.count() > 0) {
-        await promptInput.fill(options.prompt);
-        console.log('Edit prompt entered');
-      }
-    }
+    if (options.imageFile) await uploadFileToPage(page, options.imageFile, 'Image for editing');
+    if (options.imageFile2) await uploadSecondFileToPage(page, options.imageFile2, 'Second image');
+    if (options.prompt) await fillPromptField(page, options.prompt);
 
     await debugScreenshot(page, `edit-${model}-configured`);
     await clickGenerate(page, 'edit');
@@ -1155,8 +1135,7 @@ export async function editImage(options = {}) {
       label: 'edit', outputSubdir: 'edits', defaultTimeout: 120000,
     });
 
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
+    await saveStateAndClose(context, browser);
     return { success: true };
   } catch (error) {
     console.error('Edit error:', error.message);
@@ -1170,19 +1149,10 @@ export async function upscale(options = {}) {
 
   try {
     console.log('Navigating to Upscale...');
-    await page.goto(`${BASE_URL}/upscale`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
+    await navigateAndDismiss(page, '/upscale');
 
     const mediaFile = options.imageFile || options.videoFile;
-    if (mediaFile) {
-      const fileInput = page.locator('input[type="file"]').first();
-      if (await fileInput.count() > 0) {
-        await fileInput.setInputFiles(mediaFile);
-        await page.waitForTimeout(3000);
-        console.log(`Media uploaded for upscaling: ${basename(mediaFile)}`);
-      }
-    }
+    if (mediaFile) await uploadFileToPage(page, mediaFile, 'Media for upscaling');
 
     await debugScreenshot(page, 'upscale-configured');
 
@@ -1197,8 +1167,7 @@ export async function upscale(options = {}) {
       label: 'upscale', outputSubdir: 'upscaled',
     });
 
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
+    await saveStateAndClose(context, browser);
     return { success: true };
   } catch (error) {
     console.error('Upscale error:', error.message);
@@ -1207,15 +1176,24 @@ export async function upscale(options = {}) {
   }
 }
 
+async function downloadAssetAtIndex(page, index, options) {
+  const assetImg = page.locator('main img').nth(index);
+  if (!await assetImg.isVisible({ timeout: 3000 }).catch(() => false)) return;
+  await assetImg.click();
+  await page.waitForTimeout(2500);
+  await debugScreenshot(page, 'asset-detail');
+  const baseOutput = options.output || getDefaultOutputDir(options);
+  const dlDir = resolveOutputDir(baseOutput, options, 'misc');
+  await downloadLatestResult(page, dlDir, false, options);
+}
+
 export async function manageAssets(options = {}) {
   const { browser, context, page } = await launchBrowser(options);
 
   try {
     const action = options.assetAction || 'list';
     console.log(`Asset Library: ${action}...`);
-    await page.goto(`${BASE_URL}/asset/all`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
+    await navigateAndDismiss(page, '/asset/all');
 
     const filter = options.filter || options.assetType;
     if (filter) {
@@ -1240,24 +1218,13 @@ export async function manageAssets(options = {}) {
     if (action === 'list') {
       await debugScreenshot(page, 'asset-library');
       console.log(`Asset library screenshot saved. ${assetCount} assets visible.`);
-      await context.storageState({ path: STATE_FILE });
-      await browser.close();
+      await saveStateAndClose(context, browser);
       return { success: true, count: assetCount };
     }
 
     if (action === 'download' || action === 'download-latest') {
-      const targetIndex = options.assetIndex || 0;
-      const assetImg = page.locator('main img').nth(targetIndex);
-      if (await assetImg.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await assetImg.click();
-        await page.waitForTimeout(2500);
-        await debugScreenshot(page, 'asset-detail');
-
-        const baseOutput = options.output || getDefaultOutputDir(options);
-        const dlDir = resolveOutputDir(baseOutput, options, 'misc');
-        await downloadLatestResult(page, dlDir, false, options);
-        console.log('Asset downloaded');
-      }
+      await downloadAssetAtIndex(page, options.assetIndex || 0, options);
+      console.log('Asset downloaded');
     }
 
     if (action === 'download-all') {
@@ -1279,14 +1246,26 @@ export async function manageAssets(options = {}) {
       }
     }
 
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
+    await saveStateAndClose(context, browser);
     return { success: true, count: assetCount };
   } catch (error) {
     console.error('Asset Library error:', error.message);
     await browser.close();
     return { success: false, error: error.message };
   }
+}
+
+function resolvePresetUrl(presetName, presets) {
+  const presetKey = presetName.toLowerCase().replace(/[\s-]+/g, '_');
+  let presetUrl = presets[presetKey];
+  if (!presetUrl) {
+    const match = Object.keys(presets).find(k => k.includes(presetKey) || presetKey.includes(k));
+    if (match) {
+      presetUrl = presets[match];
+      console.log(`Fuzzy matched preset: ${presetName} → ${match}`);
+    }
+  }
+  return presetUrl;
 }
 
 export async function mixedMediaPreset(options = {}) {
@@ -1300,42 +1279,20 @@ export async function mixedMediaPreset(options = {}) {
     const presets = routes.mixed_media_presets || {};
 
     const presetKey = presetName.toLowerCase().replace(/[\s-]+/g, '_');
-    let presetUrl = presets[presetKey];
+    const presetUrl = resolvePresetUrl(presetName, presets);
 
     if (!presetUrl) {
-      const match = Object.keys(presets).find(k => k.includes(presetKey) || presetKey.includes(k));
-      if (match) {
-        presetUrl = presets[match];
-        console.log(`Fuzzy matched preset: ${presetName} → ${match}`);
-      } else {
-        console.log(`Available presets: ${Object.keys(presets).join(', ')}`);
-        await browser.close();
-        return { success: false, error: `Unknown preset: ${presetName}` };
-      }
+      console.log(`Available presets: ${Object.keys(presets).join(', ')}`);
+      await browser.close();
+      return { success: false, error: `Unknown preset: ${presetName}` };
     }
 
     console.log(`Navigating to Mixed Media preset: ${presetName}...`);
-    await page.goto(`${BASE_URL}${presetUrl}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
+    await navigateAndDismiss(page, presetUrl);
 
     const mediaFile = options.imageFile || options.videoFile;
-    if (mediaFile) {
-      const fileInput = page.locator('input[type="file"]').first();
-      if (await fileInput.count() > 0) {
-        await fileInput.setInputFiles(mediaFile);
-        await page.waitForTimeout(3000);
-        console.log(`Media uploaded: ${basename(mediaFile)}`);
-      }
-    }
-
-    if (options.prompt) {
-      const promptInput = page.locator('textarea').first();
-      if (await promptInput.count() > 0) {
-        await promptInput.fill(options.prompt);
-        console.log('Prompt entered');
-      }
-    }
+    if (mediaFile) await uploadFileToPage(page, mediaFile, 'Media');
+    if (options.prompt) await fillPromptField(page, options.prompt);
 
     await debugScreenshot(page, `mixed-media-${presetKey}-configured`);
     await clickGenerate(page, 'mixed media preset');
@@ -1343,8 +1300,7 @@ export async function mixedMediaPreset(options = {}) {
       screenshotName: `mixed-media-${presetKey}-result`, label: 'mixed media', outputSubdir: 'mixed-media',
     });
 
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
+    await saveStateAndClose(context, browser);
     return { success: true };
   } catch (error) {
     console.error('Mixed Media Preset error:', error.message);
@@ -1417,27 +1373,11 @@ export async function motionPreset(options = {}) {
     }
 
     console.log(`Navigating to motion preset: ${presetName}...`);
-    await page.goto(`${BASE_URL}${presetUrl}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
+    await navigateAndDismiss(page, presetUrl);
 
     const mediaFile = options.imageFile || options.videoFile;
-    if (mediaFile) {
-      const fileInput = page.locator('input[type="file"]').first();
-      if (await fileInput.count() > 0) {
-        await fileInput.setInputFiles(mediaFile);
-        await page.waitForTimeout(3000);
-        console.log(`Media uploaded: ${basename(mediaFile)}`);
-      }
-    }
-
-    if (options.prompt) {
-      const promptInput = page.locator('textarea').first();
-      if (await promptInput.count() > 0) {
-        await promptInput.fill(options.prompt);
-        console.log('Prompt entered');
-      }
-    }
+    if (mediaFile) await uploadFileToPage(page, mediaFile, 'Media');
+    if (options.prompt) await fillPromptField(page, options.prompt);
 
     await debugScreenshot(page, 'motion-preset-configured');
     await clickGenerate(page, 'motion preset');
@@ -1446,8 +1386,7 @@ export async function motionPreset(options = {}) {
       label: 'motion preset', outputSubdir: 'motion-presets', defaultTimeout: 300000, isVideo: true,
     });
 
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
+    await saveStateAndClose(context, browser);
     return { success: true };
   } catch (error) {
     console.error('Motion Preset error:', error.message);
@@ -1461,40 +1400,16 @@ export async function editVideo(options = {}) {
 
   try {
     console.log('Navigating to Video Edit...');
-    await page.goto(`${BASE_URL}/create/edit`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
+    await navigateAndDismiss(page, '/create/edit');
 
-    if (options.videoFile) {
-      const fileInputs = page.locator('input[type="file"]');
-      if (await fileInputs.count() > 0) {
-        await fileInputs.first().setInputFiles(options.videoFile);
-        await page.waitForTimeout(3000);
-        console.log(`Video uploaded: ${basename(options.videoFile)}`);
-      }
-    }
-
+    if (options.videoFile) await uploadFileToPage(page, options.videoFile, 'Video');
     if (options.imageFile) {
-      const fileInputs = page.locator('input[type="file"]');
-      const count = await fileInputs.count();
-      if (count > 1) {
-        await fileInputs.nth(1).setInputFiles(options.imageFile);
-        await page.waitForTimeout(2000);
-        console.log(`Character image uploaded: ${basename(options.imageFile)}`);
-      } else if (count === 1 && !options.videoFile) {
-        await fileInputs.first().setInputFiles(options.imageFile);
-        await page.waitForTimeout(2000);
-        console.log(`Image uploaded: ${basename(options.imageFile)}`);
+      const uploaded = await uploadSecondFileToPage(page, options.imageFile, 'Character image');
+      if (!uploaded && !options.videoFile) {
+        await uploadFileToPage(page, options.imageFile, 'Image');
       }
     }
-
-    if (options.prompt) {
-      const promptInput = page.locator('textarea').first();
-      if (await promptInput.count() > 0) {
-        await promptInput.fill(options.prompt);
-        console.log('Edit prompt entered');
-      }
-    }
+    if (options.prompt) await fillPromptField(page, options.prompt);
 
     await debugScreenshot(page, 'video-edit-configured');
     await clickGenerate(page, 'video edit');
@@ -1503,8 +1418,7 @@ export async function editVideo(options = {}) {
       outputSubdir: 'videos', defaultTimeout: 300000, isVideo: true, useHistoryPoll: true,
     });
 
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
+    await saveStateAndClose(context, browser);
     return { success: true };
   } catch (error) {
     console.error('Video Edit error:', error.message);
@@ -1518,26 +1432,10 @@ export async function storyboard(options = {}) {
 
   try {
     console.log('Navigating to Storyboard Generator...');
-    await page.goto(`${BASE_URL}/storyboard-generator`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
+    await navigateAndDismiss(page, '/storyboard-generator');
 
-    if (options.imageFile) {
-      const fileInput = page.locator('input[type="file"]').first();
-      if (await fileInput.count() > 0) {
-        await fileInput.setInputFiles(options.imageFile);
-        await page.waitForTimeout(2000);
-        console.log('Reference image uploaded');
-      }
-    }
-
-    if (options.prompt) {
-      const promptInput = page.locator('textarea').first();
-      if (await promptInput.count() > 0) {
-        await promptInput.fill(options.prompt);
-        console.log('Storyboard script entered');
-      }
-    }
+    if (options.imageFile) await uploadFileToPage(page, options.imageFile, 'Reference image');
+    if (options.prompt) await fillPromptField(page, options.prompt);
 
     if (options.scenes) {
       const scenesInput = page.locator('input[type="number"], input[placeholder*="scene" i], input[placeholder*="panel" i]');
@@ -1547,14 +1445,7 @@ export async function storyboard(options = {}) {
       }
     }
 
-    if (options.preset) {
-      const styleBtn = page.locator(`button:has-text("${options.preset}")`);
-      if (await styleBtn.count() > 0) {
-        await styleBtn.first().click();
-        await page.waitForTimeout(500);
-        console.log(`Style selected: ${options.preset}`);
-      }
-    }
+    if (options.preset) await selectButtonOption(page, options.preset, 'Style');
 
     await debugScreenshot(page, 'storyboard-configured');
     await clickGenerate(page, 'storyboard');
@@ -1564,8 +1455,7 @@ export async function storyboard(options = {}) {
       outputSubdir: 'storyboards', defaultTimeout: 300000,
     });
 
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
+    await saveStateAndClose(context, browser);
     return { success: true };
   } catch (error) {
     console.error('Storyboard error:', error.message);
@@ -1574,27 +1464,28 @@ export async function storyboard(options = {}) {
   }
 }
 
+function resolveVibeMotionSubtype(subtype) {
+  const subtypeMap = {
+    infographics: 'Infographics',
+    'text-animation': 'Text Animation',
+    text: 'Text Animation',
+    posters: 'Posters',
+    poster: 'Posters',
+    presentation: 'Presentation',
+    scratch: 'From Scratch',
+    'from-scratch': 'From Scratch',
+  };
+  return subtypeMap[subtype.toLowerCase()] || subtype;
+}
+
 export async function vibeMotion(options = {}) {
   const { browser, context, page } = await launchBrowser(options);
 
   try {
     console.log('Navigating to Vibe Motion...');
-    await page.goto(`${BASE_URL}/vibe-motion`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
+    await navigateAndDismiss(page, '/vibe-motion');
 
-    const subtype = options.tab || 'From Scratch';
-    const subtypeMap = {
-      infographics: 'Infographics',
-      'text-animation': 'Text Animation',
-      text: 'Text Animation',
-      posters: 'Posters',
-      poster: 'Posters',
-      presentation: 'Presentation',
-      scratch: 'From Scratch',
-      'from-scratch': 'From Scratch',
-    };
-    const subtypeLabel = subtypeMap[subtype.toLowerCase()] || subtype;
+    const subtypeLabel = resolveVibeMotionSubtype(options.tab || 'From Scratch');
     const subtypeTab = page.locator(`[role="tab"]:has-text("${subtypeLabel}"), button:has-text("${subtypeLabel}")`);
     if (await subtypeTab.count() > 0) {
       await subtypeTab.first().click();
@@ -1602,49 +1493,11 @@ export async function vibeMotion(options = {}) {
       console.log(`Selected sub-type: ${subtypeLabel}`);
     }
 
-    if (options.imageFile) {
-      const fileInput = page.locator('input[type="file"]').first();
-      if (await fileInput.count() > 0) {
-        await fileInput.setInputFiles(options.imageFile);
-        await page.waitForTimeout(2000);
-        console.log('Image/logo uploaded');
-      }
-    }
-
-    if (options.prompt) {
-      const promptInput = page.locator('textarea').first();
-      if (await promptInput.count() > 0) {
-        await promptInput.fill(options.prompt);
-        console.log('Content entered');
-      }
-    }
-
-    if (options.preset) {
-      const styleBtn = page.locator(`button:has-text("${options.preset}")`);
-      if (await styleBtn.count() > 0) {
-        await styleBtn.first().click();
-        await page.waitForTimeout(500);
-        console.log(`Style selected: ${options.preset}`);
-      }
-    }
-
-    if (options.duration) {
-      const durBtn = page.locator(`button:has-text("${options.duration}s"), button:has-text("${options.duration}")`);
-      if (await durBtn.count() > 0) {
-        await durBtn.first().click();
-        await page.waitForTimeout(500);
-        console.log(`Duration set to ${options.duration}s`);
-      }
-    }
-
-    if (options.aspect) {
-      const aspectBtn = page.locator(`button:has-text("${options.aspect}")`);
-      if (await aspectBtn.count() > 0) {
-        await aspectBtn.first().click();
-        await page.waitForTimeout(500);
-        console.log(`Aspect set to ${options.aspect}`);
-      }
-    }
+    if (options.imageFile) await uploadFileToPage(page, options.imageFile, 'Image/logo');
+    if (options.prompt) await fillPromptField(page, options.prompt);
+    if (options.preset) await selectButtonOption(page, options.preset, 'Style');
+    if (options.duration) await selectButtonOption(page, `${options.duration}s`, 'Duration');
+    if (options.aspect) await selectButtonOption(page, options.aspect, 'Aspect');
 
     await debugScreenshot(page, 'vibe-motion-configured');
     await clickGenerate(page, 'Vibe Motion');
@@ -1653,8 +1506,7 @@ export async function vibeMotion(options = {}) {
       outputSubdir: 'videos', defaultTimeout: 300000, isVideo: true,
     });
 
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
+    await saveStateAndClose(context, browser);
     return { success: true };
   } catch (error) {
     console.error('Vibe Motion error:', error.message);
@@ -1668,9 +1520,7 @@ export async function aiInfluencer(options = {}) {
 
   try {
     console.log('Navigating to AI Influencer Studio...');
-    await page.goto(`${BASE_URL}/ai-influencer-studio`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
+    await navigateAndDismiss(page, '/ai-influencer-studio');
 
     if (options.preset) {
       const typeBtn = page.locator(`button:has-text("${options.preset}"), [role="option"]:has-text("${options.preset}")`);
@@ -1681,14 +1531,7 @@ export async function aiInfluencer(options = {}) {
       }
     }
 
-    if (options.imageFile) {
-      const fileInput = page.locator('input[type="file"]').first();
-      if (await fileInput.count() > 0) {
-        await fileInput.setInputFiles(options.imageFile);
-        await page.waitForTimeout(2000);
-        console.log('Reference image uploaded');
-      }
-    }
+    if (options.imageFile) await uploadFileToPage(page, options.imageFile, 'Reference image');
 
     if (options.prompt) {
       const promptInput = page.locator('textarea, input[placeholder*="prompt" i], input[placeholder*="describe" i]');
@@ -1705,8 +1548,7 @@ export async function aiInfluencer(options = {}) {
       label: 'AI Influencer', outputSubdir: 'characters',
     });
 
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
+    await saveStateAndClose(context, browser);
     return { success: true };
   } catch (error) {
     console.error('AI Influencer error:', error.message);
@@ -1720,9 +1562,7 @@ export async function createCharacter(options = {}) {
 
   try {
     console.log('Navigating to Character...');
-    await page.goto(`${BASE_URL}/character`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
+    await navigateAndDismiss(page, '/character');
 
     if (options.imageFile) {
       const fileInput = page.locator('input[type="file"]').first();
@@ -1753,8 +1593,7 @@ export async function createCharacter(options = {}) {
       label: 'character creation', outputSubdir: 'characters', defaultTimeout: 120000,
     });
 
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
+    await saveStateAndClose(context, browser);
     return { success: true };
   } catch (error) {
     console.error('Character error:', error.message);
@@ -1763,48 +1602,30 @@ export async function createCharacter(options = {}) {
   }
 }
 
+const FEATURE_MAP = {
+  'fashion-factory': { url: '/fashion-factory', name: 'Fashion Factory' },
+  fashion: { url: '/fashion-factory', name: 'Fashion Factory' },
+  'ugc-factory': { url: '/ugc-factory', name: 'UGC Factory' },
+  ugc: { url: '/ugc-factory', name: 'UGC Factory' },
+  'photodump-studio': { url: '/photodump-studio', name: 'Photodump Studio' },
+  photodump: { url: '/photodump-studio', name: 'Photodump Studio' },
+  'camera-controls': { url: '/camera-controls', name: 'Camera Controls' },
+  camera: { url: '/camera-controls', name: 'Camera Controls' },
+  effects: { url: '/effects', name: 'Effects' },
+};
+
 export async function featurePage(options = {}) {
   const { browser, context, page } = await launchBrowser(options);
 
   try {
-    const featureMap = {
-      'fashion-factory': { url: '/fashion-factory', name: 'Fashion Factory' },
-      fashion: { url: '/fashion-factory', name: 'Fashion Factory' },
-      'ugc-factory': { url: '/ugc-factory', name: 'UGC Factory' },
-      ugc: { url: '/ugc-factory', name: 'UGC Factory' },
-      'photodump-studio': { url: '/photodump-studio', name: 'Photodump Studio' },
-      photodump: { url: '/photodump-studio', name: 'Photodump Studio' },
-      'camera-controls': { url: '/camera-controls', name: 'Camera Controls' },
-      camera: { url: '/camera-controls', name: 'Camera Controls' },
-      effects: { url: '/effects', name: 'Effects' },
-    };
-
     const featureKey = options.effect || options.feature || 'fashion-factory';
-    const feature = featureMap[featureKey.toLowerCase()] || { url: `/${featureKey}`, name: featureKey };
+    const feature = FEATURE_MAP[featureKey.toLowerCase()] || { url: `/${featureKey}`, name: featureKey };
 
     console.log(`Navigating to ${feature.name}...`);
-    await page.goto(`${BASE_URL}${feature.url}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
-    await dismissAllModals(page);
+    await navigateAndDismiss(page, feature.url);
 
-    if (options.imageFile) {
-      const fileInput = page.locator('input[type="file"]').first();
-      if (await fileInput.count() > 0) {
-        await fileInput.setInputFiles(options.imageFile);
-        await page.waitForTimeout(2000);
-        console.log('Image uploaded');
-      }
-    }
-
-    if (options.imageFile2) {
-      const fileInputs = page.locator('input[type="file"]');
-      const count = await fileInputs.count();
-      if (count > 1) {
-        await fileInputs.nth(1).setInputFiles(options.imageFile2);
-        await page.waitForTimeout(2000);
-        console.log('Additional image uploaded');
-      }
-    }
+    if (options.imageFile) await uploadFileToPage(page, options.imageFile, 'Image');
+    if (options.imageFile2) await uploadSecondFileToPage(page, options.imageFile2, 'Additional image');
 
     if (options.videoFile) {
       const fileInput = page.locator('input[type="file"][accept*="video"], input[type="file"]').first();
@@ -1823,14 +1644,7 @@ export async function featurePage(options = {}) {
       }
     }
 
-    if (options.preset) {
-      const styleBtn = page.locator(`button:has-text("${options.preset}")`);
-      if (await styleBtn.count() > 0) {
-        await styleBtn.first().click();
-        await page.waitForTimeout(500);
-        console.log(`Style/preset selected: ${options.preset}`);
-      }
-    }
+    if (options.preset) await selectButtonOption(page, options.preset, 'Style/preset');
 
     await debugScreenshot(page, `feature-${featureKey}-configured`);
     await clickGenerate(page, feature.name);
@@ -1838,8 +1652,7 @@ export async function featurePage(options = {}) {
       screenshotName: `feature-${featureKey}-result`, label: feature.name, outputSubdir: 'features',
     });
 
-    await context.storageState({ path: STATE_FILE });
-    await browser.close();
+    await saveStateAndClose(context, browser);
     return { success: true };
   } catch (error) {
     console.error(`Feature page error: ${error.message}`);
@@ -1904,10 +1717,9 @@ export async function authHealthCheck(options = {}) {
     if (foundUserIndicator) {
       console.log('[health-check] Auth state is valid');
       return { success: true, age: { hours: ageHours, days: ageDays } };
-    } else {
-      console.log('[health-check] Auth state uncertain (no user indicator found)');
-      return { success: true, warning: 'Could not verify user indicator' };
     }
+    console.log('[health-check] Auth state uncertain (no user indicator found)');
+    return { success: true, warning: 'Could not verify user indicator' };
 
   } catch (error) {
     console.error(`[health-check] Error during health check: ${error.message}`);
@@ -1975,13 +1787,7 @@ export async function smokeTest(options = {}) {
   console.log('[smoke-test] Running smoke test...');
   console.log('[smoke-test] This will verify: auth, navigation, UI elements (no generation)');
 
-  const results = {
-    auth: false,
-    navigation: false,
-    credits: false,
-    discovery: false,
-    overall: false,
-  };
+  const results = { auth: false, navigation: false, credits: false, discovery: false, overall: false };
 
   try {
     console.log('\n[smoke-test] Step 1/4: Auth health check...');
