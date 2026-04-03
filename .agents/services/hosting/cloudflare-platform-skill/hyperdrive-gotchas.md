@@ -50,8 +50,6 @@ WHERE application_name = 'Cloudflare Hyperdrive';
 | Query | Max duration | 60s | 60s |
 | Query | Max cached response | 50MB | 50MB |
 
-Queries >60s are terminated. Responses >50MB are returned but not cached.
-
 ## Migration Checklist
 
 - [ ] Create config via Wrangler
@@ -69,11 +67,11 @@ Queries >60s are terminated. Responses >50MB are returned but not cached.
 
 ## When NOT to Use
 
-❌ Write-heavy workloads (limited cache benefit)
-❌ Real-time data requirements (<1s freshness)
-❌ Single-region apps close to DB
-❌ Very simple apps (overhead unjustified)
-❌ DB with strict connection limits already exceeded
+- Write-heavy workloads (limited cache benefit)
+- Real-time data requirements (<1s freshness)
+- Single-region apps close to DB
+- Very simple apps (overhead unjustified)
+- DB with strict connection limits already exceeded
 
 Alternatives: D1 (Cloudflare native SQL), Durable Objects (stateful Workers), KV (global key-value), R2 (object storage).
 
