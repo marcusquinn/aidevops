@@ -28,12 +28,12 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Security Model
+## Security
 
 - **Scopes**: Access matches Cloudflare dashboard permissions
 - **Secrets**: No tokens in config; MCP client stores OAuth token
 - **Revocation**: `dash.cloudflare.com` → My Profile → API Tokens → OAuth Apps
-- **Least privilege**: For tighter scope, use a sub-account or scoped API token; see `services/hosting/cloudflare.md`
+- **Least privilege**: Use a sub-account or scoped API token for tighter scope; see `services/hosting/cloudflare.md`
 - **Audit trail**: Actions appear in the Cloudflare audit log
 
 ## Auth Setup
@@ -41,19 +41,16 @@ tools:
 First tool call opens `dash.cloudflare.com` for OAuth 2.0 authorization.
 
 **Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`)
-
 ```json
 { "mcpServers": { "cloudflare-api": { "url": "https://mcp.cloudflare.com/mcp" } } }
 ```
 
 **OpenCode** (`~/.config/opencode/config.json`)
-
 ```json
 { "mcp": { "cloudflare-api": { "type": "remote", "url": "https://mcp.cloudflare.com/mcp" } } }
 ```
 
-**Claude Code CLI** (`--transport http` is required even with HTTPS endpoint)
-
+**Claude Code CLI** (`--transport http` required even with HTTPS endpoint)
 ```bash
 claude mcp add cloudflare-api --transport http https://mcp.cloudflare.com/mcp
 ```
