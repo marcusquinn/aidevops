@@ -37,6 +37,43 @@ tools:
 | Binary size | 23-130 MB | ~200 MB | ~500 MB+ |
 | Control | Full (quantization, context, sampling) | Abstracted | GUI-mediated |
 
+## Alternative: Ollama
+
+Ollama is a popular alternative that wraps llama.cpp with a daemon and model registry. Use it when you need a simpler setup or ecosystem compatibility (e.g., Open WebUI, Continue.dev).
+
+```bash
+# Install
+brew install ollama          # macOS
+curl -fsSL https://ollama.com/install.sh | sh   # Linux
+
+# Run a model
+ollama run gemma3:27b
+ollama run llama3.2:3b
+
+# API (OpenAI-compatible)
+ollama serve   # starts daemon on http://localhost:11434
+curl http://localhost:11434/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llama3.2","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+**Security caveats:**
+
+- Ollama binds to `0.0.0.0` by default on Linux — exposes port 11434 to the network. Set `OLLAMA_HOST=127.0.0.1` to restrict to localhost.
+- 175,000+ Ollama instances are publicly exposed on the internet (Shodan, 2024). Most are misconfigured defaults.
+- Multiple CVEs in Ollama history (path traversal, SSRF, model poisoning via crafted Modelfiles). Keep updated.
+- The daemon runs persistently and auto-starts on login — increases attack surface vs. llama.cpp's on-demand model.
+
+**`num_ctx` warning:** Ollama defaults to `num_ctx=2048` regardless of model capability. For models with 32K–256K context windows, this silently truncates input. Always set explicitly:
+
+```bash
+ollama run gemma3:27b --num-ctx 32768
+# or in Modelfile:
+PARAMETER num_ctx 32768
+```
+
+Failure to set `num_ctx` is the most common cause of poor Ollama performance on long-context tasks.
+
 ## Platform Support
 
 | Platform | GPU Acceleration | Binary |
@@ -101,6 +138,60 @@ local-model-helper.sh recommend   # detects RAM/GPU, suggests models with size a
 | Summarization | Llama 3, Phi-4 | 4-8B |
 | Translation | Qwen3, NLLB | 4-8B |
 | Embeddings (RAG) | nomic-embed, bge-large | 0.1-0.3B |
+
+## Recommended Local Models (2026)
+
+Current top picks by hardware tier. Benchmarks as of Q1 2026.
+
+### Gemma 4 27B MoE — Best overall (16 GB+ RAM)
+
+Google's Gemma 4 27B uses a Mixture-of-Experts architecture with only 3.8B parameters active per forward pass, giving frontier-class quality at a fraction of the compute cost.
+
+| Metric | Value |
+|--------|-------|
+| LiveCodeBench | 77.1% |
+| Active params | 3.8B (of 27B total) |
+| Context window | 256K tokens |
+| VRAM (Q4_K_M) | ~14 GB |
+| Recommended quant | Q4_K_M or Q5_K_M |
+
+```bash
+local-model-helper.sh download google/gemma-4-27b-it-GGUF --quant Q4_K_M
+local-model-helper.sh start --model gemma-4-27b-it-q4_k_m.gguf --ctx-size 32768
+```
+
+Best for: code generation, reasoning, long-context tasks. The MoE architecture means inference speed is closer to a 4B model than a 27B model.
+
+### Gemma 4 4B (E4B) — Best for laptops (8 GB RAM)
+
+The E4B ("Efficient 4B") variant is optimised for edge devices. Outperforms most 7B models from 2024 on coding and instruction following.
+
+```bash
+local-model-helper.sh download google/gemma-4-4b-it-GGUF --quant Q4_K_M
+local-model-helper.sh start --model gemma-4-4b-it-q4_k_m.gguf --ctx-size 16384
+```
+
+Best for: MacBook Air (8 GB), low-power Linux servers, always-on assistants.
+
+### Gemma 4 31B Dense — Max quality (32 GB+ RAM)
+
+The dense 31B variant (non-MoE) delivers the highest single-query quality in the Gemma 4 family. Slower than the MoE but better for tasks requiring deep reasoning across the full parameter space.
+
+```bash
+local-model-helper.sh download google/gemma-4-31b-it-GGUF --quant Q5_K_M
+local-model-helper.sh start --model gemma-4-31b-it-q5_k_m.gguf --ctx-size 32768 --gpu-layers 99
+```
+
+Best for: M2/M3 Max (64 GB+), workstations, batch processing where quality > speed.
+
+### Quick selection guide
+
+| Hardware | Recommended model | Quant |
+|----------|------------------|-------|
+| 8 GB RAM | Gemma 4 4B (E4B) | Q4_K_M |
+| 16 GB RAM | Gemma 4 27B MoE | Q4_K_M |
+| 32 GB RAM | Gemma 4 27B MoE | Q6_K |
+| 64 GB+ RAM | Gemma 4 31B Dense | Q5_K_M or Q8_0 |
 
 ## Usage
 
