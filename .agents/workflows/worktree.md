@@ -22,7 +22,6 @@ tools:
 - **Core principle**: Main repo (`~/Git/{repo}/`) ALWAYS stays on `main`. **Never `git checkout -b` in the main repo** — the next session inherits wrong state.
 - **Preferred tool**: [Worktrunk](https://worktrunk.dev) (`brew install max-sixty/worktrunk/wt`) — full docs: `tools/git/worktrunk.md`
 - **Fallback**: `~/.aidevops/agents/scripts/worktree-helper.sh`
-- **Paths**: `~/Git/myrepo/` (main) | `~/Git/myrepo-feature-auth/` (linked) | `~/Git/myrepo-bugfix-login/` (linked)
 
 <!-- AI-CONTEXT-END -->
 
@@ -54,7 +53,7 @@ worktree-helper.sh clean                            # Batch cleanup merged branc
 
 `pre-edit-check.sh` works in any worktree — main or linked.
 
-**Localdev (t1224.8):** Worktree creation auto-sets branch-specific subdomain routing (`https://feature-auth.myapp.local`) for `localdev add` projects. Removal auto-cleans the route.
+**Localdev (t1224.8):** Worktree creation auto-sets branch-specific subdomain routing (`https://feature-auth.myapp.local`). Removal auto-cleans the route.
 
 **Session recovery:** Run `session-rename_sync_branch` after creating branches. Check `worktree-sessions.sh list` before closing PRs or deleting branches.
 
