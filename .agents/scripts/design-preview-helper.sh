@@ -186,50 +186,49 @@ resize_ai_safe() {
 	fi
 }
 
-# Main screenshot command
-cmd_screenshot() {
-	local html_path=""
-	local output_dir=""
-	local format="$DEFAULT_FORMAT"
-	local capture_dark=false
-	local viewport_width="$DEFAULT_VIEWPORT_WIDTH"
-	local full_page=true
-	local ai_safe=true
+# Parse screenshot command arguments
+# Outputs: sets caller-scoped variables via eval (html_path, output_dir, format,
+#           capture_dark, viewport_width, full_page, ai_safe)
+# Returns: 0 on success, 1 on unknown option, 2 on --help
+_screenshot_parse_args() {
+	# Defaults — written to caller scope via eval
+	eval 'local _html_path="" _output_dir="" _format="$DEFAULT_FORMAT"'
+	eval 'local _capture_dark=false _viewport_width="$DEFAULT_VIEWPORT_WIDTH"'
+	eval 'local _full_page=true _ai_safe=true'
 
-	# Parse args
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--output-dir)
-			output_dir="$2"
+			_output_dir="$2"
 			shift 2
 			;;
 		--format)
-			format="$2"
+			_format="$2"
 			shift 2
 			;;
 		--dark)
-			capture_dark=true
+			_capture_dark=true
 			shift
 			;;
 		--width)
-			viewport_width="$2"
+			_viewport_width="$2"
 			shift 2
 			;;
 		--full-page)
-			full_page=true
+			_full_page=true
 			shift
 			;;
 		--no-ai-safe)
-			ai_safe=false
+			_ai_safe=false
 			shift
 			;;
 		--ai-safe)
-			ai_safe=true
+			_ai_safe=true
 			shift
 			;;
 		-h | --help)
 			usage
-			return 0
+			return 2
 			;;
 		-*)
 			print_error "Unknown option: $1"
@@ -237,13 +236,33 @@ cmd_screenshot() {
 			return 1
 			;;
 		*)
-			if [[ -z "$html_path" ]]; then
-				html_path="$1"
+			if [[ -z "$_html_path" ]]; then
+				_html_path="$1"
 			fi
 			shift
 			;;
 		esac
 	done
+
+	# Export parsed values to caller via stdout-encoded assignment string
+	printf '%s\n' \
+		"html_path=${_html_path}" \
+		"output_dir=${_output_dir}" \
+		"format=${_format}" \
+		"capture_dark=${_capture_dark}" \
+		"viewport_width=${_viewport_width}" \
+		"full_page=${_full_page}" \
+		"ai_safe=${_ai_safe}"
+	return 0
+}
+
+# Validate screenshot inputs and resolve output directory
+# Args: $1=html_path, $2=output_dir (may be empty)
+# Prints resolved output_dir to stdout on success
+# Returns: 0 on success, 1 on validation failure
+_screenshot_validate() {
+	local html_path="$1"
+	local output_dir="$2"
 
 	if [[ -z "$html_path" ]]; then
 		print_error "Missing required argument: <preview.html>"
@@ -256,58 +275,87 @@ cmd_screenshot() {
 		return 1
 	fi
 
-	# Default output dir to same as input
 	if [[ -z "$output_dir" ]]; then
 		output_dir="$(dirname "$html_path")"
 	fi
 	mkdir -p "$output_dir"
 
-	# Check dependencies
 	require_cmd node || return 1
 	require_cmd npx || return 1
 	ensure_playwright || return 1
 
-	local basename
-	basename="$(basename "$html_path" .html)"
+	printf '%s\n' "$output_dir"
+	return 0
+}
 
-	# Capture light mode
-	local light_png="$output_dir/${basename}-light.png"
+# Capture light and optional dark mode screenshots
+# Args: $1=html_path, $2=output_dir, $3=basename, $4=viewport_width,
+#       $5=full_page, $6=capture_dark (true|false)
+# Prints: light_png path, then dark_png path (empty if not captured)
+# Returns: 0 on success, 1 on capture failure
+_screenshot_capture_modes() {
+	local html_path="$1"
+	local output_dir="$2"
+	local base_name="$3"
+	local viewport_width="$4"
+	local full_page="$5"
+	local capture_dark="$6"
+
+	local light_png="$output_dir/${base_name}-light.png"
 	print_info "Capturing light mode screenshot..."
-	if capture_screenshot "$html_path" "$light_png" "$viewport_width" "light" "$full_page"; then
-		print_success "Light mode: $light_png"
-	else
+	if ! capture_screenshot "$html_path" "$light_png" "$viewport_width" "light" "$full_page"; then
 		return 1
 	fi
+	print_success "Light mode: $light_png"
 
-	# Capture dark mode
 	local dark_png=""
 	if [[ "$capture_dark" == "true" ]]; then
-		dark_png="$output_dir/${basename}-dark.png"
+		dark_png="$output_dir/${base_name}-dark.png"
 		print_info "Capturing dark mode screenshot..."
 		if capture_screenshot "$html_path" "$dark_png" "$viewport_width" "dark" "$full_page"; then
 			print_success "Dark mode: $dark_png"
+		else
+			dark_png=""
 		fi
 	fi
 
-	# AI-safe resize
-	if [[ "$ai_safe" == "true" ]]; then
-		local ai_light="$output_dir/${basename}-light-ai.png"
-		resize_ai_safe "$light_png" "$ai_light" "$MAX_AI_REVIEW_PX"
-		print_info "AI-safe copy: $ai_light (max ${MAX_AI_REVIEW_PX}px)"
+	printf '%s\n' "$light_png" "$dark_png"
+	return 0
+}
 
-		if [[ -n "$dark_png" && -f "$dark_png" ]]; then
-			local ai_dark="$output_dir/${basename}-dark-ai.png"
-			resize_ai_safe "$dark_png" "$ai_dark" "$MAX_AI_REVIEW_PX"
-			print_info "AI-safe copy: $ai_dark (max ${MAX_AI_REVIEW_PX}px)"
-		fi
+# Create AI-safe (max 1568px) copies of captured screenshots
+# Args: $1=output_dir, $2=base_name, $3=light_png, $4=dark_png (may be empty)
+_screenshot_resize_ai_safe_all() {
+	local output_dir="$1"
+	local base_name="$2"
+	local light_png="$3"
+	local dark_png="$4"
+
+	local ai_light="$output_dir/${base_name}-light-ai.png"
+	resize_ai_safe "$light_png" "$ai_light" "$MAX_AI_REVIEW_PX"
+	print_info "AI-safe copy: $ai_light (max ${MAX_AI_REVIEW_PX}px)"
+
+	if [[ -n "$dark_png" && -f "$dark_png" ]]; then
+		local ai_dark="$output_dir/${base_name}-dark-ai.png"
+		resize_ai_safe "$dark_png" "$ai_dark" "$MAX_AI_REVIEW_PX"
+		print_info "AI-safe copy: $ai_dark (max ${MAX_AI_REVIEW_PX}px)"
 	fi
+	return 0
+}
 
-	# Format conversions
+# Convert captured PNGs to requested formats (webp, avif, or all)
+# Args: $1=format, $2=light_png, $3=dark_png (may be empty)
+_screenshot_convert_formats() {
+	local format="$1"
+	local light_png="$2"
+	local dark_png="$3"
+
 	local all_pngs=("$light_png")
 	[[ -n "$dark_png" && -f "$dark_png" ]] && all_pngs+=("$dark_png")
 
+	local png base
 	for png in "${all_pngs[@]}"; do
-		local base="${png%.png}"
+		base="${png%.png}"
 		if [[ "$format" == "webp" || "$format" == "all" ]]; then
 			if convert_to_webp "$png" "${base}.webp"; then
 				print_success "WebP: ${base}.webp"
@@ -319,6 +367,53 @@ cmd_screenshot() {
 			fi
 		fi
 	done
+	return 0
+}
+
+# Main screenshot command — orchestrates parse, validate, capture, resize, convert
+cmd_screenshot() {
+	# Parse arguments
+	local parsed
+	parsed="$(_screenshot_parse_args "$@")" || {
+		local rc="$?"
+		[[ "$rc" -eq 2 ]] && return 0 # --help
+		return 1
+	}
+
+	local html_path output_dir format capture_dark viewport_width full_page ai_safe
+	while IFS='=' read -r key val; do
+		case "$key" in
+		html_path) html_path="$val" ;;
+		output_dir) output_dir="$val" ;;
+		format) format="$val" ;;
+		capture_dark) capture_dark="$val" ;;
+		viewport_width) viewport_width="$val" ;;
+		full_page) full_page="$val" ;;
+		ai_safe) ai_safe="$val" ;;
+		esac
+	done <<<"$parsed"
+
+	# Validate and resolve output directory
+	output_dir="$(_screenshot_validate "$html_path" "$output_dir")" || return 1
+
+	local base_name
+	base_name="$(basename "$html_path" .html)"
+
+	# Capture screenshots
+	local capture_out light_png dark_png
+	capture_out="$(_screenshot_capture_modes \
+		"$html_path" "$output_dir" "$base_name" \
+		"$viewport_width" "$full_page" "$capture_dark")" || return 1
+	light_png="$(printf '%s\n' "$capture_out" | sed -n '1p')"
+	dark_png="$(printf '%s\n' "$capture_out" | sed -n '2p')"
+
+	# AI-safe resize
+	if [[ "$ai_safe" == "true" ]]; then
+		_screenshot_resize_ai_safe_all "$output_dir" "$base_name" "$light_png" "$dark_png"
+	fi
+
+	# Format conversions
+	_screenshot_convert_formats "$format" "$light_png" "$dark_png"
 
 	echo ""
 	print_success "Screenshots saved to: $output_dir"
