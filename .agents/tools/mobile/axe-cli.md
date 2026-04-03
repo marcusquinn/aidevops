@@ -28,7 +28,7 @@ axe type 'Hello World!' --udid $UDID               # direct text; echo "text" | 
 axe tap -x 100 -y 200 --pre-delay 1.0 --post-delay 0.5 --udid $UDID  # timing on any touch/gesture
 ```
 
-### Keyboard and Buttons
+### Keyboard, Buttons, and Media
 
 ```bash
 axe key 40 --udid $UDID                                        # HID keycode (40=Enter, 42=Backspace)
@@ -38,27 +38,20 @@ axe key-combo --modifiers 227 --key 4 --udid $UDID             # Cmd+A (227=Cmd,
 axe key-combo --modifiers 227,225 --key 4 --udid $UDID         # Cmd+Shift+A
 axe button home --udid $UDID                                   # hardware: home, lock, side-button, siri, apple-pay
 axe button lock --duration 2.0 --udid $UDID
-```
-
-### Screenshots, Video, and Accessibility
-
-```bash
 axe screenshot --output ~/Desktop/capture.png --udid $UDID
 axe record-video --udid $UDID --fps 15 --output recording.mp4  # H.264 MP4; flags: --fps, --quality, --scale
 axe stream-video --udid $UDID --fps 30 --format ffmpeg | \     # stream formats: mjpeg, ffmpeg, raw, bgra
   ffmpeg -f image2pipe -framerate 30 -i - -c:v libx264 output.mp4
-axe describe-ui --udid $UDID                                   # accessibility tree (full screen)
-axe describe-ui --point 100,200 --udid $UDID                   # or specific point
+axe describe-ui --udid $UDID                                   # accessibility tree (full screen or --point 100,200)
 ```
 
 ### Common Patterns
 
 ```bash
-# Accessibility audit
+# Accessibility audit: dump UI tree + screenshot
 axe describe-ui --udid "$UDID" > ui-tree.txt && axe screenshot --output ui-state.png --udid "$UDID"
 # UI flow: tap, scroll, verify
-axe tap --label "Settings" --pre-delay 0.5 --udid "$UDID"
-axe gesture scroll-down --post-delay 0.5 --udid "$UDID"
+axe tap --label "Settings" --pre-delay 0.5 --udid "$UDID" && axe gesture scroll-down --post-delay 0.5 --udid "$UDID"
 axe describe-ui --udid "$UDID"
 ```
 
@@ -71,6 +64,7 @@ axe describe-ui --udid "$UDID"
 | Gesture presets | 8 built-in | Manual swipe params |
 | Video | H.264 recording, 4 stream formats | `record_video` / `stop_recording` |
 | Accessibility | `describe-ui` (full/point) | `ui_describe_all`, `ui_describe_point` |
+| App management | Not available | `install_app`, `launch_app` |
 | Best for | Scripts, CI, pipelines | Direct AI tool calling |
 
 ## Related
