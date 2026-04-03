@@ -18,8 +18,11 @@
   ".agents/content/heygen-skill/rules-streaming-avatars.md": {
     "at": "2026-04-03T00:00:00Z",
     "hash": "db7582c5895ac7185939740cb16cbe5f72afd9ebad7bb4586b8eee5897af27d3",
-    "issue": "GH#16211",
-    "passes": 1,
+    "issue": "GH#16581",
+    "lines_after": 67,
+    "lines_before": 67,
+    "note": "Pass 2: reference corpus (API docs, tables, code examples) at minimum viable size. No further compression possible without content loss. File reviewed and confirmed appropriately structured.",
+    "passes": 2,
     "pr": "pending",
     "status": "simplified"
   },
