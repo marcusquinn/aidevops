@@ -93,13 +93,35 @@ Recovery sequence: 1h pre-filled cart → 24h FAQ+testimonials → 72h 10% disco
 
 ## 25.6 Monetization CRO Checklist
 
-**Pre-launch:** Define primary metric (RPV/ARPU/LTV) + guardrails (CR, churn, NPS) · Calculate MDE + sample size · Document full journey impact · Set up cohort-level revenue tracking · Confirm legal compliance · Brief support · Establish rollback criteria
+**Pre-launch:**
+- Define primary metric (RPV/ARPU/LTV) + guardrails (CR, churn, NPS)
+- Calculate MDE + sample size
+- Document full journey impact
+- Set up cohort-level revenue tracking
+- Confirm legal compliance
+- Brief support
+- Establish rollback criteria
 
-**During:** Monitor daily revenue + conversion · Track pricing-related tickets · Watch segment effects (new/returning, mobile/desktop, geo) · Verify allocation balance
+**During:**
+- Monitor daily revenue + conversion
+- Track pricing-related tickets
+- Watch segment effects (new/returning, mobile/desktop, geo)
+- Verify allocation balance
 
-**Post-test:** Statistical significance on revenue (not just CR) · Project 12-month LTV using cohort curves · Analyze qualitative signals · Document learnings · Update roadmap · Archive results
+**Post-test:**
+- Statistical significance on revenue (not just CR)
+- Project 12-month LTV using cohort curves
+- Analyze qualitative signals
+- Document learnings
+- Update roadmap
+- Archive results
 
-**Ongoing cadence:** Monthly: RPV vs benchmarks · Quarterly: competitive analysis + ≥1 experiment · Semi-annually: WTP survey · Annually: pricing update · Seasonally (e-com): recalibrate bundles
+**Ongoing cadence:**
+- Monthly: RPV vs benchmarks
+- Quarterly: competitive analysis + ≥1 experiment
+- Semi-annually: WTP survey
+- Annually: pricing update
+- Seasonally (e-com): recalibrate bundles
 
 ### Revenue Optimization Maturity Model
 
