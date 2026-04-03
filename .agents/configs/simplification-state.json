@@ -5929,6 +5929,12 @@
       "at": "2026-04-03T23:09:04Z",
       "pr": "16889",
       "passes": 3
+    },
+    ".agents/tools/design/library/styles/startup-bold/DESIGN.md": {
+      "hash": "e5e6e59805cd2162fbf1b927e400fe37052f1eff",
+      "at": "2026-04-04T00:16:00Z",
+      "passes": 1,
+      "pr": 16893
     }
   }
 }
