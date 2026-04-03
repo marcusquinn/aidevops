@@ -26,6 +26,14 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Callable, Optional
 
+from email_shared import (
+    check_ollama,
+    extract_body,
+    extract_frontmatter,
+    get_ollama_model,
+    yaml_escape,
+)
+
 
 # ---------------------------------------------------------------------------
 # Entity type mapping
@@ -50,37 +58,6 @@ _SPACY_LABEL_MAP: dict[str, str] = {
 
 # Entity types we extract (ordered for frontmatter output)
 ENTITY_TYPES = ["people", "organisations", "properties", "locations", "dates"]
-
-
-# ---------------------------------------------------------------------------
-# Markdown body extraction (strip frontmatter)
-# ---------------------------------------------------------------------------
-
-def extract_body(content: str) -> str:
-    """Extract the body text from a markdown file, stripping YAML frontmatter."""
-    if content.startswith("---"):
-        # Find closing ---
-        end = content.find("\n---", 3)
-        if end != -1:
-            return content[end + 4:].strip()
-    return content.strip()
-
-
-def extract_frontmatter(content: str) -> tuple[str, str, str]:
-    """Split content into (pre-frontmatter, frontmatter, body).
-
-    Returns ('---\\n', frontmatter_content, body) or ('', '', content).
-    """
-    if not content.startswith("---"):
-        return ("", "", content)
-
-    end = content.find("\n---", 3)
-    if end == -1:
-        return ("", "", content)
-
-    fm_content = content[4:end]  # between opening --- and closing ---
-    body = content[end + 4:]
-    return ("---\n", fm_content, body)
 
 
 # ---------------------------------------------------------------------------
@@ -147,44 +124,9 @@ def extract_entities_spacy(text: str) -> dict[str, list[str]]:
 # Ollama LLM extraction (fallback)
 # ---------------------------------------------------------------------------
 
-def _run_ollama_list() -> Optional[subprocess.CompletedProcess]:
-    """Run 'ollama list' and return the result, or None on failure."""
-    try:
-        result = subprocess.run(
-            ["ollama", "list"],
-            capture_output=True, text=True, timeout=5
-        )
-        if result.returncode == 0:
-            return result
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-    return None
-
-
-def _check_ollama() -> bool:
-    """Check if Ollama is running and accessible."""
-    return _run_ollama_list() is not None
-
-
-def _get_ollama_model() -> Optional[str]:
-    """Find the best available Ollama model for NER."""
-    result = _run_ollama_list()
-    if result is None:
-        return None
-
-    available = result.stdout.lower()
-    # Prefer models good at structured extraction
-    for model in ["llama3.2", "llama3.1", "llama3", "mistral", "gemma2", "phi3"]:
-        if model in available:
-            return model
-
-    # Fall back to first available model
-    lines = result.stdout.strip().split("\n")
-    if len(lines) > 1:  # Skip header line
-        first_model = lines[1].split()[0]
-        return first_model.split(":")[0]
-
-    return None
+# Ollama availability: delegated to email_shared
+_check_ollama = check_ollama
+_get_ollama_model = get_ollama_model
 
 
 _OLLAMA_PROMPT = """Extract named entities from the following email text. Return ONLY a JSON object with these keys:
@@ -461,18 +403,8 @@ def entities_to_yaml(entities: dict[str, list[str]], indent: int = 0) -> str:
     return "\n".join(lines)
 
 
-def _yaml_escape_value(value: str) -> str:
-    """Escape a string for safe YAML output."""
-    if not value:
-        return '""'
-    needs_quoting = any(c in value for c in [':', '#', '{', '}', '[', ']', ',',
-                                              '&', '*', '?', '|', '-', '<', '>',
-                                              '=', '!', '%', '@', '`', '\n', '"', "'"])
-    needs_quoting = needs_quoting or value.startswith((' ', '\t'))
-    if needs_quoting:
-        value = value.replace('\\', '\\\\').replace('"', '\\"')
-        return f'"{value}"'
-    return value
+# YAML escaping: delegated to email_shared
+_yaml_escape_value = yaml_escape
 
 
 def update_frontmatter(file_path: str, entities: dict[str, list[str]]) -> bool:

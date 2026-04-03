@@ -23,6 +23,14 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from email_shared import (
+    check_ollama,
+    extract_body,
+    extract_frontmatter,
+    get_ollama_model,
+    yaml_escape,
+)
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -39,36 +47,6 @@ MAX_DESCRIPTION_LEN = 300
 
 # Maximum text sent to Ollama (chars) to avoid context overflow
 OLLAMA_MAX_CHARS = 6000
-
-
-# ---------------------------------------------------------------------------
-# Markdown body extraction (strip frontmatter)
-# ---------------------------------------------------------------------------
-
-def extract_body(content: str) -> str:
-    """Extract the body text from a markdown file, stripping YAML frontmatter."""
-    if content.startswith("---"):
-        end = content.find("\n---", 3)
-        if end != -1:
-            return content[end + 4:].strip()
-    return content.strip()
-
-
-def extract_frontmatter(content: str) -> tuple[str, str, str]:
-    """Split content into (opener, frontmatter_content, body).
-
-    Returns ('---\\n', frontmatter_content, body) or ('', '', content).
-    """
-    if not content.startswith("---"):
-        return ("", "", content)
-
-    end = content.find("\n---", 3)
-    if end == -1:
-        return ("", "", content)
-
-    fm_content = content[4:end]  # between opening --- and closing ---
-    body = content[end + 4:]
-    return ("---\n", fm_content, body)
 
 
 # ---------------------------------------------------------------------------
@@ -285,44 +263,9 @@ Email:
 Summary:"""
 
 
-def _check_ollama() -> bool:
-    """Check if Ollama is running and accessible."""
-    try:
-        result = subprocess.run(
-            ["ollama", "list"],
-            capture_output=True, text=True, timeout=5
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
-
-
-def _get_ollama_model() -> Optional[str]:
-    """Find the best available Ollama model for summarisation."""
-    try:
-        result = subprocess.run(
-            ["ollama", "list"],
-            capture_output=True, text=True, timeout=5
-        )
-        if result.returncode != 0:
-            return None
-
-        available = result.stdout.lower()
-        # Prefer models good at summarisation
-        for model in ["llama3.2", "llama3.1", "llama3", "mistral", "gemma2", "phi3"]:
-            if model in available:
-                return model
-
-        # Fall back to first available model
-        lines = result.stdout.strip().split("\n")
-        if len(lines) > 1:  # Skip header line
-            first_model = lines[1].split()[0]
-            return first_model.split(":")[0]
-
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-
-    return None
+# Ollama availability: delegated to email_shared
+_check_ollama = check_ollama
+_get_ollama_model = get_ollama_model
 
 
 def _parse_summary_response(response: str) -> str:
@@ -482,20 +425,8 @@ def generate_summary(body: str, method: str = "auto") -> str:
 # YAML frontmatter helpers
 # ---------------------------------------------------------------------------
 
-def _yaml_escape(value: str) -> str:
-    """Escape a string value for safe YAML output."""
-    if not value:
-        return '""'
-    needs_quoting = any(c in value for c in [
-        ':', '#', '{', '}', '[', ']', ',', '&', '*', '?', '|',
-        '-', '<', '>', '=', '!', '%', '@', '`', '\n', '\r', '"', "'"
-    ])
-    needs_quoting = needs_quoting or value.startswith((' ', '\t'))
-    if needs_quoting:
-        value = value.replace('\\', '\\\\').replace('"', '\\"')
-        value = value.replace('\n', ' ').replace('\r', '')
-        return f'"{value}"'
-    return value
+# YAML escaping: delegated to email_shared
+_yaml_escape = yaml_escape
 
 
 def update_description(file_path: str, method: str = "auto") -> bool:
