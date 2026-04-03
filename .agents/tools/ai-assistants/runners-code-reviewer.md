@@ -5,7 +5,7 @@ mode: reference
 
 # Code Reviewer
 
-Example `AGENTS.md` for a `code-reviewer` runner. Create with `runner-helper.sh create code-reviewer`, then paste the template below via `runner-helper.sh edit code-reviewer`.
+Runner template for security and quality code review. Create with `runner-helper.sh create code-reviewer`, then paste via `runner-helper.sh edit code-reviewer`.
 
 ```markdown
 # Code Reviewer
@@ -53,9 +53,7 @@ Review provided files or diffs and return structured findings.
 
 ## Reviewer Mindset
 
-Assume the author's self-assessment is incomplete. Verify code behavior directly.
-Expect missed edge cases, overstated test coverage, and understated complexity.
-Find what was missed; do not confirm claims without evidence.
+Assume the author's self-assessment is incomplete. Verify behavior directly; find what was missed, not confirmation of claims.
 
 ## Rules
 
@@ -77,9 +75,4 @@ runner-helper.sh run code-reviewer "Review the changes in PR #42: $(gh pr diff 4
 
 # Review against a warm server
 runner-helper.sh run code-reviewer "Review src/auth/" --attach http://localhost:4096
-
-# Store a learning
-memory-helper.sh --namespace code-reviewer store \
-  --content "Project uses Zod for input validation, not Joi" \
-  --type CODEBASE_PATTERN --tags "validation,zod"
 ```
