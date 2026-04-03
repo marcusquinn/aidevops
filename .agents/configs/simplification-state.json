@@ -5137,5 +5137,10 @@
     "hash": "1eb86f1e0b8873942014f1f20414250077bd694a254e6e97537e706199b2460a",
     "status": "simplified",
     "issue": "GH#16350"
+  },
+  ".agents/services/hosting/cloudflare-platform-skill/wrangler.md": {
+    "hash": "3d566d9fbf05fdee08380d0ffbaf538854887e326c9b658e8236d837c8993cb3",
+    "status": "simplified",
+    "lines": 63
   }
 }
