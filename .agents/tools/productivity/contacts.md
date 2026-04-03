@@ -21,7 +21,7 @@ tools:
 - **Helper**: `~/.aidevops/agents/scripts/contacts-helper.sh [command] [args]`
 - **macOS backend**: `osascript` via Contacts.app (JXA for reads, AppleScript for writes)
 - **Linux backend**: `khard` + `vdirsyncer` (CardDAV)
-- **Setup**: `contacts-helper.sh setup`
+- **Setup**: `contacts-helper.sh setup` — macOS: grant access in System Settings > Privacy & Security > Contacts; Linux: install `khard` + `vdirsyncer`
 - **Related**: `tools/productivity/calendar.md`, `tools/productivity/apple-reminders.md`, `tools/productivity/notes.md`
 
 <!-- AI-CONTEXT-END -->
@@ -30,16 +30,16 @@ tools:
 
 | Field | macOS | Linux | Notes |
 |---|---|---|---|
-| First/Last name, Organization, Job title, Email, Phone, Notes | osascript | khard | full read/write |
-| Postal addresses, URLs/websites, Birthday | osascript (read) | khard | read-only on macOS |
+| Name, Org, Job title, Email, Phone, Notes | osascript | khard | full read/write |
+| Postal addresses, URLs, Birthday | osascript (read) | khard | read-only on macOS |
 | Social profiles | limited | khard | Linux has better support |
 | Photos, Relationships | — | — | no CLI support |
 
 ## When to Use Contacts
 
-**Look up** when: user needs email/phone/address for a person, composing email, creating a calendar event with someone, or a workflow needs to reach someone.
+**Look up** when: user needs email/phone/address, composing email, creating a calendar event, or a workflow needs to reach someone.
 
-**Create** when: user explicitly asks, a new business relationship is established, or an agent workflow discovers contact info the user should keep. Always require user confirmation — contacts sync to all devices.
+**Create** when: user explicitly asks, a new business relationship is established, or an agent workflow discovers contact info to keep. Always require user confirmation — contacts sync to all devices.
 
 **Do NOT create** for temporary interactions or info already in a CRM.
 
@@ -63,12 +63,8 @@ contacts-helper.sh add --first Jane --last Doe \
 
 ## Setup
 
-```bash
-contacts-helper.sh setup
-```
-
 - **macOS**: no install needed. Grant access: System Settings > Privacy & Security > Contacts. All accounts from Internet Accounts appear automatically.
-- **Linux**: requires `khard` + `vdirsyncer`. Example `~/.config/khard/khard.conf`:
+- **Linux**: requires `khard` + `vdirsyncer`. Run `contacts-helper.sh setup`. Example `~/.config/khard/khard.conf`:
 
 ```ini
 [addressbooks]
@@ -84,5 +80,5 @@ contacts-helper.sh show "Andrew"
 # 2. Create a reminder to call them
 reminders-helper.sh add "Call Andrew" --due tomorrow --priority medium
 # 3. Block calendar time for the call
-calendar-helper.sh add "Call with Andrew" --start "2026-04-05 10:00" --end "2026-04-05 10:30"
+calendar-helper.sh add "Call with Andrew" --start "tomorrow 10:00" --end "tomorrow 10:30"
 ```
