@@ -35,14 +35,14 @@ URL/Repo: $ARGUMENTS
 
 ## Naming Convention
 
-Imported skills use a `-skill` suffix: `playwright-skill.md` (imported, upstream-tracked) vs `playwright.md` (native). Benefits: no name clashes; `*-skill.md` glob finds all imports; `aidevops skill check` knows which to update; issues → check upstream.
+`-skill` suffix marks imported skills: `playwright-skill.md` (imported, upstream-tracked) vs `playwright.md` (native). No name clashes; `*-skill.md` glob finds all imports; `aidevops skill check` knows which to update.
 
 ## Workflow
 
 1. **Parse input** — GitHub shorthand, full URL, ClawdHub shorthand/URL, raw URL, or management command.
 2. **Run helper:** `~/.aidevops/agents/scripts/add-skill-helper.sh add "$ARGUMENTS"` (other commands: `list | check-updates | remove <name>`)
 3. **Handle conflicts** (if file exists): Merge / Replace / Separate / Skip.
-4. **Security scan:** Uses [Cisco Skill Scanner](https://github.com/cisco-ai-defense/skill-scanner) if installed. CRITICAL/HIGH findings block import. `--skip-security` bypasses (not recommended). `--force` only controls file overwrite, not security. Scan also runs on `aidevops skill update`.
+4. **Security scan:** [Cisco Skill Scanner](https://github.com/cisco-ai-defense/skill-scanner) if installed — CRITICAL/HIGH blocks import. `--skip-security` bypasses; `--force` only controls file overwrite. Scan also runs on `aidevops skill update`.
 5. **Post-import:** Placed in `.agents/` per conventions → registered in `.agents/configs/skill-sources.json` → run `./setup.sh` to create symlinks.
 
 ## Supported Sources & Formats
@@ -62,9 +62,9 @@ Imported skills use a `-skill` suffix: `playwright-skill.md` (imported, upstream
 
 ## Update Tracking
 
-Tracked in `.agents/configs/skill-sources.json`. Key fields: `name`, `upstream_url`, `upstream_commit` (or `upstream_hash` for URL sources), `local_path`, `format_detected`, `imported_at`, `last_checked`, `merge_strategy`. URL-sourced skills use SHA-256 content hashing instead of git commit comparison.
+Tracked in `.agents/configs/skill-sources.json` (`name`, `upstream_url`, `upstream_commit`/`upstream_hash`, `local_path`, `format_detected`, `imported_at`, `last_checked`, `merge_strategy`). URL sources use SHA-256 content hashing instead of git commit comparison.
 
-Run `/add-skill check-updates` periodically to detect upstream changes.
+Run `/add-skill check-updates` periodically.
 
 ## Related
 
