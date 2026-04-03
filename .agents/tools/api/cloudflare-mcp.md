@@ -24,6 +24,7 @@ tools:
 - **Setup**: `aidevops/mcp-integrations.md` → Cloudflare Code Mode MCP
 - **Platform reference**: `services/hosting/cloudflare-platform-skill.md`
 - **Capabilities**: Workers, D1, KV, R2, Pages, AI Gateway, DNS, Analytics
+- **Per-agent**: Set `cloudflare-api_*: true` in subagent frontmatter (disabled globally, enabled per agent)
 
 <!-- AI-CONTEXT-END -->
 
@@ -37,7 +38,7 @@ tools:
 
 ## Auth Setup
 
-OAuth 2.0; first tool call opens `dash.cloudflare.com` for authorization.
+First tool call opens `dash.cloudflare.com` for OAuth 2.0 authorization.
 
 **Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`)
 
@@ -51,13 +52,11 @@ OAuth 2.0; first tool call opens `dash.cloudflare.com` for authorization.
 { "mcp": { "cloudflare-api": { "type": "remote", "url": "https://mcp.cloudflare.com/mcp" } } }
 ```
 
-**Claude Code CLI**
+**Claude Code CLI** (`--transport http` is required even with HTTPS endpoint)
 
 ```bash
 claude mcp add cloudflare-api --transport http https://mcp.cloudflare.com/mcp
 ```
-
-`--transport http` is the MCP transport type; keep it even with an HTTPS endpoint.
 
 ## Usage Patterns
 
@@ -84,10 +83,6 @@ WHERE date >= date('now', '-7 days') GROUP BY date ORDER BY date DESC
 # Sync to R2
 Upload all files in ./dist/ to R2 "static-assets" under prefix "v2.1.0/". List to confirm.
 ```
-
-## Per-Agent Enablement
-
-Set `cloudflare-api_*: true` in subagent frontmatter. The server stays disabled globally and enabled per agent.
 
 ## Related Docs
 
