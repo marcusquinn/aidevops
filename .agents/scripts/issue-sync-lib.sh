@@ -890,6 +890,63 @@ _compose_issue_subtasks() {
 	return 0
 }
 
+# Append HTML implementation notes and the sync footer to the body.
+# Arguments:
+#   $1 - current body text
+#   $2 - first_line (raw task line, may contain <!-- --> comments)
+_compose_issue_html_notes_and_footer() {
+	local body="$1"
+	local first_line="$2"
+
+	# Match HTML comments — use sed to extract content between <!-- and -->
+	# Handles comments containing > characters (e.g., "use a -> b pattern")
+	local html_comments
+	html_comments=$(echo "$first_line" | sed -n 's/.*\(<!--.*-->\).*/\1/p' | sed 's/<!--//;s/-->//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+	[[ -n "$html_comments" ]] && body="$body"$'\n\n'"## Implementation Notes"$'\n\n'"$html_comments"
+
+	body="$body"$'\n\n'"---"$'\n'"*Synced from TODO.md by issue-sync-helper.sh*"
+	echo "$body"
+	return 0
+}
+
+# Append all body sections: description, subtasks, plan, related files, brief.
+# Arguments:
+#   $1 - current body text
+#   $2 - block (full task block from TODO.md)
+#   $3 - description
+#   $4 - blocked_by
+#   $5 - blocks
+#   $6 - plan_section
+#   $7 - task_id
+#   $8 - project_root
+_compose_issue_sections() {
+	local body="$1"
+	local block="$2"
+	local description="$3"
+	local blocked_by="$4"
+	local blocks="$5"
+	local plan_section="$6"
+	local task_id="$7"
+	local project_root="$8"
+
+	local notes subtasks
+	notes=$(extract_notes "$block")
+	body=$(_compose_issue_content "$body" "$description" "$blocked_by" "$blocks" "$notes")
+
+	subtasks=$(extract_subtasks "$block")
+	body=$(_compose_issue_subtasks "$body" "$subtasks")
+
+	if [[ -n "$plan_section" ]]; then
+		body=$(_compose_issue_plan_sections "$body" "$plan_section")
+	fi
+
+	body=$(_compose_issue_related_files "$body" "$task_id" "$project_root")
+	body=$(_compose_issue_brief "$body" "$project_root/todo/tasks/${task_id}-brief.md")
+
+	echo "$body"
+	return 0
+}
+
 # Append task brief content to the body (strips YAML frontmatter).
 # Arguments:
 #   $1 - current body text
@@ -980,36 +1037,11 @@ compose_issue_body() {
 		"$task_id" "$status" "$estimate" "$actual" "$detected_plan_id" \
 		"$assignee" "$logged" "$started" "$completed" "$verified" "$tags")
 
-	# Description, dependencies, notes
-	local notes
-	notes=$(extract_notes "$block")
-	body=$(_compose_issue_content "$body" "$description" "$blocked_by" "$blocks" "$notes")
+	# All body sections: description, subtasks, plan, related files, brief
+	body=$(_compose_issue_sections "$body" "$block" "$description" "$blocked_by" "$blocks" "$plan_section" "$task_id" "$project_root")
 
-	# Subtasks
-	local subtasks
-	subtasks=$(extract_subtasks "$block")
-	body=$(_compose_issue_subtasks "$body" "$subtasks")
-
-	# Plan context sections
-	if [[ -n "$plan_section" ]]; then
-		body=$(_compose_issue_plan_sections "$body" "$plan_section")
-	fi
-
-	# Related PRD/task files
-	body=$(_compose_issue_related_files "$body" "$task_id" "$project_root")
-
-	# Task brief
-	body=$(_compose_issue_brief "$body" "$project_root/todo/tasks/${task_id}-brief.md")
-
-	# HTML comments (e.g., REBASE notes) from the task line
-	local html_comments
-	# Match HTML comments — use sed to extract content between <!-- and -->
-	# Handles comments containing > characters (e.g., "use a -> b pattern")
-	html_comments=$(echo "$first_line" | sed -n 's/.*\(<!--.*-->\).*/\1/p' | sed 's/<!--//;s/-->//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-	[[ -n "$html_comments" ]] && body="$body"$'\n\n'"## Implementation Notes"$'\n\n'"$html_comments"
-
-	# Footer
-	body="$body"$'\n\n'"---"$'\n'"*Synced from TODO.md by issue-sync-helper.sh*"
+	# HTML implementation notes and footer
+	body=$(_compose_issue_html_notes_and_footer "$body" "$first_line")
 
 	echo "$body"
 	return 0
