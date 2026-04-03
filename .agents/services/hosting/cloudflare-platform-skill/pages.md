@@ -1,34 +1,19 @@
 # Cloudflare Pages
 
-JAMstack platform for full-stack apps on Cloudflare's global network.
-
-## Key Features
-
-- **Git-based deploys**: Auto-deploy from GitHub/GitLab
-- **Preview deployments**: Unique URL per branch/PR
-- **Pages Functions**: File-based serverless routing (Workers runtime)
-- **Static + dynamic**: Smart asset caching + edge compute
-- **Framework optimized**: Next.js, SvelteKit, Remix, Astro, Nuxt, Qwik
+JAMstack platform for full-stack apps on Cloudflare's global network. Git-based deploys, preview URLs per branch/PR, Pages Functions (Workers runtime), smart asset caching + edge compute. Frameworks: Next.js, SvelteKit, Remix, Astro, Nuxt, Qwik.
 
 ## Deployment Methods
 
-### 1. Git Integration (Production)
+**Git Integration (Production):** Dashboard → Workers & Pages → Create → Connect to Git → Configure build
 
-Dashboard → Workers & Pages → Create → Connect to Git → Configure build
-
-### 2. Direct Upload
+**Direct Upload:**
 
 ```bash
 npx wrangler pages deploy ./dist --project-name=my-project
 npx wrangler pages deploy ./dist --project-name=my-project --branch=staging
 ```
 
-### 3. C3 CLI
-
-```bash
-npm create cloudflare@latest my-app
-# Select framework → auto-setup + deploy
-```
+**C3 CLI:** `npm create cloudflare@latest my-app` — select framework → auto-setup + deploy
 
 ## vs Workers
 
@@ -39,22 +24,11 @@ npm create cloudflare@latest my-app
 ## Quick Start
 
 ```bash
-# Create
 npm create cloudflare@latest
-
-# Local dev
 npx wrangler pages dev ./dist
-
-# Deploy
 npx wrangler pages deploy ./dist --project-name=my-project
-
-# Types
 npx wrangler types --path='./functions/types.d.ts'
-
-# Secrets
 echo "value" | npx wrangler pages secret put KEY --project-name=my-project
-
-# Logs
 npx wrangler pages deployment tail --project-name=my-project
 ```
 
@@ -65,13 +39,10 @@ npx wrangler pages deployment tail --project-name=my-project
 - [Framework Guides](https://developers.cloudflare.com/pages/framework-guides/)
 - [Discord #functions](https://discord.com/channels/595317990191398933/910978223968518144)
 
-## In This Reference
-
-- [patterns.md](./patterns.md) - Full-stack patterns, frameworks
-- [gotchas.md](./gotchas.md) - Build issues, limits, debugging
-
 ## See Also
 
-- [pages-functions](../pages-functions/) - File-based routing, middleware
-- [d1](../d1/) - SQL database for Pages Functions
-- [kv](../kv/) - Key-value storage for caching/state
+- [patterns.md](./patterns.md) — Full-stack patterns, frameworks
+- [gotchas.md](./gotchas.md) — Build issues, limits, debugging
+- [pages-functions](../pages-functions/) — File-based routing, middleware
+- [d1](../d1/) — SQL database for Pages Functions
+- [kv](../kv/) — Key-value storage for caching/state
