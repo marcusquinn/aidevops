@@ -1,6 +1,6 @@
 # Cloudflare Cron Triggers
 
-Schedule Workers execution using cron expressions. Runs on Cloudflare's global network during underutilized periods. Uses 5-field cron syntax with Quartz extensions (L, W, #). At-least-once delivery — rare duplicate executions possible. Supports Workflow integration for long-running multi-step tasks.
+Schedule Workers on Cloudflare's global network. 5-field cron syntax with Quartz extensions (L, W, #). At-least-once delivery — make handlers idempotent.
 
 ## Cron Syntax
 
@@ -11,20 +11,19 @@ Schedule Workers execution using cron expressions. Runs on Cloudflare's global n
  │ │ │ ┌───── month (1-12, JAN-DEC)
  │ │ │ │ ┌─── day of week (1-7, SUN-SAT, 1=Sunday)
  * * * * *
+ * (any)  , (list)  - (range)  / (step)  L (last)  W (weekday)  # (nth)
 ```
-
-**Special chars:** `*` (any), `,` (list), `-` (range), `/` (step), `L` (last), `W` (weekday), `#` (nth)
 
 ## Common Schedules
 
 ```bash
-*/5 * * * *        # Every 5 minutes
-0 * * * *          # Hourly
-0 2 * * *          # Daily 2am UTC (off-peak)
-0 9 * * MON-FRI    # Weekdays 9am UTC
-0 0 1 * *          # Monthly 1st midnight UTC
-0 9 L * *          # Last day of month 9am UTC
-0 10 * * MON#2     # 2nd Monday 10am UTC
+*/5 * * * *            # Every 5 minutes
+0 * * * *              # Hourly
+0 2 * * *              # Daily 2am UTC (off-peak)
+0 9 * * MON-FRI        # Weekdays 9am UTC
+0 0 1 * *              # Monthly 1st midnight UTC
+0 9 L * *              # Last day of month 9am UTC
+0 10 * * MON#2         # 2nd Monday 10am UTC
 */10 9-17 * * MON-FRI  # Every 10min, 9am-5pm weekdays
 ```
 
@@ -71,5 +70,5 @@ export default {
 
 ## See Also
 
-- [patterns.md](./patterns.md) - Use cases, batch processing, monitoring
-- [gotchas.md](./gotchas.md) - Timezone issues, debugging, limits
+- [patterns.md](./cron-triggers-patterns.md) - Use cases, batch processing, monitoring
+- [gotchas.md](./cron-triggers-gotchas.md) - Timezone issues, debugging, limits
