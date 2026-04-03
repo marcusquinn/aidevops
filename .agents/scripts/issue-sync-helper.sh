@@ -224,6 +224,26 @@ _close_comment() {
 	fi
 }
 
+# Mark a TODO entry as done: [ ] → [x] with completed: date.
+# Also handles [-] (cancelled/declined) entries — leaves marker as [-].
+_mark_todo_done() {
+	local task_id="$1" todo_file="$2"
+	local task_id_ere
+	task_id_ere=$(_escape_ere "$task_id")
+	local today
+	today=$(date -u +%Y-%m-%d)
+
+	# Only flip [ ] → [x]; skip if already [x] or [-]
+	# Use [[:space:]] not \s for macOS sed compatibility (bash 3.2)
+	if grep -qE "^[[:space:]]*- \[ \] ${task_id_ere} " "$todo_file" 2>/dev/null; then
+		# Flip checkbox and append completed: date
+		sed -i.bak -E "s/^([[:space:]]*- )\[ \] (${task_id_ere} .*)/\1[x] \2 completed:${today}/" "$todo_file"
+		rm -f "${todo_file}.bak"
+		log_verbose "Marked $task_id as [x] in TODO.md"
+	fi
+	return 0
+}
+
 _do_close() {
 	local task_id="$1" issue_number="$2" todo_file="$3" repo="$4"
 	local task_id_ere
@@ -265,6 +285,7 @@ _do_close() {
 			_gh_edit_labels "add" "$repo" "$issue_number" "not-planned"
 		fi
 		_mark_issue_done "$repo" "$issue_number"
+		_mark_todo_done "$task_id" "$todo_file"
 		print_success "Closed #$issue_number ($task_id)"
 	else
 		print_error "Failed to close #$issue_number ($task_id)"
