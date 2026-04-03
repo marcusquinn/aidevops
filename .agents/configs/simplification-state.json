@@ -5116,6 +5116,12 @@
       "hash": "9c54376593091811cc3981781814336a892d0e7f11ce5a29b8ada517c22f6237",
       "status": "simplified",
       "issue": 16257
+    },
+    ".agents/services/hosting/cloudflare-platform-skill/wrangler.md": {
+      "hash": "9b89ade16613a27d028233cbff7cbb915e089cc7",
+      "at": "2026-04-03T09:34:09Z",
+      "pr": null,
+      "passes": 1
     }
   },
   ".agents/services/hosting/cloudflare-platform-skill/workers-patterns.md": {
