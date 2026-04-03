@@ -72,7 +72,7 @@ Useful flags: `--enable-meta` (false-positive filter), `--custom-rules /path/`, 
 
 ## VirusTotal Layer
 
-Advisory layer for file hashes (SHA256) and embedded domains/URLs. **Never replaces the Cisco scanner import gate.** Limits: 4 req/min, 500/day, max 8 per skill scan.
+Advisory layer for file hashes and embedded domains/URLs. **Never replaces the Cisco scanner import gate.** Limits: 4 req/min, 500/day, max 8 per skill scan.
 
 ```bash
 virustotal-helper.sh scan-skill /path/to/skill/
@@ -86,6 +86,6 @@ security-helper.sh vt-scan skill /path/to/skill/   # runs automatically after Ci
 | Severity | Action |
 |----------|--------|
 | CRITICAL | Do not import. Remove if already imported. |
-| HIGH | Block import. Review before allowing with `--skip-security` (or an explicit interactive override). |
-| MEDIUM | Warn. Review findings and plan fixes. |
+| HIGH | Block import. Allow only with `--skip-security` + explicit interactive override. |
+| MEDIUM | Warn. Review and plan fixes. |
 | LOW | Informational. Address in future. |
