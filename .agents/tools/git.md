@@ -44,7 +44,7 @@ tools:
 
 ## Authentication
 
-Prefer system keyring over plaintext config. Export tokens only when scripts require them:
+Export tokens only when scripts require them (prefer system keyring):
 
 ```bash
 export GITHUB_TOKEN=$(gh auth token)
@@ -56,13 +56,13 @@ Token setup and safety rules: `git/authentication.md`.
 ## Multi-Platform Remotes
 
 ```bash
+# Push to individual remotes
 git remote add github git@github.com:user/repo.git
 git remote add gitlab git@gitlab.com:user/repo.git
 git push github main && git push gitlab main
 
-# Push to both with a combined remote
+# Push to all remotes at once
 git remote add all git@github.com:user/repo.git
-git remote set-url --add --push all git@github.com:user/repo.git
 git remote set-url --add --push all git@gitlab.com:user/repo.git
 git push all main
 ```
@@ -73,9 +73,6 @@ git push all main
 ~/.aidevops/agents/scripts/opencode-github-setup-helper.sh check
 opencode github install
 ```
-
-- GitHub: `/oc explain this issue`, `/oc fix this bug`, `/opencode review this PR`
-- GitLab: add OpenCode to `.gitlab-ci.yml`, then `@opencode explain this issue` / `@opencode fix this`
 
 Full workflow and hardening: `git/opencode-github.md`, `git/opencode-gitlab.md`, `git/opencode-github-security.md`.
 
