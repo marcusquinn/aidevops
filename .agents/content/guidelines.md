@@ -23,29 +23,14 @@ Structural copy rules for website content, especially local-service pages. Tone,
 - **Tone**: Authentic, local, professional but approachable, British English
 - **Spelling**: British (`specialise`, `colour`, `moulding`, `draughty`, `centre`)
 - **Paragraphs**: One sentence per paragraph; split at 3+ lines
-- **Sentences**: Short & punchy; spaced em-dashes ( — ) instead of subordinate clauses
-- **SEO**: Bold **keywords** naturally; use long-tail variations; never stuff
-- **Avoid**: "We pride ourselves...", "Our commitment to excellence...", repetitive brand names, Markdown in HTML fields
+- **Sentences**: Short & punchy; spaced em-dashes (` — `) instead of subordinate clauses — e.g. "We finish them with marine-grade coatings — they resist swelling." not "...coatings, which means that they are built specifically..."
+- **SEO**: Bold **keywords** naturally; use long-tail variations ("Jersey heritage properties", "granite farmhouse windows"); never stuff
+- **Avoid**: "We pride ourselves...", "Our commitment to excellence...", "Elevate your home with...", repeating brand name at sentence start (prefer "We make..." over "Trinity Joinery crafts..."), empty trailing blocks (`<!-- wp:paragraph --><p></p><!-- /wp:paragraph -->`), Markdown in HTML fields
 - **HTML fields**: `<strong>`, `<em>`, `<p>` — not Markdown (`**bold**` won't render)
 - **WP fetch**: `wp post get ID --field=content` (singular `--field`, not `--fields`)
 - **Workflow**: Fetch → Refine → Structure → Update → Verify
 
 <!-- AI-CONTEXT-END -->
-
-## Formatting
-
-- One sentence per paragraph for screen readability, especially on mobile.
-- Spaced em-dashes (` — `) for emphasis instead of subordinate clauses.
-  - Good: "We finish them with marine-grade coatings — they resist swelling."
-  - Bad: "We finish them with marine-grade coatings, which means that they are built specifically..."
-- Bold primary keywords naturally; use long-tail variations ("Jersey heritage properties", "granite farmhouse windows").
-
-## Avoid
-
-- Robotic phrasing: "We pride ourselves on...", "Our commitment to excellence...", "Elevate your home with...".
-- Repeating the brand name at the start of every sentence. Prefer "We make..." over "Trinity Joinery crafts...".
-- Empty trailing blocks: `<!-- wp:paragraph --><p></p><!-- /wp:paragraph -->`.
-- Markdown in HTML content fields.
 
 ## HTML Content Fields
 
