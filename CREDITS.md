@@ -72,6 +72,19 @@ Sources, inspirations, and third-party resources incorporated into or referenced
 
 - **anomalyco/Claude** -- The original system prompt template (`anthropic.txt @ 3c41e4e8f12b`) from which `build.txt` was derived.
 
+## Agent Architecture & Quality Patterns
+
+### mngr
+
+- **imbue-ai/mngr** (MIT License) -- Unix-style tool for managing coding agents at scale. Agents as tmux sessions on SSH-accessible hosts with pluggable providers (Docker, Modal, SSH, local), idle detection, and convention-based state discovery.
+  - Repository: https://github.com/imbue-ai/mngr/
+  - Patterns adopted/referenced:
+    - **Ratchet pattern** (`test_ratchets.py`) -- Quality metrics that can only stay the same or decrease, never increase. Adopted as `.agents/configs/ratchets.json` baseline tracking in `linters-local.sh` (t1878).
+    - **Structured code review categories** (`.reviewer/code-issue-categories.md`) -- 18 categorised issue types with examples, exceptions, and severity levels. Adapted as `.agents/tools/code-review/review-categories.md` (t1877).
+    - **Conversation review / instruction_to_save** (`.reviewer/conversation-issue-categories.md`) -- Detecting when users provide persistent guidance that should be captured in instruction files. Adopted as session miner signal source (t1876).
+    - **tmux/provider/idle-detection architecture** -- Agent process management via tmux sessions, provider abstraction for compute backends, and idle detection modes for cost control. Referenced as design input for SaaS agent hosting research (t1879).
+  - Relationship: mngr manages agent *processes*; aidevops manages agent *intelligence and workflow*. Complementary, not competing.
+
 ## Design Inspiration Resources
 
 See `.agents/tools/design/design-inspiration.md` for the full catalogue of 60+ curated UI/UX galleries, screenshot libraries, and pattern references.

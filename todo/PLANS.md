@@ -22,6 +22,52 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-04-03] mngr-Inspired Quality and Architecture Improvements
+
+**Status:** Planning
+**Estimate:** ~18.5h across 4 tasks
+**TODOs:** t1876, t1877, t1878, t1879
+**Logged:** 2026-04-03
+**Trigger:** Analysis of [imbue-ai/mngr](https://github.com/imbue-ai/mngr/) (MIT-licensed agent process manager) identified 4 adoptable patterns for aidevops. Three are quality/pipeline improvements; one is strategic research for the SaaS agent hosting roadmap.
+
+#### Purpose
+
+Adopt proven patterns from mngr's architecture to improve aidevops in two dimensions:
+1. **Quality pipeline** (t1876, t1877, t1878) -- better signal mining, structured reviews, and regression prevention. These enrich existing systems (session miner, audit agents, linters) rather than creating new ones.
+2. **Strategic research** (t1879) -- evaluate mngr's tmux/provider/idle-detection architecture as a design reference for aidevops SaaS agent hosting, where users need AI agents running in secure containers.
+
+#### Development Environment
+
+| Item | Value |
+|------|-------|
+| Language/runtime | Shell (bash 3.2), Python 3.11+ (session miner), Markdown |
+| Tests | shellcheck, markdownlint-cli2, ratchet self-test |
+| Constraints | No new tools/commands -- enrich existing pipelines. Conservative false-positive tolerance (user directive). |
+
+#### Progress
+
+- [ ] (2026-04-03) t1876: Add `instruction_to_save` detection to session miner ~4h
+- [ ] (2026-04-03) t1877: Structured code review categories reference doc ~2.5h
+- [ ] (2026-04-03) t1878: Ratchet pattern for quality regression prevention ~4h
+- [ ] (2026-04-03) t1879: Research mngr architecture for SaaS agent hosting ~8h
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-04-03 | Enrich session miner instead of creating `/verify-conversation` command | We already have session-miner-pulse.sh (743 lines) and autoagent signal-mining.md. Adding a signal source is cheaper than a new command and uses the established pipeline. |
+| 2026-04-03 | Drop worktree ownership lock file idea | User warned about false positives disrupting productivity. Current prompt-level enforcement works. Revisit only if session miner shows evidence of actual ownership collisions. |
+| 2026-04-03 | Ratchets advisory by default, --strict for CI | Productivity > strictness. Developers shouldn't be blocked by ratchets during interactive work, but CI should enforce them. |
+| 2026-04-03 | t1879 is research-only, no code | SaaS hosting is strategic but premature to implement. Design doc informs future tasks when that work begins. |
+| 2026-04-03 | Credit mngr in CREDITS.md | Attribution for design inspiration and patterns adopted. |
+
+#### Surprises & Discoveries
+
+- mngr and aidevops are complementary, not competing: mngr manages agent *processes*; aidevops manages agent *intelligence and workflow*. mngr could be a provider backend for aidevops headless dispatch.
+- mngr's convention-based state (no database, prefix naming) is resilient but slower for multi-tenant SaaS. A thin metadata layer on top would be needed.
+- mngr's conversation review categories include `instruction_to_save` -- detecting persistent user guidance -- which has no equivalent in our pipeline. This is the highest-novelty finding.
+- Their ratchet pattern (`test_ratchets.py`) is simple but effective: ~50 lines of code prevent quality regression across an entire codebase.
+
 ### [2026-03-31] Chromium Debug Use Live Chromium Session Skill
 
 **Status:** In Progress (Phase 1/4 after foundation)
