@@ -20,7 +20,7 @@ tools:
 - **Source**: [cisco-ai-defense/skill-scanner](https://github.com/cisco-ai-defense/skill-scanner) (Apache 2.0)
 - **Install**: `uv tool install cisco-ai-skill-scanner` (`setup.sh` auto-installs it)
 - **No install**: `uvx cisco-ai-skill-scanner scan /path/to/skill`
-- **aidevops entry points**: `aidevops skill scan`, `security-helper.sh skill-scan`, `add-skill-helper.sh`
+- **Entry points**: `aidevops skill scan`, `security-helper.sh skill-scan`, `add-skill-helper.sh`
 - **Formats**: `summary`, `json`, `markdown`, `table`, `sarif`
 - **Exit codes**: `0` safe, `1` findings
 
@@ -58,6 +58,7 @@ Keys: `~/.config/aidevops/credentials.sh` (600 perms) or `aidevops secret set <K
 - **Batch scans**: `aidevops skill scan`, `security-helper.sh skill-scan all`
 - **Update path**: `setup.sh` scans all skills during `aidevops update` (non-blocking); `skill-update-helper.sh update` re-imports with `--force`
 - **Audit log**: `.agents/configs/SKILL-SCAN-RESULTS.md`
+- **VirusTotal layer**: advisory scan for file hashes and embedded domains/URLs; never replaces the import gate. Limits: 4 req/min, 500/day, max 8 per skill scan.
 
 ## CLI
 
@@ -66,20 +67,14 @@ skill-scanner scan /path/to/skill                                    # static on
 skill-scanner scan /path/to/skill --use-behavioral --use-llm         # full scan
 skill-scanner scan-all /path/to/skills --recursive                   # batch scan
 skill-scanner scan-all ./skills --fail-on-findings --format sarif    # CI/CD gate
-```
 
-Useful flags: `--enable-meta` (false-positive filter), `--custom-rules /path/`, `--disable-rule RULE_NAME`, `--yara-mode permissive`.
-
-## VirusTotal Layer
-
-Advisory layer for file hashes and embedded domains/URLs. **Never replaces the Cisco scanner import gate.** Limits: 4 req/min, 500/day, max 8 per skill scan.
-
-```bash
 virustotal-helper.sh scan-skill /path/to/skill/
 virustotal-helper.sh scan-file /path/to/file.md
 virustotal-helper.sh scan-domain example.com
-security-helper.sh vt-scan skill /path/to/skill/   # runs automatically after Cisco scanner
+security-helper.sh vt-scan skill /path/to/skill/                     # runs after Cisco scanner
 ```
+
+Useful flags: `--enable-meta` (false-positive filter), `--custom-rules /path/`, `--disable-rule RULE_NAME`, `--yara-mode permissive`.
 
 ## Response Guidelines
 
