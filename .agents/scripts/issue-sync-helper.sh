@@ -720,6 +720,7 @@ cmd_status() {
 	local gh_closed
 	gh_closed=$(gh_list_issues "$repo" "closed" 500 | jq 'length' 2>/dev/null || echo "0")
 
+	# Forward drift: open GH issue but TODO marked [x]
 	local drift=0
 	while IFS= read -r il; do
 		local tid
@@ -733,11 +734,30 @@ cmd_status() {
 		}
 	done < <(echo "$open_json" | jq -c '.[]' 2>/dev/null || true)
 
-	printf "\n=== Sync Status (%s) ===\nTODO open: %d (%d ref, %d no ref) | done: %d\nGitHub open: %s closed: %s | drift: %d\n" \
-		"$repo" "$total_open" "$with_ref" "$without_ref" "$total_done" "$gh_open" "$gh_closed" "$drift"
+	# Reverse drift: open TODO [ ] but GH issue is closed
+	# Build set of open issue numbers for fast lookup (avoids per-task API calls)
+	local open_numbers
+	open_numbers=$(echo "$open_json" | jq -r '.[].number' 2>/dev/null | sort -n)
+	local reverse_drift=0
+	while IFS= read -r line; do
+		local ref_num
+		ref_num=$(echo "$line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
+		[[ -z "$ref_num" ]] && continue
+		# If the referenced issue number is not in the open set, it's reverse drift
+		if ! echo "$open_numbers" | grep -qx "$ref_num"; then
+			local rtid
+			rtid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
+			reverse_drift=$((reverse_drift + 1))
+			print_warning "REVERSE-DRIFT: $rtid ref:GH#$ref_num — TODO open but issue closed"
+		fi
+	done < <(echo "$stripped" | grep -E '^\s*- \[ \] t[0-9]+.*ref:GH#[0-9]+' || true)
+
+	printf "\n=== Sync Status (%s) ===\nTODO open: %d (%d ref, %d no ref) | done: %d\nGitHub open: %s closed: %s | drift: %d | reverse-drift: %d\n" \
+		"$repo" "$total_open" "$with_ref" "$without_ref" "$total_done" "$gh_open" "$gh_closed" "$drift" "$reverse_drift"
 	[[ $without_ref -gt 0 ]] && print_warning "$without_ref tasks need push"
 	[[ $drift -gt 0 ]] && print_warning "$drift tasks need close"
-	[[ $without_ref -eq 0 && $drift -eq 0 ]] && print_success "In sync"
+	[[ $reverse_drift -gt 0 ]] && print_warning "$reverse_drift open TODOs reference closed issues — run 'reconcile' to review"
+	[[ $without_ref -eq 0 && $drift -eq 0 && $reverse_drift -eq 0 ]] && print_success "In sync"
 }
 
 cmd_reconcile() {
@@ -775,6 +795,7 @@ cmd_reconcile() {
 		fi
 	done < <(strip_code_fences <"$todo_file" | grep -E '^\s*- \[.\] t[0-9]+.*ref:GH#[0-9]+' || true)
 
+	# Forward drift: open GH issue but TODO marked [x]
 	local open_json
 	open_json=$(gh_list_issues "$repo" "open" 200)
 	while IFS= read -r il; do
@@ -791,9 +812,30 @@ cmd_reconcile() {
 		grep -qE "^\s*- \[.\] ${tid_ere} " "$todo_file" 2>/dev/null || orphans=$((orphans + 1))
 	done < <(echo "$open_json" | jq -c '.[]' 2>/dev/null || true)
 
-	printf "\n=== Reconciliation ===\nRefs OK: %d | fixed: %d | stale: %d | orphans: %d\n" "$ref_ok" "$ref_fixed" "$stale" "$orphans"
+	# Reverse drift: open TODO [ ] but GH issue is closed
+	# Build set of open issue numbers for fast lookup (avoids per-task API calls)
+	local open_numbers
+	open_numbers=$(echo "$open_json" | jq -r '.[].number' 2>/dev/null | sort -n)
+	local reverse_drift=0
+	local stripped
+	stripped=$(strip_code_fences <"$todo_file")
+	while IFS= read -r line; do
+		local ref_num
+		ref_num=$(echo "$line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
+		[[ -z "$ref_num" ]] && continue
+		if ! echo "$open_numbers" | grep -qx "$ref_num"; then
+			local rtid
+			rtid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
+			reverse_drift=$((reverse_drift + 1))
+			print_warning "REVERSE-DRIFT: $rtid ref:GH#$ref_num — TODO open but issue closed"
+		fi
+	done < <(echo "$stripped" | grep -E '^\s*- \[ \] t[0-9]+.*ref:GH#[0-9]+' || true)
+
+	printf "\n=== Reconciliation ===\nRefs OK: %d | fixed: %d | stale: %d | orphans: %d | reverse-drift: %d\n" \
+		"$ref_ok" "$ref_fixed" "$stale" "$orphans" "$reverse_drift"
 	[[ $stale -gt 0 ]] && print_info "Run 'issue-sync-helper.sh close' for stale issues"
-	[[ $ref_fixed -eq 0 && $stale -eq 0 && $orphans -eq 0 ]] && print_success "All refs correct"
+	[[ $reverse_drift -gt 0 ]] && print_warning "$reverse_drift open TODOs reference closed issues — review each: reopen issue or mark TODO [x]"
+	[[ $ref_fixed -eq 0 && $stale -eq 0 && $orphans -eq 0 && $reverse_drift -eq 0 ]] && print_success "All refs correct"
 }
 
 cmd_help() {
@@ -803,6 +845,11 @@ Usage: issue-sync-helper.sh [command] [options]
 Commands: push [tNNN] | enrich [tNNN] | pull | close [tNNN] | reconcile | status | help
 Options: --repo SLUG | --dry-run | --verbose | --force (skip evidence on close)
          --force-push (allow bulk push outside CI — use with caution, risk of duplicates)
+
+Drift detection:
+  status    — reports forward drift (open issue, done TODO) and reverse drift
+              (open TODO, closed issue) without making changes.
+  reconcile — same detection plus ref mismatches, with actionable guidance.
 
 Note: Bulk push (no task ID) is CI-only by default to prevent duplicate issues.
       Use 'push <task_id>' for single tasks, or --force-push to override.
