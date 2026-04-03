@@ -5117,5 +5117,13 @@
       "status": "simplified",
       "issue": 16257
     }
+  },
+  ".agents/services/hosting/cloudflare-platform-skill/workers-patterns.md": {
+    "at": "2026-04-03T00:00:00Z",
+    "hash": "4a94ab9f82abafc568298f41f4913b4e504b962f651338f6dbb20a6fecc984cc",
+    "issue": "GH#16293",
+    "lines_before": 141,
+    "lines_after": 139,
+    "action": "tightened"
   }
 }

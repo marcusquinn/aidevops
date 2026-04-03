@@ -107,7 +107,7 @@ For `wrangler deploy` and environment-specific deploys, see [workers.md](./worke
 ## Monitoring
 
 ```typescript
-// Analytics Engine — track latency and status per request
+// Track latency and status via Analytics Engine
 const start = Date.now();
 const response = await handleRequest(request, env);
 ctx.waitUntil(env.ANALYTICS.writeDataPoint({
@@ -118,10 +118,8 @@ ctx.waitUntil(env.ANALYTICS.writeDataPoint({
 ## Security
 
 ```typescript
-// Security headers
 const security = { 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'self'" };
 
-// Bearer auth
 const auth = request.headers.get('Authorization');
 if (!auth?.startsWith('Bearer ')) return new Response('Unauthorized', { status: 401 });
 ```
