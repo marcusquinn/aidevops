@@ -4705,5 +4705,6 @@
     "lines_after": 101,
     "bytes_before": 3340,
     "bytes_after": 3076
-  }
+  },
+  ".agents/tools/deployment/cloudron-app-publishing-skill.md": "0151e8429caa9fe4b9c786443f31688761ce0569051182b9f648d34398cd9f27"
 }

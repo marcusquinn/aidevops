@@ -15,12 +15,10 @@ tools:
 
 <!-- AI-CONTEXT-START -->
 
-## Quick Reference
-
 - **Docs**: [docs.cloudron.io/packaging/publishing](https://docs.cloudron.io/packaging/publishing)
 - **Upstream skill**: [git.cloudron.io/docs/skills](https://git.cloudron.io/docs/skills) (`cloudron-app-publishing`)
-- **Prerequisite**: App must be built with `cloudron build` (local or build service) -- on-server builds cannot be published
-- **Key file**: `CloudronVersions.json` -- version catalog hosted at a public URL
+- **Prerequisite**: App must be built with `cloudron build` (local or build service) — on-server builds cannot be published
+- **Key file**: `CloudronVersions.json` — version catalog hosted at a public URL
 - **Forum**: [App Packaging & Development](https://forum.cloudron.io/category/96/app-packaging-development)
 
 <!-- AI-CONTEXT-END -->
@@ -29,7 +27,7 @@ tools:
 
 ```bash
 cloudron versions init       # create CloudronVersions.json + scaffold manifest/stubs
-cloudron build               # build and push image
+cloudron build               # build and push image (first run prompts for Docker repository, e.g. registry/username/myapp — saved for subsequent runs)
 cloudron versions add        # add version to catalog
 # host CloudronVersions.json at a public URL
 ```
@@ -55,8 +53,6 @@ cloudron versions add        # add version to catalog
 | `cloudron build logs --id <id>` | Stream logs for a remote build |
 | `cloudron build push --id <id>` | Push a remote build to a registry |
 | `cloudron build status --id <id>` | Check status of a remote build |
-
-First run prompts for Docker repository (e.g. `registry/username/myapp`) — saved for subsequent runs.
 
 ## Versions Commands
 
