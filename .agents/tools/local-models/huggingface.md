@@ -64,7 +64,7 @@ Reserve ≥4 GB for OS. Higher-quant options in parentheses.
 
 ## Download
 
-Install CLI: `pip install huggingface_hub[cli]` (or pipx). Token: `~/.cache/huggingface/token`. Web: `https://huggingface.co/models?library=gguf&sort=trending`.
+Install CLI: `pip install "huggingface_hub[cli]"` (or pipx). Token: `~/.cache/huggingface/token`. Web: `https://huggingface.co/models?library=gguf&sort=trending`.
 
 ```bash
 # Helper (recommended)
