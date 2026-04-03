@@ -37,13 +37,13 @@ Matrix Room --> Matrix Bot --> OpenCode / runner-helper.sh --> AI session
               +-- matrix_room_sessions
 ```
 
-**Message flow**: `!ai <prompt>` → sync → permission check → room-to-runner lookup → entity resolution → L0 log → load entity profile + conversation summary + recent interactions → privacy filter → dispatch → log response → post to room + reaction.
+**Message flow**: `!ai <prompt>` → permission check → room-to-runner lookup → entity resolution → L0 log → load context (L2 profile + L1 summary + L0 recent) → privacy filter → dispatch → post response + reaction.
 
-**Session lifecycle**: First message creates session → L0 log (immutable) → after `sessionIdleTimeout` idle, AI summarises → stored in L1 (L0 never deleted) → next message primed with entity profile + summary → SIGINT/SIGTERM compacts all sessions before exit.
+**Session lifecycle**: First message creates session (L0 immutable log) → idle for `sessionIdleTimeout` → AI summarises to L1 (L0 never deleted) → next message primed with profile + summary → SIGINT/SIGTERM compacts all sessions before exit.
 
 ## Setup
 
-**Prerequisites**: Matrix homeserver (Synapse recommended), bot account + access token, OpenCode server, at least one runner. Preview: `matrix-dispatch-helper.sh setup --dry-run`.
+**Prerequisites**: Matrix homeserver (Synapse recommended), bot account + access token, OpenCode server, at least one runner. Dry-run: `matrix-dispatch-helper.sh setup --dry-run`.
 
 ### Cloudron (Recommended)
 
@@ -118,13 +118,13 @@ matrix-dispatch-helper.sh sessions clear '!room:server'
 matrix-dispatch-helper.sh sessions clear-all
 ```
 
-Trigger with `!ai <prompt>` in any mapped room. Typing indicator shown, status reactions posted, one dispatch per room (prevents flooding), long responses truncated, auto-joins on invite, per-room context persisted.
+Trigger: `!ai <prompt>` in any mapped room. One dispatch per room (prevents flooding); typing indicator, status reactions, auto-join on invite, per-room context persisted.
 
 ## Entity Integration
 
-**Resolution**: `@user:server` → lookup `entity_channels` → create if new → cache per session. Context per prompt: entity profile (L2) → conversation summary (L1) → recent interactions (L0, this channel only) → privacy filter (emails, IPs, API keys redacted).
+**Resolution**: `@user:server` → lookup `entity_channels` → create if new → cache per session. Context per prompt: L2 profile → L1 summary → L0 recent interactions (this channel only) → privacy filter (emails, IPs, API keys redacted).
 
-**Storage** (`memory.db`, SQLite WAL): `matrix_room_sessions` (per-room state), `interactions` (L0 immutable), `conversations` (L1 summaries), `entities`/`entity_channels`/`entity_profiles` (L2 identity). Legacy `sessions.db` auto-detected.
+**Storage** (`memory.db`, SQLite WAL): `matrix_room_sessions`, `interactions` (L0 immutable), `conversations` (L1 summaries), `entities`/`entity_channels`/`entity_profiles` (L2 identity). Legacy `sessions.db` auto-detected.
 
 ## Security
 
