@@ -30,14 +30,10 @@ Arguments: $ARGUMENTS
 ## Step 1: Resolve Invocation Pattern
 
 ```text
-if $ARGUMENTS starts with "init ":
-    → go to Init Mode
-elif $ARGUMENTS contains "--program ":
-    → extract program path, skip to Step 3
-elif $ARGUMENTS is non-empty (one-liner):
-    → go to One-Liner Mode
-else:
-    → go to Interactive Setup
+if $ARGUMENTS starts with "init ":      → Init Mode
+elif $ARGUMENTS contains "--program ":  → extract program path, skip to Step 3
+elif $ARGUMENTS is non-empty:           → One-Liner Mode
+else:                                   → Interactive Setup
 ```
 
 ---
@@ -47,8 +43,6 @@ else:
 Ask questions sequentially. Each question shows the inferred default as option 1. Accept Enter to use default.
 
 ### Q1 — What are you researching?
-
-Suggest based on repo context:
 
 | Signal | Suggestion |
 |--------|-----------|
@@ -67,12 +61,9 @@ Suggest based on repo context:
 3. New standalone repo
 ```
 
-If option 2: ask for repo path or name. Validate it exists in `~/.config/aidevops/repos.json`.
-If option 3: go to Init Mode after interview.
+Option 2: validate repo path exists in `~/.config/aidevops/repos.json`. Option 3: go to Init Mode.
 
 ### Q3 — What files can be modified?
-
-Suggest based on Q1 answer:
 
 | Q1 answer contains | Suggestion |
 |--------------------|-----------|
@@ -84,8 +75,6 @@ Suggest based on Q1 answer:
 
 ### Q4 — What's the success metric?
 
-Suggest based on repo type and Q1:
-
 | Context | Metric command | Name | Direction |
 |---------|---------------|------|-----------|
 | aidevops + "agent" | `agent-test-helper.sh run {suite} --json \| jq '.composite_score'` | `composite_score` | higher |
@@ -96,8 +85,6 @@ Suggest based on repo type and Q1:
 | Python + "speed" | `hyperfine --runs 3 'python main.py' --export-json /tmp/bench.json && jq '.results[0].mean' /tmp/bench.json` | `execution_seconds` | lower |
 | Cargo + "bench" | `cargo bench 2>&1 \| grep 'time:' \| awk '{print $5}'` | `bench_ns` | lower |
 | default | ask user to provide command | — | — |
-
-If no suggestion matches: ask user for the metric command, name, and direction.
 
 ### Q5 — Any constraints?
 
@@ -136,11 +123,7 @@ Only ask about Target model if Q1 mentions "agent" or "instruction".
 
 ## Step 2b: One-Liner Mode
 
-Given a short description (e.g., "reduce build time"):
-
-1. Detect repo type and infer all fields using the tables in Step 2a.
-2. Generate a draft research program.
-3. Show a compact summary:
+Detect repo type and infer all fields using the tables in Step 2a. Show compact summary:
 
 ```text
 Research program: optimize-build-time
@@ -161,16 +144,14 @@ If headless (no TTY): proceed without confirmation.
 
 ## Step 3: Write Research Program
 
-After interview or one-liner confirmation, write the program to `todo/research/{name}.md`.
+Write to `todo/research/{name}.md` using schema from `.agents/templates/research-program-template.md`:
 
-Use the schema from `.agents/templates/research-program-template.md`. The file must have:
-
-- YAML frontmatter with `name`, `mode`, `target_repo`
-- `## Target` section with `files:` and `branch:`
-- `## Metric` section with `command:`, `name:`, `direction:`, `baseline: null`
-- `## Constraints` section (may be empty)
-- `## Models` section
-- `## Budget` section
+- YAML frontmatter: `name`, `mode`, `target_repo`
+- `## Target`: `files:`, `branch:`
+- `## Metric`: `command:`, `name:`, `direction:`, `baseline: null`
+- `## Constraints` (may be empty)
+- `## Models`
+- `## Budget`
 
 Confirm: "Research program written to `todo/research/{name}.md`."
 
@@ -187,9 +168,9 @@ Begin now or queue for later?
 
 If headless: begin now (option 1).
 
-**If begin now:** dispatch to `.agents/tools/autoresearch/autoresearch.md` with `--program todo/research/{name}.md`.
+**Begin now:** dispatch to `.agents/tools/autoresearch/autoresearch.md` with `--program todo/research/{name}.md`.
 
-**If queue:** add to TODO.md:
+**Queue:** add to TODO.md:
 
 ```text
 - [ ] t{next_id} autoresearch: {name} — {one-line description} #auto-dispatch ~{budget.timeout/3600}h ref:GH#{issue}
@@ -201,80 +182,31 @@ If headless: begin now (option 1).
 
 Scaffold a new standalone research repo at `~/Git/autoresearch-{name}/`.
 
-The `autoresearch-` prefix is mandatory. It makes all research repos discoverable:
-- `ls ~/Git/autoresearch-*` — find all local research repos
-- `grep autoresearch ~/.config/aidevops/repos.json` — find all registered ones
+The `autoresearch-` prefix is mandatory — makes repos discoverable via `ls ~/Git/autoresearch-*` and `grep autoresearch ~/.config/aidevops/repos.json`.
 
-### Step I1: Validate name
+### I1: Validate name
 
-Extract `{name}` from `init "{name}"` or `init {name}`. Slugify: lowercase, replace spaces/underscores with hyphens, strip non-alphanumeric except hyphens.
+Slugify `{name}`: lowercase, hyphens for spaces/underscores, strip non-alphanumeric except hyphens. If `~/Git/autoresearch-{name}` already exists: exit with error.
 
-```text
-REPO_NAME="autoresearch-{name}"
-REPO_PATH="$HOME/Git/$REPO_NAME"
-```
-
-If `$REPO_PATH` already exists: exit with error — "Repo already exists at `$REPO_PATH`. Use `/autoresearch --program $REPO_PATH/todo/research/program.md` to run it."
-
-### Step I2: Interactive prompts (skip if headless)
+### I2: Interactive prompts (skip if headless)
 
 ```text
-Creating research repo: ~/Git/autoresearch-{name}/
-
-1. Description? (one line, for README)
-   → [Enter to skip]
-
-2. Create GitHub remote? [y/N]
-   → N
-
-3. Enable pulse dispatch? [y/N]
-   → N
-
-4. Begin experiment loop now? [y/N]
-   → N
+1. Description? (one line, for README)  → [Enter to skip]
+2. Create GitHub remote? [y/N]          → N
+3. Enable pulse dispatch? [y/N]         → N
+4. Begin experiment loop now? [y/N]     → N
 ```
 
 Headless defaults: description=empty, GitHub remote=no, pulse=no, begin now=no.
 
-### Step I3: Scaffold directory structure
+### I3: Scaffold
 
 ```bash
-mkdir -p "$REPO_PATH/baseline"
-mkdir -p "$REPO_PATH/results"
-mkdir -p "$REPO_PATH/todo/research"
-touch "$REPO_PATH/baseline/.gitkeep"
-touch "$REPO_PATH/results/.gitkeep"
+mkdir -p "$REPO_PATH/baseline" "$REPO_PATH/results" "$REPO_PATH/todo/research"
+touch "$REPO_PATH/baseline/.gitkeep" "$REPO_PATH/results/.gitkeep"
 ```
 
-Write `$REPO_PATH/program.md`:
-
-```markdown
-# Research: {name}
-
-{description if provided, else: "Describe your research goal here."}
-
-## Instructions
-
-Edit `todo/research/program.md` to define your experiment program, then run:
-
-    /autoresearch --program todo/research/program.md
-
-## Structure
-
-- `baseline/` — starting code, data, or config for the experiment
-- `results/` — experiment outputs (may be gitignored for large files)
-- `todo/research/program.md` — the autoresearch program file
-```
-
-Write `$REPO_PATH/todo/research/program.md` from `.agents/templates/research-program-template.md` with these substitutions:
-
-```text
-name: {name}
-mode: standalone
-target_repo: .
-```
-
-Replace the `## Target` `files:` line with `files: baseline/**/*` as a starting point.
+Write `$REPO_PATH/program.md` (README with structure overview) and `$REPO_PATH/todo/research/program.md` from `.agents/templates/research-program-template.md` with `name`, `mode: standalone`, `target_repo: .`, `files: baseline/**/*`.
 
 Write `$REPO_PATH/.gitignore`:
 
@@ -284,25 +216,23 @@ results/
 .DS_Store
 ```
 
-### Step I4: Git init and initial commit
+### I4: Git init
 
 ```bash
-git -C "$REPO_PATH" init
-git -C "$REPO_PATH" add .
-git -C "$REPO_PATH" commit -m "chore: init autoresearch-{name} repo"
+git -C "$REPO_PATH" init && git -C "$REPO_PATH" add . && git -C "$REPO_PATH" commit -m "chore: init autoresearch-{name} repo"
 ```
 
-### Step I5: aidevops init
+### I5: aidevops init
 
 ```bash
 aidevops init --path "$REPO_PATH" --non-interactive
 ```
 
-If `aidevops init` fails or is not available: warn but continue. The repo is still usable without aidevops task management.
+If unavailable: warn and continue.
 
-### Step I6: Register in repos.json
+### I6: Register in repos.json
 
-Read `~/.config/aidevops/repos.json`. Add entry to `initialized_repos` array:
+Add to `initialized_repos` in `~/.config/aidevops/repos.json`:
 
 ```json
 {
@@ -316,48 +246,28 @@ Read `~/.config/aidevops/repos.json`. Add entry to `initialized_repos` array:
 }
 ```
 
-Get `{gh_username}` from `gh api user --jq '.login' 2>/dev/null` or omit if unavailable.
+Get `{gh_username}` from `gh api user --jq '.login' 2>/dev/null`.
 
-Write the updated JSON back to `~/.config/aidevops/repos.json`.
-
-### Step I7: Optional GitHub remote
-
-If user answered yes to "Create GitHub remote?":
+### I7: Optional GitHub remote
 
 ```bash
 gh repo create "autoresearch-{name}" --private --source "$REPO_PATH" --push
 ```
 
-On success, update the repos.json entry:
-- Remove `"local_only": true`
-- Set `"slug": "{gh_username}/autoresearch-{name}"`
+On success: remove `local_only`, set `slug: "{gh_username}/autoresearch-{name}"`. On failure: warn, keep `local_only: true`.
 
-If `gh repo create` fails: warn, leave `local_only: true` in repos.json, continue.
+### I8: Optional pulse
 
-### Step I8: Optional pulse dispatch
+Set `"pulse": true` in repos.json. Suggest `"pulse_hours": {"start": 17, "end": 5}` for overnight-only runs.
 
-If user answered yes to "Enable pulse dispatch?":
+### I9: Optional begin now
 
-Update the repos.json entry: set `"pulse": true`.
+If yes: dispatch `/autoresearch --program "$REPO_PATH/todo/research/program.md"`.
 
-Suggest adding `pulse_hours` for overnight-only runs:
-
-```text
-Pulse enabled. To limit to overnight runs (avoid conflicts with daytime work):
-  Set "pulse_hours": {"start": 17, "end": 5} in repos.json for this entry.
-```
-
-### Step I9: Optional begin now
-
-If user answered yes to "Begin experiment loop now?":
-
-Dispatch to interactive setup: `/autoresearch --program "$REPO_PATH/todo/research/program.md"`
-
-Otherwise, print completion summary:
+Otherwise:
 
 ```text
 Repo ready at ~/Git/autoresearch-{name}/
-
 Next steps:
   1. Edit todo/research/program.md — define your experiment (metric, files, budget)
   2. Add starting code/data to baseline/
@@ -381,4 +291,4 @@ Next steps:
 
 ## Related
 
-`.agents/templates/research-program-template.md` · `.agents/tools/autoresearch/autoresearch.md` · `todo/research/` · `todo/research/agent-optimization.md` (predefined agent optimization program)
+`.agents/templates/research-program-template.md` · `.agents/tools/autoresearch/autoresearch.md` · `todo/research/` · `todo/research/agent-optimization.md`
