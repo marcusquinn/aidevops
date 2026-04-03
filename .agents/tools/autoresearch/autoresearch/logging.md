@@ -12,39 +12,35 @@ Append to `todo/research/{name}-results.tsv`:
 {iteration}\t{commit_sha_or_dash}\t{metric_name}\t{metric_value_or_dash}\t{baseline}\t{delta_or_dash}\t{status}\t{hypothesis}\t{ISO_timestamp}\t{tokens_used}\t{pass_rate_or_dash}\t{token_ratio_or_dash}
 ```
 
-Column definitions:
-
 | Column | Type | Notes |
 |--------|------|-------|
-| `iteration` | int | Sequential experiment number (0 = baseline) |
+| `iteration` | int | Sequential (0 = baseline) |
 | `commit` | string | Short SHA or `-` for crashes/discards |
 | `metric_name` | string | From research program `name:` field |
-| `metric_value` | float or `-` | Measured value; `-` for crashes/constraint fails |
-| `baseline` | float | Original baseline value (same for all rows) |
-| `delta` | float or `-` | `metric_value - baseline` (signed); `-` for crashes |
+| `metric_value` | float\|`-` | `-` for crashes/constraint fails |
+| `baseline` | float | Original value (same for all rows) |
+| `delta` | float\|`-` | `metric_value - baseline` (signed); `-` for crashes |
 | `status` | string | `baseline`, `keep`, `discard`, `constraint_fail`, `crash` |
-| `hypothesis` | string | What was tried (one line, no tabs) |
-| `timestamp` | ISO 8601 | UTC timestamp |
-| `tokens_used` | int | Approximate tokens consumed by this iteration |
-| `pass_rate` | float or `-` | Fraction of tests passing (0–1); agent-optimization only, `-` otherwise |
-| `token_ratio` | float or `-` | `avg_response_chars / baseline_chars`; agent-optimization only, `-` otherwise |
+| `hypothesis` | string | One line, no tabs |
+| `timestamp` | ISO 8601 | UTC |
+| `tokens_used` | int | Approximate tokens for this iteration |
+| `pass_rate` | float\|`-` | 0–1; agent-optimization only |
+| `token_ratio` | float\|`-` | `avg_response_chars / baseline_chars`; agent-optimization only |
 
-Example rows:
+Example:
 
 ```tsv
 iteration	commit	metric_name	metric_value	baseline	delta	status	hypothesis	timestamp	tokens_used	pass_rate	token_ratio
 0	(baseline)	build_time_s	12.4	12.4	0.0	baseline	(initial measurement)	2026-04-01T10:00:00Z	0	-	-
 1	a1b2c3d	build_time_s	11.1	12.4	-1.3	keep	remove unused lodash import	2026-04-01T10:12:00Z	2340	-	-
 2	-	build_time_s	12.8	12.4	0.4	discard	switch to esbuild (breaks API)	2026-04-01T10:24:00Z	3100	-	-
-3	-	build_time_s	-	12.4	-	crash	double worker threads (OOM)	2026-04-01T10:36:00Z	1800	-	-
-4	b2c3d4e	build_time_s	10.5	12.4	-1.9	keep	tree-shake utils/ barrel exports	2026-04-01T10:48:00Z	2800	-	-
 ```
 
 ---
 
 ## Memory Storage
 
-After each **keep** or **discard** iteration:
+After each **keep** or **discard** (medium confidence):
 
 ```text
 aidevops-memory store \
@@ -52,7 +48,7 @@ aidevops-memory store \
   --confidence medium
 ```
 
-After **keep** iterations, also store a higher-confidence finding:
+After each **keep**, also store a high-confidence finding:
 
 ```text
 aidevops-memory store \
@@ -60,7 +56,7 @@ aidevops-memory store \
   --confidence high
 ```
 
-At session end, store a summary:
+At session end, store a summary (high confidence):
 
 ```text
 aidevops-memory store \
@@ -74,19 +70,16 @@ aidevops-memory store \
 
 Used in multi-dimension campaigns (CAMPAIGN_ID is set). No-ops when CAMPAIGN_ID is absent.
 
-### Check peer discoveries (before each hypothesis generation)
+**Before each hypothesis generation** — check peer discoveries:
 
 ```bash
 mail-helper.sh check --agent "$AGENT_ID" --unread-only
-# For each unread discovery message:
-#   mail-helper.sh read <message-id> --agent "$AGENT_ID"
-#   Parse payload JSON → add to hypothesis context as PEER_DISCOVERIES
+# For each unread: mail-helper.sh read <message-id> --agent "$AGENT_ID"
+# Parse payload JSON → add to hypothesis context as PEER_DISCOVERIES
+# keep peer → consider applying; discard peer → deprioritize similar approaches
 ```
 
-- If a peer found a `keep` result, consider whether the same change applies to this dimension
-- If a peer found a `discard` result, deprioritize similar approaches
-
-### Send discovery (after each keep or discard)
+**After each keep or discard** — broadcast discovery:
 
 ```bash
 DISCOVERY_PAYLOAD=$(cat <<EOF
@@ -105,16 +98,11 @@ DISCOVERY_PAYLOAD=$(cat <<EOF
 }
 EOF
 )
-
-mail-helper.sh send \
-  --from "$AGENT_ID" \
-  --to "broadcast" \
-  --type discovery \
-  --payload "$DISCOVERY_PAYLOAD" \
-  --convoy "{CAMPAIGN_ID}"
+mail-helper.sh send --from "$AGENT_ID" --to "broadcast" --type discovery \
+  --payload "$DISCOVERY_PAYLOAD" --convoy "{CAMPAIGN_ID}"
 ```
 
-### Deregister on completion
+**On completion** — deregister:
 
 ```bash
 mail-helper.sh deregister --agent "$AGENT_ID"
