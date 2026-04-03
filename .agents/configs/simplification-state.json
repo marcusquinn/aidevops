@@ -22,13 +22,13 @@
     "status": "simplified"
   },
   ".agents/marketing-sales/direct-response-copy-frameworks-email-sequences.md": {
-    "at": "2026-04-03T06:00:00Z",
-    "hash": "877dee3ba82a3cef08c326c5eda70096ee406f81a270b5485ef0a0b324e09d59",
-    "issue": "GH#16238",
-    "lines_before": 119,
-    "lines_after": 113,
-    "passes": 1,
-    "note": "Instruction doc tightened: 119\u2192113 lines. Removed decorative horizontal rules, reordered sections (anatomy+sequences before best-practices), renamed section heading. Zero content loss.",
+    "at": "2026-04-03T09:30:00Z",
+    "hash": "bbb3ea1df32f53c905d3c8b174a0bd212fc5dd55a168169d06d81542127e8bb3",
+    "issue": "GH#16443",
+    "lines_before": 113,
+    "lines_after": 111,
+    "passes": 2,
+    "note": "Pass 2: 113\u2192111 lines. Merged templates link into intro line, moved subject line guidance above table as compact note. Zero content loss.",
     "status": "simplified"
   },
   ".agents/seo/geo-strategy.md": {

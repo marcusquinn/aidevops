@@ -1,12 +1,12 @@
 # Email Sequences Framework
 
-Email converts 2-5x vs social, ~$36 ROI per $1. Works for acquisition, nurturing, retention.
-
-**Templates**: [Email Sequence Templates](direct-response-copy-templates-email-sequences.md)
+Email converts 2-5x vs social, ~$36 ROI per $1. Works for acquisition, nurturing, retention. **Templates**: [Email Sequence Templates](direct-response-copy-templates-email-sequences.md)
 
 ## High-Converting Email Anatomy
 
 ### Subject Line Formulas
+
+40-50 chars · first 3 words hook · no spam triggers (FREE!!!, $$$$) · preview text extends subject.
 
 | Formula | Example |
 |---------|---------|
@@ -20,8 +20,6 @@ Email converts 2-5x vs social, ~$36 ROI per $1. Works for acquisition, nurturing
 | Social proof | "How Sarah got 10x more traffic in 30 days" |
 | Contrarian | "Why I stopped chasing backlinks" |
 | Direct | "Your free trial starts now" |
-
-40-50 chars (mobile-first), first 3 words must hook, avoid spam triggers (FREE!!!, $$$$), preview text extends subject.
 
 ### Structure: Star-Chain-Hook
 
