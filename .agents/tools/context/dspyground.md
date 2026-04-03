@@ -59,7 +59,6 @@ export default {
       execute: async ({ serverId }) => `Server ${serverId} is running normally`,
     }),
   },
-  schema: z.object({ /* optional structured output */ }),
   preferences: {
     selectedModel: 'openai/gpt-4o-mini',
     optimizationModel: 'openai/gpt-4o-mini',
