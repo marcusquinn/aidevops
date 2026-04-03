@@ -54,8 +54,9 @@ readonly DEFAULT_HEALTH_TTL=300   # 5 minutes for health checks
 readonly DEFAULT_RATELIMIT_TTL=60 # 1 minute for rate limit data
 readonly PROBE_TIMEOUT=10         # HTTP request timeout in seconds
 
-# Known providers list (opencode is a meta-provider routing through its gateway)
-readonly KNOWN_PROVIDERS="anthropic openai google openrouter groq deepseek opencode"
+# Known providers list (opencode is a meta-provider routing through its gateway;
+# local/ollama are local inference providers with no API key requirement)
+readonly KNOWN_PROVIDERS="anthropic openai google openrouter groq deepseek opencode local ollama"
 
 # OpenCode models cache (from models.dev, refreshed by opencode CLI)
 readonly OPENCODE_MODELS_CACHE="${HOME}/.cache/opencode/models.json"
@@ -74,12 +75,16 @@ get_provider_endpoint() {
 	groq) echo "https://api.groq.com/openai/v1/models" ;;
 	deepseek) echo "https://api.deepseek.com/v1/models" ;;
 	opencode) echo "https://opencode.ai/zen/v1/models" ;;
+	local) echo "http://localhost:8080/v1/models" ;;
+	ollama) echo "http://localhost:11434/api/tags" ;;
 	*) return 1 ;;
 	esac
 	return 0
 }
 
 # Provider to env var mapping (comma-separated for multiple options)
+# local and ollama are local inference providers — no API key required.
+# Returns empty string (not an error) so callers can skip key resolution.
 get_provider_key_vars() {
 	local provider="$1"
 	case "$provider" in
@@ -90,6 +95,7 @@ get_provider_key_vars() {
 	groq) echo "GROQ_API_KEY" ;;
 	deepseek) echo "DEEPSEEK_API_KEY" ;;
 	opencode) echo "OPENCODE_API_KEY" ;;
+	local | ollama) echo "" ;;
 	*) return 1 ;;
 	esac
 	return 0
@@ -99,7 +105,7 @@ get_provider_key_vars() {
 is_known_provider() {
 	local provider="$1"
 	case "$provider" in
-	anthropic | openai | google | openrouter | groq | deepseek) return 0 ;;
+	anthropic | openai | google | openrouter | groq | deepseek | local | ollama) return 0 ;;
 	*) return 1 ;;
 	esac
 }
@@ -478,6 +484,147 @@ _probe_opencode() {
 	return 1
 }
 
+# Probe the local llama.cpp-compatible inference server (no API key needed).
+# Checks http://localhost:8080/v1/models for a running local server.
+# Returns: 0=healthy, 1=unhealthy
+_probe_local() {
+	local quiet="${1:-false}"
+
+	local endpoint
+	endpoint=$(get_provider_endpoint "local" 2>/dev/null) || endpoint="http://localhost:8080/v1/models"
+
+	local start_ms response http_code body models_count=0 duration_ms=0
+	start_ms=$(date +%s%N 2>/dev/null || echo "0")
+	response=$(curl -s -w "\n%{http_code}" --max-time "$PROBE_TIMEOUT" "$endpoint" 2>/dev/null) || true
+	local end_ms
+	end_ms=$(date +%s%N 2>/dev/null || echo "0")
+	if [[ "$start_ms" != "0" && "$end_ms" != "0" ]]; then
+		duration_ms=$(((end_ms - start_ms) / 1000000))
+	fi
+
+	http_code=$(echo "$response" | tail -1)
+	body=$(echo "$response" | sed '$d')
+
+	if [[ "$http_code" == "200" ]]; then
+		models_count=$(echo "$body" | jq -r '.data | length' 2>/dev/null || echo "0")
+		_record_health "local" "healthy" 200 "$duration_ms" "" "$models_count"
+		[[ "$quiet" != "true" ]] && print_success "local: healthy ($models_count models at $endpoint)"
+		db_query "
+            INSERT INTO probe_log (provider, action, result, duration_ms, details)
+            VALUES ('local', 'health_probe', 'healthy', $duration_ms, '$models_count models');
+        " || true
+		return 0
+	fi
+
+	_record_health "local" "unhealthy" "${http_code:-0}" "$duration_ms" "Local server not reachable at $endpoint" 0
+	[[ "$quiet" != "true" ]] && print_warning "local: server not available at $endpoint (HTTP ${http_code:-none})"
+	return 1
+}
+
+# Probe the Ollama local inference server (no API key needed).
+# Checks http://localhost:11434/api/tags for a running Ollama instance.
+# Returns: 0=healthy, 1=unhealthy
+_probe_ollama() {
+	local quiet="${1:-false}"
+
+	local endpoint
+	endpoint=$(get_provider_endpoint "ollama" 2>/dev/null) || endpoint="http://localhost:11434/api/tags"
+
+	local start_ms response http_code body models_count=0 duration_ms=0
+	start_ms=$(date +%s%N 2>/dev/null || echo "0")
+	response=$(curl -s -w "\n%{http_code}" --max-time "$PROBE_TIMEOUT" "$endpoint" 2>/dev/null) || true
+	local end_ms
+	end_ms=$(date +%s%N 2>/dev/null || echo "0")
+	if [[ "$start_ms" != "0" && "$end_ms" != "0" ]]; then
+		duration_ms=$(((end_ms - start_ms) / 1000000))
+	fi
+
+	http_code=$(echo "$response" | tail -1)
+	body=$(echo "$response" | sed '$d')
+
+	if [[ "$http_code" == "200" ]]; then
+		# Ollama /api/tags returns {"models": [...]}
+		models_count=$(echo "$body" | jq -r '.models | length' 2>/dev/null || echo "0")
+		_record_health "ollama" "healthy" 200 "$duration_ms" "" "$models_count"
+		[[ "$quiet" != "true" ]] && print_success "ollama: healthy ($models_count models)"
+		db_query "
+            INSERT INTO probe_log (provider, action, result, duration_ms, details)
+            VALUES ('ollama', 'health_probe', 'healthy', $duration_ms, '$models_count models');
+        " || true
+		return 0
+	fi
+
+	_record_health "ollama" "unhealthy" "${http_code:-0}" "$duration_ms" "Ollama not reachable at $endpoint" 0
+	[[ "$quiet" != "true" ]] && print_warning "ollama: server not available at $endpoint (HTTP ${http_code:-none})"
+	return 1
+}
+
+# Probe Ollama context length for a specific model via /api/show.
+# Validates that the model's num_ctx meets the minimum required context length.
+# Uses the Ollama /api/show endpoint which returns model metadata including
+# model_info.llama.context_length and parameters.num_ctx.
+#
+# Arguments:
+#   model_name       - Ollama model name (e.g. "llama3.2", "mistral:7b")
+#   min_context      - Minimum required context length (default: 16384)
+#   quiet            - Suppress output if "true" (default: "false")
+#
+# Returns:
+#   0 - Model available with sufficient context length
+#   1 - Model not found or context length insufficient
+#   2 - Ollama server not reachable
+#
+# Outputs (on stdout when not quiet):
+#   Actual num_ctx value and pass/fail verdict
+_probe_ollama_context_length() {
+	local model_name="$1"
+	local min_context="${2:-16384}"
+	local quiet="${3:-false}"
+
+	local show_endpoint="http://localhost:11434/api/show"
+
+	# POST to /api/show with {"name": "<model>"}
+	local response http_code body
+	response=$(curl -s -w "\n%{http_code}" --max-time "$PROBE_TIMEOUT" \
+		-X POST "$show_endpoint" \
+		-H "Content-Type: application/json" \
+		-d "{\"name\":\"${model_name}\"}" 2>/dev/null) || true
+
+	http_code=$(echo "$response" | tail -1)
+	body=$(echo "$response" | sed '$d')
+
+	if [[ "$http_code" != "200" ]]; then
+		[[ "$quiet" != "true" ]] && print_warning "ollama: /api/show unreachable for $model_name (HTTP ${http_code:-none})"
+		return 2
+	fi
+
+	# Extract num_ctx: prefer parameters.num_ctx, fall back to model_info.llama.context_length
+	local num_ctx=0
+	num_ctx=$(echo "$body" | jq -r '
+		if .parameters and (.parameters | test("num_ctx[[:space:]]+([0-9]+)")) then
+			(.parameters | capture("num_ctx[[:space:]]+(?P<v>[0-9]+)").v | tonumber)
+		elif .model_info["llama.context_length"] then
+			.model_info["llama.context_length"]
+		else
+			0
+		end
+	' 2>/dev/null || echo "0")
+
+	# Ensure numeric
+	num_ctx="${num_ctx:-0}"
+	if ! [[ "$num_ctx" =~ ^[0-9]+$ ]]; then
+		num_ctx=0
+	fi
+
+	if [[ "$num_ctx" -ge "$min_context" ]]; then
+		[[ "$quiet" != "true" ]] && print_success "ollama/$model_name: num_ctx=$num_ctx >= min=$min_context (pass)"
+		return 0
+	fi
+
+	[[ "$quiet" != "true" ]] && print_warning "ollama/$model_name: num_ctx=$num_ctx < min=$min_context (fail)"
+	return 1
+}
+
 # Build curl argument array and resolve the final endpoint URL for a provider.
 # Outputs two lines: first the endpoint URL, then the curl args (space-separated).
 # Caller must reconstruct the array from the second line.
@@ -499,6 +646,9 @@ _probe_build_request() {
 		;;
 	google)
 		endpoint="${endpoint}?key=${api_key}&pageSize=1"
+		;;
+	local | ollama)
+		# No authentication required for local providers
 		;;
 	*)
 		curl_args="$curl_args -H 'Authorization: Bearer ${api_key}'"
@@ -620,6 +770,17 @@ probe_provider() {
 	# OpenCode uses its local models cache — no HTTP probe needed
 	if [[ "$provider" == "opencode" ]]; then
 		_probe_opencode "$quiet"
+		return $?
+	fi
+
+	# Local providers use dedicated probes — no API key required
+	if [[ "$provider" == "local" ]]; then
+		_probe_local "$quiet"
+		return $?
+	fi
+
+	if [[ "$provider" == "ollama" ]]; then
+		_probe_ollama "$quiet"
 		return $?
 	fi
 
