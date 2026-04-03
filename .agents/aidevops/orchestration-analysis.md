@@ -57,7 +57,7 @@ When `historical_context.has_yesterday_report` or `has_week_ago_report` is true:
 3. Direction: `↑ improved`, `↓ degraded`, `→ stable` (±5% = stable)
 4. Flag regressions (degraded vs yesterday AND vs week-ago) as additional findings
 
-Note: `historical_context.week_ago_report_path` is a point-in-time snapshot, not a rolling average.
+`historical_context.week_ago_report_path` is a point-in-time snapshot, not a rolling average.
 
 ## Meta-Assessment
 
