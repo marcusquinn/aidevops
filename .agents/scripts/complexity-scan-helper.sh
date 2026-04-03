@@ -128,8 +128,12 @@ check_file_state() {
 		return 0
 	fi
 
+	# Check both .files (canonical) and top-level (legacy) locations.
+	# Legacy entries existed before the .files wrapper was introduced and
+	# caused the scanner to treat already-simplified files as "new",
+	# re-filing duplicate issues every pulse cycle.
 	local recorded_hash
-	recorded_hash=$(jq -r --arg fp "$file_path" '.files[$fp].hash // empty' "$state_file" 2>/dev/null) || recorded_hash=""
+	recorded_hash=$(jq -r --arg fp "$file_path" '(.files[$fp].hash // .[$fp].hash) // empty' "$state_file" 2>/dev/null) || recorded_hash=""
 
 	if [[ -z "$recorded_hash" ]]; then
 		echo "new"
@@ -188,10 +192,19 @@ batch_hash_check() {
 		return 0
 	fi
 
-	# Load state file hashes into an associative-style lookup via jq
+	# Load state file hashes into an associative-style lookup via jq.
+	# Merges both .files (canonical) and top-level (legacy) entries,
+	# with .files taking precedence on overlap.
 	# Output: one line per entry "file_path\thash"
 	local state_hashes
-	state_hashes=$(jq -r '.files | to_entries[] | "\(.key)\t\(.value.hash)"' "$state_file" 2>/dev/null) || state_hashes=""
+	state_hashes=$(jq -r '
+		# Collect legacy top-level entries (keys that look like file paths)
+		([to_entries[] | select(.key != "files" and (.key | startswith("."))) | {key: .key, value: .value.hash}] | from_entries) as $legacy |
+		# Collect canonical .files entries
+		([.files // {} | to_entries[] | {key: .key, value: .value.hash}] | from_entries) as $canonical |
+		# Merge: canonical wins on overlap
+		($legacy + $canonical) | to_entries[] | "\(.key)\t\(.value)"
+	' "$state_file" 2>/dev/null) || state_hashes=""
 
 	# Build a temp file for state lookup (faster than repeated jq calls)
 	local state_tmp

@@ -32,7 +32,7 @@ tools:
 
 ## Output Format
 
-Per finding: `### [file:line_range] Category: Brief description` with sections **Current** | **Proposed** | **Preserved** | **Risk** | **Verification** | **Confidence** (high/medium/low). Low-confidence findings: create issues with `simplification-debt` + `needs-maintainer-review` labels, grouped by file.
+Per finding: `### [file:line_range] Category: Brief description` with sections **Current** | **Proposed** | **Preserved** | **Risk** | **Verification** | **Confidence** (high/medium/low). Low-confidence findings: create issues with `simplification-debt` label (+ `needs-maintainer-review` only when the authenticated user is NOT the repo maintainer), grouped by file.
 
 ## Regression Verification
 
@@ -88,34 +88,36 @@ Scope detection: `git diff --name-only HEAD~1` + `git diff --name-only --staged`
 ### Issue creation
 
 1. **Dedup check FIRST (GH#10783)** — search for existing open issues targeting the same file.
-2. Labels: `simplification-debt` + `needs-maintainer-review`, assign to repo maintainer.
+2. Labels: `simplification-debt` always. Add `needs-maintainer-review` only when the authenticated user is NOT the repo maintainer (the label gates changes for external contributors; when you're the maintainer, standard auto-dispatch with PR review provides sufficient gating).
 
 ```bash
 MAINTAINER=$(jq -r '.initialized_repos[] | select(.slug == "<slug>") | .maintainer // empty' ~/.config/aidevops/repos.json)
 [[ -z "$MAINTAINER" ]] && MAINTAINER=$(echo "<slug>" | cut -d/ -f1)
+CURRENT_USER=$(gh api user --jq '.login' 2>/dev/null) || CURRENT_USER=""
 EXISTING=$(gh issue list --repo <slug> --label "simplification-debt" --state open \
   --search "\"<file_path>\" in:title" --json number --jq 'length' 2>/dev/null) || EXISTING="0"
 [[ "$EXISTING" -gt 0 ]] && { echo "Skipping — existing open issue found"; exit 0; }
+LABELS="simplification-debt"
+[[ "$CURRENT_USER" != "$MAINTAINER" ]] && LABELS="$LABELS,needs-maintainer-review"
 SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer 2>/dev/null || echo "")
 gh issue create --repo <slug> \
   --title "simplification: <brief description>" \
-  --label "simplification-debt" --label "needs-maintainer-review" \
+  --label "$LABELS" \
   --assignee "$MAINTAINER" \
   --body "<structured finding>
 ---
-**To approve or decline**, comment on this issue:
-- \`approved\` — removes the review gate and queues for automated dispatch
-- \`declined: <reason>\` — closes this issue
 ${SIG_FOOTER}"
 ```
 
-### Maintainer review
+### Maintainer review (external contributors only)
 
-List pending: `gh issue list --label simplification-debt --label needs-maintainer-review`
+When the authenticated user is NOT the repo maintainer, issues are gated with `needs-maintainer-review`. List pending: `gh issue list --label simplification-debt --label needs-maintainer-review`
 
-- **Approve**: comment `approved` → pulse removes gate, adds `auto-dispatch` → PR → merged → `status:done`
+- **Approve**: comment `approved` → pulse removes gate, adds `auto-dispatch` → PR → merged → issue closed
 - **Decline**: comment `declined: <reason>` → pulse closes issue
 - **Defer**: no comment — stays gated
+
+When the authenticated user IS the maintainer, issues skip the review gate and go directly to `auto-dispatch` via the standard pulse flow.
 
 ## Quality Workflow and Pulse Integration (GH#5628, GH#15285)
 
