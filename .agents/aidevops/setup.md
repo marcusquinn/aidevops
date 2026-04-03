@@ -24,21 +24,9 @@ tools:
 
 **What setup.sh does**: checks required deps (`jq`, `curl`, `ssh`, `sqlite3`) and optional deps (`sshpass`, `gh`, `glab`, `tea`); copies `.agents/` → `~/.aidevops/agents/` with timestamped config backups; injects AGENTS.md pointer into `~/.opencode/AGENTS.md`, `~/.cursor/AGENTS.md`, `~/.claude/AGENTS.md`, `~/.config/cursor/AGENTS.md`; updates OpenCode agent paths in `~/.config/opencode/opencode.json`.
 
+**Deployed structure**: `~/.aidevops/agents/` (AGENTS.md, aidevops/, tools/, services/, workflows/, scripts/) + `~/.aidevops/config-backups/[YYYYMMDD_HHMMSS]/`
+
 <!-- AI-CONTEXT-END -->
-
-## Deployed Structure
-
-```text
-~/.aidevops/
-├── agents/
-│   ├── AGENTS.md             # User entry point
-│   ├── aidevops/             # Subagent folders
-│   ├── tools/
-│   ├── services/
-│   ├── workflows/
-│   └── scripts/              # Helper scripts
-└── config-backups/[YYYYMMDD_HHMMSS]/
-```
 
 ## Manual Configuration
 
