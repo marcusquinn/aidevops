@@ -6,9 +6,7 @@ mode: subagent
 
 ## Instructions
 
-1. Parse `$ARGUMENTS` — extract `--prompt`, `--models`, `--score`, `--judge`, `--timeout`.
-
-2. Run:
+1. Parse `$ARGUMENTS` — extract `--prompt`, `--models`, `--score`, `--judge`, `--timeout`. Run:
 
    ```bash
    ~/.aidevops/agents/scripts/compare-models-helper.sh cross-review \
@@ -17,34 +15,22 @@ mode: subagent
      [--score] [--judge sonnet]
    ```
 
-3. Present: each model's response summary, diff (2-model comparisons), judge scores and winner if `--score` used, note failures.
-
-4. If `--score`: scores recorded in model-comparisons SQLite DB, fed into pattern tracker (`/route`, `/patterns`).
+2. Present: each model's response summary, diff (2-model comparisons), judge scores and winner if `--score` used, note failures. Scores recorded in model-comparisons SQLite DB, fed into pattern tracker (`/route`, `/patterns`).
 
 ## Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--models` | `sonnet,opus` | Comma-separated model tiers to compare |
+| `--models` | `sonnet,opus` | Comma-separated tiers: `haiku`, `flash`, `sonnet`, `pro`, `opus`, or full IDs like `gemini-2.5-pro` |
 | `--score` | off | Auto-score outputs via judge model |
 | `--judge` | `opus` | Judge model tier (used with `--score`) |
 | `--timeout` | `600` | Seconds per model |
 | `--output` | auto | Directory for raw outputs |
 | `--workdir` | `pwd` | Working directory for model context |
 
-## Model Tiers
-
-`haiku`, `flash`, `sonnet`, `pro`, `opus` — or full model IDs like `gemini-2.5-pro`, `gpt-4.1`
-
 ## Scoring Criteria (judge model, 1-10)
 
-| Criterion | Description |
-|-----------|-------------|
-| correctness | Factual accuracy |
-| completeness | Coverage of requirements and edge cases |
-| quality | Code quality, best practices |
-| clarity | Formatting, readability |
-| adherence | Follows prompt instructions |
+`correctness` · `completeness` · `quality` · `clarity` · `adherence`
 
 ## Examples
 
