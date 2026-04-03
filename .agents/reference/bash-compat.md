@@ -22,15 +22,11 @@ Production failures: pulse dispatch, worktree cleanup, dataset helpers, routine 
 
 ## Array passing across process boundaries
 
-Arrays flatten to strings across subshell, `$()`, or pipe boundaries.
-
-- **Pass to subprocess**: separate positional arguments (`"${arr[@]}"`), never a single escaped string
-- **Receive from subprocess**: write to temp file (one element per line), read back with `while read` loop
+Arrays flatten to strings across subshell, `$()`, or pipe boundaries. Pass via `"${arr[@]}"` (positional args) or temp file (one element per line, read back with `while read`).
 
 ## Escape sequence quoting (recurring production bug)
 
-Bash double quotes do NOT interpret `\t` `\n` `\r` — they are literal two-character sequences.
-A single `"\t"` in a plist makes it unparseable and silently kills launchd jobs.
+Bash double quotes do NOT interpret `\t` `\n` `\r` — literal two-character sequences. A single `"\t"` in a plist makes it unparseable and silently kills launchd jobs.
 
 | Wrong | Correct | Notes |
 |-------|---------|-------|
@@ -44,7 +40,7 @@ Inside heredocs (`<<EOF`), tabs are literal — `\t` is NOT interpreted. `printf
 ## zsh IFS + `$()` trap (MCP Bash tool)
 
 The MCP Bash tool runs zsh on macOS. In zsh, `path` is a SPECIAL TIED ARRAY linked to `PATH`.
-`while IFS=$'\t' read -r size path` assigns `path=test.md` → sets `PATH=test.md` → ALL external commands fail. This is a variable name collision, not an IFS leak. Framework scripts with `#!/bin/bash` shebangs are safe; the risk is inline agent-generated code only.
+`while IFS=$'\t' read -r size path` assigns `path=test.md` → sets `PATH=test.md` → ALL external commands fail. Variable name collision, not an IFS leak. Framework scripts with `#!/bin/bash` shebangs are safe; risk is inline agent-generated code only.
 
 ```bash
 # WRONG — PATH=test.md, sed not found
