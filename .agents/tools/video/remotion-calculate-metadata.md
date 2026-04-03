@@ -6,20 +6,7 @@ metadata:
   tags: calculateMetadata, duration, dimensions, props, dynamic
 ---
 
-`calculateMetadata` runs before render and can override placeholder `<Composition>` values for duration, dimensions, fps, props, and output defaults.
-
-```tsx
-<Composition
-  id="MyComp"
-  component={MyComponent}
-  durationInFrames={300}
-  fps={30}
-  width={1920}
-  height={1080}
-  defaultProps={{ videoSrc: "https://remotion.media/video.mp4" }}
-  calculateMetadata={calculateMetadata}
-/>
-```
+`calculateMetadata` runs before render and overrides placeholder `<Composition>` values for duration, dimensions, fps, props, and output defaults. Pass it as the `calculateMetadata` prop on `<Composition>`.
 
 ## Set duration from one video
 
@@ -81,6 +68,8 @@ const calculateMetadata: CalculateMetadataFunction<Props> = async ({ props }) =>
 
 ## Transform props before render
 
+`abortSignal` cancels stale Studio requests when props change.
+
 ```tsx
 const calculateMetadata: CalculateMetadataFunction<Props> = async ({
   props,
@@ -98,16 +87,16 @@ const calculateMetadata: CalculateMetadataFunction<Props> = async ({
 };
 ```
 
-`abortSignal` cancels stale Studio requests when props change.
-
 ## Return fields
 
-All fields are optional. Returned values override the `<Composition>` props.
+All fields are optional and override the `<Composition>` props.
 
-- `durationInFrames`: frame count
-- `width`: composition width in pixels
-- `height`: composition height in pixels
-- `fps`: frames per second
-- `props`: transformed props passed to the component
-- `defaultOutName`: default output filename
-- `defaultCodec`: default codec for rendering
+| Field | Description |
+|-------|-------------|
+| `durationInFrames` | Frame count |
+| `width` | Composition width in pixels |
+| `height` | Composition height in pixels |
+| `fps` | Frames per second |
+| `props` | Transformed props passed to the component |
+| `defaultOutName` | Default output filename |
+| `defaultCodec` | Default codec for rendering |
