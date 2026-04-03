@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.840] - 2026-04-03
+
+### Changed
+
+- Tightened glm-ocr.md agent doc (79→75 lines) — moved limitations to Quick Reference, consolidated bash blocks, replaced model comparison table with decision table (#16324)
+
 ## [3.5.829] - 2026-04-03
 
 ### Changed
