@@ -21,9 +21,8 @@ tools:
 - **Helper**: `~/.aidevops/agents/scripts/tech-stack-helper.sh openexplorer <url>`
 - **Source**: [github.com/turazashvili/openexplorer.tech](https://github.com/turazashvili/openexplorer.tech)
 - **Cost**: Free, open-source, community-driven
-- **API Auth**: Supabase anon key embedded in the web app; use Playwright for the UI fallback
+- **API Auth**: Supabase anon key embedded in web app JS bundle; use Playwright for UI fallback
 - **Rate Limits**: None documented
-- **Links**: [openexplorer.tech](https://openexplorer.tech) · [Chrome Extension](https://openexplorer.tech/extension)
 
 ```bash
 tech-stack-helper.sh openexplorer search github.com            # Search by URL
@@ -34,13 +33,12 @@ tech-stack-helper.sh providers                                 # List all provid
 tech-stack-helper.sh compare https://example.com               # Compare providers
 ```
 
-**Use when**: free lookups, metadata/performance/security signals, cross-checking other providers, or when no API key is available.
-
-**Avoid when**: you need broad coverage beyond ~7k indexed sites, version detection, historical tracking, or enterprise-scale research.
+**Use**: free lookups, metadata/performance/security signals, cross-checking, no API key needed.
+**Avoid**: broad coverage beyond ~7k indexed sites, version detection, historical tracking, enterprise scale.
 
 ## API Integration
 
-**Endpoint**: `{SUPABASE_URL}/functions/v1/search` (Supabase Edge Function; anon key embedded in web app JS bundle).
+**Endpoint**: `{SUPABASE_URL}/functions/v1/search` (Supabase Edge Function)
 
 | Param | Type | Description |
 |-------|------|-------------|
@@ -53,8 +51,9 @@ tech-stack-helper.sh compare https://example.com               # Compare provide
 | `limit` | int | Results per page (default: 20) |
 | `responsive` / `https` / `spa` / `service_worker` | bool | Metadata filters |
 
-- **Response**: `results[].technologies[{name, category}]`, `results[].metadata{is_responsive, is_https, likely_spa, has_service_worker, page_load_time}`, `pagination{page, limit, total, totalPages}`
-- **Fallback**: URL not indexed → open `https://openexplorer.tech`, submit URL, wait for React SPA to render, parse results table. Helper tries API first, then Playwright.
+**Response**: `results[].technologies[{name, category}]`, `results[].metadata{is_responsive, is_https, likely_spa, has_service_worker, page_load_time}`, `pagination{page, limit, total, totalPages}`
+
+**Fallback**: URL not indexed → open `https://openexplorer.tech`, submit URL, wait for React SPA to render, parse results table. Helper tries API first, then Playwright.
 
 ## Provider Comparison
 
