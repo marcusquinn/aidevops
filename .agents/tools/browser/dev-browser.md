@@ -77,7 +77,7 @@ EOF
 
 ## Screenshot Safety (CRITICAL)
 
-> Do NOT use `fullPage: true` for AI vision review — full-page captures can exceed 8000px (Anthropic hard-rejects images >8000px). Use viewport-sized screenshots for AI. For human review: `magick tmp/full.png -resize "1568x1568>" tmp/full-resized.png`. See `rg "Screenshot Size Limits" prompts/build.txt`.
+> Do NOT use `fullPage: true` for AI vision review — full-page captures can exceed 8000px (Anthropic hard-rejects images >8000px). Use viewport-sized screenshots for AI. For human review: `magick tmp/full.png -resize "1568x1568>" tmp/full-resized.png`. See `prompts/build.txt` "Screenshot Size Limits".
 
 ```typescript
 await page.screenshot({ path: "tmp/dashboard.png" }); // viewport-sized (safe for AI)
