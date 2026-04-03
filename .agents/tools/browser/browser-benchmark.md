@@ -13,7 +13,7 @@ tools:
 
 # Browser Tool Benchmarking Agent
 
-Run standardised benchmarks across all browser automation tools and update `browser-automation.md` with results.
+Runs standardised benchmarks across all browser automation tools and updates `browser-automation.md` with results. Scripts in `browser-benchmark-scripts.md`.
 
 ```bash
 /browser-benchmark              # Run all benchmarks
@@ -24,7 +24,7 @@ Run standardised benchmarks across all browser automation tools and update `brow
 
 ## Test Matrix
 
-Target: `https://the-internet.herokuapp.com`. Run each test 3 times per tool, report median.
+Target: `https://the-internet.herokuapp.com`. 3 runs per tool, report median. Network variance ~0.2-0.5s.
 
 | Test | Measures |
 |------|----------|
@@ -47,24 +47,22 @@ Target: `https://the-internet.herokuapp.com`. Run each test 3 times per tool, re
 
 ## Running Benchmarks
 
-Scripts: `~/.aidevops/.agent-workspace/work/browser-bench/`. Full source: `browser-benchmark-scripts.md`. Network variance ~0.2-0.5s — use median of 3 runs.
-
 ```bash
 cd ~/.aidevops/.agent-workspace/work/browser-bench/
 node bench-playwright.mjs | tee results-playwright.json
 bash bench-agent-browser.sh | tee results-agent-browser.txt
 source ~/.aidevops/crawl4ai-venv/bin/activate && python bench-crawl4ai.py | tee results-crawl4ai.json
 OPENAI_API_KEY=... node bench-stagehand.mjs | tee results-stagehand.json
-# dev-browser: cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx bench.ts | tee ~/results-dev-browser.json
+# dev-browser: bun x tsx ~/.aidevops/dev-browser/skills/dev-browser/bench.ts | tee ~/results-dev-browser.json
 ```
 
 ## Updating Documentation
 
-After benchmarks, update the Performance Benchmarks table in `browser-automation.md`:
+Update the Performance Benchmarks table in `browser-automation.md`:
 
 1. Median of 3 runs per test; bold fastest time per row
 2. Update "Key insight" section if relative performance changed
-3. Note date and environment: `date && uname -a && node --version && python3 --version`
+3. Record environment: `date && uname -a && node --version && python3 --version`
 
 ## Adding New Tools
 
