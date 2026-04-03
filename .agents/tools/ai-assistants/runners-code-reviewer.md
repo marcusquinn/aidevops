@@ -5,11 +5,9 @@ mode: reference
 
 # Code Reviewer
 
-Runner template for security and quality code review.
-
 ```bash
-runner-helper.sh create code-reviewer  # create
-runner-helper.sh edit code-reviewer    # paste template below
+runner-helper.sh create code-reviewer
+runner-helper.sh edit code-reviewer  # paste template below
 runner-helper.sh run code-reviewer "Review these files: src/auth.ts src/api.ts"
 runner-helper.sh run code-reviewer "Review the changes in PR #42: $(gh pr diff 42)"
 runner-helper.sh run code-reviewer "Review src/auth/" --attach http://localhost:4096
