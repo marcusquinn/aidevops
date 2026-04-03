@@ -14,8 +14,6 @@ tools:
 
 # Cisco Skill Scanner - Agent Skill Security
 
-<!-- AI-CONTEXT-START -->
-
 ## Quick Reference
 
 - **Purpose**: Scan AI agent skills (`SKILL.md`, `AGENTS.md`, scripts) for import-blocking security risks
@@ -52,11 +50,13 @@ tools:
 | VirusTotal | Free tier | ~16s/request | `VIRUSTOTAL_MARCUSQUINN` or `VIRUSTOTAL_API_KEY` |
 | Cisco AI Defense | Enterprise | ~1s | `AI_DEFENSE_API_KEY` |
 
+Keys: `~/.config/aidevops/credentials.sh` (600 perms) or `aidevops secret set <KEY_NAME>`.
+
 ## aidevops Integration
 
-- **Import gate**: `add-skill-helper.sh` scans on import; `CRITICAL`/`HIGH` blocks unless `--skip-security` (or an explicit interactive override)
+- **Import gate**: `add-skill-helper.sh` — `CRITICAL`/`HIGH` blocks unless `--skip-security` (or explicit interactive override)
 - **Batch scans**: `aidevops skill scan`, `security-helper.sh skill-scan all`
-- **Update path**: `setup.sh` scans all skills during `aidevops update` (non-blocking); `skill-update-helper.sh update` re-imports with `add-skill-helper.sh --force`
+- **Update path**: `setup.sh` scans all skills during `aidevops update` (non-blocking); `skill-update-helper.sh update` re-imports with `--force`
 - **Audit log**: `.agents/configs/configs/SKILL-SCAN-RESULTS.md`
 
 ## CLI
@@ -72,18 +72,14 @@ Useful flags: `--enable-meta` (false-positive filter), `--custom-rules /path/`, 
 
 ## VirusTotal Layer
 
-Advisory second layer for file hashes (SHA256) and embedded domains/URLs. **VirusTotal never replaces the Cisco scanner import gate.** Limits: 4 requests/minute, 500/day, max 8 requests per skill scan.
+Advisory layer for file hashes (SHA256) and embedded domains/URLs. **Never replaces the Cisco scanner import gate.** Limits: 4 req/min, 500/day, max 8 per skill scan.
 
 ```bash
 virustotal-helper.sh scan-skill /path/to/skill/
 virustotal-helper.sh scan-file /path/to/file.md
 virustotal-helper.sh scan-domain example.com
-security-helper.sh vt-scan skill /path/to/skill/   # also runs automatically after Cisco scanner
+security-helper.sh vt-scan skill /path/to/skill/   # runs automatically after Cisco scanner
 ```
-
-## Credentials
-
-Store required keys in `~/.config/aidevops/credentials.sh` (600 perms) or gopass via `aidevops secret set <KEY_NAME>`. See the engine table for which integrations require which key.
 
 ## Response Guidelines
 
@@ -93,5 +89,3 @@ Store required keys in `~/.config/aidevops/credentials.sh` (600 perms) or gopass
 | HIGH | Block import. Review before allowing with `--skip-security` (or an explicit interactive override). |
 | MEDIUM | Warn. Review findings and plan fixes. |
 | LOW | Informational. Address in future. |
-
-<!-- AI-CONTEXT-END -->
