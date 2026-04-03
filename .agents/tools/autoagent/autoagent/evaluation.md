@@ -2,30 +2,9 @@
 
 Sub-doc for `autoagent.md`. Loaded during Step 2 (Loop) for metric measurement.
 
----
-
-## Overview
-
-Single-trial metric measurements are noisy. The autoagent uses multi-trial evaluation to get statistically reliable keep/discard decisions. Trajectory recording captures the full history of what was tried and why.
-
----
-
 ## Multi-Trial Evaluation
 
-### Pseudocode
-
-```text
-function multi_trial_evaluate(metric_cmd, n_trials):
-    results = []
-    for i in 1..n_trials:
-        result = run_metric(metric_cmd)
-        if result == ERROR:
-            return ERROR  # any trial error = overall error
-        results.append(result)
-    return median(results)
-```
-
-### Implementation
+Single-trial measurements are noisy. Use multi-trial evaluation for statistically reliable keep/discard decisions.
 
 ```bash
 multi_trial_evaluate() {
@@ -44,7 +23,6 @@ multi_trial_evaluate() {
         results+=("$result")
     done
 
-    # Compute median
     printf '%s\n' "${results[@]}" | sort -n | \
         awk 'BEGIN{c=0} {a[c++]=$1} END{
             if (c%2) print a[int(c/2)];
@@ -54,30 +32,18 @@ multi_trial_evaluate() {
 }
 ```
 
-### Statistical Significance Rule
-
-A hypothesis is kept only if the median improvement holds across trials:
-
+**Statistical rules:**
 - **Minimum trials:** 2 (default `TRIALS_PER_HYPOTHESIS`)
 - **Keep threshold:** median of N trials must show improvement vs `BEST_METRIC`
-- **Tie-breaking:** if median equals `BEST_METRIC`, discard (no improvement = not worth keeping)
+- **Tie-breaking:** median equals `BEST_METRIC` → discard (no improvement = not worth keeping)
 - **Error handling:** any single trial returning ERROR → overall result = ERROR → rollback
-
-**Why median, not mean?** Metric commands can have outlier runs (cold cache, background load). Median is more robust than mean for small N.
+- **Why median:** robust against outlier runs (cold cache, background load)
 
 ---
 
 ## Trajectory Recording
 
-Every hypothesis attempt is recorded in a structured JSON log for post-session analysis.
-
-### Trajectory File Location
-
-```text
-todo/research/{PROGRAM_NAME}-trajectory.jsonl
-```
-
-One JSON object per line (JSONL format). Append-only.
+Every hypothesis attempt is recorded in `todo/research/{PROGRAM_NAME}-trajectory.jsonl` (JSONL, append-only).
 
 ### Record Format
 
@@ -103,49 +69,28 @@ One JSON object per line (JSONL format). Append-only.
 }
 ```
 
-### Recording Commands
-
 ```bash
-# Append trajectory record after each hypothesis attempt
 record_trajectory() {
-    local iteration="$1"
-    local hypothesis="$2"
-    local median_score="$3"
-    local decision="$4"
-    local hypothesis_type="$5"
-    local files_modified="$6"
-
+    local iteration="$1" hypothesis="$2" median_score="$3"
+    local decision="$4" hypothesis_type="$5" files_modified="$6"
     local trajectory_file="$REPO_ROOT/todo/research/${PROGRAM_NAME}-trajectory.jsonl"
     mkdir -p "$(dirname "$trajectory_file")"
-
     jq -n \
-      --argjson iter "$iteration" \
-      --arg hyp "$hypothesis" \
-      --arg hyp_type "$hypothesis_type" \
-      --argjson files "$files_modified" \
-      --argjson score "$median_score" \
-      --argjson baseline "$BASELINE" \
-      --arg decision "$decision" \
-      --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      '{
-        iteration: $iter,
-        hypothesis: $hyp,
-        hypothesis_type: $hyp_type,
-        files_modified: $files,
-        median_score: $score,
-        baseline: $baseline,
-        delta: ($score - $baseline),
-        decision: $decision,
-        timestamp: $ts
-      }' >> "$trajectory_file"
+      --argjson iter "$iteration" --arg hyp "$hypothesis" \
+      --arg hyp_type "$hypothesis_type" --argjson files "$files_modified" \
+      --argjson score "$median_score" --argjson baseline "$BASELINE" \
+      --arg decision "$decision" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      '{iteration:$iter,hypothesis:$hyp,hypothesis_type:$hyp_type,
+        files_modified:$files,median_score:$score,baseline:$baseline,
+        delta:($score-$baseline),decision:$decision,timestamp:$ts}' \
+      >> "$trajectory_file"
+    return 0
 }
 ```
 
 ---
 
 ## Failure Analysis
-
-When a hypothesis is discarded, extract actionable information to guide future hypotheses.
 
 ### Failure Categories
 
@@ -157,68 +102,47 @@ When a hypothesis is discarded, extract actionable information to guide future h
 | `crash` | Metric command errors | Log error; check if modification broke the metric command itself |
 | `safety_skip` | Elevated-only file under standard safety | Log as skipped; not a failure |
 
-### Failure Pattern Detection
-
-After 3+ consecutive discards of the same type, adjust strategy:
+After 3+ consecutive discards of the same type:
 
 ```text
 if consecutive_discards >= 3:
-    if all_same_type:
-        switch to next hypothesis type in progression
-    if all_same_file:
-        skip that file for next 5 iterations
-    if all_constraint_fail:
-        review constraint list — may be too strict for current target
+    if all_same_type:   switch to next hypothesis type in progression
+    if all_same_file:   skip that file for next 5 iterations
+    if all_constraint_fail: review constraint list — may be too strict
 ```
 
-### Extracting Signal from Failures
-
-Failed hypotheses are not wasted — they narrow the search space:
+Failed hypotheses narrow the search space. Analyze patterns post-session:
 
 ```bash
-# After session: analyze failure patterns
+# Most common failure types
 jq -r 'select(.decision == "discard") | .hypothesis_type' \
-    "todo/research/${PROGRAM_NAME}-trajectory.jsonl" | \
-    sort | uniq -c | sort -rn
+    "todo/research/${PROGRAM_NAME}-trajectory.jsonl" | sort | uniq -c | sort -rn
 
-# Which files were most often in discarded hypotheses?
+# Files most often in discarded hypotheses
 jq -r 'select(.decision == "discard") | .files_modified[]' \
-    "todo/research/${PROGRAM_NAME}-trajectory.jsonl" | \
-    sort | uniq -c | sort -rn
+    "todo/research/${PROGRAM_NAME}-trajectory.jsonl" | sort | uniq -c | sort -rn
 ```
 
 ---
 
 ## Metric Command Integration
 
-The autoagent uses `autoagent-metric-helper.sh` as its primary metric command. The helper returns a composite score:
-
 ```bash
-# Standard invocation
+# Standard invocation — returns composite score as float on last line of stdout
 autoagent-metric-helper.sh run --suite agent-optimization
 
-# Output format (last line of stdout, parseable as float)
-# 0.87
-```
-
-### Composite Score Formula
-
-`composite_score = pass_rate * (1 - 0.3 * token_ratio)`
-
-- `pass_rate`: fraction of comprehension tests passing (0–1)
-- `token_ratio`: `avg_response_chars / baseline_chars` (proxy for token usage)
-- Higher score = better (direction: `higher`)
-
-### Sub-Score Logging
-
-Log sub-scores alongside the composite score for analysis:
-
-```bash
+# With JSON sub-scores
 METRIC_JSON=$(autoagent-metric-helper.sh run --suite agent-optimization --json)
 COMPOSITE=$(echo "$METRIC_JSON" | jq '.composite_score')
 PASS_RATE=$(echo "$METRIC_JSON" | jq '.pass_rate')
 TOKEN_RATIO=$(echo "$METRIC_JSON" | jq '.token_ratio')
 ```
+
+**Composite score formula:** `composite_score = pass_rate * (1 - 0.3 * token_ratio)`
+
+- `pass_rate`: fraction of comprehension tests passing (0–1)
+- `token_ratio`: `avg_response_chars / baseline_chars` (proxy for token usage)
+- Direction: `higher` is better
 
 ---
 
@@ -228,6 +152,6 @@ TOKEN_RATIO=$(echo "$METRIC_JSON" | jq '.token_ratio')
 |-----------|-------|--------|
 | Wall-clock timeout | `elapsed >= TIMEOUT` | Break loop, proceed to completion |
 | Max iterations | `ITERATION_COUNT >= MAX_ITER` | Break loop, proceed to completion |
-| Goal reached | `BEST_METRIC >= GOAL` (for `higher` direction) | Break loop, proceed to completion |
+| Goal reached | `BEST_METRIC >= GOAL` | Break loop, proceed to completion |
 | Per-experiment timeout | `timeout PER_EXPERIMENT cmd` | Treat as crash, revert, continue |
 | All hypothesis types exhausted | No new hypotheses possible | Break loop, proceed to completion |
