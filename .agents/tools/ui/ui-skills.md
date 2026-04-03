@@ -18,7 +18,6 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Constraints for building better interfaces with agents
 - **Source**: https://www.ui-skills.com/llms.txt
 - **Stack**: Tailwind CSS, `motion/react`, `tw-animate-css`, `cn` (`clsx` + `tailwind-merge`)
 - **Apply when**: Building React/Next.js UIs, Tailwind components, animation, accessibility, or UI performance

@@ -808,97 +808,6 @@
       "passes": 1,
       "pr": 12824
     },
-    ".agents/marketing-sales/cro-chapter-06.md": {
-      "at": "2026-04-02T14:10:24Z",
-      "hash": "b410a185aa2dc79cfee34d596199baff1f53d29ea0e6a25f6181d43a737d2fe8",
-      "note": "Restructured: 145-line monolith split into slim index (20 lines) + 14 chapter files",
-      "passes": 1,
-      "pr": 15563
-    },
-    ".agents/marketing-sales/cro-chapter-06/01-cialdini-types.md": {
-      "at": "2026-04-02T14:10:24Z",
-      "hash": "be4d84f41ea1f58289166497d5be8f2e8754983032b07b00cb2696dfcc388a73",
-      "passes": 1,
-      "pr": 15563
-    },
-    ".agents/marketing-sales/cro-chapter-06/02-customer-testimonials.md": {
-      "at": "2026-04-02T14:10:24Z",
-      "hash": "a23e2f21c5084f293157768fbfce99a2cb42d14bfdc9751721d39b06767e111e",
-      "passes": 1,
-      "pr": 15563
-    },
-    ".agents/marketing-sales/cro-chapter-06/03-reviews-ratings.md": {
-      "at": "2026-04-02T14:10:24Z",
-      "hash": "da97d79c5ba9cfbc01b62a3ea3e6eed29a4686222f8be98a69f41ad8e3fd2875",
-      "passes": 1,
-      "pr": 15563
-    },
-    ".agents/marketing-sales/cro-chapter-06/04-case-studies.md": {
-      "at": "2026-04-02T14:10:24Z",
-      "hash": "ae4de20f166f0fe8888017d058bfc3213b081d9e72ce97ee66722aa33d44862e",
-      "passes": 1,
-      "pr": 15563
-    },
-    ".agents/marketing-sales/cro-chapter-06/05-numbers-statistics.md": {
-      "at": "2026-04-02T14:10:24Z",
-      "hash": "c97cc70cb1cfa192e649c3fb0e4f31acf0bc8c3d5cd0d352ace4466cea6b89cf",
-      "passes": 1,
-      "pr": 15563
-    },
-    ".agents/marketing-sales/cro-chapter-06/06-trust-badges.md": {
-      "at": "2026-04-02T14:10:24Z",
-      "hash": "f59103edf1031235fd17a3c766927f27fd9ed9b3928e90ee2717ad83284f0c69",
-      "passes": 1,
-      "pr": 15563
-    },
-    ".agents/marketing-sales/cro-chapter-06/07-logos.md": {
-      "at": "2026-04-02T14:10:24Z",
-      "hash": "aacd401abf961694c7539c2c080b14af9395d85935d6460e3aedcc85673b8a1d",
-      "passes": 1,
-      "pr": 15563
-    },
-    ".agents/marketing-sales/cro-chapter-06/08-ugc.md": {
-      "at": "2026-04-02T14:10:24Z",
-      "hash": "90c968ab25ccb998c5803e9d426b7b35e4eb65b1a18b0f6a99f918ba5f8f113f",
-      "passes": 1,
-      "pr": 15563
-    },
-    ".agents/marketing-sales/cro-chapter-06/09-roadmap.md": {
-      "at": "2026-04-02T14:10:24Z",
-      "hash": "ff65c69b955e1250d2ad00c17260679a06ff3c20fecae226da1873a8745bead5",
-      "passes": 1,
-      "pr": 15563
-    },
-    ".agents/marketing-sales/cro-chapter-06/10-advanced-tactics.md": {
-      "at": "2026-04-02T14:10:24Z",
-      "hash": "033c3f0c9125a28ebd100f7835b467e9d6177b5caa46a925b50eaf84db23c035",
-      "passes": 1,
-      "pr": 15563
-    },
-    ".agents/marketing-sales/cro-chapter-06/11-psychology.md": {
-      "at": "2026-04-02T14:10:24Z",
-      "hash": "dbf9bc48e8498bd617c492e8da0438986c1b860ff1579fae8c5de0799e0d5979",
-      "passes": 1,
-      "pr": 15563
-    },
-    ".agents/marketing-sales/cro-chapter-06/12-measurement.md": {
-      "at": "2026-04-02T14:10:24Z",
-      "hash": "05993525cbcb948086a03defbed412236f2a18d531100d9ab85c3e6919306d80",
-      "passes": 1,
-      "pr": 15563
-    },
-    ".agents/marketing-sales/cro-chapter-06/13-legal-ethics.md": {
-      "at": "2026-04-02T14:10:24Z",
-      "hash": "aed5139b10409ac09c1a7f0ffdf949b934b24167d1b51e824fbac634a70dc465",
-      "passes": 1,
-      "pr": 15563
-    },
-    ".agents/marketing-sales/cro-chapter-06/14-troubleshooting.md": {
-      "at": "2026-04-02T14:10:24Z",
-      "hash": "7f22d5a12a8282339d880359a3409a78dd800eb4217ede661eab9aaaddb0bcf2",
-      "passes": 1,
-      "pr": 15563
-    },
     ".agents/marketing-sales/cro-chapter-07.md": {
       "at": "2026-03-29T02:36:03Z",
       "hash": "faba8a64f3996ee2e5722dd4b7c822d49f79c1b6",
@@ -5185,9 +5094,13 @@
       "pr": 15470
     }
   },
-  ".agents/services/hosting/cloudflare-platform-skill/pages-functions-gotchas.md": {
-    "hash": "1253c92066cfa913e522251a5dc37bd66b8a581483d712f7f3556afbdc2c03cd",
-    "issue": "GH#15840",
-    "status": "simplified"
+  ".agents/tools/ui/ui-skills.md": {
+    "at": "2026-04-03T06:08:00Z",
+    "hash": "f75020ffda4b498042577c5888bf9b0aa1efebd4ae355bf4acf33ab10e74137e",
+    "lines": 96,
+    "passes": 1,
+    "pr": 16281,
+    "status": "simplified",
+    "issue": "GH#16179"
   }
 }
