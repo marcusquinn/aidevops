@@ -20,8 +20,7 @@ tools:
 
 - **Command**: `/list-keys` or `@list-keys` or `api-keys list`
 - **Script**: `~/.aidevops/agents/scripts/list-keys-helper.sh`
-- **Purpose**: Show available API key names plus source paths — never values
-- **Security**: Names and locations only — never values
+- **Security**: Names and locations only — never values. To confirm a specific key exists: `echo "${KEY_NAME:0:10}..."`. Credential files must have 600 permissions.
 
 **Key sources** (checked in order):
 1. `~/.config/aidevops/credentials.sh` — primary credential store (600 perms)
@@ -60,15 +59,7 @@ Total: 7 keys from 4 sources
 
 | Status | Meaning |
 |--------|---------|
-| `[loaded]` | Valid value is loaded in the session |
-| `[placeholder]` | Placeholder value such as `YOUR_KEY_HERE`, `changeme`, or `xxx` |
-| `[not loaded]` | Defined but not loaded in the current session |
+| `[loaded]` | Valid value loaded in session |
+| `[placeholder]` | Placeholder detected: `YOUR_*_HERE`, `REPLACE_*`, `CHANGEME`, `FIXME`, `TODO`, `example`, `sample`, `test-key`, `dummy`, `fake`, `xxx`/`yyy`/`zzz`, `placeholder`, `none`, `null`, template markers (`<...>`, `{...}`, `[...]`), repeated chars (`xxxx`, `0000`) |
+| `[not loaded]` | Defined but not loaded in current session |
 | `[configured]` | Present in a config file |
-
-Placeholder detection covers: `YOUR_*_HERE`, `REPLACE_*`, `CHANGEME`, `FIXME`, `TODO`, `example`, `sample`, `test-key`, `dummy`, `fake`, `xxx`/`yyy`/`zzz`, `placeholder`, `none`, `null`, template markers (`<...>`, `{...}`, `[...]`), repeated characters (`xxxx`, `0000`).
-
-## Security Notes
-
-- Never displays actual key values — only names and storage locations
-- Use `echo "${KEY_NAME:0:10}..."` only to confirm a specific key exists
-- Credential files must have 600 permissions
