@@ -26,14 +26,12 @@ tools:
 - **Capabilities**: Workers, D1, KV, R2, Pages, AI Gateway, DNS, Analytics
 - **Per-agent**: Set `cloudflare-api_*: true` in subagent frontmatter (disabled globally, enabled per agent)
 
-<!-- AI-CONTEXT-END -->
-
 ## Security
 
 - **Scopes**: Access matches Cloudflare dashboard permissions
 - **Secrets**: No tokens in config; MCP client stores OAuth token
 - **Revocation**: `dash.cloudflare.com` → My Profile → API Tokens → OAuth Apps
-- **Least privilege**: Use a sub-account or scoped API token for tighter scope; see `services/hosting/cloudflare.md`
+- **Least privilege**: Use a sub-account or scoped API token; see `services/hosting/cloudflare.md`
 - **Audit trail**: Actions appear in the Cloudflare audit log
 
 ## Auth Setup
@@ -41,16 +39,19 @@ tools:
 First tool call opens `dash.cloudflare.com` for OAuth 2.0 authorization.
 
 **Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`)
+
 ```json
 { "mcpServers": { "cloudflare-api": { "url": "https://mcp.cloudflare.com/mcp" } } }
 ```
 
 **OpenCode** (`~/.config/opencode/config.json`)
+
 ```json
 { "mcp": { "cloudflare-api": { "type": "remote", "url": "https://mcp.cloudflare.com/mcp" } } }
 ```
 
 **Claude Code CLI** (`--transport http` required even with HTTPS endpoint)
+
 ```bash
 claude mcp add cloudflare-api --transport http https://mcp.cloudflare.com/mcp
 ```
@@ -87,3 +88,5 @@ Upload all files in ./dist/ to R2 "static-assets" under prefix "v2.1.0/". List t
 - `services/hosting/cloudflare-platform-skill.md` — Full platform reference (Workers, D1, R2, KV, Pages, AI, 60 products)
 - `aidevops/mcp-integrations.md` — All MCP integrations overview and setup
 - `configs/mcp-servers-config.json.txt` — Master MCP server config template
+
+<!-- AI-CONTEXT-END -->
