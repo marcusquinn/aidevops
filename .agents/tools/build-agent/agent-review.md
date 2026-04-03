@@ -45,6 +45,10 @@ tools:
 **Impact**: [ ] No conflicts [ ] Instruction count: [+/- N] [ ] Tested
 ```
 
+## Review Categories
+
+When flagging code issues, use the structured categories in `tools/code-review/review-categories.md` for consistent severity assignment. Categories include: `commit-message-mismatch`, `instruction-file-disobeyed`, `fails-silently`, `security-violation`, `logic-error`, `runtime-error-risk`, and 8 others — each with examples, exceptions, and CRITICAL/MAJOR/MINOR/NITPICK severity guidance.
+
 ## Contributing
 
 Create proposal → edit in `~/Git/aidevops/` → run `.agents/scripts/linters-local.sh` → commit/PR. Ref: `workflows/release.md`.

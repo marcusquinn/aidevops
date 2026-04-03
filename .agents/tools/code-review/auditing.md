@@ -88,3 +88,7 @@ run: |
 ```
 
 Upload `audit-report.json` as an artifact via `actions/upload-artifact@v4`. See `prompts/build.txt` for full secret-handling rules.
+
+## Review Categories
+
+For structured code review issue classification (severity levels, examples, exceptions), see `tools/code-review/review-categories.md`. Use these categories when triaging audit findings to ensure consistent severity assignment across reviews.
