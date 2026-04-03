@@ -18,12 +18,9 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Systematic review and improvement of agent instructions
-- **Trigger**: Session end, user correction, observable failure, periodic maintenance
-- **Output**: Proposed improvements with evidence and scope
-- **Checklist**: Instruction count · Universal applicability · Duplicate detection · Code examples · AI-CONTEXT block · Slash commands (see table below)
-- **Self-Assessment**: User correction, command/path failure, contradiction, staleness → complete task → cite evidence → `rg "pattern" .agents/` → propose fix → ask permission
-- **Write Restrictions (MANDATORY)**: On `main`/`master` — ALLOWED: `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`. BLOCKED: all other files. Code changes → return proposed edits for worktree application.
+- **Trigger**: Session end, user correction, observable failure, fixing multiple issues
+- **Process**: Complete task → cite evidence → `rg "pattern" .agents/` (dedup) → propose fix → ask permission
+- **Write Restrictions (MANDATORY)**: On `main`/`master` — ALLOWED: `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`. All other files → propose edits for worktree application.
 
 <!-- AI-CONTEXT-END -->
 
@@ -33,9 +30,9 @@ tools:
 |---|-------|-------------------|
 | 1 | **Instruction count** (~50-100 main, <100 subagent) | Consolidate, move to subagent, or remove |
 | 2 | **Universal applicability** (>80% tasks) | Extract task-specific content to subagents |
-| 3 | **Duplicate detection** (`rg "pattern" .agents/`) | Single authoritative source per concept |
-| 4 | **Code examples** (authoritative/working) | Keep authoritative examples; search-pattern reference as supplement only |
-| 5 | **AI-CONTEXT block** (standalone essentials) | Rewrite if an AI would get stuck with only this |
+| 3 | **Duplicate detection** | Single authoritative source per concept |
+| 4 | **Code examples** | Keep authoritative; search-pattern reference as supplement only |
+| 5 | **AI-CONTEXT block** | Rewrite if an AI would get stuck with only this |
 | 6 | **Slash commands** | Move to `scripts/commands/` or domain subagent |
 
 ## Improvement Proposal Format
@@ -50,12 +47,8 @@ tools:
 **Impact**: [ ] No conflicts [ ] Instruction count: [+/- N] [ ] Tested
 ```
 
-## Common Improvement Patterns
+## Patterns
 
-- **Consolidating**: Merge redundant rules (e.g., `local var="$1"` for all parameters).
-- **Moving to subagent**: Replace inline rules with pointers (e.g., `See aidevops/architecture.md`).
-- **Replacing code with reference**: Pair `rg "pattern" .agents/scripts/` with minimal authoritative examples, not as a full replacement.
-
-## Contributing
-
-Create proposal → edit in `~/Git/aidevops/` → run `.agents/scripts/linters-local.sh` → commit/PR. Ref: `workflows/release.md`.
+- **Consolidate**: Merge redundant rules (e.g., `local var="$1"` for all parameters).
+- **Move to subagent**: Replace inline rules with pointers (e.g., `See aidevops/architecture.md`).
+- **Replace code with reference**: Use `rg "pattern" .agents/scripts/` + minimal authoritative example; don't remove the example entirely.
