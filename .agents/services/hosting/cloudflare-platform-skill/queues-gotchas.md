@@ -4,7 +4,7 @@ See [queues.md](./queues.md), [queues-patterns.md](./queues-patterns.md).
 
 ## Delivery Semantics
 
-Queues are at-least-once. Design for idempotency — ack only after durable success.
+Queues are at-least-once; no ordering guarantee. Design for idempotency — ack only after durable success.
 
 ```typescript
 const processed = await env.PROCESSED_KV.get(msg.id);
@@ -13,8 +13,6 @@ await processMessage(msg.body);
 await env.PROCESSED_KV.put(msg.id, '1', { expirationTtl: 86400 });
 msg.ack();
 ```
-
-❌ Don't rely on message ordering.
 
 ## Content Type
 
@@ -42,6 +40,7 @@ async queue(batch: MessageBatch): Promise<void> {
 ```
 
 ```jsonc
+// wrangler.toml [limits]
 { "limits": { "cpu_ms": 300000 } } // 5 minutes
 ```
 
@@ -49,10 +48,10 @@ Log failures with enough context to replay or diagnose. Configure a DLQ for perm
 
 ## Cost and Throughput
 
-Each message = 3 ops (write + read + delete). Retries add reads. Cost beyond free tier: `((messages × 3) - 1M) / 1M × $0.40`.
+Each message = 3 ops (write + read + delete). Retries add reads. Cost beyond free tier: `((messages × 3) - 1M) / 1M × $0.40`. Keep messages <64 KB (charged per 64 KB chunk).
 
-```typescript
-// Keep messages <64 KB (charged per 64 KB chunk)
+```jsonc
+// wrangler.toml [queues.consumers]
 { "max_batch_size": 100, "max_batch_timeout": 30 }
 ```
 
