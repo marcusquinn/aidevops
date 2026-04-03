@@ -13,42 +13,22 @@ tools:
 
 # Orchestration Efficiency Analysis
 
-<!-- AI-CONTEXT-START -->
+Reads the structured JSON from `orchestration-efficiency-collector.sh` (Phase 1). Does NOT collect data. Produces:
 
-## Purpose
-
-Analyse the pre-collected orchestration efficiency report and produce:
-
-1. **Top 3 findings** — ranked by impact, with specific recommendations and expected savings
-2. **Trend analysis** — compare today vs yesterday vs 7-day average (when historical reports exist)
-3. **Meta-assessment** — is the collected data sufficient for diagnosis? What additional instrumentation would improve future analysis?
-4. **Auto-filed issues** — findings that cross severity thresholds become GitHub issues
-
-This agent does NOT collect data. It reads the structured JSON from `orchestration-efficiency-collector.sh` (Phase 1) and produces analysis only.
-
-<!-- AI-CONTEXT-END -->
+1. **Top 3 findings** — ranked by impact, with recommendations and expected savings
+2. **Trend analysis** — today vs yesterday vs 7-day snapshot (when historical reports exist)
+3. **Meta-assessment** — data sufficiency and instrumentation gaps
+4. **Auto-filed issues** — `critical`/`high` findings become GitHub issues
 
 ## Input
-
-The report file path is passed as the first argument, or auto-detected from today's date:
 
 ```bash
 REPORT_FILE="${1:-${HOME}/.aidevops/logs/efficiency-report-$(date -u +%Y-%m-%d).json}"
 ```
 
-Read the report with:
+If the file does not exist, exit: `ERROR: No report file found at $REPORT_FILE. Run orchestration-efficiency-collector.sh first.`
 
-```bash
-cat "$REPORT_FILE"
-```
-
-If the file does not exist, exit with: `ERROR: No report file found at $REPORT_FILE. Run orchestration-efficiency-collector.sh first.`
-
-## Analysis Framework
-
-### Metric Thresholds
-
-Use these thresholds to classify findings as `critical`, `high`, `medium`, or `low`:
+## Metric Thresholds
 
 | Metric | Critical | High | Medium | Low |
 |--------|----------|------|--------|-----|
@@ -63,9 +43,7 @@ Use these thresholds to classify findings as `critical`, `high`, `medium`, or `l
 | `audit_trails.prs_without_merge_summary` | >5 | 3-5 | 1-3 | 0 |
 | `speed.worker_completion_p90_secs` | >7200 | 3600-7200 | 1800-3600 | <1800 |
 
-### Finding Format
-
-Each finding must include:
+## Finding Format
 
 ```
 ## Finding N: <title>
@@ -78,30 +56,28 @@ Each finding must include:
 **Expected saving**: <quantified estimate>
 ```
 
-### Trend Analysis
+## Trend Analysis
 
 When `historical_context.has_yesterday_report` or `historical_context.has_week_ago_report` is true:
 
 1. Read the referenced report files
-2. Compare key metrics: `token_efficiency.total_cost_usd`, `errors.launch_failure_rate_pct`, `concurrency.fill_rate_pct`, `throughput.prs_merged`
+2. Compare: `token_efficiency.total_cost_usd`, `errors.launch_failure_rate_pct`, `concurrency.fill_rate_pct`, `throughput.prs_merged`
 3. Report direction: `↑ improved`, `↓ degraded`, `→ stable` (±5% = stable)
-4. Flag regressions (degraded vs yesterday AND vs week-ago snapshot) as additional findings
+4. Flag regressions (degraded vs yesterday AND vs week-ago) as additional findings
 
-Note: `historical_context.week_ago_report_path` is a single snapshot from 7 days ago, not a rolling 7-day average. Use it for point-in-time comparison only.
+Note: `historical_context.week_ago_report_path` is a point-in-time snapshot, not a rolling average.
 
-### Meta-Assessment
+## Meta-Assessment
 
-After producing findings, assess the data quality:
-
-1. **Coverage gaps**: Which metrics are `0` or missing that should have data? List them.
+1. **Coverage gaps**: Which metrics are `0` or missing that should have data?
 2. **Instrumentation improvements**: What additional data points would enable better diagnosis?
-3. **Confidence level**: `high` (all key metrics populated), `medium` (some gaps), `low` (major gaps)
+3. **Confidence**: `high` (all key metrics populated), `medium` (some gaps), `low` (major gaps)
 
-If confidence is `low`, the meta-assessment itself becomes a `medium` finding.
+If confidence is `low`, the meta-assessment becomes a `medium` finding.
 
 ## Auto-Filing Issues
 
-For each `critical` or `high` finding, file a GitHub issue:
+Gate: only `critical` and `high`. Check for duplicates first: `gh issue list --repo "$REPO" --search "<finding title>" --state open`.
 
 ```bash
 REPO="marcusquinn/aidevops"
@@ -132,11 +108,7 @@ _Auto-filed by orchestration-analysis agent from efficiency report._
 ${SIG_FOOTER}"
 ```
 
-**Gate**: Only file issues for `critical` and `high` findings. Do NOT file issues for `medium` or `low`. Do NOT file duplicate issues — check with `gh issue list --repo "$REPO" --search "<finding title>" --state open` first.
-
 ## Output Format
-
-Produce a structured markdown report to stdout:
 
 ```
 # Orchestration Efficiency Analysis — YYYY-MM-DD
@@ -162,22 +134,15 @@ Produce a structured markdown report to stdout:
 [complete list including medium/low]
 ```
 
-## Token Budget
-
-Target: <5K tokens per analysis run. Achieve this by:
-
-1. Reading only the report file (not raw logs)
-2. Producing structured output (no prose padding)
-3. Filing issues via bash (not inline generation)
-4. Stopping after the output format above — no follow-up questions
+Token budget: <5K tokens. Read only the report file; produce structured output; file issues via bash; stop after the output above.
 
 ## Scheduling Context
 
-This agent is invoked by `sh.aidevops.efficiency-analysis` launchd job:
-- **Phase 1** (collector): runs at 05:00 daily, writes `efficiency-report-YYYY-MM-DD.json`
-- **Phase 2** (this agent): runs conditionally after Phase 1 — skipped if all metrics are within baseline AND it is not Sunday (weekly deep-dive)
+Invoked by `sh.aidevops.efficiency-analysis` launchd job:
+- **Phase 1** (collector): 05:00 daily → `efficiency-report-YYYY-MM-DD.json`
+- **Phase 2** (this agent): conditional — skipped if all baseline metrics are within range AND not Sunday
 
-**Baseline thresholds for skip decision** (all must be within range to skip):
+**Skip thresholds** (all must pass to skip):
 - `errors.launch_failure_rate_pct` < 5%
 - `concurrency.fill_rate_pct` > 40%
 - `audit_trails.issues_closed_without_pr_link` == 0
