@@ -2456,6 +2456,14 @@
       "passes": 1,
       "pr": 12040
     },
+    ".agents/services/email/ses.md": {
+      "at": "2026-04-03T00:00:00Z",
+      "hash": "580742968b7a22cee8c7b74cbc323803c67530474f8200f6e03b3165376dbf1d",
+      "issue": "GH#16498",
+      "passes": 1,
+      "pr": "pending",
+      "status": "simplified"
+    },
     ".agents/services/email/smime-setup.md": {
       "at": "2026-03-30T06:50:00Z",
       "hash": "f83bb719e349bb600df046eccc7c1c5603c330f0",
