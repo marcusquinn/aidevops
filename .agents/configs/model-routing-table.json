@@ -22,6 +22,14 @@
       "probe_timeout_seconds": 3,
       "_comment": "llama.cpp or compatible OpenAI-API server. No API key needed. Use local-model-helper.sh status to check."
     },
+    "ollama": {
+      "endpoint": "http://localhost:11434/v1/chat/completions",
+      "key_env": null,
+      "probe_path": "/api/tags",
+      "probe_timeout_seconds": 3,
+      "min_context_length": 16384,
+      "_comment": "Ollama local model server. No API key needed. Probe /api/tags to check availability. OpenAI-compatible endpoint at /v1/."
+    },
     "anthropic": {
       "endpoint": "https://api.anthropic.com/v1/messages",
       "key_env": "ANTHROPIC_API_KEY",
