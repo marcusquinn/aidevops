@@ -27,13 +27,15 @@ Legal compliance, contract review, privacy policies, terms of service, GDPR/data
 
 ## Pre-flight Questions
 
-Before generating legal-adjacent output:
+Before generating legal-adjacent output, verify:
 
-1. What does the actual law say — statute, regulation, case law? Cite it.
-2. What jurisdiction(s) apply, and where do they conflict or overlap?
-3. What are the consequences of getting this wrong — financial, criminal, reputational?
-4. What would a competent opposing counsel argue against this position?
-5. Is the proposed approach proportionate to the risk?
+| # | Question |
+|---|----------|
+| 1 | What does the actual law say — statute, regulation, case law? Cite it. |
+| 2 | What jurisdiction(s) apply, and where do they conflict or overlap? |
+| 3 | What are the consequences of getting this wrong — financial, criminal, reputational? |
+| 4 | What would a competent opposing counsel argue against this position? |
+| 5 | Is the proposed approach proportionate to the risk? |
 
 ## Legal Workflows
 
@@ -49,14 +51,24 @@ Before generating legal-adjacent output:
 
 Persistent case memory with citation-level precision. Every case needs a dedicated document store (filings, depositions, correspondence, evidence).
 
-- **Contradiction detection** — cross-reference testimony against all prior statements; flag contradictions with exact page/line citations; track phrasing shifts (e.g., "I don't recall" → "I'm not sure")
-- **Timeline reconstruction** — chronological event timelines from case documents; identify gaps, inconsistencies, sequences supporting or undermining claims
-- **Evidence mapping** — track evidence-to-claim links, flag unsupported assertions, identify discovery gaps
-- **Citation fidelity** — hallucinated page numbers are malpractice-grade failures; full-text search with source attribution required
+| Capability | Detail |
+|------------|--------|
+| **Contradiction detection** | Cross-reference testimony against all prior statements; flag contradictions with exact page/line citations; track phrasing shifts (e.g., "I don't recall" → "I'm not sure") |
+| **Timeline reconstruction** | Chronological event timelines from case documents; identify gaps, inconsistencies, sequences supporting or undermining claims |
+| **Evidence mapping** | Track evidence-to-claim links, flag unsupported assertions, identify discovery gaps |
+| **Citation fidelity** | Hallucinated page numbers are malpractice-grade failures; full-text search with source attribution required |
 
 ### Opposing Counsel Profiling
 
-Maintain separate analysis notebooks per opposing counsel. **Analysis targets:** argumentation patterns and favoured legal theories, weakness mapping (where arguments failed, which judges rejected them), litigation style (bluff on motions to compel? settle early or push to trial?), citation habits (outdated/overruled authorities?), expert witness patterns (recurring experts, *Daubert*/*Frye* challenge outcomes).
+Maintain separate analysis notebooks per opposing counsel.
+
+| Analysis target | Focus |
+|-----------------|-------|
+| **Argumentation** | Favoured legal theories, patterns across cases |
+| **Weakness mapping** | Where arguments failed, which judges rejected them |
+| **Litigation style** | Bluff on motions to compel? Settle early or push to trial? |
+| **Citation habits** | Outdated/overruled authorities? |
+| **Expert witnesses** | Recurring experts, *Daubert*/*Frye* challenge outcomes |
 
 ### Legal Communications
 

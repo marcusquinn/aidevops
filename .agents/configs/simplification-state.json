@@ -5198,5 +5198,10 @@
     "hash": "f5453a48a29c9dd411399f4079384edf",
     "status": "simplified",
     "issue": "GH#16493"
+  },
+  ".agents/legal.md": {
+    "hash": "544a65fb7a2195dd41e36bafecfa2251b9c2800fae8c8ec7fbef892ff1b03bc4",
+    "status": "simplified",
+    "issue": 16258
   }
 }
