@@ -28,19 +28,13 @@ tools:
 
 ## When to Create Events
 
-**Do** create a calendar event when:
-- User explicitly asks ("schedule a meeting", "add to my calendar")
-- A routine produces a time-bound commitment (meeting, deadline, appointment)
-- Coordinating availability across people or projects
+Create when: user explicitly asks, routine produces a time-bound commitment, or coordinating availability.
 
-**Do NOT** create events for:
-- Tasks/reminders with no specific time block → use `reminders-helper.sh`
-- Things tracked in TODO.md / GitHub issues
-- Tentative plans the user hasn't confirmed
+Skip events for: tasks/reminders with no time block (→ `reminders-helper.sh`), TODO.md/GitHub issues, unconfirmed tentative plans.
 
 ## Field Coverage
 
-Core fields (title, start/end, location, notes, URL, calendar, all-day) are supported on both platforms. Linux-only extras: recurrence (`--repeat`), alarms (`--alarms`), categories (`--categories`). Invitees, travel time, and availability have no CLI support on either platform.
+Both platforms: title, start/end, location, notes, URL, calendar, all-day. Linux-only: `--repeat`, `--alarms`, `--categories`. No CLI support for invitees, travel time, or availability.
 
 ## Usage
 
@@ -84,5 +78,5 @@ calendar-helper.sh add "Client dinner" \
 calendar-helper.sh setup
 ```
 
-- **macOS**: No install needed. May need: System Settings > Privacy & Security > Calendars. All accounts from System Settings > Internet Accounts appear automatically.
-- **Linux**: Requires `khal` + `vdirsyncer` with CalDAV config. See `caldav-calendar-skill.md` for vdirsyncer configuration.
+- **macOS**: No install needed. Grant access: System Settings > Privacy & Security > Calendars. Accounts from System Settings > Internet Accounts appear automatically.
+- **Linux**: Requires `khal` + `vdirsyncer`. See `caldav-calendar-skill.md` for CalDAV config.
