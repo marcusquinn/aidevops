@@ -2,9 +2,15 @@
 
 ## Runtime Constraints
 
-**CPU Budget:** Standard 10ms, Unbound 30ms. Use `ctx.waitUntil()` for background work, Durable Objects for heavy compute, Workers AI for ML.
+**Fetch in Global Scope Is Forbidden:** All `fetch()` calls must be inside handler functions — top-level fetch errors at startup.
 
-**No Persistent State:** Workers are stateless between requests. Module-level variables reset unpredictably — store state in KV, D1, or Durable Objects.
+```typescript
+// ❌ BAD — errors at startup
+const config = await fetch('/config.json');
+
+// ✅ GOOD
+async fetch(req) { const config = await fetch('/config.json'); }
+```
 
 **Response Bodies Are Streams:** Body can only be read once — clone before reuse.
 
@@ -20,27 +26,18 @@ await logBody(text);
 return new Response(text, response);
 ```
 
+**CPU Budget:** 10ms standard, 30ms unbound. Use `ctx.waitUntil()` for background work, Durable Objects for heavy compute, Workers AI for ML.
+
+**No Persistent State:** Stateless between requests — module-level variables reset unpredictably. Store state in KV, D1, or Durable Objects.
+
 **No Node.js Built-ins by Default:** Use Workers APIs or enable compat flag.
 
 ```typescript
 // ❌ BAD
 import fs from 'fs';
 
-// ✅ GOOD — Workers API
+// ✅ GOOD — Workers API or enable { "compatibility_flags": ["nodejs_compat_v2"] }
 const data = await env.MY_BUCKET.get('file.txt');
-// OR: { "compatibility_flags": ["nodejs_compat_v2"] }
-```
-
-**Fetch in Global Scope Is Forbidden:** Move all `fetch()` calls inside handler functions.
-
-```typescript
-// ❌ BAD — top-level fetch errors at startup
-const config = await fetch('/config.json');
-
-// ✅ GOOD — fetch inside handler
-async fetch(req) {
-  const config = await fetch('/config.json');
-}
 ```
 
 ## Runtime Limits
