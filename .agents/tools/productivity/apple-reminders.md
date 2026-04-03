@@ -48,30 +48,25 @@ Ask user if unclear. Common mappings: **Work** (tasks, deadlines), **Personal/Re
 
 ## Usage
 
-### Create
-
 ```bash
-# Simple
+# Create — simple
 reminders-helper.sh add "Buy milk" --list Shopping
 
-# Full: due, priority, flag, notes, URL
+# Create — full options
 reminders-helper.sh add "Review report" --list Work \
   --due "next Friday" --priority high --flag \
-  --notes "Found via RSS" --url "https://example.com"
+  --notes "Context: ${details}" --url "https://example.com"
 
-# Linux only: tags, location
+# Create — Linux only (tags, location)
 reminders-helper.sh add "Pick up package" --list Personal \
   --location "Post Office" --tags "errands,urgent"
-```
 
-### Manage
-
-```bash
-reminders-helper.sh lists                          # List all lists
-reminders-helper.sh show today                     # Today's reminders
-reminders-helper.sh show overdue --list Work       # Overdue in Work
-reminders-helper.sh complete 1                     # Complete by index
-reminders-helper.sh edit 2 --priority high         # Edit fields
+# Manage
+reminders-helper.sh lists                          # list all lists
+reminders-helper.sh show today                     # today's reminders
+reminders-helper.sh show overdue --list Work       # overdue in list
+reminders-helper.sh complete 1                     # complete by index
+reminders-helper.sh edit 2 --priority high         # edit fields
 reminders-helper.sh sync                           # CalDAV sync (Linux)
 JSON_OUTPUT=true reminders-helper.sh show today    # JSON for agents
 ```
@@ -83,28 +78,10 @@ JSON_OUTPUT=true reminders-helper.sh show today    # JSON for agents
 
 ## Setup
 
-```bash
-reminders-helper.sh setup
-# macOS: brew install steipete/tap/remindctl && remindctl authorize
-#        Enable in System Settings > Privacy & Security > Reminders
-# Linux: pipx install todoman vdirsyncer
-#        Config: ~/.config/vdirsyncer/config + ~/.config/todoman/config.py
-#        Sync: vdirsyncer discover && vdirsyncer sync
-```
+Run `reminders-helper.sh setup` — installs platform dependencies and guides authorization.
 
-## Integration
-
-```bash
-# Agent call
-~/.aidevops/agents/scripts/reminders-helper.sh add "Follow up" \
-  --list Work --due "in 3 days" --notes "Context: ${details}"
-
-# Routine follow-up
-reminders-helper.sh add "ACTION: ${desc}" --list Work --due "${deadline}"
-
-# Mission dependency
-reminders-helper.sh add "MISSION: ${name} — ${action}" --notes "${details}"
-```
+- **macOS**: Requires Reminders permission in System Settings > Privacy & Security.
+- **Linux**: Requires `vdirsyncer/config` + `todoman/config.py`; run `vdirsyncer discover && vdirsyncer sync` after setup.
 
 ## Accounts
 
