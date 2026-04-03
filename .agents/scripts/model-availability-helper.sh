@@ -55,7 +55,7 @@ readonly DEFAULT_RATELIMIT_TTL=60 # 1 minute for rate limit data
 readonly PROBE_TIMEOUT=10         # HTTP request timeout in seconds
 
 # Known providers list (opencode is a meta-provider routing through its gateway)
-readonly KNOWN_PROVIDERS="anthropic openai google openrouter groq deepseek opencode"
+readonly KNOWN_PROVIDERS="anthropic openai google openrouter groq deepseek opencode ollama"
 
 # OpenCode models cache (from models.dev, refreshed by opencode CLI)
 readonly OPENCODE_MODELS_CACHE="${HOME}/.cache/opencode/models.json"
@@ -74,6 +74,7 @@ get_provider_endpoint() {
 	groq) echo "https://api.groq.com/openai/v1/models" ;;
 	deepseek) echo "https://api.deepseek.com/v1/models" ;;
 	opencode) echo "https://opencode.ai/zen/v1/models" ;;
+	ollama) echo "http://localhost:11434/api/tags" ;;
 	*) return 1 ;;
 	esac
 	return 0
@@ -90,6 +91,7 @@ get_provider_key_vars() {
 	groq) echo "GROQ_API_KEY" ;;
 	deepseek) echo "DEEPSEEK_API_KEY" ;;
 	opencode) echo "OPENCODE_API_KEY" ;;
+	ollama) echo "" ;; # No API key needed — local inference
 	*) return 1 ;;
 	esac
 	return 0
@@ -99,7 +101,7 @@ get_provider_key_vars() {
 is_known_provider() {
 	local provider="$1"
 	case "$provider" in
-	anthropic | openai | google | openrouter | groq | deepseek) return 0 ;;
+	anthropic | openai | google | openrouter | groq | deepseek | ollama) return 0 ;;
 	*) return 1 ;;
 	esac
 }
@@ -113,7 +115,7 @@ get_tier_models() {
 	local tier="$1"
 
 	case "$tier" in
-	local) echo "local/llama.cpp|anthropic/claude-haiku-4-5" ;;
+	local) echo "ollama/auto|local/llama.cpp|anthropic/claude-haiku-4-5" ;;
 	haiku) echo "anthropic/claude-haiku-4-5|google/gemini-2.5-flash" ;;
 	flash) echo "google/gemini-2.5-flash|openai/gpt-4.1-mini" ;;
 	sonnet) echo "anthropic/claude-sonnet-4-6|openai/gpt-5.3-codex" ;;
@@ -478,6 +480,75 @@ _probe_opencode() {
 	return 1
 }
 
+# Probe Ollama local inference server.
+# Checks: (1) server is running, (2) at least one model is loaded,
+# (3) context length is sufficient for agentic tool use.
+# CRITICAL: Ollama defaults to 4K context. Tool schemas alone consume 4-8K tokens.
+# Agent loops need 32K+. This probe warns if context is below MIN_OLLAMA_CONTEXT.
+_probe_ollama() {
+	local quiet="${1:-false}"
+	local min_context="${MIN_OLLAMA_CONTEXT:-16384}"
+	local ollama_host="${OLLAMA_HOST:-http://localhost:11434}"
+
+	# Check if Ollama server is reachable
+	local response=""
+	response=$(curl -sf --max-time 3 "${ollama_host}/api/tags" 2>/dev/null) || {
+		_record_health "ollama" "unhealthy" 0 0 "Ollama server not reachable at ${ollama_host}" 0
+		[[ "$quiet" != "true" ]] && print_warning "ollama: server not reachable at ${ollama_host}"
+		return 1
+	}
+
+	# Count loaded models
+	local models_count=0
+	models_count=$(echo "$response" | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('models',[])))" 2>/dev/null || echo "0")
+
+	if [[ "$models_count" -eq 0 ]]; then
+		_record_health "ollama" "unhealthy" 200 0 "No models loaded (run: ollama pull <model>)" 0
+		[[ "$quiet" != "true" ]] && print_warning "ollama: no models loaded (run: ollama pull <model>)"
+		return 1
+	fi
+
+	# Check context length of the first available model
+	local first_model=""
+	first_model=$(echo "$response" | python3 -c "import json,sys; m=json.load(sys.stdin).get('models',[]); print(m[0]['name'] if m else '')" 2>/dev/null || echo "")
+
+	if [[ -n "$first_model" ]]; then
+		local show_response=""
+		show_response=$(curl -sf --max-time 3 "${ollama_host}/api/show" -d "{\"name\":\"${first_model}\"}" 2>/dev/null) || true
+
+		if [[ -n "$show_response" ]]; then
+			local ctx_length=0
+			ctx_length=$(echo "$show_response" | python3 -c "
+import json, sys, re
+data = json.load(sys.stdin)
+params = data.get('parameters', '')
+match = re.search(r'num_ctx\s+(\d+)', params)
+if match:
+    print(match.group(1))
+else:
+    # Check modelfile for num_ctx
+    mf = data.get('modelfile', '')
+    match2 = re.search(r'num_ctx\s+(\d+)', mf)
+    print(match2.group(1) if match2 else '4096')
+" 2>/dev/null || echo "4096")
+
+			if [[ "$ctx_length" -lt "$min_context" ]]; then
+				_record_health "ollama" "degraded" 200 0 "Context length ${ctx_length} < ${min_context} minimum. Set OLLAMA_CONTEXT_LENGTH=${min_context} or add 'PARAMETER num_ctx ${min_context}' to your Modelfile" "$models_count"
+				[[ "$quiet" != "true" ]] && print_warning "ollama: context length ${ctx_length} is below ${min_context} minimum — agentic tool use will fail. Set OLLAMA_CONTEXT_LENGTH=${min_context} or use a Modelfile with 'PARAMETER num_ctx ${min_context}'"
+				return 2
+			fi
+		fi
+	fi
+
+	_record_health "ollama" "healthy" 200 0 "" "$models_count"
+	[[ "$quiet" != "true" ]] && print_success "ollama: healthy (${models_count} models, context OK)"
+	db_query "
+		INSERT INTO probe_log (provider, action, result, duration_ms, details)
+		VALUES ('ollama', 'api_check', 'healthy', 0, '${models_count} models available');
+	" || true
+	return 0
+}
+
 # Build curl argument array and resolve the final endpoint URL for a provider.
 # Outputs two lines: first the endpoint URL, then the curl args (space-separated).
 # Caller must reconstruct the array from the second line.
@@ -620,6 +691,12 @@ probe_provider() {
 	# OpenCode uses its local models cache — no HTTP probe needed
 	if [[ "$provider" == "opencode" ]]; then
 		_probe_opencode "$quiet"
+		return $?
+	fi
+
+	# Ollama uses its own probe — no API key, checks server + context length
+	if [[ "$provider" == "ollama" ]]; then
+		_probe_ollama "$quiet"
 		return $?
 	fi
 

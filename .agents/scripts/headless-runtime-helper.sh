@@ -289,6 +289,11 @@ get_auth_signature() {
 		auth_mtime=$(file_mtime "$OPENCODE_AUTH_FILE")
 		auth_material="${auth_material}|mtime=${auth_mtime}"
 		;;
+	ollama | local)
+		# Local providers have no auth material — use a static signature
+		# so backoff state clears only when the provider string changes
+		auth_material="${auth_material}|local=true"
+		;;
 	*)
 		auth_material="${auth_material}|unknown=true"
 		;;
@@ -729,6 +734,13 @@ provider_auth_available() {
 	local)
 		# Local provider is always considered available (no auth needed)
 		return 0
+		;;
+	ollama)
+		# Ollama: no auth needed, just check if server is reachable
+		if curl -sf --max-time 2 "${OLLAMA_HOST:-http://localhost:11434}/api/tags" >/dev/null 2>&1; then
+			return 0
+		fi
+		return 1
 		;;
 	*)
 		# Unknown provider: assume available (don't silently drop unknown providers)

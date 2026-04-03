@@ -3,7 +3,7 @@
   "_docs": "See .agents/tools/context/model-routing.md for routing rules, .agents/tools/ai-assistants/fallback-chains.md for integration.",
 
   "tiers": {
-    "local":  { "models": ["local/llama.cpp"], "fallback": "haiku", "cost": 0 },
+    "local":  { "models": ["ollama/auto", "local/llama.cpp"], "fallback": "haiku", "cost": 0 },
     "haiku":  { "models": ["anthropic/claude-haiku-4-5"] },
     "flash":  { "models": ["anthropic/claude-haiku-4-5"] },
     "sonnet": { "models": ["anthropic/claude-sonnet-4-6"] },
@@ -21,6 +21,14 @@
       "probe_path": "/v1/models",
       "probe_timeout_seconds": 3,
       "_comment": "llama.cpp or compatible OpenAI-API server. No API key needed. Use local-model-helper.sh status to check."
+    },
+    "ollama": {
+      "endpoint": "http://localhost:11434/v1/chat/completions",
+      "key_env": null,
+      "probe_path": "/api/tags",
+      "probe_timeout_seconds": 3,
+      "min_context_length": 16384,
+      "_comment": "Ollama local inference. CRITICAL: Ollama defaults to 4K context — tool schemas alone consume 4-8K tokens. Set num_ctx >= 32768 in your Modelfile or OLLAMA_CONTEXT_LENGTH env var. Use 'ollama/auto' to use whatever model is currently loaded, or 'ollama/<model>' for a specific model."
     },
     "anthropic": {
       "endpoint": "https://api.anthropic.com/v1/messages",

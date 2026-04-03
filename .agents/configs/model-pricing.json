@@ -18,7 +18,9 @@
     "gemini-3-pro":    { "input": 1.25,  "output": 10.0,  "cache_read": 0.3125, "cache_write": 2.50  },
     "gemini-3-flash":  { "input": 0.10,  "output": 0.40,  "cache_read": 0.025,  "cache_write": 0.10  },
     "deepseek-r1":     { "input": 0.55,  "output": 2.19,  "cache_read": 0.14,   "cache_write": 0.55  },
-    "deepseek-v3":     { "input": 0.27,  "output": 1.10,  "cache_read": 0.07,   "cache_write": 0.27  }
+    "deepseek-v3":     { "input": 0.27,  "output": 1.10,  "cache_read": 0.07,   "cache_write": 0.27  },
+    "ollama/":         { "input": 0.0,   "output": 0.0,   "cache_read": 0.0,    "cache_write": 0.0   },
+    "local/":          { "input": 0.0,   "output": 0.0,   "cache_read": 0.0,    "cache_write": 0.0   }
   },
   "default": { "input": 3.0, "output": 15.0, "cache_read": 0.30, "cache_write": 3.75 }
 }

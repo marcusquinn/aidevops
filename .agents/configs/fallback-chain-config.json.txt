@@ -3,8 +3,13 @@
   "_docs": "See .agents/tools/ai-assistants/fallback-chains.md for full documentation",
 
   "chains": {
-    "_comment": "Per-tier fallback chains. Anthropic ONLY. Never use openrouter, openai, or google providers for worker dispatch.",
+    "_comment": "Per-tier fallback chains. Anthropic preferred for cloud dispatch. Local providers (ollama, local) are zero-cost and tried first in the local tier.",
 
+    "local": [
+      "ollama/auto",
+      "local/llama.cpp",
+      "anthropic/claude-haiku-4-5"
+    ],
     "haiku": [
       "anthropic/claude-haiku-4-5"
     ],
