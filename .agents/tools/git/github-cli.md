@@ -41,28 +41,22 @@ gh api repos/owner/repo      # Direct API access
 ## Core Commands
 
 ```bash
-# Repos
 gh repo create my-repo --public --description "My project"
 gh repo clone owner/repo && gh repo fork owner/repo
 
-# Issues
 gh issue list --state open --label bug
 gh issue create --title "Bug report" --body "Description"
 gh issue view 123 && gh issue close 123
 
-# Pull Requests
 gh pr create --title "Feature X" --body "Description"
 gh pr create --fill          # Auto-fill from commits
 gh pr view 123 && gh pr merge 123 --squash  # Also: --merge, --rebase
 
-# Releases
 gh release create v1.2.3 --generate-notes [--draft]
 
-# Workflow runs
 gh run list && gh run view 123456 && gh run watch
 gh run rerun 123456 --failed
 
-# API
 gh api repos/owner/repo/issues [-f title="Bug" -f body="Details"]
 ```
 
@@ -83,11 +77,8 @@ Bots auto-close non-conforming submissions — check templates before submitting
 ### Fetch Templates
 
 ```bash
-# Issue templates
 gh api repos/{owner}/{repo}/contents/.github/ISSUE_TEMPLATE/ --jq '.[].name' || true
 gh api repos/{owner}/{repo}/contents/.github/ISSUE_TEMPLATE/bug-report.yml --jq '.content' | base64 -d || true
-
-# CONTRIBUTING.md and PR template
 gh api repos/{owner}/{repo}/contents/CONTRIBUTING.md --jq '.content' | base64 -d || true
 gh api repos/{owner}/{repo}/contents/.github/PULL_REQUEST_TEMPLATE.md --jq '.content' | base64 -d || true
 ```
