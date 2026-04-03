@@ -34,36 +34,32 @@ Arguments: `--program <path>` (required)
 
 <!-- AI-CONTEXT-END -->
 
----
-
 ## Step 0: Parse Arguments
 
 Extract `--program <path>`; exit with error if missing or file not found. Extract variables:
 
-```text
-PROGRAM_NAME   ← frontmatter `name`
-MODE           ← frontmatter `mode` (in-repo | cross-repo | standalone)
-TARGET_REPO    ← frontmatter `target_repo` (path or ".")
-DIMENSION      ← frontmatter `dimension` (optional, multi-dimension campaigns)
-CAMPAIGN_ID    ← frontmatter `campaign_id` (optional, multi-dimension campaigns)
-FILES          ← ## Target section, `files:` line
-BRANCH         ← ## Target section, `branch:` line (default: experiment/{name})
-METRIC_CMD     ← ## Metric section, `command:` line
-METRIC_NAME    ← ## Metric section, `name:` line
-METRIC_DIR     ← ## Metric section, `direction:` line (lower | higher)
-BASELINE       ← ## Metric section, `baseline:` line (null = not yet measured)
-GOAL           ← ## Metric section, `goal:` line (null = no goal)
-CONSTRAINTS    ← ## Constraints section, each `- ` bullet as a shell command
-RESEARCHER     ← ## Models section, `researcher:` line
-EVALUATOR      ← ## Models section, `evaluator:` line (optional)
-TARGET_MODEL   ← ## Models section, `target:` line (optional)
-TIMEOUT        ← ## Budget section, `timeout:` line (seconds)
-MAX_ITER       ← ## Budget section, `max_iterations:` line
-PER_EXPERIMENT ← ## Budget section, `per_experiment:` line
-HINTS          ← ## Hints section, all bullet lines
-```
-
----
+| Variable | Source |
+|----------|--------|
+| `PROGRAM_NAME` | frontmatter `name` |
+| `MODE` | frontmatter `mode` (`in-repo` \| `cross-repo` \| `standalone`) |
+| `TARGET_REPO` | frontmatter `target_repo` (path or `"."`) |
+| `DIMENSION` | frontmatter `dimension` (optional, multi-dimension campaigns) |
+| `CAMPAIGN_ID` | frontmatter `campaign_id` (optional, multi-dimension campaigns) |
+| `FILES` | `## Target` section, `files:` line |
+| `BRANCH` | `## Target` section, `branch:` line (default: `experiment/{name}`) |
+| `METRIC_CMD` | `## Metric` section, `command:` line |
+| `METRIC_NAME` | `## Metric` section, `name:` line |
+| `METRIC_DIR` | `## Metric` section, `direction:` line (`lower` \| `higher`) |
+| `BASELINE` | `## Metric` section, `baseline:` line (`null` = not yet measured) |
+| `GOAL` | `## Metric` section, `goal:` line (`null` = no goal) |
+| `CONSTRAINTS` | `## Constraints` section, each `- ` bullet as a shell command |
+| `RESEARCHER` | `## Models` section, `researcher:` line |
+| `EVALUATOR` | `## Models` section, `evaluator:` line (optional) |
+| `TARGET_MODEL` | `## Models` section, `target:` line (optional) |
+| `TIMEOUT` | `## Budget` section, `timeout:` line (seconds) |
+| `MAX_ITER` | `## Budget` section, `max_iterations:` line |
+| `PER_EXPERIMENT` | `## Budget` section, `per_experiment:` line |
+| `HINTS` | `## Hints` section, all bullet lines |
 
 ## Step 1: Setup
 
@@ -100,8 +96,6 @@ else:
 
 **1.6 Measure baseline (first run only):** If `BASELINE == null`: run all constraints (fail → exit); run METRIC_CMD → `BASELINE = BEST_METRIC`; update program file `baseline: {value}`; append baseline row to results.tsv.
 
----
-
 ## Step 2: Experiment Loop
 
 See `autoresearch/loop.md` for full loop pseudocode, hypothesis generation rules,
@@ -109,29 +103,21 @@ constraint checking, metric measurement, improvement check, and token estimation
 
 Loop exits when any budget condition is met (timeout / max_iterations / goal_reached).
 
----
-
 ## Step 3: Completion
 
 See `autoresearch/completion.md` for deregister, final memory, completion summary,
 cross-dimension summary, PR creation, crash recovery, and budget enforcement table.
-
----
 
 ## Logging, Memory & Mailbox
 
 See `autoresearch/logging.md` for results TSV schema, memory storage commands,
 and mailbox discovery integration (multi-dimension campaigns).
 
----
-
 ## Agent Optimization Domain
 
 When `PROGRAM_NAME == "agent-optimization"` or `METRIC_CMD` contains `agent-test-helper.sh`,
 load `autoresearch/agent-optimization.md` for composite metric parsing, security exemptions,
 simplification state integration, and hypothesis type ordering.
-
----
 
 ## Related
 
