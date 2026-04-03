@@ -8,7 +8,6 @@ Sub-doc for `autoresearch.md`. Loaded on demand during Step 2.
 
 ```text
 SESSION_START = current time
-ITER_TOKENS = 0
 
 while true:
     elapsed = now - SESSION_START
@@ -29,22 +28,18 @@ while true:
     constraint_result = run_constraints()
     if constraint_result == FAIL:
         git -C WORKTREE_PATH reset --hard HEAD
-        ITER_TOKENS = current_token_estimate() - ITER_START_TOKENS
-        TOTAL_TOKENS += ITER_TOKENS
+        track_tokens(ITER_START_TOKENS)
         log_result(ITERATION_COUNT, null, null, "constraint_fail", hypothesis, ITER_TOKENS)
         continue
 
     metric_result = run_metric()
     if metric_result == ERROR:
         git -C WORKTREE_PATH reset --hard HEAD
-        ITER_TOKENS = current_token_estimate() - ITER_START_TOKENS
-        TOTAL_TOKENS += ITER_TOKENS
+        track_tokens(ITER_START_TOKENS)
         log_result(ITERATION_COUNT, null, null, "crash", hypothesis, ITER_TOKENS)
         continue
 
-    delta = metric_result - BASELINE
-    ITER_TOKENS = current_token_estimate() - ITER_START_TOKENS
-    TOTAL_TOKENS += ITER_TOKENS
+    track_tokens(ITER_START_TOKENS)
 
     if is_improvement(metric_result, BEST_METRIC, METRIC_DIR):
         git -C WORKTREE_PATH add -A
@@ -60,6 +55,10 @@ while true:
         log_result(ITERATION_COUNT, null, metric_result, "discard", hypothesis, ITER_TOKENS)
         store_memory(hypothesis, metric_result, "discard")
         send_discovery(hypothesis, metric_result, "discard", null)
+
+# track_tokens helper (called above):
+#   ITER_TOKENS = current_token_estimate() - ITER_START_TOKENS
+#   TOTAL_TOKENS += ITER_TOKENS
 ```
 
 ---
@@ -88,54 +87,36 @@ while true:
 
 ### Rules
 
-- Never repeat a hypothesis that was already discarded (check FAILED_HYPOTHESES)
-- Prefer changes with high expected impact and low risk of constraint failure
-- For agent optimization: shorter instructions with higher information density > longer verbose instructions
-- For build optimization: structural changes (tree-shaking, module boundaries) > config tweaks
-- Simplification is always valid: removing code that doesn't affect the metric is a win
+- Never repeat a discarded hypothesis (check FAILED_HYPOTHESES)
+- Prefer high-impact changes with low constraint-failure risk
+- Agent optimization: higher information density > longer verbose instructions
+- Build optimization: structural changes (tree-shaking, module boundaries) > config tweaks
+- Simplification is always valid: less code with equal-or-better metric is a win
 
 ---
 
-## Constraint Checking
+## Helpers
+
+**Constraint check:**
 
 ```bash
 timeout PER_EXPERIMENT bash -c "{constraint_command}"
-exit_code=$?
-if exit_code != 0:
-    return FAIL with constraint_command and exit_code
+# exit_code != 0 → return FAIL; all constraints must pass (first failure short-circuits)
 ```
 
-All constraints must pass. First failure short-circuits.
-
----
-
-## Metric Measurement
+**Metric measurement:**
 
 ```bash
 timeout PER_EXPERIMENT bash -c "{METRIC_CMD}" 2>/dev/null
+# Parse last non-empty stdout line as float. Parsing failure or non-zero exit → ERROR.
 ```
 
-Parse the last non-empty line of stdout as a float. If parsing fails or command exits non-zero: return ERROR.
-
----
-
-## Improvement Check
+**Improvement check:**
 
 ```text
-is_improvement(new_value, best_value, direction):
-    if best_value == null: return true  # first measurement is always an improvement
-    if direction == "lower": return new_value < best_value
-    if direction == "higher": return new_value > best_value
+is_improvement(new, best, dir):
+    if best == null: return true   # first measurement always keeps
+    return new < best if dir=="lower" else new > best
 ```
 
----
-
-## Token Estimation
-
-```text
-current_token_estimate():
-    # chars-per-token ratio ~4; use API response token counts if available
-    return estimated_tokens
-```
-
-If the runtime exposes token counts in API responses, use those directly. Otherwise estimate from character count of tool calls and responses.
+**Token estimation:** Use API response token counts if available; otherwise estimate from character count (~4 chars/token).
