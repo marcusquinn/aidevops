@@ -35,7 +35,6 @@ tools:
 ```json
 {
   "name": "build-agent-tests",
-  "description": "Validates build-agent subagent knowledge",
   "agent": "Build+",
   "model": "anthropic/claude-sonnet-4-6",
   "timeout": 120,
@@ -51,7 +50,7 @@ tools:
 }
 ```
 
-Per-test fields (`agent`, `model`, `timeout`) override suite-level defaults.
+Per-test `agent`, `model`, `timeout` override suite-level defaults.
 
 ### Validation Fields
 
@@ -68,25 +67,16 @@ Per-test fields (`agent`, `model`, `timeout`) override suite-level defaults.
 ## Commands
 
 ```bash
-# Run suites
 agent-test-helper.sh run path/to/suite.json
 agent-test-helper.sh run smoke-test
-
-# Quick single-prompt test
 agent-test-helper.sh run-one "What is your primary purpose?"
 agent-test-helper.sh run-one "List your tools" --expect "bash"
 agent-test-helper.sh run-one "Explain git workflow" --agent "Build+" --model "anthropic/claude-sonnet-4-6" --timeout 60
-
-# Before/after comparison
 agent-test-helper.sh baseline smoke-test
 agent-test-helper.sh compare smoke-test
-
-# Manage suites
 agent-test-helper.sh create my-new-tests
 agent-test-helper.sh list
 agent-test-helper.sh results [suite-name]
-
-# CI/CD
 agent-test-helper.sh run agents-md-knowledge || { echo "Agent tests failed"; exit 1; }
 ```
 

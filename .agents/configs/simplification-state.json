@@ -3177,7 +3177,17 @@
       "passes": 1,
       "pr": 13007
     },
-    ".agents/tools/ai-orchestration/overview.md": {
+  ".agents/tools/build-agent/agent-testing.md": {
+    "at": "2026-04-03T00:00:00Z",
+    "hash": "e278c97958eb036c31006dd67f82708b6b4caf411c6e9e52ccaae9f67935972d",
+    "issue": "GH#15837",
+    "lines_after": 106,
+    "lines_before": 116,
+    "passes": 1,
+    "pr": "pending",
+    "status": "simplified"
+  },
+  ".agents/tools/ai-orchestration/overview.md": {
       "at": "2026-04-03T01:53:08Z",
       "hash": "4e97ab8ea80342eabab4b326411f74eaeb88bba0",
       "passes": 2,
