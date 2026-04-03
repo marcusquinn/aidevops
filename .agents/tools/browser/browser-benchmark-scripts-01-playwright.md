@@ -1,6 +1,6 @@
 # Playwright Benchmark Scripts
 
-Reference implementation for `browser-benchmark-scripts.md`. Target: `https://the-internet.herokuapp.com`. Tests: `navigate`, `formFill`, `extract`, `multiStep` — 3 runs each, median reported.
+Sequential and parallel Playwright benchmark scripts. Target: `https://the-internet.herokuapp.com`. See [`browser-benchmark-scripts.md`](browser-benchmark-scripts.md) for the full suite index.
 
 ## Sequential script
 
