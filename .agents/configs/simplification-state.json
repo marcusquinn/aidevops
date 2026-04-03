@@ -4689,6 +4689,12 @@
       "at": "2026-04-02T22:44:04Z",
       "pr": 15665,
       "passes": 1
+    },
+    ".agents/tools/security/tirith.md": {
+      "at": "2026-04-03T00:11:49Z",
+      "hash": "c3167839453b147ffc0fa1927ea7cba5d0880503b38645c88c39422479b0ed1d",
+      "passes": 1,
+      "pr": null
     }
   },
   ".agents/tools/ai-assistants/models-sonnet.md": {

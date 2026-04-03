@@ -20,12 +20,25 @@ tools:
 - **Purpose**: Pre-execution security guard for terminal commands
 - **Repo**: [github.com/sheeki03/tirith](https://github.com/sheeki03/tirith) (1.5k stars, Rust, AGPL-3.0)
 - **Key trait**: Sub-millisecond overhead, fully local, no network calls, no telemetry
-- **Coverage**: 30 rules across 7 categories
+- **Coverage**: 30 rules across 7 categories; critical rules block, medium rules warn
 - **Activation**: Add the shell hook once; every later command is checked automatically
-
-Browsers guard homograph attacks, ANSI injection, and suspicious URLs. Terminals usually don't. Tirith adds that check before command execution.
+- **aidevops**: setup.sh suggests install if missing; audit log at `~/.local/share/tirith/log.jsonl`
 
 <!-- AI-CONTEXT-END -->
+
+## What it catches
+
+| Category | What it stops |
+|----------|---------------|
+| **Homograph attacks** | Cyrillic/Greek lookalikes in hostnames, punycode domains, mixed-script labels |
+| **Terminal injection** | ANSI escape sequences that rewrite display, bidi overrides, zero-width characters |
+| **Pipe-to-shell** | `curl \| bash`, `wget \| sh`, `python <(curl ...)`, `eval $(wget ...)` |
+| **Dotfile attacks** | Downloads targeting `~/.bashrc`, `~/.ssh/authorized_keys`, `~/.gitconfig` |
+| **Insecure transport** | Plain HTTP piped to shell, `curl -k`, disabled TLS verification |
+| **Ecosystem threats** | Git clone typosquats, untrusted Docker registries, pip/npm URL installs |
+| **Credential exposure** | `http://user:pass@host` userinfo tricks, shortened URLs hiding destinations |
+
+Critical rules (homograph, dotfile) **block** execution. Medium rules (pipe-to-shell with clean URL) **warn** but allow.
 
 ## Install and activate
 
@@ -44,20 +57,6 @@ eval "$(tirith init --shell bash)"  # ~/.bashrc
 tirith init --shell fish | source   # ~/.config/fish/config.fish
 ```
 
-## What it catches
-
-| Category | What it stops |
-|----------|---------------|
-| **Homograph attacks** | Cyrillic/Greek lookalikes in hostnames, punycode domains, mixed-script labels |
-| **Terminal injection** | ANSI escape sequences that rewrite display, bidi overrides, zero-width characters |
-| **Pipe-to-shell** | `curl \| bash`, `wget \| sh`, `python <(curl ...)`, `eval $(wget ...)` |
-| **Dotfile attacks** | Downloads targeting `~/.bashrc`, `~/.ssh/authorized_keys`, `~/.gitconfig` |
-| **Insecure transport** | Plain HTTP piped to shell, `curl -k`, disabled TLS verification |
-| **Ecosystem threats** | Git clone typosquats, untrusted Docker registries, pip/npm URL installs |
-| **Credential exposure** | `http://user:pass@host` userinfo tricks, shortened URLs hiding destinations |
-
-Critical rules (homograph, dotfile) **block** execution. Medium rules (pipe-to-shell with clean URL) **warn** but allow.
-
 ## Commands
 
 ```bash
@@ -68,6 +67,7 @@ tirith run <url>               # Safe curl|bash replacement (download, review, c
 tirith receipt list            # Audit trail of scripts run via tirith run
 tirith why                     # Explain last triggered rule
 tirith doctor                  # Diagnostic check (shell, hooks, policy)
+TIRITH=0 <cmd>                 # One-command bypass (does not persist)
 ```
 
 ## Configuration
@@ -87,12 +87,6 @@ fail_mode: open  # or "closed" for strict environments
 ```
 
 Set `allow_bypass: false` to prevent per-command bypass in org environments.
-
-## Bypass
-
-```bash
-TIRITH=0 curl -L https://known-safe.example.com | bash  # one command only, does not persist
-```
 
 ## Integration with aidevops
 
