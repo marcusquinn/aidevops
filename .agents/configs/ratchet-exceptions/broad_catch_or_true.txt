@@ -1,0 +1,6 @@
+# Ratchet exceptions: broad_catch_or_true
+# Format: file:line reason
+# Lines starting with # are comments.
+# Each entry subtracts 1 from the raw count for this pattern.
+# Example:
+#   .agents/scripts/some-helper.sh:88 intentional: non-critical cleanup step

@@ -1,0 +1,6 @@
+# Ratchet exceptions: hardcoded_aidevops_path
+# Format: file:line reason
+# Lines starting with # are comments.
+# Each entry subtracts 1 from the raw count for this pattern.
+# Example:
+#   .agents/scripts/setup.sh:15 intentional default path definition

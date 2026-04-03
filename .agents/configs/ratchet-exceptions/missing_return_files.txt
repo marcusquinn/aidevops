@@ -1,0 +1,6 @@
+# Ratchet exceptions: missing_return_files
+# Format: file reason
+# Lines starting with # are comments.
+# Each entry subtracts 1 from the raw count for this pattern.
+# Example:
+#   .agents/scripts/some-helper.sh utility-only script, no functions need explicit return
