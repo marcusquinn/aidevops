@@ -10,30 +10,22 @@ Arguments: `$ARGUMENTS`
 
 ## Workflow
 
-### Step 1: Select the helper
+**Step 1: Select the helper** based on argument type:
 
-- `example.com` → infrastructure: `email-health-check-helper.sh check "$DOMAIN"`
-- `newsletter.html` → content: `email-health-check-helper.sh content-check "$FILE"`
-- `example.com newsletter.html` → combined: `email-health-check-helper.sh precheck "$DOMAIN" "$FILE"`
-- Extra selector/check arg (`example.com spf`, `newsletter.html check-links`) → targeted check
+| Input | Command |
+|-------|---------|
+| `example.com` | `email-health-check-helper.sh check "$DOMAIN"` |
+| `newsletter.html` | `email-health-check-helper.sh content-check "$FILE"` |
+| `example.com newsletter.html` | `email-health-check-helper.sh precheck "$DOMAIN" "$FILE"` |
+| Extra selector/check arg (`example.com spf`, `newsletter.html check-links`) | Targeted check |
 
-```bash
-# Domain
-~/.aidevops/agents/scripts/email-health-check-helper.sh check "$DOMAIN"
+All scripts: `~/.aidevops/agents/scripts/email-health-check-helper.sh`
 
-# HTML file
-~/.aidevops/agents/scripts/email-health-check-helper.sh content-check "$FILE"
+**Step 2: Format the report** — keep helper findings verbatim, end with actionable recommendations:
 
-# Domain + HTML file
-~/.aidevops/agents/scripts/email-health-check-helper.sh precheck "$DOMAIN" "$FILE"
-```
-
-### Step 2: Format the report
-
-- Infrastructure: score out of 15 for SPF, DKIM, DMARC, MX, blacklist
-- Content: score out of 10 for subject, preheader, accessibility, links, images, spam words
-- Combined runs: score out of 25 with a letter grade
-- Keep helper findings verbatim and end with actionable recommendations
+- Infrastructure: score out of 15 (SPF, DKIM, DMARC, MX, blacklist)
+- Content: score out of 10 (subject, preheader, accessibility, links, images, spam words)
+- Combined: score out of 25 with letter grade
 
 ## Options
 
