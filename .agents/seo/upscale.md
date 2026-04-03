@@ -11,8 +11,9 @@ tools:
 
 # Image Upscaling
 
-- **Decision tree**: Real-ESRGAN for bulk/privacy, Replicate for best quality, Cloudflare for CDN-integrated resizing.
-- **Minimum targets**: 1200px wide for social sharing, 800px for blog content, 2x variants for retina.
+**Decision**: Real-ESRGAN (bulk/privacy) → Replicate (best quality) → Cloudflare (CDN resize only) → Sharp (format conversion only).
+
+**Minimum targets**: 1200px wide for social sharing, 800px for blog content, 2x variants for retina.
 
 ## Providers
 
@@ -21,21 +22,17 @@ tools:
 ```bash
 brew install real-esrgan  # macOS; or pip install realesrgan
 
-# Single image (4x default)
-realesrgan-ncnn-vulkan -i input.jpg -o output.jpg
-# Specific scale
-realesrgan-ncnn-vulkan -i input.jpg -o output.jpg -s 2
-# Batch directory
-realesrgan-ncnn-vulkan -i /path/to/images/ -o /path/to/output/
-# Specify model
-realesrgan-ncnn-vulkan -i input.jpg -o output.jpg -n realesrgan-x4plus
+realesrgan-ncnn-vulkan -i input.jpg -o output.jpg           # 4x default
+realesrgan-ncnn-vulkan -i input.jpg -o output.jpg -s 2      # specific scale
+realesrgan-ncnn-vulkan -i /path/to/images/ -o /path/to/output/  # batch
+realesrgan-ncnn-vulkan -i input.jpg -o output.jpg -n realesrgan-x4plus  # model
 ```
 
-| Model | Best for | Scale |
-|-------|----------|-------|
-| `realesrgan-x4plus` | General photos (default) | 4x |
-| `realesrgan-x4plus-anime` | Illustrations, anime | 4x |
-| `realesr-animevideov3` | Video frames | 4x |
+| Model | Best for |
+|-------|----------|
+| `realesrgan-x4plus` | General photos (default, 4x) |
+| `realesrgan-x4plus-anime` | Illustrations, anime (4x) |
+| `realesr-animevideov3` | Video frames (4x) |
 
 ### Replicate API (Cloud — Best Quality)
 
@@ -45,10 +42,8 @@ aidevops secret set REPLICATE_API_TOKEN
 curl -s -X POST https://api.replicate.com/v1/predictions \
   -H "Authorization: Bearer $REPLICATE_API_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{
-    "version": "42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b",
-    "input": {"image": "https://example.com/low-res-image.jpg", "scale": 4, "face_enhance": true}
-  }'
+  -d '{"version": "42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b",
+       "input": {"image": "https://example.com/low-res-image.jpg", "scale": 4, "face_enhance": true}}'
 
 # Poll result
 curl -s "https://api.replicate.com/v1/predictions/$PREDICTION_ID" \
@@ -64,25 +59,21 @@ curl -s "https://api.replicate.com/v1/predictions/$PREDICTION_ID" \
 
 ### Cloudflare Images (CDN-Integrated)
 
-Resize and optimize on the fly. Not AI upscaling; use it for format conversion and responsive delivery when already on Cloudflare Pro+.
+Not AI upscaling. Use for format conversion and responsive delivery on Cloudflare Pro+.
 
 ```bash
-# Upload via API
 curl -X POST "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/images/v1" \
-  -H "Authorization: Bearer $CF_API_TOKEN" \
-  -F "file=@image.jpg"
+  -H "Authorization: Bearer $CF_API_TOKEN" -F "file=@image.jpg"
 # URL-based resizing: /cdn-cgi/image/width=1200,format=webp/image.jpg
 ```
 
 ### Sharp (Node.js — Format Conversion)
 
-Not upscaling. Use it for WebP/AVIF conversion, responsive variants, and `withoutEnlargement` safety.
+Not upscaling. Use for WebP/AVIF conversion, responsive variants, and `withoutEnlargement` safety.
 
 ```javascript
 import sharp from 'sharp';
-
 await sharp('input.jpg').resize(1200, null, { withoutEnlargement: true }).webp({ quality: 80 }).toFile('output.webp');
-
 for (const width of [400, 800, 1200, 1600]) {
   await sharp('input.jpg').resize(width).webp({ quality: 80 }).toFile(`output-${width}w.webp`);
 }
