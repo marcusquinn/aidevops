@@ -4,31 +4,19 @@ agent: Build+
 mode: subagent
 ---
 
-Run local email design tests (HTML, CSS, accessibility, images, links) and optionally submit to Email on Acid (EOA) for real-client rendering.
-
 Arguments: $ARGUMENTS
 
 ## Dispatch
 
 Parse `$ARGUMENTS`: HTML file path → local tests; `eoa` prefix → EOA API commands; empty/help → show usage.
 
-**Local tests (no API key):**
+| Mode | Command |
+|------|---------|
+| Local tests (no API key) | `email-design-test-helper.sh test "$ARGUMENTS"` |
+| Full EOA test (local + API rendering) | `email-design-test-helper.sh eoa-test "$ARGUMENTS"` |
+| Sandbox mode (no API key) | `email-design-test-helper.sh eoa-sandbox "$ARGUMENTS"` |
 
-```bash
-~/.aidevops/agents/scripts/email-design-test-helper.sh test "$ARGUMENTS"
-```
-
-**Full EOA test (local + API rendering):**
-
-```bash
-~/.aidevops/agents/scripts/email-design-test-helper.sh eoa-test "$ARGUMENTS"
-```
-
-**Sandbox mode (no API key):**
-
-```bash
-~/.aidevops/agents/scripts/email-design-test-helper.sh eoa-sandbox "$ARGUMENTS"
-```
+All scripts at `~/.aidevops/agents/scripts/`.
 
 ## Output
 
