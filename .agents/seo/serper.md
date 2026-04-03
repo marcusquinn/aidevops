@@ -23,8 +23,6 @@ source ~/.config/aidevops/credentials.sh
 SERPER_CURL=(-s -X POST -H "X-API-KEY: $SERPER_API_KEY" -H "Content-Type: application/json")
 ```
 
-<!-- AI-CONTEXT-END -->
-
 ## Endpoints
 
 Common params: `gl` (country: `"us"`,`"gb"`,`"de"`), `hl` (lang: `"en"`), `num` (results: 10–100), `tbs` (time: `"qdr:h/d/w/m"`), `page`.
@@ -58,3 +56,5 @@ curl "${SERPER_CURL[@]}" https://google.serper.dev/scholar \
 curl "${SERPER_CURL[@]}" https://google.serper.dev/autocomplete \
   -d '{"q": "partial query"}'
 ```
+
+<!-- AI-CONTEXT-END -->

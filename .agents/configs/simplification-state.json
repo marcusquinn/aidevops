@@ -5,7 +5,7 @@
     "issue": "GH#16713",
     "lines_after": 61,
     "lines_before": 61,
-    "note": "Pass 2: instruction doc at minimum viable size. Previously tightened 82→61 lines (GH#15698, PR#16081). All sections necessary: YAML frontmatter, workflow steps, analysis types table, TOON output format. No further compression possible without content loss.",
+    "note": "Pass 2: instruction doc at minimum viable size. Previously tightened 82\u219261 lines (GH#15698, PR#16081). All sections necessary: YAML frontmatter, workflow steps, analysis types table, TOON output format. No further compression possible without content loss.",
     "passes": 2,
     "pr": "pending",
     "status": "simplified"
@@ -5763,5 +5763,11 @@
     "hash": "42730e6d8c7fb235e7594467232c9ab9d4f69db6e66316c6d6e073ad6d3838f9",
     "issue": "GH#16671",
     "status": "simplified"
+  },
+  ".agents/seo/serper.md": {
+    "hash": "3d0adf5a1a1e65e20e30d3ba749a1d2fccc090dcdad90dcbc8bbb6a254317e72",
+    "status": "simplified",
+    "issue": "GH#16731",
+    "lines": 60
   }
 }
