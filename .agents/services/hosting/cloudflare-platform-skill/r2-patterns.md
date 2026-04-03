@@ -1,126 +1,24 @@
 # R2 Patterns & Best Practices
 
-## Streaming Large Files
+Reference corpus for R2 storage code examples. Content moved into chapter files to keep the entry point short while preserving every example.
 
-```typescript
-const object = await env.MY_BUCKET.get(key);
-if (!object) return new Response('Not found', { status: 404 });
+## Chapters
 
-const headers = new Headers();
-object.writeHttpMetadata(headers);
-headers.set('etag', object.httpEtag);
+- [01-streaming-large-files.md](./r2-patterns/01-streaming-large-files.md) - Stream objects with `writeHttpMetadata` and ETag headers.
+- [02-conditional-get.md](./r2-patterns/02-conditional-get.md) - Conditional GET returning 304 Not Modified via `onlyIf.etagDoesNotMatch`.
+- [03-upload-with-validation.md](./r2-patterns/03-upload-with-validation.md) - Key sanitisation, content-type metadata, and upload response.
+- [04-multipart-with-progress.md](./r2-patterns/04-multipart-with-progress.md) - 5MB-part multipart upload with progress callback and abort on error.
+- [05-batch-delete.md](./r2-patterns/05-batch-delete.md) - Paginated prefix delete using `list` cursor loop.
+- [06-checksum-validation.md](./r2-patterns/06-checksum-validation.md) - SHA-256 integrity on put and verify on retrieval.
+- [07-storage-class-transitions.md](./r2-patterns/07-storage-class-transitions.md) - Storage class change via S3-compatible API (not Workers binding).
+- [08-public-bucket-custom-domain.md](./r2-patterns/08-public-bucket-custom-domain.md) - CORS and long-lived cache headers for public bucket serving.
 
-return new Response(object.body, { headers });
-```
+## Related
 
-## Conditional GET (304 Not Modified)
+- [r2.md](./r2.md) - API overview, bindings, and core capabilities.
+- [r2-gotchas.md](./r2-gotchas.md) - Common pitfalls and edge cases.
 
-```typescript
-const ifNoneMatch = request.headers.get('if-none-match');
-const object = await env.MY_BUCKET.get(key, {
-  onlyIf: { etagDoesNotMatch: ifNoneMatch?.replace(/"/g, '') || '' }
-});
+## Preservation Notes
 
-if (!object) return new Response('Not found', { status: 404 });
-if (!object.body) return new Response(null, { status: 304, headers: { 'etag': object.httpEtag } });
-
-return new Response(object.body, { headers: { 'etag': object.httpEtag } });
-```
-
-## Upload with Validation
-
-```typescript
-const key = url.pathname.slice(1);
-if (!key || key.includes('..')) return new Response('Invalid key', { status: 400 });
-
-const object = await env.MY_BUCKET.put(key, request.body, {
-  httpMetadata: { contentType: request.headers.get('content-type') || 'application/octet-stream' },
-  customMetadata: { uploadedAt: new Date().toISOString(), ip: request.headers.get('cf-connecting-ip') || 'unknown' }
-});
-
-return Response.json({ key: object.key, size: object.size, etag: object.httpEtag });
-```
-
-## Multipart with Progress
-
-```typescript
-const PART_SIZE = 5 * 1024 * 1024; // 5MB
-const partCount = Math.ceil(file.size / PART_SIZE);
-const multipart = await env.MY_BUCKET.createMultipartUpload(key, { httpMetadata: { contentType: file.type } });
-
-const uploadedParts: R2UploadedPart[] = [];
-try {
-  for (let i = 0; i < partCount; i++) {
-    const start = i * PART_SIZE;
-    const part = await multipart.uploadPart(i + 1, file.slice(start, start + PART_SIZE));
-    uploadedParts.push(part);
-    onProgress?.(Math.round(((i + 1) / partCount) * 100));
-  }
-  return await multipart.complete(uploadedParts);
-} catch (error) {
-  await multipart.abort();
-  throw error;
-}
-```
-
-## Batch Delete
-
-```typescript
-async function deletePrefix(prefix: string, env: Env) {
-  let cursor: string | undefined;
-  let truncated = true;
-
-  while (truncated) {
-    const listed = await env.MY_BUCKET.list({ prefix, limit: 1000, cursor });
-    if (listed.objects.length > 0) {
-      await env.MY_BUCKET.delete(listed.objects.map(o => o.key));
-    }
-    truncated = listed.truncated;
-    cursor = listed.cursor;
-  }
-}
-```
-
-## Checksum Validation
-
-```typescript
-const hash = await crypto.subtle.digest('SHA-256', data);
-await env.MY_BUCKET.put(key, data, { sha256: hash });
-
-// Verify on retrieval
-const object = await env.MY_BUCKET.get(key);
-const retrievedHash = await crypto.subtle.digest('SHA-256', await object.arrayBuffer());
-const valid = object.checksums.sha256 && arrayBuffersEqual(retrievedHash, object.checksums.sha256);
-```
-
-## Storage Class Transitions
-
-Uses S3-compatible API (not Workers binding):
-
-```typescript
-const s3 = new S3Client({...});
-await s3.send(new CopyObjectCommand({
-  Bucket: 'my-bucket',
-  Key: key,
-  CopySource: `/my-bucket/${key}`,
-  StorageClass: 'STANDARD_IA'
-}));
-```
-
-## Public Bucket with Custom Domain
-
-Extends the streaming pattern with CORS and long-lived cache headers:
-
-```typescript
-const key = new URL(request.url).pathname.slice(1);
-const object = await env.MY_BUCKET.get(key);
-if (!object) return new Response('Not found', { status: 404 });
-
-const headers = new Headers();
-object.writeHttpMetadata(headers);
-headers.set('etag', object.httpEtag);
-headers.set('access-control-allow-origin', '*');
-headers.set('cache-control', 'public, max-age=31536000, immutable');
-
-return new Response(object.body, { headers });
-```
+- All original code blocks moved to the chapter files above.
+- No examples were removed; this file is now the index for the same material.
