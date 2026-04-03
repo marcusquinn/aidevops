@@ -37,7 +37,7 @@ npx wrangler pipelines create my-pipeline --sql "INSERT INTO my_sink SELECT * FR
 # Deleting a stream also deletes dependent pipelines and buffered events
 ```
 
-**Schema (structured streams):** JSON with `name`, `type`, `required`; optional `items` (list) or `fields` (struct). Omit `--schema-file` for unstructured streams (no validation, single `value` column).
+**Schema (structured streams):** Fields with `name`, `type`, `required`; optional `items` (list) or `fields` (struct). Omit `--schema-file` for unstructured streams (no validation, single `value` column).
 
 ```json
 {
