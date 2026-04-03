@@ -18,15 +18,12 @@ tools:
 
 ## Quick Reference
 
-| Item | Details |
-|------|---------|
-| Purpose | Fast, lightweight Docker and Linux VM runtime for macOS; Docker Desktop replacement |
-| Install | `brew install orbstack` · verify: `orb status` and `docker --version` |
-| CLI | `orb` for OrbStack management; `docker` / `docker compose` for container workflows |
-| Docs | https://docs.orbstack.dev · https://orbstack.dev · https://github.com/orbstack/orbstack |
-| Pricing | Free for personal use, paid for teams |
-
-Prefer OrbStack for lower memory use, faster startup, native macOS integration, `.orb.local` DNS, built-in Linux VMs, or Rosetta x86 emulation on Apple Silicon.
+- **Purpose**: Fast, lightweight Docker and Linux VM runtime for macOS; Docker Desktop replacement
+- **Install**: `brew install orbstack` · verify: `orb status` and `docker --version`
+- **CLI**: `orb` (management) + `docker` / `docker compose` (container workflows — all existing commands work unchanged)
+- **Docs**: https://docs.orbstack.dev · https://orbstack.dev · https://github.com/orbstack/orbstack
+- **Pricing**: Free for personal use, paid for teams
+- **When to use**: Lower memory, faster startup, native macOS integration, `.orb.local` DNS, built-in Linux VMs, Rosetta x86 emulation on Apple Silicon
 
 <!-- AI-CONTEXT-END -->
 
