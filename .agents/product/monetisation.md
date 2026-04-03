@@ -56,8 +56,6 @@ Can recommend relevant products?   -> Affiliate links + optional premium tier
 | Desktop apps | Stripe, Paddle | LemonSqueezy, Gumroad | |
 | Web apps / SaaS | Stripe | Paddle, LemonSqueezy | |
 
-Superwall handles remote paywall config and price/layout/copy A/B testing (`services/payments/superwall.md`).
-
 ## Define Entitlements
 
 Products → entitlements → feature gates:
@@ -71,11 +69,7 @@ Products → entitlements → feature gates:
 
 ## Design Paywall
 
-- Show at moment of highest intent (after user tries a premium feature)
-- Display value proposition, not price
-- Offer 3 tiers: weekly (highest per-unit), monthly (default), annual (best value) — highlight "best value"
-- Include free trial and social proof
-- "Restore Purchases" must be accessible (mobile)
+Show at moment of highest intent. Display value proposition, not price. Offer 3 tiers: weekly (highest per-unit), monthly (default), annual (best value — highlight this). Include free trial and social proof. "Restore Purchases" must be accessible (mobile).
 
 **Placement by conversion rate**:
 
@@ -95,11 +89,11 @@ Products → entitlements → feature gates:
 | 7-day | Lower | Higher | Subscriptions (recommended) |
 | No trial | Lowest | Highest | One-time purchases |
 
-A/B test price points, paywall designs, trial lengths, and feature gates with RevenueCat Experiments, Superwall, or Stripe test mode.
+A/B test price points, paywall designs, trial lengths, and feature gates via RevenueCat Experiments or Superwall (Superwall also handles remote paywall config). Stripe test mode validates checkout and billing flows — it is not an A/B testing tool.
 
 ## Set Pricing
 
-Process: competitor pricing → user WTP survey → start competitive → adjust on data. Annual plans: 15-40% discount vs monthly.
+Process: competitor pricing → WTP survey → start competitive → adjust on data. Annual plans: 15–40% discount vs monthly.
 
 | Model | Typical Range |
 |-------|--------------|
