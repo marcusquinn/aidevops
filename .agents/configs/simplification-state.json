@@ -5142,5 +5142,11 @@
     "hash": "3d566d9fbf05fdee08380d0ffbaf538854887e326c9b658e8236d837c8993cb3",
     "status": "simplified",
     "lines": 63
+  },
+  ".agents/tools/code-review/tools.md": {
+    "at": "2026-04-03T00:00:00Z",
+    "hash": "b767318f3046f9a52ff3d31a2f733bb83f4e5475501f57862a874c05e853ad7b",
+    "issue": "GH#16449",
+    "status": "simplified"
   }
 }
