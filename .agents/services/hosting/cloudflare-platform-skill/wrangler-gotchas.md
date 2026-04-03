@@ -4,15 +4,15 @@ Pitfalls and troubleshooting for the Wrangler CLI.
 
 ## Gotchas
 
-**Binding IDs vs Names** — `binding` = code name; `id`/`database_id`/`bucket_name` = resource ID. Preview bindings need separate IDs: `preview_id`, `preview_database_id`.
-
-**Environment Inheritance** — Non-inheritable (bindings, vars): must redeclare per env. Inheritable (routes, `compatibility_date`): can override.
-
 **Compatibility Dates** — Always set; omitting causes unexpected runtime changes:
 
 ```jsonc
 { "compatibility_date": "2025-01-01" }
 ```
+
+**Binding IDs vs Names** — `binding` = code name; `id`/`database_id`/`bucket_name` = resource ID. Preview bindings need separate IDs: `preview_id`, `preview_database_id`.
+
+**Environment Inheritance** — Non-inheritable (bindings, vars): must redeclare per env. Inheritable (routes, `compatibility_date`): can override.
 
 **Durable Objects Need `script_name`** — With `getPlatformProxy`, always specify:
 
@@ -24,7 +24,7 @@ Pitfalls and troubleshooting for the Wrangler CLI.
 }
 ```
 
-**Node.js Compatibility** — Some bindings (e.g., Hyperdrive with `pg`) require:
+**Node.js Compatibility** — Bindings using Node APIs (e.g., Hyperdrive with `pg`) require:
 
 ```jsonc
 { "compatibility_flags": ["nodejs_compat_v2"] }
