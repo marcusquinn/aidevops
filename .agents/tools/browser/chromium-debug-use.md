@@ -31,7 +31,7 @@ tools:
 
 Use this path only when aidevops explicitly needs to inspect or automate your live Chromium-family browser. Do not leave remote debugging enabled as a standing default.
 
-Launching with `--remote-debugging-port=9222` grants local processes profile-level access (cookies, local storage, logged-in tabs) until that browser is closed or restarted without the flag.
+`--remote-debugging-port=9222` grants local processes profile-level access (cookies, local storage, logged-in tabs) until the browser is closed or restarted without the flag.
 
 Security boundaries:
 
@@ -159,7 +159,7 @@ Rule of thumb: inspect and gather facts with `chromium-debug-use`, then formaliz
 | Fast isolated automation / repeatable scripts / CI | `tools/browser/playwright.md` |
 | Natural-language experimentation before locking in selectors | `tools/browser/stagehand.md` |
 
-For Chrome, Brave, Edge, and Vivaldi, enablement requires relaunching with the debug flag (profile-level consent). For Playwriter, enablement requires clicking the extension per tab (narrower consent). Both are local-only and user-approved — not ambient or permanent access.
+Chrome/Brave/Edge/Vivaldi require relaunching with the debug flag (profile-level consent). Playwriter requires clicking the extension per tab (narrower consent). Both are local-only and user-approved.
 
 ## Troubleshooting
 
@@ -180,7 +180,7 @@ For Chrome, Brave, Edge, and Vivaldi, enablement requires relaunching with the d
 
 ### Electron Apps
 
-Electron embeds Chromium and can expose a CDP endpoint, but there is no universal contract. CDP attachment may work when the app is launched with `--remote-debugging-port=N` and does not strip or conflict with that flag. Support must be app-specific: each app controls whether the debug port is exposed; apps with auto-update or code signing may reject modified launch arguments; some apps (VS Code, Figma desktop, Slack) accept the flag in dev builds but block it in production.
+Electron embeds Chromium and can expose a CDP endpoint, but there is no universal contract. CDP attachment may work when the app is launched with `--remote-debugging-port=N` and does not strip or conflict with that flag. Support is app-specific: each app controls whether the debug port is exposed; apps with auto-update or code signing may reject modified launch arguments; some apps (VS Code, Figma desktop, Slack) accept the flag in dev builds but block it in production.
 
 **Decision rule:** Verify the target app exposes a working `/json/version` endpoint when launched with the debug flag. If not, this workflow does not apply.
 
