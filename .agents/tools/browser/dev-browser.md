@@ -29,11 +29,15 @@ tools:
 
 | Use | Don't Use |
 |-----|-----------|
-| Local dev servers, multi-step workflows | Need YOUR existing Chrome profile -> Playwriter |
-| Stay logged in across sessions | Parallel isolated sessions -> Playwright direct |
-| Source code access for selectors | Natural language automation -> Stagehand |
+| Local dev servers, multi-step workflows | Need YOUR existing Chrome profile → Playwriter |
+| Stay logged in across sessions | Parallel isolated sessions → Playwright direct |
+| Source code access for selectors | Natural language automation → Stagehand |
 
 <!-- AI-CONTEXT-END -->
+
+## Security
+
+> **Screenshot size limit (session-crashing)**: NEVER use `fullPage: true` for AI vision review — full-page captures can exceed 8000px (Anthropic hard-rejects images >8000px). Use viewport-sized screenshots for AI. For human review: `magick tmp/full.png -resize "1568x1568>" tmp/full-resized.png`. See `rg "Screenshot Size Limits" .agents/prompts/build.txt`.
 
 ## Setup
 
@@ -71,13 +75,13 @@ EOF
 
 1. **Small scripts**: each does ONE thing
 2. **Evaluate state**: always log state at the end
-3. **Use page names**: `"main"`, `"checkout"`, `"login"` -- pages persist by name across script executions
+3. **Use page names**: `"main"`, `"checkout"`, `"login"` — pages persist by name across script executions
 4. **Disconnect to exit**: `await client.disconnect()` at the end
 5. **Plain JS in evaluate**: no TypeScript inside `page.evaluate()`
 
 ## Element Discovery
 
-Three approaches (all use the script template above -- only the operations block differs):
+Three approaches (all use the script template above — only the operations block differs):
 
 **ARIA Snapshot** (unknown page structure):
 
@@ -103,11 +107,9 @@ await page.fill('input[name="email"]', 'test@example.com');
 
 ## Common Operations
 
-All examples below show only the operations block -- wrap in the script template above.
+All examples below show only the operations block — wrap in the script template above.
 
 **Navigate and screenshot:**
-
-> **Screenshot size limit**: Do NOT use `fullPage: true` for AI vision review -- full-page captures can exceed 8000px (Anthropic hard-rejects images >8000px). Use viewport-sized screenshots for AI. For human review: `magick tmp/full.png -resize "1568x1568>" tmp/full-resized.png`. See `prompts/build.txt` "Screenshot Size Limits".
 
 ```typescript
 await page.goto("http://localhost:3000/dashboard");
@@ -134,13 +136,13 @@ const items = await page.$$eval('.item', els => els.map(e => e.textContent));
 console.log({ heading, items });
 ```
 
-**Multi-page workflow** -- use the same page name across separate script executions to maintain session state (cookies, localStorage):
+**Multi-page workflow** — use the same page name across separate script executions to maintain session state (cookies, localStorage):
 
 ```bash
 # Script 1: Login (page name "app")
 # ... page = await client.page("app"); await page.goto(".../login"); fill + submit ...
 
-# Script 2: Navigate (same "app" page -- still logged in!)
+# Script 2: Navigate (same "app" page — still logged in!)
 # ... page = await client.page("app"); await page.goto(".../settings"); ...
 ```
 
@@ -156,7 +158,7 @@ BROWSER_EXECUTABLE="/Applications/Brave Browser.app/Contents/MacOS/Brave Browser
 
 If the server doesn't expose `executablePath`, use Playwright direct with `launchPersistentContext` for persistent profile + custom browser.
 
-**Extensions** (e.g. uBlock Origin): Start headed (`start`, not `start-headless`), install from Chrome Web Store -- persists in profile. Alternative: Brave Shields provides equivalent blocking without extensions.
+**Extensions** (e.g. uBlock Origin): Start headed (`start`, not `start-headless`), install from Chrome Web Store — persists in profile. Alternative: Brave Shields provides equivalent blocking without extensions.
 
 ## Comparison with Other Browser Tools
 
