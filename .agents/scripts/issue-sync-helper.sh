@@ -902,12 +902,18 @@ cmd_reopen() {
 		fi
 
 		# Check if a merged PR exists for this task — if so, the closure is
-		# legitimate (work done) even though TODO is still [ ]. Skip reopen;
-		# the TODO needs marking [x] via task-complete-helper.sh, not reopening.
+		# legitimate (work done). Mark TODO [x] with pr:# instead of reopening.
 		local pr_info
 		pr_info=$(gh_find_merged_pr "$repo" "$tid" 2>/dev/null || echo "")
 		if [[ -n "$pr_info" ]]; then
-			log_verbose "#$ref_num ($tid) has merged PR — closure legitimate, skipping"
+			local pr_num="${pr_info%%|*}"
+			if [[ "$DRY_RUN" == "true" ]]; then
+				print_info "[DRY-RUN] Would mark $tid [x] (merged PR #$pr_num)"
+			else
+				add_pr_ref_to_todo "$tid" "$pr_num" "$todo_file" 2>/dev/null || true
+				_mark_todo_done "$tid" "$todo_file"
+				log_verbose "#$ref_num ($tid) has merged PR #$pr_num — marked TODO [x]"
+			fi
 			has_pr=$((has_pr + 1))
 			continue
 		fi
