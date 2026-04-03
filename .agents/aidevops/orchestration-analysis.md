@@ -74,29 +74,19 @@ Gate: `critical` and `high` only. Check duplicates first: `gh issue list --repo 
 ```bash
 REPO="marcusquinn/aidevops"
 SIG_FOOTER=$(~/.aidevops/agents/scripts/gh-signature-helper.sh footer \
-  --model "${ANTHROPIC_MODEL:-unknown}" \
-  --no-session --session-type worker 2>/dev/null || echo "")
-
-gh issue create \
-  --repo "$REPO" \
+  --model "${ANTHROPIC_MODEL:-unknown}" --no-session --session-type worker 2>/dev/null || echo "")
+gh issue create --repo "$REPO" \
   --title "fix: <finding title from analysis>" \
   --label "auto-dispatch,priority:high" \
   --body "## Orchestration Efficiency Finding
-
-**Date**: $(date -u +%Y-%m-%d)
-**Severity**: <critical|high>
-**Metric**: <metric.path> = <value>
-
+**Date**: $(date -u +%Y-%m-%d) | **Severity**: <critical|high> | **Metric**: <metric.path> = <value>
 ### Root Cause
 <root cause hypothesis>
-
 ### Recommendation
 <specific recommendation>
-
 ### Expected Impact
 <quantified saving>
-
-_Auto-filed by orchestration-analysis agent from efficiency report._
+_Auto-filed by orchestration-analysis agent._
 ${SIG_FOOTER}"
 ```
 
@@ -104,24 +94,16 @@ ${SIG_FOOTER}"
 
 ```
 # Orchestration Efficiency Analysis — YYYY-MM-DD
-
 ## Summary
-- **Confidence**: high | medium | low
-- **Findings**: N critical, N high, N medium, N low
-- **Issues filed**: N (list issue numbers)
-- **Total cost today**: $X.XX
-- **vs yesterday**: ↑/↓/→ X%
-- **vs 7-day avg**: ↑/↓/→ X%
-
+- **Confidence**: high | medium | low  **Findings**: N critical, N high, N medium, N low
+- **Issues filed**: N (list numbers)  **Total cost today**: $X.XX
+- **vs yesterday**: ↑/↓/→ X%  **vs 7-day avg**: ↑/↓/→ X%
 ## Top 3 Findings
 [findings in severity order]
-
 ## Trend Analysis
 [comparison table if historical data available]
-
 ## Meta-Assessment
 [data quality assessment and instrumentation gaps]
-
 ## All Findings
 [complete list including medium/low]
 ```
@@ -130,13 +112,6 @@ ${SIG_FOOTER}"
 
 Invoked by `sh.aidevops.efficiency-analysis` launchd job:
 - **Phase 1** (collector): 05:00 daily → `efficiency-report-YYYY-MM-DD.json`
-- **Phase 2** (this agent): conditional — skipped if all skip thresholds pass AND not Sunday
+- **Phase 2** (this agent): conditional — skipped if ALL skip thresholds pass AND not Sunday
 
-**Skip thresholds** (all must pass to skip):
-- `errors.launch_failure_rate_pct` < 5%
-- `concurrency.fill_rate_pct` > 40%
-- `audit_trails.issues_closed_without_pr_link` == 0
-- `audit_trails.prs_without_merge_summary` == 0
-- `token_efficiency.tokens_wasted_on_stalls` < 50000
-
-Any threshold exceeded → Phase 2 runs regardless of day.
+**Skip thresholds** (all must pass to skip): `errors.launch_failure_rate_pct` < 5%, `concurrency.fill_rate_pct` > 40%, `audit_trails.issues_closed_without_pr_link` == 0, `audit_trails.prs_without_merge_summary` == 0, `token_efficiency.tokens_wasted_on_stalls` < 50000. Any threshold exceeded → Phase 2 runs regardless of day.
