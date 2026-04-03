@@ -5,8 +5,8 @@ Primary CLI for Workers: scaffold, dev, deploy, manage bindings. Patterns: [wran
 ## Install
 
 ```bash
-npm install -D wrangler   # dev dependency (npx wrangler <cmd>)
-npm install -g wrangler   # global
+npm install -D wrangler  # dev dependency (npx wrangler <cmd>)
+npm install -g wrangler  # global
 ```
 
 ## Core Commands
@@ -26,37 +26,29 @@ wrangler tail [--env ENV] [--status error]  # Stream logs
 
 ## Resource Commands
 
-### KV
 ```bash
+# KV
 wrangler kv namespace create NAME
 wrangler kv key put "key" "value" --namespace-id=<id>
 wrangler kv key get "key" --namespace-id=<id>
-```
 
-### D1
-```bash
+# D1
 wrangler d1 create NAME
 wrangler d1 execute NAME --command "SQL"
 wrangler d1 migrations create NAME "description"
 wrangler d1 migrations apply NAME
-```
 
-### R2
-```bash
+# R2
 wrangler r2 bucket create NAME
 wrangler r2 object put BUCKET/key --file path
 wrangler r2 object get BUCKET/key
-```
 
-### Queues / Vectorize / Hyperdrive
-```bash
+# Queues / Vectorize / Hyperdrive
 wrangler queues create NAME
 wrangler vectorize create NAME --dimensions N --metric cosine
 wrangler hyperdrive create NAME --connection-string "..."
-```
 
-### Secrets
-```bash
+# Secrets
 wrangler secret put NAME
 wrangler secret list
 wrangler secret delete NAME
