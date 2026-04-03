@@ -8,15 +8,13 @@ tools:
 
 # AXe - iOS Simulator Automation CLI
 
-## Quick Reference
-
 - **Install**: `brew install cameroncooke/axe/axe`
 - **Requirements**: macOS with Xcode and iOS Simulator
 - **GitHub**: https://github.com/cameroncooke/AXe (MIT, by XcodeBuildMCP author)
 - **vs idb**: Single binary (no daemon), complete HID coverage, gesture presets, timing controls
 - All commands require `--udid SIMULATOR_UDID`. Get UDIDs: `axe list-simulators`.
 
-## Core Commands
+## Commands
 
 ### Touch, Gestures, and Input
 
