@@ -12,9 +12,15 @@
 #   - Pattern validation (return statements, positional parameters)
 #   - Markdown formatting
 #   - Skill frontmatter validation (name field matches skill-sources.json)
+#   - Ratchet checks (anti-pattern counts vs baseline — regression prevention)
 #
 # For remote auditing (CodeRabbit, Codacy, SonarCloud), use:
 #   /code-audit-remote or code-audit-helper.sh
+#
+# Options:
+#   --update-baseline   Re-count all ratchet patterns and write new baseline
+#   --strict            Make ratchet failures blocking (default: advisory)
+#   --dry-run           Show what would change without writing baseline
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
@@ -58,6 +64,15 @@ readonly MAX_NESTING_VIOLATIONS=260
 readonly MAX_FILE_LINES_WARN=800
 readonly MAX_FILE_LINES_BLOCK=1500
 readonly MAX_FILE_SIZE_VIOLATIONS=40
+
+# Ratchet configuration
+# Baseline file path (relative to repo root, resolved at runtime)
+readonly RATCHET_BASELINE_FILE=".agents/configs/ratchets.json"
+
+# Runtime flags (set by argument parsing in main)
+RATCHET_UPDATE_BASELINE=0
+RATCHET_STRICT=0
+RATCHET_DRY_RUN=0
 
 print_header() {
 	echo -e "${BLUE}Local Linters - Fast Offline Quality Checks${NC}"
@@ -1427,6 +1442,248 @@ _run_gate_checks_static() {
 
 # _run_gate_checks_complexity: run complexity and compatibility gates (bash32 through python).
 # Returns: 0 if all passed, 1 if any failed.
+# =============================================================================
+# Ratchet Quality Checks (t1878)
+# =============================================================================
+# Tracks anti-pattern counts against a stored baseline. Counts can only
+# decrease (or stay the same) — any increase is a regression and fails.
+#
+# Patterns tracked:
+#   bare_positional_params  — $1/$2 used directly (not in local var="$N")
+#   hardcoded_aidevops_path — literal ~/.aidevops instead of variable
+#   broad_catch             — || true patterns (broad error suppression)
+#
+# Baseline: .agents/configs/ratchets.json
+# Update:   linters-local.sh --update-baseline
+# Strict:   linters-local.sh --strict  (makes failures blocking)
+
+# _count_ratchet_bare_positional: count $1-$9 usages not in local assignments.
+# Outputs integer count to stdout.
+_count_ratchet_bare_positional() {
+	rg '\$[1-9]' --type sh .agents/scripts/ 2>/dev/null |
+		grep -v 'local [a-zA-Z_].*=.*\$[1-9]' |
+		grep -vc '^\s*#' 2>/dev/null ||
+		echo "0"
+	return 0
+}
+
+# _count_ratchet_hardcoded_path: count literal ~/.aidevops in shell scripts.
+# Outputs integer count to stdout.
+_count_ratchet_hardcoded_path() {
+	# shellcheck disable=SC2088
+	rg '~/.aidevops' --type sh .agents/scripts/ --count-matches 2>/dev/null |
+		awk -F: '{sum += $2} END {print (sum ? sum : 0)}'
+	return 0
+}
+
+# _count_ratchet_broad_catch: count || true patterns in shell scripts.
+# Outputs integer count to stdout.
+_count_ratchet_broad_catch() {
+	rg '\|\| true' --type sh .agents/scripts/ --count-matches 2>/dev/null |
+		awk -F: '{sum += $2} END {print (sum ? sum : 0)}'
+	return 0
+}
+
+# _ratchet_resolve_baseline: resolve path to ratchets.json from repo root.
+# Outputs absolute path to stdout.
+_ratchet_resolve_baseline() {
+	local repo_root
+	repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root="."
+	echo "${repo_root}/${RATCHET_BASELINE_FILE}"
+	return 0
+}
+
+# update_ratchet_baseline: re-count all patterns and write new baseline.
+# Respects RATCHET_DRY_RUN — prints diff without writing when set.
+# Returns: 0 on success, 1 on error.
+update_ratchet_baseline() {
+	echo -e "${BLUE}Updating Ratchet Baseline...${NC}"
+
+	if ! command -v jq &>/dev/null; then
+		print_error "jq required for ratchet baseline update"
+		return 1
+	fi
+
+	if ! command -v rg &>/dev/null; then
+		print_error "rg (ripgrep) required for ratchet counting"
+		return 1
+	fi
+
+	local baseline_file
+	baseline_file=$(_ratchet_resolve_baseline)
+
+	local bare_count hardcoded_count broad_count
+	bare_count=$(_count_ratchet_bare_positional)
+	hardcoded_count=$(_count_ratchet_hardcoded_path)
+	broad_count=$(_count_ratchet_broad_catch)
+
+	# Sanitise to integers
+	bare_count=${bare_count//[^0-9]/}
+	hardcoded_count=${hardcoded_count//[^0-9]/}
+	broad_count=${broad_count//[^0-9]/}
+	bare_count=${bare_count:-0}
+	hardcoded_count=${hardcoded_count:-0}
+	broad_count=${broad_count:-0}
+
+	local timestamp
+	timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null) || timestamp="unknown"
+
+	if [[ -f "$baseline_file" ]]; then
+		local old_bare old_hardcoded old_broad
+		old_bare=$(jq -r '.ratchets.bare_positional_params.count // 0' "$baseline_file" 2>/dev/null) || old_bare=0
+		old_hardcoded=$(jq -r '.ratchets.hardcoded_aidevops_path.count // 0' "$baseline_file" 2>/dev/null) || old_hardcoded=0
+		old_broad=$(jq -r '.ratchets.broad_catch.count // 0' "$baseline_file" 2>/dev/null) || old_broad=0
+
+		echo "  bare_positional_params:  ${old_bare} -> ${bare_count}"
+		echo "  hardcoded_aidevops_path: ${old_hardcoded} -> ${hardcoded_count}"
+		echo "  broad_catch:             ${old_broad} -> ${broad_count}"
+	else
+		echo "  bare_positional_params:  (new) ${bare_count}"
+		echo "  hardcoded_aidevops_path: (new) ${hardcoded_count}"
+		echo "  broad_catch:             (new) ${broad_count}"
+	fi
+
+	if [[ "$RATCHET_DRY_RUN" -eq 1 ]]; then
+		print_info "Dry run — baseline not written"
+		return 0
+	fi
+
+	# Write new baseline
+	local new_json
+	new_json=$(jq -n \
+		--arg ts "$timestamp" \
+		--argjson bare "$bare_count" \
+		--argjson hardcoded "$hardcoded_count" \
+		--argjson broad "$broad_count" \
+		'{
+			version: 1,
+			updated: $ts,
+			description: "Ratchet baselines for code quality regression prevention. Counts can only decrease, never increase. Run linters-local.sh --update-baseline to lock in improvements.",
+			ratchets: {
+				bare_positional_params: {
+					count: $bare,
+					description: "$1/$2 used directly (not in local var=\"$N\" assignments or comments)"
+				},
+				hardcoded_aidevops_path: {
+					count: $hardcoded,
+					description: "Literal ~/.aidevops instead of ${HOME}/.aidevops or variable"
+				},
+				broad_catch: {
+					count: $broad,
+					description: "|| true patterns (broad error suppression without specific handling)"
+				}
+			}
+		}') || {
+		print_error "Failed to generate new baseline JSON"
+		return 1
+	}
+
+	echo "$new_json" >"$baseline_file"
+	print_success "Ratchet baseline updated: $baseline_file"
+	return 0
+}
+
+# check_ratchets: compare current anti-pattern counts against baseline.
+# Advisory by default; blocking when RATCHET_STRICT=1.
+# Returns: 0 if no regressions, 1 if any pattern regressed (in strict mode).
+check_ratchets() {
+	echo -e "${BLUE}Checking Ratchet Quality Gates (t1878)...${NC}"
+
+	if ! command -v jq &>/dev/null; then
+		print_warning "jq not available — skipping ratchet checks"
+		return 0
+	fi
+
+	if ! command -v rg &>/dev/null; then
+		print_warning "rg (ripgrep) not available — skipping ratchet checks"
+		return 0
+	fi
+
+	local baseline_file
+	baseline_file=$(_ratchet_resolve_baseline)
+
+	if [[ ! -f "$baseline_file" ]]; then
+		print_warning "Ratchet baseline not found: $baseline_file"
+		print_info "Run: linters-local.sh --update-baseline to create baseline"
+		return 0
+	fi
+
+	local baseline_version
+	baseline_version=$(jq -r '.version // 0' "$baseline_file" 2>/dev/null) || baseline_version=0
+	if [[ "$baseline_version" -lt 1 ]]; then
+		print_warning "Ratchet baseline version unsupported: $baseline_version"
+		return 0
+	fi
+
+	local regressions=0
+	local improvements=0
+	local unchanged=0
+
+	# Count current values
+	local bare_current hardcoded_current broad_current
+	bare_current=$(_count_ratchet_bare_positional)
+	hardcoded_current=$(_count_ratchet_hardcoded_path)
+	broad_current=$(_count_ratchet_broad_catch)
+
+	# Sanitise
+	bare_current=${bare_current//[^0-9]/}
+	hardcoded_current=${hardcoded_current//[^0-9]/}
+	broad_current=${broad_current//[^0-9]/}
+	bare_current=${bare_current:-0}
+	hardcoded_current=${hardcoded_current:-0}
+	broad_current=${broad_current:-0}
+
+	# Read baseline values
+	local bare_baseline hardcoded_baseline broad_baseline
+	bare_baseline=$(jq -r '.ratchets.bare_positional_params.count // 0' "$baseline_file" 2>/dev/null) || bare_baseline=0
+	hardcoded_baseline=$(jq -r '.ratchets.hardcoded_aidevops_path.count // 0' "$baseline_file" 2>/dev/null) || hardcoded_baseline=0
+	broad_baseline=$(jq -r '.ratchets.broad_catch.count // 0' "$baseline_file" 2>/dev/null) || broad_baseline=0
+
+	# Helper: compare one ratchet pattern
+	# Args: $1=name $2=current $3=baseline
+	_check_one_ratchet() {
+		local name="$1"
+		local current="$2"
+		local baseline="$3"
+		local delta=$((current - baseline))
+
+		if [[ $delta -gt 0 ]]; then
+			print_error "RATCHET FAIL: ${name} regressed by ${delta} (baseline: ${baseline}, current: ${current})"
+			regressions=$((regressions + 1))
+		elif [[ $delta -lt 0 ]]; then
+			local improvement=$((-delta))
+			print_success "RATCHET PASS: ${name} improved by ${improvement} (${baseline} -> ${current})"
+			improvements=$((improvements + 1))
+		else
+			print_success "RATCHET PASS: ${name} unchanged at ${current}"
+			unchanged=$((unchanged + 1))
+		fi
+		return 0
+	}
+
+	_check_one_ratchet "bare_positional_params" "$bare_current" "$bare_baseline"
+	_check_one_ratchet "hardcoded_aidevops_path" "$hardcoded_current" "$hardcoded_baseline"
+	_check_one_ratchet "broad_catch" "$broad_current" "$broad_baseline"
+
+	echo ""
+	echo "  Ratchet summary: ${improvements} improved, ${unchanged} unchanged, ${regressions} regressed"
+
+	if [[ $improvements -gt 0 ]]; then
+		print_info "Lock in improvements: linters-local.sh --update-baseline"
+	fi
+
+	if [[ $regressions -gt 0 ]]; then
+		if [[ "$RATCHET_STRICT" -eq 1 ]]; then
+			print_error "Ratchet: ${regressions} regression(s) detected (strict mode — BLOCKING)"
+			return 1
+		else
+			print_warning "Ratchet: ${regressions} regression(s) detected (advisory — use --strict to block)"
+		fi
+	fi
+
+	return 0
+}
+
 _run_gate_checks_complexity() {
 	local exit_code=0
 
@@ -1455,6 +1712,11 @@ _run_gate_checks_complexity() {
 		echo ""
 	fi
 
+	if ! should_skip_gate "ratchets"; then
+		check_ratchets || exit_code=1
+		echo ""
+	fi
+
 	return $exit_code
 }
 
@@ -1469,7 +1731,40 @@ _run_gate_checks() {
 	return $exit_code
 }
 
+# _parse_args: parse CLI arguments and set global flags.
+# Modifies: RATCHET_UPDATE_BASELINE, RATCHET_STRICT, RATCHET_DRY_RUN
+# Returns: 0 always.
+_parse_args() {
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--update-baseline)
+			RATCHET_UPDATE_BASELINE=1
+			;;
+		--strict)
+			RATCHET_STRICT=1
+			;;
+		--dry-run)
+			RATCHET_DRY_RUN=1
+			;;
+		*)
+			# Unknown args are silently ignored for forward compatibility
+			;;
+		esac
+		shift
+	done
+	return 0
+}
+
 main() {
+	_parse_args "$@"
+
+	# --update-baseline: re-count and write new baseline, then exit
+	if [[ "$RATCHET_UPDATE_BASELINE" -eq 1 ]]; then
+		update_ratchet_baseline
+		return $?
+	fi
+
 	print_header
 
 	# Collect shell files once (includes modularised subdirectories, excludes _archive/)

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "updated": "2026-04-03T23:20:42Z",
+  "description": "Ratchet baselines for code quality regression prevention. Counts can only decrease, never increase. Run linters-local.sh --update-baseline to lock in improvements.",
+  "ratchets": {
+    "bare_positional_params": {
+      "count": 4799,
+      "description": "$1/$2 used directly (not in local var=\"$N\" assignments or comments)"
+    },
+    "hardcoded_aidevops_path": {
+      "count": 313,
+      "description": "Literal ~/.aidevops instead of ${HOME}/.aidevops or variable"
+    },
+    "broad_catch": {
+      "count": 2237,
+      "description": "|| true patterns (broad error suppression without specific handling)"
+    }
+  }
+}
