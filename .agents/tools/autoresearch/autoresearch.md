@@ -44,8 +44,8 @@ Extract `--program <path>`; exit with error if missing or file not found. Extrac
 PROGRAM_NAME   ← frontmatter `name`
 MODE           ← frontmatter `mode` (in-repo | cross-repo | standalone)
 TARGET_REPO    ← frontmatter `target_repo` (path or ".")
-DIMENSION      ← frontmatter `dimension` (optional, for multi-dimension campaigns)
-CAMPAIGN_ID    ← frontmatter `campaign_id` (optional, for multi-dimension campaigns)
+DIMENSION      ← frontmatter `dimension` (optional, multi-dimension campaigns)
+CAMPAIGN_ID    ← frontmatter `campaign_id` (optional, multi-dimension campaigns)
 FILES          ← ## Target section, `files:` line
 BRANCH         ← ## Target section, `branch:` line (default: experiment/{name})
 METRIC_CMD     ← ## Metric section, `command:` line
@@ -67,79 +67,38 @@ HINTS          ← ## Hints section, all bullet lines
 
 ## Step 1: Setup
 
-### 1.1 Resolve target repo
+**1.1 Resolve target repo:** `REPO_ROOT = cwd` if `MODE == "in-repo"` or `TARGET_REPO == "."`, else expand `TARGET_REPO` and verify it's a git repo.
+
+**1.2 Create or resume experiment worktree:**
 
 ```bash
-if MODE == "in-repo" or TARGET_REPO == ".":
-    REPO_ROOT = current working directory
-else:
-    REPO_ROOT = TARGET_REPO (expand ~)
-    verify it exists and is a git repo
+WORKTREE_PATH="$REPO_ROOT/../$(basename $REPO_ROOT)-$BRANCH"  # replace / with - in branch name
+if worktree exists: cd WORKTREE_PATH && git reset --hard HEAD; RESUMING=true
+else: git -C REPO_ROOT worktree add WORKTREE_PATH -b BRANCH; RESUMING=false
 ```
 
-### 1.2 Create or resume experiment worktree
-
-```bash
-WORKTREE_PATH="$REPO_ROOT/../$(basename $REPO_ROOT)-$BRANCH"
-# Replace / with - in branch name for path
-
-if worktree already exists at WORKTREE_PATH:
-    cd WORKTREE_PATH
-    git reset --hard HEAD  # discard any uncommitted changes from prior crash
-    RESUMING=true
-else:
-    git -C REPO_ROOT worktree add WORKTREE_PATH -b BRANCH
-    RESUMING=false
-```
-
-### 1.3 Load prior results (resume mode)
+**1.3 Load prior results (resume mode):**
 
 ```text
 RESULTS_FILE = "$REPO_ROOT/todo/research/{name}-results.tsv"
-
 if RESUMING and RESULTS_FILE exists:
-    Read results.tsv to reconstruct:
-    - ITERATION_COUNT = number of data rows (excluding header)
-    - BEST_METRIC = best metric_value seen (per direction)
-    - BASELINE = metric_value from row where status == "baseline"
-    - FAILED_HYPOTHESES = list of hypothesis from rows where status == "discard"
-    - TOTAL_TOKENS = sum of tokens_used column
+    ITERATION_COUNT = data rows (excl. header)
+    BEST_METRIC     = best metric_value (per direction)
+    BASELINE        = metric_value where status == "baseline"
+    FAILED_HYPOTHESES = hypothesis list where status == "discard"
+    TOTAL_TOKENS    = sum of tokens_used column
     Log: "Resuming from iteration N, best metric: X"
 else:
-    ITERATION_COUNT = 0; BEST_METRIC = null; BASELINE = null
-    FAILED_HYPOTHESES = []; TOTAL_TOKENS = 0
+    ITERATION_COUNT=0; BEST_METRIC=null; BASELINE=null; FAILED_HYPOTHESES=[]; TOTAL_TOKENS=0
     mkdir -p $(dirname RESULTS_FILE)
-    Write TSV header:
-      iteration\tcommit\tmetric_name\tmetric_value\tbaseline\tdelta\tstatus\thypothesis\ttimestamp\ttokens_used
+    Write TSV header: iteration\tcommit\tmetric_name\tmetric_value\tbaseline\tdelta\tstatus\thypothesis\ttimestamp\ttokens_used
 ```
 
-### 1.4 Recall cross-session memory
+**1.4 Recall cross-session memory:** `aidevops-memory recall "autoresearch $PROGRAM_NAME" --limit 10` → store as MEMORY_CONTEXT.
 
-```text
-aidevops-memory recall "autoresearch $PROGRAM_NAME" --limit 10
-```
+**1.5 Register with mailbox (multi-dimension only):** If CAMPAIGN_ID set: `mail-helper.sh register --agent "autoresearch-${PROGRAM_NAME}-${DIMENSION:-solo}"`
 
-Store recalled findings as MEMORY_CONTEXT for hypothesis generation.
-
-### 1.5 Register with mailbox (multi-dimension mode only)
-
-If CAMPAIGN_ID is set:
-
-```bash
-AGENT_ID="autoresearch-${PROGRAM_NAME}-${DIMENSION:-solo}"
-mail-helper.sh register --agent "$AGENT_ID"
-```
-
-### 1.6 Measure baseline (first run only)
-
-```text
-if BASELINE == null:
-    Run all constraints. If any fail: exit with error (baseline environment is broken).
-    Run METRIC_CMD. Parse numeric output → BASELINE = BEST_METRIC = result
-    Update program file: set `baseline: {value}`
-    Append to results.tsv:
-      0\t(baseline)\t{METRIC_NAME}\t{BASELINE}\t{BASELINE}\t0.0\tbaseline\t(initial measurement)\t{timestamp}\t0
-```
+**1.6 Measure baseline (first run only):** If `BASELINE == null`: run all constraints (fail → exit); run METRIC_CMD → `BASELINE = BEST_METRIC`; update program file `baseline: {value}`; append baseline row to results.tsv.
 
 ---
 
