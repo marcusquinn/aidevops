@@ -53,17 +53,11 @@ cmd_array=(~/.aidevops/agents/scripts/tech-stack-helper.sh reverse "$tech_name")
 ~/.aidevops/agents/scripts/tech-stack-helper.sh cache-clear --older-than 7
 ```
 
-### Step 3: Present Results
+### Step 3: Present Results and Offer Follow-ups
 
-Format output by operation type:
+Format output by operation type: **Single-site** — technologies grouped by category (Frontend, Backend, Analytics, CDN, etc.) with confidence scores and provider counts. **Reverse** — sites using the technology with traffic tier, industry, and related technologies. **Cache stats** — total entries, cache size, hit rate, top cached domains.
 
-- **Single-site**: technologies grouped by category (Frontend, Backend, Analytics, CDN, etc.) with confidence scores and provider counts
-- **Reverse**: sites using the technology with traffic tier, industry, and related technologies
-- **Cache stats**: total entries, cache size, hit rate, top cached domains
-
-### Step 4: Follow-up Actions
-
-Offer: export to JSON/CSV, reverse lookup for detected technologies, competitor comparison, periodic monitoring, detailed provider reports.
+Offer follow-ups: export to JSON/CSV, reverse lookup for detected technologies, competitor comparison, periodic monitoring, detailed provider reports.
 
 ## Usage
 
@@ -78,30 +72,14 @@ Offer: export to JSON/CSV, reverse lookup for detected technologies, competitor 
 
 ## Provider Configuration
 
-### Wappalyzer (free, open source)
+| Provider | Cost | Install |
+|----------|------|---------|
+| Wappalyzer | Free, open source | `npm install -g wappalyzer` |
+| httpx | Free, open source | `go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest` |
+| nuclei | Free, open source | `go install -v github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest` |
+| BuiltWith API | $295/month; free tier: 100 lookups/month | `aidevops secret set BUILTWITH_API_KEY` |
 
-No API key needed.
-
-```bash
-npm install -g wappalyzer
-```
-
-### httpx + nuclei (free, open source)
-
-No API key needed.
-
-```bash
-go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
-go install -v github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest
-```
-
-### BuiltWith API (commercial, optional)
-
-For reverse lookup and historical data. $295/month API access; free tier: 100 lookups/month.
-
-```bash
-aidevops secret set BUILTWITH_API_KEY
-```
+BuiltWith is optional — required for reverse lookup and historical data.
 
 ## Related
 
