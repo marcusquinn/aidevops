@@ -2,15 +2,23 @@
   "name": "opencode-aidevops",
   "version": "1.0.0",
   "description": "OpenCode plugin for aidevops — agent loading, quality hooks, CLI tools, compaction context",
-  "main": "index.mjs",
   "type": "module",
+  "exports": {
+    ".": "./index.mjs",
+    "./server": "./index.mjs"
+  },
+  "main": "index.mjs",
   "keywords": ["opencode", "plugin", "aidevops", "devops", "agents", "compaction"],
   "author": "Marcus Quinn",
   "license": "MIT",
+  "opencode": {
+    "tracked_version": "1.3.13",
+    "repo": "anomalyco/opencode"
+  },
   "peerDependencies": {
-    "opencode-ai": ">=1.1.0"
+    "opencode-ai": ">=1.3.0"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.1.56"
+    "@opencode-ai/plugin": "^1.3.13"
   }
 }

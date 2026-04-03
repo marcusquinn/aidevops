@@ -24,6 +24,7 @@ import { startGoogleProxy, registerGoogleProvider, getGoogleProxyPort } from "./
 const HOME = homedir();
 const AGENTS_DIR = join(HOME, ".aidevops", "agents");
 const SCRIPTS_DIR = join(AGENTS_DIR, "scripts");
+const PLUGIN_DIR = join(AGENTS_DIR, "plugins", "opencode-aidevops");
 const WORKSPACE_DIR = join(HOME, ".aidevops", ".agent-workspace");
 const LOGS_DIR = join(HOME, ".aidevops", "logs");
 const QUALITY_LOG = join(LOGS_DIR, "quality-hooks.log");
@@ -84,6 +85,76 @@ function readIfExists(filepath) {
 // are still discoverable even if the index is stale or missing.
 
 // Agent index loading extracted to agent-loader.mjs
+
+// ---------------------------------------------------------------------------
+// OpenCode Version Tracking (t1857)
+// ---------------------------------------------------------------------------
+// Tracks the opencode version our plugin was last tested against. Compares
+// the tracked version from package.json against the running opencode version
+// and logs a notice when the runtime is ahead of what we've tested.
+
+/**
+ * Read the tracked opencode version from the plugin's package.json.
+ * @returns {{ tracked: string, repo: string } | null}
+ */
+function getTrackedOpenCodeVersion() {
+  const pkgPath = join(PLUGIN_DIR, "package.json");
+  const content = readIfExists(pkgPath);
+  if (!content) return null;
+
+  try {
+    const pkg = JSON.parse(content);
+    const meta = pkg.opencode;
+    if (meta && meta.tracked_version) {
+      return { tracked: meta.tracked_version, repo: meta.repo || "anomalyco/opencode" };
+    }
+  } catch {
+    // Malformed JSON — skip
+  }
+  return null;
+}
+
+/**
+ * Compare semver strings (major.minor.patch). Returns:
+ *   -1 if a < b, 0 if equal, 1 if a > b.
+ * @param {string} a
+ * @param {string} b
+ * @returns {number}
+ */
+function compareSemver(a, b) {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    const va = pa[i] || 0;
+    const vb = pb[i] || 0;
+    if (va < vb) return -1;
+    if (va > vb) return 1;
+  }
+  return 0;
+}
+
+/**
+ * Check if the running opencode version is ahead of the tracked version.
+ * Logs a notice if an update to the plugin's tracked_version is needed.
+ * @returns {string | null} Notice message, or null if versions match
+ */
+function checkOpenCodeVersionDrift() {
+  const meta = getTrackedOpenCodeVersion();
+  if (!meta) return null;
+
+  const running = run("opencode --version 2>/dev/null");
+  if (!running) return null;
+
+  // Strip any leading 'v' and whitespace
+  const runningClean = running.replace(/^v/, "").trim();
+  const cmp = compareSemver(meta.tracked, runningClean);
+
+  if (cmp < 0) {
+    return `opencode ${runningClean} running, plugin tested against ${meta.tracked} — review ${meta.repo} changelog`;
+  }
+
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 // Phase 2: MCP Server Registry + Config Hook
@@ -450,6 +521,9 @@ async function configHook(config) {
     }
   }
 
+  // --- OpenCode version drift check (t1857) ---
+  const versionDrift = checkOpenCodeVersionDrift();
+
   // Silent unless something was actually changed (avoids TUI flash on startup)
   const parts = [];
   if (agentsInjected > 0) parts.push(`${agentsInjected} agents`);
@@ -461,6 +535,10 @@ async function configHook(config) {
 
   if (parts.length > 0) {
     console.error(`[aidevops] Config hook: ${parts.join(", ")}`);
+  }
+
+  if (versionDrift) {
+    console.error(`[aidevops] Version drift: ${versionDrift}`);
   }
 }
 
