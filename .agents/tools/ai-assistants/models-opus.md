@@ -24,9 +24,7 @@ tools:
 
 Highest-capability tier for tasks where stronger reasoning materially changes the outcome.
 
-## When to Use
-
-Use opus only when the task genuinely needs extra reasoning depth:
+## Use For
 
 - Architecture and system design decisions
 - Novel problems with no established pattern
@@ -35,7 +33,16 @@ Use opus only when the task genuinely needs extra reasoning depth:
 - Trade-off analysis across many variables
 - Evaluating other models' outputs
 
-Do not use for routine implementation — route to sonnet. For large-context tasks (100K+ tokens), route to pro.
+## Routing Rules
+
+- Default to sonnet unless the task genuinely needs extra reasoning depth.
+- Route routine implementation, code review, and docs → sonnet.
+- Route very large context needs (100K+ tokens) → pro.
+
+## Constraints
+
+- Do not use for tasks solvable by sonnet — opus costs 5× more per output token.
+- Do not use for simple classification or formatting — route to haiku.
 
 ## Model Details
 
