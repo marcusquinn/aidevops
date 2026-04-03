@@ -4822,6 +4822,13 @@
       "passes": 1,
       "pr": null,
       "issue": 14163
+    },
+    ".agents/tools/ui/nothing-design-skill/components.md": {
+      "at": "2026-04-03T02:38:11Z",
+      "hash": "f2d9cc3cf44863cc6af0f53ff02a971ffa5136a6",
+      "issue": "GH#15366",
+      "lines_before": 153,
+      "lines_after": 125
     }
   },
   ".agents/tools/ai-orchestration/overview.md": {

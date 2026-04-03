@@ -6,8 +6,6 @@
 - Border: `1px solid --border`, or none. Radius: 12-16px cards, 8px compact, 4px technical
 - Padding: 16-24px. No shadows. Flat surfaces, border separation.
 
----
-
 ## 2. BUTTONS
 
 | Variant | Background | Border | Text | Radius |
@@ -19,16 +17,12 @@
 
 All buttons: `Space Mono`, 13px, ALL CAPS, letter-spacing 0.06em, padding 12px 24px. Min height 44px.
 
----
-
 ## 3. INPUTS
 
 - Underline preferred (`1px solid --border-visible` bottom) or full border 8px radius
 - Label above: `--label` style (Space Mono, ALL CAPS, `--text-secondary`)
 - Focus: border -> `--text-primary`. Error: border -> `--accent`, message below in `--accent`
 - Data-entry fields: `Space Mono` for input text
-
----
 
 ## 4. LISTS / DATA ROWS
 
@@ -40,16 +34,12 @@ All buttons: `Space Mono`, 13px, ALL CAPS, letter-spacing 0.06em, padding 12px 2
 
 **Hierarchical rows:** Sub-items indented 16-24px, same divider treatment. No tree lines or expand/collapse -- indentation IS the hierarchy.
 
----
-
 ## 5. TABLES / DATA GRIDS
 
 - Header: `--label` style, bottom border `--border-visible`
 - Cell text: `Space Mono` numeric, `Space Grotesk` text. Cell padding: 12px 16px
 - Numbers right, text left. No zebra striping, no cell backgrounds.
 - Active row: `--surface-raised` background, left `2px solid --accent` indicator
-
----
 
 ## 6. NAVIGATION
 
@@ -58,14 +48,10 @@ All buttons: `Space Mono`, 13px, ALL CAPS, letter-spacing 0.06em, padding 12px 2
 - Bracket `[ HOME ]  GALLERY  INFO` or pipe `HOME | GALLERY | INFO`
 - **Back button:** Circular 40-44px, `--surface` bg, thin chevron `<`, top-left 16px from edges
 
----
-
 ## 7. TAGS / CHIPS
 
 - Border: `1px solid --border-visible`, no fill. Text: Space Mono, `--caption`, ALL CAPS
 - Radius: 999px (pill) or 4px (technical). Padding: 4px 12px. Active: `--text-display` border+text
-
----
 
 ## 8. SEGMENTED CONTROL
 
@@ -74,22 +60,16 @@ All buttons: `Space Mono`, 13px, ALL CAPS, letter-spacing 0.06em, padding 12px 2
 - Text: Space Mono, ALL CAPS, `--label` size. Height: 36-44px. Transition: 200ms ease-out
 - Max 2-4 segments
 
----
-
 ## 9. DATE / PERIOD NAVIGATION
 
 - Layout: `< LABEL >` -- back arrow, label, forward arrow
 - Label: Space Mono/Grotesk, ALL CAPS. Arrows: thin chevrons, `--text-secondary`, 44px touch
 - No calendar popovers -- linear stepping IS the interaction
 
----
-
 ## 10. TOGGLES / SWITCHES
 
 - Pill track, circle thumb. Off: `--border-visible` track, `--text-disabled` thumb
 - On: `--text-display` track, `--black` thumb. Min touch target: 44px
-
----
 
 ## 11. SEGMENTED PROGRESS BARS
 
@@ -112,8 +92,6 @@ The signature data visualization. Discrete blocks -- mechanical, instrument-like
 
 Always pair with numeric readout. Bar = proportion, number = precision.
 
----
-
 ## 12. OTHER DATA VISUALIZATION
 
 - **Bar charts:** Vertical, white fill, `--border` remainder. Square ends.
@@ -124,15 +102,11 @@ Always pair with numeric readout. Bar = proportion, number = precision.
 
 **Charts:** Line 1.5-2px `--text-display`, average dashed 1px `--text-secondary`. Axis labels: Space Mono, `--caption`. Grid: `--border`, horizontal only. No area fill, no legend boxes -- label lines directly.
 
----
-
 ## 13. WIDGETS (DASHBOARD CARDS)
 
 - `--surface` bg, 16px radius. Hero metric: large Doto/Space Mono, left-aligned
 - Unit: `--label` size, adjacent. Category: ALL CAPS Space Mono top-left
 - Instrument gauges: compass, thermometer, dial motifs
-
----
 
 ## 14. OVERLAYS & LAYERING
 
@@ -142,8 +116,6 @@ No shadows. Layering through background contrast and borders.
 - **Bottom sheets:** `--surface`, 2px handle bar centered, 16px top radius, drag-to-dismiss. Full-page sheets: title centered + dismiss button right, sections with `--text-secondary` headings.
 - **Dropdowns:** `--surface-raised`, `1px solid --border-visible` 8px radius, 44px items. Selected: left 2px accent bar. No shadow.
 - **Toasts:** None. Use inline status text: `[SAVED]`, `[ERROR: ...]`. Space Mono, `--caption`, near trigger.
-
----
 
 ## 15. STATE PATTERNS
 
