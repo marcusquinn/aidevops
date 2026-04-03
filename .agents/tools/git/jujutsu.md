@@ -26,13 +26,13 @@ tools:
 
 ## Key Advantages
 
-| Feature | Behaviour | AI/Agent benefit |
-|---------|-----------|-----------------|
-| **Working-copy-as-commit** | File changes auto-recorded; no staging area. Snapshots before every command. Message anytime: `jj describe`. | No `git add` errors; file writes auto-commit |
-| **Operation log + undo** | `jj op log` full history; `jj undo` reverses last op; `jj op restore <id>` any state. | Agents try and roll back freely; complete audit trail for headless debugging |
-| **First-class conflicts** | Conflicts stored in commits, not blocking errors. Resolve later; resolutions propagate to descendants (subsumes `git rerere`). | Overlapping agent edits produce committed conflicts, not blocking errors |
-| **Auto-rebase descendants** | Modifying any commit rebases all descendants in place (transparent `git rebase --update-refs`). | Simpler mental model — one object type vs git's working tree + index + HEAD + stash |
-| **Anonymous branches** | All visible heads tracked — commits never lost while reachable. Named bookmarks only needed for remotes. | Safe experimentation without branch management overhead |
+| Feature | Behaviour | Agent benefit |
+|---------|-----------|--------------|
+| **Working-copy-as-commit** | File changes auto-recorded; no staging area. `jj describe` sets message anytime. | No `git add` errors; file writes auto-commit |
+| **Operation log + undo** | `jj op log` full history; `jj undo` reverses last op; `jj op restore <id>` any state. | Safe rollback; complete audit trail for headless debugging |
+| **First-class conflicts** | Conflicts stored in commits, not blocking errors. Resolutions propagate to descendants (subsumes `git rerere`). | Overlapping edits produce committed conflicts, not blocking errors |
+| **Auto-rebase descendants** | Modifying any commit rebases all descendants in place. | One object type vs git's working tree + index + HEAD + stash |
+| **Anonymous branches** | All visible heads tracked — commits never lost. Named bookmarks only needed for remotes. | Safe experimentation without branch management overhead |
 
 ## Essential Commands
 
@@ -64,15 +64,13 @@ jj bookmark set main         # Set a bookmark (branch) on current commit
 
 ## aidevops Worktree Integration
 
-Colocated mode (`jj init --git-repo=.`) works with `wt` (Worktrunk) worktrees. `jj git push` replaces `git push` using the same remotes; bookmarks map directly to git branches. Team members can continue using git unchanged.
+Colocated mode (`jj init --git-repo=.`) works with `wt` (Worktrunk) worktrees. `jj git push` replaces `git push`; bookmarks map to git branches. Team members can continue using git unchanged.
 
 **See also**: `tools/git/github-cli.md` (PR/remote workflows), `tools/git/conflict-resolution.md` (conflict strategies), `tools/git/worktrunk.md` (worktree management)
 
 ## Resources
 
-- [Tutorial](https://docs.jj-vcs.dev/latest/tutorial/)
+- [Official docs & tutorial](https://docs.jj-vcs.dev/latest/tutorial/)
 - [Git comparison & command table](https://docs.jj-vcs.dev/latest/git-comparison/)
-- [Steve Klabnik's Jujutsu Tutorial](https://steveklabnik.github.io/jujutsu-tutorial/)
-- [Chris Krycho's jj init essay](https://v5.chriskrycho.com/essays/jj-init/)
 
 <!-- AI-CONTEXT-END -->
