@@ -30,6 +30,8 @@ mcp:
 - **Workflow**: `searchAPIs` → `getAPIOverview` → `getOperationDetails`
 - **Enabled for**: `@openapi-search` subagent only (lazy-loaded — zero install overhead)
 - **Docs**: <https://github.com/janwilmake/openapi-mcp-server> | **Directory**: <https://openapisearch.com/search>
+- **Use when**: unknown API for a task; exploring endpoints; request/response schemas for code generation; comparing APIs
+- **Don't use when**: you already have the docs (use Context7); testing live calls (read-only); internal/private APIs (indexes public specs only)
 - **Verification**: _"Use openapi-search to get an overview of the Stripe API, then show the endpoint for creating a payment intent."_
 
 <!-- AI-CONTEXT-END -->
@@ -42,15 +44,15 @@ mcp:
 | 2 | `getAPIOverview` | `apiId` — identifier or raw OpenAPI URL | Endpoint list, base URL, auth info |
 | 3 | `getOperationDetails` | `apiId`, `operationId` (e.g. `"POST /mail/send"`) | Parameters, request/response schemas |
 
-## Configuration
+## Setup
 
-aidevops configures all clients automatically via `setup.sh` / `generate-opencode-agents.sh`. Manual setup (Claude Code):
+Auto-configured by `setup.sh` / `generate-opencode-agents.sh`. Manual (Claude Code):
 
 ```bash
 claude mcp add --scope user openapi-search --transport http https://openapi-mcp.openapisearch.com/mcp
 ```
 
-For other clients, add `mcpServers.openapi-search` with `type: http` and `url: https://openapi-mcp.openapisearch.com/mcp`. Exceptions: OpenCode uses `type: remote`; Continue.dev uses `type: sse`; Zed uses `context_servers`.
+Other clients: add `mcpServers.openapi-search` with `type: http`, `url: https://openapi-mcp.openapisearch.com/mcp`. Exceptions: OpenCode → `type: remote`; Continue.dev → `type: sse`; Zed → `context_servers`.
 
 ## Usage
 
@@ -64,10 +66,6 @@ getAPIOverview(apiId: "exchangerate-api")
 getOperationDetails(apiId: "exchangerate-api", operationId: "GET /latest/{base}")
 # → parameters, response schema, example responses
 ```
-
-**Use**: unknown API for a task; exploring endpoints before writing integration code; request/response schemas for code generation; comparing APIs.
-
-**Don't use**: you already have the docs (use Context7 or direct docs); testing live calls (read-only); internal/private APIs (indexes public specs only).
 
 ## Troubleshooting
 
