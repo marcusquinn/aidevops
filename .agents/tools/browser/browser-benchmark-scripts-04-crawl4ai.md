@@ -1,6 +1,6 @@
 # Crawl4AI Benchmark Scripts
 
-Reference implementation for `browser-benchmark-scripts.md`. Target: `https://the-internet.herokuapp.com`. Tests: `navigate`, `extract` only (no form/multi-step) — 3 runs each.
+Crawl4AI benchmark scripts. Target: `https://the-internet.herokuapp.com`. Tests: `navigate`, `extract` only (no form/multi-step) — 3 runs each. See [`browser-benchmark-scripts.md`](browser-benchmark-scripts.md) for the full suite index.
 
 ## Sequential benchmark
 
@@ -37,7 +37,7 @@ async def run():
 asyncio.run(run())
 ```
 
-## Parallel benchmark — sequential vs parallel
+## Parallel benchmark
 
 ```python
 import asyncio, time
