@@ -841,7 +841,11 @@ cmd_reconcile() {
 # Reopen closed GitHub issues whose TODO entries are still open [ ].
 # TODO.md is the source of truth: if a task is [ ], the work is not done,
 # regardless of whether a commit message prematurely closed the issue.
-# Safety: only reopens issues closed as "COMPLETED" (not "NOT_PLANNED").
+#
+# Decision tree per closed issue:
+#   NOT_PLANNED         → skip (deliberately declined)
+#   COMPLETED + has PR  → skip (work done, TODO needs marking [x] separately)
+#   COMPLETED + no PR   → reopen (premature closure from commit keyword)
 cmd_reopen() {
 	_init_cmd || return 1
 	local repo="$_CMD_REPO" todo_file="$_CMD_TODO"
@@ -854,7 +858,7 @@ cmd_reopen() {
 
 	local stripped
 	stripped=$(strip_code_fences <"$todo_file")
-	local reopened=0 skipped=0 not_planned=0
+	local reopened=0 skipped=0 not_planned=0 has_pr=0
 
 	while IFS= read -r line; do
 		local ref_num
@@ -867,12 +871,23 @@ cmd_reopen() {
 		local tid
 		tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
 
-		# Check closure reason — only reopen "COMPLETED", not "NOT_PLANNED"
+		# Check closure reason — skip NOT_PLANNED (deliberately declined)
 		local reason
 		reason=$(gh issue view "$ref_num" --repo "$repo" --json stateReason --jq '.stateReason' 2>/dev/null || echo "")
 		if [[ "$reason" == "NOT_PLANNED" ]]; then
 			log_verbose "#$ref_num ($tid) closed as NOT_PLANNED — skipping"
 			not_planned=$((not_planned + 1))
+			continue
+		fi
+
+		# Check if a merged PR exists for this task — if so, the closure is
+		# legitimate (work done) even though TODO is still [ ]. Skip reopen;
+		# the TODO needs marking [x] via task-complete-helper.sh, not reopening.
+		local pr_info
+		pr_info=$(gh_find_merged_pr "$repo" "$tid" 2>/dev/null || echo "")
+		if [[ -n "$pr_info" ]]; then
+			log_verbose "#$ref_num ($tid) has merged PR — closure legitimate, skipping"
+			has_pr=$((has_pr + 1))
 			continue
 		fi
 
@@ -883,7 +898,7 @@ cmd_reopen() {
 		fi
 
 		gh issue reopen "$ref_num" --repo "$repo" \
-			--comment "Reopened: TODO.md still has this as \`[ ]\` (open). The issue was prematurely closed by a commit keyword. TODO.md is the source of truth for task state." 2>/dev/null && {
+			--comment "Reopened: TODO.md still has this as \`[ ]\` (open) and no merged PR was found. The issue was prematurely closed by a commit keyword. TODO.md is the source of truth for task state." 2>/dev/null && {
 			reopened=$((reopened + 1))
 			print_success "Reopened #$ref_num ($tid)"
 		} || {
@@ -892,7 +907,7 @@ cmd_reopen() {
 		}
 	done < <(echo "$stripped" | grep -E '^\s*- \[ \] t[0-9]+.*ref:GH#[0-9]+' || true)
 
-	print_info "Reopen: $reopened reopened, $skipped failed, $not_planned skipped (NOT_PLANNED)"
+	print_info "Reopen: $reopened reopened, $skipped failed, $not_planned not-planned, $has_pr have-merged-pr"
 	return 0
 }
 
