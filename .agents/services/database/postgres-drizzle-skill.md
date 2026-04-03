@@ -50,8 +50,6 @@ Slow query?
 | MEDIUM | No partial indexes | Oversized indexes | Partial indexes for filtered subsets |
 | MEDIUM | Random UUIDs for PKs | Poor index locality | UUIDv7 (PG18+) |
 
-See chapter files below for schema, query, and relation patterns.
-
 ## Reference Documentation
 
 | File | Purpose |
