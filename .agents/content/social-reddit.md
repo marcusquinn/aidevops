@@ -26,8 +26,6 @@ tools:
 
 ## Quick Access (No Auth)
 
-Reddit exposes JSON endpoints by appending `.json` to any URL:
-
 ```bash
 # Subreddit posts
 curl -s "https://www.reddit.com/r/devops/hot.json?limit=10" | jq '.data.children[].data | {title, score, url}'
