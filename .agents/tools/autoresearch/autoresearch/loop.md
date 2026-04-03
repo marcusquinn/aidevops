@@ -161,3 +161,93 @@ is_improvement(new, best, dir):
 ```
 
 **Token estimation:** Use API response token counts if available; otherwise estimate from character count (~4 chars/token).
+
+---
+
+## Multi-Trial Evaluation (t1870)
+
+Addresses LLM stochasticity: a hypothesis that improves the metric by luck on one run
+is not a real improvement. Run the metric N times and take the median (Harbor sweeps pattern).
+
+Activated when the research program has `trials: N` (N > 1) in the `## Metric` section.
+Default `trials: 1` preserves backward compatibility with all existing programs.
+
+### multi_trial_evaluate pseudocode
+
+```text
+function multi_trial_evaluate(trial_results, AGGREGATION, CONSISTENCY_THRESHOLD):
+    valid_results = [r for r in trial_results if r is not null]
+    if len(valid_results) == 0:
+        return ERROR
+
+    if AGGREGATION == "median":
+        aggregated = median(valid_results)
+    elif AGGREGATION == "mean":
+        aggregated = mean(valid_results)
+    elif AGGREGATION == "min":
+        aggregated = min(valid_results)
+    elif AGGREGATION == "max":
+        aggregated = max(valid_results)
+    else:
+        aggregated = median(valid_results)
+
+    if VARIANCE_TRACKING and len(valid_results) > 1:
+        variance = stdev(valid_results)
+        log "Trial variance: {variance:.4f} (stdev over {len(valid_results)} trials)"
+
+    return aggregated
+```
+
+### Consistency check
+
+When `trials > 1`, apply a consistency check before keeping a hypothesis:
+
+```text
+function is_consistent_improvement(trial_results, BEST_METRIC, METRIC_DIR, CONSISTENCY_THRESHOLD):
+    improving_trials = count(r for r in trial_results if is_improvement(r, BEST_METRIC, METRIC_DIR))
+    fraction = improving_trials / len(trial_results)
+    if fraction < CONSISTENCY_THRESHOLD:
+        log "Consistency check failed: only {fraction:.0%} of trials improved (threshold: {CONSISTENCY_THRESHOLD:.0%})"
+        return false
+    return true
+```
+
+A hypothesis is kept only when BOTH conditions hold:
+
+1. The aggregated metric is an improvement over `BEST_METRIC`
+2. The consistency fraction meets `CONSISTENCY_THRESHOLD` (default: 0.6 = majority)
+
+### Integration with main loop
+
+Replace the single `metric_result = run_metric()` call with:
+
+```text
+if TRIALS > 1:
+    trial_results = []
+    for i in 1..TRIALS:
+        trial_results.append(run_metric())
+    metric_result = multi_trial_evaluate(trial_results, AGGREGATION, CONSISTENCY_THRESHOLD)
+    consistent = is_consistent_improvement(trial_results, BEST_METRIC, METRIC_DIR, CONSISTENCY_THRESHOLD)
+else:
+    metric_result = run_metric()
+    consistent = true
+
+if metric_result == ERROR:
+    # ... existing crash handling ...
+elif is_improvement(metric_result, BEST_METRIC, METRIC_DIR) and consistent:
+    # ... existing keep path ...
+else:
+    # ... existing discard path ...
+```
+
+### TSV columns for multi-trial
+
+Append two columns to the results TSV when `trials > 1`:
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `trials` | int | Number of trials run (1 for single-trial programs) |
+| `trial_variance` | float\|`-` | Standard deviation across trials; `-` for single-trial |
+
+These columns are appended after `token_ratio` and are optional — existing TSV readers
+that don't know about them will ignore the extra columns.
