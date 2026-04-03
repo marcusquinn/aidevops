@@ -26,8 +26,8 @@ COMMANDS:
     setup               Install anti-detect tools (Camoufox, rebrowser-patches)
     launch              Launch browser with anti-detect profile
     profile             Manage browser profiles (create/list/show/delete/clone)
-    cookies             Manage profile cookies (export/import/clear)
-    proxy               Proxy operations (check/check-all/dns-check)
+    cookies             Manage profile cookies (export/clear)
+    proxy               Proxy operations (check/check-all)
     test                Test detection status against bot-detection sites
     warmup              Warm up a profile with browsing history
     status              Show installation status of all tools
@@ -49,9 +49,6 @@ PROFILE SUBCOMMANDS:
     delete <name>       Delete profile
     clone <src> <dst>   Clone profile
     update <name>       Update profile settings
-    bulk-create         Create multiple profiles
-    export              Export profiles to archive
-    import              Import profiles from archive
 
 PROFILE CREATE OPTIONS:
     --type <type>       Profile type: persistent|clean|warm|disposable (default: persistent)
