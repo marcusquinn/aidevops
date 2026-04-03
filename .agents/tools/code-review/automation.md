@@ -45,7 +45,7 @@ bash .agents/scripts/linters-local.sh          # verify
 
 ## Quality Metrics & Targets
 
-- **SonarCloud thresholds**: `MAX_TOTAL_ISSUES=100`, `MAX_RETURN_ISSUES=0`, `MAX_POSITIONAL_ISSUES=0`, `MAX_STRING_LITERAL_ISSUES=0`
+- **SonarCloud thresholds** (from `linters-local.sh`): `MAX_TOTAL_ISSUES=100`, `MAX_RETURN_ISSUES=10`, `MAX_POSITIONAL_ISSUES=300`, `MAX_STRING_LITERAL_ISSUES=2300`
 - **Critical**: S7679 & S1481 = 0 (100% resolved); 50+ S1192 violations eliminated
 
 ## Issue Resolution Priority
