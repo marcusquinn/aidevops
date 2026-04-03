@@ -28,11 +28,11 @@ tools:
 
 | Feature | How it works |
 |---------|-------------|
-| **Working-copy-as-commit** | Every file change auto-recorded as commit. No staging area/index. Snapshots before every command — no dirty-directory errors, no `git stash`. Set messages anytime: `jj describe`. |
-| **Operation log + undo** | All ops recorded. `jj op log` shows history, `jj undo` reverses last op, `jj op restore <id>` restores any state. |
+| **Working-copy-as-commit** | File changes auto-recorded; no staging area. Snapshots before every command — no dirty-directory errors, no `git stash`. Message anytime: `jj describe`. |
+| **Operation log + undo** | `jj op log` shows full history; `jj undo` reverses last op; `jj op restore <id>` restores any state. |
 | **First-class conflicts** | Conflicts stored in commits, not blocking errors. Resolve later; resolutions propagate to descendants (subsumes `git rerere`). |
-| **Auto-rebase descendants** | Modifying any commit rebases all descendants in place. Bookmark pointers update automatically. Equivalent to transparent `git rebase --update-refs`. |
-| **Anonymous branches** | Tracks all visible heads — commits never lost while reachable. Bookmarks (named branches) only needed for pushing to remotes. |
+| **Auto-rebase descendants** | Modifying any commit rebases all descendants in place. Equivalent to transparent `git rebase --update-refs`. |
+| **Anonymous branches** | All visible heads tracked — commits never lost while reachable. Named bookmarks only needed for remotes. |
 
 ## Essential Commands
 
@@ -40,13 +40,13 @@ tools:
 # Repository setup
 jj git init                  # New jj repo with git backend
 jj git clone <url>           # Clone a git remote
-jj init --git-repo=.         # Colocate: add jj to existing git repo
+jj init --git-repo=.         # Colocate: add jj to existing git repo (creates .jj/ alongside .git/)
 
 # Daily workflow
 jj new                       # Start a new change on top of current
 jj describe -m "message"     # Set/update commit message
 jj diff                      # Show changes in working copy
-jj log                       # Show commit graph (rich template output)
+jj log                       # Show commit graph
 jj status                    # Show working copy status
 
 # Rewriting history
@@ -62,10 +62,6 @@ jj git push                  # Push bookmarks to git remote
 jj bookmark set main         # Set a bookmark (branch) on current commit
 ```
 
-## Colocated Mode (Gradual Adoption)
-
-`jj init --git-repo=.` in any existing git repo creates `.jj/` alongside `.git/`. Both `jj` and `git` commands work on the same objects and refs. Team members continue using git; low-risk evaluation path.
-
 ## Benefits for AI-Assisted Development
 
 - **No staging friction** — file writes auto-commit; no `git add` errors
@@ -76,7 +72,7 @@ jj bookmark set main         # Set a bookmark (branch) on current commit
 
 ## aidevops Worktree Integration
 
-Colocated mode works with `wt` (Worktrunk) worktrees. Colocate each with `jj init --git-repo=.` if desired. `jj git push` replaces `git push` using the same remotes; bookmarks map directly to git branches.
+Colocated mode (`jj init --git-repo=.`) works with `wt` (Worktrunk) worktrees. `jj git push` replaces `git push` using the same remotes; bookmarks map directly to git branches. Team members can continue using git unchanged.
 
 **See also**: `tools/git/github-cli.md` (PR/remote workflows), `tools/git/conflict-resolution.md` (conflict strategies), `tools/git/worktrunk.md` (worktree management)
 
