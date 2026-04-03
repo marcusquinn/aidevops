@@ -4,7 +4,7 @@ agent: Build+
 mode: subagent
 ---
 
-Quick diagnostic of the dispatch system. Run these commands in parallel and present a unified report.
+Quick diagnostic of the dispatch system. Run in parallel, present a unified report.
 
 Arguments: $ARGUMENTS
 
@@ -73,12 +73,12 @@ fi
 
 Concise dashboard, anomalies first:
 
-- **Worker Status** — `Running: X / Y max (Z slots)`. Flag: all slots full; 0 workers + dispatchable tasks (scheduler issue).
-- **Queue Depth** — `Total open: X (Y parents, Z subtasks). Dispatchable: N (tagged: M, inherited: K). Blocked: B. Claimed: C.` Flag: dispatchable=0 but open count high (queue stall).
-- **Action Items** (priority order): PRs ready to merge (CI green, no comments) → PRs with CI failures → stale worktrees → subtasks missing `#auto-dispatch` (dispatch gap) → pulse scheduler not running.
+- **Worker Status** — `Running: X / Y max (Z slots)`. Flag: all slots full; 0 workers + dispatchable tasks.
+- **Queue Depth** — `Total open: X (Y parents, Z subtasks). Dispatchable: N. Blocked: B. Claimed: C.` Flag: dispatchable=0 but open count high (queue stall).
+- **Action Items**: PRs ready to merge → PRs with CI failures → stale worktrees → subtasks missing `#auto-dispatch` → pulse not running.
 - **System Health** — pulse scheduler (launchd/macOS, cron/Linux), recent log: `tail -20 ~/.aidevops/logs/pulse.log`
 
 ## Arguments
 
-- No arguments: show current system status
+- No arguments: current system status
 - `--fix`: auto-fix simple issues (merge green PRs, clean stale worktrees)
