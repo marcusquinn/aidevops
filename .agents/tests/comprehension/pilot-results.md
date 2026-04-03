@@ -35,7 +35,7 @@
 
 ### Clarity problem (file needs improvement)
 
-Model follows a plausible but incorrect interpretation — output addresses the right topic but reaches wrong conclusion; multiple valid readings exist.
+Plausible but incorrect interpretation — right topic, wrong conclusion; multiple valid readings exist.
 
 **Expected haiku failures:**
 - `code-simplifier.md`: nuanced "almost never simplify" categories → haiku over-simplifies classification
@@ -44,7 +44,7 @@ Model follows a plausible but incorrect interpretation — output addresses the 
 
 ### Exceeds model capability (file is fine, model too weak)
 
-Model lacks reasoning capacity for the task; instructions are clear.
+Insufficient reasoning capacity; instructions are clear.
 
 **Fast-fail indicators:** refusal, confabulation (hallucinated paths/tools), structural_violation (ignores explicit constraint), disengagement (minimal response).
 
@@ -56,16 +56,16 @@ Model lacks reasoning capacity for the task; instructions are clear.
 ### Known-Bad Cases
 
 **Haiku false-fails (correctly escalated to sonnet):**
-- `tools/code-review/code-simplifier.md` "classifies safe vs judgment": 4-tier classification (safe/prose-tightening/requires-judgment/almost-never) with nuanced boundaries — haiku collapses to binary; sonnet maintains 4-tier distinction.
-- `workflows/git-workflow.md` "destructive command safety": allowlist vs blocklist + `--force-with-lease` exception — haiku conflates; sonnet distinguishes correctly.
+- `tools/code-review/code-simplifier.md`: 4-tier classification (safe/prose-tightening/requires-judgment/almost-never) — haiku collapses to binary; sonnet maintains distinction.
+- `workflows/git-workflow.md`: allowlist vs blocklist + `--force-with-lease` exception — haiku conflates; sonnet distinguishes correctly.
 
-**Sonnet false-fails:** None expected. All pilot files within sonnet range. Opus-tier files (e.g., `prompts/build.txt` 400+ lines, deeply nested cross-refs) excluded from pilot.
+**Sonnet false-fails:** None expected. Opus-tier files (e.g., `prompts/build.txt` 400+ lines, deeply nested cross-refs) excluded from pilot.
 
-**False-pass risk:** Haiku passes deterministic checks but misunderstands intent. Example: `reference/self-improvement.md` "framework vs project routing" — haiku outputs "framework" (passes `contains` check) with wrong reasoning. Mitigation: adjudication layer (haiku self-check or sonnet judge) catches most; `reference_answer` field enables precise comparison for critical files.
+**False-pass risk:** Haiku passes deterministic checks but misunderstands intent. Example: `reference/self-improvement.md` "framework vs project routing" — haiku outputs "framework" (passes `contains` check) with wrong reasoning. Mitigation: adjudication layer (haiku self-check or sonnet judge); `reference_answer` field enables precise comparison for critical files.
 
 ## Structural Pre-Filter
 
-Uses line count, cross-ref count, code blocks, table rows, heading depth to predict complexity without model calls.
+Predicts complexity from line count, cross-ref count, code blocks, table rows, heading depth — no model calls.
 
 | Complexity | Criteria | Predicted Tier |
 |-----------|----------|----------------|
@@ -73,7 +73,7 @@ Uses line count, cross-ref count, code blocks, table rows, heading depth to pred
 | moderate | score 3-5 (60-120 lines, moderate refs) | haiku or sonnet |
 | complex | score > 5 (> 120 lines, many refs) | sonnet |
 
-**Accuracy:** ~70% correct. Remaining 30% are "moderate" files where the model benchmark adds most value.
+**Accuracy:** ~70%. Remaining 30% are "moderate" files where the model benchmark adds most value.
 
 ## Cost Analysis
 
