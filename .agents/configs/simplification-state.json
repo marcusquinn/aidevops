@@ -1,4 +1,12 @@
 {
+  ".agents/aidevops/api-integrations.md": {
+    "at": "2026-04-03T00:00:00Z",
+    "hash": "1d9ae72e2a62060ee1524f7440825f1a5539f3ce2e64b691d67d66ea36cf0edb",
+    "issue": "GH#15818",
+    "passes": 1,
+    "pr": "pending",
+    "status": "simplified"
+  },
   ".agents/aidevops/service-links.md": {
     "at": "2026-04-03T00:00:00Z",
     "hash": "1b4d0cbc25fd53ad0a3de4ad3f1b3b8f1b8ab31d",

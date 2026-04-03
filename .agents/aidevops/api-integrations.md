@@ -18,7 +18,6 @@ tools:
 **Pattern**: `configs/[service]-config.json` + `scripts/[service]-helper.sh`
 
 ```bash
-# Key management
 setup-local-api-keys.sh set [service]-api-key YOUR_KEY
 setup-local-api-keys.sh list
 test-all-apis.sh
@@ -29,28 +28,24 @@ test-all-apis.sh
 ## Setup
 
 ```bash
-# Full setup
-bash setup.sh
+bash setup.sh  # Full setup
 
 # Single service
 cp configs/[service]-config.json.txt configs/[service]-config.json
-# Edit with credentials, then:
 scripts/[service]-helper.sh test-connection
 ```
 
 ## Service Catalog
 
-Standard pattern: `configs/[service]-config.json` + `scripts/[service]-helper.sh`. Auth: credential type.
-
 ### Security & Code Quality
 
-| Service | Auth | Setup | Notes |
-|---------|------|-------|-------|
-| Vaultwarden | API Token | Config + helper | Credential storage, secure sharing, audit logs |
-| CodeRabbit | API Key | `coderabbit-cli.sh` | AI code review, security scanning |
-| Codacy | API Token | `codacy-cli.sh` | Quality metrics, coverage tracking |
-| SonarCloud | API Token | GitHub Actions | Security hotspots, code smells, coverage |
-| CodeFactor | GitHub integration | Automatic | Quality scoring, trend analysis |
+| Service | Auth | Notes |
+|---------|------|-------|
+| Vaultwarden | API Token | Credential storage, secure sharing, audit logs |
+| CodeRabbit | API Key | AI code review (`coderabbit-cli.sh`), security scanning |
+| Codacy | API Token | Quality metrics, coverage tracking (`codacy-cli.sh`) |
+| SonarCloud | API Token | Security hotspots, code smells, coverage (GitHub Actions) |
+| CodeFactor | GitHub integration | Quality scoring, trend analysis (automatic) |
 
 ### Git Platforms
 
@@ -73,39 +68,39 @@ Shared helper: `git-platforms-helper.sh`.
 
 ### Domain & DNS
 
-| Service | Auth | Config | Helper | Notes |
-|---------|------|--------|--------|-------|
-| Cloudflare | API Token (scoped) | `cloudflare-dns-config.json` | `dns-helper.sh` | DNS, security rules, analytics, caching |
-| Spaceship | API Key | | `spaceship-helper.sh` | Registration, WHOIS, transfers |
-| 101domains | API Credentials | | `101domains-helper.sh` | Bulk operations, pricing, availability |
-| AWS Route 53 | AWS Access Keys | `route53-dns-config.json` | `dns-helper.sh` | DNS hosting, health checks, traffic routing |
-| Namecheap | API Key + Username | `namecheap-dns-config.json` | `dns-helper.sh` | Domain management, DNS, SSL certificates |
+| Service | Auth | Notes |
+|---------|------|-------|
+| Cloudflare | API Token (scoped) | DNS, security rules, analytics (`cloudflare-dns-config.json`, `dns-helper.sh`) |
+| Spaceship | API Key | Registration, WHOIS, transfers (`spaceship-helper.sh`) |
+| 101domains | API Credentials | Bulk operations, pricing, availability (`101domains-helper.sh`) |
+| AWS Route 53 | AWS Access Keys | DNS hosting, health checks, traffic routing (`route53-dns-config.json`, `dns-helper.sh`) |
+| Namecheap | API Key + Username | Domain management, DNS, SSL certificates (`namecheap-dns-config.json`, `dns-helper.sh`) |
 
 ### Communication
 
 | Service | Auth | Notes |
 |---------|------|-------|
 | Amazon SES | AWS Access Keys | Email delivery, bounce tracking, reputation |
-| Twilio | SID + Token | SMS, voice, WhatsApp, 2FA, recordings. AUP required. Telfon UI: https://mytelfon.com/ |
+| Twilio | SID + Token | SMS, voice, WhatsApp, 2FA. AUP required. UI: https://mytelfon.com/ |
 | MainWP | API Key | WordPress site management, updates, backups |
 
 ### SEO & Analytics
 
-| Service | Auth | Integration | Notes |
-|---------|------|-------------|-------|
-| Ahrefs | API Key | `mcp-server-ahrefs` | Backlink analysis, keyword research, competitor analysis |
-| Google Search Console | Service Account (GCP) | `mcp-server-gsc` | Search analytics, Core Web Vitals, index coverage |
-| Perplexity | API Key | `perplexity-mcp` | Research queries, content generation, fact-checking |
+| Service | Auth | Notes |
+|---------|------|-------|
+| Ahrefs | API Key | Backlink analysis, keyword research (`mcp-server-ahrefs`) |
+| Google Search Console | Service Account (GCP) | Search analytics, Core Web Vitals (`mcp-server-gsc`) |
+| Perplexity | API Key | Research queries, fact-checking (`perplexity-mcp`) |
 
 ### Development Tools
 
-| Service | Auth | Integration | Notes |
-|---------|------|-------------|-------|
-| Context7 | API Key | `@context7/mcp-server` | Real-time library docs, code examples, API references |
-| LocalWP | Local access | Custom MCP server | WordPress DB queries, site management, dev tools |
-| Pandoc | None (local) | `pandoc-helper.sh` | Multi-format to markdown conversion (20+ formats) |
-| Agno AgentOS | LLM keys | `agno-setup.sh` | Multi-agent framework, production runtime, Agent-UI |
-| Playwright/Selenium | Site credentials | `agno-setup.sh` | Local browser automation. No cloud services. |
+| Service | Auth | Notes |
+|---------|------|-------|
+| Context7 | API Key | Real-time library docs, code examples (`@context7/mcp-server`) |
+| LocalWP | Local access | WordPress DB queries, site management (custom MCP server) |
+| Pandoc | None (local) | Multi-format to markdown conversion, 20+ formats (`pandoc-helper.sh`) |
+| Agno AgentOS | LLM keys | Multi-agent framework, production runtime (`agno-setup.sh`) |
+| Playwright/Selenium | Site credentials | Local browser automation only — no cloud services (`agno-setup.sh`) |
 
 ## References
 
