@@ -8,7 +8,7 @@ Enable when: multiple backend round-trips, geographically concentrated backend, 
 
 **Do NOT enable for:** static/cached content, Workers without backend calls, pure edge logic (auth, redirects, transforms), Workers without fetch handlers.
 
-**Requirements:** Wrangler 2.20.0+, consistent traffic from multiple global locations. Only affects fetch handlers (not RPC methods or named entrypoints). Available on all plans. Analysis takes up to 15 min; Worker runs at edge during analysis.
+**Requirements:** Wrangler 2.20.0+, consistent traffic from multiple global locations. Only affects fetch handlers (not RPC methods or named entrypoints). Available on all plans. Analysis takes up to 15 min; Worker runs at edge until analysis completes.
 
 ## Architecture: Frontend/Backend Split
 
@@ -31,7 +31,7 @@ mode = "smart"
 hint = "wnam"  # Optional: West North America
 ```
 
-Deploy and wait 15 min for analysis. Check status via API or dashboard.
+Deploy and wait 15 min for analysis.
 
 ## Placement Status
 
@@ -45,7 +45,7 @@ type PlacementStatus =
 
 1% of requests always route without optimization (baseline comparison) — expected behaviour.
 
-## CLI
+## Status Check
 
 ```bash
 # Check placement status
