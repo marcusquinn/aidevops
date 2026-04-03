@@ -30,7 +30,7 @@ Stateful coordination — serialized access to shared state:
 Model each DO around the **atom of coordination** — the unit needing serialized access (user, room, document, session).
 
 | Metric | Feels Right | Question It | Reconsider |
-|----------------|-------------|-------------|------------|
+|--------|-------------|-------------|------------|
 | Requests/sec (sustained) | < 100 | 100-500 | > 500 |
 | Storage keys | < 100 | 100-1000 | > 1000 |
 | Total state size | < 10MB | 10MB-100MB | > 1GB |
@@ -42,11 +42,11 @@ Model each DO around the **atom of coordination** — the unit needing serialize
 
 **Class**: Extend `DurableObject`. Constructor receives `DurableObjectState` (storage, WebSockets, alarms) and `Env` (bindings).
 
-**Access**: Workers get stubs via bindings → call RPC methods (recommended) or fetch handler (legacy).
+**Access**: Workers get stubs via bindings → RPC methods (recommended) or fetch handler (legacy).
 
-**ID generation**: `idFromName()` deterministic/named; `newUniqueId()` random/sharding; `idFromString()` derive from existing; jurisdiction option for data locality.
+**ID generation**: `idFromName()` deterministic; `newUniqueId()` random/sharding; `idFromString()` from existing; jurisdiction option for data locality.
 
-**Storage**: SQLite (default, 10GB/DO, transactions); Synchronous KV API (simple key-value on SQLite); Asynchronous KV API (legacy/advanced).
+**Storage**: SQLite (default, 10GB/DO, transactions); Synchronous KV API (simple key-value); Asynchronous KV API (legacy).
 
 **Special features**: Alarms (per-DO scheduled execution); WebSocket Hibernation (zero-cost idle); Point-in-Time Recovery (30-day window).
 
