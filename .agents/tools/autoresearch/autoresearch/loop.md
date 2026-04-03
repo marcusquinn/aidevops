@@ -11,7 +11,6 @@ SESSION_START = current time
 ITER_TOKENS = 0
 
 while true:
-    # Budget checks
     elapsed = now - SESSION_START
     if elapsed >= TIMEOUT: break with reason "timeout"
     if ITERATION_COUNT >= MAX_ITER: break with reason "max_iterations"
@@ -21,17 +20,12 @@ while true:
     ITER_START_TOKENS = current_token_estimate()
     Log: "--- Iteration {ITERATION_COUNT} ---"
 
-    # Check peer discoveries (multi-dimension mode)
     if CAMPAIGN_ID is set:
         peer_discoveries = check_peer_discoveries()
 
-    # Generate hypothesis
     hypothesis = generate_hypothesis(...)
-
-    # Modify files
     apply_modification(hypothesis)
 
-    # Constraint check
     constraint_result = run_constraints()
     if constraint_result == FAIL:
         git -C WORKTREE_PATH reset --hard HEAD
@@ -40,7 +34,6 @@ while true:
         log_result(ITERATION_COUNT, null, null, "constraint_fail", hypothesis, ITER_TOKENS)
         continue
 
-    # Measure metric
     metric_result = run_metric()
     if metric_result == ERROR:
         git -C WORKTREE_PATH reset --hard HEAD
@@ -53,7 +46,6 @@ while true:
     ITER_TOKENS = current_token_estimate() - ITER_START_TOKENS
     TOTAL_TOKENS += ITER_TOKENS
 
-    # Keep or discard
     if is_improvement(metric_result, BEST_METRIC, METRIC_DIR):
         git -C WORKTREE_PATH add -A
         git -C WORKTREE_PATH commit -m "experiment: {hypothesis[:60]} ({METRIC_NAME}: {metric_result})"
@@ -142,11 +134,8 @@ is_improvement(new_value, best_value, direction):
 
 ```text
 current_token_estimate():
-    # Estimate from context size: count characters in all tool inputs/outputs
-    # since session start, divide by 4 (rough chars-per-token ratio)
-    # This is an approximation — exact counting requires API response parsing
+    # chars-per-token ratio ~4; use API response token counts if available
     return estimated_tokens
 ```
 
-If the runtime exposes token counts in API responses, use those directly.
-Otherwise, estimate from character count of tool calls and responses.
+If the runtime exposes token counts in API responses, use those directly. Otherwise estimate from character count of tool calls and responses.
