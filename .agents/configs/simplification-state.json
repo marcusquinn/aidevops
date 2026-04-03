@@ -5897,7 +5897,13 @@
       "hash": "a58947b006e0638400c9e552c9b04bc478539d82",
       "at": "2026-04-03T22:25:55Z",
       "pr": 16865,
-      "passes": 2
+      "passes": 1
+    },
+    ".agents/tools/design/library/styles/corporate-friendly/DESIGN.md": {
+      "hash": "2cd4528f0ff1cbc5810685e043eb7cf68c196fb0",
+      "at": "2026-04-03T22:45:37Z",
+      "status": "simplified",
+      "issue": 16884
     }
   }
 }
