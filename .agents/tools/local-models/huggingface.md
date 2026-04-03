@@ -19,25 +19,25 @@ tools:
 
 - **Purpose**: Find, evaluate, and download GGUF models from HuggingFace for local inference via llama.cpp
 - **CLI**: `huggingface-cli download <repo> <file> --local-dir <path>` (resume-capable)
+- **Install**: `pip install "huggingface_hub[cli]"` (or pipx). Token: `~/.cache/huggingface/token`
 - **Format**: GGUF — single file (weights + tokenizer + metadata), llama.cpp native. Naming: `{model}-{size}-{quant}.gguf`
 - **Helper**: `local-model-helper.sh search|download|models|recommend|setup`
+- **Browse**: `https://huggingface.co/models?library=gguf&sort=trending`
 - **Trusted publishers**: bartowski (first choice), lmstudio-community, ggml-org, unsloth; official authors (Qwen, meta-llama, deepseek-ai, mistralai, google) preferred when available. **Avoid**: few downloads, no README, unclear quant labels.
 - **See also**: `tools/local-models/local-models.md` (runtime), `tools/context/model-routing.md` (routing), `tools/infrastructure/cloud-gpu.md` (cloud GPU)
 
 ## Quantization
 
-**Default: Q4_K_M** — best size/quality balance for almost everyone. Size estimate: `Parameters (B) × Bits / 8 ≈ GB` (e.g., 8B Q4_K_M ≈ 4.5 GB ±10%).
+**Default: Q4_K_M** — best size/quality balance. Size estimate: `Parameters (B) × Bits / 8 ≈ GB` (e.g., 8B Q4_K_M ≈ 4.5 GB ±10%).
 
 | Quant | Bits | Size vs FP16 | Use When |
 |-------|------|-------------|----------|
-| Q4_K_M | 4 | ~25% | **Default** |
+| Q4_K_M | 4 | ~25% | **Default** — RAM tight or balanced |
 | Q5_K_M | 5 | ~33% | RAM headroom, better quality |
 | Q6_K | 6 | ~50% | Near-lossless, important tasks |
 | Q8_0 | 8 | ~66% | Maximum quality |
 | IQ4_XS | 4 | ~22% | Minimum size, still usable |
 | IQ3_XXS | 3 | ~17% | Extreme compression |
-
-RAM tight → Q4_K_M or IQ4_XS. RAM available → Q5_K_M or Q6_K.
 
 ## Hardware-Tier Recommendations
 
@@ -63,8 +63,6 @@ Reserve ≥4 GB for OS.
 | **Phi 4** (Microsoft) | 3.8B–14B | Capable for size, good reasoning in constrained environments. | `microsoft/phi-4-gguf`, `bartowski/phi-4-GGUF` |
 
 ## Download
-
-Install: `pip install "huggingface_hub[cli]"` (or pipx). Token: `~/.cache/huggingface/token`. Browse: `https://huggingface.co/models?library=gguf&sort=trending`.
 
 ```bash
 # Helper (recommended)
