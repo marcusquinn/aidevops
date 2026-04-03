@@ -116,7 +116,7 @@ Now? I'm the one who's always ahead. [calm]
 Same me. Different tools. Different results. [CTA]"
 ```
 
-## Customer Journey Story
+## Customer Journey
 
 ```text
 [BEFORE]     "A year ago, I was struggling to get leads for my coaching business."
@@ -137,7 +137,7 @@ Same me. Different tools. Different results. [CTA]"
 [CONNECTION]  "If you've ever felt that same frustration, I built [PRODUCT] for you. Try it free at [WEBSITE]."
 ```
 
-## Proof Frameworks
+## Proof
 
 ### Testimonial structures
 
