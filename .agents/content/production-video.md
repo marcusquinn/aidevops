@@ -14,23 +14,19 @@ tools:
 
 # AI Video Production
 
-<!-- CLASSIFICATION: Domain reference material (not agent operational instructions).
-     This file documents video production techniques, API workflows, prompt templates,
-     and tool comparisons. Imperative language ("ALWAYS use ingredients-to-video",
-     "NEVER frame-to-video") describes domain best practices, not agent behaviour
-     directives. The single-source-of-truth policy (AGENTS.md) governs agent routing,
-     tool access, and behavioural rules — not domain knowledge libraries like this.
-     See AGENTS.md Domain Index: Content/Video/Voice for the authoritative pointer. -->
+<!-- CLASSIFICATION: Domain reference material. Imperative language describes domain best practices, not agent behaviour directives. See AGENTS.md Domain Index: Content/Video/Voice. -->
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
 - **Primary Models**: Sora 2 Pro (UGC/authentic, <$10k), Veo 3.1 (cinematic/character-consistent, >$100k)
-- **Key Technique**: Seed bracketing (15% → 70%+ success rate)
+- **Key Technique**: Seed bracketing (15% → 70%+ success rate); test 10-15 sequential seeds per content type range
 - **Seed ranges**: people 1000-1999, action 2000-2999, landscape 3000-3999, product 4000-4999, YouTube 2000-3000
 - **2-Track production**: objects/environments (Midjourney→VEO) vs characters (Freepik→Seedream→VEO)
 - **Veo 3.1**: ALWAYS use ingredients-to-video, NEVER frame-to-video (produces grainy yellow output)
+- **Voice**: NEVER use pre-made ElevenLabs voices (widely recognised as AI)
+- **Frame rate**: Never upconvert 24fps → 60fps for non-action content (soap opera effect)
 
 **Model Selection**:
 
@@ -45,8 +41,6 @@ Content Type?
 
 ## Chapters
 
-Full content is split into focused chapter files. Each is self-contained.
-
 | # | Chapter | Description |
 |---|---------|-------------|
 | 01 | [Model Selection](production-video-01-model-selection.md) | Decision tree, model comparison table, content type presets |
@@ -58,14 +52,6 @@ Full content is split into focused chapter files. Each is self-contained.
 | 07 | [Post-Production](production-video-07-post-production.md) | Upscaling, frame rate conversion, denoising, film grain |
 | 08 | [Talking-Head Pipeline](production-video-08-talking-head-pipeline.md) | Longform 30s+ pipeline: image → script → voice → video → post |
 | 09 | [Tools & Resources](production-video-09-tools-resources.md) | Internal references, helper scripts, external links |
-
-## Key Rules
-
-- **Veo 3.1**: ALWAYS ingredients-to-video, NEVER frame-to-video (grainy yellow output)
-- **Seed bracketing**: Test 10-15 sequential seeds per content type range
-- **Voice**: NEVER use pre-made ElevenLabs voices (widely recognised as AI)
-- **Frame rate**: Never upconvert 24fps → 60fps for non-action content (soap opera effect)
-- **2-Track**: Objects via Midjourney→VEO; Characters via Freepik→Seedream→VEO
 
 ## Helper Scripts
 
