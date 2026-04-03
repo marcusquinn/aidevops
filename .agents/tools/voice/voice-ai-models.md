@@ -5,8 +5,6 @@ tools:
   read: true
 ---
 
-# Voice AI Models
-
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
@@ -40,8 +38,6 @@ Need voice AI?
     └── Default → speech-to-speech.md cascaded pipeline
 ```
 
-<!-- AI-CONTEXT-END -->
-
 ## TTS (Text-to-Speech)
 
 ### Cloud
@@ -64,7 +60,7 @@ Need voice AI?
 | Coqui TTS | varies | MPL-2.0 | 20+ | Yes | 2-6GB | |
 | Piper | <100M | MIT | 30+ | No | CPU only | |
 
-Also available: EdgeTTS (free, 300+ voices), macOS Say (zero deps), FacebookMMS (1100+ languages). See `voice-models.md`.
+Also: EdgeTTS (free, 300+ voices), macOS Say (zero deps), FacebookMMS (1100+ languages) — see `voice-models.md`.
 
 ## STT (Speech-to-Text)
 
@@ -91,7 +87,7 @@ Also available: EdgeTTS (free, 300+ voices), macOS Say (zero deps), FacebookMMS 
 | NVIDIA Parakeet V3 | 0.6B | 9.6 | Fastest | 2GB (25 langs) |
 | Apple Speech | Built-in | 9.0 | Fast | On-device (macOS 26+) |
 
-Backends: `faster-whisper` (4x speed, recommended), `whisper.cpp` (C++ native, Apple Silicon optimized). See `transcription.md`.
+Backends: `faster-whisper` (4x speed, recommended), `whisper.cpp` (C++ native, Apple Silicon optimized) — see `transcription.md`.
 
 ## S2S (Speech-to-Speech)
 
@@ -117,7 +113,9 @@ Backends: `faster-whisper` (4x speed, recommended), `whisper.cpp` (C++ native, A
 | Enhancement | StudioVoice | Any | Yes |
 | Translation | Riva Translate | 36 | Yes |
 
-Pipeline: `Audio -> [Parakeet ASR] -> [Any LLM] -> [Magpie TTS] -> Audio`. See `cloud-voice-agents.md`. Cascaded S2S (VAD+STT+LLM+TTS): see `speech-to-speech.md`.
+Pipeline: `Audio -> [Parakeet ASR] -> [Any LLM] -> [Magpie TTS] -> Audio` — see `cloud-voice-agents.md`.
+
+Cascaded S2S (VAD+STT+LLM+TTS): see `speech-to-speech.md`.
 
 ## GPU Planning
 
@@ -129,4 +127,6 @@ Pipeline: `Audio -> [Parakeet ASR] -> [Any LLM] -> [Magpie TTS] -> Audio`. See `
 | Full cascaded pipeline | 4GB | 12GB |
 | CPU-only (Piper + whisper.cpp) | 0 (no GPU) | 8GB RAM |
 
-Apple Silicon: MPS for PyTorch models; `whisper-mlx` or `mlx-audio-whisper` for optimized macOS inference.
+Apple Silicon: MPS for PyTorch; `whisper-mlx` or `mlx-audio-whisper` for optimized macOS inference.
+
+<!-- AI-CONTEXT-END -->
