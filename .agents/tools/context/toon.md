@@ -26,6 +26,7 @@ tools:
 - **Best for**: Tabular data (60%+ savings), config data, API responses
 - **Config**: `configs/toon-config.json` (copy from `configs/toon-config.json.txt`); key options: `default_delimiter`, `key_folding`, `batch_processing`, `ai_prompts`
 - **Resources**: https://toonformat.dev, https://github.com/toon-format/toon
+- **Best practices**: validate input; keep JSON backups; use strict mode in production; monitor actual savings (tabular data benefits most)
 
 <!-- AI-CONTEXT-END -->
 
@@ -61,20 +62,6 @@ toon-helper.sh compare large-dataset.json
 
 ## LLM Integration
 
-**Sending TOON to LLMs** — include this preamble:
+**Sending TOON to LLMs** — include preamble: `Data is in TOON format (2-space indent, arrays show length and fields):`
 
-```
-Data is in TOON format (2-space indent, arrays show length and fields):
-```
-
-**Generating TOON from LLMs:**
-
-- Show expected header format: `users[N]{id,name,role}:`
-- Rules: 2-space indent, no trailing spaces, `[N]` matches row count
-- Request code block output only
-
-## Best Practices
-
-- Validate input before processing; use strict mode in production
-- Keep JSON backups when converting; verify round-trip accuracy
-- Monitor actual token savings — tabular data benefits most
+**Generating TOON from LLMs** — show expected header format: `users[N]{id,name,role}:`. Rules: 2-space indent, no trailing spaces, `[N]` matches row count, request code block output only.
