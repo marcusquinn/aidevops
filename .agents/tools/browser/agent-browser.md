@@ -26,6 +26,7 @@ tools:
 - **Performance** (warm): navigate+screenshot 1.9s, form fill 1.4s, reliability 0.6s. Cold-start ~3-5s.
 - **iOS** (macOS only): `-p ios --device "iPhone 16 Pro"` — Mobile Safari via Appium
 - **License**: Apache-2.0 | TypeScript (74%), Rust (22%)
+- **Platform**: macOS/Linux ARM64+x64 (native Rust + Node.js fallback); Windows (Node.js only); iOS (macOS only)
 
 **Core workflow** — use refs from `snapshot -i` for deterministic targeting:
 
@@ -78,7 +79,7 @@ agent-browser find first ".item" click | find nth 2 "a" text
 
 ## Sessions, Wait, Storage, Network
 
-Isolated browser per session (cookies, storage, history, auth). Parallel: `--session s1/s2/s3` (3 parallel tested in 2.0s).
+Isolated browser per session (cookies, storage, history, auth). Parallel sessions: `--session s1/s2/s3` (3 parallel tested in 2.0s).
 
 ```bash
 agent-browser --session agent1 open site-a.com         # named session
@@ -117,14 +118,6 @@ agent-browser -p ios --device "iPhone 16 Pro" open https://example.com
 agent-browser -p ios snapshot -i | tap @e1 | swipe up/down/left/right [px]
 agent-browser -p ios screenshot mobile.png | close
 ```
-
-## Platform Support
-
-| Platform | Binary | Fallback | iOS |
-|----------|--------|----------|-----|
-| macOS ARM64/x64 | Native Rust | Node.js | Yes |
-| Linux ARM64/x64 | Native Rust | Node.js | No |
-| Windows | — | Node.js | No |
 
 ## Comparison
 
