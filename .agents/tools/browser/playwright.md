@@ -23,6 +23,7 @@ mcp:
 
 - **Purpose**: Cross-browser testing and automation (fastest browser engine) — engine for dev-browser, agent-browser, and Stagehand
 - **Install**: `npm install playwright && npx playwright install` (lib + browsers) | `npx @playwright/mcp@latest` (MCP server)
+- **Setup**: `./setup.sh --interactive` → "Setup browser automation tools"
 - **MCP config**: `{ "playwright": { "command": "npx", "args": ["@playwright/mcp@latest"] } }`
 - **Browsers**: chromium, firefox, webkit + custom (Brave, Edge, Chrome via `executablePath`)
 - **Headless**: Yes (default) | **Proxy**: HTTP/SOCKS5 | **Session**: `storageState` / `userDataDir`
@@ -34,14 +35,6 @@ mcp:
 - **Subagents**: `playwright-emulation.md` (device/viewport), `playwright-cli.md` (CLI agent)
 
 <!-- AI-CONTEXT-END -->
-
-## Setup
-
-```bash
-./setup.sh --interactive  # Select: "Setup browser automation tools"
-npm install playwright && npx playwright install  # lib + browsers
-npx @playwright/mcp@latest  # MCP server
-```
 
 ## Custom Browser Engines
 
@@ -58,18 +51,14 @@ Use `executablePath` for Brave, Edge, or Chrome instead of bundled Chromium. Bra
 import { chromium } from 'playwright';
 const executablePath = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser';
 
+// Simple launch
 const browser = await chromium.launch({ executablePath, headless: true });
 
-// Persistent context with extensions
+// Persistent context with extensions (headless: false required)
 const context = await chromium.launchPersistentContext('/tmp/brave-profile', {
   executablePath, headless: false,
   args: ['--load-extension=/path/to/ext', '--disable-extensions-except=/path/to/ext'],
 });
-
-// Parallel isolated profiles
-const contexts = await Promise.all(
-  [1, 2, 3].map(i => chromium.launchPersistentContext(`/tmp/profile-${i}`, { executablePath, headless: false }))
-);
 ```
 
 ## Testing Patterns
