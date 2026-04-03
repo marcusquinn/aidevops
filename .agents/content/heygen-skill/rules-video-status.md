@@ -60,7 +60,7 @@ Typical generation time is **5-15 min**. At peak load, with long scripts, or at 
 
 ## Polling Pattern
 
-Poll every few seconds at first, then use exponential backoff for long-running jobs. For UI feedback, call `onProgress?: (status: string, elapsed: number) => void` on each iteration.
+Poll every few seconds; use exponential backoff for long-running jobs. For UI feedback, add `onProgress?: (status: string, elapsed: number) => void` on each iteration.
 
 ```typescript
 async function waitForVideo(
@@ -81,7 +81,7 @@ async function waitForVideo(
 
 ## Download With Retry
 
-`completed` means the metadata is ready; the file URL may still take a moment to serve. Retry downloads with exponential backoff.
+`completed` means metadata is ready; the file URL may still take a moment to serve. Retry with exponential backoff.
 
 ```typescript
 import fs from "fs";
@@ -103,7 +103,7 @@ async function downloadVideo(videoUrl: string, outputPath: string, maxRetries = 
 
 ## Resumable Workflow
 
-For long generations, persist the `video_id` and resume later instead of holding an idle process open.
+Persist `video_id` and resume later; don't hold an idle process open for long generations.
 
 ```typescript
 // generate-video.ts — start and exit
