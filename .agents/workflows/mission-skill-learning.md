@@ -24,15 +24,13 @@ tools:
 - **Called by**: Mission orchestrator (Phase 5), pulse supervisor (mission completion), manual invocation
 - **Stores to**: `memory.db` (mission_learnings table + memory entries via memory-helper.sh)
 
-**Key commands**:
-
 ```bash
 mission-skill-learner.sh scan <mission-dir>          # Scan a completed mission
-mission-skill-learner.sh scan-all [--repo <path>]    # Scan all missions
-mission-skill-learner.sh promote <path> [draft|custom]  # Promote artifact
-mission-skill-learner.sh patterns [--mission <id>]   # Show recurring patterns
-mission-skill-learner.sh suggest <mission-dir>       # Suggest promotions
-mission-skill-learner.sh stats                       # Show statistics
+mission-skill-learner.sh scan-all [--repo <path>]    # Scan all missions; paths: {repo}/todo/missions/*/mission.md + ~/.aidevops/missions/*/mission.md
+mission-skill-learner.sh promote <path> [draft|custom]  # Copy artifact to target tier and record promotion
+mission-skill-learner.sh patterns [--mission <id>]   # Identify artifacts recurring across missions
+mission-skill-learner.sh suggest <mission-dir>       # Re-scan with detailed promotion suggestions
+mission-skill-learner.sh stats                       # Artifact totals, promotion counts, missions scanned, memory pattern counts
 ```
 
 **Related**:
@@ -51,14 +49,10 @@ mission-skill-learner.sh stats                       # Show statistics
 | Stage | Action |
 |-------|--------|
 | During execution | Orchestrator records raw observations in the mission decision log; no scoring yet |
-| Mission completion | Run `mission-skill-learner.sh scan <mission-dir>` after `status: completed` |
-| Pulse follow-up | Detect completed-but-unscanned missions, run the scan, report promotion candidates |
-
-`scan <mission-dir>` inspects `agents/` and `scripts/`, extracts decisions and lessons from the decision log and retrospective, scores each artifact (0-100), stores results in `memory.db`, and suggests promotions.
+| Mission completion | `scan <mission-dir>` after `status: completed` — inspects `agents/` and `scripts/`, extracts decisions/lessons, scores artifacts (0-100), stores to `memory.db`, suggests promotions |
+| Pulse follow-up | Detect completed-but-unscanned missions, run scan, report promotion candidates |
 
 ## Artifact Scoring
-
-Mission agents and scripts are scored on 5 dimensions:
 
 | Factor | Weight | Measures |
 |--------|--------|----------|
@@ -67,10 +61,6 @@ Mission agents and scripts are scored on 5 dimensions:
 | Size | +15 | Appropriate length (not trivial, not bloated) |
 | Standard format | +15 | Follows aidevops conventions (frontmatter, set -euo, local vars) |
 | Multi-feature usage | +20 | Referenced by multiple features within the mission |
-
-## Pattern Capture
-
-Store mission decisions, lessons, and failure modes as `MISSION_PATTERN` memory entries so they surface via `/recall` during future mission planning.
 
 ## Promotion Lifecycle
 
@@ -81,19 +71,19 @@ Store mission decisions, lessons, and failure modes as `MISSION_PATTERN` memory 
 | Custom | >= 70 | `~/.aidevops/agents/custom/` | Proven useful across missions. `promote <path> custom` |
 | Shared | >= 85 | Requires PR to aidevops repo | Flagged as candidate; user/supervisor creates PR |
 
-`mission-skill-learner.sh patterns` highlights artifacts recurring across missions; treat them as strong promotion candidates.
+`patterns` highlights artifacts recurring across missions; treat them as strong promotion candidates.
 
 ## Integration Points
 
 ### Cross-Session Memory
+
+Store mission decisions, lessons, and failure modes as `MISSION_PATTERN` entries — surfaces via `/recall` during future mission planning, worker recovery, and pulse runs.
 
 | Entry type | Memory type | Tags |
 |------------|-------------|------|
 | Decisions | `MISSION_PATTERN` | `mission,decision,{mission_id}` |
 | Lessons | `MISSION_PATTERN` | `mission,lesson,{mission_id}` |
 | Promotions | `MISSION_AGENT` | `mission,promotion,{tier},{name}` |
-
-These surface automatically during mission planning (`/recall "mission patterns"`), worker recovery (`/recall "mission lesson {domain}"`), and pulse runs.
 
 ### Mission Orchestrator (Phase 5)
 
@@ -109,12 +99,3 @@ These surface automatically during mission planning (`/recall "mission patterns"
 ### Pulse Supervisor
 
 Detects missions with `status: completed` and no `mission_learnings` entries for that mission ID, runs the scan, and logs promotion candidates in the pulse report.
-
-## CLI Detail
-
-- `scan <mission-dir>`: score artifacts, extract patterns and lessons, suggest promotions
-- `scan-all [--repo <path>]`: scan `{repo}/todo/missions/*/mission.md` and `~/.aidevops/missions/*/mission.md`
-- `promote <path> [draft|custom]`: copy the artifact to the target tier and record the promotion
-- `patterns [--mission <id>]`: identify artifacts recurring across missions
-- `suggest <mission-dir>`: re-scan with detailed promotion suggestions and recommended commands
-- `stats`: show artifact totals, promotion counts, missions scanned, and memory pattern counts
