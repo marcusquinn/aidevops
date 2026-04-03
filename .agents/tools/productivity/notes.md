@@ -19,9 +19,8 @@ tools:
 ## Quick Reference
 
 - **Helper**: `~/.aidevops/agents/scripts/notes-helper.sh [command] [args]`
-- **macOS backend**: `osascript` via Notes.app (no install needed)
-- **Linux/Windows backend**: `nb` (CLI notebook, `brew install nb`)
-- **Setup**: `notes-helper.sh setup`
+- **macOS**: `osascript` via Notes.app — no install needed; `notes-helper.sh setup` for Automation permission
+- **Linux/Windows**: `nb` CLI — `brew install nb`; `notes-helper.sh setup`; optional `nb remote set <url>` for git sync
 - **Folders**: Notes (default), Work, Personal, Research — ask user if unclear
 - **Related**: `tools/productivity/apple-reminders.md`, `tools/productivity/calendar.md`, `tools/productivity/contacts.md`
 
@@ -35,37 +34,24 @@ tools:
 
 ## Usage
 
-### Create
-
 ```bash
+# Create
 notes-helper.sh add "Project ideas" --body "Feature X, integration Y"
 notes-helper.sh add "Sprint retrospective" --body "What went well: ..." --folder Work
 notes-helper.sh add "Read later: distributed systems paper"   # title only
-```
 
-### View and search
-
-```bash
+# View and search
 notes-helper.sh folders                          # List folders/notebooks
 notes-helper.sh show today                       # Notes modified today
 notes-helper.sh show week --folder Work          # This week's work notes
 notes-helper.sh view "Sprint retrospective"      # View specific note
 notes-helper.sh search "distributed systems"     # Full-text search
 notes-helper.sh search "API" --folder Work       # Search within folder
-```
 
-### Manage
-
-```bash
+# Manage
 notes-helper.sh delete "Old draft"
 notes-helper.sh sync                             # nb only; macOS is automatic
 ```
-
-## Setup
-
-**macOS** (no install needed): `notes-helper.sh setup` — may need System Settings > Privacy & Security > Automation. All Internet Accounts appear as folders automatically.
-
-**Linux/Windows**: `notes-helper.sh setup` — requires `nb` (`brew install nb`). Optional: `nb remote set <url>` for git sync.
 
 ## Platform Differences
 
