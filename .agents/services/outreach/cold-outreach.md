@@ -32,9 +32,9 @@ tools:
 | 3 | 13-16 | Increase follow-ups; keep copy variation high |
 | 4 | 17-20 | Stable warm baseline; reply handling human-in-loop |
 
-Scale above 20/day only after 7+ days of stable inbox health. Plan: `target_daily_volume / 100 = minimum active mailboxes`. Add 20-30% headroom for pauses and deliverability degradation.
+Scale above 20/day only after 7+ days of stable inbox health. Formula: `target_daily_volume / 100 = minimum active mailboxes` (+20-30% headroom for pauses and deliverability degradation).
 
-**Multi-mailbox rotation:** Group by reputation tier (new, warming, stable); route high-priority accounts through stable first. Distribute sequence steps evenly — no mailbox peaks at one hour/daypart. Pause on anomaly signals (bounce spike, spam-folder drift, complaints); rebalance to healthy mailboxes.
+**Multi-mailbox rotation:** Group by reputation tier (new, warming, stable). Route high-priority accounts through stable mailboxes first. Distribute sequence steps evenly across dayparts. Pause on anomaly signals (bounce spike, spam-folder drift, complaints); rebalance to healthy mailboxes.
 
 ## Platform Selection
 
