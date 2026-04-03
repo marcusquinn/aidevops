@@ -234,6 +234,10 @@ _build_colormind_input() {
 
 	# Comma-separated: parse each position
 	IFS=',' read -ra parts <<<"$lock_spec"
+	if [[ ${#parts[@]} -gt 5 ]]; then
+		print_error "Lock spec has ${#parts[@]} positions; maximum is 5 (got: $lock_spec)"
+		return 1
+	fi
 	for p in "${parts[@]}"; do
 		p="$(echo "$p" | xargs)" # trim whitespace
 		if [[ "$p" == "N" || "$p" == "n" ]]; then
@@ -283,12 +287,16 @@ _output_palette_table() {
 	echo ""
 
 	# Contrast check: text (position 4) on background (position 0)
-	ratio=$(calc_contrast "${colour_arr[4]}" "${colour_arr[0]}")
-	pass="FAIL"
-	if awk "BEGIN { exit !($ratio >= 4.5) }" 2>/dev/null; then
-		pass="PASS"
+	if [[ ${#colour_arr[@]} -ge 5 ]]; then
+		ratio=$(calc_contrast "${colour_arr[4]}" "${colour_arr[0]}")
+		pass="FAIL"
+		if awk "BEGIN { exit !($ratio >= 4.5) }" 2>/dev/null; then
+			pass="PASS"
+		fi
+		echo "  Contrast (text on bg): ${ratio}:1 [WCAG AA: ${pass}]"
+	else
+		print_warning "Palette has fewer than 5 colours; contrast check skipped"
 	fi
-	echo "  Contrast (text on bg): ${ratio}:1 [WCAG AA: ${pass}]"
 	echo ""
 	return 0
 }
@@ -302,10 +310,18 @@ cmd_generate() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--lock)
+			if [[ $# -lt 2 || "$2" == --* ]]; then
+				print_error "Missing value for --lock"
+				return 1
+			fi
 			lock_spec="$2"
 			shift 2
 			;;
 		--model)
+			if [[ $# -lt 2 || "$2" == --* ]]; then
+				print_error "Missing value for --model"
+				return 1
+			fi
 			model="$2"
 			shift 2
 			;;
@@ -317,7 +333,11 @@ cmd_generate() {
 			usage
 			return 0
 			;;
-		*) shift ;;
+		*)
+			print_error "Unknown option: $1"
+			usage >&2
+			return 1
+			;;
 		esac
 	done
 
