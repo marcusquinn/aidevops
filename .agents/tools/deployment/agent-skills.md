@@ -8,8 +8,6 @@ tools:
 
 # Vercel Agent Skills
 
-<!-- AI-CONTEXT-START -->
-
 ## Quick Reference
 
 - **Repo**: [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills)
@@ -17,8 +15,6 @@ tools:
 - **Install**: `npx skills add vercel-labs/agent-skills`
 - **Registry**: [skills.sh](https://skills.sh/vercel-labs/agent-skills)
 - **Related**: `vercel.md` (CLI deployment), `add-skill.md` (import system)
-
-<!-- AI-CONTEXT-END -->
 
 ## Available Skills
 
@@ -31,8 +27,6 @@ tools:
 | `composition-patterns` | Refactoring components with boolean props | Compound component patterns |
 
 ## SKILL.md Layout
-
-Each skill directory contains:
 
 ```text
 skill-name/
@@ -61,7 +55,7 @@ aidevops skill add vercel-labs/agent-skills       # aidevops (preferred)
 /add-skill vercel-labs/agent-skills --name vercel-deploy  # With custom name
 ```
 
-Installed skills are auto-detected. Relevant requests trigger them automatically (for example, "deploy my app" → `vercel-deploy`).
+Installed skills are auto-detected; relevant requests trigger them automatically ("deploy my app" → `vercel-deploy`).
 
 ## aidevops Import Flow
 
