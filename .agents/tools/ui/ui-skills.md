@@ -25,15 +25,12 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-## Stack
+## Stack & Components
 
 - MUST use Tailwind defaults (spacing, radius, shadows) before custom values
 - MUST use `motion/react` (formerly `framer-motion`) for JavaScript animation
 - SHOULD use `tw-animate-css` for Tailwind entrance and micro-animations
 - MUST use `cn` (`clsx` + `tailwind-merge`) for class logic
-
-## Components
-
 - MUST use accessible component primitives for keyboard/focus behavior (`Base UI`, `React Aria`, `Radix`)
 - MUST use the project's existing component primitives first; NEVER mix primitive systems on the same surface
 - SHOULD prefer [`Base UI`](https://base-ui.com/react/components) for new primitives if compatible
@@ -71,13 +68,10 @@ tools:
 - SHOULD use `truncate` or `line-clamp` for dense UI
 - NEVER modify `letter-spacing` (`tracking-`) unless explicitly requested
 
-## Layout
+## Layout & Design
 
 - MUST use a fixed `z-index` scale (`z-10`, `z-20`) — no arbitrary values (`z-[99]`)
 - SHOULD use `size-*` for square elements instead of `w-*` + `h-*`
-
-## Design
-
 - NEVER use gradients unless explicitly requested; prefer subtle single-hue gradients when allowed
 - NEVER use glow effects as primary affordances
 - SHOULD use Tailwind default shadow scale unless explicitly requested
