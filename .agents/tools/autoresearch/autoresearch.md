@@ -32,6 +32,7 @@ Arguments: `--program <path>` (required)
 - **Resume**: re-run with same `--program` — reads results.tsv to reconstruct state
 - **Mailbox**: `mail-helper.sh` — inter-agent discovery sharing (concurrent mode)
 - **Memory**: `aidevops-memory` — cross-session finding persistence
+- **Sub-docs**: `autoresearch/loop.md` · `autoresearch/logging.md` · `autoresearch/completion.md` · `autoresearch/agent-optimization.md`
 
 <!-- AI-CONTEXT-END -->
 
@@ -109,11 +110,8 @@ if RESUMING and RESULTS_FILE exists:
     - TOTAL_TOKENS = sum of tokens_used column
     Log: "Resuming from iteration N, best metric: X"
 else:
-    ITERATION_COUNT = 0
-    BEST_METRIC = null
-    BASELINE = null
-    FAILED_HYPOTHESES = []
-    TOTAL_TOKENS = 0
+    ITERATION_COUNT = 0; BEST_METRIC = null; BASELINE = null
+    FAILED_HYPOTHESES = []; TOTAL_TOKENS = 0
     mkdir -p $(dirname RESULTS_FILE)
     Write TSV header:
       iteration\tcommit\tmetric_name\tmetric_value\tbaseline\tdelta\tstatus\thypothesis\ttimestamp\ttokens_used
@@ -129,12 +127,11 @@ Store recalled findings as MEMORY_CONTEXT for hypothesis generation.
 
 ### 1.5 Register with mailbox (multi-dimension mode only)
 
-If CAMPAIGN_ID is set (multi-dimension campaign):
+If CAMPAIGN_ID is set:
 
 ```bash
 AGENT_ID="autoresearch-${PROGRAM_NAME}-${DIMENSION:-solo}"
 mail-helper.sh register --agent "$AGENT_ID"
-Log: "Registered as $AGENT_ID in campaign $CAMPAIGN_ID"
 ```
 
 ### 1.6 Measure baseline (first run only)
@@ -142,11 +139,8 @@ Log: "Registered as $AGENT_ID in campaign $CAMPAIGN_ID"
 ```text
 if BASELINE == null:
     Run all constraints. If any fail: exit with error (baseline environment is broken).
-    Run METRIC_CMD. Parse numeric output.
-    BASELINE = result
-    BEST_METRIC = result
+    Run METRIC_CMD. Parse numeric output → BASELINE = BEST_METRIC = result
     Update program file: set `baseline: {value}`
-    Log: "Baseline: {METRIC_NAME} = {BASELINE}"
     Append to results.tsv:
       0\t(baseline)\t{METRIC_NAME}\t{BASELINE}\t{BASELINE}\t0.0\tbaseline\t(initial measurement)\t{timestamp}\t0
 ```
@@ -155,530 +149,32 @@ if BASELINE == null:
 
 ## Step 2: Experiment Loop
 
-Repeat until any budget condition is met:
+See `autoresearch/loop.md` for full loop pseudocode, hypothesis generation rules,
+constraint checking, metric measurement, improvement check, and token estimation.
 
-```text
-SESSION_START = current time
-ITER_TOKENS = 0
-
-while true:
-    # Budget checks
-    elapsed = now - SESSION_START
-    if elapsed >= TIMEOUT: break with reason "timeout"
-    if ITERATION_COUNT >= MAX_ITER: break with reason "max_iterations"
-    if GOAL is set and goal_met(BEST_METRIC, GOAL, METRIC_DIR): break with reason "goal_reached"
-
-    ITERATION_COUNT += 1
-    ITER_START_TOKENS = current_token_estimate()
-    Log: "--- Iteration {ITERATION_COUNT} ---"
-
-    # Check peer discoveries (multi-dimension mode)
-    if CAMPAIGN_ID is set:
-        peer_discoveries = check_peer_discoveries()
-        # Incorporate peer findings into hypothesis context
-
-    # Generate hypothesis
-    hypothesis = generate_hypothesis(...)
-
-    # Modify files
-    apply_modification(hypothesis)
-
-    # Constraint check
-    constraint_result = run_constraints()
-    if constraint_result == FAIL:
-        git -C WORKTREE_PATH reset --hard HEAD
-        ITER_TOKENS = current_token_estimate() - ITER_START_TOKENS
-        TOTAL_TOKENS += ITER_TOKENS
-        log_result(ITERATION_COUNT, null, null, "constraint_fail", hypothesis, ITER_TOKENS)
-        continue
-
-    # Measure metric
-    metric_result = run_metric()
-    if metric_result == ERROR:
-        git -C WORKTREE_PATH reset --hard HEAD
-        ITER_TOKENS = current_token_estimate() - ITER_START_TOKENS
-        TOTAL_TOKENS += ITER_TOKENS
-        log_result(ITERATION_COUNT, null, null, "crash", hypothesis, ITER_TOKENS)
-        continue
-
-    delta = metric_result - BASELINE
-    ITER_TOKENS = current_token_estimate() - ITER_START_TOKENS
-    TOTAL_TOKENS += ITER_TOKENS
-
-    # Keep or discard
-    if is_improvement(metric_result, BEST_METRIC, METRIC_DIR):
-        git -C WORKTREE_PATH add -A
-        git -C WORKTREE_PATH commit -m "experiment: {hypothesis[:60]} ({METRIC_NAME}: {metric_result})"
-        HEAD_SHA = git -C WORKTREE_PATH rev-parse --short HEAD
-        BEST_METRIC = metric_result
-        log_result(ITERATION_COUNT, HEAD_SHA, metric_result, "keep", hypothesis, ITER_TOKENS)
-        store_memory(hypothesis, metric_result, "keep")
-        send_discovery(hypothesis, metric_result, "keep", HEAD_SHA)
-    else:
-        git -C WORKTREE_PATH reset --hard HEAD
-        FAILED_HYPOTHESES.append(hypothesis)
-        log_result(ITERATION_COUNT, null, metric_result, "discard", hypothesis, ITER_TOKENS)
-        store_memory(hypothesis, metric_result, "discard")
-        send_discovery(hypothesis, metric_result, "discard", null)
-```
-
----
-
-## Hypothesis Generation
-
-Called at the start of each iteration. Uses the researcher model's reasoning to
-generate the next modification to try.
-
-### Input context (provide all of these)
-
-1. **Program hints** — from `## Hints` section
-2. **Memory context** — recalled findings from prior sessions
-3. **Peer discoveries** — from mailbox (multi-dimension mode only)
-4. **Failed hypotheses** — what was tried and discarded this session
-5. **Current best** — metric value and which commit achieved it
-6. **Current code state** — read the target files (FILES glob)
-7. **Iteration number** — to guide progression strategy
-
-### Progression strategy
-
-Follow this order across iterations:
-
-| Phase | Iterations | Strategy |
-|-------|-----------|---------|
-| **Low-hanging fruit** | 1–5 | Apply hints directly; obvious improvements from code reading |
-| **Systematic** | 6–20 | Vary one parameter at a time; measure effect of each change |
-| **Combination** | 21–35 | Combine two individually-successful changes |
-| **Radical** | 36–45 | Try fundamentally different approaches if incremental gains stall |
-| **Simplification** | 46+ | Remove things; equal-or-better with less code is a win |
-
-### Rules
-
-- Never repeat a hypothesis that was already discarded (check FAILED_HYPOTHESES)
-- Prefer changes with high expected impact and low risk of constraint failure
-- For agent optimization: shorter instructions with higher information density > longer verbose instructions
-- For build optimization: structural changes (tree-shaking, module boundaries) > config tweaks
-- Simplification is always valid: removing code that doesn't affect the metric is a win
-
----
-
-## Constraint Checking
-
-For each constraint in CONSTRAINTS:
-
-```bash
-timeout PER_EXPERIMENT bash -c "{constraint_command}"
-exit_code=$?
-if exit_code != 0:
-    return FAIL with constraint_command and exit_code
-```
-
-All constraints must pass. First failure short-circuits (don't run remaining constraints).
-
----
-
-## Metric Measurement
-
-```bash
-timeout PER_EXPERIMENT bash -c "{METRIC_CMD}" 2>/dev/null
-```
-
-Parse the last non-empty line of stdout as a float. If parsing fails or command
-exits non-zero: return ERROR.
-
----
-
-## Improvement Check
-
-```text
-is_improvement(new_value, best_value, direction):
-    if best_value == null: return true  # first measurement is always an improvement
-    if direction == "lower": return new_value < best_value
-    if direction == "higher": return new_value > best_value
-```
-
----
-
-## Token Estimation
-
-Track approximate token usage per iteration:
-
-```text
-current_token_estimate():
-    # Estimate from context size: count characters in all tool inputs/outputs
-    # since session start, divide by 4 (rough chars-per-token ratio)
-    # This is an approximation — exact counting requires API response parsing
-    return estimated_tokens
-```
-
-If the runtime exposes token counts in API responses, use those directly.
-Otherwise, estimate from character count of tool calls and responses.
-
----
-
-## Results Logging
-
-Append to `todo/research/{name}-results.tsv`:
-
-```text
-{iteration}\t{commit_sha_or_dash}\t{metric_name}\t{metric_value_or_dash}\t{baseline}\t{delta_or_dash}\t{status}\t{hypothesis}\t{ISO_timestamp}\t{tokens_used}
-```
-
-Column definitions:
-
-| Column | Type | Notes |
-|--------|------|-------|
-| `iteration` | int | Sequential experiment number (0 = baseline) |
-| `commit` | string | Short SHA or `-` for crashes/discards |
-| `metric_name` | string | From research program `name:` field |
-| `metric_value` | float or `-` | Measured value; `-` for crashes/constraint fails |
-| `baseline` | float | Original baseline value (same for all rows) |
-| `delta` | float or `-` | `metric_value - baseline` (signed); `-` for crashes |
-| `status` | string | `baseline`, `keep`, `discard`, `constraint_fail`, `crash` |
-| `hypothesis` | string | What was tried (one line, no tabs) |
-| `timestamp` | ISO 8601 | UTC timestamp |
-| `tokens_used` | int | Approximate tokens consumed by this iteration |
-
-Example rows:
-
-```tsv
-iteration	commit	metric_name	metric_value	baseline	delta	status	hypothesis	timestamp	tokens_used
-0	(baseline)	build_time_s	12.4	12.4	0.0	baseline	(initial measurement)	2026-04-01T10:00:00Z	0
-1	a1b2c3d	build_time_s	11.1	12.4	-1.3	keep	remove unused lodash import	2026-04-01T10:12:00Z	2340
-2	-	build_time_s	12.8	12.4	0.4	discard	switch to esbuild (breaks API)	2026-04-01T10:24:00Z	3100
-3	-	build_time_s	-	12.4	-	crash	double worker threads (OOM)	2026-04-01T10:36:00Z	1800
-4	b2c3d4e	build_time_s	10.5	12.4	-1.9	keep	tree-shake utils/ barrel exports	2026-04-01T10:48:00Z	2800
-```
-
----
-
-## Memory Storage
-
-After each **keep** or **discard** iteration:
-
-```text
-aidevops-memory store \
-  "autoresearch {PROGRAM_NAME}: {hypothesis[:80]} → {status} ({METRIC_NAME}: {metric_value}, delta={delta:+.2f})" \
-  --confidence medium
-```
-
-After **keep** iterations, also store a higher-confidence finding:
-
-```text
-aidevops-memory store \
-  "autoresearch {PROGRAM_NAME} FINDING: {hypothesis}. Improved {METRIC_NAME} by {abs(delta):.2f} ({improvement_pct:.1f}%). Commit: {commit_sha}" \
-  --confidence high
-```
-
-At session end, store a summary:
-
-```text
-aidevops-memory store \
-  "autoresearch {PROGRAM_NAME} session complete: {ITERATION_COUNT} iterations, best {METRIC_NAME}={BEST_METRIC} (baseline={BASELINE}, improvement={improvement_pct:.1f}%), total_tokens={TOTAL_TOKENS}" \
-  --confidence high
-```
-
----
-
-## Mailbox Discovery Integration
-
-Used in multi-dimension campaigns (CAMPAIGN_ID is set). No-ops when CAMPAIGN_ID is absent.
-
-### Check peer discoveries (before each hypothesis generation)
-
-```bash
-mail-helper.sh check --agent "$AGENT_ID" --unread-only
-# For each unread discovery message:
-#   mail-helper.sh read <message-id> --agent "$AGENT_ID"
-#   Parse payload JSON → add to hypothesis context as PEER_DISCOVERIES
-```
-
-Incorporate peer discoveries into hypothesis generation:
-- If a peer found a `keep` result, consider whether the same change applies to this dimension
-- If a peer found a `discard` result, deprioritize similar approaches
-
-### Send discovery (after each keep or discard)
-
-```bash
-DISCOVERY_PAYLOAD=$(cat <<EOF
-{
-  "campaign": "{CAMPAIGN_ID}",
-  "dimension": "{DIMENSION}",
-  "hypothesis": "{hypothesis}",
-  "status": "{keep|discard}",
-  "metric_name": "{METRIC_NAME}",
-  "metric_before": {BASELINE},
-  "metric_after": {metric_value},
-  "metric_delta": {delta},
-  "files_changed": [{list of files modified}],
-  "iteration": {ITERATION_COUNT},
-  "commit": "{commit_sha_or_null}"
-}
-EOF
-)
-
-mail-helper.sh send \
-  --from "$AGENT_ID" \
-  --to "broadcast" \
-  --type discovery \
-  --payload "$DISCOVERY_PAYLOAD" \
-  --convoy "{CAMPAIGN_ID}"
-```
-
-### Deregister on completion
-
-```bash
-mail-helper.sh deregister --agent "$AGENT_ID"
-```
+Loop exits when any budget condition is met (timeout / max_iterations / goal_reached).
 
 ---
 
 ## Step 3: Completion
 
-### 3.1 Deregister from mailbox (multi-dimension mode)
-
-```bash
-if CAMPAIGN_ID is set:
-    mail-helper.sh deregister --agent "$AGENT_ID"
-```
-
-### 3.2 Store final memory
-
-```text
-aidevops-memory store \
-  "autoresearch {PROGRAM_NAME} complete: {kept_count} kept, {discarded_count} discarded, {improvement_pct:.1f}% improvement in {METRIC_NAME}. Top finding: {top_hypothesis}" \
-  --confidence high
-```
-
-### 3.3 Generate completion summary
-
-Build the results summary for the PR body:
-
-```markdown
-## Autoresearch Results: {PROGRAM_NAME}
-
-**Research:** {PROGRAM_NAME}
-**Duration:** {elapsed_human} ({ITERATION_COUNT} iterations)
-**Baseline → Best:** {BASELINE} → {BEST_METRIC} ({improvement_pct:+.1f}%)
-**Exit reason:** {timeout | max_iterations | goal_reached}
-
-### Experiment Outcomes
-
-| Status | Count |
-|--------|-------|
-| Kept | {kept_count} |
-| Discarded | {discarded_count} |
-| Constraint failures | {constraint_fail_count} |
-| Crashes | {crash_count} |
-
-### Key Findings
-
-{For each kept hypothesis, sorted by delta (best first):}
-{N}. **{hypothesis}**: {METRIC_NAME} {metric_before} → {metric_after} ({delta:+.2f}, {improvement_pct:.1f}%)
-
-### Failed Approaches
-
-{For top 3-5 discarded hypotheses:}
-- {hypothesis}: {METRIC_NAME} = {metric_value} (delta={delta:+.2f})
-
-### Token Usage
-
-- Total: ~{TOTAL_TOKENS:,} tokens across {ITERATION_COUNT} iterations
-- Average per iteration: ~{avg_tokens:,} tokens
-- Cost estimate: ~${cost_estimate:.2f} (sonnet pricing)
-
-{If CAMPAIGN_ID is set, add cross-dimension summary section — see below}
-```
-
-ASCII sparkline (if ≥5 kept iterations):
-
-```text
-{METRIC_NAME} progression ({direction}):
-{sparkline of metric_value for kept rows, 40 chars wide}
-  iter: {first_kept}  →  {last_kept}
-```
-
-### 3.4 Cross-dimension summary (multi-dimension campaigns only)
-
-If CAMPAIGN_ID is set, query the mailbox convoy for all dimension results:
-
-```bash
-sqlite3 ~/.aidevops/.agent-workspace/mail/mailbox.db \
-  "SELECT from_agent, payload FROM messages
-   WHERE convoy='{CAMPAIGN_ID}' AND type='discovery' AND json_extract(payload,'$.status')='keep'
-   ORDER BY created_at"
-```
-
-Build cross-dimension summary:
-
-```markdown
-### Cross-Dimension Summary
-
-| Dimension | Baseline | Best | Delta | Improvement | Iterations |
-|-----------|----------|------|-------|-------------|------------|
-{For each dimension found in convoy messages:}
-| {dimension} | {baseline} | {best} | {delta:+.2f} | {improvement_pct:.1f}% | {iteration_count} |
-
-### Cross-Pollination
-
-{For each discovery where a peer's finding was adopted:}
-- {source_dimension} found "{hypothesis}" → {target_dimension} adopted (iteration {N})
-
-{If no cross-pollination occurred:}
-- Dimensions ran independently (no cross-pollination detected)
-```
-
-### 3.5 Create PR from experiment branch
-
-```bash
-git -C WORKTREE_PATH push -u origin BRANCH
-
-RESULTS_SUMMARY="$(generate_completion_summary)"
-
-gh pr create \
-  --repo {REPO_SLUG} \
-  --head BRANCH \
-  --base main \
-  --title "experiment({PROGRAM_NAME}): {improvement_pct:+.1f}% improvement in {METRIC_NAME}" \
-  --body "${RESULTS_SUMMARY}
-
-Closes #{issue_number_if_any}"
-```
-
-### 3.6 Store PR memory
-
-```text
-aidevops-memory store \
-  "autoresearch {PROGRAM_NAME} PR created: {pr_url}. Best: {METRIC_NAME}={BEST_METRIC}. Key finding: {top_hypothesis}" \
-  --confidence high
-```
+See `autoresearch/completion.md` for deregister, final memory, completion summary,
+cross-dimension summary, PR creation, crash recovery, and budget enforcement table.
 
 ---
 
-## Crash Recovery
+## Logging, Memory & Mailbox
 
-If the subagent session crashes mid-loop:
-
-1. The experiment worktree persists at `WORKTREE_PATH`
-2. The results.tsv persists at `RESULTS_FILE`
-3. The experiment branch HEAD is always the last known-good state
-4. Any uncommitted changes are discarded on resume via `git reset --hard HEAD`
-
-To resume: re-run `/autoresearch --program {program_path}`. The subagent detects
-the existing worktree and results.tsv and continues from where it left off.
-
----
-
-## Budget Enforcement
-
-| Condition | Check | Action |
-|-----------|-------|--------|
-| Wall-clock timeout | `elapsed >= TIMEOUT` | Break loop, proceed to completion |
-| Max iterations | `ITERATION_COUNT >= MAX_ITER` | Break loop, proceed to completion |
-| Goal reached | `goal_met(BEST_METRIC, GOAL)` | Break loop, proceed to completion |
-| Per-experiment timeout | `timeout PER_EXPERIMENT cmd` | Treat as crash, revert, continue |
-
----
+See `autoresearch/logging.md` for results TSV schema, memory storage commands,
+and mailbox discovery integration (multi-dimension campaigns).
 
 ---
 
 ## Agent Optimization Domain
 
-When the program name is `agent-optimization` or the metric command contains
-`agent-test-helper.sh`, apply these domain-specific rules in addition to the
-general loop.
-
-### Composite Metric Parsing
-
-The metric command outputs a JSON object. Parse it as follows:
-
-```bash
-METRIC_JSON=$(eval "$METRIC_CMD")
-COMPOSITE_SCORE=$(echo "$METRIC_JSON" | jq '.composite_score')
-PASS_RATE=$(echo "$METRIC_JSON" | jq '.pass_rate')
-TOKEN_RATIO=$(echo "$METRIC_JSON" | jq '.token_ratio')
-```
-
-Use `COMPOSITE_SCORE` as the primary metric value for keep/discard decisions.
-Log `PASS_RATE` and `TOKEN_RATIO` as supplementary columns in results.tsv.
-
-**Formula**: `composite_score = pass_rate * (1 - 0.3 * token_ratio)`
-
-- `pass_rate`: fraction of tests passing (0–1)
-- `token_ratio`: `avg_response_chars / baseline_chars` — proxy for token usage
-- Higher composite score = better (direction: higher)
-
-### Baseline Setup
-
-On first run (BASELINE == null), save the current test results as the baseline
-before measuring the baseline metric:
-
-```bash
-agent-test-helper.sh baseline {suite_name}
-```
-
-This sets `baseline_chars` in the baseline file, enabling `token_ratio` computation
-on subsequent runs. Without this step, `token_ratio` defaults to 1.0 (no change).
-
-### Security Instruction Exemptions
-
-Before generating any hypothesis, check whether it would remove or weaken any of
-the following instruction categories. If yes, discard the hypothesis without testing:
-
-| Category | Detection pattern |
-|----------|------------------|
-| Credential/secret handling | `credentials`, `NEVER expose`, `gopass`, `secret` |
-| File operation safety | `Read before Edit`, `pre-edit-check`, `verify path` |
-| Git safety | `pre-edit-check.sh`, `never edit on main`, `worktree` |
-| Traceability | `PR title MUST`, `task ID`, `Closes #` |
-| Prompt injection | `prompt injection`, `adversarial`, `scan` |
-| Destructive operations | `destructive`, `confirm before`, `irreversible` |
-
-These exemptions are enforced by the constraint list in the research program AND
-by the researcher model's hypothesis generation. Both layers must hold.
-
-### Simplification State Integration
-
-Before generating hypotheses for a target file, check `.agents/configs/simplification-state.json`:
-
-```bash
-TARGET_FILE=".agents/build-plus.md"  # or whichever file is being optimized
-CURRENT_HASH=$(md5sum "$TARGET_FILE" | awk '{print $1}')
-STORED_HASH=$(jq -r --arg f "$TARGET_FILE" '.files[$f].hash // empty' \
-    .agents/configs/simplification-state.json 2>/dev/null)
-
-if [[ "$CURRENT_HASH" == "$STORED_HASH" ]]; then
-    log "File unchanged since last optimization. Skipping."
-    # If this is the only target, exit with "no work needed"
-    # If there are multiple targets, move to the next one
-fi
-```
-
-After a successful session (composite_score improved vs baseline), update the hash:
-
-```bash
-CURRENT_HASH=$(md5sum "$TARGET_FILE" | awk '{print $1}')
-jq --arg file "$TARGET_FILE" \
-   --arg hash "$CURRENT_HASH" \
-   --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-   '.files[$file] = {"hash": $hash, "at": $ts, "pr": null}' \
-   .agents/configs/simplification-state.json > /tmp/ss.json && \
-   mv /tmp/ss.json .agents/configs/simplification-state.json
-```
-
-### Agent Optimization Hypothesis Types
-
-Use this ordered list when generating hypotheses for agent instruction files:
-
-| Phase | Hypothesis type | Example |
-|-------|----------------|---------|
-| 1–5 | Consolidate redundant rules | Merge two similar "Read before Edit" rules into one |
-| 6–15 | Remove low-value instructions | Delete rules that don't affect any test outcome |
-| 16–25 | Shorten verbose phrasing | Replace 3-sentence rule with 1-sentence equivalent |
-| 26–35 | Replace inline code with references | `file:line` instead of code blocks |
-| 36–45 | Merge thin sections | Combine two small sections covering the same topic |
-| 46+ | Simplification | Remove anything that doesn't affect the metric |
-
-Always check security exemptions before testing any hypothesis.
+When `PROGRAM_NAME == "agent-optimization"` or `METRIC_CMD` contains `agent-test-helper.sh`,
+load `autoresearch/agent-optimization.md` for composite metric parsing, security exemptions,
+simplification state integration, and hypothesis type ordering.
 
 ---
 
