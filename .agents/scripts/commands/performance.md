@@ -22,7 +22,12 @@ URL/Target: $ARGUMENTS
 
 ## Run Analysis
 
-Execute in order: (1) **Lighthouse Audit** — performance, accessibility, best practices, SEO; (2) **Core Web Vitals** — FCP, LCP, CLS, FID, TTFB; (3) **Network Analysis** — third-party scripts, request chains, bundle sizes; (4) **Accessibility** — WCAG compliance issues.
+Execute in order:
+
+1. **Lighthouse Audit** — performance, accessibility, best practices, SEO
+2. **Core Web Vitals** — FCP, LCP, CLS, FID, TTFB
+3. **Network Analysis** — third-party scripts, request chains, bundle sizes
+4. **Accessibility** — WCAG compliance issues
 
 ## Report Format
 
