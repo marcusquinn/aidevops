@@ -1,15 +1,15 @@
 # AEO Patterns
 
-Use these for featured snippets, answer boxes, and spoken-result queries.
+Templates for featured snippets, answer boxes, and spoken-result queries.
 
-## Definition Block
+## Definition
 
 ```markdown
 ## What is [Term]?
 [Term] is [1-sentence definition]. [Key characteristics]. [Why it matters].
 ```
 
-## Step-by-Step Block
+## Step-by-Step
 
 ```markdown
 ## How to [Action/Goal]
@@ -30,7 +30,7 @@ Use these for featured snippets, answer boxes, and spoken-result queries.
 **Bottom line**: [1-2 sentence recommendation]
 ```
 
-## Pros/Cons Block
+## Pros/Cons
 
 ```markdown
 ## Advantages and Disadvantages of [Topic]
@@ -39,7 +39,7 @@ Use these for featured snippets, answer boxes, and spoken-result queries.
 **Verdict**: [Balanced conclusion with recommendation]
 ```
 
-## FAQ Block
+## FAQ
 
 ```markdown
 <!-- Phrase questions the way users search; match "People Also Ask" wording; keep answers 50-100 words; direct answer first -->
@@ -47,7 +47,7 @@ Use these for featured snippets, answer boxes, and spoken-result queries.
 [Direct answer first sentence]. [Supporting context in 2-3 sentences].
 ```
 
-## Listicle Block
+## Listicle
 
 ```markdown
 ## [Number] Best [Items] for [Goal/Purpose]
@@ -56,7 +56,7 @@ Use these for featured snippets, answer boxes, and spoken-result queries.
 [Why included -- 2-3 sentences with specific benefits]
 ```
 
-## Voice Search Pattern
+## Voice Search
 
 ```markdown
 <!-- Target: "What is...", "How do I...", "Where can I find...", "Why does...", "When should I...?" -->
