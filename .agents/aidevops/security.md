@@ -44,8 +44,9 @@ chmod 600 ~/.ssh/id_ed25519 && chmod 644 ~/.ssh/id_ed25519.pub
 ssh-keygen -p -f ~/.ssh/id_ed25519
 ```
 
+`~/.ssh/config` hardening — disable root login, non-standard port, fail2ban on server:
+
 ```text
-# ~/.ssh/config hardening
 Host *
     PasswordAuthentication no
     KexAlgorithms curve25519-sha256@libssh.org,diffie-hellman-group16-sha512
@@ -54,8 +55,6 @@ Host *
     ForwardX11 no
     ConnectTimeout 10
 ```
-
-- Server: disable root login, non-standard SSH port, fail2ban
 
 ## Script Security
 
