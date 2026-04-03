@@ -5,9 +5,9 @@ mode: subagent
 
 # Docs Probes
 
-Use for `/define` tasks classified as **docs**: ask the 2 questions below, then select 2 probes.
+Use for `/define` tasks classified as **docs**: ask the 2 required questions, then select 2 probes.
 
-## Default Assumptions
+## Defaults
 
 - Follow existing documentation patterns and style in the project
 - Accurate and verifiable — no speculative claims
