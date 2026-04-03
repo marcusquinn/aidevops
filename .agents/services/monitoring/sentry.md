@@ -31,9 +31,8 @@ mcp:
 
 ## MCP Setup
 
-1. Sign up at [sentry.io](https://sentry.io), create an organization (`Settings → Organizations → Create`), then create a project inside it.
-2. Generate a **personal** auth token at `Settings → Account → Personal Tokens → Create New Token` — create it **after** the org exists; earlier tokens may not inherit org access.
-   - Required scopes: `alerts:read`, `alerts:write`, `event:admin`, `event:read`, `event:write`, `member:read`, `org:read`, `project:read`, `project:releases`, `team:read`
+1. Sign up at [sentry.io](https://sentry.io), create an org (`Settings → Organizations → Create`), then a project.
+2. Generate a **personal** auth token (`Settings → Account → Personal Tokens → Create New Token`) **after** the org exists — earlier tokens may not inherit org access. Required scopes: `alerts:read`, `alerts:write`, `event:admin`, `event:read`, `event:write`, `member:read`, `org:read`, `project:read`, `project:releases`, `team:read`
 3. Save the token:
 
 ```bash
@@ -41,7 +40,7 @@ echo 'export SENTRY_YOURNAME="sntryu_..."' >> ~/.config/aidevops/credentials.sh
 chmod 600 ~/.config/aidevops/credentials.sh
 ```
 
-4. Configure the MCP in `~/.config/opencode/opencode.json` or equivalent:
+4. Configure MCP in `~/.config/opencode/opencode.json` or equivalent:
 
 ```json
 {
@@ -55,7 +54,7 @@ chmod 600 ~/.config/aidevops/credentials.sh
 }
 ```
 
-5. Test the token:
+5. Test:
 
 ```bash
 source ~/.config/aidevops/credentials.sh
@@ -83,12 +82,12 @@ npx @sentry/wizard@latest -i node
 npx @sentry/wizard@latest -i react
 ```
 
-The wizard creates the required config files. See [Sentry Docs](https://docs.sentry.io/) for platform-specific guides. Keep `sendDefaultPii` disabled unless you explicitly need user/IP metadata and have privacy coverage.
+See [Sentry Docs](https://docs.sentry.io/) for platform-specific guides. Keep `sendDefaultPii` disabled unless you explicitly need user/IP metadata and have privacy coverage.
 
 ## Troubleshooting
 
-- **Empty organizations**: create a new token **after** the organization exists.
-- **`Not authenticated`**: verify the variable (`source ~/.config/aidevops/credentials.sh && printenv | grep '^SENTRY_YOURNAME$'`), test the API (`curl -H "Authorization: Bearer $SENTRY_YOURNAME" https://sentry.io/api/0/`), then restart the runtime.
+- **Empty organizations**: token created before org existed — generate a new one after org creation.
+- **`Not authenticated`**: verify (`source ~/.config/aidevops/credentials.sh && printenv | grep '^SENTRY_YOURNAME$'`), test API (`curl -H "Authorization: Bearer $SENTRY_YOURNAME" https://sentry.io/api/0/`), restart runtime.
 - **Wrong token type**: org tokens (`org:ci`) are for CI/CD; MCP needs a personal token.
 
 ## Related
