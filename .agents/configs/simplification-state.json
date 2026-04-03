@@ -62,7 +62,7 @@
     "issue": "GH#16443",
     "lines_after": 111,
     "lines_before": 113,
-    "note": "Pass 2: 113→111 lines. Merged templates link into intro line, moved subject line guidance above table as compact note. Zero content loss.",
+    "note": "Pass 2: 113\u2192111 lines. Merged templates link into intro line, moved subject line guidance above table as compact note. Zero content loss.",
     "passes": 2,
     "status": "simplified"
   },
@@ -164,7 +164,7 @@
     "hash": "d99fc5b67969194e84d7952de9bfa655d26d6d4e9e84b2fcf0ef5790cf413af6",
     "issue": "GH#16497",
     "lines": 67,
-    "note": "tightened: merged Linux Setup into Quick Reference, consolidated When to Use paragraphs (79→67 lines)",
+    "note": "tightened: merged Linux Setup into Quick Reference, consolidated When to Use paragraphs (79\u219267 lines)",
     "status": "simplified"
   },
   ".agents/tools/programming/modern-javascript-skill/immutability.md": {
@@ -1042,7 +1042,7 @@
       "at": "2026-04-02T21:19:54Z",
       "hash": "347272e46c7d04f05dd13a4683cf44bef0dd3da7",
       "issue": "GH#14286",
-      "note": "Reference corpus chapter tightened: 92 → 90 lines. Removed decorative closing sentence with no information value. Zero content loss.",
+      "note": "Reference corpus chapter tightened: 92 \u2192 90 lines. Removed decorative closing sentence with no information value. Zero content loss.",
       "passes": 2
     },
     ".agents/marketing-sales/cro-chapter-20.md": {
@@ -5746,5 +5746,11 @@
       "pr": 16542,
       "passes": 1
     }
+  },
+  ".agents/reference/define-probes/docs.md": {
+    "at": "2026-04-03T00:00:00Z",
+    "hash": "42730e6d8c7fb235e7594467232c9ab9d4f69db6e66316c6d6e073ad6d3838f9",
+    "issue": "GH#16671",
+    "status": "simplified"
   }
 }
