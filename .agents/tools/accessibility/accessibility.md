@@ -82,17 +82,14 @@ accessibility-helper.sh wave-credits                     # check remaining credi
 # Contrast ratio — AA normal (4.5:1), AA large (3:1), AAA normal (7:1), AAA large (4.5:1)
 accessibility-helper.sh contrast '#333333' '#ffffff'
 
-# Playwright contrast — headless DOM traversal, computed fg/bg, font size/weight,
-# WCAG ratio per element, SC 1.4.3/1.4.6, large text (≥18pt or ≥14pt bold),
-# gradient/image background flags. Exit: 0=pass, 1=failures, 2=error.
+# Playwright contrast — SC 1.4.3/1.4.6, computed fg/bg, large text (≥18pt/14pt bold), gradient flags. Exit: 0=pass, 1=fail, 2=error.
 accessibility-helper.sh playwright-contrast https://example.com           # summary
 accessibility-helper.sh playwright-contrast https://example.com json      # JSON
 accessibility-helper.sh playwright-contrast https://example.com markdown AAA
-node .agents/scripts/accessibility/playwright-contrast.mjs https://example.com --format json --fail-only
-node .agents/scripts/accessibility/playwright-contrast.mjs https://example.com --limit 20
+node .agents/scripts/accessibility/playwright-contrast.mjs https://example.com --format json --fail-only  # fail-only flag
+node .agents/scripts/accessibility/playwright-contrast.mjs https://example.com --limit 20                 # limit results
 
-# Email HTML — alt (1.1.1), lang (3.1.1), role="presentation" (1.3.1),
-# font <12px (1.4.4), link text (2.4.4), headings (1.3.1), color-only (1.4.1)
+# Email HTML — alt (1.1.1), lang (3.1.1), role="presentation" (1.3.1), font <12px (1.4.4), link text (2.4.4), headings (1.3.1), color-only (1.4.1)
 accessibility-helper.sh email ./newsletter.html
 
 # Bulk audit — one URL per line, # for comments
