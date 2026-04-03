@@ -19,18 +19,17 @@ tools:
 ## Quick Reference
 
 - **Helper**: `~/.aidevops/agents/scripts/calendar-helper.sh [command] [args]`
-- **macOS backend**: `osascript` via Calendar.app (no install needed)
-- **Linux backend**: `khal` + `vdirsyncer` (CalDAV)
-- **Setup**: `calendar-helper.sh setup`
-- **Related**: `tools/productivity/apple-reminders.md` (tasks/reminders, not events), `tools/productivity/notes.md`
+- **macOS**: `osascript` via Calendar.app — no install. Grant access: System Settings > Privacy & Security > Calendars.
+- **Linux**: `khal` + `vdirsyncer` (CalDAV) — run `calendar-helper.sh setup`. See `caldav-calendar-skill.md`.
+- **Related**: `tools/productivity/apple-reminders.md` (tasks/reminders), `tools/productivity/notes.md`
 
 <!-- AI-CONTEXT-END -->
 
 ## When to Create Events
 
-Create when: user explicitly asks, routine produces a time-bound commitment, or coordinating availability.
+Create: user explicitly asks, routine produces a time-bound commitment, coordinating availability.
 
-Skip events for: tasks/reminders with no time block (→ `reminders-helper.sh`), TODO.md/GitHub issues, unconfirmed tentative plans.
+Skip: tasks/reminders with no time block (→ `reminders-helper.sh`), TODO.md/GitHub issues, unconfirmed tentative plans.
 
 ## Field Coverage
 
@@ -39,16 +38,10 @@ Both platforms: title, start/end, location, notes, URL, calendar, all-day. Linux
 ## Usage
 
 ```bash
-# View events
+# View / search
 calendar-helper.sh show today
-calendar-helper.sh show tomorrow
 calendar-helper.sh show week --calendar Work
 calendar-helper.sh show 2026-04-10..2026-04-15
-
-# Check availability before scheduling
-calendar-helper.sh show "2026-04-05" --calendar Work
-
-# List calendars / search
 calendar-helper.sh calendars
 calendar-helper.sh search "standup" --calendar Work
 
@@ -71,12 +64,3 @@ calendar-helper.sh add "Client dinner" \
   --start "2026-04-05 14:00" --end "2026-04-05 15:00" \
   --calendar Work --notes "Demo new features"
 ```
-
-## Setup
-
-```bash
-calendar-helper.sh setup
-```
-
-- **macOS**: No install needed. Grant access: System Settings > Privacy & Security > Calendars. Accounts from System Settings > Internet Accounts appear automatically.
-- **Linux**: Requires `khal` + `vdirsyncer`. See `caldav-calendar-skill.md` for CalDAV config.
