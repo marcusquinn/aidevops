@@ -322,28 +322,32 @@ _push_create_issue() {
 	local -a args=("issue" "create" "--repo" "$repo" "--title" "$title" "--body" "$body" "--label" "$all_labels")
 	[[ -n "$assignee" ]] && args+=("--assignee" "$assignee")
 
-	# GH#15234 Fix 1: Capture stderr for diagnostics; gh issue create may return empty
-	# stdout (e.g. when label application fails after issue creation) while still
-	# creating the issue server-side. Treat empty URL or non-zero exit as a soft
-	# failure and attempt a recovery lookup before declaring an error.
-	local url gh_exit stderr_content stderr_file
-	stderr_file=$(mktemp)
-	url=$(gh "${args[@]}" 2>"$stderr_file") && gh_exit=0 || gh_exit=$?
-	stderr_content=$(cat "$stderr_file" 2>/dev/null || true)
-	rm -f "$stderr_file"
+	# GH#15234 Fix 1: gh issue create may return empty stdout (e.g. when label
+	# application fails after issue creation) while still creating the issue
+	# server-side. Treat empty URL or non-zero exit as a soft failure and attempt
+	# a recovery lookup before declaring an error. Stderr is merged into the
+	# combined output for diagnostics without requiring a temp file.
+	local url gh_exit combined
+	{
+		combined=$(gh "${args[@]}" 2>&1)
+		gh_exit=$?
+	} || true
+	# Extract URL from combined output (stdout URL appears first on success)
+	url=$(echo "$combined" | grep -oE 'https://github\.com/[^ ]+/issues/[0-9]+' | head -1 || echo "")
 
-	if [[ $gh_exit -ne 0 || -z "$url" || ! "$url" =~ ^https:// ]]; then
-		# Issue may have been created despite the error — check before failing
+	if [[ $gh_exit -ne 0 || -z "$url" ]]; then
+		# Issue may have been created despite the error — check before failing.
+		# Brief pause for API consistency before the recovery lookup.
 		sleep 1
 		local recovery
 		recovery=$(gh_find_issue_by_title "$repo" "${task_id}:" "all" 500)
 		if [[ -n "$recovery" && "$recovery" != "null" ]]; then
 			print_warning "gh create exited $gh_exit but issue found via recovery: #$recovery"
-			[[ -n "$stderr_content" ]] && log_verbose "gh stderr: ${stderr_content:0:200}"
+			log_verbose "gh output: ${combined:0:200}"
 			_PUSH_CREATED_NUM="$recovery"
 			return 0
 		fi
-		print_error "Failed to create issue for $task_id (exit $gh_exit)${stderr_content:+: ${stderr_content:0:200}}"
+		print_error "Failed to create issue for $task_id (exit $gh_exit): ${combined:0:200}"
 		return 2
 	fi
 
@@ -572,11 +576,12 @@ cmd_pull() {
 				else
 					# GH#15234 Fix 4: check file modification to avoid misleading success
 					# messages when add_gh_ref_to_todo silently skips (ref already exists)
-					local before_hash after_hash
-					before_hash=$(md5sum "$todo_file" 2>/dev/null | cut -d' ' -f1 || echo "")
+					local tid_ere_pull
+					tid_ere_pull=$(_escape_ere "$tid")
+					local had_ref=false
+					strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${tid_ere_pull} .*ref:GH#${num}" && had_ref=true
 					add_gh_ref_to_todo "$tid" "$num" "$todo_file"
-					after_hash=$(md5sum "$todo_file" 2>/dev/null | cut -d' ' -f1 || echo "")
-					if [[ "$before_hash" != "$after_hash" ]]; then
+					if [[ "$had_ref" == "false" ]] && strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${tid_ere_pull} .*ref:GH#${num}"; then
 						print_success "Added ref:GH#$num to $tid"
 						synced=$((synced + 1))
 					else
