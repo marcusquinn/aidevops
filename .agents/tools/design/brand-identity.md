@@ -14,8 +14,12 @@ model: sonnet
 - **Template**: `context/brand-identity.toon` in each project repo
 - **8 dimensions**: Visual style, voice & tone, copywriting, imagery, iconography, buttons & forms, media & motion, brand positioning
 - **Create**: From scratch or existing site via `tools/design/ui-ux-inspiration.md`
-- **Related**: `content/guidelines.md`, `content/platform-personas.md`, `content/production-image.md`, `content/production-characters.md`, `content/humanise.md`, `workflows/ui-verification.md`, `tools/design/ui-ux-catalogue.toon`
+- **Downstream**: Generate `DESIGN.md` from brand identity via `tools/design/design-md.md`
+- **Palette tools**: `tools/design/colour-palette.md` (generation, spinning, narrowing)
+- **Related**: `content/guidelines.md`, `content/platform-personas.md`, `content/production-image.md`, `content/production-characters.md`, `content/humanise.md`, `workflows/ui-verification.md`, `tools/design/ui-ux-catalogue.toon`, `tools/design/library/`
 - **When to use**: Before any design or content work. If `context/brand-identity.toon` is missing, create one first.
+
+**Relationship to DESIGN.md**: Brand identity is the **strategic upstream** -- it captures _who you are_ (voice, positioning, brand archetype). DESIGN.md is the **tactical downstream** -- it captures _how to build it_ (exact hex values, font sizes, component specs). After completing a brand identity, generate a DESIGN.md to give coding agents implementation-ready tokens. See `tools/design/design-md.md` for the format and generation workflow.
 
 <!-- AI-CONTEXT-END -->
 
@@ -114,6 +118,13 @@ Every agent producing design or content output MUST check `context/brand-identit
 3. Present as filled template
 4. Refine — what stays/changes/is missing
 5. Merge kept elements with new directions, flag breaking changes
+
+**After creating brand identity** → generate DESIGN.md:
+1. Map brand identity dimensions to DESIGN.md 9 sections (see `tools/design/design-md.md` Method 4)
+2. Generate or spin colour palette via `tools/design/colour-palette.md`
+3. Populate typography, components, layout from `visual_style` and `buttons_and_forms`
+4. Write `DESIGN.md` to project root
+5. Generate preview.html for visual verification
 
 ## Example: Launchpad (developer deploy tool)
 

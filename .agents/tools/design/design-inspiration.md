@@ -15,8 +15,10 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Find UI/UX design inspiration for mobile apps, web apps, browser extensions, and emails
+- **DESIGN.md library**: `tools/design/library/` -- 54 brand DESIGN.md examples + 12 style archetypes (use directly or as starting points)
 - **Usage**: Browse by category, use case, or platform to find reference designs
-- **Workflow**: Search resources -> capture screenshots -> create mood board -> inform design decisions
+- **Workflow**: Search resources -> capture screenshots -> create mood board -> inform design decisions -> generate DESIGN.md
+- **DESIGN.md format**: `tools/design/design-md.md` (create AI-readable design systems from inspiration)
 - **Browser tools**: Use crawl4ai or Playwright to capture screenshots from these resources
 
 **Quick picks by task**:
@@ -31,6 +33,8 @@ tools:
 | Paywall / monetisation | PaywallPro, Mobbin (filter: paywall) |
 | Onboarding flow | Mobbin (filter: onboarding), Page Flows |
 | Dark mode | Dark Mode Design, Mobbin (filter: dark) |
+| DESIGN.md examples | `tools/design/library/brands/` (54 real brands), `tools/design/library/styles/` (12 archetypes) |
+| "Make it like X" | Copy from `library/brands/{brand}/DESIGN.md`, customise colours and typography |
 
 <!-- AI-CONTEXT-END -->
 
@@ -153,8 +157,24 @@ tools:
 2. **Check Email Love** for newsletter design trends
 3. **Use React Email** components to implement (see `tools/ui/react-email.md`)
 
+## AI-Readable Design Systems (DESIGN.md)
+
+For design systems that coding agents can read directly, see the **DESIGN.md library**:
+
+- `tools/design/design-md.md` -- Format specification, creation workflows, usage guide
+- `tools/design/library/brands/` -- 54 DESIGN.md files extracted from real websites (Stripe, Vercel, Linear, Apple, etc.)
+- `tools/design/library/styles/` -- 12 original style archetypes (corporate, agency, startup, developer, editorial, luxury, playful)
+- `tools/design/colour-palette.md` -- Palette generation and spinning for DESIGN.md files
+
+Source: [VoltAgent/awesome-design-md](https://github.com/VoltAgent/awesome-design-md) (MIT License). Format: [Google Stitch DESIGN.md](https://stitch.withgoogle.com/docs/design-md/overview).
+
 ## Related
 
+- `tools/design/design-md.md` - DESIGN.md format and generation workflows
+- `tools/design/library/` - Design example library (brands + styles)
+- `tools/design/colour-palette.md` - Palette generation and spinning
+- `tools/design/brand-identity.md` - Strategic brand profile
+- `tools/design/ui-ux-inspiration.md` - URL study and brand identity interview
 - `product/ui-design.md` - Product design standards and principles
 - `product/onboarding.md` - Onboarding flow design
 - `product/monetisation.md` - Paywall design

@@ -71,6 +71,14 @@ tools:
 - NEVER use gradients unless explicitly requested; prefer subtle single-hue gradients when allowed
 - NEVER use glow effects as primary affordances
 
+## Relationship to DESIGN.md
+
+These rules are **implementation constraints** that apply regardless of which DESIGN.md is active. DESIGN.md specifies _what_ the design looks like (colours, typography, components); UI Skills specifies _how_ to build it correctly (accessibility, performance, animation discipline). Both apply simultaneously -- DESIGN.md tokens feed into Tailwind/component props, while UI Skills rules govern the implementation quality.
+
+- `tools/design/design-md.md` -- DESIGN.md format (what to build)
+- `tools/design/library/` -- Design examples and style archetypes
+- `tools/design/colour-palette.md` -- Palette generation for DESIGN.md
+
 ## References
 
 - [UI Skills](https://www.ui-skills.com/) · [Base UI](https://base-ui.com/react/components) · [React Aria](https://react-spectrum.adobe.com/react-aria/) · [Radix Primitives](https://www.radix-ui.com/primitives)

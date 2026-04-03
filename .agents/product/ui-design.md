@@ -82,6 +82,15 @@ tools:
 - **Product icons**: `tools/vision/image-generation.md` · Gemini Pro for SVG · model contests for best results
 - **Screenshots/previews**: `tools/browser/remotion-best-practices-skill.md` · `tools/vision/` for marketing · Playwright for device screenshots
 
+## DESIGN.md (AI-Readable Design System)
+
+For any project with UI, create a `DESIGN.md` in the project root. This gives coding agents exact hex values, font specs, component styles, and layout rules to produce consistent, on-brand UI. See `tools/design/design-md.md` for the format specification and creation workflows.
+
+- **Library**: `tools/design/library/` -- 54 brand examples + 12 style archetypes
+- **Palette**: `tools/design/colour-palette.md` -- generate and spin colour palettes
+- **Template**: `templates/DESIGN.md.template` -- skeleton seeded by `aidevops init`
+- **Preview**: `tools/design/library/_template/preview.html.template` -- visual catalogue generator
+
 ## Design Inspiration
 
 Full catalogue (60+ resources): `tools/design/design-inspiration.md`. Design intelligence (UI styles, palettes, font pairings): `tools/design/ui-ux-catalogue.toon`. Brand/style interviews: `tools/design/brand-identity.md`, `tools/design/ui-ux-inspiration.md`.
@@ -123,6 +132,10 @@ See `tools/accessibility/accessibility-audit.md` for comprehensive auditing.
 
 ## Related
 
+- `tools/design/design-md.md` — DESIGN.md format and generation workflows
+- `tools/design/library/` — Design example library (brands + style archetypes)
+- `tools/design/colour-palette.md` — Palette generation and spinning
+- `tools/design/brand-identity.md` — Strategic brand identity profile
 - `product/onboarding.md` — Onboarding flow design
 - `product/validation.md` — Competitor UI research
 - `tools/vision/overview.md` — Image generation tools
