@@ -1,56 +1,46 @@
 # Workers Gotchas
 
-## Design Constraints
+## Runtime Constraints
 
 **CPU Budget:** Standard 10ms, Unbound 30ms. Use `ctx.waitUntil()` for background work, Durable Objects for heavy compute, Workers AI for ML.
 
-**No Persistent State:** Workers are stateless between requests. Module-level variables reset unpredictably — store persistent state in KV, D1, or Durable Objects.
+**No Persistent State:** Workers are stateless between requests. Module-level variables reset unpredictably — store state in KV, D1, or Durable Objects.
 
-**Response Bodies Are Streams:**
+**Response Bodies Are Streams:** Body can only be read once — clone before reuse.
 
 ```typescript
-// ❌ BAD
+// ❌ BAD — body consumed before return
 const response = await fetch(url);
-await logBody(response.text());  // First read
-return response;  // Body already consumed!
+await logBody(response.text());
+return response;
 
 // ✅ GOOD
-const response = await fetch(url);
 const text = await response.text();
 await logBody(text);
 return new Response(text, response);
 ```
 
-**No Node.js Built-ins by Default:**
+**No Node.js Built-ins by Default:** Use Workers APIs or enable compat flag.
 
 ```typescript
 // ❌ BAD
-import fs from 'fs';  // Not available
+import fs from 'fs';
 
-// ✅ GOOD - use Workers APIs
+// ✅ GOOD — Workers API
 const data = await env.MY_BUCKET.get('file.txt');
-
-// OR enable Node.js compat
-{ "compatibility_flags": ["nodejs_compat_v2"] }
+// OR: { "compatibility_flags": ["nodejs_compat_v2"] }
 ```
 
-**Fetch in Global Scope Is Forbidden:**
+**Fetch in Global Scope Is Forbidden:** Move all `fetch()` calls inside handler functions.
 
 ```typescript
-// ❌ BAD
-const config = await fetch('/config.json');  // Error!
+// ❌ BAD — top-level fetch errors at startup
+const config = await fetch('/config.json');
 
-export default {
-  async fetch() { return new Response('OK'); },
-};
-
-// ✅ GOOD
-export default {
-  async fetch() {
-    const config = await fetch('/config.json');  // OK
-    return new Response('OK');
-  },
-};
+// ✅ GOOD — fetch inside handler
+async fetch(req) {
+  const config = await fetch('/config.json');
+}
 ```
 
 ## Runtime Limits
