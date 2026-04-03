@@ -13,28 +13,22 @@ tools:
 
 # Cloudron App Publishing
 
-<!-- AI-CONTEXT-START -->
-
 ## Quick Reference
 
 - **Docs**: [docs.cloudron.io/packaging/publishing](https://docs.cloudron.io/packaging/publishing)
 - **Upstream skill**: [git.cloudron.io/docs/skills](https://git.cloudron.io/docs/skills) (`cloudron-app-publishing`)
-- **Prerequisite**: App must be built with `cloudron build` (local or build service) -- on-server builds cannot be published
-- **Key file**: `CloudronVersions.json` -- version catalog hosted at a public URL
+- **Prerequisite**: App must be built with `cloudron build` (local or build service) — on-server builds cannot be published
+- **Key file**: `CloudronVersions.json` — version catalog hosted at a public URL
 - **Forum**: [App Packaging & Development](https://forum.cloudron.io/category/96/app-packaging-development)
-
-<!-- AI-CONTEXT-END -->
 
 ## Workflow
 
 ```bash
-cloudron versions init       # create CloudronVersions.json + scaffold manifest/stubs
-cloudron build               # build and push image
-cloudron versions add        # add version to catalog
+cloudron versions init  # creates CloudronVersions.json + DESCRIPTION.md, CHANGELOG, POSTINSTALL.md (edit all placeholders)
+cloudron build          # build and push image (first run prompts for Docker repository, e.g. registry/username/myapp)
+cloudron versions add   # add version to catalog
 # host CloudronVersions.json at a public URL
 ```
-
-`cloudron versions init` also creates `DESCRIPTION.md`, `CHANGELOG`, `POSTINSTALL.md`. Edit all placeholders before adding a version.
 
 ## Required Manifest Fields
 
@@ -56,8 +50,6 @@ cloudron versions add        # add version to catalog
 | `cloudron build push --id <id>` | Push a remote build to a registry |
 | `cloudron build status --id <id>` | Check status of a remote build |
 
-First run prompts for Docker repository (e.g. `registry/username/myapp`) — saved for subsequent runs.
-
 ## Versions Commands
 
 | Command | Purpose |
@@ -71,9 +63,7 @@ First run prompts for Docker repository (e.g. `registry/username/myapp`) — sav
 
 ## Distribution
 
-Host `CloudronVersions.json` at any public URL (static host, git repo, web server):
-
-- **Dashboard**: add URL under Community apps in dashboard settings — updates appear automatically
+- **Dashboard**: add `CloudronVersions.json` URL under Community apps in dashboard settings — updates appear automatically
 - **CLI**: `cloudron install --versions-url <url>`
 
 ## Community Packages (9.1+)
