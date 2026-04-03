@@ -53,21 +53,12 @@ email-health-check-helper.sh accessibility newsletter.html # 5. Standalone a11y
 
 ## Client Compatibility
 
-| Engine | Clients | Flexbox/Grid | Media Queries | Custom Fonts | Notes |
-|--------|---------|-------------|---------------|-------------|-------|
-| **WebKit** | Apple Mail, iOS Mail, Outlook macOS | Yes | Yes | Yes | Best CSS support |
-| **Blink** | Gmail Web, Gmail Android | Yes | Partial | No | Strips `<style>` blocks |
-| **Word** | Outlook 2016+, Outlook 365 | No | No | No | VML for backgrounds; no `border-radius` on images |
-| **Custom** | Yahoo, AOL, Thunderbird | Yes/Partial | Partial | No | Partial media query support |
-
-## Dark Mode
-
-| Client | Behavior |
-|--------|----------|
-| Apple Mail | Full inversion; `prefers-color-scheme` supported |
-| Gmail (iOS) | Partial inversion; respects `color-scheme` meta |
-| Outlook (iOS/Android) | Full inversion; ignores `prefers-color-scheme` |
-| Yahoo | No dark mode support |
+| Engine | Clients | Flexbox/Grid | Media Queries | Custom Fonts | Dark Mode | Notes |
+|--------|---------|-------------|---------------|-------------|-----------|-------|
+| **WebKit** | Apple Mail, iOS Mail, Outlook macOS | Yes | Yes | Yes | Full inversion; `prefers-color-scheme` supported | Best CSS support |
+| **Blink** | Gmail Web, Gmail Android | Yes | Partial | No | Partial inversion (iOS); respects `color-scheme` meta | Strips `<style>` blocks |
+| **Word** | Outlook 2016+, Outlook 365 | No | No | No | Full inversion (iOS/Android); ignores `prefers-color-scheme` | VML for backgrounds; no `border-radius` on images |
+| **Custom** | Yahoo, AOL, Thunderbird | Yes/Partial | Partial | No | No dark mode support (Yahoo) | Partial media query support |
 
 Use `<meta name="color-scheme" content="light dark">` + `@media (prefers-color-scheme: dark)`. Avoid hardcoded white backgrounds; test logos on light/dark; use borders/shadows on transparent PNGs.
 
