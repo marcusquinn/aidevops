@@ -1317,12 +1317,12 @@ check_repo_pulse_schedule() {
 					.initialized_repos |= map(
 						if .slug == $slug then .pulse = false else . end
 					)
-				' "$repos_json" >"$tmp_json" 2>/dev/null; then
+				' "$repos_json" >"$tmp_json" 2>/dev/null && jq empty "$tmp_json" 2>/dev/null; then
 					mv "$tmp_json" "$repos_json"
 					echo "[pulse-wrapper] Set pulse:false for ${slug} in repos.json (expiry auto-disable)" >>"$LOGFILE"
 				else
 					rm -f "$tmp_json"
-					echo "[pulse-wrapper] WARNING: jq failed to update repos.json for ${slug} expiry — skipping this cycle only" >>"$LOGFILE"
+					echo "[pulse-wrapper] WARNING: jq produced invalid JSON for ${slug} expiry — aborting write (GH#16746)" >>"$LOGFILE"
 				fi
 			fi
 			return 1

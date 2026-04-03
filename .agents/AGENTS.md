@@ -128,7 +128,11 @@ Planning files go direct to main. Code changes need worktree + PR. Workers NEVER
 
 **Cross-repo awareness**: The supervisor manages tasks across all repos in `~/.config/aidevops/repos.json` where `pulse: true`. Each repo entry has a `slug` field (`owner/repo`) — ALWAYS use this for `gh` commands, never guess org names. Use `gh issue list --repo <slug>` and `gh pr list --repo <slug>` for each pulse-enabled repo to get the full picture. Repos with `"local_only": true` have no GitHub remote — skip `gh` operations on them. Repo paths may be nested (e.g., `~/Git/cloudron/netbird-app`), not just `~/Git/<name>`.
 
-**Repo registration**: When you create or clone a new repo (via `gh repo create`, `git clone`, `git init`, etc.), add it to `~/.config/aidevops/repos.json` immediately. Every repo the user works with should be registered — unregistered repos are invisible to cross-repo tools (pulse, health dashboard, session time, contributor stats). Set fields based on the repo's purpose:
+**Repo registration**: When you create or clone a new repo (via `gh repo create`, `git clone`, `git init`, etc.), add it to `~/.config/aidevops/repos.json` immediately. Every repo the user works with should be registered — unregistered repos are invisible to cross-repo tools (pulse, health dashboard, session time, contributor stats).
+
+**repos.json structure (CRITICAL):** The file is `{"initialized_repos": [...], "git_parent_dirs": [...]}`. New repo entries MUST be appended inside the `initialized_repos` array — NEVER as top-level keys. After ANY write, validate: `jq . ~/.config/aidevops/repos.json > /dev/null`. A malformed file silently breaks the pulse for ALL repos.
+
+Set fields based on the repo's purpose:
 - `pulse: true` — repos with active development, tasks, and issues (most repos)
 - `pulse: false` — repos that exist but don't need task management (profile READMEs, forks for reference, archived projects)
 - `pulse_hours` — optional object `{"start": N, "end": N}` (24h local time). When set, the pulse only dispatches for this repo during the specified window. Overnight windows are supported (e.g., `{"start": 17, "end": 5}` runs 17:00–05:00). Repos without this field run 24/7 (default). Example: `"pulse_hours": {"start": 17, "end": 5}` to avoid conflicts with daytime work.

@@ -163,9 +163,15 @@ write_cache_to_repos_json() {
 	# Write app_type into the matching entry
 	local tmp_file
 	tmp_file="$(mktemp)"
-	jq --arg slug "$slug" --arg app_type "$app_type" \
+	if jq --arg slug "$slug" --arg app_type "$app_type" \
 		'map(if .slug == $slug then . + {"app_type": $app_type} else . end)' \
-		"$repos_json" >"$tmp_file" && mv "$tmp_file" "$repos_json"
+		"$repos_json" >"$tmp_file" && jq empty "$tmp_file" 2>/dev/null; then
+		mv "$tmp_file" "$repos_json"
+	else
+		echo "ERROR: repos.json write produced invalid JSON — aborting (GH#16746)" >&2
+		rm -f "$tmp_file"
+		return 1
+	fi
 
 	printf "${GREEN}Cached app_type=%s for %s in repos.json${NC}\n" "$app_type" "$slug" >&2
 	return 0

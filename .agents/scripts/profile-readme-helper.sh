@@ -63,7 +63,7 @@ _resolve_profile_repo() {
 		if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
 			local tmp_json
 			tmp_json=$(mktemp)
-			jq --arg path "$convention_path" --arg slug "${gh_user}/${gh_user}" '
+			if jq --arg path "$convention_path" --arg slug "${gh_user}/${gh_user}" '
 				.initialized_repos += [{
 					"path": $path,
 					"slug": $slug,
@@ -71,7 +71,12 @@ _resolve_profile_repo() {
 					"pulse": false,
 					"maintainer": ($slug | split("/")[0])
 				}]
-			' "$repos_json" >"$tmp_json" && mv "$tmp_json" "$repos_json"
+			' "$repos_json" >"$tmp_json" && jq empty "$tmp_json" 2>/dev/null; then
+				mv "$tmp_json" "$repos_json"
+			else
+				echo "ERROR: repos.json write produced invalid JSON — aborting (GH#16746)" >&2
+				rm -f "$tmp_json"
+			fi
 		fi
 		echo "$convention_path"
 		return 0
@@ -1548,7 +1553,7 @@ _init_register_repos_json() {
 	tmp_json=$(mktemp)
 	if [[ "$already_registered" == "0" ]]; then
 		echo "Registering profile repo in repos.json"
-		jq --arg path "$repo_dir" --arg slug "$repo_slug" '
+		if jq --arg path "$repo_dir" --arg slug "$repo_slug" '
 			.initialized_repos += [{
 				"path": $path,
 				"slug": $slug,
@@ -1556,14 +1561,24 @@ _init_register_repos_json() {
 				"pulse": false,
 				"maintainer": ($slug | split("/")[0])
 			}]
-		' "$repos_json" >"$tmp_json" && mv "$tmp_json" "$repos_json"
+		' "$repos_json" >"$tmp_json" && jq empty "$tmp_json" 2>/dev/null; then
+			mv "$tmp_json" "$repos_json"
+		else
+			echo "ERROR: repos.json write produced invalid JSON — aborting (GH#16746)" >&2
+			rm -f "$tmp_json"
+		fi
 	else
 		# Ensure priority is set to "profile"
-		jq --arg path "$repo_dir" '
+		if jq --arg path "$repo_dir" '
 			.initialized_repos |= map(
 				if .path == $path then .priority = "profile" else . end
 			)
-		' "$repos_json" >"$tmp_json" && mv "$tmp_json" "$repos_json"
+		' "$repos_json" >"$tmp_json" && jq empty "$tmp_json" 2>/dev/null; then
+			mv "$tmp_json" "$repos_json"
+		else
+			echo "ERROR: repos.json write produced invalid JSON — aborting (GH#16746)" >&2
+			rm -f "$tmp_json"
+		fi
 	fi
 	return 0
 }
