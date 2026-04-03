@@ -19,12 +19,14 @@ tools:
 - **Install**: `pip install praw`
 - **Repo**: https://github.com/praw-dev/praw (4k+ stars, Python, BSD-2)
 - **Docs**: https://praw.readthedocs.io/
-
-**Rate limits**: Unauthenticated JSON: 96 req/10min per IP. Authenticated OAuth: 996 req/10min per account.
+- **Rate limits**: Unauthenticated JSON: 96 req/10min per IP. Authenticated OAuth: 996 req/10min per account.
+- **PRAW** handles rate limiting automatically; add `time.sleep(1)` for raw JSON endpoints.
 
 <!-- AI-CONTEXT-END -->
 
 ## Quick Access (No Auth)
+
+Append `.json` to any Reddit URL:
 
 ```bash
 # Subreddit posts
@@ -41,6 +43,8 @@ curl -s "https://www.reddit.com/search.json?q=aidevops&sort=relevance" | jq '.da
 ```
 
 ## PRAW (Authenticated)
+
+OAuth app setup: https://www.reddit.com/prefs/apps → create "script" type → store credentials with `aidevops secret set REDDIT_CLIENT_ID`.
 
 ```python
 import praw
@@ -64,16 +68,6 @@ reddit.subreddit("test").submit("Title", selftext="Body text")
 comment = reddit.comment("COMMENT_ID")
 comment.reply("Reply text")
 ```
-
-## OAuth App Setup
-
-1. https://www.reddit.com/prefs/apps → Create "script" app
-2. Note `client_id` (under app name) and `client_secret`
-3. `aidevops secret set REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET`
-
-## Rate Limits
-
-PRAW handles rate limiting automatically. For unauthenticated JSON endpoints, add `time.sleep(1)` between requests to stay under 96 req/10min.
 
 ## Related
 
