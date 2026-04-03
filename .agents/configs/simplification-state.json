@@ -1,12 +1,4 @@
 {
-  ".agents/tools/browser/browser-benchmark-scripts-01-playwright.md": {
-    "at": "2026-04-03T00:00:00Z",
-    "hash": "9958f23ad99c271fe00d6abb99241cff82ffae9db2b351bc5a15129693063569",
-    "issue": "GH#16500",
-    "passes": 1,
-    "pr": "pending",
-    "status": "simplified"
-  },
   ".agents/aidevops/api-integrations.md": {
     "at": "2026-04-03T00:00:00Z",
     "hash": "1d9ae72e2a62060ee1524f7440825f1a5539f3ce2e64b691d67d66ea36cf0edb",
@@ -37,14 +29,24 @@
     "issue": "GH#14349",
     "status": "simplified"
   },
+  ".agents/marketing-sales/cro-chapter-18.md": {
+    "hash": "58df67211d2ebe396a70b16e9153111d9042bf5fa05a824b833705c7795403d5",
+    "issue": "GH#15262",
+    "status": "simplified"
+  },
   ".agents/marketing-sales/direct-response-copy-frameworks-email-sequences.md": {
     "at": "2026-04-03T09:30:00Z",
     "hash": "bbb3ea1df32f53c905d3c8b174a0bd212fc5dd55a168169d06d81542127e8bb3",
     "issue": "GH#16443",
-    "lines_before": 113,
     "lines_after": 111,
-    "passes": 2,
+    "lines_before": 113,
     "note": "Pass 2: 113\u2192111 lines. Merged templates link into intro line, moved subject line guidance above table as compact note. Zero content loss.",
+    "passes": 2,
+    "status": "simplified"
+  },
+  ".agents/reference/define-probes/refactor.md": {
+    "hash": "1eb86f1e0b8873942014f1f20414250077bd694a254e6e97537e706199b2460a",
+    "issue": "GH#16350",
     "status": "simplified"
   },
   ".agents/seo/geo-strategy.md": {
@@ -81,10 +83,38 @@
     "pr": "pending",
     "status": "simplified"
   },
+  ".agents/services/hosting/cloudflare-platform-skill/queues-gotchas.md": {
+    "at": "2026-04-03T00:00:00Z",
+    "hash": "5df3a339524d800afe6cc2148b7a71c5f898d396d92d30e3949b522955a525a2",
+    "issue": "GH#16320",
+    "lines_after": 88,
+    "lines_before": 89
+  },
+  ".agents/services/hosting/cloudflare-platform-skill/workers-patterns.md": {
+    "action": "tightened",
+    "at": "2026-04-03T00:00:00Z",
+    "hash": "4a94ab9f82abafc568298f41f4913b4e504b962f651338f6dbb20a6fecc984cc",
+    "issue": "GH#16293",
+    "lines_after": 139,
+    "lines_before": 141
+  },
+  ".agents/services/hosting/cloudflare-platform-skill/wrangler.md": {
+    "hash": "3d566d9fbf05fdee08380d0ffbaf538854887e326c9b658e8236d837c8993cb3",
+    "lines": 63,
+    "status": "simplified"
+  },
   ".agents/tools/ai-orchestration/overview.md": {
     "hash": "3a63b044317f50c757951158e4e711234d09cd299f8dc557bdc5af9e580735f6",
     "issue": "GH#15266",
     "pr": "PR#16047",
+    "status": "simplified"
+  },
+  ".agents/tools/browser/browser-benchmark-scripts-01-playwright.md": {
+    "at": "2026-04-03T00:00:00Z",
+    "hash": "9958f23ad99c271fe00d6abb99241cff82ffae9db2b351bc5a15129693063569",
+    "issue": "GH#16500",
+    "passes": 1,
+    "pr": "pending",
     "status": "simplified"
   },
   ".agents/tools/browser/chromium-debug-use.md": {
@@ -94,23 +124,34 @@
     "lines_before": 316,
     "status": "simplified"
   },
+  ".agents/tools/code-review/tools.md": {
+    "at": "2026-04-03T00:00:00Z",
+    "hash": "b767318f3046f9a52ff3d31a2f733bb83f4e5475501f57862a874c05e853ad7b",
+    "issue": "GH#16449",
+    "status": "simplified"
+  },
+  ".agents/tools/programming/modern-javascript-skill/immutability.md": {
+    "hash": "f5453a48a29c9dd411399f4079384edf",
+    "issue": "GH#16493",
+    "status": "simplified"
+  },
   ".agents/tools/ui/ui-skills.md": {
     "at": "2026-04-03T06:08:00Z",
     "hash": "f75020ffda4b498042577c5888bf9b0aa1efebd4ae355bf4acf33ab10e74137e",
+    "issue": "GH#16179",
     "lines": 96,
     "passes": 1,
     "pr": 16281,
-    "status": "simplified",
-    "issue": "GH#16179"
+    "status": "simplified"
   },
   ".agents/tools/video/remotion-display-captions.md": {
     "at": "2026-04-03T00:00:00Z",
     "hash": "6dcdc470b94e1e415d3e09b76a06088646364cd9",
     "issue": "GH#16476",
-    "lines_before": 119,
     "lines_after": 117,
-    "passes": 1,
+    "lines_before": 119,
     "note": "Removed redundant intro line (exact duplicate of YAML description). Code blocks preserved verbatim. Zero content loss.",
+    "passes": 1,
     "status": "simplified"
   },
   ".agents/tools/video/remotion-get-video-dimensions.md": {
@@ -3007,6 +3048,12 @@
       "passes": 1,
       "pr": 15335
     },
+    ".agents/services/hosting/cloudflare-platform-skill/wrangler.md": {
+      "at": "2026-04-03T09:34:09Z",
+      "hash": "9b89ade16613a27d028233cbff7cbb915e089cc7",
+      "passes": 1,
+      "pr": null
+    },
     ".agents/services/hosting/cloudflare-platform-skill/zaraz.md": {
       "at": "2026-04-02T21:20:08Z",
       "hash": "e4b79af78576116b33c9947649dffa9f1de19cec",
@@ -3708,6 +3755,11 @@
       "hash": "3e37a12db3473bf11b36f10e75ede64bb2494e1b",
       "passes": 1,
       "pr": 12589
+    },
+    ".agents/tools/code-review/management.md": {
+      "hash": "9c54376593091811cc3981781814336a892d0e7f11ce5a29b8ada517c22f6237",
+      "issue": 16257,
+      "status": "simplified"
     },
     ".agents/tools/code-review/qlty.md": {
       "at": "2026-03-28T18:36:46Z",
@@ -5150,53 +5202,6 @@
       "hash": "c820f0bd721d4d8ff4fb35dff40ff98c6ba3b71f",
       "passes": 1,
       "pr": 15470
-    },
-    ".agents/tools/code-review/management.md": {
-      "hash": "9c54376593091811cc3981781814336a892d0e7f11ce5a29b8ada517c22f6237",
-      "status": "simplified",
-      "issue": 16257
-    },
-    ".agents/services/hosting/cloudflare-platform-skill/wrangler.md": {
-      "hash": "9b89ade16613a27d028233cbff7cbb915e089cc7",
-      "at": "2026-04-03T09:34:09Z",
-      "pr": null,
-      "passes": 1
     }
-  },
-  ".agents/services/hosting/cloudflare-platform-skill/workers-patterns.md": {
-    "at": "2026-04-03T00:00:00Z",
-    "hash": "4a94ab9f82abafc568298f41f4913b4e504b962f651338f6dbb20a6fecc984cc",
-    "issue": "GH#16293",
-    "lines_before": 141,
-    "lines_after": 139,
-    "action": "tightened"
-  },
-  ".agents/services/hosting/cloudflare-platform-skill/queues-gotchas.md": {
-    "at": "2026-04-03T00:00:00Z",
-    "hash": "5df3a339524d800afe6cc2148b7a71c5f898d396d92d30e3949b522955a525a2",
-    "issue": "GH#16320",
-    "lines_before": 89,
-    "lines_after": 88
-  },
-  ".agents/reference/define-probes/refactor.md": {
-    "hash": "1eb86f1e0b8873942014f1f20414250077bd694a254e6e97537e706199b2460a",
-    "status": "simplified",
-    "issue": "GH#16350"
-  },
-  ".agents/services/hosting/cloudflare-platform-skill/wrangler.md": {
-    "hash": "3d566d9fbf05fdee08380d0ffbaf538854887e326c9b658e8236d837c8993cb3",
-    "status": "simplified",
-    "lines": 63
-  },
-  ".agents/tools/code-review/tools.md": {
-    "at": "2026-04-03T00:00:00Z",
-    "hash": "b767318f3046f9a52ff3d31a2f733bb83f4e5475501f57862a874c05e853ad7b",
-    "issue": "GH#16449",
-    "status": "simplified"
-  },
-  ".agents/tools/programming/modern-javascript-skill/immutability.md": {
-    "hash": "f5453a48a29c9dd411399f4079384edf",
-    "status": "simplified",
-    "issue": "GH#16493"
   }
 }
