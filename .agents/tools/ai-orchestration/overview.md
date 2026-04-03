@@ -17,10 +17,8 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Build and deploy AI-powered agents and multi-agent workflows
-- **Frameworks**: Langflow, CrewAI, AutoGen, Agno, OpenProse
+- **Frameworks**: Langflow, CrewAI, AutoGen, Agno, OpenProse (all MIT licensed)
 - **Common Pattern**: `~/.aidevops/{tool}/` with venv, .env, start scripts
-- **All MIT Licensed**: Full commercial use permitted
 
 **Quick Setup**:
 
@@ -41,7 +39,7 @@ git clone https://github.com/openprose/prose.git ~/.config/opencode/skill/open-p
 | AutoGen Studio | 8081 | / | /tmp/autogen_studio_port |
 | Agno | 7777 (API), 3000 (UI) | /health | - |
 
-**Draft agents**: Orchestration tasks that discover reusable patterns should create draft agents in `~/.aidevops/agents/draft/`. These can be promoted to private (`custom/`) or shared (`.agents/`) after review. See `tools/build-agent/build-agent.md` "Agent Lifecycle Tiers".
+**Draft agents**: Reusable patterns discovered during orchestration tasks → `~/.aidevops/agents/draft/`. Promote to `custom/` (private) or `.agents/` (shared) after review. See `tools/build-agent/build-agent.md` "Agent Lifecycle Tiers".
 
 <!-- AI-CONTEXT-END -->
 
@@ -124,10 +122,10 @@ curl -fsSL https://ollama.com/install.sh | sh && ollama pull llama3.2
 **Port conflicts** — all helpers auto-select alternatives via `localhost-helper.sh`:
 
 ```bash
-~/.aidevops/scripts/localhost-helper.sh check-port 7860
-~/.aidevops/scripts/localhost-helper.sh find-port 7860
-~/.aidevops/scripts/localhost-helper.sh list-ports
-~/.aidevops/scripts/localhost-helper.sh kill-port 7860
+~/.aidevops/scripts/localhost-helper.sh check-port 7860  # check if port is in use
+~/.aidevops/scripts/localhost-helper.sh find-port 7860   # find next available port
+~/.aidevops/scripts/localhost-helper.sh list-ports       # list all allocated ports
+~/.aidevops/scripts/localhost-helper.sh kill-port 7860   # release a port
 # Manual fallback: lsof -i :7860 && kill -9 $(lsof -t -i:7860)
 ```
 
