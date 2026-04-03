@@ -51,11 +51,11 @@ tools:
 
 ## Browser Automation
 
-| Tool | Docs |
-|------|------|
-| [Playwright](https://playwright.dev/) | [playwright.dev/docs/intro](https://playwright.dev/docs/intro) |
-| [Selenium](https://www.selenium.dev/) | [selenium.dev](https://www.selenium.dev/) |
-| [Puppeteer](https://pptr.dev/) | [pptr.dev](https://pptr.dev/) |
+| Tool | Console | Docs |
+|------|---------|------|
+| [Playwright](https://playwright.dev/) | — | [playwright.dev/docs/intro](https://playwright.dev/docs/intro) |
+| [Selenium](https://www.selenium.dev/) | — | [selenium.dev](https://www.selenium.dev/) |
+| [Puppeteer](https://pptr.dev/) | — | [pptr.dev](https://pptr.dev/) |
 
 ## Security & Quality
 
