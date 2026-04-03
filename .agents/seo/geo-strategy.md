@@ -23,24 +23,29 @@ Increase citation likelihood in AI search by matching decision criteria with ver
 ## Workflow
 
 ### 1) Scope high-value intents
+
 - Select 5-20 intents that influence revenue or lead quality; map each to an existing target page
 - Exclude intents without a realistic ranking path
 - Classify by grounding likelihood to avoid optimizing non-retrieval prompts
 
 ### 2) Extract decision criteria
+
 - Probe multiple models with targeted buying-decision prompts
 - Normalize into concrete criteria (not vague advice); cluster by: trust, expertise, fit, cost, delivery, risk
 
 ### 3) Score coverage per page
+
 - Mark each criterion: strong, partial, missing, or not applicable
 - Require evidence references (URL section, data source, policy, certification)
 - Flag unsupported marketing claims immediately
 
 ### 4) Build retrieval-ready summaries
+
 - Add a concise criteria-matching block near top of page
 - Keep claims specific, self-contained, and fact-backed — not broad brand language
 
 ### 5) Validate and iterate
+
 - Re-check retrieval fitness after edits; evaluate coverage before citation counts
 - Monitor citations directionally, not as the only success metric
 - Re-run criteria extraction monthly or after major model shifts
