@@ -33,7 +33,7 @@ On first run (BASELINE == null), save the current test results as the baseline
 before measuring the baseline metric:
 
 ```bash
-agent-test-helper.sh baseline {suite_name}
+agent-test-helper.sh baseline .agents/tests/agent-optimization.test.json
 ```
 
 This sets `baseline_chars` in the baseline file, enabling `token_ratio` computation
@@ -84,7 +84,7 @@ CURRENT_HASH=$(md5sum "$TARGET_FILE" | awk '{print $1}')
 jq --arg file "$TARGET_FILE" \
    --arg hash "$CURRENT_HASH" \
    --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-   '.files[$file] = {"hash": $hash, "at": $ts, "pr": null}' \
+   '.files[$file] = ((.files[$file] // {}) + {"hash": $hash, "at": $ts, "pr": null})' \
    .agents/configs/simplification-state.json > /tmp/ss.json && \
    mv /tmp/ss.json .agents/configs/simplification-state.json
 ```

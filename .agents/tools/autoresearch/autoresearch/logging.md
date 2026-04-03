@@ -9,7 +9,7 @@ Sub-doc for `autoresearch.md`. Loaded on demand.
 Append to `todo/research/{name}-results.tsv`:
 
 ```text
-{iteration}\t{commit_sha_or_dash}\t{metric_name}\t{metric_value_or_dash}\t{baseline}\t{delta_or_dash}\t{status}\t{hypothesis}\t{ISO_timestamp}\t{tokens_used}
+{iteration}\t{commit_sha_or_dash}\t{metric_name}\t{metric_value_or_dash}\t{baseline}\t{delta_or_dash}\t{status}\t{hypothesis}\t{ISO_timestamp}\t{tokens_used}\t{pass_rate_or_dash}\t{token_ratio_or_dash}
 ```
 
 Column definitions:
@@ -26,16 +26,18 @@ Column definitions:
 | `hypothesis` | string | What was tried (one line, no tabs) |
 | `timestamp` | ISO 8601 | UTC timestamp |
 | `tokens_used` | int | Approximate tokens consumed by this iteration |
+| `pass_rate` | float or `-` | Fraction of tests passing (0–1); agent-optimization only, `-` otherwise |
+| `token_ratio` | float or `-` | `avg_response_chars / baseline_chars`; agent-optimization only, `-` otherwise |
 
 Example rows:
 
 ```tsv
-iteration	commit	metric_name	metric_value	baseline	delta	status	hypothesis	timestamp	tokens_used
-0	(baseline)	build_time_s	12.4	12.4	0.0	baseline	(initial measurement)	2026-04-01T10:00:00Z	0
-1	a1b2c3d	build_time_s	11.1	12.4	-1.3	keep	remove unused lodash import	2026-04-01T10:12:00Z	2340
-2	-	build_time_s	12.8	12.4	0.4	discard	switch to esbuild (breaks API)	2026-04-01T10:24:00Z	3100
-3	-	build_time_s	-	12.4	-	crash	double worker threads (OOM)	2026-04-01T10:36:00Z	1800
-4	b2c3d4e	build_time_s	10.5	12.4	-1.9	keep	tree-shake utils/ barrel exports	2026-04-01T10:48:00Z	2800
+iteration	commit	metric_name	metric_value	baseline	delta	status	hypothesis	timestamp	tokens_used	pass_rate	token_ratio
+0	(baseline)	build_time_s	12.4	12.4	0.0	baseline	(initial measurement)	2026-04-01T10:00:00Z	0	-	-
+1	a1b2c3d	build_time_s	11.1	12.4	-1.3	keep	remove unused lodash import	2026-04-01T10:12:00Z	2340	-	-
+2	-	build_time_s	12.8	12.4	0.4	discard	switch to esbuild (breaks API)	2026-04-01T10:24:00Z	3100	-	-
+3	-	build_time_s	-	12.4	-	crash	double worker threads (OOM)	2026-04-01T10:36:00Z	1800	-	-
+4	b2c3d4e	build_time_s	10.5	12.4	-1.9	keep	tree-shake utils/ barrel exports	2026-04-01T10:48:00Z	2800	-	-
 ```
 
 ---
