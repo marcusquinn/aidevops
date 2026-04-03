@@ -21,16 +21,11 @@ Structure: **IF** [change], **THEN** [expected result], **BECAUSE** [reasoning]
 
 Test multiple variables simultaneously to detect interaction effects. Example (2×2×2 = 8 variations): Headline A/B × Image X/Y × CTA Red/Blue
 
-| | |
-|---|---|
-| **Benefits** | Interaction effects, sample-efficient when interactions matter |
-| **Challenges** | Complex analysis, more traffic required, implementation complexity |
+**Benefits:** Interaction effects, sample-efficient when interactions matter. **Challenges:** Complex analysis, more traffic required, implementation complexity.
 
 ### Bandit Algorithms
 
-Dynamic traffic allocation to winning variations during the test.
-
-**Epsilon-Greedy:** 90% traffic to current best, 10% exploration, adapts in real-time. Use for continuous optimization, long-running campaigns, seasonal adjustments.
+**Epsilon-Greedy:** Dynamically allocates 90% traffic to current best, 10% exploration, adapts in real-time. Use for continuous optimization, long-running campaigns, seasonal adjustments.
 
 ## 21.3 Statistical Rigor
 
