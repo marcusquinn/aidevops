@@ -79,41 +79,49 @@ run_comprehension() {
 
 # ─── lint score ──────────────────────────────────────────────────────────────
 
+# Count shellcheck passes across all tracked .sh files
+_count_shellcheck_passes() {
+	local sc_pass=0
+	local f
+	local sh_list
+	sh_list=$(git -C "$REPO_ROOT" ls-files '*.sh' 2>/dev/null)
+	while IFS= read -r f; do
+		shellcheck "$REPO_ROOT/$f" >/dev/null 2>&1 && sc_pass=$((sc_pass + 1))
+	done <<EOF_SH
+$sh_list
+EOF_SH
+	echo "$sc_pass"
+	return 0
+}
+
 run_lint() {
 	local total_checks=0
 	local passed_checks=0
 	local score
 
 	# ShellCheck on all .sh files
-	if require_tool "shellcheck"; then
-		local sh_files
+	if ! require_tool "shellcheck"; then
+		log "WARNING: shellcheck not found — skipping shell lint"
+	else
+		local sh_files sc_pass
 		sh_files=$(git -C "$REPO_ROOT" ls-files '*.sh' 2>/dev/null | wc -l | tr -d ' ')
 		if [ "$sh_files" -gt 0 ]; then
 			total_checks=$((total_checks + sh_files))
-			local sc_pass=0
-			while IFS= read -r f; do
-				if shellcheck "$REPO_ROOT/$f" >/dev/null 2>&1; then
-					sc_pass=$((sc_pass + 1))
-				fi
-			done < <(git -C "$REPO_ROOT" ls-files '*.sh' 2>/dev/null)
+			sc_pass=$(_count_shellcheck_passes)
 			passed_checks=$((passed_checks + sc_pass))
 		fi
-	else
-		log "WARNING: shellcheck not found — skipping shell lint"
 	fi
 
 	# markdownlint on .agents/**/*.md
-	if require_tool "markdownlint-cli2"; then
+	if ! require_tool "markdownlint-cli2"; then
+		log "WARNING: markdownlint-cli2 not found — skipping markdown lint"
+	else
 		local md_files
 		md_files=$(git -C "$REPO_ROOT" ls-files '.agents/**/*.md' '.agents/*.md' 2>/dev/null | wc -l | tr -d ' ')
 		if [ "$md_files" -gt 0 ]; then
 			total_checks=$((total_checks + 1))
-			if markdownlint-cli2 "$REPO_ROOT/.agents/**/*.md" >/dev/null 2>&1; then
-				passed_checks=$((passed_checks + 1))
-			fi
+			markdownlint-cli2 "$REPO_ROOT/.agents/**/*.md" >/dev/null 2>&1 && passed_checks=$((passed_checks + 1))
 		fi
-	else
-		log "WARNING: markdownlint-cli2 not found — skipping markdown lint"
 	fi
 
 	if [ "$total_checks" -eq 0 ]; then
@@ -201,22 +209,17 @@ run_score() {
 
 	# composite = w_comp * comprehension + w_lint * lint - w_tokens * (token_ratio - 1)
 	# token_ratio > 1 means more tokens than baseline (penalise); < 1 means fewer (reward)
-	composite=$(awk "BEGIN {
-    comp = $comprehension
-    lint = $lint_score
-    tr   = $token_ratio
-    w_comp = $WEIGHT_COMPREHENSION
-    w_lint = $WEIGHT_LINT
-    w_tok  = $WEIGHT_TOKENS
-    # token penalty: ratio > 1 penalises, < 1 rewards
+	composite=$(awk -v comp="$comprehension" -v lint="$lint_score" -v tr="$token_ratio" \
+		-v w_comp="$WEIGHT_COMPREHENSION" -v w_lint="$WEIGHT_LINT" -v w_tok="$WEIGHT_TOKENS" \
+		'BEGIN {
     tok_component = 1.0 - (tr - 1.0)
-    if (tok_component < 0) tok_component = 0
-    if (tok_component > 2) tok_component = 2
+    tok_component = (tok_component < 0) ? 0 : tok_component
+    tok_component = (tok_component > 2) ? 2 : tok_component
     score = w_comp * comp + w_lint * lint + w_tok * tok_component
-    if (score < 0) score = 0
-    if (score > 1) score = 1
-    printf \"%.4f\", score
-  }")
+    score = (score < 0) ? 0 : score
+    score = (score > 1) ? 1 : score
+    printf "%.4f", score
+  }')
 
 	# Output JSON for structured parsing
 	cat <<EOF
@@ -283,12 +286,12 @@ run_compare() {
 		die "Usage: autoagent-metric-helper.sh compare <before_score> <after_score>"
 	fi
 
-	local delta improvement
-	delta=$(awk "BEGIN { printf \"%.4f\", $after - $before }")
-	improvement=$(awk "BEGIN {
-    if ($before == 0) { printf \"0.00\"; exit }
-    printf \"%.2f\", (($after - $before) / $before) * 100
-  }")
+	local delta improvement improved
+	delta=$(awk -v a="$after" -v b="$before" 'BEGIN { printf "%.4f", a - b }')
+	improvement=$(awk -v a="$after" -v b="$before" 'BEGIN {
+    printf "%.2f", (b == 0) ? 0 : ((a - b) / b) * 100
+  }')
+	improved=$(awk -v a="$after" -v b="$before" 'BEGIN { print (a > b) ? "true" : "false" }')
 
 	cat <<EOF
 {
@@ -296,7 +299,7 @@ run_compare() {
   "after": $after,
   "delta": $delta,
   "improvement_pct": $improvement,
-  "improved": $(awk "BEGIN { print ($after > $before) ? \"true\" : \"false\" }")
+  "improved": $improved
 }
 EOF
 	return 0
@@ -328,27 +331,24 @@ main() {
 		run_compare "$@"
 		;;
 	help | --help | -h)
-		cat <<'HELP'
-autoagent-metric-helper.sh — composite scorer for autoagent framework self-improvement
-
-Subcommands:
-  score [suite]         Compute composite score (JSON + numeric last line)
-  comprehension [suite] Comprehension pass rate (0–1)
-  lint                  Lint pass rate: shellcheck + markdownlint (0–1)
-  tokens [suite]        Token ratio vs baseline (1.0 = same as baseline)
-  baseline [suite]      Establish baseline_chars for token ratio computation
-  compare <before> <after>  Compare two composite scores (JSON)
-
-Environment:
-  AUTOAGENT_BASELINE_FILE         Path to baseline JSON (default: .agents/configs/autoagent-baseline.json)
-  AUTOAGENT_WEIGHT_COMPREHENSION  Weight for comprehension score (default: 0.5)
-  AUTOAGENT_WEIGHT_LINT           Weight for lint score (default: 0.3)
-  AUTOAGENT_WEIGHT_TOKENS         Weight for token score (default: 0.2)
-
-Graceful degradation:
-  Missing tools (agent-test-helper.sh, shellcheck, markdownlint-cli2) return neutral
-  scores (1.0 for comprehension/tokens, 1.0 for lint) rather than failing.
-HELP
+		printf '%s\n' \
+			"autoagent-metric-helper.sh — composite scorer (autoagent self-improvement)" \
+			"" \
+			"Subcommands:" \
+			"  score [suite]            Composite score (JSON + numeric last line)" \
+			"  comprehension [suite]    Comprehension pass rate (0-1)" \
+			"  lint                     Lint pass rate: shellcheck + markdownlint (0-1)" \
+			"  tokens [suite]           Token ratio vs baseline (1.0 = same as baseline)" \
+			"  baseline [suite]         Establish baseline_chars (token ratio computation)" \
+			"  compare <before> <after> Compare two composite scores (JSON)" \
+			"" \
+			"Environment:" \
+			"  AUTOAGENT_BASELINE_FILE         Baseline JSON path" \
+			"  AUTOAGENT_WEIGHT_COMPREHENSION  Comprehension weight (default: 0.5)" \
+			"  AUTOAGENT_WEIGHT_LINT           Lint weight (default: 0.3)" \
+			"  AUTOAGENT_WEIGHT_TOKENS         Token weight (default: 0.2)" \
+			"" \
+			"Graceful degradation: missing tools return neutral scores (1.0) rather than failing."
 		;;
 	*)
 		die "Unknown subcommand: $subcommand. Run 'autoagent-metric-helper.sh help' for usage."
