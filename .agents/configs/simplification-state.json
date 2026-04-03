@@ -1,4 +1,15 @@
 {
+  ".agents/seo/ranking-opportunities.md": {
+    "at": "2026-04-03T00:00:00Z",
+    "hash": "eb967c184a79c17e51d3eaea892f52fd50faf124aac7161e3aa9fef581237a57",
+    "issue": "GH#16713",
+    "lines_after": 61,
+    "lines_before": 61,
+    "note": "Pass 2: instruction doc at minimum viable size. Previously tightened 82→61 lines (GH#15698, PR#16081). All sections necessary: YAML frontmatter, workflow steps, analysis types table, TOON output format. No further compression possible without content loss.",
+    "passes": 2,
+    "pr": "pending",
+    "status": "simplified"
+  },
   ".agents/marketing-sales/direct-response-copy-swipe-file-landing-pages-01-saas-examples.md": {
     "at": "2026-04-03T00:00:00Z",
     "hash": "b67f8c428d9457f76f2e6227baaaa46768eccf9604fd1e71ee17c9b002831039",
