@@ -67,25 +67,15 @@ return Response.json({user, serverRegion: req.cf?.colo});
 Transaction mode: connection acquired per transaction, `RESET` on return. SET statements must stay within a single transaction or compound statement; keep transactions short.
 
 ```typescript
-// ✅ SET within transaction (RESET after COMMIT)
+// ✅ SET within transaction or as compound statement
 await client.query("BEGIN");
-await client.query("SET work_mem = '256MB'");
+await client.query("SET LOCAL work_mem = '256MB'");  // SET LOCAL preferred — scoped to transaction
 await client.query("SELECT * FROM large_table");
 await client.query("COMMIT");
-// ✅ Compound statement
-await client.query("SET work_mem = '256MB'; SELECT * FROM large_table");
+await client.query("SET work_mem = '256MB'; SELECT * FROM large_table");  // compound also works
 // ❌ Across queries — may get different connection
 await client.query("SET work_mem = '256MB'");
 await client.query("SELECT * FROM large_table");  // SET not applied
-// ✅ Short transaction
-await client.query("BEGIN");
-await client.query("UPDATE users SET status = $1 WHERE id = $2", [status, id]);
-await client.query("COMMIT");
-// ✅ SET LOCAL scoped to transaction
-await client.query("BEGIN");
-await client.query("SET LOCAL work_mem = '256MB'");
-await client.query("SELECT * FROM large_table");
-await client.query("COMMIT");
 // ❌ Long transaction holds connection
 await client.query("BEGIN");
 await processThousands();
